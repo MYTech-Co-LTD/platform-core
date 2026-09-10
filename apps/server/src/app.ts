@@ -154,6 +154,10 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   if (existsSync(webDistDir)) {
     const stripConsole = (p: string) => p.slice('/console'.length) || '/'
     const spaIndex = serveStatic({ root: webDistDir, path: 'index.html' })
+    // dist 根路径静态文件（/assets/*.js|css、/favicon.svg）：vite 构建的 index.html 以
+    // 站点绝对路径引用这些产物，缺这道中间件时它们会落进 SPA 兜底拿到 index.html，
+    // 浏览器永远白屏（Task 19 浏览器验证暴露）。未命中 next() 放行给 SPA 兜底
+    app.use('*', serveStatic({ root: webDistDir }))
     app.use('/console', serveStatic({ root: webDistDir, rewriteRequestPath: stripConsole }))
     app.use('/console/*', serveStatic({ root: webDistDir, rewriteRequestPath: stripConsole }))
     // serveStatic 未命中会 next() 放行 → GET 落到这里回退 SPA（/console 深链）
