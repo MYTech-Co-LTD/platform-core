@@ -1,9 +1,10 @@
 {
   "name": "@platform/server",
   "type": "module",
-  "main": "src/main.ts",
+  "main": "src/index.ts",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },

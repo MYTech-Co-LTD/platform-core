@@ -194,6 +194,22 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     expect((err as Error).message).toContain(path.join(dir, 'manifest.yaml'))
   })
 
+  it('YAML 语法错误：抛错信息含绝对路径（Task 15 评审 M-1）', async () => {
+    const modulesDir = await newModulesDir()
+    const dir = await writeModule(modulesDir, 'yamlmod', {
+      // 缩进坏行 + 未闭合引号——yaml.parse 抛 YAMLParseError（消息只有行列号）
+      'manifest.yaml': 'id: yamlmod\nname: "unclosed\n  bad-indent: [\n',
+    })
+    const err = await loadModules(modulesDir, { pool }).then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toContain(path.join(dir, 'manifest.yaml'))
+    // 是包装错误（含 cause）而非裸 YAMLParseError
+    expect((err as Error).cause).toBeInstanceOf(Error)
+  })
+
   it('重复模块 id：抛错并列出两个冲突目录', async () => {
     const modulesDir = await newModulesDir()
     const first = await writeModule(modulesDir, 'first', {

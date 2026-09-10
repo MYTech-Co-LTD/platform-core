@@ -34,10 +34,11 @@ describe('loadConfig', () => {
         application: undefined,
       },
       publicOrigin: 'http://127.0.0.1:13000',
+      seedDemo: false,
     })
   })
 
-  it('multi 模式 PLATFORM_ORG 可缺省；admin 凭据可空；CASDOOR_APPLICATION 可选透传', () => {
+  it('multi 模式 PLATFORM_ORG 可缺省；admin 凭据可空；CASDOOR_APPLICATION 可选透传；SEED_DEMO 开关', () => {
     const cfg = loadConfig({
       ...baseEnv,
       TENANT_MODE: 'multi',
@@ -45,12 +46,14 @@ describe('loadConfig', () => {
       CASDOOR_ADMIN_USER: '',
       CASDOOR_ADMIN_PWD: '',
       CASDOOR_APPLICATION: 'app-built-in',
+      SEED_DEMO: '1',
     })
     expect(cfg.tenantMode).toBe('multi')
     expect(cfg.platformOrg).toBe('')
     expect(cfg.casdoor.adminUser).toBeUndefined()
     expect(cfg.casdoor.adminPwd).toBeUndefined()
     expect(cfg.casdoor.application).toBe('app-built-in')
+    expect(cfg.seedDemo).toBe(true)
   })
 
   it('TENANT_MODE 非 multi/single → 抛错（含缺失）', () => {

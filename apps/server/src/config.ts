@@ -29,6 +29,8 @@ export interface AppConfig {
   sessionSecret: string
   casdoor: CasdoorConfig
   publicOrigin: string
+  /** SEED_DEMO=1 → 宿主启动期跑 demo 种子（幂等收敛，dev/冒烟用；Task 16 消费） */
+  seedDemo: boolean
 }
 
 /** 可注入的 env 源（键 → 值/未设置），默认进程环境 */
@@ -82,5 +84,6 @@ export function loadConfig(env: Env = process.env): AppConfig {
       application: optional('CASDOOR_APPLICATION'),
     },
     publicOrigin: requireValue('PUBLIC_ORIGIN'),
+    seedDemo: env.SEED_DEMO === '1',
   }
 }

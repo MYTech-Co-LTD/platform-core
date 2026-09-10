@@ -16,7 +16,6 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { parse as parseYaml } from 'yaml'
-import { z } from 'zod'
 import type { CasdoorClient } from '@platform/auth-core'
 import { ManifestSchema, type ModuleDefinition, type ModuleManifest } from '@platform/sdk'
 import type { Hono } from 'hono'
@@ -68,12 +67,22 @@ export async function loadModules(
     // ① 读 + YAML 解析 + ManifestSchema 校验（失败抛错带绝对路径）
     let manifest: ModuleManifest
     try {
-      manifest = ManifestSchema.parse(parseYaml(await readFile(manifestPath, 'utf8')))
-    } catch (err) {
-      if (err instanceof z.ZodError) {
-        throw new Error(`manifest 校验失败 ${manifestPath}: ${err.message}`, { cause: err })
+      let parsed: unknown
+      try {
+        parsed = parseYaml(await readFile(manifestPath, 'utf8'))
+      } catch (err) {
+        // readFile ENOENT（消息自带绝对路径）原样抛；YAML 语法错包一层带绝对路径
+        // （Task 15 评审 M-1：yaml.parse 原始错误只有行号列号，无文件定位）
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw err
+        throw new Error(`${manifestPath}: ${(err as Error).message}`, { cause: err })
       }
-      // readFile ENOENT（消息自带绝对路径）/ YAML 语法错 —— 原样抛
+      manifest = ManifestSchema.parse(parsed)
+    } catch (err) {
+      // err?.name 而非 instanceof：manifest 可能来自不同 zod 实例（跨包解析），
+      // instanceof 判定会静默退化为"原样抛"（Task 15 评审 M-2）；ZodError.name 是稳定标识
+      if ((err as { name?: string } | null)?.name === 'ZodError') {
+        throw new Error(`manifest 校验失败 ${manifestPath}: ${(err as Error).message}`, { cause: err })
+      }
       throw err
     }
 
