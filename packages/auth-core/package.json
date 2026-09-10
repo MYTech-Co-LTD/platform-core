@@ -1,0 +1,12 @@
+{
+  "name": "@platform/auth-core",
+  "type": "module",
+  "main": "src/public.ts",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "jose": "^5.9.0",
+    "zod": "^3.23.0"
+  }
+}

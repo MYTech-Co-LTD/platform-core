@@ -1,0 +1,51 @@
+#!/usr/bin/env sh
+# dev-workflow-infra — 通用 commit-msg hook（项目无关）
+# 由 install.sh 部署到全局 core.hooksPath，对本机所有 git 仓库 / Orca 工作树生效。
+# 作用：给每条提交追加溯源 trailer（worktree / agent / session）。
+# 绝不阻断提交：任何失败都 exit 0。
+set -u
+
+MSG_FILE="$1"
+STABLE="${DEV_WORKFLOW_HOME:-$HOME/.config/dev-workflow}"
+PROV_FILE="${DEV_WORKFLOW_PROVENANCE:-$STABLE/provenance.json}"
+
+# 1) 从 provider hook 写的标记文件读 agent + session（若有的话）
+agent=""; session=""
+if [ -f "$PROV_FILE" ] && command -v jq >/dev/null 2>&1; then
+  agent=$(jq -r '.agent // empty'   "$PROV_FILE" 2>/dev/null || true)
+  session=$(jq -r '.session // empty' "$PROV_FILE" 2>/dev/null || true)
+fi
+
+# 2) 当前 Orca 工作树 id（非 Orca 工作树里为空，正常）
+wt=""
+if command -v orca >/dev/null 2>&1; then
+  wt=$(orca worktree current --json 2>/dev/null | jq -r '.result.worktree.id // empty' 2>/dev/null || true)
+fi
+
+# 3) 关联 issue（软字段，有值才写）：权威 = worktree.linkedIssue，兜底 = 分支名正则
+issue=""
+if [ -n "$wt" ] && command -v orca >/dev/null 2>&1; then
+  issue=$(orca worktree show --worktree "$wt" --json 2>/dev/null \
+          | jq -r '.result.worktree.linkedIssue // empty' 2>/dev/null || true)
+fi
+if [ -z "$issue" ] && [ -n "$(git branch --show-current 2>/dev/null)" ]; then
+  issue=$(git branch --show-current \
+          | sed -nE 's#.*(issue-?([0-9]{1,6})|[-/]([0-9]{1,6})([-/]|$)).*#\2\3#p' | head -1)
+fi
+
+# 4) 防重复盖章（如 commit --amend 会再触发一次）：已有任一本 hook 写的 trailer 就跳过。
+#    不能只查 X-Orca-Agent：provenance 缺失（agent/session 空）时该行不写，amend 会重复盖 X-Issue。
+if grep -qE '^X-(Orca-Worktree|Orca-Agent|Agent-Session|Issue):' "$MSG_FILE" 2>/dev/null; then
+  exit 0
+fi
+
+# 5) 追加三件套 + X-Issue（哪个有值写哪个；绝不阻断提交）
+{
+  printf '\n'
+  [ -n "$wt" ]      && printf 'X-Orca-Worktree: %s\n' "$wt"
+  [ -n "$agent" ]   && printf 'X-Orca-Agent: %s\n' "$agent"
+  [ -n "$session" ] && printf 'X-Agent-Session: %s\n' "$session"
+  [ -n "$issue" ]   && printf 'X-Issue: %s\n' "$issue"
+} >> "$MSG_FILE"
+
+exit 0

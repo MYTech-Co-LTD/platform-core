@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "paths": {
+      "@platform/auth-core": ["../packages/auth-core/src/public.ts"],
+      "@platform/sdk": ["../packages/platform-sdk/src/index.ts"]
+    }
+  }
+}
