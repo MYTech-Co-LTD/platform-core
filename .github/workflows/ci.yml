@@ -5,8 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 11 }        # 仓内 lockfile 由 pnpm11 生成（allowBuilds 键），必须对齐
+      - uses: pnpm/action-setup@v4   # 版本读 package.json 的 packageManager（pnpm@11.22.0，与 lockfile 对齐）；不能再传 version 入参，否则 action 报 Multiple versions
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
