@@ -20,7 +20,7 @@ export interface ModuleManifest {
 const ID_REGEX = /^[a-z][a-z0-9-]*$/
 // 宽松 semver：三段数字。
 const VERSION_REGEX = /^[0-9]+[.][0-9]+[.][0-9]+$/
-// 平台版本约束：>=0.1.0 / >0.1 / 0.1.2 这类。
+// 平台版本约束：以 >= 或 > 开头指向数字（如 >=0.1.0 / >0.1）；裸版本号（如 0.1.2）不合法。
 const PLATFORM_REGEX = /^>=?[0-9]/
 
 const ManifestObject = z.object({
@@ -63,8 +63,13 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
 
 export type ModuleManifestInferred = z.infer<typeof ManifestSchema>
 
-// 编译期防漂移：schema 推断类型必须与接口双向一致（改其一不改另一会在此处炸 typecheck）。
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-type _AssertManifestBidirectional =
-  [ModuleManifest] extends [ModuleManifestInferred] ?
-    ([ModuleManifestInferred] extends [ModuleManifest] ? true : ['接口与 zod 推断不一致']) : never
+// 编译期防漂移：schema 推断类型必须与接口双向一致。_AssertTrue 的泛型约束 <T extends true>
+// 让"求值结果不是 true"成为真实 type 错误（单纯的条件类型别名未使用时无论求值成什么都不报错）。
+// 失败分支必须是 false 而非 never——never 可赋值给任何约束、会静默溜过（已实证：never 版对
+// platform: number 的破坏 exit 0）。
+type _AssertTrue<T extends true> = T
+type _AssertManifestBidirectional = _AssertTrue<
+  [ModuleManifest] extends [ModuleManifestInferred]
+    ? ([ModuleManifestInferred] extends [ModuleManifest] ? true : false)
+    : false
+>

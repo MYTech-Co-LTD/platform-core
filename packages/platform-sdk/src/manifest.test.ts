@@ -111,7 +111,7 @@ describe('ManifestSchema', () => {
   })
 
   it('缺必填字段报错（无 permissions）', () => {
-    const r = ManifestSchema.safeParse({ id: 'demo', name: 'x', version: '1.0.0', platform: '1.2.3' })
+    const r = ManifestSchema.safeParse({ id: 'demo', name: 'x', version: '1.0.0', platform: '>=1.2.3' })
     expect(r.success).toBe(false)
     if (r.success) return
     expect(r.error.issues.some(i => i.path[0] === 'permissions')).toBe(true)
