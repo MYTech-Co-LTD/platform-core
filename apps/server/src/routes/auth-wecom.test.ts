@@ -1,10 +1,12 @@
 // auth-wecom.test.ts — 企微登录两路路由（qr 扫码 + 企微内静默）（TDD）
 //
 // 真 PG（本地 docker platform-pg，同 auth.test.ts 约定）+ MockCasdoor（真实 HTTP，含
-// /api/login/oauth/access_token 兑换 issueOidcCode 预种 code）+ 注入 fetchFn 的假企微
-// qyapi。未提供 DATABASE_URL 时整体跳过。覆盖简报 ①-⑦：
+// /api/login/oauth/access_token 兑换 issueOidcCode 预种 code + 故障旋钮）+ 注入 fetchFn 的
+// 假企微 qyapi。未提供 DATABASE_URL 时整体跳过。覆盖简报 ①-⑦ + fix round（评审 I1/I2）：
 //  ① /qr 返回 authorize url（state 与 cookie 绑定）② qr code/state → platform_session + 302 /
-//  ③ 错 state 401 ④ iframe 头 → 200 HTML postMessage ⑤ 非 wxwork UA 访问 /silent → 302 /login
+//  ③ 错 state → 302 /login?error=BAD_STATE ④ iframe 头 → 200 HTML postMessage
+//  ④a iframe+坏 code → sso-fail ④b NO_ACCOUNT → 302 /login?error= ④c token 端点 5xx/HTML
+//     → 传输故障分类（CASDOOR_UNAVAILABLE，非 BAD_CODE）⑤ 非 wxwork UA 访问 /silent → 302 /login
 //  ⑥ via=silent 全链路（假企微 code → userid → Casdoor 用户）→ authVia='wecom-silent'
 //  ⑦ 未配 corp 租户 404。
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -174,14 +176,14 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     expect(rows[0]).toMatchObject({ action: 'login.ok', actor: 'alice', detail: { via: 'wecom-qr' } })
   })
 
-  // ③ 错 state（cookie 与 query 不一致）→ 401 BAD_STATE，不发会话
-  it('callback：state 与 cookie 不一致 → 401 {"error":"BAD_STATE"}，无 platform_session', async () => {
+  // ③ 错 state（cookie 与 query 不一致）→ 浏览器上下文兜底：302 /login?error=BAD_STATE（评审 I1）
+  it('callback：state 与 cookie 不一致 → 302 /login?error=BAD_STATE，无 platform_session', async () => {
     const res = await client.api.platform.auth.wecom.callback.$get(
       { query: { code: 'any-code', state: 'aaa' } },
       { headers: { host: 'acme.test', cookie: 'wecom_state=bbb' } },
     )
-    expect(res.status).toBe(401)
-    expect(await res.json()).toEqual({ error: 'BAD_STATE' })
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/login?error=BAD_STATE')
     expect(setCookies(res)).toEqual([])
   })
 
@@ -200,6 +202,91 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     expect(res.headers.get('content-type')).toContain('text/html')
     expect(await res.text()).toContain(`parent.postMessage({type:'sso-done'},'*')`)
     sessionToken(res) // 200 分支同样拿到会话 cookie（iframe 同站可种）
+  })
+
+  // ④a iframe 失败路（评审 I1）：坏 code → 200 HTML sso-fail（与 sso-done 对称），不发会话
+  it('callback（iframe）：坏 code → 200 HTML 含 sso-fail(error:\'BAD_CODE\')，无 platform_session', async () => {
+    const qr = await client.api.platform.auth.wecom.qr.$get(undefined, {
+      headers: { host: 'acme.test' },
+    })
+    const state = stateToken(qr)
+    const res = await client.api.platform.auth.wecom.callback.$get(
+      { query: { code: 'no-such-code', state } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}`, 'sec-fetch-dest': 'iframe' } },
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/html')
+    expect(await res.text()).toContain(`parent.postMessage({type:'sso-fail', error:'BAD_CODE'},'*')`)
+    expect(setCookies(res)).toEqual([])
+  })
+
+  // ④b 非 iframe 失败路（评审 I1）：已认证但 org 内无账户（NO_ACCOUNT）→ 302 /login?error=NO_ACCOUNT
+  it('callback：NO_ACCOUNT（code 换到 org 外用户）→ 302 /login?error=NO_ACCOUNT + audit login.fail', async () => {
+    const qr = await client.api.platform.auth.wecom.qr.$get(undefined, {
+      headers: { host: 'acme.test' },
+    })
+    const state = stateToken(qr)
+    const code = mock.issueOidcCode('stranger') // 企微/Casdoor 已认证，但 acme org 无此用户
+    const res = await client.api.platform.auth.wecom.callback.$get(
+      { query: { code, state } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/login?error=NO_ACCOUNT')
+    expect(setCookies(res)).toEqual([])
+    const { rows } = await pool.query<{
+      action: string
+      actor: string
+      detail: { via?: string; reason?: string }
+    }>(
+      "select action, actor, detail from platform.audit where action='login.fail' order by id desc limit 1",
+    )
+    expect(rows[0]).toMatchObject({
+      action: 'login.fail',
+      actor: 'stranger',
+      detail: { via: 'wecom-qr', reason: 'no-account' },
+    })
+  })
+
+  // ④c I2 修复：token 端点 5xx+HTML / 2xx+HTML 都是传输故障（CASDOOR_UNAVAILABLE），
+  //     绝不吞成 BAD_CODE——用【有效】code 验证：分类只看端点故障，与 code 有效性无关
+  it('callback：Casdoor token 端点 502+HTML 或 200+HTML → 传输故障（非 iframe 302 error=CASDOOR_UNAVAILABLE；iframe sso-fail 同码），非 BAD_CODE', async () => {
+    for (const mode of ['http502', 'html200'] as const) {
+      mock.setTokenEndpointFault(mode)
+      try {
+        // 非 iframe：302 兜底到登录页，错误码标 CASDOOR_UNAVAILABLE（不是 BAD_CODE/401 语义）
+        const qr1 = await client.api.platform.auth.wecom.qr.$get(undefined, {
+          headers: { host: 'acme.test' },
+        })
+        const s1 = stateToken(qr1)
+        const c1 = mock.issueOidcCode('alice')
+        const r1 = await client.api.platform.auth.wecom.callback.$get(
+          { query: { code: c1, state: s1 } },
+          { headers: { host: 'acme.test', cookie: `wecom_state=${s1}` } },
+        )
+        expect(r1.status).toBe(302)
+        expect(r1.headers.get('location')).toBe('/login?error=CASDOOR_UNAVAILABLE')
+        expect(r1.headers.get('location')).not.toContain('BAD_CODE')
+        expect(setCookies(r1)).toEqual([])
+        // iframe：200 sso-fail 同码
+        const qr2 = await client.api.platform.auth.wecom.qr.$get(undefined, {
+          headers: { host: 'acme.test' },
+        })
+        const s2 = stateToken(qr2)
+        const c2 = mock.issueOidcCode('alice')
+        const r2 = await client.api.platform.auth.wecom.callback.$get(
+          { query: { code: c2, state: s2 } },
+          { headers: { host: 'acme.test', cookie: `wecom_state=${s2}`, 'sec-fetch-dest': 'iframe' } },
+        )
+        expect(r2.status).toBe(200)
+        expect(await r2.text()).toContain(
+          `parent.postMessage({type:'sso-fail', error:'CASDOOR_UNAVAILABLE'},'*')`,
+        )
+        expect(setCookies(r2)).toEqual([])
+      } finally {
+        mock.setTokenEndpointFault('off')
+      }
+    }
   })
 
   // ⑤ 桌面浏览器（非 wxwork UA）打到 /silent → 302 /login，不种 state 不跳企微

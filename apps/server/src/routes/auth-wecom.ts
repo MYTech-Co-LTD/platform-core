@@ -40,6 +40,11 @@ const STATE_TTL_SEC = 300
 /** iframe（登录页内嵌扫码页）回跳分支：302 对 iframe 父页不可见 → 小 HTML 让父页壳 SPA 感知完成 */
 const IFRAME_DONE_HTML = "<script>parent.postMessage({type:'sso-done'},'*')</script>"
 
+/** iframe 失败分支（评审 I1）：与 sso-done 对称的 sso-fail 消息；error 为错误码字符串（[A-Z_]+，无注入面） */
+function iframeFailHtml(err: string): string {
+  return `<script>parent.postMessage({type:'sso-fail', error:'${err}'},'*')</script>`
+}
+
 export interface WecomRoutesDeps {
   casdoor: CasdoorFactory
   sessionSecret: string
@@ -79,7 +84,9 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
  * Casdoor OIDC code → 用户名。sso-shell.js authorizationCodeToken 生产形状：
  * POST /api/login/oauth/access_token，application/x-www-form-urlencoded，
  * grant_type=authorization_code + client_id/client_secret/code/redirect_uri 全在 body。
- * 返回 null = code 被上游拒绝（无效/过期/已用）；抛错 = 传输层故障。
+ * 返回 null = code 被上游拒绝（4xx + OAuth error 载荷如 invalid_grant，或 2xx 无 access_token）；
+ * 抛错 = 传输层故障（网络错、5xx（含反代 HTML 错误页）、任何状态码的非 JSON 体），
+ * 路由层按 502 类 fail-loudly 处理（评审 I2：不得吞成 BAD_CODE）。
  */
 async function casdoorCodeToName(
   o: { origin: string; clientId: string; clientSecret: string },
@@ -98,7 +105,15 @@ async function casdoorCodeToName(
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   })
-  const j = (await r.json().catch(() => ({}))) as { access_token?: string }
+  // 5xx（反代/网关错误页）= 服务端/链路故障，不是坏 code——抛出走 502 类（评审 I2）
+  if (r.status >= 500) throw new Error(`casdoor token endpoint http ${r.status}`)
+  let j: { access_token?: string }
+  try {
+    j = (await r.json()) as { access_token?: string }
+  } catch {
+    // 非 JSON 体（任何状态码：网关截胡的 HTML 错误页/伪装 2xx 的 HTML）同归传输故障
+    throw new Error('casdoor token endpoint returned non-json body')
+  }
   if (!j.access_token) return null
   const claims = decodeJwtPayload(j.access_token)
   const name = String(claims.name || claims.sub || '')
@@ -173,8 +188,17 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     const state = c.req.query('state') ?? ''
     const code = c.req.query('code') ?? ''
     const via = c.req.query('via') === 'silent' ? 'wecom-silent' : 'wecom-qr'
+    // 失败呈现（评审 I1）：回调恒为浏览器导航（Casdoor/企微 302 落地），JSON 错误体是用户
+    // 死胡同——iframe 内（扫码页回跳）200 + postMessage sso-fail（与 sso-done 对称，Task 17
+    // 登录页监听两种消息）；顶层 302 /login?error=<CODE>（登录页按码展示）。错误码集合与
+    // 历史 JSON error 字段同名：BAD_STATE / BAD_CODE / NO_ACCOUNT / CASDOOR_UNAVAILABLE /
+    // WECOM_UNAVAILABLE / WECOM_NOT_CONFIGURED。
+    const isIframe = c.req.header('sec-fetch-dest') === 'iframe'
+    const fail = (err: string) =>
+      isIframe ? c.html(iframeFailHtml(err)) : c.redirect(`/login?error=${encodeURIComponent(err)}`)
+
     if (!code || !state || readStateCookie(c.req.header('cookie')) !== state) {
-      return c.json({ error: 'BAD_STATE' }, 401)
+      return fail('BAD_STATE')
     }
 
     // 身份来源两分：qr = Casdoor OIDC code 换票解 name；silent = 企微 code 换 userid
@@ -182,7 +206,7 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     try {
       if (via === 'wecom-silent') {
         if (!t.wecom_corp_id || !t.wecom_secret) {
-          return c.json({ error: 'WECOM_NOT_CONFIGURED' }, 404)
+          return fail('WECOM_NOT_CONFIGURED')
         }
         name = await wecomUserIdForCode(
           {
@@ -205,27 +229,28 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
         )
       }
     } catch {
-      // 传输层故障（Casdoor/企微 5xx、网络）≠ 坏 code：502 如实暴露，不记 login.fail（非用户过错）
-      return c.json({ error: via === 'wecom-silent' ? 'WECOM_UNAVAILABLE' : 'CASDOOR_UNAVAILABLE' }, 502)
+      // 传输层故障（Casdoor/企微 5xx、网络——含 casdoorCodeToName 的非 2xx/非 JSON 抛错）
+      // ≠ 坏 code：CASDOOR/WECOM_UNAVAILABLE 类如实呈现，不记 login.fail（非用户过错）
+      return fail(via === 'wecom-silent' ? 'WECOM_UNAVAILABLE' : 'CASDOOR_UNAVAILABLE')
     }
     if (name === null) {
       // code 被上游拒绝（无效/过期/已兑换）——不泄具体原因（qr 路；silent 路只抛不 null）
-      return c.json({ error: 'BAD_CODE' }, 401)
+      return fail('BAD_CODE')
     }
 
     // 同 Task 13 登录路径：有效会话必须带可信 scopes（fail loudly）；
-    // getUser=null = 该 org 无此用户（企微 userid 未建 Casdoor 账号）→ fail-closed 403
+    // getUser=null = 该 org 无此用户（企微 userid 未建 Casdoor 账号）→ fail-closed
     let user: CasdoorUser | null
     let perms: CasdoorPermission[]
     const casdoor = deps.casdoor(t.casdoor_org)
     try {
       ;[user, perms] = await Promise.all([casdoor.getUser(name), casdoor.getPermissions()])
     } catch {
-      return c.json({ error: 'CASDOOR_UNAVAILABLE' }, 502)
+      return fail('CASDOOR_UNAVAILABLE')
     }
     if (user === null) {
       await writeAudit(deps.pool, t.id, name, 'login.fail', { via, reason: 'no-account' })
-      return c.json({ error: 'NO_ACCOUNT' }, 403)
+      return fail('NO_ACCOUNT')
     }
     const scopes = effectiveScopes(name, user.roles ?? [], perms)
 

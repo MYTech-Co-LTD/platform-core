@@ -57,6 +57,7 @@ export class MockCasdoor {
   #perms: Array<Record<string, unknown>> = []
   #sessions = new Map<string, { user: string; anonymous: boolean }>()
   #oidcCodes = new Map<string, string>() // authorization code → 用户名（单次即焚）
+  #tokenFault: 'off' | 'http502' | 'html200' = 'off'
   #server: ReturnType<typeof serve> | null = null
   #port = 0
   #lastLoginApplication = ''
@@ -107,6 +108,15 @@ export class MockCasdoor {
     const code = randomBytes(16).toString('hex')
     this.#oidcCodes.set(code, userName)
     return code
+  }
+
+  /**
+   * 令 token 端点进入故障模式（钉死客户端传输层/解析失败分类，评审 I2）：
+   * 'http502' = 502 + HTML（反代/网关错误页）；'html200' = 200 + HTML（伪装 2xx 的非 JSON）；
+   * 'off' = 恢复正常。
+   */
+  setTokenEndpointFault(mode: 'off' | 'http502' | 'html200'): void {
+    this.#tokenFault = mode
   }
 
   async start(): Promise<void> {
@@ -189,6 +199,14 @@ export class MockCasdoor {
     // x-www-form-urlencoded，grant_type/client_id/client_secret/code/redirect_uri 全在 body；
     // code 必须是 issueOidcCode 预种的且单次即焚，拒绝按 RFC 6749 回 400 + error 载荷。
     .post('/api/login/oauth/access_token', async (c) => {
+      if (this.#tokenFault === 'http502') {
+        return c.body('<html><body>502 Bad Gateway</body></html>', 502, {
+          'content-type': 'text/html',
+        })
+      }
+      if (this.#tokenFault === 'html200') {
+        return c.body('<html><body>ok?</body></html>', 200, { 'content-type': 'text/html' })
+      }
       const form = new URLSearchParams(await c.req.text())
       if (form.get('grant_type') !== 'authorization_code') {
         return c.json({ error: 'unsupported_grant_type' }, 400)
