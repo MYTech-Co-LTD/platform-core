@@ -7,9 +7,10 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["node"],
+    "baseUrl": ".",
     "paths": {
-      "@platform/auth-core": ["../packages/auth-core/src/public.ts"],
-      "@platform/sdk": ["../packages/platform-sdk/src/index.ts"]
+      "@platform/auth-core": ["packages/auth-core/src/public.ts"],
+      "@platform/sdk": ["packages/platform-sdk/src/index.ts"]
     }
   }
 }
