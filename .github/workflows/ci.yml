@@ -1,0 +1,13 @@
+name: ci
+on: { push: { branches: [main] }, pull_request: {} }
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }        # 仓内 lockfile 由 pnpm11 生成（allowBuilds 键），必须对齐
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test

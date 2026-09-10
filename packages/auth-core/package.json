@@ -3,7 +3,7 @@
   "type": "module",
   "main": "src/public.ts",
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "jose": "^5.9.0",
