@@ -9,4 +9,7 @@ describe('normalizeScopes', () => {
   })
   it('空输入返回空数组', () => { expect(normalizeScopes({})).toEqual([]) })
   it('过滤空串', () => { expect(normalizeScopes({ scopes: ['', 'a:b'] })).toEqual(['a:b']) })
+  it('permissions[].resources 空串同样被过滤', () => {
+    expect(normalizeScopes({ permissions: [{ resources: ['', 'a:b'] }] })).toEqual(['a:b'])
+  })
 })

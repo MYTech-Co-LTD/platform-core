@@ -1,0 +1,212 @@
+// mock-casdoor.ts — 测试/冒烟共用的 Casdoor mock（真实 HTTP，@hono/node-server）
+//
+// 移植自 工单系统 gateway 的生产请求形状（sso-shell.js verifyCredentials / admin-api.js
+// get-user/get-permissions / admin-auth.js 会话缓存），钉死 C2 语义。
+//
+// mock 三纪律（源自共享 Casdoor 生产实测陷阱，改动前先读）：
+//   ① API 响应不回真 secret —— 用户记录里的 password 只留 mock 内部比对，
+//     任何 JSON 响应（login / get-user / get-permissions）都不含 password 字段。
+//   ② 形参走 query 风格 —— 身份/选择器形参一律从 query 读：
+//     login 读 username/password（全 query 形参）、get-user 只认 id=<org>/<name>
+//     （owner=/name= 形参会被真实 Casdoor 报 wrong token count）、
+//     get-permissions 认 owner=、update-permission 认 id=。
+//     业务载荷（add/update 的正文）在 JSON body —— 与真实 Casdoor 一致。
+//   ③ 密码验证失败返回 HTTP 200 + {"status":"error"} —— 真实 Casdoor 行为，
+//     绝不能改成 401/403；且失败时照样发（匿名）session cookie，缓存端必须
+//     校验 body status==ok 才认 cookie（admin-auth.js 生产教训：坏 cookie 缓存 6h）。
+import { serve } from '@hono/node-server'
+import { Hono } from 'hono'
+import { randomBytes } from 'node:crypto'
+import type { Context } from 'hono'
+
+export interface MockCasdoorUser {
+  name: string
+  password: string
+  roles?: string[]
+  isAdmin?: boolean
+  displayName?: string
+  email?: string
+}
+
+export interface MockCasdoorPerm {
+  /** Casdoor 权限必有 name；种子未给时以首个 resource 兜底（装载器场景 code 即 name） */
+  name?: string
+  users?: string[]
+  roles?: string[]
+  resources?: string[]
+  actions?: string[]
+  isEnabled?: boolean
+}
+
+export interface MockCasdoorOptions {
+  users?: MockCasdoorUser[]
+  perms?: MockCasdoorPerm[]
+}
+
+const MOCK_ORG = 'mock-org'
+
+interface StoredUser extends MockCasdoorUser {
+  roles: string[]
+  isAdmin: boolean
+}
+
+export class MockCasdoor {
+  #users: StoredUser[]
+  #perms: Array<Record<string, unknown>> = []
+  #sessions = new Map<string, { user: string; anonymous: boolean }>()
+  #server: ReturnType<typeof serve> | null = null
+  #port = 0
+
+  constructor(opts: MockCasdoorOptions = {}) {
+    // 内置 admin：真实 Casdoor 永远有 built-in admin（/api/login 管理会话用它登录）。
+    // 默认口令 pw 与测试种子一致；种子里给了名为 admin 的用户则尊重种子。
+    const seeded = opts.users ?? []
+    const builtInAdmin: MockCasdoorUser[] = !seeded.some((u) => u.name === 'admin')
+      ? [{ name: 'admin', password: 'pw', roles: [] }]
+      : []
+    this.#users = [...builtInAdmin, ...seeded].map((u) => ({
+      ...u,
+      roles: u.roles ?? [],
+      isAdmin: u.isAdmin ?? u.name === 'admin',
+    }))
+    for (const [i, p] of (opts.perms ?? []).entries()) {
+      const name = p.name ?? p.resources?.[0] ?? `perm-${i + 1}`
+      this.#perms.push({
+        owner: MOCK_ORG,
+        name,
+        displayName: name,
+        users: p.users ?? [],
+        roles: p.roles ?? [],
+        resources: p.resources ?? [],
+        actions: p.actions ?? ['Read'],
+        isEnabled: p.isEnabled ?? true,
+        model: 'built-in/user-model-built-in',
+      })
+    }
+    this.#app.put('/api/update-permission', this.#updatePermission)
+    this.#app.post('/api/update-permission', this.#updatePermission)
+  }
+
+  get port(): number { return this.#port }
+  get origin(): string { return `http://127.0.0.1:${this.#port}` }
+
+  async start(): Promise<void> {
+    if (this.#server) return
+    this.#server = serve({ fetch: this.#app.fetch, port: 0, hostname: '127.0.0.1' })
+    await new Promise<void>((resolve) => {
+      if (this.#server!.listening) return resolve()
+      this.#server!.once('listening', () => resolve())
+    })
+    this.#port = (this.#server.address() as { port: number }).port
+  }
+
+  async stop(): Promise<void> {
+    const s = this.#server
+    if (!s) return
+    this.#server = null
+    this.#port = 0
+    await new Promise<void>((resolve) => {
+      s.close(() => resolve())
+      // ServerType 联合类型未暴露 node:http Server 的 closeAllConnections，运行时存在（Node ≥18.2）
+      ;(s as unknown as import('node:http').Server).closeAllConnections?.()
+    })
+  }
+
+  /** 吊销全部服务端会话（冒烟/测试用来钉「401 → 重登一次重试」语义） */
+  expireSessions(): void {
+    this.#sessions.clear()
+  }
+
+  /** 有效且非匿名的 admin 会话（管理端点门禁；无效 → 401） */
+  #isAdminSession(c: Context): boolean {
+    const m = /casdoor_session_id=([^;]+)/.exec(c.req.header('cookie') ?? '')
+    const s = m ? this.#sessions.get(m[1]!) : undefined
+    if (!s || s.anonymous) return false
+    const u = this.#users.find((x) => x.name === s.user)
+    return !!u && u.isAdmin
+  }
+
+  #unauthorized(c: Context) {
+    // 与真实 Casdoor 的 "Unauthorized operation" 文案对齐，但用 401 状态码钉死客户端重试契约
+    return c.json({ status: 'error', msg: 'Unauthorized operation' }, 401)
+  }
+
+  #updatePermission = async (c: Context) => {
+    if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+    // 纪律 ②：id=<org>/<name> query 形参（缺省会像真实 Casdoor 一样取不到目标）
+    const name = (c.req.query('id') ?? '').split('/').pop() ?? ''
+    const p = this.#perms.find((x) => x.name === name)
+    if (!p) return c.json({ status: 'error', msg: 'permission not found' })
+    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+    Object.assign(p, {
+      displayName: (b.displayName as string) ?? p.displayName,
+      model: (b.model as string) ?? p.model,
+      users: (b.users as string[]) ?? p.users,
+      roles: (b.roles as string[]) ?? p.roles,
+      resources: (b.resources as string[]) ?? p.resources,
+      actions: (b.actions as string[]) ?? p.actions,
+      isEnabled: (b.isEnabled as boolean) ?? p.isEnabled,
+    })
+    return c.json({ status: 'ok' })
+  }
+
+  #app = new Hono()
+    // POST /api/login —— 纪律 ②③：形参全 query；失败 200+{"status":"error"} 且照发匿名 cookie
+    .post('/api/login', (c) => {
+      const username = c.req.query('username') ?? ''
+      const password = c.req.query('password') ?? ''
+      const user = this.#users.find((u) => u.name === username && u.password === password)
+      const sid = randomBytes(16).toString('hex')
+      this.#sessions.set(sid, { user: user?.name ?? '', anonymous: !user })
+      // 纪律 ③：登录失败也发 session cookie（匿名会话）——缓存端必须校验 body 才认
+      c.header('Set-Cookie', `casdoor_session_id=${sid}; Path=/; HttpOnly`)
+      if (!user) return c.json({ status: 'error', msg: '用户名或密码错误' })
+      return c.json({ status: 'ok', data: `${MOCK_ORG}/${user.name}` })
+    })
+    // GET /api/get-user?id=<org>/<name> —— 纪律 ②：单数端点只认 id= 形参
+    .get('/api/get-user', (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const name = (c.req.query('id') ?? '').split('/').pop() ?? ''
+      const user = this.#users.find((u) => u.name === name)
+      if (!user) return c.json({ status: 'error', msg: 'user not found' })
+      // 纪律 ①：绝不回 password
+      return c.json({
+        status: 'ok',
+        data: {
+          owner: MOCK_ORG,
+          name: user.name,
+          displayName: user.displayName ?? user.name,
+          email: user.email ?? '',
+          roles: [...user.roles],
+          isAdmin: user.isAdmin,
+        },
+      })
+    })
+    // GET /api/get-permissions?owner=<org> —— 纪律 ②：owner= query 形参（mock 单 org，忽略具体值）
+    .get('/api/get-permissions', (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      return c.json({ status: 'ok', data: this.#perms.map((p) => ({ ...p })) })
+    })
+    // POST /api/add-permission —— 载荷在 JSON body；同名拒绝（钉死 upsert 必须先查重）
+    .post('/api/add-permission', async (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+      const name = String(b.name ?? '')
+      if (!name) return c.json({ status: 'error', msg: 'name required' })
+      if (this.#perms.some((p) => p.name === name)) {
+        return c.json({ status: 'error', msg: 'duplicate permission name' })
+      }
+      this.#perms.push({
+        owner: MOCK_ORG,
+        name,
+        displayName: String(b.displayName ?? name),
+        model: String(b.model ?? 'built-in/user-model-built-in'),
+        users: (b.users as string[]) ?? [],
+        roles: (b.roles as string[]) ?? [],
+        resources: (b.resources as string[]) ?? [],
+        actions: (b.actions as string[]) ?? ['Read'],
+        isEnabled: (b.isEnabled as boolean) ?? true,
+      })
+      return c.json({ status: 'ok', data: name })
+    })
+}

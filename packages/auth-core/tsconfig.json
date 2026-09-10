@@ -1,5 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "noEmit": true },
-  "include": ["src"]
+  // 测试文件归 vitest 管（逐字锁定的简报测试代码非 strict-null 安全，如 (await c.verifyPassword(..)).name）
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
 }

@@ -7,6 +7,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@hono/node-server": "^2.1.0",
+    "hono": "^4.13.0",
     "jose": "^5.9.0",
     "zod": "^3.23.0"
   }
