@@ -56,6 +56,7 @@ export class MockCasdoor {
   #users: StoredUser[]
   #perms: Array<Record<string, unknown>> = []
   #sessions = new Map<string, { user: string; anonymous: boolean }>()
+  #oidcCodes = new Map<string, string>() // authorization code → 用户名（单次即焚）
   #server: ReturnType<typeof serve> | null = null
   #port = 0
   #lastLoginApplication = ''
@@ -97,6 +98,16 @@ export class MockCasdoor {
   get origin(): string { return `http://127.0.0.1:${this.#port}` }
   /** 最近一次 /api/login 收到的 application 形参（测试观测口；不含密码，纪律①） */
   get lastLoginApplication(): string { return this.#lastLoginApplication }
+
+  /**
+   * 预种一枚 Casdoor authorization code（等价 authorize 页完成认证后的下发）。
+   * 单次即焚：/api/login/oauth/access_token 兑换一次后作废（真实 OAuth code 语义）。
+   */
+  issueOidcCode(userName: string): string {
+    const code = randomBytes(16).toString('hex')
+    this.#oidcCodes.set(code, userName)
+    return code
+  }
 
   async start(): Promise<void> {
     if (this.#server) return
@@ -173,6 +184,30 @@ export class MockCasdoor {
       c.header('Set-Cookie', `casdoor_session_id=${sid}; Path=/; HttpOnly`)
       if (!user) return c.json({ status: 'error', msg: '用户名或密码错误' })
       return c.json({ status: 'ok', data: `${MOCK_ORG}/${user.name}` })
+    })
+    // POST /api/login/oauth/access_token —— 旧仓 sso-shell.js authorizationCodeToken 生产形状：
+    // x-www-form-urlencoded，grant_type/client_id/client_secret/code/redirect_uri 全在 body；
+    // code 必须是 issueOidcCode 预种的且单次即焚，拒绝按 RFC 6749 回 400 + error 载荷。
+    .post('/api/login/oauth/access_token', async (c) => {
+      const form = new URLSearchParams(await c.req.text())
+      if (form.get('grant_type') !== 'authorization_code') {
+        return c.json({ error: 'unsupported_grant_type' }, 400)
+      }
+      const code = form.get('code') ?? ''
+      const name = this.#oidcCodes.get(code)
+      if (!name) return c.json({ error: 'invalid_grant', error_description: 'code 不存在或已兑换' }, 400)
+      this.#oidcCodes.delete(code)
+      // 未签名 JWT（末段占位）：消费方只 base64url 解 payload 不本地验签——token 的信任
+      // 来自端点本身（生产由 Casdoor 签名 + TLS，mock 无需真签）；claims 形状对齐旧仓
+      // gateway decodePayload 消费：owner=org、name=用户名（sub 兜位）。
+      const b64url = (s: string) => Buffer.from(s, 'utf8').toString('base64url')
+      const claims = { owner: MOCK_ORG, name, sub: name }
+      const accessToken = [
+        b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' })),
+        b64url(JSON.stringify(claims)),
+        'mock-signature',
+      ].join('.')
+      return c.json({ access_token: accessToken, token_type: 'Bearer', expires_in: 3600 })
     })
     // GET /api/get-user?id=<org>/<name> —— 纪律 ②：单数端点只认 id= 全形，严格两段
     .get('/api/get-user', (c) => {

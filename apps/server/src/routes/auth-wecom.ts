@@ -1,0 +1,249 @@
+// routes/auth-wecom.ts — 企微登录两路（桌面扫码 qr + 企微内静默 silent）→ platform_session
+//
+// 五路归一的企微两路（Task 14）：qr = 登录页 <iframe> 内嵌 Casdoor 扫码页（authorize URL
+// 由本路由下发）；silent = 企微内置浏览器整页跳 open.weixin.qq.com 静默授权。两路回调都
+// 落 GET /callback，收敛到同一 platform_session cookie（authVia 区分来源）。
+//
+// state 责任（Task 7 契约）在本路由：/qr 与 /silent 各发随机 state（randomUUID）+
+// HttpOnly cookie wecom_state（Max-Age=300, SameSite=Lax）绑定，回调校验一致（CSRF/混流）。
+// Lax 可携带的依据：旧仓 2026-08-31 生产实测（gateway/index.js:261）——扫码 iframe 最终跳
+// 回调时父页与回调目标同站；静默流是顶层导航，Lax 天然携带。
+//
+// code 换身份两分（callback 内）：
+//  - qr：code 是 Casdoor OIDC code → POST /api/login/oauth/access_token（旧仓 sso-shell.js
+//    authorizationCodeToken :157-170 生产形状：x-www-form-urlencoded，含 redirect_uri）→
+//    本地解 JWT payload 取 name（同旧 gateway decodePayload 语义：信任来自端点+TLS，不本地
+//    验签；name 平铺在 claims，sub 兜位）。
+//  - silent（via=silent）：code 是企微 code → wecomUserIdForCode（gettoken→getuserinfo）换
+//    userid → woke 语义 userid 即 Casdoor name（wo 开头），casdoor.getUser(userid) 落账户。
+// 两路拿到 name 后同 Task 13 登录路径：getUser+getPermissions → effectiveScopes →
+// signSession → 审计先行 → Set-Cookie。
+import { randomUUID } from 'node:crypto'
+import { Hono } from 'hono'
+import type { Pool } from 'pg'
+import {
+  buildAuthorizeUrl,
+  buildWecomSilentUrl,
+  effectiveScopes,
+  signSession,
+  wecomUserIdForCode,
+  type CasdoorPermission,
+  type CasdoorUser,
+} from '@platform/auth-core'
+import type { TenantEnv } from '../tenant'
+import { serializeSessionCookie, type CasdoorFactory, type SessionEnv } from '../session-middleware'
+
+const CALLBACK_PATH = '/api/platform/auth/wecom/callback'
+const STATE_COOKIE = 'wecom_state'
+const STATE_TTL_SEC = 300
+
+/** iframe（登录页内嵌扫码页）回跳分支：302 对 iframe 父页不可见 → 小 HTML 让父页壳 SPA 感知完成 */
+const IFRAME_DONE_HTML = "<script>parent.postMessage({type:'sso-done'},'*')</script>"
+
+export interface WecomRoutesDeps {
+  casdoor: CasdoorFactory
+  sessionSecret: string
+  pool: Pool
+  /** Casdoor 应用三件：qr authorize URL 拼接 + callback code 换票 */
+  casdoorUrl: string
+  casdoorClientId: string
+  casdoorClientSecret: string
+  /** 对外可见源（回调 redirect_uri 前缀；与宿主 PUBLIC_ORIGIN 同源配置） */
+  publicOrigin: string
+  /** 企微 qyapi fetch 注入口（默认 globalThis.fetch；测试注入假企微 API） */
+  wecomFetch?: typeof globalThis.fetch
+}
+
+/** 登录审计一行（与 auth.ts writeAudit 同款 SQL；失败也 await——审计写不进去就不该继续发会话） */
+async function writeAudit(
+  pool: Pool,
+  tenantId: number,
+  actor: string,
+  action: 'login.ok' | 'login.fail',
+  detail: Record<string, unknown>,
+): Promise<void> {
+  await pool.query(
+    'insert into platform.audit(tenant_id, actor, action, detail) values ($1, $2, $3, $4)',
+    [tenantId, actor, action, detail],
+  )
+}
+
+/** JWT payload 本地解码（不验签：token 直接来自 Casdoor token 端点，TLS 信任边界内——旧 gateway decodePayload 同语义） */
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  const [, payloadB64] = token.split('.')
+  if (!payloadB64) throw new Error('token is not a jwt')
+  return JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'))
+}
+
+/**
+ * Casdoor OIDC code → 用户名。sso-shell.js authorizationCodeToken 生产形状：
+ * POST /api/login/oauth/access_token，application/x-www-form-urlencoded，
+ * grant_type=authorization_code + client_id/client_secret/code/redirect_uri 全在 body。
+ * 返回 null = code 被上游拒绝（无效/过期/已用）；抛错 = 传输层故障。
+ */
+async function casdoorCodeToName(
+  o: { origin: string; clientId: string; clientSecret: string },
+  code: string,
+  redirectUri: string,
+): Promise<string | null> {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    client_id: o.clientId,
+    client_secret: o.clientSecret,
+    code,
+    redirect_uri: redirectUri,
+  })
+  const r = await fetch(`${o.origin.replace(/\/+$/, '')}/api/login/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  })
+  const j = (await r.json().catch(() => ({}))) as { access_token?: string }
+  if (!j.access_token) return null
+  const claims = decodeJwtPayload(j.access_token)
+  const name = String(claims.name || claims.sub || '')
+  return name || null
+}
+
+/** state cookie 序列化（Task 7 契约逐字：HttpOnly + Max-Age=300 + SameSite=Lax；host-only 无 Domain。短命单用途 nonce 非长期凭据） */
+function stateCookie(state: string): string {
+  return `${STATE_COOKIE}=${state}; Path=/; Max-Age=${STATE_TTL_SEC}; HttpOnly; SameSite=Lax`
+}
+
+/** 从 Cookie 头读 wecom_state（手写解析，与 session-middleware readCookie 同语义） */
+function readStateCookie(header: string | undefined): string | null {
+  if (!header) return null
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=')
+    if (eq < 0) continue
+    if (part.slice(0, eq).trim() === STATE_COOKIE) return part.slice(eq + 1).trim()
+  }
+  return null
+}
+
+function trimSlash(s: string): string {
+  return s.replace(/\/+$/, '')
+}
+
+export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv> {
+  const app = new Hono<TenantEnv & SessionEnv>()
+  const callbackUri = trimSlash(deps.publicOrigin) + CALLBACK_PATH
+
+  // GET /qr — 登录页 Tab 用：Casdoor 扫码页 iframe 地址 + 种 state
+  app.get('/qr', (c) => {
+    const t = c.get('tenant')
+    if (!t.wecom_corp_id) {
+      return c.json({ error: 'WECOM_NOT_CONFIGURED' }, 404)
+    }
+    const state = randomUUID()
+    const url = buildAuthorizeUrl(
+      deps.casdoorUrl,
+      deps.casdoorClientId,
+      callbackUri,
+      state,
+      'qr',
+    )
+    c.res.headers.append('Set-Cookie', stateCookie(state))
+    return c.json({ url })
+  })
+
+  // GET /silent — 企微内置浏览器整页跳转：非 wxwork UA（桌面误触）降级回登录页
+  app.get('/silent', (c) => {
+    const ua = c.req.header('user-agent') ?? ''
+    if (!ua.toLowerCase().includes('wxwork')) {
+      return c.redirect('/login')
+    }
+    const t = c.get('tenant')
+    if (!t.wecom_corp_id) {
+      return c.json({ error: 'WECOM_NOT_CONFIGURED' }, 404)
+    }
+    const state = randomUUID()
+    const url = buildWecomSilentUrl(
+      { corpId: t.wecom_corp_id, agentId: t.wecom_agent_id ?? undefined },
+      `${callbackUri}?via=silent`,
+      state,
+    )
+    c.res.headers.append('Set-Cookie', stateCookie(state))
+    return c.redirect(url)
+  })
+
+  // GET /callback?code&state[&via=silent] — 两路共用回调
+  app.get('/callback', async (c) => {
+    const t = c.get('tenant')
+    const state = c.req.query('state') ?? ''
+    const code = c.req.query('code') ?? ''
+    const via = c.req.query('via') === 'silent' ? 'wecom-silent' : 'wecom-qr'
+    if (!code || !state || readStateCookie(c.req.header('cookie')) !== state) {
+      return c.json({ error: 'BAD_STATE' }, 401)
+    }
+
+    // 身份来源两分：qr = Casdoor OIDC code 换票解 name；silent = 企微 code 换 userid
+    let name: string | null
+    try {
+      if (via === 'wecom-silent') {
+        if (!t.wecom_corp_id || !t.wecom_secret) {
+          return c.json({ error: 'WECOM_NOT_CONFIGURED' }, 404)
+        }
+        name = await wecomUserIdForCode(
+          {
+            corpId: t.wecom_corp_id,
+            agentId: t.wecom_agent_id ?? undefined,
+            secret: t.wecom_secret,
+          },
+          code,
+          deps.wecomFetch ?? globalThis.fetch,
+        )
+      } else {
+        name = await casdoorCodeToName(
+          {
+            origin: deps.casdoorUrl,
+            clientId: deps.casdoorClientId,
+            clientSecret: deps.casdoorClientSecret,
+          },
+          code,
+          callbackUri,
+        )
+      }
+    } catch {
+      // 传输层故障（Casdoor/企微 5xx、网络）≠ 坏 code：502 如实暴露，不记 login.fail（非用户过错）
+      return c.json({ error: via === 'wecom-silent' ? 'WECOM_UNAVAILABLE' : 'CASDOOR_UNAVAILABLE' }, 502)
+    }
+    if (name === null) {
+      // code 被上游拒绝（无效/过期/已兑换）——不泄具体原因（qr 路；silent 路只抛不 null）
+      return c.json({ error: 'BAD_CODE' }, 401)
+    }
+
+    // 同 Task 13 登录路径：有效会话必须带可信 scopes（fail loudly）；
+    // getUser=null = 该 org 无此用户（企微 userid 未建 Casdoor 账号）→ fail-closed 403
+    let user: CasdoorUser | null
+    let perms: CasdoorPermission[]
+    const casdoor = deps.casdoor(t.casdoor_org)
+    try {
+      ;[user, perms] = await Promise.all([casdoor.getUser(name), casdoor.getPermissions()])
+    } catch {
+      return c.json({ error: 'CASDOOR_UNAVAILABLE' }, 502)
+    }
+    if (user === null) {
+      await writeAudit(deps.pool, t.id, name, 'login.fail', { via, reason: 'no-account' })
+      return c.json({ error: 'NO_ACCOUNT' }, 403)
+    }
+    const scopes = effectiveScopes(name, user.roles ?? [], perms)
+
+    const now = Math.floor(Date.now() / 1000)
+    const token = await signSession(
+      { sub: name, org: t.casdoor_org, name, scopes, authVia: via },
+      deps.sessionSecret,
+      now,
+    )
+    // 审计先行（M-4，与 auth.ts 同序）：插入抛错 → 500 且未发任何会话 cookie
+    await writeAudit(deps.pool, t.id, name, 'login.ok', { via })
+    c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
+    // iframe 分支（登录页内嵌扫码页回跳）：顶层 302 指到 iframe 外不可行 → 小 HTML 通知父页
+    if (c.req.header('sec-fetch-dest') === 'iframe') {
+      return c.html(IFRAME_DONE_HTML)
+    }
+    return c.redirect('/')
+  })
+
+  return app
+}
