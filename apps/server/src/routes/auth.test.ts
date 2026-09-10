@@ -20,7 +20,7 @@ import { MockCasdoor } from '@platform/auth-core/src/test-util/mock-casdoor'
 import { runMigrations } from '../migrate'
 import { seedDemo } from '../seed'
 import { resolveTenantMiddleware, type TenantEnv } from '../tenant'
-import { sessionMiddleware, type SessionEnv } from '../session-middleware'
+import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from '../session-middleware'
 import { authRoutes } from './auth'
 
 const dbUrl = process.env.DATABASE_URL
@@ -49,11 +49,11 @@ function casdoorFor(org: string): CasdoorClient {
 
 type AppClient = ReturnType<typeof testClient<ReturnType<typeof makeApp>>>
 
-function makeApp(pool: Pool): Hono<TenantEnv & SessionEnv> {
+function makeApp(pool: Pool, casdoor: CasdoorFactory = casdoorFor): Hono<TenantEnv & SessionEnv> {
   const app = new Hono<TenantEnv & SessionEnv>()
   app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
-  app.use('*', sessionMiddleware({ casdoor: casdoorFor, sessionSecret: SECRET }))
-  app.route('/api/platform/auth', authRoutes({ casdoor: casdoorFor, sessionSecret: SECRET, pool }))
+  app.use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET }))
+  app.route('/api/platform/auth', authRoutes({ casdoor, sessionSecret: SECRET, pool }))
   return app
 }
 
@@ -275,5 +275,67 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
     })
     expect(res.status).toBe(401)
     expect(setCookies(res).join('\n')).toContain('Max-Age=0')
+  })
+
+  // ⑫ 超长 username：401 且不调 Casdoor，audit actor 截断 + detail 标 oversized
+  it('超长 username（>256）：401 BAD_CREDENTIALS，Casdoor 零调用，audit actor 截断、detail.reason=oversized', async () => {
+    let factoryCalls = 0
+    const c2 = testClient(
+      makeApp(pool, (org) => {
+        factoryCalls++
+        return casdoorFor(org)
+      }),
+    )
+    const longName = 'u'.repeat(300)
+    const res = await c2.api.platform.auth.login.$post(
+      { json: { username: longName, password: 'pw' } },
+      { headers: { host: 'acme.test' } },
+    )
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual({ error: 'BAD_CREDENTIALS' })
+    expect(factoryCalls).toBe(0) // CasdoorClient 未构造 = 必然零 HTTP
+    const { rows } = await pool.query<{ actor: string; detail: { reason?: string } }>(
+      "select actor, detail from platform.audit where action='login.fail' order by id desc limit 1",
+    )
+    expect(rows[0]!.actor.length).toBeLessThanOrEqual(256) // 有界写入
+    expect(rows[0]!.actor).not.toBe(longName) // 超长串绝不原样入库
+    expect(rows[0]!.detail.reason).toBe('oversized') // 与真实坏凭据可区分
+  })
+
+  // ⑬ 超长 password：401 且不触 Casdoor
+  it('超长 password（>512）：401 BAD_CREDENTIALS，Casdoor 零调用', async () => {
+    let factoryCalls = 0
+    const c2 = testClient(
+      makeApp(pool, (org) => {
+        factoryCalls++
+        return casdoorFor(org)
+      }),
+    )
+    const res = await c2.api.platform.auth.login.$post(
+      { json: { username: 'alice', password: 'p'.repeat(513) } },
+      { headers: { host: 'acme.test' } },
+    )
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual({ error: 'BAD_CREDENTIALS' })
+    expect(factoryCalls).toBe(0)
+  })
+
+  // ⑭ 审计先行（M-4）：审计写失败 → 500 且不发会话 cookie
+  it('审计写失败：500 且响应不带会话 cookie（writeAudit 先于 Set-Cookie）', async () => {
+    const poisoned = {
+      query: (...args: unknown[]) => {
+        if (typeof args[0] === 'string' && args[0].includes('platform.audit')) {
+          return Promise.reject(new Error('audit insert failed (simulated)'))
+        }
+        return (pool.query as unknown as (...a: unknown[]) => unknown)(...args)
+      },
+    } as unknown as Pool
+    const c2 = testClient(makeApp(poisoned))
+    const res = await c2.api.platform.auth.login.$post(
+      { json: { username: 'alice', password: 'pw' } },
+      { headers: { host: 'acme.test' } },
+    )
+    expect(res.status).toBe(500)
+    expect(setCookies(res)).toEqual([]) // 未发会话——审计与发证原子序
   })
 })

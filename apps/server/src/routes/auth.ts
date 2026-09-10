@@ -26,6 +26,14 @@ export interface AuthRoutesDeps {
   pool: Pool
 }
 
+/**
+ * 入参长度上限：超长一律按坏凭据 401 且【不调 Casdoor、audit 不落原样长串】——
+ * 防用巨型凭据刷 Casdoor 带宽 / 灌 audit 表（audit 刷量面）。Casdoor 侧用户名/密码
+ * 上限远低于此，真实用户不可能触达。
+ */
+const MAX_USERNAME_LEN = 256
+const MAX_PASSWORD_LEN = 512
+
 /** 登录审计一行（platform.audit；失败也 await——审计写不进去就不该继续发会话） */
 async function writeAudit(
   pool: Pool,
@@ -53,6 +61,18 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
     const password = typeof body?.password === 'string' ? body.password : ''
     // 形状不对也按坏凭据处理（401 不区分原因，不泄探查面）
     if (!username || !password) {
+      return c.json({ error: 'BAD_CREDENTIALS' }, 401)
+    }
+    if (username.length > MAX_USERNAME_LEN || password.length > MAX_PASSWORD_LEN) {
+      // 超长：不调 Casdoor；audit 记 login.fail 但 actor 截断到 256（有界写入，超长串
+      // 绝不原样入库）+ detail 标 reason:'oversized'——与真实坏凭据失败可区分可过滤
+      await writeAudit(
+        deps.pool,
+        t.id,
+        username.slice(0, MAX_USERNAME_LEN),
+        'login.fail',
+        { via: 'password', reason: 'oversized' },
+      )
       return c.json({ error: 'BAD_CREDENTIALS' }, 401)
     }
 
@@ -85,8 +105,10 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
       deps.sessionSecret,
       now,
     )
-    c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
+    // 审计先行（M-4）：插入抛错 → 500 且未发任何会话 cookie——审计与发证保持原子序，
+    // 不留"登录已记账失败但浏览器已拿到新会话"的窗口
     await writeAudit(deps.pool, t.id, name, 'login.ok', { via: 'password' })
+    c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
     return c.json({ ok: true })
   })
 
