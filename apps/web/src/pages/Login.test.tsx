@@ -72,6 +72,19 @@ describe('LoginPage（运行时品牌）', () => {
     expect(screen.queryByRole('tab', { name: '企业微信扫码' })).not.toBeInTheDocument()
   })
 
+  it('②b loginMethods 空数组（租户配置错）：兜底渲染单账密 Tab，不留零 Tab 白页', async () => {
+    mockApi({
+      '/api/platform/branding': () =>
+        jsonResponse({ productName: 'Broken Tenant', primaryColor: '#1890ff', loginMethods: [] }),
+    })
+
+    render(<LoginPage />)
+
+    await screen.findByText('Broken Tenant')
+    expect(screen.getAllByRole('tab')).toHaveLength(1)
+    expect(screen.getByRole('tab', { name: '账号密码登录' })).toBeInTheDocument()
+  })
+
   it('③ 账密提交失败（401 BAD_CREDENTIALS）：Alert 显示对应文案', async () => {
     mockApi({
       '/api/platform/branding': () => jsonResponse(BRANDING_PASSWORD_ONLY),
@@ -106,6 +119,40 @@ describe('LoginPage（运行时品牌）', () => {
     await waitForLocation('/console')
   })
 
+  it('③c next=//evil.example（协议相对）：防开放重定向，回落 /console', async () => {
+    window.history.pushState({}, '', '/login?next=//evil.example')
+    mockApi({
+      '/api/platform/branding': () => jsonResponse(BRANDING_PASSWORD_ONLY),
+      '/api/platform/auth/login': () => jsonResponse({ ok: true }),
+    })
+
+    render(<LoginPage />)
+    await screen.findByText('Platform')
+
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'alice' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'right-pass' } })
+    fireEvent.click(screen.getByRole('button', { name: /登\s*录/ }))
+
+    await waitForLocation('/console')
+  })
+
+  it('③d next=https://evil.example（绝对外链）：防开放重定向，回落 /console', async () => {
+    window.history.pushState({}, '', '/login?next=https://evil.example/x')
+    mockApi({
+      '/api/platform/branding': () => jsonResponse(BRANDING_PASSWORD_ONLY),
+      '/api/platform/auth/login': () => jsonResponse({ ok: true }),
+    })
+
+    render(<LoginPage />)
+    await screen.findByText('Platform')
+
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'alice' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'right-pass' } })
+    fireEvent.click(screen.getByRole('button', { name: /登\s*录/ }))
+
+    await waitForLocation('/console')
+  })
+
   it('④ 企微 Tab：挂载取 qr 渲染 iframe；postMessage sso-fail → 错误 Alert', async () => {
     mockApi({
       '/api/platform/branding': () => jsonResponse(BRANDING_DUAL),
@@ -121,7 +168,10 @@ describe('LoginPage（运行时品牌）', () => {
 
     fireEvent(
       window,
-      new MessageEvent('message', { data: { type: 'sso-fail', error: 'NO_ACCOUNT' } }),
+      new MessageEvent('message', {
+        data: { type: 'sso-fail', error: 'NO_ACCOUNT' },
+        origin: window.location.origin,
+      }),
     )
     expect(await screen.findByText(/未绑定平台账号/)).toBeInTheDocument()
   })
@@ -139,8 +189,48 @@ describe('LoginPage（运行时品牌）', () => {
     fireEvent.click(screen.getByRole('tab', { name: '企业微信扫码' }))
     await screen.findByTitle('企业微信扫码登录')
 
-    fireEvent(window, new MessageEvent('message', { data: { type: 'sso-done' } }))
+    fireEvent(
+      window,
+      new MessageEvent('message', {
+        data: { type: 'sso-done' },
+        origin: window.location.origin,
+      }),
+    )
     await waitForLocation('/console/demo')
+  })
+
+  it('④c 异 origin 的 sso-done：忽略不跳转；同 origin 再发才跳（origin 校验）', async () => {
+    mockApi({
+      '/api/platform/branding': () => jsonResponse(BRANDING_DUAL),
+      '/api/platform/auth/wecom/qr': () => jsonResponse({ url: WECOM_QR_URL }),
+    })
+
+    render(<LoginPage />)
+    await screen.findByText('ACME 工单平台')
+
+    fireEvent.click(screen.getByRole('tab', { name: '企业微信扫码' }))
+    await screen.findByTitle('企业微信扫码登录')
+
+    // 异源伪造 sso-done → 不跳
+    fireEvent(
+      window,
+      new MessageEvent('message', {
+        data: { type: 'sso-done' },
+        origin: 'https://evil.example',
+      }),
+    )
+    await new Promise((r) => setTimeout(r, 150))
+    expect(window.location.pathname).toBe('/login')
+
+    // 正控制：同源再发 → 跳（证明监听器活着，被拦的只是异源）
+    fireEvent(
+      window,
+      new MessageEvent('message', {
+        data: { type: 'sso-done' },
+        origin: window.location.origin,
+      }),
+    )
+    await waitForLocation('/console')
   })
 
   it('⑤ ?error=NO_ACCOUNT 挂载（302 浏览器兜底）：直接显示对应文案', async () => {

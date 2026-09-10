@@ -24,9 +24,14 @@ const METHOD_LABELS: Record<'password' | 'wecom-qr', string> = {
   'wecom-qr': '企业微信扫码',
 }
 
-/** 登录成功统一跳转目标：?next= 参数优先，缺省 /console */
+/**
+ * 登录成功统一跳转目标：?next= 参数优先，缺省 /console。
+ * 防开放重定向（评审 fix-3）：next 仅当是本站绝对路径（以 / 开头且非协议相对 //）才采用，
+ * https://evil、//evil、相对路径一律回落 /console。
+ */
 function nextTarget(): string {
-  return new URLSearchParams(window.location.search).get('next') || '/console'
+  const next = new URLSearchParams(window.location.search).get('next')
+  return next !== null && next.startsWith('/') && !next.startsWith('//') ? next : '/console'
 }
 
 /** 挂载时的 ?error=（企微 302 浏览器兜底路）；空串/null 归 null */
@@ -59,9 +64,11 @@ export default function LoginPage() {
     document.title = branding.productName
   }, [branding.productName])
 
-  const methods = (Object.keys(METHOD_LABELS) as Array<keyof typeof METHOD_LABELS>).filter((m) =>
+  // 白名单过滤已知方法；空集兜底单账密（评审 fix-4：租户配置错也不留零 Tab 白页）
+  const known = (Object.keys(METHOD_LABELS) as Array<keyof typeof METHOD_LABELS>).filter((m) =>
     branding.loginMethods.includes(m),
   )
+  const methods = known.length > 0 ? known : (['password'] as Array<keyof typeof METHOD_LABELS>)
 
   const items: TabsProps['items'] = methods.map((m) => ({
     key: m,
@@ -162,6 +169,9 @@ function WecomQrTab({ onError }: { onError: (code: string) => void }) {
       })
 
     const onMessage = (e: MessageEvent) => {
+      // origin 校验（评审 fix-2）：合法消息恒同源——callback 由 publicOrigin 同源服务，
+      // 异源页面伪造的 sso-done/sso-fail 一律忽略
+      if (e.origin !== window.location.origin) return
       const data = e.data as { type?: unknown; error?: unknown } | null
       if (typeof data !== 'object' || data === null) return
       if (data.type === 'sso-done') {
