@@ -77,3 +77,42 @@ export function login(username: string, password: string): Promise<void> {
 export function getWecomQr(): Promise<string> {
   return request<{ url: string }>('/api/platform/auth/wecom/qr').then((b) => b.url)
 }
+
+/** GET /api/platform/auth/session 会话自画像（Task 13）；401 时 platformFetch 已先跳 /login */
+export interface PlatformSession {
+  user: { id: string; name: string; displayName: string }
+  org: string
+  scopes: string[]
+  csrfToken: string
+}
+
+/** GET /api/platform/config 控制台菜单数据（服务端已按租户启用过滤——停用模块不出现） */
+export interface PlatformConfig {
+  tenant: { slug: string; org: string }
+  modules: Array<{
+    id: string
+    name: string
+    console: Array<{ path: string; title: string; icon?: string; scope: string }>
+  }>
+}
+
+/** 会话自画像（Task 13）：Console 壳挂载即取；退出前也会现取一次刷新 csrf */
+export function getSession(): Promise<PlatformSession> {
+  return request<PlatformSession>('/api/platform/auth/session')
+}
+
+/** 租户配置（含启用模块的 console 清单）——菜单的运行时事实源 */
+export function getPlatformConfig(): Promise<PlatformConfig> {
+  return request<PlatformConfig>('/api/platform/config')
+}
+
+/**
+ * 登出（Task 13）：需 header x-csrf-token = /session 现取的 csrfToken。
+ * 会话重签会轮换 csrf——禁止使用挂载时缓存的旧值。
+ */
+export function logout(csrfToken: string): Promise<void> {
+  return request<void>('/api/platform/auth/logout', {
+    method: 'POST',
+    headers: { 'x-csrf-token': csrfToken },
+  })
+}
