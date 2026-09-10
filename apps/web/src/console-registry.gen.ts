@@ -14,4 +14,12 @@ export interface ConsoleRegistryEntry {
   load: () => Promise<{ default: ComponentType }>
 }
 
-export const consoleRegistry: ConsoleRegistryEntry[] = []
+export const consoleRegistry: ConsoleRegistryEntry[] = [
+  {
+    path: "/console/demo",
+    title: "演示",
+    icon: "ExperimentOutlined",
+    scope: "demo:view",
+    load: () => import("../../../modules/demo/console/index.tsx"),
+  },
+]

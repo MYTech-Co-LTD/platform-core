@@ -1,0 +1,11 @@
+id: demo
+name: 演示模块
+version: 0.1.0
+platform: '>=0.1'
+permissions:
+  - { code: demo:view, name: 演示查看 }
+  - { code: demo:note,  name: 便签读写 }
+frontend:
+  console:
+    - { path: /console/demo, title: 演示, icon: ExperimentOutlined, scope: demo:view, entry: ./console/index.tsx }
+migrations: { dir: ./migrations }

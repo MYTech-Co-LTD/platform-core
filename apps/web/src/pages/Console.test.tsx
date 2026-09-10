@@ -199,10 +199,35 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     expect(load).toHaveBeenCalled()
   })
 
+  it('②c 无 scope 用户直敲模块 console URL → 403 Result（路由级门禁与菜单同判定，不触发懒加载）', async () => {
+    const load = vi.fn(() => Promise.resolve({ default: DemoPage }))
+    setRegistry([
+      { path: '/console/demo/things', title: '演示工单', scope: 'demo:console', load },
+    ])
+    mockApi({
+      '/api/platform/auth/session': () => jsonResponse(SESSION_NO_DEMO),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+
+    // 直敲 URL（非点菜单进入）：SESSION_NO_DEMO 无 demo:console
+    renderApp('/console/demo/things')
+
+    expect(await screen.findByText('无权访问')).toBeInTheDocument()
+    expect(screen.getByText('需要权限 demo:console')).toBeInTheDocument()
+    // 403 短路在 lazy(load) 之前——不该触发模块页加载
+    expect(load).not.toHaveBeenCalled()
+    expect(screen.queryByText('演示模块页面内容')).not.toBeInTheDocument()
+  })
+
   it('③ 退出：现取 /session 再 POST /logout（带 x-csrf-token）→ 跳 /login', async () => {
     setRegistry([])
+    // 第二次 /session（点退出时的现取）回轮换后的 csrf——钉死 logout 必须用现取值而非挂载缓存
+    let sessionCalls = 0
     mockApi({
-      '/api/platform/auth/session': () => jsonResponse(SESSION),
+      '/api/platform/auth/session': () => {
+        sessionCalls += 1
+        return jsonResponse(sessionCalls === 1 ? SESSION : { ...SESSION, csrfToken: 'csrf-rotated' })
+      },
       '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
       '/api/platform/auth/logout': () => jsonResponse({ ok: true }),
     })
@@ -222,7 +247,8 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
       '/api/platform/auth/logout',
     ])
     expect(authCalls[2].init?.method).toBe('POST')
-    expect((authCalls[2].init?.headers as Record<string, string>)['x-csrf-token']).toBe('csrf-xyz')
+    // 关键断言：logout 用的是第二次现取的轮换 csrf，不是挂载时的旧值 csrf-xyz
+    expect((authCalls[2].init?.headers as Record<string, string>)['x-csrf-token']).toBe('csrf-rotated')
     await waitForLocation('/login')
   })
 
