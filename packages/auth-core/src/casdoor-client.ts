@@ -1,23 +1,25 @@
 // casdoor-client.ts — 全系统唯一访问 Casdoor HTTP API 的实现（A-Full：认证+授权唯一源）
 //
-// 请求形状移植自 工单系统 gateway 生产验证版（只读参考）：
-//   - verifyPassword ← sso-shell.js verifyCredentials：POST /api/login，
+// 请求形状对齐 工单系统 gateway 生产验证版（只读参考，计划全局约束：形状以旧仓为准）：
+//   - verifyPassword ← sso-shell.js verifyCredentials（:129-133）：POST /api/login，
+//     凭据【只走 JSON body】（query 通道会把密码泄进服务端/代理 access log，绝不采用）；
 //     失败 = HTTP 200 + {"status":"error"}（真实 Casdoor 行为，不是 401/403）；
 //     成功 = {"status":"ok", data:"<org>/<name>"}。
-//   - getUser/getPermissions/upsertPermission ← admin-api.js：
+//   - getUser/getPermissions/upsertPermission ← admin-api.js（casdoorGet/casdoorPost）：
 //     单数 get-user 只认 id=<org>/<name>（owner=/name= 形参会被真实 Casdoor 报
-//     wrong token count）；get-permissions 认 owner=；update 认 id=；载荷在 JSON body。
+//     wrong token count）；get-permissions 认 owner=；update-permission 是【POST】
+//     + ?id= query 形参（旧仓零 PUT）；载荷在 JSON body。
 //   - admin 会话 ← admin-auth.js：POST /api/login 只发 casdoor_session_id cookie；
 //     红线：登录失败也 200 且照发（匿名）cookie —— 必须 status==ok 才缓存。
-//
-// 形参纪律（C2）：身份/凭据形参全 query 风格；/api/login 同时带生产验证过的 JSON body
-// 形状（真实 Casdoor JSON 解析路径），query 与 body 双通道字段一致，mock 与真实两端都能吃。
 export interface CasdoorClientOptions {
   origin: string
   /** 预留：password/code grant 换平台 JWT 时使用（当前四方法走会话式 /api/login） */
   clientId: string
   clientSecret: string
   org: string
+  /** /api/login 的 application 形参：org 用户密码验证必须用其 signupApplication，
+   *  否则真实 Casdoor 报 Unauthorized operation（fork 陷阱）——留配置口防真实接入即败 */
+  application?: string
   adminUser?: string
   adminPwd?: string
   fetchImpl?: typeof globalThis.fetch
@@ -107,19 +109,21 @@ export class CasdoorClient {
     const path = existing
       ? `update-permission?id=${encodeURIComponent(`${this.#o.org}/${String(existing.name)}`)}`
       : 'add-permission'
-    const j = await this.#adminJson(path, { method: existing ? 'PUT' : 'POST', body })
+    // add/update 都是 POST（admin-api.js casdoorPost 形状；真实 Casdoor update-* 无 PUT 端点）
+    const j = await this.#adminJson(path, { method: 'POST', body })
     if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
   }
 
   // ---- 内部：登录 / admin 会话 / 请求封装 ----
 
   async #login(username: string, password: string): Promise<LoginResult> {
-    // 全 query 形参（mock 纪律②/真实 Casdoor buy-product 同款风格）+ 生产验证过的 JSON body
-    const qs = new URLSearchParams({
-      type: 'login', username, password, application: 'app-built-in',
-    })
-    const body = { type: 'login', username, password, application: 'app-built-in' }
-    const r = await this.#fetch(`${this.#o.origin}/api/login?${qs}`, {
+    // 凭据只走 JSON body（sso-shell.js:129-133 生产形状）——query 通道会把密码泄进
+    // 服务端/代理 access log；application 默认 app-built-in，可按 fork 的 signupApplication 配置
+    const body = {
+      type: 'login', username, password,
+      application: this.#o.application ?? 'app-built-in',
+    }
+    const r = await this.#fetch(`${this.#o.origin}/api/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

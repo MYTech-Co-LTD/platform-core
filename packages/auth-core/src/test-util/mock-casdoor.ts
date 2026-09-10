@@ -6,11 +6,13 @@
 // mock 三纪律（源自共享 Casdoor 生产实测陷阱，改动前先读）：
 //   ① API 响应不回真 secret —— 用户记录里的 password 只留 mock 内部比对，
 //     任何 JSON 响应（login / get-user / get-permissions）都不含 password 字段。
-//   ② 形参走 query 风格 —— 身份/选择器形参一律从 query 读：
-//     login 读 username/password（全 query 形参）、get-user 只认 id=<org>/<name>
-//     （owner=/name= 形参会被真实 Casdoor 报 wrong token count）、
-//     get-permissions 认 owner=、update-permission 认 id=。
-//     业务载荷（add/update 的正文）在 JSON body —— 与真实 Casdoor 一致。
+//   ② 选择器形参走 query 风格 —— buy-product 类端点同款陷阱：
+//     get-user 只认 id=<org>/<name> 全形（owner=/name= 或无斜杠会被真实 Casdoor 报
+//     wrong token count）、get-permissions 认 owner=、update-permission 认 id=。
+//     注意：query 形参陷阱【不适用于 /api/login】——登录凭据走 JSON body
+//     （sso-shell.js:129-133 生产形状）；query 通道会把密码泄进服务端/代理
+//     access log，绝不采用（query 兼容读仅为防旧脚本，新代码不得依赖）。
+//     业务载荷（add/update 的正文）同样在 JSON body —— 与真实 Casdoor 一致。
 //   ③ 密码验证失败返回 HTTP 200 + {"status":"error"} —— 真实 Casdoor 行为，
 //     绝不能改成 401/403；且失败时照样发（匿名）session cookie，缓存端必须
 //     校验 body status==ok 才认 cookie（admin-auth.js 生产教训：坏 cookie 缓存 6h）。
@@ -56,6 +58,7 @@ export class MockCasdoor {
   #sessions = new Map<string, { user: string; anonymous: boolean }>()
   #server: ReturnType<typeof serve> | null = null
   #port = 0
+  #lastLoginApplication = ''
 
   constructor(opts: MockCasdoorOptions = {}) {
     // 内置 admin：真实 Casdoor 永远有 built-in admin（/api/login 管理会话用它登录）。
@@ -83,12 +86,17 @@ export class MockCasdoor {
         model: 'built-in/user-model-built-in',
       })
     }
-    this.#app.put('/api/update-permission', this.#updatePermission)
+    // 形状钉死：真实 Casdoor 的 update-* 是 POST（admin-api.js casdoorPost 形状）；
+    // PUT 在本 mock 一律 405，防「客户端偷偷走 PUT」的形状分叉被遮蔽
+    this.#app.put('/api/update-permission', (c: Context) =>
+      c.json({ status: 'error', msg: 'method not allowed: update-permission 走 POST' }, 405))
     this.#app.post('/api/update-permission', this.#updatePermission)
   }
 
   get port(): number { return this.#port }
   get origin(): string { return `http://127.0.0.1:${this.#port}` }
+  /** 最近一次 /api/login 收到的 application 形参（测试观测口；不含密码，纪律①） */
+  get lastLoginApplication(): string { return this.#lastLoginApplication }
 
   async start(): Promise<void> {
     if (this.#server) return
@@ -151,10 +159,13 @@ export class MockCasdoor {
   }
 
   #app = new Hono()
-    // POST /api/login —— 纪律 ②③：形参全 query；失败 200+{"status":"error"} 且照发匿名 cookie
-    .post('/api/login', (c) => {
-      const username = c.req.query('username') ?? ''
-      const password = c.req.query('password') ?? ''
+    // POST /api/login —— 纪律②修订+③：凭据走 JSON body（query 兼容读仅防旧脚本）；
+    // 失败 200+{"status":"error"} 且照发匿名 cookie
+    .post('/api/login', async (c) => {
+      const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+      const username = typeof b.username === 'string' && b.username ? b.username : (c.req.query('username') ?? '')
+      const password = typeof b.password === 'string' && b.password ? b.password : (c.req.query('password') ?? '')
+      this.#lastLoginApplication = String(b.application ?? c.req.query('application') ?? '')
       const user = this.#users.find((u) => u.name === username && u.password === password)
       const sid = randomBytes(16).toString('hex')
       this.#sessions.set(sid, { user: user?.name ?? '', anonymous: !user })
@@ -163,11 +174,15 @@ export class MockCasdoor {
       if (!user) return c.json({ status: 'error', msg: '用户名或密码错误' })
       return c.json({ status: 'ok', data: `${MOCK_ORG}/${user.name}` })
     })
-    // GET /api/get-user?id=<org>/<name> —— 纪律 ②：单数端点只认 id= 形参
+    // GET /api/get-user?id=<org>/<name> —— 纪律 ②：单数端点只认 id= 全形，严格两段
     .get('/api/get-user', (c) => {
       if (!this.#isAdminSession(c)) return this.#unauthorized(c)
-      const name = (c.req.query('id') ?? '').split('/').pop() ?? ''
-      const user = this.#users.find((u) => u.name === name)
+      const parts = (c.req.query('id') ?? '').split('/')
+      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        // 真实 Casdoor GetOwnerAndNameFromId 同款拒绝：非 <org>/<name> 全形不合法
+        return c.json({ status: 'error', msg: 'wrong token count, expect <org>/<name>' })
+      }
+      const user = this.#users.find((u) => u.name === parts[1])
       if (!user) return c.json({ status: 'error', msg: 'user not found' })
       // 纪律 ①：绝不回 password
       return c.json({
