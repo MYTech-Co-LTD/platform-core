@@ -16,7 +16,7 @@ export interface SessionPayload {
   org: string
   name: string
   scopes: string[]
-  authVia: string // 'password' | 'relay' | ...
+  authVia: 'password' | 'wecom-qr' | 'wecom-silent'
   iat: number // 签发时刻（Unix 秒）
   exp: number // 过期时刻（Unix 秒）
   sfa: number // scopes fetched at —— scopes 上次刷新时刻，needsScopeRefresh 的基准
@@ -57,14 +57,15 @@ export async function signSession(
 // 时刻（iat=0，exp 落在 1970）签发并要求验签通过，即钉死了这一语义。
 export async function verifySession(token: string, secret: string): Promise<SessionPayload | null> {
   try {
-    const { payload } = await compactVerify(token, key(secret))
+    // 算法白名单两侧对齐（签发 HS256 / 验签只认 HS256）——否则 alg 混淆面（如 HS512 token）会被接受
+    const { payload } = await compactVerify(token, key(secret), { algorithms: ['HS256'] })
     const claims = JSON.parse(new TextDecoder().decode(payload)) as Record<string, unknown>
     return {
       sub: String(claims.sub),
       org: String(claims.org),
       name: String(claims.name),
       scopes: (claims.scopes as string[]) ?? [],
-      authVia: String(claims.authVia),
+      authVia: claims.authVia as SessionPayload['authVia'], // 载荷已过签名验证，cast 合理
       iat: claims.iat as number,
       exp: claims.exp as number,
       sfa: claims.sfa as number,
