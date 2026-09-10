@@ -4,7 +4,8 @@
   "main": "src/main.ts",
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",
