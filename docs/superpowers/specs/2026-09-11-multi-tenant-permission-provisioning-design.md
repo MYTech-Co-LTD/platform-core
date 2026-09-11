@@ -134,7 +134,7 @@ runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactory })
 **更正（R2 复评后，用户裁决）**：上面那条被划掉的写法援引了一个**不存在的前提**——
 「未配凭据时服务可启动，只是各租户用户 403，属于『只登录不管理』的合法形态」。实际是
 **缺凭据时没有任何人能拿到会话**：登录签发前必调 `getUser` + `getPermissions`，两者都走
-admin 会话（`routes/auth.ts`）⇒ 登录一律 502，模块 API 根本到不了。
+admin 会话（`routes/auth.ts`）⇒ 即便凭据正确也签不出会话（签发前 502；错凭据仍是 401），模块 API 根本到不了。
 
 **故 `CASDOOR_ADMIN_USER` / `_PWD` 改为 config 层必填、启动期 fail-fast。** 理由：缺凭据的
 实例起得来也 100% 无用，让它启动只会制造"healthz 绿而无事可用"的假绿——正是本仓已在防的

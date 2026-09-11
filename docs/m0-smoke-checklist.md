@@ -31,11 +31,13 @@
 >    （本仓 demo 用的 user/pass/db 都是 `platform`），不要为了腾端口去杀别人的进程。
 >    `pnpm dev:stack` 默认就指向 `postgres://platform:platform@127.0.0.1:5432/platform`，
 >    需要换时用 `DATABASE_URL=… pnpm dev:stack`。
-> 2. **Casdoor 必须可达**。`TENANT_MODE=single` + 非空 `PLATFORM_ORG` 时，宿主启动期会调 Casdoor
->    upsert 模块权限码，连不上则 `upsertPermission` 抛错、进程起不来；容器在
->    `restart: unless-stopped` 下就是反复重启（`docker compose ps` 显示 Restarting）。这是
->    fail-fast 的设计行为，不是故障。纯本地无 Casdoor 时可改 `TENANT_MODE=multi` + 空
->    `PLATFORM_ORG` 跳过 upsert。
+> 2. **Casdoor 必须可达**。宿主启动期会按 `platform.tenant` 的各租户 org 调 Casdoor upsert 模块
+>    权限码（**`single` 与 `multi` 都一样**），连不上则 `upsertPermission` 抛错、进程起不来；
+>    容器在 `restart: unless-stopped` 下就是反复重启（`docker compose ps` 显示 Restarting）。
+>    这是 fail-fast 的设计行为，不是故障。
+>    **纯本地无 Casdoor 时**：不设 `SEED_DEMO`（租户表为空 ⇒ 供给循环不执行、不取 client）。
+>    但 `CASDOOR_ADMIN_USER` / `_PWD` 仍必填，且登录本身要 Casdoor 可达——否则只能起个
+>    登录签不出会话（502）的空壳。
 >    **在容器里跑时这条尤其致命**：`CASDOOR_URL` 必须是**从容器内部**能解析到的地址——
 >    宿主上的 `127.0.0.1` 在容器里指的是容器自己（原 A2 的复现就卡在这里，见 A2）。
 

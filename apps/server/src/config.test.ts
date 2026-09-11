@@ -54,7 +54,8 @@ describe('loadConfig', () => {
 
   // 曾经这两个键是可选的，理由写的是"纯登录场景不需要管理端点"——**那是错的**：
   // 登录签发前必调 getUser + getPermissions（routes/auth.ts），两者都走 admin 会话，
-  // 缺凭据时登录一律 502、没有任何人能拿到会话。缺凭据的实例起得来也毫无用处，
+  // 缺凭据时没有任何人能拿到会话——即便凭据正确，登录也会在签发前 502（错凭据仍是 401，
+  // 那是对的）。缺凭据的实例起得来也毫无用处，
   // 故改为启动期必需（fail-fast 而非"起得来但全员用不了"）
   it('缺 CASDOOR_ADMIN_USER / _PWD → 抛错（登录本身就要管理端点）', () => {
     expect(() => loadConfig({ ...baseEnv, CASDOOR_ADMIN_USER: undefined }))

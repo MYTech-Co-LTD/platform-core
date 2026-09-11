@@ -130,7 +130,7 @@ curl -fsS -X PATCH "$OPENSHIP_URL/api/projects/$PROJECT_ID/env" \
 | `PLATFORM_SESSION_SECRET` | ≥32 字符随机串 | 会话签名密钥，**泄漏即等于会话可伪造**；换值会让所有会话失效 |
 | `CASDOOR_URL` | `https://sso.hookflow.cn` | 共享 SSO |
 | `CASDOOR_CLIENT_ID` / `_SECRET` | 该 application 的凭据 | 走 OIDC code 换 token |
-| `CASDOOR_ADMIN_USER` / `_PWD` | Casdoor 管理员 | **启动期必需**。它**不只**服务模块权限码供给：登录签发前必调 `getUser` + `getPermissions`，两者都走 admin 会话 —— 缺凭据时没有人能拿到会话（登录一律 502） |
+| `CASDOOR_ADMIN_USER` / `_PWD` | Casdoor 管理员 | **启动期必需**。它**不只**服务模块权限码供给：登录签发前必调 `getUser` + `getPermissions`，两者都走 admin 会话 —— 缺凭据时没有人能拿到会话（即便凭据正确也签不出：签发前 502；错凭据仍是 401） |
 | `CASDOOR_APPLICATION` | `signupApplication` | 账密登录要它，否则真实 Casdoor 报 Unauthorized operation |
 | `PUBLIC_ORIGIN` | `https://<域名>` | 企微回调 `redirect_uri` 由它拼，必须与最终访问域名逐字一致 |
 | `SEED_DEMO` | **不要设** | 只在 dev/冒烟置 `1`；生产设了会种出 acme/beta 两个演示租户 |

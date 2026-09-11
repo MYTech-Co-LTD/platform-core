@@ -18,10 +18,14 @@ curl -i http://127.0.0.1:13000/healthz                       # → 200 {"ok":tru
 docker compose -f deploy/docker-compose.yml down -v          # 收干净（含卷）
 ```
 
-**起整栈前先确认 `CASDOOR_URL` 可达**（`.env` 里的那一项）：`TENANT_MODE=single` 且
-`PLATFORM_ORG` 非空时，宿主启动期就要调 Casdoor 做模块权限码 upsert，连不上会
-`upsertPermission` 抛错 → 容器进入 `restart: unless-stopped` 的循环（`docker compose ps`
-显示 Restarting）。这是设计如此（fail-fast），不是故障；纯本地验证可用
-`TENANT_MODE=multi` + 空 `PLATFORM_ORG` 跳过 upsert。
+**起整栈前先确认 `CASDOOR_URL` 可达**（`.env` 里的那一项）：宿主启动期就要按
+`platform.tenant` 的各租户 org 调 Casdoor 做模块权限码 upsert（**`single` 与 `multi` 都一样**），
+连不上会 `upsertPermission` 抛错 → 容器进入 `restart: unless-stopped` 的循环（`docker compose ps`
+显示 Restarting）。这是设计如此（fail-fast），不是故障。
+
+**想跳过启动期这条 Casdoor 依赖**：不设 `SEED_DEMO`——`platform.tenant` 为空时供给循环不执行、
+也不会去取 client。但注意两点：① `CASDOOR_ADMIN_USER` / `_PWD` **仍是必填**（缺了在配置装配
+阶段就报错，改 `TENANT_MODE`/`PLATFORM_ORG` 都没用）；② 真正的登录仍要 Casdoor 可达，
+否则 `CASDOOR_URL` 指向哪里都只能起个登录签不出会话（502）的空壳。
 
 人工验收清单在 `docs/m0-smoke-checklist.md`（机检那一半在 `.github/workflows/ci.yml`）。

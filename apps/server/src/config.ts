@@ -17,7 +17,7 @@ export interface CasdoorConfig {
    * Casdoor 管理端点凭据，**必填**（启动期 fail-fast）。
    *
    * 它不只服务权限码供给：登录签发前必调 getUser + getPermissions（`routes/auth.ts`），
-   * 两者都走 admin 会话 ⇒ 缺凭据时**没有人能拿到会话**（登录一律 502）。所以「只登录不
+   * 两者都走 admin 会话 ⇒ 缺凭据时**没有人能拿到会话**——即便凭据正确，登录也会在签发前 502（错凭据仍是 401，那是对的）。所以「只登录不
    * 管理」不是一种可用的部署形态，缺凭据的实例起得来也毫无用处——不如启动期就报错。
    */
   adminUser: string

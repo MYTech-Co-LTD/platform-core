@@ -43,7 +43,12 @@ export interface LoadModulesDeps {
   pool: Pool
   /**
    * 按 org 返回 CasdoorClient 的工厂（宿主传 casdoorFactory，内部按 org 缓存实例）。
-   * 缺省 → 权限码供给 warn 跳过（保留「只登录不管理」的部署形态）。
+   *
+   * 可选**只服务 loader 测试与注入式用法**：宿主 `app.ts` 无条件传工厂，生产上不存在缺省
+   * 路径（`config.ts` 已把 admin 凭据设为必填）。缺省时按 warn 跳过供给。
+   *
+   * 注意别把这里的可选读成「存在一种不配凭据也能用的部署形态」——**没有那种形态**：
+   * 登录签发前必调 getUser + getPermissions，两者都走 admin 会话，缺凭据时无人能拿到会话。
    */
   casdoorFor?: (org: string) => CasdoorClient
 }

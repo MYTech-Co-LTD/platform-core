@@ -188,12 +188,16 @@ describe('upsertPermissions 批量语义', () => {
     })
     // 同批传两次是关键：旧实现会"容忍 duplicate + 塞占位记录"，第二次迭代拿占位走 update
     // ⇒ 把 alice 的授权洗成 []，且全程不报错（这正是要防的静默损坏）
+    //
+    // 断言不锁错误文案：生产代码刚刚专门去掉了对 Casdoor 文案的依赖（文案随版本/分支变），
+    // 测试层再把 `/duplicate/i` 押回 mock 自造的那句字符串上就是同一耦合换个位置。
+    // 真正的判据是下面那条——既有记录的 users 有没有被动过
     await expect(
       c.upsertPermissions([
         { code: 'collide:code', name: '撞码' },
         { code: 'collide:code', name: '撞码' },
       ]),
-    ).rejects.toThrow(/duplicate/i)
+    ).rejects.toThrow()
 
     // 既有记录的授权必须原封不动
     expect(m.permissionsIn('acme').find((p) => p.name === 'collide:code')?.users).toEqual(['alice'])

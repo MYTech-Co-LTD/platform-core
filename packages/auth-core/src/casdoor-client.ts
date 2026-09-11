@@ -151,13 +151,33 @@ export class CasdoorClient {
       // add 路径失败：滚动发布/多副本下两实例可能同时判"码不存在"并双双 add，输的那个
       // 报错。**不按错误文案判断**（文案随 Casdoor 版本/分支变，正则匹配等于把正确性
       // 押在一条 mock 自造的字符串上），改为重读验证目标状态是否已达成：码确实在
-      // resources 里 ⇒ 供给目的已达成，视为成功；不在 ⇒ 原样抛（真失败必须响）
-      const now = await this.#permissionsRaw().catch(() => null)
+      // resources 里 ⇒ 供给目的已达成，视为成功；不在 ⇒ 抛（真失败必须响）。
+      //
+      // 判据与查重同源（都是 resources 含 code），也正与读侧一致：normalizeScopes 只消费
+      // resources（users/roles 由调用方过滤）。
+      //
+      // 分辨力受 get-permissions 的 pageSize 窗口限制（当前 100，见 #permissionsRaw）：
+      // 窗口内能分开"并发刚建"与"同名撞码"，超出窗口的码两次读都不可见 ⇒ 会保守地抛。
+      // 保守方向是对的（宁可响亮失败，不可静默不供给）；翻页能力本 PR 已列范围外
+      let readErr: unknown
+      const now = await this.#permissionsRaw().catch((e: unknown) => {
+        readErr = e
+        return null
+      })
       const arrived = now?.some(
         (p) => Array.isArray(p.resources) && (p.resources as string[]).includes(code),
       )
       if (arrived) return
-      throw err
+      // 错误里带上 org/code 与处置线索：撞码时 add 会**永久**失败（平台起不来，不只是某个
+      // 租户 403），而 Casdoor 原文只有一句 duplicate，运维无从反推出"共享 Casdoor 里有一条
+      // 同名异物记录"。二级故障（重读也失败）的原因一并挂上，别让它凭空消失
+      throw new Error(
+        `casdoor: 供给权限码 ${code} 到 org ${this.#o.org} 失败：${(err as Error).message}`
+          + '。失败后重读 get-permissions 未在 resources 里找到该码——若确有一条 name 撞上该码、'
+          + 'resources 却不含它的既有记录（共享 Casdoor 里可能由别的系统建出），需人工处置'
+          + (readErr ? `；且重读本身也出错：${(readErr as Error).message}` : ''),
+        { cause: err },
+      )
     }
   }
 
