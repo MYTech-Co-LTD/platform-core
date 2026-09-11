@@ -24,7 +24,13 @@ export interface AppConfig {
   port: number
   databaseUrl: string
   tenantMode: TenantMode
-  /** single 模式 = 唯一租户的 casdoor org；multi 模式恒为空串 */
+  /**
+   * single 模式 = 唯一租户的 casdoor org（必填，配错的表现是启动期报「租户不存在」）。
+   * multi 模式下本值**不参与租户解析，也不参与模块权限码供给**（后者按 platform.tenant
+   * 的各租户 org 逐个进行）——留空即可，留了也不起作用。
+   * 注意：本值不会在 multi 下被强制清空（下面 optional() 的语义是"空/空白 → undefined"），
+   * 别把"multi 下它一定为空"当成可以依赖的前提。
+   */
   platformOrg: string
   sessionSecret: string
   casdoor: CasdoorConfig

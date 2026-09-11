@@ -64,8 +64,14 @@ const ACME_PRODUCT_NAME = 'Acme 工单'
 const BETA_PRODUCT_NAME = 'Beta 平台'
 /**
  * multi 形态的 PLATFORM_ORG【诱饵值】：故意指向不存在的租户 org。
- * 修复前写侧拿它当供给 org、读侧按租户 org 读 —— 两条路分叉而冒烟照样全绿（issue #3 第二节实证）。
- * 修复后供给由 platform.tenant 驱动，这个值必须【完全不起作用】：全链路仍通过 ⇒ 写读同源。
+ *
+ * 它能排除的是**一件具体的事**：供给 org 退回取 `config.platformOrg`（修复前 app.ts 的形状）。
+ * 这条绊线是活的——config 并未在 multi 下强制清空该值，所以诱饵确实能到达 config.platformOrg。
+ *
+ * 它【不能】排除：① 供给 org 取 platform.tenant 里的任意单条（那是下面 beta 那条断言的活）；
+ * ② 任何读侧问题。对这个 env 回退形状，beta 断言同样会红 ⇒ 两者冗余，本条只赢在更早、
+ * 更直指原因。别把它当"写读同源"的完整证明——同源由「beta 码存在」+「beta scopes 缺失」
+ * 两条合起来证。
  */
 const DECOY_PLATFORM_ORG = 'NOT-ACME-ORG'
 
@@ -481,20 +487,27 @@ async function runMulti(child, port, mock) {
   const mockCookie = await mockAdminCookie(mock)
   const acmeCodes = mock.permissionsIn('acme').flatMap((p) => p.resources ?? [])
   const betaCodes = mock.permissionsIn('beta').flatMap((p) => p.resources ?? [])
+  // 先断【机制】再断【后果】——机制那条先红时，failure 直接指向"哪几个 org 被建了码"，
+  // 比从"beta 缺码"反推快一步。
+  //
+  // 断言 org【集合】而不是调用【次数】：demo 恰好 2 条码、租户恰好 2 个 ⇒ 正常态 4 次、
+  // 单 org 缺陷态 2 次，`count >= 2` 在两者下都为真（即它抓不住自己声称要抓的缺陷）。
+  // 集合断言随租户/码数增长自然收紧，且直接表达"每个租户各自的 org 都被建了码"
+  const provisionedOrgs = [...new Set(mock.addPermissionCalls.map((c) => c.owner))].sort()
+  check(
+    provisionedOrgs.join(',') === 'acme,beta',
+    `装载器经 add-permission 建码覆盖两个租户 org（实际 [${provisionedOrgs.join(', ')}]）`,
+    { provisionedOrgs, addPermissionCalls: mock.addPermissionCalls },
+  )
   check(
     acmeCodes.includes('demo:view') && acmeCodes.includes('demo:note'),
-    `acme org 内已建出 demo:view + demo:note（PLATFORM_ORG=${DECOY_PLATFORM_ORG} 是诱饵，供给不该依赖它）`,
+    'acme org 内已建出 demo:view + demo:note',
     { acmeCodes, decoyPlatformOrg: DECOY_PLATFORM_ORG },
   )
   check(
     betaCodes.includes('demo:view') && betaCodes.includes('demo:note'),
     'beta org 内同样建出两条码 —— 修复前此处置空（写侧只落一个 org ⇒ 其余租户恒 403）',
     { betaCodes },
-  )
-  check(
-    mock.addPermissionCalls.length >= 2,
-    `装载器确实经 add-permission 建码（${mock.addPermissionCalls.length} 次）——修复前该调用数恒为 0`,
-    { addPermissionCalls: mock.addPermissionCalls },
   )
 
   // 授予用户是租户管理员的事，与装载器建码分开：只授 acme，beta 刻意不授（下面用它证 403 在拦）

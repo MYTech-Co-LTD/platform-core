@@ -74,10 +74,8 @@ export async function provisionModulePermissions(
     'select distinct casdoor_org from platform.tenant order by casdoor_org',
   )
   for (const { casdoor_org: org } of rows) {
-    const casdoor = casdoorFor(org)
-    for (const p of permissions) {
-      await casdoor.upsertPermission(p.code, p.name)
-    }
+    // 批量接口：每 org 只拉一次 get-permissions（单码版是每码一次，租户扩张下是乘法开销）
+    await casdoorFor(org).upsertPermissions(permissions)
   }
   return rows.map((r) => r.casdoor_org)
 }

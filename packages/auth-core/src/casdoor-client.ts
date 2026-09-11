@@ -90,11 +90,38 @@ export class CasdoorClient {
   }
 
   /** 幂等 upsert 权限码：查重（resources 含 code）→ 命中则 update，否则 add；
-   *  既有记录的 users/roles/resources 原样保留（装载器重跑不洗配额） */
+   *  既有记录的 users/roles/resources 原样保留（装载器重跑不洗配额）。
+   *  单码版；批量场景用 upsertPermissions（每 org 只拉一次 get-permissions） */
   async upsertPermission(code: string, name: string): Promise<void> {
-    const existing = (await this.#permissionsRaw()).find(
-      (p) => Array.isArray(p.resources) && (p.resources as string[]).includes(code),
-    )
+    await this.upsertPermissions([{ code, name }])
+  }
+
+  /**
+   * 批量幂等 upsert 权限码：**每个 org 只拉一次** get-permissions 再逐码判定。
+   *
+   * 为什么需要它：upsertPermission 每调一次都全量拉一遍 `get-permissions?pageSize=100`。
+   * 装载器的供给是「租户数 × 码数」双层循环，单码版下每租户每码都是一次 GET（+ 可能的
+   * POST）——1 个租户 10 个模块就是几十次串行往返，且租户扩张是乘法增长。
+   */
+  async upsertPermissions(items: ReadonlyArray<{ code: string; name: string }>): Promise<void> {
+    if (items.length === 0) return
+    const existingList = await this.#permissionsRaw()
+    for (const { code, name } of items) {
+      const existing = existingList.find(
+        (p) => Array.isArray(p.resources) && (p.resources as string[]).includes(code),
+      )
+      await this.#upsertOne(code, name, existing)
+      // add 成功后把该码并入本地视图：同一批里重复出现同一 code 时不至于重复 add
+      if (!existing) existingList.push({ owner: this.#o.org, name: code, resources: [code] })
+    }
+  }
+
+  /** 单码 upsert 的实际动作（查重结果由调用方传入，便于批量复用同一次 get-permissions） */
+  async #upsertOne(
+    code: string,
+    name: string,
+    existing: Record<string, unknown> | undefined,
+  ): Promise<void> {
     const body = {
       owner: this.#o.org,
       name: (existing?.name as string | undefined) ?? code,
@@ -111,7 +138,13 @@ export class CasdoorClient {
       : 'add-permission'
     // add/update 都是 POST（admin-api.js casdoorPost 形状；真实 Casdoor update-* 无 PUT 端点）
     const j = await this.#adminJson(path, { method: 'POST', body })
-    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    if (j.status && j.status !== 'ok') {
+      // 并发启动竞态：滚动发布/多副本下两实例可能同时判"码不存在"并双双 add，输的那个
+      // 拿到 duplicate —— 码此刻确实存在（对方刚建），故视为成功。否则会凭空多一轮
+      // 崩溃重启（本 PR 把 upsert 次数从「码数」扩到「租户数×码数」，竞态窗口同步放大）
+      if (!existing && /duplicate/i.test(String(j.msg ?? ''))) return
+      throw new Error(`casdoor: ${j.msg || 'error'}`)
+    }
   }
 
   // ---- 内部：登录 / admin 会话 / 请求封装 ----
