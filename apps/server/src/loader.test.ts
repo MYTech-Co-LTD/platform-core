@@ -563,6 +563,51 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     expect((await scoped.request(`/api/modules/${id}/multi`, { method: 'DELETE' })).status).toBe(403)
   })
 
+  // PR#5 评审 R2（建议改 6）：phantom 的 ALL 出口把「声明 ⟺ 实现」放松了一格。这条**已知放松**
+  // 在此钉死——不是"修好了"，是"改坏了会红"。为什么钉行为而不是加装载期 warn：装载器**无法
+  // 区分** `app.all('/x', h)`（终结，上面刚测过的合法写法）与 `use('/x', mw)`（非终结）——两者
+  // 在 router.routes 里是同一条 'ALL' 记录。加 warn 会对合法写法误报 ⇒ 一条总在叫的告警等于
+  // 没有告警。故只在文档（docs/module-protocol.md「已知放松」）里写明，并用本例把行为冻结。
+  // 反证：把 phantom 的 `!allExact.has(d.path)` 出口删掉（回到只看逐 method 注册）⇒ 这里装载
+  // 阶段就抛错（两条声明都被判成幽灵）⇒ 本用例红，说明"放松"这件事本身是可测的。
+  it('★ 已知放松：非终结 use(路径, mw) 也能满足逐 method 声明（装载通过、运行期 404；无装载期 warn）', async () => {
+    const id = 'phantomrelaxmod'
+    cleanupModules.push(id)
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, id, {
+      'manifest.yaml': manifestYaml(
+        id,
+        '',
+        `api:\n  internal:\n`
+          + `    - { method: GET, path: /x, scope: ${id}:view }\n`
+          + `    - { method: POST, path: /x, scope: ${id}:view }`,
+      ),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        `  manifest: { id: '${id}', name: 'm', version: '1.0.0', platform: '>=0.1.0',`,
+        `    permissions: [{ code: '${id}:view', name: 'x' }],`,
+        '  },',
+        '  createRouter: () => {',
+        '    const a = new Hono()',
+        // 非终结：只把请求交给下游，自己没有任何 handler
+        "    a.use('/x', async (c, next) => { await next() })",
+        '    return a',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+    const runtime = await loadModules(modulesDir, { pool }) // 装载期不抛（这就是那条放松）
+    const scoped = new Hono()
+    scoped.use('*', injectIdentity([`${id}:view`]))
+    runtime.mount(scoped)
+    // 运行期：两条声明都兑现不了（404）。门卫照常挂在 /x 上（不是安全洞，是可达性洞）
+    expect((await scoped.request(`/api/modules/${id}/x`)).status).toBe(404)
+    expect((await scoped.request(`/api/modules/${id}/x`, { method: 'POST' })).status).toBe(404)
+  })
+
   it('通配 ALL（app.all("/files/*")）覆盖面大于声明面 ⇒ 未声明的子路径不再匿名可达', async () => {
     const id = 'wildmod'
     cleanupModules.push(id)

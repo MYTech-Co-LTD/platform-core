@@ -15,6 +15,22 @@
 // 三个桶记的其实就是"会写 audit 的那些尝试"的速率——这正是不让它长成无界表的那道闸。
 import type { Context, Env } from 'hono'
 
+/**
+ * 门（PR#5 评审 R2）：第 2/3 层的桶按「门」再分一层——`password` = 账密路，`wecom` = 企微回调。
+ *
+ * 为什么必须分：这两层此前只按 tenantId 分桶、**不分门**，于是 300 次匿名
+ * `GET /wecom/callback?code=x&state=<不匹配>`（连 state cookie 都不需要）就能推满租户失败桶，
+ * 同租户的 `POST /login` 一起 429 ⇒ **打企微回调即锁死该租户的两种登录入口**，且可持续打
+ * = 永久锁死。分桶后爆炸半径缩回「哪扇门被灌，哪扇门自己挨」。
+ *
+ * 注意分的是**桶的键**，不是实例：两扇门仍共用 `app.ts` 里的同一个 limiter 实例——分实例
+ * 等于把预算劈成两半（见 routes/auth.ts 的同名注释），那是另一个方向的错。
+ *
+ * 第 1 层（单账号失败）**不**分门：企微路本就没有用户名维度（spec §3.2），账密路的 user 桶
+ * 保持 `(tenantId, username)` 不变。企微路的 record 一律传 username=null，天然不碰 user 桶。
+ */
+export type Door = 'password' | 'wecom'
+
 export interface LimitDecision {
   allowed: boolean
   /** 被拒时建议的重试间隔（秒） */
@@ -60,17 +76,19 @@ interface Counter {
 }
 
 interface TenantState {
-  fail?: Counter
-  attempt?: Counter
-  /** username → 失败计数。**只在失败时创建**（成功直接删）——这是桶数有界的前提 */
+  /** 门 → 租户失败计数（第 2 层）。**按需造桶**：没失败过的门零成本 */
+  fail: Partial<Record<Door, Counter>>
+  /** 门 → 租户全部尝试计数（第 3 层） */
+  attempt: Partial<Record<Door, Counter>>
+  /** username → 失败计数（第 1 层，**不分门**）。**只在失败时创建**（成功直接删）——这是桶数有界的前提 */
   users: Map<string, Counter>
 }
 
 export interface LoginLimiter {
   /** 只读判定，不改状态（先查后记；被拒的请求不落账） */
-  check(tenantId: number, username: string | null): LimitDecision
+  check(tenantId: number, door: Door, username: string | null): LimitDecision
   /** 判定之后按真实结果落账：ok ⇒ 清该用户失败桶；!ok ⇒ 失败桶 +1。两者都计入"全部尝试" */
-  record(tenantId: number, username: string | null, ok: boolean): void
+  record(tenantId: number, door: Door, username: string | null, ok: boolean): void
   /** 当前租户的 user 失败桶数（"内存有界"唯一可观测的口子；将来也可喂运维指标） */
   bucketCount(tenantId: number): number
 }
@@ -82,7 +100,7 @@ export function createLoginLimiter(opts: { now?: () => number } = {}): LoginLimi
   const stateOf = (id: number): TenantState => {
     let s = tenants.get(id)
     if (!s) {
-      s = { users: new Map() }
+      s = { fail: {}, attempt: {}, users: new Map() }
       tenants.set(id, s)
     }
     return s
@@ -103,13 +121,14 @@ export function createLoginLimiter(opts: { now?: () => number } = {}): LoginLimi
   })
 
   return {
-    check(tenantId, username) {
+    check(tenantId, door, username) {
       const t = now()
       const s = tenants.get(tenantId)
       if (!s) return { allowed: true } // 从没失败过的租户零成本放行
-      const att = live(s.attempt, t)
+      // 第 2/3 层只看【本门】的桶：另一扇门被灌满不影响这一扇（PR#5 评审 R2）
+      const att = live(s.attempt[door], t)
       if (att && att.count >= TENANT_ATTEMPT_LIMIT) return deny('tenant-all', att.resetAt, t)
-      const f = live(s.fail, t)
+      const f = live(s.fail[door], t)
       if (f && f.count >= TENANT_FAIL_LIMIT) return deny('tenant-fail', f.resetAt, t)
       if (username) {
         const u = live(s.users.get(keyOf(username)), t)
@@ -118,13 +137,13 @@ export function createLoginLimiter(opts: { now?: () => number } = {}): LoginLimi
       return { allowed: true }
     },
 
-    record(tenantId, username, ok) {
+    record(tenantId, door, username, ok) {
       const t = now()
       const s = stateOf(tenantId)
 
-      const att = live(s.attempt, t)
+      const att = live(s.attempt[door], t)
       if (att) att.count += 1
-      else s.attempt = { count: 1, resetAt: t + TENANT_ATTEMPT_WINDOW_MS }
+      else s.attempt[door] = { count: 1, resetAt: t + TENANT_ATTEMPT_WINDOW_MS }
 
       if (ok) {
         // 成功即清该用户的失败桶：否则正常用户会被自己的成功登录耗尽配额
@@ -132,9 +151,9 @@ export function createLoginLimiter(opts: { now?: () => number } = {}): LoginLimi
         return
       }
 
-      const f = live(s.fail, t)
+      const f = live(s.fail[door], t)
       if (f) f.count += 1
-      else s.fail = { count: 1, resetAt: t + TENANT_FAIL_WINDOW_MS }
+      else s.fail[door] = { count: 1, resetAt: t + TENANT_FAIL_WINDOW_MS }
 
       if (!username) return // 企微路的租户层（拿不到用户名，见 spec §3.2）
 
@@ -171,17 +190,29 @@ export function createLoginLimiter(opts: { now?: () => number } = {}): LoginLimi
 }
 
 /**
- * 被限速时的统一响应：429 + Retry-After，**不写 audit**（写了等于没限速），改一行 warn 让攻击
- * 在容器日志 / OpenObserve 里可见。错误体形状沿用既有 `{ error: string }` 约定，前端无需改。
+ * 被限速时的告警：**不写 audit**（写了等于没限速），改一行 warn 让攻击在容器日志 /
+ * OpenObserve 里可见。
+ *
+ * 它与响应形状**分开**导出，是因为两扇门的呈现契约不同（PR#5 评审 R2）：账密路是 XHR，
+ * JSON 429 正确；企微回调恒是浏览器导航，JSON 是用户死胡同 ⇒ 那条路由必须把限速也折叠进
+ * 自己的 `fail()` 呈现。告警这一半两边都要，故从响应里拆出来单独调用。
+ */
+export function warnRateLimitDeny(tenantId: number, d: LimitDecision): void {
+  console.warn(
+    `[rate-limit] 拒绝登录尝试 tenant=${tenantId} 维度=${d.dimension} retry-after=${d.retryAfterSec}s`,
+  )
+}
+
+/**
+ * 账密路被限速时的统一响应：429 + Retry-After。错误体形状沿用既有 `{ error: string }`
+ * 约定，前端无需改。**只用于 XHR 形态的调用方**（见上一条：企微回调不用它）。
  */
 export function tooManyRequests<E extends Env>(
   c: Context<E>,
   tenantId: number,
   d: LimitDecision,
 ): Response {
-  console.warn(
-    `[rate-limit] 拒绝登录尝试 tenant=${tenantId} 维度=${d.dimension} retry-after=${d.retryAfterSec}s`,
-  )
+  warnRateLimitDeny(tenantId, d)
   return c.json({ error: 'TOO_MANY_REQUESTS' }, 429, {
     'Retry-After': String(d.retryAfterSec ?? 60),
   })

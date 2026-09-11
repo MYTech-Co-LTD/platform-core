@@ -28,6 +28,9 @@ export interface AuthRoutesDeps {
   /**
    * 登录限速器（M1 闭债 R2）。**必须与企微路共用同一实例**——分成两个实例等于攻击者把流量
    * 劈成两半、各享一份预算。宿主 app.ts 建一个传两处。
+   *
+   * 本路由是 `password` 门（PR#5 评审 R2）：第 2/3 层的桶按 (tenantId, door) 分，**不是**
+   * 按实例分——"共用实例"与"分开的桶"这两件事同时成立，别实现成两个实例。
    */
   limiter: LoginLimiter
 }
@@ -50,8 +53,11 @@ const MAX_PASSWORD_LEN = 512
  * 8 KiB 对真实登录体是数量级的富余。
  *
  * 为什么不能只查 `Content-Length`：它可缺失（chunked）也可伪造（声明小、实发大），
- * 只信它等于没上限。故实现成**有界读取**（readBodyBounded）：边读边计，越界即中止
- * 读取流，超出部分一个字节都不进内存。Content-Length 只作为"连读都不读"的快速拒绝前置。
+ * 只信它等于没上限。故实现成**有界读取**（readBodyBounded）：边读边计，越界即中止读取流。
+ * 上界是「上限 + 至多一个传输块」——流式读取的粒度是 chunk，**不是**逐字节：越界那一刻已经
+ * 落在内存里的那一块无法退回（探针实测 8 KiB 上限下 `pull=9`、读了 9216 B 才中止）。截断本身
+ * 是真的（伪造 `content-length` 也不影响：只信实际读到的字节数），"超出部分一个字节都不进内存"
+ * 这种说法**过强**，已按实收窄（PR#5 评审 R2）。Content-Length 只作为"连读都不读"的快速拒绝前置。
  */
 export const MAX_LOGIN_BODY_BYTES = 8192
 
@@ -74,7 +80,7 @@ async function readBodyBounded(
       if (done) break
       size += value.byteLength
       if (size > maxBytes) {
-        await reader.cancel() // 中止读取：剩下的字节不进内存
+        await reader.cancel() // 中止读取：**后续**字节不再进内存（本块已在内存里，上界见函数注释）
         return { ok: false, reason: 'too-large' }
       }
       chunks.push(value)
@@ -111,7 +117,7 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
     const t = c.get('tenant')
     // 租户层前置（Task 24 评审 R1 建议 4）：只吃租户两道闸（此层拿不到用户名——体还没读），
     // 换来"已被限速的租户连请求体都不解析"。用户维度的判定仍在下面（解析出 username 之后）。
-    const early = deps.limiter.check(t.id, null)
+    const early = deps.limiter.check(t.id, 'password', null)
     if (!early.allowed) return tooManyRequests(c, t.id, early)
 
     const read = await readBodyBounded(c.req.raw, MAX_LOGIN_BODY_BYTES)
@@ -119,25 +125,25 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
       if (read.reason === 'too-large') {
         // 超限即拒：体没读进来，自然也写不了 audit（actor 无从写起）。计数照记——
         // 它是一次失败尝试，且是第 2/3 层该看见的流量
-        deps.limiter.record(t.id, null, false)
+        deps.limiter.record(t.id, 'password', null, false)
         return c.json({ error: 'PAYLOAD_TOO_LARGE' }, 413)
       }
       // 体不是合法 JSON：与"形状不对"同一处置（按坏凭据 401，不泄原因）
-      deps.limiter.record(t.id, null, false)
+      deps.limiter.record(t.id, 'password', null, false)
       return c.json({ error: 'BAD_CREDENTIALS' }, 401)
     }
     const body = read.body as { username?: unknown; password?: unknown } | null
     const username = typeof body?.username === 'string' ? body.username : ''
     const password = typeof body?.password === 'string' ? body.password : ''
     // 限速（M1 闭债 R2）：**先于任何 writeAudit**。被拦的请求不写 audit——写了等于没限速
-    const decision = deps.limiter.check(t.id, username || null)
+    const decision = deps.limiter.check(t.id, 'password', username || null)
     if (!decision.allowed) return tooManyRequests(c, t.id, decision)
     // 形状不对也按坏凭据处理（401 不区分原因，不泄探查面）。
     // 计数（Task 24 评审 R1）：这条同样是"一次失败的登录尝试"，此前只 401 不 record ⇒
     // 它是个死角：不产生出站调用（危害比企微路低一档），但同样能把第 2/3 层推满的流量
     // 白送给攻击者。口径与其它失败分支一致：记计数、不写 audit（无 actor 可写）
     if (!username || !password) {
-      deps.limiter.record(t.id, username || null, false)
+      deps.limiter.record(t.id, 'password', username || null, false)
       return c.json({ error: 'BAD_CREDENTIALS' }, 401)
     }
     if (username.length > MAX_USERNAME_LEN || password.length > MAX_PASSWORD_LEN) {
@@ -150,7 +156,7 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
         'login.fail',
         { via: 'password', reason: 'oversized' },
       )
-      deps.limiter.record(t.id, username, false)
+      deps.limiter.record(t.id, 'password', username, false)
       return c.json({ error: 'BAD_CREDENTIALS' }, 401)
     }
 
@@ -164,7 +170,7 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
     }
     if (name === null) {
       await writeAudit(deps.pool, t.id, username, 'login.fail', { via: 'password' })
-      deps.limiter.record(t.id, username, false)
+      deps.limiter.record(t.id, 'password', username, false)
       return c.json({ error: 'BAD_CREDENTIALS' }, 401)
     }
 
@@ -190,7 +196,7 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
     // 成功清零用【提交串 username】，与 check(:69)/失败记账(:85,:99) 同键：name 是 Casdoor
     // 规范名，别名登录（邮箱/手机号）时 name !== username，用 name 清零会清错桶 ⇒ 提交串那个
     // 失败桶永不清零、正常用户被自己锁死 15 分钟。审计行仍记 name（真实身份），不受影响。
-    deps.limiter.record(t.id, username, true)
+    deps.limiter.record(t.id, 'password', username, true)
     c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
     return c.json({ ok: true })
   })
