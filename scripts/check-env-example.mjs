@@ -10,6 +10,10 @@
 //   - `process.env['KEY']` / `process.env["KEY"]`（下标读——与点读是同一构造的等价写法，
 //     不检等于留一个一字符的绕过口）
 //   - `import.meta.env.VITE_KEY`（Vite 构建期注入）
+//   - **宿主注入式访问器**（apps/server/src/config.ts 的形态，缺了这组则本门禁对真实约束
+//     零覆盖）：`env.KEY`（Env 记录的属性读）、`requireValue('KEY')`（必填形参）、
+//     `optional('KEY')`（可选形参）。宿主不写 process.env——env 记录是注入口，键名以字符串
+//     形参传给 requireValue/optional，故三种形态都要认。
 // 每个键必须出现在根 .env.example（豁免见下）。B9 的目的：防「部署缺 env → 运行时静默降级」，
 // 声明的存在性是可机检的那一半（值的合法性由 apps/server 的 fail-fast 装配负责）。
 //
@@ -18,7 +22,9 @@
 //      「枚举 env 契约」，注释行的 `# SEED_DEMO=1  # dev：…` 完整写明了键名、示例值与适用
 //      场景——它恰恰是**不该**被无脑复制的可选开关（照抄成 SEED_DEMO=1 就会在生产种 demo
 //      租户）。要求它必须取消注释，等于逼模板写一个「复制即生效」的有害默认值。
-//      判定用 `^#\s*KEY\s*=`（键名紧跟 =，纯散文字提及不算声明）。
+//      判定用 `^\s*(?:export\s+)?#?\s*([A-Z][A-Z0-9_]*)\s*=`——`#` 是**可选**的：正式声明行
+//      （`PORT=13000`）与注释声明行（`# SEED_DEMO=1  # dev：…`）都算；键名必须紧跟 `=`，
+//      散文字里提一句键名不算声明。
 //   ② 跳过 *.test.*：测试里 set/读 env 是 fixture 装配（本仓 DATABASE_URL 就在 4 个测试
 //      文件里被读），不是部署面。纳入只会逼测试改名或加豁免清单。
 //   ③ apps/web/ 下的 `VITE_` 键豁免：web 全运行时配置（品牌/接口地址来自宿主下发的
@@ -39,6 +45,13 @@ const SKIP_FILE_RE = /\.test\./
 const ENV_DOT_RE = /process[.]env[.]([A-Z0-9_]+)/g
 const ENV_INDEX_RE = /process[.]env\[['"]([A-Z0-9_]+)['"]\]/g
 const VITE_RE = /import[.]meta[.]env[.]VITE_([A-Z0-9_]+)/g
+// 宿主注入式访问器（apps/server/src/config.ts）：`\b` 保证不从 `myenv.X` 这种标识符中段起匹配；
+// 键名形如 `env.TENANT_MODE` / `requireValue('PORT')` / `optional('PLATFORM_ORG')`。
+// 注：`process.env.KEY` 也含 `env.KEY`，会与 ENV_DOT_RE 重复命中同一键 —— 同文件同行同键去重（见下），
+// 避免输出里出现重复行。
+const ENV_PROP_RE = /\benv[.]([A-Z][A-Z0-9_]*)/g
+const ENV_REQUIRE_RE = /\brequireValue\(\s*['"]([A-Z][A-Z0-9_]*)['"]/g
+const ENV_OPTIONAL_RE = /\boptional\(\s*['"]([A-Z][A-Z0-9_]*)['"]/g
 
 const toPosix = (p) => p.split(sep).join('/')
 
@@ -94,7 +107,11 @@ export async function findViolations(rootDir) {
     const rel = toPosix(relative(rootDir, abs))
     const src = await readFile(abs, 'utf8')
     const isWeb = rel.startsWith('apps/web/')
+    const seen = new Set() // `${行号}:${键}`：多种形态命中同一处只报一次
     const check = (key, line) => {
+      const at = `${line}:${key}`
+      if (seen.has(at)) return
+      seen.add(at)
       if (isWeb && key.startsWith('VITE_')) return // 规则③
       if (declared.has(key)) return
       violations.push({ file: rel, line, key })
@@ -102,6 +119,9 @@ export async function findViolations(rootDir) {
     for (const m of src.matchAll(ENV_DOT_RE)) check(m[1], lineOf(src, m.index))
     for (const m of src.matchAll(ENV_INDEX_RE)) check(m[1], lineOf(src, m.index))
     for (const m of src.matchAll(VITE_RE)) check(`VITE_${m[1]}`, lineOf(src, m.index))
+    for (const m of src.matchAll(ENV_PROP_RE)) check(m[1], lineOf(src, m.index))
+    for (const m of src.matchAll(ENV_REQUIRE_RE)) check(m[1], lineOf(src, m.index))
+    for (const m of src.matchAll(ENV_OPTIONAL_RE)) check(m[1], lineOf(src, m.index))
   }
 
   return violations.sort((a, b) => (a.file === b.file ? a.line - b.line : a.file < b.file ? -1 : 1))

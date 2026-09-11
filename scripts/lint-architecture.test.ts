@@ -188,6 +188,40 @@ describe('lint-architecture: B8 硬编码禁令', () => {
     expect(r.status).toBe(1)
     expect(out(r)).toContain('apps/server/src/a.ts:1')
   })
+
+  it('正则字面量不制造两种失步：代码位 `//` 不吃掉同行的真实字面量，正则里的引号不解除注释遮罩', () => {
+    // 方向一（假阴性）：正则字面量结尾的 `//`（/^https?:\/\//）曾被当成注释起点吃掉整行，
+    // 于是同一行里、`//` 之后的真实违规字符串一条都查不出。
+    const afterRegex = fixture({
+      'apps/server/src/a.ts':
+        "const re = /^https?:\\/\\//; const u = 'https://a.hookflow.cn'\nconst h = '10.1.2.3'\n",
+    })
+    const r1 = run('lint-architecture.mjs', afterRegex)
+    expect(r1.status).toBe(1)
+    expect(out(r1)).toContain('apps/server/src/a.ts:1')
+    expect(out(r1)).toContain('apps/server/src/a.ts:2')
+
+    // 方向二（假阳性）：正则字面量里的引号（/['"]/）曾把状态机带进字符串态且再未闭合，
+    // 此后真注释不再被遮罩 —— 一个只含注释提及 hookflow.cn、没有任何字面量的文件会误报。
+    const quotedRegex = fixture({
+      'apps/server/src/a.ts': "const q = /['\"]/\n// 本仓禁止 hookflow.cn\nconst x = 1\n",
+    })
+    expect(run('lint-architecture.mjs', quotedRegex).status).toBe(0)
+
+    // 回归钉：识别正则不能把除号也吃掉（否则除号之后的行内注释不再被遮罩 → 假阳性）
+    const division = fixture({
+      'apps/server/src/a.ts':
+        "const half = n / 2 // 本仓禁止 hookflow.cn\nconst p = (a + b) / 2 // 同样禁止 hookflow.cn\n",
+    })
+    expect(run('lint-architecture.mjs', division).status).toBe(0)
+
+    // 回归钉：JSX 的 `</div>` 不能被判成正则（`<` 曾在我的「正则位置」字符表里，`</` 会一路吃到
+    // 同行第一个 `/`，把紧随的 `// 注释` 的第一根斜杠吃掉 → 注释里的禁区字面量误报）
+    const jsx = fixture({
+      'apps/web/src/a.tsx': "export const A = () => (\n  <div> </div> // 本仓禁止 hookflow.cn\n)\n",
+    })
+    expect(run('lint-architecture.mjs', jsx).status).toBe(0)
+  })
 })
 
 describe('lint-architecture: 真实仓库', () => {
@@ -267,6 +301,58 @@ describe('check-env-example: B9 env 完整', () => {
       'apps/web/src/lib/api.ts': "const base = import.meta.env.VITE_PLATFORM_API ?? ''\n",
     })
     expect(run('check-env-example.mjs', web).status).toBe(0)
+  })
+
+  it('宿主注入式访问器 env.KEY / requireValue("KEY") / optional("KEY") 同样受检', () => {
+    // 宿主不用 process.env.X：loadConfig(env) 收 Env 记录（env.TENANT_MODE），必填/可选走
+    // requireValue('KEY') / optional('KEY') 字符串形参。不认这三种形态 = 门禁对真实约束零覆盖。
+    const r = run(
+      'check-env-example.mjs',
+      fixture({
+        '.env.example': 'TENANT_MODE=single\n',
+        'apps/server/src/config.ts':
+          "const mode = env.TENANT_MODE\nconst url = requireValue('NEW_REQUIRED')\nconst cs = optional('NEW_OPTIONAL') ?? ''\n",
+      }),
+    )
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('apps/server/src/config.ts:2')
+    expect(out(r)).toContain('NEW_REQUIRED')
+    expect(out(r)).toContain('apps/server/src/config.ts:3')
+    expect(out(r)).toContain('NEW_OPTIONAL')
+    expect(out(r)).not.toContain('TENANT_MODE') // 已声明的键不报
+  })
+
+  it('env.NEW_KEY 未声明必须 fail；注释行 `# KEY=` 仍算声明', () => {
+    const missing = run(
+      'check-env-example.mjs',
+      fixture({
+        '.env.example': 'TENANT_MODE=single\n',
+        'apps/server/src/config.ts': "const seed = env.NEW_KEY === '1'\n",
+      }),
+    )
+    expect(missing.status).toBe(1)
+    expect(out(missing)).toContain('apps/server/src/config.ts:1')
+    expect(out(missing)).toContain('NEW_KEY')
+    expect(out(missing)).toContain('[B9]')
+
+    // 真实仓形态：SEED_DEMO 在 .env.example 里只以注释行存在（可选开关，不该复制即生效）
+    const commented = fixture({
+      '.env.example': 'TENANT_MODE=single\n# SEED_DEMO=1  # dev：启动期种 demo 租户（生产不设）\n',
+      'apps/server/src/config.ts': "const seed = env.SEED_DEMO === '1'\n",
+    })
+    expect(run('check-env-example.mjs', commented).status).toBe(0)
+  })
+
+  it('同一行的等价写法（process.env.X 与 env.X）只报一次', () => {
+    const r = run(
+      'check-env-example.mjs',
+      fixture({
+        '.env.example': 'FOO=1\n',
+        'apps/server/src/a.ts': 'const a = process.env.DUP_KEY; const b = env.DUP_KEY\n',
+      }),
+    )
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('check-env-example: 1 处违规')
   })
 
   it('跳过 *.test.*（测试里 set/读 env 是 fixture 装配，不是部署面）', () => {
