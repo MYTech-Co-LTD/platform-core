@@ -56,6 +56,12 @@ export interface SessionMiddlewareDeps {
    * 重开"（auth.test.ts ㉕/㉖；只留前者的话，按次数计的闩照样全绿，评审 S2）。
    */
   degradeWarnIntervalMs?: number
+  /**
+   * 注入时钟（ms，默认 `Date.now`）。**只**供降级 warn 的去重窗口取值（`warnDegrade`），
+   * 不参与验签/过期/续期任何时间决策——测试用它手动推进窗口，去掉真实墙钟等待（`setTimeout`）。
+   * 缺省路径与改动前逐值一致，无行为变更。先例：`createLoginLimiter({ now })`（rate-limit.ts）。
+   */
+  now?: () => number
 }
 
 /**
@@ -117,7 +123,8 @@ export const sessionMiddleware = (
    * 唯一信号：说清后果（持续降级 = 授权变更不再生效），并按 org 限流（见上）。
    */
   const warnDegrade = (org: string, err: unknown): void => {
-    const nowMs = Date.now()
+    // 注入时钟（deps.now）**只**在这里取——窗口限流专用；验签/过期/续期一律走真实 nowSec()
+    const nowMs = deps.now ? deps.now() : Date.now()
     if (nowMs - (lastDegradeWarnAt.get(org) ?? 0) < degradeWarnIntervalMs) return
     lastDegradeWarnAt.set(org, nowMs)
     console.warn(

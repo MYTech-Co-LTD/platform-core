@@ -59,10 +59,11 @@ function makeApp(
   casdoor: CasdoorFactory = casdoorFor,
   limiter: LoginLimiter = createLoginLimiter(),
   degradeWarnIntervalMs?: number,
+  now?: () => number,
 ): Hono<TenantEnv & SessionEnv> {
   const app = new Hono<TenantEnv & SessionEnv>()
   app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
-  app.use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET, degradeWarnIntervalMs }))
+  app.use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET, degradeWarnIntervalMs, now }))
   app.route(
     '/api/platform/auth',
     authRoutes({ casdoor, sessionSecret: SECRET, pool, limiter }),
@@ -558,13 +559,15 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
 
   // ㉖ ㉔/㉕ 都**没证"窗口会随时间重开"**：㉔ 用默认 60s 窗口（窗口内本就不重开）、
   //    ㉕ 用 interval=0（窗口恒不开）。一条"按 org 只报一次"的闩、或把窗口当次数用，
-  //    同样能过那两条。这里给**小正数窗口**并真的等过它 ⇒ 超窗后的降级必须再报一条。
-  //    （评审 S2：注释写了"窗口过后会再报"，就得有断言真的钉住它。）
-  it('★ 负例：降级 warn 的窗口随时间重开（小正数窗口，等过窗口后再报）', async () => {
-    const WINDOW_MS = 250 // 远大于一次本地 fetch（服务已停 ⇒ 立即 ECONNREFUSED），远小于测试可接受的等待
+  //    同样能过那两条。这里给**小正数窗口**并**手动推进注入时钟**过它 ⇒ 超窗后的降级必须
+  //    再报一条。（评审 S2：注释写了"窗口过后会再报"，就得有断言真的钉住它。）
+  //    用注入时钟而非 `await setTimeout(250)`：去墙钟依赖，快且不与真 PG/真 HTTP 的 I/O 抢时钟。
+  it('★ 负例：降级 warn 的窗口随时间重开（小正数窗口，推进过窗口后再报）', async () => {
+    const WINDOW_MS = 250
+    let clockMs = 1_000_000 // 注入时钟（ms）：从 0 起会让"首条 warn"被当成窗口内，故取大基值
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      const c2 = testClient(makeApp(pool, casdoorFor, createLoginLimiter(), WINDOW_MS))
+      const c2 = testClient(makeApp(pool, casdoorFor, createLoginLimiter(), WINDOW_MS, () => clockMs))
       const stale = await signSession(
         { sub: 'alice', org: 'acme', name: 'alice', scopes: ['old:scope'], authVia: 'password' },
         SECRET,
@@ -580,9 +583,9 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
       await mock.stop()
       try {
         await degradeOnce()
-        await degradeOnce() // 仍在窗口内（两次相邻请求 ≪ 250ms）
+        await degradeOnce() // 仍在窗口内（注入时钟未推进）
         expect(warns()).toHaveLength(1)
-        await new Promise((r) => setTimeout(r, WINDOW_MS + 100)) // 等过窗口
+        clockMs += WINDOW_MS + 1 // 手动推进过窗口（旧写法靠 await setTimeout(WINDOW_MS + 100)）
         await degradeOnce()
       } finally {
         await mock.start()

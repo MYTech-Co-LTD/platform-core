@@ -156,6 +156,17 @@ describe('MockCasdoor：权限按 org 分桶（owner= 生效）', () => {
     expect(((await r.json()) as { status: string }).status).toBe('error')
   })
 
+  // R4 Task 4 Step 3：真机未授权文案**按端点区分**——get-user 回 'Please login first'，
+  // get-permissions 等回 'Unauthorized operation'。mock 旧实现两处共用一句，与真机不一致
+  //（客户端不按文案分支，这里纯为保真；R3 终审建议改）。
+  it('★ 负例：未授权文案按端点区分（get-user ⇒ Please login first；get-permissions ⇒ Unauthorized operation）', async () => {
+    const dead = { Cookie: 'casdoor_session_id=deadbeef' }
+    const u = await fetch(`${m.origin}/api/get-user?id=acme/admin1`, { headers: dead })
+    expect(((await u.json()) as { msg?: string }).msg).toBe('Please login first')
+    const p = await fetch(`${m.origin}/api/get-permissions?owner=acme`, { headers: dead })
+    expect(((await p.json()) as { msg?: string }).msg).toBe('Unauthorized operation')
+  })
+
   it('显式注入 HTTP 401：那是真机不产生的形状，只能显式注入来钉客户端的防御契约', async () => {
     m.setHttpFault('unauthorized401')
     try {
@@ -184,5 +195,47 @@ describe('MockCasdoor：权限按 org 分桶（owner= 生效）', () => {
 
     expect(m.permissionsIn('gamma').find((p) => p.name === 'shared:code')?.users).toEqual(['admin1'])
     expect(m.permissionsIn('acme').find((p) => p.name === 'shared:code')?.users).toEqual([])
+  })
+})
+
+// ---- R4 Task 4 Step 1：get-user 的 id 段数校验对齐真机 ----
+//
+// R3 终审实测真机（sso.hookflow.cn）：`id=/admin`、`id=built-in/`、`id=/` 全回
+// 200 {status:'ok',data:null}——两段（哪怕含空段）一律进查找，查不到就 ok+null；
+// 只有**段数≠2**（`noSlashId`、`built-in/admin/extra`）与**空 id** 才回 wrong token count
+// （上游 `GetOwnerAndNameFromId` 就是 `strings.Split(id,"/")` 后判 len!=2，空串只 split 出 1 段）。
+// 旧 mock 的 `!parts[0] || !parts[1]` 把含空段的两段也判非法 ⇒ 方向与真机相反。
+describe('MockCasdoor get-user：id 段数校验对齐真机', () => {
+  async function getUser(id: string): Promise<{ status: string; msg?: string; data?: unknown }> {
+    const r = await fetch(`${m.origin}/api/get-user?id=${encodeURIComponent(id)}`, {
+      headers: { Cookie: await adminCookie() },
+    })
+    expect(r.status).toBe(200)
+    return (await r.json()) as { status: string; msg?: string; data?: unknown }
+  }
+
+  it('★ 负例：含空段的两段 id 不再判非法（/admin ⇒ ok+null，不是 wrong token count）', async () => {
+    const j = await getUser('/admin')
+    expect(j.status).toBe('ok') // ← 旧 mock 在此回 error，本行必红
+    expect(j.data).toBeNull()
+  })
+
+  it('两段含空段一律进查找：built-in/ 与 / 同样 ok+null', async () => {
+    expect((await getUser('built-in/')).status).toBe('ok')
+    expect((await getUser('built-in/')).data).toBeNull()
+    expect((await getUser('/')).status).toBe('ok')
+    expect((await getUser('/')).data).toBeNull()
+  })
+
+  it('段数≠2 仍报 wrong token count（built-in/admin/extra）——归一不得变成"放行一切"', async () => {
+    const j = await getUser('built-in/admin/extra')
+    expect(j.status).toBe('error')
+    expect(String(j.msg)).toMatch(/wrong token count/)
+  })
+
+  it('空 id（段数 1）仍报 wrong token count——真机空串只 split 出 1 段', async () => {
+    const j = await getUser('')
+    expect(j.status).toBe('error')
+    expect(String(j.msg)).toMatch(/wrong token count/)
   })
 })

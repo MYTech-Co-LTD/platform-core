@@ -347,10 +347,12 @@ describe('getUser：错误 ≠ 不存在', () => {
   })
 
   // 上一条（cooldownMs:0）只证"不是闩"，**没证"窗口会随时间重开"**：一条"每客户端只重登
-  // 一次"的闩、或把冷却按次数计，照样能过它。这里用**小正数冷却**并真的等过窗口 ⇒ 窗口外
-  // 的下一次失败必须再允许一次重登。（评审 S2：注释写了"窗口过后会再报"，就得有断言钉住。）
-  it('★ 负例：冷却窗口随时间重开（小正数冷却，等过窗口后第 2 次重登出现）', async () => {
-    const COOLDOWN_MS = 250 // 远大于一次本地 mock 往返，远小于测试可接受的等待
+  // 一次"的闩、或把冷却按次数计，照样能过它。这里用**小正数冷却**并**手动推进注入时钟**过
+  // 窗口 ⇒ 窗口外的下一次失败必须再允许一次重登。（评审 S2：注释写了"窗口过后会再报"，
+  // 就得有断言钉住。）用注入时钟而非 `await setTimeout(250)`：去墙钟依赖，快且不 flaky。
+  it('★ 负例：冷却窗口随时间重开（小正数冷却，推进过窗口后第 2 次重登出现）', async () => {
+    const COOLDOWN_MS = 250
+    let clockMs = 1_000_000 // 注入时钟（ms）：从 0 起会让"首次重登"被当成窗口内，故取大基值
     const m = new MockCasdoor({ users: [{ name: 'alice', password: 'pw' }] })
     await m.start()
     try {
@@ -358,6 +360,7 @@ describe('getUser：错误 ≠ 不存在', () => {
         origin: m.origin, clientId: 'test-client', clientSecret: '', org: 'mock-org',
         adminUser: 'admin', adminPwd: 'pw',
         reloginCooldownMs: COOLDOWN_MS,
+        now: () => clockMs,
       })
       expect((await c.getUser('alice'))?.name).toBe('alice') // 预热：缓存一个有效 admin 会话
       const before = m.adminLoginCalls
@@ -366,7 +369,7 @@ describe('getUser：错误 ≠ 不存在', () => {
       await expect(c.getUser('alice')).rejects.toThrow(/get-user/)
       await expect(c.getUser('alice')).rejects.toThrow(/get-user/)
       expect(m.adminLoginCalls).toBe(before + 1)
-      await new Promise((r) => setTimeout(r, COOLDOWN_MS + 100)) // 等过冷却窗口
+      clockMs += COOLDOWN_MS + 1 // 手动推进过冷却窗口（旧写法靠 await setTimeout(COOLDOWN_MS+100)）
       await expect(c.getUser('alice')).rejects.toThrow(/get-user/)
       // 窗口外的那次必须再重登一次——"只重登一次"的闩/按次数计在这里必红
       expect(m.adminLoginCalls).toBe(before + 2)

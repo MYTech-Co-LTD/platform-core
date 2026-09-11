@@ -26,10 +26,16 @@ export interface CasdoorClientOptions {
   /**
    * 强制重登的最短间隔（ms）——**故障期登录压力的唯一闸门**，取值理由见 `#allowForcedRelogin`。
    * 默认 5000。闸的是**窗口**、不是"只重登一次"的闩——两条断言分工钉死：设 0 证"不是闩"
-   * （每次失败各重登一次），设小正数 + 真的等过窗口证"窗口会随时间重开"
+   * （每次失败各重登一次），设小正数 + **注入时钟手动推进过窗口**证"窗口会随时间重开"
    * （casdoor-client.test.ts 的两条冷却用例；只留前者的话，按次数计的闩照样全绿，评审 S2）。
    */
   reloginCooldownMs?: number
+  /**
+   * 注入时钟（ms，默认 `Date.now`）。**只**供 `#allowForcedRelogin` / `#inReloginCooldown`
+   * 这两个冷却窗口取值——测试用它手动推进窗口，去掉真实墙钟等待（`setTimeout`）的慢与 flaky。
+   * 缺省路径与改动前逐值一致，无行为变更。先例：`createLoginLimiter({ now })`（rate-limit.ts）。
+   */
+  now?: () => number
 }
 
 /** 强制重登的默认最短间隔（ms）——取值理由见 `CasdoorClient#allowForcedRelogin` */
@@ -222,7 +228,7 @@ export class CasdoorClient {
 
   /** 冷却闸（M1 闭债 R3 评审 S1）：允许本次强制重登就记账并返回 true，冷却中返回 false。 */
   #allowForcedRelogin(): boolean {
-    const now = Date.now()
+    const now = this.#nowMs()
     if (now - this.#lastForcedReloginAt < this.#reloginCooldownMs()) return false
     this.#lastForcedReloginAt = now
     return true
@@ -230,7 +236,12 @@ export class CasdoorClient {
 
   /** 冷却是否生效中（**不消费**配额）——供 #adminJson 判断"重试必然空转" */
   #inReloginCooldown(): boolean {
-    return Date.now() - this.#lastForcedReloginAt < this.#reloginCooldownMs()
+    return this.#nowMs() - this.#lastForcedReloginAt < this.#reloginCooldownMs()
+  }
+
+  /** 冷却窗口用的时钟（可注入；见 options.now）——**只**这两个冷却判断经它取值 */
+  #nowMs(): number {
+    return this.#o.now ? this.#o.now() : Date.now()
   }
 
   #reloginCooldownMs(): number {
