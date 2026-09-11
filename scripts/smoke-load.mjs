@@ -106,7 +106,15 @@ const VIEWER1 = 'viewer1' // 无任何 demo 权限——403 路径的唯一端�
 // ---- 断言 / 输出 ----
 
 /**
- * 失败即打印上下文并 exit 1（头注判断④）
+ * 断言失败：立即打印标签 + 上下文，然后**抛错**而非 process.exit(1)。
+ * 为什么要抛：main() 的 finally 负责收尸（杀子进程组 + 停 mock）。在 check 里直接
+ * process.exit 会绕过 finally，失败一次就在本机留下一个占着端口的宿主进程和一枚 mock
+ * ——而「冒烟失败」恰恰是最常被反复跑的场景。抛错仍满足「立即打印 body + 最终 exit 1」：
+ * 打印是同步发生的，退出码由顶层 catch 统一给。
+ */
+class SmokeFailure extends Error {}
+
+/**
  * @param {boolean} cond @param {string} label @param {unknown} [detail]
  */
 function check(cond, label, detail) {
@@ -119,7 +127,7 @@ function check(cond, label, detail) {
     const text = typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2)
     console.error(text.split('\n').map((l) => `      ${l}`).join('\n'))
   }
-  process.exit(1)
+  throw new SmokeFailure(label)
 }
 
 /** @param {string} label */
@@ -580,6 +588,12 @@ async function main() {
 try {
   await main()
 } catch (err) {
-  console.error(`\nsmoke-load: FAILED — ${err instanceof Error ? err.stack : String(err)}`)
+  // 断言失败（SmokeFailure）：标签已就地打印过，这里只补一行收束，不打无用的栈；
+  // 其余异常（起不来 / 连不上 / 脚本自身 bug）：栈是排障的全部信息，原样打。
+  console.error(
+    err instanceof SmokeFailure
+      ? `\nsmoke-load: FAILED — 断言未通过：${err.message}`
+      : `\nsmoke-load: FAILED — ${err instanceof Error ? err.stack : String(err)}`,
+  )
   process.exit(1)
 }
