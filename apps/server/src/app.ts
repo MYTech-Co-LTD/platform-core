@@ -127,7 +127,8 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     enabledFor: runtime.enabledFor,
   }))
   // ⑧ 登录三路：账密 + 企微 qr/silent（platformRoutes 同前缀，注册序不影响——路径不重叠）
-  // 登录限速器（M1 闭债 R2）：**一个实例传两处**（账密 + 企微）——分实例等于把预算劈成两半
+  // 登录限速器（M1 闭债 R2）：**一个实例传两处**（账密 + 企微）——分实例会与分桶一样把额度
+  // 按份数放大，却额外放大第 1 层（user 桶），无任何收益（预算口径见 rate-limit.ts 的 Door）
   const limiter = createLoginLimiter()
   app.route('/api/platform/auth', authRoutes({
     casdoor: casdoorFactory,

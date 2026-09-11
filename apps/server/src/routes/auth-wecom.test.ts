@@ -483,7 +483,12 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
       expect(res.status).toBe(302)
       expect(res.headers.get('location')).toBe('/login?error=BAD_STATE')
     }
-    expect((await call()).headers.get('location')).toBe('/login?error=TOO_MANY_REQUESTS')
+    // 状态码断言不能省（PR#5 终轮评审 S3）：本轮把原来的 `status).toBe(429)` 换成了只剩
+    // location 的断言——若哪天被拦的响应退回 JSON 却恰好带上 Location，这条回归会静默通过。
+    // 与本文件同类用例（bad-code 路的 `expect(blocked.status).toBe(302)`）保持同一口径
+    const blocked = await call()
+    expect(blocked.status).toBe(302)
+    expect(blocked.headers.get('location')).toBe('/login?error=TOO_MANY_REQUESTS')
   })
 
   // ---------------------------------------------------------------------------------------
@@ -572,6 +577,42 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
       expect(res.headers.get('location')).toBe('/login?error=WECOM_NOT_CONFIGURED')
     }
     expect((await call()).headers.get('location')).toBe('/login?error=TOO_MANY_REQUESTS')
+  })
+
+  it('★ qr 路 getUser/getPermissions 抛错同样计数 ⇒ 第 N+1 次被拦', async () => {
+    // 同一族缺陷的第三处（PR#5 终轮评审 M1）：`name` 已解析成功、进到 `getUser +
+    // getPermissions` 这一对出站调用（**两次**打共享 SSO，比无出站的 WECOM_NOT_CONFIGURED
+    // 高危害一档），上游一抛错就 302 CASDOOR_UNAVAILABLE 走人——这条 catch 此前**没有
+    // record**，于是计数不增长、永不 429，而每一次请求都照旧发两次出站调用。反证：删掉
+    // `catch` 里的 record，本用例红（第 301 次仍是 CASDOOR_UNAVAILABLE 而非 TOO_MANY_REQUESTS）。
+    const brokenCasdoor: CasdoorFactory = (org) => {
+      const c = casdoorFor(org)
+      c.getUser = () => {
+        throw new Error('casdoor get-user down')
+      }
+      return c
+    }
+    const limiter = createLoginLimiter()
+    const c8 = testClient(makeApp(pool, brokenCasdoor, limiter))
+    const qr = await c8.api.platform.auth.wecom.qr.$get(undefined, {
+      headers: { host: 'acme.test' },
+    })
+    const state = stateToken(qr)
+    const call = (code: string) =>
+      c8.api.platform.auth.wecom.callback.$get(
+        { query: { code, state } },
+        { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+      )
+    // 每次换一枚新签发的有效 OIDC code：code 单次即焚，而本用例要的是"每次都真的走到
+    // getUser 那一步"（name 解析成功才谈得上后面这处出口）
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) {
+      const res = await call(mock.issueOidcCode('alice'))
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('/login?error=CASDOOR_UNAVAILABLE')
+    }
+    const blocked = await call(mock.issueOidcCode('alice'))
+    expect(blocked.status).toBe(302) // 状态码断言同 S3 口径
+    expect(blocked.headers.get('location')).toBe('/login?error=TOO_MANY_REQUESTS')
   })
 
   // ---------------------------------------------------------------------------------------

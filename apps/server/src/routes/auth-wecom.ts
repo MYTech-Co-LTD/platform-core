@@ -302,6 +302,10 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     try {
       ;[user, perms] = await Promise.all([casdoor.getUser(name), casdoor.getPermissions()])
     } catch {
+      // 计数（PR#5 终轮评审 M1）：路由上最后一处漏记的出口，与上面那条 catch 理由逐字相同
+      // （"上游一出问题刹车就失效"），且每次做 **2 次**对共享 SSO 的出站调用（getUser +
+      // getPermissions）——比无出站的 WECOM_NOT_CONFIGURED 高一档。口径同 :243
+      deps.limiter.record(t.id, 'wecom', null, false)
       return fail('CASDOOR_UNAVAILABLE')
     }
     if (user === null) {
