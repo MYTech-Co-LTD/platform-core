@@ -1,0 +1,78 @@
+# deploy/docker-compose.yml — 平台底座单机编排（**全仓唯一的 compose 文件**，约束 B7）
+#
+# 两个用法，语义完全一致，不是两份编排：
+#   ① 只起 PG（本地冒烟/开发最常用）：
+#        docker compose -f deploy/docker-compose.yml up -d postgres
+#        # scripts/smoke-load.mjs 的本地前置就是这一条：宿主直连 127.0.0.1:5432
+#   ② 单机整体起（本任务 Step 1 的验收入口）：
+#        docker compose -f deploy/docker-compose.yml up --build -d
+#        curl -i http://127.0.0.1:13000/healthz        # ← 期望 200
+#
+# 生产（OpenShip services 模式）怎么接这份文件、哪些项要改，见 deploy/openship-adopt.md。
+# 这里只放「单机跑起来所需的最小面」，不放生产差异项——两份事实源会漂移，差异全部写在 runbook 里。
+#
+# ⚠️ 顶层 name 是【必需】的，不是装饰：compose 的默认项目名取自 compose 文件所在的**目录名**，
+# 而本文件在 deploy/ 下 —— 任何同样把 compose 放在 deploy/ 的仓库都会得到同一个项目名 `deploy`，
+# 于是 `docker compose up` 会去**接管甚至重建别人的容器**；卷名同样撞（别人的 `deploy_pgdata`
+# 会与本仓的 `deploy_pgdata` 是同一个卷，双方的数据目录互相污染）。这不是理论风险：Task 22
+# 第一次 `up -d postgres` 就把另一个项目（compose 也在 deploy/ 下）的存活容器就地 Recreate 了。
+# 写死项目名后网络/卷前缀稳定为 platform-core_*，与别人的 deploy_* 隔离。
+name: platform-core
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: platform
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # 宿主 5432：本地冒烟（scripts/smoke-load.mjs）与 psql 排障要用。生产 adopt 时删掉这条
+      # （PG 只在 compose 内网被 server 访问），见 openship-adopt.md「生产差异」。
+      - '5432:5432'
+    healthcheck:
+      # 没有它 server 会在 PG 就绪前连库（迁移直接失败）——与 CI 里 postgres service 的
+      # health-cmd 是同一条理由
+      test: ['CMD-SHELL', 'pg_isready -U platform -d platform']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  server:
+    build:
+      # context 必须是【仓根】：Dockerfile 要 COPY packages/ apps/ modules/ scripts/，
+      # context 设成 deploy/ 会让整份镜像构建失败
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    # 运行时 env 来自根 .env（gitignore；模板是根 .env.example，B9 门禁保证键齐全）。
+    # required:false —— 缺 .env 时不报错（纯 `up -d postgres` 的用法不该被它卡住）
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # .env.example 里的 DATABASE_URL 是【宿主视角】（127.0.0.1）；容器内必须走服务名。
+      # environment 优先级高于 env_file，故这里是权威值。
+      DATABASE_URL: postgres://platform:platform@postgres:5432/platform
+      # 容器监听端口。**端口在 compose 里就这两处**：这里定容器内监听，下面 ports 的左端
+      # 定宿主映射（右端必须跟这里一致）。.env 里的同名键会被本项覆盖，别去改 .env 的 PORT。
+      PORT: '13000'
+    depends_on:
+      postgres:
+        # service_healthy 而非 service_started：迁移在启动期跑，PG 未就绪即失败
+        condition: service_healthy
+    ports:
+      # HOST_PORT 只是给「本机 13000 被别的进程占着」这种情况留的逃生口（Task 22 实测踩到：
+      # 另一工作树遗留的 dev mock 长占 13000）。**默认值就是 13000，生产不需要设它**。
+      # 注意 compose 的 ${} 插值只读「本 compose 文件所在目录的 .env」与 shell 环境，
+      # 不读上面 env_file 指的 ../.env —— 所以用法是 `HOST_PORT=13001 docker compose ... up`。
+      # 容器侧端口恒为 13000（下面 environment.PORT），宿主映射由它决定。
+      - '${HOST_PORT:-13000}:13000'
+    # 启动期故障（如 Casdoor 不可达 → upsertPermission 抛错）不该让容器一停不起；
+    # 反复重启会把失败暴露在 docker compose ps 的 Restarting 上，而不是静默躺着
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -1,0 +1,32 @@
+# .dockerignore — 构建上下文过滤（deploy/Dockerfile.server 的 context = 仓根）
+#
+# 为什么需要它（不是为了「瘦身」这类可有可无的理由）：
+#   ① **宿主 node_modules 是致命污染**。本机是 darwin/arm64，装出来的 esbuild 原生二进制
+#      与 node_modules/.pnpm 里的平台包在 linux 容器里全部不可用；而 pnpm 的 workspace
+#      链接（node_modules/@platform/sdk → packages/platform-sdk）COPY 后一律变成悬空链接。
+#      两者都会把「依赖装好了」伪装成既成事实，让容器在启动期以难以归因的方式崩掉。
+#   ② **陈旧的 apps/web/dist 必须挡在门外**。app.ts 的静态托管只做一次 existsSync 判断，
+#      若宿主上一轮构建的 dist 跟着上下文进镜像、而镜像内的构建又没跑成，服务会拿旧产物
+#      对外服务——「构建失败但页面正常」正是最难发现的一类假绿。挡掉它，镜像里的 dist
+#      就只能来自构建阶段。
+#   ③ .env / .tmp 是本地密钥与临时物，绝不进镜像层。
+#
+# 注：Dockerfile 采用逐目录显式 COPY（不写 `COPY . .`），本文件的边际作用因此集中在
+# 「被 COPY 的那几个目录内部」——**/node_modules 与 **/dist 正是命中这两点的前两条。
+# 其余条目是防御性冗余（万一将来有人改成整目录 COPY）。
+**/node_modules
+**/dist
+**/out
+**/coverage
+**/*.tsbuildinfo
+
+# 本地密钥与临时物
+.env
+*.local
+.tmp
+
+# VCS / CI / 编辑器
+.git
+.gitattributes
+.github
+.DS_Store

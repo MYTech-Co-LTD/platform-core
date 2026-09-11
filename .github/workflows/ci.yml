@@ -18,6 +18,9 @@
 # 冒烟的环境变量由 scripts/smoke-load.mjs 自持（端口/PUBLIC_ORIGIN/会话密钥/Casdoor 管理员
 # 凭据/SEED_DEMO 全是脚本内常量，见该文件头注②）——CI 只注入 DATABASE_URL（service 地址，
 # 环境相关、无法内联）。单一事实源在脚本里，改端口不需要动本文件，杜绝两边各写各的漂移。
+#
+# 第五个 job `deploy` 是 CD 触发面，**默认惰性**（未 adopt 前连跑都不跑，见该 job 的注释）；
+# 接入方式与前置决策在 deploy/openship-adopt.md。
 name: ci
 on: { push: { branches: [main] }, pull_request: {} }
 jobs:
@@ -96,3 +99,54 @@ jobs:
       # 无从谈起，故构建是冒烟的前置而非可选步骤（也是「curl 200 ≠ 页面可用」的机检化）
       - run: pnpm --filter @platform/web build
       - run: pnpm exec tsx scripts/smoke-load.mjs
+
+  # CD 触发：四个门禁 job 全绿后，让 openship 按本次 commit 部署（部署本身归 openship）。
+  #
+  # 惰性闸门为什么是 repo variable，而不是「配了 secret 就跑」：
+  #   GitHub 的 job 级 `if` 只放行 github / needs / vars / inputs 四个上下文，**secrets 不在其列**
+  #   （在 if 里引用 secrets 会直接报错）——「有没有配 secret」这个闸门在 job 级根本写不出来。
+  #   vars 在 job 级 if 里可用，而 OPENSHIP_PROJECT_ID 本来就是 adopt 完成后必须人工回填的
+  #   **必填参数**（POST /api/deployments 的 projectId），让它兼任开关就没有「开关开了但参数
+  #   没填」的中间态。未设置该变量时 job 的 if 为假 → 显示为 skipped（工作流整体仍 success），
+  #   不产生任何对控制面的请求，也就不会「每次推 main 都刷一条失败」。
+  # 启用方式（adopt 之后）：gh variable set OPENSHIP_PROJECT_ID --body proj_xxx
+  #                        gh secret  set OPENSHIP_TOKEN
+  deploy:
+    needs: [unit, gates, web, smoke]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && vars.OPENSHIP_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # secret 不能在 job 级 if 里判，但可以在 step 里判：变量配了而 secret 没配属于配置错误，
+      # 应当**响亮失败**（而不是静默跳过——静默跳过会让人以为「已经部署了」）
+      - name: 校验凭据齐备
+        env:
+          OPENSHIP_TOKEN: ${{ secrets.OPENSHIP_TOKEN }}
+        run: |
+          if [ -z "${OPENSHIP_TOKEN}" ]; then
+            echo "::error::repo variable OPENSHIP_PROJECT_ID 已设置，但 secret OPENSHIP_TOKEN 缺失。"
+            echo "adopt 之后需一并配置：gh secret set OPENSHIP_TOKEN --repo $GITHUB_REPOSITORY"
+            exit 1
+          fi
+      - name: 触发 openship 部署（按本 commit 锚定）
+        env:
+          OPENSHIP_TOKEN: ${{ secrets.OPENSHIP_TOKEN }}
+          PROJECT_ID: ${{ vars.OPENSHIP_PROJECT_ID }}
+          # 控制面地址做成变量是为了换环境不改工作流；缺省即公司控制面
+          OPENSHIP_URL: ${{ vars.OPENSHIP_URL || 'https://deploy.hookflow.cn' }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "openship: project=$PROJECT_ID commit=$COMMIT_SHA"
+          # commitSha 是幂等键：同一个 sha 重复触发不会部署出两份不同的东西。
+          # 只发触发、不在 CI 里轮询到 live——构建状态归 openship（deploy/openship-adopt.md 第 7 节）
+          curl -fsS -X POST "${OPENSHIP_URL%/}/api/deployments" \
+            -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"projectId\":\"${PROJECT_ID}\",\"branch\":\"main\",\"commitSha\":\"${COMMIT_SHA}\",\"environment\":\"production\"}" \
+            -o /tmp/openship-deploy.json
+          echo "openship 响应："
+          cat /tmp/openship-deploy.json

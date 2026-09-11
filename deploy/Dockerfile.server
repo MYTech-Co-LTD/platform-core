@@ -1,0 +1,97 @@
+# deploy/Dockerfile.server — 平台底座宿主镜像（M0 Task 22）
+#
+# 构建（**context 必须是仓根**，不是 deploy/）：
+#   docker build -f deploy/Dockerfile.server -t platform-core-server .
+#   # 或经唯一的 compose 入口：docker compose -f deploy/docker-compose.yml build
+#
+# 两阶段：
+#   build   —— 装全量依赖 + `pnpm -r --if-present build`（当前只有 apps/web 有 build 脚本，
+#              产出 apps/web/dist）。
+#   runtime —— 从 build 阶段逐目录取产物。**不写 `COPY . .` 的隐式全集**：每条 COPY 枚举
+#              一个目录并写明理由（gateway 因漏 COPY 新模块 crash loop 三次的教训）。
+#
+# 三条不能想当然重建的目录层级契约（容器里跑挂了先回来对这三条）：
+#   ① app.ts 的静态托管目录按【本文件位置】解析 `../../web/dist`（apps/server/src/ →
+#      apps/web/dist）。apps/ 与 packages/ 的相对层级被打散 → 该目录不存在 → app.ts 只打印
+#      一行 warn「不存在，跳过静态托管」继续启动（/healthz 照绿而登录页白屏）。故冒烟清单
+#      把「容器日志不得出现该 warn」列成了检查项。
+#   ② 装载器按 `process.cwd()/../../modules` 解析模块目录，而 cwd 由 pnpm 脚本决定
+#      （apps/server）——这就是 CMD 必须走 `pnpm --filter @platform/server start` 而不是
+#      直接 `node apps/server/src/index.ts` 的原因。
+#   ③ 模块的权限 upsert / 会话 scopes 都要真连 Casdoor。TENANT_MODE=single 且 PLATFORM_ORG
+#      非空时，Casdoor 在启动期就不可达 → upsertPermission 抛错 → 进程起不来（fail-fast，
+#      设计如此）。容器编排里别把 Casdoor 排在宿主后面。
+
+FROM node:22-alpine AS build
+# corepack 随 node 镜像自带：按根 package.json 的 packageManager（pnpm@11.22.0）解析版本，
+# 不在 Dockerfile 里手写第二份版本号（写死就会与 package.json 漂移；工单系统的
+# `npm i -g pnpm@^11.x` 那条路正是这种漂移面）。
+# COREPACK_HOME 固定到 /opt：默认位置在 $HOME/.cache 下，而运行阶段切了 USER（HOME 变化）
+# ——固定后 shim 在运行期不会因为找不到缓存而重新联网下载。
+ENV COREPACK_HOME=/opt/corepack
+RUN corepack enable
+WORKDIR /app
+
+# ---- 逐目录 COPY（理由见各条）----
+# ① 工作区根清单：pnpm-workspace.yaml 定义 apps/* + packages/* + modules/* 三个 glob，
+#    缺它 pnpm 把本仓当单包，所有 `workspace:*` 依赖解析失败；lockfile 供 --frozen-lockfile；
+#    package.json 提供 packageManager（corepack 的版本源）与根脚本。
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# ② 根 TS 工程：各包 tsconfig.json 一律 extends ./tsconfig.base.json（本阶段最重的一步
+#    web 构建里 `tsc -b` 依赖它）；根 tsconfig.json 是 scripts/ 的 typecheck 工程，与 scripts/ 成套。
+COPY tsconfig.base.json tsconfig.json ./
+# ③ scripts/：**web 构建的硬依赖**——apps/web 的 build 脚本以相对路径调
+#    `node ../../scripts/gen-console-registry.mjs`（console registry 生成），缺目录直接构建失败；
+#    同时它是四个门禁脚本的家（镜像内可复跑门禁排障）。
+COPY scripts ./scripts
+# ④ packages/：@platform/sdk 与 @platform/auth-core 的 main 直指 src/*.ts，node_modules 里
+#    指向这里的是 workspace 符号链接——缺它宿主 import 即崩，且崩在启动期而非请求期。
+COPY packages ./packages
+# ⑤ apps/：server 源码（进程入口）+ web 源码与构建产物。必须与 packages/ 同级原样保留（契约①）。
+COPY apps ./apps
+# ⑥ modules/：装载器扫描仓根 modules/*/manifest.yaml、跑迁移、动态 import index.ts。缺目录
+#    时 readdir 抛错 → 起不来（这是响亮失败，比契约①的静默降级好）。
+COPY modules ./modules
+# ⑦ deploy/：把编排事实源（compose / 本 Dockerfile / 两份 runbook）随镜像带走——运行态里
+#    能读到「这版镜像按什么契约定制」，不必回仓库对 commit。
+COPY deploy ./deploy
+
+# 装依赖与构建合成一层：上面的 COPY 是目录级的，源码任一改动都会让本层缓存失效，拆成两条
+# RUN 并不能省下依赖下载（要真省得用 BuildKit cache mount——那会把「构建必须走 BuildKit」
+# 变成镜像的隐式前提，本镜像不引入该前提）。--frozen-lockfile：lockfile 与 manifest 不一致
+# 时直接失败，绝不在构建期静默改动依赖树。
+RUN pnpm install --frozen-lockfile && pnpm -r --if-present build
+
+# ---- 运行阶段 ----
+FROM node:22-alpine AS runtime
+ENV COREPACK_HOME=/opt/corepack \
+    NODE_ENV=production
+# corepack shim（CMD 用 pnpm 启动；pnpm 本体由下面从 build 阶段拷来的 COREPACK_HOME 提供，
+# 运行期零联网、零版本漂移）
+RUN corepack enable
+WORKDIR /app
+
+COPY --from=build /opt/corepack /opt/corepack
+# 依赖树：pnpm 的 node_modules/.pnpm 是【相对符号链接农场】+ 硬链接，整体 COPY 才保留链接
+# 语义（逐包 COPY 会把这些链接打断成悬空路径）
+COPY --from=build /app/node_modules ./node_modules
+# 以下逐目录与 build 阶段 ①..⑦ 一一对应，理由不复述。注意 dist 只可能出自 build 阶段：
+# .dockerignore 排除了宿主的 **/dist，杜绝「用陈旧产物冒充构建成果」的假绿。
+COPY --from=build /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
+COPY --from=build /app/tsconfig.base.json /app/tsconfig.json ./
+COPY --from=build /app/scripts ./scripts
+COPY --from=build /app/packages ./packages
+COPY --from=build /app/apps ./apps
+COPY --from=build /app/modules ./modules
+COPY --from=build /app/deploy ./deploy
+
+# 非 root 运行（node 镜像自带 uid 1000 的 node 用户）。被 COPY 的文件是 root 拥有但
+# world-readable，宿主进程只读磁盘：tsx 在内存里转译不落盘，pnpm run 也不写 store。
+USER node
+# 端口是文档性的：真正的映射在 compose 的 ports（PORT 可被 env 覆盖，故不在此写死）
+EXPOSE 13000
+# 探活打容器内的 $PORT（compose 注入），不在镜像里固化端口
+HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \
+  CMD wget -qO- "http://127.0.0.1:${PORT:-13000}/healthz" || exit 1
+# 走 pnpm 脚本启动：脚本 cwd = apps/server，是契约①②两个相对路径的前提（见文件头）
+CMD ["pnpm", "--filter", "@platform/server", "start"]
