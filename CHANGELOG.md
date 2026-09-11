@@ -20,9 +20,9 @@
   客户端 IP 维度**（openship edge 当前不转发 `X-Forwarded-For`，按 IP 限速会退化成全局限速；
   多副本场景下各副本各算一份是已知取舍）。桶键按用户名截断到 256（与 `auth.ts` 的
   `MAX_USERNAME_LEN` 同源），键长由限速器自己保证有界，调用方无法靠超长串撑爆内存
-- 【修复】**`platform.audit` 无界增长**：此前既无限速、又每次失败写一行，且表上无 `at` 索引、
-  全仓无清理逻辑，增长速率完全由攻击者决定。补 `002_audit_retention.sql`（`at` 索引 +
-  `platform.prune_audit(days)`），由 openship job 定时调用，默认保留 90 天
+- 【修复】**`platform.audit` 无界增长**：此前既无限速、又**每次登录尝试（成功/失败）都写一行**，
+  且表上无 `at` 索引、全仓无清理逻辑，增长速率完全由攻击者决定。补 `002_audit_retention.sql`
+  （`at` 索引 + `platform.prune_audit(days)`），由 openship job 定时调用，默认保留 90 天
 - 【破坏】**`manifest.api.internal[]` 形状变更**：`{name, scope}` → `{method, path, scope}`。
   旧形状没有 path/method，**无法被任何消费者机械使用**（全仓零消费者、零文档），已按新形状重定义
 - 【破坏】**模块不再手写 `requireScope`**：API 鉴权改由宿主按 manifest 声明施加门卫。
@@ -35,7 +35,9 @@
   恒 403 而无人知晓——同一种病的变种；同 `(method,path)` 重复声明同样被拒（否则门卫二义）
 - 【新增】**匿名探测回归网**（`@platform/sdk/test-util/anonymous-probe`，导出面
   `@platform/sdk/test-util/*`）：对每条已注册路由发匿名请求并返回实测状态码，测的是
-  "门卫真的生效"而非"代码里写了什么"；装载器测试用它锁住"装载出的模块每条路由都不可匿名到达"
+  "门卫真的生效"而非"代码里写了什么"；装载器测试用它锁住"装载出的模块每条路由都不可匿名到达"。
+  冒烟另有**真进程层面**的匿名不可达断言（`scripts/smoke-load.mjs`，发真 HTTP 请求而非进程内
+  调用同一个 app 对象）
 - 【新增】**模块协议文档** `docs/module-protocol.md`：`api.internal` 这个字段此前**死于零文档**
   ——仓里查不到任何一处描述它，于是没人知道它该长什么样、也没人发现它没人消费。本文补齐声明
   写法、装载期核对规则、门卫判定顺序与三条已实证的 Hono 挂载陷阱

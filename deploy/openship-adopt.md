@@ -210,8 +210,11 @@ curl -fsS -X POST "$OPENSHIP_URL/api/deployments/$DEPLOYMENT_ID/rollback" -H "Au
 
 ## audit 保留（`platform.audit` 清理）
 
-登录端点每次失败都会写一行 `platform.audit`。限速器（`apps/server/src/rate-limit.ts`）只把它
-压到**有界速率**，并不改变"会一直长"这件事——所以保留策略必须单独做。
+登录端点**每次登录尝试（成功 / 失败都算）**都会写一行 `platform.audit`——成功路径同样落审计
+（`apps/server/src/routes/auth.ts:121`、`apps/server/src/routes/auth-wecom.ts:272`）。限速器
+（`apps/server/src/rate-limit.ts`）把写入速率压到**有界**：失败路径另有「单账号 5 次/15 分」与
+「租户 300/分」两道，成功路径只计入「租户全部尝试 1000/分」这一道兜底桶。但它并不改变
+"会一直长"这件事——所以保留策略必须单独做。
 
 清理由 **openship job** 定时执行，**应用进程不自己跑**（有副作用的运维动作不该藏在一个 HTTP
 服务里）。函数与索引来自 `apps/server/src/migrations/002_audit_retention.sql`：
@@ -224,7 +227,9 @@ psql "$DATABASE_URL" -c "select platform.prune_audit();"
 - 保留期按需传参：`select platform.prune_audit(180);`
 - job 的建立方式见 openship 面板「Jobs」；建议同时订阅**失败通知**（job 静默失败 = 清理没发生，
   而这件事从应用侧完全看不出来）
-- 删除行数写进 job 日志才有意义：长期恒为 `0` 是正常的（无超期行），长期为负/报错才是问题
+- 删除行数写进 job 日志才有意义：长期恒为 `0` 是正常的（无超期行；`prune_audit` 返回的是
+  `select count(*)`，只会 ≥ 0，**不存在"为负"这种形态**）。真要从日志里追的是 job **报错**
+  ——那才意味着清理没发生
 
 ## 已知陷阱（都是本仓实测或从既有项目教训里抄来的）
 
