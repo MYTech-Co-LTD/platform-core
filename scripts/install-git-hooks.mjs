@@ -64,7 +64,26 @@ if (!existsSync(hooksDir)) {
   process.exit(0)
 }
 
-// 幂等：已经配好就静默退出。
+// ── 补齐执行位：**必须在幂等早退之前** ──────────────────────────
+// git 只在钩子文件带执行位时才运行它；clone / 解包 / 拷贝 / 跳文件系统都可能丢掉执行位。
+// 而「已经指向 .githooks」正是开发机的稳态——若把这段放在早退之后，它在稳态下**永远不执行**，
+// 守卫就从此静默失效（git 不跑钩子且不报错，直推 main 不再被拦）。CI 的「钩子存在且可执行」
+// 只覆盖全新 checkout（执行位来自索引），救不了本机被丢位的旧 checkout。
+// 整段包在 try 里：**"永不阻断安装"是绝对承诺**——连 readdirSync 失败（.githooks 是个
+// 普通文件 = ENOTDIR、或目录不可读 = EACCES）也不许让 install 挂掉。
+try {
+  for (const name of readdirSync(hooksDir)) {
+    try {
+      chmodSync(path.join(hooksDir, name), 0o755)
+    } catch {
+      /* 忽略：单个文件补执行位失败不该让安装失败 */
+    }
+  }
+} catch {
+  /* 忽略：列目录都失败了也不该让安装失败（此时上面的告警已足以提示异常） */
+}
+
+// 幂等：配置已经正确就静默退出（执行位已在上面补齐，故早退不会跳过修复）。
 const current = tryGit(['config', '--get', 'core.hooksPath'])
 if (current === '.githooks') {
   process.exit(0)
@@ -80,21 +99,6 @@ try {
   console.warn(`[install-git-hooks] 设置 core.hooksPath 失败：${detail}`)
   console.warn('[install-git-hooks] 可手动执行：git config core.hooksPath .githooks')
   process.exit(0)
-}
-
-// git 只在钩子文件带执行位时才运行它；clone / 解包 / 拷贝都可能丢掉执行位，
-// 因此这里显式补齐。整段包在 try 里：**"永不阻断安装"是绝对承诺**——连 readdirSync
-// 失败（.githooks 是个普通文件 = ENOTDIR、或目录不可读 = EACCES）也不许让 install 挂掉。
-try {
-  for (const name of readdirSync(hooksDir)) {
-    try {
-      chmodSync(path.join(hooksDir, name), 0o755)
-    } catch {
-      /* 忽略：单个文件补执行位失败不该让安装失败 */
-    }
-  }
-} catch {
-  /* 忽略：列目录都失败了也不该让安装失败（此时上面的告警已足以提示异常） */
 }
 
 // 覆盖了别人已有的自定义 core.hooksPath 时，明确说出来 —— 静默改掉别人的本地配置很讨嫌。
