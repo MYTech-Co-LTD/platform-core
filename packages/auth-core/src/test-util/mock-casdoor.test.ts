@@ -200,11 +200,15 @@ describe('MockCasdoor：权限按 org 分桶（owner= 生效）', () => {
 
 // ---- R4 Task 4 Step 1：get-user 的 id 段数校验对齐真机 ----
 //
-// R3 终审实测真机（sso.hookflow.cn）：`id=/admin`、`id=built-in/`、`id=/` 全回
+// R3 终审 + R4 评审真机实测（sso.hookflow.cn）：`id=/admin`、`id=built-in/`、`id=/` 全回
 // 200 {status:'ok',data:null}——两段（哪怕含空段）一律进查找，查不到就 ok+null；
-// 只有**段数≠2**（`noSlashId`、`built-in/admin/extra`）与**空 id** 才回 wrong token count
-// （上游 `GetOwnerAndNameFromId` 就是 `strings.Split(id,"/")` 后判 len!=2，空串只 split 出 1 段）。
-// 旧 mock 的 `!parts[0] || !parts[1]` 把含空段的两段也判非法 ⇒ 方向与真机相反。
+// **空 id 同样是 ok+null**（R4 评审探针：`?id=`、完全不带 id 形参、裸 `?id=` 三态都回
+// 200 ok+null ⇒ 真机把"空 id"当**查不到人**，不是在形参校验那步报错）；
+// 只有**段数≠2**（`noSlashId`、`built-in/admin/extra`）才回 wrong token count
+// （上游 `GetOwnerAndNameFromId` 就是 `strings.Split(id,"/")` 后判 len!=2）。
+// 旧 mock 的 `!parts[0] || !parts[1]` 把含空段的两段也判非法 ⇒ 方向与真机相反；
+// 而"空 id 走 split 后 length!==2 ⇒ 报错"这一步**旧实现本来就是这个方向**，只是恰好也是错的
+// ——修 Step 1 时若只动 `!parts[0] || !parts[1]`，空 id 这一格仍是错方向（R4 评审 must-fix 1）。
 describe('MockCasdoor get-user：id 段数校验对齐真机', () => {
   async function getUser(id: string): Promise<{ status: string; msg?: string; data?: unknown }> {
     const r = await fetch(`${m.origin}/api/get-user?id=${encodeURIComponent(id)}`, {
@@ -233,9 +237,24 @@ describe('MockCasdoor get-user：id 段数校验对齐真机', () => {
     expect(String(j.msg)).toMatch(/wrong token count/)
   })
 
-  it('空 id（段数 1）仍报 wrong token count——真机空串只 split 出 1 段', async () => {
+  it('★ 负例：空 id ⇒ ok+null（**不是** wrong token count）——真机把"空 id"当查不到人', async () => {
+    // R4 评审真机探针（sso.hookflow.cn）：
+    //   curl -sS -G …/api/get-user --data-urlencode "id="      ⇒ {"status":"ok",…,"data":null}
+    //   curl -sS -G …/api/get-user                            ⇒ 同 200 ok+null
+    //   curl -sS -G …/api/get-user --data-urlencode "id=" (裸 ?id=) ⇒ 同 200 ok+null
+    // 旧断言（本用例的前身）声称"真机空串只 split 出 1 段 ⇒ 报 wrong token count"——**该陈述
+    // 经探针证伪**：方向与真机相反，且它会让正解变红，把分歧焊死进闸门（R3 must-fix 2 的
+    // "替身锁住旧形状"同族）。翻它是 must-fix 1 的**要求**，不是为了让测试变绿。
     const j = await getUser('')
-    expect(j.status).toBe('error')
-    expect(String(j.msg)).toMatch(/wrong token count/)
+    expect(j.status).toBe('ok')
+    expect(j.data).toBeNull()
+  })
+
+  it('裸 query 通道（完全不带 id 形参）同样 ok+null——空 id 与"没传 id"在真机不可区分', async () => {
+    const r = await fetch(`${m.origin}/api/get-user`, { headers: { Cookie: await adminCookie() } })
+    expect(r.status).toBe(200)
+    const j = (await r.json()) as { status: string; data?: unknown }
+    expect(j.status).toBe('ok')
+    expect(j.data).toBeNull()
   })
 })

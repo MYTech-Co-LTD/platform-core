@@ -481,21 +481,29 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     const results = await probeAnonymous(probe)
     const apiRoutes = results.filter((r) => r.path.startsWith('/api/modules/probemod'))
     expect(apiRoutes.length).toBeGreaterThan(0)
-    // R4 补记：mount() 现在还会挂两道**启用闸门中间件**（精确 base + 子树 base/*）。它们在
-    // router.routes 里同样表现为 ALL 条目，被 probeAnonymous 一并探测（探测网刻意不跳过 ALL，
-    // 见 anonymous-probe.ts）——但它们是**中间件**、不是端点：无租户上下文时不在闸门职责内，
+    // R4 补记：mount() 现在还会挂一条**启用闸门中间件**（`base/*`）。它在 router.routes 里
+    // 同样表现为 ALL 条目，被 probeAnonymous 一并探测（探测网刻意不跳过 ALL，见
+    // anonymous-probe.ts）——但它是**中间件**、不是端点：无租户上下文时不在闸门职责内，
     // 放行给后续层，最终由「没有对应路由」的 404 收尾。故按两类分开断言：端点那类**强度不变**，
     // 另把闸门那类的行为一并钉住（放行 ≠ 自己造响应）。
     // 已知放松：本网因此对「闸门被误注册成端点」不再敏感——那不是安全洞（中间件不会 200），
     // 且闸门自身的语义由下方 R4 用例（停用 404 / 启用 200）逐条覆盖。
-    const gatePaths = new Set(['/api/modules/probemod', '/api/modules/probemod/*'])
-    const endpoints = apiRoutes.filter((r) => !gatePaths.has(r.path))
-    const gates = apiRoutes.filter((r) => gatePaths.has(r.path))
+    //
+    // 二分过滤条件（R4 评审 S6）：闸门恒是**中间件** ⇒ 恒记 `method === 'ALL'`，路径之外必须
+    // **同时**按 method 判别。旧写法只按路径 —— 若某个模块把自己的端点声明在**自身 base**
+    // 上（`app.get('/api/modules/<id>')` 这类，base 本就是它的相对根），那条真端点会被误判成
+    // 闸门、从"匿名一律 401"的断言里被排除掉 ⇒ 一个 fixture 耦合的盲区。加上 method 条件后，
+    // 只有「路径命中 AND 是 ALL」才算闸门。
+    const isGate = (r: { path: string; method: string }) =>
+      r.path === '/api/modules/probemod/*' && r.method === 'ALL'
+    const endpoints = apiRoutes.filter((r) => !isGate(r))
+    const gates = apiRoutes.filter(isGate)
     // ① 端点（含模块自己声明的 ALL 端点，R1 的教训）：匿名一律 401
     expect(endpoints.length).toBeGreaterThan(0)
     expect(endpoints.every((r) => r.status === 401)).toBe(true)
-    // ② 闸门中间件：两条都在（精确 + 子树），且都不是匿名可达的（无租户 ⇒ 放行 ⇒ 无路由 ⇒ 404）
-    expect(gates).toHaveLength(2)
+    // ② 闸门中间件：只此一条（`base/*` 已覆盖裸 base —— R4 评审 S4 删掉了冗余的精确那条），
+    //    且匿名不可达（无租户 ⇒ 放行 ⇒ 无路由 ⇒ 404）
+    expect(gates).toHaveLength(1)
     expect(gates.every((r) => r.status === 404)).toBe(true)
   })
 
@@ -754,10 +762,11 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     // 形状与宿主 /api 未命中兜底一致（app.ts 的 notFound）
     expect(await sub.json()).toEqual({ error: 'NOT_FOUND' })
 
-    // ② 精确路径：/api/modules/<id> 本身也必须被闸住（闸门要同时挂 base 与 base+'/*'）。
-    //    判别依据是**响应体**：闸门回 JSON {error:'NOT_FOUND'}，而"根本没挂闸门"时这里落进
-    //    Hono 默认 notFound ⇒ 纯文本 '404 Not Found'（res.json() 会抛）——故 JSON 断言即证明
-    //    请求确实经过了闸门，而不是恰好也没路由。
+    // ② 精确路径：/api/modules/<id> 本身也必须被闸住——**只靠 `base/*` 这一条**（R4 评审 S4
+    //    删掉了冗余的精确 `use(base)`）。判别依据是**响应体**：闸门回 JSON {error:'NOT_FOUND'}，
+    //    而"根本没挂闸门"时这里落进 Hono 默认 notFound ⇒ 纯文本 '404 Not Found'（res.json()
+    //    会抛）——故 JSON 断言即证明请求确实经过了闸门，而不是恰好也没路由。这条用例因此同时
+    //    是「`/*` 已覆盖裸 base」的活证据：精确那条被删掉后它照旧绿。
     const exact = await app.request('/api/modules/disabledmod')
     expect(exact.status).toBe(404)
     expect(await exact.json()).toEqual({ error: 'NOT_FOUND' })
@@ -793,6 +802,42 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     asBeta.use('*', injectIdentity(['permode:view']))
     runtime.mount(asBeta)
     expect((await asBeta.request('/api/modules/permode/ping')).status).toBe(404)
+  })
+
+  // ---- R4 评审 S5（协调者裁定）：匿名请求不落闸门，直接放行给模块自身门卫 ----
+
+  it('★ 匿名（有租户、无 identity）：停用模块与启用模块**响应逐字相同** ⇒ 停用不可枚举', async () => {
+    // 闸门挂在模块自身门卫**之前**：若匿名也走闸门，就等于按"模块是否停用"给出两种响应，
+    // 而匿名请求本就拿不到任何模块数据（门卫一律 401）——那是一次白费的 DB 往返 + 一条
+    // 可枚举信号。放行后两条路径都落到门卫的 401，**逐字相同**：
+    const tenant = await acmeTenant()
+    const disabled = await loadWithTenantState('anondisabled', tenant, false)
+    const enabled = await loadWithTenantState('anonenabled', tenant, null)
+
+    const anonApp = (runtime: Awaited<ReturnType<typeof loadModules>>) => {
+      const a = new Hono<TestEnv>()
+      a.use('*', injectTenant(tenant)) // 只注入租户，**不注入 identity**（匿名）
+      runtime.mount(a)
+      return a
+    }
+    const a1 = await anonApp(disabled).request('/api/modules/anondisabled/ping')
+    const a2 = await anonApp(enabled).request('/api/modules/anonenabled/ping')
+    expect(a1.status).toBe(401) // 停用模块：匿名拿到的是门卫的 401，**不是**闸门的 404
+    expect(a2.status).toBe(401)
+    expect(await a1.json()).toEqual({ error: 'UNAUTHENTICATED' })
+    expect(await a2.json()).toEqual({ error: 'UNAUTHENTICATED' })
+  })
+
+  it('对照：已登录用户仍拿 404（匿名放行没有把停用闸门一起放掉）', async () => {
+    const tenant = await acmeTenant()
+    const runtime = await loadWithTenantState('autheddisabled', tenant, false)
+    const authed = new Hono<TestEnv>()
+    authed.use('*', injectTenant(tenant))
+    authed.use('*', injectIdentity(['autheddisabled:view']))
+    runtime.mount(authed)
+    const res = await authed.request('/api/modules/autheddisabled/ping')
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'NOT_FOUND' })
   })
 
   it('闸门只可能更严不会更宽：显式停用后 404，显式改回 enabled=true 后恢复 200', async () => {

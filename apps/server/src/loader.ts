@@ -330,15 +330,16 @@ export async function loadModules(
         const base = moduleApiBasePath(m.manifest.id)
 
         // ⑥.5 启用闸门（M1 闭债 R4）：停用 = **该租户看不到这个模块** ⇒ 404，不是 403
-        //      （403 会泄露"模块存在但被停用"——停用状态本身就成了可枚举信息）。
+        //      （404 与「这个模块不存在」同形 ⇒ 停用状态本身不可枚举；403 才泄露"存在但被停用"）。
         //      **必须 use 在 app.route 之前**：Hono 里 handler 先注册、use 后注册时该中间件
         //      **永不执行**（已实证，见 docs/module-protocol.md「实现注意」第 2 条）——顺序错了
         //      就是一个"代码里有闸门、运行时永不生效"的静默洞。
-        //      两条都挂（hono 4.13.7 实测）：无通配的 use(base) 只匹配 base 那条路径本身，
-        //      **不**匹配 /base/ping；use(base + '/*') 则同时命中 base 与 /base/ping（`/*` 吞空段）。
-        //      即子树那条已覆盖 base，精确那条是**冗余但便宜**的防御——对裸 base 的请求会依次
-        //      过两道闸门（两次 enabledFor），而裸 base 本就没有端点，多这一次查询无关紧要。
-        //      实测反例：把这两行 `use` 挪到 `app.route` 之后 ⇒ 闸门**根本不执行**，请求 200
+        //      **只挂 `/*` 一条**（R4 评审 S4）：实测 `use(base + '/*')` 同时命中 `/base`、
+        //      `/base/`、`/base/ping`（`/*` 吞空段）——即子树那条**已经覆盖裸 base**。旧写法
+        //      另挂一条精确 `use(base)`，看着像"多一层保险"，实际只让裸 base 的请求**跑两次
+        //      enabledFor（两次 DB 往返）**，还把冗余钉进了测试（loader.test.ts 曾断言闸门必须
+        //      2 条）。精确那条已删。
+        //      实测反例：把这条 `use` 挪到 `app.route` 之后 ⇒ 闸门**根本不执行**，请求 200
         //      直达模块（正是「代码里有闸门、运行时永不生效」的静默洞）。
         //      代价：每请求一次 enabledFor 查询（+1 次 DB 往返）。**刻意不做缓存**——「停用后
         //      多久生效」不该有一个隐式窗口；将来若测出瓶颈要加 TTL，必须同时把窗口语义写进
@@ -348,6 +349,14 @@ export async function loadModules(
           // 无租户上下文（未过租户中间件）不在本闸门职责内，放行给后续层。真实链路上这道
           // 中间件先于一切业务路由，未命中 Host 早已 404/抛错 ⇒ 闸门见到的请求必带租户。
           if (!tenant) return next()
+          // **无 identity（匿名）同样直接放行**（R4 评审 S5，协调者裁定）。两个理由：
+          //   ① 闸门挂在模块**自身门卫**之前，匿名请求反正会被门卫挡下（401），到这里查库
+          //      纯属白费——改动前匿名命中模块 API 是 **0 次 DB**，加了闸门变成每请求 1 次，
+          //      而模块 API **没有独立限流** ⇒ 匿名流量可被用来放大 DB 压力。
+          //   ② 不构成信息泄露，**反而更**不可枚举：匿名打**停用**模块与打**启用**模块，落点
+          //      都是模块门卫的 401 UNAUTHENTICATED（两条响应逐字相同），停用与否无从区分；
+          //      而已登录用户拿到的仍是 404，语义不变。loader.test.ts 里有这条的用例。
+          if (!c.get('identity')) return next()
           const enabled = await enabledForImpl(tenant.id)
           if (!enabled.has(m.manifest.id)) {
             // 形状与宿主 /api 未命中兜底一致（app.ts 的 app.notFound）
@@ -355,7 +364,6 @@ export async function loadModules(
           }
           await next()
         }
-        app.use(base, gate)
         app.use(base + '/*', gate)
 
         app.route(base, m.router)

@@ -371,8 +371,8 @@ git commit -m "fix(loader): 停用模块的 API 在请求期返 404（enabledFor
 
 - [ ] **Step 1: mock 的 id 校验对齐真机（含空段的**两段** id 真机也接受）**
 
-R3 终审实测真机：`id=/admin`、`id=built-in/`、`id=/` 全回 `200 {status:'ok',data:null}`；只有**段数≠2**（`noSlashId`、`built-in/admin/extra`）与**空 id** 才回 `wrong token count`。
-⇒ mock 现在把含空段的两段也判非法，**方向与真机相反**。
+R3 终审 + R4 评审实测真机：`id=/admin`、`id=built-in/`、`id=/` 全回 `200 {status:'ok',data:null}`；**空 id 同样是 `200 {status:'ok',data:null}`**（R4 评审探针：`--data-urlencode "id="` / 不带 id 形参 / 裸 `?id=` 三态同形）；只有**段数≠2**（`noSlashId`、`built-in/admin/extra`）才回 `wrong token count`。
+⇒ mock 现在把含空段的两段也判非法，**方向与真机相反**；且空 id 在旧实现里走 split ⇒ `['']` ⇒ `len!==2` ⇒ 报错，**也是相反**（只改 `!parts[0] || !parts[1]` 会漏掉这一格，因为它在旧实现里本就是 error、看起来"没变过"——R4 评审 must-fix 1）。
 
 改 `mock-casdoor.ts` 的 get-user 全形校验为：
 

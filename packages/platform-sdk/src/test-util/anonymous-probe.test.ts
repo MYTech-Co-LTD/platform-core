@@ -70,7 +70,20 @@ describe('declaredScopeGate：未声明 = 不可达', () => {
     const anon = await appWith(null).request('/ping', { method: 'HEAD' })
     expect(anon.status).toBe(401) // 匿名仍 401（身份门在 scope 之前）
     const ok = await appWith(['demo:view']).request('/ping', { method: 'HEAD' })
-    expect(ok.status).not.toBe(403) // 关键：不得再是 403
+    // 断言收紧到 200（R4 评审 S8）：旧写法 `expect(ok.status).not.toBe(403)` **过弱**——
+    // 它只排除 403，门卫放行但下游 404/500 同样能通过它，"HEAD 归一成 GET 并一路走到
+    // handler"这条**假设本身**就没被钉住。独立探针实测该请求确为 200，故按实测收紧。
+    expect(ok.status).toBe(200)
+  })
+
+  it('★ HEAD 打【参数化】路径同样放行（/notes/42 ⇒ 200）——文件顶部那条载荷性假设的另一半', async () => {
+    // 本文件顶部声明要钉住「门卫靠 c.req.routePath 命中路径模式」这条假设。只测 /ping 时，
+    // 钉住的仅是**字面**路径的 HEAD 归一；HEAD 与**带参数**的路由匹配（`:id`）是同一假设的
+    // 另一半，且更容易被"改用通配挂载 / Hono 内部实现变化"打坏 ⇒ 一并钉住（R4 评审 S8）。
+    const anon = await appWith(null).request('/notes/42', { method: 'HEAD' })
+    expect(anon.status).toBe(401) // 匿名仍先撞身份门
+    const ok = await appWith(['demo:note']).request('/notes/42', { method: 'HEAD' })
+    expect(ok.status).toBe(200)
   })
 
   it('★ 负例：归一不得变成"放行一切 HEAD"——只声明了 POST 的路径上 HEAD 仍 403', async () => {

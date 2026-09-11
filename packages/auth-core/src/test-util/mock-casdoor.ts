@@ -7,8 +7,9 @@
 //   ① API 响应不回真 secret —— 用户记录里的 password 只留 mock 内部比对，
 //     任何 JSON 响应（login / get-user / get-permissions）都不含 password 字段。
 //   ② 选择器形参走 query 风格 —— buy-product 类端点同款陷阱：
-//     get-user 只认 id=<org>/<name> 两段形（owner=/name= 或**段数≠2**——含空 id——会被真实
-//     Casdoor 报 wrong token count；**含空段的两段照进查找** ⇒ 查不到人回 ok+null），
+//     get-user 只认 id=<org>/<name> 两段形（owner=/name= 或**段数≠2** 会被真实 Casdoor 报
+//     wrong token count；**空 id 与含空段的两段都照进查找** ⇒ 查不到人回 ok+null——
+//     R4 评审只读探针：`?id=`、不带 id、裸 `?id=` 三态同形全是 ok+null），
 //     **且 org 段是命中条件的一部分**——真机实测 `id=shanhai/admin`
 //     ⇒ ok+null，尽管 `built-in/admin` 确实存在（用户按 owner 归属；评审 S3）。
 //     且**命中判定排在会话门禁之前**（真机先查用户、后判会话）：查无此人（含不属于该 org）
@@ -244,8 +245,18 @@ export class MockCasdoor {
     // 纪律 ②：id=<org>/<name> 全形 query 形参。owner 参与定位——跨 org 同名权限互不干扰
     // （旧实现只按 name 找：两个 org 各有一枚 demo:view 时会改错那一枚，而 get-permissions
     //   已按 org 分桶 ⇒ 表现为"改了 A 租户的码、B 租户的授权凭空消失"这种极难归因的症状）
+    // 段数判别与 get-user **同一套**（R4 评审 S9）：同一个 `id=` 形参不该有两套规则——
+    // 真机两个端点共用上游 `GetOwnerAndNameFromId`（`strings.Split(id,'/')` 后判 len!=2）。
+    // 旧实现在这里多判了 `!segs[0] || !segs[1]`，把含空段的两段判非法，而 get-user 已改成
+    // 照进查找 ⇒ 同一个 id 在两条端点上一个判非法、一个照查，是"两套判别"的典型形状。
+    //
+    // 空 id 的落点说明（与 get-user 的 ok+null **不矛盾**）：更新是**变更**操作，没有
+    // "ok+null" 这个对应形状可用——空 id split 出 ['']、查不到任何权限 ⇒ 落到下面的
+    // `permission not found`。两条端点因此在空 id 上**同为 error 分支**（客户端可见差异只
+    // 剩 msg 文案），方向一致；真机该端点的空 id 行为**未经探针验证**（R4 评审只验了
+    // get-user），故这里只保证"与 get-user 同一条规则、不另立一套"。
     const segs = (c.req.query('id') ?? '').split('/')
-    if (segs.length !== 2 || !segs[0] || !segs[1]) {
+    if (segs.length !== 2) {
       return c.json({ status: 'error', msg: 'wrong token count, expect <org>/<name>' })
     }
     const p = this.#perms.find((x) => x.owner === segs[0] && x.name === segs[1])
@@ -324,11 +335,20 @@ export class MockCasdoor {
     })
     // GET /api/get-user?id=<org>/<name> —— 纪律 ②：单数端点只认 id= 全形，严格两段
     .get('/api/get-user', (c) => {
-      const parts = (c.req.query('id') ?? '').split('/')
-      // 真机规则（sso.hookflow.cn 实测，R3 终审）：**段数≠2** 才报 wrong token count——上游
-      // GetOwnerAndNameFromId 就是 strings.Split(id,'/') 后判 len!=2，**空 id 只 split 出 1 段**。
-      // 两段（哪怕含空段）一律进查找：`id=/admin`、`id=built-in/`、`id=/` 都查不到人 ⇒ ok+null。
-      // 旧实现多判了 `!parts[0] || !parts[1]`，把含空段的两段也判非法 ⇒ 方向与真机相反。
+      const rawId = c.req.query('id') ?? ''
+      // 真机规则（sso.hookflow.cn 实测，R3 终审 + R4 评审复验）：
+      //   ① **空 id ⇒ ok+null**（当"查不到人"，不报错）。R4 评审只读探针三态同形：
+      //      `--data-urlencode "id="`／完全不传 id 形参／裸 `?id=` 全回 200 {status:'ok',data:null}。
+      //   ② **段数≠2** 才报 wrong token count——上游 GetOwnerAndNameFromId 是
+      //      strings.Split(id,'/') 后判 len!=2（`id=built-in/admin/extra` 就是这条路）。
+      //   ③ 两段（哪怕含空段）一律进查找：`id=/admin`、`id=built-in/`、`id=/` 都查不到人 ⇒ ok+null。
+      // 旧实现两处都错：多判的 `!parts[0] || !parts[1]` 把含空段的两段判非法——方向与真机相反；
+      // 且空 id 走 split ⇒ [''], len!==2 ⇒ 报错，**也是与真机相反**（R4 评审 must-fix 1：只动
+      // 前一格会把这一格漏掉，因为它在旧实现里本就是 error，看起来"没变过"）。
+      // 方向后果真实：空 id 会被替身表现为"上游报错"（客户端降级用旧 scopes），真机表现为
+      // "用户不存在"（清 cookie 登出）——两个相反的分支。
+      if (rawId === '') return c.json({ status: 'ok', data: null })
+      const parts = rawId.split('/')
       if (parts.length !== 2) {
         return c.json({ status: 'error', msg: 'wrong token count, expect <org>/<name>' })
       }
