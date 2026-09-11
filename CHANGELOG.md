@@ -11,6 +11,36 @@
 
 ## [Unreleased]
 
+### Fixed - M1 闭债 R1：multi 形态的模块权限供给 + 冒烟失明（issue #3 第一、二节）
+
+- 【修复】**multi 形态下除 `PLATFORM_ORG` 所指租户外，其余租户模块 API 全线 403**：权限码是
+  平台级能力，但 Casdoor 的权限记录按 org（`owner=`）存储，而**写侧只往一个 org 写、读侧按
+  租户 org 读**，两侧不同源。原实现 `app.ts` 拿 `config.platformOrg` 当供给 org——而
+  `config.ts` 自己写明「multi 模式恒为空串」，属自我违背；multi 冒烟又传空串 ⇒ 整条 upsert
+  被 warn 跳过。改为**装载器遍历 `platform.tenant` 的每个 `casdoor_org` 各建一套码**
+  （权威租户清单来自 DB，`PLATFORM_ORG` 自本轮起只服务 single 的租户解析）
+- 【修复】**启动次序：`seedDemo` 必须先于 `loadModules`**。改成从 DB 取租户 org 后，原次序
+  （装载 ② → 种子 ③）在全新库上会**一个权限码都建不出来**，要等下次重启才供给。这是本次
+  改动**引入**的缺陷（`tenant_module.module_id` 无外键，seed 不依赖装载器，重排安全）
+- 【修复】**测试门禁对上述故障结构性失明**（三条成因逐条对治）：① `MockCasdoor` 的
+  `get-permissions` 此前**忽略 `owner=`**（自陈"mock 单 org"）⇒ 改为按 org 分桶，且 owner
+  缺失直接 `status:error`，绝不给"忽略形参回全部"的旧形状留活口；② 冒烟把 `p-demo-view`/
+  `p-demo-note` **预种**进 mock ⇒ 装载器查重必命中、`add-permission` 全程零调用 ⇒ 撤掉预种，
+  改由冒烟以**租户管理员身份走真 HTTP**（`POST /api/update-permission`）授权，使「装载器建码」
+  与「管理员授权」两件事各自可见；③ 冒烟的 multi 只驱动 `acme.test`、**从不驱动 beta** ⇒
+  补驱动 `beta.test` 并断言其 403（码在、授权不在 ⇒ 403 是授权在拦，而非路由不存在）
+- 【新增】**multi 冒烟把 `PLATFORM_ORG` 设为诱饵值 `NOT-ACME-ORG`**（不指向任何租户）——
+  即终审复评员手工探针的形状：修复前这条**因错误原因通过**，修复后必须因正确原因通过。
+  另加一条 **mutation 红检**留档：把供给查询改成 `limit 1`（复现原始缺陷形状）时，冒烟红在
+  「beta org 内同样建出两条码」而 acme 仍绿——证明新断言咬住的正是这个 bug
+- 【优化】**跳过供给时的 warn 说清后果**：从"跳过权限 upsert"改为点名哪些租户 org 的用户
+  将全部 403——只报"少做了一步"会让 403 的归因成本全部留给排障者
+- 【新增】**装载器导出 `provisionModulePermissions`**：未来的租户创建入口直接复用它，
+  避免「新增租户只能靠重启」成为死路（本轮不造租户创建 API）
+- 【优化】**`deploy/openship-adopt.md` 同步**：决策表/`TENANT_MODE` 行/已知陷阱 2 原写
+  「`multi` 跳过启动期权限 upsert」已不成立；陷阱 2 的适用条件从「`single` + `PLATFORM_ORG`
+  非空」扩展为**两种模式**，并写明未配 admin 凭据时不触发（代价是各租户全线 403）
+
 ### Added - 分支保护软替代：本地拦 + 事后可见（free 私有仓无服务端分支保护）
 
 - 【新增】**四层提交纪律机制**。起因：本仓是私有仓 + org plan=free，GitHub 的 branch protection
