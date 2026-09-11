@@ -124,12 +124,22 @@ runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactory })
 | `casdoorFor` 缺省 | warn 列出受影响的租户 org，跳过供给 |
 | 某租户 org 的 upsert 抛错 | 原样上抛 ⇒ 宿主启动 fail-fast（与 `single` 今日行为同构） |
 
-### 3.5 运维面变化（⚠ 用户已确认接受）
+### 3.5 运维面变化（⚠ 用户已确认接受；**方向经复评反转，见下方更正**）
 
 **multi 模式从此也在启动期连 Casdoor。** 此前 multi 完全跳过 upsert、启动期不碰 Casdoor。
 
-- `CASDOOR_ADMIN_USER` / `_PWD` **缺** ⇒ warn + 跳过供给（**保住今天 multi 的启动行为**，不新增硬依赖）
+- ~~`CASDOOR_ADMIN_USER` / `_PWD` **缺** ⇒ warn + 跳过供给（**保住今天 multi 的启动行为**）~~
 - 凭据**在** ⇒ 真供给；Casdoor 不可达 ⇒ **fail-fast 起不来**
+
+**更正（R2 复评后，用户裁决）**：上面那条被划掉的写法援引了一个**不存在的前提**——
+「未配凭据时服务可启动，只是各租户用户 403，属于『只登录不管理』的合法形态」。实际是
+**缺凭据时没有任何人能拿到会话**：登录签发前必调 `getUser` + `getPermissions`，两者都走
+admin 会话（`routes/auth.ts`）⇒ 登录一律 502，模块 API 根本到不了。
+
+**故 `CASDOOR_ADMIN_USER` / `_PWD` 改为 config 层必填、启动期 fail-fast。** 理由：缺凭据的
+实例起得来也 100% 无用，让它启动只会制造"healthz 绿而无事可用"的假绿——正是本仓已在防的
+模式（对照「静态托管静默降级 ⇒ 页面白屏但 `/healthz` 照绿」）。`config.ts` 里
+「管理端点凭据…可空——纯登录场景不需要」那句错话（本 spec 之前就存在）一并更正。
 
 后果：共享 SSO 抖动不再只影响 single 客户，multi 的生产容器也会跟着反复重启
 （`restart: unless-stopped` 下）。这与 `single` 的既有取舍同构，但是**多租户部署的新失败面**。
@@ -137,8 +147,9 @@ runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactory })
 文档同步（`deploy/openship-adopt.md`）：
 
 - `:128` —— 「`multi` 时 … 且**跳过**启动期权限 upsert」已不成立，改写为「按各租户 org 逐个供给」
+- `:133` —— 原写「**只有** upsertPermission（模块权限码）用它」，更正为"登录也要它"
 - `:216`（已知陷阱 2）—— 适用条件从「`single` + `PLATFORM_ORG` 非空时」扩展为**两种模式**，
-  并写明「缺 admin 凭据则跳过、不触发该陷阱」
+  并写明凭据缺失在配置装配阶段就报错
 
 ## 4. 冒烟失明（issue 第二节三条成因，逐条对治）
 

@@ -85,21 +85,14 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
 
   // ③ 模块装载（overrides.modules 注入时跳过）。权限码供给交给工厂：装载器自己按
   //    platform.tenant 的各租户 org 逐个 upsert —— multi 下每个租户各有一套码，
-  //    写侧与读侧（session-middleware 的 casdoor(p.org)）因此同源
-  //
-  //    供给需要 admin 凭据（upsertPermission 走管理端点）。**未配则不传给装载器**：
-  //    它会 warn 点名哪些租户 org 的用户将全线 403，而服务照常启动——「只登录不管理」
-  //    是合法部署形态（config 里这两个键本就是可选的）。不这样收窄，装载器会因
-  //    CasdoorClient 抛「adminUser/adminPwd not configured」而让进程起不来
+  //    写侧与读侧（session-middleware 的 casdoor(p.org)）因此同源。
+  //    这里无条件传工厂：admin 凭据在 config 层已是必填，装载器拿不到工厂的情形
+  //    在生产上不存在（该可选参数只服务测试与注入式用法）
   let runtime: ModulesRuntime
   if (overrides.modules) {
     runtime = overrides.modules
   } else {
-    const canProvision = Boolean(config.casdoor.adminUser && config.casdoor.adminPwd)
-    runtime = await loadModules(modulesDir, {
-      pool,
-      casdoorFor: canProvision ? casdoorFactory : undefined,
-    })
+    runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactory })
   }
 
   const app = new Hono<TenantEnv & SessionEnv>()

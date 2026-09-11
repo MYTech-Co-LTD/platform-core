@@ -130,7 +130,7 @@ curl -fsS -X PATCH "$OPENSHIP_URL/api/projects/$PROJECT_ID/env" \
 | `PLATFORM_SESSION_SECRET` | ≥32 字符随机串 | 会话签名密钥，**泄漏即等于会话可伪造**；换值会让所有会话失效 |
 | `CASDOOR_URL` | `https://sso.hookflow.cn` | 共享 SSO |
 | `CASDOOR_CLIENT_ID` / `_SECRET` | 该 application 的凭据 | 走 OIDC code 换 token |
-| `CASDOOR_ADMIN_USER` / `_PWD` | Casdoor 管理员 | **只有 upsertPermission（模块权限码）用它**，但它是启动期必需项 |
+| `CASDOOR_ADMIN_USER` / `_PWD` | Casdoor 管理员 | **启动期必需**。它**不只**服务模块权限码供给：登录签发前必调 `getUser` + `getPermissions`，两者都走 admin 会话 —— 缺凭据时没有人能拿到会话（登录一律 502） |
 | `CASDOOR_APPLICATION` | `signupApplication` | 账密登录要它，否则真实 Casdoor 报 Unauthorized operation |
 | `PUBLIC_ORIGIN` | `https://<域名>` | 企微回调 `redirect_uri` 由它拼，必须与最终访问域名逐字一致 |
 | `SEED_DEMO` | **不要设** | 只在 dev/冒烟置 `1`；生产设了会种出 acme/beta 两个演示租户 |
@@ -213,12 +213,12 @@ curl -fsS -X POST "$OPENSHIP_URL/api/deployments/$DEPLOYMENT_ID/rollback" -H "Au
 1. **静态托管静默降级**：`app.ts` 的 `webDistDir` 按【`apps/server/src/app.ts` 自己的位置】解析
    `../../web/dist`。镜像里 `apps/` 与 `packages/` 的层级被打散 → 该目录不存在 → 只打印一行
    warn 就继续启动（`/healthz` 照绿、页面白屏）。容器日志里搜 `跳过静态托管` 是唯一的现场证据。
-2. **启动期连不上 Casdoor 就起不来**（设计如此，fail-fast）：配置了 `CASDOOR_ADMIN_USER`/`_PWD`
-   时，装载器会按 `platform.tenant` 的每个租户 org 调 `upsertPermission`——**`single` 与 `multi`
-   都一样**（M1 起 `multi` 不再跳过供给）。**别把 Casdoor 排在平台容器后面部署**；共享 SSO
-   短暂不可用时，`restart: unless-stopped` 会让容器反复重启直到它恢复。
-   未配 admin 凭据时不触发本陷阱：装载器只打一行 warn 并跳过供给（但那意味着各租户用户
-   没有权限码、模块 API 全线 403）。
+2. **启动期连不上 Casdoor 就起不来**（设计如此，fail-fast）：装载器会按 `platform.tenant` 的
+   每个租户 org 调 `upsertPermission`——**`single` 与 `multi` 都一样**（M1 起 `multi` 不再跳过
+   供给）。**别把 Casdoor 排在平台容器后面部署**；共享 SSO 短暂不可用时，`restart: unless-stopped`
+   会让容器反复重启直到它恢复。
+   另：`CASDOOR_ADMIN_USER`/`_PWD` 在 M1 起是**必填**，缺了在配置装配阶段就报错——不要试图
+   靠"不配凭据"来跳过启动期供给：登录本身也要 admin 会话，缺了谁都拿不到会话。
 3. **境内构建可能很慢**：镜像构建要现拉 pnpm（corepack）与整棵依赖树。本机（macOS + 已缓存）
    构建约 2 分钟；生产机如果直连 npm 官方源被限速，可参照 `data-platform-scaffold` 里
    `core/gateway/Dockerfile` 的 `ARG NPM_REGISTRY` 办法加国内镜像源（本 Dockerfile 目前

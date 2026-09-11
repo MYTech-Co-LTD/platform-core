@@ -163,14 +163,16 @@ export async function loadModules(
       console.warn('[modules] platform.tenant 无租户，权限码未供给任何 org（先跑租户 seed）')
     }
   } else if (allPermissions.length > 0) {
-    // warn 必须说清后果：不是「少做了一步」，而是这些租户的用户会全线 403
+    // warn 说清后果，但**不替调用方断言 HTTP 状态**：这些租户的用户拿不到任何模块权限是
+    // 确定的；至于它表现为 403 还是"根本登录不了"，取决于宿主有没有配 admin 凭据（登录
+    // 本身就要管理端点）——装载器无从知道，写死 403 就是在许一个自己证明不了的承诺
     const { rows } = await deps.pool.query<{ casdoor_org: string }>(
       'select distinct casdoor_org from platform.tenant order by casdoor_org',
     )
     console.warn(
-      '[modules] 无 CasdoorClient 工厂，跳过权限码供给：'
+      '[modules] 未提供 CasdoorClient 工厂，跳过权限码供给：'
         + `${allPermissions.map((p) => p.code).join(', ')} → 租户 org `
-        + `[${rows.map((r) => r.casdoor_org).join(', ') || '(无租户)'}] 的用户将全部 403`,
+        + `[${rows.map((r) => r.casdoor_org).join(', ') || '(无租户)'}]（这些租户的用户将拿不到任何模块权限）`,
     )
   }
 

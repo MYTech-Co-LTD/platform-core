@@ -45,7 +45,7 @@
   避免「新增租户只能靠重启」成为死路（本轮不造租户创建 API）
 - 【优化】**`deploy/openship-adopt.md` 同步**：决策表/`TENANT_MODE` 行/已知陷阱 2 原写
   「`multi` 跳过启动期权限 upsert」已不成立；陷阱 2 的适用条件从「`single` + `PLATFORM_ORG`
-  非空」扩展为**两种模式**，并写明未配 admin 凭据时不触发（代价是各租户全线 403）
+  非空」扩展为**两种模式**
 
 ### Fixed - M1 闭债 R1 评审修复轮（异种评审 2 名 → 4 条必须改 + 3 条关键建议改）
 
@@ -54,26 +54,59 @@
   桶而租户 org 是 `acme` ⇒ 装载器另建一枚 `users` 为空的码 ⇒ admin1 `scopes` 恒空。
   **`docs/m0-smoke-checklist.md` 的 C1 复现路径正押在这里**，而 CI 不跑 `dev:stack` ⇒ 无门禁咬住。
   已实测：修复后 `scopes` 含 `demo:view/demo:note`、`ping` 200、对照组 viewer1 仍 403
-- 【修复】**「未配 admin 凭据 ⇒ 只 warn 跳过供给」此前只在文档里存在，代码里走不到**：`app.ts`
-  无条件把工厂传给装载器 ⇒ `CasdoorClient` 抛 `adminUser/adminPwd not configured` ⇒ 进程起不来。
-  而 `config.ts` 把这两个键设为可选、`.env.example` 出厂即空、demo 模块确实声明了 2 条权限。
-  **`multi` 是本次引入的回归**（改前传 `undefined` ⇒ warn 后继续启动）。现按 spec §3.5 收窄：
-  未配凭据则不把工厂交给装载器（工厂本身仍服务会话/登录路由）
-- 【修复】**冒烟的 `addPermissionCalls.length >= 2` 抓不住它自称要抓的缺陷**：demo 恰好 2 条码、
-  租户恰好 2 个 ⇒ 正常态 4 次、单 org 缺陷态 2 次，`>= 2` 在两者下**都为真**；注释里「修复前
-  该调用数恒为 0」只对"整条 upsert 被跳过"那种形态成立。改为断言 org **集合**等于 `{acme,beta}`
-  ——实测在该缺陷态下红为 `实际 [acme]`，即真的能区分
+- 【修复】**未配 admin 凭据时的行为自相矛盾**：`app.ts` 无条件把工厂传给装载器 ⇒
+  `CasdoorClient` 抛 `adminUser/adminPwd not configured` ⇒ 进程起不来；而 `config.ts` 把这两个
+  键设为可选、`.env.example` 出厂即空、demo 模块确实声明了 2 条权限。**`multi` 是本次引入的
+  回归**（改前传 `undefined` ⇒ warn 后继续启动）。
+  首次修法是"未配凭据则不把工厂交给装载器（只 warn 跳过）"，但该修法援引的前提
+  「『只登录不管理』是合法部署形态」**被复评证伪**（登录签发前必调 getUser + getPermissions，
+  两者都走 admin 会话 ⇒ 缺凭据时无人能拿到会话、登录一律 502）。故最终改为
+  **凭据在 config 层必填、启动期 fail-fast**——见下方评审修复轮 R2
+- 【修复】**冒烟的 `addPermissionCalls.length >= 2` 抓得住"恒为 0"那种形状，抓不住 `limit 1`
+  这种形状**：demo 恰好 2 条码、租户恰好 2 个 ⇒ 正常态 4 次、单 org 缺陷态 2 次，`>= 2` 在
+  两者下**都为真**（它声明要抓的"0 次"确实抓得住，我初稿写成"抓不住它自称要抓的缺陷"是
+  说大了，复评指正后收敛）。改为断言 org **集合**等于 `{acme,beta}`——实测在该缺陷态下
+  红为 `实际 [acme]`，即真的能区分
 - 【优化】**诱饵 `PLATFORM_ORG` 断言的效力收敛**：它排除的只是「供给 org 退回取
   `config.platformOrg`」这一种回退，不是"写读同源"的完整证明（同源由 beta 码存在 + beta
   scopes 缺失两条合起来证）。spec §4.4 与代码注释同步改写，并说明它与 beta 断言在该形状下冗余
 - 【优化】**权限码供给改为每 org 只拉一次 `get-permissions`**（`CasdoorClient.upsertPermissions`
   批量接口）：单码版每码全量拉一次，租户数 × 码数 是乘法开销，租户扩张下启动期很贵
 - 【修复】**并发启动竞态**：`upsertPermission` 是 check-then-add，滚动发布/多副本下两实例可能
-  同时判"码不存在"并双双 add，输的那个拿到 `duplicate permission name` ⇒ 启动失败。现把 add
-  路径上的 duplicate 视为成功（码此刻确实存在）。本轮的供给次数从「码数」扩到「租户数×码数」，
-  竞态窗口同步放大，故一并处理
+  同时判"码不存在"并双双 add，输的那个报错 ⇒ 启动失败。本轮的供给次数从「码数」扩到
+  「租户数×码数」，竞态窗口同步放大，故一并处理——**具体做法见 R2**（首版实现有缺陷）
 - 【修复】**`config.ts` 的 `platformOrg` 注释与代码不符**（原写「multi 模式恒为空串」，实际
   `optional() ?? ''` 并不强制清空）——上一轮的论证曾引用该注释，已改为事实描述
+
+### Fixed - M1 闭债 R1 评审修复轮 R2（第 2 轮异种评审 2 名 → 3 条必须改）
+
+R1 的修复本身被复评出了三个问题——其中两个是**我在修复轮里新引入的**：
+
+- 【修复】**批量供给的"占位记录"会抹掉既有授权**：R1 为了在同批内去重，把刚建的码拼一条
+  `{owner, name, resources}` 塞进本地列表；该记录缺 `users/roles/model`，被 `#upsertOne`
+  当成真记录消费（`existing?.users ?? []`）⇒ 同批内同一 code 出现第二次时走 update 把服务端
+  的 `users` 清空。旧单码版每次重取服务端、拿到的是**真**记录，**这是 R1 引入的语义退化**。
+  改为用 `Set` 去重，不伪造记录（实测：旧写法同批两次会发 2 次写请求，新写法 1 次）
+- 【修复】**duplicate 容忍把"响亮的失败"换成了"静默的永久故障"**：R1 无条件容忍 add 路径上的
+  duplicate，但 add 被拒有两种来源且**不重读无法区分**——①并发实例刚建了同一个码（容忍正确）；
+  ②已有一条 `name === code` 但 `resources` 不含它的记录（**码此刻并不在**）。②时装载器报成功、
+  日志无一行、码永远不供给 ⇒ 该租户全站 403 且无从归因。**修复前这是启动期硬崩**——即 R1 为治
+  并发竞态，亲手把本 PR 全程在批判的「静默失明」引了回来。改为**不按错误文案判断**：add 失败后
+  重读 `get-permissions`，码确实在 `resources` 里 ⇒ 视为成功，不在 ⇒ 原样抛。顺带消掉了
+  「`/duplicate/i` 正则源自 MockCasdoor 自造文案」的循环论证（该正则在真机上有退化成凭空崩溃
+  重启的风险）
+- 【修复】**「未配 admin 凭据」的后果被写错，且被钉进了测试**：R1 的注释/warn/CHANGELOG/runbook
+  均称后果是"各租户全线 403"，实测是**全员登录 502**（登录签发前必调 getUser + getPermissions，
+  两者都走 admin 会话 ⇒ 缺凭据时无人能拿到会话）。R1 据此写下的「『只登录不管理』是合法部署
+  形态」**不成立**——缺凭据的实例起得来也毫无用处。**故把 spec §3.5 的方向反转**：
+  `CASDOOR_ADMIN_USER`/`_PWD` 改为 config 层**必填**（启动期 fail-fast），而不是"起得来但全员
+  用不了"。`config.ts` 里「纯登录场景不需要」那句错话（**R1 之前就存在**）一并更正
+- 【新增】**`upsertPermissions` 的三条直接测试**：该接口 R1 引入时**零直接测试**，这正是上面
+  两个缺陷没被任何红检咬住的原因。三条分别覆盖"同批重复 code 只发一次写请求"、"撞码时抛错
+  而非静默洗掉授权"、"并发竞态下码已存在则视为成功且不洗对方 users"。红检留档：还原 R1 写法后
+  分别红为 `expected 2 to be 1` 与 `promise resolved "undefined" instead of rejecting`
+- 【优化】**装载器的 warn 不再替调用方断言 HTTP 状态**：原写"用户将全部 403"——装载器无从知道
+  宿主有没有配凭据（那决定用户能否登录），写死状态码是在许一个自己证明不了的承诺
 - 【新增】**`apps/server/src/app.test.ts`**：宿主装配的唯一直接测试，锁「凭据闸门」这一对行为
   （未配凭据 ⇒ 装配成功 + warn 点名租户；配了凭据 ⇒ 确实去供给）。红检留档：把闸门还原成
   无条件传工厂时，红为 `CasdoorClient: adminUser/adminPwd not configured`

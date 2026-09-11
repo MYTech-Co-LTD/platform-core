@@ -106,13 +106,19 @@ export class CasdoorClient {
   async upsertPermissions(items: ReadonlyArray<{ code: string; name: string }>): Promise<void> {
     if (items.length === 0) return
     const existingList = await this.#permissionsRaw()
+    // 同批内去重：同一 code 出现第二次时目标状态已达成，直接跳过。
+    // 【不要】用"把刚建的码拼一条假记录塞进 existingList"来实现去重——那种占位记录缺
+    // users/roles/model 字段，会被 #upsertOne 当成真记录消费（existing?.users ?? []），
+    // 于是走 update 把服务端的 users 清空。旧单码版每次都重取服务端、拿到的是真记录，
+    // 那样写是语义退化
+    const seen = new Set<string>()
     for (const { code, name } of items) {
+      if (seen.has(code)) continue
+      seen.add(code)
       const existing = existingList.find(
         (p) => Array.isArray(p.resources) && (p.resources as string[]).includes(code),
       )
       await this.#upsertOne(code, name, existing)
-      // add 成功后把该码并入本地视图：同一批里重复出现同一 code 时不至于重复 add
-      if (!existing) existingList.push({ owner: this.#o.org, name: code, resources: [code] })
     }
   }
 
@@ -137,13 +143,21 @@ export class CasdoorClient {
       ? `update-permission?id=${encodeURIComponent(`${this.#o.org}/${String(existing.name)}`)}`
       : 'add-permission'
     // add/update 都是 POST（admin-api.js casdoorPost 形状；真实 Casdoor update-* 无 PUT 端点）
-    const j = await this.#adminJson(path, { method: 'POST', body })
-    if (j.status && j.status !== 'ok') {
-      // 并发启动竞态：滚动发布/多副本下两实例可能同时判"码不存在"并双双 add，输的那个
-      // 拿到 duplicate —— 码此刻确实存在（对方刚建），故视为成功。否则会凭空多一轮
-      // 崩溃重启（本 PR 把 upsert 次数从「码数」扩到「租户数×码数」，竞态窗口同步放大）
-      if (!existing && /duplicate/i.test(String(j.msg ?? ''))) return
-      throw new Error(`casdoor: ${j.msg || 'error'}`)
+    try {
+      const j = await this.#adminJson(path, { method: 'POST', body })
+      if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    } catch (err) {
+      if (existing) throw err // update 路径的失败照抛，无竞态可言
+      // add 路径失败：滚动发布/多副本下两实例可能同时判"码不存在"并双双 add，输的那个
+      // 报错。**不按错误文案判断**（文案随 Casdoor 版本/分支变，正则匹配等于把正确性
+      // 押在一条 mock 自造的字符串上），改为重读验证目标状态是否已达成：码确实在
+      // resources 里 ⇒ 供给目的已达成，视为成功；不在 ⇒ 原样抛（真失败必须响）
+      const now = await this.#permissionsRaw().catch(() => null)
+      const arrived = now?.some(
+        (p) => Array.isArray(p.resources) && (p.resources as string[]).includes(code),
+      )
+      if (arrived) return
+      throw err
     }
   }
 

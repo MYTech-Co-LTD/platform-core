@@ -13,10 +13,3 @@ export function getPool(cfg: { databaseUrl: string }): Pool {
   }
   return pool
 }
-
-/** 关掉全部缓存池并清空缓存（测试收尾用；生产不调——进程退出即释放） */
-export async function closePools(): Promise<void> {
-  const all = [...pools.values()]
-  pools.clear()
-  await Promise.all(all.map((p) => p.end()))
-}
