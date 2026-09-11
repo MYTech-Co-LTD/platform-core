@@ -8,7 +8,11 @@
 //     任何 JSON 响应（login / get-user / get-permissions）都不含 password 字段。
 //   ② 选择器形参走 query 风格 —— buy-product 类端点同款陷阱：
 //     get-user 只认 id=<org>/<name> 全形（owner=/name= 或无斜杠会被真实 Casdoor 报
-//     wrong token count）、get-permissions 认 owner=、update-permission 认 id=。
+//     wrong token count），**且 org 段是命中条件的一部分**——真机实测 `id=shanhai/admin`
+//     ⇒ ok+null，尽管 `built-in/admin` 确实存在（用户按 owner 归属；评审 S3）。
+//     且**命中判定排在会话门禁之前**（真机先查用户、后判会话）：查无此人（含不属于该 org）
+//     一律 ok+null，连"未登录"都轮不到；用户存在而会话失效才是 200+status:error（评审 S1）。
+//     get-permissions 认 owner=、update-permission 认 id=。
 //     **权限按 owner 分桶**：get-permissions 只回该 org 的、add 按 body.owner 归桶、
 //     update 按 (owner,name) 定位。曾经的 "mock 单 org、忽略 owner=" 是 M0 门禁对
 //     multi 权限供给结构性失明的原因（issue #3 第二节成因①），不得回退。
@@ -27,6 +31,12 @@ import type { Context } from 'hono'
 export interface MockCasdoorUser {
   name: string
   password: string
+  /**
+   * 用户归属的 org。**真机语义的一部分**：`get-user?id=<org>/<name>` 只命中属于该 org 的
+   * 用户——真机实测 `get-user?id=shanhai/admin` ⇒ `ok+null`，尽管 `built-in/admin` 确实存在
+   * ⇒ org 段是命中条件的一部分（评审 S3）。缺省 = MOCK_ORG（旧用例的单 org 世界）。
+   */
+  owner?: string
   roles?: string[]
   isAdmin?: boolean
   displayName?: string
@@ -55,6 +65,8 @@ const MOCK_ORG = 'mock-org'
 interface StoredUser extends MockCasdoorUser {
   roles: string[]
   isAdmin: boolean
+  /** 已解析的归属 org（缺省已填成 MOCK_ORG / built-in），get-user 的命中条件之一 */
+  owner: string
 }
 
 export class MockCasdoor {
@@ -64,6 +76,9 @@ export class MockCasdoor {
   #oidcCodes = new Map<string, string>() // authorization code → 用户名（单次即焚）
   #addPermissionCalls: Array<{ owner: string; name: string }> = []
   #tokenFault: 'off' | 'http502' | 'html200' = 'off'
+  #getUserFault: 'off' | 'error' | 'errorOnce' = 'off'
+  #httpAuthFault: 'off' | 'unauthorized401' | 'unauthorized401Once' = 'off'
+  #adminLoginCount = 0
   #server: ReturnType<typeof serve> | null = null
   #port = 0
   #lastLoginApplication = ''
@@ -72,11 +87,14 @@ export class MockCasdoor {
     // 内置 admin：真实 Casdoor 永远有 built-in admin（/api/login 管理会话用它登录）。
     // 默认口令 pw 与测试种子一致；种子里给了名为 admin 的用户则尊重种子。
     const seeded = opts.users ?? []
+    // 内置 admin 归属 **built-in** org（真机实测：`get-user?id=built-in/admin` 是存在的那个，
+    // `shanhai/admin` 回 ok+null）——不标 owner 会让它落进 MOCK_ORG，与真机形状不符
     const builtInAdmin: MockCasdoorUser[] = !seeded.some((u) => u.name === 'admin')
-      ? [{ name: 'admin', password: 'pw', roles: [] }]
+      ? [{ name: 'admin', password: 'pw', roles: [], owner: 'built-in' }]
       : []
     this.#users = [...builtInAdmin, ...seeded].map((u) => ({
       ...u,
+      owner: u.owner ?? MOCK_ORG,
       roles: u.roles ?? [],
       isAdmin: u.isAdmin ?? u.name === 'admin',
     }))
@@ -103,6 +121,27 @@ export class MockCasdoor {
 
   get port(): number { return this.#port }
   get origin(): string { return `http://127.0.0.1:${this.#port}` }
+
+  /** get-user 故障注入：'error' 持续、'errorOnce' 只一次（用于验证 admin 会话自愈） */
+  setGetUserFault(mode: 'off' | 'error' | 'errorOnce'): void {
+    this.#getUserFault = mode
+  }
+
+  /**
+   * 令管理端点回 **HTTP 401**。⚠️ 这是**真机不产生的形状**（真机一律 200 + status:error），
+   * 只能显式注入——用来单独钉死客户端 `#adminRequest` 的「401 ⇒ 重取会话一次」防御分支。
+   * **绝不要**把它设成默认的会话失效形状：那正是"替身锁住旧形状"（评审 must-fix 2）。
+   * 'unauthorized401Once' 只生效一次（等价于"被反代插了一层 401，会话本身仍在"）。
+   */
+  setHttpFault(mode: 'off' | 'unauthorized401' | 'unauthorized401Once'): void {
+    this.#httpAuthFault = mode
+  }
+
+  /** admin 登录次数——"自愈确实重登了一次"的唯一机检证据 */
+  get adminLoginCalls(): number {
+    return this.#adminLoginCount
+  }
+
   /** 最近一次 /api/login 收到的 application 形参（测试观测口；不含密码，纪律①） */
   get lastLoginApplication(): string { return this.#lastLoginApplication }
 
@@ -160,12 +199,12 @@ export class MockCasdoor {
     })
   }
 
-  /** 吊销全部服务端会话（冒烟/测试用来钉「401 → 重登一次重试」语义） */
+  /** 吊销全部服务端会话（冒烟/测试用来钉「会话失效 → 自愈重登」语义；真机形状是 200+status:error） */
   expireSessions(): void {
     this.#sessions.clear()
   }
 
-  /** 有效且非匿名的 admin 会话（管理端点门禁；无效 → 401） */
+  /** 有效且非匿名的 admin 会话（管理端点门禁；无效 → #unauthorized） */
   #isAdminSession(c: Context): boolean {
     const m = /casdoor_session_id=([^;]+)/.exec(c.req.header('cookie') ?? '')
     const s = m ? this.#sessions.get(m[1]!) : undefined
@@ -175,8 +214,16 @@ export class MockCasdoor {
   }
 
   #unauthorized(c: Context) {
-    // 与真实 Casdoor 的 "Unauthorized operation" 文案对齐，但用 401 状态码钉死客户端重试契约
-    return c.json({ status: 'error', msg: 'Unauthorized operation' }, 401)
+    // 真机形状（sso.hookflow.cn / 本机 curl 实测，无凭据）：会话失效 ⇒ **HTTP 200** +
+    // {status:'error', msg:'Unauthorized operation'}，**一条 401 都没有**。
+    // 旧 mock 在这里回 401，与真机不符 ⇒ 客户端 `#adminRequest` 的 401 重试在门禁里看着是活的、
+    // 在真机上却是死码，而"替身锁住旧形状"让同类回归持续不可见（评审 must-fix 2）。
+    // 需要机检 401 防御契约时用 setHttpFault('unauthorized401') **显式注入**——那才是它该有的位置。
+    if (this.#httpAuthFault !== 'off') {
+      if (this.#httpAuthFault === 'unauthorized401Once') this.#httpAuthFault = 'off'
+      return c.json({ status: 'error', msg: 'Unauthorized operation' }, 401)
+    }
+    return c.json({ status: 'error', msg: 'Unauthorized operation' })
   }
 
   #updatePermission = async (c: Context) => {
@@ -206,6 +253,13 @@ export class MockCasdoor {
   #app = new Hono()
     // POST /api/login —— 纪律②修订+③：凭据走 JSON body（query 兼容读仅防旧脚本）；
     // 失败 200+{"status":"error"} 且照发匿名 cookie
+    //
+    // ⚠️ **已知替身拓扑落差（评审 S3）：本端点只按 name+password 查，application 只被记进
+    //    #lastLoginApplication 供断言，不参与命中。** 真机是按 application 定位 org 的，而平台
+    //    全租户共用同一个 CASDOOR_APPLICATION（apps/server/src/app.ts）⇒ "acme 的用户登 beta
+    //    租户"在真机上很可能于**登录步**就失败，而不是像替身这样"登录成功、再靠 get-user 按
+    //    org 查无此人"落进 502。smoke-load.mjs 的跨 org 502 断言因此是**前提依赖**的，那里有
+    //    完整标注；把 mock 改成按 application 分 org 前，先复核那条断言。
     .post('/api/login', async (c) => {
       const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
       const username = typeof b.username === 'string' && b.username ? b.username : (c.req.query('username') ?? '')
@@ -217,7 +271,11 @@ export class MockCasdoor {
       // 纪律 ③：登录失败也发 session cookie（匿名会话）——缓存端必须校验 body 才认
       c.header('Set-Cookie', `casdoor_session_id=${sid}; Path=/; HttpOnly`)
       if (!user) return c.json({ status: 'error', msg: '用户名或密码错误' })
-      return c.json({ status: 'ok', data: `${MOCK_ORG}/${user.name}` })
+      // 校验成功之后才计数（只数"真登上了"的）；admin 判定复用本文件的既有口径
+      // （构造器把 built-in admin 标成 isAdmin），不另造一套
+      if (user.isAdmin) this.#adminLoginCount++
+      // data = <owner>/<name>（真机形状：org 段是**用户自己的归属 org**，不是请求方租户）
+      return c.json({ status: 'ok', data: `${user.owner}/${user.name}` })
     })
     // POST /api/login/oauth/access_token —— 旧仓 sso-shell.js authorizationCodeToken 生产形状：
     // x-www-form-urlencoded，grant_type/client_id/client_secret/code/redirect_uri 全在 body；
@@ -253,19 +311,37 @@ export class MockCasdoor {
     })
     // GET /api/get-user?id=<org>/<name> —— 纪律 ②：单数端点只认 id= 全形，严格两段
     .get('/api/get-user', (c) => {
-      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
       const parts = (c.req.query('id') ?? '').split('/')
       if (parts.length !== 2 || !parts[0] || !parts[1]) {
         // 真实 Casdoor GetOwnerAndNameFromId 同款拒绝：非 <org>/<name> 全形不合法
         return c.json({ status: 'error', msg: 'wrong token count, expect <org>/<name>' })
       }
-      const user = this.#users.find((u) => u.name === parts[1])
-      if (!user) return c.json({ status: 'error', msg: 'user not found' })
+      // **按 (owner, name) 命中**：org 段是真机命中条件的一部分（实测 `id=shanhai/admin`
+      // ⇒ ok+null，尽管 built-in/admin 存在）。旧实现只按 name 命中 ⇒ "跨 org 同名用户被
+      // 误命中"这类缺陷在门禁里结构性看不见（评审 S3）。
+      const user = this.#users.find((u) => u.owner === parts[0] && u.name === parts[1])
+      // 真机（sso.hookflow.cn 实测）：用户不存在（含**不属于该 org**）⇒ HTTP 200 +
+      // {status:'ok', data:null}，**不是** status:error。旧 mock 回 error 与真机不符，正是
+      // "error 被折叠成 null"这个缺陷在测试里结构性看不见的原因（M1 闭债 R3）。
+      //
+      // **命中判定排在会话门禁之前**（评审 S1）：真机是**先查用户、后判会话**——无凭据时
+      // `id=built-in/admin`（存在）⇒ error `Please login first`，而 `id=built-in/nosuchuser`
+      // ／`id=shanhai/*`／`id=woke/*`／`id=customerb/*`（查无此人）一律 ok+null，压根走不到
+      // 会话检查那一步。旧的"先判会话"序把这条分歧盖住："admin 会话死掉 + 用户已删"在门禁里
+      // 只降级、看不出与真机不同（真机那种组合照回 ok+null）。
+      // 改动前先读本文件头注的 mock 三纪律。
+      if (!user) return c.json({ status: 'ok', data: null })
+      // 用户查得到才过会话门：门的语义是"你能不能看这个用户"，不是"这个用户存不存在"。
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      if (this.#getUserFault === 'error' || this.#getUserFault === 'errorOnce') {
+        if (this.#getUserFault === 'errorOnce') this.#getUserFault = 'off'
+        return c.json({ status: 'error', msg: 'Please login first' })
+      }
       // 纪律 ①：绝不回 password
       return c.json({
         status: 'ok',
         data: {
-          owner: MOCK_ORG,
+          owner: user.owner,
           name: user.name,
           displayName: user.displayName ?? user.name,
           email: user.email ?? '',

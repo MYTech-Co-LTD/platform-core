@@ -3,9 +3,10 @@ import { CasdoorClient } from './casdoor-client'
 import { MockCasdoor } from './test-util/mock-casdoor'
 
 let m: MockCasdoor
-// owner 必须与下面 client 的 org 一致：权限按 org 分桶后，种到 mock-org 的码在
-// org:'acme' 的 client 眼里是不存在的（这正是 mock 分桶语义生效的证明）
-beforeAll(async () => { m = new MockCasdoor({ users: [{ name: 'admin1', password: 'pw', roles: ['ops'] }],
+// owner 必须与下面 client 的 org 一致，**两处都要**：权限按 org 分桶（种到 mock-org 的码在
+// org:'acme' 的 client 眼里不存在），而用户按 (org,name) 命中（种成 MOCK_ORG 的 admin1 在
+// `get-user?id=acme/admin1` 下**不命中**——真机实测 shanhai/admin ⇒ ok+null，评审 S3）
+beforeAll(async () => { m = new MockCasdoor({ users: [{ name: 'admin1', password: 'pw', roles: ['ops'], owner: 'acme' }],
   perms: [{ owner: 'acme', users: ['admin1'], resources: ['demo:view'] }] }); await m.start() })
 afterAll(async () => { await m.stop() })
 
@@ -51,7 +52,7 @@ describe('CasdoorClient 语义钉死（C2）', () => {
     expect(ok.status).toBe(200)
     const jok = await ok.json()
     expect(jok.status).toBe('ok')
-    expect(jok.data).toBe('mock-org/admin1')
+    expect(jok.data).toBe('acme/admin1') // <owner>/<name>：org 段是用户自己的归属 org
 
     const bad = await fetch(`${m.origin}/api/login`, {
       method: 'POST',
@@ -71,11 +72,29 @@ describe('CasdoorClient 语义钉死（C2）', () => {
     expect(u).not.toHaveProperty('password')
   })
 
-  it('admin 会话失效（401）自动重登一次并重试', async () => {
+  it('admin 会话失效（真机形状：HTTP 200 + status:error）自动重登一次并重试', async () => {
     const c = new CasdoorClient({ origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
     expect((await c.getUser('admin1')).name).toBe('admin1') // 首次：登录 + 缓存 cookie
-    m.expireSessions() // 服务端吊销全部会话 → 下一次管理调用 401
-    expect((await c.getUser('admin1')).name).toBe('admin1') // 401 → 重登 → 重试成功
+    const before = m.adminLoginCalls
+    m.expireSessions() // 服务端吊销全部会话 ⇒ 真机把它回成 200+status:error（**不是 401**）
+    expect((await c.getUser('admin1')).name).toBe('admin1') // 响应体 error → 重登 → 重试成功
+    expect(m.adminLoginCalls).toBe(before + 1)
+  })
+
+  it('HTTP 401（真机不产生此形状；显式注入）仍触发「重取会话一次」的防御分支', async () => {
+    // 401 分支保留是刻意的：它仍是合法的防御面（被反代/网关插一层 401）。但它**不是**
+    // 会话失效的主要路径——真机从不产生 401 ⇒ 只能显式注入来机检它（评审 must-fix 2）。
+    const c = new CasdoorClient({ origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
+    expect((await c.getUser('admin1')).name).toBe('admin1')
+    const before = m.adminLoginCalls
+    m.expireSessions()
+    m.setHttpFault('unauthorized401Once') // 只插一次：等价于"反代插了个 401，会话本身仍在"
+    try {
+      expect((await c.getUser('admin1')).name).toBe('admin1') // 401 → 重登 → 重试成功
+      expect(m.adminLoginCalls).toBe(before + 1)
+    } finally {
+      m.setHttpFault('off')
+    }
   })
 
   it('admin 凭据错误时抛错（不吞异常）', async () => {
@@ -230,5 +249,129 @@ describe('upsertPermissions 批量语义', () => {
 
     await expect(c.upsertPermission('race:code', '竞态')).resolves.toBeUndefined()
     expect(m.permissionsIn('acme').find((p) => p.name === 'race:code')?.users).toEqual(['someone'])
+  })
+})
+
+// ---- getUser：「错误」≠「不存在」（M1 闭债 R3）----
+//
+// 真机（sso.hookflow.cn 实测）把"用户不存在"回成 200+{status:'ok',data:null}，把一堆与
+// "不存在"无关的情形（admin 会话失效 / id 非两段 / org 不存在 / DB 出错）回成 status:error。
+// 把 error 折叠成 null 会让调用方误判 ⇒ 会话中间件清 cookie（静默登出，issue #3 第三节）。
+
+describe('getUser：错误 ≠ 不存在', () => {
+  /** 与 casdoor-client.test.ts 既有装配同形状的最小 client 工厂 */
+  const clientFor = (m: MockCasdoor, org: string): CasdoorClient => new CasdoorClient({
+    origin: m.origin, clientId: 'test-client', clientSecret: '', org,
+    adminUser: 'admin', adminPwd: 'pw',
+  })
+
+  it('★ 负例：未知用户 ⇒ null', async () => {
+    const m = new MockCasdoor({ users: [] })
+    await m.start()
+    try {
+      expect(await clientFor(m, 'mock-org').getUser('nobody')).toBeNull()
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ 负例：status:error ⇒ 抛错，绝不返回 null（旧实现把它当"用户不存在"）', async () => {
+    const m = new MockCasdoor({ users: [{ name: 'alice', password: 'pw' }] })
+    await m.start()
+    try {
+      const c = clientFor(m, 'mock-org')
+      m.setGetUserFault('error') // 模拟 admin 会话失效 / 上游内部错
+      await expect(c.getUser('alice')).rejects.toThrow(/get-user/)
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ admin 会话失效后可自愈：首次 error ⇒ 强制重登并重试成功', async () => {
+    const m = new MockCasdoor({ users: [{ name: 'alice', password: 'pw' }] })
+    await m.start()
+    try {
+      const c = clientFor(m, 'mock-org')
+      // 预热一次：把 admin cookie 缓存进 client。**计划原文在 client 构造后直接取 before，
+      // 但首次调用本身就要登一次（缓存未命中）⇒ 断言 before+1 会实测成 before+2。**
+      // 自愈用例要钉的是"故障多登了一次"，故必须先有已缓存的会话，计数差才有意义。
+      expect((await c.getUser('alice'))?.name).toBe('alice')
+      const before = m.adminLoginCalls
+      m.setGetUserFault('errorOnce') // 只错一次：等价于"缓存里的 admin cookie 已失效"
+      const u = await c.getUser('alice')
+      expect(u?.name).toBe('alice')              // 重试后拿到正确结果
+      expect(m.adminLoginCalls).toBe(before + 1) // 且确实重登了一次
+    } finally {
+      await m.stop()
+    }
+  })
+
+  // ---- S1：重登放大的冷却闸（评审实测：持续 error 下 3 次失败 getUser = 3 次额外登录；
+  //      8 个并发失败 getUser = 8 次登录；且**非会话类**错误也照样触发重登）----
+  //
+  // 无死循环（重试严格一次，有界），但高错误率/持续故障下会在**共享 SSO** 上把登录压力
+  // 按请求数放大。冷却闸把"每请求一次重登"压成"每冷却窗最多一次"。
+
+  it('★ 负例：持续 error 下重登被冷却闸住（旧实现：5 次失败 = 5 次额外登录）', async () => {
+    const m = new MockCasdoor({ users: [{ name: 'alice', password: 'pw' }] })
+    await m.start()
+    try {
+      const c = clientFor(m, 'mock-org')
+      expect((await c.getUser('alice'))?.name).toBe('alice') // 预热：缓存一个有效 admin 会话
+      const before = m.adminLoginCalls
+      m.setGetUserFault('error') // 持续故障（不是"会话刚失效"那一次）
+      for (let i = 0; i < 5; i++) await expect(c.getUser('alice')).rejects.toThrow(/get-user/)
+      expect(m.adminLoginCalls).toBe(before + 1)
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('冷却闸闸的是"窗口"，不是"只重登一次"的闩（reloginCooldownMs:0 ⇒ 每次都重登）', async () => {
+    const m = new MockCasdoor({ users: [{ name: 'alice', password: 'pw' }] })
+    await m.start()
+    try {
+      const c = new CasdoorClient({
+        origin: m.origin, clientId: 'test-client', clientSecret: '', org: 'mock-org',
+        adminUser: 'admin', adminPwd: 'pw',
+        reloginCooldownMs: 0, // 关闭冷却 ⇒ 退化成旧口径（每请求一次重登）
+      })
+      expect((await c.getUser('alice'))?.name).toBe('alice')
+      const before = m.adminLoginCalls
+      m.setGetUserFault('error')
+      for (let i = 0; i < 3; i++) await expect(c.getUser('alice')).rejects.toThrow(/get-user/)
+      expect(m.adminLoginCalls).toBe(before + 3)
+    } finally {
+      await m.stop()
+    }
+  })
+
+  // 上一条（cooldownMs:0）只证"不是闩"，**没证"窗口会随时间重开"**：一条"每客户端只重登
+  // 一次"的闩、或把冷却按次数计，照样能过它。这里用**小正数冷却**并真的等过窗口 ⇒ 窗口外
+  // 的下一次失败必须再允许一次重登。（评审 S2：注释写了"窗口过后会再报"，就得有断言钉住。）
+  it('★ 负例：冷却窗口随时间重开（小正数冷却，等过窗口后第 2 次重登出现）', async () => {
+    const COOLDOWN_MS = 250 // 远大于一次本地 mock 往返，远小于测试可接受的等待
+    const m = new MockCasdoor({ users: [{ name: 'alice', password: 'pw' }] })
+    await m.start()
+    try {
+      const c = new CasdoorClient({
+        origin: m.origin, clientId: 'test-client', clientSecret: '', org: 'mock-org',
+        adminUser: 'admin', adminPwd: 'pw',
+        reloginCooldownMs: COOLDOWN_MS,
+      })
+      expect((await c.getUser('alice'))?.name).toBe('alice') // 预热：缓存一个有效 admin 会话
+      const before = m.adminLoginCalls
+      m.setGetUserFault('error')
+      // 窗口内：连续两次失败只许重登一次（冷却生效）
+      await expect(c.getUser('alice')).rejects.toThrow(/get-user/)
+      await expect(c.getUser('alice')).rejects.toThrow(/get-user/)
+      expect(m.adminLoginCalls).toBe(before + 1)
+      await new Promise((r) => setTimeout(r, COOLDOWN_MS + 100)) // 等过冷却窗口
+      await expect(c.getUser('alice')).rejects.toThrow(/get-user/)
+      // 窗口外的那次必须再重登一次——"只重登一次"的闩/按次数计在这里必红
+      expect(m.adminLoginCalls).toBe(before + 2)
+    } finally {
+      await m.stop()
+    }
   })
 })

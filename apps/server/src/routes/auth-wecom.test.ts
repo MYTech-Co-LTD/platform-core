@@ -33,8 +33,9 @@ const CALLBACK = `${PUBLIC_ORIGIN}/api/platform/auth/wecom/callback`
 // Casdoor name，woke 语义 wo 开头）；两人同挂 ops 角色 + ticket:view 直挂
 const mock = new MockCasdoor({
   users: [
-    { name: 'alice', password: 'pw', roles: ['ops'] },
-    { name: 'wo_alice', password: 'pw', roles: ['ops'] },
+    // owner 与租户 org 一致：用户按 (org,name) 命中（评审 S3，同 auth.test.ts）
+    { name: 'alice', password: 'pw', roles: ['ops'], owner: 'acme' },
+    { name: 'wo_alice', password: 'pw', roles: ['ops'], owner: 'acme' },
   ],
   perms: [
     // owner 必须与租户 org 一致（同 auth.test.ts）：权限按 org 分桶后，不标 owner 的码

@@ -3,7 +3,7 @@
 // 真 PG（本地 docker platform-pg，同 tenant.test.ts 约定）+ MockCasdoor（真实 HTTP）：
 // 未提供 DATABASE_URL 时整体跳过。覆盖简报 ①-⑦ + 三条安全硬语义：
 // 过期自检（Task 6 契约）/ 跨租户 cookie 不认 / Casdoor 故障降级与用户不存在清会话。
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Pool } from 'pg'
 import { Hono } from 'hono'
 import { testClient } from 'hono/testing'
@@ -28,8 +28,10 @@ const dbUrl = process.env.DATABASE_URL
 const SECRET = 'test-session-secret-0123456789abcdef' // ≥32 字符，测试专用
 
 // MockCasdoor 种子：alice 直挂 ticket:view + 经 ops 角色挂 ticket:admin
+// owner 必须与租户 org 一致：用户按 (org,name) 命中后，种成 MOCK_ORG 的 alice 在
+// get-user?id=acme/alice 下**不命中**（真机实测 shanhai/admin ⇒ ok+null，评审 S3）
 const mock = new MockCasdoor({
-  users: [{ name: 'alice', password: 'pw', roles: ['ops'], displayName: 'Alice' }],
+  users: [{ name: 'alice', password: 'pw', roles: ['ops'], displayName: 'Alice', owner: 'acme' }],
   perms: [
     // owner 必须与租户 org 一致（host acme.test → tenant.casdoor_org='acme'）：
     // 权限按 org 分桶后，不标 owner 的码落在 MOCK_ORG 桶，org='acme' 的 client 看不到
@@ -56,10 +58,11 @@ function makeApp(
   pool: Pool,
   casdoor: CasdoorFactory = casdoorFor,
   limiter: LoginLimiter = createLoginLimiter(),
+  degradeWarnIntervalMs?: number,
 ): Hono<TenantEnv & SessionEnv> {
   const app = new Hono<TenantEnv & SessionEnv>()
   app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
-  app.use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET }))
+  app.use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET, degradeWarnIntervalMs }))
   app.route(
     '/api/platform/auth',
     authRoutes({ casdoor, sessionSecret: SECRET, pool, limiter }),
@@ -467,5 +470,166 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
     )
     expect(res.status).toBe(413)
     expect(await res.json()).toEqual({ error: 'PAYLOAD_TOO_LARGE' })
+  })
+
+  // ㉑ M1 闭债 R3：admin 会话失效（get-user 回 status:error）时——
+  //    session-middleware **不得**清终端用户 cookie（那是静默登出通道），
+  //    而应走既有的"降级用旧 scopes 继续"分支。
+  it('★ 负例：会话刷新遇 get-user 错误 ⇒ 降级不清 cookie（旧实现判 userGone 直接清）', async () => {
+    const now = nowSec()
+    const stale = await signSession(
+      { sub: 'alice', org: 'acme', name: 'alice', scopes: ['old:scope'], authVia: 'password' },
+      SECRET,
+      now - SCOPES_TTL_SEC - 60,
+    )
+    mock.setGetUserFault('error')
+    try {
+      const res = await client.api.platform.auth.session.$get(undefined, {
+        headers: { host: 'acme.test', cookie: `platform_session=${stale}` },
+      })
+      expect(res.status).toBe(200)
+      expect(setCookies(res)).toEqual([])             // 不重签、**更不清 cookie**
+      expect((await res.json()).scopes).toEqual(['old:scope'])
+    } finally {
+      mock.setGetUserFault('off')
+    }
+  })
+
+  // ㉔ 评审 S2：降级 catch 完全静默 ⇒「admin 会话死掉」不再表现为登出（㉑ 修好了那半），
+  //    而是**每请求、永久、零信号**地降级用旧 scopes —— 该真问题从此不可观测。
+  //    必须留一条 warn（带 org 与原因），并按 org 去重/限流，否则日志本身成了新的无界增长点。
+  it('★ 负例：降级打 warn（带 org 与原因），同一 org 同一窗口只一条（不随请求数增长）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const c2 = testClient(makeApp(pool)) // 默认窗口：同一 org 的连续降级只该留一条
+      const stale = await signSession(
+        { sub: 'alice', org: 'acme', name: 'alice', scopes: ['old:scope'], authVia: 'password' },
+        SECRET,
+        nowSec() - SCOPES_TTL_SEC - 60,
+      )
+      await mock.stop() // Casdoor 不可达 ⇒ 走"降级旧 scopes"的 catch
+      try {
+        for (let i = 0; i < 3; i++) {
+          const res = await c2.api.platform.auth.session.$get(undefined, {
+            headers: { host: 'acme.test', cookie: `platform_session=${stale}` },
+          })
+          expect(res.status).toBe(200) // 可用性优先不变：降级照常放行
+        }
+      } finally {
+        await mock.start()
+      }
+      const lines = warn.mock.calls.map((a) => String(a[0] ?? ''))
+      expect(lines).toHaveLength(1)             // 3 次请求 1 条（按 org 去重）
+      expect(lines[0]).toContain('acme')        // 带 org：故障定位要能落到租户
+      expect(lines[0]).toContain('降级')         // 说清处置，不是只说"出错了"
+      expect(lines[0]).toMatch(/永久|持续/)       // 说清后果：静默降级是本轮要打掉的病
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // ㉕ 上一条只证了"有 warn + 会去重"，一条"只报一次就永远闭嘴"的闩同样能过它。
+  //    这里把窗口关掉（interval=0）⇒ 闸的是**窗口**而不是闩：每次降级都该留一条。
+  it('★ 负例：降级 warn 闸的是窗口而非闩（interval=0 ⇒ 每次降级各一条）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const c2 = testClient(makeApp(pool, casdoorFor, createLoginLimiter(), 0))
+      const stale = await signSession(
+        { sub: 'alice', org: 'acme', name: 'alice', scopes: ['old:scope'], authVia: 'password' },
+        SECRET,
+        nowSec() - SCOPES_TTL_SEC - 60,
+      )
+      await mock.stop()
+      try {
+        for (let i = 0; i < 3; i++) {
+          const res = await c2.api.platform.auth.session.$get(undefined, {
+            headers: { host: 'acme.test', cookie: `platform_session=${stale}` },
+          })
+          expect(res.status).toBe(200)
+        }
+      } finally {
+        await mock.start()
+      }
+      expect(warn.mock.calls.map((a) => String(a[0] ?? ''))).toHaveLength(3)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // ㉖ ㉔/㉕ 都**没证"窗口会随时间重开"**：㉔ 用默认 60s 窗口（窗口内本就不重开）、
+  //    ㉕ 用 interval=0（窗口恒不开）。一条"按 org 只报一次"的闩、或把窗口当次数用，
+  //    同样能过那两条。这里给**小正数窗口**并真的等过它 ⇒ 超窗后的降级必须再报一条。
+  //    （评审 S2：注释写了"窗口过后会再报"，就得有断言真的钉住它。）
+  it('★ 负例：降级 warn 的窗口随时间重开（小正数窗口，等过窗口后再报）', async () => {
+    const WINDOW_MS = 250 // 远大于一次本地 fetch（服务已停 ⇒ 立即 ECONNREFUSED），远小于测试可接受的等待
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const c2 = testClient(makeApp(pool, casdoorFor, createLoginLimiter(), WINDOW_MS))
+      const stale = await signSession(
+        { sub: 'alice', org: 'acme', name: 'alice', scopes: ['old:scope'], authVia: 'password' },
+        SECRET,
+        nowSec() - SCOPES_TTL_SEC - 60,
+      )
+      const degradeOnce = async (): Promise<void> => {
+        const res = await c2.api.platform.auth.session.$get(undefined, {
+          headers: { host: 'acme.test', cookie: `platform_session=${stale}` },
+        })
+        expect(res.status).toBe(200) // 降级放行的契约不变
+      }
+      const warns = (): string[] => warn.mock.calls.map((a) => String(a[0] ?? ''))
+      await mock.stop()
+      try {
+        await degradeOnce()
+        await degradeOnce() // 仍在窗口内（两次相邻请求 ≪ 250ms）
+        expect(warns()).toHaveLength(1)
+        await new Promise((r) => setTimeout(r, WINDOW_MS + 100)) // 等过窗口
+        await degradeOnce()
+      } finally {
+        await mock.start()
+      }
+      // 超窗后的降级必须再报一条——"只报一次"的闩/按次数计在这里必红
+      expect(warns()).toHaveLength(2)
+      expect(warns()[1]).toContain('acme') // 第 2 条同样带 org（故障定位不因限流而丢）
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // ㉒ M1 闭债 R3：登录时"密码已验证通过却查无此人"= 上游不一致 ⇒ 502 fail loudly，
+  //    绝不发一个"没有角色派生 scopes"的会话（那表现为登录成功但模块 API 全 403）。
+  it('★ 负例：登录遇 get-user 错误 ⇒ 502，且不发会话 cookie', async () => {
+    const c2 = testClient(makeApp(pool))
+    mock.setGetUserFault('error')
+    try {
+      const res = await c2.api.platform.auth.login.$post(
+        { json: { username: 'alice', password: 'pw' } },
+        { headers: { host: 'acme.test' } },
+      )
+      expect(res.status).toBe(502)
+      expect(setCookies(res)).toEqual([])
+    } finally {
+      mock.setGetUserFault('off')
+    }
+  })
+
+  // ㉓ M1 闭债 R3 的另一半：**这条才是 `user === null` 那个分支的机检面**。
+  //    ㉒ 走的是 getUser 抛错的路径（被 catch 吃掉），根本没碰到 null 判定——
+  //    只留 ㉒ 的话，`user?.roles ?? []`（不判 null）能照样全绿，发出"没有角色派生
+  //    scopes"的会话。这里让"密码验证通过"与"查无此人"同时成立：
+  //    真机形状 = 200 + {status:'ok', data:null}（不是 error）⇒ 必须 502、绝不发会话。
+  it('★ 负例：密码通过但 getUser 回 ok+null（真机"不存在"形状）⇒ 502，且不发会话 cookie', async () => {
+    const ghostCasdoor: CasdoorFactory = (org) => {
+      const c = casdoorFor(org)
+      c.verifyPassword = async () => ({ name: 'ghost' }) // 密码"验证通过"，但 Casdoor 里查无此人
+      return c
+    }
+    const c2 = testClient(makeApp(pool, ghostCasdoor))
+    const res = await c2.api.platform.auth.login.$post(
+      { json: { username: 'ghost', password: 'pw' } },
+      { headers: { host: 'acme.test' } },
+    )
+    expect(res.status).toBe(502)
+    expect(await res.json()).toEqual({ error: 'CASDOOR_UNAVAILABLE' })
+    expect(setCookies(res)).toEqual([])
   })
 })
