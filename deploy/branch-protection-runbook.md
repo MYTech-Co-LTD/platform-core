@@ -177,7 +177,9 @@ gh api repos/MYTech-Co-Ltd/platform-core/branches/main/protection \
 
 # 直推应被拒（预期报 protected branch，这正是我们要的效果）
 git commit --allow-empty -m "chore: 验证分支保护（应当被拒）"
-git push origin main   # ← 预期失败；失败后 git reset --hard HEAD~1 扔掉这条空提交
+git push origin main   # ← 预期失败；失败后：
+git reset --soft HEAD~1   # 扔掉这条空提交。**用 --soft 而非 --hard**：--soft 只挪 HEAD，
+                          # 不碰工作树；--hard 会连带丢掉你此刻未提交的其他工作。
 ```
 
 ### 4. 切回之后，软机制要不要拆
