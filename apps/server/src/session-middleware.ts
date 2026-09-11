@@ -51,8 +51,9 @@ export interface SessionMiddlewareDeps {
   sessionSecret: string
   /**
    * 降级 warn 的去重窗口（ms）：同一 org 在该窗口内最多留一条 warn。默认
-   * DEGRADE_WARN_INTERVAL_MS；测试可调小以验证"窗口过后会再报"（闸的是**窗口**，
-   * 不是"只报一次"的闩）。
+   * DEGRADE_WARN_INTERVAL_MS。闸的是**窗口**、不是"只报一次"的闩——两条断言分工钉死：
+   * interval=0 证"不是闩"（每次降级各一条），小正数窗口 + 真的等过窗口证"窗口会随时间
+   * 重开"（auth.test.ts ㉕/㉖；只留前者的话，按次数计的闩照样全绿，评审 S2）。
    */
   degradeWarnIntervalMs?: number
 }

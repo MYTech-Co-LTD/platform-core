@@ -114,6 +114,34 @@ describe('MockCasdoor：权限按 org 分桶（owner= 生效）', () => {
     expect(j.data?.owner).toBe('acme')
   })
 
+  // ---- 评审 S1：真机**先查用户、后判会话** ----
+  //
+  // 真机实测（sso.hookflow.cn，无凭据 / bogus cookie）：
+  //   `id=built-in/admin`（用户存在）                              → 200 {status:'error',msg:'Please login first'}
+  //   `id=built-in/nosuchuser`／`id=shanhai/*`／`id=woke/*`／`id=customerb/*`（查无此人）
+  //                                                                → 200 {status:'ok',data:null}
+  // ⇒ 命中判定排在会话门禁**之前**：查无此人根本走不到会话检查那一步。
+  // 旧 mock 先判会话 ⇒ "admin 会话死掉 + 用户已删"这个组合（真机：清 cookie 后照回 ok+null）
+  // 在门禁里只降级、看不出与真机的分歧。
+
+  it('★ 负例：会话已失效 + 用户不存在 ⇒ ok+null（真机先查用户、后判会话）', async () => {
+    const r = await fetch(`${m.origin}/api/get-user?id=acme/nosuchuser`, {
+      headers: { Cookie: 'casdoor_session_id=deadbeef' }, // 会话已死
+    })
+    expect(r.status).toBe(200)
+    const j = (await r.json()) as { status: string; data: unknown }
+    expect(j.status).toBe('ok') // ← 先判会话的旧序在这里回 error，本行必红
+    expect(j.data).toBeNull()
+  })
+
+  it('会话已失效 + 用户存在 ⇒ status:error（会话门仍在：查得到用户才拦）', async () => {
+    const r = await fetch(`${m.origin}/api/get-user?id=acme/admin1`, {
+      headers: { Cookie: 'casdoor_session_id=deadbeef' },
+    })
+    expect(r.status).toBe(200)
+    expect(((await r.json()) as { status: string }).status).toBe('error')
+  })
+
   // ---- 评审 must-fix 2：默认的"会话失效"形状必须与真机一致（HTTP 200，不是 401） ----
   //
   // 真机实测（本机 curl，无凭据）：get-user / get-permissions 一律 **HTTP 200** +

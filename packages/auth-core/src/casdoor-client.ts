@@ -25,7 +25,9 @@ export interface CasdoorClientOptions {
   fetchImpl?: typeof globalThis.fetch
   /**
    * 强制重登的最短间隔（ms）——**故障期登录压力的唯一闸门**，取值理由见 `#allowForcedRelogin`。
-   * 默认 5000；测试可设 0 关闭冷却（用来证明闸的是"窗口"而不是"只重登一次"的闩）。
+   * 默认 5000。闸的是**窗口**、不是"只重登一次"的闩——两条断言分工钉死：设 0 证"不是闩"
+   * （每次失败各重登一次），设小正数 + 真的等过窗口证"窗口会随时间重开"
+   * （casdoor-client.test.ts 的两条冷却用例；只留前者的话，按次数计的闩照样全绿，评审 S2）。
    */
   reloginCooldownMs?: number
 }

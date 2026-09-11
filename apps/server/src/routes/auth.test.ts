@@ -556,6 +556,45 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
     }
   })
 
+  // ㉖ ㉔/㉕ 都**没证"窗口会随时间重开"**：㉔ 用默认 60s 窗口（窗口内本就不重开）、
+  //    ㉕ 用 interval=0（窗口恒不开）。一条"按 org 只报一次"的闩、或把窗口当次数用，
+  //    同样能过那两条。这里给**小正数窗口**并真的等过它 ⇒ 超窗后的降级必须再报一条。
+  //    （评审 S2：注释写了"窗口过后会再报"，就得有断言真的钉住它。）
+  it('★ 负例：降级 warn 的窗口随时间重开（小正数窗口，等过窗口后再报）', async () => {
+    const WINDOW_MS = 250 // 远大于一次本地 fetch（服务已停 ⇒ 立即 ECONNREFUSED），远小于测试可接受的等待
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const c2 = testClient(makeApp(pool, casdoorFor, createLoginLimiter(), WINDOW_MS))
+      const stale = await signSession(
+        { sub: 'alice', org: 'acme', name: 'alice', scopes: ['old:scope'], authVia: 'password' },
+        SECRET,
+        nowSec() - SCOPES_TTL_SEC - 60,
+      )
+      const degradeOnce = async (): Promise<void> => {
+        const res = await c2.api.platform.auth.session.$get(undefined, {
+          headers: { host: 'acme.test', cookie: `platform_session=${stale}` },
+        })
+        expect(res.status).toBe(200) // 降级放行的契约不变
+      }
+      const warns = (): string[] => warn.mock.calls.map((a) => String(a[0] ?? ''))
+      await mock.stop()
+      try {
+        await degradeOnce()
+        await degradeOnce() // 仍在窗口内（两次相邻请求 ≪ 250ms）
+        expect(warns()).toHaveLength(1)
+        await new Promise((r) => setTimeout(r, WINDOW_MS + 100)) // 等过窗口
+        await degradeOnce()
+      } finally {
+        await mock.start()
+      }
+      // 超窗后的降级必须再报一条——"只报一次"的闩/按次数计在这里必红
+      expect(warns()).toHaveLength(2)
+      expect(warns()[1]).toContain('acme') // 第 2 条同样带 org（故障定位不因限流而丢）
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   // ㉒ M1 闭债 R3：登录时"密码已验证通过却查无此人"= 上游不一致 ⇒ 502 fail loudly，
   //    绝不发一个"没有角色派生 scopes"的会话（那表现为登录成功但模块 API 全 403）。
   it('★ 负例：登录遇 get-user 错误 ⇒ 502，且不发会话 cookie', async () => {

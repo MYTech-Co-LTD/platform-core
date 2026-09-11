@@ -581,7 +581,7 @@ async function runMulti(child, port, mock) {
   )
   const betaJar = new CookieJar()
   // 用 beta **自己的**用户：Casdoor 用户按 owner 归属，acme 的 admin1 在 beta 下查无此人
-  // ⇒ 拿 admin1 登 beta 会 502（真机语义，评审 S3）
+  // ⇒ 拿 admin1 登 beta 会被平台拒（替身拓扑下是 502；真机落点见下面那条负例的前提标注）
   await login(betaBase, betaJar, BETA_ADMIN1, 'beta')
   const betaSession = await betaBase.get('/api/platform/auth/session', { cookie: betaJar.header() })
   check(
@@ -597,6 +597,16 @@ async function runMulti(child, port, mock) {
   )
   // 负例：**跨 org 的用户不该能在本租户拿到会话** —— 这条是 org 归属语义的机检面：
   // 旧 mock 忽略 org 段，acme 的 admin1 能登进 beta 且拿到 200，本断言那时必红
+  //
+  // ⚠️ **前提依赖（评审 S3）：这条 502 押在 mock 的登录拓扑上，真机落点未验证。**
+  // mock 的 /api/login 只按 name+password 查（**忽略 application**），故本场景在替身里是
+  // "登录成功 ⇒ 再按 org=beta 查 get-user 无此人 ⇒ 502"。真机 /api/login 却是**按
+  // application 定位 org** 的，而平台全租户共用同一个 CASDOOR_APPLICATION
+  // （apps/server/src/app.ts）⇒ 真机更可能在**登录步**就回 200+status:error
+  // （⇒ 401 BAD_CREDENTIALS），根本走不到 get-user 那一步。
+  // 只读 GET 判不了真机的落点（要判定就得跨 org 发写探针——未获授权，不做）。
+  // ⇒ 本断言钉住的是**平台侧对"跨 org 用户"的处置**（绝不放行跨 org 会话），**不是**真机
+  //    登录步的确切响应码；换到真机拓扑时，这里的 502 可能要改判成 401，改前先按上述前提复核。
   const crossBase = base(port, BETA_HOST)
   const crossRes = await crossBase.post('/api/platform/auth/login', { username: ADMIN1, password: USER_PASSWORD })
   check(

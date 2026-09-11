@@ -10,6 +10,8 @@
 //     get-user 只认 id=<org>/<name> 全形（owner=/name= 或无斜杠会被真实 Casdoor 报
 //     wrong token count），**且 org 段是命中条件的一部分**——真机实测 `id=shanhai/admin`
 //     ⇒ ok+null，尽管 `built-in/admin` 确实存在（用户按 owner 归属；评审 S3）。
+//     且**命中判定排在会话门禁之前**（真机先查用户、后判会话）：查无此人（含不属于该 org）
+//     一律 ok+null，连"未登录"都轮不到；用户存在而会话失效才是 200+status:error（评审 S1）。
 //     get-permissions 认 owner=、update-permission 认 id=。
 //     **权限按 owner 分桶**：get-permissions 只回该 org 的、add 按 body.owner 归桶、
 //     update 按 (owner,name) 定位。曾经的 "mock 单 org、忽略 owner=" 是 M0 门禁对
@@ -251,6 +253,13 @@ export class MockCasdoor {
   #app = new Hono()
     // POST /api/login —— 纪律②修订+③：凭据走 JSON body（query 兼容读仅防旧脚本）；
     // 失败 200+{"status":"error"} 且照发匿名 cookie
+    //
+    // ⚠️ **已知替身拓扑落差（评审 S3）：本端点只按 name+password 查，application 只被记进
+    //    #lastLoginApplication 供断言，不参与命中。** 真机是按 application 定位 org 的，而平台
+    //    全租户共用同一个 CASDOOR_APPLICATION（apps/server/src/app.ts）⇒ "acme 的用户登 beta
+    //    租户"在真机上很可能于**登录步**就失败，而不是像替身这样"登录成功、再靠 get-user 按
+    //    org 查无此人"落进 502。smoke-load.mjs 的跨 org 502 断言因此是**前提依赖**的，那里有
+    //    完整标注；把 mock 改成按 application 分 org 前，先复核那条断言。
     .post('/api/login', async (c) => {
       const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
       const username = typeof b.username === 'string' && b.username ? b.username : (c.req.query('username') ?? '')
@@ -302,11 +311,6 @@ export class MockCasdoor {
     })
     // GET /api/get-user?id=<org>/<name> —— 纪律 ②：单数端点只认 id= 全形，严格两段
     .get('/api/get-user', (c) => {
-      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
-      if (this.#getUserFault === 'error' || this.#getUserFault === 'errorOnce') {
-        if (this.#getUserFault === 'errorOnce') this.#getUserFault = 'off'
-        return c.json({ status: 'error', msg: 'Please login first' })
-      }
       const parts = (c.req.query('id') ?? '').split('/')
       if (parts.length !== 2 || !parts[0] || !parts[1]) {
         // 真实 Casdoor GetOwnerAndNameFromId 同款拒绝：非 <org>/<name> 全形不合法
@@ -319,8 +323,20 @@ export class MockCasdoor {
       // 真机（sso.hookflow.cn 实测）：用户不存在（含**不属于该 org**）⇒ HTTP 200 +
       // {status:'ok', data:null}，**不是** status:error。旧 mock 回 error 与真机不符，正是
       // "error 被折叠成 null"这个缺陷在测试里结构性看不见的原因（M1 闭债 R3）。
+      //
+      // **命中判定排在会话门禁之前**（评审 S1）：真机是**先查用户、后判会话**——无凭据时
+      // `id=built-in/admin`（存在）⇒ error `Please login first`，而 `id=built-in/nosuchuser`
+      // ／`id=shanhai/*`／`id=woke/*`／`id=customerb/*`（查无此人）一律 ok+null，压根走不到
+      // 会话检查那一步。旧的"先判会话"序把这条分歧盖住："admin 会话死掉 + 用户已删"在门禁里
+      // 只降级、看不出与真机不同（真机那种组合照回 ok+null）。
       // 改动前先读本文件头注的 mock 三纪律。
       if (!user) return c.json({ status: 'ok', data: null })
+      // 用户查得到才过会话门：门的语义是"你能不能看这个用户"，不是"这个用户存不存在"。
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      if (this.#getUserFault === 'error' || this.#getUserFault === 'errorOnce') {
+        if (this.#getUserFault === 'errorOnce') this.#getUserFault = 'off'
+        return c.json({ status: 'error', msg: 'Please login first' })
+      }
       // 纪律 ①：绝不回 password
       return c.json({
         status: 'ok',
