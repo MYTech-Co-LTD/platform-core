@@ -2,6 +2,7 @@
 // 时钟注入：全部用例不碰真时间，窗口过期可被精确断言。
 import { describe, expect, it } from 'vitest'
 import {
+  MAX_KEY_LEN,
   TENANT_ATTEMPT_LIMIT,
   TENANT_FAIL_LIMIT,
   USER_BUCKET_CAP,
@@ -9,6 +10,9 @@ import {
   USER_FAIL_WINDOW_MS,
   createLoginLimiter,
 } from './rate-limit'
+// 常量同源守卫（建议改 2）：两侧都是"用户名长度上限"的投影，必须相等——用可执行断言替代
+// 注释。从 routes/auth 导出而非写死 256，漂移即红（见文末两个用例）。
+import { MAX_USERNAME_LEN } from './routes/auth'
 
 describe('登录限速器（进程内存、租户内三层、不依赖客户端 IP）', () => {
   it('★ 负例：第 5 次失败后第 6 次被拒（user 维度），桶按用户名与租户隔离', () => {
@@ -106,15 +110,45 @@ describe('登录限速器（进程内存、租户内三层、不依赖客户端 
     expect(l.check(1, 'latest').allowed).toBe(false) // 新桶照常受 user 层约束
   })
 
-  it('★ 键长有界：桶键在限速器内部截断到 256（check/record 同键，超长串不放大内存）', () => {
+  it('★ 键长有界：桶键在限速器内部截断到 MAX_KEY_LEN（check/record 同键，超长串不放大内存）', () => {
     let t = 0
     const l = createLoginLimiter({ now: () => t })
-    const prefix = 'x'.repeat(256) // 与 routes/auth.ts 的 MAX_USERNAME_LEN 同值（同源投影）
-    // 5 个仅在第 256 位之后不同的超长用户名：截断后同键 ⇒ 落同一桶、累加到达阈值。
+    const prefix = 'x'.repeat(MAX_KEY_LEN) // 引用常量而非写死长度：断言随常量走
+    // 5 个仅在 MAX_KEY_LEN 位之后不同的超长用户名：截断后同键 ⇒ 落同一桶、累加到达阈值。
     // 反证：键不截断（raw username 直作 Map 键）时 5 个是 5 个独立桶，下面两条断言都会红
     // ——bucketCount 会是 5，且全新后缀仍被放行（未认证攻击者可造 8192×任意长键常驻内存）。
     for (const tail of ['A', 'B', 'C', 'D', 'E']) l.record(1, prefix + tail, false)
     expect(l.bucketCount(1)).toBe(1)
     expect(l.check(1, prefix + 'Z').allowed).toBe(false)
+  })
+
+  // 建议改 1：旧用例只证明"存在截断"，把 MAX_KEY_LEN 改成 8 仍全绿（常量漂到危险值也不红）。
+  // 这两条边界断言钉住截断点恰在 MAX_KEY_LEN：恰好 MAX_KEY_LEN 不截断、+1 起才截断。
+  // 反证：截断点写成 MAX_KEY_LEN-1（或任何 off-by-one）⇒ 第一段红；写成 MAX_KEY_LEN+1 ⇒ 第二段红。
+  it('★ 截断边界：长度 255 与 256 落两个桶（未截断），256 与 257 落同一个桶（257 截断到 256）', () => {
+    const under = 'a'.repeat(MAX_KEY_LEN - 1) // 255：未截断
+    const at = 'a'.repeat(MAX_KEY_LEN) // 256：未截断（截断条件是 length > MAX_KEY_LEN）
+    const over = 'a'.repeat(MAX_KEY_LEN + 1) // 257：截断到前 MAX_KEY_LEN 位 ⇒ 与 at 同键
+
+    {
+      let t = 0
+      const l = createLoginLimiter({ now: () => t })
+      l.record(1, under, false)
+      l.record(1, at, false)
+      expect(l.bucketCount(1)).toBe(2) // 255 ≠ 256：两个不同的未截断键
+    }
+    {
+      let t = 0
+      const l = createLoginLimiter({ now: () => t })
+      l.record(1, at, false)
+      l.record(1, over, false)
+      expect(l.bucketCount(1)).toBe(1) // 256 = 257.slice(0,256)：同一个截断键
+    }
+  })
+
+  // 建议改 2：两个常量各自写死 256，只有注释声明"同源…必须同步"——注释不是约束。这条守卫把
+  // 它变成可执行断言：把任一侧改成 512（或把 MAX_KEY_LEN 改成 8）这里即红。
+  it('★ 常量同源：MAX_KEY_LEN 与 routes/auth.ts 的 MAX_USERNAME_LEN 相等（防两侧静默漂移）', () => {
+    expect(MAX_USERNAME_LEN).toBe(MAX_KEY_LEN)
   })
 })

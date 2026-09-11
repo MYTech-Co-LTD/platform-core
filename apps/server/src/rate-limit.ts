@@ -43,8 +43,11 @@ export const USER_BUCKET_CAP = 8192
  * 不该能靠传超长串绕过。256 与 routes/auth.ts 的 MAX_USERNAME_LEN 同值：两者都是"用户名
  * 长度上限"这一个事实的投影（auth 侧管 audit 写入有界，限速侧管内存桶键有界）——同源，
  * 变更必须同步。若只改调用方，键就仍可被下一条登录路径重新撑爆。
+ *
+ * 导出用于让"同源"这条约束变成可执行断言（见 rate-limit.test.ts 的守卫用例）——注释不是
+ * 约束，两个各写死的 256 会在无人报警的情况下漂移。
  */
-const MAX_KEY_LEN = 256
+export const MAX_KEY_LEN = 256
 
 /** 桶键统一规范化：超长截断到 MAX_KEY_LEN（check 与 record 必须经此取键，否则两处键不一致） */
 function keyOf(u: string): string {
