@@ -64,6 +64,28 @@ describe('declaredScopeGate：未声明 = 不可达', () => {
     const res = await appWith(['demo:view']).request('/ping', { method: 'POST' })
     expect(res.status).toBe(403)
   })
+
+  it('★ 负例：已声明的 GET 端点，HEAD 请求应同样放行（Hono 按 GET 派发，但 c.req.method 仍是 HEAD）', async () => {
+    // 只声明了 GET /ping 的场景见文件顶部 declared
+    const anon = await appWith(null).request('/ping', { method: 'HEAD' })
+    expect(anon.status).toBe(401) // 匿名仍 401（身份门在 scope 之前）
+    const ok = await appWith(['demo:view']).request('/ping', { method: 'HEAD' })
+    expect(ok.status).not.toBe(403) // 关键：不得再是 403
+  })
+
+  it('★ 负例：归一不得变成"放行一切 HEAD"——只声明了 POST 的路径上 HEAD 仍 403', async () => {
+    // 计划原稿此处用 '/not-declared'（该 app 上根本没有这条路由）⇒ 实测返 404 而非 403，
+    // 断言不到"归一没放宽"。改用**只声明了 POST** 的路径：HEAD 归一到 GET 后照样查不到 ⇒ 403，
+    // 这才是"未声明 GET ⇒ HEAD 仍拒"的真实形状。
+    const postOnly = [{ method: 'POST', path: '/submit', scope: 'demo:submit' }]
+    const app = new Hono()
+    app.use('*', withIdentity(['demo:view', 'demo:note', 'demo:submit']))
+    const gate = declaredScopeGate(postOnly)
+    app.use('/submit', gate)
+    app.post('/submit', (c) => c.json({ hit: 'submit' }))
+    const res = await app.request('/submit', { method: 'HEAD' })
+    expect(res.status).toBe(403)
+  })
 })
 
 describe('probeAnonymous：匿名探测回归网', () => {
