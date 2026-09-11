@@ -49,7 +49,23 @@ export type CasdoorFactory = (org: string) => CasdoorClient
 export interface SessionMiddlewareDeps {
   casdoor: CasdoorFactory
   sessionSecret: string
+  /**
+   * 降级 warn 的去重窗口（ms）：同一 org 在该窗口内最多留一条 warn。默认
+   * DEGRADE_WARN_INTERVAL_MS；测试可调小以验证"窗口过后会再报"（闸的是**窗口**，
+   * 不是"只报一次"的闩）。
+   */
+  degradeWarnIntervalMs?: number
 }
+
+/**
+ * 降级 warn 的去重窗口（默认 60s）。
+ *
+ * 取值理由：这条 warn 在故障期**每请求**都会命中——每一个带过期 sfa 的会话刷新请求都走
+ * 降级分支。不设窗口，它自己就成了新的无界日志增长点。60s 足够让运维在日志里看见
+ * "这个 org 正在降级"并形成告警面（同窗口内**首条即含全部定位信息**：org + 原因），
+ * 又不至于让单租户故障刷满日志。
+ */
+export const DEGRADE_WARN_INTERVAL_MS = 60_000
 
 /** 手写 cookie 序列化（不引 cookie 库）：host-only（不设 Domain）+ 安全属性全开 */
 export function serializeSessionCookie(token: string): string {
@@ -89,8 +105,29 @@ function toIdentity(p: SessionPayload): Identity {
 
 export const sessionMiddleware = (
   deps: SessionMiddlewareDeps,
-): MiddlewareHandler<TenantEnv & SessionEnv> =>
-  createMiddleware<TenantEnv & SessionEnv>(async (c, next) => {
+): MiddlewareHandler<TenantEnv & SessionEnv> => {
+  const degradeWarnIntervalMs = deps.degradeWarnIntervalMs ?? DEGRADE_WARN_INTERVAL_MS
+  /** 上次为某 org 打降级 warn 的时刻（中间件实例内）；见 DEGRADE_WARN_INTERVAL_MS 的取值理由 */
+  const lastDegradeWarnAt = new Map<string, number>()
+
+  /**
+   * 降级路径的信号（M1 闭债 R3 评审 S2）。修好「静默登出」后，"admin 会话死掉"不再表现为
+   * 登出，而是**每请求、永久、零信号**地降级用旧 scopes ⇒ 该真问题从此不可观测。这里补上
+   * 唯一信号：说清后果（持续降级 = 授权变更不再生效），并按 org 限流（见上）。
+   */
+  const warnDegrade = (org: string, err: unknown): void => {
+    const nowMs = Date.now()
+    if (nowMs - (lastDegradeWarnAt.get(org) ?? 0) < degradeWarnIntervalMs) return
+    lastDegradeWarnAt.set(org, nowMs)
+    console.warn(
+      `[session] Casdoor 拉取失败（org=${org}），本次请求降级用旧 scopes 继续、不重签：`
+        + '若原因是 admin 会话已失效，该 org 的 scopes 刷新会**持续**降级'
+        + '（用户在 Casdoor 的授权变更不再生效），而这条 warn 是唯一信号。'
+        + `原因：${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
+
+  return createMiddleware<TenantEnv & SessionEnv>(async (c, next) => {
     const now = nowSec()
     const token = readCookie(c.req.header('cookie'), SESSION_COOKIE)
     const p = token ? await verifySession(token, deps.sessionSecret) : null
@@ -109,14 +146,19 @@ export const sessionMiddleware = (
           const casdoor = deps.casdoor(p.org)
           const user = await casdoor.getUser(p.name)
           if (user === null) {
-            userGone = true // Casdoor 明确说没这个人（2xx + status error）→ 唯一清会话分支
+            // Casdoor 明确说没这个人（2xx + body status:'ok' 且 data:null）→ 唯一清会话分支。
+            // **不是** status:error —— error 覆盖的是与"不存在"无关的一堆情形（admin 会话失效、
+            // id 非两段、DB 出错…），CasdoorClient.getUser 对它们一律抛错（上方 catch 接住降级）
+            userGone = true
           } else {
             const perms = await casdoor.getPermissions()
             scopes = effectiveScopes(p.name, user.roles ?? [], perms)
             refreshOk = true
           }
-        } catch {
-          // 网络/5xx：降级旧 scopes 继续（可用性优先），本次不重签（防 sfa 被抹新遮蔽故障）
+        } catch (err) {
+          // 网络/5xx/上游报错：降级旧 scopes 继续（可用性优先），本次不重签（防 sfa 被抹新遮蔽故障）。
+          // 降级不是"无声"的——见 warnDegrade 的注释（评审 S2）
+          warnDegrade(p.org, err)
         }
       }
       if (userGone) {
@@ -142,3 +184,4 @@ export const sessionMiddleware = (
     }
     await next()
   })
+}

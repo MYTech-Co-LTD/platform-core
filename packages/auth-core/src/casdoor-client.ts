@@ -23,7 +23,15 @@ export interface CasdoorClientOptions {
   adminUser?: string
   adminPwd?: string
   fetchImpl?: typeof globalThis.fetch
+  /**
+   * 强制重登的最短间隔（ms）——**故障期登录压力的唯一闸门**，取值理由见 `#allowForcedRelogin`。
+   * 默认 5000；测试可设 0 关闭冷却（用来证明闸的是"窗口"而不是"只重登一次"的闩）。
+   */
+  reloginCooldownMs?: number
 }
+
+/** 强制重登的默认最短间隔（ms）——取值理由见 `CasdoorClient#allowForcedRelogin` */
+const DEFAULT_RELOGIN_COOLDOWN_MS = 5_000
 
 export interface CasdoorUser {
   name: string
@@ -47,6 +55,8 @@ export class CasdoorClient {
   readonly #o: CasdoorClientOptions
   readonly #fetch: typeof globalThis.fetch
   #adminCookie: string | null = null
+  /** 上次**强制**重登的时刻（ms）；冷却窗口的基准，见 #allowForcedRelogin */
+  #lastForcedReloginAt = 0
 
   constructor(o: CasdoorClientOptions) {
     this.#o = o
@@ -208,9 +218,41 @@ export class CasdoorClient {
     return { r, j }
   }
 
-  /** admin 会话 cookie（内存缓存）；force=true 强制重登。失败抛错，绝不缓存匿名 cookie */
+  /** 冷却闸（M1 闭债 R3 评审 S1）：允许本次强制重登就记账并返回 true，冷却中返回 false。 */
+  #allowForcedRelogin(): boolean {
+    const now = Date.now()
+    if (now - this.#lastForcedReloginAt < this.#reloginCooldownMs()) return false
+    this.#lastForcedReloginAt = now
+    return true
+  }
+
+  /** 冷却是否生效中（**不消费**配额）——供 #adminJson 判断"重试必然空转" */
+  #inReloginCooldown(): boolean {
+    return Date.now() - this.#lastForcedReloginAt < this.#reloginCooldownMs()
+  }
+
+  #reloginCooldownMs(): number {
+    return this.#o.reloginCooldownMs ?? DEFAULT_RELOGIN_COOLDOWN_MS
+  }
+
+  /**
+   * admin 会话 cookie（内存缓存）；force=true 强制重登。失败抛错，绝不缓存匿名 cookie。
+   *
+   * **冷却闸**（评审 S1）：`force` 在冷却窗口内退化为"复用现有 cookie"，即**不重登**——
+   * 调用方随后拿到的仍是本次 error，按既有口径抛/降级，语义不变。
+   *
+   * 取值理由（默认 5s）：重登的唯一目的是修复"服务端把我们的 admin 会话清了"这一类
+   * **全局、一次性**的状态错位——第一次就该修好。同一窗口内仍然失败，说明不是会话错位，
+   * 而是持续性故障（上游 5xx / DB 慢 / 凭据不对），甚至可能是**非会话类**错误（如 id 非两段）。
+   * 此时每次都重登只会在**共享 SSO** 上把登录压力按请求数放大（评审实测：持续 error 下
+   * 3 次失败 getUser = 3 次额外登录；8 个并发失败 = 8 次登录）。这里不按错误文案区分
+   * （文案随 Casdoor 版本变，本仓明确反对把正确性押在字符串上），一律按窗口限流。
+   * 5s 覆盖一次真实会话修复所需的往返，把"每请求一次重登"压成"每 5s 最多一次"。
+   * **不做 single-flight**：那要引入在途 Promise 共享与失败传播语义，复杂度不划算。
+   */
   async #sessionCookie(force = false): Promise<string> {
     if (!force && this.#adminCookie) return this.#adminCookie
+    if (force && this.#adminCookie && !this.#allowForcedRelogin()) return this.#adminCookie
     if (!this.#o.adminUser || !this.#o.adminPwd) {
       throw new Error('CasdoorClient: adminUser/adminPwd not configured')
     }
@@ -243,9 +285,14 @@ export class CasdoorClient {
       }
       return this.#fetch(`${this.#o.origin}/api/${path}`, req)
     }
-    let r = await doFetch(await this.#sessionCookie(forceSession))
+    const first = await this.#sessionCookie(forceSession)
+    let r = await doFetch(first)
     if (r.status === 401) {
-      r = await doFetch(await this.#sessionCookie(true))
+      // 401 是**真机不产生**的形状（真机把会话失效回成 200 + status:error），保留它是因为
+      // 它仍是合法的防御面（被反代/网关插一层 401 时能自愈）。冷却闸生效时 #sessionCookie
+      // 会复用同一个 cookie ⇒ 重打必然同样 401，直接不重试（否则就是空转请求）
+      const retry = await this.#sessionCookie(true)
+      if (retry !== first) r = await doFetch(retry)
     }
     return r
   }
@@ -264,6 +311,10 @@ export class CasdoorClient {
     // 而 **不是 401** ⇒ 上面那个 401 重试永不触发，缓存的死 cookie 也永不刷新。
     // 这里补一次强制重登 + 重试：不匹配文案（任何 error 都重试一次；真错的第二次照样错，
     // 由调用方按既有口径抛/降级）。
+    //
+    // 冷却闸（评审 S1）：窗口内重试只会复用同一个已知失效的 cookie 再打一次空转请求 ⇒
+    // 直接返回本次 error，把"每请求一次重登"压成"每窗口最多一次"（语义不变，调用方照旧降级）
+    if (this.#inReloginCooldown()) return j
     return readOnce(true)
   }
 

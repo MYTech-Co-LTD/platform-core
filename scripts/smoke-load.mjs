@@ -80,6 +80,12 @@ const DECOY_PLATFORM_ORG = 'NOT-ACME-ORG'
 const USER_PASSWORD = 'pw'
 const ADMIN1 = 'admin1' // 有 demo:view + demo:note
 const VIEWER1 = 'viewer1' // 无任何 demo 权限——403 路径的唯一端到端证据
+/**
+ * beta 租户自己的管理员。**必须有第二个用户**：Casdoor 的用户按 owner 归属，
+ * `get-user?id=beta/admin1` 对 acme 的 admin1 回 ok+null（真机实测 shanhai/admin ⇒ ok+null，
+ * 评审 S3）⇒ 拿 admin1 登 beta 会 502。旧开冒烟能过只是因为 mock 忽略 org 段。
+ */
+const BETA_ADMIN1 = 'beta-admin1'
 
 // ---- 类型别名（.mjs 的类型书写面就是 JSDoc；根 tsconfig 的 checkJs 按 strict 查本文件） ----
 /** @typedef {import('node:http').IncomingHttpHeaders} IncomingHttpHeaders */
@@ -574,11 +580,13 @@ async function runMulti(child, port, mock) {
     describe(betaBranding),
   )
   const betaJar = new CookieJar()
-  await login(betaBase, betaJar, ADMIN1, 'beta')
+  // 用 beta **自己的**用户：Casdoor 用户按 owner 归属，acme 的 admin1 在 beta 下查无此人
+  // ⇒ 拿 admin1 登 beta 会 502（真机语义，评审 S3）
+  await login(betaBase, betaJar, BETA_ADMIN1, 'beta')
   const betaSession = await betaBase.get('/api/platform/auth/session', { cookie: betaJar.header() })
   check(
     !((json(betaSession)?.scopes ?? []).includes('demo:view')),
-    'beta 下 admin1 的 scopes 不含 demo:view（授权只给了 acme）',
+    'beta 下 beta-admin1 的 scopes 不含 demo:view（授权只给了 acme）',
     { scopes: json(betaSession)?.scopes },
   )
   const betaPing = await betaBase.get('/api/modules/demo/ping', { cookie: betaJar.header() })
@@ -586,6 +594,15 @@ async function runMulti(child, port, mock) {
     betaPing.status === 403 && json(betaPing)?.error === 'FORBIDDEN',
     'beta 下 GET /api/modules/demo/ping 403 FORBIDDEN —— 码存在但未授权，403 是授权在拦',
     describe(betaPing),
+  )
+  // 负例：**跨 org 的用户不该能在本租户拿到会话** —— 这条是 org 归属语义的机检面：
+  // 旧 mock 忽略 org 段，acme 的 admin1 能登进 beta 且拿到 200，本断言那时必红
+  const crossBase = base(port, BETA_HOST)
+  const crossRes = await crossBase.post('/api/platform/auth/login', { username: ADMIN1, password: USER_PASSWORD })
+  check(
+    crossRes.status === 502 && json(crossRes)?.error === 'CASDOOR_UNAVAILABLE',
+    'acme 的 admin1 在 beta 下登录 502（密码验过但 beta org 里查无此人 = 上游不一致）',
+    describe(crossRes),
   )
 
   step('multi：模块 API 匿名不可达（声明即授权 —— 身份门卫在拦）')
@@ -712,9 +729,12 @@ async function main() {
 
   // MockCasdoor：multi 与 single 共用一枚（两次启动子进程，CASDOOR_URL 指向同一 mock）
   const mock = new MockCasdoor({
+    // owner = 用户归属的 org（真机语义）：ACME 的两人归 acme，beta 那位归 beta。
+    // 不标 owner 会落进 MOCK_ORG ⇒ `get-user?id=acme/admin1` 不命中 ⇒ 登录 502
     users: [
-      { name: ADMIN1, password: USER_PASSWORD, displayName: 'Admin One' },
-      { name: VIEWER1, password: USER_PASSWORD, displayName: 'Viewer One' },
+      { name: ADMIN1, password: USER_PASSWORD, displayName: 'Admin One', owner: 'acme' },
+      { name: VIEWER1, password: USER_PASSWORD, displayName: 'Viewer One', owner: 'acme' },
+      { name: BETA_ADMIN1, password: USER_PASSWORD, displayName: 'Beta Admin One', owner: 'beta' },
     ],
     // 刻意【不预种任何权限码】：预种会让装载器的 upsert 查重必命中、add-permission 全程零调用，
     // 于是「装载器真的建过码」这件事在门禁里不可见（issue #3 第二节成因②）。

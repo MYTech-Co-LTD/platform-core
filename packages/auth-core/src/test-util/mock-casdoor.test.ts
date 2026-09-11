@@ -7,7 +7,10 @@ import { MockCasdoor } from './mock-casdoor'
 let m: MockCasdoor
 beforeAll(async () => {
   m = new MockCasdoor({
-    users: [{ name: 'admin1', password: 'pw' }],
+    // owner 是真机语义的一部分：get-user?id=<org>/<name> 只命中属于该 org 的用户
+    // （真机实测 shanhai/admin ⇒ ok+null，尽管 built-in/admin 存在）。不标 owner 的
+    // 种子落进 MOCK_ORG，`id=acme/admin1` 就不该命中——那正是下面那条负例要钉的。
+    users: [{ name: 'admin1', password: 'pw', owner: 'acme' }],
     perms: [{ owner: 'acme', name: 'demo:view', users: ['admin1'], resources: ['demo:view'] }],
   })
   await m.start()
@@ -86,6 +89,55 @@ describe('MockCasdoor：权限按 org 分桶（owner= 生效）', () => {
     })).json() as { status: string; data: unknown }
     expect(j.status).toBe('ok')
     expect(j.data).toBeNull()
+  })
+
+  // ---- S3：org 段被真机采信，被旧 mock 忽略 ----
+  //
+  // 真机实测（sso.hookflow.cn）：`get-user?id=shanhai/admin` ⇒ 200 {status:'ok',data:null}，
+  // 尽管 `built-in/admin` 明明存在 ⇒ **org 段是命中条件的一部分**。旧 mock 只按 name 命中，
+  // 于是"跨 org 同名用户被误命中"这类缺陷在门禁里结构性看不见。
+
+  it('★ 负例：get-user 按 (org,name) 命中 —— 别的 org 下的同名用户不命中', async () => {
+    const j = await (await fetch(`${m.origin}/api/get-user?id=beta/admin1`, {
+      headers: { Cookie: await adminCookie() },
+    })).json() as { status: string; data: unknown }
+    expect(j.status).toBe('ok')
+    expect(j.data).toBeNull() // admin1 属于 acme，不属于 beta
+  })
+
+  it('本 org 下的同名用户照常命中（org 段是收紧命中，不是把命中关掉）', async () => {
+    const j = await (await fetch(`${m.origin}/api/get-user?id=acme/admin1`, {
+      headers: { Cookie: await adminCookie() },
+    })).json() as { status: string; data: { name: string; owner: string } | null }
+    expect(j.status).toBe('ok')
+    expect(j.data?.name).toBe('admin1')
+    expect(j.data?.owner).toBe('acme')
+  })
+
+  // ---- 评审 must-fix 2：默认的"会话失效"形状必须与真机一致（HTTP 200，不是 401） ----
+  //
+  // 真机实测（本机 curl，无凭据）：get-user / get-permissions 一律 **HTTP 200** +
+  // {status:'error',...}，没有一条 401。旧 mock 的 #unauthorized 回 401 ⇒ 客户端
+  // "#adminRequest 的 401 重试"在门禁里看着是活的、在真机上却是死码。
+
+  it('★ 负例：默认会话失效形状 = HTTP 200 + status:error（真机从不回 401）', async () => {
+    const r = await fetch(`${m.origin}/api/get-permissions?owner=acme`, {
+      headers: { Cookie: 'casdoor_session_id=deadbeef' },
+    })
+    expect(r.status).toBe(200) // ← 锁住旧 mock 的 401 会让本行红
+    expect(((await r.json()) as { status: string }).status).toBe('error')
+  })
+
+  it('显式注入 HTTP 401：那是真机不产生的形状，只能显式注入来钉客户端的防御契约', async () => {
+    m.setHttpFault('unauthorized401')
+    try {
+      const r = await fetch(`${m.origin}/api/get-permissions?owner=acme`, {
+        headers: { Cookie: 'casdoor_session_id=deadbeef' },
+      })
+      expect(r.status).toBe(401)
+    } finally {
+      m.setHttpFault('off')
+    }
   })
 
   it('update-permission 按 (owner,name) 定位：跨 org 同名互不影响', async () => {

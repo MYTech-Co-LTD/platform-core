@@ -196,9 +196,11 @@ async function main() {
   }
 
   const mock = new MockCasdoor({
+    // owner 同权限的 owner：用户按 (org,name) 命中（评审 S3），不标 owner 会落进 MOCK_ORG
+    // ⇒ `get-user?id=acme/admin1` 不命中 ⇒ 登录 502
     users: [
-      { name: ADMIN1, password: USER_PASSWORD, displayName: 'Admin One' },
-      { name: VIEWER1, password: USER_PASSWORD, displayName: 'Viewer One' },
+      { name: ADMIN1, password: USER_PASSWORD, displayName: 'Admin One', owner: 'acme' },
+      { name: VIEWER1, password: USER_PASSWORD, displayName: 'Viewer One', owner: 'acme' },
     ],
     perms: [
       // owner 必须与租户 org 一致（TENANT_MODE=single, PLATFORM_ORG='acme' → 租户

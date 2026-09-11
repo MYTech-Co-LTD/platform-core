@@ -188,7 +188,9 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
       const [user, perms] = await Promise.all([casdoor.getUser(name), casdoor.getPermissions()])
       // 密码已验证通过却查无此人 = 上游不一致（M1 闭债 R3）：绝不发一个"没有角色派生
       // scopes"的会话——那表现为"登录成功但每个模块 API 都 403"，且无人知道为什么。
-      // 与企微路 `NO_ACCOUNT` 同风格：查无此人就不发会话。
+      // 与企微路同属"查无此人就不发会话"这一族，但**呈现不同**：那里 `null` 是真的无账户
+      // ⇒ 401 `NO_ACCOUNT`；这里是密码已验过却查无此人 ⇒ 上游不一致 ⇒ 502 `CASDOOR_UNAVAILABLE`
+      // （502 是对的呈现，别改成 401——那会把上游故障误报成"你没有账户"）。
       if (user === null) return c.json({ error: 'CASDOOR_UNAVAILABLE' }, 502)
       scopes = effectiveScopes(name, user.roles ?? [], perms)
     } catch {
