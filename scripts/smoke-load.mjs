@@ -34,6 +34,8 @@ import { createServer, request as nodeHttpRequest } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MockCasdoor } from '../packages/auth-core/src/test-util/mock-casdoor.ts'
+// 限速阈值走真源码常量：写死 5 就是第二个事实源，改了 rate-limit.ts 这里不会跟着动。
+import { USER_FAIL_LIMIT } from '../apps/server/src/rate-limit.ts'
 
 // ---- 路径解析（一律按本文件位置，与 cwd 无关） ----
 const scriptsDir = fileURLToPath(new URL('.', import.meta.url))
@@ -584,6 +586,73 @@ async function runMulti(child, port, mock) {
     betaPing.status === 403 && json(betaPing)?.error === 'FORBIDDEN',
     'beta 下 GET /api/modules/demo/ping 403 FORBIDDEN —— 码存在但未授权，403 是授权在拦',
     describe(betaPing),
+  )
+
+  step('multi：模块 API 匿名不可达（声明即授权 —— 身份门卫在拦）')
+  const anonPing = await httpRequest({
+    port,
+    host: TENANT_HOST,
+    path: '/api/modules/demo/ping',
+  })
+  check(
+    anonPing.status === 401 && json(anonPing)?.error === 'UNAUTHENTICATED',
+    '匿名 GET /api/modules/demo/ping → 401 UNAUTHENTICATED（未声明 = 不可达的另一面：没身份就没门）',
+    describe(anonPing),
+  )
+
+  // 上一条只证了「彻底没门」（没身份 ⇒ 401）。声明门卫与旧的模块手写 requireScope 在 401
+  // 分支上逐字节一致，故它区分不出两者。下面这条打 declaredScopeGate 独有的 `!hit` 分支：
+  // 【已声明路径 + 未声明 method】——GET /ping 在 manifest 里，POST /ping 不在。
+  // 旧形态下模块压根没注册 POST /ping，落到 Hono 是 404；声明门卫则包在 router 外层、
+  // 按声明比对（method 不匹配即 !hit），先于 router 一律 403。403 与 404 之别即「声明即授权」。
+  // 断言必须同时钉住【无 need 字段】：带 need 的 403 是 scope 分支；无 need 才是 !hit 分支。
+  // 会话用 viewerJar（登出段之后 adminJar 已失效，见上）；
+  // viewer1 本就无 demo:view，仍拿到无 need 的 403，正说明 !hit 判在 hasScope 之前（fail-closed）。
+  step('multi：已登录打「已声明路径的未声明 method」⇒ 403 无 need（declaredScopeGate 独有分支）')
+  const undeclaredMethod = await httpRequest({
+    port,
+    host: TENANT_HOST,
+    method: 'POST',
+    path: '/api/modules/demo/ping',
+    cookie: viewerJar.header(),
+  })
+  const undeclaredBody = json(undeclaredMethod)
+  const noNeedField = undeclaredBody !== null && !('need' in undeclaredBody)
+  check(
+    undeclaredMethod.status === 403 && undeclaredBody?.error === 'FORBIDDEN' && noNeedField,
+    'POST /api/modules/demo/ping（只声明了 GET）→ 403 无 need 字段（= 未声明 method 分支）',
+    describe(undeclaredMethod),
+  )
+
+  step('multi：登录限速（连续失败达阈值 ⇒ 429，含 Retry-After）')
+  // 专用用户名：本进程的限速器是幂等的内存状态，用 admin1 会把后续用例的登录一起拦掉。
+  // 该段必须排在 runMulti 最后：限速状态一旦落进本进程，任何在此之后复用该用户名的登录都会被拦。
+  const RL_USER = 'ratelimit-probe'
+  const rlPost = () => httpRequest({
+    port,
+    host: TENANT_HOST,
+    method: 'POST',
+    path: '/api/platform/auth/login',
+    body: JSON.stringify({ username: RL_USER, password: 'wrong' }),
+  })
+  // 阈值内每一次都无条件断言——不能写成「先看见 429 就 break」：那样第一个请求若被判 429，
+  // 整段零条 401 断言会被求值，「阈值恰好是 N」这个事实就只剩运行结果佐证、没有被钉住。
+  for (let i = 0; i < USER_FAIL_LIMIT; i++) {
+    const res = await rlPost()
+    check(res.status === 401, `第 ${i + 1} 次坏凭据登录 401（尚未达阈值）`, describe(res))
+  }
+  // 第 N+1 次才该被拦。check() 是前置判定（count >= USER_FAIL_LIMIT 即拒），
+  // 故第 1..N 次皆 401，第 N+1 次起 429。
+  const rlRes = await rlPost()
+  check(
+    rlRes.status === 429 && json(rlRes)?.error === 'TOO_MANY_REQUESTS',
+    '连续失败达阈值后返回 429 TOO_MANY_REQUESTS',
+    describe(rlRes),
+  )
+  check(
+    Number(rlRes.headers['retry-after']) > 0,
+    `429 带 Retry-After 头（实际 ${rlRes.headers['retry-after']}）`,
+    { headers: rlRes.headers },
   )
 }
 

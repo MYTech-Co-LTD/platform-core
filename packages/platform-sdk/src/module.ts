@@ -69,3 +69,67 @@ export function requireScope(code: string): MiddlewareHandler {
     await next()
   }
 }
+
+/** 一个被声明的端点（与 manifest.api.internal[] 同形；宿主 loader 传进来） */
+export interface DeclaredEndpoint {
+  method: string
+  path: string
+  scope: string
+}
+
+/**
+ * 门卫放行标记（Hono context 变量键）。`declaredScopeGate` 判定通过后置位，**唯一消费者是
+ * 包裹层（`loader.applyDeclaredApiGate`）给通配 ALL 路由挂的兜底门卫**（Task 24 评审 R1）。
+ *
+ * 为什么需要它：通配 ALL 路由（`use('*')` / `use('/prefix/*')` / `mount()`）匹配的请求路径
+ * 集合**大于**任何一条声明路径。逐条声明的门卫只覆盖声明过的那几条，其余（如 `/files/*`
+ * 下的 `/files/b`）会直达模块自己的中间件/handler——**匿名可达**。兜底门卫要拒掉这些，
+ * 但它自己无法用 `c.req.routePath` 判定（在通配路径上它恒为通配模式本身，见下），只能问
+ * 这枚标记："本次请求是不是已经被某条声明的门卫放行了？"
+ *
+ * 键名带 `platform.` 前缀，避免与模块自有 context 变量撞车。
+ */
+export const DECLARED_GATE_APPROVED = 'platform.declaredGateApproved'
+
+/**
+ * 模块 API 门卫：**按声明授权**。
+ *
+ * 为什么不是模块手写 requireScope（M1 闭债 R2）：漏写一次就是**匿名可读**，且不报错、不告警、
+ * CI 不红——一种纯靠人记得的契约。改由 host 按 manifest 施加后，"忘挂"这件事在结构上不可能
+ * 发生（没有可挂的东西）。
+ *
+ * 挂载方式决定了它能不能生效（已实证，勿踩）：
+ *   - 必须 `app.use(声明路径, gate)` **先于** handler 注册，否则门卫永不执行；
+ *   - `use('*', gate)` 里 c.req.routePath 恒为 '/*'，**拿不到**下游 handler 的路径。
+ * 故宿主用"包裹层"：新建 Hono → 先挂门卫 → 再 route('/', 模块 router)（loader.applyDeclaredApiGate）。
+ *
+ * 比对基准是 `c.req.routePath`，而**包裹层一旦被宿主 mount 到前缀下，routePath 就是绝对路径**
+ * （实测：`route('/api/modules/mod', wrapper)` 下为 '/api/modules/mod/ping'）。故传进来的
+ * `declared[].path` 必须与 routePath **同基准**：宿主装载器因此传宿主绝对路径，本文件自己的
+ * 用例（未挂载）传模块相对路径。两处混用 ⇒ 门卫恒 403。
+ *
+ * 错误体与 requireScope 逐字一致（模块与前端无需感知差异）。
+ */
+export function declaredScopeGate(
+  declared: ReadonlyArray<DeclaredEndpoint>,
+): MiddlewareHandler {
+  return async (c, next) => {
+    const identity = c.get('identity') as Identity | undefined
+    if (!identity) {
+      return c.json({ error: 'UNAUTHENTICATED' }, 401)
+    }
+    const hit = declared.find((d) => d.path === c.req.routePath && d.method === c.req.method)
+    if (!hit) {
+      // 未声明即不可达（fail-closed）。装载期双向核对已保证每个注册路由都被声明过，
+      // 所以这条只会在"声明路径下的未声明 method"（如声明 GET 而请求 POST）时命中。
+      return c.json({ error: 'FORBIDDEN' }, 403)
+    }
+    if (!identity.hasScope(hit.scope)) {
+      return c.json({ error: 'FORBIDDEN', need: hit.scope }, 403)
+    }
+    // 放行即置标记：包裹层的兜底门卫据此区分"已被声明门卫放行"与"谁都没放行"
+    // （见 DECLARED_GATE_APPROVED 的说明）。置标记不是授权本身，授权是上面那两行判定。
+    c.set(DECLARED_GATE_APPROVED, true)
+    await next()
+  }
+}

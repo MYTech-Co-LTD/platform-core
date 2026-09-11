@@ -101,4 +101,22 @@ describe.skipIf(!dbUrl)('runMigrations', () => {
     )
     expect(t.rows[0].ok).toBe(true)
   })
+
+  it('002：audit 保留 —— prune_audit(days) 只删超期行并返回删除条数', async () => {
+    // 该用例自带清理，不污染其他用例：只插自己造的、且 actor 带专用前缀的行
+    await pool.query(
+      "insert into platform.audit(tenant_id, actor, action, detail, at) values"
+      + " (null, 'prune-test-old', 'login.fail', '{}', now() - interval '100 days'),"
+      + " (null, 'prune-test-new', 'login.fail', '{}', now())",
+    )
+    const { rows } = await pool.query<{ n: string }>(
+      'select platform.prune_audit(90) as n',
+    )
+    expect(Number(rows[0]!.n)).toBeGreaterThanOrEqual(1) // 至少删掉自己那条超期行
+    const left = await pool.query<{ c: string }>(
+      "select count(*) as c from platform.audit where actor like 'prune-test-%'",
+    )
+    expect(Number(left.rows[0]!.c)).toBe(1) // 未超期那条还在
+    await pool.query("delete from platform.audit where actor like 'prune-test-%'")
+  })
 })

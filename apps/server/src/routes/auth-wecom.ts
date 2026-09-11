@@ -32,6 +32,7 @@ import {
 } from '@platform/auth-core'
 import type { TenantEnv } from '../tenant'
 import { serializeSessionCookie, type CasdoorFactory, type SessionEnv } from '../session-middleware'
+import { warnRateLimitDeny, type LoginLimiter } from '../rate-limit'
 
 const CALLBACK_PATH = '/api/platform/auth/wecom/callback'
 const STATE_COOKIE = 'wecom_state'
@@ -49,6 +50,11 @@ export interface WecomRoutesDeps {
   casdoor: CasdoorFactory
   sessionSecret: string
   pool: Pool
+  /**
+   * 登录限速器（M1 闭债 R2）：与账密路共用同一实例（见 auth.ts 同名注释）。本路由是 `wecom`
+   * 门（PR#5 评审 R2）——共用实例、**分开的桶键**，两件事同时成立。
+   */
+  limiter: LoginLimiter
   /** Casdoor 应用三件：qr authorize URL 拼接 + callback code 换票 */
   casdoorUrl: string
   casdoorClientId: string
@@ -192,12 +198,40 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     // 死胡同——iframe 内（扫码页回跳）200 + postMessage sso-fail（与 sso-done 对称，Task 17
     // 登录页监听两种消息）；顶层 302 /login?error=<CODE>（登录页按码展示）。错误码集合与
     // 历史 JSON error 字段同名：BAD_STATE / BAD_CODE / NO_ACCOUNT / CASDOOR_UNAVAILABLE /
-    // WECOM_UNAVAILABLE / WECOM_NOT_CONFIGURED。
+    // WECOM_UNAVAILABLE / WECOM_NOT_CONFIGURED / TOO_MANY_REQUESTS。
     const isIframe = c.req.header('sec-fetch-dest') === 'iframe'
     const fail = (err: string) =>
       isIframe ? c.html(iframeFailHtml(err)) : c.redirect(`/login?error=${encodeURIComponent(err)}`)
 
+    // 限速（M1 闭债 R2）：租户层，必须早于任何 writeAudit。企微路在 code 换票前拿不到用户名
+    // ⇒ 只判租户维度（spec §3.2 的已知口径落差，刻意如此）；门维度固定 'wecom'（PR#5 评审 R2
+    // 拆桶：灌满企微门不得锁死同租户的账密门）。
+    //
+    // **为什么这条判定必须晚于上面 isIframe/fail 的定义**（PR#5 评审 R2）：本路由的失败一律是
+    // 导航呈现，JSON 429 在回调上是用户死胡同——qr 路会让扫码区直接显示一坨 JSON
+    // （Login.tsx 的 WecomQrTab 只认 sso-done/sso-fail 两种 postMessage，`onError` 永不触发，
+    // 用户既无提示也无法重试），silent 路整页落到 JSON 文本、连 /login?error= 兜底都没有。
+    // 故 429 与其它失败同走 fail：iframe 拿到对称的 sso-fail，顶层 302 回登录页按码展示。
+    // Retry-After 信号照旧带上（形态变了，信号不丢），console.warn 告警也照旧（warnRateLimitDeny）。
+    //
+    // **check 是只读的**（Task 24 评审 R1）：它不改状态，deny 只能由既有计数触发。故本路由
+    // 每一条失败路径都**必须**有对应的 record——漏一条，那条路径的流量就完全不进计数，
+    // 第 2/3 层永远推不满 ⇒ 该路径**永不 429**（且它每次都在往共享 SSO 发出站调用）。
+    // 口径：record 只动内存计数、**不写 audit**（record 与 writeAudit 是两个独立调用）——
+    // "被拒请求不灌审计表"的既有语义因此不受影响。
+    const decision = deps.limiter.check(t.id, 'wecom', null)
+    if (!decision.allowed) {
+      warnRateLimitDeny(t.id, decision)
+      const res = fail('TOO_MANY_REQUESTS')
+      res.headers.set('Retry-After', String(decision.retryAfterSec ?? 60))
+      return res
+    }
+
     if (!code || !state || readStateCookie(c.req.header('cookie')) !== state) {
+      // 计数：BAD_STATE 也是一次失败的登录尝试。此前只 fail 不 record ⇒ 连 /qr 都不需要
+      // （随便带个 state 循环打即可）就能无限打而计数恒为 0。不写 audit：actor 此刻根本
+      // 不存在，且被拒请求不灌审计表是既有语义（评审 R1）
+      deps.limiter.record(t.id, 'wecom', null, false)
       return fail('BAD_STATE')
     }
 
@@ -206,6 +240,10 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     try {
       if (via === 'wecom-silent') {
         if (!t.wecom_corp_id || !t.wecom_secret) {
+          // 计数（PR#5 评审 R2）：口径统一——本路由上除"被限速本身"以外的**每一个**失败出口
+          // 都要 record。这条不产生出站调用（危害比 catch 那条低一档），但它同样是免费的
+          // 第 2/3 层填充流量：漏记就等于给攻击者留一条不计数的路
+          deps.limiter.record(t.id, 'wecom', null, false)
           return fail('WECOM_NOT_CONFIGURED')
         }
         name = await wecomUserIdForCode(
@@ -231,10 +269,28 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     } catch {
       // 传输层故障（Casdoor/企微 5xx、网络——含 casdoorCodeToName 的非 2xx/非 JSON 抛错）
       // ≠ 坏 code：CASDOOR/WECOM_UNAVAILABLE 类如实呈现，不记 login.fail（非用户过错）
+      //
+      // 计数（PR#5 评审 R2）：这条 catch 是 **silent 路的唯一出口**——`wecomUserIdForCode` 对坏
+      // code 是**抛错**、不返回 null（packages/auth-core/src/wecom.ts），所以 silent 路永远到
+      // 不了下面的 `name === null`（那里那次 record 对 silent 是死代码）；而 qr 路在上游退化
+      // （Casdoor 5xx/非 JSON）时也落这里。此前这里不 record ⇒ 这两条路**完全不进第 2/3 层**：
+      // silent 路攻击面与 qr 路逐字等价（via 只来自查询串、回调上没有 wxwork UA 校验）却**永不
+      // 429**，且每次都在向共享 SSO / 腾讯 getuserinfo 发出站调用——"上游一出问题刹车就失效"，
+      // 与本路由自立的规矩「每一条失败路径都**必须**有 record」直接冲突
+      deps.limiter.record(t.id, 'wecom', null, false)
       return fail(via === 'wecom-silent' ? 'WECOM_UNAVAILABLE' : 'CASDOOR_UNAVAILABLE')
     }
     if (name === null) {
-      // code 被上游拒绝（无效/过期/已兑换）——不泄具体原因（qr 路；silent 路只抛不 null）
+      // code 被上游拒绝（无效/过期/已兑换）——不泄具体原因（qr 路；silent 路只抛不 null，
+      // 那条路在 catch 里计数，见上）
+      //
+      // 计数（Task 24 评审 R1，本条是本路由的主打路径）：循环
+      // `GET /qr → 取 state → `GET /callback?code=<垃圾>&state=<同一 uuid>` 的攻击，每次
+      // 都通过 state 校验、每次都经 casdoorCodeToName 向共享 SSO 发一次出站调用、每次都在
+      // 这里返回——此前这里**只 fail 不 record**，计数恒不增长 ⇒ 永不 429，把无限放大打在
+      // 跨租户的 SSO 面上（与 spec"每次都会产生失败"的自陈相反）。仍不写 audit：code 被
+      // 上游拒绝时拿不到可信身份，actor 无从写起；计数才是这一路要的东西
+      deps.limiter.record(t.id, 'wecom', null, false)
       return fail('BAD_CODE')
     }
 
@@ -246,10 +302,15 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     try {
       ;[user, perms] = await Promise.all([casdoor.getUser(name), casdoor.getPermissions()])
     } catch {
+      // 计数（PR#5 终轮评审 M1）：路由上最后一处漏记的出口，与上面那条 catch 理由逐字相同
+      // （"上游一出问题刹车就失效"），且每次做 **2 次**对共享 SSO 的出站调用（getUser +
+      // getPermissions）——比无出站的 WECOM_NOT_CONFIGURED 高一档。口径同 :243
+      deps.limiter.record(t.id, 'wecom', null, false)
       return fail('CASDOOR_UNAVAILABLE')
     }
     if (user === null) {
       await writeAudit(deps.pool, t.id, name, 'login.fail', { via, reason: 'no-account' })
+      deps.limiter.record(t.id, 'wecom', null, false) // 企微路不建 user 桶（check 也不看它）
       return fail('NO_ACCOUNT')
     }
     const scopes = effectiveScopes(name, user.roles ?? [], perms)
@@ -262,6 +323,7 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     )
     // 审计先行（M-4，与 auth.ts 同序）：插入抛错 → 500 且未发任何会话 cookie
     await writeAudit(deps.pool, t.id, name, 'login.ok', { via })
+    deps.limiter.record(t.id, 'wecom', null, true)
     c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
     // iframe 分支（登录页内嵌扫码页回跳）：顶层 302 指到 iframe 外不可行 → 小 HTML 通知父页
     if (c.req.header('sec-fetch-dest') === 'iframe') {

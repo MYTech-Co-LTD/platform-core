@@ -18,8 +18,16 @@ import { pathToFileURL } from 'node:url'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { parse as parseYaml } from 'yaml'
 import type { CasdoorClient } from '@platform/auth-core'
-import { ManifestSchema, type ModuleDefinition, type ModuleManifest } from '@platform/sdk'
-import type { Hono } from 'hono'
+import {
+  DECLARED_GATE_APPROVED,
+  ManifestSchema,
+  declaredScopeGate,
+  type DeclaredEndpoint,
+  type ModuleDefinition,
+  type ModuleManifest,
+} from '@platform/sdk'
+import { Hono } from 'hono'
+import type { MiddlewareHandler } from 'hono'
 import type { Pool } from 'pg'
 import { runMigrations } from './migrate'
 
@@ -83,6 +91,110 @@ export async function provisionModulePermissions(
     await casdoorFor(org).upsertPermissions(permissions)
   }
   return rows.map((r) => r.casdoor_org)
+}
+
+/** 模块 API 在宿主上的挂载前缀。mount() 与门卫声明共用此处，**不许各写一份**（防漂移） */
+export function moduleApiBasePath(id: string): string {
+  return '/api/modules/' + id
+}
+
+/**
+ * 按 manifest 声明给模块 router 施加门卫，并核对声明与代码一致（M1 闭债 R2）。
+ *
+ * **为什么用包裹层而不是对 router 补 use()**：Hono 里 handler 先注册、use 后注册时门卫
+ * 【永不执行】（已实证）——那样会造出一个"代码里有门卫、运行时永不生效"的静默洞。
+ * 正解是新建 Hono → 先挂门卫 → 再 route('/', router)（已实证：路径合成正确、门卫先跑）。
+ *
+ * 双向核对：注册的路由集合必须与声明集合完全一致，任一方向的差集都让装载失败（fail-fast，
+ * 与"装载器必填"同风格）。这让"声明与代码漂移"不可能悄悄存在。
+ *
+ * **`method === 'ALL'` ≠ 一定是中间件**（Task 24 评审 R1）：Hono 里 `app.all()` 与 `app.use()`
+ * 同走 `#addRoute('ALL', ...)`（hono-base.js），故 ALL 里混着两种东西，必须分开处置：
+ *   · **无通配的 ALL**（`app.all('/secret', h)`、`app.use('/backdoor', 终结 handler)`）在 Hono 里
+ *     只匹配【它自己那一条】请求路径（实测：`use('/prefix')` 不匹配 `/prefix/notes`）——它就是
+ *     一个"多方法端点"，正是本轮要消灭的"改了代码忘了改 manifest"错误类型。旧实现把它当成
+ *     "模块自己的 use() 中间件"整条滤掉，于是它既不参与双向核对、又拿不到声明路径上的门卫 ⇒
+ *     **匿名 200**。现在：路径不是任何声明路径的 ALL 端点一律**装载失败**（与"未声明但已注册"
+ *     同一处置）；路径是声明路径的（`app.all('/x', h)` + 逐 method 声明）视为合法写法——它落在
+ *     该声明的门卫下，门卫按 method 逐条判定（未声明的 method 照旧 403）。
+ *   · **含 '*' 的 ALL**（`use('*')` / `use('/prefix/*')` / `mount()`）才是真中间件形态。它们
+ *     匹配的请求路径集合**大于**任何一条声明路径，逐条声明的门卫盖不住，故另挂**兜底门卫**
+ *     （见下方 allWildcard 段）。
+ */
+export function applyDeclaredApiGate(
+  router: Hono,
+  manifest: ModuleManifest,
+  mountPath: string = moduleApiBasePath(manifest.id),
+): Hono {
+  const declared: DeclaredEndpoint[] = manifest.api?.internal ?? []
+  const declaredPaths = new Set(declared.map((d) => d.path))
+
+  // 三类注册路由：非 ALL（双向核对用）/ 无通配 ALL（多方法端点）/ 含通配 ALL（中间件形态）
+  const registered: string[] = []
+  const allExact = new Set<string>()
+  const allWildcard = new Set<string>()
+  for (const r of router.routes) {
+    if (r.method !== 'ALL') {
+      registered.push(`${r.method} ${r.path}`)
+    } else if (r.path.includes('*')) {
+      allWildcard.add(r.path)
+    } else {
+      allExact.add(r.path)
+    }
+  }
+
+  const declaredKeys = declared.map((d) => `${d.method} ${d.path}`)
+  const declaredSet = new Set(declaredKeys)
+  const registeredSet = new Set(registered)
+  const undeclared = registered.filter((k) => !declaredSet.has(k))
+  // 幽灵声明：既没有同名 method 的注册，也没有一条 ALL 端点坐落在同一路径上。
+  // 后半句是"app.all('/x') + 逐 method 声明"这条合法写法的出口：ALL 路由在 routes 里只有一条
+  // 'ALL' 记录，若不认它，逐 method 声明会全部被误报成幽灵。
+  const phantom = declared
+    .filter((d) => !registeredSet.has(`${d.method} ${d.path}`) && !allExact.has(d.path))
+    .map((d) => `${d.method} ${d.path}`)
+  // 未声明的 ALL 端点：无通配 ALL 只匹配它自己那条路径，路径不在声明里 = 未声明的端点
+  const undeclaredAll = [...allExact].filter((p) => !declaredPaths.has(p))
+
+  if (undeclared.length > 0 || phantom.length > 0 || undeclaredAll.length > 0) {
+    throw new Error(
+      `模块 "${manifest.id}" 的 api.internal 声明与代码不一致：`
+      + `未声明但已注册 [${undeclared.join(', ') || '-'}]；`
+      + `已声明但未注册 [${phantom.join(', ') || '-'}]；`
+      + `未声明的多方法端点（app.all()/use(路径, 终结 handler)）[`
+      + `${undeclaredAll.map((p) => `ALL ${p}`).join(', ') || '-'}]`
+      + `（未声明 = 不可达；声明与代码必须逐条对齐）`,
+    )
+  }
+
+  // 门卫的比对表用【宿主绝对路径】，而 use() 的注册路径保持【模块相对】——两者不是一回事：
+  // wrapper 被宿主 mount 到 mountPath 后，c.req.routePath 回来的是【绝对】路径（实测：
+  // route('/api/modules/mod', wrapper) 下 c.req.routePath === '/api/modules/mod/ping'），
+  // 拿模块相对的 '/ping' 去比永远 miss ⇒ 门卫恒 403（"代码里有门卫、运行时全拒"的另一种病）。
+  // 注册路径则必须相对：wrapper 自己就挂在 mountPath 上，写成绝对会叠成两段前缀。
+  const gate = declaredScopeGate(declared.map((d) => ({ ...d, path: mountPath + d.path })))
+  const guarded = new Hono()
+
+  // ① 逐条声明路径挂门卫（先于兜底门卫注册 ⇒ 放行标记在兜底门卫看到它之前就已置位）
+  for (const p of new Set(declaredPaths)) guarded.use(p, gate)
+
+  // ② 兜底门卫：只在模块注册了通配 ALL 时才挂（没用 use()/mount() 的模块行为**零变化**）。
+  //    它拒掉一切"没被声明门卫放行"的请求——这正是 wildcard 覆盖面大于声明面时的那条缝
+  //    （如 use('/prefix/*', mw) 下请求 /prefix/other 会直达模块自己的中间件）。
+  //    为什么不能直接在这条通配路径上挂 declaredScopeGate：门卫判定的基准是 c.req.routePath，
+  //    而在通配路径上它恒为通配模式本身（已实证：use('*') 下恒为 '/*'），拿去比对必然 miss
+  //    ⇒ 恒 403，会把合法的 use('*')/use('/prefix/*') 中间件形态打坏。故用放行标记判定。
+  if (allWildcard.size > 0) {
+    const fallback: MiddlewareHandler = async (c, next) => {
+      if (c.get(DECLARED_GATE_APPROVED)) return next()
+      if (!c.get('identity')) return c.json({ error: 'UNAUTHENTICATED' }, 401)
+      return c.json({ error: 'FORBIDDEN' }, 403)
+    }
+    for (const p of allWildcard) guarded.use(p, fallback)
+  }
+
+  guarded.route('/', router)
+  return guarded
 }
 
 /** 内部形态：LoadedModule + 模块目录（userApp dist 相对它解析，不外露） */
@@ -156,7 +268,11 @@ export async function loadModules(
       )
     }
 
-    loaded.push({ manifest, router: def.createRouter({ pool: deps.pool }), dir })
+    loaded.push({
+      manifest,
+      router: applyDeclaredApiGate(def.createRouter({ pool: deps.pool }), manifest),
+      dir,
+    })
   }
 
   // ⑤ 权限码供给：全部模块的权限码一次性供给到每个租户各自的 org（见 provisionModulePermissions）。
@@ -187,7 +303,7 @@ export async function loadModules(
     // ⑥ API 挂 /api/modules/<id>；userApp 静态目录存在才挂（dist 绝对路径，mount 路径来自 manifest）
     mount(app: Hono): void {
       for (const m of loaded) {
-        app.route('/api/modules/' + m.manifest.id, m.router)
+        app.route(moduleApiBasePath(m.manifest.id), m.router)
 
         const userApp = m.manifest.frontend?.userApp
         if (!userApp) continue

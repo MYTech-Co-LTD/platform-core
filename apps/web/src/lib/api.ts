@@ -28,6 +28,10 @@ const ERROR_TEXTS: Record<string, string> = {
   BAD_STATE: '登录状态已过期，请重试',
   CASDOOR_UNAVAILABLE: '认证服务暂不可用，请稍后重试',
   WECOM_UNAVAILABLE: '企业微信服务暂不可用，请稍后重试',
+  // 登录限速被触发（PR#5 评审 R2）：企微回调的限速同样走 /login?error=TOO_MANY_REQUESTS，
+  // 故这里必须有文案——未登记码会回退到通用"登录失败，请稍后重试"，把"等一下再来"这条
+  // 唯一有用的信息抹掉
+  TOO_MANY_REQUESTS: '尝试过于频繁，请稍后重试',
 }
 
 export function errorText(code: string): string {

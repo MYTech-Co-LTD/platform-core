@@ -21,6 +21,8 @@ import { seedDemo } from '../seed'
 import { resolveTenantMiddleware, type TenantEnv } from '../tenant'
 import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from '../session-middleware'
 import { wecomRoutes } from './auth-wecom'
+import { authRoutes } from './auth'
+import { TENANT_FAIL_LIMIT, createLoginLimiter, type LoginLimiter } from '../rate-limit'
 
 const dbUrl = process.env.DATABASE_URL
 const SECRET = 'test-session-secret-0123456789abcdef' // ≥32 字符，测试专用
@@ -73,7 +75,12 @@ function fakeWecomFetch(input: RequestInfo | URL, _init?: RequestInit): Promise<
 
 type AppClient = ReturnType<typeof testClient<ReturnType<typeof makeApp>>>
 
-function makeApp(pool: Pool, casdoor: CasdoorFactory = casdoorFor): Hono<TenantEnv & SessionEnv> {
+function makeApp(
+  pool: Pool,
+  casdoor: CasdoorFactory = casdoorFor,
+  limiter: LoginLimiter = createLoginLimiter(),
+  wecomFetch: typeof globalThis.fetch = fakeWecomFetch,
+): Hono<TenantEnv & SessionEnv> {
   const app = new Hono<TenantEnv & SessionEnv>()
   app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
   app.use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET }))
@@ -83,12 +90,42 @@ function makeApp(pool: Pool, casdoor: CasdoorFactory = casdoorFor): Hono<TenantE
       casdoor,
       sessionSecret: SECRET,
       pool,
+      limiter, // ← 新增
+      casdoorUrl: mock.origin,
+      casdoorClientId: 'test-client',
+      casdoorClientSecret: 'test-secret',
+      publicOrigin: PUBLIC_ORIGIN,
+      wecomFetch,
+    }),
+  )
+  return app
+}
+
+/**
+ * 两扇门同挂一个 limiter 实例的宿主形态（`app.ts` 的缩样）：拆桶断言只能在**同一个实例**
+ * 上看——分成两个实例时那两条断言天然绿，测不到"桶的键是否隔开"。
+ */
+function makeAppBothDoors(pool: Pool, limiter: LoginLimiter): Hono<TenantEnv & SessionEnv> {
+  const app = new Hono<TenantEnv & SessionEnv>()
+  app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
+  app.use('*', sessionMiddleware({ casdoor: casdoorFor, sessionSecret: SECRET }))
+  app.route(
+    '/api/platform/auth/wecom',
+    wecomRoutes({
+      casdoor: casdoorFor,
+      sessionSecret: SECRET,
+      pool,
+      limiter,
       casdoorUrl: mock.origin,
       casdoorClientId: 'test-client',
       casdoorClientSecret: 'test-secret',
       publicOrigin: PUBLIC_ORIGIN,
       wecomFetch: fakeWecomFetch,
     }),
+  )
+  app.route(
+    '/api/platform/auth',
+    authRoutes({ casdoor: casdoorFor, sessionSecret: SECRET, pool, limiter }),
   )
   return app
 }
@@ -345,5 +382,301 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     })
     expect(silent.status).toBe(404)
     expect(await silent.json()).toEqual({ error: 'WECOM_NOT_CONFIGURED' })
+  })
+
+  // 企微路：租户层限速（code 换票前拿不到用户名 ⇒ 只判租户维度，见 spec §3.2）
+  it('★ 负例：租户失败达阈值 → 回调被拦且仍走本路由的【导航】契约（非 iframe 302 /login?error=；iframe sso-fail），不落任何 audit', async () => {
+    const PROBE_ACTOR = 'rate-limit-wecom-probe' // 专用 actor：全仓仅本用例用，audit 计数才稳
+    const { rows } = await pool.query<{ id: number }>(
+      "select id from platform.tenant where slug = 'acme'",
+    )
+    const acmeId = rows[0]!.id
+    // 计数按【专用 tenant+actor】维度取：vitest 并发跑各测试文件、别的文件也在写 platform.audit，
+    // 全局 count(*) 会抖——这里 tenant_id+actor 双条件把它钉死在只有本用例碰得着的行上。
+    await pool.query('delete from platform.audit where tenant_id = $1 and actor = $2', [
+      acmeId,
+      PROBE_ACTOR,
+    ])
+    const auditCount = async (): Promise<number> => {
+      const { rows: r } = await pool.query<{ n: string }>(
+        'select count(*) as n from platform.audit where tenant_id = $1 and actor = $2',
+        [acmeId, PROBE_ACTOR],
+      )
+      return Number(r[0]!.n)
+    }
+    expect(await auditCount()).toBe(0) // 前置：该 tenant+actor 从未出现过
+
+    const limiter = createLoginLimiter()
+    const c2 = testClient(makeApp(pool, casdoorFor, limiter))
+
+    // 构造一个"若不限速就会写一行 audit"的回调：有效 state + 已认证但 org 内无账户的 code
+    // ⇒ 正常路径会落到 NO_ACCOUNT 分支、写 login.fail(actor=PROBE_ACTOR)。这样下面的
+    // "行数不增"才不是空断言。反证：临时删掉 callback 的限速早返回，本用例 audit 断言变红。
+    const qr = await c2.api.platform.auth.wecom.qr.$get(undefined, {
+      headers: { host: 'acme.test' },
+    })
+    const state = stateToken(qr)
+    const code = mock.issueOidcCode(PROBE_ACTOR)
+
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) limiter.record(acmeId, 'wecom', null, false)
+
+    // 非 iframe（顶层导航）：302 回登录页按码展示——**不是** JSON 429
+    // （PR#5 评审 R2：JSON 错误体在这条路由上是用户死胡同，见 :204 的自陈契约）
+    const res = await c2.api.platform.auth.wecom.callback.$get(
+      { query: { code, state } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/login?error=TOO_MANY_REQUESTS')
+    expect(res.headers.get('content-type') ?? '').not.toContain('application/json')
+    // Retry-After 信号不因呈现形态变化而丢失
+    expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0)
+    expect(await auditCount()).toBe(0) // ← 限速挡在 audit 之前：被拦的回调一行都不写
+
+    // iframe（登录页内嵌扫码页回跳）：200 + 与 sso-done 对称的 sso-fail——父页壳 SPA 能收，
+    // 扫码区不会显示一坨 JSON（旧实现走 rate-limit 的 JSON 429，WecomQrTab 的 onError 永不触发）
+    const resIframe = await c2.api.platform.auth.wecom.callback.$get(
+      { query: { code, state } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}`, 'sec-fetch-dest': 'iframe' } },
+    )
+    expect(resIframe.status).toBe(200)
+    expect(await resIframe.text()).toContain(
+      `parent.postMessage({type:'sso-fail', error:'TOO_MANY_REQUESTS'},'*')`,
+    )
+    expect(await auditCount()).toBe(0)
+  })
+
+  // 上一条用例是【手工喂计数】造出 429——它只证明"计数高时 check 会拦"，没证明"企微流量会把
+  // 计数推上去"。下面两条走真路由、不喂计数（PR#5 评审 R1：BAD_CODE/BAD_STATE 此前不 record
+  // ⇒ 计数恒不增长 ⇒ 该路径永不 429）。反证方式：删掉 auth-wecom.ts 对应分支的 record，红。
+  it('★ 坏 code 流量自己把租户失败计数推满 ⇒ 第 N+1 次 429（每次都会真的打到上游 SSO）', async () => {
+    const limiter = createLoginLimiter()
+    const c3 = testClient(makeApp(pool, casdoorFor, limiter))
+    const qr = await c3.api.platform.auth.wecom.qr.$get(undefined, { headers: { host: 'acme.test' } })
+    const state = stateToken(qr)
+    const call = (code: string) =>
+      c3.api.platform.auth.wecom.callback.$get(
+        { query: { code, state } },
+        { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+      )
+    // 前 TENANT_FAIL_LIMIT 次：每次通过 state 校验、每次向 mock SSO 发一次换票请求、每次 BAD_CODE
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) {
+      const res = await call(`bogus-code-${i}`)
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('/login?error=BAD_CODE')
+    }
+    const blocked = await call('bogus-code-final')
+    expect(blocked.status).toBe(302)
+    expect(blocked.headers.get('location')).toBe('/login?error=TOO_MANY_REQUESTS')
+  })
+
+  it('★ 坏 state 流量同样计数（连 /qr 都不需要）⇒ 第 N+1 次 429', async () => {
+    const limiter = createLoginLimiter()
+    const c4 = testClient(makeApp(pool, casdoorFor, limiter))
+    const call = () =>
+      c4.api.platform.auth.wecom.callback.$get(
+        { query: { code: 'x', state: 'not-the-cookie-state' } },
+        { headers: { host: 'acme.test', cookie: 'wecom_state=different' } },
+      )
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) {
+      const res = await call()
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('/login?error=BAD_STATE')
+    }
+    // 状态码断言不能省（PR#5 终轮评审 S3）：本轮把原来的 `status).toBe(429)` 换成了只剩
+    // location 的断言——若哪天被拦的响应退回 JSON 却恰好带上 Location，这条回归会静默通过。
+    // 与本文件同类用例（bad-code 路的 `expect(blocked.status).toBe(302)`）保持同一口径
+    const blocked = await call()
+    expect(blocked.status).toBe(302)
+    expect(blocked.headers.get('location')).toBe('/login?error=TOO_MANY_REQUESTS')
+  })
+
+  // ---------------------------------------------------------------------------------------
+  // PR#5 评审 R2 ①：`catch` 分支（silent 路的**唯一**出口、qr 路的上游退化出口）与
+  // `WECOM_NOT_CONFIGURED` 此前都不 record ⇒ 这两条路永不 429，且每次都在发出站调用。
+  // ---------------------------------------------------------------------------------------
+
+  it('★ silent 路（catch 分支）自己把企微门推满 ⇒ 第 N+1 次被拦（第 301 次不再出站）', async () => {
+    // 出站计数：这条断言是"空转"的直接证据——旧实现 300 次请求 = 300 次 getuserinfo，
+    // 第 301 次照样再打一次（计数不增长 ⇒ check 永不 deny）
+    let outbound = 0
+    const brokenWecom: typeof globalThis.fetch = (input) => {
+      outbound += 1
+      if (String(input).startsWith('https://qyapi.weixin.qq.com/cgi-bin/gettoken')) {
+        return Promise.resolve(
+          Response.json({ errcode: 0, access_token: 'mock-corp-token', expires_in: 7200 }),
+        )
+      }
+      // getuserinfo 对坏 code 回 errcode≠0 ⇒ wecomUserIdForCode **抛错**（不是返 null）
+      return Promise.resolve(Response.json({ errcode: 40029, errmsg: 'invalid code' }))
+    }
+    const limiter = createLoginLimiter()
+    const c5 = testClient(makeApp(pool, casdoorFor, limiter, brokenWecom))
+    const qr = await c5.api.platform.auth.wecom.qr.$get(undefined, { headers: { host: 'acme.test' } })
+    const state = stateToken(qr)
+    // via 只来自查询串（回调上没有 wxwork UA 校验）⇒ 攻击面与 qr 路逐字等价 + 一个 &via=silent
+    const call = (code: string) =>
+      c5.api.platform.auth.wecom.callback.$get(
+        { query: { code, state, via: 'silent' } },
+        { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+      )
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) {
+      const res = await call(`bogus-silent-${i}`)
+      expect(res.status).toBe(302)
+      // catch 分支：企微传输故障如实呈现（不是 BAD_CODE）
+      expect(res.headers.get('location')).toBe('/login?error=WECOM_UNAVAILABLE')
+    }
+    const beforeBlocked = outbound
+    expect(outbound).toBeGreaterThanOrEqual(TENANT_FAIL_LIMIT) // 旧实现：300 次请求 = 300 次出站
+    const blocked = await call('bogus-silent-final')
+    expect(blocked.status).toBe(302)
+    expect(blocked.headers.get('location')).toBe('/login?error=TOO_MANY_REQUESTS')
+    expect(outbound).toBe(beforeBlocked) // 被拦即不再出站（刹车真的咬住了）
+  })
+
+  it('★ qr 路上游退化（Casdoor token 端点 5xx）同样计数 ⇒ 第 N+1 次被拦', async () => {
+    // 同一族缺陷的另一半：qr 路在上游退化时也落那条 catch。旧实现在这里同样不计数 ⇒
+    // 「上游一出问题刹车就失效」——每一次被打都还照旧向共享 SSO 发出站调用。
+    mock.setTokenEndpointFault('http502')
+    try {
+      const limiter = createLoginLimiter()
+      const c7 = testClient(makeApp(pool, casdoorFor, limiter))
+      const qr = await c7.api.platform.auth.wecom.qr.$get(undefined, {
+        headers: { host: 'acme.test' },
+      })
+      const state = stateToken(qr)
+      const call = (code: string) =>
+        c7.api.platform.auth.wecom.callback.$get(
+          { query: { code, state } },
+          { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+        )
+      for (let i = 0; i < TENANT_FAIL_LIMIT; i++) {
+        const res = await call(`code-${i}`)
+        expect(res.status).toBe(302)
+        expect(res.headers.get('location')).toBe('/login?error=CASDOOR_UNAVAILABLE')
+      }
+      expect((await call('code-final')).headers.get('location')).toBe(
+        '/login?error=TOO_MANY_REQUESTS',
+      )
+    } finally {
+      mock.setTokenEndpointFault('off')
+    }
+  })
+
+  it('★ 未配 corp 租户的 WECOM_NOT_CONFIGURED 出口同样计数 ⇒ 第 N+1 次被拦', async () => {
+    const limiter = createLoginLimiter()
+    const c6 = testClient(makeApp(pool, casdoorFor, limiter))
+    const call = () =>
+      c6.api.platform.auth.wecom.callback.$get(
+        { query: { code: 'x', state: 'st', via: 'silent' } },
+        { headers: { host: 'beta.test', cookie: 'wecom_state=st' } },
+      )
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) {
+      const res = await call()
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('/login?error=WECOM_NOT_CONFIGURED')
+    }
+    expect((await call()).headers.get('location')).toBe('/login?error=TOO_MANY_REQUESTS')
+  })
+
+  it('★ qr 路 getUser/getPermissions 抛错同样计数 ⇒ 第 N+1 次被拦', async () => {
+    // 同一族缺陷的第三处（PR#5 终轮评审 M1）：`name` 已解析成功、进到 `getUser +
+    // getPermissions` 这一对出站调用（**两次**打共享 SSO，比无出站的 WECOM_NOT_CONFIGURED
+    // 高危害一档），上游一抛错就 302 CASDOOR_UNAVAILABLE 走人——这条 catch 此前**没有
+    // record**，于是计数不增长、永不 429，而每一次请求都照旧发两次出站调用。反证：删掉
+    // `catch` 里的 record，本用例红（第 301 次仍是 CASDOOR_UNAVAILABLE 而非 TOO_MANY_REQUESTS）。
+    const brokenCasdoor: CasdoorFactory = (org) => {
+      const c = casdoorFor(org)
+      c.getUser = () => {
+        throw new Error('casdoor get-user down')
+      }
+      return c
+    }
+    const limiter = createLoginLimiter()
+    const c8 = testClient(makeApp(pool, brokenCasdoor, limiter))
+    const qr = await c8.api.platform.auth.wecom.qr.$get(undefined, {
+      headers: { host: 'acme.test' },
+    })
+    const state = stateToken(qr)
+    const call = (code: string) =>
+      c8.api.platform.auth.wecom.callback.$get(
+        { query: { code, state } },
+        { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+      )
+    // 每次换一枚新签发的有效 OIDC code：code 单次即焚，而本用例要的是"每次都真的走到
+    // getUser 那一步"（name 解析成功才谈得上后面这处出口）
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) {
+      const res = await call(mock.issueOidcCode('alice'))
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('/login?error=CASDOOR_UNAVAILABLE')
+    }
+    const blocked = await call(mock.issueOidcCode('alice'))
+    expect(blocked.status).toBe(302) // 状态码断言同 S3 口径
+    expect(blocked.headers.get('location')).toBe('/login?error=TOO_MANY_REQUESTS')
+  })
+
+  // ---------------------------------------------------------------------------------------
+  // PR#5 评审 R2 ②（协调者裁定）：第 2/3 层按 (tenantId, door) 分桶——300 次匿名企微回调
+  // 不得把同租户的账密登录一起锁死。反证：不分门时下面两条断言都会红（另一扇门一起被拦）。
+  // ---------------------------------------------------------------------------------------
+
+  it('★ 拆桶①：灌满【企微门】⇒ 企微回调被拦，同租户账密路照常 200（不被牵连）', async () => {
+    const { rows } = await pool.query<{ id: number }>(
+      "select id from platform.tenant where slug = 'acme'",
+    )
+    const acmeId = rows[0]!.id
+    const limiter = createLoginLimiter()
+    const c7 = testClient(makeAppBothDoors(pool, limiter))
+    const qr = await c7.api.platform.auth.wecom.qr.$get(undefined, { headers: { host: 'acme.test' } })
+    const state = stateToken(qr)
+    const code = mock.issueOidcCode('alice') // 若不被限速，这条会正常登录成功
+
+    // 灌满企微门：等价于 300 次匿名 GET /wecom/callback?code=x&state=<不匹配>
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) limiter.record(acmeId, 'wecom', null, false)
+
+    const wecom = await c7.api.platform.auth.wecom.callback.$get(
+      { query: { code, state } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+    )
+    expect(wecom.headers.get('location')).toBe('/login?error=TOO_MANY_REQUESTS')
+
+    // ← 改动前这里 429（企微洪泛把账密路一起推满）= 全租户两种登录一起瘫
+    const pw = await c7.api.platform.auth.login.$post(
+      { json: { username: 'alice', password: 'pw' } },
+      { headers: { host: 'acme.test' } },
+    )
+    expect(pw.status).toBe(200)
+    expect(setCookies(pw).join('\n')).toContain('platform_session=')
+  })
+
+  it('★ 拆桶②（反向）：灌满【账密门】⇒ 账密路 429，同租户企微路照常登录（不被牵连）', async () => {
+    const { rows } = await pool.query<{ id: number }>(
+      "select id from platform.tenant where slug = 'acme'",
+    )
+    const acmeId = rows[0]!.id
+    const limiter = createLoginLimiter()
+    const c8 = testClient(makeAppBothDoors(pool, limiter))
+    const qr = await c8.api.platform.auth.wecom.qr.$get(undefined, { headers: { host: 'acme.test' } })
+    const state = stateToken(qr)
+    const code = mock.issueOidcCode('alice')
+
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) limiter.record(acmeId, 'password', 'alice', false)
+
+    // 账密门自己的闸照常咬住（分桶没有把限速放松掉）
+    const pw = await c8.api.platform.auth.login.$post(
+      { json: { username: 'alice', password: 'pw' } },
+      { headers: { host: 'acme.test' } },
+    )
+    expect(pw.status).toBe(429)
+    expect(await pw.json()).toEqual({ error: 'TOO_MANY_REQUESTS' })
+
+    // ← 改动前这里 302 /login?error=TOO_MANY_REQUESTS（账密洪泛把企微路一起锁死）
+    const wecom = await c8.api.platform.auth.wecom.callback.$get(
+      { query: { code, state } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+    )
+    expect(wecom.status).toBe(302)
+    expect(wecom.headers.get('location')).toBe('/')
+    expect((await verifySession(sessionToken(wecom), SECRET))?.authVia).toBe('wecom-qr')
   })
 })

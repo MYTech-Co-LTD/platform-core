@@ -11,6 +11,164 @@
 
 ## [Unreleased]
 
+### Fixed - PR#5 评审 R3（终轮）：最后一处漏记出口 + 预算/上界口径如实化 + 断言回补
+
+> 1 条必须改 + 3 条建议改，全部落地。必须改的那条是同一族缺陷的**最后一处**：R2 已把
+> 「本路由上除"被限速本身"以外每一个失败出口都要 record」立成口径，唯独 `getUser` 这条漏了。
+
+- 【修复】**企微回调 `getUser`/`getPermissions` 的 `catch` 出口不 record**（`apps/server/src/routes/auth-wecom.ts`）：
+  `name` 已解析成功、正准备做那对出站调用时上游一抛错就 `302 CASDOOR_UNAVAILABLE` 走人，计数
+  不增长 ⇒ **永不 429**，而上游退化期间每个请求照旧打 **2 次**共享 SSO（`getUser` +
+  `getPermissions`）——比无出站的 `WECOM_NOT_CONFIGURED` 高一档。可达性实测：注入 `getUser`
+  恒抛错的 casdoor 工厂 + 每枚新签发的有效 OIDC code 连打 `TENANT_FAIL_LIMIT`（300）次，
+  **第 301 次仍是 `CASDOOR_UNAVAILABLE`**（前置 `check` 本该在这之前把它拦成 `TOO_MANY_REQUESTS`）。
+  现补 `limiter.record`（只动内存计数、不写 audit）——R2 那条"每一个失败出口都要 record"至此才成立
+- 【优化】**拆桶的预算口径如实化**（`rate-limit.ts` / `routes/auth.ts` / `app.ts` 注释 + 本文件）：
+  R2 的措辞"分的是**桶的键**、不是实例"读起来像"不劈预算"，与实测相反——第 2/3 层的额度是每
+  `(tenantId, door)` 一份，故**聚合预算 ×门数**。代价已写进上面的【破坏】段（300→600、1000→2000）
+- 【优化】**请求体上界的探针数字如实化**（`routes/auth.ts` + 本文件 R2/R1 两段）：R2 括号里的
+  "8 KiB 上限下 `pull=9`、读了 9216 B"取的是 1 KiB 块长的**最有利**情形；可控块长实测 1 MiB 块
+  ⇒ 内存 ≈1 MiB。上界随传输块**线性放大**，故撤掉具体数字（真实 HTTP 下 undici 按块交付，量级
+  约 8 KiB + 一个 ~64 KiB 传输块）
+- 【修复】**补回被 R2 换掉的状态码断言**（`apps/server/src/routes/auth-wecom.test.ts`）：坏 state
+  用例的"第 N+1 次"断言此前只剩 `location`（原先是 `expect(...status).toBe(429)`）——若哪天被拦
+  响应退回 JSON 却恰好带上 `Location`，这条回归会静默通过。现与本文件同类用例同口径：先断
+  `302`、再断 `location`
+
+### Fixed - PR#5 评审 R2：企微限速两处死角 + 第 2/3 层桶按「门」拆分 + 措辞收窄
+
+> 第 2 轮评审把 PR 当一个整体看：上一轮修的限速**只修对了一半**——补上的 record 漏掉了真正
+> 会走的那条分支，而已有的计数又因为按租户不分门，把企微回调的洪泛放大成了**全租户登录封锁**。
+
+- 【修复】**企微回调的 `catch` 分支不计数 ⇒ `via=silent` 路与"上游退化"路**永不 429**
+  （`apps/server/src/routes/auth-wecom.ts`）：`wecomUserIdForCode` 对坏 code 是**抛错**、不返回
+  null（`packages/auth-core/src/wecom.ts`），所以 silent 路**永远到不了** `name === null`——
+  它落在 `catch` → `WECOM_UNAVAILABLE`，而那条分支没有 record（`:262` 那次 record 对 silent 是
+  死代码）。qr 路在上游退化（Casdoor 5xx/非 JSON）时同样落这里。后果实测：silent 路 300 次请求
+  → **300 次出站 fetch**（每次打一次腾讯 getuserinfo / 共享 SSO），计数不增长、第 301 次仍 302
+  ——**"上游一出问题刹车就失效"**。`WECOM_NOT_CONFIGURED` 出口一并补上（无出站、危害低一档）。
+  口径从此统一：**这条路由上除"被限速本身"以外的每一个失败出口都要 record**
+- 【修复】**企微回调被限速时的 429 呈现破坏该路由自陈的导航契约**（同上）：回调恒为浏览器导航
+  （Casdoor/企微 302 落地），JSON 错误体是用户死胡同，而限速判定排在 `isIframe`/`fail` 定义
+  **之前**、走的是 `rate-limit.ts` 的 JSON 429。实测后果：qr 路让扫码区直接显示一坨 JSON
+  （`Login.tsx` 的 `WecomQrTab` 只认 `sso-done`/`sso-fail` 两种 postMessage，`onError` 永不触发，
+  用户既无提示也无法重试）；silent 路整页落到 JSON 文本、连 `/login?error=` 兜底都没有。现在
+  判定挪到 `fail` 之后、429 同走 `fail`（iframe 拿到对称的 `sso-fail`，顶层 302 回登录页），
+  `Retry-After` 与 `console.warn` 告警均保留（为此把告警从响应里拆成 `warnRateLimitDeny`）；
+  `apps/web/src/lib/api.ts` 的 `ERROR_TEXTS` 补 `TOO_MANY_REQUESTS` 文案
+- 【破坏】**第 2/3 层（租户失败数 / 租户全部尝试）的桶键由 `tenantId` 改为 `(tenantId, door)`**
+  （`apps/server/src/rate-limit.ts`）：`Door = 'password' | 'wecom'`。此前不分门，于是 **300 次
+  匿名 `GET /wecom/callback?code=x&state=<不匹配>`（连 state cookie 都不需要）就推满租户失败桶，
+  同租户的 `POST /login` 一起 429** ⇒ 打企微回调即可锁死该租户的**两种**登录入口，且可持续打
+  = 永久锁死（探针实测：攻击前 `POST /login` → `200 {"ok":true}`；300 次匿名回调后同一正确凭据
+  → `429 {"error":"TOO_MANY_REQUESTS"}`）。现在爆炸半径缩回"哪扇门被灌，哪扇门自己挨"。
+  **"两扇门共用同一实例"这条不变**（`app.ts` 一个实例传两处）——拆的是**桶的键**，不是实例。
+  **拆桶的代价如实写明（PR#5 终轮评审 S1）：聚合预算 ×门数**——第 2/3 层的额度是每
+  `(tenantId, door)` 一份，故每租户每分钟可写 audit 的失败行数由 **300 变 600**、全部尝试由
+  **1000 变 2000**（收益是爆炸半径 ÷门数）。这是有意的取舍：只按租户建一个跨门总闸，等于把
+  本轮修的"打一扇门即锁死两扇门"原样复现。第 1 层（`(tenantId, username)`）**未**拆门，故
+  拆桶严格优于拆实例。
+  阈值常量全部冻结不动（5/15min、300/min、1000/min、`USER_BUCKET_CAP=8192`、`MAX_KEY_LEN=256`）；
+  第 1 层（单账号失败）**不分门**，仍是 `(tenantId, username)`（企微路本就没有用户名维度）。
+  调用方签名变为 `check(tenantId, door, username)` / `record(tenantId, door, username, ok)`
+- 【优化】**收窄一处过强的自陈**（`apps/server/src/routes/auth.ts` + 本文件 R1 段）：「超出部分
+  一个字节都不进内存」不成立——流式读取的粒度是传输块，越界那一刻已落在内存里的那一块退不回去。
+  **截断本身是真的**（伪造 `Content-Length` 也不影响，只认真实读到的字节数），故改为
+  「超出部分立即中止读取，上界 = 上限 + 至多一个传输块」。
+  括号里的具体数字**已撤掉**（PR#5 评审 R3 段 S2）：上界随传输块线性放大，8 KiB/9216 B 只是
+  1 KiB 块长的最有利情形
+- 【优化】**`docs/module-protocol.md` 补三条与实现对齐的说明**：① 兜底门卫把"未声明但模块会处理"
+  的路径从 **404 变成 401/403**（**仅**对注册过通配 ALL 的模块，这是有意的 fail-closed——404 与
+  403 的差别会泄露路径是否存在）；② 声明路径里写 `*`（如 `GET /files/*`）时，**一条声明授权整棵
+  子树**（Hono 的 `use('/files/*')` 匹配整棵子树），「逐字一致」在该形态退化为「整棵子树对得上」；
+  不在 schema 里拒绝 `*` 是因为 `app.get('/files/*', h)` 是合法 Hono 写法（取舍已写明）；
+  ③ **已知放松**：非终结 `use(path, mw)`（无任何 handler）也能满足逐 method 声明 ⇒ 装载通过而
+  运行期 404。装载器**无法区分**它与合法的 `app.all(path, h)`（`router.routes` 里同一条 `'ALL'`
+  记录），故不加装载期 warn（会对合法写法误报），改为在 `loader.test.ts` 钉死行为 + 本项写明
+
+### Fixed - PR#5 评审 R1：ALL 路由绕过门卫 + 企微限速空转 + 登录请求体上限
+
+> 这一轮修的六条都是**任务级评审看不见、只有把 PR 当一个整体看才暴露**的跨任务缺陷，且都源自
+> 计划/规范文本（实现忠实于计划）——故修完必须回到计划侧同步（`docs/module-protocol.md`、
+> `deploy/openship-adopt.md`、本文件）。
+
+- 【修复】**`app.all('/secret', h)` / `use('/backdoor', 终结 handler)` 可**匿名**到达**
+  （`apps/server/src/loader.ts`）：Hono 把 `app.all()` 与 `app.use()` 同记 `'ALL'`
+  （`hono-base.js` 的 `#addRoute('ALL', …)`），而装载器把 `'ALL'` 当成"模块自己的中间件"整条
+  滤掉——于是这类路由**既不参与双向核对、又拿不到声明路径上的门卫**，与 PR 的核心承诺
+  "未声明 = 不可达"直接相悖（实测：`GET/POST /api/modules/demo/secret` → 匿名 200）。现在：
+  无通配的 ALL 端点**路径必须逐字等于某条声明路径**，否则**装载失败**；逐 method 声明的
+  `app.all('/multi', h)` 是合法写法（落在这些声明的门卫下，未声明的 method 照旧 403）
+- 【修复】**通配 ALL（`use('*')` / `use('/prefix/*')` / `mount()`）覆盖面大于声明面时的那条缝**：
+  这类路由匹配的路径集合比任何一条声明路径都大，逐条声明的门卫盖不住（如 `/files/*` 下的
+  `/files/b` 会直达模块 handler）。现在只在模块确实注册了通配 ALL 时另挂一道**兜底门卫**：
+  没被任何声明门卫放行的请求一律 401/403——没用通配 ALL 的模块行为**逐字不变**（既有 82 条
+  server 测试原样通过）。不能直接给通配路径挂 `declaredScopeGate`：那里 `c.req.routePath`
+  恒为通配模式本身 ⇒ 恒 403，会把合法中间件形态打坏
+- 【修复】**企微回调限速结构性空转 ⇒ 永不 429，且每次请求都是一次对共享 SSO 的出站调用**
+  （`apps/server/src/routes/auth-wecom.ts`）：`check` 是**只读**的，deny 只能由既有计数触发，
+  而回调里唯一会 `record` 的分支只有 NO_ACCOUNT 与成功。攻击者用 `GET /wecom/qr` 取一枚
+  `wecom_state` 后循环打 `GET /wecom/callback?code=<垃圾>&state=<同一 uuid>`：每次通过 state
+  校验、每次经 `casdoorCodeToName` 向共享 SSO 发一次 `POST /api/login/oauth/access_token`、
+  每次返回 `BAD_CODE`——计数恒不增长。`BAD_STATE` 分支同样无计数（连 state 都不需要）。现在
+  `BAD_STATE` 与 `BAD_CODE` 在 `fail(...)` 前各补一次 `limiter.record(t.id, null, false)`：
+  **只动内存计数、不写 audit**（"被拒请求不灌审计表"的既有语义不受影响）。同类漏记的账密路
+  `!username || !password` → 401 分支一并补上（不产生出站调用，危害低一档）
+- 【修复】**登录请求体无上限**（`apps/server/src/routes/auth.ts`）：全仓此前没有任何请求体上限，
+  未认证攻击者仍可单请求把内存撑爆——T1 只截断了"限速桶的 Map 键"，"请求体本身"这条同源路径
+  没堵。现在登录体**有界读取**（边读边计，越界即中止读取流并返 `413 {error:'PAYLOAD_TOO_LARGE'}`），
+  上限 8 KiB；同时把租户维度的 `check` 前移到读体之前。
+  附更正（PR#5 评审 R2）：初稿写的"超限部分一个字节都不进内存"**过强**——上界实为
+  「上限 + 至多一个传输块」（流式读取按块交付，越界那块已在内存里，退不回去）。
+  再更正（PR#5 评审 R3 段 S2）：这个上界**不写具体数字**——它随传输块线性放大（可控块长实测
+  1 MiB 块 ⇒ 内存 ≈1 MiB）；真实 HTTP 下 undici 按块交付，量级约 8 KiB + 一个 ~64 KiB 传输块。
+  仅查 `Content-Length` 不够——它可缺失（chunked）也可伪造，故只作为"连读都不读"的快速拒绝前置
+- 【修复】**`manifest.api.internal[].path` 放行裸 `/`**（`packages/platform-sdk/src/manifest.ts`）：
+  裸 `/` 能过 schema、也能过装载期核对，但门卫被注册成 `use('/')`（Hono 展开为 `/*`），运行期
+  `routePath === '/*'` 而比对表里是 `/api/modules/<id>/` ⇒ **恒 403 且无人知晓**。正则收紧为
+  `^\/(?!$)`，与"声明一个自己没有的 scope"同族，由 schema 直接拒绝
+- 【修复】**匿名探测回归网与实现共享同一个盲区**（`packages/platform-sdk/src/test-util/anonymous-probe.ts`）：
+  探测工具用与装载器**逐字相同**的 `method !== 'ALL'` 过滤条件，于是"装载出的模块每条路由都不可
+  匿名到达"这条断言对 ALL 形态结构性地看不见（缺陷态下全绿）。现在 ALL 条目也探测（用 `GET`
+  代表，`method` 原样回 `'ALL'`），并补了"无门卫的 ALL 必须被报成 200"的反向用例
+
+### Added / Fixed / Changed - M1 闭债 R2：登录限速 + 审计保留 + 模块 scope 声明即授权（issue #3 第四节）
+
+- 【新增】**登录端点限速**（`apps/server/src/rate-limit.ts`）：租户内三层——单账号失败 5 次/15 分、
+  租户失败总数 300/分、租户全部尝试 1000/分。**限速判定先于 audit 写入**，被拦请求不落审计行，
+  返 `429 {error:'TOO_MANY_REQUESTS'}` + `Retry-After`，改经 `console.warn` 让攻击在日志侧可见。
+  账密与企微回调**两扇门共用同一实例**（分实例会与分桶一样把额度按份数放大，却额外放大第 1
+  层，无收益——预算口径见 `apps/server/src/rate-limit.ts` 的 `Door` 注释）。计数器为进程内存、**不引入
+  客户端 IP 维度**（openship edge 当前不转发 `X-Forwarded-For`，按 IP 限速会退化成全局限速；
+  多副本场景下各副本各算一份是已知取舍）。桶键按用户名截断到 256（与 `auth.ts` 的
+  `MAX_USERNAME_LEN` 同源），**键长**由限速器自己保证有界——这句话此前写成"调用方无法靠超长串
+  撑爆内存"是**过强的**：它只覆盖了内存桶的键，没覆盖"请求体本身"这条同源路径（`POST /login`
+  在 T1 仍是无上限地 `await c.req.json()`；PR#5 评审 R1 指出并已修，见本轮的【修复】条目）
+- 【修复】**`platform.audit` 无界增长**：此前既无限速、又**每次登录尝试（成功/失败）都写一行**，
+  且表上无 `at` 索引、全仓无清理逻辑，增长速率完全由攻击者决定。补 `002_audit_retention.sql`
+  （`at` 索引 + `platform.prune_audit(days)`），由 openship job 定时调用，默认保留 90 天
+- 【破坏】**`manifest.api.internal[]` 形状变更**：`{name, scope}` → `{method, path, scope}`。
+  旧形状没有 path/method，**无法被任何消费者机械使用**（全仓零消费者、零文档），已按新形状重定义。
+  **迁移动作（必做）**：升级前对每个模块逐条补 `method`/`path`/`scope`，用
+  `pnpm exec tsx scripts/check-manifests.mjs` 一次列全清单；装载期双向核对让"没补上"的后果是
+  **宿主进程启动即死**（不是"少一道鉴权"）——见 `deploy/openship-adopt.md` 已知陷阱 5
+- 【破坏】**模块不再手写 `requireScope`**：API 鉴权改由宿主按 manifest 声明施加门卫。
+  此前漏写一次就是**匿名可读**——不报错、不告警、CI 不红
+- 【新增】**装载期双向核对**：`router.routes` 与声明集合双向比对，注册未声明/声明未注册
+  一律**装载失败**（fail-fast）。「改了代码忘了改 manifest」的后果从此是起不来，而非静默漏鉴权。
+  实现用**包裹层**（新建 Hono → 先挂门卫 → 再 `route('/', router)`）而非对模块 router 补 `use()`
+  ——后者在 Hono 里门卫永不执行，会造出「代码里有门卫、运行时永不生效」的静默洞
+- 【新增】**schema 约束 `api.internal[].scope` ∈ 本模块 `permissions[].code`**：否则该路径
+  恒 403 而无人知晓——同一种病的变种；同 `(method,path)` 重复声明同样被拒（否则门卫二义）
+- 【新增】**匿名探测回归网**（`@platform/sdk/test-util/anonymous-probe`，导出面
+  `@platform/sdk/test-util/*`）：对每条已注册路由发匿名请求并返回实测状态码，测的是
+  "门卫真的生效"而非"代码里写了什么"；装载器测试用它锁住"装载出的模块每条路由都不可匿名到达"。
+  冒烟另有**真进程层面**的匿名不可达断言（`scripts/smoke-load.mjs`，发真 HTTP 请求而非进程内
+  调用同一个 app 对象）
+- 【新增】**模块协议文档** `docs/module-protocol.md`：`api.internal` 这个字段此前**死于零文档**
+  ——仓里查不到任何一处描述它，于是没人知道它该长什么样、也没人发现它没人消费。本文补齐声明
+  写法、装载期核对规则、门卫判定顺序与三条已实证的 Hono 挂载陷阱
+
 ### Fixed - M1 闭债 R1：multi 形态的模块权限供给 + 冒烟失明（issue #3 第一、二节）
 
 - 【修复】**multi 形态下除 `PLATFORM_ORG` 所指租户外，其余租户模块 API 全线 403**：权限码是

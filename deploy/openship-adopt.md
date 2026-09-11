@@ -208,6 +208,29 @@ curl -s https://platform.<公司域>/api/platform/branding   # → 该租户的�
 curl -fsS -X POST "$OPENSHIP_URL/api/deployments/$DEPLOYMENT_ID/rollback" -H "Authorization: Bearer $TOKEN"
 ```
 
+## audit 保留（`platform.audit` 清理）
+
+登录端点**每次登录尝试（成功 / 失败都算）**都会写一行 `platform.audit`——成功路径同样落审计
+（`apps/server/src/routes/auth.ts:121`、`apps/server/src/routes/auth-wecom.ts:272`）。限速器
+（`apps/server/src/rate-limit.ts`）把写入速率压到**有界**：失败路径另有「单账号 5 次/15 分」与
+「租户 300/分」两道，成功路径只计入「租户全部尝试 1000/分」这一道兜底桶。但它并不改变
+"会一直长"这件事——所以保留策略必须单独做。
+
+清理由 **openship job** 定时执行，**应用进程不自己跑**（有副作用的运维动作不该藏在一个 HTTP
+服务里）。函数与索引来自 `apps/server/src/migrations/002_audit_retention.sql`：
+
+```bash
+# 每日一次；默认保留 90 天。返回值 = 删除行数（便于在 job 日志里核对）
+psql "$DATABASE_URL" -c "select platform.prune_audit();"
+```
+
+- 保留期按需传参：`select platform.prune_audit(180);`
+- job 的建立方式见 openship 面板「Jobs」；建议同时订阅**失败通知**（job 静默失败 = 清理没发生，
+  而这件事从应用侧完全看不出来）
+- 删除行数写进 job 日志才有意义：长期恒为 `0` 是正常的（无超期行；`prune_audit` 返回的是
+  `select count(*)`，只会 ≥ 0，**不存在"为负"这种形态**）。真要从日志里追的是 job **报错**
+  ——那才意味着清理没发生
+
 ## 已知陷阱（都是本仓实测或从既有项目教训里抄来的）
 
 1. **静态托管静默降级**：`app.ts` 的 `webDistDir` 按【`apps/server/src/app.ts` 自己的位置】解析
@@ -227,6 +250,16 @@ curl -fsS -X POST "$OPENSHIP_URL/api/deployments/$DEPLOYMENT_ID/rollback" -H "Au
    把 compose 放 `deploy/` 的仓库都会得到同一个项目名，互相接管容器与卷。仓库里的 compose 已用
    顶层 `name: platform-core` 钉死（见该文件注释里的实测事故），生产侧若由 openship 指定项目名，
    以 openship 为准。
+5. **升级到「声明即授权」那一版时，老模块会让进程【启动即死】**（破坏性变更，动作必须做）：
+   `manifest.api.internal[]` 从 `{name, scope}` 变成 `{method, path, scope}`，且装载器起做
+   双向核对——**只要模块注册过路由却没写 `api.internal`（或还写着旧形状），宿主进程直接起不来**，
+   而不是"少一道鉴权"。失败信息带双向差集原文（`未声明但已注册 [...]`），照它逐条补
+   `method`/`path`/`scope` 即可。做法：升级前先用
+   `pnpm exec tsx scripts/check-manifests.mjs`（静态消费方，与装载器同一套 schema）把全部模块过一遍，
+   把要补的清单一次性列出来；**别**指望"先上线再一个个补"——任何一个模块没补上，整台宿主的
+   进程都起不来（模块是同一进程内装载的，没有单模块降级形态）。
+   `app.all('/x', h)` / `use(路径, 终结 handler)` 这类多方法端点同理：要么逐 method 声明，
+   要么改成显式 method 路由（详见 `docs/module-protocol.md`）。
 
 ## 相关
 

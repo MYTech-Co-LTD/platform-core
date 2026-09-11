@@ -13,7 +13,7 @@ const validManifest = {
     { code: 'demo:view', name: '查看' },
     { code: 'demo:edit', name: '编辑' },
   ],
-  api: { internal: [{ name: 'listTickets', scope: 'demo:view' }] },
+  api: { internal: [{ method: 'GET', path: '/tickets', scope: 'demo:view' }] },
   frontend: {
     userApp: { mount: '/demo', dist: 'apps/user-demo/dist' },
     console: [
@@ -39,7 +39,7 @@ describe('ManifestSchema', () => {
       { code: 'demo:view', name: '查看' },
       { code: 'demo:edit', name: '编辑' },
     ])
-    expect(r.data.api?.internal).toEqual([{ name: 'listTickets', scope: 'demo:view' }])
+    expect(r.data.api?.internal).toEqual([{ method: 'GET', path: '/tickets', scope: 'demo:view' }])
     expect(r.data.frontend?.userApp).toEqual({ mount: '/demo', dist: 'apps/user-demo/dist' })
     expect(r.data.frontend?.console).toHaveLength(2)
     expect(r.data.frontend?.console?.[0]).toEqual({
@@ -130,5 +130,63 @@ describe('ManifestSchema', () => {
       frontend: { console: [{ path: '/demo', title: '演示' }] },
     })
     expect(r.success).toBe(false)
+  })
+
+  // R2：api.internal 是可机械消费的声明（旧形状 {name,scope} 无 path/method，谁也没法消费，
+  // 于是成了死字段——identity 从"忘挂 requireScope"变成"没声明就不可达"）
+  it('api.internal：method 必须是白名单内的方法', () => {
+    const bad = { ...validManifest, api: { internal: [{ method: 'TRACE', path: '/x', scope: 'demo:view' }] } }
+    expect(ManifestSchema.safeParse(bad).success).toBe(false)
+  })
+
+  it('★ 负例：api.internal[].path 不以 / 开头 ⇒ 校验失败', () => {
+    // 声明写了非 / 开头的 path ⇒ 模块内相对路径的约定被破坏，宿主拼不出可用的路由。
+    // 运行期双向核对只兜底"注册了但声明对不上"，覆盖不到这种 schema 层违规，故须有静态负例。
+    const bad = { ...validManifest, api: { internal: [{ method: 'GET', path: 'x', scope: 'demo:view' }] } }
+    const r = ManifestSchema.safeParse(bad)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some(i => i.path.includes('path'))).toBe(true)
+  })
+
+  it('★ 负例：api.internal[].path 是裸 "/" ⇒ 校验失败（同族：该路径恒 403 而无人知晓）', () => {
+    // PR#5 评审 R1 建议 3：裸 '/' 能过 schema、也能过装载期双向核对，但门卫被注册成 use('/')
+    // （Hono 展开为 /*），运行期 routePath === '/*' 而比对表里是 '/api/modules/<id>/' ⇒ 恒 403。
+    // 与"声明一个自己没有的 scope"同族——都必须由 schema 挡在装载之前。
+    const bad = { ...validManifest, api: { internal: [{ method: 'GET', path: '/', scope: 'demo:view' }] } }
+    const r = ManifestSchema.safeParse(bad)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some(i => i.path.includes('path'))).toBe(true)
+    // 相邻形状不能被误伤：'/x' 与 '/x/' 都合法（只有"整条就是一个 /"才是裸根）
+    for (const ok of ['/x', '/x/', '/x/y']) {
+      const good = { ...validManifest, api: { internal: [{ method: 'GET', path: ok, scope: 'demo:view' }] } }
+      expect(ManifestSchema.safeParse(good).success, ok).toBe(true)
+    }
+  })
+
+  it('★ 负例：api.internal[].scope 不属于本模块 permissions ⇒ 校验失败', () => {
+    // 声明一个自己都没有的码 ⇒ 该路径恒 403 而无人知晓（与"忘挂 requireScope"同一种病的变种）
+    const bad = {
+      ...validManifest,
+      api: { internal: [{ method: 'GET', path: '/x', scope: 'other-module:view' }] },
+    }
+    const r = ManifestSchema.safeParse(bad)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues[0]!.message).toContain('不在本模块 permissions')
+  })
+
+  it('★ 负例：同 (method,path) 声明两次 ⇒ 校验失败（门卫会出现二义）', () => {
+    const bad = {
+      ...validManifest,
+      api: {
+        internal: [
+          { method: 'GET', path: '/x', scope: 'demo:view' },
+          { method: 'GET', path: '/x', scope: 'demo:edit' },
+        ],
+      },
+    }
+    expect(ManifestSchema.safeParse(bad).success).toBe(false)
   })
 })

@@ -4,10 +4,20 @@ import { z } from 'zod'
  * 模块接入协议（Task 8，B4/B5 机检的契约源）。
  * manifest.yaml 是整个底座的接入协议：装载器与 scripts/check-manifests.mjs 都吃这个 schema。
  */
+/** api.internal 的条目：一条 = 一个被声明的模块 API 端点。**未声明 = 不可达**（宿主门卫施加） */
+export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+
+export interface ModuleApiEndpoint {
+  method: ApiMethod
+  /** 模块内相对路径，必须以 / 开头（与 router 注册的路径模式逐字一致，装载期双向核对） */
+  path: string
+  scope: string
+}
+
 export interface ModuleManifest {
   id: string; name: string; version: string; platform: string
   permissions: Array<{ code: string; name: string }>
-  api?: { internal?: Array<{ name: string; scope: string }> }
+  api?: { internal?: ModuleApiEndpoint[] }
   frontend?: { userApp?: { mount: string; dist: string };
     console?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }> }
   migrations?: { dir: string }
@@ -30,7 +40,15 @@ const ManifestObject = z.object({
   platform: z.string().regex(PLATFORM_REGEX, 'platform 必须匹配 ^>=?[0-9]（如 >=0.1.0）'),
   permissions: z.array(z.object({ code: z.string(), name: z.string() })),
   api: z.object({
-    internal: z.array(z.object({ name: z.string(), scope: z.string() })).optional(),
+    internal: z.array(z.object({
+      method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+      // 前缀 / 且**不整条等于 /** （Task 24 评审 R1 建议 3）：裸 '/' 能过 schema、也能过装载期
+      // 双向核对，但门卫会被注册成 use('/')（Hono 展开为 /*），运行期 routePath 是 '/*' 而
+      // 比对表里是 '/api/modules/<id>/' ⇒ **恒 403 且无人知晓**。这正是本协议要消灭的那一族
+      // （同 api.internal[].scope 必须 ∈ permissions 的那条）。模块内相对路径至少要有段名。
+      path: z.string().regex(/^\/(?!$)/, 'api.internal[].path 必须 / 开头且不能是裸 "/"（模块内相对路径，如 /ping）'),
+      scope: z.string(),
+    })).optional(),
   }).optional(),
   frontend: z.object({
     userApp: z.object({ mount: z.string(), dist: z.string() }).optional(),
@@ -58,6 +76,30 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
         message: `permission.code 必须以 "${m.id}:" 开头（got "${p.code}"）`,
       })
     }
+  }
+
+  // R2：api.internal[].scope 必须 ∈ 本模块 permissions[].code —— 否则模块声明一个自己都没有
+  // 的码，该路径恒 403 而无人知晓（与"忘挂 requireScope"同一种病的变种）。由 schema 承载 ⇒
+  // 运行时装载与 check-manifests 门禁同时覆盖。
+  const codes = new Set(m.permissions.map((p) => p.code))
+  const seenEndpoints = new Set<string>()
+  for (const [i, e] of (m.api?.internal ?? []).entries()) {
+    if (!codes.has(e.scope)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['api', 'internal', i, 'scope'],
+        message: `api.internal[].scope "${e.scope}" 不在本模块 permissions[].code 内（模块只能声明自己的权限码）`,
+      })
+    }
+    const key = `${e.method} ${e.path}`
+    if (seenEndpoints.has(key)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['api', 'internal', i],
+        message: `api.internal 重复声明 ${key}（同 (method,path) 只能有一条，否则门卫二义）`,
+      })
+    }
+    seenEndpoints.add(key)
   }
 })
 

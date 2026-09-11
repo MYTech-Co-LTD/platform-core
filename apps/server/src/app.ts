@@ -26,6 +26,7 @@ import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from './sessi
 import { platformRoutes, type ModuleInfo } from './routes/platform'
 import { authRoutes } from './routes/auth'
 import { wecomRoutes } from './routes/auth-wecom'
+import { createLoginLimiter } from './rate-limit'
 
 /** platform schema 迁移（Task 11 产物目录）——按本文件位置解析，与 cwd 无关 */
 const platformMigrationsDir = fileURLToPath(new URL('./migrations', import.meta.url))
@@ -126,15 +127,20 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     enabledFor: runtime.enabledFor,
   }))
   // ⑧ 登录三路：账密 + 企微 qr/silent（platformRoutes 同前缀，注册序不影响——路径不重叠）
+  // 登录限速器（M1 闭债 R2）：**一个实例传两处**（账密 + 企微）——分实例会与分桶一样把额度
+  // 按份数放大，却额外放大第 1 层（user 桶），无任何收益（预算口径见 rate-limit.ts 的 Door）
+  const limiter = createLoginLimiter()
   app.route('/api/platform/auth', authRoutes({
     casdoor: casdoorFactory,
     sessionSecret: config.sessionSecret,
     pool,
+    limiter,
   }))
   app.route('/api/platform/auth/wecom', wecomRoutes({
     casdoor: casdoorFactory,
     sessionSecret: config.sessionSecret,
     pool,
+    limiter,
     casdoorUrl: config.casdoor.url,
     casdoorClientId: config.casdoor.clientId,
     casdoorClientSecret: config.casdoor.clientSecret,

@@ -21,7 +21,8 @@ import { runMigrations } from '../migrate'
 import { seedDemo } from '../seed'
 import { resolveTenantMiddleware, type TenantEnv } from '../tenant'
 import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from '../session-middleware'
-import { authRoutes } from './auth'
+import { MAX_LOGIN_BODY_BYTES, authRoutes } from './auth'
+import { USER_FAIL_LIMIT, createLoginLimiter, type LoginLimiter } from '../rate-limit'
 
 const dbUrl = process.env.DATABASE_URL
 const SECRET = 'test-session-secret-0123456789abcdef' // ≥32 字符，测试专用
@@ -51,11 +52,18 @@ function casdoorFor(org: string): CasdoorClient {
 
 type AppClient = ReturnType<typeof testClient<ReturnType<typeof makeApp>>>
 
-function makeApp(pool: Pool, casdoor: CasdoorFactory = casdoorFor): Hono<TenantEnv & SessionEnv> {
+function makeApp(
+  pool: Pool,
+  casdoor: CasdoorFactory = casdoorFor,
+  limiter: LoginLimiter = createLoginLimiter(),
+): Hono<TenantEnv & SessionEnv> {
   const app = new Hono<TenantEnv & SessionEnv>()
   app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
   app.use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET }))
-  app.route('/api/platform/auth', authRoutes({ casdoor, sessionSecret: SECRET, pool }))
+  app.route(
+    '/api/platform/auth',
+    authRoutes({ casdoor, sessionSecret: SECRET, pool, limiter }),
+  )
   return app
 }
 
@@ -339,5 +347,125 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
     )
     expect(res.status).toBe(500)
     expect(setCookies(res)).toEqual([]) // 未发会话——审计与发证原子序
+  })
+
+  // ⑮ 限速（M1 闭债 R2）：失败达阈值 → 429，且【此后再不产生 audit 行】
+  //
+  // 审计断言必须按【专用 actor】计数，不能用全局 count(*)：vitest 并发跑各测试文件，
+  // 别的文件同时在写/清（migrate.test.ts 的 prune 用例）platform.audit —— 全局计数会抖。
+  // 这个用户名全仓只有本用例用，计数因此稳定。
+  it('★ 负例：连续失败达阈值 → 429 + Retry-After，且限速挡在 audit 之前（行数不再增长）', async () => {
+    const RL_USER = 'rate-limit-probe-user'
+    const c2 = testClient(makeApp(pool)) // 独立限速器，不受本文件其他用例影响
+    const auditCount = async (): Promise<number> => {
+      const { rows } = await pool.query<{ n: string }>(
+        'select count(*) as n from platform.audit where actor = $1',
+        [RL_USER],
+      )
+      return Number(rows[0]!.n)
+    }
+    // 该 actor 在多次运行间可能留残留（前一轮断言失败会照常写 audit）⇒ 先清，
+    // 保证"从未出现过"这个前置断言在重复运行下仍确定成立
+    await pool.query('delete from platform.audit where actor = $1', [RL_USER])
+    expect(await auditCount()).toBe(0) // 前置：该 actor 从未出现过
+
+    for (let i = 0; i < USER_FAIL_LIMIT; i++) {
+      const r = await c2.api.platform.auth.login.$post(
+        { json: { username: RL_USER, password: 'wrong' } },
+        { headers: { host: 'acme.test' } },
+      )
+      expect(r.status).toBe(401)
+    }
+    const afterFails = await auditCount()
+    expect(afterFails).toBe(USER_FAIL_LIMIT) // 阈值内的失败照常记账
+
+    const blocked = await c2.api.platform.auth.login.$post(
+      { json: { username: RL_USER, password: 'wrong' } },
+      { headers: { host: 'acme.test' } },
+    )
+    expect(blocked.status).toBe(429)
+    expect(await blocked.json()).toEqual({ error: 'TOO_MANY_REQUESTS' })
+    expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThan(0)
+    expect(await auditCount()).toBe(afterFails) // ← 被拦的请求一行都不写
+  })
+
+  // ⑯ 限速不该误伤正常用户：只要没超阈值，正确凭据照常登录
+  it('未达阈值的正常登录不受限速影响（200 + 会话 cookie）', async () => {
+    const c2 = testClient(makeApp(pool))
+    await c2.api.platform.auth.login.$post(
+      { json: { username: 'alice', password: 'wrong' } },
+      { headers: { host: 'acme.test' } },
+    )
+    const ok = await c2.api.platform.auth.login.$post(
+      { json: { username: 'alice', password: 'pw' } },
+      { headers: { host: 'acme.test' } },
+    )
+    expect(ok.status).toBe(200)
+    expect(setCookies(ok).join('\n')).toContain('platform_session=')
+  })
+
+  // ⑰ 别名登录（提交串 username ≠ Casdoor 规范名 name）：成功清零必须也按【提交串】。
+  // 反证：把 auth.ts 成功分支改回 record(t.id, name, true)，本用例第 2 轮失败即 429（红）。
+  it('★ 别名登录：成功按提交串清零 ⇒ name!==username 时成功仍解得开失败桶', async () => {
+    const ALIAS = 'alice-alias@acme.test' // 提交串；Casdoor 返回的规范名仍是 alice
+    const aliasCasdoor: CasdoorFactory = (org) => {
+      const client = casdoorFor(org)
+      const real = client.verifyPassword.bind(client)
+      client.verifyPassword = async (u, p) =>
+        u === ALIAS && p === 'pw' ? { name: 'alice' } : real(u, p)
+      return client
+    }
+    const c2 = testClient(makeApp(pool, aliasCasdoor)) // 独立限速器：不受本文件其他用例影响
+    const post = (password: string) =>
+      c2.api.platform.auth.login.$post(
+        { json: { username: ALIAS, password } },
+        { headers: { host: 'acme.test' } },
+      )
+    for (let i = 0; i < USER_FAIL_LIMIT - 1; i++) expect((await post('wrong')).status).toBe(401)
+    expect((await post('pw')).status).toBe(200) // 别名成功登录：须清【提交串】那个失败桶
+    for (let i = 0; i < USER_FAIL_LIMIT - 1; i++) expect((await post('wrong')).status).toBe(401)
+  })
+
+  // ⑱ 超长 username 的失败也必须计入限速桶（评审 finding 3：原实现超长分支的 record 零覆盖）。
+  // 反证：临时删掉 auth.ts 超长分支的 limiter.record 调用，本用例第 6 次仍是 401（红）。
+  it('★ 超长 username 连续失败达阈值 → 第 6 次 429（超长路径确实记账）', async () => {
+    const longName = 'z'.repeat(300) // > MAX_USERNAME_LEN(256)：走"不调 Casdoor"的超长分支
+    const c2 = testClient(makeApp(pool)) // 独立限速器
+    const post = () =>
+      c2.api.platform.auth.login.$post(
+        { json: { username: longName, password: 'pw' } },
+        { headers: { host: 'acme.test' } },
+      )
+    for (let i = 0; i < USER_FAIL_LIMIT; i++) expect((await post()).status).toBe(401)
+    const blocked = await post()
+    expect(blocked.status).toBe(429)
+    expect(await blocked.json()).toEqual({ error: 'TOO_MANY_REQUESTS' })
+  })
+
+  // ⑲ 形状不对（缺 password）的 401 也必须计入限速桶（PR#5 评审 R1：该分支此前只 401 不 record
+  // ——一条不产生出站调用的限速死角）。反证：删掉 auth.ts 该分支的 record，本用例第 6 次仍 401（红）。
+  it('★ 缺 password 的 401 也记账 → 第 6 次 429（形状分支不再是死角）', async () => {
+    const c2 = testClient(makeApp(pool)) // 独立限速器
+    const post = () =>
+      c2.api.platform.auth.login.$post(
+        { json: { username: 'shape-probe', password: '' } },
+        { headers: { host: 'acme.test' } },
+      )
+    for (let i = 0; i < USER_FAIL_LIMIT; i++) expect((await post()).status).toBe(401)
+    const blocked = await post()
+    expect(blocked.status).toBe(429)
+    expect(await blocked.json()).toEqual({ error: 'TOO_MANY_REQUESTS' })
+  })
+
+  // ⑳ 未认证请求不得靠单请求撑爆内存（PR#5 评审 R1 建议 4）：有界读取直接 413。
+  // 反证：恢复 c.req.json()（无上限）时本用例拿到 401 而非 413。
+  it('★ 超长请求体：有界读取即拒（413 PAYLOAD_TOO_LARGE），整只 body 不进内存', async () => {
+    const c2 = testClient(makeApp(pool))
+    const res = await c2.api.platform.auth.login.$post(
+      { json: { username: 'alice', password: 'p'.repeat(MAX_LOGIN_BODY_BYTES) } },
+      { headers: { host: 'acme.test' } },
+    )
+    expect(res.status).toBe(413)
+    expect(await res.json()).toEqual({ error: 'PAYLOAD_TOO_LARGE' })
   })
 })

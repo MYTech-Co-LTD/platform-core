@@ -14,6 +14,7 @@ import { createMiddleware } from 'hono/factory'
 import { Pool } from 'pg'
 import { CasdoorClient } from '@platform/auth-core'
 import { MockCasdoor } from '@platform/auth-core/src/test-util/mock-casdoor'
+import { probeAnonymous } from '@platform/sdk/test-util/anonymous-probe'
 import type { Identity } from '@platform/sdk'
 import { runMigrations } from './migrate'
 import { seedDemo } from './seed'
@@ -79,20 +80,21 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     return dir
   }
 
-  /** fixture 模块入口：真协议（defineModule + requireScope），非 mock */
+  /** fixture 模块入口：真协议（defineModule），不再手写 requireScope——声明在 manifest 里 */
   function indexTs(id: string, permCode: string): string {
     return [
       "import { Hono } from 'hono'",
-      "import { defineModule, requireScope } from '@platform/sdk'",
+      "import { defineModule } from '@platform/sdk'",
       '',
       'export default defineModule({',
       `  manifest: {`,
       `    id: '${id}', name: '${id} 模块', version: '1.0.0', platform: '>=0.1.0',`,
       `    permissions: [{ code: '${permCode}', name: '${id} 查看' }],`,
+      `    api: { internal: [{ method: 'GET', path: '/ping', scope: '${permCode}' }] },`,
       '  },',
       '  createRouter: (ctx) => {',
       '    const app = new Hono()',
-      `    app.get('/ping', requireScope('${permCode}'), (c) =>`,
+      `    app.get('/ping', (c) =>`,
       `      c.json({ module: '${id}', hasPool: !!ctx.pool }))`,
       '    return app',
       '  },',
@@ -101,7 +103,14 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     ].join('\n')
   }
 
-  function manifestYaml(id: string, extra = ''): string {
+  /** fixture manifest.yaml 的 api 段默认值：与 indexTs 注册的 GET /ping 逐条对齐（新协议：
+   *  未声明 = 不可达 ⇒ 默认声明必须跟着 fixture 的代码走，否则既有用例集体装载失败）。
+   *  第三参：null = 不写 api 段（"未声明但已注册"负例）；字符串 = 自定义声明（幽灵声明负例）。 */
+  function manifestYaml(
+    id: string,
+    extra = '',
+    apiYaml: string | null = `api:\n  internal:\n    - { method: GET, path: /ping, scope: ${id}:view }`,
+  ): string {
     return [
       `id: ${id}`,
       `name: ${id} 模块`,
@@ -110,6 +119,7 @@ describe.skipIf(!dbUrl)('loadModules', () => {
       'permissions:',
       `  - code: ${id}:view`,
       `    name: ${id} 查看`,
+      ...(apiYaml ? [apiYaml] : []),
       ...(extra ? [extra] : []),
       '',
     ].join('\n')
@@ -373,5 +383,298 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     expect(afterFirst).toBeGreaterThan(0)
     await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
     expect(mock.addPermissionCalls.length).toBe(afterFirst) // 查重命中 ⇒ 走 update，不再 add
+  })
+
+  // ---- R2：声明即授权（包裹层门卫 + 装载期双向核对）----
+
+  it('★ 负例：模块注册了未声明的路由 ⇒ 装载失败（fail-fast，绝不半挂）', async () => {
+    cleanupModules.push('undeclaredmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'undeclaredmod', {
+      'manifest.yaml': manifestYaml('undeclaredmod', '', null),
+      // manifest 没有 api 段，index 却注册了 /ping
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        "  manifest: { id: 'undeclaredmod', name: 'm', version: '1.0.0', platform: '>=0.1.0',",
+        "    permissions: [{ code: 'undeclaredmod:view', name: 'x' }] },",
+        '  createRouter: () => { const a = new Hono(); a.get(\'/ping\', (c) => c.json({})); return a },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+    await expect(loadModules(modulesDir, { pool })).rejects.toThrow(/未声明/)
+  })
+
+  it('★ 负例：声明了模块未注册的路径（幽灵声明）⇒ 装载失败', async () => {
+    cleanupModules.push('phantommod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'phantommod', {
+      'manifest.yaml': manifestYaml(
+        'phantommod',
+        '',
+        'api:\n  internal:\n    - { method: GET, path: /ghost, scope: phantommod:view }',
+      ),
+      'index.ts': indexTs('phantommod', 'phantommod:view'),
+    })
+    await expect(loadModules(modulesDir, { pool })).rejects.toThrow(/幽灵|未注册|声明/)
+  })
+
+  it('声明齐备 ⇒ 装载通过；匿名 401、scope 不符 403、scope 命中 200', async () => {
+    cleanupModules.push('guardedmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'guardedmod', {
+      'manifest.yaml': manifestYaml('guardedmod'),
+      'index.ts': indexTs('guardedmod', 'guardedmod:view'),
+    })
+    const runtime = await loadModules(modulesDir, { pool })
+    const probe = new Hono()
+    runtime.mount(probe)
+    // 匿名：宿主真实链路里 identity 由会话中间件注入，此处不注入 = 未登录
+    const anon = await probe.request('/api/modules/guardedmod/ping')
+    expect(anon.status).toBe(401)
+    expect(await anon.json()).toEqual({ error: 'UNAUTHENTICATED' })
+
+    const wrong = new Hono()
+    wrong.use('*', injectIdentity(['other:scope']))
+    runtime.mount(wrong)
+    const forbidden = await wrong.request('/api/modules/guardedmod/ping')
+    expect(forbidden.status).toBe(403)
+    expect(await forbidden.json()).toEqual({ error: 'FORBIDDEN', need: 'guardedmod:view' })
+
+    const right = new Hono()
+    right.use('*', injectIdentity(['guardedmod:view']))
+    runtime.mount(right)
+    expect((await right.request('/api/modules/guardedmod/ping')).status).toBe(200)
+  })
+
+  it('匿名探测回归网：装载出的模块每条路由都不可匿名到达', async () => {
+    cleanupModules.push('probemod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'probemod', {
+      'manifest.yaml': manifestYaml('probemod'),
+      'index.ts': indexTs('probemod', 'probemod:view'),
+    })
+    const runtime = await loadModules(modulesDir, { pool })
+    const probe = new Hono()
+    runtime.mount(probe)
+    const results = await probeAnonymous(probe)
+    const apiRoutes = results.filter((r) => r.path.startsWith('/api/modules/probemod'))
+    expect(apiRoutes.length).toBeGreaterThan(0)
+    expect(apiRoutes.every((r) => r.status === 401)).toBe(true)
+  })
+
+  // ---- R1（PR#5 评审）：ALL ≠ 一定是中间件 ----
+
+  /** 装载一个给定的 index.ts（createRouter 体由调用方写），返回装载结果或抛出的错。
+   *  manifest 默认声明 GET /ping（与 routerBody 里必写的 a.get('/ping') 对齐）。 */
+  async function loadWithIndex(
+    id: string,
+    routerBody: string[],
+  ): Promise<{ runtime?: Awaited<ReturnType<typeof loadModules>>; err?: Error }> {
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, id, {
+      'manifest.yaml': manifestYaml(id),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        `  manifest: {`,
+        `    id: '${id}', name: '${id} 模块', version: '1.0.0', platform: '>=0.1.0',`,
+        `    permissions: [{ code: '${id}:view', name: '${id} 查看' }],`,
+        `    api: { internal: [{ method: 'GET', path: '/ping', scope: '${id}:view' }] },`,
+        '  },',
+        '  createRouter: () => {',
+        '    const a = new Hono()',
+        ...routerBody,
+        '    return a',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+    return loadModules(modulesDir, { pool }).then(
+      (runtime) => ({ runtime }),
+      (e: unknown) => ({ err: e as Error }),
+    )
+  }
+
+  it('★ 负例：未声明的 app.all() 多方法端点 ⇒ 装载失败（旧实现当中间件滤掉 ⇒ 匿名 200）', async () => {
+    const { err } = await loadWithIndex('allmod', [
+      "    a.all('/secret', (c) => c.json({ leaked: 'ALL' }))",
+      "    a.get('/ping', (c) => c.json({ pong: true }))",
+    ])
+    expect(err).toBeInstanceOf(Error)
+    expect(err!.message).toContain('ALL /secret')
+    expect(err!.message).toContain('未声明的多方法端点')
+  })
+
+  it('★ 负例：未声明的 use(路径, 终结 handler) ⇒ 装载失败（同一条缝的另一种写法）', async () => {
+    const { err } = await loadWithIndex('backdoormod', [
+      "    a.use('/backdoor', (c) => c.json({ leaked: 'use' }))",
+      "    a.get('/ping', (c) => c.json({ pong: true }))",
+    ])
+    expect(err).toBeInstanceOf(Error)
+    expect(err!.message).toContain('ALL /backdoor')
+  })
+
+  it('已声明的 app.all(路径) ⇒ 装载通过且行为自洽：匿名 401、声明 method 放行、未声明 method 403', async () => {
+    const id = 'declaredallmod'
+    cleanupModules.push(id)
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, id, {
+      'manifest.yaml': manifestYaml(
+        id,
+        '',
+        `api:\n  internal:\n`
+          + `    - { method: GET, path: /ping, scope: ${id}:view }\n`
+          + `    - { method: GET, path: /multi, scope: ${id}:view }\n`
+          + `    - { method: POST, path: /multi, scope: ${id}:view }`,
+      ),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        `  manifest: { id: '${id}', name: 'm', version: '1.0.0', platform: '>=0.1.0',`,
+        `    permissions: [{ code: '${id}:view', name: 'x' }],`,
+        '  },',
+        '  createRouter: () => {',
+        '    const a = new Hono()',
+        "    a.all('/multi', (c) => c.json({ method: c.req.method }))",
+        "    a.get('/ping', (c) => c.json({ pong: true }))",
+        '    return a',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+    const runtime = await loadModules(modulesDir, { pool })
+    const anon = new Hono()
+    runtime.mount(anon)
+    expect((await anon.request(`/api/modules/${id}/multi`)).status).toBe(401)
+
+    const scoped = new Hono()
+    scoped.use('*', injectIdentity([`${id}:view`]))
+    runtime.mount(scoped)
+    expect((await scoped.request(`/api/modules/${id}/multi`)).status).toBe(200)
+    expect((await scoped.request(`/api/modules/${id}/multi`, { method: 'POST' })).status).toBe(200)
+    // 未声明的 method 打到 ALL 端点上 ⇒ 门卫逐条判定 ⇒ 403（fail-closed，不会漏进 handler）
+    expect((await scoped.request(`/api/modules/${id}/multi`, { method: 'DELETE' })).status).toBe(403)
+  })
+
+  // PR#5 评审 R2（建议改 6）：phantom 的 ALL 出口把「声明 ⟺ 实现」放松了一格。这条**已知放松**
+  // 在此钉死——不是"修好了"，是"改坏了会红"。为什么钉行为而不是加装载期 warn：装载器**无法
+  // 区分** `app.all('/x', h)`（终结，上面刚测过的合法写法）与 `use('/x', mw)`（非终结）——两者
+  // 在 router.routes 里是同一条 'ALL' 记录。加 warn 会对合法写法误报 ⇒ 一条总在叫的告警等于
+  // 没有告警。故只在文档（docs/module-protocol.md「已知放松」）里写明，并用本例把行为冻结。
+  // 反证：把 phantom 的 `!allExact.has(d.path)` 出口删掉（回到只看逐 method 注册）⇒ 这里装载
+  // 阶段就抛错（两条声明都被判成幽灵）⇒ 本用例红，说明"放松"这件事本身是可测的。
+  it('★ 已知放松：非终结 use(路径, mw) 也能满足逐 method 声明（装载通过、运行期 404；无装载期 warn）', async () => {
+    const id = 'phantomrelaxmod'
+    cleanupModules.push(id)
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, id, {
+      'manifest.yaml': manifestYaml(
+        id,
+        '',
+        `api:\n  internal:\n`
+          + `    - { method: GET, path: /x, scope: ${id}:view }\n`
+          + `    - { method: POST, path: /x, scope: ${id}:view }`,
+      ),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        `  manifest: { id: '${id}', name: 'm', version: '1.0.0', platform: '>=0.1.0',`,
+        `    permissions: [{ code: '${id}:view', name: 'x' }],`,
+        '  },',
+        '  createRouter: () => {',
+        '    const a = new Hono()',
+        // 非终结：只把请求交给下游，自己没有任何 handler
+        "    a.use('/x', async (c, next) => { await next() })",
+        '    return a',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+    const runtime = await loadModules(modulesDir, { pool }) // 装载期不抛（这就是那条放松）
+    const scoped = new Hono()
+    scoped.use('*', injectIdentity([`${id}:view`]))
+    runtime.mount(scoped)
+    // 运行期：两条声明都兑现不了（404）。门卫照常挂在 /x 上（不是安全洞，是可达性洞）
+    expect((await scoped.request(`/api/modules/${id}/x`)).status).toBe(404)
+    expect((await scoped.request(`/api/modules/${id}/x`, { method: 'POST' })).status).toBe(404)
+  })
+
+  it('通配 ALL（app.all("/files/*")）覆盖面大于声明面 ⇒ 未声明的子路径不再匿名可达', async () => {
+    const id = 'wildmod'
+    cleanupModules.push(id)
+    const { runtime, err } = await loadWithIndex(id, [
+      "    a.all('/files/*', (c) => c.json({ leaked: 'wildcard' }))",
+      "    a.get('/ping', (c) => c.json({ pong: true }))",
+    ])
+    expect(err).toBeUndefined()
+    const anon = new Hono()
+    runtime!.mount(anon)
+    expect((await anon.request(`/api/modules/${id}/files/b`)).status).toBe(401)
+    const scoped = new Hono()
+    scoped.use('*', injectIdentity([`${id}:view`]))
+    runtime!.mount(scoped)
+    // 有身份也不放行：这条子路径谁都没声明过（fail-closed）
+    expect((await scoped.request(`/api/modules/${id}/files/b`)).status).toBe(403)
+    // 声明过的那条照常可达
+    expect((await scoped.request(`/api/modules/${id}/ping`)).status).toBe(200)
+  })
+
+  it('合法中间件形态不被误伤：use("*") / use("/prefix/*") 下声明路径照常放行、匿名照常 401', async () => {
+    const id = 'mwmod'
+    cleanupModules.push(id)
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, id, {
+      'manifest.yaml': manifestYaml(
+        id,
+        '',
+        `api:\n  internal:\n`
+          + `    - { method: GET, path: /ping, scope: ${id}:view }\n`
+          + `    - { method: GET, path: /prefix/notes, scope: ${id}:view }`,
+      ),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        `  manifest: { id: '${id}', name: 'm', version: '1.0.0', platform: '>=0.1.0',`,
+        `    permissions: [{ code: '${id}:view', name: 'x' }],`,
+        '  },',
+        '  createRouter: () => {',
+        '    const a = new Hono()',
+        '    const seen: string[] = []',
+        "    a.use('*', async (c, next) => { seen.push('global'); await next() })",
+        "    a.use('/prefix/*', async (c, next) => { seen.push('prefix'); await next() })",
+        // splice(0) = 取走并清空：每条响应只报【本次请求】的中间件轨迹（闭包数组跨请求累积）
+        "    a.get('/ping', (c) => c.json({ pong: true, seen: seen.splice(0) }))",
+        "    a.get('/prefix/notes', (c) => c.json({ notes: [], seen: seen.splice(0) }))",
+        '    return a',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+    const runtime = await loadModules(modulesDir, { pool })
+
+    const anon = new Hono()
+    runtime.mount(anon)
+    expect((await anon.request(`/api/modules/${id}/ping`)).status).toBe(401)
+
+    const scoped = new Hono()
+    scoped.use('*', injectIdentity([`${id}:view`]))
+    runtime.mount(scoped)
+    const ping = await scoped.request(`/api/modules/${id}/ping`)
+    expect(ping.status).toBe(200)
+    expect((await ping.json()) as { seen: string[] }).toMatchObject({ seen: ['global'] })
+    const notes = await scoped.request(`/api/modules/${id}/prefix/notes`)
+    expect(notes.status).toBe(200)
+    expect((await notes.json()) as { seen: string[] }).toMatchObject({ seen: ['global', 'prefix'] })
   })
 })
