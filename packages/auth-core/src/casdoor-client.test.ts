@@ -3,8 +3,10 @@ import { CasdoorClient } from './casdoor-client'
 import { MockCasdoor } from './test-util/mock-casdoor'
 
 let m: MockCasdoor
+// owner 必须与下面 client 的 org 一致：权限按 org 分桶后，种到 mock-org 的码在
+// org:'acme' 的 client 眼里是不存在的（这正是 mock 分桶语义生效的证明）
 beforeAll(async () => { m = new MockCasdoor({ users: [{ name: 'admin1', password: 'pw', roles: ['ops'] }],
-  perms: [{ users: ['admin1'], resources: ['demo:view'] }] }); await m.start() })
+  perms: [{ owner: 'acme', users: ['admin1'], resources: ['demo:view'] }] }); await m.start() })
 afterAll(async () => { await m.stop() })
 
 describe('CasdoorClient', () => {
@@ -97,7 +99,7 @@ describe('CasdoorClient 语义钉死（C2）', () => {
   })
 
   it('update-permission 形状钉死：PUT → 405，update 路径走 POST（admin-api.js casdoorPost 形状）', async () => {
-    const put = await fetch(`${m.origin}/api/update-permission?id=mock-org/demo:view`, {
+    const put = await fetch(`${m.origin}/api/update-permission?id=acme/demo:view`, {
       method: 'PUT',
       headers: { Cookie: await adminCookie(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ displayName: '不该生效' }),
