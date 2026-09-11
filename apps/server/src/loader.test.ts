@@ -19,6 +19,7 @@ import type { Identity } from '@platform/sdk'
 import { runMigrations } from './migrate'
 import { seedDemo } from './seed'
 import { loadModules, provisionModulePermissions } from './loader'
+import type { TenantRow } from './tenant'
 
 const dbUrl = process.env.DATABASE_URL
 const serverMigrationsDir = fileURLToPath(new URL('./migrations', import.meta.url))
@@ -146,7 +147,7 @@ describe.skipIf(!dbUrl)('loadModules', () => {
   }
 
   /** 宿主侧 identity 注入中间件的替身（真实链路 = 租户解析→会话中间件，Task 16 装配） */
-  type TestEnv = { Variables: { identity: Identity } }
+  type TestEnv = { Variables: { identity: Identity; tenant: TenantRow } }
   const injectIdentity = (scopes: string[]) =>
     createMiddleware<TestEnv>(async (c, next) => {
       c.set('identity', {
@@ -158,6 +159,24 @@ describe.skipIf(!dbUrl)('loadModules', () => {
       })
       await next()
     })
+
+  /** 宿主侧租户注入的替身（真实链路 = tenant.ts 的 resolveTenantMiddleware）。
+   *  启用闸门按【租户】判定，故闸门用例必须注入租户；只注入 identity 的既有用例**不受影响**
+   *  （无租户 ⇒ 闸门不在自己职责内，放行给后续层——与真实链路一致：那条链上租户中间件先跑，
+   *  未命中 Host 早已 404/抛错，闸门见到的请求必带租户）。 */
+  const injectTenant = (row: TenantRow) =>
+    createMiddleware<TestEnv>(async (c, next) => {
+      c.set('tenant', row)
+      await next()
+    })
+
+  /** 取 seed 的 acme 租户整行（闸门只读 id，但注入的是真实形状的行，不做窄化替身） */
+  async function acmeTenant(): Promise<TenantRow> {
+    const { rows } = await pool.query<TenantRow>(
+      "select * from platform.tenant where slug = 'acme'",
+    )
+    return rows[0]!
+  }
 
   // ---- 用例 ----
 
@@ -462,7 +481,22 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     const results = await probeAnonymous(probe)
     const apiRoutes = results.filter((r) => r.path.startsWith('/api/modules/probemod'))
     expect(apiRoutes.length).toBeGreaterThan(0)
-    expect(apiRoutes.every((r) => r.status === 401)).toBe(true)
+    // R4 补记：mount() 现在还会挂两道**启用闸门中间件**（精确 base + 子树 base/*）。它们在
+    // router.routes 里同样表现为 ALL 条目，被 probeAnonymous 一并探测（探测网刻意不跳过 ALL，
+    // 见 anonymous-probe.ts）——但它们是**中间件**、不是端点：无租户上下文时不在闸门职责内，
+    // 放行给后续层，最终由「没有对应路由」的 404 收尾。故按两类分开断言：端点那类**强度不变**，
+    // 另把闸门那类的行为一并钉住（放行 ≠ 自己造响应）。
+    // 已知放松：本网因此对「闸门被误注册成端点」不再敏感——那不是安全洞（中间件不会 200），
+    // 且闸门自身的语义由下方 R4 用例（停用 404 / 启用 200）逐条覆盖。
+    const gatePaths = new Set(['/api/modules/probemod', '/api/modules/probemod/*'])
+    const endpoints = apiRoutes.filter((r) => !gatePaths.has(r.path))
+    const gates = apiRoutes.filter((r) => gatePaths.has(r.path))
+    // ① 端点（含模块自己声明的 ALL 端点，R1 的教训）：匿名一律 401
+    expect(endpoints.length).toBeGreaterThan(0)
+    expect(endpoints.every((r) => r.status === 401)).toBe(true)
+    // ② 闸门中间件：两条都在（精确 + 子树），且都不是匿名可达的（无租户 ⇒ 放行 ⇒ 无路由 ⇒ 404）
+    expect(gates).toHaveLength(2)
+    expect(gates.every((r) => r.status === 404)).toBe(true)
   })
 
   // ---- R1（PR#5 评审）：ALL ≠ 一定是中间件 ----
@@ -676,5 +710,106 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     const notes = await scoped.request(`/api/modules/${id}/prefix/notes`)
     expect(notes.status).toBe(200)
     expect((await notes.json()) as { seen: string[] }).toMatchObject({ seen: ['global', 'prefix'] })
+  })
+
+  // ---- R4：停用语义落地（enabledFor 不只是 /config 的清单闸门，也是 API 闸门）----
+
+  /** 装载一个 fixture 模块并显式停用/启用某个租户的可见性 */
+  async function loadWithTenantState(
+    id: string,
+    tenant: TenantRow,
+    enabled: boolean | null,
+  ): Promise<Awaited<ReturnType<typeof loadModules>>> {
+    cleanupModules.push(id)
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, id, {
+      'manifest.yaml': manifestYaml(id),
+      'index.ts': indexTs(id, `${id}:view`),
+    })
+    const runtime = await loadModules(modulesDir, { pool })
+    if (enabled !== null) {
+      await pool.query(
+        `insert into platform.tenant_module(tenant_id, module_id, enabled)
+         values ($1, $2, $3)
+         on conflict (tenant_id, module_id) do update set enabled = excluded.enabled`,
+        [tenant.id, id, enabled],
+      )
+    }
+    return runtime
+  }
+
+  it('★ 负例：租户停用了某模块 ⇒ 该模块 API 返 404（此前只影响 /config 清单，API 照常可达）', async () => {
+    const tenant = await acmeTenant()
+    // 显式停用（enabled=false 行）
+    const runtime = await loadWithTenantState('disabledmod', tenant, false)
+
+    const app = new Hono<TestEnv>()
+    app.use('*', injectTenant(tenant))
+    app.use('*', injectIdentity(['disabledmod:view']))
+    runtime.mount(app)
+
+    // ① 子树路径：/api/modules/<id>/ping（声明过的端点、scope 也够 ⇒ 修复前 200）
+    const sub = await app.request('/api/modules/disabledmod/ping')
+    expect(sub.status).toBe(404)
+    // 形状与宿主 /api 未命中兜底一致（app.ts 的 notFound）
+    expect(await sub.json()).toEqual({ error: 'NOT_FOUND' })
+
+    // ② 精确路径：/api/modules/<id> 本身也必须被闸住（闸门要同时挂 base 与 base+'/*'）。
+    //    判别依据是**响应体**：闸门回 JSON {error:'NOT_FOUND'}，而"根本没挂闸门"时这里落进
+    //    Hono 默认 notFound ⇒ 纯文本 '404 Not Found'（res.json() 会抛）——故 JSON 断言即证明
+    //    请求确实经过了闸门，而不是恰好也没路由。
+    const exact = await app.request('/api/modules/disabledmod')
+    expect(exact.status).toBe(404)
+    expect(await exact.json()).toEqual({ error: 'NOT_FOUND' })
+  })
+
+  it('对照：未停用的模块照常 200（证明上一条不是"闸门把所有模块都关了"）', async () => {
+    const tenant = await acmeTenant()
+    const runtime = await loadWithTenantState('enabledmod', tenant, null) // 无行 = 默认启用
+
+    const app = new Hono<TestEnv>()
+    app.use('*', injectTenant(tenant))
+    app.use('*', injectIdentity(['enabledmod:view']))
+    runtime.mount(app)
+    expect((await app.request('/api/modules/enabledmod/ping')).status).toBe(200)
+  })
+
+  it('对照：停用的是【另一个】租户 ⇒ 本租户照常 200（闸门按租户判定，不是全局开关）', async () => {
+    const acme = await acmeTenant()
+    const beta = (await pool.query<TenantRow>(
+      "select * from platform.tenant where slug = 'beta'",
+    )).rows[0]!
+    // 停用只落在 beta 头上（无行时默认启用）
+    const runtime = await loadWithTenantState('permode', beta, false)
+
+    const asAcme = new Hono<TestEnv>()
+    asAcme.use('*', injectTenant(acme))
+    asAcme.use('*', injectIdentity(['permode:view']))
+    runtime.mount(asAcme)
+    expect((await asAcme.request('/api/modules/permode/ping')).status).toBe(200)
+
+    const asBeta = new Hono<TestEnv>()
+    asBeta.use('*', injectTenant(beta))
+    asBeta.use('*', injectIdentity(['permode:view']))
+    runtime.mount(asBeta)
+    expect((await asBeta.request('/api/modules/permode/ping')).status).toBe(404)
+  })
+
+  it('闸门只可能更严不会更宽：显式停用后 404，显式改回 enabled=true 后恢复 200', async () => {
+    const tenant = await acmeTenant()
+    const runtime = await loadWithTenantState('flipmod', tenant, false)
+
+    const app = new Hono<TestEnv>()
+    app.use('*', injectTenant(tenant))
+    app.use('*', injectIdentity(['flipmod:view']))
+    runtime.mount(app)
+    expect((await app.request('/api/modules/flipmod/ping')).status).toBe(404)
+
+    // 刻意不做缓存：改回启用后**下一个请求**即恢复（没有隐式生效窗口）
+    await pool.query(
+      `update platform.tenant_module set enabled = true where tenant_id = $1 and module_id = 'flipmod'`,
+      [tenant.id],
+    )
+    expect((await app.request('/api/modules/flipmod/ping')).status).toBe(200)
   })
 })
