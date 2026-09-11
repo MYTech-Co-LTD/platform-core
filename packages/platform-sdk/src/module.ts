@@ -21,10 +21,29 @@ export interface ModuleContext {
   pool: Pool
 }
 
-/** 模块定义：manifest（接入协议）+ createRouter（拿到 ctx 组路由）。 */
+/**
+ * 模块定义：manifest（接入协议）+ createRouter（拿到 ctx 组路由）。
+ *
+ * 返回类型为什么是 `Hono<any, any, any>`（Task 19 评审 I-1 修复）：
+ * Hono 的 Env/Schema/Path 泛型是**不变**的（`Set`/`Handler` 的参数位逆变），任何具体化的
+ * 返回类型都会反过来拒绝模块自己声明的合法 router——实测（tsc strict 逐条验证）：
+ * - `Hono`（BlankEnv）拒绝 `new Hono<{ Variables: { identity: Identity } }>()`——正是本协议
+ *   要模块写的形状（模块因此被迫 cast，见下）；
+ * - `Hono<{ Variables: { identity: Identity } }>` 拒绝模块自有变量（`identity` + 自己的键）
+ *   与宿主装载器（apps/server/src/loader.ts 的 `router: Hono`）；
+ * - `Hono<Env, any, any>`（hono 自带 Env 在比较中退化成 `{}`）、
+ *   `Hono<{ Variables: Record<string, unknown> }, any, any>` 同样拒绝上述全部形状；
+ * - 泛型化 `ModuleDefinition<E>` 能通过，但把 Hono 的不变性问题传染给 ModuleDefinition
+ *   本身：`const def: ModuleDefinition = defineModule({...})` 会因 `ModuleDefinition<M>` 不可
+ *   赋给 `ModuleDefinition<Env>` 而报错——摩擦扩散，不是收敛。
+ * 宿主对模块 router 只做「按路径前缀 route/use」，从不读写其变量表/Schema，故三个槽位
+ * 用 `any` 表达「宿主不关心」是准确的，并未丢失真实检查：非 Hono 返回值仍被拒，
+ * 模块内 `c.get('identity')` 的类型检查来自模块自己那句 `new Hono<...>()`（见 modules/demo）。
+ * 宿主装配处对同一摩擦也是这么绕的：apps/server/src/app.ts 的 `mount(app as unknown as Hono)`。
+ */
 export interface ModuleDefinition {
   manifest: ModuleManifest
-  createRouter(ctx: ModuleContext): Hono
+  createRouter(ctx: ModuleContext): Hono<any, any, any>
 }
 
 /** 原样返回 def——只是给模块一个类型收窄的挂点，宿主按 ModuleDefinition 消费。 */

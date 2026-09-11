@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx"
+  },
+  // 测试文件归 vitest 管（同 apps/server、packages/auth-core 惯例：测试代码不做 strict 迁就）
+  "exclude": ["**/*.test.ts", "**/*.test.tsx"]
+}

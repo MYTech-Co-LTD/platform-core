@@ -1,6 +1,9 @@
 node_modules/
 dist/
 out/
+# 本地临时物（mock-casdoor 启动脚本、验证截图、探针）：直推 main 的仓库里
+# 一次 `git add -A` 就会误提交，故忽略（Task 19 评审 Minor）
+.tmp/
 .env
 *.local
 coverage/
