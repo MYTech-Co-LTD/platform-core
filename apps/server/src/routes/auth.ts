@@ -36,8 +36,12 @@ export interface AuthRoutesDeps {
  * 入参长度上限：超长一律按坏凭据 401 且【不调 Casdoor、audit 不落原样长串】——
  * 防用巨型凭据刷 Casdoor 带宽 / 灌 audit 表（audit 刷量面）。Casdoor 侧用户名/密码
  * 上限远低于此，真实用户不可能触达。
+ *
+ * MAX_USERNAME_LEN 与 rate-limit.ts 的 MAX_KEY_LEN 是"用户名长度上限"这一个事实的两侧投影
+ * （auth 侧管 audit 写入有界，限速侧管内存桶键有界）——必须相等。该约束由 rate-limit.test.ts
+ * 的守卫断言强制（两侧各写死会静默漂移，故导出供断言引用）。
  */
-const MAX_USERNAME_LEN = 256
+export const MAX_USERNAME_LEN = 256
 const MAX_PASSWORD_LEN = 512
 
 /** 登录审计一行（platform.audit；失败也 await——审计写不进去就不该继续发会话） */
