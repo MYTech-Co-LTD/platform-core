@@ -21,6 +21,7 @@ import { seedDemo } from '../seed'
 import { resolveTenantMiddleware, type TenantEnv } from '../tenant'
 import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from '../session-middleware'
 import { wecomRoutes } from './auth-wecom'
+import { TENANT_FAIL_LIMIT, createLoginLimiter, type LoginLimiter } from '../rate-limit'
 
 const dbUrl = process.env.DATABASE_URL
 const SECRET = 'test-session-secret-0123456789abcdef' // ≥32 字符，测试专用
@@ -73,7 +74,11 @@ function fakeWecomFetch(input: RequestInfo | URL, _init?: RequestInit): Promise<
 
 type AppClient = ReturnType<typeof testClient<ReturnType<typeof makeApp>>>
 
-function makeApp(pool: Pool, casdoor: CasdoorFactory = casdoorFor): Hono<TenantEnv & SessionEnv> {
+function makeApp(
+  pool: Pool,
+  casdoor: CasdoorFactory = casdoorFor,
+  limiter: LoginLimiter = createLoginLimiter(),
+): Hono<TenantEnv & SessionEnv> {
   const app = new Hono<TenantEnv & SessionEnv>()
   app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
   app.use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET }))
@@ -83,6 +88,7 @@ function makeApp(pool: Pool, casdoor: CasdoorFactory = casdoorFor): Hono<TenantE
       casdoor,
       sessionSecret: SECRET,
       pool,
+      limiter, // ← 新增
       casdoorUrl: mock.origin,
       casdoorClientId: 'test-client',
       casdoorClientSecret: 'test-secret',
@@ -345,5 +351,51 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     })
     expect(silent.status).toBe(404)
     expect(await silent.json()).toEqual({ error: 'WECOM_NOT_CONFIGURED' })
+  })
+
+  // 企微路：租户层限速（code 换票前拿不到用户名 ⇒ 只判租户维度，见 spec §3.2）
+  it('★ 负例：租户失败达阈值 → 回调整体 429 TOO_MANY_REQUESTS（不落任何 audit）', async () => {
+    const PROBE_ACTOR = 'rate-limit-wecom-probe' // 专用 actor：全仓仅本用例用，audit 计数才稳
+    const { rows } = await pool.query<{ id: number }>(
+      "select id from platform.tenant where slug = 'acme'",
+    )
+    const acmeId = rows[0]!.id
+    // 计数按【专用 tenant+actor】维度取：vitest 并发跑各测试文件、别的文件也在写 platform.audit，
+    // 全局 count(*) 会抖——这里 tenant_id+actor 双条件把它钉死在只有本用例碰得着的行上。
+    await pool.query('delete from platform.audit where tenant_id = $1 and actor = $2', [
+      acmeId,
+      PROBE_ACTOR,
+    ])
+    const auditCount = async (): Promise<number> => {
+      const { rows: r } = await pool.query<{ n: string }>(
+        'select count(*) as n from platform.audit where tenant_id = $1 and actor = $2',
+        [acmeId, PROBE_ACTOR],
+      )
+      return Number(r[0]!.n)
+    }
+    expect(await auditCount()).toBe(0) // 前置：该 tenant+actor 从未出现过
+
+    const limiter = createLoginLimiter()
+    const c2 = testClient(makeApp(pool, casdoorFor, limiter))
+
+    // 构造一个"若不限速就会写一行 audit"的回调：有效 state + 已认证但 org 内无账户的 code
+    // ⇒ 正常路径会落到 NO_ACCOUNT 分支、写 login.fail(actor=PROBE_ACTOR)。这样下面的
+    // "行数不增"才不是空断言。反证：临时删掉 callback 的限速早返回，本用例 audit 断言变红。
+    const qr = await c2.api.platform.auth.wecom.qr.$get(undefined, {
+      headers: { host: 'acme.test' },
+    })
+    const state = stateToken(qr)
+    const code = mock.issueOidcCode(PROBE_ACTOR)
+
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) limiter.record(acmeId, null, false)
+
+    const res = await c2.api.platform.auth.wecom.callback.$get(
+      { query: { code, state } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+    )
+    expect(res.status).toBe(429)
+    expect(await res.json()).toEqual({ error: 'TOO_MANY_REQUESTS' })
+    expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0)
+    expect(await auditCount()).toBe(0) // ← 限速挡在 audit 之前：被拦的回调一行都不写
   })
 })

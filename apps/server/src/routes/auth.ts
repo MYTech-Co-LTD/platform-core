@@ -18,12 +18,18 @@ import {
   type CasdoorFactory,
   type SessionEnv,
 } from '../session-middleware'
+import { tooManyRequests, type LoginLimiter } from '../rate-limit'
 
 export interface AuthRoutesDeps {
   /** org 随租户变：multi 模式下各租户各自的 Casdoor org（c.get('tenant').casdoor_org） */
   casdoor: CasdoorFactory
   sessionSecret: string
   pool: Pool
+  /**
+   * 登录限速器（M1 闭债 R2）。**必须与企微路共用同一实例**——分成两个实例等于攻击者把流量
+   * 劈成两半、各享一份预算。宿主 app.ts 建一个传两处。
+   */
+  limiter: LoginLimiter
 }
 
 /**
@@ -59,6 +65,9 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
     } | null
     const username = typeof body?.username === 'string' ? body.username : ''
     const password = typeof body?.password === 'string' ? body.password : ''
+    // 限速（M1 闭债 R2）：**先于任何 writeAudit**。被拦的请求不写 audit——写了等于没限速
+    const decision = deps.limiter.check(t.id, username || null)
+    if (!decision.allowed) return tooManyRequests(c, t.id, decision)
     // 形状不对也按坏凭据处理（401 不区分原因，不泄探查面）
     if (!username || !password) {
       return c.json({ error: 'BAD_CREDENTIALS' }, 401)
@@ -73,6 +82,7 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
         'login.fail',
         { via: 'password', reason: 'oversized' },
       )
+      deps.limiter.record(t.id, username, false)
       return c.json({ error: 'BAD_CREDENTIALS' }, 401)
     }
 
@@ -86,6 +96,7 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
     }
     if (name === null) {
       await writeAudit(deps.pool, t.id, username, 'login.fail', { via: 'password' })
+      deps.limiter.record(t.id, username, false)
       return c.json({ error: 'BAD_CREDENTIALS' }, 401)
     }
 
@@ -108,6 +119,10 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
     // 审计先行（M-4）：插入抛错 → 500 且未发任何会话 cookie——审计与发证保持原子序，
     // 不留"登录已记账失败但浏览器已拿到新会话"的窗口
     await writeAudit(deps.pool, t.id, name, 'login.ok', { via: 'password' })
+    // 成功清零用【提交串 username】，与 check(:69)/失败记账(:85,:99) 同键：name 是 Casdoor
+    // 规范名，别名登录（邮箱/手机号）时 name !== username，用 name 清零会清错桶 ⇒ 提交串那个
+    // 失败桶永不清零、正常用户被自己锁死 15 分钟。审计行仍记 name（真实身份），不受影响。
+    deps.limiter.record(t.id, username, true)
     c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
     return c.json({ ok: true })
   })
