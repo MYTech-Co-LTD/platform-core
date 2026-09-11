@@ -21,6 +21,11 @@
 #
 # 第五个 job `deploy` 是 CD 触发面，**默认惰性**（未 adopt 前连跑都不跑，见该 job 的注释）；
 # 接入方式与前置决策在 deploy/openship-adopt.md。
+#
+# 第六个 job `main-guard` 是提交纪律的**事后绊线，不是门禁**：本仓是私有仓 + org plan=free，
+# GitHub 的 branch protection / rulesets 在该 tier 上不存在（见 deploy/branch-protection-runbook.md），
+# 服务端拦不住直推，只能靠本地 pre-push 钩子 + 这个事后检查。它跑在 push 到 main **之后**，
+# 此时 main 已经被改了——价值不在"阻止"而在"让绕过流程的推送可见、可追溯"。别把它当闸门用。
 name: ci
 on: { push: { branches: [main] }, pull_request: {} }
 jobs:
@@ -62,6 +67,24 @@ jobs:
       - run: pnpm exec tsx scripts/lint-architecture.mjs
       - run: pnpm exec tsx scripts/check-compose.mjs
       - run: pnpm exec tsx scripts/check-env-example.mjs
+      # 提交纪律装置校验（"守卫守卫本身"）：层①的钩子是本地文件、层②的自动安装是 package.json
+      # 配置，两者任一被改掉，本地直推防线就静默失效——不会有任何报错，只会"从此刻起拦不住"。
+      # 所以在 CI 里把它们钉死。（钩子的**行为**由 scripts/git-hooks.test.ts 覆盖，跑在 unit job）
+      - name: 校验提交纪律装置完好
+        run: |
+          set -euo pipefail
+          # git 只在钩子带执行位时才运行它——丢了执行位等于没有钩子
+          if [ ! -x .githooks/pre-push ]; then
+            echo "::error::.githooks/pre-push 缺失或不可执行（直推 main 将无人拦下）"
+            exit 1
+          fi
+          node -e "
+            const s = (require('./package.json').scripts || {}).prepare || '';
+            if (!/install-git-hooks\.mjs/.test(s)) {
+              console.error('::error::根 package.json 的 prepare 未指向 scripts/install-git-hooks.mjs（同事 clone 后不会自动装钩子）');
+              process.exit(1);
+            }
+          "
 
   web:
     runs-on: ubuntu-latest
@@ -150,3 +173,54 @@ jobs:
             -o /tmp/openship-deploy.json
           echo "openship 响应："
           cat /tmp/openship-deploy.json
+
+  # 提交纪律的**事后绊线**（不是门禁，理由见文件头注）。触发面：push 到 main。
+  #
+  # 判据用 `GET /repos/{owner}/{repo}/commits/{sha}/pulls`，而**不是"数父提交有几个"**：
+  # squash / rebase 合并产生的新提交同样是单父的，数父会把正常的 squash 合并误判成直推。
+  # associated-pulls 接口对 squash/rebase 合并返回的正是那个 PR，这才是我们要的语义。
+  #
+  # 已知边界（照实记）：push 事件的 `commits` 数组最多含 20 条，一次推 20+ 条时只查前 20。
+  # 它是绊线不是闸门，这个精度够用；要精确可改用 compare API，但会多出"force push 时
+  # before 不是祖先"的分支，不划算。
+  main-guard:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # 不需要 checkout：只查 API，不碰工作树
+      - name: 检查本次推送的提交是否经由 PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BEFORE: ${{ github.event.before }}
+          COMMITS: ${{ toJson(github.event.commits) }}
+        run: |
+          set -euo pipefail
+          # 首次推送（新仓）before 是全 0，没有可比对的历史 —— 不判直推
+          if printf '%s' "$BEFORE" | grep -qE '^0+$'; then
+            echo "首次推送（before=$BEFORE），跳过本次判定。"
+            exit 0
+          fi
+
+          offenders=''
+          while read -r sha; do
+            [ -n "$sha" ] || continue
+            count=$(gh api "repos/$REPO/commits/$sha/pulls" --jq 'length')
+            if [ "$count" = '0' ]; then
+              offenders="$offenders $sha"
+            fi
+          done < <(printf '%s' "$COMMITS" | jq -r '.[].id')
+
+          if [ -n "$offenders" ]; then
+            echo "::error::检测到未经 PR 直接进入 main 的提交：$offenders"
+            echo "本仓约定走 PR（背景见 deploy/branch-protection-runbook.md）："
+            echo "    git switch -c <分支名> && git push -u origin <分支名> && gh pr create --fill"
+            echo "确属有意直推（bootstrap / 紧急热修）时，请在 issue 或 PR 里补一条说明，"
+            echo "以免事后无从追溯 —— 这条绊线要的是'可见'，不是'禁止'。"
+            exit 1
+          fi
+          echo "本次推送的提交均经由 PR。"

@@ -1,0 +1,56 @@
+#!/usr/bin/env sh
+# pre-push —— 拒绝直推 main/master。
+#
+# 为什么需要它：本仓是私有仓、组织 plan=free，GitHub 的 branch protection 与 rulesets
+# 在该 tier 上**不存在**（API 返回 403 "Upgrade to GitHub Pro or make this repository
+# public"，且 permissions.admin=true —— 说明不是权限问题，管理员也开不了）。服务端
+# 「防」既然不可得，就只能退到「本地拦 + 事后可见」。完整背景与将来升级后如何切回真
+# 保护：deploy/branch-protection-runbook.md
+#
+# 本仓走 PR：推特性分支 → 开 PR → 合并由服务端完成（`gh pr merge` 不经过本钩子）。
+# 确有理由要直推（首次 bootstrap、紧急热修等）：
+#   PLATFORM_ALLOW_DIRECT_PUSH=1 git push origin main
+# —— 刻意设计成"必须显式打一个变量"，而不是手滑就能触发的开关。
+#
+# 局限（照实说，不粉饰）：
+#   1. 只在**装过本钩子**的机器上有效。没装的机器照推不误 → 由 CI 的 main-guard 兜底
+#      （事后报警，见 .github/workflows/ci.yml）。
+#   2. 钩子是个本地文件，"把它删了"即可绕过 → 由 CI 的 gates 校验其存在且可执行来堵。
+#   3. 它拦的是**本机 git push**。在 GitHub 网页上直接 commit / 走网页合并不受影响。
+set -u
+
+# git 通过 stdin 把推送计划喂进来，每行四个空格分隔的字段：
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+# 删除远端分支时 local_sha 为全 0 —— 那同样是"动 main"，一并拦。
+blocked=''
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main | refs/heads/master) blocked="$remote_ref" ;;
+  esac
+done
+
+[ -z "$blocked" ] && exit 0
+
+if [ "${PLATFORM_ALLOW_DIRECT_PUSH:-}" = "1" ]; then
+  echo "⚠️  已按 PLATFORM_ALLOW_DIRECT_PUSH=1 放行直推 $blocked —— 请确认这确实是有意为之。" >&2
+  exit 0
+fi
+
+cat >&2 <<'MSG'
+✋ 拒绝直推 main。
+
+本仓走 PR 流程（私有仓 free 版没有服务端分支保护，这是本地那一层防线，详见
+deploy/branch-protection-runbook.md）。三步：
+
+    git switch -c <你的分支名>          # 若已在特性分支上，跳过这步
+    git push -u origin <你的分支名>
+    gh pr create --fill                 # 然后在 PR 上等 CI 绿
+
+确有理由要直推（首次 bootstrap 等）：
+    PLATFORM_ALLOW_DIRECT_PUSH=1 git push origin main
+
+提醒：这只是"本地拦"。换一台没装钩子的机器、或在 GitHub 网页上直接改，它都拦不住——
+那种情况由 CI 的 main-guard job 事后报警。
+MSG
+
+exit 1
