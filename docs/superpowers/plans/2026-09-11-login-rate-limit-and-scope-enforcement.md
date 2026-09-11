@@ -163,19 +163,24 @@ describe('登录限速器（进程内存、租户内三层、不依赖客户端 
     expect(l.check(1, 'alice').allowed).toBe(true) // 100 次 check 没有延长窗口
   })
 
-  it('桶数上限：超限时先清过期、再淘汰最久未更新者，内存不发散', () => {
+  it('桶数上限：慢速持续填充到上限后清扫过期桶，桶数回落到上限之下（内存不发散）', () => {
+    // 填充方式是有讲究的：**必须按时间铺开**。瞬时灌 8000+ 条会先撞租户层
+    // （TENANT_ATTEMPT_LIMIT 1000/分、TENANT_FAIL_LIMIT 300/分），根本走不到桶上限 ——
+    // 那是"被租户层拦下"，不是本用例要测的"桶数有界"。
     let t = 0
     const l = createLoginLimiter({ now: () => t })
-    for (let i = 0; i < USER_BUCKET_CAP + 100; i++) {
-      l.record(1, `u${i}`, false)
-      t += 1 // 让每个桶的 resetAt 不同，淘汰顺序可判定
+    for (let step = 0; step < 30; step++) {
+      for (let i = 0; i < 299; i++) l.record(1, `u${step}-${i}`, false) // 每步 299 < 300，不触租户层
+      t += 61_000 // 快进一个租户窗口
     }
-    // 尚未被淘汰的最近桶仍在（最久未更新者被淘汰，不是不建桶）
-    const latest = `u${USER_BUCKET_CAP + 99}`
-    for (let i = 0; i < USER_FAIL_LIMIT; i++) l.record(1, latest, false)
-    expect(l.check(1, latest).allowed).toBe(false)
-    // 最早那个桶已被淘汰 ⇒ 计数归零（诚实记录：这是已知取舍，见 rate-limit.ts 注释）
-    expect(l.check(1, 'u0').allowed).toBe(true)
+    // 30 步 × 299 = 8970 个桶 > USER_BUCKET_CAP(8192) ⇒ 上限必然已被触达一次并清扫。
+    // 断言"回落到上限之下"是有咬合力的：**删掉清扫实现，这里会红**（桶数会停在 ≥8192）。
+    // 注意不能改断言成"最早的桶不在了"——过期桶本来就 live() 读作 0，那种断言删掉实现也照样绿。
+    expect(l.bucketCount(1)).toBeLessThan(USER_BUCKET_CAP)
+
+    t += 61_000 // 再清掉租户层的 60s 窗口，否则下面的 check 会被租户层拦
+    for (let i = 0; i < USER_FAIL_LIMIT; i++) l.record(1, 'latest', false)
+    expect(l.check(1, 'latest').allowed).toBe(false) // 新桶照常受 user 层约束
   })
 })
 ```
@@ -227,8 +232,12 @@ export const TENANT_FAIL_WINDOW_MS = 60_000
 export const TENANT_ATTEMPT_LIMIT = 1000
 export const TENANT_ATTEMPT_WINDOW_MS = 60_000
 /**
- * 每租户 user 级失败桶数上限（兜底）。造桶必须先造成失败，而失败速率已被 TENANT_FAIL_LIMIT
- * 压住（300/分 × 15 分 = 4500），故正常永远够用。
+ * 每租户 user 级失败桶数上限。**它何时会被触达**（实测结论，别凭直觉）：
+ *
+ * 造桶必须先造成失败，失败速率被 TENANT_FAIL_LIMIT 压住（300/分）。桶的**逻辑**过期是 15 分钟，
+ * 但过期桶**只有走到这段上限分支才会被真删**——所以桶数是【累计】的：
+ * 稳态慢速攻击下约 27 分钟（8192 / 300）就会触达上限，随即清扫掉已过期的那些、回落到约 4500。
+ * 即：内存上界 = 上限值，不是"永远够用"；也**不能**靠瞬时灌 8000+ 条来测（那会先撞租户层）。
  */
 export const USER_BUCKET_CAP = 8192
 
@@ -249,6 +258,14 @@ export interface LoginLimiter {
   check(tenantId: number, username: string | null): LimitDecision
   /** 判定之后按真实结果落账：ok ⇒ 清该用户失败桶；!ok ⇒ 失败桶 +1。两者都计入"全部尝试" */
   record(tenantId: number, username: string | null, ok: boolean): void
+  /**
+   * 该租户当前的 user 失败桶数。
+   *
+   * 它存在的理由：**这是"内存有界"唯一可观测的口子**。过期桶在 check 里本来就 live() 读作 0，
+   * 所以"清扫有没有真的发生"无法从公开行为推断——没有这个口子，清扫就成了一段无人验证其
+   * 生效的代码。将来也可直接喂给运维指标。
+   */
+  bucketCount(tenantId: number): number
 }
 
 export function createLoginLimiter(opts: { now?: () => number } = {}): LoginLimiter {
@@ -320,7 +337,10 @@ export function createLoginLimiter(opts: { now?: () => number } = {}): LoginLimi
         return
       }
       if (s.users.size >= USER_BUCKET_CAP) {
-        // 先清过期桶；仍满则淘汰最久未更新者。
+        // 先清过期桶；仍满才淘汰最久未更新者。
+        // 实测：清扫一次后总能腾出空位（15 分钟窗口内的量远小于上限）⇒ 下面那层"淘汰最久未
+        // 更新者"当前**经公开 API 不可达**，是纯防御性兜底（阈值将来被调大时才可能用上）。
+        // 所以别为它写断言——测不到的东西不该假装测过。
         // 诚实记下残余弱点：理论上可用新用户名刷掉受害者桶（使其计数归零），但产生桶必须先
         // 【造成失败】，而失败速率已被 TENANT_FAIL_LIMIT 限死，此时攻击者自己的请求也已被拒，
         // 净收益为零。
@@ -338,6 +358,10 @@ export function createLoginLimiter(opts: { now?: () => number } = {}): LoginLimi
         }
       }
       s.users.set(username, { count: 1, resetAt: t + USER_FAIL_WINDOW_MS })
+    },
+
+    bucketCount(tenantId) {
+      return tenants.get(tenantId)?.users.size ?? 0
     },
   }
 }
