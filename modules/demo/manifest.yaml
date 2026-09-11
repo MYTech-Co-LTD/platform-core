@@ -5,6 +5,11 @@ platform: '>=0.1'
 permissions:
   - { code: demo:view, name: 演示查看 }
   - { code: demo:note,  name: 便签读写 }
+api:
+  internal:
+    - { method: GET,  path: /ping,  scope: demo:view }
+    - { method: GET,  path: /notes, scope: demo:note }
+    - { method: POST, path: /notes, scope: demo:note }
 frontend:
   console:
     - { path: /console/demo, title: 演示, icon: ExperimentOutlined, scope: demo:view, entry: ./console/index.tsx }
