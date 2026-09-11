@@ -38,6 +38,19 @@ export const TENANT_ATTEMPT_WINDOW_MS = 60_000
  */
 export const USER_BUCKET_CAP = 8192
 
+/**
+ * 桶键长度上限。**键必须有界这件事由限速器自己保证**——任何调用方（含将来新增的路由）都
+ * 不该能靠传超长串绕过。256 与 routes/auth.ts 的 MAX_USERNAME_LEN 同值：两者都是"用户名
+ * 长度上限"这一个事实的投影（auth 侧管 audit 写入有界，限速侧管内存桶键有界）——同源，
+ * 变更必须同步。若只改调用方，键就仍可被下一条登录路径重新撑爆。
+ */
+const MAX_KEY_LEN = 256
+
+/** 桶键统一规范化：超长截断到 MAX_KEY_LEN（check 与 record 必须经此取键，否则两处键不一致） */
+function keyOf(u: string): string {
+  return u.length > MAX_KEY_LEN ? u.slice(0, MAX_KEY_LEN) : u
+}
+
 interface Counter {
   count: number
   resetAt: number
@@ -96,7 +109,7 @@ export function createLoginLimiter(opts: { now?: () => number } = {}): LoginLimi
       const f = live(s.fail, t)
       if (f && f.count >= TENANT_FAIL_LIMIT) return deny('tenant-fail', f.resetAt, t)
       if (username) {
-        const u = live(s.users.get(username), t)
+        const u = live(s.users.get(keyOf(username)), t)
         if (u && u.count >= USER_FAIL_LIMIT) return deny('user', u.resetAt, t)
       }
       return { allowed: true }
@@ -112,7 +125,7 @@ export function createLoginLimiter(opts: { now?: () => number } = {}): LoginLimi
 
       if (ok) {
         // 成功即清该用户的失败桶：否则正常用户会被自己的成功登录耗尽配额
-        if (username) s.users.delete(username)
+        if (username) s.users.delete(keyOf(username))
         return
       }
 
@@ -122,7 +135,7 @@ export function createLoginLimiter(opts: { now?: () => number } = {}): LoginLimi
 
       if (!username) return // 企微路的租户层（拿不到用户名，见 spec §3.2）
 
-      const cur = live(s.users.get(username), t)
+      const cur = live(s.users.get(keyOf(username)), t)
       if (cur) {
         cur.count += 1
         return
@@ -145,7 +158,7 @@ export function createLoginLimiter(opts: { now?: () => number } = {}): LoginLimi
           if (oldestKey !== undefined) s.users.delete(oldestKey)
         }
       }
-      s.users.set(username, { count: 1, resetAt: t + USER_FAIL_WINDOW_MS })
+      s.users.set(keyOf(username), { count: 1, resetAt: t + USER_FAIL_WINDOW_MS })
     },
 
     bucketCount(tenantId) {

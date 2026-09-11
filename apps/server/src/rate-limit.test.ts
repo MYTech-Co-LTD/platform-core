@@ -105,4 +105,16 @@ describe('登录限速器（进程内存、租户内三层、不依赖客户端 
     for (let i = 0; i < USER_FAIL_LIMIT; i++) l.record(1, 'latest', false)
     expect(l.check(1, 'latest').allowed).toBe(false) // 新桶照常受 user 层约束
   })
+
+  it('★ 键长有界：桶键在限速器内部截断到 256（check/record 同键，超长串不放大内存）', () => {
+    let t = 0
+    const l = createLoginLimiter({ now: () => t })
+    const prefix = 'x'.repeat(256) // 与 routes/auth.ts 的 MAX_USERNAME_LEN 同值（同源投影）
+    // 5 个仅在第 256 位之后不同的超长用户名：截断后同键 ⇒ 落同一桶、累加到达阈值。
+    // 反证：键不截断（raw username 直作 Map 键）时 5 个是 5 个独立桶，下面两条断言都会红
+    // ——bucketCount 会是 5，且全新后缀仍被放行（未认证攻击者可造 8192×任意长键常驻内存）。
+    for (const tail of ['A', 'B', 'C', 'D', 'E']) l.record(1, prefix + tail, false)
+    expect(l.bucketCount(1)).toBe(1)
+    expect(l.check(1, prefix + 'Z').allowed).toBe(false)
+  })
 })

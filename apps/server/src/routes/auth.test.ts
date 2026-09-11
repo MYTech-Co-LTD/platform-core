@@ -403,4 +403,42 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
     expect(ok.status).toBe(200)
     expect(setCookies(ok).join('\n')).toContain('platform_session=')
   })
+
+  // ⑰ 别名登录（提交串 username ≠ Casdoor 规范名 name）：成功清零必须也按【提交串】。
+  // 反证：把 auth.ts 成功分支改回 record(t.id, name, true)，本用例第 2 轮失败即 429（红）。
+  it('★ 别名登录：成功按提交串清零 ⇒ name!==username 时成功仍解得开失败桶', async () => {
+    const ALIAS = 'alice-alias@acme.test' // 提交串；Casdoor 返回的规范名仍是 alice
+    const aliasCasdoor: CasdoorFactory = (org) => {
+      const client = casdoorFor(org)
+      const real = client.verifyPassword.bind(client)
+      client.verifyPassword = async (u, p) =>
+        u === ALIAS && p === 'pw' ? { name: 'alice' } : real(u, p)
+      return client
+    }
+    const c2 = testClient(makeApp(pool, aliasCasdoor)) // 独立限速器：不受本文件其他用例影响
+    const post = (password: string) =>
+      c2.api.platform.auth.login.$post(
+        { json: { username: ALIAS, password } },
+        { headers: { host: 'acme.test' } },
+      )
+    for (let i = 0; i < USER_FAIL_LIMIT - 1; i++) expect((await post('wrong')).status).toBe(401)
+    expect((await post('pw')).status).toBe(200) // 别名成功登录：须清【提交串】那个失败桶
+    for (let i = 0; i < USER_FAIL_LIMIT - 1; i++) expect((await post('wrong')).status).toBe(401)
+  })
+
+  // ⑱ 超长 username 的失败也必须计入限速桶（评审 finding 3：原实现超长分支的 record 零覆盖）。
+  // 反证：临时删掉 auth.ts 超长分支的 limiter.record 调用，本用例第 6 次仍是 401（红）。
+  it('★ 超长 username 连续失败达阈值 → 第 6 次 429（超长路径确实记账）', async () => {
+    const longName = 'z'.repeat(300) // > MAX_USERNAME_LEN(256)：走"不调 Casdoor"的超长分支
+    const c2 = testClient(makeApp(pool)) // 独立限速器
+    const post = () =>
+      c2.api.platform.auth.login.$post(
+        { json: { username: longName, password: 'pw' } },
+        { headers: { host: 'acme.test' } },
+      )
+    for (let i = 0; i < USER_FAIL_LIMIT; i++) expect((await post()).status).toBe(401)
+    const blocked = await post()
+    expect(blocked.status).toBe(429)
+    expect(await blocked.json()).toEqual({ error: 'TOO_MANY_REQUESTS' })
+  })
 })

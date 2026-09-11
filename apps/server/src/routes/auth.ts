@@ -119,7 +119,10 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
     // 审计先行（M-4）：插入抛错 → 500 且未发任何会话 cookie——审计与发证保持原子序，
     // 不留"登录已记账失败但浏览器已拿到新会话"的窗口
     await writeAudit(deps.pool, t.id, name, 'login.ok', { via: 'password' })
-    deps.limiter.record(t.id, name, true)
+    // 成功清零用【提交串 username】，与 check(:69)/失败记账(:85,:99) 同键：name 是 Casdoor
+    // 规范名，别名登录（邮箱/手机号）时 name !== username，用 name 清零会清错桶 ⇒ 提交串那个
+    // 失败桶永不清零、正常用户被自己锁死 15 分钟。审计行仍记 name（真实身份），不受影响。
+    deps.limiter.record(t.id, username, true)
     c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
     return c.json({ ok: true })
   })
