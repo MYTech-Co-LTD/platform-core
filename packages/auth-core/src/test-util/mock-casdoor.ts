@@ -64,6 +64,8 @@ export class MockCasdoor {
   #oidcCodes = new Map<string, string>() // authorization code → 用户名（单次即焚）
   #addPermissionCalls: Array<{ owner: string; name: string }> = []
   #tokenFault: 'off' | 'http502' | 'html200' = 'off'
+  #getUserFault: 'off' | 'error' | 'errorOnce' = 'off'
+  #adminLoginCount = 0
   #server: ReturnType<typeof serve> | null = null
   #port = 0
   #lastLoginApplication = ''
@@ -103,6 +105,17 @@ export class MockCasdoor {
 
   get port(): number { return this.#port }
   get origin(): string { return `http://127.0.0.1:${this.#port}` }
+
+  /** get-user 故障注入：'error' 持续、'errorOnce' 只一次（用于验证 admin 会话自愈） */
+  setGetUserFault(mode: 'off' | 'error' | 'errorOnce'): void {
+    this.#getUserFault = mode
+  }
+
+  /** admin 登录次数——"自愈确实重登了一次"的唯一机检证据 */
+  get adminLoginCalls(): number {
+    return this.#adminLoginCount
+  }
+
   /** 最近一次 /api/login 收到的 application 形参（测试观测口；不含密码，纪律①） */
   get lastLoginApplication(): string { return this.#lastLoginApplication }
 
@@ -217,6 +230,9 @@ export class MockCasdoor {
       // 纪律 ③：登录失败也发 session cookie（匿名会话）——缓存端必须校验 body 才认
       c.header('Set-Cookie', `casdoor_session_id=${sid}; Path=/; HttpOnly`)
       if (!user) return c.json({ status: 'error', msg: '用户名或密码错误' })
+      // 校验成功之后才计数（只数"真登上了"的）；admin 判定复用本文件的既有口径
+      // （构造器把 built-in admin 标成 isAdmin），不另造一套
+      if (user.isAdmin) this.#adminLoginCount++
       return c.json({ status: 'ok', data: `${MOCK_ORG}/${user.name}` })
     })
     // POST /api/login/oauth/access_token —— 旧仓 sso-shell.js authorizationCodeToken 生产形状：
@@ -254,13 +270,20 @@ export class MockCasdoor {
     // GET /api/get-user?id=<org>/<name> —— 纪律 ②：单数端点只认 id= 全形，严格两段
     .get('/api/get-user', (c) => {
       if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      if (this.#getUserFault === 'error' || this.#getUserFault === 'errorOnce') {
+        if (this.#getUserFault === 'errorOnce') this.#getUserFault = 'off'
+        return c.json({ status: 'error', msg: 'Please login first' })
+      }
       const parts = (c.req.query('id') ?? '').split('/')
       if (parts.length !== 2 || !parts[0] || !parts[1]) {
         // 真实 Casdoor GetOwnerAndNameFromId 同款拒绝：非 <org>/<name> 全形不合法
         return c.json({ status: 'error', msg: 'wrong token count, expect <org>/<name>' })
       }
       const user = this.#users.find((u) => u.name === parts[1])
-      if (!user) return c.json({ status: 'error', msg: 'user not found' })
+      // 真机（sso.hookflow.cn 实测）：用户不存在 ⇒ HTTP 200 + {status:'ok', data:null}，
+      // **不是** status:error。旧 mock 回 error 与真机不符，正是"error 被折叠成 null"
+      // 这个缺陷在测试里结构性看不见的原因（M1 闭债 R3）。改动前先读本文件头注的 mock 三纪律。
+      if (!user) return c.json({ status: 'ok', data: null })
       // 纪律 ①：绝不回 password
       return c.json({
         status: 'ok',

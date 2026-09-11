@@ -63,11 +63,20 @@ export class CasdoorClient {
     return { name }
   }
 
-  /** 查单个用户（admin 会话）；查无此人/端点报错 → null（门禁层 fail-closed 转 403 用） */
+  /** 查单个用户（admin 会话）；**仅"真·不存在"返回 null**，端点/上游报错一律抛（见下） */
   async getUser(name: string): Promise<CasdoorUser | null> {
     const path = `get-user?id=${encodeURIComponent(`${this.#o.org}/${name}`)}`
     const j = await this.#adminJson(path)
-    const u = j.status === 'ok' ? (j.data as Record<string, unknown> | undefined) : undefined
+    // 口径与 #permissionsRaw 一致（M1 闭债 R3）：**只有 ok 才是应答**。
+    // 真机（sso.hookflow.cn 实测）：用户不存在 ⇒ 200 + {status:'ok', data:null}；
+    // 而 status:'error' 覆盖的是与"不存在"无关的一堆情形——id 非 <org>/<name> 两段
+    // （wrong token count）、admin 会话失效（'Please login first'）、org 不存在、
+    // org 非公开且权限不过、DB/角色扩展/脱敏出错。
+    // 把 error 折叠成 null 会让调用方误判"用户不存在"：会话中间件据此清 cookie（静默登出）、
+    // 登录路据此发出"没有角色派生 scopes"的会话（表现为登录了但每个模块 API 都 403）。
+    // 不匹配错误文案——形状就够区分（文案随 Casdoor 版本变，见本文件 upsertPermission 的注释）。
+    if (j.status !== 'ok') throw new Error(`casdoor get-user: ${j.msg || 'error'}`)
+    const u = j.data as Record<string, unknown> | null | undefined
     if (!u || typeof u !== 'object' || !u.name) return null
     const roles = (Array.isArray(u.roles) ? u.roles : [])
       .map((x) => (typeof x === 'string' ? x : String((x as Record<string, unknown>)?.name ?? '')))
@@ -216,8 +225,13 @@ export class CasdoorClient {
     return this.#adminCookie
   }
 
-  /** admin GET/POST/PUT：401 → 重登一次重试（仅一次，坏凭据不会循环） */
-  async #adminRequest(path: string, init?: { method?: string; body?: unknown }): Promise<Response> {
+  /** admin GET/POST/PUT：401 → 重登一次重试（仅一次，坏凭据不会循环）；
+   *  forceSession=true 强制重取会话（供 #adminJson 的响应体层自愈调用） */
+  async #adminRequest(
+    path: string,
+    init?: { method?: string; body?: unknown },
+    forceSession = false,
+  ): Promise<Response> {
     const doFetch = (cookie: string): Promise<Response> => {
       const req: RequestInit = {
         method: init?.method ?? 'GET',
@@ -229,18 +243,28 @@ export class CasdoorClient {
       }
       return this.#fetch(`${this.#o.origin}/api/${path}`, req)
     }
-    let r = await doFetch(await this.#sessionCookie())
+    let r = await doFetch(await this.#sessionCookie(forceSession))
     if (r.status === 401) {
       r = await doFetch(await this.#sessionCookie(true))
     }
     return r
   }
 
-  /** admin 请求 + 语义解包：非 2xx 一律抛（不吞异常）；status error 由调用方按语义处理 */
+  /** admin 请求 + 语义解包：非 2xx 一律抛（不吞异常）；status error 由调用方按语义处理。
+   *  **响应体 status:error 时强制重登并重试一次**（见下，M1 闭债 R3 的 admin 会话自愈） */
   async #adminJson(path: string, init?: { method?: string; body?: unknown }): Promise<Record<string, unknown>> {
-    const r = await this.#adminRequest(path, init)
-    if (!r.ok) throw new Error(`casdoor request failed: ${r.status} ${path}`)
-    return (await r.json().catch(() => ({}))) as Record<string, unknown>
+    const readOnce = async (forceSession: boolean): Promise<Record<string, unknown>> => {
+      const r = await this.#adminRequest(path, init, forceSession)
+      if (!r.ok) throw new Error(`casdoor request failed: ${r.status} ${path}`)
+      return (await r.json().catch(() => ({}))) as Record<string, unknown>
+    }
+    const j = await readOnce(false)
+    if (j.status !== 'error') return j
+    // 真机把"admin 会话失效"回成 **HTTP 200 + status:error**（'Please login first'），
+    // 而 **不是 401** ⇒ 上面那个 401 重试永不触发，缓存的死 cookie 也永不刷新。
+    // 这里补一次强制重登 + 重试：不匹配文案（任何 error 都重试一次；真错的第二次照样错，
+    // 由调用方按既有口径抛/降级）。
+    return readOnce(true)
   }
 
   async #permissionsRaw(): Promise<Array<Record<string, unknown>>> {

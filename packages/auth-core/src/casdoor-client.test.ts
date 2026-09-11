@@ -232,3 +232,58 @@ describe('upsertPermissions 批量语义', () => {
     expect(m.permissionsIn('acme').find((p) => p.name === 'race:code')?.users).toEqual(['someone'])
   })
 })
+
+// ---- getUser：「错误」≠「不存在」（M1 闭债 R3）----
+//
+// 真机（sso.hookflow.cn 实测）把"用户不存在"回成 200+{status:'ok',data:null}，把一堆与
+// "不存在"无关的情形（admin 会话失效 / id 非两段 / org 不存在 / DB 出错）回成 status:error。
+// 把 error 折叠成 null 会让调用方误判 ⇒ 会话中间件清 cookie（静默登出，issue #3 第三节）。
+
+describe('getUser：错误 ≠ 不存在', () => {
+  /** 与 casdoor-client.test.ts 既有装配同形状的最小 client 工厂 */
+  const clientFor = (m: MockCasdoor, org: string): CasdoorClient => new CasdoorClient({
+    origin: m.origin, clientId: 'test-client', clientSecret: '', org,
+    adminUser: 'admin', adminPwd: 'pw',
+  })
+
+  it('★ 负例：未知用户 ⇒ null', async () => {
+    const m = new MockCasdoor({ users: [] })
+    await m.start()
+    try {
+      expect(await clientFor(m, 'mock-org').getUser('nobody')).toBeNull()
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ 负例：status:error ⇒ 抛错，绝不返回 null（旧实现把它当"用户不存在"）', async () => {
+    const m = new MockCasdoor({ users: [{ name: 'alice', password: 'pw' }] })
+    await m.start()
+    try {
+      const c = clientFor(m, 'mock-org')
+      m.setGetUserFault('error') // 模拟 admin 会话失效 / 上游内部错
+      await expect(c.getUser('alice')).rejects.toThrow(/get-user/)
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ admin 会话失效后可自愈：首次 error ⇒ 强制重登并重试成功', async () => {
+    const m = new MockCasdoor({ users: [{ name: 'alice', password: 'pw' }] })
+    await m.start()
+    try {
+      const c = clientFor(m, 'mock-org')
+      // 预热一次：把 admin cookie 缓存进 client。**计划原文在 client 构造后直接取 before，
+      // 但首次调用本身就要登一次（缓存未命中）⇒ 断言 before+1 会实测成 before+2。**
+      // 自愈用例要钉的是"故障多登了一次"，故必须先有已缓存的会话，计数差才有意义。
+      expect((await c.getUser('alice'))?.name).toBe('alice')
+      const before = m.adminLoginCalls
+      m.setGetUserFault('errorOnce') // 只错一次：等价于"缓存里的 admin cookie 已失效"
+      const u = await c.getUser('alice')
+      expect(u?.name).toBe('alice')              // 重试后拿到正确结果
+      expect(m.adminLoginCalls).toBe(before + 1) // 且确实重登了一次
+    } finally {
+      await m.stop()
+    }
+  })
+})

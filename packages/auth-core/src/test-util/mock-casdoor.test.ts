@@ -80,6 +80,14 @@ describe('MockCasdoor：权限按 org 分桶（owner= 生效）', () => {
     expect(String(j.msg)).toMatch(/owner/)
   })
 
+  it('★ 负例：未知用户 ⇒ ok + data:null（真机形状；旧 mock 回 status:error 与真机不符）', async () => {
+    const j = await (await fetch(`${m.origin}/api/get-user?id=acme/nobody`, {
+      headers: { Cookie: await adminCookie() },
+    })).json() as { status: string; data: unknown }
+    expect(j.status).toBe('ok')
+    expect(j.data).toBeNull()
+  })
+
   it('update-permission 按 (owner,name) 定位：跨 org 同名互不影响', async () => {
     expect((await addPerm('acme', 'shared:code')).status).toBe('ok')
     expect((await addPerm('gamma', 'shared:code')).status).toBe('ok')

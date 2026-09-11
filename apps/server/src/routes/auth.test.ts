@@ -468,4 +468,65 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
     expect(res.status).toBe(413)
     expect(await res.json()).toEqual({ error: 'PAYLOAD_TOO_LARGE' })
   })
+
+  // ㉑ M1 闭债 R3：admin 会话失效（get-user 回 status:error）时——
+  //    session-middleware **不得**清终端用户 cookie（那是静默登出通道），
+  //    而应走既有的"降级用旧 scopes 继续"分支。
+  it('★ 负例：会话刷新遇 get-user 错误 ⇒ 降级不清 cookie（旧实现判 userGone 直接清）', async () => {
+    const now = nowSec()
+    const stale = await signSession(
+      { sub: 'alice', org: 'acme', name: 'alice', scopes: ['old:scope'], authVia: 'password' },
+      SECRET,
+      now - SCOPES_TTL_SEC - 60,
+    )
+    mock.setGetUserFault('error')
+    try {
+      const res = await client.api.platform.auth.session.$get(undefined, {
+        headers: { host: 'acme.test', cookie: `platform_session=${stale}` },
+      })
+      expect(res.status).toBe(200)
+      expect(setCookies(res)).toEqual([])             // 不重签、**更不清 cookie**
+      expect((await res.json()).scopes).toEqual(['old:scope'])
+    } finally {
+      mock.setGetUserFault('off')
+    }
+  })
+
+  // ㉒ M1 闭债 R3：登录时"密码已验证通过却查无此人"= 上游不一致 ⇒ 502 fail loudly，
+  //    绝不发一个"没有角色派生 scopes"的会话（那表现为登录成功但模块 API 全 403）。
+  it('★ 负例：登录遇 get-user 错误 ⇒ 502，且不发会话 cookie', async () => {
+    const c2 = testClient(makeApp(pool))
+    mock.setGetUserFault('error')
+    try {
+      const res = await c2.api.platform.auth.login.$post(
+        { json: { username: 'alice', password: 'pw' } },
+        { headers: { host: 'acme.test' } },
+      )
+      expect(res.status).toBe(502)
+      expect(setCookies(res)).toEqual([])
+    } finally {
+      mock.setGetUserFault('off')
+    }
+  })
+
+  // ㉓ M1 闭债 R3 的另一半：**这条才是 `user === null` 那个分支的机检面**。
+  //    ㉒ 走的是 getUser 抛错的路径（被 catch 吃掉），根本没碰到 null 判定——
+  //    只留 ㉒ 的话，`user?.roles ?? []`（不判 null）能照样全绿，发出"没有角色派生
+  //    scopes"的会话。这里让"密码验证通过"与"查无此人"同时成立：
+  //    真机形状 = 200 + {status:'ok', data:null}（不是 error）⇒ 必须 502、绝不发会话。
+  it('★ 负例：密码通过但 getUser 回 ok+null（真机"不存在"形状）⇒ 502，且不发会话 cookie', async () => {
+    const ghostCasdoor: CasdoorFactory = (org) => {
+      const c = casdoorFor(org)
+      c.verifyPassword = async () => ({ name: 'ghost' }) // 密码"验证通过"，但 Casdoor 里查无此人
+      return c
+    }
+    const c2 = testClient(makeApp(pool, ghostCasdoor))
+    const res = await c2.api.platform.auth.login.$post(
+      { json: { username: 'ghost', password: 'pw' } },
+      { headers: { host: 'acme.test' } },
+    )
+    expect(res.status).toBe(502)
+    expect(await res.json()).toEqual({ error: 'CASDOOR_UNAVAILABLE' })
+    expect(setCookies(res)).toEqual([])
+  })
 })
