@@ -585,6 +585,45 @@ async function runMulti(child, port, mock) {
     'beta 下 GET /api/modules/demo/ping 403 FORBIDDEN —— 码存在但未授权，403 是授权在拦',
     describe(betaPing),
   )
+
+  step('multi：模块 API 匿名不可达（声明即授权 —— 身份门卫在拦）')
+  const anonPing = await httpRequest({
+    port,
+    host: TENANT_HOST,
+    path: '/api/modules/demo/ping',
+  })
+  check(
+    anonPing.status === 401 && json(anonPing)?.error === 'UNAUTHENTICATED',
+    '匿名 GET /api/modules/demo/ping → 401 UNAUTHENTICATED（未声明 = 不可达的另一面：没身份就没门）',
+    describe(anonPing),
+  )
+
+  step('multi：登录限速（连续失败达阈值 ⇒ 429，含 Retry-After）')
+  // 专用用户名：本进程的限速器是幂等的内存状态，用 admin1 会把后续用例的登录一起拦掉。
+  // 该段必须排在 runMulti 最后：限速状态一旦落进本进程，任何在此之后复用该用户名的登录都会被拦。
+  const RL_USER = 'ratelimit-probe'
+  let rlRes = null
+  for (let i = 0; i < 6; i++) {
+    rlRes = await httpRequest({
+      port,
+      host: TENANT_HOST,
+      method: 'POST',
+      path: '/api/platform/auth/login',
+      body: JSON.stringify({ username: RL_USER, password: 'wrong' }),
+    })
+    if (rlRes.status === 429) break
+    check(rlRes.status === 401, `第 ${i + 1} 次坏凭据登录 401（尚未达阈值）`, describe(rlRes))
+  }
+  check(
+    rlRes.status === 429 && json(rlRes)?.error === 'TOO_MANY_REQUESTS',
+    '连续失败达阈值后返回 429 TOO_MANY_REQUESTS',
+    describe(rlRes),
+  )
+  check(
+    Number(rlRes.headers['retry-after']) > 0,
+    `429 带 Retry-After 头（实际 ${rlRes.headers['retry-after']}）`,
+    { headers: rlRes.headers },
+  )
 }
 
 // ---- 形态 2：single（PLATFORM_ORG 唯一租户） ----
