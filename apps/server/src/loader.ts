@@ -30,6 +30,7 @@ import { Hono } from 'hono'
 import type { MiddlewareHandler } from 'hono'
 import type { Pool } from 'pg'
 import { runMigrations } from './migrate'
+import type { TenantRow } from './tenant'
 
 /** 装载完成的模块：manifest（协议）+ router（createRouter 产物） */
 export interface LoadedModule {
@@ -40,6 +41,10 @@ export interface LoadedModule {
 /**
  * 装载结果。mount 前中间件链由宿主负责（租户解析 → 会话中间件 → 模块自加
  * requireScope），mount 只做挂载；enabledFor 按「无行=启用默认」求租户可见集。
+ *
+ * `enabledFor` 有**两个**消费方，且共用同一份实现（见 loadModules 的 enabledForImpl）：
+ * routes/platform.ts 的 /config 清单闸门，以及 mount() 挂的 API 启用闸门（M1 闭债 R4）。
+ * 两者必须同源——清单里看不到却仍能调通的模块，正是停用语义只落一半时的样子。
  */
 export interface ModulesRuntime {
   modules: LoadedModule[]
@@ -297,13 +302,63 @@ export async function loadModules(
     )
   }
 
+  // ⑦ 租户已启用模块集（Task 12 /config 的闸门 + M1 闭债 R4 的 API 启用闸门）。
+  //    简报基线 SQL 是 `where tenant_id=$1 and enabled`（只回显式启用行）——「无行=启用默认」
+  //    要求把无行模块也并入集合（消费方 routes/platform.ts 直接 .filter(has) 消费），
+  //    故取该租户全行后在内存按默认值判定：显式 enabled=true 落集合、false 剔除、
+  //    无行视为启用；只回已装载模块的 id（磁盘上已删的模块不在任何租户可见集里）。
+  //    提成局部函数是因为 mount 里的启用闸门要用同一份语义——写两遍必然漂移。
+  const enabledForImpl = async (tenantId: number): Promise<Set<string>> => {
+    const { rows } = await deps.pool.query<{ module_id: string; enabled: boolean }>(
+      'select module_id, enabled from platform.tenant_module where tenant_id = $1',
+      [tenantId],
+    )
+    const explicit = new Map(rows.map((r) => [r.module_id, r.enabled]))
+    const enabled = new Set<string>()
+    for (const m of loaded) {
+      if (explicit.get(m.manifest.id) ?? true) enabled.add(m.manifest.id)
+    }
+    return enabled
+  }
+
   return {
     modules: loaded,
 
     // ⑥ API 挂 /api/modules/<id>；userApp 静态目录存在才挂（dist 绝对路径，mount 路径来自 manifest）
     mount(app: Hono): void {
       for (const m of loaded) {
-        app.route(moduleApiBasePath(m.manifest.id), m.router)
+        const base = moduleApiBasePath(m.manifest.id)
+
+        // ⑥.5 启用闸门（M1 闭债 R4）：停用 = **该租户看不到这个模块** ⇒ 404，不是 403
+        //      （403 会泄露"模块存在但被停用"——停用状态本身就成了可枚举信息）。
+        //      **必须 use 在 app.route 之前**：Hono 里 handler 先注册、use 后注册时该中间件
+        //      **永不执行**（已实证，见 docs/module-protocol.md「实现注意」第 2 条）——顺序错了
+        //      就是一个"代码里有闸门、运行时永不生效"的静默洞。
+        //      两条都挂（hono 4.13.7 实测）：无通配的 use(base) 只匹配 base 那条路径本身，
+        //      **不**匹配 /base/ping；use(base + '/*') 则同时命中 base 与 /base/ping（`/*` 吞空段）。
+        //      即子树那条已覆盖 base，精确那条是**冗余但便宜**的防御——对裸 base 的请求会依次
+        //      过两道闸门（两次 enabledFor），而裸 base 本就没有端点，多这一次查询无关紧要。
+        //      实测反例：把这两行 `use` 挪到 `app.route` 之后 ⇒ 闸门**根本不执行**，请求 200
+        //      直达模块（正是「代码里有闸门、运行时永不生效」的静默洞）。
+        //      代价：每请求一次 enabledFor 查询（+1 次 DB 往返）。**刻意不做缓存**——「停用后
+        //      多久生效」不该有一个隐式窗口；将来若测出瓶颈要加 TTL，必须同时把窗口语义写进
+        //      本注释与 docs/module-protocol.md。
+        const gate: MiddlewareHandler = async (c, next) => {
+          const tenant = c.get('tenant') as TenantRow | undefined
+          // 无租户上下文（未过租户中间件）不在本闸门职责内，放行给后续层。真实链路上这道
+          // 中间件先于一切业务路由，未命中 Host 早已 404/抛错 ⇒ 闸门见到的请求必带租户。
+          if (!tenant) return next()
+          const enabled = await enabledForImpl(tenant.id)
+          if (!enabled.has(m.manifest.id)) {
+            // 形状与宿主 /api 未命中兜底一致（app.ts 的 app.notFound）
+            return c.json({ error: 'NOT_FOUND' }, 404)
+          }
+          await next()
+        }
+        app.use(base, gate)
+        app.use(base + '/*', gate)
+
+        app.route(base, m.router)
 
         const userApp = m.manifest.frontend?.userApp
         if (!userApp) continue
@@ -321,22 +376,6 @@ export async function loadModules(
       }
     },
 
-    // ⑦ 租户已启用模块集（Task 12 /config 的闸门）。简报基线 SQL 是
-    //    `where tenant_id=$1 and enabled`（只回显式启用行）——「无行=启用默认」要求
-    //    把无行模块也并入集合（消费方 routes/platform.ts 直接 .filter(has) 消费），
-    //    故取该租户全行后在内存按默认值判定：显式 enabled=true 落集合、false 剔除、
-    //    无行视为启用；只回已装载模块的 id（磁盘上已删的模块不在任何租户可见集里）。
-    async enabledFor(tenantId: number): Promise<Set<string>> {
-      const { rows } = await deps.pool.query<{ module_id: string; enabled: boolean }>(
-        'select module_id, enabled from platform.tenant_module where tenant_id = $1',
-        [tenantId],
-      )
-      const explicit = new Map(rows.map((r) => [r.module_id, r.enabled]))
-      const enabled = new Set<string>()
-      for (const m of loaded) {
-        if (explicit.get(m.manifest.id) ?? true) enabled.add(m.manifest.id)
-      }
-      return enabled
-    },
+    enabledFor: enabledForImpl,
   }
 }
