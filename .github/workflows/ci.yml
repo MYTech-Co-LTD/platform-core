@@ -180,9 +180,14 @@ jobs:
   # squash / rebase 合并产生的新提交同样是单父的，数父会把正常的 squash 合并误判成直推。
   # associated-pulls 接口对 squash/rebase 合并返回的正是那个 PR，这才是我们要的语义。
   #
-  # 已知边界（照实记）：push 事件的 `commits` 数组最多含 20 条，一次推 20+ 条时只查前 20。
-  # 它是绊线不是闸门，这个精度够用；要精确可改用 compare API，但会多出"force push 时
-  # before 不是祖先"的分支，不划算。
+  # 已知边界（照实记，别当它滴水不漏）：
+  #   ① push 事件的 `commits` 数组上限 20 条，一次推 20+ 条时只查前 20；
+  #   ② **只删提交的 force push**（"把我那次直推抹掉"最自然的动作）其 `commits` 为空 ——
+  #      无对象可判。此时本 job 必须打印"无法判定"，**绝不能**在空集上报"均经由 PR"：
+  #      空集上给出肯定结论比不说话更糟（那是主动作伪证，不是沉默）；
+  #   ③ 直推一条**已经有开着的 PR** 的分支到 main（`git push origin mybranch:main`），
+  #      关联 API 会照常返回那个 PR ⇒ 判不出来。这是判据的语义边界，不是本 job 的 bug。
+  # 要精确覆盖 ②③ 须改用 compare API 并处理"force push 时 before 不是祖先"，不划算。
   main-guard:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -202,13 +207,21 @@ jobs:
           set -euo pipefail
           # 首次推送（新仓）before 是全 0，没有可比对的历史 —— 不判直推
           if printf '%s' "$BEFORE" | grep -qE '^0+$'; then
-            echo "首次推送（before=$BEFORE），跳过本次判定。"
+            # 变量必须写成 ${VAR}：紧跟其后的是全角括号「）」，而 bash 3.2（macOS 自带
+            # /bin/bash，本仓开发机就是）在 UTF-8 locale 下会把 0x80 以上的字节也当成变量名
+            # 的合法字符 —— `$BEFORE）` 会被解析成变量 `BEFORE）`，在 set -u 下直接
+            # "unbound variable" 退出 1。也就是说：**这条本意是「安全跳过」的分支，会在
+            # bash 3.2 上把 job 弄挂**。CI 用的是 bash 5（解析正确，实测 5.2.37 无此问题），
+            # 所以只坑本地复跑；加花括号在两种 bash 上都正确，故一律用 ${}。
+            echo "首次推送（before=${BEFORE}），跳过本次判定。"
             exit 0
           fi
 
           offenders=''
+          checked=0
           while read -r sha; do
             [ -n "$sha" ] || continue
+            checked=$((checked + 1))
             count=$(gh api "repos/$REPO/commits/$sha/pulls" --jq 'length')
             if [ "$count" = '0' ]; then
               offenders="$offenders $sha"
@@ -223,4 +236,14 @@ jobs:
             echo "以免事后无从追溯 —— 这条绊线要的是'可见'，不是'禁止'。"
             exit 1
           fi
-          echo "本次推送的提交均经由 PR。"
+
+          # 空集必须说"判不了"，不许说"干净"：只删提交的 force push 会走到这里，
+          # 在空集上打印"均经由 PR"是主动作伪证（见文件头注的边界②）。
+          if [ "$checked" -eq 0 ]; then
+            echo "本次推送没有可供检查的提交（commits 为空，常见于仅删除提交的 force push）——"
+            echo "**无法判定**本次是否绕过了 PR，故不报绿、也不报警。若确有过直推并被抹掉，"
+            echo "请以 `git log origin/main --first-parent` 人工对一次。"
+            exit 0
+          fi
+
+          echo "本次推送的 $checked 条提交均经由 PR。"

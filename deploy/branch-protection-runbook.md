@@ -51,15 +51,22 @@ git 通过 stdin 把推送计划喂给钩子，每行 `<local_ref> <local_sha> <
 生命周期上：`pnpm install` 之后 pnpm 会执行根工程的 `prepare`，于是 **clone + `pnpm install`
 这一步就把钩子装上了**，不需要任何人记得额外做什么。
 
-实测（全新安装确实会跑 `prepare`）：
+实测（在 /tmp 造一个 workspace 形态的最小仓，跑全新 `pnpm install`，看它是否真的执行了
+`prepare` 以及钩子有没有装上）：
 
 ```console
-$ echo '>>> PREPARE-RAN'       # package.json: "prepare": "echo '>>> PREPARE-RAN'"
->>> PREPARE-RAN
+$ pnpm install
+...   prepare$ node scripts/install-git-hooks.mjs
+$ git config --get core.hooksPath
+.githooks
 ```
 
-**已知缺口（照实记）**：`pnpm install` 在依赖已是最新时会走 `Already up to date` 快路径，
-**不执行** `prepare`；`pnpm install --ignore-scripts` 同理。所以——
+**已知缺口（照实记）**：`prepare` 只在 pnpm 认为"这个工程的脚本还没执行过"时才跑。
+对**依赖已经装好的 checkout** 再跑一次 `pnpm install` 不会重跑它；`--ignore-scripts` 同理。所以——
+
+> 别拿"输出里有 `Already up to date`"当判据：一次**确实跑了** `prepare` 的安装同样会打印
+> 这一行（pnpm 的 up-to-date 说的是依赖解析，与脚不脚本是两码事）。判别依据是 pnpm 维护的
+> "该工程脚本已执行"状态，不是某行输出。这也是本条曾经写错的地方。
 
 - **全新 clone 的同事**：自动装上，无需操作。
 - **早就 clone 过、依赖已装好的老机器**：不会自动补上，需手动跑一次 `pnpm run prepare`。
@@ -67,8 +74,15 @@ $ echo '>>> PREPARE-RAN'       # package.json: "prepare": "echo '>>> PREPARE-RAN
 这正是不能把②当作唯一防线的原因；③a 用来兜"装置被改坏"。
 
 安装脚本另有一条刻意的行为：**在 git 工作树里却找不到 `.githooks/` 时必须出声**（而不是静默跳过）。
-因为"脚本被挪了位置导致仓根算错"的症状正是这个，静默会让整条机制无声无息地失效。
-（不在 git 仓库里时——例如本包被当依赖安装——则静默退出。）
+这里的"工作树"取 **git 自己认定的仓根**（`--show-toplevel`），不是从脚本位置倒推的目录——
+git 把 `core.hooksPath` 当"仓根下的相对路径"来解析，只有两者一致才谈得上正确。这条挡两种情形：
+
+- **脚本被挪走**导致倒推出的目录不是仓根；
+- **本包被当依赖装进别人的仓库**（此时 toplevel 是使用方仓库，不是本包目录）。后者危害更大：
+  若无条件写配置，会把使用方仓库的**所有**钩子指向一个它那里不存在的 `.githooks`，
+  该仓钩子集体静默失效——而使用方根本不会知道。
+
+不在任何 git 仓库里（源码被解到别处）时则静默退出。
 
 ### ③a 装置完好校验（"守卫守卫本身"）
 
@@ -97,13 +111,20 @@ push 到 main 后，回头检查本次推送的每个提交是否经由 PR 进�
 
 ## 三、局限（照实说，不粉饰）
 
-1. ①是个本地文件，**删掉它即可绕过**；③a 能发现，但发现时改动已在分支上。
-2. ①只在**装过**的机器上有效；没跑过 `pnpm install`（或用了 `--ignore-scripts`）的机器照推不误。
-3. ①②③ **全都拦不住在 GitHub 网页上直接 commit / 走网页合并**。
-4. ③b 是事后绊线，报警时 main 已经变了。
-5. ③b 一次只判定推送事件里的提交数组，**上限 20 条**；一次推 20+ 条时只查前 20 条。
+1. **`git push --no-verify` 一步绕过①。** git 此时压根不调用钩子，所以钩子**看不见**这个标志——
+   这是最省事的绕过方式，必须列在最前，而不是藏起来。缓解只有 ③b 的事后记录。
+2. ①是个本地文件，**删掉它即可绕过**；③a 能发现，但发现时改动已在分支上。
+3. ①只在**装过**的机器上有效；没跑过 `pnpm install`（或用了 `--ignore-scripts`）的机器照推不误。
+4. ①只看远端 **ref**、**不看远端名**，故 `git push backup main` 这类推 fork / 备份仓也会被拦。
+   方向是 fail-closed（多拦而非漏拦），**刻意不去"修"**——放宽远端名等于又开一个口子。
+5. ①②③ **全都拦不住在 GitHub 网页上直接 commit / 走网页合并**。
+6. ③b 是事后绊线，报警时 main 已经变了。
+7. ③b 的判据有三条边界：commits 数组**上限 20 条**；**只删提交的 force push** 会让它无对象可判
+   （此时它打印"无法判定"而**不是**谎报干净）；**直推一个已有开着 PR 的分支**到 main
+   （`git push origin mybranch:main`）会被关联 API 判成"经由 PR"。
 
 **一句话**：这套东西的价值是「让直推变麻烦、让绕过变可见」，**不是**「让直推不可能」。
+诚实的说法是：**一个 `--no-verify` 就够了**（第 1 条）。它拦的是"顺手直推"，不是"决意直推"。
 真要"不可能"，只有升级 plan 或把仓库转 public —— 见下节。
 
 ## 四、日常怎么走（本仓走 PR）
@@ -149,9 +170,9 @@ gh api -X PUT repos/MYTech-Co-Ltd/platform-core/branches/main/protection \
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["unit", "gates", "web", "smoke", "main-guard"]
+    "contexts": ["unit", "gates", "web", "smoke"]
   },
-  "enforce_admins": false,
+  "enforce_admins": true,
   "required_pull_request_reviews": {
     "required_approving_review_count": 1,
     "dismiss_stale_reviews": true
@@ -164,8 +185,18 @@ gh api -X PUT repos/MYTech-Co-Ltd/platform-core/branches/main/protection \
 JSON
 ```
 
+两处刻意与直觉相反的地方，各有原因：
+
+- **`contexts` 里没有 `main-guard`。** 它是 `if: github.event_name == 'push'` 的 job，在
+  **每个 PR 上都会被 skip**。把一个只可能 skip 的 job 列进必过检查，轻则白占一格，重则让每个
+  PR 永远卡在 "Expected — Waiting for status to be reported" ——那正是本节开头警告的那种失败。
+  它是 push 之后的绊线，本来也不属于"合并前必须绿"的集合。
+- **`enforce_admins: true`。** 若为 `false`，管理员**不受**保护约束，而下面执行 `PUT` 的人必然
+  就是管理员 ⇒ 第 3 步那条"直推应被拒"的验证会**自己失败**（直推反而成功、空提交落进 main）。
+  开启它，验证步骤才成立、管理员也别想绕。
+
 `contexts` 若与第 1 步查出的名字对不上，GitHub **不会报错**，而是永远等一个不会出现的检查
-——表现为 PR 卡在 "Expected — Waiting for status to be reported"。所以第 1 步不能跳。
+——同样表现为卡在 "Expected — Waiting for status to be reported"。所以第 1 步不能跳。
 
 ### 3. 验证
 
@@ -188,7 +219,8 @@ git reset --soft HEAD~1   # 扔掉这条空提交。**用 --soft 而非 --hard**
 
 - ① 让开发者在本机就拿到即时反馈，而不是等 push 被服务端拒绝；
 - ③a 变成"防止①被误删"，仍然成立；
-- ③b 与 `required_status_checks` 语义重叠，可以把 `main-guard` 从 contexts 里去掉或直接删掉该 job。
+- ③b 与 `required_status_checks` 语义部分重叠（都管"进 main 的东西走没走流程"），可以删掉该 job；
+  留着也无害——它**不在** contexts 里，不会卡住任何 PR（理由见第 2 节）。
 
 ## 六、回退
 

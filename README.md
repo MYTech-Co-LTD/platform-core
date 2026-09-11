@@ -41,12 +41,18 @@ gh pr create --fill          # 等 CI 绿，由服务端合并
 
 本仓是私有仓 + org plan = free，**GitHub 的分支保护与 rulesets 在该 tier 上不可用**
 （实测 403：`Upgrade to GitHub Pro or make this repository public`；管理员也开不了，不是权限问题）。
-所以服务端拦不住直推，改用四层软机制：本地 `pre-push` 钩子拦下直推、`pnpm install` 的
-`prepare` 让同事 clone 后自动装上、CI 校验装置完好、以及 `main-guard` 事后报警。
-**它们让直推变麻烦、让绕过变可见，但不让直推不可能**——别当成强制门禁。
+服务端拦不住直推，改用四层软机制：
+
+- **①** `.githooks/pre-push` 拦下本机直推 `main`/`master`（含删除推送）
+- **②** 根 `prepare` 让**同事 clone 后自动装上**①（钩子配置不随 clone 继承，光放文件没用）
+- **③a** CI 校验装置完好（钩子还在、还带执行位、②的接线没被改掉）；**③b** `main-guard` 事后绊线
+- **④** 本节与 `deploy/branch-protection-runbook.md`
+
+**它们让直推变麻烦、让绕过变可见，但不让直推不可能**——一个 `git push --no-verify` 就够了
+（git 此时不调用钩子，钩子看不见这个标志），所以别把它当强制门禁。完整的七条局限见 runbook 第三节。
 
 确有理由直推（bootstrap / 紧急热修）：`PLATFORM_ALLOW_DIRECT_PUSH=1 git push origin main`，
-并在 issue 或 PR 里补一条说明。全貌与局限见 `deploy/branch-protection-runbook.md`。
+并在 issue 或 PR 里补一条说明。
 
 ## 部署
 
