@@ -318,8 +318,10 @@ DATABASE_URL=postgres://platform:platform@127.0.0.1:5432/platform pnpm --filter 
           }
           await next()
         }
-        app.use(base, gate)          // 精确路径 /api/modules/<id>
-        app.use(base + '/*', gate)   // 子树 /api/modules/<id>/...
+        app.use(base + '/*', gate)   // **只挂这一条**：`/*` 吞空段，同时命中 /api/modules/<id>、
+                                     // /api/modules/<id>/、/api/modules/<id>/ping（R4 评审 S4 实测）。
+                                     // 旧稿另挂一条精确 `use(base)`——那是**冗余**（只让裸 base 的请求
+                                     // 多跑一次 enabledFor = 多一次 DB 往返），已删，见 loader.ts ⑥.5。
 
         app.route(base, m.router)
         /* 其余（userApp 静态等）原样不动 */
@@ -329,7 +331,7 @@ DATABASE_URL=postgres://platform:platform@127.0.0.1:5432/platform pnpm --filter 
 
 （`Context` / `Next` 从 `hono` 导入；若该文件已有等价类型别名则复用。`c.get('tenant')` 的实际形状以 `apps/server/src/tenant.ts` 的 `TenantEnv` 为准——**动手前先读它**，别照抄这里的 `{ id: number }`。）
 
-⚠️ **必须实测两件事**（用探针，别推断）：① `app.use(base)`（精确路径）与 `app.use(base + '/*')`（子树）是否**都**生效——`/api/modules/x` 与 `/api/modules/x/ping` 两种请求都要被闸住；② 闸门**先于**模块路由执行（即上面那个顺序是真的）。
+⚠️ **实测要件（R4 评审 S4 后收敛为一条）**：~~①~~ **只挂 `use(base + '/*')` 一条就够**——`/*` 吞空段，`/api/modules/x`、`/api/modules/x/`、`/api/modules/x/ping` 三种请求**都被闸住**（实测；旧稿要求"精确路径与子树**都**生效"并据此加一条精确注册，那是**冗余**，已按实测订正）。仍需用探针钉住的只剩一件：**闸门先于模块路由执行**（即上面那个注册顺序是真的）——顺序错了闸门**永不执行**。
 
 - [ ] **Step 4: 跑测试确认通过**
 

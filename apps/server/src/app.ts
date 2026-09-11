@@ -143,8 +143,14 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
       // ECONNRESET/EPIPE 而**不是这个 413**——真 socket 探针实测 25–35% 的超限请求如此
       // （进程内 app.request() 无 socket，看不见这条；回归面在 app.test.ts 的
       //  「真 HTTP（真 @hono/node-server + 真 socket）」describe）。
-      // 触发条件精确地是「访问了请求体流又弃之不用」：hono/body-limit 首行
-      // `if (!c.req.raw.body) return next()` 一旦读了 body 就不再有"没碰过它"这条退路。
+      // 触发条件**两个条件缺一不可**（R4 复审 S-a 四格实测，每格 40 次）：
+      //   ① **提前返回发生在中间件里**（onError 直接回 413、不 next），**且**
+      //   ② 返回前**访问过请求体流又弃之不用**。
+      //   裸 handler 里碰 body ⇒ 40/40 干净；中间件里提前返回但不碰 body ⇒ 40/40 干净；
+      //   **中间件提前返回 + 碰过 body ⇒ 27/40 回归**（本任务修的正是这一格）；同格再加下面
+      //   那句 cancel ⇒ 40/40 回到对照基线。缺任一条件都不复现——只写"碰了 body"会把结论推宽。
+      // 机制：hono/body-limit 首行 `if (!c.req.raw.body) return next()` 一旦读了 body 就不再
+      // 有"没碰过它"这条退路。
       // 适用面（标定过，别把结论推得更广）：这是 **keep-alive 客户端**的回归——不 cancel
       // 26/40 干净，cancel 后 40/40 回到"从不碰 body"的对照基线（评审探针同结论 120/120）。
       // 声明 `Connection: close` 的客户端在 cancel 后仍会重置——但那**不是本次改动引入的**：

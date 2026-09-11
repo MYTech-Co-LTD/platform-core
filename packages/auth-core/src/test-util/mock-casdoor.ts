@@ -250,11 +250,19 @@ export class MockCasdoor {
     // 旧实现在这里多判了 `!segs[0] || !segs[1]`，把含空段的两段判非法，而 get-user 已改成
     // 照进查找 ⇒ 同一个 id 在两条端点上一个判非法、一个照查，是"两套判别"的典型形状。
     //
-    // 空 id 的落点说明（与 get-user 的 ok+null **不矛盾**）：更新是**变更**操作，没有
-    // "ok+null" 这个对应形状可用——空 id split 出 ['']、查不到任何权限 ⇒ 落到下面的
-    // `permission not found`。两条端点因此在空 id 上**同为 error 分支**（客户端可见差异只
-    // 剩 msg 文案），方向一致；真机该端点的空 id 行为**未经探针验证**（R4 评审只验了
-    // get-user），故这里只保证"与 get-user 同一条规则、不另立一套"。
+    // 空 id 的落点（实测形状，别按"查不到权限"想当然）：空 id ⇒ `''.split('/')` 得 `['']`
+    // ⇒ **段数 1 ≠ 2 ⇒ 落到下一段的 `wrong token count`**；**下面那行 `permission not found`
+    // 对空 id 根本不可达**（它只在"两段、但查无此权限"时命中）。
+    // 两条端点空 id 上落的是**不同**分支，别读成"同为 error 分支"：
+    //   · update-permission：段数判别在查找**之前** ⇒ 200 {status:'error', msg:'wrong token count…'}
+    //   · get-user：空 id 在段数判别**之前**被单独短路（本文件 `/api/get-user` 的
+    //     `if (rawId === '') return ok+null`）⇒ **成功分支** ok+{data:null}
+    // 实测（真 mock HTTP，admin 会话，本文件口径）：`POST /api/update-permission?id=` ⇒
+    // `wrong token count, expect <org>/<name>`；`GET /api/get-user?id=` ⇒ `{status:'ok',data:null}`。
+    // 本轮对齐的只是「**段数判别用同一套规则**」（都是 `split('/')` 后判 `len !== 2`，
+    // get-user 除外一条空 id 短路），**不是**"两条端点落点相同"。
+    // 真机该端点的空 id 行为**未经探针验证**（R4 评审只验了 get-user），故这里只保证
+    // "与 get-user 同一条段数规则、不另立一套"。
     const segs = (c.req.query('id') ?? '').split('/')
     if (segs.length !== 2) {
       return c.json({ status: 'error', msg: 'wrong token count, expect <org>/<name>' })

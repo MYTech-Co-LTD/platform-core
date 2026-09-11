@@ -76,10 +76,12 @@ describe('declaredScopeGate：未声明 = 不可达', () => {
     expect(ok.status).toBe(200)
   })
 
-  it('★ HEAD 打【参数化】路径同样放行（/notes/42 ⇒ 200）——文件顶部那条载荷性假设的另一半', async () => {
-    // 本文件顶部声明要钉住「门卫靠 c.req.routePath 命中路径模式」这条假设。只测 /ping 时，
-    // 钉住的仅是**字面**路径的 HEAD 归一；HEAD 与**带参数**的路由匹配（`:id`）是同一假设的
-    // 另一半，且更容易被"改用通配挂载 / Hono 内部实现变化"打坏 ⇒ 一并钉住（R4 评审 S8）。
+  it('★ HEAD 打【参数化】路径同样放行（/notes/42 ⇒ 200）——补齐 HEAD × 参数化这个组合（咬合力见注释）', async () => {
+    // 本文件顶部声明要钉住「门卫靠 c.req.routePath 命中路径模式」这条假设。**先把它这件的
+    // 咬合力说准**（R4 复审 S-c）：HEAD 归一已有独立用例（上面那条 `/ping`），**参数化路径命中**
+    // 也已有独立用例（再上面那条 `/notes/42`），且两者失败时**都会先红**——本条**没有自己的独有
+    // 失败面**，与它们**同生共死**。保留它的理由只是「HEAD × 参数化」这个**组合**本身确实没被
+    // 别处覆盖，**不是**"另一半假设"那种更强的东西；别据此加码断言。
     const anon = await appWith(null).request('/notes/42', { method: 'HEAD' })
     expect(anon.status).toBe(401) // 匿名仍先撞身份门
     const ok = await appWith(['demo:note']).request('/notes/42', { method: 'HEAD' })

@@ -329,8 +329,14 @@ export async function loadModules(
       for (const m of loaded) {
         const base = moduleApiBasePath(m.manifest.id)
 
-        // ⑥.5 启用闸门（M1 闭债 R4）：停用 = **该租户看不到这个模块** ⇒ 404，不是 403
-        //      （404 与「这个模块不存在」同形 ⇒ 停用状态本身不可枚举；403 才泄露"存在但被停用"）。
+        // ⑥.5 启用闸门（M1 闭债 R4）：停用 = **该租户看不到这个模块的 API** ⇒ 404，不是 403
+        //      （404 与「这个模块不存在」同形 ⇒ **在模块 API 面内**停用状态不可枚举；403 才泄露
+        //      "存在但被停用"）。
+        //      ⚠️ 作用域只到**模块 API 面**，不要推成系统级结论（R4 复审 must-fix 2）：宿主
+        //      `GET /api/platform/config` 是**有意的披露面**、**只吃租户不吃 identity**（见
+        //      routes/platform.ts 的 /config），匿名带 Host 即取到该租户已启用模块清单、停用模块
+        //      直接缺席 ⇒ **系统层面可区分停用/不存在**。属存量行为。详见 docs/module-protocol.md
+        //      「停用语义」。
         //      **必须 use 在 app.route 之前**：Hono 里 handler 先注册、use 后注册时该中间件
         //      **永不执行**（已实证，见 docs/module-protocol.md「实现注意」第 2 条）——顺序错了
         //      就是一个"代码里有闸门、运行时永不生效"的静默洞。
@@ -353,9 +359,12 @@ export async function loadModules(
           //   ① 闸门挂在模块**自身门卫**之前，匿名请求反正会被门卫挡下（401），到这里查库
           //      纯属白费——改动前匿名命中模块 API 是 **0 次 DB**，加了闸门变成每请求 1 次，
           //      而模块 API **没有独立限流** ⇒ 匿名流量可被用来放大 DB 压力。
-          //   ② 不构成信息泄露，**反而更**不可枚举：匿名打**停用**模块与打**启用**模块，落点
-          //      都是模块门卫的 401 UNAUTHENTICATED（两条响应逐字相同），停用与否无从区分；
-          //      而已登录用户拿到的仍是 404，语义不变。loader.test.ts 里有这条的用例。
+          //   ② 在**模块 API 面内**不削弱不可枚举性：匿名打**停用**模块与打**启用**模块，落点
+          //      都是模块门卫的 401 UNAUTHENTICATED（实测两条响应**逐字相同**），停用与否无从
+          //      区分；而已登录用户拿到的仍是 404，语义不变。loader.test.ts 里有这条的用例。
+          //      （旧措辞写"**反而更**不可枚举"——那是把面内结论推成了系统级，已订正。宿主
+          //        /api/platform/config 匿名可达、且会回该租户已启用清单，见 ⑥.5 与
+          //        docs/module-protocol.md「停用语义」。）
           if (!c.get('identity')) return next()
           const enabled = await enabledForImpl(tenant.id)
           if (!enabled.has(m.manifest.id)) {
@@ -368,6 +377,14 @@ export async function loadModules(
 
         app.route(base, m.router)
 
+        // ⚠️ **上面那道启用闸门不覆盖这里**（R4 复审 S-d；**存量缺口，本轮不改行为**）：闸门只挂在
+        //    `base + '/*'`（= 模块 **API** 子树）上，而 userApp 静态挂在 manifest 自己的 mount 路径
+        //    下、**不经过闸门** ⇒ 显式 `enabled=false` 后 `/api/modules/<id>/ping` 返 404，而
+        //    `<mount>/index.html` 仍 200。即**停用语义只落了 API 半边**。
+        //    **休眠中**：仓内暂无模块声明 `frontend.userApp`（唯一模块 `modules/demo` 只声明了
+        //    `console` ⇒ 下面的 `continue` 先落在这里），故当前无可观测面、也没有可钉的用例。
+        //    将来有模块启用 userApp 时**必须一并补闸**，否则「停用 = 看不到这个模块」会被读成绝对
+        //    规则。docs/module-protocol.md「停用语义」段有同样的标注。
         const userApp = m.manifest.frontend?.userApp
         if (!userApp) continue
         const dist = path.resolve(m.dir, userApp.dist)
