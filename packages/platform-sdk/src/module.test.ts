@@ -90,6 +90,36 @@ describe('declaredScopeGate：放行标记', () => {
   })
 })
 
+describe('declaredScopeGate：HEAD 请求（issue #7）', () => {
+  // Hono 把 HEAD 按 GET 派发，但 `c.req.method` 仍是 'HEAD'。若门卫拿原始 method 查声明表，
+  // 已声明的 GET 端点在 HEAD 下会查不到声明 ⇒ 落进 !hit 分支 ⇒ **恒 403**。
+  // 危害不在可达性（fail-closed），而在语义：探活/监控/CDN 预检/部分 HTTP 客户端都发 HEAD，
+  // 表现为“资源存在却说没有”，容易被误读成权限问题。
+  const declared = [{ method: 'GET', path: '/ping', scope: 'demo:view' }]
+
+  const probe = (path: string, opts?: { identity?: Identity }) => {
+    const app = new Hono<{ Variables: { identity: Identity } }>()
+    app.use(path, async (c, next) => {
+      if (opts?.identity) c.set('identity', opts.identity)
+      await next()
+    })
+    app.use(path, declaredScopeGate(declared))
+    app.get(path, (c) => c.json({ ok: true }))
+    return app.request(path, { method: 'HEAD' })
+  }
+
+  it('已声明的 GET 端点：HEAD 与 GET 同权（有 scope 200 / 无 scope 403 / 匿名 401）', async () => {
+    expect((await probe('/ping', { identity: makeIdentity(['demo:view']) })).status).toBe(200)
+    expect((await probe('/ping', { identity: makeIdentity(['other:scope']) })).status).toBe(403)
+    expect((await probe('/ping')).status).toBe(401)
+  })
+
+  it('未声明的路径：HEAD 仍 fail-closed（归一不是“放行一切 HEAD”）', async () => {
+    const res = await probe('/other', { identity: makeIdentity(['demo:view']) })
+    expect(res.status).toBe(403)
+  })
+})
+
 describe('defineModule', () => {
   it('原样往返：返回 === 传入，createRouter 类型可组（router 即 Hono）', () => {
     const def: ModuleDefinition = {

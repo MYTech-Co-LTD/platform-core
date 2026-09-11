@@ -117,11 +117,12 @@ const BETA_ADMIN1 = 'beta-admin1'
  */
 
 /**
- * 一个形态的请求入口：固定 port/host，只暴露 get/post。
+ * 一个形态的请求入口：固定 port/host，只暴露 get/head/post。
  * @typedef {object} PhaseBase
  * @property {number} port
  * @property {string | undefined} host
  * @property {(p: string, opts?: CallOptions) => Promise<HttpResponse>} get
+ * @property {(p: string, opts?: CallOptions) => Promise<HttpResponse>} head
  * @property {(p: string, body: unknown, opts?: CallOptions) => Promise<HttpResponse>} post
  */
 
@@ -368,6 +369,12 @@ function base(port, host) {
     /** @param {string} p @param {CallOptions} [opts] */
     get: (p, opts = {}) => httpRequest({ port, host, method: 'GET', path: p, ...opts }),
     /**
+     * HEAD 探针：issue #7——Hono 把 HEAD 按 GET 派发，但 `c.req.method` 仍是 'HEAD'，
+     * 声明门卫不归一就会对**已声明的 GET 端点**恒回 403。这里保留 end-to-end 观测面。
+     * @param {string} p @param {CallOptions} [opts]
+     */
+    head: (p, opts = {}) => httpRequest({ port, host, method: 'HEAD', path: p, ...opts }),
+    /**
      * @param {string} p @param {unknown} body @param {CallOptions} [opts]
      */
     post: (p, body, opts = {}) => httpRequest({ port, host, method: 'POST', path: p, body: JSON.stringify(body), ...opts }),
@@ -538,6 +545,12 @@ async function runMulti(child, port, mock) {
   const pingOk = await b.get('/api/modules/demo/ping', { cookie: adminJar.header() })
   check(pingOk.status === 200 && json(pingOk)?.pong === true, 'admin1 GET /api/modules/demo/ping 200 {pong:true}', describe(pingOk))
 
+  // issue #7：已声明的 GET 端点，HEAD 应与 GET 同权（探活/监控/CDN 预检都发 HEAD）。
+  // 修复前此处恒 403（“资源存在却说没有”），与下面 viewer1 的 403 语义完全不同——
+  // 这两个断言并列，才能把“归一后仍按 scope 拦”与“未声明即不可达”区分开。
+  const pingHead = await b.head('/api/modules/demo/ping', { cookie: adminJar.header() })
+  check(pingHead.status === 200, 'admin1 HEAD /api/modules/demo/ping 200（与 GET 同权，issue #7）', describe(pingHead))
+
   // H4 反向：viewer1 无 demo:view → 403（权限平面「授权真的在拦」的唯一端到端证据）
   const viewerJar = new CookieJar()
   await login(b, viewerJar, VIEWER1, 'viewer1')
@@ -550,6 +563,12 @@ async function runMulti(child, port, mock) {
   check(
     !(json(await b.get('/api/platform/auth/session', { cookie: viewerJar.header() }))?.scopes ?? []).includes('demo:view'),
     'viewer1 会话 scopes 不含 demo:view（403 的原因可核实，而非泛化拒绝）',
+  )
+  const pingHeadDenied = await b.head('/api/modules/demo/ping', { cookie: viewerJar.header() })
+  check(
+    pingHeadDenied.status === 403,
+    'viewer1 HEAD /api/modules/demo/ping 403（HEAD 归一后仍按 scope 拦，不因归一放宽授权）',
+    describe(pingHeadDenied),
   )
 
   step('multi：登出（CSRF）→ 会话失效')
