@@ -9,6 +9,9 @@
   "scripts": {
     "test": "pnpm -r --if-present test && pnpm run test:guard",
     "test:guard": "vitest run --dir scripts",
+    "typecheck": "pnpm -r --if-present typecheck && pnpm run typecheck:scripts",
+    "typecheck:scripts": "tsc -p tsconfig.json",
+    "smoke": "tsx scripts/smoke-load.mjs",
     "build": "pnpm -r --if-present build",
     "dev": "pnpm --filter @platform/server dev"
   },

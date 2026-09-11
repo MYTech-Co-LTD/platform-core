@@ -43,6 +43,9 @@ import { parse as parseYaml } from 'yaml'
 
 export const SCRIPT_NAME = 'lint-architecture'
 
+/** 一条违规：file 为相对 rootDir 的 posix 路径，line 为 1 基行号 */
+/** @typedef {{ file: string, line: number, rule: string, message: string }} Violation */
+
 /** 扫描根（相对 rootDir）——与全局约束 B8 的「apps/ packages/ modules/ 源码」一致 */
 const SCAN_ROOTS = ['apps', 'packages', 'modules']
 /** 不进入的目录：依赖/产物/本地临时物/VCS 内部 */
@@ -88,13 +91,17 @@ const REGEX_AFTER_KEYWORD = new Set([
  * 串/模板态的失步在行尾（未转义换行）兜底回 code，不会像修复前那样污染整个文件后续。
  * 模板字符串 `${...}` 仍按字符串整体处理（既有已知边界，见文件头 ①）。
  */
+/** @param {string} src @returns {string} 等长（行号与字符串内容都不变）的掩码结果 */
 function maskComments(src) {
   let out = ''
   let state = 'code' // code | line | block | sq | dq | tpl | regex
   let inClass = false // 正则内的字符类 [...]：其中的 `/` 不结束正则
   let prevSig = '' // 代码位最近一个非空白字符（判「正则位置」用）
   let word = '' // 代码位最近的标识符（return /re/ 这类靠关键字表兜）
-  /** 代码位记账：空白不改变上下文；标识符字符续词，其他字符清词。 */
+  /**
+   * 代码位记账：空白不改变上下文；标识符字符续词，其他字符清词。
+   * @param {string} c
+   */
   const note = (c) => {
     if (/\s/.test(c)) return
     prevSig = c
@@ -195,18 +202,27 @@ function maskComments(src) {
   return out
 }
 
-/** 1 基行号（index → 该位置所在行）。 */
+/**
+ * 1 基行号（index → 该位置所在行）。
+ * @param {string} text @param {number} index @returns {number}
+ */
 function lineOf(text, index) {
   let line = 1
   for (let i = 0; i < index; i++) if (text.charCodeAt(i) === 10) line++
   return line
 }
 
+/** @param {string} p */
 const toPosix = (p) => p.split(sep).join('/')
 
-/** 递归收集待检文件（相对 rootDir 的 posix 路径 + 绝对路径）。 */
+/**
+ * 递归收集待检文件的绝对路径（相对路径由调用方 relative() 得出）。
+ * @param {string} rootDir @returns {Promise<string[]>}
+ */
 async function collectFiles(rootDir) {
+  /** @type {string[]} */
   const found = []
+  /** @param {string} dir */
   const walk = async (dir) => {
     let entries
     try {
@@ -226,9 +242,16 @@ async function collectFiles(rootDir) {
   return found
 }
 
-/** 模块 schema 白名单：manifest.yaml 的 id 优先，缺失/不可读退化为目录名。 */
+/**
+ * 模块 schema 白名单：manifest.yaml 的 id 优先，缺失/不可读退化为目录名。
+ * @param {string} rootDir @param {string} dirName @param {Map<string, string>} cache
+ * @returns {Promise<string>}
+ */
 async function moduleIdOf(rootDir, dirName, cache) {
-  if (cache.has(dirName)) return cache.get(dirName)
+  // has()+get() 两次查表在类型上无法收窄（get 恒回 T|undefined）；一次查表显式判 undefined
+  // 等价且更直白（命中值构造上非空串，与 has() 语义一致）
+  const cached = cache.get(dirName)
+  if (cached !== undefined) return cached
   let id = dirName
   try {
     const doc = parseYaml(await readFile(join(rootDir, 'modules', dirName, 'manifest.yaml'), 'utf8'))
@@ -240,17 +263,30 @@ async function moduleIdOf(rootDir, dirName, cache) {
   return id
 }
 
-/** 该文件允许引用的 schema：modules/<id>/ 用自身 id，其余（平台代码）只许 platform。 */
+/**
+ * 该文件允许引用的 schema：modules/<id>/ 用自身 id，其余（平台代码）只许 platform。
+ * @param {string} rootDir @param {string} relPath @param {Map<string, string>} cache
+ * @returns {Promise<string>}
+ */
 async function allowedSchema(rootDir, relPath, cache) {
   const seg = relPath.split('/')
   if (seg[0] === 'modules' && seg.length > 2) return moduleIdOf(rootDir, seg[1], cache)
   return 'platform'
 }
 
-/** 扫描 rootDir，返回违规列表（file 为相对 rootDir 的 posix 路径）。 */
+/**
+ * 扫描 rootDir，返回违规列表（file 为相对 rootDir 的 posix 路径）。
+ * @param {string} rootDir
+ * @returns {Promise<Violation[]>}
+ */
 export async function findViolations(rootDir) {
+  /** @type {Violation[]} */
   const violations = []
+  /** @type {Map<string, string>} */
   const idCache = new Map()
+  /**
+   * @param {string} file @param {number} line @param {string} rule @param {string} message
+   */
   const report = (file, line, rule, message) => violations.push({ file, line, rule, message })
 
   for (const abs of await collectFiles(rootDir)) {

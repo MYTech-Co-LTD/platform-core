@@ -20,7 +20,13 @@ const rootDir = resolve(process.argv[2] ?? dirname(dirname(fileURLToPath(import.
 const modulesDir = join(rootDir, 'modules')
 const outFile = join(rootDir, 'apps', 'web', 'src', 'console-registry.gen.ts')
 
-/** 单个 manifest → registry 项；console 缺失/为空返回 []（合法），形状不对抛错 */
+/**
+ * 单个 manifest → registry 项；console 缺失/为空返回 []（合法），形状不对抛错
+ * manifest 形状此处【故意】按未知值收（调用方要自己报「哪个文件的哪个字段」），
+ * 故形参类型是 unknown 而非 ModuleManifest——校验失败的信息量全在本函数内部。
+ * @param {string} moduleId
+ * @param {any} manifest
+ */
 function entriesFor(moduleId, manifest) {
   const consoleItems = manifest?.frontend?.console
   if (consoleItems === undefined) return []
@@ -64,7 +70,7 @@ for (const dir of moduleDirs) {
   try {
     manifest = parseYaml(raw)
   } catch (e) {
-    throw new Error(`modules/${dir.name}/manifest.yaml: YAML 解析失败：${e.message}`)
+    throw new Error(`modules/${dir.name}/manifest.yaml: YAML 解析失败：${e instanceof Error ? e.message : String(e)}`)
   }
   if (typeof manifest?.id !== 'string' || manifest.id === '') {
     throw new Error(`modules/${dir.name}/manifest.yaml: id 必须是非空字符串`)
@@ -88,6 +94,7 @@ for (const e of entries) {
   seen.set(e.path, e.moduleId)
 }
 
+/** @param {{ moduleId: string, entry: string }} e */
 const relModuleImport = (e) => {
   // 生成物在 apps/web/src/ 下，import 说明符相对它计算（fixture 根同构，深度一致）
   const spec = relative(join(rootDir, 'apps', 'web', 'src'), join(modulesDir, e.moduleId, e.entry))

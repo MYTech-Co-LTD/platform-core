@@ -1,8 +1,39 @@
+# ci.yml — 全门禁接入（M0 计划 Task 21；测试门禁 C1/C3 的持续执行面）
+#
+# 四个 job 的分工（都不重叠、都必绿）：
+#   unit  —— 单元/集成测试：`pnpm test`（各包 vitest + 仓根 scripts 的守卫单测）。
+#            【必须挂 PG】apps/server 有 5 个测试文件用 `describe.skipIf(!dbUrl)` 整体跳过
+#            （loader / routes/auth-wecom / migrate / routes/auth / tenant，共 50 条）。
+#            不给 DATABASE_URL 时它们是**静默跳过**的——「全绿」会绿在一个休眠基线上：
+#            会话/登录/登出/租户解析/seed/迁移/装载器/企微登录这半边一条都不执行。
+#   gates —— 静态门禁：typecheck（全 workspace 包 + scripts/）+ 四个守卫脚本对真实仓跑。
+#            typecheck 与守卫单测（跑在 unit 的 test:guard 里）是两件事：单测拿 fixture 验
+#            守卫逻辑，本 job 拿真仓验守卫结论，且 typecheck 只在 CI 真跑才有意义。
+#   web   —— 前端单测 + 构建（构建内含 `tsc -b`，即 apps/web 的 strict typecheck）。
+#   smoke —— 装载冒烟（scripts/smoke-load.mjs）：真进程 + 真端口 + 真 HTTP 跑双形态。
+#            与 unit 的差别是「进程内直调 app」覆盖不到的那一层（启动期装配、Host 语义、
+#            静态托管）。**必须先构建 web**：冒烟要断言 /assets/* 吐的是构建产物本体，
+#            dist 不存在时该断言无从谈起（见 smoke job 内注释）。
+#
+# 冒烟的环境变量由 scripts/smoke-load.mjs 自持（端口/PUBLIC_ORIGIN/会话密钥/Casdoor 管理员
+# 凭据/SEED_DEMO 全是脚本内常量，见该文件头注②）——CI 只注入 DATABASE_URL（service 地址，
+# 环境相关、无法内联）。单一事实源在脚本里，改端口不需要动本文件，杜绝两边各写各的漂移。
 name: ci
 on: { push: { branches: [main] }, pull_request: {} }
 jobs:
   unit:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: platform, POSTGRES_PASSWORD: platform, POSTGRES_DB: platform }
+        ports: ['5432:5432']
+        # health-cmd 是必需的：没有它 job 会在 PG 就绪前开跑，测试拿到连接失败而非断言失败
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: 'postgres://platform:platform@127.0.0.1:5432/platform'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4   # 版本读 package.json 的 packageManager（pnpm@11.22.0，与 lockfile 对齐）；不能再传 version 入参，否则 action 报 Multiple versions
@@ -10,3 +41,58 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      # 聚合 typecheck：`pnpm -r --if-present typecheck`（5 个 workspace 包）+ 仓根
+      # tsconfig.json（scripts/ 的 .mjs/.ts；根不是 workspace 包，-r 扫不到，故必须单独跑）
+      - run: pnpm typecheck
+      # 守卫脚本对真实仓跑：干净必须 exit 0（单测里的 fixture 用例不能替代这一步）
+      - run: pnpm exec tsx scripts/check-manifests.mjs
+      - run: pnpm exec tsx scripts/lint-architecture.mjs
+      - run: pnpm exec tsx scripts/check-compose.mjs
+      - run: pnpm exec tsx scripts/check-env-example.mjs
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @platform/web test
+      - run: pnpm --filter @platform/web build
+
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: platform, POSTGRES_PASSWORD: platform, POSTGRES_DB: platform }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: 'postgres://platform:platform@127.0.0.1:5432/platform'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      # 先构建 web：冒烟要断言 GET /assets/<hash>.<js|css> 返回的是构建产物本体（与磁盘
+      # 产物逐字节相同）而非 SPA 兜底的 index.html——Task 19 的白屏事故正是 serveStatic
+      # 被摘掉后 /assets/* 落进 SPA 兜底、curl 一样 200 却整页白屏。dist 缺失时该断言
+      # 无从谈起，故构建是冒烟的前置而非可选步骤（也是「curl 200 ≠ 页面可用」的机检化）
+      - run: pnpm --filter @platform/web build
+      - run: pnpm exec tsx scripts/smoke-load.mjs

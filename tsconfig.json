@@ -1,0 +1,28 @@
+// 根 tsconfig = scripts/ 的 typecheck 工程（M0 Task 21 / 门禁 H2）。
+//
+// 为什么需要它：scripts/ 不是 workspace 包（pnpm-workspace 是 apps/* packages/* modules/*），
+// `pnpm -r --if-present typecheck` 天然扫不到它——check-manifests / lint-architecture /
+// check-compose / check-env-example / gen-console-registry / smoke-load 六个脚本此前在
+// 【任何】typecheck 之外。Task 19 的教训是「只在 strict 下可见的类型错误，所有门禁都照不到」，
+// 门禁脚本自己不该是下一个盲区：它们判别人的对错，自己出错时无人拦。
+//
+// 两个实现判断：
+//   ① allowJs + checkJs：scripts/ 只有 .mjs 与 .ts 两种源。只 allowJs 会让 .mjs 进程序但不查
+//      其函数体——门禁脚本的主体恰恰全在 .mjs 里，那样等于没覆盖。checkJs 打开后 JS 也按
+//      strict 查（类型靠 JSDoc 标注：这是 JS 文件的唯一类型书写面），故本仓 scripts/ 里的
+//      .mjs 都带 JSDoc 参数/返回值标注。
+//   ② allowImportingTsExtensions：scripts/check-manifests.mjs 与 scripts/smoke-load.mjs 以
+//      显式 .ts 后缀 import 仓内 TS 源（分别引 SDK 的 runChecks 与 auth-core 的 MockCasdoor）。
+//      这是 tsx 运行时的正常形状，但 TS 默认拒绝——须显式开（合法前提是本工程 noEmit）。
+//      开启后这两个脚本 import 到的 TS 源会一并进入程序被查（连带收益，非副作用）。
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*.mjs", "scripts/**/*.ts"]
+}

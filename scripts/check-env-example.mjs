@@ -53,9 +53,14 @@ const ENV_PROP_RE = /\benv[.]([A-Z][A-Z0-9_]*)/g
 const ENV_REQUIRE_RE = /\brequireValue\(\s*['"]([A-Z][A-Z0-9_]*)['"]/g
 const ENV_OPTIONAL_RE = /\boptional\(\s*['"]([A-Z][A-Z0-9_]*)['"]/g
 
+/** @param {string} p */
 const toPosix = (p) => p.split(sep).join('/')
 
-/** 解析 .env.example：`KEY=` 与注释 `# KEY=` 都算声明（规则①），返回键集合。 */
+/**
+ * 解析 .env.example：`KEY=` 与注释 `# KEY=` 都算声明（规则①），返回键集合。
+ * @param {string} text
+ * @returns {Set<string>}
+ */
 export function parseEnvExample(text) {
   const keys = new Set()
   for (const line of text.split(/\r?\n/)) {
@@ -65,14 +70,25 @@ export function parseEnvExample(text) {
   return keys
 }
 
+/**
+ * @param {string} text
+ * @param {number} index
+ * @returns {number}
+ */
 function lineOf(text, index) {
   let line = 1
   for (let i = 0; i < index; i++) if (text.charCodeAt(i) === 10) line++
   return line
 }
 
+/**
+ * @param {string} rootDir
+ * @returns {Promise<string[]>}
+ */
 async function collectFiles(rootDir) {
+  /** @type {string[]} */
   const found = []
+  /** @param {string} dir */
   const walk = async (dir) => {
     let entries
     try {
@@ -92,15 +108,21 @@ async function collectFiles(rootDir) {
   return found
 }
 
-/** 扫描 rootDir，返回违规列表（file 为相对 rootDir 的 posix 路径）。 */
+/**
+ * 扫描 rootDir，返回违规列表（file 为相对 rootDir 的 posix 路径）。
+ * @param {string} rootDir
+ * @returns {Promise<Array<{ file: string, line: number, key?: string, message?: string }>>}
+ */
 export async function findViolations(rootDir) {
   let declared
   try {
     declared = parseEnvExample(await readFile(join(rootDir, '.env.example'), 'utf8'))
   } catch (e) {
     // 没有基准文件 = B9 无法判定，按违规处理（不静默放行：静默放行正是 B9 要防的那种「缺了也不说」）
-    return [{ file: '.env.example', line: 0, key: '(基准文件缺失)', message: `无法读取根 .env.example：${e.message}` }]
+    const msg = e instanceof Error ? e.message : String(e)
+    return [{ file: '.env.example', line: 0, key: '(基准文件缺失)', message: `无法读取根 .env.example：${msg}` }]
   }
+  /** @type {Array<{ file: string, line: number, key?: string, message?: string }>} */
   const violations = []
 
   for (const abs of await collectFiles(rootDir)) {
@@ -108,6 +130,7 @@ export async function findViolations(rootDir) {
     const src = await readFile(abs, 'utf8')
     const isWeb = rel.startsWith('apps/web/')
     const seen = new Set() // `${行号}:${键}`：多种形态命中同一处只报一次
+    /** @param {string} key @param {number} line */
     const check = (key, line) => {
       const at = `${line}:${key}`
       if (seen.has(at)) return

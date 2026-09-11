@@ -31,10 +31,17 @@ const COMPOSE_NAME_RE = /compose.*\.ya?ml$/i
 /** find -name '*compose*fragment*' 的等价判定（对相对路径） */
 const FRAGMENT_RE = /compose.*fragment/i
 
+/** @param {string} p */
 const toPosix = (p) => p.split(sep).join('/')
 
+/**
+ * @param {string} rootDir
+ * @returns {Promise<Array<{ file: string, message: string }>>}
+ */
 export async function findViolations(rootDir) {
+  /** @type {Array<{ file: string, message: string }>} */
   const violations = []
+  /** @param {string} dir */
   const walk = async (dir) => {
     let entries
     try {
