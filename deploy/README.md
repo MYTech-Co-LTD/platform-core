@@ -18,4 +18,10 @@ curl -i http://127.0.0.1:13000/healthz                       # → 200 {"ok":tru
 docker compose -f deploy/docker-compose.yml down -v          # 收干净（含卷）
 ```
 
+**起整栈前先确认 `CASDOOR_URL` 可达**（`.env` 里的那一项）：`TENANT_MODE=single` 且
+`PLATFORM_ORG` 非空时，宿主启动期就要调 Casdoor 做模块权限码 upsert，连不上会
+`upsertPermission` 抛错 → 容器进入 `restart: unless-stopped` 的循环（`docker compose ps`
+显示 Restarting）。这是设计如此（fail-fast），不是故障；纯本地验证可用
+`TENANT_MODE=multi` + 空 `PLATFORM_ORG` 跳过 upsert。
+
 人工验收清单在 `docs/m0-smoke-checklist.md`（机检那一半在 `.github/workflows/ci.yml`）。

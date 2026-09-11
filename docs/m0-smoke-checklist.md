@@ -26,6 +26,11 @@ curl -i http://127.0.0.1:13000/healthz
 本机 13000 被另一工作树的遗留 dev mock 长占，当次用 `HOST_PORT=13001` 跑同一份 compose
 （`HOST_PORT` 的默认值就是 13000）。
 
+⚠️ **前置**：`.env` 的 `CASDOOR_URL` 必须可达。`TENANT_MODE=single` + `PLATFORM_ORG` 非空时，
+宿主启动期会调 Casdoor upsert 模块权限码，连不上则 `upsertPermission` 抛错、容器在
+`restart: unless-stopped` 下反复重启（`docker compose ps` 显示 Restarting）——这是 fail-fast
+的设计行为，不是故障。纯本地无 Casdoor 时可改 `TENANT_MODE=multi` + 空 `PLATFORM_ORG` 跳过 upsert。
+
 ### A2 容器内真实链路：账密登录 → 模块 API 200 ✅（Casdoor 侧为 mock）
 
 ```bash
