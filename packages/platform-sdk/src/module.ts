@@ -78,6 +78,20 @@ export interface DeclaredEndpoint {
 }
 
 /**
+ * 门卫放行标记（Hono context 变量键）。`declaredScopeGate` 判定通过后置位，**唯一消费者是
+ * 包裹层（`loader.applyDeclaredApiGate`）给通配 ALL 路由挂的兜底门卫**（Task 24 评审 R1）。
+ *
+ * 为什么需要它：通配 ALL 路由（`use('*')` / `use('/prefix/*')` / `mount()`）匹配的请求路径
+ * 集合**大于**任何一条声明路径。逐条声明的门卫只覆盖声明过的那几条，其余（如 `/files/*`
+ * 下的 `/files/b`）会直达模块自己的中间件/handler——**匿名可达**。兜底门卫要拒掉这些，
+ * 但它自己无法用 `c.req.routePath` 判定（在通配路径上它恒为通配模式本身，见下），只能问
+ * 这枚标记："本次请求是不是已经被某条声明的门卫放行了？"
+ *
+ * 键名带 `platform.` 前缀，避免与模块自有 context 变量撞车。
+ */
+export const DECLARED_GATE_APPROVED = 'platform.declaredGateApproved'
+
+/**
  * 模块 API 门卫：**按声明授权**。
  *
  * 为什么不是模块手写 requireScope（M1 闭债 R2）：漏写一次就是**匿名可读**，且不报错、不告警、
@@ -113,6 +127,9 @@ export function declaredScopeGate(
     if (!identity.hasScope(hit.scope)) {
       return c.json({ error: 'FORBIDDEN', need: hit.scope }, 403)
     }
+    // 放行即置标记：包裹层的兜底门卫据此区分"已被声明门卫放行"与"谁都没放行"
+    // （见 DECLARED_GATE_APPROVED 的说明）。置标记不是授权本身，授权是上面那两行判定。
+    c.set(DECLARED_GATE_APPROVED, true)
     await next()
   }
 }

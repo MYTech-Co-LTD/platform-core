@@ -190,6 +190,12 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     const t = c.get('tenant')
     // 限速（M1 闭债 R2）：租户层，必须早于任何 writeAudit。企微路在 code 换票前拿不到用户名
     // ⇒ 只判租户维度（spec §3.2 的已知口径落差，刻意如此）
+    //
+    // **check 是只读的**（Task 24 评审 R1）：它不改状态，deny 只能由既有计数触发。故本路由
+    // 每一条失败路径都**必须**有对应的 record——漏一条，那条路径的流量就完全不进计数，
+    // 第 2/3 层永远推不满 ⇒ 该路径**永不 429**（且它每次都在往共享 SSO 发出站调用）。
+    // 口径：record 只动内存计数、**不写 audit**（record 与 writeAudit 是两个独立调用）——
+    // "被拒请求不灌审计表"的既有语义因此不受影响。
     const decision = deps.limiter.check(t.id, null)
     if (!decision.allowed) return tooManyRequests(c, t.id, decision)
     const state = c.req.query('state') ?? ''
@@ -205,6 +211,10 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
       isIframe ? c.html(iframeFailHtml(err)) : c.redirect(`/login?error=${encodeURIComponent(err)}`)
 
     if (!code || !state || readStateCookie(c.req.header('cookie')) !== state) {
+      // 计数：BAD_STATE 也是一次失败的登录尝试。此前只 fail 不 record ⇒ 连 /qr 都不需要
+      // （随便带个 state 循环打即可）就能无限打而计数恒为 0。不写 audit：actor 此刻根本
+      // 不存在，且被拒请求不灌审计表是既有语义（评审 R1）
+      deps.limiter.record(t.id, null, false)
       return fail('BAD_STATE')
     }
 
@@ -242,6 +252,14 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     }
     if (name === null) {
       // code 被上游拒绝（无效/过期/已兑换）——不泄具体原因（qr 路；silent 路只抛不 null）
+      //
+      // 计数（Task 24 评审 R1，本条是本路由的主打路径）：循环
+      // `GET /qr → 取 state → `GET /callback?code=<垃圾>&state=<同一 uuid>` 的攻击，每次
+      // 都通过 state 校验、每次都经 casdoorCodeToName 向共享 SSO 发一次出站调用、每次都在
+      // 这里返回——此前这里**只 fail 不 record**，计数恒不增长 ⇒ 永不 429，把无限放大打在
+      // 跨租户的 SSO 面上（与 spec"每次都会产生失败"的自陈相反）。仍不写 audit：code 被
+      // 上游拒绝时拿不到可信身份，actor 无从写起；计数才是这一路要的东西
+      deps.limiter.record(t.id, null, false)
       return fail('BAD_CODE')
     }
 

@@ -44,6 +44,52 @@ export interface AuthRoutesDeps {
 export const MAX_USERNAME_LEN = 256
 const MAX_PASSWORD_LEN = 512
 
+/**
+ * 登录请求体字节上限（Task 24 评审 R1 建议 4）。**未认证请求不得靠单请求撑爆内存**：
+ * 上限内最坏情况 = 256 用户名 + 512 密码（UTF-8 每字符最多 4 字节）再加上 JSON 语法，
+ * 8 KiB 对真实登录体是数量级的富余。
+ *
+ * 为什么不能只查 `Content-Length`：它可缺失（chunked）也可伪造（声明小、实发大），
+ * 只信它等于没上限。故实现成**有界读取**（readBodyBounded）：边读边计，越界即中止
+ * 读取流，超出部分一个字节都不进内存。Content-Length 只作为"连读都不读"的快速拒绝前置。
+ */
+export const MAX_LOGIN_BODY_BYTES = 8192
+
+/** 有界读体 + JSON 解析：越界返 'too-large'（已中止读取），体不是合法 JSON 返 'invalid' */
+async function readBodyBounded(
+  req: Request,
+  maxBytes: number,
+): Promise<{ ok: true; body: unknown } | { ok: false; reason: 'too-large' | 'invalid' }> {
+  // 前置：声明即超限的直接拒，不碰请求流（诚实客户端的快路径）
+  const declared = req.headers.get('content-length')
+  if (declared !== null && Number(declared) > maxBytes) return { ok: false, reason: 'too-large' }
+  const stream = req.body
+  if (!stream) return { ok: false, reason: 'invalid' }
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > maxBytes) {
+        await reader.cancel() // 中止读取：剩下的字节不进内存
+        return { ok: false, reason: 'too-large' }
+      }
+      chunks.push(value)
+    }
+  } catch {
+    return { ok: false, reason: 'invalid' }
+  }
+  const buf = Buffer.concat(chunks.map((c) => Buffer.from(c)))
+  try {
+    return { ok: true, body: JSON.parse(buf.toString('utf8')) as unknown }
+  } catch {
+    return { ok: false, reason: 'invalid' }
+  }
+}
+
 /** 登录审计一行（platform.audit；失败也 await——审计写不进去就不该继续发会话） */
 async function writeAudit(
   pool: Pool,
@@ -63,17 +109,35 @@ export function authRoutes(deps: AuthRoutesDeps): Hono<TenantEnv & SessionEnv> {
 
   app.post('/login', async (c) => {
     const t = c.get('tenant')
-    const body = (await c.req.json().catch(() => null)) as {
-      username?: unknown
-      password?: unknown
-    } | null
+    // 租户层前置（Task 24 评审 R1 建议 4）：只吃租户两道闸（此层拿不到用户名——体还没读），
+    // 换来"已被限速的租户连请求体都不解析"。用户维度的判定仍在下面（解析出 username 之后）。
+    const early = deps.limiter.check(t.id, null)
+    if (!early.allowed) return tooManyRequests(c, t.id, early)
+
+    const read = await readBodyBounded(c.req.raw, MAX_LOGIN_BODY_BYTES)
+    if (!read.ok) {
+      if (read.reason === 'too-large') {
+        // 超限即拒：体没读进来，自然也写不了 audit（actor 无从写起）。计数照记——
+        // 它是一次失败尝试，且是第 2/3 层该看见的流量
+        deps.limiter.record(t.id, null, false)
+        return c.json({ error: 'PAYLOAD_TOO_LARGE' }, 413)
+      }
+      // 体不是合法 JSON：与"形状不对"同一处置（按坏凭据 401，不泄原因）
+      deps.limiter.record(t.id, null, false)
+      return c.json({ error: 'BAD_CREDENTIALS' }, 401)
+    }
+    const body = read.body as { username?: unknown; password?: unknown } | null
     const username = typeof body?.username === 'string' ? body.username : ''
     const password = typeof body?.password === 'string' ? body.password : ''
     // 限速（M1 闭债 R2）：**先于任何 writeAudit**。被拦的请求不写 audit——写了等于没限速
     const decision = deps.limiter.check(t.id, username || null)
     if (!decision.allowed) return tooManyRequests(c, t.id, decision)
-    // 形状不对也按坏凭据处理（401 不区分原因，不泄探查面）
+    // 形状不对也按坏凭据处理（401 不区分原因，不泄探查面）。
+    // 计数（Task 24 评审 R1）：这条同样是"一次失败的登录尝试"，此前只 401 不 record ⇒
+    // 它是个死角：不产生出站调用（危害比企微路低一档），但同样能把第 2/3 层推满的流量
+    // 白送给攻击者。口径与其它失败分支一致：记计数、不写 audit（无 actor 可写）
     if (!username || !password) {
+      deps.limiter.record(t.id, username || null, false)
       return c.json({ error: 'BAD_CREDENTIALS' }, 401)
     }
     if (username.length > MAX_USERNAME_LEN || password.length > MAX_PASSWORD_LEN) {

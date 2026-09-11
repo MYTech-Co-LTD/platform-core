@@ -464,4 +464,172 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     expect(apiRoutes.length).toBeGreaterThan(0)
     expect(apiRoutes.every((r) => r.status === 401)).toBe(true)
   })
+
+  // ---- R1（PR#5 评审）：ALL ≠ 一定是中间件 ----
+
+  /** 装载一个给定的 index.ts（createRouter 体由调用方写），返回装载结果或抛出的错。
+   *  manifest 默认声明 GET /ping（与 routerBody 里必写的 a.get('/ping') 对齐）。 */
+  async function loadWithIndex(
+    id: string,
+    routerBody: string[],
+  ): Promise<{ runtime?: Awaited<ReturnType<typeof loadModules>>; err?: Error }> {
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, id, {
+      'manifest.yaml': manifestYaml(id),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        `  manifest: {`,
+        `    id: '${id}', name: '${id} 模块', version: '1.0.0', platform: '>=0.1.0',`,
+        `    permissions: [{ code: '${id}:view', name: '${id} 查看' }],`,
+        `    api: { internal: [{ method: 'GET', path: '/ping', scope: '${id}:view' }] },`,
+        '  },',
+        '  createRouter: () => {',
+        '    const a = new Hono()',
+        ...routerBody,
+        '    return a',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+    return loadModules(modulesDir, { pool }).then(
+      (runtime) => ({ runtime }),
+      (e: unknown) => ({ err: e as Error }),
+    )
+  }
+
+  it('★ 负例：未声明的 app.all() 多方法端点 ⇒ 装载失败（旧实现当中间件滤掉 ⇒ 匿名 200）', async () => {
+    const { err } = await loadWithIndex('allmod', [
+      "    a.all('/secret', (c) => c.json({ leaked: 'ALL' }))",
+      "    a.get('/ping', (c) => c.json({ pong: true }))",
+    ])
+    expect(err).toBeInstanceOf(Error)
+    expect(err!.message).toContain('ALL /secret')
+    expect(err!.message).toContain('未声明的多方法端点')
+  })
+
+  it('★ 负例：未声明的 use(路径, 终结 handler) ⇒ 装载失败（同一条缝的另一种写法）', async () => {
+    const { err } = await loadWithIndex('backdoormod', [
+      "    a.use('/backdoor', (c) => c.json({ leaked: 'use' }))",
+      "    a.get('/ping', (c) => c.json({ pong: true }))",
+    ])
+    expect(err).toBeInstanceOf(Error)
+    expect(err!.message).toContain('ALL /backdoor')
+  })
+
+  it('已声明的 app.all(路径) ⇒ 装载通过且行为自洽：匿名 401、声明 method 放行、未声明 method 403', async () => {
+    const id = 'declaredallmod'
+    cleanupModules.push(id)
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, id, {
+      'manifest.yaml': manifestYaml(
+        id,
+        '',
+        `api:\n  internal:\n`
+          + `    - { method: GET, path: /ping, scope: ${id}:view }\n`
+          + `    - { method: GET, path: /multi, scope: ${id}:view }\n`
+          + `    - { method: POST, path: /multi, scope: ${id}:view }`,
+      ),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        `  manifest: { id: '${id}', name: 'm', version: '1.0.0', platform: '>=0.1.0',`,
+        `    permissions: [{ code: '${id}:view', name: 'x' }],`,
+        '  },',
+        '  createRouter: () => {',
+        '    const a = new Hono()',
+        "    a.all('/multi', (c) => c.json({ method: c.req.method }))",
+        "    a.get('/ping', (c) => c.json({ pong: true }))",
+        '    return a',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+    const runtime = await loadModules(modulesDir, { pool })
+    const anon = new Hono()
+    runtime.mount(anon)
+    expect((await anon.request(`/api/modules/${id}/multi`)).status).toBe(401)
+
+    const scoped = new Hono()
+    scoped.use('*', injectIdentity([`${id}:view`]))
+    runtime.mount(scoped)
+    expect((await scoped.request(`/api/modules/${id}/multi`)).status).toBe(200)
+    expect((await scoped.request(`/api/modules/${id}/multi`, { method: 'POST' })).status).toBe(200)
+    // 未声明的 method 打到 ALL 端点上 ⇒ 门卫逐条判定 ⇒ 403（fail-closed，不会漏进 handler）
+    expect((await scoped.request(`/api/modules/${id}/multi`, { method: 'DELETE' })).status).toBe(403)
+  })
+
+  it('通配 ALL（app.all("/files/*")）覆盖面大于声明面 ⇒ 未声明的子路径不再匿名可达', async () => {
+    const id = 'wildmod'
+    cleanupModules.push(id)
+    const { runtime, err } = await loadWithIndex(id, [
+      "    a.all('/files/*', (c) => c.json({ leaked: 'wildcard' }))",
+      "    a.get('/ping', (c) => c.json({ pong: true }))",
+    ])
+    expect(err).toBeUndefined()
+    const anon = new Hono()
+    runtime!.mount(anon)
+    expect((await anon.request(`/api/modules/${id}/files/b`)).status).toBe(401)
+    const scoped = new Hono()
+    scoped.use('*', injectIdentity([`${id}:view`]))
+    runtime!.mount(scoped)
+    // 有身份也不放行：这条子路径谁都没声明过（fail-closed）
+    expect((await scoped.request(`/api/modules/${id}/files/b`)).status).toBe(403)
+    // 声明过的那条照常可达
+    expect((await scoped.request(`/api/modules/${id}/ping`)).status).toBe(200)
+  })
+
+  it('合法中间件形态不被误伤：use("*") / use("/prefix/*") 下声明路径照常放行、匿名照常 401', async () => {
+    const id = 'mwmod'
+    cleanupModules.push(id)
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, id, {
+      'manifest.yaml': manifestYaml(
+        id,
+        '',
+        `api:\n  internal:\n`
+          + `    - { method: GET, path: /ping, scope: ${id}:view }\n`
+          + `    - { method: GET, path: /prefix/notes, scope: ${id}:view }`,
+      ),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        `  manifest: { id: '${id}', name: 'm', version: '1.0.0', platform: '>=0.1.0',`,
+        `    permissions: [{ code: '${id}:view', name: 'x' }],`,
+        '  },',
+        '  createRouter: () => {',
+        '    const a = new Hono()',
+        '    const seen: string[] = []',
+        "    a.use('*', async (c, next) => { seen.push('global'); await next() })",
+        "    a.use('/prefix/*', async (c, next) => { seen.push('prefix'); await next() })",
+        // splice(0) = 取走并清空：每条响应只报【本次请求】的中间件轨迹（闭包数组跨请求累积）
+        "    a.get('/ping', (c) => c.json({ pong: true, seen: seen.splice(0) }))",
+        "    a.get('/prefix/notes', (c) => c.json({ notes: [], seen: seen.splice(0) }))",
+        '    return a',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+    const runtime = await loadModules(modulesDir, { pool })
+
+    const anon = new Hono()
+    runtime.mount(anon)
+    expect((await anon.request(`/api/modules/${id}/ping`)).status).toBe(401)
+
+    const scoped = new Hono()
+    scoped.use('*', injectIdentity([`${id}:view`]))
+    runtime.mount(scoped)
+    const ping = await scoped.request(`/api/modules/${id}/ping`)
+    expect(ping.status).toBe(200)
+    expect((await ping.json()) as { seen: string[] }).toMatchObject({ seen: ['global'] })
+    const notes = await scoped.request(`/api/modules/${id}/prefix/notes`)
+    expect(notes.status).toBe(200)
+    expect((await notes.json()) as { seen: string[] }).toMatchObject({ seen: ['global', 'prefix'] })
+  })
 })

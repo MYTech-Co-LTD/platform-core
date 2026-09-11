@@ -398,4 +398,44 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0)
     expect(await auditCount()).toBe(0) // ← 限速挡在 audit 之前：被拦的回调一行都不写
   })
+
+  // 上一条用例是【手工喂计数】造出 429——它只证明"计数高时 check 会拦"，没证明"企微流量会把
+  // 计数推上去"。下面两条走真路由、不喂计数（PR#5 评审 R1：BAD_CODE/BAD_STATE 此前不 record
+  // ⇒ 计数恒不增长 ⇒ 该路径永不 429）。反证方式：删掉 auth-wecom.ts 对应分支的 record，红。
+  it('★ 坏 code 流量自己把租户失败计数推满 ⇒ 第 N+1 次 429（每次都会真的打到上游 SSO）', async () => {
+    const limiter = createLoginLimiter()
+    const c3 = testClient(makeApp(pool, casdoorFor, limiter))
+    const qr = await c3.api.platform.auth.wecom.qr.$get(undefined, { headers: { host: 'acme.test' } })
+    const state = stateToken(qr)
+    const call = (code: string) =>
+      c3.api.platform.auth.wecom.callback.$get(
+        { query: { code, state } },
+        { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+      )
+    // 前 TENANT_FAIL_LIMIT 次：每次通过 state 校验、每次向 mock SSO 发一次换票请求、每次 BAD_CODE
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) {
+      const res = await call(`bogus-code-${i}`)
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('/login?error=BAD_CODE')
+    }
+    const blocked = await call('bogus-code-final')
+    expect(blocked.status).toBe(429)
+    expect(await blocked.json()).toEqual({ error: 'TOO_MANY_REQUESTS' })
+  })
+
+  it('★ 坏 state 流量同样计数（连 /qr 都不需要）⇒ 第 N+1 次 429', async () => {
+    const limiter = createLoginLimiter()
+    const c4 = testClient(makeApp(pool, casdoorFor, limiter))
+    const call = () =>
+      c4.api.platform.auth.wecom.callback.$get(
+        { query: { code: 'x', state: 'not-the-cookie-state' } },
+        { headers: { host: 'acme.test', cookie: 'wecom_state=different' } },
+      )
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) {
+      const res = await call()
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('/login?error=BAD_STATE')
+    }
+    expect((await call()).status).toBe(429)
+  })
 })

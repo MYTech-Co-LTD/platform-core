@@ -250,6 +250,16 @@ psql "$DATABASE_URL" -c "select platform.prune_audit();"
    把 compose 放 `deploy/` 的仓库都会得到同一个项目名，互相接管容器与卷。仓库里的 compose 已用
    顶层 `name: platform-core` 钉死（见该文件注释里的实测事故），生产侧若由 openship 指定项目名，
    以 openship 为准。
+5. **升级到「声明即授权」那一版时，老模块会让进程【启动即死】**（破坏性变更，动作必须做）：
+   `manifest.api.internal[]` 从 `{name, scope}` 变成 `{method, path, scope}`，且装载器起做
+   双向核对——**只要模块注册过路由却没写 `api.internal`（或还写着旧形状），宿主进程直接起不来**，
+   而不是"少一道鉴权"。失败信息带双向差集原文（`未声明但已注册 [...]`），照它逐条补
+   `method`/`path`/`scope` 即可。做法：升级前先用
+   `pnpm exec tsx scripts/check-manifests.mjs`（静态消费方，与装载器同一套 schema）把全部模块过一遍，
+   把要补的清单一次性列出来；**别**指望"先上线再一个个补"——任何一个模块没补上，整台宿主的
+   进程都起不来（模块是同一进程内装载的，没有单模块降级形态）。
+   `app.all('/x', h)` / `use(路径, 终结 handler)` 这类多方法端点同理：要么逐 method 声明，
+   要么改成显式 method 路由（详见 `docs/module-protocol.md`）。
 
 ## 相关
 

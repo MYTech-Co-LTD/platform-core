@@ -21,7 +21,7 @@ import { runMigrations } from '../migrate'
 import { seedDemo } from '../seed'
 import { resolveTenantMiddleware, type TenantEnv } from '../tenant'
 import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from '../session-middleware'
-import { authRoutes } from './auth'
+import { MAX_LOGIN_BODY_BYTES, authRoutes } from './auth'
 import { USER_FAIL_LIMIT, createLoginLimiter, type LoginLimiter } from '../rate-limit'
 
 const dbUrl = process.env.DATABASE_URL
@@ -440,5 +440,32 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
     const blocked = await post()
     expect(blocked.status).toBe(429)
     expect(await blocked.json()).toEqual({ error: 'TOO_MANY_REQUESTS' })
+  })
+
+  // ⑲ 形状不对（缺 password）的 401 也必须计入限速桶（PR#5 评审 R1：该分支此前只 401 不 record
+  // ——一条不产生出站调用的限速死角）。反证：删掉 auth.ts 该分支的 record，本用例第 6 次仍 401（红）。
+  it('★ 缺 password 的 401 也记账 → 第 6 次 429（形状分支不再是死角）', async () => {
+    const c2 = testClient(makeApp(pool)) // 独立限速器
+    const post = () =>
+      c2.api.platform.auth.login.$post(
+        { json: { username: 'shape-probe', password: '' } },
+        { headers: { host: 'acme.test' } },
+      )
+    for (let i = 0; i < USER_FAIL_LIMIT; i++) expect((await post()).status).toBe(401)
+    const blocked = await post()
+    expect(blocked.status).toBe(429)
+    expect(await blocked.json()).toEqual({ error: 'TOO_MANY_REQUESTS' })
+  })
+
+  // ⑳ 未认证请求不得靠单请求撑爆内存（PR#5 评审 R1 建议 4）：有界读取直接 413。
+  // 反证：恢复 c.req.json()（无上限）时本用例拿到 401 而非 413。
+  it('★ 超长请求体：有界读取即拒（413 PAYLOAD_TOO_LARGE），整只 body 不进内存', async () => {
+    const c2 = testClient(makeApp(pool))
+    const res = await c2.api.platform.auth.login.$post(
+      { json: { username: 'alice', password: 'p'.repeat(MAX_LOGIN_BODY_BYTES) } },
+      { headers: { host: 'acme.test' } },
+    )
+    expect(res.status).toBe(413)
+    expect(await res.json()).toEqual({ error: 'PAYLOAD_TOO_LARGE' })
   })
 })

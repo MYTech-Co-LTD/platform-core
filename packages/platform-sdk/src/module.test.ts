@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Hono } from 'hono'
 import { testClient } from 'hono/testing'
 import type { Pool } from 'pg'
-import { defineModule, requireScope } from './module'
+import { DECLARED_GATE_APPROVED, declaredScopeGate, defineModule, requireScope } from './module'
 import type { Identity, ModuleDefinition } from './module'
 
 // Task 9：模块接入三原语的契约。身份由宿主注入（此处用 set 中间件模拟宿主行为），
@@ -55,6 +55,38 @@ describe('requireScope', () => {
     const body = (await res.json()) as { userId: string; orgId: string }
     expect(body.userId).toBe('u-1')
     expect(body.orgId).toBe('org-9')
+  })
+})
+
+// 放行标记：包裹层（loader.applyDeclaredApiGate）给通配 ALL 路由挂的兜底门卫**唯一**能用来
+// 区分"已放行 / 谁都没放行"的东西（通配路径上 c.req.routePath 恒为通配模式本身，比不了表）。
+// 在这里钉死"放行才置位"，避免它被当成可随手删掉的一行。
+describe('declaredScopeGate：放行标记', () => {
+  const declared = [{ method: 'GET', path: '/ping', scope: 'demo:view' }]
+  const flagOf = (identity?: Identity) => {
+    const app = new Hono<{ Variables: { identity: Identity } }>()
+    app.use('/ping', async (c, next) => {
+      if (identity) c.set('identity', identity)
+      await next()
+    })
+    app.use('/ping', declaredScopeGate(declared))
+    app.get('/ping', (c) => {
+      const marked = (c as unknown as { get(k: string): unknown }).get(DECLARED_GATE_APPROVED)
+      return c.json({ marked: marked === true })
+    })
+    return app.request('/ping')
+  }
+
+  it('放行 ⇒ 置标记；无 identity / scope 不符 ⇒ 不置（标记不是授权本身）', async () => {
+    const ok = await flagOf(makeIdentity(['demo:view']))
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toEqual({ marked: true })
+
+    const anon = await flagOf()
+    expect(anon.status).toBe(401)
+
+    const wrong = await flagOf(makeIdentity(['other:scope']))
+    expect(wrong.status).toBe(403)
   })
 })
 

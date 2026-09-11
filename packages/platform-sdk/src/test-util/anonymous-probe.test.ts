@@ -74,7 +74,37 @@ describe('probeAnonymous：匿名探测回归网', () => {
     expect(results).toEqual([{ method: 'GET', path: '/open', status: 200 }])
   })
 
-  it('门卫齐备 ⇒ 每条路由都 401，含参数化路径', async () => {
+  it('★ 负例：ALL 形态（app.all / use(路径, handler)）也要被探测到——旧实现整条滤掉，与装载器共享盲区', async () => {
+    const unguarded = new Hono()
+    unguarded.all('/secret', (c) => c.json({ leaked: 'ALL' }))
+    // async：use() 收的是中间件签名（返回 Promise<Response|void>），同步返回 Response 过不了类型
+    unguarded.use('/backdoor', async (c) => c.json({ leaked: 'use' }))
+    const results = await probeAnonymous(unguarded)
+    // 三条都在（含两条 ALL）；ALL 打不出 method，用 GET 代表
+    expect(results).toEqual([
+      { method: 'ALL', path: '/secret', status: 200 },
+      { method: 'ALL', path: '/backdoor', status: 200 },
+    ])
+  })
+
+  it('★ ALL 端点无门卫、普通 GET 有门卫 ⇒ 只有前者被报成可达（探测不因 ALL 而变松）', async () => {
+    const router = new Hono()
+    router.all('/secret', (c) => c.json({ leaked: true }))
+    router.get('/ping', (c) => c.json({ hit: 'ping' }))
+    const guarded = new Hono()
+    const gate = declaredScopeGate(declared)
+    // 只给声明的 /ping 挂门卫（ALL 的 /secret 谁都没盖）——复现评审的洞的形状
+    guarded.use('/ping', gate)
+    guarded.route('/', router)
+    const results = await probeAnonymous(guarded)
+    expect(results).toEqual([
+      { method: 'ALL', path: '/ping', status: 401 }, // 门卫自己那条（ALL，因为 use() 记法）
+      { method: 'ALL', path: '/secret', status: 200 }, // ← 可匿名到达，探测如实报出
+      { method: 'GET', path: '/ping', status: 401 },
+    ])
+  })
+
+  it('门卫齐备 ⇒ 每条路由都 401，含参数化路径与门卫自身的 ALL 记录', async () => {
     const router = new Hono()
     router.get('/ping', (c) => c.json({ hit: 'ping' }))
     router.get('/notes/:id', (c) => c.json({ hit: 'note' }))
@@ -83,6 +113,13 @@ describe('probeAnonymous：匿名探测回归网', () => {
     for (const p of new Set(declared.map((d) => d.path))) guarded.use(p, gate)
     guarded.route('/', router)
     const results = await probeAnonymous(guarded)
-    expect(results.map((r) => r.status)).toEqual([401, 401])
+    // 两条门卫（use(声明路径, gate) 在 routes 里记 ALL）+ 两条 handler，全部 401
+    // 顺序 = 注册序：门卫先于模块路由（包裹层的构造顺序本身就是"门卫先跑"的保证）
+    expect(results.map((r) => `${r.method} ${r.path}:${r.status}`)).toEqual([
+      'ALL /ping:401',
+      'ALL /notes/:id:401',
+      'GET /ping:401',
+      'GET /notes/:id:401',
+    ])
   })
 })

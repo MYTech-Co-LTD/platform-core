@@ -19,7 +19,9 @@ api:
 
 - `method` 只接受 `GET` / `POST` / `PUT` / `PATCH` / `DELETE`
 - `path` 是**模块内相对路径**，必须以 `/` 开头，且与 `createRouter` 里注册的路径模式
-  **逐字一致**（含 `:param`，如 `/notes/:id`）
+  **逐字一致**（含 `:param`，如 `/notes/:id`）。**不能是裸 `/`**：Hono 会把 `use('/')`
+  展开成 `/*`，运行期 `routePath` 与比对表对不上 ⇒ 该路径**恒 403 且无人知晓**，schema
+  直接拒绝这种写法
 - `scope` 必须是本模块 `permissions[].code` 里的码——声明一个自己都没有的码，该路径会恒 403
   而无人知晓，schema 直接拒绝这种写法
 - 模块**不再写** `requireScope`：门禁由宿主按声明**强制施加**，模块再写一遍也是冗余（`requireScope`
@@ -37,8 +39,28 @@ api:
 |---|---|
 | 注册了路由但没声明 | **装载失败**（绝不半挂） |
 | 声明了路径但没注册（幽灵声明） | **装载失败** |
+| 注册了**未声明的多方法端点**（`app.all('/secret', h)`、`use('/backdoor', 终结 handler)`） | **装载失败**（见下） |
 | 声明了不属于本模块的 scope | schema 校验失败（`check-manifests` 门禁同时拦下） |
 | 同 `(method,path)` 声明两次 | schema 校验失败 |
+
+### `method === 'ALL'` ≠ 一定是中间件
+
+Hono 里 `app.all()` 与 `app.use()` **同记 `'ALL'`**（`hono-base.js` 的 `#addRoute('ALL', …)`），
+所以 ALL 里混着两种东西，必须分开处置：
+
+- **无通配的 ALL 就是"多方法端点"**——它只匹配**它自己那一条**请求路径（实测：`use('/prefix')`
+  不匹配 `/prefix/notes`，与具体 method 无关）。`app.all('/secret', h)` 是多方法端点（webhook
+  一类）的常见写法，正是"改了代码忘了改 manifest"这一族。规则：**它的路径必须逐字等于某条
+  声明路径**，否则装载失败。想写多方法端点就**逐 method 声明**（`app.all('/multi', h)` +
+  声明 `GET /multi`、`POST /multi`）——此时它落在这些声明的门卫下，门卫按 method 逐条判定，
+  未声明的 method 照旧 403。
+- **含 `*` 的 ALL 才是中间件形态**（`use('*')`、`use('/prefix/*')`、`mount()`）。它们匹配的
+  请求路径集合**大于**任何一条声明路径，逐条声明的门卫盖不住；装载器因此另挂一道**兜底门卫**：
+  凡是没被任何一条声明门卫放行的请求，一律 401/403（fail-closed）。没用通配 ALL 的模块不挂
+  兜底门卫，行为与从前逐字相同。
+  为什么不能直接把 `declaredScopeGate` 挂到通配路径上：门卫判定基准是 `c.req.routePath`，而在
+  通配路径上它恒为通配模式本身（已实证：`use('*')` 下恒为 `/*`）⇒ 恒 403，会把合法中间件
+  形态打坏。故兜底门卫改问"本次请求是否已被某条声明门卫放行"。
 
 所以「改了代码忘了改 manifest」的后果是**进程起不来**，而不是静默漏掉一个鉴权。
 
@@ -86,4 +108,10 @@ import { probeAnonymous } from '@platform/sdk/test-util/anonymous-probe'
 const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 ```
 
-路径参数（`/notes/:id`）会被替换为占位段后再请求；`method === 'ALL'` 的中间件记录会被跳过。
+路径参数（`/notes/:id`）与通配段（`*`）会被替换为占位段后再请求。
+
+**`method === 'ALL'` 的条目也要探测**（PR#5 评审 R1）：Hono 里 `app.all('/secret', h)` 与
+`app.use('/backdoor', 终结 handler)` 同样记为 `'ALL'`，它们**是端点、不是中间件**。旧实现把
+ALL 整条滤掉，与装载器的过滤条件逐字相同——两边共享同一个盲区，于是「每条路由都不可匿名到达」
+这条回归网对 ALL 形态结构性地看不见（实测：装载器放行的 `app.all('/secret')` 匿名 200，探测全绿）。
+ALL 条目没有单一 method 可发，探测用 `GET` 代表，结果里 `method` 原样回 `'ALL'`。

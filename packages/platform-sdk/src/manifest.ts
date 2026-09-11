@@ -42,7 +42,11 @@ const ManifestObject = z.object({
   api: z.object({
     internal: z.array(z.object({
       method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-      path: z.string().regex(/^\//, 'api.internal[].path 必须以 / 开头（模块内相对路径）'),
+      // 前缀 / 且**不整条等于 /** （Task 24 评审 R1 建议 3）：裸 '/' 能过 schema、也能过装载期
+      // 双向核对，但门卫会被注册成 use('/')（Hono 展开为 /*），运行期 routePath 是 '/*' 而
+      // 比对表里是 '/api/modules/<id>/' ⇒ **恒 403 且无人知晓**。这正是本协议要消灭的那一族
+      // （同 api.internal[].scope 必须 ∈ permissions 的那条）。模块内相对路径至少要有段名。
+      path: z.string().regex(/^\/(?!$)/, 'api.internal[].path 必须 / 开头且不能是裸 "/"（模块内相对路径，如 /ping）'),
       scope: z.string(),
     })).optional(),
   }).optional(),

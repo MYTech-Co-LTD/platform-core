@@ -149,6 +149,22 @@ describe('ManifestSchema', () => {
     expect(r.error.issues.some(i => i.path.includes('path'))).toBe(true)
   })
 
+  it('★ 负例：api.internal[].path 是裸 "/" ⇒ 校验失败（同族：该路径恒 403 而无人知晓）', () => {
+    // PR#5 评审 R1 建议 3：裸 '/' 能过 schema、也能过装载期双向核对，但门卫被注册成 use('/')
+    // （Hono 展开为 /*），运行期 routePath === '/*' 而比对表里是 '/api/modules/<id>/' ⇒ 恒 403。
+    // 与"声明一个自己没有的 scope"同族——都必须由 schema 挡在装载之前。
+    const bad = { ...validManifest, api: { internal: [{ method: 'GET', path: '/', scope: 'demo:view' }] } }
+    const r = ManifestSchema.safeParse(bad)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some(i => i.path.includes('path'))).toBe(true)
+    // 相邻形状不能被误伤：'/x' 与 '/x/' 都合法（只有"整条就是一个 /"才是裸根）
+    for (const ok of ['/x', '/x/', '/x/y']) {
+      const good = { ...validManifest, api: { internal: [{ method: 'GET', path: ok, scope: 'demo:view' }] } }
+      expect(ManifestSchema.safeParse(good).success, ok).toBe(true)
+    }
+  })
+
   it('★ 负例：api.internal[].scope 不属于本模块 permissions ⇒ 校验失败', () => {
     // 声明一个自己都没有的码 ⇒ 该路径恒 403 而无人知晓（与"忘挂 requireScope"同一种病的变种）
     const bad = {
