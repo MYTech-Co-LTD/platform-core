@@ -12,6 +12,7 @@
     "typecheck": "pnpm -r --if-present typecheck && pnpm run typecheck:scripts",
     "typecheck:scripts": "tsc -p tsconfig.json",
     "smoke": "tsx scripts/smoke-load.mjs",
+    "dev:stack": "tsx scripts/dev-stack.mjs",
     "build": "pnpm -r --if-present build",
     "dev": "pnpm --filter @platform/server dev"
   },
