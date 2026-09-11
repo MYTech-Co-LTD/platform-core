@@ -21,6 +21,7 @@ import { seedDemo } from '../seed'
 import { resolveTenantMiddleware, type TenantEnv } from '../tenant'
 import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from '../session-middleware'
 import { wecomRoutes } from './auth-wecom'
+import { TENANT_FAIL_LIMIT, createLoginLimiter, type LoginLimiter } from '../rate-limit'
 
 const dbUrl = process.env.DATABASE_URL
 const SECRET = 'test-session-secret-0123456789abcdef' // ≥32 字符，测试专用
@@ -73,7 +74,11 @@ function fakeWecomFetch(input: RequestInfo | URL, _init?: RequestInit): Promise<
 
 type AppClient = ReturnType<typeof testClient<ReturnType<typeof makeApp>>>
 
-function makeApp(pool: Pool, casdoor: CasdoorFactory = casdoorFor): Hono<TenantEnv & SessionEnv> {
+function makeApp(
+  pool: Pool,
+  casdoor: CasdoorFactory = casdoorFor,
+  limiter: LoginLimiter = createLoginLimiter(),
+): Hono<TenantEnv & SessionEnv> {
   const app = new Hono<TenantEnv & SessionEnv>()
   app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
   app.use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET }))
@@ -83,6 +88,7 @@ function makeApp(pool: Pool, casdoor: CasdoorFactory = casdoorFor): Hono<TenantE
       casdoor,
       sessionSecret: SECRET,
       pool,
+      limiter, // ← 新增
       casdoorUrl: mock.origin,
       casdoorClientId: 'test-client',
       casdoorClientSecret: 'test-secret',
@@ -345,5 +351,24 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     })
     expect(silent.status).toBe(404)
     expect(await silent.json()).toEqual({ error: 'WECOM_NOT_CONFIGURED' })
+  })
+
+  // 企微路：租户层限速（code 换票前拿不到用户名 ⇒ 只判租户维度，见 spec §3.2）
+  it('★ 负例：租户失败达阈值 → 回调整体 429 TOO_MANY_REQUESTS（不落任何 audit）', async () => {
+    const { rows } = await pool.query<{ id: number }>(
+      "select id from platform.tenant where slug = 'acme'",
+    )
+    const acmeId = rows[0]!.id
+    const limiter = createLoginLimiter()
+    const c2 = testClient(makeApp(pool, casdoorFor, limiter))
+    for (let i = 0; i < TENANT_FAIL_LIMIT; i++) limiter.record(acmeId, null, false)
+
+    const res = await c2.api.platform.auth.wecom.callback.$get(
+      { query: { code: 'x', state: 'y' } },
+      { headers: { host: 'acme.test' } },
+    )
+    expect(res.status).toBe(429)
+    expect(await res.json()).toEqual({ error: 'TOO_MANY_REQUESTS' })
+    expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0)
   })
 })

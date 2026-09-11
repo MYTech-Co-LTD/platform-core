@@ -32,6 +32,7 @@ import {
 } from '@platform/auth-core'
 import type { TenantEnv } from '../tenant'
 import { serializeSessionCookie, type CasdoorFactory, type SessionEnv } from '../session-middleware'
+import { tooManyRequests, type LoginLimiter } from '../rate-limit'
 
 const CALLBACK_PATH = '/api/platform/auth/wecom/callback'
 const STATE_COOKIE = 'wecom_state'
@@ -49,6 +50,8 @@ export interface WecomRoutesDeps {
   casdoor: CasdoorFactory
   sessionSecret: string
   pool: Pool
+  /** 登录限速器（M1 闭债 R2）：与账密路共用同一实例（见 auth.ts 同名注释） */
+  limiter: LoginLimiter
   /** Casdoor 应用三件：qr authorize URL 拼接 + callback code 换票 */
   casdoorUrl: string
   casdoorClientId: string
@@ -185,6 +188,10 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
   // GET /callback?code&state[&via=silent] — 两路共用回调
   app.get('/callback', async (c) => {
     const t = c.get('tenant')
+    // 限速（M1 闭债 R2）：租户层，必须早于任何 writeAudit。企微路在 code 换票前拿不到用户名
+    // ⇒ 只判租户维度（spec §3.2 的已知口径落差，刻意如此）
+    const decision = deps.limiter.check(t.id, null)
+    if (!decision.allowed) return tooManyRequests(c, t.id, decision)
     const state = c.req.query('state') ?? ''
     const code = c.req.query('code') ?? ''
     const via = c.req.query('via') === 'silent' ? 'wecom-silent' : 'wecom-qr'
@@ -250,6 +257,7 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     }
     if (user === null) {
       await writeAudit(deps.pool, t.id, name, 'login.fail', { via, reason: 'no-account' })
+      deps.limiter.record(t.id, null, false) // 企微路不建 user 桶（check 也不看它）
       return fail('NO_ACCOUNT')
     }
     const scopes = effectiveScopes(name, user.roles ?? [], perms)
@@ -262,6 +270,7 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     )
     // 审计先行（M-4，与 auth.ts 同序）：插入抛错 → 500 且未发任何会话 cookie
     await writeAudit(deps.pool, t.id, name, 'login.ok', { via })
+    deps.limiter.record(t.id, null, true)
     c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
     // iframe 分支（登录页内嵌扫码页回跳）：顶层 302 指到 iframe 外不可行 → 小 HTML 通知父页
     if (c.req.header('sec-fetch-dest') === 'iframe') {
