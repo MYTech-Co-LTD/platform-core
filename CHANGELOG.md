@@ -11,6 +11,67 @@
 
 ## [Unreleased]
 
+### Fixed - M1 闭债 R4：平台底座欠账批处理（issue #3，HEAD 探活 / 请求体上限 / 停用模块语义 / 替身保真）
+
+- 【修复】**已声明的 GET 端点用 `HEAD` 探活恒 403**：`declaredScopeGate`
+  （`packages/platform-sdk/src/module.ts`）比对 `(d.method, c.req.method)` 查表。Hono 按 **GET**
+  派发 HEAD（路由匹配走 GET），但 `c.req.method` 仍是 **`'HEAD'`** ⇒ 已声明 GET 的端点被 HEAD
+  一探就查不到、落进 fail-closed 分支返 **403**（对探活/LB 探测器是"这个端点用 HEAD 不可达"）。
+  修法是**查表前把 HEAD 归一到 GET**——只归查表，**不动身份与 scope 判定**：**未声明 GET 的路径
+  照样 403**（只声明 POST 的路径上 HEAD 仍 403，两条负例钉在 `anonymous-probe.test.ts`），
+  不等于"放行一切 HEAD"
+- 【修复】**`/api/*` 此前没有请求体上限**（`apps/server/src/app.ts`）：只有登录路做了有界读取
+  （`readBodyBounded`，上限 8192），**其余 `/api/*` 端点无任何上限** ⇒ 未认证请求即可用大 body
+  撑内存。改用 hono 自带的 `body-limit` 在 `/api/*` 挂 **1 MiB**（`MAX_API_BODY_BYTES`；取值为
+  已知最大正当载荷——便签正文 2000 字符——的两个数量级余量），超限返
+  **`413 {error:'PAYLOAD_TOO_LARGE'}`**。登录路更严的 8192 仍然生效。闸门挂在**租户中间件之前**
+  （拒绝超大载荷不该先做 DB 查询）、并注册在全部 `/api/*` 路由之前（Hono 中间件只对其后注册的
+  路由生效）
+- 【修复】**超限必须以 413 收场，不能以连接重置告终**（同上的 `bodyLimit.onError`，本轮评审
+  must-fix）：首版 onError 直接回 413，但 `@hono/node-server` 下客户端 body 还没写完就拿到
+  **ECONNRESET/EPIPE** ⇒ **真 HTTP 下 25–35% 的超限请求根本看不到那个 413**（进程内
+  `app.request()` 没有 socket，这条**在单测里结构性看不见**，回归面因此另建在真 socket 上）。
+  修法是 onError 里**先把请求体流 `cancel()` 掉再回 413**（`catch` 吞掉 cancel 的抛错，不让它
+  盖过 413）。改后 keep-alive 客户端从不 cancel 的 26/40 回到 **40/40**（与"从不碰 body"的对照
+  基线一致）
+- 【修复】**停用模块（`platform.tenant_module.enabled=false`）的 API 此前照常可达**
+  （`apps/server/src/loader.ts` 的 `mount()`）：停用此前**只影响 `/api/platform/config` 的清单**
+  （该租户在清单里看不到这个模块），**模块 API 本身照常可达**、只受 scope 约束 —— "停用"只落了
+  一半。现在在挂载时按租户挂**请求期启用闸门**，未启用返 **404 `{error:'NOT_FOUND'}`**；
+  **不用 403**——403 会明说"存在但被停用"，404 与"这个模块压根不存在"**同形**，于是**模块 API
+  面内**停用状态不可枚举（作用域仅限模块 API 面：`/config` 是**有意的披露面**，它匿名公开本租户
+  的启用清单，属存量行为、非本轮引入）。闸门与 `/config` **同源**（同一份 `enabledForImpl`，
+  写两遍必然漂移），**不做缓存** ——「停用后多久生效」不留隐式窗口。两条放行路径：无租户上下文
+  放行；**无 identity（匿名）放行** —— 闸门在模块自身门卫之前，匿名反正是 401，放行可避免把
+  改动前的"匿名命中模块 API 0 次 DB"变成每请求 1 次、被用来放大 DB 压力（匿名打停用/启用模块
+  都是门卫那条逐字相同的 401，放行**不**削弱上面的不可枚举性；已登录用户照旧 404）
+  - ⚠️ **闸门只覆盖模块 API 半边**（**存量缺口，本轮不改行为**）：`frontend.userApp` 静态目录
+    另挂在 manifest 的 mount 路径下、**不经过闸门** ⇒ 显式 `enabled=false` 后 API 返 404 而
+    `<mount>/index.html` 仍 200。当前**休眠中**（仓内唯一模块 `modules/demo` 只声明了
+    `console`，无可观测面），将来有模块启用 `userApp` 时必须一并补闸——否则"停用 = 看不到这个
+    模块"会被读成绝对规则（见 `docs/module-protocol.md` 的「停用语义」节）
+- 【修复】**>1 MiB 的登录请求到不了登录路的三层限速器**（同上闸门的取舍，口径已写死在
+  `app.ts` 注释）：全局上限挂在租户解析之前、限速器在 `authRoutes` 里 ⇒ 被这道闸门拒掉的登录
+  请求**一层限速器都不计**（不读体、不写 audit、不调 Casdoor）。这是刻意的：1 MiB 这个量级已
+  明确是滥用流量，为它保留"先解析出 username 再按用户维度计数"等于让滥用者用最大成本换最精确
+  的计数。**与 `auth.ts` 里"超限计数照记"不矛盾**——那句管的是**它自己** 8192 那道有界读取
+- 【优化】**测试替身与真机保真**（`packages/auth-core/src/test-util/mock-casdoor.ts` 等）：
+  - **`get-user` 的 `id` 为空不再报错，改回 `ok + data:null`**（真机实测三态同形：`?id=`、不传
+    id、裸 `?id=` 全是 `200 {status:'ok',data:null}`）。旧替身把空 id `split` 出 1 段 ⇒ 判非法
+    返 `wrong token count` —— **方向与真机相反**，把"用户不存在（客户端清 cookie 登出）"演成
+    "上游报错（客户端降级用旧 scopes）"，两个相反的分支；**含空段的两段照进查找**
+    （`id=/admin`、`id=built-in/`、`id=/` ⇒ `ok+null`），只按**段数≠2** 拒
+  - **`get-permissions` 的段数判别改成与 `get-user` 同一套**（真机两个端点共用上游
+    `GetOwnerAndNameFromId`）：旧实现在这里多判了 `!segs[0] || !segs[1]`，同一个 `id` 在两条
+    端点上"一个判非法、一个照查"，是"两套判别"的典型形状
+  - **未授权文案按端点区分**（真机：`get-user` 回 `Please login first`，`get-permissions` 等回
+    `Unauthorized operation`）：客户端不按文案分支，这里纯为保真
+  - **冷却/降级窗口用例去掉真实墙钟依赖**：`CasdoorClient` 与 `sessionMiddleware` 新增**可注入
+    时钟**（`CasdoorClientOptions.now` / `SessionMiddlewareDeps.now`），两条"窗口会随时间重开"
+    的用例改为**手动推进时钟**，不再 `await setTimeout(窗口 + 100)`。注入时钟**只**供这两处冷却
+    窗口取值，不参与验签/过期/续期任何时间决策；**缺省路径与改动前逐值一致，无行为变更**
+    （先例：`createLoginLimiter({ now })`）
+
 ### Fixed - M1 闭债 R3：Casdoor「错误」与「不存在」不再混为一谈（issue #3 第三节，真机已确认）
 
 - 【修复】**静默登出通道**：`getUser` 此前把 Casdoor 的一切 `status:error` 折叠成 `null`，
