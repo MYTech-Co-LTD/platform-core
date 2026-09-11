@@ -17,7 +17,7 @@ import { MockCasdoor } from '@platform/auth-core/src/test-util/mock-casdoor'
 import type { Identity } from '@platform/sdk'
 import { runMigrations } from './migrate'
 import { seedDemo } from './seed'
-import { loadModules } from './loader'
+import { loadModules, provisionModulePermissions } from './loader'
 
 const dbUrl = process.env.DATABASE_URL
 const serverMigrationsDir = fileURLToPath(new URL('./migrations', import.meta.url))
@@ -115,15 +115,24 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     ].join('\n')
   }
 
-  function casdoorClient(): CasdoorClient {
-    return new CasdoorClient({
-      origin: mock.origin,
-      clientId: 'test-client',
-      clientSecret: '',
-      org: 'mock-org',
-      adminUser: 'admin',
-      adminPwd: 'pw',
-    })
+  /** 按 org 返回 client 的工厂（与宿主 app.ts 的 casdoorFactory 同形状） */
+  function casdoorFactoryFor(): (org: string) => CasdoorClient {
+    const cache = new Map<string, CasdoorClient>()
+    return (org) => {
+      let c = cache.get(org)
+      if (!c) {
+        c = new CasdoorClient({
+          origin: mock.origin,
+          clientId: 'test-client',
+          clientSecret: '',
+          org,
+          adminUser: 'admin',
+          adminPwd: 'pw',
+        })
+        cache.set(org, c)
+      }
+      return c
+    }
   }
 
   /** 宿主侧 identity 注入中间件的替身（真实链路 = 租户解析→会话中间件，Task 16 装配） */
@@ -153,7 +162,7 @@ describe.skipIf(!dbUrl)('loadModules', () => {
         'create schema if not exists fixturemod;\ncreate table fixturemod.note(id int primary key);\n',
     })
 
-    const runtime = await loadModules(modulesDir, { pool, casdoor: casdoorClient() })
+    const runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
 
     // ① 装载数量与 manifest
     expect(runtime.modules).toHaveLength(1)
@@ -165,12 +174,9 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     )
     expect(mig.rows.map((r) => r.version)).toEqual(['001_init'])
 
-    // ③ 权限码 upsert 到 Casdoor（真 MockCasdoor 实例收到）
-    const casdoor = casdoorClient()
-    const perms = await casdoor.getPermissions()
-    expect(
-      perms.some((p) => p.resources?.includes('fixturemod:view')),
-    ).toBe(true)
+    // ③ 权限码供给到 platform.tenant 的每个租户 org（acme/beta 由 beforeAll 的 seedDemo 种下）
+    expect(mock.permissionsIn('acme').flatMap((p) => p.resources ?? [])).toContain('fixturemod:view')
+    expect(mock.permissionsIn('beta').flatMap((p) => p.resources ?? [])).toContain('fixturemod:view')
 
     // ④ mount 后模块路由可达（identity 注入中间件模拟宿主会话层）
     const app = new Hono<TestEnv>()
@@ -255,7 +261,7 @@ describe.skipIf(!dbUrl)('loadModules', () => {
       'index.ts': indexTs('staticmod', 'staticmod:view'),
       'web/dist/hello.txt': 'hello from staticmod dist\n',
     })
-    const runtime = await loadModules(modulesDir, { pool, casdoor: casdoorClient() })
+    const runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
     const app = new Hono()
     runtime.mount(app)
 
@@ -296,7 +302,7 @@ describe.skipIf(!dbUrl)('loadModules', () => {
       'migrations/001_init.sql':
         'create schema if not exists fixturemod;\ncreate table fixturemod.note(id int primary key);\n',
     })
-    const runtime = await loadModules(modulesDir, { pool, casdoor: casdoorClient() })
+    const runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
 
     // 无行 → 默认启用；seed 的 demo 行（enabled=true）不在装载集 → 不出现
     expect([...(await runtime.enabledFor(tenantId))].sort()).toEqual(['fixturemod'])
@@ -309,5 +315,63 @@ describe.skipIf(!dbUrl)('loadModules', () => {
       [tenantId],
     )
     expect((await runtime.enabledFor(tenantId)).has('fixturemod')).toBe(false)
+  })
+
+  it('权限码供给到每个租户各自的 org（写侧遍历 platform.tenant，不依赖任何 env）', async () => {
+    cleanupModules.push('orgmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'orgmod', {
+      'manifest.yaml': manifestYaml('orgmod'),
+      'index.ts': indexTs('orgmod', 'orgmod:view'),
+    })
+
+    const runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
+    expect(runtime.modules.map((m) => m.manifest.id)).toEqual(['orgmod'])
+
+    // 修复前：写侧只落单个 org ⇒ beta 恒空，而读侧按 beta 读 ⇒ 该租户用户全线 403
+    expect(mock.permissionsIn('acme').flatMap((p) => p.resources ?? [])).toContain('orgmod:view')
+    expect(mock.permissionsIn('beta').flatMap((p) => p.resources ?? [])).toContain('orgmod:view')
+  })
+
+  it('零租户：不供给、不抛错（全新库尚未 seed 是正常分支，不是异常）', async () => {
+    const requested: string[] = []
+    const emptyPool = { query: async () => ({ rows: [] }) } as unknown as Pool
+    const orgs = await provisionModulePermissions(
+      emptyPool,
+      (org) => { requested.push(org); throw new Error('零租户时不应取 client') },
+      [{ code: 'x:y', name: 'X' }],
+    )
+    expect(orgs).toEqual([])
+    expect(requested).toEqual([])
+  })
+
+  it('无 casdoorFor：跳过供给、不抛错，且该模块的码不存在于任何 org', async () => {
+    cleanupModules.push('nofacmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'nofacmod', {
+      'manifest.yaml': manifestYaml('nofacmod'),
+      'index.ts': indexTs('nofacmod', 'nofacmod:view'),
+    })
+
+    const runtime = await loadModules(modulesDir, { pool })
+    expect(runtime.modules.map((m) => m.manifest.id)).toEqual(['nofacmod'])
+    const all = [...mock.permissionsIn('acme'), ...mock.permissionsIn('beta')]
+    expect(all.flatMap((p) => p.resources ?? [])).not.toContain('nofacmod:view')
+  })
+
+  it('重跑不重复建码：第二次走 update 分支，add-permission 调用数不增', async () => {
+    cleanupModules.push('idemmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'idemmod', {
+      'manifest.yaml': manifestYaml('idemmod'),
+      'index.ts': indexTs('idemmod', 'idemmod:view'),
+    })
+
+    await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
+    const afterFirst = mock.addPermissionCalls.length
+    // 先证明第一次真的建了码——否则下面的「不增」是空转（修复前该断言恒真，测不出任何东西）
+    expect(afterFirst).toBeGreaterThan(0)
+    await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
+    expect(mock.addPermissionCalls.length).toBe(afterFirst) // 查重命中 ⇒ 走 update，不再 add
   })
 })

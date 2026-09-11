@@ -57,9 +57,23 @@ const CASDOOR_ADMIN_USER = 'admin'
 const CASDOOR_ADMIN_PWD = 'pw'
 const READY_TIMEOUT_MS = 30_000
 const TENANT_HOST = 'acme.test'
+const BETA_HOST = 'beta.test' // 第二个租户：其余租户恒 403 的观测面（issue #3 第二节成因③）
 const UNKNOWN_HOST = 'unknown.test'
 /** demo 种子的品牌名（apps/server/src/seed.ts）——断言 branding 命中的锚点 */
 const ACME_PRODUCT_NAME = 'Acme 工单'
+const BETA_PRODUCT_NAME = 'Beta 平台'
+/**
+ * multi 形态的 PLATFORM_ORG【诱饵值】：故意指向不存在的租户 org。
+ *
+ * 它能排除的是**一件具体的事**：供给 org 退回取 `config.platformOrg`（修复前 app.ts 的形状）。
+ * 这条绊线是活的——config 并未在 multi 下强制清空该值，所以诱饵确实能到达 config.platformOrg。
+ *
+ * 它【不能】排除：① 供给 org 取 platform.tenant 里的任意单条（那是下面 beta 那条断言的活）；
+ * ② 任何读侧问题。对这个 env 回退形状，beta 断言同样会红 ⇒ 两者冗余，本条只赢在更早、
+ * 更直指原因。别把它当"写读同源"的完整证明——同源由「beta 码存在」+「beta scopes 缺失」
+ * 两条合起来证。
+ */
+const DECOY_PLATFORM_ORG = 'NOT-ACME-ORG'
 
 const USER_PASSWORD = 'pw'
 const ADMIN1 = 'admin1' // 有 demo:view + demo:note
@@ -366,6 +380,49 @@ async function login(b, jar, username, label) {
 }
 
 /**
+ * MockCasdoor 的 admin 会话 cookie（管理端点门禁；凭据走 JSON body）。
+ * @param {MockCasdoor} mock @returns {Promise<string>}
+ */
+async function mockAdminCookie(mock) {
+  const res = await httpRequest({
+    port: mock.port,
+    path: '/api/login',
+    method: 'POST',
+    body: JSON.stringify({ username: CASDOOR_ADMIN_USER, password: CASDOOR_ADMIN_PWD }),
+  })
+  check(res.status === 200, 'MockCasdoor：admin 登录 200（授权前置）', describe(res))
+  const hit = /casdoor_session_id=([^;]+)/.exec(String(res.headers['set-cookie'] ?? ''))
+  // check() 抛错但不参与 TS 收窄（参数是复合表达式，asserts 也无能为力），故这里显式把关：
+  // 拿不到管理会话就没法授权，必须当场炸而不是拼出一个空 cookie 让后续断言以假象通过
+  if (!hit) throw new SmokeFailure('MockCasdoor：admin 登录响应未带 casdoor_session_id')
+  return `casdoor_session_id=${hit[1]}`
+}
+
+/**
+ * 以租户管理员身份把权限码授予用户。
+ * 走真 HTTP 是刻意的：这是真实租户管理员的路径（POST /api/update-permission，POST 非 PUT）。
+ * 注意权限码的 name = code（CasdoorClient.upsertPermission 建码时 name 取 code，
+ * manifest 里的中文名落在 displayName）——旧冒烟预种时用的 'p-demo-view' 是虚构的。
+ * @param {MockCasdoor} mock @param {string} cookie
+ * @param {string} org @param {string} permCode @param {string[]} users
+ * @returns {Promise<void>}
+ */
+async function grantPermission(mock, cookie, org, permCode, users) {
+  const res = await httpRequest({
+    port: mock.port,
+    method: 'POST',
+    cookie,
+    path: `/api/update-permission?id=${encodeURIComponent(`${org}/${permCode}`)}`,
+    body: JSON.stringify({ users }),
+  })
+  check(
+    res.status === 200 && json(res)?.status === 'ok',
+    `租户管理员把 ${org} 的 ${permCode} 授予 [${users.join(',')}]`,
+    describe(res),
+  )
+}
+
+/**
  * H3：静态托管回归——/assets/* 必须吐构建产物本体（Task 19 白屏事故的机检化）
  * @param {PhaseBase} b
  * @returns {Promise<void>}
@@ -401,8 +458,8 @@ async function assertStaticServing(b) {
 
 // ---- 形态 1：multi（Host → 租户） ----
 
-/** @param {ChildProcess} child @param {number} port @returns {Promise<void>} */
-async function runMulti(child, port) {
+/** @param {ChildProcess} child @param {number} port @param {MockCasdoor} mock @returns {Promise<void>} */
+async function runMulti(child, port, mock) {
   const b = base(port, TENANT_HOST)
   await waitReady(child, port, 'multi')
 
@@ -425,6 +482,37 @@ async function runMulti(child, port) {
   )
 
   await assertStaticServing(b)
+
+  step('multi：权限码供给落到每个租户各自的 org（issue #3 第一节回归锁）')
+  const mockCookie = await mockAdminCookie(mock)
+  const acmeCodes = mock.permissionsIn('acme').flatMap((p) => p.resources ?? [])
+  const betaCodes = mock.permissionsIn('beta').flatMap((p) => p.resources ?? [])
+  // 先断【机制】再断【后果】——机制那条先红时，failure 直接指向"哪几个 org 被建了码"，
+  // 比从"beta 缺码"反推快一步。
+  //
+  // 断言 org【集合】而不是调用【次数】：demo 恰好 2 条码、租户恰好 2 个 ⇒ 正常态 4 次、
+  // 单 org 缺陷态 2 次，`count >= 2` 在两者下都为真（即它抓不住自己声称要抓的缺陷）。
+  // 集合断言随租户/码数增长自然收紧，且直接表达"每个租户各自的 org 都被建了码"
+  const provisionedOrgs = [...new Set(mock.addPermissionCalls.map((c) => c.owner))].sort()
+  check(
+    provisionedOrgs.join(',') === 'acme,beta',
+    `装载器经 add-permission 建码覆盖两个租户 org（实际 [${provisionedOrgs.join(', ')}]）`,
+    { provisionedOrgs, addPermissionCalls: mock.addPermissionCalls },
+  )
+  check(
+    acmeCodes.includes('demo:view') && acmeCodes.includes('demo:note'),
+    'acme org 内已建出 demo:view + demo:note',
+    { acmeCodes, decoyPlatformOrg: DECOY_PLATFORM_ORG },
+  )
+  check(
+    betaCodes.includes('demo:view') && betaCodes.includes('demo:note'),
+    'beta org 内同样建出两条码 —— 修复前此处置空（写侧只落一个 org ⇒ 其余租户恒 403）',
+    { betaCodes },
+  )
+
+  // 授予用户是租户管理员的事，与装载器建码分开：只授 acme，beta 刻意不授（下面用它证 403 在拦）
+  await grantPermission(mock, mockCookie, 'acme', 'demo:view', [ADMIN1])
+  await grantPermission(mock, mockCookie, 'acme', 'demo:note', [ADMIN1])
 
   step('multi：登录 / 授权 / 登出 全链路')
   const adminJar = new CookieJar()
@@ -474,14 +562,43 @@ async function runMulti(child, port) {
   // 对照：viewer1 的会话不受影响（登出只作用于自己的 cookie）
   const viewerStill = await b.get('/api/platform/auth/session', { cookie: viewerJar.header() })
   check(viewerStill.status === 200, 'viewer1 会话不受 admin1 登出影响（200）', describe(viewerStill))
+
+  step('multi：beta 租户 —— 码在、授权不在 ⇒ 403（issue #3 第二节成因③）')
+  const betaBase = base(port, BETA_HOST)
+  const betaBranding = await betaBase.get('/api/platform/branding')
+  check(
+    betaBranding.status === 200 && json(betaBranding)?.productName === BETA_PRODUCT_NAME,
+    `beta.test 解析到 beta 租户（productName=${BETA_PRODUCT_NAME}）`,
+    describe(betaBranding),
+  )
+  const betaJar = new CookieJar()
+  await login(betaBase, betaJar, ADMIN1, 'beta')
+  const betaSession = await betaBase.get('/api/platform/auth/session', { cookie: betaJar.header() })
+  check(
+    !((json(betaSession)?.scopes ?? []).includes('demo:view')),
+    'beta 下 admin1 的 scopes 不含 demo:view（授权只给了 acme）',
+    { scopes: json(betaSession)?.scopes },
+  )
+  const betaPing = await betaBase.get('/api/modules/demo/ping', { cookie: betaJar.header() })
+  check(
+    betaPing.status === 403 && json(betaPing)?.error === 'FORBIDDEN',
+    'beta 下 GET /api/modules/demo/ping 403 FORBIDDEN —— 码存在但未授权，403 是授权在拦',
+    describe(betaPing),
+  )
 }
 
 // ---- 形态 2：single（PLATFORM_ORG 唯一租户） ----
 
-/** @param {ChildProcess} child @param {number} port @returns {Promise<void>} */
-async function runSingle(child, port) {
+/** @param {ChildProcess} child @param {number} port @param {MockCasdoor} mock @returns {Promise<void>} */
+async function runSingle(child, port, mock) {
   const b = base(port, undefined) // 不带 Host：默认 127.0.0.1——single 模式 host 完全被忽略
   await waitReady(child, port, 'single')
+
+  // single 与 multi 共用同一枚 mock（进程内单例），但本函数自持授权，不依赖 multi 先跑过——
+  // 两个形态各自是一份可独立理解的验收
+  const singleCookie = await mockAdminCookie(mock)
+  await grantPermission(mock, singleCookie, 'acme', 'demo:view', [ADMIN1])
+  await grantPermission(mock, singleCookie, 'acme', 'demo:note', [ADMIN1])
 
   step('single：无 Host 头也按 PLATFORM_ORG 命中')
   const branding = await b.get('/api/platform/branding')
@@ -530,10 +647,9 @@ async function main() {
       { name: ADMIN1, password: USER_PASSWORD, displayName: 'Admin One' },
       { name: VIEWER1, password: USER_PASSWORD, displayName: 'Viewer One' },
     ],
-    perms: [
-      { name: 'p-demo-view', users: [ADMIN1], resources: ['demo:view'] },
-      { name: 'p-demo-note', users: [ADMIN1], resources: ['demo:note'] },
-    ],
+    // 刻意【不预种任何权限码】：预种会让装载器的 upsert 查重必命中、add-permission 全程零调用，
+    // 于是「装载器真的建过码」这件事在门禁里不可见（issue #3 第二节成因②）。
+    // 用户授权改由 grantPermission() 以租户管理员身份走 HTTP 完成——装载器建码、管理员授权是两件事
   })
 
   /**
@@ -564,15 +680,16 @@ async function main() {
   console.log(`smoke-load: DATABASE_URL 已注入；multi=:${multiPort} single=:${singlePort}`)
 
   try {
-    // 形态 1：multi —— PLATFORM_ORG 不设，走「装载器 warn 跳过权限 upsert」分支
-    multiChild = startServer(commonEnv(multiPort, 'multi', ''), 'multi')
-    await runMulti(multiChild, multiPort)
+    // 形态 1：multi —— PLATFORM_ORG 刻意设为【诱饵】（不指向任何租户）：供给必须由
+    // platform.tenant 驱动，这个值不该在任何一处起作用（issue #3 第二节回归锁）
+    multiChild = startServer(commonEnv(multiPort, 'multi', DECOY_PLATFORM_ORG), 'multi')
+    await runMulti(multiChild, multiPort, mock)
     await stopServer(multiChild, 'multi')
     multiChild = undefined
 
-    // 形态 2：single —— PLATFORM_ORG=acme，走「权限 upsert 真调 Casdoor」分支
+    // 形态 2：single —— PLATFORM_ORG=acme，走「无 Host 头也按它命中租户」分支
     singleChild = startServer(commonEnv(singlePort, 'single', 'acme'), 'single')
-    await runSingle(singleChild, singlePort)
+    await runSingle(singleChild, singlePort, mock)
     await stopServer(singleChild, 'single')
     singleChild = undefined
   } finally {

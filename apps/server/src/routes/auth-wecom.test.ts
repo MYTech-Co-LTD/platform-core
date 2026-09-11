@@ -35,8 +35,10 @@ const mock = new MockCasdoor({
     { name: 'wo_alice', password: 'pw', roles: ['ops'] },
   ],
   perms: [
-    { name: 'p-view', users: ['alice', 'wo_alice'], resources: ['ticket:view'] },
-    { name: 'p-admin', roles: ['ops'], resources: ['ticket:admin'] },
+    // owner 必须与租户 org 一致（同 auth.test.ts）：权限按 org 分桶后，不标 owner 的码
+    // 落在 MOCK_ORG 桶，租户 org='acme' 的 client 看不到 ⇒ scopes 恒空
+    { owner: 'acme', name: 'p-view', users: ['alice', 'wo_alice'], resources: ['ticket:view'] },
+    { owner: 'acme', name: 'p-admin', roles: ['ops'], resources: ['ticket:admin'] },
   ],
 })
 

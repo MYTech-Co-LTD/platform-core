@@ -30,8 +30,10 @@ const SECRET = 'test-session-secret-0123456789abcdef' // ≥32 字符，测试�
 const mock = new MockCasdoor({
   users: [{ name: 'alice', password: 'pw', roles: ['ops'], displayName: 'Alice' }],
   perms: [
-    { name: 'p-view', users: ['alice'], resources: ['ticket:view'] },
-    { name: 'p-admin', roles: ['ops'], resources: ['ticket:admin'] },
+    // owner 必须与租户 org 一致（host acme.test → tenant.casdoor_org='acme'）：
+    // 权限按 org 分桶后，不标 owner 的码落在 MOCK_ORG 桶，org='acme' 的 client 看不到
+    { owner: 'acme', name: 'p-view', users: ['alice'], resources: ['ticket:view'] },
+    { owner: 'acme', name: 'p-admin', roles: ['ops'], resources: ['ticket:admin'] },
   ],
 })
 

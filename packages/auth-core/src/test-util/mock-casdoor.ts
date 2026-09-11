@@ -9,6 +9,9 @@
 //   ② 选择器形参走 query 风格 —— buy-product 类端点同款陷阱：
 //     get-user 只认 id=<org>/<name> 全形（owner=/name= 或无斜杠会被真实 Casdoor 报
 //     wrong token count）、get-permissions 认 owner=、update-permission 认 id=。
+//     **权限按 owner 分桶**：get-permissions 只回该 org 的、add 按 body.owner 归桶、
+//     update 按 (owner,name) 定位。曾经的 "mock 单 org、忽略 owner=" 是 M0 门禁对
+//     multi 权限供给结构性失明的原因（issue #3 第二节成因①），不得回退。
 //     注意：query 形参陷阱【不适用于 /api/login】——登录凭据走 JSON body
 //     （sso-shell.js:129-133 生产形状）；query 通道会把密码泄进服务端/代理
 //     access log，绝不采用（query 兼容读仅为防旧脚本，新代码不得依赖）。
@@ -33,6 +36,8 @@ export interface MockCasdoorUser {
 export interface MockCasdoorPerm {
   /** Casdoor 权限必有 name；种子未给时以首个 resource 兜底（装载器场景 code 即 name） */
   name?: string
+  /** 权限归属 org（Casdoor 权限记录按 owner 分桶）。缺省 = MOCK_ORG，旧用例兼容 */
+  owner?: string
   users?: string[]
   roles?: string[]
   resources?: string[]
@@ -57,6 +62,7 @@ export class MockCasdoor {
   #perms: Array<Record<string, unknown>> = []
   #sessions = new Map<string, { user: string; anonymous: boolean }>()
   #oidcCodes = new Map<string, string>() // authorization code → 用户名（单次即焚）
+  #addPermissionCalls: Array<{ owner: string; name: string }> = []
   #tokenFault: 'off' | 'http502' | 'html200' = 'off'
   #server: ReturnType<typeof serve> | null = null
   #port = 0
@@ -77,7 +83,7 @@ export class MockCasdoor {
     for (const [i, p] of (opts.perms ?? []).entries()) {
       const name = p.name ?? p.resources?.[0] ?? `perm-${i + 1}`
       this.#perms.push({
-        owner: MOCK_ORG,
+        owner: p.owner ?? MOCK_ORG,
         name,
         displayName: name,
         users: p.users ?? [],
@@ -99,6 +105,19 @@ export class MockCasdoor {
   get origin(): string { return `http://127.0.0.1:${this.#port}` }
   /** 最近一次 /api/login 收到的 application 形参（测试观测口；不含密码，纪律①） */
   get lastLoginApplication(): string { return this.#lastLoginApplication }
+
+  /** 某 org 的权限记录（断言用；等价 get-permissions?owner=，但不经 HTTP） */
+  permissionsIn(org: string): Array<Record<string, unknown>> {
+    return this.#perms.filter((p) => p.owner === org).map((p) => ({ ...p }))
+  }
+
+  /**
+   * add-permission 调用记录——「装载器真的建过码」的唯一机检证据。
+   * issue #3 第二节成因②：旧冒烟预种权限码 ⇒ 装载器查重必命中 ⇒ 走 update 分支 ⇒ 此处恒空。
+   */
+  get addPermissionCalls(): ReadonlyArray<{ owner: string; name: string }> {
+    return this.#addPermissionCalls
+  }
 
   /**
    * 预种一枚 Casdoor authorization code（等价 authorize 页完成认证后的下发）。
@@ -162,9 +181,14 @@ export class MockCasdoor {
 
   #updatePermission = async (c: Context) => {
     if (!this.#isAdminSession(c)) return this.#unauthorized(c)
-    // 纪律 ②：id=<org>/<name> query 形参（缺省会像真实 Casdoor 一样取不到目标）
-    const name = (c.req.query('id') ?? '').split('/').pop() ?? ''
-    const p = this.#perms.find((x) => x.name === name)
+    // 纪律 ②：id=<org>/<name> 全形 query 形参。owner 参与定位——跨 org 同名权限互不干扰
+    // （旧实现只按 name 找：两个 org 各有一枚 demo:view 时会改错那一枚，而 get-permissions
+    //   已按 org 分桶 ⇒ 表现为"改了 A 租户的码、B 租户的授权凭空消失"这种极难归因的症状）
+    const segs = (c.req.query('id') ?? '').split('/')
+    if (segs.length !== 2 || !segs[0] || !segs[1]) {
+      return c.json({ status: 'error', msg: 'wrong token count, expect <org>/<name>' })
+    }
+    const p = this.#perms.find((x) => x.owner === segs[0] && x.name === segs[1])
     if (!p) return c.json({ status: 'error', msg: 'permission not found' })
     const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
     Object.assign(p, {
@@ -250,22 +274,30 @@ export class MockCasdoor {
         },
       })
     })
-    // GET /api/get-permissions?owner=<org> —— 纪律 ②：owner= query 形参（mock 单 org，忽略具体值）
+    // GET /api/get-permissions?owner=<org> —— 纪律 ②：owner= query 形参，**按 org 分桶**。
+    // owner 缺失一律 status:error：绝不"忽略形参回全部"——那正是 M0 门禁对 multi 权限
+    // 结构性失明的根因（issue #3 第二节成因①），回退成那个形状必须立刻可见
     .get('/api/get-permissions', (c) => {
       if (!this.#isAdminSession(c)) return this.#unauthorized(c)
-      return c.json({ status: 'ok', data: this.#perms.map((p) => ({ ...p })) })
+      const owner = c.req.query('owner') ?? ''
+      if (!owner) return c.json({ status: 'error', msg: 'owner required' })
+      return c.json({ status: 'ok', data: this.permissionsIn(owner) })
     })
-    // POST /api/add-permission —— 载荷在 JSON body；同名拒绝（钉死 upsert 必须先查重）
+    // POST /api/add-permission —— 载荷在 JSON body；owner 必填并据此归桶；
+    // (owner,name) 重复拒绝（钉死 upsert 必须先查重）
     .post('/api/add-permission', async (c) => {
       if (!this.#isAdminSession(c)) return this.#unauthorized(c)
       const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+      const owner = String(b.owner ?? '')
       const name = String(b.name ?? '')
+      if (!owner) return c.json({ status: 'error', msg: 'owner required' })
       if (!name) return c.json({ status: 'error', msg: 'name required' })
-      if (this.#perms.some((p) => p.name === name)) {
+      if (this.#perms.some((p) => p.owner === owner && p.name === name)) {
         return c.json({ status: 'error', msg: 'duplicate permission name' })
       }
+      this.#addPermissionCalls.push({ owner, name })
       this.#perms.push({
-        owner: MOCK_ORG,
+        owner,
         name,
         displayName: String(b.displayName ?? name),
         model: String(b.model ?? 'built-in/user-model-built-in'),

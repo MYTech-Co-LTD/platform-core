@@ -13,9 +13,15 @@ export interface CasdoorConfig {
   clientId: string
   /** .env.example 默认留空：纯 mock/延迟接入场景允许空串，真实调用由 CasdoorClient 自行兜底 */
   clientSecret: string
-  /** 管理端点凭据（upsertPermission 等），可空——纯登录场景不需要 */
-  adminUser?: string
-  adminPwd?: string
+  /**
+   * Casdoor 管理端点凭据，**必填**（启动期 fail-fast）。
+   *
+   * 它不只服务权限码供给：登录签发前必调 getUser + getPermissions（`routes/auth.ts`），
+   * 两者都走 admin 会话 ⇒ 缺凭据时**没有人能拿到会话**——即便凭据正确，登录也会在签发前 502（错凭据仍是 401，那是对的）。所以「只登录不
+   * 管理」不是一种可用的部署形态，缺凭据的实例起得来也毫无用处——不如启动期就报错。
+   */
+  adminUser: string
+  adminPwd: string
   /** /api/login 的 application 形参（org 用户密码验证需其 signupApplication），可空走 CasdoorClient 默认 */
   application?: string
 }
@@ -24,7 +30,13 @@ export interface AppConfig {
   port: number
   databaseUrl: string
   tenantMode: TenantMode
-  /** single 模式 = 唯一租户的 casdoor org；multi 模式恒为空串 */
+  /**
+   * single 模式 = 唯一租户的 casdoor org（必填，配错的表现是启动期报「租户不存在」）。
+   * multi 模式下本值**不参与租户解析，也不参与模块权限码供给**（后者按 platform.tenant
+   * 的各租户 org 逐个进行）——留空即可，留了也不起作用。
+   * 注意：本值不会在 multi 下被强制清空（下面 optional() 的语义是"空/空白 → undefined"），
+   * 别把"multi 下它一定为空"当成可以依赖的前提。
+   */
   platformOrg: string
   sessionSecret: string
   casdoor: CasdoorConfig
@@ -79,8 +91,9 @@ export function loadConfig(env: Env = process.env): AppConfig {
       url: requireValue('CASDOOR_URL'),
       clientId: requireValue('CASDOOR_CLIENT_ID'),
       clientSecret: optional('CASDOOR_CLIENT_SECRET') ?? '',
-      adminUser: optional('CASDOOR_ADMIN_USER'),
-      adminPwd: optional('CASDOOR_ADMIN_PWD'),
+      // 必填：缺凭据时平台 100% 不可用（见 CasdoorConfig.adminUser 的说明）
+      adminUser: requireValue('CASDOOR_ADMIN_USER'),
+      adminPwd: requireValue('CASDOOR_ADMIN_PWD'),
       application: optional('CASDOOR_APPLICATION'),
     },
     publicOrigin: requireValue('PUBLIC_ORIGIN'),

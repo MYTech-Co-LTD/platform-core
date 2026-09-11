@@ -201,8 +201,12 @@ async function main() {
       { name: VIEWER1, password: USER_PASSWORD, displayName: 'Viewer One' },
     ],
     perms: [
-      { name: 'p-demo-view', users: [ADMIN1], resources: ['demo:view'] },
-      { name: 'p-demo-note', users: [ADMIN1], resources: ['demo:note'] },
+      // owner 必须与租户 org 一致（TENANT_MODE=single, PLATFORM_ORG='acme' → 租户
+      // casdoor_org='acme'）：权限按 org 分桶后，不标 owner 的种子会落进 MOCK_ORG 桶，
+      // acme 的 client 读不到 ⇒ 装载器另建一枚 users 为空的码 ⇒ admin1 scopes 恒空、
+      // 模块 API 全 403。docs/m0-smoke-checklist.md 的 C1 复现路径押在这里
+      { owner: 'acme', name: 'p-demo-view', users: [ADMIN1], resources: ['demo:view'] },
+      { owner: 'acme', name: 'p-demo-note', users: [ADMIN1], resources: ['demo:note'] },
     ],
   })
 

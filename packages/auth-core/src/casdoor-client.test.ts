@@ -3,8 +3,10 @@ import { CasdoorClient } from './casdoor-client'
 import { MockCasdoor } from './test-util/mock-casdoor'
 
 let m: MockCasdoor
+// owner 必须与下面 client 的 org 一致：权限按 org 分桶后，种到 mock-org 的码在
+// org:'acme' 的 client 眼里是不存在的（这正是 mock 分桶语义生效的证明）
 beforeAll(async () => { m = new MockCasdoor({ users: [{ name: 'admin1', password: 'pw', roles: ['ops'] }],
-  perms: [{ users: ['admin1'], resources: ['demo:view'] }] }); await m.start() })
+  perms: [{ owner: 'acme', users: ['admin1'], resources: ['demo:view'] }] }); await m.start() })
 afterAll(async () => { await m.stop() })
 
 describe('CasdoorClient', () => {
@@ -97,7 +99,7 @@ describe('CasdoorClient 语义钉死（C2）', () => {
   })
 
   it('update-permission 形状钉死：PUT → 405，update 路径走 POST（admin-api.js casdoorPost 形状）', async () => {
-    const put = await fetch(`${m.origin}/api/update-permission?id=mock-org/demo:view`, {
+    const put = await fetch(`${m.origin}/api/update-permission?id=acme/demo:view`, {
       method: 'PUT',
       headers: { Cookie: await adminCookie(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ displayName: '不该生效' }),
@@ -125,5 +127,108 @@ describe('CasdoorClient 语义钉死（C2）', () => {
     const j = await r.json()
     expect(j.status).toBe('error')
     expect(String(j.msg)).toMatch(/token/)
+  })
+})
+
+// ---- 批量供给的语义（M1 评审修复轮 R2）----
+//
+// 这三条覆盖的是本批新增的公开接口 upsertPermissions 的三处新语义。加它们的直接原因：
+// 该接口此前**零直接测试**，于是"同批重复 code 抹掉 users"与"duplicate 无条件容忍"
+// 两个缺陷都没被任何红检咬住——补测试是这类问题的唯一根治。
+
+/** 直连 mock 的管理端点建一条权限记录（用于造出特定形状的既有数据） */
+async function seedPermDirect(p: {
+  owner: string
+  name: string
+  resources: string[]
+  users?: string[]
+}): Promise<void> {
+  const r = await fetch(`${m.origin}/api/add-permission`, {
+    method: 'POST',
+    headers: { Cookie: await adminCookie(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ displayName: p.name, users: [], ...p }),
+  })
+  const j = (await r.json()) as { status?: string }
+  if (j.status !== 'ok') throw new Error(`seedPermDirect 失败：${JSON.stringify(j)}`)
+}
+
+describe('upsertPermissions 批量语义', () => {
+  it('同批内同一 code 出现两次：只发一次写请求，不重复 add/update', async () => {
+    const realFetch = globalThis.fetch
+    let mutating = 0
+    const c = new CasdoorClient({
+      origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+      adminUser: 'admin', adminPwd: 'pw',
+      fetchImpl: (input, init) => {
+        const u = String(input)
+        if (u.includes('add-permission') || u.includes('update-permission')) mutating++
+        return realFetch(input as RequestInfo, init)
+      },
+    })
+
+    await c.upsertPermissions([
+      { code: 'dup:code', name: '重复码' },
+      { code: 'dup:code', name: '重复码' },
+    ])
+
+    expect(mutating).toBe(1)
+    expect(m.permissionsIn('acme').filter((p) => p.name === 'dup:code')).toHaveLength(1)
+  })
+
+  it('★ 撞码（name 相同但 resources 不含该码）→ 抛错，绝不静默把既有授权洗掉', async () => {
+    // 共享 Casdoor 里可能由别的系统建出这种记录：name 撞上我们的 code，但 resources 不认它。
+    // 此时 add 会被判 duplicate，而"码究竟在不在"必须靠重读判定，不能靠错误文案猜。
+    await seedPermDirect({
+      owner: 'acme', name: 'collide:code', resources: ['legacy:other'], users: ['alice'],
+    })
+
+    const c = new CasdoorClient({
+      origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+      adminUser: 'admin', adminPwd: 'pw',
+    })
+    // 同批传两次是关键：旧实现会"容忍 duplicate + 塞占位记录"，第二次迭代拿占位走 update
+    // ⇒ 把 alice 的授权洗成 []，且全程不报错（这正是要防的静默损坏）
+    //
+    // 断言不锁错误文案：生产代码刚刚专门去掉了对 Casdoor 文案的依赖（文案随版本/分支变），
+    // 测试层再把 `/duplicate/i` 押回 mock 自造的那句字符串上就是同一耦合换个位置。
+    // 真正的判据是下面那条——既有记录的 users 有没有被动过
+    await expect(
+      c.upsertPermissions([
+        { code: 'collide:code', name: '撞码' },
+        { code: 'collide:code', name: '撞码' },
+      ]),
+    ).rejects.toThrow()
+
+    // 既有记录的授权必须原封不动
+    expect(m.permissionsIn('acme').find((p) => p.name === 'collide:code')?.users).toEqual(['alice'])
+  })
+
+  it('并发竞态：add 被拒但码确已被对方建好 ⇒ 视为成功，且不洗对方的 users', async () => {
+    const realFetch = globalThis.fetch
+    const cookie = await adminCookie()
+    let injected = false
+    const c = new CasdoorClient({
+      origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+      adminUser: 'admin', adminPwd: 'pw',
+      fetchImpl: async (input, init) => {
+        // 客户端的查重发生在 add 之前 ⇒ 那时码还不存在；add 发出前让"另一个实例"把它建好
+        // ⇒ 客户端拿到 duplicate，但目标状态其实已达成
+        if (!injected && String(input).includes('add-permission')) {
+          injected = true
+          await realFetch(`${m.origin}/api/add-permission`, {
+            method: 'POST',
+            headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              owner: 'acme', name: 'race:code', displayName: '竞态',
+              resources: ['race:code'], users: ['someone'],
+            }),
+          })
+        }
+        return realFetch(input as RequestInfo, init)
+      },
+    })
+
+    await expect(c.upsertPermission('race:code', '竞态')).resolves.toBeUndefined()
+    expect(m.permissionsIn('acme').find((p) => p.name === 'race:code')?.users).toEqual(['someone'])
   })
 })

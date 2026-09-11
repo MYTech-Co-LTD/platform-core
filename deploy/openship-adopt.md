@@ -26,7 +26,7 @@
 | 2 | **PG 策略** | 决定卷与备份面 | 见「生产差异」第 1 条。M0 阶段建议直接用 compose 里的 postgres（数据在 named volume），并把它纳入 openship 的卷备份 |
 | 3 | **域名 + 证书** | 对外可见面 | `platform.<公司域>`；DNS CNAME → 目标生产机，`.env` 的 `PUBLIC_ORIGIN` 必须与它逐字一致（企微回调 `redirect_uri` 由它拼） |
 | 4 | **项目名 / slug** | 决定控制面标识与下面的 repo variable 值 | `platform-core`（已核对：控制面当前 6 个项目里没有被占用） |
-| 5 | **Casdoor 接入参数** | 启动期就要真连 | 用哪个 org / application / admin 凭据。**注意**：`TENANT_MODE=single` 且 `PLATFORM_ORG` 非空时，宿主启动期会调 Casdoor upsert 模块权限码，Casdoor 不可达 = 进程起不来（见下方「已知陷阱」） |
+| 5 | **Casdoor 接入参数** | 启动期就要真连 | 用哪个 org / application / admin 凭据。**注意**：配了 admin 凭据时，宿主启动期会按各租户 org 调 Casdoor upsert 模块权限码（`single`/`multi` 皆是），Casdoor 不可达 = 进程起不来（见下方「已知陷阱」） |
 
 ## 要接的东西（一张表看完）
 
@@ -125,12 +125,12 @@ curl -fsS -X PATCH "$OPENSHIP_URL/api/projects/$PROJECT_ID/env" \
 |----|-----------|------|
 | `PORT` | `13000` | 与 compose 的容器端口一致 |
 | `DATABASE_URL` | 依决策 2 | compose 内网服务名 `postgres`；**不要照抄 `.env.example` 的 `127.0.0.1`**（那是宿主视角） |
-| `TENANT_MODE` | `single`（单客户）/ `multi`（多租户） | `multi` 时 `PLATFORM_ORG` 留空、租户由 Host 解析，且**跳过**启动期权限 upsert |
-| `PLATFORM_ORG` | 单客户 = 客户 Casdoor org | `single` 模式下必填，配错的表现是启动期报「租户不存在」 |
+| `TENANT_MODE` | `single`（单客户）/ `multi`（多租户） | `multi` 时租户由 Host 解析，`PLATFORM_ORG` 不再参与；**两种模式都会**按 `platform.tenant` 的各租户 org 逐个供给模块权限码 |
+| `PLATFORM_ORG` | 单客户 = 客户 Casdoor org | `single` 模式下必填，配错的表现是启动期报「租户不存在」；`multi` 模式下不参与租户解析与权限供给 |
 | `PLATFORM_SESSION_SECRET` | ≥32 字符随机串 | 会话签名密钥，**泄漏即等于会话可伪造**；换值会让所有会话失效 |
 | `CASDOOR_URL` | `https://sso.hookflow.cn` | 共享 SSO |
 | `CASDOOR_CLIENT_ID` / `_SECRET` | 该 application 的凭据 | 走 OIDC code 换 token |
-| `CASDOOR_ADMIN_USER` / `_PWD` | Casdoor 管理员 | **只有 upsertPermission（模块权限码）用它**，但它是启动期必需项 |
+| `CASDOOR_ADMIN_USER` / `_PWD` | Casdoor 管理员 | **启动期必需**。它**不只**服务模块权限码供给：登录签发前必调 `getUser` + `getPermissions`，两者都走 admin 会话 —— 缺凭据时没有人能拿到会话（即便凭据正确也签不出：签发前 502；错凭据仍是 401） |
 | `CASDOOR_APPLICATION` | `signupApplication` | 账密登录要它，否则真实 Casdoor 报 Unauthorized operation |
 | `PUBLIC_ORIGIN` | `https://<域名>` | 企微回调 `redirect_uri` 由它拼，必须与最终访问域名逐字一致 |
 | `SEED_DEMO` | **不要设** | 只在 dev/冒烟置 `1`；生产设了会种出 acme/beta 两个演示租户 |
@@ -213,9 +213,12 @@ curl -fsS -X POST "$OPENSHIP_URL/api/deployments/$DEPLOYMENT_ID/rollback" -H "Au
 1. **静态托管静默降级**：`app.ts` 的 `webDistDir` 按【`apps/server/src/app.ts` 自己的位置】解析
    `../../web/dist`。镜像里 `apps/` 与 `packages/` 的层级被打散 → 该目录不存在 → 只打印一行
    warn 就继续启动（`/healthz` 照绿、页面白屏）。容器日志里搜 `跳过静态托管` 是唯一的现场证据。
-2. **启动期连不上 Casdoor 就起不来**（设计如此，fail-fast）：`single` + `PLATFORM_ORG` 非空时，
-   装载器会调 `upsertPermission`。**别把 Casdoor 排在平台容器后面部署**；共享 SSO 短暂不可用时，
-   `restart: unless-stopped` 会让容器反复重启直到它恢复。
+2. **启动期连不上 Casdoor 就起不来**（设计如此，fail-fast）：装载器会按 `platform.tenant` 的
+   每个租户 org 调 `upsertPermission`——**`single` 与 `multi` 都一样**（M1 起 `multi` 不再跳过
+   供给）。**别把 Casdoor 排在平台容器后面部署**；共享 SSO 短暂不可用时，`restart: unless-stopped`
+   会让容器反复重启直到它恢复。
+   另：`CASDOOR_ADMIN_USER`/`_PWD` 在 M1 起是**必填**，缺了在配置装配阶段就报错——不要试图
+   靠"不配凭据"来跳过启动期供给：登录本身也要 admin 会话，缺了谁都拿不到会话。
 3. **境内构建可能很慢**：镜像构建要现拉 pnpm（corepack）与整棵依赖树。本机（macOS + 已缓存）
    构建约 2 分钟；生产机如果直连 npm 官方源被限速，可参照 `data-platform-scaffold` 里
    `core/gateway/Dockerfile` 的 `ARG NPM_REGISTRY` 办法加国内镜像源（本 Dockerfile 目前

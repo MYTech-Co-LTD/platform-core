@@ -3,7 +3,7 @@
 // 顺序（I-1 硬契约，Task 15 移交）：runtime.mount(app) 之前必须已全局挂
 // 「租户解析 → 会话」两道中间件——模块路由的 requireScope 读 c.get('identity')，
 // 会话层少一道即模块 API 全线 401（未登录）/漏身份（已登录）。
-//   loadConfig → getPool → runMigrations(platform) → loadModules → seed(可选) →
+//   loadConfig → getPool → runMigrations(platform) → seed(可选) → loadModules →
 //   Hono：安全头 → /healthz → 租户 → 会话 → /api/platform/* → auth → wecom →
 //   runtime.mount(/api/modules/* + userApp) → web 静态 → notFound
 //
@@ -78,25 +78,22 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     return client
   }
 
-  // ② 模块装载（overrides.modules 注入时跳过）。权限 upsert 主 org：single=platformOrg
-  // （必填）、multi=PLATFORM_ORG（可缺——缺则传 undefined，装载器逐模块 warn 跳过）
+  // ② demo 种子（SEED_DEMO=1；幂等收敛，重跑安全）。**必须先于装载**：装载器的权限码
+  //    供给按 platform.tenant 取租户 org，全新库上租户还不存在时会一个码都建不出来
+  //    （本设计引入的次序约束，见 docs/superpowers/specs/2026-09-11-*）
+  if (config.seedDemo) await seedDemo(pool)
+
+  // ③ 模块装载（overrides.modules 注入时跳过）。权限码供给交给工厂：装载器自己按
+  //    platform.tenant 的各租户 org 逐个 upsert —— multi 下每个租户各有一套码，
+  //    写侧与读侧（session-middleware 的 casdoor(p.org)）因此同源。
+  //    这里无条件传工厂：admin 凭据在 config 层已是必填，装载器拿不到工厂的情形
+  //    在生产上不存在（该可选参数只服务测试与注入式用法）
   let runtime: ModulesRuntime
   if (overrides.modules) {
     runtime = overrides.modules
   } else {
-    if (!config.platformOrg) {
-      console.warn(
-        '[modules] 未配置 PLATFORM_ORG，权限码 upsert 将跳过（multi 模式如需启用：设 PLATFORM_ORG）',
-      )
-    }
-    runtime = await loadModules(modulesDir, {
-      pool,
-      casdoor: config.platformOrg ? casdoorFactory(config.platformOrg) : undefined,
-    })
+    runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactory })
   }
-
-  // ③ demo 种子（SEED_DEMO=1；幂等收敛，重跑安全）
-  if (config.seedDemo) await seedDemo(pool)
 
   const app = new Hono<TenantEnv & SessionEnv>()
 

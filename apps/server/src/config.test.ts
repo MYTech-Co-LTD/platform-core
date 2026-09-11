@@ -38,22 +38,35 @@ describe('loadConfig', () => {
     })
   })
 
-  it('multi 模式 PLATFORM_ORG 可缺省；admin 凭据可空；CASDOOR_APPLICATION 可选透传；SEED_DEMO 开关', () => {
+  it('multi 模式 PLATFORM_ORG 可缺省；CASDOOR_APPLICATION 可选透传；SEED_DEMO 开关', () => {
     const cfg = loadConfig({
       ...baseEnv,
       TENANT_MODE: 'multi',
       PLATFORM_ORG: '',
-      CASDOOR_ADMIN_USER: '',
-      CASDOOR_ADMIN_PWD: '',
       CASDOOR_APPLICATION: 'app-built-in',
       SEED_DEMO: '1',
     })
     expect(cfg.tenantMode).toBe('multi')
     expect(cfg.platformOrg).toBe('')
-    expect(cfg.casdoor.adminUser).toBeUndefined()
-    expect(cfg.casdoor.adminPwd).toBeUndefined()
     expect(cfg.casdoor.application).toBe('app-built-in')
     expect(cfg.seedDemo).toBe(true)
+  })
+
+  // 曾经这两个键是可选的，理由写的是"纯登录场景不需要管理端点"——**那是错的**：
+  // 登录签发前必调 getUser + getPermissions（routes/auth.ts），两者都走 admin 会话，
+  // 缺凭据时没有任何人能拿到会话——即便凭据正确，登录也会在签发前 502（错凭据仍是 401，
+  // 那是对的）。缺凭据的实例起得来也毫无用处，
+  // 故改为启动期必需（fail-fast 而非"起得来但全员用不了"）
+  it('缺 CASDOOR_ADMIN_USER / _PWD → 抛错（登录本身就要管理端点）', () => {
+    expect(() => loadConfig({ ...baseEnv, CASDOOR_ADMIN_USER: undefined }))
+      .toThrow(/CASDOOR_ADMIN_USER/)
+    expect(() => loadConfig({ ...baseEnv, CASDOOR_ADMIN_PWD: undefined }))
+      .toThrow(/CASDOOR_ADMIN_PWD/)
+    // 空串与全空白同样视为缺失（requireValue 语义）
+    expect(() => loadConfig({ ...baseEnv, CASDOOR_ADMIN_USER: '' }))
+      .toThrow(/CASDOOR_ADMIN_USER/)
+    expect(() => loadConfig({ ...baseEnv, CASDOOR_ADMIN_PWD: '   ' }))
+      .toThrow(/CASDOOR_ADMIN_PWD/)
   })
 
   it('TENANT_MODE 非 multi/single → 抛错（含缺失）', () => {

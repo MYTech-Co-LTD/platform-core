@@ -90,11 +90,44 @@ export class CasdoorClient {
   }
 
   /** 幂等 upsert 权限码：查重（resources 含 code）→ 命中则 update，否则 add；
-   *  既有记录的 users/roles/resources 原样保留（装载器重跑不洗配额） */
+   *  既有记录的 users/roles/resources 原样保留（装载器重跑不洗配额）。
+   *  单码版；批量场景用 upsertPermissions（每 org 只拉一次 get-permissions） */
   async upsertPermission(code: string, name: string): Promise<void> {
-    const existing = (await this.#permissionsRaw()).find(
-      (p) => Array.isArray(p.resources) && (p.resources as string[]).includes(code),
-    )
+    await this.upsertPermissions([{ code, name }])
+  }
+
+  /**
+   * 批量幂等 upsert 权限码：**每个 org 只拉一次** get-permissions 再逐码判定。
+   *
+   * 为什么需要它：upsertPermission 每调一次都全量拉一遍 `get-permissions?pageSize=100`。
+   * 装载器的供给是「租户数 × 码数」双层循环，单码版下每租户每码都是一次 GET（+ 可能的
+   * POST）——1 个租户 10 个模块就是几十次串行往返，且租户扩张是乘法增长。
+   */
+  async upsertPermissions(items: ReadonlyArray<{ code: string; name: string }>): Promise<void> {
+    if (items.length === 0) return
+    const existingList = await this.#permissionsRaw()
+    // 同批内去重：同一 code 出现第二次时目标状态已达成，直接跳过。
+    // 【不要】用"把刚建的码拼一条假记录塞进 existingList"来实现去重——那种占位记录缺
+    // users/roles/model 字段，会被 #upsertOne 当成真记录消费（existing?.users ?? []），
+    // 于是走 update 把服务端的 users 清空。旧单码版每次都重取服务端、拿到的是真记录，
+    // 那样写是语义退化
+    const seen = new Set<string>()
+    for (const { code, name } of items) {
+      if (seen.has(code)) continue
+      seen.add(code)
+      const existing = existingList.find(
+        (p) => Array.isArray(p.resources) && (p.resources as string[]).includes(code),
+      )
+      await this.#upsertOne(code, name, existing)
+    }
+  }
+
+  /** 单码 upsert 的实际动作（查重结果由调用方传入，便于批量复用同一次 get-permissions） */
+  async #upsertOne(
+    code: string,
+    name: string,
+    existing: Record<string, unknown> | undefined,
+  ): Promise<void> {
     const body = {
       owner: this.#o.org,
       name: (existing?.name as string | undefined) ?? code,
@@ -110,8 +143,42 @@ export class CasdoorClient {
       ? `update-permission?id=${encodeURIComponent(`${this.#o.org}/${String(existing.name)}`)}`
       : 'add-permission'
     // add/update 都是 POST（admin-api.js casdoorPost 形状；真实 Casdoor update-* 无 PUT 端点）
-    const j = await this.#adminJson(path, { method: 'POST', body })
-    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    try {
+      const j = await this.#adminJson(path, { method: 'POST', body })
+      if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    } catch (err) {
+      if (existing) throw err // update 路径的失败照抛，无竞态可言
+      // add 路径失败：滚动发布/多副本下两实例可能同时判"码不存在"并双双 add，输的那个
+      // 报错。**不按错误文案判断**（文案随 Casdoor 版本/分支变，正则匹配等于把正确性
+      // 押在一条 mock 自造的字符串上），改为重读验证目标状态是否已达成：码确实在
+      // resources 里 ⇒ 供给目的已达成，视为成功；不在 ⇒ 抛（真失败必须响）。
+      //
+      // 判据与查重同源（都是 resources 含 code），也正与读侧一致：normalizeScopes 只消费
+      // resources（users/roles 由调用方过滤）。
+      //
+      // 分辨力受 get-permissions 的 pageSize 窗口限制（当前 100，见 #permissionsRaw）：
+      // 窗口内能分开"并发刚建"与"同名撞码"，超出窗口的码两次读都不可见 ⇒ 会保守地抛。
+      // 保守方向是对的（宁可响亮失败，不可静默不供给）；翻页能力本 PR 已列范围外
+      let readErr: unknown
+      const now = await this.#permissionsRaw().catch((e: unknown) => {
+        readErr = e
+        return null
+      })
+      const arrived = now?.some(
+        (p) => Array.isArray(p.resources) && (p.resources as string[]).includes(code),
+      )
+      if (arrived) return
+      // 错误里带上 org/code 与处置线索：撞码时 add 会**永久**失败（平台起不来，不只是某个
+      // 租户 403），而 Casdoor 原文只有一句 duplicate，运维无从反推出"共享 Casdoor 里有一条
+      // 同名异物记录"。二级故障（重读也失败）的原因一并挂上，别让它凭空消失
+      throw new Error(
+        `casdoor: 供给权限码 ${code} 到 org ${this.#o.org} 失败：${(err as Error).message}`
+          + '。失败后重读 get-permissions 未在 resources 里找到该码——若确有一条 name 撞上该码、'
+          + 'resources 却不含它的既有记录（共享 Casdoor 里可能由别的系统建出），需人工处置'
+          + (readErr ? `；且重读本身也出错：${(readErr as Error).message}` : ''),
+        { cause: err },
+      )
+    }
   }
 
   // ---- 内部：登录 / admin 会话 / 请求封装 ----
