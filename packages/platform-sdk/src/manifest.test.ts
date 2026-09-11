@@ -139,6 +139,16 @@ describe('ManifestSchema', () => {
     expect(ManifestSchema.safeParse(bad).success).toBe(false)
   })
 
+  it('★ 负例：api.internal[].path 不以 / 开头 ⇒ 校验失败', () => {
+    // 声明写了非 / 开头的 path ⇒ 模块内相对路径的约定被破坏，宿主拼不出可用的路由。
+    // 运行期双向核对只兜底"注册了但声明对不上"，覆盖不到这种 schema 层违规，故须有静态负例。
+    const bad = { ...validManifest, api: { internal: [{ method: 'GET', path: 'x', scope: 'demo:view' }] } }
+    const r = ManifestSchema.safeParse(bad)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues.some(i => i.path.includes('path'))).toBe(true)
+  })
+
   it('★ 负例：api.internal[].scope 不属于本模块 permissions ⇒ 校验失败', () => {
     // 声明一个自己都没有的码 ⇒ 该路径恒 403 而无人知晓（与"忘挂 requireScope"同一种病的变种）
     const bad = {
