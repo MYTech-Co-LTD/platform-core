@@ -13,7 +13,7 @@
 // 真 PG（同 migrate/tenant/loader.test.ts 约定）：未提供 DATABASE_URL 时整体跳过。
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MockCasdoor } from '@platform/auth-core/src/test-util/mock-casdoor'
-import { buildApp } from './app'
+import { buildApp, MAX_API_BODY_BYTES } from './app'
 import { getPool } from './db'
 import type { AppConfig } from './config'
 
@@ -40,6 +40,59 @@ function configWith(casdoorUrl: string, adminPwd: string): AppConfig {
     seedDemo: true,
   }
 }
+
+describe.skipIf(!dbUrl)('buildApp：/api/* 全局请求体上限（MAX_API_BODY_BYTES）', () => {
+  // 真 buildApp 出来的 app（全局中间件挂在 buildApp 内部，auth.test.ts 那种手搭 makeApp
+  // 不含它）——这里必须走装配，否则测不到全局上限。
+  //
+  // 池生命周期：本文件两个 describe 共用 db.ts 的模块级单例池（同 databaseUrl），故**只有
+  // 运行在最后**的 describe 关池（下面 fail-fast 那个 describe 的既有 afterAll 负责）。
+  // 本 describe 排在前面，只停自己的 mock，不关池——否则后跑的 describe 会拿到已 end 的池。
+  const mock2 = new MockCasdoor()
+  let app: Awaited<ReturnType<typeof buildApp>>['app']
+
+  beforeAll(async () => {
+    await mock2.start()
+    const built = await buildApp({ config: configWith(mock2.origin, 'pw') })
+    app = built.app
+  })
+  afterAll(async () => {
+    await mock2.stop()
+  })
+
+  it('★ 负例：非登录路 /api/* 超过上限的请求体 ⇒ 413（此前只有登录路有上限，其余 /api/* 全无）', async () => {
+    // 为什么不用 /auth/login：登录路自己就有 8192 的有界读取（readBodyBounded），超大 body
+    // 在改动前就已经返 413 ⇒ 拿 login 测全局上限是**假红/恒绿**，测不到本任务的修复。
+    // 换一条非登录路 /api/platform/auth/logout——它不读 body，改动前超大 body 照样走到
+    // 会话层返 401；只有全局 bodyLimit 才能让它在进业务前就 413。
+    const huge = 'x'.repeat(MAX_API_BODY_BYTES + 1024)
+    const res = await app.request('/api/platform/auth/logout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', host: 'acme.test' },
+      body: JSON.stringify({ pad: huge }),
+    })
+    expect(res.status).toBe(413)
+    expect(await res.json()).toEqual({ error: 'PAYLOAD_TOO_LARGE' })
+  })
+
+  it('对照：同一非登录路上限内的请求体照常走到业务（证明上一条不是"把 /api 全拒了"）', async () => {
+    const res = await app.request('/api/platform/auth/logout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', host: 'acme.test' },
+      body: JSON.stringify({ pad: 'x' }),
+    })
+    expect(res.status).toBe(401) // 无会话：证明已进到会话门，而非被上限拦下
+  })
+
+  it('对照：登录路在上限内的坏凭据仍走业务返 401（登录路自己的 8192 上限不受影响）', async () => {
+    const res = await app.request('/api/platform/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', host: 'acme.test' },
+      body: JSON.stringify({ username: 'nobody', password: 'x' }),
+    })
+    expect(res.status).toBe(401)
+  })
+})
 
 describe.skipIf(!dbUrl)('buildApp：启动期 fail-fast 传播', () => {
   const mock = new MockCasdoor()

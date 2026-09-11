@@ -14,6 +14,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import type { Pool } from 'pg'
 import { CasdoorClient } from '@platform/auth-core'
 import { loadConfig, type AppConfig } from './config'
@@ -37,6 +38,17 @@ const platformMigrationsDir = fileURLToPath(new URL('./migrations', import.meta.
  * Docker pnpm start）启动——裸 cwd 仓根直跑 tsx 时该相对路径不成立（详见任务报告）。
  */
 const modulesDir = path.resolve(process.cwd(), '../../modules')
+
+/**
+ * 全仓请求体上限（M1 闭债 R4）。此前只有登录路做了有界读取（routes/auth.ts 的
+ * readBodyBounded，上限 8192），其余 `/api/*` 端点无任何上限 —— 未认证请求即可用大 body
+ * 撑内存。用 hono 自带的 body-limit（不手搓）。
+ *
+ * 取值理由：本仓已知的最大正当载荷是便签正文 2000 字符（modules/demo 的 MAX_NOTE_LEN），
+ * 1 MiB 留出两个数量级余量；将来若出现上传类端点，应**按路由**单列而非抬这个全局值。
+ * 登录路自己的 8192 上限更严，仍然生效（它读 body 时走 readBodyBounded）。
+ */
+export const MAX_API_BODY_BYTES = 1024 * 1024
 
 /** apps/web/dist（Task 17 构建产物）：按本文件位置解析（src/ → ../../web/dist），与 cwd 无关 */
 const webDistDir = fileURLToPath(new URL('../../web/dist', import.meta.url))
@@ -108,6 +120,15 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     c.res.headers.set('X-Content-Type-Options', 'nosniff')
     c.res.headers.set('Referrer-Policy', 'no-referrer')
   })
+
+  // ④.5 请求体上限（M1 闭债 R4）：早于租户解析（拒绝超大载荷不应先做 DB 查询）。
+  // 挂在 /api/* 子树——用 hono 自带的 body-limit（不手搓）；超限返 413 + 同一 JSON 形状。
+  // 顺序约束（Hono 实测）：中间件只对**其后注册**的路由生效，故必须挂在这里（所有
+  // /api/* 路由都在下面 ⑦⑧⑨ 注册）；挂到路由之后再 use 会永不执行。
+  app.use('/api/*', bodyLimit({
+    maxSize: MAX_API_BODY_BYTES,
+    onError: (c) => c.json({ error: 'PAYLOAD_TOO_LARGE' }, 413),
+  }))
 
   // ⑤ /healthz —— 在租户中间件之前：探活不带业务 Host（LB/容器探针无租户域）
   app.get('/healthz', (c) => c.json({ ok: true }))
