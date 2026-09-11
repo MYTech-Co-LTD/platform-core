@@ -365,6 +365,7 @@ git commit -m "fix(loader): 停用模块的 API 在请求期返 404（enabledFor
 - Modify: `packages/auth-core/src/test-util/mock-casdoor.test.ts`
 - Modify: `packages/auth-core/src/casdoor-client.test.ts`
 - Modify: `apps/server/src/routes/auth.test.ts`
+- Modify: `apps/server/src/session-middleware.ts`（**仅加可选的 `now?: () => number` 测试缝**，默认 `Date.now`，零行为变更——协调者裁定：与 `createLoginLimiter({ now })` 同款先例；**不用** `vi.useFakeTimers()`，因为该用例要跑真 PG + 真 HTTP，全局假时钟与真实 I/O 混用是 flaky/挂起来源）
 
 **Interfaces:** 无对外接口变更（除 mock 的行为修正）
 
