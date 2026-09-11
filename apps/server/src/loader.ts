@@ -18,8 +18,14 @@ import { pathToFileURL } from 'node:url'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { parse as parseYaml } from 'yaml'
 import type { CasdoorClient } from '@platform/auth-core'
-import { ManifestSchema, type ModuleDefinition, type ModuleManifest } from '@platform/sdk'
-import type { Hono } from 'hono'
+import {
+  ManifestSchema,
+  declaredScopeGate,
+  type DeclaredEndpoint,
+  type ModuleDefinition,
+  type ModuleManifest,
+} from '@platform/sdk'
+import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import { runMigrations } from './migrate'
 
@@ -83,6 +89,58 @@ export async function provisionModulePermissions(
     await casdoorFor(org).upsertPermissions(permissions)
   }
   return rows.map((r) => r.casdoor_org)
+}
+
+/** 模块 API 在宿主上的挂载前缀。mount() 与门卫声明共用此处，**不许各写一份**（防漂移） */
+export function moduleApiBasePath(id: string): string {
+  return '/api/modules/' + id
+}
+
+/**
+ * 按 manifest 声明给模块 router 施加门卫，并核对声明与代码一致（M1 闭债 R2）。
+ *
+ * **为什么用包裹层而不是对 router 补 use()**：Hono 里 handler 先注册、use 后注册时门卫
+ * 【永不执行】（已实证）——那样会造出一个"代码里有门卫、运行时永不生效"的静默洞。
+ * 正解是新建 Hono → 先挂门卫 → 再 route('/', router)（已实证：路径合成正确、门卫先跑）。
+ *
+ * 双向核对：注册的路由集合必须与声明集合完全一致，任一方向的差集都让装载失败（fail-fast，
+ * 与"装载器必填"同风格）。这让"声明与代码漂移"不可能悄悄存在。
+ */
+export function applyDeclaredApiGate(
+  router: Hono,
+  manifest: ModuleManifest,
+  mountPath: string = moduleApiBasePath(manifest.id),
+): Hono {
+  const declared: DeclaredEndpoint[] = manifest.api?.internal ?? []
+
+  const registered = router.routes
+    .filter((r) => r.method !== 'ALL') // 模块自己的 use() 中间件记为 ALL，不参与比对
+    .map((r) => `${r.method} ${r.path}`)
+  const declaredKeys = declared.map((d) => `${d.method} ${d.path}`)
+  const declaredSet = new Set(declaredKeys)
+  const registeredSet = new Set(registered)
+  const undeclared = registered.filter((k) => !declaredSet.has(k))
+  const phantom = declaredKeys.filter((k) => !registeredSet.has(k))
+
+  if (undeclared.length > 0 || phantom.length > 0) {
+    throw new Error(
+      `模块 "${manifest.id}" 的 api.internal 声明与代码不一致：`
+      + `未声明但已注册 [${undeclared.join(', ') || '-'}]；`
+      + `已声明但未注册 [${phantom.join(', ') || '-'}]`
+      + `（未声明 = 不可达；声明与代码必须逐条对齐）`,
+    )
+  }
+
+  // 门卫的比对表用【宿主绝对路径】，而 use() 的注册路径保持【模块相对】——两者不是一回事：
+  // wrapper 被宿主 mount 到 mountPath 后，c.req.routePath 回来的是【绝对】路径（实测：
+  // route('/api/modules/mod', wrapper) 下 c.req.routePath === '/api/modules/mod/ping'），
+  // 拿模块相对的 '/ping' 去比永远 miss ⇒ 门卫恒 403（"代码里有门卫、运行时全拒"的另一种病）。
+  // 注册路径则必须相对：wrapper 自己就挂在 mountPath 上，写成绝对会叠成两段前缀。
+  const gate = declaredScopeGate(declared.map((d) => ({ ...d, path: mountPath + d.path })))
+  const guarded = new Hono()
+  for (const p of new Set(declared.map((d) => d.path))) guarded.use(p, gate)
+  guarded.route('/', router)
+  return guarded
 }
 
 /** 内部形态：LoadedModule + 模块目录（userApp dist 相对它解析，不外露） */
@@ -156,7 +214,11 @@ export async function loadModules(
       )
     }
 
-    loaded.push({ manifest, router: def.createRouter({ pool: deps.pool }), dir })
+    loaded.push({
+      manifest,
+      router: applyDeclaredApiGate(def.createRouter({ pool: deps.pool }), manifest),
+      dir,
+    })
   }
 
   // ⑤ 权限码供给：全部模块的权限码一次性供给到每个租户各自的 org（见 provisionModulePermissions）。
@@ -187,7 +249,7 @@ export async function loadModules(
     // ⑥ API 挂 /api/modules/<id>；userApp 静态目录存在才挂（dist 绝对路径，mount 路径来自 manifest）
     mount(app: Hono): void {
       for (const m of loaded) {
-        app.route('/api/modules/' + m.manifest.id, m.router)
+        app.route(moduleApiBasePath(m.manifest.id), m.router)
 
         const userApp = m.manifest.frontend?.userApp
         if (!userApp) continue

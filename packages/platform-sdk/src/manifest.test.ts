@@ -13,7 +13,7 @@ const validManifest = {
     { code: 'demo:view', name: '查看' },
     { code: 'demo:edit', name: '编辑' },
   ],
-  api: { internal: [{ name: 'listTickets', scope: 'demo:view' }] },
+  api: { internal: [{ method: 'GET', path: '/tickets', scope: 'demo:view' }] },
   frontend: {
     userApp: { mount: '/demo', dist: 'apps/user-demo/dist' },
     console: [
@@ -39,7 +39,7 @@ describe('ManifestSchema', () => {
       { code: 'demo:view', name: '查看' },
       { code: 'demo:edit', name: '编辑' },
     ])
-    expect(r.data.api?.internal).toEqual([{ name: 'listTickets', scope: 'demo:view' }])
+    expect(r.data.api?.internal).toEqual([{ method: 'GET', path: '/tickets', scope: 'demo:view' }])
     expect(r.data.frontend?.userApp).toEqual({ mount: '/demo', dist: 'apps/user-demo/dist' })
     expect(r.data.frontend?.console).toHaveLength(2)
     expect(r.data.frontend?.console?.[0]).toEqual({
@@ -130,5 +130,37 @@ describe('ManifestSchema', () => {
       frontend: { console: [{ path: '/demo', title: '演示' }] },
     })
     expect(r.success).toBe(false)
+  })
+
+  // R2：api.internal 是可机械消费的声明（旧形状 {name,scope} 无 path/method，谁也没法消费，
+  // 于是成了死字段——identity 从"忘挂 requireScope"变成"没声明就不可达"）
+  it('api.internal：method 必须是白名单内的方法', () => {
+    const bad = { ...validManifest, api: { internal: [{ method: 'TRACE', path: '/x', scope: 'demo:view' }] } }
+    expect(ManifestSchema.safeParse(bad).success).toBe(false)
+  })
+
+  it('★ 负例：api.internal[].scope 不属于本模块 permissions ⇒ 校验失败', () => {
+    // 声明一个自己都没有的码 ⇒ 该路径恒 403 而无人知晓（与"忘挂 requireScope"同一种病的变种）
+    const bad = {
+      ...validManifest,
+      api: { internal: [{ method: 'GET', path: '/x', scope: 'other-module:view' }] },
+    }
+    const r = ManifestSchema.safeParse(bad)
+    expect(r.success).toBe(false)
+    if (r.success) return
+    expect(r.error.issues[0]!.message).toContain('不在本模块 permissions')
+  })
+
+  it('★ 负例：同 (method,path) 声明两次 ⇒ 校验失败（门卫会出现二义）', () => {
+    const bad = {
+      ...validManifest,
+      api: {
+        internal: [
+          { method: 'GET', path: '/x', scope: 'demo:view' },
+          { method: 'GET', path: '/x', scope: 'demo:edit' },
+        ],
+      },
+    }
+    expect(ManifestSchema.safeParse(bad).success).toBe(false)
   })
 })

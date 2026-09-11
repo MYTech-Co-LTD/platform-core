@@ -14,6 +14,7 @@ import { createMiddleware } from 'hono/factory'
 import { Pool } from 'pg'
 import { CasdoorClient } from '@platform/auth-core'
 import { MockCasdoor } from '@platform/auth-core/src/test-util/mock-casdoor'
+import { probeAnonymous } from '@platform/sdk/test-util/anonymous-probe'
 import type { Identity } from '@platform/sdk'
 import { runMigrations } from './migrate'
 import { seedDemo } from './seed'
@@ -79,20 +80,21 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     return dir
   }
 
-  /** fixture 模块入口：真协议（defineModule + requireScope），非 mock */
+  /** fixture 模块入口：真协议（defineModule），不再手写 requireScope——声明在 manifest 里 */
   function indexTs(id: string, permCode: string): string {
     return [
       "import { Hono } from 'hono'",
-      "import { defineModule, requireScope } from '@platform/sdk'",
+      "import { defineModule } from '@platform/sdk'",
       '',
       'export default defineModule({',
       `  manifest: {`,
       `    id: '${id}', name: '${id} 模块', version: '1.0.0', platform: '>=0.1.0',`,
       `    permissions: [{ code: '${permCode}', name: '${id} 查看' }],`,
+      `    api: { internal: [{ method: 'GET', path: '/ping', scope: '${permCode}' }] },`,
       '  },',
       '  createRouter: (ctx) => {',
       '    const app = new Hono()',
-      `    app.get('/ping', requireScope('${permCode}'), (c) =>`,
+      `    app.get('/ping', (c) =>`,
       `      c.json({ module: '${id}', hasPool: !!ctx.pool }))`,
       '    return app',
       '  },',
@@ -101,7 +103,14 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     ].join('\n')
   }
 
-  function manifestYaml(id: string, extra = ''): string {
+  /** fixture manifest.yaml 的 api 段默认值：与 indexTs 注册的 GET /ping 逐条对齐（新协议：
+   *  未声明 = 不可达 ⇒ 默认声明必须跟着 fixture 的代码走，否则既有用例集体装载失败）。
+   *  第三参：null = 不写 api 段（"未声明但已注册"负例）；字符串 = 自定义声明（幽灵声明负例）。 */
+  function manifestYaml(
+    id: string,
+    extra = '',
+    apiYaml: string | null = `api:\n  internal:\n    - { method: GET, path: /ping, scope: ${id}:view }`,
+  ): string {
     return [
       `id: ${id}`,
       `name: ${id} 模块`,
@@ -110,6 +119,7 @@ describe.skipIf(!dbUrl)('loadModules', () => {
       'permissions:',
       `  - code: ${id}:view`,
       `    name: ${id} 查看`,
+      ...(apiYaml ? [apiYaml] : []),
       ...(extra ? [extra] : []),
       '',
     ].join('\n')
@@ -373,5 +383,85 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     expect(afterFirst).toBeGreaterThan(0)
     await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
     expect(mock.addPermissionCalls.length).toBe(afterFirst) // 查重命中 ⇒ 走 update，不再 add
+  })
+
+  // ---- R2：声明即授权（包裹层门卫 + 装载期双向核对）----
+
+  it('★ 负例：模块注册了未声明的路由 ⇒ 装载失败（fail-fast，绝不半挂）', async () => {
+    cleanupModules.push('undeclaredmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'undeclaredmod', {
+      'manifest.yaml': manifestYaml('undeclaredmod', '', null),
+      // manifest 没有 api 段，index 却注册了 /ping
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        "  manifest: { id: 'undeclaredmod', name: 'm', version: '1.0.0', platform: '>=0.1.0',",
+        "    permissions: [{ code: 'undeclaredmod:view', name: 'x' }] },",
+        '  createRouter: () => { const a = new Hono(); a.get(\'/ping\', (c) => c.json({})); return a },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+    await expect(loadModules(modulesDir, { pool })).rejects.toThrow(/未声明/)
+  })
+
+  it('★ 负例：声明了模块未注册的路径（幽灵声明）⇒ 装载失败', async () => {
+    cleanupModules.push('phantommod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'phantommod', {
+      'manifest.yaml': manifestYaml(
+        'phantommod',
+        '',
+        'api:\n  internal:\n    - { method: GET, path: /ghost, scope: phantommod:view }',
+      ),
+      'index.ts': indexTs('phantommod', 'phantommod:view'),
+    })
+    await expect(loadModules(modulesDir, { pool })).rejects.toThrow(/幽灵|未注册|声明/)
+  })
+
+  it('声明齐备 ⇒ 装载通过；匿名 401、scope 不符 403、scope 命中 200', async () => {
+    cleanupModules.push('guardedmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'guardedmod', {
+      'manifest.yaml': manifestYaml('guardedmod'),
+      'index.ts': indexTs('guardedmod', 'guardedmod:view'),
+    })
+    const runtime = await loadModules(modulesDir, { pool })
+    const probe = new Hono()
+    runtime.mount(probe)
+    // 匿名：宿主真实链路里 identity 由会话中间件注入，此处不注入 = 未登录
+    const anon = await probe.request('/api/modules/guardedmod/ping')
+    expect(anon.status).toBe(401)
+    expect(await anon.json()).toEqual({ error: 'UNAUTHENTICATED' })
+
+    const wrong = new Hono()
+    wrong.use('*', injectIdentity(['other:scope']))
+    runtime.mount(wrong)
+    const forbidden = await wrong.request('/api/modules/guardedmod/ping')
+    expect(forbidden.status).toBe(403)
+    expect(await forbidden.json()).toEqual({ error: 'FORBIDDEN', need: 'guardedmod:view' })
+
+    const right = new Hono()
+    right.use('*', injectIdentity(['guardedmod:view']))
+    runtime.mount(right)
+    expect((await right.request('/api/modules/guardedmod/ping')).status).toBe(200)
+  })
+
+  it('匿名探测回归网：装载出的模块每条路由都不可匿名到达', async () => {
+    cleanupModules.push('probemod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'probemod', {
+      'manifest.yaml': manifestYaml('probemod'),
+      'index.ts': indexTs('probemod', 'probemod:view'),
+    })
+    const runtime = await loadModules(modulesDir, { pool })
+    const probe = new Hono()
+    runtime.mount(probe)
+    const results = await probeAnonymous(probe)
+    const apiRoutes = results.filter((r) => r.path.startsWith('/api/modules/probemod'))
+    expect(apiRoutes.length).toBeGreaterThan(0)
+    expect(apiRoutes.every((r) => r.status === 401)).toBe(true)
   })
 })

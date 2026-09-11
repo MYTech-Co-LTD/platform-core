@@ -4,7 +4,8 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./web": "./web/platform-fetch.ts"
+    "./web": "./web/platform-fetch.ts",
+    "./test-util/*": "./src/test-util/*"
   },
   "scripts": {
     "test": "vitest run --passWithNoTests",
