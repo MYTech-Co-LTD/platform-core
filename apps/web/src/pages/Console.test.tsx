@@ -100,12 +100,68 @@ async function waitForLocation(pathname: string): Promise<void> {
   )
 }
 
+// ── #12 定时器收尸 ────────────────────────────────────────────────────────────
+// 现象：CI 的 web job **24 条全过却 exit 1**，报未捕获 `ReferenceError: window is not defined`，
+// 栈顶落在 `@ant-design/pro-components` 的 `BaseMenu.js:25`：`setTimeout(() => setCollapsed(...), 400)`。
+// 根因（上游缺陷）：BaseMenu 的 `MenuItemTooltip` 在 useEffect 里调度这个 400ms 定时器，**不返回
+// cleanup**；回调本身是一次 React setState ⇒ 组件卸载后定时器仍存活，等它触发时 vitest 可能已经把
+// happy-dom 环境拆掉（window 没了）⇒ React 的更新路径读 window 抛 ReferenceError。它不是断言失败，
+// 而是**用例之外的未捕获异常**——所以 24 条全绿而进程退出码 1。同一 commit `rerun --failed` 即变绿，
+// 说明纯属「拆除 ↔ 定时器到期」的赛跑（CI 慢机更易输）。复现见本文件 ★ 用例。
+//
+// 处置：把本用例期间经全局 setTimeout 调度、拆除时**尚未触发**的定时器在拆除点显式 clearTimeout
+// （真时钟下没有 clearAllTimers 这种 API，只能自己登记 id）。**这不是把红压绿**：不吞异常、不碰
+// 退出码、不改断言强度——只是不让第三方调度的回调活过它所属的环境。
+const realSetTimeout: typeof globalThis.setTimeout = globalThis.setTimeout.bind(globalThis)
+const realClearTimeout: typeof globalThis.clearTimeout = globalThis.clearTimeout.bind(globalThis)
+
+/** 本文件期间已调度、拆除时仍未触发的定时器 id（happy-dom 环境下全局 setTimeout 返回 number） */
+const armedTimers = new Set<number>()
+/** 拆除之后仍被触发的定时器回调（期望恒为空——这条断言就是 #12 的回归护栏） */
+const timersFiredAfterTeardown: string[] = []
+let tornDown = false
+
+/** 接管全局 setTimeout：登记 id + 标注回调是否发生在拆除之后（只有登记，不改时序/不吞异常） */
+function installTimerTracker(): void {
+  globalThis.setTimeout = ((handler: TimerHandler, ms?: number, ...rest: unknown[]) => {
+    if (typeof handler !== 'function') return realSetTimeout(handler, ms, ...rest)
+    const label = String(handler).replace(/\s+/g, ' ').slice(0, 72)
+    const wrapped = () => {
+      if (tornDown) timersFiredAfterTeardown.push(label)
+      ;(handler as (...a: unknown[]) => void)(...rest)
+    }
+    const id = realSetTimeout(wrapped as TimerHandler, ms)
+    armedTimers.add(id)
+    return id
+  }) as typeof globalThis.setTimeout
+}
+
+function restoreTimerTracker(): void {
+  globalThis.setTimeout = realSetTimeout
+}
+
+/** 用例拆除：卸载组件 + 收掉本用例期间调度、尚未触发的定时器（afterEach 与 ★ 用例共用同一路径） */
+function teardownConsole(): void {
+  cleanup()
+  // 收尸必须在卸载**之后**：卸载本身也会调度定时器（antd 的 mousePosition 复位等），
+  // 一并收掉。clearTimeout 对已触发的 id 是 no-op，故整批清是安全的。
+  tornDown = true
+  for (const id of armedTimers) realClearTimeout(id)
+  armedTimers.clear()
+}
+
 beforeEach(() => {
+  // 护栏：上一个用例拆除时应当已收干净——afterEach 的收尸一旦被摘掉，这里就会红
+  expect(armedTimers.size, '上一个用例遗留未收尸的定时器').toBe(0)
   window.history.pushState({}, '', '/console')
+  tornDown = false
+  timersFiredAfterTeardown.length = 0
+  installTimerTracker()
 })
 
 afterEach(() => {
-  cleanup()
+  teardownConsole()
+  restoreTimerTracker()
   vi.resetAllMocks()
   calls.length = 0
   fakeRegistry.length = 0
@@ -250,6 +306,42 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     // 关键断言：logout 用的是第二次现取的轮换 csrf，不是挂载时的旧值 csrf-xyz
     expect((authCalls[2].init?.headers as Record<string, string>)['x-csrf-token']).toBe('csrf-rotated')
     await waitForLocation('/login')
+  })
+
+  it('★ 负例：拆除后不留存活定时器（antd MenuItemTooltip 的 400ms 定时器无 cleanup，#12）', async () => {
+    setRegistry([
+      {
+        path: '/console/demo/things',
+        title: '演示工单',
+        scope: 'demo:console',
+        load: () => Promise.resolve({ default: DemoPage }),
+      },
+    ])
+    mockApi({
+      '/api/platform/auth/session': () => jsonResponse(SESSION),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+
+    renderApp()
+    // 前提：菜单（level 0）挂载后确实调度了 antd 的 tooltip 定时器，否则本用例空转
+    expect(await screen.findByText('演示工单')).toBeInTheDocument()
+    expect(armedTimers.size, '菜单挂载后应已登记 antd 的 400ms 定时器').toBeGreaterThan(0)
+
+    // 走与 afterEach 完全相同的拆除路径（卸载 + 收尸），再等过 antd 的 400ms 窗口
+    teardownConsole()
+    // 先让 React 自己已排队的收尾工作跑完（scheduler 走 setImmediate，与 antd 的 400ms 定时器无关）：
+    // 否则下面把 window 拿掉会把 React 的正常收尾也算成"遗留回调"，变成假红。
+    for (let i = 0; i < 4; i += 1) await new Promise((r) => realSetTimeout(r, 0))
+    // 再模拟 CI 的时序：vitest 拆掉 happy-dom 之后 window 已不存在——遗留回调此时触发就会
+    // 复刻线上那条 `ReferenceError: window is not defined`（而不是被环境兜住变成静默 no-op）
+    vi.stubGlobal('window', undefined)
+    try {
+      await new Promise((r) => realSetTimeout(r, 600))
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    expect(timersFiredAfterTeardown, `拆除后仍触发的定时器：${JSON.stringify(timersFiredAfterTeardown)}`).toEqual([])
   })
 
   it('④ 未登录（401 → platformFetch 已跳 /login 并 throw）：Console 不渲染任何内容', async () => {
