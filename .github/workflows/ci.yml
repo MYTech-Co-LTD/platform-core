@@ -54,7 +54,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # fetch-depth: 0 是下面两条纪律守卫的**前置**，不是可选优化：两条都拿
+      # `origin/<base>` 做 diff/log 的范围端点，浅克隆（默认 depth=1）下该 ref 不存在 ⇒
+      # `git log origin/main..HEAD` 直接失败 ⇒ 脚本走「无提交需要检查」而 **exit 0 静默通过**
+      # ——守卫看着绿，实则一次都没跑。宁可慢一点，也不要一个会空转的门禁。
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
@@ -85,6 +90,21 @@ jobs:
               process.exit(1);
             }
           "
+      # 公司纪律守卫（push 事件的那半边；标准 templates/discipline/README.md「附：让 push 守卫也跑」）。
+      #
+      # 与上一条的关系：上一条「装置校验」守的是**层①**（本地 pre-push 钩子在不在），管的是
+      # "直推拦不拦得住"；这两条守的是**层②**（提交本身合不合纪律），管的是"已经进来的东西讲没讲规矩"。
+      # 补的正是纪律栈里唯一空着的一环——薄壳 discipline.yml 只在 PR 事件上跑，因此
+      # `check-dev-discipline.sh`（commit 格式 / CHANGELOG 手改）在补这两条之前**全仓无人调用**。
+      #
+      # 注意 base 用 `github.base_ref || 'main'` 而非硬编码 origin/main：push 事件下 base_ref 为空，
+      # 回落到 main；PR 事件下取真实基线分支（叠栈 PR 时基线不是 main）。
+      - run: bash scripts/check-dev-discipline.sh "origin/${{ github.base_ref || 'main' }}" HEAD
+      - run: |
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" REPO="${{ github.repository }}" \
+          EVENT="${{ github.event_name }}" PR="${{ github.event.pull_request.number }}" \
+          BEFORE="${{ github.event.before }}" \
+          node scripts/check-pr-discipline.mjs
 
   web:
     runs-on: ubuntu-latest
