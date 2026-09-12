@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.0.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.0.0...v0.0.1) - 2026-09-12
+- 【修复】ci: main-guard 的 PR 关联查询加重试退避——修索引竞态导致的假阳性 ([#23](https://github.com/MYTech-Co-LTD/platform-core/pull/23), [b8bde09](https://github.com/MYTech-Co-LTD/platform-core/commit/b8bde09ab943ad0ff71ea4d8aaabc2f44162eb36))
+
+
 ### Added / Fixed - M1 闭债 R5：静态缓存分档 / 宿主端口绑回环 + B7 端口门禁 / CI web 间歇失败（issue #3 + #12）
 
 > 本小节由 R5 复审修复轮**补记**：R5 计划写着「本轮 CHANGELOG 由 T4 统一收口」，但该轮只派了
