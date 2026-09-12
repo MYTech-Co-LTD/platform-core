@@ -242,8 +242,30 @@ jobs:
           while read -r sha; do
             [ -n "$sha" ] || continue
             checked=$((checked + 1))
-            count=$(gh api "repos/$REPO/commits/$sha/pulls" --jq 'length')
+            # PR 关联查询带**重试退避**（issue #22）：GitHub 对 squash 提交与其 PR 的关联是
+            # **异步索引**的 —— job 跑得越快，越容易在索引可见之前发问，拿到 0 而误判「直推」。
+            # 实测（2026-09-12 合并 #21）：push 后 4 秒查得 0；同一 SHA 数分钟后查得 1；
+            # 同一 job 重跑即绿。**不是偶发** —— 该 job 此前 12 次合并都在 ~4s 内就查到了关联，
+            # 说明这是**尾部竞态**而非常态延迟，故 0 **不立即判罪**，退避重试足以覆盖。
+            # 预算 5 次 × 12s ≈ 60s（job 的 timeout-minutes: 5 余量充足）。重试**逐次打印**，
+            # 让等待可见 —— 别把红绿的区别藏进静默重试。
+            #
+            # **刻意不加「subject 以 (#N) 结尾即放行」的快路径**（issue #22 曾提议）：那会把本
+            # 守卫从「用 API 实证」降级为「信提交消息文本」，任何人给直推提交尾巴补一个 (#N)
+            # 即可绕过 —— 而这条绊线存在的意义正是拦住那个动作（见 runbook 第三节）。
+            # API 关联无法伪造：不带真 PR 就查不到。
+            tries=0
+            count=0
+            while :; do
+              tries=$((tries + 1))
+              count=$(gh api "repos/$REPO/commits/$sha/pulls" --jq 'length')
+              [ "$count" != '0' ] && break
+              [ "$tries" -ge 5 ] && break
+              echo "  · $sha 暂时查不到 PR 关联（第 $tries/5 次）——可能是索引延迟，12s 后重试"
+              sleep 12
+            done
             if [ "$count" = '0' ]; then
+              echo "  · $sha 退避重试 $tries 次后仍无 PR 关联 ⇒ 判为直推"
               offenders="$offenders $sha"
             fi
           done < <(printf '%s' "$COMMITS" | jq -r '.[].id')
@@ -262,7 +284,7 @@ jobs:
           if [ "$checked" -eq 0 ]; then
             echo "本次推送没有可供检查的提交（commits 为空，常见于仅删除提交的 force push）——"
             echo "**无法判定**本次是否绕过了 PR，故不报绿、也不报警。若确有过直推并被抹掉，"
-            echo "请以 `git log origin/main --first-parent` 人工对一次。"
+            echo "请以 \`git log origin/main --first-parent\` 人工对一次。"
             exit 0
           fi
 
