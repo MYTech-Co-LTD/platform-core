@@ -50,6 +50,26 @@ const modulesDir = path.resolve(process.cwd(), '../../modules')
  */
 export const MAX_API_BODY_BYTES = 1024 * 1024
 
+/**
+ * 静态响应的两个缓存档（M1 闭债 R5）。此前全仓 `Cache-Control` 零命中：vite 产物与 SPA 兜底
+ * 一视同仁，浏览器只能吃启发式缓存——**带内容哈希的产物每次白重验**，而 index.html 又可能被
+ * 缓存住 ⇒ 发版后用户拿到旧壳去请求已删除的旧 assets，页面白屏。
+ * 全仓统一选 `no-cache`，不用 `max-age=0, must-revalidate`——两者语义等价，但 `no-cache`
+ * 是各家代理/CDN 都认的写法。
+ *
+ * `no-cache` 的**代价要说准**（R5 三路评审必须改 2，原文此处误写成"每次带 ETag/Last-Modified
+ * 重验，命中则 304"）：本栈的静态托管（`@hono/node-server@2.1.1` 的 `serveStatic`）
+ * **不发 ETag，也不处理条件请求**——其实现只有 Range 分支，不看 `If-None-Match` /
+ * `If-Modified-Since`（全仓 `grep -rni etag` **只命中注释**，无任何实现/依赖在用）。**实测**：首响应
+ * `etag=null`；拿同一 `Last-Modified` 回发 `If-Modified-Since` 仍得 `200` + 全量 body。
+ * 所以 `no-cache` 在这里的真实含义是**每次 200 全量重传**，而不是"命中则 304"——后来者别
+ * 据此判断"重验很便宜"。实测代价可接受（index.html 约 461B），这也是选 `no-cache` 而非
+ * `max-age=0, must-revalidate` 的**唯一书面依据**。
+ * 真要有 304 需先加条件请求支持（`hono/etag`）——超出本任务范围，见任务报告的【遗留】。
+ */
+const CACHE_ASSET = 'public, max-age=31536000, immutable'
+const CACHE_REVALIDATE = 'no-cache'
+
 /** apps/web/dist（Task 17 构建产物）：按本文件位置解析（src/ → ../../web/dist），与 cwd 无关 */
 const webDistDir = fileURLToPath(new URL('../../web/dist', import.meta.url))
 
@@ -58,6 +78,13 @@ export interface BuildAppOverrides {
   config?: AppConfig
   /** 注入 fixture ModulesRuntime（跳过磁盘 loadModules；I-1 挂载顺序契约不变） */
   modules?: ModulesRuntime
+  /**
+   * 注入 fixture web dist（M1 闭债 R5）：静态托管的行为测试**不能依赖真机构建产物**——
+   * CI 的 `unit` job 只跑 `pnpm test`、从不构建 web（见 .github/workflows/ci.yml 的分工：
+   * dist 相关工作归 `smoke` job，它自己先 build），真按 apps/web/dist 断言只会红在 CI 上。
+   * 缺省 = apps/web/dist，生产与冒烟路径一字未变。
+   */
+  webDistDir?: string
 }
 
 export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
@@ -208,15 +235,50 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
 
   // ⑩ web 静态（Task 17 dist 产物）：/console/* 文件命中直出、未命中回退 SPA index；
   // 其余非 /api GET（/、/login 等 SPA 路由）回退 index.html。dist 不存在 → warn 跳过
-  if (existsSync(webDistDir)) {
+  // （distDir 默认 apps/web/dist；测试可注入 fixture，见 BuildAppOverrides.webDistDir）
+  const distDir = overrides.webDistDir ?? webDistDir
+  if (existsSync(distDir)) {
     const stripConsole = (p: string) => p.slice('/console'.length) || '/'
-    const spaIndex = serveStatic({ root: webDistDir, path: 'index.html' })
+
+    // 缓存头中间件：**必须注册在 serveStatic 之前**。@hono/node-server 的 serveStatic 一旦命中
+    // 就 `return result`、**不再 next()**，注册在它之后的中间件对"命中的产物"根本不执行
+    // （与 ④ 安全头同一手法：`await next()` 之后再改 c.res，才覆盖得到直出的裸 Response）。
+    // 判定只看**实际吐出的产物类型**，不看"路径里有没有点"那类会随 vite 配置漂移的启发式：
+    //   · text/html（index.html）——无论来自 `/`、`/login`、`/console` 深链，还是 **/assets/ 下
+    //     未命中而落 SPA 兜底**的那份——一律可重验；
+    //   · 其余只认 /assets/ 前缀（= vite 带内容哈希的产物）为 immutable，别的一律可重验。
+    //
+    // **已知边界（R5 三路评审建议 1，有意不改行为）**：分档键取的是**请求路径**而非**实际
+    // 命中的产物**，三格会分错档；真实影响 ≈ 0（都是"少优化"或"dev 专属"），故只记不修：
+    //   ① `/console/assets/<hash>.js`：stripConsole 剥掉 `/console` 后命中的是**同一份哈希
+    //      产物**，但 c.req.path 不以 `/assets/` 开头 ⇒ 拿到 `no-cache`（同产物两个档）。
+    //   ② `/ASSETS/<hash>.js`：**大小写不敏感的 FS（macOS 开发机）**上同样命中该产物，
+    //      而 startsWith 区分大小写 ⇒ 也拿 `no-cache`。生产是 Linux（FS 区分大小写），
+    //      该路径不命中产物、落 SPA 兜底 ⇒ 本就该 no-cache，无障碍。
+    //   ③ 反向：`/assets/` 下**无内容哈希**的文件（若将来往 dist/assets/ 放静态资源）会被
+    //      按前缀钉成一年 immutable，发版不会失效——往 assets/ 放东西时要记得这点。
+    app.use('*', async (c, next) => {
+      await next()
+      const res = c.res
+      // `res.status >= 400` 而非 `!res?.ok`（R5 三路评审建议 4）：`Response.ok` 是
+      // **2xx 才为真**，304 会被挡在门外 ⇒ 将来补上 ETag/条件请求（或升级 serveStatic）
+      // 后，304 反而漏设 Cache-Control（RFC 9111 §4.3.4 要求 304 携带与 200 一致的
+      // Cache-Control）。今天无 304 故非缺陷，但这条耦合太隐蔽，顺手按"只跳过错误响应"写。
+      if (!res || res.status >= 400) return
+      const isHtml = (res.headers.get('content-type') ?? '').includes('text/html')
+      res.headers.set(
+        'Cache-Control',
+        !isHtml && c.req.path.startsWith('/assets/') ? CACHE_ASSET : CACHE_REVALIDATE,
+      )
+    })
+
+    const spaIndex = serveStatic({ root: distDir, path: 'index.html' })
     // dist 根路径静态文件（/assets/*.js|css、/favicon.svg）：vite 构建的 index.html 以
     // 站点绝对路径引用这些产物，缺这道中间件时它们会落进 SPA 兜底拿到 index.html，
     // 浏览器永远白屏（Task 19 浏览器验证暴露）。未命中 next() 放行给 SPA 兜底
-    app.use('*', serveStatic({ root: webDistDir }))
-    app.use('/console', serveStatic({ root: webDistDir, rewriteRequestPath: stripConsole }))
-    app.use('/console/*', serveStatic({ root: webDistDir, rewriteRequestPath: stripConsole }))
+    app.use('*', serveStatic({ root: distDir }))
+    app.use('/console', serveStatic({ root: distDir, rewriteRequestPath: stripConsole }))
+    app.use('/console/*', serveStatic({ root: distDir, rewriteRequestPath: stripConsole }))
     // serveStatic 未命中会 next() 放行 → GET 落到这里回退 SPA（/console 深链）
     app.get('/console', spaIndex)
     app.get('/console/*', spaIndex)
@@ -227,7 +289,7 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     })
   } else {
     console.warn(
-      `[web] ${webDistDir} 不存在，跳过静态托管（登录页/控制台不可用——先 pnpm --filter @platform/web build）`,
+      `[web] ${distDir} 不存在，跳过静态托管（登录页/控制台不可用——先 pnpm --filter @platform/web build）`,
     )
   }
 

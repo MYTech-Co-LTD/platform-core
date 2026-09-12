@@ -29,9 +29,11 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      # 宿主 5432：本地冒烟（scripts/smoke-load.mjs）与 psql 排障要用。生产 adopt 时删掉这条
-      # （PG 只在 compose 内网被 server 访问），见 openship-adopt.md「生产差异」。
-      - '5432:5432'
+      # 绑回环（M1 闭债 R5）：本地冒烟/排障照旧走 127.0.0.1:5432 即可（文件头用法①、
+      # docs/m0-smoke-checklist.md、scripts/dev-stack.mjs 走的都是它，收窄零影响），
+      # 同时**不给宿主公网面留暴露**——生产本也不该把库暴露出去，绑回环让这一点
+      # **不依赖人工动作**（先前的口径是"adopt 时删掉这条"，那要靠人记得做）。
+      - '127.0.0.1:5432:5432'
     healthcheck:
       # 没有它 server 会在 PG 就绪前连库（迁移直接失败）——与 CI 里 postgres service 的
       # health-cmd 是同一条理由
@@ -49,6 +51,9 @@ services:
       dockerfile: deploy/Dockerfile.server
     # 运行时 env 来自根 .env（gitignore；模板是根 .env.example，B9 门禁保证键齐全）。
     # required:false —— 缺 .env 时不报错（纯 `up -d postgres` 的用法不该被它卡住）
+    # 注意：`required` 字段需 **Compose ≥ 2.24**；更早版本会以 **schema 报错**拒解析整份文件
+    # （`env_file.0 must be a string`）——不是静默忽略，CLI 旗标也绕不过去。低于该版本的
+    # 环境需升级 compose，或临时改回短形式（`- ../.env`，代价见上一行：变成无条件必有 .env）。
     env_file:
       - path: ../.env
         required: false
@@ -69,7 +74,21 @@ services:
       # 注意 compose 的 ${} 插值只读「本 compose 文件所在目录的 .env」与 shell 环境，
       # 不读上面 env_file 指的 ../.env —— 所以用法是 `HOST_PORT=13001 docker compose ... up`。
       # 容器侧端口恒为 13000（下面 environment.PORT），宿主映射由它决定。
-      - '${HOST_PORT:-13000}:13000'
+      # 绑回环（M1 闭债 R5）：生产上本服务只经 openship edge 访问，edge 在宿主上反代
+      # 127.0.0.1:<port> ⇒ 绑 0.0.0.0 会让任何能访问宿主该端口的人**绕过 edge**
+      # （丢掉证书、限速与访问控制）。
+      # 生产照搬本文件（openship-adopt.md「生产差异」只列了三处必改项），所以这条映射
+      # 是生产入口面的一部分：**不绑回环就必须在生产手工加差异项**，绑了则本地冒烟/开发
+      # 不受影响（它们走 127.0.0.1，见文件头用法①）。
+      # 注：上面 postgres 的那条映射（R5 修复轮必须改 3）**同样已绑回环** —— 两条映射
+      # 现在口径一致，不再"server 绑了、DB 靠生产侧手工删"。`scripts/check-compose.mjs`
+      # 的 B7 规则二守着**文件里所有** ports 条目（必须 `127.0.0.1:` 起头；R5-2 建议改 3 把
+      # 覆盖面从这两个服务名扩到全文），外加「受管服务还在这份文件里、却一条条目都没有」要报。
+      # 反过来：**整份删掉 postgres service 不报**（adopt 文档「生产差异」选项 2 就是这条路
+      # ——那不是绕过，是把宿主暴露面整个去掉）；留个空 ports 块则报。
+      # 另：`network_mode: host` 不在这条覆盖内（该模式下 compose 忽略 ports，真实绑定取决于
+      # 进程自己的 listen 地址，守卫读文本读不出来）——本仓不用该模式。
+      - '127.0.0.1:${HOST_PORT:-13000}:13000'
     # 启动期故障（如 Casdoor 不可达 → upsertPermission 抛错）不该让容器一停不起；
     # 反复重启会把失败暴露在 docker compose ps 的 Restarting 上，而不是静默躺着
     restart: unless-stopped

@@ -465,10 +465,41 @@ async function assertStaticServing(b) {
       `GET /assets/${name} 与磁盘产物逐字节相同（${onDisk.length}B）`,
       describe(res, { asset: name, onDiskBytes: onDisk.length, servedBytes: res.body.length, equalsIndexHtml: res.body.equals(indexBytes) }),
     )
+    // 缓存档（R5 修复轮 S4）：带内容哈希的产物必须 immutable。
+    // **为什么要在这一层加**：那四条缓存断言全跑在**注入的 fixture dist** 上（app.test.ts——
+    // CI 的 unit job 不构建 web），真产物 + 真进程这条路径上**一条 Cache-Control 断言都没有**，
+    // 谁把中间件摘了、或让它在真 dist 上不生效，单测全绿而线上退化成启发式缓存。
+    const cc = String(res.headers['cache-control'] ?? '')
+    check(
+      cc.includes('immutable') && cc.includes('max-age=31536000'),
+      `GET /assets/${name} Cache-Control 是 immutable 长缓存（实际 ${cc || '(空)'}）`,
+      describe(res, { asset: name }),
+    )
   }
   // 对照组：SPA 兜底仍要工作（/ 返回 index.html 本体）——两条路径各自证明自己，不是「全都回 index」
   const spa = await b.get('/')
   check(spa.status === 200 && spa.body.equals(indexBytes), 'GET / 回 SPA index.html 本体（对照组）', describe(spa))
+  // 缓存档（R5 修复轮 S4）：SPA 入口必须**可重验**，不得长缓存——发版后用户拿到旧壳去请求
+  // 已删除的旧 assets 就是白屏事故本身（app.ts 顶部注释的取舍依据）
+  const spaCc = String(spa.headers['cache-control'] ?? '')
+  check(
+    spaCc.includes('no-cache') && !spaCc.includes('immutable'),
+    `GET / Cache-Control 是可重验档（实际 ${spaCc || '(空)'}）`,
+    describe(spa),
+  )
+
+  // 负例（R5 修复轮 S5）：**认证/接口类端点不得被打上 Cache-Control**。
+  // 今天这靠一个隐式事实成立：缓存中间件用 `app.use('*')` 注册在静态托管之前，而 Hono 的
+  // 中间件只对其后注册的路由生效——所有 /api/* 与 /healthz 都在它之前注册完。将来有人把它
+  // 上移成"真全局"，就会**覆盖路由自己设的头**：认证类端点若设 `no-store` 被改写成
+  // `no-cache`，就是静默的安全弱化。单测那侧已有一条同口径的断言（进程内 app.request），
+  // 这里再钉一次**真进程 + 真 HTTP** 这一层——两层都覆盖，才防得住"只在某一层成立"。
+  for (const [p, why] of [['/healthz', '探活'], ['/api/platform/config', '平台接口']]) {
+    const r = await b.get(p)
+    check(r.status === 200, `GET ${p} 200（${why}）`, describe(r))
+    const h = r.headers['cache-control']
+    check(h === undefined, `GET ${p} 不带 Cache-Control（实际 ${h ?? '(无)'}）`, describe(r))
+  }
 }
 
 // ---- 形态 1：multi（Host → 租户） ----

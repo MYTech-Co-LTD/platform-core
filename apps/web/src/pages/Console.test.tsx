@@ -100,12 +100,95 @@ async function waitForLocation(pathname: string): Promise<void> {
   )
 }
 
+// ── #12 定时器收尸 ────────────────────────────────────────────────────────────
+// 现象：CI 的 web job **24 条全过却 exit 1**，报未捕获 `ReferenceError: window is not defined`，
+// 栈顶落在 `@ant-design/pro-components` 的 `BaseMenu.js:25`：`setTimeout(() => setCollapsed(...), 400)`。
+// 根因（上游缺陷）：BaseMenu 的 `MenuItemTooltip` 在 useEffect 里调度这个 400ms 定时器，**不返回
+// cleanup**；回调本身是一次 React setState ⇒ 组件卸载后定时器仍存活，等它触发时 vitest 可能已经把
+// happy-dom 环境拆掉（window 没了）⇒ React 的更新路径读 window 抛 ReferenceError。它不是断言失败，
+// 而是**用例之外的未捕获异常**——所以 24 条全绿而进程退出码 1。同一 commit `rerun --failed` 即变绿，
+// 说明纯属「拆除 ↔ 定时器到期」的赛跑（CI 慢机更易输）。复现见本文件 ★ 用例。
+//
+// 处置：把本用例期间经全局 setTimeout 调度、拆除时**尚未触发**的定时器在拆除点显式 clearTimeout
+// （真时钟下没有 clearAllTimers 这种 API，只能自己登记 id）。**这不是把红压绿**：不吞异常、不碰
+// 退出码、不改断言强度——只是不让第三方调度的回调活过它所属的环境。
+const realSetTimeout: typeof globalThis.setTimeout = globalThis.setTimeout.bind(globalThis)
+const realClearTimeout: typeof globalThis.clearTimeout = globalThis.clearTimeout.bind(globalThis)
+
+/**
+ * 本文件期间已调度、拆除时仍未触发的定时器；键是 `setTimeout` 的**返回值原物**。
+ *
+ * 键类型写 `unknown` 而**不是 `number`**：happy-dom 下全局 `setTimeout` 返回的是 Node 的
+ * `Timeout` **对象**，不是一个 number（探针实测：`typeof === 'object'`、构造名 `Timeout`；
+ * 第一版探针用 `JSON.stringify` 打它，因 `Timeout` 循环引用**直接抛错**）。而 DOM lib 给
+ * `window.setTimeout` 的声明面**就是** `number` —— 照抄那个声明等于写一个与运行时不符的类型
+ * （R5-2 建议改 5：本轮主题恰是"照实写"）。
+ * 行为不受影响：Map 按**对象标识**存键，`Timeout` 对象同样唯一；`clearTimeout` 对本仓登记的
+ * 任何 id 都接受（消费点在 teardownConsole）。
+ * 存 **id → { ms, label }** 而非只存 id：★ 用例的前置断言要认出「具体是哪条定时器」，
+ * 只数个数在 M2 变异（antd 定时器不再登记）下仍全绿 —— 那个时刻在册的另有 4 条与本
+ * 缺陷无关的定时器（RTL waitFor 1000ms / SWR 3000ms+2000ms / deferred 0ms），
+ * 「数量 > 0」验证不了它声称的事实（R5 三路评审 findings）。
+ */
+const armedTimers = new Map<unknown, { ms: number; label: string }>()
+
+/**
+ * ★ 用例前置断言要认的那条定时器 = antd `BaseMenu` 无 cleanup 的那条（见上方 #12 现象说明）。
+ * 两个字段都不可省：**延迟 400ms** 把它与同刻在册的无关定时器分开（实测那一刻另有 4 条：
+ * RTL waitFor 1000ms、SWR 3000ms / 2000ms、deferred 0ms），**回调体 `setCollapsed`** 把它
+ * 与将来别的 400ms 定时器分开。只断言「在册数量 > 0」会被那 4 条满足 ⇒ 前置断言名不副实，
+ * 上游修好（antd 补 cleanup）后本用例仍全绿（R5 三路评审 findings 必须改 1）。
+ * 上游若改了这个回调的形状，本该在这里变红提醒重核 —— 那是有用的红，不是过紧。
+ */
+const ANTD_TOOLTIP_TIMER = { ms: 400, marker: 'setCollapsed' } as const
+/** 拆除之后仍被触发的定时器回调（期望恒为空——这条断言就是 #12 的回归护栏） */
+const timersFiredAfterTeardown: string[] = []
+let tornDown = false
+
+/** 接管全局 setTimeout：登记 id + 标注回调是否发生在拆除之后（只有登记，不改时序/不吞异常） */
+function installTimerTracker(): void {
+  globalThis.setTimeout = ((handler: TimerHandler, ms?: number, ...rest: unknown[]) => {
+    if (typeof handler !== 'function') return realSetTimeout(handler, ms, ...rest)
+    const label = String(handler).replace(/\s+/g, ' ').slice(0, 72)
+    const wrapped = () => {
+      if (tornDown) timersFiredAfterTeardown.push(label)
+      ;(handler as (...a: unknown[]) => void)(...rest)
+    }
+    const id = realSetTimeout(wrapped as TimerHandler, ms)
+    armedTimers.set(id, { ms: typeof ms === 'number' ? ms : 0, label })
+    return id
+  }) as typeof globalThis.setTimeout
+}
+
+function restoreTimerTracker(): void {
+  globalThis.setTimeout = realSetTimeout
+}
+
+/** 用例拆除：卸载组件 + 收掉本用例期间调度、尚未触发的定时器（afterEach 与 ★ 用例共用同一路径） */
+function teardownConsole(): void {
+  cleanup()
+  // 收尸必须在卸载**之后**：卸载本身也会调度定时器（antd 的 mousePosition 复位等），
+  // 一并收掉。clearTimeout 对已触发的 id 是 no-op，故整批清是安全的。
+  tornDown = true
+  // `as number` 只是把**声明面**按回去（DOM lib 的 clearTimeout 收 number，而 happy-dom 实返
+  // 的是 `Timeout` 对象，见 armedTimers 的说明）——运行期传进去的就是当初登记的那个对象本身，
+  // 收窄不改变它，`clearTimeout` 对两者都有效。
+  for (const id of armedTimers.keys()) realClearTimeout(id as number)
+  armedTimers.clear()
+}
+
 beforeEach(() => {
+  // 护栏：上一个用例拆除时应当已收干净——afterEach 的收尸一旦被摘掉，这里就会红
+  expect(armedTimers.size, '上一个用例遗留未收尸的定时器').toBe(0)
   window.history.pushState({}, '', '/console')
+  tornDown = false
+  timersFiredAfterTeardown.length = 0
+  installTimerTracker()
 })
 
 afterEach(() => {
-  cleanup()
+  teardownConsole()
+  restoreTimerTracker()
   vi.resetAllMocks()
   calls.length = 0
   fakeRegistry.length = 0
@@ -250,6 +333,48 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     // 关键断言：logout 用的是第二次现取的轮换 csrf，不是挂载时的旧值 csrf-xyz
     expect((authCalls[2].init?.headers as Record<string, string>)['x-csrf-token']).toBe('csrf-rotated')
     await waitForLocation('/login')
+  })
+
+  it('★ 负例：拆除后不留存活定时器（antd MenuItemTooltip 的 400ms 定时器无 cleanup，#12）', async () => {
+    setRegistry([
+      {
+        path: '/console/demo/things',
+        title: '演示工单',
+        scope: 'demo:console',
+        load: () => Promise.resolve({ default: DemoPage }),
+      },
+    ])
+    mockApi({
+      '/api/platform/auth/session': () => jsonResponse(SESSION),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+
+    renderApp()
+    // 前提：菜单（level 0）挂载后确实调度了 antd 的 tooltip 定时器，否则本用例空转
+    expect(await screen.findByText('演示工单')).toBeInTheDocument()
+    const antdTimers = [...armedTimers.values()].filter(
+      (t) => t.ms === ANTD_TOOLTIP_TIMER.ms && t.label.includes(ANTD_TOOLTIP_TIMER.marker),
+    )
+    expect(
+      antdTimers.length,
+      '菜单挂载后应已登记 antd BaseMenu 的 400ms 定时器（setCollapsed(props.collapsed)）',
+    ).toBeGreaterThan(0)
+
+    // 走与 afterEach 完全相同的拆除路径（卸载 + 收尸），再等过 antd 的 400ms 窗口
+    teardownConsole()
+    // 先让 React 自己已排队的收尾工作跑完（scheduler 走 setImmediate，与 antd 的 400ms 定时器无关）：
+    // 否则下面把 window 拿掉会把 React 的正常收尾也算成"遗留回调"，变成假红。
+    for (let i = 0; i < 4; i += 1) await new Promise((r) => realSetTimeout(r, 0))
+    // 再模拟 CI 的时序：vitest 拆掉 happy-dom 之后 window 已不存在——遗留回调此时触发就会
+    // 复刻线上那条 `ReferenceError: window is not defined`（而不是被环境兜住变成静默 no-op）
+    vi.stubGlobal('window', undefined)
+    try {
+      await new Promise((r) => realSetTimeout(r, 600))
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    expect(timersFiredAfterTeardown, `拆除后仍触发的定时器：${JSON.stringify(timersFiredAfterTeardown)}`).toEqual([])
   })
 
   it('④ 未登录（401 → platformFetch 已跳 /login 并 throw）：Console 不渲染任何内容', async () => {
