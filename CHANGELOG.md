@@ -11,6 +11,81 @@
 
 ## [Unreleased]
 
+### Added / Fixed - M1 闭债 R5：静态缓存分档 / 宿主端口绑回环 + B7 端口门禁 / CI web 间歇失败（issue #3 + #12）
+
+> 本小节由 R5 复审修复轮**补记**：R5 计划写着「本轮 CHANGELOG 由 T4 统一收口」，但该轮只派了
+> T1–T3、**T4 从未创建** ⇒ R5 的可见变更此前一行未落（`git log <R5 起点>..<R5 头> -- CHANGELOG.md`
+> 为空）。以下条目**对照实现**逐条写，不是照抄计划。
+
+- 【新增】**静态响应按产物类型分档 `Cache-Control`**（`apps/server/src/app.ts`）：此前全仓
+  `Cache-Control` **零命中**，vite 产物与 SPA 兜底一视同仁，浏览器只能吃启发式缓存——**带内容
+  哈希的产物每次白重验**，而 `index.html` 又可能被缓存住 ⇒ 发版后用户拿到旧壳去请求已删除的旧
+  assets，**页面白屏**。分档判据取**实际吐出的产物类型**（响应 `content-type`），不用"路径里
+  有没有点"那类会随 vite 配置漂移的启发式：
+  - `text/html`（`index.html`——无论来自 `/`、`/login`、`/console` 深链，还是 `/assets/` 下
+    未命中而落 **SPA 兜底**的那一份）⇒ `no-cache`（可重验）
+  - 其余**仅 `/assets/` 前缀**（= vite 带内容哈希的产物）⇒
+    `public, max-age=31536000, immutable`；别的一律可重验
+  - **`/api/*` 与 `/healthz` 不受影响**（不被打标）。这条靠一个**隐式**事实成立：缓存中间件是
+    `app.use('*')` 且注册在静态托管**之前**，而 Hono 的中间件只对其后注册的路由生效——全部
+    `/api/*` 与 `/healthz` 都在它之前注册完。正因为它隐式，两层各钉了一条断言（进程内
+    `app.test.ts` + 冒烟真进程）：将来有人把它上移成"真全局"，就会覆盖路由自己设的头，认证类
+    端点的 `no-store` 被改写成 `no-cache` 属**静默的安全弱化**
+  - ⚠️ **`no-cache` 的代价要说准**（本轮订正了一处断言了本栈不存在机制的注释）：本栈的静态托管
+    （`@hono/node-server` 的 `serveStatic`）**不发 ETag、也不处理条件请求**（实现只有 Range 分支，
+    不看 `If-None-Match` / `If-Modified-Since`）。**实测**：首响应 `etag=null`；拿同一
+    `Last-Modified` 回发 `If-Modified-Since` 仍得 `200` + **全量 body** ⇒ `no-cache` 在这里的真实
+    含义是**每次 200 全量重传**，**不是**"命中则 304"——后来者别据此判断"重验很便宜"。实测代价
+    可接受（`index.html` 约 461B），这也是选 `no-cache` 而非 `max-age=0, must-revalidate` 的
+    **唯一书面依据**（两者语义等价，`no-cache` 是各家代理/CDN 都认的写法）
+    - 【优化】冒烟在**真产物 + 真进程**上补了缓存断言：此前四条缓存断言全跑在**注入的 fixture
+      dist** 上（CI 的 `unit` job 从不构建 web，dist 相关工作归 `smoke` job）⇒ 真产物这条路径
+      **一条 `Cache-Control` 断言都没有**，谁把中间件摘了都会单测全绿而线上退化。同时补
+      `/api/*` 与 `/healthz` 的负例（**不得**带 `Cache-Control`）。测试侧的注入缝是
+      `BuildAppOverrides.webDistDir`（缺省仍是 `apps/web/dist`，生产与冒烟路径一字未变）
+- 【修复】**宿主端口绑回环**（`deploy/docker-compose.yml`）：`server` 13000 与 `postgres` 5432
+  **两条**映射都改为 `127.0.0.1:` 前缀——此前绑 `0.0.0.0`（IPv4 与 IPv6 双栈），**任何能访问宿主
+  该端口的人可绕过 edge**（丢掉证书、限速与访问控制）。**DB 那条尤其重**：库一旦落在宿主网络上
+  就是**裸暴露一个可直连的 PG**（口令即全部防线），且没有任何应用层日志会告诉你这件事。
+  收窄对本地路径零影响（冒烟、`dev-stack`、冒烟清单走的都是 `127.0.0.1`）。原先"生产 adopt 时
+  把 postgres 那条删掉"的口径**一并撤掉**——它把安全性寄托在"靠人记得做"上
+  - 【新增】adopt runbook 的人工核对项从**一条映射扩到两条**（`deploy/openship-adopt.md` 第 0 步）：
+    生产走 openship 的 **services 模式**，它会不会把 compose 里这段 host_ip 前缀重写掉（改回
+    `0.0.0.0` 等），本仓**无法在本地验证**（R5 起直到现在仍是**唯一没能独立验证**的一环）。
+    重写的后果是**静默的**：edge 照常反代、冒烟照常绿，"可绕过 edge"这条又回来了。此前只点名
+    server/13000，DB 那条漏在外面——而 DB 被重写的后果更重（见上）
+- 【新增】**B7 新增宿主端口回环门禁**（`scripts/check-compose.mjs` 规则二）：文件里的 ports 映射
+  须以 `127.0.0.1:` 起头。此前守卫只按**文件名**判唯一性、**从不读内容** ⇒ 把
+  `127.0.0.1:5432:5432` 改回 `5432:5432` 全绿通过（评审变异实证）。三条判据：
+  - a) 文件里**所有** ports 条目都须绑回环——不只看 `postgres` / `server` 两个字面服务名：只覆盖
+    这两个名字时，往文件里加第三个服务并暴露 `8080:8080` **会全绿**，而本规则的目的正是"宿主
+    端口不许留绕过 edge 的面"
+  - b) 两个受管服务**若还在文件里**，各自至少一条条目。**整份删掉服务不报**——adopt 文档
+    「生产差异」选项 2（不留 postgres、`DATABASE_URL` 指向托管库）是明列的生产路径，报它等于
+    **报错理由与事实相反**（服务都不存在了，无从谈"缺端口"）
+  - c) 认不出的 ports 写法（flow 形式 `ports: ['1:2']`）fail-closed：判据 a 扩到"所有条目"之后，
+    这类写法会**一条条目都解析不出来**，不显式拦就等于静默放行一个可能绑在 `0.0.0.0` 的映射
+  - **不在覆盖内**：`network_mode: host` 的服务——该模式下 compose **忽略 ports**，宿主的真实
+    绑定取决于进程自己的 listen 地址，守卫读文本读不出来（本仓不用该模式）
+- 【修复】**CI 的 web job 间歇性以退出码 1 收场**（issue #12。处置**只落在测试侧**：
+  `apps/web/src/pages/Console.test.tsx`，产品代码一字未动）：上游 `@ant-design/pro-components` 的
+  `MenuItemTooltip` 在 `useEffect` 里调度 400ms `setTimeout` 却**不返回 cleanup** ⇒ 组件卸载后
+  定时器仍存活；等它触发时 vitest 可能已把 happy-dom 环境拆掉（`window` 没了）⇒ React 的更新
+  路径读 `window` 抛 `ReferenceError`。它不是断言失败，而是**用例之外的未捕获异常**——所以
+  **24 条全过、进程却退出码 1**（同一 commit `rerun --failed` 即变绿，纯属"拆除 ↔ 定时器到期"
+  的赛跑，CI 慢机更易输）。处置为**显式收尸**（登记定时器 id + 在拆除点 `clearTimeout`）：
+  **不吞异常、不碰退出码、不改断言强度**——只是不让第三方调度的回调活过它所属的环境
+  - 【新增】配套 ★ 回归用例先把根因钉死：断言"菜单挂载后**确实**登记到了那条 antd 定时器"，再走
+    与 `afterEach` **完全相同**的拆除路径，并**模拟 CI 的 `window` 已消失时序**等过 400ms 窗口，
+    要求无任何遗留回调触发。前置断言认的是**延迟 400ms + 回调体 `setCollapsed`** 这条定时器，
+    **不是**"在册定时器数量 > 0"——那一刻在册的另有 4 条与本缺陷无关的（RTL `waitFor` 1000ms /
+    SWR 3000ms + 2000ms / deferred 0ms），只数个数在"上游修好"的变异下仍会全绿
+- 【修复】复核轮订正的**注释保真**问题（不影响行为，但本轮主题恰是"照实写"）：`apps/web` 的
+  定时器登记表注释原称"happy-dom 环境下全局 `setTimeout` 返回 number"——**与实测不符**（探针：
+  键 `typeof === 'object'`、构造名 `Timeout`；第一版探针 `JSON.stringify` 打它直接因循环引用
+  抛错）。现按实型描述（Node `Timeout` 对象，非 number），Map 键类型同步放宽（写 `number` 等于
+  照抄 DOM lib 那个与运行时不符的声明）
+
 ### Fixed - M1 闭债 R4：平台底座欠账批处理（issue #3，HEAD 探活 / 请求体上限 / 停用模块语义 / 替身保真）
 
 - 【修复】**已声明的 GET 端点用 `HEAD` 探活恒 403**：`declaredScopeGate`

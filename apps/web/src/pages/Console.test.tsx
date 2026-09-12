@@ -116,13 +116,21 @@ const realSetTimeout: typeof globalThis.setTimeout = globalThis.setTimeout.bind(
 const realClearTimeout: typeof globalThis.clearTimeout = globalThis.clearTimeout.bind(globalThis)
 
 /**
- * 本文件期间已调度、拆除时仍未触发的定时器（happy-dom 环境下全局 setTimeout 返回 number）。
+ * 本文件期间已调度、拆除时仍未触发的定时器；键是 `setTimeout` 的**返回值原物**。
+ *
+ * 键类型写 `unknown` 而**不是 `number`**：happy-dom 下全局 `setTimeout` 返回的是 Node 的
+ * `Timeout` **对象**，不是一个 number（探针实测：`typeof === 'object'`、构造名 `Timeout`；
+ * 第一版探针用 `JSON.stringify` 打它，因 `Timeout` 循环引用**直接抛错**）。而 DOM lib 给
+ * `window.setTimeout` 的声明面**就是** `number` —— 照抄那个声明等于写一个与运行时不符的类型
+ * （R5-2 建议改 5：本轮主题恰是"照实写"）。
+ * 行为不受影响：Map 按**对象标识**存键，`Timeout` 对象同样唯一；`clearTimeout` 对本仓登记的
+ * 任何 id 都接受（消费点在 teardownConsole）。
  * 存 **id → { ms, label }** 而非只存 id：★ 用例的前置断言要认出「具体是哪条定时器」，
  * 只数个数在 M2 变异（antd 定时器不再登记）下仍全绿 —— 那个时刻在册的另有 4 条与本
  * 缺陷无关的定时器（RTL waitFor 1000ms / SWR 3000ms+2000ms / deferred 0ms），
  * 「数量 > 0」验证不了它声称的事实（R5 三路评审 findings）。
  */
-const armedTimers = new Map<number, { ms: number; label: string }>()
+const armedTimers = new Map<unknown, { ms: number; label: string }>()
 
 /**
  * ★ 用例前置断言要认的那条定时器 = antd `BaseMenu` 无 cleanup 的那条（见上方 #12 现象说明）。
@@ -162,7 +170,10 @@ function teardownConsole(): void {
   // 收尸必须在卸载**之后**：卸载本身也会调度定时器（antd 的 mousePosition 复位等），
   // 一并收掉。clearTimeout 对已触发的 id 是 no-op，故整批清是安全的。
   tornDown = true
-  for (const id of armedTimers.keys()) realClearTimeout(id)
+  // `as number` 只是把**声明面**按回去（DOM lib 的 clearTimeout 收 number，而 happy-dom 实返
+  // 的是 `Timeout` 对象，见 armedTimers 的说明）——运行期传进去的就是当初登记的那个对象本身，
+  // 收窄不改变它，`clearTimeout` 对两者都有效。
+  for (const id of armedTimers.keys()) realClearTimeout(id as number)
   armedTimers.clear()
 }
 

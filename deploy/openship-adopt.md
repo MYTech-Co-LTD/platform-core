@@ -56,14 +56,20 @@ docker context ls >/dev/null 2>&1   # 仅提示：adopt 在控制面侧执行，
 #    期望：framework=docker-compose、composePath 被认到 deploy/docker-compose.yml
 #    ⚠️ 若 prepare 认不出，别硬 adopt——先把 composePath 显式传进去再试。
 #
-#    ⚠️⚠️ 另有一条**必须人工核对**（R5 修复轮 S3 —— 本仓**唯一没能独立验证**的一环）：
-#        prepare / scan 出的端口清单里，server 仍是**宿主 13000**，且 readiness 探活经
-#        **127.0.0.1** 能通。
-#        为什么只能靠人看：生产走的是 openship 的 **services 模式**，它会不会把 compose 里的
-#        `127.0.0.1:${HOST_PORT:-13000}:13000` 这条 host_ip 前缀重写掉（改回 0.0.0.0、
-#        或换成容器 IP / loopback 端口的别的形式），本仓无法在本地验证。
+#    ⚠️⚠️ 另有一条**必须人工核对**（R5 修复轮 S3；R5-2 建议改 4 把核对面从一条映射扩到
+#        两条 —— 本仓**唯一没能独立验证**的一环）。prepare / scan 出的端口清单里，
+#        **两条**映射都应仍是宿主回环：
+#          · server   `127.0.0.1:${HOST_PORT:-13000}`（容器 13000），且 readiness 探活经
+#             **127.0.0.1** 能通；
+#          · postgres `127.0.0.1:5432`（容器 5432）。
+#        为什么只能靠人看：生产走的是 openship 的 **services 模式**，它会不会把 compose 里
+#        这段 host_ip 前缀重写掉（改回 0.0.0.0、或换成容器 IP / loopback 端口的别的形式），
+#        本仓无法在本地验证。
 #        重写的后果是**静默的**：edge 照常反代、冒烟照常绿，只是"任何能访问宿主该端口的人
 #        都可绕过 edge"这条又回来了（丢掉证书、限速与访问控制）。
+#        **两条都要看，DB 那条不能省**：被重写回 0.0.0.0 时 postgres 的后果比 server 更重
+#        —— server 前面至少还有 edge（重写后是"绕过它"），而库一旦落在宿主网络上，就是
+#        **裸暴露一个可直连的 PG**（口令即全部防线），且没有任何应用层日志会告诉你这件事。
 #        对不上就把 prepare/scan 的原始输出原样贴回来，别硬推。
 
 # ③ 目标机上 13000 / 5432 没被别的项目占用
@@ -172,10 +178,14 @@ curl -fsS -X POST "$OPENSHIP_URL/api/domains/$DOMAIN_ID/verify-ssl" -H "Authoriz
 
 1. **PG 是否留在 compose 里**
    - 留：**不必再手工删 `postgres.ports`** —— R5 修复轮起它已绑回环（`127.0.0.1:5432:5432`），
-     本来就不给宿主公网面留暴露。生产若要连宿主回环都不留，再删这条；删之前留意本仓
-     `scripts/check-compose.mjs` 的 B7 规则二要求 postgres / server 各有回环映射
-     （有意为之：把"删端口映射"变成一次想清楚的决定，而不是顺手删）。
+     本来就不给宿主公网面留暴露。生产若要连宿主回环都不留，请**走下面的选项 2（整份删掉
+     postgres service）**，不要只抽掉那条映射：本仓 `scripts/check-compose.mjs` 的 B7 规则二
+     对"**服务还在、却一条 ports 条目都没有**"报违规（有意为之：把"撤掉宿主暴露面"变成一次
+     想清楚的决定，而不是顺手删一行）。同理，server 的那条映射也不要单删。
    - 不留：删掉整个 `postgres` service，`DATABASE_URL` 指向托管库；`depends_on` 一并删。
+     **B7 规则二对这条路径不报**（R5-2 建议改 1 订正：旧实现把"服务不存在"与"有服务但没
+     端口"混成同一条违规，于是照本选项做完会让 CI 的 gates job 变红，且报错文字是"postgres
+     服务缺少宿主端口映射"——理由与事实相反）。
 2. **`HOST_PORT` 逃生口不需要设**（它只是给「本机 13000 被占」用的），默认就是 13000。
 3. **顶层 `name: platform-core`**：本地留着它防「与别的 `deploy/` 仓库串项目」；若 openship 的
    services 模式按自己的项目名管理该栈（以 `deployments/prepare` / `folder/scan` 的识别结果为准），
