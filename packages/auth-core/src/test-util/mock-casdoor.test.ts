@@ -156,6 +156,17 @@ describe('MockCasdoor：权限按 org 分桶（owner= 生效）', () => {
     expect(((await r.json()) as { status: string }).status).toBe('error')
   })
 
+  // R4 Task 4 Step 3：真机未授权文案**按端点区分**——get-user 回 'Please login first'，
+  // get-permissions 等回 'Unauthorized operation'。mock 旧实现两处共用一句，与真机不一致
+  //（客户端不按文案分支，这里纯为保真；R3 终审建议改）。
+  it('★ 负例：未授权文案按端点区分（get-user ⇒ Please login first；get-permissions ⇒ Unauthorized operation）', async () => {
+    const dead = { Cookie: 'casdoor_session_id=deadbeef' }
+    const u = await fetch(`${m.origin}/api/get-user?id=acme/admin1`, { headers: dead })
+    expect(((await u.json()) as { msg?: string }).msg).toBe('Please login first')
+    const p = await fetch(`${m.origin}/api/get-permissions?owner=acme`, { headers: dead })
+    expect(((await p.json()) as { msg?: string }).msg).toBe('Unauthorized operation')
+  })
+
   it('显式注入 HTTP 401：那是真机不产生的形状，只能显式注入来钉客户端的防御契约', async () => {
     m.setHttpFault('unauthorized401')
     try {
@@ -184,5 +195,66 @@ describe('MockCasdoor：权限按 org 分桶（owner= 生效）', () => {
 
     expect(m.permissionsIn('gamma').find((p) => p.name === 'shared:code')?.users).toEqual(['admin1'])
     expect(m.permissionsIn('acme').find((p) => p.name === 'shared:code')?.users).toEqual([])
+  })
+})
+
+// ---- R4 Task 4 Step 1：get-user 的 id 段数校验对齐真机 ----
+//
+// R3 终审 + R4 评审真机实测（sso.hookflow.cn）：`id=/admin`、`id=built-in/`、`id=/` 全回
+// 200 {status:'ok',data:null}——两段（哪怕含空段）一律进查找，查不到就 ok+null；
+// **空 id 同样是 ok+null**（R4 评审探针：`?id=`、完全不带 id 形参、裸 `?id=` 三态都回
+// 200 ok+null ⇒ 真机把"空 id"当**查不到人**，不是在形参校验那步报错）；
+// 只有**段数≠2**（`noSlashId`、`built-in/admin/extra`）才回 wrong token count
+// （上游 `GetOwnerAndNameFromId` 就是 `strings.Split(id,"/")` 后判 len!=2）。
+// 旧 mock 的 `!parts[0] || !parts[1]` 把含空段的两段也判非法 ⇒ 方向与真机相反；
+// 而"空 id 走 split 后 length!==2 ⇒ 报错"这一步**旧实现本来就是这个方向**，只是恰好也是错的
+// ——修 Step 1 时若只动 `!parts[0] || !parts[1]`，空 id 这一格仍是错方向（R4 评审 must-fix 1）。
+describe('MockCasdoor get-user：id 段数校验对齐真机', () => {
+  async function getUser(id: string): Promise<{ status: string; msg?: string; data?: unknown }> {
+    const r = await fetch(`${m.origin}/api/get-user?id=${encodeURIComponent(id)}`, {
+      headers: { Cookie: await adminCookie() },
+    })
+    expect(r.status).toBe(200)
+    return (await r.json()) as { status: string; msg?: string; data?: unknown }
+  }
+
+  it('★ 负例：含空段的两段 id 不再判非法（/admin ⇒ ok+null，不是 wrong token count）', async () => {
+    const j = await getUser('/admin')
+    expect(j.status).toBe('ok') // ← 旧 mock 在此回 error，本行必红
+    expect(j.data).toBeNull()
+  })
+
+  it('两段含空段一律进查找：built-in/ 与 / 同样 ok+null', async () => {
+    expect((await getUser('built-in/')).status).toBe('ok')
+    expect((await getUser('built-in/')).data).toBeNull()
+    expect((await getUser('/')).status).toBe('ok')
+    expect((await getUser('/')).data).toBeNull()
+  })
+
+  it('段数≠2 仍报 wrong token count（built-in/admin/extra）——归一不得变成"放行一切"', async () => {
+    const j = await getUser('built-in/admin/extra')
+    expect(j.status).toBe('error')
+    expect(String(j.msg)).toMatch(/wrong token count/)
+  })
+
+  it('★ 负例：空 id ⇒ ok+null（**不是** wrong token count）——真机把"空 id"当查不到人', async () => {
+    // R4 评审真机探针（sso.hookflow.cn）：
+    //   curl -sS -G …/api/get-user --data-urlencode "id="      ⇒ {"status":"ok",…,"data":null}
+    //   curl -sS -G …/api/get-user                            ⇒ 同 200 ok+null
+    //   curl -sS -G …/api/get-user --data-urlencode "id=" (裸 ?id=) ⇒ 同 200 ok+null
+    // 旧断言（本用例的前身）声称"真机空串只 split 出 1 段 ⇒ 报 wrong token count"——**该陈述
+    // 经探针证伪**：方向与真机相反，且它会让正解变红，把分歧焊死进闸门（R3 must-fix 2 的
+    // "替身锁住旧形状"同族）。翻它是 must-fix 1 的**要求**，不是为了让测试变绿。
+    const j = await getUser('')
+    expect(j.status).toBe('ok')
+    expect(j.data).toBeNull()
+  })
+
+  it('裸 query 通道（完全不带 id 形参）同样 ok+null——空 id 与"没传 id"在真机不可区分', async () => {
+    const r = await fetch(`${m.origin}/api/get-user`, { headers: { Cookie: await adminCookie() } })
+    expect(r.status).toBe(200)
+    const j = (await r.json()) as { status: string; data?: unknown }
+    expect(j.status).toBe('ok')
+    expect(j.data).toBeNull()
   })
 })

@@ -14,6 +14,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import type { Pool } from 'pg'
 import { CasdoorClient } from '@platform/auth-core'
 import { loadConfig, type AppConfig } from './config'
@@ -37,6 +38,17 @@ const platformMigrationsDir = fileURLToPath(new URL('./migrations', import.meta.
  * Docker pnpm start）启动——裸 cwd 仓根直跑 tsx 时该相对路径不成立（详见任务报告）。
  */
 const modulesDir = path.resolve(process.cwd(), '../../modules')
+
+/**
+ * 全仓请求体上限（M1 闭债 R4）。此前只有登录路做了有界读取（routes/auth.ts 的
+ * readBodyBounded，上限 8192），其余 `/api/*` 端点无任何上限 —— 未认证请求即可用大 body
+ * 撑内存。用 hono 自带的 body-limit（不手搓）。
+ *
+ * 取值理由：本仓已知的最大正当载荷是便签正文 2000 字符（modules/demo 的 MAX_NOTE_LEN），
+ * 1 MiB 留出两个数量级余量；将来若出现上传类端点，应**按路由**单列而非抬这个全局值。
+ * 登录路自己的 8192 上限更严，仍然生效（它读 body 时走 readBodyBounded）。
+ */
+export const MAX_API_BODY_BYTES = 1024 * 1024
 
 /** apps/web/dist（Task 17 构建产物）：按本文件位置解析（src/ → ../../web/dist），与 cwd 无关 */
 const webDistDir = fileURLToPath(new URL('../../web/dist', import.meta.url))
@@ -108,6 +120,48 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     c.res.headers.set('X-Content-Type-Options', 'nosniff')
     c.res.headers.set('Referrer-Policy', 'no-referrer')
   })
+
+  // ④.5 请求体上限（M1 闭债 R4）：早于租户解析（拒绝超大载荷不应先做 DB 查询）。
+  // 挂在 /api/* 子树——用 hono 自带的 body-limit（不手搓）；超限返 413 + 同一 JSON 形状。
+  // 顺序约束（Hono 实测）：中间件只对**其后注册**的路由生效，故必须挂在这里（所有
+  // /api/* 路由都在下面 ⑦⑧⑨ 注册）；挂到路由之后再 use 会永不执行。
+  //
+  // **登录路同样先落在这里（R4 评审 S2，有意为之）**：>1 MiB 的登录体被这道全局上限拒掉
+  // ⇒ 它**到不了** routes/auth.ts 的三层登录限速器，而那里的注释说"超限计数照记"——两句
+  // 说的是**两件事**，别当成矛盾：auth.ts 那句管的是**它自己** 8192 那道有界读取
+  // （readBodyBounded 越界 ⇒ 计数照记）；1 MiB 以上的体在本层就被拒，**不读体、不写 audit、
+  // 不调 Casdoor**。这是刻意取舍：1 MiB 这个量级已经明确是滥用流量，为它保留一条"解析出
+  // username 再按用户维度计数"的路径，等于让滥用者用最大成本换最精确的计数。代价说清楚：
+  // 本层挂在租户解析（⑥）**之前**，而限速器在 authRoutes（⑧）里 ⇒ 被这里拒掉的登录请求
+  // **三层限速器一层都不计**（连租户桶都不记）。这是有意的，若要改这条口径，上面两处注释
+  // 必须一起改。
+  app.use('/api/*', bodyLimit({
+    maxSize: MAX_API_BODY_BYTES,
+    onError: async (c) => {
+      // **必须先把请求体流 cancel 掉再回 413**（M1 闭债 R4 评审 must-fix 2）。
+      // 不 cancel 时 @hono/node-server 会直接销毁 socket，客户端还在写 body 就拿到
+      // ECONNRESET/EPIPE 而**不是这个 413**——真 socket 探针实测 25–35% 的超限请求如此
+      // （进程内 app.request() 无 socket，看不见这条；回归面在 app.test.ts 的
+      //  「真 HTTP（真 @hono/node-server + 真 socket）」describe）。
+      // 触发条件**两个条件缺一不可**（R4 复审 S-a 四格实测，每格 40 次）：
+      //   ① **提前返回发生在中间件里**（onError 直接回 413、不 next），**且**
+      //   ② 返回前**访问过请求体流又弃之不用**。
+      //   裸 handler 里碰 body ⇒ 40/40 干净；中间件里提前返回但不碰 body ⇒ 40/40 干净；
+      //   **中间件提前返回 + 碰过 body ⇒ 27/40 回归**（本任务修的正是这一格）；同格再加下面
+      //   那句 cancel ⇒ 40/40 回到对照基线。缺任一条件都不复现——只写"碰了 body"会把结论推宽。
+      // 机制：hono/body-limit 首行 `if (!c.req.raw.body) return next()` 一旦读了 body 就不再
+      // 有"没碰过它"这条退路。
+      // 适用面（标定过，别把结论推得更广）：这是 **keep-alive 客户端**的回归——不 cancel
+      // 26/40 干净，cancel 后 40/40 回到"从不碰 body"的对照基线（评审探针同结论 120/120）。
+      // 声明 `Connection: close` 的客户端在 cancel 后仍会重置——但那**不是本次改动引入的**：
+      // 同样条件下"从不碰 body"的对照本身就只有 ~70% 干净，属 @hono/node-server 的固有行为。
+      // catch 吞掉：流已被对端掐断时 cancel 会抛，那不该盖过 413 本身——这个 413 才是
+      // 客户端该看到的东西。返回 Promise 是刻意的：bodyLimit 的 onError 允许 async，
+      // 不 await 就返回会让 cancel 与响应写出赛跑，把刚修好的竞态又放回来。
+      await c.req.raw.body?.cancel().catch(() => {})
+      return c.json({ error: 'PAYLOAD_TOO_LARGE' }, 413)
+    },
+  }))
 
   // ⑤ /healthz —— 在租户中间件之前：探活不带业务 Host（LB/容器探针无租户域）
   app.get('/healthz', (c) => c.json({ ok: true }))

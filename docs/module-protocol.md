@@ -114,6 +114,62 @@ PR#5 评审 R2 钉住的一条边界。`use('/x', 非终结 mw)`（只调 `next(
 
 模块侧取身份仍走 `c.get('identity')`（由宿主注入），`Identity` 类型从 `@platform/sdk` 导出。
 
+## 停用语义：停用 = 该租户看不到这个模块
+
+`platform.tenant_module.enabled=false` ⇒ **该租户的这条模块 API 一律 404**。**不是 403**：
+403 会明说"存在但被停用"；404 与「这个模块压根不存在」**同形**，于是在**模块 API 面内**停用状态
+**不可枚举**——打 `/api/modules/<id>/*` 探不到停用与不存在之间的差别。闸门按**租户**在请求期判定，
+与 `/config` 的清单闸门**同源**（同一个 `enabledFor` 实现，见 `apps/server/src/loader.ts` 的
+`enabledForImpl`）——清单里看不到却仍能调通的模块，正是停用语义只落一半时的样子。
+「无行 = 启用默认」照旧：只有显式 `enabled=false` 行才关闸。
+
+⚠️ **「不可枚举」的作用域是模块 API 面，不是系统面**（R4 复审 must-fix 2——本节旧措辞曾写成无
+scope 的绝对断言，改掉）。`GET /api/platform/config` 是**有意的披露面**（它本来就给租户看自己的
+模块清单），且**只吃租户不吃 identity**——`apps/server/src/routes/platform.ts` 的 `/config` handler
+只读 `c.get('tenant')`、做 `enabledFor(t.id)` 过滤，链路上没有任何身份门（宿主 `apps/server/src/app.ts`
+把它挂在租户中间件之后、会话中间件旁，无 `identity` 前置要求）。⇒ 任何**能设 Host 的匿名者**都能
+取到该租户的**已启用模块清单**，**停用模块直接缺席**；再拿另一个租户的同一响应作对照，就能把
+「本租户停用」与「平台内压根不存在」分开。
+实测（真 `buildApp`，匿名请求**只带 Host、不带任何凭据/ Cookie**）：
+
+| 请求 | 结果 |
+|------|------|
+| `GET /api/platform/config` Host=acme.test（demo 已显式停用） | `200 {"tenant":{"slug":"acme",…},"modules":[]}` |
+| `GET /api/platform/config` Host=beta.test（demo 未停用） | `200 {…"modules":[{"id":"demo",…}]}` |
+| `GET /api/modules/demo/ping` Host=acme.test，停用 | `401 {"error":"UNAUTHENTICATED"}` |
+| `GET /api/modules/demo/ping` Host=acme.test，启用 | `401 {"error":"UNAUTHENTICATED"}`（与停用**逐字相同**） |
+
+即：模块 API 面内匿名分不出停用/启用（后两行同形），但 `/config` 这一面把「该租户启用了哪些模块」
+匿名公开了。属**存量行为**（`/config` 与 `enabledFor` 都早于停用闸门），非本轮引入；要收紧只能给
+`/config` 加身份门，那会改掉控制台首屏的取数前提，不在本闸门范围内。
+
+实现要点（都在 `loader.mount()` 里，动手前先读那段注释）：
+
+- 闸门用 `app.use(base + '/*', gate)` 一条挂在**模块路由之前**。**不需要**再挂一条精确的
+  `use(base)`：实测 `/*` 已经吞掉空段、同时命中 `/base`、`/base/`、`/base/ping`（R4 评审 S4
+  删掉了那条冗余的精确注册——它只让裸 base 的请求多跑一次 `enabledFor`，把两次 DB 往返花在
+  一个本就没有端点的路径上）。
+  顺序是硬约束：Hono 里 handler 先注册、`use` 后注册 ⇒ 该中间件**永不执行**（见下节第 2 条），
+  闸门晚挂就等于没挂。
+- 闸门**不做缓存**：每次请求查一次 `enabledFor`（+1 次 DB 往返）。这是刻意的——「停用后多久
+  生效」不该有一个隐式窗口。将来若测出瓶颈要加 TTL，必须同时把窗口语义写进这里与代码注释。
+- **两条放行路径**，都不在本闸门职责内：
+  - **无租户上下文** → 放行。真实链路上租户中间件先于一切业务路由，闸门见到的请求必带租户；
+    未命中 Host 的那类请求早已被租户中间件 404/抛错拦掉。
+  - **无 identity（匿名，R4 评审 S5）** → 放行。闸门挂在模块**自身门卫**之前，匿名请求反正
+    会被门卫 401 挡下，到这里查库纯属白费：改动前匿名命中模块 API 是 **0 次 DB**，挂上闸门
+    后变成每请求 1 次，而模块 API **没有独立限流** ⇒ 匿名流量可被用来放大 DB 压力。放行也
+    **不**削弱不可枚举性——匿名打**停用**模块与打**启用**模块的落点都是门卫的 401
+    `{"error":"UNAUTHENTICATED"}`，响应逐字相同，停用与否无从区分；**已登录**用户照旧拿到
+    404（那条路径上闸门照常判定）。**注意这条的 scope 只到模块 API 面**——系统面上 `/config`
+    照旧匿名公开该租户的启用清单（见上一节的 ⚠️）。
+- ⚠️ **闸门只覆盖模块 API 半边：`frontend.userApp` 静态未落**（R4 复审 S-d；**存量缺口，
+  本轮不改行为**）。闸门挂在 `base + '/*'`；而 `frontend.userApp` 的静态目录由 `loader.mount()`
+  另挂在 manifest 自己的 mount 路径下、**不经过闸门** ⇒ 显式 `enabled=false` 后
+  `/api/modules/<id>/ping` 返 404，而 `<mount>/index.html` 仍 200。**休眠中**：仓内暂无模块声明
+  `frontend.userApp`（唯一模块 `modules/demo` 只声明了 `console`），当前无可观测面；将来有模块
+  启用它时必须一并补闸，否则「停用 = 看不到这个模块」会被读成绝对规则。
+
 ## 实现注意（踩过的坑，勿重蹈）
 
 门卫能不能生效，**取决于挂载方式**，与门卫自身的代码无关。三条已实证的 Hono 行为：

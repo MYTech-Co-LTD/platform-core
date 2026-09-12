@@ -30,6 +30,7 @@ import { Hono } from 'hono'
 import type { MiddlewareHandler } from 'hono'
 import type { Pool } from 'pg'
 import { runMigrations } from './migrate'
+import type { TenantRow } from './tenant'
 
 /** 装载完成的模块：manifest（协议）+ router（createRouter 产物） */
 export interface LoadedModule {
@@ -40,6 +41,10 @@ export interface LoadedModule {
 /**
  * 装载结果。mount 前中间件链由宿主负责（租户解析 → 会话中间件 → 模块自加
  * requireScope），mount 只做挂载；enabledFor 按「无行=启用默认」求租户可见集。
+ *
+ * `enabledFor` 有**两个**消费方，且共用同一份实现（见 loadModules 的 enabledForImpl）：
+ * routes/platform.ts 的 /config 清单闸门，以及 mount() 挂的 API 启用闸门（M1 闭债 R4）。
+ * 两者必须同源——清单里看不到却仍能调通的模块，正是停用语义只落一半时的样子。
  */
 export interface ModulesRuntime {
   modules: LoadedModule[]
@@ -297,14 +302,89 @@ export async function loadModules(
     )
   }
 
+  // ⑦ 租户已启用模块集（Task 12 /config 的闸门 + M1 闭债 R4 的 API 启用闸门）。
+  //    简报基线 SQL 是 `where tenant_id=$1 and enabled`（只回显式启用行）——「无行=启用默认」
+  //    要求把无行模块也并入集合（消费方 routes/platform.ts 直接 .filter(has) 消费），
+  //    故取该租户全行后在内存按默认值判定：显式 enabled=true 落集合、false 剔除、
+  //    无行视为启用；只回已装载模块的 id（磁盘上已删的模块不在任何租户可见集里）。
+  //    提成局部函数是因为 mount 里的启用闸门要用同一份语义——写两遍必然漂移。
+  const enabledForImpl = async (tenantId: number): Promise<Set<string>> => {
+    const { rows } = await deps.pool.query<{ module_id: string; enabled: boolean }>(
+      'select module_id, enabled from platform.tenant_module where tenant_id = $1',
+      [tenantId],
+    )
+    const explicit = new Map(rows.map((r) => [r.module_id, r.enabled]))
+    const enabled = new Set<string>()
+    for (const m of loaded) {
+      if (explicit.get(m.manifest.id) ?? true) enabled.add(m.manifest.id)
+    }
+    return enabled
+  }
+
   return {
     modules: loaded,
 
     // ⑥ API 挂 /api/modules/<id>；userApp 静态目录存在才挂（dist 绝对路径，mount 路径来自 manifest）
     mount(app: Hono): void {
       for (const m of loaded) {
-        app.route(moduleApiBasePath(m.manifest.id), m.router)
+        const base = moduleApiBasePath(m.manifest.id)
 
+        // ⑥.5 启用闸门（M1 闭债 R4）：停用 = **该租户看不到这个模块的 API** ⇒ 404，不是 403
+        //      （404 与「这个模块不存在」同形 ⇒ **在模块 API 面内**停用状态不可枚举；403 才泄露
+        //      "存在但被停用"）。
+        //      ⚠️ 作用域只到**模块 API 面**，不要推成系统级结论（R4 复审 must-fix 2）：宿主
+        //      `GET /api/platform/config` 是**有意的披露面**、**只吃租户不吃 identity**（见
+        //      routes/platform.ts 的 /config），匿名带 Host 即取到该租户已启用模块清单、停用模块
+        //      直接缺席 ⇒ **系统层面可区分停用/不存在**。属存量行为。详见 docs/module-protocol.md
+        //      「停用语义」。
+        //      **必须 use 在 app.route 之前**：Hono 里 handler 先注册、use 后注册时该中间件
+        //      **永不执行**（已实证，见 docs/module-protocol.md「实现注意」第 2 条）——顺序错了
+        //      就是一个"代码里有闸门、运行时永不生效"的静默洞。
+        //      **只挂 `/*` 一条**（R4 评审 S4）：实测 `use(base + '/*')` 同时命中 `/base`、
+        //      `/base/`、`/base/ping`（`/*` 吞空段）——即子树那条**已经覆盖裸 base**。旧写法
+        //      另挂一条精确 `use(base)`，看着像"多一层保险"，实际只让裸 base 的请求**跑两次
+        //      enabledFor（两次 DB 往返）**，还把冗余钉进了测试（loader.test.ts 曾断言闸门必须
+        //      2 条）。精确那条已删。
+        //      实测反例：把这条 `use` 挪到 `app.route` 之后 ⇒ 闸门**根本不执行**，请求 200
+        //      直达模块（正是「代码里有闸门、运行时永不生效」的静默洞）。
+        //      代价：每请求一次 enabledFor 查询（+1 次 DB 往返）。**刻意不做缓存**——「停用后
+        //      多久生效」不该有一个隐式窗口；将来若测出瓶颈要加 TTL，必须同时把窗口语义写进
+        //      本注释与 docs/module-protocol.md。
+        const gate: MiddlewareHandler = async (c, next) => {
+          const tenant = c.get('tenant') as TenantRow | undefined
+          // 无租户上下文（未过租户中间件）不在本闸门职责内，放行给后续层。真实链路上这道
+          // 中间件先于一切业务路由，未命中 Host 早已 404/抛错 ⇒ 闸门见到的请求必带租户。
+          if (!tenant) return next()
+          // **无 identity（匿名）同样直接放行**（R4 评审 S5，协调者裁定）。两个理由：
+          //   ① 闸门挂在模块**自身门卫**之前，匿名请求反正会被门卫挡下（401），到这里查库
+          //      纯属白费——改动前匿名命中模块 API 是 **0 次 DB**，加了闸门变成每请求 1 次，
+          //      而模块 API **没有独立限流** ⇒ 匿名流量可被用来放大 DB 压力。
+          //   ② 在**模块 API 面内**不削弱不可枚举性：匿名打**停用**模块与打**启用**模块，落点
+          //      都是模块门卫的 401 UNAUTHENTICATED（实测两条响应**逐字相同**），停用与否无从
+          //      区分；而已登录用户拿到的仍是 404，语义不变。loader.test.ts 里有这条的用例。
+          //      （旧措辞写"**反而更**不可枚举"——那是把面内结论推成了系统级，已订正。宿主
+          //        /api/platform/config 匿名可达、且会回该租户已启用清单，见 ⑥.5 与
+          //        docs/module-protocol.md「停用语义」。）
+          if (!c.get('identity')) return next()
+          const enabled = await enabledForImpl(tenant.id)
+          if (!enabled.has(m.manifest.id)) {
+            // 形状与宿主 /api 未命中兜底一致（app.ts 的 app.notFound）
+            return c.json({ error: 'NOT_FOUND' }, 404)
+          }
+          await next()
+        }
+        app.use(base + '/*', gate)
+
+        app.route(base, m.router)
+
+        // ⚠️ **上面那道启用闸门不覆盖这里**（R4 复审 S-d；**存量缺口，本轮不改行为**）：闸门只挂在
+        //    `base + '/*'`（= 模块 **API** 子树）上，而 userApp 静态挂在 manifest 自己的 mount 路径
+        //    下、**不经过闸门** ⇒ 显式 `enabled=false` 后 `/api/modules/<id>/ping` 返 404，而
+        //    `<mount>/index.html` 仍 200。即**停用语义只落了 API 半边**。
+        //    **休眠中**：仓内暂无模块声明 `frontend.userApp`（唯一模块 `modules/demo` 只声明了
+        //    `console` ⇒ 下面的 `continue` 先落在这里），故当前无可观测面、也没有可钉的用例。
+        //    将来有模块启用 userApp 时**必须一并补闸**，否则「停用 = 看不到这个模块」会被读成绝对
+        //    规则。docs/module-protocol.md「停用语义」段有同样的标注。
         const userApp = m.manifest.frontend?.userApp
         if (!userApp) continue
         const dist = path.resolve(m.dir, userApp.dist)
@@ -321,22 +401,6 @@ export async function loadModules(
       }
     },
 
-    // ⑦ 租户已启用模块集（Task 12 /config 的闸门）。简报基线 SQL 是
-    //    `where tenant_id=$1 and enabled`（只回显式启用行）——「无行=启用默认」要求
-    //    把无行模块也并入集合（消费方 routes/platform.ts 直接 .filter(has) 消费），
-    //    故取该租户全行后在内存按默认值判定：显式 enabled=true 落集合、false 剔除、
-    //    无行视为启用；只回已装载模块的 id（磁盘上已删的模块不在任何租户可见集里）。
-    async enabledFor(tenantId: number): Promise<Set<string>> {
-      const { rows } = await deps.pool.query<{ module_id: string; enabled: boolean }>(
-        'select module_id, enabled from platform.tenant_module where tenant_id = $1',
-        [tenantId],
-      )
-      const explicit = new Map(rows.map((r) => [r.module_id, r.enabled]))
-      const enabled = new Set<string>()
-      for (const m of loaded) {
-        if (explicit.get(m.manifest.id) ?? true) enabled.add(m.manifest.id)
-      }
-      return enabled
-    },
+    enabledFor: enabledForImpl,
   }
 }

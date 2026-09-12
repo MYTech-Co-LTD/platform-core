@@ -7,8 +7,10 @@
 //   ① API 响应不回真 secret —— 用户记录里的 password 只留 mock 内部比对，
 //     任何 JSON 响应（login / get-user / get-permissions）都不含 password 字段。
 //   ② 选择器形参走 query 风格 —— buy-product 类端点同款陷阱：
-//     get-user 只认 id=<org>/<name> 全形（owner=/name= 或无斜杠会被真实 Casdoor 报
-//     wrong token count），**且 org 段是命中条件的一部分**——真机实测 `id=shanhai/admin`
+//     get-user 只认 id=<org>/<name> 两段形（owner=/name= 或**段数≠2** 会被真实 Casdoor 报
+//     wrong token count；**空 id 与含空段的两段都照进查找** ⇒ 查不到人回 ok+null——
+//     R4 评审只读探针：`?id=`、不带 id、裸 `?id=` 三态同形全是 ok+null），
+//     **且 org 段是命中条件的一部分**——真机实测 `id=shanhai/admin`
 //     ⇒ ok+null，尽管 `built-in/admin` 确实存在（用户按 owner 归属；评审 S3）。
 //     且**命中判定排在会话门禁之前**（真机先查用户、后判会话）：查无此人（含不属于该 org）
 //     一律 ok+null，连"未登录"都轮不到；用户存在而会话失效才是 200+status:error（评审 S1）。
@@ -122,7 +124,17 @@ export class MockCasdoor {
   get port(): number { return this.#port }
   get origin(): string { return `http://127.0.0.1:${this.#port}` }
 
-  /** get-user 故障注入：'error' 持续、'errorOnce' 只一次（用于验证 admin 会话自愈） */
+  /**
+   * get-user 的「**会话失效/未授权**」故障注入——**只模拟这一种口味**，不是通用的上游内部错。
+   *
+   * 它回 `200 + {status:'error', msg:'Please login first'}`，正是真机「用户存在 + admin 会话
+   * 失效」的形状。命中序是**先查用户、后判会话**（与真机一致），所以它**只在用户存在时生效**；
+   * 用户不存在那条路根本走不到会话门（真机同样回 ok+null）。
+   * 'error' 持续、'errorOnce' 只一次（后者用于验证 admin 会话自愈：重登一次后即恢复）。
+   *
+   * ⚠️ 别拿它当"上游内部错"求：真机把 DB 出错／角色扩展失败／org 不通也回 status:error，
+   * 那些与"会话失效"同形状但成因不同；本注入点只覆盖后者，**不暗示能模拟前者**。
+   */
   setGetUserFault(mode: 'off' | 'error' | 'errorOnce'): void {
     this.#getUserFault = mode
   }
@@ -213,17 +225,19 @@ export class MockCasdoor {
     return !!u && u.isAdmin
   }
 
-  #unauthorized(c: Context) {
+  #unauthorized(c: Context, msg = 'Unauthorized operation') {
     // 真机形状（sso.hookflow.cn / 本机 curl 实测，无凭据）：会话失效 ⇒ **HTTP 200** +
-    // {status:'error', msg:'Unauthorized operation'}，**一条 401 都没有**。
+    // {status:'error', msg:...}，**一条 401 都没有**。**文案按端点区分**（真机实测）：
+    // get-user 回 'Please login first'，get-permissions 等回 'Unauthorized operation'——
+    // 客户端不按文案分支，这里纯为保真（R3 终审建议）。
     // 旧 mock 在这里回 401，与真机不符 ⇒ 客户端 `#adminRequest` 的 401 重试在门禁里看着是活的、
     // 在真机上却是死码，而"替身锁住旧形状"让同类回归持续不可见（评审 must-fix 2）。
     // 需要机检 401 防御契约时用 setHttpFault('unauthorized401') **显式注入**——那才是它该有的位置。
     if (this.#httpAuthFault !== 'off') {
       if (this.#httpAuthFault === 'unauthorized401Once') this.#httpAuthFault = 'off'
-      return c.json({ status: 'error', msg: 'Unauthorized operation' }, 401)
+      return c.json({ status: 'error', msg }, 401)
     }
-    return c.json({ status: 'error', msg: 'Unauthorized operation' })
+    return c.json({ status: 'error', msg })
   }
 
   #updatePermission = async (c: Context) => {
@@ -231,8 +245,26 @@ export class MockCasdoor {
     // 纪律 ②：id=<org>/<name> 全形 query 形参。owner 参与定位——跨 org 同名权限互不干扰
     // （旧实现只按 name 找：两个 org 各有一枚 demo:view 时会改错那一枚，而 get-permissions
     //   已按 org 分桶 ⇒ 表现为"改了 A 租户的码、B 租户的授权凭空消失"这种极难归因的症状）
+    // 段数判别与 get-user **同一套**（R4 评审 S9）：同一个 `id=` 形参不该有两套规则——
+    // 真机两个端点共用上游 `GetOwnerAndNameFromId`（`strings.Split(id,'/')` 后判 len!=2）。
+    // 旧实现在这里多判了 `!segs[0] || !segs[1]`，把含空段的两段判非法，而 get-user 已改成
+    // 照进查找 ⇒ 同一个 id 在两条端点上一个判非法、一个照查，是"两套判别"的典型形状。
+    //
+    // 空 id 的落点（实测形状，别按"查不到权限"想当然）：空 id ⇒ `''.split('/')` 得 `['']`
+    // ⇒ **段数 1 ≠ 2 ⇒ 落到下一段的 `wrong token count`**；**下面那行 `permission not found`
+    // 对空 id 根本不可达**（它只在"两段、但查无此权限"时命中）。
+    // 两条端点空 id 上落的是**不同**分支，别读成"同为 error 分支"：
+    //   · update-permission：段数判别在查找**之前** ⇒ 200 {status:'error', msg:'wrong token count…'}
+    //   · get-user：空 id 在段数判别**之前**被单独短路（本文件 `/api/get-user` 的
+    //     `if (rawId === '') return ok+null`）⇒ **成功分支** ok+{data:null}
+    // 实测（真 mock HTTP，admin 会话，本文件口径）：`POST /api/update-permission?id=` ⇒
+    // `wrong token count, expect <org>/<name>`；`GET /api/get-user?id=` ⇒ `{status:'ok',data:null}`。
+    // 本轮对齐的只是「**段数判别用同一套规则**」（都是 `split('/')` 后判 `len !== 2`，
+    // get-user 除外一条空 id 短路），**不是**"两条端点落点相同"。
+    // 真机该端点的空 id 行为**未经探针验证**（R4 评审只验了 get-user），故这里只保证
+    // "与 get-user 同一条段数规则、不另立一套"。
     const segs = (c.req.query('id') ?? '').split('/')
-    if (segs.length !== 2 || !segs[0] || !segs[1]) {
+    if (segs.length !== 2) {
       return c.json({ status: 'error', msg: 'wrong token count, expect <org>/<name>' })
     }
     const p = this.#perms.find((x) => x.owner === segs[0] && x.name === segs[1])
@@ -311,9 +343,21 @@ export class MockCasdoor {
     })
     // GET /api/get-user?id=<org>/<name> —— 纪律 ②：单数端点只认 id= 全形，严格两段
     .get('/api/get-user', (c) => {
-      const parts = (c.req.query('id') ?? '').split('/')
-      if (parts.length !== 2 || !parts[0] || !parts[1]) {
-        // 真实 Casdoor GetOwnerAndNameFromId 同款拒绝：非 <org>/<name> 全形不合法
+      const rawId = c.req.query('id') ?? ''
+      // 真机规则（sso.hookflow.cn 实测，R3 终审 + R4 评审复验）：
+      //   ① **空 id ⇒ ok+null**（当"查不到人"，不报错）。R4 评审只读探针三态同形：
+      //      `--data-urlencode "id="`／完全不传 id 形参／裸 `?id=` 全回 200 {status:'ok',data:null}。
+      //   ② **段数≠2** 才报 wrong token count——上游 GetOwnerAndNameFromId 是
+      //      strings.Split(id,'/') 后判 len!=2（`id=built-in/admin/extra` 就是这条路）。
+      //   ③ 两段（哪怕含空段）一律进查找：`id=/admin`、`id=built-in/`、`id=/` 都查不到人 ⇒ ok+null。
+      // 旧实现两处都错：多判的 `!parts[0] || !parts[1]` 把含空段的两段判非法——方向与真机相反；
+      // 且空 id 走 split ⇒ [''], len!==2 ⇒ 报错，**也是与真机相反**（R4 评审 must-fix 1：只动
+      // 前一格会把这一格漏掉，因为它在旧实现里本就是 error，看起来"没变过"）。
+      // 方向后果真实：空 id 会被替身表现为"上游报错"（客户端降级用旧 scopes），真机表现为
+      // "用户不存在"（清 cookie 登出）——两个相反的分支。
+      if (rawId === '') return c.json({ status: 'ok', data: null })
+      const parts = rawId.split('/')
+      if (parts.length !== 2) {
         return c.json({ status: 'error', msg: 'wrong token count, expect <org>/<name>' })
       }
       // **按 (owner, name) 命中**：org 段是真机命中条件的一部分（实测 `id=shanhai/admin`
@@ -332,7 +376,12 @@ export class MockCasdoor {
       // 改动前先读本文件头注的 mock 三纪律。
       if (!user) return c.json({ status: 'ok', data: null })
       // 用户查得到才过会话门：门的语义是"你能不能看这个用户"，不是"这个用户存不存在"。
-      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      // 会话失效文案按端点区分（真机）：get-user 回 'Please login first'（get-permissions 等
+      // 才回 'Unauthorized operation'）——客户端不按文案分支，纯保真（R3 终审建议）。
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c, 'Please login first')
+      // 本分支只在**用户存在**时可达（命中序：先查用户、后判会话）。它模拟的是
+      // 「admin 会话失效/未授权」这一种口味（真机：用户存在 + 会话失效 ⇒ 200 +
+      // status:error 'Please login first'），**不是**通用的上游内部错——见 setGetUserFault 注释。
       if (this.#getUserFault === 'error' || this.#getUserFault === 'errorOnce') {
         if (this.#getUserFault === 'errorOnce') this.#getUserFault = 'off'
         return c.json({ status: 'error', msg: 'Please login first' })
