@@ -17,7 +17,10 @@
 // **两个层次都要覆盖**（R4 评审 must-fix 2 的教训）：进程内 `app.request()` **没有 socket**，
 // 「客户端拿不到 413、转而看到连接重置」这件事在那一层结构性地看不见 ⇒ 除了进程内那组，
 // 另起一层**真 @hono/node-server + 真 socket**（见「真 HTTP」describe）。
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { Agent, request as httpRequest } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MockCasdoor } from '@platform/auth-core/src/test-util/mock-casdoor'
@@ -264,6 +267,88 @@ describe.skipIf(!dbUrl)('buildApp：/api/* 全局请求体上限（MAX_API_BODY_
         '{"error":"PAYLOAD_TOO_LARGE"}',
       ])
     }, 60_000)
+  })
+})
+
+// ---- 静态响应的缓存策略（M1 闭债 R5）：哈希产物 immutable / 其余（含 index.html）可重验 ----
+//
+// **为什么注入 fixture dist，而不是用 apps/web/dist（计划 Step 1 的写法）**：CI 的 `unit` job
+// 只跑 `pnpm test`、从不构建 web——凡依赖 dist 的断言都归 `smoke` job（它自己先 build，见
+// ci.yml 的分工注释）。按真机产物断言 ⇒ 本文件在 CI 上整片变红或（若加 skipIf）静默休眠，
+// 两条都不可接受。fixture **复刻 vite 产物的关键形状**（index.html 以站点绝对路径引用带内容
+// 哈希的 /assets/*.js），被断言的语义与真机同源，且不依赖构建顺序。
+//
+// 真机产物那一层由 smoke 的 H3 段覆盖（/assets/* 必须吐构建产物本体）。
+describe.skipIf(!dbUrl)('buildApp：静态响应 Cache-Control', () => {
+  const mockStatic = new MockCasdoor()
+  let distDir = ''
+  let app: Awaited<ReturnType<typeof buildApp>>['app']
+
+  beforeAll(async () => {
+    await mockStatic.start()
+    distDir = await mkdtemp(join(tmpdir(), 'platform-web-dist-'))
+    await mkdir(join(distDir, 'assets'))
+    await writeFile(join(distDir, 'assets', 'index-CIQEGtjA.js'), 'console.log("fixture")\n')
+    await writeFile(join(distDir, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>\n')
+    await writeFile(
+      join(distDir, 'index.html'),
+      [
+        '<!doctype html>',
+        '<html><head><title>fixture</title></head><body>',
+        '<div id="root"></div>',
+        '<script type="module" src="/assets/index-CIQEGtjA.js"></script>',
+        '</body></html>',
+        '',
+      ].join('\n'),
+    )
+    app = (await buildApp({ config: configWith(mockStatic.origin, 'pw'), webDistDir: distDir })).app
+  })
+  afterAll(async () => {
+    await mockStatic.stop()
+    await rm(distDir, { recursive: true, force: true })
+  })
+
+  it('★ 负例：/assets/* 带内容哈希 ⇒ immutable 长缓存', async () => {
+    // 资产路径从**真装配产出的 index.html** 里取（不写死）：断言的正是浏览器会请求的那条 URL
+    const index = await app.request('/', { headers: { host: 'acme.test' } })
+    const html = await index.text()
+    const m = /\/assets\/[^"']+\.js/.exec(html)
+    expect(m).not.toBeNull()
+    const asset = await app.request(m![0], { headers: { host: 'acme.test' } })
+    // 先钉住「命中的是产物本体而非 SPA 兜底」——否则下面两条会在 "immutable 标到了 index.html 上"
+    // 这种**最坏情形**下假绿（那正是本任务要防的事故：拿 immutable 的旧壳去请求已删的旧 assets）
+    expect(asset.status).toBe(200)
+    expect(asset.headers.get('content-type')).toContain('javascript')
+    const cc = asset.headers.get('cache-control') ?? ''
+    expect(cc).toContain('immutable')
+    expect(cc).toContain('max-age=31536000')
+  })
+
+  it('★ 负例：SPA 入口（/ 与深链兜底）必须可重验，不得长缓存', async () => {
+    for (const p of ['/', '/login', '/console', '/console/demo']) {
+      const res = await app.request(p, { headers: { host: 'acme.test' } })
+      expect(res.status, `${p} 应回 SPA 入口`).toBe(200)
+      expect(res.headers.get('content-type'), `${p} 应吐 index.html`).toContain('text/html')
+      const cc = res.headers.get('cache-control') ?? ''
+      expect(cc, `${p} 的 Cache-Control`).toContain('no-cache')
+      expect(cc, `${p} 的 Cache-Control`).not.toContain('immutable')
+    }
+  })
+
+  it('★ 边界：/assets/ 前缀下**未命中**的路径落 SPA 兜底 ⇒ 仍须可重验（不得按前缀误标 immutable）', async () => {
+    // 分档若写成"看路径前缀"就会在这一格把 index.html 标成 immutable —— 发版后用户拿到旧壳
+    const res = await app.request('/assets/gone-1a2b3c.js', { headers: { host: 'acme.test' } })
+    expect(res.headers.get('content-type')).toContain('text/html') // 确系 SPA 兜底
+    const cc = res.headers.get('cache-control') ?? ''
+    expect(cc).toContain('no-cache')
+    expect(cc).not.toContain('immutable')
+  })
+
+  it('对照：非哈希产物（/favicon.svg）也走可重验档——规则是「/assets 前缀 immutable + 其余一律可重验」', async () => {
+    const res = await app.request('/favicon.svg', { headers: { host: 'acme.test' } })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('svg')
+    expect(res.headers.get('cache-control')).toBe('no-cache')
   })
 })
 
