@@ -49,6 +49,8 @@ services:
       dockerfile: deploy/Dockerfile.server
     # 运行时 env 来自根 .env（gitignore；模板是根 .env.example，B9 门禁保证键齐全）。
     # required:false —— 缺 .env 时不报错（纯 `up -d postgres` 的用法不该被它卡住）
+    # 注意：`required` 字段需 **Compose ≥ 2.24**；更早版本会因未知字段报错或静默忽略。
+    # 本仓 CI 与生产均用较新版；本地若 `docker compose version` < 2.24，请改用 `-f` 显式传 .env。
     env_file:
       - path: ../.env
         required: false
@@ -69,7 +71,15 @@ services:
       # 注意 compose 的 ${} 插值只读「本 compose 文件所在目录的 .env」与 shell 环境，
       # 不读上面 env_file 指的 ../.env —— 所以用法是 `HOST_PORT=13001 docker compose ... up`。
       # 容器侧端口恒为 13000（下面 environment.PORT），宿主映射由它决定。
-      - '${HOST_PORT:-13000}:13000'
+      # 绑回环（M1 闭债 R5）：生产上本服务只经 openship edge 访问，edge 在宿主上反代
+      # 127.0.0.1:<port> ⇒ 绑 0.0.0.0 会让任何能访问宿主该端口的人**绕过 edge**
+      # （丢掉证书、限速与访问控制）。
+      # 生产照搬本文件（openship-adopt.md「生产差异」只列了三处必改项），所以这条映射
+      # 是生产入口面的一部分：**不绑回环就必须在生产手工加差异项**，绑了则本地冒烟/开发
+      # 不受影响（它们走 127.0.0.1，见文件头用法①）。
+      # 注：上面 postgres 的 `5432:5432` 是另一回事——它是【本地冒烟/psql 排障】的便利映射，
+      # 收窄交给生产侧（adopt 文档第 1 条：生产删掉那条映射），不在本任务范围。
+      - '127.0.0.1:${HOST_PORT:-13000}:13000'
     # 启动期故障（如 Casdoor 不可达 → upsertPermission 抛错）不该让容器一停不起；
     # 反复重启会把失败暴露在 docker compose ps 的 Restarting 上，而不是静默躺着
     restart: unless-stopped
