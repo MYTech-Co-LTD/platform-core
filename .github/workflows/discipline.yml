@@ -1,0 +1,47 @@
+# discipline.yml —— 开发纪律守卫（薄壳）
+# 判据全部在 scripts/ 的两个脚本里（单一实现，本仓与项目共用同一份）：
+#   · check-pr-discipline.mjs   —— issue 关联 / 溯源 trailer / 分支名一致性
+#   · check-dev-discipline.sh   —— commit 格式（conventional commits）/ CHANGELOG 手改
+# 本文件只负责：把这两个脚本串起来，用名为 discipline 的 job 提供 required check。
+#
+# 本仓即模板：本文件与 templates/.github/workflows/discipline.yml 必须字节相同，
+# 由 scripts/guard.mjs 钉住。
+#
+# 项目侧接入见 templates/discipline/README.md（四步）。
+name: discipline
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  discipline:
+    name: discipline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 是必需的：下面两条都要拿 origin/<base> 做 diff/log 范围，
+          # 浅克隆下它不存在 ⇒ 脚本会走「无提交需要检查」而**静默通过**（守卫空转）。
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 校验 commit 格式 + CHANGELOG 手改
+        run: bash scripts/check-dev-discipline.sh "origin/${{ github.base_ref || 'main' }}" HEAD
+      - name: 校验 issue 关联 + 溯源 trailer + 分支名一致性
+        run: node scripts/check-pr-discipline.mjs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}

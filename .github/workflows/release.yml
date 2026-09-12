@@ -1,0 +1,38 @@
+# release.yml —— 发版（公司标准 dev-discipline §1.4）
+# push main 后由 release.mjs 解析上个 tag 以来的 conventional commits：
+#   CHANGELOG 每条带【新增】/【优化】/【修复】→ 提交 chore(release) → 打 tag → GitHub Release
+# 纪律：可见类型提交必须带 (#N) PR 引用，否则 release.mjs 拒绝发版。
+# 前置：仓库 Actions 权限需 Read and write（见 templates/discipline/README.md「注意」）。
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # 防循环：release bot 自己的提交不再触发
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 发版
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: node scripts/release.mjs
