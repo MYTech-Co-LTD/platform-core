@@ -54,6 +54,23 @@ function run(script: string, root: string): RunResult {
 
 const out = (r: RunResult): string => r.stdout + r.stderr
 
+/**
+ * 最小**合法** compose（B7 两条规则都满足：唯一文件 + postgres/server 各绑回环端口）。
+ * 原 fixture 用 `services: {}` 的裸壳 —— R5 修复轮给 check-compose 加了「宿主端口必须绑
+ * 回环」的规则后，裸壳会被判成"两个服务都缺端口映射"。B7 的断言（干净树必须 exit 0）
+ * 一字未动，只是 fixture 换成了**合法的**输入：不这么换，测的就不是"唯一性"而是"撞上另一条规则"。
+ */
+const MINIMAL_COMPOSE = [
+  'services:',
+  '  postgres:',
+  '    ports:',
+  "      - '127.0.0.1:5432:5432'",
+  '  server:',
+  '    ports:',
+  "      - '127.0.0.1:13000:13000'",
+  '',
+].join('\n')
+
 /** 干净：exit 0、无 stderr、stdout 一行 `<name>: OK`（与既有 scripts/check-manifests.mjs 同风格）。 */
 function expectClean(r: RunResult): void {
   expect(r.stderr).toBe('')
@@ -234,15 +251,15 @@ describe('lint-architecture: 真实仓库', () => {
 describe('check-compose: B7 全仓唯一 compose', () => {
   it('只允许 deploy/docker-compose.yml', () => {
     const ok = fixture({
-      'deploy/docker-compose.yml': 'services: {}\n',
+      'deploy/docker-compose.yml': MINIMAL_COMPOSE,
       'deploy/README.md': '# deploy\n',
     })
     const r = run('check-compose.mjs', ok)
     expectClean(r)
 
     const second = fixture({
-      'deploy/docker-compose.yml': 'services: {}\n',
-      'apps/server/docker-compose.yml': 'services: {}\n',
+      'deploy/docker-compose.yml': MINIMAL_COMPOSE,
+      'apps/server/docker-compose.yml': MINIMAL_COMPOSE,
     })
     const r2 = run('check-compose.mjs', second)
     expect(r2.status).toBe(1)
@@ -264,6 +281,77 @@ describe('check-compose: B7 全仓唯一 compose', () => {
 
   it('对当前仓跑必须干净（Step 2 硬要求）', () => {
     const r = run('check-compose.mjs', repoRoot)
+    expectClean(r)
+  })
+})
+
+describe('check-compose: B7 宿主端口必须绑回环（R5 修复轮 S1）', () => {
+  it('★ 负例：无 host_ip 前缀的映射违规（回环改 0.0.0.0 会被挡下——原守卫从不读内容）', () => {
+    // 这正是 R5 评审的变异：把 postgres 的 `127.0.0.1:5432:5432` 改回 `5432:5432`，
+    // 原守卫只看文件名 ⇒ 全绿放行。下面这格就是那条变异的机检化。
+    const r = run(
+      'check-compose.mjs',
+      fixture({
+        'deploy/docker-compose.yml': MINIMAL_COMPOSE.replace("'127.0.0.1:5432:5432'", "'5432:5432'"),
+      }),
+    )
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('[B7]')
+    expect(out(r)).toContain('5432:5432')
+    expect(out(r)).toContain('未绑回环')
+  })
+
+  it('★ 负例：绑到别的地址（0.0.0.0 / 宿主 LAN IP）同样违规——只认 127.0.0.1 前缀', () => {
+    for (const bad of ['0.0.0.0:5432:5432', '10.0.0.6:5432:5432', '::1:5432:5432']) {
+      const r = run(
+        'check-compose.mjs',
+        fixture({ 'deploy/docker-compose.yml': MINIMAL_COMPOSE.replace("'127.0.0.1:5432:5432'", `'${bad}'`) }),
+      )
+      expect(r.status, `${bad} 应违规`).toBe(1)
+      expect(out(r)).toContain('未绑回环')
+    }
+  })
+
+  it('★ 负例：两个受管服务各自都要有映射——删掉 ports 绕过规则同样违规', () => {
+    const noServerPorts = MINIMAL_COMPOSE.replace("      - '127.0.0.1:13000:13000'\n", '')
+    const r = run('check-compose.mjs', fixture({ 'deploy/docker-compose.yml': noServerPorts }))
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('server 服务缺少宿主端口映射')
+
+    const noPostgres = run(
+      'check-compose.mjs',
+      fixture({
+        'deploy/docker-compose.yml': 'services:\n  server:\n    ports:\n      - \'127.0.0.1:13000:13000\'\n',
+      }),
+    )
+    expect(noPostgres.status).toBe(1)
+    expect(out(noPostgres)).toContain('postgres 服务缺少宿主端口映射')
+  })
+
+  it('对照组：绑回环即干净；volumes 下的 `- 卷:/path` 不被误当成端口映射', () => {
+    const r = run(
+      'check-compose.mjs',
+      fixture({
+        'deploy/docker-compose.yml': [
+          'services:',
+          '  postgres:',
+          '    volumes:',
+          '      # 下面这条缩进与 ports 条目相同——分块靠 ports 块状态，不靠缩进猜',
+          '      - pgdata:/var/lib/postgresql/data',
+          '    ports:',
+          "      - '127.0.0.1:5432:5432'",
+          '  server:',
+          '    ports:',
+          "      - '127.0.0.1:13000:13000'",
+          '',
+        ].join('\n'),
+      }),
+    )
+    expectClean(r)
+  })
+
+  it('无 deploy/docker-compose.yml 的树不做规则二判定（不要求该文件必须存在）', () => {
+    const r = run('check-compose.mjs', fixture({ 'README.md': '# 空仓\n' }))
     expectClean(r)
   })
 })

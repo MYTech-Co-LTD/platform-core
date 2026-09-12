@@ -302,6 +302,12 @@ describe.skipIf(!dbUrl)('buildApp：静态响应 Cache-Control', () => {
       ].join('\n'),
     )
     app = (await buildApp({ config: configWith(mockStatic.origin, 'pw'), webDistDir: distDir })).app
+    // 304 探测路由：**必须在这里注册**（Hono 的 matcher 在首个请求时构建，之后 `app.get` 抛
+    // "Can not add a route since the matcher is already built"）。挂在缓存中间件**之后**
+    // （Hono 的中间件只对其后注册的路由生效）⇒ 与静态路由同侧，走同一段中间件。
+    // 路径取 `/api/…` 是因为 SPA 兜底 `app.get('*')` 只对 `/api/*` 调 next() 放行，
+    // 其余路径会被它先吞掉（本轮实测踩到）。
+    app.get('/api/__probe-304', () => new Response(null, { status: 304 }))
   })
   afterAll(async () => {
     await mockStatic.stop()
@@ -348,6 +354,31 @@ describe.skipIf(!dbUrl)('buildApp：静态响应 Cache-Control', () => {
     const res = await app.request('/favicon.svg', { headers: { host: 'acme.test' } })
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('svg')
+    expect(res.headers.get('cache-control')).toBe('no-cache')
+  })
+
+  // ---- R5 三路评审建议 3 / 4：两条改动的护栏（负例 + 边界） ----
+
+  it('★ 负例：/healthz 与 /api/* **不**被打上 Cache-Control（R5 评审建议 3）', async () => {
+    // 今天靠一个**隐式事实**成立：缓存中间件用 `app.use('*')` 注册在静态托管之前，而 Hono
+    // 的中间件只对**其后注册**的路由生效 —— 所有 /api/* 与 /healthz 都在它之前注册完。
+    // 一旦有人把这层中间件上移成"全局"（这念头很自然：它看起来就是个全局中间件），就会
+    // 覆盖路由自己设的头 —— 认证类端点将来若设 `no-store` 被它改写成 `no-cache`，就是
+    // 静默的安全弱化。这条断言把那个隐式事实钉成显式契约。
+    for (const p of ['/healthz', '/api/platform/config']) {
+      const res = await app.request(p, { headers: { host: 'acme.test' } })
+      expect(res.status, `${p} 应可达`).toBe(200)
+      expect(res.headers.get('cache-control'), `${p} 不该有 Cache-Control`).toBeNull()
+    }
+  })
+
+  it('★ 边界：304 也必须带 Cache-Control —— `!res.ok` 曾把它挡在门外（R5 评审建议 4）', async () => {
+    // 本栈 serveStatic 今天不发 ETag（见 app.ts 顶部注释），所以 304 只能由"将来"产生
+    // （补 hono/etag 或升级 serveStatic）。beforeAll 里注册的探测路由把那个"将来"提前到了
+    // 今天：`Response.ok` 是 **2xx 才为真**，304 会被 `!res?.ok` 判成 falsy 而漏设头
+    // （RFC 9111 §4.3.4 要求 304 携带与对应 200 一致的 Cache-Control）。
+    const res = await app.request('/api/__probe-304', { headers: { host: 'acme.test' } })
+    expect(res.status).toBe(304)
     expect(res.headers.get('cache-control')).toBe('no-cache')
   })
 })

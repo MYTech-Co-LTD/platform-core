@@ -115,8 +115,24 @@ async function waitForLocation(pathname: string): Promise<void> {
 const realSetTimeout: typeof globalThis.setTimeout = globalThis.setTimeout.bind(globalThis)
 const realClearTimeout: typeof globalThis.clearTimeout = globalThis.clearTimeout.bind(globalThis)
 
-/** 本文件期间已调度、拆除时仍未触发的定时器 id（happy-dom 环境下全局 setTimeout 返回 number） */
-const armedTimers = new Set<number>()
+/**
+ * 本文件期间已调度、拆除时仍未触发的定时器（happy-dom 环境下全局 setTimeout 返回 number）。
+ * 存 **id → { ms, label }** 而非只存 id：★ 用例的前置断言要认出「具体是哪条定时器」，
+ * 只数个数在 M2 变异（antd 定时器不再登记）下仍全绿 —— 那个时刻在册的另有 4 条与本
+ * 缺陷无关的定时器（RTL waitFor 1000ms / SWR 3000ms+2000ms / deferred 0ms），
+ * 「数量 > 0」验证不了它声称的事实（R5 三路评审 findings）。
+ */
+const armedTimers = new Map<number, { ms: number; label: string }>()
+
+/**
+ * ★ 用例前置断言要认的那条定时器 = antd `BaseMenu` 无 cleanup 的那条（见上方 #12 现象说明）。
+ * 两个字段都不可省：**延迟 400ms** 把它与同刻在册的无关定时器分开（实测那一刻另有 4 条：
+ * RTL waitFor 1000ms、SWR 3000ms / 2000ms、deferred 0ms），**回调体 `setCollapsed`** 把它
+ * 与将来别的 400ms 定时器分开。只断言「在册数量 > 0」会被那 4 条满足 ⇒ 前置断言名不副实，
+ * 上游修好（antd 补 cleanup）后本用例仍全绿（R5 三路评审 findings 必须改 1）。
+ * 上游若改了这个回调的形状，本该在这里变红提醒重核 —— 那是有用的红，不是过紧。
+ */
+const ANTD_TOOLTIP_TIMER = { ms: 400, marker: 'setCollapsed' } as const
 /** 拆除之后仍被触发的定时器回调（期望恒为空——这条断言就是 #12 的回归护栏） */
 const timersFiredAfterTeardown: string[] = []
 let tornDown = false
@@ -131,7 +147,7 @@ function installTimerTracker(): void {
       ;(handler as (...a: unknown[]) => void)(...rest)
     }
     const id = realSetTimeout(wrapped as TimerHandler, ms)
-    armedTimers.add(id)
+    armedTimers.set(id, { ms: typeof ms === 'number' ? ms : 0, label })
     return id
   }) as typeof globalThis.setTimeout
 }
@@ -146,7 +162,7 @@ function teardownConsole(): void {
   // 收尸必须在卸载**之后**：卸载本身也会调度定时器（antd 的 mousePosition 复位等），
   // 一并收掉。clearTimeout 对已触发的 id 是 no-op，故整批清是安全的。
   tornDown = true
-  for (const id of armedTimers) realClearTimeout(id)
+  for (const id of armedTimers.keys()) realClearTimeout(id)
   armedTimers.clear()
 }
 
@@ -325,7 +341,13 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     renderApp()
     // 前提：菜单（level 0）挂载后确实调度了 antd 的 tooltip 定时器，否则本用例空转
     expect(await screen.findByText('演示工单')).toBeInTheDocument()
-    expect(armedTimers.size, '菜单挂载后应已登记 antd 的 400ms 定时器').toBeGreaterThan(0)
+    const antdTimers = [...armedTimers.values()].filter(
+      (t) => t.ms === ANTD_TOOLTIP_TIMER.ms && t.label.includes(ANTD_TOOLTIP_TIMER.marker),
+    )
+    expect(
+      antdTimers.length,
+      '菜单挂载后应已登记 antd BaseMenu 的 400ms 定时器（setCollapsed(props.collapsed)）',
+    ).toBeGreaterThan(0)
 
     // 走与 afterEach 完全相同的拆除路径（卸载 + 收尸），再等过 antd 的 400ms 窗口
     teardownConsole()
