@@ -16,6 +16,7 @@
 // 相关子进程都屏蔽全局/系统配置（GIT_CONFIG_GLOBAL=/dev/null），测试才是无菌的。
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -229,6 +230,23 @@ describe('install-git-hooks：让同事 clone 后自动装上', () => {
     const second = spawn(process.execPath, [join(root, 'scripts', 'install-git-hooks.mjs')])
     expect(second.status).toBe(0)
     expect(second.stdout + second.stderr).toBe('')
+  })
+
+  it('已配好但钩子丢了执行位 → 再跑一次必须补回（幂等早退不得跳过修复）', () => {
+    // 开发机的稳态正是“已经指向 .githooks”，而执行位会因 clone / 解包 / 拷贝 / 跨文件系统而丢。
+    // 若补执行位排在幂等早退**之后**，它在稳态下永远不会执行 —— 守卫从此静默失效：git 只跑
+    // 带执行位的钩子，直推 main 不再被拦，而**没有任何报错**。
+    // CI 的“钩子存在且可执行”只覆盖全新 checkout（执行位来自索引），救不了本机被丢位的旧 checkout。
+    const root = makeRepo(true)
+    const hook = join(root, '.githooks', 'pre-push')
+    writeFileSync(hook, '#!/bin/sh\nexit 0\n')
+    spawn(process.execPath, [join(root, 'scripts', 'install-git-hooks.mjs')])
+
+    chmodSync(hook, 0o644) // 模拟丢执行位（clone/解包/拷贝的常见结果）
+    const again = spawn(process.execPath, [join(root, 'scripts', 'install-git-hooks.mjs')])
+
+    expect(again.status).toBe(0)
+    expect(statSync(hook).mode & 0o111).not.toBe(0) // ← 关键断言：修复必须回来
   })
 
   it('在 git 工作树里却找不到 .githooks 时必须出声（静默会掩盖"脚本位置放错"这类故障）', () => {

@@ -118,10 +118,10 @@ export function declaredScopeGate(
     if (!identity) {
       return c.json({ error: 'UNAUTHENTICATED' }, 401)
     }
-    // Hono 把 HEAD 当 GET 派发（路由匹配用 GET），但 c.req.method 仍是 'HEAD' ⇒ 不归一会
-    // 查不到 (HEAD, path) 而落进 !hit 分支返回 403（已声明 GET 的端点用 HEAD 探活会莫名被拒）。
-    // 只把 HEAD 归一到 GET 去**查表**——未声明 GET 的路径照样 !hit ⇒ 403，
-    // 绝不等于"放行一切 HEAD"。
+    // Hono 把 HEAD 按 GET 派发，但 `c.req.method` 仍是 'HEAD'。声明表里只会有 GET（没人声明 HEAD），
+    // 不归一就会命中 !hit ⇒ 已声明的 GET 端点在 HEAD 下**恒 403**（issue #7：资源存在却说没有）。
+    // 只归一 HEAD→GET，且仍要求该路径上存在**已声明的 GET**——未声明的路径照样 fail-closed，
+    // 所以这不是“放行一切 HEAD”。
     const method = c.req.method === 'HEAD' ? 'GET' : c.req.method
     const hit = declared.find((d) => d.path === c.req.routePath && d.method === method)
     if (!hit) {
