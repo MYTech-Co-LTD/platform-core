@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# dev-workflow-infra — 通用 commit-msg hook（项目无关）
+# team-harness — 通用 commit-msg hook（项目无关）
 # 由 install.sh 部署到全局 core.hooksPath，对本机所有 git 仓库 / Orca 工作树生效。
 # 作用：给每条提交追加溯源 trailer（worktree / agent / session）。
 # 绝不阻断提交：任何失败都 exit 0。

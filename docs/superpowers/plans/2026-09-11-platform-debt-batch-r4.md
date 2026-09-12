@@ -476,5 +476,5 @@ git commit -m "docs: CHANGELOG 收口 M1 闭债 R4（HEAD/请求体上限/停用
 ## 本计划不做（下一轮）
 
 - issue #3 第四节剩的 3 条：`branding.background` 渲染语义（要定 default 视觉与 URL 的 cover/contain）、`/healthz` vs `/readyz` 拆分口径、`getPermissions` 翻页
-- dev-workflow-infra#80（trailer 取值，属另一仓）
+- 原 `dev-workflow-infra#80`（trailer 取值，属另一仓；该仓已于 2026-09-12 退役删除，并入 `team-harness`）
 - issue #3 第五节其余工程 Minor
