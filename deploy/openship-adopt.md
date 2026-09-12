@@ -291,5 +291,5 @@ psql "$DATABASE_URL" -c "select platform.prune_audit();"
 - `.env.example` —— env 键全集的声明面（约束 B9 机检守卫：`scripts/check-env-example.mjs`）
 - `.github/workflows/ci.yml` —— `deploy` job 的定义与惰性闸门
 - `docs/m0-smoke-checklist.md` —— adopt 之后逐项勾选的人工验收清单
-- 标准：`dev-workflow-infra/docs/standards/cicd-project-onboarding.md`（本 runbook 是它在
+- 标准：`team-harness/docs/standards/cicd-project-onboarding.md`（本 runbook 是它在
   `projectType=services` + GitHub 源这一形态下的具体化）
