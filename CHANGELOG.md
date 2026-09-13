@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.0.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.0.1...v0.0.2) - 2026-09-13
+- 【修复】auth-core: 权限供给新建时 name 用净化后的码——真 Casdoor 拒收冒号，供给失败会让进程起不来 ([#26](https://github.com/MYTech-Co-LTD/platform-core/pull/26), [9d3a0ec](https://github.com/MYTech-Co-LTD/platform-core/commit/9d3a0ece55fc0cd8ecae689020e5cce733be5609))
+
+
 ## [0.0.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.0.0...v0.0.1) - 2026-09-12
 - 【修复】ci: main-guard 的 PR 关联查询加重试退避——修索引竞态导致的假阳性 ([#23](https://github.com/MYTech-Co-LTD/platform-core/pull/23), [b8bde09](https://github.com/MYTech-Co-LTD/platform-core/commit/b8bde09ab943ad0ff71ea4d8aaabc2f44162eb36))
 
