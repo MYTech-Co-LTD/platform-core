@@ -20,3 +20,14 @@ describe('effectiveScopes public 导出', () => {
       .toEqual(['a:b'])
   })
 })
+
+// 事故回归护栏（2026-09-13 生产 502）：桶文件的值导出列表误含 interface → Node ESM 运行时
+// SyntaxError、容器崩溃循环。typecheck 拦不住（值/型歧义），单测直连 src 文件也拦不住
+// （不走桶）——只有「以值身份真加载整个桶」能拦。import 本身就是断言：加载失败即测试红。
+describe('桶文件运行时可加载（事故护栏）', () => {
+  it('import * as barrel 不炸且值导出在位', async () => {
+    const barrel = await import('./public')
+    expect(typeof barrel.CasdoorClient).toBe('function')
+    expect(typeof barrel.normalizeScopes).toBe('function')
+  })
+})
