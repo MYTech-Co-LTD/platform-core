@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.3.0...v0.3.1) - 2026-09-13
+- 【修复】console: 根路径与未知路径重定向 /console，删除「工作台建设中」占位页 ([#38](https://github.com/MYTech-Co-LTD/platform-core/pull/38), [1bdd6de](https://github.com/MYTech-Co-LTD/platform-core/commit/1bdd6dee7dbfb8ed095f3d04310f7cf70d169e21))
+
+
 ## [0.3.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.2.0...v0.3.0) - 2026-09-13
 - 【新增】console: console SaaS 化改造——Pro v6 风格落现有壳（mix 布局/菜单位置规则/工作台/暗色切换） ([#36](https://github.com/MYTech-Co-LTD/platform-core/pull/36), [cc70fb1](https://github.com/MYTech-Co-LTD/platform-core/commit/cc70fb150516a5a705303a4faa341ef6b1935502))
 
