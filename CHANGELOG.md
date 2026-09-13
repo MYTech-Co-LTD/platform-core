@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.5.0...v0.5.1) - 2026-09-13
+- 【修复】console: 管理页创建/授权成功后立即刷新列表——reload 提前，去除卸载竞态下的 resetFields (#49) ([#48](https://github.com/MYTech-Co-LTD/platform-core/pull/48), [cc95942](https://github.com/MYTech-Co-LTD/platform-core/commit/cc95942ffebef3d8ca00a01a463a8aec53e5425a))
+
+
 ## [0.5.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.4.1...v0.5.0) - 2026-09-13
 - 【新增】M3 租户管理员后台——console 三张页 + Casdoor 代理锁 org + tenant:admin 门禁 (#46) ([#47](https://github.com/MYTech-Co-LTD/platform-core/pull/47), [6e4c619](https://github.com/MYTech-Co-LTD/platform-core/commit/6e4c61985d29c79433ae8db952e428e42d0226fd))
 
