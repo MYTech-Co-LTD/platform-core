@@ -46,7 +46,7 @@
   内置管理域（真身+链路）+ `modules/*` 可插拔（模块协议，不动）。
 - **D2 订阅真身 = Casdoor Subscription（用户拍板 A2）**，**一模块一 Plan**（`mod-<moduleId>`）：
   Plan 无模块列表字段，一模块一 Plan 使开关正交、无组合爆炸；`Plan.Role` **留空不用于授权**——
-  订阅管「租户能用什么」，授权管「谁能用」，两层不混。计费字段（price/period）本期闲置，将来真要计费天然衔接。
+  订阅管「租户能用什么」，授权管「谁能用」，两层不混。计费字段（price/period）本期闲置，将来真要计费天然衔接。**plan 按租户 org 各建一份**（修订：Casdoor UI 的 plan picker 按当前 org 查，平台 org 的 plan 运营在租户视角选不到——随订阅扇出建，与权限码同构）。
 - **D3 订阅锚点 = 每 org 一个专用锚用户**（`tenantsub`，禁登、仅挂订阅；**仅字母数字**，实测 `_` 被
   用户名字符集拒绝）：Subscription.User 是 user 维度且 Casdoor UI 按用户管理订阅（空 user 不可管，
   实测不校验但不可运营）；挂真实管理员会随人事变动断链。锚用户在 Casdoor 用户列表可见（边界 §6.2）。
@@ -82,7 +82,7 @@
 
 ```ts
 ensureAnchorUser(org: string): Promise<void>        // 建/复用 <org>/tenantsub，禁登（password 随机+isForbidden；仅字母数字名）
-ensureModulePlan(moduleId: string): Promise<void>   // 建/复用 plan=mod-<moduleId>（owner=平台org，Role 留空）
+ensureModulePlan(org: string, moduleId: string): Promise<void>  // 建/复用 plan=mod-<moduleId>（owner=租户org，Role 留空）
 listSubscriptions(owner: string): Promise<Sub[]>    // GET get-subscriptions?owner=（容忍外来订阅，只认 mod- 前缀）
 upsertSubscription(sub: SubInput): Promise<void>    // add/update-subscription（state/endTime）
 // 三条铁律（真机实测，§1.2）：

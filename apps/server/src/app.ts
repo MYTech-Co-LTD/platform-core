@@ -132,7 +132,13 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   if (overrides.modules) {
     runtime = overrides.modules
   } else {
-    runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactory })
+    runtime = await loadModules(modulesDir, {
+      pool,
+      casdoorFor: casdoorFactory,
+      // spec D6 灰度开关：默认 platform（旧表）；显式 casdoor 才切订阅源
+      subscriptionSource: process.env.PLATFORM_SUBSCRIPTION_SOURCE === 'casdoor' ? 'casdoor' : 'platform',
+      subscriptionCacheTtlMs: Number(process.env.PLATFORM_SUBSCRIPTION_CACHE_TTL_MS) || 60_000,
+    })
   }
 
   const app = new Hono<TenantEnv & SessionEnv>()

@@ -506,3 +506,102 @@ describe('ensureUser + bindUserToAllPermissions（JIT 自动建号，issue #32�
     }
   })
 })
+
+// ── 订阅域（spec 2026-09-13 SaaS 管理域；真机尖刺三铁律见 casdoor-client.ts）──
+describe('CasdoorClient 订阅域（fetchImpl 假路由器）', () => {
+  function subRouter(rows: Record<string, unknown[]>, log: { path: string; body?: unknown }[]) {
+    return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
+      void init
+      const u = String(input)
+      log.push({ path: u.replace(/^https?:\/\/[^/]+/, '') })
+      if (u.includes('/api/login')) {
+        return new Response(JSON.stringify({ status: 'ok' }), { headers: { 'set-cookie': 'casdoor_session_id=x' } })
+      }
+      for (const [frag, data] of Object.entries(rows)) {
+        if (u.includes(frag)) return new Response(JSON.stringify({ status: 'ok', data }))
+      }
+      return new Response(JSON.stringify({ status: 'error', msg: 'no route: ' + u }))
+    }
+  }
+  const mk = (f: typeof fetch) =>
+    new CasdoorClient({ origin: 'http://x', clientId: 'c', clientSecret: 's', org: 'acme', adminUser: 'a', adminPwd: 'p', fetchImpl: f as typeof fetch })
+
+  it('listSubscriptions：按 owner 查、透传全部字段、error 抛错', async () => {
+    const log: { path: string; body?: unknown }[] = []
+    const c = mk(subRouter({
+      '/api/get-subscriptions?owner=acme': [
+        { owner: 'acme', name: 'sub-mod-demo', user: 'acme/tenantsub', plan: 'mod-demo', startTime: '2026-09-13T00:00:00Z', endTime: '2027-09-13T00:00:00Z', state: 'Active' },
+        { owner: 'acme', name: 'sub_6a6def', user: 'woke-admin', plan: 'plan-pro', state: 'Active' },
+      ],
+    }, log))
+    const subs = await c.listSubscriptions('acme')
+    expect(subs).toHaveLength(2)
+    expect(subs[0]).toMatchObject({ plan: 'mod-demo', state: 'Active' })
+    expect(log[log.length - 1].path).toBe('/api/get-subscriptions?owner=acme')
+  })
+
+  it('listSubscriptions：接口 error 一律抛（静默空表=全租户失能）', async () => {
+    const c = mk(subRouter({}, []))
+    await expect(c.listSubscriptions('acme')).rejects.toThrow('casdoor get-subscriptions')
+  })
+})
+
+describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan→订阅）', () => {
+  function rwRouter(
+    get: (frag: string, q: URLSearchParams) => unknown,
+    post: (frag: string, body: any) => { status: string; data?: unknown },
+    log: { path: string; body?: any }[],
+  ) {
+    return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
+      const u = new URL(String(input))
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined
+      const frag = u.pathname.replace('/api', '')
+      log.push({ path: frag + u.search, body })
+      if (frag === '/login') return new Response(JSON.stringify({ status: 'ok' }), { headers: { 'set-cookie': 'casdoor_session_id=x' } })
+      if (init?.method === 'GET') return new Response(JSON.stringify({ status: 'ok', data: get(frag, u.searchParams) }))
+      return new Response(JSON.stringify(post(frag, body)))
+    }
+  }
+  const mk2 = (f: typeof fetch) =>
+    new CasdoorClient({ origin: 'http://x', clientId: 'c', clientSecret: 's', org: 'acme', adminUser: 'a', adminPwd: 'p', fetchImpl: f as typeof fetch })
+
+  it('四联：ensureOrg/ensureAnchorUser(幂等)/ensureModulePlan/upsertSubscription(RFC3339+body+回读)', async () => {
+    const orgs: string[] = []
+    const users = new Set<string>()
+    const plans = new Set<string>()
+    const subs = new Map<string, any>()
+    const log: { path: string; body?: any }[] = []
+    const c = mk2(rwRouter(
+      (frag, q) => {
+        if (frag === '/get-organizations') return orgs.map((name) => ({ name }))
+        if (frag === '/get-user') return users.has(q.get('id')!) ? { name: q.get('id')!.split('/')[1] } : null
+        if (frag === '/get-plan') return plans.has(q.get('id')!) ? { name: q.get('id')!.split('/')[1] } : null
+        if (frag === '/get-subscription') return subs.has(q.get('id')!) ? subs.get(q.get('id')!) : null
+        if (frag === '/get-subscriptions') return [...subs.values()].filter((s) => s.owner === q.get('owner'))
+        return []
+      },
+      (frag, body) => {
+        if (frag === '/add-organization') { orgs.push(body.name); return { status: 'ok', data: 'Affected' } }
+        if (frag === '/add-user') { users.add(body.owner + '/' + body.name); return { status: 'ok', data: 'Affected' } }
+        if (frag === '/add-plan') { plans.add(body.owner + '/' + body.name); return { status: 'ok', data: 'Affected' } }
+        if (frag === '/add-subscription') { subs.set(body.owner + '/' + body.name, body); return { status: 'ok', data: 'Affected' } }
+        if (frag === '/update-subscription') { subs.set(body.owner + '/' + body.name, body); return { status: 'ok', data: 'Affected' } }
+        return { status: 'error', msg: 'no post route ' + frag }
+      },
+      log,
+    ))
+    await c.ensureOrg('neworg'); expect(orgs).toContain('neworg')
+    await c.ensureAnchorUser('neworg'); expect(users.has('neworg/tenantsub')).toBe(true)
+    await c.ensureAnchorUser('neworg')
+    expect(log.filter((l) => l.path === '/add-user').length).toBe(1) // 幂等
+    await c.ensureModulePlan('neworg', 'case-engine'); expect(plans.has('neworg/mod-case-engine')).toBe(true)
+    await c.upsertSubscription('neworg', 'case-engine', { state: 'Active', days: 30 })
+    const sub = subs.get('neworg/sub-mod-case-engine')!
+    expect(sub.state).toBe('Active')
+    expect(sub.user).toBe('neworg/tenantsub')
+    expect(sub.startTime).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/) // 铁律① RFC3339
+    await c.upsertSubscription('neworg', 'case-engine', { state: 'Terminated' })
+    expect(subs.get('neworg/sub-mod-case-engine').state).toBe('Terminated') // 退订=update
+    expect(log.some((l) => l.body && l.path?.includes('?id='))).toBe(false) // 铁律② 写/delete 一律 body（GET 查询不在此列）
+  })
+})

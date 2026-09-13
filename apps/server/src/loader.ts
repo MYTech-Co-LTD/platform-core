@@ -16,6 +16,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { serveStatic } from '@hono/node-server/serve-static'
+import { enabledFromSubscriptions, SubscriptionCache } from './subscription-source'
 import { parse as parseYaml } from 'yaml'
 import type { CasdoorClient } from '@platform/auth-core'
 import {
@@ -54,6 +55,10 @@ export interface ModulesRuntime {
 
 export interface LoadModulesDeps {
   pool: Pool
+  /** 订阅源（spec D5/D6）：platform=旧表（默认）| casdoor=Active 订阅；非法值按 platform */
+  subscriptionSource?: 'platform' | 'casdoor'
+  /** casdoor 源的订阅缓存 TTL（ms，默认 60000） */
+  subscriptionCacheTtlMs?: number
   /**
    * 按 org 返回 CasdoorClient 的工厂（宿主传 casdoorFactory，内部按 org 缓存实例）。
    *
@@ -308,7 +313,23 @@ export async function loadModules(
   //    故取该租户全行后在内存按默认值判定：显式 enabled=true 落集合、false 剔除、
   //    无行视为启用；只回已装载模块的 id（磁盘上已删的模块不在任何租户可见集里）。
   //    提成局部函数是因为 mount 里的启用闸门要用同一份语义——写两遍必然漂移。
+  const subCache = new SubscriptionCache({ ttlMs: deps.subscriptionCacheTtlMs ?? 60_000 })
   const enabledForImpl = async (tenantId: number): Promise<Set<string>> => {
+    if (deps.subscriptionSource === 'casdoor') {
+      const casdoorFor = deps.casdoorFor
+      if (!casdoorFor) throw new Error('subscriptionSource=casdoor 需要 casdoorFor（宿主必须注入）')
+      const { rows } = await deps.pool.query<{ casdoor_org: string }>(
+        'select casdoor_org from platform.tenant where id = $1', [tenantId],
+      )
+      const org = rows[0]?.casdoor_org
+      if (!org) return new Set()
+      return subCache.get(org, async () =>
+        enabledFromSubscriptions(
+          await casdoorFor(org).listSubscriptions(org),
+          loaded.map((m) => m.manifest.id),
+          Date.now(),
+        ))
+    }
     const { rows } = await deps.pool.query<{ module_id: string; enabled: boolean }>(
       'select module_id, enabled from platform.tenant_module where tenant_id = $1',
       [tenantId],
