@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.2.0...v0.3.0) - 2026-09-13
+- 【新增】console: console SaaS 化改造——Pro v6 风格落现有壳（mix 布局/菜单位置规则/工作台/暗色切换） ([#36](https://github.com/MYTech-Co-LTD/platform-core/pull/36), [cc70fb1](https://github.com/MYTech-Co-LTD/platform-core/commit/cc70fb150516a5a705303a4faa341ef6b1935502))
+
+
 ## [0.2.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.1.0...v0.2.0) - 2026-09-13
 - 【新增】auth-core: 企微直连登录 JIT 自动建号——租户级旗标默认关，Casdoor OIDC 路永不 JIT (#32) ([#33](https://github.com/MYTech-Co-LTD/platform-core/pull/33), [a8a0c1d](https://github.com/MYTech-Co-LTD/platform-core/commit/a8a0c1dea8815a5b9e2601a57a9fb235ceee32b6))
 
