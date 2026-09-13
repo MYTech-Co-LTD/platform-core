@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.1.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.0.3...v0.1.0) - 2026-09-13
+- 【新增】auth-core: 扫码登录改自建应用直连企微——经 Casdoor 时回跳落在 sso，与自家可信域名永远对不上 ([#31](https://github.com/MYTech-Co-LTD/platform-core/pull/31), [ead9c9d](https://github.com/MYTech-Co-LTD/platform-core/commit/ead9c9dbb64b31789063a998c5c7a3dccddac1ec))
+
+
 ## [0.0.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.0.2...v0.0.3) - 2026-09-13
 - 【修复】auth-core: 企微 provider 名改租户级配置——写死的 provider_wecom 与共享 Casdoor 的全局唯一名冲突 ([#28](https://github.com/MYTech-Co-LTD/platform-core/pull/28), [f609944](https://github.com/MYTech-Co-LTD/platform-core/commit/f609944f29af835081612e59ed9fdcdcf3e1d0e0))
 
