@@ -26,6 +26,8 @@ import { getTenantByHost, resolveTenantMiddleware, type TenantEnv } from './tena
 import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from './session-middleware'
 import { platformRoutes, type ModuleInfo } from './routes/platform'
 import { authRoutes } from './routes/auth'
+import { adminRoutes } from './routes/admin'
+import { PLATFORM_BUILTIN_PERMISSIONS } from './loader'
 import { wecomRoutes } from './routes/auth-wecom'
 import { createLoginLimiter } from './rate-limit'
 
@@ -232,6 +234,20 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     casdoorClientId: config.casdoor.clientId,
     casdoorClientSecret: config.casdoor.clientSecret,
     publicOrigin: config.publicOrigin,
+  }))
+
+  // ⑧b 租户管理域（spec D4/D9，M3，issue #46）：/api/platform/admin/*——
+  // org 锁本租户 + requireScope('tenant:admin') 门禁 + 写操作 CSRF，全在路由内部结构锁死。
+  // 权限码宇宙 = 平台内置码（tenant:admin）+ 已装载模块码——授权页只能看到这两层发得出来的码
+  app.route('/api/platform/admin', adminRoutes({
+    casdoor: casdoorFactory,
+    sessionSecret: config.sessionSecret,
+    pool,
+    permissions: () => [
+      ...PLATFORM_BUILTIN_PERMISSIONS,
+      ...runtime.modules.flatMap((m) => m.manifest.permissions),
+    ],
+    modules: () => runtime.modules.map((m) => ({ id: m.manifest.id, name: m.manifest.name })),
   }))
 
   // ⑨ 模块 API（/api/modules/<id>/*）+ 模块 userApp 静态（mount 内部处理）。
