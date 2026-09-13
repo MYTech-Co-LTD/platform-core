@@ -74,6 +74,20 @@ function fakeWecomFetch(input: RequestInfo | URL, _init?: RequestInit): Promise<
   return Promise.resolve(new Response('not found', { status: 404 }))
 }
 
+/** 同款假企微 API，但 getuserinfo 回**指定** userid——JIT 用例（issue #32）要"陌生企微号" */
+function wecomFetchFor(userid: string): typeof globalThis.fetch {
+  return ((input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+    const u = String(input)
+    if (u.startsWith('https://qyapi.weixin.qq.com/cgi-bin/gettoken')) {
+      return Promise.resolve(Response.json({ errcode: 0, access_token: `tok-${userid}`, expires_in: 7200 }))
+    }
+    if (u.startsWith('https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo')) {
+      return Promise.resolve(Response.json({ errcode: 0, userid }))
+    }
+    return Promise.resolve(new Response('not found', { status: 404 }))
+  }) as typeof globalThis.fetch
+}
+
 type AppClient = ReturnType<typeof testClient<ReturnType<typeof makeApp>>>
 
 function makeApp(
@@ -710,5 +724,156 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     expect(wecom.status).toBe(302)
     expect(wecom.headers.get('location')).toBe('/')
     expect((await verifySession(sessionToken(wecom), SECRET))?.authVia).toBe('wecom-qr')
+  })
+
+  // ---------------------------------------------------------------------------------------
+  // JIT 自动建号（issue #32）：企微直连两路（qr-corp/silent）拿到合法 userid 但 org 内
+  // 无此账号时，租户旗标 wecom_auto_signup 开 ⇒ admin API 建号 + 挂全量模块权限码后放行；
+  // 旗标关 ⇒ 维持 #31 的 fail-closed NO_ACCOUNT。Casdoor OIDC code 路（代开发）**永不** JIT。
+  // ---------------------------------------------------------------------------------------
+
+  /** 翻 acme 租户的 JIT 旗标（迁移 004 的列；用例用 try/finally 保证恢复 false） */
+  async function setAutoSignup(on: boolean): Promise<void> {
+    await pool.query('update platform.tenant set wecom_auto_signup = $1 where slug = $2', [
+      on,
+      'acme',
+    ])
+  }
+
+  it('★ JIT（qr-corp）：旗标开 + 陌生企微号 → 自动建号 + 挂全量码 → 302 / 全 scopes + audit login.ok', async () => {
+    await setAutoSignup(true)
+    try {
+      const c = testClient(makeApp(pool, casdoorFor, createLoginLimiter(), wecomFetchFor('wo_new')))
+      const qr = await c.api.platform.auth.wecom.qr.$get(undefined, {
+        headers: { host: 'acme.test' },
+      })
+      const state = stateToken(qr)
+      const res = await c.api.platform.auth.wecom.callback.$get(
+        { query: { code: 'jit-qr-corp-code', state, via: 'qr-corp' } },
+        { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+      )
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('/')
+      const p = await verifySession(sessionToken(res), SECRET)
+      expect(p?.authVia).toBe('wecom-qr')
+      expect(p?.name).toBe('wo_new')
+      expect(p?.org).toBe('acme')
+      // 新号无角色，全量权限码挂 users ⇒ 直挂全集（p-view + p-admin），排序后即平台全集
+      expect(p?.scopes).toEqual(['ticket:admin', 'ticket:view'])
+      // 建号载荷落档：signupApplication 缺省 app-built-in（与 #login 同口径）
+      expect(mock.userIn('acme', 'wo_new')).toMatchObject({
+        owner: 'acme',
+        name: 'wo_new',
+        type: 'normal-user',
+        signupApplication: 'app-built-in',
+      })
+      // 绑定侧证据：p-view 的 users 追加了 wo_new（alice/wo_alice 原值保留）
+      const pView = mock.permissionsIn('acme').find((x) => x.name === 'p-view')
+      expect(pView?.users).toEqual(['alice', 'wo_alice', 'wo_new'])
+      const { rows } = await pool.query<{ action: string; actor: string; detail: { via?: string } }>(
+        "select action, actor, detail from platform.audit where action='login.ok' and actor='wo_new' order by id desc limit 1",
+      )
+      expect(rows[0]).toMatchObject({ action: 'login.ok', actor: 'wo_new', detail: { via: 'wecom-qr' } })
+    } finally {
+      await setAutoSignup(false)
+    }
+  })
+
+  it('★ 旗标关（回归钉）：陌生企微号仍 NO_ACCOUNT，且**不建号**（#31 fail-closed 不回退）', async () => {
+    // 旗标保持迁移缺省 false（上一条 finally 已恢复）；不 setAutoSignup(true)
+    const c = testClient(makeApp(pool, casdoorFor, createLoginLimiter(), wecomFetchFor('wo_off')))
+    const qr = await c.api.platform.auth.wecom.qr.$get(undefined, {
+      headers: { host: 'acme.test' },
+    })
+    const state = stateToken(qr)
+    const res = await c.api.platform.auth.wecom.callback.$get(
+      { query: { code: 'flag-off-code', state, via: 'qr-corp' } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/login?error=NO_ACCOUNT')
+    expect(mock.userIn('acme', 'wo_off')).toBeUndefined() // 一个号都没建出来
+    const { rows } = await pool.query<{ actor: string; detail: { reason?: string } }>(
+      "select actor, detail from platform.audit where action='login.fail' and actor='wo_off' order by id desc limit 1",
+    )
+    expect(rows[0]).toMatchObject({ actor: 'wo_off', detail: { reason: 'no-account' } })
+  })
+
+  it('★ Casdoor OIDC code 路**永不** JIT：旗标开 + org 外用户照旧 NO_ACCOUNT（JIT 只属企微直连两路）', async () => {
+    await setAutoSignup(true)
+    try {
+      const qr = await client.api.platform.auth.wecom.qr.$get(undefined, {
+        headers: { host: 'acme.test' },
+      })
+      const state = stateToken(qr)
+      const code = mock.issueOidcCode('oidc_stranger') // Casdoor 已认证、但 acme org 无此用户
+      const res = await client.api.platform.auth.wecom.callback.$get(
+        { query: { code, state } },
+        { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+      )
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('/login?error=NO_ACCOUNT')
+      expect(mock.userIn('acme', 'oidc_stranger')).toBeUndefined()
+    } finally {
+      await setAutoSignup(false)
+    }
+  })
+
+  it('★ JIT 建号失败（add-user 故障）→ CASDOOR_UNAVAILABLE + audit login.fail(jit-create-failed)，绝不静默放行', async () => {
+    await setAutoSignup(true)
+    try {
+      const brokenCasdoor: CasdoorFactory = (org) => {
+        const c = casdoorFor(org)
+        c.ensureUser = async () => {
+          throw new Error('casdoor add-user down')
+        }
+        return c
+      }
+      const c = testClient(
+        makeApp(pool, brokenCasdoor, createLoginLimiter(), wecomFetchFor('wo_broken')),
+      )
+      const qr = await c.api.platform.auth.wecom.qr.$get(undefined, {
+        headers: { host: 'acme.test' },
+      })
+      const state = stateToken(qr)
+      const res = await c.api.platform.auth.wecom.callback.$get(
+        { query: { code: 'jit-broken-code', state, via: 'qr-corp' } },
+        { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+      )
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('/login?error=CASDOOR_UNAVAILABLE')
+      const { rows } = await pool.query<{ actor: string; detail: { reason?: string } }>(
+        "select actor, detail from platform.audit where action='login.fail' and actor='wo_broken' order by id desc limit 1",
+      )
+      expect(rows[0]).toMatchObject({ actor: 'wo_broken', detail: { reason: 'jit-create-failed' } })
+    } finally {
+      await setAutoSignup(false)
+    }
+  })
+
+  it('★ JIT（silent）：企微内静默路同样吃旗标 → authVia=wecom-silent 全链建号放行', async () => {
+    await setAutoSignup(true)
+    try {
+      const c = testClient(
+        makeApp(pool, casdoorFor, createLoginLimiter(), wecomFetchFor('wo_silent_new')),
+      )
+      const s1 = await c.api.platform.auth.wecom.silent.$get(undefined, {
+        headers: { host: 'acme.test', 'user-agent': WXWORK_UA },
+      })
+      const state = stateToken(s1)
+      const res = await c.api.platform.auth.wecom.callback.$get(
+        { query: { code: 'jit-silent-code', state, via: 'silent' } },
+        { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+      )
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('/')
+      const p = await verifySession(sessionToken(res), SECRET)
+      expect(p?.authVia).toBe('wecom-silent')
+      expect(p?.name).toBe('wo_silent_new')
+      expect(p?.scopes).toEqual(['ticket:admin', 'ticket:view'])
+      expect(mock.userIn('acme', 'wo_silent_new')).toMatchObject({ name: 'wo_silent_new' })
+    } finally {
+      await setAutoSignup(false)
+    }
   })
 })

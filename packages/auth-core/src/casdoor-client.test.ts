@@ -407,3 +407,102 @@ describe('getUser：错误 ≠ 不存在', () => {
     }
   })
 })
+
+// ---- JIT 自动建号（issue #32）：ensureUser + bindUserToAllPermissions ----
+// 形状依据：2026-09-13 生产手工解卡时在真 Casdoor（sso.hookflow.cn）上验证过的 add-user
+// 载荷——owner=<org>、name=<企微 userid>、type='normal-user'、signupApplication=<配置的
+// application>。建号后把该用户补进 org 全部权限记录的 users（装载器供给只建记录不挂人）。
+
+describe('ensureUser + bindUserToAllPermissions（JIT 自动建号，issue #32）', () => {
+  it('★ ensureUser：add-user 带 owner/name/type=normal-user/signupApplication（application 可配，缺省 app-built-in 同 #login 口径）', async () => {
+    const m = new MockCasdoor({ users: [] })
+    await m.start()
+    try {
+      const c = new CasdoorClient({
+        origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+        adminUser: 'admin', adminPwd: 'pw', application: 'app-mytech',
+      })
+      await c.ensureUser('wo_new')
+      expect(m.userIn('acme', 'wo_new')).toMatchObject({
+        owner: 'acme', name: 'wo_new', type: 'normal-user', signupApplication: 'app-mytech',
+      })
+      // 建成后 get-user 立即可查（路由的 JIT 后重读依赖这一点）
+      expect((await c.getUser('wo_new')).name).toBe('wo_new')
+
+      // 未配 application：缺省 app-built-in（与 #login 的 application 缺省同口径）
+      const c2 = new CasdoorClient({
+        origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+        adminUser: 'admin', adminPwd: 'pw',
+      })
+      await c2.ensureUser('wo_plain')
+      expect(m.userIn('acme', 'wo_plain')).toMatchObject({ signupApplication: 'app-built-in' })
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ add 竞态：add-user 被拒但人已被并发建好 ⇒ 重读验证视为成功（不按错误文案分支，同 upsertPermissions 口径）', async () => {
+    // 预种同名用户：add-user 必中 duplicate（真机 casdoor object.AddUser 查重 ⇒ status:error）
+    const m = new MockCasdoor({ users: [{ name: 'wo_raced', password: '', owner: 'acme' }] })
+    await m.start()
+    try {
+      const c = new CasdoorClient({
+        origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+        adminUser: 'admin', adminPwd: 'pw',
+      })
+      await expect(c.ensureUser('wo_raced')).resolves.toBeUndefined() // 竞态 ⇒ 视为成功，不抛
+      // 既有用户的口令/角色不被竞态路径洗掉（add 没发生第二次）
+      expect(m.addUserCalls).toHaveLength(0)
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ add 真失败（故障注入 + 重读仍查无此人）⇒ 抛错（fail loudly，绝不静默放行）', async () => {
+    const m = new MockCasdoor({ users: [] })
+    await m.start()
+    try {
+      m.setAddUserFault('error')
+      const c = new CasdoorClient({
+        origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+        adminUser: 'admin', adminPwd: 'pw',
+      })
+      await expect(c.ensureUser('wo_absent')).rejects.toThrow(/add-user/)
+      expect(m.userIn('acme', 'wo_absent')).toBeUndefined()
+    } finally {
+      m.setAddUserFault('off')
+      await m.stop()
+    }
+  })
+
+  it('★ bindUserToAllPermissions：逐条补 users、保留 roles/resources 原值、其他 org 的权限不受影响、幂等', async () => {
+    const m = new MockCasdoor({
+      perms: [
+        { owner: 'acme', name: 'p-view', users: ['alice'], resources: ['ticket:view'] },
+        { owner: 'acme', name: 'p-admin', users: [], roles: ['ops'], resources: ['ticket:admin'] },
+        { owner: 'other-org', name: 'p-other', users: [], resources: ['ticket:view'] },
+      ],
+    })
+    await m.start()
+    try {
+      const c = new CasdoorClient({
+        origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+        adminUser: 'admin', adminPwd: 'pw',
+      })
+      await c.bindUserToAllPermissions('wo_new')
+      const acme = m.permissionsIn('acme')
+      expect(acme.find((p) => p.name === 'p-view')?.users).toEqual(['alice', 'wo_new'])
+      expect(acme.find((p) => p.name === 'p-admin')?.users).toEqual(['wo_new'])
+      // 既有字段不被洗掉（update 全量载荷必须回填 roles/resources）
+      expect(acme.find((p) => p.name === 'p-admin')?.roles).toEqual(['ops'])
+      expect(acme.find((p) => p.name === 'p-admin')?.resources).toEqual(['ticket:admin'])
+      // 其他 org 的同名资源权限**不在本 org 的 get-permissions 桶里** ⇒ 一行都不能碰
+      expect(m.permissionsIn('other-org').find((p) => p.name === 'p-other')?.users).toEqual([])
+      // 幂等：已绑过的不再重复 push
+      await c.bindUserToAllPermissions('wo_new')
+      expect(m.permissionsIn('acme').find((p) => p.name === 'p-view')?.users).toEqual(['alice', 'wo_new'])
+    } finally {
+      await m.stop()
+    }
+  })
+})

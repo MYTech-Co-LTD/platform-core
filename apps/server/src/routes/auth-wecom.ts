@@ -321,6 +321,27 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
       deps.limiter.record(t.id, 'wecom', null, false)
       return fail('CASDOOR_UNAVAILABLE')
     }
+    if (user === null && wecomCode && t.wecom_auto_signup) {
+      // JIT 自动建号（issue #32）：企微**直连**两路（qr-corp/silent）+ 租户显式开旗标才走。
+      // 直连路拿到的 userid 已过企微身份认证（真实企业成员）⇒「企微成员即平台账号」是
+      // 租户级决定；Casdoor OIDC code 路（代开发）的账号来源是 Casdoor 自己的注册/管理面，
+      // **永不** JIT（上面的 wecomCode 判定即为此）。形状：2026-09-13 生产手工解卡
+      // （mytech/ZhangDuo）在真 Casdoor 上验证过的 ensureUser + 全量码挂 users。
+      try {
+        await casdoor.ensureUser(name)
+        await casdoor.bindUserToAllPermissions(name)
+        // perms 是 bind 前拉的（users 不含新号）——重拉拿绑定后的全集；ensureUser 内部
+        // 已处理 add 竞态（重读验证），这里 getUser 只可能拿到刚建的号
+        ;[user, perms] = await Promise.all([casdoor.getUser(name), casdoor.getPermissions()])
+      } catch {
+        // 建号/绑定失败 = 上游故障，fail loudly：绝不静默放行一个半建成的号。
+        // 注：ensureUser 成而 bind 半途失败属部分授权（只会少不会多）——下次扫码
+        // getUser 已非 null、走正常路，漏挂的码由运维补 bind（幂等可重跑）
+        await writeAudit(deps.pool, t.id, name, 'login.fail', { via, reason: 'jit-create-failed' })
+        deps.limiter.record(t.id, 'wecom', null, false)
+        return fail('CASDOOR_UNAVAILABLE')
+      }
+    }
     if (user === null) {
       await writeAudit(deps.pool, t.id, name, 'login.fail', { via, reason: 'no-account' })
       deps.limiter.record(t.id, 'wecom', null, false) // 企微路不建 user 桶（check 也不看它）

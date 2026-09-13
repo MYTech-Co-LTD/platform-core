@@ -24,6 +24,8 @@ export interface TenantRow {
   wecom_secret: string | null
   /** 该租户在共享 Casdoor 上**自己那个**企微 provider 的名字（issue #27）；NULL ⇒ 代码回落默认 */
   wecom_provider: string | null
+  /** 企微直连两路（qr-corp/silent）的 JIT 自动建号旗标（issue #32）；缺省 false = fail-closed */
+  wecom_auto_signup: boolean
   created_at: Date
 }
 

@@ -69,6 +69,9 @@ interface StoredUser extends MockCasdoorUser {
   isAdmin: boolean
   /** 已解析的归属 org（缺省已填成 MOCK_ORG / built-in），get-user 的命中条件之一 */
   owner: string
+  /** 经 /api/add-user 建号时的载荷存档（type/signupApplication 等，供 userIn 断言；
+   *  add-user 载荷不含敏感字段——mock 从不存真凭据，纪律①） */
+  createdViaApi?: Record<string, unknown>
 }
 
 export class MockCasdoor {
@@ -77,6 +80,8 @@ export class MockCasdoor {
   #sessions = new Map<string, { user: string; anonymous: boolean }>()
   #oidcCodes = new Map<string, string>() // authorization code → 用户名（单次即焚）
   #addPermissionCalls: Array<{ owner: string; name: string }> = []
+  #addUserCalls: Array<Record<string, unknown>> = []
+  #addUserFault: 'off' | 'error' = 'off'
   #tokenFault: 'off' | 'http502' | 'html200' = 'off'
   #getUserFault: 'off' | 'error' | 'errorOnce' = 'off'
   #httpAuthFault: 'off' | 'unauthorized401' | 'unauthorized401Once' = 'off'
@@ -168,6 +173,26 @@ export class MockCasdoor {
    */
   get addPermissionCalls(): ReadonlyArray<{ owner: string; name: string }> {
     return this.#addPermissionCalls
+  }
+
+  /**
+   * add-user 调用记录（JIT 自动建号，issue #32）——「真的发过建号请求」的机检证据。
+   * 记录的是请求载荷（owner/name/type/signupApplication……，无敏感字段——纪律①）。
+   */
+  get addUserCalls(): ReadonlyArray<Record<string, unknown>> {
+    return this.#addUserCalls
+  }
+
+  /** 令 /api/add-user 回 status:error（模拟上游建号故障；只在非重复时生效——
+   *  重复命中走真机 duplicate 形状，别让故障注入盖掉竞态用例要的分支） */
+  setAddUserFault(mode: 'off' | 'error'): void {
+    this.#addUserFault = mode
+  }
+
+  /** 某 org 下已存的用户记录（断言口；createdViaApi 存有 add-user 载荷）——不经 HTTP */
+  userIn(org: string, name: string): Record<string, unknown> | undefined {
+    const u = this.#users.find((x) => x.owner === org && x.name === name)
+    return u ? { ...u, ...(u.createdViaApi ?? {}) } : undefined
   }
 
   /**
@@ -433,5 +458,35 @@ export class MockCasdoor {
         isEnabled: (b.isEnabled as boolean) ?? true,
       })
       return c.json({ status: 'ok', data: name })
+    })
+    // POST /api/add-user —— JIT 自动建号（issue #32）。载荷 JSON body；owner/name 必填；
+    // **(owner,name) 重复拒绝**（真机 casdoor object.AddUser 先查重、存在即回 false ⇒
+    // status:error——客户端按 upsertPermissions 的口径重读验证，不按错误文案分支）；
+    // 成功回 data:'Affected'（真机 addObject 形状）。admin 会话门禁同其他管理端点。
+    .post('/api/add-user', async (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+      const owner = String(b.owner ?? '')
+      const name = String(b.name ?? '')
+      if (!owner) return c.json({ status: 'error', msg: 'owner required' })
+      if (!name) return c.json({ status: 'error', msg: 'name required' })
+      if (this.#users.some((u) => u.owner === owner && u.name === name)) {
+        return c.json({ status: 'error', msg: 'duplicate user name' })
+      }
+      if (this.#addUserFault === 'error') {
+        return c.json({ status: 'error', msg: 'add-user fault injected' })
+      }
+      this.#addUserCalls.push({ ...b })
+      // 建出的号：无角色、非 admin、空口令（密码字段只留 mock 内部比对，get-user 不回——纪律①）
+      this.#users.push({
+        owner,
+        name,
+        password: '',
+        roles: (b.roles as string[]) ?? [],
+        isAdmin: (b.isAdmin as boolean) ?? false,
+        displayName: String(b.displayName ?? name),
+        createdViaApi: { ...b },
+      })
+      return c.json({ status: 'ok', data: 'Affected' })
     })
 }

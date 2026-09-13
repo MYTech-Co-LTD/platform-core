@@ -1,0 +1,17 @@
+-- 004_tenant_wecom_auto_signup.sql — 企微直连登录的 JIT 自动建号旗标（issue #32）
+--
+-- 为什么需要这一列：企微直连两路（扫码 qr-corp / 企微内静默 silent，issue #30/#31）拿到
+-- 合法 userid 后按「userid 即 Casdoor name」落账户；org 内查无此人时旧实现一律
+-- fail-closed NO_ACCOUNT（#31）。生产实测（2026-09-13，mytech 租户）新员工首扫即撞墙——
+-- canSignUp 只在 Casdoor 自家登录页生效，直连路根本经过不了它，账号必须另有来源。
+--
+-- 旗标开 ⇔ 直连两路在 getUser=null 时经 admin API 建 minimal 账号（ensureUser）+
+-- 挂全量模块权限码（bindUserToAllPermissions）后放行；**Casdoor OIDC code 路（代开发）
+-- 永不 JIT**——那条路的账号来源是 Casdoor 自己的注册/管理面。
+--
+-- 默认 false（关）：JIT 是放宽数字边界的行为（企微成员 ⇔ 平台账号自动打通），必须
+-- 租户级显式开启；不配的部署行为与 #31 一字不变。seed 会收敛为 false（安全旗标
+-- 要确定性关，不跟 wecom_provider 一样留给人工）。
+--
+-- 幂等：本仓部署每次全量重跑全部迁移，故必须可重复执行。
+alter table platform.tenant add column if not exists wecom_auto_signup boolean not null default false;
