@@ -219,9 +219,12 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
 
     renderApp()
 
-    // 系统项「概览」+ 启用项出现
+    // 系统项「概览」+ 启用项出现（工作台卡片会带同名文本，菜单断言钉在菜单节点上防歧义）
     expect(await screen.findByText('概览')).toBeInTheDocument()
-    expect(screen.getByText('演示工单')).toBeInTheDocument()
+    const menuHit = (await screen.findAllByText('演示工单')).find((el) =>
+      el.className.includes('ant-pro-base-menu'),
+    )
+    expect(menuHit).toBeDefined()
     // 停用模块（config 缺席）与幽灵页（registry 缺席）都不出菜单
     expect(screen.queryByText('停用页面')).not.toBeInTheDocument()
     expect(screen.queryByText('幽灵页')).not.toBeInTheDocument()
@@ -258,11 +261,10 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
 
     expect(await screen.findByText('概览')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '退出登录' })).toBeInTheDocument()
-    // 概览页（index 路由）内容：租户 slug / 用户 displayName（avatar 也有一份）/ scope 标签
-    expect(await screen.findByText('acme')).toBeInTheDocument()
-    expect(screen.getAllByText('Alice 陈').length).toBeGreaterThan(0)
-    expect(screen.getByText('demo:console')).toBeInTheDocument()
-    expect(screen.queryByText('演示工单')).not.toBeInTheDocument()
+    // 概览页（index 路由）= 工作台（issue #36）：欢迎卡（租户/用户）+ 空模块态
+    expect(await screen.findByText(/租户 acme/)).toBeInTheDocument()
+    expect(screen.getAllByText(/Alice 陈/).length).toBeGreaterThan(0)
+    expect(screen.getByText(/当前没有可用的模块/)).toBeInTheDocument()
   })
 
   it('②b 点击启用菜单项 → 懒加载模块页渲染（lazy(load) 接线）', async () => {
@@ -276,10 +278,42 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     })
 
     renderApp()
-    fireEvent.click(await screen.findByText('演示工单'))
+    // 点的是「菜单项」（工作台卡片也有同名文本，见 ⑥）——钉在菜单节点上防歧义
+    const menuText = (await screen.findAllByText('演示工单')).find((el) =>
+      el.className.includes('ant-pro-base-menu'),
+    )
+    expect(menuText).toBeDefined()
+    fireEvent.click(menuText!)
 
     expect(await screen.findByText('演示模块页面内容')).toBeInTheDocument()
     expect(load).toHaveBeenCalled()
+  })
+
+  it('⑥ 工作台：模块入口卡片按可见集合渲染，点击直达模块页', async () => {
+    setRegistry([
+      {
+        path: '/console/demo/things',
+        title: '演示工单',
+        icon: 'AppstoreOutlined',
+        scope: 'demo:console',
+        load: () => Promise.resolve({ default: DemoPage }),
+      },
+    ])
+    mockApi({
+      '/api/platform/auth/session': () => jsonResponse(SESSION),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+
+    renderApp()
+    // 工作台出现模块入口卡片：卡片标题与所属模块名（moduleName 来自 config）在同一张 .ant-card 内
+    // ——钉住「这是工作台卡片」而非顶栏菜单项（菜单项不在 .ant-card 里，防假绿；顶栏菜单也有同名文本）
+    const cardTitle = (await screen.findAllByText('演示工单')).find((el) => el.closest('.ant-card'))
+    expect(cardTitle).toBeDefined()
+    const card = cardTitle!.closest('.ant-card')
+    expect(card?.textContent).toContain('演示模块')
+    // 点击卡片 → 懒加载模块页
+    fireEvent.click(cardTitle!)
+    expect(await screen.findByText('演示模块页面内容')).toBeInTheDocument()
   })
 
   it('②c 无 scope 用户直敲模块 console URL → 403 Result（路由级门禁与菜单同判定，不触发懒加载）', async () => {
@@ -300,6 +334,25 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     // 403 短路在 lazy(load) 之前——不该触发模块页加载
     expect(load).not.toHaveBeenCalled()
     expect(screen.queryByText('演示模块页面内容')).not.toBeInTheDocument()
+  })
+
+  it('⑤ 暗色切换：点击写入 localStorage，再点切回；初始读取持久化值', async () => {
+    setRegistry([])
+    mockApi({
+      '/api/platform/auth/session': () => jsonResponse(SESSION),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+    window.localStorage.setItem('console-theme', 'dark') // 初始持久化值
+
+    renderApp()
+    const btn = await screen.findByRole('button', { name: '切换暗色模式' })
+    // dark 态点击 → light
+    fireEvent.click(btn)
+    await waitFor(() => expect(window.localStorage.getItem('console-theme')).toBe('light'))
+    // 再点 → dark
+    fireEvent.click(btn)
+    await waitFor(() => expect(window.localStorage.getItem('console-theme')).toBe('dark'))
+    window.localStorage.removeItem('console-theme')
   })
 
   it('③ 退出：现取 /session 再 POST /logout（带 x-csrf-token）→ 跳 /login', async () => {
@@ -351,7 +404,7 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
 
     renderApp()
     // 前提：菜单（level 0）挂载后确实调度了 antd 的 tooltip 定时器，否则本用例空转
-    expect(await screen.findByText('演示工单')).toBeInTheDocument()
+    expect((await screen.findAllByText('演示工单')).length).toBeGreaterThan(0)
     const antdTimers = [...armedTimers.values()].filter(
       (t) => t.ms === ANTD_TOOLTIP_TIMER.ms && t.label.includes(ANTD_TOOLTIP_TIMER.marker),
     )

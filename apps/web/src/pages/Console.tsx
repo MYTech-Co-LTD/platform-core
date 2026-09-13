@@ -7,9 +7,8 @@
 // 会话（Task 13）：挂载并行取 /session + /config；401 由 platformFetch 统一跳 /login?next=/console。
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Link, Outlet, useLocation, useOutletContext } from 'react-router-dom'
+import { Link, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router-dom'
 import { ProLayout } from '@ant-design/pro-components'
-import type { MenuDataItem } from '@ant-design/pro-components'
 import {
   AppstoreOutlined,
   BarChartOutlined,
@@ -19,12 +18,15 @@ import {
   DatabaseOutlined,
   ExperimentOutlined,
   FileTextOutlined,
+  MoonOutlined,
   SettingOutlined,
+  SunOutlined,
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons'
-import { Avatar, Button, Card, ConfigProvider, Result, Spin, Tag, Typography } from 'antd'
+import { Avatar, Button, Card, ConfigProvider, Result, Spin, Typography, theme } from 'antd'
 import { consoleRegistry } from '../console-registry.gen'
+import { buildConsoleMenu, visibleConsoleEntries } from './console-menu'
 import {
   ApiError,
   DEFAULT_BRANDING,
@@ -54,10 +56,11 @@ const CONSOLE_ICONS: Record<string, ReactNode> = {
   TeamOutlined: <TeamOutlined />,
 }
 
-/** 子路由（概览/模块页）经 Outlet context 拿会话与租户配置 */
+/** 子路由（概览/模块页）经 Outlet context 拿会话、租户配置与品牌（模块页只读 session，加字段向后兼容） */
 export interface ConsoleOutletContext {
   session: PlatformSession
   config: PlatformConfig
+  branding: Branding
 }
 
 type Booted =
@@ -69,6 +72,15 @@ type Booted =
 export default function ConsoleShell() {
   const [booted, setBooted] = useState<Booted>({ state: 'loading' })
   const [branding, setBranding] = useState<Branding>(DEFAULT_BRANDING)
+  // 暗色偏好持久化在 localStorage（spec §2 D3：主题切换零成本，品牌主色仍走 branding API）。
+  // 用 window.localStorage：happy-dom 只在 window 上挂 Storage，裸全局在测试环境是 undefined
+  const [dark, setDark] = useState(() => window.localStorage.getItem('console-theme') === 'dark')
+  const toggleDark = () =>
+    setDark((d) => {
+      const next = !d
+      window.localStorage.setItem('console-theme', next ? 'dark' : 'light')
+      return next
+    })
 
   useEffect(() => {
     let alive = true
@@ -117,8 +129,19 @@ export default function ConsoleShell() {
   }
 
   return (
-    <ConfigProvider theme={{ token: { colorPrimary: branding.primaryColor } }}>
-      <ConsoleLayout session={booted.session} config={booted.config} branding={branding} />
+    <ConfigProvider
+      theme={{
+        algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
+        token: { colorPrimary: branding.primaryColor },
+      }}
+    >
+      <ConsoleLayout
+        session={booted.session}
+        config={booted.config}
+        branding={branding}
+        dark={dark}
+        onToggleDark={toggleDark}
+      />
     </ConfigProvider>
   )
 }
@@ -127,34 +150,23 @@ function ConsoleLayout({
   session,
   config,
   branding,
+  dark,
+  onToggleDark,
 }: {
   session: PlatformSession
   config: PlatformConfig
   branding: Branding
+  dark: boolean
+  onToggleDark: () => void
 }) {
   const location = useLocation()
   const [loggingOut, setLoggingOut] = useState(false)
 
-  // 菜单 = 系统项「概览」+ 启用模块的 console 页（config ∩ registry ∩ 用户 scope）
-  const menuItems = useMemo<MenuDataItem[]>(() => {
-    const items: MenuDataItem[] = [{ path: '/console', name: '概览' }]
-    const seen = new Set<string>()
-    for (const m of config.modules) {
-      for (const c of m.console) {
-        if (seen.has(c.path)) continue // 同 path 只出一次（首个声明者胜）
-        seen.add(c.path)
-        const reg = consoleRegistry.find((r) => r.path === c.path)
-        if (!reg) continue // config 有但构建期没挂载（新模块未发布）→ 不出菜单
-        if (!session.scopes.includes(c.scope)) continue // 权限门禁：scope 不在会话里
-        items.push({
-          path: reg.path,
-          name: c.title,
-          icon: CONSOLE_ICONS[c.icon ?? reg.icon ?? ''],
-        })
-      }
-    }
-    return items
-  }, [config, session])
+  // 菜单位置规则（spec §3）在 console-menu.ts：概览 → pinned（case-engine）→ manifest 声明序
+  const menuItems = useMemo(
+    () => buildConsoleMenu(visibleConsoleEntries(config, session, consoleRegistry), CONSOLE_ICONS),
+    [config, session],
+  )
 
   const onLogout = async () => {
     setLoggingOut(true)
@@ -173,7 +185,7 @@ function ConsoleLayout({
     <ProLayout
       title={branding.productName}
       logo={branding.logo || undefined}
-      layout="side"
+      layout="mix"
       fixSiderbar
       location={{ pathname: location.pathname }}
       route={{ path: '/', routes: menuItems }}
@@ -185,59 +197,64 @@ function ConsoleLayout({
         style: { marginLeft: 8 },
       }}
       actionsRender={() => [
+        <Button
+          key="theme"
+          size="small"
+          aria-label="切换暗色模式"
+          icon={dark ? <SunOutlined /> : <MoonOutlined />}
+          onClick={onToggleDark}
+        />,
         <Button key="logout" size="small" loading={loggingOut} onClick={() => void onLogout()}>
           退出登录
         </Button>,
       ]}
     >
-      <Outlet context={{ session, config } satisfies ConsoleOutletContext} />
+      <Outlet context={{ session, config, branding } satisfies ConsoleOutletContext} />
     </ProLayout>
   )
 }
 
-/** /console 概览页（index 路由）：租户 / 用户 / 权限三张卡 */
+/** /console 概览页（index 路由）= 工作台（issue #36）：欢迎卡 + 模块入口卡片网格 + 预留数据位 */
 export function ConsoleOverview() {
-  const { session, config } = useOutletContext<ConsoleOutletContext>()
+  const { session, config, branding } = useOutletContext<ConsoleOutletContext>()
+  const navigate = useNavigate()
+  const entries = visibleConsoleEntries(config, session, consoleRegistry)
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'stretch' }}>
-      <Card title="租户" style={{ minWidth: 280 }}>
-        <Typography.Paragraph style={{ marginBottom: 4 }}>
-          <Typography.Text type="secondary">租户标识 </Typography.Text>
-          <Typography.Text>{config.tenant.slug}</Typography.Text>
-        </Typography.Paragraph>
-        <Typography.Paragraph style={{ marginBottom: 4 }}>
-          <Typography.Text type="secondary">组织 </Typography.Text>
-          <Typography.Text>{config.tenant.org}</Typography.Text>
-        </Typography.Paragraph>
-        <Typography.Paragraph style={{ marginBottom: 0 }}>
-          <Typography.Text type="secondary">启用模块 </Typography.Text>
-          <Typography.Text>{config.modules.map((m) => m.name).join('、') || '—'}</Typography.Text>
-        </Typography.Paragraph>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <Card styles={{ body: { padding: 24 } }}>
+        <Typography.Title level={4} style={{ marginTop: 0 }}>
+          你好，{session.user.displayName}
+        </Typography.Title>
+        <Typography.Text type="secondary">
+          租户 {config.tenant.slug} · 组织 {session.org} · {branding.productName}
+        </Typography.Text>
       </Card>
-      <Card title="当前用户" style={{ minWidth: 280 }}>
-        <Typography.Paragraph style={{ marginBottom: 4 }}>
-          <Typography.Text>{session.user.displayName}</Typography.Text>
-        </Typography.Paragraph>
-        <Typography.Paragraph style={{ marginBottom: 4 }}>
-          <Typography.Text type="secondary">账号 </Typography.Text>
-          <Typography.Text>{session.user.id}</Typography.Text>
-        </Typography.Paragraph>
-        <Typography.Paragraph style={{ marginBottom: 0 }}>
-          <Typography.Text type="secondary">组织 </Typography.Text>
-          <Typography.Text>{session.org}</Typography.Text>
-        </Typography.Paragraph>
-      </Card>
-      <Card title="权限" style={{ minWidth: 280 }}>
-        {session.scopes.length === 0 ? (
-          <Typography.Text type="secondary">未持有任何权限</Typography.Text>
+      <div>
+        <Typography.Title level={5} style={{ marginTop: 0 }}>
+          模块
+        </Typography.Title>
+        {entries.length === 0 ? (
+          <Typography.Text type="secondary">当前没有可用的模块</Typography.Text>
         ) : (
-          session.scopes.map((s) => (
-            <Tag key={s} style={{ marginBottom: 8 }}>
-              {s}
-            </Tag>
-          ))
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+            {entries.map((e) => (
+              <Card
+                key={e.path}
+                hoverable
+                style={{ width: 240, borderRadius: 12 }}
+                onClick={() => navigate(e.path)}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  {CONSOLE_ICONS[e.icon ?? '']}
+                  <Typography.Text strong>{e.title}</Typography.Text>
+                </div>
+                <Typography.Text type="secondary">{e.moduleName}</Typography.Text>
+              </Card>
+            ))}
+          </div>
         )}
-      </Card>
+      </div>
+      {/* 预留数据位：平台指标卡（接入后在此渲染，见 spec §3 第 1 行） */}
     </div>
   )
 }
