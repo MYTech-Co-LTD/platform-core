@@ -1,17 +1,17 @@
 import { useMemo } from 'react'
-import { RouterProvider, createBrowserRouter } from 'react-router-dom'
+import { Navigate, RouterProvider, createBrowserRouter } from 'react-router-dom'
 import ConsoleShell, { ConsoleModulePage, ConsoleOverview } from './pages/Console'
 import LoginPage from './pages/Login'
-import ConsolePlaceholder from './pages/Placeholder'
 
 /**
- * 路由表（Task 17 骨架 / Task 18 console 壳）：唯一前端应用（门户 + console 同构建）。
- * / 工作台仍为占位；/console 为管理台壳（ProLayout），模块页由 console-registry 聚合懒加载。
+ * 路由表（Task 17 骨架 / Task 18 console 壳 / #36 SaaS 化 / #38 根路径修订）：唯一前端应用。
+ * `/` 与顶层未知路径一律重定向 /console（工作台本体；未登录由 platformFetch 401 带 next 跳登录）。
+ * /console 为管理台壳（ProLayout），模块页由 console-registry 聚合懒加载，壳内 404 自带。
  */
 export function createAppRouter() {
   return createBrowserRouter([
     { path: '/login', element: <LoginPage /> },
-    { path: '/', element: <ConsolePlaceholder /> },
+    { path: '/', element: <Navigate to="/console" replace /> },
     {
       path: '/console',
       element: <ConsoleShell />,
@@ -20,7 +20,7 @@ export function createAppRouter() {
         { path: '*', element: <ConsoleModulePage /> },
       ],
     },
-    { path: '*', element: <ConsolePlaceholder /> },
+    { path: '*', element: <Navigate to="/console" replace /> },
   ])
 }
 
