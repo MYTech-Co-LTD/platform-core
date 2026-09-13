@@ -41,10 +41,12 @@ export default function AdminUsersPage() {
   const onCreate = async (v: { username: string; displayName?: string; password: string }) => {
     try {
       await createAdminUser(v)
-      message.success(`已创建 ${v.username}`)
+      // 顺序（浏览器实测回归，issue #46）：关弹窗 → **立即刷新表** → 再做 UI 反馈。
+      // reload 必须紧跟成功之后——任何夹在中间的 UI 调用抛错都会把刷新吞掉（表格静默陈旧）。
+      // resetFields 不再调用：destroyOnClose 销毁字段即重置，手动 reset 反而在卸载竞态下断链。
       setCreating(false)
-      form.resetFields()
       void reload()
+      message.success(`已创建 ${v.username}`)
     } catch (e) {
       message.error(e instanceof ApiError ? `创建失败：${e.code}` : '创建失败')
     }

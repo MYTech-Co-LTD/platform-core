@@ -36,10 +36,10 @@ export default function AdminPermissionsPage() {
   const onGrant = async (code: string, v: { user: string }) => {
     try {
       await grantAdminPermission(code, v.user)
-      message.success(`已授权 ${v.user} ← ${code}`)
+      // 顺序同 Users.onCreate（浏览器实测回归，issue #46）：刷新先行，UI 反馈殿后
       setGranting(null)
-      form.resetFields()
       void reload()
+      message.success(`已授权 ${v.user} ← ${code}`)
     } catch (e) {
       message.error(e instanceof ApiError ? `授权失败：${e.code}` : '授权失败')
     }
