@@ -166,20 +166,27 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     await pool.end()
   })
 
-  // ① /qr：authorize url（qr 模式 + provider 预选 + redirect_uri）+ state cookie 绑定
-  it('/qr：url 含 state（与 wecom_state cookie 一致）、provider/mode/redirect_uri 正确；cookie HttpOnly/Max-Age=300/SameSite=Lax', async () => {
+  // ① /qr：**直连企微**（issue #30）——URL 是企微扫码登录页、redirect_uri 落回我们自己
+  //    并带 via=qr-corp（告诉回调"这是企微 code"）+ state cookie 绑定
+  it('/qr：企微扫码登录 URL（直连，不经 Casdoor）+ redirect_uri 落自家域带 via=qr-corp；cookie HttpOnly/Max-Age=300/SameSite=Lax', async () => {
     const res = await client.api.platform.auth.wecom.qr.$get(undefined, {
       headers: { host: 'acme.test' },
     })
     expect(res.status).toBe(200)
     const { url } = (await res.json()) as { url: string }
-    expect(url).toContain(`${mock.origin}/login/oauth/authorize?`)
-    expect(url).toContain('provider=provider_wecom')
-    expect(url).toContain('mode=qr')
-    expect(url).toContain('client_id=test-client')
-    expect(url).toContain(`redirect_uri=${encodeURIComponent(CALLBACK)}`)
+    // **直连企微**：不再是 Casdoor 的 /login/oauth/authorize——那条会把 redirect_uri 换成
+    // Casdoor 自己的域（sso.hookflow.cn），而企微自建应用**可信域名只能配一个**，
+    // 客户用自有域名时永远对不上（报「redirect_uri 与配置的授权完成回调域名不一致」）
+    expect(url.startsWith('https://login.work.weixin.qq.com/wwlogin/sso/login?')).toBe(true)
+    expect(url).not.toContain('sso.hookflow.cn')
+    const q = new URL(url).searchParams
+    expect(q.get('login_type')).toBe('CorpApp')
+    expect(q.get('appid')).toBe('ww_demo_corp')
+    expect(q.get('agentid')).toBe('1000002')
+    // redirect_uri 必须**原样是我们自己的回调**并带 via=qr-corp（回调据此走企微换票支路）
+    expect(q.get('redirect_uri')).toBe(`${CALLBACK}?via=qr-corp`)
     const state = stateToken(res)
-    expect(url).toContain(`state=${state}`) // url 里的 state 与 cookie 里的是同一枚
+    expect(q.get('state')).toBe(state) // url 里的 state 与 cookie 里的是同一枚
     const sc = setCookies(res).join('\n')
     expect(sc).toContain('wecom_state=')
     expect(sc).toContain('HttpOnly')
@@ -369,6 +376,30 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
       "select detail from platform.audit where action='login.ok' order by id desc limit 1",
     )
     expect(rows[0]?.detail.via).toBe('wecom-silent')
+  })
+
+  // ⑥.5 扫码**直连**全链（issue #30）：/qr 给企微登录页 → 企微 code 回调（via=qr-corp）
+  //      → 假企微 fetch 换 userid wo_alice → Casdoor 用户 → authVia=wecom-qr
+  //      （authVia 仍是 'wecom-qr'——它确实是"企微扫码"；与经 Casdoor 的代开发路同名，
+  //        两条路的区别在 **code 的类型**，由 via=qr-corp 标明）
+  it('via=qr-corp 全链：/qr 直连企微；企微 code 回调 → platform_session authVia=wecom-qr', async () => {
+    const q1 = await client.api.platform.auth.wecom.qr.$get(undefined, {
+      headers: { host: 'acme.test' },
+    })
+    expect(q1.status).toBe(200)
+    const state = stateToken(q1)
+
+    // 用**企微** code（不是 Casdoor OIDC code）——自建应用直连拿到的就是前者
+    const res = await client.api.platform.auth.wecom.callback.$get(
+      { query: { code: 'wecom-qr-corp-code', state, via: 'qr-corp' } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/')
+    const p = await verifySession(sessionToken(res), SECRET)
+    expect(p?.authVia).toBe('wecom-qr')
+    expect(p?.name).toBe('wo_alice')
+    expect(p?.org).toBe('acme')
   })
 
   // ⑦ 未配企微的租户（beta）：/qr 与 /silent（wxwork UA）都 404 WECOM_NOT_CONFIGURED
