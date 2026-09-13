@@ -26,6 +26,8 @@ export interface WecomCorpConfig {
 export const DEFAULT_WECOM_PROVIDER = 'provider_wecom'
 const AUTHORIZE_PATH = '/login/oauth/authorize'
 const SILENT_ENDPOINT = 'https://open.weixin.qq.com/connect/oauth2/authorize'
+/** 企微「扫码登录」端点（PC 端自建应用）：扫码后带 code 回跳 redirect_uri。 */
+const QR_LOGIN_ENDPOINT = 'https://login.work.weixin.qq.com/wwlogin/sso/login'
 const GETTOKEN_URL = 'https://qyapi.weixin.qq.com/cgi-bin/gettoken'
 const GETUSERINFO_URL = 'https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo'
 
@@ -71,6 +73,30 @@ export function buildWecomSilentUrl(cfg: WecomCorpConfig, redirectUri: string, s
   })
   if (cfg.agentId) qs.set('agentid', cfg.agentId)
   return `${SILENT_ENDPOINT}?${qs}#wechat_redirect`
+}
+
+/**
+ * 企微**扫码登录** URL（自建应用**直连**，不经 Casdoor）（issue #30）。
+ *
+ * 为什么要自己拼：经 Casdoor 时，Casdoor 对企微发的 `redirect_uri` 是**它自己的域**
+ * （实测 `https://sso.hookflow.cn/callback`，我们的回调被包在 `state` 里）；而企微自建应用的
+ * **可信域名只能配一个** ⇒ 客户用自有域名（本公司内部应用 = `mytech.hookflow.cn`）时
+ * **永远对不上**，报「redirect_uri 与配置的授权完成回调域名不一致」。
+ * 直连则回跳落在**我们自己的域**上，与租户自己的可信域名一致。
+ *
+ * 形状与 Casdoor 现发的一致（实测取到的 URL）：
+ * `login_type=CorpApp` + `appid=corpId` + `agentid` + `redirect_uri` + `state`。
+ * 取到 code 后与 silent 路走**同一个**换票函数（`wecomUserIdForCode`）。
+ */
+export function buildWecomQrUrl(cfg: WecomCorpConfig, redirectUri: string, state: string): string {
+  const qs = new URLSearchParams({
+    login_type: 'CorpApp',
+    appid: cfg.corpId,
+    redirect_uri: redirectUri,
+    state,
+  })
+  if (cfg.agentId) qs.set('agentid', cfg.agentId)
+  return `${QR_LOGIN_ENDPOINT}?${qs}`
 }
 
 // access_token 缓存：模块级 Map 按 corpId 键，expire 前复用，过期判定留 60s 提前量

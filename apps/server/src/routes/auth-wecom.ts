@@ -22,7 +22,7 @@ import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import {
-  buildAuthorizeUrl,
+  buildWecomQrUrl,
   buildWecomSilentUrl,
   effectiveScopes,
   signSession,
@@ -150,22 +150,26 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
   const app = new Hono<TenantEnv & SessionEnv>()
   const callbackUri = trimSlash(deps.publicOrigin) + CALLBACK_PATH
 
-  // GET /qr — 登录页 Tab 用：Casdoor 扫码页 iframe 地址 + 种 state
+  // GET /qr — 登录页 Tab 用：企微扫码登录地址 + 种 state
   app.get('/qr', (c) => {
     const t = c.get('tenant')
-    if (!t.wecom_corp_id) {
+    // 自建应用三件套缺一不可：corpId/secret 后面都要用（secret 缺了只会在回调里才炸，
+    // 不如在这里就 404 让登录页直接显示"二维码加载失败"）。**保留**：无 corp 的租户返 404
+    // （既有测试钉着这个出口，且代开发路尚未接线）。
+    if (!t.wecom_corp_id || !t.wecom_secret) {
       return c.json({ error: 'WECOM_NOT_CONFIGURED' }, 404)
     }
     const state = randomUUID()
-    const url = buildAuthorizeUrl(
-      deps.casdoorUrl,
-      deps.casdoorClientId,
-      callbackUri,
+    // **直连企微，不经 Casdoor**（issue #30）：经 Casdoor 时它把 redirect_uri 换成自己的域
+    // （实测 sso.hookflow.cn/callback，我们的回调被包在 state 里），而企微自建应用的
+    // **可信域名只能配一个** ⇒ 客户用自有域名（本公司内部应用 = mytech.hookflow.cn）时
+    // 永远对不上，报「redirect_uri 与配置的授权完成回调域名不一致」。
+    // 直连则回跳落在**我们自己的域**上，与租户自己的可信域名一致。
+    // `via=qr-corp` 告诉回调"这是**企微** code 而非 Casdoor OIDC code"（见回调的分支）。
+    const url = buildWecomQrUrl(
+      { corpId: t.wecom_corp_id, agentId: t.wecom_agent_id ?? undefined },
+      `${callbackUri}?via=qr-corp`,
       state,
-      'qr',
-      // 该租户自己那个 provider（issue #27）：共享 Casdoor 的 provider 名全局唯一，
-      // 写死的 provider_wecom 早被别的部署占用。**NULL ⇒ 走缺省**，既有部署行为不变。
-      t.wecom_provider ?? undefined,
     )
     c.res.headers.append('Set-Cookie', stateCookie(state))
     return c.json({ url })
@@ -196,7 +200,12 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
     const t = c.get('tenant')
     const state = c.req.query('state') ?? ''
     const code = c.req.query('code') ?? ''
-    const via = c.req.query('via') === 'silent' ? 'wecom-silent' : 'wecom-qr'
+    const viaRaw = c.req.query('via') ?? ''
+    const via = viaRaw === 'silent' ? 'wecom-silent' : 'wecom-qr'
+    // 是否是**企微** code（而非 Casdoor OIDC code）：silent 路与自建应用的扫码路（`qr-corp`，
+    // issue #30）都是**我们直连企微**拿到的 code ⟹ 走同一个换票函数；只有经 Casdoor 的代开发路
+    // 拿的是 OIDC code。**这同时决定失败时的错误码**（企微故障 vs Casdoor 故障）。
+    const wecomCode = viaRaw === 'silent' || viaRaw === 'qr-corp'
     // 失败呈现（评审 I1）：回调恒为浏览器导航（Casdoor/企微 302 落地），JSON 错误体是用户
     // 死胡同——iframe 内（扫码页回跳）200 + postMessage sso-fail（与 sso-done 对称，Task 17
     // 登录页监听两种消息）；顶层 302 /login?error=<CODE>（登录页按码展示）。错误码集合与
@@ -238,10 +247,11 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
       return fail('BAD_STATE')
     }
 
-    // 身份来源两分：qr = Casdoor OIDC code 换票解 name；silent = 企微 code 换 userid
+    // 身份来源两分：**企微 code**（silent 路 + 自建应用的扫码路 qr-corp，issue #30）换 userid；
+    // **Casdoor OIDC code**（经 Casdoor 的代开发路）换票解 name。
     let name: string | null
     try {
-      if (via === 'wecom-silent') {
+      if (wecomCode) {
         if (!t.wecom_corp_id || !t.wecom_secret) {
           // 计数（PR#5 评审 R2）：口径统一——本路由上除"被限速本身"以外的**每一个**失败出口
           // 都要 record。这条不产生出站调用（危害比 catch 那条低一档），但它同样是免费的
@@ -281,7 +291,7 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
       // 429**，且每次都在向共享 SSO / 腾讯 getuserinfo 发出站调用——"上游一出问题刹车就失效"，
       // 与本路由自立的规矩「每一条失败路径都**必须**有 record」直接冲突
       deps.limiter.record(t.id, 'wecom', null, false)
-      return fail(via === 'wecom-silent' ? 'WECOM_UNAVAILABLE' : 'CASDOOR_UNAVAILABLE')
+      return fail(wecomCode ? 'WECOM_UNAVAILABLE' : 'CASDOOR_UNAVAILABLE')
     }
     if (name === null) {
       // code 被上游拒绝（无效/过期/已兑换）——不泄具体原因（qr 路；silent 路只抛不 null，

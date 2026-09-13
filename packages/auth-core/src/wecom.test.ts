@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildAuthorizeUrl, buildWecomSilentUrl, wecomUserIdForCode } from './wecom'
+import { buildAuthorizeUrl, buildWecomQrUrl, buildWecomSilentUrl, wecomUserIdForCode } from './wecom'
 
 // URL 形状钉死（移植参考：旧仓 gateway provider-login.js / sso-shell.js 生产验证版）：
 //   - authorize（qr/silent）：Casdoor /login/oauth/authorize 基座 + provider 预选 + mode 区分。
@@ -78,6 +78,35 @@ describe('buildWecomSilentUrl', () => {
   it('agentId 未配 → 不带 agentid 参数', () => {
     const url = buildWecomSilentUrl({ corpId: 'ww_corp_1' }, 'https://h.example.com/cb', 's')
     expect(new URL(url).searchParams.has('agentid')).toBe(false)
+  })
+})
+
+// 扫码**直连企微**（issue #30）：自建应用不走 Casdoor —— 经 Casdoor 时 redirect_uri 会被换成
+// Casdoor 自己的域（sso.hookflow.cn），而企微自建应用的**可信域名只能配一个** ⇒ 客户用自有域名
+// 时永远对不上。直连则回跳落在我们自己的域上。
+describe('buildWecomQrUrl', () => {
+  const redirect = 'https://portal.example.com/api/platform/auth/wecom/callback?via=qr-corp'
+
+  it('登录页端点 + login_type=CorpApp + appid/agentid，redirect_uri 原样（编码往返）', () => {
+    const url = buildWecomQrUrl({ corpId: 'ww_corp_1', agentId: '1000002' }, redirect, 'st=ate&1')
+    expect(url.startsWith('https://login.work.weixin.qq.com/wwlogin/sso/login?')).toBe(true)
+    const q = new URL(url).searchParams
+    expect(q.get('login_type')).toBe('CorpApp')
+    expect(q.get('appid')).toBe('ww_corp_1')
+    expect(q.get('agentid')).toBe('1000002')
+    expect(q.get('redirect_uri')).toBe(redirect) // 编码后往返还原 ⇒ 没被改写
+    expect(q.get('state')).toBe('st=ate&1')
+  })
+
+  it('agentId 未配 → 不带 agentid 参数（与 silent 同口径）', () => {
+    const url = buildWecomQrUrl({ corpId: 'ww_corp_1' }, 'https://h.example.com/cb', 's')
+    expect(new URL(url).searchParams.has('agentid')).toBe(false)
+  })
+
+  it('★ redirect_uri 指向**我们自己的域**，不是 Casdoor 的（本改动的全部意义）', () => {
+    const got = new URL(buildWecomQrUrl({ corpId: 'c' }, redirect, 's')).searchParams.get('redirect_uri')
+    expect(got).toBe(redirect)
+    expect(got).not.toContain('sso.hookflow.cn') // 经 Casdoor 时它会给这个，而自家可信域名对不上
   })
 })
 
