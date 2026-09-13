@@ -1,7 +1,7 @@
 # platform-core 通用 SaaS 管理域（订阅进 Casdoor · 一层管理）：设计
 
 > 本文是「platform-core 通用 SaaS 管理后台底座」的**规划稿**（spec）。
-> **状态：设计已定稿（2026-09-13 用户确认），待 writing-plans 出实施计划后开工。**
+> **状态：设计已定稿（2026-09-13 用户确认；同日 D4 双层修订，见修订记录），M1 已实施（PR #42/#43，部署受阻于 env 问题，线上暂回滚）；M3 待排期。**
 > 工作铁律：实施中任何方向/范围调整，先改本文再动码。
 >
 > 触发链：「要做通用 SaaS 管理后台，混合架构，通用能力（用户/角色/权限/订阅）要完善，新模块能快速接入」
@@ -50,15 +50,21 @@
 - **D3 订阅锚点 = 每 org 一个专用锚用户**（`tenantsub`，禁登、仅挂订阅；**仅字母数字**，实测 `_` 被
   用户名字符集拒绝）：Subscription.User 是 user 维度且 Casdoor UI 按用户管理订阅（空 user 不可管，
   实测不校验但不可运营）；挂真实管理员会随人事变动断链。锚用户在 Casdoor 用户列表可见（边界 §6.2）。
-- **D4 管理一层化**：只有平台超管（公司运营），**日常运营直接在 Casdoor 后台做**
-  （用户/角色/权限/订阅的原生页）；**不自建 M2/M3 管理页**。将来租户自治/客户私有化管理需求出现时
-  再建代理页——真身全在 Casdoor，**数据模型零返工**。
+- **D4 管理双层（2026-09-13 二次确认修订，推翻初版「一层化」——初版折叠时丢了「租户管理员
+  要在自建后台管」的原始意图，属决策对齐偏差）**：
+  - **平台超管（公司运营）→ Casdoor 后台**（sso.hookflow.cn）：租户 org 开通、订阅发放/退订、
+    全局用户/角色/权限。不建平台超管页（原 M2 维持砍）。
+  - **租户管理员 → platform-core console 自建页（恢复 M3）**：本租户用户管理、角色与授权、
+    我的订阅（只读）。后端 = apps/server 代理 Casdoor Admin API（**锁 org=本租户**，越界即拒）
+    + listSubscriptions 只读。真身仍在 Casdoor，页面是代理——不违 A2。
 - **D5 config 聚合改造**：`/api/platform/config` 的模块清单从查 `tenant_module` 改为查该租户 org 的
   **Active 订阅**（`state=Active 且 now ≤ EndTime`）；带短 TTL 缓存（防每请求打 Casdoor）。
 - **D6 tenant_module 退役**：迁移脚本把存量行回填为 Active Subscription；灰度开关
   `PLATFORM_SUBSCRIPTION_SOURCE=platform|casdoor` 切换读取源；切换验证后删表依赖。
 - **D7 唯一自建管理件 = 租户开通 CLI**（服务器侧脚本，同 `seed.ts` 模式）：一键完成
   `platform.tenant` + `tenant_domain` + Casdoor org + 权限码扇出 + 锚用户 + 初始订阅 + branding 默认行。
+- **D9 租户管理员识别 = 权限码 `tenant:admin`**（平台内置码，随装载器按租户 org 扇出供给，
+  与模块码同机制）；console「管理」菜单组与 M3 页面以它门禁。授权动作在 Casdoor 完成（给用户挂码）。
 - **D8 console UI 本期零改动**：菜单蓝图的「平台管理▾/帮助▾」组继续留白（无页面不挂菜单的规矩不变）；
   「我的订阅」只读页列为后续可选项。
 
@@ -115,6 +121,7 @@ upsertSubscription(sub: SubInput): Promise<void>    // add/update-subscription�
 | M1a | Casdoor 客户端扩展 + API 行为实测 + 锚用户/Plan 机制 | 单测 + 真机 Casdoor 冒烟（建锚用户/Plan/订阅往返） |
 | M1b | config 聚合改造 + 缓存 + 灰度开关 + 迁移脚本 | 既有 config/console 测试全绿（mock Casdoor）；迁移脚本对现网幂等重跑通过；灰度切 casdoor 后菜单与旧表一致 |
 | M1c | 租户开通 CLI | 新开一个测试租户端到端走通（登录→菜单→模块页） |
+| **M3（修订恢复）** | 租户管理员 console 页：用户管理 / 角色与授权 / 我的订阅（只读）；后端代理锁 org | 有 tenant:admin 码的账号见「管理」菜单组；用户增删/授权往返真机验证；无码账号不可见 |
 
 **总验收 = §3 链路全链路演示**：新模块（用 demo 模块模拟）→ manifest 已在 → Casdoor 订阅 → 授权 → console 出菜单；退订（state 改 Terminated）→ 菜单在 TTL 内消失。
 
@@ -137,3 +144,10 @@ upsertSubscription(sub: SubInput): Promise<void>    // add/update-subscription�
 - 会话记忆：`frontend-stack-no-antdpro-migration`（方向 A）、`platform-core-multi-tenant-permission-model`
   （权限码 org 分桶——本设计不改此模型，只把「租户能用什么」从平台表挪到 Casdoor 订阅）。
 - Casdoor 结构体核对来源：casbin/casdoor master `object/{plan,subscription,pricing}.go`（2026-09-13）。
+
+## 8. 修订记录
+
+- 2026-09-13（晚）：**D4 一层化 → 双层**。用户澄清原始意图：平台超管管 Casdoor，**租户管理员在自建
+  console 管**。初版一层化把两层都折叠进 Casdoor 后台，砍掉的 M3（租户管理员页）**恢复**；M2（平台
+  超管页）维持不做。新增 D9（tenant:admin 权限码）。M1 的全部产出（订阅真身/客户端方法/双源/CLI）
+  不受影响——M3 页面正是构建在 M1 之上。
