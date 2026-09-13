@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.0.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.0.2...v0.0.3) - 2026-09-13
+- 【修复】auth-core: 企微 provider 名改租户级配置——写死的 provider_wecom 与共享 Casdoor 的全局唯一名冲突 ([#28](https://github.com/MYTech-Co-LTD/platform-core/pull/28), [f609944](https://github.com/MYTech-Co-LTD/platform-core/commit/f609944f29af835081612e59ed9fdcdcf3e1d0e0))
+
+
 ## [0.0.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.0.1...v0.0.2) - 2026-09-13
 - 【修复】auth-core: 权限供给新建时 name 用净化后的码——真 Casdoor 拒收冒号，供给失败会让进程起不来 ([#26](https://github.com/MYTech-Co-LTD/platform-core/pull/26), [9d3a0ec](https://github.com/MYTech-Co-LTD/platform-core/commit/9d3a0ece55fc0cd8ecae689020e5cce733be5609))
 
