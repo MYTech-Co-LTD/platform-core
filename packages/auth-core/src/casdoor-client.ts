@@ -269,6 +269,60 @@ export class CasdoorClient {
     return Array.isArray(j.data) ? (j.data as CasdoorSubscription[]) : []
   }
 
+  /** 订阅锚用户名：仅字母数字（Casdoor 用户名字符集实测拒绝 `_`，spec D3） */
+  async ensureOrg(name: string): Promise<void> {
+    const j = await this.#adminJson('get-organizations')
+    if (j.status === 'ok' && Array.isArray(j.data) && j.data.some((o) => (o as { name: string }).name === name)) return
+    await this.#adminJson('add-organization', { method: 'POST', body: { name, displayName: name, isEnabled: true } })
+  }
+
+  /** 租户订阅锚用户（禁登、随机密码、幂等）。Casdoor UI 按用户管理订阅——空 user 不可运营。 */
+  async ensureAnchorUser(org: string): Promise<void> {
+    const id = `${org}/tenantsub`
+    const j = await this.#adminJson(`get-user?id=${encodeURIComponent(id)}`)
+    if (j.status === 'ok' && j.data) return
+    await this.#adminJson('add-user', {
+      method: 'POST',
+      body: {
+        owner: org, name: 'tenantsub', displayName: 'Tenant Subscription Anchor',
+        password: crypto.randomUUID() + '!Aa1', email: 'tenantsub@subscription.invalid',
+        isForbidden: true, type: 'normal-user',
+      },
+    })
+    const back = await this.#adminJson(`get-user?id=${encodeURIComponent(id)}`) // 铁律③ 写后回读
+    if (back.status !== 'ok' || !back.data) throw new Error(`casdoor ensure-anchor-user: 写后回读失败 ${id}`)
+  }
+
+  /** 模块 plan（owner=租户 org、Role 留空——订阅管租户能用什么，授权管谁能用，两层不混）。幂等。 */
+  async ensureModulePlan(org: string, moduleId: string): Promise<void> {
+    const plan = `mod-${moduleId}`
+    const id = `${org}/${plan}`
+    const j = await this.#adminJson(`get-plan?id=${encodeURIComponent(id)}`)
+    if (j.status === 'ok' && j.data) return
+    await this.#adminJson('add-plan', {
+      method: 'POST',
+      body: { owner: org, name: plan, displayName: plan, price: 0, currency: 'CNY', isEnabled: true },
+    })
+  }
+
+  /** 订阅/退订（幂等 upsert）。铁律①：时间一律 RFC3339 UTC——写错会毒化整个 org 的列表读取。 */
+  async upsertSubscription(org: string, moduleId: string, opts: { state: 'Active' | 'Terminated'; days?: number }): Promise<void> {
+    const name = `sub-mod-${moduleId}`
+    const id = `${org}/${name}`
+    const existing = await this.#adminJson(`get-subscription?id=${encodeURIComponent(id)}`)
+    const days = opts.days ?? 3650
+    const next = {
+      owner: org, name, displayName: name, user: `${org}/tenantsub`, plan: `mod-${moduleId}`,
+      startTime: new Date().toISOString(),
+      endTime: new Date(Date.now() + days * 864e5).toISOString(),
+      state: opts.state,
+    }
+    const path = existing.status === 'ok' && existing.data ? 'update-subscription' : 'add-subscription'
+    await this.#adminJson(path, { method: 'POST', body: next })
+    const back = await this.#adminJson(`get-subscription?id=${encodeURIComponent(id)}`) // 铁律③
+    if (back.status !== 'ok' || !back.data) throw new Error(`casdoor upsert-subscription: 写后回读失败 ${id}`)
+  }
+
 /**
    * 把用户挂到本 org 的**全部**权限码上（issue #32 JIT 建号后的授权步）：
    * 逐条 update-permission 把 name 追加进 users 数组，其余字段（roles/resources/
