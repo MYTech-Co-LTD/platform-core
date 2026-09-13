@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.3.1...v0.4.0) - 2026-09-13
+- 【新增】SaaS 管理域 M1——订阅进 Casdoor、config 双源、迁移与租户开通 CLI ([#41](https://github.com/MYTech-Co-LTD/platform-core/pull/41), [3f8b81e](https://github.com/MYTech-Co-LTD/platform-core/commit/3f8b81e3ca0e81c7ca83b5a31d7f121c9257a70d))
+
+
 ## [0.3.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.3.0...v0.3.1) - 2026-09-13
 - 【修复】console: 根路径与未知路径重定向 /console，删除「工作台建设中」占位页 ([#38](https://github.com/MYTech-Co-LTD/platform-core/pull/38), [1bdd6de](https://github.com/MYTech-Co-LTD/platform-core/commit/1bdd6dee7dbfb8ed095f3d04310f7cf70d169e21))
 
