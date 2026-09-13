@@ -302,6 +302,25 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     expect(screen.queryByText('演示模块页面内容')).not.toBeInTheDocument()
   })
 
+  it('⑤ 暗色切换：点击写入 localStorage，再点切回；初始读取持久化值', async () => {
+    setRegistry([])
+    mockApi({
+      '/api/platform/auth/session': () => jsonResponse(SESSION),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+    window.localStorage.setItem('console-theme', 'dark') // 初始持久化值
+
+    renderApp()
+    const btn = await screen.findByRole('button', { name: '切换暗色模式' })
+    // dark 态点击 → light
+    fireEvent.click(btn)
+    await waitFor(() => expect(window.localStorage.getItem('console-theme')).toBe('light'))
+    // 再点 → dark
+    fireEvent.click(btn)
+    await waitFor(() => expect(window.localStorage.getItem('console-theme')).toBe('dark'))
+    window.localStorage.removeItem('console-theme')
+  })
+
   it('③ 退出：现取 /session 再 POST /logout（带 x-csrf-token）→ 跳 /login', async () => {
     setRegistry([])
     // 第二次 /session（点退出时的现取）回轮换后的 csrf——钉死 logout 必须用现取值而非挂载缓存

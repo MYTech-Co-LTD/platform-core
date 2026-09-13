@@ -18,11 +18,13 @@ import {
   DatabaseOutlined,
   ExperimentOutlined,
   FileTextOutlined,
+  MoonOutlined,
   SettingOutlined,
+  SunOutlined,
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons'
-import { Avatar, Button, Card, ConfigProvider, Result, Spin, Tag, Typography } from 'antd'
+import { Avatar, Button, Card, ConfigProvider, Result, Spin, Tag, Typography, theme } from 'antd'
 import { consoleRegistry } from '../console-registry.gen'
 import { buildConsoleMenu, visibleConsoleEntries } from './console-menu'
 import {
@@ -69,6 +71,15 @@ type Booted =
 export default function ConsoleShell() {
   const [booted, setBooted] = useState<Booted>({ state: 'loading' })
   const [branding, setBranding] = useState<Branding>(DEFAULT_BRANDING)
+  // 暗色偏好持久化在 localStorage（spec §2 D3：主题切换零成本，品牌主色仍走 branding API）。
+  // 用 window.localStorage：happy-dom 只在 window 上挂 Storage，裸全局在测试环境是 undefined
+  const [dark, setDark] = useState(() => window.localStorage.getItem('console-theme') === 'dark')
+  const toggleDark = () =>
+    setDark((d) => {
+      const next = !d
+      window.localStorage.setItem('console-theme', next ? 'dark' : 'light')
+      return next
+    })
 
   useEffect(() => {
     let alive = true
@@ -117,8 +128,19 @@ export default function ConsoleShell() {
   }
 
   return (
-    <ConfigProvider theme={{ token: { colorPrimary: branding.primaryColor } }}>
-      <ConsoleLayout session={booted.session} config={booted.config} branding={branding} />
+    <ConfigProvider
+      theme={{
+        algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
+        token: { colorPrimary: branding.primaryColor },
+      }}
+    >
+      <ConsoleLayout
+        session={booted.session}
+        config={booted.config}
+        branding={branding}
+        dark={dark}
+        onToggleDark={toggleDark}
+      />
     </ConfigProvider>
   )
 }
@@ -127,10 +149,14 @@ function ConsoleLayout({
   session,
   config,
   branding,
+  dark,
+  onToggleDark,
 }: {
   session: PlatformSession
   config: PlatformConfig
   branding: Branding
+  dark: boolean
+  onToggleDark: () => void
 }) {
   const location = useLocation()
   const [loggingOut, setLoggingOut] = useState(false)
@@ -158,7 +184,7 @@ function ConsoleLayout({
     <ProLayout
       title={branding.productName}
       logo={branding.logo || undefined}
-      layout="side"
+      layout="mix"
       fixSiderbar
       location={{ pathname: location.pathname }}
       route={{ path: '/', routes: menuItems }}
@@ -170,6 +196,13 @@ function ConsoleLayout({
         style: { marginLeft: 8 },
       }}
       actionsRender={() => [
+        <Button
+          key="theme"
+          size="small"
+          aria-label="切换暗色模式"
+          icon={dark ? <SunOutlined /> : <MoonOutlined />}
+          onClick={onToggleDark}
+        />,
         <Button key="logout" size="small" loading={loggingOut} onClick={() => void onLogout()}>
           退出登录
         </Button>,
