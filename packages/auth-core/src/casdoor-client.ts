@@ -71,6 +71,13 @@ export interface CasdoorPermission {
   resources?: string[]
 }
 
+/** listUsers 的返回形状（M3 spec D4：租户管理员用户管理页数据源） */
+export interface CasdoorListedUser {
+  name: string
+  displayName: string
+  isForbidden: boolean
+}
+
 interface LoginResult {
   r: Response
   j: Record<string, unknown>
@@ -267,6 +274,24 @@ export class CasdoorClient {
     const j = await this.#adminJson(`get-subscriptions?owner=${encodeURIComponent(owner)}`)
     if (j.status !== 'ok') throw new Error(`casdoor get-subscriptions: ${j.msg || 'error'}`)
     return Array.isArray(j.data) ? (j.data as CasdoorSubscription[]) : []
+  }
+
+  /**
+   * 列**本 client org** 的全量用户（M3 用户管理页）。error 一律抛、绝不静默空表
+   * （与 listSubscriptions 同口径：静默空表 = 管理页白屏，响亮失败才可排障）。
+   * 锚用户过滤是调用方（admin 路由）的职责——客户端原样透传。
+   */
+  async listUsers(): Promise<CasdoorListedUser[]> {
+    const j = await this.#adminJson(`get-users?owner=${encodeURIComponent(this.#o.org)}`)
+    if (j.status !== 'ok') throw new Error(`casdoor get-users: ${j.msg || 'error'}`)
+    if (!Array.isArray(j.data)) return []
+    return (j.data as Array<Record<string, unknown>>)
+      .map((u) => ({
+        name: String(u.name ?? ''),
+        displayName: typeof u.displayName === 'string' && u.displayName ? u.displayName : String(u.name ?? ''),
+        isForbidden: u.isForbidden === true,
+      }))
+      .filter((u) => u.name !== '')
   }
 
   /** 订阅锚用户名：仅字母数字（Casdoor 用户名字符集实测拒绝 `_`，spec D3） */

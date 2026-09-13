@@ -605,3 +605,32 @@ describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan�
     expect(log.some((l) => l.body && l.path?.includes('?id='))).toBe(false) // 铁律② 写/delete 一律 body（GET 查询不在此列）
   })
 })
+
+// ---- M3 租户管理域（spec D4/D9：listUsers / 用户生命周期 / 权限码 grant/revoke） ----
+
+describe('M3 用户与授权（D4）', () => {
+  let mm: MockCasdoor
+  beforeAll(async () => {
+    mm = new MockCasdoor({
+      users: [
+        { name: 'alice', password: 'pw', owner: 'acme', displayName: 'Alice' },
+        { name: 'bob', password: 'pw', owner: 'acme', isForbidden: true },
+        { name: 'tenantsub', password: 'x', owner: 'acme', isForbidden: true },
+      ],
+      perms: [
+        { owner: 'acme', name: 'demo-view', displayName: '演示查看', resources: ['demo:view'], users: ['acme/bob'] },
+      ],
+    })
+    await mm.start()
+  })
+  afterAll(async () => { await mm.stop() })
+  const client = () =>
+    new CasdoorClient({ origin: mm.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
+
+  it('listUsers 列本 org 用户（三字段；built-in admin 不在桶内）', async () => {
+    const users = await client().listUsers()
+    expect(users).toContainEqual({ name: 'alice', displayName: 'Alice', isForbidden: false })
+    expect(users).toContainEqual({ name: 'bob', displayName: 'bob', isForbidden: true })
+    expect(users.map((u) => u.name)).not.toContain('admin')
+  })
+})

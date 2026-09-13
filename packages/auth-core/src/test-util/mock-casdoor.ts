@@ -43,6 +43,8 @@ export interface MockCasdoorUser {
   isAdmin?: boolean
   displayName?: string
   email?: string
+  /** 禁登标记（M3 用户管理：setUserForbidden 的落点；get-users 回传） */
+  isForbidden?: boolean
 }
 
 export interface MockCasdoorPerm {
@@ -67,6 +69,7 @@ const MOCK_ORG = 'mock-org'
 interface StoredUser extends MockCasdoorUser {
   roles: string[]
   isAdmin: boolean
+  isForbidden: boolean
   /** 已解析的归属 org（缺省已填成 MOCK_ORG / built-in），get-user 的命中条件之一 */
   owner: string
   /** 经 /api/add-user 建号时的载荷存档（type/signupApplication 等，供 userIn 断言；
@@ -81,6 +84,8 @@ export class MockCasdoor {
   #oidcCodes = new Map<string, string>() // authorization code → 用户名（单次即焚）
   #addPermissionCalls: Array<{ owner: string; name: string }> = []
   #addUserCalls: Array<Record<string, unknown>> = []
+  #updateUserCalls: Array<Record<string, unknown>> = []
+  #deleteUserCalls: Array<{ owner: string; name: string }> = []
   #addUserFault: 'off' | 'error' = 'off'
   #tokenFault: 'off' | 'http502' | 'html200' = 'off'
   #getUserFault: 'off' | 'error' | 'errorOnce' = 'off'
@@ -104,6 +109,7 @@ export class MockCasdoor {
       owner: u.owner ?? MOCK_ORG,
       roles: u.roles ?? [],
       isAdmin: u.isAdmin ?? u.name === 'admin',
+      isForbidden: u.isForbidden ?? false,
     }))
     for (const [i, p] of (opts.perms ?? []).entries()) {
       const name = p.name ?? p.resources?.[0] ?? `perm-${i + 1}`
@@ -193,6 +199,16 @@ export class MockCasdoor {
   userIn(org: string, name: string): Record<string, unknown> | undefined {
     const u = this.#users.find((x) => x.owner === org && x.name === name)
     return u ? { ...u, ...(u.createdViaApi ?? {}) } : undefined
+  }
+
+  /** update-user 调用记录（M3 用户管理断言口；含 id 与载荷——**不含 password 值**的断言由用例自证） */
+  get updateUserCalls(): ReadonlyArray<Record<string, unknown>> {
+    return this.#updateUserCalls
+  }
+
+  /** delete-user 调用记录（M3：钉死铁律②——delete 一律 JSON body {owner,name}） */
+  get deleteUserCalls(): ReadonlyArray<{ owner: string; name: string }> {
+    return this.#deleteUserCalls
   }
 
   /**
@@ -421,6 +437,7 @@ export class MockCasdoor {
           email: user.email ?? '',
           roles: [...user.roles],
           isAdmin: user.isAdmin,
+          isForbidden: user.isForbidden,
         },
       })
     })
@@ -481,12 +498,66 @@ export class MockCasdoor {
       this.#users.push({
         owner,
         name,
-        password: '',
+        password: typeof b.password === 'string' ? b.password : '',
         roles: (b.roles as string[]) ?? [],
         isAdmin: (b.isAdmin as boolean) ?? false,
+        isForbidden: (b.isForbidden as boolean) ?? false,
         displayName: String(b.displayName ?? name),
         createdViaApi: { ...b },
       })
       return c.json({ status: 'ok', data: 'Affected' })
+    })
+    // GET /api/get-users?owner=<org> —— M3 用户管理列表。owner= query、按 org 分桶（纪律②，
+    // 与 get-permissions 同口径：owner 缺失回 error，绝不"忽略形参回全部"）；纪律①：不回 password。
+    .get('/api/get-users', (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const owner = c.req.query('owner') ?? ''
+      if (!owner) return c.json({ status: 'error', msg: 'owner required' })
+      const data = this.#users
+        .filter((u) => u.owner === owner)
+        .map((u) => ({
+          owner: u.owner,
+          name: u.name,
+          displayName: u.displayName ?? u.name,
+          email: u.email ?? '',
+          roles: [...u.roles],
+          isAdmin: u.isAdmin,
+          isForbidden: u.isForbidden,
+        }))
+      return c.json({ status: 'ok', data })
+    })
+    // POST /api/update-user?id=<org>/<name> —— M3 禁启/重置密码。段数规则与 update-permission
+    // 同一套（split('/') 判 len!==2）；载荷 JSON body，merge 进既有记录（真机是整记录替换——
+    // 客户端必须先 get 全量再带回，mock 按 merge 实现不掩盖"漏带字段"的客户端缺陷之外的行为）。
+    .post('/api/update-user', async (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const segs = (c.req.query('id') ?? '').split('/')
+      if (segs.length !== 2) {
+        return c.json({ status: 'error', msg: 'wrong token count, expect <org>/<name>' })
+      }
+      const u = this.#users.find((x) => x.owner === segs[0] && x.name === segs[1])
+      if (!u) return c.json({ status: 'error', msg: 'user not found' })
+      const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+      this.#updateUserCalls.push({ id: `${segs[0]}/${segs[1]}`, ...b })
+      if (typeof b.password === 'string' && b.password) u.password = b.password
+      if (typeof b.isForbidden === 'boolean') u.isForbidden = b.isForbidden
+      if (typeof b.displayName === 'string' && b.displayName) u.displayName = b.displayName
+      return c.json({ status: 'ok', data: 'Affected' })
+    })
+    // POST /api/delete-user —— M3 删号。铁律②：真机 delete 类端点只认 JSON body {owner,name}
+    //（?id= query 形式静默无效）——mock 只实现 body 形式，query 形式一律 error，钉死客户端形状。
+    // 幂等形状：删不存在也回 ok（真机 delete 不存在不报错）。
+    .post('/api/delete-user', async (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+      const owner = String(b.owner ?? '')
+      const name = String(b.name ?? '')
+      if (!owner || !name) {
+        return c.json({ status: 'error', msg: 'delete-user 走 JSON body {owner,name}（铁律②）' })
+      }
+      this.#deleteUserCalls.push({ owner, name })
+      const i = this.#users.findIndex((u) => u.owner === owner && u.name === name)
+      if (i >= 0) this.#users.splice(i, 1)
+      return c.json({ status: 'ok', data: 'Deleted' })
     })
 }
