@@ -120,3 +120,61 @@ export function logout(csrfToken: string): Promise<void> {
     headers: { 'x-csrf-token': csrfToken },
   })
 }
+
+// ---- 租户管理域（M3，spec D4/D9，issue #46）----
+
+export interface AdminUser {
+  name: string
+  displayName: string
+  isForbidden: boolean
+}
+export interface AdminPermission {
+  code: string
+  name: string
+  users: string[]
+}
+export interface AdminSubscription {
+  moduleId: string
+  moduleName: string | null
+  state: string
+  startTime: string | null
+  endTime: string | null
+}
+
+export const listAdminUsers = () => request<{ users: AdminUser[] }>('/api/platform/admin/users')
+export const listAdminPermissions = () =>
+  request<{ permissions: AdminPermission[] }>('/api/platform/admin/permissions')
+export const listAdminSubscriptions = () =>
+  request<{ subscriptions: AdminSubscription[] }>('/api/platform/admin/subscriptions')
+
+/**
+ * 管理写操作统一通道：**现取** /session 拿 csrfToken（会话重签会轮换，禁止缓存旧值——
+ * 与 logout 同一契约）→ 带 x-csrf-token 调用。无 body 的 DELETE 传 undefined。
+ */
+async function adminWrite<T>(path: string, method: string, body?: unknown): Promise<T> {
+  const s = await getSession()
+  return request<T>(path, {
+    method,
+    headers: {
+      'x-csrf-token': s.csrfToken,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  })
+}
+
+export const createAdminUser = (v: { username: string; displayName?: string; password: string }) =>
+  adminWrite<{ name: string }>('/api/platform/admin/users', 'POST', v)
+export const setAdminUserForbidden = (name: string, isForbidden: boolean) =>
+  adminWrite<{ name: string }>(`/api/platform/admin/users/${encodeURIComponent(name)}`, 'PATCH', { isForbidden })
+export const resetAdminUserPassword = (name: string, password: string) =>
+  adminWrite<{ name: string }>(`/api/platform/admin/users/${encodeURIComponent(name)}/password`, 'PATCH', { password })
+export const deleteAdminUser = (name: string) =>
+  adminWrite<{ name: string }>(`/api/platform/admin/users/${encodeURIComponent(name)}`, 'DELETE')
+export const grantAdminPermission = (code: string, user: string) =>
+  adminWrite<{ ok: true }>(`/api/platform/admin/permissions/${encodeURIComponent(code)}/users`, 'POST', { user })
+export const revokeAdminPermission = (code: string, user: string) =>
+  adminWrite<{ ok: true }>(
+    `/api/platform/admin/permissions/${encodeURIComponent(code)}/users/${encodeURIComponent(user)}`,
+    'DELETE',
+  )
