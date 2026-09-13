@@ -1,7 +1,7 @@
 // console-menu.test.ts — 菜单位置规则（spec §3）与三重过滤的纯函数测试（issue #36）
 import { describe, expect, it } from 'vitest'
 import type { ComponentType } from 'react'
-import { buildConsoleMenu, visibleConsoleEntries } from './console-menu'
+import { TENANT_ADMIN_SCOPE, buildConsoleMenu, visibleConsoleEntries } from './console-menu'
 import type { ConsoleRegistryEntry } from '../console-registry.gen'
 
 const CONFIG = {
@@ -55,11 +55,34 @@ describe('visibleConsoleEntries（三重过滤 + 去重）', () => {
 
 describe('buildConsoleMenu（spec §3 位置规则）', () => {
   it('概览恒第 1；case-engine 模块页钉第 2（即使 manifest 声明在后）；其余按声明序', () => {
-    const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION, REGISTRY), {})
+    const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION, REGISTRY), {}, SESSION)
     expect(menu.map((m) => m.path)).toEqual(['/console', '/console/case-engine', '/console/first/a'])
   })
   it('case-engine 未落地/无权限时该位自然缺席，不产生空位', () => {
-    const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION_PARTIAL, REGISTRY), {})
+    const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION_PARTIAL, REGISTRY), {}, SESSION_PARTIAL)
     expect(menu.map((m) => m.path)).toEqual(['/console', '/console/first/a'])
+  })
+})
+
+// ---- M3：管理组（tenant:admin 门禁，spec D4/D9，issue #46）----
+describe('buildConsoleMenu 管理组', () => {
+  it('有 tenant:admin → 尾部追加「管理」组（三项子菜单）', () => {
+    const menu = buildConsoleMenu([], {}, { scopes: ['tenant:admin'] })
+    const group = menu.at(-1)
+    expect(group?.name).toBe('管理')
+    expect(group?.children?.map((c) => c.path)).toEqual([
+      '/console/admin/users',
+      '/console/admin/permissions',
+      '/console/admin/subscriptions',
+    ])
+  })
+
+  it('无 tenant:admin → 不出现管理组（模块页照旧）', () => {
+    const menu = buildConsoleMenu([], {}, { scopes: ['demo:view'] })
+    expect(menu.some((m) => m.name === '管理')).toBe(false)
+  })
+
+  it('TENANT_ADMIN_SCOPE 与服务端门禁同串', () => {
+    expect(TENANT_ADMIN_SCOPE).toBe('tenant:admin')
   })
 })

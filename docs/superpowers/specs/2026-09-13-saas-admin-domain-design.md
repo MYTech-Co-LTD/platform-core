@@ -138,6 +138,9 @@ upsertSubscription(sub: SubInput): Promise<void>    // add/update-subscription�
 6. 关联规划：console 菜单蓝图（`2026-09-13-console-saas-ui-blueprint-design.md` §3）的「平台管理▾」
    「帮助▾」继续留白；AI 通路 spec（`2026-09-13-case-engine-ai-pathway-design.md`）维持挂起，
    其模块落地时自然走本链路接入。
+7. M3「角色与授权」页口径（2026-09-13 补）：授权 = **权限码 ↔ 用户直挂**（与
+   effectiveScopes 的 matchUser 语义一致，含 `tenant:admin` 自身的授予/回收 = 管理员交接）。
+   Casdoor Role 组管理不在 M3（那是平台超管在 Casdoor 后台的事）；将来要做角色组再扩。
 
 ## 7. 关联
 
@@ -151,3 +154,5 @@ upsertSubscription(sub: SubInput): Promise<void>    // add/update-subscription�
   console 管**。初版一层化把两层都折叠进 Casdoor 后台，砍掉的 M3（租户管理员页）**恢复**；M2（平台
   超管页）维持不做。新增 D9（tenant:admin 权限码）。M1 的全部产出（订阅真身/客户端方法/双源/CLI）
   不受影响——M3 页面正是构建在 M1 之上。
+- 2026-09-13（夜）：M3 计划落盘（`plans/2026-09-13-m3-tenant-admin-console.md`，issue #46），
+  补 M3 授权页口径（码↔用户直挂，角色组不做）。

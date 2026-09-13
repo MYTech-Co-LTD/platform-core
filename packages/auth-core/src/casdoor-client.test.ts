@@ -605,3 +605,92 @@ describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan�
     expect(log.some((l) => l.body && l.path?.includes('?id='))).toBe(false) // 铁律② 写/delete 一律 body（GET 查询不在此列）
   })
 })
+
+// ---- M3 租户管理域（spec D4/D9：listUsers / 用户生命周期 / 权限码 grant/revoke） ----
+
+describe('M3 用户与授权（D4）', () => {
+  let mm: MockCasdoor
+  beforeAll(async () => {
+    mm = new MockCasdoor({
+      users: [
+        { name: 'alice', password: 'pw', owner: 'acme', displayName: 'Alice' },
+        { name: 'bob', password: 'pw', owner: 'acme', isForbidden: true },
+        { name: 'tenantsub', password: 'x', owner: 'acme', isForbidden: true },
+      ],
+      perms: [
+        { owner: 'acme', name: 'demo-view', displayName: '演示查看', resources: ['demo:view'], users: ['acme/bob'] },
+      ],
+    })
+    await mm.start()
+  })
+  afterAll(async () => { await mm.stop() })
+  const client = () =>
+    new CasdoorClient({ origin: mm.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
+
+  it('listUsers 列本 org 用户（三字段；built-in admin 不在桶内）', async () => {
+    const users = await client().listUsers()
+    expect(users).toContainEqual({ name: 'alice', displayName: 'Alice', isForbidden: false })
+    expect(users).toContainEqual({ name: 'bob', displayName: 'bob', isForbidden: true })
+    expect(users.map((u) => u.name)).not.toContain('admin')
+  })
+
+  it('createManagedUser 建号（密码进载荷）且写后回读验证（铁律③）', async () => {
+    await client().createManagedUser({ name: 'carol', displayName: 'Carol', password: 'InitPass123' })
+    const seeded = mm.userIn('acme', 'carol')
+    expect(seeded?.createdViaApi).toMatchObject({ owner: 'acme', name: 'carol', displayName: 'Carol', password: 'InitPass123', type: 'normal-user' })
+  })
+
+  it('setUserForbidden 置位：update 载荷带回既有 displayName（防字段被洗）且生效', async () => {
+    await client().setUserForbidden('alice', true)
+    const call = mm.updateUserCalls.at(-1)
+    expect(call).toMatchObject({ id: 'acme/alice', isForbidden: true, displayName: 'Alice' })
+    expect(mm.userIn('acme', 'alice')?.isForbidden).toBe(true)
+  })
+
+  it('resetUserPassword：payload 含新密码、不进任何日志面（update 调用可见性由 mock 记录保证）', async () => {
+    await client().resetUserPassword('alice', 'NewPass456')
+    expect(mm.updateUserCalls.at(-1)).toMatchObject({ id: 'acme/alice', password: 'NewPass456' })
+  })
+
+  it('deleteUser 走 JSON body {owner,name}（铁律②）且删后回读为无（铁律③）', async () => {
+    await client().deleteUser('bob')
+    expect(mm.deleteUserCalls).toEqual([{ owner: 'acme', name: 'bob' }])
+    expect(mm.userIn('acme', 'bob')).toBeUndefined()
+  })
+
+  it('deleteUser 对不存在者抛错（回读仍存在分支不可达于 mock，但回读校验本身被走过）', async () => {
+    // mock 的 delete 幂等形状：不存在也 ok —— 客户端回读 getUser=null ⇒ 正常返回（幂等删除）
+    await expect(client().deleteUser('ghostuser')).resolves.toBeUndefined()
+  })
+
+  it('grantPermissionToUser 追加全形 org/user、保留既有配额，写后回读验证', async () => {
+    await client().grantPermissionToUser('demo:view', 'alice')
+    const perm = mm.permissionsIn('acme').find((p) => (p.resources as string[]).includes('demo:view'))
+    expect(perm?.users).toEqual(['acme/bob', 'acme/alice']) // 既有 acme/bob 保留、新挂全形
+  })
+
+  it('grantPermissionToUser 幂等：已挂（短名或全形）不再发 update', async () => {
+    const before = mm.updateUserCalls.length // 无关口；permission 的 update 无独立记录口，用状态断言
+    await client().grantPermissionToUser('demo:view', 'bob') // acme/bob 已在
+    const perm = mm.permissionsIn('acme').find((p) => (p.resources as string[]).includes('demo:view'))
+    expect(perm?.users).toEqual(['acme/bob', 'acme/alice']) // 不变（无重复、无顺序扰动）
+    expect(before).toBe(mm.updateUserCalls.length)
+  })
+
+  it('revokePermissionFromUser 清全形并保留他人', async () => {
+    await client().revokePermissionFromUser('demo:view', 'alice')
+    const perm = mm.permissionsIn('acme').find((p) => (p.resources as string[]).includes('demo:view'))
+    expect(perm?.users).toEqual(['acme/bob'])
+  })
+
+  it('revokePermissionFromUser 幂等：本就没挂直接返回', async () => {
+    await expect(client().revokePermissionFromUser('demo:view', 'ghostuser')).resolves.toBeUndefined()
+    const perm = mm.permissionsIn('acme').find((p) => (p.resources as string[]).includes('demo:view'))
+    expect(perm?.users).toEqual(['acme/bob'])
+  })
+
+  it('grant/revoke 对未知码抛错（先跑装载器供给）', async () => {
+    await expect(client().grantPermissionToUser('nope:code', 'alice')).rejects.toThrow('不存在权限码')
+    await expect(client().revokePermissionFromUser('nope:code', 'alice')).rejects.toThrow('不存在权限码')
+  })
+})

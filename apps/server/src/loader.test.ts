@@ -858,3 +858,79 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     expect((await app.request('/api/modules/flipmod/ping')).status).toBe(200)
   })
 })
+
+// ---- D9：平台内置码 tenant:admin 随装载扇出（M3，issue #46） ----
+describe.skipIf(!dbUrl)('平台内置权限码（D9）', () => {
+  let pool: Pool
+  const mock = new MockCasdoor()
+  const fixtureRoot = path.join(fileURLToPath(new URL('..', import.meta.url)), '.tmp-loader-fixtures-d9')
+  const tmpRunDirs: string[] = []
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: dbUrl })
+    await runMigrations(pool, 'platform', serverMigrationsDir)
+    await seedDemo(pool)
+    await mock.start()
+    await mkdir(fixtureRoot, { recursive: true })
+  })
+  afterAll(async () => {
+    await rm(fixtureRoot, { recursive: true, force: true })
+    await mock.stop()
+    await pool.end()
+  })
+  afterEach(async () => {
+    for (const d of tmpRunDirs.splice(0)) await rm(d, { recursive: true, force: true })
+  })
+
+  function casdoorFactoryFor(): (org: string) => CasdoorClient {
+    const cache = new Map<string, CasdoorClient>()
+    return (org) => {
+      let c = cache.get(org)
+      if (!c) {
+        c = new CasdoorClient({
+          origin: mock.origin, clientId: 'test-client', clientSecret: '', org,
+          adminUser: 'admin', adminPwd: 'pw',
+        })
+        cache.set(org, c)
+      }
+      return c
+    }
+  }
+
+  it('零模块也供给 tenant:admin 到每个租户 org（内置码在前，管理员门禁不依赖业务模块）', async () => {
+    const runDir = await mkdtemp(path.join(fixtureRoot, 'run-'))
+    tmpRunDirs.push(runDir)
+    const modulesDir = path.join(runDir, 'modules')
+    await mkdir(modulesDir) // 空 modules/
+    await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
+    expect(mock.permissionsIn('acme').flatMap((p) => p.resources ?? [])).toContain('tenant:admin')
+    expect(mock.permissionsIn('beta').flatMap((p) => p.resources ?? [])).toContain('tenant:admin')
+  })
+
+  it('模块码与内置码一起扇出（同一次装载）', async () => {
+    const runDir = await mkdtemp(path.join(fixtureRoot, 'run-'))
+    tmpRunDirs.push(runDir)
+    const modulesDir = path.join(runDir, 'modules')
+    await mkdir(path.join(modulesDir, 'somemod'), { recursive: true })
+    await writeFile(path.join(modulesDir, 'somemod', 'manifest.yaml'), [
+      'id: somemod', 'name: somemod 模块', 'version: 1.0.0', 'platform: ">=0.1.0"',
+      'permissions:', '  - { code: somemod:view, name: somemod 查看 }',
+      '', '',
+    ].join('\n'))
+    // 无 index.ts ⇒ 装载失败会抛——补最小入口（无 api 声明即可，api 段可缺省）
+    await writeFile(path.join(modulesDir, 'somemod', 'index.ts'), [
+      "import { Hono } from 'hono'",
+      "import { defineModule } from '@platform/sdk'",
+      'export default defineModule({',
+      "  manifest: { id: 'somemod', name: 'somemod 模块', version: '1.0.0', platform: '>=0.1.0', permissions: [{ code: 'somemod:view', name: 'somemod 查看' }] },",
+      '  createRouter: () => new Hono(),',
+      '})',
+      '', '',
+    ].join('\n'))
+    await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
+    const codes = mock.permissionsIn('acme').flatMap((p) => p.resources ?? [])
+    expect(codes).toContain('somemod:view')
+    expect(codes).toContain('tenant:admin')
+    await pool.query("delete from platform.schema_migrations where module = 'somemod'")
+  })
+})

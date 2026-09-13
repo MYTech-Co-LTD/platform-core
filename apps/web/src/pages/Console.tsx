@@ -63,6 +63,19 @@ export interface ConsoleOutletContext {
   branding: Branding
 }
 
+/**
+ * /console/admin/* 的路由级门禁（M3，spec D9）：无 tenant:admin → 403 Result。
+ * 与菜单组同一判定（session.scopes.includes(TENANT_ADMIN_SCOPE)）——菜单挡导航、
+ * 这里挡直敲 URL，两处一个语义。
+ */
+export function AdminGate({ children }: { children: ReactNode }) {
+  const { session } = useOutletContext<ConsoleOutletContext>()
+  if (!session.scopes.includes('tenant:admin')) {
+    return <Result status="403" title="需要租户管理员权限" subTitle="请联系管理员授予 tenant:admin 权限码" />
+  }
+  return <>{children}</>
+}
+
 type Booted =
   | { state: 'loading' }
   | { state: 'ready'; session: PlatformSession; config: PlatformConfig }
@@ -163,8 +176,9 @@ function ConsoleLayout({
   const [loggingOut, setLoggingOut] = useState(false)
 
   // 菜单位置规则（spec §3）在 console-menu.ts：概览 → pinned（case-engine）→ manifest 声明序
+  // → 管理组（tenant:admin 门禁，spec D4/D9 M3）
   const menuItems = useMemo(
-    () => buildConsoleMenu(visibleConsoleEntries(config, session, consoleRegistry), CONSOLE_ICONS),
+    () => buildConsoleMenu(visibleConsoleEntries(config, session, consoleRegistry), CONSOLE_ICONS, session),
     [config, session],
   )
 
