@@ -59,8 +59,13 @@
 |---|---|
 | `apps/web/src/pages/Console.tsx` | `ProLayout` 加 `layout="mix"`；`menuItems` 构造加位置规则（§3）；`actionsRender` 加暗色切换 |
 | `apps/web/src/pages/Console.tsx`（`ConsoleOverview`） | 重写为工作台：欢迎卡 + 模块入口卡片网格（数据源 config∩registry，点击进模块页） |
+| `apps/web/src/App.tsx` | **（修订 2026-09-13，issue #38）** 根路径 `/` 与顶层 `*` 重定向 `/console`；删除 `Placeholder.tsx`——全站不再出现「工作台建设中」占位 |
 | 概览页样式 | 玻璃卡片风格（antd 6 token / 自定义 class），对齐 Pro v6 观感 |
 | 模块页 | 本期**不改**（demo 模块页保持现状；面包屑/PageContainer 规范属后续项，不在本期范围） |
+
+### 修订记录
+
+- 2026-09-13：v0.3.0 部署后验收反馈——直接打开根域名仍见 Task 18 占位页「工作台建设中」（初版规划漏了根路由，当时 `/` 不在改动面）。修订为重定向并删占位组件（issue #38）。
 
 ## 5. 测试与验收
 
