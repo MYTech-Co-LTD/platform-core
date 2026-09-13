@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.1.0...v0.2.0) - 2026-09-13
+- 【新增】auth-core: 企微直连登录 JIT 自动建号——租户级旗标默认关，Casdoor OIDC 路永不 JIT (#32) ([#33](https://github.com/MYTech-Co-LTD/platform-core/pull/33), [a8a0c1d](https://github.com/MYTech-Co-LTD/platform-core/commit/a8a0c1dea8815a5b9e2601a57a9fb235ceee32b6))
+
+
 ## [0.1.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.0.3...v0.1.0) - 2026-09-13
 - 【新增】auth-core: 扫码登录改自建应用直连企微——经 Casdoor 时回跳落在 sso，与自家可信域名永远对不上 ([#31](https://github.com/MYTech-Co-LTD/platform-core/pull/31), [ead9c9d](https://github.com/MYTech-Co-LTD/platform-core/commit/ead9c9dbb64b31789063a998c5c7a3dccddac1ec))
 
