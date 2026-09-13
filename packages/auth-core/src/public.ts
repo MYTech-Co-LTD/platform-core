@@ -1,8 +1,7 @@
 export { normalizeScopes } from './normalize-scopes'
 export { effectiveScopes } from './effective-scopes'
-export {
-  CasdoorSubscription, CasdoorClient } from './casdoor-client'
-export type { CasdoorClientOptions, CasdoorUser, CasdoorPermission } from './casdoor-client'
+export { CasdoorClient } from './casdoor-client'
+export type { CasdoorClientOptions, CasdoorUser, CasdoorPermission, CasdoorSubscription } from './casdoor-client'
 export {
   SESSION_COOKIE,
   SESSION_TTL_SEC,
