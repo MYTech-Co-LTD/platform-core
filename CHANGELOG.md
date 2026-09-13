@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.4.0...v0.4.1) - 2026-09-13
+- 【修复】auth-core: 桶文件 type-only 导出修复 + 运行时加载护栏（生产事故热修） ([#44](https://github.com/MYTech-Co-LTD/platform-core/pull/44), [f3af194](https://github.com/MYTech-Co-LTD/platform-core/commit/f3af194213c620e30c1bb3f3f16a548475082de1))
+
+
 ## [0.4.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.3.1...v0.4.0) - 2026-09-13
 - 【新增】SaaS 管理域 M1——订阅进 Casdoor、config 双源、迁移与租户开通 CLI ([#41](https://github.com/MYTech-Co-LTD/platform-core/pull/41), [3f8b81e](https://github.com/MYTech-Co-LTD/platform-core/commit/3f8b81e3ca0e81c7ca83b5a31d7f121c9257a70d))
 
