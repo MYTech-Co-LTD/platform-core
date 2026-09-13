@@ -32,7 +32,7 @@ const ctx: ConsoleOutletContext = {
     csrfToken: 'x',
   },
   config: { tenant: { slug: 'my', org: 'myorg' }, modules: [] },
-  branding: { productName: 'P', logo: null, primaryColor: '#1677ff', background: '', loginMethods: ['password'] },
+  branding: { productName: 'P', primaryColor: '#1677ff', background: '', loginMethods: ['password'] },
 }
 
 describe('AdminUsersPage 渲染冒烟', () => {
