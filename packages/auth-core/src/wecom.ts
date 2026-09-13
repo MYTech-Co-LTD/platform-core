@@ -18,10 +18,12 @@ export interface WecomCorpConfig {
   agentId?: string
 }
 
-// provider 名 platform-core 固定约定：宿主租户在 Casdoor 统一建名为 provider_wecom 的
-// WeCom provider，qr（iframe 内嵌扫码页）与 silent（宿主整页跳转）两流共用同一预选参数，
-// mode 由宿主/前端区分渲染方式。
-const WECOM_PROVIDER_NAME = 'provider_wecom'
+// provider 名的**缺省值**（issue #27）：原先写死为本值。但共享 Casdoor 的 provider 名是
+// **全局唯一**的（实测建 mytech/provider_wecom 被拒：duplicate key … "UQE_provider_name"）
+// ⇒ 两个部署都假定「全局只有我一个 provider_wecom」时必然撞名（该名已被 woke 工单栈占用）。
+// 现改由调用方**按租户**传入（见 buildAuthorizeUrl 的 providerName；取值落在
+// platform.tenant.wecom_provider）。**不传时仍是本值** ⇒ 对既有使用方零影响。
+export const DEFAULT_WECOM_PROVIDER = 'provider_wecom'
 const AUTHORIZE_PATH = '/login/oauth/authorize'
 const SILENT_ENDPOINT = 'https://open.weixin.qq.com/connect/oauth2/authorize'
 const GETTOKEN_URL = 'https://qyapi.weixin.qq.com/cgi-bin/gettoken'
@@ -39,6 +41,9 @@ export function buildAuthorizeUrl(
   redirectUri: string,
   state: string,
   mode: 'qr' | 'silent',
+  /** 该**租户自己**的企微 provider 名（`platform.tenant.wecom_provider`，issue #27）。
+   *  **缺省即旧行为** —— 不配这一列的部署生成的 URL 与改动前逐字相同。 */
+  providerName: string = DEFAULT_WECOM_PROVIDER,
 ): string {
   const qs = new URLSearchParams({
     client_id: clientId,
@@ -46,7 +51,7 @@ export function buildAuthorizeUrl(
     response_type: 'code',
     scope: 'read',
     state,
-    provider: WECOM_PROVIDER_NAME,
+    provider: providerName,
     mode,
   })
   return `${casdoorOrigin.replace(/\/+$/, '')}${AUTHORIZE_PATH}?${qs}`
