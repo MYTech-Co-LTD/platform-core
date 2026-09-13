@@ -9,7 +9,6 @@ import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, Outlet, useLocation, useOutletContext } from 'react-router-dom'
 import { ProLayout } from '@ant-design/pro-components'
-import type { MenuDataItem } from '@ant-design/pro-components'
 import {
   AppstoreOutlined,
   BarChartOutlined,
@@ -25,6 +24,7 @@ import {
 } from '@ant-design/icons'
 import { Avatar, Button, Card, ConfigProvider, Result, Spin, Tag, Typography } from 'antd'
 import { consoleRegistry } from '../console-registry.gen'
+import { buildConsoleMenu, visibleConsoleEntries } from './console-menu'
 import {
   ApiError,
   DEFAULT_BRANDING,
@@ -135,26 +135,11 @@ function ConsoleLayout({
   const location = useLocation()
   const [loggingOut, setLoggingOut] = useState(false)
 
-  // 菜单 = 系统项「概览」+ 启用模块的 console 页（config ∩ registry ∩ 用户 scope）
-  const menuItems = useMemo<MenuDataItem[]>(() => {
-    const items: MenuDataItem[] = [{ path: '/console', name: '概览' }]
-    const seen = new Set<string>()
-    for (const m of config.modules) {
-      for (const c of m.console) {
-        if (seen.has(c.path)) continue // 同 path 只出一次（首个声明者胜）
-        seen.add(c.path)
-        const reg = consoleRegistry.find((r) => r.path === c.path)
-        if (!reg) continue // config 有但构建期没挂载（新模块未发布）→ 不出菜单
-        if (!session.scopes.includes(c.scope)) continue // 权限门禁：scope 不在会话里
-        items.push({
-          path: reg.path,
-          name: c.title,
-          icon: CONSOLE_ICONS[c.icon ?? reg.icon ?? ''],
-        })
-      }
-    }
-    return items
-  }, [config, session])
+  // 菜单位置规则（spec §3）在 console-menu.ts：概览 → pinned（case-engine）→ manifest 声明序
+  const menuItems = useMemo(
+    () => buildConsoleMenu(visibleConsoleEntries(config, session, consoleRegistry), CONSOLE_ICONS),
+    [config, session],
+  )
 
   const onLogout = async () => {
     setLoggingOut(true)
