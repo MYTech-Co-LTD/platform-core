@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.4.1...v0.5.0) - 2026-09-13
+- 【新增】M3 租户管理员后台——console 三张页 + Casdoor 代理锁 org + tenant:admin 门禁 (#46) ([#47](https://github.com/MYTech-Co-LTD/platform-core/pull/47), [6e4c619](https://github.com/MYTech-Co-LTD/platform-core/commit/6e4c61985d29c79433ae8db952e428e42d0226fd))
+
+
 ## [0.4.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.4.0...v0.4.1) - 2026-09-13
 - 【修复】auth-core: 桶文件 type-only 导出修复 + 运行时加载护栏（生产事故热修） ([#44](https://github.com/MYTech-Co-LTD/platform-core/pull/44), [f3af194](https://github.com/MYTech-Co-LTD/platform-core/commit/f3af194213c620e30c1bb3f3f16a548475082de1))
 
