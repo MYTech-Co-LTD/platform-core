@@ -114,5 +114,73 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
     return c.json({ name })
   })
 
+  // ---- 角色与授权（口径：权限码 ↔ 用户直挂，spec §6.7）----
+
+  /** Casdoor 权限 users 全形（`org/name`）→ 短名；锚用户剔除 */
+  function shortNames(users: string[]): string[] {
+    return users
+      .map((u) => (u.includes('/') ? (u.split('/').pop() ?? u) : u))
+      .filter((u) => u !== ANCHOR_USER)
+  }
+
+  app.get('/permissions', async (c) => {
+    const org = c.get('tenant').casdoor_org
+    const universe = deps.permissions()
+    const raw = await deps.casdoor(org).getPermissions()
+    // getPermissions 不回 resources 之外的元数据——code→name 用宇宙表，raw 按 resources 反查
+    const permissions = universe.map((u) => ({
+      code: u.code,
+      name: u.name,
+      users: shortNames(raw.find((p) => p.resources?.includes(u.code))?.users ?? []),
+    }))
+    return c.json({ permissions })
+  })
+
+  app.post('/permissions/:code/users', async (c) => {
+    const code = c.req.param('code')
+    if (!deps.permissions().some((p) => p.code === code)) return c.json({ error: 'NO_SUCH_CODE' }, 404)
+    const body = await c.req.json<{ user?: unknown }>().catch(() => null)
+    const user = typeof body?.user === 'string' ? body.user : ''
+    if (!/^[A-Za-z0-9]+$/.test(user) || user === ANCHOR_USER) return c.json({ error: 'INVALID' }, 400)
+    const t = c.get('tenant')
+    await deps.casdoor(t.casdoor_org).grantPermissionToUser(code, user)
+    await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.grant', { code, user })
+    return c.json({ ok: true })
+  })
+
+  app.delete('/permissions/:code/users/:user', async (c) => {
+    const code = c.req.param('code')
+    if (!deps.permissions().some((p) => p.code === code)) return c.json({ error: 'NO_SUCH_CODE' }, 404)
+    const user = c.req.param('user')
+    if (user === ANCHOR_USER) return c.json({ error: 'FORBIDDEN_TARGET' }, 400)
+    const t = c.get('tenant')
+    await deps.casdoor(t.casdoor_org).revokePermissionFromUser(code, user)
+    await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.revoke', { code, user })
+    return c.json({ ok: true })
+  })
+
+  // ---- 我的订阅（只读）----
+
+  app.get('/subscriptions', async (c) => {
+    const org = c.get('tenant').casdoor_org
+    const subs = await deps.casdoor(org).listSubscriptions(org)
+    const modules = new Map(deps.modules().map((m) => [m.id, m.name]))
+    // plan 形如 `<org>/mod-<moduleId>`（或裸 `mod-<id>`）：取最后一段判 mod- 前缀；
+    // 外来订阅（非 mod- 前缀，spec §1.2 已知 woke org 有支付流产生的）一律忽略
+    const subscriptions = subs.flatMap((s) => {
+      const last = String(s.plan ?? '').split('/').pop() ?? ''
+      const m = /^mod-(.+)$/.exec(last)
+      if (!m) return []
+      return [{
+        moduleId: m[1]!,
+        moduleName: modules.get(m[1]!) ?? null,
+        state: String(s.state ?? ''),
+        startTime: s.startTime ?? null,
+        endTime: s.endTime ?? null,
+      }]
+    })
+    return c.json({ subscriptions })
+  })
+
   return app
 }

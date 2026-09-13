@@ -228,3 +228,81 @@ describe('admin 路由：用户 CRUD', () => {
     expect(calls.deleted).toEqual([{ org: 'myorg', name: 'bob' }])
   })
 })
+
+// ---- 授权与订阅（Task 7）----
+
+describe('admin 路由：角色与授权', () => {
+  it('GET /permissions 只出宇宙内的码、users 映射短名并滤锚用户', async () => {
+    const casdoor = (org: string) =>
+      ({
+        async getPermissions() {
+          expect(org).toBe('myorg')
+          return [
+            { users: ['myorg/alice'], roles: [], resources: ['tenant:admin'] },
+            { users: ['myorg/alice', `myorg/${ANCHOR_USER}`], roles: [], resources: ['demo:view'] },
+            { users: ['myorg/alice'], roles: [], resources: ['other:sys'] }, // 宇宙外
+          ]
+        },
+      }) as unknown as CasdoorClient
+    const app = mount(deps({ casdoor }), { scopes: ['tenant:admin'] })
+    const res = await app.request('/api/platform/admin/permissions')
+    expect(await res.json()).toEqual({
+      permissions: [
+        { code: 'tenant:admin', name: '租户管理员', users: ['alice'] },
+        { code: 'demo:view', name: '演示查看', users: ['alice'] },
+      ],
+    })
+  })
+
+  it('POST /permissions/:code/users：未知码 404、锚用户/非法名 400、成功写 audit admin.grant', async () => {
+    const casdoor = (org: string) =>
+      ({
+        async grantPermissionToUser(code: string, user: string) {
+          expect(org).toBe('myorg')
+          return { code, user }
+        },
+      }) as unknown as CasdoorClient
+    const d = deps({ casdoor })
+    const app = mount(d, { scopes: ['tenant:admin'] })
+    expect((await app.request('/api/platform/admin/permissions/nope:code/users', { method: 'POST', headers: withCsrf, body: JSON.stringify({ user: 'alice' }) })).status).toBe(404)
+    expect((await app.request('/api/platform/admin/permissions/demo:view/users', { method: 'POST', headers: withCsrf, body: JSON.stringify({ user: ANCHOR_USER }) })).status).toBe(400)
+    expect((await app.request('/api/platform/admin/permissions/demo:view/users', { method: 'POST', headers: withCsrf, body: JSON.stringify({ user: 'bad_name' }) })).status).toBe(400)
+    const ok = await app.request('/api/platform/admin/permissions/demo:view/users', { method: 'POST', headers: withCsrf, body: JSON.stringify({ user: 'alice' }) })
+    expect(await ok.json()).toEqual({ ok: true })
+    const audits = d.audits as Array<{ sql: string; params: unknown[] }>
+    expect(audits.at(-1)?.params[2]).toBe('admin.grant')
+  })
+
+  it('DELETE /permissions/:code/users/:user 成功写 audit admin.revoke', async () => {
+    const casdoor = (org: string) =>
+      ({ async revokePermissionFromUser() { expect(org).toBe('myorg') } }) as unknown as CasdoorClient
+    const d = deps({ casdoor })
+    const app = mount(d, { scopes: ['tenant:admin'] })
+    const res = await app.request('/api/platform/admin/permissions/demo:view/users/alice', { method: 'DELETE', headers: withCsrf })
+    expect(await res.json()).toEqual({ ok: true })
+    const audits = d.audits as Array<{ sql: string; params: unknown[] }>
+    expect(audits.at(-1)?.params[2]).toBe('admin.revoke')
+  })
+})
+
+describe('admin 路由：我的订阅（只读）', () => {
+  it('GET /subscriptions 映射 mod- 前缀、忽略外来订阅', async () => {
+    const casdoor = (org: string) =>
+      ({
+        async listSubscriptions(owner: string) {
+          expect(owner).toBe('myorg')
+          return [
+            { plan: 'myorg/mod-demo', state: 'Active', startTime: '2026-09-13T00:00:00Z', endTime: '2027-09-13T00:00:00Z' },
+            { plan: 'myorg/sub_6a6def', state: 'Active', startTime: '2026-08-29T00:00:00Z', endTime: null },
+          ]
+        },
+      }) as unknown as CasdoorClient
+    const app = mount(deps({ casdoor }), { scopes: ['tenant:admin'] })
+    const res = await app.request('/api/platform/admin/subscriptions')
+    expect(await res.json()).toEqual({
+      subscriptions: [
+        { moduleId: 'demo', moduleName: '演示模块', state: 'Active', startTime: '2026-09-13T00:00:00Z', endTime: '2027-09-13T00:00:00Z' },
+      ],
+    })
+  })
+})
