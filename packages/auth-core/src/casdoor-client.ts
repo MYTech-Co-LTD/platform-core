@@ -257,7 +257,19 @@ export class CasdoorClient {
     }
   }
 
-  /**
+    /**
+   * 按 org 列订阅（admin 会话，spec 2026-09-13 SaaS 管理域）。
+   * 真机实测（尖刺）：数据坏行（非 RFC3339 时间）会让该 org 的此接口整体 error——
+   * error 一律抛，不静默空表（静默空表 = 全租户失能，响亮失败才可排障）。
+   * 容忍外来订阅：原样透传，mod- 前缀过滤是调用方（subscription-source）的职责。
+   */
+  async listSubscriptions(owner: string): Promise<CasdoorSubscription[]> {
+    const j = await this.#adminJson(`get-subscriptions?owner=${encodeURIComponent(owner)}`)
+    if (j.status !== 'ok') throw new Error(`casdoor get-subscriptions: ${j.msg || 'error'}`)
+    return Array.isArray(j.data) ? (j.data as CasdoorSubscription[]) : []
+  }
+
+/**
    * 把用户挂到本 org 的**全部**权限码上（issue #32 JIT 建号后的授权步）：
    * 逐条 update-permission 把 name 追加进 users 数组，其余字段（roles/resources/
    * actions/isEnabled）原样保留。已挂的跳过（幂等，重复 bind 不产生写调用）。
@@ -416,4 +428,15 @@ export class CasdoorClient {
     if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
     return Array.isArray(j.data) ? (j.data as Array<Record<string, unknown>>) : []
   }
+}
+
+/** Casdoor 订阅（字段见 object/subscription.go；时间 RFC3339 UTC——写侧由 upsertSubscription 保证） */
+export interface CasdoorSubscription {
+  owner: string
+  name: string
+  user: string
+  plan: string
+  startTime: string
+  endTime: string
+  state: string
 }

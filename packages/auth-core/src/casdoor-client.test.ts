@@ -506,3 +506,42 @@ describe('ensureUser + bindUserToAllPermissions（JIT 自动建号，issue #32�
     }
   })
 })
+
+// ── 订阅域（spec 2026-09-13 SaaS 管理域；真机尖刺三铁律见 casdoor-client.ts）──
+describe('CasdoorClient 订阅域（fetchImpl 假路由器）', () => {
+  function subRouter(rows: Record<string, unknown[]>, log: { path: string; body?: unknown }[]) {
+    return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
+      void init
+      const u = String(input)
+      log.push({ path: u.replace(/^https?:\/\/[^/]+/, '') })
+      if (u.includes('/api/login')) {
+        return new Response(JSON.stringify({ status: 'ok' }), { headers: { 'set-cookie': 'casdoor_session_id=x' } })
+      }
+      for (const [frag, data] of Object.entries(rows)) {
+        if (u.includes(frag)) return new Response(JSON.stringify({ status: 'ok', data }))
+      }
+      return new Response(JSON.stringify({ status: 'error', msg: 'no route: ' + u }))
+    }
+  }
+  const mk = (f: typeof fetch) =>
+    new CasdoorClient({ origin: 'http://x', clientId: 'c', clientSecret: 's', org: 'acme', adminUser: 'a', adminPwd: 'p', fetchImpl: f as typeof fetch })
+
+  it('listSubscriptions：按 owner 查、透传全部字段、error 抛错', async () => {
+    const log: { path: string; body?: unknown }[] = []
+    const c = mk(subRouter({
+      '/api/get-subscriptions?owner=acme': [
+        { owner: 'acme', name: 'sub-mod-demo', user: 'acme/tenantsub', plan: 'mod-demo', startTime: '2026-09-13T00:00:00Z', endTime: '2027-09-13T00:00:00Z', state: 'Active' },
+        { owner: 'acme', name: 'sub_6a6def', user: 'woke-admin', plan: 'plan-pro', state: 'Active' },
+      ],
+    }, log))
+    const subs = await c.listSubscriptions('acme')
+    expect(subs).toHaveLength(2)
+    expect(subs[0]).toMatchObject({ plan: 'mod-demo', state: 'Active' })
+    expect(log[log.length - 1].path).toBe('/api/get-subscriptions?owner=acme')
+  })
+
+  it('listSubscriptions：接口 error 一律抛（静默空表=全租户失能）', async () => {
+    const c = mk(subRouter({}, []))
+    await expect(c.listSubscriptions('acme')).rejects.toThrow('casdoor get-subscriptions')
+  })
+})
