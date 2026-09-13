@@ -1,3 +1,5 @@
+// @ts-nocheck —— CLI 薄壳：纯核（planMigration/tenantProvisionSteps）有 vitest 兜底；
+// tsc 根工程解析不到 apps/server 的 pg 类型，不为此给根加依赖
 // migrate-tenant-module-to-subs.mjs — tenant_module → Casdoor 订阅迁移（spec D6；#41）
 // 用法：node scripts/migrate-tenant-module-to-subs.mjs [--apply]（默认 dry-run 只打印计划）
 // 语义：对每租户的「有效启用集」（loaded ∩ (显式行 ?? true)）产出 锚用户→plan→订阅 三步；幂等。
