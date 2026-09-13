@@ -294,6 +294,79 @@ export class CasdoorClient {
       .filter((u) => u.name !== '')
   }
 
+  /** 取单用户**原始记录**（get-user 全量）。update-* 是整记录替换——改一个字段必须先取全量带回，防其余字段被洗。 */
+  async #getRawUser(name: string): Promise<Record<string, unknown> | null> {
+    const j = await this.#adminJson(`get-user?id=${encodeURIComponent(`${this.#o.org}/${name}`)}`)
+    if (j.status !== 'ok') throw new Error(`casdoor get-user: ${j.msg || 'error'}`)
+    const u = j.data as Record<string, unknown> | null | undefined
+    return u && typeof u === 'object' && u.name ? u : null
+  }
+
+  async #requireRawUser(name: string): Promise<Record<string, unknown>> {
+    const raw = await this.#getRawUser(name)
+    if (!raw) throw new Error(`casdoor: 用户不存在 ${this.#o.org}/${name}`)
+    return raw
+  }
+
+  /**
+   * 建可登录用户（M3 用户管理页）。add 竞态与 ensureUser 同口径：失败**重读验证**目标状态，
+   * 人已在即视为成功；仍无此人 ⇒ 抛（fail loudly）。写后回读（铁律③）。
+   */
+  async createManagedUser(input: { name: string; displayName?: string; password: string }): Promise<void> {
+    const body = {
+      owner: this.#o.org,
+      name: input.name,
+      displayName: input.displayName || input.name,
+      password: input.password,
+      type: 'normal-user',
+      signupApplication: this.#o.application ?? 'app-built-in',
+    }
+    try {
+      const j = await this.#adminJson('add-user', { method: 'POST', body })
+      if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    } catch (err) {
+      const existing = await this.getUser(input.name).catch(() => null)
+      if (existing !== null) return
+      throw new Error(
+        `casdoor: add-user 建号 ${input.name} 到 org ${this.#o.org} 失败：${(err as Error).message}`,
+        { cause: err },
+      )
+    }
+    const back = await this.#getRawUser(input.name) // 铁律③
+    if (!back) throw new Error(`casdoor create-managed-user: 写后回读失败 ${this.#o.org}/${input.name}`)
+  }
+
+  /** 禁用/启用（isForbidden）。整记录替换：先取全量、只改目标字段再带回；密码不落日志。 */
+  async setUserForbidden(name: string, forbidden: boolean): Promise<void> {
+    const raw = await this.#requireRawUser(name)
+    const j = await this.#adminJson(`update-user?id=${encodeURIComponent(`${this.#o.org}/${name}`)}`, {
+      method: 'POST',
+      body: { ...raw, isForbidden: forbidden },
+    })
+    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+  }
+
+  /** 重置密码。同整记录替换口径。 */
+  async resetUserPassword(name: string, password: string): Promise<void> {
+    const raw = await this.#requireRawUser(name)
+    const j = await this.#adminJson(`update-user?id=${encodeURIComponent(`${this.#o.org}/${name}`)}`, {
+      method: 'POST',
+      body: { ...raw, password },
+    })
+    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+  }
+
+  /**
+   * 删用户。铁律②：delete 类端点一律 JSON body `{owner,name}`（query 形式真机静默无效）；
+   * 铁律③：删后回读，仍存在 ⇒ 抛（mock 幂等形状下不存在者也 ok，回读 null 即幂等成功）。
+   */
+  async deleteUser(name: string): Promise<void> {
+    const j = await this.#adminJson('delete-user', { method: 'POST', body: { owner: this.#o.org, name } })
+    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    const back = await this.#getRawUser(name)
+    if (back !== null) throw new Error(`casdoor delete-user: 删后回读仍存在 ${this.#o.org}/${name}`)
+  }
+
   /** 订阅锚用户名：仅字母数字（Casdoor 用户名字符集实测拒绝 `_`，spec D3） */
   async ensureOrg(name: string): Promise<void> {
     const j = await this.#adminJson('get-organizations')

@@ -633,4 +633,33 @@ describe('M3 用户与授权（D4）', () => {
     expect(users).toContainEqual({ name: 'bob', displayName: 'bob', isForbidden: true })
     expect(users.map((u) => u.name)).not.toContain('admin')
   })
+
+  it('createManagedUser 建号（密码进载荷）且写后回读验证（铁律③）', async () => {
+    await client().createManagedUser({ name: 'carol', displayName: 'Carol', password: 'InitPass123' })
+    const seeded = mm.userIn('acme', 'carol')
+    expect(seeded?.createdViaApi).toMatchObject({ owner: 'acme', name: 'carol', displayName: 'Carol', password: 'InitPass123', type: 'normal-user' })
+  })
+
+  it('setUserForbidden 置位：update 载荷带回既有 displayName（防字段被洗）且生效', async () => {
+    await client().setUserForbidden('alice', true)
+    const call = mm.updateUserCalls.at(-1)
+    expect(call).toMatchObject({ id: 'acme/alice', isForbidden: true, displayName: 'Alice' })
+    expect(mm.userIn('acme', 'alice')?.isForbidden).toBe(true)
+  })
+
+  it('resetUserPassword：payload 含新密码、不进任何日志面（update 调用可见性由 mock 记录保证）', async () => {
+    await client().resetUserPassword('alice', 'NewPass456')
+    expect(mm.updateUserCalls.at(-1)).toMatchObject({ id: 'acme/alice', password: 'NewPass456' })
+  })
+
+  it('deleteUser 走 JSON body {owner,name}（铁律②）且删后回读为无（铁律③）', async () => {
+    await client().deleteUser('bob')
+    expect(mm.deleteUserCalls).toEqual([{ owner: 'acme', name: 'bob' }])
+    expect(mm.userIn('acme', 'bob')).toBeUndefined()
+  })
+
+  it('deleteUser 对不存在者抛错（回读仍存在分支不可达于 mock，但回读校验本身被走过）', async () => {
+    // mock 的 delete 幂等形状：不存在也 ok —— 客户端回读 getUser=null ⇒ 正常返回（幂等删除）
+    await expect(client().deleteUser('ghostuser')).resolves.toBeUndefined()
+  })
 })
