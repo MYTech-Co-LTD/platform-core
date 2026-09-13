@@ -163,6 +163,9 @@ export function wecomRoutes(deps: WecomRoutesDeps): Hono<TenantEnv & SessionEnv>
       callbackUri,
       state,
       'qr',
+      // 该租户自己那个 provider（issue #27）：共享 Casdoor 的 provider 名全局唯一，
+      // 写死的 provider_wecom 早被别的部署占用。**NULL ⇒ 走缺省**，既有部署行为不变。
+      t.wecom_provider ?? undefined,
     )
     c.res.headers.append('Set-Cookie', stateCookie(state))
     return c.json({ url })

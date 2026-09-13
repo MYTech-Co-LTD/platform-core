@@ -36,6 +36,26 @@ describe('buildAuthorizeUrl', () => {
     const url = buildAuthorizeUrl(`${origin}/`, 'client_1', redirect, 's', 'qr')
     expect(url.startsWith(`${origin}/login/oauth/authorize?`)).toBe(true)
   })
+
+  // ---- providerName（issue #27）：租户级 provider，共享 Casdoor 上 provider 名全局唯一 ----
+
+  it('★ providerName 可传：用租户自己那个 provider，其余参数不受影响', () => {
+    const url = buildAuthorizeUrl(origin, 'client_1', redirect, 's', 'qr', 'wecom_mytech')
+    expect(url).toContain('provider=wecom_mytech&mode=qr')
+    expect(url).not.toContain('provider=provider_wecom')
+    const q = new URL(url).searchParams
+    expect(q.get('redirect_uri')).toBe(redirect) // 编码往返仍对
+    expect(q.get('scope')).toBe('read')          // 与本改动无关的既有断言不漂
+    expect(q.get('response_type')).toBe('code')
+  })
+
+  it('★ 缺省不变（回归钉）：不传 与 显式传 undefined 生成**逐字相同**的 URL', () => {
+    // 路由用 `t.wecom_provider ?? undefined` 取值 ⇒ 「列里是 NULL」走的正是这条等价路径。
+    // 上面那两条 provider=provider_wecom 的用例即"与改动前逐字相同"的正面证据；
+    // 这里再钉住"undefined 与不传同义"，避免将来有人把缺省值从参数默认值挪到别处。
+    expect(buildAuthorizeUrl(origin, 'client_1', redirect, 'st', 'qr', undefined))
+      .toBe(buildAuthorizeUrl(origin, 'client_1', redirect, 'st', 'qr'))
+  })
 })
 
 describe('buildWecomSilentUrl', () => {

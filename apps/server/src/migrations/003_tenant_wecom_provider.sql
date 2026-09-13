@@ -1,0 +1,16 @@
+-- 003_tenant_wecom_provider.sql — 租户级企微 provider 名（issue #27）
+--
+-- 为什么需要这一列：授权 URL 里的 `provider=<名>` 原先由 auth-core 的常量写死
+-- （WECOM_PROVIDER_NAME = 'provider_wecom'），而**共享 Casdoor 的 provider 名是全局唯一的**
+-- （实测建 mytech/provider_wecom 被拒：duplicate key ... "UQE_provider_name"）。于是两个部署
+-- 都假定「全局只有我一个 provider_wecom」时必然撞名 —— 实测该名已被 woke 工单栈占用
+-- （admin/provider_wecom，corp 属 woke，ticket-dispatch-admin/-worker 正在用）。
+--
+-- 本仓是**多租户底座**（TENANT_MODE=multi 时一个部署服务多个租户），multi 下每个租户有**自己的
+-- 企微企业** ⇒ provider 名必须**按租户**，与同一行的 wecom_corp_id/agent_id/secret 同桶。
+--
+-- 允许为 NULL：取不到时由代码回落到旧默认 'provider_wecom' ⇒ **不配这一列的部署行为一字不变**
+-- （woke / data-analysis 等既有使用方零影响）。
+--
+-- 幂等：本仓部署每次全量重跑全部迁移，故必须可重复执行。
+alter table platform.tenant add column if not exists wecom_provider text;

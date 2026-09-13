@@ -22,6 +22,8 @@ export interface TenantRow {
   wecom_corp_id: string | null
   wecom_agent_id: string | null
   wecom_secret: string | null
+  /** 该租户在共享 Casdoor 上**自己那个**企微 provider 的名字（issue #27）；NULL ⇒ 代码回落默认 */
+  wecom_provider: string | null
   created_at: Date
 }
 
