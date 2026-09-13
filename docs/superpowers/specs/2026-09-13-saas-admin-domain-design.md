@@ -20,12 +20,24 @@
 - auth-core 的 Casdoor 客户端现有方法：`ensureUser / getUser / upsertPermission(s) /
   bindUserToAllPermissions / verifyPassword` + adminRequest 通道——**无 Plan/Subscription/Role 方法**。
 
-### 1.2 Casdoor 侧事实（源码级核对 casbin/casdoor master；部署为 `casbin/casdoor:latest`）
+### 1.2 Casdoor 侧事实（2026-09-13 真机尖刺验证，三轮；源码级核对 casbin/casdoor master）
 
 - `Plan`：owner/name、price/period、isEnabled、**`Role string`（单数，订阅者授予的角色）**、无模块列表字段。
-- `Subscription`：owner（org）、**`User`（订阅者，user 维度必填语义）**、Plan、StartTime/EndTime、
-  **`State`（SubscriptionState 状态机）**、Pricing/Payment（计费侧，本期不用）。
-- Casdoor 管理后台原生页：用户 / 角色 / 权限 / 订阅——**日常运营操作全部可在此完成**。
+- `Subscription`：owner（org）、`User`（订阅者）、Plan、StartTime/EndTime、`State`（状态机）。
+- **真机实测结论（sso.hookflow.cn，借 server 容器凭据，测完残留清零）**：
+  1. **全套 CRUD 可用**：add/get/update/delete plan 与 subscription 均走通；admin 会话可跨 org 读列表。
+  2. **时间必须 RFC3339（UTC Z 后缀）**：写 `"YYYY-MM-DD HH:MM:SS"` 会被存下但**毒化该 org 的
+     get-subscriptions 整体列表**（解析报错、列表全挂，单条读不受影响）——比"写失败"严重，
+     属危险失败模式。客户端必须强格式化 + 写后回读验证；解毒手段 = update/delete 单条。
+  3. **用户名仅字母数字**（`_` 被拒：「The username may only contain alphanumeric characters」）——
+     D3 锚用户命名不得含下划线。
+  4. **delete 类端点全部要 JSON body `{owner,name}`**；`?id=` query 形式对 delete-user **静默无效**
+     （返回空、什么都没删）——阴险坑，客户端封装必须钉死 body 形式。
+  5. `add-subscription` **不校验 user**（空/不存在均收）——仍保留锚用户：Casdoor UI 按用户展示/管理订阅，
+     空 user 的订阅在运营后台不可见不可管。
+  6. 现网已存在他人订阅（woke org `sub_6a6def`，2026-08-29 支付流程产生，plan-pro Active）——
+     说明订阅流已被试过；M1b 迁移脚本读列表时须容忍非 `mod-` 前缀的外来订阅。
+- Casdoor 管理后台原生页：用户 / 角色 / 权限 / 订阅——日常运营操作全部可在此完成。
 - 做不到的：建 `platform.tenant` 行（跨平台库）、品牌设置（平台库 branding）。
 
 ## 2. 决策
@@ -35,8 +47,9 @@
 - **D2 订阅真身 = Casdoor Subscription（用户拍板 A2）**，**一模块一 Plan**（`mod-<moduleId>`）：
   Plan 无模块列表字段，一模块一 Plan 使开关正交、无组合爆炸；`Plan.Role` **留空不用于授权**——
   订阅管「租户能用什么」，授权管「谁能用」，两层不混。计费字段（price/period）本期闲置，将来真要计费天然衔接。
-- **D3 订阅锚点 = 每 org 一个专用锚用户**（`_tenant_sub`，禁登、仅挂订阅）：Subscription.User 是
-  user 维度；挂真实管理员会随人事变动断链。锚用户在 Casdoor 用户列表可见（边界 §6.2）。
+- **D3 订阅锚点 = 每 org 一个专用锚用户**（`tenantsub`，禁登、仅挂订阅；**仅字母数字**，实测 `_` 被
+  用户名字符集拒绝）：Subscription.User 是 user 维度且 Casdoor UI 按用户管理订阅（空 user 不可管，
+  实测不校验但不可运营）；挂真实管理员会随人事变动断链。锚用户在 Casdoor 用户列表可见（边界 §6.2）。
 - **D4 管理一层化**：只有平台超管（公司运营），**日常运营直接在 Casdoor 后台做**
   （用户/角色/权限/订阅的原生页）；**不自建 M2/M3 管理页**。将来租户自治/客户私有化管理需求出现时
   再建代理页——真身全在 Casdoor，**数据模型零返工**。
@@ -68,14 +81,17 @@
 新增方法（全部走既有 `adminRequest` 通道）：
 
 ```ts
-ensureAnchorUser(org: string): Promise<void>        // 建/复用 <org>/_tenant_sub，禁登（password 随机+isForbidden）
+ensureAnchorUser(org: string): Promise<void>        // 建/复用 <org>/tenantsub，禁登（password 随机+isForbidden；仅字母数字名）
 ensureModulePlan(moduleId: string): Promise<void>   // 建/复用 plan=mod-<moduleId>（owner=平台org，Role 留空）
-listSubscriptions(owner: string): Promise<Sub[]>    // GET get-subscriptions?owner=
+listSubscriptions(owner: string): Promise<Sub[]>    // GET get-subscriptions?owner=（容忍外来订阅，只认 mod- 前缀）
 upsertSubscription(sub: SubInput): Promise<void>    // add/update-subscription（state/endTime）
+// 三条铁律（真机实测，§1.2）：
+// ① startTime/endTime 一律 RFC3339 UTC（写错毒化整个 org 的列表读取）
+// ② delete 类端点一律 JSON body {owner,name}（query 形式静默无效）
+// ③ 每次写订阅后回读验证（防静默坏行）
 ```
 
-首任务：**实测** Casdoor 订阅 API 运行行为（state 流转、EndTime 过期由谁驱动、User 字段空值行为），
-与源码结构体核对，实测结论回填本文 §1.2。
+~~首任务：实测 Casdoor 订阅 API 运行行为~~ **已完成（2026-09-13 三轮真机尖刺），结论回填 §1.2。**
 
 ### 4.2 config 聚合改造（M1b）
 
@@ -104,7 +120,9 @@ upsertSubscription(sub: SubInput): Promise<void>    // add/update-subscription�
 
 ## 6. 已知边界
 
-1. **Casdoor 订阅 API 运行行为未实测**（结构体已核对）——M1a 首任务实测定调，结论回填 §1.2。
+1. ~~Casdoor 订阅 API 运行行为未实测~~ **已实测闭环（§1.2 真机尖刺）**；残余未知只剩 EndTime 到期后
+   state 由谁翻转（Casdoor 定时任务 vs 只读不翻）——不阻塞设计：读取侧已按 `state=Active 且
+   now ≤ EndTime` 双重判定，翻不翻都不影响口径。
 2. 锚用户在各 org 用户列表可见——将来若建租户管理页需过滤；Casdoor 后台运营时知会运营同学忽略。
 3. 订阅缓存一致性窗口 = TTL（默认 60s）；改订阅→菜单变化最长延迟一分钟，属可接受。
 4. 私有化交付时「客户管理员怎么管用户」：随附 Casdoor 给客户 org 管理员账号（Casdoor 支持按 org
