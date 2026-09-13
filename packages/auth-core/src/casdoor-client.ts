@@ -11,6 +11,23 @@
 //     + ?id= query 形参（旧仓零 PUT）；载荷在 JSON body。
 //   - admin 会话 ← admin-auth.js：POST /api/login 只发 casdoor_session_id cookie；
 //     红线：登录失败也 200 且照发（匿名）cookie —— 必须 status==ok 才缓存。
+/**
+ * Casdoor 的 `name` 字段**禁用字符集**（真 Casdoor 实测：`"/?:#&%=+;"`）。
+ *
+ * 本仓的权限码是 `<模块>:<动作>` 形如 `demo:view` —— **冒号正好在禁用集里**，把码直接当
+ * `name` 会被拒（`Field 'name' contains forbidden characters`）；供给不上去 ⇒ `loadModules`
+ * 抛 ⇒ **进程起不来**（issue #25：首发站点 502、容器无限重启）。
+ *
+ * **只换 `name` 这一个标识字段**：码本身仍原样进 `resources`，而读侧（normalizeScopes）与
+ * 供给的查重判据都是 `resources.includes(code)` ⇒ 换名**零语义变化**。
+ *
+ * 为什么长期没被发现：开发/CI 全程 MockCasdoor，它不校验字符集 —— 这条路径直到 2026-09-13
+ * 首次对着真 Casdoor 部署才暴露。
+ */
+export function safePermissionName(code: string): string {
+  return code.replace(/[/?:#&%=+;]/g, '-')
+}
+
 export interface CasdoorClientOptions {
   origin: string
   /** 预留：password/code grant 换平台 JWT 时使用（当前四方法走会话式 /api/login） */
@@ -157,7 +174,9 @@ export class CasdoorClient {
   ): Promise<void> {
     const body = {
       owner: this.#o.org,
-      name: (existing?.name as string | undefined) ?? code,
+      // 新建时**不能**拿码当 name（码含 `:`，真 Casdoor 拒收）——见 safePermissionName。
+      // update 路径沿用既有 name：兼容此前由别的系统建出的（无冒号的）记录。
+      name: (existing?.name as string | undefined) ?? safePermissionName(code),
       displayName: name,
       model: (existing?.model as string | undefined) ?? 'built-in/user-model-built-in',
       users: (existing?.users as string[] | undefined) ?? [],

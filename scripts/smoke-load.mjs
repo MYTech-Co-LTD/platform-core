@@ -34,6 +34,9 @@ import { createServer, request as nodeHttpRequest } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MockCasdoor } from '../packages/auth-core/src/test-util/mock-casdoor.ts'
+// 权限的 name 不等于码（真 Casdoor 禁冒号 ⇒ 建码时净化过，见 safePermissionName / issue #25）——
+// 按名字引用权限的地方必须用同一个函数，否则会 404 "permission not found"
+import { safePermissionName } from '../packages/auth-core/src/casdoor-client.ts'
 // 限速阈值走真源码常量：写死 5 就是第二个事实源，改了 rate-limit.ts 这里不会跟着动。
 import { USER_FAIL_LIMIT } from '../apps/server/src/rate-limit.ts'
 
@@ -416,8 +419,10 @@ async function mockAdminCookie(mock) {
 /**
  * 以租户管理员身份把权限码授予用户。
  * 走真 HTTP 是刻意的：这是真实租户管理员的路径（POST /api/update-permission，POST 非 PUT）。
- * 注意权限码的 name = code（CasdoorClient.upsertPermission 建码时 name 取 code，
- * manifest 里的中文名落在 displayName）——旧冒烟预种时用的 'p-demo-view' 是虚构的。
+ * ⚠️ 权限的 **name 不等于 code**：真 Casdoor 的 name 禁 `"/?:#&%=+;"`，而码形如 `demo:view`
+ * ⇒ `CasdoorClient` 建码时把 name **净化**成 `demo-view`（`safePermissionName`，issue #25）。
+ * 所以这里引用权限必须走同一个函数；写成 `org/permCode` 会 404 "permission not found"
+ * （2026-09-13 CI 实测踩到）。manifest 里的中文名落在 displayName。
  * @param {MockCasdoor} mock @param {string} cookie
  * @param {string} org @param {string} permCode @param {string[]} users
  * @returns {Promise<void>}
@@ -427,7 +432,7 @@ async function grantPermission(mock, cookie, org, permCode, users) {
     port: mock.port,
     method: 'POST',
     cookie,
-    path: `/api/update-permission?id=${encodeURIComponent(`${org}/${permCode}`)}`,
+    path: `/api/update-permission?id=${encodeURIComponent(`${org}/${safePermissionName(permCode)}`)}`,
     body: JSON.stringify({ users }),
   })
   check(
