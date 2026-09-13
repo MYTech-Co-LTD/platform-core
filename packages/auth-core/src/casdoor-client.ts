@@ -367,6 +367,74 @@ export class CasdoorClient {
     if (back !== null) throw new Error(`casdoor delete-user: 删后回读仍存在 ${this.#o.org}/${name}`)
   }
 
+  /** 按 resources 含 code 找权限原始记录（判据与 #upsertOne 查重、读侧 normalizeScopes 同源） */
+  async #findPermissionByCode(code: string): Promise<Record<string, unknown>> {
+    const list = await this.#permissionsRaw()
+    const hit = list.find((p) => Array.isArray(p.resources) && (p.resources as string[]).includes(code))
+    if (!hit) throw new Error(`casdoor: org ${this.#o.org} 不存在权限码 ${code}（先跑装载器供给）`)
+    return hit
+  }
+
+  /**
+   * 授权：把用户挂到权限码（M3 授权页）。users 追加 `org/user` **全形**（Casdoor UI 同款写法；
+   * effectiveScopes 的 matchUser 对短名/全形都可命中）。幂等：已挂（任一形态）直接返回。
+   * 整记录替换（bindUserToAllPermissions 同形状），写后回读验证（铁律③）。
+   */
+  async grantPermissionToUser(code: string, userName: string): Promise<void> {
+    const p = await this.#findPermissionByCode(code)
+    const users = (p.users as string[] | undefined) ?? []
+    const full = `${this.#o.org}/${userName}`
+    if (users.includes(userName) || users.includes(full)) return
+    const body = {
+      owner: this.#o.org,
+      name: String(p.name),
+      displayName: String(p.displayName ?? p.name),
+      model: String(p.model ?? 'built-in/user-model-built-in'),
+      users: [...users, full],
+      roles: (p.roles as string[] | undefined) ?? [],
+      resources: (p.resources as string[] | undefined) ?? [],
+      actions: (p.actions as string[] | undefined) ?? ['Read'],
+      isEnabled: p.isEnabled === undefined ? true : p.isEnabled,
+    }
+    const j = await this.#adminJson(
+      `update-permission?id=${encodeURIComponent(`${this.#o.org}/${String(p.name)}`)}`,
+      { method: 'POST', body },
+    )
+    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    const back = await this.#findPermissionByCode(code)
+    const bu = (back.users as string[] | undefined) ?? []
+    if (!bu.includes(userName) && !bu.includes(full)) {
+      throw new Error(`casdoor: 授权写后回读未命中 ${code} ← ${userName}`)
+    }
+  }
+
+  /**
+   * 回收：把用户从权限码摘下。短名与 `org/user` 全形**一并清**（历史数据两种形态都可能存在）。
+   * 幂等：本就没挂直接返回（不发 update）。
+   */
+  async revokePermissionFromUser(code: string, userName: string): Promise<void> {
+    const p = await this.#findPermissionByCode(code)
+    const users = (p.users as string[] | undefined) ?? []
+    const kept = users.filter((u) => u !== userName && u !== `${this.#o.org}/${userName}`)
+    if (kept.length === users.length) return
+    const body = {
+      owner: this.#o.org,
+      name: String(p.name),
+      displayName: String(p.displayName ?? p.name),
+      model: String(p.model ?? 'built-in/user-model-built-in'),
+      users: kept,
+      roles: (p.roles as string[] | undefined) ?? [],
+      resources: (p.resources as string[] | undefined) ?? [],
+      actions: (p.actions as string[] | undefined) ?? ['Read'],
+      isEnabled: p.isEnabled === undefined ? true : p.isEnabled,
+    }
+    const j = await this.#adminJson(
+      `update-permission?id=${encodeURIComponent(`${this.#o.org}/${String(p.name)}`)}`,
+      { method: 'POST', body },
+    )
+    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+  }
+
   /** 订阅锚用户名：仅字母数字（Casdoor 用户名字符集实测拒绝 `_`，spec D3） */
   async ensureOrg(name: string): Promise<void> {
     const j = await this.#adminJson('get-organizations')

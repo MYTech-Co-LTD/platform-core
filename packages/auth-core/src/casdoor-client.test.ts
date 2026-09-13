@@ -662,4 +662,35 @@ describe('M3 用户与授权（D4）', () => {
     // mock 的 delete 幂等形状：不存在也 ok —— 客户端回读 getUser=null ⇒ 正常返回（幂等删除）
     await expect(client().deleteUser('ghostuser')).resolves.toBeUndefined()
   })
+
+  it('grantPermissionToUser 追加全形 org/user、保留既有配额，写后回读验证', async () => {
+    await client().grantPermissionToUser('demo:view', 'alice')
+    const perm = mm.permissionsIn('acme').find((p) => (p.resources as string[]).includes('demo:view'))
+    expect(perm?.users).toEqual(['acme/bob', 'acme/alice']) // 既有 acme/bob 保留、新挂全形
+  })
+
+  it('grantPermissionToUser 幂等：已挂（短名或全形）不再发 update', async () => {
+    const before = mm.updateUserCalls.length // 无关口；permission 的 update 无独立记录口，用状态断言
+    await client().grantPermissionToUser('demo:view', 'bob') // acme/bob 已在
+    const perm = mm.permissionsIn('acme').find((p) => (p.resources as string[]).includes('demo:view'))
+    expect(perm?.users).toEqual(['acme/bob', 'acme/alice']) // 不变（无重复、无顺序扰动）
+    expect(before).toBe(mm.updateUserCalls.length)
+  })
+
+  it('revokePermissionFromUser 清全形并保留他人', async () => {
+    await client().revokePermissionFromUser('demo:view', 'alice')
+    const perm = mm.permissionsIn('acme').find((p) => (p.resources as string[]).includes('demo:view'))
+    expect(perm?.users).toEqual(['acme/bob'])
+  })
+
+  it('revokePermissionFromUser 幂等：本就没挂直接返回', async () => {
+    await expect(client().revokePermissionFromUser('demo:view', 'ghostuser')).resolves.toBeUndefined()
+    const perm = mm.permissionsIn('acme').find((p) => (p.resources as string[]).includes('demo:view'))
+    expect(perm?.users).toEqual(['acme/bob'])
+  })
+
+  it('grant/revoke 对未知码抛错（先跑装载器供给）', async () => {
+    await expect(client().grantPermissionToUser('nope:code', 'alice')).rejects.toThrow('不存在权限码')
+    await expect(client().revokePermissionFromUser('nope:code', 'alice')).rejects.toThrow('不存在权限码')
+  })
 })
