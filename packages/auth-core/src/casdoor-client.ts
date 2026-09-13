@@ -227,6 +227,66 @@ export class CasdoorClient {
     }
   }
 
+  /**
+   * JIT 自动建号（issue #32）：org 内确无此人时经 add-user 建一个最小账号。
+   * 幂等语义由调用方保证（先 getUser 判存在再调用）；本方法自身只处理 add 竞态。
+   * 载荷形状：2026-09-13 生产手工解卡（mytech/ZhangDuo）在真 Casdoor 验证过的最小集——
+   * type=normal-user + signupApplication 缺省 app-built-in（与 #login 同口径，可配）。
+   */
+  async ensureUser(name: string): Promise<void> {
+    const body = {
+      owner: this.#o.org,
+      name,
+      displayName: name,
+      type: 'normal-user',
+      signupApplication: this.#o.application ?? 'app-built-in',
+    }
+    try {
+      const j = await this.#adminJson('add-user', { method: 'POST', body })
+      if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    } catch (err) {
+      // add 竞态：与 #upsertOne 同口径——**不按错误文案分支**（duplicate 文案随版本变），
+      // 重读验证目标状态：人确实已在 org 里 ⇒ 建号目的已达成，视为成功；仍查无此人 ⇒ 抛
+      // （fail loudly：绝不静默放行一个没建出来的号）
+      const existing = await this.getUser(name).catch(() => null)
+      if (existing !== null) return
+      throw new Error(
+        `casdoor: add-user 建号 ${name} 到 org ${this.#o.org} 失败：${(err as Error).message}`,
+        { cause: err },
+      )
+    }
+  }
+
+  /**
+   * 把用户挂到本 org 的**全部**权限码上（issue #32 JIT 建号后的授权步）：
+   * 逐条 update-permission 把 name 追加进 users 数组，其余字段（roles/resources/
+   * actions/isEnabled）原样保留。已挂的跳过（幂等，重复 bind 不产生写调用）。
+   * 口径与装载器一致：模块码 upsert 时不带用户，JIT 建的号没有任何角色 ⇒
+   * 不挂 users 则 effectiveScopes 恒空、登录即空权限。**逐条**而非合并成一次
+   * update：Casdoor 的 update-permission 是整记录替换，逐条=最小破坏面。
+   */
+  async bindUserToAllPermissions(user: string): Promise<void> {
+    const list = await this.#permissionsRaw()
+    for (const p of list) {
+      const users = (p.users as string[] | undefined) ?? []
+      if (users.includes(user)) continue
+      const body = {
+        owner: this.#o.org,
+        name: String(p.name),
+        displayName: String(p.displayName ?? p.name),
+        model: String(p.model ?? 'built-in/user-model-built-in'),
+        users: [...users, user],
+        roles: (p.roles as string[] | undefined) ?? [],
+        resources: (p.resources as string[] | undefined) ?? [],
+        actions: (p.actions as string[] | undefined) ?? ['Read'],
+        isEnabled: p.isEnabled === undefined ? true : p.isEnabled,
+      }
+      const path = `update-permission?id=${encodeURIComponent(`${this.#o.org}/${String(p.name)}`)}`
+      const j = await this.#adminJson(path, { method: 'POST', body })
+      if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    }
+  }
+
   // ---- 内部：登录 / admin 会话 / 请求封装 ----
 
   async #login(username: string, password: string): Promise<LoginResult> {

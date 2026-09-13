@@ -43,12 +43,15 @@ export async function seedDemo(pool: Pool): Promise<void> {
   try {
     await client.query('begin')
     for (const t of DEMO_TENANTS) {
-      // 品牌字段全量 upsert（含默认值三件）——跨会话收敛，不留旧值
+      // 品牌字段全量 upsert（含默认值三件）——跨会话收敛，不留旧值。
+      // wecom_auto_signup 一并收敛 false（issue #32）：安全旗标要确定性关——不像
+      // wecom_provider 留 NULL 给人工，JIT 开关若不收敛，测试/演示环境手工翻过一次
+      // 就永久漂着，"旗标关 = fail-closed"的回归钉也失去意义
       const { rows } = await client.query<{ id: number }>(
         `insert into platform.tenant(
             slug, casdoor_org, product_name, logo, primary_color, background,
-            login_methods, wecom_corp_id, wecom_agent_id, wecom_secret)
-          values ($1, $2, $3, null, '#1890ff', 'default', $4, $5, $6, $7)
+            login_methods, wecom_corp_id, wecom_agent_id, wecom_secret, wecom_auto_signup)
+          values ($1, $2, $3, null, '#1890ff', 'default', $4, $5, $6, $7, false)
           on conflict (slug) do update set
             casdoor_org   = excluded.casdoor_org,
             product_name  = excluded.product_name,
@@ -58,7 +61,8 @@ export async function seedDemo(pool: Pool): Promise<void> {
             login_methods = excluded.login_methods,
             wecom_corp_id = excluded.wecom_corp_id,
             wecom_agent_id= excluded.wecom_agent_id,
-            wecom_secret  = excluded.wecom_secret
+            wecom_secret  = excluded.wecom_secret,
+            wecom_auto_signup = excluded.wecom_auto_signup
           returning id`,
         [
           t.slug,
