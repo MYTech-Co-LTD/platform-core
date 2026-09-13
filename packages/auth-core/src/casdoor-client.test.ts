@@ -191,14 +191,16 @@ describe('upsertPermissions 批量语义', () => {
     ])
 
     expect(mutating).toBe(1)
-    expect(m.permissionsIn('acme').filter((p) => p.name === 'dup:code')).toHaveLength(1)
+    // name 是**净化后**的（码含冒号，真 Casdoor 拒收 ⇒ 见 safePermissionName / issue #25）
+    expect(m.permissionsIn('acme').filter((p) => p.name === 'dup-code')).toHaveLength(1)
   })
 
   it('★ 撞码（name 相同但 resources 不含该码）→ 抛错，绝不静默把既有授权洗掉', async () => {
-    // 共享 Casdoor 里可能由别的系统建出这种记录：name 撞上我们的 code，但 resources 不认它。
-    // 此时 add 会被判 duplicate，而"码究竟在不在"必须靠重读判定，不能靠错误文案猜。
+    // 共享 Casdoor 里可能由别的系统建出这种记录：name 撞上我们**将要新建的名字**（净化后的
+    // `collide-code`），但 resources 不认这个码。此时 add 会被判 duplicate，而"码究竟在不在"
+    // 必须靠重读判定，不能靠错误文案猜。
     await seedPermDirect({
-      owner: 'acme', name: 'collide:code', resources: ['legacy:other'], users: ['alice'],
+      owner: 'acme', name: 'collide-code', resources: ['legacy:other'], users: ['alice'],
     })
 
     const c = new CasdoorClient({
@@ -219,7 +221,7 @@ describe('upsertPermissions 批量语义', () => {
     ).rejects.toThrow()
 
     // 既有记录的授权必须原封不动
-    expect(m.permissionsIn('acme').find((p) => p.name === 'collide:code')?.users).toEqual(['alice'])
+    expect(m.permissionsIn('acme').find((p) => p.name === 'collide-code')?.users).toEqual(['alice'])
   })
 
   it('并发竞态：add 被拒但码确已被对方建好 ⇒ 视为成功，且不洗对方的 users', async () => {
@@ -238,7 +240,7 @@ describe('upsertPermissions 批量语义', () => {
             method: 'POST',
             headers: { Cookie: cookie, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              owner: 'acme', name: 'race:code', displayName: '竞态',
+              owner: 'acme', name: 'race-code', displayName: '竞态',
               resources: ['race:code'], users: ['someone'],
             }),
           })
@@ -248,7 +250,34 @@ describe('upsertPermissions 批量语义', () => {
     })
 
     await expect(c.upsertPermission('race:code', '竞态')).resolves.toBeUndefined()
-    expect(m.permissionsIn('acme').find((p) => p.name === 'race:code')?.users).toEqual(['someone'])
+    expect(m.permissionsIn('acme').find((p) => p.name === 'race-code')?.users).toEqual(['someone'])
+  })
+
+  it('★ 新建权限的 name 不含 Casdoor 禁用字符；码原样保留在 resources（issue #25）', async () => {
+    // 真 Casdoor 对 name 拒绝 "/?:#&%=+;"，而本仓权限码形如 `demo:view` —— 旧实现直接把码当
+    // name，**真环境必炸**（供给失败 ⇒ loadModules 抛 ⇒ 进程起不来）。MockCasdoor 不校验，
+    // 所以这条**必须直接断言请求体**，不能只断言"调用成功"（那正是旧实现全绿的原因）。
+    const realFetch = globalThis.fetch
+    let addBody: Record<string, unknown> | null = null
+    const c = new CasdoorClient({
+      origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+      adminUser: 'admin', adminPwd: 'pw',
+      fetchImpl: (input, init) => {
+        if (String(input).includes('add-permission')) addBody = JSON.parse(String(init?.body))
+        return realFetch(input as RequestInfo, init)
+      },
+    })
+
+    // 用本文件里**没出现过**的码：mock 是 beforeAll 建的全文件共享实例，前面用例已建过
+    // `demo:view` ⇒ 拿它测会走 update 路径、根本没有 add 请求（本条初版就这么栽的）
+    await c.upsertPermission('charset:probe', '字符集探针')
+
+    expect(addBody).not.toBeNull()
+    // ① name 干净：不含任何 Casdoor 禁用字符
+    expect(String(addBody!.name)).not.toMatch(/[/?:#&%=+;]/)
+    expect(addBody!.name).toBe('charset-probe')
+    // ② 码本身原样进 resources —— 换名只动标识字段，读侧与查重都只认 resources
+    expect(addBody!.resources).toEqual(['charset:probe'])
   })
 })
 
