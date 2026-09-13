@@ -1,7 +1,13 @@
-# Runbook（待人工执行）：OpenShip 接入（adopt）+ 生产部署
+# Runbook：OpenShip 接入（adopt）+ 生产部署
 
-> 状态：**未执行**。M0 Task 22 的交付面到此为止——本文是留给有 OpenShip 控制面权限者的操作单，
-> 照着敲即可，含前置决策、要接的东西、验证、回滚。
+> 状态：**已执行（2026-09-13 首次真实部署）**。执行记录：项目 `proj_v0QZ68VYDc0pkFxL` ·
+> 生产机 `23a1091e`（mytech-weknora，219.151.186.106）· 域名 `mytech.hookflow.cn` ·
+> 首次部署服务 **2/2 成功**，线上 `/healthz` `{"ok":true}`。
+>
+> **本文已按这次真实部署订正**：原文有 **3 处错**（`rootDirectory` 填错、缺「建租户行」、
+> 部署调用缺 `serverId`）与 **1 处待验证项已关闭**（回环映射，见 §0）。下文各节带
+> `2026-09-13 订正` 标注。下次接新客户时**照订正后的走**。
+>
 > 与 `deploy/branch-protection-runbook.md` 同一形态：**先决策、再操作、每步带验证与回退**。
 
 ## 为什么没在 Task 22 里直接 adopt
@@ -35,16 +41,16 @@
 | 源 | GitHub `MYTech-Co-LTD/platform-core`，分支 `main` | 与其它项目一致（`gh repo view`） |
 | 项目类型 | `projectType=services`、`framework=docker-compose` | compose 编排的多服务项目 |
 | 运行模式 | `runtimeMode=docker`、`productionMode=host`、`sourceKind=git` | 与 `woke` 项目同形 |
-| 仓库根 | `rootDirectory=.` | compose 的 `build.context: ..` 是相对仓根算的 |
+| 仓库根 | `rootDirectory=deploy` | ⚠️ **2026-09-13 订正：原文写 `.`，是错的。** openship 把 compose 的 `build.context: ..` **相对 `rootDirectory`** 解析 ⇒ 填 `.` 时 `..` 逃出仓库，部署**必失败**：`Invalid Compose build context: path escapes the linked repository`。填 `deploy` 才对（= `deployments/prepare` 自己返回的值，**以 prepare 为准**） |
 | compose | `composePath=deploy/docker-compose.yml` | **全仓唯一的 compose 文件**（约束 B7 由 `scripts/check-compose.mjs` 机检守卫），不要在生产另写一份 |
 | env | 根 `.env.example` 的 13 键（见下表） | B9 门禁保证「代码引用的键都有声明」，故这份清单就是全集 |
 | 卷 | `pgdata`（compose 命名卷 → `<project>_pgdata`） | PG 数据。生产要进备份策略 |
 | 域名 | `platform.<公司域>`（决策 3） | 走 openship edge 签证书 |
-| 部署触发 | `ci.yml` 的 `deploy` job（**惰性**，见第 6 节） | 需人工建一个 repo variable 才激活 |
+| 部署触发 | `ci.yml` 的 `deploy` job（**惰性**，见第 7 节） | 需人工建一个 repo variable 才激活 |
 
 ## 操作单
 
-### 0. 前置检查（三条，缺一条就别往下走）
+### 0. 前置检查（四条，缺一条就别往下走）
 
 ```bash
 # ① 目标服务器在线且 openship 认它
@@ -56,24 +62,31 @@ docker context ls >/dev/null 2>&1   # 仅提示：adopt 在控制面侧执行，
 #    期望：framework=docker-compose、composePath 被认到 deploy/docker-compose.yml
 #    ⚠️ 若 prepare 认不出，别硬 adopt——先把 composePath 显式传进去再试。
 #
-#    ⚠️⚠️ 另有一条**必须人工核对**（R5 修复轮 S3；R5-2 建议改 4 把核对面从一条映射扩到
-#        两条 —— 本仓**唯一没能独立验证**的一环）。prepare / scan 出的端口清单里，
-#        **两条**映射都应仍是宿主回环：
-#          · server   `127.0.0.1:${HOST_PORT:-13000}`（容器 13000），且 readiness 探活经
-#             **127.0.0.1** 能通；
-#          · postgres `127.0.0.1:5432`（容器 5432）。
-#        为什么只能靠人看：生产走的是 openship 的 **services 模式**，它会不会把 compose 里
-#        这段 host_ip 前缀重写掉（改回 0.0.0.0、或换成容器 IP / loopback 端口的别的形式），
-#        本仓无法在本地验证。
-#        重写的后果是**静默的**：edge 照常反代、冒烟照常绿，只是"任何能访问宿主该端口的人
-#        都可绕过 edge"这条又回来了（丢掉证书、限速与访问控制）。
-#        **两条都要看，DB 那条不能省**：被重写回 0.0.0.0 时 postgres 的后果比 server 更重
-#        —— server 前面至少还有 edge（重写后是"绕过它"），而库一旦落在宿主网络上，就是
-#        **裸暴露一个可直连的 PG**（口令即全部防线），且没有任何应用层日志会告诉你这件事。
+#    ✅ **回环映射已实测确认（2026-09-13 首次真实部署）** —— 本节原是本仓「唯一没能
+#        独立验证」的一环，现已关闭：**openship 的 services 模式不会重写 host_ip 前缀**，
+#        两个服务的宿主端口都原样保持回环：
+#          · server   `127.0.0.1:13000:13000`   ✓
+#          · postgres `127.0.0.1:5432:5432`     ✓（`deployments/prepare` 的输出里可见）
+#        之所以还是要核：**换 openship 版本或换机器时它未必仍成立**，而重写的后果是**静默的**
+#        —— edge 照常反代、冒烟照常绿，只是「任何能访问宿主该端口的人都能绕过 edge」这条又
+#        回来了。**两条都要看，DB 那条不能省**：被重写回 0.0.0.0 时 postgres 比 server 更重
+#        —— server 前面至少还有 edge，而库一旦落在宿主网络上就是**裸暴露一个可直连的 PG**
+#        （口令即全部防线），且没有任何应用层日志会告诉你。
 #        对不上就把 prepare/scan 的原始输出原样贴回来，别硬推。
 
 # ③ 目标机上 13000 / 5432 没被别的项目占用
 #    （本机实测就有过 13000 被上一轮 dev mock 长占的先例）
+
+# ④ 【2026-09-13 新增】目标机的 docker 能拉到 docker.io 镜像
+#    这台机上踩到：daemon.json 里的 registry-mirrors 指向一个**返回 401 的 mirror**
+#    ⇒ 构建第一步 `FROM node:22-alpine` 就失败（`401 Unauthorized`），且**该机上任何
+#    docker.io 拉取都会失败**（不止本项目）。
+#    标准口径：**不配 registry-mirrors**（docker.io 也走 HTTPS_PROXY→CONNECT）；若 mirror
+#    指向的是公司 smart-proxy 也可用。旧机若配的是第三方 mirror，跑
+#    `openship-platform/scripts/retrofit-docker-proxy.sh`（幂等）修。
+#    自检：
+#      docker info | grep -iE 'http proxy|https proxy'   # 应有代理
+#      docker pull node:22-alpine                        # 必须成功
 ```
 
 ### 1. adopt：建项目（`ensure` 语义 —— 同名复用，不会建两份）
@@ -94,7 +107,7 @@ curl -fsS -X POST "$OPENSHIP_URL/api/projects" \
     "sourceKind": "git",
     "projectType": "services",
     "framework": "docker-compose",
-    "rootDirectory": ".",
+    "rootDirectory": "deploy",
     "composePath": "deploy/docker-compose.yml",
     "runtimeMode": "docker",
     "productionMode": "host",
@@ -103,7 +116,7 @@ curl -fsS -X POST "$OPENSHIP_URL/api/projects" \
     "port": 13000,
     "readiness": { "enabled": true, "path": "/healthz", "port": 13000, "stabilization": true }
   }'
-# 记下返回的 projectId（形如 proj_xxxxxxxx）——下面每一步都要它，第 6 节还要回填到 GitHub
+# 记下返回的 projectId（形如 proj_xxxxxxxx）——下面每一步都要它，第 7 节还要回填到 GitHub
 ```
 
 > 等价做法：直接用 openship MCP 的 `post_projects`（同一套字段）。用 MCP 时注意它是
@@ -151,6 +164,12 @@ curl -fsS -X PATCH "$OPENSHIP_URL/api/projects/$PROJECT_ID/env" \
 | `PUBLIC_ORIGIN` | `https://<域名>` | 企微回调 `redirect_uri` 由它拼，必须与最终访问域名逐字一致 |
 | `SEED_DEMO` | **不要设** | 只在 dev/冒烟置 `1`；生产设了会种出 acme/beta 两个演示租户 |
 
+> ⚠️ **2026-09-13 实测：用本节的 curl（或 MCP `patch_projects_by_id_env`），别用 dashboard 的
+> 「环境变量」表单。** 那个表单**能读不能存** —— 加行 / 键盘输入 / 上传 `.env` 三种都在保存时
+> 被丢弃（点「保存更改」只保存右栏设置并跳转到 `/projects/<id>/runtime`，未保存的行随之丢失），
+> 而**同一个 PATCH 接口一次就成**。密钥值也不必经手第三方：在 dashboard 页面控制台里 fetch 那个
+> 接口即可（同源、带会话；注意 dashboard 的 API 走 **`/api/proxy/api/...`** 前缀）。
+
 ### 3. 卷
 
 compose 里的 `pgdata` 由 node 侧命名（`<project>_pgdata`）。adopt 后到控制面把该卷纳入备份
@@ -172,6 +191,22 @@ curl -fsS -X POST "$OPENSHIP_URL/api/domains/$DOMAIN_ID/verify-ssl" -H "Authoriz
 **顺序不能反**：`PUBLIC_ORIGIN` 与域名必须一致，否则企微登录的 `redirect_uri` 会被 Casdoor /
 企微拒（回调域名不匹配）。
 
+> ⚠️ **2026-09-13 订正：光加域名不够，还必须先把服务标记为暴露。**
+> openship 的模型是「**服务**（service）暴露 + 绑域名」，edge 才有得反代。实测：只调
+> `/api/domains` 把域名加上、但服务仍是 `exposed:false` / `publicEndpoints:[]` 时，
+> **部署的路由同步会把该域名剪掉**（项目域名列表变回空），表现是「明明加过、回头查不见了」。
+> 正确顺序：
+> ```bash
+> # ① 先把 server 服务标记为暴露并绑域名（用服务 id，不是项目 id）
+> curl -fsS -X PATCH "$OPENSHIP_URL/api/projects/$PROJECT_ID/services/$SERVER_SERVICE_ID" \
+>   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+>   -d '{"exposed":true,"exposedPort":"13000","domainType":"custom",
+>        "customDomain":"platform.<公司域>",
+>        "publicEndpoints":[{"port":13000,"domainType":"custom","customDomain":"platform.<公司域>"}]}'
+> # ② 域名会随之自动建出（含 sslStatus=provisioning），然后再 verify
+> ```
+> 把 `server` 暴露为公网入口是**有意的决定**（它前面就是 edge）；`postgres` **不要暴露**。
+
 ### 5. 生产差异（相对仓库里的 `deploy/docker-compose.yml`）
 
 本仓的 compose 是「单机跑起来」的事实源，**生产只需改这三处**，其余照搬：
@@ -191,7 +226,74 @@ curl -fsS -X POST "$OPENSHIP_URL/api/domains/$DOMAIN_ID/verify-ssl" -H "Authoriz
    services 模式按自己的项目名管理该栈（以 `deployments/prepare` / `folder/scan` 的识别结果为准），
    以 openship 为准——它才是生产编排的持有者。
 
-### 6. 部署触发（CI 接线）
+### 6. 首次部署（人工跑一次）
+
+> **2026-09-13 新增本节**：原文从 §5 直接跳到「CI 接线」，**没有首次部署这一步**；而手工首发
+> 与 CI 触发**不是一回事** —— 前者要显式选机器、且必须先备好租户行。
+
+#### 6.1 前置：必须先建一行 `platform.tenant`，否则**整站 500**
+
+`TENANT_MODE=single` 的租户解析按 `PLATFORM_ORG` 查 `platform.tenant`；**查不到就抛错、
+每个业务请求都 500**：
+
+```
+Error: TENANT_MODE=single 但租户不存在：casdoor_org="mytech"（检查 PLATFORM_ORG 配置或先跑 seed）
+    at /app/apps/server/src/tenant.ts:103
+```
+
+**`/healthz` 仍是 200**（它挂在租户中间件**之前**，架构文档 §3 的第 ⑤ 段）⇒ **这个故障探活
+发现不了**，只有打业务端点才暴露。首次部署后如果「探活绿、页面 500」，先查这里。
+
+生产**不能**用 `SEED_DEMO=1` 绕过（它会种出 acme/beta 两个演示租户）。照 `apps/server/src/seed.ts`
+的口径手工建（幂等）：
+
+```bash
+docker exec -i <pg容器> psql -U platform -d platform <<'SQL'
+begin;
+insert into platform.tenant(slug, casdoor_org, product_name, logo, primary_color, background, login_methods)
+values ('<slug>','<casdoor org>','<产品名>', null, '#1890ff', 'default', '{password,wecom-qr}')
+on conflict (slug) do update set
+  casdoor_org = excluded.casdoor_org, product_name = excluded.product_name,
+  primary_color = excluded.primary_color, background = excluded.background,
+  login_methods = excluded.login_methods;
+-- 给该租户启用模块（示例：demo）
+insert into platform.tenant_module(tenant_id, module_id, enabled)
+select id, 'demo', true from platform.tenant where slug = '<slug>'
+on conflict (tenant_id, module_id) do nothing;
+commit;
+SQL
+```
+
+- **`login_methods` 的合法值只有 `password` 与 `wecom-qr`**（见 `apps/web/src/pages/Login.tsx`
+  的 `METHOD_LABELS`）。前端按白名单过滤 ⇒ 写错的值被**静默丢掉**，登录页只剩账密 tab。
+- `product_name` 就是控制台标题与登录页品牌。
+- `plan` 上还要记得：**新客户 = 新 org + 新租户行**，这套是逐客户一份。
+
+#### 6.2 发起部署：**必须传 `serverId`**
+
+```bash
+# 用 deployments/build/access —— **能传 serverId 的那个调用**
+curl -fsS -X POST "$OPENSHIP_URL/api/deployments/build/access" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"projectId":"'"$PROJECT_ID"'","serverId":"<决策 1 的 serverId>",
+       "deployTarget":"server","branch":"main","environment":"production"}'
+```
+
+> ⚠️ **2026-09-13 订正**：项目**创建时拿不到 `serverId`** —— `post_projects` **不接受**该字段
+> （建出来是 `serverId: null`），而 `patch` 会**静默忽略**它（返回 200、值仍是 null，极易误判
+> 为已设置）。因此它**只能在部署这一步传**。
+> **不带 `serverId` 不会报错**，只会落到控制面的 `defaultServerId`（很可能是**另一台机器**）
+> —— 静默部署到错的地方。
+
+#### 6.3 成功判据（别只看 HTTP 200）
+
+`get_deployments_by_id_build` 里：`status=ready` · `partial.successful` 等于服务数 ·
+日志出现 `Health check passed: "server" answered at 127.0.0.1:13000/healthz`。
+
+> 日志里 postgres 那条 `never answered at 127.0.0.1:5432/healthz` 是**误报**：openship 给每个
+> 服务都按 HTTP 探活，而 postgres 不提供 HTTP。server 能连上库即为证据。
+
+### 7. 部署触发（CI 接线）
 
 `ci.yml` 里已经有 `deploy` job，它**默认不跑**，等一个 repo variable：
 
@@ -211,7 +313,7 @@ commitSha 锚定构建部署。
 写法根本不成立。`vars` 在 job 级 `if` 里可用，而 `OPENSHIP_PROJECT_ID` 本来就是 adopt 之后
 必须人工回填的**必填参数**——让它兼任开关，就不存在「开关开了但参数没填」的中间态。
 
-### 7. 验证（首次部署后逐条做）
+### 8. 验证（首次部署后逐条做）
 
 ```bash
 curl -fsS "$OPENSHIP_URL/api/projects/$PROJECT_ID/deployments" -H "Authorization: Bearer $TOKEN" | head -c 400
@@ -224,7 +326,7 @@ curl -s https://platform.<公司域>/api/platform/branding   # → 该租户的�
 再看容器日志里**不得**出现 `[web] ... 不存在，跳过静态托管`（出现即白屏前兆，见「已知陷阱」）。
 最后的逐项人工清单在 `docs/m0-smoke-checklist.md`。
 
-### 8. 回滚
+### 9. 回滚
 
 ```bash
 # 回到上一个部署（openship 原生回滚，按 commit 或快照）
