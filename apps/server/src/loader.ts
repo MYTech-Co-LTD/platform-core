@@ -78,6 +78,15 @@ export interface ProvisionPermission {
 }
 
 /**
+ * 平台内置权限码（spec D9）：不来自任何模块 manifest，随装载器按租户 org 扇出供给。
+ * `tenant:admin` = 租户管理员识别——console「管理」菜单组与 /api/platform/admin/* 的门禁。
+ * 授权动作在 Casdoor 完成（给用户挂码）；授予/回收的 UI 在 M3 授权页。
+ */
+export const PLATFORM_BUILTIN_PERMISSIONS: ReadonlyArray<ProvisionPermission> = [
+  { code: 'tenant:admin', name: '租户管理员' },
+]
+
+/**
  * 把模块权限码供给到【每个租户各自的 Casdoor org】。
  *
  * 为什么必须遍历租户：权限码是平台级能力，但 Casdoor 的权限记录按 org（owner=）存储，
@@ -285,9 +294,13 @@ export async function loadModules(
     })
   }
 
-  // ⑤ 权限码供给：全部模块的权限码一次性供给到每个租户各自的 org（见 provisionModulePermissions）。
+  // ⑤ 权限码供给：平台内置码（D9）+ 全部模块码，一次性供给到每个租户各自的 org。
+  //    内置码在前：即使 modules/ 空（零模块）tenant:admin 也要供给——管理员门禁不依赖业务模块。
   //    放在循环之后而非之内：租户清单只需查一次，且 manifest 全部校验通过后才产生副作用
-  const allPermissions = loaded.flatMap((m) => m.manifest.permissions)
+  const allPermissions: ReadonlyArray<ProvisionPermission> = [
+    ...PLATFORM_BUILTIN_PERMISSIONS,
+    ...loaded.flatMap((m) => m.manifest.permissions),
+  ]
   if (deps.casdoorFor) {
     const orgs = await provisionModulePermissions(deps.pool, deps.casdoorFor, allPermissions)
     if (orgs.length === 0 && allPermissions.length > 0) {
