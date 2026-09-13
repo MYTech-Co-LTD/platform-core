@@ -316,6 +316,31 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     expect(await screen.findByText('演示模块页面内容')).toBeInTheDocument()
   })
 
+  it('⑦ 根路径 / 重定向 /console（登录态直达工作台，不再出现「工作台建设中」占位）', async () => {
+    setRegistry([])
+    mockApi({
+      '/api/platform/auth/session': () => jsonResponse(SESSION),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+
+    renderApp('/')
+    await waitForLocation('/console')
+    expect(await screen.findByText(/你好，/)).toBeInTheDocument()
+    expect(screen.queryByText('工作台建设中')).not.toBeInTheDocument()
+  })
+
+  it('⑦b 顶层未知路径同样重定向 /console（占位页全站下线）', async () => {
+    setRegistry([])
+    mockApi({
+      '/api/platform/auth/session': () => jsonResponse(SESSION),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+
+    renderApp('/some-garbage-path')
+    await waitForLocation('/console')
+    expect(await screen.findByText(/你好，/)).toBeInTheDocument()
+  })
+
   it('②c 无 scope 用户直敲模块 console URL → 403 Result（路由级门禁与菜单同判定，不触发懒加载）', async () => {
     const load = vi.fn(() => Promise.resolve({ default: DemoPage }))
     setRegistry([
