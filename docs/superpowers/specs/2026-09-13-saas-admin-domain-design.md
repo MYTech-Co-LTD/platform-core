@@ -1,7 +1,7 @@
 # platform-core 通用 SaaS 管理域（订阅进 Casdoor · 一层管理）：设计
 
 > 本文是「platform-core 通用 SaaS 管理后台底座」的**规划稿**（spec）。
-> **状态：设计已定稿（2026-09-13 用户确认；同日 D4 双层修订，见修订记录），M1 已实施（PR #42/#43，部署受阻于 env 问题，线上暂回滚）；M3 待排期。**
+> **状态：设计已定稿并全部落地——M1（PR #42/#43）、M3（PR #47/#48）已上线；D6 灰度已切 casdoor（2026-09-14，openship env `PLATFORM_SUBSCRIPTION_SOURCE=casdoor`）且 §5 总验收通过（见修订记录）。tenant_module 表保留为回滚兜底，拆表是另一个待议决定。**
 > 工作铁律：实施中任何方向/范围调整，先改本文再动码。
 >
 > 触发链：「要做通用 SaaS 管理后台，混合架构，通用能力（用户/角色/权限/订阅）要完善，新模块能快速接入」
@@ -124,6 +124,7 @@ upsertSubscription(sub: SubInput): Promise<void>    // add/update-subscription�
 | **M3（修订恢复）** | 租户管理员 console 页：用户管理 / 角色与授权 / 我的订阅（只读）；后端代理锁 org | 有 tenant:admin 码的账号见「管理」菜单组；用户增删/授权往返真机验证；无码账号不可见 |
 
 **总验收 = §3 链路全链路演示**：新模块（用 demo 模块模拟）→ manifest 已在 → Casdoor 订阅 → 授权 → console 出菜单；退订（state 改 Terminated）→ 菜单在 TTL 内消失。
+**✅ 已通过（2026-09-14 真机验收）**：切 casdoor 源后 config 清单与旧表基线一致；发放（Active）→ 菜单/工作台出现；退订（Terminated）→ config ~8s 内剔除、浏览器菜单消失；复订 → ~32s 内恢复（TTL 窗口内）。验收中发现并修复 issue #50（update-subscription 缺 `?id=` 静默失效，PR #51）。
 
 ## 6. 已知边界
 
@@ -156,3 +157,8 @@ upsertSubscription(sub: SubInput): Promise<void>    // add/update-subscription�
   不受影响——M3 页面正是构建在 M1 之上。
 - 2026-09-13（夜）：M3 计划落盘（`plans/2026-09-13-m3-tenant-admin-console.md`，issue #46），
   补 M3 授权页口径（码↔用户直挂，角色组不做）。
+- 2026-09-14：**D6 灰度切换完成 + §5 总验收通过**。生产切 `PLATFORM_SUBSCRIPTION_SOURCE=casdoor`
+  （openship env），tenant_module 存量已回填为 Active 订阅（mytech/mod-demo）；表保留为回滚兜底。
+  验收中发现 issue #50（upsertSubscription update 缺 `?id=`，真机静默 no-op，宽松替身遮蔽——
+  PR #51 修复并收严回读验 state）。迁移动作在容器内以等价客户端调用完成（脚本因 pnpm 布局
+  在容器解析不到 pg，此坑待沉淀）。
