@@ -244,29 +244,21 @@ Error: TENANT_MODE=single 但租户不存在：casdoor_org="mytech"（检查 PLA
 **`/healthz` 仍是 200**（它挂在租户中间件**之前**，架构文档 §3 的第 ⑤ 段）⇒ **这个故障探活
 发现不了**，只有打业务端点才暴露。首次部署后如果「探活绿、页面 500」，先查这里。
 
-生产**不能**用 `SEED_DEMO=1` 绕过（它会种出 acme/beta 两个演示租户）。照 `apps/server/src/seed.ts`
-的口径手工建（幂等）：
+生产**不能**用 `SEED_DEMO=1` 绕过（它会种出 acme/beta 两个演示租户）。改跑 provision CLI
+（`deploy/delivery-private.md` 步骤 4，服务器侧容器内执行；私有化交付全流程也看那份 runbook）：
 
-```bash
-docker exec -i <pg容器> psql -U platform -d platform <<'SQL'
-begin;
-insert into platform.tenant(slug, casdoor_org, product_name, logo, primary_color, background, login_methods)
-values ('<slug>','<casdoor org>','<产品名>', null, '#1890ff', 'default', '{password,wecom-qr}')
-on conflict (slug) do update set
-  casdoor_org = excluded.casdoor_org, product_name = excluded.product_name,
-  primary_color = excluded.primary_color, background = excluded.background,
-  login_methods = excluded.login_methods;
--- 给该租户启用模块（示例：demo）
-insert into platform.tenant_module(tenant_id, module_id, enabled)
-select id, 'demo', true from platform.tenant where slug = '<slug>'
-on conflict (tenant_id, module_id) do nothing;
-commit;
-SQL
+```sh
+pnpm exec tsx scripts/provision-tenant.mjs <slug> --org <casdoor-org> --module <id>... \
+  --product-name <产品名> --login-methods password --domain <域名>
 ```
 
 - **`login_methods` 的合法值只有 `password` 与 `wecom-qr`**（见 `apps/web/src/pages/Login.tsx`
-  的 `METHOD_LABELS`）。前端按白名单过滤 ⇒ 写错的值被**静默丢掉**，登录页只剩账密 tab。
+  的 `METHOD_LABELS`）。CLI 已做白名单校验（坏值入口即拒）；**手工 SQL 路径若还在用**，
+  写错的值会被前端**静默丢掉**，登录页只剩账密 tab。
 - `product_name` 就是控制台标题与登录页品牌。
+- **`PLATFORM_SUBSCRIPTION_SOURCE=casdoor` 是新交付的统一口径**：模块启用走 Casdoor 订阅
+  （CLI 的 `--module` 建 plan+Active 订阅）。往 `tenant_module` 插表的旧做法**废弃**——
+  casdoor 源下没人读那张表，插了也白插。platform 源仅作我方实例的临时回滚兜底。
 - `plan` 上还要记得：**新客户 = 新 org + 新租户行**，这套是逐客户一份。
 
 #### 6.2 发起部署：**必须传 `serverId`**

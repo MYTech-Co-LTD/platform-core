@@ -58,6 +58,7 @@ Casdoor 后台运营，租户管理员在 console 自建页管理——spec D4 �
 
 ## 债账与遗留（改动前看一眼）
 
-- open issues（#12 CI 间歇红等）；spec「已知边界」节；M1c CLI 的 multi 模式端到端验收未做。
+- open issues（#12 CI 间歇红等）；spec「已知边界」节；M1c CLI 端到端验收未做（multi +
+  single 两笔，待 spec-3 试点交付时销账——`deploy/delivery-private.md`）。
 - 长期记忆（agent 侧）：openship env 四层物化、合并只等 CI CLEAN、绝不手工补长 SHA 等——
   按各自 agent 的记忆机制加载，不在本仓维护。
