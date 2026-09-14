@@ -133,8 +133,9 @@ upsertSubscription(sub: SubInput): Promise<void>    // add/update-subscription�
    now ≤ EndTime` 双重判定，翻不翻都不影响口径。
 2. 锚用户在各 org 用户列表可见——将来若建租户管理页需过滤；Casdoor 后台运营时知会运营同学忽略。
 3. 订阅缓存一致性窗口 = TTL（默认 60s）；改订阅→菜单变化最长延迟一分钟，属可接受。
-4. 私有化交付时「客户管理员怎么管用户」：随附 Casdoor 给客户 org 管理员账号（Casdoor 支持按 org
-   收敛管理范围），或届时建租户管理页（真身不动，零返工）。
+4. 私有化交付时「客户管理员怎么管用户」：给客户管理员挂 `tenant:admin` 码，用 console
+   M3 自管页（用户/角色授权/我的订阅，2026-09-13 已上线）；或随附 Casdoor org 管理员账号
+   （Casdoor 支持按 org 收敛管理范围）。交付流程正典：`deploy/delivery-private.md`（spec-3）。
 5. 本期不做：计费对接（Plan 价格字段闲置）、租户自治页、console「我的订阅」页、多语言管理文案。
 6. 关联规划：console 菜单蓝图（`2026-09-13-console-saas-ui-blueprint-design.md` §3）的「平台管理▾」
    「帮助▾」继续留白；AI 通路 spec（`2026-09-13-case-engine-ai-pathway-design.md`）维持挂起，
@@ -162,3 +163,5 @@ upsertSubscription(sub: SubInput): Promise<void>    // add/update-subscription�
   验收中发现 issue #50（upsertSubscription update 缺 `?id=`，真机静默 no-op，宽松替身遮蔽——
   PR #51 修复并收严回读验 state）。迁移动作在容器内以等价客户端调用完成（脚本因 pnpm 布局
   在容器解析不到 pg，此坑待沉淀）。
+- 2026-09-14（晚）：§6.4 回改——M3 租户管理员页已上线，私有化客户管理口径改为 tenant:admin +
+  console 自管；交付流程指向 spec-3 的 `deploy/delivery-private.md`。
