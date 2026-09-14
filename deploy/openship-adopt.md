@@ -314,17 +314,22 @@ commitSha 锚定构建部署。
 必须人工回填的**必填参数**——让它兼任开关，就不存在「开关开了但参数没填」的中间态。
 
 > **✅ 已启用（2026-09-14）**：variable `OPENSHIP_PROJECT_ID=proj_v0QZ68VYDc0pkFxL`、
-> `OPENSHIP_URL=https://deploy.hookflow.cn/api/proxy`、secret `OPENSHIP_TOKEN`（PAT
-> `ci-platform-core-deploy-full`）均已配置。此后 merge 到 main = 门禁全绿后自动部署
->（首次端到端验证：PR #53 合并 → deploy job → dep_LxPARydzAI0V4kOt → healthz 200）。
+> `OPENSHIP_URL=https://deploy.hookflow.cn/api/proxy`、secret `OPENSHIP_TOKEN`（scoped PAT
+> `ci-platform-core-deploy-scoped`；启用当天曾临时用 fullAccess PAT，同日已收紧）均已配置。
+> 此后 merge 到 main = 门禁全绿后自动部署（端到端验证：PR #53/#54 合并 → deploy job →
+> healthz 200）。
 > 三个实测坑：
 > ① **API 基址带 `/api/proxy` 前缀**——edge 把裸 `/api/*` 路由给 dashboard 壳（SPA fallback
 >    404/403），真实 API 在 `/api/proxy/api/*`。`OPENSHIP_URL` 变量必须指到代理前缀（本文
 >    §8 的示例 URL 里的裸 `/api` 路径在本控制面拓扑下同样要加前缀）。
-> ② **PAT 端点在控制面「设置 → API 令牌」**；本控制面版本上**项目限定（scoped）PAT 调
->    `POST /api/deployments` 恒 403**——旧版 collection 预检要求 `project:*` 级权限（上游
->    master 已修，见 deployment.routes.ts 的 collectionProject 注释）。故当前用 fullAccess
->    PAT；**控制面升级后应收紧回 scoped**（重发一枚 grants=[project/proj_xxx/write] 并换 secret）。
+> ② **PAT 端点在控制面「设置 → API 令牌」**；scoped PAT 触发部署需要**两条 grant**：
+>    `{resourceType:"project", resourceId:"proj_xxx", permissions:["write"]}` 让 deployment:write
+>    过，**外加** `{resourceType:"github_repository", resourceId:"OWNER/REPO", permissions:["read"]}`
+>    ——deploy 入口有 `assertGitHubRepoAccess(op=read)` 前置（github-access.ts），scoped
+>    principal 的 GitHub 权限只来自 github_* grant，缺了就 403 `GITHUB_ACCESS_DENIED`
+>    （"You don't have access to OWNER/REPO"——文案酷似授权配置错误，极易误诊；2026-09-14
+>    曾据此误判为「控制面版本旧、上游已修」，实测 v0.7.2 本就如此，与版本无关）。
+>    另：403 body 若是 "already in progress" 则是**部署互斥**（#59 已加 CI 重试），先读 body 再下结论。
 > ③ dashboard 会话创建 PAT 的 POST `/api/proxy/api/tokens`，值只在响应里出现一次。
 
 ### 8. 验证（首次部署后逐条做）
