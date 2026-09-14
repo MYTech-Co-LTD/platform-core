@@ -124,8 +124,10 @@
 2. **三同纪律**：`manifest.id` = DB schema 名 = API 前缀，三处必须一致（B1 守 schema 侧，前缀由 `id` 派生）
 3. 在 `manifest.api.internal[]` 里**逐条声明**每条路由的 method / path / scope——**没声明就是不可达**
 4. 权限码写进 `manifest.permissions[]`；供给由装载器按各租户 org 逐个 upsert，**模块不手写 `requireScope`**
-5. console 条目写进 `manifest.frontend.console[]`；前端 registry 由 `scripts/gen-console-registry.mjs` 生成
-6. 部署**一般不用动**（模块随宿主构建进镜像）
+5. **租户数据表必须带 `org` 列**（值 = `identity.orgId`），读写按 org 过滤——约定正文读
+   `docs/module-protocol.md`「租户数据隔离」
+6. console 条目写进 `manifest.frontend.console[]`；前端 registry 由 `scripts/gen-console-registry.mjs` 生成
+7. 部署**一般不用动**（模块随宿主构建进镜像）
 
 → 逐条契约与已踩过的坑读 `docs/module-protocol.md`（**改模块 API / 门卫 / 声明前必读**）
 
