@@ -91,7 +91,7 @@ brainstorming 四问的答案（2026-09-14）：
 | 1 | 本 spec | 文档 |
 | 2 | `docs/module-protocol.md` 新节「租户数据隔离」（约定正文） | 文档 |
 | 3 | `docs/architecture.md` §5「加一个模块要动什么」清单加一行（表带租户维度） | 文档 |
-| 4 | demo 修正：新迁移给 `demo.note` 加 org 列（幂等）+ 路由按 orgId 过滤 + 唯一约束含 org + 多租户互不可见测试 | 代码 |
+| 4 | demo 修正：新迁移给 `demo.note` 加 org 列（幂等）+ 路由按 orgId 过滤 + 多租户互不可见测试（note 无业务唯一键，「唯一约束含 org」于它不适用，不强加） | 代码 |
 | 5 | `scripts/provision-tenant.mjs` 增 `--all-tenants` | 代码 |
 
 验收：
