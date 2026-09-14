@@ -186,13 +186,32 @@ jobs:
           echo "openship: project=$PROJECT_ID commit=$COMMIT_SHA"
           # commitSha 是幂等键：同一个 sha 重复触发不会部署出两份不同的东西。
           # 只发触发、不在 CI 里轮询到 live——构建状态归 openship（deploy/openship-adopt.md 第 7 节）
-          curl -fsS -X POST "${OPENSHIP_URL%/}/api/deployments" \
-            -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
-            -H 'Content-Type: application/json' \
-            -d "{\"projectId\":\"${PROJECT_ID}\",\"branch\":\"main\",\"commitSha\":\"${COMMIT_SHA}\",\"environment\":\"production\"}" \
-            -o /tmp/openship-deploy.json
-          echo "openship 响应："
-          cat /tmp/openship-deploy.json
+          #
+          # 部署互斥（2026-09-14 实测，PR #55/#56 连续合并踩到）：同项目已有部署在跑时，
+          # API 回 403 body "A deployment is already in progress"——这不是错误，等待重试即可
+          # （curl 不用 -f：-f 会把 403 的 body 丢掉，无法区分「互斥等待」与「真失败」）。
+          for i in $(seq 1 10); do
+            CODE=$(curl -sS -o /tmp/openship-deploy.json -w '%{http_code}' -X POST "${OPENSHIP_URL%/}/api/deployments" \
+              -H "Authorization: Bearer ${OPENSHIP_TOKEN}" \
+              -H 'Content-Type: application/json' \
+              -d "{\"projectId\":\"${PROJECT_ID}\",\"branch\":\"main\",\"commitSha\":\"${COMMIT_SHA}\",\"environment\":\"production\"}")
+            if [ "${CODE:0:1}" = "2" ]; then
+              echo "openship 响应（HTTP ${CODE}）："
+              cat /tmp/openship-deploy.json
+              exit 0
+            fi
+            BODY=$(cat /tmp/openship-deploy.json 2>/dev/null || true)
+            echo "第 ${i}/10 次触发：HTTP ${CODE} ${BODY:0:200}"
+            # 仅对「部署互斥」重试；其他错误（401/403 授权、4xx 参数）立即失败
+            if ! grep -q 'already in progress' /tmp/openship-deploy.json 2>/dev/null; then
+              echo "::error::部署触发失败（非互斥错误，不重试）"
+              exit 1
+            fi
+            echo "既有部署在跑，30s 后重试"
+            sleep 30
+          done
+          echo "::error::等待既有部署完成超时（约 5 分钟）——去控制面看卡住的部署"
+          exit 1
 
   # 提交纪律的**事后绊线**（不是门禁，理由见文件头注）。触发面：push 到 main。
   #
