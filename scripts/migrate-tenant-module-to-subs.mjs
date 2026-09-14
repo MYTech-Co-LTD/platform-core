@@ -1,7 +1,9 @@
 // @ts-nocheck —— CLI 薄壳：纯核（planMigration/tenantProvisionSteps）有 vitest 兜底；
 // tsc 根工程解析不到 apps/server 的 pg 类型，不为此给根加依赖
 // migrate-tenant-module-to-subs.mjs — tenant_module → Casdoor 订阅迁移（spec D6；#41）
-// 用法：node scripts/migrate-tenant-module-to-subs.mjs [--apply]（默认 dry-run 只打印计划）
+// 用法：npx tsx scripts/migrate-tenant-module-to-subs.mjs [--apply]（默认 dry-run 只打印计划）。
+// 必须 tsx：barrel（public.ts）的无扩展名 TS 导入裸 node 解析不了；且 pg 经 createRequire
+// 锚到 apps/server 解析（scripts/ 不属于任何 workspace 包，裸 import 'pg' 处处解析不到）。
 // 语义：对每租户的「有效启用集」（loaded ∩ (显式行 ?? true)）产出 锚用户→plan→订阅 三步；幂等。
 
 import { readdir, readFile } from 'node:fs/promises'
@@ -21,7 +23,11 @@ async function main() {
   const apply = process.argv.includes('--apply')
   const dbUrl = process.env.DATABASE_URL
   if (!dbUrl) throw new Error('需要 DATABASE_URL')
-  const { Pool } = await import('pg')
+  // pg 解析锚到 apps/server（pnpm workspace：pg 是 apps/server 的依赖，本脚本所在的
+  // scripts/ 不属于任何包，裸 import 'pg' 在仓库根/容器里都解析不到——D6 切换时实测踩过）
+  const { createRequire } = await import('node:module')
+  const requireFromServer = createRequire(new URL('../apps/server/package.json', import.meta.url))
+  const { Pool } = requireFromServer('pg')
   const { CasdoorClient } = await import('../packages/auth-core/src/public.ts')
   const pool = new Pool({ connectionString: dbUrl })
   // 已装载模块 id（与装载器同源：扫 modules/*/manifest.yaml）
