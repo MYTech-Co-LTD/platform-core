@@ -313,6 +313,12 @@ commitSha 锚定构建部署。
 写法根本不成立。`vars` 在 job 级 `if` 里可用，而 `OPENSHIP_PROJECT_ID` 本来就是 adopt 之后
 必须人工回填的**必填参数**——让它兼任开关，就不存在「开关开了但参数没填」的中间态。
 
+> **✅ 已启用（2026-09-14）**：variable `OPENSHIP_PROJECT_ID=proj_v0QZ68VYDc0pkFxL` 与
+> secret `OPENSHIP_TOKEN`（openship PAT `ci-platform-core-deploy`，**scope 限定本 project
+> write**，经控制面设置 → API 令牌创建）均已配置。此后 merge 到 main = 门禁全绿后自动部署。
+> PAT 发放备忘：控制面 0.7.x 的 PAT 端点在 **`/api/proxy/api/tokens`**（edge 把裸 `/api/*`
+> 路由给 dashboard 壳，SPA fallback 会 404——别按直觉打 `/api/tokens`）。
+
 ### 8. 验证（首次部署后逐条做）
 
 ```bash
