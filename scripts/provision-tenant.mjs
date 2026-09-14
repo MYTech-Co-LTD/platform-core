@@ -1,7 +1,8 @@
 // @ts-nocheck —— CLI 薄壳：纯核（planMigration/tenantProvisionSteps/planAllTenantGrants）有 vitest 兜底；
 // tsc 根工程解析不到 apps/server 的 pg 类型，不为此给根加依赖
 // provision-tenant.mjs — 租户开通 CLI（spec D7；#41）：org→租户行→锚用户→权限扇出→初始订阅
-// 用法：npx tsx scripts/provision-tenant.mjs <slug> [--org <casdoorOrg>] [--module <id>]...（org 缺省 <slug>-org）
+// 用法：npx tsx scripts/provision-tenant.mjs <slug> [--org <casdoorOrg>] [--module <id>]...
+//       [--product-name <名>] [--login-methods password,wecom-qr] [--domain <host>]（org 缺省 <slug>-org）
 //       npx tsx scripts/provision-tenant.mjs --all-tenants --module <id>...（批量发放：遍历 platform.tenant 各 org）
 // 必须 tsx：TS barrel（public.ts/loader.ts）导入裸 node 解析不了；且 pg 经 createRequire
 // 锚到 apps/server 解析（scripts/ 不属于任何 workspace 包，裸 import 'pg' 处处解析不到——
@@ -13,7 +14,9 @@ import { parse as parseYaml } from 'yaml'
 
 export function tenantProvisionSteps(slug, opts = {}) {
   const org = opts.org ?? `${slug}-org`
-  const steps = ['org:' + org, 'tenant-row:' + slug, 'anchor', 'permissions']
+  const steps = ['org:' + org, 'tenant-row:' + slug, 'anchor']
+  if (opts.domain) steps.push('domain:' + opts.domain)
+  steps.push('permissions')
   for (const m of opts.modules ?? []) steps.push('plan:' + m, 'subscribe:' + m)
   return steps
 }
@@ -25,12 +28,32 @@ export function planAllTenantGrants(orgs, modules = []) {
   return steps
 }
 
+/** login_methods 白名单（合法值与 apps/web/src/pages/Login.tsx 的 METHOD_LABELS 一致）：
+ *  坏值前端静默丢弃只留账密 tab（adopt runbook §6.1 坑），在 CLI 入口拦下。 */
+export function parseLoginMethods(raw) {
+  if (!raw) return ['password']
+  const allowed = new Set(['password', 'wecom-qr'])
+  const parts = raw.split(',').map((s) => s.trim()).filter(Boolean)
+  const bad = parts.filter((p) => !allowed.has(p))
+  if (bad.length > 0) throw new Error(`--login-methods 非法值：${bad.join(',')}（合法值：password, wecom-qr）`)
+  return parts.length > 0 ? parts : ['password']
+}
+
+/** 权限扇出清单 = 内置码在前 + 模块码（spec-3 §2.1：开通即可挂 tenant:admin，不等宿主重启） */
+export function provisionPerms(modulePerms, builtin = []) {
+  return [...builtin, ...modulePerms]
+}
+
 async function main() {
   const args = process.argv.slice(2)
   const allTenants = args.includes('--all-tenants')
   const slug = allTenants ? undefined : args[0]
   const org = (() => { const i = args.indexOf('--org'); return i > 0 ? args[i + 1] : (slug ? `${slug}-org` : '') })()
   const modules = args.flatMap((a, i) => (a === '--module' ? [args[i + 1]] : []))
+  const productName = (() => { const i = args.indexOf('--product-name'); return i > 0 ? args[i + 1] : undefined })()
+  const loginMethodsRaw = (() => { const i = args.indexOf('--login-methods'); return i > 0 ? args[i + 1] : undefined })()
+  const loginMethods = parseLoginMethods(loginMethodsRaw) // 入口拦：坏值在任何 IO（Casdoor/DB）之前退出
+  const domain = (() => { const i = args.indexOf('--domain'); return i > 0 ? args[i + 1] : undefined })()
   const dbUrl = process.env.DATABASE_URL
   if (!dbUrl) throw new Error('需要 DATABASE_URL')
   const requireFromServer = createRequire(new URL('../apps/server/package.json', import.meta.url))
@@ -61,18 +84,29 @@ async function main() {
     return
   }
 
-  if (!slug) throw new Error('用法: node scripts/provision-tenant.mjs <slug> [--org <org>] [--module <id>]... | --all-tenants --module <id>...')
-  console.log('[provision] 计划：', tenantProvisionSteps(slug, { org, modules }).join(' → '))
-  const { provisionModulePermissions } = await import('../apps/server/src/loader.ts')
+  if (!slug) throw new Error('用法: npx tsx scripts/provision-tenant.mjs <slug> [--org <org>] [--module <id>]... [--product-name <名>] [--login-methods password,wecom-qr] [--domain <host>] | --all-tenants --module <id>...')
+  console.log('[provision] 计划：', tenantProvisionSteps(slug, { org, modules, domain }).join(' → '))
+  const { provisionModulePermissions, PLATFORM_BUILTIN_PERMISSIONS } = await import('../apps/server/src/loader.ts')
   const c = makeClient(org)
   await c.ensureOrg(org); console.log('  ✓ org')
   const { rows } = await pool.query(
-    `insert into platform.tenant(slug, casdoor_org) values ($1, $2)
-     on conflict (slug) do update set casdoor_org = excluded.casdoor_org returning id`,
-    [slug, org],
+    `insert into platform.tenant(slug, casdoor_org, product_name, login_methods)
+     values ($1, $2, $3, $4)
+     on conflict (slug) do update set
+       casdoor_org = excluded.casdoor_org,
+       product_name = excluded.product_name,
+       login_methods = excluded.login_methods
+     returning id`,
+    [slug, org, productName ?? slug, loginMethods],
   )
   const tenantId = rows[0].id; console.log('  ✓ tenant-row #' + tenantId)
   await c.ensureAnchorUser(org); console.log('  ✓ anchor')
+  if (domain) {
+    await pool.query('insert into platform.tenant_domain(tenant_id, domain) values ($1, $2) on conflict (domain) do nothing', [tenantId, domain])
+    const { rows: occ } = await pool.query('select tenant_id from platform.tenant_domain where domain = $1', [domain])
+    if (occ[0]?.tenant_id !== tenantId) throw new Error(`域名已被租户 #${occ[0].tenant_id} 占用：${domain}（on conflict 静默跳过，这里明确报错——spec-3 §2.3）`)
+    console.log('  ✓ domain ' + domain)
+  }
   // 权限码扇出：modules/*/manifest 的 permissions（与装载器同源）
   const modulesDir = path.join(import.meta.dirname, '..', 'modules')
   const perms = []
@@ -81,7 +115,8 @@ async function main() {
     const m = parseYaml(await readFile(path.join(modulesDir, d.name, 'manifest.yaml'), 'utf8'))
     for (const p of m?.permissions ?? []) perms.push({ code: p.code, name: p.name })
   }
-  await provisionModulePermissions(pool, (o) => (o === org ? c : c), perms); console.log('  ✓ permissions ×' + perms.length)
+  const allPerms = provisionPerms(perms, PLATFORM_BUILTIN_PERMISSIONS.map((p) => ({ code: p.code, name: p.name })))
+  await provisionModulePermissions(pool, (o) => (o === org ? c : c), allPerms); console.log('  ✓ permissions ×' + allPerms.length)
   for (const m of modules) {
     await c.ensureModulePlan(org, m)
     await c.upsertSubscription(org, m, { state: 'Active' })
