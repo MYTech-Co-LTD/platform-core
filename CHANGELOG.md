@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.6.0...v0.7.0) - 2026-09-14
+- 【新增】scripts: provision CLI 三债 + 私有化交付 runbook（spec-3） (#63) ([#64](https://github.com/MYTech-Co-LTD/platform-core/pull/64), [b00e64b](https://github.com/MYTech-Co-LTD/platform-core/commit/b00e64b4ab938b7fa889b726b7baf01efbd2455a))
+
+
 ## [0.6.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.5.3...v0.6.0) - 2026-09-14
 - 【新增】demo: 模块租户数据隔离 + provision 批量发放（spec-1） (#61) ([#62](https://github.com/MYTech-Co-LTD/platform-core/pull/62), [903a2e2](https://github.com/MYTech-Co-LTD/platform-core/commit/903a2e266452064d4817f0c0cc9cc4f2083578a3))
 
