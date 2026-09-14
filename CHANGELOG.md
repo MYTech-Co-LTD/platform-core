@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.5.3...v0.6.0) - 2026-09-14
+- 【新增】demo: 模块租户数据隔离 + provision 批量发放（spec-1） (#61) ([#62](https://github.com/MYTech-Co-LTD/platform-core/pull/62), [903a2e2](https://github.com/MYTech-Co-LTD/platform-core/commit/903a2e266452064d4817f0c0cc9cc4f2083578a3))
+
+
 ## [0.5.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.5.2...v0.5.3) - 2026-09-14
 - 【修复】scripts: 迁移脚本 pg 经 createRequire 锚 apps/server 解析；用法订正为 tsx (#3 关联) ([#57](https://github.com/MYTech-Co-LTD/platform-core/pull/57), [b346e8e](https://github.com/MYTech-Co-LTD/platform-core/commit/b346e8e91f9651e09164548db2d45a4b2dcee3e3))
 
