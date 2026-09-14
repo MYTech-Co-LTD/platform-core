@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.5.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.5.1...v0.5.2) - 2026-09-14
+- 【修复】auth-core: upsertSubscription update 补 ?id= 定位 + 回读验 state（真机形状，替身收严）(#50) ([#51](https://github.com/MYTech-Co-LTD/platform-core/pull/51), [e262813](https://github.com/MYTech-Co-LTD/platform-core/commit/e2628131348047d431d840a73b2d78e78f711d88))
+
+
 ## [0.5.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.5.0...v0.5.1) - 2026-09-13
 - 【修复】console: 管理页创建/授权成功后立即刷新列表——reload 提前，去除卸载竞态下的 resetFields (#49) ([#48](https://github.com/MYTech-Co-LTD/platform-core/pull/48), [cc95942](https://github.com/MYTech-Co-LTD/platform-core/commit/cc95942ffebef3d8ca00a01a463a8aec53e5425a))
 
