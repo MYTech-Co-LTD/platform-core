@@ -37,8 +37,11 @@ export default defineModule({
     }))
 
     r.get('/notes', async (c) => {
+      // 租户隔离（spec-1 §2）：读写一律按 identity.orgId 过滤，见 docs/module-protocol.md
+      const org = c.get('identity')!.orgId
       const { rows } = await pool.query<NoteRow>(
-        'select id, body, created_at from demo.note order by id desc limit 50',
+        'select id, body, created_at from demo.note where org = $1 order by id desc limit 50',
+        [org],
       )
       return c.json({ notes: rows })
     })
@@ -48,9 +51,10 @@ export default defineModule({
       const text = typeof body?.body === 'string' ? body.body.trim() : ''
       if (!text) return c.json({ error: 'BODY_REQUIRED' }, 400)
       if (text.length > MAX_NOTE_LEN) return c.json({ error: 'BODY_TOO_LONG' }, 400)
+      const org = c.get('identity')!.orgId
       const { rows } = await pool.query<NoteRow>(
-        'insert into demo.note(body) values ($1) returning id, body, created_at',
-        [text],
+        'insert into demo.note(org, body) values ($1, $2) returning id, body, created_at',
+        [org, text],
       )
       return c.json({ note: rows[0] }, 201)
     })

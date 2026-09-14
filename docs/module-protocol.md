@@ -191,7 +191,7 @@ scope 的绝对断言，改掉）。`GET /api/platform/config` 是**有意的披
 零 join、自包含；不跨 schema 引 `platform.tenant`（B1 边界干净）；org 与租户 1:1，权威源
 在 Casdoor + 租户行。
 
-**存量数据回填口径**（示例见 `modules/demo/migrations/002_note_org.sql`）：无法归属的旧行
+**存量数据回填口径**（示例见 `modules/demo/migrations/003_note_org.sql`）：无法归属的旧行
 回填**空串**——空串不等于任何真 org，对所有租户不可见；宁可不可见，不可错归属。
 
 CI 门禁：暂无（文档 + 评审守）；等第一个真实业务模块落地后再评估要不要扫 migrations 的

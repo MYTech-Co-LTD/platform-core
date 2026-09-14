@@ -279,10 +279,14 @@ Expected: **FAIL**。红的位置：反向断言 `expect(betaIds).not.toContain(
 算有效红。若因连不上 PG 跳过/报连接错——先解决 DATABASE_URL（本机 5432 可能被原生 postgres
 遮蔽 compose 容器）。
 
-- [ ] **Step 3: 写迁移 `modules/demo/migrations/002_note_org.sql`**
+- [ ] **Step 3: 写迁移 `modules/demo/migrations/003_note_org.sql`**
+
+> 执行中订正（2026-09-14）：不叫 002——本地开发库账本存在幽灵记录 (demo, 002_note_org)
+> （2026-09-11 早期实验加过 org_id 列后文件被删、账本残留；该列 NOT NULL 且仓内零引用、
+> 表 0 行）。同名 002 会被账本静默跳过；改 003 并顺带 drop 幽灵列自愈脏库。
 
 ```sql
--- 002_note_org.sql — demo.note 补租户维度（spec-1 §2：租户数据表必须带 org）。
+-- 003_note_org.sql — demo.note 补租户维度（spec-1 §2：租户数据表必须带 org）。
 -- 幂等：add column if not exists + 回填受 where 约束 + set not null 对已 not null 列是 no-op。
 -- 回填口径：无法归属的旧行回填空串——空串不等于任何真 org，对所有租户不可见；
 -- 宁可不可见，不可错归属（demo 是占位模块，存量行不可见可接受）。
@@ -291,6 +295,8 @@ update demo.note set org = '' where org is null;
 alter table demo.note alter column org set not null;
 -- 热路径索引以 org 为前缀列（查询形状：where org = $1 order by id desc limit 50）
 create index if not exists demo_note_org_id_idx on demo.note(org, id);
+-- 自愈：清掉幽灵实验列（本库实测 0 行数据、仓内零引用；净库/生产库上是无害 no-op）
+alter table demo.note drop column if exists org_id;
 ```
 
 - [ ] **Step 4: 改 `modules/demo/index.ts` 两个 handler**
