@@ -12,6 +12,27 @@
 | Casdoor | **共用我方 sso.hookflow.cn**，客户一个独立 org | 合规要求 → 客户侧独立 Casdoor 实例（`CASDOOR_URL` 指过去，单独定运维归属） |
 | 域名 | 客户自有域名，DNS A 记录到机器公网 IP | 无域名时用 openship 免费子域 |
 
+### 0.1 客户信息采集单（开工前收齐；标注阻塞的步骤）
+
+客户侧：
+
+| # | 采集项 | 阻塞 | 要点 |
+|---|---|---|---|
+| ① | 机器与网络 | 步骤 1 | 公网 IP + 与控制面的网络关系（同 VPC 走内网 / 跨 VPC 走公网，决定阶段 A 白名单配法）；docker 双容器余量即可（参照现有实例） |
+| ② | Casdoor 归属 | 步骤 3/4 | 默认共用：定 org 名（建议 = 客户 slug，字母数字）。**只收一个管理员**——建号挂 `tenant:admin` 后，其余用户客户在 console M3 页自管（采集面最小化）；合规隔离则拿要求原文，独立实例单独定 |
+| ③ | 域名 | 步骤 5 | 客户自有域名 + **DNS 控制人**（A 记录切换要约时间窗）；无域名用 openship 免费子域 |
+| ④ | 品牌与登录 | 步骤 4 | `product_name`（控制台标题/登录页品牌）；要不要企微扫码——要则客户企微管理员提供三参（corp_id / agent_id / secret，敏感值走 openship env isSecret） |
+| ⑤ | 模块清单 | 全局 | `--module` 集。仓内现只有 `demo` 占位模块；**真业务功能 = L1 模块开发先行**（spec-1 分级 + 模块接入流程），是试点排期的最大变量 |
+
+我方侧（可并行推进）：
+
+- ⑥ 客户机阶段 A 材料（`cicd-project-onboarding` 清单：网络 → ufw 4878 → git smart-proxy → docker → 注册 server）
+- ⑦ env 值备好：`PLATFORM_SESSION_SECRET` 随机生成、Casdoor 凭据、`PUBLIC_ORIGIN=https://<域名>`
+- ⑧ 验收记录：六步成功判据逐项勾 + M1c 两笔销账（single 试点 + multi 测试租户，见 AGENTS.md 债账）
+
+两条提示：⑤ 是关键路径（①–④ 都是配置级、天内；⑤ 是开发级、周级——试点排期先问「演示什么」）；
+共用 Casdoor 的 org 命名一旦定了不轻动（租户行、权限桶、订阅 plan 都锚它）。
+
 ## 1. 六步开通链路
 
 ### 步骤 1：客户机接入（仅客户机路径）
