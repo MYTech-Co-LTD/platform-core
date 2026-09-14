@@ -549,7 +549,7 @@ describe('CasdoorClient 订阅域（fetchImpl 假路由器）', () => {
 describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan→订阅）', () => {
   function rwRouter(
     get: (frag: string, q: URLSearchParams) => unknown,
-    post: (frag: string, body: any) => { status: string; data?: unknown },
+    post: (frag: string, body: any, q: URLSearchParams) => { status: string; data?: unknown },
     log: { path: string; body?: any }[],
   ) {
     return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
@@ -559,7 +559,7 @@ describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan�
       log.push({ path: frag + u.search, body })
       if (frag === '/login') return new Response(JSON.stringify({ status: 'ok' }), { headers: { 'set-cookie': 'casdoor_session_id=x' } })
       if (init?.method === 'GET') return new Response(JSON.stringify({ status: 'ok', data: get(frag, u.searchParams) }))
-      return new Response(JSON.stringify(post(frag, body)))
+      return new Response(JSON.stringify(post(frag, body, u.searchParams)))
     }
   }
   const mk2 = (f: typeof fetch) =>
@@ -580,12 +580,18 @@ describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan�
         if (frag === '/get-subscriptions') return [...subs.values()].filter((s) => s.owner === q.get('owner'))
         return []
       },
-      (frag, body) => {
+      (frag, body, q) => {
         if (frag === '/add-organization') { orgs.push(body.name); return { status: 'ok', data: 'Affected' } }
         if (frag === '/add-user') { users.add(body.owner + '/' + body.name); return { status: 'ok', data: 'Affected' } }
         if (frag === '/add-plan') { plans.add(body.owner + '/' + body.name); return { status: 'ok', data: 'Affected' } }
         if (frag === '/add-subscription') { subs.set(body.owner + '/' + body.name, body); return { status: 'ok', data: 'Affected' } }
-        if (frag === '/update-subscription') { subs.set(body.owner + '/' + body.name, body); return { status: 'ok', data: 'Affected' } }
+        if (frag === '/update-subscription') {
+          // 真机形状（issue #50）：update-* 按 ?id=<org>/<name> 定位，缺 id 时静默 no-op —— 替身必须拒绝无 id 的 update
+          const id = q.get('id')
+          if (!id || !subs.has(id)) return { status: 'error', msg: 'update-subscription 需要 ?id=<org>/<name>' }
+          subs.set(id, body)
+          return { status: 'ok', data: 'Affected' }
+        }
         return { status: 'error', msg: 'no post route ' + frag }
       },
       log,
@@ -602,7 +608,49 @@ describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan�
     expect(sub.startTime).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/) // 铁律① RFC3339
     await c.upsertSubscription('neworg', 'case-engine', { state: 'Terminated' })
     expect(subs.get('neworg/sub-mod-case-engine').state).toBe('Terminated') // 退订=update
-    expect(log.some((l) => l.body && l.path?.includes('?id='))).toBe(false) // 铁律② 写/delete 一律 body（GET 查询不在此列）
+    // issue #50 修订：update-* 真机按 ?id=<org>/<name> 定位（此前「写一律 body、path 无 ?id=」的
+    // 断言钉死了错误形状——真机缺 id 静默 no-op，被宽松替身遮蔽）。body 仍带 owner/name（delete 铁律②不变）。
+    expect(log.some((l) => l.path.startsWith('/update-subscription?id='))).toBe(true)
+    expect(log.filter((l) => l.path.startsWith('/update-subscription')).at(-1)?.body.owner).toBe('neworg')
+  })
+
+  // ---- issue #50：update 必须带 ?id=，回读验 state（真机形状钉死）----
+
+  it('Active → Terminated：update 带 ?id= 且回读 state 生效', async () => {
+    const subs = new Map<string, any>([['acme/sub-mod-demo', { owner: 'acme', name: 'sub-mod-demo', user: 'acme/tenantsub', plan: 'mod-demo', startTime: '2026-09-14T00:00:00Z', endTime: '2036-09-11T00:00:00Z', state: 'Active' }]])
+    const log: { path: string; body?: any }[] = []
+    const c = mk2(rwRouter(
+      (frag, q) => {
+        if (frag === '/get-subscription') return subs.has(q.get('id')!) ? subs.get(q.get('id')!) : null
+        if (frag === '/get-subscriptions') return [...subs.values()].filter((s) => s.owner === q.get('owner'))
+        return []
+      },
+      (frag, body, q) => {
+        if (frag === '/update-subscription') {
+          const id = q.get('id')
+          if (!id || !subs.has(id)) return { status: 'error', msg: 'update-subscription 需要 ?id=<org>/<name>' }
+          subs.set(id, body)
+          return { status: 'ok', data: 'Affected' }
+        }
+        return { status: 'error', msg: 'no post route ' + frag }
+      },
+      log,
+    ))
+    await c.upsertSubscription('acme', 'demo', { state: 'Terminated' })
+    const upd = log.filter((l) => l.path.startsWith('/update-subscription')).at(-1)!
+    expect(upd.path).toBe('/update-subscription?id=acme%2Fsub-mod-demo') // 铁律形状：id query
+    expect(subs.get('acme/sub-mod-demo').state).toBe('Terminated')
+  })
+
+  it('写丢 state 时回读校验抛错（不再假绿）', async () => {
+    // 真机故障形状：update 回 ok 但 state 没变（如替身吞掉变更）→ 回读 Active ⇒ 必须抛
+    const subs = new Map<string, any>([['acme/sub-mod-demo', { owner: 'acme', name: 'sub-mod-demo', user: 'acme/tenantsub', plan: 'mod-demo', startTime: '2026-09-14T00:00:00Z', endTime: '2036-09-11T00:00:00Z', state: 'Active' }]])
+    const c = mk2(rwRouter(
+      (frag, q) => (frag === '/get-subscription' ? (subs.has(q.get('id')!) ? subs.get(q.get('id')!) : null) : []),
+      () => ({ status: 'ok', data: 'Affected' }), // update 永远 ok 但不改数据（写丢形状）
+      [],
+    ))
+    await expect(c.upsertSubscription('acme', 'demo', { state: 'Terminated' })).rejects.toThrow('state')
   })
 })
 

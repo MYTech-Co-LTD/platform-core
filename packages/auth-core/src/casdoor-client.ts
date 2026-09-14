@@ -483,10 +483,19 @@ export class CasdoorClient {
       endTime: new Date(Date.now() + days * 864e5).toISOString(),
       state: opts.state,
     }
-    const path = existing.status === 'ok' && existing.data ? 'update-subscription' : 'add-subscription'
+    // update 必须带 ?id=<org>/<name>（issue #50：真机 update-* 一律按 id 定位，缺 id 静默 no-op
+    // ——与 update-permission 同规；M1 替身按 body 定位比真机宽松，把这条形状漂移遮蔽到了 D6 验收才现形）
+    const path = existing.status === 'ok' && existing.data
+      ? `update-subscription?id=${encodeURIComponent(id)}`
+      : 'add-subscription'
     await this.#adminJson(path, { method: 'POST', body: next })
     const back = await this.#adminJson(`get-subscription?id=${encodeURIComponent(id)}`) // 铁律③
     if (back.status !== 'ok' || !back.data) throw new Error(`casdoor upsert-subscription: 写后回读失败 ${id}`)
+    // 铁律③收严（issue #50）：回读验**目标状态**，不只存在性——state 写丢是假绿
+    const backState = String((back.data as { state?: string }).state ?? '')
+    if (backState !== opts.state) {
+      throw new Error(`casdoor upsert-subscription: 写后回读 state 不符 ${id} 期望=${opts.state} 实际=${backState}`)
+    }
   }
 
 /**
