@@ -313,11 +313,19 @@ commitSha 锚定构建部署。
 写法根本不成立。`vars` 在 job 级 `if` 里可用，而 `OPENSHIP_PROJECT_ID` 本来就是 adopt 之后
 必须人工回填的**必填参数**——让它兼任开关，就不存在「开关开了但参数没填」的中间态。
 
-> **✅ 已启用（2026-09-14）**：variable `OPENSHIP_PROJECT_ID=proj_v0QZ68VYDc0pkFxL` 与
-> secret `OPENSHIP_TOKEN`（openship PAT `ci-platform-core-deploy`，**scope 限定本 project
-> write**，经控制面设置 → API 令牌创建）均已配置。此后 merge 到 main = 门禁全绿后自动部署。
-> PAT 发放备忘：控制面 0.7.x 的 PAT 端点在 **`/api/proxy/api/tokens`**（edge 把裸 `/api/*`
-> 路由给 dashboard 壳，SPA fallback 会 404——别按直觉打 `/api/tokens`）。
+> **✅ 已启用（2026-09-14）**：variable `OPENSHIP_PROJECT_ID=proj_v0QZ68VYDc0pkFxL`、
+> `OPENSHIP_URL=https://deploy.hookflow.cn/api/proxy`、secret `OPENSHIP_TOKEN`（PAT
+> `ci-platform-core-deploy-full`）均已配置。此后 merge 到 main = 门禁全绿后自动部署
+>（首次端到端验证：PR #53 合并 → deploy job → dep_LxPARydzAI0V4kOt → healthz 200）。
+> 三个实测坑：
+> ① **API 基址带 `/api/proxy` 前缀**——edge 把裸 `/api/*` 路由给 dashboard 壳（SPA fallback
+>    404/403），真实 API 在 `/api/proxy/api/*`。`OPENSHIP_URL` 变量必须指到代理前缀（本文
+>    §8 的示例 URL 里的裸 `/api` 路径在本控制面拓扑下同样要加前缀）。
+> ② **PAT 端点在控制面「设置 → API 令牌」**；本控制面版本上**项目限定（scoped）PAT 调
+>    `POST /api/deployments` 恒 403**——旧版 collection 预检要求 `project:*` 级权限（上游
+>    master 已修，见 deployment.routes.ts 的 collectionProject 注释）。故当前用 fullAccess
+>    PAT；**控制面升级后应收紧回 scoped**（重发一枚 grants=[project/proj_xxx/write] 并换 secret）。
+> ③ dashboard 会话创建 PAT 的 POST `/api/proxy/api/tokens`，值只在响应里出现一次。
 
 ### 8. 验证（首次部署后逐条做）
 
