@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.5.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.5.2...v0.5.3) - 2026-09-14
+- 【修复】scripts: 迁移脚本 pg 经 createRequire 锚 apps/server 解析；用法订正为 tsx (#3 关联) ([#57](https://github.com/MYTech-Co-LTD/platform-core/pull/57), [b346e8e](https://github.com/MYTech-Co-LTD/platform-core/commit/b346e8e91f9651e09164548db2d45a4b2dcee3e3))
+
+
 ## [0.5.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.5.1...v0.5.2) - 2026-09-14
 - 【修复】auth-core: upsertSubscription update 补 ?id= 定位 + 回读验 state（真机形状，替身收严）(#50) ([#51](https://github.com/MYTech-Co-LTD/platform-core/pull/51), [e262813](https://github.com/MYTech-Co-LTD/platform-core/commit/e2628131348047d431d840a73b2d78e78f711d88))
 
