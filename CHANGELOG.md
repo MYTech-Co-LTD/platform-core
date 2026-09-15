@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.7.0...v0.8.0) - 2026-09-15
+- 【新增】auth: wechat-oa 访客登录路 + userApp 停用闸门 + guest 码协议（售后 M1） (#66) ([#67](https://github.com/MYTech-Co-LTD/platform-core/pull/67), [868fe80](https://github.com/MYTech-Co-LTD/platform-core/commit/868fe800552e09bf4f99cd1afbc715a60ca9df14))
+
+
 ## [0.7.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.6.0...v0.7.0) - 2026-09-14
 - 【新增】scripts: provision CLI 三债 + 私有化交付 runbook（spec-3） (#63) ([#64](https://github.com/MYTech-Co-LTD/platform-core/pull/64), [b00e64b](https://github.com/MYTech-Co-LTD/platform-core/commit/b00e64b4ab938b7fa889b726b7baf01efbd2455a))
 
