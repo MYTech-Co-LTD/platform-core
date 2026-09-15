@@ -1,5 +1,7 @@
-// 路由层的两个共享类型。单独一个文件是为了让 T6–T9 四个域互相不 import（避免循环与耦合），
-// 只共同依赖这里。
+// 路由层的共享层：两个**类型**（ModuleHono / RouteCtx）**外加**分页的**运行时常量**与解析器。
+// 单独一个文件是为了让 T6–T9 四个域互相不 import（避免循环与耦合），只共同依赖这里。
+// ⚠️ 因此本文件有**值导出**：引类型请务必 `import type`，别把类型当值引（#44 的形状，
+//    typecheck 与直连 src 的单测都拦不住，本仓护栏只加载 auth-core 的桶、照不到这里）。
 import type { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type { Identity } from '@platform/sdk'

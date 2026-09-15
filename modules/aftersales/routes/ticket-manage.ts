@@ -196,6 +196,11 @@ function toNullableInt(v: unknown): number | null {
  * 「fixed/reject 路，没有比例」⇒ 访客端把「按 0.1235 赔 8825 分」显示成与「驳回、无比例」同形。
  *
  * 列【在场】时才转换；在场且值为 null ⇒ **保持 null**（那个 null 是 fixed/reject 的表达，不能丢）。
+ *
+ * ⚠️「键缺席」是 **`JSON.stringify` 之后**的性质（值是 `undefined` 时序列化会把键丢掉），
+ * 不是函数返回对象上的性质：返回对象里键**仍在场**（`'refundRatio' in item === true`，
+ * 值为 `undefined`）。当前 4 个调用点都经 `c.json`（= JSON 序列化）故成立；
+ * 若将来有人直接读该对象的键（不吃序列化），**前提就不成立了** —— 那里要显式判 `undefined`。
  */
 export function normalizeTicketRow(row: Record<string, unknown>): Record<string, unknown> {
   return {
