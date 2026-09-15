@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "noEmit": true },
+  // 测试文件归 vitest 管（同 apps/server 与 auth-core 惯例：测试代码不做 strict-null 迁就）
+  "include": ["**/*.ts"],
+  "exclude": ["**/*.test.ts"]
+}
