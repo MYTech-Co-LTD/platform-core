@@ -104,7 +104,8 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 |---|---|---|
 | `ticket` | after_sales_work_order | 编号/商品/门店/金额类型（按比例\|固定）/金额/附件引用/状态机（待处理→已处理\|已驳回）/处理人 |
 | `ticket_rule` | after_sales_rule | 比例/固定额；工单实时算金额 |
-| `store` / `product` / `employee` / `department` / `region` | 共用主数据 | 「可搬迁」纪律；`employee.open_id` 是移动端身份锚 |
+| `store` / `product` / `employee` / `region` | 共用主数据 | 「可搬迁」纪律；`employee.open_id` 是移动端身份锚。**M2a 建这四张**（各有源表） |
+| `department` | 共用主数据（§0.1 原表清单的一行） | **建表归 M2b**（2026-09-15 定）：§3.3 的 14 张源表清单里**没有部门表**，M2a 既无源可映、又无 API 消费者（§2.2 主数据面只有 stores/products/employees）——建它等于照猜写 DDL，与 `archive_*` 同一条规矩 |
 | `archive_order` / `archive_order_item` | group_buying_order(_item) 存量 | **只读档案表**：保工单关联订单展示/查询完整，无业务 API；接龙二期另起活表。**建表归 M2b**（2026-09-15 定）：它们唯一的消费者就是 M2b 的迁移脚本，而 `group_buying_*` 的字段清单**至今没有实测样本**（§3.3 只测得行数与几处类型异常）——M2a 建它等于照猜写 DDL。M2a 侧只留 `ticket.related_order` 引用列；M2b 拉样后建表，字段按样本定 |
 
 **金额表示（2026-09-15 定）**：目标表金额**一律整数分**（列名 `_minor` 后缀或注释标明），
@@ -127,7 +128,7 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 
 | 面 | scope | 端点 |
 |---|---|---|
-| 管理端 | `aftersales:manage` | `GET /tickets`（分页/筛选）· `GET /tickets/:id` · `POST /tickets/:id/process` · `GET/POST /rules` · `PUT/DELETE /rules/:id` · `GET /stores` · `GET /products` · `GET /employees` · `POST /employees/:id/approve` · `GET /attachments/:id` |
+| 管理端 | `aftersales:manage` | `GET /tickets`（分页/筛选）· `GET /tickets/:id` · `POST /tickets/:id/process` · `GET/POST /rules` · `PUT/DELETE /rules/:id` · `GET /stores` · `GET /products` · `GET/POST /employees` · `POST /employees/:id/approve` · `GET /attachments/:id` |
 | 访客端 | `aftersales:guest` | `GET /guest/tickets`（**只回自己的**，按 `identity.userId`＝openid 过滤）· `GET /guest/tickets/:id` · `POST /guest/tickets`（提交）· `POST /guest/attachments`（元数据→预签名 PUT URL） |
 
 分面而非靠「同一个 handler 里判 scope」是**故意的**：门卫按声明逐条判定，一个端点一个 scope
@@ -154,7 +155,12 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
   视频过服务器必炸。字节全程不过平台；上传换预签名 PUT（短 TTL），下载经 scope 校验换
   预签名 GET（短 TTL）。
 - env：`AFTERSALES_ZOS_ENDPOINT/REGION/BUCKET/ACCESS_KEY/SECRET`（B9 声明 + openship isSecret）；
-  key 规范 `aftersales/{org}/{ticket_id}/{uuid}`（key 不用裸 `=` 等需编码字符）。
+  key 规范 `aftersales/{org}/{ticket_ref}/{uuid}`（key 不用裸 `=` 等需编码字符）。
+- **`{ticket_ref}` 不是工单的库内主键，是客户端自带的幂等键**（2026-09-15 定，写 M2a 计划时落实）：
+  移动端的顺序是**先传图、后提交工单**（选照片→上传→提交），预签名发生在工单落库**之前**，
+  那一刻没有任何库内 id 可拼。故该段放客户端生成的 `client_request_id`——它同时就是 §2.2
+  要求的提交幂等键（`ticket` 表 `unique(org, client_request_id)`）。工单主键仍由库自增，
+  两者互不替代（幂等键由客户端持有，主键由库持有）。
 - **附件存量不搬运**：历史工单附件引用保持 COS 原值（无极 COS 账号保活可读；客户不在意
   历史凭证则可标记不可看——交付时按客户意思二选一）；新附件全走 ZOS。
 
@@ -346,6 +352,16 @@ GET https://data.wujisite.com/api/private/object
 - module-protocol.md（userApp 闸门缺口、租户数据隔离约定）。
 
 ## 7. 修订记录
+
+- 2026-09-15（写 M2a 计划时：三处收口，仍是**约束倒逼**，非口味）：
+  ① §2.3 附件 key 段 `{ticket_id}` → **`{ticket_ref}` = 客户端幂等键**——移动端「先传图后提交」，
+  预签名早于工单落库，那一刻无库内 id 可拼；该段改放 `client_request_id`（同时是 §2.2 的提交
+  幂等键）。这是本节唯一一次改**已定的 key 规范**，理由是原规范在真实时序上不可实现。
+  ② §2.1 主数据行拆开：M2a 只建 `store`/`product`/`employee`/`region`（四张各有源表），
+  **`department` 归 M2b**——§3.3 源表清单里没有部门表，且 §2.2 主数据面无它的端点，
+  M2a 建它＝照猜写 DDL（与 `archive_*` 同规矩）。
+  ③ §2.2 管理端面补回 `POST /employees`——上一轮把散文摊成表时漏抄，而 §2.2 散文行原本有它
+  （员工注册是 console 侧流程，§3.1）。**同轮内的自相矛盾，按更完整的原始清单修**。
 
 - 2026-09-15（写 M2a 计划前：两处范围收口，均由**平台固有约束**倒逼，非口味调整）：
   ① §2.2 增「路径按 scope 分面」——协议规定同一 `(method, path)` 只能声明一次、一条声明只带一个
