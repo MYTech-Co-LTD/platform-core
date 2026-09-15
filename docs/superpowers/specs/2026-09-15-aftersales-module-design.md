@@ -104,6 +104,7 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 |---|---|---|
 | `ticket` | after_sales_work_order | 编号/商品/门店/金额类型（按比例\|固定）/金额/附件引用/状态机（待处理→已处理\|已驳回）/处理人 |
 | `ticket_rule` | after_sales_rule | 比例/固定额；工单实时算金额 |
+| `ticket_attachment` | after_sales_work_order 的 `damage_images`（数组/字符串混用，归一后展开） | 附件对象键（ZOS `object_key`）+ 类型/大小/上传者。**`ticket_id` 可空**——§2.3 的预签名发生在工单落库**之前**（移动端先传图后提交），那一行先以 `client_request_id` 落库；提交工单时按 `(org, client_request_id)` 认领。唯一索引 `(org, object_key)` |
 | `store` / `product` / `employee` / `region` | 共用主数据 | 「可搬迁」纪律；`employee.open_id` 是移动端身份锚。**M2a 建这四张**（各有源表） |
 | `department` | 共用主数据（§0.1 原表清单的一行） | **建表归 M2b**（2026-09-15 定）：§3.3 的 14 张源表清单里**没有部门表**，M2a 既无源可映、又无 API 消费者（§2.2 主数据面只有 stores/products/employees）——建它等于照猜写 DDL，与 `archive_*` 同一条规矩 |
 | `archive_order` / `archive_order_item` | group_buying_order(_item) 存量 | **只读档案表**：保工单关联订单展示/查询完整，无业务 API；接龙二期另起活表。**建表归 M2b**（2026-09-15 定）：它们唯一的消费者就是 M2b 的迁移脚本，而 `group_buying_*` 的字段清单**至今没有实测样本**（§3.3 只测得行数与几处类型异常）——M2a 建它等于照猜写 DDL。M2a 侧只留 `ticket.related_order` 引用列；M2b 拉样后建表，字段按样本定 |
@@ -352,6 +353,14 @@ GET https://data.wujisite.com/api/private/object
 - module-protocol.md（userApp 闸门缺口、租户数据隔离约定）。
 
 ## 7. 修订记录
+
+- 2026-09-15（M2a 开工前**回读订正**：§2.1 漏列 `ticket_attachment`）：§2.1 自述「数据模型」，
+  却只列了 `ticket`/`ticket_rule`/主数据/`department`/`archive_*`，**没有附件表**——而 §2.2 声明了
+  `POST /attachments` + `GET /attachments/:id`、§2.3 定了 ZOS key 规范与预签名直传、§2.1 的
+  `ticket` 行又写着「附件引用」。三节都假定它存在，表却漏了 ⇒ 补一行（含 `ticket_id` 可空
+  这一非显然点：预签名早于落库，行先落在 `client_request_id` 上，提交时认领）。
+  本轮**不改任何设计**，只把已成事实的表补进清单——`ticket_attachment` 自 M2a 计划定稿起
+  就在 `001_init.sql` 里（7 张表），此处是文档追平代码。
 
 - 2026-09-15（M1 已合并后**回读订正**，两处旧措辞与落地物不符）：
   ① §4 #5「`.env.example` 增键：公众号 + ZOS」——**公众号半边是错的**：M1 落地后凭证在

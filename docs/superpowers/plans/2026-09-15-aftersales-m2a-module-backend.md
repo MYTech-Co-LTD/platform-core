@@ -193,7 +193,7 @@ gh issue create \
 ## 范围（做什么）
 
 - `manifest.yaml`：`id: aftersales`、两个权限码、`guest: { scope: aftersales:guest }`、逐条声明域 API
-- `migrations/001_init.sql`：8 张租户数据表（ticket / ticket_rule / ticket_attachment /
+- `migrations/001_init.sql`：7 张租户数据表（ticket / ticket_rule / ticket_attachment /
   store / product / employee / region），全部带 `org`
 - 域 API：管理端（工单列表/详情/处理、规则 CRUD、门店/商品/员工、员工审批、附件取 URL）
   + 访客端（`/guest/*`：只看自己的工单、提交工单、附件预签名 PUT）
@@ -320,7 +320,7 @@ git commit -m "docs(architecture): 组件表登记首个真业务模块 aftersal
   - `modules/aftersales/test-util.ts` 导出三个值：`makeIdentity(partial): Identity`、
     `buildTestApp(mod: ModuleDefinition, identity: Identity, ctx: ModuleContext): Hono`、
     `applyMigrations(pool: Pool): Promise<string[]>`
-  - DB 表 8 张（列定义见 `001_init.sql`）
+  - DB 表 7 张（列定义见 `001_init.sql`）
 
 - [ ] **Step 1: 写 `modules/aftersales/package.json`**
 
@@ -387,7 +387,7 @@ M2a（本模块当前形态）实施计划见 `docs/superpowers/plans/2026-09-15
 
 ## 表分类声明（`docs/module-protocol.md`「租户数据隔离」要求）
 
-**本模块没有全局表**：`001_init.sql` 建的全部 8 张表
+**本模块没有全局表**：`001_init.sql` 建的全部 7 张表
 （`ticket` / `ticket_rule` / `ticket_attachment` / `store` / `product` / `employee` / `region`
 及后续增量）都是**租户数据表**，每张都带 `org text not null`，读写一律 `where org = $1`。
 
@@ -739,7 +739,7 @@ describePg('迁移（需要 DATABASE_URL）', () => {
     }
   })
 
-  it('8 张表全部落库，且每张都带 org 列（租户数据表纪律）', async () => {
+  it('7 张表全部落库，且每张都带 org 列（租户数据表纪律）', async () => {
     const tables = ['region', 'store', 'product', 'employee', 'ticket_rule', 'ticket', 'ticket_attachment']
     const res = await pool.query<{ table_name: string; column_name: string }>(
       `select table_name, column_name from information_schema.columns
@@ -811,7 +811,7 @@ manifest 与路由（此刻都是空集合）双向核对通过。
 
 ```bash
 git add modules/aftersales
-git commit -m "feat(aftersales): 模块骨架与建表迁移——8 张租户数据表，API 面暂空 (#<N>)"
+git commit -m "feat(aftersales): 模块骨架与建表迁移——7 张租户数据表，API 面暂空 (#<N>)"
 ```
 
 ---
@@ -3260,7 +3260,7 @@ platform-core 第一个真业务模块的后端落地（spec M2a 期）。
 - `docs/module-protocol.md`
 
 ## 范围
-- `modules/aftersales`：manifest 声明 + 001 迁移建表（8 张）
+- `modules/aftersales`：manifest 声明 + 001 迁移建表（7 张）
 - 域 API：工单（管理端 + 访客端）· 规则 · 主数据 · 附件
 - 天翼 ZOS 预签名存储（path-style；上传/下载字节不过平台）
 
