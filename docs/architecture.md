@@ -54,7 +54,7 @@
 | `apps/web`（`@platform/web`） | 前端 console（SPA）；模块 console 条目由 registry 聚合 | `@platform/sdk/web`（`platformFetch`）、antd、react | 无人 |
 | `packages/auth-core` | **认证内核**：Casdoor 客户端、会话签名、scope 计算、企微 | jose、hono、zod（**无仓内依赖**） | **只有 `apps/server`** |
 | `packages/platform-sdk` | **模块契约**：`defineModule` / manifest schema / 门卫 / 前端 fetch | hono、pg、yaml、zod（**无仓内依赖**） | `apps/server`、`apps/web`、每个 `modules/<id>` |
-| `modules/<id>` | 业务模块（现为 `demo` 占位） | `@platform/sdk`（+ 前端库） | 无人；由宿主装载 |
+| `modules/<id>` | 业务模块。现为 `demo`（占位）与 `aftersales`（**第一个真业务模块**：售后域。M2a 只有域 API + 建表 + ZOS 预签名，console/mobile 归 M3） | `@platform/sdk`（+ 前端库；`aftersales` 另有 `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` 做天翼 ZOS 预签名） | 无人；由宿主装载 |
 | `scripts/` | 门禁与工具 | — | CI |
 | `deploy/` | 部署面：compose / Dockerfile / runbook | — | 生产接入 |
 
@@ -128,6 +128,12 @@
    `docs/module-protocol.md`「租户数据隔离」
 6. console 条目写进 `manifest.frontend.console[]`；前端 registry 由 `scripts/gen-console-registry.mjs` 生成
 7. 部署**一般不用动**（模块随宿主构建进镜像）
+8. 有**外部访客面**（移动端/公众号客户）的模块：manifest 增声明 `guest: { scope }`
+   （`scope` 必须 ∈ 本模块 `permissions[].code`，schema 拒绝越界），宿主 `wechat-oa` 访客登录路
+   按**该租户已启用模块**发放这些码；访客面的端点照常在 `api.internal[]` 里**逐条声明**（scope
+   用那个 guest 码），**不另开一套门禁**。访客身份不落 Casdoor（外部用户不进内部 IdP）。
+   路径必须与管理端**分面**（如 `/guest/*`）——同 `(method, path)` 只能声明一次。
+   → 例：`modules/aftersales`（首个使用者）；协议细节读 `docs/module-protocol.md`
 
 → 逐条契约与已踩过的坑读 `docs/module-protocol.md`（**改模块 API / 门卫 / 声明前必读**）
 
