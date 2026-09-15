@@ -148,4 +148,69 @@ describePg('主数据域', () => {
     expect((await res.json()) as { error: string }).toMatchObject({ error: 'STORE_NOT_FOUND' })
     await pool.query('delete from aftersales.store where org = $1', ['test-aftersales-md-other'])
   })
+
+  // ── 终审修复轮 1（I-1）：body 参数面的整数上界，**按目标列的列型分档** ──
+  // `employee.store_id` 是 **bigint** ⇒ 上界 = Number.MAX_SAFE_INTEGER（`.safe()`）。
+  // 修前 `z.number().int()` 放行 `1e30` ⇒ 落 pg 参数位抛 22P02 ⇒ **Hono 兜成 500**（终审实测）。
+  it('【回归 I-1】员工注册 storeId 越界 ⇒ 400（不是 500）', async () => {
+    for (const storeId of [1e30, Number.MAX_SAFE_INTEGER + 1]) {
+      const res = await app.request('/employees', json({ name: '越界', storeId }))
+      expect(res.status, `storeId=${storeId} 应为 400，实为 ${res.status}`).toBe(400)
+      expect((await res.json()) as { error: string }).toMatchObject({ error: 'INVALID_BODY' })
+    }
+    // 边界对照：MAX_SAFE_INTEGER 本身是合法 bigint ⇒ zod 放行、走到门店校验 ⇒ 本 org 没有这个门店
+    // ⇒ 400 **STORE_NOT_FOUND**。这条把「上界恰好在 bigint 列型上」钉住：再紧一点就会变 INVALID_BODY。
+    const boundary = await app.request('/employees', json({ name: '边界', storeId: Number.MAX_SAFE_INTEGER }))
+    expect(boundary.status).toBe(400)
+    expect((await boundary.json()) as { error: string }).toMatchObject({ error: 'STORE_NOT_FOUND' })
+  })
+
+  // ── 终审修复轮 1（I-2）：path-param id 守卫收成 routes/context.ts 的 parseIdParam ──
+  // 修前 `Number.isInteger(1e23) === true` ⇒ 超大数字串落进 pg 的 bigint 参数位 ⇒ 500。
+  // 本用例是【管理面】终点站之一的端到端连线证据；helper 本身的形状由 routes/context.test.ts 钉住。
+  // 本站点【保留原有状态码】404（与 ticket-manage 的 400 不同，这是刻意的）。
+  it('【回归 I-2】审批端点路径 id 越界 / 非规范 ⇒ 404（保留本站点原有状态码）', async () => {
+    for (const raw of ['1e23', '99999999999999999999999', '1.0', '1e2', '-1', 'abc']) {
+      const res = await app.request(`/employees/${raw}/approve`, json({ approveStatus: 'approved' }))
+      expect(res.status, `POST /employees/${raw}/approve 应为 404，实为 ${res.status}`).toBe(404)
+      expect((await res.json()) as { error: string }).toMatchObject({ error: 'NOT_FOUND' })
+    }
+  })
+
+  // ── 终审修复轮 1（M-T8-1）：`escapeLike` 的转义此前【从未被执行过】 ──
+  // 终审静态核：本文件原来的搜索词只有 `苹果` / `不存在的名字`，**无一含 `%` 或 `_`**
+  // ⇒ 转义函数一次都没被走到；将来有人「简化」掉它【不会红】。
+  // 终审动态实核（真 PG 16.15）：`name ilike '%A\%B%'` 只命中 `A%B`；不转义对照
+  // `'%A%B%'` 命中 `A_B`/`A%B`/`AXB` 三行。⇒ 转义本身是对的（PG 默认 ESCAPE 字符就是
+  // 反斜杠，无需显式 ESCAPE 子句），本用例补的是【证据】，不改实现。
+  it('【回归 M-T8-1】搜索词里的 % / _ / 反斜杠按【字面量】处理，不当通配符', async () => {
+    // `a\%b` 是【含转义字符本身】的输入（JS 字面量 'a\\%b' ⇒ 4 个字符 a \ % b）
+    const names = ['A%B', 'A_B', 'AXB', '纯%号', '纯_号', 'a\\%b']
+    await pool.query(
+      `insert into aftersales.product(org, name, spec, basic_quantity, basic_unit_price_minor)
+       select $1, unnest($2::text[]), '', 1, 1`,
+      [ORG, names],
+    )
+    try {
+      const search = async (q: string) => {
+        const res = await app.request(`/products?q=${encodeURIComponent(q)}`)
+        expect(res.status, `q=${q}`).toBe(200)
+        return ((await res.json()) as { items: { name: string }[] }).items.map((p) => p.name).sort()
+      }
+
+      // ① `q='%'`：若 `%` 被当通配符，它会匹配【一切】——包括本 org 原有的「苹果」
+      const pct = await search('%')
+      expect(pct).toEqual(['A%B', 'a\\%b', '纯%号'])
+      expect(pct, '% 不得被当成通配符匹配到一切').not.toContain('苹果')
+
+      // ② `q='_'`：单字符通配符同理，只命中名字里真有下划线的
+      expect(await search('_')).toEqual(['A_B', '纯_号'])
+
+      // ③ `q='a\%b'`（输入自带反斜杠）：反斜杠必须先被转义，否则它会把后面的 `%` 吃掉、
+      //    当成「字面 %」⇒ 变成匹配 `a%b` 类名字。正确行为是整体按字面量匹配 ⇒ 只有 `a\%b` 命中。
+      expect(await search('a\\%b')).toEqual(['a\\%b'])
+    } finally {
+      await pool.query('delete from aftersales.product where org = $1 and name = any($2::text[])', [ORG, names])
+    }
+  })
 })
