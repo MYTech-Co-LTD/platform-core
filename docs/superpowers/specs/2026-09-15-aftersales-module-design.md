@@ -69,14 +69,16 @@ modules/aftersales            ← 售后域模块（通用产品模块，不带�
 ——通用资源名（`/stores /products /employees`）、表不掺售后语义；接龙立项时**有真实第二
 消费者了**再决定是否抽独立档案模块（YAGNI；现在抽是过早抽象）。
 
-### 1.3 身份（双轨，都在租户 `login_methods` 白名单内）
+### 1.3 身份（两类用户，2026-09-15 用户订正：移动端是外部客户，非内部员工）
 
-- **PC 管理端** = Casdoor 现成路（password / wecom）。
-- **移动端** = **新增 `wechat-oa` 登录路**：公众号静默授权（snsapi_base）→ code 换 openid →
-  查 `employee.open_id` 绑定 → 发 platform_session。**fail-closed 与企微 JIT 三条件同构**：
-  未绑定员工一律拒（工单提交者是门店员工，不是任意微信用户）；绑定/审批沿用 wuji-2 既有
-  门店员工审批流。租户行新增公众号配置（app_id/secret，敏感值走 openship env，形态仿
-  wecom 三参）。auth-core 新增公众号 OAuth（B2 边界内，认证代码只进 auth-core）。
+- **内部员工**（PC console / 企微内）= Casdoor 现成路（password / wecom），不动。
+- **外部客户**（移动 H5，面向公众）= **新增 `wechat-oa` 访客登录路**：公众号静默授权
+  （snsapi_base）→ code 换 openid → 签**访客 session**（sub = openid、org = 租户、
+  scopes = `['aftersales:guest']`，按租户订阅模块发放）——**不建 Casdoor 账号**（外部
+  用户不进内部 IdP）。fail-closed 语义：登录只认 openid 身份，**业务资格由模块判定**
+  （openid↔客户↔门店绑定与审批状态是模块数据，沿用 wuji-2 既有流程随迁）；宿主登录路
+  **零跨模块 schema**（B1 干净）。租户行新增公众号配置（app_id/secret，敏感值走 openship
+  env，形态仿 wecom 三参）。auth-core 新增公众号 OAuth（B2 边界内，认证代码只进 auth-core）。
 
 ## 2. 数据模型、域 API、附件
 
@@ -97,6 +99,11 @@ modules/aftersales            ← 售后域模块（通用产品模块，不带�
 主数据 GET /stores、GET /products（搜索）、GET/POST /employees、POST /employees/:id/approve
 附件   POST /attachments（元数据→预签名 PUT URL）、GET /attachments/:id（校验→预签名 GET URL）
 ```
+
+**scope 分层**（身份两类用户的落点）：移动端端点（提交工单/查自己的工单）声明
+`aftersales:guest`（访客 session 发放）；管理端点（处理/规则/员工/审批）声明内部码
+`aftersales:manage`——门卫**零改动**（identity+scope 判定照旧），访客身份进既有 identity
+结构；`ticket` 提交者字段 = openid（外部客户标识，可选关联门店）。
 
 **并发与幂等**（§0.3 的落点）：处理动作用状态机条件更新（`update … where status=待处理`，
 影响行数 0 ⇒ 409）；工单提交带客户端幂等键（后端去重，不再靠前端防抖）；处理端点按
@@ -190,5 +197,8 @@ userApp 静态必须同形 404——首个真实 userApp 用户，闸门与本�
 
 - 2026-09-15：初版。brainstorming 四问定方向（§0.2），三节设计（拓扑身份 / 数据API附件 /
   重写迁移分期）逐节确认后落盘；附件按用户修订：试点直连天翼 ZOS、存量不搬运。
+- 2026-09-15（补2）：用户订正身份模型——移动端是**外部客户**（非内部员工）：openid 签
+  访客 session（不建 Casdoor 账号、scope=aftersales:guest 按订阅发放），业务资格由模块
+  按绑定/审批状态判定；内部员工一律 Casdoor。§1.3 重写、§2 增 scope 分层。
 - 2026-09-15（补）：应用户要求增 §0.3「迁移即重构」原则——无极前端直调/无事务模式不
   翻译，按标准开发范式重构（服务端权威金额、单端点事务、服务端分页过滤、单测门禁）。
