@@ -3516,7 +3516,7 @@ Expected: 全绿。**注意**：`pnpm typecheck` 走的是根脚本（`pnpm -r -
 - [ ] **Step 3: 推分支**
 
 ```bash
-git push -u origin feat/aftersales-m2a-module-backend
+git push -u origin feat/aftersales-m2a
 ```
 
 若报 SSL/代理错，先试默认（走 7897）；仍失败再加 `-c http.proxy= -c https.proxy=` 绕过
@@ -3525,8 +3525,8 @@ git push -u origin feat/aftersales-m2a-module-backend
 - [ ] **Step 4: 开 PR**
 
 ```bash
-gh pr create --base main --head feat/aftersales-m2a-module-backend \
-  --title "feat(aftersales): M2a 模块后端——域 API + 建表 + 天翼 ZOS 预签名 (Closes #<N>)" \
+gh pr create --base main --head feat/aftersales-m2a \
+  --title "feat(aftersales): M2a 模块后端——域 API + 建表 + 天翼 ZOS 预签名 (Closes #73)" \
   --body "$(cat <<'EOF'
 ## 目标
 platform-core 第一个真业务模块的后端落地（spec M2a 期）。
@@ -3551,12 +3551,17 @@ platform-core 第一个真业务模块的后端落地（spec M2a 期）。
 - [ ] `smoke-load` 证明宿主能装载本模块（装载期双向核对通过）
 - [ ] 每个域都有真 PG 测试：金额公式、三态状态机、幂等、租户隔离、跨租户 404 同形
 
-Closes #<N>
+Closes #73
 EOF
 )"
 ```
 
 - [ ] **Step 5: 等 CI，**只**在 CI CLEAN 时合并**
+
+> ⚠️ **本步不在 T10 内执行**（2026-09-15 协调者裁定，随本行改回计划）：
+> 合并 main = **自动部署到生产**（AGENTS.md「部署已全自动」），因此合并必须排在
+> **全分支终审**之后，并取到**人的明确 go-ahead**。T10 本次只做到 Step 4（开 PR），
+> 本步由协调者在「CI CLEAN ＋ 终审无阻塞项 ＋ 人确认」三者齐备后执行。
 
 ```bash
 gh pr checks --watch
