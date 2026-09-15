@@ -21,4 +21,9 @@ api:
     - { method: GET,  path: /guest/tickets,       scope: aftersales:guest }
     - { method: GET,  path: /guest/tickets/:id,   scope: aftersales:guest }
     - { method: POST, path: /guest/tickets,       scope: aftersales:guest }
+    # ── 规则·管理端（aftersales:manage）──
+    - { method: GET,    path: /rules,     scope: aftersales:manage }
+    - { method: POST,   path: /rules,     scope: aftersales:manage }
+    - { method: PUT,    path: /rules/:id, scope: aftersales:manage }
+    - { method: DELETE, path: /rules/:id, scope: aftersales:manage }
 migrations: { dir: ./migrations }

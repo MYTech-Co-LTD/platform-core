@@ -6,6 +6,7 @@ import type { Identity } from '@platform/sdk'
 import { ZosStorage, zosConfigFromEnv } from './storage'
 import { registerTicketManage } from './routes/ticket-manage'
 import { registerTicketGuest } from './routes/ticket-guest'
+import { registerRule } from './routes/rule'
 import type { RouteCtx } from './routes/context'
 
 // 装配形状照 modules/demo/index.ts（本仓模块的唯一范式）。
@@ -24,6 +25,7 @@ export default defineModule({
 
     registerTicketManage(r, ctx)
     registerTicketGuest(r, ctx)
+    registerRule(r, ctx)
     // T7/T8/T9 在这里继续 register*
     return r
   },
