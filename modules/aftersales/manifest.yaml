@@ -34,4 +34,8 @@ api:
     - { method: GET,  path: /employees,              scope: aftersales:manage }
     - { method: POST, path: /employees,              scope: aftersales:manage }
     - { method: POST, path: /employees/:id/approve,  scope: aftersales:manage }
+    # ── 附件（访客传、管理端取）──
+    # 上传在访客面（外部客户拍的照片），读取在管理端（客服要看图判损）——按 scope 分面。
+    - { method: POST, path: /guest/attachments, scope: aftersales:guest }
+    - { method: GET,  path: /attachments/:id,   scope: aftersales:manage }
 migrations: { dir: ./migrations }

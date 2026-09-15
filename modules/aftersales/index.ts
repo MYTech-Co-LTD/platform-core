@@ -8,6 +8,7 @@ import { registerTicketManage } from './routes/ticket-manage'
 import { registerTicketGuest } from './routes/ticket-guest'
 import { registerRule } from './routes/rule'
 import { registerMasterData } from './routes/masterdata'
+import { registerAttachmentGuest, registerAttachmentManage } from './routes/attachment'
 import type { RouteCtx } from './routes/context'
 
 // 装配形状照 modules/demo/index.ts（本仓模块的唯一范式）。
@@ -28,7 +29,8 @@ export default defineModule({
     registerTicketGuest(r, ctx)
     registerRule(r, ctx)
     registerMasterData(r, ctx)
-    // T7/T8/T9 在这里继续 register*
+    registerAttachmentGuest(r, ctx)
+    registerAttachmentManage(r, ctx)
     return r
   },
 })
