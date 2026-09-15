@@ -3312,3 +3312,5 @@ gh pr merge --squash --delete-branch
 7. **桶策略/后端异步体积校验**——T9 的 `sizeBytesAdvisory` 已把这条边界写在响应里；真上限靠
    ZOS 侧策略，M2a 不含。
 
+
+<!-- issue: #73 -->
