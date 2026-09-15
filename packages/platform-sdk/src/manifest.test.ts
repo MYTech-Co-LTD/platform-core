@@ -190,3 +190,18 @@ describe('ManifestSchema', () => {
     expect(ManifestSchema.safeParse(bad).success).toBe(false)
   })
 })
+
+describe('guest 字段（售后 spec §1.3 协议小扩展）', () => {
+  const base = {
+    id: 'guestmod', name: 'g', version: '0.1.0', platform: '>=0.1',
+    permissions: [{ code: 'guestmod:view', name: 'v' }, { code: 'guestmod:guest', name: '访客' }],
+  }
+  it('合法：guest.scope ∈ permissions codes', () => {
+    const r = ManifestSchema.safeParse({ ...base, guest: { scope: 'guestmod:guest' } })
+    expect(r.success).toBe(true)
+  })
+  it('非法：guest.scope 不在 permissions ⇒ ZodError（与 api scope 同纪律）', () => {
+    const r = ManifestSchema.safeParse({ ...base, guest: { scope: 'other:guest' } })
+    expect(r.success).toBe(false)
+  })
+})
