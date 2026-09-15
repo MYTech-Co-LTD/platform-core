@@ -77,8 +77,16 @@ modules/aftersales            ← 售后域模块（通用产品模块，不带�
   scopes = `['aftersales:guest']`，按租户订阅模块发放）——**不建 Casdoor 账号**（外部
   用户不进内部 IdP）。fail-closed 语义：登录只认 openid 身份，**业务资格由模块判定**
   （openid↔客户↔门店绑定与审批状态是模块数据，沿用 wuji-2 既有流程随迁）；宿主登录路
-  **零跨模块 schema**（B1 干净）。租户行新增公众号配置（app_id/secret，敏感值走 openship
-  env，形态仿 wecom 三参）。auth-core 新增公众号 OAuth（B2 边界内，认证代码只进 auth-core）。
+  **零跨模块 schema**（B1 干净）。租户行新增公众号配置（`wechat_oa_app_id/secret` 两列，
+  形态仿 wecom 三参）；**wechat-oa 不是 console 登录 tab**（外部客户不进登录页）——路由
+  启用判定 = 租户行公众号配置存在，不动 `login_methods` 白名单与前端 METHOD_LABELS。
+  auth-core 新增公众号 OAuth（B2 边界内，认证代码只进 auth-core）。
+
+**访客 scope 发放机制（协议小扩展）**：manifest 增可选字段 `guest: { scope: string }`——
+模块声明自己的访客码（声明即授权的延伸）；wechat-oa 回调签访客 session 时，scopes =
+**该租户已启用模块**声明的 guest 码集合（未启用/未声明 ⇒ 无码；停用模块的移动端 API 由
+既有闸门 404 + 门卫 403 自然闭合）。M1 落协议字段与发放逻辑，M2 的 aftersales manifest
+声明 `guest: { scope: aftersales:guest }`。
 
 ## 2. 数据模型、域 API、附件
 
@@ -197,6 +205,9 @@ userApp 静态必须同形 404——首个真实 userApp 用户，闸门与本�
 
 - 2026-09-15：初版。brainstorming 四问定方向（§0.2），三节设计（拓扑身份 / 数据API附件 /
   重写迁移分期）逐节确认后落盘；附件按用户修订：试点直连天翼 ZOS、存量不搬运。
+- 2026-09-15（补3）：规划期两处定形——wechat-oa 非 console 登录 tab（启用判定=公众号配置
+  存在，不动 login_methods）；访客 scope 走 manifest `guest:{scope}` 声明（协议小扩展，
+  宿主按已启用模块发放）。
 - 2026-09-15（补2）：用户订正身份模型——移动端是**外部客户**（非内部员工）：openid 签
   访客 session（不建 Casdoor 账号、scope=aftersales:guest 按订阅发放），业务资格由模块
   按绑定/审批状态判定；内部员工一律 Casdoor。§1.3 重写、§2 增 scope 分层。
