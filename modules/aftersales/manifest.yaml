@@ -26,4 +26,12 @@ api:
     - { method: POST,   path: /rules,     scope: aftersales:manage }
     - { method: PUT,    path: /rules/:id, scope: aftersales:manage }
     - { method: DELETE, path: /rules/:id, scope: aftersales:manage }
+    # ── 主数据·管理端（aftersales:manage）──
+    # 资源名刻意通用（stores/products/employees）——spec §1.2「可搬迁」纪律，
+    # 接龙二期若成为第二消费者，这组端点可整体搬去独立档案模块。
+    - { method: GET,  path: /stores,                 scope: aftersales:manage }
+    - { method: GET,  path: /products,               scope: aftersales:manage }
+    - { method: GET,  path: /employees,              scope: aftersales:manage }
+    - { method: POST, path: /employees,              scope: aftersales:manage }
+    - { method: POST, path: /employees/:id/approve,  scope: aftersales:manage }
 migrations: { dir: ./migrations }
