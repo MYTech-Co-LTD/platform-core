@@ -892,7 +892,7 @@ describe('computeAmountMinor —— spec §2.4 金额公式', () => {
 
   it('比例是【小数】不是百分数：0.1 的门槛是 10 件，不是 0.1 件', () => {
     // 若被误当百分数（ratio=10）门槛会变成 1000 件、结果恒 0。用正值钉住正确解释。
-    expect(computeAmountMinor({ ...base, damageQuantity: 100 })).toBe(9_000)
+    expect(computeAmountMinor({ ...base, damageQuantity: 100 })).toBe(45_000)
   })
 })
 
