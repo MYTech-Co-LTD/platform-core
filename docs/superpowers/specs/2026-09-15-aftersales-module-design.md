@@ -104,8 +104,13 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 |---|---|---|
 | `ticket` | after_sales_work_order | 编号/商品/门店/金额类型（按比例\|固定）/金额/附件引用/状态机（待处理→已处理\|已驳回）/处理人 |
 | `ticket_rule` | after_sales_rule | 比例/固定额；工单实时算金额 |
-| `store` / `product` / `employee` / `department` / `region` | 共用主数据 | 「可搬迁」纪律；`employee.open_id` 是移动端身份锚 |
-| `archive_order` / `archive_order_item` | group_buying_order(_item) 存量 | **只读档案表**：保工单关联订单展示/查询完整，无业务 API；接龙二期另起活表 |
+| `store` / `product` / `employee` / `region` | 共用主数据 | 「可搬迁」纪律；`employee.open_id` 是移动端身份锚。**M2a 建这四张**（各有源表） |
+| `department` | 共用主数据（§0.1 原表清单的一行） | **建表归 M2b**（2026-09-15 定）：§3.3 的 14 张源表清单里**没有部门表**，M2a 既无源可映、又无 API 消费者（§2.2 主数据面只有 stores/products/employees）——建它等于照猜写 DDL，与 `archive_*` 同一条规矩 |
+| `archive_order` / `archive_order_item` | group_buying_order(_item) 存量 | **只读档案表**：保工单关联订单展示/查询完整，无业务 API；接龙二期另起活表。**建表归 M2b**（2026-09-15 定）：它们唯一的消费者就是 M2b 的迁移脚本，而 `group_buying_*` 的字段清单**至今没有实测样本**（§3.3 只测得行数与几处类型异常）——M2a 建它等于照猜写 DDL。M2a 侧只留 `ticket.related_order` 引用列；M2b 拉样后建表，字段按样本定 |
+
+**金额表示（2026-09-15 定）**：目标表金额**一律整数分**（列名 `_minor` 后缀或注释标明），
+**永不浮点**——§0.3 服务端权威计算的前提（浮点累加会在对账时变成假的差额）。源侧单位
+（分/元）的解释**不在这一层**，只发生在 §3.3 的迁移脚本一处转换里。
 
 ### 2.2 域 API（方案 A，manifest 逐条声明，门卫 fail-closed）
 
@@ -115,6 +120,21 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 主数据 GET /stores、GET /products（搜索）、GET/POST /employees、POST /employees/:id/approve
 附件   POST /attachments（元数据→预签名 PUT URL）、GET /attachments/:id（校验→预签名 GET URL）
 ```
+
+**路径按 scope 分面（2026-09-15 定，协议硬约束推出来的）**：平台协议里**同一个
+`(method, path)` 只能声明一次**（重复声明被 schema 拒绝，否则门卫判定二义），而一条声明只带
+**一个** scope。于是「管理端看全部工单」与「访客看自己的工单」**不能共用 `GET /tickets`**
+——必须分路径。访客面统一收进 `/guest/*` 前缀：
+
+| 面 | scope | 端点 |
+|---|---|---|
+| 管理端 | `aftersales:manage` | `GET /tickets`（分页/筛选）· `GET /tickets/:id` · `POST /tickets/:id/process` · `GET/POST /rules` · `PUT/DELETE /rules/:id` · `GET /stores` · `GET /products` · `GET/POST /employees` · `POST /employees/:id/approve` · `GET /attachments/:id` |
+| 访客端 | `aftersales:guest` | `GET /guest/tickets`（**只回自己的**，按 `identity.userId`＝openid 过滤）· `GET /guest/tickets/:id` · `POST /guest/tickets`（提交）· `POST /guest/attachments`（元数据→预签名 PUT URL） |
+
+分面而非靠「同一个 handler 里判 scope」是**故意的**：门卫按声明逐条判定，一个端点一个 scope
+是协议保证的性质；把两套权限塞进一个 handler 等于在模块里重造一套判定，正是 §0.3 要消灭的
+「前端式编排」。`/guest/*` 的租户与身份仍由宿主注入（访客 session 的 `org` = 租户、
+`sub` = openid），模块侧只多做一件事：**读写一律再按 `submitter_openid` 收窄**。
 
 **scope 分层**（身份两类用户的落点）：移动端端点（提交工单/查自己的工单）声明
 `aftersales:guest`（访客 session 发放）；管理端点（处理/规则/员工/审批）声明内部码
@@ -135,9 +155,53 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
   视频过服务器必炸。字节全程不过平台；上传换预签名 PUT（短 TTL），下载经 scope 校验换
   预签名 GET（短 TTL）。
 - env：`AFTERSALES_ZOS_ENDPOINT/REGION/BUCKET/ACCESS_KEY/SECRET`（B9 声明 + openship isSecret）；
-  key 规范 `aftersales/{org}/{ticket_id}/{uuid}`（key 不用裸 `=` 等需编码字符）。
+  key 规范 `aftersales/{org}/{ticket_ref}/{uuid}`（key 不用裸 `=` 等需编码字符）。
+- **`{ticket_ref}` 不是工单的库内主键，是客户端自带的幂等键**（2026-09-15 定，写 M2a 计划时落实）：
+  移动端的顺序是**先传图、后提交工单**（选照片→上传→提交），预签名发生在工单落库**之前**，
+  那一刻没有任何库内 id 可拼。故该段放客户端生成的 `client_request_id`——它同时就是 §2.2
+  要求的提交幂等键（`ticket` 表 `unique(org, client_request_id)`）。工单主键仍由库自增，
+  两者互不替代（幂等键由客户端持有，主键由库持有）。
 - **附件存量不搬运**：历史工单附件引用保持 COS 原值（无极 COS 账号保活可读；客户不在意
   历史凭证则可标记不可看——交付时按客户意思二选一）；新附件全走 ZOS。
+
+### 2.4 工单处理：金额规则与状态机（**源行为实证** → 服务端权威实现）
+
+M2a 要复刻的业务内核。以下全部取自 wuji-1 源码**逐行实证**，不是推测：
+
+**金额公式**（源：`src/pages/afterSalesWorkOrderManage.vue:687-697`，**当前在浏览器里算**）：
+
+```
+售后金额 = (报损数量 − 基本数量 × 售后比例) × 基本单价      // damage_quantity/basic_quantity/basic_unit_price
+         → 负数取 0（Math.max(0, …)），四舍五入到分
+```
+
+语义：`基本数量 × 比例` 是**免赔门槛**，超出部分才赔。⇒ M2a 把它搬成服务端纯函数并落库
+（§0.3「服务端权威计算」）；**前端传来的金额一概不采信**。
+
+**三态状态机**（源：`src/utils/enumConstants.ts:56-79` 为权威；`src/types/afterSalesWorkOrder.ts:60`
+另声明了一个**含 `processing` 的 4 态版本，全仓从未写入过** —— 死声明，勿照搬）：
+
+| 值 | 中文 | 处理动作 |
+|---|---|---|
+| `pending` | 待处理 | 提交时写入（`useAfterSalesWorkOrder.ts:460`） |
+| `completed` | 已处理 | `ratio` / `fixed` 两条路 |
+| `cancelled` | 已驳回 | `reject` 路（**金额强制归 0**） |
+
+**金额类型 `after_sales_type`**（源：`enumConstants.ts:111` = `'ratio' | 'fixed' | 'reject'`）：
+
+- `ratio`：按公式算，落 `after_sales_rate`（**小数比例，非百分数**）+ `after_sales_amount`。
+- `fixed`：金额是**操作员输入值**，不是计算值 ⇒ 服务端**校验**（非负、整数分、上界）而非重算。
+  这正是 §0.3「前端金额不采信」的**例外要写清**：固定额是业务输入，比例额才是计算值。
+- `reject`：驳回，金额 0，状态 `cancelled`。
+
+**两处源侧单位陷阱（M2a 必须按实证实现，别按注释）**：
+
+- `ticket_rule.refund_ratio`：类型注释谎称「售后比例(%)」，**实存小数**——`AfterSalesRuleDialog.vue:138`
+  载入时 ×100、`:166` 保存时 ÷100，且公式里直接当乘数用（`basic_quantity * refundRatio`）。
+  精度实证：保存走 `.toFixed(4)` ⇒ 目标列定 `numeric(6,4)`。
+- **工单域金额是「元」带分精度**：`basic_unit_price` 类型是 `number`（非 int），且公式末尾
+  `Math.round(amount * 100) / 100` 是**按分的四舍五入**。⇒ §2.1「目标表整数分」的迁移换算
+  在**工单域 = ×100**。**注意不外推到接龙域**（`group_buying_*.price:int` 是另一套，M2b 单独核）。
 
 ## 3. 管理端重写、数据迁移、分期
 
@@ -210,22 +274,34 @@ GET https://data.wujisite.com/api/private/object
 | 数组/字符串混用 | `after_sales_work_order.damage_images:arr/str` | 附件字段先归一再搬 |
 | 字段名说谎 | `group_buying_batch.title:date`（叫 title 存日期） | 不照搬字段名 |
 | 软删语义不统一 | 仅 `group_buying_batch` 有 `is_deleted` | 删除语义逐表问清 |
-| **金额单位未标** | `total_amount:int`、`price:int`（分？元？） | **M2 开工前必须问客户**——服务端权威计算（§0.3）的地基 |
+| **同名字段注释与值不符** | `after_sales_rule.refund_ratio` 注释写「比例(%)」，实存**小数** | 目标列 `numeric(6,4)`；实证见 §2.4 |
+| **同概念多份声明互相打架** | `AfterSalesStatus`：`enumConstants` 3 态 vs `afterSalesWorkOrder.ts` 4 态（`processing` 全仓零写入）；`AfterSalesType` 两处语义不同（业务类型 vs 金额类型） | 目标枚举以 `enumConstants` 为准，见 §2.4 |
+| **审批状态三套词表** | `store.ts`/`registerRequest.ts` 用 `pending\|approved\|rejected`，`employeeInfo.ts` 用 `待审批\|通过\|驳回` | 迁移前归一，见 §5 #9 |
+| **金额单位未标** | `total_amount:int`、`price:int`（分？元？） | **工单域已由源码实证为元**（§2.4）；**接龙域仍待 M2b 动数据前落实**（§5 #7） |
 | 字段与表名撞车 | `employee_info.store_info`（字段）vs `store_info`（表） | 目标表消歧 |
 
 - 映射清洗：老数据二义（`product_name`/`store_selection` 存 ID 或名称）**迁移时一次洗清**，不带兼容层。
 - `employee_info.openId` 全量带过来；订单档案表随迁（工单关联展示）。
 
-**活库一致性（M2 开工前必须定，不得默认）**：源库仍在写入（实测最新 `_mtime` = 2026-09-12），
-工单表 25,661 行仍在涨。二选一写进 M2 计划：**① 一次性快照 + 停机窗口**；
-**② 导出 + `_mtime` 增量对账**（`_mtime` 可做水位线）。
+**活库一致性 — 已定（2026-09-15，用户拍板）：① 一次性快照 + 空闲窗口。** 源库仍在写入
+（实测最新 `_mtime` = 2026-09-12），工单表 25,661 行仍在涨。选定做法是**数据迁移整体后置**：
+不与代码开发同期，择一个业务空闲窗口**一次性全量拉取入库**。
+
+⇒ **M2 拆两段**（这是本次决定的直接后果）：
+- **M2a 代码**：域 API + 建表 + ZOS 存储。**不依赖源数据**，即刻开工。
+- **M2b 数据**：全量拉取 → 清洗 → 入库 → 对账。**择窗口单独跑，另出计划**；执行时以「拉取
+  开始时 / 结束后各取一次最大 `_mtime`，加窗口内行数与金额汇总」为对账基线（§3.4）。
+
+② `_mtime` 增量对账**不选**——它买的「源库不停写也能持续同步」在本项目没有需求方，代价却是
+长期维护一套对账机制；`_mtime` 降级为 M2b 的**窗口内快照口径**，够用。
 
 ### 3.4 分期与验收
 
 | 期 | 内容 |
 |---|---|
 | M1 底座三件 | userApp 静态托管 + 停用闸门补缺；auth-core 公众号 OAuth 路 + 租户行公众号配置 + `login_methods` 新值 |
-| M2 模块后端 | 域 API + 迁移建表 + ZOS 存储 + 数据全量迁移与清洗 |
+| **M2a 模块后端（代码）** | 域 API + 迁移建表 + ZOS 存储——**不依赖源数据，先做** |
+| **M2b 数据迁移（择窗口）** | 全量拉取 → 清洗 → 入库 → 计数/金额对账（一次性，另出计划） |
 | M3 双端 | console 管理端 + 移动端 userApp 整迁 |
 
 **总验收绑定 spec-3 试点**：客户机六步交付；单租户 e2e（公众号登录 → 提交工单含 ZOS 直传
@@ -246,18 +322,26 @@ GET https://data.wujisite.com/api/private/object
 
 ## 5. 已知边界
 
-1. **活库一致性策略未定**（§3.3，取代原「导出方式未确认」）——源库在写，全量迁移期间
-   工单表仍在涨；「快照 + 停机窗口」与「导出 + `_mtime` 增量对账」二选一。**通道本身已实测
-   可拉（§3.3），排期不再是虚的**；但未定策略前不得开跑数据迁移。
+1. **活库一致性：已定为「空闲窗口一次性全量」**（§3.3，2026-09-15 拍板）——数据迁移（M2b）
+   整体后置于代码开发（M2a）之后，择业务空闲窗口一次跑完，以窗口首尾的行数/金额汇总对账。
+   **M2a 不依赖源数据，即刻可开工**；M2b 的**排期取决于窗口**，不在 M2a 的关键路径上。
 2. **cron 不碰**：售后域不需要定时任务；接龙自动失效属二期，届时再解决平台定时机制。
 3. **接龙（groupbuying）二期**：购物车并发/库存锁/自动失效/live 表另起；主数据届时评估抽取。
 4. 历史附件依赖无极 COS 账号保活（或客户接受不可看）。
 5. 天翼 ZOS 端点写法坑（endpoint 不带 `https://`、path-style）带进实现注意——WeKnora 两条
    条目为证。
 6. 第一个真模块落地后，触发 spec-1 留的「评估租户隔离 CI 门禁升级」。
-7. **源库金额单位未确认**（§3.3 实证表）：`total_amount` / `price` 是分还是元未标——这是
-   §0.3「服务端权威计算」的地基，M2 写金额逻辑前必须问客户，**不许按猜测实现**。
+7. **源库金额单位：工单域已证，接龙域仍开**（§3.3 实证表 + §2.4）——
+   ① **工单域 = 元带分精度**（源码实证：`basic_unit_price` 是 `number`、公式末尾按分四舍五入）
+   ⇒ M2b 换算 ×100，已可写；
+   ② **接龙域未定**（`group_buying_order.total_amount:int` / `price:int`，是分是元未标），
+   **M2b 动这半边数据前必须落实**——优先用数据自证（拉样看量级：接龙客单价若为几十元级，
+   则 `5000` 是分、`50` 是元；再看有无非整百值），证不出来再问客户。
+   内部表示一律整数分（§2.1），故 M2a 不受影响；**接龙域不许按猜测写转换**。
 8. `wechat_openid`（wuji 内部 token 缓存）确认**不迁**——平台无消费者，只记录不搬运。
+9. **审批状态词表需归一**（§3.3 实证表）：源侧三套并存——`store.ts` / `registerRequest.ts` 用
+   `pending|approved|rejected`，`employeeInfo.ts` 用中文 `待审批|通过|驳回`。目标表**定死一套
+   英文枚举**，中文是**展示层**的事；归一在 M2a 建表时定死类型、M2b 迁移时做映射。
 
 ## 6. 关联
 
@@ -269,6 +353,35 @@ GET https://data.wujisite.com/api/private/object
 
 ## 7. 修订记录
 
+- 2026-09-15（写 M2a 计划时：三处收口，仍是**约束倒逼**，非口味）：
+  ① §2.3 附件 key 段 `{ticket_id}` → **`{ticket_ref}` = 客户端幂等键**——移动端「先传图后提交」，
+  预签名早于工单落库，那一刻无库内 id 可拼；该段改放 `client_request_id`（同时是 §2.2 的提交
+  幂等键）。这是本节唯一一次改**已定的 key 规范**，理由是原规范在真实时序上不可实现。
+  ② §2.1 主数据行拆开：M2a 只建 `store`/`product`/`employee`/`region`（四张各有源表），
+  **`department` 归 M2b**——§3.3 源表清单里没有部门表，且 §2.2 主数据面无它的端点，
+  M2a 建它＝照猜写 DDL（与 `archive_*` 同规矩）。
+  ③ §2.2 管理端面补回 `POST /employees`——上一轮把散文摊成表时漏抄，而 §2.2 散文行原本有它
+  （员工注册是 console 侧流程，§3.1）。**同轮内的自相矛盾，按更完整的原始清单修**。
+
+- 2026-09-15（写 M2a 计划前：两处范围收口，均由**平台固有约束**倒逼，非口味调整）：
+  ① §2.2 增「路径按 scope 分面」——协议规定同一 `(method, path)` 只能声明一次、一条声明只带一个
+  scope（`manifest.ts` 的 superRefine 拒绝重复），故「管理端看全部工单」与「访客看自己的工单」
+  **不可能共用 `GET /tickets`**；访客面统一收进 `/guest/*` 前缀，端点清单由散文改成双面表。
+  ② §2.1 `archive_order` / `archive_order_item` **建表归 M2b**——其唯一消费者是 M2b 迁移脚本，
+  而源 `group_buying_*` 字段至今无实测样本，M2a 建表＝照猜写 DDL；M2a 只留 `ticket.related_order`。
+- 2026-09-15（M2a 设计依据：工单域源码实证，**新增 §2.4**）：为写 M2a 计划回读 wuji-1 源码，
+  把要复刻的业务内核钉死成文——**金额公式**（`(报损数量 − 基本数量×比例) × 基本单价`，负数取 0，
+  取整到分；源在 `afterSalesWorkOrderManage.vue:687-705`，**目前跑在浏览器里**）、**三态状态机**
+  （`pending|completed|cancelled`；`types/afterSalesWorkOrder.ts:60` 那个含 `processing` 的 4 态版
+  **全仓零写入，是死声明**）、**金额类型 `ratio|fixed|reject`**（`fixed` 的金额是**操作员输入**而非
+  计算值 ⇒ §0.3「前端金额不采信」在此有**明写的例外**）。§3.3 实证表补 3 行（`refund_ratio` 注释
+  与值不符、同概念多份声明打架、审批状态三套词表），§5 新增 #9。
+  **金额单位问题拆解**：工单域由源码实证为**元带分精度**（§5 #7 ①），接龙域仍未定（②）。
+- 2026-09-15（M2a 开工决策，用户拍板）：**两条前置项落定**——① §3.3 活库一致性 = **一次性快照 +
+  空闲窗口**，数据迁移**整体后置于代码开发**，M2 据此**拆成 M2a（代码，即刻开工）/ M2b（数据，
+  择窗口另出计划）**；② §2.1 新增「金额表示」= **目标表一律整数分，永不浮点**，源侧单位
+  （分/元）的解释**收敛到 M2b 迁移脚本的一处转换**——§5 #7 随之从「开发期前置」降为
+  **「迁移期前置」**（M2a 的服务端金额计算不再被它卡住）。§5 #1 相应改写。
 - 2026-09-15（M2 前置调研，真机实测）：**原「第一未知数」销账**——无极托管库走只读 HTTP API
   可拉（非直连/非导出文件），§3.3 重写为「通道口径 + 14 张源表清单与实测行数 + 不合理实证表」。
   §5 边界 #1 由「导出方式未确认」换为「活库一致性策略未定」，并新增 #7 金额单位待问、#8
