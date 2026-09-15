@@ -267,4 +267,80 @@ describePg('工单域', () => {
     expect(manageBody.size).toBe(20)
     expect(guestBody.size).toBe(manageBody.size)
   })
+
+  // ── 修复轮 1/5（裁决 C）：列缺席 ⇒ 别名字段缺席，不得替「没查的列」编造 null ──
+  // 访客列表是有意的【窄 SELECT】（不含 product_id / store_id / refund_ratio），而
+  // normalizeTicketRow 曾无条件映射这三列：productId/storeId 变 Number(undefined)=NaN 被
+  // JSON.stringify 写成 null，refundRatio 走 toRatioOrNull(undefined) → null。后者最重：
+  // T4 契约里 refundRatio:null 的语义是「fixed/reject 路，没有比例」（domain/ticket.ts）
+  // ⇒ 访客端把「按 0.1235 赔 8825 分」显示成与「驳回、无比例」同形。
+  it('【回归】ratio 工单：访客列表没 SELECT 的三列不得被编造成 null，管理端/详情仍是真值', async () => {
+    const created = await submit(appGuest, validBody('req-alias-ratio'))
+    const { id } = (await created.json()) as { id: number }
+    const proc = await appManage.request(`/tickets/${id}/process`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amountType: 'ratio', refundRatio: 0.1235 }),
+    })
+    expect(proc.status).toBe(200)
+
+    const guestList = (await (await appGuest.request('/guest/tickets?size=100')).json()) as {
+      items: Record<string, unknown>[]
+    }
+    const manageList = (await (await appManage.request('/tickets?size=100')).json()) as {
+      items: Record<string, unknown>[]
+    }
+    const detail = (await (await appGuest.request(`/guest/tickets/${id}`)).json()) as Record<string, unknown>
+    const li = guestList.items.find((i) => i.id === id)
+    const mi = manageList.items.find((i) => i.id === id)
+    expect(li, `访客列表里应有工单 ${id}`).toBeDefined()
+    expect(mi, `管理端列表里应有工单 ${id}`).toBeDefined()
+
+    // ① 访客列表：这三列不在 SELECT 里 ⇒ 别名字段【必须缺席】（`'键' in item === false`）。
+    //    这是本轮 F2 的正主——修前这里是 `refundRatio:null` / `productId:null`。
+    expect('refundRatio' in li!).toBe(false)
+    expect('productId' in li!).toBe(false)
+    expect('storeId' in li!).toBe(false)
+
+    // ② 缺席为何无害：访客仍能靠金额类型/金额判别「按比例赔」——缺席的不是判别依据。
+    //    注意键名：本接口的金额类型就是 snake_case 的 `amount_type`（normalizeTicketRow 只给
+    //    amount_minor 起了 camelCase 别名，没给 amount_type 起），故按【实际契约】断言。
+    expect(li!.amount_type).toBe('ratio')
+    expect(li!.amountMinor).toBe(8825)
+
+    // ③ 对照：访客详情是宽 SELECT，必须给出真值（修前就正确，别弱化）。
+    expect(detail.refundRatio).toBe(0.1235)
+    expect(detail.productId).toBe(productId)
+
+    // ④ 管理端列表也是宽 SELECT ⇒ 必须仍是真值（钉住「没把管理端一起弄成缺席」）。
+    expect(mi!.refundRatio).toBe(0.1235)
+    expect(mi!.productId).toBe(productId)
+  })
+
+  it('【回归】reject 工单：null 的语义必须保住（详情 + 管理端列表），访客列表该键必然缺席', async () => {
+    const created = await submit(appGuest, validBody('req-alias-reject'))
+    const { id } = (await created.json()) as { id: number }
+    const proc = await appManage.request(`/tickets/${id}/process`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amountType: 'reject' }),
+    })
+    expect(proc.status).toBe(200)
+
+    const manageList = (await (await appManage.request('/tickets?size=100')).json()) as {
+      items: Record<string, unknown>[]
+    }
+    const detail = (await (await appGuest.request(`/guest/tickets/${id}`)).json()) as Record<string, unknown>
+    const mi = manageList.items.find((i) => i.id === id)
+    expect(mi, `管理端列表里应有工单 ${id}`).toBeDefined()
+
+    // 列【在场且为 null】⇒ 别名必须是 null（**不是缺席**）：这就是 fixed/reject 路的表达。
+    expect('refundRatio' in detail).toBe(true)
+    expect(detail.refundRatio).toBeNull()
+    expect('refundRatio' in mi!).toBe(true)
+    expect(mi!.refundRatio).toBeNull()
+
+    // 访客列表（窄 SELECT）不含该列 ⇒ 键必然缺席，故这里【不】断言该键：
+    // 断言 null 会假红，断言缺席才是本轮的约定——已在上一张 ratio 工单的用例里钉住。
+  })
 })

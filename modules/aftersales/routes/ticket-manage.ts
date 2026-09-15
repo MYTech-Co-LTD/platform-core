@@ -180,16 +180,32 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
   })
 }
 
-/** bigint/numeric 在 pg 里都是字符串：出口统一转成 number 或 null，别把字符串漏给前端。 */
+/** 列在场时的 bigint/numeric → number。列【缺席】（undefined）由调用点自己判并原样返回 undefined。 */
+function toNullableInt(v: unknown): number | null {
+  return v === null ? null : Number(v)
+}
+
+/**
+ * bigint/numeric 在 pg 里都是字符串：出口统一转成 number 或 null，别把字符串漏给前端。
+ *
+ * 【列缺席 ⇒ 别名字段缺席】—— 与 basic_unit_price_minor 同一条约定（`row.x === undefined` 时返回
+ * undefined，`JSON.stringify` 会把整个键丢掉）：**不许替「本查询没 SELECT 的列」编造值**。
+ * 访客列表是有意的窄 SELECT（不含 product_id / store_id / refund_ratio），无条件映射会把「没查」
+ * 说成「没有值」：productId/storeId 变 Number(undefined)=NaN 被序列化成 null，更重的是
+ * refundRatio 走 toRatioOrNull(undefined) → null —— 而 T4 契约里 refundRatio:null 的语义是
+ * 「fixed/reject 路，没有比例」⇒ 访客端把「按 0.1235 赔 8825 分」显示成与「驳回、无比例」同形。
+ *
+ * 列【在场】时才转换；在场且值为 null ⇒ **保持 null**（那个 null 是 fixed/reject 的表达，不能丢）。
+ */
 export function normalizeTicketRow(row: Record<string, unknown>): Record<string, unknown> {
   return {
     ...row,
     id: Number(row.id),
-    productId: row.product_id === null ? null : Number(row.product_id),
-    storeId: row.store_id === null ? null : Number(row.store_id),
+    productId: row.product_id === undefined ? undefined : toNullableInt(row.product_id),
+    storeId: row.store_id === undefined ? undefined : toNullableInt(row.store_id),
     basicUnitPriceMinor: row.basic_unit_price_minor === undefined ? undefined : toMinor(row.basic_unit_price_minor as string),
     amountMinor: toMinor(row.amount_minor as string),
-    refundRatio: toRatioOrNull(row.refund_ratio as string | null),
+    refundRatio: row.refund_ratio === undefined ? undefined : toRatioOrNull(row.refund_ratio as string | null),
   }
 }
 
