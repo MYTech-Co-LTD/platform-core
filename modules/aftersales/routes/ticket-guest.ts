@@ -138,14 +138,22 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
         [org, ticketId],
       )
 
-      // ④ 认领附件：把本次幂等键下、尚未归属的附件挂到这张工单上
+      // ④ 认领附件：把本次幂等键下、**属于本上传者**、尚未归属的附件挂到这张工单上。
+      //
+      // ⚠️ `and uploader_openid = $5` 是【所有权谓词，不是可选项】。`identity.userId` 在本路由
+      //    就是访客 openid（见上面 ② 的 `submitter_openid`，用的是同一个值）。
+      //    少了它：同租户内任一访客只要把 clientRequestId 猜/撞成同一个值，就能认领【别人】尚未
+      //    提交的附件，再经 GET /guest/tickets/:id 拿到该附件**完整的预签名 GET URL**
+      //    （受害者侧 total=0，零可观测迹象）。终审已端到端实测（那条 UPDATE rowCount=1）。
+      //    三个谓词合起来的语义 =「确实属于本次请求、且属于本上传者」——不必再额外查询。
       if (body.attachmentIds?.length) {
         await client.query(
           `update aftersales.ticket_attachment
               set ticket_id = $3
             where org = $1 and id = any($4::bigint[])
-              and client_request_id = $2 and ticket_id is null`,
-          [org, body.clientRequestId, ticketId, body.attachmentIds],
+              and client_request_id = $2 and ticket_id is null
+              and uploader_openid = $5`,
+          [org, body.clientRequestId, ticketId, body.attachmentIds, identity.userId],
         )
       }
 

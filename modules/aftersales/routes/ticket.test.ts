@@ -343,4 +343,73 @@ describePg('工单域', () => {
     // 访客列表（窄 SELECT）不含该列 ⇒ 键必然缺席，故这里【不】断言该键：
     // 断言 null 会假红，断言缺席才是本轮的约定——已在上一张 ratio 工单的用例里钉住。
   })
+
+  // ── 终审修复轮 1（C-1，Critical）：附件认领语句缺【所有权谓词】 ──
+  // 修前 ticket-guest.ts 的 `update aftersales.ticket_attachment … where` 只有
+  // `org / id = any(…) / client_request_id / ticket_id is null`——**没有 uploader_openid**。
+  // 失败场景（终审已端到端实测，那条 UPDATE rowCount=1）：同租户内另一个访客只要把
+  // clientRequestId 猜/撞成受害者那一个，就能认领【别人】尚未提交的附件，再经
+  // GET /guest/tickets/:id 拿到该附件的 objectKey（配好 ZOS 的真机上还带完整预签名 GET URL），
+  // 而受害者侧 total=0、零可观测迹象。被突破的是**授权面**，故定 Critical。
+  //
+  // 这里【直接用 SQL 造受害者的附件行】而不走 POST /guest/attachments：后者要 ZOS 凭证
+  // （本文件没 stub，没配就 503），而本用例要钉的是【认领语句的谓词】，与预签名可用性无关。
+  // 落库形状与 routes/attachment.ts 的 insert 逐字一致。
+  const seedAttachment = async (clientRequestId: string, uploaderOpenid: string, suffix: string) => {
+    const objectKey = `aftersales/${ORG}/${clientRequestId}/00000000-0000-4000-8000-0000000000${suffix}`
+    const res = await pool.query<{ id: string }>(
+      `insert into aftersales.ticket_attachment(
+         org, ticket_id, client_request_id, object_key, content_type, size_bytes, uploader_openid)
+       values ($1, null, $2, $3, 'image/jpeg', 1024, $4) returning id`,
+      [ORG, clientRequestId, objectKey, uploaderOpenid],
+    )
+    return { id: Number(res.rows[0].id), objectKey }
+  }
+
+  it('【回归·安全 C-1】同租户另一访客用同一 clientRequestId 认领 ⇒ 抢不走别人的附件', async () => {
+    const REQ = 'req-c1-shared'
+    // 受害者 bob 先传了图、还【没提交工单】——这正是「先传图后提交」的正常时序（spec §2.3）
+    const victim = await seedAttachment(REQ, 'openid-bob', 'c1')
+
+    // 攻击者 alice 用【同一个 clientRequestId】提交工单，并把这个 id 列进 attachmentIds
+    const attack = await submit(appGuest, { ...validBody(REQ), attachmentIds: [victim.id] })
+    expect(attack.status).toBe(201)
+    const attackerTicketId = ((await attack.json()) as { id: number }).id
+
+    // ① 库里（最强的一条）：受害者的行【没被认领】，且 uploader 仍是 bob
+    const row = await pool.query(
+      'select ticket_id, uploader_openid from aftersales.ticket_attachment where org = $1 and id = $2',
+      [ORG, victim.id],
+    )
+    expect(row.rows[0]).toMatchObject({ ticket_id: null, uploader_openid: 'openid-bob' })
+
+    // ② 接口面（泄露面本身）：攻击者的工单详情里【不得】出现受害者的 objectKey
+    const detail = (await (await appGuest.request(`/guest/tickets/${attackerTicketId}`)).json()) as {
+      attachments: { objectKey: string }[]
+    }
+    expect(detail.attachments.map((a) => a.objectKey)).not.toContain(victim.objectKey)
+    expect(detail.attachments).toEqual([])
+  })
+
+  it('【回归·安全 C-1·对照】上传者认领【自己的】附件 ⇒ 仍然认领得到（修复不得误伤正常路径）', async () => {
+    const REQ = 'req-c1-own'
+    const mine = await seedAttachment(REQ, 'openid-alice', 'c2')
+
+    const res = await submit(appGuest, { ...validBody(REQ), attachmentIds: [mine.id] })
+    expect(res.status).toBe(201)
+    const ticketId = ((await res.json()) as { id: number }).id
+
+    const row = await pool.query(
+      'select ticket_id, uploader_openid from aftersales.ticket_attachment where org = $1 and id = $2',
+      [ORG, mine.id],
+    )
+    expect(Number(row.rows[0].ticket_id)).toBe(ticketId)
+    expect(row.rows[0].uploader_openid).toBe('openid-alice')
+
+    const detail = (await (await appGuest.request(`/guest/tickets/${ticketId}`)).json()) as {
+      attachments: { objectKey: string }[]
+    }
+    expect(detail.attachments.map((a) => a.objectKey)).toEqual([mine.objectKey])
+  })
+
 })
