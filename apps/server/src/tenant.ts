@@ -26,6 +26,9 @@ export interface TenantRow {
   wecom_provider: string | null
   /** 企微直连两路（qr-corp/silent）的 JIT 自动建号旗标（issue #32）；缺省 false = fail-closed */
   wecom_auto_signup: boolean
+  /** 租户级微信公众号 provider（售后 spec §1.3 外部客户身份，005）；NULL ⇒ wechat-oa 路由对该租户 404 WECHAT_OA_NOT_CONFIGURED */
+  wechat_oa_app_id: string | null
+  wechat_oa_secret: string | null
   created_at: Date
 }
 
