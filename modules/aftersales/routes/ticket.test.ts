@@ -233,4 +233,38 @@ describePg('工单域', () => {
     const body = (await res.json()) as { size: number }
     expect(body.size).toBe(100)
   })
+
+  // ── 修复轮 1/5（裁决 B）：访客列表此前【内联】算 page/size、不做整数守卫 ──
+  // 非法值直接落进 pg 的 limit/offset 参数位 ⇒ 22P02 ⇒ 500。以下用例先红后绿。
+  it('【回归】访客列表：?page=1.5&size=1 ⇒ 200（不是 500），回显整数 1/1', async () => {
+    const res = await appGuest.request('/guest/tickets?page=1.5&size=1')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { page: number; size: number }
+    expect(body.page).toBe(1)
+    expect(body.size).toBe(1)
+  })
+
+  it('【回归】访客列表：其余非法分页形状一律 200，且回显必为整数（不得回显 2.5/Infinity）', async () => {
+    for (const qs of ['page=2.5&size=3', 'page=Infinity&size=20', 'size=1.5', 'page=2.5', 'size=abc']) {
+      const res = await appGuest.request(`/guest/tickets?${qs}`)
+      expect(res.status, `?${qs} 应为 200`).toBe(200)
+      const body = (await res.json()) as { page: number; size: number }
+      expect(Number.isInteger(body.page), `?${qs} 的 page 应为整数，实为 ${body.page}`).toBe(true)
+      expect(Number.isInteger(body.size), `?${qs} 的 size 应为整数，实为 ${body.size}`).toBe(true)
+      expect(body.page).toBeGreaterThanOrEqual(1)
+      expect(body.size).toBeGreaterThanOrEqual(1)
+    }
+  })
+
+  it('【回归】?size=-5：管理端与访客端必须回同一个值（一份常量 + 一份解析，不许漂移）', async () => {
+    const guestRes = await appGuest.request('/guest/tickets?size=-5')
+    const manageRes = await appManage.request('/tickets?size=-5')
+    expect(guestRes.status).toBe(200)
+    expect(manageRes.status).toBe(200)
+    const guestBody = (await guestRes.json()) as { size: number }
+    const manageBody = (await manageRes.json()) as { size: number }
+    // 计划既定口径：非法值【回落默认值】
+    expect(manageBody.size).toBe(20)
+    expect(guestBody.size).toBe(manageBody.size)
+  })
 })

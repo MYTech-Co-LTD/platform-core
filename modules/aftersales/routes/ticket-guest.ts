@@ -1,9 +1,9 @@
 import { z } from 'zod'
 import { loadAttachments, normalizeTicketRow } from './ticket-manage'
+// 分页常量与解析器在 routes/context.ts：与管理端【同一份】实现、【同一套】语义
+// （此前本文件内联算 page/size 且无整数守卫 ⇒ 非法值 500；?size=-5 也与端点间漂移）。
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
-
-const MAX_PAGE_SIZE = 100
-const DEFAULT_PAGE_SIZE = 20
 
 const SubmitBody = z.object({
   // 客户端幂等键（spec §2.2）；同时是附件 object key 里的 {ticket_ref}（spec §2.3）
@@ -20,8 +20,9 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
   // GET /guest/tickets —— 只回自己的（按 submitter_openid 收窄，spec §2.2）
   r.get('/guest/tickets', async (c) => {
     const identity = c.get('identity')
-    const page = Math.max(1, Number(c.req.query('page')) || 1)
-    const size = Math.min(Math.max(1, Number(c.req.query('size')) || DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE)
+    // 与管理端同一口径（parsePageParam）：非法值回落默认值，超出上界夹住。
+    const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
+    const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
     const totalRes = await ctx.pool.query<{ n: number }>(
       'select count(*)::int as n from aftersales.ticket where org = $1 and submitter_openid = $2',

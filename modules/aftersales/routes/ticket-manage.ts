@@ -7,11 +7,10 @@ import {
   toRatioOrNull,
 } from '../domain/ticket'
 import type { TicketStatus } from '../domain/ticket'
+// 分页常量与解析器在 routes/context.ts（四域共享层）——本文件不再留本地副本，
+// 避免与管理端/访客端两份实现静默漂移（见 context.ts 的 parsePageParam 注释）。
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
-
-/** 列表分页上界：模块自己的护栏，防止 size=99999 一次拉全表。 */
-const MAX_PAGE_SIZE = 100
-const DEFAULT_PAGE_SIZE = 20
 
 const ProcessBody = z.discriminatedUnion('amountType', [
   z.object({ amountType: z.literal('ratio'), refundRatio: z.number(), remark: z.string().max(2000).optional() }),
@@ -29,12 +28,6 @@ interface TicketRow {
   damage_quantity: number
   basic_quantity: number
   basic_unit_price_minor: string
-}
-
-function parsePageParam(raw: string | undefined, fallback: number, max: number): number {
-  const n = Number(raw)
-  if (!Number.isInteger(n) || n < 1) return fallback
-  return Math.min(n, max)
 }
 
 export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
