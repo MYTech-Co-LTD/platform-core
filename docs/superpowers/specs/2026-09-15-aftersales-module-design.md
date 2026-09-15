@@ -80,12 +80,20 @@ modules/aftersales            ← 售后域模块（通用产品模块，不带�
   **零跨模块 schema**（B1 干净）。租户行新增公众号配置（`wechat_oa_app_id/secret` 两列，
   形态仿 wecom 三参）；**wechat-oa 不是 console 登录 tab**（外部客户不进登录页）——路由
   启用判定 = 租户行公众号配置存在，不动 `login_methods` 白名单与前端 METHOD_LABELS。
-  auth-core 新增公众号 OAuth（B2 边界内，认证代码只进 auth-core）。
+  auth-core 新增公众号 OAuth（B2 边界内，认证代码只进 auth-core）。回调失败留痕与企微母本
+  （auth-wecom）有一处**有意分叉**：code 被拒（微信 200+errcode 形状）的 BAD_CODE **写
+  audit `login.fail`**（detail `via=wechat-oa, reason=no-openid`，actor 用显式匿名桶
+  `wechat-oa-anon`——openid 未知，占位串与真实 openid 约定的 o 前缀无碰撞面），而企微路的
+  BAD_CODE 只计数不写 audit（拿不到可信 actor）；理由：访客路没有 NO_ACCOUNT/JIT 后续分支，
+  no-openid 是它唯一的内容物失败，不留行则零痕迹——后人勿以「统一口径」为由抹掉这行 audit。
 
 **访客 scope 发放机制（协议小扩展）**：manifest 增可选字段 `guest: { scope: string }`——
 模块声明自己的访客码（声明即授权的延伸）；wechat-oa 回调签访客 session 时，scopes =
 **该租户已启用模块**声明的 guest 码集合（未启用/未声明 ⇒ 无码；停用模块的移动端 API 由
-既有闸门 404 + 门卫 403 自然闭合）。M1 落协议字段与发放逻辑，M2 的 aftersales manifest
+既有闸门 404 + 门卫 403 自然闭合）。访客 session 的 **scopes 刷新同样不查 Casdoor**（openid
+在 Casdoor 无账户，查了必命中「用户不存在→清会话」，7 天 TTL 实际活不过 5 分钟），改按
+该租户已启用模块的 guest 码重算重签——「停用模块即掉码」的语义因此在 session 层延续。
+M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 声明 `guest: { scope: aftersales:guest }`。
 
 ## 2. 数据模型、域 API、附件
@@ -203,6 +211,12 @@ userApp 静态必须同形 404——首个真实 userApp 用户，闸门与本�
 
 ## 7. 修订记录
 
+- 2026-09-15（Task 6 实现轮，审查 I1+M1）：§1.3 增两处落定——① 回调 BAD_CODE 写 audit
+  `login.fail`（actor=显式匿名桶 `wechat-oa-anon`），与企微母本「BAD_CODE 只计数不写
+  audit」是**有意分叉**（访客路无 NO_ACCOUNT/JIT 后续分支，no-openid 是唯一内容物失败），
+  勿以「统一口径」为由抹掉；② 访客 session 的 scopes 刷新不查 Casdoor（openid 无 Casdoor
+  账户，查了必清会话——7 天 TTL 实际活不过 5 分钟），改按已启用模块 guest 码重算重签，
+  停用即掉码在 session 层延续。
 - 2026-09-15：初版。brainstorming 四问定方向（§0.2），三节设计（拓扑身份 / 数据API附件 /
   重写迁移分期）逐节确认后落盘；附件按用户修订：试点直连天翼 ZOS、存量不搬运。
 - 2026-09-15（补3）：规划期两处定形——wechat-oa 非 console 登录 tab（启用判定=公众号配置

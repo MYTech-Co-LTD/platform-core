@@ -20,12 +20,12 @@
 // 刻意**不**另插新租户/域名：tenant.test.ts 钉死了租户清单 ['acme','beta'] 与域名收敛集，
 // 持久化的第三租户会把它打红。audit 断言一律加 actor 过滤——vitest 并行文件同写 acme 的
 // audit 行（auth-wecom 的 stranger/wo_* 等），只按 tenant+action 取最新行会抖。
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Pool } from 'pg'
 import { Hono } from 'hono'
 import { testClient } from 'hono/testing'
 import { fileURLToPath } from 'node:url'
-import { verifySession } from '@platform/auth-core'
+import { SCOPES_TTL_SEC, signSession, verifySession, type CasdoorClient } from '@platform/auth-core'
 import { runMigrations } from '../migrate'
 import { seedDemo } from '../seed'
 import { resolveTenantMiddleware, type TenantEnv } from '../tenant'
@@ -67,13 +67,21 @@ interface MakeAppOpts {
   limiter?: LoginLimiter
   enabledGuestScopes?: (tenantId: number) => Promise<string[]>
   wechatFetch?: typeof globalThis.fetch
+  /** 会话中间件的 Casdoor 工厂（生命周期用例注入「getUser 恒 null」的计数桩）；缺省不应触达 */
+  sessionCasdoor?: CasdoorFactory
+  /** 会话中间件的访客码解析器（app.ts 从 loader runtime.enabledGuestScopes 注入的同位物） */
+  guestScopes?: (tenantId: number) => Promise<string[]>
 }
 
 /** 宿主形态缩样（app.ts 装配链的对应段）：租户 → 会话 → wechat-oa 路由 */
 function makeApp(pool: Pool, opts: MakeAppOpts = {}): Hono<TenantEnv & SessionEnv> {
   const app = new Hono<TenantEnv & SessionEnv>()
   app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
-  app.use('*', sessionMiddleware({ casdoor: neverCasdoor, sessionSecret: SECRET }))
+  app.use('*', sessionMiddleware({
+    casdoor: opts.sessionCasdoor ?? neverCasdoor,
+    sessionSecret: SECRET,
+    guestScopes: opts.guestScopes,
+  }))
   app.route(
     '/api/platform/auth/wechat-oa',
     wechatOaRoutes({
@@ -297,5 +305,106 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
     expect(setCookies(res)).toEqual([])
     // 传输故障非用户过错（与 ④ 的 no-openid 行对照）：一行本路的 login.fail 都不多
     expect(await failCount()).toBe(before)
+  })
+
+  // ---------------------------------------------------------------------------------------
+  // I1 修复轮（审查裁定）：访客 session 的生命周期。签发时 sfa=iat，5 分钟（SCOPES_TTL_SEC）
+  // 后首个请求命中 scopes 刷新——通用分支拿 openid（=p.name）去 Casdoor getUser，openid 在
+  // Casdoor 没有账户 ⇒ 必返 null ⇒ userGone 清会话：7 天 TTL 的访客 session 实际活不过
+  // 5 分钟。修复（方案 a）：wechat-oa 分支不查 Casdoor，用注入的 guestScopes（= runtime
+  // enabledGuestScopes，app.ts 同位注入）按**当前租户**重算后重签。
+  // ---------------------------------------------------------------------------------------
+
+  /** 假 Casdoor：getUser 对任何名字都答「不存在」（真机对 openid 的必然回答）并计数——
+   *  证明访客路的刷新**一次都不该碰它**（修复前这里被调且直接导致清会话） */
+  function casdoorUserGone(): { factory: CasdoorFactory; getUserCalls: () => number } {
+    let calls = 0
+    const client = {
+      getUser: async () => {
+        calls += 1
+        return null
+      },
+      getPermissions: async () => [],
+    } as unknown as CasdoorClient
+    return { factory: () => client, getUserCalls: () => calls }
+  }
+
+  /** 老化访客 token：sfa 距今 > SCOPES_TTL_SEC（触发刷新）、exp 剩 > 6 天（不触发续期）——
+   *  与 auth.test.ts ⑥ 的 stale 造法同款 */
+  async function agedGuestSession(scopes: string[]): Promise<string> {
+    return signSession(
+      { sub: 'o_visitor_1', org: 'acme', name: 'o_visitor_1', scopes, authVia: 'wechat-oa' },
+      SECRET,
+      Math.floor(Date.now() / 1000) - SCOPES_TTL_SEC - 60,
+    )
+  }
+
+  it('★ I1：老 sfa 的访客 session 过刷新点 → 存活并按 guestScopes 重算重签，全程不碰 Casdoor', async () => {
+    const gone = casdoorUserGone()
+    const seenTenantIds: number[] = []
+    const client = testClient(makeApp(pool, {
+      sessionCasdoor: gone.factory,
+      guestScopes: async (tenantId) => {
+        seenTenantIds.push(tenantId)
+        return GUEST_SCOPES
+      },
+    }))
+    const stale = await agedGuestSession(['stale:guest'])
+    // 任意过中间件链的请求即可（/silent 桌面 UA → 302 /login；刷新发生在中间件层，与路由无关）
+    const res = await client.api.platform.auth['wechat-oa'].silent.$get(undefined, {
+      headers: { host: 'acme.test', 'user-agent': DESKTOP_UA, cookie: `platform_session=${stale}` },
+    })
+    expect(res.status).toBe(302)
+    expect(setCookies(res).join('\n')).not.toContain('Max-Age=0') // 未被清（修复前：userGone 清会话）
+    const p = await verifySession(sessionToken(res), SECRET) // 重签后的新 cookie
+    expect(p?.sub).toBe('o_visitor_1')
+    expect(p?.authVia).toBe('wechat-oa')
+    expect(p?.scopes).toEqual(GUEST_SCOPES) // stale 被替换为解析器真值
+    expect(p!.sfa).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000)) // sfa 已刷新
+    expect(gone.getUserCalls()).toBe(0) // 访客路的刷新不碰 Casdoor（openid 在那没有账户）
+    expect(seenTenantIds).toEqual([acmeId]) // 按当前租户重算，非全局并集
+  })
+
+  it('★ I1：停用模块后（guestScopes 返回 []）→ 刷新把访客 scopes 收缩为空——「停用即掉码」在 session 层延续', async () => {
+    const gone = casdoorUserGone()
+    const client = testClient(makeApp(pool, {
+      sessionCasdoor: gone.factory,
+      guestScopes: async () => [], // 模块被停用后 enabledGuestScopes 的真值
+    }))
+    const stale = await agedGuestSession(['guestmod:guest', 'othermod:guest'])
+    const res = await client.api.platform.auth['wechat-oa'].silent.$get(undefined, {
+      headers: { host: 'acme.test', 'user-agent': DESKTOP_UA, cookie: `platform_session=${stale}` },
+    })
+    expect(res.status).toBe(302)
+    const p = await verifySession(sessionToken(res), SECRET)
+    expect(p?.scopes).toEqual([]) // 旧码不沿用：停用后访客在下个刷新点掉码（而非拖满 7 天）
+    expect(gone.getUserCalls()).toBe(0)
+  })
+
+  it('★ I1：guestScopes 抛错（DB 故障）→ 降级沿用旧 scopes、不重签不清会话，warn 带访客解析器来源', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const gone = casdoorUserGone()
+      const client = testClient(makeApp(pool, {
+        sessionCasdoor: gone.factory,
+        guestScopes: async () => {
+          throw new Error('guest scopes db down')
+        },
+      }))
+      const stale = await agedGuestSession(['guestmod:guest'])
+      const res = await client.api.platform.auth['wechat-oa'].silent.$get(undefined, {
+        headers: { host: 'acme.test', 'user-agent': DESKTOP_UA, cookie: `platform_session=${stale}` },
+      })
+      expect(res.status).toBe(302) // 降级放行（可用性优先，同 Casdoor 降级口径）
+      // 未重签（重签会把 sfa 抹成 now 遮蔽故障）、未清会话：本响应不带任何 platform_session Set-Cookie
+      expect(setCookies(res).join('\n')).not.toContain('platform_session=')
+      expect(gone.getUserCalls()).toBe(0)
+      const lines = warn.mock.calls.map((a) => String(a[0] ?? ''))
+      expect(lines).toHaveLength(1) // 信号不丢：降级留 warn（带 org 与来源）
+      expect(lines[0]).toContain('acme')
+      expect(lines[0]).toContain('访客码解析器')
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

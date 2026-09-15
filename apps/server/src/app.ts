@@ -208,7 +208,14 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     mode: config.tenantMode,
     platformOrg: config.platformOrg,
   }))
-  app.use('*', sessionMiddleware({ casdoor: casdoorFactory, sessionSecret: config.sessionSecret }))
+  // guestScopes（审查 I1）：访客 session（wechat-oa）的 scopes 刷新不查 Casdoor（openid 在
+  // Casdoor 无账户——查了必 userGone 清会话，7 天 TTL 实际活不过 5 分钟），改由 loader 的
+  // enabledGuestScopes 按当前租户已启用模块重算（停用模块即掉码）；runtime 已在 ③ 产出
+  app.use('*', sessionMiddleware({
+    casdoor: casdoorFactory,
+    sessionSecret: config.sessionSecret,
+    guestScopes: runtime.enabledGuestScopes,
+  }))
 
   // ⑦ 平台路由：branding/config（modules 注入 = runtime 的 console 数据 + enabledFor 闸门）
   app.route('/api/platform', platformRoutes({
