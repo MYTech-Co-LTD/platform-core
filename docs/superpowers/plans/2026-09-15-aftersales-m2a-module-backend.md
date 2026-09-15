@@ -826,6 +826,13 @@ git commit -m "feat(aftersales): 模块骨架与建表迁移——7 张租户数
 
 ### Task 4: 业务内核 `domain/ticket.ts`（金额公式 + 三态状态机，纯函数）
 
+> **实施订正（2026-09-15，T4 评审 R4 后回写）**：本节的代码块原把 ratio 路写成
+> 「用全精度比例算钱 + 原样返回」，与本节 T7 用例「提交 `0.123456789` ⇒ 落库 `'0.1235'`」自相矛盾
+> ⇒ 库里 `(refund_ratio, amount_minor)` 复算不上（实测差 250 分 / 167 分）。
+> 已按裁决改为**在 domain 层归一到存储契约（4 位）**并导出 `normalizeRatio`（T6/T7 共用），
+> `assertValidRatio` 降为它的薄封装。**下方代码块已同步为 `68d3cfb` 的实际实现**；
+> 仅测试代码块未同步（实际 23 条用例，见仓内文件）。裁决留痕：`.superpowers/sdd/2026-09-15-aftersales-m2a-module-backend/progress.md`。
+
 **Files:**
 - Create: `modules/aftersales/domain/ticket.ts`
 - Test: `modules/aftersales/domain/ticket.test.ts`
@@ -841,9 +848,12 @@ git commit -m "feat(aftersales): 模块骨架与建表迁移——7 张租户数
   - `resolveProcess(ticket: {damageQuantity: number; basicQuantity: number; basicUnitPriceMinor: number}, input: ProcessInput): ProcessOutcome`
   - `isProcessable(status: TicketStatus): boolean`
   - `assertValidRatio(r: number): void` / `assertValidFixedAmount(m: number): void`
+  - `const REFUND_RATIO_DECIMALS = 4`
+  - `normalizeRatio(r: number): number`（校验 + 四舍五入到 4 位小数并【返回归一值】；`assertValidRatio` 是它丢弃返回值的薄封装）
+  - `const TICKET_STATUSES = ['pending', 'completed', 'cancelled'] as const`（`TicketStatus` 由它派生）
   - `toMinor(v: string | number | null | undefined): number`
   - `toRatioOrNull(v: string | number | null | undefined): number | null`
-  - T6/T7 直接复用 `resolveProcess` / `assertValidRatio` / `toMinor` / `toRatioOrNull`
+  - T6/T7 直接复用 `resolveProcess` / `normalizeRatio` / `toMinor` / `toRatioOrNull`
 
 - [ ] **Step 1: 写失败的测试 `modules/aftersales/domain/ticket.test.ts`**
 
@@ -1047,12 +1057,18 @@ export interface AmountInput {
 /**
  * 售后金额（整数分）= (报损数量 − 基本数量 × 售后比例) × 基本单价；负数取 0；四舍五入到分。
  *
- * 源（afterSalesWorkOrderManage.vue:687-705）在浏览器里算，且末尾是 `Math.round(amount*100)/100`
- * ——那是「元」换算成分的四舍五入。目标表单价本来就是分，所以这一步退化成一次 `Math.round`。
+ * 源（afterSalesWorkOrderManage.vue:687-705）在浏览器里按「元」算，末尾 `Math.round(amount*100)/100`
+ * 是按分的四舍五入；目标表单价本来就是分，所以这里只剩一次 `Math.round` 到分。
  *
- * `basicQuantity * refundRatio` 会产生 IEEE 浮点尾差（如 100×0.1 = 10.000000000000002），
- * 但结果只经过一次乘法就被舍入到整数分，误差量级 ~1e-12 分，被舍入吸收；不参与累加，
- * 不会像浮点金额那样攒出假差额。
+ * 【与源侧的关系】这里是【精确算术的按分四舍五入】；与源侧在【恰好半分位】上可差 1 分
+ * （源侧浮点噪声所致，非本实现算错）——例：q=14.5、单价 0.01 元，
+ * 源序 `Math.round(14.5 × 0.01 × 100)` = 14（中间值 14.499999999999998），本实现 `Math.round(14.5 × 1)` = 15。
+ * 数学真值 14.5 分四舍五入就是 15 ⇒ 规格「四舍五入到分」被本实现精确满足。
+ * （按 q∈{0.5,…,200 半步} × 单价∈{1..3000 分} 扫描：1_200_000 组里 34_636 处分歧，全部落在恰好半分位。）
+ *
+ * `basicQuantity * refundRatio` 会产生 IEEE 浮点尾差（如 0.1×3 = 0.30000000000000004、
+ * 3×0.29 = 0.8699999999999999），但结果只经过一次乘法就被舍入到整数分，误差被舍入吸收；
+ * 不参与累加，不会像浮点金额那样攒出假差额。
  */
 export function computeAmountMinor(i: AmountInput): number {
   const payableQuantity = i.damageQuantity - i.basicQuantity * i.refundRatio
@@ -1060,11 +1076,46 @@ export function computeAmountMinor(i: AmountInput): number {
   return Math.round(payableQuantity * i.basicUnitPriceMinor)
 }
 
-/** 比例必须是 [0, 1] 的有限数。工单处理（ratio 路）与规则写侧（T7）共用这一条口径。 */
-export function assertValidRatio(r: number): void {
+/**
+ * 比例的存储契约：`ticket.refund_ratio` 是 numeric(6,4)（spec §2.4 源侧保存走 .toFixed(4)）。
+ * 算钱用的比例与落库的比例必须是【同一个数】，否则库里 (refund_ratio, amount_minor) 自相矛盾
+ * ——按落库比例复算得不出落库金额，正是 spec §2.1「整数分」要防的对账假差额。
+ */
+export const REFUND_RATIO_DECIMALS = 4
+
+/**
+ * 比例收口的【唯一实现】（纯函数，无 IO）：先按现有口径卡 [0, 1] 与有限性（越界抛
+ * AmountValidationError），再把比例四舍五入到存储契约的 4 位小数，【返回归一后的值】。
+ *
+ * 为什么是「四舍五入」而不是「拒绝 >4 位小数」：列就是 numeric(6,4)，存 0.123456789 会被列型
+ * 收窄成 0.1235；与其让列型自己收窄、或干脆拒绝，不如在这里收口——算钱与落库用同一个数。
+ * （计划 T7 的用例即：提交 0.123456789 ⇒ 落库 refund_ratio = 0.1235，是成功不是 400。）
+ *
+ * 归一按【十进制真值】做，不直接 `Math.round(r * 1e4) / 1e4`：`r * 1e4` 会把浮点噪声一起放大，
+ * 恰好半分位上会漏进位（0.00015、0.33335 这类），而目标列 numeric(6,4) 自身的口径是半分位进位
+ * ——两边口径必须一致。实测：0..1 的 100_001 个 5 位小数字面量里，直乘有 573 个漏进位、
+ * 被 toFixed 的二进制近似带偏的有 4992 个，本实现 0 个偏离十进制真值。
+ * 先按 15 位有效数字把二进制尾差收干净（十进制输入在 double 里的噪声 ~1e-16 相对量级），再整数量化。
+ *
+ * 注：先卡后归一 ⇒ 归一值必然仍在 [0, 1]（r ∈ [0,1] ⇒ r·10⁴ ∈ [0,10⁴] ⇒ 归一值 ∈ [0,1]），
+ * 因此不需要再补一道「归一后复核」。
+ */
+export function normalizeRatio(r: number): number {
   if (!Number.isFinite(r) || r < 0 || r > 1) {
     throw new AmountValidationError(`refundRatio 必须在 [0, 1] 内（收到 ${r}）`)
   }
+  const factor = 10 ** REFUND_RATIO_DECIMALS
+  return Math.round(Number((r * factor).toPrecision(15))) / factor
+}
+
+/**
+ * 比例合法性的校验面（签名与语义保持不变，返回 void）。工单处理（ratio 路）与规则写侧（T7）
+ * 共用这一条口径：内部委托 normalizeRatio 后丢弃返回值——「一条口径只有一个实现」，
+ * 改了归一也就改了校验，不会两边漂移。
+ * 【落库方要用的是 normalizeRatio 的返回值】，不是这个 void 封装。
+ */
+export function assertValidRatio(r: number): void {
+  normalizeRatio(r)
 }
 
 /** 固定额必须是非负【整数分】且不超过 MAX_FIXED_AMOUNT_MINOR。 */
@@ -1110,12 +1161,15 @@ export function resolveProcess(
 ): ProcessOutcome {
   switch (input.amountType) {
     case 'ratio': {
-      assertValidRatio(input.refundRatio)
+      // normalizeRatio 一次收口（校验 + 归一），归一值【同时】用于算钱与落库：
+      // 不能拿全精度的比例算钱、却被 numeric(6,4) 收窄后落库——那样库里的
+      // (refund_ratio, amount_minor) 复算不上，正是 §2.1「整数分」要防的对账假差额。
+      const refundRatio = normalizeRatio(input.refundRatio)
       return {
         status: 'completed',
         amountType: 'ratio',
-        amountMinor: computeAmountMinor({ ...ticket, refundRatio: input.refundRatio }),
-        refundRatio: input.refundRatio,
+        amountMinor: computeAmountMinor({ ...ticket, refundRatio }),
+        refundRatio,
       }
     }
     case 'fixed': {
@@ -2276,7 +2330,7 @@ git commit -m "feat(aftersales): 工单域——管理端列表/详情/处理 + 
 - Modify: `modules/aftersales/index.ts`（追加 `registerRule`）
 
 **Interfaces:**
-- Consumes: `assertValidRatio` / `AmountValidationError` / `toRatioOrNull`（T4）；`ModuleHono` / `RouteCtx`（T6）
+- Consumes: `normalizeRatio` / `AmountValidationError` / `toRatioOrNull`（T4）；`ModuleHono` / `RouteCtx`（T6）
 - Produces: `registerRule(r: ModuleHono, ctx: RouteCtx): void`
 
 - [ ] **Step 1: 写失败的测试 `modules/aftersales/routes/rule.test.ts`**
@@ -2333,7 +2387,7 @@ describePg('规则域', () => {
     expect(row.rows[0].refund_ratio).toBe('0.1235')
   })
 
-  it('比例越界 ⇒ 400（与工单处理共用 assertValidRatio 一条口径）', async () => {
+  it('比例越界 ⇒ 400（与工单处理共用 normalizeRatio 一条口径）', async () => {
     for (const bad of [1.5, -0.2]) {
       const res = await post({ name: '越界', refundRatio: bad })
       expect(res.status).toBe(400)
@@ -2396,7 +2450,7 @@ Expected: FAIL —— 路由未注册，全部 404。
 
 ```ts
 import { z } from 'zod'
-import { AmountValidationError, assertValidRatio, toRatioOrNull } from '../domain/ticket'
+import { AmountValidationError, normalizeRatio, toRatioOrNull } from '../domain/ticket'
 import type { ModuleHono, RouteCtx } from './context'
 
 /** 规则表是配置表（源侧 12 行），不需要分页，但仍设上界防呆。 */
@@ -2432,11 +2486,14 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
     const org = c.get('identity').orgId
     const parsed = RuleBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
-    const { name, refundRatio, remark } = parsed.data
+    const { name, remark } = parsed.data
+    let refundRatio: number
 
     try {
-      // 与工单处理共用同一条校验口径（T4 的 assertValidRatio）——比例合法性的唯一事实源
-      assertValidRatio(refundRatio)
+      // 与工单处理共用同一条口径（T4 的 normalizeRatio）——比例合法性与 4 位小数的唯一事实源。
+      // 【落库必须用它的返回值】：assertValidRatio 只是它丢弃返回值的薄封装，
+      // 用 void 封装等于「校验在 JS、量化交给 pg 列型」，又变成两套实现。
+      refundRatio = normalizeRatio(parsed.data.refundRatio)
     } catch (err) {
       if (err instanceof AmountValidationError) {
         return c.json({ error: 'INVALID_AMOUNT', message: err.message }, 400)
@@ -2459,10 +2516,11 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
 
     const parsed = RuleBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
-    const { name, refundRatio, remark } = parsed.data
+    const { name, remark } = parsed.data
+    let refundRatio: number
 
     try {
-      assertValidRatio(refundRatio)
+      refundRatio = normalizeRatio(parsed.data.refundRatio)
     } catch (err) {
       if (err instanceof AmountValidationError) {
         return c.json({ error: 'INVALID_AMOUNT', message: err.message }, 400)
