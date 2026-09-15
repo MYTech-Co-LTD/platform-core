@@ -12,11 +12,13 @@ export const SCOPES_TTL_SEC = 300
 const RENEW_THRESHOLD_SEC = 6 * 86400
 
 export interface SessionPayload {
-  sub: string // Casdoor 用户 id（UUID），形如 'org/name' 的展示名走 name
+  // 身份 id：Casdoor 用户（UUID）；或公众号访客 openid（wechat-oa 访客 session，售后 spec §1.3——
+  // openid 即身份，不落 Casdoor 账号）
+  sub: string
   org: string
   name: string
   scopes: string[]
-  authVia: 'password' | 'wecom-qr' | 'wecom-silent'
+  authVia: 'password' | 'wecom-qr' | 'wecom-silent' | 'wechat-oa'
   iat: number // 签发时刻（Unix 秒）
   exp: number // 过期时刻（Unix 秒）
   sfa: number // scopes fetched at —— scopes 上次刷新时刻，needsScopeRefresh 的基准
