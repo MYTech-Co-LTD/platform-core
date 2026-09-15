@@ -163,9 +163,62 @@ userApp 静态必须同形 404——首个真实 userApp 用户，闸门与本�
 
 ### 3.3 数据迁移（全量）
 
-- **开工前置确认项（第一未知数）**：无极托管库的导出方式（直连 / 导出文件 / API 拉取）。
-- 映射清洗：老数据二义（`product_name`/`store_selection`）**迁移时一次洗清**，不带兼容层。
-- `employee.open_id` 全量带过来（移动端身份锚）；订单档案表随迁（工单关联展示）。
+**通道已真机实测打通（2026-09-15，原「第一未知数」销账）**：无极托管库提供**只读 HTTP API**，
+**不需要直连 DB、不需要导出文件**。以下口径全部来自实测，勿凭猜写迁移脚本：
+
+```
+GET https://data.wujisite.com/api/private/object
+    ?appid=<app>&schemaid=<表名>&schemakey=<表级键>
+分页  page（1 起）+ size（上限 15000）   ← limit/skip/offset/pagesize 等全部【静默忽略】（写错不报错）
+计数  count=<任意值> → {"data":{"total":N}}
+返回  {"data":[ …行字段平铺… ],"code":200,"version":-1}
+```
+
+- `schemaid` + `schemakey` 是**严格双因子**：错一即 `403 forbidden`；裸 `appid` 拿不到表清单
+  （不可枚举，这是好事）。
+- **键在哪、怎么取**：wuji 后台「数据源管理」逐表可见。M2 开工时落 **openship env isSecret**，
+  **绝不进仓库/文档/提交信息**（本节只写表名，不写键值）。
+
+**源表清单（14 张，行数为实测）**：
+
+| 域 | 源表（`schemaid`） | 行数 | 去向 |
+|---|---|---|---|
+| 售后 | `after_sales_work_order` | 25,661 | M2 → `ticket` |
+| 售后 | `after_sales_rule` | 12 | M2 → `ticket_rule` |
+| 主数据 | `store_info` | 322 | M2 → `store` |
+| 主数据 | `region_info` | 13 | M2 → `region` |
+| 主数据 | `employee_info` | 591 | M2 → `employee`（`openId` = 移动端身份锚） |
+| 主数据 | `employee_info_approve` | 214 | M2 → 员工审批态 |
+| 主数据 | `product_archive` | 13,767 | M2 → `product` |
+| 接龙·档案 | `group_buying_order` / `group_buying_order_item` | 32,040 / 59,786 | **只读档案表**（§2.1），无业务 API |
+| 接龙·二期 | `group_buying_batch` / `group_buying_product` / `group_buying_cart` / `Ordering_rules` | 570 / 6,421 / 4,093 / 8 | 二期另行立项 |
+| 接龙·二期 | `outbound_detail` | **309,485** | 二期 |
+| — | `wechat_openid` | 未取 | **不迁**：wuji 内部 token 缓存，平台无消费者 |
+
+⇒ 售后 M2 实搬量 ≈ **13.2 万行**（工单 25,661 仅 2 页），规模可控。
+
+**源表「不合理」实证 —— 本节是「参考不照搬」的证据清单，目标表按 §2.1 重新设计、不照抄**：
+
+| 现象 | 实测实例 | 迁移约束 |
+|---|---|---|
+| 同字段类型漂移 | `damage_amount:int/num`、`after_sales_rate:int/num` | schemaless；目标表必须定死类型 |
+| 外键类型不匹配 | `group_buying_order.batch_id:str` → `group_buying_batch.batch_id:int` | 静默 join 失败的源头，引用关系逐对核 |
+| **同一概念两种拼写** | `employee_info.openId` vs `employee_info_approve.openid` | **join 前必须归一**，否则员工审批态挂不上——而它是移动端身份锚 |
+| 主键类型不统一 | `_id`：`employee_info:str` / `employee_info_approve:int` | 同上 |
+| 时间字段五套并存 | `create_time` / `created_at` / `_ctime` / `ctime` / `timestamp_with_watermark` | `employee_info_approve` **同表内** `ctime`+`_ctime` 双套 |
+| 嵌套突破扁平 | `employee_info_approve.approveinfo:obj` | 全区唯一嵌套字段，需展平 |
+| 数组/字符串混用 | `after_sales_work_order.damage_images:arr/str` | 附件字段先归一再搬 |
+| 字段名说谎 | `group_buying_batch.title:date`（叫 title 存日期） | 不照搬字段名 |
+| 软删语义不统一 | 仅 `group_buying_batch` 有 `is_deleted` | 删除语义逐表问清 |
+| **金额单位未标** | `total_amount:int`、`price:int`（分？元？） | **M2 开工前必须问客户**——服务端权威计算（§0.3）的地基 |
+| 字段与表名撞车 | `employee_info.store_info`（字段）vs `store_info`（表） | 目标表消歧 |
+
+- 映射清洗：老数据二义（`product_name`/`store_selection` 存 ID 或名称）**迁移时一次洗清**，不带兼容层。
+- `employee_info.openId` 全量带过来；订单档案表随迁（工单关联展示）。
+
+**活库一致性（M2 开工前必须定，不得默认）**：源库仍在写入（实测最新 `_mtime` = 2026-09-12），
+工单表 25,661 行仍在涨。二选一写进 M2 计划：**① 一次性快照 + 停机窗口**；
+**② 导出 + `_mtime` 增量对账**（`_mtime` 可做水位线）。
 
 ### 3.4 分期与验收
 
@@ -193,13 +246,18 @@ userApp 静态必须同形 404——首个真实 userApp 用户，闸门与本�
 
 ## 5. 已知边界
 
-1. **无极库导出方式未确认**（§3.3 前置项）——未确认前 M2 数据迁移排期是虚的。
+1. **活库一致性策略未定**（§3.3，取代原「导出方式未确认」）——源库在写，全量迁移期间
+   工单表仍在涨；「快照 + 停机窗口」与「导出 + `_mtime` 增量对账」二选一。**通道本身已实测
+   可拉（§3.3），排期不再是虚的**；但未定策略前不得开跑数据迁移。
 2. **cron 不碰**：售后域不需要定时任务；接龙自动失效属二期，届时再解决平台定时机制。
 3. **接龙（groupbuying）二期**：购物车并发/库存锁/自动失效/live 表另起；主数据届时评估抽取。
 4. 历史附件依赖无极 COS 账号保活（或客户接受不可看）。
 5. 天翼 ZOS 端点写法坑（endpoint 不带 `https://`、path-style）带进实现注意——WeKnora 两条
    条目为证。
 6. 第一个真模块落地后，触发 spec-1 留的「评估租户隔离 CI 门禁升级」。
+7. **源库金额单位未确认**（§3.3 实证表）：`total_amount` / `price` 是分还是元未标——这是
+   §0.3「服务端权威计算」的地基，M2 写金额逻辑前必须问客户，**不许按猜测实现**。
+8. `wechat_openid`（wuji 内部 token 缓存）确认**不迁**——平台无消费者，只记录不搬运。
 
 ## 6. 关联
 
@@ -211,6 +269,12 @@ userApp 静态必须同形 404——首个真实 userApp 用户，闸门与本�
 
 ## 7. 修订记录
 
+- 2026-09-15（M2 前置调研，真机实测）：**原「第一未知数」销账**——无极托管库走只读 HTTP API
+  可拉（非直连/非导出文件），§3.3 重写为「通道口径 + 14 张源表清单与实测行数 + 不合理实证表」。
+  §5 边界 #1 由「导出方式未确认」换为「活库一致性策略未定」，并新增 #7 金额单位待问、#8
+  `wechat_openid` 确认不迁。实证要点：`size` 上限 15000、`limit/skip/offset` 静默忽略、
+  `schemaid`+`schemakey` 严格双因子、`employee_info.openId` 与 `employee_info_approve.openid`
+  同概念两拼写。**键值一律不落文档**（在哪、怎么取：wuji 后台 → M2 落 openship env isSecret）。
 - 2026-09-15（Task 6 实现轮，审查 I1+M1）：§1.3 增两处落定——① 回调 BAD_CODE 写 audit
   `login.fail`（actor=显式匿名桶 `wechat-oa-anon`），与企微母本「BAD_CODE 只计数不写
   audit」是**有意分叉**（访客路无 NO_ACCOUNT/JIT 后续分支，no-openid 是唯一内容物失败），
