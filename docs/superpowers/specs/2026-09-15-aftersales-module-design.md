@@ -299,7 +299,7 @@ GET https://data.wujisite.com/api/private/object
 
 | 期 | 内容 |
 |---|---|
-| M1 底座三件 | userApp 静态托管 + 停用闸门补缺；auth-core 公众号 OAuth 路 + 租户行公众号配置 + `login_methods` 新值 |
+| M1 底座三件 | userApp 静态托管 + 停用闸门补缺；auth-core 公众号 OAuth 路 + 租户行公众号配置（**启用判定 = 配置存在，非 `login_methods` 新值**——见 §1.3，此行旧措辞已订正） |
 | **M2a 模块后端（代码）** | 域 API + 迁移建表 + ZOS 存储——**不依赖源数据，先做** |
 | **M2b 数据迁移（择窗口）** | 全量拉取 → 清洗 → 入库 → 计数/金额对账（一次性，另出计划） |
 | M3 双端 | console 管理端 + 移动端 userApp 整迁 |
@@ -316,7 +316,7 @@ GET https://data.wujisite.com/api/private/object
 | 2 | `modules/aftersales`（manifest/迁移/index/console/mobile/storage） | 代码 |
 | 3 | auth-core 公众号 OAuth + 租户行公众号配置 + `wechat-oa` 登录路 | 代码 |
 | 4 | userApp 静态托管 + 停用闸门（loader/module-protocol 回写） | 代码+文档 |
-| 5 | `.env.example` 增键（B9）：公众号 + ZOS | 代码 |
+| 5 | `.env.example` 增键（B9）：**只有 ZOS**（公众号**不需要 env 键**——凭证在租户行 `wechat_oa_app_id/secret`，见 §1.3；此处旧措辞「公众号 + ZOS」已订正） | 代码 |
 | 6 | 数据迁移脚本（导出→清洗→导入，幂等） | 代码 |
 | 7 | `architecture.md` 组件表加行、module-protocol userApp 节更新 | 文档 |
 
@@ -352,6 +352,15 @@ GET https://data.wujisite.com/api/private/object
 - module-protocol.md（userApp 闸门缺口、租户数据隔离约定）。
 
 ## 7. 修订记录
+
+- 2026-09-15（M1 已合并后**回读订正**，两处旧措辞与落地物不符）：
+  ① §4 #5「`.env.example` 增键：公众号 + ZOS」——**公众号半边是错的**：M1 落地后凭证在
+  **租户行**（`platform.tenant.wechat_oa_app_id/secret`，见 `apps/server/src/migrations/005_tenant_wechat_oa.sql`），
+  `packages/auth-core/src/wechat-oa.ts` 的 `{appId, secret}` 是**入参**不是 env 读取
+  ⇒ **没有任何公众号 env 键**，`.env.example` 只需增 ZOS 五个。
+  ② §3.4 的 M1 行「`login_methods` 新值」——与 §1.3 已定的「启用判定 = 租户行配置存在，
+  不动 `login_methods` 白名单」**自相矛盾**，M1 按 §1.3 落地。此行旧措辞留着会误导
+  M2a 的实施者去找一个不存在的白名单改动。
 
 - 2026-09-15（写 M2a 计划时：三处收口，仍是**约束倒逼**，非口味）：
   ① §2.3 附件 key 段 `{ticket_id}` → **`{ticket_ref}` = 客户端幂等键**——移动端「先传图后提交」，

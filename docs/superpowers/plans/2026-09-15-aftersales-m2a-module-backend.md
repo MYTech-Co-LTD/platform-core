@@ -1448,9 +1448,11 @@ AFTERSALES_ZOS_ACCESS_KEY=
 AFTERSALES_ZOS_SECRET=
 ```
 
-> **只加这五个，不加公众号的键**：spec §4 #5 写的是「`.env.example` 增键（B9）：公众号 + ZOS」，
-> 但**公众号那几个键属 M1**（`wechat-oa` 登录路 + 租户行公众号配置，见 spec §1.3 / §3.4 的 M1 行），
-> 不在 M2a 范围里。本任务只负责 M2a 自己引入的键——**别把它读成漏了**，M1 那批在 M1 的计划里加。
+> **只加这五个，不加公众号的键——公众号根本没有 env 键**（已核，非「以后再加」）：
+> spec §4 #5 旧措辞写「`.env.example` 增键：公众号 + ZOS」，但 M1 已按 §1.3 落地——公众号凭证
+> 在**租户行**（`platform.tenant.wechat_oa_app_id/secret`，见 `apps/server/src/migrations/005_tenant_wechat_oa.sql`），
+> `packages/auth-core/src/wechat-oa.ts` 的 `{appId, secret}` 是**入参**、不读 env。
+> 故本任务只需 ZOS 五个键；spec §4 #5 已同步订正（见 spec 修订记录）。
 
 - [ ] **Step 6: 跑 B9 门禁确认声明齐了**
 
@@ -3299,8 +3301,10 @@ gh pr merge --squash --delete-branch
    本计划**不含**任何拉数/清洗/入库/对账步骤，也不预留脚本骨架。
 2. **`department` / `archive_order` / `archive_order_item` 建表**——归 M2b（spec §2.1、§3.3：
    无源表样本，M2a 建表等于照猜写 DDL）。
-3. **M1 的 userApp 静态托管与 auth-core 公众号 OAuth**——那是 M1，与本模块并行但在另一条线上；
-   本计划的访客端点**已按 `aftersales:guest` 声明**，M1 落地后即可被真实访客 session 调用。
+3. **M1 的 userApp 静态托管与 auth-core 公众号 OAuth**——不在本计划，且**已合并到 main**
+   （`apps/server/src/routes/auth-wechat-oa.ts`、`migrations/005_tenant_wechat_oa.sql`、
+   `manifest.ts` 的 `guest?: { scope }`）；本计划的访客端点声明 `aftersales:guest`，
+   落库后即可被真实访客 session 调用。**模块自己的 `mobile/` 目录（userApp 整迁）仍属 M3。**
 4. **console 管理端 / 移动端整迁（M3）**——本计划只交付后端。
 5. **ZOS 真机端到端验证**（真凭证上传一个视频再取回）——需要真桶，属 spec §3.4 的客户机验收，
    不放在本计划的本地门禁里；本计划的 storage 测试全部是**离线预签名**计算。
