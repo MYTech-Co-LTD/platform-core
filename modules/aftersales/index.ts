@@ -3,6 +3,10 @@ import { Hono } from 'hono'
 import { parse as parseYaml } from 'yaml'
 import { ManifestSchema, defineModule } from '@platform/sdk'
 import type { Identity } from '@platform/sdk'
+import { ZosStorage, zosConfigFromEnv } from './storage'
+import { registerTicketManage } from './routes/ticket-manage'
+import { registerTicketGuest } from './routes/ticket-guest'
+import type { RouteCtx } from './routes/context'
 
 // 装配形状照 modules/demo/index.ts（本仓模块的唯一范式）。
 // 门禁由宿主按 manifest 声明施加（M1 闭债 R2）——模块侧【不写】requireScope。
@@ -12,7 +16,15 @@ const manifest = ManifestSchema.parse(
 
 export default defineModule({
   manifest,
-  // 本任务先返回空 router：装载期双向核对（注册集合 ⟺ 声明集合）在两边都空时通过。
-  // T6 起逐域在这里 register*；每次注册都必须与 manifest 的声明同批改。
-  createRouter: () => new Hono<{ Variables: { identity: Identity } }>(),
+  createRouter: ({ pool }) => {
+    const r = new Hono<{ Variables: { identity: Identity } }>()
+    // 没有 ZOS 凭证时 storage 为 null：模块照常装载，只有附件端点回 503（见 storage.ts）
+    const config = zosConfigFromEnv(process.env)
+    const ctx: RouteCtx = { pool, storage: config ? new ZosStorage(config) : null }
+
+    registerTicketManage(r, ctx)
+    registerTicketGuest(r, ctx)
+    // T7/T8/T9 在这里继续 register*
+    return r
+  },
 })

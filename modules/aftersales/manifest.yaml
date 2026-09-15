@@ -9,8 +9,16 @@ permissions:
 # 管理端与访客端的端点都在下面 api.internal 里逐条声明——分为两面是因为同一个
 # (method, path) 只能声明一次、一条声明只带一个 scope（spec §2.2「路径按 scope 分面」）。
 guest: { scope: aftersales:guest }
-# api.internal 暂时为空：装载期双向核对是「空集合 vs 空集合」，本任务先交付「能装载 + 能建表」。
-# T6–T9 每加一个域，就在同一个提交里同步追加声明与路由——两边不一致 = 进程起不来。
 api:
-  internal: []
+  internal:
+    # ── 工单·管理端（aftersales:manage）──
+    - { method: GET,  path: /tickets,             scope: aftersales:manage }
+    - { method: GET,  path: /tickets/:id,         scope: aftersales:manage }
+    - { method: POST, path: /tickets/:id/process, scope: aftersales:manage }
+    # ── 工单·访客端（aftersales:guest）──
+    # 为什么与上面分面而不是共用 /tickets：同一个 (method, path) 只能声明一次、一条声明只带一个
+    # scope（packages/platform-sdk/src/manifest.ts 的 superRefine）。见 spec §2.2「路径按 scope 分面」。
+    - { method: GET,  path: /guest/tickets,       scope: aftersales:guest }
+    - { method: GET,  path: /guest/tickets/:id,   scope: aftersales:guest }
+    - { method: POST, path: /guest/tickets,       scope: aftersales:guest }
 migrations: { dir: ./migrations }
