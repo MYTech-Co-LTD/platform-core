@@ -1593,7 +1593,7 @@ DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)" pnpm exec tsx sc
 **Files:**
 - Create: `modules/aftersales/routes/ticket-manage.ts`
 - Create: `modules/aftersales/routes/ticket-guest.ts`
-- Create: `modules/aftersales/routes/context.ts`（`ModuleHono` / `RouteCtx` 两个类型的落点）
+- Create: `modules/aftersales/routes/context.ts`（四域共享层：`ModuleHono` / `RouteCtx` 两个**类型**，**外加**分页**运行时常量**与解析器）
 - Create: `modules/aftersales/routes/ticket.test.ts`
 - Modify: `modules/aftersales/manifest.yaml`（追加 6 条声明）
 - Modify: `modules/aftersales/index.ts`（装配 ctx + 注册两个域）
@@ -1601,7 +1601,15 @@ DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)" pnpm exec tsx sc
 **Interfaces:**
 - Consumes: `resolveProcess` / `isProcessable` / `AmountValidationError` / `toMinor` / `toRatioOrNull`（T4）；`zosConfigFromEnv` / `ZosStorage`（T5）
 - Produces:
-  - `routes/context.ts`：`type ModuleHono`、`interface RouteCtx { pool: Pool; storage: ZosStorage | null }`
+  - `routes/context.ts`：
+    - 类型：`type ModuleHono`、`interface RouteCtx { pool: Pool; storage: ZosStorage | null }`
+    - **运行时值**（分页全仓唯一一份，T6 管理端 / T6 访客端 / **T8 主数据端**都从这里取，
+      **不许各自再写一份**——两份实现已实测漂移过：`?size=-5` 曾出现管理端回落 20、访客端夹成 1）：
+      `const MAX_PAGE_SIZE = 100`、`const DEFAULT_PAGE_SIZE = 20`、
+      `function parsePageParam(raw: string | undefined, fallback: number, max: number): number`
+      （非整数 / < 1 / 空 / NaN / Infinity ⇒ 回落 fallback，**不是 400**；> max ⇒ 夹到 max）。
+      ⚠️ 调用 `page` 时 max 传 `Number.MAX_SAFE_INTEGER`：**该上界是载荷的**，去掉它
+      `?page=1e21` 的 `offset` 会溢出 pg bigint ⇒ 500（T6 定向复审实测）。
   - `registerTicketManage(r: ModuleHono, ctx: RouteCtx): void`
   - `registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void`
   - `index.ts` 的 `createRouter` 改为 `({ pool }) => …` 形态（后续 T7/T8/T9 往里追加 `register*`）
@@ -1609,8 +1617,10 @@ DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)" pnpm exec tsx sc
 - [ ] **Step 1: 写 `modules/aftersales/routes/context.ts`**
 
 ```ts
-// 路由层的两个共享类型。单独一个文件是为了让 T6–T9 四个域互相不 import（避免循环与耦合），
-// 只共同依赖这里。
+// 路由层的共享层：两个**类型**（ModuleHono / RouteCtx）**外加**分页的**运行时常量**与解析器。
+// 单独一个文件是为了让 T6–T9 四个域互相不 import（避免循环与耦合），只共同依赖这里。
+// ⚠️ 因此本文件有**值导出**：引类型请务必 `import type`，别把类型当值引（#44 的形状，
+//    typecheck 与直连 src 的单测都拦不住，本仓护栏只加载 auth-core 的桶、照不到这里）。
 import type { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type { Identity } from '@platform/sdk'
@@ -1623,6 +1633,26 @@ export type ModuleHono = Hono<{ Variables: { identity: Identity } }>
 export interface RouteCtx {
   pool: Pool
   storage: ZosStorage | null
+}
+
+/** 列表分页上界：模块自己的护栏，防止 size=99999 一次拉全表。 */
+export const MAX_PAGE_SIZE = 100
+export const DEFAULT_PAGE_SIZE = 20
+
+/**
+ * 分页参数解析（page/size 共用）。**全仓唯一一份**——T6 的管理端列表与访客列表都从这里取，
+ * 两份实现会静默漂移：修复前 `?size=-5` ⇒ 管理端回落 20、访客端夹成 1（同一参数两个端点两种语义）。
+ *
+ * 口径：非整数 / < 1 / 空 / NaN / Infinity ⇒ 回落 fallback（**不是 400**，回落是本模块既定的统一口径）；
+ * 大于 max ⇒ 夹到 max。
+ *
+ * 守卫不是「防御性编程」而是必需：非法值（1.5 / Infinity）直接落进 pg 的 limit/offset 参数位会抛
+ * 22P02 ⇒ Hono 兜成 500，且参数完全由客户端控制（实测 `?page=1.5&size=1` 曾 500）。
+ */
+export function parsePageParam(raw: string | undefined, fallback: number, max: number): number {
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 1) return fallback
+  return Math.min(n, max)
 }
 ```
 
@@ -1864,6 +1894,116 @@ describePg('工单域', () => {
     const body = (await res.json()) as { size: number }
     expect(body.size).toBe(100)
   })
+
+  // ── 修复轮 1/5（裁决 B）：访客列表此前【内联】算 page/size、不做整数守卫 ──
+  // 非法值直接落进 pg 的 limit/offset 参数位 ⇒ 22P02 ⇒ 500。以下用例先红后绿。
+  it('【回归】访客列表：?page=1.5&size=1 ⇒ 200（不是 500），回显整数 1/1', async () => {
+    const res = await appGuest.request('/guest/tickets?page=1.5&size=1')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { page: number; size: number }
+    expect(body.page).toBe(1)
+    expect(body.size).toBe(1)
+  })
+
+  it('【回归】访客列表：其余非法分页形状一律 200，且回显必为整数（不得回显 2.5/Infinity）', async () => {
+    for (const qs of ['page=2.5&size=3', 'page=Infinity&size=20', 'size=1.5', 'page=2.5', 'size=abc']) {
+      const res = await appGuest.request(`/guest/tickets?${qs}`)
+      expect(res.status, `?${qs} 应为 200`).toBe(200)
+      const body = (await res.json()) as { page: number; size: number }
+      expect(Number.isInteger(body.page), `?${qs} 的 page 应为整数，实为 ${body.page}`).toBe(true)
+      expect(Number.isInteger(body.size), `?${qs} 的 size 应为整数，实为 ${body.size}`).toBe(true)
+      expect(body.page).toBeGreaterThanOrEqual(1)
+      expect(body.size).toBeGreaterThanOrEqual(1)
+    }
+  })
+
+  it('【回归】?size=-5：管理端与访客端必须回同一个值（一份常量 + 一份解析，不许漂移）', async () => {
+    const guestRes = await appGuest.request('/guest/tickets?size=-5')
+    const manageRes = await appManage.request('/tickets?size=-5')
+    expect(guestRes.status).toBe(200)
+    expect(manageRes.status).toBe(200)
+    const guestBody = (await guestRes.json()) as { size: number }
+    const manageBody = (await manageRes.json()) as { size: number }
+    // 计划既定口径：非法值【回落默认值】
+    expect(manageBody.size).toBe(20)
+    expect(guestBody.size).toBe(manageBody.size)
+  })
+
+  // ── 修复轮 1/5（裁决 C）：列缺席 ⇒ 别名字段缺席，不得替「没查的列」编造 null ──
+  // 访客列表是有意的【窄 SELECT】（不含 product_id / store_id / refund_ratio），而
+  // normalizeTicketRow 曾无条件映射这三列：productId/storeId 变 Number(undefined)=NaN 被
+  // JSON.stringify 写成 null，refundRatio 走 toRatioOrNull(undefined) → null。后者最重：
+  // T4 契约里 refundRatio:null 的语义是「fixed/reject 路，没有比例」（domain/ticket.ts）
+  // ⇒ 访客端把「按 0.1235 赔 8825 分」显示成与「驳回、无比例」同形。
+  it('【回归】ratio 工单：访客列表没 SELECT 的三列不得被编造成 null，管理端/详情仍是真值', async () => {
+    const created = await submit(appGuest, validBody('req-alias-ratio'))
+    const { id } = (await created.json()) as { id: number }
+    const proc = await appManage.request(`/tickets/${id}/process`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amountType: 'ratio', refundRatio: 0.1235 }),
+    })
+    expect(proc.status).toBe(200)
+
+    const guestList = (await (await appGuest.request('/guest/tickets?size=100')).json()) as {
+      items: Record<string, unknown>[]
+    }
+    const manageList = (await (await appManage.request('/tickets?size=100')).json()) as {
+      items: Record<string, unknown>[]
+    }
+    const detail = (await (await appGuest.request(`/guest/tickets/${id}`)).json()) as Record<string, unknown>
+    const li = guestList.items.find((i) => i.id === id)
+    const mi = manageList.items.find((i) => i.id === id)
+    expect(li, `访客列表里应有工单 ${id}`).toBeDefined()
+    expect(mi, `管理端列表里应有工单 ${id}`).toBeDefined()
+
+    // ① 访客列表：这三列不在 SELECT 里 ⇒ 别名字段【必须缺席】（`'键' in item === false`）。
+    //    这是本轮 F2 的正主——修前这里是 `refundRatio:null` / `productId:null`。
+    expect('refundRatio' in li!).toBe(false)
+    expect('productId' in li!).toBe(false)
+    expect('storeId' in li!).toBe(false)
+
+    // ② 缺席为何无害：访客仍能靠金额类型/金额判别「按比例赔」——缺席的不是判别依据。
+    //    注意键名：本接口的金额类型就是 snake_case 的 `amount_type`（normalizeTicketRow 只给
+    //    amount_minor 起了 camelCase 别名，没给 amount_type 起），故按【实际契约】断言。
+    expect(li!.amount_type).toBe('ratio')
+    expect(li!.amountMinor).toBe(8825)
+
+    // ③ 对照：访客详情是宽 SELECT，必须给出真值（修前就正确，别弱化）。
+    expect(detail.refundRatio).toBe(0.1235)
+    expect(detail.productId).toBe(productId)
+
+    // ④ 管理端列表也是宽 SELECT ⇒ 必须仍是真值（钉住「没把管理端一起弄成缺席」）。
+    expect(mi!.refundRatio).toBe(0.1235)
+    expect(mi!.productId).toBe(productId)
+  })
+
+  it('【回归】reject 工单：null 的语义必须保住（详情 + 管理端列表），访客列表该键必然缺席', async () => {
+    const created = await submit(appGuest, validBody('req-alias-reject'))
+    const { id } = (await created.json()) as { id: number }
+    const proc = await appManage.request(`/tickets/${id}/process`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amountType: 'reject' }),
+    })
+    expect(proc.status).toBe(200)
+
+    const manageList = (await (await appManage.request('/tickets?size=100')).json()) as {
+      items: Record<string, unknown>[]
+    }
+    const detail = (await (await appGuest.request(`/guest/tickets/${id}`)).json()) as Record<string, unknown>
+    const mi = manageList.items.find((i) => i.id === id)
+    expect(mi, `管理端列表里应有工单 ${id}`).toBeDefined()
+
+    // 列【在场且为 null】⇒ 别名必须是 null（**不是缺席**）：这就是 fixed/reject 路的表达。
+    expect('refundRatio' in detail).toBe(true)
+    expect(detail.refundRatio).toBeNull()
+    expect('refundRatio' in mi!).toBe(true)
+    expect(mi!.refundRatio).toBeNull()
+
+    // 访客列表（窄 SELECT）不含该列 ⇒ 键必然缺席，故这里【不】断言该键：
+    // 断言 null 会假红，断言缺席才是本轮的约定——已在上一张 ratio 工单的用例里钉住。
+  })
 })
 ```
 
@@ -1887,11 +2027,10 @@ import {
   toRatioOrNull,
 } from '../domain/ticket'
 import type { TicketStatus } from '../domain/ticket'
+// 分页常量与解析器在 routes/context.ts（四域共享层）——本文件不再留本地副本，
+// 避免与管理端/访客端两份实现静默漂移（见 context.ts 的 parsePageParam 注释）。
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
-
-/** 列表分页上界：模块自己的护栏，防止 size=99999 一次拉全表。 */
-const MAX_PAGE_SIZE = 100
-const DEFAULT_PAGE_SIZE = 20
 
 const ProcessBody = z.discriminatedUnion('amountType', [
   z.object({ amountType: z.literal('ratio'), refundRatio: z.number(), remark: z.string().max(2000).optional() }),
@@ -1909,12 +2048,6 @@ interface TicketRow {
   damage_quantity: number
   basic_quantity: number
   basic_unit_price_minor: string
-}
-
-function parsePageParam(raw: string | undefined, fallback: number, max: number): number {
-  const n = Number(raw)
-  if (!Number.isInteger(n) || n < 1) return fallback
-  return Math.min(n, max)
 }
 
 export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
@@ -2067,16 +2200,37 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
   })
 }
 
-/** bigint/numeric 在 pg 里都是字符串：出口统一转成 number 或 null，别把字符串漏给前端。 */
+/** 列在场时的 bigint/numeric → number。列【缺席】（undefined）由调用点自己判并原样返回 undefined。 */
+function toNullableInt(v: unknown): number | null {
+  return v === null ? null : Number(v)
+}
+
+/**
+ * bigint/numeric 在 pg 里都是字符串：出口统一转成 number 或 null，别把字符串漏给前端。
+ *
+ * 【列缺席 ⇒ 别名字段缺席】—— 与 basic_unit_price_minor 同一条约定（`row.x === undefined` 时返回
+ * undefined，`JSON.stringify` 会把整个键丢掉）：**不许替「本查询没 SELECT 的列」编造值**。
+ * 访客列表是有意的窄 SELECT（不含 product_id / store_id / refund_ratio），无条件映射会把「没查」
+ * 说成「没有值」：productId/storeId 变 Number(undefined)=NaN 被序列化成 null，更重的是
+ * refundRatio 走 toRatioOrNull(undefined) → null —— 而 T4 契约里 refundRatio:null 的语义是
+ * 「fixed/reject 路，没有比例」⇒ 访客端把「按 0.1235 赔 8825 分」显示成与「驳回、无比例」同形。
+ *
+ * 列【在场】时才转换；在场且值为 null ⇒ **保持 null**（那个 null 是 fixed/reject 的表达，不能丢）。
+ *
+ * ⚠️「键缺席」是 **`JSON.stringify` 之后**的性质（值是 `undefined` 时序列化会把键丢掉），
+ * 不是函数返回对象上的性质：返回对象里键**仍在场**（`'refundRatio' in item === true`，
+ * 值为 `undefined`）。当前 4 个调用点都经 `c.json`（= JSON 序列化）故成立；
+ * 若将来有人直接读该对象的键（不吃序列化），**前提就不成立了** —— 那里要显式判 `undefined`。
+ */
 export function normalizeTicketRow(row: Record<string, unknown>): Record<string, unknown> {
   return {
     ...row,
     id: Number(row.id),
-    productId: row.product_id === null ? null : Number(row.product_id),
-    storeId: row.store_id === null ? null : Number(row.store_id),
+    productId: row.product_id === undefined ? undefined : toNullableInt(row.product_id),
+    storeId: row.store_id === undefined ? undefined : toNullableInt(row.store_id),
     basicUnitPriceMinor: row.basic_unit_price_minor === undefined ? undefined : toMinor(row.basic_unit_price_minor as string),
     amountMinor: toMinor(row.amount_minor as string),
-    refundRatio: toRatioOrNull(row.refund_ratio as string | null),
+    refundRatio: row.refund_ratio === undefined ? undefined : toRatioOrNull(row.refund_ratio as string | null),
   }
 }
 
@@ -2113,10 +2267,10 @@ export async function loadAttachments(
 ```ts
 import { z } from 'zod'
 import { loadAttachments, normalizeTicketRow } from './ticket-manage'
+// 分页常量与解析器在 routes/context.ts：与管理端【同一份】实现、【同一套】语义
+// （此前本文件内联算 page/size 且无整数守卫 ⇒ 非法值 500；?size=-5 也与端点间漂移）。
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
-
-const MAX_PAGE_SIZE = 100
-const DEFAULT_PAGE_SIZE = 20
 
 const SubmitBody = z.object({
   // 客户端幂等键（spec §2.2）；同时是附件 object key 里的 {ticket_ref}（spec §2.3）
@@ -2133,8 +2287,9 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
   // GET /guest/tickets —— 只回自己的（按 submitter_openid 收窄，spec §2.2）
   r.get('/guest/tickets', async (c) => {
     const identity = c.get('identity')
-    const page = Math.max(1, Number(c.req.query('page')) || 1)
-    const size = Math.min(Math.max(1, Number(c.req.query('size')) || DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE)
+    // 与管理端同一口径（parsePageParam）：非法值回落默认值，超出上界夹住。
+    const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
+    const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
     const totalRes = await ctx.pool.query<{ n: number }>(
       'select count(*)::int as n from aftersales.ticket where org = $1 and submitter_openid = $2',
@@ -2243,8 +2398,10 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
 
       // ③ 编号：同一事务内补写（不是 generated column）——因为 M2b 迁移要【保留源编号】，
       //    生成列会让源编号落不进来。形状 AS-00000001，8 位补零。
-      await client.query(
-        `update aftersales.ticket set code = 'AS-' || lpad(id::text, 8, '0') where org = $1 and id = $2`,
+      //    code 与 status 【从同一条 update 的 returning 读回】，不硬编码字面量：
+      //    硬写 'pending' 会在将来状态默认值变化时对客户端静默说谎（协调者 T6 裁决 A）。
+      const coded = await client.query<{ code: string; status: string }>(
+        `update aftersales.ticket set code = 'AS-' || lpad(id::text, 8, '0') where org = $1 and id = $2 returning code, status`,
         [org, ticketId],
       )
 
@@ -2260,7 +2417,10 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
       }
 
       await client.query('commit')
-      return c.json({ id: ticketId, duplicated: false }, 201)
+      return c.json(
+        { id: ticketId, code: coded.rows[0].code, status: coded.rows[0].status, duplicated: false },
+        201,
+      )
     } catch (err) {
       await client.query('rollback').catch(() => {})
       // 并发下两个请求可能同时通过 ① 的存在性检查 ⇒ 唯一索引 (org, client_request_id) 让后到的那个
@@ -2645,6 +2805,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
+import { DEFAULT_PAGE_SIZE } from './context'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -2711,6 +2872,28 @@ describePg('主数据域', () => {
     expect(body.size).toBe(100)
     const apple = body.items.find((p) => p.basicUnitPriceMinor === 500)
     expect(apple).toBeDefined()
+  })
+
+  // 分页口径与管理端/访客端**同一份** parsePageParam（context.ts）。两条边界必须钉住：
+  // ① 非法值回落默认（**不是 500**——非法值直接进 pg 的 limit/offset 会抛 22P02 被 Hono 兜成 500）；
+  // ② page 上界不得去掉（去掉则 ?page=1e21 的 offset 溢出 pg bigint ⇒ 500）。
+  it('商品分页：非法 page/size 回落默认值，不 500', async () => {
+    for (const qs of ['size=-5', 'size=1.5', 'size=abc', 'size=', 'page=1.5', 'page=0', 'page=']) {
+      const res = await app.request(`/products?${qs}`)
+      expect(res.status, `?${qs}`).toBe(200)
+      const body = (await res.json()) as { page: number; size: number }
+      expect(Number.isInteger(body.page), `?${qs} page`).toBe(true)
+      expect(Number.isInteger(body.size), `?${qs} size`).toBe(true)
+    }
+    const fallback = (await (await app.request('/products?size=-5&page=0')).json()) as { page: number; size: number }
+    expect(fallback).toMatchObject({ page: 1, size: DEFAULT_PAGE_SIZE })
+  })
+
+  it('商品分页：page 上界存在（极大 page 不 500，offset 不溢出 pg bigint）', async () => {
+    const res = await app.request('/products?page=1e21&size=100')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { page: number }
+    expect(body.page).toBe(Number.MAX_SAFE_INTEGER)
   })
 
   it('员工注册 ⇒ 201、审批态默认 pending', async () => {
@@ -2784,11 +2967,9 @@ Expected: FAIL —— 路由未注册。
 ```ts
 import { z } from 'zod'
 import { toMinor } from '../domain/ticket'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
-/** 分页上界。源侧 product 有 13,767 行，服务端分页是硬需求不是优化（spec §0.3）。 */
-const MAX_PAGE_SIZE = 100
-const DEFAULT_PAGE_SIZE = 20
 /** 门店是选择器数据（源侧 322 行），一次给全但设上界。 */
 const MAX_STORES = 1000
 /** 员工是审批列表（源侧 591 行），同上。 */
@@ -2835,10 +3016,12 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/products', async (c) => {
     const org = c.get('identity').orgId
     const q = c.req.query('q')
-    const sizeRaw = Number(c.req.query('size'))
-    const size = Number.isInteger(sizeRaw) && sizeRaw >= 1 ? Math.min(sizeRaw, MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE
-    const pageRaw = Number(c.req.query('page'))
-    const page = Number.isInteger(pageRaw) && pageRaw >= 1 ? pageRaw : 1
+    // 与管理端/访客端**同一口径**（context.ts 的 parsePageParam）：非法值回落默认、超上界夹住。
+    // ⚠️ page 的上界 `Number.MAX_SAFE_INTEGER` 是**载荷的**——去掉它，`?page=1e21` 时
+    // `(page - 1) * size` 会溢出 pg 的 bigint（> 9.22e18）或变成非整数 ⇒ **又变 500**。
+    // （T6 定向复审实测：去掉该上界 ⇒ 必 500。）
+    const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
+    const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
     const params: unknown[] = [org]
     let where = 'org = $1'
