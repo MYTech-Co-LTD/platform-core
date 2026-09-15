@@ -857,6 +857,73 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     )
     expect((await app.request('/api/modules/flipmod/ping')).status).toBe(200)
   })
+
+  // ---- 售后 M1：userApp 停用闸门（休眠缺口收口）+ guest 码发放 ----
+
+  it('userApp 静态吃启用闸门：停用 ⇒ 404（与 API 面同形）；启用 ⇒ 200（匿名可载壳）', async () => {
+    cleanupModules.push('userappmod')
+    cleanupSqls.push('drop schema if exists userappmod cascade')
+    const modulesDir = await newModulesDir()
+    // apiYaml 传 null：extra 从 permissions 序列的下一个列表项接起（先补 guest 码，再写 api/guest/frontend）
+    await writeModule(modulesDir, 'userappmod', {
+      'manifest.yaml': manifestYaml(
+        'userappmod',
+        [
+          '  - { code: userappmod:guest, name: 访客 }',
+          'api:',
+          '  internal:',
+          '    - { method: GET, path: /ping, scope: userappmod:view }',
+          'guest: { scope: userappmod:guest }',
+          'frontend:',
+          '  userApp: { mount: /m-userappmod, dist: dist }',
+        ].join('\n'),
+        null,
+      ),
+      'index.ts': indexTs('userappmod', 'userappmod:view'),
+      'dist/index.html': '<html>shell</html>',
+    })
+    const tenant = await acmeTenant()
+    // 显式停用（enabled=false 行）
+    await pool.query(
+      `insert into platform.tenant_module(tenant_id, module_id, enabled)
+       values ($1, 'userappmod', false)
+       on conflict (tenant_id, module_id) do update set enabled = false`,
+      [tenant.id],
+    )
+    const runtime = await loadModules(modulesDir, { pool })
+
+    // ① 停用 ⇒ 静态与 API 均 404 同形（已登录视角；闸门按租户判定，形状与宿主 notFound 一致）
+    const authed = new Hono<TestEnv>()
+    authed.use('*', injectTenant(tenant))
+    authed.use('*', injectIdentity(['userappmod:view']))
+    runtime.mount(authed)
+    const spa = await authed.request('/m-userappmod/')
+    expect(spa.status).toBe(404)
+    expect(await spa.json()).toEqual({ error: 'NOT_FOUND' })
+    const api = await authed.request('/api/modules/userappmod/ping')
+    expect(api.status).toBe(404)
+    expect(await api.json()).toEqual({ error: 'NOT_FOUND' })
+
+    // ③ 停用 ⇒ 无访客码可发放
+    expect(await runtime.enabledGuestScopes(tenant.id)).toEqual([])
+
+    // 改回启用（闸门刻意无缓存 ⇒ 下一个请求即恢复）
+    await pool.query(
+      `update platform.tenant_module set enabled = true where tenant_id = $1 and module_id = 'userappmod'`,
+      [tenant.id],
+    )
+
+    // ② 启用 ⇒ 静态 200——**匿名不带 cookie**（不注入 identity；SPA 壳登录前必须可载）
+    const anon = new Hono<TestEnv>()
+    anon.use('*', injectTenant(tenant)) // 只注入租户，不注入 identity = 匿名
+    runtime.mount(anon)
+    const shell = await anon.request('/m-userappmod/')
+    expect(shell.status).toBe(200)
+    expect(await shell.text()).toContain('shell')
+
+    // ③ 启用 ⇒ 按已启用模块发放访客码
+    expect(await runtime.enabledGuestScopes(tenant.id)).toEqual(['userappmod:guest'])
+  })
 })
 
 // ---- D9：平台内置码 tenant:admin 随装载扇出（M3，issue #46） ----

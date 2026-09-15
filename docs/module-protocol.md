@@ -163,12 +163,16 @@ scope 的绝对断言，改掉）。`GET /api/platform/config` 是**有意的披
     `{"error":"UNAUTHENTICATED"}`，响应逐字相同，停用与否无从区分；**已登录**用户照旧拿到
     404（那条路径上闸门照常判定）。**注意这条的 scope 只到模块 API 面**——系统面上 `/config`
     照旧匿名公开该租户的启用清单（见上一节的 ⚠️）。
-- ⚠️ **闸门只覆盖模块 API 半边：`frontend.userApp` 静态未落**（R4 复审 S-d；**存量缺口，
-  本轮不改行为**）。闸门挂在 `base + '/*'`；而 `frontend.userApp` 的静态目录由 `loader.mount()`
-  另挂在 manifest 自己的 mount 路径下、**不经过闸门** ⇒ 显式 `enabled=false` 后
-  `/api/modules/<id>/ping` 返 404，而 `<mount>/index.html` 仍 200。**休眠中**：仓内暂无模块声明
-  `frontend.userApp`（唯一模块 `modules/demo` 只声明了 `console`），当前无可观测面；将来有模块
-  启用它时必须一并补闸，否则「停用 = 看不到这个模块」会被读成绝对规则。
+- **userApp 静态已吃同一道启用闸门**（售后 M1，2026-09-15 收口）：`frontend.userApp` 的
+  静态目录在 `mountPath + '/*'` 上先挂模块 API 同款 `gate` 再 serveStatic——匿名放行
+  （SPA 壳登录前必须可载，业务 API 自会 401/404），**已登录 + 停用 ⇒ 404 与 API 面同形**。
+  「停用 = 看不到这个模块」现在在 API 面与 userApp 面两侧同时成立（`/api/platform/config`
+  披露面的既有口径不变，见上节 ⚠️）。
+
+- **`guest: { scope }` 声明（售后 spec §1.3 协议小扩展）**：模块可声明自己的访客码
+  （`scope` 必须 ∈ `permissions[].code`，schema 拒绝越界）；宿主 `wechat-oa` 访客登录路
+  签 session 时按**该租户已启用模块**发放这些码——停用模块的移动端 API 由闸门 404 +
+  门卫 403 自然闭合。访客身份不落 Casdoor（外部用户不进内部 IdP）。
 
 ## 租户数据隔离（spec-1 §2，2026-09-14）
 

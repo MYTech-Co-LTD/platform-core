@@ -15,4 +15,5 @@ export {
 export type { SessionPayload } from './session'
 export { buildAuthorizeUrl, buildWecomQrUrl, buildWecomSilentUrl, wecomUserIdForCode } from './wecom'
 export type { WecomCorpConfig } from './wecom'
+export { buildWechatOaSilentUrl, wechatOaOpenidForCode } from './wechat-oa'
 // MockCasdoor 故意不进 public 导出：它只属于 src/test-util/，测试与冒烟脚本从包内路径引入

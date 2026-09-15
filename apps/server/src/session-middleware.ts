@@ -7,7 +7,9 @@
 //
 // 重签策略：needsScopeRefresh（now-sfa>=300）或 needsRenew（exp-now<6天）任一命中即重签一次
 // （signSession 以注入的同一 now 签发，iat/exp/sfa 三值与本地构造的载荷严格一致，csrf 可复算）；
-// scopes 值只在 scope 刷新命中时向 Casdoor 重算（getUser+getPermissions+effectiveScopes）。
+// scopes 值只在 scope 刷新命中时重算：普通会话向 Casdoor（getUser+getPermissions+
+// effectiveScopes）；访客会话（authVia='wechat-oa'，审查 I1）不查 Casdoor（openid 在那没有
+// 账户，查了必清会话），改用注入的 guestScopes 按当前租户已启用模块重算——见实现处注释。
 //
 // 可用性优先：Casdoor 拉取失败（网络/5xx → CasdoorClient 抛错）→ 降级用旧 scopes 继续本次
 // 请求且【不重签】（重签会把 sfa 抹成 now，遮蔽故障 5 分钟）；仅 Casdoor 明确返回"用户不存在"
@@ -49,6 +51,15 @@ export type CasdoorFactory = (org: string) => CasdoorClient
 export interface SessionMiddlewareDeps {
   casdoor: CasdoorFactory
   sessionSecret: string
+  /**
+   * 访客 session（authVia='wechat-oa'）的 guest 码解析器（loader runtime.enabledGuestScopes，
+   * 由 app.ts 注入）。访客 session 的 scopes 刷新**不查 Casdoor**——openid 在 Casdoor 没有
+   * 账户，getUser 必返 null ⇒ 走通用分支必命中「用户不存在 → 清会话」，7 天 TTL 的访客
+   * session 实际活不过一个 SCOPES_TTL_SEC（审查 I1）。改由本解析器按【当前租户已启用
+   * 模块】重算——「停用模块即掉码」语义因此在 session 层延续。未注入时（无 loader 的
+   * 装配/部分测试）：沿用旧 scopes、不重签——任何情况下访客路都不查 Casdoor、不清会话。
+   */
+  guestScopes?: (tenantId: number) => Promise<string[]>
   /**
    * 降级 warn 的去重窗口（ms）：同一 org 在该窗口内最多留一条 warn。默认
    * DEGRADE_WARN_INTERVAL_MS。闸的是**窗口**、不是"只报一次"的闩——两条断言分工钉死：
@@ -121,16 +132,17 @@ export const sessionMiddleware = (
    * 降级路径的信号（M1 闭债 R3 评审 S2）。修好「静默登出」后，"admin 会话死掉"不再表现为
    * 登出，而是**每请求、永久、零信号**地降级用旧 scopes ⇒ 该真问题从此不可观测。这里补上
    * 唯一信号：说清后果（持续降级 = 授权变更不再生效），并按 org 限流（见上）。
+   * source 标明降级的是哪个上游（默认 Casdoor；访客路的 guestScopes 解析器另传）。
    */
-  const warnDegrade = (org: string, err: unknown): void => {
+  const warnDegrade = (org: string, err: unknown, source = 'Casdoor'): void => {
     // 注入时钟（deps.now）**只**在这里取——窗口限流专用；验签/过期/续期一律走真实 nowSec()
     const nowMs = deps.now ? deps.now() : Date.now()
     if (nowMs - (lastDegradeWarnAt.get(org) ?? 0) < degradeWarnIntervalMs) return
     lastDegradeWarnAt.set(org, nowMs)
     console.warn(
-      `[session] Casdoor 拉取失败（org=${org}），本次请求降级用旧 scopes 继续、不重签：`
+      `[session] ${source} 拉取失败（org=${org}），本次请求降级用旧 scopes 继续、不重签：`
         + '若原因是 admin 会话已失效，该 org 的 scopes 刷新会**持续**降级'
-        + '（用户在 Casdoor 的授权变更不再生效），而这条 warn 是唯一信号。'
+        + '（对应上游的授权变更不再生效），而这条 warn 是唯一信号。'
         + `原因：${err instanceof Error ? err.message : String(err)}`,
     )
   }
@@ -150,23 +162,42 @@ export const sessionMiddleware = (
       let refreshOk = false
       let userGone = false
       if (wantRefresh) {
-        try {
-          const casdoor = deps.casdoor(p.org)
-          const user = await casdoor.getUser(p.name)
-          if (user === null) {
-            // Casdoor 明确说没这个人（2xx + body status:'ok' 且 data:null）→ 唯一清会话分支。
-            // **不是** status:error —— error 覆盖的是与"不存在"无关的一堆情形（admin 会话失效、
-            // id 非两段、DB 出错…），CasdoorClient.getUser 对它们一律抛错（上方 catch 接住降级）
-            userGone = true
-          } else {
-            const perms = await casdoor.getPermissions()
-            scopes = effectiveScopes(p.name, user.roles ?? [], perms)
-            refreshOk = true
+        if (p.authVia === 'wechat-oa') {
+          // 访客 session（售后 spec §1.3，审查 I1）：openid 在 Casdoor **没有账户**——走下方
+          // 通用分支必命中「getUser=null → userGone 清会话」，7 天 TTL 的访客 session 实际
+          // 活不过一个 SCOPES_TTL_SEC（5 分钟）。访客路的 scopes 真源是「当前租户已启用
+          // 模块的 guest 码」：注入了 guestScopes（app.ts 从 loader runtime 接）就重算重签
+          // ——「停用模块即掉码」语义因此在 session 层延续；解析器故障降级旧 scopes、不
+          // 重签（可用性优先，同下方 Casdoor 分支口径）；未注入（无 loader 的装配/旧测试）
+          // 沿用旧 scopes。任何情况下**不查 Casdoor、不清会话**——访客登出靠 TTL/主动登出，
+          // 不靠 Casdoor 的用户表
+          if (deps.guestScopes) {
+            try {
+              scopes = await deps.guestScopes(tenant.id)
+              refreshOk = true
+            } catch (err) {
+              warnDegrade(p.org, err, '访客码解析器（guestScopes）')
+            }
           }
-        } catch (err) {
-          // 网络/5xx/上游报错：降级旧 scopes 继续（可用性优先），本次不重签（防 sfa 被抹新遮蔽故障）。
-          // 降级不是"无声"的——见 warnDegrade 的注释（评审 S2）
-          warnDegrade(p.org, err)
+        } else {
+          try {
+            const casdoor = deps.casdoor(p.org)
+            const user = await casdoor.getUser(p.name)
+            if (user === null) {
+              // Casdoor 明确说没这个人（2xx + body status:'ok' 且 data:null）→ 唯一清会话分支。
+              // **不是** status:error —— error 覆盖的是与"不存在"无关的一堆情形（admin 会话失效、
+              // id 非两段、DB 出错…），CasdoorClient.getUser 对它们一律抛错（上方 catch 接住降级）
+              userGone = true
+            } else {
+              const perms = await casdoor.getPermissions()
+              scopes = effectiveScopes(p.name, user.roles ?? [], perms)
+              refreshOk = true
+            }
+          } catch (err) {
+            // 网络/5xx/上游报错：降级旧 scopes 继续（可用性优先），本次不重签（防 sfa 被抹新遮蔽故障）。
+            // 降级不是"无声"的——见 warnDegrade 的注释（评审 S2）
+            warnDegrade(p.org, err)
+          }
         }
       }
       if (userGone) {

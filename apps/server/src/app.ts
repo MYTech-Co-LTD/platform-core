@@ -29,6 +29,7 @@ import { authRoutes } from './routes/auth'
 import { adminRoutes } from './routes/admin'
 import { PLATFORM_BUILTIN_PERMISSIONS } from './loader'
 import { wecomRoutes } from './routes/auth-wecom'
+import { wechatOaRoutes } from './routes/auth-wechat-oa'
 import { createLoginLimiter } from './rate-limit'
 
 /** platform schema 迁移（Task 11 产物目录）——按本文件位置解析，与 cwd 无关 */
@@ -207,7 +208,14 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     mode: config.tenantMode,
     platformOrg: config.platformOrg,
   }))
-  app.use('*', sessionMiddleware({ casdoor: casdoorFactory, sessionSecret: config.sessionSecret }))
+  // guestScopes（审查 I1）：访客 session（wechat-oa）的 scopes 刷新不查 Casdoor（openid 在
+  // Casdoor 无账户——查了必 userGone 清会话，7 天 TTL 实际活不过 5 分钟），改由 loader 的
+  // enabledGuestScopes 按当前租户已启用模块重算（停用模块即掉码）；runtime 已在 ③ 产出
+  app.use('*', sessionMiddleware({
+    casdoor: casdoorFactory,
+    sessionSecret: config.sessionSecret,
+    guestScopes: runtime.enabledGuestScopes,
+  }))
 
   // ⑦ 平台路由：branding/config（modules 注入 = runtime 的 console 数据 + enabledFor 闸门）
   app.route('/api/platform', platformRoutes({
@@ -234,6 +242,18 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     casdoorClientId: config.casdoor.clientId,
     casdoorClientSecret: config.casdoor.clientSecret,
     publicOrigin: config.publicOrigin,
+  }))
+  // ⑧c 公众号访客登录路（售后 spec §1.3）：外部客户 openid 直接签访客 session（不落
+  // Casdoor），租户行公众号配置存在即启用。依赖 runtime.enabledGuestScopes——runtime 在
+  // ③（装载段）产出、先于整条 Hono 装配链，故此处可直接引用（顺序约束：若日后重构使
+  // 装载晚于路由挂载，本块必须随之下移到 runtime 产出之后——Hono 路径不重叠时注册序
+  // 不影响分发）。同一 limiter 实例第三处传入，门键 'wechat-oa' 在路由内部独立分桶。
+  app.route('/api/platform/auth/wechat-oa', wechatOaRoutes({
+    sessionSecret: config.sessionSecret,
+    pool,
+    limiter,
+    publicOrigin: config.publicOrigin,
+    enabledGuestScopes: runtime.enabledGuestScopes,
   }))
 
   // ⑧b 租户管理域（spec D4/D9，M3，issue #46）：/api/platform/admin/*——

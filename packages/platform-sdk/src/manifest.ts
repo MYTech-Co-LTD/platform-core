@@ -18,6 +18,8 @@ export interface ModuleManifest {
   id: string; name: string; version: string; platform: string
   permissions: Array<{ code: string; name: string }>
   api?: { internal?: ModuleApiEndpoint[] }
+  /** 售后 spec §1.3：访客侧授权声明——scope 必须 ∈ permissions[].code（与 api.internal[].scope 同纪律） */
+  guest?: { scope: string }
   frontend?: { userApp?: { mount: string; dist: string };
     console?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }> }
   migrations?: { dir: string }
@@ -50,6 +52,7 @@ const ManifestObject = z.object({
       scope: z.string(),
     })).optional(),
   }).optional(),
+  guest: z.object({ scope: z.string() }).optional(),
   frontend: z.object({
     userApp: z.object({ mount: z.string(), dist: z.string() }).optional(),
     console: z.array(z.object({
@@ -82,6 +85,20 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
   // 的码，该路径恒 403 而无人知晓（与"忘挂 requireScope"同一种病的变种）。由 schema 承载 ⇒
   // 运行时装载与 check-manifests 门禁同时覆盖。
   const codes = new Set(m.permissions.map((p) => p.code))
+
+  // 售后 spec §1.3：guest.scope 与 api.internal[].scope 同纪律——声明一个自己都没有的码 ⇒
+  // 访客会话（guest scope 按订阅发放）拿到的是不存在的授权，恒 403 而无人知晓。由 schema 承载 ⇒
+  // 运行时装载与 check-manifests 门禁同时覆盖。
+  if (m.guest) {
+    if (!codes.has(m.guest.scope)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['guest', 'scope'],
+        message: `guest.scope "${m.guest.scope}" 必须是本模块 permissions[].code 里的码`,
+      })
+    }
+  }
+
   const seenEndpoints = new Set<string>()
   for (const [i, e] of (m.api?.internal ?? []).entries()) {
     if (!codes.has(e.scope)) {
