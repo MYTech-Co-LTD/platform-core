@@ -412,4 +412,72 @@ describePg('工单域', () => {
     expect(detail.attachments.map((a) => a.objectKey)).toEqual([mine.objectKey])
   })
 
+  // ── 终审修复轮 1（I-1）：body 参数面的整数上界，**按目标列的列型分档** ──
+  // 修前 `z.number().int()` 的 `int` 就是 `Number.isInteger`，而 `Number.isInteger(1e30) === true`
+  // ⇒ 越界值直接进 pg 参数位：`|v| ≥ 1e21` 被序列化成指数记法 ⇒ 22P02；低于 1e21 但超列型 ⇒ 22003
+  // ⇒ **Hono 兜成 500**。终审实测 8 条路径全 500（含对外访客面）。
+  it('【回归 I-1】访客提交 body 的越界整数 ⇒ 400（不是 500），且不落库', async () => {
+    // bigint 列（product_id / store_id / ticket_attachment.id）：上界 = Number.MAX_SAFE_INTEGER
+    // integer 列（damage_quantity）：上界 = int4 ⇒ 2147483647
+    const cases: Record<string, unknown>[] = [
+      { productId: 1e30 },
+      { storeId: 1e30 },
+      { damageQuantity: 1e30 },
+      { damageQuantity: 2147483648 }, // int4 越界 1
+      { damageQuantity: Number.MAX_SAFE_INTEGER }, // 是安全整数，却仍超 int4（实测 22003）
+      { attachmentIds: [1e30] },
+      { productId: Number.MAX_SAFE_INTEGER + 1 }, // 超出安全整数
+    ]
+    for (const [i, patch] of cases.entries()) {
+      const req = `req-i1-bad-${i}`
+      const res = await submit(appGuest, { ...validBody(req), ...patch })
+      expect(res.status, `${JSON.stringify(patch)} 应为 400，实为 ${res.status}`).toBe(400)
+      expect(((await res.json()) as { error: string }).error).toBe('INVALID_BODY')
+      const cnt = await pool.query(
+        'select count(*)::int as n from aftersales.ticket where org = $1 and client_request_id = $2',
+        [ORG, req],
+      )
+      expect(cnt.rows[0].n, `${JSON.stringify(patch)} 不得落库`).toBe(0)
+    }
+  })
+
+  it('【回归 I-1·边界对照】合法边界仍被接受：damageQuantity 恰好 2147483647 ⇒ 201', async () => {
+    const boundary = await submit(appGuest, { ...validBody('req-i1-max'), damageQuantity: 2147483647 })
+    expect(boundary.status).toBe(201)
+    // 反向：再大一个就 400（上界是【恰好 int4 上限】，不是更松也不是更紧）
+    const over = await submit(appGuest, { ...validBody('req-i1-over'), damageQuantity: 2147483648 })
+    expect(over.status).toBe(400)
+  })
+
+  // ── 终审修复轮 1（I-2）：7 处 path-param id 守卫收成 routes/context.ts 的 parseIdParam ──
+  // 修前内联守卫是 `!Number.isInteger(id) || id <= 0`，而 `Number.isInteger(1e23) === true`
+  // ⇒ 超大数字串放行 ⇒ 落进 bigint 参数位 ⇒ 500（实测 `GET …/tickets/1e23` ⇒ 500）；
+  // `Number('1.0') === 1`、`Number('1e2') === 100` ⇒ 非规范 id 被【静默接受】。
+  // 本用例是【访客面 + 管理面】两条真实路由的端到端连线证据（helper 本身的形状由
+  // routes/context.test.ts 的单测钉住）。各处【保留原有的状态码】：管理面 400、访客面 404。
+  it('【回归 I-2】路径 id 越界 / 非规范 ⇒ 不是 500，且各站点保留原有状态码', async () => {
+    for (const raw of ['1e23', '99999999999999999999999', '1e30', '1.0', '1e2', '-1', 'abc', '0']) {
+      const m = await appManage.request(`/tickets/${raw}`)
+      expect(m.status, `管理端 GET /tickets/${raw}`).toBe(400)
+      expect((await m.json()) as { error: string }, `管理端 /tickets/${raw}`).toMatchObject({
+        error: 'INVALID_ID',
+      })
+
+      const g = await appGuest.request(`/guest/tickets/${raw}`)
+      expect(g.status, `访客端 GET /guest/tickets/${raw}`).toBe(404)
+      expect((await g.json()) as { error: string }, `访客端 /guest/tickets/${raw}`).toMatchObject({
+        error: 'NOT_FOUND',
+      })
+    }
+  })
+
+  it('【回归 I-2·边界对照】规范 id 仍然放行：不存在的 id=999999999 ⇒ 各自原有语义', async () => {
+    // 管理端：行不存在 ⇒ 404 NOT_FOUND（**不是** INVALID_ID——守卫放行了，是查询没命中）
+    const m = await appManage.request('/tickets/999999999')
+    expect(m.status).toBe(404)
+    expect((await m.json()) as { error: string }).toMatchObject({ error: 'NOT_FOUND' })
+    // 访客面同理（此前该用例已存在，这里补一条形状一致的对照）
+    const g = await appGuest.request('/guest/tickets/999999999')
+    expect(g.status).toBe(404)
+  })
 })

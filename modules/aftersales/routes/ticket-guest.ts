@@ -2,18 +2,29 @@ import { z } from 'zod'
 import { loadAttachments, normalizeTicketRow } from './ticket-manage'
 // 分页常量与解析器在 routes/context.ts：与管理端【同一份】实现、【同一套】语义
 // （此前本文件内联算 page/size 且无整数守卫 ⇒ 非法值 500；?size=-5 也与端点间漂移）。
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageParam } from './context'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
+
+/**
+ * `ticket.damage_quantity` 是 **int4** 列，上界必须按列型取——**不能**借 bigint 那档的
+ * `MAX_SAFE_INTEGER`：`9007199254740991` 是安全整数却仍超 int4（实测 `22003`）。
+ */
+const MAX_INT4 = 2_147_483_647
 
 const SubmitBody = z.object({
   // 客户端幂等键（spec §2.2）；同时是附件 object key 里的 {ticket_ref}（spec §2.3）
   clientRequestId: z.string().min(1).max(128),
-  productId: z.number().int().positive(),
-  storeId: z.number().int().positive().optional(),
-  damageQuantity: z.number().int().nonnegative(),
+  // 下面三个 id 落 **bigint** 列 ⇒ 一律 `.safe()`（= Number.isSafeInteger）。
+  // `z.number().int()` 的 `int` 就是 `Number.isInteger`，而 `Number.isInteger(1e30) === true`
+  // ⇒ 放行后值直接进 pg 参数位：`|v| ≥ 1e21` 被 JS 序列化成指数记法 ⇒ 22P02，低于 1e21 但超列型
+  // ⇒ 22003 ⇒ **Hono 兜成 500**（终审实测 8 条路径全 500）。全模块 bigint 列只用这一种写法。
+  productId: z.number().int().positive().safe(),
+  storeId: z.number().int().positive().safe().optional(),
+  // 这一档走 int4 上界，见 MAX_INT4。
+  damageQuantity: z.number().int().nonnegative().max(MAX_INT4),
   remark: z.string().max(2000).optional(),
   /** 本次提交要一起认领的附件（先传图后提交，见 spec §2.3） */
-  attachmentIds: z.array(z.number().int().positive()).max(50).optional(),
+  attachmentIds: z.array(z.number().int().positive().safe()).max(50).optional(),
 })
 
 export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
@@ -48,8 +59,8 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
   // GET /guest/tickets/:id —— 不是自己的 ⇒ 404（与不存在同形，不泄露"存在但不属于你"）
   r.get('/guest/tickets/:id', async (c) => {
     const identity = c.get('identity')
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
 
     const res = await ctx.pool.query(
       `select id, code, product_id, product_name, store_id, store_name,

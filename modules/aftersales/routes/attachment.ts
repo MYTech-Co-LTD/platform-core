@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { UPLOAD_URL_TTL_SECONDS, objectKeyFor } from '../storage'
+import { parseIdParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
 /**
@@ -8,7 +9,8 @@ import type { ModuleHono, RouteCtx } from './context'
  * 而桶域是独立源。收窄入口是这一层唯一能做的把关（`text/html` 一类不给进）。
  */
 const ALLOWED_PREFIXES = ['image/', 'video/']
-const MAX_DECLARED_BYTES = 500 * 1024 * 1024 // 500MB，仅作明显误报的护栏，见下方注释
+/** 导出是为了让测试直接引用这个上界（`M-5`）——在测试里重写一遍字面量就是第二个事实源。 */
+export const MAX_DECLARED_BYTES = 500 * 1024 * 1024 // 500MB，仅作明显误报的护栏，见下方注释
 
 const UploadRequest = z.object({
   /** 客户端幂等键——同时是 object key 的 {ticket_ref} 段（spec §2.3） */
@@ -34,9 +36,13 @@ export function registerAttachmentGuest(r: ModuleHono, ctx: RouteCtx): void {
     if (!ctx.storage) return c.json({ error: 'ZOS_NOT_CONFIGURED' }, 503)
 
     const objectKey = objectKeyFor(identity.orgId, clientRequestId)
-    // 先落元数据、后给 URL：字节从客户端直传 ZOS，全程不过平台（spec §2.3）。
+    // 先取得预签名、再落元数据。顺序是刻意的：预签名会抛（凭证错 / 网络错），
+    // 若先 INSERT 再签名，每次故障都在库里留一行【无主孤儿】——异常正常上抛，缺的是原子性。
+    // presignPut 的入参只有 objectKey/contentType，**不依赖刚落的行** ⇒ 提前是免费的改善。
+    // 字节从客户端直传 ZOS，全程不过平台（spec §2.3）；
     // 这一步【不校验对象是否真的传上来了】——预签名 PUT 是"给了一张票"，不是"票已核销"。
     // 是否真有字节，只有在读取时才知道（见下方【已知边界】）。
+    const uploadUrl = await ctx.storage.presignPut(objectKey, contentType)
     const res = await ctx.pool.query<{ id: string }>(
       `insert into aftersales.ticket_attachment(
          org, ticket_id, client_request_id, object_key, content_type, size_bytes, uploader_openid)
@@ -44,7 +50,6 @@ export function registerAttachmentGuest(r: ModuleHono, ctx: RouteCtx): void {
       [identity.orgId, clientRequestId, objectKey, contentType, sizeBytes ?? 0, identity.userId],
     )
 
-    const uploadUrl = await ctx.storage.presignPut(objectKey, contentType)
     return c.json(
       {
         id: Number(res.rows[0].id),
@@ -65,8 +70,8 @@ export function registerAttachmentGuest(r: ModuleHono, ctx: RouteCtx): void {
 export function registerAttachmentManage(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/attachments/:id', async (c) => {
     const org = c.get('identity').orgId
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
 
     const res = await ctx.pool.query(
       `select id, ticket_id, object_key, content_type, size_bytes, uploader_openid, created_at

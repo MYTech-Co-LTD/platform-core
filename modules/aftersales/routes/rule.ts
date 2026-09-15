@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { AmountValidationError, normalizeRatio, toRatioOrNull } from '../domain/ticket'
+import { parseIdParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
 /** 规则表是配置表（源侧 12 行），不需要分页，但仍设上界防呆。 */
@@ -60,8 +61,8 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
 
   r.put('/rules/:id', async (c) => {
     const org = c.get('identity').orgId
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
 
     const parsed = RuleBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
@@ -89,8 +90,8 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
 
   r.delete('/rules/:id', async (c) => {
     const org = c.get('identity').orgId
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
 
     // 硬删是刻意的：这是配置表不是流水表，源侧也没有软删语义（spec §3.3 实证表：
     // "仅 group_buying_batch 有 is_deleted"）。历史工单不受影响——它落的是金额快照。

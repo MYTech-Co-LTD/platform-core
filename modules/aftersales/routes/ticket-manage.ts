@@ -9,7 +9,7 @@ import {
 import type { TicketStatus } from '../domain/ticket'
 // 分页常量与解析器在 routes/context.ts（四域共享层）——本文件不再留本地副本，
 // 避免与管理端/访客端两份实现静默漂移（见 context.ts 的 parsePageParam 注释）。
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageParam } from './context'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
 const ProcessBody = z.discriminatedUnion('amountType', [
@@ -71,8 +71,8 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
   // GET /tickets/:id —— 管理端详情，附件带预签名 GET URL
   r.get('/tickets/:id', async (c) => {
     const org = c.get('identity').orgId
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'INVALID_ID' }, 400)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'INVALID_ID' }, 400)
 
     const res = await ctx.pool.query(
       `select id, code, submitter_openid, product_id, product_name, store_id, store_name,
@@ -94,8 +94,8 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
   // POST /tickets/:id/process —— 状态机条件更新（spec §2.2：影响行数 0 ⇒ 409）
   r.post('/tickets/:id/process', async (c) => {
     const org = c.get('identity').orgId
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'INVALID_ID' }, 400)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'INVALID_ID' }, 400)
 
     const parsed = ProcessBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)

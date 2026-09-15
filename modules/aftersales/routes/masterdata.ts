@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { toMinor } from '../domain/ticket'
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageParam } from './context'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
 /** 门店是选择器数据（源侧 322 行），一次给全但设上界。 */
@@ -13,7 +13,10 @@ const escapeLike = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`)
 const EmployeeBody = z.object({
   name: z.string().min(1).max(200),
   phone: z.string().max(50).optional(),
-  storeId: z.number().int().positive().optional(),
+  // `.safe()`：目标列 employee.store_id 是 bigint。`Number.isInteger(1e30) === true` ⇒ 旧写法放行
+  // 越界值，落进 pg 参数位抛 22P02 ⇒ Hono 兜成 500（实测 `storeId: 1e30` ⇒ 500）。
+  // 全模块 bigint 列一律用 `.safe()`，别混其他写法。
+  storeId: z.number().int().positive().safe().optional(),
   /** 微信 openid，移动端身份锚（spec §1.2）。console 侧注册时可留空，随迁时由 M2b 补。 */
   openId: z.string().max(200).optional(),
 })
@@ -149,8 +152,8 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
 
   r.post('/employees/:id/approve', async (c) => {
     const org = c.get('identity').orgId
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
 
     const parsed = ApproveBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
