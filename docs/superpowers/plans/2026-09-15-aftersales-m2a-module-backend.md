@@ -830,7 +830,9 @@ git commit -m "feat(aftersales): 模块骨架与建表迁移——7 张租户数
 > 「用全精度比例算钱 + 原样返回」，与本节 T7 用例「提交 `0.123456789` ⇒ 落库 `'0.1235'`」自相矛盾
 > ⇒ 库里 `(refund_ratio, amount_minor)` 复算不上（实测差 250 分 / 167 分）。
 > 已按裁决改为**在 domain 层归一到存储契约（4 位）**并导出 `normalizeRatio`（T6/T7 共用），
-> `assertValidRatio` 降为它的薄封装。**下方代码块已同步为 `68d3cfb` 的实际实现**；
+> `assertValidRatio` 降为它的薄封装。**下方实现代码块与仓内 `modules/aftersales/domain/ticket.ts`
+> 逐字节一致**（去掉首尾围栏行后与仓内文件 `diff` 应为空——**可自行机检**，故此处不钉某个 commit SHA：
+> 钉 SHA 会随下一次纯注释改动再次过期）；
 > 仅测试代码块未同步（实际 23 条用例，见仓内文件）。裁决留痕：`.superpowers/sdd/2026-09-15-aftersales-m2a-module-backend/progress.md`。
 
 **Files:**
