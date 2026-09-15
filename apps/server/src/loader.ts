@@ -51,6 +51,8 @@ export interface ModulesRuntime {
   modules: LoadedModule[]
   mount(app: Hono): void
   enabledFor(tenantId: number): Promise<Set<string>>
+  /** 该租户已启用模块声明的访客码（manifest guest.scope，售后 spec §1.3：wechat-oa 签访客 session 用） */
+  enabledGuestScopes(tenantId: number): Promise<string[]>
 }
 
 export interface LoadModulesDeps {
@@ -411,19 +413,19 @@ export async function loadModules(
 
         app.route(base, m.router)
 
-        // ⚠️ **上面那道启用闸门不覆盖这里**（R4 复审 S-d；**存量缺口，本轮不改行为**）：闸门只挂在
-        //    `base + '/*'`（= 模块 **API** 子树）上，而 userApp 静态挂在 manifest 自己的 mount 路径
-        //    下、**不经过闸门** ⇒ 显式 `enabled=false` 后 `/api/modules/<id>/ping` 返 404，而
-        //    `<mount>/index.html` 仍 200。即**停用语义只落了 API 半边**。
-        //    **休眠中**：仓内暂无模块声明 `frontend.userApp`（唯一模块 `modules/demo` 只声明了
-        //    `console` ⇒ 下面的 `continue` 先落在这里），故当前无可观测面、也没有可钉的用例。
-        //    将来有模块启用 userApp 时**必须一并补闸**，否则「停用 = 看不到这个模块」会被读成绝对
-        //    规则。docs/module-protocol.md「停用语义」段有同样的标注。
+        // 已收口：静态挂同一 gate（售后 M1）——上面那道启用闸门曾只盖模块 API 子树（R4 复审
+        // S-d 记的存量缺口，当时仓内无 userApp 模块、无可观测面故休眠）。现在 userApp 静态在
+        // serveStatic 之前挂**同一闭包 gate** ⇒ 停用 = 静态与 API 同形 404，「停用 = 看不到这个
+        // 模块」在两面都成立。匿名照旧放行（gate 内既有分支）：SPA 壳登录前必须可载，壳里没有
+        // 业务数据，数据面自有门卫把守。
         const userApp = m.manifest.frontend?.userApp
         if (!userApp) continue
         const dist = path.resolve(m.dir, userApp.dist)
         if (!existsSync(dist)) continue // 目录不存在静默跳过（模块未构建前端）
-        const mountPath = userApp.mount.replace(/\/+$/, '') // 去尾斜杠，统一拼 /* 后缀
+        const mountPath = userApp.mount.replace(/\/+$/, '')
+        // 售后 M1（module-protocol「停用语义」休眠缺口收口）：userApp 静态吃同一道启用闸门——
+        // 匿名放行（SPA 壳登录前可载，业务 API 自会 401/404），已登录+停用 ⇒ 404 与 API 面同形。
+        app.use(mountPath + '/*', gate)
         // serveStatic 以 root+完整请求路径拼文件名，须剥掉挂载前缀还原 dist 内相对路径
         app.use(
           mountPath + '/*',
@@ -436,5 +438,13 @@ export async function loadModules(
     },
 
     enabledFor: enabledForImpl,
+
+    /** 该租户已启用模块声明的访客码（manifest guest.scope，售后 spec §1.3：wechat-oa 签访客 session 用） */
+    enabledGuestScopes: async (tenantId: number): Promise<string[]> => {
+      const enabled = await enabledForImpl(tenantId)
+      return loaded
+        .filter((m) => enabled.has(m.manifest.id) && m.manifest.guest)
+        .map((m) => m.manifest.guest!.scope)
+    },
   }
 }
