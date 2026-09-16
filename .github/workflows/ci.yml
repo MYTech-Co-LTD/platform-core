@@ -6,9 +6,11 @@
 #            （loader / routes/auth-wecom / migrate / routes/auth / tenant，共 50 条）。
 #            不给 DATABASE_URL 时它们是**静默跳过**的——「全绿」会绿在一个休眠基线上：
 #            会话/登录/登出/租户解析/seed/迁移/装载器/企微登录这半边一条都不执行。
-#   gates —— 静态门禁：typecheck（全 workspace 包 + scripts/）+ 四个守卫脚本对真实仓跑。
+#   gates —— 门禁：typecheck（全 workspace 包 + scripts/）+ 五个守卫脚本对真实仓跑。
 #            typecheck 与守卫单测（跑在 unit 的 test:guard 里）是两件事：单测拿 fixture 验
 #            守卫逻辑，本 job 拿真仓验守卫结论，且 typecheck 只在 CI 真跑才有意义。
+#            五个守卫里 check-tenant-isolation 要真库（issue #77 的真库对账），故本 job 也挂了
+#            postgres service——为什么不是挂在 unit / smoke，见那条 step 的注释。
 #   web   —— 前端单测 + 构建（构建内含 `tsc -b`，即 apps/web 的 strict typecheck）。
 #   smoke —— 装载冒烟（scripts/smoke-load.mjs）：真进程 + 真端口 + 真 HTTP 跑双形态。
 #            与 unit 的差别是「进程内直调 app」覆盖不到的那一层（启动期装配、Host 语义、
@@ -53,6 +55,17 @@ jobs:
   gates:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # 本 job 里唯一的非静态守卫是 check-tenant-isolation（下面那条 step）：它按 issue #77 的
+    # 决定**拿真库当真值**，故这里挂 postgres service。与 unit / smoke 的两个 service 块同形。
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: platform, POSTGRES_PASSWORD: platform, POSTGRES_DB: platform }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: 'postgres://platform:platform@127.0.0.1:5432/platform'
     steps:
       # fetch-depth: 0 是下面两条纪律守卫的**前置**，不是可选优化：两条都拿
       # `origin/<base>` 做 diff/log 的范围端点，浅克隆（默认 depth=1）下该 ref 不存在 ⇒
@@ -72,6 +85,25 @@ jobs:
       - run: pnpm exec tsx scripts/lint-architecture.mjs
       - run: pnpm exec tsx scripts/check-compose.mjs
       - run: pnpm exec tsx scripts/check-env-example.mjs
+      # 租户隔离门禁（issue #77；正典 docs/module-protocol.md「租户数据隔离」）：真库对账——
+      # 真跑各模块的 migrations（跑进脚本自建的**一次性库** platform_tenant_isolation_check），
+      # 再查 information_schema 要 org 列。判据按「全部 migrations 的累积终态」，不按文件判
+      # （demo 的 org 是 003 才补的，按文件判会误报模板文件——issue #77 §三）。
+      #
+      # **为什么挂在 gates，而不是 unit / smoke**：
+      #   · gates 是「守卫脚本对真实仓跑」这一族；本脚本是第五条，与上面四条同址 ⇒ 找门禁的人
+      #     只需看一处，不必按「要不要真库」把守卫族拆到两个 job 里。
+      #   · unit 的语义是「跑测试」（本门禁的 fixture 单测就在那儿，走 pnpm run test:guard 的
+      #     `vitest run --dir scripts`）——真仓判定也塞进 unit，「测试红了」与「守卫判定仓库
+      #     有违规」就同色了，排障要靠读日志而不是读 job 名。
+      #   · smoke 的语义是「真进程 + 真端口 + 真 HTTP」，且它必须先构建 web（分钟级）又最易
+      #     flaky：把一条确定性的 schema 门禁挂上去，会让 flaky 冒烟与租户隔离违规同色，
+      #     且违规反馈被 web 构建延迟。issue #77 那句「复用 smoke job 已有的 postgres service」
+      #     是**服务复用**的省事建议（少写十行 service 块），不是「挂 smoke job」的决定；
+      #     本 job 自己挂一个同形状的 service，代价是并行 job 各起一个 PG 容器。
+      # 权限：CI 的 platform 角色是 POSTGRES_USER（超级用户）⇒ 有 CREATEDB；脚本权限不足时
+      # **响亮失败**（不静默跳过）。
+      - run: pnpm exec tsx scripts/check-tenant-isolation.mjs
       # 提交纪律装置校验（"守卫守卫本身"）：层①的钩子是本地文件、层②的自动安装是 package.json
       # 配置，两者任一被改掉，本地直推防线就静默失效——不会有任何报错，只会"从此刻起拦不住"。
       # 所以在 CI 里把它们钉死。（钩子的**行为**由 scripts/git-hooks.test.ts 覆盖，跑在 unit job）

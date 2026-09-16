@@ -181,7 +181,8 @@ scope 的绝对断言，改掉）。`GET /api/platform/config` 是**有意的披
 - **租户数据表**：存「某租户的数据」的表，必须带 `org text not null` 列，值 =
   `identity.orgId`（宿主注入的身份里现成的租户材料，即该租户的 Casdoor org）。
 - **全局表**：字典/配置类跨租户共享的数据，可不带 org——但必须在模块 README 声明理由，
-  评审时按此核对。
+  评审时按此核对；**真有全局表时**还要在该表建表语句上方加一行机器可读的豁免标记
+  （`-- global-table: <理由>`，契约见下节「租户隔离 CI 门禁」）。
 
 三条纪律：
 
@@ -198,8 +199,49 @@ scope 的绝对断言，改掉）。`GET /api/platform/config` 是**有意的披
 **存量数据回填口径**（示例见 `modules/demo/migrations/003_note_org.sql`）：无法归属的旧行
 回填**空串**——空串不等于任何真 org，对所有租户不可见；宁可不可见，不可错归属。
 
-CI 门禁：暂无（文档 + 评审守）；等第一个真实业务模块落地后再评估要不要扫 migrations 的
-建表语句（本仓规矩：门禁升级是单独的决定）。
+CI 门禁：见下节（`scripts/check-tenant-isolation.mjs`，跑在 `ci.yml` 的 **gates** job）。
+
+## 租户隔离 CI 门禁（issue #77，2026-09-16）
+
+**跑在哪**：脚本 `scripts/check-tenant-isolation.mjs`，由 `.github/workflows/ci.yml` 的 **gates**
+job 在四条守卫之后执行（`pnpm exec tsx scripts/check-tenant-isolation.mjs`；gates 为它挂了
+postgres service）。同一脚本的 fixture 单测在 `scripts/check-tenant-isolation.test.ts`，跑在
+unit job 的 `pnpm run test:guard` 里。
+
+**判据是「真库对账」，不是扫 DDL**：脚本真跑一遍每个模块的 migrations（跑进它自建的一次性库
+`platform_tenant_isolation_check`，**绝不碰 DATABASE_URL 指的那个库**），再查
+`information_schema` 要「该模块 schema 下的每张表都有 `org` 列」。两条读法写死在这里，别按
+别的理解改：
+
+1. **按全部 migrations 的累积终态判，不按文件判**。`modules/demo/001_note.sql` 建 `demo.note`
+   时没有 org，org 是 `003_note_org.sql` 后补的——按文件判的正则实现会**误报 demo**，而 demo
+   正是每个新模块照抄的模板。真库天然只看终态。（回归用例见
+   `check-tenant-isolation.test.ts` 的「累积终态」一组。）
+2. **只认 `org` 列存在**：不查 `not null`、不查唯一约束含不含 org、不查索引前缀。上面三条纪律
+   里只有 ① 进机器判据——②③是**条件适用**的（本文件自己写了「没有业务唯一键的表不适用，
+   不强加」），机器判不出「这张表该不该有业务唯一键」，查它必然误报，故仍是评审守；`not null`
+   管的是「行可不可见」而非「租户会不会互见」，纳入判据会把门禁的暴露面从「隔离」漂到「数据
+   质量」。**纪律正典是三条，门禁只机检第一条。**
+
+另有两条**不看 org** 的静态检查，守的是门禁自身的健全性（fail-closed）：模块迁移里的
+`create table` 必须建在**本模块 schema**（= manifest `id`，「三同纪律」），建到别处或不限定
+schema 一律判违规（门禁只查本模块 schema，建到别处 = 门禁看不见 = 静默放行）；豁免标记必须
+紧贴一条本模块的 `create table` 且理由非空。
+
+**豁免出口：`-- global-table: <理由>`（真有全局表时用）**
+
+```sql
+-- global-table: 省份字典，全租户共用，无租户归属
+create table if not exists demo.province (…);
+```
+
+- 与 DDL **同址**：理由长在表的定义旁边，评审一眼可见，也不会与表走散。这就是它不做成 manifest
+  字段的理由——manifest 是**机器契约**（其合法性由 `check-manifests` 守），把评审说明塞进契约
+  字段会让契约变成评审簿，且新模块模板里会多出一个空字段，空字段很容易变成默认勾选。
+- 理由**必填**（空理由即违规）、标记必须**紧贴**建表语句（挂空即违规）；它**只豁免「org 列
+  缺失」这一条判据**，②③纪律照旧由评审守。
+- **「本模块没有全局表」不需要任何标记**（售后模块在 README 声明即可）：标记是「真有全局表」
+  时的出口，不是「声明我没有」的入口。
 
 ## 实现注意（踩过的坑，勿重蹈）
 
