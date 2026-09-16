@@ -66,25 +66,23 @@ export interface IAfterSalesWorkOrder {
 export type AfterSalesStatus = 'pending' | 'processing' | 'completed' | 'cancelled'
 export type AfterSalesType = 'return' | 'exchange' | 'repair' | 'refund' | 'other'
 
+/**
+ * 附件（**域侧适配版**，非源侧形状）：
+ * 源侧那份的 `url` / `originalPath` 在域侧**没有产出方**——`wuji-upload` 的 shim 回的是
+ * `{id, objectKey}`（预签名 **PUT** 地址不是可读地址，spec §2.3），对象 key 也由服务端按
+ * `objectKeyFor(org, clientRequestId)` 定，客户端拼的路径没有消费方。
+ * 于是页面真正要的两样东西改由下面两个字段承载（`previewUrl` + `attachmentId`）：
+ */
 export interface IAttachment {
-  /** 文件类型（image/video） */
   type: 'image' | 'video'
-  /** 文件URL */
-  url: string
-  /** 文件名 */
+  /** 本地预览（`URL.createObjectURL(file)`）——提交前展示用；提交后即可 revoke */
+  previewUrl: string
+  /** 服务端预签名时给的行 id：提交工单时作为 `attachmentIds` 认领（spec §2.3） */
+  attachmentId: number | null
   name: string
-  /** 文件大小（字节） */
   size: number
-  /** 原始文件路径（用于重命名） */
-  originalPath?: string
-  /** 原始文件名（用于重命名） */
-  originalName?: string
-  /** 文件序号 */
-  index?: number
-  /** 上传状态：'pending' 等待中, 'uploading' 上传中, 'completed' 已完成, 'failed' 失败 */
-  uploadStatus?: 'pending' | 'uploading' | 'completed' | 'failed'
-  /** 上传进度 0-100 */
-  uploadProgress?: number
-  /** 临时预览URL（用于上传中显示本地预览） */
-  previewUrl?: string
+  originalName: string
+  index: number
+  uploadStatus: 'uploading' | 'completed' | 'failed'
+  uploadProgress: number
 }
