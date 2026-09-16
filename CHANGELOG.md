@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.9.0...v0.10.0) - 2026-09-16
+- 【新增】aftersales: M3a console 管理端——5 页收进 1 条目 + 模块内 tabs ([#80](https://github.com/MYTech-Co-LTD/platform-core/pull/80), [0cf5213](https://github.com/MYTech-Co-LTD/platform-core/commit/0cf521351488244311f72bbf89389b44d545f03d))
+
+
 ## [0.9.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.8.0...v0.9.0) - 2026-09-16
 - 【新增】aftersales: M2a 模块后端——域 API + 建表 + 天翼 ZOS 预签名 ([#74](https://github.com/MYTech-Co-LTD/platform-core/pull/74), [912dff4](https://github.com/MYTech-Co-LTD/platform-core/commit/912dff4005c0590adbdeedab7c08d05fa3f2ce8d))
 
