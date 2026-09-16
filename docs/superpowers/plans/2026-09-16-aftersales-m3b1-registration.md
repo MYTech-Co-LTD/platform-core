@@ -432,12 +432,14 @@ async function cleanup() {
   await pool.query(`delete from aftersales.product where org = $1`, [ORG])
 }
 
-beforeAll(async () => {
+beforeAll(cleanup)
+beforeEach(async () => {
   await cleanup()
-  // 两张门店供「我的门店」用
+  // ⚠️ 门店必须建在 cleanup **之后**：写在 beforeAll 里会被第一个 beforeEach 的 cleanup 删掉，
+  //    后续用例拿到空的门店 id 列表 ⇒ 解构出 undefined ⇒ employee_store 的 store_id not-null 报错
+  //    （而报错点离真因很远 —— 实施时实测踩到）
   await pool.query(`insert into aftersales.store(org, name, address, phone) values ($1,'店A','',''), ($1,'店B','','')`, [ORG])
 })
-beforeEach(cleanup)
 afterAll(async () => { await cleanup(); await pool.end() })
 
 const storeIds = async (): Promise<number[]> =>
