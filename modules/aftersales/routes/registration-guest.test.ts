@@ -20,12 +20,15 @@ function app(openid = OPENID) {
   return r
 }
 
+/** 两个 org 都要清：租户隔离用例会往 OTHER_ORG 插行，只清 ORG 会让残留跨轮累积。 */
+const ORGS = [ORG, OTHER_ORG]
+
 async function cleanup() {
-  await pool.query(`delete from aftersales.employee_approval where org = any($1::text[])`, [[ORG, OTHER_ORG]])
-  await pool.query(`delete from aftersales.employee_store where org = $1`, [ORG])
-  await pool.query(`delete from aftersales.employee where org = $1`, [ORG])
-  await pool.query(`delete from aftersales.store where org = $1`, [ORG])
-  await pool.query(`delete from aftersales.product where org = $1`, [ORG])
+  await pool.query(`delete from aftersales.employee_approval where org = any($1::text[])`, [ORGS])
+  await pool.query(`delete from aftersales.employee_store where org = any($1::text[])`, [ORGS])
+  await pool.query(`delete from aftersales.employee where org = any($1::text[])`, [ORGS])
+  await pool.query(`delete from aftersales.store where org = any($1::text[])`, [ORGS])
+  await pool.query(`delete from aftersales.product where org = any($1::text[])`, [ORGS])
 }
 
 beforeAll(cleanup)
