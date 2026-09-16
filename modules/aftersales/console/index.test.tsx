@@ -48,9 +48,9 @@ function renderAt(path: string) {
 }
 
 describe('售后 console 入口', () => {
-  it('五个页签都在菜单里', () => {
+  it('六个页签都在菜单里', () => {
     renderAt('/console/aftersales/tickets')
-    for (const label of ['工单', '规则', '员工', '商品', '门店']) {
+    for (const label of ['工单', '规则', '员工', '商品', '门店', '申请审批']) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0)
     }
   })

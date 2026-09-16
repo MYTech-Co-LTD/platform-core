@@ -34,9 +34,18 @@ api:
     - { method: GET,  path: /employees,              scope: aftersales:manage }
     - { method: POST, path: /employees,              scope: aftersales:manage }
     - { method: POST, path: /employees/:id/approve,  scope: aftersales:manage }
+    # ── 登记/变更·管理面（aftersales:manage，M3b-1 / spec §2.5）──
+    - { method: GET,  path: /employee-approvals,             scope: aftersales:manage }
+    - { method: POST, path: /employee-approvals/:id/decide,  scope: aftersales:manage }
     # ── 附件（访客传、管理端取）──
     # 上传在访客面（外部客户拍的照片），读取在管理端（客服要看图判损）——按 scope 分面。
     - { method: POST, path: /guest/attachments, scope: aftersales:guest }
+    # ── 登记/变更·访客面（aftersales:guest，M3b-1 / spec §2.5）──
+    - { method: GET,  path: /guest/me/registration,     scope: aftersales:guest }
+    - { method: POST, path: /guest/employee-approvals,  scope: aftersales:guest }
+    # GET /guest/products 与管理面 GET /products 分面：协议里同一条 (method,path) 只能声明一次、
+    # 一条声明只带一个 scope（spec §2.2 的同一条理由）。
+    - { method: GET,  path: /guest/products,            scope: aftersales:guest }
     - { method: GET,  path: /attachments/:id,   scope: aftersales:manage }
 # 管理端 console（M3a）。**只声明一条**：manifest 的前端条目在 console 菜单里是**平铺**的
 # （apps/web/src/pages/console-menu.ts 只给平台「管理」组做了 children），而 frontend.console
