@@ -134,3 +134,33 @@ export interface ProcessResult {
   amountType: AmountType
   amountMinor: number
 }
+
+// ── 员工登记与审批（M3b-1，spec §2.5）─────────────────────────────────────────
+
+/**
+ * 提交登记/变更的**目标值**——客户端只表达「我要变成什么」，差异由服务端算（spec §2.5 纪律②）。
+ *
+ * ⚠️ 这里是**引用**域内核的定义、不是重定义：形状只有一份事实源
+ * （`import type` ⇒ 编译期擦除，console 侧不会因此把域内核打进前端包）。
+ */
+export type { RegistrationTarget } from './domain/registration'
+import type { RegistrationTarget } from './domain/registration'
+
+/** `GET /guest/me/registration` 的响应（M3b-2 的移动端据此判断「有没有登记 / 我的门店」） */
+export interface MyRegistration {
+  registration: { name: string; phone: string; storeIds: number[] } | null
+  hasPendingApproval: boolean
+}
+
+/** `GET /employee-approvals` 的一行。`oldInfo`/`newInfo` **只含实际变了的字段** */
+export interface EmployeeApprovalItem {
+  id: number
+  openId: string
+  approveType: 'register' | 'change'
+  status: 'pending' | 'approved' | 'rejected'
+  oldInfo: Partial<RegistrationTarget>
+  newInfo: Partial<RegistrationTarget>
+  createdAt: string
+  decidedAt: string | null
+  decidedBy: string | null
+}
