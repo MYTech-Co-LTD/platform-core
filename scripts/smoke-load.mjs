@@ -507,6 +507,70 @@ async function assertStaticServing(b) {
   }
 }
 
+/** 移动端 userApp 的挂载点（manifest 的 frontend.userApp.mount；改这里也要改那儿） */
+const MOBILE_MOUNT = '/app/aftersales'
+const MOBILE_DIST = path.join(repoRoot, 'modules', 'aftersales', 'mobile', 'dist')
+
+/**
+ * H6：userApp 静态**真的挂上了**（M3b-2；spec §3.2 的两条机检）。
+ *
+ * 为什么必须有这一条：`loader.ts` 的 `if (!existsSync(dist)) continue` 是**静默跳过** ——
+ * 「构建没跑」表现为「API 照常、移动端 404」，整条流水线全绿。这正是本仓反复批的
+ * 「静默失败 = 绿」，所以它必须在**真进程 + 真 HTTP** 这层被钉住。
+ *
+ * 三条断言各自防一件事：
+ *   ① 入口回 SPA 壳而不是 404  → 防「没构建 / 路径写错」被静默跳过；
+ *   ② 深链也回**移动端的**壳   → 防 loader 缺 SPA 兜底时被 app.ts 的全局兜底吞成 console 壳；
+ *   ③ 产物引用带挂载点前缀     → 防 vite 的 base 没设，assets 与 console 的撞车。
+ * @param {PhaseBase} b
+ */
+async function assertUserAppServing(b) {
+  step('H6 移动端 userApp：入口与深链都回 SPA 壳，产物引用带挂载点前缀')
+  check(
+    existsSync(path.join(MOBILE_DIST, 'index.html')),
+    `移动端构建产物存在：${path.relative(repoRoot, MOBILE_DIST)}（先跑 pnpm --filter @aftersales/mobile build）`,
+  )
+
+  const shell = readFileSync(path.join(MOBILE_DIST, 'index.html'))
+  const webShell = readFileSync(path.join(webDistDir, 'index.html'))
+
+  for (const p of [`${MOBILE_MOUNT}/`, MOBILE_MOUNT, `${MOBILE_MOUNT}/register`]) {
+    const res = await b.get(p)
+    check(res.status === 200, `GET ${p} 200`, describe(res))
+    check(
+      res.body.equals(shell),
+      `GET ${p} 回的是**移动端**的 SPA 壳（不是 console 的、也不是 404）`,
+      describe(res, { equalsWebShell: res.body.equals(webShell), bytes: res.body.length }),
+    )
+    check(
+      String(res.headers['content-type'] ?? '').includes('text/html'),
+      `GET ${p} content-type 是 html（实际 ${res.headers['content-type'] ?? '(空)'}）`,
+      describe(res),
+    )
+  }
+
+  // 产物路径前缀：index.html 里引的 assets 必须是挂载点前缀（vite 的 base 生效）
+  const html = shell.toString('utf8')
+  check(
+    !/["'(]\/assets\//.test(html),
+    'index.html 里**没有**裸 /assets/ 引用（有 ⇒ vite base 没设，会与 console 的产物撞路径）',
+    html.slice(0, 800),
+  )
+  check(
+    new RegExp(`["'(]${MOBILE_MOUNT}/assets/`).test(html),
+    `index.html 里的产物引用带 ${MOBILE_MOUNT}/ 前缀`,
+    html.slice(0, 800),
+  )
+
+  // 负例对照：不存在的子路径不该被两套壳中的任何一套假装成"有内容"
+  const missing = await b.get(`${MOBILE_MOUNT}/definitely-not-a-real-asset.js`)
+  check(
+    missing.body.equals(shell),
+    '深链落到 SPA 壳（同上，负例：非产物路径不吐别的东西）',
+    describe(missing),
+  )
+}
+
 // ---- 形态 1：multi（Host → 租户） ----
 
 /** @param {ChildProcess} child @param {number} port @param {MockCasdoor} mock @returns {Promise<void>} */
@@ -533,6 +597,7 @@ async function runMulti(child, port, mock) {
   )
 
   await assertStaticServing(b)
+  await assertUserAppServing(b)
 
   step('multi：权限码供给落到每个租户各自的 org（issue #3 第一节回归锁）')
   const mockCookie = await mockAdminCookie(mock)

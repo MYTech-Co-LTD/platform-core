@@ -61,3 +61,14 @@ docker compose -f deploy/docker-compose.yml up --build -d
 curl -i http://127.0.0.1:13000/healthz     # → 200 {"ok":true}
 ```
 人工冒烟清单：`docs/m0-smoke-checklist.md`。
+
+## 已知边界
+
+**照实写，不粉饰。**「本地全绿」在这两类边界上**不等于**「验过」。
+
+- **移动端（`modules/aftersales/mobile`）tsconfig 是 `strict: false`**：整包搬自 `wuji-2`
+  （源工程即 `strict: false`），按 strict 走会一次爆出成百条改写，属另一个任务的范围。
+  **这是一次显式声明的弱化**，收紧是 M3b-2 之后的跟进项。
+- **移动端的端到端本地验不了**（spec §5 #13）：`MockCasdoor` 只做 Casdoor、**不做公众号 OAuth**
+  ⇒ 本地拿不到**访客 session**。本地覆盖到 shim 单测 + 组件测试 + 装载冒烟（H6）；
+  「真壳 + 真访客」这一段**只在试点客户机上验**。**别把「本地全绿」读成「端到端验过」。**
