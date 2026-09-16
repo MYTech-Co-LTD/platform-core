@@ -38,6 +38,11 @@
   还有别的弃用会以 `Warning: [antd: 组件] …` 打出来。
 - ⚠️ **antd 对「两个汉字」的按钮会自动插空格**：`okText="提交"` 实际渲染成 `提 交`，
   于是 `getByRole('button', { name: '提交' })` **找不到**。测试里用正则 **`/提\s*交/`**。
+- ⚠️ **模块页的按钮文案必须显式写，不依赖宿主 locale**：antd 的 `Modal`/`Popconfirm` 默认按钮
+  文案跟随 **locale**——测试里没有 `ConfigProvider` ⇒ 默认英文 `OK`，而真实 app（apps/web 壳里）
+  是中文。同一份代码在两种环境下的可访问名不同，测试就会假红。
+  ⇒ 本模块的 `Modal`/`Popconfirm` **一律显式给 `okText` / `cancelText`**（本模块其余文案本来就
+  全是硬编码中文，本就不该受宿主 locale 影响）。
 
 ## 波次划分（派发用）
 

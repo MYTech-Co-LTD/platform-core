@@ -56,6 +56,7 @@ export function ProcessDialog(props: {
         }
       }}
       okText={done ? '完成' : '提交'}
+      cancelText="取消"
       confirmLoading={busy}
       destroyOnHidden
     >
