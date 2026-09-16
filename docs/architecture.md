@@ -96,6 +96,7 @@
 | **B7** 部署面 | 全仓唯一 compose；文件里**所有** `ports` 条目必须 `127.0.0.1:` 起头 | `scripts/check-compose.mjs` | `gates` |
 | **B8** 无硬编码 | 禁 `hookflow.cn`；禁公网 IP 字面量（`127.0.0.1` 白名单） | `scripts/lint-architecture.mjs` | `gates` |
 | **B9** env 契约 | `.env.example` 键齐全 | `scripts/check-env-example.mjs` | `gates` |
+| **租户隔离** | 模块迁移建表必须有 `org`。判据是**真库对账**（跑一遍模块 migrations 再查 `information_schema`），且按**累积终态**判、不按文件判——按文件判会误报 `modules/demo`（它的 org 在 `003` 才补），而 demo 正是新模块照抄的模板。契约与豁免出口见 `docs/module-protocol.md`「租户隔离 CI 门禁」 | `scripts/check-tenant-isolation.mjs` | `gates` |
 | 装置完好 | `.githooks/pre-push` 带执行位 + 根 `prepare` 接线未被改掉（本地防线被改掉时**不会有任何报错**，只会"从此刻起拦不住"） | `.github/workflows/ci.yml` 的 gates | `gates` |
 | typecheck | 聚合 `tsc --noEmit`，**含 `scripts/`**（只跑包内会漏 `scripts/*.mjs` 的类型错误） | `.github/workflows/ci.yml` | `gates` |
 | 测试 / 冒烟 | 挂真 PG 的全量测试 / 双形态**真进程**装载冒烟 | `.github/workflows/ci.yml` | `unit` / `smoke` |
