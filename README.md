@@ -10,7 +10,8 @@
 - `deploy/` — 部署面：唯一 compose、宿主 Dockerfile、两份 runbook（`openship-adopt.md` 待人工
   执行；`branch-protection-runbook.md` 记录分支保护的现状与替代机制，见 `deploy/README.md`）
 - `scripts/` — 工具脚本：门禁（`check-manifests` / `lint-architecture` / `check-compose` /
-  `check-env-example`）、前端 registry 生成（`gen-console-registry`）、装载冒烟（`smoke-load`）
+  `check-env-example` / `check-tenant-isolation`）、前端 registry 生成（`gen-console-registry`）、
+  装载冒烟（`smoke-load`）
 
 ## 常用命令
 
@@ -24,7 +25,7 @@ pnpm dev          # 启动 @platform/server 开发模式
 ```
 
 CI（`.github/workflows/ci.yml`）四个门禁 job：`unit`（挂 PG 跑全量测试）、`gates`
-（typecheck + 四个守卫脚本对真仓跑）、`web`（前端单测 + 构建）、`smoke`（双形态装载冒烟）。
+（typecheck + 五个守卫脚本对真仓跑）、`web`（前端单测 + 构建）、`smoke`（双形态装载冒烟）。
 另有两个非门禁 job：`deploy`（CD 触发，**默认惰性**——未设 repo variable
 `OPENSHIP_PROJECT_ID` 时显示 skipped，adopt 之后才生效，见 `deploy/openship-adopt.md`）与
 `main-guard`（提交纪律的事后绊线，见下节）。

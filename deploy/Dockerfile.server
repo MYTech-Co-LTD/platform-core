@@ -45,7 +45,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY tsconfig.base.json tsconfig.json ./
 # ③ scripts/：**web 构建的硬依赖**——apps/web 的 build 脚本以相对路径调
 #    `node ../../scripts/gen-console-registry.mjs`（console registry 生成），缺目录直接构建失败；
-#    同时它是四个门禁脚本的家（镜像内可复跑门禁排障）。
+#    同时它是五个门禁脚本的家（镜像内可复跑门禁排障）。
 COPY scripts ./scripts
 # ④ packages/：@platform/sdk 与 @platform/auth-core 的 main 直指 src/*.ts，node_modules 里
 #    指向这里的是 workspace 符号链接——缺它宿主 import 即崩，且崩在启动期而非请求期。
