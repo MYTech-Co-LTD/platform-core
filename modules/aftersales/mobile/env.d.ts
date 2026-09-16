@@ -13,9 +13,14 @@ declare module '*.vue' {
  * 而那些块在移植时**整体删除**（spec §3.2：身份只有 session 一份来源）。
  * 若哪次改动让它又冒出来，请在类型上就不给（编译期红好过运行期白屏）。
  */
-declare function defineWujiPageMeta(options: { title: string; description?: string }): void
+declare function defineWujiPageMeta(options: {
+  title: string
+  description?: string
+  /** 源页传了它（`DefineWujiPageMetaOptions` 有这个字段）——不收就是 TS2353 */
+  metaKeywords?: string
+}): void
 
 interface Window {
   /** main.ts 里赋的退化实现（`declare function` 声明的是全局函数，赋值目标是 window） */
-  defineWujiPageMeta?: (options: { title: string; description?: string }) => void
+  defineWujiPageMeta?: (options: { title: string; description?: string; metaKeywords?: string }) => void
 }

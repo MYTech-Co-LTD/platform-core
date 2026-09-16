@@ -8,6 +8,13 @@
     "strict": false,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vite/client"],
+    // ⚠️ **必须显式写**（2026-09-16 T6/T7 各自独立实测发现）：`paths` 里写的是 `./src/*` 这种
+    // **相对 baseUrl** 的路径，而 baseUrl 是从 `tsconfig.base.json` 继承来的 `"."`——
+    // 它按**基配置所在目录**（仓根）解析 ⇒ 实际 baseUrl 是 `../../..`，于是所有别名都落到
+    // `仓根/src/...`（`tsc --showConfig` 可直接看到）⇒ TS2307 一片。
+    // 这个缺陷一直睡着，因为**在 T6 之前没有任何非测试文件 import 过别名**（占位页面不 import），
+    // 而测试文件被 `exclude` 掉 ⇒ typecheck 从没照到它们。第一个真页面一进来就引爆。
+    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
       "@wujibase/wuji": ["./src/shims/wuji.ts"],

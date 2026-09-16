@@ -156,7 +156,10 @@ export const employee_info_approve = {
    * 源侧 payload 里的 `approvetype` / `openid` / `status` / `old_info` **一律不发**——
    * `old_info` 尤其不能发：服务端本来就知道当前行，发过去只会变成第二份事实。
    */
-  async create(data: { approveinfo?: unknown } = {}): Promise<unknown> {
+  // ⚠️ `approvetype` 收进类型但**不消费**：源侧调用点（与计划自己的用例）都传它，
+  //    不收就是 TS2353（实测）。shim 的目标值映射本来就只读 `approveinfo`，
+  //    差异由服务端算 ⇒ 收下它只是把**类型对齐调用点**，不改行为。
+  async create(data: { approvetype?: string; approveinfo?: unknown } = {}): Promise<unknown> {
     const info = (data.approveinfo ?? {}) as {
       employee_name?: unknown
       employee_phonenumber?: unknown
