@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import { Pool } from 'pg'
 import type { Identity } from '@platform/sdk'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { applyMigrations } from '../test-util'
 import { registerRegistrationManage } from './registration-manage'
 
 const ORG = 'test-m3b1-manage'
@@ -26,7 +27,14 @@ async function cleanup() {
   await pool.query(`delete from aftersales.employee where org = $1`, [ORG])
   await pool.query(`delete from aftersales.store where org = $1`, [ORG])
 }
-beforeAll(cleanup)
+// 自带迁移（评审 N3）：本文件必须**自足**，不能依赖别的包先迁完 aftersales schema。
+// `pnpm -r` 的包间执行顺序不保证 —— 靠 apps/server「顺带」迁移就是「本地红、CI 绿」的时序红
+// （#84 里那 3 个 `relation "aftersales.employee_approval" does not exist` 正是这么来的）。
+// 放在 cleanup **之前**：cleanup 自己就查 aftersales.* 的表，表还不存在它先挂。
+beforeAll(async () => {
+  await applyMigrations(pool)
+  await cleanup()
+})
 beforeEach(cleanup)
 afterAll(async () => {
   await cleanup()
