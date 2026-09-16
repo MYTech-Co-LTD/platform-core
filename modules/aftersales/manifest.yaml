@@ -1,0 +1,41 @@
+id: aftersales
+name: 售后管理
+version: 0.1.0
+platform: '>=0.1'
+permissions:
+  - { code: aftersales:manage, name: 售后管理端 }
+  - { code: aftersales:guest,  name: 售后访客 }
+# 访客码声明（spec §1.3 协议小扩展）：hosting 的 wechat-oa 登录路按该租户已启用模块发放这个码。
+# 管理端与访客端的端点都在下面 api.internal 里逐条声明——分为两面是因为同一个
+# (method, path) 只能声明一次、一条声明只带一个 scope（spec §2.2「路径按 scope 分面」）。
+guest: { scope: aftersales:guest }
+api:
+  internal:
+    # ── 工单·管理端（aftersales:manage）──
+    - { method: GET,  path: /tickets,             scope: aftersales:manage }
+    - { method: GET,  path: /tickets/:id,         scope: aftersales:manage }
+    - { method: POST, path: /tickets/:id/process, scope: aftersales:manage }
+    # ── 工单·访客端（aftersales:guest）──
+    # 为什么与上面分面而不是共用 /tickets：同一个 (method, path) 只能声明一次、一条声明只带一个
+    # scope（packages/platform-sdk/src/manifest.ts 的 superRefine）。见 spec §2.2「路径按 scope 分面」。
+    - { method: GET,  path: /guest/tickets,       scope: aftersales:guest }
+    - { method: GET,  path: /guest/tickets/:id,   scope: aftersales:guest }
+    - { method: POST, path: /guest/tickets,       scope: aftersales:guest }
+    # ── 规则·管理端（aftersales:manage）──
+    - { method: GET,    path: /rules,     scope: aftersales:manage }
+    - { method: POST,   path: /rules,     scope: aftersales:manage }
+    - { method: PUT,    path: /rules/:id, scope: aftersales:manage }
+    - { method: DELETE, path: /rules/:id, scope: aftersales:manage }
+    # ── 主数据·管理端（aftersales:manage）──
+    # 资源名刻意通用（stores/products/employees）——spec §1.2「可搬迁」纪律，
+    # 接龙二期若成为第二消费者，这组端点可整体搬去独立档案模块。
+    - { method: GET,  path: /stores,                 scope: aftersales:manage }
+    - { method: GET,  path: /products,               scope: aftersales:manage }
+    - { method: GET,  path: /employees,              scope: aftersales:manage }
+    - { method: POST, path: /employees,              scope: aftersales:manage }
+    - { method: POST, path: /employees/:id/approve,  scope: aftersales:manage }
+    # ── 附件（访客传、管理端取）──
+    # 上传在访客面（外部客户拍的照片），读取在管理端（客服要看图判损）——按 scope 分面。
+    - { method: POST, path: /guest/attachments, scope: aftersales:guest }
+    - { method: GET,  path: /attachments/:id,   scope: aftersales:manage }
+migrations: { dir: ./migrations }

@@ -826,6 +826,15 @@ git commit -m "feat(aftersales): 模块骨架与建表迁移——7 张租户数
 
 ### Task 4: 业务内核 `domain/ticket.ts`（金额公式 + 三态状态机，纯函数）
 
+> **实施订正（2026-09-15，T4 评审 R4 后回写）**：本节的代码块原把 ratio 路写成
+> 「用全精度比例算钱 + 原样返回」，与本节 T7 用例「提交 `0.123456789` ⇒ 落库 `'0.1235'`」自相矛盾
+> ⇒ 库里 `(refund_ratio, amount_minor)` 复算不上（实测差 250 分 / 167 分）。
+> 已按裁决改为**在 domain 层归一到存储契约（4 位）**并导出 `normalizeRatio`（T6/T7 共用），
+> `assertValidRatio` 降为它的薄封装。**下方实现代码块与仓内 `modules/aftersales/domain/ticket.ts`
+> 逐字节一致**（去掉首尾围栏行后与仓内文件 `diff` 应为空——**可自行机检**，故此处不钉某个 commit SHA：
+> 钉 SHA 会随下一次纯注释改动再次过期）；
+> 仅测试代码块未同步（实际 23 条用例，见仓内文件）。裁决留痕：`.superpowers/sdd/2026-09-15-aftersales-m2a-module-backend/progress.md`。
+
 **Files:**
 - Create: `modules/aftersales/domain/ticket.ts`
 - Test: `modules/aftersales/domain/ticket.test.ts`
@@ -841,9 +850,12 @@ git commit -m "feat(aftersales): 模块骨架与建表迁移——7 张租户数
   - `resolveProcess(ticket: {damageQuantity: number; basicQuantity: number; basicUnitPriceMinor: number}, input: ProcessInput): ProcessOutcome`
   - `isProcessable(status: TicketStatus): boolean`
   - `assertValidRatio(r: number): void` / `assertValidFixedAmount(m: number): void`
+  - `const REFUND_RATIO_DECIMALS = 4`
+  - `normalizeRatio(r: number): number`（校验 + 四舍五入到 4 位小数并【返回归一值】；`assertValidRatio` 是它丢弃返回值的薄封装）
+  - `const TICKET_STATUSES = ['pending', 'completed', 'cancelled'] as const`（`TicketStatus` 由它派生）
   - `toMinor(v: string | number | null | undefined): number`
   - `toRatioOrNull(v: string | number | null | undefined): number | null`
-  - T6/T7 直接复用 `resolveProcess` / `assertValidRatio` / `toMinor` / `toRatioOrNull`
+  - T6/T7 直接复用 `resolveProcess` / `normalizeRatio` / `toMinor` / `toRatioOrNull`
 
 - [ ] **Step 1: 写失败的测试 `modules/aftersales/domain/ticket.test.ts`**
 
@@ -892,7 +904,7 @@ describe('computeAmountMinor —— spec §2.4 金额公式', () => {
 
   it('比例是【小数】不是百分数：0.1 的门槛是 10 件，不是 0.1 件', () => {
     // 若被误当百分数（ratio=10）门槛会变成 1000 件、结果恒 0。用正值钉住正确解释。
-    expect(computeAmountMinor({ ...base, damageQuantity: 100 })).toBe(9_000)
+    expect(computeAmountMinor({ ...base, damageQuantity: 100 })).toBe(45_000)
   })
 })
 
@@ -998,12 +1010,23 @@ Expected: FAIL —— `Failed to resolve import "./ticket"`。
 // 抽出来的理由：这是 M2a 里唯一必须逐行对齐源行为的逻辑（spec §2.4），得能脱离数据库被穷举测试。
 // 路由层只负责取数、开事务、把结果落库——算与判一概在这里。
 
-export type TicketStatus = 'pending' | 'completed' | 'cancelled'
+/**
+ * 三态状态机（spec §2.4）：pending → completed | cancelled。
+ * 这里是状态取值的【唯一事实源】：类型从数组派生、测试直接断言数组本身，
+ * 所以「往状态集里加一个值」会让类型与断言同时跟上，不可能出现类型漂移。
+ * 源 types/afterSalesWorkOrder.ts 那个含 processing 的 4 态版本全仓零写入，是死声明，勿照搬。
+ */
+export const TICKET_STATUSES = ['pending', 'completed', 'cancelled'] as const
+export type TicketStatus = (typeof TICKET_STATUSES)[number]
+
 export type AmountType = 'ratio' | 'fixed' | 'reject'
 
 /**
  * M2a 新增守卫（源侧没有这个上界）：fixed 的金额是操作员手输的，必须有个天花板挡住误输。
- * 取一百万元——远高于任何真实售后单，又远低于 Number.MAX_SAFE_INTEGER（见 toMinor 的说明）。
+ * 取一百万元——远高于任何真实售后单，又远低于 Number.MAX_SAFE_INTEGER。
+ *
+ * 【作用域只到 fixed 路】只有 assertValidFixedAmount 用它。ratio 路的金额是按公式算出来的，
+ * 【没有任何显式上界】——它的取值上界由「报损数量 × 单价的合法输入范围」决定，不由本常量兜底。
  */
 export const MAX_FIXED_AMOUNT_MINOR = 100_000_000
 
@@ -1020,7 +1043,9 @@ export class AmountValidationError extends Error {
  *   · bigint(int8) 默认返回【字符串】（pg 怕超出 Number.MAX_SAFE_INTEGER 丢精度）
  *   · numeric 同样返回【字符串】——`ticket_rule.refund_ratio` 就是 numeric(6,4)
  * 不转就直接参与算术是最阴的一类 bug：`"1200" * 3` 会被 JS 算对，`"1200" + 1` 却变成 "12001"。
- * 转 Number 在这里安全——金额上界 1e8 分、比例 4 位小数，都远在 2^53 之内。
+ * 转 Number 在这里安全：比例是 4 位小数；金额分两路——fixed 由 MAX_FIXED_AMOUNT_MINOR（1e8 分）卡住，
+ * ratio 由「报损数量 × 单价的合法输入范围」决定。两路都远在 2^53 之内。
+ * 【别外推】1e8 只是 fixed 路的上界，不是全模块的兜底——ratio 路的金额没有显式上界。
  */
 export function toMinor(v: string | number | null | undefined): number {
   if (v === null || v === undefined) return 0
@@ -1047,12 +1072,18 @@ export interface AmountInput {
 /**
  * 售后金额（整数分）= (报损数量 − 基本数量 × 售后比例) × 基本单价；负数取 0；四舍五入到分。
  *
- * 源（afterSalesWorkOrderManage.vue:687-705）在浏览器里算，且末尾是 `Math.round(amount*100)/100`
- * ——那是「元」换算成分的四舍五入。目标表单价本来就是分，所以这一步退化成一次 `Math.round`。
+ * 源（afterSalesWorkOrderManage.vue:687-705）在浏览器里按「元」算，末尾 `Math.round(amount*100)/100`
+ * 是按分的四舍五入；目标表单价本来就是分，所以这里只剩一次 `Math.round` 到分。
  *
- * `basicQuantity * refundRatio` 会产生 IEEE 浮点尾差（如 100×0.1 = 10.000000000000002），
- * 但结果只经过一次乘法就被舍入到整数分，误差量级 ~1e-12 分，被舍入吸收；不参与累加，
- * 不会像浮点金额那样攒出假差额。
+ * 【与源侧的关系】这里是【精确算术的按分四舍五入】；与源侧在【恰好半分位】上可差 1 分
+ * （源侧浮点噪声所致，非本实现算错）——例：q=14.5、单价 0.01 元，
+ * 源序 `Math.round(14.5 × 0.01 × 100)` = 14（中间值 14.499999999999998），本实现 `Math.round(14.5 × 1)` = 15。
+ * 数学真值 14.5 分四舍五入就是 15 ⇒ 规格「四舍五入到分」被本实现精确满足。
+ * （按 q∈{0.5,…,200 半步} × 单价∈{1..3000 分} 扫描：1_200_000 组里 34_636 处分歧，全部落在恰好半分位。）
+ *
+ * `basicQuantity * refundRatio` 会产生 IEEE 浮点尾差（如 0.1×3 = 0.30000000000000004、
+ * 3×0.29 = 0.8699999999999999），但结果只经过一次乘法就被舍入到整数分，误差被舍入吸收；
+ * 不参与累加，不会像浮点金额那样攒出假差额。
  */
 export function computeAmountMinor(i: AmountInput): number {
   const payableQuantity = i.damageQuantity - i.basicQuantity * i.refundRatio
@@ -1060,11 +1091,59 @@ export function computeAmountMinor(i: AmountInput): number {
   return Math.round(payableQuantity * i.basicUnitPriceMinor)
 }
 
-/** 比例必须是 [0, 1] 的有限数。工单处理（ratio 路）与规则写侧（T7）共用这一条口径。 */
-export function assertValidRatio(r: number): void {
+/**
+ * 比例的存储契约：`ticket.refund_ratio` 是 numeric(6,4)（spec §2.4 源侧保存走 .toFixed(4)）。
+ * 算钱用的比例与落库的比例必须是【同一个数】，否则库里 (refund_ratio, amount_minor) 自相矛盾
+ * ——按落库比例复算得不出落库金额，正是 spec §2.1「整数分」要防的对账假差额。
+ */
+export const REFUND_RATIO_DECIMALS = 4
+
+/**
+ * 比例收口的【唯一实现】（纯函数，无 IO）：先按现有口径卡 [0, 1] 与有限性（越界抛
+ * AmountValidationError），再把比例四舍五入到存储契约的 4 位小数，【返回归一后的值】。
+ *
+ * 为什么是「四舍五入」而不是「拒绝 >4 位小数」：列就是 numeric(6,4)，存 0.123456789 会被列型
+ * 收窄成 0.1235；与其让列型自己收窄、或干脆拒绝，不如在这里收口——算钱与落库用同一个数。
+ * （计划 2329-2334 行的用例即：提交 0.123456789 ⇒ 落库 refund_ratio = 0.1235，是成功不是 400。）
+ *
+ * 归一按【十进制真值】做，不直接 `Math.round(r * 1e4) / 1e4`：`r * 1e4` 会把浮点噪声一起放大，
+ * 恰好半分位上会漏进位（0.00015、0.33335 这类）。口径以【十进制真值】为准——调用方给的字面值
+ * 就是十进制的，不是以列型的舍入结果为准。实测：0..1 的 100_001 个 5 位小数字面量里，
+ * 直乘有 573 个漏进位、被 toFixed 的二进制近似带偏的有 4992 个，本实现 0 个偏离十进制真值。
+ * 先按 15 位有效数字把二进制尾差收干净（十进制输入在 double 里的噪声 ~1e-16 相对量级），再整数量化。
+ *
+ * 【与列型口径的关系：恰好半分位一致，但不是全域一致】别把这里读成「与 numeric(6,4) 逐值相同」：
+ * 对「比 4 位半分位低 1–2 ulp」的 double，`(r * 1e4).toPrecision(15)` 会把乘积收成【恰好 x.5】
+ * ⇒ 本实现按半分位进位；而列型看到的是【严格小于 x.5 的精确十进制】⇒ 舍去，两边差 1e-4
+ * （例：r = 0.12344999999999999 ⇒ 本实现 0.1235、numeric(6,4) 列 0.1234）。
+ * 真机实测（pg 16.15）：0.00005…0.99995 共 10_000 个 4 位半分位，各取相对最近 double 的
+ * −2/−1/0/+1/+2 ulp，共 50_000 个候选 ⇒ 20_000 处分歧，全部落在 −1/−2 ulp（各 10_000），
+ * 方向恒为「本实现 > 列型」、差恒 1e-4；这些输入距半步十进制真值 4e-21…3e-16。
+ *
+ * 【这不影响要害性质】本函数要保证的是「库里 (refund_ratio, amount_minor) 自洽」，靠的是
+ * 【输出落进 numeric(6,4) 不再被改动】。实测 250_001 个输入（100_001 个 5 位小数字面量
+ * + 上述 50_000 个边界候选 + 100_000 个伪随机 double），归一值再走一遍 numeric(6,4) 转换，
+ * 0 违例。所以上面那处分歧只是「函数的舍入口径 vs 列型口径」在极窄窗口上的差别，
+ * 不会在库里造出比例与金额对不上的记录。
+ *
+ * 注：先卡后归一 ⇒ 归一值必然仍在 [0, 1]（r ∈ [0,1] ⇒ r·10⁴ ∈ [0,10⁴] ⇒ 归一值 ∈ [0,1]），
+ * 因此不需要再补一道「归一后复核」。
+ */
+export function normalizeRatio(r: number): number {
   if (!Number.isFinite(r) || r < 0 || r > 1) {
     throw new AmountValidationError(`refundRatio 必须在 [0, 1] 内（收到 ${r}）`)
   }
+  const factor = 10 ** REFUND_RATIO_DECIMALS
+  return Math.round(Number((r * factor).toPrecision(15))) / factor
+}
+
+/**
+ * 比例合法性的校验面（签名与语义保持不变，返回 void）。工单处理（ratio 路）与规则写侧（T7）
+ * 共用这一条口径：内部委托 normalizeRatio 后丢弃返回值——「一条口径只有一个实现」，
+ * 改了归一也就改了校验，不会两边漂移。
+ */
+export function assertValidRatio(r: number): void {
+  normalizeRatio(r)
 }
 
 /** 固定额必须是非负【整数分】且不超过 MAX_FIXED_AMOUNT_MINOR。 */
@@ -1082,9 +1161,16 @@ export function assertValidFixedAmount(m: number): void {
   }
 }
 
+/**
+ * 可处理状态（三态里的 pending）。`satisfies TicketStatus` 把它钉在 TICKET_STATUSES 派生出的类型上
+ * ——取值表改名/删值，这里编译期就报错，不会静默漂移；同时口径不放宽：
+ * 只列进来的这一态算可处理（fail-closed），将来多出第四态默认【不可】处理。
+ */
+const PROCESSABLE_STATUS = 'pending' satisfies TicketStatus
+
 /** 只有 pending 可以进处理动作；completed / cancelled 都是终态。 */
 export function isProcessable(status: TicketStatus): boolean {
-  return status === 'pending'
+  return status === PROCESSABLE_STATUS
 }
 
 /** 处理动作的输入——三个分支互斥，用 discriminated union 让路由层的 zod 与这里同形。 */
@@ -1110,12 +1196,16 @@ export function resolveProcess(
 ): ProcessOutcome {
   switch (input.amountType) {
     case 'ratio': {
-      assertValidRatio(input.refundRatio)
+      // normalizeRatio 一次收口（校验 + 归一），归一值【同时】用于算钱与落库：
+      // 不能拿全精度的比例算钱、却被 numeric(6,4) 收窄后落库——那样库里的
+      // (refund_ratio, amount_minor) 复算不上，正是 §2.1「整数分」要防的对账假差额。
+      // 校验口径不另起炉灶：assertValidRatio 就是本函数丢弃返回值的薄封装。
+      const refundRatio = normalizeRatio(input.refundRatio)
       return {
         status: 'completed',
         amountType: 'ratio',
-        amountMinor: computeAmountMinor({ ...ticket, refundRatio: input.refundRatio }),
-        refundRatio: input.refundRatio,
+        amountMinor: computeAmountMinor({ ...ticket, refundRatio }),
+        refundRatio,
       }
     }
     case 'fixed': {
@@ -1503,7 +1593,7 @@ DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)" pnpm exec tsx sc
 **Files:**
 - Create: `modules/aftersales/routes/ticket-manage.ts`
 - Create: `modules/aftersales/routes/ticket-guest.ts`
-- Create: `modules/aftersales/routes/context.ts`（`ModuleHono` / `RouteCtx` 两个类型的落点）
+- Create: `modules/aftersales/routes/context.ts`（四域共享层：`ModuleHono` / `RouteCtx` 两个**类型**，**外加**分页**运行时常量**与解析器）
 - Create: `modules/aftersales/routes/ticket.test.ts`
 - Modify: `modules/aftersales/manifest.yaml`（追加 6 条声明）
 - Modify: `modules/aftersales/index.ts`（装配 ctx + 注册两个域）
@@ -1511,7 +1601,15 @@ DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)" pnpm exec tsx sc
 **Interfaces:**
 - Consumes: `resolveProcess` / `isProcessable` / `AmountValidationError` / `toMinor` / `toRatioOrNull`（T4）；`zosConfigFromEnv` / `ZosStorage`（T5）
 - Produces:
-  - `routes/context.ts`：`type ModuleHono`、`interface RouteCtx { pool: Pool; storage: ZosStorage | null }`
+  - `routes/context.ts`：
+    - 类型：`type ModuleHono`、`interface RouteCtx { pool: Pool; storage: ZosStorage | null }`
+    - **运行时值**（分页全仓唯一一份，T6 管理端 / T6 访客端 / **T8 主数据端**都从这里取，
+      **不许各自再写一份**——两份实现已实测漂移过：`?size=-5` 曾出现管理端回落 20、访客端夹成 1）：
+      `const MAX_PAGE_SIZE = 100`、`const DEFAULT_PAGE_SIZE = 20`、
+      `function parsePageParam(raw: string | undefined, fallback: number, max: number): number`
+      （非整数 / < 1 / 空 / NaN / Infinity ⇒ 回落 fallback，**不是 400**；> max ⇒ 夹到 max）。
+      ⚠️ 调用 `page` 时 max 传 `Number.MAX_SAFE_INTEGER`：**该上界是载荷的**，去掉它
+      `?page=1e21` 的 `offset` 会溢出 pg bigint ⇒ 500（T6 定向复审实测）。
   - `registerTicketManage(r: ModuleHono, ctx: RouteCtx): void`
   - `registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void`
   - `index.ts` 的 `createRouter` 改为 `({ pool }) => …` 形态（后续 T7/T8/T9 往里追加 `register*`）
@@ -1519,8 +1617,11 @@ DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)" pnpm exec tsx sc
 - [ ] **Step 1: 写 `modules/aftersales/routes/context.ts`**
 
 ```ts
-// 路由层的两个共享类型。单独一个文件是为了让 T6–T9 四个域互相不 import（避免循环与耦合），
-// 只共同依赖这里。
+// 路由层的共享层：两个**类型**（ModuleHono / RouteCtx）**外加**参数解析的**运行时常量**与解析器
+// （分页 `parsePageParam` + 路径 id `parseIdParam`）。
+// 单独一个文件是为了让 T6–T9 四个域互相不 import（避免循环与耦合），只共同依赖这里。
+// ⚠️ 因此本文件有**值导出**：引类型请务必 `import type`，别把类型当值引（#44 的形状，
+//    typecheck 与直连 src 的单测都拦不住，本仓护栏只加载 auth-core 的桶、照不到这里）。
 import type { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type { Identity } from '@platform/sdk'
@@ -1533,6 +1634,45 @@ export type ModuleHono = Hono<{ Variables: { identity: Identity } }>
 export interface RouteCtx {
   pool: Pool
   storage: ZosStorage | null
+}
+
+/** 列表分页上界：模块自己的护栏，防止 size=99999 一次拉全表。 */
+export const MAX_PAGE_SIZE = 100
+export const DEFAULT_PAGE_SIZE = 20
+
+/**
+ * 分页参数解析（page/size 共用）。**全仓唯一一份**——T6 的管理端列表与访客列表都从这里取，
+ * 两份实现会静默漂移：修复前 `?size=-5` ⇒ 管理端回落 20、访客端夹成 1（同一参数两个端点两种语义）。
+ *
+ * 口径：非整数 / < 1 / 空 / NaN / Infinity ⇒ 回落 fallback（**不是 400**，回落是本模块既定的统一口径）；
+ * 大于 max ⇒ 夹到 max。
+ *
+ * 守卫不是「防御性编程」而是必需：非法值（1.5 / Infinity）直接落进 pg 的 limit/offset 参数位会抛
+ * 22P02 ⇒ Hono 兜成 500，且参数完全由客户端控制（实测 `?page=1.5&size=1` 曾 500）。
+ */
+export function parsePageParam(raw: string | undefined, fallback: number, max: number): number {
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 1) return fallback
+  return Math.min(n, max)
+}
+
+/**
+ * 路径参数里的 id（`/rules/:id` 一类的 `:id` 段）。**全仓唯一一份**，与 `parsePageParam` 同址同因：
+ * 7 处内联守卫一字不差，分开修必然写出 7 份实现 ⇒ 重造 `parsePageParam` 当初被消灭的那种漂移。
+ *
+ * 口径：**只接受十进制正整数字面量**，其余一律 `null`。
+ *   · 非规范字面量（`1.0` / `1e2` / 前导 `+`）**拒绝**——`Number('1.0') === 1`、`Number('1e2') === 100`，
+ *     旧守卫会把它【静默当作某个 id】，属歧义不是特性；
+ *   · `Number.isInteger(1e23) === true` ⇒ 旧守卫放行，值直接落进 pg 的 bigint 参数位 ⇒
+ *     22P02 ⇒ Hono 兜成 **500**（实测 `GET …/tickets/1e23`）。`Number.isSafeInteger` 同时否掉
+ *     越界值与指数记法（`1e23` 不是安全整数）。
+ *
+ * 只回 `null`，**状态码由各调用点自己决定**（本模块里 400 与 404 都有，语义各不相同，不在这里统一）。
+ */
+export function parseIdParam(raw: string | undefined): number | null {
+  if (raw === undefined || !/^\d+$/.test(raw)) return null
+  const n = Number(raw)
+  return Number.isSafeInteger(n) && n > 0 ? n : null
 }
 ```
 
@@ -1774,6 +1914,253 @@ describePg('工单域', () => {
     const body = (await res.json()) as { size: number }
     expect(body.size).toBe(100)
   })
+
+  // ── 修复轮 1/5（裁决 B）：访客列表此前【内联】算 page/size、不做整数守卫 ──
+  // 非法值直接落进 pg 的 limit/offset 参数位 ⇒ 22P02 ⇒ 500。以下用例先红后绿。
+  it('【回归】访客列表：?page=1.5&size=1 ⇒ 200（不是 500），回显整数 1/1', async () => {
+    const res = await appGuest.request('/guest/tickets?page=1.5&size=1')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { page: number; size: number }
+    expect(body.page).toBe(1)
+    expect(body.size).toBe(1)
+  })
+
+  it('【回归】访客列表：其余非法分页形状一律 200，且回显必为整数（不得回显 2.5/Infinity）', async () => {
+    for (const qs of ['page=2.5&size=3', 'page=Infinity&size=20', 'size=1.5', 'page=2.5', 'size=abc']) {
+      const res = await appGuest.request(`/guest/tickets?${qs}`)
+      expect(res.status, `?${qs} 应为 200`).toBe(200)
+      const body = (await res.json()) as { page: number; size: number }
+      expect(Number.isInteger(body.page), `?${qs} 的 page 应为整数，实为 ${body.page}`).toBe(true)
+      expect(Number.isInteger(body.size), `?${qs} 的 size 应为整数，实为 ${body.size}`).toBe(true)
+      expect(body.page).toBeGreaterThanOrEqual(1)
+      expect(body.size).toBeGreaterThanOrEqual(1)
+    }
+  })
+
+  it('【回归】?size=-5：管理端与访客端必须回同一个值（一份常量 + 一份解析，不许漂移）', async () => {
+    const guestRes = await appGuest.request('/guest/tickets?size=-5')
+    const manageRes = await appManage.request('/tickets?size=-5')
+    expect(guestRes.status).toBe(200)
+    expect(manageRes.status).toBe(200)
+    const guestBody = (await guestRes.json()) as { size: number }
+    const manageBody = (await manageRes.json()) as { size: number }
+    // 计划既定口径：非法值【回落默认值】
+    expect(manageBody.size).toBe(20)
+    expect(guestBody.size).toBe(manageBody.size)
+  })
+
+  // ── 修复轮 1/5（裁决 C）：列缺席 ⇒ 别名字段缺席，不得替「没查的列」编造 null ──
+  // 访客列表是有意的【窄 SELECT】（不含 product_id / store_id / refund_ratio），而
+  // normalizeTicketRow 曾无条件映射这三列：productId/storeId 变 Number(undefined)=NaN 被
+  // JSON.stringify 写成 null，refundRatio 走 toRatioOrNull(undefined) → null。后者最重：
+  // T4 契约里 refundRatio:null 的语义是「fixed/reject 路，没有比例」（domain/ticket.ts）
+  // ⇒ 访客端把「按 0.1235 赔 8825 分」显示成与「驳回、无比例」同形。
+  it('【回归】ratio 工单：访客列表没 SELECT 的三列不得被编造成 null，管理端/详情仍是真值', async () => {
+    const created = await submit(appGuest, validBody('req-alias-ratio'))
+    const { id } = (await created.json()) as { id: number }
+    const proc = await appManage.request(`/tickets/${id}/process`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amountType: 'ratio', refundRatio: 0.1235 }),
+    })
+    expect(proc.status).toBe(200)
+
+    const guestList = (await (await appGuest.request('/guest/tickets?size=100')).json()) as {
+      items: Record<string, unknown>[]
+    }
+    const manageList = (await (await appManage.request('/tickets?size=100')).json()) as {
+      items: Record<string, unknown>[]
+    }
+    const detail = (await (await appGuest.request(`/guest/tickets/${id}`)).json()) as Record<string, unknown>
+    const li = guestList.items.find((i) => i.id === id)
+    const mi = manageList.items.find((i) => i.id === id)
+    expect(li, `访客列表里应有工单 ${id}`).toBeDefined()
+    expect(mi, `管理端列表里应有工单 ${id}`).toBeDefined()
+
+    // ① 访客列表：这三列不在 SELECT 里 ⇒ 别名字段【必须缺席】（`'键' in item === false`）。
+    //    这是本轮 F2 的正主——修前这里是 `refundRatio:null` / `productId:null`。
+    expect('refundRatio' in li!).toBe(false)
+    expect('productId' in li!).toBe(false)
+    expect('storeId' in li!).toBe(false)
+
+    // ② 缺席为何无害：访客仍能靠金额类型/金额判别「按比例赔」——缺席的不是判别依据。
+    //    注意键名：本接口的金额类型就是 snake_case 的 `amount_type`（normalizeTicketRow 只给
+    //    amount_minor 起了 camelCase 别名，没给 amount_type 起），故按【实际契约】断言。
+    expect(li!.amount_type).toBe('ratio')
+    expect(li!.amountMinor).toBe(8825)
+
+    // ③ 对照：访客详情是宽 SELECT，必须给出真值（修前就正确，别弱化）。
+    expect(detail.refundRatio).toBe(0.1235)
+    expect(detail.productId).toBe(productId)
+
+    // ④ 管理端列表也是宽 SELECT ⇒ 必须仍是真值（钉住「没把管理端一起弄成缺席」）。
+    expect(mi!.refundRatio).toBe(0.1235)
+    expect(mi!.productId).toBe(productId)
+  })
+
+  it('【回归】reject 工单：null 的语义必须保住（详情 + 管理端列表），访客列表该键必然缺席', async () => {
+    const created = await submit(appGuest, validBody('req-alias-reject'))
+    const { id } = (await created.json()) as { id: number }
+    const proc = await appManage.request(`/tickets/${id}/process`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amountType: 'reject' }),
+    })
+    expect(proc.status).toBe(200)
+
+    const manageList = (await (await appManage.request('/tickets?size=100')).json()) as {
+      items: Record<string, unknown>[]
+    }
+    const detail = (await (await appGuest.request(`/guest/tickets/${id}`)).json()) as Record<string, unknown>
+    const mi = manageList.items.find((i) => i.id === id)
+    expect(mi, `管理端列表里应有工单 ${id}`).toBeDefined()
+
+    // 列【在场且为 null】⇒ 别名必须是 null（**不是缺席**）：这就是 fixed/reject 路的表达。
+    expect('refundRatio' in detail).toBe(true)
+    expect(detail.refundRatio).toBeNull()
+    expect('refundRatio' in mi!).toBe(true)
+    expect(mi!.refundRatio).toBeNull()
+
+    // 访客列表（窄 SELECT）不含该列 ⇒ 键必然缺席，故这里【不】断言该键：
+    // 断言 null 会假红，断言缺席才是本轮的约定——已在上一张 ratio 工单的用例里钉住。
+  })
+
+  // ── 终审修复轮 1（C-1，Critical）：附件认领语句缺【所有权谓词】 ──
+  // 修前 ticket-guest.ts 的 `update aftersales.ticket_attachment … where` 只有
+  // `org / id = any(…) / client_request_id / ticket_id is null`——**没有 uploader_openid**。
+  // 失败场景（终审已端到端实测，那条 UPDATE rowCount=1）：同租户内另一个访客只要把
+  // clientRequestId 猜/撞成受害者那一个，就能认领【别人】尚未提交的附件，再经
+  // GET /guest/tickets/:id 拿到该附件的 objectKey（配好 ZOS 的真机上还带完整预签名 GET URL），
+  // 而受害者侧 total=0、零可观测迹象。被突破的是**授权面**，故定 Critical。
+  //
+  // 这里【直接用 SQL 造受害者的附件行】而不走 POST /guest/attachments：后者要 ZOS 凭证
+  // （本文件没 stub，没配就 503），而本用例要钉的是【认领语句的谓词】，与预签名可用性无关。
+  // 落库形状与 routes/attachment.ts 的 insert 逐字一致。
+  const seedAttachment = async (clientRequestId: string, uploaderOpenid: string, suffix: string) => {
+    const objectKey = `aftersales/${ORG}/${clientRequestId}/00000000-0000-4000-8000-0000000000${suffix}`
+    const res = await pool.query<{ id: string }>(
+      `insert into aftersales.ticket_attachment(
+         org, ticket_id, client_request_id, object_key, content_type, size_bytes, uploader_openid)
+       values ($1, null, $2, $3, 'image/jpeg', 1024, $4) returning id`,
+      [ORG, clientRequestId, objectKey, uploaderOpenid],
+    )
+    return { id: Number(res.rows[0].id), objectKey }
+  }
+
+  it('【回归·安全 C-1】同租户另一访客用同一 clientRequestId 认领 ⇒ 抢不走别人的附件', async () => {
+    const REQ = 'req-c1-shared'
+    // 受害者 bob 先传了图、还【没提交工单】——这正是「先传图后提交」的正常时序（spec §2.3）
+    const victim = await seedAttachment(REQ, 'openid-bob', 'c1')
+
+    // 攻击者 alice 用【同一个 clientRequestId】提交工单，并把这个 id 列进 attachmentIds
+    const attack = await submit(appGuest, { ...validBody(REQ), attachmentIds: [victim.id] })
+    expect(attack.status).toBe(201)
+    const attackerTicketId = ((await attack.json()) as { id: number }).id
+
+    // ① 库里（最强的一条）：受害者的行【没被认领】，且 uploader 仍是 bob
+    const row = await pool.query(
+      'select ticket_id, uploader_openid from aftersales.ticket_attachment where org = $1 and id = $2',
+      [ORG, victim.id],
+    )
+    expect(row.rows[0]).toMatchObject({ ticket_id: null, uploader_openid: 'openid-bob' })
+
+    // ② 接口面（泄露面本身）：攻击者的工单详情里【不得】出现受害者的 objectKey
+    const detail = (await (await appGuest.request(`/guest/tickets/${attackerTicketId}`)).json()) as {
+      attachments: { objectKey: string }[]
+    }
+    expect(detail.attachments.map((a) => a.objectKey)).not.toContain(victim.objectKey)
+    expect(detail.attachments).toEqual([])
+  })
+
+  it('【回归·安全 C-1·对照】上传者认领【自己的】附件 ⇒ 仍然认领得到（修复不得误伤正常路径）', async () => {
+    const REQ = 'req-c1-own'
+    const mine = await seedAttachment(REQ, 'openid-alice', 'c2')
+
+    const res = await submit(appGuest, { ...validBody(REQ), attachmentIds: [mine.id] })
+    expect(res.status).toBe(201)
+    const ticketId = ((await res.json()) as { id: number }).id
+
+    const row = await pool.query(
+      'select ticket_id, uploader_openid from aftersales.ticket_attachment where org = $1 and id = $2',
+      [ORG, mine.id],
+    )
+    expect(Number(row.rows[0].ticket_id)).toBe(ticketId)
+    expect(row.rows[0].uploader_openid).toBe('openid-alice')
+
+    const detail = (await (await appGuest.request(`/guest/tickets/${ticketId}`)).json()) as {
+      attachments: { objectKey: string }[]
+    }
+    expect(detail.attachments.map((a) => a.objectKey)).toEqual([mine.objectKey])
+  })
+
+  // ── 终审修复轮 1（I-1）：body 参数面的整数上界，**按目标列的列型分档** ──
+  // 修前 `z.number().int()` 的 `int` 就是 `Number.isInteger`，而 `Number.isInteger(1e30) === true`
+  // ⇒ 越界值直接进 pg 参数位：`|v| ≥ 1e21` 被序列化成指数记法 ⇒ 22P02；低于 1e21 但超列型 ⇒ 22003
+  // ⇒ **Hono 兜成 500**。终审实测 8 条路径全 500（含对外访客面）。
+  it('【回归 I-1】访客提交 body 的越界整数 ⇒ 400（不是 500），且不落库', async () => {
+    // bigint 列（product_id / store_id / ticket_attachment.id）：上界 = Number.MAX_SAFE_INTEGER
+    // integer 列（damage_quantity）：上界 = int4 ⇒ 2147483647
+    const cases: Record<string, unknown>[] = [
+      { productId: 1e30 },
+      { storeId: 1e30 },
+      { damageQuantity: 1e30 },
+      { damageQuantity: 2147483648 }, // int4 越界 1
+      { damageQuantity: Number.MAX_SAFE_INTEGER }, // 是安全整数，却仍超 int4（实测 22003）
+      { attachmentIds: [1e30] },
+      { productId: Number.MAX_SAFE_INTEGER + 1 }, // 超出安全整数
+    ]
+    for (const [i, patch] of cases.entries()) {
+      const req = `req-i1-bad-${i}`
+      const res = await submit(appGuest, { ...validBody(req), ...patch })
+      expect(res.status, `${JSON.stringify(patch)} 应为 400，实为 ${res.status}`).toBe(400)
+      expect(((await res.json()) as { error: string }).error).toBe('INVALID_BODY')
+      const cnt = await pool.query(
+        'select count(*)::int as n from aftersales.ticket where org = $1 and client_request_id = $2',
+        [ORG, req],
+      )
+      expect(cnt.rows[0].n, `${JSON.stringify(patch)} 不得落库`).toBe(0)
+    }
+  })
+
+  it('【回归 I-1·边界对照】合法边界仍被接受：damageQuantity 恰好 2147483647 ⇒ 201', async () => {
+    const boundary = await submit(appGuest, { ...validBody('req-i1-max'), damageQuantity: 2147483647 })
+    expect(boundary.status).toBe(201)
+    // 反向：再大一个就 400（上界是【恰好 int4 上限】，不是更松也不是更紧）
+    const over = await submit(appGuest, { ...validBody('req-i1-over'), damageQuantity: 2147483648 })
+    expect(over.status).toBe(400)
+  })
+
+  // ── 终审修复轮 1（I-2）：7 处 path-param id 守卫收成 routes/context.ts 的 parseIdParam ──
+  // 修前内联守卫是 `!Number.isInteger(id) || id <= 0`，而 `Number.isInteger(1e23) === true`
+  // ⇒ 超大数字串放行 ⇒ 落进 bigint 参数位 ⇒ 500（实测 `GET …/tickets/1e23` ⇒ 500）；
+  // `Number('1.0') === 1`、`Number('1e2') === 100` ⇒ 非规范 id 被【静默接受】。
+  // 本用例是【访客面 + 管理面】两条真实路由的端到端连线证据（helper 本身的形状由
+  // routes/context.test.ts 的单测钉住）。各处【保留原有的状态码】：管理面 400、访客面 404。
+  it('【回归 I-2】路径 id 越界 / 非规范 ⇒ 不是 500，且各站点保留原有状态码', async () => {
+    for (const raw of ['1e23', '99999999999999999999999', '1e30', '1.0', '1e2', '-1', 'abc', '0']) {
+      const m = await appManage.request(`/tickets/${raw}`)
+      expect(m.status, `管理端 GET /tickets/${raw}`).toBe(400)
+      expect((await m.json()) as { error: string }, `管理端 /tickets/${raw}`).toMatchObject({
+        error: 'INVALID_ID',
+      })
+
+      const g = await appGuest.request(`/guest/tickets/${raw}`)
+      expect(g.status, `访客端 GET /guest/tickets/${raw}`).toBe(404)
+      expect((await g.json()) as { error: string }, `访客端 /guest/tickets/${raw}`).toMatchObject({
+        error: 'NOT_FOUND',
+      })
+    }
+  })
+
+  it('【回归 I-2·边界对照】规范 id 仍然放行：不存在的 id=999999999 ⇒ 各自原有语义', async () => {
+    // 管理端：行不存在 ⇒ 404 NOT_FOUND（**不是** INVALID_ID——守卫放行了，是查询没命中）
+    const m = await appManage.request('/tickets/999999999')
+    expect(m.status).toBe(404)
+    expect((await m.json()) as { error: string }).toMatchObject({ error: 'NOT_FOUND' })
+    // 访客面同理（此前该用例已存在，这里补一条形状一致的对照）
+    const g = await appGuest.request('/guest/tickets/999999999')
+    expect(g.status).toBe(404)
+  })
 })
 ```
 
@@ -1797,11 +2184,10 @@ import {
   toRatioOrNull,
 } from '../domain/ticket'
 import type { TicketStatus } from '../domain/ticket'
+// 分页常量与解析器在 routes/context.ts（四域共享层）——本文件不再留本地副本，
+// 避免与管理端/访客端两份实现静默漂移（见 context.ts 的 parsePageParam 注释）。
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
-
-/** 列表分页上界：模块自己的护栏，防止 size=99999 一次拉全表。 */
-const MAX_PAGE_SIZE = 100
-const DEFAULT_PAGE_SIZE = 20
 
 const ProcessBody = z.discriminatedUnion('amountType', [
   z.object({ amountType: z.literal('ratio'), refundRatio: z.number(), remark: z.string().max(2000).optional() }),
@@ -1819,12 +2205,6 @@ interface TicketRow {
   damage_quantity: number
   basic_quantity: number
   basic_unit_price_minor: string
-}
-
-function parsePageParam(raw: string | undefined, fallback: number, max: number): number {
-  const n = Number(raw)
-  if (!Number.isInteger(n) || n < 1) return fallback
-  return Math.min(n, max)
 }
 
 export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
@@ -1868,8 +2248,8 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
   // GET /tickets/:id —— 管理端详情，附件带预签名 GET URL
   r.get('/tickets/:id', async (c) => {
     const org = c.get('identity').orgId
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'INVALID_ID' }, 400)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'INVALID_ID' }, 400)
 
     const res = await ctx.pool.query(
       `select id, code, submitter_openid, product_id, product_name, store_id, store_name,
@@ -1891,8 +2271,8 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
   // POST /tickets/:id/process —— 状态机条件更新（spec §2.2：影响行数 0 ⇒ 409）
   r.post('/tickets/:id/process', async (c) => {
     const org = c.get('identity').orgId
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'INVALID_ID' }, 400)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'INVALID_ID' }, 400)
 
     const parsed = ProcessBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
@@ -1977,16 +2357,37 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
   })
 }
 
-/** bigint/numeric 在 pg 里都是字符串：出口统一转成 number 或 null，别把字符串漏给前端。 */
+/** 列在场时的 bigint/numeric → number。列【缺席】（undefined）由调用点自己判并原样返回 undefined。 */
+function toNullableInt(v: unknown): number | null {
+  return v === null ? null : Number(v)
+}
+
+/**
+ * bigint/numeric 在 pg 里都是字符串：出口统一转成 number 或 null，别把字符串漏给前端。
+ *
+ * 【列缺席 ⇒ 别名字段缺席】—— 与 basic_unit_price_minor 同一条约定（`row.x === undefined` 时返回
+ * undefined，`JSON.stringify` 会把整个键丢掉）：**不许替「本查询没 SELECT 的列」编造值**。
+ * 访客列表是有意的窄 SELECT（不含 product_id / store_id / refund_ratio），无条件映射会把「没查」
+ * 说成「没有值」：productId/storeId 变 Number(undefined)=NaN 被序列化成 null，更重的是
+ * refundRatio 走 toRatioOrNull(undefined) → null —— 而 T4 契约里 refundRatio:null 的语义是
+ * 「fixed/reject 路，没有比例」⇒ 访客端把「按 0.1235 赔 8825 分」显示成与「驳回、无比例」同形。
+ *
+ * 列【在场】时才转换；在场且值为 null ⇒ **保持 null**（那个 null 是 fixed/reject 的表达，不能丢）。
+ *
+ * ⚠️「键缺席」是 **`JSON.stringify` 之后**的性质（值是 `undefined` 时序列化会把键丢掉），
+ * 不是函数返回对象上的性质：返回对象里键**仍在场**（`'refundRatio' in item === true`，
+ * 值为 `undefined`）。当前 4 个调用点都经 `c.json`（= JSON 序列化）故成立；
+ * 若将来有人直接读该对象的键（不吃序列化），**前提就不成立了** —— 那里要显式判 `undefined`。
+ */
 export function normalizeTicketRow(row: Record<string, unknown>): Record<string, unknown> {
   return {
     ...row,
     id: Number(row.id),
-    productId: row.product_id === null ? null : Number(row.product_id),
-    storeId: row.store_id === null ? null : Number(row.store_id),
+    productId: row.product_id === undefined ? undefined : toNullableInt(row.product_id),
+    storeId: row.store_id === undefined ? undefined : toNullableInt(row.store_id),
     basicUnitPriceMinor: row.basic_unit_price_minor === undefined ? undefined : toMinor(row.basic_unit_price_minor as string),
     amountMinor: toMinor(row.amount_minor as string),
-    refundRatio: toRatioOrNull(row.refund_ratio as string | null),
+    refundRatio: row.refund_ratio === undefined ? undefined : toRatioOrNull(row.refund_ratio as string | null),
   }
 }
 
@@ -2023,28 +2424,40 @@ export async function loadAttachments(
 ```ts
 import { z } from 'zod'
 import { loadAttachments, normalizeTicketRow } from './ticket-manage'
+// 分页常量与解析器在 routes/context.ts：与管理端【同一份】实现、【同一套】语义
+// （此前本文件内联算 page/size 且无整数守卫 ⇒ 非法值 500；?size=-5 也与端点间漂移）。
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
-const MAX_PAGE_SIZE = 100
-const DEFAULT_PAGE_SIZE = 20
+/**
+ * `ticket.damage_quantity` 是 **int4** 列，上界必须按列型取——**不能**借 bigint 那档的
+ * `MAX_SAFE_INTEGER`：`9007199254740991` 是安全整数却仍超 int4（实测 `22003`）。
+ */
+const MAX_INT4 = 2_147_483_647
 
 const SubmitBody = z.object({
   // 客户端幂等键（spec §2.2）；同时是附件 object key 里的 {ticket_ref}（spec §2.3）
   clientRequestId: z.string().min(1).max(128),
-  productId: z.number().int().positive(),
-  storeId: z.number().int().positive().optional(),
-  damageQuantity: z.number().int().nonnegative(),
+  // 下面三个 id 落 **bigint** 列 ⇒ 一律 `.safe()`（= Number.isSafeInteger）。
+  // `z.number().int()` 的 `int` 就是 `Number.isInteger`，而 `Number.isInteger(1e30) === true`
+  // ⇒ 放行后值直接进 pg 参数位：`|v| ≥ 1e21` 被 JS 序列化成指数记法 ⇒ 22P02，低于 1e21 但超列型
+  // ⇒ 22003 ⇒ **Hono 兜成 500**（终审实测 8 条路径全 500）。全模块 bigint 列只用这一种写法。
+  productId: z.number().int().positive().safe(),
+  storeId: z.number().int().positive().safe().optional(),
+  // 这一档走 int4 上界，见 MAX_INT4。
+  damageQuantity: z.number().int().nonnegative().max(MAX_INT4),
   remark: z.string().max(2000).optional(),
   /** 本次提交要一起认领的附件（先传图后提交，见 spec §2.3） */
-  attachmentIds: z.array(z.number().int().positive()).max(50).optional(),
+  attachmentIds: z.array(z.number().int().positive().safe()).max(50).optional(),
 })
 
 export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
   // GET /guest/tickets —— 只回自己的（按 submitter_openid 收窄，spec §2.2）
   r.get('/guest/tickets', async (c) => {
     const identity = c.get('identity')
-    const page = Math.max(1, Number(c.req.query('page')) || 1)
-    const size = Math.min(Math.max(1, Number(c.req.query('size')) || DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE)
+    // 与管理端同一口径（parsePageParam）：非法值回落默认值，超出上界夹住。
+    const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
+    const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
     const totalRes = await ctx.pool.query<{ n: number }>(
       'select count(*)::int as n from aftersales.ticket where org = $1 and submitter_openid = $2',
@@ -2070,8 +2483,8 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
   // GET /guest/tickets/:id —— 不是自己的 ⇒ 404（与不存在同形，不泄露"存在但不属于你"）
   r.get('/guest/tickets/:id', async (c) => {
     const identity = c.get('identity')
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
 
     const res = await ctx.pool.query(
       `select id, code, product_id, product_name, store_id, store_name,
@@ -2153,24 +2566,37 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
 
       // ③ 编号：同一事务内补写（不是 generated column）——因为 M2b 迁移要【保留源编号】，
       //    生成列会让源编号落不进来。形状 AS-00000001，8 位补零。
-      await client.query(
-        `update aftersales.ticket set code = 'AS-' || lpad(id::text, 8, '0') where org = $1 and id = $2`,
+      //    code 与 status 【从同一条 update 的 returning 读回】，不硬编码字面量：
+      //    硬写 'pending' 会在将来状态默认值变化时对客户端静默说谎（协调者 T6 裁决 A）。
+      const coded = await client.query<{ code: string; status: string }>(
+        `update aftersales.ticket set code = 'AS-' || lpad(id::text, 8, '0') where org = $1 and id = $2 returning code, status`,
         [org, ticketId],
       )
 
-      // ④ 认领附件：把本次幂等键下、尚未归属的附件挂到这张工单上
+      // ④ 认领附件：把本次幂等键下、**属于本上传者**、尚未归属的附件挂到这张工单上。
+      //
+      // ⚠️ `and uploader_openid = $5` 是【所有权谓词，不是可选项】。`identity.userId` 在本路由
+      //    就是访客 openid（见上面 ② 的 `submitter_openid`，用的是同一个值）。
+      //    少了它：同租户内任一访客只要把 clientRequestId 猜/撞成同一个值，就能认领【别人】尚未
+      //    提交的附件，再经 GET /guest/tickets/:id 拿到该附件**完整的预签名 GET URL**
+      //    （受害者侧 total=0，零可观测迹象）。终审已端到端实测（那条 UPDATE rowCount=1）。
+      //    三个谓词合起来的语义 =「确实属于本次请求、且属于本上传者」——不必再额外查询。
       if (body.attachmentIds?.length) {
         await client.query(
           `update aftersales.ticket_attachment
               set ticket_id = $3
             where org = $1 and id = any($4::bigint[])
-              and client_request_id = $2 and ticket_id is null`,
-          [org, body.clientRequestId, ticketId, body.attachmentIds],
+              and client_request_id = $2 and ticket_id is null
+              and uploader_openid = $5`,
+          [org, body.clientRequestId, ticketId, body.attachmentIds, identity.userId],
         )
       }
 
       await client.query('commit')
-      return c.json({ id: ticketId, duplicated: false }, 201)
+      return c.json(
+        { id: ticketId, code: coded.rows[0].code, status: coded.rows[0].status, duplicated: false },
+        201,
+      )
     } catch (err) {
       await client.query('rollback').catch(() => {})
       // 并发下两个请求可能同时通过 ① 的存在性检查 ⇒ 唯一索引 (org, client_request_id) 让后到的那个
@@ -2276,7 +2702,7 @@ git commit -m "feat(aftersales): 工单域——管理端列表/详情/处理 + 
 - Modify: `modules/aftersales/index.ts`（追加 `registerRule`）
 
 **Interfaces:**
-- Consumes: `assertValidRatio` / `AmountValidationError` / `toRatioOrNull`（T4）；`ModuleHono` / `RouteCtx`（T6）
+- Consumes: `normalizeRatio` / `AmountValidationError` / `toRatioOrNull`（T4）；`ModuleHono` / `RouteCtx`（T6）
 - Produces: `registerRule(r: ModuleHono, ctx: RouteCtx): void`
 
 - [ ] **Step 1: 写失败的测试 `modules/aftersales/routes/rule.test.ts`**
@@ -2333,7 +2759,7 @@ describePg('规则域', () => {
     expect(row.rows[0].refund_ratio).toBe('0.1235')
   })
 
-  it('比例越界 ⇒ 400（与工单处理共用 assertValidRatio 一条口径）', async () => {
+  it('比例越界 ⇒ 400（与工单处理共用 normalizeRatio 一条口径）', async () => {
     for (const bad of [1.5, -0.2]) {
       const res = await post({ name: '越界', refundRatio: bad })
       expect(res.status).toBe(400)
@@ -2396,7 +2822,8 @@ Expected: FAIL —— 路由未注册，全部 404。
 
 ```ts
 import { z } from 'zod'
-import { AmountValidationError, assertValidRatio, toRatioOrNull } from '../domain/ticket'
+import { AmountValidationError, normalizeRatio, toRatioOrNull } from '../domain/ticket'
+import { parseIdParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
 /** 规则表是配置表（源侧 12 行），不需要分页，但仍设上界防呆。 */
@@ -2432,11 +2859,14 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
     const org = c.get('identity').orgId
     const parsed = RuleBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
-    const { name, refundRatio, remark } = parsed.data
+    const { name, remark } = parsed.data
+    let refundRatio: number
 
     try {
-      // 与工单处理共用同一条校验口径（T4 的 assertValidRatio）——比例合法性的唯一事实源
-      assertValidRatio(refundRatio)
+      // 与工单处理共用同一条口径（T4 的 normalizeRatio）——比例合法性与 4 位小数的唯一事实源。
+      // 【落库必须用它的返回值】：assertValidRatio 只是它丢弃返回值的薄封装，
+      // 用 void 封装等于「校验在 JS、量化交给 pg 列型」，又变成两套实现。
+      refundRatio = normalizeRatio(parsed.data.refundRatio)
     } catch (err) {
       if (err instanceof AmountValidationError) {
         return c.json({ error: 'INVALID_AMOUNT', message: err.message }, 400)
@@ -2454,15 +2884,16 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
 
   r.put('/rules/:id', async (c) => {
     const org = c.get('identity').orgId
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
 
     const parsed = RuleBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
-    const { name, refundRatio, remark } = parsed.data
+    const { name, remark } = parsed.data
+    let refundRatio: number
 
     try {
-      assertValidRatio(refundRatio)
+      refundRatio = normalizeRatio(parsed.data.refundRatio)
     } catch (err) {
       if (err instanceof AmountValidationError) {
         return c.json({ error: 'INVALID_AMOUNT', message: err.message }, 400)
@@ -2482,8 +2913,8 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
 
   r.delete('/rules/:id', async (c) => {
     const org = c.get('identity').orgId
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
 
     // 硬删是刻意的：这是配置表不是流水表，源侧也没有软删语义（spec §3.3 实证表：
     // "仅 group_buying_batch 有 is_deleted"）。历史工单不受影响——它落的是金额快照。
@@ -2551,6 +2982,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
+import { DEFAULT_PAGE_SIZE } from './context'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -2619,6 +3051,28 @@ describePg('主数据域', () => {
     expect(apple).toBeDefined()
   })
 
+  // 分页口径与管理端/访客端**同一份** parsePageParam（context.ts）。两条边界必须钉住：
+  // ① 非法值回落默认（**不是 500**——非法值直接进 pg 的 limit/offset 会抛 22P02 被 Hono 兜成 500）；
+  // ② page 上界不得去掉（去掉则 ?page=1e21 的 offset 溢出 pg bigint ⇒ 500）。
+  it('商品分页：非法 page/size 回落默认值，不 500', async () => {
+    for (const qs of ['size=-5', 'size=1.5', 'size=abc', 'size=', 'page=1.5', 'page=0', 'page=']) {
+      const res = await app.request(`/products?${qs}`)
+      expect(res.status, `?${qs}`).toBe(200)
+      const body = (await res.json()) as { page: number; size: number }
+      expect(Number.isInteger(body.page), `?${qs} page`).toBe(true)
+      expect(Number.isInteger(body.size), `?${qs} size`).toBe(true)
+    }
+    const fallback = (await (await app.request('/products?size=-5&page=0')).json()) as { page: number; size: number }
+    expect(fallback).toMatchObject({ page: 1, size: DEFAULT_PAGE_SIZE })
+  })
+
+  it('商品分页：page 上界存在（极大 page 不 500，offset 不溢出 pg bigint）', async () => {
+    const res = await app.request('/products?page=1e21&size=100')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { page: number }
+    expect(body.page).toBe(Number.MAX_SAFE_INTEGER)
+  })
+
   it('员工注册 ⇒ 201、审批态默认 pending', async () => {
     const res = await app.request('/employees', json({ name: '张三', phone: '13800000000' }))
     expect(res.status).toBe(201)
@@ -2674,6 +3128,71 @@ describePg('主数据域', () => {
     expect((await res.json()) as { error: string }).toMatchObject({ error: 'STORE_NOT_FOUND' })
     await pool.query('delete from aftersales.store where org = $1', ['test-aftersales-md-other'])
   })
+
+  // ── 终审修复轮 1（I-1）：body 参数面的整数上界，**按目标列的列型分档** ──
+  // `employee.store_id` 是 **bigint** ⇒ 上界 = Number.MAX_SAFE_INTEGER（`.safe()`）。
+  // 修前 `z.number().int()` 放行 `1e30` ⇒ 落 pg 参数位抛 22P02 ⇒ **Hono 兜成 500**（终审实测）。
+  it('【回归 I-1】员工注册 storeId 越界 ⇒ 400（不是 500）', async () => {
+    for (const storeId of [1e30, Number.MAX_SAFE_INTEGER + 1]) {
+      const res = await app.request('/employees', json({ name: '越界', storeId }))
+      expect(res.status, `storeId=${storeId} 应为 400，实为 ${res.status}`).toBe(400)
+      expect((await res.json()) as { error: string }).toMatchObject({ error: 'INVALID_BODY' })
+    }
+    // 边界对照：MAX_SAFE_INTEGER 本身是合法 bigint ⇒ zod 放行、走到门店校验 ⇒ 本 org 没有这个门店
+    // ⇒ 400 **STORE_NOT_FOUND**。这条把「上界恰好在 bigint 列型上」钉住：再紧一点就会变 INVALID_BODY。
+    const boundary = await app.request('/employees', json({ name: '边界', storeId: Number.MAX_SAFE_INTEGER }))
+    expect(boundary.status).toBe(400)
+    expect((await boundary.json()) as { error: string }).toMatchObject({ error: 'STORE_NOT_FOUND' })
+  })
+
+  // ── 终审修复轮 1（I-2）：path-param id 守卫收成 routes/context.ts 的 parseIdParam ──
+  // 修前 `Number.isInteger(1e23) === true` ⇒ 超大数字串落进 pg 的 bigint 参数位 ⇒ 500。
+  // 本用例是【管理面】终点站之一的端到端连线证据；helper 本身的形状由 routes/context.test.ts 钉住。
+  // 本站点【保留原有状态码】404（与 ticket-manage 的 400 不同，这是刻意的）。
+  it('【回归 I-2】审批端点路径 id 越界 / 非规范 ⇒ 404（保留本站点原有状态码）', async () => {
+    for (const raw of ['1e23', '99999999999999999999999', '1.0', '1e2', '-1', 'abc']) {
+      const res = await app.request(`/employees/${raw}/approve`, json({ approveStatus: 'approved' }))
+      expect(res.status, `POST /employees/${raw}/approve 应为 404，实为 ${res.status}`).toBe(404)
+      expect((await res.json()) as { error: string }).toMatchObject({ error: 'NOT_FOUND' })
+    }
+  })
+
+  // ── 终审修复轮 1（M-T8-1）：`escapeLike` 的转义此前【从未被执行过】 ──
+  // 终审静态核：本文件原来的搜索词只有 `苹果` / `不存在的名字`，**无一含 `%` 或 `_`**
+  // ⇒ 转义函数一次都没被走到；将来有人「简化」掉它【不会红】。
+  // 终审动态实核（真 PG 16.15）：`name ilike '%A\%B%'` 只命中 `A%B`；不转义对照
+  // `'%A%B%'` 命中 `A_B`/`A%B`/`AXB` 三行。⇒ 转义本身是对的（PG 默认 ESCAPE 字符就是
+  // 反斜杠，无需显式 ESCAPE 子句），本用例补的是【证据】，不改实现。
+  it('【回归 M-T8-1】搜索词里的 % / _ / 反斜杠按【字面量】处理，不当通配符', async () => {
+    // `a\%b` 是【含转义字符本身】的输入（JS 字面量 'a\\%b' ⇒ 4 个字符 a \ % b）
+    const names = ['A%B', 'A_B', 'AXB', '纯%号', '纯_号', 'a\\%b']
+    await pool.query(
+      `insert into aftersales.product(org, name, spec, basic_quantity, basic_unit_price_minor)
+       select $1, unnest($2::text[]), '', 1, 1`,
+      [ORG, names],
+    )
+    try {
+      const search = async (q: string) => {
+        const res = await app.request(`/products?q=${encodeURIComponent(q)}`)
+        expect(res.status, `q=${q}`).toBe(200)
+        return ((await res.json()) as { items: { name: string }[] }).items.map((p) => p.name).sort()
+      }
+
+      // ① `q='%'`：若 `%` 被当通配符，它会匹配【一切】——包括本 org 原有的「苹果」
+      const pct = await search('%')
+      expect(pct).toEqual(['A%B', 'a\\%b', '纯%号'])
+      expect(pct, '% 不得被当成通配符匹配到一切').not.toContain('苹果')
+
+      // ② `q='_'`：单字符通配符同理，只命中名字里真有下划线的
+      expect(await search('_')).toEqual(['A_B', '纯_号'])
+
+      // ③ `q='a\%b'`（输入自带反斜杠）：反斜杠必须先被转义，否则它会把后面的 `%` 吃掉、
+      //    当成「字面 %」⇒ 变成匹配 `a%b` 类名字。正确行为是整体按字面量匹配 ⇒ 只有 `a\%b` 命中。
+      expect(await search('a\\%b')).toEqual(['a\\%b'])
+    } finally {
+      await pool.query('delete from aftersales.product where org = $1 and name = any($2::text[])', [ORG, names])
+    }
+  })
 })
 ```
 
@@ -2690,11 +3209,9 @@ Expected: FAIL —— 路由未注册。
 ```ts
 import { z } from 'zod'
 import { toMinor } from '../domain/ticket'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
-/** 分页上界。源侧 product 有 13,767 行，服务端分页是硬需求不是优化（spec §0.3）。 */
-const MAX_PAGE_SIZE = 100
-const DEFAULT_PAGE_SIZE = 20
 /** 门店是选择器数据（源侧 322 行），一次给全但设上界。 */
 const MAX_STORES = 1000
 /** 员工是审批列表（源侧 591 行），同上。 */
@@ -2705,7 +3222,10 @@ const escapeLike = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`)
 const EmployeeBody = z.object({
   name: z.string().min(1).max(200),
   phone: z.string().max(50).optional(),
-  storeId: z.number().int().positive().optional(),
+  // `.safe()`：目标列 employee.store_id 是 bigint。`Number.isInteger(1e30) === true` ⇒ 旧写法放行
+  // 越界值，落进 pg 参数位抛 22P02 ⇒ Hono 兜成 500（实测 `storeId: 1e30` ⇒ 500）。
+  // 全模块 bigint 列一律用 `.safe()`，别混其他写法。
+  storeId: z.number().int().positive().safe().optional(),
   /** 微信 openid，移动端身份锚（spec §1.2）。console 侧注册时可留空，随迁时由 M2b 补。 */
   openId: z.string().max(200).optional(),
 })
@@ -2741,10 +3261,12 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/products', async (c) => {
     const org = c.get('identity').orgId
     const q = c.req.query('q')
-    const sizeRaw = Number(c.req.query('size'))
-    const size = Number.isInteger(sizeRaw) && sizeRaw >= 1 ? Math.min(sizeRaw, MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE
-    const pageRaw = Number(c.req.query('page'))
-    const page = Number.isInteger(pageRaw) && pageRaw >= 1 ? pageRaw : 1
+    // 与管理端/访客端**同一口径**（context.ts 的 parsePageParam）：非法值回落默认、超上界夹住。
+    // ⚠️ page 的上界 `Number.MAX_SAFE_INTEGER` 是**载荷的**——去掉它，`?page=1e21` 时
+    // `(page - 1) * size` 会溢出 pg 的 bigint（> 9.22e18）或变成非整数 ⇒ **又变 500**。
+    // （T6 定向复审实测：去掉该上界 ⇒ 必 500。）
+    const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
+    const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
     const params: unknown[] = [org]
     let where = 'org = $1'
@@ -2839,8 +3361,8 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
 
   r.post('/employees/:id/approve', async (c) => {
     const org = c.get('identity').orgId
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
 
     const parsed = ApproveBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
@@ -2920,17 +3442,35 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Pool } from 'pg'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
+import { MAX_DECLARED_BYTES } from './attachment'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
 
 const ORG = 'test-aftersales-att'
+// 专供 M-7（路由层 → sanitizeOrgSegment 的连线）用例：含 `/` 与 `=`（必须被换成 `_`）。
+// `..` 放在【段的内部】（`7..x`）而不是独立成段：净化器只把**纯** `.`/`..` 段视作危险，
+// 而那一档属 M-4，本轮【明确不动】——这样本用例既走到了 `..` 这两个字符，
+// 又不会在 M-4 落地时因精确断言而假红。
+const UNSAFE_ORG = 'test-aft/att=7..x'
+const UNSAFE_ORG_SANITIZED = 'test-aft_att_7..x'
+
+// 两个 describe 都要用（brief 把它写在第一个 describe 里，第二个够不着 ⇒ 上提到模块作用域）
+const post = (body: unknown) => ({
+  method: 'POST' as const,
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+})
 
 describePg('附件域（已配置 ZOS）', () => {
   const pool = new Pool({ connectionString: dbUrl })
   const ctx = { pool }
   // 假凭证——只为让预签名算得出来；真凭证只在部署环境的 env 里（openship isSecret）。
-  // 五个键给齐，zosConfigFromEnv 才返回非 null。必须建在 app 之前，理由见本节开头。
+  // 五个键给齐，zosConfigFromEnv 才返回非 null。
+  // ⚠️ `stubEnv` 必须**先于** `buildTestApp` 执行：ZOS 配置是在模块的 `createRouter` 里读的
+  //    （`index.ts: zosConfigFromEnv(process.env)` ⇒ `storage = config ? new ZosStorage(config) : null`），
+  //    而 `buildTestApp` 会立即调用 `createRouter`。stub 晚于它 ⇒ **静默失效**：
+  //    这些用例不会报错，只会回 503 而不是用假凭证签出 URL。
   vi.stubEnv('AFTERSALES_ZOS_ENDPOINT', 'zos.xinan1.ctyun.cn')
   vi.stubEnv('AFTERSALES_ZOS_REGION', 'xinan1')
   vi.stubEnv('AFTERSALES_ZOS_BUCKET', 'aftersales-test')
@@ -2946,22 +3486,28 @@ describePg('附件域（已配置 ZOS）', () => {
     makeIdentity({ orgId: ORG, scopes: ['aftersales:manage'] }),
     ctx,
   )
+  // M-7 的不安全 org 壳。**必须与上面两个 app 同处**（即同样在 stubEnv 之后、describe body 里）：
+  // 下面第二个 describe 顶层的 `vi.unstubAllEnvs()` 在**收集期**就执行了，若把这个 app 留到
+  // 用例体内再建，拿到的是「五个键全空 ⇒ storage = null」⇒ 端点回 503 而不是 201。
+  const unsafeGuest = buildTestApp(
+    mod,
+    makeIdentity({ orgId: UNSAFE_ORG, userId: 'openid-unsafe', scopes: ['aftersales:guest'] }),
+    ctx,
+  )
+
+  // 行的 `org` 落的是【原始】identity.orgId（只有 objectKey 会被净化，见 routes/attachment.ts），
+  // 所以 UNSAFE_ORG 那些行也按原值清。
+  const ALL_ORGS = [ORG, UNSAFE_ORG]
 
   beforeAll(async () => {
     await applyMigrations(pool)
-    await pool.query('delete from aftersales.ticket_attachment where org = $1', [ORG])
+    await pool.query('delete from aftersales.ticket_attachment where org = any($1::text[])', [ALL_ORGS])
   })
 
   afterAll(async () => {
-    await pool.query('delete from aftersales.ticket_attachment where org = $1', [ORG])
+    await pool.query('delete from aftersales.ticket_attachment where org = any($1::text[])', [ALL_ORGS])
     expect(pool.ended, '池在本 afterAll 之前已被 end——有别的钩子提前收摊').toBe(false)
     await pool.end().catch(() => {})
-  })
-
-  const post = (body: unknown) => ({
-    method: 'POST' as const,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
   })
 
   it('访客申请上传 ⇒ 201，回预签名 PUT URL，且 key 形状是 aftersales/{org}/{幂等键}/{uuid}', async () => {
@@ -3022,6 +3568,67 @@ describePg('附件域（已配置 ZOS）', () => {
     const cross = await buildTestApp(mod, other, ctx).request(`/attachments/${id}`)
     expect(cross.status).toBe(404)
   })
+
+  // ── 终审修复轮 1（M-5）：sizeBytes 守卫【零测试】 ──
+  // 终审已实测行为正确（`-1`/`1.5`/`500MB+1`/`1e30` 全 400，`500MB` 边界 201）
+  // ⇒ 缺口【纯在证据】不在实现；且 500MB 是本次新引入的业务规则 ⇒ 一并钉住。
+  it('【回归 M-5】sizeBytes 越界 ⇒ 400（含非整数与指数记法）', async () => {
+    for (const sizeBytes of [-1, 1.5, MAX_DECLARED_BYTES + 1, 1e30]) {
+      const res = await guest.request(
+        '/guest/attachments',
+        post({ clientRequestId: 'req-size-bad', contentType: 'image/jpeg', sizeBytes }),
+      )
+      expect(res.status, `sizeBytes=${sizeBytes} 应为 400，实为 ${res.status}`).toBe(400)
+      expect((await res.json()) as { error: string }).toMatchObject({ error: 'INVALID_BODY' })
+    }
+  })
+
+  it('【回归 M-5·边界】sizeBytes 恰好 MAX_DECLARED_BYTES ⇒ 201，且按申报值落库（上界是闭区间）', async () => {
+    const res = await guest.request(
+      '/guest/attachments',
+      post({ clientRequestId: 'req-size-max', contentType: 'image/jpeg', sizeBytes: MAX_DECLARED_BYTES }),
+    )
+    expect(res.status).toBe(201)
+    const { id } = (await res.json()) as { id: number }
+    const row = await pool.query(
+      'select size_bytes, client_request_id from aftersales.ticket_attachment where org = $1 and id = $2',
+      [ORG, id],
+    )
+    // bigint 在 pg 里是字符串——别按 number 断言
+    expect(row.rows[0]).toMatchObject({
+      size_bytes: String(MAX_DECLARED_BYTES),
+      client_request_id: 'req-size-max',
+    })
+  })
+
+  // ── 终审修复轮 1（M-7）：路由 → sanitizeOrgSegment 这条连线【一次都没被走过】 ──
+  // T5 的单测覆盖了净化函数本身（storage.test.ts），但路由层是否**真的调用了它**无人钉过。
+  // 若有人把 `objectKeyFor(identity.orgId, …)` 改成手动拼字符串，那些单测全绿、只有本用例会红。
+  it('【回归 M-7】identity.orgId 含 / 与 = ⇒ 落库/回显的 objectKey 里 org 段已被净化', async () => {
+    const res = await unsafeGuest.request(
+      '/guest/attachments',
+      post({ clientRequestId: 'req/att=1..x', contentType: 'image/jpeg' }),
+    )
+    expect(res.status).toBe(201)
+    const { id, objectKey } = (await res.json()) as { id: number; objectKey: string }
+
+    const segs = objectKey.split('/')
+    expect(segs).toHaveLength(4)
+    expect(segs[0]).toBe('aftersales')
+    expect(segs[1]).toBe(UNSAFE_ORG_SANITIZED) // 原始值 `test-aft/att=7..x`
+    expect(segs[2]).toBe('req_att_1..x') // 幂等键同样过净化（它也是 key 的一段）
+    expect(segs[3]).toMatch(/^[0-9a-f-]{36}$/)
+    // 自明断言：`/` 与 `=` 都没漏出去（漏出去会改变 S3 key 的分段/需编码）
+    expect(segs[1]).not.toContain('=')
+    expect(segs[1]).not.toContain('/')
+
+    // 落库的那一份与回显的【同一个值】——净化在写库之前就完成了
+    const row = await pool.query(
+      'select org, object_key from aftersales.ticket_attachment where org = $1 and id = $2',
+      [UNSAFE_ORG, id],
+    )
+    expect(row.rows[0]).toMatchObject({ org: UNSAFE_ORG, object_key: objectKey })
+  })
 })
 
 describePg('附件域（未配置 ZOS）', () => {
@@ -3067,6 +3674,7 @@ Expected: FAIL —— 路由未注册。
 ```ts
 import { z } from 'zod'
 import { UPLOAD_URL_TTL_SECONDS, objectKeyFor } from '../storage'
+import { parseIdParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
 /**
@@ -3075,7 +3683,8 @@ import type { ModuleHono, RouteCtx } from './context'
  * 而桶域是独立源。收窄入口是这一层唯一能做的把关（`text/html` 一类不给进）。
  */
 const ALLOWED_PREFIXES = ['image/', 'video/']
-const MAX_DECLARED_BYTES = 500 * 1024 * 1024 // 500MB，仅作明显误报的护栏，见下方注释
+/** 导出是为了让测试直接引用这个上界（`M-5`）——在测试里重写一遍字面量就是第二个事实源。 */
+export const MAX_DECLARED_BYTES = 500 * 1024 * 1024 // 500MB，仅作明显误报的护栏，见下方注释
 
 const UploadRequest = z.object({
   /** 客户端幂等键——同时是 object key 的 {ticket_ref} 段（spec §2.3） */
@@ -3101,9 +3710,13 @@ export function registerAttachmentGuest(r: ModuleHono, ctx: RouteCtx): void {
     if (!ctx.storage) return c.json({ error: 'ZOS_NOT_CONFIGURED' }, 503)
 
     const objectKey = objectKeyFor(identity.orgId, clientRequestId)
-    // 先落元数据、后给 URL：字节从客户端直传 ZOS，全程不过平台（spec §2.3）。
+    // 先取得预签名、再落元数据。顺序是刻意的：预签名会抛（凭证错 / 网络错），
+    // 若先 INSERT 再签名，每次故障都在库里留一行【无主孤儿】——异常正常上抛，缺的是原子性。
+    // presignPut 的入参只有 objectKey/contentType，**不依赖刚落的行** ⇒ 提前是免费的改善。
+    // 字节从客户端直传 ZOS，全程不过平台（spec §2.3）；
     // 这一步【不校验对象是否真的传上来了】——预签名 PUT 是"给了一张票"，不是"票已核销"。
     // 是否真有字节，只有在读取时才知道（见下方【已知边界】）。
+    const uploadUrl = await ctx.storage.presignPut(objectKey, contentType)
     const res = await ctx.pool.query<{ id: string }>(
       `insert into aftersales.ticket_attachment(
          org, ticket_id, client_request_id, object_key, content_type, size_bytes, uploader_openid)
@@ -3111,7 +3724,6 @@ export function registerAttachmentGuest(r: ModuleHono, ctx: RouteCtx): void {
       [identity.orgId, clientRequestId, objectKey, contentType, sizeBytes ?? 0, identity.userId],
     )
 
-    const uploadUrl = await ctx.storage.presignPut(objectKey, contentType)
     return c.json(
       {
         id: Number(res.rows[0].id),
@@ -3132,8 +3744,8 @@ export function registerAttachmentGuest(r: ModuleHono, ctx: RouteCtx): void {
 export function registerAttachmentManage(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/attachments/:id', async (c) => {
     const org = c.get('identity').orgId
-    const id = Number(c.req.param('id'))
-    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'NOT_FOUND' }, 404)
+    const id = parseIdParam(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
 
     const res = await ctx.pool.query(
       `select id, ticket_id, object_key, content_type, size_bytes, uploader_openid, created_at
@@ -3239,7 +3851,7 @@ Expected: 全绿。**注意**：`pnpm typecheck` 走的是根脚本（`pnpm -r -
 - [ ] **Step 3: 推分支**
 
 ```bash
-git push -u origin feat/aftersales-m2a-module-backend
+git push -u origin feat/aftersales-m2a
 ```
 
 若报 SSL/代理错，先试默认（走 7897）；仍失败再加 `-c http.proxy= -c https.proxy=` 绕过
@@ -3248,8 +3860,8 @@ git push -u origin feat/aftersales-m2a-module-backend
 - [ ] **Step 4: 开 PR**
 
 ```bash
-gh pr create --base main --head feat/aftersales-m2a-module-backend \
-  --title "feat(aftersales): M2a 模块后端——域 API + 建表 + 天翼 ZOS 预签名 (Closes #<N>)" \
+gh pr create --base main --head feat/aftersales-m2a \
+  --title "feat(aftersales): M2a 模块后端——域 API + 建表 + 天翼 ZOS 预签名 (Closes #73)" \
   --body "$(cat <<'EOF'
 ## 目标
 platform-core 第一个真业务模块的后端落地（spec M2a 期）。
@@ -3274,12 +3886,17 @@ platform-core 第一个真业务模块的后端落地（spec M2a 期）。
 - [ ] `smoke-load` 证明宿主能装载本模块（装载期双向核对通过）
 - [ ] 每个域都有真 PG 测试：金额公式、三态状态机、幂等、租户隔离、跨租户 404 同形
 
-Closes #<N>
+Closes #73
 EOF
 )"
 ```
 
 - [ ] **Step 5: 等 CI，**只**在 CI CLEAN 时合并**
+
+> ⚠️ **本步不在 T10 内执行**（2026-09-15 协调者裁定，随本行改回计划）：
+> 合并 main = **自动部署到生产**（AGENTS.md「部署已全自动」），因此合并必须排在
+> **全分支终审**之后，并取到**人的明确 go-ahead**。T10 本次只做到 Step 4（开 PR），
+> 本步由协调者在「CI CLEAN ＋ 终审无阻塞项 ＋ 人确认」三者齐备后执行。
 
 ```bash
 gh pr checks --watch
@@ -3312,3 +3929,5 @@ gh pr merge --squash --delete-branch
 7. **桶策略/后端异步体积校验**——T9 的 `sizeBytesAdvisory` 已把这条边界写在响应里；真上限靠
    ZOS 侧策略，M2a 不含。
 
+
+<!-- issue: #73 -->
