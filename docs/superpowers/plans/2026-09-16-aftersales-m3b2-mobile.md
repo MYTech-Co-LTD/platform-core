@@ -873,6 +873,24 @@ window.defineWujiPageMeta = (o) => {
 createApp(App).use(TDesign).use(router).mount('#app')
 ```
 
+> ⚠️ **订正（2026-09-16，Task 4 执行时实证）**：下面 `router.ts` 逐字代码里的
+> `import.meta.env.BASE_URL` 会让 **B9 门禁（`scripts/check-env-example.mjs`）exit 1** ——
+> 报 `env 键 "BASE_URL" 未在根 .env.example 声明`。
+>
+> **真根因不是「Vite 内建键需要豁免」，是守卫的一个假阳性**：`ENV_PROP_RE`
+> （`/\benv[.]([A-Z][A-Z0-9_]*)/g`，本意只认 `apps/server/src/config.ts` 的裸 `env.KEY`）
+> 会匹配到 `import.meta.env.BASE_URL` 里的**子串** `env.BASE_URL`；`\b` 在 `.` 之后成立，拦不住。
+> 同一条 over-match 也坑任何**非 apps/web** 文件里的 `import.meta.env.VITE_*`（规则③的 `VITE_`
+> 豁免只按 `apps/web` 目录特判，而 `modules/aftersales/mobile` 是第二个前端包 ⇒ 该特判已不够用）。
+>
+> **处置（用户 2026-09-16 裁定）**：把豁免**升级成通则**——`import.meta.env.*` 整体不归 B9 管辖
+> （Node/Hono 侧没有 `import.meta.env`，凡出现必是**构建期注入**的常量，不存在「部署缺 env ⇒
+> 运行时静默降级」）。具体：`ENV_PROP_RE` 加 `(?<![.\w])` 负向后顾、**删除 `VITE_RE`** 与规则③、
+> 在既有 `scripts/lint-architecture.test.ts` 的 B9 块补三条用例。
+> **`BASE_URL` 不进 `.env.example`**（它是构建期注入、不是可部署 env，加进去等于造一个假旋钮）；
+> `router.ts` **保持** `import.meta.env.BASE_URL`（写死 `'/app/aftersales/'` 会让 base 与 router
+> 不同源 —— 正是上面那段注释要防的漂移）。
+
 - [ ] **Step 5: 建两个占位页面**
 
 `modules/aftersales/mobile/src/pages/afterSalesWorkOrderSubmit.vue`（Task 8 换实体）：
