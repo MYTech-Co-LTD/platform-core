@@ -17,6 +17,14 @@
 // wechat_oa_state（Max-Age=300, SameSite=Lax）绑定，回调校验一致（CSRF/混流）。静默流是
 // 顶层导航，Lax 天然携带。
 //
+// **回跳（M3b-2，spec §3.2 未登录节）**：/silent 另收 `?next=<path>`，把它与 state **一同**
+// 编进上面那个 cookie 的载荷（`<state>` 或 `<state>.<base64url(next)>`，**不新开 cookie**、
+// TTL 与四个属性一字不改）；/callback 成功时 302 到该 next（**不再恒为 `/`**），无 next 时
+// 与改动前同形（回 `/`）。为什么必须有：移动端 userApp 在 401 时要跳这里，不回跳的话用户
+// 登录成功后被丢在 console 首页、**回不到移动端页**（只能靠再点一次公众号菜单，那不是闭环）。
+// next 经 `safeNextPath()` 白名单化后才进 Location——只放行同源相对路径，这是**开放重定向**
+// 防护：`next` 完全由 URL 控制，不校验则 `//evil.test` 这类协议相对 URL 会被浏览器当跨源跳走。
+//
 // code 换身份的失败两分（wechatOaOpenidForCode 契约，auth-core/wechat-oa.ts）：微信 API 的
 // 特殊错误形状是 **HTTP 200 + body errcode**——errcode≠0 或无 openid 归「被拒」返 null
 // （BAD_CODE，用户可感知的内容物失败，写 audit login.fail）；网络错/5xx/非 JSON 归传输层
