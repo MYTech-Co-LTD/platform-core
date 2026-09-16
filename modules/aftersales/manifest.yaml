@@ -56,4 +56,8 @@ api:
 frontend:
   console:
     - { path: /console/aftersales, title: 售后管理, icon: ToolOutlined, scope: aftersales:manage, entry: ./console/index.tsx }
+  # 移动端 userApp（M3b-2）：Vite 壳 + Vue 3.5 + TDesign，搬自 wuji-2 的两个保留页。
+  # mount 与 mobile/vite.config.ts 的 `base` **必须一致**（不一致 ⇒ 产物引用错前缀）。
+  # dist 相对**模块目录**解析（loader 的 path.resolve(m.dir, dist)）。
+  userApp: { mount: /app/aftersales, dist: ./mobile/dist }
 migrations: { dir: ./migrations }

@@ -1,0 +1,20 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // ⚠️ **有意关掉**（Global Constraints 有记，Task 9 Step 5 会写进 README 的已知边界）：
+    // 本包整包搬自 wuji-2，而源工程就是 `strict: false`。开着它会让 955 行的页面一次爆出
+    // 成百条 strict-null 改写，那是**另一个任务**的范围。这是**显式声明的弱化**，不是默认值。
+    "strict": false,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@wujibase/wuji": ["./src/shims/wuji.ts"],
+      "@wujibase/wuji-data": ["./src/shims/wuji-data.ts"],
+      "@wujibase/wuji-upload": ["./src/shims/wuji-upload.ts"]
+    }
+  },
+  "include": ["src", "env.d.ts"],
+  "exclude": ["**/*.test.ts"]
+}

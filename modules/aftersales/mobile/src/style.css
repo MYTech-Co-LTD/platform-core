@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 源页用到 `safe-area-inset-bottom`（提交页底部固定操作栏，`fixed bottom-0 … safe-area-inset-bottom`），
+   那是无极宿主提供的自定义 utility，Tailwind 本身没有 ⇒ 不补的话 iPhone 上按钮会被横条压住。 */
+@layer utilities {
+  .safe-area-inset-bottom {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  }
+}
