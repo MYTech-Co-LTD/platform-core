@@ -1927,6 +1927,25 @@ git commit -m "feat(aftersales): M3b-2 三 shim + clientRequestId 三条语义�
 
 ### Task 6: 登记页（`storeEmployeeApproval`）
 
+> ⚠️ **订正（2026-09-16，Task 6 执行时实证：本节 Step 2/7 的测试有 9 处与源侧真实行为不符）**
+>
+> 根因是**写计划的方式错了**：本节测试是照「我以为 composable 该有的形状」写的，**不是读源文件
+> 得出的**。执行者逐条实跑复现后按下面订正（原则：**移植的契约是保持源侧行为，不是实现臆想的行为**）：
+>
+> | # | 初稿断言 | 订正 |
+> |---|---|---|
+> | 1 | `loadEmployeeInfo` 调一次 `employee_info_approve.query` | **删**。该查询在源侧属 **`submitApproval`**（提交前查待审批）⇒ 断言移过去，**不给 `loadEmployeeInfo` 新增查询** |
+> | 2 | `loadEmployeeInfo` 把 `'3,5'` 回填 `formData.store_info` | **删**。该回填在源侧属**页面的 `handleEdit`**（`.vue:414-422`）⇒ 断言移到页面测试 |
+> | 3 | `loadSelectedStores` 按请求 id 收窄 | **删**。域侧 `ids=` 已在**服务端**收窄，客户端再收是冗余；保留「一次 query + 参数形状 + 赋值」三条 |
+> | 4 | `c.formData.employee_name = '张三'` | 用 **`.value`**（`formData` 保持 Ref，页面一字不改） |
+> | 5 | mock 工厂提升导致 `success` 未初始化 | `vi.hoisted` 修（机械） |
+> | 6 | `global = { stubs: { 't-card': false } }` | **去掉**——`false` 是破坏性 no-op stub，会把整棵卡片子树吞掉；只装 `TDesign` |
+> | 7 | 只填姓名+电话就断言提交成功 | **用例自己把门店选上**；**不动**页面的必填校验（放宽校验 = 改测试迁就测试） |
+> | 8 | 裸 `localStorage`（Node22 实验性全局遮住 happy-dom 的） | `Object.defineProperty` 注入后**保留**该断言（与源码级断言互补） |
+>
+> 下面 Step 2 / Step 7 的代码块**保留初稿原样**（作为「别这么写」的对照），
+> **以本表为准**执行。诚实记录：这一节的测试初稿是坏样本。
+
 **Files:**
 - Create: `modules/aftersales/mobile/src/types/store.ts`（从 `wuji-2/src/types/store.ts` 搬）
 - Create: `modules/aftersales/mobile/src/utils/afterSalesHelpers.ts`（从 `wuji-2/src/utils/afterSalesHelpers.ts` 搬）
