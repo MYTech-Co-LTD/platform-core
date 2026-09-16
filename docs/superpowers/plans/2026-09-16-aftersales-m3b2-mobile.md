@@ -615,6 +615,7 @@ git commit -m "fix(server): userApp 补挂载点 SPA 兜底——深链不再落
 > | 1 | `tsconfig.json` 只写 `paths` **没写 `baseUrl`** | 继承的 `tsconfig.base.json` 里 `baseUrl: "."` 按**基配置所在目录**解析 ⇒ 实际 `baseUrl = ../../..`（`tsc --showConfig` 可见）⇒ `paths` 的 `./src/*` 全落到 `仓根/src/...` ⇒ **TS2307 一片，全部别名失效** | `compilerOptions` 加 **`"baseUrl": "."`** |
 > | 2 | `env.d.ts` 的 `defineWujiPageMeta` options 缺 `metaKeywords` | 源页传它（`DefineWujiPageMetaOptions` 有）⇒ TS2353 | 两个签名都加 `metaKeywords?: string` |
 > | 3 | `wuji-data.ts` 的 `employee_info_approve.create` 参数类型只有 `{approveinfo?}` | 计划自己的 Step 4 与用例都传 `approvetype` ⇒ TS2353 | 类型加 `approvetype?: string`（**收下但不消费**，只对齐调用点） |
+> | 4 | `modules/aftersales/tsconfig.json` **没排 `mobile`**（它无 `include` ⇒ 父 tsc 把 `mobile/src/**` 一并纳入，实测 18 个文件） | 父 tsc 用**本包的**编译选项扫嵌套包，不知道 mobile 的 `paths` ⇒ `@wujibase/*` / `@/*` 全 TS2307，**`pnpm typecheck` 整条红**（Wave 4 才暴露：Wave 3 前 mobile 源码全用相对 import） | 父 `exclude` 加 `"mobile"`。**不是漏检**——mobile 有**自己的** `vue-tsc` typecheck，`pnpm -r` 会跑到它（已用「故意塞类型错误 ⇒ 必须报错」反证） |
 
 **Files:**
 - Modify: `pnpm-workspace.yaml`
