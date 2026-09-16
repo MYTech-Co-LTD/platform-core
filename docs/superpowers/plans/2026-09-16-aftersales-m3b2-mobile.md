@@ -604,6 +604,18 @@ git commit -m "fix(server): userApp 补挂载点 SPA 兜底——深链不再落
 
 ### Task 4: 移动端壳与构建链接入
 
+> ⚠️ **订正（2026-09-16，T6/T7 各自独立实测发现三处配置缺陷；已在集成分支修复）**
+>
+> 三处都是**本节的逐字产物**，且**一直睡着**——因为在第一个真页面（T6）之前，
+> **没有任何非测试文件 import 过别名**（占位页面不 import），而测试文件被 `exclude` 掉
+> ⇒ `typecheck` 从没照到它们。
+>
+> | # | 缺陷 | 症状 | 修法 |
+> |---|---|---|---|
+> | 1 | `tsconfig.json` 只写 `paths` **没写 `baseUrl`** | 继承的 `tsconfig.base.json` 里 `baseUrl: "."` 按**基配置所在目录**解析 ⇒ 实际 `baseUrl = ../../..`（`tsc --showConfig` 可见）⇒ `paths` 的 `./src/*` 全落到 `仓根/src/...` ⇒ **TS2307 一片，全部别名失效** | `compilerOptions` 加 **`"baseUrl": "."`** |
+> | 2 | `env.d.ts` 的 `defineWujiPageMeta` options 缺 `metaKeywords` | 源页传它（`DefineWujiPageMetaOptions` 有）⇒ TS2353 | 两个签名都加 `metaKeywords?: string` |
+> | 3 | `wuji-data.ts` 的 `employee_info_approve.create` 参数类型只有 `{approveinfo?}` | 计划自己的 Step 4 与用例都传 `approvetype` ⇒ TS2353 | 类型加 `approvetype?: string`（**收下但不消费**，只对齐调用点） |
+
 **Files:**
 - Modify: `pnpm-workspace.yaml`
 - Modify: `modules/aftersales/manifest.yaml`（`frontend.userApp`）
