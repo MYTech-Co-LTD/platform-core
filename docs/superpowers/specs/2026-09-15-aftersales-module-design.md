@@ -106,6 +106,8 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 | `ticket_rule` | after_sales_rule | 比例/固定额；工单实时算金额 |
 | `ticket_attachment` | after_sales_work_order 的 `damage_images`（数组/字符串混用，归一后展开） | 附件对象键（ZOS `object_key`）+ 类型/大小/上传者。**`ticket_id` 可空**——§2.3 的预签名发生在工单落库**之前**（移动端先传图后提交），那一行先以 `client_request_id` 落库；提交工单时按 `(org, client_request_id)` 认领。唯一索引 `(org, object_key)` |
 | `store` / `product` / `employee` / `region` | 共用主数据 | 「可搬迁」纪律；`employee.open_id` 是移动端身份锚。**M2a 建这四张**（各有源表） |
+| `employee_approval` | employee_info_approve | **登记/变更申请**（M3b-1，见 §2.5）：`org / open_id / approve_type(register\|change) / status(pending\|approved\|rejected) / old_info jsonb / new_info jsonb / created_at / decided_at / decided_by`。**防重靠部分唯一索引** `unique(org, open_id) where status='pending'`——源里「您已有待审批的申请」是**前端判**的，这里由库保证 |
+| `employee_store` | employee_info.store_info（**逗号分隔多门店串**） | **员工↔门店多对多**（M3b-1，见 §2.5）。源侧是多门店串、平台原为 `employee.store_id` 单值 FK ⇒ **规范化成关联表**；M2b 把串拆成行 |
 | `department` | 共用主数据（§0.1 原表清单的一行） | **建表归 M2b**（2026-09-15 定）：§3.3 的 14 张源表清单里**没有部门表**，M2a 既无源可映、又无 API 消费者（§2.2 主数据面只有 stores/products/employees）——建它等于照猜写 DDL，与 `archive_*` 同一条规矩 |
 | `archive_order` / `archive_order_item` | group_buying_order(_item) 存量 | **只读档案表**：保工单关联订单展示/查询完整，无业务 API；接龙二期另起活表。**建表归 M2b**（2026-09-15 定）：它们唯一的消费者就是 M2b 的迁移脚本，而 `group_buying_*` 的字段清单**至今没有实测样本**（§3.3 只测得行数与几处类型异常）——M2a 建它等于照猜写 DDL。M2a 侧只留 `ticket.related_order` 引用列；M2b 拉样后建表，字段按样本定 |
 
@@ -119,6 +121,8 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 工单   GET/POST /tickets、GET /tickets/:id、POST /tickets/:id/process
 规则   GET/POST/PUT/DELETE /rules
 主数据 GET /stores、GET /products（搜索）、GET/POST /employees、POST /employees/:id/approve
+登记   GET /employee-approvals、POST /employee-approvals/:id/decide（管理面）
+       GET /guest/me/registration、POST /guest/employee-approvals、GET /guest/products（访客面）
 附件   POST /attachments（元数据→预签名 PUT URL）、GET /attachments/:id（校验→预签名 GET URL）
 ```
 
@@ -129,8 +133,8 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 
 | 面 | scope | 端点 |
 |---|---|---|
-| 管理端 | `aftersales:manage` | `GET /tickets`（分页/筛选）· `GET /tickets/:id` · `POST /tickets/:id/process` · `GET/POST /rules` · `PUT/DELETE /rules/:id` · `GET /stores` · `GET /products` · `GET/POST /employees` · `POST /employees/:id/approve` · `GET /attachments/:id` |
-| 访客端 | `aftersales:guest` | `GET /guest/tickets`（**只回自己的**，按 `identity.userId`＝openid 过滤）· `GET /guest/tickets/:id` · `POST /guest/tickets`（提交）· `POST /guest/attachments`（元数据→预签名 PUT URL） |
+| 管理端 | `aftersales:manage` | `GET /tickets`（分页/筛选）· `GET /tickets/:id` · `POST /tickets/:id/process` · `GET/POST /rules` · `PUT/DELETE /rules/:id` · `GET /stores` · `GET /products` · `GET/POST /employees` · `POST /employees/:id/approve` · `GET /attachments/:id` · `GET /employee-approvals` · `POST /employee-approvals/:id/decide` |
+| 访客端 | `aftersales:guest` | `GET /guest/tickets`（**只回自己的**，按 `identity.userId`＝openid 过滤）· `GET /guest/tickets/:id` · `POST /guest/tickets`（提交）· `POST /guest/attachments`（元数据→预签名 PUT URL）· `GET /guest/me/registration`（我的登记 + 我的门店 + 有无待审）· `POST /guest/employee-approvals`（提交登记/变更）· `GET /guest/products`（选商品；见 §2.5） |
 
 分面而非靠「同一个 handler 里判 scope」是**故意的**：门卫按声明逐条判定，一个端点一个 scope
 是协议保证的性质；把两套权限塞进一个 handler 等于在模块里重造一套判定，正是 §0.3 要消灭的
@@ -220,6 +224,64 @@ M2a 要复刻的业务内核。以下全部取自 wuji-1 源码**逐行实证**�
   `Math.round(amount * 100) / 100` 是**按分的四舍五入**。⇒ §2.1「目标表整数分」的迁移换算
   在**工单域 = ×100**。**注意不外推到接龙域**（`group_buying_*.price:int` 是另一套，M2b 单独核）。
 
+### 2.5 员工登记与审批（M3b-1，2026-09-16 收口）
+
+**为什么有这一节**：M3b 经探查后**不是纯前端整迁**（issue #81）。移动端提交工单前那道
+「必须是已登记的人」的闸门，其数据与端点**平台上都不存在**——`GET /employees` 等全在
+`aftersales:manage` 面。本节点把这条链补齐。
+
+#### 身份定性（用户 2026-09-16 澄清）
+
+移动端**对外、面向加盟商**：**有限制**（不是任何人可提交），但**不是公司内部人员、不走 Casdoor**
+⇒ 身份仍是 M1 的**访客 session**（`sub` = openid、`org` = 租户、scopes = `aftersales:guest`），
+§1.3 的口径不变。**「有限制」落在业务数据上（有无已审批的登记），不落在 IdP 上。**
+
+#### 两表流程（源行为实证 → 服务端实现）
+
+源侧是**两表**（实读 `wuji-1/src/composables/useEmployeeApproveOperations.ts`）：
+审批 `employee_info_approve` 记录 → 通过后**再写回 `employee_info`**（注册 `create` / 变更 `update`）。
+M3a 的 console 员工页实现的是**单表简化版**（直接改 `employee.approve_status`）——本次**不改它**，
+而是**补上申请表**并新增一个「申请审批」入口（见 §3.1）。
+
+#### 三条实现纪律
+
+1. **防重由库保证**，不是前端判：`unique(org, open_id) where status='pending'`（部分唯一索引）。
+   源里那句「您已有待审批的申请」是**提交前查一次**的前端判定 —— 并发下会漏。
+2. **差异计算放服务端**。源的 `submitApproval` 在**前端**逐字段 diff 后传 `old_info`/`new_info`
+   ——按 §0.3 属「前端式编排」。平台的服务端本来就知道当前 `employee` 行 ⇒
+   **客户端只表达「我要变成什么」（目标值），diff 由服务端算并落 `old_info`/`new_info`。**
+3. **审批通过单事务写回**：注册 ⇒ 建 `employee` 行（`approve_status='approved'`）；
+   变更 ⇒ 改行 + 重建 `employee_store` 关联。**与申请记录的 `status`/`decided_*` 同一事务**——
+   不允许「申请已通过但 employee 没改」。
+
+#### 多门店（规范化，不照搬）
+
+源 `employee_info.store_info` 是**逗号分隔的门店串**（多选），平台原设计是 `employee.store_id`
+**单值 FK**。移动端「我的门店」要出列表、源也支持多选 ⇒ **加关联表 `employee_store`**。
+`employee.store_id` **保留为「主门店」（可空）**，避免改动 M2a 已上线的列语义；M2b 迁移时
+把串拆成关联行、并挑一个作主门店。
+
+#### 端点清单（5 个，全部逐条声明进 manifest）
+
+| 端点 | scope | 语义 |
+|---|---|---|
+| `GET /guest/me/registration` | guest | **我的登记**（employee 行）+ **我的门店**（`employee_store` 展开）+ **有无待审申请** |
+| `POST /guest/employee-approvals` | guest | 提交注册/变更；**body 只给目标值**；服务端算 diff；有待审 ⇒ 409 |
+| `GET /guest/products` | guest | 选商品（搜索/分页）。**协议限制一条声明一个 scope** ⇒ 必须与 `GET /products` 分面（同 `/guest/tickets` 的理由） |
+| `GET /employee-approvals` | manage | 申请列表（按 `status` 筛选） |
+| `POST /employee-approvals/:id/decide` | manage | `{decision: approve\|reject}`；approve ⇒ 单事务写回 employee |
+
+**M3a 的 `POST /employees/:id/approve` 保持不动**——它管的是「已有员工行的状态」，语义不同，
+**加而不改**已上线的行为。
+
+#### 明确不做
+
+- **订单选择**：源的提交页要选 `outbound_detail` 出库单，而 `SubmitBody` **不收 `relatedOrder`**
+  ⇒ 移动端**不选订单**；订单档案（`archive_order*`）本就在 §2.1 归 M2b
+- **`wechatOpenidVerify.vue`**：它在**前端做微信 OAuth2**，而 M1 已在**宿主**做掉（`wechat-oa` 访客路）
+  ⇒ 按 §0.3「前端式编排要收敛」**退役，不迁**
+- **`orderHistory.vue`**：其 composable 混着接龙表（`group_buying_*`）⇒ 与接龙同批留二期
+
 ## 3. 管理端重写、数据迁移、分期
 
 ### 3.1 console 管理端（wuji-1 售后部分 → React + antd）
@@ -253,6 +315,10 @@ M2a 要复刻的业务内核。以下全部取自 wuji-1 源码**逐行实证**�
 **零反向依赖 `apps/web`**（`lint-architecture` 的 B1 兜底）。源侧 30 个 composable 的业务逻辑
 **不搬运**——按 §0.3「迁移即重构」，绝大多数已由 M2a 收敛成服务端单端点。
 
+**M3b-1 的追加（2026-09-16）**：M3a 的员工页**加一个「申请审批」页签**（`/console/aftersales/approvals`），
+审批 §2.5 的 `employee_approval` 申请。**现有那三个页签行为不变**（`POST /employees/:id/approve`
+保持原语义）——**加而不改**。
+
 **共享响应类型**：新增 `modules/aftersales/api-types.ts`，服务端路由与 console **两侧共用**
 ⇒ 前端测试替身**天然钉在真类型上**、不会漂（AGENTS.md #11「测试替身必须收严到真机形状」）。
 **不改任何接口行为。**
@@ -263,14 +329,15 @@ wuji-2 整包 + Vite 壳 + shim（`wuji-data` 7 方法 → 域 API；`getCurrent
 `wuji-upload` → 预签名直传）；只保留售后工单提交相关页（wuji-2 TODO 本就要删接龙页——
 留给二期）。
 
-> ⚠️ **旧措辞已订正（2026-09-16）**：本节原写「**连带补 userApp 停用闸门**（module-protocol
-> 挂名缺口：`enabled=false` 时 userApp 静态必须同形 404——首个真实 userApp 用户，闸门与本模块
-> 同批落地）」——**该工作 M1 已完成**：`loader.ts` 的 `mount()` 里 userApp 静态先挂模块 API
-> 同款 `gate` 再 `serveStatic`；`module-protocol.md`「停用语义」节已记为「userApp 静态已吃
-> 同一道启用闸门（售后 M1，2026-09-15 收口）」；issue #66 的验收清单亦已勾选。
-> ⇒ **M3b 无存量缺口，是纯前端整迁**（整包 + Vite 壳 + 三个 shim）。
->
-> **M3b 与 M3c 的设计收口另批进行**（本次只收口 M3a）。
+> ⚠️ **2026-09-16 收口后的订正（两次）**：
+> ① 本节原写「**连带补 userApp 停用闸门**」——**该工作 M1 已完成**（`loader.ts` 的 `mount()` 里
+> userApp 静态先挂模块 API 同款 `gate` 再 `serveStatic`；`module-protocol.md`「停用语义」节有记；
+> issue #66 验收清单已勾选）。
+> ② 本节又曾写「**M3b 无存量缺口，是纯前端整迁**」——**该结论已被探查证伪**（issue #81）：
+> 移动端依赖一批平台上**不存在**的后端面（登记/审批的表与端点、访客面商品）。⇒ 拆成
+> **M3b-1（后端扩面 + 管理端闭环，见 §2.5）** 与 **M3b-2（移动端整迁，本节）**，**先 M3b-1**。
+> ③ 另：源仓库 `wuji-2` **没有 `main.ts`/`App.vue`/router/index.html** —— 它是跑在无极宿主里的
+> 页面集 ⇒ 「**Vite 壳**」是**我们要造的**，不是搬来的。
 
 ### 3.3 数据迁移（全量）
 
@@ -350,8 +417,9 @@ GET https://data.wujisite.com/api/private/object
 | **M2a 模块后端（代码）** | 域 API + 迁移建表 + ZOS 存储——**不依赖源数据，先做**（ZOS 凭证落地形态为**进程 env**，**仅单租户部署成立**，见 §2.3 的两阶段裁定） |
 | **M2b 数据迁移（择窗口）** | 全量拉取 → 清洗 → 入库 → 计数/金额对账（一次性，另出计划） |
 | **M3a console 管理端** | 5 页收进 **1 个 console 条目 + 模块内 tabs**（§3.1）。**纯前端**：调 M2a 已上线的端点，**不扩后端** |
-| **M3b 移动端 userApp** | wuji-2 整包 + Vite 壳 + 三 shim（§3.2）。**无存量缺口**——停用闸门 M1 已补 |
-| **M3c 每租户可配 ZOS** | 凭证落租户行 + `platform.tenant` 加列 + 配置 UI + **模块接入协议扩展**（§2.3）；**协议文档先行**（`architecture.md` + `module-protocol.md`）。**不在试点关键路径上**（单租户形态下 env 成立），故排在 M3a/M3b 之后 |
+| **M3b-1 员工登记与审批（后端扩面）** | 新表 `employee_approval` + `employee_store`、5 个端点（§2.5）、manifest 声明、console「申请审批」页签。**先做**——移动端的 shim 形状由它决定 |
+| **M3b-2 移动端 userApp** | wuji-2 整包 + **Vite 壳**（源仓库无入口/router——`wuji-2` 是跑在无极宿主里的页面集）+ 三 shim（§3.2）。**依赖 M3b-1 的端点** |
+| **M3c 每租户可配 ZOS** | 凭证落租户行 + `platform.tenant` 加列 + 配置 UI + **模块接入协议扩展**（§2.3）；**协议文档先行**（`architecture.md` + `module-protocol.md`）。**不在试点关键路径上**（单租户形态下 env 成立），故排在 M3a/M3b-1/M3b-2 之后 |
 
 **总验收绑定 spec-3 试点**：客户机六步交付；单租户 e2e（公众号登录 → 提交工单含 ZOS 直传
 视频 → console 处理按规则算金额 → 状态流转）；多租户 org 隔离测试；停用闸门 404 同形；
@@ -421,6 +489,21 @@ GET https://data.wujisite.com/api/private/object
 - module-protocol.md（userApp 闸门缺口、租户数据隔离约定）。
 
 ## 7. 修订记录
+
+- 2026-09-16（**M3b 探查后重定范围：M3b 不是纯前端整迁** ⇒ 拆 M3b-1/M3b-2，issue #81）。
+  M3a 合并上线后开 M3b。**实读源仓库**（`~/Documents/mytechcode/wuji-2`、`wuji-1`）后推翻了
+  「纯前端整迁」这个前提：**移动端依赖一批平台上不存在的后端面**。
+  ⇒ ① **新增 §2.5**（员工登记与审批）——新表 `employee_approval`（**防重靠部分唯一索引**，
+  因为源里那句「您已有待审批的申请」是前端判的）+ `employee_store`（源是多门店逗号串、
+  平台原为单值 FK ⇒ **规范化成关联表**）+ 5 个端点（访客面 3 / 管理面 2）；
+  ② §2.1 表清单、§2.2 端点块与分面表同步；
+  ③ §3.1 加「申请审批」页签（**加而不改** M3a 现有页签与 `POST /employees/:id/approve` 语义）；
+  ④ §3.4 期表把 M3b 拆成 **M3b-1（后端扩面 + 管理端闭环）先做** / M3b-2（移动端）依赖它；
+  ⑤ §3.2 订正两处：旧的「停用闸门缺口」（M1 已补）与**我上一轮写的「无存量缺口、纯前端整迁」
+  （已被探查证伪）**，并记下 `wuji-2` **没有入口/router** ⇒ Vite 壳是**我们造的**。
+  **探查中两条依赖已被 M2a 的 API 设计解掉**：订单选择（`SubmitBody` 不收 `relatedOrder`
+  ⇒ 移动端不选订单，订单档案归 M2b）、`wechatOpenidVerify.vue`（前端做 OAuth，已由 M1 宿主路
+  取代 ⇒ **退役不迁**）。**本轮只改文档不动码**；实施计划另出。
 
 - 2026-09-16（**M3 拆分 + M3a 设计收口**，issue #79。M2a 已合并上线，M3 是下一个开发期）：
   M3 原为一行，核代码后拆成三件——**三件不是同一条轴上的**：M3a/M3b 是**前端移植**，
