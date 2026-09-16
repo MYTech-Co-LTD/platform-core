@@ -2608,7 +2608,14 @@ git commit -m "feat(aftersales): M3b-2 提交页数据层——裁订单面 + �
 - Consumes: Task 7 的 `useAfterSalesWorkOrder()`、Task 5 的 `Message` / `Confirm` / `employee_info`。
 - Produces: 组件默认导出；未登记时跳到路由 `register`。
 
-- [ ] **Step 1: 搬页面并做这五处改动**
+- [ ] **Step 1: 搬页面并做这六处改动**
+
+> ⚠️ **第六处（2026-09-16，Task 7 执行时发现）**：源页面模板 `:226` / `:233` 用 **`attachment.url`**
+> 渲染已完成附件的预览。而 Task 5/7 把 `IAttachment.url` 换成了 **`previewUrl`**（因为
+> `wuji-upload` shim 回的是 `{id, objectKey}`，没有可读 url）⇒ 那两处必须改成 **`previewUrl`**，
+> 否则已完成附件在页面上渲染成空白。**初稿的"五处"漏了它**（它要到改页面时才暴露）。
+> 本任务的源码级断言测试要把 `attachment.url` 一并钉住。
+
 
 搬 `wuji-2/src/pages/afterSalesWorkOrderSubmit.vue`（955 行）。**只做这五处**：
 
