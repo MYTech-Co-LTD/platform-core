@@ -344,6 +344,23 @@ frontend:
 **构建没跑（或路径写错）⇒ userApp 静态静默不挂载、不报错**，表现为「API 照常、移动端页面 404」。
 ⇒ **`smoke-load` 必须断言该挂载点的路由回 SPA 壳而不是 404**（这条是同一条纪律：静默跳过 = 绿）。
 
+#### 壳与宿主的四个集成点（2026-09-16 计划期**实读代码**发现，设计稿原缺）
+
+写计划时逐条对过 `loader.ts` / `app.ts` / `pnpm-workspace.yaml` / `ci.yml`，**四条都是必然推论**，
+不补任何一条移动端都跑不起来：
+
+| # | 事实（实读） | 后果 / 处置 |
+|---|---|---|
+| **I1** | `loader.ts` 给 userApp 只挂了 `serveStatic`，**没有 SPA 兜底**；而 `app.ts:328` 的 `app.get('*')` 会把一切非 `/api` GET 兜成 **web（console）的** `index.html` | 深链/刷新 `/app/aftersales/<route>` ⇒ **打开的是 React 控制台壳**。⇒ loader 在 serveStatic 之后补**挂载点作用域**的 `app.get(mountPath)` + `app.get(mountPath + '/*')` 回 `dist/index.html`（注册在 loader §⑨，天然早于 app.ts §⑩ 的全局兜底）。**两侧都要断言**：`/app/aftersales/`（入口）与 `/app/aftersales/<深链>`（刷新） |
+| **I2** | 源码页用**站点绝对** `/assets/*`；`apps/web` 的 vite 产物**也**在 `/assets/*`（`app.ts:321` 的 `app.use('*', serveStatic({root: webDistDir}))`） | 不设 `base` ⇒ 移动端 index.html 引的 `/assets/x.js` 会命中 **console 的**同路径文件 ⇒ 加载错包 / 白屏。⇒ mobile 的 vite 设 **`base: '/app/aftersales/'`**，产物引用成 `/app/aftersales/assets/*`，由挂载点的 `serveStatic`（`rewriteRequestPath` 剥前缀）命中 |
+| **I3** | `pnpm-workspace.yaml` 是 `packages: ['apps/*','packages/*','modules/*']` —— **`modules/*` 只匹配直接子目录**，`modules/aftersales/mobile` 不在其中 | 不补 glob ⇒ mobile **不是 workspace 包** ⇒ `pnpm -r --if-present build` 跳过它 ⇒ 镜像里没有 `mobile/dist` ⇒ **正好踩上面那个静默陷阱**（API 照常、移动端 404，且不报错）。⇒ 加 `'modules/*/*'`（无 `package.json` 的子目录如 `console/` `routes/` 会被 pnpm 自动忽略） |
+| **I4** | `ci.yml` 的 `smoke` job 只跑 `pnpm --filter @platform/web build` | 冒烟断言 SPA 壳时**没有产物可断** ⇒ 断言形同虚设。⇒ smoke job 补 `pnpm --filter <mobile 包名> build` |
+
+> **I3 值得单记**：它是「静默失败」这条纪律的**第三次**同形复现（前两次：`existsSync(dist)` 跳过、
+> 桶文件 interface 导出）。三者的共同形状是**缺一份东西不报错、只是行为悄悄退化** ——
+> 所以 I1/I3 都要**配机检**（I1 由 smoke 两条断言盖住，I3 由「smoke 跑得过」本身盖住：
+> 没构建就没产物，I1 的断言必红）。
+
 #### 三个 shim（**按保留页收窄**，不造通用网关）
 
 spec §0.2 **明确否决过通用数据网关**（表级粗粒度权限违背「声明即授权」的细粒度哲学）⇒
@@ -351,9 +368,18 @@ shim 只提供**保留页真正调到的**东西：
 
 | 包 | shim 内容 |
 |---|---|
-| `@wujibase/wuji-data` | 只导出用到的表对象（`after_sales_work_order` / `employee_info` / `employee_info_approve` / `store_info` / `product_archive` / `wechat_openid`），每个**只实现被调到的方法**，映射到具体域端点 |
+| `@wujibase/wuji-data` | 只导出用到的表对象（`after_sales_work_order` / `employee_info` / `employee_info_approve` / `store_info` / `product_archive`），每个**只实现被调到的方法**，映射到具体域端点 |
 | `@wujibase/wuji` | `getCurrentUser()`（访客 session）、`Message` / `Confirm`（TDesign 的对应物） |
 | `@wujibase/wuji-upload` | `uploadImage` / `uploadFile` → **预签名直传**（`POST /guest/attachments` 拿 URL，再 PUT 到 ZOS） |
+
+**上表是「实读源侧调用链后」的清单，与本节初稿差三个符号**（2026-09-16 计划期发现）：
+
+- **`wechat_openid` 不导出**（初稿列了它）：它是**前端微信 OAuth** 的 token 缓存表，而那条路由
+  已由 M1 宿主路取代 ⇒ **退役**，shim 里没有映射对象（**调用点也要摘**，见下条）。
+- **`users` / `outbound_detail` 不导出**（初稿没列、但**源侧在调用图里**）：
+  两个都出现在 `useAfterSalesData.ts` —— `users` 只在 `loadUserStores()` 里（该函数**不在保留页的
+  解构清单里**，对保留图是死码）；`outbound_detail` 在 `loadOrders()`（= 订单选择，**本节已定不做**）。
+  ⇒ 实施时**把这两个函数连同 import 一起裁掉**，shim 才收得进 5 个表对象。
 
 #### 补一个访客面端点：`GET /guest/stores`（M3b-2 的探查发现）
 
@@ -378,6 +404,25 @@ shim 只提供**保留页真正调到的**东西：
 - **`storeEmployeeApproval`**：登记/变更表单 → `POST /guest/employee-approvals`
   （**只提交目标值**；差异由服务端算，见 §2.5 纪律②）
 
+**两页的移植程度不同**（2026-09-16 计划期实读源侧调用链后确认，别按「都差不多」估工）：
+
+- **登记页 ≈ 直搬**：它的调用面（`store_info.query` 搜门店 / `employee_info.query` 读自己 /
+  `employee_info_approve.query|create`）**逐条都能落到域端点**上，字段名做一层映射即可。
+- **提交页 = 改造**（**不是直搬**）：源侧它是**订单驱动**——`useAfterSalesData.loadOrders()`
+  拿 `outbound_detail`（出库单）的行，页面的 `selectedOrder` 供出 `basic_unit` /
+  `basic_quantity` / `basic_unit_price` / `batch` / `sale_time`，`useWorkOrderSubmit` 再由这些算
+  `damage_amount` 并拼出 **23 键**的 payload。而域侧 `POST /guest/tickets` 的 `SubmitBody` 只有
+  **5 键**（`clientRequestId` / `productId` / `storeId` / `damageQuantity` / `remark` / `attachmentIds`），
+  且**本就决定不收 `relatedOrder`**（§2.5）。⇒ 提交页必须：**订单选择整块换成商品选择**、
+  报损数量上界改取**商品的 `basicQuantity`**、金额/单价等由服务端快照（§2.2 ②）**前端不再算**、
+  `generateOrderNumber()`（走 `.count()` 按前缀数单）**整块删掉**——工单号由服务端 `code` 生成
+  （`AS-00000001`，§2.2 ③）。
+- **两页都要摘掉页内的前端微信 OAuth 块**（不只 `wechatOpenidVerify.vue` 那个页面）：
+  实读见两页各自有 `wechat_openid.request({code})` + `localStorage['wechat_openid']` +
+  `window.w.global.appid` + 手拼的 `open.weixin.qq.com` 授权 URL。**身份一律改为 session 给**
+  （`getCurrentUser()`），这些块连 `localStorage` 读取一并删除——留着就是**第二份身份来源**，
+  与 §0.3「前端式编排要收敛」直接冲突。
+
 #### `clientRequestId`（M2a 遗留的未知量，本期定死）
 
 它既是**幂等键**（§2.2），又是附件 object key 里的 `{ticket_ref}`（§2.3）。三条要求：
@@ -389,9 +434,24 @@ shim 只提供**保留页真正调到的**东西：
 
 ⇒ 实现：`crypto.randomUUID()` + 存 **sessionStorage**（满足 2）+ **提交成功后清除**（满足 3）。
 
-#### 未登录
+#### 未登录（含回跳，2026-09-16 用户裁定）
 
-访客 session 缺失（401）⇒ 跳宿主的 `/api/platform/auth/wechat-oa/silent`（M1 的访客登录路）。
+访客 session 缺失（401）⇒ 跳宿主的 `/api/platform/auth/wechat-oa/silent?next=<当前路径>`。
+
+⚠️ **不补回跳这条链是断的**（计划期实读 `auth-wechat-oa.ts` 发现）：现行 `/silent` **不收任何
+回跳参数**，`/callback` 恒 `c.redirect('/')` ⇒ 登录成功后用户落在 **console 首页**、**回不到移动端页**，
+而此刻 session 已建——用户只能再点一次公众号菜单才进得来。**「能进」靠的是运气（菜单重进），
+不是链路闭环**，试点现场必现。
+
+⇒ M3b-2 里**补宿主侧回跳**（本仓第一次动这条路由，故写全）：
+
+- `/silent?next=<path>`：把 `next` 与 state **一同**存进既有的 `wechat_oa_state` cookie
+  （不新开 cookie——一个 state 一个 nonce，TTL 300s 报文不变）；
+- `/callback`：取回 `next` 后**必须校验为同源相对路径**（以单个 `/` 开头、不以 `//` 开头、
+  不含 `\`）才 302 过去，否则**回落 `/`** —— 这是**开放重定向**，`next` 完全由 URL 控制，
+  不校验就是一个能把用户送去任意站点的洞；
+- 回归测试钉两条：**外部 URL（`https://evil.test`、`//evil.test`）⇒ 落 `/`**；
+  合法相对路径（`/app/aftersales/register`）⇒ 302 到它。
 
 #### 明确不做（各有归属）
 
@@ -480,7 +540,7 @@ GET https://data.wujisite.com/api/private/object
 | **M2b 数据迁移（择窗口）** | 全量拉取 → 清洗 → 入库 → 计数/金额对账（一次性，另出计划） |
 | **M3a console 管理端** | 5 页收进 **1 个 console 条目 + 模块内 tabs**（§3.1）。**纯前端**：调 M2a 已上线的端点，**不扩后端** |
 | **M3b-1 员工登记与审批（后端扩面）** | 新表 `employee_approval` + `employee_store`、5 个端点（§2.5）、manifest 声明、console「申请审批」页签。**先做**——移动端的 shim 形状由它决定 |
-| **M3b-2 移动端 userApp** | wuji-2 整包（Vue 3.5 + TDesign + Tailwind）+ **自造 Vite 壳** + 三 shim + 两页（提交 / 登记）；`clientRequestId` 三条语义本期定死（§3.2）；**并补一个 `GET /guest/stores`**（两个保留页都要门店数据，探查发现）。**依赖 M3b-1 的端点**（已就绪） |
+| **M3b-2 移动端 userApp** | wuji-2 整包（Vue 3.5 + TDesign + Tailwind）+ **自造 Vite 壳** + 三 shim + 两页（提交 / 登记）；`clientRequestId` 三条语义本期定死（§3.2）。**本期不是纯模块内**——计划期实读后确认还含四处**宿主/构建面**改动：① 补 `GET /guest/stores`（两页都要门店数据）；② `loader.ts` 补挂载点 SPA 兜底（I1）；③ `vite base` + workspace glob + CI smoke 构建（I2–I4）；④ `/silent?next=` 回跳 + 开放重定向防护（未登录节）。**依赖 M3b-1 的端点**（已就绪） |
 | **M3c 每租户可配 ZOS** | 凭证落租户行 + `platform.tenant` 加列 + 配置 UI + **模块接入协议扩展**（§2.3）；**协议文档先行**（`architecture.md` + `module-protocol.md`）。**不在试点关键路径上**（单租户形态下 env 成立），故排在 M3a/M3b-1/M3b-2 之后 |
 
 **总验收绑定 spec-3 试点**：客户机六步交付；单租户 e2e（公众号登录 → 提交工单含 ZOS 直传
@@ -556,6 +616,23 @@ GET https://data.wujisite.com/api/private/object
 - module-protocol.md（userApp 闸门缺口、租户数据隔离约定）。
 
 ## 7. 修订记录
+
+- 2026-09-16（**M3b-2 计划期：实读代码后补四处集成面**，issue #83。**本轮仍只改文档不动码**）：
+  写实施计划时把「移动端要挂进宿主」这条路**逐条对过真代码**，发现设计稿（上一条）漏了四处
+  **必然推论**，全部补进 **§3.2 新增节「壳与宿主的四个集成点」**：
+  ① **I1 loader 没有 userApp 的 SPA 兜底** ⇒ 深链/刷新被 `app.ts` 的全局 `app.get('*')` 兜成
+  **console 的** index.html；② **I2 `vite base`** 不设 `/app/aftersales/` ⇒ 与 console 的
+  `/assets/*` **同路径撞车**；③ **I3 `pnpm-workspace.yaml` 的 `modules/*` 不含 `modules/*/mobile`**
+  ⇒ 不是 workspace 包 ⇒ 不构建 ⇒ **正中设计稿反复警告的那个静默陷阱**（且是同一形状的**第三次**
+  复现）；④ **I4 CI smoke job 只构建 web** ⇒ 断言无产物可断。
+  另**订正三处**：⑤ **shim 表对象 6 → 5**（`wechat_openid` 是退役项，`users`/`outbound_detail`
+  在源侧调用图里但属死码/已定不做，连函数一并裁）；⑥ **两页移植程度不同**——登记页≈直搬、
+  **提交页 = 改造**（源侧订单驱动 vs 域侧商品驱动 + `SubmitBody` 只 5 键 + `generateOrderNumber`
+  整个删掉），且**两页各自的前端微信 OAuth 块都要摘**（不只 `wechatOpenidVerify.vue`）；
+  ⑦ **未登录补 `/silent?next=` 回跳**（用户 2026-09-16 裁定）——现行 callback 恒 302 到 `/`，
+  「能进移动端页」靠的是再点一次公众号菜单，**链路本不闭环**；补时必须校验 `next` 为同源相对
+  路径（**开放重定向**）。
+  §3.4 期表 M3b-2 行同步：本期**不是纯模块内**，含四处宿主/构建面改动。
 
 - 2026-09-16（**M3b-2 设计收口**，issue #83。M3b-1 已合并上线）：
   ① **§3.2 整节重写**（原文自述「只定边界，**未收口**」）——落点/构建、三 shim 的收窄口径、
