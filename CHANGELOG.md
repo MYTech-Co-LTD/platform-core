@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.8.0...v0.9.0) - 2026-09-16
+- 【新增】aftersales: M2a 模块后端——域 API + 建表 + 天翼 ZOS 预签名 ([#74](https://github.com/MYTech-Co-LTD/platform-core/pull/74), [912dff4](https://github.com/MYTech-Co-LTD/platform-core/commit/912dff4005c0590adbdeedab7c08d05fa3f2ce8d))
+
+
 ## [0.8.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.7.0...v0.8.0) - 2026-09-15
 - 【新增】auth: wechat-oa 访客登录路 + userApp 停用闸门 + guest 码协议（售后 M1） (#66) ([#67](https://github.com/MYTech-Co-LTD/platform-core/pull/67), [868fe80](https://github.com/MYTech-Co-LTD/platform-core/commit/868fe800552e09bf4f99cd1afbc715a60ca9df14))
 
