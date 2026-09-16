@@ -159,7 +159,7 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
   - **M2a 已落地的形态**：进程 env `AFTERSALES_ZOS_ENDPOINT/REGION/BUCKET/ACCESS_KEY/SECRET`
     （B9 声明 + openship isSecret）。**该形态只对【单租户部署】成立**——一客户一部署
     （＝ spec-3 试点的交付形态），一个进程只服务一个租户，全局一份配置即正确。
-  - **目标形态（M3 收口）**：**每租户可配**——凭证落**租户行**，与 §1.3 公众号
+  - **目标形态（M3c 收口）**：**每租户可配**——凭证落**租户行**，与 §1.3 公众号
     `wechat_oa_app_id/secret` **同构**；**启用判定 = 租户行存储配置存在**；env 退化为
     **平台默认/兜底**（租户未配时用平台桶）。
     **为什么必须收**：`.env` 是**进程级**、而 `createRouter` 又是**装载期只调一次**
@@ -167,7 +167,7 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
     ＝**全租户爆炸半径**；也无法按租户归集存储成本。
     **注意隔离本身没破**（下方 key 规范带 `{org}` 段，且每次读都 `where org = $1`、
     预签名由服务端按 DB 行生成）——缺的是**可配置性**，不是隔离。
-  - **M3 的前置（架构先行）**：`ModuleContext` 目前**只有 `pool`**
+  - **M3c 的前置（架构先行）**：`ModuleContext` 目前**只有 `pool`**
     （`packages/platform-sdk/src/module.ts`），且 `createRouter` 在装载期只调一次
     ⇒ 宿主需**按请求**注入租户配置（照既有 `identity` 的做法：宿主中间件写进请求上下文，
     模块 `c.get(...)` 读）。这是**模块接入协议的扩展** ⇒ **先改 `docs/architecture.md` +
@@ -224,23 +224,53 @@ M2a 要复刻的业务内核。以下全部取自 wuji-1 源码**逐行实证**�
 
 ### 3.1 console 管理端（wuji-1 售后部分 → React + antd）
 
-| wuji-1 页面 | console 条目 |
-|---|---|
-| 售后工单处理（919 行大头） | `/console/aftersales/tickets`（三态列表 + 处理弹窗 → 状态机端点） |
-| 售后规则管理 | `/console/aftersales/rules` |
-| 员工信息管理 + 注册审批 | `/console/aftersales/employees`（含审批） |
-| 商品/门店档案（引用面） | `/console/aftersales/products`、`/stores`（只读起步） |
+**交付形态 = 1 个 console 条目 + 模块内 tabs**（2026-09-16 设计收口，issue #79）。
 
-纪律照 demo 范式：HTTP 只走 `platformFetch`、权限读 Outlet 注入 scopes、零反向依赖
-apps/web。30 个 composable 的业务逻辑随页面移植，但口径是**业务规则复用、实现按 §0.3
-重构**（前端算金额/全量过滤等模式不搬运，改调服务端）。
+`console-menu.ts` 里模块条目在菜单中是**平铺**的（只有平台的「管理」组有 `children`），
+而 manifest 的 `frontend.console` 是**扁平数组、协议不支持嵌套**。⇒ 声明**一个**条目
+（`/console/aftersales`），页内用**真子路由**切 5 个页签——可深链、浏览器后退可用。
+**不动协议。**
 
-### 3.2 移动端 userApp
+| 页签 | 端点 | **砍掉**（无端点支撑） |
+|---|---|---|
+| 工单 | `GET /tickets`（`status` 筛选 + `page/size` + **有 `total`**）· `GET /tickets/:id` · `POST /tickets/:id/process` | 批量删除、导出、品牌筛选、状态计数 |
+| 规则 | `GET/POST /rules` · `PUT/DELETE /rules/:id` | ——（端点完整） |
+| 员工 | `GET/POST /employees` · `POST /employees/:id/approve` | 导入、导出 |
+| 商品 | `GET /products`（**有 `total`**，可真分页） | 写操作（只读起步） |
+| 门店 | `GET /stores` | 写操作（只读起步） |
+
+**已知边界**：`GET /rules` / `GET /employees` / `GET /stores` **不回 `total`**（即 §5 登记的
+**M-T8-3**，归 M2b）⇒ 这三页**只能单页展示**，UI 上要如实、**不摆一个假的页码**。
+
+**处理弹窗不显示预估金额**：`POST /tickets/:id/process` **只在提交之后**返回服务端算出的
+`amountMinor`，没有预览端点；而 §0.3 把「前端算金额」列为**要消灭的模式**。⇒ `ratio` 路
+只选/填比例、**盲提交**，提交返回的金额才是唯一真相；`fixed` 路的金额是操作员自己填的。
+**前端不引入第二份金额公式**（两份实现必然漂移）。故障分支各有明确文案，其中
+`409 ALREADY_PROCESSED` 表示已被他人处理 ⇒ 提示并刷新列表。
+
+**落点与纪律**（照 demo 范式 `modules/demo/console/`）：`modules/aftersales/console/`，
+入口 `index.tsx` 默认导出组件；HTTP **只走 `platformFetch`**、权限读 Outlet 注入 scopes、
+**零反向依赖 `apps/web`**（`lint-architecture` 的 B1 兜底）。源侧 30 个 composable 的业务逻辑
+**不搬运**——按 §0.3「迁移即重构」，绝大多数已由 M2a 收敛成服务端单端点。
+
+**共享响应类型**：新增 `modules/aftersales/api-types.ts`，服务端路由与 console **两侧共用**
+⇒ 前端测试替身**天然钉在真类型上**、不会漂（AGENTS.md #11「测试替身必须收严到真机形状」）。
+**不改任何接口行为。**
+
+### 3.2 移动端 userApp（M3b；本设计只定边界，**未收口**）
 
 wuji-2 整包 + Vite 壳 + shim（`wuji-data` 7 方法 → 域 API；`getCurrentUser` → session；
 `wuji-upload` → 预签名直传）；只保留售后工单提交相关页（wuji-2 TODO 本就要删接龙页——
-留给二期）。**连带补 userApp 停用闸门**（module-protocol 挂名缺口：`enabled=false` 时
-userApp 静态必须同形 404——首个真实 userApp 用户，闸门与本模块同批落地）。
+留给二期）。
+
+> ⚠️ **旧措辞已订正（2026-09-16）**：本节原写「**连带补 userApp 停用闸门**（module-protocol
+> 挂名缺口：`enabled=false` 时 userApp 静态必须同形 404——首个真实 userApp 用户，闸门与本模块
+> 同批落地）」——**该工作 M1 已完成**：`loader.ts` 的 `mount()` 里 userApp 静态先挂模块 API
+> 同款 `gate` 再 `serveStatic`；`module-protocol.md`「停用语义」节已记为「userApp 静态已吃
+> 同一道启用闸门（售后 M1，2026-09-15 收口）」；issue #66 的验收清单亦已勾选。
+> ⇒ **M3b 无存量缺口，是纯前端整迁**（整包 + Vite 壳 + 三个 shim）。
+>
+> **M3b 与 M3c 的设计收口另批进行**（本次只收口 M3a）。
 
 ### 3.3 数据迁移（全量）
 
@@ -319,7 +349,9 @@ GET https://data.wujisite.com/api/private/object
 | M1 底座三件 | userApp 静态托管 + 停用闸门补缺；auth-core 公众号 OAuth 路 + 租户行公众号配置（**启用判定 = 配置存在，非 `login_methods` 新值**——见 §1.3，此行旧措辞已订正） |
 | **M2a 模块后端（代码）** | 域 API + 迁移建表 + ZOS 存储——**不依赖源数据，先做**（ZOS 凭证落地形态为**进程 env**，**仅单租户部署成立**，见 §2.3 的两阶段裁定） |
 | **M2b 数据迁移（择窗口）** | 全量拉取 → 清洗 → 入库 → 计数/金额对账（一次性，另出计划） |
-| M3 双端 | console 管理端 + 移动端 userApp 整迁；**并收口「每租户可配 ZOS」**（§2.3：凭证落租户行 + `platform.tenant` 加列 + 配置 UI + 模块接入协议扩展；协议文档先行） |
+| **M3a console 管理端** | 5 页收进 **1 个 console 条目 + 模块内 tabs**（§3.1）。**纯前端**：调 M2a 已上线的端点，**不扩后端** |
+| **M3b 移动端 userApp** | wuji-2 整包 + Vite 壳 + 三 shim（§3.2）。**无存量缺口**——停用闸门 M1 已补 |
+| **M3c 每租户可配 ZOS** | 凭证落租户行 + `platform.tenant` 加列 + 配置 UI + **模块接入协议扩展**（§2.3）；**协议文档先行**（`architecture.md` + `module-protocol.md`）。**不在试点关键路径上**（单租户形态下 env 成立），故排在 M3a/M3b 之后 |
 
 **总验收绑定 spec-3 试点**：客户机六步交付；单租户 e2e（公众号登录 → 提交工单含 ZOS 直传
 视频 → console 处理按规则算金额 → 状态流转）；多租户 org 隔离测试；停用闸门 404 同形；
@@ -333,9 +365,9 @@ GET https://data.wujisite.com/api/private/object
 | 2 | `modules/aftersales`（manifest/迁移/index/console/mobile/storage） | 代码 |
 | 3 | auth-core 公众号 OAuth + 租户行公众号配置 + `wechat-oa` 登录路 | 代码 |
 | 4 | userApp 静态托管 + 停用闸门（loader/module-protocol 回写） | 代码+文档 |
-| 5 | `.env.example` 增键（B9）：**只有 ZOS**（公众号**不需要 env 键**——凭证在租户行 `wechat_oa_app_id/secret`，见 §1.3；此处旧措辞「公众号 + ZOS」已订正）。**注（2026-09-16）**：ZOS 这五个 env 键在 M3 收口后**仍保留**，但降级为**平台默认/兜底**（租户可在租户行覆盖，见 §2.3） | 代码 |
+| 5 | `.env.example` 增键（B9）：**只有 ZOS**（公众号**不需要 env 键**——凭证在租户行 `wechat_oa_app_id/secret`，见 §1.3；此处旧措辞「公众号 + ZOS」已订正）。**注（2026-09-16）**：ZOS 这五个 env 键在 M3c 收口后**仍保留**，但降级为**平台默认/兜底**（租户可在租户行覆盖，见 §2.3） | 代码 |
 | 6 | 数据迁移脚本（导出→清洗→导入，幂等） | 代码 |
-| 7 | `architecture.md` 组件表加行、module-protocol userApp 节更新；**并（M3）为「每租户配置注入」补 `ModuleContext` 契约**（§2.3，协议文档须先于代码落地） | 文档 |
+| 7 | `architecture.md` 组件表加行、module-protocol userApp 节更新；**并（M3c）为「每租户配置注入」补 `ModuleContext` 契约**（§2.3，协议文档须先于代码落地） | 文档 |
 
 ## 5. 已知边界
 
@@ -389,6 +421,22 @@ GET https://data.wujisite.com/api/private/object
 - module-protocol.md（userApp 闸门缺口、租户数据隔离约定）。
 
 ## 7. 修订记录
+
+- 2026-09-16（**M3 拆分 + M3a 设计收口**，issue #79。M2a 已合并上线，M3 是下一个开发期）：
+  M3 原为一行，核代码后拆成三件——**三件不是同一条轴上的**：M3a/M3b 是**前端移植**，
+  M3c 动**模块接入协议**（影响面最广，且**不在试点关键路径上**，单租户形态下 env 已成立）。
+  ⇒ ① §3.4 期表拆成 M3a/M3b/M3c 并标出优先级；
+  ② §3.1 **收口**：交付形态定为「**1 个 console 条目 + 模块内 tabs**」（`console-menu.ts`
+  里模块条目是**平铺**的、manifest 的 `frontend.console` 是扁平数组不支持嵌套 ⇒ 用子路由
+  而非改协议）；补**页面 ↔ 端点映射表**与**砍掉项**（批量删除/导出/员工导入/品牌筛选/
+  状态计数——**都没有端点**，且客户端导出与「服务端分页」直接冲突）；写明
+  **`/rules` `/employees` `/stores` 不回 `total`**（即 §5 的 M-T8-3）⇒ 那三页**单页展示、
+  不摆假页码**；写明**处理弹窗不显示预估金额**——`process` 端点只在提交后返回 `amountMinor`，
+  而 §0.3 把「前端算金额」列为要消灭的模式，**前端不引入第二份公式**；
+  ③ **§3.2 订正**：原写「连带补 userApp 停用闸门」，**该工作 M1 已完成**
+  （`loader.ts` 的 `mount()` 有实现、`module-protocol.md` 有记载、issue #66 已勾选）
+  ⇒ M3b **无存量缺口、是纯前端整迁**。
+  **本轮只改文档不动码**；M3a 的实施计划另出。
 
 - 2026-09-16（**M2a 已合并上线后，用户提出的多租户问题** ⇒ 当场裁定「方向 C」，**只改文档不动码**）：
   用户问「不同租户都装了这个模块怎么办？ZOS 是要可以配置的」。核代码后确认这是**真缺口**：
