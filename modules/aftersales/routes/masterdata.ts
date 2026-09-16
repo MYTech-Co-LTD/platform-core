@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { ApproveStatus, EmployeeItem, Paged, ProductItem, StoreItem, Unpaged } from '../api-types'
 import { toMinor } from '../domain/ticket'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
@@ -38,7 +39,8 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
         where ${where} order by id limit $${params.length + 1}`,
       [...params, MAX_STORES],
     )
-    return c.json({
+    // 响应形状与 console 共用同一份类型（api-types.ts）
+    const body: Unpaged<StoreItem> = {
       items: res.rows.map((s) => ({
         id: Number(s.id),
         name: s.name,
@@ -46,7 +48,8 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
         address: s.address,
         phone: s.phone,
       })),
-    })
+    }
+    return c.json(body)
   })
 
   r.get('/products', async (c) => {
@@ -76,7 +79,8 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
         limit $${params.length + 1} offset $${params.length + 2}`,
       [...params, size, (page - 1) * size],
     )
-    return c.json({
+    // 响应形状与 console 共用同一份类型（api-types.ts）——本端点是**回 total 的两个之一**
+    const body: Paged<ProductItem> = {
       items: listRes.rows.map((p) => ({
         id: Number(p.id),
         name: p.name,
@@ -88,7 +92,8 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
       total: totalRes.rows[0].n,
       page,
       size,
-    })
+    }
+    return c.json(body)
   })
 
   r.get('/employees', async (c) => {
@@ -105,16 +110,18 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
         where ${where} order by id desc limit $${params.length + 1}`,
       [...params, MAX_EMPLOYEES],
     )
-    return c.json({
+    // 响应形状与 console 共用同一份类型（api-types.ts）
+    const body: Unpaged<EmployeeItem> = {
       items: res.rows.map((e) => ({
         id: Number(e.id),
         name: e.name,
         phone: e.phone,
         storeId: e.store_id === null ? null : Number(e.store_id),
         openId: e.open_id,
-        approveStatus: e.approve_status,
+        approveStatus: e.approve_status as ApproveStatus,
       })),
-    })
+    }
+    return c.json(body)
   })
 
   r.post('/employees', async (c) => {

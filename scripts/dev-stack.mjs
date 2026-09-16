@@ -167,6 +167,7 @@ function banner(url) {
       `  登录页    ${url}/login           账号 ${ADMIN1} / ${USER_PASSWORD}`,
       `  控制台    ${url}/console`,
       `  演示页    ${url}/console/demo    ← C1：左侧菜单「演示」点进来的落点`,
+      `  售后页    ${url}/console/aftersales  ← M3a：左侧菜单「售后管理」（五个页签）`,
       `  模块 API  ${url}/api/modules/demo/notes`,
       `  对照组    ${VIEWER1} / ${USER_PASSWORD}（无 demo:view → 模块 API 403）`,
       '',
@@ -209,6 +210,9 @@ async function main() {
       // 模块 API 全 403。docs/m0-smoke-checklist.md 的 C1 复现路径押在这里
       { owner: 'acme', name: 'p-demo-view', users: [ADMIN1], resources: ['demo:view'] },
       { owner: 'acme', name: 'p-demo-note', users: [ADMIN1], resources: ['demo:note'] },
+      // 售后模块（M3a）：不种这枚码，模块 API 全 403、console 菜单条目也不出现
+      // ⇒ 新模块在本地**无法验收**（`aftersales:manage` 是它的管理台唯一入口码）。
+      { owner: 'acme', name: 'p-aftersales-manage', users: [ADMIN1], resources: ['aftersales:manage'] },
     ],
   })
 

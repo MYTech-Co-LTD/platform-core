@@ -277,7 +277,13 @@ export function ConsoleOverview() {
 export function ConsoleModulePage() {
   const { pathname } = useLocation()
   const { session } = useOutletContext<ConsoleOutletContext>()
-  const entry = consoleRegistry.find((r) => r.path === pathname)
+  // **前缀匹配，不是全等**（售后 M3a）：模块可以「声明 1 个条目 + 页内真子路由」
+  // （`/console/aftersales` 之下挂 `tickets`/`rules`/…）。全等匹配会让深链
+  // `/console/aftersales/stores` 直接落进下面的 404 分支——菜单点得进去、URL 一贴就白页。
+  // 用 `${r.path}/` 收尾而不是裸 startsWith：否则 `/console/aftersalesXyz` 会误命中本条目。
+  const entry = consoleRegistry.find(
+    (r) => pathname === r.path || pathname.startsWith(`${r.path}/`),
+  )
   const Lazy = useMemo(() => (entry ? lazy(entry.load) : null), [entry])
 
   if (!entry || !Lazy) {

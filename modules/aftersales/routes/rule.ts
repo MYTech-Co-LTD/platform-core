@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { RuleItem, Unpaged } from '../api-types'
 import { AmountValidationError, normalizeRatio, toRatioOrNull } from '../domain/ticket'
 import { parseIdParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
@@ -20,7 +21,8 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
          from aftersales.ticket_rule where org = $1 order by id limit $2`,
       [org, MAX_RULES],
     )
-    return c.json({
+    // 响应形状与 console 共用同一份类型（api-types.ts）——改这里会同时影响两端
+    const body: Unpaged<RuleItem> = {
       items: res.rows.map((r) => ({
         id: Number(r.id),
         name: r.name,
@@ -29,7 +31,8 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
         remark: r.remark,
         createdAt: r.created_at,
       })),
-    })
+    }
+    return c.json(body)
   })
 
   r.post('/rules', async (c) => {

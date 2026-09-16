@@ -16,6 +16,13 @@ export interface ConsoleRegistryEntry {
 
 export const consoleRegistry: ConsoleRegistryEntry[] = [
   {
+    path: "/console/aftersales",
+    title: "售后管理",
+    icon: "ToolOutlined",
+    scope: "aftersales:manage",
+    load: () => import("../../../modules/aftersales/console/index.tsx"),
+  },
+  {
     path: "/console/demo",
     title: "演示",
     icon: "ExperimentOutlined",
