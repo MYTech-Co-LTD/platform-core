@@ -1126,8 +1126,9 @@ describe('申请审批页', () => {
       expect(calls.some((c) => c.method === 'POST' && c.url === '/api/modules/aftersales/employee-approvals/7/decide')).toBe(true),
     )
     expect(calls.find((c) => c.method === 'POST')!.body).toEqual({ decision: 'approve' })
-    // 刷新：GET 至少两次（初次 + 决定后）
-    expect(calls.filter((c) => c.method === undefined).length).toBeGreaterThanOrEqual(2)
+    // 刷新：GET 至少两次（初次 + 决定后）。⚠️ 必须放进 waitFor —— reload 是异步生效的，
+    //    POST 落地后立刻断言会撞竞态（实施时实测：拿到 1）
+    await waitFor(() => expect(calls.filter((c) => c.method === undefined).length).toBeGreaterThanOrEqual(2))
   })
 
   it('驳回发的是 decision: "reject"', async () => {

@@ -20,6 +20,7 @@ import RulesPage from './rules'
 import EmployeesPage from './employees'
 import ProductsPage from './products'
 import StoresPage from './stores'
+import ApprovalsPage from './approvals'
 
 const TABS = [
   { key: 'tickets', label: '工单' },
@@ -27,6 +28,7 @@ const TABS = [
   { key: 'employees', label: '员工' },
   { key: 'products', label: '商品' },
   { key: 'stores', label: '门店' },
+  { key: 'approvals', label: '申请审批' },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -58,6 +60,7 @@ export default function AftersalesConsolePage() {
     employees: EmployeesPage,
     products: ProductsPage,
     stores: StoresPage,
+    approvals: ApprovalsPage,
   }
   const Active = PAGES[active]
 
