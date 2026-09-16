@@ -75,9 +75,17 @@ async function writeAudit(
   )
 }
 
-/** state cookie 序列化（Task 7 契约逐字：HttpOnly + Max-Age=300 + SameSite=Lax；host-only 无 Domain。短命单用途 nonce 非长期凭据） */
-function stateCookie(state: string): string {
-  return `${STATE_COOKIE}=${state}; Path=/; Max-Age=${STATE_TTL_SEC}; HttpOnly; SameSite=Lax`
+/**
+ * state cookie 序列化（Task 7 契约逐字：HttpOnly + Max-Age=300 + SameSite=Lax；host-only 无 Domain。短命单用途 nonce 非长期凭据）
+ *
+ * 载荷 = `<state>` 或 `<state>.<base64url(next)>`（M3b-2 回跳）。
+ * **不新开 cookie**：一个 state 一个 nonce，`Path`/`Max-Age`/`HttpOnly`/`SameSite` 一字不改——
+ * 少一个 cookie 名就少一处将来要一起改的属性面。base64url（不是 base64）：`+` `/` `=` 在
+ * cookie 值里都要再编码一次，base64url 三个全避开。
+ */
+function stateCookie(state: string, next: string): string {
+  const payload = next === '/' ? state : `${state}.${Buffer.from(next, 'utf8').toString('base64url')}`
+  return `${STATE_COOKIE}=${payload}; Path=/; Max-Age=${STATE_TTL_SEC}; HttpOnly; SameSite=Lax`
 }
 
 /** 从 Cookie 头读 wechat_oa_state（手写解析，与 session-middleware readCookie 同语义） */
@@ -89,6 +97,38 @@ function readStateCookie(header: string | undefined): string | null {
     if (part.slice(0, eq).trim() === STATE_COOKIE) return part.slice(eq + 1).trim()
   }
   return null
+}
+
+/**
+ * 回跳目标白名单化（spec §3.2 未登录节）：**只放行同源相对路径**，其余一律回落 `/`。
+ *
+ * `next` 完全由 URL 控制 ⇒ 不校验就是一个**开放重定向**：攻击者构造
+ * `/silent?next=https://evil.test` 就能把刚完成微信授权的用户送去任意站点，
+ * 而且是从**我们自己的可信域名**出发的跳转（钓鱼场景里这是最值钱的一种）。
+ *
+ * 判据只有一条「单个 `/` 开头」是不够的：`//evil.test` 是**协议相对 URL**，浏览器按跨源处理；
+ * `/\evil.test` 在部分浏览器里同样被当作跨源。两者都必须在 `startsWith('/')` 之后单独挡掉。
+ * 控制字符一并拒——这个值最终进 `Location` 头，CR/LF 是头注入面。
+ */
+export function safeNextPath(raw: string | undefined): string {
+  if (!raw) return '/'
+  if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return '/'
+  // eslint 之外的理由：`\x00-\x1f` 与 `\x7f` 在 Location 头里没有合法位置
+  for (const ch of raw) if (ch < ' ' || ch === '\x7f') return '/'
+  return raw
+}
+
+/**
+ * cookie 载荷 → `{state, next}`。**state 段照比，next 段只做白名单化**。
+ * 坏 base64 不抛（`Buffer.from` 对非法输入是宽容的）——解出来是垃圾字符，`safeNextPath`
+ * 自会把它挡成 `/`，所以这里不需要 try/catch。
+ */
+function splitStateCookie(payload: string | null): { state: string; next: string } {
+  if (payload === null) return { state: '', next: '/' }
+  const dot = payload.indexOf('.')
+  if (dot < 0) return { state: payload, next: '/' }
+  const decoded = Buffer.from(payload.slice(dot + 1), 'base64url').toString('utf8')
+  return { state: payload.slice(0, dot), next: safeNextPath(decoded) }
 }
 
 function trimSlash(s: string): string {
@@ -111,8 +151,9 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps): Hono<TenantEnv & Sessi
       return c.json({ error: 'WECHAT_OA_NOT_CONFIGURED' }, 404)
     }
     const state = randomUUID()
+    const next = safeNextPath(c.req.query('next'))
     const url = buildWechatOaSilentUrl(t.wechat_oa_app_id, callbackUri, state)
-    c.res.headers.append('Set-Cookie', stateCookie(state))
+    c.res.headers.append('Set-Cookie', stateCookie(state, next))
     return c.redirect(url)
   })
 
@@ -138,7 +179,8 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps): Hono<TenantEnv & Sessi
       return res
     }
 
-    if (!code || !state || readStateCookie(c.req.header('cookie')) !== state) {
+    const baked = splitStateCookie(readStateCookie(c.req.header('cookie')))
+    if (!code || !state || baked.state !== state) {
       // 计数：BAD_STATE 也是一次失败的登录尝试（连 /silent 都不需要——随便带个 state 循环
       // 打即可）。不写 audit：actor 此刻不存在，且被拒请求不灌审计表是既有语义（评审 R1）
       deps.limiter.record(t.id, 'wechat-oa', null, false)
@@ -194,7 +236,8 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps): Hono<TenantEnv & Sessi
     await writeAudit(deps.pool, t.id, openid, 'login.ok', { via: 'wechat-oa' })
     deps.limiter.record(t.id, 'wechat-oa', null, true)
     c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
-    return c.redirect('/')
+    // 回跳：`baked.next` 已在拆 cookie 时过了一遍 safeNextPath（非法一律被折成 '/'）
+    return c.redirect(baked.next)
   })
 
   return app
