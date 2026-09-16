@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.12.1...v0.13.0) - 2026-09-16
+- 【新增】ci: 租户隔离门禁——模块 migrations 建表必须有 org（真库对账，按累积终态判） ([#87](https://github.com/MYTech-Co-LTD/platform-core/pull/87), [0e73e1f](https://github.com/MYTech-Co-LTD/platform-core/commit/0e73e1fb24b3c2022babd44c8a4e9468d047bc5e))
+
+
 ## [0.12.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.12.0...v0.12.1) - 2026-09-16
 - 【修复】server: runMigrations 加 session 级 advisory lock——并发迁移不再撞主键 ([#86](https://github.com/MYTech-Co-LTD/platform-core/pull/86), [f63c748](https://github.com/MYTech-Co-LTD/platform-core/commit/f63c74845d7e1a970acf418c78e9976507e9af08))
 
