@@ -408,6 +408,25 @@ id 来自 `GET /guest/me/registration`，而**名字**只能从这里取，所�
 另一页 `useStoreEmployeeApproval` 更退化成 `storeIds.map(id => query({id__eq}))` 的 N 次并发请求。
 平台侧直接给 `ids`，两条调用都收得干净。）
 
+#### 移动端不为档案做专属 UI（2026-09-16 用户裁定）
+
+提交页原有一张「商品信息」卡（源 `:104-135`，`v-if="selectedOrder"`：单据号/配送单位/基本数量/
+基本单价/批次/订货时间），数据源**全是订单字段**。订单面在域侧本就不做（§2.5 不收 `relatedOrder`）
+⇒ 该卡随 `currentOrder` 一起删除，**不**改由 `selectedProduct` 重建。
+
+**理由（用户原话）**：「我后面做其他应用的时候接入商品档案，到时候引用」。
+
+⇒ 商品/门店档案是**可复用的档案层**（§1.2 的「可搬迁」纪律已为它留了通用资源名），
+**后续应用接入时引用**。因此：
+- 本期**不**为档案做**消费者专属**的展示形态（造了就是把档案绑死在售后这一个消费者上）；
+- `GET /guest/products` / `GET /stores` 等档案端点保持**通用形状**（`StoreItem` / `ProductItem`），
+  不因售后页的展示需要而加字段；
+- 另一张「预计报损金额」卡（源 `:333-340`，`currentOrder.basic_unit_price × damage_quantity`）
+  一并删除——那是**前端算金额**，§0.3 明列要消灭的模式（M3a 对处理弹窗已有同类裁定）。
+
+> 落在产物上：`afterSalesWorkOrderSubmit.vue` 里 **`currentOrder` / `selectedOrder` / `预计报损`
+> / `商品信息` / `loadOrders` / `orderList` 均为 0 处**（Wave 5 已机检）。
+
 #### 页面（两页 + 小路由）
 
 - **`afterSalesWorkOrderSubmit`**：闸门（`GET /guest/me/registration`，未登记 ⇒ 引导去登记页）
