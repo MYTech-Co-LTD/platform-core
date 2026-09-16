@@ -323,21 +323,68 @@ M3a 的 console 员工页实现的是**单表简化版**（直接改 `employee.a
 ⇒ 前端测试替身**天然钉在真类型上**、不会漂（AGENTS.md #11「测试替身必须收严到真机形状」）。
 **不改任何接口行为。**
 
-### 3.2 移动端 userApp（M3b；本设计只定边界，**未收口**）
+### 3.2 移动端 userApp（M3b-2，2026-09-16 收口）
 
-wuji-2 整包 + Vite 壳 + shim（`wuji-data` 7 方法 → 域 API；`getCurrentUser` → session；
-`wuji-upload` → 预签名直传）；只保留售后工单提交相关页（wuji-2 TODO 本就要删接龙页——
-留给二期）。
+**整包搬 + 自造 Vite 壳 + 三 shim**。与 §3.1 的 console（React **重写**）刻意不同：移动端**保留
+Vue 3.5 + TDesign 1.9 + Tailwind 的原始代码**（spec §0.2 的选择），shim 只做「旧调用面 → 域 API」。
 
-> ⚠️ **2026-09-16 收口后的订正（两次）**：
-> ① 本节原写「**连带补 userApp 停用闸门**」——**该工作 M1 已完成**（`loader.ts` 的 `mount()` 里
-> userApp 静态先挂模块 API 同款 `gate` 再 `serveStatic`；`module-protocol.md`「停用语义」节有记；
-> issue #66 验收清单已勾选）。
-> ② 本节又曾写「**M3b 无存量缺口，是纯前端整迁**」——**该结论已被探查证伪**（issue #81）：
-> 移动端依赖一批平台上**不存在**的后端面（登记/审批的表与端点、访客面商品）。⇒ 拆成
-> **M3b-1（后端扩面 + 管理端闭环，见 §2.5）** 与 **M3b-2（移动端整迁，本节）**，**先 M3b-1**。
-> ③ 另：源仓库 `wuji-2` **没有 `main.ts`/`App.vue`/router/index.html** —— 它是跑在无极宿主里的
-> 页面集 ⇒ 「**Vite 壳**」是**我们要造的**，不是搬来的。
+#### 落点与构建
+
+`modules/aftersales/mobile/`；manifest 加：
+
+```yaml
+frontend:
+  userApp: { mount: /app/aftersales, dist: ./mobile/dist }
+```
+
+**构建自动接上**：`deploy/Dockerfile.server` 走 `pnpm install --frozen-lockfile && pnpm -r --if-present build`
+⇒ mobile 作为 workspace 包、带自己的 build 脚本即可在镜像里构建。
+
+⚠️ **一个必须配机检的静默陷阱**：`loader.ts` 的 `mount()` 里 `if (!existsSync(dist)) continue` ——
+**构建没跑（或路径写错）⇒ userApp 静态静默不挂载、不报错**，表现为「API 照常、移动端页面 404」。
+⇒ **`smoke-load` 必须断言该挂载点的路由回 SPA 壳而不是 404**（这条是同一条纪律：静默跳过 = 绿）。
+
+#### 三个 shim（**按保留页收窄**，不造通用网关）
+
+spec §0.2 **明确否决过通用数据网关**（表级粗粒度权限违背「声明即授权」的细粒度哲学）⇒
+shim 只提供**保留页真正调到的**东西：
+
+| 包 | shim 内容 |
+|---|---|
+| `@wujibase/wuji-data` | 只导出用到的表对象（`after_sales_work_order` / `employee_info` / `employee_info_approve` / `store_info` / `product_archive` / `wechat_openid`），每个**只实现被调到的方法**，映射到具体域端点 |
+| `@wujibase/wuji` | `getCurrentUser()`（访客 session）、`Message` / `Confirm`（TDesign 的对应物） |
+| `@wujibase/wuji-upload` | `uploadImage` / `uploadFile` → **预签名直传**（`POST /guest/attachments` 拿 URL，再 PUT 到 ZOS） |
+
+#### 页面（两页 + 小路由）
+
+- **`afterSalesWorkOrderSubmit`**：闸门（`GET /guest/me/registration`，未登记 ⇒ 引导去登记页）
+  → 选门店（**来自我的登记**，不是全量门店）/ 商品（`GET /guest/products`）
+  → 传图（预签名直传）→ 提交（`POST /guest/tickets`）
+- **`storeEmployeeApproval`**：登记/变更表单 → `POST /guest/employee-approvals`
+  （**只提交目标值**；差异由服务端算，见 §2.5 纪律②）
+
+#### `clientRequestId`（M2a 遗留的未知量，本期定死）
+
+它既是**幂等键**（§2.2），又是附件 object key 里的 `{ticket_ref}`（§2.3）。三条要求：
+
+1. **同一笔提交重试 ⇒ 同键**（否则幂等失效，重试会重复建单）
+2. **跨刷新 ⇒ 同键**（否则刷新后换新键 ⇒ **之前传的附件认领不回来** ⇒ 孤儿，见 §5 #12）
+3. **提交成功后 ⇒ 必须轮换**（否则同一会话提交第二笔时被幂等判重，**服务端静默返回第一笔**，
+   而前端显示「提交成功」——用户以为提交了新工单，落库的却是旧的那笔）
+
+⇒ 实现：`crypto.randomUUID()` + 存 **sessionStorage**（满足 2）+ **提交成功后清除**（满足 3）。
+
+#### 未登录
+
+访客 session 缺失（401）⇒ 跳宿主的 `/api/platform/auth/wechat-oa/silent`（M1 的访客登录路）。
+
+#### 明确不做（各有归属）
+
+- **接龙页**（`groupBuyingOrder` / `groupBuyingOrderHistory`）：二期
+- **`wechatOpenidVerify.vue`**：它在**前端做微信 OAuth2**，而 M1 已在**宿主**做掉（`wechat-oa`）
+  ⇒ 按 §0.3「前端式编排要收敛」**退役，不迁**
+- **`orderHistory.vue`**：其 composable 混着接龙表（`group_buying_*`）⇒ 与接龙同批留二期
+- **订单选择**：`SubmitBody` 不收 `relatedOrder`（§2.5）⇒ 移动端不选订单；订单档案归 M2b
 
 ### 3.3 数据迁移（全量）
 
@@ -418,7 +465,7 @@ GET https://data.wujisite.com/api/private/object
 | **M2b 数据迁移（择窗口）** | 全量拉取 → 清洗 → 入库 → 计数/金额对账（一次性，另出计划） |
 | **M3a console 管理端** | 5 页收进 **1 个 console 条目 + 模块内 tabs**（§3.1）。**纯前端**：调 M2a 已上线的端点，**不扩后端** |
 | **M3b-1 员工登记与审批（后端扩面）** | 新表 `employee_approval` + `employee_store`、5 个端点（§2.5）、manifest 声明、console「申请审批」页签。**先做**——移动端的 shim 形状由它决定 |
-| **M3b-2 移动端 userApp** | wuji-2 整包 + **Vite 壳**（源仓库无入口/router——`wuji-2` 是跑在无极宿主里的页面集）+ 三 shim（§3.2）。**依赖 M3b-1 的端点** |
+| **M3b-2 移动端 userApp** | wuji-2 整包（Vue 3.5 + TDesign + Tailwind）+ **自造 Vite 壳** + 三 shim + 两页（提交 / 登记）；`clientRequestId` 三条语义本期定死（§3.2）。**依赖 M3b-1 的端点**（已就绪） |
 | **M3c 每租户可配 ZOS** | 凭证落租户行 + `platform.tenant` 加列 + 配置 UI + **模块接入协议扩展**（§2.3）；**协议文档先行**（`architecture.md` + `module-protocol.md`）。**不在试点关键路径上**（单租户形态下 env 成立），故排在 M3a/M3b-1/M3b-2 之后 |
 
 **总验收绑定 spec-3 试点**：客户机六步交付；单租户 e2e（公众号登录 → 提交工单含 ZOS 直传
@@ -468,6 +515,11 @@ GET https://data.wujisite.com/api/private/object
     （`a/b` 与 `a_b` 都变 `a_b`）。**读隔离不受影响**（授权判定走 DB 的 `where org = $1`，
     不靠 key），但**对象命名空间会串**——若将来做「按前缀清理 / 按前缀计费 / 按前缀生命周期」，
     这里就是一个雷。收口方式待定（如 org 段改用可逆编码或加哈希短后缀）。
+13. **M3b-2 的端到端本地验不了**（2026-09-16 用户裁定「留到试点」）：
+    `MockCasdoor` 只做 Casdoor、**不做公众号 OAuth** ⇒ 本地拿不到**访客 session**，
+    因此「真壳 + 真访客」这一层**只能在试点客户机上验**。本地验到 **shim 单测 + 组件测试**。
+    ⚠️ 这条写下来的目的：**别把「本地全绿」读成「端到端验过」**——两者差的正是最不确定的那一段。
+
 12. **孤儿附件没有 GC**（2026-09-16 T10 上线后验证实测，**M2b 收口**）：
     预签名发生在工单落库**之前**，行先以 `ticket_id is null` 落在 `client_request_id` 上（§2.3）。
     访客若**传了图但没提交工单**（或提交失败后放弃），那一行与**桶里的对象**都会**永久留存**。
@@ -489,6 +541,16 @@ GET https://data.wujisite.com/api/private/object
 - module-protocol.md（userApp 闸门缺口、租户数据隔离约定）。
 
 ## 7. 修订记录
+
+- 2026-09-16（**M3b-2 设计收口**，issue #83。M3b-1 已合并上线）：
+  ① **§3.2 整节重写**（原文自述「只定边界，**未收口**」）——落点/构建、三 shim 的收窄口径、
+  两页 + 小路由、`clientRequestId` 的三条语义、未登录跳转、明确不做；
+  ② §3.4 期表 M3b-2 行同步；③ §5 补第 13 条（**端到端本地验不了的边界**）。
+  **三条值得单记的探查结论**：**构建自动接上**（`Dockerfile.server` 是 `pnpm -r --if-present build`，
+  mobile 作为 workspace 包带 build 脚本即可）；⚠️ 但 **`loader.ts` 的 `if (!existsSync(dist)) continue`
+  是静默跳过** ⇒ 「构建没跑」表现为「API 照常、移动端 404」，**必须配 `smoke-load` 机检**；
+  `clientRequestId` **提交成功后必须轮换**——不轮换的症状是「第二笔被幂等判重、静默返回第一笔，
+  而前端显示提交成功」。**本轮只改文档不动码**；实施计划另出。
 
 - 2026-09-16（**M3b 探查后重定范围：M3b 不是纯前端整迁** ⇒ 拆 M3b-1/M3b-2，issue #81）。
   M3a 合并上线后开 M3b。**实读源仓库**（`~/Documents/mytechcode/wuji-2`、`wuji-1`）后推翻了
