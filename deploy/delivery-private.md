@@ -21,17 +21,28 @@
 | ① | 机器与网络 | 步骤 1 | 公网 IP + 与控制面的网络关系（同 VPC 走内网 / 跨 VPC 走公网，决定阶段 A 白名单配法）；docker 双容器余量即可（参照现有实例） |
 | ② | Casdoor 归属 | 步骤 3/4 | 默认共用：定 org 名（建议 = 客户 slug，字母数字）。**只收一个管理员**——建号挂 `tenant:admin` 后，其余用户客户在 console M3 页自管（采集面最小化）；合规隔离则拿要求原文，独立实例单独定 |
 | ③ | 域名 | 步骤 5 | 客户自有域名 + **DNS 控制人**（A 记录切换要约时间窗）；无域名用 openship 免费子域 |
-| ④ | 品牌与登录 | 步骤 4 | `product_name`（控制台标题/登录页品牌）；要不要企微扫码——要则客户企微管理员提供三参（corp_id / agent_id / secret，敏感值走 openship env isSecret） |
-| ⑤ | 模块清单 | 全局 | `--module` 集。仓内现只有 `demo` 占位模块；**真业务功能 = L1 模块开发先行**（spec-1 分级 + 模块接入流程），是试点排期的最大变量 |
+| ④ | 品牌与登录 | 步骤 4 | `product_name`（控制台标题/登录页品牌）；要不要企微扫码——要则客户企微管理员提供三参（corp_id / agent_id / secret）。⚠️ **订正（2026-09-16）**：原文续写「敏感值走 openship env isSecret」**不成立**——三参不是 env，而是**租户行** `wecom_corp_id/wecom_agent_id/wecom_secret`（路由读租户行，见 `apps/server/src/routes/auth-wecom.ts`），且**当前没有 CLI / UI 写入入口**（仓内只有 seed 与手工 SQL）⇒ **要企微扫码就是必须先补的缺口，见 §3 边界**；用账密登录（`--login-methods password`）则不受影响。**另收公众号两参**：`--wechat-oa-app-id` / `--wechat-oa-secret`（客户公众号后台的 AppID / AppSecret）——同样落**租户行**（`wechat_oa_app_id/secret`），**已有 CLI 入口**（步骤 4）。⚠️ **两者是两件不同的东西**：企微 = console **内部登录**（员工），公众号 = **外部访客**登录（售后移动端，spec §1.3） |
+| ⑤ | 模块清单 | 全局 | `--module` 集。仓内现有 `demo`（占位）+ **`aftersales` 售后管理**（M2a 后端 → M3a console → M3b-1 登记审批 → M3b-2 移动端 userApp，**四期已全期上线**）⇒ 真业务功能 = `--module aftersales` 一步开出。**订正（2026-09-16）**：原文写「仓内现只有 `demo` 占位模块；**真业务功能 = L1 模块开发先行**（spec-1 分级 + 模块接入流程），是试点排期的最大变量」——该判断在售后四期落地后已不成立：⑤ 由**开发级（周级）降为配置级（天内）** |
 
 我方侧（可并行推进）：
 
 - ⑥ 客户机阶段 A 材料（`cicd-project-onboarding` 清单：网络 → ufw 4878 → git smart-proxy → docker → 注册 server）
-- ⑦ env 值备好：`PLATFORM_SESSION_SECRET` 随机生成、Casdoor 凭据、`PUBLIC_ORIGIN=https://<域名>`
+- ⑦ env 值备好：`PLATFORM_SESSION_SECRET` 随机生成、Casdoor 凭据、`PUBLIC_ORIGIN=https://<域名>`、
+  **`--module` 含 `aftersales` 时另备 ZOS 五个键**（`AFTERSALES_ZOS_*`，见步骤 3）
 - ⑧ 验收记录：六步成功判据逐项勾 + M1c 两笔销账（single 试点 + multi 测试租户，见 AGENTS.md 债账）
 
-两条提示：⑤ 是关键路径（①–④ 都是配置级、天内；⑤ 是开发级、周级——试点排期先问「演示什么」）；
-共用 Casdoor 的 org 命名一旦定了不轻动（租户行、权限桶、订阅 plan 都锚它）。
+两条提示：①–⑤ **现在都是配置级**（天内）——⑤ 的订正见上（售后四期已上线，`--module aftersales`
+即得一套真业务功能）；但「**演示什么**」仍要先问：落在**已上线模块之外**的诉求才是新的开发级变量
+（L1 模块开发先行，spec-1 分级 + 模块接入流程）。共用 Casdoor 的 org 命名一旦定了不轻动
+（租户行、权限桶、订阅 plan 都锚它）。
+
+> **试点可演示的完整链路（2026-09-16，售后 M3b-2 上线后）**：**公众号访客登录 → 移动端提交工单
+> （含图片/视频 ZOS 直传）→ console 处理按规则算金额 → 状态流转**。移动端入口
+> `https://<客户域名>/app/aftersales`（manifest `frontend.userApp.mount`）。
+> 前置两件（缺任一则链路断在各自那一段）：步骤 3 配齐五个 `AFTERSALES_ZOS_*` env（缺 = 提交页传图 503）、
+> 步骤 4 带 `--wechat-oa-*` 两参（缺 = 访客登录 404）。⚠️ 这条链路的**「真壳 + 真访客」段本地验不了**
+> ——`MockCasdoor` 只做 Casdoor、不做公众号 OAuth ⇒ 本地拿不到访客 session（售后 spec §5 #13），
+> 只能在客户机上验；**别把「本地全绿」读成「端到端验过」**。
 
 ## 1. 六步开通链路
 
@@ -63,6 +74,18 @@ rootDirectory=deploy、framework=docker-compose。
 | `PLATFORM_SESSION_SECRET` | 随机生成（isSecret） |
 | `PUBLIC_ORIGIN` | `https://<客户域名>` |
 | `PLATFORM_SUBSCRIPTION_SOURCE` | `casdoor`（**新交付一律 casdoor 源，全平台单一口径**；platform 源仅我方实例回滚兜底） |
+| `AFTERSALES_ZOS_ENDPOINT` | 天翼 ZOS（S3 兼容）端点（**可省协议**，代码补 `https://`；如 `zos.xinan1.ctyun.cn`） |
+| `AFTERSALES_ZOS_REGION` | ZOS 区域（如 `xinan1`） |
+| `AFTERSALES_ZOS_BUCKET` | 附件桶名 |
+| `AFTERSALES_ZOS_ACCESS_KEY` | ZOS 访问密钥 AK（**isSecret**） |
+| `AFTERSALES_ZOS_SECRET` | ZOS 密钥 SK（**isSecret**） |
+
+⚠️ 后五行（售后附件存储，`modules/aftersales/storage.ts`）：**只要 `--module` 集里含 `aftersales`
+就必须配齐**。凭证没有第二条落点（走 env，我们侧备好给 MCP 设 isSecret）。**漏配不是启动报错**：
+`zosConfigFromEnv` 缺任一键即返回 null，**服务照常起、其余功能照常**，但附件端点回
+**503 `ZOS_NOT_CONFIGURED`**——而移动端提交页的核心就是传图/传视频（平台 bodyLimit ~1MiB，
+字节只能走预签名直传，见 storage.ts 文件头）。成功判据：提交页传图能拿到预签名 URL 并 PUT 成功
+（并入步骤 6 冒烟）。
 
 再部署（MCP `post_deployments_build_access`）：projectId、**serverId**（步骤 1 拿的）、
 deployTarget=server、branch=main、environment=production。
@@ -81,11 +104,22 @@ MCP `post_projects_by_id_services_by_serviceId_exec`（serviceId 从
 
 ```sh
 pnpm exec tsx scripts/provision-tenant.mjs <客户slug> --org <客户org> --module <id>... \
-  --product-name <产品名> --login-methods password[,wecom-qr] --domain <客户域名>
+  --product-name <产品名> --login-methods password[,wecom-qr] --domain <客户域名> \
+  --wechat-oa-app-id <公众号AppID> --wechat-oa-secret <公众号AppSecret>
 ```
 
+`--wechat-oa-*` 两参（**可选**，来自 §0.1 ④）：写租户行 `wechat_oa_app_id/secret` 两列，
+即**该租户的访客登录启用开关**（启用判定就是「配置存在」，不是 `login_methods`，
+`apps/server/src/routes/auth-wechat-oa.ts`）：
+
+- **必须成对**：只给一个 = 参数错误，入口响亮报错（写半个 = 看起来配了其实不启用）。
+- **secret 不进日志**：CLI 只回显 `wechat-oa <appId 前 6 位…>`，secret 只落库；本命令本身
+  含明文 secret，**不要贴进 issue / 群 / 截图**。
+- **不配**：该租户 `/silent` 直接 404 `WECHAT_OA_NOT_CONFIGURED` ⇒ 公众号访客登录路走不通。
+- **幂等**：重跑一次**不带**这两参**不会**清掉已配好的两列（`on conflict do update` 只改本次列出的列）。
+
 成功判据：逐步 ✓ 打印到 `permissions ×N`（N = 模块码数 + 1，含 tenant:admin）与
-`subscribe mod-<id>`、`domain <host>`；**幂等可重跑**。
+`subscribe mod-<id>`、`domain <host>`、带两参时的 `wechat-oa <appId 前 6 位…>`；**幂等可重跑**。
 
 ### 步骤 5：域名与证书
 
@@ -98,6 +132,10 @@ MCP `post_domains`（projectId、hostname=<客户域名>）→ `post_domains_by_
 `docs/m0-smoke-checklist.md`。登录一口：CLI 建的是租户与订阅，**第一批用户要在 Casdoor
 建号并挂码**（客户管理员 = `tenant:admin`，挂上后 console「管理」菜单组可见——M3 页自管）。
 
+**访客链路也只有在这里能验**（本地验不了，见 §0.1 链路一段）：公众号内打开
+`https://<客户域名>/app/aftersales` → 登录（应拿到访客 session，不是回登录页）→ 提交一张带图的
+工单（图片应直传 ZOS 成功）→ console 处理按规则出金额 → 状态流转到终态。
+
 ## 2. 升级 SOP
 
 - **我方托管实例**：CI 自动（merge main 即部署，现状不动）。
@@ -108,5 +146,11 @@ MCP `post_domains`（projectId、hostname=<客户域名>）→ `post_domains_by_
 
 ## 3. 边界
 
+- **企微扫码三参没有交付写入入口（已知边界，2026-09-16 核出，跟踪 issue #88）**：
+  `wecom_corp_id` / `wecom_agent_id` / `wecom_secret` 落**租户行**（**不是 env**），
+  但仓内**只有 seed 与手工 SQL** 能写（`provision-tenant.mjs` 无对应参数、管理端无写端点、
+  console 无配置页）⇒ **试点若需要企微扫码登录，这是一个必须先补的缺口**；用账密登录
+  （`--login-methods password`，见 §0.1 ④）则不受影响。同族的公众号两参已由
+  `scripts/provision-tenant.mjs` 补上（步骤 4）。
 - 独立 Casdoor 实例的部署与运维归属：特殊情况按客户单独定，本文不展开。
 - 壳层定制（布局/导航/多语言）：**L2 车道未建前不接**（spec-1 §1），立项信号 = 第一个真实壳层需求。
