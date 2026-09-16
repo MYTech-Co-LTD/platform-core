@@ -134,7 +134,7 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 | 面 | scope | 端点 |
 |---|---|---|
 | 管理端 | `aftersales:manage` | `GET /tickets`（分页/筛选）· `GET /tickets/:id` · `POST /tickets/:id/process` · `GET/POST /rules` · `PUT/DELETE /rules/:id` · `GET /stores` · `GET /products` · `GET/POST /employees` · `POST /employees/:id/approve` · `GET /attachments/:id` · `GET /employee-approvals` · `POST /employee-approvals/:id/decide` |
-| 访客端 | `aftersales:guest` | `GET /guest/tickets`（**只回自己的**，按 `identity.userId`＝openid 过滤）· `GET /guest/tickets/:id` · `POST /guest/tickets`（提交）· `POST /guest/attachments`（元数据→预签名 PUT URL）· `GET /guest/me/registration`（我的登记 + 我的门店 + 有无待审）· `POST /guest/employee-approvals`（提交登记/变更）· `GET /guest/products`（选商品；见 §2.5） |
+| 访客端 | `aftersales:guest` | `GET /guest/tickets`（**只回自己的**，按 `identity.userId`＝openid 过滤）· `GET /guest/tickets/:id` · `POST /guest/tickets`（提交）· `POST /guest/attachments`（元数据→预签名 PUT URL）· `GET /guest/me/registration`（我的登记 + 我的门店 + 有无待审）· `POST /guest/employee-approvals`（提交登记/变更）· `GET /guest/products`（选商品；见 §2.5）· `GET /guest/stores`（选/查门店；见 §3.2） |
 
 分面而非靠「同一个 handler 里判 scope」是**故意的**：门卫按声明逐条判定，一个端点一个 scope
 是协议保证的性质；把两套权限塞进一个 handler 等于在模块里重造一套判定，正是 §0.3 要消灭的
@@ -355,6 +355,21 @@ shim 只提供**保留页真正调到的**东西：
 | `@wujibase/wuji` | `getCurrentUser()`（访客 session）、`Message` / `Confirm`（TDesign 的对应物） |
 | `@wujibase/wuji-upload` | `uploadImage` / `uploadFile` → **预签名直传**（`POST /guest/attachments` 拿 URL，再 PUT 到 ZOS） |
 
+#### 补一个访客面端点：`GET /guest/stores`（M3b-2 的探查发现）
+
+**两个保留页都要门店数据**（实读源侧调用链）：
+
+| 页面 | 用法 |
+|---|---|
+| 登记页（`useStoreEmployeeApproval`） | `store_info.query({filter, sort})` ⇒ **全量门店的搜索**（加盟商从里面**挑**自己属于哪些门店） |
+| 提交页（`useAfterSalesData`） | `store_info.query({filter:{id__eq …}})` ⇒ 按 id 查**已登记门店的明细**（要显示**名字**） |
+
+而访客面**没有门店端点**（`GET /stores` 是 `aftersales:manage`）；`GET /guest/me/registration`
+只回 `storeIds`、**不含名字** ⇒ 提交页的展示也不够。
+
+⇒ 新增 **`GET /guest/stores`**（搜索 + 分页，与 `/guest/products` 同构，同样因「一条声明一个 scope」
+必须与 `GET /stores` 分面）；`me/registration` 保持只回 id、**不扩**（门店明细统一走这个端点）。
+
 #### 页面（两页 + 小路由）
 
 - **`afterSalesWorkOrderSubmit`**：闸门（`GET /guest/me/registration`，未登记 ⇒ 引导去登记页）
@@ -465,7 +480,7 @@ GET https://data.wujisite.com/api/private/object
 | **M2b 数据迁移（择窗口）** | 全量拉取 → 清洗 → 入库 → 计数/金额对账（一次性，另出计划） |
 | **M3a console 管理端** | 5 页收进 **1 个 console 条目 + 模块内 tabs**（§3.1）。**纯前端**：调 M2a 已上线的端点，**不扩后端** |
 | **M3b-1 员工登记与审批（后端扩面）** | 新表 `employee_approval` + `employee_store`、5 个端点（§2.5）、manifest 声明、console「申请审批」页签。**先做**——移动端的 shim 形状由它决定 |
-| **M3b-2 移动端 userApp** | wuji-2 整包（Vue 3.5 + TDesign + Tailwind）+ **自造 Vite 壳** + 三 shim + 两页（提交 / 登记）；`clientRequestId` 三条语义本期定死（§3.2）。**依赖 M3b-1 的端点**（已就绪） |
+| **M3b-2 移动端 userApp** | wuji-2 整包（Vue 3.5 + TDesign + Tailwind）+ **自造 Vite 壳** + 三 shim + 两页（提交 / 登记）；`clientRequestId` 三条语义本期定死（§3.2）；**并补一个 `GET /guest/stores`**（两个保留页都要门店数据，探查发现）。**依赖 M3b-1 的端点**（已就绪） |
 | **M3c 每租户可配 ZOS** | 凭证落租户行 + `platform.tenant` 加列 + 配置 UI + **模块接入协议扩展**（§2.3）；**协议文档先行**（`architecture.md` + `module-protocol.md`）。**不在试点关键路径上**（单租户形态下 env 成立），故排在 M3a/M3b-1/M3b-2 之后 |
 
 **总验收绑定 spec-3 试点**：客户机六步交付；单租户 e2e（公众号登录 → 提交工单含 ZOS 直传
