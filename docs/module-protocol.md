@@ -243,6 +243,133 @@ create table if not exists demo.province (…);
 - **「本模块没有全局表」不需要任何标记**（售后模块在 README 声明即可）：标记是「真有全局表」
   时的出口，不是「声明我没有」的入口。
 
+## 租户级配置注入：`storage`（M3c 每租户可配 ZOS，2026-09-16 拍板）
+
+> 适用：`modules/<id>/manifest.yaml` 的**可选** `storage` 字段 + 宿主在模块 API 子树上挂的
+> 投影中间件。契约源是 `packages/platform-sdk/src/{manifest,module}.ts`。
+>
+> **本节自成一体**：规则以本节为准，过程稿（`docs/superpowers/specs/2026-09-16-m3c-tenant-storage-protocol-design.md`）
+> 只作决策留档，不再承载规则。
+
+**它解决的是什么**：模块配置过去只能来自**进程 env**——`.env` 是进程级的，而 `createRouter` 又是
+**装载期只调一次**（`apps/server/src/loader.ts:294`）⇒ 多租户同进程部署时，所有租户**必然**共用一份
+配置（共用一个桶 + 一套 AK/SK）：做不到租户自带存储（BYO）、一把密钥泄露的半径 =**全租户**、
+也无法按租户归集存储成本。
+
+**这不是隔离修复**（别把它写成修洞）：既有三道隔离都是完好的——key 规范 `aftersales/{org}/…` 带
+`{org}` 段、每次读都 `where org = $1`、预签名 URL 由服务端按 DB 行生成（客户端拿不到拼接权）。
+缺的是**可配置性**：协议里过去没有承载「本租户的配置」的位置。
+
+### 模块侧：怎么声明（**不声明 = 拿不到**）
+
+```yaml
+# modules/<id>/manifest.yaml
+storage: { kind: s3 }     # 缺省 = 不声明 = 宿主不注入，本模块行为与今天逐字相同
+```
+
+- `kind` 是**收窄的枚举**（目前只允许 `s3`）。写别的值 ⇒ manifest schema 拒绝 ⇒ **装载失败**
+  （进程起不来，不是告警）——与 `api.internal[].scope` / `guest.scope` 的 fail-fast 同风格。
+- 字段**可选**：现有模块一行不改仍装载通过（见下「加而不改」）。
+- ⚠️ 这是**声明进 manifest**的第三种能力（前两种是 `api.internal[]` 与 `guest.scope`），理由相同：
+  manifest 是本仓模块能力的**唯一审计面**——看 manifest 就知道某模块用不用存储。宿主**无条件**
+  注入会让所有模块都拿得到租户存储凭据，违反最小权限，审计面也消失。
+
+### 宿主侧：注入的键、形状与位置
+
+宿主在**模块 API 子树**（`/api/modules/<id>/*`）上挂一条中间件，把**本次请求所属租户**的配置
+投影进该请求的 Hono context：
+
+```ts
+import { TENANT_STORAGE } from '@platform/sdk'
+import type { TenantStorageConfig } from '@platform/sdk'
+
+const cfg = c.get(TENANT_STORAGE)              // TenantStorageConfig | undefined
+if (!cfg) return c.json({ error: 'ZOS_NOT_CONFIGURED' }, 503)
+```
+
+| 名 | 值 / 形状 | 出处 |
+|---|---|---|
+| context 键常量 | `TENANT_STORAGE`，值 `'platform.tenantStorage'` | `packages/platform-sdk/src/module.ts` |
+| 值的类型 | `TenantStorageConfig = { kind: 's3'; endpoint: string; region: string; bucket: string; accessKeyId: string; secretAccessKey: string }` | 同上 |
+| 注入点 | `<模块 API 基路径> + '/*'`（**仅声明了 `storage` 的模块的 API 子树**） | `apps/server/src/loader.ts` 的 `mount()` |
+
+- **为什么是模块子树**：注入面 =「声明过的模块」自身，宿主自己的路由与未声明的模块都不在面上。
+- **为什么键名带 `platform.` 前缀**：避免与模块自有 context 变量撞车（照 `DECLARED_GATE_APPROVED`
+  的既有做法）；键名是**宿主 set / 模块 get 的约定**，编译器不连线，改名是破坏性变更。
+- **挂载顺序是硬约束**：**在启用闸门之后、`app.route(base, m.router)` 之前**。Hono 里 handler
+  先注册、`use` 后注册 ⇒ 该中间件**永不执行**（见「实现注意」第 2 条）——顺序错了的表现是模块
+  `c.get(TENANT_STORAGE)` **恒 `undefined`**（附件类端点全线 503），代码里却看不出问题。
+  排在闸门之后：停用模块该拿 404 就先拿 404，不必先花代价解配置。
+- **零额外 DB 往返**：租户行本来就已被请求链的租户中间件取过（`apps/server/src/tenant.ts`，
+  配置列若落在 `platform.tenant` 则 `select *` 自动带出），投影是**纯函数、零 IO**。
+- **不声明就不 set**：manifest 没写 `storage` 的模块，宿主不挂这条中间件 ⇒ `c.get(TENANT_STORAGE)`
+  恒 `undefined`。
+- ⚠️ **它不是门卫**：这条中间件**不做鉴权、不返回 401/403**，只做投影。「宿主施加门禁」与
+  「宿主注入材料」是**两件事**，混为一谈会让后人以为注入了材料就等于加了权限。
+
+### 安全性质：声明的是「能力」，不是「租户」
+
+这三条是本节必须写死的边界：
+
+1. **配置的作用域永远是「本次请求所属的租户」**——宿主从 `c.get('tenant')` 取，模块**没有任何
+   途径指定 org**（协议里不存在「模块说明自己要哪个租户」的位置，装成一个按 org 的解析器或
+   缓存也是同类越权，一样被排除）。
+2. **注入的是投影后的窄值，不是 `TenantRow`**——⚠️ **绝不**把租户行整个递给模块：`TenantRow`
+   里坐着 `wecom_secret` / `wechat_oa_secret` / `casdoor_org`（`apps/server/src/tenant.ts`）。
+   把整行给模块 = 每个声明了 `storage` 的模块都能读到该租户的**企微/公众号密钥**，还等于把模块
+   引到 `platform` schema 的语义上（B1 的精神）。**只投影存储五元组。**
+3. **manifest 里不含凭据名的任何自由度**——只写得出 `kind`，写不出 bucket / access key / org。
+
+### 兜底语义（fail-explicit）
+
+| 租户行上的存储配置 | 宿主行为 | 模块读到的 |
+|---|---|---|
+| **五列全空**（未配） | 注入**平台默认**（进程 env 五键；env 缺任一键 ⇒ 等价于「没有平台默认」⇒ 不 set） | 有值 / `undefined` |
+| **部分填写**（如只填了 endpoint，没有 AK/SK） | **不注入**（**绝不回落平台桶**） | `undefined` |
+| 五列全填 | 注入该租户自己的配置 | 有值 |
+
+- **部分填写一定不回落**：回落不是容错，是**把红改成绿**——租户以为附件落在自己的桶，实际落在
+  平台桶 ⇒ **数据位置被误述** + 平台替租户承担存储成本。「部分填写」没有任何可能是有意为之。
+- **env 五键保留**，语义从「唯一来源」降为「**平台默认**」（B9 契约不变）；`zosConfigFromEnv`
+  现成的「缺任一键 ⇒ `null`」正好承接「没有平台默认」这个状态。
+- ⚠️ **「配了但连不上」在请求路径上不可观测**：预签名走 SigV4 **纯本地计算、不发网络请求** ⇒
+  宿主**永远无法**在请求路径上发现配置坏；错误只在客户端拿预签名 URL 直连对象存储时出现，而那是
+  浏览器/手机直连、**平台侧看不到**——表现在平台侧是零日志、零告警、各处都绿。
+  ⇒ **连通性验证必须放在请求路径之外**：管理端**保存时探测**（拒绝保存并回显原因）+ 显式
+  **「测试连接」**动作（用于桶被删 / AK 轮换 / 网络策略变更这类事后场景）。**明确不在请求路径上
+  探测**：每请求一次网络往返会把存储侧抖动放大成平台 5xx，且把一个可选依赖变成硬依赖。
+- 由此，**「配置存在但不可用」由模块自己承接**：宿主只保证「如实把本租户的配置（或没有）交给
+  模块」，503 的错误码与降级话术是模块自己的事。
+
+### 加而不改（兼容性论证）
+
+**`ModuleContext` 保持 `{ pool }` 一字不动**：新能力 = manifest **可选字段** + context **键**
+（不声明就不 set）。
+
+⇒ 「现有模块不受影响」不是「我们改了但保证不破坏」，而是**根本没改**——`modules/demo` 与
+`modules/aftersales` 的 `createRouter` 一行不动，照旧装载通过。装载期的双向核对（本文件上一节）
+不受影响：它核对的是**路由集合**，本节不动任何路由。
+
+> 为什么不把能力做成 `ModuleContext` 上的可选字段（如 `storage?: boolean` / `storageFor(c)`）：
+> 收益与上文相同，代价更大——`ModuleContext` 的每条边都受 Hono 泛型不变性摩擦
+> （`packages/platform-sdk/src/module.ts:27-43` 记录了那段摩擦史），接口每宽一分摩擦面就大一分；
+> 且一个**可选**字段对「模块要不要声明」不提供任何结构约束，声明仍得另想办法。
+
+### 与既有不变量的关系
+
+| 不变量 | 关系 |
+|---|---|
+| **B1 跨 schema（三同）** | **不触犯**：模块**不读** `platform.tenant`——投影由**宿主**做。⚠️ 由此引出一条**新约束**：注入的必须是**投影后的纯值**（见上「安全性质」第 2 条）。 |
+| **声明即授权（fail-closed）** | **强化**：新能力同样走 manifest 声明；未声明 = **拿不到**（`undefined`），与「未声明路径 = 不可达」同构。 |
+| **装载期双向核对** | **不触犯**：它比对路由集合与 `api.internal` 的差集；本节不动路由。 |
+| **`enabledFor` 只能请求期门控** | **同构不冲突**：同样是请求期解析；装载期只拿着 manifest 的**声明**（不含任何租户数据），且顺序上启用闸门在前。 |
+| **I-1 挂载顺序** | **天然满足**：投影中间件挂在 `runtime.mount()` 内部（⑨），而租户→会话（⑥）在它之前（`apps/server/src/app.ts`）⇒ 一定读得到 `c.get('tenant')`。 |
+| **B9 env 契约** | **不触犯**：env 五键保留（`.env.example` 不变），语义降为「平台默认」。 |
+
+> ⚠️ 与**售后 spec §1.3 的公众号** `wechat_oa_app_id/secret` **只同构一半**：配置都落租户行，但公众号那两个键的
+> 消费方是**宿主自己的路由**（它直接 `c.get('tenant')`），**从来没有交付给模块**过。本节是**新增的
+> 一条交付通路**，不是复用既有通路——别以为「照公众号抄一下就行」。
+
 ## 实现注意（踩过的坑，勿重蹈）
 
 门卫能不能生效，**取决于挂载方式**，与门卫自身的代码无关。三条已实证的 Hono 行为：
