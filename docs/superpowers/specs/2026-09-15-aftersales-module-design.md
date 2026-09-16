@@ -368,6 +368,17 @@ GET https://data.wujisite.com/api/private/object
     （`a/b` 与 `a_b` 都变 `a_b`）。**读隔离不受影响**（授权判定走 DB 的 `where org = $1`，
     不靠 key），但**对象命名空间会串**——若将来做「按前缀清理 / 按前缀计费 / 按前缀生命周期」，
     这里就是一个雷。收口方式待定（如 org 段改用可逆编码或加哈希短后缀）。
+12. **孤儿附件没有 GC**（2026-09-16 T10 上线后验证实测，**M2b 收口**）：
+    预签名发生在工单落库**之前**，行先以 `ticket_id is null` 落在 `client_request_id` 上（§2.3）。
+    访客若**传了图但没提交工单**（或提交失败后放弃），那一行与**桶里的对象**都会**永久留存**。
+    实测（2026-09-16，对已上线的生产实例）：模块内**没有任何删除路径**
+    （`grep` 无 `DeleteObject` / 无 lifecycle / 无清扫器），而全仓唯一的 `ticket_id is null`
+    出现在**认领谓词**里（`routes/ticket-guest.ts:165`，是消费路径，不是清扫器）
+    ⇒ **库侧与桶侧都没有 GC**。生产库当前 `ticket_attachment` 为 **0 行**
+    （尚无租户启用，属干净基线，非「已清理」）。
+    ⇒ **M2b 需给出清理设计**：按「未认领且超过 N 天」同时清 DB 行与对象。
+    数据上可行——`001_init.sql` 已有 `object_key` / `created_at` 与 `(org, ticket_id)` 索引；
+    注意**对象 key 里不含工单信息**，只能由行的 `object_key` 反查。
 
 ## 6. 关联
 
@@ -389,6 +400,7 @@ GET https://data.wujisite.com/api/private/object
   凭证落租户行、启用判定＝配置存在**（与公众号同构）；② §3.4 的 M2a 行标注该边界、M3 行加入收口项；
   ③ §4 #7 把「`ModuleContext` 每租户配置注入契约」列为 M3 落地物；④ §5 补第 10 条（该边界）
   与第 11 条（`sanitizeOrgSegment` 命名空间碰撞，**登记未裁定**）。
+  同日另补 §5 第 12 条：**孤儿附件没有 GC**（T10 上线后验证实测，M2b 收口）。
   **本相位不改任何代码、不加迁移**——按规矩「架构先行」，且协议扩展须**先改
   `docs/architecture.md` + `docs/module-protocol.md` 再动码**。
 
