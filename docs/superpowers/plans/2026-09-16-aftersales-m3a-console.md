@@ -22,6 +22,12 @@
 - **无 `total` 的端点不摆假页码**：`GET /rules`、`GET /employees`、`GET /stores` 回 `{items}` 无 `total` ⇒ 单页展示。
 - **测试纪律（AGENTS.md #11）**：测试替身必须收严到真机形状 ⇒ 响应类型从 `api-types.ts` 取，不手抄形状。
 - **门禁**：`pnpm typecheck` / `pnpm test` / `pnpm --filter @platform/web build` / 四道守卫脚本 / `smoke-load` 全绿。
+- ⚠️ **模块 console 代码受 `apps/web` 那套更严的 tsconfig 约束**（实测发现，不是推测）：
+  `apps/web/tsconfig.app.json` 虽是 `include: ["src"]`，但 TypeScript **会跟随 import** 把
+  `modules/*/console/**` 拉进自己的 program（`apps/web/src/console-registry.gen.ts` 里那句
+  `import("../../../modules/…/console/index.tsx")` 就是入口）⇒ 下面两条**对模块 console 代码同样生效**：
+  - `noUnusedLocals` / `noUnusedParameters` —— **不许留未使用的导入或参数**（`_` 前缀参数除外）
+  - `verbatimModuleSyntax` —— **类型导入必须写 `import type { … }`**，不能与值导入混在一句里
 
 ## 波次划分（派发用）
 
