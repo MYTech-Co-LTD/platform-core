@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.10.0...v0.11.0) - 2026-09-16
+- 【新增】aftersales: M3b-1 员工登记与审批——新表 + 5 端点 + console 审批页签 ([#82](https://github.com/MYTech-Co-LTD/platform-core/pull/82), [3b751a9](https://github.com/MYTech-Co-LTD/platform-core/commit/3b751a9d1f831e0064fc2642d755bb9492240e1c))
+
+
 ## [0.10.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.9.0...v0.10.0) - 2026-09-16
 - 【新增】aftersales: M3a console 管理端——5 页收进 1 条目 + 模块内 tabs ([#80](https://github.com/MYTech-Co-LTD/platform-core/pull/80), [0cf5213](https://github.com/MYTech-Co-LTD/platform-core/commit/0cf521351488244311f72bbf89389b44d545f03d))
 
