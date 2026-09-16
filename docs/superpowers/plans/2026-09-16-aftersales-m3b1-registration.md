@@ -519,10 +519,18 @@ describe('POST /guest/employee-approvals', () => {
     expect((await res.json() as any).message).toContain('没有修改')
   })
 
-  it('★ 租户隔离：另一个 org 的同名 openid 的申请不受影响', async () => {
+  it('★ 防重索引**按 org 分桶**：另一个 org 的同名 openid 的 pending 不会挡住我', async () => {
     const [s1] = await storeIds()
-    await submit(app(), { name: '张三', phone: '138', storeIds: [s1] })
-    expect(Number((await pool.query(`select count(*)::int n from aftersales.employee_approval where org='test-m3b1-other'`)).rows[0]!.n)).toBe(0)
+    // 先在**别的 org** 放一条同 openid 的 pending —— 若唯一索引漏了 org 列，下面这次提交会撞 409
+    await pool.query(
+      `insert into aftersales.employee_approval(org, open_id, approve_type, new_info)
+       values ('test-m3b1-other', $1, 'register', '{}'::jsonb)`,
+      [OPENID],
+    )
+    const res = await submit(app(), { name: '张三', phone: '138', storeIds: [s1] })
+    expect(res.status).toBe(201)
+    // 自清（不属于本 org 的 fixture，cleanup 删不到）
+    await pool.query(`delete from aftersales.employee_approval where org = 'test-m3b1-other'`)
   })
 })
 
