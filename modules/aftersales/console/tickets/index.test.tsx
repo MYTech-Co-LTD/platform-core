@@ -1,6 +1,6 @@
 // tickets/index.test.tsx — 工单列表：渲染、status 筛选、服务端真分页（用响应里的 total）
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
@@ -78,5 +78,13 @@ describe('工单列表', () => {
     m.mockImplementation(async () => json({ error: 'FORBIDDEN' }, 403))
     render(<TicketsPage />)
     await waitFor(() => expect(screen.getByText('没有权限执行该操作')).toBeInTheDocument())
+  })
+
+  it('★ 接线：点「处理」真的打开弹窗（不是只画了个按钮）', async () => {
+    render(<TicketsPage />)
+    await waitFor(() => expect(screen.getByText('T-1')).toBeInTheDocument())
+    // antd 对两个汉字的按钮插空格 ⇒ 可访问名是「处 理」
+    fireEvent.click(screen.getAllByRole('button', { name: /处\s*理/ })[0]!)
+    await waitFor(() => expect(screen.getByText('处理工单 #1')).toBeInTheDocument())
   })
 })

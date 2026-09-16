@@ -6,9 +6,10 @@
 // **金额一律来自服务端**：未处理工单的 `amount_minor` 就是 null，显示占位符而不是 ¥0.00
 // （后者会让人以为算过、且结果是 0）。
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Select, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Select, Table, Tag, Typography } from 'antd'
 import { apiGet, messageOf } from '../lib/api'
 import { formatMinor } from '../lib/format'
+import { ProcessDialog } from './ProcessDialog'
 import type { Paged, TicketListItem, TicketStatus } from '../../api-types'
 
 const SIZE = 20
@@ -31,6 +32,8 @@ export default function TicketsPage() {
   const [status, setStatus] = useState<'' | TicketStatus>('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  /** 正在处理的工单 id（null = 弹窗关着） */
+  const [processing, setProcessing] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -72,7 +75,7 @@ export default function TicketsPage() {
         />
         <Typography.Text type="secondary">共 {total} 条</Typography.Text>
       </div>
-      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} /> : null}
       <Table<TicketListItem>
         rowKey="id"
         dataSource={items}
@@ -103,8 +106,27 @@ export default function TicketsPage() {
             width: 180,
             render: (v: string) => v.replace('T', ' ').slice(0, 19),
           },
+          {
+            title: '操作',
+            width: 90,
+            // 待处理 ⇒ 可处理；已处理/已驳回 ⇒ 只读查看（同一个弹窗，退回只显示结果态）
+            render: (_: unknown, r: TicketListItem) => (
+              <Button size="small" type={r.status === 'pending' ? 'primary' : 'link'} onClick={() => setProcessing(r.id)}>
+                {r.status === 'pending' ? '处理' : '查看'}
+              </Button>
+            ),
+          },
         ]}
       />
+      {processing !== null ? (
+        <ProcessDialog
+          ticketId={processing}
+          open
+          onClose={() => setProcessing(null)}
+          // 处理完刷新列表：状态与「服务端核定的退款额」都要重新取，不在前端就地改
+          onDone={() => void load()}
+        />
+      ) : null}
     </div>
   )
 }
