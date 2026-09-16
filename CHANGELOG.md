@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.11.0...v0.12.0) - 2026-09-16
+- 【新增】aftersales: M3b-2 移动端 userApp 整迁——Vite 壳 + 三 shim + 两页（含四处宿主/构建面） ([#85](https://github.com/MYTech-Co-LTD/platform-core/pull/85), [e9ca836](https://github.com/MYTech-Co-LTD/platform-core/commit/e9ca8365ebe279651c16c7651423b50e3bc3d49d))
+
+
 ## [0.11.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.10.0...v0.11.0) - 2026-09-16
 - 【新增】aftersales: M3b-1 员工登记与审批——新表 + 5 端点 + console 审批页签 ([#82](https://github.com/MYTech-Co-LTD/platform-core/pull/82), [3b751a9](https://github.com/MYTech-Co-LTD/platform-core/commit/3b751a9d1f831e0064fc2642d755bb9492240e1c))
 
