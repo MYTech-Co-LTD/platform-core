@@ -1399,11 +1399,18 @@ describe('store_info.query', () => {
     expect(get).toHaveBeenCalledWith('/guest/stores?ids=3%2C5')
   })
 
-  it('OR 里有 id__eq 但一个都没给（空集）⇒ 仍然走 ids=，绝不回落成「查全部」', async () => {
+  it('OR 为空数组（= 我没有任何门店）⇒ 仍然走 ids=，绝不回落成「查全部」', async () => {
     get.mockResolvedValue({ items: [], total: 0, page: 1, size: 20 })
-    await store_info.query({ filter: { OR: [{ id__eq: undefined }] } })
+    // ⚠️ 输入用 **`OR: []`**——那是真实调用点的形状（`OR: allowedIds.map(...)` 在 allowedIds 为空时
+    // 就产出它）。初稿这里写的是 `[{ id__eq: undefined }]`，那个形状现实中不会出现，
+    // 且与实现（`'id__eq' in c` 判据）打架（实测 1 failed）。
+    await store_info.query({ filter: { OR: [] } })
     // 空集：`ids=`（服务端按空集处理），**不是**不带参数的「不过滤」
     expect(get).toHaveBeenCalledWith('/guest/stores?ids=')
+  })
+
+  it('id__eq 的值不是有限数 ⇒ 抛（不静默跳过——那会表现成「少了一个门店」）', async () => {
+    await expect(store_info.query({ filter: { OR: [{ id__eq: 'abc' }] } })).rejects.toThrow(/不是有限数/)
   })
 
   it('认不出的 filter ⇒ 抛（不猜、不静默降级成全量）', async () => {
@@ -1575,17 +1582,31 @@ const MAX_PRODUCT_PAGES = 50
  * 调用点只有两个、都有测试，抛出去的是一条开发期就能撞见的错。
  */
 function parseStoreFilter(filter: unknown): { kind: 'ids'; ids: number[] } | { kind: 'search'; text: string } {
+  // ⚠️ 订正（2026-09-16，Task 5 执行时实证）：初稿这里用 `c?.id__eq !== undefined` 判形状，
+  // 与测试的 `{ OR: [{ id__eq: undefined }] }` ⇒ `ids=` 直接打架（实测 1 failed），
+  // 而且真实调用点产出的是 **`OR: []`**（`OR: allowedIds.map(...)` 在 allowedIds 为空时），
+  // 初稿会把 `[]` 也判成「认不出」。
   const or = (filter as { OR?: unknown } | null)?.OR
   if (Array.isArray(or)) {
+    // 空数组 = 调用方说「我没有任何门店」。**不是**「没给条件」——回落成不过滤就是把全量门店
+    // 回给访客（本仓反复批的静默降级）。
+    if (or.length === 0) return { kind: 'ids', ids: [] }
+
     const ids: number[] = []
     let sawId = false
     let sawName = false
     let text = ''
     for (const cond of or) {
       const c = cond as { id__eq?: unknown; store_name__eq?: unknown } | null
-      if (c?.id__eq !== undefined) {
+      if (c && 'id__eq' in c) {
         sawId = true
-        ids.push(Number(c.id__eq))
+        const n = Number(c.id__eq)
+        // 坏值**抛**而不是跳过：跳过会让「有个坏值」表现成「少了一个门店」，
+        // 而调用方是页面——少一个门店比报错难查得多。
+        if (!Number.isFinite(n)) {
+          throw new Error(`store_info.query: OR 里的 id__eq 不是有限数：${JSON.stringify(c.id__eq)}`)
+        }
+        ids.push(n)
       }
       if (typeof c?.store_name__eq === 'string') {
         sawName = true
