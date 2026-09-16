@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.12.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.12.0...v0.12.1) - 2026-09-16
+- 【修复】server: runMigrations 加 session 级 advisory lock——并发迁移不再撞主键 ([#86](https://github.com/MYTech-Co-LTD/platform-core/pull/86), [f63c748](https://github.com/MYTech-Co-LTD/platform-core/commit/f63c74845d7e1a970acf418c78e9976507e9af08))
+
+
 ## [0.12.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.11.0...v0.12.0) - 2026-09-16
 - 【新增】aftersales: M3b-2 移动端 userApp 整迁——Vite 壳 + 三 shim + 两页（含四处宿主/构建面） ([#85](https://github.com/MYTech-Co-LTD/platform-core/pull/85), [e9ca836](https://github.com/MYTech-Co-LTD/platform-core/commit/e9ca8365ebe279651c16c7651423b50e3bc3d49d))
 
