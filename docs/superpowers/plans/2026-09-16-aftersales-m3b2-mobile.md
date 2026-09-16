@@ -1475,7 +1475,12 @@ describe('product_archive.query', () => {
   it('搜索词走 q（域侧没有「商品编码」这一路，源侧的双分支合并因此收成一路）', async () => {
     get.mockResolvedValue({ items: [], total: 0, page: 1, size: 100 })
     await product_archive.query({ filter: { product_name__contains: '螺栓', status__eq: 1 } })
-    expect(get).toHaveBeenCalledWith('/guest/products?q=%E8%9E%BA%E6%A0%93&size=100')
+    // ⚠️ 断言**不锁参数顺序**：`q` 与 `page`/`size` 谁在前是实现细节（URLSearchParams 的
+    // 插入序），把它钉进测试只会在重构时无谓地红。钉「带上了这两个参数」才是契约。
+    const url = get.mock.calls[0]![0] as string
+    expect(url.startsWith('/guest/products?')).toBe(true)
+    expect(url).toContain('q=%E8%9E%BA%E6%A0%93')
+    expect(url).toContain('size=100')
   })
 })
 
