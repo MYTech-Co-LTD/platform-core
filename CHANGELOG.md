@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.13.0...v0.14.0) - 2026-09-16
+- 【新增】scripts: 补私有化试点的交付阻断——公众号参数写入入口 + runbook 三处订正 ([#89](https://github.com/MYTech-Co-LTD/platform-core/pull/89), [6f248cb](https://github.com/MYTech-Co-LTD/platform-core/commit/6f248cbdb083b16bce7bdd54d428a178a9e216a3))
+
+
 ## [0.13.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.12.1...v0.13.0) - 2026-09-16
 - 【新增】ci: 租户隔离门禁——模块 migrations 建表必须有 org（真库对账，按累积终态判） ([#87](https://github.com/MYTech-Co-LTD/platform-core/pull/87), [0e73e1f](https://github.com/MYTech-Co-LTD/platform-core/commit/0e73e1fb24b3c2022babd44c8a4e9468d047bc5e))
 
