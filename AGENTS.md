@@ -47,6 +47,10 @@ Casdoor 后台运营，租户管理员在 console 自建页管理——spec D4 �
     Node ESM 运行时 SyntaxError，typecheck/单测都拦不住；护栏测试在 CI 兜底（运行时加载桶文件）。
 11. **测试替身必须收严到真机形状**（#50/#51 教训）：mock 接受比真机宽松的形状 = 缺陷结构性
     不可见；mock-casdoor 的端点形状以真机实测为准，别按想象放宽。
+    **放置要求（issue #68）**：与真类型**逐字段对齐的替身**放 **`src/test-util/`**，并标注真类型
+    （如 `const baseTenant: TenantRow = …`）。因为 tsconfig 是 `include: ["src"]` +
+    `exclude: ["src/**/*.test.ts"]`——**写在 `*.test.ts` 里的注解压根不被 typecheck**，
+    注解再对也没有门禁；写成 `src/` 下的**非测试文件**（`test-util/`）才受 `pnpm typecheck` 检。
 
 ## 命令 / 门禁 / 部署（指针）
 

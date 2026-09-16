@@ -10,6 +10,7 @@ import { csrfToken, type CasdoorClient } from '@platform/auth-core'
 import type { Identity } from '@platform/sdk'
 import type { Pool } from 'pg'
 import type { TenantRow } from '../tenant'
+import { baseTenant } from '../test-util/tenant'
 import type { SessionPayload } from '@platform/auth-core'
 import { adminRoutes, ANCHOR_USER, type AdminRoutesDeps } from './admin'
 
@@ -60,13 +61,8 @@ function fakePool(): { pool: Pool; audits: Array<{ sql: string; params: unknown[
   return { pool, audits }
 }
 
-const baseTenant: TenantRow = {
-  id: 1, slug: 'my', casdoor_org: 'myorg', product_name: 'P', logo: null,
-  primary_color: '#1677ff', background: '', login_methods: ['password'],
-  wecom_corp_id: null, wecom_agent_id: null, wecom_secret: null, wecom_provider: null,
-  wecom_auto_signup: false, created_at: new Date(),
-}
-
+// baseTenant 搬到 `../test-util/tenant`（issue #68）：放在 `src/` 下它才被 typecheck，
+// 于是那句 `: TenantRow` 注解成为门禁。原地保留本地副本等于门禁形同虚设。
 const SESSION_SECRET = 'x'.repeat(32)
 
 type TestEnv = { Variables: { tenant: TenantRow; session: SessionPayload; identity: Identity } }
