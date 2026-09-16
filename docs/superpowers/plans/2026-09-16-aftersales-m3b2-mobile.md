@@ -280,11 +280,18 @@ import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageParam } from './context'
 Run: `cd modules/aftersales && DATABASE_URL=… pnpm vitest run routes/registration-guest.test.ts`
 Expected: PASS（全部用例，含既有登记用例）。
 
-- [ ] **Step 7: 跑装载器测试（证明「注册 ↔ 声明」双向一致）**
+- [ ] **Step 7: 跑模块测试（证明「注册 ↔ 声明」双向一致）**
 
-Run: `cd apps/server && DATABASE_URL=… pnpm vitest run src/loader.test.ts`
+Run: `cd modules/aftersales && DATABASE_URL=… pnpm vitest run module.test.ts`
 Expected: PASS。装载期双向核对是硬门禁——路由注册了但 manifest 没声明（或反之）会让
-loadModules 抛错，这条测试就是那个契约的执行面。
+`loadModules` **抛错**（模块起不来，不是告警）。
+
+> ⚠️ **订正（2026-09-16，Task 1 执行时实证）**：本步初稿写的是跑 `apps/server/src/loader.test.ts`
+> ——**那条证明不了这件事**。loader 的测试只加载 `apps/server/.tmp-loader-fixtures` 下的**临时
+> fixture 模块**，**不碰真 manifest**，所以注册集与声明集是否一致它根本看不见。
+> 真·执行面是 **`modules/aftersales/module.test.ts`** 里那条「declared-set vs registered-set」
+> 用例。`loader.test.ts` 仍然值得跑（Step 3/Step 7 的等价物），但它验证的是**装载器本身**的
+> 行为，不是**本模块**的声明一致性——两件事被混为一谈过一次，记在这里。
 
 - [ ] **Step 8: 提交**
 
