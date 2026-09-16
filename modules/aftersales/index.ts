@@ -10,6 +10,7 @@ import { registerRule } from './routes/rule'
 import { registerMasterData } from './routes/masterdata'
 import { registerAttachmentGuest, registerAttachmentManage } from './routes/attachment'
 import { registerRegistrationGuest } from './routes/registration-guest'
+import { registerRegistrationManage } from './routes/registration-manage'
 import type { RouteCtx } from './routes/context'
 
 // 装配形状照 modules/demo/index.ts（本仓模块的唯一范式）。
@@ -33,6 +34,7 @@ export default defineModule({
     registerAttachmentGuest(r, ctx)
     registerAttachmentManage(r, ctx)
     registerRegistrationGuest(r, ctx)
+    registerRegistrationManage(r, ctx)
     return r
   },
 })
