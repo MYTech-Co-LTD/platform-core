@@ -376,6 +376,11 @@ shim 只提供**保留页真正调到的**东西：
 
 - **`wechat_openid` 不导出**（初稿列了它）：它是**前端微信 OAuth** 的 token 缓存表，而那条路由
   已由 M1 宿主路取代 ⇒ **退役**，shim 里没有映射对象（**调用点也要摘**，见下条）。
+- **`getCurrentUser()` 也不导出**（初稿列了它）：它在源侧的**全部**消费点都在
+  `useAfterSalesData.loadUserStores()` 里（`currentUser.userId` / `.name`），而该函数对保留页
+  是死码（见下条）⇒ **裁掉后无任何调用点**。而实现它还得新开一个「访客 whoami」端点
+  （访客身份是 HttpOnly cookie 里的 openid，前端读不到）——**为死码开端点不划算**，
+  故按本节自己的原则「只提供保留页真正调到的」不导出。将来真需要时再补。
 - **`users` / `outbound_detail` 不导出**（初稿没列、但**源侧在调用图里**）：
   两个都出现在 `useAfterSalesData.ts` —— `users` 只在 `loadUserStores()` 里（该函数**不在保留页的
   解构清单里**，对保留图是死码）；`outbound_detail` 在 `loadOrders()`（= 订单选择，**本节已定不做**）。
@@ -395,6 +400,13 @@ shim 只提供**保留页真正调到的**东西：
 
 ⇒ 新增 **`GET /guest/stores`**（搜索 + 分页，与 `/guest/products` 同构，同样因「一条声明一个 scope」
 必须与 `GET /stores` 分面）；`me/registration` 保持只回 id、**不扩**（门店明细统一走这个端点）。
+
+**参数面**（计划期实读两处调用后定）：`q`（名称模糊搜索）+ `ids`（逗号分隔的门店 id 列表）
++ `page`/`size`。**`ids` 不是可有可无的**——提交页的口径是「选**我登记的**门店」：
+id 来自 `GET /guest/me/registration`，而**名字**只能从这里取，所以必须有「按 id 批量取」这一路。
+（源侧那半边靠 `OR: [{id__eq}, …]` 拼 filter，正是因为源数据源**没有 `id__in`**——
+另一页 `useStoreEmployeeApproval` 更退化成 `storeIds.map(id => query({id__eq}))` 的 N 次并发请求。
+平台侧直接给 `ids`，两条调用都收得干净。）
 
 #### 页面（两页 + 小路由）
 
