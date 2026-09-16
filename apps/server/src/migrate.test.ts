@@ -8,7 +8,12 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Pool } from 'pg'
-import { runMigrations } from './migrate'
+import {
+  MIGRATION_LOCK_KEY,
+  MIGRATION_LOCK_RETRY_INTERVAL_MS,
+  MIGRATION_LOCK_TIMEOUT_MS,
+  runMigrations,
+} from './migrate'
 
 const dbUrl = process.env.DATABASE_URL
 const serverMigrationsDir = fileURLToPath(new URL('./migrations', import.meta.url))
@@ -190,6 +195,122 @@ describe.skipIf(!dbUrl)('runMigrations', () => {
       "select to_regclass('t_conc_ddl.a')::text as a, to_regclass('t_conc_ddl.b')::text as b",
     )
     expect(ok.rows[0]).toEqual({ a: 't_conc_ddl.a', b: 't_conc_ddl.b' })
+  })
+
+  // ── 取锁护栏（评审 N1）────────────────────────────────────────────────────────
+  // 缺陷形态：`pg_try_advisory_lock` 之前的写法是**会无限等待**的 `pg_advisory_lock`，
+  // 而取锁路径在**进程启动期**（app.ts 的 fail-fast 之前）⇒ 锁被长期占住时的症状是
+  // 「服务永远起不来、日志一行没有」，直到部署超时（比没有锁还难排障）。
+  // 下面两条钉住修法的两半：**有界重试（不是一次就放弃）** + **等满即响亮抛错（不是静默继续）**。
+  // 注：这里测的是「他方持有」，用**另一条连接**持锁——同会话重入 advisory lock 仍算成功，
+  //     拿同一个 client 自锁是测不出来的。
+
+  /** 取锁告警的注入口：既让用例断言「看得见」，又避免测试输出被 warn 刷屏 */
+  const collectWarns = () => {
+    const warns: string[] = []
+    return { warns, warn: (m: string) => warns.push(m) }
+  }
+
+  it('取锁超时：他方占用 ⇒ 首次即告警，等满上限抛错且错误信息可读；正文绝不执行', async () => {
+    const mod = 't_lock_timeout'
+    usedModules.push(mod)
+    cleanupSqls.push('drop schema if exists t_lock_timeout cascade')
+    const dir = await tmpModuleDir({
+      '001_never.sql': 'create schema if not exists t_lock_timeout; create table t_lock_timeout.a(id int);',
+    })
+
+    const holder = await pool.connect()
+    const { warns, warn } = collectWarns()
+    // 预算压到 300ms/50ms —— 默认口径是 60s/2s，不注入就得真等一分钟
+    const lockTimeoutMs = 300
+    const lockRetryIntervalMs = 50
+    try {
+      await holder.query('select pg_advisory_lock(hashtext($1))', [MIGRATION_LOCK_KEY])
+
+      const startedAt = Date.now()
+      let error: Error | undefined
+      try {
+        await runMigrations(pool, mod, dir, { lockTimeoutMs, lockRetryIntervalMs, warn })
+      } catch (err) {
+        error = err as Error
+      }
+      const elapsedMs = Date.now() - startedAt
+
+      // ① 响亮失败，且错误是**给排障的人看的**：锁键、等了多久、可能被谁占着
+      expect(error, '拿不到锁时必须抛错——静默继续 = 两个迁移者同时跑 = 退回 #84 的缺陷').toBeInstanceOf(Error)
+      expect(error!.message).toContain(MIGRATION_LOCK_KEY)
+      expect(error!.message).toContain(`已等 ${lockTimeoutMs}ms`)
+      expect(error!.message).toMatch(/占用方可能/)
+      expect(error!.message).toMatch(/pg_locks/)
+
+      // ② 有界：等满即返回（无限等待正是原缺陷）。上界留足余量，只钉「有界」不钉精确耗时。
+      expect(elapsedMs).toBeGreaterThanOrEqual(lockTimeoutMs)
+      expect(elapsedMs).toBeLessThan(lockTimeoutMs + 5_000)
+
+      // ③ 看得见：第一次没拿到锁就说话，说的是「卡在哪」
+      expect(warns[0], '第一次没拿到锁就要打告警——原缺陷的症状正是「什么都不打」').toContain(
+        '等待 migration advisory lock',
+      )
+      expect(warns[0]).toContain(MIGRATION_LOCK_KEY)
+
+      // ④ 没有静默继续：迁移正文一次也没跑（记账无行 + schema 不存在）
+      const rows = await pool.query('select 1 from platform.schema_migrations where module = $1', [mod])
+      expect(rows.rowCount).toBe(0)
+      const ns = await pool.query<{ ok: boolean }>("select to_regnamespace('t_lock_timeout') is null as ok")
+      expect(ns.rows[0]!.ok).toBe(true)
+    } finally {
+      // 用例失败也必须放锁，否则后续用例（含别文件）全被这把锁堵死
+      await holder.query('select pg_advisory_unlock(hashtext($1))', [MIGRATION_LOCK_KEY]).catch(() => {})
+      holder.release()
+    }
+  })
+
+  it('取锁重试：他方在等待窗口内放锁 ⇒ 迁移照常完成（有界重试不是「试一次就放弃」）', async () => {
+    const mod = 't_lock_retry'
+    usedModules.push(mod)
+    cleanupSqls.push('drop schema if exists t_lock_retry cascade')
+    const dir = await tmpModuleDir({
+      '001_after_wait.sql': 'create schema if not exists t_lock_retry; create table t_lock_retry.a(id int);',
+    })
+
+    const holder = await pool.connect()
+    const { warns, warn } = collectWarns()
+    let releaseTimer: NodeJS.Timeout | undefined
+    try {
+      await holder.query('select pg_advisory_lock(hashtext($1))', [MIGRATION_LOCK_KEY])
+      const ran = await runMigrations(pool, mod, dir, {
+        lockRetryIntervalMs: 50,
+        lockTimeoutMs: 10_000,
+        // 放锁挂在**第一次告警**上，而不是挂在计时器上：告警只在「第一次 try 已经失败」之后才响，
+        // 于是「至少重试一次才拿到锁」是**确定的**，不靠「runMigrations 一定在 N ms 内开跑」的时序运气。
+        warn: (m) => {
+          warn(m)
+          if (warns.length === 1) {
+            releaseTimer = setTimeout(() => {
+              void holder.query('select pg_advisory_unlock(hashtext($1))', [MIGRATION_LOCK_KEY]).catch(() => {})
+            }, 120)
+          }
+        },
+      })
+      expect(ran).toEqual(['001_after_wait'])
+      // 确实等过——否则这个用例根本没覆盖到重试路径（例如第一把 try 就拿到锁）
+      expect(warns.length, '没等到锁就拿到了 ⇒ 用例没覆盖重试路径').toBeGreaterThanOrEqual(1)
+      const row = await pool.query('select version from platform.schema_migrations where module = $1', [mod])
+      expect(row.rows.map((r: { version: string }) => r.version)).toEqual(['001_after_wait'])
+    } finally {
+      if (releaseTimer) clearTimeout(releaseTimer)
+      await holder.query('select pg_advisory_unlock(hashtext($1))', [MIGRATION_LOCK_KEY]).catch(() => {})
+      holder.release()
+    }
+  })
+
+  it('取锁预算是有穷的正常数（不许出现 Infinity —— 那等于退回「无限等待」）', () => {
+    expect(Number.isFinite(MIGRATION_LOCK_TIMEOUT_MS)).toBe(true)
+    expect(Number.isFinite(MIGRATION_LOCK_RETRY_INTERVAL_MS)).toBe(true)
+    expect(MIGRATION_LOCK_TIMEOUT_MS).toBeGreaterThan(0)
+    expect(MIGRATION_LOCK_RETRY_INTERVAL_MS).toBeGreaterThan(0)
+    // 上限内至少能重试一次，否则「重试」是摆设
+    expect(MIGRATION_LOCK_TIMEOUT_MS).toBeGreaterThan(MIGRATION_LOCK_RETRY_INTERVAL_MS)
   })
 
   it('真实 platform 迁移目录：001_platform.sql 应用后 platform.tenant 表存在', async () => {
