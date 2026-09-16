@@ -5,8 +5,11 @@
 #   # 或经唯一的 compose 入口：docker compose -f deploy/docker-compose.yml build
 #
 # 两阶段：
-#   build   —— 装全量依赖 + `pnpm -r --if-present build`（当前只有 apps/web 有 build 脚本，
-#              产出 apps/web/dist）。
+#   build   —— 装全量依赖 + `pnpm -r --if-present build`。有 build 脚本的工作区包各自产出
+#              dist，**两个都在运行阶段的 COPY 面内、少一个就是对应壳 404**：
+#                · apps/web/dist                    —— console（app.ts 按【本文件位置】解析）
+#                · modules/aftersales/mobile/dist   —— 移动端壳，挂载点 /app/aftersales/
+#                  （manifest 的 userApp.mount，与 mobile/vite.config.ts 的 base 同源）。
 #   runtime —— 从 build 阶段逐目录取产物。**不写 `COPY . .` 的隐式全集**：每条 COPY 枚举
 #              一个目录并写明理由（gateway 因漏 COPY 新模块 crash loop 三次的教训）。
 #

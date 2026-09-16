@@ -562,7 +562,10 @@ async function assertUserAppServing(b) {
     html.slice(0, 800),
   )
 
-  // 负例对照：不存在的子路径不该被两套壳中的任何一套假装成"有内容"
+  // 负例对照：不存在的子路径**落到 SPA 壳**正是对的——前端路由接管未命中的路径是 SPA 的
+  // 正常行为，两套壳在这里**都**该吐自己的 index.html。这条真正要防的是它「吐了别的东西」：
+  // 比如串到另一套壳的产物上（静态托管挂错根），那才是两套壳互相污染的症状。
+  // （原文写的是「不该被假装成有内容」，与下面的断言正好相反，2026-09-16 订正。）
   const missing = await b.get(`${MOBILE_MOUNT}/definitely-not-a-real-asset.js`)
   check(
     missing.body.equals(shell),

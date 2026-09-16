@@ -45,6 +45,12 @@ describe('store_info.query', () => {
     await expect(store_info.query({ filter: { OR: [{ id__eq: 'abc' }] } })).rejects.toThrow(/不是有限数/)
   })
 
+  it('OR 里的 store_name__eq 是空串 ⇒ 抛（空搜索词会退化成「查全部」，不猜、不静默降级）', async () => {
+    await expect(store_info.query({ filter: { OR: [{ store_name__eq: '' }] } })).rejects.toThrow(/空搜索词/)
+    // 「抛」还要配上「没发请求」：只断 reject 的话，一个「先发了全量请求再抛」的实现照样绿。
+    expect(get).not.toHaveBeenCalled()
+  })
+
   it('认不出的 filter ⇒ 抛（不猜、不静默降级成全量）', async () => {
     await expect(store_info.query({ filter: { foo__eq: 1 } })).rejects.toThrow(/认不出的 filter/)
   })

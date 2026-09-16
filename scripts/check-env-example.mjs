@@ -63,6 +63,11 @@ const ENV_INDEX_RE = /process[.]env\[['"]([A-Z0-9_]+)['"]\]/g
 // ⚠️ 曾用 `\benv[.]`：`\b` 在 `.` 之后**成立** ⇒ `import.meta.env.BASE_URL` 里的子串
 //    `env.BASE_URL` 被当成宿主 env 记录读 ⇒ 假阳性（M3b-2 实测：mobile 包 router.ts 报 B9）。
 // 键名形如 `env.TENANT_MODE` / `requireValue('PORT')` / `optional('PLATFORM_ORG')`。
+// ⚠️ 收窄的**代价**写在明处（免得它变成没人知道的缺口）：`(?<![.\w])` 在放掉 `process.env` /
+//    `import.meta.env` 的同时，也放掉了 `<某物>.env.KEY`（形如 `cfg.env.SECRET`）这类
+//    「对象自己的 env 字段」。**实测全仓当前无此用法**——扫 `[A-Za-z0-9_$)\]]+\.env\.KEY`
+//    只剩 `process.env.*` 与 `import.meta.env.*` 两种 ⇒ 本次收窄**零覆盖损失**。
+//    将来若真出现 `<某物>.env.KEY`，要么把键补进 .env.example，要么回来重估这条正则。
 const ENV_PROP_RE = /(?<![.\w])env[.]([A-Z][A-Z0-9_]*)/g
 const ENV_REQUIRE_RE = /\brequireValue\(\s*['"]([A-Z][A-Z0-9_]*)['"]/g
 const ENV_OPTIONAL_RE = /\boptional\(\s*['"]([A-Z][A-Z0-9_]*)['"]/g
@@ -153,7 +158,7 @@ export async function findViolations(rootDir) {
     }
     for (const m of src.matchAll(ENV_DOT_RE)) check(m[1], lineOf(src, m.index))
     for (const m of src.matchAll(ENV_INDEX_RE)) check(m[1], lineOf(src, m.index))
-    for (const m of src.matchAll(ENV_PROP_RE)) check(m[1], lineOf(src, m.index)) // 反证②临时态
+    for (const m of src.matchAll(ENV_PROP_RE)) check(m[1], lineOf(src, m.index))
     for (const m of src.matchAll(ENV_REQUIRE_RE)) check(m[1], lineOf(src, m.index))
     for (const m of src.matchAll(ENV_OPTIONAL_RE)) check(m[1], lineOf(src, m.index))
   }

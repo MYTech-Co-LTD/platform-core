@@ -84,7 +84,17 @@ function parseStoreFilter(filter: unknown): { kind: 'ids'; ids: number[] } | { k
       }
     }
     if (sawId) return { kind: 'ids', ids }
-    if (sawName) return { kind: 'search', text }
+    if (sawName) {
+      // 空搜索词**显式抛**，与「认不出的 filter」同一口径：不猜、不静默降级。
+      // 放它过去的后果很具体——调用处（`store_info.query`）对 `text === ''` 既不设 `ids`
+      // 也不设 `q`，请求于是退化成**不带任何收窄条件的全量门店**（本文件头注把这条列为
+      // 「最不该发生的静默降级」）。当前两个调用点都先判了非空 ⇒ 打不到，但那是**调用点的
+      // 自律，不是这里的保证**；空串在这里本来就意味着「没有可用的收窄条件」。
+      if (text === '') {
+        throw new Error('store_info.query: OR 里的 store_name__eq 是空串（空搜索词会退化成不过滤 = 全量门店）')
+      }
+      return { kind: 'search', text }
+    }
   }
   throw new Error(
     `store_info.query: 认不出的 filter（本 shim 只支持 id__eq / store_name__eq 两种形状）：${JSON.stringify(filter)}`,
