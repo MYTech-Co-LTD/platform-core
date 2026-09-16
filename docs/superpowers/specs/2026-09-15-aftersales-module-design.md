@@ -155,8 +155,24 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 - **预签名直传是必选而非优化**：移动端附件是手机拍的图片+视频，平台全局 bodyLimit ~1MiB，
   视频过服务器必炸。字节全程不过平台；上传换预签名 PUT（短 TTL），下载经 scope 校验换
   预签名 GET（短 TTL）。
-- env：`AFTERSALES_ZOS_ENDPOINT/REGION/BUCKET/ACCESS_KEY/SECRET`（B9 声明 + openship isSecret）；
-  key 规范 `aftersales/{org}/{ticket_ref}/{uuid}`（key 不用裸 `=` 等需编码字符）。
+- **凭证放哪 —— 分两阶段（2026-09-16 裁定「方向 C」）**：
+  - **M2a 已落地的形态**：进程 env `AFTERSALES_ZOS_ENDPOINT/REGION/BUCKET/ACCESS_KEY/SECRET`
+    （B9 声明 + openship isSecret）。**该形态只对【单租户部署】成立**——一客户一部署
+    （＝ spec-3 试点的交付形态），一个进程只服务一个租户，全局一份配置即正确。
+  - **目标形态（M3 收口）**：**每租户可配**——凭证落**租户行**，与 §1.3 公众号
+    `wechat_oa_app_id/secret` **同构**；**启用判定 = 租户行存储配置存在**；env 退化为
+    **平台默认/兜底**（租户未配时用平台桶）。
+    **为什么必须收**：`.env` 是**进程级**、而 `createRouter` 又是**装载期只调一次**
+    ⇒ 多租户只能共用一个桶 + 一套 AK/SK：做不到租户自带存储（BYO）；一把密钥泄露
+    ＝**全租户爆炸半径**；也无法按租户归集存储成本。
+    **注意隔离本身没破**（下方 key 规范带 `{org}` 段，且每次读都 `where org = $1`、
+    预签名由服务端按 DB 行生成）——缺的是**可配置性**，不是隔离。
+  - **M3 的前置（架构先行）**：`ModuleContext` 目前**只有 `pool`**
+    （`packages/platform-sdk/src/module.ts`），且 `createRouter` 在装载期只调一次
+    ⇒ 宿主需**按请求**注入租户配置（照既有 `identity` 的做法：宿主中间件写进请求上下文，
+    模块 `c.get(...)` 读）。这是**模块接入协议的扩展** ⇒ **先改 `docs/architecture.md` +
+    `docs/module-protocol.md`，再动码**。
+- key 规范 `aftersales/{org}/{ticket_ref}/{uuid}`（key 不用裸 `=` 等需编码字符）。
 - **`{ticket_ref}` 不是工单的库内主键，是客户端自带的幂等键**（2026-09-15 定，写 M2a 计划时落实）：
   移动端的顺序是**先传图、后提交工单**（选照片→上传→提交），预签名发生在工单落库**之前**，
   那一刻没有任何库内 id 可拼。故该段放客户端生成的 `client_request_id`——它同时就是 §2.2
@@ -301,9 +317,9 @@ GET https://data.wujisite.com/api/private/object
 | 期 | 内容 |
 |---|---|
 | M1 底座三件 | userApp 静态托管 + 停用闸门补缺；auth-core 公众号 OAuth 路 + 租户行公众号配置（**启用判定 = 配置存在，非 `login_methods` 新值**——见 §1.3，此行旧措辞已订正） |
-| **M2a 模块后端（代码）** | 域 API + 迁移建表 + ZOS 存储——**不依赖源数据，先做** |
+| **M2a 模块后端（代码）** | 域 API + 迁移建表 + ZOS 存储——**不依赖源数据，先做**（ZOS 凭证落地形态为**进程 env**，**仅单租户部署成立**，见 §2.3 的两阶段裁定） |
 | **M2b 数据迁移（择窗口）** | 全量拉取 → 清洗 → 入库 → 计数/金额对账（一次性，另出计划） |
-| M3 双端 | console 管理端 + 移动端 userApp 整迁 |
+| M3 双端 | console 管理端 + 移动端 userApp 整迁；**并收口「每租户可配 ZOS」**（§2.3：凭证落租户行 + `platform.tenant` 加列 + 配置 UI + 模块接入协议扩展；协议文档先行） |
 
 **总验收绑定 spec-3 试点**：客户机六步交付；单租户 e2e（公众号登录 → 提交工单含 ZOS 直传
 视频 → console 处理按规则算金额 → 状态流转）；多租户 org 隔离测试；停用闸门 404 同形；
@@ -317,9 +333,9 @@ GET https://data.wujisite.com/api/private/object
 | 2 | `modules/aftersales`（manifest/迁移/index/console/mobile/storage） | 代码 |
 | 3 | auth-core 公众号 OAuth + 租户行公众号配置 + `wechat-oa` 登录路 | 代码 |
 | 4 | userApp 静态托管 + 停用闸门（loader/module-protocol 回写） | 代码+文档 |
-| 5 | `.env.example` 增键（B9）：**只有 ZOS**（公众号**不需要 env 键**——凭证在租户行 `wechat_oa_app_id/secret`，见 §1.3；此处旧措辞「公众号 + ZOS」已订正） | 代码 |
+| 5 | `.env.example` 增键（B9）：**只有 ZOS**（公众号**不需要 env 键**——凭证在租户行 `wechat_oa_app_id/secret`，见 §1.3；此处旧措辞「公众号 + ZOS」已订正）。**注（2026-09-16）**：ZOS 这五个 env 键在 M3 收口后**仍保留**，但降级为**平台默认/兜底**（租户可在租户行覆盖，见 §2.3） | 代码 |
 | 6 | 数据迁移脚本（导出→清洗→导入，幂等） | 代码 |
-| 7 | `architecture.md` 组件表加行、module-protocol userApp 节更新 | 文档 |
+| 7 | `architecture.md` 组件表加行、module-protocol userApp 节更新；**并（M3）为「每租户配置注入」补 `ModuleContext` 契约**（§2.3，协议文档须先于代码落地） | 文档 |
 
 ## 5. 已知边界
 
@@ -343,6 +359,26 @@ GET https://data.wujisite.com/api/private/object
 9. **审批状态词表需归一**（§3.3 实证表）：源侧三套并存——`store.ts` / `registerRequest.ts` 用
    `pending|approved|rejected`，`employeeInfo.ts` 用中文 `待审批|通过|驳回`。目标表**定死一套
    英文枚举**，中文是**展示层**的事；归一在 M2a 建表时定死类型、M2b 迁移时做映射。
+10. **ZOS 凭证在多租户下是进程级共享**（2026-09-16 用户提出、当场裁定方向 C）：
+    M2a 落地的 env 形态**只对单租户部署成立**；多租户共用一个桶 + 一套 AK/SK
+    ⇒ 无 BYO、单密钥爆炸半径、成本不可归集（**隔离本身不破**）。**收口排在 M3**，
+    见 §2.3 的两阶段裁定与前置（模块接入协议须先扩展）。
+11. **`sanitizeOrgSegment` 的命名空间碰撞**（2026-09-16 实读代码发现，**登记未裁定**）：
+    它把非 `[A-Za-z0-9._-]` 一律替换为 `_` ⇒ **两个不同的 org 可能落进同一 key 前缀**
+    （`a/b` 与 `a_b` 都变 `a_b`）。**读隔离不受影响**（授权判定走 DB 的 `where org = $1`，
+    不靠 key），但**对象命名空间会串**——若将来做「按前缀清理 / 按前缀计费 / 按前缀生命周期」，
+    这里就是一个雷。收口方式待定（如 org 段改用可逆编码或加哈希短后缀）。
+12. **孤儿附件没有 GC**（2026-09-16 T10 上线后验证实测，**M2b 收口**）：
+    预签名发生在工单落库**之前**，行先以 `ticket_id is null` 落在 `client_request_id` 上（§2.3）。
+    访客若**传了图但没提交工单**（或提交失败后放弃），那一行与**桶里的对象**都会**永久留存**。
+    实测（2026-09-16，对已上线的生产实例）：模块内**没有任何删除路径**
+    （`grep` 无 `DeleteObject` / 无 lifecycle / 无清扫器），而全仓唯一的 `ticket_id is null`
+    出现在**认领谓词**里（`routes/ticket-guest.ts:165`，是消费路径，不是清扫器）
+    ⇒ **库侧与桶侧都没有 GC**。生产库当前 `ticket_attachment` 为 **0 行**
+    （尚无租户启用，属干净基线，非「已清理」）。
+    ⇒ **M2b 需给出清理设计**：按「未认领且超过 N 天」同时清 DB 行与对象。
+    数据上可行——`001_init.sql` 已有 `object_key` / `created_at` 与 `(org, ticket_id)` 索引；
+    注意**对象 key 里不含工单信息**，只能由行的 `object_key` 反查。
 
 ## 6. 关联
 
@@ -353,6 +389,20 @@ GET https://data.wujisite.com/api/private/object
 - module-protocol.md（userApp 闸门缺口、租户数据隔离约定）。
 
 ## 7. 修订记录
+
+- 2026-09-16（**M2a 已合并上线后，用户提出的多租户问题** ⇒ 当场裁定「方向 C」，**只改文档不动码**）：
+  用户问「不同租户都装了这个模块怎么办？ZOS 是要可以配置的」。核代码后确认这是**真缺口**：
+  `modules/aftersales/index.ts` 在 `createRouter` 里 `zosConfigFromEnv(process.env)` 建了一个
+  **装载期单例**，而 `ModuleContext` **只有 `pool`** ⇒ 多租户共用一份凭证，**没有任何按租户的接缝**。
+  根因是**本 spec 自身的不一致**：§1.3 把公众号凭证放在**租户行**，§2.3 却把 ZOS 放在**全局 env**，
+  §4 #5 还专门把两者对立着写（「只有 ZOS」需要 env 键）。
+  ⇒ ① §2.3 改写为**两阶段**：M2a 的 env 形态**明确限定单租户部署**；**目标形态（M3）＝每租户可配、
+  凭证落租户行、启用判定＝配置存在**（与公众号同构）；② §3.4 的 M2a 行标注该边界、M3 行加入收口项；
+  ③ §4 #7 把「`ModuleContext` 每租户配置注入契约」列为 M3 落地物；④ §5 补第 10 条（该边界）
+  与第 11 条（`sanitizeOrgSegment` 命名空间碰撞，**登记未裁定**）。
+  同日另补 §5 第 12 条：**孤儿附件没有 GC**（T10 上线后验证实测，M2b 收口）。
+  **本相位不改任何代码、不加迁移**——按规矩「架构先行」，且协议扩展须**先改
+  `docs/architecture.md` + `docs/module-protocol.md` 再动码**。
 
 - 2026-09-15（M2a 开工前**回读订正**：§2.1 漏列 `ticket_attachment`）：§2.1 自述「数据模型」，
   却只列了 `ticket`/`ticket_rule`/主数据/`department`/`archive_*`，**没有附件表**——而 §2.2 声明了
