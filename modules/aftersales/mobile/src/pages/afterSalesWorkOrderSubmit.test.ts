@@ -8,11 +8,12 @@ import TDesign, { Select } from 'tdesign-vue-next'
  * 否则报 `Cannot access 'X' before initialization`。计划 Task 6 的订正表第 5 条已实证过这一点，
  * 而 Task 8 的测试初稿同样缺这一步 —— 这里按订正执行。
  */
-const { replace, back, success, warning, empQuery, storeQuery, productQuery } = vi.hoisted(() => ({
+const { replace, back, success, warning, woCreate, empQuery, storeQuery, productQuery } = vi.hoisted(() => ({
   replace: vi.fn(),
   back: vi.fn(),
   success: vi.fn(),
   warning: vi.fn(),
+  woCreate: vi.fn(),
   empQuery: vi.fn(),
   storeQuery: vi.fn(),
   productQuery: vi.fn(),
@@ -23,14 +24,20 @@ vi.mock('@/shims/wuji-data', () => ({
   employee_info: { query: (...a: unknown[]) => empQuery(...a) },
   store_info: { query: (...a: unknown[]) => storeQuery(...a) },
   product_archive: { query: (...a: unknown[]) => productQuery(...a) },
-  after_sales_work_order: { create: vi.fn().mockResolvedValue({ id: 1 }) },
+  after_sales_work_order: { create: (...a: unknown[]) => woCreate(...a) },
 }))
+// F2 的用例要**真**走一次上传失败（失败件留在列表里正是 F2 的前提），所以上传 shim 在这里
+// 换成可控替身——其余用例不碰上传，不受影响。
+vi.mock('@/shims/wuji-upload', () => ({ uploadImage: vi.fn(), uploadFile: vi.fn() }))
 vi.mock('@wujibase/wuji', () => ({
   Message: { success, warning, error: vi.fn(), info: vi.fn() },
   Confirm: vi.fn(() => ({ hide: vi.fn() })),
 }))
 
+import { uploadImage } from '@/shims/wuji-upload'
 import Submit from './afterSalesWorkOrderSubmit.vue'
+
+const up = vi.mocked(uploadImage)
 
 /** 登记者快照（shim 的形状：`employee_info.query` 回的是**行数组**，未登记回空数组） */
 const REGISTERED = {
@@ -55,6 +62,10 @@ beforeEach(() => {
   back.mockClear()
   success.mockClear()
   warning.mockClear()
+  woCreate.mockReset().mockResolvedValue({ id: 1 })
+  up.mockReset().mockResolvedValue({ id: 42, objectKey: 'k', uploadUrl: 'u', expiresIn: 60 })
+  globalThis.URL.createObjectURL = vi.fn(() => 'blob:local-preview')
+  globalThis.URL.revokeObjectURL = vi.fn()
   empQuery.mockReset()
   storeQuery.mockReset().mockResolvedValue([])
   productQuery.mockReset().mockResolvedValue([])
@@ -109,6 +120,55 @@ describe('afterSalesWorkOrderSubmit 页面', () => {
     // 什么它就只能验什么（实测：把模板改回 `:value="product.id"` 这条照样绿）。
     // 绑定的那一半由下面第 3 条用例的源码级断言（`:value="product"`）兜住。
     expect(w.find('input[placeholder*="报损数量"]').attributes('placeholder')).toContain('最大100')
+  })
+
+  /**
+   * F2 回归（独立评审）：**列表里有一条附件 ≠ 有一条可提交的附件**。
+   *
+   * 旧闸门数的是 `attachments.length`（列表长度），而发送侧按 `uploadStatus === 'completed'`
+   * 过滤（`useWorkOrderSubmit`）。上传失败的行**留在列表里**（`useFileUpload` 的 failed 分支
+   * 不删行）⇒ 闸门放行、过滤后 0 条 ⇒ `wuji-data` 的 `attachmentIds.length > 0 ? … : {}`
+   * **不发** attachmentIds ⇒ 服务端 201 建单、**零附件**落库，而页面文案是「请至少上传一个附件」。
+   */
+  it('F2：列表里只有一条**上传失败**的附件 ⇒ 闸门拦住提交（与发送同口径）', async () => {
+    empQuery.mockResolvedValue([REGISTERED])
+    productQuery.mockResolvedValue([PRODUCT])
+    const w = mount(Submit, { global })
+    await flushPromises()
+
+    // ① 造一条**真**的失败件：驱动文件输入，让上传 reject。失败行按实现留在列表里。
+    up.mockRejectedValue(new Error('boom'))
+    const input = w.find('input[type="file"]')
+    Object.defineProperty(input.element, 'files', {
+      value: [new File([new Uint8Array([1])], 'a.jpg', { type: 'image/jpeg' })],
+      configurable: true,
+    })
+    await input.trigger('change')
+    await flushPromises()
+
+    // ② 其余必填项填满——不填的话闸门会被**别的**校验先拦下，这条用例就测不到附件闸门。
+    //    商品/门店下拉直接喂 v-model（`<t-option>` 不挂载，点选走不通，见上一条用例注）。
+    await w.findAllComponents(Select)[0]!.vm.$emit('update:modelValue', PRODUCT)
+    await w.findAllComponents(Select)[1]!.vm.$emit('update:modelValue', 3)
+    await w.find('input[placeholder*="报损数量"]').setValue('2')
+    await w.find('textarea').setValue('外包装破损')
+    await flushPromises()
+
+    // ③ 点提交
+    //    点之前的这条断言是本用例的**质量闸门**：`warning` 一律出自页面的必填校验 ⇒
+    //    它一次没响过，等于「商品/门店/数量/原因都填合格了」。少了它，本用例可能因为
+    //    「前面某个校验先响了」而红——那是红得不是地方，修好附件闸门它也不会变绿。
+    expect(warning).not.toHaveBeenCalled()
+
+    const submit = w.findAll('button').find((b) => b.text().includes('提交工单'))!
+    await submit.trigger('click')
+    await flushPromises()
+
+    // 闸门必须拦住：一条 failed 的附件**不是**「至少一个附件」。
+    // 先断 `woCreate`：它一旦被调用，就说明闸门**放行**了（失败信息里带调用次数，
+    // 一眼能分辨「闸门没拦住」与「某个前置校验提前拦下」这两种红）。
+    expect(woCreate).not.toHaveBeenCalled()
+    expect(warning).toHaveBeenCalledWith('请至少上传一个附件')
   })
 
   it('源码里没有订单选择 / 前端 OAuth / 附件的死 url 残留', async () => {

@@ -249,6 +249,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Message } from '@wujibase/wuji'
 import { useAfterSalesWorkOrder } from '@/composables/useAfterSalesWorkOrder'
+import { countSubmittable } from '@/composables/useWorkOrderSubmit'
 import { employee_info } from '@wujibase/wuji-data'
 
 /**
@@ -459,8 +460,11 @@ const handleSubmit = async () => {
     return
   }
 
-  // 验证附件上传
-  if (attachments.value.length === 0) {
+  // 验证附件上传：**与发送同口径**——数「可提交的附件」（completed），不是数列表长度。
+  // 列表里可能只有上传失败的行（失败行按实现留在列表里）⇒ 数长度的写法会放行，而发送侧
+  // 过滤后是 0 条 ⇒ 服务端 201 建单、**零附件**落库，页面却提示「至少上传一个附件」（评审 F2）。
+  // 口径定义在 `useWorkOrderSubmit`（`countSubmittable`），此处不另写一遍。
+  if (countSubmittable(attachments.value) === 0) {
     Message.warning('请至少上传一个附件')
     return
   }

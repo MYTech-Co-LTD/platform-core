@@ -21,11 +21,27 @@ import type { IAttachment } from '@/types/afterSalesWorkOrder'
 export type { IAttachment }
 
 /**
+ * 附件行 + **本地稳定 id**（F1）。
+ *
+ * `IAttachment` 的超集，只在 `useFileUpload` 内部用（对外仍导出 `IAttachment`，页面按它渲染）。
+ * 为什么必须有它：`IAttachment.index` 是**上传开始那一刻**的就位下标，而 `removeAttachment`
+ * 会 `splice` ⇒ 下单成功前它随时可能指向**别人**或指向**空位**。回写要是跟着它走，就会
+ * 「复活已删除的行」或「同一文件长出僵尸 + 重复两条」（评审 F1 的两个实测场景）。
+ * `localId` 自 `addAttachment` 起不变，是回写的唯一定位依据。
+ */
+export interface LocalAttachment extends IAttachment {
+  localId: string
+}
+
+/**
  * 文件上传 hook
  */
 export function useFileUpload() {
   const isUploading = ref(false)
-  const attachments = ref<IAttachment[]>([])
+  const attachments = ref<LocalAttachment[]>([])
+
+  /** 按**本地 id** 定位（F1）：找不到 = 这行已被删除 ⇒ 调用方丢弃结果，不复活。 */
+  const indexByLocalId = (localId: string) => attachments.value.findIndex((a) => a.localId === localId)
 
   /**
    * 上传单个文件（带进度）
@@ -139,20 +155,29 @@ export function useFileUpload() {
 
   /**
    * 添加附件
+   *
+   * ⚠️ 三处回写（进度 / 成功 / 失败）**一律按 `localId` 定位，不按下标**——删除按钮在上传中
+   * **可点**（提交页的删除按钮无 `v-if`），而 `removeAttachment` 会 `splice`，上传开始时记下的
+   * 下标当场失效。按下标写的两个实测症状（评审 F1）：
+   *   A 删掉**正在上传**的那条 ⇒ 它在上传成功后**复活**成 completed，且 `previewUrl` 已被
+   *     `revokeObjectURL` ⇒ 缩略图是坏的，还被计进提交；
+   *   B 删掉**前面**的条目 ⇒ 数组左移，写回落到空位 ⇒ 同一文件两条：一条永远 uploading、
+   *     一条 completed。
    */
-  const addAttachment = async (file: File, index?: number): Promise<IAttachment> => {
-    const uploadIndex = index ?? attachments.value.length
+  const addAttachment = async (file: File, index?: number): Promise<LocalAttachment> => {
+    const localId = crypto.randomUUID()
 
     // 先创建一个占位附件，显示上传中状态
     const fileType = file.type.startsWith('image/') ? 'image' : 'video'
-    const placeholder: IAttachment = {
+    const placeholder: LocalAttachment = {
+      localId,
       type: fileType,
       previewUrl: URL.createObjectURL(file), // 创建本地预览
       attachmentId: null,
       name: file.name,
       size: file.size,
       originalName: file.name,
-      index: uploadIndex,
+      index: index ?? attachments.value.length,
       uploadStatus: 'uploading',
       uploadProgress: 0,
     }
@@ -163,11 +188,12 @@ export function useFileUpload() {
     try {
       // 执行上传，并更新进度
       const attachment = await uploadSingleFile(file, (progress) => {
-        // 更新对应附件的进度
-        if (attachments.value[uploadIndex]) {
-          attachments.value[uploadIndex].uploadProgress = progress
+        // 进度也按 id 回写：按下标的话，上传中删掉前面的行会让进度打到**别人**身上
+        const at = indexByLocalId(localId)
+        if (at !== -1) {
+          attachments.value[at].uploadProgress = progress
           if (progress === 100) {
-            attachments.value[uploadIndex].uploadStatus = 'completed'
+            attachments.value[at].uploadStatus = 'completed'
           }
         }
       })
@@ -175,20 +201,28 @@ export function useFileUpload() {
       // 上传完成，更新附件信息
       // ⚠️ `previewUrl` 取自占位对象：本地 blob 是**唯一**的预览源（域侧没有可读 url），
       //    不能像源侧那样在成功后 revoke 掉它。
-      attachments.value[uploadIndex] = {
+      const at = indexByLocalId(localId)
+      if (at === -1) {
+        // 这行在上传途中被删掉了 ⇒ **丢弃结果，不复活**（对象已经上云，但认领与否是提交页的事；
+        // 就地写回等于把用户删掉的附件塞回列表，而且它的 previewUrl 已经 revoke 过）。
+        return { ...attachment, localId, previewUrl: placeholder.previewUrl, index: placeholder.index }
+      }
+      attachments.value[at] = {
         ...attachment,
+        localId,
         previewUrl: placeholder.previewUrl,
-        index: uploadIndex,
+        index: placeholder.index,
         uploadStatus: 'completed',
         uploadProgress: 100,
       }
 
-      return attachments.value[uploadIndex]
+      return attachments.value[at]
     } catch (error) {
       // 上传失败，更新状态
-      if (attachments.value[uploadIndex]) {
-        attachments.value[uploadIndex].uploadStatus = 'failed'
-        attachments.value[uploadIndex].uploadProgress = 0
+      const at = indexByLocalId(localId)
+      if (at !== -1) {
+        attachments.value[at].uploadStatus = 'failed'
+        attachments.value[at].uploadProgress = 0
       }
       throw error
     }

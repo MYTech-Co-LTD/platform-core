@@ -31,6 +31,21 @@ export interface SubmittableAttachment {
 }
 
 /**
+ * **提交口径**（F2）：只有 `uploadStatus === 'completed'` 的附件算「有附件」。
+ *
+ * 这份口径只在这里定义一次，闸门（提交页）与发送（`submitWorkOrder`）都来问它——两处各写一遍
+ * 就是两份口径，而它们**已经分叉过一次**：闸门数的是 `attachments.length`（列表长度），
+ * 发送按状态过滤。上传失败的行**留在列表里**（`useFileUpload` 的 failed 分支不删行）⇒
+ * 闸门放行、过滤后 0 条 ⇒ data shim 的 `attachmentIds.length > 0 ? … : {}` **不发**
+ * attachmentIds ⇒ 服务端 201 建单、**零附件**落库，而页面文案是「请至少上传一个附件」。
+ */
+export const isSubmittable = (a: SubmittableAttachment): boolean => a.uploadStatus === 'completed'
+
+/** 可提交附件的条数——提交页闸门的判据（与 `submitWorkOrder` 同一口径）。 */
+export const countSubmittable = (list: readonly SubmittableAttachment[]): number =>
+  list.filter(isSubmittable).length
+
+/**
  * 选中项可能是**行对象**（计划 Step 7 的形状：`product.id` / `store?.id`），也可能是
  * 页面 `:value="x.id"` 绑出来的**主键**（源页面 today 的形状，改不改是 Task 8 的决定）——
  * 两种都收，免得两个任务为这一处被迫同步落地。
@@ -85,8 +100,9 @@ export function useWorkOrderSubmit(deps: {
         store_selection: pickId(selectedStore.value),
         damage_quantity: formData.value.damage_quantity,
         damage_reason: formData.value.damage_reason,
-        // 只带**已完成**的附件：上传中的带上会被服务端按 id 认领，而对象可能还没落
-        damage_images: attachments.value.filter((a) => a.uploadStatus === 'completed'),
+        // 只带**已完成**的附件：上传中的带上会被服务端按 id 认领，而对象可能还没落。
+        // 判据取自 `isSubmittable`——与提交页闸门共用同一份口径（F2）。
+        damage_images: attachments.value.filter(isSubmittable),
       })
 
       // ⚠️ 语义③：**成功后必须轮换幂等键**。不轮换的症状是——同一会话提交第二笔时服务端
