@@ -1,11 +1,9 @@
 import { z } from 'zod'
 import type { ApproveStatus, EmployeeItem, Paged, ProductItem, StoreItem, Unpaged } from '../api-types'
 import { toMinor } from '../domain/ticket'
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_STORES, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
-/** 门店是选择器数据（源侧 322 行），一次给全但设上界。 */
-const MAX_STORES = 1000
 /** 员工是审批列表（源侧 591 行），同上。 */
 const MAX_EMPLOYEES = 2000
 /** ILIKE 的 `%` `_` 在搜索词里是通配符——转义掉，否则用户输入 `%` 等于全表匹配。 */

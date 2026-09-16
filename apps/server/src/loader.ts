@@ -434,6 +434,14 @@ export async function loadModules(
             rewriteRequestPath: (p) => p.slice(mountPath.length) || '/',
           }),
         )
+        // userApp 的 **SPA 兜底**（M3b-2 I1）。必须在这里补，**不能**指望 app.ts 的全局
+        // `app.get('*')`：那条兜的是 **web（console）的** index.html ⇒ 深链/刷新
+        // `/app/aftersales/<route>` 会拿到 React 控制台壳（同一套 assets 前缀下尤其难查）。
+        // 注册点在 §⑨（模块挂载），早于 app.ts §⑩ 的全局兜底 ⇒ Hono 按注册序天然优先。
+        // 只挂 `get`：`serveStatic` 未命中的**非 GET** 仍该落 notFound（兜底不是「什么都接」）。
+        const userAppIndex = serveStatic({ root: dist, path: 'index.html' })
+        app.get(mountPath, userAppIndex)
+        app.get(mountPath + '/*', userAppIndex)
       }
     },
 

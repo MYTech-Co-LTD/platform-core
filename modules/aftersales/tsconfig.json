@@ -9,5 +9,12 @@
   // 测试代码不做 strict-null 迁就）。注意 .tsx 也要排——M3a 起本模块有 console 组件测试。
   // 不再写 `include`（原为 `["**/*.ts"]`）：那会把 console 的 .tsx 排除在类型检查外，
   // 与 modules/demo 的形状对齐（demo 也是无 include、只写 exclude）。
-  "exclude": ["**/*.test.ts", "**/*.test.tsx"]
+  //
+  // ⚠️ `mobile` 是**嵌套的独立 workspace 包**（M3b-2），必须排掉（2026-09-16 Wave 4 实测）：
+  // 本配置无 `include` ⇒ 父 tsc 会**把 mobile/src/** 一并纳入**（实测 18 个文件，含
+  // `env.d.ts` / `vite.config.ts`），而它用的是**本包的**编译选项——不知道 mobile 自己的
+  // `paths` 别名 ⇒ `@wujibase/*` / `@/*` 全报 TS2307，把整个 `pnpm typecheck` 打红。
+  // 排掉**不是漏检**：mobile 有**自己的** `typecheck`（`vue-tsc --noEmit` + 它自己的 tsconfig），
+  // `pnpm -r --if-present typecheck` 会跑到它 ⇒ 该包仍被检查，只是用**对的配置**检查一次。
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "mobile"]
 }

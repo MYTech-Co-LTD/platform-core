@@ -1,3 +1,7 @@
-packages: [ 'apps/*', 'packages/*', 'modules/*' ]
+# `modules/*/*` 是 M3b-2 加的：模块的**前端子包**（`modules/aftersales/mobile`）不在这三个 glob 里
+# ⇒ 不是 workspace 包 ⇒ `pnpm -r --if-present build` 跳过它 ⇒ 镜像里没有 dist ⇒
+# `loader.ts` 的 `if (!existsSync(dist)) continue` 静默不挂载（**不报错**）。
+# 没有子 package.json 的目录（console/ routes/ migrations/ …）pnpm 自动忽略，无需 exclude。
+packages: [ 'apps/*', 'packages/*', 'modules/*', 'modules/*/*' ]
 allowBuilds:
   esbuild: true

@@ -299,6 +299,45 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     expect(await res.text()).toContain('hello from staticmod dist')
   })
 
+  it('userApp 深链回**本模块的** SPA 壳（挂载点 SPA 兜底，M3b-2 I1）', async () => {
+    cleanupModules.push('spamod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'spamod', {
+      'manifest.yaml': manifestYaml(
+        'spamod',
+        'frontend:\n  userApp:\n    mount: /apps/spamod\n    dist: web/dist',
+      ),
+      'index.ts': indexTs('spamod', 'spamod:view'),
+      'web/dist/index.html': '<html>spamod shell</html>',
+      'web/dist/assets/app.js': 'console.log(1)',
+    })
+    const runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
+    const app = new Hono()
+    runtime.mount(app)
+
+    // ① 入口（带尾斜杠）
+    const root = await app.request('/apps/spamod/')
+    expect(root.status).toBe(200)
+    expect(await root.text()).toContain('spamod shell')
+
+    // ② 入口（不带尾斜杠）——客户端路由的 base 就是这个形状
+    const bare = await app.request('/apps/spamod')
+    expect(bare.status).toBe(200)
+    expect(await bare.text()).toContain('spamod shell')
+
+    // ③ **深链**：这条是本次修的核心。修之前它 404（本 Hono 实例没有全局兜底），
+    //    而在真宿主里它更糟——会被 app.ts 的 app.get('*') 兜成 **web 的** index.html，
+    //    也就是「刷新移动端页 ⇒ 打开 React 控制台壳」。
+    const deep = await app.request('/apps/spamod/register')
+    expect(deep.status).toBe(200)
+    expect(await deep.text()).toContain('spamod shell')
+
+    // ④ 产物文件仍走静态本体（兜底不能把 assets 也吞掉）
+    const asset = await app.request('/apps/spamod/assets/app.js')
+    expect(asset.status).toBe(200)
+    expect(await asset.text()).toBe('console.log(1)')
+  })
+
   it('userApp dist 不存在：跳过静态挂载不炸（请求 404）', async () => {
     cleanupModules.push('ghostapp')
     const modulesDir = await newModulesDir()

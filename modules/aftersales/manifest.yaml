@@ -46,6 +46,9 @@ api:
     # GET /guest/products 与管理面 GET /products 分面：协议里同一条 (method,path) 只能声明一次、
     # 一条声明只带一个 scope（spec §2.2 的同一条理由）。
     - { method: GET,  path: /guest/products,            scope: aftersales:guest }
+    # 门店的访客面（M3b-2 / spec §3.2）：两个保留页都要门店数据。与上面管理面 GET /stores
+    # 分面的理由同上——同一条 (method,path) 只能声明一次、一条声明只带一个 scope。
+    - { method: GET,  path: /guest/stores,              scope: aftersales:guest }
     - { method: GET,  path: /attachments/:id,   scope: aftersales:manage }
 # 管理端 console（M3a）。**只声明一条**：manifest 的前端条目在 console 菜单里是**平铺**的
 # （apps/web/src/pages/console-menu.ts 只给平台「管理」组做了 children），而 frontend.console
@@ -53,4 +56,8 @@ api:
 frontend:
   console:
     - { path: /console/aftersales, title: 售后管理, icon: ToolOutlined, scope: aftersales:manage, entry: ./console/index.tsx }
+  # 移动端 userApp（M3b-2）：Vite 壳 + Vue 3.5 + TDesign，搬自 wuji-2 的两个保留页。
+  # mount 与 mobile/vite.config.ts 的 `base` **必须一致**（不一致 ⇒ 产物引用错前缀）。
+  # dist 相对**模块目录**解析（loader 的 path.resolve(m.dir, dist)）。
+  userApp: { mount: /app/aftersales, dist: ./mobile/dist }
 migrations: { dir: ./migrations }

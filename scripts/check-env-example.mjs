@@ -9,15 +9,15 @@
 //   - `process.env.KEY`（点读）
 //   - `process.env['KEY']` / `process.env["KEY"]`（下标读——与点读是同一构造的等价写法，
 //     不检等于留一个一字符的绕过口）
-//   - `import.meta.env.VITE_KEY`（Vite 构建期注入）
 //   - **宿主注入式访问器**（apps/server/src/config.ts 的形态，缺了这组则本门禁对真实约束
 //     零覆盖）：`env.KEY`（Env 记录的属性读）、`requireValue('KEY')`（必填形参）、
 //     `optional('KEY')`（可选形参）。宿主不写 process.env——env 记录是注入口，键名以字符串
 //     形参传给 requireValue/optional，故三种形态都要认。
+// **`import.meta.env.*` 不在扫描面内**（M3b-2 起是通则，见规则③）。
 // 每个键必须出现在根 .env.example（豁免见下）。B9 的目的：防「部署缺 env → 运行时静默降级」，
 // 声明的存在性是可机检的那一半（值的合法性由 apps/server 的 fail-fast 装配负责）。
 //
-// 三条判定规则（都写在这里，避免后来者当成漏检）：
+// 两条判定规则（都写在这里，避免后来者当成漏检）：
 //   ① `.env.example` 里 `KEY=` 与注释行 `# KEY=` 都算声明。理由：.env.example 的职责是
 //      「枚举 env 契约」，注释行的 `# SEED_DEMO=1  # dev：…` 完整写明了键名、示例值与适用
 //      场景——它恰恰是**不该**被无脑复制的可选开关（照抄成 SEED_DEMO=1 就会在生产种 demo
@@ -27,9 +27,21 @@
 //      散文字里提一句键名不算声明。
 //   ② 跳过 *.test.*：测试里 set/读 env 是 fixture 装配（本仓 DATABASE_URL 就在 4 个测试
 //      文件里被读），不是部署面。纳入只会逼测试改名或加豁免清单。
-//   ③ apps/web/ 下的 `VITE_` 键豁免：web 全运行时配置（品牌/接口地址来自宿主下发的
-//      /api/platform/config），构建期不注入任何 env，故 VITE_ 键没有「部署缺 env」这回事。
-//      豁免按文件位置判定（只有 web 里才算），非 web 文件引用 VITE_ 仍受检。
+//
+// ── **`import.meta.env.*` 不作 B9 管辖**（M3b-2 起；取代原先「apps/web 的 VITE_ 键豁免」那条）──
+// 理由：**Node/Hono 侧根本没有 `import.meta.env`**。它只存在于「被打包器处理过」的代码里，
+// 凡本仓服务端代码出现它，必是**构建期注入的常量**（前端包）⇒ 值在构建时就烘进产物了，
+// 不存在「部署缺 env ⇒ 运行时静默降级」这一面，即 B9 要防的那类事故在此**不成立**。
+// 原先的写法是按**目录**特判（只有 apps/web 下才豁免，非 web 文件引用 VITE_ 仍受检）——
+// 那在只有 apps/web 一个前端包时够用；`modules/aftersales/mobile` 是第二个前端包，
+// 特判从此不够用（同一个「构建期注入」的事实，只因目录不同就给两种结论）。
+// 故本门禁改为**按构造判**：凡 `import.meta.env.` 前缀的读取整体豁免，与包在哪无关；
+// 也不需要维护一份「Vite 内建键名表」（BASE_URL/MODE/DEV/PROD/SSR… 会随 Vite 版本增删）。
+//
+// ⚠️ 这条豁免**不是**「漏检」：在**未打包**的服务端代码里写 `import.meta.env.X` 确实是个 bug
+//    （Node 不定义该对象 ⇒ 取属性当崩），但那是**响亮地崩**、启动即暴露，不是 B9 要防的
+//    静默降级 ⇒ 仍不归本门禁。部署面真正要注入的值，仍以 `process.env.KEY` /
+//    宿主 `env.KEY` 的形态出现（那三组检测器照旧全检，本豁免对它们零影响）。
 import { readdir, readFile } from 'node:fs/promises'
 import { basename, join, relative, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -44,12 +56,19 @@ const SKIP_FILE_RE = /\.test\./
 
 const ENV_DOT_RE = /process[.]env[.]([A-Z0-9_]+)/g
 const ENV_INDEX_RE = /process[.]env\[['"]([A-Z0-9_]+)['"]\]/g
-const VITE_RE = /import[.]meta[.]env[.]VITE_([A-Z0-9_]+)/g
-// 宿主注入式访问器（apps/server/src/config.ts）：`\b` 保证不从 `myenv.X` 这种标识符中段起匹配；
+// 宿主注入式访问器（apps/server/src/config.ts）：负向后顾 `(?<![.\w])` 保证只认**独立**的
+// `env` 绑定——`myenv.X`（标识符中段）与 `process.env.X` / `import.meta.env.X`（前缀带 `.`）
+// 都不再被本条命中。前者的等价形态由 ENV_DOT_RE 负责（重复命中同键由下面的同文件同行同键去重兜底）；
+// 后者整体不在扫描面内（见文件头规则③）。
+// ⚠️ 曾用 `\benv[.]`：`\b` 在 `.` 之后**成立** ⇒ `import.meta.env.BASE_URL` 里的子串
+//    `env.BASE_URL` 被当成宿主 env 记录读 ⇒ 假阳性（M3b-2 实测：mobile 包 router.ts 报 B9）。
 // 键名形如 `env.TENANT_MODE` / `requireValue('PORT')` / `optional('PLATFORM_ORG')`。
-// 注：`process.env.KEY` 也含 `env.KEY`，会与 ENV_DOT_RE 重复命中同一键 —— 同文件同行同键去重（见下），
-// 避免输出里出现重复行。
-const ENV_PROP_RE = /\benv[.]([A-Z][A-Z0-9_]*)/g
+// ⚠️ 收窄的**代价**写在明处（免得它变成没人知道的缺口）：`(?<![.\w])` 在放掉 `process.env` /
+//    `import.meta.env` 的同时，也放掉了 `<某物>.env.KEY`（形如 `cfg.env.SECRET`）这类
+//    「对象自己的 env 字段」。**实测全仓当前无此用法**——扫 `[A-Za-z0-9_$)\]]+\.env\.KEY`
+//    只剩 `process.env.*` 与 `import.meta.env.*` 两种 ⇒ 本次收窄**零覆盖损失**。
+//    将来若真出现 `<某物>.env.KEY`，要么把键补进 .env.example，要么回来重估这条正则。
+const ENV_PROP_RE = /(?<![.\w])env[.]([A-Z][A-Z0-9_]*)/g
 const ENV_REQUIRE_RE = /\brequireValue\(\s*['"]([A-Z][A-Z0-9_]*)['"]/g
 const ENV_OPTIONAL_RE = /\boptional\(\s*['"]([A-Z][A-Z0-9_]*)['"]/g
 
@@ -128,20 +147,17 @@ export async function findViolations(rootDir) {
   for (const abs of await collectFiles(rootDir)) {
     const rel = toPosix(relative(rootDir, abs))
     const src = await readFile(abs, 'utf8')
-    const isWeb = rel.startsWith('apps/web/')
     const seen = new Set() // `${行号}:${键}`：多种形态命中同一处只报一次
     /** @param {string} key @param {number} line */
     const check = (key, line) => {
       const at = `${line}:${key}`
       if (seen.has(at)) return
       seen.add(at)
-      if (isWeb && key.startsWith('VITE_')) return // 规则③
       if (declared.has(key)) return
       violations.push({ file: rel, line, key })
     }
     for (const m of src.matchAll(ENV_DOT_RE)) check(m[1], lineOf(src, m.index))
     for (const m of src.matchAll(ENV_INDEX_RE)) check(m[1], lineOf(src, m.index))
-    for (const m of src.matchAll(VITE_RE)) check(`VITE_${m[1]}`, lineOf(src, m.index))
     for (const m of src.matchAll(ENV_PROP_RE)) check(m[1], lineOf(src, m.index))
     for (const m of src.matchAll(ENV_REQUIRE_RE)) check(m[1], lineOf(src, m.index))
     for (const m of src.matchAll(ENV_OPTIONAL_RE)) check(m[1], lineOf(src, m.index))

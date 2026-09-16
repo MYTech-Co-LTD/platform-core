@@ -534,6 +534,41 @@ describe('check-env-example: B9 env 完整', () => {
     expect(out(r)).toContain('.env.example')
   })
 
+  it('★ 变异（M3b-2）：import.meta.env.* 不作 B9 管辖；宿主 env.KEY / process.env.KEY 两组检测器零牵连', () => {
+    // 根因（假阳性）：旧 ENV_PROP_RE 用 `\benv[.]`，而 `\b` 在 `.` 之后**成立** ⇒
+    // `import.meta.env.BASE_URL` 里的子串 `env.BASE_URL` 被当成宿主 env 记录读。
+    // 触发面是 M3b-2 新增的第二个前端包 modules/aftersales/mobile（router.ts 的
+    // `createWebHistory(import.meta.env.BASE_URL)`）：BASE_URL 由 vite 的 `base` **构建期**注入，
+    // 不是可部署 env —— 要求它声明进 .env.example 等于让人造一个假旋钮。
+    // 新通则（脚本文件头③）：`import.meta.env.*` 整体豁免，理由与包在哪无关。
+    const imported = fixture({
+      '.env.example': 'FOO=1\n',
+      // **非 web** 文件：旧规则③只豁免 apps/web ⇒ 这条路径以前必报（正是要钉住的回归面）
+      'modules/aftersales/mobile/src/router.ts':
+        'const h = createWebHistory(import.meta.env.BASE_URL)\nconst x = import.meta.env.VITE_FOO\n',
+    })
+    expect(run('check-env-example.mjs', imported).status).toBe(0)
+
+    // 反方向：豁免**只**盖 import.meta.env.*，两组真检测器必须原样还在
+    //（防「把门开宽到把覆盖面改没」—— 这正是加这条用例的理由）
+    const stillChecked = run(
+      'check-env-example.mjs',
+      fixture({
+        '.env.example': 'TENANT_MODE=single\n',
+        // 裸 env.KEY 未声明 ⇒ 仍要报（负向后顾没把独立 env 绑定一起排掉）
+        'apps/server/src/config.ts': "const mode = env.TENANT_MODE\nconst a = env.MISSING_HOST_KEY\n",
+        // process.env.KEY 未声明 ⇒ 仍要报（一号检测器不受该后顾影响）
+        'apps/server/src/b.ts': "const u = process.env.MISSING_ENV_KEY ?? ''\n",
+      }),
+    )
+    expect(stillChecked.status).toBe(1)
+    expect(out(stillChecked)).toContain('apps/server/src/config.ts:2')
+    expect(out(stillChecked)).toContain('MISSING_HOST_KEY')
+    expect(out(stillChecked)).toContain('apps/server/src/b.ts:1')
+    expect(out(stillChecked)).toContain('MISSING_ENV_KEY')
+    expect(out(stillChecked)).not.toContain('TENANT_MODE') // 已声明的宿主键照旧不报
+  })
+
   it('对当前仓跑必须干净（Step 2 硬要求）', () => {
     const r = run('check-env-example.mjs', repoRoot)
     expectClean(r)

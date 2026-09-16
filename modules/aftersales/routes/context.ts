@@ -21,6 +21,9 @@ export interface RouteCtx {
 export const MAX_PAGE_SIZE = 100
 export const DEFAULT_PAGE_SIZE = 20
 
+/** 门店是选择器数据（源侧 322 行），一次给全但设上界。**管理面与访客面共用这一个**。 */
+export const MAX_STORES = 1000
+
 /**
  * 分页参数解析（page/size 共用）。**全仓唯一一份**——T6 的管理端列表与访客列表都从这里取，
  * 两份实现会静默漂移：修复前 `?size=-5` ⇒ 管理端回落 20、访客端夹成 1（同一参数两个端点两种语义）。

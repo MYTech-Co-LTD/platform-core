@@ -30,7 +30,7 @@ import { runMigrations } from '../migrate'
 import { seedDemo } from '../seed'
 import { resolveTenantMiddleware, type TenantEnv } from '../tenant'
 import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from '../session-middleware'
-import { wechatOaRoutes, OA_ANON_ACTOR } from './auth-wechat-oa'
+import { wechatOaRoutes, OA_ANON_ACTOR, safeNextPath } from './auth-wechat-oa'
 import { TENANT_FAIL_LIMIT, createLoginLimiter, type LoginLimiter } from '../rate-limit'
 
 const dbUrl = process.env.DATABASE_URL
@@ -406,5 +406,89 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+
+  // ---------------------------------------------------------------------------------------
+  // M3b-2（spec §3.2 未登录节）：/silent?next= 回跳。`next` 完全由 URL 控制 ⇒ 不校验就是
+  // 开放重定向（攻击者把刚完成微信授权的用户从**我们自己的可信域名**送去任意站点）。
+  // 以下四条钉死「成功出口按校验过的 next 走」，且**旧契约一字不改**（无 next ⇒ 302 /）。
+  // ---------------------------------------------------------------------------------------
+
+  /** 走 /silent（可选带 next）拿 state cookie 载荷与其 state 段（首个 '.' 之前）——
+   *  载荷形状 `<state>` 或 `<state>.<base64url(next)>`（同文件 stateCookie 契约，不新开 cookie） */
+  async function silentNext(
+    client: AppClient,
+    next?: string,
+  ): Promise<{ cookie: string; state: string }> {
+    const res = await client.api.platform.auth['wechat-oa'].silent.$get(
+      next === undefined ? undefined : { query: { next } },
+      { headers: { host: 'acme.test', 'user-agent': WECHAT_UA } },
+    )
+    expect(res.status).toBe(302)
+    const cookie = stateToken(res)
+    return { cookie, state: cookie.split('.')[0]! }
+  }
+
+  const callbackWith = (client: AppClient, code: string, state: string, cookie: string) =>
+    client.api.platform.auth['wechat-oa'].callback.$get(
+      { query: { code, state } },
+      { headers: { host: 'acme.test', cookie: `wechat_oa_state=${cookie}` } },
+    )
+
+  it('★ M3b-2：next 存在 → callback 成功 302 到 next（不是恒回 "/"）', async () => {
+    const client = testClient(makeApp(pool, { wechatFetch: okWechat }))
+    const { cookie, state } = await silentNext(client, '/app/aftersales/register')
+    expect(cookie).toMatch(/^[0-9a-f-]{36}\./) // 载荷 = <uuid state>.<base64url(next)>
+    const cb = await callbackWith(client, 'good-code', state, cookie)
+    expect(cb.status).toBe(302)
+    expect(cb.headers.get('location')).toBe('/app/aftersales/register')
+  })
+
+  it('★ M3b-2：next 是外部 URL → cookie 照发，但 callback 成功仍回 "/"（不成开放重定向）', async () => {
+    const client = testClient(makeApp(pool, { wechatFetch: okWechat }))
+    const { cookie, state } = await silentNext(client, 'https://evil.test')
+    const cb = await callbackWith(client, 'good-code', state, cookie)
+    expect(cb.status).toBe(302)
+    expect(cb.headers.get('location')).toBe('/')
+  })
+
+  it('★ M3b-2：无 next → 行为与改动前一致（302 "/"），既有契约不回归', async () => {
+    const client = testClient(makeApp(pool, { wechatFetch: okWechat }))
+    const { cookie, state } = await silentNext(client)
+    expect(cookie).not.toContain('.') // 无 next ⇒ 载荷只有 state（cookie 形状与改动前一致）
+    const cb = await callbackWith(client, 'good-code', state, cookie)
+    expect(cb.headers.get('location')).toBe('/')
+  })
+
+  it('★ M3b-2：BAD_STATE 判据没被 next 段破坏（cookie 里带 next 也要比 state）', async () => {
+    const client = testClient(makeApp(pool, { wechatFetch: okWechat }))
+    const { cookie } = await silentNext(client, '/app/aftersales')
+    // 用**别的** state 打，cookie 原封带上 ⇒ 必须仍是 BAD_STATE
+    const cb = await callbackWith(client, 'good-code', '00000000-0000-0000-0000-000000000000', cookie)
+    expect(cb.headers.get('location')).toBe('/login?error=BAD_STATE')
+  })
+})
+
+// -----------------------------------------------------------------------------------------
+// M3b-2（spec §3.2 未登录节）：回跳目标白名单化。导出供测试**同源**断言（形状照 OA_ANON_ACTOR
+// 的先例），而不是在测试里重写一份规则——两份规则 = 第二个事实源，将来只改一边。
+// 纯函数、不需要 DB ⇒ 刻意放在 describe.skipIf 之外（无 DATABASE_URL 时这几条仍跑）。
+// -----------------------------------------------------------------------------------------
+describe('safeNextPath：只放行同源相对路径（开放重定向防护）', () => {
+  it('合法相对路径原样返回', () => {
+    expect(safeNextPath('/app/aftersales')).toBe('/app/aftersales')
+    expect(safeNextPath('/app/aftersales/register?x=1')).toBe('/app/aftersales/register?x=1')
+  })
+  it('缺失 / 空 ⇒ 回落 "/"', () => {
+    expect(safeNextPath(undefined)).toBe('/')
+    expect(safeNextPath('')).toBe('/')
+  })
+  it('外部 URL ⇒ 回落 "/"（协议相对 // 是跨源，必须挡）', () => {
+    for (const bad of ['https://evil.test', 'http://evil.test', '//evil.test', '/\\evil.test', 'evil.test', 'javascript:alert(1)']) {
+      expect(safeNextPath(bad), bad).toBe('/')
+    }
+  })
+  it('控制字符 ⇒ 回落 "/"（Location 头不能带 CR/LF）', () => {
+    expect(safeNextPath('/a\r\nSet-Cookie: x=1')).toBe('/')
   })
 })
