@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { parseLoginMethods, planAllTenantGrants, provisionPerms, tenantProvisionSteps } from './provision-tenant.mjs'
+import {
+  maskWechatOaAppId, parseLoginMethods, parseWechatOaArgs, planAllTenantGrants, provisionPerms,
+  tenantProvisionSteps, tenantRowUpsert,
+} from './provision-tenant.mjs'
 
 describe('tenantProvisionSteps（纯核）', () => {
   it('默认 org 命名 + 无模块四步；带 --module 逐模块追加 plan/subscribe', () => {
@@ -12,6 +15,65 @@ describe('tenantProvisionSteps（纯核）', () => {
     expect(tenantProvisionSteps('acme', { org: 'o1', domain: 'acme.example.com' })).toEqual([
       'org:o1', 'tenant-row:acme', 'anchor', 'domain:acme.example.com', 'permissions',
     ])
+  })
+  it('带公众号两参：紧跟 tenant-row 插一步，且计划里只有遮蔽后的 appId（secret 永不出现）', () => {
+    const steps = tenantProvisionSteps('acme', { org: 'o1', wechatOaAppId: 'wx0123456789abcdef' })
+    expect(steps).toEqual(['org:o1', 'tenant-row:acme', 'wechat-oa wx0123…', 'anchor', 'permissions'])
+    expect(steps.join(' ')).not.toContain('89abcdef')
+  })
+  it('不带公众号两参：计划里没有任何 wechat 步（与既有的四步计划逐字一致）', () => {
+    expect(tenantProvisionSteps('acme')).toEqual(['org:acme-org', 'tenant-row:acme', 'anchor', 'permissions'])
+  })
+})
+
+describe('parseWechatOaArgs（缺口 1：公众号两参可选但必须成对）', () => {
+  it('都不给 → null（调用方据此不写那两列，见 tenantRowUpsert）', () => {
+    expect(parseWechatOaArgs(undefined, undefined)).toBeNull()
+    expect(parseWechatOaArgs('', '')).toBeNull()
+  })
+  it('都给 → 原样透传给 upsert', () => {
+    expect(parseWechatOaArgs('wx123', 'app-secret-9')).toEqual({ appId: 'wx123', secret: 'app-secret-9' })
+  })
+  it('只给一个 → throw（写半个 = 看起来配了其实不启用的半途态，不进 IO）', () => {
+    expect(() => parseWechatOaArgs('wx123', undefined)).toThrow(/必须同时提供/)
+    expect(() => parseWechatOaArgs(undefined, 'app-secret-9')).toThrow(/必须同时提供/)
+  })
+  it('报错文案不含任何一方的值（本 CLI 对敏感值的口径：从不打印）', () => {
+    const msgOf = (f: () => unknown) => { try { f() } catch (e) { return (e as Error).message } return '' }
+    const a = msgOf(() => parseWechatOaArgs('wx-appid-1', undefined))
+    expect(a).toMatch(/必须同时提供/)
+    expect(a).not.toContain('wx-appid-1')
+    expect(msgOf(() => parseWechatOaArgs(undefined, 'app-secret-9'))).not.toContain('app-secret-9')
+  })
+})
+
+describe('maskWechatOaAppId（打印遮蔽）', () => {
+  it('只留前 6 位；不超过 6 位则原样（appId 本身不是敏感值，secret 才是）', () => {
+    expect(maskWechatOaAppId('wx0123456789abcdef')).toBe('wx0123…')
+    expect(maskWechatOaAppId('wx1234')).toBe('wx1234')
+    expect(maskWechatOaAppId(undefined)).toBe('')
+  })
+})
+
+describe('tenantRowUpsert（纯核：给了才写那两列 = 幂等重跑不误清）', () => {
+  it('不带公众号两参：SQL 里根本不出现 wechat_oa —— do update 只改列出的列', () => {
+    const { text, values } = tenantRowUpsert({ slug: 'acme', org: 'o1', loginMethods: ['password'] })
+    expect(text).not.toContain('wechat_oa')
+    expect(text).toContain('insert into platform.tenant(slug, casdoor_org, product_name, login_methods)')
+    expect(text).toContain('on conflict (slug) do update set')
+    expect(values).toEqual(['acme', 'o1', 'acme', ['password']]) // productName 缺省 = slug
+  })
+  it('带两参：两列进 insert 与 do update，secret 只落 values（不进 SQL 文本）', () => {
+    const { text, values } = tenantRowUpsert({
+      slug: 'acme', org: 'o1', productName: '售后', loginMethods: ['password', 'wecom-qr'],
+      wechatOa: { appId: 'wx123', secret: 'app-secret-9' },
+    })
+    expect(text).toContain('wechat_oa_app_id, wechat_oa_secret')
+    expect(text).toContain('wechat_oa_app_id = excluded.wechat_oa_app_id')
+    expect(text).toContain('wechat_oa_secret = excluded.wechat_oa_secret')
+    expect(text).toContain('$5, $6')
+    expect(text).not.toContain('app-secret-9') // 值一律走参数位，不拼进 SQL
+    expect(values).toEqual(['acme', 'o1', '售后', ['password', 'wecom-qr'], 'wx123', 'app-secret-9'])
   })
 })
 
