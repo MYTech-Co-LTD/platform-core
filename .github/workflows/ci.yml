@@ -142,6 +142,12 @@ jobs:
       # 无从谈起，故构建是冒烟的前置而非可选步骤（也是「curl 200 ≠ 页面可用」的机检化）
       - run: pnpm --filter @platform/web build
       - run: pnpm exec tsx scripts/smoke-load.mjs
+      # 租户隔离门禁（spec-1 §2 / issue #77）。**紧跟 smoke-load 之后是刻意的**：
+      # 那时宿主刚把全部模块 migrations 应用完，`information_schema` 就是真值——
+      # 判据因此是【真库对账】而不是扫迁移文本，不必写 DDL 解析器。
+      # 且必须是【累积终态】而非单文件：`modules/demo/001_note.sql` 建表时没有 org、
+      # `003_note_org.sql` 才补上；按文件判会把本仓自己的参考模块（= 新模块的抄写模板）判红。
+      - run: pnpm exec tsx scripts/check-tenant-isolation.mjs
 
   # CD 触发：四个门禁 job 全绿后，让 openship 按本次 commit 部署（部署本身归 openship）。
   #
