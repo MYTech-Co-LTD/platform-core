@@ -38,4 +38,10 @@ api:
     # 上传在访客面（外部客户拍的照片），读取在管理端（客服要看图判损）——按 scope 分面。
     - { method: POST, path: /guest/attachments, scope: aftersales:guest }
     - { method: GET,  path: /attachments/:id,   scope: aftersales:manage }
+# 管理端 console（M3a）。**只声明一条**：manifest 的前端条目在 console 菜单里是**平铺**的
+# （apps/web/src/pages/console-menu.ts 只给平台「管理」组做了 children），而 frontend.console
+# 是扁平数组、协议不支持嵌套 ⇒ 五个页面收进一个条目，页内用真子路由分区（spec §3.1）。
+frontend:
+  console:
+    - { path: /console/aftersales, title: 售后管理, icon: ToolOutlined, scope: aftersales:manage, entry: ./console/index.tsx }
 migrations: { dir: ./migrations }

@@ -1,7 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "noEmit": true },
-  // 测试文件归 vitest 管（同 apps/server 与 auth-core 惯例：测试代码不做 strict-null 迁就）
-  "include": ["**/*.ts"],
-  "exclude": ["**/*.test.ts"]
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx"
+  },
+  // 测试文件归 vitest 管（同 apps/server、packages/auth-core、modules/demo 惯例：
+  // 测试代码不做 strict-null 迁就）。注意 .tsx 也要排——M3a 起本模块有 console 组件测试。
+  // 不再写 `include`（原为 `["**/*.ts"]`）：那会把 console 的 .tsx 排除在类型检查外，
+  // 与 modules/demo 的形状对齐（demo 也是无 include、只写 exclude）。
+  "exclude": ["**/*.test.ts", "**/*.test.tsx"]
 }
