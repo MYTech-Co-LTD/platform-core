@@ -28,6 +28,16 @@
   `import("../../../modules/…/console/index.tsx")` 就是入口）⇒ 下面两条**对模块 console 代码同样生效**：
   - `noUnusedLocals` / `noUnusedParameters` —— **不许留未使用的导入或参数**（`_` 前缀参数除外）
   - `verbatimModuleSyntax` —— **类型导入必须写 `import type { … }`**，不能与值导入混在一句里
+- ⚠️ **antd 6 的弃用 prop（实施中实测撞到，已写进下面的代码）**：本项目 antd 是 **^6.0.0**，
+  与 antd 5 的写法有几处不同，而**本仓约定不留弃用告警**（见 `modules/demo/console/index.tsx`
+  里 antd `List` 那行注释）。实测撞到并已修的三条：
+  - `Alert` 的 `message=` ⇒ **`title=`**（`description=` 仍可用）
+  - `Modal` 的 `destroyOnClose` ⇒ **`destroyOnHidden`**
+  - `Space` 的 `direction=` ⇒ **`orientation=`**
+  **每写完一个页面跑一次 `pnpm --filter aftersales test` 并 grep `deprecat`**，
+  还有别的弃用会以 `Warning: [antd: 组件] …` 打出来。
+- ⚠️ **antd 对「两个汉字」的按钮会自动插空格**：`okText="提交"` 实际渲染成 `提 交`，
+  于是 `getByRole('button', { name: '提交' })` **找不到**。测试里用正则 **`/提\s*交/`**。
 
 ## 波次划分（派发用）
 
@@ -882,7 +892,7 @@ export default function TicketsPage() {
         />
         <Typography.Text type="secondary">共 {total} 条</Typography.Text>
       </div>
-      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} /> : null}
       <Table<TicketListItem>
         rowKey="id"
         dataSource={items}
@@ -1087,7 +1097,7 @@ export function ProcessDialog(props: { ticketId: number; open: boolean; onClose:
       destroyOnClose
     >
       <Space direction="vertical" style={{ width: '100%' }}>
-        {error ? <Alert type="error" showIcon message={error} /> : null}
+        {error ? <Alert type="error" showIcon title={error} /> : null}
         {done ? (
           <Alert
             type="success"
@@ -1277,7 +1287,7 @@ export default function RulesPage() {
   return (
     <div>
       <Button type="primary" onClick={() => setCreating(true)} style={{ marginBottom: 12 }}>新建规则</Button>
-      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} /> : null}
       <Table<RuleItem>
         rowKey="id"
         dataSource={items}
@@ -1435,7 +1445,7 @@ export default function EmployeesPage() {
   return (
     <div>
       <Button type="primary" onClick={() => setCreating(true)} style={{ marginBottom: 12 }}>新建员工</Button>
-      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} /> : null}
       <Table<EmployeeItem>
         rowKey="id"
         dataSource={items}
@@ -1602,7 +1612,7 @@ export default function ProductsPage() {
   return (
     <div>
       <Typography.Text type="secondary">共 {total} 条</Typography.Text>
-      {error ? <Alert type="error" showIcon message={error} style={{ margin: '12px 0' }} /> : null}
+      {error ? <Alert type="error" showIcon title={error} style={{ margin: '12px 0' }} /> : null}
       <Table<ProductItem>
         rowKey="id" dataSource={items} loading={loading}
         pagination={{ current: page, pageSize: SIZE, total, showSizeChanger: false, onChange: setPage }}
@@ -1633,7 +1643,7 @@ export default function StoresPage() {
 
   return (
     <div>
-      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} /> : null}
       <Table<StoreItem>
         rowKey="id" dataSource={items} loading={loading} pagination={false}
         columns={[
