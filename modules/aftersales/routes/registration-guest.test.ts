@@ -193,3 +193,56 @@ describe('GET /guest/products', () => {
     expect(body.total).toBe(1)
   })
 })
+
+// ── GET /guest/stores（M3b-2 增补；spec §3.2）───────────────────────────────
+describe('GET /guest/stores', () => {
+  it('无参数：回本 org 的门店，形状是 camelCase 的 StoreItem', async () => {
+    const res = await app().request('/guest/stores')
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.items.map((s: { name: string }) => s.name)).toEqual(['店A', '店B'])
+    // 形状与 console 共用一份类型（api-types.ts）——field 名错了 console 侧也会错
+    expect(Object.keys(body.items[0]).sort()).toEqual(['address', 'id', 'name', 'phone', 'regionId'])
+  })
+
+  it('q：按名称模糊搜索（ILIKE），且 % 被转义（不是通配全表）', async () => {
+    const hit = await (await app().request('/guest/stores?q=店A')).json()
+    expect(hit.items.map((s: { name: string }) => s.name)).toEqual(['店A'])
+    // `%` 不转义就是「匹配所有」——这正是 escapeLike 存在的理由
+    const all = await (await app().request('/guest/stores?q=%25')).json()
+    expect(all.items).toEqual([])
+  })
+
+  it('ids：只回指定的那几个（提交页「我的门店」走这条）', async () => {
+    const ids = await storeIds()
+    const res = await app().request(`/guest/stores?ids=${ids[1]}`)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.items.map((s: { id: number }) => s.id)).toEqual([ids[1]])
+  })
+
+  it('ids= 空串：合法的空集（不是「不过滤」）——否则会把全量门店回给访客', async () => {
+    const res = await app().request('/guest/stores?ids=')
+    expect(res.status).toBe(200)
+    expect((await res.json()).items).toEqual([])
+  })
+
+  it('ids 含非法段：400 INVALID_IDS（不静默丢坏值）', async () => {
+    for (const bad of ['1,abc', '1,-2', '1,1.5', '1,1e3']) {
+      const res = await app().request(`/guest/stores?ids=${encodeURIComponent(bad)}`)
+      expect(res.status, `ids=${bad}`).toBe(400)
+      expect((await res.json()).error).toBe('INVALID_IDS')
+    }
+  })
+
+  it('租户隔离：别的 org 的门店看不见', async () => {
+    await pool.query(`insert into aftersales.store(org, name, address, phone) values ($1,'别家店','','')`, [OTHER_ORG])
+    const body = await (await app().request('/guest/stores')).json()
+    expect(body.items.map((s: { name: string }) => s.name)).toEqual(['店A', '店B'])
+  })
+
+  it('分页：非法 size 回落默认值、超上界夹住（与 /guest/products 同一口径）', async () => {
+    const body = await (await app().request('/guest/stores?page=1&size=99999')).json()
+    expect(body.size).toBe(100) // MAX_PAGE_SIZE，不是 99999
+  })
+})

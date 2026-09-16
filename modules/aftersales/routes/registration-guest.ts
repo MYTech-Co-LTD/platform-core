@@ -130,4 +130,63 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
       size,
     })
   })
+
+  // ── 选门店（M3b-2 的移动端要用；spec §3.2）──────────────────────────────
+  // 与 `GET /stores` 分面是**协议硬约束**：同一条 (method,path) 只能声明一次、一条声明只带
+  // 一个 scope（spec §2.2 的同一条理由，与 /guest/products 同构）。
+  //
+  // 两个调用方（实读源侧）：登记页按**名称**搜（`q`）；提交页按**我的登记 id** 取明细（`ids`）。
+  // `ids` 不是可有可无——提交页的口径是「选我登记的门店」，id 来自 /guest/me/registration，
+  // 而**名字**只能从这里取（源侧那半边靠拼 OR filter，是因为源数据源没有 id__in）。
+  r.get('/guest/stores', async (c) => {
+    const org = c.get('identity').orgId
+    const q = c.req.query('q')
+    const idsRaw = c.req.query('ids')
+    const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
+    const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
+
+    const params: unknown[] = [org]
+    let where = 'org = $1'
+    if (q) {
+      params.push(`%${escapeLike(q)}%`)
+      where += ` and name ilike $${params.length}`
+    }
+    if (idsRaw !== undefined) {
+      // 约定：空串 = **空集**（调用方说「我没有任何门店」），不是「不过滤」——
+      // 不过滤会把全量门店回给访客，是这批端点里最不该发生的一种静默降级。
+      const parts = idsRaw === '' ? [] : idsRaw.split(',')
+      // 只认十进制正整数字面量（与 parseIdParam 同一口径）：非规范写法（`1e3` / `-2` / `1.5`）
+      // 一律 400，**不静默丢弃坏值**——少几个门店比报错难查得多。
+      const nums = parts.map((t) => (/^\d+$/.test(t) ? Number(t) : NaN))
+      if (nums.some((n) => !Number.isSafeInteger(n) || n <= 0)) {
+        return c.json({ error: 'INVALID_IDS' }, 400)
+      }
+      if (nums.length === 0) return c.json({ items: [], total: 0, page, size })
+      params.push(nums)
+      where += ` and id = any($${params.length}::bigint[])`
+    }
+
+    // 与 /guest/products 同构：回 total ⇒ 可真分页（对照 /stores 只回 {items}）
+    const totalRes = await ctx.pool.query<{ n: number }>(
+      `select count(*)::int as n from aftersales.store where ${where}`,
+      params,
+    )
+    const listRes = await ctx.pool.query(
+      `select id, name, region_id, address, phone from aftersales.store
+        where ${where} order by id limit $${params.length + 1} offset $${params.length + 2}`,
+      [...params, size, (page - 1) * size],
+    )
+    return c.json({
+      items: listRes.rows.map((s) => ({
+        id: Number(s.id),
+        name: s.name,
+        regionId: s.region_id === null ? null : Number(s.region_id),
+        address: s.address,
+        phone: s.phone,
+      })),
+      total: totalRes.rows[0]!.n,
+      page,
+      size,
+    })
+  })
 }
