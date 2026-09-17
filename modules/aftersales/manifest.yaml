@@ -9,6 +9,9 @@ permissions:
 # 管理端与访客端的端点都在下面 api.internal 里逐条声明——分为两面是因为同一个
 # (method, path) 只能声明一次、一条声明只带一个 scope（spec §2.2「路径按 scope 分面」）。
 guest: { scope: aftersales:guest }
+# 租户级存储（M3c，正典「租户级配置注入」）：声明 = 宿主在本模块的 API 子树上按请求注入
+# c.get(TENANT_STORAGE)。不声明就没有——声明的是**能力**，不是租户（manifest 里写不出 bucket/AK/org）。
+storage: { kind: s3 }
 api:
   internal:
     # ── 工单·管理端（aftersales:manage）──
