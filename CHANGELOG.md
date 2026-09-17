@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.14.0...v0.14.1) - 2026-09-17
+- 【优化】test: issue #68 Step2——两侧链式化，testClient() 不再塌成 unknown (Refs #68) ([#92](https://github.com/MYTech-Co-LTD/platform-core/pull/92), [e6e3c26](https://github.com/MYTech-Co-LTD/platform-core/commit/e6e3c2642964b2c8140dea577847de3df9f1d983))
+
+
 ## [0.14.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.13.0...v0.14.0) - 2026-09-16
 - 【新增】scripts: 补私有化试点的交付阻断——公众号参数写入入口 + runbook 三处订正 ([#89](https://github.com/MYTech-Co-LTD/platform-core/pull/89), [6f248cb](https://github.com/MYTech-Co-LTD/platform-core/commit/6f248cbdb083b16bce7bdd54d428a178a9e216a3))
 
