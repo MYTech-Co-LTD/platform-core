@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.15.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.15.0...v0.15.1) - 2026-09-17
+- 【修复】test-util: MockCasdoor 权限路径补形状（model/StoredPerm/种子 displayName）(Refs #68) ([#95](https://github.com/MYTech-Co-LTD/platform-core/pull/95), [fd54314](https://github.com/MYTech-Co-LTD/platform-core/commit/fd5431416cd74e9656537e2a896c1275d2e8bab0))
+
+
 ## [0.15.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.14.1...v0.15.0) - 2026-09-17
 - 【新增】ci: 租户隔离门禁补 T2——org 列必须 not null（对齐正典）(Refs #77) ([#98](https://github.com/MYTech-Co-LTD/platform-core/pull/98), [5ebc0b4](https://github.com/MYTech-Co-LTD/platform-core/commit/5ebc0b4fcc3b1f3b0b150f26d252f390c03f1825))
 
