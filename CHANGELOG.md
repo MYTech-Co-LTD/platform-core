@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.16.0...v0.17.0) - 2026-09-17
+- 【新增】server: M3c 步 3——租户存储行列 + 投影三态 + 附件 storage_ref（生产行为零变化） ([#105](https://github.com/MYTech-Co-LTD/platform-core/pull/105), [d280c74](https://github.com/MYTech-Co-LTD/platform-core/commit/d280c7476074c1e679f36e9c0641f244cc49ffb0))
+
+
 ## [0.16.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.15.2...v0.16.0) - 2026-09-17
 - 【新增】sdk: M3c 步 2 宿主机制——存储配置协议面 + manifest storage 可选字段 + loader 投影中间件 ([#104](https://github.com/MYTech-Co-LTD/platform-core/pull/104), [53096f1](https://github.com/MYTech-Co-LTD/platform-core/commit/53096f1e0343c52e77d8c9af80af981f628f4ee8))
 
