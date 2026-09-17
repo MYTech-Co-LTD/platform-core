@@ -3,7 +3,23 @@
   "compilerOptions": {
     "noEmit": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    // `vitest` 必须显式映射（issue #68）：本包 node_modules 下是 vitest 3.2.7，而仓库根
+    // node_modules 下是 vitest 2.1.9（根 package.json 给 scripts/ 守卫测试用的）。
+    // `@testing-library/jest-dom/vitest` 的 `declare module 'vitest'` 是**从它自己的位置**
+    // 解析 `'vitest'` 的：jest-dom 在 pnpm 的 .pnpm 树下没有自己的 vitest ⇒ 向上走到
+    // **根** node_modules ⇒ 它把 `toBeInTheDocument` 增强合并进了 2.1.9 的 `Assertion`，
+    // 而测试文件 import 的是本包的 3.2.7 ⇒ 两个 `Assertion` 不是同一个声明 ⇒
+    // 「Property 'toBeInTheDocument' does not exist」× 40。显式 paths 把两侧钉到同一个
+    // 文件（apps/web/tsconfig.app.json 早已这么写，此处对齐）。
+    //
+    // ⚠️ 本地写 `paths` 会**整体覆盖** tsconfig.base 的 paths（extends 不合并该字段）——
+    // 这里故意只留 `vitest`：`@platform/sdk` / `@platform/auth-core` 走 node_modules 的
+    // workspace 软链 + package.json `exports` 同样解析得到（本模块未用 auth-core），
+    // 复制一份反而多一处要跟着 base 改的漂移点。
+    "paths": {
+      "vitest": ["./node_modules/vitest/dist/index.d.ts"]
+    }
   },
   // 测试文件归 vitest 管（同 apps/server、packages/auth-core、modules/demo 惯例：
   // 测试代码不做 strict-null 迁就）。注意 .tsx 也要排——M3a 起本模块有 console 组件测试。

@@ -52,6 +52,14 @@ export interface MockCasdoorPerm {
   name?: string
   /** 权限归属 org（Casdoor 权限记录按 owner 分桶）。缺省 = MOCK_ORG，旧用例兼容 */
   owner?: string
+  /**
+   * 权限显示名。**真机必有该字段**（不是"可选字段里的可选项"）——客户端供给权限时
+   * `#upsertOne` 的载荷恒带 `displayName: name`，update-permission 又是整记录替换、
+   * 会把既有 displayName 原样带回来（本文件 add/update 两处 handler 已按此形状建模）。
+   * issue #68：接口此前漏声明它 ⇒ 与真机形状不符的偏**窄**一侧——种子照真机写 `displayName`
+   * 会被 TS 的 excess-property 检查判 TS2353。补声明即闭合该缝隙，运行时行为无变化。
+   */
+  displayName?: string
   users?: string[]
   roles?: string[]
   resources?: string[]

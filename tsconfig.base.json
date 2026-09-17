@@ -10,7 +10,16 @@
     "baseUrl": ".",
     "paths": {
       "@platform/auth-core": ["packages/auth-core/src/public.ts"],
-      "@platform/sdk": ["packages/platform-sdk/src/index.ts"]
+      "@platform/sdk": ["packages/platform-sdk/src/index.ts"],
+      // 子路径必须显式映射（issue #68）。@platform/sdk 的 exports 里
+      //   "./test-util/*": "./src/test-util/*"
+      // 的**目标是免扩展名的**，而 TS 的 bundler 解析不会给 exports 通配目标补 `.ts`
+      // ⇒ `@platform/sdk/test-util/anonymous-probe` 报 TS2307（连带 4 处 TS7006）。
+      // 实测：把该 exports 目标临时改成 "./src/test-util/*.ts" 即可消除，故根因在
+      // platform-sdk/package.json 而非消费方；此处是 tsconfig 侧的兜底（本轮不改 package.json）。
+      // 只映射 src/ 下：`@platform/sdk/web` 的 exports 目标自带 .ts、走 node_modules 即可，
+      // 映射不中时的回落实测有效（modules/* 的 @platform/sdk/web 不受影响）。
+      "@platform/sdk/*": ["packages/platform-sdk/src/*"]
     }
   }
 }

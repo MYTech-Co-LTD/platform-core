@@ -3,7 +3,14 @@
   "compilerOptions": {
     "noEmit": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    // `vitest` 必须显式映射（issue #68）——成因与写法同 modules/aftersales/tsconfig.json：
+    // 本包是 vitest 3.2.7，仓库根是 2.1.9，jest-dom 的 `declare module 'vitest'` 会解到根上，
+    // 增强合错声明 ⇒ `toBeInTheDocument` 全红。本地 `paths` 整体覆盖 base 的 paths，
+    // 故此处只留 `vitest`（sdk/auth-core 走 node_modules 软链同样解析得到）。
+    "paths": {
+      "vitest": ["./node_modules/vitest/dist/index.d.ts"]
+    }
   },
   // 测试文件归 vitest 管（同 apps/server、packages/auth-core 惯例：测试代码不做 strict 迁就）
   "exclude": ["**/*.test.ts", "**/*.test.tsx"]
