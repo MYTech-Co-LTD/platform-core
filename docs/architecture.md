@@ -50,7 +50,7 @@
 
 | 组件 | 做什么 | 依赖 | 谁依赖它 |
 |---|---|---|---|
-| `apps/server`（`@platform/server`） | 宿主：装配、租户解析、会话、平台路由、登录三路、模块挂载、静态托管 | `@platform/auth-core`、`@platform/sdk`、hono、pg、zod | 无人（可部署端） |
+| `apps/server`（`@platform/server`） | 宿主：装配、租户解析、会话、平台路由、登录三路、模块挂载、静态托管 | `@platform/auth-core`、`@platform/sdk`、hono、pg、zod、**`@aws-sdk/client-s3`**（M3c 起：管理端「保存时探测 / 测试连接」，见下方「依赖边新增」） | 无人（可部署端） |
 | `apps/web`（`@platform/web`） | 前端 console（SPA）；模块 console 条目由 registry 聚合 | `@platform/sdk/web`（`platformFetch`）、antd、react | 无人 |
 | `packages/auth-core` | **认证内核**：Casdoor 客户端、会话签名、scope 计算、企微 | jose、hono、zod（**无仓内依赖**） | **只有 `apps/server`** |
 | `packages/platform-sdk` | **模块契约**：`defineModule` / manifest schema / 门卫 / 前端 fetch | hono、pg、yaml、zod（**无仓内依赖**） | `apps/server`、`apps/web`、每个 `modules/<id>` |
@@ -63,6 +63,31 @@
 1. **认证代码只许在 `packages/auth-core`**，且 `@platform/auth-core` **只许 `apps/server` 引**。
    `apps/web` 与 `packages/platform-sdk` 连 `import type` 都不许。（B2 守）
 2. **平台代码与模块代码不许互相跨 schema。**（B1 守）
+
+### 2.1 依赖边新增：`apps/server` → `@aws-sdk/client-s3`（M3c，2026-09-17 拍板）
+
+- **是什么**：宿主侧一条新的外部依赖边，为**尚未落地**的探测模块而引——`apps/server/src/storage-probe.ts`
+  的 HeadBucket 探测（该文件由 `docs/superpowers/plans/2026-09-17-m3c-tenant-storage.md` 的 T7 新建），
+  服务管理端的「保存时探测」与「测试连接」。
+- **为什么是宿主**：这两处都得**真发一次网络请求**——预签名（SigV4）是纯本地计算，宿主在请求路径上
+  **永远**发现不了「配置存在但连不上」。而探测要在保存前拦住写、并把失败**分类**成不含凭据的形状回给
+  前端 ⇒ 落点必须同时满足「读得到租户行」与「不受模块边界约束」，只有宿主。放进模块等于让每个
+  声明 `storage` 的模块各造一套探测。
+- **为什么是「宿主自己的依赖」而不是「复用它自己抽出来的公共包」**：宿主这次引的是一条**独立**的依赖边
+  ——宿主只做探测（HeadBucket），`modules/aftersales` 只做预签名（`ZosStorage`）。两者**同一主版本**
+  （`^3.700.0`，与模块现有依赖一致），避免两套 AWS SDK 在重试 / 错误形状上分叉
+  （那类问题的表现是「探测说 OK、真传失败」，极难查）。
+
+> **⚠️「存储客户端抽公共包」的判据到点了，但本次并没有抽 —— 两件事分开记。**
+> spec §2.3（`docs/superpowers/specs/2026-09-15-aftersales-module-design.md`）与 M3c spec §9
+> （`docs/superpowers/specs/2026-09-16-m3c-tenant-storage-protocol-design.md`）记的是
+> 「`storage.ts` 模块内自持，**第二个消费者出现再抽公共包**」。上面这条依赖边**让那个判据到点**
+> （`modules/aftersales/storage.ts` 是第一个消费者，**宿主是第二个**）。
+> **但「判据到点」不等于「已经抽了」**：本次裁定的是「**宿主自己的探测用宿主自己的依赖**」——
+> `ZosStorage` 仍留在 `modules/aftersales/storage.ts`，宿主侧只有那个**新建的探测模块**（T7），
+> 它只调 HeadBucket、不做预签名。
+> 抽取公共包是**下一个、尚未决策**的动作，它现在才**有了依据**（不再缺案例）。
+> 别把本节读成「公共包已存在」，也别读成「判据还没到」。
 
 ## 3. 宿主装配链与 I-1 顺序契约
 
@@ -171,7 +196,9 @@ env，多租户同进程部署就只能共用一份 ⇒ 无 BYO、单密钥爆�
    `storage: { kind: s3 }`（可选，缺省 = 不声明），宿主在**模块 API 子树**上按请求注入
    `c.get(TENANT_STORAGE)`；**不声明就不 set**。⚠️ 声明的是**能力**，不是**租户**——模块没有任何
    途径指定 org，注入的也只是投影后的存储五元组。协议细节与兜底语义读 `docs/module-protocol.md`
-   「租户级配置注入」；机制与不变量的对照见 §4.3
+   「租户级配置注入」；机制与不变量的对照见 §4.3。宿主侧的连通性探测（管理端「保存时探测 /
+   测试连接」）用**宿主自己的** `@aws-sdk/client-s3`——**不是**抽出来的公共包；
+   「第二个消费者出现再抽公共包」这条判据的现状见 §2.1
 
 → 逐条契约与已踩过的坑读 `docs/module-protocol.md`（**改模块 API / 门卫 / 声明前必读**）
 
