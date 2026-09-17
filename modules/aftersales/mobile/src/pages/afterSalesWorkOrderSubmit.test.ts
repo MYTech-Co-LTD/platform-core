@@ -63,7 +63,11 @@ beforeEach(() => {
   success.mockClear()
   warning.mockClear()
   woCreate.mockReset().mockResolvedValue({ id: 1 })
-  up.mockReset().mockResolvedValue({ id: 42, objectKey: 'k', uploadUrl: 'u', expiresIn: 60 })
+  // `uploadImage` 的解析值是 `UploadResult = { id, objectKey }`（wuji-upload.ts）——**没有**
+  // `uploadUrl` / `expiresIn`：那两个是**预签名响应**（`PresignResponse`）的键，属于 shim 内部
+  // 从 `/guest/attachments` 拿到的那一层，从不外泄。旧 fixture 多带了它们 = 测试替身比真机宽
+  // （issue #68 同款漂移，Step 3 收口时被 typecheck 抓出）。
+  up.mockReset().mockResolvedValue({ id: 42, objectKey: 'k' })
   globalThis.URL.createObjectURL = vi.fn(() => 'blob:local-preview')
   globalThis.URL.revokeObjectURL = vi.fn()
   empQuery.mockReset()

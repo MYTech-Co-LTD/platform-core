@@ -1,7 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "noEmit": true },
-  // 测试文件归 vitest 管（逐字锁定的简报测试代码非 strict-null 安全，如 (await c.verifyPassword(..)).name）
-  "include": ["src"],
-  "exclude": ["src/**/*.test.ts"]
+  // 测试文件**纳入** typecheck（issue #68，2026-09-17 收口，与根 apps/server 同款）。
+  // 旧文写「逐字锁定的简报测试代码非 strict-null 安全，如 (await c.verifyPassword(..)).name」
+  // ⇒ 曾 exclude `src/**/*.test.ts`。那句描述的**是真错不是噪声**：`verifyPassword` 的返回
+  // 类型本就含 null，测试在「断言成功」的语境里漏收窄。清零方式是把 8 处改成 `?.`（断言照旧
+  // 会红，不吞错），不是把文件继续挡在门外。
+  "include": ["src"]
 }

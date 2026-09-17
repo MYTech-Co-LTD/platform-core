@@ -21,16 +21,18 @@
       "vitest": ["./node_modules/vitest/dist/index.d.ts"]
     }
   },
-  // 测试文件归 vitest 管（同 apps/server、packages/auth-core、modules/demo 惯例：
-  // 测试代码不做 strict-null 迁就）。注意 .tsx 也要排——M3a 起本模块有 console 组件测试。
-  // 不再写 `include`（原为 `["**/*.ts"]`）：那会把 console 的 .tsx 排除在类型检查外，
+  // 测试文件**纳入** typecheck（issue #68，2026-09-17 收口）：旧写法 `["**/*.test.ts",
+  // "**/*.test.tsx", "mobile"]` 里的前两条已删。注意 .tsx 也回到检查面内——M3a 起本模块
+  // 有 console 组件测试，正是需要的。
+  // 不写 `include`（原为 `["**/*.ts"]`）：那会把 console 的 .tsx 排除在类型检查外，
   // 与 modules/demo 的形状对齐（demo 也是无 include、只写 exclude）。
   //
-  // ⚠️ `mobile` 是**嵌套的独立 workspace 包**（M3b-2），必须排掉（2026-09-16 Wave 4 实测）：
-  // 本配置无 `include` ⇒ 父 tsc 会**把 mobile/src/** 一并纳入**（实测 18 个文件，含
-  // `env.d.ts` / `vite.config.ts`），而它用的是**本包的**编译选项——不知道 mobile 自己的
-  // `paths` 别名 ⇒ `@wujibase/*` / `@/*` 全报 TS2307，把整个 `pnpm typecheck` 打红。
+  // ⚠️ `mobile` 是**嵌套的独立 workspace 包**（M3b-2），必须**保持**排掉（2026-09-16 Wave 4
+  // 实测，issue #68 Step 3 复核）：本配置无 `include` ⇒ 父 tsc 会**把 mobile/src/** 一并纳入**
+  // （实测 18 个文件，含 `env.d.ts` / `vite.config.ts`），而它用的是**本包的**编译选项——
+  // 不知道 mobile 自己的 `paths` 别名 ⇒ `@wujibase/*` / `@/*` 全报 TS2307（实测 23 条假红），
+  // 把整个 `pnpm typecheck` 打红。**这一条不要随「清 exclude」一起删**。
   // 排掉**不是漏检**：mobile 有**自己的** `typecheck`（`vue-tsc --noEmit` + 它自己的 tsconfig），
   // `pnpm -r --if-present typecheck` 会跑到它 ⇒ 该包仍被检查，只是用**对的配置**检查一次。
-  "exclude": ["**/*.test.ts", "**/*.test.tsx", "mobile"]
+  "exclude": ["mobile"]
 }

@@ -133,12 +133,21 @@ describe('after_sales_work_order.create', () => {
   it('只映射域端点收的那几个字段，且带上 sessionStorage 里的幂等键', async () => {
     sessionStorage.clear()
     send.mockResolvedValue({ id: 9, code: 'AS-00000009', status: 'pending', duplicated: false })
-    await after_sales_work_order.create({
+    // 源侧 payload 共 23 个键，这里**刻意多传**几个源侧字段，钉住「多传的被丢掉」。
+    //
+    // ⚠️ 用 `Record<string, unknown>` 承接而不是字面量直传（issue #68 Step 3）：`create` 的形参
+    // **有意**只声明它真正读的 5 个键——真调用点 `useWorkOrderSubmit.ts` 也只传这 5 个 ⇒
+    // 字面量多带键会被 TS 的新鲜度检查（excess property check）拦下。**那是对的检查**，不该
+    // 为让测试绿去给生产签名加索引签名（那等于宣称域端点收这些字段，与 §2.2 相反）。
+    // 而源侧 payload 的形状本就不受本仓控制 ⇒ 先落成一个「源侧 payload 对象」再传，
+    // 正是这条路径的真实形态。
+    const sourceSidePayload: Record<string, unknown> = {
       product_id: 4, store_selection: 7, damage_quantity: 2, damage_reason: '破损',
       damage_images: [{ attachmentId: 11 }, { attachmentId: 12 }],
       // 下面这些源侧字段域端点**不收**，必须被丢掉（不是拼进 body）
       order_number: 'YYMMDD00001', related_order: 3, damage_amount: 1000,
-    })
+    }
+    await after_sales_work_order.create(sourceSidePayload)
     const body = send.mock.calls[0]![2] as Record<string, unknown>
     expect(Object.keys(body).sort()).toEqual(['attachmentIds', 'clientRequestId', 'damageQuantity', 'productId', 'remark', 'storeId'])
     expect(body).toMatchObject({ productId: 4, storeId: 7, damageQuantity: 2, remark: '破损', attachmentIds: [11, 12] })

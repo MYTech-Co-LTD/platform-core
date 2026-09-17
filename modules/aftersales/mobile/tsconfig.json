@@ -22,6 +22,14 @@
       "@wujibase/wuji-upload": ["./src/shims/wuji-upload.ts"]
     }
   },
-  "include": ["src", "env.d.ts"],
-  "exclude": ["**/*.test.ts"]
+  // 测试文件**纳入** typecheck（issue #68，2026-09-17 收口）：旧写法 `"exclude":
+  // ["**/*.test.ts"]` 已删。与仓内既有形状一致（apps/web 的 tsconfig.app.json、
+  // packages/platform-sdk 本来就把测试纳入，且它们的 build 同样跑类型检查）。
+  //
+  // ⚠️ **连带影响，改这里前先读**：本包的 `build` 脚本是 `vue-tsc --noEmit && vite build`
+  // ⇒ 测试文件的类型错会**挡住移动端构建**（Docker 构建链走 `pnpm -r build`）。
+  // 这是**有意的**：build 与 typecheck 共用同一道类型门，就不存在「CI typecheck 绿、
+  // 构建挂」或反过来的两套口径。若日后要拆开（build 不依赖测试类型），那是另一个决定
+  // ——改之前先看 issue #68 的结论，别顺手把 exclude 加回来。
+  "include": ["src", "env.d.ts"]
 }
