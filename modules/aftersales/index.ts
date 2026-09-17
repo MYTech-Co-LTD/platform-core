@@ -1,9 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { Hono } from 'hono'
 import { parse as parseYaml } from 'yaml'
-import { ManifestSchema, defineModule } from '@platform/sdk'
-import type { Identity } from '@platform/sdk'
-import { ZosStorage, zosConfigFromEnv } from './storage'
+import { ManifestSchema, TENANT_STORAGE, defineModule } from '@platform/sdk'
+import type { Identity, TenantStorageConfig } from '@platform/sdk'
 import { registerTicketManage } from './routes/ticket-manage'
 import { registerTicketGuest } from './routes/ticket-guest'
 import { registerRule } from './routes/rule'
@@ -22,10 +21,11 @@ const manifest = ManifestSchema.parse(
 export default defineModule({
   manifest,
   createRouter: ({ pool }) => {
-    const r = new Hono<{ Variables: { identity: Identity } }>()
-    // 没有 ZOS 凭证时 storage 为 null：模块照常装载，只有附件端点回 503（见 storage.ts）
-    const config = zosConfigFromEnv(process.env)
-    const ctx: RouteCtx = { pool, storage: config ? new ZosStorage(config) : null }
+    // ⚠️ 装载期**不读任何配置**（M3c 步 4）：存储配置由宿主按请求投影进 `TENANT_STORAGE`，
+    // 各 handler 自己 `c.get`。这里读 env 是步 4 之前的形态，已消灭——它带来的正是
+    // 「多租户同进程必然共用一份配置」。
+    const r = new Hono<{ Variables: { identity: Identity; [TENANT_STORAGE]?: TenantStorageConfig } }>()
+    const ctx: RouteCtx = { pool } // storage 已从 RouteCtx 消失，配置改为按请求取
 
     registerTicketManage(r, ctx)
     registerTicketGuest(r, ctx)
