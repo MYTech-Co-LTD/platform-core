@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.15.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.15.1...v0.15.2) - 2026-09-17
+- 【修复】discipline: CHANGELOG 守卫改三点 diff——落后于 main 不再误报，并改掉有害的补救建议 (Closes #99) ([#100](https://github.com/MYTech-Co-LTD/platform-core/pull/100), [eff4893](https://github.com/MYTech-Co-LTD/platform-core/commit/eff4893d9b06408642d6e587c42f8f18b96f945f))
+
+
 ## [0.15.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.15.0...v0.15.1) - 2026-09-17
 - 【修复】test-util: MockCasdoor 权限路径补形状（model/StoredPerm/种子 displayName）(Refs #68) ([#95](https://github.com/MYTech-Co-LTD/platform-core/pull/95), [fd54314](https://github.com/MYTech-Co-LTD/platform-core/commit/fd5431416cd74e9656537e2a896c1275d2e8bab0))
 
