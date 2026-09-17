@@ -22,6 +22,29 @@ export interface ModuleContext {
 }
 
 /**
+ * 宿主按【本次请求所属租户】投影出的存储配置（正典「租户级配置注入」）。
+ * kind 由 manifest 的 `storage.kind` 选定；五元组是 S3 兼容的通用形状（ZOS 只是实现之一）。
+ *
+ * ⚠️ 模块拿到的是**投影后的窄值**，不是 `TenantRow` —— 后者坐着 wecom/公众号密钥与 casdoor_org。
+ * 这条是 B1 的延伸约束，不是风格问题（见 docs/architecture.md §4.3 的不变量表）。
+ */
+export interface TenantStorageConfig {
+  kind: 's3'
+  /** 已规范化（含协议、无尾斜杠）——`normalizeEndpoint` 的产物 */
+  endpoint: string
+  region: string
+  bucket: string
+  accessKeyId: string
+  secretAccessKey: string
+}
+
+/**
+ * 存储配置的 Hono context 变量键。带 `platform.` 前缀避撞（照 DECLARED_GATE_APPROVED 的既有做法）。
+ * 键名是**宿主 set / 模块 get 的约定**，编译器不连线 ⇒ 改名是破坏性变更。
+ */
+export const TENANT_STORAGE = 'platform.tenantStorage'
+
+/**
  * 模块定义：manifest（接入协议）+ createRouter（拿到 ctx 组路由）。
  *
  * 返回类型为什么是 `Hono<any, any, any>`（Task 19 评审 I-1 修复）：
