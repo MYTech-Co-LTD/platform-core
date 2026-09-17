@@ -80,11 +80,12 @@ rootDirectory=deploy、framework=docker-compose。
 | `AFTERSALES_ZOS_ACCESS_KEY` | ZOS 访问密钥 AK（**isSecret**） |
 | `AFTERSALES_ZOS_SECRET` | ZOS 密钥 SK（**isSecret**） |
 
-⚠️ 后五行（售后附件存储，`modules/aftersales/storage.ts`）：**只要 `--module` 集里含 `aftersales`
-就必须配齐**。凭证没有第二条落点（走 env，我们侧备好给 MCP 设 isSecret）。**漏配不是启动报错**：
-`zosConfigFromEnv` 缺任一键即返回 null，**服务照常起、其余功能照常**，但附件端点回
-**503 `ZOS_NOT_CONFIGURED`**——而移动端提交页的核心就是传图/传视频（平台 bodyLimit ~1MiB，
-字节只能走预签名直传，见 storage.ts 文件头）。成功判据：提交页传图能拿到预签名 URL 并 PUT 成功
+⚠️ 后五行（售后附件存储）：**只要 `--module` 集里含 `aftersales`，每个租户就必须有一份可用的存储配置**
+——要么由这五个 env 键充当**平台默认**，要么该租户在管理端「存储配置」页配自己的桶。
+凭证只有这两个落点（env 或租户行），我们侧备好给 MCP 设 isSecret。**漏配不是启动报错**：
+五键缺任一 ⇒ 没有平台默认（SDK 的 `platformStorageFromEnv` 回 `null`），**服务照常起、其余功能照常**，
+但**既没 env、又没配自己桶**的租户，附件端点回 **503 `ZOS_NOT_CONFIGURED`**——而移动端提交页的核心
+就是传图/传视频（平台 bodyLimit ~1MiB，字节只能走预签名直传，见 storage.ts 文件头）。成功判据：提交页传图能拿到预签名 URL 并 PUT 成功
 （并入步骤 6 冒烟）。
 
 > **M3c（2026-09-17）起：上面五个 `AFTERSALES_ZOS_*` 的语义是「平台默认」，不再是唯一来源。**
@@ -94,8 +95,6 @@ rootDirectory=deploy、framework=docker-compose。
 >   （fail-explicit；**绝不**悄悄写进平台桶 —— 那会让「租户以为附件在自己桶里、实际在平台桶」）；
 > - **env 与租户都没配** ⇒ 附件端点回 **`503 ZOS_NOT_CONFIGURED`**（与 M3c 之前的表现一致）。
 >
-> 另：本节原文提到的 `zosConfigFromEnv` 在 **M3c 步 4 已不存在**——平台默认的读取现在收在
-> SDK 的 `platformStorageFromEnv`，按请求解析在模块侧（`modules/aftersales/storage.ts`）。
 
 再部署（MCP `post_deployments_build_access`）：projectId、**serverId**（步骤 1 拿的）、
 deployTarget=server、branch=main、environment=production。
