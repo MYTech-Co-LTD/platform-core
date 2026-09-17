@@ -60,6 +60,15 @@ export interface MockCasdoorPerm {
    * 会被 TS 的 excess-property 检查判 TS2353。补声明即闭合该缝隙，运行时行为无变化。
    */
   displayName?: string
+  /**
+   * 权限模型。同 displayName：**真机权限记录带它**——客户端供给权限时
+   * `grantPermissionToUser` / `revokePermissionFromUser` 写回的载荷恒带
+   * `model: String(p.model ?? 'built-in/user-model-built-in')`（`casdoor-client.ts:392,424,518`），
+   * 本文件 update / add 两个 handler 也同样读 `b.model`。
+   * issue #68 同族：接口此前漏声明它 ⇒ 与真机形状不符的偏**窄**一侧——种子照真机写 `model`
+   * 会被 TS 的 excess-property 检查判 TS2353。补声明即闭合该缝隙，运行时行为无变化。
+   */
+  model?: string
   users?: string[]
   roles?: string[]
   resources?: string[]
@@ -85,9 +94,29 @@ interface StoredUser extends MockCasdoorUser {
   createdViaApi?: Record<string, unknown>
 }
 
+/**
+ * 权限在 mock 内的存储形状：**种子与 update / add 载荷的字段一律补全**（照 `StoredUser` 的先例）。
+ *
+ * 为什么值得单独一个类型（issue #68）：此前 `#perms` 是 `Array<Record<string, unknown>>`
+ * ⇒ **权限路径的读写全不受检**——`p.displayName` 之所以不报错，不是因为它在，而是因为
+ * 整条路径没有类型。用户路径有 `StoredUser`，权限路径一直没有；这正是
+ * 「替身形状与真机漂移」在本仓的结构性盲区（纪律 #11）。
+ */
+interface StoredPerm {
+  name: string
+  owner: string
+  displayName: string
+  model: string
+  users: string[]
+  roles: string[]
+  resources: string[]
+  actions: string[]
+  isEnabled: boolean
+}
+
 export class MockCasdoor {
   #users: StoredUser[]
-  #perms: Array<Record<string, unknown>> = []
+  #perms: StoredPerm[] = []
   #sessions = new Map<string, { user: string; anonymous: boolean }>()
   #oidcCodes = new Map<string, string>() // authorization code → 用户名（单次即焚）
   #addPermissionCalls: Array<{ owner: string; name: string }> = []
@@ -124,13 +153,15 @@ export class MockCasdoor {
       this.#perms.push({
         owner: p.owner ?? MOCK_ORG,
         name,
-        displayName: name,
+        // 种子里给了就用种子的：真机权限记录有 displayName，此前写死 `name` ⇒ 种子静默失效（纪律 #11）
+        displayName: p.displayName ?? name,
         users: p.users ?? [],
         roles: p.roles ?? [],
         resources: p.resources ?? [],
         actions: p.actions ?? ['Read'],
         isEnabled: p.isEnabled ?? true,
-        model: 'built-in/user-model-built-in',
+        // model 同理：真机恒带该字段，种子里给了就尊重
+        model: p.model ?? 'built-in/user-model-built-in',
       })
     }
     // 形状钉死：真实 Casdoor 的 update-* 是 POST（admin-api.js casdoorPost 形状）；
