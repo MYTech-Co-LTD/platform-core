@@ -48,8 +48,14 @@ export function sanitizeOrgSegment(s: string): string {
  * 对象 key：`aftersales/{org}/{ticket_ref}/{uuid}`。
  * `ticket_ref` 是【客户端幂等键】而不是库内主键——移动端先传图后提交，预签名时工单还没落库
  * （spec §2.3，2026-09-15 定）。
+ *
+ * `uuid` 显式注 `string`（第三参只做字符串拼接，不参与任何校验）：不注的话 TS 取**默认值的
+ * 推导类型** `randomUUID()` 的 `` `${string}-${string}-…` `` 模板字面量型，把「只给测试用的
+ * 定值注入点」意外锁成 UUID 形状铁律——storage.test.ts 传 `'u'` 就撞 TS2345（issue #68
+ * Step 3）。**注 `string` 不是放松**：函数本来就只把它插进模板串，形状从来不是它的事；
+ * 真机路径全部走缺省值 `randomUUID()`，不受影响。
  */
-export function objectKeyFor(org: string, clientRequestId: string, uuid = randomUUID()): string {
+export function objectKeyFor(org: string, clientRequestId: string, uuid: string = randomUUID()): string {
   return `aftersales/${sanitizeOrgSegment(org)}/${sanitizeOrgSegment(clientRequestId)}/${uuid}`
 }
 

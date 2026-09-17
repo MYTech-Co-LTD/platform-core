@@ -74,7 +74,9 @@ describe('useFileUpload', () => {
     f.removeAttachment(0)
     expect(list(f)).toEqual([])
 
-    d.resolve({ id: 42, objectKey: 'k', uploadUrl: 'u', expiresIn: 60 })
+    // 解析值 = `UploadResult`（`{ id, objectKey }`）；`uploadUrl`/`expiresIn` 是 shim 内部
+    // 预签名响应的键，不在对外形状里（issue #68 Step 3 清掉的替身漂移）。
+    d.resolve({ id: 42, objectKey: 'k' })
     await pending
 
     // 旧实现按下标回写 `attachments.value[0] = {...}` ⇒ 把删掉的那条**复活**成 completed，
@@ -92,7 +94,7 @@ describe('useFileUpload', () => {
     expect(list(f).map((a) => a.name)).toEqual(['a.jpg', 'b.jpg'])
 
     f.removeAttachment(0) // 删掉前面的 ⇒ 数组左移，b 落到 0 号位
-    d.resolve({ id: 43, objectKey: 'k2', uploadUrl: 'u', expiresIn: 60 })
+    d.resolve({ id: 43, objectKey: 'k2' })
     await pending
 
     const l = list(f)

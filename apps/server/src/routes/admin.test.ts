@@ -15,6 +15,10 @@ import { adminRoutes, ANCHOR_USER, type AdminRoutesDeps } from './admin'
 
 // ---- 替身 ----
 
+/** 替身**收到的调用台账**（断言「org 只来自 tenant.casdoor_org」的观测口）。
+ *  用例里一律显式注这个类型（`const calls: FakeCasdoorCalls = {…}`），别写 `[] as unknown[]`
+ *  ——那会把手误写成 `unknown[]`、让台账与这里的形状悄悄脱钩（issue #68 Step 3 清掉的
+ *  3 条 TS2345 就是它）。注了之后五个数组的形状由本接口一次性钉死。 */
 interface FakeCasdoorCalls {
   listUsersOrgs: string[]
   created: Array<{ org: string; input: { name: string; displayName?: string; password: string } }>
@@ -133,7 +137,7 @@ describe('admin 路由：门禁与结构锁', () => {
   })
 
   it('GET /users 过滤锚用户 tenantsub，org 取自 tenant.casdoor_org', async () => {
-    const calls = { listUsersOrgs: [] as string[], created: [], forbidden: [], reset: [], deleted: [] }
+    const calls: FakeCasdoorCalls = { listUsersOrgs: [], created: [], forbidden: [], reset: [], deleted: [] }
     const d = deps({ casdoor: fakeCasdoor([
       { name: ANCHOR_USER, displayName: 'Tenant Subscription Anchor', isForbidden: true },
       { name: 'alice', displayName: 'Alice', isForbidden: false },
@@ -176,7 +180,7 @@ describe('admin 路由：用户 CRUD', () => {
   })
 
   it('POST /users 成功：201 + audit（action=admin.user.create，detail 无密码）', async () => {
-    const calls = { listUsersOrgs: [] as string[], created: [], forbidden: [] as unknown[], reset: [], deleted: [] }
+    const calls: FakeCasdoorCalls = { listUsersOrgs: [], created: [], forbidden: [], reset: [], deleted: [] }
     const d = deps({ casdoor: fakeCasdoor([], calls) })
     const app = mount(d, { scopes: ['tenant:admin'] })
     const res = await app.request('/api/platform/admin/users', {
@@ -191,7 +195,7 @@ describe('admin 路由：用户 CRUD', () => {
   })
 
   it('PATCH /users/:name：锚用户 400 FORBIDDEN_TARGET；正常禁用写 audit', async () => {
-    const calls = { listUsersOrgs: [] as string[], created: [], forbidden: [], reset: [], deleted: [] }
+    const calls: FakeCasdoorCalls = { listUsersOrgs: [], created: [], forbidden: [], reset: [], deleted: [] }
     const d = deps({ casdoor: fakeCasdoor([], calls) })
     const app = mount(d, { scopes: ['tenant:admin'] })
     const anchor = await app.request(`/api/platform/admin/users/${ANCHOR_USER}`, {
@@ -207,7 +211,7 @@ describe('admin 路由：用户 CRUD', () => {
   })
 
   it('PATCH /users/:name/password：短密码 400；成功不把密码写进 audit', async () => {
-    const calls = { listUsersOrgs: [] as string[], created: [], forbidden: [] as unknown[], reset: [], deleted: [] }
+    const calls: FakeCasdoorCalls = { listUsersOrgs: [], created: [], forbidden: [], reset: [], deleted: [] }
     const d = deps({ casdoor: fakeCasdoor([], calls) })
     const app = mount(d, { scopes: ['tenant:admin'] })
     const bad = await app.request('/api/platform/admin/users/alice/password', {
@@ -223,7 +227,7 @@ describe('admin 路由：用户 CRUD', () => {
   })
 
   it('DELETE /users/:name：删自己与删锚用户 400；正常删除写 audit', async () => {
-    const calls = { listUsersOrgs: [] as string[], created: [], forbidden: [] as unknown[], reset: [] as unknown[], deleted: [] }
+    const calls: FakeCasdoorCalls = { listUsersOrgs: [], created: [], forbidden: [], reset: [], deleted: [] }
     const d = deps({ casdoor: fakeCasdoor([], calls) })
     const app = mount(d, { scopes: ['tenant:admin'] })
     expect((await app.request('/api/platform/admin/users/admin1', { method: 'DELETE', headers: withCsrf })).status).toBe(400)

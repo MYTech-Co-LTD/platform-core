@@ -11,7 +11,7 @@
     "paths": {
       "vitest": ["./node_modules/vitest/dist/index.d.ts"]
     }
-  },
-  // 测试文件归 vitest 管（同 apps/server、packages/auth-core 惯例：测试代码不做 strict 迁就）
-  "exclude": ["**/*.test.ts", "**/*.test.tsx"]
+  }
+  // 测试文件**纳入** typecheck（issue #68，2026-09-17 收口）：旧写法 `"exclude":
+  // ["**/*.test.ts", "**/*.test.tsx"]` 已删（本包实测 0 错，删 exclude 无代价）。
 }

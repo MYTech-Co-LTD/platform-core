@@ -1,7 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "noEmit": true },
-  // 测试文件归 vitest 管（同 auth-core 惯例：简报测试代码不做 strict-null 迁就）
-  "include": ["src"],
-  "exclude": ["src/**/*.test.ts"]
+  // 测试文件**纳入** typecheck（issue #68，2026-09-17 收口）。
+  // 旧文写「测试文件归 vitest 管」⇒ 曾 exclude `src/**/*.test.ts`。代价是**测试替身的
+  // 形状漂移 CI 结构性抓不到**（显形实例：Task 4 给 platform.tenant 加 wechat_oa_* 两列，
+  // admin.test.ts 的 baseTenant 字面量没跟上，只有编辑器红线）。`pnpm typecheck` 在 CI 的
+  // gates job 里跑 ⇒ 去掉 exclude 就是这道门禁本身。**别再把它加回来**：加回来等于
+  // 把本仓「测试替身必须收严到真机形状」这条硬约束重新变成无机械保障的君子协定。
+  // packages/auth-core、modules/* 的同款处理与同款理由见各自 tsconfig。
+  "include": ["src"]
 }
