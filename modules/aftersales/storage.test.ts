@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { platformStorageFromEnv } from '@platform/sdk'
 import {
   UPLOAD_URL_TTL_SECONDS,
   ZosStorage,
-  normalizeEndpoint,
   objectKeyFor,
   sanitizeOrgSegment,
-  zosConfigFromEnv,
 } from './storage'
-import type { ZosConfig } from './storage'
+import type { TenantStorageConfig } from '@platform/sdk'
 
 const FULL_ENV = {
   AFTERSALES_ZOS_ENDPOINT: 'zos.xinan1.ctyun.cn',
@@ -17,19 +16,26 @@ const FULL_ENV = {
   AFTERSALES_ZOS_SECRET: 'secret-test',
 }
 
-describe('normalizeEndpoint —— 天翼 ZOS 实测坑之一', () => {
-  it('裸域名补 https://（WeKnora 实证：写成不带协议的域名会让签名/连接失败）', () => {
-    expect(normalizeEndpoint('zos.xinan1.ctyun.cn')).toBe('https://zos.xinan1.ctyun.cn')
+describe('与 @platform/sdk 的解析连线（本模块不再自持实现）', () => {
+  // 步 4 起 `normalizeEndpoint` / env 解析**只有一份实现**（`packages/platform-sdk/src/storage.ts`，
+  // 其单测在 T1 已写）。本模块**不留同名单测**——那是第二份事实源。
+  // 这里只留一条**连线断言**：证明模块经 SDK 取配置时，补协议那一步仍然发生。
+  it('platformStorageFromEnv：裸域名补 https://、去尾斜杠（模块侧不再自己实现）', () => {
+    const cfg = platformStorageFromEnv({ ...FULL_ENV, AFTERSALES_ZOS_ENDPOINT: '  zos.xinan1.ctyun.cn/  ' })
+    expect(cfg?.endpoint).toBe('https://zos.xinan1.ctyun.cn')
+    expect(cfg).toEqual({
+      kind: 's3',
+      endpoint: 'https://zos.xinan1.ctyun.cn',
+      region: 'xinan1',
+      bucket: 'aftersales-test',
+      accessKeyId: 'AKIATEST',
+      secretAccessKey: 'secret-test',
+    })
   })
 
-  it('已有协议的不重复补', () => {
-    expect(normalizeEndpoint('https://zos.xinan1.ctyun.cn')).toBe('https://zos.xinan1.ctyun.cn')
-    expect(normalizeEndpoint('http://zos.internal')).toBe('http://zos.internal')
-  })
-
-  it('去首尾空白与尾斜杠（带尾斜杠会让 path-style 拼出双斜杠）', () => {
-    expect(normalizeEndpoint('  zos.xinan1.ctyun.cn/  ')).toBe('https://zos.xinan1.ctyun.cn')
-    expect(normalizeEndpoint('https://zos.xinan1.ctyun.cn///')).toBe('https://zos.xinan1.ctyun.cn')
+  it('五键缺任一 ⇒ null（= 没有平台默认 ⇒ 宿主不注入）', () => {
+    expect(platformStorageFromEnv({})).toBeNull()
+    expect(platformStorageFromEnv({ ...FULL_ENV, AFTERSALES_ZOS_BUCKET: '' })).toBeNull()
   })
 })
 
@@ -59,35 +65,9 @@ describe('objectKeyFor —— 形状 aftersales/{org}/{ticket_ref}/{uuid}', () =
   })
 })
 
-describe('zosConfigFromEnv —— CI 没有 ZOS 凭证时模块必须仍能装载', () => {
-  it('五个键齐 ⇒ 返回配置，且 endpoint 已补协议', () => {
-    expect(zosConfigFromEnv(FULL_ENV)).toEqual({
-      endpoint: 'https://zos.xinan1.ctyun.cn',
-      region: 'xinan1',
-      bucket: 'aftersales-test',
-      accessKeyId: 'AKIATEST',
-      secretAccessKey: 'secret-test',
-    })
-  })
-
-  it('完全没配 ⇒ null', () => {
-    expect(zosConfigFromEnv({})).toBeNull()
-  })
-
-  it.each([
-    'AFTERSALES_ZOS_ENDPOINT',
-    'AFTERSALES_ZOS_REGION',
-    'AFTERSALES_ZOS_BUCKET',
-    'AFTERSALES_ZOS_ACCESS_KEY',
-    'AFTERSALES_ZOS_SECRET',
-  ])('少 %s ⇒ null（附件端点随后回 503，绝不半配置启动）', (missing) => {
-    const env = { ...FULL_ENV, [missing]: '' }
-    expect(zosConfigFromEnv(env)).toBeNull()
-  })
-})
-
 describe('预签名（纯离线计算：本测试【不需要】真凭证、不联网）', () => {
-  const config: ZosConfig = {
+  const config: TenantStorageConfig = {
+    kind: 's3',
     endpoint: 'https://zos.xinan1.ctyun.cn',
     region: 'xinan1',
     bucket: 'aftersales-test',
