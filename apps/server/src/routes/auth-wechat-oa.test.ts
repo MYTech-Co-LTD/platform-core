@@ -74,26 +74,25 @@ interface MakeAppOpts {
 }
 
 /** 宿主形态缩样（app.ts 装配链的对应段）：租户 → 会话 → wechat-oa 路由 */
-function makeApp(pool: Pool, opts: MakeAppOpts = {}): Hono<TenantEnv & SessionEnv> {
-  const app = new Hono<TenantEnv & SessionEnv>()
-  app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
-  app.use('*', sessionMiddleware({
-    casdoor: opts.sessionCasdoor ?? neverCasdoor,
-    sessionSecret: SECRET,
-    guestScopes: opts.guestScopes,
-  }))
-  app.route(
-    '/api/platform/auth/wechat-oa',
-    wechatOaRoutes({
+function makeApp(pool: Pool, opts: MakeAppOpts = {}) {
+  return new Hono<TenantEnv & SessionEnv>()
+    .use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
+    .use('*', sessionMiddleware({
+      casdoor: opts.sessionCasdoor ?? neverCasdoor,
       sessionSecret: SECRET,
-      pool,
-      limiter: opts.limiter ?? createLoginLimiter(),
-      publicOrigin: PUBLIC_ORIGIN,
-      enabledGuestScopes: opts.enabledGuestScopes ?? (async () => GUEST_SCOPES),
-      wechatFetch: opts.wechatFetch,
-    }),
-  )
-  return app
+      guestScopes: opts.guestScopes,
+    }))
+    .route(
+      '/api/platform/auth/wechat-oa',
+      wechatOaRoutes({
+        sessionSecret: SECRET,
+        pool,
+        limiter: opts.limiter ?? createLoginLimiter(),
+        publicOrigin: PUBLIC_ORIGIN,
+        enabledGuestScopes: opts.enabledGuestScopes ?? (async () => GUEST_SCOPES),
+        wechatFetch: opts.wechatFetch,
+      }),
+    )
 }
 
 function setCookies(res: Response): string[] {

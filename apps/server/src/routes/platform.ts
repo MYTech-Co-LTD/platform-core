@@ -34,43 +34,40 @@ export interface PlatformRoutesDeps {
 /** 企微登录方法（开了且配了 corpId 才回传 wecomCorpId，未开不暴露） */
 const WECOM_LOGIN_METHODS = new Set(['wecom-qr', 'wecom-silent'])
 
-export function platformRoutes(deps: PlatformRoutesDeps): Hono<TenantEnv> {
+export function platformRoutes(deps: PlatformRoutesDeps) {
   const listModules = deps.modules ?? (() => [])
   const enabledFor = deps.enabledFor ?? (async () => new Set<string>())
 
-  const app = new Hono<TenantEnv>()
+  return new Hono<TenantEnv>()
+    .get('/branding', (c) => {
+      const t = c.get('tenant')
+      const branding: {
+        productName: string
+        logo: string | null
+        primaryColor: string
+        background: string
+        loginMethods: string[]
+        wecomCorpId?: string
+      } = {
+        productName: t.product_name,
+        logo: t.logo,
+        primaryColor: t.primary_color,
+        background: t.background,
+        loginMethods: t.login_methods,
+      }
+      if (t.login_methods.some((m) => WECOM_LOGIN_METHODS.has(m)) && t.wecom_corp_id) {
+        branding.wecomCorpId = t.wecom_corp_id
+      }
+      return c.json(branding)
+    })
 
-  app.get('/branding', (c) => {
-    const t = c.get('tenant')
-    const branding: {
-      productName: string
-      logo: string | null
-      primaryColor: string
-      background: string
-      loginMethods: string[]
-      wecomCorpId?: string
-    } = {
-      productName: t.product_name,
-      logo: t.logo,
-      primaryColor: t.primary_color,
-      background: t.background,
-      loginMethods: t.login_methods,
-    }
-    if (t.login_methods.some((m) => WECOM_LOGIN_METHODS.has(m)) && t.wecom_corp_id) {
-      branding.wecomCorpId = t.wecom_corp_id
-    }
-    return c.json(branding)
-  })
-
-  app.get('/config', async (c) => {
-    const t = c.get('tenant')
-    const enabled = await enabledFor(t.id)
-    const modules = listModules()
-      .filter((m) => enabled.has(m.id)) // tenant_module 闸门
-      .filter((m) => m.console.length > 0) // 无 console 的模块对控制台不可见
-      .map((m) => ({ id: m.id, name: m.name, console: m.console }))
-    return c.json({ tenant: { slug: t.slug, org: t.casdoor_org }, modules })
-  })
-
-  return app
+    .get('/config', async (c) => {
+      const t = c.get('tenant')
+      const enabled = await enabledFor(t.id)
+      const modules = listModules()
+        .filter((m) => enabled.has(m.id)) // tenant_module 闸门
+        .filter((m) => m.console.length > 0) // 无 console 的模块对控制台不可见
+        .map((m) => ({ id: m.id, name: m.name, console: m.console }))
+      return c.json({ tenant: { slug: t.slug, org: t.casdoor_org }, modules })
+    })
 }

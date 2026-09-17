@@ -95,54 +95,52 @@ function makeApp(
   casdoor: CasdoorFactory = casdoorFor,
   limiter: LoginLimiter = createLoginLimiter(),
   wecomFetch: typeof globalThis.fetch = fakeWecomFetch,
-): Hono<TenantEnv & SessionEnv> {
-  const app = new Hono<TenantEnv & SessionEnv>()
-  app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
-  app.use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET }))
-  app.route(
-    '/api/platform/auth/wecom',
-    wecomRoutes({
-      casdoor,
-      sessionSecret: SECRET,
-      pool,
-      limiter, // ← 新增
-      casdoorUrl: mock.origin,
-      casdoorClientId: 'test-client',
-      casdoorClientSecret: 'test-secret',
-      publicOrigin: PUBLIC_ORIGIN,
-      wecomFetch,
-    }),
-  )
-  return app
+) {
+  return new Hono<TenantEnv & SessionEnv>()
+    .use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
+    .use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET }))
+    .route(
+      '/api/platform/auth/wecom',
+      wecomRoutes({
+        casdoor,
+        sessionSecret: SECRET,
+        pool,
+        limiter, // ← 新增
+        casdoorUrl: mock.origin,
+        casdoorClientId: 'test-client',
+        casdoorClientSecret: 'test-secret',
+        publicOrigin: PUBLIC_ORIGIN,
+        wecomFetch,
+      }),
+    )
 }
 
 /**
  * 两扇门同挂一个 limiter 实例的宿主形态（`app.ts` 的缩样）：拆桶断言只能在**同一个实例**
  * 上看——分成两个实例时那两条断言天然绿，测不到"桶的键是否隔开"。
  */
-function makeAppBothDoors(pool: Pool, limiter: LoginLimiter): Hono<TenantEnv & SessionEnv> {
-  const app = new Hono<TenantEnv & SessionEnv>()
-  app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
-  app.use('*', sessionMiddleware({ casdoor: casdoorFor, sessionSecret: SECRET }))
-  app.route(
-    '/api/platform/auth/wecom',
-    wecomRoutes({
-      casdoor: casdoorFor,
-      sessionSecret: SECRET,
-      pool,
-      limiter,
-      casdoorUrl: mock.origin,
-      casdoorClientId: 'test-client',
-      casdoorClientSecret: 'test-secret',
-      publicOrigin: PUBLIC_ORIGIN,
-      wecomFetch: fakeWecomFetch,
-    }),
-  )
-  app.route(
-    '/api/platform/auth',
-    authRoutes({ casdoor: casdoorFor, sessionSecret: SECRET, pool, limiter }),
-  )
-  return app
+function makeAppBothDoors(pool: Pool, limiter: LoginLimiter) {
+  return new Hono<TenantEnv & SessionEnv>()
+    .use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
+    .use('*', sessionMiddleware({ casdoor: casdoorFor, sessionSecret: SECRET }))
+    .route(
+      '/api/platform/auth/wecom',
+      wecomRoutes({
+        casdoor: casdoorFor,
+        sessionSecret: SECRET,
+        pool,
+        limiter,
+        casdoorUrl: mock.origin,
+        casdoorClientId: 'test-client',
+        casdoorClientSecret: 'test-secret',
+        publicOrigin: PUBLIC_ORIGIN,
+        wecomFetch: fakeWecomFetch,
+      }),
+    )
+    .route(
+      '/api/platform/auth',
+      authRoutes({ casdoor: casdoorFor, sessionSecret: SECRET, pool, limiter }),
+    )
 }
 
 function setCookies(res: Response): string[] {
