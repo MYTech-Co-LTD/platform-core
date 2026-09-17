@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.18.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.18.0...v0.18.1) - 2026-09-17
+- 【修复】scripts: smoke-load 先起 mock 再取宿主端口——消除端口撞车 (Closes #112) ([#114](https://github.com/MYTech-Co-LTD/platform-core/pull/114), [b76b289](https://github.com/MYTech-Co-LTD/platform-core/commit/b76b289f4d59baa42dcf0323391ae3a4c5b40397))
+
+
 ## [0.18.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.17.1...v0.18.0) - 2026-09-17
 - 【新增】aftersales: M3c 步 4 原子切换——按请求解析存储配置 + 读写 storage_ref + 端到端断言 ([#108](https://github.com/MYTech-Co-LTD/platform-core/pull/108), [35c185c](https://github.com/MYTech-Co-LTD/platform-core/commit/35c185c442c421444eeab0bd7e2fd0514eb5e3a9))
 
