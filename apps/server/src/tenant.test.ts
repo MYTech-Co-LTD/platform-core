@@ -19,14 +19,7 @@ import { seedDemo } from './seed'
 const dbUrl = process.env.DATABASE_URL
 const serverMigrationsDir = fileURLToPath(new URL('./migrations', import.meta.url))
 
-// 客户端类型（makeApp 返回值）：testClient 对 Hono<TenantEnv> 的推断产物
-type AppClient = ReturnType<
-  typeof testClient<ReturnType<typeof makeBareApp>>
->
-
-function makeBareApp() {
-  return new Hono<TenantEnv>()
-}
+// 客户端类型（makeApp 返回值）：由 testClient 的推导产物直接承接，不手写别名
 
 describe.skipIf(!dbUrl)('租户解析 + platform 路由 + seed', () => {
   let pool: Pool
@@ -45,11 +38,12 @@ describe.skipIf(!dbUrl)('租户解析 + platform 路由 + seed', () => {
     mode: 'multi' | 'single',
     platformOrg = '',
     deps?: PlatformRoutesDeps,
-  ): AppClient {
-    const app = makeBareApp()
-    app.use('*', resolveTenantMiddleware({ pool, mode, platformOrg }))
-    app.route('/api/platform', platformRoutes(deps ?? { pool }))
-    return testClient(app)
+  ) {
+    return testClient(
+      new Hono<TenantEnv>()
+        .use('*', resolveTenantMiddleware({ pool, mode, platformOrg }))
+        .route('/api/platform', platformRoutes(deps ?? { pool })),
+    )
   }
 
   // —— getTenantByHost 直测 ——

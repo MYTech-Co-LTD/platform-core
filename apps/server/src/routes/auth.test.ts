@@ -60,15 +60,14 @@ function makeApp(
   limiter: LoginLimiter = createLoginLimiter(),
   degradeWarnIntervalMs?: number,
   now?: () => number,
-): Hono<TenantEnv & SessionEnv> {
-  const app = new Hono<TenantEnv & SessionEnv>()
-  app.use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
-  app.use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET, degradeWarnIntervalMs, now }))
-  app.route(
-    '/api/platform/auth',
-    authRoutes({ casdoor, sessionSecret: SECRET, pool, limiter }),
-  )
-  return app
+) {
+  return new Hono<TenantEnv & SessionEnv>()
+    .use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
+    .use('*', sessionMiddleware({ casdoor, sessionSecret: SECRET, degradeWarnIntervalMs, now }))
+    .route(
+      '/api/platform/auth',
+      authRoutes({ casdoor, sessionSecret: SECRET, pool, limiter }),
+    )
 }
 
 function setCookies(res: Response): string[] {
@@ -81,6 +80,25 @@ function sessionToken(res: Response): string {
   const m = /platform_session=([^;]+)/.exec(setCookies(res).join('\n'))
   if (!m) throw new Error('response has no platform_session Set-Cookie')
   return m[1]!
+}
+
+/**
+ * 成功分支收窄：`/session`（与 `/login`）的响应体类型是「失败 `{error}` | 成功
+ * `{user,org,scopes,csrfToken}`」的**联合**。测试在 `expect(res.status).toBe(200)` 之后直接取
+ * `scopes`/`csrfToken`——运行时分支已由状态码保证，类型层却没有收窄。
+ *
+ * 这条错误**不是**本次改动引入的，是本次改动**暴露**的（issue #68 Step2 之前 `testClient()`
+ * 整条链塌成 `unknown`，取什么字段都"过"）。修法刻意**不手抄**一份成功分支的形状——
+ * 手抄清单与真实路由脱钩，就是本仓明确否掉的"把红改绿"；这里只做 `Exclude`，
+ * 形状仍从 `res.json()` 的推导值来。真拿到 error 体时直接抛：测试红，且原因比
+ * `undefined is not an object` 直白。
+ */
+function okBody<T>(body: T): Exclude<T, { error: string }> {
+  if (typeof body === 'object' && body !== null && 'error' in body) {
+    const { error } = body as { error: unknown }
+    throw new Error(`期望成功响应体，实际拿到 { error: ${JSON.stringify(error)} }`)
+  }
+  return body as Exclude<T, { error: string }>
 }
 
 function nowSec(): number {
@@ -164,7 +182,7 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
     const sres = await client.api.platform.auth.session.$get(undefined, {
       headers: { host: 'acme.test', cookie: `platform_session=${token}` },
     })
-    const { csrfToken: csrf } = await sres.json()
+    const { csrfToken: csrf } = okBody(await sres.json())
     const out = await client.api.platform.auth.logout.$post(undefined, {
       headers: { host: 'acme.test', cookie: `platform_session=${token}`, 'x-csrf-token': csrf },
     })
@@ -208,7 +226,7 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
     const p = await verifySession(fresh, SECRET)
     expect(p?.scopes).toEqual(['ticket:admin', 'ticket:view']) // stale 被替换为 Casdoor 真值
     expect(p!.sfa).toBeGreaterThanOrEqual(now) // sfa 已刷新（新签发时刻）
-    expect((await res.json()).scopes).toEqual(['ticket:admin', 'ticket:view']) // 本请求即见新 scopes
+    expect(okBody(await res.json()).scopes).toEqual(['ticket:admin', 'ticket:view']) // 本请求即见新 scopes
   })
 
   // ⑦ audit 两行入库
@@ -271,7 +289,7 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
       })
       expect(res.status).toBe(200)
       expect(setCookies(res)).toEqual([]) // 未重签（重签会假装 sfa 已刷新，遮蔽故障）
-      expect((await res.json()).scopes).toEqual(['old:scope'])
+      expect(okBody(await res.json()).scopes).toEqual(['old:scope'])
     } finally {
       await mock.start() // 换端口重启；工厂按 mock.origin 现取，自愈
     }
@@ -490,7 +508,7 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
       })
       expect(res.status).toBe(200)
       expect(setCookies(res)).toEqual([])             // 不重签、**更不清 cookie**
-      expect((await res.json()).scopes).toEqual(['old:scope'])
+      expect(okBody(await res.json()).scopes).toEqual(['old:scope'])
     } finally {
       mock.setGetUserFault('off')
     }
