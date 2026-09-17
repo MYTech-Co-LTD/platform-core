@@ -24,6 +24,7 @@ const { fakeRegistry } = vi.hoisted(() => ({
 vi.mock('../console-registry.gen', () => ({ consoleRegistry: fakeRegistry }))
 
 import { platformFetch } from '@platform/sdk/web'
+import { App as AntdApp } from 'antd'
 import App from '../App'
 
 const platformFetchMock = vi.mocked(platformFetch)
@@ -475,5 +476,62 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
       expect(container.textContent).toBe('')
     })
     expect(screen.queryByText('概览')).not.toBeInTheDocument()
+  })
+})
+
+// ── issue #106：管理台缺 antd <App> 提供者 ⇒ 14 个 message 调用点全抛 TypeError ──────────
+// 现象：antd 6.x 的 App.useApp() 是**裸 useContext**，没挂 <App> 时默认值是
+// `{ message: {}, notification: {}, modal: {} }` ⇒ `message.success/error` 是 undefined，
+// 调用即抛 `TypeError: message.error is not a function`；管理台所有操作反馈静默失效
+// （成功与失败在界面上同形）。
+//
+// 断言强度（防「空转」）：光断言「壳里有 App 标签」验证不了任何东西——那是对实现形状的
+// 同义反复。本用例走**渲染后的真实调用**：① 壳内组件拿到的 message 是**真函数**；
+// ② 调它之后**真的渲染出可见文案**（`<App>` 内建的 message 持有人被挂载，调用有出口）。
+// 缺了 ①，② 也无从谈起；只有 ② 能证明「反馈对用户可见」这件事真的成立。
+/**
+ * 壳内探针每次渲染留下的 message（供断言读取；用例前置清空数组）。
+ * 用**数组**而不是模块级 `let`/属性：前者无论怎么清空都不会被 TS 的控制流分析窄化，
+ * 而 `delete probe.message` / `probe.message = undefined` 会把该属性一路窄成 `undefined`
+ * ——后面 `message.success` 直接判为 `never`（typecheck 实测 TS2339，两版都踩过）。
+ */
+const probeMessages: Array<ReturnType<typeof AntdApp.useApp>['message']> = []
+
+/** 挂在管理台壳内（经 registry 懒加载）的探针页：只做一件事——把 useApp() 的 message 交出去 */
+function MessageProbe() {
+  probeMessages.push(AntdApp.useApp().message)
+  return <div>消息探针页</div>
+}
+
+describe('管理台 antd <App> 提供者（issue #106）', () => {
+  it('壳内 App.useApp() 拿到的 message 是真 API，且调用渲染出可见反馈', async () => {
+    probeMessages.length = 0
+    setRegistry([
+      {
+        path: '/console/probe',
+        title: '消息探针',
+        scope: 'demo:console',
+        load: () => Promise.resolve({ default: MessageProbe }),
+      },
+    ])
+    mockApi({
+      '/api/platform/auth/session': () => jsonResponse(SESSION),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+
+    // 直敲模块路由（经壳的 Outlet 渲染）——探针确实在管理台壳**之内**，不是裸渲染
+    renderApp('/console/probe')
+    expect(await screen.findByText('消息探针页')).toBeInTheDocument()
+
+    // ① 真函数（缺 <App> 时 antd 给的默认值是 {} ⇒ 这两个断言在修复前即红）
+    const message = probeMessages.at(-1)
+    expect(typeof message?.success).toBe('function')
+    expect(typeof message?.error).toBe('function')
+
+    // ② 调用有出口：文案真的渲染进文档（`<App>` 内建持有人已挂载）
+    message!.success('保存成功 #106')
+    expect(await screen.findByText('保存成功 #106')).toBeInTheDocument()
+    message!.error('保存失败 #106')
+    expect(await screen.findByText('保存失败 #106')).toBeInTheDocument()
   })
 })

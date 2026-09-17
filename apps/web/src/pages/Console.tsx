@@ -24,7 +24,17 @@ import {
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons'
-import { Avatar, Button, Card, ConfigProvider, Result, Spin, Typography, theme } from 'antd'
+import {
+  App as AntdApp,
+  Avatar,
+  Button,
+  Card,
+  ConfigProvider,
+  Result,
+  Spin,
+  Typography,
+  theme,
+} from 'antd'
 import { consoleRegistry } from '../console-registry.gen'
 import { buildConsoleMenu, visibleConsoleEntries } from './console-menu'
 import {
@@ -148,13 +158,20 @@ export default function ConsoleShell() {
         token: { colorPrimary: branding.primaryColor },
       }}
     >
-      <ConsoleLayout
-        session={booted.session}
-        config={booted.config}
-        branding={branding}
-        dark={dark}
-        onToggleDark={toggleDark}
-      />
+      {/* antd <App> 必须在 ConfigProvider **之内**（issue #106）：它渲染 message/notification/
+          modal 的持有人，并给 App.useApp() 提供真 API。antd 6.x 的 useApp 是裸 useContext——
+          没这层提供者时默认值是 `{message:{},notification:{},modal:{}}`，管理台 14 个
+          message.* 调用点全部抛 TypeError（User/Permissions/Subscriptions/存储配置）。
+          放这里而不是 main.tsx 根：只覆盖管理台壳，且继承上面这份租户主题配置。 */}
+      <AntdApp>
+        <ConsoleLayout
+          session={booted.session}
+          config={booted.config}
+          branding={branding}
+          dark={dark}
+          onToggleDark={toggleDark}
+        />
+      </AntdApp>
     </ConfigProvider>
   )
 }
