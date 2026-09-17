@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.14.1...v0.15.0) - 2026-09-17
+- 【新增】ci: 租户隔离门禁补 T2——org 列必须 not null（对齐正典）(Refs #77) ([#98](https://github.com/MYTech-Co-LTD/platform-core/pull/98), [5ebc0b4](https://github.com/MYTech-Co-LTD/platform-core/commit/5ebc0b4fcc3b1f3b0b150f26d252f390c03f1825))
+
+
 ## [0.14.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.14.0...v0.14.1) - 2026-09-17
 - 【优化】test: issue #68 Step2——两侧链式化，testClient() 不再塌成 unknown (Refs #68) ([#92](https://github.com/MYTech-Co-LTD/platform-core/pull/92), [e6e3c26](https://github.com/MYTech-Co-LTD/platform-core/commit/e6e3c2642964b2c8140dea577847de3df9f1d983))
 
