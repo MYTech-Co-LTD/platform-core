@@ -87,6 +87,16 @@ rootDirectory=deploy、framework=docker-compose。
 字节只能走预签名直传，见 storage.ts 文件头）。成功判据：提交页传图能拿到预签名 URL 并 PUT 成功
 （并入步骤 6 冒烟）。
 
+> **M3c（2026-09-17）起：上面五个 `AFTERSALES_ZOS_*` 的语义是「平台默认」，不再是唯一来源。**
+> 宿主按**请求所属租户**解析存储配置（租户自己在管理端「存储配置」页配，落 `platform.tenant` 五列）：
+> **五列全空** ⇒ 回落这五个 env 键；**五列全填** ⇒ 用该租户的桶。两处容易踩的：
+> - **部分填写 ≠ 回落**：租户行只填了一部分 ⇒ **不注入**，附件写路径回 **503**
+>   （fail-explicit；**绝不**悄悄写进平台桶 —— 那会让「租户以为附件在自己桶里、实际在平台桶」）；
+> - **env 与租户都没配** ⇒ 附件端点回 **`503 ZOS_NOT_CONFIGURED`**（与 M3c 之前的表现一致）。
+>
+> 另：本节原文提到的 `zosConfigFromEnv` 在 **M3c 步 4 已不存在**——平台默认的读取现在收在
+> SDK 的 `platformStorageFromEnv`，按请求解析在模块侧（`modules/aftersales/storage.ts`）。
+
 再部署（MCP `post_deployments_build_access`）：projectId、**serverId**（步骤 1 拿的）、
 deployTarget=server、branch=main、environment=production。
 
