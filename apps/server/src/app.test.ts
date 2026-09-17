@@ -236,7 +236,14 @@ describe.skipIf(!dbUrl)('buildApp：/api/* 全局请求体上限（MAX_API_BODY_
     afterAll(async () => {
       // 成功的那些请求走 keep-alive（Node ≥19 的 globalAgent 默认开）⇒ 不主动断开的话
       // server.close() 会一直等这些空闲连接，vitest 报 open handle / 挂住
-      server?.closeAllConnections?.()
+      //
+      // `in` 收窄而不是 `?.` / 断言：`ReturnType<typeof serve>` = `ServerType` =
+      // `http.Server | http2.Http2Server | http2.Http2SecureServer`（@hono/node-server 的联合），
+      // 而 `closeAllConnections` 只在 `http.Server` 上（Node ≥18.2）。本套件没传 `createServer`
+      // ⇒ 运行时必是 `http.Server`，但类型层仍是三选一：旧写法 `server?.closeAllConnections?.()`
+      // 的可选链只挡 `undefined`，挡不住「联合里另外两个成员没有这个属性」⇒ TS2339。
+      // 收窄后归 http.Server，`?.` 也不再需要（`server` 已被 truthy 判定）。
+      if (server && 'closeAllConnections' in server) server.closeAllConnections()
       await new Promise<void>((resolve) => {
         if (!server) return resolve()
         server.close(() => resolve())

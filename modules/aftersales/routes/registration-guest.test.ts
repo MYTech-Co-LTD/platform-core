@@ -76,7 +76,10 @@ async function seedMe(storeIdsToLink: number[] = []): Promise<void> {
   }
 }
 
-const submit = (a: Hono, body: unknown) =>
+// 形参用 `ReturnType<typeof app>`（推导）而不是裸 `Hono`：裸 `Hono` = `Hono<BlankEnv>`，
+// 而 `app()` 造的是带 `{ identity }` 变量表的 app —— Hono 的 Env 不变，两者 TS2345
+// （issue #68 Step 3 的 10 条）。推导写法还顺带保证「以后 app() 换了 Env，这里跟着走」。
+const submit = (a: ReturnType<typeof app>, body: unknown) =>
   a.request('/guest/employee-approvals', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

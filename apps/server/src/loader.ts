@@ -24,11 +24,12 @@ import {
   ManifestSchema,
   declaredScopeGate,
   type DeclaredEndpoint,
+  type Identity,
   type ModuleDefinition,
   type ModuleManifest,
 } from '@platform/sdk'
 import { Hono } from 'hono'
-import type { MiddlewareHandler } from 'hono'
+import type { Env, MiddlewareHandler } from 'hono'
 import type { Pool } from 'pg'
 import { runMigrations } from './migrate'
 import type { TenantRow } from './tenant'
@@ -40,16 +41,42 @@ export interface LoadedModule {
 }
 
 /**
+ * 启用闸门（mount 内挂的 `gate`）**读到**的全部变量。**只用于给闸门自己的 body 定类型**
+ * （`MiddlewareHandler<MountEnv>`），不是 mount 形参的类型 —— 见下面 `mount<E extends Env>`。
+ *
+ * 读它们是为了判定「这个租户停用了这个模块吗」：`tenant` 定租户、`identity` 判匿名。
+ * 两个都**可以缺席**，且闸门对缺席有显式分支（无租户/匿名一律放行给后续层）——这正是
+ * 闸门类型写得比宿主 Env 宽的原因，也是 mount 形参能不挑 Env 的原因。
+ */
+export interface MountEnv {
+  Variables: { tenant: TenantRow; identity: Identity }
+}
+
+/**
  * 装载结果。mount 前中间件链由宿主负责（租户解析 → 会话中间件 → 模块自加
  * requireScope），mount 只做挂载；enabledFor 按「无行=启用默认」求租户可见集。
  *
  * `enabledFor` 有**两个**消费方，且共用同一份实现（见 loadModules 的 enabledForImpl）：
  * routes/platform.ts 的 /config 清单闸门，以及 mount() 挂的 API 启用闸门（M1 闭债 R4）。
  * 两者必须同源——清单里看不到却仍能调通的模块，正是停用语义只落一半时的样子。
+ *
+ * **`mount` 的形参为什么是 `<E extends Env>(app: Hono<E>)` 而不是 `(app: Hono)`**（issue #68
+ * Step 3 实测订正）：Hono 的 Env 在类型层是**不变**的——`E` 既出现在 `Handler<E>` 的参数位
+ * （handler 的 `c: Context<E>`），又经 `Set<E>` / 返回的 `Hono<E, …>` 出现在产出位。实测三种
+ * 形参都收不下真实调用点：
+ *   · `(app: Hono)`（缺省 = `Hono<BlankEnv>`）⇒ 收不下任何带变量表的 app（TS2345）；
+ *   · `(app: Hono<MountEnv>)` ⇒ 连 `MountEnv` 的**真超集** `TenantEnv & SessionEnv` 也收不下
+ *     （反方向同样 TS2345，缺 `session` 键）；
+ *   · 泛型 `E` ⇒ 两边都收得下（E 由调用点推出，app.ts 推 `TenantEnv & SessionEnv`、
+ *     测试推各自的 TestEnv）。
+ * app.ts 里那句 `runtime.mount(app as unknown as Hono)` 就是被第一条逼出来的双向断言，
+ * 已随本次签名订正删除。**闸门 body 的类型没有因此变松**：`gate` 自己注的是
+ * `MiddlewareHandler<MountEnv>`，`c.get('tenant')` / `c.get('identity')` 的**键名仍受检**
+ * （实测：body 里写 `c.get('zzzNope')` 报 TS2769「'zzzNope' 不可赋给 'identity' | 'tenant'」）。
  */
 export interface ModulesRuntime {
   modules: LoadedModule[]
-  mount(app: Hono): void
+  mount<E extends Env>(app: Hono<E>): void
   enabledFor(tenantId: number): Promise<Set<string>>
   /** 该租户已启用模块声明的访客码（manifest guest.scope，售后 spec §1.3：wechat-oa 签访客 session 用） */
   enabledGuestScopes(tenantId: number): Promise<string[]>
@@ -361,7 +388,7 @@ export async function loadModules(
     modules: loaded,
 
     // ⑥ API 挂 /api/modules/<id>；userApp 静态目录存在才挂（dist 绝对路径，mount 路径来自 manifest）
-    mount(app: Hono): void {
+    mount<E extends Env>(app: Hono<E>): void {
       for (const m of loaded) {
         const base = moduleApiBasePath(m.manifest.id)
 
@@ -386,7 +413,10 @@ export async function loadModules(
         //      代价：每请求一次 enabledFor 查询（+1 次 DB 往返）。**刻意不做缓存**——「停用后
         //      多久生效」不该有一个隐式窗口；将来若测出瓶颈要加 TTL，必须同时把窗口语义写进
         //      本注释与 docs/module-protocol.md。
-        const gate: MiddlewareHandler = async (c, next) => {
+        // 闸门的 Env 注 `MountEnv`（本闸门**读到的**变量全集），不注宿主真实装配的
+        // `TenantEnv & SessionEnv`：闸门只认这两个键，多注一个 `session` 就是多一处跟着
+        // 宿主漂的耦合。注了之后 `c.get(...)` 的键名受检（见 MountEnv 的注释）。
+        const gate: MiddlewareHandler<MountEnv> = async (c, next) => {
           const tenant = c.get('tenant') as TenantRow | undefined
           // 无租户上下文（未过租户中间件）不在本闸门职责内，放行给后续层。真实链路上这道
           // 中间件先于一切业务路由，未命中 Host 早已 404/抛错 ⇒ 闸门见到的请求必带租户。

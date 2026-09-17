@@ -271,9 +271,11 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   }))
 
   // ⑨ 模块 API（/api/modules/<id>/*）+ 模块 userApp 静态（mount 内部处理）。
-  // cast 说明：mount 的签名收 Hono（BlankEnv），本 app 带 TenantEnv&SessionEnv——
-  // Hono 泛型协变不接受（TS2345），但 mount 内只 route/use 不触碰变量表，运行时同构
-  runtime.mount(app as unknown as Hono)
+  // 无需 cast：mount 收 `Hono<MountEnv>`，只声明闸门真正读的 `tenant` / `identity`
+  // 两个变量——本 app 的 `TenantEnv & SessionEnv` 结构上覆盖它。旧文在此处写过
+  // 「mount 收 Hono（BlankEnv），Hono 泛型协变不接受」⇒ `as unknown as Hono`；
+  // 那句是**签名过窄**的补丁，已随 MountEnv 收口（原因见 loader.ts 的 MountEnv 注释）。
+  runtime.mount(app)
 
   // ⑩ web 静态（Task 17 dist 产物）：/console/* 文件命中直出、未命中回退 SPA index；
   // 其余非 /api GET（/、/login 等 SPA 路由）回退 index.html。dist 不存在 → warn 跳过

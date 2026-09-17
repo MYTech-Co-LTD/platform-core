@@ -13,12 +13,12 @@ afterAll(async () => { await m.stop() })
 describe('CasdoorClient', () => {
   it('verifyPassword 成功返回用户，失败返回 null', async () => {
     const c = new CasdoorClient({ origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme' })
-    expect((await c.verifyPassword('admin1', 'pw')).name).toBe('admin1')
+    expect((await c.verifyPassword('admin1', 'pw'))?.name).toBe('admin1')
     expect(await c.verifyPassword('admin1', 'bad')).toBeNull()
   })
   it('getUser/getPermissions 携带 admin 会话', async () => {
     const c = new CasdoorClient({ origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
-    expect((await c.getUser('admin1')).roles).toEqual(['ops'])
+    expect((await c.getUser('admin1'))?.roles).toEqual(['ops'])
     expect(await c.getPermissions()).toHaveLength(1)
   })
   it('upsertPermission 幂等（已存在不重复建）', async () => {
@@ -74,10 +74,10 @@ describe('CasdoorClient 语义钉死（C2）', () => {
 
   it('admin 会话失效（真机形状：HTTP 200 + status:error）自动重登一次并重试', async () => {
     const c = new CasdoorClient({ origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
-    expect((await c.getUser('admin1')).name).toBe('admin1') // 首次：登录 + 缓存 cookie
+    expect((await c.getUser('admin1'))?.name).toBe('admin1') // 首次：登录 + 缓存 cookie
     const before = m.adminLoginCalls
     m.expireSessions() // 服务端吊销全部会话 ⇒ 真机把它回成 200+status:error（**不是 401**）
-    expect((await c.getUser('admin1')).name).toBe('admin1') // 响应体 error → 重登 → 重试成功
+    expect((await c.getUser('admin1'))?.name).toBe('admin1') // 响应体 error → 重登 → 重试成功
     expect(m.adminLoginCalls).toBe(before + 1)
   })
 
@@ -85,12 +85,12 @@ describe('CasdoorClient 语义钉死（C2）', () => {
     // 401 分支保留是刻意的：它仍是合法的防御面（被反代/网关插一层 401）。但它**不是**
     // 会话失效的主要路径——真机从不产生 401 ⇒ 只能显式注入来机检它（评审 must-fix 2）。
     const c = new CasdoorClient({ origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
-    expect((await c.getUser('admin1')).name).toBe('admin1')
+    expect((await c.getUser('admin1'))?.name).toBe('admin1')
     const before = m.adminLoginCalls
     m.expireSessions()
     m.setHttpFault('unauthorized401Once') // 只插一次：等价于"反代插了个 401，会话本身仍在"
     try {
-      expect((await c.getUser('admin1')).name).toBe('admin1') // 401 → 重登 → 重试成功
+      expect((await c.getUser('admin1'))?.name).toBe('admin1') // 401 → 重登 → 重试成功
       expect(m.adminLoginCalls).toBe(before + 1)
     } finally {
       m.setHttpFault('off')
@@ -136,7 +136,7 @@ describe('CasdoorClient 语义钉死（C2）', () => {
     await c1.verifyPassword('admin1', 'pw')
     expect(m.lastLoginApplication).toBe('app-built-in')
     const c2 = new CasdoorClient({ origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme', application: 'acme-app' })
-    expect((await c2.verifyPassword('admin1', 'pw')).name).toBe('admin1')
+    expect((await c2.verifyPassword('admin1', 'pw'))?.name).toBe('admin1')
     expect(m.lastLoginApplication).toBe('acme-app')
   })
 
@@ -427,7 +427,7 @@ describe('ensureUser + bindUserToAllPermissions（JIT 自动建号，issue #32�
         owner: 'acme', name: 'wo_new', type: 'normal-user', signupApplication: 'app-mytech',
       })
       // 建成后 get-user 立即可查（路由的 JIT 后重读依赖这一点）
-      expect((await c.getUser('wo_new')).name).toBe('wo_new')
+      expect((await c.getUser('wo_new'))?.name).toBe('wo_new')
 
       // 未配 application：缺省 app-built-in（与 #login 的 application 缺省同口径）
       const c2 = new CasdoorClient({
@@ -509,8 +509,13 @@ describe('ensureUser + bindUserToAllPermissions（JIT 自动建号，issue #32�
 
 // ── 订阅域（spec 2026-09-13 SaaS 管理域；真机尖刺三铁律见 casdoor-client.ts）──
 describe('CasdoorClient 订阅域（fetchImpl 假路由器）', () => {
+  // 假路由器的形参写 `RequestInfo | URL`（= `Request | string | URL`），**不能**只写
+  // `RequestInfo`：`fetchImpl` 的声明是 `typeof fetch`，而 `fetch` 的两条重载分别是
+  // `(input: URL | RequestInfo, …)` 与 `(input: string | URL | Request, …)` 都含裸 `URL`
+  // ⇒ 形参缺 URL 的实参不可赋（TS2345，issue #68 Step 3 清掉的 5 条）。函数赋给**重载**
+  // 目标时 TS 要求对**每条**重载都成立，故按并集写最宽的那条。
   function subRouter(rows: Record<string, unknown[]>, log: { path: string; body?: unknown }[]) {
-    return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
+    return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       void init
       const u = String(input)
       log.push({ path: u.replace(/^https?:\/\/[^/]+/, '') })
@@ -524,7 +529,7 @@ describe('CasdoorClient 订阅域（fetchImpl 假路由器）', () => {
     }
   }
   const mk = (f: typeof fetch) =>
-    new CasdoorClient({ origin: 'http://x', clientId: 'c', clientSecret: 's', org: 'acme', adminUser: 'a', adminPwd: 'p', fetchImpl: f as typeof fetch })
+    new CasdoorClient({ origin: 'http://x', clientId: 'c', clientSecret: 's', org: 'acme', adminUser: 'a', adminPwd: 'p', fetchImpl: f })
 
   it('listSubscriptions：按 owner 查、透传全部字段、error 抛错', async () => {
     const log: { path: string; body?: unknown }[] = []
@@ -547,12 +552,13 @@ describe('CasdoorClient 订阅域（fetchImpl 假路由器）', () => {
 })
 
 describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan→订阅）', () => {
+  // 形参同 subRouter（`RequestInfo | URL`），理由见那一处的注释
   function rwRouter(
     get: (frag: string, q: URLSearchParams) => unknown,
     post: (frag: string, body: any, q: URLSearchParams) => { status: string; data?: unknown },
     log: { path: string; body?: any }[],
   ) {
-    return async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
+    return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const u = new URL(String(input))
       const body = init?.body ? JSON.parse(String(init.body)) : undefined
       const frag = u.pathname.replace('/api', '')
@@ -563,7 +569,7 @@ describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan�
     }
   }
   const mk2 = (f: typeof fetch) =>
-    new CasdoorClient({ origin: 'http://x', clientId: 'c', clientSecret: 's', org: 'acme', adminUser: 'a', adminPwd: 'p', fetchImpl: f as typeof fetch })
+    new CasdoorClient({ origin: 'http://x', clientId: 'c', clientSecret: 's', org: 'acme', adminUser: 'a', adminPwd: 'p', fetchImpl: f })
 
   it('四联：ensureOrg/ensureAnchorUser(幂等)/ensureModulePlan/upsertSubscription(RFC3339+body+回读)', async () => {
     const orgs: string[] = []
