@@ -66,7 +66,7 @@ describe('buildConsoleMenu（spec §3 位置规则）', () => {
 
 // ---- M3：管理组（tenant:admin 门禁，spec D4/D9，issue #46）----
 describe('buildConsoleMenu 管理组', () => {
-  it('有 tenant:admin → 尾部追加「管理」组（三项子菜单）', () => {
+  it('有 tenant:admin → 尾部追加「管理」组（四项子菜单）', () => {
     const menu = buildConsoleMenu([], {}, { scopes: ['tenant:admin'] })
     const group = menu.at(-1)
     expect(group?.name).toBe('管理')
@@ -74,6 +74,7 @@ describe('buildConsoleMenu 管理组', () => {
       '/console/admin/users',
       '/console/admin/permissions',
       '/console/admin/subscriptions',
+      '/console/admin/storage',
     ])
   })
 
