@@ -19,16 +19,23 @@
 //   真库对账天然只看终态，这个坑不存在（`scripts/check-tenant-isolation.test.ts` 有一组
 //   专门钉住它的回归用例）。
 //
-// ★ 判据只认「org 列存在」，不查 not null / 不查唯一约束 / 不查索引前缀。
-//   正典的三条纪律里，①「带 org text not null 列」是本门禁的判据面，②（唯一约束含 org）
-//   与 ③（热路径索引以 org 为前缀列）**刻意不查**：
-//     · 正典自己写了②③是**条件适用**的（「没有业务唯一键的表不适用，不强加」）——机器判不出
-//       「这张表该不该有业务唯一键」，查它必然误报，故②③仍是评审守（正典里的措辞与此一致）。
-//     · `not null` 不查：它管的是「行可不可见」而不是「租户会不会互见」。org **缺失**才有互见
-//       风险；org 为空的最坏结果是该行对所有租户不可见——而这正是正典为存量回填选定的状态
-//       （回填空串，「宁可不可见，不可错归属」）。把它纳入判据会把本门禁的暴露面从「隔离」
-//       漂到「数据质量」，而 issue 的验收（反例 = 建表无 org）也止于列存在性。
-//   一句话：正典那句 `org text not null` 是**写法指引**，本门禁的判据是**列存在性**。
+// ★ 判据两条（都出自正典同一句话）：①「org 列存在」+ ②「该 org 列 not null」。
+//   正典三条纪律里，①「带 `org text not null` 列」是本门禁的判据面——**措辞里就写着 not null，
+//   故两条都查**；②（唯一约束含 org）与 ③（热路径索引以 org 为前缀列）**刻意不查**：正典自己
+//   写了②③是**条件适用**的（「没有业务唯一键的表不适用，不强加」）——机器判不出「这张表该不该
+//   有业务唯一键」，查它必然误报，故②③仍是评审守（正典里的措辞与此一致）。
+//
+//   ★ 为什么 not null 也在判据面里（2026-09-17 补 T2；本脚本一度明文写着「不查」）：
+//   老实说，`not null` 管的是「行可不可见」，不是「租户会不会互见」——org **缺失**才有互见
+//   风险；org 为空的最坏结果是该行对所有租户不可见（而这正是正典为存量回填选定的状态：
+//   回填空串，「宁可不可见，不可错归属」）。**但正典要求它**（docs/module-protocol.md:181
+//   逐字写着 `org text not null`），而本门禁的职责是**执行正典**，不是照自己的理解给正典打折：
+//   门禁注释里引用一句正典、实现里只查半句，两者立刻会漂开——「引着正典、查着别的」正是门禁
+//   腐化的起点。可空 org 也不是无害：`where org = $1` 会**静默漏掉**这些行（NULL 不等于任何值），
+//   读不到与读错了同样难查。
+//   代价侧实测为零（加 T2 时全仓 10 张模块表**全部已是 NOT NULL**：demo 的 003_note_org.sql
+//   就是 `add column` 后紧跟回填 + `set not null`）⇒ 这条例只知道「将来有人写漏 not null 时
+//   红一次」，正是它要防的。
 //
 // ── 判据之外的两条静态检查（门禁自身的健全性，fail-closed） ─────────────────────
 // 下面两条**不看 org**，它们防的是「门禁空转 / 豁免权漂移」，不是租户互见：
@@ -56,8 +63,10 @@
 //     -- global-table: 省份字典，全租户共用，无租户归属
 //     create table if not exists demo.province (…)
 // 四条约束（防「随便声明就能绕过」）：理由**必填**（空理由即违规）；标记必须**紧贴**一条本模块
-// schema 的 create table（挂空即违规）；它**只豁免「org 列缺失」这一条判据**（②③纪律照旧由评审
-// 守）；标记长在 DDL 旁 ⇒ 必走 PR、评审一眼可见。
+// schema 的 create table（挂空即违规）；它豁免的是**「租户数据表」整条判据**——org 存在（T1）与
+// org not null（T2）**两条一起豁免，保持一致**：标记的语义是「这张表**不是**租户数据表」（全局
+// 字典/配置表），既然它不是租户数据表，正典那句 `org text not null` 对它**整体不适用**，没有
+// 「T1 算是 T2 不算」的中间态（②③纪律照旧由评审守）；标记长在 DDL 旁 ⇒ 必走 PR、评审一眼可见。
 // 为什么不做成 manifest 字段（issue 已定，这里补上为什么）：理由应当长在表的定义旁边，放到另一个
 // 文件里会走散；manifest 是**机器契约**（B4/B5 由 check-manifests 校验），把「为什么这张表没有
 // org」塞进契约字段等于把契约当评审簿用，且新模块模板会多出一个空字段——空字段很容易变成默认勾选。
@@ -393,7 +402,7 @@ function withDatabaseName(dbUrl, dbName) {
  * 在一次性数据库里跑完各模块迁移 → 查 information_schema。
  * **绝不碰 DATABASE_URL 指的那个库**（见实现判断①）；调用方负责 drop（本函数内 try/finally）。
  * @param {string} dbUrl @param {Module[]} modules
- * @returns {Promise<Map<string, { total: number, missingOrg: string[] }>>} schema → 表统计
+ * @returns {Promise<Map<string, { total: number, missingOrg: string[], nullableOrg: string[] }>>} schema → 表统计
  */
 export async function inspectSchemas(dbUrl, modules) {
   // scripts/ 不属于任何 workspace 包，裸 import 'pg' 处处解析不到 ⇒ 锚到 apps/server 解析
@@ -422,6 +431,10 @@ export async function inspectSchemas(dbUrl, modules) {
       }
 
       const schemas = modules.map((m) => m.id)
+      // 表清单以 information_schema.tables 为准（不是从 columns 分组出来的）：零列的表
+      // （`create table fx.t()` 合法）在 columns 里一行都没有，从 columns 出发会连表都见不到
+      // ⇒ 静默放行。故「有没有 org」与「org 可不可空」都做成对 tables 的两个 exists 探针，
+      // 与既有的 has_org 同形（真值只有一个来源：库）。
       const { rows } = await pool.query(
         `select t.table_schema, t.table_name,
                 exists (
@@ -429,20 +442,30 @@ export async function inspectSchemas(dbUrl, modules) {
                    where c.table_schema = t.table_schema
                      and c.table_name = t.table_name
                      and c.column_name = 'org'
-                ) as has_org
+                ) as has_org,
+                exists (
+                  select 1 from information_schema.columns c
+                   where c.table_schema = t.table_schema
+                     and c.table_name = t.table_name
+                     and c.column_name = 'org'
+                     and c.is_nullable = 'NO'
+                ) as org_not_null
            from information_schema.tables t
           where t.table_schema = any($1::text[])
             and t.table_type = 'BASE TABLE'
           order by 1, 2`,
         [schemas],
       )
-      /** @type {Map<string, { total: number, missingOrg: string[] }>} */
-      const bySchema = new Map(schemas.map((s) => [s, { total: 0, missingOrg: [] }]))
-      for (const row of /** @type {Array<{ table_schema: string, table_name: string, has_org: boolean }>} */ (rows)) {
+      /** @type {Map<string, { total: number, missingOrg: string[], nullableOrg: string[] }>} */
+      const bySchema = new Map(schemas.map((s) => [s, { total: 0, missingOrg: [], nullableOrg: [] }]))
+      for (const row of /** @type {Array<{ table_schema: string, table_name: string, has_org: boolean, org_not_null: boolean }>} */ (rows)) {
         const stat = bySchema.get(row.table_schema)
         if (!stat) continue
         stat.total++
+        // 缺列归 T1、可空归 T2，**互斥**（有 not null 探针为真必然有列 ⇒ 两条不会同时命中），
+        // 免得一张没有 org 的表被报两次（一次说缺列、一次说可空，第二条是噪声）。
         if (!row.has_org) stat.missingOrg.push(row.table_name)
+        else if (!row.org_not_null) stat.nullableOrg.push(row.table_name)
       }
       return bySchema
     } finally {
@@ -484,7 +507,7 @@ export async function checkTenantIsolation({ rootDir, dbUrl }) {
     const modules = checked.map((c) => c.mod)
     const bySchema = await inspectSchemas(dbUrl, modules)
     for (const { mod, sql } of checked) {
-      const stat = bySchema.get(mod.id) ?? { total: 0, missingOrg: [] }
+      const stat = bySchema.get(mod.id) ?? { total: 0, missingOrg: [], nullableOrg: [] }
       tables += stat.total
 
       // 空转自检：迁移里有建表迹象，库里却一张表都没见到 ⇒ 门禁对这个模块是瞎的，判违规
@@ -496,14 +519,32 @@ export async function checkTenantIsolation({ rootDir, dbUrl }) {
         })
       }
 
-      for (const table of stat.missingOrg) {
+      /**
+       * 违规定位：认得出的建表写法 ⇒ 指到 `文件:行号`；认不出的 ⇒ 退回迁移目录（不伪造行号）
+       * @param {string} table @returns {{ file: string, line: number | null }}
+       */
+      const at = (table) => {
         const site = sql.creates.get(table)
-        const exemption = sql.markers.get(table)
-        if (exemption) continue // 有豁免标记（理由已由 parseModuleSql 校验非空）
+        return { file: site ? site.file : mod.migrationsDirRel, line: site ? site.line : null }
+      }
+
+      // 两条判据共用同一个豁免出口（标记的语义是「这张表不是租户数据表」，故 T1/T2 一起不适用；
+      // 理由已由 parseModuleSql 校验非空）与同一段「全局表则加标记」的出口说明。
+      const globalTableHint = `若它确为跨租户共享的全局表，请在它的 create table 上方加一行 \`-- global-table: <理由>\`（正典 docs/module-protocol.md「租户数据隔离」）`
+
+      for (const table of stat.missingOrg) {
+        if (sql.markers.get(table)) continue // 有豁免标记
         violations.push({
-          file: site ? site.file : mod.migrationsDirRel,
-          line: site ? site.line : null,
-          message: `表 "${mod.id}.${table}" 跑完迁移后没有 org 列——租户数据表必须带 org（写法定典 \`org text not null\`，值 = identity.orgId），读写一律 \`where org = $1\`；若它确为跨租户共享的全局表，请在它的 create table 上方加一行 \`-- global-table: <理由>\`（正典 docs/module-protocol.md「租户数据隔离」）`,
+          ...at(table),
+          message: `表 "${mod.id}.${table}" 跑完迁移后没有 org 列——租户数据表必须带 org（写法定典 \`org text not null\`，值 = identity.orgId），读写一律 \`where org = $1\`；${globalTableHint}`,
+        })
+      }
+
+      for (const table of stat.nullableOrg) {
+        if (sql.markers.get(table)) continue // 同一条豁免（标记说的是「它不是租户数据表」）
+        violations.push({
+          ...at(table),
+          message: `表 "${mod.id}.${table}" 的 org 列可空——租户数据表**必须 not null**（正典 docs/module-protocol.md:181 逐字写着 \`org text not null\`）；可空 org 的行会从 \`where org = $1\` 里静默消失（NULL 不等于任何值），读不到与读错了同样难查。存量行先回填（无法归属的填空串——「宁可不可见，不可错归属」）再 \`alter table ${mod.id}.${table} alter column org set not null\`；${globalTableHint}`,
         })
       }
     }
@@ -528,9 +569,10 @@ async function main() {
     }
     process.exit(1)
   }
-  // OK 行必须带计数：门禁「扫了 0 个模块」也是绿的，那种绿要靠人看得见（本仓 fetch-depth 教训）
+  // OK 行必须带计数：门禁「扫了 0 个模块」也是绿的，那种绿要靠人看得见（本仓 fetch-depth 教训）。
+  // 措辞跟着判据走：查了两条（org 存在 + org not null）就说两条，别让 OK 行比实现少说一条。
   console.log(
-    `${SCRIPT_NAME}: OK（${result.checked} 个模块 / ${result.tables} 张表全部带 org；`
+    `${SCRIPT_NAME}: OK（${result.checked} 个模块 / ${result.tables} 张表全部带 org 且 not null；`
     + `跳过 ${result.skipped} 个无 migrations/ 的模块）`,
   )
 }

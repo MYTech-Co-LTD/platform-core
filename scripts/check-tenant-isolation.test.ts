@@ -168,6 +168,61 @@ describePg('真库对账（真跑迁移 + 真查 information_schema）', () => {
     expect(result.violations[0]?.message).toContain('"fx.note"')
   })
 
+  it('org 列 not null ⇒ 绿（正典写法定典：`org text not null`）', async () => {
+    const root = fixture(moduleFiles('fx', {
+      '001_init.sql': 'create schema if not exists fx;\ncreate table if not exists fx.note (id serial primary key, org text not null);\n',
+    }))
+    const result = await checkTenantIsolation({ rootDir: root, dbUrl })
+    expect(result.violations).toEqual([])
+    expect(result.tables).toBe(1)
+  })
+
+  it('org 列可空 ⇒ 红（必须 not null），报出表名与建表语句所在位置', async () => {
+    const root = fixture(moduleFiles('fx', {
+      '001_init.sql': 'create schema if not exists fx;\ncreate table if not exists fx.note (id serial primary key, org text);\n',
+    }))
+    const result = await checkTenantIsolation({ rootDir: root, dbUrl })
+    expect(result.violations).toHaveLength(1)
+    expect(result.violations[0]).toMatchObject({ file: 'modules/fx/migrations/001_init.sql', line: 2 })
+    expect(result.violations[0]?.message).toContain('"fx.note"')
+    expect(result.violations[0]?.message).toContain('必须 not null')
+  })
+
+  it('缺 org 只报一次（T1），不因为「可空」再报一条（两条判据互斥）', async () => {
+    const root = fixture(moduleFiles('fx', {
+      '001_init.sql': 'create schema if not exists fx;\ncreate table if not exists fx.note (id serial primary key);\n',
+    }))
+    const result = await checkTenantIsolation({ rootDir: root, dbUrl })
+    expect(result.violations).toHaveLength(1)
+    expect(result.violations[0]?.message).toContain('没有 org 列')
+  })
+
+  it('★ 累积终态（T2 同款）：001 补成可空、002 再 set not null ⇒ 绿', async () => {
+    // 与 demo 003_note_org.sql 同一形状（add column 可空 → 回填 → set not null）。按文件判的
+    // 实现会在 001 那步就报红；真库只看终态，故绿。
+    const root = fixture(moduleFiles('fx', {
+      '001_init.sql': 'create schema if not exists fx;\ncreate table if not exists fx.note (id serial primary key, body text not null);\n',
+      '002_org.sql': 'alter table fx.note add column if not exists org text;\nupdate fx.note set org = \'\' where org is null;\nalter table fx.note alter column org set not null;\n',
+    }))
+    const result = await checkTenantIsolation({ rootDir: root, dbUrl })
+    expect(result.violations).toEqual([])
+    expect(result.tables).toBe(1)
+  })
+
+  it('豁免标记同样豁免 T2：被豁免的表 org 可空也不判（标记说的是「它不是租户数据表」）', async () => {
+    const root = fixture(moduleFiles('fx', {
+      '001_init.sql': [
+        'create schema if not exists fx;',
+        '-- global-table: 省份字典，全租户共用',
+        'create table if not exists fx.province (id serial primary key, org text);',
+        'create table if not exists fx.note (id serial primary key, org text not null);',
+      ].join('\n'),
+    }))
+    const result = await checkTenantIsolation({ rootDir: root, dbUrl })
+    expect(result.violations).toEqual([])
+    expect(result.tables).toBe(2)
+  })
+
   it('★ 累积终态：001 建表无 org、002 后补 org ⇒ 绿（demo 那个反例的回归）', async () => {
     // 逐字复刻 modules/demo 的形状：建表在 001（无 org）、org 在 003 才补上。
     // 按文件判的正则实现会在这里误报 —— 而 demo 是每个新模块照抄的模板，
@@ -247,7 +302,7 @@ describePg('CLI 契约（spawn 真实入口）', () => {
   it('干净 ⇒ exit 0 且 OK 行带检查面计数', () => {
     const r = runCli([repoRoot])
     expect(r.status, r.stderr).toBe(0)
-    expect(r.stdout).toMatch(/^check-tenant-isolation: OK（\d+ 个模块 \/ \d+ 张表全部带 org；跳过 \d+ 个无 migrations\/ 的模块）\n$/)
+    expect(r.stdout).toMatch(/^check-tenant-isolation: OK（\d+ 个模块 \/ \d+ 张表全部带 org 且 not null；跳过 \d+ 个无 migrations\/ 的模块）\n$/)
   })
 
   it('有违规 ⇒ exit 1 且逐行 `路径:行号: [租户隔离] 说明`', () => {
