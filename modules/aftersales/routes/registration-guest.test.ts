@@ -17,7 +17,7 @@ function app(openid = OPENID) {
     c.set('identity', { userId: openid, orgId: ORG, displayName: openid, scopes: [], hasScope: () => true })
     await next()
   })
-  registerRegistrationGuest(r, { pool })
+  registerRegistrationGuest(r, { pool, storage: null })
   return r
 }
 

@@ -38,25 +38,17 @@ export function errorText(code: string): string {
   return ERROR_TEXTS[code] ?? '登录失败，请稍后重试'
 }
 
-/** 平台 API 唯一错误形状：code 即后端 {error} 错误码（或 UNAUTHENTICATED/NETWORK 等通道错误）。
- *  `reason` / `detail` 是可选的**结构化补充**（目前只有存储探测用：服务端回
- *  `{error:'STORAGE_PROBE_FAILED', reason, detail}`）——带上它们，页面才能把「为什么连不上」
- *  显示出来；只回一个 code 的话用户拿到的就是「操作失败」四个字，没有任何下一步可做。 */
+/** 平台 API 唯一错误形状：code 即后端 {error} 错误码（或 UNAUTHENTICATED/NETWORK 等通道错误） */
 export class ApiError extends Error {
-  constructor(readonly code: string, readonly reason?: string, readonly detail?: string) {
+  constructor(readonly code: string) {
     super(code)
   }
 }
 
 /** 非 2xx：解析 body {error} 为 ApiError；body 异常时退 HTTP_<status> */
 async function toApiError(res: Response): Promise<ApiError> {
-  const body = (await res.json().catch(() => null)) as { error?: unknown; reason?: unknown; detail?: unknown } | null
-  const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
-  return new ApiError(
-    str(body?.error) ?? `HTTP_${res.status}`,
-    str(body?.reason),
-    str(body?.detail),
-  )
+  const body = (await res.json().catch(() => null)) as { error?: unknown } | null
+  return new ApiError(typeof body?.error === 'string' ? body.error : `HTTP_${res.status}`)
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -186,43 +178,3 @@ export const revokeAdminPermission = (code: string, user: string) =>
     `/api/platform/admin/permissions/${encodeURIComponent(code)}/users/${encodeURIComponent(user)}`,
     'DELETE',
   )
-
-// ---- 租户级存储配置（M3c）----
-
-/**
- * GET /api/platform/admin/storage 的形状。
- * ⚠️ **没有 secretAccessKey 字段，也永远不会有**——服务端连字段都不回（「有但空」会被当成
- * 「配过」）。AK 只回掩码（前 4 位 + `****`）。这不是本类型的选择，是服务端的契约。
- */
-export interface AdminStorage {
-  /** 五列全填 ⇒ true（已配，附件走本租户的桶） */
-  configured: boolean
-  /** 部分填写 ⇒ true（库里是半套 ⇒ 宿主不予使用，附件不可用） */
-  partial: boolean
-  endpoint: string
-  region: string
-  bucket: string
-  accessKeyIdMasked: string
-  /** 进程 env 五键是否齐全（= 有没有「平台默认」可回落） */
-  platformFallback: boolean
-}
-
-/** 存储配置写入形状；AK/SK **留空 = 保持原值**（凭据轮换不必重贴） */
-export interface AdminStorageInput {
-  endpoint: string
-  region: string
-  bucket: string
-  accessKeyId?: string
-  secretAccessKey?: string
-}
-
-export const getAdminStorage = () => request<AdminStorage>('/api/platform/admin/storage')
-/** 保存（服务端**保存前探测**，不通过不写库）⇒ 400 STORAGE_PROBE_FAILED / INCOMPLETE */
-export const saveAdminStorage = (v: AdminStorageInput) =>
-  adminWrite<{ ok: true }>('/api/platform/admin/storage', 'PUT', v)
-/** 显式「测试连接」：**不写库** */
-export const testAdminStorage = (v: AdminStorageInput) =>
-  adminWrite<{ ok: true }>('/api/platform/admin/storage/test', 'POST', v)
-/** 清除配置 ⇒ 活回落平台默认（五列置 null） */
-export const clearAdminStorage = () =>
-  adminWrite<{ ok: true }>('/api/platform/admin/storage', 'DELETE')

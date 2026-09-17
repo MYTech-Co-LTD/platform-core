@@ -2,8 +2,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
-import { TENANT_STORAGE } from '@platform/sdk'
-import type { Identity, ModuleContext, ModuleDefinition, TenantStorageConfig } from '@platform/sdk'
+import type { Identity, ModuleContext, ModuleDefinition } from '@platform/sdk'
 // 【刻意】不复制 apps/server/src/migrate.ts 的实现。重跑语义（记账表 platform.schema_migrations、
 // 单文件单事务、按文件名排序）是行为契约：复制一份就是第二个事实源，改一边另一边不生效，
 // 而症状是「本地过了 CI 没过」这种最贵的错。跨包相对引用在这里是合理代价。
@@ -27,23 +26,15 @@ export function makeIdentity(partial: Partial<Identity> & { orgId: string }): Id
  * 它与宿主 app.ts 的装配【不同源】——宿主那层（租户解析、会话、门卫、停用闸门）不在这里。
  * 端到端形态的断言（含门卫与闸门）归 apps/server 的测试，本壳只覆盖模块自身的业务行为。
  * 这样分工是为了让模块测试不依赖宿主的装配细节（宿主改了装配不该红在模块测试上）。
- *
- * ⚠️ `storage` 是**第 4 参**（M3c 步 4）：与宿主投影同形状的本请求存储配置。
- * **不传 = 未配存储**（与「模块未声明 `storage`」同一状态）⇒ 附件端点回 503。
- * 模块的 `createRouter` 已不再从 env 取配置 ⇒ 不注入就等于没配置 —— 这是本步最容易漏的一处：
- * 漏了不会编译错，只会让一整组附件用例**静默变成 503**。
  */
 export function buildTestApp(
   mod: ModuleDefinition,
   identity: Identity,
   ctx: ModuleContext,
-  storage?: TenantStorageConfig,
 ): Hono {
-  const app = new Hono<{ Variables: { identity: Identity; [TENANT_STORAGE]?: TenantStorageConfig } }>()
+  const app = new Hono<{ Variables: { identity: Identity } }>()
   app.use('*', async (c, next) => {
     c.set('identity', identity)
-    // 不传就不 set：与宿主「不声明就不注入」同一语义，别在这条路径上补默认值
-    if (storage) c.set(TENANT_STORAGE, storage)
     await next()
   })
   app.route('/', mod.createRouter(ctx))

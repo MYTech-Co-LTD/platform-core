@@ -5,7 +5,6 @@ import LoginPage from './pages/Login'
 import AdminUsersPage from './pages/admin/Users'
 import AdminPermissionsPage from './pages/admin/Permissions'
 import AdminSubscriptionsPage from './pages/admin/Subscriptions'
-import AdminStoragePage from './pages/admin/Storage'
 
 /**
  * 路由表（Task 17 骨架 / Task 18 console 壳 / #36 SaaS 化 / #38 根路径修订 / #46 M3 管理组）：
@@ -26,7 +25,6 @@ export function createAppRouter() {
         { path: 'admin/users', element: <AdminGate><AdminUsersPage /></AdminGate> },
         { path: 'admin/permissions', element: <AdminGate><AdminPermissionsPage /></AdminGate> },
         { path: 'admin/subscriptions', element: <AdminGate><AdminSubscriptionsPage /></AdminGate> },
-        { path: 'admin/storage', element: <AdminGate><AdminStoragePage /></AdminGate> },
         { path: '*', element: <ConsoleModulePage /> },
       ],
     },

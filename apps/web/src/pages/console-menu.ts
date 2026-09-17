@@ -32,8 +32,6 @@ function adminGroup(iconMap: Record<string, ReactNode>): MenuDataItem {
       { path: '/console/admin/users', name: '用户管理' },
       { path: '/console/admin/permissions', name: '角色与授权' },
       { path: '/console/admin/subscriptions', name: '我的订阅' },
-      // 存储配置（M3c）：**不设图标** —— CONSOLE_ICONS 要求图标名先登记才渲染，不设就不欠这笔账
-      { path: '/console/admin/storage', name: '存储配置' },
     ],
   }
 }
