@@ -852,13 +852,6 @@ async function main() {
     console.error(`smoke-load: 找不到宿主目录 ${serverDir}`)
     process.exit(1)
   }
-  let [multiPort, singlePort] = SMOKE_PORT_ENV
-    ? [Number(SMOKE_PORT_ENV), Number(SMOKE_PORT_ENV) + 1]
-    : await freePorts(2)
-  if (!Number.isInteger(multiPort) || multiPort < 1 || multiPort > 65534) {
-    console.error(`smoke-load: SMOKE_PORT 不可用：${SMOKE_PORT_ENV}`)
-    process.exit(1)
-  }
 
   // MockCasdoor：multi 与 single 共用一枚（两次启动子进程，CASDOOR_URL 指向同一 mock）
   const mock = new MockCasdoor({
@@ -897,8 +890,31 @@ async function main() {
 
   let multiChild
   let singleChild
+
+  // ⚠️ 顺序是硬要求：**先起 mock，再取两个宿主端口**（issue #112 实测的撞车）。
+  // 反过来的话：freePorts 拿到端口后会**立即释放**探测用的监听，而 mock 的
+  // `serve({port:0})` 是 OS 随机分配——它可能恰好拿到那个刚释放的端口
+  // ⇒ 宿主子进程 `EADDRINUSE` 而 mock 却好好的，报错点在离根因很远的地方。
+  // mock 先绑住，它的端口就进了「已用」集合，freePorts 不可能取到。
   await mock.start()
-  console.log(`smoke-load: MockCasdoor 就绪 ${mock.origin}`)
+  let [multiPort, singlePort] = SMOKE_PORT_ENV
+    ? [Number(SMOKE_PORT_ENV), Number(SMOKE_PORT_ENV) + 1]
+    : await freePorts(2)
+  if (!Number.isInteger(multiPort) || multiPort < 1 || multiPort > 65534) {
+    console.error(`smoke-load: SMOKE_PORT 不可用：${SMOKE_PORT_ENV}`)
+    process.exit(1)
+  }
+  // 显式撞车断言：把「三方端口互不相同」从隐含假设变成当场可诊断的检查。
+  // 真撞上时，子进程深处只会给一句 EADDRINUSE；这里直接把三个端口打出来。
+  if (multiPort === singlePort || multiPort === mock.port || singlePort === mock.port) {
+    console.error(
+      `smoke-load: 端口撞车（mock=:${mock.port} multi=:${multiPort} single=:${singlePort}）`
+      + ' —— 分配逻辑有缺陷，不该发生；见 issue #112',
+    )
+    process.exit(1)
+  }
+
+  console.log(`smoke-load: MockCasdoor 就绪 ${mock.origin}（:${mock.port}）`)
   console.log(`smoke-load: DATABASE_URL 已注入；multi=:${multiPort} single=:${singlePort}`)
 
   try {
