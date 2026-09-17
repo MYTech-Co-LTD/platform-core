@@ -17,7 +17,7 @@ function app() {
     c.set('identity', { userId: 'admin1', orgId: ORG, displayName: '管理员', scopes: [], hasScope: () => true })
     await next()
   })
-  registerRegistrationManage(r, { pool, storage: null })
+  registerRegistrationManage(r, { pool })
   return r
 }
 

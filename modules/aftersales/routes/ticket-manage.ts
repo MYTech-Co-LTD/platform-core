@@ -1,4 +1,7 @@
 import { z } from 'zod'
+import { TENANT_STORAGE } from '@platform/sdk'
+import { storageCandidatesFor, storageResolverFor, warnUnresolvedRef } from '../storage'
+import type { ZosStorage } from '../storage'
 import {
   AmountValidationError,
   isProcessable,
@@ -87,7 +90,8 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
 
     return c.json({
       ...normalizeTicketRow(row),
-      attachments: await loadAttachments(ctx, org, id),
+      // 本请求的候选集（注入值 + 平台默认）穿进加载器：每行按它自己的 storage_ref 解析
+      attachments: await loadAttachments(ctx, org, id, storageResolverFor(storageCandidatesFor(c.get(TENANT_STORAGE)))),
     })
   })
 
@@ -215,28 +219,36 @@ export function normalizeTicketRow(row: Record<string, unknown>): Record<string,
 }
 
 /**
- * 附件行 + 预签名 GET URL。storage 为 null（没配 ZOS 凭证）时 url 回 null 而不是整个端点 503——
- * 工单本身的数据仍然有用，附件拉不到是「降级」不是「失败」（附件专用端点才是 503）。
+ * 附件行 + 预签名 GET URL。**逐行按它自己的 `storage_ref` 解析**（第 4 参 `resolve`）：
+ * 签不出来时该项 url 回 null 而不是整个端点 503——工单本身的数据仍然有用，附件拉不到是
+ * 「降级」不是「失败」（附件专用端点才是 503）。
  */
 export async function loadAttachments(
   ctx: RouteCtx,
   org: string,
   ticketId: number,
+  resolve: (ref: string) => ZosStorage | null,
 ): Promise<{ id: number; objectKey: string; contentType: string; sizeBytes: number; url: string | null }[]> {
   const res = await ctx.pool.query(
-    `select id, object_key, content_type, size_bytes
+    `select id, object_key, content_type, size_bytes, storage_ref
        from aftersales.ticket_attachment
       where org = $1 and ticket_id = $2
       order by id`,
     [org, ticketId],
   )
   return Promise.all(
-    res.rows.map(async (a) => ({
-      id: Number(a.id),
-      objectKey: a.object_key as string,
-      contentType: a.content_type as string,
-      sizeBytes: toMinor(a.size_bytes as string),
-      url: ctx.storage ? await ctx.storage.presignGet(a.object_key as string) : null,
-    })),
+    res.rows.map(async (a) => {
+      const storage = resolve(a.storage_ref as string)
+      // 单件失败**只让该项 url 为 null**。降级在此正当：失败可单独补救（人工迁移 / 重配）且
+      // 不该阻断「看工单详情」；条件是**日志里显式可见**（deploy-verify §3：不许用容错掩盖失败）。
+      if (!storage) warnUnresolvedRef(org, a.storage_ref as string)
+      return {
+        id: Number(a.id),
+        objectKey: a.object_key as string,
+        contentType: a.content_type as string,
+        sizeBytes: toMinor(a.size_bytes as string),
+        url: storage ? await storage.presignGet(a.object_key as string) : null,
+      }
+    }),
   )
 }

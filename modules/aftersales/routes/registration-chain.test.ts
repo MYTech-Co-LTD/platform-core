@@ -24,8 +24,8 @@ function asIdentity(identity: Partial<Identity>) {
     } as Identity)
     await next()
   })
-  registerRegistrationGuest(r, { pool, storage: null })
-  registerRegistrationManage(r, { pool, storage: null })
+  registerRegistrationGuest(r, { pool })
+  registerRegistrationManage(r, { pool })
   return r
 }
 const guest = () => asIdentity({ userId: OPENID, displayName: OPENID })

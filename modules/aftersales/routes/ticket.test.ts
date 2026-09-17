@@ -1,5 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Pool } from 'pg'
+import { storageRefOf } from '@platform/sdk'
+import type { TenantStorageConfig } from '@platform/sdk'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 
@@ -10,18 +12,36 @@ const describePg = dbUrl ? describe : describe.skip
 const ORG = 'test-aftersales-ticket'
 const OTHER_ORG = 'test-aftersales-ticket-other'
 
+/** 本请求注入的存储配置（M3c 步 4）。本文件**不 stub env**：平台默认因此为 null，
+ *  于是「ref 解析不出来」是这里的默认情形之一（见末尾那条降级用例）。 */
+const TENANT_CFG: TenantStorageConfig = {
+  kind: 's3',
+  endpoint: 'https://zos.tenant.test',
+  region: 'xinan1',
+  bucket: 'tenant-b1',
+  accessKeyId: 'AKIATENANT',
+  secretAccessKey: 'sk-tenant',
+}
+const TENANT_REF = storageRefOf(TENANT_CFG)
+/** 两边都对不上的 ref（模拟「配置换过、旧桶读不了」）。
+ *  ⚠️ 下面两条用例**各用一个不同的 ghost ref**：warn 的 60s 去重键是 `org|ref`，
+ *  共用同一个 ref 时第二条用例的 warn 会被去重吃掉 ⇒ 断言变成随机成败。 */
+const GHOST_REF = 's3|https://zos.ghost.test|ghost-bucket'
+const GHOST_REF_2 = 's3|https://zos.ghost2.test|ghost-bucket-2'
+
 describePg('工单域', () => {
   const pool = new Pool({ connectionString: dbUrl })
   const manage = makeIdentity({ orgId: ORG, scopes: ['aftersales:manage'] })
   const guest = makeIdentity({ orgId: ORG, userId: 'openid-alice', scopes: ['aftersales:guest'] })
   const guestBob = makeIdentity({ orgId: ORG, userId: 'openid-bob', scopes: ['aftersales:guest'] })
-  // buildTestApp 的第三个参数就是宿主的 ModuleContext（本仓模块只用到 pool）。
-  // 【不要】在这里塞 storage：模块自己从 process.env 解析 ZOS 配置（见 index.ts），
-  // 从测试注入的 storage 根本到不了 createRouter 里面——那会是一个静默失效的注入点。
+  // buildTestApp 的第三个参数是宿主的 ModuleContext（本仓模块只用到 pool）。
+  // 第 4 参是**本请求的存储配置**（M3c 步 4）：与宿主投影同形状。旧注释说「不要在这里塞
+  // storage，模块自己从 process.env 解析」——那句描述的是**装载期形态**，已被本步消灭；
+  // 现在的注入点就是它，且是唯一能把配置交给模块的方式。
   const ctx = { pool }
-  const appManage = buildTestApp(mod, manage, ctx)
-  const appGuest = buildTestApp(mod, guest, ctx)
-  const appGuestBob = buildTestApp(mod, guestBob, ctx)
+  const appManage = buildTestApp(mod, manage, ctx, TENANT_CFG)
+  const appGuest = buildTestApp(mod, guest, ctx, TENANT_CFG)
+  const appGuestBob = buildTestApp(mod, guestBob, ctx, TENANT_CFG)
 
   let productId = 0
   let storeId = 0
@@ -352,16 +372,21 @@ describePg('工单域', () => {
   // GET /guest/tickets/:id 拿到该附件的 objectKey（配好 ZOS 的真机上还带完整预签名 GET URL），
   // 而受害者侧 total=0、零可观测迹象。被突破的是**授权面**，故定 Critical。
   //
-  // 这里【直接用 SQL 造受害者的附件行】而不走 POST /guest/attachments：后者要 ZOS 凭证
-  // （本文件没 stub，没配就 503），而本用例要钉的是【认领语句的谓词】，与预签名可用性无关。
-  // 落库形状与 routes/attachment.ts 的 insert 逐字一致。
-  const seedAttachment = async (clientRequestId: string, uploaderOpenid: string, suffix: string) => {
+  // 这里【直接用 SQL 造受害者的附件行】而不走 POST /guest/attachments：要的是**精确控制行上
+  // 的 storage_ref**（被测端点只会写当前注入的 ref），而本用例要钉的是【认领语句的谓词】。
+  // 落库形状与 routes/attachment.ts 的 insert 逐字一致（`storage_ref` 默认 '' = 本列引入前的行）。
+  const seedAttachment = async (
+    clientRequestId: string,
+    uploaderOpenid: string,
+    suffix: string,
+    storageRef = '',
+  ) => {
     const objectKey = `aftersales/${ORG}/${clientRequestId}/00000000-0000-4000-8000-0000000000${suffix}`
     const res = await pool.query<{ id: string }>(
       `insert into aftersales.ticket_attachment(
-         org, ticket_id, client_request_id, object_key, content_type, size_bytes, uploader_openid)
-       values ($1, null, $2, $3, 'image/jpeg', 1024, $4) returning id`,
-      [ORG, clientRequestId, objectKey, uploaderOpenid],
+         org, ticket_id, client_request_id, object_key, content_type, size_bytes, uploader_openid, storage_ref)
+       values ($1, null, $2, $3, 'image/jpeg', 1024, $4, $5) returning id`,
+      [ORG, clientRequestId, objectKey, uploaderOpenid, storageRef],
     )
     return { id: Number(res.rows[0].id), objectKey }
   }
@@ -410,6 +435,50 @@ describePg('工单域', () => {
       attachments: { objectKey: string }[]
     }
     expect(detail.attachments.map((a) => a.objectKey)).toEqual([mine.objectKey])
+  })
+
+  // ── M3c 步 4：单件附件签不出来 ⇒ **只让该项 url 为 null**（降级语义，既有行为） ──
+  // 为什么降级在这里正当：工单本身的数据仍然有用，附件拉不到是「降级」不是「失败」
+  // （附件专用端点才是 503）。条件是该失败**在日志里显式可见**（deploy-verify §3：
+  // 不许用容错掩盖失败）—— 所以下面第二条用例专门钉那条 warn。
+  it('【M3c 步 4】某附件 ref 解析不出来 ⇒ 该项 url=null、其余项照常签，工单本身仍 200', async () => {
+    const REQ = 'req-ref-ghost-a'
+    const good = await seedAttachment(REQ, 'openid-alice', 'g1', TENANT_REF)
+    const ghost = await seedAttachment(REQ, 'openid-alice', 'g2', GHOST_REF)
+
+    const created = await submit(appGuest, { ...validBody(REQ), attachmentIds: [good.id, ghost.id] })
+    expect(created.status).toBe(201)
+    const ticketId = ((await created.json()) as { id: number }).id
+
+    const res = await appGuest.request(`/guest/tickets/${ticketId}`)
+    expect(res.status).toBe(200) // ← 降级：工单数据照常可用，**不是** 503
+    const body = (await res.json()) as { attachments: { id: number; url: string | null }[] }
+    expect(body.attachments).toHaveLength(2)
+    const urlOf = new Map(body.attachments.map((a) => [a.id, a.url]))
+    expect(urlOf.get(ghost.id)).toBeNull() // 只这一项
+    expect(String(urlOf.get(good.id))).toContain('zos.tenant.test') // 其余项照常，且用的是注入配置
+  })
+
+  it('【M3c 步 4】ref 解析不出来 ⇒ 服务端留一条 warn（含 org 与 ref，**不含任何凭据**）', async () => {
+    const REQ = 'req-ref-ghost-b'
+    const ghost = await seedAttachment(REQ, 'openid-alice', 'g3', GHOST_REF_2)
+    const created = await submit(appGuest, { ...validBody(REQ), attachmentIds: [ghost.id] })
+    const ticketId = ((await created.json()) as { id: number }).id
+
+    // 客户端只会看到「附件打不开」（预签名是本地计算，平台发不出这个错）⇒ 这条 warn 是
+    // 该故障在本仓的**唯一信号**，所以要钉住它真的发了出来、且内容安全。
+    const spy = vi.spyOn(console, 'warn')
+    try {
+      const res = await appGuest.request(`/guest/tickets/${ticketId}`)
+      expect(res.status).toBe(200)
+      const hit = spy.mock.calls.map((a) => String(a[0])).find((m) => m.includes(GHOST_REF_2))
+      expect(hit, '应当为解析不出来的 ref 留一条 warn').toBeTruthy()
+      expect(hit).toContain(ORG)
+      expect(hit).not.toContain(TENANT_CFG.accessKeyId)
+      expect(hit).not.toContain(TENANT_CFG.secretAccessKey)
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   // ── 终审修复轮 1（I-1）：body 参数面的整数上界，**按目标列的列型分档** ──
