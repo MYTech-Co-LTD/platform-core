@@ -213,6 +213,10 @@ async function main() {
       // 售后模块（M3a）：不种这枚码，模块 API 全 403、console 菜单条目也不出现
       // ⇒ 新模块在本地**无法验收**（`aftersales:manage` 是它的管理台唯一入口码）。
       { owner: 'acme', name: 'p-aftersales-manage', users: [ADMIN1], resources: ['aftersales:manage'] },
+      // 平台内置管理码（M3c）：不种它 ⇒ 「管理」菜单组与 /console/admin/* 的 AdminGate 都进不去
+      // ⇒ **存储配置页本地不可达、无法验收**（`tenant:admin` 是它的唯一入口码，与上面那条同形）。
+      // 载入器会把该码供给到本租户 org；这里种的是**把码发给 admin1** 这一步（两件事）。
+      { owner: 'acme', name: 'p-tenant-admin', users: [ADMIN1], resources: ['tenant:admin'] },
     ],
   })
 

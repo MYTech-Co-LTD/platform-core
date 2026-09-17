@@ -5,16 +5,26 @@
 //    typecheck 与直连 src 的单测都拦不住，本仓护栏只加载 auth-core 的桶、照不到这里）。
 import type { Hono } from 'hono'
 import type { Pool } from 'pg'
-import type { Identity } from '@platform/sdk'
-import type { ZosStorage } from '../storage'
+import { TENANT_STORAGE } from '@platform/sdk'
+import type { Identity, TenantStorageConfig } from '@platform/sdk'
 
-/** 模块路由的统一类型：identity 由宿主注入（模块自己【不写】门禁，spec/协议见 module-protocol）。 */
-export type ModuleHono = Hono<{ Variables: { identity: Identity } }>
+/**
+ * 模块路由的统一类型：identity 由宿主注入（模块自己【不写】门禁，spec/协议见 module-protocol）。
+ *
+ * M3c 步 4 起还带**本请求的存储配置**（宿主投影进 `TENANT_STORAGE`，未声明 `storage` 的模块
+ * 恒 undefined）。变量写在这里而不是各路由自己 cast：所有 handler 都从同一个 `c.get` 取。
+ * ⚠️ 用**计算键名**而非字面量 'platform.tenantStorage'——后者是第二份事实源，改名时它不会
+ * 跟着改，症状是**静默拿不到配置**。
+ */
+export type ModuleHono = Hono<{ Variables: { identity: Identity; [TENANT_STORAGE]?: TenantStorageConfig } }>
 
-/** 每个域注册时拿到的依赖。storage 可能为 null（没配 ZOS 凭证），见 storage.ts 的说明。 */
+/**
+ * 每个域注册时拿到的依赖。**只有 pool**：存储配置从装载期常量改成了**按请求**解析
+ * （`c.get(TENANT_STORAGE)` ⇒ `storageCandidatesFor` / `storageResolverFor`），
+ * 故 `ZosStorage | null` 这个装载期形状已经不存在了 —— 这正是步 4 要消灭的形态。
+ */
 export interface RouteCtx {
   pool: Pool
-  storage: ZosStorage | null
 }
 
 /** 列表分页上界：模块自己的护栏，防止 size=99999 一次拉全表。 */
