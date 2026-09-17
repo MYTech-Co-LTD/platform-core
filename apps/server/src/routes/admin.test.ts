@@ -64,7 +64,12 @@ const baseTenant: TenantRow = {
   id: 1, slug: 'my', casdoor_org: 'myorg', product_name: 'P', logo: null,
   primary_color: '#1677ff', background: '', login_methods: ['password'],
   wecom_corp_id: null, wecom_agent_id: null, wecom_secret: null, wecom_provider: null,
-  wecom_auto_signup: false, created_at: new Date(),
+  wecom_auto_signup: false,
+  // 租户级微信公众号 provider（spec §1.3 外部客户身份，005）。**后加的两列**：本字面量当时
+  // 没跟上 ⇒ 测试替身比真机窄（issue #68 的显形实例）。这里取 null = 未配公众号，
+  // 与上面 wecom_* 的缺省口径一致（admin 域不消费这两列）。
+  wechat_oa_app_id: null, wechat_oa_secret: null,
+  created_at: new Date(),
 }
 
 const SESSION_SECRET = 'x'.repeat(32)
