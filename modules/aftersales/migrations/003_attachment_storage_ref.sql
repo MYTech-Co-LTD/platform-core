@@ -1,0 +1,26 @@
+-- 003_attachment_storage_ref.sql — 附件行记录「写入当时的配置标识」（M3c 裁定 ②）
+--
+-- 为什么需要它：预签名用的是**当次请求解析出的配置**，而行上只有 object_key。租户的存储配置一旦
+-- 变化（未配 → 配了自己的桶 / 换桶 / 换 AK 对应账号 / 回滚清空配置），存量行的下载链接就会指向**新桶**
+-- ⇒ NoSuchKey；客户端表现为「附件打不开」，而平台侧**静默**（预签名是纯本地计算，平台发不出这个错）。
+--
+-- 列的形状：`<kind>|<endpoint>|<bucket>`，由平台 SDK 的 `storageRefOf()` 生成
+-- （唯一的生成器，宿主与模块共用 —— 两处实现 = 两份事实源，失败形态是静默的）。
+-- **不含 AK/SK**：轮换 AK 不该让存量行失去归属（裁定②定的最小可用是 bucket + endpoint）。
+--
+-- 空串的语义（**给存量行的定义，不是猜测**）：
+--   ''  = 「本列引入之前写入的行」。本列引入前唯一存在的配置就是**平台 env 五键**（M2a 的单租户形态），
+--         故读侧把 '' 当作**平台默认**解析（见 modules/aftersales/storage.ts 的 storageResolverFor）。
+--   注意迁移器（apps/server/src/migrate.ts）跑在**数据库里**、读不到 env ⇒ 回填**不写真实桶名**：
+--         写死一个桶名等于造第二份事实源（env 换了桶，库里还是旧名）。这是有意的取舍。
+--
+-- 回填口径的实测底数：生产库当前 ticket_attachment 为 **0 行**（售后 spec §5 #12 实测），
+--   故这是**定义性回填**、无实际行可写。若某个部署确有存量行且其平台 env 的桶后来被换过，
+--   那些行将读不出来 —— 与 spec §2.3 已承认的边界同类（凭据/位置的历史无法凭空重建）。
+--
+-- 不加索引：读取一律按 (org, id) / (org, ticket_id) 走既有索引，storage_ref 只参与**相等比较**、
+--   从不作为过滤条件。加索引是给一个不存在的查询写保险。
+--
+-- 幂等：not null + default 让存量行直接得到 ''（PG 11+ 加带默认值的列是元数据操作，不重写表）。
+alter table aftersales.ticket_attachment
+  add column if not exists storage_ref text not null default '';
