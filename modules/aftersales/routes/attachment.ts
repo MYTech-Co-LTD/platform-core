@@ -1,13 +1,5 @@
 import { z } from 'zod'
-import { TENANT_STORAGE, storageRefOf } from '@platform/sdk'
-import {
-  UPLOAD_URL_TTL_SECONDS,
-  objectKeyFor,
-  storageCandidatesFor,
-  storageFor,
-  storageResolverFor,
-  warnUnresolvedRef,
-} from '../storage'
+import { UPLOAD_URL_TTL_SECONDS, objectKeyFor } from '../storage'
 import { parseIdParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
@@ -39,15 +31,9 @@ export function registerAttachmentGuest(r: ModuleHono, ctx: RouteCtx): void {
       return c.json({ error: 'UNSUPPORTED_CONTENT_TYPE', contentType }, 400)
     }
 
-    // 没配存储 ⇒ 服务端算不出预签名 URL。回 503 而不是 500，也不是假装成功——
+    // 没配 ZOS 凭证 ⇒ 服务端算不出预签名 URL。回 503 而不是 500，也不是假装成功——
     // 前者说"这个能力此刻不可用"，后者会在客户端留下一张永远传不上去的工单。
-    //
-    // ⚠️ 写侧**只认本请求注入的配置**（`TENANT_STORAGE`），**绝不**回落到平台默认：
-    // 租户配置「部分填写」时宿主不注入，此时若拿平台桶兜底 = 把本该报错的状态**静默写进平台桶**
-    // （数据位置被误述 + 平台替租户承担成本）。这正是裁定 4 的 fail-explicit：**写侧不猜**。
-    const cfg = c.get(TENANT_STORAGE)
-    if (!cfg) return c.json({ error: 'ZOS_NOT_CONFIGURED' }, 503)
-    const storage = storageFor(cfg)
+    if (!ctx.storage) return c.json({ error: 'ZOS_NOT_CONFIGURED' }, 503)
 
     const objectKey = objectKeyFor(identity.orgId, clientRequestId)
     // 先取得预签名、再落元数据。顺序是刻意的：预签名会抛（凭证错 / 网络错），
@@ -56,13 +42,12 @@ export function registerAttachmentGuest(r: ModuleHono, ctx: RouteCtx): void {
     // 字节从客户端直传 ZOS，全程不过平台（spec §2.3）；
     // 这一步【不校验对象是否真的传上来了】——预签名 PUT 是"给了一张票"，不是"票已核销"。
     // 是否真有字节，只有在读取时才知道（见下方【已知边界】）。
-    const uploadUrl = await storage.presignPut(objectKey, contentType)
+    const uploadUrl = await ctx.storage.presignPut(objectKey, contentType)
     const res = await ctx.pool.query<{ id: string }>(
       `insert into aftersales.ticket_attachment(
-         org, ticket_id, client_request_id, object_key, content_type, size_bytes, uploader_openid, storage_ref)
-       values ($1, null, $2, $3, $4, $5, $6, $7) returning id`,
-      // storage_ref 是纯函数产物（不含凭据）——读侧全靠它把这一行归回当时的桶
-      [identity.orgId, clientRequestId, objectKey, contentType, sizeBytes ?? 0, identity.userId, storageRefOf(cfg)],
+         org, ticket_id, client_request_id, object_key, content_type, size_bytes, uploader_openid)
+       values ($1, null, $2, $3, $4, $5, $6) returning id`,
+      [identity.orgId, clientRequestId, objectKey, contentType, sizeBytes ?? 0, identity.userId],
     )
 
     return c.json(
@@ -89,7 +74,7 @@ export function registerAttachmentManage(r: ModuleHono, ctx: RouteCtx): void {
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
 
     const res = await ctx.pool.query(
-      `select id, ticket_id, object_key, content_type, size_bytes, uploader_openid, created_at, storage_ref
+      `select id, ticket_id, object_key, content_type, size_bytes, uploader_openid, created_at
          from aftersales.ticket_attachment where org = $1 and id = $2`,
       [org, id],
     )
@@ -97,18 +82,7 @@ export function registerAttachmentManage(r: ModuleHono, ctx: RouteCtx): void {
     // 跨租户取别人的附件同样是 404：与不存在同形
     if (!row) return c.json({ error: 'NOT_FOUND' }, 404)
 
-    // 用**行上记录的**配置签名，不是「当前配置」（见 003 迁移的列注释：换桶后拿当前配置硬签
-    // 会签出一个指向别的桶的 URL，客户端 NoSuchKey、平台侧零信号）
-    const cands = storageCandidatesFor(c.get(TENANT_STORAGE))
-    const storage = storageResolverFor(cands)(row.storage_ref as string)
-    // 两种「签不出来」的语义必须分开（同形的话，运维分不清「本租户压根没配」与「配置换过、旧桶读不了」）：
-    //   · 一个候选都没有（未配且无平台默认 / 部分填写）⇒ ZOS_NOT_CONFIGURED（与改动前逐字同形）
-    //   · 有候选但该行的 ref 都对不上 ⇒ STORAGE_REF_UNRESOLVED（**显式失败**，绝不硬签）
-    if (!storage) {
-      const ref = row.storage_ref as string
-      if (cands.all.length > 0) warnUnresolvedRef(org, ref)
-      return c.json({ error: cands.all.length > 0 ? 'STORAGE_REF_UNRESOLVED' : 'ZOS_NOT_CONFIGURED' }, 503)
-    }
+    if (!ctx.storage) return c.json({ error: 'ZOS_NOT_CONFIGURED' }, 503)
 
     return c.json({
       id: Number(row.id),
@@ -119,7 +93,7 @@ export function registerAttachmentManage(r: ModuleHono, ctx: RouteCtx): void {
       sizeBytes: Number(row.size_bytes),
       uploaderOpenid: row.uploader_openid,
       createdAt: row.created_at,
-      url: await storage.presignGet(row.object_key as string),
+      url: await ctx.storage.presignGet(row.object_key as string),
     })
   })
 }

@@ -1,6 +1,4 @@
 import { z } from 'zod'
-import { TENANT_STORAGE } from '@platform/sdk'
-import { storageCandidatesFor, storageResolverFor } from '../storage'
 import { loadAttachments, normalizeTicketRow } from './ticket-manage'
 // 分页常量与解析器在 routes/context.ts：与管理端【同一份】实现、【同一套】语义
 // （此前本文件内联算 page/size 且无整数守卫 ⇒ 非法值 500；?size=-5 也与端点间漂移）。
@@ -74,13 +72,7 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
     )
     const row = res.rows[0]
     if (!row) return c.json({ error: 'NOT_FOUND' }, 404)
-    return c.json({
-      ...normalizeTicketRow(row),
-      // 与 ticket-manage 的详情端点同形：本请求候选集穿进加载器，逐行按 storage_ref 解析
-      attachments: await loadAttachments(
-        ctx, identity.orgId, id, storageResolverFor(storageCandidatesFor(c.get(TENANT_STORAGE))),
-      ),
-    })
+    return c.json({ ...normalizeTicketRow(row), attachments: await loadAttachments(ctx, identity.orgId, id) })
   })
 
   // POST /guest/tickets —— 提交工单：单端点单事务（spec §0.3、§2.2）
