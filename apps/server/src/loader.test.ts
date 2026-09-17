@@ -126,6 +126,41 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     ].join('\n')
   }
 
+  /** M3c 存储投影的 fixture：storagemod（manifest.yaml 声明 storage）+ plainmod（同 handler、不声明）。
+   *  handler 把 context 键**原样回显**——唯一能证明「宿主真的 set 了」的证据面（断言模块内部变量
+   *  只能证明它自己算出来的东西）。两组**共用同一份 handler 源码**，唯一差别是 manifest.yaml
+   *  声明不声明 storage ⇒ 排除「handler 写法不同」这个第三变量。
+   *  ⚠️ 声明必须写在 **manifest.yaml**：装载器读的是它（apps/server/src/loader.ts:280），
+   *     index.ts 里的内联 manifest 不参与装载。 */
+  async function writeStorageFixtures(modulesDir: string): Promise<void> {
+    const echoIndexTs = (id: string): string => [
+      "import { Hono } from 'hono'",
+      "import { TENANT_STORAGE, defineModule } from '@platform/sdk'",
+      '',
+      'export default defineModule({',
+      '  manifest: {',
+      `    id: '${id}', name: '${id}', version: '1.0.0', platform: '>=0.1.0',`,
+      `    permissions: [{ code: '${id}:view', name: '查看' }],`,
+      `    api: { internal: [{ method: 'GET', path: '/ping', scope: '${id}:view' }] },`,
+      '  },',
+      '  createRouter: () => {',
+      '    const app = new Hono()',
+      "    app.get('/ping', (c) => c.json({ storage: c.get(TENANT_STORAGE) ?? null }))",
+      '    return app',
+      '  },',
+      '})',
+      '',
+    ].join('\n')
+    await writeModule(modulesDir, 'storagemod', {
+      'manifest.yaml': manifestYaml('storagemod', 'storage: { kind: s3 }'),
+      'index.ts': echoIndexTs('storagemod'),
+    })
+    await writeModule(modulesDir, 'plainmod', {
+      'manifest.yaml': manifestYaml('plainmod'),
+      'index.ts': echoIndexTs('plainmod'),
+    })
+  }
+
   /** 按 org 返回 client 的工厂（与宿主 app.ts 的 casdoorFactory 同形状） */
   function casdoorFactoryFor(): (org: string) => CasdoorClient {
     const cache = new Map<string, CasdoorClient>()
@@ -962,6 +997,54 @@ describe.skipIf(!dbUrl)('loadModules', () => {
 
     // ③ 启用 ⇒ 按已启用模块发放访客码
     expect(await runtime.enabledGuestScopes(tenant.id)).toEqual(['userappmod:guest'])
+  })
+
+  // ---- M3c：租户存储投影中间件（正典「租户级配置注入」）----
+
+  it('声明 storage 的模块：投影中间件把平台默认注入模块 API 子树（未声明则恒 undefined）', async () => {
+    cleanupModules.push('storagemod', 'plainmod')
+    const modulesDir = await newModulesDir()
+    await writeStorageFixtures(modulesDir)
+
+    const runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
+    const app = new Hono<TestEnv>()
+    // 门卫按 manifest 声明施加：identity 必须带这两个码，否则请求在门卫处就 403、到不了 handler。
+    // （本用例验的是**注入**不是授权 ⇒ 码给全，让请求真的落到模块 handler 上。）
+    app.use('*', injectIdentity(['storagemod:view', 'plainmod:view']))
+    runtime.mount(app)
+
+    // ① 平台 env 完整 ⇒ 注入（且**只有五个键**，没有 TenantRow 的任何别的字段）
+    const saved = { ...process.env }
+    process.env.AFTERSALES_ZOS_ENDPOINT = 'zos.xinan1.ctyun.cn'
+    process.env.AFTERSALES_ZOS_REGION = 'xinan1'
+    process.env.AFTERSALES_ZOS_BUCKET = 'platform-bucket'
+    process.env.AFTERSALES_ZOS_ACCESS_KEY = 'AKIAPLAT'
+    process.env.AFTERSALES_ZOS_SECRET = 'sk-platform'
+    try {
+      const on = await app.request('/api/modules/storagemod/ping')
+      expect(await on.json()).toEqual({
+        storage: {
+          kind: 's3',
+          endpoint: 'https://zos.xinan1.ctyun.cn',
+          region: 'xinan1',
+          bucket: 'platform-bucket',
+          accessKeyId: 'AKIAPLAT',
+          secretAccessKey: 'sk-platform',
+        },
+      })
+      // ② 未声明 storage 的模块：同一个 handler 拿不到（「不声明 = 拿不到」，与未声明路径不可达同构）
+      const off = await app.request('/api/modules/plainmod/ping')
+      expect(await off.json()).toEqual({ storage: null })
+    } finally {
+      for (const k of ['ENDPOINT', 'REGION', 'BUCKET', 'ACCESS_KEY', 'SECRET']) {
+        if (saved[`AFTERSALES_ZOS_${k}`] === undefined) delete process.env[`AFTERSALES_ZOS_${k}`]
+        else process.env[`AFTERSALES_ZOS_${k}`] = saved[`AFTERSALES_ZOS_${k}`]
+      }
+      // ③ env 缺任一 ⇒ 不 set（声明了也拿不到 —— 「没有平台默认」是确定状态）
+      delete process.env.AFTERSALES_ZOS_BUCKET
+      const incomplete = await app.request('/api/modules/storagemod/ping')
+      expect(await incomplete.json()).toEqual({ storage: null })
+    }
   })
 })
 

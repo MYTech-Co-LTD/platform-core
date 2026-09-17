@@ -143,6 +143,31 @@ describe('runChecks（check-manifests CLI 核心）', () => {
     })
   })
 
+  it('manifest.storage.kind 写错 ⇒ 报错（新字段自动走既有 schema 检查，门禁零改动）', async () => {
+    await withRoot(async (root) => {
+      await write(root, 'modules/storagemod/manifest.yaml', [
+        'id: storagemod', 'name: storagemod 模块', 'version: 1.0.0', "platform: '>=0.1.0'",
+        'permissions:', '  - code: storagemod:view', '    name: 查看',
+        'storage: { kind: oss }', // ← 只有 s3 合法
+        '',
+      ].join('\n'))
+      const { errors } = await runChecks(root)
+      expect(errors.some((e) => e.includes('storage'))).toBe(true)
+    })
+  })
+
+  it('manifest.storage.kind = s3 ⇒ 通过（正向对照：防止把「一律拒绝」当成修好了）', async () => {
+    await withRoot(async (root) => {
+      await write(root, 'modules/storagemod/manifest.yaml', [
+        'id: storagemod', 'name: storagemod 模块', 'version: 1.0.0', "platform: '>=0.1.0'",
+        'permissions:', '  - code: storagemod:view', '    name: 查看',
+        'storage: { kind: s3 }',
+        '',
+      ].join('\n'))
+      expect((await runChecks(root)).errors).toEqual([])
+    })
+  })
+
   it('多错误并存时逐条列出（schema 失败的 manifest 不再跑后续仓库级检查）', async () => {
     await withRoot(async root => {
       await write(root, 'modules/a/manifest.yaml', validYaml) // a 缺 console/migrations 实体 → 2 错

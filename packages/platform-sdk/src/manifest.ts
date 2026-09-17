@@ -20,6 +20,10 @@ export interface ModuleManifest {
   api?: { internal?: ModuleApiEndpoint[] }
   /** 售后 spec §1.3：访客侧授权声明——scope 必须 ∈ permissions[].code（与 api.internal[].scope 同纪律） */
   guest?: { scope: string }
+  /** 售后 spec §2.3 / 正典「租户级配置注入」：声明本模块需要**本租户的**存储配置。
+   *  缺省 = 不声明 = 宿主不注入（`c.get(TENANT_STORAGE)` 恒 undefined），行为与今天逐字相同。
+   *  ⚠️ 声明的是**能力**不是**租户**：这里写不出 bucket / AK / org，只写得出 kind。 */
+  storage?: { kind: 's3' }
   frontend?: { userApp?: { mount: string; dist: string };
     console?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }> }
   migrations?: { dir: string }
@@ -53,6 +57,9 @@ const ManifestObject = z.object({
     })).optional(),
   }).optional(),
   guest: z.object({ scope: z.string() }).optional(),
+  // 枚举**收窄**到 s3：写别的值 ⇒ schema 拒绝 ⇒ 装载失败（进程起不来，不是告警）——
+  // 与 api.internal[].scope / guest.scope 的 fail-fast 同风格。
+  storage: z.object({ kind: z.enum(['s3']) }).optional(),
   frontend: z.object({
     userApp: z.object({ mount: z.string(), dist: z.string() }).optional(),
     console: z.array(z.object({

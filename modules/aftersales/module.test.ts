@@ -17,6 +17,8 @@ describe('manifest（不需要数据库）', () => {
     expect(m.permissions.map((p) => p.code).sort()).toEqual(['aftersales:guest', 'aftersales:manage'])
     expect(m.guest?.scope).toBe('aftersales:guest')
     expect(m.migrations?.dir).toBe('./migrations')
+    // M3c：声明租户级存储能力（宿主据此挂投影中间件；不声明 ⇒ c.get(TENANT_STORAGE) 恒 undefined）
+    expect(m.storage).toEqual({ kind: 's3' })
   })
 
   it('api.internal 的声明集合与 createRouter 注册的路由集合逐条一致（装载期双向核对的本地版）', () => {

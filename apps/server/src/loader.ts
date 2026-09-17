@@ -22,16 +22,19 @@ import type { CasdoorClient } from '@platform/auth-core'
 import {
   DECLARED_GATE_APPROVED,
   ManifestSchema,
+  TENANT_STORAGE,
   declaredScopeGate,
   type DeclaredEndpoint,
   type Identity,
   type ModuleDefinition,
   type ModuleManifest,
+  type TenantStorageConfig,
 } from '@platform/sdk'
 import { Hono } from 'hono'
 import type { Env, MiddlewareHandler } from 'hono'
 import type { Pool } from 'pg'
 import { runMigrations } from './migrate'
+import { resolveTenantStorage } from './tenant-storage'
 import type { TenantRow } from './tenant'
 
 /** 装载完成的模块：manifest（协议）+ router（createRouter 产物） */
@@ -41,15 +44,21 @@ export interface LoadedModule {
 }
 
 /**
- * 启用闸门（mount 内挂的 `gate`）**读到**的全部变量。**只用于给闸门自己的 body 定类型**
- * （`MiddlewareHandler<MountEnv>`），不是 mount 形参的类型 —— 见下面 `mount<E extends Env>`。
+ * mount 内两条中间件（启用闸门 `gate` + M3c 存储投影 `project`）**用到的**全部变量。
+ * **只用于给它们各自的 body 定类型**（`MiddlewareHandler<MountEnv>`），不是 mount 形参的类型
+ * —— 见下面 `mount<E extends Env>`。
  *
- * 读它们是为了判定「这个租户停用了这个模块吗」：`tenant` 定租户、`identity` 判匿名。
+ * 闸门读它们是为了判定「这个租户停用了这个模块吗」：`tenant` 定租户、`identity` 判匿名。
  * 两个都**可以缺席**，且闸门对缺席有显式分支（无租户/匿名一律放行给后续层）——这正是
  * 闸门类型写得比宿主 Env 宽的原因，也是 mount 形参能不挑 Env 的原因。
+ *
+ * `[TENANT_STORAGE]` 是**投影中间件的产出位**（不是它读的）：键可选是因为「不注入」是常态
+ * ——模块没声明 `storage`（不挂投影）、或声明了但没有可用配置（env 不全 / 部分填写）⇒ 不 set。
+ * 写在 Variables 里是 Hono 的硬要求（`Context.set` 的键必须 ∈ E['Variables']），
+ * 键名用**计算属性**引 SDK 常量：写死字符串就是第二份事实源（改名时它不会跟着改，静默失效）。
  */
 export interface MountEnv {
-  Variables: { tenant: TenantRow; identity: Identity }
+  Variables: { tenant: TenantRow; identity: Identity; [TENANT_STORAGE]?: TenantStorageConfig }
 }
 
 /**
@@ -440,6 +449,24 @@ export async function loadModules(
           await next()
         }
         app.use(base + '/*', gate)
+
+        // 存储投影（M3c，正典「租户级配置注入」）：**只对声明了 storage 的模块**挂。
+        //   · 位置是硬约束：必须在启用闸门之后（停用模块该拿 404 就先拿 404，不必先花代价解配置）、
+        //     在 app.route **之前**（Hono 里 handler 先注册、use 后注册 ⇒ 中间件**永不执行**——
+        //     顺序错了的表现是模块 c.get(TENANT_STORAGE) 恒 undefined，代码里看不出问题）。
+        //   · 它不是门卫：不做鉴权、不返回 403，只做投影。「宿主施加门禁」与「宿主注入材料」是两件事。
+        //   · 无租户上下文 ⇒ 不 set（放行给后续层）。真实链路上租户中间件先于一切业务路由，
+        //     这里见到无租户只可能是测试壳或未过租户中间件的装配。
+        //   · 不声明就不挂 ⇒ 模块拿到的恒 undefined（与「未声明路径 = 不可达」同构）。
+        if (m.manifest.storage) {
+          const project: MiddlewareHandler<MountEnv> = async (c, next) => {
+            const cfg = resolveTenantStorage(c.get('tenant') as TenantRow | undefined)
+            // 不 set 时不「清理旧值」：Hono 的 context 是**每请求**新建的，不存在跨请求残留。
+            if (cfg) c.set(TENANT_STORAGE, cfg)
+            await next()
+          }
+          app.use(base + '/*', project)
+        }
 
         app.route(base, m.router)
 
