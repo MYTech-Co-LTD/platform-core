@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.17.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.17.0...v0.17.1) - 2026-09-17
+- 【修复】web: 管理台挂 antd <App> 提供者——14 个 message 调用点不再抛 TypeError (Closes #106) ([#107](https://github.com/MYTech-Co-LTD/platform-core/pull/107), [b9386d5](https://github.com/MYTech-Co-LTD/platform-core/commit/b9386d5e326ed912f47851fc0f88a688ed381026))
+
+
 ## [0.17.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.16.0...v0.17.0) - 2026-09-17
 - 【新增】server: M3c 步 3——租户存储行列 + 投影三态 + 附件 storage_ref（生产行为零变化） ([#105](https://github.com/MYTech-Co-LTD/platform-core/pull/105), [d280c74](https://github.com/MYTech-Co-LTD/platform-core/commit/d280c7476074c1e679f36e9c0641f244cc49ffb0))
 
