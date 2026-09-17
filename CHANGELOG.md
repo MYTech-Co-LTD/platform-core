@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.15.2...v0.16.0) - 2026-09-17
+- 【新增】sdk: M3c 步 2 宿主机制——存储配置协议面 + manifest storage 可选字段 + loader 投影中间件 ([#104](https://github.com/MYTech-Co-LTD/platform-core/pull/104), [53096f1](https://github.com/MYTech-Co-LTD/platform-core/commit/53096f1e0343c52e77d8c9af80af981f628f4ee8))
+
+
 ## [0.15.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.15.1...v0.15.2) - 2026-09-17
 - 【修复】discipline: CHANGELOG 守卫改三点 diff——落后于 main 不再误报，并改掉有害的补救建议 (Closes #99) ([#100](https://github.com/MYTech-Co-LTD/platform-core/pull/100), [eff4893](https://github.com/MYTech-Co-LTD/platform-core/commit/eff4893d9b06408642d6e587c42f8f18b96f945f))
 
