@@ -29,6 +29,12 @@ export interface TenantRow {
   /** 租户级微信公众号 provider（售后 spec §1.3 外部客户身份，005）；NULL ⇒ wechat-oa 路由对该租户 404 WECHAT_OA_NOT_CONFIGURED */
   wechat_oa_app_id: string | null
   wechat_oa_secret: string | null
+  /** 租户级存储配置（M3c，006）。五列**全空** ⇒ 未配（宿主注入平台默认）；**部分填写** ⇒ 不注入。 */
+  storage_endpoint: string | null
+  storage_region: string | null
+  storage_bucket: string | null
+  storage_access_key: string | null
+  storage_secret: string | null
   created_at: Date
 }
 

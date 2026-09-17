@@ -1046,6 +1046,92 @@ describe.skipIf(!dbUrl)('loadModules', () => {
       expect(await incomplete.json()).toEqual({ storage: null })
     }
   })
+
+  it('投影三态：全空 ⇒ 平台默认；部分填 ⇒ 不注入（绝不回落）；全填 ⇒ 用租户的', async () => {
+    cleanupModules.push('storagemod', 'plainmod')
+    const modulesDir = await newModulesDir()
+    await writeStorageFixtures(modulesDir)
+    const runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
+
+    // 平台默认（env 五键）由本用例**自己**准备并在 finally 复原：三态断言不该依赖上一条用例
+    // 的 env 残留（T3 用例的 finally 结尾还会删掉 BUCKET，先后顺序会变结论）。与 T3 同一 save/restore 手法。
+    const saved = { ...process.env }
+    const setPlatformEnv = (): void => {
+      process.env.AFTERSALES_ZOS_ENDPOINT = 'zos.xinan1.ctyun.cn'
+      process.env.AFTERSALES_ZOS_REGION = 'xinan1'
+      process.env.AFTERSALES_ZOS_BUCKET = 'platform-bucket'
+      process.env.AFTERSALES_ZOS_ACCESS_KEY = 'AKIAPLAT'
+      process.env.AFTERSALES_ZOS_SECRET = 'sk-platform'
+    }
+    const restoreEnv = (): void => {
+      for (const k of ['ENDPOINT', 'REGION', 'BUCKET', 'ACCESS_KEY', 'SECRET']) {
+        const key = `AFTERSALES_ZOS_${k}`
+        if (saved[key] === undefined) delete process.env[key]
+        else process.env[key] = saved[key]
+      }
+    }
+
+    const acme = await acmeTenant()
+    // ⚠️ 门卫按 manifest 声明施加：identity 必须带 storagemod:view，否则请求在门卫处就 403、到不了
+    //    handler（验的是**注入**不是授权 ⇒ 码给全，让请求真的落到模块 handler 上）。与 T3 用例同一手法。
+    const read = async (row: TenantRow | undefined) => {
+      const a = new Hono<TestEnv>()
+      if (row) a.use('*', injectTenant(row))
+      a.use('*', injectIdentity(['storagemod:view']))
+      runtime.mount(a)
+      const res = await a.request('/api/modules/storagemod/ping')
+      expect(res.status).toBe(200)
+      return (await res.json()).storage
+    }
+
+    try {
+      setPlatformEnv()
+
+      // ① 全空（五列皆 null —— T4 落地后的真实初始状态）⇒ 平台默认
+      expect(await read(acme)).toMatchObject({ bucket: 'platform-bucket' })
+
+      // ①b 边界：「空」的判据含**空串与纯空白**（管理端表单与手改库都容易留下）——trim 后判空
+      const blank = { ...acme, storage_endpoint: '', storage_region: '   ', storage_bucket: '\t' }
+      expect(await read(blank)).toMatchObject({ bucket: 'platform-bucket' })
+
+      // ①c 边界：无租户上下文（row 为 undefined）与全空同处理 ⇒ 无租户时行为**不变**
+      expect(await read(undefined)).toMatchObject({ bucket: 'platform-bucket' })
+
+      // ② 部分填写 ⇒ null，**且绝不等于平台桶**（这条断言是裁定 4 的全部内容）
+      const partial = { ...acme, storage_endpoint: 'https://zos.tenant.test', storage_bucket: 'tenant-b1' }
+      expect(await read(partial)).toBeNull()
+      expect(await read(partial)).not.toMatchObject({ bucket: 'platform-bucket' })
+
+      // ③ 全填 ⇒ 用租户的（endpoint 带空格与尾斜杠也被规范化 ⇒ trim 后的值才进配置）
+      const full = {
+        ...acme,
+        storage_endpoint: '  zos.tenant.test/  ',
+        storage_region: 'xinan1',
+        storage_bucket: 'tenant-b1',
+        storage_access_key: 'AKIATENANT',
+        storage_secret: 'sk-tenant',
+      }
+      expect(await read(full)).toEqual({
+        kind: 's3', endpoint: 'https://zos.tenant.test', region: 'xinan1',
+        bucket: 'tenant-b1', accessKeyId: 'AKIATENANT', secretAccessKey: 'sk-tenant',
+      })
+
+      // ③b 边界：四列填实 + 一列**纯空白** ⇒ 仍是「部分填写」⇒ 不注入（纯空白算空）
+      expect(await read({ ...full, storage_secret: '   ' })).toBeNull()
+
+      // ④ 平台 env 不全 + 租户全空 ⇒ null（「没有平台默认」是确定状态，不是半成品）
+      delete process.env.AFTERSALES_ZOS_BUCKET
+      expect(await read({ ...acme })).toBeNull()
+
+      // ⑤ 注入值**不含 TenantRow 的任何别的字段**（正典点名：wecom/公众号密钥绝不外泄）
+      const injected = await read(full)
+      expect(Object.keys(injected).sort()).toEqual(
+        ['accessKeyId', 'bucket', 'endpoint', 'kind', 'region', 'secretAccessKey'],
+      )
+    } finally {
+      restoreEnv()
+    }
+  })
 })
 
 // ---- D9：平台内置码 tenant:admin 随装载扇出（M3，issue #46） ----

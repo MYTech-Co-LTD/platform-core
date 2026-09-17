@@ -73,6 +73,9 @@ const baseTenant: TenantRow = {
   // 没跟上 ⇒ 测试替身比真机窄（issue #68 的显形实例）。这里取 null = 未配公众号，
   // 与上面 wecom_* 的缺省口径一致（admin 域不消费这两列）。
   wechat_oa_app_id: null, wechat_oa_secret: null,
+  // 五列存储配置（M3c）：本组用例要改它们 ⇒ 字面量必须写全，缺一个就 TS2741
+  storage_endpoint: null, storage_region: null, storage_bucket: null,
+  storage_access_key: null, storage_secret: null,
   created_at: new Date(),
 }
 
