@@ -76,9 +76,39 @@ export interface MockCasdoorPerm {
   isEnabled?: boolean
 }
 
+/**
+ * org 种子（#117：org/application 域建模）。缺省值都取「正常形状」——要复刻真机陷阱
+ * （畸形 org / 零 application）必须**显式**给偏值，别让缺省悄悄变成陷阱形状。
+ */
+export interface MockCasdoorOrg {
+  /** org 名（真机 org 全局按名唯一——add-organization 同名即拒） */
+  name: string
+  /**
+   * org 的 owner。真机语义（#117 实测，2026-09-19 山海交付）：GetOrganization 按
+   * (owner,name) 命中，UI/正规途径建的 org owner='admin'；经 add-organization API
+   * **缺 owner 字段**建出的是 owner="" 的畸形 org——列表可见、单查失明。种子缺省 'admin'
+   * （种子 = 已存在的正常 org）；复刻畸形记录显式给 `owner: ''`。
+   */
+  owner?: string
+  /**
+   * 密码哈希类型。真机（#117 实测）：add-organization 缺该字段 ⇒ 空串 ⇒ 该 org 所有用户
+   * 密码登录报 `unsupported password type: `。种子缺省 'bcrypt'（UI 建 org 的默认值）。
+   */
+  passwordType?: string
+  /**
+   * org 名下的 application 名单。真机（#117 实测）：org 零 application 时 add-user 报
+   * `The organization: <org> should have one application at least`——共享 Casdoor 的正典
+   * 模式是每客户 org 一个 application（交付 runbook 先建 application 再跑 provision CLI）。
+   * 种子缺省 ['app-built-in']（种子用户能存在 ⇒ 建 org 时必有过 application）；复刻
+   * 「零 application」陷阱显式给 `applications: []`。
+   */
+  applications?: string[]
+}
+
 export interface MockCasdoorOptions {
   users?: MockCasdoorUser[]
   perms?: MockCasdoorPerm[]
+  orgs?: MockCasdoorOrg[]
 }
 
 const MOCK_ORG = 'mock-org'
@@ -114,12 +144,23 @@ interface StoredPerm {
   isEnabled: boolean
 }
 
+/** org 在 mock 内的存储形状（#117）：字段一律补全，add-organization 载荷缺的字段落成空串/空表——正是真机陷阱形状 */
+interface StoredOrg {
+  name: string
+  owner: string
+  passwordType: string
+  applications: string[]
+}
+
 export class MockCasdoor {
   #users: StoredUser[]
   #perms: StoredPerm[] = []
+  #orgs: StoredOrg[] = []
   #sessions = new Map<string, { user: string; anonymous: boolean }>()
   #oidcCodes = new Map<string, string>() // authorization code → 用户名（单次即焚）
   #addPermissionCalls: Array<{ owner: string; name: string }> = []
+  #addOrganizationCalls: Array<Record<string, unknown>> = []
+  #addApplicationCalls: Array<Record<string, unknown>> = []
   #addUserCalls: Array<Record<string, unknown>> = []
   #updateUserCalls: Array<Record<string, unknown>> = []
   #deleteUserCalls: Array<{ owner: string; name: string }> = []
@@ -164,6 +205,26 @@ export class MockCasdoor {
         model: p.model ?? 'built-in/user-model-built-in',
       })
     }
+    // org 存储（#117）：built-in 恒在（真机：admin 用户归 built-in，且带 app-built-in）。
+    // 显式种子可复刻畸形形状（owner:'' / applications:[]）；种子用户/权限出现过的 org 自动
+    // 补录成**正常**形状——真机上「用户/权限已存在」蕴含「org 存在、且建用户时 org 必有过
+    // application」，自动补录只是把这份蕴含显式化，不让种子路径绕过 API 路径的严格前置
+    this.#orgs = [{ name: 'built-in', owner: 'admin', passwordType: 'bcrypt', applications: ['app-built-in'] }]
+    for (const g of opts.orgs ?? []) {
+      this.#orgs.push({
+        name: g.name,
+        owner: g.owner ?? 'admin',
+        passwordType: g.passwordType ?? 'bcrypt',
+        applications: g.applications ? [...g.applications] : ['app-built-in'],
+      })
+    }
+    const ensureOrgSeeded = (orgName: string) => {
+      if (!this.#orgs.some((g) => g.name === orgName)) {
+        this.#orgs.push({ name: orgName, owner: 'admin', passwordType: 'bcrypt', applications: ['app-built-in'] })
+      }
+    }
+    for (const u of this.#users) ensureOrgSeeded(u.owner)
+    for (const p of this.#perms) ensureOrgSeeded(p.owner)
     // 形状钉死：真实 Casdoor 的 update-* 是 POST（admin-api.js casdoorPost 形状）；
     // PUT 在本 mock 一律 405，防「客户端偷偷走 PUT」的形状分叉被遮蔽
     this.#app.put('/api/update-permission', (c: Context) =>
@@ -232,6 +293,22 @@ export class MockCasdoor {
    *  重复命中走真机 duplicate 形状，别让故障注入盖掉竞态用例要的分支） */
   setAddUserFault(mode: 'off' | 'error'): void {
     this.#addUserFault = mode
+  }
+
+  /** org 记录（断言口；按 (owner,name) 命中——与 get-organization 单查同判据，#117） */
+  organizationIn(owner: string, name: string): Record<string, unknown> | undefined {
+    const g = this.#orgs.find((x) => x.owner === owner && x.name === name)
+    return g ? { ...g } : undefined
+  }
+
+  /** add-organization 调用记录（#117：载荷形状断言——owner/passwordType 是否带上） */
+  get addOrganizationCalls(): ReadonlyArray<Record<string, unknown>> {
+    return this.#addOrganizationCalls
+  }
+
+  /** add-application 调用记录（交付 runbook「每客户 org 一个 application」的机检证据） */
+  get addApplicationCalls(): ReadonlyArray<Record<string, unknown>> {
+    return this.#addApplicationCalls
   }
 
   /** 某 org 下已存的用户记录（断言口；createdViaApi 存有 add-user 载荷）——不经 HTTP */
@@ -515,6 +592,66 @@ export class MockCasdoor {
       })
       return c.json({ status: 'ok', data: name })
     })
+    // GET /api/get-organizations —— org 列表（admin 会话）。**不按 owner 过滤**（#117 真机：
+    // owner="" 的畸形 org 列表照样可见——「列表看得见」正是当初「✓ org 假绿」的来源，单查失明
+    // 才暴露）。回带 owner/passwordType 供调用方判形状。
+    .get('/api/get-organizations', (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      return c.json({
+        status: 'ok',
+        data: this.#orgs.map((g) => ({ owner: g.owner, name: g.name, passwordType: g.passwordType })),
+      })
+    })
+    // GET /api/get-organization?id=<owner>/<name> —— 单查按 (owner,name) 命中（#117 真机：
+    // GetOrganization 按 (owner='admin',name) 查询 ⇒ 畸形 org（owner=""）单查失明 ok+null）。
+    // 段数规则与 get-user / update-permission 同一套（split('/') 判 len!==2）。
+    .get('/api/get-organization', (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const segs = (c.req.query('id') ?? '').split('/')
+      if (segs.length !== 2) {
+        return c.json({ status: 'error', msg: 'wrong token count, expect <org>/<name>' })
+      }
+      const g = this.#orgs.find((x) => x.owner === segs[0] && x.name === segs[1])
+      if (!g) return c.json({ status: 'ok', data: null })
+      return c.json({ status: 'ok', data: { owner: g.owner, name: g.name, passwordType: g.passwordType } })
+    })
+    // POST /api/add-organization —— #117 真机陷阱的复刻点：body 缺 owner ⇒ 建出 owner="" 的
+    // 畸形 org（**不报错**：列表可见、单查失明，后续 add-user 才炸 `does not exist`）；
+    // 缺 passwordType ⇒ 空串（该 org 用户密码登录报 `unsupported password type: `）。
+    // 新建 org 的 applications 恒为空表（真机：API 建 org 不自动带 application）。
+    // 同名（org 全局按名唯一）拒绝。
+    .post('/api/add-organization', async (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+      const name = String(b.name ?? '')
+      if (!name) return c.json({ status: 'error', msg: 'name required' })
+      if (this.#orgs.some((g) => g.name === name)) {
+        return c.json({ status: 'error', msg: 'duplicate organization name' })
+      }
+      this.#addOrganizationCalls.push({ ...b })
+      this.#orgs.push({
+        name,
+        owner: String(b.owner ?? ''),
+        passwordType: String(b.passwordType ?? ''),
+        applications: [],
+      })
+      return c.json({ status: 'ok', data: 'Affected' })
+    })
+    // POST /api/add-application —— 共享 Casdoor 正典步骤（#117 现场对照 customerb-app 形状）：
+    // 每客户 org 一个 application（owner=admin、organization=<客户 org>）。挂上之后该 org 的
+    // add-user 才过得了「至少一个 application」前置。
+    .post('/api/add-application', async (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+      const orgName = String(b.organization ?? '')
+      const appName = String(b.name ?? '')
+      if (!orgName || !appName) return c.json({ status: 'error', msg: 'organization/name required' })
+      const g = this.#orgs.find((x) => x.name === orgName)
+      if (!g) return c.json({ status: 'error', msg: `The organization: ${orgName} does not exist` })
+      this.#addApplicationCalls.push({ ...b })
+      g.applications.push(appName)
+      return c.json({ status: 'ok', data: 'Affected' })
+    })
     // POST /api/add-user —— JIT 自动建号（issue #32）。载荷 JSON body；owner/name 必填；
     // **(owner,name) 重复拒绝**（真机 casdoor object.AddUser 先查重、存在即回 false ⇒
     // status:error——客户端按 upsertPermissions 的口径重读验证，不按错误文案分支）；
@@ -528,6 +665,17 @@ export class MockCasdoor {
       if (!name) return c.json({ status: 'error', msg: 'name required' })
       if (this.#users.some((u) => u.owner === owner && u.name === name)) {
         return c.json({ status: 'error', msg: 'duplicate user name' })
+      }
+      // #117 收严（真机实测，2026-09-19 山海交付）——add-user 的两个 org 前置：
+      //   ① org 必须存在（owner 归属的 org；未建/畸形 org 报 `The organization: <org> does not exist`）；
+      //   ② org 必须已有至少一个 application（共享 Casdoor 正典 = 每客户 org 一个 application，
+      //      交付 runbook 先建 application 再跑 provision CLI）。
+      // 客户端不按文案分支（文案随 Casdoor 版本变）；这里钉的是「前置不满足 ⇒ 200+status:error」
+      // 这个形状——旧替身来者不拒，正是 #117 三层缺陷在门禁里结构性不可见的原因（纪律 #11）。
+      const org = this.#orgs.find((g) => g.name === owner)
+      if (!org) return c.json({ status: 'error', msg: `The organization: ${owner} does not exist` })
+      if (org.applications.length === 0) {
+        return c.json({ status: 'error', msg: `The organization: ${owner} should have one application at least` })
       }
       if (this.#addUserFault === 'error') {
         return c.json({ status: 'error', msg: 'add-user fault injected' })

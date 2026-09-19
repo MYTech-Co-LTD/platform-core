@@ -415,7 +415,9 @@ describe('getUser：错误 ≠ 不存在', () => {
 
 describe('ensureUser + bindUserToAllPermissions（JIT 自动建号，issue #32）', () => {
   it('★ ensureUser：add-user 带 owner/name/type=normal-user/signupApplication（application 可配，缺省 app-built-in 同 #login 口径）', async () => {
-    const m = new MockCasdoor({ users: [] })
+    // orgs 种子：#117 起 add-user 有两个 org 前置（org 存在 + 已有 application）——
+    // 真机上 org 先于用户存在，替身同样不再「来者不拒」
+    const m = new MockCasdoor({ users: [], orgs: [{ name: 'acme' }] })
     await m.start()
     try {
       const c = new CasdoorClient({
@@ -459,7 +461,7 @@ describe('ensureUser + bindUserToAllPermissions（JIT 自动建号，issue #32�
   })
 
   it('★ add 真失败（故障注入 + 重读仍查无此人）⇒ 抛错（fail loudly，绝不静默放行）', async () => {
-    const m = new MockCasdoor({ users: [] })
+    const m = new MockCasdoor({ users: [], orgs: [{ name: 'acme' }] }) // orgs 种子同上（#117 add-user 前置）
     await m.start()
     try {
       m.setAddUserFault('error')
@@ -572,14 +574,21 @@ describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan�
     new CasdoorClient({ origin: 'http://x', clientId: 'c', clientSecret: 's', org: 'acme', adminUser: 'a', adminPwd: 'p', fetchImpl: f })
 
   it('四联：ensureOrg/ensureAnchorUser(幂等)/ensureModulePlan/upsertSubscription(RFC3339+body+回读)', async () => {
-    const orgs: string[] = []
+    // org 存储按 #117 真机形状建模：add-organization 缺 owner/passwordType ⇒ 落空串（畸形）；
+    // get-organization 单查按 (owner,name) 命中（get-organizations 列表不过滤 owner）
+    const orgs: Array<{ owner: string; name: string; passwordType: string }> = []
     const users = new Set<string>()
     const plans = new Set<string>()
     const subs = new Map<string, any>()
     const log: { path: string; body?: any }[] = []
     const c = mk2(rwRouter(
       (frag, q) => {
-        if (frag === '/get-organizations') return orgs.map((name) => ({ name }))
+        if (frag === '/get-organizations') return orgs.map((g) => ({ owner: g.owner, name: g.name, passwordType: g.passwordType }))
+        if (frag === '/get-organization') {
+          const segs = (q.get('id') ?? '').split('/')
+          const hit = segs.length === 2 ? orgs.find((g) => g.owner === segs[0] && g.name === segs[1]) : undefined
+          return hit ? { owner: hit.owner, name: hit.name, passwordType: hit.passwordType } : null
+        }
         if (frag === '/get-user') return users.has(q.get('id')!) ? { name: q.get('id')!.split('/')[1] } : null
         if (frag === '/get-plan') return plans.has(q.get('id')!) ? { name: q.get('id')!.split('/')[1] } : null
         if (frag === '/get-subscription') return subs.has(q.get('id')!) ? subs.get(q.get('id')!) : null
@@ -587,7 +596,7 @@ describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan�
         return []
       },
       (frag, body, q) => {
-        if (frag === '/add-organization') { orgs.push(body.name); return { status: 'ok', data: 'Affected' } }
+        if (frag === '/add-organization') { orgs.push({ owner: String(body.owner ?? ''), name: body.name, passwordType: String(body.passwordType ?? '') }); return { status: 'ok', data: 'Affected' } }
         if (frag === '/add-user') { users.add(body.owner + '/' + body.name); return { status: 'ok', data: 'Affected' } }
         if (frag === '/add-plan') { plans.add(body.owner + '/' + body.name); return { status: 'ok', data: 'Affected' } }
         if (frag === '/add-subscription') { subs.set(body.owner + '/' + body.name, body); return { status: 'ok', data: 'Affected' } }
@@ -602,7 +611,7 @@ describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan�
       },
       log,
     ))
-    await c.ensureOrg('neworg'); expect(orgs).toContain('neworg')
+    await c.ensureOrg('neworg'); expect(orgs.map((g) => g.name)).toContain('neworg')
     await c.ensureAnchorUser('neworg'); expect(users.has('neworg/tenantsub')).toBe(true)
     await c.ensureAnchorUser('neworg')
     expect(log.filter((l) => l.path === '/add-user').length).toBe(1) // 幂等
@@ -657,6 +666,80 @@ describe('CasdoorClient 订阅域写路径（rwRouter：org→锚用户→plan�
       [],
     ))
     await expect(c.upsertSubscription('acme', 'demo', { state: 'Terminated' })).rejects.toThrow('state')
+  })
+})
+
+// ── #117：共享 Casdoor 首建 org（2026-09-19 山海交付实测的三处真机陷阱：
+//    ① add-organization 缺 owner ⇒ owner="" 畸形 org：列表可见、单查失明，后续 add-user 报
+//      `The organization: <org> does not exist`；② 缺 passwordType ⇒ 该 org 用户密码登录报
+//      `unsupported password type: `；③ add-user 缺 signupApplication / org 零 application ⇒ 被拒
+//    （共享 Casdoor 正典 = 每客户 org 一个 application，交付 runbook 先建）──
+describe('ensureOrg / ensureAnchorUser（#117 共享 Casdoor 首建）', () => {
+  const mkOrgClient = (mock: MockCasdoor, org: string, application?: string) =>
+    new CasdoorClient({
+      origin: mock.origin, clientId: 'x', clientSecret: 'y', org,
+      adminUser: 'admin', adminPwd: 'pw', ...(application ? { application } : {}),
+    })
+
+  it('★ ensureOrg：建出的 org 单查可见且形状正确（owner=admin、passwordType=bcrypt）', async () => {
+    const m = new MockCasdoor({ users: [] })
+    await m.start()
+    try {
+      await mkOrgClient(m, 'neworg').ensureOrg('neworg')
+      expect(m.organizationIn('admin', 'neworg')).toMatchObject({ owner: 'admin', name: 'neworg', passwordType: 'bcrypt' })
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ ensureOrg：同名畸形 org（owner≠admin，单查失明）⇒ 响亮抛错——此前「列表可见」被当存在而假绿放行', async () => {
+    // 复刻旧版 CLI 建出的畸形 org：owner=""、零 application；get-organizations 列表看得见，
+    // get-organization?id=admin/<name> 单查失明 ⇒ ensureOrg 不得把它当「已存在」放行
+    const m = new MockCasdoor({ orgs: [{ name: 'ghost', owner: '', applications: [] }] })
+    await m.start()
+    try {
+      await expect(mkOrgClient(m, 'ghost').ensureOrg('ghost')).rejects.toThrow(/ghost/)
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('ensureOrg 幂等：已存在的正常 org 直接返回，不发 add-organization', async () => {
+    const m = new MockCasdoor({ orgs: [{ name: 'acme-org' }] })
+    await m.start()
+    try {
+      await mkOrgClient(m, 'acme-org').ensureOrg('acme-org')
+      expect(m.addOrganizationCalls).toHaveLength(0)
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ ensureAnchorUser：add-user 带 signupApplication（缺省 app-built-in，可配——与 #login/ensureUser 同口径）', async () => {
+    const m = new MockCasdoor({ orgs: [{ name: 'neworg' }, { name: 'neworg2' }] })
+    await m.start()
+    try {
+      await mkOrgClient(m, 'neworg').ensureAnchorUser('neworg')
+      expect(m.userIn('neworg', 'tenantsub')).toMatchObject({
+        owner: 'neworg', name: 'tenantsub', type: 'normal-user', isForbidden: true,
+        signupApplication: 'app-built-in',
+      })
+      await mkOrgClient(m, 'neworg2', 'app-shanhai').ensureAnchorUser('neworg2')
+      expect(m.userIn('neworg2', 'tenantsub')).toMatchObject({ signupApplication: 'app-shanhai' })
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ ensureAnchorUser：org 零 application ⇒ add-user 被真机拒（交付 runbook 先建 application）且不留半建用户', async () => {
+    const m = new MockCasdoor({ orgs: [{ name: 'neworg', applications: [] }] })
+    await m.start()
+    try {
+      await expect(mkOrgClient(m, 'neworg').ensureAnchorUser('neworg')).rejects.toThrow()
+      expect(m.userIn('neworg', 'tenantsub')).toBeUndefined()
+    } finally {
+      await m.stop()
+    }
   })
 })
 
