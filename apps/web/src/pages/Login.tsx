@@ -1,12 +1,16 @@
-// pages/Login.tsx —— /login：运行时品牌 + 双登录方式（账密 / 企微扫码）
+// pages/Login.tsx —— /login：浅色分栏登录页（运行时品牌 + 双登录方式）
 //
 // 品牌契约（Task 12）：挂载即 GET /api/platform/branding，失败回退 DEFAULT_BRANDING——
 // 登录页必须永远可渲染；primaryColor 经 ConfigProvider token 注入全页。
+// 视觉契约（2026-09-20 改版 spec）：左栏品牌区（浅渐变+网格纹理：logo/产品名/大标语/
+//   副标语/品牌色装饰/版权），右栏白底表单；branding.background 有值且 ≠'default' 时作为
+//   **左栏底色**（语义自「整页背景」收窄），默认走 CSS 浅渐变；<768px 折叠单列。
 // 企微契约（Task 14）：qr 取 iframe 地址；callback 在 iframe 内 postMessage
 //   {type:'sso-done'}（父页跳 next||/console）或 {type:'sso-fail',error}（Alert 对应文案）；
 //   302 /login?error=<CODE> 是非 iframe 浏览器兜底——挂载时解析 search 显示同一套文案。
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, ConfigProvider, Form, Input, Spin, Tabs, Typography } from 'antd'
+import { LockOutlined, UserOutlined } from '@ant-design/icons'
+import { Alert, Button, ConfigProvider, Form, Input, Spin, Tabs, Typography } from 'antd'
 import type { TabsProps } from 'antd'
 import {
   ApiError,
@@ -17,6 +21,7 @@ import {
   login,
   type Branding,
 } from '../lib/api'
+import s from './Login.module.css'
 
 /** 已知登录方式 → Tab 标签（服务端可能回传未知值，页面按白名单过滤） */
 const METHOD_LABELS: Record<'password' | 'wecom-qr', string> = {
@@ -81,40 +86,68 @@ export default function LoginPage() {
       ),
   }))
 
+  // background 语义收窄（改版 spec）：有值且非 'default' 才作为左栏底色；默认走 CSS 渐变
+  const brandBg =
+    branding.background && branding.background !== 'default'
+      ? { background: branding.background }
+      : undefined
+
   return (
     <ConfigProvider theme={{ token: { colorPrimary: branding.primaryColor } }}>
-      <div
-        style={{
-          minHeight: '100vh',
-          display: 'grid',
-          placeItems: 'center',
-          background: branding.background || '#f5f5f5',
-        }}
-      >
-        {ready ? (
-          <Card style={{ width: 380 }}>
-            {branding.logo ? (
-              <img src={branding.logo} alt={branding.productName} style={{ height: 40 }} />
-            ) : null}
-            <Typography.Title level={3} style={{ marginTop: 12 }}>
-              {branding.productName}
-            </Typography.Title>
-            {errorCode ? (
-              <Alert
-                type="error"
-                showIcon
-                title={errorText(errorCode)}
-                closable
-                onClose={() => setErrorCode(null)}
-                style={{ marginBottom: 16 }}
-              />
-            ) : null}
-            <Tabs items={items} />
-          </Card>
-        ) : (
+      {ready ? (
+        <div className={s.page}>
+          <aside className={s.brand} style={brandBg} data-testid="brand-panel">
+            <div className={s.brandHeader}>
+              {branding.logo ? (
+                <img src={branding.logo} alt={branding.productName} className={s.brandLogo} />
+              ) : null}
+              <span className={s.brandName}>{branding.productName}</span>
+            </div>
+            <div className={s.brandBody}>
+              <h1 className={s.headline}>
+                安全、可信赖的
+                <br />
+                <span style={{ color: branding.primaryColor }}>多租户管理平台</span>
+              </h1>
+              <p className={s.tagline}>模块化控制台 · 租户隔离 · 订阅管理</p>
+              <div className={s.accentLine} style={{ background: branding.primaryColor }} />
+              <div className={s.dots}>
+                {[0.9, 0.55, 0.3].map((opacity) => (
+                  <span key={opacity} style={{ background: branding.primaryColor, opacity }} />
+                ))}
+              </div>
+            </div>
+            <div className={s.brandFooter}>
+              © {new Date().getFullYear()} {branding.productName}
+            </div>
+          </aside>
+          <main className={s.formCol}>
+            <div className={s.formInner}>
+              <Typography.Title level={3} style={{ marginBottom: 4 }}>
+                欢迎登录
+              </Typography.Title>
+              <Typography.Paragraph type="secondary" style={{ marginBottom: 24 }}>
+                登录 {branding.productName} 管理控制台
+              </Typography.Paragraph>
+              {errorCode ? (
+                <Alert
+                  type="error"
+                  showIcon
+                  title={errorText(errorCode)}
+                  closable
+                  onClose={() => setErrorCode(null)}
+                  style={{ marginBottom: 16 }}
+                />
+              ) : null}
+              <Tabs items={items} />
+            </div>
+          </main>
+        </div>
+      ) : (
+        <div className={s.loading}>
           <Spin size="large" />
-        )}
-      </div>
+        </div>
+      )}
     </ConfigProvider>
   )
 }
@@ -138,12 +171,17 @@ function PasswordForm({ onFail }: { onFail: (code: string) => void }) {
   return (
     <Form layout="vertical" onFinish={onFinish}>
       <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
-        <Input autoComplete="username" placeholder="用户名" />
+        <Input autoComplete="username" placeholder="用户名" prefix={<UserOutlined />} size="large" />
       </Form.Item>
       <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
-        <Input.Password autoComplete="current-password" placeholder="密码" />
+        <Input.Password
+          autoComplete="current-password"
+          placeholder="密码"
+          prefix={<LockOutlined />}
+          size="large"
+        />
       </Form.Item>
-      <Button type="primary" htmlType="submit" block loading={submitting}>
+      <Button type="primary" htmlType="submit" block size="large" loading={submitting}>
         登录
       </Button>
     </Form>

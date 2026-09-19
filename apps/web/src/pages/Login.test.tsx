@@ -260,6 +260,16 @@ describe('LoginPage（运行时品牌）', () => {
     expect(screen.getAllByRole('tab')).toHaveLength(1)
     expect(screen.getByRole('tab', { name: '账号密码登录' })).toBeInTheDocument()
   })
+
+  it('⑥ 品牌栏底色：background 非 default 时作为左栏底色消费', async () => {
+    mockApi({
+      '/api/platform/branding': () => jsonResponse({ ...BRANDING_DUAL, background: '#123456' }),
+    })
+
+    render(<LoginPage />)
+
+    expect(await screen.findByTestId('brand-panel')).toHaveStyle({ background: '#123456' })
+  })
 })
 
 /** happy-dom 的 location.href 赋值非同步跳转，轮询 pathname 直到命中（防 flake） */
