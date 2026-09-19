@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.19.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.18.1...v0.19.0) - 2026-09-19
+- 【新增】cli: 企微三参补交付写入入口——provision-tenant 加 --wecom-* (Closes #115) ([#116](https://github.com/MYTech-Co-LTD/platform-core/pull/116), [a47611e](https://github.com/MYTech-Co-LTD/platform-core/commit/a47611ebc180228516d0cf1c655bed35824798d6))
+
+
 ## [0.18.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.18.0...v0.18.1) - 2026-09-17
 - 【修复】scripts: smoke-load 先起 mock 再取宿主端口——消除端口撞车 (Closes #112) ([#114](https://github.com/MYTech-Co-LTD/platform-core/pull/114), [b76b289](https://github.com/MYTech-Co-LTD/platform-core/commit/b76b289f4d59baa42dcf0323391ae3a4c5b40397))
 
