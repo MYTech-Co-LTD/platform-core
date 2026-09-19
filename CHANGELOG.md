@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.19.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.19.0...v0.19.1) - 2026-09-19
+- 【修复】auth-core: 共享 Casdoor 首建三缺陷——ensureOrg 漏 owner/passwordType、ensureAnchorUser 漏 signupApplication、写响应吞 (Closes #117) ([#118](https://github.com/MYTech-Co-LTD/platform-core/pull/118), [0666cae](https://github.com/MYTech-Co-LTD/platform-core/commit/0666cae8aca40d750a14630d5094f93ecdeb1e7c))
+
+
 ## [0.19.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.18.1...v0.19.0) - 2026-09-19
 - 【新增】cli: 企微三参补交付写入入口——provision-tenant 加 --wecom-* (Closes #115) ([#116](https://github.com/MYTech-Co-LTD/platform-core/pull/116), [a47611e](https://github.com/MYTech-Co-LTD/platform-core/commit/a47611ebc180228516d0cf1c655bed35824798d6))
 
