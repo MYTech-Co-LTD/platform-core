@@ -21,7 +21,7 @@
 | ① | 机器与网络 | 步骤 1 | 公网 IP + 与控制面的网络关系（同 VPC 走内网 / 跨 VPC 走公网，决定阶段 A 白名单配法）；docker 双容器余量即可（参照现有实例） |
 | ② | Casdoor 归属 | 步骤 3/4 | 默认共用：定 org 名（建议 = 客户 slug，字母数字）。**只收一个管理员**——建号挂 `tenant:admin` 后，其余用户客户在 console M3 页自管（采集面最小化）；合规隔离则拿要求原文，独立实例单独定 |
 | ③ | 域名 | 步骤 5 | 客户自有域名 + **DNS 控制人**（A 记录切换要约时间窗）；无域名用 openship 免费子域 |
-| ④ | 品牌与登录 | 步骤 4 | `product_name`（控制台标题/登录页品牌）；要不要企微扫码——要则客户企微管理员提供三参（corp_id / agent_id / secret）。⚠️ **订正（2026-09-16）**：原文续写「敏感值走 openship env isSecret」**不成立**——三参不是 env，而是**租户行** `wecom_corp_id/wecom_agent_id/wecom_secret`（路由读租户行，见 `apps/server/src/routes/auth-wecom.ts`），且**当前没有 CLI / UI 写入入口**（仓内只有 seed 与手工 SQL）⇒ **要企微扫码就是必须先补的缺口，见 §3 边界**；用账密登录（`--login-methods password`）则不受影响。**另收公众号两参**：`--wechat-oa-app-id` / `--wechat-oa-secret`（客户公众号后台的 AppID / AppSecret）——同样落**租户行**（`wechat_oa_app_id/secret`），**已有 CLI 入口**（步骤 4）。⚠️ **两者是两件不同的东西**：企微 = console **内部登录**（员工），公众号 = **外部访客**登录（售后移动端，spec §1.3） |
+| ④ | 品牌与登录 | 步骤 4 | `product_name`（控制台标题/登录页品牌）；要不要企微扫码——要则客户企微管理员提供三参（corp_id / agent_id / secret）。三参落**租户行** `wecom_corp_id/wecom_agent_id/wecom_secret`（不是 env；路由读租户行，见 `apps/server/src/routes/auth-wecom.ts`），**CLI 已有写入入口**（#115：`--wecom-corp-id [--wecom-agent-id] --wecom-secret`，corp+secret 必须同给、agent 可选随行，见步骤 4）；管理端写端点/配置页仍无（§3 边界），交付走 CLI 不受影响。**另收公众号两参**：`--wechat-oa-app-id` / `--wechat-oa-secret`（客户公众号后台的 AppID / AppSecret）——同样落**租户行**（`wechat_oa_app_id/secret`），**已有 CLI 入口**（步骤 4）。⚠️ **两者是两件不同的东西**：企微 = console **内部登录**（员工），公众号 = **外部访客**登录（售后移动端，spec §1.3） |
 | ⑤ | 模块清单 | 全局 | `--module` 集。仓内现有 `demo`（占位）+ **`aftersales` 售后管理**（M2a 后端 → M3a console → M3b-1 登记审批 → M3b-2 移动端 userApp，**四期已全期上线**）⇒ 真业务功能 = `--module aftersales` 一步开出。**订正（2026-09-16）**：原文写「仓内现只有 `demo` 占位模块；**真业务功能 = L1 模块开发先行**（spec-1 分级 + 模块接入流程），是试点排期的最大变量」——该判断在售后四期落地后已不成立：⑤ 由**开发级（周级）降为配置级（天内）** |
 
 我方侧（可并行推进）：
@@ -114,7 +114,8 @@ MCP `post_projects_by_id_services_by_serviceId_exec`（serviceId 从
 ```sh
 pnpm exec tsx scripts/provision-tenant.mjs <客户slug> --org <客户org> --module <id>... \
   --product-name <产品名> --login-methods password[,wecom-qr] --domain <客户域名> \
-  --wechat-oa-app-id <公众号AppID> --wechat-oa-secret <公众号AppSecret>
+  --wechat-oa-app-id <公众号AppID> --wechat-oa-secret <公众号AppSecret> \
+  --wecom-corp-id <企微企业ID> [--wecom-agent-id <企微应用ID>] --wecom-secret <企微应用Secret>
 ```
 
 `--wechat-oa-*` 两参（**可选**，来自 §0.1 ④）：写租户行 `wechat_oa_app_id/secret` 两列，
@@ -127,8 +128,21 @@ pnpm exec tsx scripts/provision-tenant.mjs <客户slug> --org <客户org> --modu
 - **不配**：该租户 `/silent` 直接 404 `WECHAT_OA_NOT_CONFIGURED` ⇒ 公众号访客登录路走不通。
 - **幂等**：重跑一次**不带**这两参**不会**清掉已配好的两列（`on conflict do update` 只改本次列出的列）。
 
+`--wecom-*` 三参（**可选**，#115，来自 §0.1 ④）：写租户行 `wecom_corp_id/agent_id/secret` 三列，
+即**该租户的企微扫码启用开关**（启用判定 = corp_id + secret 成对存在，`apps/server/src/routes/auth-wecom.ts`）：
+
+- **corp_id 与 secret 必须同给**：单给任一 = 参数错误，入口响亮报错（消费方判定只看这两列，
+  写半个 = `WECOM_NOT_CONFIGURED` 半途态）。**agent_id 可选且仅随行**：单给 agent（不给前两者）
+  同样报错；给了才写库 ⇒ 后补/改 agent 用全三参重跑即可。
+- **secret 不进日志**：CLI 只回显 `wecom <corpId 前 6 位…>`，secret 只落库；同上**不要贴明文**。
+- **不配**：console 企微扫码 tab 不可用（`--login-methods` 里配了 `wecom-qr` 也登录不了，
+  404 `WECOM_NOT_CONFIGURED`）。
+- **幂等**：重跑一次**不带**三参**不会**清掉已配三列；不带 agent 的重跑也不清已配的 agent 列
+  （`on conflict do update` 只改本次列出的列，真 PG 三场景核过）。
+
 成功判据：逐步 ✓ 打印到 `permissions ×N`（N = 模块码数 + 1，含 tenant:admin）与
-`subscribe mod-<id>`、`domain <host>`、带两参时的 `wechat-oa <appId 前 6 位…>`；**幂等可重跑**。
+`subscribe mod-<id>`、`domain <host>`、带两参时的 `wechat-oa <appId 前 6 位…>`、
+带三参时的 `wecom <corpId 前 6 位…>`；**幂等可重跑**。
 
 ### 步骤 5：域名与证书
 
@@ -155,11 +169,8 @@ MCP `post_domains`（projectId、hostname=<客户域名>）→ `post_domains_by_
 
 ## 3. 边界
 
-- **企微扫码三参没有交付写入入口（已知边界，2026-09-16 核出，跟踪 issue #88）**：
-  `wecom_corp_id` / `wecom_agent_id` / `wecom_secret` 落**租户行**（**不是 env**），
-  但仓内**只有 seed 与手工 SQL** 能写（`provision-tenant.mjs` 无对应参数、管理端无写端点、
-  console 无配置页）⇒ **试点若需要企微扫码登录，这是一个必须先补的缺口**；用账密登录
-  （`--login-methods password`，见 §0.1 ④）则不受影响。同族的公众号两参已由
-  `scripts/provision-tenant.mjs` 补上（步骤 4）。
+- **租户级外部接入参数的运营面写入入口仍无（已知边界）**：公众号两参（#88）与企微三参（#115）
+  的**交付路径**都已在 `scripts/provision-tenant.mjs`（步骤 4），但**管理端写端点与 console 配置页**
+  两族都还没有（改配置 = 重跑 CLI）——交付不受影响；运营面需求（租户自助改配置）出现再立项。
 - 独立 Casdoor 实例的部署与运维归属：特殊情况按客户单独定，本文不展开。
 - 壳层定制（布局/导航/多语言）：**L2 车道未建前不接**（spec-1 §1），立项信号 = 第一个真实壳层需求。
