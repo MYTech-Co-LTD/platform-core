@@ -435,26 +435,65 @@ export class CasdoorClient {
     if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
   }
 
-  /** 订阅锚用户名：仅字母数字（Casdoor 用户名字符集实测拒绝 `_`，spec D3） */
+  /**
+   * 建 org（幂等）。#117 真机三陷阱（2026-09-19 山海交付实测）：
+   *   ① add-organization 缺 `owner` ⇒ 建出 owner="" 的畸形 org——get-organizations 列表可见、
+   *     get-organization 单查失明（GetOrganization 按 (owner,name) 查询），后续 add-user 报
+   *     `The organization: <org> does not exist`；
+   *   ② 缺 `passwordType` ⇒ 空串 ⇒ 该 org 用户密码登录报 `unsupported password type: `；
+   *   ③ 200+status:error 被吞 ⇒ 「✓ org」假绿。
+   * 故：存在性判定与回读**同口径**（单查 `?id=admin/<name>`，不查列表——列表不过滤 owner，
+   * 畸形 org 会被当存在而放行）；body 恒带 owner='admin' + passwordType='bcrypt'（UI 建 org
+   * 的默认值）；写操作逐一验 status；建后回读验 owner/name/passwordType（铁律③）。
+   */
   async ensureOrg(name: string): Promise<void> {
-    const j = await this.#adminJson('get-organizations')
-    if (j.status === 'ok' && Array.isArray(j.data) && j.data.some((o) => (o as { name: string }).name === name)) return
-    await this.#adminJson('add-organization', { method: 'POST', body: { name, displayName: name, isEnabled: true } })
+    const id = `admin/${name}`
+    const exists = await this.#adminJson(`get-organization?id=${encodeURIComponent(id)}`)
+    if (exists.status === 'ok' && exists.data
+      && (exists.data as { owner?: string }).owner === 'admin'
+      && (exists.data as { name?: string }).name === name) return
+    const add = await this.#adminJson('add-organization', {
+      method: 'POST',
+      body: { owner: 'admin', name, displayName: name, passwordType: 'bcrypt', isEnabled: true },
+    })
+    if (add.status && add.status !== 'ok') {
+      // 同名被拒不按文案分支，重读列表判定（同 #upsertOne 口径）：列表有此名而单查无 ⇒ 畸形记录
+      const list = await this.#adminJson('get-organizations')
+      const listed = list.status === 'ok' && Array.isArray(list.data)
+        && list.data.some((o) => (o as { name: string }).name === name)
+      throw new Error(listed
+        ? `casdoor ensure-org: 同名 org 已存在但单查失明（疑似 owner≠admin 的畸形记录，旧版 CLI 建出；`
+          + `需人工删建——delete-organization 走 JSON body {owner,name} 后带 owner='admin' 重建，#117）: ${name}`
+        : `casdoor: ${add.msg || 'error'}`)
+    }
+    const back = await this.#adminJson(`get-organization?id=${encodeURIComponent(id)}`) // 铁律③ 写后回读
+    const g = back.status === 'ok' ? back.data as { owner?: string; name?: string; passwordType?: string } | null : null
+    if (!g || g.owner !== 'admin' || g.name !== name || g.passwordType !== 'bcrypt') {
+      throw new Error(`casdoor ensure-org: 写后回读失败/形状不符 ${id}（owner=${g?.owner ?? '无'} passwordType=${g?.passwordType ?? '无'}）`)
+    }
   }
 
-  /** 租户订阅锚用户（禁登、随机密码、幂等）。Casdoor UI 按用户管理订阅——空 user 不可运营。 */
+  /**
+   * 租户订阅锚用户（禁登、随机密码、幂等）。Casdoor UI 按用户管理订阅——空 user 不可运营。
+   * #117 真机：add-user 缺 `signupApplication` / org 零 application ⇒ 200+status:error
+   * `The organization: <org> should have one application at least`——共享 Casdoor 正典 =
+   * 每客户 org 一个 application（交付 runbook 先建 application 再跑 provision CLI）。
+   * signupApplication 与 #login/ensureUser 同口径：可配，缺省 app-built-in。
+   */
   async ensureAnchorUser(org: string): Promise<void> {
     const id = `${org}/tenantsub`
     const j = await this.#adminJson(`get-user?id=${encodeURIComponent(id)}`)
     if (j.status === 'ok' && j.data) return
-    await this.#adminJson('add-user', {
+    const add = await this.#adminJson('add-user', {
       method: 'POST',
       body: {
         owner: org, name: 'tenantsub', displayName: 'Tenant Subscription Anchor',
         password: crypto.randomUUID() + '!Aa1', email: 'tenantsub@subscription.invalid',
         isForbidden: true, type: 'normal-user',
+        signupApplication: this.#o.application ?? 'app-built-in',
       },
     })
+    if (add.status && add.status !== 'ok') throw new Error(`casdoor ensure-anchor-user: ${add.msg || 'error'}`)
     const back = await this.#adminJson(`get-user?id=${encodeURIComponent(id)}`) // 铁律③ 写后回读
     if (back.status !== 'ok' || !back.data) throw new Error(`casdoor ensure-anchor-user: 写后回读失败 ${id}`)
   }

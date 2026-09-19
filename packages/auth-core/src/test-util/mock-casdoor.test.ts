@@ -258,3 +258,99 @@ describe('MockCasdoor get-user：id 段数校验对齐真机', () => {
     expect(j.data).toBeNull()
   })
 })
+
+// ── #117：org/application 域（真机形状复刻——add-organization 缺 owner 的畸形 org、
+//    GetOrganization 按 (owner,name) 单查失明、add-user 的两个 org 前置）──
+// 状态有增删，逐用例独立起 mock（不复用顶部的共享实例）。
+describe('MockCasdoor org/application 域（#117）', () => {
+  const cookieOf = async (mock: MockCasdoor): Promise<string> => {
+    const r = await fetch(`${mock.origin}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pw' }),
+    })
+    const hit = /casdoor_session_id=([^;]+)/.exec(r.headers.get('set-cookie') ?? '')
+    return hit ? `casdoor_session_id=${hit[1]}` : ''
+  }
+  const post = async (mock: MockCasdoor, path: string, body: unknown): Promise<Record<string, unknown>> =>
+    (await (await fetch(`${mock.origin}/api/${path}`, {
+      method: 'POST',
+      headers: { Cookie: await cookieOf(mock), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })).json()) as Record<string, unknown>
+  const get = async (mock: MockCasdoor, path: string): Promise<Record<string, unknown>> =>
+    (await (await fetch(`${mock.origin}/api/${path}`, { headers: { Cookie: await cookieOf(mock) } }))
+      .json()) as Record<string, unknown>
+
+  it('★ 负例：add-organization 缺 owner ⇒ 建出 owner="" 的畸形 org——列表可见、单查失明（真机陷阱复刻）', async () => {
+    const m = new MockCasdoor({ users: [] })
+    await m.start()
+    try {
+      const j = await post(m, 'add-organization', { name: 'broken', displayName: 'broken', isEnabled: true })
+      expect(j.status).toBe('ok') // 真机不报错——畸形是静默的，这正是陷阱
+      const list = (await get(m, 'get-organizations')) as { data: Array<{ owner: string; name: string }> }
+      expect(list.data.map((g) => g.name)).toContain('broken') // 列表可见
+      const single = (await get(m, `get-organization?id=${encodeURIComponent('admin/broken')}`)) as { status: string; data: unknown }
+      expect(single.status).toBe('ok')
+      expect(single.data).toBeNull() // 单查失明（GetOrganization 按 (admin,name) 查）
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('add-organization 带 owner/passwordType ⇒ 单查命中且字段落库；同名拒绝', async () => {
+    const m = new MockCasdoor({ users: [] })
+    await m.start()
+    try {
+      await post(m, 'add-organization', { owner: 'admin', name: 'ok-org', passwordType: 'bcrypt', displayName: 'ok-org' })
+      const single = (await get(m, `get-organization?id=${encodeURIComponent('admin/ok-org')}`)) as { data: { owner: string; name: string; passwordType: string } }
+      expect(single.data).toMatchObject({ owner: 'admin', name: 'ok-org', passwordType: 'bcrypt' })
+      const dup = await post(m, 'add-organization', { owner: 'admin', name: 'ok-org' })
+      expect(dup.status).toBe('error')
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ add-user 的两个 org 前置：org 不存在 / org 零 application ⇒ 200+status:error（真机实测文案族）', async () => {
+    const m = new MockCasdoor({ orgs: [{ name: 'neworg', applications: [] }] })
+    await m.start()
+    try {
+      const noOrg = await post(m, 'add-user', { owner: 'nowhere', name: 'u1', type: 'normal-user' })
+      expect(noOrg.status).toBe('error')
+      const noApp = await post(m, 'add-user', { owner: 'neworg', name: 'u1', type: 'normal-user' })
+      expect(noApp.status).toBe('error')
+      expect(m.userIn('neworg', 'u1')).toBeUndefined() // 前置不满足 ⇒ 不留半建用户
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('add-application 挂到 org 后 add-user 放行（共享 Casdoor 正典：先建 application 再建用户）', async () => {
+    const m = new MockCasdoor({ orgs: [{ name: 'neworg', applications: [] }] })
+    await m.start()
+    try {
+      const j = await post(m, 'add-application', { owner: 'admin', name: 'cust-app', organization: 'neworg' })
+      expect(j.status).toBe('ok')
+      expect(m.addApplicationCalls).toHaveLength(1)
+      const add = await post(m, 'add-user', { owner: 'neworg', name: 'u1', type: 'normal-user', signupApplication: 'cust-app' })
+      expect(add.status).toBe('ok')
+      expect(m.userIn('neworg', 'u1')).toMatchObject({ signupApplication: 'cust-app' })
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('种子用户/权限出现过的 org 自动补录成正常形状（含 application）——built-in 恒在', async () => {
+    const m = new MockCasdoor({ users: [{ name: 'a', password: 'p', owner: 'acme' }] })
+    await m.start()
+    try {
+      expect(m.organizationIn('admin', 'acme')).toMatchObject({ owner: 'admin', passwordType: 'bcrypt', applications: ['app-built-in'] })
+      expect(m.organizationIn('admin', 'built-in')).toMatchObject({ applications: ['app-built-in'] })
+      const add = await post(m, 'add-user', { owner: 'acme', name: 'late', type: 'normal-user' })
+      expect(add.status).toBe('ok')
+    } finally {
+      await m.stop()
+    }
+  })
+})

@@ -63,6 +63,16 @@ rootDirectory=deploy、framework=docker-compose。
 
 ### 步骤 3：首次部署（带 serverId）+ env 物化
 
+**共用 Casdoor 前置（#117 正典，先做这一步再配 env）**：给客户 org 建一个 application。
+Casdoor 后台（platform 超管）建：owner=`admin`、organization=`<客户 org>`、名字建议
+`<客户slug>-app`（山海实录：`shanhaiyiguo-app`，对照既有 `customerb-app` 形状）。两个硬理由：
+
+- **org 至少要有一个 application**，provision CLI 的 `ensureAnchorUser`（add-user）才不被拒
+  （#117 真机：`The organization: <org> should have one application at least`）；
+- 下面的 env **三键指向它**——application 不自动建（含 clientId/redirectUris 等丰富形状，
+  CLI 不代生成），人工建是正典；org 本身由 CLI `ensureOrg` 建（#117 修复后带
+  owner=admin + passwordType=bcrypt，写后回读验形状）。
+
 先 env（MCP `patch_projects_by_id_env`，environment=production）：
 
 | 键 | 值 |
@@ -70,7 +80,13 @@ rootDirectory=deploy、framework=docker-compose。
 | `TENANT_MODE` | `single` |
 | `PLATFORM_ORG` | `<客户 casdoor org>` |
 | `CASDOOR_URL` | 我方 sso（默认）或客户独立实例 |
-| `CASDOOR_CLIENT_ID` / `CASDOOR_CLIENT_SECRET` / `CASDOOR_ADMIN_USER` / `CASDOOR_ADMIN_PWD` / `CASDOOR_APPLICATION` | 按目标 Casdoor 取值（敏感值走 isSecret） |
+| `CASDOOR_APPLICATION` | **上面建的 `<客户slug>-app`（客户 org 自己的 application）** |
+| `CASDOOR_CLIENT_ID` / `CASDOOR_CLIENT_SECRET` | **同一个 application 的三件套之二**（application 页取，secret 走 isSecret） |
+| `CASDOOR_ADMIN_USER` / `CASDOOR_ADMIN_PWD` | Casdoor 管理员（admin API 会话登录用；pwd 走 isSecret） |
+
+> ⚠️ **三键必须指向客户 org 自己的 application**（#117 山海实测）：沿用 `app-built-in` /
+> admin 侧应用 ⇒ 登录链路断（`/api/login` 的 application 形参对不上用户 signupApplication
+> 所属）。三键指同一个 application，别一半旧一半新。
 | `PLATFORM_SESSION_SECRET` | 随机生成（isSecret） |
 | `PUBLIC_ORIGIN` | `https://<客户域名>` |
 | `PLATFORM_SUBSCRIPTION_SOURCE` | `casdoor`（**新交付一律 casdoor 源，全平台单一口径**；platform 源仅我方实例回滚兜底） |
@@ -144,6 +160,12 @@ pnpm exec tsx scripts/provision-tenant.mjs <客户slug> --org <客户org> --modu
 `subscribe mod-<id>`、`domain <host>`、带两参时的 `wechat-oa <appId 前 6 位…>`、
 带三参时的 `wecom <corpId 前 6 位…>`；**幂等可重跑**。
 
+> ⚠️ **#117 修复后的响亮失败口径**（改前是「✓ org 假绿、晚到 ensureAnchorUser 才炸」）：
+> `ensureOrg` 报「同名 org 已存在但单查失明」= 旧版 CLI 建出的 owner≠admin 畸形 org——
+> 按报错提示人工删建（Casdoor `delete-organization` 走 JSON body `{owner,name}`，重建时带
+> `owner:'admin'`），再重跑 CLI。`ensureAnchorUser` 报 `should have one application at least`
+> = 步骤 3 前置的 application 没建——回去建完再重跑（幂等，重跑无副作用）。
+
 ### 步骤 5：域名与证书
 
 MCP `post_domains`（projectId、hostname=<客户域名>）→ `post_domains_by_id_verify` →
@@ -153,7 +175,27 @@ MCP `post_domains`（projectId、hostname=<客户域名>）→ `post_domains_by_
 
 按 `deploy/README.md` 的部署后验证（容器创建时间 vs 镜像构建时间、新行为可观测）+
 `docs/m0-smoke-checklist.md`。登录一口：CLI 建的是租户与订阅，**第一批用户要在 Casdoor
-建号并挂码**（客户管理员 = `tenant:admin`，挂上后 console「管理」菜单组可见——M3 页自管）。
+建号并挂码**：
+
+- **挂码口径**：客户管理员挂 `tenant:admin`（console「管理」菜单组可见，M3 页自管）**加**
+  `--module` 集各模块的**管理码**（aftersales = `aftersales:manage`——只挂 tenant:admin
+  能进 console 但模块页 403；访客码 `aftersales:guest` 是移动端会话派生用的，不用挂人）。
+- **建号/改密码口径**（#117 真机）：Casdoor **add-user 服务端会哈希密码，update-user 不哈希**
+  ⇒ 建号走 add-user（或 console M3 页）；**改密码 = 删号重建**（`delete-user` JSON body
+  `{owner,name}` 后重新 add-user）——**不要**用 update-user 改 password（存成不哈希的值，
+  登录必败且无报错线索）。
+
+浏览器级冒烟用仓内脚本（#117 进仓固化，替代临时的 /tmp 版）：
+
+```sh
+SMOKE_BASE=https://<客户域名> SMOKE_USER=<冒烟账号> SMOKE_PASS=<密码在哪见下> \
+  SMOKE_BRAND=<产品名> node scripts/smoke-delivery.mjs
+```
+
+断言集：登录页品牌 + 企微 tab → 表单登录落 `/console` → 管理菜单组（tenant:admin 证据）→
+模块页无 403（模块码证据）→ 移动端壳 HTTP<500。截图落 `/tmp`（`SMOKE_OUT` 可改）。
+凭据取法：冒烟账号在 Casdoor 客户 org 建号并挂码（同上口径），**密码只存在 openship env /
+交付记录，不进仓、不进命令行参数**（脚本只从 env 读）。
 
 **访客链路也只有在这里能验**（本地验不了，见 §0.1 链路一段）：公众号内打开
 `https://<客户域名>/app/aftersales` → 登录（应拿到访客 session，不是回登录页）→ 提交一张带图的
@@ -174,3 +216,35 @@ MCP `post_domains`（projectId、hostname=<客户域名>）→ `post_domains_by_
   两族都还没有（改配置 = 重跑 CLI）——交付不受影响；运营面需求（租户自助改配置）出现再立项。
 - 独立 Casdoor 实例的部署与运维归属：特殊情况按客户单独定，本文不展开。
 - 壳层定制（布局/导航/多语言）：**L2 车道未建前不接**（spec-1 §1），立项信号 = 第一个真实壳层需求。
+
+## 4. 交付实录（真实案例沉淀——无案例不立标准，本文新增口径全部溯源到这一单）
+
+### 2026-09-19 山海一果（第一单，`platform.shanhaiyiguo.com`）
+
+**形态**：客户机独立实例（TENANT_MODE=single）+ 共用 sso.hookflow.cn（org
+`shanhaiyiguo-org`，application `shanhaiyiguo-app`）+ 自有域名 + `--module aftersales`
+（含 ZOS 五键、公众号两参、企微三参）。
+
+**踩坑（= issue #117，三层真机缺陷，provision CLI 前两轮失败、第三轮全绿）**：
+
+1. `ensureOrg` 的 add-organization body 缺 `owner` ⇒ 建出 owner="" 畸形 org：get-organizations
+   列表可见、get-organization 单查失明（按 (owner,name) 查询）⇒ 「✓ org」假绿，晚到
+   ensureAnchorUser 才报 `The organization: <org> does not exist`；
+2. 缺 `passwordType` ⇒ 该 org 用户密码登录报 `unsupported password type: `；
+3. `ensureAnchorUser` 的 add-user 缺 `signupApplication` + org 零 application ⇒ 被拒
+   (`should have one application at least`)；两处写操作 200+status:error 被吞。
+
+**修法（本仓 PR，Closes #117）**：CLI 侧补 owner/passwordType/signupApplication + 写后回读
+验形状 + status!=='ok' 即抛 + 畸形 org 给处置线索；mock-casdoor 按真机形状收严（org/application
+域 + add-user 两前置）；本文步骤 3/4/6 的新口径即由此立。
+
+**当场处置（下一家别再踩）**：手工 `delete-organization`（JSON body）删畸形 org → 带
+owner='admin' 重建 → `add-application` 建 `shanhaiyiguo-app`（org=shanhaiyiguo-org）→
+env 三键改指该 application → 第三轮 CLI 全绿（permissions ×5 + subscribe mod-aftersales）。
+
+**验收**：浏览器冒烟（本单用的 /tmp 临时版即 `scripts/smoke-delivery.mjs` 的前身）全过——
+品牌/企微 tab/表单登录/console 管理菜单组/模块页无 403/移动端壳。**未验**：公众号访客
+链路（待客户公众号侧可信域名 + 真机验证，见步骤 6）；企微真扫码（tab 可见，可信域名
+`platform.shanhaiyiguo.com` 待客户企微后台配，WW_verify 文件随 PR #29 口径走业务仓）。
+
+**销账**：本单即 M1c「single 试点端到端验收」的实录（AGENTS.md 债账对应项）。
