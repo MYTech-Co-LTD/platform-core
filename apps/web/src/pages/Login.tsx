@@ -45,6 +45,18 @@ function queryError(): string | null {
   return code && code.trim() ? code : null
 }
 
+/**
+ * 深色底判断（走查修正）：hex 色（#rgb/#rrggbb）按 BT.601 加权亮度 < 0.5 视为深底，
+ * 品牌栏切浅色文字；非 hex 值（色名/渐变等）保守按浅底处理。
+ */
+function isDarkColor(css: string): boolean {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(css.trim())
+  if (!m) return false
+  const hex = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1]
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+  return 0.299 * r + 0.587 * g + 0.114 * b < 0.5
+}
+
 export default function LoginPage() {
   const [branding, setBranding] = useState<Branding>(DEFAULT_BRANDING)
   const [ready, setReady] = useState(false)
@@ -86,17 +98,22 @@ export default function LoginPage() {
       ),
   }))
 
-  // background 语义收窄（改版 spec）：有值且非 'default' 才作为左栏底色；默认走 CSS 渐变
-  const brandBg =
-    branding.background && branding.background !== 'default'
-      ? { background: branding.background }
-      : undefined
+  // background 语义收窄（改版 spec）：有值且非 'default' 才作为左栏底色；默认走 CSS 渐变；
+  // 深色底时加 brandDark 类切浅色文字（可读性兜底，走查修正）
+  const customBg =
+    branding.background && branding.background !== 'default' ? branding.background : undefined
+  const brandBg = customBg ? { background: customBg } : undefined
+  const brandDark = customBg !== undefined && isDarkColor(customBg)
 
   return (
     <ConfigProvider theme={{ token: { colorPrimary: branding.primaryColor } }}>
       {ready ? (
         <div className={s.page}>
-          <aside className={s.brand} style={brandBg} data-testid="brand-panel">
+          <aside
+            className={brandDark ? `${s.brand} ${s.brandDark}` : s.brand}
+            style={brandBg}
+            data-testid="brand-panel"
+          >
             <div className={s.brandHeader}>
               {branding.logo ? (
                 <img src={branding.logo} alt={branding.productName} className={s.brandLogo} />

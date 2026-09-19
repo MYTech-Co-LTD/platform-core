@@ -94,6 +94,26 @@
   color: #9aa7b8;
 }
 
+/* 深色底（branding.background 为深色 hex）时文字切浅色，网格线换浅色——可读性兜底 */
+.brandDark .brandName,
+.brandDark .headline {
+  color: #ffffff;
+}
+
+.brandDark .tagline {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.brandDark .brandFooter {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.brandDark::before {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+}
+
 /* ---- 右栏：表单区 ---- */
 .formCol {
   flex: 1;
