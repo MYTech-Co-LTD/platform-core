@@ -21,7 +21,7 @@
 | ① | 机器与网络 | 步骤 1 | 公网 IP + 与控制面的网络关系（同 VPC 走内网 / 跨 VPC 走公网，决定阶段 A 白名单配法）；docker 双容器余量即可（参照现有实例） |
 | ② | Casdoor 归属 | 步骤 3/4 | 默认共用：定 org 名（建议 = 客户 slug，字母数字）。**只收一个管理员**——建号挂 `tenant:admin` 后，其余用户客户在 console M3 页自管（采集面最小化）；合规隔离则拿要求原文，独立实例单独定 |
 | ③ | 域名 | 步骤 5 | 客户自有域名 + **DNS 控制人**（A 记录切换要约时间窗）；无域名用 openship 免费子域 |
-| ④ | 品牌与登录 | 步骤 4 | `product_name`（控制台标题/登录页品牌）；要不要企微扫码——要则客户企微管理员提供三参（corp_id / agent_id / secret）。三参落**租户行** `wecom_corp_id/wecom_agent_id/wecom_secret`（不是 env；路由读租户行，见 `apps/server/src/routes/auth-wecom.ts`），**CLI 已有写入入口**（#115：`--wecom-corp-id [--wecom-agent-id] --wecom-secret`，corp+secret 必须同给、agent 可选随行，见步骤 4）；管理端写端点/配置页仍无（§3 边界），交付走 CLI 不受影响。**另收公众号两参**：`--wechat-oa-app-id` / `--wechat-oa-secret`（客户公众号后台的 AppID / AppSecret）——同样落**租户行**（`wechat_oa_app_id/secret`），**已有 CLI 入口**（步骤 4）。⚠️ **两者是两件不同的东西**：企微 = console **内部登录**（员工），公众号 = **外部访客**登录（售后移动端，spec §1.3） |
+| ④ | 品牌与登录 | 步骤 4 | `product_name`（控制台标题/登录页品牌）；要不要企微扫码——要则客户企微管理员提供三参（corp_id / agent_id / secret）。三参落**租户行** `wecom_corp_id/wecom_agent_id/wecom_secret`（不是 env；路由读租户行，见 `apps/server/src/routes/auth-wecom.ts`），**CLI 已有写入入口**（#115：`--wecom-corp-id [--wecom-agent-id] --wecom-secret`，corp+secret 必须同给、agent 可选随行，见步骤 4）；管理端写端点/配置页仍无（§3 边界），交付走 CLI 不受影响。**企微扫码除三参外，还差客户企微管理员在自建应用页配的两项后台开关**（值由我方提供，采集时一并约好）：**可信域名**（网页授权及 JS-SDK，填实例域名；其验证文件 `WW_verify_*.txt` 由我方经 openship 上线，口径见步骤 5）与**企业可信 IP**（填**实例机器的公网出口 IP**——gettoken 豁免此项、其余服务端 API 全受它拦；漏配 = 扫码回调 getuserinfo 报 60020，文案酷似 secret 错，极易误诊）。**另收公众号两参**：`--wechat-oa-app-id` / `--wechat-oa-secret`（客户公众号后台的 AppID / AppSecret）——同样落**租户行**（`wechat_oa_app_id/secret`），**已有 CLI 入口**（步骤 4）。⚠️ **两者是两件不同的东西**：企微 = console **内部登录**（员工），公众号 = **外部访客**登录（售后移动端，spec §1.3） |
 | ⑤ | 模块清单 | 全局 | `--module` 集。仓内现有 `demo`（占位）+ **`aftersales` 售后管理**（M2a 后端 → M3a console → M3b-1 登记审批 → M3b-2 移动端 userApp，**四期已全期上线**）⇒ 真业务功能 = `--module aftersales` 一步开出。**订正（2026-09-16）**：原文写「仓内现只有 `demo` 占位模块；**真业务功能 = L1 模块开发先行**（spec-1 分级 + 模块接入流程），是试点排期的最大变量」——该判断在售后四期落地后已不成立：⑤ 由**开发级（周级）降为配置级（天内）** |
 
 我方侧（可并行推进）：
@@ -166,10 +166,35 @@ pnpm exec tsx scripts/provision-tenant.mjs <客户slug> --org <客户org> --modu
 > `owner:'admin'`），再重跑 CLI。`ensureAnchorUser` 报 `should have one application at least`
 > = 步骤 3 前置的 application 没建——回去建完再重跑（幂等，重跑无副作用）。
 
+> ⚠️ **重跑（含只为改三参/两参的重跑）必须把 `--product-name` 与 `--login-methods` 带全**
+> （2026-09-19 山海换企微应用实测踩中）：租户行 upsert 对 `casdoor_org / product_name /
+> login_methods` 三列**恒写**——不传就落 fallback（品牌洗成 slug、login_methods 洗成只剩
+> `password` ⇒ 登录页企微 tab 消失）。上面两条「幂等不清列」的语义**只对企微三参与公众号
+> 两参列成立**（`tenantRowUpsert`：这三列在每次 upsert 的 set 清单里，另五列给了才写）。
+
 ### 步骤 5：域名与证书
 
 MCP `post_domains`（projectId、hostname=<客户域名>）→ `post_domains_by_id_verify` →
 `post_domains_by_id_verify_ssl`。DNS 由客户侧先把 A 记录指到机器公网 IP。
+
+**企微可信域名验证文件（`WW_verify_<code>.txt`）——openship 服务级注入口径（2026-09-19
+起正典，零 PR 零发版零升级窗口）**：
+
+1. MCP `patch_projects_by_id_services_by_serviceId`（server 服务）传
+   `advanced: {files: [{path: "/app/apps/web/dist/WW_verify_<code>.txt", content: "<验证码>"}]}`
+   （`advanced` 是**合并**语义，多个应用 = files 数组多行，每应用一个码）；
+2. MCP `post_deployments_build_access`（environment=production，`serviceIds` 与
+   `refreshServiceIds` 都带上 server 服务）——refresh 重建，秒级、不重构建；
+3. 成功判据：`curl https://<客户域名>/WW_verify_<code>.txt` 回 **200 且内容逐字一致**，
+   再让客户企微管理员在可信域名处点「验证」。
+
+机制与实测（我方实例三验全过，2026-09-19）：宿主 `serveStatic` 按请求读磁盘（`app.ts`），
+openship 把文件**挂载**进容器 dist（部署日志 `mounted N generated config file(s)`）；refresh
+重建与 git 完整部署（含 compose 同步）后文件**都在**。删除 = `advanced.files` 置 null +
+refresh；删后该路径落 SPA 兜底回 index.html——企微要逐字码，缺 = 响亮失败，不假绿。
+**历史仓内口径（PR #29/#120，文件提交 `apps/web/public/` 随构建带出）已退役**：仓内旧文件
+保留不迁移，新文件一律走注入。企微接入四要素全景（三参/可信域名/可信IP/扫码人账号）见
+WeKnora 条目「企微自建应用接入 platform-core」。
 
 ### 步骤 6：冒烟
 
@@ -243,8 +268,14 @@ owner='admin' 重建 → `add-application` 建 `shanhaiyiguo-app`（org=shanhaiy
 env 三键改指该 application → 第三轮 CLI 全绿（permissions ×5 + subscribe mod-aftersales）。
 
 **验收**：浏览器冒烟（本单用的 /tmp 临时版即 `scripts/smoke-delivery.mjs` 的前身）全过——
-品牌/企微 tab/表单登录/console 管理菜单组/模块页无 403/移动端壳。**未验**：公众号访客
-链路（待客户公众号侧可信域名 + 真机验证，见步骤 6）；企微真扫码（tab 可见，可信域名
-`platform.shanhaiyiguo.com` 待客户企微后台配，WW_verify 文件随 PR #29 口径走业务仓）。
+品牌/企微 tab/表单登录/console 管理菜单组/模块页无 403/移动端壳。
+
+**同日闭环（换应用 1000012 后，交付当天全部收口）**：企微三参轮换（1000009→1000012，
+重跑 CLI 的品牌/登录方式被洗——坑即步骤 4 的重跑警示）→ WW_verify 文件上线（PR #120，
+**末代仓内口径**；此后新文件一律走步骤 5 注入）→ 企微后台可信域名（`platform.shanhaiyiguo.com`）
++ 企业可信 IP（实例出口 `113.249.104.181`）配齐 → 首管理员 ZhangDuo 建号挂码
+（`tenant:admin` + `aftersales:manage`，name=企微 userid）→ **企微扫码登录机器验证通过**
+（审计 `login.ok via=wecom-qr`，2026-09-19）。**未验（本单剩余）**：公众号访客链路
+（待客户公众号侧可信域名 + 真机验证，见步骤 6）。
 
 **销账**：本单即 M1c「single 试点端到端验收」的实录（AGENTS.md 债账对应项）。
