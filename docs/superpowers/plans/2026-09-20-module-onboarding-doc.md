@@ -592,7 +592,7 @@ gh issue create \
 |---|---|
 | `notifications.dir` | schema 接受，**零消费者**（无任何读取方） |
 | `config.schema` | schema 接受，**零消费者** |
-| `bindings` | 仅 `scripts/check-manifests.mjs` 查键白名单 `{postgres, novu, cube}`，**无运行时消费** |
+| `bindings` | 仅 `packages/platform-sdk/src/checks.ts` 的 `BINDING_KEYS`（`{postgres, novu, cube}`；经 `scripts/check-manifests.mjs` 调用）查键白名单，**无运行时消费** |
 
 三者均为「声明了不会产生任何效果」。已在 `docs/module-onboarding.md` §2 表与「已知边界」节
 如实标注为「预留·无消费者」（不阻塞文档交付）。
@@ -629,7 +629,10 @@ gh issue create \
 过滤**（只有访客路 :176 按已启用模块重算）⇒ 停用模块的页对持码用户直敲可达；有页 scope 但无
 `tenant:admin` 的用户可直敲进模块 admin 页。
 
-测试面：`Console.test.tsx` 的 ① 用例只覆盖**菜单**过滤，路由门禁无测试。
+测试面：`Console.test.tsx` **已有**路由级用例（②c 无 scope 直敲模块页 → 403；⑧ 直敲
+`/console/admin/storage` → 未启用 Result），但**没有**覆盖本缺口的两条：
+(a) 停用模块 + 持有该 scope 的用户直敲模块页仍可打开（config 维度无断言）；
+(b) 模块 admin 页路由缺 `tenant:admin` 组门（无断言）。
 
 ## 影响
 
