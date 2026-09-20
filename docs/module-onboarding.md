@@ -174,7 +174,7 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
                         │
                         ▼
         菜单出现该条目 + 点进去懒加载模块页
-        （任何一项不过 ⇒ 菜单不出。注意这是**菜单**的过滤——
+        （任何一项不过 ⇒ 菜单不出。注意这是「菜单」的过滤——
           路由层另按 registry ∩ session scope 兜底，不含 config，见「已知边界」）
 ```
 
@@ -209,7 +209,7 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 > ⚠️ 上表第 2、4 行是 **2026-09-20 实测订正**后的口径，**不要回退**成「菜单与页面同隐」那种
 > 把菜单与路由混为一谈的写法。证据：`apps/web/src/App.tsx:30` 模块页落 `*` 通配；
 > `apps/web/src/pages/Console.tsx` 的 `ConsoleModulePage` 只判 `registry` + `session.scopes`，无 config 查询；
-> `apps/web/src/App.tsx:26-29` 的 `AdminGate` 只包内置四项；`apps/server/src/session-middleware.ts:196` 普通会话 scopes 来自
+> `apps/web/src/App.tsx:26-29` 的 `AdminGate` 只包内置四项；`apps/server/src/session-middleware.ts:193` 普通会话 scopes 来自
 > Casdoor（非按启用模块过滤）。缺口已开 issue 跟踪。
 
 ### `frontend.console`：管理台模块页
