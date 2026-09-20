@@ -206,7 +206,7 @@ frontend:
     `ConsoleModulePage`/`AdminGate`/`StorageGate`、`apps/server/src/session-middleware.ts:193`。
   - ⚠️ 「停用 = 该租户看不到这个模块」在 **API 面与 userApp 面**照旧成立（见「停用语义」节）；
     上面说的是**控制台路由面**的实现缺口，缺口记录在案、修复另议。
-- **服务端 config 不暴露 admin 清单**：前端按 registry∩config 自判，零后端改动。
+- **服务端 config 不暴露 admin 清单**：前端**菜单**按 registry∩config 自判（**路由**面见上条——只按 registry∩scope），零后端改动。
 - **path 约束双向**：admin 必须落 `/console/admin/` 下；`frontend.console[].path` 不得占用
   该前缀（schema 双拦——防串组：菜单把 console 条目当模块区平铺页）。
 - **管理组 children 顺序**：平台内置三项（用户/角色/我的订阅）→ 存储配置（能力联动：
