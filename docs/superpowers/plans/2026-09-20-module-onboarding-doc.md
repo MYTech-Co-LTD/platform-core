@@ -194,8 +194,7 @@ grep -oE '`[A-Za-z0-9_./-]+\.(md|ts|tsx|mjs|json|yaml|sql)`' docs/module-onboard
 ```
 Expected: 无输出（无 `MISSING:` 行）。占位路径（形如 `modules/<id>/…`）不被该正则捕获，属正常。
 
-再核正典节名引用（**必须用 python3 提取**：实测 `grep -oE '「[^」]+」'` 在本机会静默丢结果——
-9 条 vs 实际 14 条，multibyte 方括号表达式不靠谱）：
+再核正典节名引用（**用 python3 提取**，理由见下）：
 
 ```bash
 python3 -c "
@@ -204,6 +203,20 @@ s=open('docs/module-onboarding.md',encoding='utf-8').read()
 print('\n'.join(sorted(set(re.findall(r'「[^」]+」',s)))))
 "
 ```
+
+> ⚠️ **2026-09-20 订正（本条曾写错，勿回退）**：本命令原写作「**必须**用 python3：实测
+> `grep -oE '「[^」]+」'` 在本机会静默丢结果，多字节方括号表达式不靠谱」。**该结论是假的**——
+> `grep -oE '「[^」]+」' <file> | wc -l` 与 python `len(re.findall(...))` 在同一份真文档上是
+> **53 vs 53，逐条相同**，grep 无辜。
+>
+> 真根因：当时的比较管道里有个 **`sort -u`**——macOS 的 `sort -u` 在 `en_US.UTF-8` 下会把
+> **互不相同的中文串判为相等并去重**（实测：10 个不同中文词 ⇒ 剩 1 条；`LC_ALL=C sort -u`
+> 才正常 10 条；`sort` 不加 `-u` 也正常）。于是「少掉的」全是 `sort -u` 折叠的，与 grep 无关。
+>
+> **教训（比结论本身更值钱）**：拿「工具 A 的输出集合」与「工具 B 的输出集合」对比来判定某个
+> 工具坏了之前，先确认**两边的集合运算语义一致**（尤其排序/去重所用的 locale）——否则你测的是
+> 自己的管道，不是被怀疑的那个工具。对本仓的实操含义：**含非 ASCII 的去重比较一律先钉 locale**
+> （`LC_ALL=C sort -u`），或直接用 python 的 `set`。经验已沉淀进 WeKnora「研发运维经验库」。
 逐条确认每个节名在 `docs/module-protocol.md` 里以 `##`/`###` 标题**存在**——判据是
 **标题前缀匹配**（正典标题常带括注，如 `## 租户数据隔离（spec-1 §2，2026-09-14）`，书名号内写
 `租户数据隔离` 即命中；要求「逐字全等」会与本文自己的写法冲突）。
@@ -359,7 +372,8 @@ print('\n'.join(sorted(set(re.findall(r'「[^」]+」',s)))))
 "
 ```
 Expected: 第一条无输出；第二条逐条在 `docs/module-protocol.md` / `apps/web` 源码中找到对应标题或标识符（如 `storageDeclarers`、`ConsoleOutletContext`、`CONSOLE_ICONS` 确实存在于源码）。
-（第二条**不要**用 `grep -oE '「[^」]+」'`——本机实测会静默丢结果，见 Task 1 Step 6。）
+（第二条用 `grep -oE` 或 python 都可以——**grep 本身没问题**；含非 ASCII 的**去重比较**才要钉
+locale，见 Task 1 Step 6 的订正说明。）
 
 核实命令（对标识符）：
 ```bash
