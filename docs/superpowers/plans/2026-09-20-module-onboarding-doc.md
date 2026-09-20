@@ -290,7 +290,8 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
                         │
                         ▼
         菜单出现该条目 + 点进去懒加载模块页
-        （任何一项不过 ⇒ 菜单不出、直敲 URL 也进不去）
+        （任何一项不过 ⇒ 菜单不出。注意这是**菜单**的过滤——
+          路由层另按 registry ∩ session scope 兜底，不含 config，见「已知边界」）
 ```
 
 **两级菜单**：壳侧栏一条（**协议管**：扁平数组、不支持嵌套、显隐三重过滤）+ 页内导航
@@ -323,17 +324,23 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 | 你声明了… | 管理台上发生什么 |
 |---|---|
 | `frontend.console[]` 条目 | 菜单**平铺**一条 = 一页（协议不支持嵌套；多页面收一个条目、页内真子路由分区——`modules/aftersales/console/index.tsx` 是现成姿势）；显隐 = registry ∩ config 启用集 ∩ session scope 三重过滤；**一个条目 = 侧栏一项 + 页内自绘导航** |
-| `frontend.admin[]` 条目 | 进**管理组 children**，顺序：平台内置三项 → 存储配置 → 模块 admin 页（manifest 声明序）；三条约法（`/console/admin/` 前缀 / scope ∈ permissions / console 条目禁占该前缀）+ 双层门禁（组门 `tenant:admin` + 页门 scope） |
+| `frontend.admin[]` 条目 | 进**管理组 children**，顺序：平台内置三项 → 存储配置 → 模块 admin 页（manifest 声明序）；三条约法（`/console/admin/` 前缀 / scope ∈ permissions / console 条目禁占该前缀）。⚠️ **组门 `tenant:admin` 目前只由菜单侧施加**——模块 admin 页走 `*` 通配的 `ConsoleModulePage`（`registry ∩ 页门 scope`），`AdminGate` 只包住平台内置四项 |
 | `storage: {kind: s3}` | **触发租户管理台「存储配置」页可见**（能力联动：`storageDeclarers ∩ 启用模块 ≠ ∅` 才显示/可达）；运行时 `c.get(TENANT_STORAGE)` 取本租户配置 |
-| 模块被停用 | 菜单与页面**同隐**；直敲 admin 路径出「模块可能未启用」Result；API 面 404（与「不存在」同形） |
+| 模块被停用 | **菜单面**：菜单不出（三重过滤含 config）。**路由面**：模块页/模块 admin 页走 `registry ∩ session scope`，**不查 config** ⇒ 持码用户直敲 URL 仍可打开该页。唯一由 config 驱动的路由门是 `/console/admin/storage` 的 `StorageGate`。API 面 404（与「不存在」同形） |
+
+> ⚠️ 上表第 2、4 行是 **2026-09-20 实测订正**后的口径，**不要回退**成「菜单与页面同隐」那种
+> 把菜单与路由混为一谈的写法。证据（写 §5 时可引用）：`apps/web/src/App.tsx:30` 模块页落 `*`
+> 通配；`Console.tsx` 的 `ConsoleModulePage` 只判 `registry` + `session.scopes`，无 config 查询；
+> `App.tsx:26-29` 的 `AdminGate` 只包内置四项；`apps/server/src/session-middleware.ts:196` 普通
+> 会话 scopes 来自 Casdoor（非按启用模块过滤）。缺口开 issue 跟踪，不在本计划内。
 ```
 
 - [ ] **Step 3: 写各能力面字段细节**
 
 内容要求：五个能力面各一小节，每节 = 字段形状 + 最小示例（引用现文件）+ 语义指针。**必须覆盖**：
 
-1. **`frontend.console`**——字段五项；显隐三重过滤；`icon` 走壳侧 `CONSOLE_ICONS` 白名单（**未登记的名字不渲染图标**，需要新图标要先在壳里登记）；多页面姿势（声明 1 条 + 页内子路由）；两个实测坑 → 见 §7。
-2. **`frontend.admin`**——字段五项 + 三条约法 + 双层门禁；已知边界：本期零真实消费者（见文末「已知边界」）。
+1. **`frontend.console`**——字段五项；**菜单与路由是两套判定**（必须写清：菜单 = `registry ∩ config 启用集 ∩ session scope`；路由 = 落 `*` 通配的 `ConsoleModulePage`，只判 `registry ∩ session scope`，**不查 config**）；`icon` 走壳侧 `CONSOLE_ICONS` 白名单（**未登记的名字不渲染图标**，需要新图标要先在壳里登记——现成反例：`modules/aftersales` 声明 `icon: ToolOutlined` 未登记，该菜单项实际无图标）；多页面姿势（声明 1 条 + 页内子路由）；两个实测坑 → 见 §7。
+2. **`frontend.admin`**——字段五项 + 三条约法；**门禁必须如实写**：菜单侧有组门 `tenant:admin`，但模块 admin 页走 `*` 通配的 `ConsoleModulePage`、只判页门 scope，**直敲 URL 时不套 `AdminGate`**（详见「已知边界」）；本期零真实消费者。
 3. **`frontend.userApp`**——`mount` 与前端工程 `base` **必须一致**（不一致 ⇒ 产物引用错前缀）；`dist` 相对**模块目录**解析；停用 ⇒ 静态与 API 面同时 404（`module-protocol.md`「停用语义」节）。
 4. **`guest.scope`**——访客码语义与发放路径，指针 `module-protocol.md`「停用语义」节的 guest 段。
 5. **`storage`**——声明姿势、`TENANT_STORAGE` 取法、部分填写不回落、连通性验证必须在请求路径之外（管理端保存时探测 + 「测试连接」动作），指针 `module-protocol.md`「租户级配置注入：`storage`」节。
@@ -442,6 +449,12 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 ```markdown
 ## 已知边界
 
+- **路由层不吃 config（2026-09-20 实测）**：停用模块的**菜单**会消失，但**页面本身**没有 config
+  路门——模块页与模块 admin 页都落 `/console` 的 `*` 通配（`apps/web/src/App.tsx:30`），由
+  `ConsoleModulePage` 只按 `registry ∩ session scope` 放行（`Console.tsx`），持码用户直敲 URL
+  仍可打开；模块 admin 页同样**不套**组门 `AdminGate`（它只包住平台内置四项，`App.tsx:26-29`）。
+  真正由 config 驱动的路由门只有 `/console/admin/storage` 的 `StorageGate`。这是**实现缺口**
+  （#125 spec 的「门禁双层」与它自己的「路由」条自相矛盾），已开 issue 跟踪。
 - **manifest 三个字段是预留（无消费者）**：`notifications.dir`、`config.schema`（schema 接受、
   无人读取）、`bindings`（仅 `check-manifests` 查键白名单，无运行时消费）。声明它们**不会有
   任何效果**——见 §2 表。清理与否另议。
@@ -474,16 +487,16 @@ git commit -m "docs(onboarding): 补验收清单/故障速查/已知边界——
 
 ---
 
-### Task 4: 配套改动（AGENTS.md 文档地图 + 正典反向指针）+ 死字段 issue
+### Task 4: 配套改动（AGENTS.md 文档地图 + 正典反向指针 + 正典口径订正）+ 两个 issue
 
 **Files:**
 - Modify: `AGENTS.md`（「文档地图（动手前先读对应的）」表）
-- Modify: `docs/module-protocol.md`（顶部引言块）
-- Create: GitHub issue（`gh issue create`）
+- Modify: `docs/module-protocol.md`（顶部引言块；「模块管理页：`frontend.admin`」节的「显隐联动」bullet）
+- Create: GitHub issue ×2（`gh issue create`）
 
 **Interfaces:**
 - Consumes: Task 1–3 交付的 `docs/module-onboarding.md`（指针目标必须已存在）
-- Produces: 双向指针闭环；死字段 issue 编号（写进 PR 描述）
+- Produces: 双向指针闭环；两个 issue 编号（写进 PR 描述）
 
 - [ ] **Step 1: AGENTS.md 文档地图加一行**
 
@@ -503,16 +516,42 @@ git commit -m "docs(onboarding): 补验收清单/故障速查/已知边界——
 > 「怎么接入」（步骤、属性全字段参考、验收清单、故障速查），不复制本文正文。
 ```
 
-- [ ] **Step 3: 核实双向指针**
+- [ ] **Step 2b: 订正正典的「显隐联动」口径（2026-09-20 实测）**
+
+`docs/module-protocol.md` 的「模块管理页：`frontend.admin`」节里，「**显隐联动**」bullet 现写作
+「菜单/路由 = registry（构建期聚合）∩ config 启用集（运行时）∩ session scope」「模块停用 ⇒ 页面
+消失（菜单不出、直敲出「模块可能未启用」Result）」。**这与实现不符**，改为（逐字）：
+
+```markdown
+- **显隐联动（2026-09-20 实测订正）**：**菜单与路由是两套判定**，别混为一谈——
+  - **菜单**（侧栏）= registry（构建期聚合，`group:'admin'`）∩ config 启用集（运行时，订阅/
+    `tenant_module`）∩ session scope。模块停用 ⇒ **菜单不出**。
+  - **路由**（直敲 URL）= `ConsoleModulePage`（`/console` 下的 `*` 通配）只判 registry ∩
+    session scope，**不查 config**；模块 admin 页同样落该通配，**不套**组门 `AdminGate`
+    （它只包住平台内置四项）。⇒ 停用模块的页面对**持码用户**直敲仍可打开。
+  - 唯一由 config 驱动的路由门是 `/console/admin/storage` 的 `StorageGate`
+    （`storageDeclarers ∩ 启用模块 ≠ ∅`）。
+  - 证据：`apps/web/src/App.tsx:26-30`、`apps/web/src/pages/Console.tsx` 的
+    `ConsoleModulePage`/`AdminGate`/`StorageGate`、`apps/server/src/session-middleware.ts:196`。
+  - ⚠️ 「停用 = 该租户看不到这个模块」在 **API 面与 userApp 面**照旧成立（见「停用语义」节）；
+    上面说的是**控制台路由面**的实现缺口，已开 issue 跟踪。
+```
+
+> 为什么必须一起改：正典是唯一事实源，只改新文档会让两边对同一件事各说各话。
+
+- [ ] **Step 3: 核实双向指针与订正落地**
 
 Run:
 ```bash
 grep -n 'module-onboarding' AGENTS.md docs/module-protocol.md docs/module-onboarding.md
+grep -n '菜单与路由是两套判定' docs/module-protocol.md docs/module-onboarding.md
 ```
-Expected: `AGENTS.md` 1 处、`docs/module-protocol.md` 1 处、`docs/module-onboarding.md` 至少 1 处
-（文档头指向正典的反向链接已由 Task 1 Step 1 建立）。
+Expected: 第一条 `AGENTS.md` 1 处、`docs/module-protocol.md` 1 处、`docs/module-onboarding.md` 至少 1 处；
+第二条两个文件各命中（正典订正 + 新文档同口径）。
 
-- [ ] **Step 4: 开死字段清理待议 issue**
+- [ ] **Step 4: 开两个 issue（死字段清理待议 + 控制台路由门禁缺口）**
+
+**4a — 死字段清理待议：**
 
 Run:
 ```bash
@@ -539,11 +578,56 @@ EOF
 ```
 Expected: 输出新 issue 的 URL；记下编号供 PR 描述使用。
 
+**4b — 控制台路由门禁缺口（2026-09-20 实测）：**
+
+Run:
+```bash
+gh issue create \
+  --title "fix(web): 控制台路由层不吃 config——停用模块的页面对持码用户仍可直达；模块 admin 页缺组门" \
+  --body "$(cat <<'EOF'
+## 现象
+
+`docs/module-protocol.md` 曾写作「菜单/路由 = registry ∩ config ∩ session scope」「模块停用 ⇒
+页面消失（菜单不出、直敲出「模块可能未启用」Result）」。2026-09-20 写模块接入文档时实测：
+
+| 层 | 实际判定 | 证据 |
+|---|---|---|
+| 侧栏菜单 | `registry ∩ config 启用集 ∩ session scope` | `apps/web/src/pages/console-menu.ts:86-104` |
+| **模块页路由** | **`registry ∩ session scope`，不查 config** | `Console.tsx` 的 `ConsoleModulePage`（`apps/web/src/App.tsx:30` 的 `*` 通配） |
+| **模块 admin 页路由** | 同上，且**不套**组门 `tenant:admin` | `App.tsx:26-29` 的 `AdminGate` 只包平台内置四项 |
+| `/console/admin/storage` | `storageDeclarers ∩ 启用模块 ≠ ∅` | `Console.tsx` 的 `StorageGate`（**唯一** config 驱动的路由门） |
+
+辅证：`apps/server/src/session-middleware.ts:196` 普通会话 scopes 来自 Casdoor，**不按启用模块
+过滤**（只有访客路 :176 按已启用模块重算）⇒ 停用模块的页对持码用户直敲可达；有页 scope 但无
+`tenant:admin` 的用户可直敲进模块 admin 页。
+
+测试面：`Console.test.tsx` 的 ① 用例只覆盖**菜单**过滤，路由门禁无测试。
+
+## 影响
+
+- 「停用 = 该租户看不到这个模块」在**控制台路由面**不成立（API 面与 userApp 面照旧成立）。
+- 模块 admin 页的「组门 `tenant:admin`」在直敲路径上不存在。
+
+## 待议（两个独立决定）
+
+1. 模块页路由是否吃 config（停用 ⇒ 与菜单同隐）？若要，`ConsoleModulePage` 需接 `config`。
+2. 模块 admin 页是否套 `AdminGate`（组门）？#125 spec 自身矛盾：门禁双层 bullet 说要，路由 bullet
+   说走 `ConsoleModulePage` + 页门。
+
+注：两条都会改变用户可见行为，需独立 spec 与验收（含直敲 URL 的浏览器级用例）。
+
+背景：写 `docs/module-onboarding.md` 时发现，文档已按**实测**口径如实描述（见该文档 §5 与
+「已知边界」节），正典 `module-protocol.md` 同步订正。
+EOF
+)"
+```
+Expected: 输出新 issue 的 URL；连同 4a 的编号一起写进 PR 描述。
+
 - [ ] **Step 5: 提交**
 
 ```bash
 git add AGENTS.md docs/module-protocol.md
-git commit -m "docs(agents): 文档地图加模块接入指南行 + 正典补反向指针"
+git commit -m "docs(agents): 文档地图加模块接入指南行 + 正典补反向指针并订正控制台显隐口径"
 ```
 
 ---

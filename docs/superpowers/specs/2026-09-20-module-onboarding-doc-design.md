@@ -182,9 +182,18 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 | 你声明了… | 管理台上发生什么 |
 |---|---|
 | `frontend.console[]` 条目 | 菜单**平铺**一条 = 一页（协议不支持嵌套；多页面收一个条目、页内真子路由分区——aftersales 现成姿势）；显隐 = registry ∩ config 启用集 ∩ session scope 三重过滤；**一个条目 = 侧栏一项 + 页内自绘导航** |
-| `frontend.admin[]` 条目 | 进**管理组 children**，顺序：平台内置三项 → 存储配置 → 模块 admin 页（manifest 声明序）；三条约法（`/console/admin/` 前缀 / scope ∈ permissions / console 条目禁占该前缀）+ 双层门禁（组门 `tenant:admin` + 页门 scope） |
+| `frontend.admin[]` 条目 | 进**管理组 children**，顺序：平台内置三项 → 存储配置 → 模块 admin 页（manifest 声明序）；三条约法（`/console/admin/` 前缀 / scope ∈ permissions / console 条目禁占该前缀）。⚠️ **组门 `tenant:admin` 目前只由菜单侧施加**——模块 admin 页走 `*` 通配的 `ConsoleModulePage`（`registry ∩ 页门 scope`），`AdminGate` 只包住平台内置四项 |
 | `storage: {kind: s3}` | **触发租户管理台「存储配置」页可见**（能力联动：`storageDeclarers ∩ 启用模块 ≠ ∅` 才显示/可达）；运行时 `c.get(TENANT_STORAGE)` 取本租户配置 |
-| 模块被停用 | 菜单与页面**同隐**；直敲 admin 路径出「模块可能未启用」Result；API 面 404 同形 |
+| 模块被停用 | **菜单面**：菜单不出（三重过滤含 config）。**路由面**：模块页/模块 admin 页走 `registry ∩ session scope`，**不查 config** ⇒ 持码用户直敲 URL 仍可打开该页。唯一由 config 驱动的路由门是 `/console/admin/storage` 的 `StorageGate`。API 面 404（与「不存在」同形） |
+
+> ⚠️ **2026-09-20 实测订正（必须按此写，勿回退成「菜单与页面同隐」）**：菜单与路由是**两套判定**。
+> 证据链：`apps/web/src/App.tsx:30` 模块页落 `*` 通配 → `Console.tsx` 的 `ConsoleModulePage`
+> 只做 `consoleRegistry.find(...)` + `session.scopes.includes(entry.scope)`，**无 config 查询**；
+> `App.tsx:26-29` 的 `AdminGate` 只包平台内置四项；`apps/server/src/session-middleware.ts:196`
+> 普通会话 scopes 走 Casdoor（非按启用模块过滤，只有访客路 :176 重算）。
+> 正典 `module-protocol.md` 的「显隐联动」bullet 写作「菜单/路由 = registry ∩ config ∩ session
+> scope」与之不符，Task 4 一并订正。缺口（是否让路由层也吃 config / 给模块 admin 页补组门）
+> 开 issue 跟踪，不在本计划内。
 
 ### 3.4 §7 症状速查初版清单
 
@@ -220,6 +229,10 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 
 ## 6. 已知边界（文档「已知边界」节明示的内容）
 
+- **路由层不吃 config（2026-09-20 实测）**：模块页与模块 admin 页的路由判定是 `registry ∩
+  session scope`，**不含 config**——停用模块的页面对持码用户仍可直敲直达；覆盖此点的测试只有
+  菜单侧（`Console.test.tsx` 的 ① 用例）。这是**实现缺口**而非设计意图（#125 spec 的「门禁双层」
+  与它自己的「路由」条自相矛盾），缺口开 issue 跟踪，文档如实写现状。
 - `notifications` / `config.schema` / `bindings` 为预留·无消费者（D4）
 - `frontend.admin` 本期零真实消费者，端到端只靠 fixture 验证——第一个真实模块接入时
   补浏览器级验收（沿 #125 spec 的待销账）
