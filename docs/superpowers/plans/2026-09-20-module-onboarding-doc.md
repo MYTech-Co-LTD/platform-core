@@ -404,7 +404,8 @@ pnpm exec tsx scripts/check-tenant-isolation.mjs # 真库对账：本模块 sche
 pnpm smoke                    # 装载冒烟（需 DATABASE_URL，且先 pnpm --filter @platform/web build）
 ```
 
-CI 四个门禁 job（`unit` / `gates` / `web` / `smoke`）跑的就是上面这些；全绿才算接入完成。
+CI 四个门禁 job（`unit` / `gates` / `web` / `smoke`）覆盖上面这些——`gates` 另外还跑
+`check-compose` / `check-env-example` 与提交纪律守卫，是**超集**，别写成「就是这些」；全绿才算接入完成。
 装载期检查会额外咬人：**注册路由与 `api.internal` 声明的任一方向差集 ⇒ 装载失败**（进程起不来）。
 构建期还有一条：**两个模块声明同一条 `frontend.console[].path` ⇒ `gen-console-registry` 硬失败**
 （菜单是按 path 聚合的，重复即二义）。
@@ -421,7 +422,8 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 
 - [ ] **Step 2: 写 §7 故障速查**
 
-**必须用下列两张表**（症状 → 病因 → 出路）：
+**必须用下列内容**（症状 → 病因 → 出路；**后端一张表 + 前端一张表**，别把前端症状挂在
+`### 后端` 下）：
 
 ```markdown
 ## §7 故障速查
@@ -434,17 +436,24 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 | 进程起不来（装载失败） | 注册路由与声明的**双向差集** | 读失败信息里的差集原文（带 `未声明但已注册 […]；已声明但未注册 […]`） |
 | 停用模块的 API 面是 404（不是 403） | 停用语义**有意如此**（404 与「不存在」同形 ⇒ 模块 API 面内不可枚举） | `module-protocol.md`「停用语义」节 |
 | `c.get(TENANT_STORAGE)` 恒 `undefined` | ① manifest 没声明 `storage` ② 租户行**部分填写**（绝不回落平台桶） ③ 投影中间件挂载顺序错 | `module-protocol.md`「租户级配置注入」节 |
+
+### 前端
+
+| 症状 | 病因 | 出路 |
+|---|---|---|
 | 模块页整块空白、零报错 | 用了嵌套 `<Routes>`——模块页挂在壳的 splat 路由 `*` 之下，嵌套路由按 splat 剩余段匹配，永远匹配不上 | 按 pathname 末段直接选页（照 `modules/aftersales/console/index.tsx`） |
 | 点页签跳到别的路径（模块段丢失，如 `/console/rules`） | 相对导航以壳的 splat 路由为基准解析 | 导航一律用**绝对路径** |
 | 管理台 `message.*` 抛 TypeError | 壳里 antd `<App>` 提供者缺失（`useApp` 是裸 `useContext`） | 已由 `Console.tsx` 的 `<AntdApp>` 覆盖；模块页不需要自己加 |
+| 模块停用后直敲模块页 URL 仍能打开 | **实现缺口**（路由层不查 config，见「已知边界」）——不是有意语义，别照抄成惯例 | 见文末「已知边界」 |
 
-> 上表两条前端症状（空白页 / 丢模块段）是 aftersales M3a 浏览器实测抓到的，正典里没有等价
+> 上表前端两条（空白页 / 丢模块段）是 aftersales M3a 浏览器实测抓到的，正典里没有等价
 > 记载——它们只在 `modules/aftersales/console/index.tsx` 的注释里，本表把它提到接入视角。
 ```
 
 - [ ] **Step 3: 写「已知边界」**
 
-**必须用下列正文**（三条，逐字采用概念，可直接抄）：
+**必须用下列正文**（四条，逐字采用概念，可直接抄；第一条是路由门禁缺口，勿删——§5 的前向
+引用指向它）：
 
 ```markdown
 ## 已知边界
