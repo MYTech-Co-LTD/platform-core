@@ -26,7 +26,7 @@ globs 是 `['apps/*', 'packages/*', 'modules/*', 'modules/*/*']`——`modules/<
 |---|---|---|
 | `modules/<id>/manifest.yaml` | **总是** | 接入协议单一事实源（§2） |
 | `modules/<id>/index.ts` | **总是** | 入口：读 yaml → `ManifestSchema.parse` → `defineModule`（§3） |
-| `modules/<id>/package.json` | **总是** | `name` = 模块 id；deps 见 demo（`@platform/sdk` workspace:* + `hono` + `yaml`） |
+| `modules/<id>/package.json` | **总是** | `name` = 模块 id；deps 见 demo（`@platform/sdk` workspace:* + `hono` + `yaml`）（+ 有 `console/` 页时 antd / react / react-dom / react-router-dom） |
 | `modules/<id>/tsconfig.json` | **总是** | `extends "../../tsconfig.base.json"`，`noEmit: true`；`vitest` 的显式 paths 映射照 demo（成因见 demo tsconfig 的注释，issue #68） |
 | `modules/<id>/vitest.config.ts` | 有测试时 | 照 demo（happy-dom 环境 + esbuild jsx automatic；不引 `@vitejs/plugin-react`） |
 | `modules/<id>/migrations/` | 有表时 | SQL 迁移，目录名可改但须在 manifest 声明（§4） |
@@ -102,13 +102,14 @@ globs 是 `['apps/*', 'packages/*', 'modules/*', 'modules/*/*']`——`modules/<
 3. 热路径索引以 org 为前缀列。
 
 **全局表**（字典/配置类跨租户共享）可不带 org，但要在模块 README 声明理由，**并且**在建表
-语句上方紧贴一行 `-- global-table: <理由>`（理由是必填、标记必须紧贴 DDL）。细节见正典同名节。
+语句上方紧贴一行 `-- global-table: <理由>`（理由是必填、标记必须紧贴 DDL）。细节见
+`docs/module-protocol.md`「租户数据隔离」节与「租户隔离 CI 门禁」节。
 
 **迁移执行**：`apps/server/src/migrate.ts` 按 `platform.schema_migrations(module, version)`
 主键记账——**同一批迁移重复执行是幂等的**（版本已在账本里就跳过）。因此：
 
 - DDL 一律 `create table if not exists` / `add column if not exists` / `create index if not exists`；
-- 视图一律 `drop view if exists` + `create view`（**不要** `create or replace view`，见团队 `db-migration` 规则）；
+- 视图一律 `drop view if exists` + `create view`（**不要** `create or replace view`，见团队规则 `~/.claude/rules/common/db-migration.md`）；
 - 来自外部系统的字段一律 `text`，不用 `varchar(n)`；
 - 目录不存在静默跳过——没有表的模块不需要 `migrations/`。
 
@@ -265,6 +266,9 @@ frontend:
 
 - **`mount`**——站点路径前缀。宿主在其上挂静态目录（尾部 `/` 先剥掉）**并补 SPA 兜底**（`index.html`），模块不用自己配 rewrite。
 - **`dist`**——**相对模块目录**解析（`apps/server/src/loader.ts` 的 `mount()` 里 `path.resolve(m.dir, dist)`），不是相对仓根。
+- ⚠️ **`dist` 目录不存在 ⇒ 装载器静默跳过整段**：`apps/server/src/loader.ts:481` 的
+  `if (!existsSync(dist)) continue`（**不报错**）——静态挂载与 SPA 兜底**都没挂**，`/app/<id>/*`
+  于是落到控制台顶层 `*` 路由、在移动端 URL 上给你**控制台壳**。前端子包必须先构建（见 §7 前端表）。
 - ⚠️ **`mount` 与前端工程自己的 `base` 必须逐字一致**：`modules/aftersales/mobile/vite.config.ts` 的 `base: '/app/aftersales/'` 与 manifest 的 `mount` 是一对。不一致 ⇒ 产物引用**错前缀**（HTML 拿得到、`/assets/*` 全 404），且**没有任何构建期检查替你拦**——只能自查。
 - **停用闸门与 API 面同款**：userApp 静态在 `serveStatic` **之前**挂同一道 `gate`——匿名放行（SPA 壳登录前必须可载，业务 API 自会 401/404），**已登录 + 停用 ⇒ 404 与 API 面同形**。语义详见 `docs/module-protocol.md`「停用语义」节。
 - 这是「模块交付独立 UI」的**唯一**入口：管理台方向没有「进入应用 → 独立菜单体系」这回事（见本节心智模型）。
@@ -317,8 +321,8 @@ pnpm test                     # 递归各包 test + scripts/ 守卫单测
 pnpm typecheck                # 递归 tsc --noEmit + scripts/
 pnpm exec tsx scripts/check-manifests.mjs        # manifest schema + entry/migrations 文件存在性
 pnpm exec tsx scripts/lint-architecture.mjs      # 架构不变量
-pnpm exec tsx scripts/check-tenant-isolation.mjs # 真库对账：本模块 schema 每张表都有 org 列（**需 DATABASE_URL**，且该库要有 CREATEDB 权限——它自建一次性库；缺了会响亮失败）
-pnpm smoke                    # 装载冒烟（需 DATABASE_URL，且先 pnpm --filter @platform/web build **与 pnpm --filter @aftersales/mobile build**——它硬检查移动端产物）
+pnpm exec tsx scripts/check-tenant-isolation.mjs # 真库对账：本模块 schema 每张表都有 org 列（需 DATABASE_URL，且该库要有 CREATEDB 权限——它自建一次性库；缺了会响亮失败）
+pnpm smoke                    # 装载冒烟（需 DATABASE_URL，且先 pnpm --filter @platform/web build 与 pnpm --filter @aftersales/mobile build——它硬检查移动端产物）
 ```
 
 CI 四个门禁 job（`unit` / `gates` / `web` / `smoke`）覆盖上面这些——`gates` 另外还跑
@@ -336,16 +340,22 @@ import { probeAnonymous } from '@platform/sdk/test-util/anonymous-probe'
 const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 ```
 
+**部署/交付不在本文范围**：把模块接入平台（openship 上架、域名、环境变量、回滚）只留指针——
+见 `deploy/openship-adopt.md`。
+
 ## §7 故障速查
 
 ### 后端
 
 | 症状 | 病因 | 出路 |
 |---|---|---|
-| 端点恒 403 | ① 声明了裸 `/` ② 声明路径相对/绝对混用（门卫比对基准是宿主**绝对** `routePath`） ③ scope 不在本模块 `permissions` | ①③ 见 `module-protocol.md`「规则：没声明 = 不可达」节；② 的机制另见同文「实现注意（踩过的坑，勿重蹈）」节 |
+| 端点恒 403 | ① 身份缺该端点的 scope 码（`403 {"error":"FORBIDDEN","need":"<code>"}`——最常见：Casdoor 未授权或角色没挂这个码） ② 请求了已声明路径上**未声明**的 method（`403 {"error":"FORBIDDEN"}`） ③ 声明路径相对/绝对混用（门卫比对基准是宿主**绝对** `routePath`） | ①② 见 `module-protocol.md`「门卫的判定顺序」节；③ 的机制另见同文「实现注意（踩过的坑，勿重蹈）」节 |
 | 进程起不来（装载失败） | 注册路由与声明的**双向差集** | 读失败信息里的差集原文（带 `未声明但已注册 […]；已声明但未注册 […]`） |
 | 停用模块的 API 面是 404（不是 403） | 停用语义**有意如此**（404 与「不存在」同形 ⇒ 模块 API 面内不可枚举） | `module-protocol.md`「停用语义」节 |
 | `c.get(TENANT_STORAGE)` 恒 `undefined` | ① manifest 没声明 `storage` ② 租户行**部分填写**（绝不回落平台桶） ③ 投影中间件挂载顺序错 | `module-protocol.md`「租户级配置注入」节 |
+
+> ⚠️ **裸 `/` 与 scope ∉ `permissions` 不表现为 403**——它们是 schema 拒（`ManifestSchema` 直接
+> 拒绝 ⇒ 装载失败 / `check-manifests` 红），见 §2 的「校验」列。别在这张表里找它们。
 
 ### 前端
 
@@ -355,6 +365,7 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 | 点页签跳到别的路径（模块段丢失，如 `/console/rules`） | 相对导航以壳的 splat 路由为基准解析 | 导航一律用**绝对路径** |
 | 管理台 `message.*` 抛 TypeError | 壳里 antd `<App>` 提供者缺失（`useApp` 是裸 `useContext`） | 已由 `Console.tsx` 的 `<AntdApp>` 覆盖；模块页不需要自己加 |
 | 模块停用后直敲模块页 URL 仍能打开（菜单已消失） | **实现缺口**：路由层不含 config——模块页/模块 admin 页都落 `/console` 的 `*` 通配（`apps/web/src/App.tsx:30`），`ConsoleModulePage` 只按 `registry ∩ session scope` 放行（`apps/web/src/pages/Console.tsx`） | 「已知边界」路由层不吃 config 条（#125 spec 的「门禁双层」自相矛盾，缺口记录在案、修复另议）；真正由 config 驱动的路由门只有 `/console/admin/storage` 的 `StorageGate` |
+| 访问 `/app/<id>` 拿到的是控制台壳（不是模块前端） | `frontend.userApp.dist` 目录不存在 ⇒ 装载器**静默跳过**（不报错）：静态挂载与 SPA fallback 都没挂，请求落到控制台顶层 `*` 路由 | 先构建前端子包（`pnpm --filter <pkg> build`）；CI 的移动端产物检查只覆盖 `modules/aftersales/mobile`，新模块要自己保证 |
 
 > 前端表的空白页 / 丢模块段两条是 aftersales M3a 浏览器实测抓到的，正典里没有等价
 > 记载——它们只在 `modules/aftersales/console/index.tsx` 的注释里，本表把它提到接入视角。

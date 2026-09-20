@@ -171,13 +171,14 @@ globs 是 `['apps/*', 'packages/*', 'modules/*', 'modules/*/*']`——`modules/<
 3. 热路径索引以 org 为前缀列。
 
 **全局表**（字典/配置类跨租户共享）可不带 org，但要在模块 README 声明理由，**并且**在建表
-语句上方紧贴一行 `-- global-table: <理由>`（理由是必填、标记必须紧贴 DDL）。细节见正典同名节。
+语句上方紧贴一行 `-- global-table: <理由>`（理由是必填、标记必须紧贴 DDL）。细节见
+`docs/module-protocol.md`「租户数据隔离」节与「租户隔离 CI 门禁」节。
 
 **迁移执行**：`apps/server/src/migrate.ts` 按 `platform.schema_migrations(module, version)`
 主键记账——**同一批迁移重复执行是幂等的**（版本已在账本里就跳过）。因此：
 
 - DDL 一律 `create table if not exists` / `add column if not exists` / `create index if not exists`；
-- 视图一律 `drop view if exists` + `create view`（**不要** `create or replace view`，见团队 `db-migration` 规则）；
+- 视图一律 `drop view if exists` + `create view`（**不要** `create or replace view`，见团队规则 `~/.claude/rules/common/db-migration.md`）；
 - 来自外部系统的字段一律 `text`，不用 `varchar(n)`；
 - 目录不存在静默跳过——没有表的模块不需要 `migrations/`。
 
@@ -432,10 +433,13 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 
 | 症状 | 病因 | 出路 |
 |---|---|---|
-| 端点恒 403 | ① 声明了裸 `/` ② 声明路径相对/绝对混用（门卫比对基准是宿主**绝对** `routePath`） ③ scope 不在本模块 `permissions` | ①③ 见 `module-protocol.md`「规则：没声明 = 不可达」节；② 的机制另见同文「实现注意（踩过的坑，勿重蹈）」节 |
+| 端点恒 403 | ① 身份缺该端点的 scope 码（`403 {"error":"FORBIDDEN","need":"<code>"}`——最常见：Casdoor 未授权或角色没挂这个码） ② 请求了已声明路径上**未声明**的 method（`403 {"error":"FORBIDDEN"}`） ③ 声明路径相对/绝对混用（门卫比对基准是宿主**绝对** `routePath`） | ①② 见 `module-protocol.md`「门卫的判定顺序」节；③ 的机制另见同文「实现注意（踩过的坑，勿重蹈）」节 |
 | 进程起不来（装载失败） | 注册路由与声明的**双向差集** | 读失败信息里的差集原文（带 `未声明但已注册 […]；已声明但未注册 […]`） |
 | 停用模块的 API 面是 404（不是 403） | 停用语义**有意如此**（404 与「不存在」同形 ⇒ 模块 API 面内不可枚举） | `module-protocol.md`「停用语义」节 |
 | `c.get(TENANT_STORAGE)` 恒 `undefined` | ① manifest 没声明 `storage` ② 租户行**部分填写**（绝不回落平台桶） ③ 投影中间件挂载顺序错 | `module-protocol.md`「租户级配置注入」节 |
+
+> ⚠️ **裸 `/` 与 scope ∉ `permissions` 不表现为 403**——它们是 schema 拒（`ManifestSchema` 直接
+> 拒绝 ⇒ 装载失败 / `check-manifests` 红），见 §2 的「校验」列。别在这张表里找它们。
 
 ### 前端
 
@@ -677,7 +681,7 @@ git commit -m "docs(agents): 文档地图加模块接入指南行 + 正典补反
 Run: `pnpm install && pnpm test && pnpm typecheck`
 Expected: 全绿。
 
-- [ ] **Step 2: 跑四个守卫脚本**
+- [ ] **Step 2: 跑五个守卫脚本**
 
 Run:
 ```bash
@@ -685,8 +689,9 @@ pnpm exec tsx scripts/check-manifests.mjs
 pnpm exec tsx scripts/lint-architecture.mjs
 pnpm exec tsx scripts/check-compose.mjs
 pnpm exec tsx scripts/check-env-example.mjs
+pnpm exec tsx scripts/check-tenant-isolation.mjs   # 需 DATABASE_URL（真库对账）
 ```
-Expected: 四条全过。
+Expected: 五条全过。
 
 - [ ] **Step 3: 全文档指针终检**
 
@@ -734,7 +739,7 @@ manifest 的 `notifications.dir` / `config.schema` / `bindings` 经实测**无�
 
 ## 验收
 
-- 全量门禁（test / typecheck / 四个守卫脚本）全绿
+- 全量门禁（test / typecheck / 五个守卫脚本）全绿
 - 文档内所有路径与节名引用经脚本核实真实存在
 EOF
 )"

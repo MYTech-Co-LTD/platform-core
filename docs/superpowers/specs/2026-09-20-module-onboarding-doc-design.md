@@ -202,7 +202,7 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 
 | 症状 | 病因 | 出路 |
 |---|---|---|
-| 端点恒 403 | ① 裸 `/` 声明 ② 声明相对/绝对混用（比对基准是宿主绝对 routePath） ③ scope 不在本模块 permissions | 按 module-protocol.md「规则」节自查 |
+| 端点恒 403 | ① 身份缺该端点的 scope 码（`403 {"error":"FORBIDDEN","need":"<code>"}`——最常见：Casdoor 未授权或角色没挂这个码） ② 请求了已声明路径上**未声明**的 method（`403 {"error":"FORBIDDEN"}`） ③ 声明路径相对/绝对混用（门卫比对基准是宿主**绝对** `routePath`） | ①② 见 `module-protocol.md`「门卫的判定顺序」节；③ 的机制另见同文「实现注意（踩过的坑，勿重蹈）」节 |
 | 进程起不来（装载失败） | 注册与声明双向差集 | 读失败信息里的差集原文 |
 | 停用模块 API 面 404（不是 403） | 停用语义设计如此（不可枚举） | module-protocol.md「停用语义」 |
 | `c.get(TENANT_STORAGE)` 恒 undefined | 未声明 `storage` / 租户行部分填写不回落 | module-protocol.md「租户级配置注入」 |
