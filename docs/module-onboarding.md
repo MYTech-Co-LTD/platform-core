@@ -246,7 +246,7 @@ frontend:
 ```
 
 - **三条约法**（前两条 schema 拒，第三条也由 schema 双向拦）：`path` 必须 `/console/admin/` 开头；`scope` 必须 ∈ 本模块 `permissions[].code`（**这一条对 admin 是硬校验，对 console 不是**）；`frontend.console[]` 不得占该前缀。
-- **双层门禁**：组门 `tenant:admin`（宿主施加，与平台内置管理页同一道）+ 页门 `scope`（判定同 console）。
+- **两层权限**：组门 `tenant:admin` + 页门 `scope`（判定同 console 条目）。⚠️ **组门目前只在菜单侧生效**——模块 admin 页走 `*` 通配的 `ConsoleModulePage`，直敲 URL 时**不套** `AdminGate`（见下条与文末「已知边界」）。
 - **菜单**（侧栏）= registry（构建期聚合，`group:'admin'`）∩ config 启用集 ∩ session scope；
   **路由**（直敲 URL）= `ConsoleModulePage` 只判 registry ∩ session scope，**不查 config**，
   且**不套**组门 `AdminGate`——组门目前只在菜单侧生效。
