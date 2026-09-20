@@ -174,6 +174,34 @@ scope 的绝对断言，改掉）。`GET /api/platform/config` 是**有意的披
   签 session 时按**该租户已启用模块**发放这些码——停用模块的移动端 API 由闸门 404 +
   门卫 403 自然闭合。访客身份不落 Casdoor（外部用户不进内部 IdP）。
 
+## 模块管理页：`frontend.admin`（2026-09-20）
+
+> 适用：`modules/<id>/manifest.yaml` 的**可选** `frontend.admin`。契约源
+> `packages/platform-sdk/src/manifest.ts`。spec：`docs/superpowers/specs/2026-09-20-module-admin-pages-design.md`。
+
+```yaml
+frontend:
+  admin:
+    - path: /console/admin/<module>/<page>   # 必须 /console/admin/ 开头（schema 拒绝）
+      title: 页面标题
+      icon: SettingOutlined                  # 可选；壳侧 CONSOLE_ICONS 同规
+      scope: <module>:manage                 # 必须 ∈ permissions[].code（schema 拒绝）
+      entry: ./console/admin/<page>.tsx      # 模块内文件（check-manifests 验存在）
+```
+
+- **语义**：模块自有的「管理」组子页。门禁双层——组门 `tenant:admin`（宿主施加，同平台
+  内置管理页）+ 页门 `scope`（同 console 条目判定）。
+- **显隐联动**：菜单/路由 = registry（构建期聚合，`group:'admin'`）∩ config 启用集（运行时，
+  订阅/tenant_module）∩ session scope——与 `frontend.console` 三重过滤同构。**模块停用 ⇒
+  页面消失**（菜单不出、直敲出「模块可能未启用」Result）。
+- **服务端 config 不暴露 admin 清单**：前端按 registry∩config 自判，零后端改动。
+- **path 约束双向**：admin 必须落 `/console/admin/` 下；`frontend.console[].path` 不得占用
+  该前缀（schema 双拦——防串组：菜单把 console 条目当模块区平铺页）。
+- **管理组 children 顺序**：平台内置三项（用户/角色/我的订阅）→ 存储配置（能力联动：
+  `storageDeclarers ∩ 启用模块 ≠ ∅`，见下）→ 模块 admin 页（manifest 声明序）。
+- **存储配置页归属**：留宿主（管的是 `platform.tenant` 租户全局五列，非模块私有配置）；
+  `/api/admin/storage` 门禁保持 `tenant:admin` 不随模块联动（宿主域，spec 记录在案）。
+
 ## 租户数据隔离（spec-1 §2，2026-09-14）
 
 模块的表分两类，**类属是设计决定，写迁移前就要想清楚**：
