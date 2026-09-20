@@ -290,7 +290,7 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
                         │
                         ▼
         菜单出现该条目 + 点进去懒加载模块页
-        （任何一项不过 ⇒ 菜单不出。注意这是**菜单**的过滤——
+        （任何一项不过 ⇒ 菜单不出。注意这是「菜单」的过滤——
           路由层另按 registry ∩ session scope 兜底，不含 config，见「已知边界」）
 ```
 
@@ -331,7 +331,7 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 > ⚠️ 上表第 2、4 行是 **2026-09-20 实测订正**后的口径，**不要回退**成「菜单与页面同隐」那种
 > 把菜单与路由混为一谈的写法。证据（写 §5 时可引用）：`apps/web/src/App.tsx:30` 模块页落 `*`
 > 通配；`Console.tsx` 的 `ConsoleModulePage` 只判 `registry` + `session.scopes`，无 config 查询；
-> `App.tsx:26-29` 的 `AdminGate` 只包内置四项；`apps/server/src/session-middleware.ts:196` 普通
+> `App.tsx:26-29` 的 `AdminGate` 只包内置四项；`apps/server/src/session-middleware.ts:193` 普通
 > 会话 scopes 来自 Casdoor（非按启用模块过滤）。缺口开 issue 跟踪，不在本计划内。
 ```
 
@@ -532,7 +532,7 @@ git commit -m "docs(onboarding): 补验收清单/故障速查/已知边界——
   - 唯一由 config 驱动的路由门是 `/console/admin/storage` 的 `StorageGate`
     （`storageDeclarers ∩ 启用模块 ≠ ∅`）。
   - 证据：`apps/web/src/App.tsx:26-30`、`apps/web/src/pages/Console.tsx` 的
-    `ConsoleModulePage`/`AdminGate`/`StorageGate`、`apps/server/src/session-middleware.ts:196`。
+    `ConsoleModulePage`/`AdminGate`/`StorageGate`、`apps/server/src/session-middleware.ts:193`。
   - ⚠️ 「停用 = 该租户看不到这个模块」在 **API 面与 userApp 面**照旧成立（见「停用语义」节）；
     上面说的是**控制台路由面**的实现缺口，已开 issue 跟踪。
 ```
@@ -597,7 +597,7 @@ gh issue create \
 | **模块 admin 页路由** | 同上，且**不套**组门 `tenant:admin` | `App.tsx:26-29` 的 `AdminGate` 只包平台内置四项 |
 | `/console/admin/storage` | `storageDeclarers ∩ 启用模块 ≠ ∅` | `Console.tsx` 的 `StorageGate`（**唯一** config 驱动的路由门） |
 
-辅证：`apps/server/src/session-middleware.ts:196` 普通会话 scopes 来自 Casdoor，**不按启用模块
+辅证：`apps/server/src/session-middleware.ts:193` 普通会话 scopes 来自 Casdoor，**不按启用模块
 过滤**（只有访客路 :176 按已启用模块重算）⇒ 停用模块的页对持码用户直敲可达；有页 scope 但无
 `tenant:admin` 的用户可直敲进模块 admin 页。
 

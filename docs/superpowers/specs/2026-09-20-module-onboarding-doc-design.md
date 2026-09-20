@@ -156,7 +156,8 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
                         │
                         ▼
         菜单出现该条目 + 点进去懒加载模块页
-        （任何一项不过 ⇒ 菜单不出、直敲 URL 也进不去）
+        （任何一项不过 ⇒ 菜单不出。注意这是「菜单」的过滤——
+          路由层另按 registry ∩ session scope 兜底，不含 config，见「已知边界」）
 ```
 
 **图 3 两级菜单——壳侧栏一条，页内页签模块自己画**：
@@ -189,7 +190,7 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 > ⚠️ **2026-09-20 实测订正（必须按此写，勿回退成「菜单与页面同隐」）**：菜单与路由是**两套判定**。
 > 证据链：`apps/web/src/App.tsx:30` 模块页落 `*` 通配 → `Console.tsx` 的 `ConsoleModulePage`
 > 只做 `consoleRegistry.find(...)` + `session.scopes.includes(entry.scope)`，**无 config 查询**；
-> `App.tsx:26-29` 的 `AdminGate` 只包平台内置四项；`apps/server/src/session-middleware.ts:196`
+> `App.tsx:26-29` 的 `AdminGate` 只包平台内置四项；`apps/server/src/session-middleware.ts:193`
 > 普通会话 scopes 走 Casdoor（非按启用模块过滤，只有访客路 :176 重算）。
 > 正典 `module-protocol.md` 的「显隐联动」bullet 写作「菜单/路由 = registry ∩ config ∩ session
 > scope」与之不符，Task 4 一并订正。缺口（是否让路由层也吃 config / 给模块 admin 页补组门）
