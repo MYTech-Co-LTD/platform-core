@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.21.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.20.0...v0.21.0) - 2026-09-20
+- 【新增】sdk: 模块管理页协议与存储配置能力联动 ([#125](https://github.com/MYTech-Co-LTD/platform-core/pull/125), [45a4bdd](https://github.com/MYTech-Co-LTD/platform-core/commit/45a4bdd45c3f83e970a225e69974ff57aef9ede0))
+
+
 ## [0.20.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.19.1...v0.20.0) - 2026-09-20
 - 【新增】web: 登录页改版——参考 Casdoor 浅色分栏风格 ([#123](https://github.com/MYTech-Co-LTD/platform-core/pull/123), [607a5ff](https://github.com/MYTech-Co-LTD/platform-core/commit/607a5fff89c176eda079a73248955c6185bc458e))
 
