@@ -25,7 +25,12 @@ export interface ModuleManifest {
    *  ⚠️ 声明的是**能力**不是**租户**：这里写不出 bucket / AK / org，只写得出 kind。 */
   storage?: { kind: 's3' }
   frontend?: { userApp?: { mount: string; dist: string };
-    console?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }> }
+    console?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }>;
+    /** 模块管理页协议（2026-09-20 spec）：模块自有的「管理」组子页。门禁 = tenant:admin（组门，
+     *  宿主施加）+ scope（页门）。path 必须以 /console/admin/ 开头、scope 必须 ∈ permissions[].code
+     *  （superRefine 承载 ⇒ 装载与 check-manifests 同时覆盖）。服务端 config 不暴露 admin 清单——
+     *  前端按 registry∩config∩scope 自判（与 console 三重过滤同构）。 */
+    admin?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }> }
   migrations?: { dir: string }
   bindings?: Record<string, 'required' | 'optional'>
   notifications?: { dir: string }
@@ -63,6 +68,13 @@ const ManifestObject = z.object({
   frontend: z.object({
     userApp: z.object({ mount: z.string(), dist: z.string() }).optional(),
     console: z.array(z.object({
+      path: z.string(),
+      title: z.string(),
+      icon: z.string().optional(),
+      scope: z.string(),
+      entry: z.string(),
+    })).optional(),
+    admin: z.array(z.object({
       path: z.string(),
       title: z.string(),
       icon: z.string().optional(),
@@ -124,6 +136,35 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
       })
     }
     seenEndpoints.add(key)
+  }
+
+  // 模块管理页协议（2026-09-20 spec）：admin 页必须落在 /console/admin/ 之下（壳按组聚合）；
+  // scope 与 api.internal[].scope 同纪律。console 页反向不得占用该前缀（防串组——菜单会把
+  // console 条目当模块区平铺页，占住 admin 前缀会让路由与菜单分组对不上）。
+  for (const [i, a] of (m.frontend?.admin ?? []).entries()) {
+    if (!a.path.startsWith('/console/admin/')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['frontend', 'admin', i, 'path'],
+        message: `frontend.admin[${i}].path 必须以 /console/admin/ 开头（管理组子页）`,
+      })
+    }
+    if (!codes.has(a.scope)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['frontend', 'admin', i, 'scope'],
+        message: `frontend.admin[${i}].scope "${a.scope}" 不在本模块 permissions[].code 内（模块只能声明自己的权限码）`,
+      })
+    }
+  }
+  for (const [i, c] of (m.frontend?.console ?? []).entries()) {
+    if (c.path.startsWith('/console/admin/')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['frontend', 'console', i, 'path'],
+        message: `frontend.console[${i}].path 不得以 /console/admin/ 开头（该前缀保留给 frontend.admin）`,
+      })
+    }
   }
 })
 
