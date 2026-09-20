@@ -194,7 +194,7 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 > 普通会话 scopes 走 Casdoor（非按启用模块过滤，只有访客路 :176 重算）。
 > 正典 `module-protocol.md` 的「显隐联动」bullet 写作「菜单/路由 = registry ∩ config ∩ session
 > scope」与之不符，Task 4 一并订正。缺口（是否让路由层也吃 config / 给模块 admin 页补组门）
-> 开 issue 跟踪，不在本计划内。
+> 记录在案，修复另议（不在本计划范围）。
 
 ### 3.4 §7 症状速查初版清单
 
@@ -233,7 +233,7 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 - **路由层不吃 config（2026-09-20 实测）**：模块页与模块 admin 页的路由判定是 `registry ∩
   session scope`，**不含 config**——停用模块的页面对持码用户仍可直敲直达；覆盖此点的测试只有
   菜单侧（`Console.test.tsx` 的 ① 用例）。这是**实现缺口**而非设计意图（#125 spec 的「门禁双层」
-  与它自己的「路由」条自相矛盾），缺口开 issue 跟踪，文档如实写现状。
+  与它自己的「路由」条自相矛盾），缺口记录在案，文档如实写现状。
 - `notifications` / `config.schema` / `bindings` 为预留·无消费者（D4）
 - `frontend.admin` 本期零真实消费者，端到端只靠 fixture 验证——第一个真实模块接入时
   补浏览器级验收（沿 #125 spec 的待销账）
