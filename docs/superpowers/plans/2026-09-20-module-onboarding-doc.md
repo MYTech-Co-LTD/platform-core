@@ -203,7 +203,9 @@ s=open('docs/module-onboarding.md',encoding='utf-8').read()
 print('\n'.join(sorted(set(re.findall(r'「[^」]+」',s)))))
 "
 ```
-逐条确认每个节名在 `docs/module-protocol.md` 里以 `##`/`###` 标题**逐字**存在（含书名号内的文字）。
+逐条确认每个节名在 `docs/module-protocol.md` 里以 `##`/`###` 标题**存在**——判据是
+**标题前缀匹配**（正典标题常带括注，如 `## 租户数据隔离（spec-1 §2，2026-09-14）`，书名号内写
+`租户数据隔离` 即命中；要求「逐字全等」会与本文自己的写法冲突）。
 
 - [ ] **Step 7: 提交**
 
@@ -397,6 +399,8 @@ pnpm smoke                    # 装载冒烟（需 DATABASE_URL，且先 pnpm --
 
 CI 四个门禁 job（`unit` / `gates` / `web` / `smoke`）跑的就是上面这些；全绿才算接入完成。
 装载期检查会额外咬人：**注册路由与 `api.internal` 声明的任一方向差集 ⇒ 装载失败**（进程起不来）。
+构建期还有一条：**两个模块声明同一条 `frontend.console[].path` ⇒ `gen-console-registry` 硬失败**
+（菜单是按 path 聚合的，重复即二义）。
 
 **给模块测试加一条匿名探测**（`module-protocol.md`「调试：匿名探测」节）——用
 `probeAnonymous` 断言每条已声明路由在无 identity 时都是 401，比相信代码里写了什么更硬：
