@@ -10,6 +10,7 @@ vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 
 import { platformFetch } from '@platform/sdk/web'
 import LoginPage from './Login'
+import s from './Login.module.css'
 
 const platformFetchMock = vi.mocked(platformFetch)
 
@@ -259,6 +260,36 @@ describe('LoginPage（运行时品牌）', () => {
     expect(await screen.findByText('Platform')).toBeInTheDocument()
     expect(screen.getAllByRole('tab')).toHaveLength(1)
     expect(screen.getByRole('tab', { name: '账号密码登录' })).toBeInTheDocument()
+  })
+
+  it('⑥ 品牌栏底色：background 非 default 时作为左栏底色消费', async () => {
+    mockApi({
+      '/api/platform/branding': () => jsonResponse({ ...BRANDING_DUAL, background: '#123456' }),
+    })
+
+    render(<LoginPage />)
+
+    expect(await screen.findByTestId('brand-panel')).toHaveStyle({ background: '#123456' })
+  })
+
+  it('⑥b 深色底可读性兜底：background 为深色时品牌栏切浅色文字类', async () => {
+    mockApi({
+      '/api/platform/branding': () => jsonResponse({ ...BRANDING_DUAL, background: '#123456' }),
+    })
+
+    render(<LoginPage />)
+
+    expect(await screen.findByTestId('brand-panel')).toHaveClass(s.brandDark)
+  })
+
+  it('⑥c 浅色底不误判：background 为浅色 hex 时不切 brandDark', async () => {
+    mockApi({
+      '/api/platform/branding': () => jsonResponse({ ...BRANDING_DUAL, background: '#f0f4fa' }),
+    })
+
+    render(<LoginPage />)
+
+    expect(await screen.findByTestId('brand-panel')).not.toHaveClass(s.brandDark)
   })
 })
 
