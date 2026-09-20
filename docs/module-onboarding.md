@@ -210,7 +210,7 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 > 把菜单与路由混为一谈的写法。证据：`apps/web/src/App.tsx:30` 模块页落 `*` 通配；
 > `apps/web/src/pages/Console.tsx` 的 `ConsoleModulePage` 只判 `registry` + `session.scopes`，无 config 查询；
 > `apps/web/src/App.tsx:26-29` 的 `AdminGate` 只包内置四项；`apps/server/src/session-middleware.ts:193` 普通会话 scopes 来自
-> Casdoor（非按启用模块过滤）。缺口已开 issue 跟踪。
+> Casdoor（非按启用模块过滤）。缺口记录在案，修复另议。
 
 ### `frontend.console`：管理台模块页
 
@@ -317,11 +317,12 @@ pnpm test                     # 递归各包 test + scripts/ 守卫单测
 pnpm typecheck                # 递归 tsc --noEmit + scripts/
 pnpm exec tsx scripts/check-manifests.mjs        # manifest schema + entry/migrations 文件存在性
 pnpm exec tsx scripts/lint-architecture.mjs      # 架构不变量
-pnpm exec tsx scripts/check-tenant-isolation.mjs # 真库对账：本模块 schema 每张表都有 org 列
-pnpm smoke                    # 装载冒烟（需 DATABASE_URL，且先 pnpm --filter @platform/web build）
+pnpm exec tsx scripts/check-tenant-isolation.mjs # 真库对账：本模块 schema 每张表都有 org 列（**需 DATABASE_URL**，且该库要有 CREATEDB 权限——它自建一次性库；缺了会响亮失败）
+pnpm smoke                    # 装载冒烟（需 DATABASE_URL，且先 pnpm --filter @platform/web build **与 pnpm --filter @aftersales/mobile build**——它硬检查移动端产物）
 ```
 
-CI 四个门禁 job（`unit` / `gates` / `web` / `smoke`）跑的就是上面这些；全绿才算接入完成。
+CI 四个门禁 job（`unit` / `gates` / `web` / `smoke`）覆盖上面这些——`gates` 另外还跑
+`check-compose` / `check-env-example` 与提交纪律守卫，是**超集**；全绿才算接入完成。
 装载期检查会额外咬人：**注册路由与 `api.internal` 声明的任一方向差集 ⇒ 装载失败**（进程起不来）。
 构建期还有一条：**两个模块声明同一条 `frontend.console[].path` ⇒ `gen-console-registry` 硬失败**
 （菜单是按 path 聚合的，重复即二义）。
@@ -341,16 +342,21 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 
 | 症状 | 病因 | 出路 |
 |---|---|---|
-| 端点恒 403 | ① 声明了裸 `/` ② 声明路径相对/绝对混用（门卫比对基准是宿主**绝对** `routePath`） ③ scope 不在本模块 `permissions` | `module-protocol.md`「规则：没声明 = 不可达」节 |
+| 端点恒 403 | ① 声明了裸 `/` ② 声明路径相对/绝对混用（门卫比对基准是宿主**绝对** `routePath`） ③ scope 不在本模块 `permissions` | ①③ 见 `module-protocol.md`「规则：没声明 = 不可达」节；② 的机制另见同文「实现注意（踩过的坑，勿重蹈）」节 |
 | 进程起不来（装载失败） | 注册路由与声明的**双向差集** | 读失败信息里的差集原文（带 `未声明但已注册 […]；已声明但未注册 […]`） |
 | 停用模块的 API 面是 404（不是 403） | 停用语义**有意如此**（404 与「不存在」同形 ⇒ 模块 API 面内不可枚举） | `module-protocol.md`「停用语义」节 |
 | `c.get(TENANT_STORAGE)` 恒 `undefined` | ① manifest 没声明 `storage` ② 租户行**部分填写**（绝不回落平台桶） ③ 投影中间件挂载顺序错 | `module-protocol.md`「租户级配置注入」节 |
+
+### 前端
+
+| 症状 | 病因 | 出路 |
+|---|---|---|
 | 模块页整块空白、零报错 | 用了嵌套 `<Routes>`——模块页挂在壳的 splat 路由 `*` 之下，嵌套路由按 splat 剩余段匹配，永远匹配不上 | 按 pathname 末段直接选页（照 `modules/aftersales/console/index.tsx`） |
 | 点页签跳到别的路径（模块段丢失，如 `/console/rules`） | 相对导航以壳的 splat 路由为基准解析 | 导航一律用**绝对路径** |
 | 管理台 `message.*` 抛 TypeError | 壳里 antd `<App>` 提供者缺失（`useApp` 是裸 `useContext`） | 已由 `Console.tsx` 的 `<AntdApp>` 覆盖；模块页不需要自己加 |
-| 模块停用后直敲模块页 URL 仍能打开（菜单已消失） | **实现缺口**：路由层不含 config——模块页/模块 admin 页都落 `/console` 的 `*` 通配（`apps/web/src/App.tsx:30`），`ConsoleModulePage` 只按 `registry ∩ session scope` 放行（`apps/web/src/pages/Console.tsx`） | 「已知边界」路由层不吃 config 条（#125 spec 的「门禁双层」自相矛盾，已开 issue 跟踪）；真正由 config 驱动的路由门只有 `/console/admin/storage` 的 `StorageGate` |
+| 模块停用后直敲模块页 URL 仍能打开（菜单已消失） | **实现缺口**：路由层不含 config——模块页/模块 admin 页都落 `/console` 的 `*` 通配（`apps/web/src/App.tsx:30`），`ConsoleModulePage` 只按 `registry ∩ session scope` 放行（`apps/web/src/pages/Console.tsx`） | 「已知边界」路由层不吃 config 条（#125 spec 的「门禁双层」自相矛盾，缺口记录在案、修复另议）；真正由 config 驱动的路由门只有 `/console/admin/storage` 的 `StorageGate` |
 
-> 上表两条前端症状（空白页 / 丢模块段）是 aftersales M3a 浏览器实测抓到的，正典里没有等价
+> 前端表的空白页 / 丢模块段两条是 aftersales M3a 浏览器实测抓到的，正典里没有等价
 > 记载——它们只在 `modules/aftersales/console/index.tsx` 的注释里，本表把它提到接入视角。
 
 ## 已知边界
@@ -360,7 +366,7 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
   `ConsoleModulePage` 只按 `registry ∩ session scope` 放行（`Console.tsx`），持码用户直敲 URL
   仍可打开；模块 admin 页同样**不套**组门 `AdminGate`（它只包住平台内置四项，`App.tsx:26-29`）。
   真正由 config 驱动的路由门只有 `/console/admin/storage` 的 `StorageGate`。这是**实现缺口**
-  （#125 spec 的「门禁双层」与它自己的「路由」条自相矛盾），已开 issue 跟踪。
+  （#125 spec 的「门禁双层」与它自己的「路由」条自相矛盾），缺口记录在案、修复另议。
 - **manifest 三个字段是预留（无消费者）**：`notifications.dir`、`config.schema`（schema 接受、
   无人读取）、`bindings`（仅 `check-manifests` 查键白名单，无运行时消费）。声明它们**不会有
   任何效果**——见 §2 表。清理与否另议。
