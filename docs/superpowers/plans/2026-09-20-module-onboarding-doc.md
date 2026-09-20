@@ -444,7 +444,7 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 | 模块页整块空白、零报错 | 用了嵌套 `<Routes>`——模块页挂在壳的 splat 路由 `*` 之下，嵌套路由按 splat 剩余段匹配，永远匹配不上 | 按 pathname 末段直接选页（照 `modules/aftersales/console/index.tsx`） |
 | 点页签跳到别的路径（模块段丢失，如 `/console/rules`） | 相对导航以壳的 splat 路由为基准解析 | 导航一律用**绝对路径** |
 | 管理台 `message.*` 抛 TypeError | 壳里 antd `<App>` 提供者缺失（`useApp` 是裸 `useContext`） | 已由 `Console.tsx` 的 `<AntdApp>` 覆盖；模块页不需要自己加 |
-| 模块停用后直敲模块页 URL 仍能打开 | **实现缺口**（路由层不查 config，见「已知边界」）——不是有意语义，别照抄成惯例 | 见文末「已知边界」 |
+| 模块停用后直敲模块页 URL 仍能打开（菜单已消失） | **实现缺口**：路由层不含 config——模块页/模块 admin 页都落 `/console` 的 `*` 通配（`apps/web/src/App.tsx:30`），`ConsoleModulePage` 只按 `registry ∩ session scope` 放行（`apps/web/src/pages/Console.tsx`） | 「已知边界」路由层不吃 config 条（#125 spec 的「门禁双层」自相矛盾，缺口记录在案、修复另议）；真正由 config 驱动的路由门只有 `/console/admin/storage` 的 `StorageGate` |
 
 > 前端表的空白页 / 丢模块段两条是 aftersales M3a 浏览器实测抓到的，正典里没有等价
 > 记载——它们只在 `modules/aftersales/console/index.tsx` 的注释里，本表把它提到接入视角。
