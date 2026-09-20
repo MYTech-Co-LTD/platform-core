@@ -556,17 +556,26 @@ git commit -m "docs(onboarding): 补验收清单/故障速查/已知边界——
 ```
 
 （原标题「门禁双层」改成「两层权限」是刻意的：原措辞暗示两层在同一处强制，与实测不符。
-⚠️ 同文件 `:335` 附近的「宿主施加门禁」讲的是**存储投影**不是门禁，**不要动**。）
+⚠️ 同文件讲**存储投影**的那处「宿主施加门禁」**不要动**——它说的不是门禁。）
+
+**同一节还有第三处同源错述**（「服务端 config 不暴露 admin 清单」条），一并改：
+
+```
+- **服务端 config 不暴露 admin 清单**：前端**菜单**按 registry∩config 自判（**路由**面见上条——
+  只按 registry∩scope），零后端改动。
+```
 
 - [ ] **Step 3: 核实双向指针与订正落地**
 
 Run:
 ```bash
-grep -n 'module-onboarding' AGENTS.md docs/module-protocol.md docs/module-onboarding.md
+grep -n 'module-onboarding' AGENTS.md docs/module-protocol.md
 grep -n '菜单与路由是两套判定' docs/module-protocol.md docs/module-onboarding.md
 ```
-Expected: 第一条 `AGENTS.md` 1 处、`docs/module-protocol.md` 1 处、`docs/module-onboarding.md` 至少 1 处；
+Expected: 第一条 `AGENTS.md` 1 处、`docs/module-protocol.md` 1 处；
 第二条两个文件各命中（正典订正 + 新文档同口径）。
+（**不要把 `docs/module-onboarding.md` 放进第一条 grep**——它的 H1 是「新模块接入指南」，
+文件名不自指，期望它命中是错的。）
 
 - [ ] **Step 4: 开两个 issue（死字段清理待议 + 控制台路由门禁缺口）**
 
