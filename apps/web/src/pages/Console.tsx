@@ -86,6 +86,20 @@ export function AdminGate({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+/**
+ * /console/admin/storage 的能力联动门（2026-09-20 spec）：启用的模块里无任何 storage 声明者
+ * → 「模块未启用」Result（与模块页 404 语义一致，不是裸 404）。外层 AdminGate 仍管 tenant:admin；
+ * API 门禁不变（宿主域，spec 记录在案）。
+ */
+export function StorageGate({ children }: { children: ReactNode }) {
+  const { config } = useOutletContext<ConsoleOutletContext>()
+  const visible = storageDeclarers.some((id) => config.modules.some((m) => m.id === id))
+  if (!visible) {
+    return <Result status="404" title="页面不存在" subTitle="模块可能未启用或未发布，请联系管理员" />
+  }
+  return <>{children}</>
+}
+
 type Booted =
   | { state: 'loading' }
   | { state: 'ready'; session: PlatformSession; config: PlatformConfig }

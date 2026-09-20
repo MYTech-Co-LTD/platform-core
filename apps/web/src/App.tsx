@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Navigate, RouterProvider, createBrowserRouter } from 'react-router-dom'
-import ConsoleShell, { AdminGate, ConsoleModulePage, ConsoleOverview } from './pages/Console'
+import ConsoleShell, { AdminGate, ConsoleModulePage, ConsoleOverview, StorageGate } from './pages/Console'
 import LoginPage from './pages/Login'
 import AdminUsersPage from './pages/admin/Users'
 import AdminPermissionsPage from './pages/admin/Permissions'
@@ -26,7 +26,7 @@ export function createAppRouter() {
         { path: 'admin/users', element: <AdminGate><AdminUsersPage /></AdminGate> },
         { path: 'admin/permissions', element: <AdminGate><AdminPermissionsPage /></AdminGate> },
         { path: 'admin/subscriptions', element: <AdminGate><AdminSubscriptionsPage /></AdminGate> },
-        { path: 'admin/storage', element: <AdminGate><AdminStoragePage /></AdminGate> },
+        { path: 'admin/storage', element: <AdminGate><StorageGate><AdminStoragePage /></StorageGate></AdminGate> },
         { path: '*', element: <ConsoleModulePage /> },
       ],
     },
