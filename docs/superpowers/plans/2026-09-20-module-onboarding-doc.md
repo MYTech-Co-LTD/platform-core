@@ -722,9 +722,15 @@ gh pr create --title "docs(onboarding): 新模块接入指南——协议/契约
 ## 如实标注的已知债
 
 manifest 的 `notifications.dir` / `config.schema` / `bindings` 经实测**无消费者**
-（或仅白名单校验），文档标为「预留·无消费者」，清理另开 issue（见下）。
+（或仅白名单校验），文档标为「预留·无消费者」。
 
-Closes #<死字段 issue 编号>
+**相关 issue（本 PR 只记录、不修复，故不写 Closes——写了会在合并时误关）：**
+- #126 死字段清理待议
+- #127 控制台路由门禁缺口（模块页路由不吃 config + 模块 admin 页缺组门）
+
+> 注：#127 的正文在评审中修正过一次（原写的「路由门禁无测试」不成立——
+> `Console.test.tsx:407`/`:366` 已有路由级用例；真实缺口收窄为 (a) config 维度无断言
+> (b) admin 页组门无断言）。
 
 ## 验收
 
