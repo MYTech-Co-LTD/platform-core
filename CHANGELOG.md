@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.20.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.19.1...v0.20.0) - 2026-09-20
+- 【新增】web: 登录页改版——参考 Casdoor 浅色分栏风格 ([#123](https://github.com/MYTech-Co-LTD/platform-core/pull/123), [607a5ff](https://github.com/MYTech-Co-LTD/platform-core/commit/607a5fff89c176eda079a73248955c6185bc458e))
+
+
 ## [0.19.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.19.0...v0.19.1) - 2026-09-19
 - 【修复】auth-core: 共享 Casdoor 首建三缺陷——ensureOrg 漏 owner/passwordType、ensureAnchorUser 漏 signupApplication、写响应吞 (Closes #117) ([#118](https://github.com/MYTech-Co-LTD/platform-core/pull/118), [0666cae](https://github.com/MYTech-Co-LTD/platform-core/commit/0666cae8aca40d750a14630d5094f93ecdeb1e7c))
 
