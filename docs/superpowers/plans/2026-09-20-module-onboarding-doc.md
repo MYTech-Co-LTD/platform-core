@@ -193,9 +193,15 @@ grep -oE '`[A-Za-z0-9_./-]+\.(md|ts|tsx|mjs|json|yaml|sql)`' docs/module-onboard
 ```
 Expected: 无输出（无 `MISSING:` 行）。占位路径（形如 `modules/<id>/…`）不被该正则捕获，属正常。
 
-再核正典节名引用：
+再核正典节名引用（**必须用 python3 提取**：实测 `grep -oE '「[^」]+」'` 在本机会静默丢结果——
+9 条 vs 实际 14 条，multibyte 方括号表达式不靠谱）：
+
 ```bash
-grep -oE '「[^」]+」' docs/module-onboarding.md | sort -u
+python3 -c "
+import re
+s=open('docs/module-onboarding.md',encoding='utf-8').read()
+print('\n'.join(sorted(set(re.findall(r'「[^」]+」',s)))))
+"
 ```
 逐条确认每个节名在 `docs/module-protocol.md` 里以 `##`/`###` 标题**逐字**存在（含书名号内的文字）。
 
@@ -336,9 +342,14 @@ Run:
 ```bash
 grep -oE '`[A-Za-z0-9_./-]+\.(md|ts|tsx|mjs|json|yaml|sql)`' docs/module-onboarding.md \
   | tr -d '`' | sort -u | while read -r p; do [ -e "$p" ] || echo "MISSING: $p"; done
-grep -oE '「[^」]+」' docs/module-onboarding.md | sort -u
+python3 -c "
+import re
+s=open('docs/module-onboarding.md',encoding='utf-8').read()
+print('\n'.join(sorted(set(re.findall(r'「[^」]+」',s)))))
+"
 ```
 Expected: 第一条无输出；第二条逐条在 `docs/module-protocol.md` / `apps/web` 源码中找到对应标题或标识符（如 `storageDeclarers`、`ConsoleOutletContext`、`CONSOLE_ICONS` 确实存在于源码）。
+（第二条**不要**用 `grep -oE '「[^」]+」'`——本机实测会静默丢结果，见 Task 1 Step 6。）
 
 核实命令（对标识符）：
 ```bash
