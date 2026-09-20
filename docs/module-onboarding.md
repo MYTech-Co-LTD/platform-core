@@ -113,3 +113,184 @@ globs 是 `['apps/*', 'packages/*', 'modules/*', 'modules/*/*']`——`modules/<
 - 目录不存在静默跳过——没有表的模块不需要 `migrations/`。
 
 文件命名与版本号自愈姿势可参考 `modules/demo/migrations/`（含一条「账本幽灵记录」的处置注释）。
+
+## §5 能力面按需接入
+
+### 心智模型：一个壳，模块交付「页」
+
+**管理后台是单一壳**（`apps/web`，React + ProLayout），模块交付的是**页**：构建期由
+`scripts/gen-console-registry.mjs` 聚合成 `apps/web/src/console-registry.gen.ts`，运行时壳做
+**三重过滤**（config 启用集 ∩ registry 已挂载 ∩ session scope）出菜单，命中后 lazy load 模块
+entry 的 default 导出、渲染进壳的 `Outlet`，共享壳的布局/主题/会话（`ConsoleOutletContext`）。
+
+**没有「进入应用 → 独立菜单体系」这回事。** 要独立 UI 的是 C 端场景，走 `frontend.userApp`
+（真独立构建，挂 `/app/<id>`，如 aftersales 的 Vue 移动端）。
+
+**行业参照**：本平台 = Stripe / Grafana 系（统一壳 + 页聚合 + 页内自绘导航），
+不是 Odoo / Salesforce 系（app 切换器 + 每 app 独立菜单）——后者是 40+ app 重套件的形态，
+本平台模块数量级不需要。
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  ConsoleShell（apps/web，唯一的壳：React + ProLayout）            │
+│  壳管：布局 / 主题 / 暗色切换 / 会话 / 登出                        │
+│ ┌──────────────┬─────────────────────────────────────────────┐ │
+│ │  侧栏菜单      │              页面区 <Outlet/>                │ │
+│ │  （只有这一套） │                                             │ │
+│ │              │   ┌─────────────────────────────────────┐   │ │
+│ │  概览          │   │ 点「售后管理」⇒ 懒加载 aftersales 的   │   │ │
+│ │  演示     ─────┼──▶│ console/index.tsx，渲染在这个框里      │   │ │
+│ │  售后管理   ───┼──▶│                                     │   │ │
+│ │              │   │ aftersales 页内想多页？自己写子路由：    │   │ │
+│ │ ▾ 管理         │   │ /console/aftersales/tickets          │   │ │
+│ │   用户管理      │   │ /console/aftersales/rules           │   │ │
+│ │   角色与授权    │   │ （页内导航，侧栏菜单不跟着变）           │   │ │
+│ │   我的订阅      │   └─────────────────────────────────────┘   │ │
+│ │   存储配置*     │                                             │ │
+│ │   模块admin页*  │   （点菜单其他项 ⇒ Outlet 里换成别的模块页）    │ │
+│ └──────────────┴─────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────┘
+ * 存储配置/模块admin页：只有 tenant:admin 且模块声明了才出现
+```
+
+声明怎么变成菜单：
+
+```
+modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
+  frontend.console/admin 条目               frontend.console 条目
+        │                                        │
+        └───────────────┬────────────────────────┘
+                        ▼  构建期（pnpm build 前置脚本）
+        scripts/gen-console-registry.mjs 聚合
+                        │
+                        ▼
+        apps/web/src/console-registry.gen.ts（生成文件）
+                        │
+                        ▼  运行时，壳里做三重过滤
+        config 启用集        registry 挂载        session scope
+        （租户启用了          （构建期已           （用户有
+          这个模块吗）          挂载了吗）           这个权限码吗）
+             └──────── 三项全过 ────────┘
+                        │
+                        ▼
+        菜单出现该条目 + 点进去懒加载模块页
+        （任何一项不过 ⇒ 菜单不出、直敲 URL 也进不去）
+```
+
+**两级菜单**：壳侧栏一条（**协议管**：扁平数组、不支持嵌套、显隐三重过滤）+ 页内导航
+**模块自绘**（**协议不管**）：
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ ConsoleShell（壳）                                                │
+│ ┌────────────┬─────────────────────────────────────────────────┐ │
+│ │ 壳的侧栏菜单 │  aftersales 的页面区（模块自己的地盘）              │ │
+│ │            │ ┌─────────────────────────────────────────────┐ │ │
+│ │ 概览         │ │ ⌗工单 ⌗规则 ⌗员工 ⌗商品 ⌗门店 ⌗申请审批      │ │ │
+│ │ 演示         │ ├─────────────────────────────────────────────┤ │ │
+│ │ 售后管理 ────┼─▶│ （选中页签的内容区）                          │ │ │
+│ │            │ │                                             │ │ │
+│ │ ▾ 管理      │ └─────────────────────────────────────────────┘ │ │
+│ │   …         │   ↑ 这排页签是 aftersales 自己用 antd <Menu>     │ │
+│ └────────────┴──── 画的，URL 驱动：/console/aftersales/tickets   │ │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### 声明了会发生什么（先看这张表建立预期）
+
+| 你声明了… | 管理台上发生什么 |
+|---|---|
+| `frontend.console[]` 条目 | 菜单**平铺**一条 = 一页（协议不支持嵌套；多页面收一个条目、页内真子路由分区——`modules/aftersales/console/index.tsx` 是现成姿势）；显隐 = registry ∩ config 启用集 ∩ session scope 三重过滤；**一个条目 = 侧栏一项 + 页内自绘导航** |
+| `frontend.admin[]` 条目 | 进**管理组 children**，顺序：平台内置三项 → 存储配置 → 模块 admin 页（manifest 声明序）；三条约法（`/console/admin/` 前缀 / scope ∈ permissions / console 条目禁占该前缀）+ 双层门禁（组门 `tenant:admin` + 页门 scope） |
+| `storage: {kind: s3}` | **触发租户管理台「存储配置」页可见**（能力联动：`storageDeclarers ∩ 启用模块 ≠ ∅` 才显示/可达）；运行时 `c.get(TENANT_STORAGE)` 取本租户配置 |
+| 模块被停用 | 菜单与页面**同隐**；直敲 admin 路径出「模块可能未启用」Result；API 面 404（与「不存在」同形） |
+
+### `frontend.console`：管理台模块页
+
+五项字段（契约源 `packages/platform-sdk/src/manifest.ts`），最小可跑示例见 `modules/demo/manifest.yaml`：
+
+```yaml
+frontend:
+  console:
+    - { path: /console/demo, title: 演示, icon: ExperimentOutlined, scope: demo:view, entry: ./console/index.tsx }
+```
+
+- **`path`**——站点路径，**全平台唯一**：两个模块声明同一条 ⇒ `gen-console-registry` 构建期硬失败（菜单按 path 聚合，重复即二义）；**不得占 `/console/admin/` 前缀**（schema 拒，防串组）。壳侧按**前缀**匹配（`pathname === path || pathname.startsWith(path + '/')`），深链 `/console/demo/xyz` 也进得来。
+- **`title`**——菜单文案。页内导航的文案归模块自定（协议不管）。
+- **`icon`**——AntD 图标**名字符串**，由壳侧白名单 `CONSOLE_ICONS`（`apps/web/src/pages/Console.tsx`）映射成组件。壳不 import 全量图标（`* as Icons` 会把整包打进 bundle）⇒ **未登记的名字不渲染图标、也不报错**；要新图标先在壳里登记。实测一例：`modules/aftersales/manifest.yaml` 声明 `icon: ToolOutlined`，而登记表里没有它 ⇒ 售后那条菜单项目前**无图标**（demo 的 `ExperimentOutlined` 已登记）。
+- **`scope`**——页门，也是本节**唯一机器只半查**的字段：装配期进 registry、运行期参与 `registry ∩ config 启用集 ∩ session scopes` 三重过滤、直敲 URL 由模块页判 `403 无权访问`——但 schema **不查它 ∈ `permissions`**（与 `frontend.admin[].scope` 的这处差异见 §2 表脚注）。写一个不存在的码**不报错**，只是那一页永不出现（静默失效）；写 console 条目时按「scope ∈ `permissions[].code`」自查。
+- **`entry`**——模块内相对路径，指向该页组件文件（上面示例里的 ./console/index.tsx）；`check-manifests` 验文件存在，registry 生成时去掉 `./` 前缀当 import 说明符。
+
+**多页面姿势**：`frontend.console` 是**扁平数组、协议不支持嵌套** ⇒ 声明**一条** + 页内真子路由（URL 仍是唯一驱动，页内导航模块自绘，见本节开头第三张图）。现成姿势是 `modules/aftersales/console/index.tsx`——一个条目 `/console/aftersales` 挂六个页签，深链可直达。
+
+**两个实测坑**（浏览器实测抓到，正典无载）→ §7 故障速查前端那两行：嵌套 `<Routes>` ⇒ 空白页零报错；相对 `navigate()` ⇒ 丢模块段（跳成 `/console/rules`）。
+
+### `frontend.admin`：管理组子页
+
+字段五项，与 `frontend.console` **同形**（`{ path, title, icon?, scope, entry }`）；形状与三条约法正典在 `docs/module-protocol.md`「模块管理页：`frontend.admin`」节。
+
+```yaml
+# modules/<id>/manifest.yaml —— 本期仓内零真实消费者，照形状写
+frontend:
+  admin:
+    - { path: /console/admin/<id>/settings, title: 模块设置, icon: SettingOutlined, scope: <id>:manage, entry: ./console/admin/settings.tsx }
+```
+
+- **三条约法**（前两条 schema 拒，第三条也由 schema 双向拦）：`path` 必须 `/console/admin/` 开头；`scope` 必须 ∈ 本模块 `permissions[].code`（**这一条对 admin 是硬校验，对 console 不是**）；`frontend.console[]` 不得占该前缀。
+- **双层门禁**：组门 `tenant:admin`（宿主施加，与平台内置管理页同一道）+ 页门 `scope`（判定同 console）。
+- **显隐**：菜单/路由 = `registry(group='admin') ∩ config 启用集 ∩ session scopes`，与 console 三重过滤**同构**（`apps/web/src/pages/console-menu.ts`）——服务端 config **不暴露** admin 清单，前端按 registry∩config 自判，零后端改动。
+- **进组顺序**：平台内置三项（用户管理／角色与授权／我的订阅）→ 存储配置（能力联动）→ 模块 admin 页（manifest 声明序）。
+- **停用联动**与 console 同：菜单不出、直敲出「模块可能未启用」Result。
+- **已知边界**：本期**零真实消费者**——协议与联动逻辑已交付、fixture 级验证覆盖，但还没有真实模块用它。接入者就是第一个真实用例，记得补浏览器级验收（见文末「已知边界」）。
+
+### `frontend.userApp`：独立前端应用（C 端／移动端）
+
+```yaml
+# modules/aftersales/manifest.yaml —— 仓内唯一实例
+frontend:
+  userApp: { mount: /app/aftersales, dist: ./mobile/dist }
+```
+
+- **`mount`**——站点路径前缀。宿主在其上挂静态目录（尾部 `/` 先剥掉）**并补 SPA 兜底**（`index.html`），模块不用自己配 rewrite。
+- **`dist`**——**相对模块目录**解析（`apps/server/src/loader.ts` 的 `mount()` 里 `path.resolve(m.dir, dist)`），不是相对仓根。
+- ⚠️ **`mount` 与前端工程自己的 `base` 必须逐字一致**：`modules/aftersales/mobile/vite.config.ts` 的 `base: '/app/aftersales/'` 与 manifest 的 `mount` 是一对。不一致 ⇒ 产物引用**错前缀**（HTML 拿得到、`/assets/*` 全 404），且**没有任何构建期检查替你拦**——只能自查。
+- **停用闸门与 API 面同款**：userApp 静态在 `serveStatic` **之前**挂同一道 `gate`——匿名放行（SPA 壳登录前必须可载，业务 API 自会 401/404），**已登录 + 停用 ⇒ 404 与 API 面同形**。语义详见 `docs/module-protocol.md`「停用语义」节。
+- 这是「模块交付独立 UI」的**唯一**入口：管理台方向没有「进入应用 → 独立菜单体系」这回事（见本节心智模型）。
+
+### `guest.scope`：访客码
+
+```yaml
+# modules/aftersales/manifest.yaml
+guest: { scope: aftersales:guest }
+```
+
+- **形状**：单值 string，必须 ∈ 本模块 `permissions[].code`（schema 拒越界）——与 `api.internal[].scope` 同纪律：声明一个自己都没有的码 ⇒ 访客拿到的授权恒 403 而无人知晓。
+- **发放路径**：宿主 `wechat-oa` 访客登录路（`apps/server/src/routes/auth-wechat-oa.ts`）签 session 时，按**该租户已启用模块**发放这些码（`runtime.enabledGuestScopes`）——发的是**访客码**，不是模块全量权限码；访客身份**不落 Casdoor**（外部用户不进内部 IdP）。
+- **它决定访客能调什么**：`api.internal` 里 `scope` = 访客码的那些条目。同一条 `(method, path)` 只能声明一次、一条声明只带一个 scope ⇒ 访客面与管理面只能**按路径分面**（`/guest/tickets` 对 `/tickets`；正例见 `modules/aftersales/manifest.yaml` 的注释）。
+- **停用联动**：模块停用 ⇒ 该码不再发放；访客 session 刷新时按当时的启用集**重算**（停用即掉码，`apps/server/src/app.ts` 的接线注释），移动端 API 由闸门 404 + 门卫 403 自然闭合。
+- 指针：`docs/module-protocol.md`「停用语义」节的 guest 段。
+
+### `storage`：租户级配置注入
+
+```yaml
+# modules/<id>/manifest.yaml —— 声明的是能力，不是租户（写不出 bucket / AK / org）
+storage: { kind: s3 }     # 唯一合法值；写别的 ⇒ schema 拒绝 ⇒ 装载失败（进程起不来）
+```
+
+- **不声明 = 拿不到**：宿主只对**声明了的**模块、在其 API 子树（`/api/modules/<id>/*`）上挂一条投影中间件；没声明的模块宿主根本不 `set` ⇒ 模块里 `c.get(TENANT_STORAGE)` 恒 `undefined`，行为与今天逐字相同。
+- **取法**（模块侧；`TENANT_STORAGE` 与 `TenantStorageConfig` 均从 `@platform/sdk` 导出）：
+
+```ts
+import { TENANT_STORAGE } from '@platform/sdk'
+import type { TenantStorageConfig } from '@platform/sdk'
+
+const cfg = c.get(TENANT_STORAGE)                    // TenantStorageConfig | undefined
+if (!cfg) return c.json({ error: 'ZOS_NOT_CONFIGURED' }, 503)
+```
+
+- **值的形状**：`{ kind: 's3', endpoint, region, bucket, accessKeyId, secretAccessKey }`——**投影后的窄值**，不是整行租户记录（租户行里坐着企微／公众号密钥）。配置的作用域**永远是本次请求所属的租户**，模块没有任何途径指定 org。
+- **兜底语义（fail-explicit）**：租户五列**全空** ⇒ 注入**平台默认**（进程 env 五键；env 缺任一键 ≈ 没有平台默认 ⇒ 不 set）；**部分填写**（如只填了 endpoint，没有 AK/SK）⇒ **不注入**（`undefined`），**绝不回落平台桶**——回落不是容错，是把「数据落在哪」说错 + 平台替租户承担存储成本。
+- ⚠️ **「配了但连不上」在请求路径上不可观测**：预签名是纯本地 SigV4 计算、不发网络请求 ⇒ 平台侧零日志、零告警、各处全绿。故**连通性验证必须在请求路径之外**：管理端**保存时探测**（先探测、通过才写，不留「库里有配置、探测没过」的中间态）+ 显式**「测试连接」**动作（不写库；用于桶被删／AK 轮换／网络策略变更这类事后场景）——两个端点都在 `apps/server/src/routes/admin.ts`。**明确不**在请求路径上探测：每请求一次网络往返会把存储侧抖动放大成平台 5xx，还把可选依赖变成硬依赖。
+- 「配置存在但不可用」由**模块自己承接**：宿主只保证如实把本租户的配置（或没有）交给模块，503 错误码与降级话术是模块自己的事。
+- 联动提醒：声明 `storage` 也是租户管理台**「存储配置」页可见**的条件之一（`storageDeclarers ∩ 启用模块 ≠ ∅`，见上面的对照表）。
+- 指针：`docs/module-protocol.md`「租户级配置注入：`storage`」节——那节自成一体（声明姿势 / 宿主注入的键与位置 / 安全性质 / 兜底语义四层皆有），本节只是接入视角的摘要。
