@@ -35,8 +35,8 @@ import {
   Typography,
   theme,
 } from 'antd'
-import { consoleRegistry } from '../console-registry.gen'
-import { buildConsoleMenu, visibleConsoleEntries } from './console-menu'
+import { consoleRegistry, storageDeclarers } from '../console-registry.gen'
+import { buildConsoleMenu, visibleAdminEntries, visibleConsoleEntries } from './console-menu'
 import {
   ApiError,
   DEFAULT_BRANDING,
@@ -82,6 +82,20 @@ export function AdminGate({ children }: { children: ReactNode }) {
   const { session } = useOutletContext<ConsoleOutletContext>()
   if (!session.scopes.includes('tenant:admin')) {
     return <Result status="403" title="需要租户管理员权限" subTitle="请联系管理员授予 tenant:admin 权限码" />
+  }
+  return <>{children}</>
+}
+
+/**
+ * /console/admin/storage 的能力联动门（2026-09-20 spec）：启用的模块里无任何 storage 声明者
+ * → 「模块未启用」Result（与模块页 404 语义一致，不是裸 404）。外层 AdminGate 仍管 tenant:admin；
+ * API 门禁不变（宿主域，spec 记录在案）。
+ */
+export function StorageGate({ children }: { children: ReactNode }) {
+  const { config } = useOutletContext<ConsoleOutletContext>()
+  const visible = storageDeclarers.some((id) => config.modules.some((m) => m.id === id))
+  if (!visible) {
+    return <Result status="404" title="页面不存在" subTitle="模块可能未启用或未发布，请联系管理员" />
   }
   return <>{children}</>
 }
@@ -195,7 +209,11 @@ function ConsoleLayout({
   // 菜单位置规则（spec §3）在 console-menu.ts：概览 → pinned（case-engine）→ manifest 声明序
   // → 管理组（tenant:admin 门禁，spec D4/D9 M3）
   const menuItems = useMemo(
-    () => buildConsoleMenu(visibleConsoleEntries(config, session, consoleRegistry), CONSOLE_ICONS, session),
+    () =>
+      buildConsoleMenu(visibleConsoleEntries(config, session, consoleRegistry), CONSOLE_ICONS, session, {
+        adminEntries: visibleAdminEntries(config, session, consoleRegistry),
+        storageVisible: storageDeclarers.some((id) => config.modules.some((m) => m.id === id)),
+      }),
     [config, session],
   )
 

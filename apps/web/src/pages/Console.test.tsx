@@ -11,17 +11,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 
-// 生成物 mock：模块经 vi.hoisted 数组按测试注入（registry 是「构建期聚合」产物，测试里等价于手摆）
-const { fakeRegistry } = vi.hoisted(() => ({
+// 生成物 mock：模块经 vi.hoisted 数组按测试注入（registry 是「构建期聚合」产物，测试里等价于手摆；
+// storageDeclarers 同理——存储配置页能力联动的构建期事实，测试里等价于手摆声明者集合）
+const { fakeRegistry, fakeStorageDeclarers } = vi.hoisted(() => ({
   fakeRegistry: [] as Array<{
     path: string
     title: string
+    group: 'main' | 'admin'
+    moduleId: string
     icon?: string
     scope: string
     load: () => Promise<{ default: ComponentType }>
   }>,
+  fakeStorageDeclarers: [] as string[],
 }))
-vi.mock('../console-registry.gen', () => ({ consoleRegistry: fakeRegistry }))
+vi.mock('../console-registry.gen', () => ({
+  consoleRegistry: fakeRegistry,
+  storageDeclarers: fakeStorageDeclarers,
+}))
 
 import { platformFetch } from '@platform/sdk/web'
 import { App as AntdApp } from 'antd'
@@ -81,6 +88,11 @@ function mockApi(handlers: Record<string, () => Response>): void {
 
 function setRegistry(entries: typeof fakeRegistry): void {
   fakeRegistry.splice(0, fakeRegistry.length, ...entries)
+}
+
+/** 手摆 storage 声明者集合（默认空 = 无声明者 = 存储配置页隐藏） */
+function setStorageDeclarers(ids: string[]): void {
+  fakeStorageDeclarers.splice(0, fakeStorageDeclarers.length, ...ids)
 }
 
 /** 渲染整个 App（真实路由表），从 at 路径进入 */
@@ -201,6 +213,8 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     setRegistry([
       {
         path: '/console/demo/things',
+        group: 'main',
+        moduleId: 'demo',
         title: '演示工单',
         icon: 'AppstoreOutlined',
         scope: 'demo:console',
@@ -208,6 +222,8 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
       },
       {
         path: '/console/other/page',
+        group: 'main',
+        moduleId: 'other',
         title: '停用页面',
         scope: 'other:console',
         load: () => Promise.resolve({ default: OtherPage }),
@@ -235,6 +251,8 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     setRegistry([
       {
         path: '/console/demo/things',
+        group: 'main',
+        moduleId: 'demo',
         title: '演示工单',
         scope: 'demo:console',
         load: () => Promise.resolve({ default: DemoPage }),
@@ -271,7 +289,7 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
   it('②b 点击启用菜单项 → 懒加载模块页渲染（lazy(load) 接线）', async () => {
     const load = vi.fn(() => Promise.resolve({ default: DemoPage }))
     setRegistry([
-      { path: '/console/demo/things', title: '演示工单', scope: 'demo:console', load },
+      { path: '/console/demo/things', title: '演示工单', group: 'main', moduleId: 'demo', scope: 'demo:console', load },
     ])
     mockApi({
       '/api/platform/auth/session': () => jsonResponse(SESSION),
@@ -294,6 +312,8 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     setRegistry([
       {
         path: '/console/demo/things',
+        group: 'main',
+        moduleId: 'demo',
         title: '演示工单',
         icon: 'AppstoreOutlined',
         scope: 'demo:console',
@@ -342,10 +362,52 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     expect(await screen.findByText(/你好，/)).toBeInTheDocument()
   })
 
+  // ---- 存储配置页能力联动（2026-09-20 spec）----
+  it('⑧ 存储配置能力联动：config 无 storage 声明者 → 菜单不出现 + 直敲出「未启用」Result', async () => {
+    setRegistry([])
+    setStorageDeclarers(['aftersales'])
+    mockApi({
+      '/api/platform/auth/session': () =>
+        jsonResponse({ ...SESSION, scopes: ['tenant:admin', 'demo:console'] }),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY), // demo 启用、aftersales 不在
+    })
+
+    renderApp()
+
+    expect(await screen.findByText('概览')).toBeInTheDocument()
+    // 菜单无「存储配置」（点开管理组后断言——子菜单懒渲染，不点开恒不可见）
+    fireEvent.click(await screen.findByText('管理'))
+    await waitFor(() => expect(screen.getByText('用户管理')).toBeInTheDocument())
+    expect(screen.queryByText('存储配置')).not.toBeInTheDocument()
+    // 直敲 /console/admin/storage → 未启用 Result（AdminGate 先过：session 有 tenant:admin；
+    // history.pushState 不触发 router 重渲染，从目标路径重新 render——与 ②c 同法）
+    cleanup()
+    renderApp('/console/admin/storage')
+    expect(
+      await screen.findByText('模块可能未启用或未发布，请联系管理员'),
+    ).toBeInTheDocument()
+  })
+
+  it('⑧b 声明者启用 → 存储配置出现在管理组', async () => {
+    setRegistry([])
+    setStorageDeclarers(['demo']) // 与 CONFIG_DEMO_ONLY 的 demo 相交
+    mockApi({
+      '/api/platform/auth/session': () =>
+        jsonResponse({ ...SESSION, scopes: ['tenant:admin', 'demo:console'] }),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+
+    renderApp()
+
+    // ProLayout 子菜单懒渲染：先点开「管理」组，children 才进 DOM
+    fireEvent.click(await screen.findByText('管理'))
+    expect(await screen.findByText('存储配置')).toBeInTheDocument()
+  })
+
   it('②c 无 scope 用户直敲模块 console URL → 403 Result（路由级门禁与菜单同判定，不触发懒加载）', async () => {
     const load = vi.fn(() => Promise.resolve({ default: DemoPage }))
     setRegistry([
-      { path: '/console/demo/things', title: '演示工单', scope: 'demo:console', load },
+      { path: '/console/demo/things', title: '演示工单', group: 'main', moduleId: 'demo', scope: 'demo:console', load },
     ])
     mockApi({
       '/api/platform/auth/session': () => jsonResponse(SESSION_NO_DEMO),
@@ -418,6 +480,8 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     setRegistry([
       {
         path: '/console/demo/things',
+        group: 'main',
+        moduleId: 'demo',
         title: '演示工单',
         scope: 'demo:console',
         load: () => Promise.resolve({ default: DemoPage }),
@@ -509,6 +573,8 @@ describe('管理台 antd <App> 提供者（issue #106）', () => {
     setRegistry([
       {
         path: '/console/probe',
+        group: 'main',
+        moduleId: 'probe',
         title: '消息探针',
         scope: 'demo:console',
         load: () => Promise.resolve({ default: MessageProbe }),

@@ -115,6 +115,13 @@ export async function runChecks(rootDir: string): Promise<CheckResult> {
         errors.push(`${relPath}: frontend.console[${i}].entry 指向的文件不存在: ${c.entry}`)
       }
     }
+    // ③b 模块管理页协议（2026-09-20 spec）：admin entry 与 console entry 同规
+    for (const [i, a] of (m.frontend?.admin ?? []).entries()) {
+      const target = join(dirname(file), a.entry)
+      if (!(await exists(target))) {
+        errors.push(`${relPath}: frontend.admin[${i}].entry 指向的文件不存在: ${a.entry}`)
+      }
+    }
     if (m.migrations) {
       const dir = join(dirname(file), m.migrations.dir)
       if (!(await isDir(dir))) {

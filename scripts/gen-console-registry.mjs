@@ -28,31 +28,40 @@ const outFile = join(rootDir, 'apps', 'web', 'src', 'console-registry.gen.ts')
  * @param {any} manifest
  */
 function entriesFor(moduleId, manifest) {
-  const consoleItems = manifest?.frontend?.console
-  if (consoleItems === undefined) return []
-  if (!Array.isArray(consoleItems)) {
-    throw new Error(`modules/${moduleId}/manifest.yaml: frontend.console 必须是数组`)
-  }
-  return consoleItems.map((item, i) => {
-    const where = `modules/${moduleId}/manifest.yaml frontend.console[${i}]`
-    for (const key of ['path', 'title', 'scope', 'entry']) {
-      if (typeof item?.[key] !== 'string' || item[key] === '') {
-        throw new Error(`${where}: ${key} 必须是非空字符串`)
+  const out = []
+  // console → 'main'（模块区平铺页）；admin → 'admin'（「管理」组子页，2026-09-20 模块管理页协议）
+  for (const [field, group] of [['console', 'main'], ['admin', 'admin']]) {
+    const items = manifest?.frontend?.[field]
+    if (items === undefined) continue
+    if (!Array.isArray(items)) {
+      throw new Error(`modules/${moduleId}/manifest.yaml: frontend.${field} 必须是数组`)
+    }
+    for (const [i, item] of items.entries()) {
+      const where = `modules/${moduleId}/manifest.yaml frontend.${field}[${i}]`
+      for (const key of ['path', 'title', 'scope', 'entry']) {
+        if (typeof item?.[key] !== 'string' || item[key] === '') {
+          throw new Error(`${where}: ${key} 必须是非空字符串`)
+        }
       }
+      out.push({
+        path: item.path,
+        title: item.title,
+        group,
+        // icon 可选；字符串透传（AntD 图标名，Console 壳负责名→组件映射）
+        ...(typeof item.icon === 'string' ? { icon: item.icon } : {}),
+        scope: item.scope,
+        // entry 形如 ./console/main.tsx —— import 说明符只需去掉 ./ 前缀
+        entry: item.entry.replace(/^\.\//, ''),
+      })
     }
-    return {
-      path: item.path,
-      title: item.title,
-      // icon 可选；字符串透传（AntD 图标名，Console 壳负责名→组件映射）
-      ...(typeof item.icon === 'string' ? { icon: item.icon } : {}),
-      scope: item.scope,
-      // entry 形如 ./console/main.tsx —— import 说明符只需去掉 ./ 前缀
-      entry: item.entry.replace(/^\.\//, ''),
-    }
-  })
+  }
+  return out
 }
 
 const entries = []
+// 声明了 storage 能力的模块 id（manifest storage 字段，构建期事实）——「存储配置」管理页
+// 显隐 = storageDeclarers ∩ config 启用模块 ≠ ∅（2026-09-20 spec，运行时判定在 Console 壳）
+const storageDeclarers = []
 const moduleDirs = await readdir(modulesDir, { withFileTypes: true })
   // modules/ 不存在（空仓）→ 空数组注册表同样合法
   .catch(() => [])
@@ -79,6 +88,7 @@ for (const dir of moduleDirs) {
     throw new Error(`modules/${dir.name}/manifest.yaml: id "${manifest.id}" 与目录名不一致`)
   }
   entries.push(...entriesFor(manifest.id, manifest).map((e) => ({ moduleId: manifest.id, ...e })))
+  if (manifest?.storage && typeof manifest.storage === 'object') storageDeclarers.push(manifest.id)
 }
 
 // 确定性输出：按模块 id 排序；同一 manifest 内保持声明序（sort 稳定）——菜单顺序跟着 manifest 走
@@ -102,13 +112,18 @@ const relModuleImport = (e) => {
 }
 
 const header = `// @generated —— scripts/gen-console-registry.mjs 生成物，勿手改（build 前置自动重生成）。
-// 来源：modules/*/manifest.yaml 的 frontend.console。无模块/无 console 项 → 空数组（合法）。
+// 来源：modules/*/manifest.yaml 的 frontend.console / frontend.admin（group 区分）与 storage（storageDeclarers）。
+// 无模块/无 console 项 → 空数组（合法）。
 import type { ComponentType } from 'react'
 
 export interface ConsoleRegistryEntry {
   /** 模块 console 页路由（全路径，以 /console/ 开头），与 manifest frontend.console.path 一致 */
   path: string
   title: string
+  /** 'main' = 模块区平铺页（frontend.console）；'admin' = 「管理」组子页（frontend.admin） */
+  group: 'main' | 'admin'
+  /** 声明该页的模块 id（运行时与 config 启用集做联动判定） */
+  moduleId: string
   /** AntD 图标名（字符串透传；Console 壳按名映射，未知名不渲染图标） */
   icon?: string
   /** 访问该页所需权限 scope（session.scopes 成员判定） */
@@ -124,15 +139,22 @@ const body = entries
     const iconLine = e.icon === undefined ? '' : `\n    icon: ${JSON.stringify(e.icon)},`
     return `  {
     path: ${JSON.stringify(e.path)},
-    title: ${JSON.stringify(e.title)},${iconLine}
+    title: ${JSON.stringify(e.title)},
+    group: ${JSON.stringify(e.group)},
+    moduleId: ${JSON.stringify(e.moduleId)},${iconLine}
     scope: ${JSON.stringify(e.scope)},
     load: () => import(${relModuleImport(e)}),
   },`
   })
   .join('\n')
 
-const file = `${header}${body === '' ? ']' : `\n${body}\n]`}
-`
+// storageDeclarers：按 id 排序保确定性（幂等字节级一致）；空 → 空数组字面量
+const declarersBody = `\n\nexport const storageDeclarers: string[] = [${storageDeclarers
+  .sort()
+  .map((id) => JSON.stringify(id))
+  .join(', ')}]\n`
+
+const file = `${header}${body === '' ? ']' : `\n${body}\n]`}${declarersBody}`
 
 await mkdir(dirname(outFile), { recursive: true })
 await writeFile(outFile, file, 'utf8')

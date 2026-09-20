@@ -189,4 +189,44 @@ frontend:
     await expect(gen(root)).rejects.toThrow()
     await expect(readGen(root)).rejects.toThrow()
   })
+
+  it('⑤ admin 项与 storage 声明聚合：group/moduleId 落生成物，storageDeclarers 导出声明者', async () => {
+    const root = await newFixture()
+    await writeModule(
+      root,
+      'demo',
+      `id: demo
+name: 演示
+version: 0.1.0
+platform: '>=0.1.0'
+permissions: []
+storage: { kind: s3 }
+frontend:
+  console:
+    - { path: /console/demo/things, title: 演示工单, scope: demo:console, entry: ./console/main.tsx }
+  admin:
+    - { path: /console/admin/demo/settings, title: 演示管理, icon: SettingOutlined, scope: demo:admin, entry: ./console/admin/settings.tsx }
+`,
+    )
+    await writeModule(
+      root,
+      'bare',
+      `id: bare
+name: 裸模块
+version: 0.1.0
+platform: '>=0.1.0'
+permissions: []
+`,
+    )
+
+    const { stdout } = await gen(root)
+    expect(stdout).toContain('2 项')
+
+    const genFile = await readGen(root)
+    expect(genFile).toContain('group: "admin"')
+    expect(genFile).toContain('moduleId: "demo"')
+    expect(genFile).toContain('path: "/console/admin/demo/settings"')
+    // storageDeclarers 只含声明 storage 的模块
+    expect(genFile).toContain('export const storageDeclarers: string[] = ["demo"]')
+  })
 })

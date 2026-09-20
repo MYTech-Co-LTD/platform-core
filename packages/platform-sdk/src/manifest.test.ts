@@ -205,3 +205,59 @@ describe('guest 字段（售后 spec §1.3 协议小扩展）', () => {
     expect(r.success).toBe(false)
   })
 })
+
+// ---- 模块管理页协议（2026-09-20 spec）：frontend.admin 校验 ----
+describe('frontend.admin（模块管理页协议）', () => {
+  const BASE = {
+    id: 'demo',
+    name: '演示',
+    version: '0.1.0',
+    platform: '>=0.1',
+    permissions: [{ code: 'demo:view', name: '查看' }],
+  }
+
+  it('合法声明通过：path 落 /console/admin/ 下，scope ∈ permissions', () => {
+    const parsed = ManifestSchema.safeParse({
+      ...BASE,
+      frontend: {
+        admin: [
+          { path: '/console/admin/demo/settings', title: '演示设置', scope: 'demo:view', entry: './console/admin/settings.tsx' },
+        ],
+      },
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('path 不以 /console/admin/ 开头 → 拒绝并指到字段', () => {
+    const parsed = ManifestSchema.safeParse({
+      ...BASE,
+      frontend: {
+        admin: [{ path: '/console/demo/settings', title: 'x', scope: 'demo:view', entry: './a.tsx' }],
+      },
+    })
+    expect(parsed.success).toBe(false)
+    expect(parsed.error?.issues[0]?.path).toContain('admin')
+  })
+
+  it('scope 不在 permissions[].code 内 → 拒绝（与 api.internal[].scope 同纪律）', () => {
+    const parsed = ManifestSchema.safeParse({
+      ...BASE,
+      frontend: {
+        admin: [{ path: '/console/admin/demo/x', title: 'x', scope: 'other:view', entry: './a.tsx' }],
+      },
+    })
+    expect(parsed.success).toBe(false)
+    expect(parsed.error?.issues.some((i) => i.message.includes('不在本模块 permissions'))).toBe(true)
+  })
+
+  it('frontend.console 不得占用 /console/admin/ 前缀（防串组）', () => {
+    const parsed = ManifestSchema.safeParse({
+      ...BASE,
+      frontend: {
+        console: [{ path: '/console/admin/demo/oops', title: 'x', scope: 'demo:view', entry: './a.tsx' }],
+      },
+    })
+    expect(parsed.success).toBe(false)
+    expect(parsed.error?.issues.some((i) => i.message.includes('不得以 /console/admin/ 开头'))).toBe(true)
+  })
+})
