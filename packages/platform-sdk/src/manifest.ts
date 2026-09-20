@@ -53,10 +53,16 @@ const ManifestObject = z.object({
   api: z.object({
     internal: z.array(z.object({
       method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-      // 前缀 / 且**不整条等于 /** （Task 24 评审 R1 建议 3）：裸 '/' 能过 schema、也能过装载期
-      // 双向核对，但门卫会被注册成 use('/')（Hono 展开为 /*），运行期 routePath 是 '/*' 而
-      // 比对表里是 '/api/modules/<id>/' ⇒ **恒 403 且无人知晓**。这正是本协议要消灭的那一族
+      // 前缀 / 且**不整条等于 /** （Task 24 评审 R1 建议 3）。这条 regex 是**唯一的拦截点**：
+      // 若放行裸 '/'，它会一路过 schema 与装载期双向核对（那边比对的是**字面模式**），但门卫会被
+      // 注册成 use('/')——Hono 把它展开为 /*——运行期 routePath 是 '/*' 而比对表里是
+      // '/api/modules/<id>/' ⇒ **恒 403 且无人知晓**。这正是本协议要消灭的那一族
       // （同 api.internal[].scope 必须 ∈ permissions 的那条）。模块内相对路径至少要有段名。
+      //
+      // ⚠️ 别把上面读成「裸 '/' **现在**能过 schema」：regex 在，它就过不了（实测 safeParse 对
+      // '/' 与 '' 均 REJECT，文案即下面这句）——它的表现是**装载失败 / check-manifests 红**，
+      // 不是运行期 403。2026-09-20 曾有文档照旧注释把「裸 '/' ⇒ 恒 403」写进模块接入指南，
+      // 已订正（issue #129）。
       path: z.string().regex(/^\/(?!$)/, 'api.internal[].path 必须 / 开头且不能是裸 "/"（模块内相对路径，如 /ping）'),
       scope: z.string(),
     })).optional(),
