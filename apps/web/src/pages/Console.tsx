@@ -35,8 +35,8 @@ import {
   Typography,
   theme,
 } from 'antd'
-import { consoleRegistry } from '../console-registry.gen'
-import { buildConsoleMenu, visibleConsoleEntries } from './console-menu'
+import { consoleRegistry, storageDeclarers } from '../console-registry.gen'
+import { buildConsoleMenu, visibleAdminEntries, visibleConsoleEntries } from './console-menu'
 import {
   ApiError,
   DEFAULT_BRANDING,
@@ -195,7 +195,11 @@ function ConsoleLayout({
   // 菜单位置规则（spec §3）在 console-menu.ts：概览 → pinned（case-engine）→ manifest 声明序
   // → 管理组（tenant:admin 门禁，spec D4/D9 M3）
   const menuItems = useMemo(
-    () => buildConsoleMenu(visibleConsoleEntries(config, session, consoleRegistry), CONSOLE_ICONS, session),
+    () =>
+      buildConsoleMenu(visibleConsoleEntries(config, session, consoleRegistry), CONSOLE_ICONS, session, {
+        adminEntries: visibleAdminEntries(config, session, consoleRegistry),
+        storageVisible: storageDeclarers.some((id) => config.modules.some((m) => m.id === id)),
+      }),
     [config, session],
   )
 

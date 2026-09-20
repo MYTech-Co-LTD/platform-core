@@ -11,17 +11,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 
-// 生成物 mock：模块经 vi.hoisted 数组按测试注入（registry 是「构建期聚合」产物，测试里等价于手摆）
-const { fakeRegistry } = vi.hoisted(() => ({
+// 生成物 mock：模块经 vi.hoisted 数组按测试注入（registry 是「构建期聚合」产物，测试里等价于手摆；
+// storageDeclarers 同理——存储配置页能力联动的构建期事实，测试里等价于手摆声明者集合）
+const { fakeRegistry, fakeStorageDeclarers } = vi.hoisted(() => ({
   fakeRegistry: [] as Array<{
     path: string
     title: string
+    group: 'main' | 'admin'
+    moduleId: string
     icon?: string
     scope: string
     load: () => Promise<{ default: ComponentType }>
   }>,
+  fakeStorageDeclarers: [] as string[],
 }))
-vi.mock('../console-registry.gen', () => ({ consoleRegistry: fakeRegistry }))
+vi.mock('../console-registry.gen', () => ({
+  consoleRegistry: fakeRegistry,
+  storageDeclarers: fakeStorageDeclarers,
+}))
 
 import { platformFetch } from '@platform/sdk/web'
 import { App as AntdApp } from 'antd'
