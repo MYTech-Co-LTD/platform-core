@@ -176,4 +176,32 @@ describe('runChecks（check-manifests CLI 核心）', () => {
       expect(errors).toHaveLength(4)
     })
   })
+
+  // 模块管理页协议（2026-09-20 spec）：admin entry 存在性与 console entry 同规
+  it('frontend.admin[].entry 指向的文件不存在 → 报错指明；存在则零错', async () => {
+    await withRoot(async root => {
+      // admin 块必须内插进 frontend（validYaml 末尾是 bindings 块，尾部追加会挂错层级）
+      const withAdmin = validYaml.replace(
+        '      entry: console/index.js',
+        [
+          '      entry: console/index.js',
+          '  admin:',
+          '    - path: /console/admin/demo/settings',
+          '      title: 演示管理',
+          '      scope: demo:view',
+          '      entry: console/admin/settings.js',
+        ].join('\n'),
+      )
+      // entry 文件缺失 → 指明
+      await write(root, 'modules/a/manifest.yaml', withAdmin.replaceAll('demo', 'a'))
+      let errors = (await runChecks(root)).errors
+      expect(errors.some((e) => e.includes('frontend.admin[0].entry 指向的文件不存在'))).toBe(true)
+      // 文件存在 → admin 不产生任何错（console/migrations 实体按 validYaml 场景补齐）
+      await write(root, 'modules/a/console/index.js')
+      await write(root, 'modules/a/console/admin/settings.js')
+      await write(root, 'modules/a/migrations/')
+      errors = (await runChecks(root)).errors
+      expect(errors).toEqual([])
+    })
+  })
 })
