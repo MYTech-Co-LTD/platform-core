@@ -35,6 +35,8 @@ function reg(path: string, scope: string): ConsoleRegistryEntry {
   return {
     path,
     title: path,
+    group: 'main',
+    moduleId: 'ghost',
     scope,
     load: () => Promise.resolve({ default: (() => null) as ComponentType }),
   }
