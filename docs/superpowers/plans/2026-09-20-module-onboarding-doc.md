@@ -449,6 +449,7 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 | 点页签跳到别的路径（模块段丢失，如 `/console/rules`） | 相对导航以壳的 splat 路由为基准解析 | 导航一律用**绝对路径** |
 | 管理台 `message.*` 抛 TypeError | 壳里 antd `<App>` 提供者缺失（`useApp` 是裸 `useContext`） | 已由 `Console.tsx` 的 `<AntdApp>` 覆盖；模块页不需要自己加 |
 | 模块停用后直敲模块页 URL 仍能打开（菜单已消失） | **实现缺口**：路由层不含 config——模块页/模块 admin 页都落 `/console` 的 `*` 通配（`apps/web/src/App.tsx:30`），`ConsoleModulePage` 只按 `registry ∩ session scope` 放行（`apps/web/src/pages/Console.tsx`） | 「已知边界」路由层不吃 config 条（#125 spec 的「门禁双层」自相矛盾，缺口记录在案、修复另议）；真正由 config 驱动的路由门只有 `/console/admin/storage` 的 `StorageGate` |
+| 访问 `/app/<id>` 拿到的是控制台壳（不是模块前端） | `frontend.userApp.dist` 目录不存在 ⇒ 装载器**静默跳过**（不报错）：静态挂载与 SPA fallback 都没挂，请求落到控制台顶层 `*` 路由 | 先构建前端子包（`pnpm --filter <pkg> build`）；CI 的移动端产物检查只覆盖 `modules/aftersales/mobile`，新模块要自己保证 |
 
 > 前端表的空白页 / 丢模块段两条是 aftersales M3a 浏览器实测抓到的，正典里没有等价
 > 记载——它们只在 `modules/aftersales/console/index.tsx` 的注释里，本表把它提到接入视角。
@@ -758,7 +759,7 @@ Expected: 输出 PR URL；等 CI 全绿后合并（**合并只等 CI CLEAN**）�
 | §3.1 心智模型 | Task 2 Step 1 |
 | §3.2 三张图 | Task 2 Step 1（逐字） |
 | §3.3 对照表 | Task 2 Step 2（逐字） |
-| §3.4 症状速查 | Task 3 Step 2（**后端 4 条 + 前端 4 条**；比 spec §3.4 的 4+2 多 antd App 与「停用后仍可直达」两行） |
+| §3.4 症状速查 | Task 3 Step 2（**后端 4 条 + 前端 5 条**；比 spec §3.4 的 4+2 多 antd App、「停用后仍可直达」、「`/app/<id>` 返回控制台壳」三行） |
 | §4 配套交付 1（正文） | Task 1–3 |
 | §4 配套 2（AGENTS.md） | Task 4 Step 1 |
 | §4 配套 3（反向指针） | Task 4 Step 2 |
