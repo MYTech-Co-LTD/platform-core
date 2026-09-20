@@ -5,6 +5,9 @@
 > **本文存在本身就是一条教训**：`api.internal` 是一个曾在仓里活了一阵子的**死字段**——当年
 > 没有任何一处文档描述它该长什么样，于是没人知道该怎么写，也没人发现它没有任何消费者。
 > 一个字段死于零文档。补上这份文档，是让"没人知道它是什么"这件事不再复发的最低成本手段。
+>
+> **接入视角的指南见 `docs/module-onboarding.md`**——本文是语义与边界的正典，那份文档管
+> 「怎么接入」（步骤、属性全字段参考、验收清单、故障速查），不复制本文正文。
 
 ## 规则：没声明 = 不可达
 
@@ -189,12 +192,21 @@ frontend:
       entry: ./console/admin/<page>.tsx      # 模块内文件（check-manifests 验存在）
 ```
 
-- **语义**：模块自有的「管理」组子页。门禁双层——组门 `tenant:admin`（宿主施加，同平台
-  内置管理页）+ 页门 `scope`（同 console 条目判定）。
-- **显隐联动**：菜单/路由 = registry（构建期聚合，`group:'admin'`）∩ config 启用集（运行时，
-  订阅/tenant_module）∩ session scope——与 `frontend.console` 三重过滤同构。**模块停用 ⇒
-  页面消失**（菜单不出、直敲出「模块可能未启用」Result）。
-- **服务端 config 不暴露 admin 清单**：前端按 registry∩config 自判，零后端改动。
+- **语义**：模块自有的「管理」组子页。两层权限——组门 `tenant:admin` + 页门 `scope`（同
+  console 条目判定）；⚠️ 组门目前**只在菜单侧**生效（见下条「显隐联动」）。
+- **显隐联动（2026-09-20 实测订正）**：**菜单与路由是两套判定**，别混为一谈——
+  - **菜单**（侧栏）= registry（构建期聚合，`group:'admin'`）∩ config 启用集（运行时，订阅/
+    `tenant_module`）∩ session scope。模块停用 ⇒ **菜单不出**。
+  - **路由**（直敲 URL）= `ConsoleModulePage`（`/console` 下的 `*` 通配）只判 registry ∩
+    session scope，**不查 config**；模块 admin 页同样落该通配，**不套**组门 `AdminGate`
+    （它只包住平台内置四项）。⇒ 停用模块的页面对**持码用户**直敲仍可打开。
+  - 唯一由 config 驱动的路由门是 `/console/admin/storage` 的 `StorageGate`
+    （`storageDeclarers ∩ 启用模块 ≠ ∅`）。
+  - 证据：`apps/web/src/App.tsx:26-30`、`apps/web/src/pages/Console.tsx` 的
+    `ConsoleModulePage`/`AdminGate`/`StorageGate`、`apps/server/src/session-middleware.ts:193`。
+  - ⚠️ 「停用 = 该租户看不到这个模块」在 **API 面与 userApp 面**照旧成立（见「停用语义」节）；
+    上面说的是**控制台路由面**的实现缺口，缺口记录在案、修复另议。
+- **服务端 config 不暴露 admin 清单**：前端**菜单**按 registry∩config 自判（**路由**面见上条——只按 registry∩scope），零后端改动。
 - **path 约束双向**：admin 必须落 `/console/admin/` 下；`frontend.console[].path` 不得占用
   该前缀（schema 双拦——防串组：菜单把 console 条目当模块区平铺页）。
 - **管理组 children 顺序**：平台内置三项（用户/角色/我的订阅）→ 存储配置（能力联动：
