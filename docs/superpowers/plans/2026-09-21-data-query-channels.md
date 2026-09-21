@@ -34,6 +34,11 @@
 10. **env 键 B9 门禁**：代码里出现的每个 env 键都必须在根 `.env.example` 声明（只声明键名 + 「在哪、怎么取」，**不写真值**）。本计划引入的六个键：`DATA_WAREHOUSE_URL` / `DATA_WECOM_CHANNEL_KEY` / `DATA_QUERY_RATE_PER_MIN` / `DATA_LLM_BASE_URL` / `DATA_LLM_API_KEY` / `DATA_LLM_MODEL`。
 11. **装载期双向核对**：注册的路由集合必须与 manifest 声明集合**完全一致**，任一方向差集 ⇒ 装载失败。⇒ **凡是加路由的任务，必须同一个任务内同时改 `manifest.yaml` + `index.ts` + 路由文件**（T6/T7/T8 因此串行，见派发表）。声明路径写**模块相对路径**（`/metrics`），loader 会给它加 `/api/modules/<id>` 前缀。
 12. **提交纪律**：`docs` 提交不需要 issue；`feat`/`fix` **必须先有 issue**，PR body 写 `Closes #N`；一切可见变更走 PR，只等 CI **CLEAN** 才合；CHANGELOG 禁手写。执行本计划前先开 issue（见「开工前置」）。
+13. **租户隔离键 = `org text not null`**（值 = `identity.orgId` = `DataTenant.casdoor_org`），模块的每张租户数据表都要有它，读写**一律 `where org = $1`**。
+    - 出处：正典 `docs/module-protocol.md`「租户数据隔离」；门禁 `scripts/check-tenant-isolation.mjs`，它是 CI `gates` job 的第五条守卫且 **PR 事件也跑**——违反 ⇒ PR 恒红。
+    - 判据是 information_schema 的 `column_name`：**`org_id` 不算 `org`**，`tenant_id bigint` 也不算。
+    - 本计划早期版本三表用 `tenant_id bigint`，**是错的**（会让 gates 报 3 处违规），已按本约束订正。
+    - 豁免出口 `-- global-table: <理由>` **只对真正的全局表**用；本模块三张表都是租户数据表，不得豁免。
 
 ---
 
@@ -343,8 +348,12 @@ migrations: { dir: ./migrations }
 -- 纪律（每条都有出处，别按口味改）：
 --   · 幂等：全部 if not exists——部署脚本会每次全量重跑全部迁移（团队规则 db-migration §1）
 --   · 外部系统来的字段（指标 id / 名称）一律 text，不用 varchar（团队规则 db-migration §2）
---   · tenant_id 用 bigint：与 platform.tenant.id 同型（会话中间件的 guestScopes 收 number）
---   · 主体隔离：metrics/keys/audit 三表一律带 tenant_id，读写一律 where tenant_id = …
+--   · **隔离键是 `org text not null`**（值 = `identity.orgId` = `DataTenant.casdoor_org`），
+--     读写**一律 `where org = $1`**。出处是正典 `docs/module-protocol.md`「租户数据隔离」；
+--     门禁是 `scripts/check-tenant-isolation.mjs`——CI `gates` job 的第五条守卫（**PR 事件也跑**），
+--     判据按 information_schema 的 `column_name`：**`org_id` 不算命中 `org`**。
+--     ⚠️ 本计划早期版本三表都用 `tenant_id bigint`，那会让 gates 恒红（3 处违规），已订正——
+--     别再改回去：`tenant_id bigint` 不是「另一种等价写法」，是正典不允许的写法。
 --   · token_hash 唯一索引：同一个 token 不可能落两行（也挡住重复写入）
 --   · casdoor_user 列存的是 **Casdoor 用户名**（不是 sub）——getUser 只按 name 取，
 --     见 apps/server/src/session-middleware.ts 的 casdoor.getUser(p.name) 用法。
@@ -353,7 +362,7 @@ create schema if not exists data;
 
 -- ── 指标词表（语义层声明在平台库里的投影）──
 create table if not exists data.metrics (
-  tenant_id      bigint      not null,
+  org            text        not null,                  -- 隔离键：值 = identity.orgId
   id             text        not null,
   title          text        not null,
   description    text        not null default '',
@@ -364,14 +373,14 @@ create table if not exists data.metrics (
   params         jsonb       not null default '{}'::jsonb,
   created_at     timestamptz not null default now(),
   updated_at     timestamptz not null default now(),
-  primary key (tenant_id, id)
+  primary key (org, id)
 );
 
 -- ── 个人 Key（通道 B）──
 -- 只存哈希：明文 token 只在创建响应里出现一次，永不落库/落日志。
 create table if not exists data.query_keys (
   id           bigserial   primary key,
-  tenant_id    bigint      not null,
+  org          text        not null,                    -- 隔离键：值 = identity.orgId
   casdoor_user text        not null,                    -- Casdoor 用户名（不是 sub）
   name         text        not null,
   token_hash   text        not null unique,             -- sha256 hex
@@ -379,15 +388,17 @@ create table if not exists data.query_keys (
   last_used_at timestamptz,
   revoked_at   timestamptz
 );
-create index if not exists data_query_keys_tenant_user_idx
-  on data.query_keys(tenant_id, casdoor_user);
+create index if not exists data_query_keys_org_user_idx
+  on data.query_keys(org, casdoor_user);
 
 -- ── 统一审计（三通道一张表）──
 create table if not exists data.query_audit (
   id         bigserial   primary key,
-  tenant_id  bigint      not null,
+  org        text        not null,                      -- 隔离键（= identity.orgId），**同时就是**「钉死的主体值」
+                                                        -- （= 授权核心写进 SQL 的那个值）——两者同源（Requester.orgId
+                                                        -- 就来自该租户的 Casdoor org），故**只设一列**，不设两列。
+                                                        -- 早期版本的独立 `org_id` 已并入本列（`org_id` 也不被门禁认作 `org`）。
   user_id    text        not null,                      -- 通道报告的身份标识（会话=sub，PAT/企微=Casdoor 用户名）
-  org_id     text        not null,                      -- 钉死的主体值（= 授权核心写进 SQL 的那个值）
   channel    text        not null,                      -- session | pat | wecom
   key_id     bigint,                                    -- 仅 pat 通道
   metric_id  text        not null,
@@ -397,8 +408,8 @@ create table if not exists data.query_audit (
   reason     text,                                      -- 仅 denied/error
   created_at timestamptz not null default now()
 );
-create index if not exists data_query_audit_tenant_time_idx
-  on data.query_audit(tenant_id, created_at desc);
+create index if not exists data_query_audit_org_time_idx
+  on data.query_audit(org, created_at desc);
 ```
 
 - [ ] **Step 5: 写模块装配 + 路由共享层 + 占位前端**
@@ -421,6 +432,9 @@ export interface DataTenant {
   id: number
   casdoor_org: string
 }
+// ⚠️ 模块各表的**隔离键取 `casdoor_org`**（值 = `identity.orgId`，见全局约束 13）——**不是 `id`**。
+// `id` 留着是因为 `TenantRow` 结构上要可赋给本类型、且 T5 的宿主侧中间件仍按 `id` 认租户行；
+// 模块自己的 SQL 一律 `where org = $1` 且 $1 来自 `casdoor_org`。别用 `id` 去查模块表。
 
 /**
  * 模块路由的统一 Env。identity 由宿主注入（模块自己【不写】门禁）。
@@ -1128,26 +1142,28 @@ git commit -m "feat(data): 授权核心——词表裁剪/主体钉死/fail-clos
 
 ```ts
 // metric-store.ts
-export async function loadCatalog(pool: Pool, tenantId: number): Promise<MetricDef[]>
-export async function upsertMetric(pool: Pool, tenantId: number, def: MetricDef): Promise<void>
-export async function deleteMetric(pool: Pool, tenantId: number, id: string): Promise<boolean>
+export async function loadCatalog(pool: Pool, org: string): Promise<MetricDef[]>
+export async function upsertMetric(pool: Pool, org: string, def: MetricDef): Promise<void>
+export async function deleteMetric(pool: Pool, org: string, id: string): Promise<boolean>
 
 // key-store.ts
 export const PAT_PREFIX: string                       // 'dkq_'
 export const MAX_KEY_NAME_LEN: number                 // 64
 export function newPatToken(): string                 // PAT_PREFIX + base64url(32 字节)
 export function hashPat(token: string): string        // sha256 hex
-export async function createPatKey(pool: Pool, tenantId: number, casdoorUser: string, name: string): Promise<{ id: number; token: string }>
-export async function listPatKeys(pool: Pool, tenantId: number, casdoorUser: string): Promise<PatKeyRow[]>
-export async function revokePatKey(pool: Pool, tenantId: number, casdoorUser: string, id: number): Promise<boolean>
+export async function createPatKey(pool: Pool, org: string, casdoorUser: string, name: string): Promise<{ id: number; token: string }>
+export async function listPatKeys(pool: Pool, org: string, casdoorUser: string): Promise<PatKeyRow[]>
+export async function revokePatKey(pool: Pool, org: string, casdoorUser: string, id: number): Promise<boolean>
 export async function resolvePat(pool: Pool, token: string): Promise<ResolvedPat | null>
 export async function touchPatKey(pool: Pool, id: number): Promise<void>
 export interface PatKeyRow { id: number; name: string; createdAt: string; lastUsedAt: string | null; revoked: boolean }
-export interface ResolvedPat { keyId: number; tenantId: number; casdoorUser: string }
+export interface ResolvedPat { keyId: number; org: string; casdoorUser: string }
 
 // audit-store.ts
 export interface AuditEntry {
-  tenantId: number; userId: string; orgId: string; channel: Channel
+  /** 隔离键 `org`（text）= 审计里的主体值，**一列两义**（见 T1 的 001_init.sql 注记）。
+   *  早期版本的独立 `orgId` 字段已并入本字段——别再加回来。 */
+  org: string; userId: string; channel: Channel
   keyId: number | null; metricId: string; params: Record<string, unknown>
   rowCount: number | null; verdict: 'ok' | 'denied' | 'error'; reason: string | null
 }
@@ -1173,7 +1189,8 @@ import { applyMigrations } from '../test-util'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
-const TENANT = 9001
+/** 模块各表的**隔离键**（text，值 = 该租户的 Casdoor org）——已不是数字 tenant id。 */
+const ORG = 'org-t3-test'
 
 describe('token 形状（不需要数据库）', () => {
   it('前缀是 dkq_，32 字节随机 → base64url', () => {
@@ -1196,13 +1213,13 @@ describePg('key-store（需要 DATABASE_URL）', () => {
   const pool = new Pool({ connectionString: dbUrl })
   afterAll(async () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
-    await pool.query('delete from data.query_keys where tenant_id = $1', [TENANT]).catch(() => {})
+    await pool.query('delete from data.query_keys where org = $1', [ORG]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
   it('建 key → 库里只有哈希，明文只在返回值里', async () => {
     await applyMigrations(pool)
-    const { id, token } = await createPatKey(pool, TENANT, 'alice', '我的 key')
+    const { id, token } = await createPatKey(pool, ORG, 'alice', '我的 key')
     expect(token.startsWith(PAT_PREFIX)).toBe(true)
 
     const raw = await pool.query('select token_hash from data.query_keys where id = $1', [id])
@@ -1211,33 +1228,33 @@ describePg('key-store（需要 DATABASE_URL）', () => {
   })
 
   it('resolvePat 命中 / 未知 token 返 null / 吊销后立刻失效', async () => {
-    const { id, token } = await createPatKey(pool, TENANT, 'bob', 'k')
+    const { id, token } = await createPatKey(pool, ORG, 'bob', 'k')
     const hit = await resolvePat(pool, token)
-    expect(hit).toEqual({ keyId: id, tenantId: TENANT, casdoorUser: 'bob' })
+    expect(hit).toEqual({ keyId: id, org: ORG, casdoorUser: 'bob' })
 
     expect(await resolvePat(pool, 'dkq_never-existed')).toBeNull()
 
-    expect(await revokePatKey(pool, TENANT, 'bob', id)).toBe(true)
+    expect(await revokePatKey(pool, ORG, 'bob', id)).toBe(true)
     expect(await resolvePat(pool, token)).toBeNull()       // 吊销即时生效
   })
 
   it('listPatKeys 只列自己的，且 revoked 标记正确', async () => {
-    const { id } = await createPatKey(pool, TENANT, 'carol', 'c1')
-    const other = await createPatKey(pool, TENANT, 'dave', 'd1')
-    const mine = await listPatKeys(pool, TENANT, 'carol')
+    const { id } = await createPatKey(pool, ORG, 'carol', 'c1')
+    const other = await createPatKey(pool, ORG, 'dave', 'd1')
+    const mine = await listPatKeys(pool, ORG, 'carol')
     expect(mine.map((k) => k.id)).toContain(id)
     expect(mine.map((k) => k.id)).not.toContain(other.id)
-    await revokePatKey(pool, TENANT, 'carol', id)
-    expect((await listPatKeys(pool, TENANT, 'carol')).find((k) => k.id === id)?.revoked).toBe(true)
+    await revokePatKey(pool, ORG, 'carol', id)
+    expect((await listPatKeys(pool, ORG, 'carol')).find((k) => k.id === id)?.revoked).toBe(true)
   })
 
   it('revokePatKey 对别人的 key 返 false（不能吊销别人的）', async () => {
-    const { id } = await createPatKey(pool, TENANT, 'erin', 'e1')
-    expect(await revokePatKey(pool, TENANT, 'frank', id)).toBe(false)
+    const { id } = await createPatKey(pool, ORG, 'erin', 'e1')
+    expect(await revokePatKey(pool, ORG, 'frank', id)).toBe(false)
   })
 
   it('touchPatKey 写 last_used_at', async () => {
-    const { id } = await createPatKey(pool, TENANT, 'gina', 'g1')
+    const { id } = await createPatKey(pool, ORG, 'gina', 'g1')
     await touchPatKey(pool, id)
     const r = await pool.query('select last_used_at from data.query_keys where id = $1', [id])
     expect(r.rows[0].last_used_at).not.toBeNull()
@@ -1245,7 +1262,7 @@ describePg('key-store（需要 DATABASE_URL）', () => {
 })
 ```
 
-`modules/data/domain/metric-store.test.ts` 与 `audit-store.test.ts` 用同一 `describePg` + 独立 `TENANT` 常量的形状：metric-store 测 `upsertMetric` 幂等（同 id 两次 → 一行、字段被覆盖）、`loadCatalog` 只回本租户、`deleteMetric` 返 true/false；audit-store 测写入后各列就对（尤其 `row_count: null` 与 `params` 的 jsonb 往返）。
+`modules/data/domain/metric-store.test.ts` 与 `audit-store.test.ts` 用同一 `describePg` + 独立 `ORG` 常量（隔离键，text）的形状：metric-store 测 `upsertMetric` 幂等（同 id 两次 → 一行、字段被覆盖）、`loadCatalog` 只回本租户、`deleteMetric` 返 true/false；audit-store 测写入后各列就对（尤其 `row_count: null` 与 `params` 的 jsonb 往返）。
 
 - [ ] **Step 2: 跑测试，确认失败**
 
@@ -1277,7 +1294,7 @@ export interface PatKeyRow {
 }
 export interface ResolvedPat {
   keyId: number
-  tenantId: number
+  org: string
   casdoorUser: string
 }
 
@@ -1295,7 +1312,7 @@ export function hashPat(token: string): string {
  * 名称超长/空 ⇒ 抛（路由层先校验，这里是最后一道）。
  */
 export async function createPatKey(
-  pool: Pool, tenantId: number, casdoorUser: string, name: string,
+  pool: Pool, org: string, casdoorUser: string, name: string,
 ): Promise<{ id: number; token: string }> {
   const trimmed = name.trim()
   if (trimmed.length === 0 || trimmed.length > MAX_KEY_NAME_LEN) {
@@ -1303,23 +1320,23 @@ export async function createPatKey(
   }
   const token = newPatToken()
   const r = await pool.query(
-    `insert into data.query_keys (tenant_id, casdoor_user, name, token_hash)
+    `insert into data.query_keys (org, casdoor_user, name, token_hash)
      values ($1, $2, $3, $4) returning id`,
-    [tenantId, casdoorUser, trimmed, hashPat(token)],
+    [org, casdoorUser, trimmed, hashPat(token)],
   )
   // ⚠️ node-pg 把 bigint(int8) 读成 **string** —— 不归一，后面 `===` 比较与 JSON 回包都会变味
   return { id: Number(r.rows[0].id), token }
 }
 
 export async function listPatKeys(
-  pool: Pool, tenantId: number, casdoorUser: string,
+  pool: Pool, org: string, casdoorUser: string,
 ): Promise<PatKeyRow[]> {
   const r = await pool.query(
     `select id, name, created_at, last_used_at, revoked_at
        from data.query_keys
-      where tenant_id = $1 and casdoor_user = $2
+      where org = $1 and casdoor_user = $2
       order by created_at desc`,
-    [tenantId, casdoorUser],
+    [org, casdoorUser],
   )
   return r.rows.map((row) => ({
     id: Number(row.id),
@@ -1332,12 +1349,12 @@ export async function listPatKeys(
 
 /** 吊销：**必须带 casdoor_user** —— 不带就能吊销别人的 key。返回是否真命中一行。 */
 export async function revokePatKey(
-  pool: Pool, tenantId: number, casdoorUser: string, id: number,
+  pool: Pool, org: string, casdoorUser: string, id: number,
 ): Promise<boolean> {
   const r = await pool.query(
     `update data.query_keys set revoked_at = now()
-      where id = $1 and tenant_id = $2 and casdoor_user = $3 and revoked_at is null`,
-    [id, tenantId, casdoorUser],
+      where id = $1 and org = $2 and casdoor_user = $3 and revoked_at is null`,
+    [id, org, casdoorUser],
   )
   return (r.rowCount ?? 0) > 0
 }
@@ -1345,13 +1362,13 @@ export async function revokePatKey(
 /** 解析 token → 主体。已吊销 / 不存在一律 null（fail-closed）。 */
 export async function resolvePat(pool: Pool, token: string): Promise<ResolvedPat | null> {
   const r = await pool.query(
-    `select id, tenant_id, casdoor_user from data.query_keys
+    `select id, org, casdoor_user from data.query_keys
       where token_hash = $1 and revoked_at is null`,
     [hashPat(token)],
   )
   if (r.rowCount === 0) return null
   const row = r.rows[0]
-  return { keyId: Number(row.id), tenantId: Number(row.tenant_id), casdoorUser: row.casdoor_user }
+  return { keyId: Number(row.id), org: row.org, casdoorUser: row.casdoor_user }
 }
 
 /** 记一次使用。fire-and-forget 调用（失败不阻断问数）。 */
@@ -1362,7 +1379,7 @@ export async function touchPatKey(pool: Pool, id: number): Promise<void> {
 
 - [ ] **Step 4: 写 metric-store.ts / audit-store.ts / warehouse.ts**
 
-`metric-store.ts` 要点：`loadCatalog` 的 `where tenant_id = $1`；`upsertMetric` 用 `on conflict (tenant_id, id) do update set …, updated_at = now()`（幂等，团队规则 db-migration §1）；行 → `MetricDef` 的映射里 `params` 是 jsonb（pg 已反序列化成对象）。
+`metric-store.ts` 要点：`loadCatalog` 的 `where org = $1`；`upsertMetric` 用 `on conflict (org, id) do update set …, updated_at = now()`（幂等，团队规则 db-migration §1）；行 → `MetricDef` 的映射里 `params` 是 jsonb（pg 已反序列化成对象）。
 
 `audit-store.ts` 要点：单条 `insert`，`params` 用 `JSON.stringify(entry.params)` 传（pg 的 jsonb 参数位接受字符串）或直接传对象；`rowCount` 传 `null` 时列可空。
 
@@ -1455,7 +1472,7 @@ export interface QueryError { status: 'error'; metricId: string; reason: 'wareho
 export type QueryOutcome = QueryOk | QueryDenied | QueryError
 
 export async function runQuery(
-  deps: QueryDeps, tenantId: number, requester: Requester | null,
+  deps: QueryDeps, org: string, requester: Requester | null,
   metricId: string, args: Record<string, unknown>,
 ): Promise<QueryOutcome>
 ```
@@ -1476,7 +1493,10 @@ import type { Requester } from './authz'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
-const TENANT = 9002
+/** 隔离键（text，值 = Casdoor org）。**与 `req()` 的 `orgId` 同值**——生产上两者就是同一个值
+ *  （隔离键取宿主注入的 `identity.orgId`，主体值取 `Requester.orgId`，同一租户同一 org），
+ *  测试里让它们相等才不至于验一个现实中不存在的状态。 */
+const ORG = 'org_a'
 
 const METRIC = {
   id: 'sales_daily', title: '销售日明细', description: '',
@@ -1506,18 +1526,18 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
 
   beforeEach(async () => {
     await applyMigrations(pool)
-    await pool.query('delete from data.query_audit where tenant_id = $1', [TENANT])
-    await upsertMetric(pool, TENANT, METRIC)
+    await pool.query('delete from data.query_audit where org = $1', [ORG])
+    await upsertMetric(pool, ORG, METRIC)
   })
   afterAll(async () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
-    await pool.query('delete from data.query_audit where tenant_id = $1', [TENANT]).catch(() => {})
-    await pool.query('delete from data.metrics where tenant_id = $1', [TENANT]).catch(() => {})
+    await pool.query('delete from data.query_audit where org = $1', [ORG]).catch(() => {})
+    await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
   it('ok：执行 SQL 只带本主体，回包带 subject，审计记 ok + 行数', async () => {
-    const out = await runQuery(deps, TENANT, req(), 'sales_daily', {})
+    const out = await runQuery(deps, ORG, req(), 'sales_daily', {})
     expect(out.status).toBe('ok')
     if (out.status !== 'ok') return
     expect(out.subject).toBe('org_a')
@@ -1526,7 +1546,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
 
     const a = await pool.query(
       `select channel, key_id, verdict, row_count, reason from data.query_audit
-        where tenant_id = $1 order by id desc limit 1`, [TENANT])
+        where org = $1 order by id desc limit 1`, [ORG])
     expect(a.rows[0]).toMatchObject({ channel: 'session', key_id: null, verdict: 'ok', row_count: 1 })
   })
 
@@ -1534,34 +1554,34 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     // ⚠️ 清零必须在 runQuery **之前**：写在之后等于把这次调用留下的证据擦掉，
     //    断言恒真（跑没跑 SQL 都绿）——「从未触达仓库」就变成一句没人验的话。
     lastSql = ''
-    const out = await runQuery(deps, TENANT, req({ scopes: [] }), 'sales_daily', {})
+    const out = await runQuery(deps, ORG, req({ scopes: [] }), 'sales_daily', {})
     expect(out).toEqual({ status: 'denied', metricId: 'sales_daily', reason: 'metric_not_authorized' })
     const a = await pool.query(
-      `select verdict, reason from data.query_audit where tenant_id = $1 order by id desc limit 1`, [TENANT])
+      `select verdict, reason from data.query_audit where org = $1 order by id desc limit 1`, [ORG])
     expect(a.rows[0]).toMatchObject({ verdict: 'denied', reason: 'metric_not_authorized' })
     expect(lastSql).toBe('')                                   // 被拒 ⇒ 从未触达仓库
   })
 
   it('denied：匿名（requester = null）→ unauthenticated', async () => {
-    const out = await runQuery(deps, TENANT, null, 'sales_daily', {})
+    const out = await runQuery(deps, ORG, null, 'sales_daily', {})
     expect(out).toEqual({ status: 'denied', metricId: 'sales_daily', reason: 'unauthenticated' })
   })
 
   it('denied：PAT 通道的 key_id 落进审计（通道 B 可追溯到具体 key）', async () => {
-    await runQuery(deps, TENANT, req({ channel: 'pat', keyId: 42 }), 'sales_daily', {})
+    await runQuery(deps, ORG, req({ channel: 'pat', keyId: 42 }), 'sales_daily', {})
     const a = await pool.query(
-      `select channel, key_id from data.query_audit where tenant_id = $1 order by id desc limit 1`, [TENANT])
+      `select channel, key_id from data.query_audit where org = $1 order by id desc limit 1`, [ORG])
     expect(a.rows[0]).toMatchObject({ channel: 'pat', key_id: '42' })
   })
 
   it('error：仓库执行抛错 → status:error + 审计 verdict=error', async () => {
     const bad: QueryDeps = { pool, execute: async () => { throw new Error('boom') } }
-    const out = await runQuery(bad, TENANT, req(), 'sales_daily', {})
+    const out = await runQuery(bad, ORG, req(), 'sales_daily', {})
     expect(out.status).toBe('error')
     if (out.status !== 'error') return
     expect(out.reason).toBe('warehouse_error')
     const a = await pool.query(
-      `select verdict, reason from data.query_audit where tenant_id = $1 order by id desc limit 1`, [TENANT])
+      `select verdict, reason from data.query_audit where org = $1 order by id desc limit 1`, [ORG])
     expect(a.rows[0]).toMatchObject({ verdict: 'error', reason: 'warehouse_error' })
   })
 
@@ -1570,7 +1590,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
       pool,
       execute: async () => ({ columns: ['org'], rows: Array.from({ length: 1000 }, () => ['org_a']) }),
     }
-    const out = await runQuery(many, TENANT, req(), 'sales_daily', {})
+    const out = await runQuery(many, ORG, req(), 'sales_daily', {})
     expect(out.status === 'ok' && out.truncated).toBe(true)
   })
 })
@@ -1619,7 +1639,7 @@ export type QueryOutcome = QueryOk | QueryDenied | QueryError
 
 export async function runQuery(
   deps: QueryDeps,
-  tenantId: number,
+  org: string,
   requester: Requester | null,
   metricId: string,
   args: Record<string, unknown>,
@@ -1627,9 +1647,11 @@ export async function runQuery(
   const audit = (
     verdict: 'ok' | 'denied' | 'error', reason: string | null, rowCount: number | null,
   ) => writeAudit(deps.pool, {
-    tenantId,
+    // 隔离键 `org` 就是审计里的主体值——**同一列**（见 T1 的 001_init.sql 注记）。
+    // 值取 `org` 形参（= 路由传进来的 `identity.orgId`，宿主注入的权威值），
+    // **不是** `requester.orgId`——那是通道解析出来的；生产上两者同值，但隔离键必须认宿主那一份。
+    org,
     userId: requester?.userId ?? '(anonymous)',
-    orgId: requester?.orgId ?? '',
     channel: requester?.channel ?? 'session',
     keyId: requester?.keyId ?? null,
     metricId,
@@ -1644,7 +1666,7 @@ export async function runQuery(
     return { status: 'denied', metricId, reason: 'unauthenticated' }
   }
 
-  const catalog = await loadCatalog(deps.pool, tenantId)
+  const catalog = await loadCatalog(deps.pool, org)
   const authz = authorize(catalog, requester, metricId, args)
   if (!authz.ok) {
     await audit('denied', authz.reason, null)
@@ -1776,8 +1798,8 @@ const baseTenant: TenantRow = {
 async function seedKey(pool: Pool, token: string, casdoorUser: string) {
   const tokenHash = createHash('sha256').update(token).digest('hex')
   const r = await pool.query(
-    `insert into data.query_keys (tenant_id, casdoor_user, name, token_hash)
-     values ($1, $2, 'test', $3) returning id`, [TENANT, casdoorUser, tokenHash])
+    `insert into data.query_keys (org, casdoor_user, name, token_hash)
+     values ($1, $2, 'test', $3) returning id`, [ORG, casdoorUser, tokenHash])
   return Number(r.rows[0].id)
 }
 
@@ -1808,7 +1830,7 @@ describePg('patIdentityMiddleware（需要 DATABASE_URL）', () => {
   const pool = new Pool({ connectionString: dbUrl })
   afterAll(async () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
-    await pool.query('delete from data.query_keys where tenant_id = $1', [TENANT]).catch(() => {})
+    await pool.query('delete from data.query_keys where org = $1', [ORG]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
@@ -2036,7 +2058,7 @@ export function patIdentityMiddleware(deps: PatAuthDeps): MiddlewareHandler<Requ
     // ↓↓ 这一行必须与 modules/data/domain/key-store.ts 的 hashPat 实现**逐字一致**
     const tokenHash = createHash('sha256').update(token).digest('hex')
     const q = await deps.pool.query(
-      `select id, tenant_id, casdoor_user from data.query_keys
+      `select id, org, casdoor_user from data.query_keys
         where token_hash = $1 and revoked_at is null`,
       [tokenHash],
     )
@@ -2045,7 +2067,8 @@ export function patIdentityMiddleware(deps: PatAuthDeps): MiddlewareHandler<Requ
     const row = q.rows[0]
     const keyId = Number(row.id)
     // 跨租户的 key 一律无效（域名解析出的租户与 key 的租户必须一致）
-    if (Number(row.tenant_id) !== Number(tenant.id)) return c.json({ error: 'INVALID_KEY' }, 401)
+    // 隔离键是 org（text，值 = 租户的 Casdoor org）——别再按数字比：类型都不对了。
+    if (row.org !== tenant.casdoor_org) return c.json({ error: 'INVALID_KEY' }, 401)
 
     const t = now()
     const w = windows.get(keyId)
@@ -2417,11 +2440,12 @@ export function registerQuery(r: ModuleHono, ctx: RouteCtx): void {
     const parsed = QueryBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
 
-    const tenantId = c.get('tenant').id
+    const org = c.get('tenant').casdoor_org
+
     // `execute` 必须透传：缺省会让 runQuery 去建真仓库连接，测试里就变成「断言被网络错误顶掉」
     const outcome = await runQuery(
       { pool: ctx.pool, execute: ctx.execute },
-      tenantId, requesterOf(c), parsed.data.metricId, parsed.data.args,
+      org, requesterOf(c), parsed.data.metricId, parsed.data.args,
     )
 
     if (outcome.status === 'ok') return c.json(outcome)
@@ -2611,18 +2635,18 @@ describePg('个人 Key 路由（需要 DATABASE_URL）', () => {
   const pool = new Pool({ connectionString: dbUrl })
   beforeEach(async () => {
     await applyMigrations(pool)
-    await pool.query('delete from data.query_keys where tenant_id = $1', [TENANT])
+    await pool.query('delete from data.query_keys where org = $1', [ORG])
   })
   afterAll(async () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
-    await pool.query('delete from data.query_keys where tenant_id = $1', [TENANT]).catch(() => {})
+    await pool.query('delete from data.query_keys where org = $1', [ORG]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
   function app(casdoorUser = 'alice') {
     const id = makeIdentity({ orgId: 'acme' })
     // casdoor_user 取 identity.displayName（会话通道里它**就是** Casdoor 用户名）。
-    // 第 4 参是 T1 的 `DataTenant`（**不是**裸 tenantId）：`{ id: TENANT, casdoor_org: 'acme' }`。
+    // 第 4 参是 T1 的 `DataTenant`（**不是**裸数字）：`{ id: TENANT, casdoor_org: 'acme' }`。
     return buildTestApp(mod, { ...id, displayName: casdoorUser }, { pool },
                         { id: TENANT, casdoor_org: 'acme' })
   }
@@ -2825,7 +2849,8 @@ export function registerMcp(r: ModuleHono, ctx: RouteCtx): void {
     // 通知（无 id）：**不回**，202 空体（MCP 明确要求）
     if (msg.id === undefined) return c.body(null, 202)
 
-    const tenantId = c.get('tenant').id
+    const org = c.get('tenant').casdoor_org
+
     const requester = requesterOf(c)
     const reply = (result: unknown) => c.json({ jsonrpc: '2.0', id: msg.id, result })
     const rpcError = (code: number, message: string) =>
@@ -2840,14 +2865,14 @@ export function registerMcp(r: ModuleHono, ctx: RouteCtx): void {
     }
     if (msg.method === 'ping') return reply({})
     if (msg.method === 'tools/list') {
-      const catalog = visibleMetrics(await loadCatalog(ctx.pool, tenantId), requester)
+      const catalog = visibleMetrics(await loadCatalog(ctx.pool, org), requester)
       return reply({ tools: catalog.map(toTool) })
     }
     if (msg.method === 'tools/call') {
       const name = String(msg.params?.name ?? '')
       const args = (msg.params?.arguments ?? {}) as Record<string, unknown>
       const out = await runQuery(
-        { pool: ctx.pool, execute: ctx.execute }, tenantId, requester, name, args,
+        { pool: ctx.pool, execute: ctx.execute }, org, requester, name, args,
       )
       return reply({
         content: [{ type: 'text', text: JSON.stringify(out) }],
@@ -2918,7 +2943,7 @@ export type AgentEvent =
   | { type: 'final'; text: string; table?: { columns: string[]; rows: unknown[][] } }
   | { type: 'error'; reason: string; detail?: string }      // 流已开头 ⇒ 失败只能用事件表达，不能用状态码
 export const MAX_AGENT_TURNS = 6
-export interface AgentDeps { pool: Pool; tenantId: number; execute?: SqlExecutor }
+export interface AgentDeps { pool: Pool; org: string; execute?: SqlExecutor }
 export function runAgentLoop(deps: AgentDeps, requester: Requester, model: ChatModel, question: string): AsyncGenerator<AgentEvent>
 ```
 
@@ -3062,7 +3087,7 @@ export type AgentEvent =
   | { type: 'final'; text: string; table?: { columns: string[]; rows: unknown[][] } }
   | { type: 'error'; reason: string; detail?: string }
 
-export interface AgentDeps { pool: Pool; tenantId: number; execute?: SqlExecutor }
+export interface AgentDeps { pool: Pool; org: string; execute?: SqlExecutor }
 
 /** 硬上限。超出即收尾出 `final`，**不是**抛错、更不是继续转。 */
 export const MAX_AGENT_TURNS = 6
@@ -3107,7 +3132,7 @@ export async function* runAgentLoop(
   deps: AgentDeps, requester: Requester, model: ChatModel, question: string,
 ): AsyncGenerator<AgentEvent> {
   // 词表在本轮对话开始时裁剪一次（同一次对话内权限漂移不做中途刷新——改权限下一次问答生效）
-  const catalog = visibleMetrics(await loadCatalog(deps.pool, deps.tenantId), requester)
+  const catalog = visibleMetrics(await loadCatalog(deps.pool, deps.org), requester)
   const messages: ChatMessage[] = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: question },
@@ -3162,7 +3187,7 @@ async function runTool(
   const args = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
     ? (rawArgs as Record<string, unknown>) : {}
   // 与 MCP 通道**同一个** runQuery ⇒ 同一个授权核心。这里不做任何权限判断。
-  return runQuery({ pool: deps.pool, execute: deps.execute }, deps.tenantId, requester, metricId, args)
+  return runQuery({ pool: deps.pool, execute: deps.execute }, deps.org, requester, metricId, args)
 }
 
 /** 活动事件的展示文案。**只放 id 与非敏感参数**——SQL、主体值、凭证都不进事件流。 */
@@ -3202,7 +3227,7 @@ export function registerChat(r: ModuleHono, ctx: RouteCtx): void {
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
 
     const requester = requesterOf(c)
-    const deps = { pool: ctx.pool, tenantId: c.get('tenant').id, execute: ctx.execute }
+    const deps = { pool: ctx.pool, org: c.get('tenant').casdoor_org, execute: ctx.execute }
     const model = openAiCompatModel(cfg)
     const encoder = new TextEncoder()
 
@@ -3781,6 +3806,8 @@ async function alicePat(): Promise<string> {
 
 ```ts
 let acmeTenantId = 0
+/** acme 租户的 Casdoor org ——**模块各表的隔离键**（也见 ④ 的注记，同样从库里查，不写死字面量）。 */
+let acmeOrg = ''
 
 beforeAll(async () => {
   if (!dbUrl) return
@@ -3800,22 +3827,26 @@ beforeAll(async () => {
   // ④ ★ tenantId **从库里查**，不要写死 1：platform.tenant.id 是自增，
   //    在**不是全新空库**上跑过几轮之后它就不是 1 了（`on conflict do update` 保留原 id）。
   //    写死 1 的症状是「用例全红且看起来像授权/装载问题」——实际上只是 fixture 挂到了别的租户。
-  const { rows } = await pool.query<{ id: string }>(
-    `select id from platform.tenant where slug = 'acme'`)
+  //    `casdoor_org` 同理**一起查**：它是模块各表的**隔离键**（= 授权核心写进 SQL 的主体值），
+  //    写死字面量 'acme' 的话，夹具与库里一旦对不上，断言就在**空集**上跑——
+  //    又是一种「绿了但没验到东西」。
+  const { rows } = await pool.query<{ id: string; casdoor_org: string }>(
+    `select id, casdoor_org from platform.tenant where slug = 'acme'`)
   acmeTenantId = Number(rows[0]!.id)
-  if (!Number.isSafeInteger(acmeTenantId) || acmeTenantId <= 0) {
-    throw new Error('e2e fixture: platform.tenant 里没有 acme 租户（seedDemo 没跑成）')
+  acmeOrg = rows[0]!.casdoor_org
+  if (!Number.isSafeInteger(acmeTenantId) || acmeTenantId <= 0 || !acmeOrg) {
+    throw new Error('e2e fixture: platform.tenant 里没有可用的 acme 租户（seedDemo 没跑成）')
   }
 
   // ⑤ 指标定义走 T3 的 store（幂等 upsert，可重复跑）。**两个指标**：
   //    一个 alice 够得着（data:query），一个够不着（data:finance）——用例 6 的裁剪断言靠这对差值，
   //    只有一个指标的话「不在词表里」既可能是裁剪对了、也可能是词表本来就空（假绿）。
-  await upsertMetric(pool, acmeTenantId, {
+  await upsertMetric(pool, acmeOrg, {
     id: 'sales_daily', title: '销售日报', description: '按主体分组的日销售额',
     requiredScope: 'data:query', subjectColumn: 'org',
     selectSql: 'SELECT org, day, revenue FROM marts.sales_daily', groupBy: '', params: {},
   })
-  await upsertMetric(pool, acmeTenantId, {
+  await upsertMetric(pool, acmeOrg, {
     id: 'finance_summary', title: '财务汇总（alice 无权）', description: '给裁剪断言用的对照项',
     requiredScope: 'data:finance', subjectColumn: 'org',
     selectSql: 'SELECT org, day, revenue FROM marts.sales_daily', groupBy: '', params: {},
@@ -3885,23 +3916,23 @@ afterAll(async () => {
    > 于是"nobody 也被拒"这句会**因为别的理由**变绿或变红，而"alice 能查"这句会**在拿不到身份时**失败。
 5. **主体钉死（三通道各测一次）**：在 `QUERY_BODY` 基础上把参数塞成保留键——**`{ ...QUERY_BODY, args: { org: 'beta' } }`**（**同一个 `sales_daily`**）→ 403 `subject_pinned_by_platform`，且**回包不含 beta 的任何数据**。
    （夹具里 beta 的金额是 **999**，acme 是 **100**——断言回包里没有 `999` 比断言"没有 beta 字样"硬。）
-   > ⚠️ 这三条被拒请求会写进 `data.query_audit`，与用例 7 的成功请求同 tenant 同 metric ⇒ 用例 7 的断言必须为此留余地（见用例 7 的注记）。
+   > ⚠️ 这三条被拒请求会写进 `data.query_audit`，与用例 7 的成功请求同 org 同 metric ⇒ 用例 7 的断言必须为此留余地（见用例 7 的注记）。
 6. **词表裁剪（三通道各测一次）**：`data:finance` 的指标在 `tools/list`（通道 B）与 `GET /metrics`（通道 A）里**都不出现**。
 7. **审计三通道统一**：三条成功请求之后查审计表——
    ```ts
    const pool = getPool({ databaseUrl: dbUrl! })
-   const { rows: audit } = await pool.query<{ channel: string; org_id: string; verdict: string }>(
-     `select distinct channel, org_id, verdict from data.query_audit
-       where tenant_id = $1 and metric_id = 'sales_daily'`, [acmeTenantId])
+   const { rows: audit } = await pool.query<{ channel: string; org: string; verdict: string }>(
+     `select distinct channel, org, verdict from data.query_audit
+       where org = $1 and metric_id = 'sales_daily'`, [acmeOrg])
    ```
-   断言两件事：① `(channel, org_id, verdict)` 里 `verdict='ok'` 的三条**都在**，且 `org_id` 全是 `'acme'`
-   （`session` / `pat` / `wecom` 各一条，证明三通道确实共写一张表）；② **没有任何一行的 `org_id` 是 `'beta'`**。
+   断言两件事：① `(channel, org, verdict)` 里 `verdict='ok'` 的三条**都在**，且 `org` 全是 `'acme'`
+   （`session` / `pat` / `wecom` 各一条，证明三通道确实共写一张表）；② **没有任何一行的 `org` 是 `'beta'`**。
    > ⚠️ **不要断言「verdict 只有 `'ok'`」——在正确实现下必红**：用例 5 故意用 `args: { org: 'beta' }`
    > 造了三条被拒记录（`subject_pinned_by_platform` ⇒ `verdict='denied'`），它们与本用例的成功请求
-   > **同 tenant、同 metric**，必然落进同一个结果集；而 T4 的 `audit()` 在被拒时写的 `org_id` 是
-   > **`requester.orgId`（即 `'acme'`）**，不是参数里的 beta。原稿「只有 ok」与用例 5 直接打架。
+   > **同 org、同 metric**，必然落进同一个结果集；而 T4 的 `audit()` 写进 `org` 的是**形参 `org`**
+   > （= 路由传进来的 `identity.orgId`，即 `'acme'`），不是参数里的 beta。原稿「只有 ok」与用例 5 直接打架。
    > ② 才是主体钉死的**可观测不变量**：参数里塞进来的 beta 从未变成写进 SQL/审计的主体值。
-   > **必须带 `tenant_id` 过滤**：审计表是全租户共用的一张表，且本文件不是唯一写它的测试
+   > **必须带 `org` 过滤**：审计表是全租户共用的一张表，且本文件不是唯一写它的测试
    > （T3/T4 的单测也写）——不带过滤的 `count(*)` 会随别的测试跑过而变，是典型的间歇红。
 8. **门卫仍然生效**（证明新中间件没绕过既有门禁）：用 `aliceCookie()`（只有 `data:query`）请求
    `GET /api/modules/data/metrics/all`（声明 `data:manage`）→ **403**。
@@ -3988,7 +4019,7 @@ curl -sS https://<生产域名>/healthz
   理由是「`MetricBody` 的 `subjectColumn`/`selectSql` 是必填」×「口径只定义一次」，
   且本计划没有 `subjectColumn` 存在性校验（UI 写入的坏定义会静默返回错数据）。
   已在 T9 Step 6 对应小节把两条理由写全，并在本记录「有意偏离」节复述。
-- **类型一致性**：`Requester` / `MetricDef` / `QueryOutcome` 在 T2/T4 定义，T6/T7/T8/T9/T10 消费，签名逐处核对一致；`tenantId: number` 全链一致（T3 store → T4 runQuery → T6 路由）。
+- **类型一致性**：`Requester` / `MetricDef` / `QueryOutcome` 在 T2/T4 定义，T6/T7/T8/T9/T10 消费，签名逐处核对一致；`org: string` 全链一致（T3 store → T4 runQuery → T6 路由）。
 
 ### 自检发现并**就地修正**的缺陷（第二轮逐字核仓后）
 
@@ -4037,12 +4068,13 @@ curl -sS https://<生产域名>/healthz
 | 23 | **T10 的请求体键名与 T6 的 schema 不符**：`QUERY_BODY = { metric, params }` vs `QueryBody = { metricId, args }` ⇒ e2e 全文件 400 `INVALID_BODY`（"红了但没有一处在验真东西"）；T10 自己用例 5 又写 `args:`，前后不一 | `QUERY_BODY` 改为 `{ metricId, args }`，并加注「键名必须与 T6 schema 逐字一致」 |
 | 24 | **T2 的测试断言与 T2 的实现互斥**：测试断言 `AND day >= '…'::date` / `<=`，实现只发 `=`，同段注记明说「params 只支持 `=`（不是 `>=`）」⇒ 该用例**永远红**，Step 4 的「Expected: PASS」不可达 | 断言改为 `=`（与实现一致）；并**记录取舍**：同列两个 `=` 恒为空集 ⇒ `day_from`/`day_to` 不要同时传，区间能力不在本计划范围（原先只有一句轻描淡写，没写后果） |
 | 25 | **T4 的「不执行 SQL」断言空转**：`lastSql = ''` 写在 `runQuery` **之后**，等于把证据擦掉再断言 `toBe('')` ⇒ 跑没跑 SQL 都绿，「从未触达仓库」没人验 | 清零移到 `runQuery` **之前**，并写明"写在之后 = 断言恒真"这个机制 |
-| 26 | **T10 用例 7 的断言与用例 5 打架**：用例 5 故意造三条 `subject_pinned_by_platform` 被拒（同 tenant 同 metric，T4 的 `audit()` 仍写 `org_id=requester.orgId='acme'`）⇒ 用例 7 断言「`verdict` 只有 `'ok'`」在正确实现下**必红** | 用例 7 改为断言两件真事：① `verdict='ok'` 的三条（session/pat/wecom）都在且 `org_id='acme'`；② **没有任何一行 `org_id='beta'`**（这才是主体钉死的可观测不变量）。用例 5 同步注明会留下 denied 行 |
+| 26 | **T10 用例 7 的断言与用例 5 打架**：用例 5 故意造三条 `subject_pinned_by_platform` 被拒（同 org 同 metric，T4 的 `audit()` 仍写 `org='acme'`）⇒ 用例 7 断言「`verdict` 只有 `'ok'`」在正确实现下**必红** | 用例 7 改为断言两件真事：① `verdict='ok'` 的三条（session/pat/wecom）都在且 `org='acme'`；② **没有任何一行 `org='beta'`**（这才是主体钉死的可观测不变量）。用例 5 同步注明会留下 denied 行 |
 | 27 | **`dataQueryRatePerMin` 必填引发连锁 TS2741**：T5 定为必填 `number`，但 T10 的 `configWithCasdoor` 字面量没它；`apps/server/src/demo-tenant-isolation.test.ts:42` 的全量字面量也没有 ⇒ 测试文件纳入 typecheck（issue #68），`pnpm typecheck` 红 | T10 字面量补 `dataQueryRatePerMin: 60`；把 `demo-tenant-isolation.test.ts` **写进 T5 的 Files 与主表**（原先没有任何任务认领它）；T5 Step 6 加注「必填 ⇒ 所有全量字面量都要补，改完跑 `--filter @platform/server typecheck`」 |
 | 28 | **T9 `runTool` 的联合有一支没有判别式**：`{ metrics: … }` 缺 `status`，而调用方读 `result.status` ⇒ TS2339；本任务的门禁正是 `pnpm --filter data typecheck` ⇒ 不可达 | 该支改为 `{ status: 'metrics'; metrics: … }`（返回值同步），并在函数上方写明「每一支都必须带 `status`」及其理由 |
 | 29 | **T8 让改 `buildTestApp` 的第 4 参**，但该参已被 T1 定为 `DataTenant` 且 T7/T10 在按对象用它 ⇒ 照字面改会**静默打挂 T7** | 删掉该指令，改为：注入走 `RouteCtx.execute`（T6 已在自己的 Files/Interfaces 里声明），并**补上 T6 没写的机制**——`ModuleContext` 是 SDK 的封闭接口（`module.ts:20`，只有 `pool`），所以「ctx 里本来就有 execute」不成立，`index.ts` 必须显式转发；测试侧用**变量**携带 `execute` 绕开多余属性检查 |
 | 30 | **T6 的状态码自相矛盾**：Interfaces 写 `200/403/500`，同任务代码 `c.json(outcome, 502)`，T10 也期望 502 ⇒ 照 Interfaces 写就与 T10 对不上 | Interfaces 改为 **200/403/502**，并写明理由（上游数据仓库不可用不是本服务的 bug ⇒ 502） |
 | 31 | **T1 的 Files 漏了两个它自己正文要求的文件**：① `modules/data/console/index.tsx`（Step 3 的注记明说必须建，否则 web 构建期解析入口失败）② `apps/web/src/console-registry.gen.ts`（**进 git 的生成物**；CI 的 `web` job 每次 build 都重新生成它 ⇒ **脏了永远不红**，是静默不一致） | 两者补进 T1 的 Files、主表；新增 **Step 10** 专做重新生成（`node scripts/gen-console-registry.mjs`，禁手改），Step 11 的验证组加上 `--filter @platform/web typecheck` 与 `lint-architecture.mjs`。另补 **Step 2 的 `pnpm install`**（新 workspace 包不 install ⇒ `--filter data` 解析不到，失败形态与代码无关） |
+| 32 | **三张表的隔离键口径违反正典 ⇒ CI `gates` 恒红**（**由 T1 的实施 worker 在开工前查出来并附实测证据**，本扫描漏掉，属"计划 vs 仓库正典"这一类）：T1 的 `001_init.sql` 三表都用 `tenant_id bigint`，而 `scripts/check-tenant-isolation.mjs`（CI `gates` job 第五条守卫，**PR 事件也跑**）按 `information_schema.column_name='org'` 判，**`org_id` 不算 `org`**；正典 `docs/module-protocol.md`「租户数据隔离」逐字写着模块租户数据表**必须带 `org text not null`**（值 = `identity.orgId`），读写一律 `where org = $1`。⇒ T1 的 PR 必红，且这个偏离一路贯穿 T3/T4/T5/T9 的 SQL | **按正典改（不改门禁、不用豁免）**：① 三表隔离键统一为 `org text not null`（值 = `identity.orgId` = `DataTenant.casdoor_org`），`data.query_audit` 的 `org_id` **并入 `org`**（一列两义：既是隔离键也是钉死的主体值，两者生产上同源）；② 主键/索引随之改：`(org, id)` / `data_query_keys_org_user_idx` / `data_query_audit_org_time_idx`；③ 全链 `tenantId: number` → `org: string`（T3 store → T4 `runQuery` → T6/T8/T9 路由，路由侧取 `c.get('tenant').casdoor_org`）；④ T5 的跨租户比对改 `row.org !== tenant.casdoor_org`；⑤ 新增**全局约束 13** 把这条钉死，并写明豁免出口 `-- global-table` 只对真正的全局表用。**明确否决**的替代方案：`-- global-table` 豁免（语义不符：这三张都是租户数据表）、双键并存 `tenant_id`+`org`（两个事实源，且运行期真正生效的仍是 `tenant_id` ⇒ 门禁绿了正典没执行，是假绿）、放宽门禁（宪章级改动，须另立 issue） |
 
 **另外三处不是"与真仓不符"、而是"计划自己不可执行"**，也一并修了：
 
