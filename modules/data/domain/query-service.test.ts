@@ -4,6 +4,7 @@ import { runQuery, type QueryDeps } from './query-service'
 import { upsertMetric } from './metric-store'
 import { applyMigrations } from '../test-util'
 import type { Requester } from './authz'
+import { DATA_WAREHOUSE_UNCONFIGURED } from './warehouse'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -76,9 +77,18 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     expect(lastSql).toBe('')                                   // 被拒 ⇒ 从未触达仓库
   })
 
-  it('denied：匿名（requester = null）→ unauthenticated', async () => {
+  it('denied：匿名（requester = null）→ unauthenticated，审计也留痕', async () => {
     const out = await runQuery(deps, ORG, null, 'sales_daily', {})
     expect(out).toEqual({ status: 'denied', metricId: 'sales_daily', reason: 'unauthenticated' })
+    // 匿名被拒**也留痕**（约束 7）：匿名占位主体 + 默认 session 通道 + 无 key。
+    // 只查回包形状验不到这一写——回归掉 audit('denied','unauthenticated') 时这里必须红。
+    const a = await pool.query(
+      `select user_id, channel, key_id, verdict, reason from data.query_audit
+        where org = $1 order by id desc limit 1`, [ORG])
+    expect(a.rows[0]).toMatchObject({
+      user_id: '(anonymous)', channel: 'session', key_id: null,
+      verdict: 'denied', reason: 'unauthenticated',
+    })
   })
 
   it('denied：PAT 通道的 key_id 落进审计（通道 B 可追溯到具体 key）', async () => {
@@ -97,6 +107,23 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     const a = await pool.query(
       `select verdict, reason from data.query_audit where org = $1 order by id desc limit 1`, [ORG])
     expect(a.rows[0]).toMatchObject({ verdict: 'error', reason: 'warehouse_error' })
+  })
+
+  it('error：未配仓库 → reason=warehouse_unconfigured（不是 warehouse_error）', async () => {
+    // 按 T3 warehouse.ts 的**真形状**注入：真源就是 new Error(DATA_WAREHOUSE_UNCONFIGURED)
+    // （常量从 './warehouse' import，query-service 以 === 全等判 err.message）——不造近似值。
+    const unconfigured: QueryDeps = {
+      pool,
+      execute: async () => { throw new Error(DATA_WAREHOUSE_UNCONFIGURED) },
+    }
+    const out = await runQuery(unconfigured, ORG, req(), 'sales_daily', {})
+    expect(out.status).toBe('error')
+    if (out.status !== 'error') return
+    expect(out.reason).toBe('warehouse_unconfigured')          // 关键分叉：走配错分支而非笼统 warehouse_error
+    expect(out.detail).toBe(DATA_WAREHOUSE_UNCONFIGURED)
+    const a = await pool.query(
+      `select verdict, reason from data.query_audit where org = $1 order by id desc limit 1`, [ORG])
+    expect(a.rows[0]).toMatchObject({ verdict: 'error', reason: 'warehouse_unconfigured' })
   })
 
   it('truncated：行数达到上限时置位', async () => {
