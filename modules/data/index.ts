@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { parse as parseYaml } from 'yaml'
 import { ManifestSchema, defineModule } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './routes/context'
+import { registerKeys } from './routes/keys'
 import { registerMetrics } from './routes/metrics'
 import { registerQuery } from './routes/query'
 import { resolvePat, touchPatKey } from './domain/key-store'
@@ -25,6 +26,7 @@ export default defineModule({
       execute: (moduleCtx as RouteCtx).execute,
     }
     // register* 与 manifest.yaml 的 api.internal 必须同一提交对齐（装载期双向核对）
+    registerKeys(r, _ctx) // T7
     registerMetrics(r, _ctx) // T6
     registerQuery(r, _ctx) // T6
     return r
