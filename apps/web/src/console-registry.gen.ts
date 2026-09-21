@@ -30,6 +30,15 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     load: () => import("../../../modules/aftersales/console/index.tsx"),
   },
   {
+    path: "/console/data",
+    title: "数据问数",
+    group: "main",
+    moduleId: "data",
+    icon: "BarChartOutlined",
+    scope: "data:query",
+    load: () => import("../../../modules/data/console/index.tsx"),
+  },
+  {
     path: "/console/demo",
     title: "演示",
     group: "main",
