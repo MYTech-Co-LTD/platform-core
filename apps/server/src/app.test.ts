@@ -65,6 +65,8 @@ function configWith(casdoorUrl: string, adminPwd: string): AppConfig {
     // 必需：platform.tenant 为空时供给循环不执行、压根不取 client，这条契约就变成空转
     // ——那正是 issue #3 第二节"结构性失明"的形状
     seedDemo: true,
+    // 数据问数 per-key 限速（T5 加的**必填**字段）：本文件不走 PAT 通道，取 loadConfig 的缺省值
+    dataQueryRatePerMin: 60,
   }
 }
 
