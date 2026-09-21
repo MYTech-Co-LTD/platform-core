@@ -129,6 +129,13 @@
 > B1 的 schema 侧由门禁守；`id` → API 前缀由 `moduleApiBasePath(id)`（`apps/server/src/loader.ts:102`）
 > 从 `id` **派生**，属构造上一致，不靠人记。
 
+> **B1 没有豁免出口**（`allowedSchema()` 把 `modules/<id>/` 之外一律硬钉成 `platform`，
+> 无 marker、无 allowlist）。所以当宿主**必须在 mount 前**用到模块 schema 里的数据时（典型：
+> PAT 凭证解析要在模块路由之前注入 `identity`），**不能**让宿主自带一份 SQL——正确解法是
+> **模块端口**：模块用 `createPorts(ctx)` 声明能力，宿主用 `runtime.port(id, name)` 取用。
+> 契约见 `docs/module-protocol.md`「模块端口」。（2026-09-21 拍板：该冲突实测会让 `gates` 报
+> B1 违规，见该节。）
+
 ### 4.2 第二档：仅文档（无门禁，靠评审与人守）
 
 | 不变量 | 是什么 / 违反了会怎样 | 出处 |

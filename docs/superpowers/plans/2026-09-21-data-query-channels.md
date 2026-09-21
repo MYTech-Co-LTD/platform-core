@@ -22,11 +22,22 @@
 2. **主体钉死**：SQL 里出现的 `org` 值**只来自身份解析**（`Requester.orgId`）。请求参数里出现保留键（`org` / `subject` / `tenant` / `tenant_id` / `org_id` / `casdoor_org`）一律拒 `subject_pinned_by_platform`。
 3. **词表外指标不可见**：`tools/list` 与 `GET /metrics` 只回 `requiredScope` 命中请求者 scopes 的指标——是「看不见」，不是「调了报错」。
 4. **fail-closed**：无身份 / 未授权 / 未声明 / 企微未关联 / Casdoor 不可达，一律拒绝并给出**可解释 reason**。PAT 通道**没有**缓存的 scopes，故 Casdoor 故障时**没有**「降级用旧权限」这条路（与 session 中间件的退化策略刻意不同，理由见 T5）。
-5. **PAT 只存哈希**：`data.query_keys` 只存 SHA-256 十六进制，明文 token 只在创建响应里出现一次。哈希实现**两侧逐字一致**：
+5. **PAT 只存哈希**：`data.query_keys` 只存 SHA-256 十六进制，明文 token 只在创建响应里出现一次。
    ```
    createHash('sha256').update(token).digest('hex')
    ```
-   `modules/data/domain/key-store.ts`（T3）与 `apps/server/src/pat-auth.ts`（T5）**必须各写这一行原文**（变量名 `token` 不变），且 **T10 必须有往返契约测试**（模块路由建 key → 宿主中间件验 key）。任何 key（PAT / 企微服务凭证 / LLM key）**不进**聊天记录、LLM 上下文、日志、提交信息。
+   ⚠️ **这一行只在模块侧存在一份**（`modules/data/domain/key-store.ts`，T3）——**宿主侧不再复制**。
+   原稿要求「两侧各写一行原文 + T10 往返契约测试兜漂移」，那次订正（全局约束 14 / 模块端口）之后
+   宿主**没有**任何 SQL 与哈希：凭证解析整体下沉到模块，漂移面**构造上消失**。
+   T10 的往返契约测试**保留**，但它锁的语义变了（见 T10）：从「两份实现是否一致」变成
+   「模块路由建的 key 能被宿主中间件认下来」（走端口）。
+   任何 key（PAT / 企微服务凭证 / LLM key）**不进**聊天记录、LLM 上下文、日志、提交信息。
+
+14. **宿主需要模块 schema 里的数据时，走「模块端口」，不是自带 SQL**（2026-09-21 拍板；与约束 13 同类，都是「计划 vs 仓库正典」，由实施 worker 实测查出）：
+    - **B1 三同纪律**（`docs/architecture.md:118`）规定平台代码只许 `platform.*`、`modules/<id>/` 只许自身 id，由 `scripts/lint-architecture.mjs` 在 `gates` job 强制，且 **`allowedSchema()` 没有任何豁免机制**。
+    - 实测：把模块的 `data.query_keys` 查询写进 `apps/server/src/pat-auth.ts` ⇒ 立刻 2 处 B1 违规（`pat-auth.ts:57` / `:100`），**PR 恒红**。
+    - 正确解法（契约正典：`docs/module-protocol.md`「模块端口」）：模块用 `createPorts(ctx: ModuleContext): ModulePorts` **声明能力**，宿主用 `runtime.port(moduleId, name)` **取用**。宿主侧零 SQL、零模块 schema 引用；**宿主仍不静态 import 模块**（端口是运行时取用）。
+    - **端口缺失 ⇒ 该通道 fail-closed（拒绝，不是放行）**；端口**只解析凭证、不施加权限**。
 6. **通道 C 走问数 API 不走 MCP**：`POST /api/modules/data/query` 带 `X-Wecom-Userid`。`/mcp` 端点**仅供通道 B**。通道 A 是模块内直接调 `runQuery`，不经 MCP 协议。
 7. **审计三通道统一**：每一次问数（无论裁决）都写 `data.query_audit` 一行，字段覆盖「身份 / 通道 / key_id? / 指标 / 参数 / 行数 / 裁决+reason / ts」。
 8. **回包带钉死主体**：ok 回包必含 `subject`（= 本次 SQL 钉死的 org 值），让客户端能独立验证。
@@ -102,6 +113,8 @@ plan: docs/superpowers/plans/2026-09-21-data-query-channels.md
 | `apps/server/src/demo-tenant-isolation.test.ts`、`apps/server/src/app.test.ts`、`apps/server/src/storage-injection.test.ts` | 三个**既有**宿主测试文件的 `AppConfig` 全量字面量各补 `dataQueryRatePerMin`（必填字段，漏补 TS2741） | T5 |
 | `packages/platform-sdk/src/requester-vars.ts` | 新建：`REQUESTER_CHANNEL` / `REQUESTER_KEY_ID` 常量 + `RequesterVars` 类型 | T5 |
 | `packages/platform-sdk/src/index.ts` | 导出上面两个常量（值）与 `RequesterVars`（类型）——**值/类型分行 `export`**（#44 纪律） | T5 |
+| `packages/platform-sdk/src/module.ts` | **模块端口契约**（约束 14）：`ModulePorts` / `ResolvedPatKey` / `ModuleDefinition.createPorts?` | T5 |
+| `apps/server/src/loader.ts` | `ModulesRuntime.port(moduleId, name)` ——宿主的唯一取用面 | T5 |
 | `modules/data/module.test.ts` | manifest↔路由双向核对 + 迁移幂等 | T1（T6/T7/T8 扩展） |
 | `apps/server/src/data-query.e2e.test.ts` | 三通道端到端 + PAT 往返契约 | T10 |
 | `docs/architecture.md` | 组件清单加 `modules/data` | T1 |
@@ -125,7 +138,7 @@ plan: docs/superpowers/plans/2026-09-21-data-query-channels.md
 > 起 worktree 的话，T3/T4 自己的「Expected: PASS」根本跑不起来（上游文件不存在）。
 > **只有 T5 是干净的并行边界**。
 
-> **W2 的并行边界（重要）**：T5 的 `apps/server/src/pat-auth.ts` **不得** `import` `modules/data/**`——宿主静态依赖模块是架构违规，且会打掉 worktree 并行。它自带哈希行与自己的查询 SQL（约束 5 + T10 往返契约测试兜漂移）。
+> **W2 的并行边界（重要）**：T5 的 `apps/server/src/pat-auth.ts` **不得** `import` `modules/data/**`——宿主静态依赖模块是架构违规，且会打掉 worktree 并行。⚠️ 但它**也不再自带哈希行与查询 SQL**（原稿是那么写的，被约束 14 订正）：宿主侧零 SQL、零 `data.` 引用，凭证解析走**模块端口**（`runtime.port('data','resolvePatKey')`，T3 实现 / T6 声明 / T5 定义契约与取用）。
 
 Orca 派发（W2 两路并行 → 串行链 + W3 串行）：
 
@@ -1155,6 +1168,11 @@ export async function createPatKey(pool: Pool, org: string, casdoorUser: string,
 export async function listPatKeys(pool: Pool, org: string, casdoorUser: string): Promise<PatKeyRow[]>
 export async function revokePatKey(pool: Pool, org: string, casdoorUser: string, id: number): Promise<boolean>
 export async function resolvePat(pool: Pool, token: string): Promise<ResolvedPat | null>
+// ⚠️ 约束 14：这个函数**就是**宿主侧 PAT 中间件用的那个端口的实现
+// （`createPorts` 在 T6 的 index.ts 里把它包成 `resolvePatKey(token)` 暴露给宿主）。
+// `ResolvedPat` 的字段必须与 `@platform/sdk` 的 `ResolvedPatKey` **同名同型**
+// （keyId / org / casdoorUser）——端口是跨包契约，两边形状漂移的症状是宿主拿不到 org。
+// 宿主侧**不再有任何 SQL 与哈希**，所以「两侧逐字一致」的约定已随约束 5 订正作废。
 export async function touchPatKey(pool: Pool, id: number): Promise<void>
 export interface PatKeyRow { id: number; name: string; createdAt: string; lastUsedAt: string | null; revoked: boolean }
 export interface ResolvedPat { keyId: number; org: string; casdoorUser: string }
@@ -1277,7 +1295,8 @@ Expected: FAIL —— `Cannot find module './key-store'`
 // ⚠️ 哈希那一行必须与 apps/server/src/pat-auth.ts 里的实现**逐字一致**：
 //     createHash('sha256').update(token).digest('hex')
 //   两侧不共享代码是刻意的——宿主静态 import 模块是架构违规，且会打掉 worktree 并行。
-//   漂移风险由 T10 的往返契约测试兜（模块建 key → 宿主中间件验 key）。
+//   ⚠️ 约束 14 订正后**没有第二份实现**：宿主不再复制哈希行，解析走模块端口，
+//   所以这一行只在这里存在一份。T10 的往返契约测试仍保留（模块建 key → 宿主中间件认下来）。
 import { createHash } from 'node:crypto'
 import { randomBytes } from 'node:crypto'
 import type { Pool } from 'pg'
@@ -1715,13 +1734,15 @@ git commit -m "feat(data): runQuery 编排——授权→执行→审计（所�
 
 ### Task 5: 宿主鉴权中间件（PAT + 企微）+ config + SDK 常量
 
-**纯宿主侧任务，不碰 `modules/data/**`**（理由见 W2 并行边界）。它自带哈希行与查询 SQL——这是刻意重复，漂移由 T10 的往返契约测试兜。
+**纯宿主侧任务，不碰 `modules/data/**`**（理由见 W2 并行边界）。PAT 的凭证解析**不在这里**——宿主不引用模块 schema（约束 14 / B1），走**模块端口**：本任务定义端口契约 + 宿主侧取用，实现在 T3/T6 的模块侧。
 
 **Files:**
 - Create: `apps/server/src/pat-auth.ts`
 - Create: `apps/server/src/wecom-channel-auth.ts`
 - Create: `packages/platform-sdk/src/requester-vars.ts`
 - Modify: `packages/platform-sdk/src/index.ts`（导出两个常量）
+- Modify: `packages/platform-sdk/src/module.ts`（**端口契约**：`ModulePorts` / `ResolvedPatKey` / `ModuleDefinition.createPorts?`——约束 14）
+- Modify: `apps/server/src/loader.ts`（`ModulesRuntime` 增 `port(moduleId, name)`；装载时收集各模块的 `createPorts`）
 - Modify: `apps/server/src/config.ts`（加三个 data 配置键）
 - Modify: `apps/server/src/app.ts:218`（sessionMiddleware 之后插两行 `app.use`）
 - Modify: `apps/server/src/demo-tenant-isolation.test.ts` / `apps/server/src/app.test.ts` / `apps/server/src/storage-injection.test.ts`（**各补一行 `dataQueryRatePerMin: 60`**）：本任务给 `AppConfig` 加了**必填**字段，而这三个**既有**宿主测试文件里各有一个 `const config: AppConfig = {…}` 全量字面量（`42` / `50` / `105` 行）⇒ 不补就是 TS2741；本仓测试文件纳入 typecheck（issue #68），`pnpm --filter @platform/server typecheck` 会红。
@@ -1741,12 +1762,27 @@ export const REQUESTER_KEY_ID = 'platform.requesterKeyId'
 /** Variables 片段（**不是**整个 Env）——交给宿主与模块各自求交自己的 Env。 */
 export type RequesterVars = { [REQUESTER_CHANNEL]?: 'pat' | 'wecom'; [REQUESTER_KEY_ID]?: number }
 
+// packages/platform-sdk/src/module.ts（约束 14 的端口契约）
+export interface ResolvedPatKey { keyId: number; org: string; casdoorUser: string }
+export interface ModulePorts { resolvePatKey?(token: string): Promise<ResolvedPatKey | null> }
+// ModuleDefinition 增：createPorts?(ctx: ModuleContext): ModulePorts
+
+// apps/server/src/loader.ts
+// ModulesRuntime 增：port<K extends keyof ModulePorts>(moduleId: string, name: K): NonNullable<ModulePorts[K]> | undefined
+
 // apps/server/src/pat-auth.ts
-export interface PatAuthDeps { pool: Pool; casdoor: CasdoorFactory; ratePerMin?: number; now?: () => number }
+// ⚠️ **没有 `pool`**：宿主不再碰模块 schema（B1）。凭证解析走注入的端口。
+export interface PatAuthDeps {
+  casdoor: CasdoorFactory
+  /** 由 modules/data 供给（`runtime.port('data','resolvePatKey')`）。**缺失 ⇒ 通道 B fail-closed（503）**。 */
+  resolveKey?: (token: string) => Promise<ResolvedPatKey | null>
+  ratePerMin?: number
+  now?: () => number
+}
 /** 宿主侧两个中间件共用的 Env：租户 + 会话 + 请求者上下文。 */
 export type RequesterEnv = TenantEnv & SessionEnv & { Variables: RequesterVars }
 export function patIdentityMiddleware(deps: PatAuthDeps): MiddlewareHandler<RequesterEnv>
-export const PAT_PREFIX = 'dkq_'          // 与 modules/data 的 key-store 同值（刻意各写一份）
+export const PAT_PREFIX = 'dkq_'          // 与 modules/data 的 key-store 同值（**前缀是协议，不是实现**：宿主靠它认出「这条请求该由本中间件处理」，仍须各写一份；但**哈希**不再重复，见约束 5/14）
 
 // apps/server/src/wecom-channel-auth.ts
 export interface WecomChannelAuthDeps { casdoor: CasdoorFactory; channelKey?: string }
@@ -1794,9 +1830,13 @@ const baseTenant: TenantRow = {
   created_at: new Date(),
 }
 
-/** 本文件**自己**算哈希建 key：不 import 模块，正是为了证明「宿主不依赖模块」。
- *  也正因为这一行是独立实现，它与 key-store 的 hashPat 之间**没有**编译期约束——
- *  一致性只有 T10 的往返契约测试能证。别在这里图省事改成 import 模块的实现。 */
+/** ⚠️ 约束 14 订正后：本文件的用例**不再需要真库**——中间件不再查表，凭证解析是**注入的端口**。
+ *  用例改为注入一个**桩 `resolveKey`**（返回值自己控制），于是：
+ *   · 「token 命中 / 未命中 / 端口缺失 / 端口抛错」这些分支可以**直接构造**，不用造库；
+ *   · 中间件的行为（first-setter-wins、限速、fail-closed 503、scopes 实时拉取）全部可测；
+ *   · 真正的「模块建 key → 宿主认下来」这条端到端链，归 T10 的 e2e（那边有真库与真装配）。
+ *  `seedKey` 只在**仍要真库**的用例里保留；宿主测试写 `data.query_keys` 不受 B1 约束
+ *  （lint 跳过 `*.test.*`），但能不用就别用——桩更准也更快。 */
 async function seedKey(pool: Pool, token: string, casdoorUser: string) {
   const tokenHash = createHash('sha256').update(token).digest('hex')
   const r = await pool.query(
@@ -2007,7 +2047,10 @@ export type { RequesterVars } from './requester-vars'
 // pat-auth.ts — 通道 B（系统外个人 Key）的鉴权中间件。
 //
 // ⚠️ 本文件**不得** import modules/data/**（宿主静态依赖模块 = 架构违规，且打掉 worktree 并行）。
-//    它自带哈希行与查询 SQL：漂移由 apps/server/src/data-query.e2e.test.ts 的往返契约测试兜。
+//    ⚠️ 也**不得**引用模块 schema（B1 三同纪律，约束 14）：原稿让这里自带查询 SQL，实测会被
+//    `scripts/lint-architecture.mjs` 报 2 处 B1 违规（gates job，PR 恒红）。凭证解析改走**模块端口**：
+//    deps.resolveKey（由 modules/data 供给，见 T3 的实现与 T6 的 createPorts 声明）。
+//    ⇒ 本文件里**没有 SQL、没有哈希、没有 Pool**。
 //
 // 与 sessionMiddleware 的**刻意差别**：PAT 没有「缓存的旧 scopes」可降级——权限必须实时向
 // Casdoor 取。所以 Casdoor 故障时这里 **fail-closed 503**，而不是像会话那样降级继续
@@ -2287,7 +2330,7 @@ git commit -m "feat(data): 宿主鉴权中间件——PAT（实时权限/fail-cl
 - Create: `modules/data/routes/query.ts`
 - Modify: `modules/data/routes/context.ts`（`ModuleVars` 求交 `RequesterVars`、`RouteCtx` 加 `execute`、加 `requesterOf`）
 - Modify: `modules/data/manifest.yaml`（`api.internal` 首批 5 条）
-- Modify: `modules/data/index.ts`（注册 + 把 `execute` 透进 `RouteCtx`）
+- Modify: `modules/data/index.ts`（注册 + 把 `execute` 透进 `RouteCtx` + **声明 `createPorts`**（约束 14）：把 T3 的 `resolvePat` 包成 `resolvePatKey(token)` 暴露给宿主。**这是宿主能解析 PAT 的唯一途径**——不声明的话 `runtime.port('data','resolvePatKey')` 恒 `undefined` ⇒ 通道 B 全线 503）
 - Test: `modules/data/routes/metrics.test.ts`、`modules/data/routes/query.test.ts`
 - Modify: `modules/data/module.test.ts`（双向核对自动覆盖，无需改；若红说明漏了声明）
 
@@ -3879,8 +3922,11 @@ afterAll(async () => {
 
 用例：
 
-1. **PAT 往返契约**（建 key 用的是**模块的路由**，校验用的是**宿主中间件**——宿主与模块各自
-   实现的那一行哈希只要有一个字符不同，这条必红）：`const pat = await alicePat()` →
+1. **PAT 往返契约**（建 key 用的是**模块的路由**，校验用的是**宿主中间件**，中间隔着**模块端口**
+   ⇒ 这条锁的是「模块建出来的 key，宿主这条链真的认」——**端到端**，不是两份实现的比对）：
+   ⚠️ 约束 14 订正后宿主侧已无 SQL 与哈希，所以这条用例的价值**变了但没消失**：它现在是
+   「端口契约的形状 + 装配没接错」的唯一证明（漏声明 `createPorts` / 取端口取错 id / 端口返回
+   形状漂移，三种装配错误都只有这条能抓）。`const pat = await alicePat()` →
    `expect(pat).toMatch(/^[A-Za-z0-9_-]{20,}$/)`（**别断言长度 32/64 这类具体值**——编码方式一改
    就假红）→ 再用它请求 `POST /api/modules/data/query` → **200**。
 2. **通道 A（会话）**：**`signSession` 是 async 的**（`packages/auth-core/src/session.ts:37`，返回 `Promise<string>`），
@@ -4082,6 +4128,7 @@ curl -sS https://<生产域名>/healthz
 | 32 | **三张表的隔离键口径违反正典 ⇒ CI `gates` 恒红**（**由 T1 的实施 worker 在开工前查出来并附实测证据**，本扫描漏掉，属"计划 vs 仓库正典"这一类）：T1 的 `001_init.sql` 三表都用 `tenant_id bigint`，而 `scripts/check-tenant-isolation.mjs`（CI `gates` job 第五条守卫，**PR 事件也跑**）按 `information_schema.column_name='org'` 判，**`org_id` 不算 `org`**；正典 `docs/module-protocol.md`「租户数据隔离」逐字写着模块租户数据表**必须带 `org text not null`**（值 = `identity.orgId`），读写一律 `where org = $1`。⇒ T1 的 PR 必红，且这个偏离一路贯穿 T3/T4/T5/T9 的 SQL | **按正典改（不改门禁、不用豁免）**：① 三表隔离键统一为 `org text not null`（值 = `identity.orgId` = `DataTenant.casdoor_org`），`data.query_audit` 的 `org_id` **并入 `org`**（一列两义：既是隔离键也是钉死的主体值，两者生产上同源）；② 主键/索引随之改：`(org, id)` / `data_query_keys_org_user_idx` / `data_query_audit_org_time_idx`；③ 全链 `tenantId: number` → `org: string`（T3 store → T4 `runQuery` → T6/T8/T9 路由，路由侧取 `c.get('tenant').casdoor_org`）；④ T5 的跨租户比对改 `row.org !== tenant.casdoor_org`；⑤ 新增**全局约束 13** 把这条钉死，并写明豁免出口 `-- global-table` 只对真正的全局表用。**明确否决**的替代方案：`-- global-table` 豁免（语义不符：这三张都是租户数据表）、双键并存 `tenant_id`+`org`（两个事实源，且运行期真正生效的仍是 `tenant_id` ⇒ 门禁绿了正典没执行，是假绿）、放宽门禁（宪章级改动，须另立 issue） |
 
 | 33 | **`dataQueryRatePerMin` 必填的消费方少算了**（**由 T5 的实施 worker 在开工时实测枚举出来**）：计划原文说 `AppConfig` 加必填字段后只有"两处"字面量要补，且把其中一处记成"属 T10"。实测是**宿主侧三处既有测试文件**——`demo-tenant-isolation.test.ts:42` / `app.test.ts:50` / `storage-injection.test.ts:105`——**都存在**，而 T10 只新建 `data-query.e2e.test.ts`，**根本覆盖不到后两处** ⇒ 按原文执行，`pnpm --filter @platform/server typecheck` 恒红、T5 的 Step 8 永远达不成 | T5 的 Files 清单与主表改为**列全三处**并注明「三处，不是一处」；Step 6 的注记把「已知两处」订正为「宿主侧已知四处（三处既有 + T10 一处）」并写明归属。裁决同步下达给 worker：授权改这三处、报告里列为显式偏离、**只补这一行别顺手改其它** |
+| 34 | **PAT 中间件撞 B1 硬约束 ⇒ 计划在这一处结构性写不通**（**由 T5 的实施 worker 在开工时实测查出**，与 #32 同类——计划 vs 仓库正典，两轮扫描都漏了）：brief 要 `apps/server/src/pat-auth.ts` 自带一份查询 `data.query_keys` 的 SQL，而 **B1 三同纪律**（`docs/architecture.md:118`）规定平台代码只许 `platform.*`，由 `scripts/lint-architecture.mjs` 在 `gates` job（**PR 事件也跑**）强制，且 `allowedSchema()` **没有任何豁免机制**。实测：基线 OK(exit 0)，该分支 **2 处违规**（`pat-auth.ts:57` / `:100`，正是"逐字照抄"的那两行）⇒ **PR 恒红**。**根因**：PAT 中间件必须在 `runtime.mount` 之前解析 token（Hono 中间件只影响其后注册的路由），而凭证表在模块 schema 里——两条约束互斥 | **人裁决走「模块端口」（依赖倒置）**，契约落 `docs/module-protocol.md`「模块端口」+ `docs/architecture.md` 的 B1 注记：① 模块用 `createPorts(ctx): ModulePorts` **声明能力**（`resolvePatKey(token) => {keyId, org, casdoorUser} \| null`），宿主用 `runtime.port(moduleId, name)` **取用**；② 宿主侧**零 SQL、零 `data.` 引用、零哈希**，SQL 留在 T3 的 `key-store`（模块 schema 合法）；③ 端口**只解析凭证、不施加权限**，**缺失 ⇒ 通道 fail-closed（503，不是放行）**；④ 顺带消灭约束 5 的「两侧各写一行哈希」——没有第二份实现就没有漂移面。**明确否决**：给该文件开 B1 豁免（与 #32 先例相反，且等于把「宿主可读模块 schema」写进正典、削掉硬边界）；把 PAT 整条移出本轮（人不选）。**连带订正**：T3（端口实现）、T6（`index.ts` 声明 `createPorts`）、T10（往返契约语义从"两份实现比对"改为"端口装配端到端"） |
 
 - **T7/T10 的 `buildTestApp` 第 4 参**：T1 已定为 `DataTenant`（`{ id; casdoor_org }`），T7 原先传裸 `TENANT` 数字 ⇒ 改为传对象。
 - **T10 `acmeTenantId` 原本写死 1**：`platform.tenant.id` 是自增，非空库上跑过几轮就不是 1 ⇒ 改为 `beforeAll` 里**按 slug 查**并在查不到时抛错。

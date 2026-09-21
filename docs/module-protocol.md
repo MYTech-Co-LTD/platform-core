@@ -410,6 +410,91 @@ if (!cfg) return c.json({ error: 'ZOS_NOT_CONFIGURED' }, 503)
 > 消费方是**宿主自己的路由**（它直接 `c.get('tenant')`），**从来没有交付给模块**过。本节是**新增的
 > 一条交付通路**，不是复用既有通路——别以为「照公众号抄一下就行」。
 
+## 模块端口：`createPorts`（宿主在 mount 前索取模块能力，2026-09-21 拍板）
+
+> 适用：`modules/<id>/index.ts` 的**可选** `createPorts` + 宿主装载器暴露的 `port()` 取用面。
+> 契约源是 `packages/platform-sdk/src/module.ts` 的 `ModulePorts` / `ResolvedPatKey` / `ModuleDefinition`。
+>
+> **本节自成一体**：规则以本节为准。
+
+**它解决的是什么**：有些能力，宿主**必须在 `runtime.mount` 之前**就拿到——最典型的是
+**PAT 凭证解析**：`patIdentityMiddleware` 要在模块路由之前把 `Bearer dkq_…` 解析成
+`(org, casdoor_user)` 才能注入 `identity`（Hono 的中间件只影响**其后注册**的路由，挂晚了恒不执行）。
+
+而这些能力的**数据**（如 `data.query_keys`）在**模块自己的 schema** 里。于是撞上 B1：
+
+> **B1 跨 schema 三同纪律**：平台代码只许 `platform.*`；`modules/<id>/` 只许自身 id。
+> 固化在 `scripts/lint-architecture.mjs`（`allowedSchema()` 把 `modules/<id>/` 之外一律硬钉成
+> `platform`），**没有任何豁免机制**（无 marker、无 allowlist）。
+
+> ⚠️ **这不是理论风险**：2026-09-21 实测——把模块的 `data.query_keys` 查询写进
+> `apps/server/src/pat-auth.ts`，`lint-architecture.mjs` 立刻报 2 处 B1 违规（`gates` job，
+> **PR 事件也跑**）。「宿主自带一份 SQL」这个走法**结构性行不通**。
+
+**端口就是那个缺口**：宿主**声明它需要什么能力**，模块**供给实现**——依赖倒置。宿主侧零 SQL、
+零模块 schema 引用；模块侧在自己的 schema 里合法地读写。
+
+### 模块侧：怎么声明（**不声明 = 宿主取不到**）
+
+```ts
+// modules/<id>/index.ts
+export default defineModule({
+  manifest,
+  createRouter: ({ pool }) => { /* …路由… */ },
+  // 可选。与 createRouter 同形：吃同一个 ModuleContext。
+  createPorts: ({ pool }) => ({
+    async resolvePatKey(token) {
+      // 哈希 + 查询 + 触碰 last_used_at **都在这里**（模块自己的 schema，合法）
+    },
+  }),
+})
+```
+
+- **字段可选**：现有模块（`demo` / `aftersales`）一行不改仍装载通过。
+- ⚠️ **只暴露宿主确实需要的能力**。端口不是「把模块业务开个后门给宿主」的地方——目前**只有**
+  `resolvePatKey` 一个成员，加新的要先回答「宿主为什么必须在 mount 前拿到它」。
+
+### 宿主侧：怎么取
+
+```ts
+// apps/server/src/app.ts（在 sessionMiddleware 之后、runtime.mount 之前）
+app.use('/api/modules/*', patIdentityMiddleware({
+  casdoor: casdoorFactory,
+  resolveKey: runtime.port('data', 'resolvePatKey'),   // ← 唯一取法
+  ratePerMin: config.dataQueryRatePerMin,
+}))
+```
+
+| 名 | 值 / 形状 | 出处 |
+|---|---|---|
+| 端口接口 | `ModulePorts = { resolvePatKey?(token: string): Promise<ResolvedPatKey \| null> }` | `packages/platform-sdk/src/module.ts` |
+| 返回值 | `ResolvedPatKey = { keyId: number; org: string; casdoorUser: string }` | 同上 |
+| 模块侧声明 | `createPorts(ctx: ModuleContext): ModulePorts` | `ModuleDefinition`（可选字段） |
+| 宿主侧取用 | `runtime.port(moduleId, name)`；未装载/未声明 ⇒ **`undefined`** | `apps/server/src/loader.ts` 的 `ModulesRuntime` |
+
+### 安全性质（本节必须写死的四条）
+
+1. **端口是「能力」，不是数据通道**：宿主只能触发模块声明的那几个**具体动作**，拿不到表、拿不到
+   任意查询、拿不到 Pool。这与「宿主引用模块 schema」是**本质不同**的两件事——后者把模块的存储
+   形状变成宿主的第二份事实源。
+2. **端口不施加权限**：`resolvePatKey` 只**解析凭证**（token → 主体），**不判定能不能查**。
+   授权仍由宿主（Casdoor 实时 scopes）与模块的授权核心各自在既有位置完成。别把端口当成门禁。
+3. **端口缺失 ⇒ 该通道关闭，且是 fail-closed**：宿主必须自己处理 `undefined`——
+   见到该通道形状的凭证（`Bearer dkq_…`）而端口缺失 ⇒ **拒绝（503）**，**不是放行**。
+   （与 `storage` 未配置时模块自己 503 同风格；注意**不要**照抄访客码/企微那种 `next()` 放行——
+   那两者放行是因为「没开这个能力时，请求本来就不该由它处理」。）
+4. **凭证明文不进日志**：端口吃明文 token 是必要的（哈希在模块侧），但实现方**不得**把它写进
+   日志、审计、错误信息或 LLM 上下文。
+
+### 与既有不变量的关系
+
+- **B1 在两个方向都成立**：宿主不引用 `data.*`；模块不引用 `platform.*`（它走 `ctx.pool` 与
+  `identity`）。这正是端口存在的理由。
+- **「宿主不静态依赖模块」仍成立**：端口是**运行时取用**（`runtime.port(...)`），不是 `import`——
+  宿主对 `modules/<id>/` 没有编译期依赖，模块缺席时宿主只是拿到 `undefined`。
+- **一份实现的纪律**：有了端口，宿主侧**不再需要**复制模块的哈希行。任何「两侧逐字一致」的
+  人工约定，都是一份可以消失的漂移面——**能消失就让它消失**，别为了对称而保留。
+
 ## 实现注意（踩过的坑，勿重蹈）
 
 门卫能不能生效，**取决于挂载方式**，与门卫自身的代码无关。三条已实证的 Hono 行为：
