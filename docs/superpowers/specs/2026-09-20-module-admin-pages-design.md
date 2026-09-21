@@ -63,6 +63,12 @@ frontend:
   admin 页**共享** `/console/admin/` 前缀，不冲突靠两点：宿主 admin 显式路由只占
   各自精确路径（react-router 精确优先）；registry 全局 path 唯一（同 path 首个声明者胜）。
 
+> 🕰 本「**路由**」条写的是 **#127 之前**的口径（模块 admin 页只落 `ConsoleModulePage` 通配、
+> 只判页门——路由**不吃** config、**不套**组门）。该口径**已于 #127 反转**（2026-09-21）：
+> 路由层接入 config 启用门（停用 ⇒ 直敲出「模块可能未启用」Result），模块 admin 页路由先过组门
+> `AdminGate`（`tenant:admin`）再进 `ConsoleModulePage`。以 `docs/module-protocol.md` 现行正文为准，
+> **勿按本条回退**。
+
 ## 存储配置页：能力联动
 
 - gen 脚本聚合 `storageDeclarers`（扫各 manifest 的 `storage:` 字段）进
