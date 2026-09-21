@@ -138,14 +138,22 @@ export interface DeclaredEndpoint {
 }
 
 /**
- * 门卫放行标记（Hono context 变量键）。`declaredScopeGate` 判定通过后置位，**唯一消费者是
- * 包裹层（`loader.applyDeclaredApiGate`）给通配 ALL 路由挂的兜底门卫**（Task 24 评审 R1）。
+ * 门卫放行标记（Hono context 变量键）。`declaredScopeGate` 判定通过后置位，**两个消费者**
+ * （#145 起）：
+ *   ① 包裹层（`loader.applyDeclaredApiGate`）给通配 ALL 路由挂的兜底门卫（Task 24 评审 R1）；
+ *   ② `declaredScopeGate` 自己的重复匹配短路——同深度 param 声明的 use 也会匹配静态兄弟
+ *     路径（`/metrics/:id` 的门卫也命中 `GET /metrics/all`），那一次调用里 routePath 是
+ *     ':id' **模式**、按 GET 查表必 miss；已放行 ⇒ 不再重复判定（见 declaredScopeGate）。
  *
  * 为什么需要它：通配 ALL 路由（`use('*')` / `use('/prefix/*')` / `mount()`）匹配的请求路径
  * 集合**大于**任何一条声明路径。逐条声明的门卫只覆盖声明过的那几条，其余（如 `/files/*`
  * 下的 `/files/b`）会直达模块自己的中间件/handler——**匿名可达**。兜底门卫要拒掉这些，
  * 但它自己无法用 `c.req.routePath` 判定（在通配路径上它恒为通配模式本身，见下），只能问
  * 这枚标记："本次请求是不是已经被某条声明的门卫放行了？"
+ *
+ * 伪造面（#145 评审问过）：标记是 Hono **context 变量**——请求参数/头写不进 context，
+ * 全仓也只有本门卫的成功路径 `c.set` 它；短路跳过的永远是**已通过完整声明判定**的请求，
+ * 不会放过任何未判定的授权。
  *
  * 键名带 `platform.` 前缀，避免与模块自有 context 变量撞车。
  */
@@ -168,12 +176,22 @@ export const DECLARED_GATE_APPROVED = 'platform.declaredGateApproved'
  * `declared[].path` 必须与 routePath **同基准**：宿主装载器因此传宿主绝对路径，本文件自己的
  * 用例（未挂载）传模块相对路径。两处混用 ⇒ 门卫恒 403。
  *
+ * **重复匹配短路（#145）**：包裹层给每条声明路径各挂一道 use；同深度的 param 声明
+ * （`/metrics/:id`）的 use 也会匹配静态兄弟路径（`GET /metrics/all`），且那一次调用里
+ * routePath 是 ':id' 模式而非实际路径——查表必 miss ⇒ **授权用户被误 403**（实测症状：
+ * data 模块 `GET /metrics/all` 对所有持 data:manage 的人恒 403，console 指标页不可用）。
+ * 已置放行标记 ⇒ 直接 next()，不再查表。配套约束（loader.applyDeclaredApiGate）：门卫
+ * 注册必须**静态路径在前**——param 在前时错误那道先跑、403 先出，短路来不及生效（实测）。
+ *
  * 错误体与 requireScope 逐字一致（模块与前端无需感知差异）。
  */
 export function declaredScopeGate(
   declared: ReadonlyArray<DeclaredEndpoint>,
 ): MiddlewareHandler {
   return async (c, next) => {
+    // 重复匹配短路（#145）：本次请求已被（精确路径命中的）声明门卫放行 ⇒ 不再重复判定。
+    // 没有这一行，param 声明的 use 会把静态兄弟路径误 403——见上方「重复匹配短路」注记。
+    if (c.get(DECLARED_GATE_APPROVED)) return next()
     const identity = c.get('identity') as Identity | undefined
     if (!identity) {
       return c.json({ error: 'UNAUTHENTICATED' }, 401)
@@ -192,7 +210,7 @@ export function declaredScopeGate(
     if (!identity.hasScope(hit.scope)) {
       return c.json({ error: 'FORBIDDEN', need: hit.scope }, 403)
     }
-    // 放行即置标记：包裹层的兜底门卫据此区分"已被声明门卫放行"与"谁都没放行"
+    // 放行即置标记：包裹层的兜底门卫与本门卫自己的重复匹配短路都据此判定
     // （见 DECLARED_GATE_APPROVED 的说明）。置标记不是授权本身，授权是上面那两行判定。
     c.set(DECLARED_GATE_APPROVED, true)
     await next()
