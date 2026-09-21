@@ -1,10 +1,10 @@
 // key-store.ts — 个人 Key（通道 B）的存储层。
 //
-// ⚠️ 哈希那一行必须与 apps/server/src/pat-auth.ts 里的实现**逐字一致**：
+// ⚠️ 哈希实现只在本文件存在一份（约束 5/14 订正后宿主侧没有也不得再建第二份）：
 //     createHash('sha256').update(token).digest('hex')
-//   两侧不共享代码是刻意的——宿主静态 import 模块是架构违规，且会打掉 worktree 并行。
-//   ⚠️ 约束 14 订正后**没有第二份实现**：宿主不再复制哈希行，解析走模块端口，
-//   所以这一行只在这里存在一份。T10 的往返契约测试仍保留（模块建 key → 宿主中间件认下来）。
+//   宿主不复制这一行——静态 import 模块是架构违规，且会打掉 worktree 并行；
+//   解析一律走模块端口（resolvePat，T6 包成 resolvePatKey 暴露给宿主）。
+//   跨进程一致性由 T10 的往返契约测试负责（模块建 key → 宿主中间件认下来）。
 import { createHash } from 'node:crypto'
 import { randomBytes } from 'node:crypto'
 import type { Pool } from 'pg'
@@ -98,7 +98,8 @@ export async function resolvePat(pool: Pool, token: string): Promise<ResolvedPat
   return { keyId: Number(row.id), org: row.org, casdoorUser: row.casdoor_user }
 }
 
-/** 记一次使用。fire-and-forget 调用（失败不阻断问数）。 */
-export async function touchPatKey(pool: Pool, id: number): Promise<void> {
-  await pool.query('update data.query_keys set last_used_at = now() where id = $1', [id])
+/** 记一次使用。org 与 id 双条件：即便传错 id，只要 org 是自己的就写不到别家的 key
+ *  （约束 13：写路径一律带隔离键）。fire-and-forget 调用（失败不阻断问数）。 */
+export async function touchPatKey(pool: Pool, org: string, id: number): Promise<void> {
+  await pool.query('update data.query_keys set last_used_at = now() where org = $1 and id = $2', [org, id])
 }

@@ -22,11 +22,16 @@ describe('warehouseConfigured（不需要数据库）', () => {
 describe('warehousePool（惰性单例；装载期不建连接）', () => {
   afterAll(() => { resetWarehousePool() })
 
-  it('未配 ⇒ 抛，而不是给出一条坏连接（fail-closed 的可见面是常量化错误码）', () => {
+  it('未配 ⇒ 抛（常量化错误码）；抛完单例仍是空的——失败不留半成品', async () => {
     resetWarehousePool()
     expect(() => warehousePool({})).toThrow(DATA_WAREHOUSE_UNCONFIGURED)
-    // 抛过之后单例仍是空的：不能因为一次拿不到就留下半成品
-    expect(warehouseConfigured({})).toBe(false)
+    // 真正要验的不变量：抛过之后单例**仍未被赋值**——下一次带配置的调用必须拿到
+    // 按这份 env 新建的池。若失败路径曾把池（哪怕坏的）写进单例，这里拿到的就是
+    // 那条残骸，它的 connectionString 对不上本份 env，断言即红。
+    const p = warehousePool({ DATA_WAREHOUSE_URL: WAREHOUSE_URL })
+    expect(p.options.connectionString).toBe(WAREHOUSE_URL)
+    resetWarehousePool()
+    await p.end()   // 没真连过，end 是干净的
   })
 
   it('配了 ⇒ 两次拿到同一条（单例）；statement_timeout 已设；reset 后换新', async () => {

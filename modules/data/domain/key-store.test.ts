@@ -17,9 +17,12 @@ describe('token 形状（不需要数据库）', () => {
     expect(newPatToken()).not.toBe(t)          // 每次都不同
   })
 
-  it('hashPat 与宿主中间件那条行**逐字一致**（跨进程契约，见 Global Constraints 5）', () => {
+  it('hashPat 是 sha256 hex——全仓唯一一份哈希实现，钉住算法不漂移', () => {
     const token = 'dkq_fixture-token'
-    // ↓↓ 这一行必须与 apps/server/src/pat-auth.ts 里的实现完全相同
+    // 自查重算：这条用例不证明跨进程一致性，只钉住「hashPat = sha256 hex」这一算法形状。
+    // 哈希实现只在本模块存在一份（约束 5/14 订正后宿主侧没有也不得再建第二份——
+    // apps/server 不得复制本行，解析一律经模块端口 resolvePatKey）；
+    // 跨进程一致性由 T10 的往返契约测试负责（模块建 key → 宿主中间件认下来）。
     const expected = createHash('sha256').update(token).digest('hex')
     expect(hashPat(token)).toBe(expected)
     expect(hashPat(token)).toMatch(/^[0-9a-f]{64}$/)
@@ -70,10 +73,20 @@ describePg('key-store（需要 DATABASE_URL）', () => {
     expect(await revokePatKey(pool, ORG, 'frank', id)).toBe(false)
   })
 
-  it('touchPatKey 写 last_used_at', async () => {
+  it('touchPatKey 写 last_used_at（带 org）', async () => {
     const { id } = await createPatKey(pool, ORG, 'gina', 'g1')
-    await touchPatKey(pool, id)
+    await touchPatKey(pool, ORG, id)
     const r = await pool.query('select last_used_at from data.query_keys where id = $1', [id])
     expect(r.rows[0].last_used_at).not.toBeNull()
+  })
+
+  it('touchPatKey 的 org 限定：别的 org 拿同一个 id 去碰 ⇒ 不生效（隔离键双条件）', async () => {
+    const { id } = await createPatKey(pool, ORG, 'hank', 'h1')
+    await touchPatKey(pool, 'org-t3-test-other', id)      // org 对不上 ⇒ 静默不命中
+    const untouched = await pool.query('select last_used_at from data.query_keys where id = $1', [id])
+    expect(untouched.rows[0].last_used_at).toBeNull()     // last_used_at 原样，没被别家碰
+    await touchPatKey(pool, ORG, id)                      // 本 org ⇒ 生效
+    const touched = await pool.query('select last_used_at from data.query_keys where id = $1', [id])
+    expect(touched.rows[0].last_used_at).not.toBeNull()
   })
 })
