@@ -4,6 +4,7 @@ import { parse as parseYaml } from 'yaml'
 import { ManifestSchema, defineModule } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './routes/context'
 import { registerKeys } from './routes/keys'
+import { registerMcp } from './routes/mcp'
 import { registerMetrics } from './routes/metrics'
 import { registerQuery } from './routes/query'
 import { resolvePat, touchPatKey } from './domain/key-store'
@@ -29,6 +30,7 @@ export default defineModule({
     registerKeys(r, _ctx) // T7
     registerMetrics(r, _ctx) // T6
     registerQuery(r, _ctx) // T6
+    registerMcp(r, _ctx) // T8
     return r
   },
   // 模块端口（约束 14）：宿主在 mount 前经 runtime.port('data','resolvePatKey') 取用。

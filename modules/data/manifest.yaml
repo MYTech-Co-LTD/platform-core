@@ -9,12 +9,14 @@ permissions:
 # loader 的 applyDeclaredApiGate 会用 moduleApiBasePath(id) 加前缀后再做门卫比对。
 # 声明集合必须与 createRouter 注册的集合逐条一致（装载期双向核对，任一方向差集 ⇒ 装载失败）。
 # 改路由或改本清单都必须在同一提交里对齐两侧。T6 首批（指标 + 问数）；
-# T7（个人 Key）已加；T8 再加一批。
+# T7（个人 Key）已加；T8（MCP 端点）已加。
 api:
   internal:
     # ── 问数面（data:query）──
     - { method: GET,  path: /metrics, scope: data:query }
     - { method: POST, path: /query,   scope: data:query }
+    # MCP 端点（通道 B 的 JSON-RPC 单入口；协议错误自兜，授权仍走同一核心）
+    - { method: POST, path: /mcp,     scope: data:query }
     # ── 指标管理面（data:manage）──
     - { method: GET,    path: /metrics/all, scope: data:manage }
     - { method: POST,   path: /metrics,     scope: data:manage }
