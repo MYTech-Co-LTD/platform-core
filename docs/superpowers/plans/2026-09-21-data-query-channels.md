@@ -2366,7 +2366,13 @@ git commit -m "feat(data): 宿主鉴权中间件——PAT 走模块端口（宿�
 - Create: `modules/data/routes/query.ts`
 - Modify: `modules/data/routes/context.ts`（`ModuleVars` 求交 `RequesterVars`、`RouteCtx` 加 `execute`、加 `requesterOf`）
 - Modify: `modules/data/manifest.yaml`（`api.internal` 首批 5 条）
-- Modify: `modules/data/index.ts`（注册 + 把 `execute` 透进 `RouteCtx` + **声明 `createPorts`**（约束 14）：把 T3 的 `resolvePat` 包成 `resolvePatKey(token)` 暴露给宿主。**这是宿主能解析 PAT 的唯一途径**——不声明的话 `runtime.port('data','resolvePatKey')` 恒 `undefined` ⇒ 通道 B 全线 503）
+- Modify: `modules/data/index.ts`（注册 + 把 `execute` 透进 `RouteCtx` + **声明 `createPorts`**（约束 14）：把 T3 的 `resolvePat` 包成 `resolvePatKey(token)` 暴露给宿主。**这是宿主能解析 PAT 的唯一途径**——不声明的话 `runtime.port('data','resolvePatKey')` 恒 `undefined` ⇒ 通道 B 全线 503。
+  **包装体必须做两件事**（缺一就是功能回归）：
+  ① 调 `resolvePat(pool, token)`，命中后把返回值**原样**交给宿主（形状 = SDK 的 `ResolvedPatKey`）；
+  ② **fire-and-forget 调 `touchPatKey(pool, resolved.org, resolved.keyId)`**（`.catch(() => {})`，不 await、失败不阻断）——
+  这是 `last_used_at` 的**唯一**写入点：端口化把宿主那条 `update … last_used_at` 删掉之后，若包装体不补上，
+  该列会**静默停止前进**（T5 评审报过的回归面，症状是「页面上的最近使用时间永远不变」，无任何报错）。
+  ⚠️ `touchPatKey` 的签名是 `(pool, org, id)`（#141 订正）——别按旧稿写 `(pool, id)`。
 - Test: `modules/data/routes/metrics.test.ts`、`modules/data/routes/query.test.ts`
 - Modify: `modules/data/module.test.ts`（双向核对自动覆盖，无需改；若红说明漏了声明）
 
@@ -4167,7 +4173,7 @@ curl -sS https://<生产域名>/healthz
 | 34 | **PAT 中间件撞 B1 硬约束 ⇒ 计划在这一处结构性写不通**（**由 T5 的实施 worker 在开工时实测查出**，与 #32 同类——计划 vs 仓库正典，两轮扫描都漏了）：brief 要 `apps/server/src/pat-auth.ts` 自带一份查询 `data.query_keys` 的 SQL，而 **B1 三同纪律**（`docs/architecture.md:118`）规定平台代码只许 `platform.*`，由 `scripts/lint-architecture.mjs` 在 `gates` job（**PR 事件也跑**）强制，且 `allowedSchema()` **没有任何豁免机制**。实测：基线 OK(exit 0)，该分支 **2 处违规**（`pat-auth.ts:57` / `:100`，正是"逐字照抄"的那两行）⇒ **PR 恒红**。**根因**：PAT 中间件必须在 `runtime.mount` 之前解析 token（Hono 中间件只影响其后注册的路由），而凭证表在模块 schema 里——两条约束互斥 | **人裁决走「模块端口」（依赖倒置）**，契约落 `docs/module-protocol.md`「模块端口」+ `docs/architecture.md` 的 B1 注记：① 模块用 `createPorts(ctx): ModulePorts` **声明能力**（`resolvePatKey(token) => {keyId, org, casdoorUser} \| null`），宿主用 `runtime.port(moduleId, name)` **取用**；② 宿主侧**零 SQL、零 `data.` 引用、零哈希**，SQL 留在 T3 的 `key-store`（模块 schema 合法）；③ 端口**只解析凭证、不施加权限**，**缺失 ⇒ 通道 fail-closed（503，不是放行）**；④ 顺带消灭约束 5 的「两侧各写一行哈希」——没有第二份实现就没有漂移面。**明确否决**：给该文件开 B1 豁免（与 #32 先例相反，且等于把「宿主可读模块 schema」写进正典、削掉硬边界）；把 PAT 整条移出本轮（人不选）。**连带订正**：T3（端口实现）、T6（`index.ts` 声明 `createPorts`）、T10（往返契约语义从"两份实现比对"改为"端口装配端到端"） |
 | 35 | **订正只落到「边界注记」，正文的范文块仍是旧稿**（**由 T5 的实施 worker 在返工时指出**；本条是**一类**问题，不只这一处）：约束 14 改了口径、我也改了 Interfaces 与各处注记，但 **T5 Step 4 的 `pat-auth.ts` 整段范文**（含两条 `data.query_keys` 的 SQL、`createHash` 行、`pool` 依赖、`import type { Pool }`）**原样留着**——实施者若照抄那一段，B1 违规就会**原地复发**。同类还有：T5 Step 8 缺 `lint-architecture` 这条最要命的验收、Step 9 的 `git add` 清单缺新旧 6 个文件、Step 5 的测试用例体仍是 `seedKey` + 真库写法 | 逐处订正：Step 4 范文整体改写为端口版（去掉 SQL/哈希/`pool`/`import Pool`，`deps.resolveKey` 缺失与抛错都 503 `PAT_UNAVAILABLE`，`row.org !== tenant.casdoor_org` 拒，`touch` 语句移出宿主并注明**别再对称地加回来**）；Step 8 补 `node scripts/lint-architecture.mjs` 必须 OK 并写明 PR 恒红的理由；Step 9 的 `git add` 补全；Step 5 测试块改为**桩端口**写法并给原稿块加显式作废标注（留档断言意图，禁止照抄 `seedKey`）。**教训（可复用）**：**订正口径时，正文里的范文块与正文注记一样要逐个扫**——只改注记等于留了个「照抄就复发」的陷阱 |
 | 36 | **`touchPatKey(pool, id)` 是模块里唯一的裸 id 写路径，与约束 13 字面冲突**（**由 T3 的任务评审报出，标 plan-mandated**——签名是 brief 钉死的，故不算实施者偏离）：约束 13 写的是「读写**一律 `where org = $1`**」，而这条 `update … where id = $1` 只按主键写。T3 实施者的辩护是「id 不是用户输入，拿不到别人的 id，无实际隔离洞」——**成立**，但那是**约定**不是**机制**，且它会是全模块唯一的例外，下次有人照抄就出事 | **人裁决：补 org**。签名改 `touchPatKey(pool, org, id)`、SQL 改 `where org = $1 and id = $2`，并补一条「拿另一个 org 去 touch 同一 id ⇒ 不生效」的用例（锁的就是隔离）。⚠️ **不要**把这一处的改法顺手推广到 `resolvePat`——它**仍然不带 org**（评审独立复核：`token_hash` 全局唯一，端口没有 org 位，补上成死结）；`touchPatKey` 是它唯一的例外被消除，不是范式改变 |
-
+| 37 | **`touchPatKey` 全仓零调用方——`last_used_at` 的写入点随端口化被删除后无人接盘**（T5 评审报过并标「归 T6/后续」，但计划的 T6 段**根本没有这条线**，靠挂账必然漏）：端口化删掉了宿主那条 fire-and-forget 的 `update … last_used_at`，T3 交付了新签名的 `touchPatKey(pool, org, id)` 却**没有任何任务负责调它** ⇒ 该列会**静默停止前进**（症状：Key 页的「最近使用」永远不变，无报错——静默故障的典型形态） | T6 的 `index.ts` 的 `createPorts` 包装体**必须做两件事**：① 调 `resolvePat` 原样转交（形状 = SDK `ResolvedPatKey`）；② 命中后 **fire-and-forget `touchPatKey(pool, resolved.org, resolved.keyId)`**（不 await、`.catch(() => {})`）。写进 Files 行（实施者真正照着做的清单），不只是注记——#35 的教训 |
 - **T7/T10 的 `buildTestApp` 第 4 参**：T1 已定为 `DataTenant`（`{ id; casdoor_org }`），T7 原先传裸 `TENANT` 数字 ⇒ 改为传对象。
 - **T10 `acmeTenantId` 原本写死 1**：`platform.tenant.id` 是自增，非空库上跑过几轮就不是 1 ⇒ 改为 `beforeAll` 里**按 slug 查**并在查不到时抛错。
 - **T10 的 e2e 配置缺 `dataWecomChannelKey`**：不给它 ⇒ 通道 C 的中间件**直接放行**（设计如此）⇒ 用例 4 会「没验到东西却仍然绿」。已补进 `configWithCasdoor` 并注明这个静默绿的机制。
