@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.22.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.22.0...v0.22.1) - 2026-09-21
+- 【修复】web: 控制台路由层吃 config；模块 admin 页路由套 AdminGate 组门 ([#147](https://github.com/MYTech-Co-LTD/platform-core/pull/147), [30a4471](https://github.com/MYTech-Co-LTD/platform-core/commit/30a447135c42eecf6731b32bb5da5276a1464f72))
+
+
 ## [0.22.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.21.0...v0.22.0) - 2026-09-21
 - 【新增】data: 问数三通道——一个授权核心 + 系统内会话/个人 Key/企微三通道 ([#146](https://github.com/MYTech-Co-LTD/platform-core/pull/146), [ca648d6](https://github.com/MYTech-Co-LTD/platform-core/commit/ca648d67d189aa61c36112ddfd3b205562640c6c))
 
