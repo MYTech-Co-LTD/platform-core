@@ -67,6 +67,9 @@ function DemoPage() {
 function OtherPage() {
   return <div>停用模块页面内容</div>
 }
+function AdminSettingPage() {
+  return <div>演示模块管理页内容</div>
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -424,6 +427,75 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     expect(screen.queryByText('演示模块页面内容')).not.toBeInTheDocument()
   })
 
+  // ---- #127：路由层吃 config + 模块 admin 页组门 ----
+  it('②d 停用模块（config 缺席）+ 持码用户直敲模块页 → 「模块可能未启用」Result（路由吃 config）', async () => {
+    const load = vi.fn(() => Promise.resolve({ default: OtherPage }))
+    setRegistry([
+      { path: '/console/other/page', title: '停用页面', group: 'main', moduleId: 'other', scope: 'other:console', load },
+    ])
+    mockApi({
+      // SESSION 持有 other:console——排除「无 scope 403」老路径，钉住 config 这维度
+      '/api/platform/auth/session': () => jsonResponse(SESSION),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY), // config 只有 demo ⇒ other 停用
+    })
+
+    renderApp('/console/other/page')
+
+    // 与菜单同款口径：停用 ⇒ 菜单与路由同隐，直敲出「模块可能未启用」Result
+    expect(await screen.findByText('模块可能未启用或未发布，请联系管理员')).toBeInTheDocument()
+    expect(load).not.toHaveBeenCalled()
+    expect(screen.queryByText('停用模块页面内容')).not.toBeInTheDocument()
+  })
+
+  it('②e 模块 admin 页直敲：持页门 scope 但无 tenant:admin → 组门 403（admin 路由套 AdminGate）', async () => {
+    const load = vi.fn(() => Promise.resolve({ default: AdminSettingPage }))
+    setRegistry([
+      {
+        path: '/console/admin/demo/settings',
+        title: '演示设置',
+        group: 'admin',
+        moduleId: 'demo',
+        scope: 'demo:console',
+        load,
+      },
+    ])
+    mockApi({
+      // SESSION 持有 demo:console 页门但无 tenant:admin——钉住组门这维度（与平台内置四项同待遇）
+      '/api/platform/auth/session': () => jsonResponse(SESSION),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+
+    renderApp('/console/admin/demo/settings')
+
+    expect(await screen.findByText('需要租户管理员权限')).toBeInTheDocument()
+    expect(load).not.toHaveBeenCalled()
+    expect(screen.queryByText('演示模块管理页内容')).not.toBeInTheDocument()
+  })
+
+  it('②f 模块 admin 页直敲：tenant:admin + 页门 scope + 模块启用 → 放行渲染（组门不误伤合法用户）', async () => {
+    const load = vi.fn(() => Promise.resolve({ default: AdminSettingPage }))
+    setRegistry([
+      {
+        path: '/console/admin/demo/settings',
+        title: '演示设置',
+        group: 'admin',
+        moduleId: 'demo',
+        scope: 'demo:console',
+        load,
+      },
+    ])
+    mockApi({
+      '/api/platform/auth/session': () =>
+        jsonResponse({ ...SESSION, scopes: ['tenant:admin', 'demo:console'] }),
+      '/api/platform/config': () => jsonResponse(CONFIG_DEMO_ONLY),
+    })
+
+    renderApp('/console/admin/demo/settings')
+
+    expect(await screen.findByText('演示模块管理页内容')).toBeInTheDocument()
+    expect(load).toHaveBeenCalled()
+  })
+
   it('⑤ 暗色切换：点击写入 localStorage，再点切回；初始读取持久化值', async () => {
     setRegistry([])
     mockApi({
@@ -574,7 +646,9 @@ describe('管理台 antd <App> 提供者（issue #106）', () => {
       {
         path: '/console/probe',
         group: 'main',
-        moduleId: 'probe',
+        // moduleId 必须落 config 启用集（demo）——#127 起路由吃 config，模块不在 config 里
+        // 直敲就会被启用门拦下（旧 fixture 的 moduleId:'probe' 是靠路由层缺口才渲染得出）
+        moduleId: 'demo',
         title: '消息探针',
         scope: 'demo:console',
         load: () => Promise.resolve({ default: MessageProbe }),

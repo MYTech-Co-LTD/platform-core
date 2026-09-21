@@ -175,8 +175,8 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
                         │
                         ▼
         菜单出现该条目 + 点进去懒加载模块页
-        （任何一项不过 ⇒ 菜单不出。注意这是「菜单」的过滤——
-          路由层另按 registry ∩ session scope 兜底，不含 config，见「已知边界」）
+        （任何一项不过 ⇒ 菜单不出、直敲 URL 也进不去——
+          #127 起路由与菜单同一判定，直敲出「模块可能未启用」Result）
 ```
 
 **两级菜单**：壳侧栏一条（**协议管**：扁平数组、不支持嵌套、显隐三重过滤）+ 页内导航
@@ -203,15 +203,13 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 | 你声明了… | 管理台上发生什么 |
 |---|---|
 | `frontend.console[]` 条目 | 菜单**平铺**一条 = 一页（协议不支持嵌套；多页面收一个条目、页内真子路由分区——`modules/aftersales/console/index.tsx` 是现成姿势）；显隐 = registry ∩ config 启用集 ∩ session scope 三重过滤；**一个条目 = 侧栏一项 + 页内自绘导航** |
-| `frontend.admin[]` 条目 | 进**管理组 children**，顺序：平台内置三项 → 存储配置 → 模块 admin 页（manifest 声明序）；三条约法（`/console/admin/` 前缀 / scope ∈ permissions / console 条目禁占该前缀）。⚠️ **组门 `tenant:admin` 目前只由菜单侧施加**——模块 admin 页走 `*` 通配的 `ConsoleModulePage`（`registry ∩ 页门 scope`），`AdminGate` 只包住平台内置四项 |
+| `frontend.admin[]` 条目 | 进**管理组 children**，顺序：平台内置三项 → 存储配置 → 模块 admin 页（manifest 声明序）；三条约法（`/console/admin/` 前缀 / scope ∈ permissions / console 条目禁占该前缀）。组门 `tenant:admin` **菜单与路由双层生效**（#127）——路由经 `admin/*` 分支套 `AdminGate`，与平台内置四项同待遇 |
 | `storage: {kind: s3}` | **触发租户管理台「存储配置」页可见**（能力联动：`storageDeclarers ∩ 启用模块 ≠ ∅` 才显示/可达）；运行时 `c.get(TENANT_STORAGE)` 取本租户配置 |
-| 模块被停用 | **菜单面**：菜单不出（三重过滤含 config）。**路由面**：模块页/模块 admin 页走 `registry ∩ session scope`，**不查 config** ⇒ 持码用户直敲 URL 仍可打开该页。唯一由 config 驱动的路由门是 `/console/admin/storage` 的 `StorageGate`。API 面 404（与「不存在」同形） |
+| 模块被停用 | **菜单与路由同隐**（#127）：菜单不出（三重过滤含 config）；直敲模块页/模块 admin 页出「模块可能未启用」Result（路由也吃 config 启用集）。`/console/admin/storage` 的 `StorageGate` 是另一道**能力联动**门。API 面 404（与「不存在」同形） |
 
-> ⚠️ 上表第 2、4 行是 **2026-09-20 实测订正**后的口径，**不要回退**成「菜单与页面同隐」那种
-> 把菜单与路由混为一谈的写法。证据：`apps/web/src/App.tsx:30` 模块页落 `*` 通配；
-> `apps/web/src/pages/Console.tsx` 的 `ConsoleModulePage` 只判 `registry` + `session.scopes`，无 config 查询；
-> `apps/web/src/App.tsx:26-29` 的 `AdminGate` 只包内置四项；`apps/server/src/session-middleware.ts:193` 普通会话 scopes 来自
-> Casdoor（非按启用模块过滤）。缺口记录在案，修复另议。
+> 🕰 上表第 2、4 行在 2026-09-20 曾按**实测旧口径**写（路由不吃 config、模块 admin 页缺
+> 组门）——那是当天的实现缺口，**已由 #127 修复**（2026-09-21）：路由层接入 config 启用门、
+> 模块 admin 页路由套 `AdminGate`。上表现为修复后的正典口径（菜单与路由同一判定）。
 
 ### `frontend.console`：管理台模块页
 
@@ -226,14 +224,14 @@ frontend:
 - **`path`**——站点路径，**全平台唯一**：两个模块声明同一条 ⇒ `gen-console-registry` 构建期硬失败（菜单按 path 聚合，重复即二义）；**不得占 `/console/admin/` 前缀**（schema 拒，防串组）。壳侧按**前缀**匹配（`pathname === path || pathname.startsWith(path + '/')`），深链 `/console/demo/xyz` 也进得来。
 - **`title`**——菜单文案。页内导航的文案归模块自定（协议不管）。
 - **`icon`**——AntD 图标**名字符串**，由壳侧白名单 `CONSOLE_ICONS`（`apps/web/src/pages/Console.tsx`）映射成组件。壳不 import 全量图标（`* as Icons` 会把整包打进 bundle）⇒ **未登记的名字不渲染图标、也不报错**；要新图标先在壳里登记。实测一例：`modules/aftersales/manifest.yaml` 声明 `icon: ToolOutlined`，而登记表里没有它 ⇒ 售后那条菜单项目前**无图标**（demo 的 `ExperimentOutlined` 已登记）。
-- **`scope`**——页门，也是本节**唯一机器只半查**的字段：**菜单**侧参与 `registry ∩ config 启用集 ∩ session scopes` 三重过滤；**路由**侧由模块页判 `registry` 命中 + `session.scopes.includes(scope)`，不过则 `403 无权访问`（**不查 config**）——但 schema **不查它 ∈ `permissions`**（与 `frontend.admin[].scope` 的这处差异见 §2 表脚注）。写一个不存在的码**不报错**，只是那一页永不出现（静默失效）；写 console 条目时按「scope ∈ `permissions[].code`」自查。
+- **`scope`**——页门，也是本节**唯一机器只半查**的字段：**菜单**侧参与 `registry ∩ config 启用集 ∩ session scopes` 三重过滤；**路由**侧由 `ConsoleModulePage` 判 `registry` 命中 + config 启用 + `session.scopes.includes(scope)`——停用出「模块可能未启用」Result、无码 `403 无权访问`（#127 起路由也吃 config）——但 schema **不查它 ∈ `permissions`**（与 `frontend.admin[].scope` 的这处差异见 §2 表脚注）。写一个不存在的码**不报错**，只是那一页永不出现（静默失效）；写 console 条目时按「scope ∈ `permissions[].code`」自查。
 - **`entry`**——模块内相对路径，指向该页组件文件（上面示例里的 ./console/index.tsx）；`check-manifests` 验文件存在，registry 生成时去掉 `./` 前缀当 import 说明符。
 
 **多页面姿势**：`frontend.console` 是**扁平数组、协议不支持嵌套** ⇒ 声明**一条** + 页内真子路由（URL 仍是唯一驱动，页内导航模块自绘，见本节开头第三张图）。现成姿势是 `modules/aftersales/console/index.tsx`——一个条目 `/console/aftersales` 挂六个页签，深链可直达。
 
 **两个实测坑**（浏览器实测抓到，正典无载）→ §7 故障速查前端那两行：嵌套 `<Routes>` ⇒ 空白页零报错；相对 `navigate()` ⇒ 丢模块段（跳成 `/console/rules`）。
 
-**菜单与路由是两套判定**：菜单走三重过滤（含 config 启用集），路由（直敲 URL）只判 `registry ∩ session scope`——**路由不含 config**，所以模块停用后菜单消失、直敲 URL 仍可打开。详见「已知边界」。
+**菜单与路由同一判定**（#127 起）：两者都走 `registry ∩ config 启用集 ∩ session scope` 三重过滤——模块停用后菜单消失，直敲 URL 也出「模块可能未启用」Result。
 
 ### `frontend.admin`：管理组子页
 
@@ -247,13 +245,12 @@ frontend:
 ```
 
 - **三条约法**（前两条 schema 拒，第三条也由 schema 双向拦）：`path` 必须 `/console/admin/` 开头；`scope` 必须 ∈ 本模块 `permissions[].code`（**这一条对 admin 是硬校验，对 console 不是**）；`frontend.console[]` 不得占该前缀。
-- **两层权限**：组门 `tenant:admin` + 页门 `scope`（判定同 console 条目）。⚠️ **组门目前只在菜单侧生效**——模块 admin 页走 `*` 通配的 `ConsoleModulePage`，直敲 URL 时**不套** `AdminGate`（见下条与文末「已知边界」）。
-- **菜单**（侧栏）= registry（构建期聚合，`group:'admin'`）∩ config 启用集 ∩ session scope；
-  **路由**（直敲 URL）= `ConsoleModulePage` 只判 registry ∩ session scope，**不查 config**，
-  且**不套**组门 `AdminGate`——组门目前只在菜单侧生效。
+- **两层权限**：组门 `tenant:admin` + 页门 `scope`（判定同 console 条目），**菜单与路由双层生效**（#127）——路由侧 `admin/*` 分支先套 `AdminGate` 再进 `ConsoleModulePage`。
+- **菜单**（侧栏）= registry（构建期聚合，`group:'admin'`）∩ config 启用集 ∩ session scope，整个「管理」组先过 `tenant:admin`；
+  **路由**（直敲 URL）= `AdminGate`（组门）→ `ConsoleModulePage`（registry ∩ config 启用集 ∩ session scope）——与菜单同一套判定。
 - **服务端 config 不暴露 admin 清单**：菜单侧前端按 registry∩config 自判（`apps/web/src/pages/console-menu.ts`），零后端改动。
 - **进组顺序**：平台内置三项（用户管理／角色与授权／我的订阅）→ 存储配置（能力联动）→ 模块 admin 页（manifest 声明序）。
-- **停用联动（菜单面）**：模块停用 ⇒ 菜单不出（三重过滤含 config）。路由面见上一条——直敲 URL 仍可开；只有 registry 未命中的路径才落「模块可能未启用」Result。
+- **停用联动**：模块停用 ⇒ 菜单不出、直敲 URL 也进不去——路由同判 config，出「模块可能未启用」Result（registry 未命中的路径是同款 Result）。
 - **已知边界**：本期**零真实消费者**——协议与联动逻辑已交付、fixture 级验证覆盖，但还没有真实模块用它。接入者就是第一个真实用例，记得补浏览器级验收（见文末「已知边界」）。
 
 ### `frontend.userApp`：独立前端应用（C 端／移动端）
@@ -364,7 +361,6 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 | 模块页整块空白、零报错 | 用了嵌套 `<Routes>`——模块页挂在壳的 splat 路由 `*` 之下，嵌套路由按 splat 剩余段匹配，永远匹配不上 | 按 pathname 末段直接选页（照 `modules/aftersales/console/index.tsx`） |
 | 点页签跳到别的路径（模块段丢失，如 `/console/rules`） | 相对导航以壳的 splat 路由为基准解析 | 导航一律用**绝对路径** |
 | 管理台 `message.*` 抛 TypeError | 壳里 antd `<App>` 提供者缺失（`useApp` 是裸 `useContext`） | 已由 `Console.tsx` 的 `<AntdApp>` 覆盖；模块页不需要自己加 |
-| 模块停用后直敲模块页 URL 仍能打开（菜单已消失） | **实现缺口**：路由层不含 config——模块页/模块 admin 页都落 `/console` 的 `*` 通配（`apps/web/src/App.tsx:30`），`ConsoleModulePage` 只按 `registry ∩ session scope` 放行（`apps/web/src/pages/Console.tsx`） | 「已知边界」路由层不吃 config 条（#125 spec 的「门禁双层」自相矛盾，缺口记录在案、修复另议）；真正由 config 驱动的路由门只有 `/console/admin/storage` 的 `StorageGate` |
 | 访问 `/app/<id>` 拿到的是控制台壳（不是模块前端） | `frontend.userApp.dist` 目录不存在 ⇒ 装载器**静默跳过**（不报错）：静态挂载与 SPA fallback 都没挂，请求落到控制台顶层 `*` 路由 | 先构建前端子包（`pnpm --filter <pkg> build`）；CI 的移动端产物检查只覆盖 `modules/aftersales/mobile`，新模块要自己保证 |
 
 > 前端表的空白页 / 丢模块段两条是 aftersales M3a 浏览器实测抓到的，正典里没有等价
@@ -372,12 +368,6 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 
 ## 已知边界
 
-- **路由层不吃 config（2026-09-20 实测）**：停用模块的**菜单**会消失，但**页面本身**没有 config
-  路门——模块页与模块 admin 页都落 `/console` 的 `*` 通配（`apps/web/src/App.tsx:30`），由
-  `ConsoleModulePage` 只按 `registry ∩ session scope` 放行（`Console.tsx`），持码用户直敲 URL
-  仍可打开；模块 admin 页同样**不套**组门 `AdminGate`（它只包住平台内置四项，`App.tsx:26-29`）。
-  真正由 config 驱动的路由门只有 `/console/admin/storage` 的 `StorageGate`。这是**实现缺口**
-  （#125 spec 的「门禁双层」与它自己的「路由」条自相矛盾），缺口记录在案、修复另议。
 - **manifest 三个字段是预留（无消费者）**：`notifications.dir`、`config.schema`（schema 接受、
   无人读取）、`bindings`（仅 `check-manifests` 查键白名单，无运行时消费）。声明它们**不会有
   任何效果**——见 §2 表。清理与否另议。

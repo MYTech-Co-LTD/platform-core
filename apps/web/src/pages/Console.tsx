@@ -3,7 +3,8 @@
 // 「模块不再有自己的管理后台」：模块 console 页在构建期聚合成 console-registry.gen.ts
 // （scripts/gen-console-registry.mjs），本壳按 /api/platform/config 的运行时清单出菜单——
 // 服务端说该租户启用（config 出现）且 registry 里有（构建期已挂载）且用户持有 scope，三项
-// 全过才出菜单/放行路由；任何一环缺失都对用户不可见。
+// 全过才出菜单/放行路由（#127 起：菜单与路由同口径；模块 admin 页路由另先过 AdminGate 组门）；
+// 任何一环缺失都对用户不可见。
 // 会话（Task 13）：挂载并行取 /session + /config；401 由 platformFetch 统一跳 /login?next=/console。
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -66,7 +67,7 @@ const CONSOLE_ICONS: Record<string, ReactNode> = {
   TeamOutlined: <TeamOutlined />,
 }
 
-/** 子路由（概览/模块页）经 Outlet context 拿会话、租户配置与品牌（模块页只读 session，加字段向后兼容） */
+/** 子路由（概览/模块页）经 Outlet context 拿会话、租户配置与品牌（模块页读 session + config，加字段向后兼容） */
 export interface ConsoleOutletContext {
   session: PlatformSession
   config: PlatformConfig
@@ -76,7 +77,8 @@ export interface ConsoleOutletContext {
 /**
  * /console/admin/* 的路由级门禁（M3，spec D9）：无 tenant:admin → 403 Result。
  * 与菜单组同一判定（session.scopes.includes(TENANT_ADMIN_SCOPE)）——菜单挡导航、
- * 这里挡直敲 URL，两处一个语义。
+ * 这里挡直敲 URL，两处一个语义。#127 起同时包住模块 admin 页（App.tsx 的 admin/* 通配
+ * 分支），与平台内置四项同待遇。
  */
 export function AdminGate({ children }: { children: ReactNode }) {
   const { session } = useOutletContext<ConsoleOutletContext>()
@@ -308,10 +310,16 @@ export function ConsoleOverview() {
   )
 }
 
-/** /console/<模块 path> 模块页（通配路由）：registry 命中 + scope 放行 → 懒加载模块 default 导出 */
+/**
+ * /console/<模块 path> 模块页（通配路由）：registry 命中 + 模块启用 + scope 放行 →
+ * 懒加载模块 default 导出。config 启用门（#127）：与菜单同款口径——服务端停用（config 缺席）
+ * ⇒ 菜单与路由**同隐**，直敲出「模块可能未启用」Result；判定排在 scope 之前（停用 = 该租户
+ * 无此模块，与 API 面 404 同形）。模块 admin 页经 App.tsx 的 admin/* 分支进入，本页之外
+ * 另先过 AdminGate 组门。
+ */
 export function ConsoleModulePage() {
   const { pathname } = useLocation()
-  const { session } = useOutletContext<ConsoleOutletContext>()
+  const { session, config } = useOutletContext<ConsoleOutletContext>()
   // **前缀匹配，不是全等**（售后 M3a）：模块可以「声明 1 个条目 + 页内真子路由」
   // （`/console/aftersales` 之下挂 `tickets`/`rules`/…）。全等匹配会让深链
   // `/console/aftersales/stores` 直接落进下面的 404 分支——菜单点得进去、URL 一贴就白页。
@@ -319,9 +327,11 @@ export function ConsoleModulePage() {
   const entry = consoleRegistry.find(
     (r) => pathname === r.path || pathname.startsWith(`${r.path}/`),
   )
+  // config 启用门（#127）：registry 命中但 config 无此模块 = 服务端停用 ⇒ 与菜单同隐
+  const moduleEnabled = entry ? config.modules.some((m) => m.id === entry.moduleId) : false
   const Lazy = useMemo(() => (entry ? lazy(entry.load) : null), [entry])
 
-  if (!entry || !Lazy) {
+  if (!entry || !Lazy || !moduleEnabled) {
     return <Result status="404" title="页面不存在" subTitle="模块可能未启用或未发布，请联系管理员" />
   }
   if (!session.scopes.includes(entry.scope)) {
