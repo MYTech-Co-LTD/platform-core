@@ -196,6 +196,11 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 > scope」与之不符，Task 4 一并订正。缺口（是否让路由层也吃 config / 给模块 admin 页补组门）
 > 记录在案，修复另议（不在本计划范围）。
 
+> 🕰 上表第 2、4 行与上引「实测订正」块（菜单与路由是**两套判定**、路由**不查** config、模块 admin
+> 页**不套**组门）是 **#127 之前**的实现缺口口径。该口径**已于 #127 反转**（2026-09-21）：路由层接入
+> config 启用集、模块 admin 页路由套 `AdminGate`（`tenant:admin`），菜单与路由**同一套判定**。
+> 以 `docs/module-protocol.md` 现行正文为准，**勿按上块「必须按此写，勿回退」的祈使句回退**。
+
 ### 3.4 §7 症状速查初版清单
 
 后端：
@@ -234,6 +239,8 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
   session scope`，**不含 config**——停用模块的页面对持码用户仍可直敲直达；覆盖此点的测试只有
   菜单侧（`Console.test.tsx` 的 ① 用例）。这是**实现缺口**而非设计意图（#125 spec 的「门禁双层」
   与它自己的「路由」条自相矛盾），缺口记录在案，文档如实写现状。
+  > 🕰 本条即 **#127 的立项对象**，该缺口**已于 #127 反转**（2026-09-21）：路由层接入 config 启用门、
+  > 模块 admin 页路由套组门 `AdminGate`。以 `docs/module-protocol.md` 现行正文为准，**勿按本条照写现状**。
 - `notifications` / `config.schema` / `bindings` 为预留·无消费者（D4）
 - `frontend.admin` 本期零真实消费者，端到端只靠 fixture 验证——第一个真实模块接入时
   补浏览器级验收（沿 #125 spec 的待销账）

@@ -349,6 +349,10 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 > 会话 scopes 来自 Casdoor（非按启用模块过滤）。缺口记录在案，修复另议（不在本计划范围）。
 ```
 
+> 🕰 上块（逐字采用）的「组门 `tenant:admin` 只由菜单侧施加」「路由面不查 config」是 **#127 之前**
+> 的实测口径。该口径**已于 #127 反转**（2026-09-21）：路由层接入 config 启用集、模块 admin 页路由套
+> `AdminGate`。以 `docs/module-protocol.md` 现行正文为准，**勿按上块「不要回退」的祈使句照抄**。
+
 - [ ] **Step 3: 写各能力面字段细节**
 
 内容要求：五个能力面各一小节，每节 = 字段形状 + 最小示例（引用现文件）+ 语义指针。**必须覆盖**：
@@ -358,6 +362,10 @@ modules/<A>/manifest.yaml              modules/<B>/manifest.yaml
 3. **`frontend.userApp`**——`mount` 与前端工程 `base` **必须一致**（不一致 ⇒ 产物引用错前缀）；`dist` 相对**模块目录**解析；停用 ⇒ 静态与 API 面同时 404（`module-protocol.md`「停用语义」节）。
 4. **`guest.scope`**——访客码语义与发放路径，指针 `module-protocol.md`「停用语义」节的 guest 段。
 5. **`storage`**——声明姿势、`TENANT_STORAGE` 取法、部分填写不回落、连通性验证必须在请求路径之外（管理端保存时探测 + 「测试连接」动作），指针 `module-protocol.md`「租户级配置注入：`storage`」节。
+
+> 🕰 上面第 1、2 条要求写进文档的「菜单与路由是两套判定」「直敲 URL 时不套 `AdminGate`」是
+> **#127 之前**的口径，**已于 #127 反转**（路由层吃 config + 模块 admin 页过组门）。以
+> `docs/module-protocol.md` 现行正文为准，**勿按本步照写**。
 
 - [ ] **Step 4: 核实新增内容的路径与节名引用**
 
@@ -469,6 +477,10 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 > 记载——它们只在 `modules/aftersales/console/index.tsx` 的注释里，本表把它提到接入视角。
 ```
 
+> 🕰 上表「模块停用后直敲模块页 URL 仍能打开（菜单已消失）」一行是 **#127 之前**的实现缺口口径。
+> 该口径**已于 #127 反转**（2026-09-21）：路由层吃 config ⇒ 直敲出「模块可能未启用」Result；模块
+> admin 页另过组门 `AdminGate`。以 `docs/module-protocol.md` 现行正文为准，**勿按该行照抄**。
+
 - [ ] **Step 3: 写「已知边界」**
 
 **必须用下列正文**（四条，逐字采用概念，可直接抄；第一条是路由门禁缺口，勿删——§5 的前向
@@ -492,6 +504,10 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
   届时的演进先例是 Grafana 的做法——section 分组 + 排序权重 + **管理员侧** placement 配置
   （与本平台「模块作者 manifest 决定序」不同）。现在不做（YAGNI），方向先钉住。
 ```
+
+> 🕰 上块第 1 条「路由层不吃 config」是 **#127 之前**的实现缺口口径，**已于 #127 反转**（缺口即
+> #127 的立项对象；修复后 `docs/module-onboarding.md` 的「已知边界」节已删去该条，不再有路由门禁
+> 缺口条目）。以 `docs/module-protocol.md` 现行正文为准，**勿按上块（含「第一条勿删」的前向引用）照写**。
 
 - [ ] **Step 4: 核实文档完整性**
 
@@ -584,6 +600,11 @@ git commit -m "docs(onboarding): 补验收清单/故障速查/已知边界——
   只按 registry∩scope），零后端改动。
 ```
 
+> 🕰 本 Step 2b 要求把正典「显隐联动」改成「**菜单与路由是两套判定**」的整套文本，**已于 #127 反转**：
+> 正典现行正文是「菜单与路由**同一套判定**」（路由吃 config 启用集 + 模块 admin 页过组门
+> `AdminGate`），本步的三个订正块（显隐联动 / 两层权限 / config 不暴露 admin 清单）全部作废。
+> 以 `docs/module-protocol.md` 现行正文为准，**勿按本步照抄**。
+
 - [ ] **Step 3: 核实双向指针与订正落地**
 
 Run:
@@ -595,6 +616,10 @@ Expected: 第一条 `AGENTS.md` 1 处、`docs/module-protocol.md` 1 处；
 第二条两个文件各命中（正典订正 + 新文档同口径）。
 （**不要把 `docs/module-onboarding.md` 放进第一条 grep**——它的 H1 是「新模块接入指南」，
 文件名不自指，期望它命中是错的。）
+
+> 🕰 本步第二条 grep（`菜单与路由是两套判定`）的口径**已于 #127 反转**：两份文档里那段文本已被删改，
+> 该 grep 现在**本就不该命中**——**不要为了让它变绿而把旧口径写回文档**。以 `docs/module-protocol.md`
+> 现行正文为准。
 
 - [ ] **Step 4: 开两个 issue（死字段清理待议 + 控制台路由门禁缺口）**
 

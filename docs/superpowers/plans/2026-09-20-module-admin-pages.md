@@ -6,6 +6,11 @@
 
 **Architecture:** 全部前端/构建期改动，零后端零 DB：SDK schema 承载校验（装载与 check-manifests 同时覆盖）→ gen 脚本聚合（registry 条目带 `group`/`moduleId`，另导出 `storageDeclarers`）→ console-menu 按「registry∩config 启用集∩scope」判定（与 console 三重过滤同构）→ Console/App 接线（菜单 + StorageGate 路由门）。spec：`docs/superpowers/specs/2026-09-20-module-admin-pages-design.md`。
 
+> 🕰 本段末句「菜单 + StorageGate 路由门」是 **#127 之前**的口径：当时模块页路由不吃 config、
+> 模块 admin 页不套组门，路由侧只有 `StorageGate` 一道门。该口径**已于 #127 反转**（2026-09-21）：
+> 路由层吃 config 启用集 + 模块 admin 页路由过 `AdminGate`。以 `docs/module-protocol.md` 现行正文
+> 为准，**勿按本段照做**。
+
 **Tech Stack:** zod schema + tsx 守卫脚本 + Vite 生成物 + React Router 6 + vitest。
 
 ## Global Constraints
@@ -580,6 +585,10 @@ git commit -m "feat(web): 管理组动态化——模块 admin 页聚合与存�
 - Consumes: Task 3 `storageDeclarers`；`ConsoleOutletContext.config`；Task 4 的判定式。
 - Produces: `export function StorageGate({ children }: { children: ReactNode })`——config 启用集与 storageDeclarers 无交集时渲染「模块可能未启用」Result。
 
+> 🕰 本 Task 的「路由门」只覆盖 `/console/admin/storage`（`StorageGate`），是 **#127 之前**的口径：
+> 当时模块 admin 页路由既不查 config 也不套组门 `AdminGate`。该口径**已于 #127 反转**（2026-09-21）。
+> 以 `docs/module-protocol.md` 现行正文为准，**勿按本 Task 照做**。
+
 - [ ] **Step 1: 写失败测试（Console.test.tsx 追加；vi.mock 工厂扩 storageDeclarers）**
 
 ① 顶部 mock 改为（`fakeRegistry` 声明保持，新增可变数组）：
@@ -666,6 +675,10 @@ export function StorageGate({ children }: { children: ReactNode }) {
 ```
 
 （import 行加 `StorageGate`。）
+
+> 🕰 本步只给 `admin/storage` 包一层，是 **#127 之前**的接线（模块 admin 页**不套** `AdminGate`）。
+> 该口径**已于 #127 反转**：`App.tsx` 另加 `admin/*` 分支（`AdminGate` → `ConsoleModulePage`），
+> 模块 admin 页与平台内置四项同待遇。以 `docs/module-protocol.md` 现行正文为准，**勿按本步照做**。
 
 - [ ] **Step 5: 跑测试确认绿**
 
