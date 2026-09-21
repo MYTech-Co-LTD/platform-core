@@ -45,6 +45,37 @@ export interface TenantStorageConfig {
 export const TENANT_STORAGE = 'platform.tenantStorage'
 
 /**
+ * 模块端口（正典 `docs/module-protocol.md`「模块端口：`createPorts`」，2026-09-21 拍板）：
+ * 有些能力宿主**必须在 `runtime.mount` 之前**就拿到（最典型的是 PAT 凭证解析——中间件要在模块
+ * 路由之前把 `Bearer dkq_…` 解析成主体才能注入 `identity`），而这份能力的**数据**在模块自己的
+ * schema 里 —— 宿主直接查就是 B1 违规（`scripts/lint-architecture.mjs`，无豁免机制）。
+ * 解法是依赖倒置：**宿主声明它需要什么能力，模块供给实现**。宿主侧零 SQL、零模块 schema 引用。
+ */
+export interface ResolvedPatKey {
+  keyId: number
+  /** 隔离键：值 = 租户的 Casdoor org（宿主据此判跨租户，与 `TenantRow.casdoor_org` 同基准）。 */
+  org: string
+  /** 凭证绑定的人（Casdoor name）。**不是**授权结论——权限仍由宿主实时向 Casdoor 取。 */
+  casdoorUser: string
+}
+
+/**
+ * 端口集合。**只暴露宿主确实需要的能力**——端口不是「把模块业务开个后门给宿主」的地方。
+ * 加新成员前先回答：宿主为什么**必须**在 `mount` 之前拿到它？
+ *
+ * ⚠️ 端口**只解析凭证、不施加权限**：`resolvePatKey` 回答「这个 token 是谁」，
+ * 不回答「他能不能查」。授权由宿主（Casdoor 实时 scopes）与模块的授权核心各自完成。
+ */
+export interface ModulePorts {
+  /**
+   * 把 PAT 明文 token 解析成凭证主体；未命中/已吊销 ⇒ `null`。
+   * **哈希与查询都在模块侧**（模块自己的 schema 里合法）；宿主侧没有第二份实现。
+   * 明文 token 不得进日志/审计（正典「模块端口」安全性质第 4 条）。
+   */
+  resolvePatKey?(token: string): Promise<ResolvedPatKey | null>
+}
+
+/**
  * 模块定义：manifest（接入协议）+ createRouter（拿到 ctx 组路由）。
  *
  * 返回类型为什么是 `Hono<any, any, any>`（Task 19 评审 I-1 修复）：
@@ -67,6 +98,12 @@ export const TENANT_STORAGE = 'platform.tenantStorage'
 export interface ModuleDefinition {
   manifest: ModuleManifest
   createRouter(ctx: ModuleContext): Hono<any, any, any>
+  /**
+   * 可选：宿主在 `mount` 前索取的能力（端口）。与 `createRouter` 同形——吃同一个
+   * `ModuleContext`。**不声明 = 宿主取不到**（`runtime.port(id, name)` 恒 `undefined`，
+   * 宿主据此对该通道 fail-closed）；现有模块不改仍装载通过。
+   */
+  createPorts?(ctx: ModuleContext): ModulePorts
 }
 
 /** 原样返回 def——只是给模块一个类型收窄的挂点，宿主按 ModuleDefinition 消费。 */

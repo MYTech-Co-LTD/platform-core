@@ -35,7 +35,27 @@ describe('loadConfig', () => {
       },
       publicOrigin: 'http://127.0.0.1:13000',
       seedDemo: false,
+      // 数据问数（T5）：渠道凭证未配 = 通道 C 关闭；限速走缺省 60
+      dataWecomChannelKey: undefined,
+      dataQueryRatePerMin: 60,
     })
+  })
+
+  // T5 新增的必填字段：合法缺省 / 显式合法值 / 非法值 fail-fast 三档。
+  // 非法值直接 throw 是刻意的——限速配错（0 / 负数 / 非整数）静默放行等于没限速，
+  // 而限速的目标是防 agent 循环问数打爆 pg_duckdb，静默失效比启动失败更贵。
+  it('DATA_QUERY_RATE_PER_MIN：缺省 60；合法值透传；非法值抛错', () => {
+    expect(loadConfig({ ...baseEnv }).dataQueryRatePerMin).toBe(60)
+    expect(loadConfig({ ...baseEnv, DATA_QUERY_RATE_PER_MIN: '120' }).dataQueryRatePerMin).toBe(120)
+    expect(loadConfig({ ...baseEnv, DATA_WECOM_CHANNEL_KEY: 'ck' }).dataWecomChannelKey).toBe('ck')
+    for (const bad of ['0', '-1', '1.5', 'abc']) {
+      expect(() => loadConfig({ ...baseEnv, DATA_QUERY_RATE_PER_MIN: bad }))
+        .toThrow(/DATA_QUERY_RATE_PER_MIN/)
+    }
+    // 空/全空白**不**抛错：optional() 把空串与未设置同视 ⇒ 落回缺省 60
+    // （别把它塞进上面的 bad 列表——那会把「空串=未配」这条既有语义判成回归）
+    expect(loadConfig({ ...baseEnv, DATA_QUERY_RATE_PER_MIN: '' }).dataQueryRatePerMin).toBe(60)
+    expect(loadConfig({ ...baseEnv, DATA_QUERY_RATE_PER_MIN: '  ' }).dataQueryRatePerMin).toBe(60)
   })
 
   it('multi 模式 PLATFORM_ORG 可缺省；CASDOOR_APPLICATION 可选透传；SEED_DEMO 开关', () => {

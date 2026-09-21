@@ -43,6 +43,10 @@ export interface AppConfig {
   publicOrigin: string
   /** SEED_DEMO=1 → 宿主启动期跑 demo 种子（幂等收敛，dev/冒烟用；Task 16 消费） */
   seedDemo: boolean
+  /** 通道 C 的渠道服务凭证。未配 ⇒ 通道 C 关闭（中间件直接放行）。 */
+  dataWecomChannelKey?: string
+  /** per-key 限速（次/分钟），缺省 60。 */
+  dataQueryRatePerMin: number
 }
 
 /** 可注入的 env 源（键 → 值/未设置），默认进程环境 */
@@ -81,6 +85,16 @@ export function loadConfig(env: Env = process.env): AppConfig {
     throw new Error(`PORT 必须是 1-65535 的整数，当前=${JSON.stringify(env.PORT)}`)
   }
 
+  // ── 数据问数（modules/data）──
+  // 非必填：没配 = 没开对应的能力（通道 C 关闭 / 用默认限速）。
+  // ⚠️ 注意 DATA_WAREHOUSE_URL **不在这里读**：它由模块自己在请求期从 process.env 取
+  //    （部署级连接，装载期不建）。config 只管宿主中间件要用的两个。
+  const rateRaw = optional('DATA_QUERY_RATE_PER_MIN')
+  const dataQueryRatePerMin = rateRaw === undefined ? 60 : Number(rateRaw)
+  if (!Number.isInteger(dataQueryRatePerMin) || dataQueryRatePerMin < 1) {
+    throw new Error(`DATA_QUERY_RATE_PER_MIN 必须是正整数，当前=${JSON.stringify(rateRaw)}`)
+  }
+
   return {
     port,
     databaseUrl: requireValue('DATABASE_URL'),
@@ -98,5 +112,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     },
     publicOrigin: requireValue('PUBLIC_ORIGIN'),
     seedDemo: env.SEED_DEMO === '1',
+    dataWecomChannelKey: optional('DATA_WECOM_CHANNEL_KEY'),
+    dataQueryRatePerMin,
   }
 }

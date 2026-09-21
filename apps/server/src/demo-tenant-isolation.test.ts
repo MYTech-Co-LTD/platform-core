@@ -55,6 +55,8 @@ describePg('demo 模块租户隔离（spec-1 §2：org 不可互见）', () => {
       },
       publicOrigin: 'http://127.0.0.1:13000',
       seedDemo: true, // 种 acme/beta 两租户 + demo 启用（tenant_module 源，默认订阅源=platform）
+      // 数据问数 per-key 限速（T5 加的**必填**字段）：本组用例不走 PAT 通道，取 loadConfig 的缺省值
+      dataQueryRatePerMin: 60,
     }
     app = (await buildApp({ config })).app
   })

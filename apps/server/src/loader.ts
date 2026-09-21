@@ -28,6 +28,7 @@ import {
   type Identity,
   type ModuleDefinition,
   type ModuleManifest,
+  type ModulePorts,
   type TenantStorageConfig,
 } from '@platform/sdk'
 import { Hono } from 'hono'
@@ -87,6 +88,19 @@ export interface ModulesRuntime {
   modules: LoadedModule[]
   mount<E extends Env>(app: Hono<E>): void
   enabledFor(tenantId: number): Promise<Set<string>>
+  /**
+   * 取某模块声明的**端口**（能力，正典 `docs/module-protocol.md`「模块端口：`createPorts`」）。
+   *
+   * 宿主必须在 `runtime.mount` **之前**拿到某些能力（最典型：PAT 凭证解析——`patIdentityMiddleware`
+   * 要在模块路由之前把 `Bearer dkq_…` 解析成主体），而这些能力的数据在模块自己的 schema 里。
+   * 宿主直接查 = B1 违规，故由模块经 `createPorts` 供给，宿主在这里**运行时取用**（不是 import，
+   * 模块缺席时宿主只是拿到 `undefined`，没有编译期依赖）。
+   *
+   * 未装载该模块 / 模块没声明 `createPorts` / 没声明这个成员 ⇒ `undefined`，**不抛错**：
+   * 缺席是**正常状态**（该部署没装那个模块），由调用方按通道语义处置（如 PAT 端口缺失 ⇒ 503
+   * fail-closed，**不是**放行）。
+   */
+  port<K extends keyof ModulePorts>(moduleId: string, name: K): NonNullable<ModulePorts[K]> | undefined
   /** 该租户已启用模块声明的访客码（manifest guest.scope，售后 spec §1.3：wechat-oa 签访客 session 用） */
   enabledGuestScopes(tenantId: number): Promise<string[]>
 }
@@ -268,6 +282,8 @@ export async function loadModules(
 
   const loaded: ModuleEntry[] = []
   const seen = new Map<string, string>() // id → 首见模块目录（重复 id 报错带两个路径）
+  /** id → 该模块声明的端口（`createPorts` 产物）。没声明的模块不入表 ⇒ `port()` 返 undefined */
+  const portsByModule = new Map<string, ModulePorts>()
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
@@ -323,6 +339,13 @@ export async function loadModules(
       throw new Error(
         `${entryPath} 的 default 导出不是 defineModule 产物（缺 manifest/createRouter）`,
       )
+    }
+
+    // ④.5 端口收集（正典「模块端口」）：模块**可选**声明 createPorts，宿主在 mount 前取用。
+    //      与 createRouter 同形、同一次装载里建；不声明就跳过（取用侧得 undefined）。
+    //      **抛错与 createRouter 同级 fail-fast**：装载期建不起来的端口不该等到第一个请求才暴露。
+    if (typeof def.createPorts === 'function') {
+      portsByModule.set(manifest.id, def.createPorts({ pool: deps.pool }))
     }
 
     loaded.push({
@@ -503,6 +526,13 @@ export async function loadModules(
     },
 
     enabledFor: enabledForImpl,
+
+    // 端口取用面（正典「模块端口」）。**不抛错**：缺席由调用方按通道语义处置（见接口注释）。
+    // typeof 判定是防御模块把非函数塞进端口槽（类型上该槽位只有可选方法，运行时无保证）。
+    port<K extends keyof ModulePorts>(moduleId: string, name: K): NonNullable<ModulePorts[K]> | undefined {
+      const candidate = portsByModule.get(moduleId)?.[name]
+      return typeof candidate === 'function' ? (candidate as NonNullable<ModulePorts[K]>) : undefined
+    },
 
     /** 该租户已启用模块声明的访客码（manifest guest.scope，售后 spec §1.3：wechat-oa 签访客 session 用） */
     enabledGuestScopes: async (tenantId: number): Promise<string[]> => {
