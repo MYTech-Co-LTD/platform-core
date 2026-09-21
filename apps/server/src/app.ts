@@ -24,6 +24,8 @@ import { runMigrations } from './migrate'
 import { seedDemo } from './seed'
 import { getTenantByHost, resolveTenantMiddleware, type TenantEnv } from './tenant'
 import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from './session-middleware'
+import { patIdentityMiddleware } from './pat-auth'
+import { wecomChannelIdentityMiddleware } from './wecom-channel-auth'
 import { platformRoutes, type ModuleInfo } from './routes/platform'
 import { authRoutes } from './routes/auth'
 import { adminRoutes } from './routes/admin'
@@ -215,6 +217,28 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     casdoor: casdoorFactory,
     sessionSecret: config.sessionSecret,
     guestScopes: runtime.enabledGuestScopes,
+  }))
+
+  // ⑥.5 数据问数两通道的鉴权（**必须在 sessionMiddleware 之后、runtime.mount 之前**）：
+  //   · PAT（通道 B）：Bearer dkq_… → 用户 → 实时 scopes
+  //   · 企微（通道 C）：渠道凭证 + X-Wecom-Userid → Casdoor 反查
+  // 两条都只作用于 /api/modules/*（模块路由），且都遵守 first-setter-wins：
+  // session 已注入 identity 时它们直接放行——**系统内通道不经这里**。
+  // Hono 的中间件只影响**其后注册**的路由，故位置不能挪到 runtime.mount 之后。
+  //
+  // 凭证解析走**模块端口**（正典 docs/module-protocol.md「模块端口」）：宿主不碰 data.query_keys
+  // ——B1 只许 platform.*，而凭证表在模块 schema 里。`runtime.port` 是**运行时取用**（不是 import
+  // modules/data），模块缺席/未声明时得 undefined ⇒ PAT 中间件对该通道 fail-closed 503。
+  // ⚠️ 端口在这里**求值一次**（装载已完成，端口集合已定型）：若某部署在运行期装载/卸载模块，
+  //    这里拿到的是装配时刻的结果——宿主目前只在启动期装载（buildApp 内），故成立。
+  app.use('/api/modules/*', patIdentityMiddleware({
+    resolveKey: runtime.port('data', 'resolvePatKey'),
+    casdoor: casdoorFactory,
+    ratePerMin: config.dataQueryRatePerMin,
+  }))
+  app.use('/api/modules/*', wecomChannelIdentityMiddleware({
+    casdoor: casdoorFactory,
+    channelKey: config.dataWecomChannelKey,
   }))
 
   // ⑦ 平台路由：branding/config（modules 注入 = runtime 的 console 数据 + enabledFor 闸门）

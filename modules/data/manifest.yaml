@@ -8,10 +8,27 @@ permissions:
 # ⚠️ api.internal 的 path 是**模块相对路径**（不带 /api/modules/<id> 前缀）——
 # loader 的 applyDeclaredApiGate 会用 moduleApiBasePath(id) 加前缀后再做门卫比对。
 # 声明集合必须与 createRouter 注册的集合逐条一致（装载期双向核对，任一方向差集 ⇒ 装载失败）。
-# T1 起为空是自洽的（还没注册任何路由）；T6/T7/T8 各加一批，且必须在【同一个任务】里同时改
-# 本文件的 api.internal 与 index.ts 的 register* 调用。
+# 改路由或改本清单都必须在同一提交里对齐两侧。T6 首批（指标 + 问数）；
+# T7（个人 Key）已加；T8（MCP 端点）已加；T9（系统内问数 SSE）已加。
 api:
-  internal: []
+  internal:
+    # ── 问数面（data:query）──
+    - { method: GET,  path: /metrics, scope: data:query }
+    - { method: POST, path: /query,   scope: data:query }
+    # 通道 A：系统内问数（SSE 流式；LLM 编排在平台后端）
+    - { method: POST, path: /chat,    scope: data:query }
+    # MCP 端点（通道 B 的 JSON-RPC 单入口；协议错误自兜，授权仍走同一核心）
+    - { method: POST, path: /mcp,     scope: data:query }
+    # ── 指标管理面（data:manage）──
+    - { method: GET,    path: /metrics/all, scope: data:manage }
+    - { method: POST,   path: /metrics,     scope: data:manage }
+    - { method: PUT,    path: /metrics/:id, scope: data:manage }
+    - { method: DELETE, path: /metrics/:id, scope: data:manage }
+    # ── 个人 Key 管理（data:query；只能操作自己的——不是管理员给别人发，用 data:manage
+    #    会让只能问数的人生成不了 Key，与 spec §3 冲突）──
+    - { method: GET,    path: /keys,     scope: data:query }
+    - { method: POST,   path: /keys,     scope: data:query }
+    - { method: DELETE, path: /keys/:id, scope: data:query }
 frontend:
   console:
     - { path: /console/data, title: 数据问数, icon: BarChartOutlined, scope: data:query, entry: ./console/index.tsx }

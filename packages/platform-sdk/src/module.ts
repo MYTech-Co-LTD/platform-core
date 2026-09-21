@@ -45,6 +45,37 @@ export interface TenantStorageConfig {
 export const TENANT_STORAGE = 'platform.tenantStorage'
 
 /**
+ * 模块端口（正典 `docs/module-protocol.md`「模块端口：`createPorts`」，2026-09-21 拍板）：
+ * 有些能力宿主**必须在 `runtime.mount` 之前**就拿到（最典型的是 PAT 凭证解析——中间件要在模块
+ * 路由之前把 `Bearer dkq_…` 解析成主体才能注入 `identity`），而这份能力的**数据**在模块自己的
+ * schema 里 —— 宿主直接查就是 B1 违规（`scripts/lint-architecture.mjs`，无豁免机制）。
+ * 解法是依赖倒置：**宿主声明它需要什么能力，模块供给实现**。宿主侧零 SQL、零模块 schema 引用。
+ */
+export interface ResolvedPatKey {
+  keyId: number
+  /** 隔离键：值 = 租户的 Casdoor org（宿主据此判跨租户，与 `TenantRow.casdoor_org` 同基准）。 */
+  org: string
+  /** 凭证绑定的人（Casdoor name）。**不是**授权结论——权限仍由宿主实时向 Casdoor 取。 */
+  casdoorUser: string
+}
+
+/**
+ * 端口集合。**只暴露宿主确实需要的能力**——端口不是「把模块业务开个后门给宿主」的地方。
+ * 加新成员前先回答：宿主为什么**必须**在 `mount` 之前拿到它？
+ *
+ * ⚠️ 端口**只解析凭证、不施加权限**：`resolvePatKey` 回答「这个 token 是谁」，
+ * 不回答「他能不能查」。授权由宿主（Casdoor 实时 scopes）与模块的授权核心各自完成。
+ */
+export interface ModulePorts {
+  /**
+   * 把 PAT 明文 token 解析成凭证主体；未命中/已吊销 ⇒ `null`。
+   * **哈希与查询都在模块侧**（模块自己的 schema 里合法）；宿主侧没有第二份实现。
+   * 明文 token 不得进日志/审计（正典「模块端口」安全性质第 4 条）。
+   */
+  resolvePatKey?(token: string): Promise<ResolvedPatKey | null>
+}
+
+/**
  * 模块定义：manifest（接入协议）+ createRouter（拿到 ctx 组路由）。
  *
  * 返回类型为什么是 `Hono<any, any, any>`（Task 19 评审 I-1 修复）：
@@ -67,6 +98,12 @@ export const TENANT_STORAGE = 'platform.tenantStorage'
 export interface ModuleDefinition {
   manifest: ModuleManifest
   createRouter(ctx: ModuleContext): Hono<any, any, any>
+  /**
+   * 可选：宿主在 `mount` 前索取的能力（端口）。与 `createRouter` 同形——吃同一个
+   * `ModuleContext`。**不声明 = 宿主取不到**（`runtime.port(id, name)` 恒 `undefined`，
+   * 宿主据此对该通道 fail-closed）；现有模块不改仍装载通过。
+   */
+  createPorts?(ctx: ModuleContext): ModulePorts
 }
 
 /** 原样返回 def——只是给模块一个类型收窄的挂点，宿主按 ModuleDefinition 消费。 */
@@ -101,14 +138,22 @@ export interface DeclaredEndpoint {
 }
 
 /**
- * 门卫放行标记（Hono context 变量键）。`declaredScopeGate` 判定通过后置位，**唯一消费者是
- * 包裹层（`loader.applyDeclaredApiGate`）给通配 ALL 路由挂的兜底门卫**（Task 24 评审 R1）。
+ * 门卫放行标记（Hono context 变量键）。`declaredScopeGate` 判定通过后置位，**两个消费者**
+ * （#145 起）：
+ *   ① 包裹层（`loader.applyDeclaredApiGate`）给通配 ALL 路由挂的兜底门卫（Task 24 评审 R1）；
+ *   ② `declaredScopeGate` 自己的重复匹配短路——同深度 param 声明的 use 也会匹配静态兄弟
+ *     路径（`/metrics/:id` 的门卫也命中 `GET /metrics/all`），那一次调用里 routePath 是
+ *     ':id' **模式**、按 GET 查表必 miss；已放行 ⇒ 不再重复判定（见 declaredScopeGate）。
  *
  * 为什么需要它：通配 ALL 路由（`use('*')` / `use('/prefix/*')` / `mount()`）匹配的请求路径
  * 集合**大于**任何一条声明路径。逐条声明的门卫只覆盖声明过的那几条，其余（如 `/files/*`
  * 下的 `/files/b`）会直达模块自己的中间件/handler——**匿名可达**。兜底门卫要拒掉这些，
  * 但它自己无法用 `c.req.routePath` 判定（在通配路径上它恒为通配模式本身，见下），只能问
  * 这枚标记："本次请求是不是已经被某条声明的门卫放行了？"
+ *
+ * 伪造面（#145 评审问过）：标记是 Hono **context 变量**——请求参数/头写不进 context，
+ * 全仓也只有本门卫的成功路径 `c.set` 它；短路跳过的永远是**已通过完整声明判定**的请求，
+ * 不会放过任何未判定的授权。
  *
  * 键名带 `platform.` 前缀，避免与模块自有 context 变量撞车。
  */
@@ -131,12 +176,22 @@ export const DECLARED_GATE_APPROVED = 'platform.declaredGateApproved'
  * `declared[].path` 必须与 routePath **同基准**：宿主装载器因此传宿主绝对路径，本文件自己的
  * 用例（未挂载）传模块相对路径。两处混用 ⇒ 门卫恒 403。
  *
+ * **重复匹配短路（#145）**：包裹层给每条声明路径各挂一道 use；同深度的 param 声明
+ * （`/metrics/:id`）的 use 也会匹配静态兄弟路径（`GET /metrics/all`），且那一次调用里
+ * routePath 是 ':id' 模式而非实际路径——查表必 miss ⇒ **授权用户被误 403**（实测症状：
+ * data 模块 `GET /metrics/all` 对所有持 data:manage 的人恒 403，console 指标页不可用）。
+ * 已置放行标记 ⇒ 直接 next()，不再查表。配套约束（loader.applyDeclaredApiGate）：门卫
+ * 注册必须**静态路径在前**——param 在前时错误那道先跑、403 先出，短路来不及生效（实测）。
+ *
  * 错误体与 requireScope 逐字一致（模块与前端无需感知差异）。
  */
 export function declaredScopeGate(
   declared: ReadonlyArray<DeclaredEndpoint>,
 ): MiddlewareHandler {
   return async (c, next) => {
+    // 重复匹配短路（#145）：本次请求已被（精确路径命中的）声明门卫放行 ⇒ 不再重复判定。
+    // 没有这一行，param 声明的 use 会把静态兄弟路径误 403——见上方「重复匹配短路」注记。
+    if (c.get(DECLARED_GATE_APPROVED)) return next()
     const identity = c.get('identity') as Identity | undefined
     if (!identity) {
       return c.json({ error: 'UNAUTHENTICATED' }, 401)
@@ -155,7 +210,7 @@ export function declaredScopeGate(
     if (!identity.hasScope(hit.scope)) {
       return c.json({ error: 'FORBIDDEN', need: hit.scope }, 403)
     }
-    // 放行即置标记：包裹层的兜底门卫据此区分"已被声明门卫放行"与"谁都没放行"
+    // 放行即置标记：包裹层的兜底门卫与本门卫自己的重复匹配短路都据此判定
     // （见 DECLARED_GATE_APPROVED 的说明）。置标记不是授权本身，授权是上面那两行判定。
     c.set(DECLARED_GATE_APPROVED, true)
     await next()

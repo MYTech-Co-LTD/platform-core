@@ -100,9 +100,9 @@
 
 | # | 项 | 状态 |
 |---|---|---|
-| 1 | Casdoor 按 wecom userid 反查关联用户的 API 形状 | 待核实（实现前） |
-| 2 | OpenClaw `requesterSenderId` 注入行为跨版本稳定性（以 data-analysis 实测为准） | 待核实 |
-| 3 | per-key 限速阈值、LLM 选型与成本（通道A 后端编排引入平台级 LLM key） | 实施期定 |
+| 1 | Casdoor 按 wecom userid 反查关联用户的 API 形状 | **已核实**：就是 `casdoor.getUser(userid)`——企微 userid 即 Casdoor name（`apps/server/src/routes/auth-wecom.ts` 注释的既有语义），无需绑定表。T5 中间件按此实现，T10 e2e 用例 4 在真装配（MockCasdoor + 真 admin 会话）下端到端验证通过 |
+| 2 | OpenClaw `requesterSenderId` 注入行为跨版本稳定性（以 data-analysis 实测为准） | 待核实（不影响本实现：通道 C 走问数 API `/query` 不经 `mcp.servers`，`requesterSenderId` 不在本链路上） |
+| 3 | per-key 限速阈值、LLM 选型与成本（通道A 后端编排引入平台级 LLM key） | **已定**：per-key 限速默认 **60 次/分钟**（`DATA_QUERY_RATE_PER_MIN`，`config.ts` 缺省值；固定窗口按 keyId 分桶）；LLM 走 OpenAI 兼容端点（`DATA_LLM_BASE_URL` / `DATA_LLM_API_KEY` / `DATA_LLM_MODEL`，见根 `.env.example`），具体模型部署期配 |
 | 4 | Metabase 锁参页门（per-requester locked param 嵌入） | 另文（BI 页门设计） |
 | 5 | 通道B skill 文档形态 | 待沉淀 |
 

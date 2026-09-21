@@ -542,6 +542,68 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     expect((await right.request('/api/modules/guardedmod/ping')).status).toBe(200)
   })
 
+  it('★ #145：静态兄弟路径不被 param 声明的门卫误伤（param 声明写在静态之前也 200）', async () => {
+    // 形状即 data 模块的 /metrics/:id 与 GET /metrics/all：同深度 param 声明的 use 也会匹配
+    // 静态兄弟路径，且那次调用里 routePath 是 ':id' 模式——按 GET 查表必 miss。修复前：
+    // 授权用户打 GET /records/all 恒 403（param 那道先以模式查表 miss ⇒ 403 先出）。
+    // manifest 刻意把 param 声明放在静态**前面**：装载器注册门卫时静态必须排到前面
+    // （loader 的 gatePaths 排序），否则 SDK 门卫的放行标记短路来不及生效。
+    cleanupModules.push('siblingmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'siblingmod', {
+      'manifest.yaml': manifestYaml('siblingmod', '', [
+        'api:',
+        '  internal:',
+        '    - { method: PUT, path: /records/:id, scope: siblingmod:view }',
+        '    - { method: GET, path: /records/all, scope: siblingmod:view }',
+      ].join('\n')),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        '',
+        'export default defineModule({',
+        '  manifest: {',
+        "    id: 'siblingmod', name: 'siblingmod 模块', version: '1.0.0', platform: '>=0.1.0',",
+        "    permissions: [{ code: 'siblingmod:view', name: '查看' }],",
+        '    api: { internal: [',
+        "      { method: 'PUT', path: '/records/:id', scope: 'siblingmod:view' },",
+        "      { method: 'GET', path: '/records/all', scope: 'siblingmod:view' },",
+        '    ] },',
+        '  },',
+        '  createRouter: () => {',
+        '    const app = new Hono()',
+        "    app.get('/records/all', (c) => c.json({ all: true }))",
+        "    app.put('/records/:id', (c) => c.json({ id: c.req.param('id') }))",
+        '    return app',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+    const runtime = await loadModules(modulesDir, { pool })
+
+    // 授权用户打静态兄弟路径：静态门卫放行置标记 → param 门卫短路 → handler 200
+    const right = new Hono()
+    right.use('*', injectIdentity(['siblingmod:view']))
+    runtime.mount(right)
+    const ok = await right.request('/api/modules/siblingmod/records/all')
+    expect(ok.status, '#145 修复前此处恒 403（param 门卫以 :id 模式查表 miss）').toBe(200)
+    expect(await ok.json()).toEqual({ all: true })
+
+    // 对照①：param 路径自身的门卫不受影响
+    const put = await right.request('/api/modules/siblingmod/records/7', { method: 'PUT' })
+    expect(put.status).toBe(200)
+    expect(await put.json()).toEqual({ id: '7' })
+
+    // 对照②：无权用户在静态路径上仍被**静态那道**门卫拦下（短路没有跳过任何授权判定）
+    const wrong = new Hono()
+    wrong.use('*', injectIdentity(['other:scope']))
+    runtime.mount(wrong)
+    const denied = await wrong.request('/api/modules/siblingmod/records/all')
+    expect(denied.status).toBe(403)
+    expect(await denied.json()).toEqual({ error: 'FORBIDDEN', need: 'siblingmod:view' })
+  })
+
   it('匿名探测回归网：装载出的模块每条路由都不可匿名到达', async () => {
     cleanupModules.push('probemod')
     const modulesDir = await newModulesDir()
@@ -1131,6 +1193,75 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     } finally {
       restoreEnv()
     }
+  })
+
+  // ---- 模块端口（正典 docs/module-protocol.md「模块端口：createPorts」）----
+
+  /** 声明了 createPorts 的 fixture（端口名只有 resolvePatKey 一个成员，与 SDK 契约一致）。
+   *  **必须拿到 ctx.pool**（模块要靠它查自己的 schema）——故意做成拿不到就抛，让"ctx 传歪了"当场可见。 */
+  const portModIndexTs = (id: string, shouldThrow = false): string => [
+    "import { Hono } from 'hono'",
+    "import { defineModule } from '@platform/sdk'",
+    '',
+    'export default defineModule({',
+    '  manifest: {',
+    `    id: '${id}', name: '${id}', version: '1.0.0', platform: '>=0.1.0',`,
+    `    permissions: [{ code: '${id}:view', name: '查看' }],`,
+    `    api: { internal: [{ method: 'GET', path: '/ping', scope: '${id}:view' }] },`,
+    '  },',
+    '  createRouter: () => {',
+    '    const app = new Hono()',
+    "    app.get('/ping', (c) => c.json({ ok: true }))",
+    '    return app',
+    '  },',
+    '  createPorts: (ctx) => {',
+    // 抛错点在 createPorts **自身**（不是它返回的方法里）：钉的是"装载期建不起来就装载失败"，
+    // 而不是"端口方法在请求期抛"（那是中间件的事，见 pat-auth.test.ts 的端口抛错用例）。
+    `    if (${shouldThrow}) throw new Error('createPorts 抛错，装载必须失败')`,
+    '    return {',
+    '      async resolvePatKey(token) {',
+    "        if (!ctx.pool) throw new Error('createPorts 没拿到 pool（ctx 传歪了）')",
+    "        return token === 'dkq_ok' ? { keyId: 42, org: 'acme', casdoorUser: 'alice' } : null",
+    '      },',
+    '    }',
+    '  },',
+    '})',
+    '',
+  ].join('\n')
+
+  it('端口：声明的模块取得到；未声明 / 没装载的模块 ⇒ undefined（且不抛错）', async () => {
+    cleanupModules.push('portmod', 'noportmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'portmod', {
+      'manifest.yaml': manifestYaml('portmod'),
+      'index.ts': portModIndexTs('portmod'),
+    })
+    await writeModule(modulesDir, 'noportmod', {
+      'manifest.yaml': manifestYaml('noportmod'),
+      'index.ts': indexTs('noportmod', 'noportmod:view'),
+    })
+    const runtime = await loadModules(modulesDir, { pool })
+
+    const resolve = runtime.port('portmod', 'resolvePatKey')
+    expect(resolve).toBeTypeOf('function')
+    // 命中 / 未命中由模块侧决定，宿主只透传（这条断言同时证明 ctx.pool 真的递到了模块）
+    expect(await resolve!('dkq_ok')).toEqual({ keyId: 42, org: 'acme', casdoorUser: 'alice' })
+    expect(await resolve!('dkq_nope')).toBeNull()
+
+    // 未声明 createPorts 的模块：取到 undefined，**不是抛错**（缺席是正常状态：该部署没装那个模块）
+    expect(runtime.port('noportmod', 'resolvePatKey')).toBeUndefined()
+    // 根本没装载的 id：同样 undefined
+    expect(runtime.port('nosuchmod', 'resolvePatKey')).toBeUndefined()
+  })
+
+  it('createPorts 抛错 ⇒ 装载失败（fail-fast，与 createRouter 同级，不留到首个请求）', async () => {
+    cleanupModules.push('boomport')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'boomport', {
+      'manifest.yaml': manifestYaml('boomport'),
+      'index.ts': portModIndexTs('boomport', true),
+    })
+    await expect(loadModules(modulesDir, { pool })).rejects.toThrow('createPorts 抛错，装载必须失败')
   })
 })
 

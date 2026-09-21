@@ -118,6 +118,8 @@ describePg('存储注入的端到端面（M3c 步 4：注入真的驱动预签�
       },
       publicOrigin: 'http://127.0.0.1:13000',
       seedDemo: true, // 种 acme/beta 两租户；aftersales 无 tenant_module 行 ⇒ 默认启用
+      // 数据问数 per-key 限速（T5 加的**必填**字段）：本组用例不走 PAT 通道，取 loadConfig 的缺省值
+      dataQueryRatePerMin: 60,
     }
     app = (await buildApp({ config })).app
 
