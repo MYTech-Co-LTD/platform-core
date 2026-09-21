@@ -1,0 +1,18 @@
+id: data
+name: 数据问数
+version: 0.1.0
+platform: '>=0.1'
+permissions:
+  - { code: data:query,  name: 数据问数 }
+  - { code: data:manage, name: 数据指标管理 }
+# ⚠️ api.internal 的 path 是**模块相对路径**（不带 /api/modules/<id> 前缀）——
+# loader 的 applyDeclaredApiGate 会用 moduleApiBasePath(id) 加前缀后再做门卫比对。
+# 声明集合必须与 createRouter 注册的集合逐条一致（装载期双向核对，任一方向差集 ⇒ 装载失败）。
+# T1 起为空是自洽的（还没注册任何路由）；T6/T7/T8 各加一批，且必须在【同一个任务】里同时改
+# 本文件的 api.internal 与 index.ts 的 register* 调用。
+api:
+  internal: []
+frontend:
+  console:
+    - { path: /console/data, title: 数据问数, icon: BarChartOutlined, scope: data:query, entry: ./console/index.tsx }
+migrations: { dir: ./migrations }

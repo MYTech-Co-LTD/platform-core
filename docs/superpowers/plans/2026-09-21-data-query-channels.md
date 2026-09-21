@@ -99,7 +99,7 @@ plan: docs/superpowers/plans/2026-09-21-data-query-channels.md
 | `apps/server/src/wecom-channel-auth.ts` | 企微渠道鉴权中间件 | T5 |
 | `apps/server/src/config.ts` | 加三个 data 配置键 | T5 |
 | `apps/server/src/app.ts` | 挂两个中间件（⑥ 的 `sessionMiddleware` 块之后、⑦ 平台路由之前） | T5 |
-| `apps/server/src/demo-tenant-isolation.test.ts` | 既有 `AppConfig` 全量字面量补 `dataQueryRatePerMin`（必填字段，漏补 TS2741） | T5 |
+| `apps/server/src/demo-tenant-isolation.test.ts`、`apps/server/src/app.test.ts`、`apps/server/src/storage-injection.test.ts` | 三个**既有**宿主测试文件的 `AppConfig` 全量字面量各补 `dataQueryRatePerMin`（必填字段，漏补 TS2741） | T5 |
 | `packages/platform-sdk/src/requester-vars.ts` | 新建：`REQUESTER_CHANNEL` / `REQUESTER_KEY_ID` 常量 + `RequesterVars` 类型 | T5 |
 | `packages/platform-sdk/src/index.ts` | 导出上面两个常量（值）与 `RequesterVars`（类型）——**值/类型分行 `export`**（#44 纪律） | T5 |
 | `modules/data/module.test.ts` | manifest↔路由双向核对 + 迁移幂等 | T1（T6/T7/T8 扩展） |
@@ -1724,7 +1724,9 @@ git commit -m "feat(data): runQuery 编排——授权→执行→审计（所�
 - Modify: `packages/platform-sdk/src/index.ts`（导出两个常量）
 - Modify: `apps/server/src/config.ts`（加三个 data 配置键）
 - Modify: `apps/server/src/app.ts:218`（sessionMiddleware 之后插两行 `app.use`）
-- Modify: `apps/server/src/demo-tenant-isolation.test.ts`（**补 `dataQueryRatePerMin`**：该文件第 42 行有一个 `const config: AppConfig = {…}` 全量字面量，本任务给 `AppConfig` 加了**必填**字段 ⇒ 不补就是 TS2741；本仓测试文件纳入 typecheck，`pnpm typecheck` 会红）
+- Modify: `apps/server/src/demo-tenant-isolation.test.ts` / `apps/server/src/app.test.ts` / `apps/server/src/storage-injection.test.ts`（**各补一行 `dataQueryRatePerMin: 60`**）：本任务给 `AppConfig` 加了**必填**字段，而这三个**既有**宿主测试文件里各有一个 `const config: AppConfig = {…}` 全量字面量（`42` / `50` / `105` 行）⇒ 不补就是 TS2741；本仓测试文件纳入 typecheck（issue #68），`pnpm --filter @platform/server typecheck` 会红。
+  > ⚠️ **三处，不是一处**（2026-09-21 由 T5 的实施 worker 实测枚举后订正）。原文只列了 `demo-tenant-isolation.test.ts` 并称另一处「属 T10」——**那是错的**：`app.test.ts` / `storage-injection.test.ts` 是本仓既有文件，而 T10 只新建 `data-query.e2e.test.ts`，根本覆盖不到。**别的任务不会替你修这三处。**
+  > 边界：只补这一行，别顺手改这三个既有文件的其它东西。
 - Test: `apps/server/src/pat-auth.test.ts`
 - Test: `apps/server/src/wecom-channel-auth.test.ts`
 
@@ -2218,9 +2220,12 @@ export interface AppConfig {
 
 > ⚠️ **`dataQueryRatePerMin` 是必填 `number`**（`loadConfig` 恒给它值：缺省 60，非法值直接 throw）。
 > 必填的代价是**所有 `const config: AppConfig = {…}` 全量字面量都要补这一行**，否则 TS2741。
-> 已知两处：`apps/server/src/demo-tenant-isolation.test.ts:42`（本任务改）与 T10 的
-> `configWithCasdoor`（T10 改）。本仓测试文件纳入 typecheck（issue #68），所以漏补 = `pnpm typecheck` 红。
-> 改完跑 `pnpm --filter @platform/server typecheck` 确认，别只跑单测。
+> **宿主侧已知四处**（2026-09-21 实测枚举订正，原文只写"两处"且把其中两处错记成 T10 的活）：
+> `apps/server/src/demo-tenant-isolation.test.ts:42`、`apps/server/src/app.test.ts:50`、
+> `apps/server/src/storage-injection.test.ts:105`——**这三处都是既有文件，本任务改**（T10 只新建
+> `data-query.e2e.test.ts`，覆盖不到它们）；第四处是 T10 自己的 `configWithCasdoor`（T10 改）。
+> 本仓测试文件纳入 typecheck（issue #68），所以漏补 = `pnpm --filter @platform/server typecheck` 红。
+> 改完**必须**跑 `pnpm --filter @platform/server typecheck` 确认，别只跑单测。
 
 - [ ] **Step 7: app.ts 挂两个中间件**
 
@@ -4076,7 +4081,7 @@ curl -sS https://<生产域名>/healthz
 | 31 | **T1 的 Files 漏了两个它自己正文要求的文件**：① `modules/data/console/index.tsx`（Step 3 的注记明说必须建，否则 web 构建期解析入口失败）② `apps/web/src/console-registry.gen.ts`（**进 git 的生成物**；CI 的 `web` job 每次 build 都重新生成它 ⇒ **脏了永远不红**，是静默不一致） | 两者补进 T1 的 Files、主表；新增 **Step 10** 专做重新生成（`node scripts/gen-console-registry.mjs`，禁手改），Step 11 的验证组加上 `--filter @platform/web typecheck` 与 `lint-architecture.mjs`。另补 **Step 2 的 `pnpm install`**（新 workspace 包不 install ⇒ `--filter data` 解析不到，失败形态与代码无关） |
 | 32 | **三张表的隔离键口径违反正典 ⇒ CI `gates` 恒红**（**由 T1 的实施 worker 在开工前查出来并附实测证据**，本扫描漏掉，属"计划 vs 仓库正典"这一类）：T1 的 `001_init.sql` 三表都用 `tenant_id bigint`，而 `scripts/check-tenant-isolation.mjs`（CI `gates` job 第五条守卫，**PR 事件也跑**）按 `information_schema.column_name='org'` 判，**`org_id` 不算 `org`**；正典 `docs/module-protocol.md`「租户数据隔离」逐字写着模块租户数据表**必须带 `org text not null`**（值 = `identity.orgId`），读写一律 `where org = $1`。⇒ T1 的 PR 必红，且这个偏离一路贯穿 T3/T4/T5/T9 的 SQL | **按正典改（不改门禁、不用豁免）**：① 三表隔离键统一为 `org text not null`（值 = `identity.orgId` = `DataTenant.casdoor_org`），`data.query_audit` 的 `org_id` **并入 `org`**（一列两义：既是隔离键也是钉死的主体值，两者生产上同源）；② 主键/索引随之改：`(org, id)` / `data_query_keys_org_user_idx` / `data_query_audit_org_time_idx`；③ 全链 `tenantId: number` → `org: string`（T3 store → T4 `runQuery` → T6/T8/T9 路由，路由侧取 `c.get('tenant').casdoor_org`）；④ T5 的跨租户比对改 `row.org !== tenant.casdoor_org`；⑤ 新增**全局约束 13** 把这条钉死，并写明豁免出口 `-- global-table` 只对真正的全局表用。**明确否决**的替代方案：`-- global-table` 豁免（语义不符：这三张都是租户数据表）、双键并存 `tenant_id`+`org`（两个事实源，且运行期真正生效的仍是 `tenant_id` ⇒ 门禁绿了正典没执行，是假绿）、放宽门禁（宪章级改动，须另立 issue） |
 
-**另外三处不是"与真仓不符"、而是"计划自己不可执行"**，也一并修了：
+| 33 | **`dataQueryRatePerMin` 必填的消费方少算了**（**由 T5 的实施 worker 在开工时实测枚举出来**）：计划原文说 `AppConfig` 加必填字段后只有"两处"字面量要补，且把其中一处记成"属 T10"。实测是**宿主侧三处既有测试文件**——`demo-tenant-isolation.test.ts:42` / `app.test.ts:50` / `storage-injection.test.ts:105`——**都存在**，而 T10 只新建 `data-query.e2e.test.ts`，**根本覆盖不到后两处** ⇒ 按原文执行，`pnpm --filter @platform/server typecheck` 恒红、T5 的 Step 8 永远达不成 | T5 的 Files 清单与主表改为**列全三处**并注明「三处，不是一处」；Step 6 的注记把「已知两处」订正为「宿主侧已知四处（三处既有 + T10 一处）」并写明归属。裁决同步下达给 worker：授权改这三处、报告里列为显式偏离、**只补这一行别顺手改其它** |
 
 - **T7/T10 的 `buildTestApp` 第 4 参**：T1 已定为 `DataTenant`（`{ id; casdoor_org }`），T7 原先传裸 `TENANT` 数字 ⇒ 改为传对象。
 - **T10 `acmeTenantId` 原本写死 1**：`platform.tenant.id` 是自增，非空库上跑过几轮就不是 1 ⇒ 改为 `beforeAll` 里**按 slug 查**并在查不到时抛错。
