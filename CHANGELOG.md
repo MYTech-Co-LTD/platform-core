@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.22.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.21.0...v0.22.0) - 2026-09-21
+- 【新增】data: 问数三通道——一个授权核心 + 系统内会话/个人 Key/企微三通道 ([#146](https://github.com/MYTech-Co-LTD/platform-core/pull/146), [ca648d6](https://github.com/MYTech-Co-LTD/platform-core/commit/ca648d67d189aa61c36112ddfd3b205562640c6c))
+
+
 ## [0.21.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.20.0...v0.21.0) - 2026-09-20
 - 【新增】sdk: 模块管理页协议与存储配置能力联动 ([#125](https://github.com/MYTech-Co-LTD/platform-core/pull/125), [45a4bdd](https://github.com/MYTech-Co-LTD/platform-core/commit/45a4bdd45c3f83e970a225e69974ff57aef9ede0))
 
