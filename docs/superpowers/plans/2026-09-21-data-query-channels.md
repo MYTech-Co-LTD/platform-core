@@ -1868,25 +1868,36 @@ const withAlice = () =>
     perms: [{ owner: ORG, users: ['alice'], resources: ['data:query'] }],
   })
 
-describePg('patIdentityMiddleware（需要 DATABASE_URL）', () => {
-  const pool = new Pool({ connectionString: dbUrl })
-  afterAll(async () => {
-    expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
-    await pool.query('delete from data.query_keys where org = $1', [ORG]).catch(() => {})
-    await pool.end().catch(() => {})
-  })
+// ⚠️ 约束 14 订正后：中间件**不再查表**，凭证解析是**注入的端口** ⇒ 本文件**不需要真库**
+//    （从 `describePg` 变回普通 `describe`，用例恒跑而不是靠 env 才跑）。
+//    桩让四个分支可以**直接构造**：命中 / 未命中(null) / 端口缺失(undefined) / 端口抛错。
+//    真正的「模块建 key → 宿主认下来」端到端链归 T10 的 e2e（那边有真库与真装配）。
+describe('patIdentityMiddleware（不需要数据库——凭证解析走注入桩）', () => {
+  /** 桩端口：token → 凭证主体；未命中返回 null。 */
+  const resolverOf = (map: Record<string, ResolvedPatKey>) =>
+    (async (token: string) => map[token] ?? null)
+
+  /** 本文件多数用例共用的桩：`dkq_roundtrip-1` → alice 的 key。 */
+  const DEFAULT_KEYS: Record<string, ResolvedPatKey> = {
+    'dkq_roundtrip-1': { keyId: 1, org: ORG, casdoorUser: 'alice' },
+  }
 
   /** 假 tenant 中间件 + 被测中间件 + 回显 handler。
    *  Env 泛型**必须**是 `RequesterEnv`（= TenantEnv & SessionEnv & { Variables: RequesterVars }）：
-   *  `c.set('tenant', …)` 与 `c.get(REQUESTER_CHANNEL)` 都靠它，裸 `new Hono()` 会得到 BlankEnv。 */
-  function app(mock: MockCasdoor, ratePerMin = 60) {
+   *  `c.set('tenant', …)` 与 `c.get(REQUESTER_CHANNEL)` 都靠它，裸 `new Hono()` 会得到 BlankEnv。
+   *  `resolveKey` 传 `undefined` 即模拟**端口缺失**（模块没装载 / 没声明 `createPorts`）。 */
+  function app(
+    mock: MockCasdoor,
+    ratePerMin = 60,
+    resolveKey?: (token: string) => Promise<ResolvedPatKey | null>,
+  ) {
     const a = new Hono<RequesterEnv>()
     a.use('*', async (c, next) => {
       c.set('tenant', baseTenant)
       await next()
     })
     a.use('/api/modules/*', patIdentityMiddleware({
-      pool, casdoor: casdoorFor(mock), ratePerMin,
+      casdoor: casdoorFor(mock), resolveKey: resolveKey ?? resolverOf(DEFAULT_KEYS), ratePerMin,
     }))
     a.post('/api/modules/data/query', (c) => c.json({
       userId: c.get('identity')?.userId ?? null,
@@ -1897,6 +1908,12 @@ describePg('patIdentityMiddleware（需要 DATABASE_URL）', () => {
     return a
   }
 
+
+  // ⚠️⚠️ **以下用例体仍是原稿（基于 `seedKey` + 真库的那种写法），已被约束 14 订正作废。**
+  // 实际落地形态见 `apps/server/src/pat-auth.test.ts`（T5 已交付）：用上面的桩端口构造，
+  // **不碰 DB**，四个分支各一条独立用例。**别照抄下面的 `seedKey(...)` 调用**——
+  // 那是「宿主查模块表」时代的产物，照抄等于把 B1 违规连同测试一起搬回来。
+  // 保留它们只为了留档：断言意图（scopes 实时拉、通道/keyId 回显、限速、跨租户拒）仍然有效。
   it('有效 PAT → 注入 live scopes + 通道 / keyId', async () => {
     const mock = withAlice()
     await mock.start()
@@ -2055,13 +2072,11 @@ export type { RequesterVars } from './requester-vars'
 // 与 sessionMiddleware 的**刻意差别**：PAT 没有「缓存的旧 scopes」可降级——权限必须实时向
 // Casdoor 取。所以 Casdoor 故障时这里 **fail-closed 503**，而不是像会话那样降级继续
 // （会话降级的是"本次请求的授权新鲜度"，PAT 降级就等于**没有授权**）。
-import { createHash } from 'node:crypto'
 import { createMiddleware } from 'hono/factory'
 import type { MiddlewareHandler } from 'hono'
-import type { Pool } from 'pg'
 import { effectiveScopes } from '@platform/auth-core'
 import { REQUESTER_CHANNEL, REQUESTER_KEY_ID } from '@platform/sdk'
-import type { Identity, RequesterVars } from '@platform/sdk'
+import type { Identity, RequesterVars, ResolvedPatKey } from '@platform/sdk'
 import type { CasdoorFactory, SessionEnv } from './session-middleware'
 import type { TenantEnv } from './tenant'
 
@@ -2076,8 +2091,10 @@ const WINDOW_MS = 60_000
 export type RequesterEnv = TenantEnv & SessionEnv & { Variables: RequesterVars }
 
 export interface PatAuthDeps {
-  pool: Pool
+  // ⚠️ **没有 `pool`**：宿主不碰 DB、不引用模块 schema（B1 + 约束 14）。凭证解析走注入的端口。
   casdoor: CasdoorFactory
+  /** 由 modules/data 供给（`runtime.port('data','resolvePatKey')`）。**缺失 ⇒ 通道 B fail-closed（503）**。 */
+  resolveKey?: (token: string) => Promise<ResolvedPatKey | null>
   ratePerMin?: number
   /** 注入时钟（ms），仅供限速窗口取值。 */
   now?: () => number
@@ -2100,19 +2117,27 @@ export function patIdentityMiddleware(deps: PatAuthDeps): MiddlewareHandler<Requ
     // 不是 PAT 的地盘（没带 / 带了别的 Bearer）→ 放行，鉴权交给下游门卫（fail-closed 在那边）
     if (!token) return next()
 
-    // ↓↓ 这一行必须与 modules/data/domain/key-store.ts 的 hashPat 实现**逐字一致**
-    const tokenHash = createHash('sha256').update(token).digest('hex')
-    const q = await deps.pool.query(
-      `select id, org, casdoor_user from data.query_keys
-        where token_hash = $1 and revoked_at is null`,
-      [tokenHash],
-    )
+    // ⚠️ 宿主**不做哈希、不查库、不引用模块 schema**（B1 + 约束 14）。
+    //    凭证解析走**模块端口**（`docs/module-protocol.md`「模块端口」）：唯一一份 hashPat 与那条
+    //    select 在 modules/data 的 key-store 里，由模块自己执行；返回形状与模块侧同名同型。
     const tenant = c.get('tenant')
-    if (q.rowCount === 0) return c.json({ error: 'INVALID_KEY' }, 401)
-    const row = q.rows[0]
-    const keyId = Number(row.id)
+    if (!deps.resolveKey) {
+      // 端口缺失（模块未装载 / 未声明 createPorts）⇒ **fail-closed**：见到 PAT 形状的凭证却解析不了，
+      // 一律拒绝。**不要**照抄访客码/企微那种 next() 放行——那两者放行是因为「没开这个能力时，
+      // 请求本来就不该由它处理」；而这里是「这条请求就是要用 PAT，但解析不了」。
+      return c.json({ error: 'PAT_UNAVAILABLE' }, 503)
+    }
+    let row: ResolvedPatKey | null
+    try {
+      row = await deps.resolveKey(token)
+    } catch {
+      // 解析侧不可用（DB 挂等）⇒ 同样 fail-closed：PAT 没有可降级的缓存 scopes
+      return c.json({ error: 'PAT_UNAVAILABLE' }, 503)
+    }
+    if (row === null) return c.json({ error: 'INVALID_KEY' }, 401)
+    const keyId = row.keyId
     // 跨租户的 key 一律无效（域名解析出的租户与 key 的租户必须一致）
-    // 隔离键是 org（text，值 = 租户的 Casdoor org）——别再按数字比：类型都不对了。
+    // 隔离键是 org（text，值 = 租户的 Casdoor org）——别按数字比，类型都不对了。
     if (row.org !== tenant.casdoor_org) return c.json({ error: 'INVALID_KEY' }, 401)
 
     const t = now()
@@ -2124,19 +2149,19 @@ export function patIdentityMiddleware(deps: PatAuthDeps): MiddlewareHandler<Requ
     let scopes: string[]
     try {
       const casdoor = deps.casdoor(tenant.casdoor_org)
-      const user = await casdoor.getUser(row.casdoor_user)
+      const user = await casdoor.getUser(row.casdoorUser)
       if (user === null) return c.json({ error: 'USER_GONE' }, 401)
       const perms = await casdoor.getPermissions()
-      scopes = effectiveScopes(row.casdoor_user, user.roles ?? [], perms)
+      scopes = effectiveScopes(row.casdoorUser, user.roles ?? [], perms)
     } catch {
       // 无缓存可降级 ⇒ fail-closed（没有任何第二套权限状态可以拿来用）
       return c.json({ error: 'CASDOOR_UNAVAILABLE' }, 503)
     }
 
     const identity: Identity = {
-      userId: row.casdoor_user,
+      userId: row.casdoorUser,
       orgId: tenant.casdoor_org,
-      displayName: row.casdoor_user,
+      displayName: row.casdoorUser,
       scopes,
       hasScope: (code: string) => scopes.includes(code),
     }
@@ -2144,11 +2169,8 @@ export function patIdentityMiddleware(deps: PatAuthDeps): MiddlewareHandler<Requ
     c.set(REQUESTER_CHANNEL, 'pat')
     c.set(REQUESTER_KEY_ID, keyId)
 
-    // 记一次使用：**不 await**（失败不阻断问数；last_used_at 不是审计真源，审计在 query_audit）
-    void deps.pool
-      .query('update data.query_keys set last_used_at = now() where id = $1', [keyId])
-      .catch(() => {})
-
+    // ⚠️ 这里**不再有** `update … last_used_at` 那条语句（宿主零 SQL）：记一次使用由**模块侧**
+    //    在 `resolveKey` 内部完成。别为了「对称」把它加回来——那会重新引入 `data.` 引用。
     await next()
   })
 }
@@ -2307,14 +2329,23 @@ Expected: PASS
 Run: `pnpm --filter @platform/server test && pnpm --filter @platform/sdk test`
 Expected: 既有测试**全绿**（本步不能回归——装配顺序是既有契约）
 
+Run: `node scripts/lint-architecture.mjs`
+Expected: **OK**。⚠️ 这是本任务**最要命的一条**：PAT 必须走模块端口（约束 14），宿主侧零 SQL、零 `data.` 引用。
+把原稿那种「宿主自带一份 SQL」写回来 ⇒ 这里立刻 2 处 B1 违规（`pat-auth.ts:57` / `:100`），而它在 CI 的
+`gates` job 里、**PR 事件也跑** ⇒ 整个 PR 恒红。
+
 - [ ] **Step 9: 提交**
 
 ```bash
 git add apps/server/src/pat-auth.ts apps/server/src/wecom-channel-auth.ts \
         apps/server/src/pat-auth.test.ts apps/server/src/wecom-channel-auth.test.ts \
-        apps/server/src/config.ts apps/server/src/app.ts \
+        apps/server/src/config.ts apps/server/src/app.ts apps/server/src/loader.ts \
+        apps/server/src/loader.test.ts apps/server/src/config.test.ts \
+        apps/server/src/app.test.ts apps/server/src/demo-tenant-isolation.test.ts \
+        apps/server/src/storage-injection.test.ts \
+        packages/platform-sdk/src/module.ts \
         packages/platform-sdk/src/requester-vars.ts packages/platform-sdk/src/index.ts
-git commit -m "feat(data): 宿主鉴权中间件——PAT（实时权限/fail-closed 503）与企微渠道凭证"
+git commit -m "feat(data): 宿主鉴权中间件——PAT 走模块端口（宿主零 SQL）与企微渠道凭证"
 ```
 
 ---
@@ -4129,6 +4160,7 @@ curl -sS https://<生产域名>/healthz
 
 | 33 | **`dataQueryRatePerMin` 必填的消费方少算了**（**由 T5 的实施 worker 在开工时实测枚举出来**）：计划原文说 `AppConfig` 加必填字段后只有"两处"字面量要补，且把其中一处记成"属 T10"。实测是**宿主侧三处既有测试文件**——`demo-tenant-isolation.test.ts:42` / `app.test.ts:50` / `storage-injection.test.ts:105`——**都存在**，而 T10 只新建 `data-query.e2e.test.ts`，**根本覆盖不到后两处** ⇒ 按原文执行，`pnpm --filter @platform/server typecheck` 恒红、T5 的 Step 8 永远达不成 | T5 的 Files 清单与主表改为**列全三处**并注明「三处，不是一处」；Step 6 的注记把「已知两处」订正为「宿主侧已知四处（三处既有 + T10 一处）」并写明归属。裁决同步下达给 worker：授权改这三处、报告里列为显式偏离、**只补这一行别顺手改其它** |
 | 34 | **PAT 中间件撞 B1 硬约束 ⇒ 计划在这一处结构性写不通**（**由 T5 的实施 worker 在开工时实测查出**，与 #32 同类——计划 vs 仓库正典，两轮扫描都漏了）：brief 要 `apps/server/src/pat-auth.ts` 自带一份查询 `data.query_keys` 的 SQL，而 **B1 三同纪律**（`docs/architecture.md:118`）规定平台代码只许 `platform.*`，由 `scripts/lint-architecture.mjs` 在 `gates` job（**PR 事件也跑**）强制，且 `allowedSchema()` **没有任何豁免机制**。实测：基线 OK(exit 0)，该分支 **2 处违规**（`pat-auth.ts:57` / `:100`，正是"逐字照抄"的那两行）⇒ **PR 恒红**。**根因**：PAT 中间件必须在 `runtime.mount` 之前解析 token（Hono 中间件只影响其后注册的路由），而凭证表在模块 schema 里——两条约束互斥 | **人裁决走「模块端口」（依赖倒置）**，契约落 `docs/module-protocol.md`「模块端口」+ `docs/architecture.md` 的 B1 注记：① 模块用 `createPorts(ctx): ModulePorts` **声明能力**（`resolvePatKey(token) => {keyId, org, casdoorUser} \| null`），宿主用 `runtime.port(moduleId, name)` **取用**；② 宿主侧**零 SQL、零 `data.` 引用、零哈希**，SQL 留在 T3 的 `key-store`（模块 schema 合法）；③ 端口**只解析凭证、不施加权限**，**缺失 ⇒ 通道 fail-closed（503，不是放行）**；④ 顺带消灭约束 5 的「两侧各写一行哈希」——没有第二份实现就没有漂移面。**明确否决**：给该文件开 B1 豁免（与 #32 先例相反，且等于把「宿主可读模块 schema」写进正典、削掉硬边界）；把 PAT 整条移出本轮（人不选）。**连带订正**：T3（端口实现）、T6（`index.ts` 声明 `createPorts`）、T10（往返契约语义从"两份实现比对"改为"端口装配端到端"） |
+| 35 | **订正只落到「边界注记」，正文的范文块仍是旧稿**（**由 T5 的实施 worker 在返工时指出**；本条是**一类**问题，不只这一处）：约束 14 改了口径、我也改了 Interfaces 与各处注记，但 **T5 Step 4 的 `pat-auth.ts` 整段范文**（含两条 `data.query_keys` 的 SQL、`createHash` 行、`pool` 依赖、`import type { Pool }`）**原样留着**——实施者若照抄那一段，B1 违规就会**原地复发**。同类还有：T5 Step 8 缺 `lint-architecture` 这条最要命的验收、Step 9 的 `git add` 清单缺新旧 6 个文件、Step 5 的测试用例体仍是 `seedKey` + 真库写法 | 逐处订正：Step 4 范文整体改写为端口版（去掉 SQL/哈希/`pool`/`import Pool`，`deps.resolveKey` 缺失与抛错都 503 `PAT_UNAVAILABLE`，`row.org !== tenant.casdoor_org` 拒，`touch` 语句移出宿主并注明**别再对称地加回来**）；Step 8 补 `node scripts/lint-architecture.mjs` 必须 OK 并写明 PR 恒红的理由；Step 9 的 `git add` 补全；Step 5 测试块改为**桩端口**写法并给原稿块加显式作废标注（留档断言意图，禁止照抄 `seedKey`）。**教训（可复用）**：**订正口径时，正文里的范文块与正文注记一样要逐个扫**——只改注记等于留了个「照抄就复发」的陷阱 |
 
 - **T7/T10 的 `buildTestApp` 第 4 参**：T1 已定为 `DataTenant`（`{ id; casdoor_org }`），T7 原先传裸 `TENANT` 数字 ⇒ 改为传对象。
 - **T10 `acmeTenantId` 原本写死 1**：`platform.tenant.id` 是自增，非空库上跑过几轮就不是 1 ⇒ 改为 `beforeAll` 里**按 slug 查**并在查不到时抛错。
