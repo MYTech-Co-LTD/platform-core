@@ -509,6 +509,13 @@ app.use('/api/modules/*', patIdentityMiddleware({
 （如 `/api/modules/demo/ping`），而 `use()` 的注册路径必须保持**模块相对**（写成绝对会叠成
 两段前缀）。装载器因此给门卫传宿主绝对路径、给 `use()` 传模块相对路径——两者不是一回事。
 
+4. **同深度的 param 声明会重复匹配静态兄弟路径**（issue #145）：`/records/:id` 的门卫也会
+   命中 `GET /records/all`，且那一次调用里 `routePath` 是 `:id` **模式**（按 GET 查表必
+   miss）——授权用户被误 403。装载器两道防线：门卫注册**静态路径在前**（param 先跑时
+   403 先出）；`declaredScopeGate` 见放行标记（`DECLARED_GATE_APPROVED`）即短路。模块侧
+   无需做什么，但**静态/param 同深度兄弟**是已知敏感形状（e2e 的回归锁在
+   `apps/server/src/data-query.e2e.test.ts` 用例 8）。
+
 ## 调试：匿名探测
 
 `probeAnonymous(router)`（`@platform/sdk/test-util/anonymous-probe`）对每条已注册路由发一个

@@ -90,6 +90,47 @@ describe('declaredScopeGate：放行标记', () => {
   })
 })
 
+describe('declaredScopeGate：重复匹配短路（#145）', () => {
+  // 同深度 param 声明的 use 也会匹配静态兄弟路径（/metrics/:id 的门卫命中 GET /metrics/all），
+  // 且那一次调用里 routePath 是 ':id' **模式**——按 GET 查表必 miss。没有短路时，授权用户
+  // 打静态兄弟路径会被误 403（实测：data 模块 GET /metrics/all 对所有持权者恒 403）。
+  const declared = [
+    { method: 'PUT', path: '/metrics/:id', scope: 'demo:manage' },
+    { method: 'GET', path: '/metrics/all', scope: 'demo:manage' },
+  ]
+
+  /** 复刻 loader.applyDeclaredApiGate 的注册形状：静态在前（修复后的注册序）、param 在后 */
+  const gatedApp = () => {
+    const app = new Hono<{ Variables: { identity: Identity } }>()
+    app.use('*', async (c, next) => {
+      c.set('identity', makeIdentity(['demo:manage']))
+      await next()
+    })
+    app.use('/metrics/all', declaredScopeGate(declared))
+    app.use('/metrics/:id', declaredScopeGate(declared))
+    app.get('/metrics/all', (c) => c.json({ all: true }))
+    app.put('/metrics/:id', (c) => c.json({ id: c.req.param('id') }))
+    return app
+  }
+
+  it('授权请求打静态兄弟路径：第一道放行置标记，第二道（param 模式查表必 miss）短路 → 200', async () => {
+    const res = await gatedApp().request('/metrics/all')
+    expect(res.status, '短路修复前此处恒 403（第二道门卫以 :id 模式查表 miss）').toBe(200)
+    expect(await res.json()).toEqual({ all: true })
+  })
+
+  it('param 路径自身的门卫不受短路影响：PUT /metrics/:id 照常按声明判定放行', async () => {
+    const res = await gatedApp().request('/metrics/7', { method: 'PUT' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ id: '7' })
+  })
+
+  it('短路不放宽 fail-closed：param 路径上的未声明 method（GET /metrics/7）仍 403', async () => {
+    const res = await gatedApp().request('/metrics/7')
+    expect(res.status).toBe(403)
+  })
+})
+
 describe('declaredScopeGate：HEAD 请求（issue #7）', () => {
   // Hono 把 HEAD 按 GET 派发，但 `c.req.method` 仍是 'HEAD'。若门卫拿原始 method 查声明表，
   // 已声明的 GET 端点在 HEAD 下会查不到声明 ⇒ 落进 !hit 分支 ⇒ **恒 403**。

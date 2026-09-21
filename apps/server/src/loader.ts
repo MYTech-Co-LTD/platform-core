@@ -246,8 +246,15 @@ export function applyDeclaredApiGate(
   const gate = declaredScopeGate(declared.map((d) => ({ ...d, path: mountPath + d.path })))
   const guarded = new Hono()
 
-  // ① 逐条声明路径挂门卫（先于兜底门卫注册 ⇒ 放行标记在兜底门卫看到它之前就已置位）
-  for (const p of new Set(declaredPaths)) guarded.use(p, gate)
+  // ① 逐条声明路径挂门卫（先于兜底门卫注册 ⇒ 放行标记在兜底门卫看到它之前就已置位）。
+  //    注册序**静态路径在前、param 路径在后**（#145）：Hono 按注册序执行匹配到的中间件，
+  //    而同深度 param 声明（/metrics/:id）的 use 也会匹配静态兄弟路径（GET /metrics/all）——
+  //    param 那道先跑时以 ':id' 模式查表必 miss ⇒ 403 先出，静态那道（真正该判定的）
+  //    轮不到跑，SDK 门卫的放行标记短路来不及生效（实测：data 模块 GET /metrics/all 对
+  //    所有授权用户恒 403）。静态在前 + 短路 ⇒ 重复匹配无害。sort 稳定，组内保持声明序。
+  const gatePaths = [...new Set(declaredPaths)]
+    .sort((a, b) => Number(a.includes(':')) - Number(b.includes(':')))
+  for (const p of gatePaths) guarded.use(p, gate)
 
   // ② 兜底门卫：只在模块注册了通配 ALL 时才挂（没用 use()/mount() 的模块行为**零变化**）。
   //    它拒掉一切"没被声明门卫放行"的请求——这正是 wildcard 覆盖面大于声明面时的那条缝

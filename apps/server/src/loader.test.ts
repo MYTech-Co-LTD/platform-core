@@ -542,6 +542,68 @@ describe.skipIf(!dbUrl)('loadModules', () => {
     expect((await right.request('/api/modules/guardedmod/ping')).status).toBe(200)
   })
 
+  it('★ #145：静态兄弟路径不被 param 声明的门卫误伤（param 声明写在静态之前也 200）', async () => {
+    // 形状即 data 模块的 /metrics/:id 与 GET /metrics/all：同深度 param 声明的 use 也会匹配
+    // 静态兄弟路径，且那次调用里 routePath 是 ':id' 模式——按 GET 查表必 miss。修复前：
+    // 授权用户打 GET /records/all 恒 403（param 那道先以模式查表 miss ⇒ 403 先出）。
+    // manifest 刻意把 param 声明放在静态**前面**：装载器注册门卫时静态必须排到前面
+    // （loader 的 gatePaths 排序），否则 SDK 门卫的放行标记短路来不及生效。
+    cleanupModules.push('siblingmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'siblingmod', {
+      'manifest.yaml': manifestYaml('siblingmod', '', [
+        'api:',
+        '  internal:',
+        '    - { method: PUT, path: /records/:id, scope: siblingmod:view }',
+        '    - { method: GET, path: /records/all, scope: siblingmod:view }',
+      ].join('\n')),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        '',
+        'export default defineModule({',
+        '  manifest: {',
+        "    id: 'siblingmod', name: 'siblingmod 模块', version: '1.0.0', platform: '>=0.1.0',",
+        "    permissions: [{ code: 'siblingmod:view', name: '查看' }],",
+        '    api: { internal: [',
+        "      { method: 'PUT', path: '/records/:id', scope: 'siblingmod:view' },",
+        "      { method: 'GET', path: '/records/all', scope: 'siblingmod:view' },",
+        '    ] },',
+        '  },',
+        '  createRouter: () => {',
+        '    const app = new Hono()',
+        "    app.get('/records/all', (c) => c.json({ all: true }))",
+        "    app.put('/records/:id', (c) => c.json({ id: c.req.param('id') }))",
+        '    return app',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+    const runtime = await loadModules(modulesDir, { pool })
+
+    // 授权用户打静态兄弟路径：静态门卫放行置标记 → param 门卫短路 → handler 200
+    const right = new Hono()
+    right.use('*', injectIdentity(['siblingmod:view']))
+    runtime.mount(right)
+    const ok = await right.request('/api/modules/siblingmod/records/all')
+    expect(ok.status, '#145 修复前此处恒 403（param 门卫以 :id 模式查表 miss）').toBe(200)
+    expect(await ok.json()).toEqual({ all: true })
+
+    // 对照①：param 路径自身的门卫不受影响
+    const put = await right.request('/api/modules/siblingmod/records/7', { method: 'PUT' })
+    expect(put.status).toBe(200)
+    expect(await put.json()).toEqual({ id: '7' })
+
+    // 对照②：无权用户在静态路径上仍被**静态那道**门卫拦下（短路没有跳过任何授权判定）
+    const wrong = new Hono()
+    wrong.use('*', injectIdentity(['other:scope']))
+    runtime.mount(wrong)
+    const denied = await wrong.request('/api/modules/siblingmod/records/all')
+    expect(denied.status).toBe(403)
+    expect(await denied.json()).toEqual({ error: 'FORBIDDEN', need: 'siblingmod:view' })
+  })
+
   it('匿名探测回归网：装载出的模块每条路由都不可匿名到达', async () => {
     cleanupModules.push('probemod')
     const modulesDir = await newModulesDir()
