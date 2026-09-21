@@ -144,6 +144,7 @@ describePg('POST /chat 的 SSE 形状（需要 DATABASE_URL；fetch stub 成脚�
       .map((block) => JSON.parse(block.slice(6)))
   }
 
+  // 超时放宽到 15s：默认 5s 在全仓并行负载下余量不足（实测 5017ms 假红，仅超 17ms；隔离跑恒绿 ⇒ 边缘超时 flake，不是缺陷）
   it('SSE：content-type 正确、事件序列 = activity + final（带表）、key 只出现在请求头', async () => {
     await applyMigrations(pool)
     await upsertMetric(pool, ORG, SALES_DAILY)
@@ -178,8 +179,9 @@ describePg('POST /chat 的 SSE 形状（需要 DATABASE_URL；fetch stub 成脚�
     expect(headers.authorization).toBe(`Bearer ${LLM_ENV.DATA_LLM_API_KEY}`)
     // key 不出现在请求体里（只在头）
     expect(JSON.stringify(fetchCalls[0]!.init.body)).not.toContain(LLM_ENV.DATA_LLM_API_KEY)
-  })
+  }, 15000)
 
+  // 同上：同样走 DB 迁移 + 词表 upsert + SSE 流路径，同参数防同款边缘超时
   it('SSE 里的失败用事件表达：LLM HTTP 错 ⇒ error 事件（流已开头，不再换状态码）', async () => {
     await applyMigrations(pool)
     await upsertMetric(pool, ORG, SALES_DAILY)
@@ -194,5 +196,5 @@ describePg('POST /chat 的 SSE 形状（需要 DATABASE_URL；fetch stub 成脚�
     const events = parseEvents(await res.text())
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({ type: 'error', reason: 'AGENT_FAILED', detail: 'LLM_HTTP_502' })
-  })
+  }, 15000)
 })
