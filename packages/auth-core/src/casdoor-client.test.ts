@@ -753,6 +753,8 @@ describe('M3 用户与授权（D4）', () => {
         { name: 'alice', password: 'pw', owner: 'acme', displayName: 'Alice' },
         { name: 'bob', password: 'pw', owner: 'acme', isForbidden: true },
         { name: 'tenantsub', password: 'x', owner: 'acme', isForbidden: true },
+        // #119 携带关联用例：dave 有角色（真机 get-user 回传的关联之一）
+        { name: 'dave', password: 'DavePass99', owner: 'acme', displayName: 'Dave', roles: ['ops'] },
       ],
       perms: [
         { owner: 'acme', name: 'demo-view', displayName: '演示查看', resources: ['demo:view'], users: ['acme/bob'] },
@@ -784,14 +786,26 @@ describe('M3 用户与授权（D4）', () => {
     expect(mm.userIn('acme', 'alice')?.isForbidden).toBe(true)
   })
 
-  it('resetUserPassword：payload 含新密码、不进任何日志面（update 调用可见性由 mock 记录保证）', async () => {
+  // #119 语义钉死：resetUserPassword 改完密码，新密码必须能登录、旧密码必须失效。
+  // 真机：add-user 服务端哈希 / update-user 不哈希 / login 按哈希比对——走 update-user 改密码
+  // = 存明文 = 登录必败（#119 缺陷本体，真机把「重置密码」变成「锁死用户」）。
+  // 修复路径 = 删号重建（add-user 哈希是正路），形状断言一并钉死：不再走 update-user。
+  it('★ resetUserPassword（#119）：改完密码——新密码 verifyPassword 成功、旧密码失败；走删号重建、不走 update-user', async () => {
+    expect((await client().verifyPassword('alice', 'pw'))?.name).toBe('alice') // 前置：旧密码现场可用
+    const updBefore = mm.updateUserCalls.length
     await client().resetUserPassword('alice', 'NewPass456')
-    expect(mm.updateUserCalls.at(-1)).toMatchObject({ id: 'acme/alice', password: 'NewPass456' })
+    expect(mm.updateUserCalls.length).toBe(updBefore) // 绝不再走 update-user（#119 缺陷路径）
+    expect(mm.deleteUserCalls.at(-1)).toEqual({ owner: 'acme', name: 'alice' }) // 铁律②：JSON body {owner,name}
+    expect(mm.addUserCalls.at(-1)).toMatchObject({ owner: 'acme', name: 'alice', password: 'NewPass456' })
+    expect((await client().verifyPassword('alice', 'NewPass456'))?.name).toBe('alice') // 新密码能登录
+    expect(await client().verifyPassword('alice', 'pw')).toBeNull() // 旧密码失效
   })
 
   it('deleteUser 走 JSON body {owner,name}（铁律②）且删后回读为无（铁律③）', async () => {
     await client().deleteUser('bob')
-    expect(mm.deleteUserCalls).toEqual([{ owner: 'acme', name: 'bob' }])
+    // .at(-1) 而非全量数组：resetUserPassword（#119 重建路径）也会删号，全量断言会被
+    // 用例顺序绑架；铁律②钉的是「本次调用走 JSON body {owner,name}」这个形状
+    expect(mm.deleteUserCalls.at(-1)).toEqual({ owner: 'acme', name: 'bob' })
     expect(mm.userIn('acme', 'bob')).toBeUndefined()
   })
 
@@ -829,5 +843,44 @@ describe('M3 用户与授权（D4）', () => {
   it('grant/revoke 对未知码抛错（先跑装载器供给）', async () => {
     await expect(client().grantPermissionToUser('nope:code', 'alice')).rejects.toThrow('不存在权限码')
     await expect(client().revokePermissionFromUser('nope:code', 'alice')).rejects.toThrow('不存在权限码')
+  })
+
+  // #119 重建不能换静默降权（放在本 describe 末尾：grant/revoke 各用例对 demo:view 的 users
+  // 数组有逐元素精确断言，本用例给 users 追加 acme/dave 必须排在其后）。
+  // 「带什么」的口径与依据见 casdoor-client.ts resetUserPassword 注释的 ①②③：
+  //   · groups/displayName/type 等由 add-user 载荷显式带回（真机 AddUser 会写）；
+  //   · roles 与权限码挂靠**不进载荷、靠同名重建自动回来**（角色成员在 Role 行、挂靠在权限
+  //     记录上，DeleteUser 都不动它们）；
+  //   · roles 进载荷在真机是**建号直接失败**（`User.Roles` 是对象数组，字符串数组过不了
+  //     json.Unmarshal）——下面单独一条用例把这条形状钉死。
+  it('★ resetUserPassword 重建携带关联（#119）：groups/isAdmin 等进载荷；roles 靠同名派生回来、不载荷；权限码挂靠天然保留', async () => {
+    await client().grantPermissionToUser('demo:view', 'dave') // 挂码（写进权限记录的 users）
+    await client().resetUserPassword('dave', 'NewDavePass1')
+    const u = await client().getUser('dave')
+    expect(u?.roles).toEqual(['ops']) // 关联带回（派生视图，见下一条载荷断言）
+    expect(u?.displayName).toBe('Dave')
+    // 载荷层证据：人/属性带上了，**roles 没带**（带 = 真机建号失败，见下一条用例）
+    expect(mm.addUserCalls.at(-1)).toMatchObject({ displayName: 'Dave', owner: 'acme', name: 'dave' })
+    expect(mm.addUserCalls.at(-1)).not.toHaveProperty('roles')
+    const perm = mm.permissionsIn('acme').find((p) => (p.resources as string[]).includes('demo:view'))
+    expect(perm?.users).toContain('acme/dave') // 挂靠在权限记录上，重建后仍在
+    expect((await client().verifyPassword('dave', 'NewDavePass1'))?.name).toBe('dave') // 且新密码能登录
+  })
+
+  // 上面那条「roles 不进载荷」的**护栏**：真机 add-user 的 body 反序列化成 object.User，
+  // 其 Roles 是 []*Role（对象数组）⇒ 字符串数组让 json.Unmarshal 整个失败、建号不成立。
+  // 替身照此收严（#119 约束 1 / AGENTS 硬约束 11）——否则「把角色塞进载荷」这条错路在
+  // 门禁里一路绿灯，真机上却是「删号成功、建号失败」= 人没了。
+  it('★ 真机形状护栏：add-user 收字符串数组 roles ⇒ 建号失败（不是静默忽略）', async () => {
+    await expect(client().createManagedUser({ name: 'erin', password: 'InitPass123' })).resolves.toBeUndefined()
+    // 直接从 mock 打一次带字符串数组 roles 的 add-user：真机上这就是 200+status:error 的形状
+    const raw = await fetch(`${mm.origin}/api/add-user`, {
+      method: 'POST',
+      headers: { Cookie: await mm.adminCookie(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ owner: 'acme', name: 'frank', type: 'normal-user', roles: ['ops'] }),
+    })
+    const j = (await raw.json()) as { status: string }
+    expect(j.status).toBe('error')
+    expect(mm.userIn('acme', 'frank')).toBeUndefined() // 建号没成立——字符串 roles 是致命的
   })
 })

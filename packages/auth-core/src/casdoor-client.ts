@@ -346,14 +346,123 @@ export class CasdoorClient {
     if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
   }
 
-  /** 重置密码。同整记录替换口径。 */
+  /**
+   * 重置密码（#119）：**delete-user + add-user 重建**，不走 update-user。
+   *
+   * 真机实测（2026-09-19 山海交付，#117/#119）：add-user 服务端**会哈希**密码（建号正路），
+   * update-user **不哈希**——password 按原样存 ⇒ 旧实现（update-user 传明文）改完密码
+   * verifyPassword 必败 = 把用户锁死且无报错线索。交付 runbook 的临时口径
+   * （delivery-private.md 步骤 6「改密码 = 删号重建」）在此固化成代码。
+   *
+   * ── 重建携带清单（修锁死 bug 不能换静默降权 bug）──────────────────────────────
+   * 先 get-user 取全量，逐项判「能不能带」：
+   *
+   * ① **显式带回 add-user 载荷**（真机 AddUser 会写进记录/enforcer 的）：
+   *    owner/name/displayName/type/signupApplication/email/phone/groups/isForbidden/isAdmin。
+   *    `groups` 尤其不能漏——真机 AddUser 里 `userEnforcer.UpdateGroupsForUser(user.GetId(), Groups)`
+   *    是**唯一**写 group 规则的地方；不带 = 组派生角色与组授权静默丢失。
+   *
+   * ② **不携带、靠「同名重建」自动回来**（两条都是读上游源码 + 真机 delete 语义得出的结论）：
+   *    · **权限码挂靠**：关联存在**权限记录**的 users 数组（`org/name` 全形），
+   *      `DeleteUser` 不碰权限记录 ⇒ 天然保留；
+   *    · **角色（roles）**：角色成员存在 **Role 行的 users 列**，get-user 的 roles 是派生视图
+   *      （`object/role.go getRolesByUserInternal` 按 `r.users like %<org>/<name>%` 查）；
+   *      `DeleteUser` 不动 Role 行，同 owner/name ⇒ `GetId()` 不变 ⇒ 角色原样回来。
+   *
+   * ③ **绝不放进载荷**：`roles`。真机 add-user 的 body 反序列化成 `object.User`，其 `Roles` 是
+   *    `[]*Role`（**对象**数组）——塞字符串数组会让 json.Unmarshal **整个失败**（200+status:error），
+   *    于是「删号成功、建号失败」= 人没了；即便形状对（对象数组），`AddUser` 里也**没有任何**
+   *    角色写入，纯属无用。角色既然是 ② 自动回来的，就没有理由冒险去带。
+   *
+   * ── 带不回来的（显式列出，别静默丢）──────────────────────────────────────
+   *  · **第三方身份绑定**（企微/钉钉/飞书/微信/QQ…）：真机 `DeleteUser` 调
+   *    `DeleteThirdPartyLinksByUser` **删绑定**，且 add-user 无法重建绑定，get-user 也不回传
+   *    ⇒ **走企微扫码登录建的号，重建后绑定丢失**（下次企微登录会被当成陌生身份）。这是本次
+   *    重建最重的一处真实损失，交付口径必须先确认目标用户是否只用账密登录（见 PR 验收清单）。
+   *  · 密码历史、登录错误计数、token/会话：真机一并清（会话失效本就是重置密码的预期效果）。
+   *  · createdTime/updatedTime：add-user 重新打戳 ⇒ **注册时间重置**。
+   *  · uuid（`User.Id`）：add-user 重新生成。本仓不消费 Casdoor uuid（会话 `sub` 用的是 name，
+   *    见 `apps/server/src/routes/auth.ts:9`）⇒ 对平台无影响。
+   *  · 头像/名/姓/地址/语言/properties/tagging/多因子等长尾列：平台不消费、不转发，重建会丢
+   *    （avatar 回落 org 默认头像）。M3 用户是纯 Casdoor 侧最小记录，交付口径不含这些字段。
+   *  · Casdoor **enforcer 的角色 g 规则**：`DeleteUser` 会清、add-user 不重建。平台自身的授权
+   *    不读 enforcer（读权限记录 + get-user 的派生 roles），故平台侧生效范围不变；若某租户
+   *    直接用 Casdoor enforcer 判权，需人工在 Casdoor 重新保存该角色以重建规则。
+   *
+   * 回读验证（铁律③）三层：① 人回来了（存在性）；② 属性/关联没丢（displayName/roles/groups/
+   * isForbidden/isAdmin 逐项比对——roles 这一项现在验的是 ②「同名自动回来」，是**真断言**）；
+   * ③ **新密码真的能登录**（verifyPassword）——正是 #119 的缺陷语义本身，update-user 旧路必炸。
+   */
   async resetUserPassword(name: string, password: string): Promise<void> {
     const raw = await this.#requireRawUser(name)
-    const j = await this.#adminJson(`update-user?id=${encodeURIComponent(`${this.#o.org}/${name}`)}`, {
-      method: 'POST',
-      body: { ...raw, password },
-    })
-    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    // roles 归一（get-user 回 {name} 对象数组；容错收字符串是历史替身形状，见 getUser 同款归一）：
+    // **只用于删前快照与删后比对**，不进 add-user 载荷（理由见方法注释 ③）
+    const roleNames = (Array.isArray(raw.roles) ? raw.roles : [])
+      .map((x) => (typeof x === 'string' ? x : String((x as { name?: unknown })?.name ?? '')))
+      .filter(Boolean)
+    const groups = (Array.isArray(raw.groups) ? raw.groups : [])
+      .filter((g): g is string => typeof g === 'string')
+    const body = {
+      owner: this.#o.org,
+      name,
+      displayName: typeof raw.displayName === 'string' && raw.displayName ? raw.displayName : name,
+      password, // add-user 服务端哈希——重建的全部意义所在（#119）
+      type: typeof raw.type === 'string' && raw.type ? raw.type : 'normal-user',
+      signupApplication: typeof raw.signupApplication === 'string' && raw.signupApplication
+        ? raw.signupApplication
+        : (this.#o.application ?? 'app-built-in'),
+      email: typeof raw.email === 'string' ? raw.email : '',
+      phone: typeof raw.phone === 'string' ? raw.phone : '',
+      // 无 roles：见方法注释 ③（字符串数组 ⇒ 真机建号直接失败；角色靠 Role 行同名派生回来）
+      groups,
+      isForbidden: raw.isForbidden === true,
+      isAdmin: raw.isAdmin === true,
+    }
+    await this.deleteUser(name) // 铁律②③（JSON body + 删后回读）已在 deleteUser 内建
+    try {
+      const j = await this.#adminJson('add-user', { method: 'POST', body })
+      if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    } catch (err) {
+      // 刚删完号又建不回来 = 比改密码失败更糟（**人没了**）。重读区分「竞态下被并发建回」
+      // 与「真没建出来」——后者必须带着「用户当前不存在 + 可照抄的属性」抛出，供人工补建
+      const existing = await this.#getRawUser(name).catch(() => null)
+      if (existing) return // 并发建回（同 org 同名），继续走回读验证
+      throw new Error(
+        `casdoor reset-user-password: 删号后重建失败——用户 ${this.#o.org}/${name} **当前不存在**，`
+        + `需人工按其原属性 add-user 补建（roles 不进载荷；角色挂在 Role 行，同名自会回来）。`
+        + `可照抄载荷（password 已抹）：${JSON.stringify({ ...body, password: '<本次设置的新密码>' })}；`
+        + `原属性快照：roles=[${roleNames.join(',')}]。上游报错：${(err as Error).message}`,
+        { cause: err },
+      )
+    }
+    const back = await this.#getRawUser(name) // 铁律③ 写后回读
+    if (!back) throw new Error(`casdoor reset-user-password: 写后回读失败 ${this.#o.org}/${name}`)
+    const backRoles = (Array.isArray(back.roles) ? back.roles : [])
+      .map((x) => (typeof x === 'string' ? x : String((x as { name?: unknown })?.name ?? '')))
+      .filter(Boolean)
+    const backGroups = (Array.isArray(back.groups) ? back.groups : [])
+      .filter((g): g is string => typeof g === 'string')
+    const drift: string[] = []
+    if (String(back.displayName ?? '') !== String(body.displayName)) drift.push('displayName')
+    // roles 的比对是「同名派生是否真的把角色带回来了」——掉了就是静默降权，必须响亮
+    if (backRoles.join(',') !== roleNames.join(',')) drift.push('roles')
+    if (backGroups.join(',') !== groups.join(',')) drift.push('groups')
+    if ((back.isForbidden === true) !== body.isForbidden) drift.push('isForbidden')
+    if ((back.isAdmin === true) !== body.isAdmin) drift.push('isAdmin')
+    if (drift.length > 0) {
+      // 密码已重建可用，但属性/关联缺了 = 静默降权——变成响亮失败，交人工补
+      throw new Error(
+        `casdoor reset-user-password: 重建后回读属性不符（${drift.join('、')} 未带上）——`
+        + `新密码已生效但属性缺失，需人工在 Casdoor 补挂 ${this.#o.org}/${name}`,
+      )
+    }
+    // 铁律③终检：新密码真能登录——#119 的缺陷语义本身（update-user 旧路在这里必炸）
+    if ((await this.verifyPassword(name, password)) === null) {
+      throw new Error(
+        `casdoor reset-user-password: 密码已重建但新密码登录验证失败（${this.#o.org}/${name}）`
+        + '——疑似目标端未按哈希存储，按 #119 排查',
+      )
+    }
   }
 
   /**

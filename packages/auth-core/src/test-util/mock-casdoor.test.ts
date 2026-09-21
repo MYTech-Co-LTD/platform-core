@@ -354,3 +354,76 @@ describe('MockCasdoor org/application 域（#117）', () => {
     }
   })
 })
+
+// ── #119：密码哈希三件套（真机形状：add-user 哈希 / update-user 不哈希 / login 按哈希比对）──
+// 替身自己的语义也要有测试（本文件头注）。三件套里「update-user 直存不哈希」这条**尤其不许动**：
+// 它与真机碰巧一致，正是旧实现「单测绿却真机锁死」的遮蔽源——给 update-user 加哈希能让
+// 任何走 update-user 改密码的用例变绿，但那是替身撒谎（issue #119 约束 1 / AGENTS 硬约束 11）。
+describe('MockCasdoor 密码哈希三件套（#119）', () => {
+  const mk = async (users: Array<{ name: string; password: string; owner?: string }>): Promise<MockCasdoor> => {
+    const mock = new MockCasdoor({ users })
+    await mock.start()
+    return mock
+  }
+  const login = async (mock: MockCasdoor, username: string, password: string): Promise<{ status: string; data?: string }> =>
+    (await (await fetch(`${mock.origin}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'login', username, password, application: 'app-built-in' }),
+    })).json()) as { status: string; data?: string }
+  const adminCookieOf = async (mock: MockCasdoor): Promise<string> => {
+    const r = await fetch(`${mock.origin}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pw' }),
+    })
+    return `casdoor_session_id=${/casdoor_session_id=([^;]+)/.exec(r.headers.get('set-cookie') ?? '')?.[1] ?? ''}`
+  }
+  const adminPost = async (mock: MockCasdoor, path: string, body: unknown): Promise<Record<string, unknown>> =>
+    (await (await fetch(`${mock.origin}/api/${path}`, {
+      method: 'POST',
+      headers: { Cookie: await adminCookieOf(mock), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })).json()) as Record<string, unknown>
+
+  it('种子用户：明文入、哈希落库，登录可用', async () => {
+    const m = await mk([{ name: 'u1', password: 'pw', owner: 'acme' }])
+    try {
+      expect((await login(m, 'u1', 'pw')).status).toBe('ok')
+      expect(String(m.userIn('acme', 'u1')?.password)).not.toBe('pw') // 存库值非明文
+      expect((await login(m, 'u1', 'bad')).status).toBe('error')
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('add-user 建号：服务端哈希（存库非明文），明文口令可登录', async () => {
+    // 种一个 acme 用户让 org 自动补录（#117：add-user 前置 org 必须存在且有 application）
+    const m = await mk([{ name: 'seed', password: 'p', owner: 'acme' }])
+    try {
+      const j = await adminPost(m, 'add-user', { owner: 'acme', name: 'n1', password: 'Secret123', type: 'normal-user' })
+      expect(j.status).toBe('ok')
+      expect((await login(m, 'n1', 'Secret123')).status).toBe('ok')
+      expect(String(m.userIn('acme', 'n1')?.password)).not.toBe('Secret123')
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ 负例：update-user 改密码后新密码登录失败——真机形状（update-user 不哈希），这正是 #119 缺陷现场', async () => {
+    const m = await mk([{ name: 'seed', password: 'p', owner: 'acme' }])
+    try {
+      await adminPost(m, 'add-user', { owner: 'acme', name: 'n1', password: 'Secret123', type: 'normal-user' })
+      const upd = await fetch(`${m.origin}/api/update-user?id=${encodeURIComponent('acme/n1')}`, {
+        method: 'POST',
+        headers: { Cookie: await adminCookieOf(m), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'NewPass456' }),
+      })
+      expect(((await upd.json()) as { status: string }).status).toBe('ok') // update 本身回 ok——假绿
+      // 但新密码登不进：存的是明文，login 按哈希比对 ⇒ 必败（真机锁死现场，别修 mock！）
+      expect((await login(m, 'n1', 'NewPass456')).status).toBe('error')
+    } finally {
+      await m.stop()
+    }
+  })
+})

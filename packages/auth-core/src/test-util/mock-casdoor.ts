@@ -27,8 +27,18 @@
 //     校验 body status==ok 才认 cookie（admin-auth.js 生产教训：坏 cookie 缓存 6h）。
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import type { Context } from 'hono'
+
+/**
+ * mock 的「服务端哈希」建模（#119 真机形状收严）：真机 Casdoor 用户记录存的是**密码哈希**
+ * （bcrypt），登录按哈希比对。mock 用 sha256 站位——要钉的形状是「**存哈希 / 按哈希验**」，
+ * 不是算法本身。真机的两面（2026-09-19 山海交付实测）：
+ *   · add-user 服务端**哈希**后落库（建号正路）；
+ *   · update-user 的 password 按原样存、**不哈希** ⇒ 改完密码登录必败（#119 缺陷本体）。
+ * 旧的明文直比替身把后者遮成绿——「单测绿却不可用」正是本 issue 立项的教训。
+ */
+const hashPassword = (p: string): string => `sha256$${createHash('sha256').update(p).digest('hex')}`
 
 export interface MockCasdoorUser {
   name: string
@@ -39,12 +49,31 @@ export interface MockCasdoorUser {
    * ⇒ org 段是命中条件的一部分（评审 S3）。缺省 = MOCK_ORG（旧用例的单 org 世界）。
    */
   owner?: string
+  /**
+   * 该用户所属的角色名（#119：落进**角色成员表** `#roleMembers`，等价真机 Role 行的 users 列——
+   * 不是用户行字段）。故意只做**种子**入口：真机 add-user 不消费 roles（见 `#roleMembers` 注释），
+   * 故 mock 也不提供经 API 写角色的口子。
+   */
   roles?: string[]
   isAdmin?: boolean
   displayName?: string
   email?: string
   /** 禁登标记（M3 用户管理：setUserForbidden 的落点；get-users 回传） */
   isForbidden?: boolean
+  /**
+   * 用户类型（Casdoor User.type 列，'normal-user' 等）。真机 get-user 回传它；
+   * #119 重建携带清单之一（resetUserPassword 删号重建时原样带回）。缺省 'normal-user'。
+   */
+  type?: string
+  /**
+   * 注册 application（真机 User.signupApplication 列——org 用户密码登录必须匹配它）。
+   * #119 重建携带清单之一。缺省 app-built-in（与 #login/ensureUser 的缺省同口径）。
+   */
+  signupApplication?: string
+  /** 电话（Casdoor User.phone 列；#119 重建携带清单之一）。缺省 ''。 */
+  phone?: string
+  /** 用户组（Casdoor User.groups 列；#119 重建携带清单之一）。缺省 []。 */
+  groups?: string[]
 }
 
 export interface MockCasdoorPerm {
@@ -113,10 +142,13 @@ export interface MockCasdoorOptions {
 
 const MOCK_ORG = 'mock-org'
 
-interface StoredUser extends MockCasdoorUser {
-  roles: string[]
+interface StoredUser extends Omit<MockCasdoorUser, 'roles'> {
   isAdmin: boolean
   isForbidden: boolean
+  type: string
+  signupApplication: string
+  phone: string
+  groups: string[]
   /** 已解析的归属 org（缺省已填成 MOCK_ORG / built-in），get-user 的命中条件之一 */
   owner: string
   /** 经 /api/add-user 建号时的载荷存档（type/signupApplication 等，供 userIn 断言；
@@ -154,6 +186,20 @@ interface StoredOrg {
 
 export class MockCasdoor {
   #users: StoredUser[]
+  /**
+   * 角色成员表（#119 真机形状收严）：role 名 → 成员 `owner/name` 全形集合，**等价真机 Role 行的
+   * users 列**——真机的角色成员不在用户行上；get-user 回传的 roles 是**派生视图**，由
+   * `object/role.go getRolesByUserInternal` 按 `r.users like %<org>/<name>%` 查 Role 表得出
+   * （读上游源码，2026-09-21）。两个直接后果，正是 #119「删号重建」必须照抄的语义：
+   *   · delete-user **不动** Role 行的 users 引用 ⇒ 同 owner/name 重建（GetId 不变）后角色
+   *     **天然回来**，不需要（也无法）靠 add-user 携带；
+   *   · add-user **不消费** roles：真机 `AddUser` 里只有 groups 走 `userEnforcer.UpdateGroupsForUser`，
+   *     没有任何角色写入；且 body 反序列化成 `object.User`，其 `Roles` 是 `[]*Role`（**对象**
+   *     数组）——塞字符串数组会让 json.Unmarshal 报错、**整个建号失败**（不是静默忽略）。
+   * 此前 mock 把 roles 当用户行字段（随删带走、且 add-user 照单全收字符串数组），两头都与真机
+   * 相反 ⇒「重建会不会掉角色」在门禁里既测不出也测不对（纪律 #11）。故改为成员表 + 派生读取。
+   */
+  #roleMembers = new Map<string, Set<string>>()
   #perms: StoredPerm[] = []
   #orgs: StoredOrg[] = []
   #sessions = new Map<string, { user: string; anonymous: boolean }>()
@@ -182,13 +228,28 @@ export class MockCasdoor {
     const builtInAdmin: MockCasdoorUser[] = !seeded.some((u) => u.name === 'admin')
       ? [{ name: 'admin', password: 'pw', roles: [], owner: 'built-in' }]
       : []
-    this.#users = [...builtInAdmin, ...seeded].map((u) => ({
-      ...u,
-      owner: u.owner ?? MOCK_ORG,
-      roles: u.roles ?? [],
-      isAdmin: u.isAdmin ?? u.name === 'admin',
-      isForbidden: u.isForbidden ?? false,
-    }))
+    this.#users = [...builtInAdmin, ...seeded].map((u) => {
+      const owner = u.owner ?? MOCK_ORG
+      // 种子的 roles 落进**角色成员表**（= 真机 Role.users），不落用户行——见 #roleMembers 注释
+      for (const r of u.roles ?? []) {
+        const set = this.#roleMembers.get(r) ?? new Set<string>()
+        set.add(`${owner}/${u.name}`)
+        this.#roleMembers.set(r, set)
+      }
+      const { roles: _seedRoles, ...rest } = u
+      return {
+        ...rest,
+        owner,
+        isAdmin: u.isAdmin ?? u.name === 'admin',
+        isForbidden: u.isForbidden ?? false,
+        type: u.type ?? 'normal-user',
+        signupApplication: u.signupApplication ?? 'app-built-in',
+        phone: u.phone ?? '',
+        groups: u.groups ?? [],
+        // #119：种子口令按「明文入、哈希存」落库——真机 Casdoor 存哈希、登录按哈希比对
+        password: hashPassword(u.password),
+      }
+    })
     for (const [i, p] of (opts.perms ?? []).entries()) {
       const name = p.name ?? p.resources?.[0] ?? `perm-${i + 1}`
       this.#perms.push({
@@ -311,10 +372,14 @@ export class MockCasdoor {
     return this.#addApplicationCalls
   }
 
-  /** 某 org 下已存的用户记录（断言口；createdViaApi 存有 add-user 载荷）——不经 HTTP */
+  /** 某 org 下已存的用户记录（断言口；createdViaApi 存有 add-user 载荷）——不经 HTTP。
+   *  顶层字段是**存储态**：password 是服务端哈希（#119：add-user 哈希落库），add-user 载荷
+   *  原文（含明文 password——请求形状断言用）在嵌套的 createdViaApi 里，不盖顶层。 */
   userIn(org: string, name: string): Record<string, unknown> | undefined {
     const u = this.#users.find((x) => x.owner === org && x.name === name)
-    return u ? { ...u, ...(u.createdViaApi ?? {}) } : undefined
+    if (!u) return undefined
+    const { password: _sentPwd, ...archived } = u.createdViaApi ?? {}
+    return { ...u, ...archived }
   }
 
   /** update-user 调用记录（M3 用户管理断言口；含 id 与载荷——**不含 password 值**的断言由用例自证） */
@@ -380,6 +445,33 @@ export class MockCasdoor {
     if (!s || s.anonymous) return false
     const u = this.#users.find((x) => x.name === s.user)
     return !!u && u.isAdmin
+  }
+
+  /**
+   * 取一枚有效 **admin 会话 cookie**：测试要直接打管理端点（不经客户端）时用——管理端点门禁是
+   * `#isAdminSession`，没 cookie 只会拿到 unauthorized，端点本身的行为就测不出来。
+   */
+  async adminCookie(): Promise<string> {
+    const r = await fetch(`${this.origin}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pw' }),
+    })
+    return `casdoor_session_id=${/casdoor_session_id=([^;]+)/.exec(r.headers.get('set-cookie') ?? '')?.[1] ?? ''}`
+  }
+
+  /**
+   * 按用户派生的角色视图（真机 get-user 的 roles 形状）：查角色成员表，回**对象数组**
+   * `[{owner,name}]`。真机 `User.Roles` 是 `[]*Role`（对象），**从不**回字符串数组——
+   * 旧 mock 回 `['ops']` 是替身自造的形状（纪律 #11）。
+   */
+  #rolesOf(owner: string, name: string): Array<Record<string, unknown>> {
+    const id = `${owner}/${name}`
+    const out: Array<Record<string, unknown>> = []
+    for (const [role, members] of this.#roleMembers) {
+      if (members.has(id)) out.push({ owner, name: role })
+    }
+    return out
   }
 
   #unauthorized(c: Context, msg = 'Unauthorized operation') {
@@ -454,7 +546,10 @@ export class MockCasdoor {
       const username = typeof b.username === 'string' && b.username ? b.username : (c.req.query('username') ?? '')
       const password = typeof b.password === 'string' && b.password ? b.password : (c.req.query('password') ?? '')
       this.#lastLoginApplication = String(b.application ?? c.req.query('application') ?? '')
-      const user = this.#users.find((u) => u.name === username && u.password === password)
+      // #119：登录按**哈希比对**（真机存的是密码哈希）。旧替身明文直比，把
+      // 「update-user 改密码 ⇒ 存明文 ⇒ 登录必败」这个真机缺陷在门禁里遮成了绿。
+      // 空/未哈希落库的值（如 add-user 未带 password）自然不等于任何哈希 ⇒ 登不进
+      const user = this.#users.find((u) => u.name === username && u.password === hashPassword(password))
       const sid = randomBytes(16).toString('hex')
       this.#sessions.set(sid, { user: user?.name ?? '', anonymous: !user })
       // 纪律 ③：登录失败也发 session cookie（匿名会话）——缓存端必须校验 body 才认
@@ -551,7 +646,15 @@ export class MockCasdoor {
           name: user.name,
           displayName: user.displayName ?? user.name,
           email: user.email ?? '',
-          roles: [...user.roles],
+          // #119：type/signupApplication/phone/groups 是真机 User 列（get-user 回传）——
+          // resetUserPassword 删号重建的携带回读验证需要它们可见
+          type: user.type,
+          signupApplication: user.signupApplication,
+          phone: user.phone,
+          groups: [...user.groups],
+          // #119：roles 是**派生视图**（查角色成员表），不是用户行字段——delete-user 不带它走，
+          // 同名重建后自然回来（真机 Role.users 语义）
+          roles: this.#rolesOf(user.owner, user.name),
           isAdmin: user.isAdmin,
           isForbidden: user.isForbidden,
         },
@@ -680,16 +783,39 @@ export class MockCasdoor {
       if (this.#addUserFault === 'error') {
         return c.json({ status: 'error', msg: 'add-user fault injected' })
       }
+      // #119 真机形状收严：真机 add-user 把 body 反序列化成 `object.User`，其 `Roles` 是
+      // `[]*Role`（**对象**数组）⇒ 传字符串数组时 json.Unmarshal **整个失败**（200+status:error），
+      // 不是静默忽略。旧替身照单全收字符串数组，于是「把角色塞进 add-user 载荷」这条错路
+      // 在门禁里一路绿灯、真机上却是建号失败 + 人已删（纪律 #11）。
+      // 对象数组形状放行但**不落库**——真机 AddUser 里没有任何角色写入（角色成员在 Role 行，
+      // 由 get-user 派生），`#roleMembers` 只由种子建立。
+      if (b.roles !== undefined) {
+        const shapeOk = Array.isArray(b.roles)
+          && b.roles.every((r) => !!r && typeof r === 'object' && typeof (r as { name?: unknown }).name === 'string')
+        if (!shapeOk) {
+          return c.json({
+            status: 'error',
+            msg: 'json: cannot unmarshal string into Go struct field User.roles of type object.Role',
+          })
+        }
+      }
       this.#addUserCalls.push({ ...b })
-      // 建出的号：无角色、非 admin、空口令（密码字段只留 mock 内部比对，get-user 不回——纪律①）
+      // 建出的号：密码按**哈希**落库（#119 真机形状：add-user 服务端哈希——与 update-user
+      // 的「不哈希」相对，正是 #119 缺陷的两面）；其余载荷字段落成一等存储（type/
+      // signupApplication/phone/groups/email——真机 User 列，resetUserPassword 删号重建的
+      // 携带清单靠 get-user 回读验证，mock 必须存得住才验得了）。get-user 不回密码——纪律①
       this.#users.push({
         owner,
         name,
-        password: typeof b.password === 'string' ? b.password : '',
-        roles: (b.roles as string[]) ?? [],
+        password: typeof b.password === 'string' && b.password ? hashPassword(b.password) : '',
         isAdmin: (b.isAdmin as boolean) ?? false,
         isForbidden: (b.isForbidden as boolean) ?? false,
         displayName: String(b.displayName ?? name),
+        type: typeof b.type === 'string' && b.type ? b.type : 'normal-user',
+        signupApplication: typeof b.signupApplication === 'string' && b.signupApplication ? b.signupApplication : 'app-built-in',
+        email: typeof b.email === 'string' ? b.email : '',
+        phone: typeof b.phone === 'string' ? b.phone : '',
+        groups: (b.groups as string[]) ?? [],
         createdViaApi: { ...b },
       })
       return c.json({ status: 'ok', data: 'Affected' })
@@ -707,7 +833,7 @@ export class MockCasdoor {
           name: u.name,
           displayName: u.displayName ?? u.name,
           email: u.email ?? '',
-          roles: [...u.roles],
+          roles: this.#rolesOf(u.owner, u.name),
           isAdmin: u.isAdmin,
           isForbidden: u.isForbidden,
         }))
@@ -726,6 +852,10 @@ export class MockCasdoor {
       if (!u) return c.json({ status: 'error', msg: 'user not found' })
       const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
       this.#updateUserCalls.push({ id: `${segs[0]}/${segs[1]}`, ...b })
+      // #119 铁形状：update-user 的 password 按**原样**存、不哈希（真机实测 2026-09-19
+      // 山海交付——与 add-user 的「服务端哈希」相对）。这正是「重置密码走 update-user =
+      // 锁死用户」的缺陷现场；**禁止**为了让任何用例变绿而给这里改成哈希（AGENTS 硬约束 11：
+      // 替身形状以真机实测为准；issue #119 的约束 1）
       if (typeof b.password === 'string' && b.password) u.password = b.password
       if (typeof b.isForbidden === 'boolean') u.isForbidden = b.isForbidden
       if (typeof b.displayName === 'string' && b.displayName) u.displayName = b.displayName
@@ -743,6 +873,10 @@ export class MockCasdoor {
         return c.json({ status: 'error', msg: 'delete-user 走 JSON body {owner,name}（铁律②）' })
       }
       this.#deleteUserCalls.push({ owner, name })
+      // 只删用户行：#roleMembers（= 真机 Role 行的 users 列）与 #perms（= 真机权限记录的
+      // users 数组）都**不动**——真机 DeleteUser 只清 enforcer 规则/第三方绑定/密码历史 + 用户行。
+      // 这正是 #119「删号重建」能保住角色与权限码挂靠的依据；谁把这行改成顺带清成员，
+      // 就把替身改得比真机更狠、让重建路径的回归重新不可见（纪律 #11）。
       const i = this.#users.findIndex((u) => u.owner === owner && u.name === name)
       if (i >= 0) this.#users.splice(i, 1)
       return c.json({ status: 'ok', data: 'Deleted' })

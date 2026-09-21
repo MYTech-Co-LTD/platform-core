@@ -209,6 +209,10 @@ WeKnora 条目「企微自建应用接入 platform-core」。
   ⇒ 建号走 add-user（或 console M3 页）；**改密码 = 删号重建**（`delete-user` JSON body
   `{owner,name}` 后重新 add-user）——**不要**用 update-user 改 password（存成不哈希的值，
   登录必败且无报错线索）。
+  ⇒ #119 已把「删号重建」固化进 console M3 页的**重置密码**（`CasdoorClient.resetUserPassword`，
+  删除后按原属性 add-user 重建 + 回读验证 + 新密码试登），人工不必再手敲；但重建**带不回第三方
+  身份绑定**（企微/钉钉/飞书…，真机 `DeleteUser` 会删绑定表）——**只对账密登录的账号用**；
+  扫码登录的账号若丢了绑定，需在 Casdoor 侧重新建立绑定（见 PR #119 验收清单）。
 
 浏览器级冒烟用仓内脚本（#117 进仓固化，替代临时的 /tmp 版）：
 
