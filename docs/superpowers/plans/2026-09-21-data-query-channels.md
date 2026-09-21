@@ -85,7 +85,8 @@ plan: docs/superpowers/plans/2026-09-21-data-query-channels.md
 | `modules/data/domain/llm.ts` | `ChatModel` + `openAiCompatModel` + `llmFromEnv` | T9 |
 | `modules/data/domain/agent-loop.ts` | `runAgentLoop`（AsyncGenerator） | T9 |
 | `modules/data/routes/chat.ts` | `POST /chat`（SSE） | T9 |
-| `modules/data/console/index.tsx` | 页签壳（问数对话 / 指标管理 / 问数 Key） | T9 |
+| `modules/data/console/index.tsx` | 页签壳（问数对话 / 指标管理 / 问数 Key） | **T1（占位）+ T9（真页面）** |
+| `apps/web/src/console-registry.gen.ts` | **生成物，进 git**（`scripts/gen-console-registry.mjs`）——manifest 的 `frontend.console` 一变就必须重新生成并提交。⚠️ CI 的 `web` job 每次 build 都重新生成它 ⇒ **脏了不会红**，漏提交就是静默不一致 | T1、T9 |
 | `modules/data/console/query/index.tsx` | 对话面板 | T9 |
 | `modules/data/console/metrics/index.tsx` | 指标管理 | T9 |
 | `modules/data/console/keys/index.tsx` | 问数 Key 管理 | T9 |
@@ -93,6 +94,7 @@ plan: docs/superpowers/plans/2026-09-21-data-query-channels.md
 | `apps/server/src/wecom-channel-auth.ts` | 企微渠道鉴权中间件 | T5 |
 | `apps/server/src/config.ts` | 加三个 data 配置键 | T5 |
 | `apps/server/src/app.ts` | 挂两个中间件（⑥ 的 `sessionMiddleware` 块之后、⑦ 平台路由之前） | T5 |
+| `apps/server/src/demo-tenant-isolation.test.ts` | 既有 `AppConfig` 全量字面量补 `dataQueryRatePerMin`（必填字段，漏补 TS2741） | T5 |
 | `packages/platform-sdk/src/requester-vars.ts` | 新建：`REQUESTER_CHANNEL` / `REQUESTER_KEY_ID` 常量 + `RequesterVars` 类型 | T5 |
 | `packages/platform-sdk/src/index.ts` | 导出上面两个常量（值）与 `RequesterVars`（类型）——**值/类型分行 `export`**（#44 纪律） | T5 |
 | `modules/data/module.test.ts` | manifest↔路由双向核对 + 迁移幂等 | T1（T6/T7/T8 扩展） |
@@ -106,26 +108,33 @@ plan: docs/superpowers/plans/2026-09-21-data-query-channels.md
 | 波 | 任务 | 并行度 | 依据 |
 |---|---|---|---|
 | **W1** | **T1** 模块骨架 | 单独 | 后面所有任务都要 `modules/data` 存在 |
-| **W2** | **T2 / T3 / T4 / T5** | **四路并行** | 互不共享文件：T2 只有 `domain/authz.ts`；T3 只有 `domain/{metric,key,audit}-store.ts` + `warehouse.ts`；T4 只有 `domain/query-service.ts`；T5 只有 `apps/server/src/{pat-auth,wecom-channel-auth,config,app}.ts` + sdk |
+| **W2** | **T2 ∥ T5** → **T3** → **T4** | **两路并行起手，随后串行** | 见下方「W2 的真实依赖」——原表声称四路互不共享文件，**实测不成立** |
 | **W3** | **T6 → T7 → T8** | **严格串行** | 三者都改 `manifest.yaml` + `index.ts`（约束 ⑪ 的双向核对），并行必然冲突 |
 | **W4** | **T9** | 单独 | 依赖 T6（`/query`）+ T7（`/keys`）的端点形状 |
 | **W5** | **T10** | 单独 | 依赖 T5–T9 全部 |
 
+> **W2 的真实依赖（2026-09-21 订正，原「四路并行」是错的）**：
+> T3 的 Interfaces 写着 `Consumes: … domain/authz.ts 的 MetricDef / Channel`；T4 则**运行时** import
+> T2 的 `authorize` 与 T3 的 `loadCatalog` / `writeAudit` / `runWarehouse*`，其测试还 import T3 的
+> `upsertMetric`。所以 `T2 → T3 → T4` 是一条**链**，不是三个独立任务——按原表各自 `new-top-level`
+> 起 worktree 的话，T3/T4 自己的「Expected: PASS」根本跑不起来（上游文件不存在）。
+> **只有 T5 是干净的并行边界**。
+
 > **W2 的并行边界（重要）**：T5 的 `apps/server/src/pat-auth.ts` **不得** `import` `modules/data/**`——宿主静态依赖模块是架构违规，且会打掉 worktree 并行。它自带哈希行与自己的查询 SQL（约束 5 + T10 往返契约测试兜漂移）。
 
-Orca 派发（W2 四路 + W3 串行）：
+Orca 派发（W2 两路并行 → 串行链 + W3 串行）：
 
 ```bash
-# W2：四个独立任务，一次连发
+# W2 起手：T2 与 T5 两个独立任务，一次连发
 orca orchestration task-create --spec "<T2 spec>" --json
-orca orchestration task-create --spec "<T3 spec>" --json
-orca orchestration task-create --spec "<T4 spec>" --json
 orca orchestration task-create --spec "<T5 spec>" --json
-# 记 task_id 后一次连发四个 worker-start（= 并行）
+# 记 task_id 后一次连发两个 worker-start（= 并行）
 orca orchestration worker-start --task <t2> --worktree new-top-level --name data-authz  --agent claude --setup run --json
-orca orchestration worker-start --task <t3> --worktree new-top-level --name data-stores --agent claude --setup run --json
-orca orchestration worker-start --task <t4> --worktree new-top-level --name data-query  --agent claude --setup run --json
 orca orchestration worker-start --task <t5> --worktree new-top-level --name data-hostmw --agent claude --setup run --json
+
+# W2 串行链：T3 等 T2，T4 等 T3（用 --deps 编码）
+orca orchestration task-create --spec "<T3 spec>" --deps '["<t2 task_id>"]' --json
+orca orchestration task-create --spec "<T4 spec>" --deps '["<t3 task_id>"]' --json
 
 # W3：T7/T8 用 --deps 编码串行
 orca orchestration task-create --spec "<T6 spec>" --json
@@ -133,7 +142,13 @@ orca orchestration task-create --spec "<T7 spec>" --deps '["<T6 task_id>"]' --js
 orca orchestration task-create --spec "<T8 spec>" --deps '["<T7 task_id>"]' --json
 ```
 
-每波末跑**全量**验证（见 T1 Step 6 的命令组），不只跑本任务那几条。
+> ⚠️ **派发前 `git fetch origin main`，且用 `--base-branch` 显式指 ref**：Orca 的 `--base-branch main`
+> 取的是**本地** ref，长期 worktree 里本地 main 会脱节 ⇒ worker 拿到旧基线（团队记忆
+> `orca-base-branch-uses-stale-local-main`）。
+> ⚠️ **worktree 路径必须 ASCII**：中文路径会让 `pathToFileURL` 的百分号编码打挂 vitest 的 TS fixture
+> 加载（团队记忆 `non-ascii-worktree-path-breaks-vitest`）——`--name` 给 ASCII 短名。
+
+每波末跑**全量**验证（见 T1 Step 11 的命令组），不只跑本任务那几条。
 
 ---
 
@@ -179,8 +194,10 @@ node scripts/check-env-example.mjs
 - Create: `modules/data/test-util.ts`
 - Create: `modules/data/module.test.ts`
 - Create: `modules/data/README.md`
+- Create: `modules/data/console/index.tsx`（**最小占位**；理由见 Step 3 的注记。T9 替换成真页面）
 - Modify: `.env.example`（末尾追加六键）
 - Modify: `docs/architecture.md`（组件清单表加一行 `modules/data`）
+- Modify: `apps/web/src/console-registry.gen.ts`（**重新生成**，不是手改：`node scripts/gen-console-registry.mjs`。见 Step 10）
 
 **Interfaces:**
 - Consumes: `@platform/sdk` 的 `ManifestSchema` / `defineModule` / `Identity` / `ModuleContext` / `ModuleDefinition`；`apps/server/src/migrate.ts` 的 `runMigrations`（**刻意跨包相对引用，不复制**，理由见 `modules/aftersales/test-util.ts` 顶部注释）
@@ -201,6 +218,10 @@ node scripts/check-env-example.mjs
 授权：本次改动已由已合入的 spec（`55a341b`）+ 本计划批准，符合「先经人同意 → 更新架构文档 → 再写代码」。
 
 - [ ] **Step 2: 建包与配置**
+
+> ⚠️ 写完 `modules/data/package.json` 后**在仓库根跑一次 `pnpm install`**：新 workspace 包不 install 的话
+> `pnpm --filter data …` 解析不到，`@platform/sdk` 的 `workspace:*` 链接也不存在 ⇒ typecheck/test 会以
+> 「找不到模块」这种**与代码无关**的形态失败，白排障。`pnpm-lock.yaml` 若有改动，一并提交。
 
 `modules/data/package.json`（照 `modules/aftersales/package.json`，**删掉** `@aws-sdk/*`——本模块不碰对象存储）：
 
@@ -671,19 +692,42 @@ DATA_LLM_API_KEY=
 DATA_LLM_MODEL=
 ```
 
-- [ ] **Step 10: 跑门禁 + 提交**
+- [ ] **Step 10: 重新生成 console registry（**别手改生成物**）**
+
+Step 3 往 manifest 里加了 `frontend.console`，`apps/web/src/console-registry.gen.ts` 就与 manifest 不一致了。
+它是 `scripts/gen-console-registry.mjs` 的**生成物、进 git**，必须重新生成并提交：
+
+```bash
+node scripts/gen-console-registry.mjs
+git diff --stat apps/web/src/console-registry.gen.ts   # 应看到 1 file changed
+```
+
+Expected: 文件里多出 `/console/data` 一条，`load` 指向 `../../../modules/data/console/index.tsx`
+（这就是 Step 5 必须建那个占位组件的原因——`tsc -b` 会真的去解析这个 import）。
+
+> ⚠️ **为什么必须显式做这一步**：CI 的 `web` job 跑的是 `pnpm --filter @platform/web build`，
+> 而 `apps/web/package.json` 的 build 第一步就是重新生成它——所以**CI 永远绿**，没有任何脏树/diff 检查。
+> 漏提交的形态是「本仓长期留着一份与 manifest 不符的生成物」，静默不一致，不是红。
+
+- [ ] **Step 11: 跑门禁 + 提交**
 
 Run: `node scripts/check-env-example.mjs && pnpm --filter data typecheck && pnpm --filter data test`
 Expected: 全绿（带 `DATABASE_URL`）。
 
+另跑一次**宿主与 web** 的门禁（本任务动了 manifest 的 `frontend.console`，影响面在 web）：
+
 ```bash
-git add modules/data .env.example docs/architecture.md
+pnpm --filter @platform/web typecheck && node scripts/lint-architecture.mjs
+```
+
+```bash
+git add modules/data .env.example docs/architecture.md apps/web/src/console-registry.gen.ts
 git commit -m "feat(data): 数据问数模块骨架——三张表/manifest/env 键/测试脚手架"
 ```
 
 ---
 
-# W2 — 授权核心与地基（四路并行）
+# W2 — 授权核心与地基（T2 ∥ T5 → T3 → T4）
 
 ### Task 2: 授权核心（纯函数）
 
@@ -831,8 +875,12 @@ describe('authorize —— 主体钉死', () => {
     })
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.plan.sql).toContain("AND day >= '2026-08-15'::date")
-    expect(r.plan.sql).toContain("AND day <= '2026-08-20'::date")
+    // ⚠️ 谓词是 `=` 不是 `>=`/`<=`：本计划只支持等值参数（见下方注记）。
+    //    这条用例断言的是「参数落到正确的列 + 值被字面量转义」，不是区间语义。
+    //    ⚠️ 副作用要知道：同一列上两个 `=`（day = A AND day = B）恒为空集——
+    //    所以 `day_from` / `day_to` **不要同时传**（本计划范围内不提供区间能力）。
+    expect(r.plan.sql).toContain("AND day = '2026-08-15'::date")
+    expect(r.plan.sql).toContain("AND day = '2026-08-20'::date")
   })
 
   it('A4 注入他人主体参数 → subject_pinned_by_platform（值只来自身份）', () => {
@@ -1042,6 +1090,12 @@ export function authorize(
 ```
 
 > `params` 只支持 `=` 比较（不是 `>=`）。原型的 `day_from >=` 是演示形态；产品面用显式列名 + `=` 更保守，需要区间就声明两个指标或后续加 `op` 字段（**不在本计划范围**，别顺手加）。
+>
+> ⚠️ **已知取舍（记录在案，别当没看见）**：本计划只发 `=`，而 `mart_sales_daily` 声明了
+> `day_from` / `day_to` 两个都落在 `day` 列上的参数——**同时传会拼出 `day = A AND day = B`，恒为空集，
+> 且不报错**（静默空结果是比报错更坏的形态）。因此：**同一列上的两个等值参数不要同时传**；
+> 区间能力（`op` 字段或 `day_between` 指标）是后续决定，**不在本计划范围**。
+> T9 的 LLM 工具面同理——`params` 的语义要原样告诉模型，别让它自己组合出恒空条件。
 
 - [ ] **Step 4: 跑测试，确认通过**
 
@@ -1477,9 +1531,11 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
   })
 
   it('denied：未授权指标 —— 不执行 SQL，但审计照写', async () => {
+    // ⚠️ 清零必须在 runQuery **之前**：写在之后等于把这次调用留下的证据擦掉，
+    //    断言恒真（跑没跑 SQL 都绿）——「从未触达仓库」就变成一句没人验的话。
+    lastSql = ''
     const out = await runQuery(deps, TENANT, req({ scopes: [] }), 'sales_daily', {})
     expect(out).toEqual({ status: 'denied', metricId: 'sales_daily', reason: 'metric_not_authorized' })
-    lastSql = ''
     const a = await pool.query(
       `select verdict, reason from data.query_audit where tenant_id = $1 order by id desc limit 1`, [TENANT])
     expect(a.rows[0]).toMatchObject({ verdict: 'denied', reason: 'metric_not_authorized' })
@@ -1646,6 +1702,7 @@ git commit -m "feat(data): runQuery 编排——授权→执行→审计（所�
 - Modify: `packages/platform-sdk/src/index.ts`（导出两个常量）
 - Modify: `apps/server/src/config.ts`（加三个 data 配置键）
 - Modify: `apps/server/src/app.ts:218`（sessionMiddleware 之后插两行 `app.use`）
+- Modify: `apps/server/src/demo-tenant-isolation.test.ts`（**补 `dataQueryRatePerMin`**：该文件第 42 行有一个 `const config: AppConfig = {…}` 全量字面量，本任务给 `AppConfig` 加了**必填**字段 ⇒ 不补就是 TS2741；本仓测试文件纳入 typecheck，`pnpm typecheck` 会红）
 - Test: `apps/server/src/pat-auth.test.ts`
 - Test: `apps/server/src/wecom-channel-auth.test.ts`
 
@@ -2136,6 +2193,12 @@ export interface AppConfig {
 
 并在 `return { … }` 里加 `dataWecomChannelKey: optional('DATA_WECOM_CHANNEL_KEY')` 与 `dataQueryRatePerMin`。
 
+> ⚠️ **`dataQueryRatePerMin` 是必填 `number`**（`loadConfig` 恒给它值：缺省 60，非法值直接 throw）。
+> 必填的代价是**所有 `const config: AppConfig = {…}` 全量字面量都要补这一行**，否则 TS2741。
+> 已知两处：`apps/server/src/demo-tenant-isolation.test.ts:42`（本任务改）与 T10 的
+> `configWithCasdoor`（T10 改）。本仓测试文件纳入 typecheck（issue #68），所以漏补 = `pnpm typecheck` 红。
+> 改完跑 `pnpm --filter @platform/server typecheck` 确认，别只跑单测。
+
 - [ ] **Step 7: app.ts 挂两个中间件**
 
 `apps/server/src/app.ts` 第 218 行之后（`sessionMiddleware` 块结束、`// ⑦ 平台路由` 之前）插入：
@@ -2207,7 +2270,7 @@ git commit -m "feat(data): 宿主鉴权中间件——PAT（实时权限/fail-cl
   - `GET /metrics`（`data:query`）→ `{ metrics: [{id,title,description}] }`（**词表裁剪后的**）
   - `GET /metrics/all`（`data:manage`）→ 全量（含 `requiredScope`/`subjectColumn`）
   - `POST /metrics` / `PUT /metrics/:id` / `DELETE /metrics/:id`（`data:manage`）
-  - `POST /query`（`data:query`）→ `QueryOutcome` 原样 + 200/403/500 状态码映射
+  - `POST /query`（`data:query`）→ `QueryOutcome` 原样 + **200 / 403 / 502** 状态码映射（`error` 一律 **502**：`warehouse_unconfigured` 与 `warehouse_error` 都是上游数据仓库不可用，不是本服务的 bug ⇒ 不是 500。T10 的部署后验证也按 502 断言）
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -2715,7 +2778,21 @@ git commit -m "feat(data): 个人 Key 路由——生成（仅展示一次）/�
 8. `tools/call` 传 `org` 参数 → `subject_pinned_by_platform`
 9. `tools/call` 正常 → `{status:'ok', subject, rows}`（用注入的 `execute` 假仓库；**注意**：模块路由的 `runQuery` 用的是 `warehousePool()`，测试要能注入——做法：`registerMcp(r, ctx)` 里 `ctx` 加一个可选的 `execute`，由 `test-util` 注入）
 
-> **⚠️ 上一条揭示一个 T4/T6 的接口缺口**：`runQuery` 的 `deps.execute` 在路由层无处注入。**在 T6 就要解决**——`RouteCtx` 加可选 `execute?: (sql: string) => Promise<{columns,rows}>`，路由把它透传给 `runQuery`。T6 的 `test-util` 第 4 参相应扩展。若 T6 已合并但没加，T8 就地补（改 `context.ts` + `test-util.ts` + 三个路由文件透传）。
+> **⚠️ 上一条揭示一个 T4/T6 的接口缺口**：`runQuery` 的 `deps.execute` 在路由层无处注入。**在 T6 就要解决**——`RouteCtx` 加可选 `execute?: (sql: string) => Promise<{columns,rows}>`，路由把它透传给 `runQuery`。若 T6 已合并但没加，T8 就地补（改 `context.ts` + 各路由文件透传）。
+>
+> **注入走 `RouteCtx`，不是 `buildTestApp` 的第 4 参**（订正）：`buildTestApp` 的第 4 参
+> 已被 T1 定为 `tenant: DataTenant`，T7/T10 都在按对象传它（`{ id: TENANT, casdoor_org: 'acme' }`）。
+> **别去扩展那个参数**——改了会静默打挂 T7 的调用点。
+>
+> ⚠️ **但「`ctx` 里本来就有 `execute`」是不成立的**——T6 必须自己解决这条注入路径，别以为它已经通了：
+> `ModuleContext`（`packages/platform-sdk/src/module.ts:20`）是**封闭接口，只有 `pool`**，宿主也只注入 `pool`；
+> 而 `index.ts` 的 `createRouter` 是从这个 `ModuleContext` 里**构造**出模块内部的 `RouteCtx` 的。
+> 所以「测试侧传个带 `execute` 的 ctx」**不会自动到达 `RouteCtx`**。T6 要做两件事，缺一不可：
+> ① `RouteCtx` 加可选 `execute?: (sql: string) => Promise<{ columns: string[]; rows: unknown[][] }>`；
+> ② `index.ts` 构造 `RouteCtx` 时把它**转发**过去（宿主不提供 ⇒ 从 `createRouter` 的入参上按需读取并透传，
+>    **不要**去改 SDK 的 `ModuleContext`：那是宿主契约，宿主没有这个能力，改了等于撒谎）。
+> T6 的测试侧则用一个**变量**（不是内联字面量）携带 `execute` 传给 `buildTestApp`，绕开多余属性检查。
+> 这条是 T4→T6 的**接口缺口**，T6 必须在本任务内闭合并在报告里写明最终形态。
 
 - [ ] **Step 2: 跑测试，确认失败** → `pnpm --filter data test routes/mcp.test.ts`（FAIL：404）
 
@@ -3064,14 +3141,18 @@ export async function* runAgentLoop(
   }
 }
 
+// ⚠️ 联合的**每一支都必须带 `status` 判别式**：调用方靠 `result.status === 'ok'` 收窄
+// （见上面 agent loop 里那行）。少给一支加 `status`，`result.status` 就是 TS2339，
+// 而 `pnpm --filter data typecheck` 是本任务的验收门禁之一——所以 `list_metrics` 那支
+// 也必须写成 `{ status: 'metrics'; metrics: … }`，不能只回 `{ metrics: … }`。
 async function runTool(
   call: ToolCall, catalog: MetricDef[], deps: AgentDeps, requester: Requester,
 ): Promise<{ status: 'ok'; columns: string[]; rows: unknown[][] }
         | { status: 'denied'; metricId: string; reason: string; detail?: string }
         | { status: 'error'; reason: string; detail: string }
-        | { metrics: { id: string; title: string; description: string }[] }> {
+        | { status: 'metrics'; metrics: { id: string; title: string; description: string }[] }> {
   if (call.name === 'list_metrics') {
-    return { metrics: catalog.map((m) => ({ id: m.id, title: m.title, description: m.description })) }
+    return { status: 'metrics', metrics: catalog.map((m) => ({ id: m.id, title: m.title, description: m.description })) }
   }
   if (call.name !== 'query_metric') {
     return { status: 'error', reason: 'unknown_tool', detail: call.name }
@@ -3625,6 +3706,10 @@ function configWithCasdoor(casdoorUrl: string): AppConfig {
     // ★ 通道 C 的渠道凭证。**不给它 ⇒ wecomChannelAuth 会直接 next() 放行**（设计如此：
     //   没开通道 C 的部署不能被锁死）⇒ 用例 4 会静默变成"没验到东西"却仍然绿。
     dataWecomChannelKey: 'test-channel-key',
+    // ★ **必填**（T5 给 `AppConfig` 加的是 `dataQueryRatePerMin: number`，不是可选）：
+    //   漏了就是 TS2741，而测试文件纳入 typecheck ⇒ `pnpm --filter @platform/server typecheck` 红。
+    //   60 是 `loadConfig` 的缺省值，这里显式写出来即可。
+    dataQueryRatePerMin: 60,
   }
 }
 
@@ -3646,7 +3731,9 @@ async function req(
   })
 }
 
-const QUERY_BODY = { metric: 'sales_daily', params: {} }
+// ⚠️ 键名必须与 T6 的 `QueryBody` schema 逐字一致：`metricId` + `args`（**不是** `metric` + `params`）。
+//    写错的症状是所有用例 400 `INVALID_BODY` —— e2e 整份文件"红了但没有一处在验真东西"。
+const QUERY_BODY = { metricId: 'sales_daily', args: {} }
 
 /**
  * alice 的两个凭证（**懒建 + 记忆化**）：用例 1/2/3/5/6/7/8 共用同一份身份，
@@ -3796,8 +3883,9 @@ afterAll(async () => {
    > 这条**必须先确认 `config.dataWecomChannelKey` 给上了**：不给它的部署里，
    > `wecomChannelAuth` 会**直接 `next()` 放行**（设计如此——没开通道 C 的部署不能被锁死）。
    > 于是"nobody 也被拒"这句会**因为别的理由**变绿或变红，而"alice 能查"这句会**在拿不到身份时**失败。
-5. **主体钉死（三通道各测一次）**：`args: { org: 'beta' }` → 403 `subject_pinned_by_platform`，且**回包不含 beta 的任何数据**。
+5. **主体钉死（三通道各测一次）**：在 `QUERY_BODY` 基础上把参数塞成保留键——**`{ ...QUERY_BODY, args: { org: 'beta' } }`**（**同一个 `sales_daily`**）→ 403 `subject_pinned_by_platform`，且**回包不含 beta 的任何数据**。
    （夹具里 beta 的金额是 **999**，acme 是 **100**——断言回包里没有 `999` 比断言"没有 beta 字样"硬。）
+   > ⚠️ 这三条被拒请求会写进 `data.query_audit`，与用例 7 的成功请求同 tenant 同 metric ⇒ 用例 7 的断言必须为此留余地（见用例 7 的注记）。
 6. **词表裁剪（三通道各测一次）**：`data:finance` 的指标在 `tools/list`（通道 B）与 `GET /metrics`（通道 A）里**都不出现**。
 7. **审计三通道统一**：三条成功请求之后查审计表——
    ```ts
@@ -3806,8 +3894,13 @@ afterAll(async () => {
      `select distinct channel, org_id, verdict from data.query_audit
        where tenant_id = $1 and metric_id = 'sales_daily'`, [acmeTenantId])
    ```
-   断言三个通道的 `(channel, org_id)` 组合**都出现**（`session` / `pat` / `wecom`，各自 `org_id='acme'`），
-   且 `verdict` 只有 `'ok'`。
+   断言两件事：① `(channel, org_id, verdict)` 里 `verdict='ok'` 的三条**都在**，且 `org_id` 全是 `'acme'`
+   （`session` / `pat` / `wecom` 各一条，证明三通道确实共写一张表）；② **没有任何一行的 `org_id` 是 `'beta'`**。
+   > ⚠️ **不要断言「verdict 只有 `'ok'`」——在正确实现下必红**：用例 5 故意用 `args: { org: 'beta' }`
+   > 造了三条被拒记录（`subject_pinned_by_platform` ⇒ `verdict='denied'`），它们与本用例的成功请求
+   > **同 tenant、同 metric**，必然落进同一个结果集；而 T4 的 `audit()` 在被拒时写的 `org_id` 是
+   > **`requester.orgId`（即 `'acme'`）**，不是参数里的 beta。原稿「只有 ok」与用例 5 直接打架。
+   > ② 才是主体钉死的**可观测不变量**：参数里塞进来的 beta 从未变成写进 SQL/审计的主体值。
    > **必须带 `tenant_id` 过滤**：审计表是全租户共用的一张表，且本文件不是唯一写它的测试
    > （T3/T4 的单测也写）——不带过滤的 `count(*)` 会随别的测试跑过而变，是典型的间歇红。
 8. **门卫仍然生效**（证明新中间件没绕过既有门禁）：用 `aliceCookie()`（只有 `data:query`）请求
@@ -3881,7 +3974,7 @@ curl -sS https://<生产域名>/healthz
 | node-pg 把 bigint 读成 string | 本计划 T3 | `key_id` / `id` 必须 `Number()` 归一，否则 `===` 与 JSON 回包变味 |
 | 迁移幂等是**部署脚本全量重跑**的前提 | 团队规则 `db-migration` §1 | 三张表全 `if not exists`；T1 有一条不记账直跑两遍的测试专测这个 |
 | `scripts/` 是 checkJs，JSDoc 字面量类型会被加宽 | 团队记忆 `scripts-checkjs-jsdoc-literal-types-widen` | 本计划不新增 `scripts/` 守卫，若新增须走「单形状、字段恒在」 |
-| Orca 工作树中文路径会打挂 vitest | 团队记忆 `non-ascii-worktree-path-breaks-vitest` | W2 四路并行**不要**建在中文路径下（当前 worktree 目录名是 `采集板块`——派发前确认 Orca 新 worktree 的路径） |
+| Orca 工作树中文路径会打挂 vitest | 团队记忆 `non-ascii-worktree-path-breaks-vitest` | W2 起手的两路并行**不要**建在中文路径下（当前 worktree 目录名是 `采集板块`——派发前确认 Orca 新 worktree 的路径） |
 | 桶文件（barrel）export 混入 type 会运行时崩 | 本仓 #44 事故；AGENTS.md 硬约束 10 | `packages/platform-sdk/src/index.ts` 加导出时，**值导出与类型导出分行**（`export { … }` 只放值） |
 | 合并只等 CI CLEAN | 团队记忆 `merge-only-on-clean-ci` | 每个 PR 都等 CLEAN，**UNSTABLE 不许强合** |
 
@@ -3935,6 +4028,21 @@ curl -sS https://<生产域名>/healthz
 | 19 | T10 全文件**没有装配点**：用例引用 `app`、引用 `buildApp(...)`，但没有任何一处真的调用（也没有 `MockCasdoor` 构造、没有文件级 `afterAll` 池守卫） | 补齐：`MockCasdoor` 构造（`owner`=用户 org）、`beforeAll` 六步含 ⑥ `app = (await buildApp({...})).app`、`afterAll` 含 `expect(pool.ended).toBe(false)` 守卫 |
 | 20 | T10 两处"同源值"陷阱：① 用例里 `SECRET = process.env.SESSION_SECRET ?? 'test-session-secret'` 与 config 的 `sessionSecret` **不同源** ⇒ 签验不一致（症状像中间件坏了）；② `process.env.DATA_WAREHOUSE_URL ??= dbUrl` 在 `dbUrl` 为 `undefined` 时会被 Node **字符串化成 `"undefined"`** ⇒ `warehouseConfigured()` 变 true 指向假 DSN | ① 提成文件级常量 `SESSION_SECRET`，config 与 `signSession` 共用；② 加 `if (dbUrl)` 守卫，并写明 Node 的这个字符串化行为 |
 | 21 | T10 用例靠**执行顺序**传状态（用例 3 直接吃用例 1 建的 token）⇒ 用例 1 一红，后面全变成「undefined 引起的怪错」，掩盖真因 | 加 `aliceCookie()` / `alicePat()` 两个**懒建 + 记忆化** helper，用例互不依赖顺序 |
+
+**第二轮订正（2026-09-21，开工前专项扫描 + 逐条对真仓复核；作者自检漏掉的）：**
+
+| # | 症状 | 处置 |
+|---|---|---|
+| 22 | **波次表把 W2 说成「四路并行、互不共享文件」，实测不成立**：T3 `Consumes … domain/authz.ts 的 MetricDef/Channel`；T4 **运行时** import T2 的 `authorize` 与 T3 的 `loadCatalog`/`writeAudit`/`runWarehouse*`，测试还 import T3 的 `upsertMetric` ⇒ 真实形态是链 `T2 → T3 → T4`，只有 T5 是干净并行边界。按原表各自起 worktree，T3/T4 自己的「Expected: PASS」根本跑不起来 | 波次表改为 **T2 ∥ T5 → T3 → T4**，Orca 派发块改用 `--deps` 编码（同 W3 的做法），并写明原判断错在哪 |
+| 23 | **T10 的请求体键名与 T6 的 schema 不符**：`QUERY_BODY = { metric, params }` vs `QueryBody = { metricId, args }` ⇒ e2e 全文件 400 `INVALID_BODY`（"红了但没有一处在验真东西"）；T10 自己用例 5 又写 `args:`，前后不一 | `QUERY_BODY` 改为 `{ metricId, args }`，并加注「键名必须与 T6 schema 逐字一致」 |
+| 24 | **T2 的测试断言与 T2 的实现互斥**：测试断言 `AND day >= '…'::date` / `<=`，实现只发 `=`，同段注记明说「params 只支持 `=`（不是 `>=`）」⇒ 该用例**永远红**，Step 4 的「Expected: PASS」不可达 | 断言改为 `=`（与实现一致）；并**记录取舍**：同列两个 `=` 恒为空集 ⇒ `day_from`/`day_to` 不要同时传，区间能力不在本计划范围（原先只有一句轻描淡写，没写后果） |
+| 25 | **T4 的「不执行 SQL」断言空转**：`lastSql = ''` 写在 `runQuery` **之后**，等于把证据擦掉再断言 `toBe('')` ⇒ 跑没跑 SQL 都绿，「从未触达仓库」没人验 | 清零移到 `runQuery` **之前**，并写明"写在之后 = 断言恒真"这个机制 |
+| 26 | **T10 用例 7 的断言与用例 5 打架**：用例 5 故意造三条 `subject_pinned_by_platform` 被拒（同 tenant 同 metric，T4 的 `audit()` 仍写 `org_id=requester.orgId='acme'`）⇒ 用例 7 断言「`verdict` 只有 `'ok'`」在正确实现下**必红** | 用例 7 改为断言两件真事：① `verdict='ok'` 的三条（session/pat/wecom）都在且 `org_id='acme'`；② **没有任何一行 `org_id='beta'`**（这才是主体钉死的可观测不变量）。用例 5 同步注明会留下 denied 行 |
+| 27 | **`dataQueryRatePerMin` 必填引发连锁 TS2741**：T5 定为必填 `number`，但 T10 的 `configWithCasdoor` 字面量没它；`apps/server/src/demo-tenant-isolation.test.ts:42` 的全量字面量也没有 ⇒ 测试文件纳入 typecheck（issue #68），`pnpm typecheck` 红 | T10 字面量补 `dataQueryRatePerMin: 60`；把 `demo-tenant-isolation.test.ts` **写进 T5 的 Files 与主表**（原先没有任何任务认领它）；T5 Step 6 加注「必填 ⇒ 所有全量字面量都要补，改完跑 `--filter @platform/server typecheck`」 |
+| 28 | **T9 `runTool` 的联合有一支没有判别式**：`{ metrics: … }` 缺 `status`，而调用方读 `result.status` ⇒ TS2339；本任务的门禁正是 `pnpm --filter data typecheck` ⇒ 不可达 | 该支改为 `{ status: 'metrics'; metrics: … }`（返回值同步），并在函数上方写明「每一支都必须带 `status`」及其理由 |
+| 29 | **T8 让改 `buildTestApp` 的第 4 参**，但该参已被 T1 定为 `DataTenant` 且 T7/T10 在按对象用它 ⇒ 照字面改会**静默打挂 T7** | 删掉该指令，改为：注入走 `RouteCtx.execute`（T6 已在自己的 Files/Interfaces 里声明），并**补上 T6 没写的机制**——`ModuleContext` 是 SDK 的封闭接口（`module.ts:20`，只有 `pool`），所以「ctx 里本来就有 execute」不成立，`index.ts` 必须显式转发；测试侧用**变量**携带 `execute` 绕开多余属性检查 |
+| 30 | **T6 的状态码自相矛盾**：Interfaces 写 `200/403/500`，同任务代码 `c.json(outcome, 502)`，T10 也期望 502 ⇒ 照 Interfaces 写就与 T10 对不上 | Interfaces 改为 **200/403/502**，并写明理由（上游数据仓库不可用不是本服务的 bug ⇒ 502） |
+| 31 | **T1 的 Files 漏了两个它自己正文要求的文件**：① `modules/data/console/index.tsx`（Step 3 的注记明说必须建，否则 web 构建期解析入口失败）② `apps/web/src/console-registry.gen.ts`（**进 git 的生成物**；CI 的 `web` job 每次 build 都重新生成它 ⇒ **脏了永远不红**，是静默不一致） | 两者补进 T1 的 Files、主表；新增 **Step 10** 专做重新生成（`node scripts/gen-console-registry.mjs`，禁手改），Step 11 的验证组加上 `--filter @platform/web typecheck` 与 `lint-architecture.mjs`。另补 **Step 2 的 `pnpm install`**（新 workspace 包不 install ⇒ `--filter data` 解析不到，失败形态与代码无关） |
 
 **另外三处不是"与真仓不符"、而是"计划自己不可执行"**，也一并修了：
 
