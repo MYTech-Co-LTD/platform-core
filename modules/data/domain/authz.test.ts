@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   MAX_QUERY_ROWS, authorize, sqlQuote, visibleMetrics,
-  type MetricDef, type Requester,
+  type MetricDef, type MetricParamType, type Requester,
 } from './authz'
 
 // 词表形状照 /tmp/iam-lab/mcp_authz_server.py 的 CATALOG（原型实测 11/11 的那份）
@@ -123,6 +123,23 @@ describe('authorize —— 主体钉死', () => {
 
   it('非法日期字面量 → bad_param（引号是拼的，格式必须先验）', () => {
     const r = authorize(CATALOG, req(), 'mart_sales_daily', { day_from: "2026-08-15' OR 1=1 --" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toBe('bad_param')
+  })
+
+  it('越界 type（词表里的 DATE）→ bad_param —— 这条锁的是 fail-closed，不是锁异常', () => {
+    // 锁的是**语义**：任何 literal() 无法安全转义的参数值都必须被拒（reason: bad_param），
+    // **不是**「别抛异常」。因为最坏的形态恰恰是不抛也不拒——
+    // 越界 type 穿透 switch 会返回 `undefined`，而调用方判据是 `lit === null`，
+    // `undefined === null` 为 false ⇒ 被当合法值放行 ⇒ ok:true + `AND day = undefined`（SQL 必炸）。
+    // 故断言必须落在「被拒 + reason 可解释」上；只断言「没抛错」会漏掉这个缺陷。
+    // `as unknown as` 是**故意**越过闭合 union 的类型约束：类型层挡得住编译期字面量，
+    // 挡不住运行时数据（可达路径：T3 loadCatalog 未校验 DB 里的 type 值就放进词表）。
+    const cat: MetricDef[] = [{
+      ...CATALOG[1],
+      params: { day: { column: 'day', type: 'DATE' as unknown as MetricParamType } },
+    }]
+    const r = authorize(cat, req(), 'metrics_revenue_mom', { day: '2026-08-15' })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.reason).toBe('bad_param')
   })
