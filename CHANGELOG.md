@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.24.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.23.0...v0.24.0) - 2026-09-22
+- 【新增】aftersales: M2b 迁移脚本骨架（纯核可测 + 默认 dry-run） ([#159](https://github.com/MYTech-Co-LTD/platform-core/pull/159), [aaa9849](https://github.com/MYTech-Co-LTD/platform-core/commit/aaa9849198b64c91dd84c3b1c3720075feda4ab3))
+
+
 ## [0.23.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.22.2...v0.23.0) - 2026-09-22
 - 【新增】aftersales: 孤儿附件 GC——deleteObject + manage 端点 + 行锁先行单行事务 ([#158](https://github.com/MYTech-Co-LTD/platform-core/pull/158), [2aa4e8b](https://github.com/MYTech-Co-LTD/platform-core/commit/2aa4e8bb1b45e5f619008162c516080bfa579aa0))
 
