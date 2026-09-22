@@ -1,10 +1,25 @@
 #!/usr/bin/env node
 // sync-data-semantics.mjs — **L1 语义声明 → data.metrics 的唯一物化通道**（issue #150 / 计划 Task 8）。
 //
-// 用法：DATABASE_URL=postgres://… pnpm exec tsx scripts/sync-data-semantics.mjs [--dry-run]
-// 契约：成功 → exit 0，stdout 一行 `sync-data-semantics: …`；失败（YAML 坏 / 形状不合契约 /
-//       缺 DATABASE_URL）→ exit 1，stderr 一条可解释的错误。**不是门禁**（不判别人的对错），
-//       故不套 check-* 的「OK（计数）」格式。
+// 用法：DATABASE_URL=postgres://… pnpm exec tsx scripts/sync-data-semantics.mjs [模式]
+//       **不给模式 = 写库**（把 data.metrics 里 org='platform' 的 L1 行对齐到仓内声明）。
+//       不写库的模式有两个：`--check`（门禁：有漂移 exit 1）与 `--dry-run`（不是门禁：exit 恒 0）。
+//       `--help` 打印同一份说明（文案的唯一事实源是下面的 `FLAG_HELP`，不会两处各说各话）。
+// 契约：成功 → exit 0，stdout 一行 `sync-data-semantics: …`；**有漂移的 --check** → exit 1；
+//       参数用法错（未知 flag / 模式互斥）→ exit 2；其余失败（YAML 坏 / 形状不合契约 /
+//       缺 DATABASE_URL）→ exit 1，stderr 一条可解释的错误。
+//
+// ── ⚠️ 未知 flag 一律**响亮拒绝**，绝不再静默忽略（T8 评审 I1，Important）────────────────
+// 改前：脚本只看 `argv.includes('--dry-run')`，其它一律无视 ⇒ 打了 `--check` 的命令
+// **实际向真库物化了**（评审在真库上复现），且 exit 0 全绿——一个「检查 job」在写生产库。
+// 这是 fail-open 里最坏的一类：假绿 + 有副作用。故未知 flag → exit 2 + 列出支持项。
+// T9 的门禁③消费 `--check`：**1 = 检出漂移**、**2 = 用法错**（两者都是非 0，但含义不同）。
+//
+// ── ⚠️ 物化出来的行在**真库上目前跑不通**（已知边界，issue #176）──────────────────────
+// `dbt/models/**` 还没有 `org` 列，而 `domain/authz.ts` 的 `authorize` 恒拼
+// `WHERE <主体列> = '<org>'` ⇒ 这些 L1 指标一旦被消费通道加载，查询会以仓库错误（502）收场。
+// 即：**物化先落库、真跑等 marts 补 org 列**（`dbt/README.md` §10 把「marts 行里的 org 列」
+// 写成目标形态，尚未落地）。本脚本只负责物化，跑不通是 marts 侧的事——见 issue #176。
 //
 // ── 它存在的理由（全局约束 12 的另一半）────────────────────────────────────────────
 // 约束 12 说「L1 行的 select_sql 只能由 sync 脚本从仓内 YAML 物化写入」。这一句需要两半才成立：
@@ -211,6 +226,131 @@ export function diffDeclarations(declared, current) {
   return { added, updated, removed, unchanged }
 }
 
+// ── 命令行面 ────────────────────────────────────────────────────────────────────
+// 出口码三分法（0 成功 / 1 漂移或运行失败 / 2 用法错），与仓内其它 CLI 的「非 0 但含义不同」一致。
+
+/** 成功（含「--check 无漂移」「--dry-run 有漂移」——那两种模式下 0 不代表「库已对齐」）。 */
+export const EXIT_OK = 0
+/** `--check` 检出漂移；运行期失败（YAML 坏 / 缺 DATABASE_URL / 写库报错）也用这个。 */
+export const EXIT_DRIFT = 1
+/** 参数用法错：未知 flag 或模式互斥。**与漂移区分**，否则 T9 的门禁会把用法错读成漂移。 */
+export const EXIT_USAGE = 2
+
+export const MODE_WRITE = 'write'
+export const MODE_DRY_RUN = 'dry-run'
+export const MODE_CHECK = 'check'
+export const MODE_HELP = 'help'
+
+/**
+ * 支持的 flag 与它们的语义——**唯一事实源**：`parseArgs`、`--help` 文案与用法错提示
+ * 都从这里生成，三处不会各说各话。每条都显式写明「会不会写库」：本脚本最危险的失败形态
+ * 就是「以为在检查、实际在写」。
+ */
+export const FLAG_HELP = [
+  { flag: '--check', help: '读库比对并打印差集，**不写库**；有漂移 exit 1 / 无漂移 exit 0（门禁）' },
+  { flag: '--dry-run', help: '读库比对并打印差集，**不写库**；exit 恒 0（不是门禁，只给人看）' },
+  { flag: '--help, -h', help: '打印本说明，**不写库**；exit 0' },
+]
+
+/**
+ * 解析 argv → 模式 + 未识别项。**纯函数**（单测面，不需要数据库）。
+ *
+ * 返回**单形状、字段恒在**的对象（不写可辨识联合）：`scripts/` 是 checkJs 工程，
+ * JSDoc 里的字面量联合会被加宽、窄化随之失效——那正是本仓已经踩过的一类假绿。
+ *
+ * @param {readonly string[]} argv 不含 node 与脚本路径的参数
+ * @returns {{ mode: string, modes: string[], unknown: string[] }}
+ *   `mode` 是最终生效的模式（不给模式 ⇒ `write`）；`modes` 保留原序（用于「互斥」判定）；
+ *   `unknown` 是未识别的参数。
+ */
+export function parseArgs(argv) {
+  /** @type {string[]} */ const unknown = []
+  /** @type {string[]} */ const modes = []
+  for (const arg of argv) {
+    if (arg === '--check') modes.push(MODE_CHECK)
+    else if (arg === '--dry-run') modes.push(MODE_DRY_RUN)
+    else if (arg === '--help' || arg === '-h') modes.push(MODE_HELP)
+    else unknown.push(arg)
+  }
+  let mode = MODE_WRITE
+  // --help 优先于其它模式（`--check --help` 是「我要看说明」，不是「我要检查」）
+  if (modes.includes(MODE_HELP)) mode = MODE_HELP
+  else if (modes.length > 0) mode = modes[0]
+  return { mode, modes, unknown }
+}
+
+/**
+ * 参数用法错 → 一条可读的错误（没错则 null）。
+ *
+ * ★ 未知 flag **必须**是错（不是「忽略」）：忽略会让 `--check` 的调用方以为跑的是 dry-run，
+ *   实际发生的是写库 + exit 0。同理模式互斥也要响亮——静默取第一个会让
+ *   `--check --dry-run` 的语义取决于参数顺序（不可预测）。
+ *
+ * @param {{ mode: string, modes: string[], unknown: string[] }} args
+ * @returns {string | null}
+ */
+export function usageError(args) {
+  const supported = `支持的参数：\n${FLAG_HELP.map((f) => `  ${f.flag.padEnd(10)} ${f.help}`).join('\n')}`
+  if (args.unknown.length > 0) {
+    return `未知参数 ${args.unknown.join(' ')} —— 本脚本不忽略未识别 flag`
+      + `（静默忽略会让 \`--check\` 退化成「直接写库」）。\n${supported}`
+  }
+  // 互斥只判**非 help** 的模式：`--help` 的语义是「把说明给我」，不是「跑哪个模式」——
+  // 把 `--check --help` 判成互斥，就与 parseArgs 的「help 优先」自相矛盾
+  // （改前实测：parseArgs 说 help、usageError 说互斥 ⇒ 同一份 argv 两个结论）。
+  const effective = args.modes.filter((m) => m !== MODE_HELP)
+  if (effective.length > 1) {
+    return `模式互斥：${effective.join(' + ')} —— 一次只能给一个模式。\n${supported}`
+  }
+  return null
+}
+
+/** `--help` 的正文（与头注同源：都从 `FLAG_HELP` 生成）。 */
+export function usageText() {
+  return [
+    `用法：DATABASE_URL=postgres://… pnpm exec tsx scripts/${SCRIPT_NAME}.mjs [模式]`,
+    '      不给模式 = **写库**（把 org=platform 的 L1 行对齐到仓内 dbt 声明）。',
+    '',
+    FLAG_HELP.map((f) => `  ${f.flag.padEnd(10)} ${f.help}`).join('\n'),
+    '',
+    '退出码：0 成功 / 1 --check 检出漂移或运行失败 / 2 参数用法错（未知参数、模式互斥）',
+  ].join('\n')
+}
+
+/**
+ * 差集 → 可读文本（**`--check` 与 `--dry-run` 共用同一个打印器**）。
+ *
+ * 为什么两处必须同源：T9 的门禁要消费 `--check`，而人读的是 `--dry-run`——
+ * 两处各写一份格式化，症状是「门禁说漂移、人照着 dry-run 的输出找不到是哪条」。
+ *
+ * @param {{ added: string[], updated: string[], removed: string[], unchanged: string[] }} diff
+ * @returns {string[]} 首行是计数摘要，其后每行一条漂移（`+` 新增 / `~` 更新 / `-` 删除）
+ */
+export function formatDiff(diff) {
+  const lines = [
+    `新增 ${diff.added.length} / 更新 ${diff.updated.length}`
+    + ` / 删除 ${diff.removed.length} / 未变 ${diff.unchanged.length}`,
+  ]
+  for (const id of diff.added) lines.push(`  + ${id}`)
+  for (const id of diff.updated) lines.push(`  ~ ${id}`)
+  for (const id of diff.removed) lines.push(`  - ${id}`)
+  return lines
+}
+
+/**
+ * 模式 + 差集 → 出口码。**纯函数**（单测面）：把「会不会非 0」从 main 里提出来，
+ * 免得它和「有没有写库」一起埋在 I/O 里没法单测。
+ *
+ * @param {string} mode
+ * @param {{ added: string[], updated: string[], removed: string[], unchanged: string[] }} diff
+ * @returns {number}
+ */
+export function exitCodeFor(mode, diff) {
+  if (mode !== MODE_CHECK) return EXIT_OK
+  const drift = diff.added.length + diff.updated.length + diff.removed.length
+  return drift > 0 ? EXIT_DRIFT : EXIT_OK
+}
+
 /**
  * 读仓内的 L1 声明（唯一事实源）。
  *
@@ -235,8 +375,21 @@ function poolFromEnv() {
 }
 
 async function main() {
-  const argv = process.argv.slice(2)
-  const dryRun = argv.includes('--dry-run')
+  const args = parseArgs(process.argv.slice(2))
+
+  // ★ 参数校验**必须最靠前**：未知 flag 若晚于读库/写库被处理，「--check 打成了 --chekc」
+  //   这类手误就已经把库改了——错误提示再清楚也没意义。
+  const usage = usageError(args)
+  if (usage !== null) {
+    console.error(`${SCRIPT_NAME}: ${usage}`)
+    process.exitCode = EXIT_USAGE
+    return
+  }
+  if (args.mode === MODE_HELP) {
+    console.log(usageText())
+    return
+  }
+
   const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
   const declared = readDeclarations(rootDir)
@@ -245,12 +398,19 @@ async function main() {
     const current = await loadPlatformCatalog(pool)
     const diff = diffDeclarations(declared, current)
 
-    if (dryRun) {
-      console.log(
-        `${SCRIPT_NAME}: dry-run —— 新增 ${diff.added.length} / 更新 ${diff.updated.length}`
-        + ` / 删除 ${diff.removed.length} / 未变 ${diff.unchanged.length}`,
-      )
-      for (const id of [...diff.added, ...diff.updated, ...diff.removed]) console.log(`  ${id}`)
+    // 两种**不写库**的模式共用同一个 diff 打印器（T9 的门禁与人读的输出必须同源）
+    if (args.mode !== MODE_WRITE) {
+      const lines = formatDiff(diff)
+      console.log(`${SCRIPT_NAME}: ${args.mode} —— ${lines[0]}`)
+      for (const line of lines.slice(1)) console.log(line)
+      const code = exitCodeFor(args.mode, diff)
+      if (args.mode === MODE_CHECK) {
+        // 把「为什么非 0」写在 stdout 末行：人读日志时不必回头查退出码表的含义
+        console.log(`${SCRIPT_NAME}: check ${code === EXIT_OK
+          ? '无漂移（库内 L1 行与仓内声明一致）'
+          : `检出漂移（exit ${code}）—— 库内 L1 行与仓内声明不一致`}`)
+      }
+      process.exitCode = code
       return
     }
 

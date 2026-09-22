@@ -55,8 +55,23 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
 const ROW_COLUMNS =
   'id, title, description, required_scope, subject_column, select_sql, group_by, params, source'
 
-/** 本租户的整份词表（**不含** L1 平台行——合并加载见 `loadMergedCatalog`）。`order by id`：顺序确定。 */
-export async function loadCatalog(pool: Pool, org: string): Promise<MetricRow[]> {
+/**
+ * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
+ *
+ * ⚠️ **消费通道一律不得调用本函数**（T8 评审 C1，Critical）。它只回本 org 的行 ⇒
+ *   平台 L1 指标在调用它的通道上**整条消失**（不是报错，是「这个词表里没这个 id」）；
+ *   而 `GET /metrics` 用的是合并词表 ⇒ **同一 id 在两条通道上胜负相反**
+ *   （console 显示平台口径、`/query` 却跑租户那条 `source='l2'` 的 SQL），
+ *   且没有任何状态码/日志/审计差异——是静默错答类缺陷。
+ *
+ *   消费面（`POST /query`、MCP `tools/list`、chat、`GET /metrics`）**唯一**的词表加载器是
+ *   `loadMergedCatalog`。名字里的 `Org` 就是为了让这个错法在调用点一眼可辨：
+ *   `loadCatalog` 读起来像「那个词表加载器」，正是 C1 里三条通道集体用错它的原因。
+ *   本函数在**生产路径上没有调用方**——它服务的是存储层的「单桶」断言
+ *   （`metric-store.test.ts`：只回本 org、行 → `MetricRow` 映射保真）。
+ *   机器判据：`catalog-consumers.test.ts` 的「来源守卫」组逐文件钉住四个消费模块引用的是哪一个。
+ */
+export async function loadOrgCatalog(pool: Pool, org: string): Promise<MetricRow[]> {
   const r = await pool.query(
     `select ${ROW_COLUMNS} from data.metrics where org = $1 order by id`,
     [org],
@@ -76,10 +91,17 @@ export async function loadPlatformCatalog(pool: Pool): Promise<MetricRow[]> {
 /**
  * 消费面词表 = **L1（平台）∪ L2（本 org）**（计划 Task 8「catalog 加载」）。
  *
+ * ★ **这是消费通道唯一的词表加载器**（T8 评审 C1 的整改落点）：`POST /query`、
+ *   MCP `tools/list`、chat（`domain/agent-loop.ts`）、`GET /metrics` 四条面全部经它，
+ *   于是「同一 id 在任一通道上解析结果一致（撞 id 时 L1 赢）」是**加载器的性质**，
+ *   而不是四条通道各自的性质——四条各自加载就会漂（C1 的实况：3/4 条用了 `loadOrgCatalog`）。
+ *   机器判据：`catalog-consumers.test.ts`（四通道一致性断言 + 来源守卫）。
+ *
  * ★ L2 **不可覆盖** L1 口径：见下方撞名分支——这是「L2 只 refine 不改口径」在加载侧的落点。
  *   写入侧已有闸门（routes/metrics.ts 的 `ID_RESERVED_BY_L1`），这里是**第二道**：
- *   闸门被绕过（历史数据 / 直接写库）时，加载侧仍不能让 L2 行顶掉 L1 行，
- *   否则「L1 口径唯一」就只靠写侧那道门——而单道门的失效是静默的。
+ *   闸门被绕过（历史数据 / 直接写库 / 「先建 L2、后物化 L1」的合法时序）时，
+ *   加载侧仍不能让 L2 行顶掉 L1 行，否则「L1 口径唯一」就只靠写侧那道门——
+ *   而单道门的失效是静默的。
  */
 export async function loadMergedCatalog(pool: Pool, org: string): Promise<MetricRow[]> {
   const r = await pool.query(

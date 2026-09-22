@@ -4,7 +4,7 @@
 // 审计在**所有**结局都写（spec §5 约束 7）——包括被拒与出错，否则「为什么被拒」查不出来。
 import type { Pool } from 'pg'
 import { MAX_QUERY_ROWS, authorize, type DenyReason, type Requester } from './authz'
-import { loadCatalog } from './metric-store'
+import { loadMergedCatalog } from './metric-store'
 import { writeAudit } from './audit-store'
 import { DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './warehouse'
 
@@ -60,7 +60,10 @@ export async function runQuery(
     return { status: 'denied', metricId, reason: 'unauthenticated' }
   }
 
-  const catalog = await loadCatalog(deps.pool, org)
+  // 词表 = L1（平台）∪ L2（本 org）——**合并加载器**，与 `GET /metrics`/MCP/chat 同一落点
+  // （T8 评审 C1：这里曾用只回本 org 的加载器 ⇒ 平台指标在 /query 上 403「未声明」，
+  //  而 console 把它列了出来——同一 id 在两条通道上胜负相反且无任何可观测信号）。
+  const catalog = await loadMergedCatalog(deps.pool, org)
   const authz = authorize(catalog, requester, metricId, args)
   if (!authz.ok) {
     await audit('denied', authz.reason, null)

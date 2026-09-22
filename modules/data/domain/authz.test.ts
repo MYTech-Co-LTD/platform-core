@@ -134,7 +134,7 @@ describe('authorize —— 主体钉死', () => {
     // `undefined === null` 为 false ⇒ 被当合法值放行 ⇒ ok:true + `AND day = undefined`（SQL 必炸）。
     // 故断言必须落在「被拒 + reason 可解释」上；只断言「没抛错」会漏掉这个缺陷。
     // `as unknown as` 是**故意**越过闭合 union 的类型约束：类型层挡得住编译期字面量，
-    // 挡不住运行时数据（可达路径：T3 loadCatalog 未校验 DB 里的 type 值就放进词表）。
+    // 挡不住运行时数据（可达路径：T3 loadOrgCatalog 未校验 DB 里的 type 值就放进词表）。
     const cat: MetricDef[] = [{
       ...CATALOG[1],
       params: { day: { column: 'day', type: 'DATE' as unknown as MetricParamType } },

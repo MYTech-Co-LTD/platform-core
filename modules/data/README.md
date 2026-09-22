@@ -50,6 +50,13 @@
   `source` 一律 **400**（不是忽略——静默忽略会让调用方以为自己的 SQL 生效了）。
 - catalog 加载 = **L1（platform）∪ L2（本 org）**；同 id 撞上时 **L1 赢**（写侧另有一道 409
   `ID_RESERVED_BY_L1` 闸）。
+  - 这句话对**四条消费面全部成立**（T8 评审 C1 的整改点）：`POST /query`、MCP `tools/list`、
+    chat、`GET /metrics` 共用**同一个**加载器 `loadMergedCatalog`——四条各自加载就会漂
+    （C1 的实况：3/4 条用了只回本 org 的 `loadOrgCatalog`，于是同一个 metricId 在
+    console 上显示平台口径、在 `/query` 上跑租户那条 SQL，且无任何可观测信号）。
+    机器判据：`modules/data/catalog-consumers.test.ts`（四通道一致性 + 来源守卫）。
+  - ⚠️ **可见 ≠ 查得通**：marts 还没有 `org` 列 ⇒ L1 指标在真库上会以仓库错误（502）收场，
+    见下面「L2 的已知边界」第 4 条与 issue #176。
 
 ### agent 接入面：**预留，本轮不实现**（拍板 #5）
 

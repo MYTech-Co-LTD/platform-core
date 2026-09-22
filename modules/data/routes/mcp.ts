@@ -12,7 +12,7 @@
 // 未授权拒全部出自那条链——本文件不做第二份判定，约束 1）。
 import type { MetricDef } from '../domain/authz'
 import { visibleMetrics } from '../domain/authz'
-import { loadCatalog } from '../domain/metric-store'
+import { loadMergedCatalog } from '../domain/metric-store'
 import { runQuery } from '../domain/query-service'
 import type { ModuleHono, RouteCtx } from './context'
 import { requesterOf } from './context'
@@ -71,9 +71,11 @@ export function registerMcp(r: ModuleHono, ctx: RouteCtx): void {
     if (msg.method === 'ping') return reply({})
     if (msg.method === 'tools/list') {
       // M3 守卫拒掉的请求者（requesterOf → null）：词表对其「看不见」——空 tools，不是报错。
-      // 守卫必须在 loadCatalog **之前**（实测：放在后面 = 空身份先炸在加载词表上，500 而非空词表）。
+      // 守卫必须在加载词表**之前**（实测：放在后面 = 空身份先炸在加载词表上，500 而非空词表）。
       if (requester === null) return reply({ tools: [] })
-      return reply({ tools: visibleMetrics(await loadCatalog(ctx.pool, org), requester).map(toTool) })
+      // 合并加载器（L1 ∪ 本 org）——与 /query、chat、GET /metrics 同一落点，
+      // 否则平台指标不出现在 agent 的工具面里（T8 评审 C1）。
+      return reply({ tools: visibleMetrics(await loadMergedCatalog(ctx.pool, org), requester).map(toTool) })
     }
     if (msg.method === 'tools/call') {
       const name = String(msg.params?.name ?? '')

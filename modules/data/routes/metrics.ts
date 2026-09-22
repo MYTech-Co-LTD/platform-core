@@ -190,11 +190,18 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   r.delete('/metrics/:id', async (c) => {
     const id = metricIdOf(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    // L1 行只读，且是**显式** 409（不是含混的 404）：存储层的 deleteMetric 本来就带
-    // `source='l2'`，所以 L1 id 会掉到 404——但 404 会让管理员以为「这行不存在」，
-    // 真相是「它在，但只能改 dbt 声明再物化」。故先认出来再拒。
-    if (await isL1Id(ctx, id)) return c.json({ error: 'READONLY_L1' }, 409)
+    // ★ 顺序：**先删本租户自己的 L2 行，再判 L1**（T8 评审 M-①）。不能反——
+    //   「租户先建 L2、平台事后同 id 物化」是**合法时序**（写侧闸门只拦相反方向），
+    //   撞 id 之后那行 L2 在合并词表里被 L1 顶掉（消费面看不见它），若 DELETE 先判 L1
+    //   就恒 409 ⇒ **永久孤儿**：租户再也清不掉自己声明过的那行，而存储层的
+    //   `deleteMetric` 本来完全能删它（`org = 本 org` 与 `source = 'l2'` 都钉在 WHERE 里，
+    //   碰不到平台桶那行）。删自己的行不影响任何人：「L1 赢」是**解析**规则，
+    //   不是「租户的行归平台所有」。
     const gone = await deleteMetric(ctx.pool, orgOf(c), id)
-    return gone ? c.json({ ok: true }) : c.json({ error: 'NOT_FOUND' }, 404)
+    if (gone) return c.json({ ok: true })
+    // 没删到：若这个 id 是平台词表里的 ⇒ **显式** 409（不是含混的 404）：404 会让管理员
+    // 以为「这行不存在」，真相是「它在，但只能改 dbt 声明再物化」。故先认出来再拒。
+    if (await isL1Id(ctx, id)) return c.json({ error: 'READONLY_L1' }, 409)
+    return c.json({ error: 'NOT_FOUND' }, 404)
   })
 }

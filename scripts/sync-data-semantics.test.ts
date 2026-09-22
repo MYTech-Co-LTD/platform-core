@@ -7,17 +7,36 @@
 //      L2 编译点会对**所有**租户失效（而它只会在「某租户建 L2 指标时」暴露，离因很远）。
 //   ② 差集分类正确：删/改/增/未变四态判错，会让 sync 要么漏删（脏词表）要么反复重写。
 //
-// T9 的 `--check` 模式（dry-run + 有 diff 即 exit 1）与 check-data-models 的 L2 同源断言
-// **不在这里**——那是 T9 的面，本文件只覆盖本脚本自己的纯函数。
+// ③ **命令行面**（T8 评审 I1）：`--check` 是不是真 dry-run、未知 flag 会不会被静默忽略、
+//    出口码怎么分。这三个纯函数（`parseArgs` / `usageError` / `exitCodeFor`）+ `formatDiff`
+//    是本文件的第三组断言——`--check` 是 **T9 的门禁要消费的东西**，它的语义必须在**这里**被钉住。
+//    ⚠️ 「`--check` 真的不写库」这条**不**在本文件里（本文件不连库，这是既有约定）：
+//    它的硬证据是任务报告里对真库的前后行数实测。本文件钉的是机制（模式解析 + 出口码 +
+//    打印器同源），实跑钉的是效果——把真库 spawn 用例塞进单测反而危险：sync 的删除侧
+//    （`deleteStaleL1Metrics`）会清掉平台桶里不在仓内声明集中的行，而那正是
+//    metric-store/metrics 等测试文件并行的 L1 夹具（跨文件擦数据，症状是随机红）。
+// check-data-models 的 L2 同源断言**不在这里**——那是 T9 的面。
 import { describe, expect, it } from 'vitest'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  EXIT_DRIFT,
+  EXIT_OK,
+  EXIT_USAGE,
+  MODE_CHECK,
+  MODE_DRY_RUN,
+  MODE_HELP,
+  MODE_WRITE,
   buildSelectSql,
   declarationsFromYaml,
   deriveRelation,
   diffDeclarations,
+  exitCodeFor,
+  formatDiff,
+  parseArgs,
   readDeclarations,
+  usageError,
+  usageText,
 } from './sync-data-semantics.mjs'
 import { parseL1Select } from '../modules/data/domain/semantic-compiler.ts'
 
@@ -129,5 +148,81 @@ describe('diffDeclarations：双向差集的四态分类', () => {
     const newer = declared.map((r) => ({ ...r, created_at: new Date(0), updated_at: new Date(9) }))
     expect(diffDeclarations(withTs, newer).updated).toEqual([])
     expect(diffDeclarations(withTs, newer).unchanged.length).toBe(3)
+  })
+})
+
+describe('命令行面：模式解析（T8 评审 I1）', () => {
+  it('不给模式 = write（默认是**写库**）；--check / --dry-run / --help(-h) 各自成模式', () => {
+    expect(parseArgs([]).mode).toBe(MODE_WRITE)
+    expect(parseArgs(['--dry-run']).mode).toBe(MODE_DRY_RUN)
+    expect(parseArgs(['--check']).mode).toBe(MODE_CHECK)
+    expect(parseArgs(['--help']).mode).toBe(MODE_HELP)
+    expect(parseArgs(['-h']).mode).toBe(MODE_HELP)
+  })
+
+  it('★ --check 不是写模式（改前它根本不被识别 ⇒ 打了 --check 实际进写模式）', () => {
+    const args = parseArgs(['--check'])
+    expect(args.mode).not.toBe(MODE_WRITE)
+    expect(args.unknown, '--check 被当成未知参数').toEqual([])
+  })
+
+  it('★ 未知 flag 一律拒绝：--check 打成 --chekc 不许静默变成写库', () => {
+    const args = parseArgs(['--chekc'])
+    expect(args.unknown).toEqual(['--chekc'])
+    expect(args.mode, '未知 flag 掉进了写模式').toBe(MODE_WRITE)
+    expect(usageError(args)).toMatch(/未知参数 --chekc/)
+    // 支持项必须列全（否则调用方只能猜/去翻源码）
+    const msg = usageError(args) ?? ''
+    for (const flag of ['--check', '--dry-run', '--help']) expect(msg).toContain(flag)
+  })
+
+  it('模式互斥：--check --dry-run ⇒ 用法错（静默取第一个会让语义取决于参数顺序）', () => {
+    expect(usageError(parseArgs(['--check', '--dry-run']))).toMatch(/互斥/)
+    expect(usageError(parseArgs(['--check']))).toBeNull()
+    expect(usageError(parseArgs(['--dry-run']))).toBeNull()
+    expect(usageError(parseArgs([]))).toBeNull()
+  })
+
+  it('--help 优先于其它模式（--check --help = 看说明，不是跑检查）', () => {
+    expect(parseArgs(['--check', '--help']).mode).toBe(MODE_HELP)
+    expect(usageError(parseArgs(['--check', '--help']))).toBeNull()
+  })
+
+  it('--help 正文写明「会不会写库」与退出码含义（默认模式 = 写库必须显式说出来）', () => {
+    const text = usageText()
+    expect(text).toMatch(/不给模式 = \*\*写库\*\*/)
+    expect(text).toMatch(/不写库/)
+    expect(text).toMatch(/退出码/)
+    for (const flag of ['--check', '--dry-run', '--help']) expect(text).toContain(flag)
+  })
+})
+
+describe('命令行面：出口码与 diff 打印器（T8 评审 I1 / T9 消费）', () => {
+  const noDrift = { added: [], updated: [], removed: [], unchanged: ['a', 'b'] }
+  const added = { ...noDrift, added: ['x'] }
+  const updated = { ...noDrift, updated: ['x'] }
+  const removed = { ...noDrift, removed: ['x'] }
+
+  it('★ --check：三种漂移全判非 0（新增/更新/删除任一都算漂移）；无漂移 ⇒ 0', () => {
+    for (const diff of [added, updated, removed]) {
+      expect(exitCodeFor(MODE_CHECK, diff), `${JSON.stringify(diff)} 没被判成漂移`).toBe(EXIT_DRIFT)
+    }
+    expect(exitCodeFor(MODE_CHECK, noDrift)).toBe(EXIT_OK)
+  })
+
+  it('--dry-run 恒 0（它不是门禁，头注写着）；write 模式也恒 0（失败走异常路径）', () => {
+    expect(exitCodeFor(MODE_DRY_RUN, added)).toBe(EXIT_OK)
+    expect(exitCodeFor(MODE_WRITE, added)).toBe(EXIT_OK)
+  })
+
+  it('用法错的出口码与「检出漂移」**不同**（否则 T9 会把手误读成漂移）', () => {
+    expect(EXIT_USAGE).not.toBe(EXIT_DRIFT)
+    expect(EXIT_USAGE).not.toBe(EXIT_OK)
+  })
+
+  it('formatDiff：--check 与 --dry-run 共用同一个打印器（计数摘要 + 每行一条漂移）', () => {
+    expect(formatDiff({ added: ['a'], updated: ['b'], removed: ['c'], unchanged: ['d', 'e'] }))
+      .toEqual(['新增 1 / 更新 1 / 删除 1 / 未变 2', '  + a', '  ~ b', '  - c'])
+    expect(formatDiff(noDrift)).toEqual(['新增 0 / 更新 0 / 删除 0 / 未变 2'])
   })
 })

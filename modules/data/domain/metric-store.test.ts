@@ -6,7 +6,7 @@ import {
   L1_ORG,
   deleteMetric,
   deleteStaleL1Metrics,
-  loadCatalog,
+  loadOrgCatalog,
   loadMergedCatalog,
   loadPlatformCatalog,
   upsertL1Metric,
@@ -125,7 +125,7 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
       .toMatchObject({ org: ORG, source: 'l2' })
   })
 
-  it('loadCatalog 只回本租户，且行 → MetricRow 映射保真（params jsonb 往返、created/updated 不外泄）', async () => {
+  it('loadOrgCatalog 只回本租户，且行 → MetricRow 映射保真（params jsonb 往返、created/updated 不外泄）', async () => {
     const mine = def({
       id: 'finance_margin',
       title: '毛利',
@@ -138,7 +138,7 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
     await put(ORG, mine)
     await put(OTHER_ORG, def({ id: 'other_org_only', title: '别家的' }))
 
-    const catalog = await loadCatalog(pool, ORG)
+    const catalog = await loadOrgCatalog(pool, ORG)
     expect(catalog.map((m) => m.id)).toContain('finance_margin')
     // 反向：别家租户的行一条都不能出现（隔离键 org 的判据）
     expect(catalog.map((m) => m.id)).not.toContain('other_org_only')
@@ -153,7 +153,7 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
 
     await put(OTHER_ORG, def({ id: 'other_keep' }))
     expect(await deleteMetric(pool, ORG, 'other_keep')).toBe(false)    // 别家的同 id 删不掉
-    expect((await loadCatalog(pool, OTHER_ORG)).map((m) => m.id)).toContain('other_keep')
+    expect((await loadOrgCatalog(pool, OTHER_ORG)).map((m) => m.id)).toContain('other_keep')
   })
 
   // ── T8：L1（平台）与 L2（租户）两层 ──────────────────────────────────────────────
@@ -222,7 +222,7 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
       const ids = (await loadPlatformCatalog(pool)).map((m) => m.id)
       expect(ids).toContain(`${L1_ID_PREFIX}keep`)
       expect(ids).not.toContain(`${L1_ID_PREFIX}stale`)
-      expect((await loadCatalog(pool, ORG)).map((m) => m.id), 'l2 行被差集删了').toContain('l2_untouched')
+      expect((await loadOrgCatalog(pool, ORG)).map((m) => m.id), 'l2 行被差集删了').toContain('l2_untouched')
     })
 
     it('★ 裁剪后词表经 authz 只少不多：合并集 → visibleMetrics ⊆ 合并集，且只按 scope 减', async () => {

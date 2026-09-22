@@ -39,6 +39,8 @@ const L1_FINANCE = def({
   selectSql: 'select sum(fct_retail_sale.margin) as value, system_book from fct_retail_sale',
   groupBy: 'system_book',
 })
+/** M-① 的撞 id 探针：**先**由租户建 L2、**后**由平台物化同 id（唯一能造出撞 id 的合法时序）。 */
+const L1_CLASH_PROBE = 'retail:clash_probe'
 
 /** 合法 L2 声明（各用例只覆盖自己关心的字段）。 */
 const l2Body = (over: Record<string, unknown> = {}) => ({
@@ -77,7 +79,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     await pool.query('delete from data.metrics where org = any($1::text[])', [[ORG, OTHER_ORG]]).catch(() => {})
     // L1 桶跨文件共用 ⇒ 只删本文件放进去的两条（别 `where org='platform'`，会删掉并行兄弟的夹具）
     await pool.query('delete from data.metrics where org = $1 and id = any($2::text[])',
-      [L1_ORG, [L1_SALES.id, L1_FINANCE.id]]).catch(() => {})
+      [L1_ORG, [L1_SALES.id, L1_FINANCE.id, L1_CLASH_PROBE]]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
@@ -226,5 +228,35 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     const second = await app(ORG, ['data:manage']).request('/metrics/l2_net_sales_xiongmao', { method: 'DELETE' })
     expect(second.status).toBe(404)
     expect((await second.json()).error).toBe('NOT_FOUND')
+  })
+
+  it('★ 撞 id 的租户 L2 行**删得掉**（T8 评审 M-①：改前先判 L1 ⇒ DELETE 恒 409 ⇒ 永久孤儿）', async () => {
+    // 合法时序：租户**先**建 L2，平台**事后**把同 id 物化成 L1。
+    // （反方向建不出来——写侧闸门以 409 ID_RESERVED_BY_L1 拦下，见上一条用例。）
+    const clashId = L1_CLASH_PROBE
+    const post1 = await post(l2Body({ id: clashId }))
+    expect(post1.status, '撞 id 的 L2 行没建起来（夹具前提不成立）').toBe(201)
+    await upsertL1Metric(pool, def({ id: clashId, title: '平台同 id 版' }))
+
+    // 前提核对：合并词表里这条 id 由 **L1 赢**（租户那行在消费面上看不见）
+    const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
+    expect(all.metrics.find((m: { id: string }) => m.id === clashId))
+      .toMatchObject({ title: '平台同 id 版', source: 'l1' })
+
+    // 但它仍是**租户自己的**行 ⇒ 必须删得掉（改前这里恒 409 READONLY_L1）
+    const del = await app(ORG, ['data:manage']).request(`/metrics/${clashId}`, { method: 'DELETE' })
+    expect(del.status, 'DELETE 恒 409 ⇒ 租户清不掉自己声明过的行（永久孤儿）').toBe(200)
+    expect(await del.json()).toEqual({ ok: true })
+
+    // 删的是**租户那行**：本 org 桶里没了，平台桶那行安然无恙
+    const mine = await pool.query('select source from data.metrics where org = $1 and id = $2', [ORG, clashId])
+    expect(mine.rowCount).toBe(0)
+    const plat = await pool.query('select source from data.metrics where org = $1 and id = $2', [L1_ORG, clashId])
+    expect(plat.rows[0]).toMatchObject({ source: 'l1' })
+
+    // 再删一次：这次才轮到 L1 那道闸（它在，但只能改 dbt 声明再物化）
+    const again = await app(ORG, ['data:manage']).request(`/metrics/${clashId}`, { method: 'DELETE' })
+    expect(again.status).toBe(409)
+    expect((await again.json()).error).toBe('READONLY_L1')
   })
 })
