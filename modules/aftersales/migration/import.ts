@@ -4,8 +4,10 @@
 // 跳行纪律：必填枚举（status/amountType/approveType）为 null = 源值不在词表——**跳行并记
 // reasons（unknown_*）**，绝不落列缺省（列 default 'pending' 就是当年要消灭的硬映射——与
 // clean.ts 的 mapValue 无 fallback 同一条裁决，T3「按 skip 计数对照」以此为实现面）。
-// not-null 数值/时间列的缺值不属「词表未知」：按本文件 `?? 0n` 的既有模式收口到列缺省语义
-//（ticket_rule.refund_ratio → 0=未录；*.created_at → 迁移时刻），避免一行缺值 23502 打断整批。
+// not-null 时间列的缺值不属「词表未知」：按 `?? new Date()` 收口到列缺省语义（created_at → 迁移时刻），
+// 避免一行缺值 23502 打断整批。**例外（2026-09-22 裁决）：ticket_rule.refund_ratio 缺值不落 0**——
+// 「没有比例的规则」静默落 0 = 替业务写死「无退款」：新行跳行记因（missing_refund_ratio）；
+// 已存在行不因源缺值降级（比例列只在源有值时才被写，见 importRule 的等价守卫）。
 import type { Pool } from 'pg'
 import type {
   CleanEmployee, CleanEmployeeApproval, CleanProduct, CleanRegion, CleanRule, CleanStore, CleanTicket,
@@ -149,12 +151,27 @@ export async function importRule(pool: Pool, org: string, rows: CleanRule[]): Pr
   const stat = newStat('ticket_rule', rows.length)
   for (const r of rows) {
     if (!r.sourceId) { skip(stat, 'no_source_id'); continue }
+    if (r.refundRatio === null) {
+      // 裁决（2026-09-22）：缺比例的规则**不新增**——静默落 0 等于替业务写死「无退款」，跳行记因。
+      // 重跑例外：库内已有该行（比例已录）不算缺行——其余字段照更新，比例列**不写**。
+      // 「源有值才 set」的守卫没法住进单条 upsert：NOT NULL 在 conflict 仲裁**之前**先检，
+      // 携 NULL 走 insert 腿必 23502（即便该行命中冲突、根本轮不到 DO UPDATE）——实测如此；
+      // 故拆成这条**不碰比例列**的 update 作等价形态（比例只在下方源有值的 upsert 里被写）。
+      const exists = await pool.query(
+        `select 1 from aftersales.ticket_rule where org = $1 and source_id = $2`, [org, r.sourceId])
+      if (exists.rows.length === 0) { skip(stat, 'missing_refund_ratio'); continue }
+      await pool.query(
+        `update aftersales.ticket_rule set name = $3, remark = $4 where org = $1 and source_id = $2`,
+        [org, r.sourceId, r.name, r.remark])
+      stat.imported += 1
+      continue
+    }
     await pool.query(
       `insert into aftersales.ticket_rule (org, source_id, name, refund_ratio, remark)
        values ($1, $2, $3, $4, $5)
        on conflict (org, source_id) where source_id <> ''
        do update set name = excluded.name, refund_ratio = excluded.refund_ratio, remark = excluded.remark`,
-      [org, r.sourceId, r.name, r.refundRatio ?? '0', r.remark],
+      [org, r.sourceId, r.name, r.refundRatio, r.remark],
     )
     stat.imported += 1
   }

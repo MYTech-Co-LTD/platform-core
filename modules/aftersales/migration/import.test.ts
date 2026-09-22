@@ -116,16 +116,10 @@ describePg('导入层（需要 DATABASE_URL）', () => {
     expect(stat.reasons['no_source_id']).toBe(1)
   })
 
-  it('not-null 列的缺值不炸批：rule 缺 refund_ratio → 落列缺省 0；ticket/approval 缺全部时间键 → created_at 落当前时刻', async () => {
-    // ticket_rule.refund_ratio / *.created_at 是 not null 列：clean 产物可为 null（源缺值），
-    // 原样传 NULL 会 23502 打断整批。此处按本文件既有的 `?? 0n` 模式收口到列缺省语义（0=未录、
-    // created_at=迁移时刻），与「未知枚举跳行」不冲突——枚举错值是语义事故，数值/时间缺值只是未录。
-    const ruleStat = await importRule(pool, ORG, [cleanRule({ ...FIXTURE_RULE, refund_ratio: null })])
-    expect(ruleStat).toMatchObject({ imported: 1, skipped: 0 })
-    const rule = await pool.query<{ refund_ratio: string }>(
-      `select refund_ratio::text as refund_ratio from aftersales.ticket_rule where org = $1 and source_id <> ''`, [ORG])
-    expect(rule.rows[0].refund_ratio).toBe('0.0000')
-
+  it('not-null 时间列的缺值不炸批：ticket/approval 缺全部时间键 → created_at 落当前时刻', async () => {
+    // *.created_at 是 not null 列：clean 产物可为 null（源缺值），原样传 NULL 会 23502 打断整批。
+    // 此处按 `?? new Date()` 收口到列缺省语义（迁移时刻），与「未知枚举跳行」不冲突——
+    // 枚举错值是语义事故，时间缺值只是未录。（refund_ratio 缺值已改跳行/守卫语义，见下两条用例。）
     const { create_time: _noTime, ...noTime } = FIXTURE_TICKET   // 拿掉全部时间键的源行（destructure 比 delete 类型干净）
     const tStat = await importTicket(pool, ORG, [cleanTicket(noTime)])
     expect(tStat.imported).toBe(1)
@@ -138,6 +132,28 @@ describePg('导入层（需要 DATABASE_URL）', () => {
     const a = await pool.query<{ created_at: Date }>(
       `select created_at from aftersales.employee_approval where org = $1 and source_id <> ''`, [ORG])
     expect(a.rows[0].created_at).not.toBeNull()
+  })
+
+  it('规则缺 refund_ratio ⇒ 跳行记因 missing_refund_ratio，绝不静默落 0（2026-09-22 裁决①）', async () => {
+    // 「没有比例的规则」落 0 = 替业务写死「无退款」——与未知枚举跳行同一条 skip 哲学。
+    const stat = await importRule(pool, ORG, [cleanRule({ ...FIXTURE_RULE, refund_ratio: null })])
+    expect(stat).toMatchObject({ fetched: 1, imported: 0, skipped: 1 })
+    expect(stat.reasons['missing_refund_ratio']).toBe(1)
+    const rows = await pool.query<{ n: number }>(
+      `select count(*)::int as n from aftersales.ticket_rule where org = $1 and source_id <> ''`, [ORG])
+    expect(rows.rows[0].n).toBe(0)                                        // 该行从未落库，更没落成 0.0000
+  })
+
+  it('重跑：库内已有比例、源侧同 source_id 行缺该字段 ⇒ 比例保持库内值不降级（裁决②）', async () => {
+    await importRule(pool, ORG, [cleanRule(FIXTURE_RULE)])                // 首跑落 0.05
+    const stat = await importRule(pool, ORG, [
+      cleanRule({ ...FIXTURE_RULE, refund_ratio: null, name: '改名重跑' }), // 重跑：源缺比例 + drifted 名
+    ])
+    expect(stat).toMatchObject({ fetched: 1, imported: 1, skipped: 0 })   // 已存在行不跳——走的 DO UPDATE
+    const rows = await pool.query<{ name: string; refund_ratio: string }>(
+      `select name, refund_ratio::text as refund_ratio from aftersales.ticket_rule where org = $1 and source_id <> ''`, [ORG])
+    expect(rows.rows[0].name).toBe('改名重跑')                            // update 确实执行了（不是整行跳过）
+    expect(rows.rows[0].refund_ratio).toBe('0.0500')                      // 源缺值绝不把库内非空值降级
   })
 
   it('employee_approval 走 004 的 source_id 幂等位', async () => {
