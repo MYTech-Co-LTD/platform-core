@@ -1,0 +1,107 @@
+# deploy/data-compose.yml — 数据面部署单元 B（issue #150；spec 2026-09-20 §1/§11.1）。
+# 全内网：不进 openship edge、不绑公网；所有 ports 一律回环（B7 规则二对两份 compose 都生效）。
+# 拆缝用法（同仓同分支、独立 project）见 deploy/customer-onboarding.md §0/阶段 5。
+# ⚠️ 顶层 name 必需——与主 compose 同一条理由（项目名/卷名撞车，docker-compose.yml 头注的实测事故）。
+name: platform-core-data
+
+services:
+  # ── 语义层 + 物化落点（spec §11.2 #3：自建镜像，DuckDB v1.5.5）──
+  pg_duckdb:
+    image: ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5
+    # 镜像获取两条路（deploy/pg-duckdb/README.md）：GHCR 拉取（需目标机 docker login）或目标机本地构建同 tag。
+    environment:
+      POSTGRES_USER: ${PGDUCK_USER:-platform}
+      POSTGRES_PASSWORD: ${PGDUCK_PASSWORD:-platform}     # 真值走 project env（openship），不进 git
+      POSTGRES_DB: ${PGDUCK_DB:-warehouse}
+    # shared_preload_libraries 是 pg_duckdb 硬要求（spec §9.4 方案 2）
+    command: ["postgres", "-c", "shared_preload_libraries=pg_duckdb"]
+    volumes:
+      - pgduckdata:/var/lib/postgresql/data
+    ports:
+      # 平台侧的接线点（DATA_WAREHOUSE_URL 指这里）。**别把它读成「谁都能连」**：回环 ⇒ 够得到的
+      # 是**宿主进程**（宿主上的 edge、宿主上跑的 `docker compose run` job）。
+      # **容器**消费方（单元 A 的 server）另说：容器里的 127.0.0.1 是自己的 netns，不是宿主回环；
+      # 两份 compose 各一个 default 网络、无共享 external 网络/extra_hosts ⇒ **按现值不可达**。
+      # 接线方式待 T6 裁决（计划 Task 6 Step 1 的 Gate-B）。
+      - '127.0.0.1:15432:5432'
+    mem_limit: ${PGDUCK_MEM_LIMIT:-2g}    # 每连接一个 DuckDB 实例（max_memory 默认 4096MB/连接，
+                                          # spec §9.4）——连接数 × 内存必须显式收口，见 pg-duckdb/README §3
+                                          # 实测语境：Compose v5.3.0 下解析进规范模型（2g → 2147483648）；
+                                          # `mem_limit` 属**非 deploy 面**旧键，按 deploy-spec/swarm 模型
+                                          # 解析的消费方可能不读 ⇒ 被静默忽略 = 本行唯一目的落空（spec §9.4）
+    restart: unless-stopped
+
+  # ── Metabase 应用库（spec §8：生产必须 Postgres，H2 官方 AVOID；不放 pg_duckdb 实例上：
+  #    OLTP 应用库与 OLAP DuckDB 内存模型同池必打架）──
+  metabase-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${MBDB_USER:-metabase}
+      POSTGRES_PASSWORD: ${MBDB_PASSWORD:-metabase}
+      POSTGRES_DB: ${MBDB_DB:-metabase}
+    volumes:
+      - mbdata:/var/lib/postgresql/data
+    healthcheck:
+      # 与主 compose 同一条理由（deploy/docker-compose.yml:38-45 的 postgres healthcheck）：
+      # 没有它 metabase 会在 PG 就绪前连库——空卷首启要跑 initdb，此窗口内不接受 TCP 连接，
+      # Metabase 会 `Metabase Initialization FAILED` **退出**（不是自等），靠 restart 反复重启自愈。
+      test: ['CMD-SHELL', 'pg_isready -U ${MBDB_USER:-metabase} -d ${MBDB_DB:-metabase}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    # 不映射 ports：只有同 compose 网络内的 metabase 够得到（服务名即主机名）
+
+  # ── BI 渲染面（spec §11.2 #1；版本锁死 = PoC 实测版，禁 latest——§6.6 纪律）──
+  metabase:
+    image: metabase/metabase:v0.63.18.1
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_CONNECTION_URI: postgresql://${MBDB_USER:-metabase}:${MBDB_PASSWORD:-metabase}@metabase-db:5432/metabase
+    depends_on:
+      metabase-db:
+        # service_healthy 而非 service_started（list 形态只等容器**被启动**）：Metabase 启动期
+        # 连不上应用库即初始化失败退出——主 compose 对 postgres 是同形（deploy/docker-compose.yml:68-71）
+        condition: service_healthy
+    ports:
+      # 回环；对外嵌入面怎么走（edge 反代 or 内网直连）是部署级决策，T6 定了记进 runbook
+      - '127.0.0.1:13030:3000'
+    restart: unless-stopped
+
+  # ── duckle headless runner（T5 提供 Dockerfile；一次性执行，不常驻）──
+  duckle:
+    build: { context: .., dockerfile: deploy/duckle/Dockerfile }
+    image: platform-core-duckle:local
+    profiles: ["etl"]        # 平时 up 不起；docker compose --profile etl run duckle <args> 按需执行
+    environment:
+      # --token 是硬要求（spec §1：绑非回环且无凭据时 15 分钟内可被 claim 成管理员）——
+      # 不用 :? 强制插值（会让没配 token 的部署连三服务的 up 都起不来）；真值在 etl 执行时给，
+      # runner 入口对空 token 拒跑（T5 的 ENTRYPOINT 说明）。
+      DUCKLE_TOKEN: ${DUCKLE_TOKEN:-}
+    volumes:
+      - duckle-workspace:/workspace
+      - ../duckle:/pipelines:ro      # 相对路径锚在 compose 文件所在目录（deploy/）⇒ 一层 .. 即仓根
+    # 无 ports：headless runner 不需要网络面
+
+  # ── dbt runner（物化/测试执行器；调度=openship jobs 打 docker run，拍板 #4，零常驻）──
+  dbt:
+    build: { context: .., dockerfile: deploy/dbt/Dockerfile }
+    image: platform-core-dbt:local
+    profiles: ["etl"]
+    environment:
+      DBT_HOST: pg_duckdb          # compose 网络内走服务名（不是宿主视角的 127.0.0.1:15432）
+      DBT_USER: ${PGDUCK_USER:-platform}
+      DBT_PASSWORD: ${PGDUCK_PASSWORD:-platform}
+      DBT_DBNAME: ${PGDUCK_DB:-warehouse}
+      # ZOS/S3 凭据键见 dbt/profiles.example.yml——真值只在 project env（openship isSecret）
+    volumes:
+      - ../dbt:/usr/app:ro
+    depends_on:
+      - pg_duckdb
+    # 无 ports
+
+volumes:
+  pgduckdata:        # 物化表/语义 schema（可从 parquet 重算，备份=省重建时间，spec §8）
+  mbdata:            # Metabase 应用库（❌不可重建，必须备份——报表/集合/权限的真相所在）
+  duckle-workspace:  # 管线定义的真源在仓内 duckle/；workspace 是中间产物（可重建）
