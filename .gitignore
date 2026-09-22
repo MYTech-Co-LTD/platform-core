@@ -11,3 +11,28 @@ coverage/
 *.tsbuildinfo
 # 售后 M2b：T3 拉样的本地脱敏样本目录（SAMPLE-NOTES.md 对照用），真数据不落仓
 modules/aftersales/migration/samples-local/
+
+# ── 数据栈 P1（issue #150）。本节由 T5 一次落笔 —— 本波 .gitignore 的唯一写入方
+#    （W1 并行波里 T3/T4 都被明令不许碰本文件；T4 的 dbt 本地产物因此由 T5 代笔）。
+
+# ① dbt 本地产物（T4 的面，由 T5 代笔，见上）。
+#    `dbt parse` 会生成这三个目录；T4 合并前它们会以未跟踪文件出现在任何人的工作区。
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+
+# ② duckle 本地产物。
+#    `duckle/**/_ops/` 取自计划 L688 给的形态（数据湖路径 `duckle/<域>/_ops/…`，
+#    出处 docs/data-platform-handbook.md §2「duckle 自己的产出」）。
+#    ⚠️ **待实测核对**：v0.7.3 的 runner 二进制里**检索不到 `_ops` 产物名**（strings 实测），
+#    它是**桶里的路径**而不是引擎写进工作区的本地状态目录 ⇒ 本规则实际触发概率低，
+#    属防御性冗余。留着是为了「有人把湖物化到本地也不会误提交」，**别读成「引擎会生成 _ops/」**。
+duckle/**/_ops/
+#    引擎**实际**会在工作区写的是下面几条（v0.7.3 二进制字符串实测：
+#    `.duckle/keys` `.duckle/secrets` `.duckle/catalog.json` `.duckle/branches/`、
+#    `secrets.enc`、`--log-dir` 默认 `<workspace>/logs`、工作区 `runs/`）。
+#    `secrets.enc` 是加密的凭据包 —— 它绝不该进仓，这条同时是安全项不只是洁癖。
+duckle/**/.duckle/
+duckle/**/logs/
+duckle/**/runs/
+duckle/**/secrets.enc

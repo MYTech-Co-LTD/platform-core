@@ -1,0 +1,54 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 1,
+  "domain": "example",
+  "table": "example_table",
+  "owner": "data-platform",
+  "description": "模板占位，不是任何真实数据源的契约：以下 domain/table/列名/类型全是示例，用来演示形状。接一个新源时把本文件复制成 `contracts/common/<源>.<表>.json`（如抖音 → `douyin.sku_daily.json`）后逐字段替换。字段语义见 contracts/README.md，元 schema 见 ./_schema.schema.json。",
+  "layout": {
+    "prefix": "example/example_table",
+    "partitionStyle": "hive",
+    "partitionBy": ["biz_month"],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": true,
+    "note": "示例口径：= 本次采集的源侧快照 id。真实取值口径随接入 PR 按实际源定。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "示例：批次标记（与 batch.markerColumn 同名，跨字段一致性由校验器补检）。"
+    },
+    {
+      "name": "biz_month",
+      "type": "varchar",
+      "nullable": false,
+      "description": "示例：分区键（YYYYMM）。分区键列不许可空——空了在落盘时无处安放。"
+    },
+    {
+      "name": "sku_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "示例：外部系统标识。**外部来源的标识一律 varchar**：长度不受我们控制，用 VARCHAR(n) 早晚被撑爆。"
+    },
+    {
+      "name": "amount",
+      "type": "decimal",
+      "precision": 18,
+      "scale": 2,
+      "nullable": true,
+      "description": "示例：金额。落盘即定型成 decimal（不留字符串），单位写在这里（本示例：元）。"
+    },
+    {
+      "name": "stat_date",
+      "type": "date",
+      "nullable": true,
+      "description": "示例：业务日期。落盘即定型成 date（不留 `2026-07-01 10:02:34` / `20260707` 这类字符串——两种格式混在一列是既有踩坑）。"
+    }
+  ]
+}

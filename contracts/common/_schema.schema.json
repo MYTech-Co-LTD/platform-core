@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/MYTech-Co-Ltd/platform-core/main/contracts/common/_schema.schema.json",
+  "title": "采集契约（落盘 schema 声明）—— 契约本身的元 schema",
+  "description": "校验「一个采集契约文档」的形状。契约 = 落盘即定型的机器面：声明新数据源落 parquet 时的表身份、列名与类型、可空性、分区键、批次标记与 owner。落盘前按契约校验，类型不符即失败，不静默降级成 VARCHAR。适用面 = 新数据源接入（存量乐檬 parquet 不重落盘、由 dbt staging 手写 cast 补，见 docs/superpowers/specs/2026-09-21-data-platform-layered-design.md §10 拍板记录·分叉 1）。形态与约定见 contracts/README.md。",
+  "$comment": "本 schema 只覆盖「单文档内部」的约束。以下六条是**它表达不了**的（JSON Schema 没有跨字段引用能力），属校验器要补的规则——不要以为过了本 schema 就算合规，见 contracts/README.md §4：① partitionBy 里的每个键必须是 columns 里出现过的列名；② layout.prefix 必须等于 domain + '/' + table；③ columns 的 name 不得重复；④ batch.markerColumn 必须是 columns 里出现过的列名；⑤ decimal 的 scale 必须 ≤ precision；⑥ 分区键列不得声明 nullable = true。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "domain",
+    "table",
+    "owner",
+    "layout",
+    "batch",
+    "columns"
+  ],
+  "properties": {
+    "$schema": {
+      "description": "编辑器提示用的自引用（指向本文件）。**不是契约语义的一部分**，校验器可以不看它——但它必须被允许，否则 `additionalProperties: false` 会把每个带它的契约文件都判成违规。",
+      "type": "string"
+    },
+    "contractVersion": {
+      "description": "契约格式版本。格式本身要改时递增，并同步本文件与 README 的迁移说明——不要原地改语义而不动版本号。",
+      "const": 1
+    },
+    "domain": {
+      "description": "数据域（桶内路径的第一段）。与 table 一起构成落盘前缀。",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "table": {
+      "description": "表名（桶内路径的第二段）。",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "owner": {
+      "description": "这张表的负责方（团队名或角色名，不是个人手机号/邮箱——联系方式的取法写在 README 或 owners.json，不在这份契约里）。",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "description": {
+      "description": "这张表是什么、粒度是什么（一行代表什么）。可选，但写下来能省掉后面每一次「这列到底是啥」的来回。",
+      "type": "string",
+      "minLength": 1
+    },
+    "layout": {
+      "description": "落盘布局。路径规范的正典是 docs/data-platform-handbook.md §4 与 layered design §4：`s3://<bucket>/<domain>/<table>/<date>/all.parquet`，分区名走 hive 风格 `键=值/`。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prefix", "partitionStyle", "partitionBy", "fileName"],
+      "properties": {
+        "prefix": {
+          "description": "桶内前缀，相对 bucket 根。必须严格等于 `<domain>/<table>`（此跨字段等式由校验器补，见本文件 $comment 第 ② 条）。",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*/[a-z][a-z0-9_]*$"
+        },
+        "partitionStyle": {
+          "description": "分区目录命名风格。**只接受 hive**（`system_book=3120/`）——它不是风格偏好，是硬要求：非 hive 命名的存量路径（`3120/`）已被记为欠账，见 docs/data-platform-handbook.md §4「路径非 hive 分区命名 ⇒ 下游拿不到自动分区列」。新源不许再欠一次。",
+          "const": "hive"
+        },
+        "partitionBy": {
+          "description": "分区键，按路径层级**从外到内**排列（如 [\"system_book\",\"biz_date\"] 对应 `<prefix>/system_book=…/biz_date=…/`）。每个键必须是 columns 里出现过的列（跨字段，由校验器补，见 $comment 第 ① 条）。分区键列不应声明 nullable=true：分区键为空会在落盘时无处安放。",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "fileName": {
+          "description": "分区目录内的文件名。取 all.parquet——本仓已有的两条路径规范都这么写（handbook §2 的乐檬 `…/<日期>/all.parquet` 与抖音 `douyin/sku_daily/<月>/all.parquet`，layered design §4 的 `s3://<bucket>/<domain>/<table>/<date>/all.parquet`）。**多文件形态（含 duckle 分片产出）尚未有实测案例** ⇒ 真要放开得先有案例，改的是本 schema 的版本号，不是就地放宽。",
+          "const": "all.parquet"
+        }
+      }
+    },
+    "batch": {
+      "description": "批次标记声明。用途是幂等与可追溯：重跑同一批次要能认出「是同一批」而不是追加出重复行；下游也能按批次回溯「这批是什么时候、从哪个快照来的」。批次标记的**取值口径**（用采集时刻？源快照 id？）随接入 PR 按实际源定，本契约只声明它的列名与类型。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["markerColumn", "type"],
+      "properties": {
+        "markerColumn": {
+          "description": "承载批次标记的列名。必须是 columns 里出现过的列（跨字段，由校验器补，见 $comment 第 ④ 条）。",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "type": {
+          "description": "批次标记列的类型。**与 columns[].type 同一套词汇**（都是 DuckDB SQL 类型名，小写）——两处用不同拼法就会出现「列声明是 varchar、批次标记写 string」这种自相矛盾的契约。这里只收标识/时间类的标量：varchar / integer / bigint / date / timestamp / timestamptz（boolean、float、decimal、json 做批次标记没有意义，故不在枚举内）。",
+          "enum": ["varchar", "integer", "bigint", "date", "timestamp", "timestamptz"]
+        },
+        "unique": {
+          "description": "批次标记是否唯一标识一组行（幂等键）。true 时它可用于「同批次重跑 ⇒ 覆盖而非追加」的判据；不确定就别写（可选字段，不写 = 未声明，**不要写成 false 冒充已知**）。",
+          "type": "boolean"
+        },
+        "note": {
+          "description": "取值口径的说明（如「= 源侧快照日期，格式 YYYYMMDD」）。",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "columns": {
+      "description": "列声明。这是契约的核心：**落盘时按这里的类型定型**，不是先落字符串再让下游 cast。",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/column" }
+    }
+  },
+
+  "$defs": {
+    "columnType": {
+      "description": "允许的落盘类型。取 **DuckDB SQL 的类型名**（小写）——因为落盘是 DuckDB 写的 parquet、下游 staging 的 cast 目标也是 DuckDB SQL 类型，两边同一套词汇才谈得上「按契约校验」。\n\n⚠️ **`double` 故意不在枚举里**。这不是遗漏：pg_duckdb 不接受 `DOUBLE` 作为 cast 目标（报错 `type \"double\" is only a shell`，实测记录见 docs/superpowers/specs/2026-09-21-data-platform-layered-design.md §9 坑 #4），浮点要写 `float`、金额要写 `decimal`。把禁令写进枚举 = 让「照抄一个看起来正常的 cast」在契约层就失败，而不是等到物化时才炸。\n\n⚠️ 与 duckle 管线声明里的类型枚举（`string/int32/int64/float32/float64/bool/date/timestamp/time/decimal/json/binary/geometry`）**不是同一套词汇**，两边的逐项映射**尚未实测核对**，登记在 contracts/README.md §6 的待核对清单里。别把这里的名字直接抄进 duckle 的 `data.schema`。",
+      "enum": [
+        "varchar",
+        "boolean",
+        "smallint",
+        "integer",
+        "bigint",
+        "float",
+        "decimal",
+        "date",
+        "time",
+        "timestamp",
+        "timestamptz",
+        "blob",
+        "json"
+      ]
+    },
+
+    "column": {
+      "description": "一个列的声明。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "nullable"],
+      "properties": {
+        "name": {
+          "description": "落盘列名，小写下划线。",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "type": {
+          "$ref": "#/$defs/columnType"
+        },
+        "nullable": {
+          "description": "**必填**，没有默认值。空着会让人以为「没说就是能空」，而能空与否恰恰是下游要不要写 not_null 断言的依据。不确定就显式写 true 并在此列的 description 里说明为什么不确定。",
+          "type": "boolean"
+        },
+        "precision": {
+          "description": "仅 decimal 允许：总位数。",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 38
+        },
+        "scale": {
+          "description": "仅 decimal 允许：小数位数。",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 38
+        },
+        "description": {
+          "description": "这一列是什么、单位是什么（金额是元还是分、时间是什么时区）。",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "decimal 必须给精度与标度：`decimal` 不带 (p,s) 在不同引擎里默认值不同，落盘口径会漂。",
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "decimal" } }
+          },
+          "then": { "required": ["precision", "scale"] },
+          "else": {
+            "$comment": "非 decimal 不许给 precision/scale —— 允许它就会出现「写了 18,2 的 varchar」，纯噪声。",
+            "not": {
+              "anyOf": [
+                { "required": ["precision"] },
+                { "required": ["scale"] }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}
