@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.23.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.22.2...v0.23.0) - 2026-09-22
+- 【新增】aftersales: 孤儿附件 GC——deleteObject + manage 端点 + 行锁先行单行事务 ([#158](https://github.com/MYTech-Co-LTD/platform-core/pull/158), [2aa4e8b](https://github.com/MYTech-Co-LTD/platform-core/commit/2aa4e8bb1b45e5f619008162c516080bfa579aa0))
+
+
 ## [0.22.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.22.1...v0.22.2) - 2026-09-22
 - 【修复】auth-core: resetUserPassword 改走 Casdoor 专用改密端点 set-password ([#149](https://github.com/MYTech-Co-LTD/platform-core/pull/149), [38e0c9e](https://github.com/MYTech-Co-LTD/platform-core/commit/38e0c9ee577e2d9e1211dc80a309aa280eea494a))
 
