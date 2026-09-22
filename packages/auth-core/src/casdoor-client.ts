@@ -346,14 +346,78 @@ export class CasdoorClient {
     if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
   }
 
-  /** 重置密码。同整记录替换口径。 */
+  /**
+   * 目标 org 的 `passwordType`（改密前置；空/读不到一律抛，见 `resetUserPassword` ③）
+   */
+  async #requireOrgPasswordType(): Promise<string> {
+    // id 形参同 ensureOrg：平台 org 的 owner 恒 'admin'（#117 真机实测：UI/正规途径建的 org
+    // owner='admin'；owner≠'admin' 的畸形记录单查失明 ⇒ 也落进下面的响错分支）
+    const id = `admin/${this.#o.org}`
+    const j = await this.#adminJson(`get-organization?id=${encodeURIComponent(id)}`)
+    const g = j.status === 'ok' ? (j.data as { passwordType?: string } | null) : null
+    const t = String(g?.passwordType ?? '')
+    if (t) return t
+    throw new Error(
+      `casdoor set-password: org ${this.#o.org} 读不到 passwordType（get-organization?id=${id} ⇒ `
+      + `${j.status === 'ok' ? (g ? `passwordType='${t}'` : 'data=null') : `status=error: ${j.msg || 'error'}`}）`
+      + '。该 org 下密码登录本就会报 unsupported password type（#117 同款），改密也只会静默不生效'
+      + '（Casdoor cred.GetCredManager 对空类型回 nil ⇒ 不哈希），故**拒绝执行**而不是回一个假的成功；'
+      + '先给该 org 配 passwordType（如 bcrypt——见 ensureOrg）再来',
+    )
+  }
+
+  /**
+   * 重置密码（M3 用户管理）。走 Casdoor **专用改密端点** `POST /api/set-password`：服务端哈希
+   * （controllers/user.go SetPassword → `object.User.UpdateUserPassword` → `cred.GetCredManager`），
+   * 只写 user 行的 password/password_salt/password_type/... 四列 ⇒ **不删号**，第三方绑定
+   * （`thirdPartyLinks`，企微/钉钉/飞书…）与 roles/createdTime 全部原样保留。
+   *
+   * **为什么不用 update-user（#119 的病根，2026-09-22 调研定论）**：`object.UpdateUser` 在
+   * update-user 不带 `?columns=` 时走列白名单，而那份白名单**根本没有 password**（v1.0.0 → master
+   * 共 8 个版本逐版抽查一致）⇒ 拿它改密码是**静默空操作**：回 ok，新旧密码行为都不变。现场把
+   * "新密码登录失败"反推成"写入了明文/账号被锁"，与源码不符——订正见 issue #119 评论 +
+   * `.superpowers/sdd/issue-119-research.md` §3.2。
+   *
+   * 四个形状要点（源码 + 真机只读探针，调研 §5.1）：
+   *  ① 本端点**只认 form-urlencoded**（controllers/user.go:522 逐字段读 `Request.Form`；官方前端
+   *     UserBackend.ts 也发 formData）。传 JSON ⇒ 四个参数全空、id 退化成 `/`，真机探针复现为
+   *     `The user: / doesn't exist` ⇒ 必须走 #adminForm，不能走 #adminJson。
+   *  ② 管理员路径传 `oldPassword: ''` 即跳过旧密码校验（controllers/user.go:620-625：仅非管理员、
+   *     或显式给了 oldPassword 时才比对）——这正是"管理端重置"的定义。
+   *  ③ **前置**：目标 org 必须配了 passwordType，否则 `cred.GetCredManager` 回 nil ⇒ **不哈希**
+   *     （真机此时把明文写进 password 列）且照样回 ok ⇒ 静默失败，正是本 issue 的病根换个位置
+   *     （#117 §4 同款）。故**前置校验拒绝执行** + 写后回读验目标状态（铁律③）双保险。
+   *  ④ 后置**不**用 verifyPassword 钉：真机 `HandleLoggedIn` 对 **isForbidden** 用户一律拒登
+   *     （controllers/auth.go:61 'The user is forbidden to sign in'）⇒ 拿登录当后置条件会把
+   *     "给已禁用用户重置密码"变成假失败；且登录失败会累加 `signin_wrong_times`
+   *     （object/check.go CheckPassword → checkSigninErrorTimes）。改为回读 user 记录的
+   *     `passwordType`：真机 set-password 成功时恒 `user.PasswordType = organization.PasswordType`。
+   *  ⑤ 改密**不踢会话**（真机 `isUserAccessRevoked` 只与 is_forbidden/is_deleted 有关，与
+   *     password 无关）⇒ 既有 cookie/token 继续有效。产品若要"重置即下线"，得平台侧另做。
+   *
+   * 口令**不进**日志/错误文案（本方法任何 throw 都不带 password）。
+   */
   async resetUserPassword(name: string, password: string): Promise<void> {
-    const raw = await this.#requireRawUser(name)
-    const j = await this.#adminJson(`update-user?id=${encodeURIComponent(`${this.#o.org}/${name}`)}`, {
-      method: 'POST',
-      body: { ...raw, password },
+    const orgType = await this.#requireOrgPasswordType() // ③
+    const j = await this.#adminForm('set-password', {  // ①
+      userOwner: this.#o.org,
+      userName: name,
+      oldPassword: '', // ② 管理员路径：空 ⇒ 跳过旧密码校验
+      newPassword: password,
     })
-    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    // 失败时把服务端 msg 原样透出（真机复杂度/复用校验不过也走这里，msg 可读——不能吞）
+    if (j.status !== 'ok') throw new Error(`casdoor set-password: ${j.msg || 'error'}`)
+    // 铁律③ 写后回读验**目标状态**：真机 updateUserPassword 成功时恒把 user.PasswordType 置成
+    // org.PasswordType；写入被吞 / 未哈希时该字段保持原值 ⇒ 不等即抛（回读为 null 也算失败：
+    // 用户不该在改密后消失）。比"回读属性树"更贴目标，且不依赖登录（见 ④）。
+    const back = await this.#getRawUser(name)
+    const backType = String(back?.passwordType ?? '')
+    if (!back || backType !== orgType) {
+      throw new Error(
+        `casdoor set-password: 写后回读 passwordType 不符 ${this.#o.org}/${name}`
+        + `（期望=${orgType}、实际=${back ? (backType || '空') : '用户不存在'}）——改密疑似未生效`,
+      )
+    }
   }
 
   /**
@@ -640,20 +704,29 @@ export class CasdoorClient {
   }
 
   /** admin GET/POST/PUT：401 → 重登一次重试（仅一次，坏凭据不会循环）；
-   *  forceSession=true 强制重取会话（供 #adminJson 的响应体层自愈调用） */
+   *  forceSession=true 强制重取会话（供 #adminExchange 的响应体层自愈调用）。
+   *
+   *  实体编码二选一（**互斥**，`form` 优先）：`form` ⇒ `x-www-form-urlencoded`（set-password
+   *  只认它，见 resetUserPassword ①）；`body` ⇒ JSON（本文件其余调用方一律走这条）。 */
   async #adminRequest(
     path: string,
-    init?: { method?: string; body?: unknown },
+    init?: { method?: string; body?: unknown; form?: Record<string, string> },
     forceSession = false,
   ): Promise<Response> {
     const doFetch = (cookie: string): Promise<Response> => {
+      const headers: Record<string, string> = { Cookie: cookie }
+      let body: string | undefined
+      if (init?.form) {
+        headers['Content-Type'] = 'application/x-www-form-urlencoded'
+        body = new URLSearchParams(init.form).toString()
+      } else if (init?.body) {
+        headers['Content-Type'] = 'application/json'
+        body = JSON.stringify(init.body)
+      }
       const req: RequestInit = {
         method: init?.method ?? 'GET',
-        headers: {
-          Cookie: cookie,
-          ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-        },
-        ...(init?.body ? { body: JSON.stringify(init.body) } : {}),
+        headers,
+        ...(body === undefined ? {} : { body }),
       }
       return this.#fetch(`${this.#o.origin}/api/${path}`, req)
     }
@@ -670,8 +743,11 @@ export class CasdoorClient {
   }
 
   /** admin 请求 + 语义解包：非 2xx 一律抛（不吞异常）；status error 由调用方按语义处理。
-   *  **响应体 status:error 时强制重登并重试一次**（见下，M1 闭债 R3 的 admin 会话自愈） */
-  async #adminJson(path: string, init?: { method?: string; body?: unknown }): Promise<Record<string, unknown>> {
+   *  **响应体 status:error 时强制重登并重试一次**（见下，M1 闭债 R3 的 admin 会话自愈）。
+   *
+   *  JSON 与 form 两个入口（#adminJson / #adminForm）**共用本内核**：编码只体现在 init 上，
+   * 会话自愈与冷却闸只有一套——#119 加 form 口时不复制这段（复制就会长出第二份冷却语义）。 */
+  async #adminExchange(path: string, init?: { method?: string; body?: unknown; form?: Record<string, string> }): Promise<Record<string, unknown>> {
     const readOnce = async (forceSession: boolean): Promise<Record<string, unknown>> => {
       const r = await this.#adminRequest(path, init, forceSession)
       if (!r.ok) throw new Error(`casdoor request failed: ${r.status} ${path}`)
@@ -688,6 +764,17 @@ export class CasdoorClient {
     // 直接返回本次 error，把"每请求一次重登"压成"每窗口最多一次"（语义不变，调用方照旧降级）
     if (this.#inReloginCooldown()) return j
     return readOnce(true)
+  }
+
+  /** #adminExchange 的 **JSON 形**（既有调用方全部走它；签名与改动前逐字一致） */
+  async #adminJson(path: string, init?: { method?: string; body?: unknown }): Promise<Record<string, unknown>> {
+    return this.#adminExchange(path, init)
+  }
+
+  /** #adminExchange 的 **form 形**（`POST` + x-www-form-urlencoded）。set-password 只认 form：见
+   *  resetUserPassword ① —— 走 JSON 会让服务端把参数读成空（真机探针复现，调研 §5.1）。 */
+  async #adminForm(path: string, form: Record<string, string>): Promise<Record<string, unknown>> {
+    return this.#adminExchange(path, { method: 'POST', form })
   }
 
   async #permissionsRaw(): Promise<Array<Record<string, unknown>>> {

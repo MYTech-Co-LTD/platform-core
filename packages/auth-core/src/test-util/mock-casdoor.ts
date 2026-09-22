@@ -45,6 +45,26 @@ export interface MockCasdoorUser {
   email?: string
   /** 禁登标记（M3 用户管理：setUserForbidden 的落点；get-users 回传） */
   isForbidden?: boolean
+  /**
+   * 口令哈希类型。**真机语义的一部分**（issue #119）：真机 user 行带 `password_type` 列，
+   * add-user / set-password 成功时被置成**该 org 的** passwordType（`object.User.UpdateUserPassword`：
+   * `user.PasswordType = organization.PasswordType`），而 `get-user` **回带**该字段
+   * （`GetMaskedUser` 只把 `password` 掩成 `***`，不动 passwordType）。
+   *
+   * 这是"改密到底生效没有"的**唯一可回读判据**（口令本身读不到），客户端 `resetUserPassword`
+   * 的写后回读就钉在它上面。**本替身不实现真哈希**（全 mock 的口令一律明文存、明文比对，
+   * 见 `MockCasdoorUser.password`），只按真机形状维护这个**标记**字段——种子缺省见构造器：
+   * 有口令的用户取所属 org 的类型，无口令的（JIT/扫码建号）留空串（真机同形：
+   * `UpdateUserPassword` 对空口令直接 return，类型不落）。
+   */
+  passwordType?: string
+  /**
+   * 第三方绑定（企微/钉钉/飞书…）。**真机语义的一部分**（issue #119 的核心诉求）：
+   * 真机 `ThirdPartyLinks []*ThirdPartyLink json:"thirdPartyLinks,omitempty"`，`get-user` 经
+   * `PopulateThirdPartyLinks()` 回带；删号会经 `DeleteThirdPartyLinksByUser` **不可逆丢掉**它
+   * （这正是"删号重建"改密法被否掉的理由）。种子给值即可让用例钉住"改密后绑定仍在"。
+   */
+  thirdPartyLinks?: string[]
 }
 
 export interface MockCasdoorPerm {
@@ -119,6 +139,10 @@ interface StoredUser extends MockCasdoorUser {
   isForbidden: boolean
   /** 已解析的归属 org（缺省已填成 MOCK_ORG / built-in），get-user 的命中条件之一 */
   owner: string
+  /** 已解析的口令哈希类型标记（见 MockCasdoorUser.passwordType；构造器补齐，空串 = 无类型） */
+  passwordType: string
+  /** 已解析的第三方绑定（见 MockCasdoorUser.thirdPartyLinks；构造器补齐，缺省空表） */
+  thirdPartyLinks: string[]
   /** 经 /api/add-user 建号时的载荷存档（type/signupApplication 等，供 userIn 断言；
    *  add-user 载荷不含敏感字段——mock 从不存真凭据，纪律①） */
   createdViaApi?: Record<string, unknown>
@@ -165,6 +189,7 @@ export class MockCasdoor {
   #updateUserCalls: Array<Record<string, unknown>> = []
   #deleteUserCalls: Array<{ owner: string; name: string }> = []
   #addUserFault: 'off' | 'error' = 'off'
+  #setPasswordFault: 'off' | 'error' | 'noop' = 'off'
   #tokenFault: 'off' | 'http502' | 'html200' = 'off'
   #getUserFault: 'off' | 'error' | 'errorOnce' = 'off'
   #httpAuthFault: 'off' | 'unauthorized401' | 'unauthorized401Once' = 'off'
@@ -188,6 +213,8 @@ export class MockCasdoor {
       roles: u.roles ?? [],
       isAdmin: u.isAdmin ?? u.name === 'admin',
       isForbidden: u.isForbidden ?? false,
+      passwordType: u.passwordType ?? '',
+      thirdPartyLinks: u.thirdPartyLinks ?? [],
     }))
     for (const [i, p] of (opts.perms ?? []).entries()) {
       const name = p.name ?? p.resources?.[0] ?? `perm-${i + 1}`
@@ -225,6 +252,14 @@ export class MockCasdoor {
     }
     for (const u of this.#users) ensureOrgSeeded(u.owner)
     for (const p of this.#perms) ensureOrgSeeded(p.owner)
+    // 口令哈希类型标记（issue #119）：**有口令的种子用户取其 org 的类型**（真机 add-user 走过
+    // UpdateUserPassword ⇒ user.PasswordType = org.PasswordType）；无口令的留空串（真机同形：
+    // UpdateUserPassword 对空口令直接 return，类型不落）。**故意不在种子缺省里写死 'bcrypt'**：
+    // 那会让"种进一个未配 passwordType 的 org"的用例悄悄拿到 bcrypt，把 #119 的静默失败盖掉。
+    for (const u of this.#users) {
+      if (!u.password) continue
+      u.passwordType = u.passwordType || (this.#orgs.find((g) => g.name === u.owner)?.passwordType ?? '')
+    }
     // 形状钉死：真实 Casdoor 的 update-* 是 POST（admin-api.js casdoorPost 形状）；
     // PUT 在本 mock 一律 405，防「客户端偷偷走 PUT」的形状分叉被遮蔽
     this.#app.put('/api/update-permission', (c: Context) =>
@@ -293,6 +328,19 @@ export class MockCasdoor {
    *  重复命中走真机 duplicate 形状，别让故障注入盖掉竞态用例要的分支） */
   setAddUserFault(mode: 'off' | 'error'): void {
     this.#addUserFault = mode
+  }
+
+  /**
+   * 令 /api/set-password 进入故障模式（issue #119 的客户端回读/透传两条断言用）：
+   * - `'error'`：改密被拒，200 + status:error + 可读 msg —— 真机长这样（口令复杂度
+   *   `CheckPasswordComplexity` / 复用 `CheckPasswordReuse` 任一不过），注入点用来钉
+   *   「msg 必须透出给调用方，不能吞」。
+   * - `'noop'`：**回 ok 但写入被吞**——不是某条真机端点形状，而是"任何『回 ok 却没落地』"
+   *   的抽象形状（写丢 / 中间层缓存 / 上游假绿都长这样）。用来钉客户端的写后回读（铁律③）
+   *   真能咬住，而不是只对着成功路径断言。
+   */
+  setSetPasswordFault(mode: 'off' | 'error' | 'noop'): void {
+    this.#setPasswordFault = mode
   }
 
   /** org 记录（断言口；按 (owner,name) 命中——与 get-organization 单查同判据，#117） */
@@ -554,6 +602,10 @@ export class MockCasdoor {
           roles: [...user.roles],
           isAdmin: user.isAdmin,
           isForbidden: user.isForbidden,
+          // issue #119：真机 get-user 回带这两个字段（GetMaskedUser 只掩 password；thirdPartyLinks
+          // 由 PopulateThirdPartyLinks 填）——它们是"改密生效了没有"与"绑定还在不在"的回读判据
+          passwordType: user.passwordType,
+          thirdPartyLinks: [...user.thirdPartyLinks],
         },
       })
     })
@@ -690,6 +742,10 @@ export class MockCasdoor {
         isAdmin: (b.isAdmin as boolean) ?? false,
         isForbidden: (b.isForbidden as boolean) ?? false,
         displayName: String(b.displayName ?? name),
+        // 口令类型标记（issue #119）同真机：add-user 带了口令 ⇒ 已被 UpdateUserPassword 哈希，
+        // 类型落在 user 行；不带口令（JIT/扫码建号）⇒ 直接 return，类型留空。
+        passwordType: typeof b.password === 'string' && b.password ? org.passwordType : '',
+        thirdPartyLinks: [], // 新号无绑定（真实建号亦然）
         createdViaApi: { ...b },
       })
       return c.json({ status: 'ok', data: 'Affected' })
@@ -713,9 +769,16 @@ export class MockCasdoor {
         }))
       return c.json({ status: 'ok', data })
     })
-    // POST /api/update-user?id=<org>/<name> —— M3 禁启/重置密码。段数规则与 update-permission
+    // POST /api/update-user?id=<org>/<name> —— M3 禁启。段数规则与 update-permission
     // 同一套（split('/') 判 len!==2）；载荷 JSON body，merge 进既有记录（真机是整记录替换——
     // 客户端必须先 get 全量再带回，mock 按 merge 实现不掩盖"漏带字段"的客户端缺陷之外的行为）。
+    //
+    // ⚠️ **password 在这里是静默空操作**（issue #119 收严，纪律 #11）。旧替身写的是
+    // `if (b.password) u.password = b.password`（= 按"写入明文"建模），与真机**不符**：
+    // 真机 `object.UpdateUser` 在无 `?columns=` 时走列白名单，而那份白名单**不含 password /
+    // password_salt / password_type**（v1.0.0 → master 共 8 个版本逐版抽查一致）⇒ 改密码既
+    // 不哈希也不落库，替换身按"写明文"实现会把「改了没生效」这类缺陷在门禁里盖成绿。
+    // 真机改密的正路是 set-password（见下）——本 handler 现在**只认非口令字段**。
     .post('/api/update-user', async (c) => {
       if (!this.#isAdminSession(c)) return this.#unauthorized(c)
       const segs = (c.req.query('id') ?? '').split('/')
@@ -725,11 +788,52 @@ export class MockCasdoor {
       const u = this.#users.find((x) => x.owner === segs[0] && x.name === segs[1])
       if (!u) return c.json({ status: 'error', msg: 'user not found' })
       const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
-      this.#updateUserCalls.push({ id: `${segs[0]}/${segs[1]}`, ...b })
-      if (typeof b.password === 'string' && b.password) u.password = b.password
+      this.#updateUserCalls.push({ id: `${segs[0]}/${segs[1]}`, ...b }) // 载荷原样存档（含被忽略的 password，供用例钉"它无效"）
       if (typeof b.isForbidden === 'boolean') u.isForbidden = b.isForbidden
       if (typeof b.displayName === 'string' && b.displayName) u.displayName = b.displayName
       return c.json({ status: 'ok', data: 'Affected' })
+    })
+    // POST /api/set-password —— **Casdoor 专用改密端点**（issue #119）。真机形状（源码 +
+    // sso.hookflow.cn 只读探针，调研 §5.1）：
+    //   ① **只读 form-urlencoded**（controllers/user.go:522 逐字段 `c.Ctx.Request.Form.Get(...)`）。
+    //      传 JSON ⇒ 四个参数全空 ⇒ userOwner/userName 空 ⇒ id 退化成 `/` ⇒ 真机回
+    //      `The user: / doesn't exist`（探针实测）。旧替身压根没有这个端点 ⇒ 客户端若写成 JSON
+    //      也没人拦；这里**只读 form**，并把"参数为空"按真机表现为"用户不存在"。
+    //   ② 命中序与 get-user 同一口径：**先查用户、后判会话**（真机探针：不带凭据时回的也是
+    //      "用户不存在"，不是"请先登录"）。
+    //   ③ **服务端哈希**：真机 SetPassword 尾段 `targetUser.UpdateUserPassword(organization)` 经
+    //      `cred.GetCredManager(org.PasswordType)` 哈希后写 password/password_salt/password_type。
+    //      本替身不实现真哈希（全 mock 口令一律明文存、明文比对），但**按真机形状**维护
+    //      `passwordType` 标记——那正是客户端写后回读的判据。org 未配 passwordType 时
+    //      credManager 回 nil ⇒ 真机**不哈希**（明文写库、password_type 不动）⇒ 替身照此
+    //      **只写口令、不动 passwordType**，客户端的回读能咬住这种静默失败。
+    //   ④ 管理员路径：`oldPassword` 为空即跳过旧密码校验（controllers/user.go:620-625）。
+    .post('/api/set-password', async (c) => {
+      // 只认 form：JSON body 在这里读不出任何参数（真机同形）。**不要**改用 parseBody——
+      // 那个对 JSON body 的行为不是真机形状，会把 ① 这条钉死的东西放走。
+      const form = new URLSearchParams(await c.req.text())
+      const userOwner = form.get('userOwner') ?? ''
+      const userName = form.get('userName') ?? ''
+      const oldPassword = form.get('oldPassword') ?? ''
+      const newPassword = form.get('newPassword') ?? ''
+      const u = this.#users.find((x) => x.owner === userOwner && x.name === userName)
+      if (!u) return c.json({ status: 'error', msg: `The user: ${userOwner}/${userName} doesn't exist` })
+      const g = this.#orgs.find((x) => x.name === u.owner)
+      if (!g) return c.json({ status: 'error', msg: `the organization: ${u.owner} is not found` })
+      if (!this.#isAdminSession(c)) return c.json({ status: 'error', msg: 'Please login first' })
+      if (oldPassword !== '' && oldPassword !== u.password) {
+        return c.json({ status: 'error', msg: 'password or code is incorrect' })
+      }
+      if (this.#setPasswordFault === 'error') {
+        // 真机此处是**口令复杂度 / 复用校验**（object/check.go CheckPasswordComplexity /
+        // password_history.go CheckPasswordReuse）任一不过 ⇒ 200+status:error+可读 msg。
+        // 注入文案只为让用例能钉"msg 透出给调用方"，**不是**真机文案（真机文案随 i18n 变）。
+        return c.json({ status: 'error', msg: 'injected rejection: 口令不合规' })
+      }
+      if (this.#setPasswordFault === 'noop') return c.json({ status: 'ok' }) // 回 ok 却没落地
+      u.password = newPassword // 真机恒写该列（未哈希时写进去的就是明文）
+      if (g.passwordType !== '') u.passwordType = g.passwordType // 只有哈希成功才带类型
+      return c.json({ status: 'ok' })
     })
     // POST /api/delete-user —— M3 删号。铁律②：真机 delete 类端点只认 JSON body {owner,name}
     //（?id= query 形式静默无效）——mock 只实现 body 形式，query 形式一律 error，钉死客户端形状。

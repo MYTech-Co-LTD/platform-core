@@ -354,3 +354,103 @@ describe('MockCasdoor org/application 域（#117）', () => {
     }
   })
 })
+
+// ── issue #119：改密两条端点形状（旧替身**两条都错**——update-user 按"写明文"实现、
+//    set-password 压根没有）。形状按真机源码 + sso.hookflow.cn 只读探针收严。──
+describe('MockCasdoor 改密域形状（#119）', () => {
+  const cookieOf = async (mock: MockCasdoor): Promise<string> => {
+    const r = await fetch(`${mock.origin}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pw' }),
+    })
+    const hit = /casdoor_session_id=([^;]+)/.exec(r.headers.get('set-cookie') ?? '')
+    return hit ? `casdoor_session_id=${hit[1]}` : ''
+  }
+  const jsonPost = async (mock: MockCasdoor, path: string, body: unknown): Promise<Record<string, unknown>> =>
+    (await (await fetch(`${mock.origin}/api/${path}`, {
+      method: 'POST',
+      headers: { Cookie: await cookieOf(mock), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })).json()) as Record<string, unknown>
+  const formPost = async (mock: MockCasdoor, path: string, form: Record<string, string>): Promise<Record<string, unknown>> =>
+    (await (await fetch(`${mock.origin}/api/${path}`, {
+      method: 'POST',
+      headers: { Cookie: await cookieOf(mock), 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(form).toString(),
+    })).json()) as Record<string, unknown>
+
+  it('★ update-user 对 password 是**静默空操作**（真机列白名单不含它）——旧替身按"写明文"实现，与真机不符', async () => {
+    // 真机 object.UpdateUser 在无 ?columns= 时走列白名单，白名单不含 password/password_salt/
+    // password_type（v1.0.0→master 8 版一致）⇒ 改密既不哈希也不落库，回 ok 而已。旧替身写的是
+    // `if (b.password) u.password = b.password` ⇒ 把「改了没生效」这类缺陷在门禁里盖成绿。
+    const m = new MockCasdoor({ users: [{ name: 'alice', password: 'old', owner: 'acme' }] })
+    await m.start()
+    try {
+      const j = await jsonPost(m, `update-user?id=${encodeURIComponent('acme/alice')}`, {
+        owner: 'acme', name: 'alice', password: 'NEW',
+      })
+      expect(j.status).toBe('ok') // 真机照回 ok —— 这才是"静默"二字的意思
+      expect(m.userIn('acme', 'alice')?.password).toBe('old') // 口令没变（旧替身这里会变成 'NEW'）
+      expect(m.userIn('acme', 'alice')?.passwordType).toBe('bcrypt') // 类型也不动
+      // 载荷仍被原样存档：用例可以钉"调用方确实发过 password"（它无效，不等于没人发过）
+      expect(m.updateUserCalls.at(-1)).toMatchObject({ id: 'acme/alice', password: 'NEW' })
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ set-password 只认 form-urlencoded：JSON body ⇒ 参数读空 ⇒ 回"用户不存在"（真机探针复刻）', async () => {
+    // sso.hookflow.cn 只读探针：同一端点传 form ⇒ 参数可达 handler；传 JSON ⇒ userOwner/userName
+    // 都是空串 ⇒ id 退化成 `/` ⇒ `The user: / doesn't exist`。形状漂移（客户端写成 JSON）在旧替身
+    // 下**无从暴露**（端点都没有），故这里钉死。
+    const m = new MockCasdoor({ users: [{ name: 'alice', password: 'old', owner: 'acme' }] })
+    await m.start()
+    try {
+      const j = await jsonPost(m, 'set-password', { userOwner: 'acme', userName: 'alice', newPassword: 'NEW' })
+      expect(j.status).toBe('error')
+      expect(String(j.msg)).toMatch(/The user: \/ doesn't exist/) // 参数全空 ⇒ id 退化成 `/`（真机形状）
+      expect(m.userIn('acme', 'alice')?.password).toBe('old') // 什么都没改
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('set-password 走 form ⇒ 口令落库、password_type 落成该 org 的类型（真机 UpdateUserPassword 的形状）', async () => {
+    const m = new MockCasdoor({
+      users: [{ name: 'wxuser', password: '', owner: 'acme', thirdPartyLinks: ['wecom:zhangsan'] }],
+    })
+    await m.start()
+    try {
+      const j = await formPost(m, 'set-password', {
+        userOwner: 'acme', userName: 'wxuser', oldPassword: '', newPassword: 'NEW',
+      })
+      expect(j.status).toBe('ok')
+      expect(m.userIn('acme', 'wxuser')).toMatchObject({ password: 'NEW', passwordType: 'bcrypt' })
+      expect(m.userIn('acme', 'wxuser')?.thirdPartyLinks).toEqual(['wecom:zhangsan']) // 改密不碰绑定
+    } finally {
+      await m.stop()
+    }
+  })
+
+  it('★ org 未配 passwordType：set-password 回 ok 但**不哈希**（真机 credManager 回 nil）⇒ password_type 不动', async () => {
+    // 这条是替身对"静默失败"的建模：真机此时把明文写进 password 列、password_type 保持原值，
+    // 客户端只能靠**回读 password_type** 发现没生效（口令本身读不到）。替身必须留住这个差异，
+    // 否则「改密静默不生效」在门禁里永远看不见（纪律 #11）。
+    const m = new MockCasdoor({
+      orgs: [{ name: 'no-type-org', passwordType: '' }],
+      users: [{ name: 'carol', password: 'old', owner: 'no-type-org' }],
+    })
+    await m.start()
+    try {
+      const j = await formPost(m, 'set-password', {
+        userOwner: 'no-type-org', userName: 'carol', oldPassword: '', newPassword: 'NEW',
+      })
+      expect(j.status).toBe('ok') // 真机照回 ok（这才是病根难查之处）
+      expect(m.userIn('no-type-org', 'carol')?.password).toBe('NEW')
+      expect(m.userIn('no-type-org', 'carol')?.passwordType).toBe('') // 类型没落 ⇒ 客户端回读能咬住
+    } finally {
+      await m.stop()
+    }
+  })
+})

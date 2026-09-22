@@ -784,9 +784,135 @@ describe('M3 用户与授权（D4）', () => {
     expect(mm.userIn('acme', 'alice')?.isForbidden).toBe(true)
   })
 
-  it('resetUserPassword：payload 含新密码、不进任何日志面（update 调用可见性由 mock 记录保证）', async () => {
-    await client().resetUserPassword('alice', 'NewPass456')
-    expect(mm.updateUserCalls.at(-1)).toMatchObject({ id: 'acme/alice', password: 'NewPass456' })
+  // ---- issue #119：改密改走 Casdoor 专用端点 set-password（服务端哈希、不删号） ----
+  //
+  // 旧实现走 update-user 整记录替换带 password——真机那份列白名单**不含 password**
+  // （object.UpdateUser，v1.0.0→master 8 版一致）⇒ 改密是**静默空操作**：回 ok、什么都没写。
+  // 下面这组用例把新形状钉死（请求体形状 + 语义 + 不删号 + 前置/后置两道闸）。
+
+  it('★ resetUserPassword 走 set-password（form-urlencoded）：新密码验得过、旧密码验不过、不删号不重建', async () => {
+    // 直接断言**请求形状**，不只断言"调用成功"：退回到 update-user 也能让"改密成功"看起来成立
+    // （真机那份白名单会把它变成静默空操作）——这正是本 issue 的病根，门禁必须咬请求体。
+    const realFetch = globalThis.fetch
+    let sent: { url: string; method?: string; contentType?: string; body?: string } | null = null
+    const c = new CasdoorClient({
+      origin: mm.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw',
+      fetchImpl: (input, init) => {
+        if (String(input).includes('/api/set-password')) {
+          const h = (init?.headers ?? {}) as Record<string, string>
+          sent = { url: String(input), method: init?.method, contentType: h['Content-Type'], body: String(init?.body ?? '') }
+        }
+        return realFetch(input as RequestInfo, init)
+      },
+    })
+    const beforeDel = mm.deleteUserCalls.length
+    const beforeAdd = mm.addUserCalls.length
+    const beforeUpd = mm.updateUserCalls.length
+
+    await c.resetUserPassword('alice', 'NewPass456')
+
+    // ① 形状：POST + form-urlencoded，四参齐（oldPassword 空 = 管理员路径跳过旧密码校验）。
+    //    传 JSON 真机会把参数读成空、id 退化成 `/`（调研 §5.1 真机探针）⇒ 编码本身是要钉死的形状。
+    expect(sent!.url).toMatch(/\/api\/set-password$/)
+    expect(sent!.method).toBe('POST')
+    expect(sent!.contentType).toBe('application/x-www-form-urlencoded')
+    expect(Object.fromEntries(new URLSearchParams(sent!.body))).toEqual({
+      userOwner: 'acme', userName: 'alice', oldPassword: '', newPassword: 'NewPass456',
+    })
+    // ② #119 验收本体：新密码验得过、旧密码验不过
+    expect((await c.verifyPassword('alice', 'NewPass456'))?.name).toBe('alice')
+    expect(await c.verifyPassword('alice', 'pw')).toBeNull()
+    // ③ 不再删号重建（#148 那条路会发 delete-user + add-user），也不再走 update-user 带 password
+    expect(mm.deleteUserCalls.length).toBe(beforeDel)
+    expect(mm.addUserCalls.length).toBe(beforeAdd)
+    expect(mm.updateUserCalls.length).toBe(beforeUpd)
+    // ④ 记录真的换了口令、且带上了本 org 的口令类型（写后回读的判据）
+    expect(mm.userIn('acme', 'alice')?.password).toBe('NewPass456')
+    expect(mm.userIn('acme', 'alice')?.passwordType).toBe('bcrypt')
+  })
+
+  it('★ 带第三方绑定的用户重置密码后绑定仍在；无口令的扫码账号就此拿到可登录口令', async () => {
+    // #119 的核心诉求：改密不能丢第三方绑定（真机删号会经 DeleteThirdPartyLinksByUser 不可逆丢掉）。
+    const m2 = new MockCasdoor({
+      users: [{ name: 'wxuser', password: '', owner: 'acme', thirdPartyLinks: ['wecom:zhangsan'] }],
+    })
+    await m2.start()
+    try {
+      const c = new CasdoorClient({
+        origin: m2.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw',
+      })
+      // 无口令的扫码账号：真机 passwordType 为空串（UpdateUserPassword 对空口令直接 return）
+      expect(m2.userIn('acme', 'wxuser')?.passwordType).toBe('')
+      await c.resetUserPassword('wxuser', 'NewPass456')
+      // ① 绑定仍在（钉死"不删号"这条路）
+      expect(m2.userIn('acme', 'wxuser')?.thirdPartyLinks).toEqual(['wecom:zhangsan'])
+      expect(m2.deleteUserCalls).toEqual([])
+      expect(m2.addUserCalls).toEqual([])
+      // ② 目标状态：记录现在承载本 org 口令类型的哈希（客户端写后回读的判据）
+      expect(m2.userIn('acme', 'wxuser')?.passwordType).toBe('bcrypt')
+      // ③ 这条账号此前根本没有可用口令（旧实现连"改"都无从谈起），现在能登了
+      expect((await c.verifyPassword('wxuser', 'NewPass456'))?.name).toBe('wxuser')
+    } finally {
+      await m2.stop()
+    }
+  })
+
+  it('★ 前置：目标 org 未配 passwordType ⇒ 响亮拒绝、一次写都不发（真机此时改密不哈希却回 ok）', async () => {
+    // 真机 cred.GetCredManager(空类型) 回 nil ⇒ 完全不哈希（明文写库）且照样回 ok——#119 病根换个
+    // 位置再现。客户端必须在**写之前**拒绝，而不是写完发现没生效（更不是静默回个成功）。
+    const m3 = new MockCasdoor({
+      orgs: [{ name: 'no-type-org', passwordType: '' }],
+      users: [{ name: 'carol', password: 'pw', owner: 'no-type-org' }],
+    })
+    await m3.start()
+    try {
+      const realFetch = globalThis.fetch
+      let writes = 0
+      const c = new CasdoorClient({
+        origin: m3.origin, clientId: 'x', clientSecret: 'y', org: 'no-type-org', adminUser: 'admin', adminPwd: 'pw',
+        fetchImpl: (input, init) => {
+          if (String(input).includes('/api/set-password')) writes++
+          return realFetch(input as RequestInfo, init)
+        },
+      })
+      await expect(c.resetUserPassword('carol', 'NewPass456')).rejects.toThrow(/passwordType/)
+      expect(writes).toBe(0) // 前置拒绝 ⇒ 不"先写写看"
+      expect(m3.userIn('no-type-org', 'carol')?.password).toBe('pw') // 口令没被动
+    } finally {
+      await m3.stop()
+    }
+  })
+
+  it('★ 写后回读（铁律③）：服务端回 ok 却没落地 ⇒ 抛错，绝不假绿', async () => {
+    const m4 = new MockCasdoor({ users: [{ name: 'dave', password: '', owner: 'acme' }] })
+    await m4.start()
+    try {
+      const c = new CasdoorClient({
+        origin: m4.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw',
+      })
+      m4.setSetPasswordFault('noop') // 真机对应的形状：任何"回 ok 但没写进去"
+      await expect(c.resetUserPassword('dave', 'NewPass456')).rejects.toThrow(/写后回读/)
+      expect(m4.userIn('acme', 'dave')?.password).toBe('') // 确实没落地
+    } finally {
+      m4.setSetPasswordFault('off')
+      await m4.stop()
+    }
+  })
+
+  it('★ 改密被拒时把服务端 msg 透出（真机复杂度/复用校验不过 ⇒ 可读 msg，不能吞）', async () => {
+    const m5 = new MockCasdoor({ users: [{ name: 'erin', password: '', owner: 'acme' }] })
+    await m5.start()
+    try {
+      const c = new CasdoorClient({
+        origin: m5.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw',
+      })
+      m5.setSetPasswordFault('error')
+      // 断言的是"服务端给的 msg 传到了调用方"这条管路（注入文案是替身自己的，不锁真机文案）
+      await expect(c.resetUserPassword('erin', 'NewPass456')).rejects.toThrow(/injected rejection/)
+    } finally {
+      m5.setSetPasswordFault('off')
+      await m5.stop()
+    }
   })
 
   it('deleteUser 走 JSON body {owner,name}（铁律②）且删后回读为无（铁律③）', async () => {
