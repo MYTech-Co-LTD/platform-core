@@ -14,28 +14,44 @@
 // ⚠️ 为什么报表**必须**经平台建（spec §11.3.1 / §4）：AI 侧的语义层自身不带权限，
 //   「建报表 = 跨租户能力」；facade 是唯一的鉴权与定租户点。故本模块绝不把 Metabase 凭据
 //   下发给任何调用方，凭据只在本模块服务端 env。
+//
+// ⚠️ **Metabase 侧的身份按 org 命名空间化**（I-1）：`<org>/<title>`（`dashboardName`）。
+//   平台的 Metabase 是单实例多租户共用，dashboard 只有 `name` 这一个身份 ⇒ 名字不带 org 时，
+//   两个租户的同名报表经 `GET /api/search` 命中同一张 ⇒ 跨租户**改写**（setEmbedding 覆盖
+//   embedding_params）与跨租户**归档**（DELETE 删掉别人的报表）。四处口径必须一致：
+//   查找 / 创建（都过 `dashboardName`）、发布与归档（按 upsert / 登记行给出的 id 走）。
 import { z } from 'zod'
 import type { ModuleHono, RouteCtx } from './context'
 import { requesterOf } from './context'
 import {
   MetabaseError,
   archiveDashboard,
+  dashboardName,
   embedDashboardUrl,
+  getDashboardEmbeddingParams,
   listEmbeddableDashboards,
   metabaseDeps,
   metabaseFromEnv,
+  parseDashboardName,
   setEmbedding,
   signEmbedToken,
   upsertDashboard,
 } from '../domain/metabase'
-import { deleteReport, getReport, listReports, upsertReport } from '../domain/report-store'
+import {
+  deleteReport,
+  getReport,
+  listAllReports,
+  listReports,
+  upsertReport,
+} from '../domain/report-store'
 
 /**
  * 平台**保留**的锁定参数名：它的值恒为调用者 org、只在签 token 时现写。
  * 调用方在 `lockedParams` 里给 `tenant` ⇒ 400（不是「静默忽略」：静默会让调用方以为
  * 自己锁定了别的租户，而实际没锁——那种误解比报错危险）。
  * ⚠️ 同一个名字也必须出现在 Metabase 的 `embedding_params` 里（且为 `locked`）——
- * 否则 JWT 里带了值也不生效，租户绑定在真机上不成立。见 POST /reports 的 setEmbedding 调用。
+ * 否则 JWT 里带了值也不生效，租户绑定在真机上不成立。见 POST /reports 的 setEmbedding 调用；
+ * **机械防线**在 `POST /reports/reconcile`（回读断言 `tenant === 'locked'`，不满足落 `tenantUnlocked`）。
  */
 export const TENANT_PARAM = 'tenant'
 
@@ -82,8 +98,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const org = c.get('tenant').casdoor_org
     const deps = metabaseDeps(cfg)
     try {
-      // 幂等（API 无按名 upsert，spec §6.5）：命中同名 ⇒ PUT、否则 POST
-      const up = await upsertDashboard(deps, parsed.data.title)
+      // 幂等（API 无按名 upsert，spec §6.5）：命中同名 ⇒ PUT、否则 POST。
+      // ⚠️ 查找/创建都用**含 org 的规范名**（I-1）：Metabase 是单实例多租户共用，裸 title 会让
+      //    两个租户的同名报表命中同一张 dashboard ⇒ 跨租户改写 embedding_params / 跨租户归档。
+      const up = await upsertDashboard(deps, dashboardName(org, parsed.data.title))
       // 发布 + 锁参数。tenant 恒锁（值不在这里，在签名时现写）——这行是「租户绑定成立」的前提
       await setEmbedding(deps, up.id, [
         { name: TENANT_PARAM, mode: 'locked' },
@@ -162,6 +180,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       // 先归档、再删行。顺序不能倒：只删登记行而把 dashboard 留在可嵌入集里 ⇒ 它恒出现在
       // 对账的 unregistered 差集里（一条永远消不掉的噪声）。反过来先归档、删行失败 ⇒
       // 登记行还在，对账会把它报成 missingInMetabase（可恢复的、显式可见的状态）。
+      // M-1：本顺序由 routes/reports.test.ts 的「先归档后删行」用例 + 变异回归钉住。
+      // ⚠️ 归档只按 id（不按名）：id 就是创建时那次 `dashboardName(org, title)` upsert 的返回值，
+      //    命名空间一致性由 POST 那一处保证（少一处口径就留一条串味路径）。
       await archiveDashboard(deps, row.metabaseId)
     } catch (err) {
       if (err instanceof MetabaseError) return c.json({ error: 'METABASE_ERROR' }, 502)
@@ -178,33 +199,74 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (!cfg) return c.json({ error: 'METABASE_UNCONFIGURED' }, 503)
     const org = c.get('tenant').casdoor_org
     const rows = await listReports(ctx.pool, org)
+    // 登记侧取**全部租户**的并集（I-2）：只算本 org 会把别人的 dashboard 恒报成本租户未登记。
+    const allRows = await listAllReports(ctx.pool)
+    const deps = metabaseDeps(cfg)
     let embeddable: { id: number; name: string }[]
     try {
       // 正规可观测面（spec §6.5）：**别看 iframe**——报表被 unpublish 后嵌入方显示什么
       // 官方没有任何说明，属不可观测面。
-      embeddable = await listEmbeddableDashboards(metabaseDeps(cfg))
+      embeddable = await listEmbeddableDashboards(deps)
     } catch (err) {
       if (err instanceof MetabaseError) return c.json({ error: 'METABASE_ERROR' }, 502)
       throw err
     }
 
-    // 双向差集（spec §7：对账必须有，且失败必须**显式可见**，不静默——M3c 教训）
+    // ── 差集①：本 org 的登记行指向的 dashboard 在可嵌入集里找不到（按 id 求差，判据本来是对的）
     const embeddableIds = new Set(embeddable.map((d) => d.id))
-    const localTitles = new Set(rows.map((r) => r.title))
     const missingInMetabase = rows
       .filter((r) => !embeddableIds.has(r.metabaseId))
       .map((r) => ({ id: r.id, title: r.title, metabaseId: r.metabaseId }))
-    const unregistered = embeddable
-      .filter((d) => !localTitles.has(d.name))
+
+    // ── 差集②：可嵌入集里**不属于任何 org 的任何一行 metabase_id** 的（I-2 的新判据）。
+    // 旧判据按 `title` 集合求差，两个结构性缺陷：同名孤儿看不见（名字命中了本 org 的 title）、
+    // 多租户下把别人的 dashboard 恒报成本租户未登记（ok:false 与 ok:true 两种假绿各占一半）。
+    // 新判据与 title 无关、与「谁在跑对账」无关 ⇒ **正交、无假绿**。
+    const registeredIds = new Set(allRows.map((r) => r.metabaseId))
+    const unregisteredAll = embeddable
+      .filter((d) => !registeredIds.has(d.id))
       .map((d) => ({ metabaseId: d.id, name: d.name }))
-    const ok = missingInMetabase.length === 0 && unregistered.length === 0
+    // 两分：名字能解出 `(org, title)` ⇒ 归属确定、消除动作确定（重跑 POST 按全等命中接管；
+    // 若是已登记行的重复副本则归档该 id）＝**能自愈**；解不出（人在 Metabase 侧直接建的、或
+    // 本改动前的无前缀遗留）⇒ 平台无从判定归属 ＝**需人看**。
+    const unregistered = {
+      recoverable: unregisteredAll.filter((d) => parseDashboardName(d.name) !== null),
+      needsHuman: unregisteredAll.filter((d) => parseDashboardName(d.name) === null),
+    }
+
+    // ── 差集③（RR9②）：「建 dashboard 的人必须把租户过滤参数叫 `tenant`」这条约定只能靠人记得，
+    // 失效模式还是静默的（页面显示未过滤数据）⇒ 对账时**回读** dashboard，断言
+    // `embedding_params.tenant === 'locked'`，不满足就显式报出来。这是那条约定的机械防线。
+    // 只读**本 org** 的行：它是「我们登记的报表锁没锁住」的自检；跨 org 读会把别人的行内状态
+    // 暴露给本租户（而 unregistered 的跨 org 读是**必需**的——不取全局并集就有假阳性）。
+    const tenantUnlocked: { id: string; title: string; metabaseId: number }[] = []
+    try {
+      for (const r of rows) {
+        // 已经报成 missingInMetabase 的行不重复报（回读也只会 404）
+        if (!embeddableIds.has(r.metabaseId)) continue
+        const params = await getDashboardEmbeddingParams(deps, r.metabaseId)
+        if (params[TENANT_PARAM] !== 'locked') {
+          tenantUnlocked.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
+        }
+      }
+    } catch (err) {
+      if (err instanceof MetabaseError) return c.json({ error: 'METABASE_ERROR' }, 502)
+      throw err
+    }
+
+    const ok = missingInMetabase.length === 0
+      && unregistered.recoverable.length === 0
+      && unregistered.needsHuman.length === 0
+      && tenantUnlocked.length === 0
 
     // 差集非空 ⇒ 打一条可检索的告警行：对账结果只在响应体里返回的话，只有**主动去调**的人
     // 才看得见（这正是 #M3c 那条「配了但不对，在请求路径上不可观测」的病）。
     if (!ok) {
       console.warn(
         `[data.reports] 对账差集 org=${org} `
-        + `missingInMetabase=${missingInMetabase.length} unregistered=${unregistered.length}`,
+        + `missingInMetabase=${missingInMetabase.length} `
+        + `unregistered=${unregistered.recoverable.length}自愈+${unregistered.needsHuman.length}需人看 `
+        + `tenantUnlocked=${tenantUnlocked.length}`,
       )
     }
     return c.json({
@@ -212,6 +274,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       registered: rows.length,
       embeddable: embeddable.length,
       missingInMetabase,
+      tenantUnlocked,
       unregistered,
     })
   })

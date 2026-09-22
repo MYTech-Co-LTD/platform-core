@@ -10,8 +10,11 @@ import { createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   MetabaseError,
+  dashboardName,
+  getDashboardEmbeddingParams,
   listEmbeddableDashboards,
   metabaseFromEnv,
+  parseDashboardName,
   setEmbedding,
   signEmbedToken,
   upsertDashboard,
@@ -117,6 +120,34 @@ describe('upsertDashboard：幂等（幂等要自实现——API 无按名 upser
   })
 })
 
+describe('dashboardName / parseDashboardName：Metabase 侧身份按 org 命名空间化（I-1）', () => {
+  it('★ 两个 org 的同名报表 ⇒ Metabase 侧名字不同（跨租户串味从结构上消除）', () => {
+    expect(dashboardName('org-a', '销售日报')).toBe('org-a/销售日报')
+    // 这一条就是 I-1 的根因面：名字若相同，`GET /api/search` 按名命中 ⇒ 两租户共用一张 dashboard
+    expect(dashboardName('org-a', '销售日报')).not.toBe(dashboardName('org-b', '销售日报'))
+  })
+
+  it('title 里的 / 不破坏解析（按**第一个** / 切，org 恒取前缀）', () => {
+    expect(parseDashboardName(dashboardName('org-a', '2026/09 月报')))
+      .toEqual({ org: 'org-a', title: '2026/09 月报' })
+  })
+
+  it('往返：parse(dashboardName(org, title)) 还原 org 与 title', () => {
+    const cases: Array<[string, string]> = [
+      ['org-a', '日报'], ['org-b', '带 空格 的'], ['org-c', '带/斜杠/多段'], ['org-d', ''],
+    ]
+    for (const [org, title] of cases) {
+      expect(parseDashboardName(dashboardName(org, title))).toEqual({ org, title })
+    }
+  })
+
+  it('★ 没有命名空间前缀（人在 Metabase 侧直接建的）⇒ null（对账归到「需人看」）', () => {
+    expect(parseDashboardName('手工建的报表')).toBeNull()
+    expect(parseDashboardName('/销售日报')).toBeNull() // 空前缀：解不出 org
+    expect(parseDashboardName('')).toBeNull()
+  })
+})
+
 describe('setEmbedding：发布 + 锁参数（只有未版本化老 API 能做，spec §6.4）', () => {
   it('PUT /api/dashboard/{id} 载荷含 enable_embedding + embedding_type=signed + embedding_params 映射', async () => {
     const { calls, fetcher } = stub([{ body: { id: 7 } }])
@@ -158,6 +189,38 @@ describe('listEmbeddableDashboards：对账的正规可观测面（spec §6.5—
     // 若这里回落成 []，对账会报告「无差集」——把「读不到」伪装成「对得上」，正是对账机制最怕的假绿
     const { fetcher } = stub([{ body: { data: [{ id: 7 }] } }])
     await expect(listEmbeddableDashboards(depsOf(fetcher))).rejects.toThrow(MetabaseError)
+  })
+})
+
+describe('getDashboardEmbeddingParams：对账回读（RR9②——把「靠人记得」变成机械判据）', () => {
+  it('回读 GET /api/dashboard/{id} ⇒ embedding_params 映射（带 API key）', async () => {
+    const { calls, fetcher } = stub([
+      { body: { id: 7, name: 'org-a/日报', embedding_params: { tenant: 'locked', region: 'locked' } } },
+    ])
+    expect(await getDashboardEmbeddingParams(depsOf(fetcher), 7))
+      .toEqual({ tenant: 'locked', region: 'locked' })
+    expect(calls[0].url).toBe('https://mb.test/api/dashboard/7')
+    expect(calls[0].init?.method ?? 'GET').toBe('GET')
+    expect(headerOf(calls[0], 'x-api-key')).toBe('mb-api-key')
+  })
+
+  it('★ 未发布过（embedding_params 为 null）⇒ {}，**不是抛**：那是「未锁」这个结论本身，交给上层显式报出', async () => {
+    const { fetcher } = stub([{ body: { id: 7, embedding_params: null } }])
+    expect(await getDashboardEmbeddingParams(depsOf(fetcher), 7)).toEqual({})
+  })
+
+  it('★ 形状既不是对象也不是 null（字符串 / 数组）⇒ 抛（读不出就是读不出，不许回落成 {} 伪装成「没问题」）', async () => {
+    await expect(
+      getDashboardEmbeddingParams(depsOf(stub([{ body: { id: 7, embedding_params: 'locked' } }]).fetcher), 7),
+    ).rejects.toThrow(MetabaseError)
+    await expect(
+      getDashboardEmbeddingParams(depsOf(stub([{ body: { id: 7, embedding_params: [] } }]).fetcher), 7),
+    ).rejects.toThrow(MetabaseError)
+  })
+
+  it('404（dashboard 已消失）⇒ 抛 MetabaseError(404)', async () => {
+    const { fetcher } = stub([{ status: 404, body: { message: 'not found' } }])
+    await expect(getDashboardEmbeddingParams(depsOf(fetcher), 7)).rejects.toThrow(MetabaseError)
   })
 })
 

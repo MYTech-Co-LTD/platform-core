@@ -50,6 +50,30 @@ export async function getReport(pool: Pool, org: string, id: string): Promise<Re
   return r.rowCount === 0 ? null : toReportRow(r.rows[0])
 }
 
+/** 带隔离键的登记行——只有跨 org 的对账面需要把 org 显式带出来。 */
+export interface RegisteredReport extends ReportRow {
+  org: string
+}
+
+/**
+ * **全部租户**的登记（对账的登记侧并集）。
+ *
+ * 为什么必须跨 org 读（I-2）：`unregistered` 的判据是「Metabase 可嵌入集里**不属于任何 org 的
+ * 任何一行 `metabase_id`**」。只读本 org 时，别人的 dashboard（本来就登记在别人名下）会
+ * **恒被报成本租户未登记** ⇒ 多租户部署下这个差集恒非空 / 或按 title 求差时恒空——
+ * 两种都是**假绿**（对账机制一半失效，spec §7 的目的被绕过）。
+ * 跨 org 读是**平台级对账动作**的一部分（spec §7 的对账本就是平台级的），仅
+ * `POST /reports/reconcile` 使用；其余读写面一律带 `where org = $1`。
+ */
+export async function listAllReports(pool: Pool): Promise<RegisteredReport[]> {
+  const r = await pool.query(
+    `select org, id, title, metabase_id, embed_params, required_scope
+       from data.reports
+      order by org, title`,
+  )
+  return r.rows.map((row) => ({ ...toReportRow(row), org: row.org as string }))
+}
+
 /**
  * 幂等登记：**冲突键是 (org, title)**，不是 (org, id)。
  *

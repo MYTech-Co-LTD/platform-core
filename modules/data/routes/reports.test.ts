@@ -67,6 +67,12 @@ function fakeMetabase(seed: FakeDash[] = []) {
       return json(d)
     }
     const m = /^\/api\/dashboard\/(\d+)$/.exec(u.pathname)
+    // 对账回读（RR9②）：`GET /api/dashboard/{id}`。未发布过的 dashboard 真机回 `embedding_params: null`。
+    if (m && method === 'GET') {
+      const d = state.dashboards.find((x) => x.id === Number(m[1]))
+      if (!d) return json({ message: 'not found' }, 404)
+      return json({ id: d.id, name: d.name, embedding_params: d.embedding_params ?? null })
+    }
     if (m && method === 'PUT') {
       const d = state.dashboards.find((x) => x.id === Number(m[1]))
       if (!d) return json({ message: 'not found' }, 404)
@@ -81,6 +87,27 @@ function fakeMetabase(seed: FakeDash[] = []) {
     return json({ message: 'not found' }, 404)
   }
   return { state, fetcher }
+}
+
+/**
+ * 让「删登记行」那一条语句失败（M-1：钉住 DELETE 的「**先归档、后删行**」顺序）。
+ * 其余语句原样透传给真池子。顺序倒过来时本包装会让该用例转红（归档根本没发生）。
+ */
+function poolFailingReportDelete(base: Pool): Pool {
+  const proxy = new Proxy(base, {
+    get(target, prop, receiver) {
+      if (prop === 'query') {
+        return async (text: unknown, params?: unknown) => {
+          if (typeof text === 'string' && /delete\s+from\s+data\.reports/i.test(text)) {
+            throw new Error('simulated failure: delete from data.reports')
+          }
+          return (target.query as unknown as (t: unknown, p?: unknown) => Promise<unknown>)(text, params)
+        }
+      }
+      return Reflect.get(target, prop, receiver) as unknown
+    },
+  })
+  return proxy as unknown as Pool
 }
 
 /** 从返回的嵌入 URL 里取出 JWT 的 payload（断言「锁定的租户值到底写成了谁」的直证）。 */
@@ -204,8 +231,10 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     // Metabase 侧：创建一次，且 embedding_params 里 **tenant 一定是 locked**——
     // 这是「看哪个租户的数据」在 Metabase 侧的落点（不写死它，租户绑定在真机上不成立）
     expect(mb.state.dashboards).toHaveLength(1)
+    // name = **含 org 的规范名**（I-1）：Metabase 是单实例多租户共用，名字不带 org 会让两个租户
+    // 的同名报表落到同一张 dashboard 上。用户可见的原标题只在 `data.reports.title` 里。
     expect(mb.state.dashboards[0]).toMatchObject({
-      name: '销售日报', embeddable: true, archived: false,
+      name: `${ORG}/销售日报`, embeddable: true, archived: false,
       embedding_params: { tenant: 'locked', region: 'locked' },
     })
     // 登记行
@@ -297,7 +326,10 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect((await pool.query('select 1 from data.reports where org = $1', [ORG])).rowCount).toBe(0)
     // 归档后不再出现在可嵌入集里 ⇒ 对账干净（这正是「先归档、再删行」的理由）
     const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
-    expect(rec).toMatchObject({ ok: true, missingInMetabase: [], unregistered: [] })
+    expect(rec).toMatchObject({
+      ok: true, missingInMetabase: [], tenantUnlocked: [],
+      unregistered: { recoverable: [], needsHuman: [] },
+    })
     // 未知 id：404（不泄露存在性）
     expect((await app.request('/reports/nope', { method: 'DELETE' })).status).toBe(404)
   })
@@ -315,7 +347,11 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(rec.missingInMetabase).toEqual([
       expect.objectContaining({ title: '已登记', metabaseId: 100 }),
     ])
-    expect(rec.unregistered).toEqual([{ metabaseId: 900, name: '手工建的报表' }])
+    // 人手建的（名字没有 org 命名空间前缀）⇒ 归属解不出 ⇒ 「需人看」那一类
+    expect(rec.unregistered).toEqual({
+      recoverable: [],
+      needsHuman: [{ metabaseId: 900, name: '手工建的报表' }],
+    })
   })
 
   it('对账无漂移 ⇒ ok:true 且两侧差集都空', async () => {
@@ -323,9 +359,181 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     await post(app, { title: '甲' })
     await post(app, { title: '乙' })
     const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
-    expect(rec).toMatchObject({ ok: true, missingInMetabase: [], unregistered: [] })
+    expect(rec).toMatchObject({
+      ok: true, missingInMetabase: [], tenantUnlocked: [],
+      unregistered: { recoverable: [], needsHuman: [] },
+    })
     expect(rec.registered).toBe(2)
     expect(rec.embeddable).toBe(2)
+  })
+
+  it('★ RR9② 对账回读 embedding_params：tenant 未锁 ⇒ 显式报出（机械判据替代「靠人记得」的 README 约定）', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '未锁报表' })).json()
+    const dash = mb.state.dashboards[0]
+    // Metabase 侧被手工改掉——等价于「dashboard 的租户参数不叫 tenant」那种静默失效
+    dash.embedding_params = { region: 'locked' }
+
+    const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(rec.ok).toBe(false)
+    expect(rec.tenantUnlocked).toEqual([
+      expect.objectContaining({ id, title: '未锁报表', metabaseId: dash.id }),
+    ])
+    // 反证：锁回去 ⇒ 干净（不是「永远报未锁」）
+    dash.embedding_params = { tenant: 'locked' }
+    const clean = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(clean).toMatchObject({ ok: true, tenantUnlocked: [] })
+  })
+
+  it('★ I-1 两个 org 同 title ⇒ Metabase 侧两张不同 dashboard；B 的写 / 删都不碰 A 的', async () => {
+    const a = shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }))
+    const b = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] }))
+    const ra = await (await post(a.app, { title: '销售日报' })).json()
+    const rb = await (await post(b.app, { title: '销售日报', lockedParams: { region: 'cn' } })).json()
+
+    // ① Metabase 侧收到**两次** create，两张不同 id 的 dashboard，名字各带自己的 org 前缀
+    const creates = mb.state.calls.filter(
+      (c) => c.init?.method === 'POST' && new URL(c.url).pathname === '/api/dashboard',
+    )
+    expect(creates).toHaveLength(2)
+    expect(ra.metabaseId).not.toBe(rb.metabaseId)
+    expect(mb.state.dashboards.find((d) => d.id === ra.metabaseId)?.name).toBe(`${ORG}/销售日报`)
+    expect(mb.state.dashboards.find((d) => d.id === rb.metabaseId)?.name).toBe(`${OTHER_ORG}/销售日报`)
+    // 登记侧：各 org 一行，title 仍是**用户可见的原标题**（命名空间只在 Metabase 侧）
+    const reg = await pool.query(
+      'select org, title from data.reports where org = any($1) order by org', [[ORG, OTHER_ORG]],
+    )
+    expect(reg.rows).toEqual([
+      { org: ORG, title: '销售日报' }, { org: OTHER_ORG, title: '销售日报' },
+    ])
+
+    // ② B 的 setEmbedding 只打到 B 那张：region 只有 B 声明过 ⇒ A 那张的 embedding_params 里不该有它
+    const putsWithRegion = mb.state.calls.filter(
+      (c) => c.init?.method === 'PUT' && String(c.init.body).includes('"region"'),
+    )
+    expect(putsWithRegion).toHaveLength(1)
+    expect(putsWithRegion[0].url).toContain(`/api/dashboard/${rb.metabaseId}`)
+    expect(mb.state.dashboards.find((d) => d.id === ra.metabaseId)?.embedding_params)
+      .toEqual({ tenant: 'locked' })
+
+    // ③ B 的 DELETE 只归档 B 那张；A 的报表照旧可取嵌入 URL（跨租户归档被结构上消除）
+    expect((await b.app.request(`/reports/${rb.id}`, { method: 'DELETE' })).status).toBe(204)
+    expect(mb.state.dashboards.find((d) => d.id === rb.metabaseId)?.archived).toBe(true)
+    expect(mb.state.dashboards.find((d) => d.id === ra.metabaseId)?.archived).toBe(false)
+    expect((await a.app.request(`/reports/${ra.id}/embed-url`)).status).toBe(200)
+    expect((await (await a.app.request('/reports')).json()).reports).toHaveLength(1)
+  })
+
+  it('★ I-2 同名孤儿 ⇒ 显式报出（旧判据下恒 ok:true 的假绿点）', async () => {
+    const { app } = manage()
+    await post(app, { title: '孤儿报表' })
+    // 「先 search 后写」窗口的产物：Metabase 侧多出一张**同名同命名空间**的重复 dashboard
+    mb.state.dashboards.push({ id: 901, name: `${ORG}/孤儿报表`, embeddable: true, archived: false })
+
+    const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(rec.ok).toBe(false)
+    expect(rec.unregistered).toEqual({
+      recoverable: [{ metabaseId: 901, name: `${ORG}/孤儿报表` }],
+      needsHuman: [],
+    })
+    expect(rec.missingInMetabase).toEqual([])
+  })
+
+  it('★ I-2 多租户正常态：各 org 各自登记 ⇒ 无噪声（别人的 dashboard 不被报成本租户未登记）', async () => {
+    const a = shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }))
+    const b = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] }))
+    await post(a.app, { title: 'A 的报表' })
+    await post(b.app, { title: 'B 的报表' })
+
+    const rec = await (await a.app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(rec).toMatchObject({
+      ok: true, registered: 1, embeddable: 2,
+      missingInMetabase: [], tenantUnlocked: [],
+      unregistered: { recoverable: [], needsHuman: [] },
+    })
+  })
+
+  it('★ I-2 / M-4 并发建同名（search 竞态）也会造孤儿 ⇒ 同样显式报出', async () => {
+    const { app } = manage()
+    // 把「先 search 后写」的窗口**卡死**成确定性的竞态：两个请求都先做完 search（都看到空集），
+    // 再各自 POST。sleep 做不到这件事——Node 会在两个 timer 之间排空微任务，先到的请求会一路跑完。
+    const base = mb.fetcher
+    let arrived = 0
+    let open: () => void = () => {}
+    const bothArrived = new Promise<void>((resolve) => { open = resolve })
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (new URL(url).pathname === '/api/search') {
+        arrived += 1
+        if (arrived >= 2) open()
+        // 兜底 500ms：万一只有一方到（不该发生）也只是断言失败，不是挂死
+        await Promise.race([bothArrived, new Promise((r) => setTimeout(r, 500))])
+      }
+      return base(url, init)
+    })
+    // 两个请求在数组字面量里**同时发起**（不是先 await 一个再发下一个），再由 Promise.all 收齐
+    const pending = [post(app, { title: '并发报表' }), post(app, { title: '并发报表' })]
+    const [x, y] = await Promise.all(pending.map(async (r) => (await r).json()))
+    expect(x.created).toBe(true)
+    expect(y.created).toBe(true)
+    // Metabase 侧两张 dashboard，登记行仍 1 行（unique (org, title) 挡着）⇒ 必有一张是孤儿
+    expect(mb.state.dashboards).toHaveLength(2)
+    const reg = await pool.query(
+      'select metabase_id from data.reports where org = $1 and title = $2', [ORG, '并发报表'],
+    )
+    expect(reg.rowCount).toBe(1)
+    const registeredId = reg.rows[0].metabase_id as number
+    const orphanId = [x.metabaseId as number, y.metabaseId as number].find((i) => i !== registeredId)
+
+    const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(rec.ok).toBe(false)
+    expect(rec.unregistered).toEqual({
+      recoverable: [{ metabaseId: orphanId, name: `${ORG}/并发报表` }],
+      needsHuman: [],
+    })
+  })
+
+  it('★ M-1 删除顺序钉死：先归档、后删行（删行失败 ⇒ 归档**已经**发生，报 missingInMetabase 而非未登记噪声）', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '顺序报表' })).json()
+    const dashId = mb.state.dashboards[0].id
+    const broken = buildTestApp(
+      mod,
+      makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }),
+      { pool: poolFailingReportDelete(pool) },
+      { id: TENANT, casdoor_org: ORG },
+    )
+
+    const res = await broken.request(`/reports/${id}`, { method: 'DELETE' })
+    expect(res.status).not.toBe(204) // 删行失败 ⇒ 不许回「删成功」
+    expect(res.status).toBeGreaterThanOrEqual(500)
+    // ★ 顺序的落点：归档**在前**，所以此刻它已经发生（顺序倒过来这条必红，见报告「变异回归」）
+    expect(mb.state.dashboards.find((d) => d.id === dashId)?.archived).toBe(true)
+
+    const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(rec.ok).toBe(false)
+    expect(rec.missingInMetabase).toEqual([
+      expect.objectContaining({ title: '顺序报表', metabaseId: dashId }),
+    ])
+    expect(rec.unregistered).toEqual({ recoverable: [], needsHuman: [] })
+  })
+
+  it('★ M-2 租户值来源钉死：casdoor_org 与 identity.orgId 分叉时，锁值仍取 requester.orgId', async () => {
+    // 分叉形态（宿主当前三通道硬门拦着 ⇒ 真机不可达）：宿主租户 = OTHER_ORG，调用者身份 = ORG
+    const forked = buildTestApp(
+      mod,
+      makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }),
+      { pool },
+      { id: TENANT, casdoor_org: OTHER_ORG },
+    )
+    const { id } = await (await post(forked, { title: '分叉报表' })).json()
+    const res = await forked.request(`/reports/${id}/embed-url`)
+    expect(res.status).toBe(200)
+    const payload = payloadOf((await res.json()).url)
+    expect(payload).toMatchObject({ params: { tenant: ORG } })
+    expect(payload.params).not.toMatchObject({ tenant: OTHER_ORG })
+    // 另一件事分开表态：登记行的隔离键（= Metabase 命名空间同源）仍取**宿主租户**
+    const row = await pool.query('select org from data.reports where id = $1', [id])
+    expect(row.rows[0].org).toBe(OTHER_ORG)
   })
 
   it('Metabase 侧 401 ⇒ 502（上游失败与「没配」分开表达），且不留半条登记行', async () => {

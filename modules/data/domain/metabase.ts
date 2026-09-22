@@ -81,6 +81,40 @@ async function call(
   }
 }
 
+/**
+ * Metabase 侧 dashboard 身份的**命名空间**：`<org>/<title>`（I-1）。
+ *
+ * 为什么必须带 org：平台的 Metabase 是**单实例多租户共用**的，而 dashboard 在 Metabase 侧
+ * 的身份只有 `name`。不带 org 时，两个租户用**同一个 title** 建报表会经 `GET /api/search`
+ * （模糊匹配 + 我们按 name 全等判命中）落到**同一张** dashboard 上 ⇒
+ * B 的 `setEmbedding` **覆盖** A 的 `embedding_params`、B 的 `DELETE` **归档** A 的报表
+ * （实测复现的跨租户**破坏性**操作）。带上 org 前缀后，两个租户的同名报表在 Metabase 侧
+ * **结构上**就是两张不同的 dashboard——不是「对账里报出来」，是**没有这条路径**。
+ *
+ * ⚠️ 命名空间只体现在 **Metabase 侧的名字**上：`data.reports.title` 恒为用户可见的原标题，
+ *    `unique (org, title)` 语义不变 ⇒ 本改动**不需要迁移**。
+ * ⚠️ 口径必须与登记行的隔离键**同源**（都是 `tenant.casdoor_org`）：若两处取值分叉，同一个
+ *    `(org, title)` 会对应两个名字，重跑 `POST /reports` 会不断造出新 dashboard（孤儿）。
+ * ⚠️ 部署注记：本改动前若已有登记行，其 dashboard 名**没有**前缀 ⇒ 首次重跑 `POST /reports`
+ *    会新建一张带前缀的，老那张会出现在对账的 `unregistered.needsHuman` 里（需人归档）。
+ */
+export function dashboardName(org: string, title: string): string {
+  return `${org}/${title}`
+}
+
+/**
+ * `dashboardName` 的逆：按**第一个** `/` 切回 `{org, title}`（title 里带 `/` 不影响）。
+ * 解析不出（没有 `/`、前缀为空）⇒ `null` —— 那是**人在 Metabase 侧直接建的** dashboard，
+ * 平台无从判定它属于谁 ⇒ 对账把它归到「需人看」那一类。
+ *
+ * ⚠️ 前提：Casdoor org 名不含 `/`（含 `/` 会让 `(org, title)` 与名字不再一一对应）。
+ */
+export function parseDashboardName(name: string): { org: string; title: string } | null {
+  const at = name.indexOf('/')
+  if (at <= 0) return null
+  return { org: name.slice(0, at), title: name.slice(at + 1) }
+}
+
 /** 取响应体里的数字 id；不是数字 ⇒ 抛（大 id 不猜、不 Number() 硬转）。 */
 function idOf(body: unknown): number {
   const id = (body as { id?: unknown } | null)?.id
@@ -115,6 +149,9 @@ async function findDashboardIdByName(deps: MetabaseDeps, name: string): Promise<
 /**
  * 幂等建/更 dashboard：命中同名则 `PUT`（改名到同一个 name，幂等），否则 `POST` 创建。
  * 返回 `created` 是**可观测的幂等证据**（第二次 POST /reports 应为 false）。
+ *
+ * ⚠️ `name` 传的是 `dashboardName(org, title)`（含 org 的规范名，I-1）——**不许**传裸 title：
+ *    裸 title 会让两个租户的同名报表命中同一张 dashboard（跨租户改写/归档）。
  */
 export async function upsertDashboard(
   deps: MetabaseDeps, name: string, collectionId?: number,
@@ -175,6 +212,31 @@ export async function listEmbeddableDashboards(
     }
     return { id: rec.id, name: rec.name }
   })
+}
+
+/**
+ * 对账回读单个 dashboard：`GET /api/dashboard/{id}` → `embedding_params` 映射
+ * （spec §6.5 的正规可观测面之一）。
+ *
+ * 用途（RR9②）：「建 dashboard 的人必须把租户过滤参数写成名为 `tenant` 的参数」这条约定
+ * **只能靠人记得**，失效模式是静默的（页面显示未过滤数据）⇒ 由本函数把它变成**机械判据**：
+ * 对账时回读，断言 `tenant === 'locked'`，不满足就把该行显式报出来。
+ *
+ * ⚠️ `embedding_params` 为 `null`/缺键（未发布过）⇒ 归一成 `{}`（**不是抛**）：那是「未锁」
+ *    这个**结论本身**，必须由上层显式报出，而不是把整轮对账变成 502。
+ * ⚠️ 形状既不是对象也不是 null（字符串/数组）⇒ 抛：读不出就是读不出，不许回落成 `{}`
+ *    把「读不到」伪装成「除了没锁都正常」。
+ */
+export async function getDashboardEmbeddingParams(
+  deps: MetabaseDeps, dashboardId: number,
+): Promise<Record<string, string>> {
+  const body = await call(deps, 'GET', `/api/dashboard/${dashboardId}`)
+  const params = (body as { embedding_params?: unknown } | null)?.embedding_params
+  if (params === null || params === undefined) return {}
+  if (typeof params !== 'object' || Array.isArray(params)) {
+    throw new MetabaseError(200, SHAPE_ERROR)
+  }
+  return params as Record<string, string>
 }
 
 /**
