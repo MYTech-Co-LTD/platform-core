@@ -65,6 +65,7 @@
 | ③ | **ZOS 乐檬桶只读凭据**（存量 parquet 的读取面）落 openship env(isSecret)；**Metabase 服务账号 API key + 嵌入签名密钥**（T7 的 env 三键真值） | 人 | T6（ZOS）/ T10（Metabase） | T6 的 dbt 首跑、T10 |
 | ④ | **业务排期/窗口**（目标机上首次起数据面、注册物化 job 的时段确认） | 人与客户/机主 | T6 的 `up` 与 job 注册 | T6 后半 |
 | ⑤ | **SaaS 双租户验收环境**（multi 形态、两个测试租户 + 各自用户/PAT/凭据）与排期 | 人 | T13 | 仅 T13；T11/T12 的代码面不受影响 |
+| ⑥ | **dbt 实测版本确认**：压测环境现场实际安装的 dbt 版本号（或确认按默认 `1.9.8` 钉死）——layered §11 只记了内存资源画像、**没有版本号**，「以 §11 实测版本核对」的出处不存在 | 人（实测人） | T3 的 `DBT_VERSION` 注释销账、T6 真跑用的版本 | T3 工件按默认值可先行；卡 T6 前的版本落定 |
 
 派发前另两件事（团队记忆）：**先 `git fetch origin main`**（Orca `--base-branch main` 取本地 ref，长期 worktree 会脱节）；**worktree 路径必须 ASCII**（中文路径打挂 vitest 的 TS fixture 加载）。
 
@@ -120,7 +121,7 @@
 |---|---|---|---|
 | **W0（P0）** | T1 镜像 | 单独，不依赖任何决策 | — |
 | **W1（P1 仓内工件）** | **T2（架构+B7）先行 → T3（data-compose）∥ T4（dbt）∥ T5（contracts+duckle）** | T3 依赖 T2（B7 放行）；T4/T5 与 T2/T3 文件面零交集 | — |
-| **W1g（P1 真机闭环）** | T6 部署闭环 + 摘标注 | 操作者任务，串行 | 外部输入①②③④ + W1 全合并 |
+| **W1g（P1 真机闭环）** | T6 部署闭环 + 摘标注 | 操作者任务，串行 | 外部输入①②③④⑥ + W1 全合并 |
 | **W2（P2 治理与配置面）** | **T7（facade+登记）→ T8（L2 定义权）→ T9（治理四机制）** | 严格串行：T7/T8 都改 `manifest.yaml`+`index.ts`（装载期双向核对，并行必冲突）；T9 的门禁③消费 T8 的声明形态 | — |
 | **W2g（P2 e2e）** | T10 端到端验收 | 操作者任务 | W1g 部署存活 + 外部输入③（Metabase 凭据）+ W2 合并 |
 | **W3（P3 多租户代码面）** | T11（每租户 schema+凭据）→ T12（串租户回归套件） | 串行（T12 断言依赖 T11 形态） | — |
@@ -410,7 +411,7 @@ gh pr create --title "build(data-stack): B7 双白名单与架构文档数据面
 
 **Interfaces:**
 - Consumes: T1 的镜像名（`ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5`）；T5 的 `deploy/duckle/Dockerfile`（compose 引用其 build 路径——**两任务谁先后合并都行，W1g 前齐即可**）；`deploy/customer-onboarding.md` 阶段 5 的拆缝接线模型。
-- Produces: 五个服务定义 + 三个卷 + 全回环端口。平台侧接线点 = 宿主 `127.0.0.1:15432`（customer-onboarding 阶段 5「唯一跨 project 接线点」）。
+- Produces: 五个服务定义 + 三个卷 + 全回环端口。平台侧接线点 = 宿主 `127.0.0.1:15432`——**本计划选定的端口**（满足 customer-onboarding §4「拆缝两 project 同机端口必须错开」的约束；文档只记过 lab 实测端口 18080/18081/16379，**未记过 15432**——别把它引用成文档既有内容。最终接线形态由 T6 Step 6 回写进 customer-onboarding 阶段 5）。
 
 - [ ] **Step 1: 写 data-compose.yml（T2 合并后才能提 PR——B7 放行面）**
 
@@ -511,8 +512,9 @@ volumes:
 
 ```dockerfile
 # deploy/dbt/Dockerfile — dbt runner（postgres adapter 打 pg_duckdb 端点）。
-# ⚠️ DBT_VERSION 默认值待核对：以 2026-09-21 分层 spec 压测环境实测的 dbt 版本钉死
-#（layered §11 资源画像那轮实测用的版本），实施时核对后改掉本行注释。
+# ⚠️ DBT_VERSION 默认值待确认：layered §11 只有内存资源画像、未记 dbt 版本号——
+# 待实测人确认（开工前置外部输入⑥：人给版本号，或确认默认 1.9.8），
+# 拍板时以现场实际安装为准，确认后改掉本行注释。
 FROM python:3.12-slim
 ARG DBT_VERSION=1.9.8
 RUN pip install --no-cache-dir "dbt-core==${DBT_VERSION}" "dbt-postgres==${DBT_VERSION}"
@@ -525,7 +527,10 @@ ENTRYPOINT ["dbt"]
 Run:
 ```bash
 pnpm exec tsx scripts/check-compose.mjs        # T2 已合：data-compose 全回环 ⇒ OK；改出非回环会当场红
-docker compose -f deploy/data-compose.yml config --quiet   # 本地语法面（不需要镜像在场）
+docker compose -f deploy/data-compose.yml config --quiet   # 本地语法面（不需要镜像在场）。若因 T5 的
+                                                            # build 上下文文件（deploy/duckle/Dockerfile）
+                                                            # 未合并而报错：跳过本步并在任务报告注明，
+                                                            # 留 T5 合并后复验——别为过本步预写 T5 的文件
 pnpm typecheck && pnpm test
 ```
 
@@ -598,12 +603,12 @@ from r
 
 - `marts/`：至少一个口径模型（如 `fct_retail_sale`，粒度显式）——**口径只在这里定义一次**（layered 纪律）。
 - `schema.yml`：模型列描述 + tests（`not_null`/`unique`/`accepted_values`/金额范围——layered §4 步骤4）；**语义声明**（L1）：每个指标带 `name`（**命名空间 `<域>:<指标名>` 前缀**，layered §6）、表达式、粒度、`owner`、`tier`、`definition`——owner/tier/grain 是治理门禁的必填面（spec §10 机制 1 的 dbt 原生对应物）。
-- `dbt/tests/audit_<指标>.sql`：**每个声明的指标一条对账 singular test**（独立复算 vs 物化结果逐位比对；spec §10 机制 4「同名唯一 + 每个指标一条对账查询」——硬要求 7「对账是硬要求：cast 错了静默，只有它能抓」）。命名约定 `audit_*` 与指标名一一对应，机检在 Step 5 锁。
+- `dbt/tests/audit_<指标>.sql`：**每个声明的指标一条对账 singular test**（独立复算 vs 物化结果逐位比对；spec §10 机制 4「同名唯一 + 每个指标一条对账查询」——硬要求 7「对账是硬要求：cast 错了静默，只有它能抓」）。**文件名映射唯一规则（T4 在此定义，T9 机检消费同一条——两个 worker 不得各造一套）**：指标命名空间 `<域>:<指标名>` 含冒号、不能进文件名 ⇒ `:` 替换为 `__`，例 `aftersales:refund_ratio` → `dbt/tests/audit_aftersales__refund_ratio.sql`。命名约定 `audit_*` 与指标名一一对应，机检在 Step 5 锁。
 
 - [ ] **Step 5: 静态门禁 check-data-models.mjs（先红后绿）+ CI 接线**
 
 新建 `scripts/check-data-models.test.ts`（fixtures：合规 dbt 目录 → 干净；缺 owner 的声明 → 违规；staging 用 `::double` → 违规；staging 无 `r['` 模式 → 违规；同名指标两处 → 违规；声明了指标但无 `audit_*.sql` → 违规）。`check-data-models.mjs` 检查项（静态、无库）：
-① `staging/stg_*.sql` 必含 `r['` 取列模式（坑 #5 的结构性防御）；② 禁 `::double`（坑 #4）；③ 禁 `union_by_name`（硬约束 2：漂移必须显式处理）；④ staging 一对一（staging 模型 ↔ sources.yml 源一一对应）；⑤ 语义声明必填字段（owner/tier/grain/definition）齐全；⑥ 指标命名空间前缀 + **同名唯一**；⑦ 每个声明指标有对应 `dbt/tests/audit_<指标>.sql`。
+① `staging/stg_*.sql` 必含 `r['` 取列模式（坑 #5 的结构性防御）；② 禁 `::double`（坑 #4）；③ 禁 `union_by_name`（硬约束 2：漂移必须显式处理）；④ staging 一对一（staging 模型 ↔ sources.yml 源一一对应）；⑤ 语义声明必填字段（owner/tier/grain/definition）齐全；⑥ 指标命名空间前缀 + **同名唯一**；⑦ 每个声明指标有对应 `dbt/tests/audit_<指标>.sql`（文件名按 Step 4 定义的 `:` → `__` 映射规则生成，T9 扩面时消费同一条规则，别另造）。
 > scripts/ 是 checkJs——JSDoc 字面量类型会加宽（团队记忆），检查器用「单形状、字段恒在」写法，`pnpm typecheck` 才拦得住。
 
 ci.yml 的 gates job 在 check-env-example 之后加一行 `- run: pnpm exec tsx scripts/check-data-models.mjs`。
@@ -641,7 +646,7 @@ gh pr create --title "feat(data-stack): dbt 项目与数据工件静态门禁（
 
 - [ ] **Step 2: duckle/ 管线骨架 + ZOS 直写的显式 gate**
 
-`duckle/README.md` 开头必须先写这条已知事实：**duckle 原生 s3 sink 直连天翼 ZOS 反复 403、两条 WeKnora 既有条目判定能力空白**（spec §8）——动手前先检索 WeKnora 核对现状；`duckle/common/` 与 `duckle/customers/` 目录约定（与 contracts/dbt 的 common/customers 三件套同构：一个新源 = 契约 + 管线 + staging 三个文件同 PR）。管线文件本体是**目录与命名约定 + README**，不放编造的 DSL 范文（duckle 管线格式以官方文档/实测为准，别按想象写）。`.gitignore` 加 `duckle/**/ _ops/` 本地产物目录（以实测的 _ops 形态为准）。
+`duckle/README.md` 开头必须先写这条已知事实：**duckle 原生 s3 sink 直连天翼 ZOS 反复 403、两条 WeKnora 既有条目判定能力空白**（spec §8）——动手前先检索 WeKnora 核对现状；`duckle/common/` 与 `duckle/customers/` 目录约定（与 contracts/dbt 的 common/customers 三件套同构：一个新源 = 契约 + 管线 + staging 三个文件同 PR）。管线文件本体是**目录与命名约定 + README**，不放编造的 DSL 范文（duckle 管线格式以官方文档/实测为准，别按想象写）。`.gitignore` 加本地产物目录忽略：`duckle/**/_ops/`（若实测的 _ops 形态不同，以实测为准写正确 glob）。**模式内不得内嵌空格**——`duckle/**/ _ops/` 这种写法只会匹配「目录名以空格开头」的 `_ops`，照抄即空转；要忽略多种形态就写成多条独立模式、每条一行，别在一条模式里用空格拼。
 
 - [ ] **Step 3: deploy/duckle/Dockerfile（headless runner 容器化）**
 
@@ -698,6 +703,7 @@ gh pr create --title "feat(data-stack): contracts/ 与 duckle/ 数据采集工�
 2. **外部输入②**：dp-lab / dp-lab-bi 已删（人在 dashboard；MCP 无删项目接口）+ 目标机已选定。
 3. **外部输入③**：ZOS 乐檬桶只读凭据已落 openship env(isSecret)。
 4. **外部输入④**：目标机时段已确认。W1 的 T2–T5 全部合并进 main。
+5. **外部输入⑥**：dbt 版本已确认（人给版本号或确认 1.9.8），T3 Dockerfile 的 ARG 注释销账——真跑用的版本必须与现场安装一致。
 
 - [ ] **Step 2: 按目标形态建数据面 project（openship MCP）**
 
@@ -720,6 +726,7 @@ gh pr create --title "feat(data-stack): contracts/ 与 duckle/ 数据采集工�
 - [ ] **Step 6: 摘「尚未进仓」标注 + handbook 补齐（docs PR）**
 
 - `deploy/customer-onboarding.md`：摘掉六处「尚未进仓」标注（:33 / :51 / :91 / :157 / :172 / :199——行号以 grep「尚未进仓」实测为准）。
+- `deploy/customer-onboarding.md` 阶段 5：**回写最终接线形态**——平台侧 env 加 `DATA_WAREHOUSE_URL=…@127.0.0.1:15432/warehouse`（15432 是**本计划选定**的端口，文档原本只记过 lab 端口 18080/18081/16379，此前未记过 15432），并写明「仅同宿主可达」的前提（回环端口在 productionMode=host 下由宿主进程可达；对照主 compose 头注的容器服务名口径时别误读为矛盾——那是 compose 网络内视图，两者说的是不同层的可达性）。
 - `docs/data-platform-handbook.md` §3 落地位置四个 `<待补>` 补齐（duckle 管线→`duckle/`；dbt 项目→`dbt/`；语义声明→`dbt/models/**/schema.yml`；采集契约→`contracts/`）；§5 验收记录加一行（验收范围=本任务全链路，卡点→案例号）。
 
 ```bash
@@ -790,7 +797,7 @@ gh pr create --title "feat(data): Metabase 报表 facade + 报表登记 + 看板
 **Interfaces:**
 - Consumes: 拍板 #5 全文（定义权下放；可机检声明；agent 接入面预留；C 排除）+ 拍板 #2（dbt YAML 是 L1 事实源）；既有 `domain/authz.ts`（词表裁剪单实现——L2 合并后仍走它，**不另写第二处权限判定**）、`domain/metric-store.ts`（`data.metrics` 读写）。
 - Produces:
-  - `003_metrics_source.sql`：`data.metrics` 加 `source text not null default 'l2'`（值 `l1`/`l2`）+ 索引 `(source)`；**不加豁免**（org 列纪律不变）。
+  - `003_metrics_source.sql`：`data.metrics` 加 `source text not null default 'l2'`（值 `l1`/`l2`）+ 索引 `(source)`；**不加豁免**（org 列纪律不变）。迁移文件里给 default 加注释说明语义：「`default 'l2'` 只对**届时已清零/已处置**的表安全——存量行会被它静默改标 L2（见 Step 3 存量处置前置）」。
   - `domain/semantic-compiler.ts` —— **唯一编译点**：结构化声明 → `select_sql`。
 
 ```ts
@@ -803,7 +810,10 @@ export interface L2Declaration {
   filters?: { dim: string; op: '=' | 'in'; values: string[] }[]   // 维度名 ∈ L1 声明
   target?: number
 }
-export function compileL2(base: L1Metric, decl: L2Declaration): { selectSql: string; title: string }
+export function compileL2(base: MetricDef, decl: L2Declaration): { selectSql: string; title: string }
+// base 复用既有 MetricDef（modules/data/domain/authz.ts 导出、metric-store.ts 同款消费）——
+// 仓内没有 L1Metric 这个类型名，别新造；若 L2 侧确需扩展字段，以 alias 关系注明
+// （如 type L2Base = MetricDef & { … }），不另起平行类型。
 // 受限表达式（B 中档）不在 v1——拍板原文「定义权下放」指的是定义新指标/语义的权限下放，
 // 表达力档位的扩展（算术组合等）等真实需求出现再走 spec 增补，别在实现里私自放宽。
 ```
@@ -815,8 +825,9 @@ export function compileL2(base: L1Metric, decl: L2Declaration): { selectSql: str
 
 - [ ] **Step 1（TDD）**: `semantic-compiler.test.ts`——base 不存在于 L1 → 抛；filters/visibility 的维度名不在 L1 声明 → 抛（机检即写时校验）；compile 产物是纯 SELECT（断言不含分号/DDL 痕迹）；同名 L2 在同 org 唯一。
 - [ ] **Step 2**: `metric-store.test.ts` 扩：L1∪L2 合并、L2 不可覆盖 L1 口径、裁剪后词表经 authz 只少不多。
-- [ ] **Step 3**: 迁移 + sync 脚本（幂等：重跑两遍行数不变）+ 路由收紧 + console 指标管理页改声明式表单。
-- [ ] **Step 4**: 全量验证（check-tenant-isolation 必跑）+ PR：
+- [ ] **Step 3（存量处置前置——003 落生产前的 gate，不做完不许合并）**: 核对生产 `data.metrics` 存量行数（经 openship 或部署侧查询——worker 无 openship 权限时经编排者转操作者代查，**门槛不变**；别裸 SSH）。**为什么必须前置**：山海试点已跑过 #146，console 指标页用自由 `selectSql` 写过行——003 的 `default 'l2'` 会把这些存量行静默改标 L2，造出不受唯一编译点管辖的「L2 祖父级行」，违反全局约束 12。**非零 ⇒ 逐行人工复核显式处置**：每行要么迁入 dbt YAML（成为 L1 声明、经 sync 物化），要么删除（自由 SQL 行不迁 YAML 就只能删，没有第三种去向）；**处置结果（核对行数 + 逐行去向）记进任务报告**。核对为零 ⇒ 报告记「核对时为零」。本步完成才可合并 PR（merge main 即自动部署、003 立刻应用）。
+- [ ] **Step 4**: 迁移 + sync 脚本（幂等：重跑两遍行数不变）+ 路由收紧 + console 指标管理页改声明式表单。
+- [ ] **Step 5**: 全量验证（check-tenant-isolation 必跑）+ PR：
 
 ```bash
 git add modules/data scripts/sync-data-semantics.mjs deploy/Dockerfile.server
@@ -997,6 +1008,22 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 | 6 | **`??` coalesce 运算符不是可靠的 DuckDB 语法**（写时顺手用了 R 风格） | 改标准 `coalesce(try_strptime(...), try_strptime(...))` |
 | 7 | **duckle 二进制下载 URL 的 repo slug 属推测**（spec 只记了 ghcr org 与资产名，没记 GitHub repo 全名）；而 **PyPI `duckle` 是 spec 明载的另一条官方分发路径** | Dockerfile 主路径改 PyPI（spec 明载、无 slug 猜测），二进制路线降为 README 替代项；ENTRYPOINT 标注「CLI 子命令形态以官方文档核对」 |
 
+**第三轮：开工前扫描七处（2026-09-22，返工撰写者修入本体；每处最小化修改 + 修后 grep 复核）**
+
+| # | 发现（原文怎么错的） | 修正（落点） |
+|---|---|---|
+| 1 | **T8 的 003 迁移会把存量行静默改标 L2**：`source not null default 'l2'` 落到已跑过 #146 的生产库（山海试点 console 指标页用自由 `selectSql` 写过行）⇒ 存量行变「L2 祖父级行」，违反全局约束 12（`select_sql` 只能由唯一编译点生成） | T8 加 **Step 3 存量处置前置**（核对生产 `data.metrics` 行数——经 openship/部署侧查询；非零逐行人工复核：迁 dbt YAML 或删，结果记任务报告；完成才许合并）；003 的 default 语义加注释「只对届时已清零/已处置的表安全」 |
+| 2 | T3 Step 3 的 `docker compose config` 验证依赖 T5 的 build 上下文文件（`deploy/duckle/Dockerfile`），W1 并行波里可能未合并 | 加 hedge：因 T5 文件未合并报错则跳过本步、报告注明、留 T5 合并后复验，别预写 T5 的文件 |
+| 3 | T5 的 .gitignore 模式内嵌空格：`duckle/**/ _ops/` 只会匹配「目录名以空格开头」的形态，照抄即空转 | 改 `duckle/**/_ops/`（或以实测 _ops 形态为准的正确 glob），写明禁内嵌空格、多条形态写成多条独立模式 |
+| 4 | 指标命名空间 `<域>:<指标名>` 含冒号，`audit_<指标>.sql` 按名字面映射会产出含 `:` 的文件名；T4/T9 两个 worker 可能各造一套映射 | T4 Step 4 定义唯一映射（`:` → `__`，例 `aftersales:refund_ratio` → `audit_aftersales__refund_ratio.sql`）；Step 5 机检⑦与 T9 扩面写明消费同一条规则 |
+| 5 | T3 的引用姿态错：把 15432 说成 customer-onboarding 阶段 5「唯一跨 project 接线点」的既有内容——文档里没有 15432（只记过 lab 端口 18080/18081/16379），是本计划新选的端口 | 引用改「**计划选定**（满足 §4 端口错开约束）」；T6 Step 6 加回写步：最终接线形态（含 15432 与「仅同宿主可达」前提，对照主 compose 头注别误读为容器服务名矛盾）写回 customer-onboarding 阶段 5 |
+| 6 | T3 的 dbt 版本核对出处不存在：「layered §11 资源画像实测的 dbt 版本」——§11 只有内存画像、无版本号 | 出处改「⚠️ 待实测人确认（拍板时以现场实际安装为准）」；开工前置表加**外部输入⑥**（人给版本号或确认 1.9.8），W1g gate（波次表 + T6 Step 1 GATE）同步带上 |
+| 7 | T8 用了 `L1Metric` 类型名——仓内既有类型是 `MetricDef`（`modules/data/domain/authz.ts` 导出、`metric-store.ts` 消费；grep 实测），没有 L1Metric | Interfaces 改 `compileL2(base: MetricDef, …)`，注明复用既有类型、扩展字段走 alias 关系、不另起平行类型 |
+
+**两个取舍的裁定记录（开工前扫描，均维持，已写进「有意的取舍」节）**：
+- **取舍 A 维持**——facade/治理归 P2：与 spec §11.8 分期表逐字一致（issue #150 的平铺清单无分期语义）。
+- **取舍 B 维持**——不建第二数据模块、全扩 `modules/data`：扫描实测风险为低（manifest 约 13→19 条无结构性问题；报表页签走单一 frontend 入口不触 registry 面；零新权限码；只碰 `data.*`）。
+
 ### 有意的取舍（reviewer 请过目）
 
 - **不新建第二个数据域模块**（报表/L2/治理全部扩 `modules/data`）：spec 写作时 `modules/<id>` 未定 id 且当时 `modules/data` 尚不存在；#146 落地后授权核心/词表/审计/通道都在 `data`，另起模块 = 授权逻辑第二份或跨模块端口，违反「授权核心单实现」的既定约束。**这是 spec 未显式裁决的落点选择，按最低摩擦 + 复用既有正典取的，请 reviewer 确认。**
@@ -1004,3 +1031,5 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 - **pg_duckdb 镜像走 GHCR + 目标机本地构建双路径**：私有化客户机未必有 GHCR 凭据，Dockerfile 在仓即「任何机器可复现」；GHCR 是 SaaS/自用的便捷面。构建频率（§11.9 #4）维持开放：dispatch-only。
 - **duckle 在 v1 只交付骨架与 runner 镜像，不交付可跑管线**：duckle→ZOS 直写是已记录的能力空白（两条 WeKnora 条目），在拿不到「直写可行或替代路径」的实测结论前写「可跑管线」是编造；闭环数据源用存量乐檬 parquet（拍板 #1 本就不重落盘）。新源（抖音）接入是 data-platform 标准的 SOP 事件，不在 #150 的 P1 出口里。
 - **T12 缓存重放断言保留但依据重写**：spec 验收 #2 的 cube 缓存 key 论据随 Cube 否决失效；Metabase 结果缓存是否把 A 的卡数据重放给 B 是**未验证的真实风险**，测试保留并以 Metabase embed API 为反向验面——真机结论（T13）无论红绿都沉淀 WeKnora。
+- **facade/治理归 P2（不提前到 P1）——开工前扫描裁定：维持（2026-09-22，经扫描确认）**：与 spec §11.8 分期表逐字一致；issue #150 的平铺清单无分期语义，不构成把 facade/治理提前进 P1 的依据。
+- **「不建第二数据模块、全扩 modules/data」——开工前扫描裁定：维持（2026-09-22，经扫描确认）**：扫描实测扩面风险为低——manifest 声明约 13→19 条无结构性问题（装载期双向核对照常兜底）；报表页签走单一 frontend 入口、不触模块 registry 面；零新权限码（复用 `data:manage`/`data:query`）；B1 面只碰 `data.*`。上方首条取舍的落点由此坐实。
