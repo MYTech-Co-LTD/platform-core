@@ -30,7 +30,9 @@ export default defineModule({
     }
     // register* 与 manifest.yaml 的 api.internal 必须同一提交对齐（装载期双向核对）
     registerKeys(r, _ctx) // T7
-    registerMetrics(r, _ctx) // T6
+    // T6，T8 收紧写路径：POST/PUT 只收结构化 L2Declaration（SQL 由 domain/semantic-compiler.ts
+    // 这个**唯一编译点**生成）；`source='l1'` 的行经 API 只读。端点集合未变 ⇒ 本清单无新声明。
+    registerMetrics(r, _ctx)
     registerQuery(r, _ctx) // T6
     registerMcp(r, _ctx) // T8
     registerChat(r, _ctx) // T9

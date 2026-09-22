@@ -30,6 +30,54 @@
 改授权核心、三通道中间件、manifest 声明或宿主装载器门卫时，这份文件是回归底线；
 其中用例 8 同时锁着 issue #145（param 门卫误伤静态兄弟路径）的修复。
 
+## L1 / L2 两层语义（#150 T8）：谁定义、谁能改
+
+| | **L1 平台语义** | **L2 租户语义** |
+|---|---|---|
+| 谁定义 | 我方（产品能力） | 租户管理员（`data:manage`） |
+| 事实源 | `dbt/semantics/l1_metrics.yml`（进仓库，走 PR） | `data.metrics` 里的 `source='l2'` 行（**永不进 git**） |
+| 落库 org | `platform`（固定桶名，不是 env 的 `PLATFORM_ORG`） | 该租户的 `identity.orgId` |
+| 改它的唯一途径 | 改 dbt 声明 → 重跑 `scripts/sync-data-semantics.mjs` | 管理 API（`POST`/`PUT /metrics`） |
+| 表达力 | 口径本体（expression / grain / tier / owner / definition） | **只能**裁剪/别名/过滤（不能改口径、不能写 SQL） |
+
+- **写入口是分开的两个函数**（不是一个带 `source` 形参的函数）：`upsertMetric`（租户路径，写死
+  `l2`）与 `upsertL1Metric`（物化路径专用，写死 `l1`）。⇒ `grep upsertL1Metric` 就能穷举
+  「谁在写平台词表」，也不存在「漏传来源 ⇒ 静默标错」这个失败态。
+- **唯一编译点**：`domain/semantic-compiler.ts`。L2 的入参是租户数据，任何第二处「顺手拼 SQL」
+  都是注入面 ⇒ 全仓只有它把声明变成 SQL。产物形状见该文件头的「形状契约」节
+  （`select <表达式> as value[, <维度>] from <关系>`，`domain/authz.ts` 直接在其后续 `WHERE`）。
+- 管理 API 的 body **`.strict()`**：带 `selectSql` / `subjectColumn` / `groupBy` / `params` /
+  `source` 一律 **400**（不是忽略——静默忽略会让调用方以为自己的 SQL 生效了）。
+- catalog 加载 = **L1（platform）∪ L2（本 org）**；同 id 撞上时 **L1 赢**（写侧另有一道 409
+  `ID_RESERVED_BY_L1` 闸）。
+
+### agent 接入面：**预留，本轮不实现**（拍板 #5）
+
+L2 定义 API **就是**将来的 agent 接入面，而且已经具备接入所需的两件事：**PAT 通道**
+（`data:manage` 作用域的 PAT 即可调）与**结构化入参**（agent 只需产出可机检的声明，
+不必也不该生成 SQL）。⇒ 接入本身**不需要**新端点，是「拿 PAT 调现有端点」。
+**未做且不在本轮**：MCP 工具面（把定义面暴露成 `tools/*`）。届时的硬约束：**不许**新开
+绕过 `manifest.yaml` 的入口（那会绕开宿主门卫——spec §11.3.1 的教训）。
+
+### L2 的已知边界（本轮**未**做，别当成漏检）
+
+1. **`target`（目标值）无存储面**：`data.metrics` 没有对应列（003 只加了 `source`），
+   故管理 API 对入参里的 `target` 返回 400 `TARGET_NOT_SUPPORTED`——**显式拒绝，不静默丢弃**。
+   补它需要一次迁移（加列）或把它归入 dbt 声明。
+2. **平台超管那一半没有门可落**：拍板 #5 说「租户管理员 **+ 平台超管**均可定义」，
+   并要求「沿用平台既有信号、勿新造第二套超管判定」。核对结果：仓内**唯一的**平台内置码是
+   `tenant:admin`（`apps/server/src/loader.ts:137`），而它是**租户级**的——按
+   `tenant.casdoor_org` 分桶、`apps/server/src/routes/admin.ts:55` 的 `requireScope('tenant:admin')`、
+   console 管理区 `/console/admin/*` 也都是租户管理域。⇒ 本轮**只**实现租户 `data:manage`
+   管本 org 的 L2；`org='platform'` 的 l2 行（全租户可见的平台级派生）**暂不开口**（fail-closed）。
+   ⚠️ **不许**拿 `tenant:admin` 兼作平台门：那会给租户引入跨租户写能力。
+3. **`tier` / `owner` / `sources` 不落库**：`data.metrics` 没有对应列。它们仍是治理面的事实源
+   （在 dbt YAML 里、被静态门禁规则 ⑤ 强制必填），只是不在这张表上体现。
+4. **L1 物化的行在真库上还跑不通**：`dbt/models/**` 当前**没有 `org` 列**，而 `authz.authorize`
+   恒拼 `WHERE <主体列> = '<org>'` ⇒ 这些 L1 指标的查询要等 marts 补上 org 列
+   （`dbt/README.md` §10 与 `macros/generate_schema_name.sql` 头注把「marts 行里的 org 列」
+   写成了**目标形态**，尚未落地）。**物化行先落、真跑等后续**——这是计划 Task 8 的既定取舍。
+
 ## 报表面（Metabase 嵌入；issue #150 / T7）：`tenant` 参数约定
 
 报表本体在 Metabase、登记在平台（双写面）⇒ 平台是**唯一的鉴权与定租户点**

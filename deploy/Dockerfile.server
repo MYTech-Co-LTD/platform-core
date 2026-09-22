@@ -58,6 +58,14 @@ COPY modules ./modules
 # ⑦ deploy/：把编排事实源（compose / 本 Dockerfile / 两份 runbook）随镜像带走——运行态里
 #    能读到「这版镜像按什么契约定制」，不必回仓库对 commit。
 COPY deploy ./deploy
+# ⑧ dbt/：**L1 语义声明的事实源**（`dbt/semantics/l1_metrics.yml`），服务端只读它。
+#    为什么必须在运行阶段也在场（不是构建期一次性产物）：`scripts/sync-data-semantics.mjs`
+#    （L1 → data.metrics 的唯一物化通道）在**部署序列里**读这个文件——它跑在容器内，
+#    缺目录时 readFileSync 抛 ENOENT ⇒ 平台词表物化不出来 ⇒ 问数链对该租户**全线**
+#    「指标未声明」。而这是**响亮**失败（不是静默空词表），故不构成假绿风险。
+#    为什么不干脆把解析结果烘进构建期：那会让「改一条 L1 声明」必须重建镜像，
+#    而声明的事实源在仓里、改它不该要走一次镜像构建（同 scripts/ 随镜像走的理由）。
+COPY dbt ./dbt
 
 # 装依赖与构建合成一层：上面的 COPY 是目录级的，源码任一改动都会让本层缓存失效，拆成两条
 # RUN 并不能省下依赖下载（要真省得用 BuildKit cache mount——那会把「构建必须走 BuildKit」
@@ -87,6 +95,8 @@ COPY --from=build /app/packages ./packages
 COPY --from=build /app/apps ./apps
 COPY --from=build /app/modules ./modules
 COPY --from=build /app/deploy ./deploy
+# ⑧ dbt/ 的对应项（理由同 build 阶段 ⑧，不复述）：sync 脚本在运行态读 L1 声明事实源
+COPY --from=build /app/dbt ./dbt
 
 # 非 root 运行（node 镜像自带 uid 1000 的 node 用户）。被 COPY 的文件是 root 拥有但
 # world-readable，宿主进程只读磁盘：tsx 在内存里转译不落盘，pnpm run 也不写 store。
