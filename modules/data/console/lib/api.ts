@@ -50,6 +50,16 @@ const MESSAGES: Record<string, string> = {
   METABASE_UNCONFIGURED: '本站未接报表服务（未配置 Metabase）',
   METABASE_ERROR: '报表服务暂时不可用，请稍后重试',
   TENANT_PARAM_RESERVED: 'tenant 参数由平台保留，不能自定义',
+  // L2 派生指标（#150 T8）。逐码给文案：这几个都是**调用方改一下就能过**的错，
+  // 回落成裸码（如 UNKNOWN_DIM）会让用户不知道该改什么——而这一页的用户正是要自己定义指标的人。
+  L1_BASE_NOT_FOUND: '要派生的平台指标不存在（平台词表以 dbt 声明为准）',
+  UNKNOWN_DIM: '用到了平台指标没有声明的维度，请从下拉里选',
+  BAD_FILTER: '过滤条件不合法：用 = 只能给一个值，用 in 至少给一个值',
+  ID_RESERVED_BY_L1: '这个 id 属于平台词表，不能占用（换一个 id）',
+  READONLY_L1: '平台词表经 API 只读，改它要改 dbt 声明后重新物化',
+  TARGET_NOT_SUPPORTED: '目标值当前没有存储位置，暂不支持',
+  L1_BASE_SQL_INVALID: '平台指标的 SQL 形状不合契约，请联系平台侧处理',
+  ID_MISMATCH: '路径 id 与提交内容不一致',
 }
 
 /** 已知码给中文文案；未知码回落成码本身（便于排障）。 */

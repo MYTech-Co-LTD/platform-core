@@ -3,7 +3,7 @@
 import type { Pool } from 'pg'
 import type { MetricDef, Requester } from './authz'
 import { visibleMetrics } from './authz'
-import { loadCatalog } from './metric-store'
+import { loadMergedCatalog } from './metric-store'
 import { runQuery } from './query-service'
 import type { SqlExecutor } from './query-service'
 import type { ChatMessage, ChatModel, ToolCall, ToolSpec } from './llm'
@@ -65,7 +65,9 @@ export async function* runAgentLoop(
   deps: AgentDeps, requester: Requester, model: ChatModel, question: string,
 ): AsyncGenerator<AgentEvent> {
   // 词表在本轮对话开始时裁剪一次（同一次对话内权限漂移不做中途刷新——改权限下一次问答生效）
-  const catalog = visibleMetrics(await loadCatalog(deps.pool, deps.org), requester)
+  // ★ 必须是**合并**加载器（L1 ∪ 本 org）：用只回本 org 的那个，平台指标对 agent 就不存在
+  //   （它连"看不见"都不会说——`list_metrics` 里直接没有这条 id）。T8 评审 C1。
+  const catalog = visibleMetrics(await loadMergedCatalog(deps.pool, deps.org), requester)
   const messages: ChatMessage[] = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: question },

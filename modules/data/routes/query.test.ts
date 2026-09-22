@@ -74,7 +74,7 @@ describePg('POST /query（需要 DATABASE_URL）', () => {
   })
 
   it('未声明的指标 → 403 + 可解释 reason（不是 500）', async () => {
-    // 这条**需要真库**：`runQuery` 是先 loadCatalog 再判声明，没有 pool 会先炸在加载词表上
+    // 这条**需要真库**：`runQuery` 是先 loadOrgCatalog 再判声明，没有 pool 会先炸在加载词表上
     // （错误信号会变成「500 而不是 403」，看着像授权坏了）。种一条真指标，再问一个没声明的。
     await applyMigrations(pool)
     await upsertMetric(pool, ORG, SALES_DAILY)

@@ -20,10 +20,24 @@ api:
     # MCP 端点（通道 B 的 JSON-RPC 单入口；协议错误自兜，授权仍走同一核心）
     - { method: POST, path: /mcp,     scope: data:query }
     # ── 指标管理面（data:manage）──
+    # T8：定义面已从「自由 SQL」收成**结构化声明**（L2Declaration，禁任意 SQL 不变，全局约束 12）：
+    #   · POST/PUT 只收 `{ id, baseMetric, op:{kind:'refine'}, alias?, visibility?, filters?, target? }`；
+    #     body 里出现 selectSql/subjectColumn/groupBy/params/source ⇒ **400**（.strict()，不是忽略）。
+    #   · `source='l1'` 的行动（org='platform'，由 scripts/sync-data-semantics.mjs 物化）经 API **只读**：
+    #     改它要改仓内 dbt 声明再物化（口径变更走代码评审）。DELETE 打到 L1 id ⇒ 409 READONLY_L1。
+    #   · 页门仍是 data:manage（本模块不自己写 requireScope，门卫由宿主按本清单施加）。
+    #     ⚠️ 平台超管（org='platform' 的 l2 行 / 全租户可见）**当前无门可落**：仓内没有平台超管
+    #     identity 信号（唯一平台内置码 tenant:admin 是**租户级**的，loader.ts:137）⇒ 本轮不开口，
+    #     见 README「L2 的已知边界」。**这就是拍板 #5 的平台超管那一半尚未落地的唯一原因。**
     - { method: GET,    path: /metrics/all, scope: data:manage }
     - { method: POST,   path: /metrics,     scope: data:manage }
     - { method: PUT,    path: /metrics/:id, scope: data:manage }
     - { method: DELETE, path: /metrics/:id, scope: data:manage }
+    # ── agent 接入面（**预留，本轮不实现**）─────────────────────────────────────────
+    # 拍板 #5：「预留 agent 接入面（接入本身另题不在本轮）」。已具备的条件：PAT 通道 + data:manage
+    # 即可调上面的定义面（管理 API 对 agent 与人**同形**——都是 HTTP + 同一个 scope）。
+    # **未做**：MCP 工具面（把 L2 定义暴露成 tools/*）另题，不在本模块本轮范围；
+    # 届时**不要**新开绕过本清单的入口（那样会绕开宿主门卫，MCP 端点评审 §11.3.1 的教训）。
     # ── 个人 Key 管理（data:query；只能操作自己的——不是管理员给别人发，用 data:manage
     #    会让只能问数的人生成不了 Key，与 spec §3 冲突）──
     - { method: GET,    path: /keys,     scope: data:query }

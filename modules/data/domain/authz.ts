@@ -96,7 +96,7 @@ function literal(param: MetricParamDef, value: unknown): string | null {
       // `undefined === null` 为 false ⇒ 越界值被**当合法值放行**，拼出 `AND <col> = undefined`：
       // 结果是 `ok: true` + 一条必然报错的 SQL（线上表现为 500 + 误导性 Postgres 语法错误），
       // 而不是可解释的 `bad_param`。类型层（闭合 union）只能挡编译期字面量，挡不住运行时数据——
-      // 词表若来自未校验的外部输入（如 T3 `loadCatalog` 读到的 `type: 'DATE'`）就会走到这里。
+      // 词表若来自未校验的外部输入（如 T3 `loadOrgCatalog` 读到的 `type: 'DATE'`）就会走到这里。
       return null
   }
 }
