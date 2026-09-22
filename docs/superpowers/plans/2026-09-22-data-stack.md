@@ -44,13 +44,14 @@
 6. **迁移幂等**：`modules/data/migrations/*.sql` 全 `if not exists` / `add column if not exists`；数据面的租户 provisioning SQL 同样幂等（部署/脚本会全量重跑）。dbt 模型天然幂等（`create or replace` / full-refresh 语义），但**对账 singular test 必须可重复跑**。
 7. **export 值/类型分行**（#44 生产事故）：桶文件里绝不混 `interface`/`type`；模块内新文件引类型一律 `import type`。
 8. **提交纪律**：本计划实施 PR 一律 **`Refs #150`**——**伞 issue 的关闭权只留给 T13 的收尾 PR**（M2b 教训：#158 的 body 误带 `Closes #151` 提前关了伞 issue，被 discipline CI 抓到后只能 reopen）。docs 类提交免 issue；一切可见变更走 PR、只等 CI **CLEAN**；CHANGELOG 禁手写。
+   **与之配套（第十轮 I-2 成文化）：本批 PR 标题与提交的 `type` 一律取 `build` / `docs` / `test`，不得取 `feat` / `fix`**——`scripts/check-pr-discipline.mjs` 对标题 `type ∈ {feat, fix}` **强制** body 含 `Closes/Fixes/Resolves #N`（该脚本的 `NEEDS_ISSUE` 名单），而它抽 issue 号的正则是 `(?:closes|fixes|resolves)\s+#(\d+)`、**不认 `Refs`**（T4 评审 §RR5.2 拿脚本自身的导出函数打真实 PR body 实测）⇒ 与上面「一律 `Refs #150`」**结构性互斥**：「`feat` 标题 + 只写 `Refs #150`」的 PR 在 `discipline` job 上**必红**，二者不可兼得（实测：`typeOf(feat…)=feat` ⇒ `nums.length=0` ⇒ 退出 1）。先例（均 `build(data-stack)` + `Refs #150`，已合并）：**#162 / #164 / #166 / #167 / #168**。**若某任务确实需要 `feat` / `fix`** ⇒ 必须**为该项目单独开一张 issue**（**不能**是伞 issue #150 —— 提前 `Closes` 会把它关掉），PR body 写 `Closes` 那张；**不得用 `skip-issue` 标签绕**（那是给紧急热修的口子，语义不对）。
 9. **敏感值**：ZOS 凭据 / Metabase API key / 嵌入签名密钥 / duckle `--token` 只落 openship env(isSecret) 或部署 env，**绝不进仓库/文档/日志/提交信息**；`.env.example` 只写键名与取法。
 10. **版本锁死**：DuckDB **v1.5.5**（spec §11.2 #3，pg_duckdb 官方钉 v1.5.4 装不上 ossie，实测 404）、Metabase **v0.63.18.1**（PoC 实测版；禁 `latest`/`.x` 可变 tag——spec §6.6 纪律）、dbt / duckle 版本在各自 Dockerfile 里 ARG 钉死（默认值待实施时以压测环境实测版本核对）。升级走 runbook，不随手改。
 11. **口径单一定义**（layered §3 纪律）：口径只在 marts 定义一次；staging 只规范化不改义；消费层（BI/AI）只能组合已声明的指标与维度。**L2 不能改 L1 口径**（只能裁剪/别名/过滤/目标值/新定义走结构化声明）。
 12. **禁任意 SQL 的定义面**：L2 定义 API 只接受**结构化、可机检的声明**（base 引用 + 白名单聚合/过滤/别名），由模块内**唯一编译点**生成 `select_sql`；不接受自由 SQL 入参。L1 行的 `select_sql` 只能由 sync 脚本从仓内 YAML 物化写入。
 13. **唯一通道**：一切部署/回滚/重启/env/备份/job 操作走 **openship MCP**（根本法则）；真机验收任务（T6/T10/T13）的执行者是「拿着 openship 权限的操作者」（人或被授权的 agent），不是普通 worktree worker。
 14. **AI 消费必须经平台**（spec §11.3.1 安全论断）：`semantic_query` 的 filter allowlist 防不了跨租户，保护来自**每租户会话绑定**——任何绕开 facade 的数据面直连（含 Metabase 官方 MCP）都不合规，不新增此类入口。
-15. **先查再动手**（knowledge-capture）：涉及 duckle/S3 兼容端点/WeKnora 上传 → 先检索 WeKnora（skill: `weknora`）；尤其 **duckle 原生 s3 sink 直连天翼 ZOS 反复 403、判定能力空白**（spec §8 记录的两条既有条目）——T5 的 duckle→ZOS 直写按「未验证」对待，处置见该任务。
+15. **先查再动手**（knowledge-capture）：涉及 duckle/S3 兼容端点/WeKnora 上传 → 先检索 WeKnora（skill: `weknora`）；尤其 duckle→天翼 ZOS 的 **sink 能力**——**现行口径（经验库《Duckle 原生 s3 sink 直连天翼云 ZOS 403 根因调查》条目自带的 2026-09-17 订正 + 真机实测；第十轮 B 节）**：**`snk.minio`（"Write via S3-compatible endpoint"）可直写 ZOS**（`validate` 过 2 stages 0 failed / `run` 两次 ok / 两条独立通道回读 / 重跑幂等 ETag+Size 逐字节一致）；**`snk.parquet` 仍 403**（抓包证实它 dial 的是 AWS 默认端点、根本没到 ZOS）、**`snk.s3` 仍 404**。⚠️ **旧口径「duckle 原生 s3 sink 直连 ZOS 反复 403、判定能力空白」已被取代**（同句尚在 spec §8，spec 是历史快照、**不追改**）——本仓/本部署面的复现归 T6（Task 6 Step 1 的 **Gate-D**）；**别照旧稿重推「能力空白」**。
 
 ---
 
@@ -684,8 +685,8 @@ pnpm exec tsx scripts/check-compose.mjs
 
 ```bash
 git add dbt scripts/check-data-models.mjs scripts/check-data-models.test.ts .github/workflows/ci.yml .env.example
-git commit -m "feat(data-stack): dbt 项目——乐檬 staging/marts + L1 语义声明 + 对账 tests + 静态门禁"
-gh pr create --title "feat(data-stack): dbt 项目与数据工件静态门禁（P1）" --body "Refs #150"
+git commit -m "build(data-stack): dbt 项目——乐檬 staging/marts + L1 语义声明 + 对账 tests + 静态门禁"
+gh pr create --title "build(data-stack): dbt 项目与数据工件静态门禁（P1）" --body "Refs #150"
 ```
 
 ---
@@ -704,7 +705,7 @@ gh pr create --title "feat(data-stack): dbt 项目与数据工件静态门禁（
 
 - [ ] **Step 2: duckle/ 管线骨架 + ZOS 直写的显式 gate**
 
-`duckle/README.md` 开头必须先写这条已知事实：**duckle 原生 s3 sink 直连天翼 ZOS 反复 403、两条 WeKnora 既有条目判定能力空白**（spec §8）——动手前先检索 WeKnora 核对现状；`duckle/common/` 与 `duckle/customers/` 目录约定（与 contracts/dbt 的 common/customers 三件套同构：一个新源 = 契约 + 管线 + staging 三个文件同 PR）。管线文件本体是**目录与命名约定 + README**，不放编造的 DSL 范文（duckle 管线格式以官方文档/实测为准，别按想象写）。`.gitignore` 加本地产物目录忽略：`duckle/**/_ops/`（若实测的 _ops 形态不同，以实测为准写正确 glob）。**模式内不得内嵌空格**——`duckle/**/ _ops/` 这种写法只会匹配「目录名以空格开头」的 `_ops`，照抄即空转；要忽略多种形态就写成多条独立模式、每条一行，别在一条模式里用空格拼。
+`duckle/README.md` 开头必须先写这条已知事实：**duckle→天翼 ZOS 的 sink 能力以经验库 2026-09-17 订正后的口径为准 —— `snk.minio` 可直写（真机实测，转述准确、未夸大），`snk.parquet` 403、`snk.s3` 404 仍不通；「反复 403、判定能力空白」是已被取代的旧口径**（第十轮 B 节；同句尚在 spec §8，spec 是历史快照、**不追改**）——动手前先检索 WeKnora 核对现状；`duckle/common/` 与 `duckle/customers/` 目录约定（与 contracts/dbt 的 common/customers 三件套同构：一个新源 = 契约 + 管线 + staging 三个文件同 PR）。管线文件本体是**目录与命名约定 + README**，不放编造的 DSL 范文（duckle 管线格式以官方文档/实测为准，别按想象写）。`.gitignore` 加本地产物目录忽略：`duckle/**/_ops/`（若实测的 _ops 形态不同，以实测为准写正确 glob）。**模式内不得内嵌空格**——`duckle/**/ _ops/` 这种写法只会匹配「目录名以空格开头」的 `_ops`，照抄即空转；要忽略多种形态就写成多条独立模式、每条一行，别在一条模式里用空格拼。
 
 - [ ] **Step 3: deploy/duckle/Dockerfile（headless runner 容器化）**
 
@@ -743,8 +744,8 @@ pnpm typecheck && pnpm test
 
 ```bash
 git add contracts duckle deploy/duckle .gitignore
-git commit -m "feat(data-stack): 采集契约目录 + duckle 管线骨架与 runner 镜像（新源落盘即定型）"
-gh pr create --title "feat(data-stack): contracts/ 与 duckle/ 数据采集工件（P1）" --body "Refs #150"
+git commit -m "build(data-stack): 采集契约目录 + duckle 管线骨架与 runner 镜像（新源落盘即定型）"
+gh pr create --title "build(data-stack): contracts/ 与 duckle/ 数据采集工件（P1）" --body "Refs #150"
 ```
 
 ---
@@ -764,6 +765,8 @@ gh pr create --title "feat(data-stack): contracts/ 与 duckle/ 数据采集工�
 5. **外部输入⑥**：dbt 版本已确认（人给版本号或确认 1.9.8），T3 Dockerfile 的 ARG 注释销账——真跑用的版本必须与现场安装一致。
 6. **版本配对已验收（T1 的显式前置，不是「顺带」）**：pg_duckdb v1.1.1 × DuckDB v1.5.5 是**未经任何一方验证**的配对（v1.1.1 自陈配对 v1.4.3；跨 1 个 minor；上游 CI 从不覆盖 `DUCKDB_VERSION`；spec 实测 lab 是 main/1.2.0-dev + v1.5.5）⇒ **T1 的首次 dispatch 兼作该配对的验收**：编译通过 = 配对成立；失败则把 `PG_DUCKDB_VERSION` ARG 回退 `main`（lab 验证过的配对）**并按 §0（T1 runbook 版本纪律）出「新」tag**（回退场景建议 `main-duckdb1.5.5` / `<sha8>-duckdb1.5.5`，**不得复用 `1.1.1-duckdb1.5.5`**）重跑。**不许把「配对是否成立」第一次在真编译上发现留到本 gate**——进本 gate 的前提就是这条已绿，结论记 T1 任务报告。
 7. **Gate-B（I-2 的接线裁决；必须在 Step 4 之前落地）**：`DATA_WAREHOUSE_URL` 钉的 `127.0.0.1:15432` 是**宿主回环**，而消费方是单元 A 的 `server` **容器**（`modules/data/domain/warehouse.ts:13` 在请求期读 env；`deploy/data-compose.yml:21` 该注释已按此订正）——容器里的 `127.0.0.1` 是自己的 netns，不是宿主回环；两份 compose 各一个 `default` 网络、无共享 external 网络、无 `extra_hosts`（T3 评审 §2.3 实测）⇒ **按现值 `ECONNREFUSED`**。判定一条命令：进单元 A 的 `server` 容器内跑 `nc -zv 127.0.0.1 15432`——**预期 refused**，refused 即坐实本缺口。接线方式须由人**三选一裁决**：`extra_hosts: host.docker.internal:host-gateway`（单元 A）/ 两份共享 external network / 改消费路径（平台经宿主进程访问）；裁决结果回写 `deploy/customer-onboarding.md` 阶段 5（Step 6 第 2 条）。**未裁决即进 Step 4 = 该步「问数链路吃真数据」的验收句必然失败。**
+8. **Gate-C（T5 评审 M3；跑任何 duckle 命令前先读）**：引擎的 `--workspace <dir>` **默认值是「管线文件的父目录」**（v0.7.3 二进制 USAGE 原文：`Workspace root (default: pipeline file's parent)`），而 compose 把管线目录以 `../duckle:/pipelines:ro` **只读**挂载 ⇒ **只给 `--pipeline /pipelines/x.json` 而不给 `--workspace`** 时，引擎要把 `.duckle/`、`logs/`、`runs/` 写到只读挂载上 ⇒ **运行期写失败**（症状不在启动、也不在解析，是跑到写盘才炸）。⇒ **本波所有 duckle 作业（含 Step 5 的核对步、以及将来的 job）必须显式传 `--workspace /workspace`**。Step 5 的核对步另需按评审给的反向验法**故意不给** `--workspace` 跑一次、确认它确实报写失败（坐实这条警示不是空话），并把「漏写会撞只读挂载」这句补进 `deploy/duckle/README.md` §5（该文件的示例**已**显式带 `--workspace`，缺的只是这句警示）。依据：T5 评审 §4 的 M3（评审明标这条实施者无法自验）。
+9. **Gate-D（T5 评审 I2 的口径防呆；读 spec §8 或本计划旧行之前先读本条）**：**ZOS 直写的现行口径一律以本计划为准** —— `snk.minio` **可直写** ZOS（经验库条目自带 2026-09-17 订正 + 真机实测：`validate` 过、`run` 两次 ok、两条独立通道回读、重跑幂等），`snk.parquet` **403**（抓包证实 dial 的是 AWS 默认端点）、`snk.s3` **404**。**spec 的两处同句已被取代，且按本仓纪律不追改**（`docs/superpowers/specs/2026-09-20-data-stack-module-design.md:526–527`、`docs/superpowers/specs/2026-09-15-aftersales-module-design.md:166` —— spec 是「当时怎么定的」历史快照）⇒ **T6 读 spec §8 的 ZOS 结论时一律以本计划为准**，**不得据 spec 恢复「能力空白」结论**。依据：T5 评审 §5.1–5.4 / I2（第十轮 B 节）。
 
 - [ ] **Step 2: 按目标形态建数据面 project（openship MCP）**
 
@@ -782,7 +785,7 @@ gh pr create --title "feat(data-stack): contracts/ 与 duckle/ 数据采集工�
 
 - [ ] **Step 5: 注册物化 job（拍板 #4）+ duckle→ZOS 结论落档**
 
-经 openship MCP 建 job（cron 低频起步，如每日一次；command = `docker compose -f … --profile etl run --rm dbt build --select <被消费的组合>`——**按需物化**，不是全量）。ducle 核对步：跑一次最小管线验证 ZOS 直写是否仍 403；结论（能/不能+替代路径）记进 `duckle/README.md` 与 WeKnora（命中既有条目则**更新不新建**）。
+经 openship MCP 建 job（cron 低频起步，如每日一次；command = `docker compose -f … --profile etl run --rm dbt build --select <被消费的组合>`——**按需物化**，不是全量）。duckle 核对步：跑一次最小管线，**验证 `snk.minio` 直写在本部署面是否成立**（经验库 2026-09-17 真机实测为「可直写」，但那是**经验库所在部署面**的复现、不是本仓的 ⇒ 本仓复现归本步；**别按「是否仍 403」的旧稿预设结论**）；结论（成立 + 实际参数 / 不成立 + 替代路径）记进 `duckle/README.md` 与 WeKnora（命中既有条目则**更新不新建**）。**动手前先读 Task 6 Step 1 的 Gate-D（口径防呆）与 Gate-C（`--workspace` 必显式传，否则写只读挂载）**。
 
 - [ ] **Step 6: 摘「尚未进仓」标注 + handbook 补齐（docs PR）**
 
@@ -846,8 +849,8 @@ export function signEmbedToken(secret: string, resource: { type: 'dashboard'; id
 
 ```bash
 git add modules/data .env.example
-git commit -m "feat(data): Metabase 报表 facade——幂等建报/锁参嵌入/登记与对账（P2）"
-gh pr create --title "feat(data): Metabase 报表 facade + 报表登记 + 看板页签（P2）" --body "Refs #150"
+git commit -m "build(data-stack): Metabase 报表 facade——幂等建报/锁参嵌入/登记与对账（P2）"
+gh pr create --title "build(data-stack): Metabase 报表 facade + 报表登记 + 看板页签（P2）" --body "Refs #150"
 ```
 
 ---
@@ -893,8 +896,8 @@ export function compileL2(base: MetricDef, decl: L2Declaration): { selectSql: st
 
 ```bash
 git add modules/data scripts/sync-data-semantics.mjs deploy/Dockerfile.server
-git commit -m "feat(data): L2 定义权下放——结构化声明 + 唯一编译点 + L1 经 sync 物化（P2）"
-gh pr create --title "feat(data): L2 配置层——定义权下放与可机检声明（P2）" --body "Refs #150"
+git commit -m "build(data-stack): L2 定义权下放——结构化声明 + 唯一编译点 + L1 经 sync 物化（P2）"
+gh pr create --title "build(data-stack): L2 配置层——定义权下放与可机检声明（P2）" --body "Refs #150"
 ```
 
 ---
@@ -918,8 +921,8 @@ gh pr create --title "feat(data): L2 配置层——定义权下放与可机检�
 
 ```bash
 git add scripts dbt/README.md
-git commit -m "feat(data-stack): 治理四机制收口——门禁③覆盖 L2 + 血缘/排查 runbook（P2）"
-gh pr create --title "feat(data-stack): 数据治理四机制与 L2 机检（P2）" --body "Refs #150"
+git commit -m "build(data-stack): 治理四机制收口——门禁③覆盖 L2 + 血缘/排查 runbook（P2）"
+gh pr create --title "build(data-stack): 数据治理四机制与 L2 机检（P2）" --body "Refs #150"
 ```
 
 ---
@@ -957,8 +960,8 @@ gh pr create --title "feat(data-stack): 数据治理四机制与 L2 机检（P2�
 
 ```bash
 git add dbt deploy/data-tenants scripts/reconcile-data-tenants.mjs scripts/check-data-models.test.ts
-git commit -m "feat(data-stack): 每租户 schema 与凭据收紧——USER MAPPING/SCOPE + 启用集对账（P3）"
-gh pr create --title "feat(data-stack): 多租户 schema/凭据收紧与对账（P3）" --body "Refs #150"
+git commit -m "build(data-stack): 每租户 schema 与凭据收紧——USER MAPPING/SCOPE + 启用集对账（P3）"
+gh pr create --title "build(data-stack): 多租户 schema/凭据收紧与对账（P3）" --body "Refs #150"
 ```
 
 ---
@@ -1013,7 +1016,7 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 
 | 坑 | 出处 | 对本计划的影响 |
 |---|---|---|
-| duckle 原生 s3 sink 直连 ZOS 反复 403（能力空白） | WeKnora 两条既有条目（spec §8 引） | T5 不跑真管线；T6 核对并落结论（能/不能+替代路径）；**先检索 WeKnora 再动手** |
+| ~~duckle 原生 s3 sink 直连 ZOS 反复 403（能力空白）~~ **旧口径已被取代**（经验库 2026-09-17 订正 + 真机实测）：`snk.minio` **可直写**；`snk.parquet` 403 / `snk.s3` 404 仍不通 | WeKnora 两条既有条目（spec §8 引；spec 同句是历史快照、不追改） | T5 不跑真管线；T6 核对并落结论（能/不能+替代路径）；**先检索 WeKnora 再动手**；**别照旧稿写「能力空白」**（第十轮 B 节 / Task 6 Step 1 Gate-D） |
 | parquet 列全是 VARCHAR（金额/时间是字符串） | layered 坑 #1 | staging 手写 cast（拍板 #1）；契约管新源 |
 | `DOUBLE` 不是 pg_duckdb 可用的 cast 目标 | layered 坑 #4 | 用 `numeric`/`float`；check-data-models 静态拦 |
 | 读 parquet 必须 `r['列名']` + 别名 r | layered 坑 #5 | `SELECT *` 的成功会掩盖它；staging 规范 + 静态门禁双拦 |
@@ -1156,6 +1159,46 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 | M-4 | 本计划 Task 3 Step 3 的「若因 T5 未合并而 `config` 报错 ⇒ 跳过本步」**预期偏差**：`config` 是纯客户端解析、现场实测 **不会报错**（daemon 未起也 exit 0）⇒ 「compose 语法绿」**不覆盖 build context 是否可用**（`duckle`/`dbt` 两条 build 路径此刻都缺文件，T6 首次 `up --profile etl` 才会撞） | 归 **T6（Gate-A）**：`deploy/duckle/Dockerfile` + `duckle/`（T5）、`dbt/`（T4）必须落仓，**且 T5 的 ENTRYPOINT 必须真的对空 `DUCKLE_TOKEN` 拒跑**（本文件把该安全责任显式转给了 T5）。**本轮不改这句 Step 文字**（属 T6 面）。依据：评审 §0 表 M-4 / §2.4 / §2.7 / §0 Gate-A |
 | — | **纪律改进（评审 §7）**：本轮 4 个问题**全部源自本计划的范文块**，而实施者「逐字照抄」在流程上正确、结果上却把缺陷一次搬进仓 | **范文块须附实测/正典出处，或显式标「待验」**（T1 的 pg-duckdb 两处块是正面样板：把实测结论与 open item 都写进块内，故照抄不会错）。**本条为纪律，不改任何代码**；本轮已按此订正 Task 3 块（I-1/M-2 两处）。 |
 
+**第十轮：T4/T5 评审带回的裁量（2026-09-22，W1 收口波）**
+
+本轮性质：**登记 + 口径订正——不改任何代码行为**。W1 的 T3/T4/T5 三笔各自带回「不在自己文件面内」的裁量，本波一次落进正典；两条 Important 的**文件面内**修复已由各自修复笔完成（下表只登记指针），跨任务的部分由本波订正文字。依据全文：`.superpowers/sdd/2026-09-22-data-stack/task-4-review.md`（下称 R4）/ `task-5-review.md`（下称 R5）；实施者侧 `task-4-report.md` §7 / `task-5-report.md` §2.1、§8。
+
+| # | 事项 | 裁决与依据 |
+|---|---|---|
+| T4 I-1 | 门禁规则②只拦 `::double` 运算符形态，**`CAST(x AS double)` 逃检**（同一坑 #4、同一条类型名查找路径） | **已由 T4 修复笔修**（PR #167 第二笔 `4f039da`；`scripts/check-data-models.mjs` 的 `DOUBLE_CAST_RE` 扩为 `(?:::\s*\|\bas\s+)double\b(?!\s+precision)`）。证据指针：`task-4-fix-report.md` §2.1（**先红后绿**：改前 13 failed → 改后 GREEN）、§2.4（**真仓变异**：5 格逐格转红并逐字节还原）、§4（为何单一正则优于第二条正则）。依据：R4 §0.1 表 I-1 / §RR1.8（探针 G 实测修前逃检）/ §RR5.2。 |
+| T4 I-2 | `feat` + `Closes #N` 与「只许 `Refs #150`」的**结构性互斥**未成文；实际命中 **T4 / T5 / T7 / T8 / T9 / T11 六个任务**（任务书列的「T4/T7/T9/T10/T12」**不准确**：T10 是真机验收任务、**不开 PR** ⇒ 不受影响；T5 / T8 / T11 被漏掉；T12 取 `test(...)` ⇒ 豁免） | **本轮修（计划层面）**：① 全局约束 8 补**成文规则**（含「确实需要 `feat`/`fix` ⇒ 必须给该项目**单独开一张 issue**、不能用伞 issue #150、不得用 `skip-issue` 标签绕」）；② 计划里 6 处 `feat(...)`（T4/T5/T7/T8/T9/T11，**共 12 行 = 6 组 commit subject + PR title**）逐处改 `build(...)`。依据：R4 §RR5.2（守卫行为独立实测）/ §RR5.3 / R5 §7.4。 |
+| T4 M-1 | 其余 4 条与计划的偏离也没登记进计划 | **本轮登记**——见下面「T4 §7 五条偏离」表的 ①/②/④/⑤ 行（R4 §RR5.1 逐条裁决）。 |
+| T4 M-2 | `::"double"`（**带引号**的类型名）同属坑 #4 形态但逃检 | **不修**，已转 **issue #170**。R4 §RR1.8 实测：正则要求 `double` 紧随 `::`，引号挡住了；真实仓无此写法，概率远低于 `CAST` 形态。 |
+| T4 M-3 | 单引号字符串 / 双引号标识符里的 `::double` 会**误报** | **不修**：`maskSqlComments` 已声明的边界，方向是 **fail-closed**（多报非漏报）；改它属「扩守卫」另一起决定。依据：R4 §0.1 表 M-3。 |
+| T4 M-4 | `dbt/README.md:96` 给 T6 的「并入 `marts/schema.yml`」核对步**判据不全**（该文件的字段形状不是 dbt 的 `metrics:` 规格） | **不修**（`dbt/**` 本轮只许做规则② 的注释同步）；R4 §RR5.1 ① 独立找到「字段形状不是 dbt metrics 规格」这条更硬的判据。 |
+| T4 M-5 | `task-4-report.md` §5.2 把 fixture 的 `::double precision` 反面对照写成「已在真仓生效」——真仓 `dbt/` 里**没有**该写法（措辞不精确，代码无问题） | **不修**（报告侧文字，非仓内文件）；如实登记。 |
+| T4 M-6 | `apps/server/.tmp-loader-fixtures/`（另 `-d9`）未被 `.gitignore` 忽略；PR #168 也没补 | **本轮修**（见 `.gitignore` 的实测形态与双向自证）。 |
+| T4 M-7 | `modules/data/routes/query.test.ts` 单独跑 4060ms vs 5000ms 默认超时——边缘 flake 的机制证据，**非 T4 引入** | **已并入 issue #169**（本机负载下测试超时抖动）；不修测试、**不动任何超时值**。 |
+| T4 M-8 | 规则②③每文件只报**第一条**命中（`firstMatchLine`）⇒「N 处违规」不是命中数；OK 行的计数面与违规检查面用的文件过滤器不同 | **不修**（行为不变）；登记为已知边界。依据：R4 §0.1 表 M-8。 |
+| T4 观察 | `::timestamptz` 的语义依赖会话 `TimeZone`（`stg_lemeng_retail_detail.sql`） | 登记：**T6 核对时显式钉时区**。依据：R4 §0.1 表末行。 |
+| T5 I1 | 入口闸白名单**过宽**：7 个动词可执行「非离线」工作（跑管线 / 读活源 / 重建环境 / 改活库），与闸**自身声明的不变量**直接矛盾 | **已由 T5 修复笔修**（PR #168 第二笔 `4ede4de`：六个动词 `sequence`/`deliveries`/`work`/`drift`/`branch`/`python` **移出**白名单 + `review` 改 `--data`/`--drift` **条件判定** + 删掉「每个都是引擎自陈无凭据无网络」的**普适断言**改逐条事实）。证据指针：`task-5-fix-report.md` §2（动词级对照）、§3（**先红后绿** 39/51 → 51/51 + **变异 28 条转红**）、§4（注释订正逐条引二进制原文）、§5（**主威胁防线未破**自证）。依据：R5 §0 表 I1 / §3.5。 |
+| T5 I2 | ZOS「能力空白」**旧口径仍留在正典**（计划 4 处 + spec 2 文件 3 处），而 T6 的作业输入正是其中一处 ⇒ T6 会按旧稿重推错误结论 | **本轮修（计划层面 4 处 + grep 连带 1 处）**；spec 处**不追改**（历史快照）。落点见本节末「B 节落点」。依据：R5 §0 表 I2 / §5.1–5.4。 |
+| T5 M1 | token **纯空白**（`"   "`）被放行 | **不修**（`deploy/duckle/entrypoint.sh` 非本轮落点，且属「扩闸」另一起决定）；T5 修复笔的用例集已把它**如实编码为「期望=现状」并标 `[M1 未修]`**，既未掩盖也未删条。依据：R5 §0 表 M1 / `task-5-fix-report.md` §3.1。 |
+| T5 M2 | T4 交接第 4 项 `apps/server/.tmp-loader-fixtures/`（`pnpm test` 会生成）未补忽略 | **本轮修**（见 `.gitignore`）。 |
+| T5 M3 | `--workspace` 引擎默认值 = **管线文件父目录** = `/pipelines`（**只读**挂载）⇒ 漏写即**运行期写失败** | **本轮钉成 T6 的 Gate-C**（Task 6 Step 1 第 8 项：本波所有 duckle 作业必须显式传 `--workspace /workspace`；Step 5 的核对步另按评审的反向验法**故意不给一次**、确认确实报写失败，并把警示补进 `deploy/duckle/README.md` §5）。依据：R5 §4 的 M3（评审明标这条**实施者无法自验**）。 |
+| T5 M4 | 「元 schema 表达不了」的清单实为 **6 条**，第 6 条（分区键列不得 `nullable = true`）未登记进「两处必须同步」的那两份清单 | **已由 T5 修复笔修**（PR #168 第二笔）：`task-5-fix-report.md` §6.1（两处清单机器比对 **True**，6 条逐字一致）+ §6.2（真校验器复跑 **18/18 拒 + 8/8 过**；第 ⑥ 条探针「被放行」正是「表达不了」的机器实证）。依据：R5 §0 表 M4。 |
+| T5 M5 | 类型枚举与 spec 记录的补救口径不一致（spec 写 `numeric`，枚举里没有）；`float` 作 `double` 替代品是**变窄**而非等价 | **登记待议，不修**：spec 是历史快照（不追改），类型枚举属 T5 的文件面、改它需另起决定。依据：R5 §0 表 M5。 |
+
+**T4 §7 五条偏离逐条登记**（出处 `task-4-report.md` §7；裁决见 R4 §RR5.1）：
+
+| # | 偏离 | 裁决与依据 |
+|---|---|---|
+| ① | L1 语义声明落 `dbt/semantics/l1_metrics.yml`，不在计划 Step 4 写的 `marts/schema.yml` | **可接受（本轮登记）**：门禁**两处都扫**（`dbt/semantics/**` 与 `dbt/models/**`）⇒ 两种落点都不漏检；另有一条更硬的独立理由——`marts/schema.yml` 的字段形状**不是 dbt 的 `metrics:` 规格**（同 T4 M-4）。该文件里已有指向它的注记。 |
+| ② | 两个时间列各自定型，**不做**范文块的 `coalesce` | **可接受，且偏离是对的**：范文把「交易时间」与「业务日」两列两种语义 coalesce 成一个字段 ⇒ 同一行两个值都在时后者不可见 = **静默丢一半信息**，与坑 #3 原文（「同一张表里两个时间列两种格式」并列陈述）冲突。已在 `stg_lemeng_retail_detail.sql` 与 `dbt/README.md` §3 标为有意偏离。 |
+| ③ | 提交/PR 类型用 `build` 而非计划 Step 6 的 `feat` | **必须修（计划层面）⇒ 本轮已修**（见上 T4 I-2）。`build` 是本仓**唯一可行**的类型选择；`skip-issue` 标签虽能豁免但语义不对（那是给紧急热修的口子）。 |
+| ④ | `ci.yml` 注释「五个守卫」→「六个守卫」（两处） | **可接受**：加一行 step 就必须同步这处口径，否则文件头注释当场过期；属「本任务需要的那一行」的连带（**未碰任何 step 逻辑**）。 |
+| ⑤ | 门禁必填字段取 Step 4 的**完整清单**（`name`/`expression`/`grain`/`owner`/`tier`/`definition`），非 Step 5 括号里简写的四字段 | **可接受**：计划**自身**矛盾（Step 4 明写六项、Step 5 ⑤ 简写成四项）⇒ 取更全的那份是对的（`expression` 是「口径本体」，缺了声明无法复算），**取全 = 取 Step 4 的正典**，不是自选。 |
+
+**两条 issue 的指针**（本波开的，供后续波次取用）：**#169** = 本机负载下测试超时抖动（迁移 advisory lock 2s 重试 vs vitest 5s 默认超时，`modules/data` 在高负载下每次命中不同用例；T4 M-7 并入）；**#170** = 门禁规则② 的残余逃检面 `::"double"`（T4 M-2）。
+
+**B 节落点（ZOS 旧口径订正）**——5 处，**按位置点名（不写行号：本计划后续编辑必然漂移；复核用 `grep -n "能力空白\|403\|直写"`）**：① 全局约束 15「先查再动手」；② Task 5 Step 2 的 `duckle/README.md` 已知事实句；③ **Task 6 Step 5 的 duckle 核对步（按 `自检纪律` 第 5 条做的 grep 连带项**——原文「验证 ZOS 直写是否仍 403」本身就带旧口径的预设）；④ 附录「与本计划相关的已知坑」表的那一行；⑤「有意的取舍」的 duckle 段。防呆 gate = **Task 6 Step 1 第 9 项 Gate-D**。
+**spec 侧指针（仅点名，不追改）**：`docs/superpowers/specs/2026-09-20-data-stack-module-design.md:526–527` 与 `docs/superpowers/specs/2026-09-15-aftersales-module-design.md:166` 的「duckle s3 sink 能力空白」句**已被本波取代 —— 以本计划为准**。spec 是「当时怎么定的」历史快照，按本仓既有纪律**不追改**（处置同第六轮 #3）。
+
 **两个取舍的裁定记录（开工前扫描，均维持，已写进「有意的取舍」节）**：
 - **取舍 A 维持**——facade/治理归 P2：与 spec §11.8 分期表逐字一致（issue #150 的平铺清单无分期语义）。
 - **取舍 B 维持**——不建第二数据模块、全扩 `modules/data`：扫描实测风险为低（manifest 约 13→19 条无结构性问题；报表页签走单一 frontend 入口不触 registry 面；零新权限码；只碰 `data.*`）。
@@ -1165,7 +1208,7 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 - **不新建第二个数据域模块**（报表/L2/治理全部扩 `modules/data`）：spec 写作时 `modules/<id>` 未定 id 且当时 `modules/data` 尚不存在；#146 落地后授权核心/词表/审计/通道都在 `data`，另起模块 = 授权逻辑第二份或跨模块端口，违反「授权核心单实现」的既定约束。**这是 spec 未显式裁决的落点选择，按最低摩擦 + 复用既有正典取的，请 reviewer 确认。**
 - **Metabase 版本锁 v0.63.18.1（非 LTS v0.58）**：PoC 全链路实测版本；spec §6.6 的 LTS 口径是版本纪律的来源，但 0.63 已实现 OSI `ai_context`（spec §9.6 记录）且是实测通过组合。升级窗口与频次归 runbook，不在本计划拍。
 - **pg_duckdb 镜像走 GHCR + 目标机本地构建双路径**：私有化客户机未必有 GHCR 凭据，Dockerfile 在仓即「任何机器可复现」；GHCR 是 SaaS/自用的便捷面。构建频率（§11.9 #4）维持开放：dispatch-only。
-- **duckle 在 v1 只交付骨架与 runner 镜像，不交付可跑管线**：duckle→ZOS 直写是已记录的能力空白（两条 WeKnora 条目），在拿不到「直写可行或替代路径」的实测结论前写「可跑管线」是编造；闭环数据源用存量乐檬 parquet（拍板 #1 本就不重落盘）。新源（抖音）接入是 data-platform 标准的 SOP 事件，不在 #150 的 P1 出口里。
+- **duckle 在 v1 只交付骨架与 runner 镜像，不交付可跑管线**：duckle→ZOS 直写**在本仓尚无复现结论**——经验库 2026-09-17 有 `snk.minio` 可直写的**真机实测**（第十轮 B 节），但那是经验库所在部署面的复现、**不是本仓/本部署面的**（复现归 T6，见 Task 6 Step 1 的 Gate-D）；在拿到**本部署面**的「直写可行或替代路径」结论前写「可跑管线」是编造。⚠️ **旧口径写的「已记录的能力空白」已被取代** —— 本条**结论不变、理由换了**；闭环数据源用存量乐檬 parquet（拍板 #1 本就不重落盘）。新源（抖音）接入是 data-platform 标准的 SOP 事件，不在 #150 的 P1 出口里。
 - **T12 缓存重放断言保留但依据重写**：spec 验收 #2 的 cube 缓存 key 论据随 Cube 否决失效；Metabase 结果缓存是否把 A 的卡数据重放给 B 是**未验证的真实风险**，测试保留并以 Metabase embed API 为反向验面——真机结论（T13）无论红绿都沉淀 WeKnora。
 - **facade/治理归 P2（不提前到 P1）——开工前扫描裁定：维持（2026-09-22，经扫描确认）**：与 spec §11.8 分期表逐字一致；issue #150 的平铺清单无分期语义，不构成把 facade/治理提前进 P1 的依据。
 - **「不建第二数据模块、全扩 modules/data」——开工前扫描裁定：维持（2026-09-22，经扫描确认）**：扫描实测扩面风险为低——manifest 声明约 13→19 条无结构性问题（装载期双向核对照常兜底）；报表页签走单一 frontend 入口、不触模块 registry 面；零新权限码（复用 `data:manage`/`data:query`）；B1 面只碰 `data.*`。上方首条取舍的落点由此坐实。

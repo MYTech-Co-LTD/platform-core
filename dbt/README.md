@@ -55,7 +55,7 @@ dbt/
 | 规范 | 为什么 | 机检 |
 |---|---|---|
 | 读 parquet 一律 `with r as (select * from read_parquet(…))` + **`r['列名']::type`** | 坑 #5：`SELECT *` 能过、**点名取列报 `column does not exist`**，而 `SELECT *` 的成功会掩盖它 | 规则 ①（`staging/stg_*.sql` 必须含 `r['` 取列模式，**注释位不算**） |
-| 金额用 `numeric`，浮点用 `float`/`real` | 坑 #4：`DOUBLE` 不是 pg_duckdb 可用的 cast 目标（`type "double" is only a shell`） | 规则 ②（禁 `::double`；**放行** PG 原生的 `::double precision`） |
+| 金额用 `numeric`，浮点用 `float`/`real` | 坑 #4：`DOUBLE` 不是 pg_duckdb 可用的 cast 目标（`type "double" is only a shell`） | 规则 ②（禁 `::double` **与** `CAST(... AS double)`（同一坑 #4、同一类型名查找路径）；**放行** PG 原生的 `double precision`） |
 | 时间列**各自 try、各自成列** | 坑 #3：同表两列两种格式（`order_time` = `%Y-%m-%d %H:%M:%S`、`order_detail_bizday` = `%Y%m%d`） | 无（形态靠评审；`not_null` 在 marts 兜漏解析） |
 | 不做聚合、不做 join、不改口径 | layered §3：③ 的职责只有「规范化」 | 无（纪律靠评审） |
 

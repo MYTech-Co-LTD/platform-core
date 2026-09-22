@@ -18,7 +18,9 @@
 --     而 `SELECT *` 的成功会掩盖它 ⇒ 写新 staging 的人必然踩（本层是全仓唯一碰原始类型的地方，
 --     所以这条纪律落在这里；scripts/check-data-models.mjs 的规则 ① 静态拦）。
 --   坑 #4 **DOUBLE 不是 pg_duckdb 可用的 cast 目标**（报 `type "double" is only a shell`）
---     ⇒ 金额用 numeric、浮点用 float（静态门禁规则 ② 拦：只拦 `::double`，放行 PG 原生的 `::double precision`）。
+--     ⇒ 金额用 numeric、浮点用 float（静态门禁规则 ② 拦：`::double` **与** `CAST(... AS double)`
+--       —— 同一坑 #4、同一类型名查找路径（两种写法都是拿裸 `double` 去查类型名），故同拦；
+--       放行 PG 原生的 `double precision`（不做类型名查找，与本条要拦的不是同一个东西））。
 --   坑 #3 同一张表里**两个时间列两种格式**（`order_time` = '2026-07-01 10:02:34'；`order_detail_bizday` = '20260707'）。
 --   坑 #2 列集漂移（同域不同日 46 vs 43 列，supplier_* 时有时无）⇒ **禁 `union_by_name` 兜**
 --     （静态门禁规则 ③ 拦），显式分组策略见下。
