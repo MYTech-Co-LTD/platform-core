@@ -1,0 +1,47 @@
+# .github/workflows/pg-duckdb-image.yml — 自建 pg_duckdb 镜像构建（P0，spec §11.8）。
+#
+# 仅 workflow_dispatch：构建频率与触发是 spec §11.9 #4 的**仍开放项**，本工作流不替它拍板——
+# 不设 schedule、不在 push/PR 上跑。跑一次 ~1–2h 的 C++ 构建，动前想清楚 Actions 额度
+#（team-harness PR#79 因账单挂起的教训）。
+#
+# 产物 tag 的纪律：**编码双版本、不打 latest**（可变 tag 禁用是版本纪律，spec §6.6）。
+# tag 形态与 deploy/data-compose.yml 的 image 引用（T3）逐字一致——改这里必须同步改那里。
+name: pg-duckdb-image
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          # Dockerfile 无本地 COPY，context 只含 Dockerfile 自身；file 缺省即 <context>/Dockerfile
+          #（显式写 file 会被按 context 相对解析，解析出双写路径——别加回来）
+          context: deploy/pg-duckdb
+          # 生产机都是 amd64；别多平台翻倍烧时间
+          platforms: linux/amd64
+          push: true
+          # ⚠️ 这里的 owner 段**必须写字面量小写**，不能用 ${{ github.repository_owner }}：
+          # 本 org 是 MYTech-Co-LTD（含大写），而 OCI 镜像引用名只接受小写。
+          # 写错时的真实报错（本地 buildx 实测，照抄给排障用）：
+          #   ERROR: failed to build: invalid tag "ghcr.io/MYTech-Co-LTD/<repo>:<tag>":
+          #   repository name must be lowercase
+          # ——注意**不是** `invalid reference format`；引文对不上就会认不出真错。
+          # 失败时机也**在最前面的 tag 解析阶段**：一个构建步骤都不跑，Dockerfile 都没被读
+          #（对照实验：小写 tag + 同一个不存在的 base 镜像会真的进入 load metadata）。
+          # ⇒ 这是**最便宜**的失败形态（<1s、零 Actions 额度），不是「构建完推送时才炸」。
+          # 小写形态与 deploy/data-compose.yml 的引用逐字一致。
+          tags: ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5
