@@ -35,8 +35,13 @@ jobs:
           platforms: linux/amd64
           push: true
           # ⚠️ 这里的 owner 段**必须写字面量小写**，不能用 ${{ github.repository_owner }}：
-          # 本 org 是 MYTech-Co-LTD（含大写），而 OCI 镜像引用只接受小写仓库名 ⇒
-          # buildx 会在**推送阶段**报 `invalid reference format: repository name must be lowercase`。
-          # 推送发生在 ~1–2h 构建**之后** ⇒ 一旦写错，是先烧掉整次构建额度再失败。
+          # 本 org 是 MYTech-Co-LTD（含大写），而 OCI 镜像引用名只接受小写。
+          # 写错时的真实报错（本地 buildx 实测，照抄给排障用）：
+          #   ERROR: failed to build: invalid tag "ghcr.io/MYTech-Co-LTD/<repo>:<tag>":
+          #   repository name must be lowercase
+          # ——注意**不是** `invalid reference format`；引文对不上就会认不出真错。
+          # 失败时机也**在最前面的 tag 解析阶段**：一个构建步骤都不跑，Dockerfile 都没被读
+          #（对照实验：小写 tag + 同一个不存在的 base 镜像会真的进入 load metadata）。
+          # ⇒ 这是**最便宜**的失败形态（<1s、零 Actions 额度），不是「构建完推送时才炸」。
           # 小写形态与 deploy/data-compose.yml 的引用逐字一致。
           tags: ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5

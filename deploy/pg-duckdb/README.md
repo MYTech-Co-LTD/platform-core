@@ -13,8 +13,10 @@
 
 ## 0. 版本与 tag 纪律
 
-tag 编码**两个**版本：`<pg_duckdb 源码 tag>-duckdb<DuckDB 版本>`。两者的唯一事实源是
-Dockerfile 顶部的两个 `ARG`（`PG_DUCKDB_VERSION` / `DUCKDB_VERSION`）。
+tag 编码**两个**版本：`<去掉 v 的 pg_duckdb 源码 tag>-duckdb<去掉 v 的 DuckDB 版本>`。
+两者的唯一事实源是 Dockerfile 顶部的两个 `ARG`（`PG_DUCKDB_VERSION` / `DUCKDB_VERSION`）。
+例：`PG_DUCKDB_VERSION=v1.1.1` + `DUCKDB_VERSION=v1.5.5` ⇒ `1.1.1-duckdb1.5.5`
+——两个 `v` 都**不进** tag；机械按公式拼会得到 `v1.1.1-duckdbv1.5.5`，那是错的。
 
 - **不打 `latest`**：可变 tag 禁用是版本纪律（spec §6.6）。任何升级都是「改 ARG → 出**新** tag」，
   旧 tag 保持可回滚。
@@ -57,6 +59,12 @@ docker run -d --name pgduckdb-lab postgres:17 sleep infinity
 docker exec -it pgduckdb-lab bash
 
 # ② 装构建依赖（与 Dockerfile 的构建 stage 同清单）
+#    目标机直连 GitHub 可能不通 ⇒ 代理要在**容器内**配（本路径的 apt / curl 都在容器里跑；
+#    `docker build --build-arg HTTPS_PROXY=…` 是**本地构建 Dockerfile** 时才用的参数，
+#    而本 runbook 的两条路径都不是——1a 在 GitHub 托管 runner 上跑，1b 在容器里跑）。
+#    代理地址口径见基建速查——**用公网 EIP，内网 `10.0.0.8:4878` 被云安全组拦**。
+export http_proxy=http://113.250.177.229:4878
+export https_proxy=$http_proxy
 apt-get update && apt-get install -y --no-install-recommends \
   ca-certificates curl build-essential cmake ninja-build \
   liblz4-dev libzstd-dev zlib1g-dev libcurl4-openssl-dev postgresql-server-dev-17
@@ -86,6 +94,15 @@ exit
 docker commit pgduckdb-lab ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5
 ```
 
+⚠️ **跨机必须 `docker push`**：§1b 的 tag 与 §1a 完全相同，但两条路径**只在「在目标机上本地构建」
+时才等价**。若在别的机器上构建，镜像还在那台机器的本地 daemon 里，必须推上去，否则目标机
+`docker compose pull` 找不到镜像：
+
+```bash
+docker login ghcr.io
+docker push ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5
+```
+
 **手工路径的两个已知差异**（不是缺陷，是「为什么它只是兜底」）：
 
 1. **产物是胖镜像**：`docker commit` 会把 gcc / cmake / ninja / `postgresql-server-dev-17`
@@ -93,13 +110,11 @@ docker commit pgduckdb-lab ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-d
 2. **`libcurl4` 是「顺手带进来的」**：`libcurl4-openssl-dev` 依赖 `libcurl4`，commit 时留在了
    镜像里。CI 路径**不继承**这份依赖，所以在最终 stage 显式装了它——见 §2。
 
-目标机直连 GitHub 可能不通：构建期 `curl`/`apt` 需要走 smart-proxy，
-`docker build --build-arg HTTPS_PROXY=http://113.250.177.229:4878 --build-arg HTTP_PROXY=...`
-（代理地址口径见基建速查——**用公网 EIP，内网 `10.0.0.8:4878` 被云安全组拦**）。
-
 ---
 
-## 2. 首次构建必须核对的落点（COPY gate）
+## 2. 首次构建要盯的两件事（COPY 落点 + 版本配对）
+
+### 2.1 COPY 落点（三条判据）
 
 Dockerfile 最后两条 `COPY --from=build` 的路径是「按 PG 布局推定」的，**首次真构建时按实际
 `make install` 日志复核一次**。核对方法：
@@ -122,6 +137,27 @@ docker run --rm --entrypoint bash <新 tag> -c '
 > 参考：spec 实测产出的镜像（`pgduckdb-lab:v1.5.5`）三条都成立。注意那份实测产物是
 > **pg_duckdb 1.2.0-dev**（control 里 `default_version = 1.2.0`）+ DuckDB v1.5.5，
 > 而本镜像钉的是 v1.1.1 源码 —— **机制同源、revision 不同**，所以这次核对不能省。
+
+### 2.2 版本配对：编译可行性**没有任何一方验证过**（比 COPY 落点更该盯的）
+
+上面那句「revision 不同」说的只是 COPY 落点。它**还有另一半后果**：本镜像的
+`pg_duckdb v1.1.1 + DuckDB v1.5.5` 是**未经上游、也未经 lab 验证过的配对**。
+
+- **上游自陈的配对不是这个**：`v1.1.1` 的 CHANGELOG 写着 `Update to DuckDB v1.4.3. (#985)`
+  —— 即 v1.1.1 配 **DuckDB v1.4.3**（2025-12-16）。本镜像用的 **v1.5.5 发布于 2026-07-21**
+  ⇒ 相隔约 **7 个月、跨 1 个 minor**。
+- **上游对 v1.1.1 只测一个组合**：其 CI 跑 `make -j8 install DUCKDB_BUILD=…`，**从不覆盖
+  `DUCKDB_VERSION`** ⇒ 测的就是 Makefile 默认的 `v1.4.3`。`v1.1.1 + v1.5.5` 上游没测过。
+- **lab 验证的也不是这个**：lab 是 pg_duckdb **1.2.0-dev（main）** + DuckDB v1.5.5，而 main 的
+  Makefile 默认 = **v1.5.4** ⇒ 被验证的 override 是 **v1.5.4 → v1.5.5（同 minor 的补丁级）**；
+  本镜像是 **v1.4.3 → v1.5.5（跨 1 个 minor）**，**不等于** lab 那一对。
+- **已排除的**：头文件级断裂 —— `v1.1.1` 引用的 `duckdb/*` 头文件在 DuckDB v1.5.5 的
+  `src/include` 下 **52/52 全部存在**（实测核对）。所以「include 不到」这种失败不会发生。
+- **仍未知的**：符号 / API 漂移。上面那条只证明「能 include」，**不证明「能链接、能跑」**
+  —— 既未证实也未证伪。
+
+⇒ **首次 dispatch 就是这一对的验收**，也是最先要知道「要不要回退」的地方（回退口径见 §5.2）。
+盯的是 `make` 阶段的**编译/链接错误**，而不是下面这些落点判据。
 
 最后在真 PG 上验一次可加载（`shared_preload_libraries` 之外的第二步）：
 
@@ -161,16 +197,44 @@ SELECT extversion FROM pg_extension WHERE extname = 'pg_duckdb';   -- 期望 1.1
 - **显式设 `duckdb.memory_limit`**：它是 `duckdb.max_memory` 的**别名**（同一个 GUC，
   上游文档与源码均注明），按业务实际情况往下调，别吃默认。
 
-> 相关的两个默认值也一并留意（同源实测）：`duckdb.threads` / `duckdb.worker_threads` 默认
-> `-1` = **按机器核数**，即每条连接都能起满核数线程；连接一多就是线程超订。
+> 相关的两个默认值也一并留意：`duckdb.threads` / `duckdb.worker_threads` 默认 **`-1`**、
+> 两者互为**别名**（v1.1.1 `src/pgduckdb_guc.cpp` L226-230：共享同一全局 `duckdb_maximum_threads`，
+> 其初值 `= -1`，range -1..1024；short_desc 明写 *alias for duckdb.threads*）。
+> `-1` 的语义**不在 pg_duckdb 侧**：v1.1.1 `src/pgduckdb_duckdb.cpp:137` 是
+> `if (duckdb_maximum_threads > -1) { SET_DUCKDB_OPTION(maximum_threads); }` ⇒ **默认值下
+> pg_duckdb 根本不把这个选项传给 DuckDB**，落到 DuckDB 自己的默认。上游注释（DuckDB v1.5.5
+> `src/include/duckdb/main/config.hpp:110-111`，原文）：
+> > `//! The maximum amount of CPU threads used by the database system. Default: all available.`
+>
+> 即**按机器可用核数**——每条连接都能起满核数线程，连接一多就是线程超订。
 > 这跟构建期「ninja 按 nproc 起任务打 OOM」是同一类失控，只是发生在运行期。
 
 ---
 
-## 5. 构建频率（**开放项**，本工作流不替它拍板）
+## 5. 开放项与回退口径
+
+### 5.1 构建频率（**开放项**，本工作流不替它拍板）
 
 spec §11.9 #4：自建镜像的**构建频率与触发**仍是开放项（跟 pg_duckdb 上游走，还是跟 DuckDB
 版本走，未定）。所以工作流**只开 `workflow_dispatch`**：不设 `schedule`、不在 push/PR 上跑。
 
 现口径 = **按需手动 dispatch**。要升级版本时：改 Dockerfile 的两个 `ARG` → 重跑 → 出新 tag
 （同步改 `deploy/data-compose.yml`）。等 §11.9 #4 拍板后，再把触发方式写进这里。
+
+### 5.2 版本配对的回退路径（**首次 dispatch 前先读**）
+
+**开放项（随本轮登记）**：`PG_DUCKDB_VERSION=v1.1.1` + `DUCKDB_VERSION=v1.5.5` 这一对
+（§2.2）**尚未被任何一方验证过**，而**首次 dispatch 同时就是这一对的验收** —— 跑通之前，
+它属于「未验证配对」，不能算「P0 已交付」。
+
+若那次 dispatch **编译失败**（最可能是 §2.2 说的符号/API 漂移），按顺序回退，
+**只改 `PG_DUCKDB_VERSION` 这一个 ARG**：
+
+1. `PG_DUCKDB_VERSION=main` —— 即 lab 验证过的配对（main 的默认 DuckDB v1.5.4 → override v1.5.5）。
+   代价：`main` 是移动靶，可复现性掉一档 ⇒ 这是**应急回退**，不是新默认。
+2. 钉到 lab 对应的 **1.2.0-dev commit**（拿具体 SHA 填进 ARG）—— 要长期用就选这条，可复现。
+
+**不往下降 `DUCKDB_VERSION`**：duckdb-ossie 只发到 v1.5.5，降到 v1.4.3 会让 §0 的自建理由
+（语义层装不上）失效——所以回退方向是换 pg_duckdb，不是换 DuckDB。
+
+跑通或回退后，把结论（成功 / 回退到哪一对）写回本节，并删掉这条开放项。
