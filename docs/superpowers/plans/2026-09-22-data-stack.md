@@ -123,13 +123,15 @@
 | **W0（P0）** | T1 镜像 | 单独，不依赖任何决策 | — |
 | **W1（P1 仓内工件）** | **T2（架构+B7）先行 → T3（data-compose）∥ T4（dbt）∥ T5（contracts+duckle）** | T3 依赖 T2（B7 放行）；T4/T5 与 T2/T3 文件面零交集 | — |
 | **W1g（P1 真机闭环）** | T6 部署闭环 + 摘标注 | 操作者任务，串行 | 外部输入①②③④⑥ + W1 全合并 + **T1 版本配对已验收（首次 dispatch）** |
-| **W2（P2 治理与配置面）** | **T7（facade+登记）→ T8（L2 定义权）→ T9（治理四机制）** | 严格串行：T7/T8 都改 `manifest.yaml`+`index.ts`（装载期双向核对，并行必冲突）；T9 的门禁③消费 T8 的声明形态 | — |
+| **W2（P2 治理与配置面）** | **T7（facade+登记）→ T8（L2 定义权）→ T9（治理四机制）** | 严格串行：T7/T8 都改 `manifest.yaml`+`index.ts`（装载期双向核对，并行必冲突）；T9 的门禁③消费 T8 的声明形态；**T9 另依赖 T11**（跨波文件重叠，见下方第十一轮订正） | — |
 | **W2g（P2 e2e）** | T10 端到端验收 | 操作者任务 | W1g 部署存活 + 外部输入③（Metabase 凭据）+ W2 合并 |
 | **W3（P3 多租户代码面）** | T11（每租户 schema+凭据）→ T12（串租户回归套件） | 串行（T12 断言依赖 T11 形态） | — |
 | **W3g（P3 SaaS 验收）** | T13 验收 + 收尾 + 关伞 | 操作者任务 | 外部输入⑤ + T11/T12 合并 + W1g 同款部署面 |
 
 **W1 文件面零交集核验**（并行判据，逐任务点名的唯一触碰面）：
 T2 = `docs/architecture.md` + `scripts/check-compose.mjs` + `scripts/lint-architecture.test.ts`；T3 = `deploy/data-compose.yml` + `deploy/dbt/Dockerfile`；T4 = `dbt/**` + `scripts/check-data-models.*` + `.github/workflows/ci.yml` + `.env.example`；T5 = `contracts/**` + `duckle/**` + `deploy/duckle/Dockerfile` + `.gitignore`。两两无共享文件，`ci.yml` 与 `.env.example` 只被 T4 碰（`.env.example` 的下一处触碰在 W2 的 T7，串行不冲突）。
+
+**第十一轮订正——跨波文件重叠（原核验未查）**：上行核验只覆盖了 **W1 内部**的零交集，**未查跨波重叠**。实测 **T9 与 T11 共享两个文件**——`scripts/check-data-models.test.ts`（T11 的 16 例 fixtures）与 `dbt/README.md`（T11 的「多租户跑法」节）⇒ 原表的「W2 严格串行」只覆盖 W2 内部，**不能推出「W3 与 T9 无关」**。处置：**把 T11 编进 T9 的 `--deps`**（见下方派发块），既**保住 T7 ∥ T11 的并行收益**（T11 不依赖 T7），又挡住两笔在合并时互相撞车。这条也是「本波教训」第 1 条的同形实例：**判据写对了，但落点清单没列全**。
 
 Orca 派发（W1 四任务两批；W2/W3 用 `--deps` 编码串行）：
 
@@ -153,8 +155,10 @@ orca orchestration worker-start --task <t5> --worktree new-top-level --name ds-e
 # W2 / W3：串行链用 --deps
 orca orchestration task-create --spec "<T7 spec>" --deps '["<t6 或 w1 收口 task_id>"]' --json
 orca orchestration task-create --spec "<T8 spec>" --deps '["<t7 task_id>"]' --json
-orca orchestration task-create --spec "<T9 spec>" --deps '["<t8 task_id>"]' --json
-# T10/T11/T12/T13 同式；--name 全 ASCII
+orca orchestration task-create --spec "<T9 spec>" --deps '["<t8 task_id>","<t11 task_id>"]' --json
+#   ↑ T11 必列（第十一轮订正）：T9 与 T11 共享 scripts/check-data-models.test.ts 与 dbt/README.md。
+#     T11 可在 T7 期间并行开工（它不依赖 T7），但必须在 T9 之前合并。
+# T10/T12/T13 同式（T12 依赖 T11）；--name 全 ASCII
 ```
 
 > gate 波（T6/T10/T13）不 `worker-start`——按 M2b T5 形态派「操作者任务」或由编排者亲自执行。
@@ -1195,6 +1199,7 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 | ⑤ | 门禁必填字段取 Step 4 的**完整清单**（`name`/`expression`/`grain`/`owner`/`tier`/`definition`），非 Step 5 括号里简写的四字段 | **可接受**：计划**自身**矛盾（Step 4 明写六项、Step 5 ⑤ 简写成四项）⇒ 取更全的那份是对的（`expression` 是「口径本体」，缺了声明无法复算），**取全 = 取 Step 4 的正典**，不是自选。 |
 
 **两条 issue 的指针**（本波开的，供后续波次取用）：**#169** = 本机负载下测试超时抖动（迁移 advisory lock 2s 重试 vs vitest 5s 默认超时，`modules/data` 在高负载下每次命中不同用例；T4 M-7 并入）；**#170** = 门禁规则② 的残余逃检面 `::"double"`（T4 M-2）。
+⚠️ **#169 的描述已在第十一轮升级**：W2/W3 波它**首次打红了 CI**（不再只是「本机」现象）——以第十一轮为准。
 
 **B 节落点（ZOS 旧口径订正）**——5 处，**按位置点名（不写行号：本计划后续编辑必然漂移；复核用 `grep -n "能力空白\|403\|直写"`）**：① 全局约束 15「先查再动手」；② Task 5 Step 2 的 `duckle/README.md` 已知事实句；③ **Task 6 Step 5 的 duckle 核对步（按 `自检纪律` 第 5 条做的 grep 连带项**——原文「验证 ZOS 直写是否仍 403」本身就带旧口径的预设）；④ 附录「与本计划相关的已知坑」表的那一行；⑤「有意的取舍」的 duckle 段。防呆 gate = **Task 6 Step 1 第 9 项 Gate-D**。
 **spec 侧指针（仅点名，不追改）**：`docs/superpowers/specs/2026-09-20-data-stack-module-design.md:526–527` 与 `docs/superpowers/specs/2026-09-15-aftersales-module-design.md:166` 的「duckle s3 sink 能力空白」句**已被本波取代 —— 以本计划为准**。spec 是「当时怎么定的」历史快照，按本仓既有纪律**不追改**（处置同第六轮 #3）。
@@ -1202,6 +1207,33 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 **两个取舍的裁定记录（开工前扫描，均维持，已写进「有意的取舍」节）**：
 - **取舍 A 维持**——facade/治理归 P2：与 spec §11.8 分期表逐字一致（issue #150 的平铺清单无分期语义）。
 - **取舍 B 维持**——不建第二数据模块、全扩 `modules/data`：扫描实测风险为低（manifest 约 13→19 条无结构性问题；报表页签走单一 frontend 入口不触 registry 面；零新权限码；只碰 `data.*`）。
+
+**第十一轮：W2/W3 五笔带回的评审裁量与修复（2026-09-22/23，W2/W3 收口波）**
+
+本轮**登记 W1 之后的五笔（W2/W3）**：评审结论、修复笔、合并 SHA 与遗留项。**只有这五笔进表**——W2g 的 T10 与 W3g 的 T13 是**操作者任务、不开 PR**（见「波次与依赖」节末那句注：gate 波不 `worker-start`），其真机结论按计划各自归 T13 与 T6。性质同第十轮：**登记 + 口径订正——不改任何代码行为**。五笔**全部**走「独立评审 → 修复笔 → 合并」，下表按**合并先后**排（= 下表的行序）。**「修复笔 SHA」是分支侧 commit**——PR 走 squash 合并 ⇒ 该 commit **不在 main 的历史上**（内容在），引它作「这笔改了什么」的指针，体例同第七/十轮。依据全文：`.superpowers/sdd/2026-09-22-data-stack/task-{7,8,9,11,12}-review.md` 及配套的 `task-*-fix-report.md`、`task-*-report.md`。
+
+| # | 事项 | 裁决与依据 |
+|---|---|---|
+| T7 | 报表 facade + 登记 + 看板页签 | 评审 **0 Critical / 2 Important / 6 Minor**。**I-1 跨租户 Metabase 命名空间共享**——两个 org 的同名 title **共用同一张 dashboard** ⇒ B 可覆盖 A 的 `embedding_params`、**B 的 DELETE 会归档 A 的报表** ⇒ 修复笔 `dc8c355` **结构性消除**（Metabase 侧身份按 org 命名空间化为 `<org>/<title>`，查找 / 创建 / 发布 / 归档**四处口径一致**）。**I-2 `reconcile` 的 `unregistered` 按名求差 ⇒ 多租户下恒假阳性（报假绿 `ok:true`）**（spec §7 的目的被绕过）⇒ 换成「**不属于任何 org 的 `metabase_id` 才算未登记**」并两分为**可自愈 / 需人看**，另补 reconcile 回读断言 `embedding_params.tenant = locked`。合并 `52628a9b`（PR #172）。依据：`task-7-review.md` §0 / §RR1–RR2、`task-7-fix-report.md` |
+| T11 | 每租户 schema + 凭据收紧 + 启用集对账 | 评审 **0C / 3I / 8M**。**I1 派生非单射且无人检测**——`Acme-Org` 与 `acme-org` 归一到同一 schema 时对账报 **clean / exit 0**，**正是本脚本存在意义的反面**（静默串租户）⇒ 新增 `collisions` 桶（同名组含多 org ⇒ 逐条报出 + `clean=false` + exit 1）。**I2 对账只覆盖 schema + role、对凭据面全盲，且凭据段失败不回滚前段 ⇒ 失败残留恰落在对账的绿区** ⇒ provision 模板**整份事务化**（失败 = 无残留）。**I3 spec §11.2 #6「每租户一桶」在实现里降级为「共享桶 + 前缀 `SCOPE`」且报告未点名** ⇒ 见下方 issue **#175**。另有 M3：口令的**日志面**如实声明（缺省配置下**失败**的那条改口令语句就带明文进服务端日志）。合并 `28f37790`（PR #173）。依据：`task-11-review.md` 结论摘要表、`task-11-fix-report.md` |
+| T12 | 串租户回归套件（含缓存重放） | 评审 **1 Critical / 5 Important**。**C1 编排层无回归保护**——四个判定函数各自**都有牙齿**，但把面③或面④**整段从 `runSuite` 摘掉 ⇒ 34/34 全绿**，而**出口码只由那一层决定** ⇒ 补**编排级用例**（删任一面即红）。**I1 出口码把「判据不成立」误分类成「跑不起来」**——真机 `/query` 的 `denied` 是 **403**、`error` 是 **502**，被 `callJson` 非 2xx 一律抛成 **exit 2**，且**面②③④被整段跳过** ⇒ 403/502 交判据层 + 面级打散。**I2 空集静默空转**——`E2E_METRIC_ID=,` 经 `splitList` 成空集 ⇒ 整面不跑，而**输出读起来像「已验证」** ⇒ 空集 exit 2。**I3 四条判据分支被邻居分支遮蔽**（停用后全绿）；**I4 面② 的判据打在仓内正典两次点名「不可观测」的嵌入页正文上** ⇒ 改打计划指名的数据 API；**I5 面③ 的 `limit 0` 在 PG 语义下不执行扫描** ⇒ 改 `limit 1`。合并 `dbd80822`（PR #177）。依据：`task-12-review.md` 结论摘要表、`task-12-fix-report.md` |
+| T8 | L2 配置层（定义权下放） | 评审 **1 Critical / 2 Important / 4 Minor**。**C1 消费通道词表未合并**——`/query`、MCP `tools/list`、chat 三条通道仍用只回本 org 的加载器 ⇒ **平台 L1 指标在三条通道上全部不可达**，而 `GET /metrics` 用的是**合并词表** ⇒ **同一 id 在两条通道上胜负相反**（与本 PR 自己写进 README 的不变量直接矛盾，且 **CI 结构性不可见**）⇒ 三条通道统一到单一落点 + **来源守卫**（四通道一致性断言 + 正则断言）。**I1 `--check` 不存在且未知 flag 被静默忽略 ⇒ 打了 `--check` 实际向真库物化**（评审**在真库**复现）⇒ 实现真 dry-run + 未知 flag 响亮拒绝。**I2 UI 未做真实浏览器自验**（该页已从只读改成**写入表单**）⇒ 补 CDP 走查。合并 `26fefcb9`（PR #178）。依据：`task-8-review.md` §0、`task-8-fix-report.md` |
+| T9 | 治理四机制收口 + 门禁覆盖 L2 | 评审 **0C / 3I**。**I-3/I-4/I-5 = `dbt/README.md` §11 的三处命令错误**（`--profiles-dir` 指向只有 `profiles.example.yml` 的仓内目录；对 `materialized='table'` 的 marts 调 view-only 的 `pg_get_viewdef`；parquet 路径丢了 `lemeng/` 段且把叶子文件 `all.parquet` 写成 `<日期>.parquet`）——**离线可判、且 §11 与 §10 自相矛盾**；**M-2 目录递归 SQL 只按 `relname` join ⇒ 多租户下跨 schema 笛卡尔扇出**（本仓多租户正是「同一模型跑 N 次、模型名完全相同」）⇒ 已在本 PR 内订正（T9 修复笔 `489e0f2`）。**I-1 规则⑧是标记级文本比对、不是行为断言**（构造「编译器行为变了而标记未变」的改动时**假绿**，被 `semantic-compiler.test.ts` 兜住）⇒ 本轮只做**如实披露** + 登记为后续加固。合并 `dbf62d86`（PR #179）。依据：`task-9-review.md` §0、`task-9-fix-report.md` |
+
+**评审交叉验证的正面事实（T8）**：T8 评审**用 openship MCP（未裸 SSH）独立复现**了 T8 的存量核对结论——主实例 `data.metrics` **0 行**、山海实例**无 `data` schema** ⇒ 计划风险登记里「存量会被 `default 'l2'` 静默改标」的前提**与实况不符**，本轮**不存在**该风险。
+
+**本波四条 issue 的指针**（本波开的，供后续波次取用）：
+
+- **#169**（本机负载下测试超时抖动）——**描述升级**：本波它**首次也打红了 CI**（PR #172 的 `unit` job 命中 `agent-loop.test.ts` 的 5000ms 超时 ⇒ `mergeable_state=unstable` ⇒ 按纪律**不强合**、重跑 CLEAN 后才合并）⇒ 第七/十轮写的「**只在本机**」**已不准确**。根因（**迁移全库 advisory lock 的 2s 重试 vs vitest 5s 默认超时**）不变，但影响面已从「本地开发信号」扩到「**CI 判定信号**」；处置口径**未变**：**不调大全局 `testTimeout`**（那是把红改成绿）。
+- **#174**：租户隔离的**承重点未验**——`scope` 作 `USER MAPPING` 的 OPTION **无上游依据**；**T13 必须回读 DuckDB 侧 secret 的 `scope`**（只验「DDL 没报错」不够）。
+- **#175**：spec §11.2 #6「**每租户一桶**」在实现里降级为「共享桶 + 前缀 `SCOPE`」⇒ **需人裁决**（两条路的代价对比已在 issue 里）。
+- **#176**：L2 落地暴露的**两处计划缺口**——① dbt marts **缺 org 列**（会让 T6 的「问数链路吃真数据」验收**必然失败**，**须在 T6 之前收口**）；② 仓内**无平台超管 signal**（拍板 #5 的平台侧**无门可落**）。本轮按 **fail-closed** 先行（只实现租户 `data:manage` 管本 org 的 L2；`org='platform'` 的写入**不开口**）。
+
+**本波教训（三条通用）**：
+
+1. **「某一条通道接对了」≠「所有通道都接对了」**：本波三次 Critical/Important（**T12 的编排层**、**T8 的三条消费通道**、**T9 的 §11 命令**）**是同一形状**——判定逻辑写对了，但**接线 / 落点没到处改**。⇒ 任何「统一口径」类改动，**落点清单必须是所有消费方**并**逐条断言**，且要有一条**跨通道一致性的机器判据**（否则 CI 结构性看不见）。
+2. **「静默空集」是独立的假绿类**：一个非空字符串（**一个逗号**）过了必填闸门、解析后却是空集 ⇒ **整面空转**，而输出读起来像「已验证 0 项」。⇒ **空集一律响亮失败。**
+3. **不采信自陈（协调侧同样成立）**：T8 实施者自陈「已实现 `--check`」，评审**在真库**证明它不存在且会写库。⇒ 协调方当时已据该自陈写进 T9 任务书，事后订正为「**先实测四条性质、再围绕它搭门禁**」。**派发材料的每一句自陈都要有独立复核路径。**
 
 ### 有意的取舍（reviewer 请过目）
 
