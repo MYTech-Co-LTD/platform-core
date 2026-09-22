@@ -205,10 +205,16 @@ WeKnora 条目「企微自建应用接入 platform-core」。
 - **挂码口径**：客户管理员挂 `tenant:admin`（console「管理」菜单组可见，M3 页自管）**加**
   `--module` 集各模块的**管理码**（aftersales = `aftersales:manage`——只挂 tenant:admin
   能进 console 但模块页 403；访客码 `aftersales:guest` 是移动端会话派生用的，不用挂人）。
-- **建号/改密码口径**（#117 真机）：Casdoor **add-user 服务端会哈希密码，update-user 不哈希**
-  ⇒ 建号走 add-user（或 console M3 页）；**改密码 = 删号重建**（`delete-user` JSON body
-  `{owner,name}` 后重新 add-user）——**不要**用 update-user 改 password（存成不哈希的值，
-  登录必败且无报错线索）。
+- **建号/改密码口径**（#119 订正，2026-09-22）：Casdoor **add-user 与 set-password 都在服务端哈希**；
+  而 `update-user` 的列白名单**不含 password**（`object.UpdateUser`，v1.0.0→master 8 版一致）⇒
+  拿它改密码是**静默空操作**（回 ok、旧密码照旧可用），**不是**"写入明文/把账号锁死"（#117 现场的
+  反推已订正）。⇒ 建号走 add-user（或 console M3 页）；**改密码走 console M3 的「重置密码」**
+  （`resetUserPassword` 调 Casdoor 专用端点 `POST /api/set-password`，**form-urlencoded**）——它只写
+  user 行的 password 几列，**不删号**，第三方绑定（企微/钉钉/飞书）与 roles 完整保留。
+  两道闸防"静默改密不生效"：**前置**该 org 必须配 `passwordType`（空则 `cred.GetCredManager`
+  回 nil ⇒ 不哈希，客户端直接拒绝执行）+ **写后回读** user 记录的 `passwordType`。
+  **不要**用 update-user 改 password（无效），**也不要**再走"删号重建"（第三方绑定不可逆丢失）。
+  ⚠️ 改密**不踢**既有会话（Casdoor 的 kick 只跟 is_forbidden/is_deleted 走）——要"重置即下线"需平台侧另做。
 
 浏览器级冒烟用仓内脚本（#117 进仓固化，替代临时的 /tmp 版）：
 

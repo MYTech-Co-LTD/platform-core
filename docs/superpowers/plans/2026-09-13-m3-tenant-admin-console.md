@@ -200,6 +200,13 @@ test('deleteUser 走 JSON body {owner,name}（铁律②）并回读验证', asyn
   expect(seen).toEqual([{ owner: 'myorg', name: 'dave' }])
 })
 
+// ⚠️ 订正（issue #119，2026-09-22）：本 Step 里 `resetUserPassword 取全量记录改密再 update`
+// 的那段**测试与实现都已作废**——真机 update-user 的列白名单不含 password（object.UpdateUser，
+// v1.0.0→master 8 版一致）⇒ 那样改密是**静默空操作**（回 ok、旧密码照旧可用）。现行口径：
+// `POST /api/set-password`（form-urlencoded，服务端哈希、不删号）+ 前置校验 org 的 passwordType
+// + 写后回读 user 的 passwordType。**以 `packages/auth-core/src/casdoor-client.ts` 的现行实现与
+// `.superpowers/sdd/issue-119-research.md` 为准，不要照抄下面的范文块**（本仓原则：计划订正只落
+// 边界注记，不改写历史范文——照抄就会原地复发缺陷）。
 test('resetUserPassword 取全量记录改密再 update（防字段被洗）', async () => {
   const bodies: unknown[] = []
   const client = makeClient({
@@ -275,6 +282,7 @@ async setUserForbidden(name: string, forbidden: boolean): Promise<void> {
 }
 
 /** 重置密码。同整记录替换口径；密码不进任何日志。 */
+// ⚠️ 订正（issue #119）：此实现已作废——见上一条注记（update-user 改不动 password，改走 set-password）。
 async resetUserPassword(name: string, password: string): Promise<void> {
   const raw = await this.#requireRawUser(name)
   const j = await this.#adminJson(`update-user?id=${encodeURIComponent(`${this.#o.org}/${name}`)}`, {
