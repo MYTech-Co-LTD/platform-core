@@ -4,7 +4,7 @@
 //
 // 用法：DATABASE_URL=<平台库> DATA_WAREHOUSE_URL=<数据面 pg_duckdb> \
 //         pnpm exec tsx scripts/reconcile-data-tenants.mjs [--json]
-// 契约：干净 → exit 0（stdout 一行结论 + 计数）；有差集 → exit 1，**逐条打印差集**；
+// 契约：干净 → exit 0（stdout 一行结论 + 计数）；有差集/撞名 → exit 1，**逐条打印**；
 //       无法对账（缺 env / 查询失败）→ exit 2（「对不成账」与「对账发现漂移」必须可区分 ——
 //       前者是脚本/环境坏了，后者是被观测的系统漂移了，处置完全不同）。
 //
@@ -19,7 +19,18 @@
 // 「少了一个租户的数据」或者干脆静默通过，线上是**看不出来**的。所以：
 //   · 两个方向的差集都逐条打印（谁的 org / 哪个 schema / 缺的是 schema 还是 role）；
 //   · 有差集 ⇒ exit 1（openship 定时 job 靠退出码变红，不靠人去读日志）；
-//   · 连「认不出的数据面对象」也单列（`unattributable`）—— 丢弃它们 = 漂移看不见。
+//   · 连「认不出的数据面对象」也单列（`unattributable`）—— 丢弃它们 = 漂移看不见；
+//   · 连「派生撞名」也单列（`collisions`）—— 见下。
+//
+// ── 为什么必须检测「派生撞名」（I1，评审实测的静默串租户）────────────────────────
+// 派生（`tenant_` + 折小写 + `-`→`_`）是**非单射**的：`acme-org` 与 `Acme-Org` 归一到**同一个**
+// `tenant_acme_org`。两个不同租户共用一个 schema + role ⇒ 数据物化进同一个 schema ⇒ **串租户**；
+// 而在修复前，两个差集都空 ⇒ 本脚本报 **clean / exit 0** —— 恰恰是它唯一存在理由（「让静默漂移
+// 显形」）的反面。两条处置路里选了「在能看见全部键的这一侧检测」（另一条「让派生单射」要么改
+// 派生（两处同构的纪律：macro 与脚本必须同步改）、要么在撞名时让物化变死，都不如检测直接）。
+// ⚠️ **macro 那一侧结构性看不见这件事**：`dbt run --vars '{tenant: …}'` 一次只喂一个租户键
+// ⇒ 撞名只在「同时看到全部平台键」的这里才可判。故 macro 头注② 说的「宁可失败」由**本脚本**兑现。
+// 撞名 ⇒ 进 `collisions` 且 `clean=false`（**不许** clean：那就是静默通行）。
 //
 // ── 对账的两侧各是什么（口径写死在这里，别在别处复述）────────────────────────────
 // 平台侧「启用集」：`platform.tenant` 各租户 × **data 模块**的有效启用。
@@ -65,6 +76,9 @@ const IDENT_RE = /^[a-z0-9_]+$/
  * 归一两条：折小写 + `-` → `_`（**与 `dbt/macros/generate_schema_name.sql` 逐字同构**）。
  * 归一后仍非法 ⇒ **抛**（fail-closed）：静默拼一个坏名字会让对账在**错误的名字**上做比较
  * （永远 clean 或永远脏），比直接失败危险得多。
+ *
+ * ⚠️ 这条派生**不是单射**（`acme-org` 与 `Acme-Org` 都 → `tenant_acme_org`）。让「非单射」不可能
+ * 静默通过的地方是 `diffTenants`（它看得见**全部**平台键，而 macro 一次只喂一个键）—— 见头注。
  *
  * @param {string} key @returns {string}
  */
@@ -128,10 +142,11 @@ export function platformTenantRefs(tenantRows, moduleRows, loadedModuleIds) {
 }
 
 /**
- * 双向差集。三个方向都**显式**给出，谁都不静默：
+ * 双向差集 + 撞名。四个方向都**显式**给出，谁都不静默：
  *   · `missingInData`     —— 平台有、数据面无（含「schema、role 只建了一半」）
  *   · `missingInPlatform` —— 数据面有、平台无（退租/改名漏回收的形态）
  *   · `unattributable`    —— 数据面里 `tenant_` 打头但**认不出键**的对象（不猜、不丢）
+ *   · `collisions`        —— **两个（或更多）不同租户归一到同一 schema**（I1：静默串租户）
  *
  * 元素形状刻意**字段恒在**（`schemaPresent` / `rolePresent` 恒为布尔）：`scripts/` 是 checkJs，
  * JSDoc 字面量类型会被加宽 ⇒ 可辨识联合在这里会静默失效（`check-data-models.mjs` 头注判断③
@@ -144,6 +159,7 @@ export function platformTenantRefs(tenantRows, moduleRows, loadedModuleIds) {
  *   missingInData: Array<{ org: string, key: string, schema: string, role: string, schemaPresent: boolean, rolePresent: boolean }>,
  *   missingInPlatform: Array<{ key: string, schema: string, role: string, schemaPresent: boolean, rolePresent: boolean }>,
  *   unattributable: string[],
+ *   collisions: Array<{ schema: string, orgs: string[], keys: string[] }>,
  *   clean: boolean,
  * }}
  */
@@ -151,6 +167,8 @@ export function diffTenants(platformTenants, dataSchemas, dataRoles) {
   const schemaSet = new Set(dataSchemas)
   const roleSet = new Set(dataRoles)
 
+  /** @type {Map<string, { orgs: Set<string>, keys: Set<string> }>} */
+  const bySchema = new Map()
   /** @type {Array<{ org: string, key: string, schema: string, role: string, schemaPresent: boolean, rolePresent: boolean }>} */
   const missingInData = []
   const claimed = new Set()
@@ -158,11 +176,27 @@ export function diffTenants(platformTenants, dataSchemas, dataRoles) {
     const schema = tenantSchemaName(t.key)
     const role = schema // schema 与 role 同名（provision-template.sql 的约定）
     claimed.add(schema)
+    // I1：按**归一后**的 schema 名归组 —— 派生非单射（`acme-org` 与 `Acme-Org` 同落
+    // `tenant_acme_org`），组里出现 ≥2 个不同键/org 就是一次撞名。org 与 key 分开收：
+    // 键是派生的输入（真正的判据），org 是给人看的身份（两者现在同源，将来可能改键口径）。
+    const group = bySchema.get(schema) ?? { orgs: new Set(), keys: new Set() }
+    group.orgs.add(t.org)
+    group.keys.add(t.key)
+    bySchema.set(schema, group)
     const schemaPresent = schemaSet.has(schema)
     const rolePresent = roleSet.has(role)
     if (!schemaPresent || !rolePresent) {
       missingInData.push({ org: t.org, key: t.key, schema, role, schemaPresent, rolePresent })
     }
+  }
+
+  // 撞名组：**按 schema 名排序、组内排序**（不用 localeCompare：对账输出要能逐字 diff，
+  // 顺序不许随插入顺序或本机 locale 抖）。
+  /** @type {Array<{ schema: string, orgs: string[], keys: string[] }>} */
+  const collisions = []
+  for (const [schema, group] of [...bySchema].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (group.orgs.size < 2 && group.keys.size < 2) continue
+    collisions.push({ schema, orgs: [...group.orgs].sort(), keys: [...group.keys].sort() })
   }
 
   /** @type {Array<{ key: string, schema: string, role: string, schemaPresent: boolean, rolePresent: boolean }>} */
@@ -189,7 +223,11 @@ export function diffTenants(platformTenants, dataSchemas, dataRoles) {
     missingInData,
     missingInPlatform,
     unattributable,
-    clean: missingInData.length === 0 && missingInPlatform.length === 0 && unattributable.length === 0,
+    collisions,
+    clean: missingInData.length === 0
+      && missingInPlatform.length === 0
+      && unattributable.length === 0
+      && collisions.length === 0,
   }
 }
 
@@ -213,6 +251,9 @@ async function loadedModuleIds() {
 
 /** 有/无 → 打印用词（字段恒在的类型上选词，不在类型上分叉）。 */
 const has = (/** @type {boolean} */ b) => (b ? '有' : '缺')
+
+/** 桶内条数 → 打印用词（空 = ✓）。**逐桶**判，不用全局 `clean`（见 main() 里的说明）。 */
+const mark = (/** @type {number} */ n) => (n === 0 ? '✓' : '✗')
 
 async function main() {
   const asJson = process.argv.includes('--json')
@@ -255,22 +296,29 @@ async function main() {
         console.log(`[reconcile] ⚠️ 本仓没有 ${DATA_MODULE_ID} 模块 ⇒ 平台侧启用集**恒为空**，「数据面有、平台无」会把数据面全部对象都报成差集 —— 这不是漂移，是模块不在`)
       }
       console.log(`[reconcile] 数据面：tenant_* schema ${schemas.length} 个 / role ${roles.length} 个`)
-      console.log(`[reconcile] ${diff.clean ? '✓' : '✗'} 平台有、数据面无：${diff.missingInData.length} 条`)
+      // 每行的 ✓/✗ 由**本桶自己**的条数决定（不是拿全局 clean）：否则「只有撞名」的场景会打出
+      // 三行 `✗ … 0 条`，把人的注意力引到空桶上。干净时四行全 ✓（输出与修复前逐字一致）。
+      console.log(`[reconcile] ${mark(diff.missingInData.length)} 平台有、数据面无：${diff.missingInData.length} 条`)
       for (const m of diff.missingInData) {
         console.log(`  - org=${m.org} key=${m.key} schema=${m.schema}(${has(m.schemaPresent)}) role=${m.role}(${has(m.rolePresent)})`)
       }
-      console.log(`[reconcile] ${diff.clean ? '✓' : '✗'} 数据面有、平台无：${diff.missingInPlatform.length} 条`)
+      console.log(`[reconcile] ${mark(diff.missingInPlatform.length)} 数据面有、平台无：${diff.missingInPlatform.length} 条`)
       for (const m of diff.missingInPlatform) {
         console.log(`  - key=${m.key} schema=${m.schema}(${has(m.schemaPresent)}) role=${m.role}(${has(m.rolePresent)})`)
       }
-      console.log(`[reconcile] ${diff.clean ? '✓' : '✗'} 认不出的 tenant_* 对象：${diff.unattributable.length} 条`)
+      console.log(`[reconcile] ${mark(diff.unattributable.length)} 认不出的 tenant_* 对象：${diff.unattributable.length} 条`)
       for (const name of diff.unattributable) {
         console.log(`  - ${name}（不是本约定产生的名字：既不报成租户资源，也不静默丢弃 —— 请人工确认它的归属）`)
       }
+      console.log(`[reconcile] ${mark(diff.collisions.length)} 派生撞名（不同租户归一到同一 schema）：${diff.collisions.length} 组`)
+      for (const c of diff.collisions) {
+        console.log(`  - schema=${c.schema} ← orgs=[${c.orgs.join(', ')}] keys=[${c.keys.join(', ')}]`)
+        console.log('    （两个不同租户共用一个 schema + role ⇒ 数据面会串租户：请先在平台侧改名，别在这一层放宽）')
+      }
       if (diff.clean) {
-        console.log('[reconcile] OK：平台启用集与数据面已建 schema/role 一致（两个差集都空）')
+        console.log('[reconcile] OK：平台启用集与数据面已建 schema/role 一致（两个差集都空、无认不出的对象、无派生撞名）')
       } else {
-        console.log('[reconcile] 差集非空 ⇒ exit 1（对账失败必须显式可见：openship job 靠退出码变红，不靠人读日志）')
+        console.log('[reconcile] 差集/撞名非空 ⇒ exit 1（对账失败必须显式可见：openship job 靠退出码变红，不靠人读日志）')
       }
     }
     // 出口码就是 job 的信号面（干净 0 / 漂移 1）；连接池在 finally 里关

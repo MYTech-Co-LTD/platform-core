@@ -46,6 +46,19 @@ TENANT_ROLE_PASSWORD='…' TENANT_ZOS_ACCESS_KEY='…' TENANT_ZOS_SECRET='…' \
 `DROP USER MAPPING IF EXISTS` + `CREATE USER MAPPING` 是**故意**的 —— 它让「凭据轮换」与
 「首次开通」走同一条路）。实测证据在 `task-11-report.md`（连跑两次的输出）。
 
+**失败 = 无残留（整份模板单事务）**：模板里所有落库语句都在**一个事务**里（第一句 DDL 之前的
+`begin;` 与最后那句 `commit;`）⇒ 中途任何一步失败（`ON_ERROR_STOP` 让 psql 立刻退出、连接断开）
+就是**整体回滚、什么都没落**。这条不变量是**修复笔 I2-a** 建立的，为什么必须：
+
+- 修复前 §3（凭据面）响亮失败**不回滚** §1（role）/§2（schema）—— 已落库；而对账
+  （`scripts/reconcile-data-tenants.mjs`）只覆盖 schema + role、**对凭据面全盲** ⇒ 那个「半建」
+  的残留**恰好落在对账报绿的区间里**（半建而无人知）。
+- 幂等**不受影响**（事务只改「失败时留下什么」，不改「重跑的结果」）。实测查库证据（失败后
+  无 role / 无 schema）在 `task-11-fix-report.md`。
+- ⚠️ 因此**不要**再传 `psql -1/--single-transaction`（本文件自带事务，两者会叠）；也**不许**
+  往模板里加 `CREATE INDEX CONCURRENTLY` / `VACUUM` / `CREATE DATABASE` 一类的**非事务**语句
+  （PG 会直接拒；真需要时另起一次调用）。
+
 ## 3 参数与注入（**「在哪、怎么取」，不写值**）
 
 | 参数 | 必填 | 形态 | 值从哪来 |
@@ -63,8 +76,25 @@ TENANT_ROLE_PASSWORD='…' TENANT_ZOS_ACCESS_KEY='…' TENANT_ZOS_SECRET='…' \
 **为什么三样密钥型走 env 而不是 `-v`**：`-v` 的值会出现在进程 argv 里（`ps` 可见）；
 模板用 `\getenv`（psql ≥ 15；数据面镜像基于 PG 17）从进程环境读，**不进 argv**。
 
-**已知边界**：角色口令一旦 `ALTER ROLE … PASSWORD`，在 `log_statement=all` 一类配置下会进
-**服务端日志** —— 轮换口令时留意日志留存策略（这是 PG 侧的既有性质，不是本模板引入的）。
+**已知边界（口令进服务端日志 —— 暴露面比「只在 `log_statement=all` 下」宽，别读小了）**：
+角色口令走 `ALTER/CREATE ROLE … PASSWORD`，而 PG 的 DDL **只收字面量**（psql 变量是客户端替换
+⇒ 口令必然出现在语句文本里）⇒
+
+- **缺省配置**（`log_statement=none` + `log_min_error_statement=error`，即 PG 出厂缺省）下：
+  **那条语句失败**时，PG 会把**整条语句文本（含明文口令）**写进服务端日志 —— 这是 PG 的既有
+  性质，不是本模板引入的。实测（PG 16.15，未改任何 GUC）：一条失败的改口令语句 ⇒ 日志里
+  `STATEMENT: alter role … password '…'`。触发条件很现实（跑 provision 的角色没有 CREATEROLE、
+  连接被掐断）。
+- `log_statement=all` / `pgaudit` 一类审计配置下：**成功**的那次也一样进日志。
+- **缓解只在目标机做得成**，两条取舍：`alter system set log_min_error_statement = 'panic'`
+  （reload 生效；代价是**所有** ERROR 失败的「哪条语句触发的」那行不再记录，报错本身照常记）；
+  或接受它、靠日志留存策略兜。**只收紧 `log_statement` 没用**（它的缺省已是 `none`，管的是
+  **成功**的语句）。
+- 「不把口令写进语句」在 PG 侧没有可用 DDL 形态；客户端能算 verifier 的只有 psql 的 `\password`
+  （实测它把口令换成客户端算出的 SCRAM verifier 才发上去），但它是**交互式提示**、值只能从
+  stdin 喂 ⇒ 与「env 注入 + 一次 psql 调用」的契约相冲，且有 tty 时会去读 `/dev/tty` 而**挂住**
+  （对开通 job 来说挂死更糟）。**登记为 runner 契约面的候选**（要做改的是 runner，不是模板）。
+  详见模板 §1 头注（本轮 M3 的如实声明）。
 
 ## 4 退出码与失败面（fail-closed）
 
@@ -76,6 +106,7 @@ TENANT_ROLE_PASSWORD='…' TENANT_ZOS_ACCESS_KEY='…' TENANT_ZOS_SECRET='…' \
 | `tenant_name` 形态不对（大写、连字符、非 `tenant_` 前缀） | 形态校验停住 —— **标识符没有类型兜底**，一个带大写的名字会被 PG 折成另一个对象 |
 | `dbt_role` 这个角色在库里不存在 | 停住（schema 授权与默认权限都要挂到它身上，角色不在 = 白建） |
 | 本库没有 `duckdb` 扩展，且没显式 `expect_pg_duckdb=off` | 停住 —— **不静默跳过**（跳过 = 「租户开通了、凭据没落」的假绿） |
+| 上面任何一条触发 | 除「停住」外还**整体回滚**（整份模板单事务） ⇒ 数据面上**不留残留**（不会出现「role/schema 建了、凭据没落」的半建态） |
 
 ## 5 `expect_pg_duckdb` 开关（唯一允许跳过 §3 的口子）
 
@@ -84,9 +115,11 @@ TENANT_ROLE_PASSWORD='…' TENANT_ZOS_ACCESS_KEY='…' TENANT_ZOS_SECRET='…' \
 所以：
 
 - 缺省 `on`：扩展不在 ⇒ **响亮失败**；
-- `off`：显式声明「本库就是没有 pg_duckdb」（本地/CI 的纯 PG 环境），此时**打一条 WARNING** ——
-  跳过是有记录的动作，不是无声的。**真机核对归 T13**；两条候选路（USER MAPPING 承载 vs
-  同会话 `duckdb.create_simple_secret`）写在 `provision-template.sql` 的 §3 头注里。
+- `off`：显式声明「本库就是没有 pg_duckdb」（本地/CI 的纯 PG 环境），此时**打一条 `WARNING: …`**
+  —— 跳过是有记录的动作，不是无声的。前缀**写在消息文本里**（psql 的 `\warn` 原样写 **stderr**、
+  自己**不加**任何前缀）⇒ 按 `WARNING` grep 的 job 才能命中这条（选 `off` 的 job 请按它筛）。
+  **真机核对归 T13**；两条候选路（USER MAPPING 承载 vs 同会话 `duckdb.create_simple_secret`）
+  写在 `provision-template.sql` 的 §3 头注里。
 
 ## 6 未验清单（诚实边界）
 

@@ -193,6 +193,12 @@ done
 连字符改下划线，如 `acme-org` → `tenant_acme_org`）。**同一份模型、不同 `--vars` ⇒ 落进不同 schema**；
 会话绑哪个 schema 就只能看到哪个租户的物化结果（spec §11.5 #3 的 per-schema + `search_path`）。
 
+⚠️ **这条派生不是单射**（修复笔 I1 点出）：`acme-org` 与 `Acme-Org` **都**归一到 `tenant_acme_org`
+⇒ 两个不同租户落进**同一个** schema（数据面串租户）。而 **macro 这一侧结构性看不见**：
+`dbt run --vars` 一次只喂一个租户键，撞名要同时看到**全部**平台键才判得出来。⇒ 判它的地方是
+`scripts/reconcile-data-tenants.mjs` 的 **`collisions`** 桶（**撞名 ⇒ 逐条报出 + `exit 1`，
+绝不报 clean**）。改派生规则时**两处必须同步**（`dbt/macros/**` 与那个脚本，同源纪律见该脚本头注）。
+
 **不给 `tenant` var ⇒ 逐字回到 dbt 内置行为**（`target.schema`，即 P1 私有化单租户那份配置）——
 私有化部署**不需要**任何改动，也不该被多租户这条路径影响。
 
@@ -200,7 +206,7 @@ done
 
 | 件 | 落在哪 | 谁建 |
 |---|---|---|
-| 每租户 PG role + schema + 授权 | `deploy/data-tenants/provision-template.sql` | openship job（逐租户跑一次，幂等） |
+| 每租户 PG role + schema + 授权 | `deploy/data-tenants/provision-template.sql` | openship job（逐租户跑一次，幂等；**整份模板单事务 ⇒ 失败无残留**） |
 | 每租户 S3 凭据（`SCOPE` 收窄到该租户桶前缀） | 同上（§3，**未实测形态**） | 同上 |
 | 平台启用集 ↔ 数据面已建的对账 | `scripts/reconcile-data-tenants.mjs`（**双向差集，openship 定时 job 打**） | job |
 
@@ -208,4 +214,5 @@ done
 dbt / pg_duckdb）；「不给 var 时回内置行为」依赖 dbt-core 的 `generate_schema_name_for_env`
 （见 macro 头注判断③）——同样是**真机首跑核对**项，归 T6/T13。**多租户的 schema 名派生**则有
 机检兜底：`scripts/check-data-models.test.ts` 的 T11 格①（macro 必须由 `var('tenant')` 派生、
-不许出现整名形态的字面量 schema）与格②（平台侧对账用同一张用例表）。
+不许出现整名形态的字面量 schema）与格②（平台侧对账用同一张用例表），外加 T11 修复笔段
+（**撞名组必须非 clean**、空键分歧被记录、模板单事务、`dbt_project.yml` 显式 `macro-paths`）。

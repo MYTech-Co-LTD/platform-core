@@ -19,6 +19,22 @@
 --   `DROP USER MAPPING IF EXISTS` + `CREATE USER MAPPING` 是**故意**的形态：它让「凭据轮换」
 --   与「首次开通」走同一条路（只重跑不换值 ⇒ 结果逐字一致；换了值 ⇒ 收敛到新值）。
 --
+-- ── ⚠️ 失败 = 无残留（整份模板单事务 —— 本不变量由修复笔 I2-a 建立）────────────────────
+-- 本文件里**所有落库语句都在一个事务里**（第一句 DDL 之前的 `begin;` 与最后那句 `commit;`）：
+-- 中途任何一步失败（`ON_ERROR_STOP` 会让 psql 立刻退出、连接断开）⇒ **整体回滚，什么都没落**。
+-- 为什么这必须是结构性的而不是「靠自觉」：修复前 §3（凭据面）响亮失败**不回滚** §1（role）/
+-- §2（schema）—— 已落库；而 `scripts/reconcile-data-tenants.mjs` 只覆盖 schema+role、对凭据面
+-- **全盲** ⇒ 那个「半建」的残留恰好落在对账报绿的区间里（**半建而无人知**）。单事务把
+-- 「失败 ⇒ 无残留」变成结构保证（实测查库证据见 task-11-fix-report.md）。
+-- ⚠️ 三条纪律：
+--   · 幂等**不受影响**：事务只改「失败时留下什么」，不改「重跑的结果」⇒ 连跑两次仍不报错、
+--     结果逐字一致（README §2 的幂等口径不变）。
+--   · **不许**往本文件加非事务语句（`CREATE INDEX CONCURRENTLY` / `REINDEX … CONCURRENTLY` /
+--     `VACUUM` / `CREATE DATABASE` / `CREATE TABLESPACE` / `ALTER SYSTEM`）——PG 会直接拒
+--     （`cannot run inside a transaction block`）。真需要时**不要**硬包进来，另起一次调用。
+--     当前文件里没有这类语句（`scripts/check-data-models.test.ts` 的 T11 修复笔段有断言钉住）。
+--   · 调用方**不要**再传 `psql -1/--single-transaction`：本文件自带事务，两者会叠。
+--
 -- ── 参数与注入（「在哪、怎么取」，**不写值**）───────────────────────────────────────────
 --   · 非密参数走 `-v`（值来自 openship env / 部署 env；**本文件不存任何真值**）；
 --   · 三样**密钥型**参数走 **环境变量 + `\getenv`**（PG ≥ 15），**不走 `-v`**：`-v` 会让口令
@@ -48,6 +64,9 @@
 -- ═══════════════════════════════════════════════════════════════════════════════════════
 
 \set ON_ERROR_STOP on
+
+-- ── 单事务：本行之后的所有落库语句要么全成、要么全回滚（见头注「失败 = 无残留」）────────
+begin;
 
 -- ── §0 参数齐备性（fail-closed：缺一个就停在这里，绝不让空值当参数用）──────────────────
 \if :{?tenant_name}
@@ -116,7 +135,24 @@ end $$;
 
 -- ── §1 PG role（每租户一个：连接身份 = 租户边界的一半，另一半是 SCOPE）────────────────
 -- 口令每次收敛到注入值（幂等：不换值 ⇒ 结果一致；换值 ⇒ 轮换）。
--- ⚠️ 口令会出现在**服务端日志**里（`log_statement=all` 一类的配置下）；轮换口令时留意日志留存策略。
+--
+-- ⚠️ 口令会进**服务端日志** —— 暴露面比「只在 log_statement=all 下」宽，如实读这一节（评审 M3）：
+--   · **缺省配置**（`log_statement=none` + `log_min_error_statement=error`，即 PG 的出厂缺省，
+--     本机 `show` 实读确认）下：**这一句失败**时，PG 会把**整条语句文本（含明文口令）**写进
+--     服务端日志（`log_min_error_statement` 的语义是「语句出错 ≥ error 就记语句」）。
+--     触发条件很现实：跑 provision 的角色没有 CREATEROLE、连接被中途掐断、库满了。
+--     实测（PG 16.15，未改任何 GUC）：一条失败语句 ⇒ 日志里 `STATEMENT: alter role … password '…'`。
+--   · `log_statement=all` / `pgaudit` 一类审计配置下：**成功**的那次也一样进日志。
+--   · 只收紧 `log_statement` **没用**（它的缺省已经是 `none`，管的是「成功的语句」）——
+--     要动的是失败路径那一个：`alter system set log_min_error_statement = 'panic'`（reload 生效）。
+--     代价：**所有** ERROR 级失败都不再附「哪条语句触发的」那行 `STATEMENT:`（报错本身照常记录）
+--     ⇒ 排障能力下降，取舍由目标机决定。
+--   · 「不把口令写进语句」在 PG 侧**没有**可用的 DDL 形态：`ALTER ROLE … PASSWORD` 只收字面量，
+--     psql 变量是**客户端替换**（口令照样进语句文本）。客户端能算 verifier 的只有 psql 的
+--     `\password`（实测：它把口令换成客户端算出的 SCRAM verifier 才发上去，明文不上服务器），
+--     但它是**交互式提示**、值只能从 stdin 喂 ⇒ 与「env 注入 + 一次 psql 调用」的 runner 契约
+--     相冲，且在有 tty 的环境会去读 /dev/tty 而**挂住**（对开通 job 而言挂死比日志暴露更糟）。
+--     ⇒ 本轮不做，登记为 runner 契约面的候选（真要做，改的是 runner，不是本模板的 DDL）。
 select exists(select 1 from pg_roles where rolname = :'tenant_name')::text as role_exists \gset
 \if :role_exists
   alter role :"tenant_name" with login password :'tenant_role_password' nosuperuser nocreatedb nocreaterole;
@@ -172,7 +208,10 @@ select exists(select 1 from pg_extension where extname = 'duckdb')::text as has_
   \if :expect_pg_duckdb
     do $$ begin raise exception '本库没有 duckdb 扩展 ⇒ pg_duckdb 凭据这一件建不了。**不跳过**：跳过会造出「租户开通了、凭据没落」的假绿。明知环境如此请显式传 -v expect_pg_duckdb=off（那时会打一条 WARNING）'; end $$;
   \else
-    \warn '跳过 §3 pg_duckdb 凭据（expect_pg_duckdb=off，且本库没有 duckdb 扩展）：该租户的 schema/role/授权已就绪，但**凭据未落** ⇒ 本租户的 read_parquet 现在还读不到桶。这不是开通完成，是「③ 面就绪、② 面待真机核」。'
+    -- `WARNING: ` 前缀写进**消息文本**里（不是靠 psql）：`\warn` 原样把文本写到 **stderr**、
+    -- 自己**不加**任何前缀（实测：stdout 0 字节 / stderr 1 行）⇒ 不手写这个前缀，按 `WARNING`
+    -- grep 的 job 会**漏掉**这条「跳过」。README §5 的措辞就是「打一条 WARNING」（评审 M2）。
+    \warn 'WARNING: 跳过 §3 pg_duckdb 凭据（expect_pg_duckdb=off，且本库没有 duckdb 扩展）：该租户的 schema/role/授权已就绪，但**凭据未落** ⇒ 本租户的 read_parquet 现在还读不到桶。这不是开通完成，是「③ 面就绪、② 面待真机核」。'
   \endif
 \endif
 
@@ -183,3 +222,6 @@ select rolname as role_name, rolcanlogin as can_login from pg_roles where rolnam
 select nspname as schema_name, pg_get_userbyid(nspowner) as owner from pg_namespace where nspname = :'tenant_name';
 select table_schema, privilege_type from information_schema.role_table_grants
  where grantee = :'tenant_name' order by table_schema, privilege_type;
+
+-- 单事务的唯一出口：走到这里才落库（失败时 psql 已退出、连接已断 ⇒ 上面全部回滚）
+commit;
