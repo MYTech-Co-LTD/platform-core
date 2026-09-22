@@ -36,3 +36,15 @@ duckle/**/.duckle/
 duckle/**/logs/
 duckle/**/runs/
 duckle/**/secrets.enc
+
+# ③ 测试产物（W1 收口波补：T4 评审 M-6 / T5 评审 M2 —— 上一笔 T5 因任务书硬约束不许再碰本文件，
+#    故遗留到这里，由本笔代补）。
+#    `pnpm test` 的 apps/server loader 套件会在 apps/server/ 下建**两个**目录（本笔实测，
+#    不是照抄任务书的字符串——实测法与输出见 .superpowers/sdd/2026-09-22-data-stack/plan-sync-report.md）：
+#      apps/server/.tmp-loader-fixtures/      ← loader.test.ts 的 fixture 根（顶层 describe）
+#      apps/server/.tmp-loader-fixtures-d9/   ← 同文件 D9 用例的第二个根（**字面写在代码里**，不是运行期随机名）
+#    两者都有 afterAll 自清，正常路径不留残留；但 afterAll 在**进程被硬杀**时不会执行
+#    （SIGKILL / vitest 超时强杀 / Ctrl-C 连按——而该套件的超时正是本机已知事件，
+#    issue #169）⇒ 会以未跟踪文件残留，`git add -A` 就会把它带进仓。理由同上面 `.tmp/` 那条。
+#    一条模式覆盖两者及将来同前缀的变体（`*` 不跨 `/` ⇒ 只影响 apps/server/ 下这一族）。
+apps/server/.tmp-loader-fixtures*/
