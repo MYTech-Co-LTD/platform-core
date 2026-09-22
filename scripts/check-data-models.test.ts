@@ -719,6 +719,11 @@ describe('T11 修复笔 I2-a / M8：模板事务化（失败 ⇒ 无残留）与
 // T9（P2 / W2 收尾）追加：门禁③扩面两类
 //   (a) **L2 声明静态面**：`modules/data/domain/semantic-compiler.ts` 里的 zod schema
 //       （写时校验）与唯一编译点的校验必须**同源** —— 防两处漂移。
+//       ⚠️ **本格的覆盖强度如实披露（T9 评审 I-1）**：下面这 7 例断的是**标记级文本比对**
+//       （改字面量 / 改键名 ⇒ 红），**不是行为断言** —— 「编译器行为变了而标记没变」的改动
+//       （守卫体掏空、`filters` 被静默丢弃）在**本格**是绿的，那两例由
+//       `modules/data/domain/semantic-compiler.test.ts`（CI `unit` job）抓。计划 L896 原本要的
+//       行为 fixtures（「schema 拒的编译器也拒」）属**后续加固**，见门禁头注「⑧ 的**强度**」。
 //   (b) **消费 `sync-data-semantics.mjs --check`**：把「L1 物化的 dry-run 契约」接进机检面。
 //
 // **为什么追加在本文件**：任务书硬约束 1 把 T9 的落点钉成这三个文件，且 T11 先例已把
@@ -745,7 +750,7 @@ function l2RealSource(): string {
   return readFileSyncT9(join(repoRoot, L2_COMPILER_REL), 'utf8')
 }
 
-describe('T9 格⑧：L2 声明的 zod schema 与编译点校验**同源**（纯核，可喂合成源）', () => {
+describe('T9 格⑧：L2 声明的 zod schema 与编译点校验**同源**（纯核 / **标记级**，可喂合成源）', () => {
   it('真文件 → 零违规（反空转：基线真合规，门禁在真仓上不得因此变红）', () => {
     expect(checkL2DeclarationSameSource(l2RealSource())).toEqual([])
   })
