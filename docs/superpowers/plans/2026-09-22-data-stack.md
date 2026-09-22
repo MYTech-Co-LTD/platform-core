@@ -121,7 +121,7 @@
 |---|---|---|---|
 | **W0（P0）** | T1 镜像 | 单独，不依赖任何决策 | — |
 | **W1（P1 仓内工件）** | **T2（架构+B7）先行 → T3（data-compose）∥ T4（dbt）∥ T5（contracts+duckle）** | T3 依赖 T2（B7 放行）；T4/T5 与 T2/T3 文件面零交集 | — |
-| **W1g（P1 真机闭环）** | T6 部署闭环 + 摘标注 | 操作者任务，串行 | 外部输入①②③④⑥ + W1 全合并 |
+| **W1g（P1 真机闭环）** | T6 部署闭环 + 摘标注 | 操作者任务，串行 | 外部输入①②③④⑥ + W1 全合并 + **T1 版本配对已验收（首次 dispatch）** |
 | **W2（P2 治理与配置面）** | **T7（facade+登记）→ T8（L2 定义权）→ T9（治理四机制）** | 严格串行：T7/T8 都改 `manifest.yaml`+`index.ts`（装载期双向核对，并行必冲突）；T9 的门禁③消费 T8 的声明形态 | — |
 | **W2g（P2 e2e）** | T10 端到端验收 | 操作者任务 | W1g 部署存活 + 外部输入③（Metabase 凭据）+ W2 合并 |
 | **W3（P3 多租户代码面）** | T11（每租户 schema+凭据）→ T12（串租户回归套件） | 串行（T12 断言依赖 T11 形态） | — |
@@ -196,8 +196,15 @@ pnpm exec tsx scripts/check-data-models.mjs
 - Create: `.github/workflows/pg-duckdb-image.yml`
 
 **Interfaces:**
-- Consumes: spec §11.4 recipe（逐字转录，见下）；pg_duckdb v1.1.1 release + DuckDB v1.5.5 tarball（**别用 git clone——子模块在这条网上爬不动**，spec 原话）。
+- Consumes: spec §11.4 recipe（**已按 T1 交付实证订正，见 Step 1 后的订正说明——不是逐字转录**）；pg_duckdb v1.1.1 release + DuckDB v1.5.5 tarball（**别用 git clone——子模块在这条网上爬不动**，spec 原话）。
 - Produces: 镜像 `ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5`（tag 编码 pg_duckdb 版本 + DuckDB 版本；**不打 `latest`**——可变 tag 禁用是版本纪律）。
+
+> **⚠️ 计划层选型风险：版本配对未经验证（pin 在这里，验收在 W1g）**
+> pg_duckdb v1.1.1 自陈配对 DuckDB **v1.4.3**，而本计划用 **v1.5.5**（跨 1 个 minor；
+> 上游 CI 从不覆盖 `DUCKDB_VERSION`；spec 实测的 lab 是 pg_duckdb main/1.2.0-dev + v1.5.5）
+> ⇒ 头文件级断裂已排除（v1.1.1 引用的 **52 个 duckdb 头**——**口径**：`#include "duckdb/…"` 与 `#include <duckdb/…>` **两形态并集去重**（只取双引号形态得 43，是更窄的口径；两处数字打架的根因就是口径没写）——在 v1.5.5 中 **52/52 全在**，逐条 HTTP 探针实测），
+> 符号/API 漂移**既未证实也未证伪**。**首次 dispatch 兼作该配对的验收**；
+> 失败则 ARG 回退 `main`（lab 验证过的配对），**并按 runbook `deploy/pg-duckdb/README.md` §0 出「新」tag**（回退场景建议 `main-duckdb1.5.5` / `<sha8>-duckdb1.5.5`），**不得复用 `1.1.1-duckdb1.5.5`**——tag 是 Step 2 workflow `tags:` 与 runbook §1b ⑦ `docker commit` 的**硬编码字面量**，不由 ARG 推导：只改 ARG 重跑会让 main 编出的产物盖到钉死的 tag 上（撞 §0「旧 tag 保持可回滚」）。W1g gate 有对应的显式前置（T6 Step 1）。
 
 - [ ] **Step 1: 写 Dockerfile（recipe 容器化；三个编译配置缺一不可）**
 
@@ -220,9 +227,19 @@ RUN curl -fsSL https://github.com/duckdb/pg_duckdb/archive/refs/tags/${PG_DUCKDB
 RUN mkdir -p third_party/duckdb \
     && curl -fsSL https://github.com/duckdb/duckdb/archive/refs/tags/${DUCKDB_VERSION}.tar.gz \
       | tar xz -C third_party/duckdb --strip-components=1
+# 补「子模块已初始化」哨兵：Makefile 的目标文件挂在
+#   $(OBJS): .git/modules/third_party/duckdb/HEAD
+# 上；该路径缺失时 make 会执行 `git submodule update --init --recursive`，
+# 而上面 tarball 解出的树**不是 git 仓库** ⇒ fatal，退出 128（是当场退出，不是编译失败）。
+# 源码既已由 tarball 预填到位 ⇒ 只需哨兵文件让 make 判该 target up-to-date（跳过 recipe）。
+# ⚠️ 不是可选的：不加这两行，tarball-only 构建必挂。
+RUN mkdir -p .git/modules/third_party/duckdb \
+    && touch .git/modules/third_party/duckdb/HEAD
 # 上游真 bug 的手工补丁（spec §11.4 ③）：jemalloc 文件缺一个 include
+# ⚠️ 路径在**第三方树内**（该文件属 DuckDB）：pg_duckdb 自己的 src/ 下没有它——
+# 按 §11.4 的简写写成 src/common/allocator/... 会 No such file 当场失败。
 RUN sed -i '1i #include "duckdb/common/string_util.hpp"' \
-      src/common/allocator/allocator_jemalloc.cpp
+      third_party/duckdb/src/common/allocator/allocator_jemalloc.cpp
 # §11.4 ②：三个编译配置缺一不可（DISABLE_UNITY / CMAKE_BUILD_PARALLEL_LEVEL / 上面的 include）
 RUN make DUCKDB_VERSION=${DUCKDB_VERSION} \
       DUCKDB_CMAKE_VARS="-DCXX_EXTRA=-fvisibility=default -DBUILD_SHELL=0 -DBUILD_PYTHON=0 -DBUILD_UNITTESTS=0 -DDISABLE_UNITY=1 -DOVERRIDE_GIT_DESCRIBE=${DUCKDB_VERSION}" \
@@ -230,6 +247,12 @@ RUN make DUCKDB_VERSION=${DUCKDB_VERSION} \
 RUN make install
 
 FROM postgres:17
+# 运行期依赖：pg_duckdb.so 经 libduckdb.so 依赖 libcurl.so.4（ldd 实测），而 postgres:17 不带 libcurl4。
+# §11.4 ④ 的 docker commit 路径碰不到这问题（libcurl4-openssl-dev 顺手把 libcurl4 带进了镜像）；
+# 多阶段构建**不继承** build stage 的包 ⇒ 必须显式装。不装 = 扩展加载时报
+# `libcurl.so.4: cannot open shared object file`（运行期加载失败，不是构建失败）。
+RUN apt-get update && apt-get install -y --no-install-recommends libcurl4 \
+    && rm -rf /var/lib/apt/lists/*
 # make install 的落点在 PG 的 pkglibdir/sharedir——首次构建时以 `make install` 实际输出核对 COPY 路径
 #（builder 与本 stage 同基镜像，路径一致；对不上就按 install 日志订正，别猜）。
 COPY --from=build /usr/lib/postgresql/17/lib/ /usr/lib/postgresql/17/lib/
@@ -238,6 +261,14 @@ COPY --from=build /usr/share/postgresql/17/extension/ /usr/share/postgresql/17/e
 ```
 
 > ⚠️ 最后一组 COPY 路径标注了「首次构建核对」——recipe 只验证到 `make install` 成功，install 产物落点以构建日志为准。这是有意的 gate，不是含糊。
+
+> **订正说明（2026-09-22，按 T1 交付实证）**：上面的范文块已**换成本体订正后的版本**（不是加注记），四处与旧稿不同：
+> ① `sed` 目标补全到**第三方树内**（`third_party/duckdb/src/...`；该文件属 DuckDB，pg_duckdb 树内 `src/` 无 `common/` 目录）；
+> ② 新增**子模块哨兵** `mkdir -p .git/modules/third_party/duckdb && touch .git/modules/third_party/duckdb/HEAD`；
+> ③ 最终 stage 新增**运行期** `apt-get install -y --no-install-recommends libcurl4`；
+> ④ Step 2 的 `tags:` 改用**小写字面量** `ghcr.io/mytech-co-ltd/...`。
+> **四处根因同一个**：spec §11.4 的**简写**（③ 的路径未点明在第三方树内）与**缺项**（无 ② 哨兵步、无 ③ 多阶段运行期依赖、④ 未点明 org 名大写非法）。
+> ⚠️ **旧稿是被 T1 交付实证证伪的版本，别再照抄旧稿**（本仓已知复发坑：订正只落注记、范文块不动 ⇒ 后来者照抄即复发）。
 
 - [ ] **Step 2: 写 workflow（仅手动触发）**
 
@@ -262,12 +293,18 @@ jobs:
           context: deploy/pg-duckdb       # Dockerfile 无本地 COPY，小 context；file 缺省即 <context>/Dockerfile
           platforms: linux/amd64          # 生产机都是 amd64；别多平台翻倍烧时间
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/platform-core-pg-duckdb:1.1.1-duckdb1.5.5
+          # ⚠️ owner 段**必须写字面量小写**，不能用 ${{ github.repository_owner }}：
+          # 本 org 是 MYTech-Co-LTD（含大写），而 OCI 引用名只接受小写仓库名 ⇒
+          # buildx 报 `invalid tag "ghcr.io/MYTech-Co-LTD/...": repository name must be lowercase`。
+          # 实测的失败时机：**解析 tag 阶段即终止**（Dockerfile 都没被读，一个构建步骤都不跑）——
+          # 最便宜的失败形态，但错字面量仍会挡住整条路径，别写错。
+          # 小写形态与 deploy/data-compose.yml 的引用（T3）逐字一致——改这里必须同步改那里。
+          tags: ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5
 ```
 
 - [ ] **Step 3: 写 runbook（`deploy/pg-duckdb/README.md`）**
 
-必含四节：① 构建路径（CI dispatch；**手工 docker commit 兜底**——§11.4 recipe 的原形态，目标机/无额度时用，两路径产物同源同 tag）；② 运行期硬约束（§11.5 三条逐字：DuckDB 实例按连接、SET 与使用同会话；`install_extension` 同会话开两个 allow；`duckdb.query()` 看不到 PG 表用 `raw_query`）；③ 内存口径（每连接一个 DuckDB 实例、`max_memory` 默认 4096MB/连接——spec §9.4；资源收口怎么做：连接池上限 + `duckdb.memory_limit` 显式设）；④ 构建频率开放项说明（现口径=按需 dispatch；升级 DuckDB 版本 = 改 ARG 重跑，先核对 duckdb-ossie 的发布版本）。
+必含四节：① 构建路径（CI dispatch；**手工 docker commit 兜底**——§11.4 recipe 的原形态，目标机/无额度时用，两路径产物同源同 tag）；② 运行期硬约束（§11.5 三条逐字：DuckDB 实例按连接、SET 与使用同会话；`install_extension` 同会话开两个 allow；`duckdb.query()` 看不到 PG 表用 `raw_query`）；③ 内存口径（每连接一个 DuckDB 实例、`max_memory` 默认 4096MB/连接——spec §9.4；资源收口怎么做：连接池上限 + `duckdb.memory_limit` 显式设）；④ 构建频率开放项说明（现口径=按需 dispatch；升级 DuckDB 版本 = 改 ARG 重跑，先核对 duckdb-ossie 的发布版本——**tag 是硬编码字面量、不由 ARG 推导，升级/回退都要按 §0 同步出「新」tag，别覆盖旧 tag**）。
 
 - [ ] **Step 4: 验证 + 提交**
 
@@ -284,6 +321,8 @@ git add deploy/pg-duckdb .github/workflows/pg-duckdb-image.yml
 git commit -m "build(data-stack): 自建 pg_duckdb 镜像——DuckDB v1.5.5 recipe 容器化 + dispatch 构建"
 gh pr create --title "build(data-stack): pg_duckdb 自建镜像（P0）" --body "Refs #150"
 ```
+
+> **本条已按 T1 交付实证订正（commit `a5a0032` / PR #162）**：Step 1 / Step 2 的范文块已**换成交付物实证版本**（四处订正与根因见 Step 1 后的订正说明）；计划的版本配对风险条见 Interfaces 下（W1g 有显式前置）。**本条订正只动文档**——T1 交付物（`deploy/pg-duckdb/*`、`.github/workflows/pg-duckdb-image.yml`）另行处理，不在此列。
 
 ---
 
@@ -704,6 +743,7 @@ gh pr create --title "feat(data-stack): contracts/ 与 duckle/ 数据采集工�
 3. **外部输入③**：ZOS 乐檬桶只读凭据已落 openship env(isSecret)。
 4. **外部输入④**：目标机时段已确认。W1 的 T2–T5 全部合并进 main。
 5. **外部输入⑥**：dbt 版本已确认（人给版本号或确认 1.9.8），T3 Dockerfile 的 ARG 注释销账——真跑用的版本必须与现场安装一致。
+6. **版本配对已验收（T1 的显式前置，不是「顺带」）**：pg_duckdb v1.1.1 × DuckDB v1.5.5 是**未经任何一方验证**的配对（v1.1.1 自陈配对 v1.4.3；跨 1 个 minor；上游 CI 从不覆盖 `DUCKDB_VERSION`；spec 实测 lab 是 main/1.2.0-dev + v1.5.5）⇒ **T1 的首次 dispatch 兼作该配对的验收**：编译通过 = 配对成立；失败则把 `PG_DUCKDB_VERSION` ARG 回退 `main`（lab 验证过的配对）**并按 §0（T1 runbook 版本纪律）出「新」tag**（回退场景建议 `main-duckdb1.5.5` / `<sha8>-duckdb1.5.5`，**不得复用 `1.1.1-duckdb1.5.5`**）重跑。**不许把「配对是否成立」第一次在真编译上发现留到本 gate**——进本 gate 的前提就是这条已绿，结论记 T1 任务报告。
 
 - [ ] **Step 2: 按目标形态建数据面 project（openship MCP）**
 
@@ -963,7 +1003,7 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 | locked parameters 是官方点名「不推荐敏感数据」的用法 | spec §6.1/已知边界 | T2 架构文档显式接受；隔离主力在凭据/schema 层 |
 | 嵌入带水印、不能禁 CSV 导出 | spec §6.3 | 显式接受（数据外带面，导的是租户自己那份） |
 | 物化存储 ~×8 膨胀 | layered §5.3 | 按需 `--select`，不全量物化 |
-| 编译三配置缺一不可（DISABLE_UNITY / 并行度 2 / jemalloc include 补丁） | spec §11.4 | Dockerfile 逐字转录，别「优化」 |
+| 编译三配置缺一不可（DISABLE_UNITY / 并行度 2 / jemalloc include 补丁） | spec §11.4 | 以 **T1 交付物 Dockerfile** 为准（§11.4 原文已证伪，见 Step 1 后订正说明），别「优化」 |
 | Metabase↔Cube 版本级断点六次 | spec §6.2（cube 时代记录） | Cube 已否决，但**版本锁死 + 升级先核兼容**的纪律平移到 Metabase↔pg_duckdb：锁 v0.63.18.1，升级走 runbook |
 | Actions 额度会挂起真实工作流 | team-harness PR#79 教训 | 镜像构建仅 dispatch；跑前确认额度（外部输入①） |
 | 改部署配置≠生效（openship env 四层物化） | 团队记忆 | T10/T13 的 env 核对看**物化结果** |
@@ -981,6 +1021,7 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 2. **计数与清单不符**（#39 类）：文件表逐行核对任务的 Files 清单（见下「核对结论」#1）；六处「尚未进仓」标注行号以 grep 实测为准；L1 语义声明必填字段在 T4 Step 4 / T9 / `semantic-compiler` 三处口径一致（owner/tier/grain/definition）。
 3. **接口消费方漏列**（#33 类）：`ALLOWED` 双白名单的消费方 = 守卫本体 + 新建测试 + T3 的 compose（落仓前提）；`check-data-models` 的消费方 = ci.yml gates（T4 接线）+ T9 扩面 + T11 的 macro 断言；`signEmbedToken` 的消费方 = embed-url 路由 + T12 断言 2；`compileL2` 的消费方 = metrics 路由 + T9 的 schema 同源断言——逐个在任务 Interfaces 写明。
 4. **并行任务文件面交集为零**：W1 四任务逐任务点名唯一触碰面（见派发表下核验段）；W2 串行的两条理由（manifest 双向核对、T9 消费 T8 形态）写死在波次表。
+5. **订正后的连带口径残留**（F3b 复核 N-2 / N-4 教训）：任何一处口径订正（数字 / 引用姿态 / 操作步骤）落地后，**全文 grep 该口径的原文与数字**（如「43」「逐字转录」「回退 ARG」），**逐条判定**是否与订正后口径冲突——同一份文档里新旧口径并存 ⇒ 后来者照抄旧的那条（第四轮只改了 L199 一处，漏了第一轮附表里的同口径残留）。执行结果见「自检发现与处置」第五轮。
 
 ### 自检发现与处置
 
@@ -1019,6 +1060,31 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 | 5 | T3 的引用姿态错：把 15432 说成 customer-onboarding 阶段 5「唯一跨 project 接线点」的既有内容——文档里没有 15432（只记过 lab 端口 18080/18081/16379），是本计划新选的端口 | 引用改「**计划选定**（满足 §4 端口错开约束）」；T6 Step 6 加回写步：最终接线形态（含 15432 与「仅同宿主可达」前提，对照主 compose 头注别误读为容器服务名矛盾）写回 customer-onboarding 阶段 5 |
 | 6 | T3 的 dbt 版本核对出处不存在：「layered §11 资源画像实测的 dbt 版本」——§11 只有内存画像、无版本号 | 出处改「⚠️ 待实测人确认（拍板时以现场实际安装为准）」；开工前置表加**外部输入⑥**（人给版本号或确认 1.9.8），W1g gate（波次表 + T6 Step 1 GATE）同步带上 |
 | 7 | T8 用了 `L1Metric` 类型名——仓内既有类型是 `MetricDef`（`modules/data/domain/authz.ts` 导出、`metric-store.ts` 消费；grep 实测），没有 L1Metric | Interfaces 改 `compileL2(base: MetricDef, …)`，注明复用既有类型、扩展字段走 alias 关系、不另起平行类型 |
+
+**第四轮：T1 交付实证带回的订正（2026-09-22，T1 评审 I-1；范文块**本体已换**，非加注记）**
+
+| # | 缺陷（原文怎么错的） | 修正（落点） |
+|---|---|---|
+| 1 | T1 Step 1 的 `sed` 目标写 `src/common/allocator/allocator_jemalloc.cpp`——**该路径在 pg_duckdb 树内不存在**（该文件属 `third_party/duckdb`；v1.1.1 树内 `src/` 无 `common/` 目录）⇒ 照抄即 `No such file` 当场失败 | Step 1 范文块路径补全进第三方树内 |
+| 2 | T1 Step 1 **缺子模块哨兵步** ⇒ tarball-only 构建必挂（Makefile 的 `git submodule update --init --recursive` 在非 git 树 fatal，退出 128） | Step 1 范文块增 `mkdir -p .git/modules/third_party/duckdb && touch …/HEAD` |
+| 3 | T1 Step 1 最终 stage **缺运行期依赖** ⇒ 扩展加载失败（`libcurl.so.4` 是 `libduckdb.so` 的 NEEDED；多阶段**不继承** build stage 的包） | Step 1 范文块最终 stage 增 `apt-get install -y --no-install-recommends libcurl4` |
+| 4 | T1 Step 2 的 `tags:` 用 `${{ github.repository_owner }}`——org 名 `MYTech-Co-LTD` 含**大写**，而 OCI 引用名要求小写 | Step 2 范文块改字面量 `ghcr.io/mytech-co-ltd/…`（并写明实测失败时机 = 解析 tag 阶段） |
+| 5 | **根因不止计划**：同一个被证伪的旧稿还在 spec §11.4（自称「实测，可照抄」）里；T1 brief 是同源生成物 | spec §11.4 同批订正（补路径口径 / 哨兵 / 多阶段运行期依赖 + 收窄「可照抄」边界）；brief 不手改——由 `task-brief` 从本计划重新生成（手改 = 双写漂移） |
+| 6 | 计划层**选型风险未标注**：pg_duckdb v1.1.1 × DuckDB v1.5.5 是未经任何一方验证的配对（评审 I-2） | T1 Interfaces 下补配对风险条（含 ARG 回退 `main` 的口径）；W1g gate 两处（波次表 + T6 Step 1 第 6 项）写成**显式前置** |
+
+**第五轮：订正口径的连带残留清扫（2026-09-22，F3b 复核对本计划的 N-2 / N-3 / N-4）**
+
+| # | 缺陷（原文怎么错的） | 修正（落点） |
+|---|---|---|
+| 1 | **头文件计数口径没写，与 T1 runbook 侧的 52/52 打架**（复核 N-2；裁决 = **52 正确**：`#include "duckdb/…"` 双引号形态 43 + `<duckdb/…>` 尖括号形态 10，**两形态并集去重 52**；复核对 52 条逐条 HTTP 探针 = 52/52 全 200。只取双引号形态是更窄的口径，不是算错） | T1 Interfaces 的版本配对风险条改 **52 个 / 52/52 全在**，并**把口径写进正文**（两形态并集去重）——「口径没写」正是两处数字打架的根因 |
+| 2 | **回退口径只提「改 ARG」不提「出新 tag」**（复核 N-3，与 runbook §5.2 同源的共同盲区）：tag 是 Step 2 workflow `tags:` 与 runbook §1b ⑦ `docker commit` 的**硬编码字面量**，不由 ARG 推导 ⇒ 只改 ARG 重跑 = 把 `main`（或某个 SHA）编出的产物盖到钉死的 `1.1.1-duckdb1.5.5` 上（撞 §0「旧 tag 保持可回滚」；且 `main`/SHA 本就不在 tag 公式的取值域内） | T1 Interfaces 风险条 + W1g gate（T6 Step 1 第 6 项）各补半句：**回退须按 §0 出「新」tag**（回退场景建议 `main-duckdb1.5.5` / `<sha8>-duckdb1.5.5`），**不得复用 `1.1.1-duckdb1.5.5`**。**另自查扩面**：T1 Step 3 的 ④（升级路径「改 ARG 重跑」）属同一盲区，一并补（升级/回退都要同步出新 tag） |
+| 3 | 第一轮核验附表仍写「Dockerfile 逐字转录，别「优化」」——而 §11.4 原文**已被本轮明文证伪**（spec 写明「旧稿是已证伪的版本，别再照抄旧稿」）⇒ 照抄 = 要求把 Dockerfile 与一个已证伪的范文块逐字对齐（复核 N-4；同文档 L199 已改否定式，此为其**唯一残留**） | 结论列改「以 **T1 交付物 Dockerfile** 为准（§11.4 原文已证伪，见 Step 1 后订正说明），别「优化」」 |
+
+**第五轮执行自查纪律第 5 条的 grep 结果（实测，供 reviewer 复核）**：
+
+- **头文件计数口径**：全文**已无**旧口径的肯定式写法（原「v1.1.1 引用的…头在 v1.5.5 中全在」已改为 52/52 并写明口径）；其余数字命中**全是**端口 `5432` / `15432`（L176/181/355/374/453/479/502/531/758/759）与乐檬**列数漂移**（L588/612/998），与本口径无关。
+- **「逐字转录」**：**执行面只剩 L199 一处**，且是否定式（「**不是**逐字转录」）；原第一轮附表的肯定式写法已按本表第 3 行改掉（本表引用行不计）。
+- **「回退」**：L207 / L307 / L746 三处**执行步骤**均已带「出新 tag」半句；第四轮记录行里的「含 ARG 回退 `main` 的口径」是**历史落点描述、非执行步骤**，按原样保留。
 
 **两个取舍的裁定记录（开工前扫描，均维持，已写进「有意的取舍」节）**：
 - **取舍 A 维持**——facade/治理归 P2：与 spec §11.8 分期表逐字一致（issue #150 的平铺清单无分期语义）。

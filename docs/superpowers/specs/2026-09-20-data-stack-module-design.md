@@ -817,25 +817,52 @@ platform-core
 **▶ 观察项（补充）**：`duckdb_mcp` 将来是否长出身份面（token / user / 按主体的工具授权）。
 若长出，facade 的一层可省；**但「租户绑定」这件事无论它怎么长都仍归平台**。
 
-#### 11.4 自建 pg_duckdb 的 recipe（实测，可照抄）
+#### 11.4 自建 pg_duckdb 的 recipe（单容器 `docker commit` 路径 = 实测；多阶段容器化路径 = 已按 T1 实证订正）
+
+> **「可照抄」的边界（2026-09-22 订正）**：本节原标题自称「实测，可照抄」——**这个说法只对 ④ 的单容器 `docker commit` 路径成立，而且要先补上 ①′ 哨兵步**；**多阶段容器化路径已被 T1 交付实证证伪**（照抄本节原文即构建失败或加载失败）。订正依据见本节末。
 
 ```
 依赖：liblz4-dev libzstd-dev zlib1g-dev libcurl4-openssl-dev（+ cmake/ninja/g++/postgresql-server-dev-17）
 源码：gh api repos/duckdb/duckdb/tarball/v1.5.5    ← 别用 git clone（子模块在这条网上爬不动）
 
 ① 预填 third_party/duckdb（解压 tarball，绕开 git submodule）
+①′ 补子模块哨兵：mkdir -p .git/modules/third_party/duckdb && touch .git/modules/third_party/duckdb/HEAD
+    （不加必挂：Makefile 的每个目标文件都挂在 $(OBJS): .git/modules/third_party/duckdb/HEAD 上，
+     该路径缺失时 make 去执行 `git submodule update --init --recursive`，
+     而 tarball 解出的树不是 git 仓库 ⇒ fatal: not a git repository，退出 128。
+     源码已由 ① 预填到位 ⇒ 哨兵文件让 make 判该 target up-to-date、跳过 recipe 即可解除。
+     main 与 v1.1.1 的 Makefile 都有这条前置 ⇒ 与 pg_duckdb 版本无关）
 ② make DUCKDB_VERSION=v1.5.5 \
      DUCKDB_CMAKE_VARS="-DCXX_EXTRA=-fvisibility=default -DBUILD_SHELL=0 -DBUILD_PYTHON=0 \
        -DBUILD_UNITTESTS=0 -DDISABLE_UNITY=1 -DOVERRIDE_GIT_DESCRIBE=v1.5.5" \
      CMAKE_BUILD_PARALLEL_LEVEL=2 -j2
-③ 手工补一行上游 bug：src/common/allocator/allocator_jemalloc.cpp 缺
+③ 手工补一行上游 bug：third_party/duckdb/src/common/allocator/allocator_jemalloc.cpp 缺
    #include "duckdb/common/string_util.hpp"
+   （⚠️ 该文件属 DuckDB、在第三方子模块树内——pg_duckdb 自己的 src/ 下没有它
+    （v1.1.1 实证：src/ 只有 catalog/pg/scan/utility/vendor 与 pgduckdb_*.cpp，无 common/ 目录）；
+    旧稿的简写 src/common/allocator/... 会 No such file 当场失败）
 ④ make install → docker commit 成派生镜像
 ```
 
 **三个编译配置缺一不可**：`DISABLE_UNITY=1`（统一编译单元 OOM）、
 `CMAKE_BUILD_PARALLEL_LEVEL=2`（外层 `-j` 压不住 ninja，它按 nproc 起 8 个 ⇒ OOM）、
 **jemalloc 那个 include 补丁（上游真 bug）**。
+
+**④ 单容器 `docker commit` 路径为什么碰不到「运行期缺库」这类坑**（⇒ 这才是「可照抄」的真实边界）：
+
+- **运行期 `libcurl4` 天然被带进来**：`libcurl4-openssl-dev`（构建依赖）依赖 `libcurl4`；`docker commit`
+  提交的是**整个构建容器**，那份 `libcurl4` 就留在镜像里了 ⇒ 无需显式装。
+  **多阶段容器化路径不继承 build stage 的包**（最终 stage 只拿 `COPY --from=build` 的产物）⇒
+  **必须显式 `apt-get install -y --no-install-recommends libcurl4`**。不装 = 运行期报
+  `libcurl.so.4: cannot open shared object file`——这是**扩展加载失败，不是构建失败**
+  （`libcurl.so.4` 是 `libduckdb.so` 的 NEEDED，`ldd` 可验；`postgres:17` 基镜像不带它）。
+- **单容器路径没有「多阶段继承」这回事**（只有一个 stage），故无此坑。
+- ⚠️ **但 ①′ 哨兵不是 ④ 能豁免的**：它源于「tarball 解出的树不是 git 仓库」这条性质，与单容器/多阶段**无关**
+  ——两条路径在同一 cwd 跑同一个 Makefile，前置条件一样。所以「④ 可照抄」的前提是**先补 ①′**。
+
+> **订正依据（2026-09-22，T1 交付实证 + 评审复核）**：本书原文的 ③ 是**简写**（未点明在第三方树内），
+> ①′ 哨兵与多阶段运行期 `libcurl4` 是**缺项**——三者照抄即失败。多阶段容器化路径（`deploy/pg-duckdb/Dockerfile`）
+> 已按实证订正；本节已同步（①′ / ③ 路径 / ④ 的边界说明）。**旧稿是已证伪的版本，别再照抄旧稿。**
 
 #### 11.5 运行期三个硬约束（实测踩到，必须知道）
 
