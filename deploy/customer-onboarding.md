@@ -30,6 +30,9 @@ platform-core-<客户>        composePath=deploy/docker-compose.yml   ← 平台
 platform-core-<客户>-data   composePath=deploy/data-compose.yml     ← 数据栈（duckle/dbt/pg_duckdb/BI）
 ```
 
+> ⚠️ 拆缝所依赖的 `deploy/data-compose.yml`（及 `duckle/`、`dbt/`）**尚未进仓**（见 §1 标注，
+> issue #150）——部署模型经 lab compose 实测可行，但仓内工件落地前照此拆缝会失败。
+
 **三条硬规则**：
 
 1. **不开客户分支**。差异用三层 + enabled 开关表达。
@@ -43,6 +46,10 @@ platform-core-<客户>-data   composePath=deploy/data-compose.yml     ← 数据
 ---
 
 ## 1 仓库目标形态（单分支，模块与数据栈同居）
+
+> ⚠️ 本节描述的是数据栈落地后的**目标形态**，对应文件（`deploy/data-compose.yml`、`contracts/`、
+> `duckle/`、`dbt/`）**尚未进仓**（issue #150 跟踪）。
+> 照本节直接拆缝会失败——落地前请以仓内实际存在的工件为准。
 
 ```
 platform-core/
@@ -80,6 +87,8 @@ platform-core/
 CUSTOMER=<客户>
 dbt run --select "path:models/common,path:models/customers/$CUSTOMER"
 ```
+
+> `dbt/` 模型目录尚未进仓（issue #150）——数据栈落地后此命令才有对象可跑。
 
 ---
 
@@ -144,6 +153,10 @@ PATCH .../services/<svc>  { "enabled": false }   # 客户不用哪块关哪块
 ```
 
 ### 阶段 5：拆缝（仅当 §3 决策 1 选了拆）
+
+> ⚠️ 依赖的 `deploy/data-compose.yml` **尚未进仓**（issue #150，见 §1 标注）——
+> 数据栈工件落地前本阶段无法执行。
+
 ```sh
 POST /api/projects        # platform-core-<客户>-data：同仓同分支，composePath=deploy/data-compose.yml
                           # 显式传 serverId（可与平台同机，端口错开；或另一台机）
@@ -156,7 +169,7 @@ PATCH .../env             # 数据栈自己的 env（CUSTOMER=<客户>、对象�
 |---|---|
 | 建租户行（**先于一切验收**，否则整站 500 而 `/healthz` 仍 200） | 能登录 |
 | 该客户的账套/主体清单 | 能列出 |
-| dbt 首次物化（`common` + `customers/<客户>` select） | 有数 |
+| dbt 首次物化（`common` + `customers/<客户>` select；`dbt/` 尚未进仓，issue #150） | 有数 |
 | 语义声明（L2 进 DB，不进 git） | 词表有内容 |
 
 ### 阶段 7：验收（逐项勾，别只看部署绿）
@@ -183,7 +196,7 @@ PATCH .../env             # 数据栈自己的 env（CUSTOMER=<客户>、对象�
 |---|---|---|
 | 1 | merge main = 门禁全绿**自动部署**（全量） | adopt runbook §7 |
 | 2 | **例行模块修复用 serviceIds 定向部署**——全量部署会重建该 project 全部容器（把客户 pg/Metabase 全重启）；定向部署其余容器 kept running（实测 Test 4a） | 2026-09-21 |
-| 3 | **改 canonical compose 前先想全体客户**：新服务会自动出现在每个客户下次部署（实测 Test 3）。三选一：全体都要 / 给不需要的客户立即 patch `enabled:false`（有时窗）/ 可选服务放 `data-compose.yml` | 2026-09-21 |
+| 3 | **改 canonical compose 前先想全体客户**：新服务会自动出现在每个客户下次部署（实测 Test 3）。三选一：全体都要 / 给不需要的客户立即 patch `enabled:false`（有时窗）/ 可选服务放 `data-compose.yml`（尚未进仓，见 §1） | 2026-09-21 |
 | 4 | 改 env / 改 enabled 后必须显式触发一次部署 | 实测 |
 | 5 | 发版 / 回滚 / 看监控都按 project 各自操作（无客户维度批量） | 控制面结构 |
 
