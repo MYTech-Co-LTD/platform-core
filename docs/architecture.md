@@ -38,10 +38,14 @@
 > ⚠️ **本段是目标形态，不是既成事实**：`deploy/data-compose.yml` 随 P1 的 T3 落仓。B7 白名单自本
 > 版起放行该路径（**缺席不违规**——真仓此刻就没有它）。
 >
-> **三条显式接受**（spec 已点名/记录，不默默使用）：① Metabase **locked parameters 锁租户**是官方
-> 点名「不推荐承载敏感数据」的用法——**接受**：租户隔离的主力在数据层（凭据 + schema），locked
-> parameter 只是嵌入路径上的执行点；② 嵌入页带「Powered by Metabase」**水印**、③ 嵌入页**不能禁
-> CSV 导出**——**接受**：导出的是租户自己那份数据，不构成跨租户外带面。
+> **三条显式接受**（spec 已点名/记录，不默默使用；**逐条各带自己的理由**——接受 ≠ 无风险）：
+> ① Metabase **locked parameters 锁租户**是官方**明确不建议**用于敏感数据的用法——**接受**：租户
+> 隔离的主力在数据层（凭据 + schema），locked parameter 只是嵌入路径上的执行点；
+> ② 嵌入页带「Powered by Metabase」**水印**——**接受**：**去掉水印要 Pro/EE**（成本），而本形态
+> 不打算为此升版；抹白标不可配置是本条的实际代价；
+> ③ 嵌入页**不能禁 CSV 导出**（官方：只有 Pro/EE 能关数据下载）——**接受**：导出的是租户自己那份
+> 数据，**不构成跨租户外带面**；**但残余风险要写明**：这意味着**我们无法阻止租户把数据导出到平台
+> 之外**——这是显式接受的风险，不是「没有风险」。
 
 ### 1.3 生产通道，与「为什么绑回环不是可选项」
 
@@ -73,8 +77,8 @@
 | `modules/<id>` | 业务模块。现为 `demo`（占位）、`aftersales`（**第一个真业务模块**：售后域。M2a 只有域 API + 建表 + ZOS 预签名，console/mobile 归 M3）与 `data`（**数据问数域**：三条消费通道共用一个授权核心——会话 / 个人 Key+PAT / 企微渠道凭证；见 `docs/superpowers/specs/2026-09-21-data-query-channels-design.md`） | `@platform/sdk`（+ 前端库；`aftersales` 另有 `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` 做天翼 ZOS 预签名；`data` 另有模块内 LLM 编排，**无** S3 依赖） | 无人；由宿主装载 |
 | `scripts/` | 门禁与工具 | — | CI |
 | `deploy/` | 部署面：compose / Dockerfile / runbook | — | 生产接入 |
-| `deploy/data-compose.yml` + `deploy/pg-duckdb/` | **数据面（部署单元 B，目标形态——compose 文件随 P1 的 T3 落仓）**：`deploy/pg-duckdb/` 是自建 `pg_duckdb` 镜像（PG 内嵌 DuckDB 执行面，T1 已落仓）——数据栈引入的**新组件**；单元 B 的编排里另有 Metabase / `metabase-db` / `duckle`·`dbt` 一次性 runner | `deploy/pg-duckdb/Dockerfile` → `ghcr.io/mytech-co-ltd/platform-core-pg-duckdb`（tag 见该 README） | 无人（可独立部署）；拆缝时作独立 openship project，接线见 `deploy/customer-onboarding.md` §5 |
-| `dbt/` `contracts/` `duckle/` | **数据工件（目标形态——随 P1 的 T4/T5 落仓）**：dbt staging / 语义声明、采集契约、管线。**均非 Node workspace 包**，因此落在 B1（跨 schema）与 B9（env 键齐全）的扫描根之外，由 `scripts/check-data-models.mjs`（T4 起）单独守 | — | 单元 B 的 runner 服务读它们 |
+| `deploy/data-compose.yml` + `deploy/pg-duckdb/` | **数据面（部署单元 B，目标形态——compose 文件随 P1 的 T3 落仓）**：`deploy/pg-duckdb/` 是自建 `pg_duckdb` 镜像（PG 内嵌 DuckDB 执行面，T1 已落仓）——数据栈引入的**新组件**；单元 B 的编排里另有 Metabase / `metabase-db` / `duckle`·`dbt` 一次性 runner | `deploy/pg-duckdb/Dockerfile` → `ghcr.io/mytech-co-ltd/platform-core-pg-duckdb`（tag 见该 README；**镜像本身随首次 dispatch 构建产出，尚未存在**，见该 README §5.2） | 无人（可独立部署）；拆缝时作独立 openship project，接线见 `deploy/customer-onboarding.md` §5 |
+| `dbt/` `contracts/` `duckle/` | **数据工件（目标形态——随 P1 的 T4/T5 落仓）**：dbt staging / 语义声明、采集契约、管线。**均非 Node workspace 包**，因此落在 B1（跨 schema）与 B9（env 键齐全）的扫描根之外。**但别读成「它们被守住了」**：`scripts/check-data-models.mjs`（T4 起）按计划只做 **dbt 工件的静态门禁**（staging 模式 / 语义声明必填 / 同名唯一 / 对账测试存在），**不覆盖 env 键**；而 `duckle/`（T5）与 `contracts/` **不在 B1/B8/B9 任何扫描面内** ⇒ 它们的 env 键等约束**当前没有任何静态门禁**（需要时由 T4 按其职责扩面，或在评审里守） | — | 单元 B 的 runner 服务读它们 |
 
 两条**不可越过的边界**：
 

@@ -42,7 +42,7 @@
 | 项目类型 | `projectType=services`、`framework=docker-compose` | compose 编排的多服务项目 |
 | 运行模式 | `runtimeMode=docker`、`productionMode=host`、`sourceKind=git` | 与 `woke` 项目同形 |
 | 仓库根 | `rootDirectory=deploy` | ⚠️ **2026-09-13 订正：原文写 `.`，是错的。** openship 把 compose 的 `build.context: ..` **相对 `rootDirectory`** 解析 ⇒ 填 `.` 时 `..` 逃出仓库，部署**必失败**：`Invalid Compose build context: path escapes the linked repository`。填 `deploy` 才对（= `deployments/prepare` 自己返回的值，**以 prepare 为准**） |
-| compose | `composePath=deploy/docker-compose.yml` | **全仓两份 compose 之一**（部署单元 A；另一份是 `deploy/data-compose.yml` 部署单元 B/数据面，约束 B7 白名单由 `scripts/check-compose.mjs` 机检守卫），不要在生产另写第三份 |
+| compose | `composePath=deploy/docker-compose.yml` | **全仓两份 compose 之一**（部署单元 A；另一份是 `deploy/data-compose.yml` 部署单元 B/数据面——**P1 起放行，文件缺席不违规**，约束 B7 白名单由 `scripts/check-compose.mjs` 机检守卫），不要在生产另写第三份 |
 | env | 根 `.env.example` 的 13 键（见下表） | B9 门禁保证「代码引用的键都有声明」，故这份清单就是全集 |
 | 卷 | `pgdata`（compose 命名卷 → `<project>_pgdata`） | PG 数据。生产要进备份策略 |
 | 域名 | `platform.<公司域>`（决策 3） | 走 openship edge 签证书 |
