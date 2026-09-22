@@ -55,11 +55,12 @@ function run(script: string, root: string): RunResult {
 const out = (r: RunResult): string => r.stdout + r.stderr
 
 /**
- * 最小**合法** compose（B7 两条规则都满足：唯一文件 + 文件里每条 ports 都绑回环，
- * 且两个受管服务 postgres / server 各自都有映射）。
+ * 最小**合法**主 compose（B7 两条规则都满足：文件在**白名单内**（P1 起白名单两份，见下方
+ * 「B7 双白名单」describe）+ 文件里每条 ports 都绑回环，且两个受管服务 postgres / server
+ * 各自都有映射——受管名只对主 compose 生效）。
  * 原 fixture 用 `services: {}` 的裸壳 —— R5 修复轮给 check-compose 加了「宿主端口必须绑
  * 回环」的规则后，裸壳会被判成"两个服务都缺端口映射"。B7 的断言（干净树必须 exit 0）
- * 一字未动，只是 fixture 换成了**合法的**输入：不这么换，测的就不是"唯一性"而是"撞上另一条规则"。
+ * 一字未动，只是 fixture 换成了**合法的**输入：不这么换，测的就不是"白名单"而是"撞上另一条规则"。
  */
 const MINIMAL_COMPOSE = [
   'services:',
@@ -249,8 +250,8 @@ describe('lint-architecture: 真实仓库', () => {
   })
 })
 
-describe('check-compose: B7 全仓唯一 compose', () => {
-  it('只允许 deploy/docker-compose.yml', () => {
+describe('check-compose: B7 白名单两份 compose', () => {
+  it('只允许白名单两份（主 compose + 数据面 compose）；白名单外的第三份仍违规', () => {
     const ok = fixture({
       'deploy/docker-compose.yml': MINIMAL_COMPOSE,
       'deploy/README.md': '# deploy\n',
@@ -427,6 +428,56 @@ describe('check-compose: B7 宿主端口必须绑回环（R5 修复轮 S1）', (
   it('无 deploy/docker-compose.yml 的树不做规则二判定（不要求该文件必须存在）', () => {
     const r = run('check-compose.mjs', fixture({ 'README.md': '# 空仓\n' }))
     expectClean(r)
+  })
+})
+
+describe('check-compose: B7 双白名单（P1 数据面 compose，issue #150）', () => {
+  // 复用既有 fixture()/run()/expectClean；DATA_COMPOSE 是端口全回环的合法数据面最小例
+  const DATA_COMPOSE = [
+    'services:',
+    '  pg_duckdb:',
+    '    ports:',
+    "      - '127.0.0.1:15432:5432'",
+    '',
+  ].join('\n')
+
+  it('★ 主 compose + data-compose（全回环）→ 干净【本任务的行为变更，改 ALLOWED 前先红】', () => {
+    const r = run('check-compose.mjs', fixture({
+      'deploy/docker-compose.yml': MINIMAL_COMPOSE,
+      'deploy/data-compose.yml': DATA_COMPOSE,
+    }))
+    expectClean(r)   // 现状红：data-compose 被判「多出来的 compose 文件」
+  })
+
+  it('★ data-compose 缺席 → 仍干净（拆缝是可选形态，第二份文件不强制存在）', () => {
+    expectClean(run('check-compose.mjs', fixture({ 'deploy/docker-compose.yml': MINIMAL_COMPOSE })))
+  })
+
+  it('★ 规则二覆盖第二份文件：data-compose 的非回环端口违规', () => {
+    const r = run('check-compose.mjs', fixture({
+      'deploy/docker-compose.yml': MINIMAL_COMPOSE,
+      'deploy/data-compose.yml': DATA_COMPOSE.replace("'127.0.0.1:15432:5432'", "'15432:5432'"),
+    }))
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('deploy/data-compose.yml')
+    expect(out(r)).toContain('未绑回环')
+  })
+
+  it('★ 第三份 compose 仍违规（白名单只有两份）', () => {
+    const r = run('check-compose.mjs', fixture({
+      'deploy/docker-compose.yml': MINIMAL_COMPOSE,
+      'deploy/data-compose.yml': DATA_COMPOSE,
+      'dbt/docker-compose.yml': MINIMAL_COMPOSE,
+    }))
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('dbt/docker-compose.yml')
+  })
+
+  it('★ 判据 b 不跨文件：data-compose 里没有 postgres/server 不构成违规（受管名只对主 compose）', () => {
+    expectClean(run('check-compose.mjs', fixture({
+      'deploy/docker-compose.yml': MINIMAL_COMPOSE,
+      'deploy/data-compose.yml': DATA_COMPOSE,
+    })))
   })
 })
 

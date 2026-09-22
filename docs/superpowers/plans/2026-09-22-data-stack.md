@@ -1086,6 +1086,20 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 - **「逐字转录」**：**执行面只剩 L199 一处**，且是否定式（「**不是**逐字转录」）；原第一轮附表的肯定式写法已按本表第 3 行改掉（本表引用行不计）。
 - **「回退」**：L207 / L307 / L746 三处**执行步骤**均已带「出新 tag」半句；第四轮记录行里的「含 ARG 回退 `main` 的口径」是**历史落点描述、非执行步骤**，按原样保留。
 
+**第六轮：T2 派发时的 grep 驱动面补全（2026-09-22，T2 交付带回；编号续第五轮，不重复用「第五轮」）**
+
+| # | 缺陷（原文怎么错的） | 修正（落点） |
+|---|---|---|
+| 1 | **`check-compose.mjs` 的改点计划只点名 3 处，实际是 8 处引用 + 5 处口径文字**。计划 Step 2 只说：`ALLOWED` 常量、`checkHostPortBindings` 遍历、头注规则一。实际漏列：**L57 `REQUIRED_PORT_SERVICES` 变死 const**（被新 Map 取代——计划只说加 Map 没说删旧 const，留 = 死代码 + `typecheck:scripts` 未使用告警）；**L234 `compose 片段` 报错串里硬编码单路径**；**头注判断②**（「全仓只有一个 compose 是字面要求」）、**判断③**（「规则二只对被放行的那个文件生效」）、**判据 b 说明**（「postgres / server 两个受管服务」需补「按文件给」）、**L49 doc 注释**（「唯一被放行的 compose 文件」）、**L161 函数 doc**、**L175/L189 行内注释**、**L239 报错串插值**，以及三处 `file: ALLOWED`（判据 a/b/c 的报错要指向**当前**文件） | T2 按实际面全改（含删死 const、报错串改 `ALLOWED.join(' / ')`、判据 b 服务清单改 `REQUIRED_PORT_SERVICES_BY_FILE` 按当前文件取）。另：计划写 `export const ALLOWED`，实测**全仓零消费方**（B7 测试是黑盒 spawn、不 import）⇒ 维持**不导出**（不新增没人用的 API） |
+| 2 | **活文档里的同一口径计划完全没列**：「全仓唯一 compose」/「唯一编排事实源」还写在 `AGENTS.md:41`（**项目事实唯一来源，优先级最高**）、`README.md:10`、`deploy/README.md:7`、`deploy/openship-adopt.md:45` 与 `:402`、`deploy/docker-compose.yml:1`（文件头注释）。T3 落 `data-compose.yml` 后这 6 处即为**错口径**，且散在多份活文档里 | T2 一并收敛为「白名单两份」口径（一行级改动，保留原句仍成立的部分如「不要在生产另写第三份」），改后重跑 grep 复核（见下「第六轮 grep 复核」） |
+| 3 | **历史快照两处必须不动，计划与 brief 都未点名其「不改」性质**：`docs/superpowers/specs/2026-09-20-data-stack-module-design.md:34` 的「全仓唯一 compose…」落在 **「### 现状：为什么今天接不进来」** 表里——该节的**前提就是当时接不进来**，改它 = 篡改历史记录；`docs/superpowers/specs/2026-09-12-platform-architecture-doc-design.md:84` 是 architecture.md **自身的设计稿**，同属快照 | 两处**不改**，仅在 T2 报告登记（口径正典唯二：`docs/architecture.md` §1.2/§4.1 + 守卫本体）。其余 `specs/*.md`、旧 `plans/*.md` 的旧口径同样不改 |
+
+**第六轮 grep 复核（T2 交付时实测，供 reviewer 复核）**：
+
+- `grep -rn "全仓唯一\|全仓只\|唯一 compose\|唯一编排事实源\|唯一被放行" --include='*.md' --include='*.yml' .`（去 node_modules）后，**活文档面已无旧口径残留**：命中只剩 ① `docs/superpowers/**` 历史 spec/plan（含本计划 L333 / L1034 的**决策时证据记录**——写的是「当时实测在位」，属快照，不改）；② 无关同形词（`parsePageParam` / `authz.ts` 的「全仓唯一一份」指单实现，与 compose 无关）。
+- `grep -n "ALLOWED\|唯一\|只许\|只放行" scripts/check-compose.mjs scripts/lint-architecture.test.ts` 命中全部落在**新口径**（白名单遍历 / 新 describe 标题），无旧单文件口径残留。
+- **本表同时是一处「计划自身文字已过期」的登记**：Task 2 Step 1 的「在既有『B7 全仓唯一 compose』describe 里」与 L346 的描述，指的是**改动前**的 describe 标题（T2 已改为「B7 白名单两份」）——执行步骤类文字按**快照**保留，后来者照抄前先看本表。
+
 **两个取舍的裁定记录（开工前扫描，均维持，已写进「有意的取舍」节）**：
 - **取舍 A 维持**——facade/治理归 P2：与 spec §11.8 分期表逐字一致（issue #150 的平铺清单无分期语义）。
 - **取舍 B 维持**——不建第二数据模块、全扩 `modules/data`：扫描实测风险为低（manifest 约 13→19 条无结构性问题；报表页签走单一 frontend 入口不触 registry 面；零新权限码；只碰 `data.*`）。

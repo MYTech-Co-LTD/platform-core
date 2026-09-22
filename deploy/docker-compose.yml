@@ -1,4 +1,5 @@
-# deploy/docker-compose.yml — 平台底座单机编排（**全仓唯一的 compose 文件**，约束 B7）
+# deploy/docker-compose.yml — 平台底座单机编排（**全仓两份 compose 之一，部署单元 A**，约束 B7
+# 白名单；另一份是 deploy/data-compose.yml 部署单元 B/数据面，P1 起放行）
 #
 # 两个用法，语义完全一致，不是两份编排：
 #   ① 只起 PG（本地冒烟/开发最常用）：

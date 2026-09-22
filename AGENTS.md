@@ -38,8 +38,9 @@ Casdoor 后台运营，租户管理员在 console 自建页管理——spec D4 �
    `tenant:admin`）与读侧（session scopes）必须遍历 `platform.tenant` 各 org，不能只管单 org。
 7. **free 私仓无服务端分支保护**（org plan=free 没有 rulesets）：直推 main 会被 CI 拒发版 +
    main-guard 事后绊线点名——**别依赖服务端拦截，也别关掉这两道**。
-8. **compose 全仓唯一**（`deploy/docker-compose.yml`，约束 B7）+ 所有 ports 必须回环
-   `127.0.0.1:`（`scripts/check-compose.mjs` 守卫）；`.env.example` 键齐全门禁（B9，
+8. **compose 全仓只两份**（约束 B7，白名单：`deploy/docker-compose.yml` 部署单元 A +
+   `deploy/data-compose.yml` 部署单元 B/数据面，P1 起放行；第三份即违规）+ **两份**的 ports 必须
+   回环 `127.0.0.1:`（`scripts/check-compose.mjs` 守卫）；`.env.example` 键齐全门禁（B9，
    `scripts/check-env-example.mjs`）：代码引用的 env 键必须在模板里声明。
 9. **Casdoor 三铁律**（真机实测，详见 SaaS 管理域 spec §1.2/§4.1）：时间一律 RFC3339 UTC；
    delete 类端点一律 JSON body `{owner,name}`（query 形式静默无效）；update 类端点一律带
