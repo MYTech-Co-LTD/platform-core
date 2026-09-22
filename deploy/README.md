@@ -4,7 +4,7 @@
 
 | 文件 | 是什么 | 什么时候看它 |
 |------|--------|--------------|
-| `docker-compose.yml` | **全仓唯一的 compose**（约束 B7，`scripts/check-compose.mjs` 守卫）：`postgres` + `server` 两个服务 | 本地起栈、单机跑；adopt 时作为 `composePath` |
+| `docker-compose.yml` | **全仓两份 compose 之一**（约束 B7 白名单；另一份是 `data-compose.yml` 部署单元 B/数据面，P1 起放行。`scripts/check-compose.mjs` 守卫）：`postgres` + `server` 两个服务 | 本地起栈、单机跑；adopt 时作为 `composePath` |
 | `Dockerfile.server` | 宿主镜像（两阶段，node:22-alpine）。文件头写了三条「容器里跑挂了先回来对」的目录契约 | 改镜像、排查启动期故障 |
 | `openship-adopt.md` | OpenShip 接入 + 生产部署操作单：前置决策 → adopt → env → 域名 → 部署触发 → 验证 → 回滚 | **待人工执行**；有控制面权限者照它敲 |
 | `branch-protection-runbook.md` | main 分支保护操作单 | **待人工执行**；有仓库 admin 权限者照它敲 |

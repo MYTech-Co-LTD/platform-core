@@ -6,10 +6,12 @@
 //       有违规 → exit 1，stderr 每条一行 `相对路径: [B7] 说明`。
 //
 // 两条规则（同一脚本、同一 [B7] 标签——都是「compose 这个部署事实源」的约束）：
-//   规则一（原）：全仓只放行 deploy/docker-compose.yml 本身。等价命令
+//   规则一（原；P1 起白名单扩到两份）：全仓只放行**白名单**里的 compose 文件（见 ALLOWED）——
+//     即 `deploy/docker-compose.yml`（部署单元 A）+ `deploy/data-compose.yml`（部署单元 B，
+//     数据面，issue #150）。等价命令
 //     `find . -name '*compose*.y*ml' -not -path './node_modules/*'`；
 //     另有 `*compose*fragment*` 命中即违规（compose 片段是变相的多 compose 编排入口）。
-//   规则二（R5 修复轮 S1 新增；R5-2 建议改 1/2/3 扩展）：deploy/docker-compose.yml 的
+//   规则二（R5 修复轮 S1 新增；R5-2 建议改 1/2/3 扩展）：**白名单各文件**（各自独立）的
 //     **宿主端口绑定**必须收在回环上。为什么需要它：R5 给这些端口加了回环绑定（免绕过 edge），
 //     但**没有任何门禁守着**——把 `127.0.0.1:5432:5432` 改回 `5432:5432` 全绿通过（评审变异
 //     实证）。原守卫只按文件名判唯一性、从不读内容。三条判据：
@@ -17,14 +19,24 @@
 //          两个字面服务名**：只覆盖这两个名字时，往文件里加第三个服务并暴露 `8080:8080`
 //          会全绿，而本规则的目的正是「宿主端口不许留绕过 edge 的面」。要放行别的 host_ip
 //          必须在这里**显式加白名单**，不要靠"那个服务不叫 postgres"蒙混过去。
-//       b) postgres / server 两个受管服务**若出现在文件里**，各自至少要有一条 ports 条目。
+//          **本判据对白名单里存在的每一份文件各跑一遍**（数据面 compose 全内网，端口同样收在回环）。
+//       b) **受管服务名按文件给**（REQUIRED_PORT_SERVICES_BY_FILE）：只有主 compose 有
+//          postgres / server 两个受管服务，各自**若出现在该文件里**至少要有一条 ports 条目。
 //          **整份服务被删不报**——adopt 文档「生产差异」选项 2（不留 postgres、DATABASE_URL
 //          指向托管库）是明列的生产路径，那不是绕过，而是把宿主暴露面整个去掉。
 //          （R5-2 建议改 1：旧实现把"服务不存在"与"有服务但没端口"混成一条违规，于是选项 2
 //          会让 CI 变红且**报错理由与事实相反**。）
-//       c) 认不出的 ports 写法（flow 形式 `ports: ['1:2']` / `ports: []`…）一律判违规。判据 a
-//          扩到「所有条目」之后，这类写法会**一条条目都解析不出来** ⇒ 不显式拦就等于静默放行，
-//          所以这里 fail-closed：宁可让人来扩守卫，也不放行一个可能绑在 0.0.0.0 的映射。
+//       c) 认不出的 **`ports:` 声明行或块内条目**一律判违规，两类：
+//          ① 声明行不是本守卫认的形态（缩进 4 的裸 `ports:`）——flow 形式 `ports: ['1:2']` /
+//             `ports: []` / 缩进不是 4 的 `ports:` 行；
+//          ② **落在 `ports` 块内、缩进不是 6 的列表项**（`- …`）。
+//          判据 a 扩到「所有条目」之后，这两类写法会**一条条目都解析不出来** ⇒ 不显式拦就等于静默
+//          放行，所以这里 fail-closed：宁可让人来扩守卫，也不放行一个可能绑在 0.0.0.0 的映射。
+//          ②是评审 I-1 补的面：条目正则 `^ {6}-\s*(.+)$` 缩进精确，而旧实现的判据 c **只在行内含
+//          `ports` 关键字时**才报 ⇒ 非 6 缩进的条目（缩进 8 / 与 `ports:` 同缩进 4）判据 a 与 c
+//          **同时失明**；主 compose 只靠判据 b 歪打正着（红，但文案是「服务还在却一条 ports 都没有」
+//          ——理由与事实相反），而数据面 compose 的受管名清单为空 ⇒ 连兜底都没有。**只支持 6 缩进
+//          的列表项；其他缩进一律判违规**（认不出就不放行，请改成 6 缩进，或扩本守卫）。
 //     **不在覆盖内**：`network_mode: host` 的服务——该模式下 compose **忽略 ports**，宿主的真实
 //     绑定取决于进程自己的 listen 地址，本守卫读文本读不出来（本仓不用该模式；将来要用得单独扩
 //     守卫，别以为本条规则替它兜了底）。
@@ -34,10 +46,11 @@
 // 三个实现判断：
 //   ① 用 node 递归遍历而不是 spawn `find`：跨平台（Windows 无 find）、可对 fixtures 目录树直接跑。
 //   ② 除 node_modules 外额外跳过 .git：VCS 内部构造上不含 compose 文件，扫描它只是浪费。
-//      （.tmp 等本地目录【不】跳过——「全仓只有一个 compose」是字面要求，留在仓里的临时
-//      compose 一样算多出来的编排事实源。）
-//   ③ 规则二**只对被放行的那个文件**生效（别的 compose 文件已由规则一判违规，不必重复报），
-//      且**文件不存在即跳过**——本门禁不要求该文件必须存在。
+//      （.tmp 等本地目录【不】跳过——「全仓只许白名单里的那几份 compose」是字面要求，留在仓里的
+//      临时 compose 一样算多出来的编排事实源。）
+//   ③ 规则二**对白名单里存在的每一份**各跑一遍，受管服务名按文件取（见判据 b；别的 compose
+//      文件已由规则一判违规，不必重复报），且**单份文件不存在即跳过**——本门禁不要求白名单
+//      每份都存在（数据面 compose 缺席是合法形态：拆缝是可选选项）。
 // 注：整文件级违规没有行号，故输出形如 `deploy/docker-compose.yml: [B7] …`（与
 // scripts/check-manifests.mjs 的无行号报错一致），不伪造 `:1`。
 import { readdir, readFile } from 'node:fs/promises'
@@ -46,15 +59,20 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export const SCRIPT_NAME = 'check-compose'
 
-/** 唯一被放行的 compose 文件（相对 rootDir） */
-const ALLOWED = 'deploy/docker-compose.yml'
+/** 被放行的 compose 文件（相对 rootDir）。P1 起为双白名单：主 compose（部署单元 A）+ 数据面
+ *  compose（部署单元 B，issue #150；目标形态见 `deploy/customer-onboarding.md` §0/§1）。 */
+const ALLOWED = ['deploy/docker-compose.yml', 'deploy/data-compose.yml']
 /** 宿主端口映射必须用的 host_ip 前缀（规则二） */
 const REQUIRED_HOST_IP = '127.0.0.1'
 /**
- * 受管服务（规则二判据 b）：**服务还在**却没写 ports 就报——否则"删掉 ports 行"即可绕过本规则。
+ * 规则二判据 b 的受管服务**按文件**给：只对主 compose 生效——数据面 compose 的服务整份可裁剪
+ *  （`deploy/customer-onboarding.md` 「服务裁剪」旋钮），不设受管名，否则裁剪即红。
+ * 语义不变：**服务还在**却没写 ports 就报——否则"删掉 ports 行"即可绕过本规则；
  * 整份服务被删**不报**（判定靠 parsePorts 的 `has()`，见 checkHostPortBindings 判据 b）。
  */
-const REQUIRED_PORT_SERVICES = ['postgres', 'server']
+const REQUIRED_PORT_SERVICES_BY_FILE = new Map([
+  ['deploy/docker-compose.yml', ['postgres', 'server']],
+])
 /** 不进入的目录：依赖（brief 明示）+ VCS 内部（见头注判断②） */
 const SKIP_DIRS = new Set(['node_modules', '.git'])
 /** find -name '*compose*.y*ml' 的等价判定（对文件名大小写不敏感） */
@@ -72,10 +90,11 @@ const toPosix = (p) => p.split(sep).join('/')
  * 且**只在 ports 块内**收条目 —— 否则 postgres 的 `volumes:` 下的 `- pgdata:/…`
  * 会被当成端口映射。任何缩进 ≤ 4 的新行都终止 ports 块。
  *
- * **已知边界（有意为之，fail-closed）**：flow 形式（`ports: ['1:2']` / `ports: []`）
- * 与引号内换行识别不了 —— 这类行会被 collectUnparsedPortsDeclarations 单独挑出来报违规
- * （判据 c）。报错方向是安全的（宁可让人来改守卫，也不静默放行一个绑在 0.0.0.0 的映射）；
- * 若将来真要用 flow 形式，这里与那条判据必须一起改。
+ * **已知边界（有意为之，fail-closed）**：flow 形式（`ports: ['1:2']` / `ports: []`）、
+ * 引号内换行、以及**缩进不是 6 的列表项**（缩进 8 / 与 `ports:` 同缩进 4 —— YAML 合法且常见）
+ * 都识别不了 —— 这三类行会被 collectUnparsedPortsDeclarations 单独挑出来报违规（判据 c）。
+ * 报错方向是安全的（宁可让人来改守卫，也不静默放行一个绑在 0.0.0.0 的映射）；
+ * 若将来真要用别的缩进或 flow 形式，这里与那条判据必须一起改。
  *
  * @param {string} text
  * @returns {Map<string, string[]>}
@@ -136,75 +155,102 @@ export function normalizePortEntry(entry) {
 }
 
 /**
- * 找出**本守卫认不出**的 ports 声明（规则二判据 c）。
+ * 找出**本守卫认不出**的 ports 声明（规则二判据 c）。两类：
  *
- * 判据：该行含 `ports` 键，但**不是**本守卫认的块序列形态（缩进 4 的裸 `ports:`）。
- * 注释行跳过——文件头与块内的散文里出现 `ports:` 是常态，不该被当成声明。
- * 只返回有问题的行（原文 + 行号），供报错指位。
+ *   ① `kind: 'declaration'`——该行含 `ports` 键，但**不是**本守卫认的块序列形态（缩进 4 的裸
+ *      `ports:`）：flow 形式（`ports: ['1:2']`）、`ports: []`、缩进不是 4 的 `ports:` 行。
+ *   ② `kind: 'entry'`——**落在 `ports` 块内、缩进不是 6 的列表项**（评审 I-1 补的面）。
+ *      条目正则 `^ {6}-\s*(.+)$` 缩进精确 ⇒ 这类行既不进 parsePorts（判据 a 看不见），
+ *      旧实现又因为**行内不含 `ports` 关键字**而判据 c 也不报 ⇒ 一个绑在 0.0.0.0 的映射可以
+ *      完全静默通过。块边界与 parsePorts **同一套**规则（任何缩进 ≤4 的非空白行终止块）。
+ *
+ * 注释行与空行不改变块状态（与 parsePorts 一致）——文件头与块内的散文里出现 `ports:` 是常态，
+ * 不该被当成声明。只返回有问题的行（原文 + 行号 + 类别），供报错指位。
  *
  * @param {string} text
- * @returns {Array<{ line: number, text: string }>}
+ * @returns {Array<{ line: number, text: string, kind: 'declaration' | 'entry' }>}
  */
 export function collectUnparsedPortsDeclarations(text) {
-  /** @type {Array<{ line: number, text: string }>} */
+  /** @type {Array<{ line: number, text: string, kind: 'declaration' | 'entry' }>} */
   const out = []
+  let inPorts = false
   text.split('\n').forEach((raw, i) => {
     const line = raw.replace(/\s+$/, '')
-    if (line.trimStart().startsWith('#')) return
-    if (!/^\s*ports\s*:/.test(line)) return
-    if (/^ {4}ports:\s*$/.test(line)) return // 本守卫认的形态（与 parsePorts 同一判据）
-    out.push({ line: i + 1, text: line.trim() })
+    if (line.trimStart().startsWith('#')) return // 注释行：块状态不变
+    if (line.trim() === '') return // 空行：块状态不变
+    if (/^\s*ports\s*:/.test(line)) {
+      inPorts = true
+      // 本守卫认的形态（与 parsePorts 同一判据）；不是它 ⇒ 声明行本身判违规
+      if (!/^ {4}ports:\s*$/.test(line)) out.push({ line: i + 1, text: line.trim(), kind: 'declaration' })
+      return
+    }
+    if (!inPorts) return
+    const entry = /^(\s*)-\s*\S/.exec(line)
+    if (entry) {
+      // 块内列表项：缩进不是 6 ⇒ 判据 a 解析不到它 ⇒ 这里 fail-closed 兜住
+      if (entry[1].length !== 6) out.push({ line: i + 1, text: line.trim(), kind: 'entry' })
+      return
+    }
+    if (/^ {0,4}\S/.test(line)) inPorts = false // 回到服务级/顶层键 ⇒ 块结束（与 parsePorts 同判据）
   })
   return out
 }
 
 /**
- * 规则二：对唯一放行的 compose 做宿主端口绑定检查（判据 a/b/c 见文件头）。
+ * 规则二：对**白名单里存在的每一份** compose 做宿主端口绑定检查（判据 a/b/c 见文件头）。
+ * 单份文件不存在即跳过——白名单里的文件不要求都存在（数据面 compose 缺席是合法形态）。
  * @param {string} rootDir
  * @param {Array<{ file: string, message: string }>} violations
  */
 async function checkHostPortBindings(rootDir, violations) {
-  let text
-  try {
-    text = await readFile(join(rootDir, ALLOWED), 'utf8')
-  } catch {
-    return // 文件不存在：本门禁不要求它必须存在（见头注判断③）
-  }
-  const byService = parsePorts(text)
+  for (const file of ALLOWED) {
+    let text
+    try {
+      text = await readFile(join(rootDir, file), 'utf8')
+    } catch {
+      continue // 该份文件不存在：本门禁不要求它必须存在（见头注判断③）
+    }
+    const byService = parsePorts(text)
 
-  // 判据 a：**文件里所有** ports 条目一律须绑回环（R5-2 建议改 3 把覆盖面从两个字面
-  // 服务名扩到全文——只覆盖服务名时，新增第三个服务暴露 `8080:8080` 会全绿）。
-  for (const [service, entries] of byService) {
-    for (const entry of entries) {
-      const value = normalizePortEntry(entry)
-      if (!value.startsWith(`${REQUIRED_HOST_IP}:`)) {
+    // 判据 a：**该文件里所有** ports 条目一律须绑回环（R5-2 建议改 3 把覆盖面从两个字面
+    // 服务名扩到全文——只覆盖服务名时，新增第三个服务暴露 `8080:8080` 会全绿）。
+    // 对白名单**每份**文件各跑一遍：数据面 compose 全内网、不进 edge，端口同样收在回环。
+    for (const [service, entries] of byService) {
+      for (const entry of entries) {
+        const value = normalizePortEntry(entry)
+        if (!value.startsWith(`${REQUIRED_HOST_IP}:`)) {
+          violations.push({
+            file,
+            message: `${service} 的 ports 映射 \`${entry}\` 未绑回环——必须写成 \`${REQUIRED_HOST_IP}:<宿主端口>:<容器端口>\`：无 host_ip 前缀的映射落在 0.0.0.0（IPv4 与 IPv6 双栈），任何能访问宿主该端口的人可**绕过 edge**（丢掉证书、限速与访问控制）`,
+          })
+        }
+      }
+    }
+
+    // 判据 b：受管服务**还在**却一条 ports 条目都没有 ⇒ 报（"删掉 ports 行"不该是静默的绕过）。
+    // 受管名**按文件**取：只有主 compose 有（数据面服务整份可裁剪，不设受管名——取不到即不判）。
+    // 整份服务被删 ⇒ 跳过：adopt 文档「生产差异」选项 2 明列了这条路，报它等于报错理由与事实相反。
+    for (const service of REQUIRED_PORT_SERVICES_BY_FILE.get(file) ?? []) {
+      if (!byService.has(service)) continue
+      const entries = byService.get(service) ?? []
+      if (entries.length === 0) {
         violations.push({
-          file: ALLOWED,
-          message: `${service} 的 ports 映射 \`${entry}\` 未绑回环——必须写成 \`${REQUIRED_HOST_IP}:<宿主端口>:<容器端口>\`：无 host_ip 前缀的映射落在 0.0.0.0（IPv4 与 IPv6 双栈），任何能访问宿主该端口的人可**绕过 edge**（丢掉证书、限速与访问控制）`,
+          file,
+          message: `${service} 服务还在，却一条 ports 条目都没有——本地冒烟/排障经 \`${REQUIRED_HOST_IP}:<宿主端口>\` 直连它。要撤掉宿主暴露面请**整份删掉该服务**（adopt 文档「生产差异」选项 2），不要留一个空 ports 块：那会让"这里到底有没有宿主暴露面"变成看不出来的事`,
         })
       }
     }
-  }
 
-  // 判据 b：受管服务**还在**却一条 ports 条目都没有 ⇒ 报（"删掉 ports 行"不该是静默的绕过）。
-  // 整份服务被删 ⇒ 跳过：adopt 文档「生产差异」选项 2 明列了这条路，报它等于报错理由与事实相反。
-  for (const service of REQUIRED_PORT_SERVICES) {
-    if (!byService.has(service)) continue
-    const entries = byService.get(service) ?? []
-    if (entries.length === 0) {
+    // 判据 c：认不出的 `ports:` 声明行或块内条目 ⇒ fail-closed（见文件头说明）
+    for (const decl of collectUnparsedPortsDeclarations(text)) {
       violations.push({
-        file: ALLOWED,
-        message: `${service} 服务还在，却一条 ports 条目都没有——本地冒烟/排障经 \`${REQUIRED_HOST_IP}:<宿主端口>\` 直连它。要撤掉宿主暴露面请**整份删掉该服务**（adopt 文档「生产差异」选项 2），不要留一个空 ports 块：那会让"这里到底有没有宿主暴露面"变成看不出来的事`,
+        file,
+        message:
+          decl.kind === 'entry'
+            ? `第 ${decl.line} 行的 \`ports\` 块内条目 \`${decl.text}\` 缩进不是 6——本守卫只支持块序列（缩进 4 的 \`ports:\` + 缩进 6 的 \`- '${REQUIRED_HOST_IP}:<宿主>:<容器>'\`），其他缩进解析不出条目，静默放行等于开着"绑 0.0.0.0 也全绿"的门，故判违规：请把条目改成缩进 6，或扩本守卫`
+            : `第 ${decl.line} 行的 ports 写法 \`${decl.text}\` 本守卫认不出来——只支持块序列（缩进 4 的 \`ports:\` + 缩进 6 的 \`- '${REQUIRED_HOST_IP}:<宿主>:<容器>'\`）。flow 形式（如 \`ports: ['1:2']\`）解析不出条目，静默放行等于开着"绑 0.0.0.0 也全绿"的门，故判违规：请改成块序列，或扩本守卫`,
       })
     }
-  }
-
-  // 判据 c：认不出的 ports 写法 ⇒ fail-closed（见文件头说明）
-  for (const decl of collectUnparsedPortsDeclarations(text)) {
-    violations.push({
-      file: ALLOWED,
-      message: `第 ${decl.line} 行的 ports 写法 \`${decl.text}\` 本守卫认不出来——只支持块序列（缩进 4 的 \`ports:\` + 缩进 6 的 \`- '${REQUIRED_HOST_IP}:<宿主>:<容器>'\`）。flow 形式（如 \`ports: ['1:2']\`）解析不出条目，静默放行等于开着"绑 0.0.0.0 也全绿"的门，故判违规：请改成块序列，或扩本守卫`,
-    })
   }
 }
 
@@ -231,12 +277,12 @@ export async function findViolations(rootDir) {
       if (!entry.isFile()) continue
       const rel = toPosix(relative(rootDir, join(dir, entry.name)))
       if (FRAGMENT_RE.test(rel)) {
-        violations.push({ file: rel, message: 'compose 片段（*compose*fragment*）——编排事实源只许 deploy/docker-compose.yml' })
+        violations.push({ file: rel, message: `compose 片段（*compose*fragment*）——编排事实源只许 ${ALLOWED.join(' / ')}` })
         continue
       }
       if (!COMPOSE_NAME_RE.test(entry.name)) continue
-      if (rel === ALLOWED) continue
-      violations.push({ file: rel, message: `多出来的 compose 文件——全仓只许 ${ALLOWED}` })
+      if (ALLOWED.includes(rel)) continue
+      violations.push({ file: rel, message: `多出来的 compose 文件——全仓只许 ${ALLOWED.join(' / ')}` })
     }
   }
   await walk(rootDir)

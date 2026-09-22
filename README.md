@@ -7,8 +7,9 @@
 - `apps/` — 可部署应用：`server`（Hono API）、`web`（前端，Task 17 生成）
 - `packages/` — 共享库：`auth-core`（认证内核）、`platform-sdk`（`@platform/sdk`）
 - `modules/` — 业务模块：`demo` 为占位，工单系统将迁入
-- `deploy/` — 部署面：唯一 compose、宿主 Dockerfile、两份 runbook（`openship-adopt.md` 待人工
-  执行；`branch-protection-runbook.md` 记录分支保护的现状与替代机制，见 `deploy/README.md`）
+- `deploy/` — 部署面：只两份 compose（主 + 数据面，见 `deploy/README.md`；**数据面那份 P1 起放行
+  ——白名单已开、文件缺席不违规**）、宿主 Dockerfile、两份 runbook（`openship-adopt.md` 待人工执行；
+  `branch-protection-runbook.md` 记录分支保护的现状与替代机制，见 `deploy/README.md`）
 - `scripts/` — 工具脚本：门禁（`check-manifests` / `lint-architecture` / `check-compose` /
   `check-env-example` / `check-tenant-isolation`）、前端 registry 生成（`gen-console-registry`）、
   装载冒烟（`smoke-load`）
