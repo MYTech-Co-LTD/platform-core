@@ -7,7 +7,7 @@ import { registerTicketManage } from './routes/ticket-manage'
 import { registerTicketGuest } from './routes/ticket-guest'
 import { registerRule } from './routes/rule'
 import { registerMasterData } from './routes/masterdata'
-import { registerAttachmentGuest, registerAttachmentManage } from './routes/attachment'
+import { registerAttachmentGuest, registerAttachmentGc, registerAttachmentManage } from './routes/attachment'
 import { registerRegistrationGuest } from './routes/registration-guest'
 import { registerRegistrationManage } from './routes/registration-manage'
 import type { RouteCtx } from './routes/context'
@@ -33,6 +33,7 @@ export default defineModule({
     registerMasterData(r, ctx)
     registerAttachmentGuest(r, ctx)
     registerAttachmentManage(r, ctx)
+    registerAttachmentGc(r, ctx)
     registerRegistrationGuest(r, ctx)
     registerRegistrationManage(r, ctx)
     return r

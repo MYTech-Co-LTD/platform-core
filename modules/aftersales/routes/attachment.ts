@@ -8,6 +8,9 @@ import {
   storageResolverFor,
   warnUnresolvedRef,
 } from '../storage'
+import {
+  GC_DEFAULT_LIMIT, GC_DEFAULT_OLDER_THAN_DAYS, GC_MAX_LIMIT, runAttachmentGc,
+} from '../domain/attachment-gc'
 import { parseIdParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
@@ -121,5 +124,36 @@ export function registerAttachmentManage(r: ModuleHono, ctx: RouteCtx): void {
       createdAt: row.created_at,
       url: await storage.presignGet(row.object_key as string),
     })
+  })
+}
+
+/** GC 请求体：全可选、缺省安全（dry-run）。olderThanDays 上界 10 年防误输。 */
+const GcBody = z.object({
+  olderThanDays: z.number().int().min(1).max(3650).optional(),
+  dryRun: z.boolean().optional(),
+  limit: z.number().int().min(1).max(GC_MAX_LIMIT).optional(),
+})
+
+/** 孤儿附件 GC（spec §5 #12；拍板：openship job 定时打本端点触发）。manage 面。 */
+export function registerAttachmentGc(r: ModuleHono, ctx: RouteCtx): void {
+  r.post('/attachments/gc', async (c) => {
+    const org = c.get('identity').orgId
+    const parsed = GcBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const opts = {
+      olderThanDays: parsed.data.olderThanDays ?? GC_DEFAULT_OLDER_THAN_DAYS,
+      // 破坏性操作安全缺省：dry-run。生产 openship job 显式传 dryRun:false。
+      dryRun: parsed.data.dryRun ?? true,
+      limit: parsed.data.limit ?? GC_DEFAULT_LIMIT,
+    }
+    // 候选集合与读侧同源（storageCandidatesFor 含平台默认）：孤儿行大多写在平台桶时代；
+    // 删对象必须按行上的 storage_ref 归桶（删错桶=白删）。
+    const cands = storageCandidatesFor(c.get(TENANT_STORAGE))
+    if (cands.all.length === 0) return c.json({ error: 'ZOS_NOT_CONFIGURED' }, 503)
+    const report = await runAttachmentGc(
+      { pool: ctx.pool, org, resolver: storageResolverFor(cands), deleter: (s, key) => s.deleteObject(key) },
+      opts,
+    )
+    return c.json(report)
   })
 }

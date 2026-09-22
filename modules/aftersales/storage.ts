@@ -16,7 +16,7 @@
 // 解析/规范化的**实现只有一份**，在 `@platform/sdk`（T1）；本模块只消费，不复制。
 
 import { randomUUID } from 'node:crypto'
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { platformStorageFromEnv, storageRefOf } from '@platform/sdk'
 import type { TenantStorageConfig } from '@platform/sdk'
@@ -131,14 +131,21 @@ export function objectKeyFor(org: string, clientRequestId: string, uuid: string 
 export class ZosStorage {
   private readonly client: S3Client
 
-  constructor(private readonly config: TenantStorageConfig) {
-    this.client = new S3Client({
+  /** client 可注入【仅供测试】（storage.test.ts 断言 DeleteObjectCommand 的形状，不发网络）；
+   *  生产路径恒走缺省值——storageFor 构造的池化实例从不传第二参。 */
+  constructor(private readonly config: TenantStorageConfig, client?: S3Client) {
+    this.client = client ?? new S3Client({
       endpoint: config.endpoint,
       region: config.region,
       credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
       // 见文件头 ②：ZOS 实测必须 path-style，否则 bucket 会被当成 DNS 子域拼进 host。
       forcePathStyle: true,
     })
+  }
+
+  /** GC（spec §5 #12）删对象。S3 语义：key 不存在也成功（204）⇒ GC 崩溃后重跑天然幂等。 */
+  async deleteObject(key: string): Promise<void> {
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.config.bucket, Key: key }))
   }
 
   presignPut(

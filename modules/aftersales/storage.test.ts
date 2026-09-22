@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { S3Client } from '@aws-sdk/client-s3'
 import { platformStorageFromEnv } from '@platform/sdk'
 import {
   UPLOAD_URL_TTL_SECONDS,
@@ -103,5 +104,21 @@ describe('预签名（纯离线计算：本测试【不需要】真凭证、不�
     expect(new URL(put).searchParams.get('X-Amz-Signature')).not.toBe(
       new URL(get).searchParams.get('X-Amz-Signature'),
     )
+  })
+})
+
+describe('deleteObject —— GC 的对象删除（spec §5 #12）', () => {
+  it('对配置的桶发 DeleteObjectCommand（命令形状断言，不发网络）', async () => {
+    const sends: unknown[] = []
+    const fakeClient = {
+      send: async (cmd: unknown) => { sends.push(cmd); return { $metadata: { httpStatusCode: 204 } } },
+    } as unknown as S3Client
+    const cfg = platformStorageFromEnv(FULL_ENV)!
+    const s = new ZosStorage(cfg, fakeClient)
+    await s.deleteObject('aftersales/acme/req-1/u')
+    expect(sends).toHaveLength(1)
+    const cmd = sends[0] as { input: { Bucket: string; Key: string } }
+    expect(cmd.input.Bucket).toBe('aftersales-test')
+    expect(cmd.input.Key).toBe('aftersales/acme/req-1/u')
   })
 })
