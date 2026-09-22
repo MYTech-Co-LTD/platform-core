@@ -1,4 +1,4 @@
-// stores/index.test.tsx — 门店页（只读）：★ 无 total ⇒ 不出现分页控件
+// stores/index.test.tsx — 门店页（只读）：★ 未接分页 ⇒ 不出现分页控件
 import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -14,7 +14,8 @@ const json = (b: unknown) =>
 beforeEach(() => {
   m.mockReset()
   m.mockImplementation(async () =>
-    json({ items: [{ id: 1, name: '一号店', regionId: 3, address: '某路 1 号', phone: '010-1' }] }),
+    // #155 起真机回 {items,total,page,size}——替身钉在真实形状上（AGENTS.md #11）
+    json({ items: [{ id: 1, name: '一号店', regionId: 3, address: '某路 1 号', phone: '010-1' }], total: 1, page: 1, size: 20 }),
   )
 })
 afterEach(cleanup)
@@ -26,7 +27,7 @@ describe('门店页（只读）', () => {
     expect(screen.getByText('某路 1 号')).toBeInTheDocument()
   })
 
-  it('★ 无 total ⇒ 不出现分页控件（不摆假页码）', async () => {
+  it('★ API 已回 total 但 console 未接分页（#155 只做 API 面）⇒ 不出现分页控件', async () => {
     render(<StoresPage />)
     await waitFor(() => expect(screen.getByText('一号店')).toBeInTheDocument())
     expect(document.querySelector('.ant-pagination')).toBeNull()

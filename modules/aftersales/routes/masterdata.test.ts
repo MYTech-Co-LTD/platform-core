@@ -54,6 +54,24 @@ describePg('主数据域', () => {
     expect(body.items.map((s) => s.name).sort()).toEqual(['上海门店', '北京门店'])
   })
 
+  // 【#155】与 /products 同形：回 {items,total,page,size}；q 过滤要计入 total（同一 where）。
+  // 本 org 门店恰为 beforeAll 的两行（其余用例只动别的 org）⇒ total 可钉死为 2。
+  it('【#155】门店列表回 total/page/size，q 过滤计入 total', async () => {
+    const res = await app.request('/stores')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { items: unknown[]; total: number; page: number; size: number }
+    expect(body).toMatchObject({ total: 2, page: 1, size: DEFAULT_PAGE_SIZE })
+
+    const hit = await app.request('/stores?q=上海')
+    const hitBody = (await hit.json()) as { items: unknown[]; total: number }
+    expect(hitBody.total).toBe(1)
+
+    const paged = await app.request('/stores?page=1&size=1')
+    const pagedBody = (await paged.json()) as { items: unknown[]; total: number; size: number }
+    expect(pagedBody).toMatchObject({ total: 2, size: 1 })
+    expect(pagedBody.items).toHaveLength(1)
+  })
+
   it('商品按名搜索（服务端过滤，不搬源侧「全量 13767 行 + 前端过滤」）', async () => {
     const hit = await app.request('/products?q=苹果')
     const hitBody = (await hit.json()) as { items: { name: string }[] }
@@ -106,6 +124,29 @@ describePg('主数据域', () => {
     const body = (await res.json()) as { items: { name: string; approveStatus: string; openId: string }[] }
     expect(body.items.every((e) => e.approveStatus === 'pending')).toBe(true)
     expect(body.items.find((e) => e.name === '张三')?.openId).toBe('')
+  })
+
+  // 【#155】与 /products 同形：回 {items,total,page,size}；approveStatus 筛选计入 total（同一 where）。
+  // 期望值直接按同一 where 从库里数出来——不硬编码行数，免疫本文件用例间的顺序耦合。
+  it('【#155】员工列表回 total/page/size，approveStatus 筛选计入 total', async () => {
+    const all = await app.request('/employees')
+    expect(all.status).toBe(200)
+    const dbAll = await pool.query<{ n: number }>(
+      'select count(*)::int as n from aftersales.employee where org = $1',
+      [ORG],
+    )
+    const allBody = (await all.json()) as { items: unknown[]; total: number; page: number; size: number }
+    expect(allBody).toMatchObject({ total: dbAll.rows[0]!.n, page: 1, size: DEFAULT_PAGE_SIZE })
+    // 单页装得下时（本用例 < 20 行）行数即 total——total 与 items 由同一 where 产生
+    expect(allBody.items).toHaveLength(allBody.total)
+
+    const pending = await app.request('/employees?approveStatus=pending')
+    const dbPending = await pool.query<{ n: number }>(
+      "select count(*)::int as n from aftersales.employee where org = $1 and approve_status = 'pending'",
+      [ORG],
+    )
+    const pendingBody = (await pending.json()) as { total: number }
+    expect(pendingBody.total).toBe(dbPending.rows[0]!.n)
   })
 
   it('审批通过 ⇒ 200 且状态落 approved；非法审批值 ⇒ 400', async () => {

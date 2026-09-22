@@ -1,7 +1,7 @@
 // products/index.tsx — 商品档案（只读起步，spec §3.1）。
 //
-// `GET /products` 回 `{ items, total, page, size }` ⇒ **可以真分页**（与 /stores 的关键差别：
-// 那个端点不回 total）。价格是服务端给的整数分，这里只做展示格式化、不做任何推导。
+// `GET /products` 回 `{ items, total, page, size }` ⇒ **可以真分页**（#155 起 /stores 等
+// 三端点同形；本页是分页口径的原点）。价格是服务端给的整数分，这里只做展示格式化、不做任何推导。
 import { useCallback, useEffect, useState } from 'react'
 import { Alert, Table, Typography } from 'antd'
 import { apiGet, messageOf } from '../lib/api'

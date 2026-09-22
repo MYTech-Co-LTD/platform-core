@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
+import { DEFAULT_PAGE_SIZE } from './context'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -66,6 +67,46 @@ describePg('规则域', () => {
     const other = makeIdentity({ orgId: 'test-aftersales-rule-other', scopes: ['aftersales:manage'] })
     const otherRes = await buildTestApp(mod, other, { pool }).request('/rules')
     expect((await otherRes.json()) as { items: unknown[] }).toMatchObject({ items: [] })
+  })
+
+  // 【#155】三端点补 total：回包形状与 /products 逐字一致（{items,total,page,size}），
+  // page/size 走同一份 parsePageParam。独立 org 钉死 total——不被本文件其余用例的增删干扰。
+  it('【#155】列表回 total/page/size（与 /products 同形），分页按 offset 生效', async () => {
+    const pagedOrg = 'test-aftersales-rule-paged'
+    await pool.query('delete from aftersales.ticket_rule where org = $1', [pagedOrg])
+    const pagedApp = buildTestApp(
+      mod,
+      makeIdentity({ orgId: pagedOrg, scopes: ['aftersales:manage'] }),
+      { pool },
+    )
+    const jsonBody = (body: unknown) => ({
+      method: 'POST' as const,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    await pagedApp.request('/rules', jsonBody({ name: '规则甲', refundRatio: 0.1 }))
+    await pagedApp.request('/rules', jsonBody({ name: '规则乙', refundRatio: 0.2 }))
+    try {
+      const first = await pagedApp.request('/rules?page=1&size=1')
+      expect(first.status).toBe(200)
+      const body1 = (await first.json()) as { items: { name: string }[]; total: number; page: number; size: number }
+      expect(body1, 'page=1&size=1 应回 {total:2, page:1, size:1} 且只一行').toMatchObject({ total: 2, page: 1, size: 1 })
+      expect(body1.items).toHaveLength(1)
+
+      const second = await pagedApp.request('/rules?page=2&size=1')
+      const body2 = (await second.json()) as { items: { name: string }[]; total: number; page: number; size: number }
+      expect(body2, 'page=2 应翻到第二行（offset 生效）').toMatchObject({ total: 2, page: 2, size: 1 })
+      expect(body2.items.map((r) => r.name)).not.toEqual(body1.items.map((r) => r.name))
+
+      // 缺省口径与 /products 相同：page=1 / size=DEFAULT_PAGE_SIZE
+      const def = await pagedApp.request('/rules')
+      expect((await def.json()) as { page: number; size: number }).toMatchObject({
+        page: 1,
+        size: DEFAULT_PAGE_SIZE,
+      })
+    } finally {
+      await pool.query('delete from aftersales.ticket_rule where org = $1', [pagedOrg])
+    }
   })
 
   it('改规则 ⇒ 200；跨 org 改别人的规则 ⇒ 404（不是 403，避免泄露存在性）', async () => {

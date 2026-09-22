@@ -1,15 +1,15 @@
 // stores/index.tsx — 门店档案（只读起步，spec §3.1）。
 //
-// `GET /stores` 回 `{ items }` **无 total**（服务端另有 `MAX_STORES` 上限）⇒ 单页展示、
-// **不放分页控件**（spec §3.1 已知边界：不摆一个假的页码）。
+// `GET /stores` 已回 `{items,total,page,size}`（#155，与 /products 同形）⇒ **可真分页**；
+// 但 console 分页重构不在 #155 ⇒ 本页仍单页展示、**不放分页控件**（不摆假页码）。
 import { useCallback } from 'react'
 import { Alert, Table } from 'antd'
 import { apiGet } from '../lib/api'
 import { useList } from '../lib/useList'
-import type { StoreItem, Unpaged } from '../../api-types'
+import type { Paged, StoreItem } from '../../api-types'
 
 export default function StoresPage() {
-  const load = useCallback(async () => (await apiGet<Unpaged<StoreItem>>('/stores')).items, [])
+  const load = useCallback(async () => (await apiGet<Paged<StoreItem>>('/stores')).items, [])
   const { items, loading, error } = useList(load)
 
   return (

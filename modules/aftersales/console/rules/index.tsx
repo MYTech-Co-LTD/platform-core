@@ -1,15 +1,15 @@
 // rules/index.tsx — 售后规则 CRUD（M3a）。
 //
-// `GET /rules` 回 `{ items }` **无 total**（服务端另有 `MAX_RULES` 上限）⇒ 单页展示、
-// **不放分页控件**（spec §3.1 已知边界：不摆一个假的页码）。
+// `GET /rules` 已回 `{items,total,page,size}`（#155，与 /products 同形）⇒ **可真分页**；
+// 但 console 分页重构不在 #155 ⇒ 本页仍单页展示、**不放分页控件**（不摆假页码）。
 import { useCallback, useState } from 'react'
 import { Alert, Button, Form, Input, InputNumber, Modal, Popconfirm, Table } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
 import { useList } from '../lib/useList'
-import type { RuleItem, Unpaged } from '../../api-types'
+import type { Paged, RuleItem } from '../../api-types'
 
 export default function RulesPage() {
-  const load = useCallback(async () => (await apiGet<Unpaged<RuleItem>>('/rules')).items, [])
+  const load = useCallback(async () => (await apiGet<Paged<RuleItem>>('/rules')).items, [])
   const { items, loading, error, reload } = useList(load)
   const [creating, setCreating] = useState(false)
   const [form] = Form.useForm<{ name: string; refundRatio: number; remark?: string }>()

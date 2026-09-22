@@ -1,7 +1,7 @@
 // employees/index.tsx — 员工信息 + 注册审批（M3a）。
 //
-// `GET /employees` 回 `{ items }` **无 total**（服务端另有 `MAX_EMPLOYEES` 上限）⇒ 单页展示、
-// **不放分页控件**（spec §3.1 已知边界）。
+// `GET /employees` 已回 `{items,total,page,size}`（#155，与 /products 同形）⇒ **可真分页**；
+// 但 console 分页重构不在 #155 ⇒ 本页仍单页展示、**不放分页控件**（不摆假页码）。
 //
 // 审批的请求体是 **`{ approveStatus }`**（英文枚举，spec §5 #9：中文是展示层的事、不入库）
 // ——以 `routes/masterdata.ts` 的 `ApproveBody` 为准。
@@ -9,7 +9,7 @@ import { useCallback, useState } from 'react'
 import { Alert, Button, Form, Input, InputNumber, Modal, Table, Tag } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
 import { useList } from '../lib/useList'
-import type { ApproveStatus, EmployeeItem, Unpaged } from '../../api-types'
+import type { ApproveStatus, EmployeeItem, Paged } from '../../api-types'
 
 /** 枚举 → 展示层中文（spec §5 #9：中文不下库） */
 const STATUS_LABEL: Record<ApproveStatus, string> = {
@@ -19,7 +19,7 @@ const STATUS_LABEL: Record<ApproveStatus, string> = {
 }
 
 export default function EmployeesPage() {
-  const load = useCallback(async () => (await apiGet<Unpaged<EmployeeItem>>('/employees')).items, [])
+  const load = useCallback(async () => (await apiGet<Paged<EmployeeItem>>('/employees')).items, [])
   const { items, loading, error, reload } = useList(load)
   const [creating, setCreating] = useState(false)
   const [form] = Form.useForm<{ name: string; phone?: string; storeId?: number }>()
