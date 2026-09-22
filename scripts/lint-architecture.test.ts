@@ -473,10 +473,83 @@ describe('check-compose: B7 双白名单（P1 数据面 compose，issue #150）'
     expect(out(r)).toContain('dbt/docker-compose.yml')
   })
 
-  it('★ 判据 b 不跨文件：data-compose 里没有 postgres/server 不构成违规（受管名只对主 compose）', () => {
+  it('★ 判据 b 不跨文件：data-compose 里名为 postgres 的服务没有 ports 也不违规（受管名按文件取）', () => {
+    // 这条必须用**真会触发判据 b 的形状**（服务名就叫 postgres 且不给 ports）——否则判据 b 无从触发，
+    // 用例就只是首条的复制品（评审 I-2）。受管名按文件取 ⇒ 数据面这份取不到清单 ⇒ 不判 ⇒ 干净；
+    // 一旦有人把 `REQUIRED_PORT_SERVICES_BY_FILE.get(file)` 改回恒取主 compose 的清单，这条即红。
     expectClean(run('check-compose.mjs', fixture({
       'deploy/docker-compose.yml': MINIMAL_COMPOSE,
-      'deploy/data-compose.yml': DATA_COMPOSE,
+      'deploy/data-compose.yml': [
+        'services:',
+        '  postgres:',            // 数据面里真有一个叫 postgres 的服务…
+        '    image: postgres:16-alpine',
+        '  pg_duckdb:',           // …而受管名清单对这份文件为空 ⇒ 判据 b 不报（服务可整份裁剪）
+        '    ports:',
+        "      - '127.0.0.1:15432:5432'",
+        '',
+      ].join('\n'),
+    })))
+  })
+})
+
+describe('check-compose: B7 判据 c 覆盖 `ports` 块内非规范缩进（评审 I-1）', () => {
+  // 机制：条目正则 `^ {6}-\s*(.+)$` 缩进精确；旧实现的判据 c 又只在行内含 `ports` 关键字时才报
+  // ⇒ 非 6 缩进的条目判据 a 与 c **同时失明**。主 compose 只靠判据 b 歪打正着，数据面 compose
+  // 连那个兜底都没有 ⇒ 一个 `0.0.0.0` 映射可以完全静默通过。
+  const indent = (n: number, entry: string): string =>
+    `services:\n  pg_duckdb:\n    ports:\n${' '.repeat(n)}- '${entry}'\n`
+  const withData = (dataCompose: string): string => fixture({
+    'deploy/docker-compose.yml': MINIMAL_COMPOSE,
+    'deploy/data-compose.yml': dataCompose,
+  })
+
+  it('★ 负例：data-compose 条目**缩进 8** 且非回环 ⇒ 红（判据 c 报文件名=data-compose）', () => {
+    const r = run('check-compose.mjs', withData(indent(8, '0.0.0.0:15432:5432')))
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('deploy/data-compose.yml')
+    expect(out(r)).toContain('缩进不是 6')
+  })
+
+  it('★ 负例：条目与 `ports:` **同缩进 4**（YAML 常见写法）且非回环 ⇒ 红（判据 c）', () => {
+    const r = run('check-compose.mjs', withData(indent(4, '0.0.0.0:15432:5432')))
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('缩进不是 6')
+    expect(out(r)).toContain('0.0.0.0:15432:5432')
+  })
+
+  it('★ 缩进 8 但**回环**同样红——fail-closed：认不出就不放行（请改成缩进 6）', () => {
+    const r = run('check-compose.mjs', withData(indent(8, '127.0.0.1:15432:5432')))
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('缩进不是 6')
+  })
+
+  it('★ 主 compose 的非 6 缩进条目也报（既有面：过去只有判据 b 歪打正着、文案与事实相反）', () => {
+    const r = run(
+      'check-compose.mjs',
+      fixture({
+        'deploy/docker-compose.yml': MINIMAL_COMPOSE.replace(
+          "    ports:\n      - '127.0.0.1:5432:5432'",
+          "    ports:\n    - '0.0.0.0:5432:5432'",
+        ),
+      }),
+    )
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('缩进不是 6')
+  })
+
+  it('对照组：规范缩进照旧干净；`volumes` 块内的条目不受本判据影响', () => {
+    expectClean(run('check-compose.mjs', withData(indent(6, '127.0.0.1:15432:5432'))))
+    expectClean(run('check-compose.mjs', fixture({
+      'deploy/docker-compose.yml': MINIMAL_COMPOSE,
+      'deploy/data-compose.yml': [
+        'services:',
+        '  pg_duckdb:',
+        '    volumes:',
+        '      - data:/var/lib/pg_duckdb', // 6 缩进的**卷**条目：不在 ports 块内，不该被本判据扫到
+        '    ports:',
+        "      - '127.0.0.1:15432:5432'",
+        '',
+      ].join('\n'),
     })))
   })
 })

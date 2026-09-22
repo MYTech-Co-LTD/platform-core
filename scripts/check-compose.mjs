@@ -26,9 +26,17 @@
 //          指向托管库）是明列的生产路径，那不是绕过，而是把宿主暴露面整个去掉。
 //          （R5-2 建议改 1：旧实现把"服务不存在"与"有服务但没端口"混成一条违规，于是选项 2
 //          会让 CI 变红且**报错理由与事实相反**。）
-//       c) 认不出的 ports 写法（flow 形式 `ports: ['1:2']` / `ports: []`…）一律判违规。判据 a
-//          扩到「所有条目」之后，这类写法会**一条条目都解析不出来** ⇒ 不显式拦就等于静默放行，
-//          所以这里 fail-closed：宁可让人来扩守卫，也不放行一个可能绑在 0.0.0.0 的映射。
+//       c) 认不出的 **`ports:` 声明行或块内条目**一律判违规，两类：
+//          ① 声明行不是本守卫认的形态（缩进 4 的裸 `ports:`）——flow 形式 `ports: ['1:2']` /
+//             `ports: []` / 缩进不是 4 的 `ports:` 行；
+//          ② **落在 `ports` 块内、缩进不是 6 的列表项**（`- …`）。
+//          判据 a 扩到「所有条目」之后，这两类写法会**一条条目都解析不出来** ⇒ 不显式拦就等于静默
+//          放行，所以这里 fail-closed：宁可让人来扩守卫，也不放行一个可能绑在 0.0.0.0 的映射。
+//          ②是评审 I-1 补的面：条目正则 `^ {6}-\s*(.+)$` 缩进精确，而旧实现的判据 c **只在行内含
+//          `ports` 关键字时**才报 ⇒ 非 6 缩进的条目（缩进 8 / 与 `ports:` 同缩进 4）判据 a 与 c
+//          **同时失明**；主 compose 只靠判据 b 歪打正着（红，但文案是「服务还在却一条 ports 都没有」
+//          ——理由与事实相反），而数据面 compose 的受管名清单为空 ⇒ 连兜底都没有。**只支持 6 缩进
+//          的列表项；其他缩进一律判违规**（认不出就不放行，请改成 6 缩进，或扩本守卫）。
 //     **不在覆盖内**：`network_mode: host` 的服务——该模式下 compose **忽略 ports**，宿主的真实
 //     绑定取决于进程自己的 listen 地址，本守卫读文本读不出来（本仓不用该模式；将来要用得单独扩
 //     守卫，别以为本条规则替它兜了底）。
@@ -82,10 +90,11 @@ const toPosix = (p) => p.split(sep).join('/')
  * 且**只在 ports 块内**收条目 —— 否则 postgres 的 `volumes:` 下的 `- pgdata:/…`
  * 会被当成端口映射。任何缩进 ≤ 4 的新行都终止 ports 块。
  *
- * **已知边界（有意为之，fail-closed）**：flow 形式（`ports: ['1:2']` / `ports: []`）
- * 与引号内换行识别不了 —— 这类行会被 collectUnparsedPortsDeclarations 单独挑出来报违规
- * （判据 c）。报错方向是安全的（宁可让人来改守卫，也不静默放行一个绑在 0.0.0.0 的映射）；
- * 若将来真要用 flow 形式，这里与那条判据必须一起改。
+ * **已知边界（有意为之，fail-closed）**：flow 形式（`ports: ['1:2']` / `ports: []`）、
+ * 引号内换行、以及**缩进不是 6 的列表项**（缩进 8 / 与 `ports:` 同缩进 4 —— YAML 合法且常见）
+ * 都识别不了 —— 这三类行会被 collectUnparsedPortsDeclarations 单独挑出来报违规（判据 c）。
+ * 报错方向是安全的（宁可让人来改守卫，也不静默放行一个绑在 0.0.0.0 的映射）；
+ * 若将来真要用别的缩进或 flow 形式，这里与那条判据必须一起改。
  *
  * @param {string} text
  * @returns {Map<string, string[]>}
@@ -146,24 +155,43 @@ export function normalizePortEntry(entry) {
 }
 
 /**
- * 找出**本守卫认不出**的 ports 声明（规则二判据 c）。
+ * 找出**本守卫认不出**的 ports 声明（规则二判据 c）。两类：
  *
- * 判据：该行含 `ports` 键，但**不是**本守卫认的块序列形态（缩进 4 的裸 `ports:`）。
- * 注释行跳过——文件头与块内的散文里出现 `ports:` 是常态，不该被当成声明。
- * 只返回有问题的行（原文 + 行号），供报错指位。
+ *   ① `kind: 'declaration'`——该行含 `ports` 键，但**不是**本守卫认的块序列形态（缩进 4 的裸
+ *      `ports:`）：flow 形式（`ports: ['1:2']`）、`ports: []`、缩进不是 4 的 `ports:` 行。
+ *   ② `kind: 'entry'`——**落在 `ports` 块内、缩进不是 6 的列表项**（评审 I-1 补的面）。
+ *      条目正则 `^ {6}-\s*(.+)$` 缩进精确 ⇒ 这类行既不进 parsePorts（判据 a 看不见），
+ *      旧实现又因为**行内不含 `ports` 关键字**而判据 c 也不报 ⇒ 一个绑在 0.0.0.0 的映射可以
+ *      完全静默通过。块边界与 parsePorts **同一套**规则（任何缩进 ≤4 的非空白行终止块）。
+ *
+ * 注释行与空行不改变块状态（与 parsePorts 一致）——文件头与块内的散文里出现 `ports:` 是常态，
+ * 不该被当成声明。只返回有问题的行（原文 + 行号 + 类别），供报错指位。
  *
  * @param {string} text
- * @returns {Array<{ line: number, text: string }>}
+ * @returns {Array<{ line: number, text: string, kind: 'declaration' | 'entry' }>}
  */
 export function collectUnparsedPortsDeclarations(text) {
-  /** @type {Array<{ line: number, text: string }>} */
+  /** @type {Array<{ line: number, text: string, kind: 'declaration' | 'entry' }>} */
   const out = []
+  let inPorts = false
   text.split('\n').forEach((raw, i) => {
     const line = raw.replace(/\s+$/, '')
-    if (line.trimStart().startsWith('#')) return
-    if (!/^\s*ports\s*:/.test(line)) return
-    if (/^ {4}ports:\s*$/.test(line)) return // 本守卫认的形态（与 parsePorts 同一判据）
-    out.push({ line: i + 1, text: line.trim() })
+    if (line.trimStart().startsWith('#')) return // 注释行：块状态不变
+    if (line.trim() === '') return // 空行：块状态不变
+    if (/^\s*ports\s*:/.test(line)) {
+      inPorts = true
+      // 本守卫认的形态（与 parsePorts 同一判据）；不是它 ⇒ 声明行本身判违规
+      if (!/^ {4}ports:\s*$/.test(line)) out.push({ line: i + 1, text: line.trim(), kind: 'declaration' })
+      return
+    }
+    if (!inPorts) return
+    const entry = /^(\s*)-\s*\S/.exec(line)
+    if (entry) {
+      // 块内列表项：缩进不是 6 ⇒ 判据 a 解析不到它 ⇒ 这里 fail-closed 兜住
+      if (entry[1].length !== 6) out.push({ line: i + 1, text: line.trim(), kind: 'entry' })
+      return
+    }
+    if (/^ {0,4}\S/.test(line)) inPorts = false // 回到服务级/顶层键 ⇒ 块结束（与 parsePorts 同判据）
   })
   return out
 }
@@ -213,11 +241,14 @@ async function checkHostPortBindings(rootDir, violations) {
       }
     }
 
-    // 判据 c：认不出的 ports 写法 ⇒ fail-closed（见文件头说明）
+    // 判据 c：认不出的 `ports:` 声明行或块内条目 ⇒ fail-closed（见文件头说明）
     for (const decl of collectUnparsedPortsDeclarations(text)) {
       violations.push({
         file,
-        message: `第 ${decl.line} 行的 ports 写法 \`${decl.text}\` 本守卫认不出来——只支持块序列（缩进 4 的 \`ports:\` + 缩进 6 的 \`- '${REQUIRED_HOST_IP}:<宿主>:<容器>'\`）。flow 形式（如 \`ports: ['1:2']\`）解析不出条目，静默放行等于开着"绑 0.0.0.0 也全绿"的门，故判违规：请改成块序列，或扩本守卫`,
+        message:
+          decl.kind === 'entry'
+            ? `第 ${decl.line} 行的 \`ports\` 块内条目 \`${decl.text}\` 缩进不是 6——本守卫只支持块序列（缩进 4 的 \`ports:\` + 缩进 6 的 \`- '${REQUIRED_HOST_IP}:<宿主>:<容器>'\`），其他缩进解析不出条目，静默放行等于开着"绑 0.0.0.0 也全绿"的门，故判违规：请把条目改成缩进 6，或扩本守卫`
+            : `第 ${decl.line} 行的 ports 写法 \`${decl.text}\` 本守卫认不出来——只支持块序列（缩进 4 的 \`ports:\` + 缩进 6 的 \`- '${REQUIRED_HOST_IP}:<宿主>:<容器>'\`）。flow 形式（如 \`ports: ['1:2']\`）解析不出条目，静默放行等于开着"绑 0.0.0.0 也全绿"的门，故判违规：请改成块序列，或扩本守卫`,
       })
     }
   }
