@@ -173,3 +173,39 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
 5. **本目录不碰 `.gitignore`**（T5 是唯一写入方）：`dbt/target/`、`dbt/logs/`、`dbt/dbt_packages/`
    是 `dbt parse/run` 的本地生成物，**不 `git add`、不提交**；静态门禁自己也跳过这三个目录。
    若需要忽略规则，见 T4 任务报告的「需要协调方转给 T5」段。
+
+## 10 多租户跑法（P3 / T11：每租户一个 schema）
+
+**一句话**：多租户不是「跑一份多租户模型」，是**同一份模型跑 N 次、每次换一个租户 schema**。
+
+```bash
+# openship job 逐租户循环（零新常驻组件 —— 拍板 #4：调度 = openship jobs）
+for KEY in <租户键 1> <租户键 2>; do
+  dbt run --select <…> --vars "{tenant: $KEY}"
+done
+```
+
+**租户键 = `platform.tenant.casdoor_org`**（不是 slug）。理由：身份面一致 —— 模块里的
+`identity.orgId`、marts 行里的 `org` 列、数据面 schema 三者同源，换成 slug 会让「谁能看到哪份数据」
+在三个地方各说各话。取法：平台库 `select casdoor_org from platform.tenant`（**不写进任何文档/日志的值面**）。
+
+**schema 名的派生只有一处实现**：`macros/generate_schema_name.sql`（`tenant_` + 键折小写 +
+连字符改下划线，如 `acme-org` → `tenant_acme_org`）。**同一份模型、不同 `--vars` ⇒ 落进不同 schema**；
+会话绑哪个 schema 就只能看到哪个租户的物化结果（spec §11.5 #3 的 per-schema + `search_path`）。
+
+**不给 `tenant` var ⇒ 逐字回到 dbt 内置行为**（`target.schema`，即 P1 私有化单租户那份配置）——
+私有化部署**不需要**任何改动，也不该被多租户这条路径影响。
+
+**配套的三件（不在这份 dbt 里，但缺了它这条跑法是空的）**：
+
+| 件 | 落在哪 | 谁建 |
+|---|---|---|
+| 每租户 PG role + schema + 授权 | `deploy/data-tenants/provision-template.sql` | openship job（逐租户跑一次，幂等） |
+| 每租户 S3 凭据（`SCOPE` 收窄到该租户桶前缀） | 同上（§3，**未实测形态**） | 同上 |
+| 平台启用集 ↔ 数据面已建的对账 | `scripts/reconcile-data-tenants.mjs`（**双向差集，openship 定时 job 打**） | job |
+
+**为什么这一节不改 §8/§9 的「未验」清单**：本节的每一条**都还没在真库上跑过**（本机没有
+dbt / pg_duckdb）；「不给 var 时回内置行为」依赖 dbt-core 的 `generate_schema_name_for_env`
+（见 macro 头注判断③）——同样是**真机首跑核对**项，归 T6/T13。**多租户的 schema 名派生**则有
+机检兜底：`scripts/check-data-models.test.ts` 的 T11 格①（macro 必须由 `var('tenant')` 派生、
+不许出现整名形态的字面量 schema）与格②（平台侧对账用同一张用例表）。
