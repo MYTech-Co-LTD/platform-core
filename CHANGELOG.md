@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.22.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.22.1...v0.22.2) - 2026-09-22
+- 【修复】auth-core: resetUserPassword 改走 Casdoor 专用改密端点 set-password ([#149](https://github.com/MYTech-Co-LTD/platform-core/pull/149), [38e0c9e](https://github.com/MYTech-Co-LTD/platform-core/commit/38e0c9ee577e2d9e1211dc80a309aa280eea494a))
+
+
 ## [0.22.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.22.0...v0.22.1) - 2026-09-21
 - 【修复】web: 控制台路由层吃 config；模块 admin 页路由套 AdminGate 组门 ([#147](https://github.com/MYTech-Co-LTD/platform-core/pull/147), [30a4471](https://github.com/MYTech-Co-LTD/platform-core/commit/30a447135c42eecf6731b32bb5da5276a1464f72))
 
