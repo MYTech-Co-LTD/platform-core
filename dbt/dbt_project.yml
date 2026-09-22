@@ -19,6 +19,11 @@ config-version: 2
 profile: 'platform_data'
 
 model-paths: ['models']
+# `macro-paths` **显式声明**（评审 M8）：dbt 缺省就是 `["macros"]`，但缺省一旦被收紧/改动，
+# `generate_schema_name.sql` 会**静默变成死代码** —— 那时 dbt 回内置行为、每个租户落进同一个
+# schema，而「macro 在场且由 var('tenant') 派生」那批**结构断言仍然全绿**（它只读文件内容）。
+# 显式写出来，等于把「这个目录必须被 dbt 扫」变成一份可 diff 的声明。
+macro-paths: ['macros']
 test-paths: ['tests']
 # 本地产物（`dbt parse` / `dbt run` 生成）：**不进仓**。忽略规则归 T5（.gitignore 唯一写入方，本任务
 # 不碰）；静态门禁自己也跳过这三个目录（scripts/check-data-models.mjs 的 SKIP_DIRS）——否则本地跑过

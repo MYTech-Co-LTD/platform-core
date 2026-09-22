@@ -336,3 +336,381 @@ describe('CLI 对外契约（干净 exit 0 + OK 行；违规 exit 1 + 每条一�
     expect(r.status).toBe(0)
   })
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// T11（P3 / W3 串行首任务）追加：每租户 schema 派生 + 租户启用集对账
+//
+// **为什么追加在本文件**：任务书硬约束 1 把 T11 的落点钉成「`dbt/macros/**`、`dbt/README.md`、
+// `deploy/data-tenants/**`、`scripts/reconcile-data-tenants.mjs`、`scripts/check-data-models.test.ts`
+// （只追加）」，且计划 Task 11 Step 3 的 `git add` 也只列了**这一个**测试文件 ⇒ T11 的两组
+// fixtures 都落在这里（「对账的纯核 fixtures」与「门禁 fixtures」同址：文件名的字面含义不再覆盖
+// 全部内容，这是既定约束的取舍，**不是笔误**；偏离点已记进 task-11-report.md）。
+//
+// 本段**不重排、不改写、不删**上面任何既有用例（W1 刚落地，且同期有人在改 `check-data-models.mjs`
+// 本体 —— 本波 T11 只许在 `.test.ts` 里追加）。故所有新增 import 与 helper 都写在本段内，
+// 动态 `import()` 把「模块缺席」的失败**局限在本段**（否则本文件整体加载失败，上面那批既有用例
+// 会跟着一起红 —— 那时看不清红的是谁）。
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+import { readFileSync as readFileSyncT11 } from 'node:fs'
+import { maskSqlComments as maskSqlCommentsT11 } from './check-data-models.mjs'
+
+/** 租户键 → 资源名 的**唯一用例表**：macro 与对账脚本必须对同一张表给出同一答案。 */
+const TENANT_KEY_CASES: Array<[string, string]> = [
+  ['acme', 'tenant_acme'],
+  ['beta', 'tenant_beta'],
+  ['acme-org', 'tenant_acme_org'],
+  ['Acme-Org', 'tenant_acme_org'],
+  ['a_b', 'tenant_a_b'],
+]
+
+const MACRO_REL = 'dbt/macros/generate_schema_name.sql'
+
+/** 掩掉 Jinja 注释（`{# … #}`）。
+ *  为什么必须掩：本仓的 macro/README 惯例是**在注释里点名禁忌形态**（dbt/README 规则② 那行就是
+ *  这么写的）。不掩 Jinja 注释，「不许出现裸字面量 schema 名」这条断言就会把自己规范里举的
+ *  反例判成违规（与门禁本体 maskSqlComments 的注释位判断①同因）。 */
+function maskJinjaComments(src: string): string {
+  return src.replace(/\{#[\s\S]*?#\}/g, (m) => ' '.repeat(m.length))
+}
+
+/** macro 的**代码位**文本：Jinja 注释 + SQL 注释都掩掉（两种注释位都不算代码位）。 */
+function macroCode(): string {
+  return maskSqlCommentsT11(maskJinjaComments(readFileSyncT11(join(repoRoot, MACRO_REL), 'utf8')))
+}
+
+/** 取代码位上的 SQL 单引号字面量。 */
+function quotedLiterals(src: string): string[] {
+  return [...src.matchAll(/'([^']*)'/g)].map((m) => m[1] ?? '')
+}
+
+/** 「整名」形态的裸字面量 schema（`'tenant_acme'` 是裸字面量；`'tenant_'` 是**前缀**，不是）。
+ *  抽成函数是为了让反面对照能喂合成源，证明这条判据**不是空转**。 */
+function bareLiteralSchemaNames(src: string): string[] {
+  return quotedLiterals(src).filter((lit) => /^tenant_[a-z0-9_]+$/.test(lit))
+}
+
+describe('T11 格①：generate_schema_name 的每租户 schema 必须由 var(\'tenant\') 派生', () => {
+  it('macro 在场，且 schema 名由 var(\'tenant\') 派生（lower + `-`→`_` 归一，与对账脚本同一用例表）', () => {
+    const code = macroCode()
+    expect(code, `${MACRO_REL} 缺席 —— 每租户 schema 的唯一定义点`).toMatch(/var\(\s*'tenant'\s*[,)]/)
+    expect(code, '归一：大小写折叠').toMatch(/lower/)
+    expect(code, '归一：`-` → `_`（casdoor org 常带连字符，PG 标识符里不安全）').toMatch(
+      /replace\(\s*'-'\s*,\s*'_'\s*\)/,
+    )
+    expect(code, '租户 schema 的命名前缀是唯一的落点（「tenant_」这个**前缀**字面量必须在）').toContain("'tenant_'")
+  })
+
+  it('macro 里**没有**裸字面量 schema 名（整名直写 `tenant_xxx` ⇒ 派生被架空，每租户会共用同一个 schema）', () => {
+    expect(bareLiteralSchemaNames(macroCode())).toEqual([])
+  })
+
+  it('反面对照：合成源里的整名字面量**必须被这条判据抓到**（断言不是空转）', () => {
+    expect(bareLiteralSchemaNames("{% macro m() %}{{ 'tenant_acme' }}{% endmacro %}")).toEqual(['tenant_acme'])
+    // 前缀形态不算裸字面量（否则上面那条断言会被自己的前缀变成恒红）
+    expect(bareLiteralSchemaNames("{% macro m() %}{{ 'tenant_' ~ var('tenant') }}{% endmacro %}")).toEqual([])
+  })
+
+  it('macro 的注释位**不算**代码位（注释里举反例是允许的，否则门禁一上线就被人关掉）', () => {
+    expect(bareLiteralSchemaNames(maskJinjaComments("{% macro m() %}{# 反例：'tenant_acme' #}{{ 'tenant_' }}{% endmacro %}"))).toEqual([])
+  })
+})
+
+describe('T11 格②：reconcile-data-tenants 的纯核（两侧集合的各种差集形态）', () => {
+  /** 动态 import：模块缺席时只红本段，不连坐同文件既有用例。 */
+  async function core(): Promise<{
+    tenantKeyOf: (name: string) => string
+    tenantSchemaName: (key: string) => string
+    diffTenants: (
+      platform: Array<{ org: string; key: string }>,
+      schemas: string[],
+      roles: string[],
+    ) => {
+      missingInData: Array<{ org: string; key: string; schema: string; role: string; schemaPresent: boolean; rolePresent: boolean }>
+      missingInPlatform: Array<{ key: string; schema: string; role: string; schemaPresent: boolean; rolePresent: boolean }>
+      unattributable: string[]
+      clean: boolean
+    }
+  }> {
+    return (await import('./reconcile-data-tenants.mjs')) as never
+  }
+
+  it('tenantSchemaName：与 macro 同一张用例表 + 非法键 fail-closed（绝不静默拼出一个坏标识符）', async () => {
+    const { tenantSchemaName } = await core()
+    for (const [key, expected] of TENANT_KEY_CASES) {
+      expect(tenantSchemaName(key), `键 ${key}`).toBe(expected)
+    }
+    for (const bad of ['', '   ', 'a.b', 'json/x', 'a b']) {
+      expect(() => tenantSchemaName(bad), `非法键 ${JSON.stringify(bad)} 必须抛`).toThrow()
+    }
+  })
+
+  it('两侧一致 → clean，两个差集都空', async () => {
+    const { diffTenants } = await core()
+    const d = diffTenants(
+      [{ org: 'acme-org', key: 'acme-org' }, { org: 'beta', key: 'beta' }],
+      ['tenant_acme_org', 'tenant_beta'],
+      ['tenant_acme_org', 'tenant_beta'],
+    )
+    // `collisions` 是修复笔 I1 加的桶（接口跟着走；这条断言没放宽：仍是「四个桶全空 + clean」）
+    expect(d).toEqual({ missingInData: [], missingInPlatform: [], unattributable: [], collisions: [], clean: true })
+  })
+
+  it('差集①「平台有、数据面无」→ 逐条列出（不是只给个计数，更不是静默）', async () => {
+    const { diffTenants } = await core()
+    const d = diffTenants(
+      [{ org: 'acme-org', key: 'acme-org' }, { org: 'beta', key: 'beta' }],
+      ['tenant_acme_org'],
+      ['tenant_acme_org'],
+    )
+    expect(d.missingInData).toEqual([
+      { org: 'beta', key: 'beta', schema: 'tenant_beta', role: 'tenant_beta', schemaPresent: false, rolePresent: false },
+    ])
+    expect(d.missingInPlatform).toEqual([])
+    expect(d.clean).toBe(false)
+  })
+
+  it('差集②「数据面有、平台无」→ 逐条列出（退租/改名漏回收的形态）', async () => {
+    const { diffTenants } = await core()
+    const d = diffTenants(
+      [{ org: 'acme-org', key: 'acme-org' }],
+      ['tenant_acme_org', 'tenant_ghost'],
+      ['tenant_acme_org', 'tenant_ghost'],
+    )
+    expect(d.missingInPlatform).toEqual([
+      { key: 'ghost', schema: 'tenant_ghost', role: 'tenant_ghost', schemaPresent: true, rolePresent: true },
+    ])
+    expect(d.missingInData).toEqual([])
+    expect(d.clean).toBe(false)
+  })
+
+  it('半建（schema 有、role 无）→ 也进差集①，且用 present 标志把「半」显式标出来', async () => {
+    const { diffTenants } = await core()
+    const d = diffTenants([{ org: 'acme-org', key: 'acme-org' }], ['tenant_acme_org'], [])
+    expect(d.missingInData).toEqual([
+      { org: 'acme-org', key: 'acme-org', schema: 'tenant_acme_org', role: 'tenant_acme_org', schemaPresent: true, rolePresent: false },
+    ])
+    // 半建的 schema **不算孤儿**：它的键在平台侧存在，只是 role 那半没建
+    expect(d.missingInPlatform).toEqual([])
+  })
+
+  it('半建反过来（role 有、schema 无）→ 同样进差集①', async () => {
+    const { diffTenants } = await core()
+    const d = diffTenants([{ org: 'acme-org', key: 'acme-org' }], [], ['tenant_acme_org'])
+    expect(d.missingInData).toEqual([
+      { org: 'acme-org', key: 'acme-org', schema: 'tenant_acme_org', role: 'tenant_acme_org', schemaPresent: false, rolePresent: true },
+    ])
+  })
+
+  it('两边命名归一后同名 ⇒ clean（证明两侧用的是同一条派生规则，不是各写一套）', async () => {
+    const { diffTenants } = await core()
+    const d = diffTenants([{ org: 'Acme-Org', key: 'Acme-Org' }], ['tenant_acme_org'], ['tenant_acme_org'])
+    expect(d.clean).toBe(true)
+  })
+
+  it('tenantKeyOf：数据面名字 → 键，认不出的一律返回空串（**不猜**）', async () => {
+    const { tenantKeyOf } = await core()
+    expect(tenantKeyOf('tenant_acme')).toBe('acme')
+    expect(tenantKeyOf('tenant_acme_org')).toBe('acme_org')
+    for (const unknown of ['public', 'tenant_', 'tenant_acme-org', 'stg_lemeng_retail_detail']) {
+      expect(tenantKeyOf(unknown), `认不出的名字 ${unknown}`).toBe('')
+    }
+  })
+
+  it('认不出的数据面对象**显式进 unattributable**（不许静默丢弃：丢弃 = 漂移看不见）', async () => {
+    const { diffTenants } = await core()
+    const d = diffTenants([{ org: 'acme-org', key: 'acme-org' }], ['tenant_acme_org', 'tenant_'], ['tenant_acme_org'])
+    expect(d.unattributable).toEqual(['tenant_'])
+    expect(d.clean).toBe(false)
+  })
+})
+
+describe('T11 格②附带：平台侧「启用集」的算法（与 enabledFor 两个消费方同源）', () => {
+  async function core(): Promise<{
+    platformTenantRefs: (
+      tenants: Array<{ id: number; org: string }>,
+      modules: Array<{ tenant_id: number; module_id: string; enabled: boolean }>,
+      loaded: string[],
+    ) => Array<{ org: string; key: string }>
+  }> {
+    return (await import('./reconcile-data-tenants.mjs')) as never
+  }
+
+  it('`tenant_module` 无行 = 启用（与 enabledFor 同语义）；显式 enabled=false 才剔除', async () => {
+    const { platformTenantRefs } = await core()
+    expect(
+      platformTenantRefs(
+        [{ id: 1, org: 'acme-org' }, { id: 2, org: 'beta' }, { id: 3, org: 'gamma' }],
+        [
+          { tenant_id: 2, module_id: 'data', enabled: false },
+          { tenant_id: 3, module_id: 'data', enabled: true },
+        ],
+        ['aftersales', 'data'],
+      ),
+    ).toEqual([
+      { org: 'acme-org', key: 'acme-org' },
+      { org: 'gamma', key: 'gamma' },
+    ])
+  })
+
+  it('别的模块的启用行不影响 data 的启用集（只看 data 那一行）', async () => {
+    const { platformTenantRefs } = await core()
+    expect(
+      platformTenantRefs(
+        [{ id: 1, org: 'acme-org' }],
+        [{ tenant_id: 1, module_id: 'aftersales', enabled: false }],
+        ['aftersales', 'data'],
+      ),
+    ).toEqual([{ org: 'acme-org', key: 'acme-org' }])
+  })
+
+  it('data 模块未装载 ⇒ 启用集为空（「模块不在本仓」不能被读成「所有租户都停用了」）', async () => {
+    const { platformTenantRefs } = await core()
+    expect(platformTenantRefs([{ id: 1, org: 'acme-org' }], [], ['aftersales', 'demo'])).toEqual([])
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// T11 修复笔（评审 I1 / I2-a / M8）追加：**只追加**，上面 34 例一个字都不改。
+//
+// 唯一一处「改到既有行」的例外是 I1 给 `diffTenants` 的返回值加了 `collisions` 桶 ⇒
+// 「两侧一致 → clean」那条 `toEqual` 必须跟着补 `collisions: []`（它**没有**放宽断言，
+// 只是跟着接口走）。这一处已在 task-11-fix-report.md 的「与计划/任务书的冲突与偏离」里点名。
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+const PROVISION_REL = 'deploy/data-tenants/provision-template.sql'
+
+/** 对账纯核的类型（含 I1 新增的 `collisions` 桶）。 */
+type ReconcileCore = {
+  tenantSchemaName: (key: string) => string
+  diffTenants: (
+    platform: Array<{ org: string; key: string }>,
+    schemas: string[],
+    roles: string[],
+  ) => {
+    missingInData: Array<{ org: string; key: string; schema: string; role: string; schemaPresent: boolean; rolePresent: boolean }>
+    missingInPlatform: Array<{ key: string; schema: string; role: string; schemaPresent: boolean; rolePresent: boolean }>
+    unattributable: string[]
+    collisions: Array<{ schema: string; orgs: string[]; keys: string[] }>
+    clean: boolean
+  }
+}
+
+/** 动态 import（模块缺席只红本段，不连坐同文件既有用例）。 */
+async function reconcileCore(): Promise<ReconcileCore> {
+  return (await import('./reconcile-data-tenants.mjs')) as never
+}
+
+/** 模板原文。 */
+function provisionRaw(): string {
+  return readFileSyncT11(join(repoRoot, PROVISION_REL), 'utf8')
+}
+
+/**
+ * 模板的**代码位**：丢掉 `--` 行注释（本文件是 psql 脚本，注释只有行注释一种）。
+ *
+ * ⚠️ **不能用 `maskSqlComments`**（本文件上面 T11 段用的那个原语）：它**不掩字符串字面量**
+ * （把它自己的头注判断①的原话），于是模板第 82 行的 `'…**不带 https://**：…'` 里
+ * 「URL 后紧跟加粗星号」的 `/**` 被当成 **块注释起始** ⇒ 从那里到文件尾**全被掩成空白**
+ * （实测，见 task-11-fix-report.md 的本轮新发现）。拿它做「不许出现非事务语句」的判据会**恒绿**
+ * ——那是空转的断言，比没有断言更坏。
+ */
+function provisionCode(): string {
+  return provisionRaw().split('\n').filter((l) => !l.trimStart().startsWith('--')).join('\n')
+}
+
+/** macro 的「空 tenant var ⇒ 回内置行为」分支原文（掩注释后；取不到 = 那条分支不在）。 */
+function macroEmptyKeyBranch(): string | null {
+  const m = /\{%-?\s*if\s+tenant\s*==\s*''\s*-?%\}\s*([\s\S]*?)\{%-?\s*else\s*-?%\}/.exec(macroCode())
+  return m?.[1] ?? null
+}
+
+describe('T11 修复笔 I1：派生撞名（不同租户归一到同一 schema）必须显式报出，不许 clean', () => {
+  it('两个不同 org 归一到同一 schema ⇒ 撞名组逐条列出，且 clean=false（评审 RR4 实测的那一组）', async () => {
+    const { diffTenants } = await reconcileCore()
+    const d = diffTenants(
+      [{ org: 'acme-org', key: 'acme-org' }, { org: 'Acme-Org', key: 'Acme-Org' }],
+      ['tenant_acme_org'],
+      ['tenant_acme_org'],
+    )
+    // 修复前的形态正是「两个差集都空 ⇒ clean:true / exit 0」—— 静默串租户
+    expect(d.missingInData).toEqual([])
+    expect(d.missingInPlatform).toEqual([])
+    expect(d.unattributable).toEqual([])
+    expect(d.collisions).toEqual([
+      { schema: 'tenant_acme_org', orgs: ['Acme-Org', 'acme-org'], keys: ['Acme-Org', 'acme-org'] },
+    ])
+    expect(d.clean, '撞名必须让 clean 为假 —— 否则对账看不出串租户').toBe(false)
+  })
+
+  it('单一 org（哪怕大小写混合）不是撞名 ⇒ 仍 clean（不许把正常形态判成撞名）', async () => {
+    const { diffTenants } = await reconcileCore()
+    const d = diffTenants([{ org: 'Acme-Org', key: 'Acme-Org' }], ['tenant_acme_org'], ['tenant_acme_org'])
+    expect(d.collisions).toEqual([])
+    expect(d.clean).toBe(true)
+  })
+
+  it('多组撞名：按 schema 名排序、组内稳定排序（对账输出可 diff，不随插入顺序抖）', async () => {
+    const { diffTenants } = await reconcileCore()
+    const d = diffTenants(
+      [
+        { org: 'acme-org', key: 'acme-org' },
+        { org: '_', key: '_' },
+        { org: 'Acme-Org', key: 'Acme-Org' },
+        { org: '-', key: '-' },
+      ],
+      [],
+      [],
+    )
+    // 语料里的两个撞名组（评审 RR4 逐例复核过）：tenant_acme_org 与 tenant__
+    expect(d.collisions.map((c) => c.schema)).toEqual(['tenant__', 'tenant_acme_org'])
+    expect(d.collisions[0]?.orgs).toEqual(['-', '_'])
+  })
+})
+
+describe('T11 修复笔：空键 —— macro 与脚本的**已知分歧**，共享用例表原未覆盖，现钉住', () => {
+  it('脚本侧空键**抛**（fail-closed）；macro 侧空 var 走「回内置行为」分支且**不 raise**（两者各自正确）', async () => {
+    const { tenantSchemaName } = await reconcileCore()
+    expect(() => tenantSchemaName(''), '脚本侧：空键会拼出 `tenant_`（所有租户共用名的形态）⇒ 必须抛').toThrow()
+    const branch = macroEmptyKeyBranch()
+    expect(branch, 'macro 必须有「空 tenant var ⇒ 回内置行为」这条分支').not.toBeNull()
+    expect(branch).toContain('generate_schema_name_for_env')
+    expect(
+      branch,
+      '空键分支里不许有 raise：macro 刻意回内置行为（P1 单租户零变化），脚本刻意抛 —— 分歧在此被 fixture 记录',
+    ).not.toContain('raise_compiler_error')
+  })
+})
+
+describe('T11 修复笔 I2-a / M8：模板事务化（失败 ⇒ 无残留）与 macro-paths 显式声明', () => {
+  it('provision 模板：恰好一个 BEGIN、一个 COMMIT，且 BEGIN 在第一个落库语句之前', () => {
+    const code = provisionCode()
+    expect(code.match(/^\s*begin;\s*$/gim) ?? [], '恰好一个 BEGIN（整份模板单事务）').toHaveLength(1)
+    expect(code.match(/^\s*commit;\s*$/gim) ?? [], '恰好一个 COMMIT').toHaveLength(1)
+    const beginAt = code.search(/^\s*begin;\s*$/im)
+    const firstWrite = code.search(/^\s*(create|alter|drop|grant|revoke)\b/im)
+    expect(firstWrite, '模板里当然有落库语句（没有的话这条断言是空转）').toBeGreaterThan(-1)
+    expect(beginAt, 'BEGIN 必须在第一句落库语句之前 —— 否则失败的那一段不被事务覆盖').toBeLessThan(firstWrite)
+  })
+
+  it('provision 模板：COMMIT 之后不许再有落库语句（否则那一段挂在事务外、失败就留残留）', () => {
+    const code = provisionCode()
+    const commitAt = code.search(/^\s*commit;\s*$/im)
+    expect(code.slice(commitAt)).not.toMatch(/^\s*(create|alter|drop|grant|revoke)\b/im)
+  })
+
+  it('provision 模板：不含非事务语句（包进事务会直接报错，不许为了事务化把语法改错）', () => {
+    const code = provisionCode().toLowerCase()
+    for (const bad of ['concurrently', 'vacuum', 'create database', 'create tablespace', 'alter system', 'reindex']) {
+      expect(code, `非事务语句 \`${bad}\` 不许出现在模板的**代码位**里（注释里点名允许）`).not.toContain(bad)
+    }
+    // 反面对照：同一条判据对合成源里的真 `vacuum;` 必须判红 —— 否则上面那圈是空转
+    const synthetic = '-- 注释里提一句 vacuum 是允许的\nvacuum;\n'
+    expect(synthetic.split('\n').filter((l) => !l.trimStart().startsWith('--')).join('\n').toLowerCase()).toContain('vacuum')
+  })
+
+  it('dbt_project.yml 显式声明 macro-paths（缺省的 ["macros"] 一旦被收紧 ⇒ macro 静默变死代码而结构断言仍绿）', () => {
+    const project = readFileSyncT11(join(repoRoot, 'dbt/dbt_project.yml'), 'utf8')
+    expect(project).toMatch(/^\s*macro-paths:\s*\['macros'\]\s*$/m)
+  })
+})
