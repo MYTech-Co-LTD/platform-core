@@ -714,3 +714,172 @@ describe('T11 修复笔 I2-a / M8：模板事务化（失败 ⇒ 无残留）与
     expect(project).toMatch(/^\s*macro-paths:\s*\['macros'\]\s*$/m)
   })
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// T9（P2 / W2 收尾）追加：门禁③扩面两类
+//   (a) **L2 声明静态面**：`modules/data/domain/semantic-compiler.ts` 里的 zod schema
+//       （写时校验）与唯一编译点的校验必须**同源** —— 防两处漂移。
+//       ⚠️ **本格的覆盖强度如实披露（T9 评审 I-1）**：下面这 7 例断的是**标记级文本比对**
+//       （改字面量 / 改键名 ⇒ 红），**不是行为断言** —— 「编译器行为变了而标记没变」的改动
+//       （守卫体掏空、`filters` 被静默丢弃）在**本格**是绿的，那两例由
+//       `modules/data/domain/semantic-compiler.test.ts`（CI `unit` job）抓。计划 L896 原本要的
+//       行为 fixtures（「schema 拒的编译器也拒」）属**后续加固**，见门禁头注「⑧ 的**强度**」。
+//   (b) **消费 `sync-data-semantics.mjs --check`**：把「L1 物化的 dry-run 契约」接进机检面。
+//
+// **为什么追加在本文件**：任务书硬约束 1 把 T9 的落点钉成这三个文件，且 T11 先例已把
+// 「对账纯核 fixtures 与门禁 fixtures 同址」定成取舍（见上面 T11 段头注）⇒ 同址沿用。
+//
+// **本段不重排、不改写、不删上面任何既有用例**（T4 的六格与 CLI 契约、T11 的 16 例 fixtures
+// 都是现状）。同上 T11 的先例：新增 import 写在本段内、并起别名，把「模块缺席」的爆炸半径
+// 限制在本段 —— 否则本文件整体加载失败，上面那批既有用例会跟着一起红，看不清红的是谁。
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+import { readFileSync as readFileSyncT9 } from 'node:fs'
+import {
+  L2_DECLARATION_REL,
+  checkL2DeclarationSameSource,
+  checkSyncCheckContract,
+  checkDataModels as checkDataModelsT9,
+} from './check-data-models.mjs'
+
+/** 规则 ⑧ 的扫描面（相对 rootDir）—— **import 门禁导出的常量**，不在这里再写一份路径。 */
+const L2_COMPILER_REL = L2_DECLARATION_REL
+
+/** 真文件的逐字副本（读自真仓）。 */
+function l2RealSource(): string {
+  return readFileSyncT9(join(repoRoot, L2_COMPILER_REL), 'utf8')
+}
+
+describe('T9 格⑧：L2 声明的 zod schema 与编译点校验**同源**（纯核 / **标记级**，可喂合成源）', () => {
+  it('真文件 → 零违规（反空转：基线真合规，门禁在真仓上不得因此变红）', () => {
+    expect(checkL2DeclarationSameSource(l2RealSource())).toEqual([])
+  })
+
+  it('⑧-b（T8 回归点）：只放宽 schema 的 op.kind，编译器仍只认 refine ⇒ 必须红', () => {
+    const v = checkL2DeclarationSameSource(
+      l2RealSource().replace("kind: z.literal('refine')", "kind: z.literal('aggregate')"),
+    )
+    expect(v.length, 'schema 说收 aggregate、编译器只认 refine —— 这正是「两处漂移」').toBeGreaterThan(0)
+    expect(v.map((x) => x.message).join('\n')).toContain('op.kind')
+  })
+
+  it('⑧-b：只放宽 schema 的过滤算子（多收 like），编译器只认 = / in ⇒ 必须红', () => {
+    const v = checkL2DeclarationSameSource(
+      l2RealSource().replace("z.enum(['=', 'in'])", "z.enum(['=', 'in', 'like'])"),
+    )
+    expect(v.length).toBeGreaterThan(0)
+    expect(v.map((x) => x.message).join('\n')).toContain('过滤算子')
+  })
+
+  it('⑧-a：写时校验不再从唯一编译点导出（schema 搬家 ⇒ 两处漂移面）⇒ 必须红', () => {
+    const v = checkL2DeclarationSameSource(
+      l2RealSource().replace('export const L2DeclarationSchema', 'const L2DeclarationSchema'),
+    )
+    expect(v.map((x) => x.message).join('\n')).toContain('L2DeclarationSchema')
+  })
+
+  it('⑧-c：schema 收到一个接口里没有的字段（编译器永不读 ⇒ 静默丢弃）⇒ 必须红', () => {
+    const v = checkL2DeclarationSameSource(
+      l2RealSource().replace(
+        '  target: z.number().optional(),',
+        '  target: z.number().optional(),\n  expression: z.string().optional(),',
+      ),
+    )
+    expect(v.map((x) => x.message).join('\n')).toContain('expression')
+  })
+
+  it('⑧-c 反向：接口里有、schema 里没有的字段 ⇒ 必须红（该声明永远写不进来）', () => {
+    const v = checkL2DeclarationSameSource(
+      l2RealSource().replace('  target?: number', '  target?: number\n  expression?: string'),
+    )
+    expect(v.map((x) => x.message).join('\n')).toContain('expression')
+  })
+
+  it('反面对照：合成源里「两侧逐字一致」必须**不**红（否则上面几条只是恒红，等于没在守）', () => {
+    // 用**真名字**：判据是按 `L2Declaration*` / `compileL2` 定位的（把名字参数化会凭空多一层
+    // 没有生产用的 API 面）。契约面则按同一套词表写全 —— schema 与编译器说同一套话。
+    const synthetic = [
+      'export interface L2Declaration {',
+      "  op: { kind: 'refine' }",
+      "  filters?: { dim: string; op: '=' | 'in'; values: string[] }[]",
+      '}',
+      'export const L2DeclarationSchema = z.object({',
+      "  op: z.object({ kind: z.literal('refine') }),",
+      '  filters: z.array(z.object({',
+      "    op: z.enum(['=', 'in']),",
+      '  })),',
+      '})',
+      'export function compileL2(d: L2Declaration) {',
+      "  if (d.op?.kind !== 'refine') throw new Error('x')",
+      "  if (f.op !== '=' && f.op !== 'in') throw new Error('y')",
+      '}',
+    ].join('\n')
+    expect(checkL2DeclarationSameSource(synthetic)).toEqual([])
+  })
+})
+
+describe('T9 格⑨：消费 sync-data-semantics.mjs 的 --check 契约（门禁③的 L1 侧）', () => {
+  /** 真契约：**动态 import**（模块缺席只红本段；且不拖 pg —— metric-store 只有 type import）。 */
+  async function realContract(): Promise<Record<string, unknown>> {
+    return await import('./sync-data-semantics.mjs')
+  }
+
+  it('真契约四条性质都在：--check 存在 / 未知 flag 响亮 / 漂移非 0 / 无漂移 0', async () => {
+    const c = await realContract()
+    expect(checkSyncCheckContract(c)).toEqual([])
+    // 逐条直证（与门禁的断言面同源，避免「门禁绿但性质其实不在」）
+    const parseArgs = c.parseArgs as (a: string[]) => { mode: string; unknown: string[] }
+    const usageError = c.usageError as (a: unknown) => string | null
+    const exitCodeFor = c.exitCodeFor as (m: string, d: unknown) => number
+    expect(parseArgs(['--check']).mode).toBe(c.MODE_CHECK)
+    expect(usageError(parseArgs(['--chekc'])), '未知 flag 被静默忽略 ⇒ 打了 --check 会真写库（T8 的原始缺陷）').not.toBeNull()
+    const drift = { added: ['x'], updated: [], removed: [], unchanged: [] }
+    const clean = { added: [], updated: [], removed: [], unchanged: [] }
+    expect(exitCodeFor(c.MODE_CHECK as string, drift)).not.toBe(0)
+    expect(exitCodeFor(c.MODE_CHECK as string, clean)).toBe(0)
+  })
+
+  it('反面对照：把「未知 flag 静默忽略」的契约喂进去 ⇒ 必须红（T8 那个会写库的形态）', async () => {
+    const c = await realContract()
+    // 变异要**外科级**：只把「未识别项」丢掉（= T8 第一版只认 `argv.includes('--dry-run')` 的形态），
+    // 保留真实的 usageError。这样只有 ⑨-b 的**未知 flag** 那一条会红，互斥那条仍该绿 ——
+    // 若把 usageError 整个换成 `() => null`，两条都会红，反而看不清红的是哪个触发路径。
+    const silentUnknown = {
+      ...c,
+      parseArgs: (a: string[]) => ({ ...(c.parseArgs as (x: string[]) => object)(a), unknown: [] }),
+    }
+    const v = checkSyncCheckContract(silentUnknown)
+    expect(v).toHaveLength(1)
+    expect(v[0]?.message).toContain('未知')
+  })
+
+  it('反面对照：--check 退化成正数/恒 0 的出口码 ⇒ 必须红（门禁会读错）', async () => {
+    const c = await realContract()
+    const broken = { ...c, exitCodeFor: () => 0 }
+    expect(checkSyncCheckContract(broken).length).toBeGreaterThan(0)
+  })
+
+  it('反面对照：用法错与漂移共用一个出口码 ⇒ 必须红（消费方分不清「打错字」和「真漂移」）', async () => {
+    const c = await realContract()
+    const collapsed = { ...c, EXIT_USAGE: c.EXIT_DRIFT }
+    expect(checkSyncCheckContract(collapsed).length).toBeGreaterThan(0)
+    expect(checkSyncCheckContract(collapsed).map((x) => x.message).join('\n')).toContain('出口码')
+  })
+})
+
+describe('T9 端到端：门禁在**含真模块文件**的 rootDir 上跑（规则 ⑧ 走文件面）', () => {
+  it('真文件副本 + 无 dbt/ ⇒ 零违规（⑧ 在文件面上同样不空转也不误伤）', () => {
+    const root = fixture({ [L2_COMPILER_REL]: l2RealSource() })
+    expect(checkDataModelsT9(root)).toEqual([])
+  })
+
+  it('真文件副本 + 单点放宽 op.kind ⇒ 经 checkDataModels 必须红，且违规落在 L2 文件上', () => {
+    const root = fixture({
+      [L2_COMPILER_REL]: l2RealSource().replace("kind: z.literal('refine')", "kind: z.literal('aggregate')"),
+    })
+    const v = checkDataModelsT9(root)
+    expect(v.length).toBeGreaterThan(0)
+    expect(v.every((x) => x.file === L2_COMPILER_REL)).toBe(true)
+    expect(v.map((x) => x.message).join('\n')).toContain('op.kind')
+  })
+})

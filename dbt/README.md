@@ -216,3 +216,163 @@ dbt / pg_duckdb）；「不给 var 时回内置行为」依赖 dbt-core 的 `gen
 机检兜底：`scripts/check-data-models.test.ts` 的 T11 格①（macro 必须由 `var('tenant')` 派生、
 不许出现整名形态的字面量 schema）与格②（平台侧对账用同一张用例表），外加 T11 修复笔段
 （**撞名组必须非 clean**、空键分歧被记录、模板单事务、`dbt_project.yml` 显式 `macro-paths`）。
+
+## 11 血缘与排查（T9 / 治理四机制收口）
+
+> **本节的定位**：`spec §10` 的四机制在 dbt 侧「原生全有」（`schema.yml` / `dbt docs` / `dbt test` /
+> 状态选择）——本节把它们落成**可执行的 runbook**。与 §10 一样，本节**不改 §8/§9 的「未验」清单**：
+> 下面每条命令都**还没在本仓的环境里跑过**（本机没有 dbt / pg_duckdb），属**真机首跑核对**项。
+
+### 11.1 四机制 ↔ 落点（一张表看全）
+
+| 机制（spec §10） | 仓内落点 | 谁守着它 |
+|---|---|---|
+| ① 记录 | `dbt/semantics/l1_metrics.yml` 的必填六项（`name`/`definition`/`expression`/`grain`/`owner`/`tier`） | 门禁规则 ⑤（静态必填）；`sync-data-semantics.mjs` 物化进 `data.metrics` |
+| ② 血缘 | `dbt docs generate` 产物（见 §11.2） | 本节 runbook；**无静态门禁**（产物要 dbt 环境） |
+| ③ 测试 | `dbt/tests/audit_<指标>.sql`（singular test，**独立复算**） | 门禁规则 ⑦（存在性 + 文件名映射无碰撞，事实源 = `metricToAuditFileName()`） |
+| ④ 状态选择 | `dbt run --select …` 的按需物化 + `sync-data-semantics.mjs --check` 对账 | 本节 §11.4（job）；`--check` 的**契约**由门禁规则 ⑨ 守着 |
+
+**T9 新增的两条机检**（`scripts/check-data-models.mjs`，改这两个面时先读规则头注）：
+- **规则 ⑧ — L2 声明静态面**：`modules/data/domain/semantic-compiler.ts` 里**写时校验**（zod schema）
+  与**唯一编译点**必须同源（`op.kind` / 过滤算子的接受集逐字一致、字段面集合相等）。
+  漂移形态是**假绿**：schema 放行的声明落库，直到某个租户查它时才炸。拍板 #5 要求门禁覆盖
+  「用户/agent 产生的声明」——L2 的入参正是**租户数据**，这条断言只能落在模块源码上。
+  ⚠️ **强度如实披露（T9 评审 I-1）：这条是「标记级文本比对」，不是行为断言。**「同源」在这里的
+  含义只是**两侧的字面量 / 结构 / 正则一致**，**不等于**「编译器真的执行了那套话」。构造
+  「**编译器行为变了、而比对标记没变**」的改动时它会**假绿**——评核实测两例：① 把守卫体掏空
+  （`if (decl.op?.kind !== 'refine') { /* 空 */ }`）⇒ 编译器实际接受任意 `op.kind`；②
+  `const filters = decl.filters ?? []` 改成 `const filters = []` ⇒ 租户的 `filters` 被**静默丢弃**、
+  编译出的 `select_sql` 不再带切片。两例的标记面都**逐字未动** ⇒ 门禁读成「两处一致」而 exit 0。
+  这个缺口**当前由** `modules/data/domain/semantic-compiler.test.ts`（CI `unit` job）兜住
+  （两例在该测试里分别红 1 / 4 条）——所以不是「无防守」，是**这道门禁在这一层是盲的**。
+  计划 L896 原本要的是**行为** fixtures（「**schema 拒的编译器也拒**」，纯函数对纯函数、不需要库）
+  ⇒ 属**后续加固**，本轮**只披露、不改比对机制**。
+- **规则 ⑨ — `--check` 契约**：把 dry-run 的四条性质（`--check` 存在 / **用法错响亮** / 漂移非 0 /
+  无漂移 0）与**出口码三分法**接进机检面。为什么值得单列：T8 第一版的真实缺陷就是
+  「未知 flag 被静默忽略 ⇒ 打了 `--check` **实际写库**、还 exit 0」。
+  ⚠️ 规则 ⑨ **只断言契约、不连库**（真跑 `--check` 见 §11.4）。
+
+### 11.2 血缘：产物怎么来（runbook）
+
+**主路径 —— `dbt docs generate`**（dbt 原生血缘，来源是 `ref()`/`source()` 的静态解析）：
+
+```bash
+dbt docs generate --project-dir dbt          # 产物：dbt/target/{index.html,manifest.json,catalog.json}
+```
+
+- ⚠️ **不要写 `--profiles-dir dbt`**（本节原文的错误，T9 评审 I-3 订正）：`--profiles-dir` 找的是该目录下
+  **名为 `profiles.yml`** 的文件，而 `dbt/` 里**只有 `profiles.example.yml`** —— 真值**刻意不进仓**
+  （`dbt/dbt_project.yml` 的 profile 头注、`dbt/profiles.example.yml` 的「用法」两条都写明）。
+  ⇒ 与 §10 一致，**不给 `--profiles-dir`**，靠 `~/.dbt/profiles.yml`
+  （`cp dbt/profiles.example.yml ~/.dbt/profiles.yml` 后填值）；profile 若放在**仓外**的目录，
+  再用 `--profiles-dir "$DBT_PROFILES_DIR"`（那是 `profiles.example.yml` 允许的另一种用法，
+  **该目录在仓外**）。
+  ⚠️ **待核**：dbt 在「给了 `--profiles-dir` 但目录内没有 `profiles.yml`」时是否回落到 `~/.dbt`，
+  **依 dbt 版本而异**，本机无 dbt、**未实测** ⇒ 这里按**仓内正典**（不给 `--profiles-dir`）取。
+- **产物是生成物**：`dbt/target/` 已在 §9 第 5 条的「不提交」清单里，**不 `git add`**。
+- **谁来跑**：挂 **T6 的物化 job 附带**（每次物化后顺带 generate，代价小），**或**独立**低频** job
+  （见 §11.4 的 cron 建议）。二选一即可，**别两处都跑**（同一条产物两个写入方只会互相覆盖）。
+- `manifest.json` 是**机器可读**的那一份：要拿血缘做检查/告警时读它，不要解析 HTML。
+
+**补充路径 —— Postgres 目录递归**（marts 是**视图**形态时的兜底）：
+
+```bash
+psql "$DATABASE_URL" -c "select distinct v.view_schema||'.'||v.view_name as view, v.table_schema||'.'||v.table_name as depends_on from information_schema.view_table_usage v where v.view_schema = '<目标 schema>' order by 1, 2"
+```
+
+- ⚠️ **必须带 `where v.view_schema = '<目标 schema>'`，且不要再 join `pg_class` 取 schema 名**
+  （本节原文的缺陷，T9 评审 M-2 订正）：原写法把 `view_table_usage` 再 join 回 `pg_class`，
+  而 join 条件**只有 `relname`**、没有 schema 限定 ⇒ 同名关系在多 schema 并存时**笛卡尔扇出**。
+  本仓的多租户正是「同一份模型跑 N 次、每次一个 schema」（§10）⇒ 各租户 schema 里**模型名完全相同**，
+  于是会把 A 租户的视图配到 B 租户的同名对象上，输出**看着有、其实错**的血缘。
+  实测（PG 16.15，两个 schema 各放一对同名 `v_dep` / `t_src`）：**原查询对 `tenant_a.v_dep` 出 5 行**
+  （正确 1 行），且**连 `information_schema` / `pg_catalog` 的系统视图也一并列出**
+  （44 行输入 → 56 行输出）。`view_table_usage` 本身就带 `view_schema` / `table_schema` 两列
+  ⇒ **直接用它们**即可，join 回 `pg_class` 是多余且有害的一步。`distinct` 是防同一对重复出行的兜底。
+- **为什么留这一条**：dbt docs 的血缘是**声明面**推出来的（`ref()`），而 PG 目录里的依赖是
+  **数据库自己记的**——两者一致才说明「声明与落库没分叉」。视图形态下这条几乎**零维护且不漂移**
+  （spec §10 机制② 的原话）。
+- ⚠️ **这条只对 `view` 形态有意义**：本仓 marts / staging **全部 `materialized='table'`**（§2.2；全仓零 view）
+  ⇒ 加了 schema 限定后**该 schema 返回 0 行**（表没有依赖记录）。**那是静默空、不是报错**
+  —— 读成「没有血缘」之前，先确认物化形态（§2.2 的 gate 2）。
+
+### 11.3 排查五步阶梯（**每步一条命令，按顺序走，别跳**）
+
+口径出问题的典型症状是「数不对」——**先定位到哪一层，再改**。五步的**顺序即收敛方向**：
+从「我们**说要**算什么」逐步走到「源数据**这次真的**是什么」。
+
+| # | 步 | 命令 |
+|---|---|---|
+| ① | **读声明**（口径的事实源） | `sed -n "/name: 'retail:net_sales'/,/^  - name:/p" dbt/semantics/l1_metrics.yml` |
+| ② | **dbt docs 看依赖**（这一层读了谁） | `dbt docs generate --project-dir dbt && echo '开 dbt/target/index.html → 选模型 → Lineage'` |
+| ③ | **看 PG 里实际的关系定义** | `psql "$DATABASE_URL" -c '\d+ <schema>.fct_retail_sale'` |
+| ④ | **抽 parquet 源核对**（上游真值长什么样） | `psql "$DATABASE_URL" -c "select r['order_detail_bizday'], r['amount'] from read_parquet('s3://<桶>/lemeng/retail_detail/<账套>/<日期>/all.parquet') r limit 5"` |
+| ⑤ | **独立复算**（不复用 dbt 任何产物） | `psql "$DATABASE_URL" -c "select '<账套>' as system_book, try_strptime(r['order_detail_bizday'], '%Y%m%d')::date as bizday, sum(r['amount']::numeric) as net_sales from read_parquet('s3://<桶>/lemeng/retail_detail/<账套>/<日期>/all.parquet') r group by 1, 2"` |
+
+**每步的判读**：
+- ① 与 ⑤ **按 grain 对齐后数不一致** ⇒ 先怀疑 **cast / 列名**（§3）或**列集漂移**（§6）——这正是
+  `dbt/tests/audit_*.sql` 在真数据上抓的东西。
+- ③ 的定义**与 ① 的表达式对不上** ⇒ 落库那一步没跟上声明（**重新物化**，别手改关系）。
+- ④ 读不出/报错 ⇒ **先核对路径形态**（与 `dbt/models/common/staging/sources.yml` 的
+  `meta.path_convention` 逐段对照），**再**查**凭据 / secret**（§4 与 §11.4）——**别把路径形态错误
+  误判成凭据问题**（本节原判读表的归因顺序会把排查带偏，T9 评审 I-5 点出）。
+- 走到 ⑤ 仍与 BI 里的数不同 ⇒ 问题在**消费层**（locked 参数 / 报表 SQL），不在数据面。
+
+**阶梯命令的订正依据（T9 评审 I-4 / I-5 / M-3 / M-4；全部**离线可查**，不依赖真机）**：
+（I-3 的 `--profiles-dir` 订正在 §11.2，同属本节这一批）
+
+- **① 的锚点必须带引号**（M-3）：`l1_metrics.yml` 里写的是 `  - name: 'retail:net_sales'`（**带单引号**）。
+  原文的不带引号模式**匹配不到任何行** ⇒ `sed` **静默输出空、exit 0**，排查者会据此判「声明压根不存在」。
+  实测：不带引号 `0` 行；带引号 `18` 行。⚠️ 外层用**双引号**，别用单引号（`sed -n '…/name: 'x'…'` 会写坏）。
+- **③ 不能用 `pg_get_viewdef`**（I-4）：本仓 marts / staging **全部 `materialized='table'`**
+  （项目级 `+materialized: table` + 两个模型各自又显式 `config(materialized='table')` ⇒ **全仓零 view**），
+  而 `pg_get_viewdef` 只对**视图 / 物化视图**有定义。**实测（PG 16.15）**：对**表**调用**不报错**，
+  而是返回 **NULL**（静默空 —— 比报错更糟：容易被读成「这个关系没有定义」）；
+  对视图/物化视图返回定义文本。**另一处**：`'dbt.fct_retail_sale'` 里的 schema `dbt`
+  **任何配置都不产生**（`profiles.example.yml` 缺省 schema = `staging`；多租户 = `tenant_<租户键>`，
+  见 §10；仓内 `dbt.fct_x` 只出现在**注释里的举例**）⇒ 实测报 `ERROR: schema "dbt" does not exist`。
+  ⇒ 改读**关系定义本身**（`\d+` 列出列与类型，实测可用）；`<schema>` 按 `search_path` /
+  `tenant_<租户键>` 取，**`dbt` 不是本仓的任何 schema**。等价写法：
+  `select column_name, data_type from information_schema.columns where table_schema='<schema>' and table_name='fct_retail_sale' order by ordinal_position`。
+- **④ 只用「已实证」的列**（M-4）：`sources.yml` 只登记**三列**（`amount` / `order_time` /
+  `order_detail_bizday`）；原文抽的 `order_no` 在 L1 声明里明确标**「暂定」**（`retail:order_count`
+  的 definition：*「单号列的列名与去重语义待 T6 按实测样本核对（staging 里 `order_no` 是暂定列）」*）
+  ⇒ 拿未实证列去抽查源，报错概率高、且报错会被归因错。故改抽**已实证的** `order_detail_bizday` + `amount`。
+- **⑤ 必须与声明的 grain 同量**（M-4）：`l1_metrics.yml` 的 `grain: [system_book, bizday]`，
+  `dbt/tests/audit_retail__net_sales.sql` 也是按 `(system_book, bizday)` 对齐的。原文的
+  **不带 `group by` 的总计**与粒度级声明**不同量** ⇒ 判读表那条「① 与 ⑤ 数不一致」**按字面不可执行**。
+  故 ⑤ 采用与 audit **同一形态**的 `group by`（`try_strptime(...)::date` 也是照抄 audit 的写法）。
+- **④⑤ 的 parquet 路径形态必须与正典逐段一致**（I-5）：正典（**四处一致**，皆在仓内）是
+  `s3://<bucket>/lemeng/retail_detail/<账套>/<日期>/all.parquet` —— `dbt/semantics/l1_metrics.yml` 的
+  `sources`、`dbt/models/common/staging/sources.yml` 的 `meta.path_convention` 与 `access_path`、
+  `dbt_project.yml` 的 vars 头注、`dbt/tests/audit_retail__net_sales.sql` 的实际读路径。
+  原文写成 `<桶前缀>/retail_detail/<账套>/<日期>.parquet`：**丢了 `lemeng/` 段**，且把目录里的
+  **叶子文件 `all.parquet` 换成了以日期命名的文件**（后者无论怎么读 `<桶前缀>` 都错）。
+  这类错误「照着跑读不到东西」，而原判读表把它归因到**凭据** ⇒ **误判方向**。
+  ⚠️ 模型与 audit 的实际读路径是**通配**（`…/<账套>/**/*.parquet`，见 `audit_retail__net_sales.sql`）；
+  这里读**某一天的叶子文件**是**抽查**形态（同一份源、范围更小），不是模型的正式读路径。
+
+⚠️ ④⑤ 两条的 `read_parquet` **要求同会话已建 secret**（pg_duckdb 的 secret 按**连接**生效，
+见「附：已知坑」里的 DuckDB 实例按连接那条）；`<桶>` / `<账套>` / `<日期>` / `<schema>` 是占位，
+**真值不进文档**（安全基线：只写「在哪、怎么取」）。
+
+### 11.4 对账持续在真数据上执行（**机制③④ 的落点**）
+
+**这是本节最关键的一句**：**物化 job 每次跑都带 tests** ⇒ `dbt test`（含每个 `audit_<指标>.sql`
+的独立复算）**每次物化都在真实数据上重跑一遍**。所以「对账」不是一次性验收动作，而是**常态**：
+cast 错了、源列漂移了，下一次物化就会红。
+
+| job | 建议 cron（**非整点**，避开业务高峰与其他 job 撞车） | 命令要点 |
+|---|---|---|
+| 物化（带 tests） | `17 2 * * *` | `dbt run --select <按需> && dbt test --select <同一批>`——**test 必须跟在同一 job 里**，否则「跑过 tests」不成立 |
+| L1 对账（`--check`） | `43 2 * * *` | `tsx scripts/sync-data-semantics.mjs --check`——**漂移 ⇒ exit 1**（规则 ⑨ 守的契约）；⚠️ **先核这一条是 dry-run**：跑前后查 `data.metrics` 行数，**必须不变** |
+| 租户对账 | `7 3 * * *` | `tsx scripts/reconcile-data-tenants.mjs`（§10 那条双向差集；**撞名必报、exit 1**） |
+| 血缘产物（可选） | `23 4 * * 1`（每周） | `dbt docs generate`（§11.2；若已挂在物化 job 上，**本行删掉**） |
+
+- **cron 全部是建议值**，真值由 T6 注册 job 时与机主/客户确认（**外部输入④**：业务排期/窗口）。
+  写进本文件是为了「别默认 0 点整点打」——整点会被所有定时任务挤在一起。
+- ⚠️ **对账 job 的失败必须显式可见**（non-zero + 告警），**不许 `continue-on-error`**：
+  漂移被静默 = 回到「没有对账」的状态（部署验证纪律：别用容错掩盖失败）。
+- ⚠️ 上面三条 job 的**命令形态都还没在真机上跑过**（本机无 dbt / pg_duckdb / 部署库），
+  归 T6 首次注册时核对；其中 `--check` 的**契约**已由门禁规则 ⑨ 静态守住，
+  但**它对真库的行为**（尤其「不写库」）**每次改 sync 脚本都要重测一次**——那是 T8 踩过的坑。
