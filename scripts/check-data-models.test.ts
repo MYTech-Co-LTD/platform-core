@@ -161,6 +161,36 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
     expect(violations[0]?.message).toContain('::double')
   })
 
+  // ── 规则 ② 的第二形态：`CAST(expr AS double)` ────────────────────────────────────────
+  // 坑 #4 的触发条件是「**裸 `double` 去查 pg_type**」（触发器是类型名查找，不是 `::` 这个运算符）。
+  // `CAST(expr AS Typename)` 的 Typename 与 `::` 走同一条路 ⇒ 两者必须同红；且 `CAST` 是比 `::`
+  // 更常见的写法（评审 §RR1.8 探针 G：修前这一格**逃检**，故本格是「先红后绿」的红格）。
+  it('格③附带：代码位 `cast(... as double)` → 违规（与 `::double` 同一条类型名查找路径，坑 #4）', () => {
+    const root = variant((f) => {
+      f[STAGING] = f[STAGING].replace(
+        "r['amount']::numeric as amount",
+        "cast(r['amount'] as double) as amount",
+      )
+    })
+    const violations = checkDataModels(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.file).toBe(STAGING)
+    expect(violations[0]?.line).toBeGreaterThan(0)
+    expect(violations[0]?.message).toContain('double')
+    expect(violations[0]?.message).toContain('坑 #4')
+  })
+
+  it('格③反面对照：代码位 `cast(... as double precision)` → 绿（PG 原生类型，负向前瞻不得误伤）', () => {
+    const root = variant((f) => {
+      // 把 marts 里**唯一**的 `double` 形态换成 CAST 写法 ⇒ 本格单独隔离「`as double precision` 会不会被误伤」
+      f[MARTS] = f[MARTS].replace(
+        '    sum(amount)::double precision as net_amount',
+        '    cast(sum(amount) as double precision) as net_amount',
+      )
+    })
+    expect(checkDataModels(root)).toEqual([])
+  })
+
   it('格④：staging 无 `r[`取列模式 → 违规（SELECT * 能过、点名取列报 column does not exist）', () => {
     const root = variant((f) => {
       f[STAGING] = [

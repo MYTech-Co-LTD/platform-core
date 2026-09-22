@@ -8,7 +8,8 @@
 // ── 本门禁的**范围**（多一句都不做，别在这里扩面） ───────────────────────────────
 // 只做 **dbt 工件的静态门禁**，七项（计划 L649–650 逐条）：
 //   ① staging 模型必含 `r['列名']` 取列模式（坑 #5 的结构性防御）
-//   ② 禁 `::double`（坑 #4：pg_duckdb 里它是 shell 类型，报 `type "double" is only a shell`）
+//   ② 禁 `::double` 与 `CAST(... AS double)`（同一坑 #4：裸 `double` 去查类型名 ⇒ shell 类型，
+//      报 `type "double" is only a shell`；两种写法同一条路，故同拦）
 //   ③ 禁 `union_by_name`（漂移必须显式处理，不许引擎替我们猜列集）
 //   ④ staging 一对一（staging 模型 ↔ sources.yml 的源，**双向**）
 //   ⑤ 语义声明必填字段齐全（owner / tier / grain / definition + name / expression）
@@ -33,10 +34,18 @@
 //    为什么**不**直接复用 maskSql：它把单引号串也掩成空格 —— 规则 ① 要的恰恰是 `r['amount']`
 //    里的引号与内容，掩掉就判不了了；且它所在模块顶层 import 了 `apps/server/src/migrate.ts`，
 //    会把 pg 那条依赖链拖进一个纯静态门禁。二者需求相反，故意不合并。
-// ② **`::double precision` 放行**：被判违规的是 DuckDB 的 shell 类型 `::double`（坑 #4 的死法），
-//    而 `::double precision` 是 PG 原生类型、不是同一个东西（负向前瞻 `(?!\s+precision)` 区分）。
-//    ⚠️ 诚实标注：`::double precision` 是否同样受坑 #4 影响的**未实测** —— 本条放行是「不误伤 PG
+// ② **两种写法一起拦、`double precision` 放行**：被判违规的是 DuckDB 的 shell 类型 `double`（坑 #4 的死法）。
+//    触发条件是「**拿裸 `double` 去查 `pg_type`**」，**不是 `::` 这个运算符** ⇒ `::double` 与
+//    `CAST(x AS double)` 走**同一条路**、必须同红（评审 §RR1.8 探针 G 实测：修前 `CAST` 形态逃检；
+//    而 `CAST` 是比 `::` 更常见的写法）。故正则收两个句法形态：`::\s*` 与 `\bas\s+`。
+//    而 `double precision` 是 PG 原生类型（`float8` 的专用拼写，**不做类型名查找**）、不是同一个东西
+//    —— 负向前瞻 `(?!\s+precision)` **两个分支共用**，故放行口径对两种写法一致。
+//    `as` 分支写 `\s+`（不是 `\s*`）：SQL 里 `as` 与类型名之间必然有分隔，`\s*` 只会多认下
+//    `asdouble` 这类标识符（真 SQL 里不存在），是纯粹的误伤面。
+//    ⚠️ 诚实标注：`double precision` 是否同样受坑 #4 影响的**未实测** —— 本条放行是「不误伤 PG
 //    合法写法」的取舍，不是「已证实安全」。真出事时改这里，别改调用方。
+//    ⚠️ 已知漏检（评审 M-2，本轮有意不修）：带引号的类型名 `::"double"` 同属坑 #4 形态但**不拦**
+//    —— 正则要求 `double` 紧随 `::`，引号挡住了。真实仓无此写法，概率远低于 `CAST`。
 // ③ **违规行号字段恒在**（`scripts/` 是 checkJs，JSDoc 字面量类型会被加宽 ⇒ 可辨识联合收窄在这里
 //    会静默失效）。故 `Violation` 是**单形状、字段恒在**：`{ file, line, message }`，无行号的
 //    检查项写 `line: 0`（打印时不带 `:0`，**不伪造 `:1`** —— 与 check-compose 的无行号报错同旨）。
@@ -70,8 +79,8 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'target', 'logs', 'dbt_packag
 const STAGING_RE = /^dbt\/models\/(?:.+\/)?staging\/stg_[A-Za-z0-9_]+\.sql$/
 /** 规则 ①：`r['列名']`（单双引号都算；坑 #5 要的是「点名取列」这个构造，不是某一种引号） */
 const R_COLUMN_RE = /r\s*\[\s*['"]/
-/** 规则 ②：DuckDB shell 类型 `::double`；`::double precision` 是 PG 原生类型 ⇒ 放行（见头注判断②） */
-const DOUBLE_CAST_RE = /::\s*double\b(?!\s+precision)/gi
+/** 规则 ②：DuckDB shell 类型 `double`——**两种写法都拦**（`::double` 与 `CAST(x AS double)`，见头注判断②）；`double precision` 是 PG 原生类型 ⇒ 放行 */
+const DOUBLE_CAST_RE = /(?:::\s*|\bas\s+)double\b(?!\s+precision)/gi
 /** 规则 ③：`union_by_name` 兜列集漂移 */
 const UNION_BY_NAME_RE = /union_by_name/gi
 /** 规则 ⑥：指标名的命名空间形态 `<域>:<指标名>`（两段都小写蛇形） */
@@ -219,7 +228,7 @@ export function checkDataModels(rootDir) {
       push(
         rel,
         doubleLine,
-        '用了 `::double` —— pg_duckdb 里 DOUBLE 不是可用的 cast 目标（报 `type "double" is only a shell`，坑 #4）：金额用 `numeric`、浮点用 `float`/`real`。放行 `::double precision`（PG 原生类型，与本条要拦的不是同一个东西）',
+        '用了 `::double` / `CAST(... AS double)` —— pg_duckdb 里 DOUBLE 不是可用的 cast 目标（报 `type "double" is only a shell`，坑 #4）：金额用 `numeric`、浮点用 `float`/`real`。两种写法**同一条路**（都是拿裸 `double` 去查类型名），故一起拦；放行 `double precision`（PG 原生类型，与本条要拦的不是同一个东西）',
       )
     }
     const unionLine = firstMatchLine(masked, UNION_BY_NAME_RE)
