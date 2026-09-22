@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.25.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.24.0...v0.25.0) - 2026-09-22
+- 【新增】aftersales: /rules /employees /stores 补 total，与 /products 同形（M-T8-3） ([#160](https://github.com/MYTech-Co-LTD/platform-core/pull/160), [0f24864](https://github.com/MYTech-Co-LTD/platform-core/commit/0f2486400108b1e52401dcef78d358f43ffb803e))
+
+
 ## [0.24.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.23.0...v0.24.0) - 2026-09-22
 - 【新增】aftersales: M2b 迁移脚本骨架（纯核可测 + 默认 dry-run） ([#159](https://github.com/MYTech-Co-LTD/platform-core/pull/159), [aaa9849](https://github.com/MYTech-Co-LTD/platform-core/commit/aaa9849198b64c91dd84c3b1c3720075feda4ab3))
 
