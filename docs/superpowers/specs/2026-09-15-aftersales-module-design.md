@@ -111,6 +111,16 @@ M1 落协议字段与发放逻辑，M2 的 aftersales manifest
 | `department` | 共用主数据（§0.1 原表清单的一行） | **建表归 M2b**（2026-09-15 定）：§3.3 的 14 张源表清单里**没有部门表**，M2a 既无源可映、又无 API 消费者（§2.2 主数据面只有 stores/products/employees）——建它等于照猜写 DDL，与 `archive_*` 同一条规矩 |
 | `archive_order` / `archive_order_item` | group_buying_order(_item) 存量 | **只读档案表**：保工单关联订单展示/查询完整，无业务 API；接龙二期另起活表。**建表归 M2b**（2026-09-15 定）：它们唯一的消费者就是 M2b 的迁移脚本，而 `group_buying_*` 的字段清单**至今没有实测样本**（§3.3 只测得行数与几处类型异常）——M2a 建它等于照猜写 DDL。M2a 侧只留 `ticket.related_order` 引用列；M2b 拉样后建表，字段按样本定 |
 
+> **拍板记录（2026-09-22）·历史附件不迁行**：`ticket_attachment` **只装新 ZOS 附件**——
+> 历史附件（无极 COS）**不进该表**。上表 `ticket_attachment` 行的「`damage_images` 归一后展开」
+> 描述的是**新数据路径的形状**，不构成把存量 `damage_images`（COS URL）迁进该表的依据——
+> COS URL 进 `object_key` 会被 ZOS presign **签错桶**（本拍板消除该行与 §2.3「COS 原值原地」
+> 的矛盾）。历史附件在无极系统查看；后续如需外链展示**另立题**。
+
+> **拍板记录（2026-09-22）·`department` 移出 M2b**：上表 `department` 行的「建表归 M2b」
+> **不再成立**——§3.3 的 14 张源表无部门表，**无源可迁**，M2b 不建不迁 `department`；
+> 真需要部门数据时**另立项**。
+
 **金额表示（2026-09-15 定）**：目标表金额**一律整数分**（列名 `_minor` 后缀或注释标明），
 **永不浮点**——§0.3 服务端权威计算的前提（浮点累加会在对账时变成假的差额）。源侧单位
 （分/元）的解释**不在这一层**，只发生在 §3.3 的迁移脚本一处转换里。
@@ -325,6 +335,9 @@ M3a 的 console 员工页实现的是**单表简化版**（直接改 `employee.a
 
 **已知边界**：`GET /rules` / `GET /employees` / `GET /stores` **不回 `total`**（即 §5 登记的
 **M-T8-3**，归 M2b）⇒ 这三页**只能单页展示**，UI 上要如实、**不摆一个假的页码**。
+
+> **拍板记录（2026-09-22）**：**M-T8-3 移出 M2b**，拆为独立 issue **#155**（API 扩面
+> 非数据迁移，与 M2b 择窗口迁移不同轴）。上文「归 M2b」为悬空指针，**订正为归 #155**。
 
 **处理弹窗不显示预估金额**：`POST /tickets/:id/process` **只在提交之后**返回服务端算出的
 `amountMinor`，没有预览端点；而 §0.3 把「前端算金额」列为**要消灭的模式**。⇒ `ratio` 路
@@ -659,6 +672,8 @@ GET https://data.wujisite.com/api/private/object
     ⇒ **M2b 需给出清理设计**：按「未认领且超过 N 天」同时清 DB 行与对象。
     数据上可行——`001_init.sql` 已有 `object_key` / `created_at` 与 `(org, ticket_id)` 索引；
     注意**对象 key 里不含工单信息**，只能由行的 `object_key` 反查。
+    **拍板记录（2026-09-22）·GC 触发机制**：**openship job 定时打 manage 面端点**——端点需
+    **manifest 声明 + 门卫双核对**（装载期双向核对）；N 天值 / 软删宽限 / dry-run 留给实施计划定。
 
 ## 6. 关联
 
@@ -669,6 +684,17 @@ GET https://data.wujisite.com/api/private/object
 - module-protocol.md（userApp 闸门缺口、租户数据隔离约定）。
 
 ## 7. 修订记录
+
+- 2026-09-22（**M2b 启动前裁决落档**，与数据栈分层 spec 同日拍板。**本轮只改文档，只加注记、
+  原文不删改**；数据栈侧六项见 `2026-09-21-data-platform-layered-design.md` §10 拍板记录）：
+  ① §2.1 表后加拍板注记：**历史附件不迁行**——`ticket_attachment` 只装新 ZOS 附件，存量
+  `damage_images`（无极 COS）不进表（消除与 §2.3「COS 原值原地」的矛盾：COS URL 进
+  `object_key` 会被 ZOS presign 签错桶；历史附件在无极系统查看，外链展示另立题）；
+  ② §2.1 表后加拍板注记：**`department` 移出 M2b**——14 张源表无部门表，无源可迁，需要时另立项；
+  ③ §5 #12 加拍板注记：**GC 触发 = openship job 定时打 manage 面端点**（端点需 manifest 声明 +
+  门卫双核对；N 天值/软删宽限/dry-run 留给实施计划定）；
+  ④ §3.1 加拍板注记：**M-T8-3 移出 M2b**，拆独立 issue **#155**（API 扩面非数据迁移，
+  原文「归 M2b」为悬空指针，订正为归 #155）。
 
 - 2026-09-16（**M3c 拍板结论落进架构与协议文档**——提案「架构先行」的第二步。**本轮只改文档，
   实现代码一行未动**）：
