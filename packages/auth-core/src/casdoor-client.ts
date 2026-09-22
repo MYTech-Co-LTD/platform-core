@@ -390,7 +390,10 @@ export class CasdoorClient {
    *  ④ 后置**不**用 verifyPassword 钉：真机 `HandleLoggedIn` 对 **isForbidden** 用户一律拒登
    *     （controllers/auth.go:61 'The user is forbidden to sign in'）⇒ 拿登录当后置条件会把
    *     "给已禁用用户重置密码"变成假失败；且登录失败会累加 `signin_wrong_times`
-   *     （object/check.go CheckPassword → checkSigninErrorTimes）。改为回读 user 记录的
+   *     （累加在登录/校验路径的口令不符分支 `recordSigninErrorInfo`，master 即
+   *     `object/check.go:281`（`CheckPassword` 调它）；`checkSigninErrorTimes`
+   *     （`object/check.go:212`）**只**做「超限拒回」（:218-225）与「冻结窗口过后重置」（:229），
+   *     它**不**累加）。改为回读 user 记录的
    *     `passwordType`：真机 set-password 成功时恒 `user.PasswordType = organization.PasswordType`。
    *  ⑤ 改密**不踢会话**（真机 `isUserAccessRevoked` 只与 is_forbidden/is_deleted 有关，与
    *     password 无关）⇒ 既有 cookie/token 继续有效。产品若要"重置即下线"，得平台侧另做。
@@ -410,6 +413,15 @@ export class CasdoorClient {
     // 铁律③ 写后回读验**目标状态**：真机 updateUserPassword 成功时恒把 user.PasswordType 置成
     // org.PasswordType；写入被吞 / 未哈希时该字段保持原值 ⇒ 不等即抛（回读为 null 也算失败：
     // 用户不该在改密后消失）。比"回读属性树"更贴目标，且不依赖登录（见 ④）。
+    //
+    // ⚠️ **能力边界（别高估这条回读）**：它证明的是「写请求被接受且类型对齐」，**不是**「口令已变更」。
+    // 对 `passwordType` 本已等于 org 类型的 org（console/add-user 建号即如此——最常见的形状），
+    // 本检查的**分辨力为 0**：写入被代理/中间层吞掉时它照样通过。口令真变的**唯一硬证据是真机登录**
+    // （见 issue #119 的验收步骤 + `deploy/delivery-private.md` 的建号/改密口径）。
+    // 上游 `/api/check-user-password` 可作**非致命**二次信号（check-only、不吃 session，但对 isForbidden
+    // 同样拒回 ⇒ 同样不够当硬闸）——**故此处刻意不新增该请求**：多一个副作用面，换不来硬断言。
+    // 本回读真能咬住的窄口径：org 的 `passwordType` 是**未知/拼错的非空值** ⇒ 真机 `cred.GetCredManager`
+    // 回 nil ⇒ 不哈希、类型不动 ⇒ 回读值仍为旧值 ≠ org 类型 ⇒ 抛（评审 §3 的独立佐证）。
     const back = await this.#getRawUser(name)
     const backType = String(back?.passwordType ?? '')
     if (!back || backType !== orgType) {
