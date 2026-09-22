@@ -62,6 +62,8 @@ docker exec -it pgduckdb-lab bash
 #    目标机直连 GitHub 可能不通 ⇒ 代理要在**容器内**配（本路径的 apt / curl 都在容器里跑；
 #    `docker build --build-arg HTTPS_PROXY=…` 是**本地构建 Dockerfile** 时才用的参数，
 #    而本 runbook 的两条路径都不是——1a 在 GitHub 托管 runner 上跑，1b 在容器里跑）。
+#    ⚠️ 下面两行 export 是**无条件**的：**若该机可直连 GitHub，这两行可跳过**
+#    （留着就等于强制全部容器流量走代理，不是「按需」）。
 #    代理地址口径见基建速查——**用公网 EIP，内网 `10.0.0.8:4878` 被云安全组拦**。
 export http_proxy=http://113.250.177.229:4878
 export https_proxy=$http_proxy
@@ -219,7 +221,7 @@ spec §11.9 #4：自建镜像的**构建频率与触发**仍是开放项（跟 p
 版本走，未定）。所以工作流**只开 `workflow_dispatch`**：不设 `schedule`、不在 push/PR 上跑。
 
 现口径 = **按需手动 dispatch**。要升级版本时：改 Dockerfile 的两个 `ARG` → 重跑 → 出新 tag
-（同步改 `deploy/data-compose.yml`）。等 §11.9 #4 拍板后，再把触发方式写进这里。
+（**tag 的三个引用点必须同改**，见 §5.2）。等 §11.9 #4 拍板后，再把触发方式写进这里。
 
 ### 5.2 版本配对的回退路径（**首次 dispatch 前先读**）
 
@@ -233,6 +235,20 @@ spec §11.9 #4：自建镜像的**构建频率与触发**仍是开放项（跟 p
 1. `PG_DUCKDB_VERSION=main` —— 即 lab 验证过的配对（main 的默认 DuckDB v1.5.4 → override v1.5.5）。
    代价：`main` 是移动靶，可复现性掉一档 ⇒ 这是**应急回退**，不是新默认。
 2. 钉到 lab 对应的 **1.2.0-dev commit**（拿具体 SHA 填进 ARG）—— 要长期用就选这条，可复现。
+
+⚠️ **改完 ARG 还有第二步：按 §0 出「新」tag ——`1.1.1-duckdb1.5.5` 不得复用。**
+tag **不是**从 ARG 推导出来的（它是硬编码字面量），所以「只改一个 ARG → 重跑」的实际后果是
+**用 `main` / 某个 SHA 编出的另一份产物盖上 `1.1.1-duckdb1.5.5`**：既撞 §0 的「不打可变
+tag、**旧 tag 保持可回滚**」（覆盖后收不回），又让 tag 名与产物实际来源不符——而 §2.2 已确认
+tag 与 `extversion` 本来就可能不同名，**排查时极难识别**。
+回退场景的命名约定建议 **`main-duckdb1.5.5`** / **`<sha8>-duckdb1.5.5`**
+（`main` / SHA 不在 §0 那条 tag 公式的取值域内，所以回退要另起一个名字）。
+
+tag 在**三处，必须同改**（漏一处 ⇒ 产物与引用对不上）：
+
+1. `.github/workflows/pg-duckdb-image.yml` 的 `tags:`
+2. §1b ⑦ 的 `docker commit …:<tag>`（含 §1b 末尾跨机 `docker push` 的那条同 tag 命令）
+3. `deploy/data-compose.yml` 里 `pg_duckdb` 服务的镜像引用（T3；即文首「改 tag 必须两边同改」）
 
 **不往下降 `DUCKDB_VERSION`**：duckdb-ossie 只发到 v1.5.5，降到 v1.4.3 会让 §0 的自建理由
 （语义层装不上）失效——所以回退方向是换 pg_duckdb，不是换 DuckDB。
