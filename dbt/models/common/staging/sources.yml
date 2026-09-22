@@ -1,0 +1,49 @@
+# sources.yml — 乐檬零售域的**落地声明**（对象存储上的 parquet 湖，不是 PG 表）。
+#
+# ⚠️ 两个必须先读的口径（否则会把本文件当成 dbt 的运行时接口）：
+#
+# 1. **`source()` 不是读路径**。本仓的读路径是 pg_duckdb 的 `read_parquet()`（staging 模型里直写），
+#    而 dbt 跑在 **dbt-postgres** 适配器上：`{{ source('lemeng','retail_detail') }}` 会被渲染成
+#    `"db"."schema"."table"` 这种 PG 关系名 —— 湖上没有那个关系，渲染出来必然查不到。
+#    （能直接读 parquet 的是 **dbt-duckdb** 适配器，走 source 的 `external_location`；本仓不用它。）
+#    ⇒ 本文件的 `source` 声明是**声明与血缘的落点**，它的消费者是
+#      ① 静态门禁 `scripts/check-data-models.mjs`（④ staging 一对一的另一半）
+#      ② 人（这份清单本身就是「这个域有哪些源」的事实源）
+#    ⚠️ 「声明 ↔ 实际读的 s3 路径一致」这条（spec §10 门禁③ 的对应物）**当前没有机检** —— 路径由
+#       `read_parquet()` 的字符串拼出、还带 var，静态对不上。属**明确不做**，不是漏检（见 dbt/README.md）。
+#
+# 2. **命名是硬约束**：staging 模型名 = `stg_<source 的 name>_<table 的 name>`（此处 = `stg_lemeng_retail_detail`）。
+#    ④ 是**双向**机检：源没有 staging 模型违规，staging 模型没有源也违规。改名要两处一起改。
+version: 2
+
+sources:
+  - name: lemeng
+    description: >-
+      乐檬零售域（对象存储 parquet 湖）。路径约定 `lemeng/retail_detail/<账套>/<日期>/all.parquet`，
+      账套 = 主体维度（3120 熊喵 / 64188 品品甜）。出处：docs/data-platform-handbook.md §2。
+    # 落地位置的机读事实（`meta` 是 dbt 允许任意键的地方，不参与 dbt 校验）
+    meta:
+      path_convention: 'lemeng/retail_detail/<账套>/<日期>/all.parquet'
+      account_books: ['3120', '64188']
+      # ⚠️ 路径**非 hive 分区命名**（`3120/` 而不是 `system_book=3120/`）⇒ 下游拿不到自动分区列，
+      # 账套只能由 var 供值或从路径解析（handbook §4 / 标准 §4.1 欠账）。
+      partitioning: '非 hive（目录名不带键名）；账套列当前由 dbt var `account_book` 供值'
+    tables:
+      - name: retail_detail
+        description: >-
+          零售明细（2026-09-21 只读压测链路通，1.09M 行）。**未达标**：列全是 VARCHAR、字段集漂移、
+          同一表两种日期格式（handbook §4 三条欠账）——故 staging 层手写 cast 补（拍板 1）。
+        meta:
+          # 读路径不是 source()（见文件头 1），这里是**人读的**说明
+          access_path: "read_parquet('s3://{{ var('zos_bucket') }}/{{ var('lemeng_retail_prefix') }}/{{ var('account_book') }}/**/*.parquet')"
+          # 坑 #2：同域不同日 46 vs 43 列（supplier_* 时有时无）⇒ 禁用 `union_by_name` 兜（静态门禁拦），
+          # 显式分组策略见 dbt/README.md「漂移策略」
+          known_drift: '同域不同日列数不等（46 vs 43，supplier_* 时有时无）——列全集待 T6 按实测样本钉死'
+        # 只登记**已实证**的三列形态（列全集是 gate 到 T6 的，别在这里照猜写全）
+        columns:
+          - name: amount
+            description: '成交金额。**存量 parquet 里是 VARCHAR**（实测值形如 `"12.79"`）⇒ staging 手写 cast'
+          - name: order_time
+            description: '交易时间，字符串格式 `%Y-%m-%d %H:%M:%S`（实测样例 `2026-07-01 10:02:34`）'
+          - name: order_detail_bizday
+            description: '业务日，字符串格式 `%Y%m%d`（实测样例 `20260707`）——**与 order_time 两种格式并存**（坑 #3）'

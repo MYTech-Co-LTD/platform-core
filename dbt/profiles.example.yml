@@ -1,0 +1,41 @@
+# profiles.example.yml — dbt 连接模板（**不含任何真值**；本文件进仓，`profiles.yml` 不进仓）。
+#
+# 用法（二选一）：
+#   · 本地：`cp profiles.example.yml ~/.dbt/profiles.yml` 后填值（或 `dbt --profiles-dir <不进仓的目录>`）；
+#   · 部署：openship 把 env(isSecret) 注入运行环境，**真值不落磁盘**（推荐路径）。
+# 真值取法：openship 数据面 project 的 env(isSecret)；本地开发指向本机 pg_duckdb。
+platform_data:
+  target: prod
+  outputs:
+    prod:
+      # pg_duckdb **就是 Postgres**（扩展，不是另一个协议）⇒ 用官方 postgres 适配器，
+      # 不存在专门的 pg_duckdb adapter（spec §11.1）。
+      type: postgres
+      host: "{{ env_var('DBT_HOST') }}"
+      user: "{{ env_var('DBT_USER') }}"
+      password: "{{ env_var('DBT_PASSWORD') }}"
+      dbname: "{{ env_var('DBT_DBNAME') }}"
+      port: 5432
+      # 缺省 schema。每租户一个 schema 是 spec §11.5 #3 的贴架构做法（同名视图各指各的数据）；
+      # 租户级落点属 P3（T11），此处不预接。
+      schema: staging
+      # ⚠️ threads 是**内存开关**，不是纯性能旋钮：DuckDB 实例**按连接**、`duckdb.max_memory`
+      # 默认 4096MB/连接（spec §9.4 / §11.5 #1）⇒ 并发度就是内存倍数。先钉 2，调大前先看资源画像
+      # （layered §11）与连接池上限。
+      threads: 2
+
+# ── ZOS 五键：**不写成 profile 键**，只在这里登记键名 ──────────────────────────────
+# 为什么不是 profile 键：dbt **不保证**把自定义 profile 键透传到模型上下文
+# （`target.<自定义键>` 在 dbt-postgres 下**未实测**，而未知键还可能被适配器的凭据校验拒绝）；
+# 而 `env_var()` 是 dbt 文档保证的注入面。故五键一律走 env_var，在**用到它的那一句**里现取：
+#
+#   LEMENG_ZOS_ENDPOINT    端点主机名（**不带 https://** —— ZOS 要求 path-style，带了会拼出畸形前缀）
+#   LEMENG_ZOS_REGION      区域（如 xinan1）
+#   LEMENG_ZOS_BUCKET      桶名（作为 dbt var `zos_bucket` 注入路径）
+#   LEMENG_ZOS_ACCESS_KEY  访问密钥 ID
+#   LEMENG_ZOS_SECRET      访问密钥（**绝不进仓、绝不进 dbt var**，理由见 dbt_project.yml）
+#
+# ⚠️ 这五键**没有任何静态门禁**：B9（scripts/check-env-example.mjs）的扫描根只有
+#    apps/ packages/ modules/，**不扫 dbt/**（T2 评审实测确认）。`.env.example` 里那段是
+#    「键面事实源」的文档化，**不是被门禁守住的约定**。
+# 注入形态（on-run-start / 模型 pre-hook / 连接串参数）以实测为准，见 dbt/README.md「gate 1」。
