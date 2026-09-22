@@ -63,12 +63,12 @@
 | `modules/aftersales/migration/wuji-source.ts` | 拉取层（分页/count/maxMtime，fetch 可注入） | T2 |
 | `modules/aftersales/migration/clean.ts` | 清洗层（单位/词表/拼写归一唯一处 + 各表映射） | T2（T3/T4 扩） |
 | `modules/aftersales/migration/import.ts` | 导入层（幂等 upsert + FK 解析 + 二义洗清） | T2（T4 扩 archive） |
-| `modules/aftersales/migration/reconcile.ts` | 对账（计数 + 金额和） | T2 |
-| `modules/aftersales/migration/fixtures.ts` | 测试夹具（W1 按 spec 实证表编造；T3 脱敏真样本替换） | T2（T3 替换） |
+| `modules/aftersales/migration/reconcile.ts` | 对账（计数 + 金额和） | T2（T4 扩 archive） |
+| `modules/aftersales/migration/fixtures.ts` | 测试夹具（W1 按 spec 实证表编造；T3 脱敏真样本替换） | T2（T3 替换；T4 扩接龙两表） |
 | `modules/aftersales/migrations/004_employee_approval_source_id.sql` | employee_approval 补幂等位 | T2 |
 | `modules/aftersales/migration/wuji-source.test.ts` / `clean.test.ts` / `import.test.ts` / `reconcile.test.ts` | 纯核单测 | T2 |
 | `modules/aftersales/vitest.config.ts` | backend include 加 `migration/**` | T2 |
-| `scripts/migrate-aftersales-wuji.mjs` | CLI 薄壳（默认 dry-run + `--apply` + 拉样模式） | T2 |
+| `scripts/migrate-aftersales-wuji.mjs` | CLI 薄壳（默认 dry-run + `--apply` + 拉样模式） | T2（T4 补 archive 对账面） |
 | `.env.example` | wuji 11 个键（文档化键面） | T2 |
 | `.gitignore` | `modules/aftersales/migration/samples-local/`（原始样本永不进 git） | T2 |
 | `modules/aftersales/migration/samples-local/`（gitignored） | 拉样落盘目录（含客户 PII，仅本地） | T3 |
@@ -114,16 +114,19 @@ orca orchestration task-create --spec "<T5 spec：真跑迁移，gate=外部输�
 pnpm --filter aftersales test
 pnpm --filter aftersales typecheck
 
-# 全仓门禁（每波末必跑；CI gates job 同款）
+# 全仓门禁（每波末必跑；CI gates job 同款——五条守卫一条不落）
 pnpm typecheck
 pnpm exec tsx scripts/check-manifests.mjs
 pnpm exec tsx scripts/lint-architecture.mjs
 pnpm exec tsx scripts/check-compose.mjs
 pnpm exec tsx scripts/check-env-example.mjs
+DATABASE_URL=postgres://platform:platform@127.0.0.1:5432/platform pnpm exec tsx scripts/check-tenant-isolation.mjs
 pnpm test
 ```
 
 > 带库用例：`DATABASE_URL=postgres://platform:platform@127.0.0.1:5432/platform`（本地 compose pg；**不带时相关 describe 静默 skip**——skip 不等于通过，收尾前必须带 env 跑一次）。T2/T4 的 import/reconcile 用例是**写库型**测试，建议在全新空库上先跑一轮（`dropdb platform && createdb platform`，团队记忆：迁移/并发类问题只在空库暴露）。
+>
+> `check-tenant-isolation` 是 CI gates 的**第五条守卫**（真库对账：真跑各模块 migrations 后查每张表的 org 列，脚本自建一次性库 `platform_tenant_isolation_check`，故要 `DATABASE_URL` 指向有 CREATEDB 权限的库）。**T2 的 004（employee_approval 补幂等位）与 T4 的 005（archive 两张新表）正是它的检查对象**——这两处任务落地后本地必跑它，别只等 CI 红了才发现。
 >
 > 迁移 CLI（T2 产物）：`npx tsx scripts/migrate-aftersales-wuji.mjs --org <casdoor_org> [选项]`；wuji env 键 = `WUJI_APPID` / `WUJI_DATA_ORIGIN`（默认 `https://data.wujisite.com`）/ `WUJI_KEY_<大写表名>`（9 张表，清单在 `.env.example`）。
 
@@ -734,6 +737,7 @@ export function yuanToMinor(v: unknown): bigint | null
 export type GroupbuyUnit = 'fen' | 'yuan'
 export const GROUPBUY_UNIT_UNPROVEN: string
 export function setGroupbuyUnit(u: GroupbuyUnit): void
+export function resetGroupbuyUnit(): void       // 仅供测试序列重置模块级状态（T4 用例开头/T2 beforeEach 调）
 export function groupbuyUnitProven(): boolean
 export function groupbuyToMinor(v: unknown): bigint        // 未证即抛
 export function openIdOf(row: Record<string, unknown>): string
@@ -937,17 +941,19 @@ export function maxMtimeOf(rows: Record<string, unknown>[]): string | null {
 `modules/aftersales/migration/clean.test.ts`：
 
 ```ts
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   GROUPBUY_UNIT_UNPROVEN, cleanEmployee, cleanEmployeeApproval, cleanRule, cleanTicket,
-  groupbuyToMinor, groupbuyUnitProven, openIdOf, ratioOf, setGroupbuyUnit, splitStoreRefs,
-  yuanToMinor,
+  groupbuyToMinor, groupbuyUnitProven, openIdOf, ratioOf, resetGroupbuyUnit, setGroupbuyUnit,
+  splitStoreRefs, yuanToMinor,
 } from './clean'
 import {
   FIXTURE_EMPLOYEE, FIXTURE_EMPLOYEE_APPROVE, FIXTURE_RULE, FIXTURE_TICKET,
 } from './fixtures'
 
 describe('单位与归一（裁决 5：唯一处）', () => {
+  beforeEach(() => { resetGroupbuyUnit() })   // 模块级单位状态：用例间互不染——首例「未自证即抛」不再依赖文件内执行顺序
+
   it('yuanToMinor：元(带分精度)→整数分；字符串数字可；空/非法→null', () => {
     expect(yuanToMinor(7549.99)).toBe(754999n)          // 7549.99*100=754998.999…，round 兜住
     expect(yuanToMinor('12.5')).toBe(1250n)
@@ -983,6 +989,16 @@ describe('拼写与词表归一（§3.3 实证表）', () => {
   it('splitStoreRefs：中英文逗号都拆、空段滤掉', () => {
     expect(splitStoreRefs('S001，S002, ,S003')).toEqual(['S001', 'S002', 'S003'])
     expect(splitStoreRefs(123)).toEqual([])   // 源字段类型漂移：非串一律空
+  })
+
+  it('词表未知值 → null（无硬映射缺省）：未知态不会变 pending、未知类型不会变 ratio', () => {
+    expect(cleanTicket({ ...FIXTURE_TICKET, status: '神秘态' }).status).toBeNull()
+    expect(cleanTicket({ ...FIXTURE_TICKET, after_sales_type: '第四种' }).amountType).toBeNull()
+    expect(cleanEmployee({ ...FIXTURE_EMPLOYEE, approve_status: '待定' }).approveStatus).toBeNull()
+    expect(cleanEmployeeApproval({ ...FIXTURE_EMPLOYEE_APPROVE, approve_type: '注销' }).approveType).toBeNull()
+    // 已知中英文照常归一
+    expect(cleanTicket({ ...FIXTURE_TICKET, status: '已处理' }).status).toBe('completed')
+    expect(cleanEmployee({ ...FIXTURE_EMPLOYEE, approve_status: '驳回' }).approveStatus).toBe('rejected')
   })
 })
 
@@ -1068,6 +1084,9 @@ export const FIXTURE_TICKET = {
 //   · 金额整数分：工单域源值「元带分精度」（§2.4 源码实证）⇒ 换算只在 yuanToMinor 一处；
 //     接龙域单位未证 ⇒ groupbuyToMinor 在 setGroupbuyUnit 之前一律抛（T3 自证后才许设）。
 //   · openId/openid 两拼写归一（§3.3）；审批/工单状态词表归一英文枚举（§5 #9）。
+//   · 词表未知值**不硬映射缺省**：mapValue 未知值一律 null，导入侧对必填枚举为 null 的行
+//     跳行记因（unknown_status / unknown_amount_type / unknown_approve_type）——T3 核对
+//     「按 skip 计数对照」与 T5 验收「未知状态不会落库为 pending」的前提都在这一条。
 //   · refund_ratio 源存小数（注释谎称 %）⇒ 原样 4 位小数，绝不 ×100。
 //
 // ⚠️ *_KEYS 的字段名候选是 W1 按 spec §3.3 实证表 + 源仓调用面写的【暂定】清单——
@@ -1118,6 +1137,9 @@ export const GROUPBUY_UNIT_UNPROVEN = 'GROUPBUY_UNIT_UNPROVEN'
 let groupbuyUnit: GroupbuyUnit | null = null
 /** 只允许 T3 的样本自证结论（或客户答复）把单位设进来——「数据自证禁猜」的落点。 */
 export function setGroupbuyUnit(u: GroupbuyUnit): void { groupbuyUnit = u }
+/** 仅供测试重置模块级状态（clean.test.ts 的 beforeEach、T4 接龙用例开头先调它——消除用例间
+ *  顺序依赖：没有它，「未自证即抛」类用例红绿取决于文件内谁先跑）。生产路径无调用方。 */
+export function resetGroupbuyUnit(): void { groupbuyUnit = null }
 export function groupbuyUnitProven(): boolean { return groupbuyUnit !== null }
 export function groupbuyToMinor(v: unknown): bigint {
   if (groupbuyUnit === null) {
@@ -1144,9 +1166,12 @@ export const AMOUNT_TYPE_MAP: Record<string, 'ratio' | 'fixed' | 'reject'> = {
   ratio: 'ratio', fixed: 'fixed', reject: 'reject',
   '按比例': 'ratio', '固定金额': 'fixed', '驳回': 'reject',
 }
-function mapValue<T>(map: Record<string, T>, v: unknown, fallback: T): T {
+/** 词表映射：未知值一律 null，**无 fallback 参数**——硬映射缺省（status→pending、amountType→ratio）
+ *  会把不可解释的源值静默改成可解释的错值，正是 T3 核对要消灭的东西。导入侧对必填枚举为 null
+ *  的行跳行记因（见 import.ts），skip 计数就是 T3/T5 的对照面。 */
+function mapValue<T>(map: Record<string, T>, v: unknown): T | null {
   const key = typeof v === 'string' ? v.trim() : String(v ?? '')
-  return map[key] ?? fallback
+  return map[key] ?? null
 }
 /** 同概念两拼写（§3.3：employee_info.openId vs employee_info_approve.openid）。 */
 export function openIdOf(row: SrcRow): string {
@@ -1189,9 +1214,10 @@ export const KEYS = {
 export interface CleanRegion { sourceId: string; name: string }
 export interface CleanStore { sourceId: string; name: string; regionSourceId: string | null; address: string; phone: string }
 export interface CleanProduct { sourceId: string; name: string; spec: string; basicQuantity: number; basicUnitPriceMinor: bigint | null }
-export interface CleanEmployee { sourceId: string; name: string; phone: string; openId: string; approveStatus: string; storeSourceIds: string[] }
+// 词表产物的 null 语义：源值不在词表（未知/缺失）——导入侧跳行记因，见各 import* 的 unknown_* 检查
+export interface CleanEmployee { sourceId: string; name: string; phone: string; openId: string; approveStatus: string | null; storeSourceIds: string[] }
 export interface CleanEmployeeApproval {
-  sourceId: string; openId: string; approveType: 'register' | 'change'; status: string
+  sourceId: string; openId: string; approveType: 'register' | 'change' | null; status: string | null
   oldInfo: Record<string, unknown>; newInfo: Record<string, unknown>
   createdAt: Date | null; decidedAt: Date | null; decidedBy: string
 }
@@ -1200,7 +1226,7 @@ export interface CleanTicket {
   sourceId: string; code: string; submitterOpenid: string
   productRefRaw: string; storeRefRaw: string        // 二义（ID 或名称）——import 侧带档案映射洗清
   damageQuantity: number; basicQuantity: number; basicUnitPriceMinor: bigint | null
-  status: string; amountType: 'ratio' | 'fixed' | 'reject' | null
+  status: string | null; amountType: 'ratio' | 'fixed' | 'reject' | null
   amountMinor: bigint | null; refundRatio: string | null
   operator: string; remark: string; relatedOrder: string
   createdAt: Date | null; processedAt: Date | null
@@ -1229,7 +1255,7 @@ export function cleanEmployee(row: SrcRow): CleanEmployee {
   return {
     sourceId: pickStr(row, KEYS.employee.id), name: pickStr(row, KEYS.employee.name),
     phone: pickStr(row, KEYS.employee.phone), openId: openIdOf(row),
-    approveStatus: mapValue(APPROVE_STATUS_MAP, pick(row, KEYS.employee.approveStatus), 'pending'),
+    approveStatus: mapValue(APPROVE_STATUS_MAP, pick(row, KEYS.employee.approveStatus)),
     storeSourceIds: splitStoreRefs(row.store_info),
   }
 }
@@ -1243,8 +1269,10 @@ export function cleanEmployeeApproval(row: SrcRow): CleanEmployeeApproval {
   const typeRaw = pickStr(row, KEYS.approval.type)
   return {
     sourceId: pickStr(row, KEYS.approval.id), openId: openIdOf(row),
-    approveType: typeRaw === 'change' || typeRaw === '变更' ? 'change' : 'register',
-    status: mapValue(APPROVE_STATUS_MAP, pick(row, KEYS.approval.status), 'pending'),
+    // approve_type 与状态同规则：只有 register/注册、change/变更 四个拼写可映射，其余 → null（跳行）
+    approveType: typeRaw === 'change' || typeRaw === '变更' ? 'change'
+      : typeRaw === 'register' || typeRaw === '注册' ? 'register' : null,
+    status: mapValue(APPROVE_STATUS_MAP, pick(row, KEYS.approval.status)),
     oldInfo, newInfo,
     createdAt: pickTime(row), decidedAt: pickTime(row, ['decided_at', 'decided_time']),
     decidedBy: pickStr(row, KEYS.approval.decidedBy),
@@ -1265,11 +1293,11 @@ export function cleanTicket(row: SrcRow): CleanTicket {
     damageQuantity: pickInt(row, KEYS.ticket.damageQuantity),
     basicQuantity: pickInt(row, KEYS.ticket.basicQuantity),
     basicUnitPriceMinor: yuanToMinor(pick(row, KEYS.ticket.basicUnitPrice)),
-    status: mapValue(TICKET_STATUS_MAP, pick(row, KEYS.ticket.status), 'pending'),
+    status: mapValue(TICKET_STATUS_MAP, pick(row, KEYS.ticket.status)),
     amountType: ((): 'ratio' | 'fixed' | 'reject' | null => {
       const raw = pick(row, KEYS.ticket.amountType)
-      if (raw === undefined || raw === null || raw === '') return null
-      return mapValue(AMOUNT_TYPE_MAP, raw, 'ratio')
+      if (raw === undefined || raw === null || raw === '') return null   // 缺值与未知值同路 null
+      return mapValue(AMOUNT_TYPE_MAP, raw)                              // 未知值 → null ⇒ 导入侧跳行
     })(),
     amountMinor: yuanToMinor(pick(row, KEYS.ticket.amount)),
     refundRatio: ratioOf(pick(row, KEYS.ticket.ratio)),
@@ -1326,7 +1354,11 @@ describePg('导入层（需要 DATABASE_URL）', () => {
       { sourceId: 'R001', name: '华东' },
       { sourceId: 'R002', name: '华北' },
     ])
-    await importStore(pool, ORG, [cleanStore({ _id: 'S001', name: '一号店', region_id: 'R001' })])
+    // 夹具补导 S002：FIXTURE_EMPLOYEE.store_info='S001，S002' 两段都要能解析到档案，下面的 2 行断言才成立
+    await importStore(pool, ORG, [
+      cleanStore({ _id: 'S001', name: '一号店', region_id: 'R001' }),
+      cleanStore({ _id: 'S002', name: '二号店', region_id: 'R002' }),
+    ])
     await importProduct(pool, ORG, [{ sourceId: 'P001', name: '商品甲', spec: '500ml', basicQuantity: 10, basicUnitPriceMinor: 1250n }])
 
     const empStat = await importEmployee(pool, ORG, [cleanEmployee(FIXTURE_EMPLOYEE)])
@@ -1353,9 +1385,36 @@ describePg('导入层（需要 DATABASE_URL）', () => {
         join aftersales.employee e on e.id = es.employee_id
        where es.org = $1 order by es.id`, [ORG])
     expect(links.rows).toHaveLength(2)
+    // 「不可解析段跳过」的行为此处不锁（S001/S002 都有档案）——由下一条「解析不到档案」用例专门锁
     const emp = await pool.query<{ store_id: string | null }>(
       `select store_id from aftersales.employee where org = $1`, [ORG])
     expect(Number(emp.rows[0].store_id)).toBe(Number(links.rows[0].store_id))
+  })
+
+  it('store_info 段解析不到档案 ⇒ 只该段跳过：落链 1 行、行照常导入、reasons 记 unresolved_store_ref', async () => {
+    await importStore(pool, ORG, [cleanStore({ _id: 'S001', name: '一号店', region_id: 'R001' })])
+    const stat = await importEmployee(pool, ORG, [
+      cleanEmployee({ ...FIXTURE_EMPLOYEE, store_info: 'S001，S999' }),   // S999 无档案
+    ])
+    expect(stat).toMatchObject({ fetched: 1, imported: 1, skipped: 0 })   // 行不跳（主门店=S001 可解析）
+    expect(stat.reasons['unresolved_store_ref']).toBe(1)                  // 丢的是「链」不是「行」——计数可见，不静默
+    const links = await pool.query<{ n: number }>(
+      `select count(*)::int as n from aftersales.employee_store where org = $1`, [ORG])
+    expect(links.rows[0].n).toBe(1)                                      // 只有 S001 落链
+  })
+
+  it('未知状态/类型 ⇒ 整行跳过记因，绝不落库为 pending（T3/T5 的前提）', async () => {
+    const stat = await importTicket(pool, ORG, [
+      cleanTicket({ ...FIXTURE_TICKET, _id: 'wo-x1', status: '神秘态' }),
+      cleanTicket({ ...FIXTURE_TICKET, _id: 'wo-x2', after_sales_type: '第四种' }),
+      cleanTicket(FIXTURE_TICKET),
+    ])
+    expect(stat).toMatchObject({ fetched: 3, imported: 1, skipped: 2 })
+    expect(stat.reasons['unknown_status']).toBe(1)
+    expect(stat.reasons['unknown_amount_type']).toBe(1)
+    const rows = await pool.query<{ n: number; status: string }>(
+      `select count(*)::int as n, max(status) as status from aftersales.ticket where org = $1 and source_id <> ''`, [ORG])
+    expect(rows.rows[0]).toEqual({ n: 1, status: 'completed' })           // 落库的只有可映射行——未知态从未变 pending
   })
 
   it('幂等重跑：同批再导一遍 = 行数不变、字段被覆盖更新（source_id 是幂等位）', async () => {
@@ -1390,6 +1449,9 @@ describePg('导入层（需要 DATABASE_URL）', () => {
 // import.ts — 清洗行 → 目标库（幂等 upsert；source_id 是幂等位，重跑收敛）。
 // 导入顺序约束（FK）：region → store → product → employee(含 employee_store) → rule →
 // employee_approval → ticket。archive_* 在 T4 并入（同一顺序原则）。
+// 跳行纪律：必填枚举（status/amountType/approveType）为 null = 源值不在词表——**跳行并记
+// reasons（unknown_*）**，绝不落列缺省（列 default 'pending' 就是当年要消灭的硬映射——与
+// clean.ts 的 mapValue 无 fallback 同一条裁决，T3「按 skip 计数对照」以此为实现面）。
 import type { Pool } from 'pg'
 import type {
   CleanEmployee, CleanEmployeeApproval, CleanProduct, CleanRegion, CleanRule, CleanStore, CleanTicket,
@@ -1474,9 +1536,14 @@ export async function importEmployee(pool: Pool, org: string, rows: CleanEmploye
   const stores = await sourceIdMap(pool, org, 'store')
   for (const r of rows) {
     if (!r.sourceId) { skip(stat, 'no_source_id'); continue }
+    if (r.approveStatus === null) { skip(stat, 'unknown_status'); continue }
     // 主门店 = 串里第一个能解析到档案的（§2.5：employee.store_id 保留「主门店」语义，可空）
     const resolved = r.storeSourceIds.map((sid) => stores.get(sid) ?? null)
     const primaryStore = resolved.find((id): id is number => id !== null) ?? null
+    // 不可解析段：计入 reasons（信息面，**不增 skipped**——行本身已导入，丢的是「链」不是「行」）。
+    // 静默丢段 = 对账黑洞：链表没有源侧计数可对，唯一可见性就是这里的计数。
+    const unresolved = resolved.filter((id) => id === null).length
+    if (unresolved > 0) stat.reasons['unresolved_store_ref'] = (stat.reasons['unresolved_store_ref'] ?? 0) + unresolved
     const ins = await pool.query<{ id: string }>(
       `insert into aftersales.employee (org, source_id, name, phone, open_id, approve_status, store_id)
        values ($1, $2, $3, $4, $5, $6, $7)
@@ -1506,6 +1573,8 @@ export async function importEmployeeApproval(pool: Pool, org: string, rows: Clea
   const stat = newStat('employee_approval', rows.length)
   for (const r of rows) {
     if (!r.sourceId) { skip(stat, 'no_source_id'); continue }
+    if (r.status === null) { skip(stat, 'unknown_status'); continue }
+    if (r.approveType === null) { skip(stat, 'unknown_approve_type'); continue }
     await pool.query(
       `insert into aftersales.employee_approval
          (org, source_id, open_id, approve_type, status, old_info, new_info, created_at, decided_at, decided_by)
@@ -1554,6 +1623,8 @@ export async function importTicket(pool: Pool, org: string, rows: CleanTicket[])
   )
   for (const r of rows) {
     if (!r.sourceId) { skip(stat, 'no_source_id'); continue }
+    if (r.status === null) { skip(stat, 'unknown_status'); continue }
+    if (r.amountType === null) { skip(stat, 'unknown_amount_type'); continue }
     // 二义洗清（§3.3：product_name 存 ID 或名称）：值命中档案 source_id ⇒ 挂 FK + 以档案名为快照；
     // 否则视为名称快照、不挂 FK。store 同理。
     const productId = products.get(r.productRefRaw) ?? null
@@ -1616,7 +1687,8 @@ export async function reconcileCounts(
   return out
 }
 function source_eq(source: number, target: number): boolean {
-  // target ≤ source：源侧被 clean 跳过的行（no_source_id 等）不落库——差额必须能在 ImportStat.reasons 对上。
+  // target ≤ source：源侧被 clean 跳过的行（no_source_id、unknown_status、unknown_amount_type 等）不落库
+  // ——差额必须能在 ImportStat.reasons 对上。
   // 相等是最优结局；本函数不吞差额（差额核对是人工步，见 CLI 输出）。
   return source === target
 }
@@ -1873,6 +1945,7 @@ pnpm typecheck && pnpm test
 pnpm exec tsx scripts/check-compose.mjs
 pnpm exec tsx scripts/check-env-example.mjs
 pnpm exec tsx scripts/lint-architecture.mjs
+DATABASE_URL=postgres://platform:platform@127.0.0.1:5432/platform pnpm exec tsx scripts/check-tenant-isolation.mjs   # 004 动了模块表 ⇒ 第五条守卫本地必跑
 ```
 Expected: 全绿（`typecheck:scripts` 覆盖 scripts/ 的 .mjs——@ts-nocheck 头让它只查语法形状）。
 
@@ -1901,7 +1974,7 @@ npx tsx scripts/migrate-aftersales-wuji.mjs --org <目标租户org> \
   --sample 20 --sample-out modules/aftersales/migration/samples-local
 ```
 
-Expected: 每表一行 `[wuji] <表>: count=<实测行数> pulled≤20 maxMtime=…` + 九个 JSON 文件。**count 与 spec §3.3 的 2026-09-15 实测行数对一遍**（region 13 / store 322 / employee 591 / approval 214 / product 13,767 / rule 12 / work_order ~25,661——工单仍在涨是预期，其余表大幅偏离要停下报告）。
+Expected: 每表一行 `[wuji] <表>: count=<实测行数> pulled≤20 maxMtime=…` + 九个 JSON 文件。**count 与 spec §3.3 的 2026-09-15 实测行数对一遍**（region 13 / store 322 / employee 591 / approval 214 / product 13,767 / rule 12 / work_order ~25,661 / group_buying_order 32,040 / group_buying_order_item 59,786——工单仍在涨是预期，其余表大幅偏离要停下报告）。
 
 - [ ] **Step 3: 逐表核对（SAMPLE-NOTES.md 落结论）**
 
@@ -1912,7 +1985,7 @@ Expected: 每表一行 `[wuji] <表>: count=<实测行数> pulled≤20 maxMtime=
 | 主键 | `_id` 的实际类型（str/int 漂移是实证过的）与形态 |
 | 工单编号 | `TICKET_KEYS.code` 哪个候选是真名（`order_number`…）；`related_order` 引用的接龙单号字段名 |
 | 提交人 | work_order 的提交人字段名与拼写（openId/openid/open_id？） |
-| 状态/词表 | status / after_sales_type / approve_status 实际值集（英文？中文？还有第四种值？）——补全 `*_MAP`，遇未知值**加跳过原因而不是硬映射** |
+| 状态/词表 | status / after_sales_type / approve_status（及 approve_type）实际值集（英文？中文？还有第四种值？）——核对动作＝**按 skip 计数对照**：把样本逐行喂 clean+import，未知值应体现为 `ImportStat.reasons` 的 `unknown_status`/`unknown_amount_type`/`unknown_approve_type` 计数（T2 已实现跳行记因，无硬映射缺省）；样本值补进 `*_MAP` 后该计数应归零。仍归不了零的值 ⇒ 拉样结论里单列，升级处理 |
 | 时间 | 每表实际存在的时间字段名；`_mtime` 形态是否可字典序比较（不可则改 `maxMtimeOf`） |
 | `store_info` | 确系逗号串？分隔符形态？有无空段/空格 |
 | `approveinfo` | 嵌套形状确系 `{old,new}`？不是则改 `cleanEmployeeApproval` 的展平 |
@@ -2024,7 +2097,7 @@ export function cleanArchiveOrderItem(row: SrcRow): CleanArchiveOrderItem
 
 `import.ts` 追加两个 upsert（与既有七表同形：`on conflict (org, source_id) where source_id <> '' do update`）；item 的 `order_source_id` 只存文本引用（不做 FK 查找——档案保真）。
 
-`clean.test.ts` 追加：**未 `setGroupbuyUnit` 时 `cleanArchiveOrder` 抛 `GROUPBUY_UNIT_UNPROVEN`**（接龙禁猜的测试钉）；设 `'fen'`/`'yuan'` 后换算正确。`import.test.ts` 追加两表幂等重跑用例。
+`clean.test.ts` 追加：**未 `setGroupbuyUnit` 时 `cleanArchiveOrder` 抛 `GROUPBUY_UNIT_UNPROVEN`**（接龙禁猜的测试钉）——用例开头先 `resetGroupbuyUnit()`（T2 提供的测试序列重置，消除与文件内其他用例的顺序依赖）；设 `'fen'`/`'yuan'` 后换算正确（两组用例同样先 reset 再 set）。`import.test.ts` 追加两表幂等重跑用例。
 
 `module.test.ts` 的表清单用例（`'7 张表全部落库…'`）改为 9 张：
 
@@ -2042,6 +2115,7 @@ Run:
 DATABASE_URL=postgres://platform:platform@127.0.0.1:5432/platform pnpm --filter aftersales test
 pnpm typecheck && pnpm test
 pnpm exec tsx scripts/lint-architecture.mjs
+DATABASE_URL=postgres://platform:platform@127.0.0.1:5432/platform pnpm exec tsx scripts/check-tenant-isolation.mjs   # 005 两张新表 ⇒ 第五条守卫本地必跑
 ```
 Expected: 全绿（rawMigrationSqls 幂等用例自动覆盖 005；表清单断言 9 张过）。
 
@@ -2091,7 +2165,7 @@ Expected: 每表 `[wuji] … count=N pulled=N maxMtime=…` + `[dry-run] 清洗�
 
 - **容器/代码面无关**（本任务不动代码，但迁移是数据面部署）：直接验**新行为在线上可观测**——
   - console 打开 `/console/aftersales`：工单页有数据、翻页可用（≈25,661 条源工单）；员工/商品/门店页有迁移数据（**UI 自验：自己开界面走一遍**，团队纪律）；
-  - 抽查一条源工单：金额显示与源侧一致（×100 后的分值 ÷100 回显）；处理弹窗对**已完结**的历史工单不可再处理（409 `ALREADY_PROCESSED` 是正确行为——迁移行 status 不是 pending）。
+  - 抽查一条源工单：金额显示与源侧一致（×100 后的分值 ÷100 回显）；处理弹窗对**已完结**的历史工单不可再处理（409 `ALREADY_PROCESSED` 是正确行为——迁移行 status 不是 pending）。验收前提：**未知状态不会落库为 pending**——它们在导入侧被跳过并计入 `reasons`（`unknown_status` 等，对账差额可解释），硬映射缺省的破坏面已在 T2 消除。
 - **GC job 若 T1 后尚未注册**：补 T1 Step 10（openship job + 机器人账号 + 手动 dry-run 验证）。
 
 - [ ] **Step 6: 收尾落档**
@@ -2139,6 +2213,19 @@ Expected: 每表 `[wuji] … count=N pulled=N maxMtime=…` + `[dry-run] 清洗�
 | 3 | **范文块留死代码**（问数计划 #35 同类）：`wuji-source.test` 草稿里留了整段 `expectUrlContaining` 死函数 + 「落盘时删掉」注记；CLI 草稿里留了空 `if` 与重复的 `createRequire` 动态导入 | 三处全部直接清干净（死函数删、空 if 删、动态导入改用顶部静态导入）；注记只保留仍然成立的那句（接龙守门位置的理由） |
 | 4 | **GC 竞态方向想反了**（写作中发现，未流入正文）：先删对象后删行的写法在「删对象后、删行前被认领」窗口会把**已挂活工单的附件**对象删掉；先删行后删对象则在崩溃时泄漏对象 | 定稿为**行锁先行**：`SELECT … FOR UPDATE`（谓词含 `ticket_id is null`）→ 删对象（事务内）→ 删行 → COMMIT；两种崩溃方向都收敛到「行保留、下轮重试」，代价（行锁跨一次 S3 调用）已在 T1 注明 |
 | 5 | **`employee_approval` 无幂等位**（002 建表没有 `source_id`）：T2 若直接导入，`--apply` 重跑会让 214 行翻倍 | 补 `004_employee_approval_source_id.sql`（`add column if not exists` + 部分唯一索引，与 001 同模式），导入 upsert 与 `module.test.ts` 幂等用例自动覆盖 |
+
+### 开工前冲突扫描六处（2026-09-22 返工，已全部修入计划本体）
+
+| # | 症状 → 处置 |
+|---|---|
+| 1 | T2 词表硬 fallback（status→pending、amountType→ratio）与 T3「遇未知值加跳过原因而不是硬映射」、T5「迁移行 status 不是 pending」三处矛盾，且接口无 skip 通道 → **skip 语义做成一等公民**：`mapValue` 去 fallback 参数、未知值返 null；必填枚举为 null 的行导入侧跳行记因，复用既有 `ImportStat.reasons`（键 `unknown_status`/`unknown_amount_type`/`unknown_approve_type`——reasons 本就是通用 skip 计数字段，无需另加字段）；T3 核对指令同步为按 skip 计数对照；T5 验收前提补「未知状态不会落库为 pending（被跳过并计数）」。扫描者点名 status/amountType，实际硬映射共五处（employee.approveStatus / approval.status / approval.approveType 的 ternary 缺省 / ticket.status / ticket.amountType），统一按同一规则收编；clean/import 两侧各补一条用例锁行为 |
+| 2 | 波末门禁清单漏第五条守卫 check-tenant-isolation → 「常用命令」波末清单补 `DATABASE_URL=… pnpm exec tsx scripts/check-tenant-isolation.mjs`（CI gates 同款五条），并注明 T2 的 004、T4 的 005 新表正是它的检查对象、这两处任务后本地必跑 |
+| 3 | 文件表 T4 触及面漏三行 → reconcile.ts / fixtures.ts / CLI 三行的任务列补 T4（与 T4 自身 Files 清单对齐） |
+| 4 | T3 行数对账清单缺接龙两表 → 补 `group_buying_order 32,040 / group_buying_order_item 59,786`（spec §3.3） |
+| 5 | employee_store 链路用例只导 S001 一家店但断言 2 行（照抄即红）→ 夹具侧补导 S002（两段都解析、断言 2 成立）；另补「S999 解析不到档案 ⇒ 落链 1 行 + reasons 记 unresolved_store_ref」用例锁「不可解析段跳过」（importEmployee 补该计数——静默丢段=对账黑洞），并在链路用例注明锁定归属 |
+| 6 | T2 接口只导出 set/proven 无 reset，T4 要测「未设单位时抛 GROUPBUY_UNIT_UNPROVEN」照抄写不出（模块级状态跨用例污染）→ T2 接口补 `resetGroupbuyUnit()`（一行实现，注释注明仅供测试序列重置、生产无调用方）；T2 clean.test.ts 的 beforeEach 先 reset；T4 接龙用例开头先 reset |
+
+> 复核方式：全文 grep `mapValue`（无一处带第三参）、`fallback`（词表映射的 fallback 已绝迹——余下仅 `pickStr`/`pickInt` 的字符串/整数缺省形参与「无 fallback」的否定表述，与本条无关）、`unknown_status`/`unresolved_store_ref`/`resetGroupbuyUnit`/`check-tenant-isolation`/`32,040`（六处处置各自可搜到落点）。
 
 ### 有意的取舍（reviewer 请过目）
 
