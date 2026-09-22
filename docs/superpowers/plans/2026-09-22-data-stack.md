@@ -475,10 +475,17 @@ services:
     volumes:
       - pgduckdata:/var/lib/postgresql/data
     ports:
-      # 平台宿主的接线点（DATA_WAREHOUSE_URL 指这里）；回环 ⇒ 只有同宿主的 edge/宿主进程够得到
+      # 平台侧的接线点（DATA_WAREHOUSE_URL 指这里）。**别把它读成「谁都能连」**：回环 ⇒ 够得到的
+      # 是**宿主进程**（宿主上的 edge、宿主上跑的 `docker compose run` job）。
+      # **容器**消费方（单元 A 的 server）另说：容器里的 127.0.0.1 是自己的 netns，不是宿主回环；
+      # 两份 compose 各一个 default 网络、无共享 external 网络/extra_hosts ⇒ **按现值不可达**。
+      # 接线方式待 T6 裁决（计划 Task 6 Step 1 的 Gate-B）。
       - '127.0.0.1:15432:5432'
     mem_limit: ${PGDUCK_MEM_LIMIT:-2g}    # 每连接一个 DuckDB 实例（max_memory 默认 4096MB/连接，
                                           # spec §9.4）——连接数 × 内存必须显式收口，见 pg-duckdb/README §3
+                                          # 实测语境：Compose v5.3.0 下解析进规范模型（2g → 2147483648）；
+                                          # `mem_limit` 属**非 deploy 面**旧键，按 deploy-spec/swarm 模型
+                                          # 解析的消费方可能不读 ⇒ 被静默忽略 = 本行唯一目的落空（spec §9.4）
     restart: unless-stopped
 
   # ── Metabase 应用库（spec §8：生产必须 Postgres，H2 官方 AVOID；不放 pg_duckdb 实例上：
@@ -491,6 +498,15 @@ services:
       POSTGRES_DB: ${MBDB_DB:-metabase}
     volumes:
       - mbdata:/var/lib/postgresql/data
+    healthcheck:
+      # 与主 compose 同一条理由（deploy/docker-compose.yml:38-45 的 postgres healthcheck）：
+      # 没有它 metabase 会在 PG 就绪前连库——空卷首启要跑 initdb，此窗口内不接受 TCP 连接，
+      # Metabase 会 `Metabase Initialization FAILED` **退出**（不是自等），靠 restart 反复重启自愈。
+      test: ['CMD-SHELL', 'pg_isready -U ${MBDB_USER:-metabase} -d ${MBDB_DB:-metabase}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
     # 不映射 ports：只有同 compose 网络内的 metabase 够得到（服务名即主机名）
 
@@ -501,7 +517,10 @@ services:
       MB_DB_TYPE: postgres
       MB_DB_CONNECTION_URI: postgresql://${MBDB_USER:-metabase}:${MBDB_PASSWORD:-metabase}@metabase-db:5432/metabase
     depends_on:
-      - metabase-db
+      metabase-db:
+        # service_healthy 而非 service_started（list 形态只等容器**被启动**）：Metabase 启动期
+        # 连不上应用库即初始化失败退出——主 compose 对 postgres 是同形（deploy/docker-compose.yml:68-71）
+        condition: service_healthy
     ports:
       # 回环；对外嵌入面怎么走（edge 反代 or 内网直连）是部署级决策，T6 定了记进 runbook
       - '127.0.0.1:13030:3000'
@@ -744,6 +763,7 @@ gh pr create --title "feat(data-stack): contracts/ 与 duckle/ 数据采集工�
 4. **外部输入④**：目标机时段已确认。W1 的 T2–T5 全部合并进 main。
 5. **外部输入⑥**：dbt 版本已确认（人给版本号或确认 1.9.8），T3 Dockerfile 的 ARG 注释销账——真跑用的版本必须与现场安装一致。
 6. **版本配对已验收（T1 的显式前置，不是「顺带」）**：pg_duckdb v1.1.1 × DuckDB v1.5.5 是**未经任何一方验证**的配对（v1.1.1 自陈配对 v1.4.3；跨 1 个 minor；上游 CI 从不覆盖 `DUCKDB_VERSION`；spec 实测 lab 是 main/1.2.0-dev + v1.5.5）⇒ **T1 的首次 dispatch 兼作该配对的验收**：编译通过 = 配对成立；失败则把 `PG_DUCKDB_VERSION` ARG 回退 `main`（lab 验证过的配对）**并按 §0（T1 runbook 版本纪律）出「新」tag**（回退场景建议 `main-duckdb1.5.5` / `<sha8>-duckdb1.5.5`，**不得复用 `1.1.1-duckdb1.5.5`**）重跑。**不许把「配对是否成立」第一次在真编译上发现留到本 gate**——进本 gate 的前提就是这条已绿，结论记 T1 任务报告。
+7. **Gate-B（I-2 的接线裁决；必须在 Step 4 之前落地）**：`DATA_WAREHOUSE_URL` 钉的 `127.0.0.1:15432` 是**宿主回环**，而消费方是单元 A 的 `server` **容器**（`modules/data/domain/warehouse.ts:13` 在请求期读 env；`deploy/data-compose.yml:21` 该注释已按此订正）——容器里的 `127.0.0.1` 是自己的 netns，不是宿主回环；两份 compose 各一个 `default` 网络、无共享 external 网络、无 `extra_hosts`（T3 评审 §2.3 实测）⇒ **按现值 `ECONNREFUSED`**。判定一条命令：进单元 A 的 `server` 容器内跑 `nc -zv 127.0.0.1 15432`——**预期 refused**，refused 即坐实本缺口。接线方式须由人**三选一裁决**：`extra_hosts: host.docker.internal:host-gateway`（单元 A）/ 两份共享 external network / 改消费路径（平台经宿主进程访问）；裁决结果回写 `deploy/customer-onboarding.md` 阶段 5（Step 6 第 2 条）。**未裁决即进 Step 4 = 该步「问数链路吃真数据」的验收句必然失败。**
 
 - [ ] **Step 2: 按目标形态建数据面 project（openship MCP）**
 
@@ -757,6 +777,7 @@ gh pr create --title "feat(data-stack): contracts/ 与 duckle/ 数据采集工�
 
 - Metabase：建 pg_duckdb 连接（同 compose 网络走服务名 `pg_duckdb:5432`；连接用户用超级用户——pg_duckdb 的扩展/委托需要）→ sync → 在 marts 上建第一个 question/dashboard。**确定嵌入面暴露通道**（edge 反代域名 or 客户内网直连），结论记进 `deploy/customer-onboarding.md` 对应节（这是 spec「只经嵌入面出去」的落地决策，不绑公网）。
 - 平台 project env 加 `DATA_WAREHOUSE_URL=postgres://…@127.0.0.1:15432/warehouse`（同机接线点）→ 重新部署平台 → **问数链路吃真数据**（#146 的 `POST /api/modules/data/query` 打真 marts——这是「新行为在线上可观测」的验法，比容器时间戳更硬）。
+  - **订正注记（第九轮 I-2；评审 §6）**：上行 `127.0.0.1:15432` **只对宿主进程成立**；消费方是单元 A 的 `server` **容器**，容器内的 `127.0.0.1` 是自己的 netns ⇒ **按现值不可达（`ECONNREFUSED`）**，而症状在连接层、不是配置报错（「部署后验」类假绿高发区）。接线方式未定（Step 1 的 Gate-B，需人裁决）⇒ **本条的验收句在裁决落地前不可达**。原文保留以留可追溯性。
 - 容器时间戳照 deploy-verify 双验（创建 > 镜像构建）。
 
 - [ ] **Step 5: 注册物化 job（拍板 #4）+ duckle→ZOS 结论落档**
@@ -767,6 +788,7 @@ gh pr create --title "feat(data-stack): contracts/ 与 duckle/ 数据采集工�
 
 - `deploy/customer-onboarding.md`：摘掉六处「尚未进仓」标注（:33 / :51 / :91 / :157 / :172 / :199——行号以 grep「尚未进仓」实测为准）。
 - `deploy/customer-onboarding.md` 阶段 5：**回写最终接线形态**——平台侧 env 加 `DATA_WAREHOUSE_URL=…@127.0.0.1:15432/warehouse`（15432 是**本计划选定**的端口，文档原本只记过 lab 端口 18080/18081/16379，此前未记过 15432），并写明「仅同宿主可达」的前提（回环端口在 productionMode=host 下由宿主进程可达；对照主 compose 头注的容器服务名口径时别误读为矛盾——那是 compose 网络内视图，两者说的是不同层的可达性）。
+  - **订正注记（第九轮 I-2；评审 §6）**：上句「仅同宿主可达」的论证只覆盖**宿主进程**（宿主上的 edge / 宿主上 `docker compose run` 的 job）——**不覆盖容器消费方**（单元 A 的 `server` 容器）。`deploy/customer-onboarding.md:239-245` 的实测依据也正是「宿主 curl 200」，即**宿主视角**，所以容器侧缺口一直没暴露。回写 runbook 时**必须一并写明「容器消费方尚未接线（Step 1 的 Gate-B，待裁决）」**，别把这句写成结论性的接线口径。
 - `docs/data-platform-handbook.md` §3 落地位置四个 `<待补>` 补齐（duckle 管线→`duckle/`；dbt 项目→`dbt/`；语义声明→`dbt/models/**/schema.yml`；采集契约→`contracts/`）；§5 验收记录加一行（验收范围=本任务全链路，卡点→案例号）。
 
 ```bash
@@ -1119,6 +1141,20 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 | ② | **RR-M3**：非 6 缩进条目落在**受管服务**上时，判据 b 多报一条**与事实相反**的文案（「服务还在，却一条 ports 条目都没有」——实际文件里有 `ports:` 声明），且排在判据 c 的正确诊断**之前**（m16 形状共 2 处违规） | **裁决不修**（见复核 §8 RR-M3）：净效果本波让这格**变好**（`2cbfe97` 下**只有**那条误导文案）。可选修法（判据 b 在该服务存在 `ports:` 声明时改中性文案，或把判据 c 报错排前）**同理属改守卫，另起决定** |
 | ③ | **RR-M2**：复核 brief 的 RR1 格 6 期望与守卫**成文契约**冲突（`ports: []` 与受管服务空块的红是三 head **逐字相同**的既存行为） | 复核裁量**不改守卫**（「只认一种形态、其余 fail-closed」是本守卫核心设计），**改 brief 措辞**——已由协调方在 `task-2-rereview-brief.md` 该格改注为「**非受管服务的空块**」 |
 | ④ | **RR-M4 / RR-M5**：PR #164 body §2 旧清单未同步（纯 nit）；`docs/architecture.md` §5.1 未同步 §2 的「无静态门禁」口径 | RR-M4 由**协调方直改 PR body**（不占提交）；RR-M5 本轮落地——§5.1 第 2 条后补半句「该纪律是流程约束，**当前无静态门禁**（见 §2）」。**是消歧不是纠错**：§5.1 原句上下文确在 T4 门的范围内，原句并没写错 |
+
+**第九轮：T3 评审带回的裁量（2026-09-22，PR #166 修复波；范文块与接线口径一并登记）**
+
+本轮**未修任何「Critical」级缺陷**——0 Critical / 2 Important / 4 Minor。I-1 修在文件面内（并同步订正本计划 Task 3 的范文块，见下表）；I-2 修法均落在被禁面（单元 A）⇒ 只订正文字 + 钉成 T6 的显式 gate。**评审报告全文**：`.superpowers/sdd/2026-09-22-data-stack/task-3-review.md`（下列每行的「依据」即指该报告的节号）。
+
+| # | 事项 | 裁决与依据 |
+|---|---|---|
+| I-1 | `metabase` → `metabase-db` 的**就绪竞态**：只有 list 形态 `depends_on`（= 只等容器被启动），无 healthcheck / 无 `condition: service_healthy` ⇒ 空卷首启 initdb 窗口内 Metabase 初始化失败退出，靠 `restart` 反复重启自愈 | **本轮修**（PR #166 第二笔）：照主 compose 既有口径给 `metabase-db` 加 `pg_isready` healthcheck、`metabase` 改 map 形态 + `condition: service_healthy`（`deploy/docker-compose.yml:38-45` / `:68-71` 是形态来源）；**并同步订正本计划 Task 3 的范文块**（`diff` 自证块 ↔ 仓内文件仍逐字一致），防「照抄即复发」。根因=范文块缺这条，不是实施者自创。依据：评审 §0 表 I-1 / §2.8 |
+| I-2 | `DATA_WAREHOUSE_URL=…@127.0.0.1:15432/warehouse` **对消费方不可达**：消费方是单元 A 的 `server` **容器**（`modules/data/domain/warehouse.ts:13` 请求期读 env），容器内的 `127.0.0.1` 是自己的 netns；两份 compose 各一个 `default` 网络、无共享 external 网络、无 `extra_hosts` ⇒ Step 4 的「问数链路吃真数据」按现值 `ECONNREFUSED` | **不在 T3 补**——可行修法（`extra_hosts` / 共享 external network / 改消费路径）**没有一条能只靠 `deploy/data-compose.yml` 完成**，且全回环是 B7 强制 + spec §1 安全姿态，改它才是错。⇒ 只订正 `deploy/data-compose.yml:21` 注释 + 本计划 Step 4/Step 6 的注记，**并钉成 T6 的 Step 1 Gate-B**（`nc -zv 127.0.0.1 15432` 预期 refused，三选一需人裁决）。依据：评审 §0 表 I-2 / §2.3 / §6（裁决三条理由） |
+| M-1 | data-compose 引入的 8 个 env 键（`PGDUCK_USER/PASSWORD/DB/MEM_LIMIT`、`MBDB_USER/PASSWORD/DB`、`DUCKLE_TOKEN`）**不在 B9 门禁内**（`check-env-example.mjs:51` 的 `SCAN_ROOTS` 不含 `deploy/`、只扫 `.ts/.tsx`），根 `.env.example` 里也一个都没声明（实测只有 `DATA_WAREHOUSE_URL=`）⇒ 键面契约无静态门禁，漏配只会静默落在 `:-` 默认口令上 | **不扩门禁**（守卫面属 T2/守卫本体、`.env.example` 在 W1 归 T4——都不是 T3 的文件面）⇒ 归 **T6 gate**：核对 project env 里 `PGDUCK_PASSWORD` / `DUCKLE_TOKEN` 等已物化为 isSecret（与 Step 2 的物化清单对齐）。**B9 绿与本文件的 8 个键零关系**——别把它读成「env 键面已守」。依据：评审 §3 |
+| M-2 | `mem_limit: ${PGDUCK_MEM_LIMIT:-2g}` **无实测注记**（该键是「动态内存收口」的唯一手段，被静默忽略即 spec §9.4「连接数 × 4GB」失控） | **本轮补注释**（裁决「留」不改形态）：`deploy/data-compose.yml` 该行下补「Compose v5.3.0 实测解析进规范模型（2g → 2147483648）；`mem_limit` 属**非 deploy 面**旧键，按 swarm 模型解析的消费方可能不读」；范文块同步。**不改写成 `deploy.resources.limits.memory`**——本仓是单机 `docker compose`（`runtimeMode=docker`），改形态属架构面变更，得先走文档。依据：评审 §2.6 |
+| M-3 | `data-compose.yml` **无判据 b** ⇒ 实测「把某服务的 `ports:` 段落删空」**全绿且静默**（主 compose 同形会红）——宿主暴露面有无变成看不出来的事 | **是设计而非漏写**（brief 明写「没有判据 b 兜底」、计划 L40 与 `docs/architecture.md:143` 明写判据 b 只对主 compose 的 `postgres`/`server` 生效、T2 有回归用例钉住）⇒ **如实登记，不修**。方向朝安全侧（撤销暴露面而非增加），与判据 b 的立规理由同源。依据：评审 §1.4 / §1.5（cell C vs cell D） |
+| M-4 | 本计划 Task 3 Step 3 的「若因 T5 未合并而 `config` 报错 ⇒ 跳过本步」**预期偏差**：`config` 是纯客户端解析、现场实测 **不会报错**（daemon 未起也 exit 0）⇒ 「compose 语法绿」**不覆盖 build context 是否可用**（`duckle`/`dbt` 两条 build 路径此刻都缺文件，T6 首次 `up --profile etl` 才会撞） | 归 **T6（Gate-A）**：`deploy/duckle/Dockerfile` + `duckle/`（T5）、`dbt/`（T4）必须落仓，**且 T5 的 ENTRYPOINT 必须真的对空 `DUCKLE_TOKEN` 拒跑**（本文件把该安全责任显式转给了 T5）。**本轮不改这句 Step 文字**（属 T6 面）。依据：评审 §0 表 M-4 / §2.4 / §2.7 / §0 Gate-A |
+| — | **纪律改进（评审 §7）**：本轮 4 个问题**全部源自本计划的范文块**，而实施者「逐字照抄」在流程上正确、结果上却把缺陷一次搬进仓 | **范文块须附实测/正典出处，或显式标「待验」**（T1 的 pg-duckdb 两处块是正面样板：把实测结论与 open item 都写进块内，故照抄不会错）。**本条为纪律，不改任何代码**；本轮已按此订正 Task 3 块（I-1/M-2 两处）。 |
 
 **两个取舍的裁定记录（开工前扫描，均维持，已写进「有意的取舍」节）**：
 - **取舍 A 维持**——facade/治理归 P2：与 spec §11.8 分期表逐字一致（issue #150 的平铺清单无分期语义）。
