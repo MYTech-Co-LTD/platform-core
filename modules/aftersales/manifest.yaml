@@ -53,6 +53,8 @@ api:
     # 分面的理由同上——同一条 (method,path) 只能声明一次、一条声明只带一个 scope。
     - { method: GET,  path: /guest/stores,              scope: aftersales:guest }
     - { method: GET,  path: /attachments/:id,   scope: aftersales:manage }
+    # ── 孤儿附件 GC（spec §5 #12；openship job 定时打，body 缺省 dry-run）──
+    - { method: POST, path: /attachments/gc, scope: aftersales:manage }
 # 管理端 console（M3a）。**只声明一条**：manifest 的前端条目在 console 菜单里是**平铺**的
 # （apps/web/src/pages/console-menu.ts 只给平台「管理」组做了 children），而 frontend.console
 # 是扁平数组、协议不支持嵌套 ⇒ 五个页面收进一个条目，页内用真子路由分区（spec §3.1）。
