@@ -46,6 +46,10 @@ const MESSAGES: Record<string, string> = {
   NOT_FOUND: '目标不存在或已被删除',
   LLM_UNCONFIGURED: '本站未开启智能问数（未配置 LLM）',
   AGENT_FAILED: '问数过程中出错了，请稍后重试',
+  // 报表面（#150 T7）。两码分开：没接 = 配置状态（运维该去配），调用失败 = 上游故障（该重试）
+  METABASE_UNCONFIGURED: '本站未接报表服务（未配置 Metabase）',
+  METABASE_ERROR: '报表服务暂时不可用，请稍后重试',
+  TENANT_PARAM_RESERVED: 'tenant 参数由平台保留，不能自定义',
 }
 
 /** 已知码给中文文案；未知码回落成码本身（便于排障）。 */

@@ -8,6 +8,7 @@ import { registerMcp } from './routes/mcp'
 import { registerMetrics } from './routes/metrics'
 import { registerQuery } from './routes/query'
 import { registerChat } from './routes/chat'
+import { registerReports } from './routes/reports'
 import { resolvePat, touchPatKey } from './domain/key-store'
 
 // 装配形状照 modules/demo/index.ts 与 modules/aftersales/index.ts（本仓模块的唯一范式）。
@@ -33,6 +34,7 @@ export default defineModule({
     registerQuery(r, _ctx) // T6
     registerMcp(r, _ctx) // T8
     registerChat(r, _ctx) // T9
+    registerReports(r, _ctx) // #150 T7：Metabase 报表 facade
     return r
   },
   // 模块端口（约束 14）：宿主在 mount 前经 runtime.port('data','resolvePatKey') 取用。

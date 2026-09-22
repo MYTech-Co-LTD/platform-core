@@ -29,6 +29,16 @@ api:
     - { method: GET,    path: /keys,     scope: data:query }
     - { method: POST,   path: /keys,     scope: data:query }
     - { method: DELETE, path: /keys/:id, scope: data:query }
+    # ── 报表（Metabase 报表 facade；#150 T7）──
+    # 页门分档（spec §4「权限双门必须分开表态」）：制作/登记/对账 = data:manage（跨租户能力，
+    # 必须经平台）；观看面（清单 + 拿嵌入 URL）= data:query。
+    # **数据门不在这里**：看哪个租户的数据由嵌入时锁定的 tenant 参数控（值 = 调用者 org，
+    # 入参不可覆盖）——门卫管不了那一半，别以为声明了 scope 就万事大吉。
+    - { method: POST,   path: /reports,               scope: data:manage }
+    - { method: GET,    path: /reports,               scope: data:query }
+    - { method: GET,    path: /reports/:id/embed-url, scope: data:query }
+    - { method: DELETE, path: /reports/:id,           scope: data:manage }
+    - { method: POST,   path: /reports/reconcile,     scope: data:manage }
 frontend:
   console:
     - { path: /console/data, title: 数据问数, icon: BarChartOutlined, scope: data:query, entry: ./console/index.tsx }
