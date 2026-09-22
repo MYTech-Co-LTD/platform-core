@@ -1,11 +1,8 @@
 import { z } from 'zod'
-import type { RuleItem, Unpaged } from '../api-types'
+import type { Paged, RuleItem } from '../api-types'
 import { AmountValidationError, normalizeRatio, toRatioOrNull } from '../domain/ticket'
-import { parseIdParam } from './context'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
-
-/** 规则表是配置表（源侧 12 行），不需要分页，但仍设上界防呆。 */
-const MAX_RULES = 500
 
 const RuleBody = z.object({
   name: z.string().min(1).max(200),
@@ -16,13 +13,23 @@ const RuleBody = z.object({
 export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/rules', async (c) => {
     const org = c.get('identity').orgId
+    // 【#155】与 /products 同一口径（context.ts 的 parsePageParam）：回 total 可真分页。
+    // 原先的 `MAX_RULES=500` 硬上界随之退役——size 已被 MAX_PAGE_SIZE 夹住。
+    const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
+    const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
+
+    const totalRes = await ctx.pool.query<{ n: number }>(
+      'select count(*)::int as n from aftersales.ticket_rule where org = $1',
+      [org],
+    )
     const res = await ctx.pool.query(
       `select id, name, refund_ratio, remark, created_at
-         from aftersales.ticket_rule where org = $1 order by id limit $2`,
-      [org, MAX_RULES],
+         from aftersales.ticket_rule where org = $1 order by id
+         limit $2 offset $3`,
+      [org, size, (page - 1) * size],
     )
     // 响应形状与 console 共用同一份类型（api-types.ts）——改这里会同时影响两端
-    const body: Unpaged<RuleItem> = {
+    const body: Paged<RuleItem> = {
       items: res.rows.map((r) => ({
         id: Number(r.id),
         name: r.name,
@@ -31,6 +38,9 @@ export function registerRule(r: ModuleHono, ctx: RouteCtx): void {
         remark: r.remark,
         createdAt: r.created_at,
       })),
+      total: totalRes.rows[0]!.n,
+      page,
+      size,
     }
     return c.json(body)
   })

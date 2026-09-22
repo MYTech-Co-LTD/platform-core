@@ -1,11 +1,9 @@
 import { z } from 'zod'
-import type { ApproveStatus, EmployeeItem, Paged, ProductItem, StoreItem, Unpaged } from '../api-types'
+import type { ApproveStatus, EmployeeItem, Paged, ProductItem, StoreItem } from '../api-types'
 import { toMinor } from '../domain/ticket'
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_STORES, parseIdParam, parsePageParam } from './context'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
-/** 员工是审批列表（源侧 591 行），同上。 */
-const MAX_EMPLOYEES = 2000
 /** ILIKE 的 `%` `_` 在搜索词里是通配符——转义掉，否则用户输入 `%` 等于全表匹配。 */
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`)
 
@@ -26,19 +24,28 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/stores', async (c) => {
     const org = c.get('identity').orgId
     const q = c.req.query('q')
+    // 【#155】与 /products 同一口径（context.ts 的 parsePageParam）：回 total 可真分页。
+    // 原先的 `MAX_STORES` 硬上界随之退役——size 已被 MAX_PAGE_SIZE 夹住。
+    const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
+    const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
+
     const params: unknown[] = [org]
     let where = 'org = $1'
     if (q) {
       params.push(`%${escapeLike(q)}%`)
       where += ` and name ilike $${params.length}`
     }
+    const totalRes = await ctx.pool.query<{ n: number }>(
+      `select count(*)::int as n from aftersales.store where ${where}`,
+      params,
+    )
     const res = await ctx.pool.query(
       `select id, name, region_id, address, phone from aftersales.store
-        where ${where} order by id limit $${params.length + 1}`,
-      [...params, MAX_STORES],
+        where ${where} order by id limit $${params.length + 1} offset $${params.length + 2}`,
+      [...params, size, (page - 1) * size],
     )
     // 响应形状与 console 共用同一份类型（api-types.ts）
-    const body: Unpaged<StoreItem> = {
+    const body: Paged<StoreItem> = {
       items: res.rows.map((s) => ({
         id: Number(s.id),
         name: s.name,
@@ -46,6 +53,9 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
         address: s.address,
         phone: s.phone,
       })),
+      total: totalRes.rows[0]!.n,
+      page,
+      size,
     }
     return c.json(body)
   })
@@ -77,7 +87,8 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
         limit $${params.length + 1} offset $${params.length + 2}`,
       [...params, size, (page - 1) * size],
     )
-    // 响应形状与 console 共用同一份类型（api-types.ts）——本端点是**回 total 的两个之一**
+    // 响应形状与 console 共用同一份类型（api-types.ts）——回 total 的分页口径原点，
+    // #155 起 /rules /employees /stores 与本端点逐字对齐
     const body: Paged<ProductItem> = {
       items: listRes.rows.map((p) => ({
         id: Number(p.id),
@@ -97,19 +108,28 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/employees', async (c) => {
     const org = c.get('identity').orgId
     const status = c.req.query('approveStatus')
+    // 【#155】与 /products 同一口径（context.ts 的 parsePageParam）：回 total 可真分页。
+    // 原先的 `MAX_EMPLOYEES` 硬上界随之退役——size 已被 MAX_PAGE_SIZE 夹住。
+    const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
+    const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
+
     const params: unknown[] = [org]
     let where = 'org = $1'
     if (status) {
       params.push(status)
       where += ` and approve_status = $${params.length}`
     }
+    const totalRes = await ctx.pool.query<{ n: number }>(
+      `select count(*)::int as n from aftersales.employee where ${where}`,
+      params,
+    )
     const res = await ctx.pool.query(
       `select id, name, phone, store_id, open_id, approve_status from aftersales.employee
-        where ${where} order by id desc limit $${params.length + 1}`,
-      [...params, MAX_EMPLOYEES],
+        where ${where} order by id desc limit $${params.length + 1} offset $${params.length + 2}`,
+      [...params, size, (page - 1) * size],
     )
     // 响应形状与 console 共用同一份类型（api-types.ts）
-    const body: Unpaged<EmployeeItem> = {
+    const body: Paged<EmployeeItem> = {
       items: res.rows.map((e) => ({
         id: Number(e.id),
         name: e.name,
@@ -118,6 +138,9 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
         openId: e.open_id,
         approveStatus: e.approve_status as ApproveStatus,
       })),
+      total: totalRes.rows[0]!.n,
+      page,
+      size,
     }
     return c.json(body)
   })

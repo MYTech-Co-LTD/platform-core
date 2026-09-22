@@ -1,4 +1,4 @@
-// rules/index.test.tsx — 规则 CRUD：列表、新建、删除；★ 无 total ⇒ 不出分页控件
+// rules/index.test.tsx — 规则 CRUD：列表、新建、删除；★ 未接分页 ⇒ 不出分页控件
 //
 // ⚠️ antd 对「两个汉字」的按钮自动插空格 ⇒ 可访问名是「删 除」「确 定」，用正则匹配。
 import '@testing-library/jest-dom/vitest'
@@ -23,7 +23,8 @@ beforeEach(() => {
     calls.push({ url, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
     if (init?.method === 'POST') return json({ id: 2 })
     if (init?.method === 'DELETE') return json({ ok: true })
-    return json({ items: [RULE] })
+    // #155 起真机回 {items,total,page,size}——替身钉在真实形状上（AGENTS.md #11）
+    return json({ items: [RULE], total: 1, page: 1, size: 20 })
   })
 })
 afterEach(cleanup)
@@ -35,7 +36,7 @@ describe('规则页', () => {
     expect(screen.getByText('50.00%')).toBeInTheDocument()
   })
 
-  it('★ 无 total ⇒ 页面不出现分页控件（不摆假页码）', async () => {
+  it('★ API 已回 total 但 console 未接分页（#155 只做 API 面）⇒ 不出现分页控件', async () => {
     render(<RulesPage />)
     await waitFor(() => expect(screen.getByText('标准比例')).toBeInTheDocument())
     expect(document.querySelector('.ant-pagination')).toBeNull()

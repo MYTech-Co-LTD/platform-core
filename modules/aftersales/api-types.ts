@@ -16,10 +16,11 @@
 //      访客列表）。**本轮不改接口**（不扩后端）⇒ 下面 `TicketListItem` 以 **snake_case 那份**为准
 //      （它必然存在），camelCase 别名标成可选。
 //
-// ⚠️ 另一条：`GET /rules` / `/employees` / `/stores` 有服务端上限（`MAX_RULES` /
-//    `MAX_EMPLOYEES` / `MAX_STORES`，见各路由），**回 `{items}` 但不回 `total`** ⇒ console 侧
-//    只能单页展示，**不要摆一个假的页码**（spec §3.1 的已知边界）。`GET /tickets` 与
-//    `/products` 回 `total`，可真分页。
+// ⚠️ 另一条（#155 后的现况）：`GET /rules` / `/employees` / `/stores` 已与 `/products`
+//    **同形**，回 `{items,total,page,size}`（`page`/`size` 走同一份 `parsePageParam`；
+//    原 `MAX_RULES`/`MAX_EMPLOYEES`/`MAX_STORES` 硬上界退役，由 `MAX_PAGE_SIZE` 接管）。
+//    console 三页**仍单页展示**——分页重构不在 #155，改前**不要摆页码**。
+//    `GET /employee-approvals` 仍回 `{items}`（`Unpaged`）。
 
 export type TicketStatus = 'pending' | 'completed' | 'cancelled'
 export type AmountType = 'ratio' | 'fixed'
@@ -70,7 +71,7 @@ export interface TicketAttachment {
   url: string | null
 }
 
-/** `GET /tickets` 与 `GET /products` 的响应（**这两个端点回 `total`**） */
+/** 分页列表响应：`GET /tickets` / `/products` / `/guest/*`；#155 起 `/rules` / `/employees` / `/stores` 同形对齐 */
 export interface Paged<T> {
   items: T[]
   total: number
@@ -78,7 +79,7 @@ export interface Paged<T> {
   size: number
 }
 
-/** `GET /rules` / `/employees` / `/stores` 的响应（**无 `total`** ⇒ 单页） */
+/** `GET /employee-approvals` 的响应（**无 `total`** ⇒ 单页） */
 export interface Unpaged<T> {
   items: T[]
 }

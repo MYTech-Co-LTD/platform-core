@@ -1,8 +1,9 @@
 // console/lib/useList.ts — 列表页的加载 / 错误 / 重载（各列表页共用）。
 //
-// 只管这三件事。**分页能力不塞进本 hook**——它按端点能力而定：GET /tickets 与 /products 回
-// `total` 可服务端分页，而 /rules /employees /stores 只回 `{items}` ⇒ 单页展示、不摆假页码。
-// 谁用谁决定（spec §3.1 的已知边界）。
+// 只管这三件事。**分页能力不塞进本 hook**——它按端点能力而定：GET /tickets、/products 与
+// #155 后的 /rules /employees /stores 都回 `total` 可服务端分页；后三页的 console 分页重构
+// 不在 #155 ⇒ 暂仍单页展示、不摆假页码（GET /employee-approvals 仍只回 `{items}`）。
+// 谁用谁决定。
 import { useCallback, useEffect, useState } from 'react'
 import { messageOf } from './api'
 

@@ -1,4 +1,4 @@
-// employees/index.test.tsx — 员工列表 + 审批；★ 无 total ⇒ 无分页控件
+// employees/index.test.tsx — 员工列表 + 审批；★ 未接分页 ⇒ 无分页控件
 //
 // ⚠️ 审批的请求体是 `{ approveStatus }`（枚举字符串），**不是** `{ approve: boolean }`
 //    ——以 `routes/masterdata.ts` 的 `ApproveBody` 为准。
@@ -23,7 +23,8 @@ beforeEach(() => {
   m.mockImplementation(async (url: string, init?: RequestInit) => {
     calls.push({ url, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
     if (init?.method === 'POST') return json({ ok: true })
-    return json({ items: [EMP] })
+    // #155 起真机回 {items,total,page,size}——替身钉在真实形状上（AGENTS.md #11）
+    return json({ items: [EMP], total: 1, page: 1, size: 20 })
   })
 })
 afterEach(cleanup)
@@ -54,7 +55,7 @@ describe('员工页', () => {
     expect(calls.find((c) => c.url.endsWith('/approve'))!.body).toEqual({ approveStatus: 'rejected' })
   })
 
-  it('★ 无 total ⇒ 不出现分页控件', async () => {
+  it('★ API 已回 total 但 console 未接分页（#155 只做 API 面）⇒ 不出现分页控件', async () => {
     render(<EmployeesPage />)
     await waitFor(() => expect(screen.getByText('张三')).toBeInTheDocument())
     expect(document.querySelector('.ant-pagination')).toBeNull()

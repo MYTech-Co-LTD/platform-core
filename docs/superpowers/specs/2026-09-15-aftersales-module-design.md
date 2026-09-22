@@ -338,6 +338,12 @@ M3a 的 console 员工页实现的是**单表简化版**（直接改 `employee.a
 
 > **拍板记录（2026-09-22）**：**M-T8-3 移出 M2b**，拆为独立 issue **#155**（API 扩面
 > 非数据迁移，与 M2b 择窗口迁移不同轴）。上文「归 M2b」为悬空指针，**订正为归 #155**。
+>
+> **落地注记（2026-09-22，#155）**：三端点已补 `total` 并与 `/products` **同形**
+> （`{items,total,page,size}`，`page`/`size` 走同一份 `parsePageParam`；
+> `MAX_RULES`/`MAX_EMPLOYEES`/`MAX_STORES` 硬上界退役，由 `MAX_PAGE_SIZE` 接管）。
+> **console 三页的分页重构不在 #155** ⇒ 上文「只能单页展示」降级为 console 侧临时现状
+> （不摆假页码的纪律不变），待分页重构落地后销记。
 
 **处理弹窗不显示预估金额**：`POST /tickets/:id/process` **只在提交之后**返回服务端算出的
 `amountMinor`，没有预览端点；而 §0.3 把「前端算金额」列为**要消灭的模式**。⇒ `ratio` 路
