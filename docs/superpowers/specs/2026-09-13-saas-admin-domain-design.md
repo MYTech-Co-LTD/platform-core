@@ -1,7 +1,7 @@
 # platform-core 通用 SaaS 管理域（订阅进 Casdoor · 一层管理）：设计
 
 > 本文是「platform-core 通用 SaaS 管理后台底座」的**规划稿**（spec）。
-> **状态：设计已定稿并全部落地——M1（PR #42/#43）、M3（PR #47/#48）已上线；D6 灰度已切 casdoor（2026-09-14，openship env `PLATFORM_SUBSCRIPTION_SOURCE=casdoor`）且 §5 总验收通过（见修订记录）。tenant_module 表保留为回滚兜底，拆表是另一个待议决定。**
+> **状态：设计已定稿——M1a/M1b/M3 落地（M1 PR #42/#43、M3 PR #47/#48 已上线）；M1c 端到端验收：single 笔已随山海试点销账（`deploy/delivery-private.md` §4）、multi 笔未做（issue #153）；D6 灰度已切 casdoor（2026-09-14，openship env `PLATFORM_SUBSCRIPTION_SOURCE=casdoor`）且 §5 总验收通过（见修订记录）。tenant_module 表保留为回滚兜底，拆表是另一个待议决定。**
 > 工作铁律：实施中任何方向/范围调整，先改本文再动码。
 >
 > 触发链：「要做通用 SaaS 管理后台，混合架构，通用能力（用户/角色/权限/订阅）要完善，新模块能快速接入」
