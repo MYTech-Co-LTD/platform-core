@@ -6,10 +6,10 @@
 #            （loader / routes/auth-wecom / migrate / routes/auth / tenant，共 50 条）。
 #            不给 DATABASE_URL 时它们是**静默跳过**的——「全绿」会绿在一个休眠基线上：
 #            会话/登录/登出/租户解析/seed/迁移/装载器/企微登录这半边一条都不执行。
-#   gates —— 门禁：typecheck（全 workspace 包 + scripts/）+ 五个守卫脚本对真实仓跑。
+#   gates —— 门禁：typecheck（全 workspace 包 + scripts/）+ 六个守卫脚本对真实仓跑。
 #            typecheck 与守卫单测（跑在 unit 的 test:guard 里）是两件事：单测拿 fixture 验
 #            守卫逻辑，本 job 拿真仓验守卫结论，且 typecheck 只在 CI 真跑才有意义。
-#            五个守卫里 check-tenant-isolation 要真库（issue #77 的真库对账），故本 job 也挂了
+#            六个守卫里只有 check-tenant-isolation 要真库（issue #77 的真库对账），故本 job 也挂了
 #            postgres service——为什么不是挂在 unit / smoke，见那条 step 的注释。
 #   web   —— 前端单测 + 构建（构建内含 `tsc -b`，即 apps/web 的 strict typecheck）。
 #   smoke —— 装载冒烟（scripts/smoke-load.mjs）：真进程 + 真端口 + 真 HTTP 跑双形态。
@@ -85,6 +85,12 @@ jobs:
       - run: pnpm exec tsx scripts/lint-architecture.mjs
       - run: pnpm exec tsx scripts/check-compose.mjs
       - run: pnpm exec tsx scripts/check-env-example.mjs
+      # dbt 工件静态门禁（issue #150 / T4；正典 docs/architecture.md §5.1）：staging 的 `r['列名']`
+      # 取列模式 / 禁 `::double` / 禁 `union_by_name` / staging 一对一双向 / 语义声明必填字段 /
+      # 指标命名空间与同名唯一 / 每个声明指标一条对账 test。纯静态：不连库、不读 parquet。
+      # ⚠️ 它的扫描面只有 `dbt/`（dbt 工件）——**不含** env 键（那归上面的 check-env-example，
+      #    而 B9 不扫 dbt/），也不含 `duckle/` 与 `contracts/`（正典里明写着当前无机检）。
+      - run: pnpm exec tsx scripts/check-data-models.mjs
       # 租户隔离门禁（issue #77；正典 docs/module-protocol.md「租户数据隔离」）：真库对账——
       # 真跑各模块的 migrations（跑进脚本自建的**一次性库** platform_tenant_isolation_check），
       # 再查 information_schema 要 org 列。判据按「全部 migrations 的累积终态」，不按文件判

@@ -1,0 +1,47 @@
+# schema.yml — marts 层的模型描述 + dbt tests（layered §4 步骤 4）。
+#
+# ⚠️ **L1 语义声明不在这里**，在 `dbt/semantics/l1_metrics.yml`。为什么（一句话）：
+#   指标名的命名空间形态是 `<域>:<指标名>`（`retail:net_sales`），而 **dbt 资源名不允许冒号**
+#   ⇒ 把带冒号的 `name` 放进 dbt 会扫的 schema 文件里，有让 `dbt parse` 挂掉的风险。
+#   详细理由、以及「T6 若证实 dbt 接受带冒号的名字可并入本文件」的核对步，见 dbt/README.md
+#   「L1 语义声明的落点」。静态门禁**两处都扫**（`dbt/semantics/**` 与 `dbt/models/**`），
+#   所以两种落点都不会漏检。
+#
+# 本文件的两类断言（都不替代对账：对账是 `dbt/tests/audit_*.sql` 的独立复算）：
+#   · 列级 `tests:`（dbt 原生，`not_null` / `accepted_values`）——钉「这一列该有的形状」
+#   · 结构断言（singular test）——钉「单列约束抓不住的形状」，如**复合粒度的唯一性**与金额范围
+version: 2
+
+models:
+  - name: fct_retail_sale
+    description: >-
+      零售销售事实（口径模型）。粒度 **(system_book, bizday)**；口径只在此定义一次。
+      指标声明见 dbt/semantics/l1_metrics.yml（L1 事实源）。
+    columns:
+      - name: system_book
+        description: 账套（主体维度，3120 熊喵 / 64188 品品甜）。**暂定**：当前由 dbt var 供值，路径解析进列待 T6。
+        tests:
+          - not_null
+          # 账套是**自己控制的枚举**（标准 §4.1 的主体清单），故用 accepted_values 钉死；
+          # 新增账套要改这里（有意的摩擦：账套集合变了是件该被看见的事）。
+          - accepted_values:
+              values: ['3120', '64188']
+      - name: bizday
+        description: 业务日（来自 parquet 的 `order_detail_bizday`，格式 `%Y%m%d`）。
+        tests:
+          - not_null
+      - name: net_amount
+        description: 净销售额 = sum(成交金额)。**与 l1_metrics.yml 的 `retail:net_sales` 同源**。
+        tests:
+          # 金额范围是结构断言（singular test）而不是列级 test：dbt 原生的 accepted_values 只判等值
+          # 集合，判不了「≥ 0」这种区间；引 dbt_utils 又要加 packages.yml（多一层依赖 + 解析期要联网）。
+          # 见 dbt/tests/assert_fct_retail_sale_net_amount_nonnegative.sql
+          - not_null
+      - name: order_count
+        description: 订单数 = count(distinct 单号)。**与 l1_metrics.yml 的 `retail:order_count` 同源**。
+        tests:
+          - not_null
+# 复合粒度 **(system_book, bizday)** 的唯一性由 singular test 手写（单列的 unique 判不了：
+# 两列各自都不唯一；引 dbt_utils.unique_combination_of_columns 要加 packages.yml —— 多一层依赖、
+# 解析期还要联网，本任务不引入）：
+#   dbt/tests/assert_fct_retail_sale_grain_unique.sql

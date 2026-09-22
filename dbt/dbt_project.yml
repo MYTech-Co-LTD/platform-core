@@ -1,0 +1,52 @@
+# dbt_project.yml — 数据栈 dbt 项目（分层设计 ③ staging / ④ marts 两层；issue #150 / 计划 Task 4）
+#
+# 为什么 materialization 缺省是 `table`（不是 view、也不是全量禁物化）：
+#   分层设计的实测口径（layered §5.3）是「staging 物化一次、marts 物化一次，消费层不再回源」
+#   （1.09M 行聚合 ~1 秒），纪律是**按需 `--select`**（物化存储实测 ×8 膨胀），不是禁止物化。
+#   而 `table` 同时满足 gate 2：**物化落点必须是 PG 可见关系**（见下）。
+#
+# ⚠️ 两处「以实测口径为准」的设计 gate（本文件**不预接**未实测的接线 = 不制造假绿；
+#    结论与核对清单在 dbt/README.md 的同名小节）：
+#   gate 1 S3 凭据注入：DuckDB 实例**按连接**（spec §11.5 #1）⇒ secret 必须在用到它的那条会话里建。
+#   gate 2 物化落点：read_parquet 裸扫描不进 pg_class（spec §9.4）⇒ 模型必须物化成 PG 可见关系
+#     （table / view / `USING duckdb` 外表）。本文件缺省 `table`，形态核对见 README。
+name: 'platform_data'
+version: '0.1.0'
+config-version: 2
+
+# profile 名固定；**真值不在本仓**——跑的人用一份不进仓的 profiles.yml（模板见 profiles.example.yml），
+# 或由 openship 把 env(isSecret) 注入运行环境。
+profile: 'platform_data'
+
+model-paths: ['models']
+test-paths: ['tests']
+# 本地产物（`dbt parse` / `dbt run` 生成）：**不进仓**。忽略规则归 T5（.gitignore 唯一写入方，本任务
+# 不碰）；静态门禁自己也跳过这三个目录（scripts/check-data-models.mjs 的 SKIP_DIRS）——否则本地跑过
+# 一次 `dbt parse` 就会让门禁去读 target/ 里的编译产物。
+target-path: 'target'
+log-path: 'logs'
+packages-install-path: 'dbt_packages'
+clean-targets: ['target', 'logs', 'dbt_packages']
+
+vars:
+  # ── 非敏感：路径与账套 ───────────────────────────────────────────────────────
+  # 乐檬零售明细前缀（不含 bucket / 协议）：s3://<bucket>/lemeng/retail_detail/<账套>/**/*.parquet
+  # 出处：docs/data-platform-handbook.md §2 的源清单（`lemeng/retail_detail/<主体>/<日期>/all.parquet`）
+  lemeng_retail_prefix: 'lemeng/retail_detail'
+  # 账套 = 主体维度（3120 熊喵 / 64188 品品甜；handbook §2）。
+  # ⚠️ 值来自**路径**、不在数据里（handbook §4 欠账「账套只在路径、数据里没有」/ 标准 C3 身份跟着数据走）
+  # ⇒ 存量阶段由本 var 供值、每个账套跑一份；路径解析进列（`filename` + 正则）**待 T6 按实测形态钉死**。
+  account_book: '3120'
+  # ── 敏感：只留「非密」三项作 var（bucket / endpoint / region）────────────────
+  # ⚠️ AK/SK **刻意不做 dbt var**：vars 会落进 target/manifest.json、编译产物与 `dbt run` 日志。
+  #    它们只在「建 secret 的那一句」里由 `env_var()` 现取（形态待 T6 实测，见 README gate 1）。
+  # `env_var` 第二参给空串默认值：这样**没有凭据的机器也能 `dbt parse`**（parse 不连库、不读 parquet）。
+  # 缺 env 时路径会拼成 `s3:///…` ⇒ 运行期**响亮失败**，不会静默读到别的东西。
+  # 取法：天翼云 ZOS 控制台 → 对象存储 → 访问密钥；endpoint 只写域名（不带 https://）。
+  zos_bucket: "{{ env_var('LEMENG_ZOS_BUCKET', '') }}"
+  zos_endpoint: "{{ env_var('LEMENG_ZOS_ENDPOINT', '') }}"
+  zos_region: "{{ env_var('LEMENG_ZOS_REGION', '') }}"
+
+models:
+  platform_data:
+    +materialized: table

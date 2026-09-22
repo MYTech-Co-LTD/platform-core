@@ -1,0 +1,58 @@
+# l1_metrics.yml — **L1 语义声明（事实源）**。拍板 2（2026-09-22）：语义声明以 dbt YAML 为事实源，
+# 引擎（Ossie 等）只当**编译产物**（spec §11.7「押架构不押规范」）。
+#
+# 为什么这个文件**不在** `models/` 下（也就不在 dbt 的扫描面内）—— 一句话版：
+#   指标 `name` 是命名空间形态 `<域>:<指标名>`（含冒号），而 **dbt 资源名不允许冒号**；
+#   放进 dbt 会扫的 schema 文件有让 `dbt parse` 挂掉的风险。完整理由 + T6 的核对步见 README
+#   「L1 语义声明的落点」。**静态门禁两处都扫**（本目录 + `dbt/models/**`），两种落点都不漏检。
+#
+# ── 字段约定（静态门禁 rules ⑤⑥⑦ 的判据面，改这里必须同步改 README 与门禁）─────────────────
+#   name        必填。`<域>:<指标名>`，两段都小写蛇形。命名空间是「同名唯一」能成立的前提
+#               （layered §6）；它同时决定对账文件名（`:` → `__`，映射函数只有一处事实源：
+#               scripts/check-data-models.mjs 导出的 metricToAuditFileName()）。
+#   label       人读名字（进词表 / BI 展示面）。
+#   definition  必填。**口径的逐字定义**（治理机制① 的必需字段，spec §10）。
+#   expression  必填。口径的**实现表达式**（指向哪个模型的哪些列）；「口径只定义一次」的落点。
+#   grain       必填。可聚合维度清单（非空数组）。消费层只能在这些维度上组合（layered §7 约束 5）。
+#   owner       必填。口径负责人（谁改谁负责；治理机制①）。
+#   tier        必填。`certified`（已认证，可直接对外）| `experimental`（试验口径，消费方自担）。
+#               ⚠️ tier 是**标记**不是强制（spec §10 软肋③）：本仓不靠它挡谁，靠它让人一眼看见成熟度。
+#   sources     选填（人读）。指标背后**实际读的对象存储路径**。
+#
+# ⚠️ 「声明 ↔ 实现一致」（expression 指向的模型/列真的存在且口径一致）这条**当前没有机检**
+#    —— 它需要真库（spec §10 门禁③ 的形态）。当前只有：本文件的**存在性/字段/命名/对账文件**机检
+#    （本仓 scripts/check-data-models.mjs），加上 `dbt/tests/audit_*.sql` 的独立复算（真库上跑）。
+version: 1
+
+metrics:
+  - name: 'retail:net_sales'
+    label: 净销售额
+    definition: >-
+      有效零售订单的成交金额合计（口径模型 fct_retail_sale，粒度 = 账套 × 业务日）。
+      「有效」的判定条件（退货 / 赠品 / 作废是否剔除）**尚未落进实现**：当前实现为全部明细行的
+      金额合计 ⇒ 本声明与实现之间**有一处已知缺口**，见 fct_retail_sale.sql 头注与 README 的
+      「实证 vs 暂定」表。**不得**为了对齐实现而改写本定义（那是口径追着实现跑）。
+    expression: 'sum(fct_retail_sale.net_amount)'
+    grain: [system_book, bizday]
+    owner: data-platform
+    tier: experimental
+    sources:
+      - 's3://<bucket>/lemeng/retail_detail/<账套>/<日期>/all.parquet'
+    # 对账（每个声明指标一条独立复算，layered §7 硬约束 7）：对应的 singular test 文件名**不在这里写**
+    # —— 名字由 `:` → `__` 的映射函数算出（scripts/check-data-models.mjs 导出的 metricToAuditFileName()，
+    #   唯一事实源）。在这里再写一遍文件名 = 两处事实源，映射一改这两行就悄悄过期。
+
+  - name: 'retail:order_count'
+    label: 订单数
+    definition: >-
+      零售明细里按单号去重的订单笔数（口径模型 fct_retail_sale，粒度 = 账套 × 业务日）。
+      **上滚语义**：更粗粒度上对 expression 求和 = 各业务日去重笔数之和（跨日重号的订单会被重复计入）
+      —— 这是本口径的**已知边界**，要「跨日唯一订单数」得单独声明一个新指标，不许改本定义。
+      **暂定**：单号列的列名与去重语义待 T6 按实测样本核对（staging 里 `order_no` 是暂定列）；
+      若样本里没有稳定的单号列，本声明应**删除**而不是替换成近似口径（口径不能猜）。
+    expression: 'sum(fct_retail_sale.order_count)'
+    grain: [system_book, bizday]
+    owner: data-platform
+    tier: experimental
+    sources:
+      - 's3://<bucket>/lemeng/retail_detail/<账套>/<日期>/all.parquet'
