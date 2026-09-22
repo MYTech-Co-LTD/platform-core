@@ -130,6 +130,13 @@ ERROR: ResolutionImpossible
 | 7 | `serve --host 0.0.0.0` | `DUCKLE_TOKEN=`（空串，= T3 compose 的默认形态） | 拒跑 exit 1 | ✅ exit 1 |
 | 8 | `validate` | 别名已设 | 透传 exit 7 | ✅ exit 7 |
 
+> ⚠️ **本表只覆盖 `serve` / `--pipeline` / 无参数 / `validate`，以及 token 名翻译 —— 它不描述白名单的边界。**
+> 白名单经独立评审（T5 review §3.5）**收窄过一次**：`sequence` / `work` / `deliveries` / `drift` /
+> `branch` / `python` 移出（它们会跑管线 / 读活源 / 取包 / 改活库 / 投递出站）；`review` 改为
+> **条件**动词（带 `--data` / `--drift` 才要 token）。用例集同时扩到 **51 条**（含主威胁防线
+> `serve` / `web` / `--pipeline` / `mcp` / 未知形态，与「保留的本地动词仍放行」两个方向）。
+> **名单与逐条理由的唯一事实源是 `entrypoint.sh` 的注释**；本表不复制它，免得又一处漂移。
+
 ### 4.2 结构面命令（无 daemon 也能跑）
 
 - 指令集全部合法（无未知指令）；`ENTRYPOINT ["/usr/local/bin/duckle-entrypoint"]` 可被 JSON 解析。
@@ -193,6 +200,13 @@ duckle-runner console add-user|list|key-add|key-list|key-revoke
 duckle-runner catalog|review|drift|audit|branch|import|runs|sql|components|python|xsd|cache|work|…
 ```
 
+- ⚠️ **上面这份是「引擎有哪些子命令」，不是「入口闸放行哪些」**——两者别混读。
+  入口闸只放行**不读活源、不写 sink、不出网**的本地动词
+  （`validate` / `test` / `catalog` / `sql` / `components` / `xsd` / `console` / `cache` /
+  `import` / `runs` / `audit`），`review` **仅**在纯静态（不带 `--data` / `--drift`）时放行。
+  上表里的 `drift` / `python` / `work`、以及 `sequence` / `deliveries` / `branch`
+  **不在**名单内（读活源 / 取包 / 跑管线 / 改活库 / 投递出站），无 token 一律拒跑。
+  逐条理由见 `entrypoint.sh` 的注释。
 - **`--token` 只属于 `serve` / `web`**，不是全局开关；环境变量形态是 **`DUCKLE_CONSOLE_TOKEN`**
   （`serve --help` 的 `--token` 条目自陈 "also DUCKLE_CONSOLE_TOKEN"）。
 - **`validate` 不吃 `--duckdb`**（它不碰引擎）；跑管线才需要。这是既有经验库里记过的踩坑同一条。

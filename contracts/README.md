@@ -78,16 +78,17 @@ layered design §4 的 `s3://<bucket>/<domain>/<table>/<date>/all.parquet`。
 - `layout.partitionStyle` / `fileName` / `contractVersion` 是 `const`
 - 名字形态（小写下划线）、`partitionBy` 非空、`batch.type` 只收标识/时间类标量
 
-### 4.2 ⚠️ 它**表达不了**五条跨字段约束（校验器必须补）
+### 4.2 ⚠️ 它**表达不了**六条跨字段约束（校验器必须补）
 
-JSON Schema 没有跨字段引用能力。以下五条**过了 schema 也可能不合规**，元 schema 的 `$comment`
+JSON Schema 没有跨字段引用能力。以下六条**过了 schema 也可能不合规**，元 schema 的 `$comment`
 里同样记着这一份清单 —— 两处必须同步改：
 
-1. `layout.partitionBy` 里每个键必须是 `columns` 里出现过的列名
-2. `layout.prefix` 必须等于 `domain + "/" + table`
-3. `columns[].name` 不得重复
-4. `batch.markerColumn` 必须是 `columns` 里出现过的列名
-5. `decimal` 的 `scale` 必须 ≤ `precision`
+1. partitionBy 里的每个键必须是 columns 里出现过的列名
+2. layout.prefix 必须等于 domain + '/' + table
+3. columns 的 name 不得重复
+4. batch.markerColumn 必须是 columns 里出现过的列名
+5. decimal 的 scale 必须 ≤ precision
+6. 分区键列不得声明 nullable = true
 
 ### 4.3 校验器：**当前不存在**（这是本任务最大的一条欠账）
 
@@ -111,7 +112,7 @@ m=json.load(open('contracts/common/_schema.schema.json'));V.check_schema(m); \
 **校验器落地时的判据**（给后来者，也给出可供机器守的形状）：
 
 - 必须**跳过 `_` 前缀文件**（§1）；`_template.contract.json` 只作模板，不作契约
-- 必须补 §4.2 那五条跨字段规则
+- 必须补 §4.2 那六条跨字段规则
 - 建议挂进 `.github/workflows/ci.yml` 的 `gates` job——但**先经 T4 或评审加面**：
   `scripts/check-data-models.*` 是 T4 的文件面，本任务不碰
 
@@ -120,7 +121,7 @@ m=json.load(open('contracts/common/_schema.schema.json'));V.check_schema(m); \
 | 约定 | 谁在守 |
 |---|---|
 | 元 schema 的字段级约束 | ⚠️ **只有你手动跑** §4.3 那条命令。CI 不跑 |
-| §4.2 的五条跨字段规则 | ❌ **没人守**——连元 schema 都表达不了 |
+| §4.2 的六条跨字段规则 | ❌ **没人守**——连元 schema 都表达不了 |
 | 「新源必须先有契约再落盘」的**顺序** | ❌ 流程约束，无机器判据 |
 | `_` 前缀语义 | ❌ 只在自动发现场景才有意义，而自动发现尚不存在 |
 | 契约里的类型 ↔ duckle `data.schema` 类型枚举的映射 | ⚠️ **未实测核对**，见 §7 |
