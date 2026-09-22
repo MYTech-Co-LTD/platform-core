@@ -8,13 +8,32 @@
 //   E2E_PLATFORM_URL=… E2E_METRIC_ID=… … pnpm exec tsx scripts/e2e-data-cross-tenant.mjs
 //   pnpm exec tsx scripts/e2e-data-cross-tenant.mjs --help     # 列出全部 env 键与含义
 //
-// 契约：**干净 → exit 0**（四面全过）；**有 violation → exit 1，逐条打印**；
-//       **跑不起来 → exit 2**（缺 env / 配置自相矛盾 / 连不上平台）。
-// exit 2 与 exit 1 必须分开：前者是「脚本/环境坏了」，后者是「被观测的系统串租户了」，
-// 处置完全不同（与 `scripts/reconcile-data-tenants.mjs` 同一口径）。
+// ── 出口码（**三分**；判据以本节为准）──────────────────────────────────────────────────
+//
+//   exit 0 —— 四面**都跑到**、且**都没有 violation**。注意「有一面没跑到」**不会是 0**。
+//   exit 1 —— 至少一面产出 violation。**「数据面回了一个业务结局」也算这一类**：
+//             `/query` 的 **403 `denied` / 502 `error`**（`modules/data/routes/query.ts:29–35`）
+//             是**判据输入**，不是传输失败 ⇒ 交给 `judgeQueryResult` 判红。
+//             （一次**正常的**「词表裁剪生效」就长这样 —— 它必须显示成「这一面没判定成」，
+//               而不是「工具坏了」，否则 T13 会先去查网络与 PAT。）
+//   exit 2 —— **脚本侧 / 传输侧**跑不起来：缺 env、配置自相矛盾、解析后为空集、
+//             平台连不上、任一面「响应读不出 / 不是 JSON」。本档**既不等于**「隔离通过」，
+//             也**不等于**「串租户了」——它是「**这次没测出来**」。
+//
+// exit 1 与 exit 2 必须分开：前者是「被观测的系统有问题」，后者是「观测本身没做成」，
+// 处置完全不同（与 `scripts/reconcile-data-tenants.mjs` 的 0/1/2 同一口径）。
+// **混档时的优先级**：任一面记了 `cannotRun` ⇒ 出口码 **2**（压过 1）——「这一轮没测全」
+// 必须先解决，否则 T13 会拿一次残缺的运行当 gate；此时 violation **照常逐条打印**，不吞。
+//
+// ── 面与面**解耦**（一个面的异常不许吞掉其余三面）────────────────────────────────────
+// 每个面各自 try/catch：某一面跑不起来（或面① 就被 denied）时，其余三面**照跑**，
+// 并把「本面跑不起来」的原因记进 `cannotRun`（逐条打印）。否则一个面的异常会让另外三面
+// 变成盲区 —— 那正是「套件全绿」最省事的产生方式。
 //
 // **缺参不许静默按默认值跑**：任何一个必需 env 缺席 ⇒ 一次列全缺的键名 + exit 2。
 // 静默默认值会让「job 配错了」表现为「套件全绿」，那是本套件最不该产的假绿。
+// **空集同理**：`E2E_METRIC_ID=,` 这种「非空但解析后为空集」的形态 ⇒ 同样 exit 2，
+// **不许**静默把整面空转掉（那会让输出读起来像「已验证」）。
 //
 // ═══════════════════════════════════════════════════════════════════════════════════════
 // 为什么必须**从数据面服务侧反向验**，不能只验 UI（spec 验收 #2 原话）
@@ -42,11 +61,32 @@
 //    另外本面还回读**嵌入 token 里的 `params.tenant`**（`signEmbedToken` 的 locked 值）：
 //    它必须恒等于**调用者身份**的 org。改得动它 = 数据门失守，与缓存无关也该红。
 //
+//    ⚠️ **判据打在哪一面（I4 订正）**：探针只搜**数据 API** `/api/embed/dashboard/{token}`
+//    的响应正文 —— 那是**计划 L977 逐字指定的面**（「A 的 JWT 调 Metabase embed API
+//    （`/api/embed/dashboard/{token}`——iframe 背后就是这个）拿数据」）。**旧实现搜的是
+//    `<metabase>/public/dashboard/<token>` 的 HTML 壳正文**，而「壳正文里就有数据」这个前提
+//    **在仓内找不到任何依据**：`modules/data/domain/metabase.ts` 头注与 spec §6.5（L451–458）
+//    两次点名 iframe 属**不可观测**面（真机是 HTML 壳、卡数据走 XHR）⇒ 拿它当判据会**恒红（假红）**。
+//    现 HTML 壳只留**附加诊断**（`embedShellDiagnostic`，只进 notes、**不参与判定**）。
+//
+//    ⚠️ **语义已降级（T7 命名空间化的后果，评审 RR3-裁决B）**：`dashboardName(org,title) =
+//    `<org>/<title>`` 让两侧的卡在 Metabase 侧**结构上就是两张** ⇒「跨租户共享卡被重放」这条
+//    路径在这个部署形态下**不存在**；本面实际能抓到的是**同租户结果缓存串号**（B 在自己的卡上
+//    命中了别人的缓存）。故见到本面红时，先读 notes 里的「同卡 / 不同卡」形态，**别按「跨租户
+//    共享卡」去排查**。
+//
 // ③ **凭据负测**（A 的 PG role 直连 pg_duckdb → `read_parquet(B 的桶路径)` ⇒ **必须失败**）
 //    这是 T11 的 USER MAPPING/SCOPE 结构性隔离的**反证**，也是「从数据面反向验」的字面落实。
 //    ⚠️ **带正对照**：同一个 role 读**自己的**桶路径必须**成功**。少了正对照，一个「pg_duckdb
 //       没装 / 网络不通 / role 连不上」的坏环境会让负测**恒过**——负测的「通过」就毫无意义。
 //       故正对照失败 ⇒ 红；负测失败但**原因不像授权拒绝**（连不上等）⇒ 也红（信号不可采信）。
+//    ⚠️ **探针必须真触发扫描（I5 订正）**：SQL 用 `limit 1` 而**不是** `limit 0` —— PG 语义下
+//       `LIMIT 0` **不执行扫描**（本机 PG 16.15 实测：同一函数 `limit 0` 不报错、`limit 1` 报错，
+//       见 task-12-fix-report.md §I5）⇒ 旧写法会让正对照**空转**、负测拿到**假绿或假红**。
+//    ⚠️ **真机红时的排查顺序**：本面的真实依据悬在 **issue #174**（`USER MAPPING` 的 `scope`
+//       OPTION **无上游依据**、键名未验）上 ⇒ 顺序是 **① 先证 `read_parquet` 真会做权限判定
+//       （比对 `limit 1` 的实际行为）→ ② 再查 T11 的 `deploy/data-tenants/provision-template.sql`
+//       DDL 形状 → ③ 最后才怀疑本套件的判据**。
 //
 // ④ **L2 词表**（A 的 PAT `GET /metrics` + `POST /mcp` 的 `tools/list`）
 //    穿 = 词表里出现**B org 定义的指标 id**。两条通道**各判各的**（`routes/metrics.ts` 与
@@ -59,23 +99,28 @@
 //     （`dashboardName()` = `<org>/<title>`）⇒ 共享卡形态只在「有人手工建了共用 dashboard」时
 //     才出现。本套件**两种形态都判**，并在 notes 里如实记下是哪一种（不假装它一定是共享的）。
 //   · 面① **只跑 A→B 一个方向**（计划 L950–954 逐字如此）；反方向由面②（两侧都查）覆盖。
+//   · 出口码三分与「面级解耦」是本轮（评审 I1）的订正：`denied`/`error` 是**判据**不是传输错；
+//     面与面各自 try/catch（`cannotRun`）。完整的 0/1/2 矩阵见本文件头注与 `--help`。
 //
 // ═══════════════════════════════════════════════════════════════════════════════════════
 // 诚实边界（**别把本套件的全绿当隔离已证的结论**）
 // ═══════════════════════════════════════════════════════════════════════════════════════
 //   · 本文件**从未在两租户真栈上跑过**——真栈那一面归 T13。本文件交付的是**判据 + 判据的单测**。
-//   · 面③ 依赖 T11 的 `SCOPE` 真实收窄效果，而 T11 自述该 DDL 形状**键名未验**（真机核对归 T13）
-//     ⇒ 面③ 若在真栈上红，第一嫌疑是 T11 的 USER MAPPING 形状，不是本套件的判据。
+//   · 面③ 依赖 T11 的 `SCOPE` 真实收窄效果，而 T11 自述该 DDL 形状**键名未验**（真机核对归 T13，
+//     见 **issue #174**）⇒ 面③ 若在真栈上红，排查顺序是「先证 `read_parquet` 真做权限判定
+//     （`limit 1` 行为）→ 再查 T11 的 DDL 形状 → 最后才怀疑本套件的判据」。
+//   · 面② 的**真机可观测性未验**：判据已改打计划 L977 指定的数据 API，但「探针会出现在该 API 的
+//     响应里」这一点**只有真机（T13）能证**；本文件能证的只是「判据在纯函数层与编排层都有牙齿」。
 //   · 探针是**配置**不是凭据：它进 env，不进 git（本文件只写键名与取法）。
 
 import { createRequire } from 'node:module'
 
 // ── 出口码（三分：能不能跑 / 隔离成不成立）────────────────────────────────────────────
-/** 四面全过。 */
+/** 四面**都跑到**且**都没有 violation**。 */
 export const EXIT_CLEAN = 0
-/** 有 violation（隔离被穿过 / 判据不成立）。 */
+/** 有 violation（隔离被穿过 / 判据不成立）—— **含 `/query` 的 `denied`/`error` 这类业务结局**。 */
 export const EXIT_VIOLATION = 1
-/** 跑不起来：缺 env、配置自相矛盾、连不上平台。**与上一条必须能区分**。 */
+/** 跑不起来：缺 env、配置矛盾、解析后空集、连不上平台、响应读不出。**与上一条必须能区分**。 */
 export const EXIT_CANNOT_RUN = 2
 
 /** 数据模块的 id（本仓 `modules/data/manifest.yaml` 的 `id`）。 */
@@ -88,14 +133,23 @@ export const DATA_MODULE_ID = 'data'
  */
 
 /**
+ * @typedef {Object} CannotRun
+ * @property {string} surface 哪个面跑不起来（同上四个标识；`config` = 跑之前的配置闸门）
+ * @property {string} message 人读的原因（缺参 / 空集 / 传输错 / 协议读不出）
+ */
+
+/**
  * @typedef {Object} Judgement
  * @property {Violation[]} violations 非空 ⇒ 该面红
  * @property {string[]} notes 「不是违规、但排障时非知道不可」的观察（**不许**塞进 violations：
  *   那会让套件恒红；也不许把 violation 降级成 note：那是假的绿灯）
+ * @property {CannotRun[]} cannotRun 「**这一面没测出来**」的原因。**只有 `runSuite` 会填**，
+ *   四个面判定函数恒为空数组。单形状、字段恒在（scripts/ 是 checkJs：写成可选字段会让
+ *   类型加宽、可辨识联合收窄失败 —— 团队在案的类型书写陷阱）。
  */
 
 /** 四面判定的统一形状（不在某个面上开特例）。 */
-const clean = () => /** @type {Judgement} */ ({ violations: [], notes: [] })
+const clean = () => /** @type {Judgement} */ ({ violations: [], notes: [], cannotRun: [] })
 
 /**
  * @typedef {Object} TenantEnv
@@ -131,7 +185,7 @@ const clean = () => /** @type {Judgement} */ ({ violations: [], notes: [] })
  */
 export const ENV_SPEC = [
   { key: 'E2E_PLATFORM_URL', help: '平台基址，如 https://platform.example.com（模块 API 前缀 /api/modules/data 由它派生）' },
-  { key: 'E2E_METRIC_ID', help: '面①要逐指标问的指标 id（逗号分隔可多个；两个租户同名的那张）' },
+  { key: 'E2E_METRIC_ID', help: '面①要逐指标问的指标 id（逗号分隔可多个；两个租户同名的那张。**解析后为空集 ⇒ exit 2**）' },
   { key: 'E2E_REPORT_ID', help: '面②用于取嵌入 URL 的报表 id（两侧同名报表各一行时，用下面两个覆盖）' },
   { key: 'E2E_TENANT_A_REPORT_ID', help: '选填：租户 A 侧的报表 id（缺省 = E2E_REPORT_ID）' },
   { key: 'E2E_TENANT_B_REPORT_ID', help: '选填：租户 B 侧的报表 id（缺省 = E2E_REPORT_ID）' },
@@ -144,7 +198,7 @@ export const ENV_SPEC = [
   { key: 'E2E_TENANT_A_PG_DSN', help: '面③：租户 A 的 PG role 直连 DSN（数据面 pg_duckdb）', secret: true },
   { key: 'E2E_TENANT_A_S3_PATH', help: '面③正对照：A 自己的桶前缀（如 s3://bucket/<acme 前缀>/）' },
   { key: 'E2E_TENANT_B_S3_PATH', help: '面③负测：B 的桶前缀（**必须与 A 的不同**，否则负测退化成读自己的）' },
-  { key: 'E2E_TENANT_B_METRIC_IDS', help: '面④：B org 定义的 L2 指标 id（逗号分隔；A 侧两条通道都必须看不到）' },
+  { key: 'E2E_TENANT_B_METRIC_IDS', help: '面④：B org 定义的 L2 指标 id（逗号分隔；A 侧两条通道都必须看不到。**解析后为空集 ⇒ exit 2**）' },
 ]
 
 /** 选填的 env 键（有缺省值，故不参与「缺参」判定）。 */
@@ -174,6 +228,8 @@ const splitList = (s) => [...new Set(s.split(',').map((x) => x.trim()).filter((x
  *   · 两租户 org 同值 ⇒ 那不是串租户测试，是同租户自比；
  *   · 两租户探针同值 ⇒ 探针分不开两侧，「谁的数据」无从判定（**恒绿**）；
  *   · 两租户 S3 路径同值 ⇒ 面③的「负测」退化成读自己的（**恒绿**）。
+ * 另加两道**空集**闸门（`E2E_METRIC_ID` / `E2E_TENANT_B_METRIC_IDS` **非空但解析后为空集**）：
+ * 那种形态下整面不跑而输出仍像「已验证」⇒ 同样抛（见下方注释）。
  *
  * @param {Record<string, string | undefined>} env @returns {SuiteConfig}
  */
@@ -223,6 +279,27 @@ export function loadConfig(env) {
   }
 
   const metricIds = splitList(env.E2E_METRIC_ID ?? '')
+  const foreignMetricIds = splitList(env.E2E_TENANT_B_METRIC_IDS ?? '')
+
+  // ── 空集闸门（**非空但解析后为空集** ⇒ 同样响亮失败，不许静默空转）──────────────────
+  // `E2E_METRIC_ID=,` 这类值能过上面的「必填非空」闸门，但 `splitList` 之后是空集 ⇒ 面①/面④
+  // 的整个循环**一条都不跑**，而输出仍然打印得像「已验证」（面④ 甚至会打一条「对侧 0 个 id
+  // 均未出现」的 note）—— 这正是「空集旁路 = 另一种静默默认值」。⇒ 一律 exit 2。
+  if (metricIds.length === 0) {
+    throw new Error(
+      `E2E_METRIC_ID 解析后为**空集**（原值 ${JSON.stringify(env.E2E_METRIC_ID ?? '')}）：`
+      + '面① 将一条指标都不问、整面空转，而输出看起来仍像「已验证」。'
+      + '请检查键名与分隔符（逗号分隔，各项去空后必须至少剩一项）。',
+    )
+  }
+  if (foreignMetricIds.length === 0) {
+    throw new Error(
+      `E2E_TENANT_B_METRIC_IDS 解析后为**空集**（原值 ${JSON.stringify(env.E2E_TENANT_B_METRIC_IDS ?? '')}）：`
+      + '面④ 没有可比对的对侧指标 id ⇒ 任何词表都会被判绿（且会打出一条读起来像「过了」的 note）。'
+      + '请检查键名与分隔符。',
+    )
+  }
+
   const reportId = (env.E2E_REPORT_ID ?? '').trim()
   return {
     platformUrl: trimSlash(env.E2E_PLATFORM_URL ?? ''),
@@ -233,7 +310,7 @@ export function loadConfig(env) {
     tenantA,
     tenantB,
     credential,
-    foreignMetricIds: splitList(env.E2E_TENANT_B_METRIC_IDS ?? ''),
+    foreignMetricIds,
   }
 }
 
@@ -268,6 +345,11 @@ function findRow(rows, needle) {
  *   · 结果里出现对侧探针 ⇒ **红**（串租户本体）；
  *   · 本侧探针一次都没出现（含空结果集）⇒ **红**（正面信号缺席：分不清「没串」与「没数据」）。
  *
+ * ⚠️ 本函数收到的 `denied`/`error` 是**真机 HTTP 403/502 的响应体**
+ * （`modules/data/routes/query.ts:29–35`：ok→200 / denied→403 / error→502），
+ * 由 `callJson` 的**状态码白名单**原样交进来 —— 它们是**判据输入**，
+ * **不是**「工具跑不起来」（那是 exit 2）。两者的处置完全不同，别混。
+ *
  * @param {{ tenant: string, probe: string, foreignProbe: string, outcome: any }} args
  * @returns {Judgement}
  */
@@ -278,7 +360,9 @@ export function judgeQueryResult({ tenant, probe, foreignProbe, outcome }) {
       surface: 'query',
       message: `面① 问数未成功（status=${String(outcome?.status)}，reason=${String(outcome?.reason)}，`
         + `detail=${String(outcome?.detail ?? '')}）：本面**无法判定**。「没跑到」不许当通过 —— `
-        + '那会把「PAT 失效 / 仓库连不上 / 词表空」一律显示成全绿。',
+        + '那会把「PAT 失效 / 仓库连不上 / 词表空」一律显示成全绿。'
+        + '（判据层：`denied`/`error` 是数据面回的**业务结局**（真机 HTTP 403/502），'
+        + '按 violation 计 ⇒ **exit 1**；只有「脚本/传输侧跑不起来」才是 exit 2。）',
     })
     return out
   }
@@ -545,7 +629,14 @@ export function judgeCatalog({ foreignMetricIds, metrics, tools }) {
     }
   }
 
-  if (viaMetrics !== null && viaTools !== null && out.violations.length === 0) {
+  if (foreignMetricIds.length === 0) {
+    // 「对侧 0 个 id 均未出现」这种 note 读起来像「过了」⇒ **不打**（I2）。空集在 loadConfig
+    // 与 runSuite 两处都已按 exit 2 处理，这里只如实说清「本面无从比对」。
+    out.notes.push(
+      '面④ 的对侧指标 id 列表为**空集** ⇒ 本面**无从比对**（任何词表都会「看不到对侧指标」）。'
+      + '这不是「裁剪生效」，是没测 —— 已在配置/编排层按 exit 2 处理。',
+    )
+  } else if (viaMetrics !== null && viaTools !== null && out.violations.length === 0) {
     out.notes.push(
       `面④ 两条通道都看不到对侧指标：GET /metrics ${viaMetrics.length} 项 / tools/list `
       + `${viaTools.length} 项，对侧 ${foreignMetricIds.length} 个 id 均未出现。`,
@@ -565,11 +656,17 @@ export function judgeCatalog({ foreignMetricIds, metrics, tools }) {
  */
 
 /**
- * 一次带 PAT 的 JSON 调用（非 2xx / 非 JSON 一律抛 —— 读不出就是读不出）。
+ * 一次带 PAT 的 JSON 调用。**默认**：非 2xx / 非 JSON 一律抛（读不出就是读不出）。
+ *
+ * `acceptStatuses` 是**状态码白名单**：名单内的状态码**当成正常响应**照常解析 JSON 并返回 ——
+ * 用于 `/query` 的 **403 `denied` / 502 `error`**（`modules/data/routes/query.ts:29–35`）。
+ * 这两者是**数据面回的业务结局 = 判据输入**，若在传输层抛出，整轮会变成 exit 2 +
+ * 文案「PAT 失效 / 路径或前缀不对？」，并且**面②③④ 全被跳过**（评审 I1 实测）。
+ *
  * @param {SuiteDeps} deps @param {string} method @param {string} path @param {string} pat
- * @param {unknown} [body] @returns {Promise<any>}
+ * @param {unknown} [body] @param {number[]} [acceptStatuses] @returns {Promise<any>}
  */
-async function callJson(deps, method, path, pat, body) {
+async function callJson(deps, method, path, pat, body, acceptStatuses = []) {
   const res = await deps.fetch(`${moduleApiBase(deps.config.platformUrl)}${path}`, {
     method,
     headers: {
@@ -578,14 +675,48 @@ async function callJson(deps, method, path, pat, body) {
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
-  if (!res || res.ok !== true) {
-    throw new Error(`${method} ${path} → HTTP ${String(res?.status)}（PAT 失效 / 路径或前缀不对？）`)
+  if (!res) throw new Error(`${method} ${path} → 没有响应（fetch 返回空）`)
+  if (res.ok !== true && !acceptStatuses.includes(res.status)) {
+    throw new Error(`${method} ${path} → HTTP ${String(res.status)}（PAT 失效 / 路径或前缀不对？）`)
   }
   try {
     return await res.json()
   } catch {
-    throw new Error(`${method} ${path} → 2xx 但不是 JSON：读不出，不许当空结果`)
+    throw new Error(
+      `${method} ${path} → HTTP ${String(res.status)} 但正文不是 JSON：读不出，`
+      + '不许当空结果（这是「跑不起来」，exit 2）',
+    )
   }
+}
+
+/** 嵌入 URL 里区分「人看的壳」与「token」的那一段（`embedDashboardUrl` 拼的就是它）。 */
+const EMBED_PATH_MARKER = '/public/dashboard/'
+
+/**
+ * 拆嵌入 URL ⇒ `{ base, token }`。拆不出 ⇒ **抛**（读不出就是读不出，不许回落成空 token）。
+ * @param {string} embedUrl @param {string} what @returns {{ base: string, token: string }}
+ */
+function splitEmbedUrl(embedUrl, what) {
+  const i = embedUrl.indexOf(EMBED_PATH_MARKER)
+  const token = i < 0 ? '' : embedUrl.slice(i + EMBED_PATH_MARKER.length)
+  if (i < 0 || token === '') {
+    throw new Error(`嵌入 URL 不是 ${EMBED_PATH_MARKER}<token> 形态（${what}：拿到 ${embedUrl}）`)
+  }
+  return { base: embedUrl.slice(0, i), token }
+}
+
+/**
+ * 嵌入 URL（人看的 HTML 壳）→ **嵌入数据 API** URL。
+ *
+ * 这是**计划 L977 逐字指定的可观测面**：「A 的 JWT 调 Metabase embed API
+ * （`/api/embed/dashboard/{token}`——iframe 背后就是这个）拿数据」。
+ * 判据打在这一面（而不是 HTML 壳正文）的理由见文件头注 ②（I4）。
+ *
+ * @param {string} embedUrl @returns {string}
+ */
+export function embedDataApiUrl(embedUrl) {
+  const { base, token } = splitEmbedUrl(embedUrl, 'embedDataApiUrl')
+  return `${base}/api/embed/dashboard/${token}`
 }
 
 /**
@@ -601,65 +732,163 @@ async function embedUrlOf(deps, tenant, reportId) {
 }
 
 /**
- * 取嵌入页正文（iframe 背后就是它；判定只看正文里有没有探针）。
- * @param {SuiteDeps} deps @param {string} url @returns {Promise<string>}
+ * 取一段正文（2xx 才算取到；判定只看正文里有没有探针）。
+ * @param {SuiteDeps} deps @param {string} url @param {string} what @returns {Promise<string>}
  */
-async function embedBodyOf(deps, url) {
+async function fetchText(deps, url, what) {
   const res = await deps.fetch(url)
-  if (!res || res.ok !== true) throw new Error(`嵌入页 ${url} → HTTP ${String(res?.status)}`)
+  if (!res || res.ok !== true) throw new Error(`${what} ${url} → HTTP ${String(res?.status)}`)
   return await res.text()
 }
 
 /**
- * 跑完四面，收齐 violations 与 notes（I/O 全经 `deps`，故单测可全桩）。
+ * 面② 的**附加诊断**（**只进 notes，绝不参与判定**）。
+ *
+ * 旧实现把判据打在 `<metabase>/public/dashboard/<token>` 的 **HTML 壳正文**上，而「壳正文里就有
+ * 数据」这个前提**在仓内找不到任何依据**（`domain/metabase.ts` 头注 + spec §6.5 两次点名 iframe
+ * 属不可观测面；真机是 HTML 壳、卡数据走 XHR）⇒ 拿它当判据会**恒红（假红）**。故此处只如实记录
+ * 「壳里有没有出现探针」供真机核对（T13），**读不到也只是一条 note**。
+ *
+ * @param {SuiteDeps} deps @param {string} label @param {string} url @param {string} probe
+ * @returns {Promise<Judgement>}
+ */
+async function embedShellDiagnostic(deps, label, url, probe) {
+  const out = clean()
+  try {
+    const body = await fetchText(deps, url, `嵌入页 HTML 壳(${label})`)
+    out.notes.push(
+      `面② 附加诊断（**不参与判定**）：${label} 的 HTML 壳正文里`
+      + `${body.includes(probe) ? '出现了' : '**没有**出现'}探针 '${probe}'。`
+      + '这条形态（「壳正文里有数据」）**在仓内无依据、待真机核**（见头注 ②/I4）⇒ 只作诊断。',
+    )
+  } catch (e) {
+    out.notes.push(
+      `面② 附加诊断：${label} 的 HTML 壳取不到（${e instanceof Error ? e.message : String(e)}）`
+      + '—— 同上，**不参与判定**。',
+    )
+  }
+  return out
+}
+
+/**
+ * 跑完四面，收齐 violations / notes / cannotRun（I/O 全经 `deps`，故单测可全桩）。
+ *
+ * **面与面解耦**：每个面各自 try/catch（`runFace`）。某一面跑不起来时，其余三面**照跑**，
+ * 原因记进 `cannotRun`（⇒ 出口码由 `exitCodeOf` 定为 2）。面① 出 `denied`/`error` 属**判据**
+ * （不是跑不起来）⇒ 不打断后续三面。
+ *
  * @param {SuiteDeps} deps @returns {Promise<Judgement>}
  */
 export async function runSuite(deps) {
   const { config } = deps
   const out = clean()
   /** @param {Judgement} j */
-  const merge = (j) => { out.violations.push(...j.violations); out.notes.push(...j.notes) }
-
-  // ── 面① 问数 API（A 的 PAT 逐指标；方向 A→B，与计划 L950–954 逐字一致）──────────────
-  for (const metricId of config.metricIds) {
-    const outcome = await callJson(deps, 'POST', '/query', config.tenantA.pat, { metricId, args: {} })
-    merge(judgeQueryResult({
-      tenant: config.tenantA.org,
-      probe: config.tenantA.probe,
-      foreignProbe: config.tenantB.probe,
-      outcome,
-    }))
+  const merge = (j) => {
+    out.violations.push(...j.violations)
+    out.notes.push(...j.notes)
+    out.cannotRun.push(...j.cannotRun)
   }
 
+  /** 面级隔离：本面抛出去 ⇒ 记 cannotRun + note，**不影响**其余三面。 @param {string} surface @param {() => Promise<void>} fn */
+  const runFace = async (surface, fn) => {
+    try {
+      await fn()
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      out.cannotRun.push({ surface, message })
+      out.notes.push(`面 [${surface}] **跑不起来**（${message}）—— 本面本次**无法判定**；其余三面照跑。`)
+    }
+  }
+
+  // ── 空集旁路闸门（I2）：**跑到一条都不跑**与「跑了 N 条」必须在输出里分得开 ────────────
+  // 闸门也在 `loadConfig`（CLI 唯一入口）；此处再挡一次，是因为 `runSuite` 可以被直接调用
+  // （单测/将来的 job 壳），而**空集空转 + 输出像「已验证」**是本套件最不该产的假绿。
+  if (config.metricIds.length === 0) {
+    out.cannotRun.push({
+      surface: 'query',
+      message: '面① 的指标 id 列表为**空集**（E2E_METRIC_ID 解析后没有非空项）⇒ 一条都不会问，'
+        + '整面空转。空集不是「全过」：请检查键名与分隔符。',
+    })
+  }
+  if (config.foreignMetricIds.length === 0) {
+    out.cannotRun.push({
+      surface: 'catalog',
+      message: '面④ 的对侧指标 id 列表为**空集**（E2E_TENANT_B_METRIC_IDS 解析后没有非空项）⇒ '
+        + '无可比对的对象，任何词表都会被判绿。空集不是「裁剪生效」：请检查键名与分隔符。',
+    })
+  }
+  out.notes.push(
+    `面① 将逐 ${config.metricIds.length} 个指标问数；面④ 将比对 ${config.foreignMetricIds.length} 个对侧指标 id`
+    + `${config.metricIds.length === 0 || config.foreignMetricIds.length === 0 ? '（**有空集**，见 exit 2）' : ''}。`,
+  )
+
+  // ── 面① 问数 API（A 的 PAT 逐指标；方向 A→B，与计划 L950–954 逐字一致）──────────────
+  await runFace('query', async () => {
+    for (const metricId of config.metricIds) {
+      // 403 denied / 502 error 是**判据输入**（`routes/query.ts:29–35`），不是传输失败 ⇒ 白名单放行
+      const outcome = await callJson(
+        deps, 'POST', '/query', config.tenantA.pat, { metricId, args: {} }, [403, 502],
+      )
+      merge(judgeQueryResult({
+        tenant: config.tenantA.org,
+        probe: config.tenantA.probe,
+        foreignProbe: config.tenantB.probe,
+        outcome,
+      }))
+    }
+  })
+
   // ── 面② 嵌入缓存重放（A 先查一次 → B 查同一张卡 → B 必须拿到 B 的数据）──────────────
-  const aUrl = await embedUrlOf(deps, config.tenantA, config.reportIdA)
-  const aBody = await embedBodyOf(deps, aUrl)
-  const bUrl = await embedUrlOf(deps, config.tenantB, config.reportIdB)
-  const bBody = await embedBodyOf(deps, bUrl)
-  merge(judgeEmbedReplay({
-    a: { org: config.tenantA.org, claims: decodeEmbedToken(aUrl.split('/public/dashboard/')[1] ?? ''), body: aBody },
-    b: { org: config.tenantB.org, claims: decodeEmbedToken(bUrl.split('/public/dashboard/')[1] ?? ''), body: bBody },
-    probes: { a: config.tenantA.probe, b: config.tenantB.probe },
-  }))
+  // 判据面 = **数据 API**（计划 L977）；HTML 壳只走附加诊断。
+  await runFace('embed-replay', async () => {
+    const aUrl = await embedUrlOf(deps, config.tenantA, config.reportIdA)
+    const bUrl = await embedUrlOf(deps, config.tenantB, config.reportIdB)
+    const aBody = await fetchText(deps, embedDataApiUrl(aUrl), '嵌入数据 API(A)')
+    const bBody = await fetchText(deps, embedDataApiUrl(bUrl), '嵌入数据 API(B)')
+    merge(judgeEmbedReplay({
+      a: { org: config.tenantA.org, claims: decodeEmbedToken(splitEmbedUrl(aUrl, 'A').token), body: aBody },
+      b: { org: config.tenantB.org, claims: decodeEmbedToken(splitEmbedUrl(bUrl, 'B').token), body: bBody },
+      probes: { a: config.tenantA.probe, b: config.tenantB.probe },
+    }))
+    merge(await embedShellDiagnostic(deps, 'A', aUrl, config.tenantA.probe))
+    merge(await embedShellDiagnostic(deps, 'B', bUrl, config.tenantB.probe))
+  })
 
   // ── 面③ 凭据负测（A 的 role：正对照读自己 / 负测读 B）────────────────────────────────
-  const positive = await deps.readParquet(config.credential.ownS3Path)
-  const negative = await deps.readParquet(config.credential.foreignS3Path)
-  merge(judgeCredentialProbe({
-    ownPath: config.credential.ownS3Path,
-    foreignPath: config.credential.foreignS3Path,
-    positive,
-    negative,
-  }))
+  await runFace('credential', async () => {
+    const positive = await deps.readParquet(config.credential.ownS3Path)
+    const negative = await deps.readParquet(config.credential.foreignS3Path)
+    merge(judgeCredentialProbe({
+      ownPath: config.credential.ownS3Path,
+      foreignPath: config.credential.foreignS3Path,
+      positive,
+      negative,
+    }))
+  })
 
   // ── 面④ L2 词表（A 的 PAT 两条通道）────────────────────────────────────────────────
-  const metrics = await callJson(deps, 'GET', '/metrics', config.tenantA.pat)
-  const tools = await callJson(deps, 'POST', '/mcp', config.tenantA.pat, {
-    jsonrpc: '2.0', id: 1, method: 'tools/list',
+  await runFace('catalog', async () => {
+    const metrics = await callJson(deps, 'GET', '/metrics', config.tenantA.pat)
+    const tools = await callJson(deps, 'POST', '/mcp', config.tenantA.pat, {
+      jsonrpc: '2.0', id: 1, method: 'tools/list',
+    })
+    merge(judgeCatalog({ foreignMetricIds: config.foreignMetricIds, metrics, tools }))
   })
-  merge(judgeCatalog({ foreignMetricIds: config.foreignMetricIds, metrics, tools }))
 
   return out
+}
+
+/**
+ * 判定 ⇒ 出口码（**单一落点**：`main` 与单测都用它，避免「断言里自己重算一遍」的假保护）。
+ *
+ * 优先级：`cannotRun` 非空 ⇒ **2**（这一轮没测全，必须先解决，否则 T13 会拿残缺运行当 gate）；
+ * 否则有 violation ⇒ 1；否则 0。violations 在 2 的情形下**照常打印**，不吞。
+ *
+ * @param {Judgement} j @returns {number}
+ */
+export function exitCodeOf(j) {
+  if (j.cannotRun.length > 0) return EXIT_CANNOT_RUN
+  return j.violations.length === 0 ? EXIT_CLEAN : EXIT_VIOLATION
 }
 
 // ═══ 生产 I/O：pg_duckdb 试读 ══════════════════════════════════════════════════════════
@@ -679,7 +908,15 @@ const quoteLiteral = (s) => `'${String(s).replaceAll("'", "''")}'`
  *
  * 连接失败**不抛**：回落成 `{ok:false,error}` 交给 `judgeCredentialProbe` 判 —— 那正是
  * 「正对照失败 ⇒ 红（空转防护）」要吃掉的那种形态。抛出去会变成 exit 2，把「环境坏了」
- * 与「隔离没成立」混为一谈。
+ * 与「隔离没成立」混为一谈。（评审 §RR2④ 同判：`DSN 连不上` 归 **exit 1**，不归 2。）
+ *
+ * ⚠️ **`limit 1` 不是笔误（I5 订正）**：旧写法是 `limit 0`，注释还写着「LIMIT 0 也要真去解析
+ * 路径/对象」—— 那是**错的**。PG 语义下 `LIMIT 0` 会让执行器**根本不跑**子节点（函数不执行、
+ * 不触达对象存储）；本机 PG **16.15** 实测（见 task-12-fix-report.md §I5）：
+ * `select 1 from f() limit 0` 直接返回 0 行不报错、同一函数 `limit 1` 立刻 RAISE
+ * ⇒ 旧写法下正对照是**空转**、负测拿到的是**假红**（「读到 B 的桶」也是假的）。
+ * 用 `limit 1` 才会真的从 `read_parquet(...)` 拉一行 ⇒ 必须真的去解析路径与对象、
+ * 真的过一遍 USER MAPPING / SCOPE 判定，且只拉一行（不整桶扫描）。
  *
  * @param {string} dsn @param {string} s3Path
  * @returns {Promise<{ ok: boolean, error: string }>}
@@ -690,8 +927,8 @@ export async function probeReadParquet(dsn, s3Path) {
   const client = new Client({ connectionString: dsn })
   try {
     await client.connect()
-    // LIMIT 0 也要真去解析路径/对象 ⇒ 权限与 SCOPE 判据照样触发，且不拉数据。
-    await client.query('select 1 from read_parquet(' + quoteLiteral(s3Path) + ') limit 0')
+    // `limit 1`：**必须真的拉一行**才会触发扫描/权限判定（`limit 0` 不执行 —— 见上注 I5）。
+    await client.query('select 1 from read_parquet(' + quoteLiteral(s3Path) + ') limit 1')
     return { ok: true, error: '' }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -710,7 +947,13 @@ export function helpText() {
     '用法：pnpm exec tsx scripts/e2e-data-cross-tenant.mjs           # 四面全跑',
     '      pnpm exec tsx scripts/e2e-data-cross-tenant.mjs --help    # 本页',
     '',
-    '出口码：0 = 四面全过；1 = 有 violation（逐条打印）；2 = 跑不起来（缺 env / 配置矛盾 / 连不上）',
+    '出口码（三分）：',
+    '  0 = 四面**都跑到**且都没有 violation；',
+    '  1 = 有 violation（逐条打印）—— **含 /query 的 403 denied / 502 error 这类业务结局**',
+    '      （它们是判据输入，不是传输失败；一次正常的「词表裁剪生效」就落在这一档）；',
+    '  2 = 跑不起来：缺 env / 配置矛盾 / **解析后空集** / 连不上平台 / 任一面响应读不出。',
+    '      任一面跑不起来 ⇒ 总码为 2（压过 1），但 violation 照常打印，不吞。',
+    '      2 **既不等于**「隔离通过」，也**不等于**「串租户了」——它是「这次没测出来」。',
     '',
     'env 契约（两租户的 org / PAT / 探针 + 仓库 DSN + 对侧指标 id；**值只经 env，不进 git**）：',
   ]
@@ -719,8 +962,11 @@ export function helpText() {
   }
   lines.push(
     '',
-    '⚠️ 本套件**从未在两租户真栈上跑过**（真栈那一面归 T13），且面③ 依赖 T11 的 SCOPE 真实收窄',
-    '   （该 DDL 形状 T11 自述「键名未验」）⇒ 面③ 若红，第一嫌疑是 T11 的 USER MAPPING 形状。',
+    '⚠️ 本套件**从未在两租户真栈上跑过**（真栈那一面归 T13）；面③ 的真依据悬在 issue #174',
+    '   （T11 的 USER MAPPING `scope` OPTION 无上游依据）⇒ 面③ 若红，排查顺序：',
+    '   ① 先证 read_parquet 真会做权限判定（`limit 1` 行为）→ ② 再查 T11 的 DDL 形状 → ③ 最后才怀疑判据。',
+    '⚠️ 面② 的判据已改打**数据 API** `/api/embed/dashboard/{token}`（计划 L977 逐字指定）——',
+    '   HTML 壳只留附加诊断、不参与判定；探针是否真出现在该 API 响应里，只有真机能证（T13）。',
     '建议：并入 reconcile job（或独立低濒 job）定时跑 —— 退出码就是信号面，不靠人读日志。',
   )
   return lines.join('\n')
@@ -728,17 +974,31 @@ export function helpText() {
 
 /**
  * 打印判定结果（violation **逐条**、带面标签；notes 另起一段，不混进违规）。
+ *
+ * `OK：四面全过` **只在出口码为 0 时**打印：有 `cannotRun` 时绝不能出现这句话（I2 的同族毛病
+ * ——「一条都没跑」的输出不许读起来像「已验证」）。
+ *
  * @param {Judgement} j
  */
 function printJudgement(j) {
   for (const n of j.notes) console.log(`[e2e-cross-tenant] · ${n}`)
-  if (j.violations.length === 0) {
-    console.log('[e2e-cross-tenant] OK：四面全过（问数 / 嵌入缓存重放 / 凭据负测 / L2 词表）')
+  if (j.violations.length > 0) {
+    console.log(`[e2e-cross-tenant] ${j.violations.length} 条 violation（逐条如下）：`)
+    for (const [i, v] of j.violations.entries()) {
+      console.log(`  ${i + 1}. [${v.surface}] ${v.message}`)
+    }
+  }
+  if (j.cannotRun.length > 0) {
+    console.log(
+      `[e2e-cross-tenant] ${j.cannotRun.length} 面**跑不起来**（exit 2，不是隔离通过、也不是串租户）：`,
+    )
+    for (const [i, c] of j.cannotRun.entries()) {
+      console.log(`  ${i + 1}. [${c.surface}] ${c.message}`)
+    }
     return
   }
-  console.log(`[e2e-cross-tenant] ${j.violations.length} 条 violation（逐条如下）：`)
-  for (const [i, v] of j.violations.entries()) {
-    console.log(`  ${i + 1}. [${v.surface}] ${v.message}`)
+  if (j.violations.length === 0) {
+    console.log('[e2e-cross-tenant] OK：四面全过（问数 / 嵌入缓存重放 / 凭据负测 / L2 词表）')
   }
 }
 
@@ -773,7 +1033,7 @@ async function main() {
   }
 
   printJudgement(judgement)
-  process.exitCode = judgement.violations.length === 0 ? EXIT_CLEAN : EXIT_VIOLATION
+  process.exitCode = exitCodeOf(judgement)
 }
 
 if (process.argv[1]?.endsWith('e2e-data-cross-tenant.mjs')) {
