@@ -18,7 +18,7 @@ export default defineConfig({
         test: {
           name: 'backend',
           environment: 'node',
-          include: ['domain/**/*.test.ts', 'routes/**/*.test.ts', '*.test.ts'],
+          include: ['domain/**/*.test.ts', 'routes/**/*.test.ts', 'migration/**/*.test.ts', '*.test.ts'],
         },
       },
       {

@@ -9,3 +9,5 @@ out/
 coverage/
 .DS_Store
 *.tsbuildinfo
+# 售后 M2b：T3 拉样的本地脱敏样本目录（SAMPLE-NOTES.md 对照用），真数据不落仓
+modules/aftersales/migration/samples-local/
