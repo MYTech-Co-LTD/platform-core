@@ -1,4 +1,4 @@
-// console/index.tsx — 数据模块 console 入口：三页签（问数 / 指标 / 我的 Key）。
+// console/index.tsx — 数据模块 console 入口：四页签（问数 / 指标 / 我的 Key / 报表）。
 //
 // ⚠️ 三条实测结论（照 modules/aftersales/console/index.tsx，本仓浏览器实测得来，勿「优化」）：
 // 1. **不用嵌套 `<Routes>`**：本组件挂在宿主壳的 `{ path: '*', element: <ConsoleModulePage /> }`
@@ -12,11 +12,13 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import QueryPage from './query'
 import MetricsPage from './metrics'
 import KeysPage from './keys'
+import ReportsPage from './reports'
 
 const TABS = [
   { key: 'query', label: '问数' },
   { key: 'metrics', label: '指标' },
   { key: 'keys', label: '我的 Key' },
+  { key: 'reports', label: '报表' },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -42,7 +44,7 @@ export default function DataConsolePage() {
   }, [last, pathname, navigate])
 
   const PAGES: Record<TabKey, () => React.JSX.Element> = {
-    query: QueryPage, metrics: MetricsPage, keys: KeysPage,
+    query: QueryPage, metrics: MetricsPage, keys: KeysPage, reports: ReportsPage,
   }
   const Active = PAGES[active]
 

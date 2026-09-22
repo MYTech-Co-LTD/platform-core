@@ -29,3 +29,28 @@
 
 改授权核心、三通道中间件、manifest 声明或宿主装载器门卫时，这份文件是回归底线；
 其中用例 8 同时锁着 issue #145（param 门卫误伤静态兄弟路径）的修复。
+
+## 报表面（Metabase 嵌入；issue #150 / T7）：`tenant` 参数约定
+
+报表本体在 Metabase、登记在平台（双写面）⇒ 平台是**唯一的鉴权与定租户点**
+（AI 侧的语义层自身不带权限，spec §11.3.1）。嵌入走的 signed embedding，权限**双门分开**：
+
+| 门 | 管什么 | 落在哪 |
+|---|---|---|
+| 页门 | 「谁**能看**」 | 本模块的 platform scope（宿主按 manifest 施加）：制作/登记/对账 `data:manage`，观看面 `data:query` |
+| 数据门 | 「看**哪个租户的数据**」 | 嵌入 JWT 里 `locked` 的参数值，由 `GET /reports/:id/embed-url` **现签** |
+
+**★ 建 Metabase dashboard 的人必须遵守的约定**：把租户过滤写成**名为 `tenant`** 的
+参数（仪表盘过滤器或原生查询变量皆可）。
+
+- 平台在 `POST /reports` 时会把 `tenant` 与报表自己声明的 `lockedParams` 一并写进 Metabase 的
+  `embedding_params`（值恒为 `"locked"`）；
+- 签名时 `tenant` 的值恒 = **调用者身份里的 org**（`requester.orgId`），
+  **入参一律不可覆盖**（`POST /reports` 的 `lockedParams` 里带 `tenant` ⇒ 400 `TENANT_PARAM_RESERVED`）；
+- ⇒ 若 dashboard 的租户参数不叫 `tenant`，JWT 里的锁定值**绑不到任何东西**，页面会显示未经
+  租户过滤的数据。这是真机部署（T10）必须核的一条。
+
+env 三键（`DATA_METABASE_URL` / `_API_KEY` / `_SECRET_KEY`）见根 `.env.example`；
+`SECRET_KEY` 决定「看哪个租户数据」那一半权限，泄露 = 能签任意租户的嵌入凭证。
+对本表：`POST /reports/reconcile` 的差集是**显式返回 + 落日志**的（spec §7 的双写面对账）；
+报表删除走「Metabase 侧归档 + 删登记行」，只删登记行会让该报表恒留在对账的未登记差集里。

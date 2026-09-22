@@ -1,4 +1,4 @@
-// index.test.tsx — 数据模块 console 入口：三页签的路由壳（T9）。
+// index.test.tsx — 数据模块 console 入口：四页签的路由壳（问数/指标/我的 Key/报表）。
 // 挂载形态照宿主壳的真实结构（同 aftersales/console/index.test.tsx）：
 // `{ path: '*', element: <ConsoleModulePage/> }` 挂在 `/console` 下。
 // 只测「URL 驱动哪一页」：裸路径规范化、页签点击走绝对路径、深链真的渲染出那页的内容。
@@ -25,6 +25,7 @@ beforeEach(() => {
       return json({ metrics: [{ id: 'sales_daily', title: '销售日明细', description: '', requiredScope: null, subjectColumn: 'org' }] })
     }
     if (url.includes('/keys')) return json({ keys: [] })
+    if (url.includes('/reports')) return json({ reports: [] })
     return json({})
   })
 })
@@ -45,10 +46,10 @@ function renderAt(path: string) {
   return router
 }
 
-describe('数据模块 console 入口（三页签）', () => {
-  it('三个页签都在菜单里', () => {
+describe('数据模块 console 入口（四页签）', () => {
+  it('四个页签都在菜单里', () => {
     renderAt('/console/data/query')
-    for (const label of ['问数', '指标', '我的 Key']) {
+    for (const label of ['问数', '指标', '我的 Key', '报表']) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0)
     }
   })
@@ -74,5 +75,11 @@ describe('数据模块 console 入口（三页签）', () => {
     renderAt('/console/data/keys')
     await waitFor(() => expect(screen.getByText('创建于')).toBeInTheDocument())
     await waitFor(() => expect(urls.some((u) => u.includes('/keys'))).toBe(true))
+  })
+
+  it('深链到 /reports 渲染报表页（「报表标题」是报表页独有表头）并请求 /reports', async () => {
+    renderAt('/console/data/reports')
+    await waitFor(() => expect(screen.getByText('报表标题')).toBeInTheDocument())
+    await waitFor(() => expect(urls.some((u) => u.includes('/reports'))).toBe(true))
   })
 })
