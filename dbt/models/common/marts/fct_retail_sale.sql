@@ -1,5 +1,7 @@
+-- 物化落点 gate 2（同 staging）：口径模型必须落在 PG 可见关系上，否则 Metabase 看不见（spec §9.4）。
+-- ⚠️ 注释必须留在 Jinja config 块外：块内是 Jinja 表达式、不认 SQL 注释行（真 dbt 1.9.1
+--   parse 实测报 expected token，2026-09-23 T6 收尾订正）。
 {{
-    -- 物化落点 gate 2（同 staging）：口径模型必须落在 PG 可见关系上，否则 Metabase 看不见（spec §9.4）。
     config(materialized='table')
 }}
 

@@ -1,7 +1,9 @@
+-- 物化落点 gate 2 的**显式表态**：staging 必须落在 PG 可见关系上（表/视图），
+-- 不能是 read_parquet 的裸扫描结果 —— 裸扫描不进 pg_class ⇒ Metabase 与任何 PG 客户端看不见
+-- （spec §9.4）。项目的缺省已是 table，这里再钉一次是为了「改项目缺省时不静默改变本模型语义」。
+-- ⚠️ 注释必须留在 Jinja config 块外：块内是 Jinja 表达式、不认 SQL 注释行（真 dbt 1.9.1
+--   parse 实测报 expected token，2026-09-23 T6 收尾订正）。
 {{
-    -- 物化落点 gate 2 的**显式表态**：staging 必须落在 PG 可见关系上（表/视图），
-    -- 不能是 read_parquet 的裸扫描结果 —— 裸扫描不进 pg_class ⇒ Metabase 与任何 PG 客户端看不见
-    -- （spec §9.4）。项目的缺省已是 table，这里再钉一次是为了「改项目缺省时不静默改变本模型语义」。
     config(materialized='table')
 }}
 

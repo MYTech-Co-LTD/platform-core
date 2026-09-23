@@ -866,9 +866,9 @@ gh pr create --title "build(data-stack): contracts/ 与 duckle/ 数据采集工�
 
 1. ~~**外部输入①**：pg_duckdb 镜像可获取（GHCR 凭据或目标机本地构建路径二选一）；首次构建已跑通（T1 的 CI dispatch 或目标机构建），tag 与 compose 一致。~~ ⇒ **2026-09-23 订正：本条前置已消解** —— 用**官方镜像** `pgduckdb/pgduckdb:18-v1.1.1`（Docker Hub，**实测可拉**）；**不再需要** GHCR 凭据 / 本地构建 / 首次构建跑通。⚠️「tag 与 compose 一致」**只对备件路径成立**——现状 compose 用官方镜像、与备件 tag **不一致**，**这是预期形态**（见 `.github/workflows/pg-duckdb-image.yml` 头注）。
 2. **外部输入②**（**2026-09-23 订正：已全部就位，且不卡本步**）：① dp-lab / dp-lab-bi **已删**（人在 dashboard；MCP 无删项目接口），**含宿主侧清理**——两者在 server `23a1091e`（mytech-weknora），**与 T6 目标机 `8281d598` 是不同宿主**、无端口/卷/网络共享 ⇒ 属**清场项而非 gate**；② **目标机已定**：`113.249.104.181` = `10.0.0.5` = server **`8281d598`**（shanghai）。
-3. **外部输入③**：ZOS 乐檬桶只读凭据已落 openship env(isSecret)。
-4. **外部输入④**：目标机时段已确认。W1 的 T2–T5 全部合并进 main。
-5. **外部输入⑥**：dbt 版本已确认（人给版本号或确认 1.9.8），T3 Dockerfile 的 ARG 注释销账——真跑用的版本必须与现场安装一致。
+3. **外部输入③**：ZOS 乐檬桶只读凭据已落 openship env(isSecret)。⇒ **已就位并实测（2026-09-23）**：真机用它建 DuckDB secret 后 ZOS 认证通过（形态见下方销账块第 1 条）。
+4. **外部输入④**：目标机时段已确认。W1 的 T2–T5 全部合并进 main。⇒ **已消费（2026-09-23）**：T6 部署已实际执行（时段已用掉）；T2–T5 均已在 main。
+5. **外部输入⑥**：dbt 版本已确认（人给版本号或确认 1.9.8），T3 Dockerfile 的 ARG 注释销账——真跑用的版本必须与现场安装一致。⇒ **已销账（2026-09-23，本 PR ②）**：PyPI 实测钉 **1.9.1**——dbt-core 1.9.x 发到 1.9.9 而 **dbt-postgres 1.9.x 只发到 1.9.1**，1.9.8 配对不存在（构建必挂 `No matching distribution found for dbt-postgres==1.9.8`）；Dockerfile ARG 默认值已改 1.9.1，真机构建 + parse + debug 均已验证。
 6. ~~**版本配对已验收（T1 的显式前置，不是「顺带」）**：pg_duckdb v1.1.1 × DuckDB v1.5.5 是未经任何一方验证的配对 ⇒ T1 的首次 dispatch 兼作该配对的验收：编译通过 = 配对成立；失败则把 `PG_DUCKDB_VERSION` ARG 回退 `main` …~~ ⇒ **2026-09-23 订正：本条前置已消解，且原因与原文预期相反** —— 该配对**已经验收过了，结果是失败**（`pg_duckdb v1.1.1 × DuckDB v1.5.5` **实测编译失败**，8 处 API 断裂，见 `deploy/pg-duckdb/README.md` §2.2）⇒ 本轮改用**官方镜像**（上游自陈配对 = DuckDB v1.4.3，**不需要**本仓再做配对验收）。**进本 gate 不再要求「配对已绿」**。将来若启用备件，才回到「**重新核对上游自陈配对 + 重新实测 + 出「新」tag**」的口径（**不是**原文的「ARG 回退 `main`」）。
 7. **Gate-B（I-2 的接线裁决；必须在 Step 4 之前落地）——✅ 已裁决（2026-09-23，用户拍）**
 
@@ -891,6 +891,15 @@ gh pr create --title "build(data-stack): contracts/ 与 duckle/ 数据采集工�
 9. **Gate-D（T5 评审 I2 的口径防呆；读 spec §8 或本计划旧行之前先读本条）**：**ZOS 直写的现行口径一律以本计划为准** —— `snk.minio` **可直写** ZOS（经验库条目自带 2026-09-17 订正 + 真机实测：`validate` 过、`run` 两次 ok、两条独立通道回读、重跑幂等），`snk.parquet` **403**（抓包证实 dial 的是 AWS 默认端点）、`snk.s3` **404**。**spec 的两处同句已被取代，且按本仓纪律不追改**（`docs/superpowers/specs/2026-09-20-data-stack-module-design.md:526–527`、`docs/superpowers/specs/2026-09-15-aftersales-module-design.md:166` —— spec 是「当时怎么定的」历史快照）⇒ **T6 读 spec §8 的 ZOS 结论时一律以本计划为准**，**不得据 spec 恢复「能力空白」结论**。依据：T5 评审 §5.1–5.4 / I2（第十轮 B 节）。
 10. **Gate-E（跨组件 parquet 格式兼容；官方镜像切换引入的新面）**：**duckle 自带 DuckDB `1.5.4`**（写 parquet 的一方；`duckle==0.7.3` ⇒ `duckdb-cli==1.5.4`），而 **pg_duckdb（官方镜像）是 `1.4.3`** ⇒ **写方比读方新**。本步真机**必验一条**：**用 duckle 写一个 parquet ⇒ 让 pg_duckdb `read_parquet` 读**（读得出、列类型符合预期）。同一条已记进 `duckle/README.md` §7.4 未验清单第 5 项。
 11. **#182 门：模块 `storage` 能力「未声明」⇒ 数据面拿不到凭据**：`modules/data/manifest.yaml` **当前无 `storage:` 声明**（2026-09-23 实测：`grep -n storage modules/data/manifest.yaml` 无命中；对照 `modules/aftersales/manifest.yaml:14` 的 `storage: { kind: s3 }`）⇒ 宿主「不声明就不挂」（`apps/server/src/loader.ts:483-491`）⇒ `c.get(TENANT_STORAGE)` **恒 `undefined`**、租户管理台「**存储配置**」页**不可达**（`storageDeclarers ∩ 启用模块 ≠ ∅` 才显示）⇒ **没有任何 UI 入口能把本租户 ZOS 五元组写进租户行** ⇒ **T6 的数据面拿不到凭据**（Task 11 的 `provision-template.sql` USER MAPPING secret + Task 4 的 dbt S3 注入都源自这份凭据）。**修复笔已派（见 issue #182）**——本步开工前先确认该笔已合并、`storage: { kind: s3 }` 已在 manifest 里（**未落地则本步先等它**）。⚠️ 该声明**目前尚无消费点**（数据面读 ZOS 发生在 pg_duckdb 内部；模块只与 pg_duckdb 对话）⇒ 「**声明了能力但未消费**」这条**显式登记**，别被下一个人读成「已经接好了」（issue #182 的「已知的后续」节同此）。
+
+   **T6 实测销账（2026-09-23，shanhai / `10.0.0.5` 真机；由 T6 收尾 PR 回填进计划）**——部署期现场逐条结论：
+
+   - **pg_duckdb 建密钥（「S3 凭据注入」gate 的真机形态）**：`duckdb.create_simple_secret(...)` 签名实测为 `(type, key_id, secret, session_token, region, url_style, provider, endpoint, scope, validation, use_ssl)`、**全 text**；ZOS 内网端点**去 `https://` 前缀 + `use_ssl=false`** 认证通过。
+   - **桶内 glob**：pg_duckdb 侧**不暴露** `glob()`，但 `duckdb.query()` 内**可用**（列取值用 `SELECT *` 包一层）。
+   - **dbt parse**：通过（EXIT=0）——且真机 parse 顺带抓出两个模型的 Jinja 注释编译错（config 块内混 SQL 注释行），已随 T6 收尾 PR 修复。
+   - **dbt debug**：Connection test **OK**。
+   - **数据面容器 / 端口 / Gate-B 接线 / 平台重部署**：全部完成（过程与证据见编排侧 ledger 的 T6 节——`.superpowers/sdd/` 未进仓，需要时找编排者要，别按本节转述二次脑补）。
+   - **数据本身为空（采集未开始）** ⇒ Step 3 物化/对账、Step 4「问数链路吃真数据」、Step 5 duckle 核对（Gate-C/D/E）**全部待数据到位后执行**——T6 未完，本销账只覆盖「部署 + 连通」面。
 
 - [ ] **Step 2: 按目标形态建数据面 project（openship MCP）**
 
@@ -1476,6 +1485,20 @@ wheel 订正 C6）。
   ③ **已完成的历史命令**（L410/L411 的 commit message 与 PR title，PR #162 已合并）——按快照留；
   ④ **W4 里的「仍需自建」**（输入指纹、`pipelineHash` 那条）——**指自造能力，与镜像无关**。
   ⇒ **无一处仍把自建镜像当作在跑的部署路径。**
+
+**第十三轮：T6 真机收尾轮（2026-09-23，`type=fix` 一笔 PR；main 红根因 + #184 + T6 现场修正登记）**
+
+本轮性质：**登记 + 回填**——把 T6 部署期的现场修正与 gate 销账落回仓库（本 PR 四件：两个 dbt 模型的
+Jinja 注释修复、`deploy/dbt/Dockerfile` 版本配对订正、`deploy/customer-onboarding.md` 阶段 5 的
+openship services 模式三坑登记、计划 T6 gate 销账与本轮登记），外加 main 红根因与 #184 的正式登记。
+**不动产品代码。**
+
+| # | 事项 | 登记与依据 |
+|---|---|---|
+| 1 | **main unit 连红的根因坐实（#185）+ 修复（#186）** | main 的 unit job 自 `dbf62d8`（2026-09-22 16:05Z）起连红，失败集中在 `modules/data/routes/metrics.test.ts` 且**条数随运行变化**（竞态签名）。根因（#185，诊断报告 `main-red-diagnosis.md`）：`metric-store.test.ts` 的 `deleteStaleL1Metrics` 用例把平台桶里不在 keepIds 的行**全删**——含**并行兄弟文件正在使用的 L1 夹具**（兄弟随后 `400 L1_BASE_NOT_FOUND`）；引入者 #178（潜伏竞态，#179 换耗时分布后爆发；#179–#181 的 diff 未碰 `modules/data`，不是它们的回归）。修复 #186（`9b30e62`，2026-09-23 合并）：keepIds 并入兄弟夹具 id、断言一字未改；`modules/data` 全量（全新空库）19 files / 211 tests 全绿。**#169 根因订正**：诊断中 `mcp.test.ts` 仍偶发 5000ms 超时——advisory lock 抖动与本次连红**并存但不同源**，main 连红不归 #169。 |
+| 2 | **#184 合并（`e8cc18a`）——三条裁决进正典** | ① Gate-B 裁决（共享 external network `openship-platform-core-shanhai` + `DATA_WAREHOUSE_URL` 服务名形态）落计划 T6 Step 1 第 7 项与 `docs/architecture.md` §2.2；② #175（scope 先验后裁）进 T13 核对清单；③ #176b（平台级 L2 写入不开口）进「已知边界 / 分期项」节。另含 duckle Dockerfile 注释前提订正与 T6 gate 增补（Gate-E / 外部输入② / #182 登记）。 |
+| 3 | **T6 部署期现场修正（= 本 PR 四件）** | ① 两个 dbt 模型（`stg_lemeng_retail_detail.sql` / `fct_retail_sale.sql`）的 Jinja 注释修复——config 块内混 SQL 注释行致真 dbt 1.9.1 parse 报 `expected token`，注释移到块外（文字保留）；② `deploy/dbt/Dockerfile` 版本配对订正——PyPI 实测 dbt-core 1.9.x 发到 1.9.9 而 **dbt-postgres 1.9.x 只到 1.9.1**，1.9.8 配对不存在（构建必挂）⇒ ARG 默认钉 **1.9.1**；③ `deploy/customer-onboarding.md` 阶段 5 登记 openship services 模式三坑（相对路径 bind 被 400 / pgduckdb PG18 数据目录挂载约定变更 / services-sync 写入的 environment 不解析 `${VAR:-default}` 模板——2026-09-23 shanhai 真机）；④ 计划 T6 gate 销账（Task 6 Step 1 销账块，含外部输入③④⑥）+ 本轮登记。 |
+| 4 | **悬而未决一条：openship 部署拉镜像对慢代理静默失败** | 症状：「Pulling image」无报错但服务 failed——拉取慢/失败**不响亮**。**已由智能代理修复根治**；但「**部署依赖镜像已在本地**」这个前提值得记进 onboarding（阶段 1 的预拉镜像清单或需扩到数据栈镜像）——**未落**，留 onboarding 下一笔。 |
 
 ### 有意的取舍（reviewer 请过目）
 
