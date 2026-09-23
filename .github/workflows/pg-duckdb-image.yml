@@ -1,11 +1,17 @@
 # .github/workflows/pg-duckdb-image.yml — 自建 pg_duckdb 镜像构建（P0，spec §11.8）。
 #
-# 仅 workflow_dispatch：构建频率与触发是 spec §11.9 #4 的**仍开放项**，本工作流不替它拍板——
+# ⚠️ 当前未启用（备件）——2026-09-23：部署路径已改用官方镜像 pgduckdb/pgduckdb:18-v1.1.1
+#（deploy/data-compose.yml）。本工作流保留不删；**启用前先按实测重验配对**——
+# pg_duckdb v1.1.1 × DuckDB v1.5.5 已实测编译失败（8 处 API 断裂，见 deploy/pg-duckdb/README.md §2.2），
+# 别指望「重新 dispatch 一次就好」。详见该 README 文首与 §5.2。
+#
+# 仅 workflow_dispatch：构建频率与触发原为 spec §11.9 #4 的开放项，本工作流不替它拍板——
 # 不设 schedule、不在 push/PR 上跑。跑一次 ~1–2h 的 C++ 构建，动前想清楚 Actions 额度
-#（team-harness PR#79 因账单挂起的教训）。
+#（team-harness PR#79 因账单挂起的教训）。（2026-09-23：该开放项随「未启用」消解。）
 #
 # 产物 tag 的纪律：**编码双版本、不打 latest**（可变 tag 禁用是版本纪律，spec §6.6）。
-# tag 形态与 deploy/data-compose.yml 的 image 引用（T3）逐字一致——改这里必须同步改那里。
+# tag 形态与 deploy/data-compose.yml 的 image 引用（T3）**在备件启用时**必须逐字一致——
+# ⚠️ 现状**不一致**（compose 已改官方镜像）：这是备件状态下的**预期**差异，不是漏改。
 name: pg-duckdb-image
 on:
   workflow_dispatch: {}

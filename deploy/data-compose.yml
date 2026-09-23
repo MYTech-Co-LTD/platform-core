@@ -5,10 +5,14 @@
 name: platform-core-data
 
 services:
-  # ── 语义层 + 物化落点（spec §11.2 #3：自建镜像，DuckDB v1.5.5）──
+  # ── 湖上查询引擎 + 物化落点（2026-09-23 订正：**官方镜像**，非自建——官方镜像上游自陈配对
+  #    = DuckDB v1.4.3；自建路径 `deploy/pg-duckdb/` 与 `.github/workflows/pg-duckdb-image.yml`
+  #    保留为「未启用（备件）」，理由是 ossie 本轮出局 + 自选配对实测编译失败（8 处 API 断裂）──
   pg_duckdb:
-    image: ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5
-    # 镜像获取两条路（deploy/pg-duckdb/README.md）：GHCR 拉取（需目标机 docker login）或目标机本地构建同 tag。
+    image: pgduckdb/pgduckdb:18-v1.1.1
+    # 来源：Docker Hub（上游构建）。目标机 dockerd 已配 HTTPS Proxy，`docker pull` 实测可达 Docker Hub
+    # ⇒ 无需 GHCR 凭据、无需本地构建（代理地址口径见公司基建速查，此处不写值）。
+    # 备件路径（GHCR 拉取 / 目标机本地构建）见 deploy/pg-duckdb/README.md。
     environment:
       POSTGRES_USER: ${PGDUCK_USER:-platform}
       POSTGRES_PASSWORD: ${PGDUCK_PASSWORD:-platform}     # 真值走 project env（openship），不进 git

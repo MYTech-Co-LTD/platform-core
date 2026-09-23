@@ -65,7 +65,13 @@ duckle 自己的入口垫片也证实这条路：`duckle/__main__.py` 的 `_find
 > 那一行**逐字节一致**，且两者文件大小都是 41326640。⇒ PyPI wheel 内嵌的就是同一个 release 二进制。
 >
 > ⚠️ release 资产**只有 `-linux-x64`，没有 `-linux-arm64`**（同 release 的 `Duckle-linux-arm64`
-> 是桌面 App，不是 runner）。arm64 机器只能走 PyPI 路径。
+> 是桌面 App，不是 runner）。arm64 机器**走 PyPI 路径**。
+>
+> **订正（2026-09-23）**：上面这句说的只是 **GitHub release 的二进制资产**。**PyPI 侧的平台覆盖面更宽**
+> —— 除 `manylinux2014_x86_64` 外，**还有 `macosx_11_0_arm64` 与 `manylinux2014_aarch64` wheel**，
+> 且 **实测装机成功**（`duckle==0.7.3` + 传递依赖 `duckdb-cli==1.5.4`）。
+> ⇒ **别把原句读成「arm64/macOS 装不了 duckle」**——装得上的是 **PyPI 路径**，不是 release 二进制路径。
+> （能力接入口径见 `duckle/README.md` §7。）
 
 ## 3. 版本与升级
 
@@ -75,7 +81,14 @@ duckle 自己的入口垫片也证实这条路：`duckle/__main__.py` 的 `_find
 | DuckDB CLI | `1.5.4`（**传递依赖，非本镜像显式钉**） | duckle 0.7.3 自己的 `Requires-Dist: duckdb-cli==1.5.4` |
 | Python | `3.12-slim` | 计划范文同值；duckle 声明 `Requires-Python: >=3.8` |
 
-### ⚠️ 与计划的版本分歧：计划要 `DUCKDB_VERSION=1.5.5`（对齐 pg_duckdb 内核），本镜像**没有照做**
+### ⚠️ 与计划的版本分歧：~~计划要 `DUCKDB_VERSION=1.5.5`（对齐 pg_duckdb 内核）~~，本镜像**没有照做**
+
+> **2026-09-23 订正（一句话）**：这条分歧的**另一半已经消失**——pg_duckdb 本轮改用官方镜像
+> （上游自陈配对 = DuckDB **v1.4.3**），**不再有「对齐 pg_duckdb 内核」这个目标**。
+> 但**本镜像的做法一字不改、且理由更硬**：`duckle==0.7.3` 在**自己的包元数据**里硬钉
+> `duckdb-cli==1.5.4` ⇒ 手钉 1.5.5 是 `ResolutionImpossible`（下面就写着）。
+> ⇒ **读下面这节时把它当成「两个版本号本来就无关」的技术记录**，不再是「分歧待裁决」。
+> （另：pg_duckdb 侧的对应订正见 `deploy/pg-duckdb/README.md` 文首与 §2.2。）
 
 **不是取舍，是根本装不上。** 实测（`pip download "duckle==0.7.3" "duckdb-cli==1.5.5"`）：
 
@@ -181,8 +194,12 @@ DuckDB 默认 spill 上限 = 磁盘 90%，**共享机上必须收口**。
 4. **`--token` 之外的控制台面** —— 本镜像只收口了「空 token」这一缺口。引擎还有 OIDC 登录与
    `console add-user` 两条建号路径（二进制字符串实测，见 §7），**本任务未评估**；
    首次部署前若要对外暴露控制台面，须另立处置。
-5. **DuckDB 版本分歧** —— 计划要 1.5.5、上游钉 1.5.4（§3）。是否需要为 pg_duckdb 协作而对齐，
-   **待有人拿实测结论**；在拿到之前，读作「两个独立实例，只经 parquet 交互」。
+5. **DuckDB 版本分歧** —— ~~计划要 1.5.5、上游钉 1.5.4（§3）。是否需要为 pg_duckdb 协作而对齐，
+   **待有人拿实测结论**；在拿到之前，读作「两个独立实例，只经 parquet 交互」。~~
+   ⇒ **2026-09-23 订正：本项已按「不对齐」结案**（不再是待验项）——pg_duckdb 改用官方镜像后
+   **没有要对其的版本号**，且「两个独立实例、只经 parquet 交互」这条**本来就成立**
+   （计划全局约束 10 已同口径写明「与 pg_duckdb 内核不做版本对齐」）。
+   **但「不对齐」≠「已验证」**：本镜像的其余未验项（§4/§6 第 1–4、6 条）**一条都不因此销账**。
 6. **duckle→ZOS 直写** —— 见 `duckle/README.md` 开头；本任务不跑真管线，验证归 W1g（T6）。
 
 ## 7. CLI 面速查（v0.7.3 二进制实测，非官方文档抄录）
@@ -214,3 +231,20 @@ duckle-runner catalog|review|drift|audit|branch|import|runs|sql|components|pytho
 - `serve` 默认 `127.0.0.1:8080`；`--duckdb` 解析顺序 `DUCKLE_DUCKDB_BIN` → 同级 `bin/duckdb` → `PATH`。
 - ⚠️ **`serve` 绑非回环且无凭据 ⇒ UNCLAIMED 15 分钟认领窗**（`--help` 原文），本镜像的入口
   正是为堵这一条而存在（见 `entrypoint.sh` 文件头）。
+
+## 8. 引擎能力接入（指针 + **入口闸口径**，2026-09-23）
+
+**事实源在 `duckle/README.md` §7**（三条原生可替代 / 一条半替代 / 三个坑 / 四项未验）。
+本节**只记与本镜像入口闸直接相关的那一条**，避免两处各写一份：
+
+**接入「要凭据与网络」的能力（`drift` / `review --data` —— 见 `duckle/README.md` §7.1/§7.5）时，
+凭据由 etl job 显式带 `--token` 提供，`entrypoint.sh` 的白名单闸一步都不放宽。**
+
+- 二者的分工：**闸管「裸跑时不许做什么」**（`drift` / `work` / `branch` / `python` /
+  `sequence` / `deliveries` 这些**读活源 / 取包 / 跑管线 / 改活库 / 投递出站**的动词，
+  无 token 一律拒跑；`review` 是**条件**动词，只有带 `--data` / `--drift` 才要 token）；
+  **job 管「授权作业带凭据做什么」**。
+- ⚠️ **不因为「本轮要接引擎能力」而移动这条边界**——那会把 §4/§6 记录的安全姿态一起改掉，
+  属**另一起决定**（要动就先改 `entrypoint.sh` 的注释正典并走独立评审，见 §6 第 4 条）。
+- **未验项不变**：`duckle/README.md` §7.4 的四项（远端源 drift / `review --data` / 容器内行为 /
+  非回环 UNCLAIMED 分支）**本文件一条都不销账**，`docker build` 与「容器内真跑管线」仍见 §4/§6。

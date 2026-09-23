@@ -1,12 +1,12 @@
-# 数据栈 P0–P3 落地（duckle ETL + dbt + Ossie 语义 + pg_duckdb + Metabase，issue #150）实施计划
+# 数据栈 P0–P3 落地（duckle ETL + dbt + pg_duckdb + Metabase，issue #150）实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把两份 spec（选型定稿 + 七层分层）已拍板的数据栈按 **P0→P3** 落进仓与真机：P0 自建 pg_duckdb 镜像固化成 CI 构建；P1 数据面仓内工件（`deploy/data-compose.yml` / `duckle/` / `dbt/` / `contracts/`）+ 私有化单租户全链路闭环（乐檬 parquet → dbt staging/marts → Metabase 可见）；P2 Metabase 报表 facade + 报表登记 + L2 定义权下放 + 治理四机制；P3 SaaS 多租户（每租户 schema + 凭据收紧 + 串租户回归）。
+**Goal:** 把两份 spec（选型定稿 + 七层分层）已拍板的数据栈按 **P0→P3** 落进仓与真机：P0 pg_duckdb 镜像（**本轮已改走官方镜像**，自建降为备件）；P1 数据面仓内工件（`deploy/data-compose.yml` / `duckle/` / `dbt/` / `contracts/`）+ 私有化单租户全链路闭环（乐檬 parquet → dbt staging/marts → Metabase 可见）；P2 Metabase 报表 facade + 报表登记 + L2 定义权下放 + 治理四机制；P3 SaaS 多租户（每租户 schema + 凭据收紧 + 串租户回归）。**另有 W4（新增）duckle 引擎能力接入**——见下方「本轮订正」与 W4 节。
 
-**Architecture:** 数据面是**仓内工件 + 拆缝部署单元**（`deploy/customer-onboarding.md` §1 目标形态）：`deploy/docker-compose.yml`（部署单元 A，平台宿主）**不动**；数据栈全部服务进 `deploy/data-compose.yml`（部署单元 B，另一 project，全内网，端口全回环）。语义事实源 = **dbt YAML**（进仓库，是产品；引擎只当编译产物——spec §11.7），Ossie 暴露走 dbt 原生支持（拍板）。平台侧身份/权限/登记/治理全部落在 `modules/data`（**不新建第二个数据域模块**——#146 已交付授权核心 `domain/authz.ts` + 词表 `data.metrics` + PAT + 统一审计，P2/P3 是它的扩面，复用同一条鉴权链）。Metabase 那条连接是**跨租户能力**（spec §11.3.1 安全论断）⇒ AI 建报表必须经平台 facade，凭据只在服务端 env。
+**Architecture:** 数据面是**仓内工件 + 拆缝部署单元**（`deploy/customer-onboarding.md` §1 目标形态）：`deploy/docker-compose.yml`（部署单元 A，平台宿主）**不动**；数据栈全部服务进 `deploy/data-compose.yml`（部署单元 B，另一 project，全内网，端口全回环）。语义事实源 = **dbt YAML**（进仓库，是产品；引擎只当编译产物——spec §11.7）；**语义编译 = 我们自己的唯一编译点**（`modules/data/domain/semantic-compiler.ts`）。~~Ossie 暴露走 dbt 原生支持~~ **Ossie 本轮不采用**（见「本轮订正」A3）。平台侧身份/权限/登记/治理全部落在 `modules/data`（**不新建第二个数据域模块**——#146 已交付授权核心 `domain/authz.ts` + 词表 `data.metrics` + PAT + 统一审计，P2/P3 是它的扩面，复用同一条鉴权链）。Metabase 那条连接是**跨租户能力**（spec §11.3.1 安全论断）⇒ AI 建报表必须经平台 facade，凭据只在服务端 env。
 
-**Tech Stack:** 数据面：pg_duckdb 自建镜像（DuckDB **v1.5.5**，spec §11.2 #3）+ Metabase OSS（**v0.63.18.1**，PoC 实测版本）+ dbt（postgres adapter 打 pg_duckdb 端点）+ duckle headless runner（二进制容器化）。平台侧：TypeScript / Hono / pg / zod / jose（嵌入 JWT 签名）/ vitest；守卫脚本 `scripts/*.mjs`（checkJs）+ `*.test.ts` fixtures。
+**Tech Stack:** 数据面：**pg_duckdb 官方镜像 `pgduckdb/pgduckdb:18-v1.1.1`（Docker Hub，上游构建；上游自陈配对 = DuckDB v1.4.3）** + Metabase OSS（**v0.63.18.1**，PoC 实测版本）+ dbt（postgres adapter 打 pg_duckdb 端点）+ duckle headless runner（二进制容器化）。平台侧：TypeScript / Hono / pg / zod / jose（嵌入 JWT 签名）/ vitest；守卫脚本 `scripts/*.mjs`（checkJs）+ `*.test.ts` fixtures。
 
 **Spec:**
 - `docs/superpowers/specs/2026-09-20-data-stack-module-design.md`（选型定稿 §11，2026-09-20 用户确认；§5/§6 的 Cube 内容是**技术记录非推荐路线**）
@@ -16,19 +16,59 @@
 
 ---
 
+## ⚠️ 本轮订正（2026-09-23）——**本节口径优先于本计划下方一切旧文**
+
+> **读法**：本计划是一份**边实施边订正**的活文档。下面**五条（A1–A5）**是 2026-09-23 方案整理的**最终口径**；
+> 与它冲突的**任何**旧段落（含 Task 1 全文、各范文块、前后各轮自检记录）**一律以本节为准**。
+> 职责边界的正典在 `docs/architecture.md` §2.2（新增的「数据栈组件分工」）。
+
+**A1 走官方镜像（取代「自建镜像」）**：`pg_duckdb` 服务改用 **`pgduckdb/pgduckdb:18-v1.1.1`**
+（Docker Hub；**上游构建**，其自陈配对 = **DuckDB v1.4.3**）。依据三条：
+① `duckdb-ossie` 本轮**不采用** ⇒ 「必须钉 DuckDB v1.5.5」这个**自建的唯一理由消失**；
+② **实测**：`pg_duckdb v1.1.1 × DuckDB v1.5.5` **编译失败**（**8 处 API 断裂**，如
+`DBConfigOptions` 无 `allow_unsigned_extensions`、`extension_directory` 已改名
+`extension_directories`——逐条见 `deploy/pg-duckdb/README.md` §2.2）；
+③ **实测**：目标机（`10.0.0.5` / `113.249.104.181`）的 dockerd 已配 HTTPS Proxy，
+`docker pull alpine:3.20` **真下载成功** ⇒ **能拉 Docker Hub**。
+⇒ **W0 的 T1 从「独立交付块」降为「不派发的备件」**（见「波次与依赖」与 Task 1 头部）。
+
+**A2 自建路径保留但标「未启用（备件）」**：`deploy/pg-duckdb/**` 与
+`.github/workflows/pg-duckdb-image.yml` **保留不删**；将来若要走 ossie 通路，**按 `main` + commit sha
+重新验证配对**再启用（**不是**「重新 dispatch 一次就好」）。
+
+**A3 Ossie 本轮不采用**：语义声明的事实源 = **dbt YAML**；编译 = **我们自己的唯一编译点**
+（`modules/data/domain/semantic-compiler.ts`）。spec §11.3 的「AI 走 `duckdb-ossie` MCP 问数据」
+标「**未采纳（观察项）**」，理由：**两条 AI 通路 = 两套词表两套权限，是治理反模式** ⇒
+保留**单一受管入口**。
+
+**A4 W4（新增）**：duckle 引擎能力接入（drift / 契约校验 / 血缘 / 新鲜度）见下方 **W4 节**；
+`contracts/` 据此**降级为「人写的意图源」**，机器面改用 duckle 自己的声明与门禁。
+
+**A5 订正指针（spec 侧一律不追改）**：`docs/superpowers/specs/**` 是**历史快照，正文不改**。
+下列条号**已被本轮取代**，一律以 `docs/architecture.md`（尤其 §2.2 与 §6.1）与本计划本节为准：
+
+| 被取代的 spec 条 | 旧口径 | 现口径 |
+|---|---|---|
+| `2026-09-20-data-stack-module-design.md` §11.2 #3 | pg_duckdb **自建镜像**、钉 DuckDB **v1.5.5** | **官方镜像** `pgduckdb/pgduckdb:18-v1.1.1`；自建 = 未启用备件 |
+| 同上 §11.2 #4 | L1 语义声明 = **Ossie JSON** | **实际存储是 dbt YAML**（`dbt/semantics/l1_metrics.yml` + `dbt/models/common/marts/schema.yml`） |
+| 同上 §11.3 | AI 走 **duckdb-ossie MCP** 问数据（两条 AI 路径） | **本轮只保留单一受管入口**（未采纳，观察项） |
+| 同上 §11.9 #3/#4 | 「Ossie 观察信号」「自建镜像构建频率」两开放项 | **两项均随本轮消解**（ossie 出局 / 自建未启用） |
+
+---
+
 ## 已拍口径（2026-09-22 全部人已拍——实施者不得重开）
 
 | # | 拍板 | 落在本计划哪 |
 |---|---|---|
 | 0 | **dbt 进主干** = 对 09-20 定稿 §11.1 的生效扩展（定稿生效、dbt 提前） | T4 dbt 项目是 P1 主工件之一 |
 | 1 | **定型在 dbt staging**：存量乐檬 parquet（VARCHAR）**不重落盘**，`stg_*.sql` 手写 cast，cast 正确性靠 dbt tests / 对账断言兜；「落盘即定型」收窄为**新数据源接入尽量在落盘侧做对** | T4（staging cast + 对账 singular tests）、T5（contracts 新源契约） |
-| 2 | **语义事实源 = dbt YAML**；Ossie 暴露经 **dbt 原生支持**（拍板人裁定：此前材料假设的自建 YAML→引擎格式转换层代价不成立）；事实源纪律仍守 §11.7（引擎只当编译产物） | T4（schema.yml 语义声明）、T8（L1 物化） |
-| 3 | **问数入口 = OpenClaw → 平台 MCP**（已随 PR #146 落地，**销账**，本计划不重做）；Metabase MCP 记为「不经 facade 不合规」观察项 | 头部声明 + T7 不给 Metabase MCP 开任何口 |
+| 2 | **语义事实源 = dbt YAML**（事实源纪律守 §11.7：引擎只当编译产物）；**语义编译 = 我们自己的唯一编译点**（`modules/data/domain/semantic-compiler.ts`）。~~Ossie 暴露经 dbt 原生支持~~ ⇒ **Ossie 本轮不采用**（2026-09-23「本轮订正」A3） | T4（schema.yml 语义声明）、T8（L1 物化 + 唯一编译点） |
+| 3 | **问数入口 = OpenClaw → 平台 MCP**（已随 PR #146 落地，**销账**，本计划不重做）；Metabase MCP 记为「不经 facade 不合规」观察项；**spec §11.3 的 `duckdb-ossie` MCP 通路本轮未采纳（观察项）**——两条 AI 通路 = 两套词表两套权限，是治理反模式 ⇒ 保留单一受管入口 | 头部声明 + T7 不给 Metabase MCP 开任何口 |
 | 4 | **物化调度 = openship jobs**（`dbt --select` 由 job 定时打；零新常驻组件） | T6（job 注册）、T11（多租户循环） |
 | 5 | **L2 = 定义权下放**：租户管理员 + 平台超管均可**定义**指标与语义（不止 A 薄档裁剪）；定义产出是**受治理、可机检的声明**（禁任意 SQL 不变）；**预留 agent 接入面**（接入本身另题不在本轮）；门禁③机检范围**覆盖用户/agent 产生的声明**；C 厚档维持排除 | T8（L2 声明形态与权限）、T9（门禁③覆盖 L2） |
 | 6 | **dp-lab / dp-lab-bi 已拍删除，落地时重建**：删除 = 人在 dashboard 操作（openship MCP 无删项目接口）；部署验证**按目标形态从仓内工件新建** | 开工前置② + T6 |
 
-仍开放的项（**不阻塞本计划，但别擅自拍**）：自建镜像**构建频率与触发**（spec §11.9 #4）——本计划按「仅 workflow_dispatch 手动触发、不设 schedule」处理，等于把这个开放项维持原状；Ossie 观察信号（§11.9 #3）——只观察不行动。
+仍开放的项：**本轮已无**（2026-09-23 订正）。原来记的两项——自建镜像**构建频率与触发**（spec §11.9 #4）与 **Ossie 观察信号**（§11.9 #3）——**均随「本轮订正」消解**：自建路径**未启用** ⇒ 构建频率没有对象；**ossie 不采用** ⇒ 观察信号没有对象。工作流仍保持「**仅 `workflow_dispatch`**、不设 schedule、不在 push/PR 上跑」的形态——这对**备件路径**依然正确（§5.1 同口径）。
 
 ---
 
@@ -46,7 +86,17 @@
 8. **提交纪律**：本计划实施 PR 一律 **`Refs #150`**——**伞 issue 的关闭权只留给 T13 的收尾 PR**（M2b 教训：#158 的 body 误带 `Closes #151` 提前关了伞 issue，被 discipline CI 抓到后只能 reopen）。docs 类提交免 issue；一切可见变更走 PR、只等 CI **CLEAN**；CHANGELOG 禁手写。
    **与之配套（第十轮 I-2 成文化）：本批 PR 标题与提交的 `type` 一律取 `build` / `docs` / `test`，不得取 `feat` / `fix`**——`scripts/check-pr-discipline.mjs` 对标题 `type ∈ {feat, fix}` **强制** body 含 `Closes/Fixes/Resolves #N`（该脚本的 `NEEDS_ISSUE` 名单），而它抽 issue 号的正则是 `(?:closes|fixes|resolves)\s+#(\d+)`、**不认 `Refs`**（T4 评审 §RR5.2 拿脚本自身的导出函数打真实 PR body 实测）⇒ 与上面「一律 `Refs #150`」**结构性互斥**：「`feat` 标题 + 只写 `Refs #150`」的 PR 在 `discipline` job 上**必红**，二者不可兼得（实测：`typeOf(feat…)=feat` ⇒ `nums.length=0` ⇒ 退出 1）。先例（均 `build(data-stack)` + `Refs #150`，已合并）：**#162 / #164 / #166 / #167 / #168**。**若某任务确实需要 `feat` / `fix`** ⇒ 必须**为该项目单独开一张 issue**（**不能**是伞 issue #150 —— 提前 `Closes` 会把它关掉），PR body 写 `Closes` 那张；**不得用 `skip-issue` 标签绕**（那是给紧急热修的口子，语义不对）。
 9. **敏感值**：ZOS 凭据 / Metabase API key / 嵌入签名密钥 / duckle `--token` 只落 openship env(isSecret) 或部署 env，**绝不进仓库/文档/日志/提交信息**；`.env.example` 只写键名与取法。
-10. **版本锁死**：DuckDB **v1.5.5**（spec §11.2 #3，pg_duckdb 官方钉 v1.5.4 装不上 ossie，实测 404）、Metabase **v0.63.18.1**（PoC 实测版；禁 `latest`/`.x` 可变 tag——spec §6.6 纪律）、dbt / duckle 版本在各自 Dockerfile 里 ARG 钉死（默认值待实施时以压测环境实测版本核对）。升级走 runbook，不随手改。
+10. **版本锁死**（2026-09-23 订正：**pg_duckdb 一项已改**）：
+    - **pg_duckdb = 官方镜像 `pgduckdb/pgduckdb:18-v1.1.1`**（Docker Hub，上游构建；上游自陈配对 = **DuckDB v1.4.3**）——
+      ~~自建镜像钉 DuckDB v1.5.5（spec §11.2 #3，官方钉 v1.5.4 装不上 ossie，实测 404）~~ **作废**：
+      ossie 本轮不采用 ⇒ 该理由消失；且自选配对 `v1.1.1 × v1.5.5` **实测编译失败**（8 处 API 断裂）。
+      自建路径**未启用（备件）**，见「本轮订正」A1/A2。
+    - Metabase **v0.63.18.1**（PoC 实测版；禁 `latest`/`.x` 可变 tag——spec §6.6 纪律）。
+    - dbt / duckle 版本在各自 Dockerfile 里 ARG 钉死（默认值待实施时以压测环境实测版本核对）。
+      ⚠️ **duckle 的 DuckDB 由它自己的传递依赖独占决定**（实测 `duckle==0.7.3` ⇒ `duckdb-cli==1.5.4`；
+      手钉 1.5.5 是 `ResolutionImpossible`）——**与 pg_duckdb 内核不做版本对齐**（那是两个独立实例，
+      只经 parquet 交互），详见 `deploy/duckle/README.md` §3。
+    - 升级走 runbook，不随手改。
 11. **口径单一定义**（layered §3 纪律）：口径只在 marts 定义一次；staging 只规范化不改义；消费层（BI/AI）只能组合已声明的指标与维度。**L2 不能改 L1 口径**（只能裁剪/别名/过滤/目标值/新定义走结构化声明）。
 12. **禁任意 SQL 的定义面**：L2 定义 API 只接受**结构化、可机检的声明**（base 引用 + 白名单聚合/过滤/别名），由模块内**唯一编译点**生成 `select_sql`；不接受自由 SQL 入参。L1 行的 `select_sql` 只能由 sync 脚本从仓内 YAML 物化写入。
 13. **唯一通道**：一切部署/回滚/重启/env/备份/job 操作走 **openship MCP**（根本法则）；真机验收任务（T6/T10/T13）的执行者是「拿着 openship 权限的操作者」（人或被授权的 agent），不是普通 worktree worker。
@@ -61,7 +111,7 @@
 
 | # | 外部输入 | 谁给 | 解锁什么 | 没给卡住什么 |
 |---|---|---|---|---|
-| ① | **pg_duckdb 镜像的可获取通道**：GHCR 拉取凭据（目标机 `docker login ghcr.io`）**或** 明确走「目标机本地构建」路径；另确认 Actions 额度可承担一次 ~1–2h 的 C++ 构建（team-harness PR#79 因账单挂起的教训） | 人（org 设置 + dashboard） | T1 的首次构建、T6 的部署 | 仅卡 T1 的构建执行与 T6；T1 写工件不受影响 |
+| ① | ~~**pg_duckdb 镜像的可获取通道**：GHCR 拉取凭据（目标机 `docker login ghcr.io`）**或**「目标机本地构建」路径；另确认 Actions 额度可承担一次 ~1–2h 的 C++ 构建~~ ⇒ **已消解（2026-09-23）**：改用**官方镜像** `pgduckdb/pgduckdb:18-v1.1.1`，Docker Hub **实测可拉**（目标机 dockerd 已配 HTTPS Proxy，`docker pull alpine:3.20` 成功）⇒ **不再需要** GHCR 凭据、本地构建路径**或** Actions 额度 | ~~人（org 设置 + dashboard）~~ **无人**（已完成） | ~~T1 的首次构建~~ **无** | **不再卡任何任务**（备件将来启用时才重新需要） |
 | ② | **dp-lab / dp-lab-bi 删除**（已拍，人在 dashboard 操作：`proj_BzOHhfY6_8OUFHR9` / `proj_gFnTdeeQfEuLPuQV`）+ **目标机选定**（第一次部署验证跑哪台机、与哪些生产负载同机） | 人 | T6 全部 | T6 |
 | ③ | **ZOS 乐檬桶只读凭据**（存量 parquet 的读取面）落 openship env(isSecret)；**Metabase 服务账号 API key + 嵌入签名密钥**（T7 的 env 三键真值） | 人 | T6（ZOS）/ T10（Metabase） | T6 的 dbt 首跑、T10 |
 | ④ | **业务排期/窗口**（目标机上首次起数据面、注册物化 job 的时段确认） | 人与客户/机主 | T6 的 `up` 与 job 注册 | T6 后半 |
@@ -78,9 +128,9 @@
 
 | 文件 | 职责 | 任务 |
 |---|---|---|
-| `deploy/pg-duckdb/Dockerfile` | 自建 pg_duckdb 镜像（§11.4 recipe 容器化） | T1 |
-| `deploy/pg-duckdb/README.md` | 构建与运行 runbook（§11.4/§11.5 + 手工 docker commit 兜底 + 构建频率开放项说明） | T1 |
-| `.github/workflows/pg-duckdb-image.yml` | 仅 `workflow_dispatch` 的镜像构建 → GHCR | T1 |
+| `deploy/pg-duckdb/Dockerfile` | 自建 pg_duckdb 镜像（§11.4 recipe 容器化）——**⚠️ 未启用（备件）** | T1（**备件，不派发**） |
+| `deploy/pg-duckdb/README.md` | 构建与运行 runbook（§11.4/§11.5 + 手工 docker commit 兜底）——**⚠️ 未启用（备件）**；文首记本轮改用官方镜像的理由与实测失败结论 | T1（**备件，不派发**） |
+| `.github/workflows/pg-duckdb-image.yml` | 仅 `workflow_dispatch` 的镜像构建 → GHCR——**⚠️ 未启用（备件）** | T1（**备件，不派发**） |
 | `docs/architecture.md` | B7 行改双白名单 + §1 拓扑（部署单元 B）+ §2 组件表 + §5 扩展点 + 三条显式接受 | T2 |
 | `scripts/check-compose.mjs` | `ALLOWED` 单字符串 → 双白名单；规则二遍历两份文件 | T2 |
 | `scripts/lint-architecture.test.ts` | **扩既有**的 check-compose fixtures describe（B7 测试一直在这里，黑盒 spawn 形态——别另起新测试文件） | T2 |
@@ -120,13 +170,14 @@
 
 | 波 | 任务 | 并行度 / 依赖 | gate |
 |---|---|---|---|
-| **W0（P0）** | T1 镜像 | 单独，不依赖任何决策 | — |
+| **W0（P0）** | ~~T1 镜像~~ ⇒ **不派发**（**降为备件「未启用」**，2026-09-23：「本轮订正」A1/A2） | — | — |
 | **W1（P1 仓内工件）** | **T2（架构+B7）先行 → T3（data-compose）∥ T4（dbt）∥ T5（contracts+duckle）** | T3 依赖 T2（B7 放行）；T4/T5 与 T2/T3 文件面零交集 | — |
-| **W1g（P1 真机闭环）** | T6 部署闭环 + 摘标注 | 操作者任务，串行 | 外部输入①②③④⑥ + W1 全合并 + **T1 版本配对已验收（首次 dispatch）** |
+| **W1g（P1 真机闭环）** | T6 部署闭环 + 摘标注 | 操作者任务，串行 | 外部输入①②③④⑥ + W1 全合并 + ~~**T1 版本配对已验收（首次 dispatch）**~~ ⇒ **该前置已消解**（走官方镜像，无自选配对可验收；「本轮订正」A1） |
 | **W2（P2 治理与配置面）** | **T7（facade+登记）→ T8（L2 定义权）→ T9（治理四机制）** | 严格串行：T7/T8 都改 `manifest.yaml`+`index.ts`（装载期双向核对，并行必冲突）；T9 的门禁③消费 T8 的声明形态；**T9 另依赖 T11**（跨波文件重叠，见下方第十一轮订正） | — |
 | **W2g（P2 e2e）** | T10 端到端验收 | 操作者任务 | W1g 部署存活 + 外部输入③（Metabase 凭据）+ W2 合并 |
 | **W3（P3 多租户代码面）** | T11（每租户 schema+凭据）→ T12（串租户回归套件） | 串行（T12 断言依赖 T11 形态） | — |
 | **W3g（P3 SaaS 验收）** | T13 验收 + 收尾 + 关伞 | 操作者任务 | 外部输入⑤ + T11/T12 合并 + W1g 同款部署面 |
+| **W4（新增，P0–P3 之后）** | **T14 duckle 引擎能力接入**（drift / 契约校验 / 血缘 / 新鲜度；`contracts/` 定位订正） | 见 W4 节（**文档已落，实现按接入 PR 分批**） | W1 全合并（`duckle/` + `deploy/duckle/` 在场）；**首次真跑前**须先销 §7.4 的四项未验 |
 
 **W1 文件面零交集核验**（并行判据，逐任务点名的唯一触碰面）：
 T2 = `docs/architecture.md` + `scripts/check-compose.mjs` + `scripts/lint-architecture.test.ts`；T3 = `deploy/data-compose.yml` + `deploy/dbt/Dockerfile`；T4 = `dbt/**` + `scripts/check-data-models.*` + `.github/workflows/ci.yml` + `.env.example`；T5 = `contracts/**` + `duckle/**` + `deploy/duckle/Dockerfile` + `.gitignore`。两两无共享文件，`ci.yml` 与 `.env.example` 只被 T4 碰（`.env.example` 的下一处触碰在 W2 的 T7，串行不冲突）。
@@ -138,9 +189,9 @@ Orca 派发（W1 四任务两批；W2/W3 用 `--deps` 编码串行）：
 ```bash
 git fetch origin main   # 先对齐（团队记忆：--base-branch main 取本地 ref）
 
-# W0：单独
-orca orchestration task-create --spec "<T1 spec：pg_duckdb 镜像，见计划 Task 1>" --json
-orca orchestration worker-start --task <t1> --worktree new-top-level --name ds-image --agent claude --setup run --json
+# W0：**不派发**（2026-09-23 订正：T1 降为备件「未启用」；已合并的产物保留，见「本轮订正」A1/A2）
+#   ~~orca orchestration task-create --spec "<T1 spec：pg_duckdb 镜像，见计划 Task 1>" --json~~
+#   ~~orca orchestration worker-start --task <t1> --worktree new-top-level --name ds-image --agent claude --setup run --json~~
 
 # W1：T2 先行；T2 合并后 T3/T4/T5 一次连发（三路并行）
 orca orchestration task-create --spec "<T2 spec：架构先行+B7 双白名单>" --json
@@ -189,11 +240,25 @@ pnpm exec tsx scripts/check-data-models.mjs
 
 ---
 
-# W0（P0）— 自建镜像基础
+# W0（P0）— 自建镜像基础　【**已降级为备件（未启用），不派发**】
 
-### Task 1: pg_duckdb 自建镜像（Dockerfile + workflow_dispatch 构建 + GHCR + runbook）
+> ## ⚠️ T1 降级为「备件（未启用）」（2026-09-23，「本轮订正」A1/A2）
+>
+> **本任务不再派发。** 产物（`deploy/pg-duckdb/**` + `.github/workflows/pg-duckdb-image.yml`）
+> **已合并、保留不删**；`deploy/data-compose.yml` 的 `pg_duckdb` 服务已改用**官方镜像**
+> `pgduckdb/pgduckdb:18-v1.1.1`。**下面整节按「备件的构建 runbook + 实测记录」读**，
+> **不是待执行的步骤**。
+>
+> **启用备件的入口条件**：按 `main` + commit sha **重新验证配对**——自选的
+> `pg_duckdb v1.1.1 × DuckDB v1.5.5` **已实测编译失败**（8 处 API 断裂），
+> **不是**「重新 dispatch 一次就能过」（`deploy/pg-duckdb/README.md` §2.2/§5.2）。
 
-**为什么不被任何决策阻塞**：镜像构建只依赖 spec §11.4 的实测 recipe（已验证可行），不碰 compose、不碰 B7、不碰模块；文件面三个新文件。**这是整个 #150 里唯一在 W1 之前就能独立交付的块。**
+### Task 1: pg_duckdb 自建镜像（Dockerfile + workflow_dispatch 构建 + GHCR + runbook）　【**备件，不派发**】
+
+**~~为什么不被任何决策阻塞~~ ⇒ 本任务的存在理由已改（2026-09-23）**：原文的理由（「只依赖
+spec §11.4 的实测 recipe（已验证可行）……是 #150 里唯一在 W1 之前就能独立交付的块」）
+**只在 ossie 通路下成立**；ossie 出局（A3）+ 自选配对**实测编译失败**（A1）之后，
+本任务**降为备件**。下面各 Step 是**已执行过的历史步骤 + 备件启用时的参考**。
 
 **Files:**
 - Create: `deploy/pg-duckdb/Dockerfile`
@@ -201,21 +266,36 @@ pnpm exec tsx scripts/check-data-models.mjs
 - Create: `.github/workflows/pg-duckdb-image.yml`
 
 **Interfaces:**
-- Consumes: spec §11.4 recipe（**已按 T1 交付实证订正，见 Step 1 后的订正说明——不是逐字转录**）；pg_duckdb v1.1.1 release + DuckDB v1.5.5 tarball（**别用 git clone——子模块在这条网上爬不动**，spec 原话）。
-- Produces: 镜像 `ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5`（tag 编码 pg_duckdb 版本 + DuckDB 版本；**不打 `latest`**——可变 tag 禁用是版本纪律）。
+- Consumes（**本任务已降为备件，下列输入当前无消费场景**）：spec §11.4 recipe（**已按 T1 交付实证订正，见 Step 1 后的订正说明——不是逐字转录**）；pg_duckdb v1.1.1 release + DuckDB v1.5.5 tarball（**别用 git clone——子模块在这条网上爬不动**，spec 原话；⚠️ 这一对该配对**实测编译失败**，见下风险条）。
+- Produces: ~~镜像 `ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5`（tag 编码 pg_duckdb 版本 + DuckDB 版本；**不打 `latest`**——可变 tag 禁用是版本纪律）~~ ⇒ **⚠️ 该镜像从未产出**：首次构建**实测停在编译阶段**（8 处 API 断裂，见 `deploy/pg-duckdb/README.md` §2.2）。tag 公式与纪律仍见该 README §0（**备件启用时**才用得上）。
 
-> **⚠️ 计划层选型风险：版本配对未经验证（pin 在这里，验收在 W1g）**
-> pg_duckdb v1.1.1 自陈配对 DuckDB **v1.4.3**，而本计划用 **v1.5.5**（跨 1 个 minor；
-> 上游 CI 从不覆盖 `DUCKDB_VERSION`；spec 实测的 lab 是 pg_duckdb main/1.2.0-dev + v1.5.5）
-> ⇒ 头文件级断裂已排除（v1.1.1 引用的 **52 个 duckdb 头**——**口径**：`#include "duckdb/…"` 与 `#include <duckdb/…>` **两形态并集去重**（只取双引号形态得 43，是更窄的口径；两处数字打架的根因就是口径没写）——在 v1.5.5 中 **52/52 全在**，逐条 HTTP 探针实测），
-> 符号/API 漂移**既未证实也未证伪**。**首次 dispatch 兼作该配对的验收**；
-> 失败则 ARG 回退 `main`（lab 验证过的配对），**并按 runbook `deploy/pg-duckdb/README.md` §0 出「新」tag**（回退场景建议 `main-duckdb1.5.5` / `<sha8>-duckdb1.5.5`），**不得复用 `1.1.1-duckdb1.5.5`**——tag 是 Step 2 workflow `tags:` 与 runbook §1b ⑦ `docker commit` 的**硬编码字面量**，不由 ARG 推导：只改 ARG 重跑会让 main 编出的产物盖到钉死的 tag 上（撞 §0「旧 tag 保持可回滚」）。W1g gate 有对应的显式前置（T6 Step 1）。
+> **⚠️ 计划层选型风险 ⇒ 已实测落定：该配对编译失败（本任务据此降为备件）**
+> pg_duckdb v1.1.1 自陈配对 DuckDB **v1.4.3**，而本计划原用 **v1.5.5**（跨 1 个 minor；
+> 上游 CI 从不覆盖 `DUCKDB_VERSION`；spec 实测的 lab 是 pg_duckdb main/1.2.0-dev + v1.5.5）。
+> 头文件级断裂**确实**排除了（v1.1.1 引用的 **52 个 duckdb 头**——**口径**：`#include "duckdb/…"` 与 `#include <duckdb/…>` **两形态并集去重**（只取双引号形态得 43，是更窄的口径；两处数字打架的根因就是口径没写）——在 v1.5.5 中 **52/52 全在**，逐条 HTTP 探针实测），
+> **但它推不出「编译得过」**：**首次构建实测 8 处 API 断裂**（原名逐条见
+> `deploy/pg-duckdb/README.md` §2.2，如 `DBConfigOptions` 无 `allow_unsigned_extensions`、
+> `extension_directory` 已改名 `extension_directories`）⇒ **该配对不成立**。
+> ⇒ **本条风险已关闭**：处置 = **改走官方镜像**（「本轮订正」A1），**不是**走原预案的「ARG 回退 `main`」。
+> **备件将来启用时**才回到回退口径，且必须**按 `deploy/pg-duckdb/README.md` §0 的订正口径
+> 重新核对上游自陈配对 + 重新实测 + 出「新」tag**（回退场景建议 `main-duckdb1.5.5` /
+> `<sha8>-duckdb1.5.5`），**不得复用 `1.1.1-duckdb1.5.5`**——tag 是 Step 2 workflow `tags:` 与
+> runbook §1b ⑦ `docker commit` 的**硬编码字面量**，不由 ARG 推导。原「W1g 的显式前置」**已消解**
+> （官方镜像没有自选配对可验收，见波次表 W1g 行）。
 
 - [ ] **Step 1: 写 Dockerfile（recipe 容器化；三个编译配置缺一不可）**
 
 ```dockerfile
 # deploy/pg-duckdb/Dockerfile — 自建 pg_duckdb（spec 2026-09-20 §11.2 #3 / §11.4，实测 recipe 容器化）。
-# 为什么自建：官方 pg_duckdb 钉 DuckDB v1.5.4，duckdb-ossie 只发到 v1.5.5（安装 404，实测）。
+#
+# ⚠️ 当前未启用（备件）——2026-09-23：部署路径已改用官方镜像 pgduckdb/pgduckdb:18-v1.1.1
+#（deploy/data-compose.yml）。本文件保留不删；启用前先按 README §0 的订正口径核对上游自陈配对、
+# 重新实测编译，并出新 tag。详见 deploy/pg-duckdb/README.md 文首与 §2.2、§5.2。
+#
+# 为什么当初自建：官方 pg_duckdb 钉 DuckDB v1.5.4，duckdb-ossie 只发到 v1.5.5（安装 404，实测）；
+# 且 pg_duckdb 需 superuser + shared_preload_libraries（spec §9.4 方案 2）⇒ 必须自建 PG。
+# ⚠️ 该理由**已消失**（ossie 本轮不采用）；且本镜像的 v1.1.1 × v1.5.5 配对**实测编译失败**
+#（8 处 API 断裂，见 README §2.2）⇒ 这条路本轮不通。
 # 构建耗时长（C++ 全量编译，-j2 下 ~1–2h）——这是版本换来的代价，别为了快改并行度把机器打 OOM
 #（spec 实测：外层 -j 压不住 ninja，它按 nproc 起任务 ⇒ OOM；DISABLE_UNITY=1 同理是 OOM 对策）。
 FROM postgres:17 AS build
@@ -274,6 +354,10 @@ COPY --from=build /usr/share/postgresql/17/extension/ /usr/share/postgresql/17/e
 > ④ Step 2 的 `tags:` 改用**小写字面量** `ghcr.io/mytech-co-ltd/...`。
 > **四处根因同一个**：spec §11.4 的**简写**（③ 的路径未点明在第三方树内）与**缺项**（无 ② 哨兵步、无 ③ 多阶段运行期依赖、④ 未点明 org 名大写非法）。
 > ⚠️ **旧稿是被 T1 交付实证证伪的版本，别再照抄旧稿**（本仓已知复发坑：订正只落注记、范文块不动 ⇒ 后来者照抄即复发）。
+>
+> **订正说明（2026-09-23，本轮）**：范文块的**头部注释**已与仓内 `deploy/pg-duckdb/Dockerfile`
+> **逐字对齐**（补「当前未启用（备件）」段与实测失败的结论）——**构建逻辑一字未动**
+> （硬约束：本文件只许改注释）。**整节已降为备件、不派发**（见本节头部）。
 
 - [ ] **Step 2: 写 workflow（仅手动触发）**
 
@@ -309,9 +393,9 @@ jobs:
 
 - [ ] **Step 3: 写 runbook（`deploy/pg-duckdb/README.md`）**
 
-必含四节：① 构建路径（CI dispatch；**手工 docker commit 兜底**——§11.4 recipe 的原形态，目标机/无额度时用，两路径产物同源同 tag）；② 运行期硬约束（§11.5 三条逐字：DuckDB 实例按连接、SET 与使用同会话；`install_extension` 同会话开两个 allow；`duckdb.query()` 看不到 PG 表用 `raw_query`）；③ 内存口径（每连接一个 DuckDB 实例、`max_memory` 默认 4096MB/连接——spec §9.4；资源收口怎么做：连接池上限 + `duckdb.memory_limit` 显式设）；④ 构建频率开放项说明（现口径=按需 dispatch；升级 DuckDB 版本 = 改 ARG 重跑，先核对 duckdb-ossie 的发布版本——**tag 是硬编码字面量、不由 ARG 推导，升级/回退都要按 §0 同步出「新」tag，别覆盖旧 tag**）。
+必含四节：① 构建路径（CI dispatch；**手工 docker commit 兜底**——§11.4 recipe 的原形态，目标机/无额度时用，两路径产物同源同 tag）；② 运行期硬约束（§11.5 三条逐字：DuckDB 实例按连接、SET 与使用同会话；`install_extension` 同会话开两个 allow；`duckdb.query()` 看不到 PG 表用 `raw_query`）；③ 内存口径（每连接一个 DuckDB 实例、`max_memory` 默认 4096MB/连接——spec §9.4；资源收口怎么做：连接池上限 + `duckdb.memory_limit` 显式设）；④ ~~构建频率开放项说明（现口径=按需 dispatch；升级 DuckDB 版本 = 改 ARG 重跑，先核对 **duckdb-ossie 的发布版本**~~ ⇒ **2026-09-23 订正：本任务未启用，④ 改述为**「**备件启用时的入口条件**」——构建频率开放项**随本轮消解**；升级路径改为「**先按 §0 核对上游自陈配对 + 重新实测编译**」，**别再把 ossie 的发布版本当作 DuckDB 上限的依据**；**tag 是硬编码字面量、不由 ARG 推导，升级/回退都要按 §0 同步出「新」tag，别覆盖旧 tag**（这一句不变）。
 
-- [ ] **Step 4: 验证 + 提交**
+- [ ] **Step 4: 验证 + 提交**　[**历史步骤——已于 2026-09-22 执行完毕（PR #162 已合并）**，勿重跑]
 
 Run:
 ```bash
@@ -328,6 +412,12 @@ gh pr create --title "build(data-stack): pg_duckdb 自建镜像（P0）" --body 
 ```
 
 > **本条已按 T1 交付实证订正（commit `a5a0032` / PR #162）**：Step 1 / Step 2 的范文块已**换成交付物实证版本**（四处订正与根因见 Step 1 后的订正说明）；计划的版本配对风险条见 Interfaces 下（W1g 有显式前置）。**本条订正只动文档**——T1 交付物（`deploy/pg-duckdb/*`、`.github/workflows/pg-duckdb-image.yml`）另行处理，不在此列。
+>
+> **2026-09-23 追加（本轮订正）**：**T1 整体降为「备件（未启用）、不派发」**（「本轮订正」A1/A2）——
+> 该配对**实测编译失败**（8 处 API 断裂），部署路径已改走官方镜像。Step 1–4 全部转为
+> **历史记录 + 备件启用时的参考**；T1 交付物（三文件）**保留在仓**，其中
+> `deploy/pg-duckdb/README.md` / `Dockerfile` / `.github/workflows/pg-duckdb-image.yml`
+> 本轮**只改了注释与文档**（构建逻辑一字未动）。
 
 ---
 
@@ -424,8 +514,8 @@ Run: `pnpm exec vitest run --dir scripts` — Expected: PASS（新旧用例全�
 - [ ] **Step 3: 更新 docs/architecture.md（正典四点 + 三条显式接受）**
 
 1. **§4.1 B7 行**：`全仓唯一 compose` → `全仓只两份 compose：deploy/docker-compose.yml（部署单元 A）+ deploy/data-compose.yml（部署单元 B，数据面，P1 起）`；后半句「所有 ports 必须 127.0.0.1: 起头」**不变且对两份都生效**。
-2. **§1 拓扑**：§1.2 服务表**不动**（单元 A 仍是 postgres + server）；在 §1.2 末尾补一段「部署单元 B」：`deploy/data-compose.yml`（pg_duckdb 自建镜像 / Metabase / metabase-db / duckle·dbt 一次性 runner），**独立 openship project、可选拆缝**（指针 `deploy/customer-onboarding.md` §0/§1），全内网、端口回环。
-3. **§2 组件表**：加一行 `deploy/data-compose.yml + deploy/pg-duckdb`（数据面：自建 pg_duckdb 镜像——**新组件**，spec §11.8 架构先行门点名要写进去的正是它）与一行 `dbt/ contracts/ duckle/`（数据工件：staging/语义声明/采集契约/管线，均非 Node workspace 包、在 B1/B9 扫描根外，由 `scripts/check-data-models.mjs` 守）。
+2. **§1 拓扑**：§1.2 服务表**不动**（单元 A 仍是 postgres + server）；在 §1.2 末尾补一段「部署单元 B」：`deploy/data-compose.yml`（pg_duckdb ~~自建镜像~~**官方镜像**（2026-09-23 订正，见「本轮订正」A1）/ Metabase / metabase-db / duckle·dbt 一次性 runner），**独立 openship project、可选拆缝**（指针 `deploy/customer-onboarding.md` §0/§1），全内网、端口回环。
+3. **§2 组件表**：加一行 `deploy/data-compose.yml + deploy/pg-duckdb`（数据面：~~自建 pg_duckdb 镜像~~ ⇒ **pgduckdb 官方镜像**（2026-09-23 订正，「本轮订正」A1；`deploy/pg-duckdb/` 标「未启用（备件）」）——**新组件**，spec §11.8 架构先行门点名要写进去的正是它）与一行 `dbt/ contracts/ duckle/`（数据工件：staging/语义声明/采集契约/管线，均非 Node workspace 包、在 B1/B9 扫描根外，由 `scripts/check-data-models.mjs` 守）。
 4. **§5 扩展点**：加小节「数据面工件怎么演进」——改 dbt 模型/契约走 PR（口径单一定义纪律）；新增数据源 = contracts 契约 + duckle 管线 + dbt staging 三件套同 PR。
 5. **显式接受三条**（spec 已知边界要求「显式接受或推翻，不能默默用」，落在单元 B 那段）：locked parameters 锁租户是官方点名「不推荐敏感数据」的用法——**接受**（隔离主力在数据层凭据/schema，locked param 是嵌入路径的执行点）；嵌入带水印、不能禁 CSV 导出——**接受**（导的是租户自己那份）。
 
@@ -454,7 +544,7 @@ gh pr create --title "build(data-stack): B7 双白名单与架构文档数据面
 - Create: `deploy/dbt/Dockerfile`
 
 **Interfaces:**
-- Consumes: T1 的镜像名（`ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5`）；T5 的 `deploy/duckle/Dockerfile`（compose 引用其 build 路径——**两任务谁先后合并都行，W1g 前齐即可**）；`deploy/customer-onboarding.md` 阶段 5 的拆缝接线模型。
+- Consumes: ~~T1 的镜像名（`ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5`）~~ ⇒ **2026-09-23 订正：pg_duckdb 用官方镜像 `pgduckdb/pgduckdb:18-v1.1.1`（Docker Hub），与 T1 无关**（「本轮订正」A1）；T5 的 `deploy/duckle/Dockerfile`（compose 引用其 build 路径——**两任务谁先后合并都行，W1g 前齐即可**）；`deploy/customer-onboarding.md` 阶段 5 的拆缝接线模型。
 - Produces: 五个服务定义 + 三个卷 + 全回环端口。平台侧接线点 = 宿主 `127.0.0.1:15432`——**本计划选定的端口**（满足 customer-onboarding §4「拆缝两 project 同机端口必须错开」的约束；文档只记过 lab 实测端口 18080/18081/16379，**未记过 15432**——别把它引用成文档既有内容。最终接线形态由 T6 Step 6 回写进 customer-onboarding 阶段 5）。
 
 - [ ] **Step 1: 写 data-compose.yml（T2 合并后才能提 PR——B7 放行面）**
@@ -467,10 +557,14 @@ gh pr create --title "build(data-stack): B7 双白名单与架构文档数据面
 name: platform-core-data
 
 services:
-  # ── 语义层 + 物化落点（spec §11.2 #3：自建镜像，DuckDB v1.5.5）──
+  # ── 湖上查询引擎 + 物化落点（2026-09-23 订正：**官方镜像**，非自建——官方镜像上游自陈配对
+  #    = DuckDB v1.4.3；自建路径 `deploy/pg-duckdb/` 与 `.github/workflows/pg-duckdb-image.yml`
+  #    保留为「未启用（备件）」，理由是 ossie 本轮出局 + 自选配对实测编译失败（8 处 API 断裂）──
   pg_duckdb:
-    image: ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5
-    # 镜像获取两条路（deploy/pg-duckdb/README.md）：GHCR 拉取（需目标机 docker login）或目标机本地构建同 tag。
+    image: pgduckdb/pgduckdb:18-v1.1.1
+    # 来源：Docker Hub（上游构建）。目标机 dockerd 已配 HTTPS Proxy，`docker pull` 实测可达 Docker Hub
+    # ⇒ 无需 GHCR 凭据、无需本地构建（代理地址口径见公司基建速查，此处不写值）。
+    # 备件路径（GHCR 拉取 / 目标机本地构建）见 deploy/pg-duckdb/README.md。
     environment:
       POSTGRES_USER: ${PGDUCK_USER:-platform}
       POSTGRES_PASSWORD: ${PGDUCK_PASSWORD:-platform}     # 真值走 project env（openship），不进 git
@@ -711,30 +805,27 @@ gh pr create --title "build(data-stack): dbt 项目与数据工件静态门禁�
 
 `duckle/README.md` 开头必须先写这条已知事实：**duckle→天翼 ZOS 的 sink 能力以经验库 2026-09-17 订正后的口径为准 —— `snk.minio` 可直写（真机实测，转述准确、未夸大），`snk.parquet` 403、`snk.s3` 404 仍不通；「反复 403、判定能力空白」是已被取代的旧口径**（第十轮 B 节；同句尚在 spec §8，spec 是历史快照、**不追改**）——动手前先检索 WeKnora 核对现状；`duckle/common/` 与 `duckle/customers/` 目录约定（与 contracts/dbt 的 common/customers 三件套同构：一个新源 = 契约 + 管线 + staging 三个文件同 PR）。管线文件本体是**目录与命名约定 + README**，不放编造的 DSL 范文（duckle 管线格式以官方文档/实测为准，别按想象写）。`.gitignore` 加本地产物目录忽略：`duckle/**/_ops/`（若实测的 _ops 形态不同，以实测为准写正确 glob）。**模式内不得内嵌空格**——`duckle/**/ _ops/` 这种写法只会匹配「目录名以空格开头」的 `_ops`，照抄即空转；要忽略多种形态就写成多条独立模式、每条一行，别在一条模式里用空格拼。
 
-- [ ] **Step 3: deploy/duckle/Dockerfile（headless runner 容器化）**
+- [ ] **Step 3: deploy/duckle/Dockerfile（headless runner 容器化）**　[**已交付** → `deploy/duckle/Dockerfile`]
 
-```dockerfile
-# deploy/duckle/Dockerfile — duckle headless runner（spec §1 打包事实：官方镜像只有 web 编辑器；
-# headless 分发 = 二进制（duckle-runner-linux-x64 + SHA256SUMS.txt）或 PyPI duckle，后者是
-# spec 明载的分发路径，取它做主路径；二进制路线记进 README 作替代。
-# runner 另需一个 duckdb 在 PATH（或 DUCKLE_DUCKDB_BIN）——版本与 pg_duckdb 内核对齐（v1.5.5）。
-FROM python:3.12-slim
-ARG DUCKLE_VERSION=x.y.z          # ⚠️ 待核对：以 PyPI 实际版本钉死（首次构建时查）
-ARG DUCKDB_VERSION=1.5.5
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip \
-    && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir "duckle==${DUCKLE_VERSION}"
-# duckdb CLI（版本锁死；zip 资产名以官方 release 页为准——首次构建核对）
-RUN curl -fsSLO "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip" \
-    && unzip -j duckdb_cli-linux-amd64.zip duckdb -d /usr/local/bin/ \
-    && rm -f duckdb_cli-linux-amd64.zip
-WORKDIR /workspace
-# --token 硬要求（spec §1）：入口对空 DUCKLE_TOKEN 拒跑（exit 1），别让「没配 token 也能起」
-# 成为默认——compose 不用 :? 强制插值（会卡住无关服务的 up），安全闸放在这里。
-ENTRYPOINT ["sh", "-c", 'exec duckle "$@" --token "$DUCKLE_TOKEN"', "--"]
-```
+> ⚠️ **2026-09-23 订正：原范文代码块已删除——它与交付物有四处实质差异，其中两处正是旧口径。**
+>
+> 被删掉的范文写的是：`ARG DUCKDB_VERSION=1.5.5`（理由是「与 pg_duckdb 内核对齐」）+
+> `curl`/`unzip` 单独下载 DuckDB CLI + 内联 `ENTRYPOINT`。**三处都不成立**：
+> ① **`DUCKDB_VERSION=1.5.5` 作废**——「与 pg_duckdb 内核对齐」**随本轮改用官方镜像 + ossie 出局
+> 彻底失去对象**；且实测 `duckle==0.7.3` 在自己的元数据里**硬钉** `duckdb-cli==1.5.4`
+> （手钉 1.5.5 是 `ResolutionImpossible`，见 `deploy/duckle/README.md` §3）；
+> ② **不需要单独下载 DuckDB CLI**——`pip install duckle` 一步就把引擎装好了（实测）；
+> ③ **ENTRYPOINT 不是内联 `--token` 透传**——`--token` 只属 `serve`/`web`，环境变量名是
+> `DUCKLE_CONSOLE_TOKEN`，安全闸改由 `entrypoint.sh` 做。
+>
+> **正典是仓内文件**（四处的逐条依据写在 `deploy/duckle/Dockerfile` 文件头 §①–④ 与
+> `deploy/duckle/README.md` §2.1/§3）。**保留旧范文 = 后来者照抄即复发**（本仓已知复发坑）。
 
-> ⚠️ duckle 的 CLI 子命令形态（`duckle run …`/runner 入口名）与版本号是**首次构建核对点**——spec 只记了分发形态没记 CLI 面，按官方文档核对，别按本 ENTRYPOINT 范文照抄。本任务不跑真管线——duckle→ZOS 直写按「未验证」对待，验证归 W1g（T6 有核对步：能直写则记结论；不能则记「经 dbt/中转落盘」的替代路径结论，**不静默绕过**）。
+> ⚠️ duckle 的 CLI 子命令形态与版本号曾是**首次构建核对点**——spec 只记了分发形态没记 CLI 面。
+> **交付物已按实测核过**：PyPI 路径装出 `duckle` 与 `duckle-mcp` 两个 console script，
+> `duckle` 是 `os.execve` 掉包内 `duckle-runner` 的**垫片**（⇒ 与 release 版同一程序、同一套参数）；
+> CLI 面速查见 `deploy/duckle/README.md` §7。本任务不跑真管线——duckle→ZOS 直写按「未验证」对待，
+> 验证归 W1g（T6 有核对步：能直写则记结论；不能则记「经 dbt/中转落盘」的替代路径结论，**不静默绕过**）。
 
 - [ ] **Step 4: 验证 + 提交**
 
@@ -762,12 +853,12 @@ gh pr create --title "build(data-stack): contracts/ 与 duckle/ 数据采集工�
 
 - [ ] **Step 1: GATE——四项前置全绿才许动**
 
-1. **外部输入①**：pg_duckdb 镜像可获取（GHCR 凭据或目标机本地构建路径二选一）；首次构建已跑通（T1 的 CI dispatch 或目标机构建），tag 与 compose 一致。
+1. ~~**外部输入①**：pg_duckdb 镜像可获取（GHCR 凭据或目标机本地构建路径二选一）；首次构建已跑通（T1 的 CI dispatch 或目标机构建），tag 与 compose 一致。~~ ⇒ **2026-09-23 订正：本条前置已消解** —— 用**官方镜像** `pgduckdb/pgduckdb:18-v1.1.1`（Docker Hub，**实测可拉**）；**不再需要** GHCR 凭据 / 本地构建 / 首次构建跑通。⚠️「tag 与 compose 一致」**只对备件路径成立**——现状 compose 用官方镜像、与备件 tag **不一致**，**这是预期形态**（见 `.github/workflows/pg-duckdb-image.yml` 头注）。
 2. **外部输入②**：dp-lab / dp-lab-bi 已删（人在 dashboard；MCP 无删项目接口）+ 目标机已选定。
 3. **外部输入③**：ZOS 乐檬桶只读凭据已落 openship env(isSecret)。
 4. **外部输入④**：目标机时段已确认。W1 的 T2–T5 全部合并进 main。
 5. **外部输入⑥**：dbt 版本已确认（人给版本号或确认 1.9.8），T3 Dockerfile 的 ARG 注释销账——真跑用的版本必须与现场安装一致。
-6. **版本配对已验收（T1 的显式前置，不是「顺带」）**：pg_duckdb v1.1.1 × DuckDB v1.5.5 是**未经任何一方验证**的配对（v1.1.1 自陈配对 v1.4.3；跨 1 个 minor；上游 CI 从不覆盖 `DUCKDB_VERSION`；spec 实测 lab 是 main/1.2.0-dev + v1.5.5）⇒ **T1 的首次 dispatch 兼作该配对的验收**：编译通过 = 配对成立；失败则把 `PG_DUCKDB_VERSION` ARG 回退 `main`（lab 验证过的配对）**并按 §0（T1 runbook 版本纪律）出「新」tag**（回退场景建议 `main-duckdb1.5.5` / `<sha8>-duckdb1.5.5`，**不得复用 `1.1.1-duckdb1.5.5`**）重跑。**不许把「配对是否成立」第一次在真编译上发现留到本 gate**——进本 gate 的前提就是这条已绿，结论记 T1 任务报告。
+6. ~~**版本配对已验收（T1 的显式前置，不是「顺带」）**：pg_duckdb v1.1.1 × DuckDB v1.5.5 是未经任何一方验证的配对 ⇒ T1 的首次 dispatch 兼作该配对的验收：编译通过 = 配对成立；失败则把 `PG_DUCKDB_VERSION` ARG 回退 `main` …~~ ⇒ **2026-09-23 订正：本条前置已消解，且原因与原文预期相反** —— 该配对**已经验收过了，结果是失败**（`pg_duckdb v1.1.1 × DuckDB v1.5.5` **实测编译失败**，8 处 API 断裂，见 `deploy/pg-duckdb/README.md` §2.2）⇒ 本轮改用**官方镜像**（上游自陈配对 = DuckDB v1.4.3，**不需要**本仓再做配对验收）。**进本 gate 不再要求「配对已绿」**。将来若启用备件，才回到「**重新核对上游自陈配对 + 重新实测 + 出「新」tag**」的口径（**不是**原文的「ARG 回退 `main`」）。
 7. **Gate-B（I-2 的接线裁决；必须在 Step 4 之前落地）**：`DATA_WAREHOUSE_URL` 钉的 `127.0.0.1:15432` 是**宿主回环**，而消费方是单元 A 的 `server` **容器**（`modules/data/domain/warehouse.ts:13` 在请求期读 env；`deploy/data-compose.yml:21` 该注释已按此订正）——容器里的 `127.0.0.1` 是自己的 netns，不是宿主回环；两份 compose 各一个 `default` 网络、无共享 external 网络、无 `extra_hosts`（T3 评审 §2.3 实测）⇒ **按现值 `ECONNREFUSED`**。判定一条命令：进单元 A 的 `server` 容器内跑 `nc -zv 127.0.0.1 15432`——**预期 refused**，refused 即坐实本缺口。接线方式须由人**三选一裁决**：`extra_hosts: host.docker.internal:host-gateway`（单元 A）/ 两份共享 external network / 改消费路径（平台经宿主进程访问）；裁决结果回写 `deploy/customer-onboarding.md` 阶段 5（Step 6 第 2 条）。**未裁决即进 Step 4 = 该步「问数链路吃真数据」的验收句必然失败。**
 8. **Gate-C（T5 评审 M3；跑任何 duckle 命令前先读）**：引擎的 `--workspace <dir>` **默认值是「管线文件的父目录」**（v0.7.3 二进制 USAGE 原文：`Workspace root (default: pipeline file's parent)`），而 compose 把管线目录以 `../duckle:/pipelines:ro` **只读**挂载 ⇒ **只给 `--pipeline /pipelines/x.json` 而不给 `--workspace`** 时，引擎要把 `.duckle/`、`logs/`、`runs/` 写到只读挂载上 ⇒ **运行期写失败**（症状不在启动、也不在解析，是跑到写盘才炸）。⇒ **本波所有 duckle 作业（含 Step 5 的核对步、以及将来的 job）必须显式传 `--workspace /workspace`**。Step 5 的核对步另需按评审给的反向验法**故意不给** `--workspace` 跑一次、确认它确实报写失败（坐实这条警示不是空话），并把「漏写会撞只读挂载」这句补进 `deploy/duckle/README.md` §5（该文件的示例**已**显式带 `--workspace`，缺的只是这句警示）。依据：T5 评审 §4 的 M3（评审明标这条实施者无法自验）。
 9. **Gate-D（T5 评审 I2 的口径防呆；读 spec §8 或本计划旧行之前先读本条）**：**ZOS 直写的现行口径一律以本计划为准** —— `snk.minio` **可直写** ZOS（经验库条目自带 2026-09-17 订正 + 真机实测：`validate` 过、`run` 两次 ok、两条独立通道回读、重跑幂等），`snk.parquet` **403**（抓包证实 dial 的是 AWS 默认端点）、`snk.s3` **404**。**spec 的两处同句已被取代，且按本仓纪律不追改**（`docs/superpowers/specs/2026-09-20-data-stack-module-design.md:526–527`、`docs/superpowers/specs/2026-09-15-aftersales-module-design.md:166` —— spec 是「当时怎么定的」历史快照）⇒ **T6 读 spec §8 的 ZOS 结论时一律以本计划为准**，**不得据 spec 恢复「能力空白」结论**。依据：T5 评审 §5.1–5.4 / I2（第十轮 B 节）。
@@ -1005,7 +1096,7 @@ gh pr create --title "test(data-stack): 串租户回归测试套件（P3）" --b
 - [ ] **Step 3: 收尾落档**——
   - spec（`2026-09-20-data-stack-module-design.md`）：§11.8 分期表加落地注记（P0–P3 各一行：日期 + PR/验收指针）；已知边界按实际落地更新（Metabase 嵌入面暴露通道的最终形态、ducle→ZOS 结论）。
   - handbook §5 验收记录补 P2/P3 两行。
-  - **WeKnora 沉淀**（先 hybrid-search 查重，命中更新不新建）：pg_duckdb 自建镜像 recipe 容器化的实操增量（install 产物路径/构建时长）；Metabase 老 API 幂等 upsert + `embedding_params` 的实操口径；串租户回归里缓存重放的结果（Metabase 缓存 key 是否含参数——实测结论对后来者高价值）。
+  - **WeKnora 沉淀**（先 hybrid-search 查重，命中更新不新建）：~~pg_duckdb 自建镜像 recipe 容器化的实操增量（install 产物路径/构建时长）~~ ⇒ **改沉淀「自选配对的失败结论」**（2026-09-23 订正：「自建配方实操增量」**不存在**——首次构建**实测停在编译阶段**，`install` 从未跑到，故无产物路径/构建时长可记；有价值的是**8 处 API 断裂**这条 + 「官方镜像 + Docker Hub 可达」这条结论）；Metabase 老 API 幂等 upsert + `embedding_params` 的实操口径；串租户回归里缓存重放的结果（Metabase 缓存 key 是否含参数——实测结论对后来者高价值）。
   - 最终 docs PR：**body 写 `Closes #150`**——伞 issue 在此关闭（全局约束 8：此前所有 PR 一律 Refs）。
 
 ```bash
@@ -1013,6 +1104,82 @@ git add docs
 git commit -m "docs(data-stack): #150 P0–P3 落地收尾——spec 分期注记 + 验收记录"
 gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）" --body "Closes #150"
 ```
+
+---
+
+# W4（新增）— duckle 引擎能力接入（2026-09-23 新增）
+
+> **文档面本轮已落**（`duckle/README.md` §7、`contracts/README.md` §10、`docs/architecture.md`
+> §2.2 与 §5.1）；**实现面在「第一个新数据源接入 PR」里分批销账**。本节的作用是把那些结论
+> **钉成可执行的落点与 gate**，不是再写一遍结论。
+
+**为什么新增**：本轮把 duckle 从「只是 ETL 执行器」正名为**管线层的机器面**（漂移门禁 / 契约校验 /
+管线级血缘 / 新鲜度）——`contracts/` 据此**降级为「人写的意图源」**（见下 Step 1）。
+**正典**：`duckle/README.md` §7（能力清单 C1 / 半替代 C2 / 三条坑 C3 / 未验清单 C4 / 接入方式 C5 /
+wheel 订正 C6）。
+
+### Task 14: duckle 引擎能力接入（drift / 契约校验 / 血缘 / 新鲜度）
+
+**谁在什么条件下做（先读这条，别把它当独立任务派）**：
+
+| 面 | 谁做 | 什么时候 | 为什么是这个时候 |
+|---|---|---|---|
+| **文档面** | 本轮方案整理 | **已完成**（2026-09-23） | 结论要先有正典，否则每接入一个源都要重新论证一次 |
+| **实现面** | **接入新数据源的那个 PR 的执笔者** | **只在有源接入时** | C1–C3 的产物（`data.schema` / `qa.contract` / `drift` / 血缘）**都长在具体管线上**——**没有源就没有对象**。⇒ **不新开一个「能力接入」空 PR** |
+| **未验项销账** | 同上 | 该 PR 的**首次真跑**时逐条销 | 未销完的管线**不得**当作「已验证」对外表述 |
+
+**Files:**（**本任务不新建仓内文件**——实现在接入 PR 里，随三件套一起走）
+- 管线定义：`duckle/<域>/<源>.<表>.json`（含 `node.data.schema` / `qa.contract` / `drift` / `qa.freshness` 节点）
+- 同一 PR 的另两件：`contracts/<域>/<源>.<表>.json`（人写的意图源）+ `dbt/models/**/stg_<表>.sql`
+
+**Interfaces:**
+- Consumes: W1 的 `duckle/`（管线骨架）与 `deploy/duckle/`（镜像 + 入口闸）；`duckle/README.md` §7
+  的能力结论；`contracts/` 的人写声明（**作为意图源，不是机器判据**）。
+- Produces: 管线侧的四类机器面 + **与契约的逐项一致性**（人写的意图 ↔ 引擎执行的面）。
+
+- [ ] **Step 1: 落点分工（C1–C2，逐条对号入座；别自己造轮子）**
+
+  | 要的能力 | 交给谁 | 形态 |
+  |---|---|---|
+  | **列漂移门禁**（C1①） | **duckle `drift`** | 抓 missing / added / typeChanged，exit 1 |
+  | **落地契约校验**（C1②） | **duckle `node.data.schema` + `qa.contract`**（+ `drift`） | 按声明定型，不符即失败（不静默降 VARCHAR） |
+  | **管线级血缘**（C1③） | **duckle `catalog build`** → `.duckle/catalog.json` | 含 lint / orphans / owners |
+  | **新鲜度**（C2，**半替代**） | **一半靠引擎**：run receipt + `logs/duckle_metrics.prom` + `qa.freshness`（上次成功时间 / 行数）；**另一半仍需自建**：**输入指纹**（引擎自陈未按 run 记录） | ⚠️ **别把「有时间戳」当成「有输入指纹」** |
+
+  ⇒ **`contracts/` 的角色随之订正**：它是**人写的意图源**（接入起点 + 评审依据），
+  **机器面在管线**（见 `contracts/README.md` §10）。两者**不是二选一**，但**必须一致**——
+  契约里声明的列/类型/分区，要在 `data.schema` / `qa.contract` 里落成引擎认得的形态，
+  **接入 PR 里逐项核对**（这是 `contracts/README.md` §9 第 2/5 条那两项未验的落点）。
+
+- [ ] **Step 2: 三条坑按纪律落（C3——**写成管线里的门禁，不是写成一句提醒**）**
+
+  1. **`drift` 假绿**：源未声明 schema 时 `drift` **静默 exit 0** ⇒ 门禁**必须先断言「声明存在」**
+     （断言 `node.data.schema` 在场、且非空）**再**判 drift 的结论。
+  2. **`qa.freshness` 时区**：对 **UTC 列按本地墙钟**算（实测偏 **+8h**）⇒ 用它**必须强制时区对齐**
+     （本仓铁律 RFC3339 UTC），否则会把真延迟判成「新鲜」。
+  3. **`pipelineHash` 语义**：它是**代码指纹、不是数据指纹** ⇒ **禁止**用它判「输入数据变没变」；
+     输入变化判定走 Step 1 表里「仍需自建」的那个输入指纹。
+
+- [ ] **Step 3: 未验项进 gate（C4——未销完不许称「已验证」）**
+
+  下面四项**当前未验**（出处 `duckle/README.md` §7.4），**接入 PR 的首次真跑时逐条销账**，
+  销账结论写进该 PR 的报告与 `duckle/README.md` §6/§7.4：
+  1. **远端源（S3 / PG / REST）上的 `drift`**；2. **`review --data` / `review --drift`**；
+  3. **容器内行为**（本机 docker daemon 未运行、镜像未构建）；4. **非回环 `UNCLAIMED` 分支**。
+  ⚠️ 这四项**一条都不会因为「本机装上了 duckle」而自动销账**（PyPI 有 macOS/arm64 wheel，见 C6）。
+
+- [ ] **Step 4: 接入方式（C5——**凭据走 job，不放宽入口闸**）**
+
+  `drift` / `review --data` 要凭据与网络 ⇒ **etl job 显式带 `--token` 跑**。
+  ⚠️ **不是**放宽 `deploy/duckle/entrypoint.sh` 的白名单闸——那是安全边界（`duckle/README.md` §7.5、
+  `deploy/duckle/README.md` §8）。**动它 = 另一起决定**（要改先改 `entrypoint.sh` 的注释正典 + 独立评审）。
+
+- [ ] **Step 5: 附带订正（C6）**　[**本轮文档已落**]
+
+  PyPI 上 `duckle` 除 `manylinux2014_x86_64` **还有 `macosx_11_0_arm64` 与 `manylinux2014_aarch64`
+  wheel**（实测装机成功：`0.7.3` + 传递依赖 `duckdb-cli==1.5.4`）⇒
+  `deploy/duckle/README.md` §2.2 的「**release 资产只有 `-linux-x64`**」那句**已订正**
+  （该句只对 **release 二进制**成立）。**装得上 ≠ 已验证管线**，Step 3 一项都不销。
 
 ---
 
@@ -1032,9 +1199,12 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 | locked parameters 是官方点名「不推荐敏感数据」的用法 | spec §6.1/已知边界 | T2 架构文档显式接受；隔离主力在凭据/schema 层 |
 | 嵌入带水印、不能禁 CSV 导出 | spec §6.3 | 显式接受（数据外带面，导的是租户自己那份） |
 | 物化存储 ~×8 膨胀 | layered §5.3 | 按需 `--select`，不全量物化 |
-| 编译三配置缺一不可（DISABLE_UNITY / 并行度 2 / jemalloc include 补丁） | spec §11.4 | 以 **T1 交付物 Dockerfile** 为准（§11.4 原文已证伪，见 Step 1 后订正说明），别「优化」 |
+| 编译三配置缺一不可（DISABLE_UNITY / 并行度 2 / jemalloc include 补丁） | spec §11.4 | 以 **T1 交付物 Dockerfile** 为准（§11.4 原文已证伪，见 Step 1 后订正说明），别「优化」。⚠️ **该路径本轮未启用（备件）**——本轮只改了它的注释（「本轮订正」A1/A2） |
 | Metabase↔Cube 版本级断点六次 | spec §6.2（cube 时代记录） | Cube 已否决，但**版本锁死 + 升级先核兼容**的纪律平移到 Metabase↔pg_duckdb：锁 v0.63.18.1，升级走 runbook |
-| Actions 额度会挂起真实工作流 | team-harness PR#79 教训 | 镜像构建仅 dispatch；跑前确认额度（外部输入①） |
+| **duckle `drift` 在「源未声明 schema」时静默 `exit 0`（假绿）** | W4 / `duckle/README.md` §7.3 | 门禁**必须先断言「声明存在」**再判 drift 结论（只看退出码 = 把没声明当没漂移） |
+| **duckle `qa.freshness` 对 UTC 列按本地墙钟算（实测偏 +8h）** | W4 / `duckle/README.md` §7.3 | 用它**必须强制时区对齐**（铁律 RFC3339 UTC）——否则真延迟会被判成「新鲜」 |
+| **duckle `pipelineHash` 是代码指纹、不是数据指纹** | W4 / `duckle/README.md` §7.3 | **不能**用它判「输入数据变没变」；判定输入变化要靠自建的输入指纹（半替代那一半） |
+| Actions 额度会挂起真实工作流 | team-harness PR#79 教训 | 镜像构建仅 dispatch；跑前确认额度（外部输入① —— **本轮已随「自建未启用」消解**，见「本轮订正」A1/A2） |
 | 改部署配置≠生效（openship env 四层物化） | 团队记忆 | T10/T13 的 env 核对看**物化结果** |
 | 合并只等 CI CLEAN；直推 main 拒发版 | 团队记忆/AGENTS #7 | 每 PR 等 CLEAN；本计划零直推 |
 | 伞 issue 被中途 PR 的 Closes 提前关闭 | M2b #158 事故 | 全局约束 8：Refs #150 一路到底，T13 才关 |
@@ -1062,7 +1232,7 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 | 2 | 引用的门禁命令逐个对照 ci.yml 实测 | `pnpm exec tsx scripts/check-*.mjs` 五条 + `pnpm typecheck`/`pnpm test` 与 ci.yml gates job 逐字同形；`pnpm --filter data test/typecheck` 经 `modules/data/package.json` 的 `"name": "data"` 核实 |
 | 3 | B7 前置证据复核 | `scripts/check-compose.mjs:50` `ALLOWED = 'deploy/docker-compose.yml'` 与 `docs/architecture.md:121`「全仓唯一 compose」均实测在位（决策材料同源） |
 | 4 | 「尚未进仓」标注位置 | grep 实测六处：customer-onboarding.md :33/:51/:91/:157/:172/:199（T6 Step 6 已写明以届时 grep 为准） |
-| 5 | 拍板六项 ↔ 任务落点 | 已拍口径表逐行有落点任务；仍开放两项（构建频率、Ossie 观察信号）显式标注「不阻塞、不擅自拍」 |
+| 5 | 拍板六项 ↔ 任务落点 | 已拍口径表逐行有落点任务；~~仍开放两项（构建频率、Ossie 观察信号）显式标注「不阻塞、不擅自拍」~~ ⇒ **2026-09-23 追记：两项均随「本轮订正」消解**（自建未启用 ⇒ 构建频率无对象；ossie 不采用 ⇒ 观察信号无对象）。口径表 #2/#3 已同步订正 |
 | 6 | modules/data 既有面（防重复造） | `authz.ts`/`metric-store.ts`/`warehouse.ts`/`routes/mcp.ts` 均实测在位（#146 已交付）；T7/T8 全部走扩面，无一处重建授权逻辑 |
 | 7 | spec 中 Cube 时代条款的误引排查 | `cast({{v}} as text)`（cube SQL API 专用坑）**未**写进本计划任何 Metabase→pg_duckdb 步骤（真 PG 驱动参数化原生可用）；cube 缓存 key 依据在 T12 标注为「原文已失效、测试平移保留」 |
 
@@ -1235,11 +1405,55 @@ gh pr create --title "docs(data-stack): 数据栈 P0-P3 收尾（Closes #150）"
 2. **「静默空集」是独立的假绿类**：一个非空字符串（**一个逗号**）过了必填闸门、解析后却是空集 ⇒ **整面空转**，而输出读起来像「已验证 0 项」。⇒ **空集一律响亮失败。**
 3. **不采信自陈（协调侧同样成立）**：T8 实施者自陈「已实现 `--check`」，评审**在真库**证明它不存在且会写库。⇒ 协调方当时已据该自陈写进 T9 任务书，事后订正为「**先实测四条性质、再围绕它搭门禁**」。**派发材料的每一句自陈都要有独立复核路径。**
 
+**第十二轮：方案整理轮（2026-09-23，docs 型一笔 PR；`type=chore`，PR 标题/body 见报告）**
+
+本轮性质：**口径整理 + 旧口径清理**，**不动任何代码逻辑**——唯一的功能面改动是
+`deploy/data-compose.yml` 的 `pg_duckdb` **image 行**（`ghcr.io/…` 自建 tag → `pgduckdb/pgduckdb:18-v1.1.1`）
+与相邻注释；`deploy/pg-duckdb/Dockerfile` 与 `.github/workflows/pg-duckdb-image.yml` **只改注释**。
+**职责边界正典落在 `docs/architecture.md` §2.2（新增「数据栈组件分工」）与 §6.1（订正指针）**——
+本计划只做「同步 + 落点 + gate」，**不复制 §2.2 的正文**。
+
+| # | 旧口径（原文怎么错的） | 本轮订正（落点） |
+|---|---|---|
+| 1 | **pg_duckdb 走「自建镜像」**（钉 DuckDB v1.5.5，理由是 ossie 只发到 v1.5.5）——散在计划头部/Tech Stack/约束 10/Task 1 全文/Task 3 范文/T6 前置/`data-compose.yml`/`deploy/pg-duckdb/**`/workflow | 改**官方镜像** `pgduckdb/pgduckdb:18-v1.1.1`；自建**降为「未启用（备件）」保留不删**。依据三条（ossie 出局 / 配对实测 8 处 API 断裂 / Docker Hub 实测可拉）见「本轮订正」A1。落点：计划头部与「本轮订正」A1/A2、约束 10、Task 1 头部+Interfaces+范文头注+Step 4 标记、Task 3 Consumes+compose 范文、T6 Step 1 第 1/6 项、波次表 W0/W1g、派发块 W0、外部输入①、文件表、附录、取舍条；`deploy/data-compose.yml`、`deploy/pg-duckdb/README.md`（§0/§2.2/§5.1/§5.2）、`Dockerfile`、workflow |
+| 2 | **Ossie 仍在口径里**：语义暴露「经 dbt 原生支持」、AI 走 `duckdb-ossie` MCP（两条 AI 通路）；两个「仍开放项」 | **A3：Ossie 本轮不采用**（观察项）——单一受管入口，理由=两条通路两套词表两套权限是治理反模式。落点：计划头部/架构/口径表 #2/#3/「仍开放项」/A5 表、`docs/architecture.md` §2.2 末注 |
+| 3 | **DuckDB 版本锁死 v1.5.5**（并被 duckle Dockerfile 范文继承为「与 pg_duckdb 内核对齐」） | pg_duckdb = 官方镜像（上游自陈配对 = **DuckDB v1.4.3**）；**duckle 的 DuckDB 由它自己的传递依赖独占决定**（`duckle==0.7.3` ⇒ `duckdb-cli==1.5.4`；手钉 1.5.5 = `ResolutionImpossible`），**两者不做对齐**。落点：约束 10、Task 5 Step 3 范文（**已删，见 #6**）、`deploy/pg-duckdb/README.md` §0/§2.2 |
+| 4 | **L1 存储格式 =「Ossie JSON」**（spec §11.2 #4）——与仓内实际（dbt YAML）不符 | **事实源 = dbt YAML**；**订正指针**落 `docs/architecture.md` §6.1 与本计划「本轮订正」A5（**spec 正文不追改**，历史快照） |
+| 5 | **`contracts/` 的机器面定位**（「落盘前按契约校验」，隐含一个从未存在的独立校验器） | **降级为「人写的意图源」**，机器面改用 **duckle 自己的声明与门禁**（`node.data.schema` + `qa.contract` + `drift`）。落点：`contracts/README.md` §10（新增）+ §4.3/§8、`duckle/README.md` §7、`docs/architecture.md` §5.1 第 2 条 |
+| 6 | **T5 的 duckle Dockerfile 范文与交付物有四处实质差异**（其中 `DUCKDB_VERSION=1.5.5`、curl+unzip 单下 DuckDB 两处是旧口径） | **范文块整块删除**，只留「正典是仓内文件」的指针 + 四处差异摘要——**防「照抄即复发」**（本仓已知复发坑）。落点：Task 5 Step 3 |
+| 7 | **W4 不存在**（duckle 只被当 ETL 执行器，其漂移/契约/血缘/新鲜度能力未进计划） | **新增 W4 + Task 14**（落点分工 / 三坑成纪律 / 未验项进 gate / 接入方式=job 带 token 不放宽闸 / C6 wheel 订正），并进波次表；`duckle/README.md` §7 与 `deploy/duckle/README.md` §8 落正典 |
+
+**第十二轮 grep 复核（自检纪律第 5 条，实测供 reviewer 复核）**：
+
+- **`ossie` / `Ossie`（本计划）**：命中**全部**落在「**订正语境**」——「本轮订正」A1/A3/A5、口径表 #2/#3、
+  「仍开放项」（已消解）、约束 10 的删除线、Task 1 头注/范文头注、Task 5 Step 3 的差异摘要、
+  第一轮 #5 的追记；**唯一**非订正语境是 **L752** 的「先检索 WeKnora《duckdb-ossie 全链路 PoC》条目」
+  ——那是**经验库条目名**（该 PoC 在本轮之前做过，条目仍在库），**保留**。
+- **`v1.5.5`（本计划）**：命中分三类——① **订正语境**（A1/#1~#3 各订正行、Task 1 Interfaces/风险条、
+  T6 第 6 项、附录、取舍条）；② **备件工件自身的版本**（Task 1 范文 `ARG DUCKDB_VERSION=v1.5.5`、
+  workflow `tags:`、§0 的 tag 公式例）——**备件保留，README/workflow/计划三处均已标「未启用」**；
+  ③ **历史轮次记录**（第四/五轮与 L269 Step 4 commit message）——按本计划既有体例
+  （「执行步骤类文字按快照保留」）**原样留**。
+- **`Ossie JSON`**：本计划内**已无**（原 spec §11.2 #4 的写法）；只在「本轮订正」A5 的**对照列**里
+  作为「旧口径」出现，与 L1 = dbt YAML 并列。`docs/architecture.md` §6.1 同形。
+- **`自建镜像` / `自建`（本计划）**：命中分四类，**逐类可解释**——① **订正语境**（「本轮订正」A1/A2、
+  口径表 #2/#3、约束 10 删除线、Task 1 头部与 Interfaces/风险条、Task 2 §1 与 §2 的删除线、
+  外部输入①、波次表 W0、附录、取舍条）——**已明标取代**；② **备件工件自身的名称**（W0 标题、
+  Task 1 标题、Task 1 的 `Dockerfile`/workflow 范文头注）——**均在标题或紧邻处标「未启用（备件）」**；
+  ③ **已完成的历史命令**（L410/L411 的 commit message 与 PR title，PR #162 已合并）——按快照留；
+  ④ **W4 里的「仍需自建」**（输入指纹、`pipelineHash` 那条）——**指自造能力，与镜像无关**。
+  ⇒ **无一处仍把自建镜像当作在跑的部署路径。**
+
 ### 有意的取舍（reviewer 请过目）
 
 - **不新建第二个数据域模块**（报表/L2/治理全部扩 `modules/data`）：spec 写作时 `modules/<id>` 未定 id 且当时 `modules/data` 尚不存在；#146 落地后授权核心/词表/审计/通道都在 `data`，另起模块 = 授权逻辑第二份或跨模块端口，违反「授权核心单实现」的既定约束。**这是 spec 未显式裁决的落点选择，按最低摩擦 + 复用既有正典取的，请 reviewer 确认。**
 - **Metabase 版本锁 v0.63.18.1（非 LTS v0.58）**：PoC 全链路实测版本；spec §6.6 的 LTS 口径是版本纪律的来源，但 0.63 已实现 OSI `ai_context`（spec §9.6 记录）且是实测通过组合。升级窗口与频次归 runbook，不在本计划拍。
-- **pg_duckdb 镜像走 GHCR + 目标机本地构建双路径**：私有化客户机未必有 GHCR 凭据，Dockerfile 在仓即「任何机器可复现」；GHCR 是 SaaS/自用的便捷面。构建频率（§11.9 #4）维持开放：dispatch-only。
+- ~~**pg_duckdb 镜像走 GHCR + 目标机本地构建双路径**：私有化客户机未必有 GHCR 凭据，Dockerfile 在仓即「任何机器可复现」；GHCR 是 SaaS/自用的便捷面。构建频率（§11.9 #4）维持开放：dispatch-only。~~
+  ⇒ **2026-09-23 订正（取舍已变，理由记全）**：**改走官方镜像** `pgduckdb/pgduckdb:18-v1.1.1`
+  （Docker Hub）。**自建与 GHCR 双路径保留为「未启用（备件）」**——不是「自建没价值」，而是
+  **它的成立前提（ossie 要来）没了 + 自选配对实测编译失败**；「私有化客户机未必有 GHCR 凭据」
+  这条**原来的优点现在由 Docker Hub + 目标机代理**承接（**实测可拉**）。
+  构建频率开放项**随「未启用」消解**（见「本轮订正」A1/A2、`deploy/pg-duckdb/README.md` §5.1）。
 - **duckle 在 v1 只交付骨架与 runner 镜像，不交付可跑管线**：duckle→ZOS 直写**在本仓尚无复现结论**——经验库 2026-09-17 有 `snk.minio` 可直写的**真机实测**（第十轮 B 节），但那是经验库所在部署面的复现、**不是本仓/本部署面的**（复现归 T6，见 Task 6 Step 1 的 Gate-D）；在拿到**本部署面**的「直写可行或替代路径」结论前写「可跑管线」是编造。⚠️ **旧口径写的「已记录的能力空白」已被取代** —— 本条**结论不变、理由换了**；闭环数据源用存量乐檬 parquet（拍板 #1 本就不重落盘）。新源（抖音）接入是 data-platform 标准的 SOP 事件，不在 #150 的 P1 出口里。
 - **T12 缓存重放断言保留但依据重写**：spec 验收 #2 的 cube 缓存 key 论据随 Cube 否决失效；Metabase 结果缓存是否把 A 的卡数据重放给 B 是**未验证的真实风险**，测试保留并以 Metabase embed API 为反向验面——真机结论（T13）无论红绿都沉淀 WeKnora。
 - **facade/治理归 P2（不提前到 P1）——开工前扫描裁定：维持（2026-09-22，经扫描确认）**：与 spec §11.8 分期表逐字一致；issue #150 的平铺清单无分期语义，不构成把 facade/治理提前进 P1 的依据。
