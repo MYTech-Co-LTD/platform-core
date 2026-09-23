@@ -5,6 +5,14 @@ platform: '>=0.1'
 permissions:
   - { code: data:query,  name: 数据问数 }
   - { code: data:manage, name: 数据指标管理 }
+# 租户级存储（M3c，正典「租户级配置注入」）：数据面按租户取**本租户自己的 ZOS 五元组**，
+# 把待分析数据落该租户的桶（spec 2026-09-20；计划 2026-09-22 USER MAPPING secret / dbt S3 注入同理）。
+# 与 aftersales 同一条协议：声明的是**能力**，不是租户（manifest 里写不出 bucket/AK/org）。
+# ⚠️ 两条事实：(a) 本模块**当前无代码消费点** —— 读 ZOS 发生在 pg_duckdb 内部，模块只与
+# pg_duckdb 对话；声明的直接作用是让宿主挂存储投影（loader.ts:491）+ console「存储配置」页
+# 按能力联动可见（否则无任何入口能把桶凭据写进租户行）。(b) 写入时 endpoint 须**归一化后落库**，
+# 目标机应填**内网 endpoint**（同租户不同网络位置的机器读取路径不同）。
+storage: { kind: s3 }
 # ⚠️ api.internal 的 path 是**模块相对路径**（不带 /api/modules/<id> 前缀）——
 # loader 的 applyDeclaredApiGate 会用 moduleApiBasePath(id) 加前缀后再做门卫比对。
 # 声明集合必须与 createRouter 注册的集合逐条一致（装载期双向核对，任一方向差集 ⇒ 装载失败）。
