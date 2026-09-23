@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.25.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.25.0...v0.25.1) - 2026-09-23
+- 【修复】data: 测试夹具竞态——deleteStaleL1Metrics 用例的 keepIds 并入兄弟文件夹具 ([#186](https://github.com/MYTech-Co-LTD/platform-core/pull/186), [9b30e62](https://github.com/MYTech-Co-LTD/platform-core/commit/9b30e6283850016131eb81ff7a84e1ec0c8d07c7))
+
+
 ## [0.25.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.24.0...v0.25.0) - 2026-09-22
 - 【新增】aftersales: /rules /employees /stores 补 total，与 /products 同形（M-T8-3） ([#160](https://github.com/MYTech-Co-LTD/platform-core/pull/160), [0f24864](https://github.com/MYTech-Co-LTD/platform-core/commit/0f2486400108b1e52401dcef78d358f43ffb803e))
 
