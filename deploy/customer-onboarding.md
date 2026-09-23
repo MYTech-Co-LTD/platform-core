@@ -164,6 +164,21 @@ PATCH .../env             # 数据栈自己的 env（CUSTOMER=<客户>、对象�
 # ★ 唯一的跨 project 接线点：平台侧 env 加数据栈地址 → 重新部署平台 → 验收连通
 ```
 
+**openship services 模式三个实测坑（2026-09-23，shanhai / 10.0.0.5 真机，各一段 + 处置）**：
+
+- **相对路径 bind 不被 openship services 模式支持**：`../duckle`、`../dbt` 这类相对路径 bind
+  （锚在 compose 文件所在目录）在 `docker compose` CLI 下语义正常，但 openship **逐服务建容器**时
+  把它当卷名处理 ⇒ API 报 400、部署挂。处置：服务器上放持久检出（本例
+  `/opt/platform-core-data/platform-core`），在 openship 服务级配置（dashboard/API 服务覆盖）把
+  挂载改成**绝对路径**。
+- **pgduckdb PG18 镜像的数据目录约定变更**：`pgduckdb/pgduckdb:18-v1.1.1`（PG18）数据落在
+  `/var/lib/postgresql` 下的**版本子目录**；旧写法挂 `/var/lib/postgresql/data` 被入口脚本拒
+  （报 unused mount 错误退出）。处置：服务级把挂载改到 `/var/lib/postgresql`。
+- **经 services-sync/API 写入的 environment 是终值、不解析 `${VAR:-default}` 模板**：模板字符串
+  以字面量进容器（实测 PG 报 invalid character in extension owner）。处置：非机密键写 project env
+  明值，或服务 env 直接写字面值；另有首轮初始化先于 secret 写入的坑（metabase-db 落了默认口令）
+  用 `ALTER USER` 对齐。
+
 ### 阶段 6：数据初始化
 | 动作 | 验收 |
 |---|---|
