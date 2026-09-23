@@ -157,7 +157,7 @@
 - **职责**：**湖上查询引擎**（DuckDB `read_parquet()` 直读 ZOS）+ **物化落点**。
 - **输入**：湖里的 parquet（直读）+ dbt 的物化写入。
 - **输出**：PG 关系（视图 / 物化视图 / `USING duckdb` 表）——**只有进了 `pg_class` 的才被看见**。
-- **不做什么**：宿主端口**只回环**、**不直接对终端用户开放**（跨 project 接线 = 计划 T6 的 Gate-B）。
+- **不做什么**：宿主端口**只回环**、**不直接对终端用户开放**。**跨 project 接线口径（2026-09-23 已裁决）**：单元 B 的服务加入单元 A 的**既有 external network `openship-platform-core-shanhai`**（目标机实测名），`pg_duckdb` 以**服务名** `pg_duckdb:5432` 对单元 A 的 `server` 可达——`DATA_WAREHOUSE_URL` 取服务名形态；**单元 A 的 compose 不动、宿主端口仍全回环、B7 不破**。详见计划 T6 Step 1 的 Gate-B 条目。
 - **依赖关系**：读对象存储；被 dbt（写）与 `modules/data`（查询期）依赖。
 
 **5. Metabase + `metabase-db`（常驻）**

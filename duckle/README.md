@@ -170,6 +170,12 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
 2. **`review --data` / `review --drift`** —— 未验。
 3. **容器内行为** —— 未验（实测机的 docker daemon 未运行；镜像也未构建，见 `deploy/duckle/README.md` §4/§6）。
 4. **非回环 `UNCLAIMED` 分支** —— 未验（安全闸覆盖了「空 token」，其余控制台面见 `deploy/duckle/README.md` §6 第 4 条）。
+5. **跨组件 parquet 格式兼容（写方比读方新）** —— 未验：本 runner 自带的 DuckDB 是 **`1.5.4`**
+   （`duckle==0.7.3` ⇒ `duckdb-cli==1.5.4`，**写** parquet 的一方），而消费侧 pg_duckdb
+   （官方镜像 `pgduckdb/pgduckdb:18-v1.1.1`）是 **`1.4.3`** ⇒ **写方比读方新**。
+   真机**必验一条**：**用 duckle 写一个 parquet ⇒ 让 pg_duckdb `read_parquet` 读**（读得出、列类型符合预期）。
+   这条是**镜像从「自建（DuckDB v1.5.5）」切到「官方镜像（v1.4.3）」时新引入的面**——
+   归 **T6 的 Gate-E**（计划 `docs/superpowers/plans/2026-09-22-data-stack.md` Task 6 Step 1 第 10 项）。
 
 ### 7.5 接入方式（**凭据与网络从哪来**）
 

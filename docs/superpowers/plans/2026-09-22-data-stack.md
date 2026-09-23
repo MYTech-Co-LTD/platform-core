@@ -72,6 +72,17 @@
 
 ---
 
+## 已知边界 / 分期项（2026-09-23 裁决登记——实施者按此执行，**不得自行扩大范围**）
+
+> **用途**：把**已裁决的「本轮不做」与「分期待定」**集中登记，免得它们散在各轮注记里被读成「待办」或「已做」。
+> 每条给出 **边界 / 依据 / 回指 issue**；**改边界前先回对应的裁决与 issue**。
+
+| # | 已知边界 / 分期项 | 依据与回指 |
+|---|---|---|
+| 1 | **平台级 L2（`org='platform'`）的写入不开口（fail-closed）**——本轮**只实现租户 `data:manage` 管本 org 的 L2**；平台级 L2 的**写入面不开**，且 **`tenant:admin` 不得兼作平台门**。⇒ 即「拍板 #5 的平台超管那一半」**本轮不落地**，是**已知边界**而非缺陷 | **裁决（2026-09-23，用户拍）：本轮不做**。理由：仓内**没有平台超管 signal**（平台超管按 spec D4 在 **Casdoor 后台**运营，`tenant:admin` 是**租户级**内置码，`apps/server/src/loader.ts:137`）⇒ **无门可落**，且**不新造第二套超管判定**。回指 issue **#176 的 ②**（同现状见 `modules/data/manifest.yaml` 的 T8 注 + 该模块 README「L2 的已知边界」）。⚠️ 与 **#176 的 ①**（marts **缺 org 列**）**别混为一谈**——那**不是**边界、是**必须在 T6 之前收口的缺口** |
+
+---
+
 ## Global Constraints
 
 每条都是**项目级**要求，隐含在**每一个**任务里。
@@ -112,7 +123,7 @@
 | # | 外部输入 | 谁给 | 解锁什么 | 没给卡住什么 |
 |---|---|---|---|---|
 | ① | ~~**pg_duckdb 镜像的可获取通道**：GHCR 拉取凭据（目标机 `docker login ghcr.io`）**或**「目标机本地构建」路径；另确认 Actions 额度可承担一次 ~1–2h 的 C++ 构建~~ ⇒ **已消解（2026-09-23）**：改用**官方镜像** `pgduckdb/pgduckdb:18-v1.1.1`，Docker Hub **实测可拉**（目标机 dockerd 已配 HTTPS Proxy，`docker pull alpine:3.20` 成功）⇒ **不再需要** GHCR 凭据、本地构建路径**或** Actions 额度 | ~~人（org 设置 + dashboard）~~ **无人**（已完成） | ~~T1 的首次构建~~ **无** | **不再卡任何任务**（备件将来启用时才重新需要） |
-| ② | **dp-lab / dp-lab-bi 删除**（已拍，人在 dashboard 操作：`proj_BzOHhfY6_8OUFHR9` / `proj_gFnTdeeQfEuLPuQV`）+ **目标机选定**（第一次部署验证跑哪台机、与哪些生产负载同机） | 人 | T6 全部 | T6 |
+| ② | ~~**dp-lab / dp-lab-bi 删除**（已拍，人在 dashboard 操作：`proj_BzOHhfY6_8OUFHR9` / `proj_gFnTdeeQfEuLPuQV`）+ **目标机选定**（第一次部署验证跑哪台机、与哪些生产负载同机）~~ ⇒ **已全部就位（2026-09-23）**：① dp-lab / dp-lab-bi **已删除**（2026-09-23，**含宿主侧清理**）；② **目标机已定**：`113.249.104.181` = `10.0.0.5` = server **`8281d598`**（shanghai）。⚠️ **该删除不阻塞 T6**：dp-lab 两项目在 server `23a1091e`（mytech-weknora），而 T6 目标机是 `8281d598`——**不同宿主、无端口/卷/网络共享** ⇒ 它属**清场项而非 gate**（原表把它与「目标机选定」捆成一个 gate 是过度绑定） | 人（**已完成**） | T6 全部（目标机已定） | **不再卡任何任务** |
 | ③ | **ZOS 乐檬桶只读凭据**（存量 parquet 的读取面）落 openship env(isSecret)；**Metabase 服务账号 API key + 嵌入签名密钥**（T7 的 env 三键真值） | 人 | T6（ZOS）/ T10（Metabase） | T6 的 dbt 首跑、T10 |
 | ④ | **业务排期/窗口**（目标机上首次起数据面、注册物化 job 的时段确认） | 人与客户/机主 | T6 的 `up` 与 job 注册 | T6 后半 |
 | ⑤ | **SaaS 双租户验收环境**（multi 形态、两个测试租户 + 各自用户/PAT/凭据）与排期 | 人 | T13 | 仅 T13；T11/T12 的代码面不受影响 |
@@ -854,14 +865,32 @@ gh pr create --title "build(data-stack): contracts/ 与 duckle/ 数据采集工�
 - [ ] **Step 1: GATE——四项前置全绿才许动**
 
 1. ~~**外部输入①**：pg_duckdb 镜像可获取（GHCR 凭据或目标机本地构建路径二选一）；首次构建已跑通（T1 的 CI dispatch 或目标机构建），tag 与 compose 一致。~~ ⇒ **2026-09-23 订正：本条前置已消解** —— 用**官方镜像** `pgduckdb/pgduckdb:18-v1.1.1`（Docker Hub，**实测可拉**）；**不再需要** GHCR 凭据 / 本地构建 / 首次构建跑通。⚠️「tag 与 compose 一致」**只对备件路径成立**——现状 compose 用官方镜像、与备件 tag **不一致**，**这是预期形态**（见 `.github/workflows/pg-duckdb-image.yml` 头注）。
-2. **外部输入②**：dp-lab / dp-lab-bi 已删（人在 dashboard；MCP 无删项目接口）+ 目标机已选定。
+2. **外部输入②**（**2026-09-23 订正：已全部就位，且不卡本步**）：① dp-lab / dp-lab-bi **已删**（人在 dashboard；MCP 无删项目接口），**含宿主侧清理**——两者在 server `23a1091e`（mytech-weknora），**与 T6 目标机 `8281d598` 是不同宿主**、无端口/卷/网络共享 ⇒ 属**清场项而非 gate**；② **目标机已定**：`113.249.104.181` = `10.0.0.5` = server **`8281d598`**（shanghai）。
 3. **外部输入③**：ZOS 乐檬桶只读凭据已落 openship env(isSecret)。
 4. **外部输入④**：目标机时段已确认。W1 的 T2–T5 全部合并进 main。
 5. **外部输入⑥**：dbt 版本已确认（人给版本号或确认 1.9.8），T3 Dockerfile 的 ARG 注释销账——真跑用的版本必须与现场安装一致。
 6. ~~**版本配对已验收（T1 的显式前置，不是「顺带」）**：pg_duckdb v1.1.1 × DuckDB v1.5.5 是未经任何一方验证的配对 ⇒ T1 的首次 dispatch 兼作该配对的验收：编译通过 = 配对成立；失败则把 `PG_DUCKDB_VERSION` ARG 回退 `main` …~~ ⇒ **2026-09-23 订正：本条前置已消解，且原因与原文预期相反** —— 该配对**已经验收过了，结果是失败**（`pg_duckdb v1.1.1 × DuckDB v1.5.5` **实测编译失败**，8 处 API 断裂，见 `deploy/pg-duckdb/README.md` §2.2）⇒ 本轮改用**官方镜像**（上游自陈配对 = DuckDB v1.4.3，**不需要**本仓再做配对验收）。**进本 gate 不再要求「配对已绿」**。将来若启用备件，才回到「**重新核对上游自陈配对 + 重新实测 + 出「新」tag**」的口径（**不是**原文的「ARG 回退 `main`」）。
-7. **Gate-B（I-2 的接线裁决；必须在 Step 4 之前落地）**：`DATA_WAREHOUSE_URL` 钉的 `127.0.0.1:15432` 是**宿主回环**，而消费方是单元 A 的 `server` **容器**（`modules/data/domain/warehouse.ts:13` 在请求期读 env；`deploy/data-compose.yml:21` 该注释已按此订正）——容器里的 `127.0.0.1` 是自己的 netns，不是宿主回环；两份 compose 各一个 `default` 网络、无共享 external 网络、无 `extra_hosts`（T3 评审 §2.3 实测）⇒ **按现值 `ECONNREFUSED`**。判定一条命令：进单元 A 的 `server` 容器内跑 `nc -zv 127.0.0.1 15432`——**预期 refused**，refused 即坐实本缺口。接线方式须由人**三选一裁决**：`extra_hosts: host.docker.internal:host-gateway`（单元 A）/ 两份共享 external network / 改消费路径（平台经宿主进程访问）；裁决结果回写 `deploy/customer-onboarding.md` 阶段 5（Step 6 第 2 条）。**未裁决即进 Step 4 = 该步「问数链路吃真数据」的验收句必然失败。**
+7. **Gate-B（I-2 的接线裁决；必须在 Step 4 之前落地）——✅ 已裁决（2026-09-23，用户拍）**
+
+   **缺口回述（原文保留以留可追溯性）**：`DATA_WAREHOUSE_URL` 钉的 `127.0.0.1:15432` 是**宿主回环**，而消费方是单元 A 的 `server` **容器**（`modules/data/domain/warehouse.ts:13` 在请求期读 env；`deploy/data-compose.yml:21` 该注释已按此订正）——容器里的 `127.0.0.1` 是自己的 netns，不是宿主回环；两份 compose 各一个 `default` 网络、无共享 external 网络、无 `extra_hosts`（T3 评审 §2.3 实测）⇒ **按现值 `ECONNREFUSED`**。判定一条命令：进单元 A 的 `server` 容器内跑 `nc -zv 127.0.0.1 15432`——**预期 refused**，refused 即坐实本缺口。
+
+   **裁决（2026-09-23，用户拍）：共享 external network**，实现取**更省的做法**——**单元 B（`deploy/data-compose.yml`）加入单元 A 的既有网络** ⇒ **单元 A 的 compose 一行不改**（尊重本计划「单元 A 不动」的约束）。
+
+   - **目标机实测的网络名**（协调方经 openship MCP 在 `10.0.0.5` 上实测）：**`openship-platform-core-shanhai`**（bridge）；**单元 A 的 `server` 与 `postgres` 都挂在该网络上**。
+   - **实现形态**：`deploy/data-compose.yml` 的服务声明**两个**网络——自己的 `default` + 该 external（`external: true`，`name: openship-platform-core-shanhai`）；`pg_duckdb` 在其上以**服务名**可达。
+   - **`DATA_WAREHOUSE_URL` 改服务名形态**（**不再用** `127.0.0.1:15432`）：`postgres://…@pg_duckdb:5432/warehouse`。
+
+   **三条边界（一并写明，别漏）**：
+
+   - ㈠ 该网络归 `platform-core-shanhai` 这个 project 所有 ⇒ 这是**跨 project 依赖**：该项目被删/重建时网络可能被重建（**同名则无碍**）。
+   - ㈡ 单元 A 的网络里将出现数据面容器（**同信任域**），而**宿主端口仍全回环、B7 不破**。
+   - ㈢ ~~原候选① `extra_hosts: host.docker.internal:host-gateway`（单元 A）~~ ⇒ **已排除，附原因**：**在回环绑定下不成立**——容器连宿主 bridge IP 时那里**没有监听**。**别再把它捡回来。**
+
+   ⇒ 接线结果回写 `deploy/customer-onboarding.md` 阶段 5（Step 6 第 2 条）。**未接线即进 Step 4 = 该步「问数链路吃真数据」的验收句必然失败**（症状在连接层、不是配置报错）。
 8. **Gate-C（T5 评审 M3；跑任何 duckle 命令前先读）**：引擎的 `--workspace <dir>` **默认值是「管线文件的父目录」**（v0.7.3 二进制 USAGE 原文：`Workspace root (default: pipeline file's parent)`），而 compose 把管线目录以 `../duckle:/pipelines:ro` **只读**挂载 ⇒ **只给 `--pipeline /pipelines/x.json` 而不给 `--workspace`** 时，引擎要把 `.duckle/`、`logs/`、`runs/` 写到只读挂载上 ⇒ **运行期写失败**（症状不在启动、也不在解析，是跑到写盘才炸）。⇒ **本波所有 duckle 作业（含 Step 5 的核对步、以及将来的 job）必须显式传 `--workspace /workspace`**。Step 5 的核对步另需按评审给的反向验法**故意不给** `--workspace` 跑一次、确认它确实报写失败（坐实这条警示不是空话），并把「漏写会撞只读挂载」这句补进 `deploy/duckle/README.md` §5（该文件的示例**已**显式带 `--workspace`，缺的只是这句警示）。依据：T5 评审 §4 的 M3（评审明标这条实施者无法自验）。
 9. **Gate-D（T5 评审 I2 的口径防呆；读 spec §8 或本计划旧行之前先读本条）**：**ZOS 直写的现行口径一律以本计划为准** —— `snk.minio` **可直写** ZOS（经验库条目自带 2026-09-17 订正 + 真机实测：`validate` 过、`run` 两次 ok、两条独立通道回读、重跑幂等），`snk.parquet` **403**（抓包证实 dial 的是 AWS 默认端点）、`snk.s3` **404**。**spec 的两处同句已被取代，且按本仓纪律不追改**（`docs/superpowers/specs/2026-09-20-data-stack-module-design.md:526–527`、`docs/superpowers/specs/2026-09-15-aftersales-module-design.md:166` —— spec 是「当时怎么定的」历史快照）⇒ **T6 读 spec §8 的 ZOS 结论时一律以本计划为准**，**不得据 spec 恢复「能力空白」结论**。依据：T5 评审 §5.1–5.4 / I2（第十轮 B 节）。
+10. **Gate-E（跨组件 parquet 格式兼容；官方镜像切换引入的新面）**：**duckle 自带 DuckDB `1.5.4`**（写 parquet 的一方；`duckle==0.7.3` ⇒ `duckdb-cli==1.5.4`），而 **pg_duckdb（官方镜像）是 `1.4.3`** ⇒ **写方比读方新**。本步真机**必验一条**：**用 duckle 写一个 parquet ⇒ 让 pg_duckdb `read_parquet` 读**（读得出、列类型符合预期）。同一条已记进 `duckle/README.md` §7.4 未验清单第 5 项。
+11. **#182 门：模块 `storage` 能力「未声明」⇒ 数据面拿不到凭据**：`modules/data/manifest.yaml` **当前无 `storage:` 声明**（2026-09-23 实测：`grep -n storage modules/data/manifest.yaml` 无命中；对照 `modules/aftersales/manifest.yaml:14` 的 `storage: { kind: s3 }`）⇒ 宿主「不声明就不挂」（`apps/server/src/loader.ts:483-491`）⇒ `c.get(TENANT_STORAGE)` **恒 `undefined`**、租户管理台「**存储配置**」页**不可达**（`storageDeclarers ∩ 启用模块 ≠ ∅` 才显示）⇒ **没有任何 UI 入口能把本租户 ZOS 五元组写进租户行** ⇒ **T6 的数据面拿不到凭据**（Task 11 的 `provision-template.sql` USER MAPPING secret + Task 4 的 dbt S3 注入都源自这份凭据）。**修复笔已派（见 issue #182）**——本步开工前先确认该笔已合并、`storage: { kind: s3 }` 已在 manifest 里（**未落地则本步先等它**）。⚠️ 该声明**目前尚无消费点**（数据面读 ZOS 发生在 pg_duckdb 内部；模块只与 pg_duckdb 对话）⇒ 「**声明了能力但未消费**」这条**显式登记**，别被下一个人读成「已经接好了」（issue #182 的「已知的后续」节同此）。
 
 - [ ] **Step 2: 按目标形态建数据面 project（openship MCP）**
 
@@ -874,8 +903,8 @@ gh pr create --title "build(data-stack): contracts/ 与 duckle/ 数据采集工�
 - [ ] **Step 4: Metabase 面板 + 平台接线 + 新行为验证（deploy-verify）**
 
 - Metabase：建 pg_duckdb 连接（同 compose 网络走服务名 `pg_duckdb:5432`；连接用户用超级用户——pg_duckdb 的扩展/委托需要）→ sync → 在 marts 上建第一个 question/dashboard。**确定嵌入面暴露通道**（edge 反代域名 or 客户内网直连），结论记进 `deploy/customer-onboarding.md` 对应节（这是 spec「只经嵌入面出去」的落地决策，不绑公网）。
-- 平台 project env 加 `DATA_WAREHOUSE_URL=postgres://…@127.0.0.1:15432/warehouse`（同机接线点）→ 重新部署平台 → **问数链路吃真数据**（#146 的 `POST /api/modules/data/query` 打真 marts——这是「新行为在线上可观测」的验法，比容器时间戳更硬）。
-  - **订正注记（第九轮 I-2；评审 §6）**：上行 `127.0.0.1:15432` **只对宿主进程成立**；消费方是单元 A 的 `server` **容器**，容器内的 `127.0.0.1` 是自己的 netns ⇒ **按现值不可达（`ECONNREFUSED`）**，而症状在连接层、不是配置报错（「部署后验」类假绿高发区）。接线方式未定（Step 1 的 Gate-B，需人裁决）⇒ **本条的验收句在裁决落地前不可达**。原文保留以留可追溯性。
+- 平台 project env 加 **`DATA_WAREHOUSE_URL=postgres://…@pg_duckdb:5432/warehouse`**（**服务名形态**——Gate-B 已于 2026-09-23 裁决，见 Step 1 第 7 项；~~原值 `127.0.0.1:15432` 是宿主回环、对容器消费方不可达~~）→ 重新部署平台 → **问数链路吃真数据**（#146 的 `POST /api/modules/data/query` 打真 marts——这是「新行为在线上可观测」的验法，比容器时间戳更硬）。
+  - **订正注记（第九轮 I-2；评审 §6）**：上行 `127.0.0.1:15432` **只对宿主进程成立**；消费方是单元 A 的 `server` **容器**，容器内的 `127.0.0.1` 是自己的 netns ⇒ **按现值不可达（`ECONNREFUSED`）**，而症状在连接层、不是配置报错（「部署后验」类假绿高发区）。接线方式未定（Step 1 的 Gate-B，需人裁决）⇒ **本条的验收句在裁决落地前不可达**。原文保留以留可追溯性。**⇒ 2026-09-23 已裁决**（共享 external network `openship-platform-core-shanhai`；`DATA_WAREHOUSE_URL` 取**服务名形态** `…@pg_duckdb:5432/warehouse`——见 Step 1 第 7 项）⇒ **本条的缺口已闭合，按新值执行**。
 - 容器时间戳照 deploy-verify 双验（创建 > 镜像构建）。
 
 - [ ] **Step 5: 注册物化 job（拍板 #4）+ duckle→ZOS 结论落档**
@@ -885,8 +914,8 @@ gh pr create --title "build(data-stack): contracts/ 与 duckle/ 数据采集工�
 - [ ] **Step 6: 摘「尚未进仓」标注 + handbook 补齐（docs PR）**
 
 - `deploy/customer-onboarding.md`：摘掉六处「尚未进仓」标注（:33 / :51 / :91 / :157 / :172 / :199——行号以 grep「尚未进仓」实测为准）。
-- `deploy/customer-onboarding.md` 阶段 5：**回写最终接线形态**——平台侧 env 加 `DATA_WAREHOUSE_URL=…@127.0.0.1:15432/warehouse`（15432 是**本计划选定**的端口，文档原本只记过 lab 端口 18080/18081/16379，此前未记过 15432），并写明「仅同宿主可达」的前提（回环端口在 productionMode=host 下由宿主进程可达；对照主 compose 头注的容器服务名口径时别误读为矛盾——那是 compose 网络内视图，两者说的是不同层的可达性）。
-  - **订正注记（第九轮 I-2；评审 §6）**：上句「仅同宿主可达」的论证只覆盖**宿主进程**（宿主上的 edge / 宿主上 `docker compose run` 的 job）——**不覆盖容器消费方**（单元 A 的 `server` 容器）。`deploy/customer-onboarding.md:239-245` 的实测依据也正是「宿主 curl 200」，即**宿主视角**，所以容器侧缺口一直没暴露。回写 runbook 时**必须一并写明「容器消费方尚未接线（Step 1 的 Gate-B，待裁决）」**，别把这句写成结论性的接线口径。
+- `deploy/customer-onboarding.md` 阶段 5：**回写最终接线形态**——**⇒ 2026-09-23 订正（Gate-B 已裁决）：最终形态 = 「单元 B 加入单元 A 的既有 external network `openship-platform-core-shanhai`」+ `DATA_WAREHOUSE_URL=…@pg_duckdb:5432/warehouse`（服务名形态）**；下面原文的 `127.0.0.1:15432` **不再作为最终接线口径**（原文保留以留可追溯性）。原文：平台侧 env 加 `DATA_WAREHOUSE_URL=…@127.0.0.1:15432/warehouse`（15432 是**本计划选定**的端口，文档原本只记过 lab 端口 18080/18081/16379，此前未记过 15432），并写明「仅同宿主可达」的前提（回环端口在 productionMode=host 下由宿主进程可达；对照主 compose 头注的容器服务名口径时别误读为矛盾——那是 compose 网络内视图，两者说的是不同层的可达性）。
+  - **订正注记（第九轮 I-2；评审 §6）**：上句「仅同宿主可达」的论证只覆盖**宿主进程**（宿主上的 edge / 宿主上 `docker compose run` 的 job）——**不覆盖容器消费方**（单元 A 的 `server` 容器）。`deploy/customer-onboarding.md:239-245` 的实测依据也正是「宿主 curl 200」，即**宿主视角**，所以容器侧缺口一直没暴露。回写 runbook 时**必须一并写明「容器消费方尚未接线（Step 1 的 Gate-B，待裁决）」**，别把这句写成结论性的接线口径。**⇒ 2026-09-23 订正（Gate-B 已裁决）**：回写时**直接写最终形态**（单元 B 加入单元 A 既有 external network `openship-platform-core-shanhai` + 服务名 `pg_duckdb:5432`）——**不再写「尚未接线 / 待裁决」**；「仅同宿主可达」的旧论证随之**下线**（容器消费方的可达性改由**跨 compose 共享网络内的服务名**承接）。
 - `docs/data-platform-handbook.md` §3 落地位置四个 `<待补>` 补齐（duckle 管线→`duckle/`；dbt 项目→`dbt/`；语义声明→`dbt/models/**/schema.yml`；采集契约→`contracts/`）；§5 验收记录加一行（验收范围=本任务全链路，卡点→案例号）。
 
 ```bash
@@ -1093,6 +1122,10 @@ gh pr create --title "test(data-stack): 串租户回归测试套件（P3）" --b
 
 - [ ] **Step 1: GATE**——外部输入⑤（SaaS multi 环境两测试租户：各自行/用户/PAT/ZOS 凭据/报表）+ T11/T12 已合并 + 数据面已在 SaaS 机部署（provisioning 模板已对两租户跑过）。
 - [ ] **Step 2: 跑 T12 套件真机版**——四断言面全绿；物化 job 以两租户循环形态跑一轮（每租户 schema 各自有数）。
+  - [ ] **隔离承重点回读（#174 / #175，裁决 = 先验后裁，2026-09-23 用户拍）**：`scope` 作 `USER MAPPING` 的 OPTION **无上游依据**（#174），且实现已把 spec §11.2 #6 的「**每租户一桶**」**降级为「共享桶 + 前缀 `SCOPE`」**（#175）⇒ **本步必须真机回读 DuckDB 侧 secret 的 `scope`**——**只验「DDL 没报错」不算验**（那正是 #174 点名的假绿形态）。两条分支：
+    - **验通过** ⇒ **接受**该降级，并**回写 spec §11.2 #6**（写明：降级事实 + 依据 + 「**隔离的承重点是 `SCOPE`**」）——**回写 spec 是 T13 的动作**（spec 正文按纪律不追改，此处的回写是裁决后的一次性合法更新）。
+    - **验不通** ⇒ **必须改造为「每租户一桶」**（或上游支持的等价隔离），**不得将就**。
+    - **未验不得定稿**：本条的结论直接撑起 P3 的隔离承诺 ⇒ **不允许「先写结论、后补验」**。
 - [ ] **Step 3: 收尾落档**——
   - spec（`2026-09-20-data-stack-module-design.md`）：§11.8 分期表加落地注记（P0–P3 各一行：日期 + PR/验收指针）；已知边界按实际落地更新（Metabase 嵌入面暴露通道的最终形态、ducle→ZOS 结论）。
   - handbook §5 验收记录补 P2/P3 两行。

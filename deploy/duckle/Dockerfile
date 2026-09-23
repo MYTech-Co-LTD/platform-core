@@ -27,7 +27,9 @@
 #      `duckdb`（该函数 docstring 原文：'Locate the DuckDB CLI that `duckdb-cli` installed
 #      alongside us'）。
 #
-#   ② **不照抄 `DUCKDB_VERSION=1.5.5`**。范文要与 pg_duckdb 内核（v1.5.5）对齐。核对后不采用：
+#   ② **不照抄 `DUCKDB_VERSION=1.5.5`**。范文的前提是与 pg_duckdb 内核（**v1.5.5**）对齐——
+#      ⚠️ **该前提已过期**（2026-09-23：pg_duckdb 改走**官方镜像** `pgduckdb/pgduckdb:18-v1.1.1`，
+#      上游自陈配对 = **DuckDB v1.4.3**）。核对后**结论不变、且理由更强**（不照抄 1.5.5）：
 #      duckle 0.7.3 把 `duckdb-cli==1.5.4` 钉死在**自己的包元数据**里（不是建议，是 Requires-Dist），
 #      且 runner 二进制里带 `target_version 1.5.4` 的版本检查字符串（v0.7.3 二进制实测）。
 #      强行改 1.5.5 会让 pip 解析出与引擎自陈 target 不一致的组合，而**该组合的行为未实测** ——
