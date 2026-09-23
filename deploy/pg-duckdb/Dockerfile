@@ -1,7 +1,13 @@
 # deploy/pg-duckdb/Dockerfile — 自建 pg_duckdb（spec 2026-09-20 §11.2 #3 / §11.4，实测 recipe 容器化）。
 #
-# 为什么自建：官方 pg_duckdb 钉 DuckDB v1.5.4，duckdb-ossie 只发到 v1.5.5（安装 404，实测）；
+# ⚠️ 当前未启用（备件）——2026-09-23：部署路径已改用官方镜像 pgduckdb/pgduckdb:18-v1.1.1
+#（deploy/data-compose.yml）。本文件保留不删；启用前先按 README §0 的订正口径核对上游自陈配对、
+# 重新实测编译，并出新 tag。详见 deploy/pg-duckdb/README.md 文首与 §2.2、§5.2。
+#
+# 为什么当初自建：官方 pg_duckdb 钉 DuckDB v1.5.4，duckdb-ossie 只发到 v1.5.5（安装 404，实测）；
 # 且 pg_duckdb 需 superuser + shared_preload_libraries（spec §9.4 方案 2）⇒ 必须自建 PG。
+# ⚠️ 该理由**已消失**（ossie 本轮不采用）；且本镜像的 v1.1.1 × v1.5.5 配对**实测编译失败**
+#（8 处 API 断裂，见 README §2.2）⇒ 这条路本轮不通。
 #
 # 构建耗时长（C++ 全量编译，-j2 下 ~1–2h）——这是版本换来的代价，别为了快改并行度把机器打 OOM
 #（spec 实测：外层 -j 压不住 ninja，它按 nproc 起任务 ⇒ OOM；DISABLE_UNITY=1 同理是 OOM 对策）。

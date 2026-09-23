@@ -134,3 +134,61 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
 5. **资源预算四个参数**（`--memory-limit` / `--threads` / `--temp-dir` / `--max-temp-size`）——
    引擎帮助已实测（见 `deploy/duckle/README.md` §5），但**本仓的部署里给什么值未定**，
    且**环境变量形态未实测**（只实测了命令行开关）。
+6. **引擎能力接入的三条坑与四项未验** —— 见 §7（C3 的三条坑**已实测，按纪律对待**；C4 的四项**是 gate**）。
+
+## 7 引擎能力接入（spike 实测结论，2026-09-23）
+
+> **本节是「duckle 的哪部分能力本仓要接、接得上多少」的正典**（接手方先读 `docs/architecture.md`
+> §2.2 第 2 条）。逐条区分**原生可替代 / 半替代 / 仍需自建**——**别把三者读成一回事**。
+
+### 7.1 三条**原生可替代**（用引擎自己的面，不自己造）
+
+| 要的能力 | 用 duckle 的什么 | 形态 |
+|---|---|---|
+| **列漂移门禁** | `drift` | 抓 **missing / added / typeChanged** 三类，**exit 1** |
+| **落地契约校验** | `node.data.schema` + `qa.contract`（**+ `drift`**） | 按声明定型，不符即失败（**不静默降成 VARCHAR**） |
+| **管线级血缘** | `catalog build` → `.duckle/catalog.json` | 含 **lint / orphans / owners** |
+
+### 7.2 一条**半替代**（一半靠引擎，一半**仍需自建**）
+
+**新鲜度**：`run receipt` + `logs/duckle_metrics.prom` + `qa.freshness` 能给**上次成功时间**与**行数**
+——**但「输入指纹」引擎自陈未按 run 记录** ⇒ 这一半**仍需自建**。**别把「有时间戳」当成「有输入指纹」。**
+
+### 7.3 三个坑（**写成纪律，不许漏**）
+
+1. ⚠️ **`drift` 在「源未声明 schema」时静默 `exit 0`（假绿）** ⇒ **门禁必须先断言「声明存在」**，
+   再判 drift 的结论。只看退出码 = 把没声明当成没漂移。
+2. ⚠️ **`qa.freshness` 对 UTC 列按本地墙钟算（实测偏 +8h）** ⇒ 用它**必须强制时区对齐**
+   （本仓铁律：时间一律 **RFC3339 UTC**）。不钉时区就会得出「数据晚 8 小时」的假告警，
+   或反过来**把真延迟判成新鲜**。
+3. ⚠️ **`pipelineHash` 是「代码指纹」，不是「数据指纹」** ⇒ **不能**用它判「输入数据变没变」。
+   判定输入变化要靠**自建的输入指纹**（见 §7.2）。
+
+### 7.4 未验清单（**这些是 gate，不是「大概可以」**）
+
+1. **远端源（S3 / PG / REST）上的 `drift`** —— 未验（本机只验到本地形态）。
+2. **`review --data` / `review --drift`** —— 未验。
+3. **容器内行为** —— 未验（实测机的 docker daemon 未运行；镜像也未构建，见 `deploy/duckle/README.md` §4/§6）。
+4. **非回环 `UNCLAIMED` 分支** —— 未验（安全闸覆盖了「空 token」，其余控制台面见 `deploy/duckle/README.md` §6 第 4 条）。
+
+### 7.5 接入方式（**凭据与网络从哪来**）
+
+`drift` / `review --data` **要凭据与网络** ⇒ **etl job 显式带 `--token` 跑**——这是
+**入口闸白名单之外的设计路径**。
+⚠️ **不是**「放宽 `deploy/duckle/entrypoint.sh` 的闸」：那道白名单（`sequence` / `work` /
+`deliveries` / `drift` / `branch` / `python` 移出，`review` 改条件动词）是**安全边界**，
+本轮接入能力**不放宽它**。二者的分工：**闸管「裸跑时不许做什么」，job 管「授权作业带凭据做什么」。**
+
+### 7.6 落点结论（对 `contracts/` 的分工订正）
+
+⇒ **`contracts/` 降级为「人写的意图源」**（讲清该源该长什么样、owner 是谁、分区怎么切），
+**机器面改用 duckle 自己的声明与门禁**（`node.data.schema` + `qa.contract` + `drift`）。
+两者**不是二选一**：契约仍是接入的起点与评审依据，「落盘即定型」的**执行点**从「另建校验器」
+移到**管线**。相应说明见 `contracts/README.md` §10；`docs/architecture.md` §5.1 第 2 条已同步。
+
+> **附带订正（C6）**：PyPI 上 `duckle` 除 `manylinux2014_x86_64` 外**还有 `macosx_11_0_arm64`
+> 与 `manylinux2014_aarch64` wheel**（**实测装机成功**：`0.7.3` + 传递依赖 `duckdb-cli==1.5.4`）。
+> ⇒ ① `deploy/duckle/README.md` §2.2 的「**release 资产只有 `-linux-x64`**」那句只对
+> **release 二进制**成立（**PyPI 侧有 arm64/macOS wheel**），该处已订正；
+> ② §4 说的「本仓**没有本地 duckle**」是**当时（T5）**的事实 —— **本机实测可以装**
+> （macOS arm64，见上），但**装得上 ≠ 已验证管线**，§6 的未验项一条都不因此销账。

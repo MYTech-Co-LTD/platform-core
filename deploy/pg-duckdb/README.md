@@ -1,17 +1,36 @@
-# deploy/pg-duckdb — 自建 pg_duckdb 镜像（P0）
+# deploy/pg-duckdb — 自建 pg_duckdb 镜像（P0）｜**当前未启用（备件）**
 
-数据面的 PG 必须带 pg_duckdb，而 pg_duckdb **要 superuser + `shared_preload_libraries`**
-（spec §9.4 方案 2）⇒ 不能用托管 PG、也不能用官方镜像，得自建。
+> ## ⚠️ 本轮（2026-09-23）改用**官方镜像**，本目录降为**未启用（备件）**
+>
+> `deploy/data-compose.yml` 的 `pg_duckdb` 服务现在拉 **`pgduckdb/pgduckdb:18-v1.1.1`**
+> （Docker Hub，**上游构建**；其自陈配对 = **DuckDB v1.4.3**）。本目录的 Dockerfile /
+> workflow **全部保留**，但**不在任何部署路径上**——将来若要走 ossie 通路，按 `main` + commit
+> sha **重新验证配对**再启用。
+>
+> **为什么放弃自建（钉 DuckDB v1.5.5 的唯一理由已消失 + 配对实测失败）**：
+> 1. **前提变了**：`duckdb-ossie` 本轮**不采用**（语义事实源 = dbt YAML）⇒「必须在 v1.5.5 上装
+>    ossie」这条**自建的唯一理由不存在了**。
+> 2. **配对实测失败**：`pg_duckdb v1.1.1 × DuckDB v1.5.5` **首次构建实测编译失败**——
+>    **8 处 API 断裂**（如 `DBConfigOptions` 无 `allow_unsigned_extensions`、
+>    `extension_directory` 已改名 `extension_directories`）。逐条见 §2.2。
+> 3. **官方镜像可达**：目标机（`10.0.0.5` = `113.249.104.181`）的 dockerd 已配
+>    `HTTPS Proxy 113.250.177.229:4878`，`docker pull alpine:3.20` **真下载成功** ⇒ 能拉 Docker Hub。
+>
+> **历史理由（保留作备件启用时的背景）**：pg_duckdb **要 superuser +
+> `shared_preload_libraries`**（spec §9.4 方案 2）⇒ **不能用托管 PG**（这条**现在依然成立**，
+> 官方镜像也是自建 PG 基底）。当初自建的**额外**理由是「官方镜像钉 v1.5.4 而 ossie 只发到
+> v1.5.5，在 v1.5.4 上安装报 404（实测）」——**该理由随 ossie 出局而消失**。
 
-**为什么不用官方镜像**：官方 pg_duckdb 钉 DuckDB v1.5.4，而语义层要装的 `duckdb-ossie`
-只发到 v1.5.5 —— 在 v1.5.4 上安装报 404（实测）。所以自建，把 DuckDB 钉在 v1.5.5。
-
-- **镜像**：`ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5`
-- **消费方**：`deploy/data-compose.yml` 的 `pg_duckdb` 服务（T3）。**改 tag 必须两边同改。**
+- **镜像**（备件路径）：`ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5`
+  ——⚠️ **产物从未构建过**（配对实测编译失败，见上）；tag 公式与纪律见 §0。
+- **当前实际消费方**：`deploy/data-compose.yml` 的 `pg_duckdb` 服务拉的是**官方镜像**
+  `pgduckdb/pgduckdb:18-v1.1.1`。**备件将来启用时**才需要「改 tag 两边同改」。
 
 ---
 
 ## 0. 版本与 tag 纪律
+
+> ⚠️ **本节全部是「备件启用时」的纪律**——当前**未启用**，不构成任何在跑的部署路径。
 
 tag 编码**两个**版本：`<去掉 v 的 pg_duckdb 源码 tag>-duckdb<去掉 v 的 DuckDB 版本>`。
 两者的唯一事实源是 Dockerfile 顶部的两个 `ARG`（`PG_DUCKDB_VERSION` / `DUCKDB_VERSION`）。
@@ -24,7 +43,10 @@ tag 编码**两个**版本：`<去掉 v 的 pg_duckdb 源码 tag>-duckdb<去掉 
   `default_version = '1.1.0'`。所以 tag 是 `1.1.1-...`，但 `CREATE EXTENSION pg_duckdb` 装出来
   `SELECT extversion ...` 是 **1.1.0**。这不是错，是上游 tag 与 control 版本不同步
   （已核对 v1.1.1 源码树）。别按 tag 名去断言扩展版本。
-- 版本更换前**先核对 duckdb-ossie 的发布版本**（它决定 DuckDB 上限——自建的理由就是这个）。
+- ~~版本更换前**先核对 duckdb-ossie 的发布版本**（它决定 DuckDB 上限——自建的理由就是这个）。~~
+  **这条已作废**（2026-09-23）：ossie 本轮出局，DuckDB 上限不再由它决定。启用备件时改为
+  **按 pg_duckdb 上游自陈的配对核对**（源码的 CHANGELOG / CI 默认值），**并且必须重新实测**——
+  v1.1.1 × v1.5.5 这个「自选配对」就是这么炸的（§2.2）。
 
 ---
 
@@ -116,6 +138,10 @@ docker push ghcr.io/mytech-co-ltd/platform-core-pg-duckdb:1.1.1-duckdb1.5.5
 
 ## 2. 首次构建要盯的两件事（COPY 落点 + 版本配对）
 
+> ⚠️ **按「备件」状态读本节**：本目录**未启用**。首次构建**已实测停在 §2.2 的编译阶段**（失败）
+> ⇒ §2.1 的 COPY 落点核对**从未执行过**（根本没走到 install 之后）。两节都按
+> 「**备件将来启用时**的核对步」读。
+
 ### 2.1 COPY 落点（三条判据）
 
 Dockerfile 最后两条 `COPY --from=build` 的路径是「按 PG 布局推定」的，**首次真构建时按实际
@@ -140,7 +166,10 @@ docker run --rm --entrypoint bash <新 tag> -c '
 > **pg_duckdb 1.2.0-dev**（control 里 `default_version = 1.2.0`）+ DuckDB v1.5.5，
 > 而本镜像钉的是 v1.1.1 源码 —— **机制同源、revision 不同**，所以这次核对不能省。
 
-### 2.2 版本配对：编译可行性**没有任何一方验证过**（比 COPY 落点更该盯的）
+### 2.2 版本配对：**首次构建实测已判定——这一对编译失败（8 处 API 断裂）**
+
+> ⚠️ **本节结论已由实测落定（2026-09-23）**，它正是「本轮改用官方镜像」的直接原因之一。
+> 本节**不是**「未知风险的提示」，而是**这条自建路径被判定不可用的记录**。
 
 上面那句「revision 不同」说的只是 COPY 落点。它**还有另一半后果**：本镜像的
 `pg_duckdb v1.1.1 + DuckDB v1.5.5` 是**未经上游、也未经 lab 验证过的配对**。
@@ -153,13 +182,30 @@ docker run --rm --entrypoint bash <新 tag> -c '
 - **lab 验证的也不是这个**：lab 是 pg_duckdb **1.2.0-dev（main）** + DuckDB v1.5.5，而 main 的
   Makefile 默认 = **v1.5.4** ⇒ 被验证的 override 是 **v1.5.4 → v1.5.5（同 minor 的补丁级）**；
   本镜像是 **v1.4.3 → v1.5.5（跨 1 个 minor）**，**不等于** lab 那一对。
-- **已排除的**：头文件级断裂 —— `v1.1.1` 引用的 `duckdb/*` 头文件在 DuckDB v1.5.5 的
-  `src/include` 下 **52/52 全部存在**（实测核对）。所以「include 不到」这种失败不会发生。
-- **仍未知的**：符号 / API 漂移。上面那条只证明「能 include」，**不证明「能链接、能跑」**
-  —— 既未证实也未证伪。
+- **首次构建实测：8 处 API 断裂** —— 逐处登记**原文名**：
 
-⇒ **首次 dispatch 就是这一对的验收**，也是最先要知道「要不要回退」的地方（回退口径见 §5.2）。
-盯的是 `make` 阶段的**编译/链接错误**，而不是下面这些落点判据。
+  | # | 断裂点（原文名） | 已知形态 |
+  |---|---|---|
+  | 1 | `DBConfigOptions::allow_unsigned_extensions` | `DBConfigOptions` 上**无**该成员 |
+  | 2 | `DBConfigOptions::enable_external_access` | — |
+  | 3 | `DBConfigOptions::allow_community_extensions` | — |
+  | 4 | `DBConfigOptions::autoinstall_known_extensions` | — |
+  | 5 | `DBConfigOptions::autoload_known_extensions` | — |
+  | 6 | `DBConfigOptions::extension_directory` | **已改名** `extension_directories` |
+  | 7 | `DBConfig::storage_extensions` | — |
+  | 8 | `DBConfig::optimizer_extensions` | — |
+
+  「—」= **只登记断裂点原名**：除 1 与 6 之外的形态**未逐条定性**，此处**不替上游编原因**。
+
+- ⚠️ **口径（原文的推论错在哪）**：原文写「**已排除的**：头文件级断裂 —— 52/52 头全在（实测），
+  所以「include 不到」这种失败不会发生」+「**仍未知的**：符号 / API 漂移，既未证实也未证伪」。
+  **头文件 52/52 全在是真的**（复核对 52 条逐条 HTTP 探针 = 52/52 全 200），但它**只**证明
+  「include 得到头文件」，**推不出**「编译得过」——上表 8 处正是「头文件里**找不到这些符号**」
+  的形态。**别再把「头文件在」读成「配对可行」**；「未知」也**不再是未知**——已实测**证伪**。
+
+⇒ **结论：该配对不成立**（编译失败），自建路径据此**降为「未启用（备件）」**（见文首）。
+将来启用备件时，**先按 §0 的订正口径核对上游自陈配对，并重新实测**，**别复用这一对**；
+下面的 COPY 落点判据（§2.1）与「真 PG 上验一次可加载」仍是**备件启用时**的核对步。
 
 最后在真 PG 上验一次可加载（`shared_preload_libraries` 之外的第二步）：
 
@@ -215,26 +261,40 @@ SELECT extversion FROM pg_extension WHERE extname = 'pg_duckdb';   -- 期望 1.1
 
 ## 5. 开放项与回退口径
 
-### 5.1 构建频率（**开放项**，本工作流不替它拍板）
+### 5.1 构建频率（**开放项已消解**——前提消失）
 
-spec §11.9 #4：自建镜像的**构建频率与触发**仍是开放项（跟 pg_duckdb 上游走，还是跟 DuckDB
-版本走，未定）。所以工作流**只开 `workflow_dispatch`**：不设 `schedule`、不在 push/PR 上跑。
+> ⚠️ **2026-09-23：本节随「本轮未启用」消解。** 下面这段记录的是备件启用时仍成立的部分。
 
-现口径 = **按需手动 dispatch**。要升级版本时：改 Dockerfile 的两个 `ARG` → 重跑 → 出新 tag
-（**tag 的三个引用点必须同改**，见 §5.2）。等 §11.9 #4 拍板后，再把触发方式写进这里。
+~~spec §11.9 #4：自建镜像的**构建频率与触发**仍是开放项（跟 pg_duckdb 上游走，还是跟 DuckDB
+版本走，未定）。~~ **该开放项的前提（自建镜像在部署路径上）已不存在**——本轮改官方镜像，
+自建降为未启用备件 ⇒「多久构建一次」这个问题的对象没有了。将来启用备件时再议（届时应先按
+§2.2 的实测结论重新选配对）。
 
-### 5.2 版本配对的回退路径（**首次 dispatch 前先读**）
+工作流本身**只开 `workflow_dispatch`**（不设 `schedule`、不在 push/PR 上跑）这条形态**保持不变**——
+它对备件路径依然是对的：跑一次 ~1–2h 的 C++ 构建，不该被无人值守触发。
+要升级版本时：改 Dockerfile 的两个 `ARG` → 重跑 → 出新 tag
+（**tag 的三个引用点必须同改**，见 §5.2）。
 
-**开放项（随本轮登记）**：`PG_DUCKDB_VERSION=v1.1.1` + `DUCKDB_VERSION=v1.5.5` 这一对
-（§2.2）**尚未被任何一方验证过**，而**首次 dispatch 同时就是这一对的验收** —— 跑通之前，
-它属于「未验证配对」，不能算「P0 已交付」。
+### 5.2 版本配对的回退路径（**备件启用前先读**）
 
-若那次 dispatch **编译失败**（最可能是 §2.2 说的符号/API 漂移），按顺序回退，
+> ⚠️ **本节前提已变（2026-09-23）**：原文写「这一对尚未被任何一方验证过，首次 dispatch 兼作
+> 验收」。**验收已经发生了，结果是失败**（§2.2 的 8 处 API 断裂）⇒ 本节从「预案」变成
+> 「**历史记录 + 备件启用时的回退口径**」。本轮**没有走这条回退**——本轮的整体处置是
+> **改走官方镜像**（文首），**不是**「在自建路径里换一个配对」。
+
+**原预案**：`PG_DUCKDB_VERSION=v1.1.1` + `DUCKDB_VERSION=v1.5.5` 这一对（§2.2）**未经任何一方
+验证过**，而首次 dispatch 同时就是它的验收 —— 跑通之前属「未验证配对」，不能算「P0 已交付」。
+
+**实测失败后**（就是 §2.2 那 8 处断裂），若**仍要走自建**，按顺序回退，
 **只改 `PG_DUCKDB_VERSION` 这一个 ARG**：
 
 1. `PG_DUCKDB_VERSION=main` —— 即 lab 验证过的配对（main 的默认 DuckDB v1.5.4 → override v1.5.5）。
    代价：`main` 是移动靶，可复现性掉一档 ⇒ 这是**应急回退**，不是新默认。
 2. 钉到 lab 对应的 **1.2.0-dev commit**（拿具体 SHA 填进 ARG）—— 要长期用就选这条，可复现。
+
+> ⚠️ **本轮订正的启用口径**（比原预案更严）：备件将来启用时**不能只做上面这个 ARG 回退**——
+> 还得①按 §0 的订正核对**上游自陈的配对**（而不是「谁验证过」），②**重新实测编译**，
+> ③按 §0 出「**新** tag」（见下）。原预案的「换 pair 重跑」不足以恢复这条路径。
 
 ⚠️ **改完 ARG 还有第二步：按 §0 出「新」tag ——`1.1.1-duckdb1.5.5` 不得复用。**
 tag **不是**从 ARG 推导出来的（它是硬编码字面量），所以「只改一个 ARG → 重跑」的实际后果是
@@ -250,7 +310,17 @@ tag 在**三处，必须同改**（漏一处 ⇒ 产物与引用对不上）：
 2. §1b ⑦ 的 `docker commit …:<tag>`（含 §1b 末尾跨机 `docker push` 的那条同 tag 命令）
 3. `deploy/data-compose.yml` 里 `pg_duckdb` 服务的镜像引用（T3；即文首「改 tag 必须两边同改」）
 
-**不往下降 `DUCKDB_VERSION`**：duckdb-ossie 只发到 v1.5.5，降到 v1.4.3 会让 §0 的自建理由
-（语义层装不上）失效——所以回退方向是换 pg_duckdb，不是换 DuckDB。
+~~**不往下降 `DUCKDB_VERSION`**：duckdb-ossie 只发到 v1.5.5，降到 v1.4.3 会让 §0 的自建理由
+（语义层装不上）失效——所以回退方向是换 pg_duckdb，不是换 DuckDB。~~
 
-跑通或回退后，把结论（成功 / 回退到哪一对）写回本节，并删掉这条开放项。
+**⚠️ 上面这条已作废（2026-09-23），作废的不是「不降 DuckDB」这个动作，而是它的理由**：
+「降 v1.4.3 会让自建理由失效」的前提是 **ossie 必须装得上**——而**本轮 ossie 出局**
+（语义事实源 = dbt YAML）⇒ 这条理由消失。**本轮结论是「整条自建路径未启用」**，
+所以「往哪降」已无对象。
+
+**本轮结论（写回本节，开放项就此关闭）**：
+1. `pg_duckdb v1.1.1 × DuckDB v1.5.5` —— **实测编译失败**（§2.2，8 处 API 断裂）。
+2. 处置 = **改用官方镜像 `pgduckdb/pgduckdb:18-v1.1.1`**（上游构建，自陈配对 = DuckDB v1.4.3），
+   本目录与 `.github/workflows/pg-duckdb-image.yml` **降为「未启用（备件）」**，**不删**。
+3. 将来启用备件的入口条件是**重新验证配对**（§0 的订正口径 + 重新实测 + 出新 tag），
+   **不是**「照本节第 1/2 条回退一下就能用」。
