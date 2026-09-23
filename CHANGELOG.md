@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.25.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.25.1...v0.25.2) - 2026-09-23
+- 【修复】data-stack: T6 真机收尾——Jinja 注释/dbt 版本配对/services 三坑登记/gate 销账 (#150) ([#187](https://github.com/MYTech-Co-LTD/platform-core/pull/187), [3148390](https://github.com/MYTech-Co-LTD/platform-core/commit/314839036eb58256af2cedaad1a379d08038bbd3))
+
+
 ## [0.25.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.25.0...v0.25.1) - 2026-09-23
 - 【修复】data: 测试夹具竞态——deleteStaleL1Metrics 用例的 keepIds 并入兄弟文件夹具 ([#186](https://github.com/MYTech-Co-LTD/platform-core/pull/186), [9b30e62](https://github.com/MYTech-Co-LTD/platform-core/commit/9b30e6283850016131eb81ff7a84e1ec0c8d07c7))
 
