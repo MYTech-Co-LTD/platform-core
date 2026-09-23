@@ -215,7 +215,20 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
       await upsertL1Metric(pool, l1Def({ id: `${L1_ID_PREFIX}stale` }))
       await put(ORG, def({ id: 'l2_untouched' }))
 
-      const deleted = await deleteStaleL1Metrics(pool, [`${L1_ID_PREFIX}keep`])
+      // ★ keepIds 必须把**并行兄弟文件此刻的 L1 夹具**一并带上。
+      //
+      // 为什么：`deleteStaleL1Metrics` 的删除侧是 `not (id = any(keepIds))`，作用域是**整个平台桶**
+      // （`org='platform' and source='l1'`）——那正是 sync 要的语义（仓内声明集之外的行都要清）。
+      // 但本用例跑在**跨文件共用的真库**上，且 vitest 默认多文件并行：只传本文件的 keep，
+      // 调用瞬间就会**连带删掉 metrics.test.ts / catalog-consumers.test.ts 正在用的 L1 夹具行**，
+      // 兄弟文件随后所有以它为 baseMetric 的写路径都会拿到 `400 L1_BASE_NOT_FOUND`
+      // （不是期望的 409/201）——症状与代码缺陷极不相似，且取决于两文件相对耗时（CI 上稳定复现）。
+      //
+      // 收窄成「只删本文件自己造的那些」后，本用例仍然**只用 t8test:stale 验**「不在 keepIds ⇒ 被删」，
+      // 断言一字未改；删除面则不再越出本文件的夹具。自带前缀的那些（readonly/stale）本文件自己负责。
+      const siblingIds = (await loadPlatformCatalog(pool))
+        .map((m) => m.id).filter((id) => !id.startsWith(L1_ID_PREFIX))
+      const deleted = await deleteStaleL1Metrics(pool, [`${L1_ID_PREFIX}keep`, ...siblingIds])
 
       expect(deleted).toContain(`${L1_ID_PREFIX}stale`)
       expect(deleted).not.toContain(`${L1_ID_PREFIX}keep`)
