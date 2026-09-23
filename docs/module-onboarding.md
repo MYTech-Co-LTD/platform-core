@@ -51,6 +51,7 @@ globs 是 `['apps/*', 'packages/*', 'modules/*', 'modules/*/*']`——`modules/<
 | `api.internal[]` | 否 | `{method,path,scope}[]` | 模块 API 声明，**未声明 = 不可达**；path 模块内相对、禁裸 `/`；scope ∈ permissions | schema + 装载期双向核对 |
 | `guest.scope` | 否 | string | 访客码，必须 ∈ permissions；宿主 wechat-oa 登录路按已启用模块发放 | schema |
 | `storage.kind` | 否 | `'s3'`（枚举收窄） | 声明 = 宿主在本模块 API 子树注入 `c.get(TENANT_STORAGE)`；**声明的是能力不是租户** | schema |
+| `dataDependencies[]` | 否 | `<schema>.<view>` string[] | **跨模块只读数据依赖**：声明要读的**别的模块拥有的稳定视图**（如 `data.v_order_snapshot`）；声明 = 可读授权、**只读**；门禁层契约而非运行时门卫（差异见 protocol 同名节）。⚠️ **待落地**——schema 未收该字段，落地前写了会被 `ManifestSchema` 拒 | 待落地（schema + 门禁随采集首管线收，见 §5 对应节） |
 | `frontend.console[]` | 否 | `{path,title,icon?,scope,entry}[]` | 管理台平铺页；path 不得占 `/console/admin/` 前缀；scope ∈ permissions | schema + 门禁（entry 文件存在） |
 | `frontend.admin[]` | 否 | 同上 | 管理组子页；path **必须** `/console/admin/` 开头 | schema + 门禁（entry 文件存在） |
 | `frontend.userApp` | 否 | `{mount,dist}` | 独立前端应用（C 端/移动端）；`dist` 相对模块目录 | schema |
@@ -308,6 +309,42 @@ if (!cfg) return c.json({ error: 'ZOS_NOT_CONFIGURED' }, 503)
 - 联动提醒：声明 `storage` 也是租户管理台**「存储配置」页可见**的条件之一（`storageDeclarers ∩ 启用模块 ≠ ∅`，见上面的对照表）。
 - 指针：`docs/module-protocol.md`「租户级配置注入：`storage`」节——那节自成一体（声明姿势 / 宿主注入的键与位置 / 安全性质 / 兜底语义四层皆有），本节只是接入视角的摘要。
 
+### `dataDependencies`：跨模块只读数据依赖（待落地）
+
+**什么时候用它**：你的模块要读**别的模块拥有的数据**（如售后要读数据栈操作面产出的商品档案 /
+门店档案 / 订单数据）。先读 `docs/architecture.md` §2.3 把所有权与一源两面看清楚——
+**这些数据归采集契约所有，你的模块只是消费者**。
+
+**最小示例**（声明 + 只读查询）：
+
+```yaml
+# modules/aftersales/manifest.yaml —— 声明要读的稳定视图（提供方 schema.视图名）
+dataDependencies:
+  - data.v_order_snapshot
+```
+
+```ts
+// 模块路由里只读稳定视图；org 过滤纪律与读自己的表完全一样
+const { rows } = await pool.query(
+  'select order_no, product_id, qty from data.v_order_snapshot where org = $1 order by order_no desc limit 50',
+  [c.get('identity')!.orgId],
+)
+```
+
+- **只声明稳定视图，不声明物理表**：稳定视图（`v_*` 一类）是提供方（`modules/data`）对外承诺的
+  只读面，内部表结构演进不影响你（防腐层）。物理表不是承诺面，声明了也不合规。
+- **只读**：授权面只有 `select`；对提供方 schema 的任何写都不在授权内。
+- **新鲜度 SLA = 采集频率**：订单类管线**小时级或 15 分钟起步（按业务定）**，档案类**日批**——
+  你读到的是「最近一次采集」的数据，**不是实时的**。超周期场景的兜底**已裁不做**
+  （架构 §2.3 拍板④）：不会有「订单同步中」状态，也没有手动回查源系统的口子——消费侧
+  UI/文案不要假设自己能区分「没数据」与「还没同步」。
+- ⚠️ **本能力尚未落地**：schema 未收字段、B1 守卫未扩、引用表 / 稳定视图 / sync job 未建——
+  全部随**采集首管线**落地（架构 §2.3 实施注记，四件套同一个 PR）。落地前在 manifest 写
+  `dataDependencies` 会被 `ManifestSchema` 拒绝，模块代码里写 `data.*` 跨 schema 查询会被
+  B1 报红。
+- 指针：协议正典（声明语义 / 与 `api.internal` 的强度差异 / 门禁核什么）在
+  `docs/module-protocol.md`「跨模块只读数据依赖：`dataDependencies`」节。
+
 ## §6 接入验收清单
 
 全量命令见 `README.md` §常用命令。模块接入后至少跑通：
@@ -350,6 +387,7 @@ const results = await probeAnonymous(mountedApp) // 期望每条都是 401
 | 进程起不来（装载失败） | 注册路由与声明的**双向差集** | 读失败信息里的差集原文（带 `未声明但已注册 […]；已声明但未注册 […]`） |
 | 停用模块的 API 面是 404（不是 403） | 停用语义**有意如此**（404 与「不存在」同形 ⇒ 模块 API 面内不可枚举） | `module-protocol.md`「停用语义」节 |
 | `c.get(TENANT_STORAGE)` 恒 `undefined` | ① manifest 没声明 `storage` ② 租户行**部分填写**（绝不回落平台桶） ③ 投影中间件挂载顺序错 | `module-protocol.md`「租户级配置注入」节 |
+| `gates` 报 B1 跨 schema 引用（如 `data.v_order_snapshot`） | ① 跨模块读**没声明** `dataDependencies`（或声明的是物理表不是稳定视图） ② 本能力**尚未落地**——守卫未扩面前任何跨 schema 引用都报红 ③ 写了他模块 schema（写侧**永远**无豁免） | 声明进 `dataDependencies`（§5 对应节）；能力未落地时先别跨 schema 读（`architecture.md` §2.3） |
 
 > ⚠️ **裸 `/` 与 scope ∉ `permissions` 不表现为 403**——它们是 schema 拒（`ManifestSchema` 直接
 > 拒绝 ⇒ 装载失败 / `check-manifests` 红），见 §2 的「校验」列。别在这张表里找它们。
