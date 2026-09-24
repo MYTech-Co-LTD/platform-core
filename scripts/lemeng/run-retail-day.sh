@@ -4,15 +4,23 @@
 # 用法（job/exec 内，秘密值来自 job env——本脚本只读不写，任何输出都不回显值）：
 #   sh run-retail-day.sh probe                     # 环境/桶/容器/token 闸 体检（只打印长度与状态码）
 #   sh run-retail-day.sh window 07 [suffix]        # 单时窗
-#   sh run-retail-day.sh windows                   # 昨日 24 时窗全量
+#   sh run-retail-day.sh windows                   # 昨日 24 时窗全量（任一窗失败即整体非零，不再续跑）
 #   sh run-retail-day.sh listing                   # 对象清单（24 个 hour=NN/all.parquet + 字面量占位符扫描）
 #   sh run-retail-day.sh rb "<duckdb SQL>"         # 容器内 duckdb httpfs 回读（值由容器 env 展开）
 #   sh run-retail-day.sh idem 03                   # 幂等重跑并比对 ETag/Size
-#   sh run-retail-day.sh drift                     # 契约漂移门禁（先断言 data.schema 声明存在）
+#   sh run-retail-day.sh idem3 03                  # 幂等强判（同 batch_id 字节一致 + 换 batch_id 因果对照）
+#   sh run-retail-day.sh drift [H]                 # 契约漂移门禁（先断言 data.schema 声明存在）
 #   sh run-retail-day.sh envfile                   # 把 DUCKLE_TOKEN 物化成 deploy/.env（600；compose 插值用）
+#
+# 退出码契约（job 据此判红——S1 教训：「打印 FAIL/VACUOUS 但仍 exit 0」= 假绿，等于没验）：
+#   0 = 该模式全部验证项通过；非 0 = 至少一项验证失败。
+#   取清单失败 / 清单被截断 / 幂等目标对象 NOT_FOUND / 0 检查（drift VACUOUS）一律非 0。
+#   windows：任一窗失败 ⇒ 立即非零退出，不再续跑后续窗。
 #
 # 依赖 env: LEMENG_TOKEN / DUCKLE_TOKEN / ZOS_BUCKET / ZOS_ENDPOINT / ZOS_REGION /
 #           ZOS_ACCESS_KEY / ZOS_SECRET_KEY / BRANCH_NUMS / SYSTEM_BOOK / BIZDAY
+# 可选 env: LEMENG_LIST_MAX_KEYS —— 列举单页上限，默认 1000（= S3 ListObjectsV2 单页硬上限，安全值）。
+#           只用于测试时临时给小值强制触发「截断即判红」；默认值不得为可测而放小。
 set -u
 REPO=${REPO:-/opt/platform-core-data/platform-core}
 COMPOSE="docker compose -f $REPO/deploy/data-compose.yml"
@@ -21,25 +29,68 @@ LOG_ROOT=/workspace/logs
 BIZDAY=${BIZDAY:-$(date -u -d yesterday +%Y-%m-%d 2>/dev/null || date -u -v-1d +%Y-%m-%d)}
 SYSTEM_BOOK=${SYSTEM_BOOK:-3120}
 PREFIX="lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY"
+# 当日对象前缀（'=' 必须 pct 编码：S3 prefix 里的裸 '=' 会被 SigV4 判无效——Task 8 实测）。
+# 收窄到 bizday 一级：既避免「跨日同 hour key」被误匹配，也让清单不随天数增长（恒 ≤24 键）。
+DAY_PREFIX="lemeng/retail_order_line/system_book%3D$SYSTEM_BOOK/bizday%3D$BIZDAY/"
+LIST_MAX_KEYS=${LEMENG_LIST_MAX_KEYS:-1000}
 RB_HELPER=$REPO/lemeng-readback.sh
 
 duckdb_bin() { $COMPOSE run --rm --entrypoint sh duckle -c 'command -v duckdb' 2>/dev/null | tr -d '\r' | tail -1; }
 
-s3_list() { # $1=prefix
-  curl -s --max-time 25 --aws-sigv4 "aws:amz:${ZOS_REGION:-xinan1}:s3" \
+s3_list() { # $1=prefix → 单页清单到 stdout；HTTP/网络失败非零退出（-f）
+  curl -sSf --max-time 25 --aws-sigv4 "aws:amz:${ZOS_REGION:-xinan1}:s3" \
     --user "$ZOS_ACCESS_KEY:$ZOS_SECRET_KEY" \
-    "https://${ZOS_ENDPOINT}/${ZOS_BUCKET}?list-type=2&prefix=$1"
+    "https://${ZOS_ENDPOINT}/${ZOS_BUCKET}?list-type=2&max-keys=${LIST_MAX_KEYS}&prefix=$1"
 }
 
-count_hour() { # $1=hour -> 该 hour 前缀下的对象数
-  s3_list "lemeng/retail_order_line/system_book%3D$SYSTEM_BOOK/bizday%3D$BIZDAY/hour%3D$1/" | grep -c '<Key>'
-}
-
-hour_meta() { # $1=hour  -> "hour=NN size=S etag=E"（取出该 hour 对象的 ETag/Size，供幂等比对）
-  s3_list "lemeng/" > /tmp/m.xml
-  python3 - "$1" <<'PY'
+list_guard() { # $1=清单文件 $2=前缀(人读) → 非 ListBucketResult / IsTruncated != false ⇒ 判红
+  # 为什么必须判红：截断后 prefix 下只剩前 N 个 key，任何基于它的比对都可能「两边都 NOT_FOUND ⇒
+  # 比两个空串 ⇒ 报 PASS」，即比空气也算过（S1 评审 I3）。宁可红，不许静默退化。
+  python3 - "$1" "$2" "$LIST_MAX_KEYS" <<'PY'
 import re, sys
-h = sys.argv[1]
+f, pfx, mk = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    x = open(f).read()
+except OSError as e:
+    print('LIST_UNREADABLE prefix=%s err=%s' % (pfx, e), file=sys.stderr)
+    raise SystemExit(3)
+if '<ListBucketResult' not in x:
+    print('LIST_INVALID_RESPONSE prefix=%s head=%s' % (pfx, x[:200].replace('\n', ' ')), file=sys.stderr)
+    raise SystemExit(4)
+tr = re.search(r'<IsTruncated>(.*?)</IsTruncated>', x)
+if tr is None or tr.group(1).strip() != 'false':
+    print('LIST_TRUNCATED prefix=%s max_keys=%s IsTruncated=%s'
+          % (pfx, mk, tr.group(1) if tr else 'MISSING'), file=sys.stderr)
+    print('  ⇒ 清单被截断，基于它的比对会静默退化成「比空气也算过」。判红，不退化。', file=sys.stderr)
+    raise SystemExit(5)
+PY
+}
+
+count_hour() { # $1=hour → 该 hour 前缀下的对象数（清单不健康或 0 个都非零退出）
+  pfx="${DAY_PREFIX}hour%3D$1/"
+  if ! s3_list "$pfx" > /tmp/ch.xml; then
+    echo "count_hour: 取清单失败 prefix=$pfx" >&2; return 3
+  fi
+  if ! list_guard /tmp/ch.xml "…/bizday=$BIZDAY/hour=$1/"; then
+    echo "count_hour: 清单不健康，拒绝据此报数 prefix=$pfx" >&2; return 4
+  fi
+  n=$(grep -c '<Key>' /tmp/ch.xml)
+  echo "$n"
+  [ "$n" -gt 0 ] || echo "count_hour: 对象数为 0（hour=$1 该窗对象缺失）" >&2
+  [ "$n" -gt 0 ]
+}
+
+hour_meta() { # $1=hour  -> "hour=NN size=S etag=E"（该 hour 对象的 ETag/Size，供幂等比对）
+  pfx="${DAY_PREFIX}hour%3D$1/"
+  if ! s3_list "$pfx" > /tmp/m.xml; then
+    echo "hour_meta: 取清单失败 prefix=$pfx" >&2; return 3
+  fi
+  if ! list_guard /tmp/m.xml "…/bizday=$BIZDAY/hour=$1/"; then
+    echo "hour_meta: 清单不健康，拒绝据此判幂等 prefix=$pfx" >&2; return 4
+  fi
+  python3 - "$1" "$pfx" <<'PY'
+import re, sys
+h, pfx = sys.argv[1], sys.argv[2]
 x = open('/tmp/m.xml').read()
 for b in re.findall(r'<Contents>(.*?)</Contents>', x, re.S):
     k = re.search(r'<Key>(.*?)</Key>', b).group(1)
@@ -48,7 +99,10 @@ for b in re.findall(r'<Contents>(.*?)</Contents>', x, re.S):
               re.search(r'<ETag>(.*?)</ETag>', b).group(1).strip('"&quot;')))
         break
 else:
-    print('hour=%s NOT_FOUND' % h)
+    # NOT_FOUND 必须非零退出：否则 idem3 会把两个 NOT_FOUND 判成「相等 ⇒ 幂等 PASS」= 比空气
+    print('hour=%s NOT_FOUND prefix=%s keys_seen=%d' % (h, pfx, len(re.findall(r'<Contents>', x, re.S))),
+          file=sys.stderr)
+    raise SystemExit(6)
 PY
 }
 
@@ -92,15 +146,28 @@ window)
   if [ "$rc" -ne 0 ]; then exit "$rc"; fi
   ;;
 windows)
-  for H in $(seq -w 0 23); do sh "$0" window "$H"; done
+  # 原实现只让循环状态等于**最后一个窗**：中间某个 hour 失败只在日志里一行，进程仍 exit 0。
+  # 现在任一窗失败 ⇒ 立即非零退出且不再续跑（job 据此判红）。
+  for H in $(seq -w 0 23); do
+    sh "$0" window "$H" || { wrc=$?; echo "WINDOWS_FAILED hour=$H exit=$wrc (已停止续跑)"; exit "$wrc"; }
+  done
+  echo "WINDOWS_ALL_OK 24/24 windows"
   ;;
 listing)
-  s3_list "lemeng/" > /tmp/ls.xml
+  # 先清陈旧产物：取清单失败时若留着上一次的 /tmp/ls.xml，下面的扫描会拿旧清单报绿
+  rm -f /tmp/ls.xml
+  if ! s3_list "lemeng/" > /tmp/ls.xml; then
+    echo "LISTING_FAILED: 取清单失败（curl 非零）；已丢弃旧 /tmp/ls.xml，不以旧清单报绿"
+    exit 1
+  fi
+  if ! list_guard /tmp/ls.xml "lemeng/"; then
+    echo "LISTING_FAILED: 清单校验未通过（见上）；已丢弃 /tmp/ls.xml"
+    rm -f /tmp/ls.xml
+    exit 1
+  fi
   python3 <<'PY'
 import re
 x=open('/tmp/ls.xml').read()
-if '<Contents>' not in x:
-    print('NON_LIST_RESPONSE:', x[:300]); raise SystemExit(1)
 rows=re.findall(r'<Contents>(.*?)</Contents>', x, re.S)
 tr=re.search(r'<IsTruncated>(.*?)</IsTruncated>', x)
 print('objects=%d truncated=%s' % (len(rows), tr.group(1) if tr else '?'))
@@ -150,23 +217,33 @@ rb)
   ;;
 idem)
   H="${2:-03}"
-  before=$(hour_meta "$H"); echo "before=$before"
-  sh "$0" window "$H" "-idem"
-  after=$(hour_meta "$H"); echo "after=$after"
-  if [ "$before" = "$after" ]; then echo "IDEMPOTENT=PASS"; else echo "IDEMPOTENT=FAIL"; fi
+  before=$(hour_meta "$H") || { echo "IDEM_FAILED: 取 before 元数据失败 hour=${H}（清单缺失/截断/取失败）"; exit 1; }
+  echo "before=$before"
+  sh "$0" window "$H" "-idem" || { wrc=$?; echo "IDEM_FAILED: 重跑 window 失败 exit=$wrc"; exit "$wrc"; }
+  after=$(hour_meta "$H") || { echo "IDEM_FAILED: 取 after 元数据失败 hour=$H"; exit 1; }
+  echo "after=$after"
+  if [ "$before" = "$after" ]; then
+    echo "IDEMPOTENT=PASS"
+  else
+    echo "IDEMPOTENT=FAIL"
+    exit 1
+  fi
   ;;
 idem3)
   # 幂等强判：① 同 batch_id 重跑 ⇒ 字节一致；② 换 batch_id ⇒ 差异仅来自 batch_id 载荷列（因果对照）
   H="${2:-03}"; A="retail-${SYSTEM_BOOK}-idemA-${H}"; B="retail-${SYSTEM_BOOK}-idemB-${H}"
   BATCH_ID_OVERRIDE="$A" sh "$0" window "$H" "-iA" >/tmp/wi.log 2>&1 || { echo "window A run1 FAILED"; tail -6 /tmp/wi.log; exit 1; }
-  ra=$(hour_meta "$H")
+  ra=$(hour_meta "$H") || { echo "hour_meta A_run1 FAILED hour=${H}（NOT_FOUND/清单截断/取失败）"; exit 1; }
   BATCH_ID_OVERRIDE="$B" sh "$0" window "$H" "-iB" >/tmp/wi.log 2>&1 || { echo "window B run FAILED"; tail -6 /tmp/wi.log; exit 1; }
-  rb=$(hour_meta "$H")
+  rb=$(hour_meta "$H") || { echo "hour_meta B_run1 FAILED hour=$H"; exit 1; }
   BATCH_ID_OVERRIDE="$A" sh "$0" window "$H" "-iA2" >/tmp/wi.log 2>&1 || { echo "window A run2 FAILED"; tail -6 /tmp/wi.log; exit 1; }
-  ra2=$(hour_meta "$H")
-  echo "A_run1=$ra"; echo "B_run1=$rb"; echo "A_run2=$ra2"; echo "objects_hour${H}=$(count_hour "$H")"
-  [ "$ra" = "$ra2" ] && echo "IDEMPOTENT_SAME_BATCH=PASS" || echo "IDEMPOTENT_SAME_BATCH=FAIL"
-  [ "$ra" = "$rb" ] && echo "BATCH_ID_EFFECT=NONE" || echo "BATCH_ID_EFFECT=OBSERVED"
+  ra2=$(hour_meta "$H") || { echo "hour_meta A_run2 FAILED hour=$H"; exit 1; }
+  nobj=$(count_hour "$H") || { echo "count_hour FAILED hour=${H}（对象数 0 或清单不健康）"; exit 1; }
+  echo "A_run1=$ra"; echo "B_run1=$rb"; echo "A_run2=$ra2"; echo "objects_hour${H}=$nobj"
+  idem_rc=0
+  if [ "$ra" = "$ra2" ]; then echo "IDEMPOTENT_SAME_BATCH=PASS"; else echo "IDEMPOTENT_SAME_BATCH=FAIL"; idem_rc=1; fi
+  if [ "$ra" = "$rb" ]; then echo "BATCH_ID_EFFECT=NONE"; else echo "BATCH_ID_EFFECT=OBSERVED"; fi
+  if [ "$idem_rc" -ne 0 ]; then echo "IDEM_FAILED: 同 batch_id 重跑字节不一致"; exit 1; fi
   ;;
 drift)
   echo "== assert data.schema declaration exists (anti-false-green) =="
@@ -189,7 +266,14 @@ drift)
     chk=0
   fi
   echo "drift_checked_sources=$chk"
-  if [ "$chk" -gt 0 ]; then echo "DRIFT_VERDICT=MEANINGFUL"; else echo "DRIFT_VERDICT=VACUOUS(0 checked)"; fi
+  if [ "$rc" -ne 0 ]; then echo "DRIFT_FAILED: drift 自身非零退出 exit=$rc"; exit "$rc"; fi
+  if [ "$chk" -gt 0 ]; then
+    echo "DRIFT_VERDICT=MEANINGFUL"
+  else
+    echo "DRIFT_VERDICT=VACUOUS(0 checked)"
+    echo "DRIFT_FAILED: 0 检查 = 根本没比对，不得报绿（换一个有数据的时窗重跑；空时窗天然无法比对）"
+    exit 1
+  fi
   ;;
 envfile)
   umask 077
@@ -198,7 +282,8 @@ envfile)
   echo "envfile keys=$(cut -d= -f1 "$REPO/deploy/.env" | tr '\n' ',') mode=$(stat -c '%a' "$REPO/deploy/.env")"
   ;;
 *)
-  echo "usage: $0 <probe|diag|window H [suffix]|windows|listing|agg|branches|rb SQL|idem H|drift|envfile>"
+  echo "usage: $0 <probe|diag|window H [suffix]|windows|listing|agg|branches|rb SQL|idem H|idem3 H|drift [H]|envfile>"
+  echo "exit: 0=全项通过；非 0=有验证项失败（含 0 检查/清单截断/NOT_FOUND/取清单失败）"
   exit 2
   ;;
 esac
