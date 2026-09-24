@@ -86,6 +86,15 @@ listing)
   s3_list "lemeng/" | grep -o '<Key>[^<]*</Key>' | sed 's/<[^>]*>//g' | grep -F '${ENV' | head -3
   echo "== scan end =="
   ;;
+diag)
+  echo "== root listing (no prefix) =="
+  s3_list "" | head -c 1200
+  echo
+  echo "== container view of ZOS vars (lengths only) =="
+  $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION --entrypoint sh duckle -c 'echo bucket_len=${#ZOS_BUCKET} ep_len=${#ZOS_ENDPOINT} region_len=${#ZOS_REGION}' 2>&1 | tail -2
+  echo "== workspace parquet (local-write fallback check) =="
+  $COMPOSE run --rm --entrypoint sh duckle -c 'find /workspace -name "*.parquet" 2>/dev/null | head -5; echo ws_listing:; ls -la /workspace 2>/dev/null | head -8; echo duckle_state:; ls -la /workspace/.duckle 2>/dev/null | head -5' 2>&1 | tail -14
+  ;;
 rb)
   shift
   $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
