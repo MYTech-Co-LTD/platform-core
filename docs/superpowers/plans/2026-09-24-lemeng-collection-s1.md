@@ -257,7 +257,7 @@ Expected: 行数=1、类型=DECIMAL(14,2)（与契约一致）。
 
 - [ ] **Step 2: `validate_pipeline` 过 + `duckle-runner validate` 过**
 
-Run（runner 形态）：`/tmp/duckle-venv/bin/duckle-runner validate /tmp/lemeng.retail_order_line.json`
+Run（runner 形态）：`/tmp/duckle-venv/bin/duckle validate /tmp/lemeng.retail_order_line.json`
 Expected: `0 failed`。
 
 - [ ] **Step 3: 落仓提交**
@@ -283,8 +283,8 @@ git commit -m "feat(duckle): 乐檬零售明细采集管线——8页容量+末�
 # 伪码（实际经 openship jobs 一次性 run；分支列表 = whoami.branch_nums 去 99）：
 for H in $(seq -w 0 23); do
   BATCH_ID="retail-3120-$(date -u +%Y%m%dT%H%M%SZ)-$H"
-  duckle-runner --pipeline /pipelines/common/lemeng.retail_order_line.json --workspace /workspace \
-    --duckdb $(command -v duckdb) --log-dir /workspace/logs --name "retail-d-$H"   # env: LEMENG_TOKEN/BIZDAY=昨日/HOUR_FROM=$H:00:00/HOUR_TO=$H:59:59/BRANCH_NUMS/SYSTEM_BOOK=3120/ZOS_*/BATCH_ID
+  duckle --pipeline /pipelines/common/lemeng.retail_order_line.json --workspace /workspace \
+    --duckdb "$(command -v duckdb)" --log-dir /workspace/logs/$H   # env: LEMENG_TOKEN/BIZDAY=昨日/HOUR=$H/HOUR_FROM=$H:00:00/HOUR_TO=$H:59:59/BRANCH_NUMS/SYSTEM_BOOK=3120/ZOS_*/BATCH_ID；CLI 无 --name，按 log-dir 区分（Task 5 实测订正）
 done
 ```
 
@@ -397,13 +397,13 @@ git add dbt/ && git commit -m "feat(dbt): 零售域切新湖——staging 重写
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-BIZDAY=$(date -u -v-1d +%F)          # macOS; 数据面 Linux 用 date -u -d 'yesterday' +%F
+BIZDAY=$(date -u -v-1d +%F)          # macOS; 数据面 Linux 用 date -u -d 'yesterday' +%F；duckle 即 runner（无 duckle-runner 二进制）
 for H in $(seq -w 0 23); do
   BATCH_ID="retail-${SYSTEM_BOOK}-$(date -u +%Y%m%dT%H%M%SZ)-$H"
   export HOUR="$H" HOUR_FROM="${H}:00:00" HOUR_TO="${H}:59:59" BATCH_ID
-  duckle-runner --pipeline /pipelines/common/lemeng.retail_order_line.json \
+  duckle --pipeline /pipelines/common/lemeng.retail_order_line.json \
     --workspace /workspace --duckdb "$(command -v duckdb)" \
-    --log-dir /workspace/logs --name "retail-${BIZDAY}-$H"
+    --log-dir /workspace/logs/${BIZDAY}/$H
   echo "{\"ts\":\"$(date -u +%FT%TZ)\",\"job\":\"retail-day\",\"system_book\":\"$SYSTEM_BOOK\",\"bizday\":\"$BIZDAY\",\"hour\":\"$H\",\"status\":\"ok\"}"
 done
 ```
