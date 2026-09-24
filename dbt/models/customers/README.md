@@ -16,7 +16,9 @@ models/customers/
 
 - **客户目录里不复制 `common/` 的模型**。要改共用口径 ⇒ 改 `common/`（走 PR，被看见），
   不是在本目录 fork 一份 —— 口径只能有单一定义（layered §7 约束 4）。
-- 客户模型引用共用层照旧 `{{ ref('stg_lemeng_retail_detail') }}`（跨目录 ref 在 dbt 里是正常的）。
+- 客户模型引用共用层照旧 `{{ ref('stg_lemeng_retail_order_line') }}`（新湖、**现行**零售 staging；跨目录 ref 在
+  dbt 里是正常的）。⚠️ 旧湖的 `stg_lemeng_retail_detail` 仍在仓里（**双轨期保留、待 S4 删**）——**别拿它当范例**：
+  它的取列形态在本栈上取列即报错（见 `dbt/README.md` §3 第 1 行）。
 - **命名空间用客户标识**：客户特有指标声明为 `<客户标识>:<指标名>`（如 `shanhai:net_sales`），
   与 `common` 域的指标放在同一份声明文件里（`dbt/semantics/l1_metrics.yml`）——
   **同名唯一**是全仓一条规则（静态门禁规则 ⑥），不因为分了目录就放宽。

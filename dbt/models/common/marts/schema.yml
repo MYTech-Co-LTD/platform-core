@@ -19,7 +19,7 @@ models:
       指标声明见 dbt/semantics/l1_metrics.yml（L1 事实源）。
     columns:
       - name: system_book
-        description: 账套（主体维度，3120 熊喵 / 64188 品品甜）。**暂定**：当前由 dbt var 供值，路径解析进列待 T6。
+        description: 账套（主体维度，3120 熊喵 / 64188 品品甜）。**已实证**——身份跟着数据走：值来自**路径**（新湖 hive 分区键 `system_book=<账套>/` 被 read_parquet 自动推断成列，staging 只把它 `::varchar` 定型；2026-09-24 真机 dbt run 通过）。⚠️ `account_book` var 只用于**拼读路径**、不灌数据；「由 var 供值」那套只在双轨期保留的旧湖 `stg_lemeng_retail_detail` 里。
         tests:
           - not_null
           # 账套是**自己控制的枚举**（标准 §4.1 的主体清单），故用 accepted_values 钉死；
