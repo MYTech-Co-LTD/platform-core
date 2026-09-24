@@ -170,14 +170,26 @@ idem3)
   ;;
 drift)
   echo "== assert data.schema declaration exists (anti-false-green) =="
-  grep -c '"schema"' "$REPO/duckle/common/lemeng.retail_order_line.json"
-  echo "== drift --help =="
-  $COMPOSE run --rm -e DUCKLE_TOKEN duckle drift --help 2>&1 | head -20
-  echo "== drift run =="
-  $COMPOSE run --rm -e DUCKLE_TOKEN -e LEMENG_TOKEN -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
-    -e BIZDAY="$BIZDAY" duckle drift --pipeline "$PIPELINE" --workspace /workspace 2>&1 | tail -25
-  echo "drift_exit_code_recorded_above"
-  echo "drift_done"
+  n=$(grep -c '"schema"' "$REPO/duckle/common/lemeng.retail_order_line.json")
+  echo "declared_schema_nodes=$n"
+  if [ "$n" -lt 8 ]; then echo "ASSERT_FAIL: schema declaration missing (drift 会假绿)"; exit 1; fi
+  H="${2:-17}"
+  echo "== drift run (window hour=$H, full env) =="
+  out=$($COMPOSE run --rm \
+    -e DUCKLE_TOKEN -e LEMENG_TOKEN -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
+    -e BIZDAY="$BIZDAY" -e HOUR="$H" -e HOUR_FROM="$H:00:00" -e HOUR_TO="$H:59:59" \
+    -e SYSTEM_BOOK="$SYSTEM_BOOK" -e BRANCH_NUMS -e BATCH_ID="drift-$H" \
+    duckle drift --pipeline "$PIPELINE" --workspace /workspace 2>&1)
+  rc=$?
+  printf '%s\n' "$out" | tail -30
+  echo "drift_exit=$rc"
+  if printf '%s' "$out" | grep -qE '^  summary: [0-9]+ checked'; then
+    chk=$(printf '%s' "$out" | sed -n 's/^  summary: \([0-9]*\) checked.*/\1/p')
+  else
+    chk=0
+  fi
+  echo "drift_checked_sources=$chk"
+  if [ "$chk" -gt 0 ]; then echo "DRIFT_VERDICT=MEANINGFUL"; else echo "DRIFT_VERDICT=VACUOUS(0 checked)"; fi
   ;;
 envfile)
   umask 077
