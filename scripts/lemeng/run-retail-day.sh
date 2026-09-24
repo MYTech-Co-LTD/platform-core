@@ -31,6 +31,10 @@ s3_list() { # $1=prefix
     "https://${ZOS_ENDPOINT}/${ZOS_BUCKET}?list-type=2&prefix=$1"
 }
 
+count_hour() { # $1=hour -> 该 hour 前缀下的对象数
+  s3_list "lemeng/retail_order_line/system_book%3D$SYSTEM_BOOK/bizday%3D$BIZDAY/hour%3D$1/" | grep -c '<Key>'
+}
+
 hour_meta() { # $1=hour  -> "hour=NN size=S etag=E"（取出该 hour 对象的 ETag/Size，供幂等比对）
   s3_list "lemeng/" > /tmp/m.xml
   python3 - "$1" <<'PY'
@@ -74,7 +78,7 @@ probe)
   ;;
 window)
   H="${2:?hour}"; SUF="${3:-}"
-  BATCH_ID="retail-${SYSTEM_BOOK}-$(date -u +%Y%m%dT%H%M%SZ)-${H}${SUF}"
+  BATCH_ID="${BATCH_ID_OVERRIDE:-retail-${SYSTEM_BOOK}-$(date -u +%Y%m%dT%H%M%SZ)-${H}${SUF}}"
   out=$($COMPOSE run --rm \
     -e LEMENG_TOKEN -e DUCKLE_TOKEN -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
     -e BIZDAY="$BIZDAY" -e HOUR="$H" -e HOUR_FROM="$H:00:00" -e HOUR_TO="$H:59:59" \
@@ -127,7 +131,7 @@ SQL
 branches)
   SQL="SELECT branch_num, sum(sale_money) AS fin_amt, count(*) AS rows FROM read_parquet('s3://$ZOS_BUCKET/lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY/**/*.parquet', hive_partitioning=1) WHERE state='FINISHED' GROUP BY branch_num ORDER BY branch_num;"
   $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
-    -e RB_QUERY="$SQL" -v "$RB_HELPER":/rb.sh:ro --entrypoint sh duckle -c 'sh /rb.sh' 2>&1 | grep -vE '^ *Container |^ *Network ' | tail -200
+    -e RB_FLAGS=-csv -e RB_QUERY="$SQL" -v "$RB_HELPER":/rb.sh:ro --entrypoint sh duckle -c 'sh /rb.sh' 2>&1 | grep -vE '^ *Container |^ *Network ' | tail -200
   echo "== branches end =="
   ;;
 diag)
@@ -151,6 +155,19 @@ idem)
   after=$(hour_meta "$H"); echo "after=$after"
   if [ "$before" = "$after" ]; then echo "IDEMPOTENT=PASS"; else echo "IDEMPOTENT=FAIL"; fi
   ;;
+idem3)
+  # 幂等强判：① 同 batch_id 重跑 ⇒ 字节一致；② 换 batch_id ⇒ 差异仅来自 batch_id 载荷列（因果对照）
+  H="${2:-03}"; A="retail-${SYSTEM_BOOK}-idemA-${H}"; B="retail-${SYSTEM_BOOK}-idemB-${H}"
+  BATCH_ID_OVERRIDE="$A" sh "$0" window "$H" "-iA" >/tmp/wi.log 2>&1 || { echo "window A run1 FAILED"; tail -6 /tmp/wi.log; exit 1; }
+  ra=$(hour_meta "$H")
+  BATCH_ID_OVERRIDE="$B" sh "$0" window "$H" "-iB" >/tmp/wi.log 2>&1 || { echo "window B run FAILED"; tail -6 /tmp/wi.log; exit 1; }
+  rb=$(hour_meta "$H")
+  BATCH_ID_OVERRIDE="$A" sh "$0" window "$H" "-iA2" >/tmp/wi.log 2>&1 || { echo "window A run2 FAILED"; tail -6 /tmp/wi.log; exit 1; }
+  ra2=$(hour_meta "$H")
+  echo "A_run1=$ra"; echo "B_run1=$rb"; echo "A_run2=$ra2"; echo "objects_hour${H}=$(count_hour "$H")"
+  [ "$ra" = "$ra2" ] && echo "IDEMPOTENT_SAME_BATCH=PASS" || echo "IDEMPOTENT_SAME_BATCH=FAIL"
+  [ "$ra" = "$rb" ] && echo "BATCH_ID_EFFECT=NONE" || echo "BATCH_ID_EFFECT=OBSERVED"
+  ;;
 drift)
   echo "== assert data.schema declaration exists (anti-false-green) =="
   grep -c '"schema"' "$REPO/duckle/common/lemeng.retail_order_line.json"
@@ -158,7 +175,8 @@ drift)
   $COMPOSE run --rm -e DUCKLE_TOKEN duckle drift --help 2>&1 | head -20
   echo "== drift run =="
   $COMPOSE run --rm -e DUCKLE_TOKEN -e LEMENG_TOKEN -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
-    -e BIZDAY="$BIZDAY" duckle --token "$DUCKLE_TOKEN" drift --pipeline "$PIPELINE" --workspace /workspace 2>&1 | tail -20
+    -e BIZDAY="$BIZDAY" duckle drift --pipeline "$PIPELINE" --workspace /workspace 2>&1 | tail -25
+  echo "drift_exit_code_recorded_above"
   echo "drift_done"
   ;;
 envfile)

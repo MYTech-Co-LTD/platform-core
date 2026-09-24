@@ -10,4 +10,4 @@ set -u
 printf "%s\n" \
   "CREATE SECRET zos_rb (TYPE S3, KEY_ID '$ZOS_ACCESS_KEY', SECRET '$ZOS_SECRET_KEY', ENDPOINT '$ZOS_ENDPOINT', URL_STYLE 'path', USE_SSL true, REGION '$ZOS_REGION'); $RB_QUERY" \
   > /tmp/rb.sql
-duckdb < /tmp/rb.sql
+duckdb ${RB_FLAGS:-} < /tmp/rb.sql
