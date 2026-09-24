@@ -109,7 +109,7 @@ openship jobs（数据面机，cron）
 | G1 | `snk.minio` 对象 key 能否 `${ENV:…}` 参数化（tick 按 hour 分区直写） | tick 落本地湖 → wrapper 用 DuckDB httpfs 上传（已投产通道） |
 | G2 | duckle（DuckDB 1.5.4）写 parquet ↔ pg_duckdb（1.4.3）回读兼容 | main 已列 Gate-E（T6），沿用其处置 |
 | G3 | 调拨/批发明细嵌套行的稳定行键（order_no+item 是否够） | 按实测样本钉死自然键后回填契约 |
-| G4 | 64188 token 的 whoami/能力面与 3120 一致 | 按 3120 范式微调后双账套铺开 |
+| G4 | ~~64188 token 的 whoami/能力面与 3120 一致~~ **已销（2026-09-24 实测）**：whoami `company_id=64188`、可见门店 129 家；能力面与 3120 同形（`posorder.find` 行含 `order_no`/`pos_order_details`，明细含 `order_detail_num`/`item_num`/`system_book_code`，行键范式成立） | ⚠️ 探针方法学：64188 单店单日可能空窗（店 1/99 七天窗均 0 单），探针/铺开须多店合查 |
 
 继承 main `duckle/README.md` §7.4 未验清单中与本设计相关者：远端源 drift、容器内行为（归 S1 一并核）。
 
