@@ -5,17 +5,23 @@
 #   sh run-retail-day.sh probe                     # 环境/桶/容器/token 闸 体检（只打印长度与状态码）
 #   sh run-retail-day.sh window 07 [suffix]        # 单时窗
 #   sh run-retail-day.sh windows                   # 昨日 24 时窗全量（任一窗失败即整体非零，不再续跑）
-#   sh run-retail-day.sh listing                   # 对象清单（24 个 hour=NN/all.parquet + 字面量占位符扫描）
+#   sh run-retail-day.sh listing                   # 当日对象清单（bizday 前缀；断言：非空 + 未截断 + 无 ${ENV 字面量）
 #   sh run-retail-day.sh rb "<duckdb SQL>"         # 容器内 duckdb httpfs 回读（值由容器 env 展开）
-#   sh run-retail-day.sh idem 03                   # 幂等重跑并比对 ETag/Size
 #   sh run-retail-day.sh idem3 03                  # 幂等强判（同 batch_id 字节一致 + 换 batch_id 因果对照）
 #   sh run-retail-day.sh drift [H]                 # 契约漂移门禁（先断言 data.schema 声明存在）
 #   sh run-retail-day.sh envfile                   # 把 DUCKLE_TOKEN 物化成 deploy/.env（600；compose 插值用）
 #
+# 已退役模式（**不要恢复**）——`idem`：
+#   原语义「重跑时窗、只换 batch_id，仍要求 ETag/Size 一致」在本设计下**前提不成立**：`batch_id` 是管线写入的
+#   **载荷列**（Task 3 裁定 `batch.unique=false`；真机实测 2930B/3c9eecf5 → 3011B/740601f3），所以它必然不同 ⇒
+#   该模式**恒红**、只会污染门禁。真 claim 由 `idem3` 覆盖（A/B/A2 三跑 + `BATCH_ID_EFFECT=OBSERVED` 因果对照）。
+#   现 `idem` 只打印退役说明并 exit 2。**别"修"成钉固定 batch_id**：那只是 idem3 的真子集，白增冗余面。
+#
 # 退出码契约（job 据此判红——S1 教训：「打印 FAIL/VACUOUS 但仍 exit 0」= 假绿，等于没验）：
 #   0 = 该模式全部验证项通过；非 0 = 至少一项验证失败。
-#   取清单失败 / 清单被截断 / 幂等目标对象 NOT_FOUND / 0 检查（drift VACUOUS）一律非 0。
+#   取清单失败 / 清单被截断 / 清单为空 / key 里残留 ${ENV 字面量 / 幂等目标对象 NOT_FOUND / 0 检查（drift VACUOUS）一律非 0。
 #   windows：任一窗失败 ⇒ 立即非零退出，不再续跑后续窗。
+#   已退役模式（`idem`）恒 exit 2，不参与任何判断。
 #
 # 依赖 env: LEMENG_TOKEN / DUCKLE_TOKEN / ZOS_BUCKET / ZOS_ENDPOINT / ZOS_REGION /
 #           ZOS_ACCESS_KEY / ZOS_SECRET_KEY / BRANCH_NUMS / SYSTEM_BOOK / BIZDAY
@@ -156,29 +162,47 @@ windows)
 listing)
   # 先清陈旧产物：取清单失败时若留着上一次的 /tmp/ls.xml，下面的扫描会拿旧清单报绿
   rm -f /tmp/ls.xml
-  if ! s3_list "lemeng/" > /tmp/ls.xml; then
+  # 列**当日前缀**（与 hour_meta/count_hour 同一套前缀约定）：当日恒 ≤24 键 ⇒ 不会像全桶前缀
+  # 「lemeng/」那样在约 42 天后 >1000 键、把硬判截断的门禁变成永久红。
+  if ! s3_list "$DAY_PREFIX" > /tmp/ls.xml; then
     echo "LISTING_FAILED: 取清单失败（curl 非零）；已丢弃旧 /tmp/ls.xml，不以旧清单报绿"
     exit 1
   fi
-  if ! list_guard /tmp/ls.xml "lemeng/"; then
+  if ! list_guard /tmp/ls.xml "$DAY_PREFIX"; then
     echo "LISTING_FAILED: 清单校验未通过（见上）；已丢弃 /tmp/ls.xml"
     rm -f /tmp/ls.xml
     exit 1
   fi
   python3 <<'PY'
-import re
+import re, sys
 x=open('/tmp/ls.xml').read()
 rows=re.findall(r'<Contents>(.*?)</Contents>', x, re.S)
 tr=re.search(r'<IsTruncated>(.*?)</IsTruncated>', x)
 print('objects=%d truncated=%s' % (len(rows), tr.group(1) if tr else '?'))
+if not rows:
+    # 本模式声明要核「当日的 hour=NN 对象在位」；0 个对象 = 没有可核的东西，不得报通过
+    print('LIST_EMPTY_PREFIX: 该前缀下 0 个对象 ⇒ 无对象可核（不得当作通过；diag 仍可看桶根）', file=sys.stderr)
+    raise SystemExit(7)
 for b in sorted(rows, key=lambda b: re.search(r'<Key>(.*?)</Key>', b).group(1)):
     k=re.search(r'<Key>(.*?)</Key>', b).group(1)
     print('key=%s size=%s etag=%s' % (k, re.search(r'<Size>(\d+)</Size>', b).group(1),
           re.search(r'<ETag>(.*?)</ETag>', b).group(1).strip('"&quot;')))
 PY
+  lrc=$?
+  if [ "$lrc" -ne 0 ]; then
+    echo "LISTING_FAILED: 清单枚举未通过 exit=${lrc}（见上）；该日可能尚无对象"
+    exit 1
+  fi
   echo "== literal-placeholder scan in keys (must be empty) =="
-  grep -o '<Key>[^<]*</Key>' /tmp/ls.xml | grep -F '${ENV' | head -3
+  leak=$(grep -o '<Key>[^<]*</Key>' /tmp/ls.xml | grep -F '${ENV' | head -3)
+  if [ -n "$leak" ]; then
+    printf '%s\n' "$leak"
+    echo 'LISTING_FAILED: key 里残留 ${ENV:…} 字面量占位符 ⇒ 写入用了未展开的 env（G1b 回归）'
+    exit 1
+  fi
+  echo "(clean)"
   echo "== prefix probe: plain '=' vs pct-encoded '=' (encoding sensitivity) =="
+  # 下面第一条**故意**用未编码的裸 '='（SigV4 判无效 ⇒ 403 打到 stderr）——这是预期输出，不是故障
   printf 'plain_eq_keys=%s\n' "$(s3_list "$PREFIX/hour=03/" | grep -c '<Key>')"
   printf 'pct_eq_keys=%s\n' "$(s3_list "lemeng/retail_order_line/system_book%3D3120/bizday%3D$BIZDAY/hour%3D03/" | grep -c '<Key>')"
   echo "== scan end =="
@@ -216,18 +240,12 @@ rb)
     -e RB_QUERY="$*" -v "$RB_HELPER":/rb.sh:ro --entrypoint sh duckle -c 'sh /rb.sh' 2>&1 | tail -40
   ;;
 idem)
-  H="${2:-03}"
-  before=$(hour_meta "$H") || { echo "IDEM_FAILED: 取 before 元数据失败 hour=${H}（清单缺失/截断/取失败）"; exit 1; }
-  echo "before=$before"
-  sh "$0" window "$H" "-idem" || { wrc=$?; echo "IDEM_FAILED: 重跑 window 失败 exit=$wrc"; exit "$wrc"; }
-  after=$(hour_meta "$H") || { echo "IDEM_FAILED: 取 after 元数据失败 hour=$H"; exit 1; }
-  echo "after=$after"
-  if [ "$before" = "$after" ]; then
-    echo "IDEMPOTENT=PASS"
-  else
-    echo "IDEMPOTENT=FAIL"
-    exit 1
-  fi
+  # 已退役（修复环 2/5；理由见文件头「已退役模式」）。原语义要求「只换 batch_id、ETag/Size 仍相等」，
+  # 而 batch_id 是**载荷列**（Task 3 裁定 batch.unique=false；真机 2930B/3c9eecf5 → 3011B/740601f3）⇒ 恒红。
+  # 真 claim 归 idem3。不要把它"修好"（钉固定 batch_id = idem3 的真子集，只增冗余面）。
+  echo "IDEM_RETIRED: 'idem' 已退役（换 batch_id 后要求 ETag 一致的前提不成立：batch_id 是载荷列）"
+  echo "IDEM_RETIRED: 请用 'idem3 <hour>'：同 batch_id 三跑字节一致 + 换 batch_id 因果对照（BATCH_ID_EFFECT）"
+  exit 2
   ;;
 idem3)
   # 幂等强判：① 同 batch_id 重跑 ⇒ 字节一致；② 换 batch_id ⇒ 差异仅来自 batch_id 载荷列（因果对照）
@@ -282,8 +300,9 @@ envfile)
   echo "envfile keys=$(cut -d= -f1 "$REPO/deploy/.env" | tr '\n' ',') mode=$(stat -c '%a' "$REPO/deploy/.env")"
   ;;
 *)
-  echo "usage: $0 <probe|diag|window H [suffix]|windows|listing|agg|branches|rb SQL|idem H|idem3 H|drift [H]|envfile>"
-  echo "exit: 0=全项通过；非 0=有验证项失败（含 0 检查/清单截断/NOT_FOUND/取清单失败）"
+  echo "usage: $0 <probe|diag|window H [suffix]|windows|listing|agg|branches|rb SQL|idem3 H|drift [H]|envfile>"
+  echo "exit: 0=全项通过；非 0=有验证项失败（含 0 检查/清单截断/清单为空/残留 \${ENV 字面量/NOT_FOUND/取清单失败）"
+  echo "retired: 'idem' 恒 exit 2 —— 用 idem3（见文件头「已退役模式」）"
   exit 2
   ;;
 esac
