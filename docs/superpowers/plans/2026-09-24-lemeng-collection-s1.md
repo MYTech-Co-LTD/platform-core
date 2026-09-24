@@ -177,11 +177,13 @@ Expected: 拿到 5 个组件的 schema JSON；`snk.minio` 存在且字段与 `du
 
 ---
 
-### Task 5: G1 探针——snk.minio key 的 env 参数化
+### Task 5: G1 探针——sink key 的 env 参数化（两段式）
 
-**Files:** 无仓库改动（探针管线留 /tmp，不落仓）；Modify: spec §4.2 G1 行（销账或退路裁定）
+> **环境订正（2026-09-24 执行时发现）**：本机无 ZOS 凭据（凭据只在数据面机/openship env，取不出明文）。原「本地直写 ZOS 测试桶」改为：**G1a 本地零凭据信号探针**（snk.parquet 本地路径的 env 参数化——同一模板引擎，强信号）+ **G1b 原位确认**（并入 Task 8 首次真机写 ZOS，失败即走退路）。spec G1 行在 G1b 确认前保持「部分销账（G1a 信号 + 待 G1b）」。
 
-**Interfaces:** Produces: 覆盖写对象的 key 生成方式（Task 7 管线 sink 参数形态）
+**Files:** 无仓库改动（探针管线留 /tmp，不落仓）；Modify: spec §4.2 G1 行（部分销账标注）
+
+**Interfaces:** Produces: key 模板化的信号结论 + Task 8 的 G1b 验收点（Task 7 管线 sink 参数按信号结论先定形态）
 
 - [ ] **Step 1: 造最小探针管线（引擎产）**
 
