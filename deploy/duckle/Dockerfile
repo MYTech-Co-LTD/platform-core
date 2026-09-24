@@ -59,7 +59,12 @@ FROM python:3.12-slim
 # 钉死版本：0.7.3 = PyPI 实测最新（2026-09-16 发布），也是 release v0.7.3 的同一版。
 # 升级前先看 deploy/duckle/README.md §3「版本与升级」——那里记着 CLI 面的核对点。
 ARG DUCKLE_VERSION=0.7.3
-RUN pip install --no-cache-dir "duckle==${DUCKLE_VERSION}"
+# -i 走国内镜像：与 Dockerfile.server 的 npmmirror 同因（2026-09-23/24 两站实测）——
+# RUN 步骤不继承 dockerd 代理，pip 直连 pypi.org 在境内构建容器里会被掐；经代理则
+# MITM 无 CA 校验不过。镜像源是唯一「可达 + 快 + 不需要装 CA」的路（shanhai 实测 8s 建完）。
+RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ \
+      --timeout 60 --retries 5 \
+      "duckle==${DUCKLE_VERSION}"
 
 # 入口（安全闸 + token 名字翻译 + exec 透传）。见文件头 §③。
 # 单独成文件而非 `sh -c` 内联：它的行为可在本机用 `sh` 直接跑全套用例（含拒跑分支），
