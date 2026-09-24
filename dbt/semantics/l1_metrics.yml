@@ -37,7 +37,7 @@ metrics:
     owner: data-platform
     tier: experimental
     sources:
-      - 's3://<bucket>/lemeng/retail_detail/<账套>/<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
     # 对账（每个声明指标一条独立复算，layered §7 硬约束 7）：对应的 singular test 文件名**不在这里写**
     # —— 名字由 `:` → `__` 的映射函数算出（scripts/check-data-models.mjs 导出的 metricToAuditFileName()，
     #   唯一事实源）。在这里再写一遍文件名 = 两处事实源，映射一改这两行就悄悄过期。
@@ -55,4 +55,4 @@ metrics:
     owner: data-platform
     tier: experimental
     sources:
-      - 's3://<bucket>/lemeng/retail_detail/<账套>/<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'

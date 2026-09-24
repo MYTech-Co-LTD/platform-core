@@ -35,8 +35,18 @@ clean-targets: ['target', 'logs', 'dbt_packages']
 
 vars:
   # ── 非敏感：路径与账套 ───────────────────────────────────────────────────────
-  # 乐檬零售明细前缀（不含 bucket / 协议）：s3://<bucket>/lemeng/retail_detail/<账套>/**/*.parquet
+  # ⚠️ 两个前缀**并存**（双轨期，S1 阶段）：新湖 `retail_order_line` 与旧湖 `retail_detail`。
+  #    谁读哪个：`stg_lemeng_retail_order_line`（新）+ 两个 `audit_*`（新）用下面那个新 var；
+  #    旧 `stg_lemeng_retail_detail` 仍未删（待 S4 回填覆盖同域后删），它用旧 var ——
+  #    **两个都别删**，删哪个都会让另一方静默指向错路径或直接编译失败。
+  #
+  # 乐檬零售**订单明细**前缀（新湖；不含 bucket / 协议）：
+  # s3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet
+  # 出处：contracts/common/lemeng.retail_order_line.json 的 `layout.prefix` / `partitionBy`（hive 三级分区）
+  lemeng_retail_order_line_prefix: 'lemeng/retail_order_line'
+  # 乐檬零售**明细（旧湖）**前缀：s3://<bucket>/lemeng/retail_detail/<账套>/**/*.parquet
   # 出处：docs/data-platform-handbook.md §2 的源清单（`lemeng/retail_detail/<主体>/<日期>/all.parquet`）
+  # 非 hive 命名（目录名不带键名）⇒ 账套只能由 var 供值（见 sources.yml 的 source 级 meta）。
   lemeng_retail_prefix: 'lemeng/retail_detail'
   # 账套 = 主体维度（3120 熊喵 / 64188 品品甜；handbook §2）。
   # ⚠️ 值来自**路径**、不在数据里（handbook §4 欠账「账套只在路径、数据里没有」/ 标准 C3 身份跟着数据走）

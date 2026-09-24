@@ -1,0 +1,83 @@
+# schema.yml — staging 层的模型描述 + 列级 dbt tests（新湖 `stg_lemeng_retail_order_line`）。
+#
+# ⚠️ 落点纪律：**本文件只描述 staging 模型**；`fct_retail_sale` 的描述与测试仍在
+#   `dbt/models/common/marts/schema.yml`（口径模型与清洗模型各自归各自，别互相塞）。
+# ⚠️ L1 语义声明也不在这里，在 `dbt/semantics/l1_metrics.yml`（理由见 marts/schema.yml 头注）。
+#
+# 本文件的两类断言（都不替代对账 —— 对账是 `dbt/tests/audit_*.sql` 的独立复算）：
+#   · 列级 `tests:`（dbt 原生）—— 钉「这一列该有的形状」
+#   · 结构断言（singular test）—— 钉「单列约束抓不住的形状」，见
+#     `dbt/tests/assert_stg_lemeng_retail_order_line_key_unique.sql`（**复合自然键唯一性**）
+#
+# ⚠️ 两种「空」都要当心（本文件两条测试都是**非空断言**，空表上照样绿）：
+#   ① 表是空的 ⇒ 一切列级测试通过，而那不是「数据对」，是「没有数据」；
+#   ② 本层的 cast 写错（截断/取整/精度）⇒ 列级测试一条都不红。抓 ② 的是 `dbt/tests/audit_*.sql`
+#      （绕开 staging 直接打 parquet 的独立复算）。
+version: 2
+
+models:
+  - name: stg_lemeng_retail_order_line
+    description: >-
+      乐檬零售订单明细 staging（新湖）。**一对一、只规范化不改义**：取列 / 命名 / 透传 /
+      分区键定型，不做聚合、不做 join、不定义口径（口径只在 marts 的 fct_retail_sale 定义一次）。
+      源 = 湖表 `lemeng.retail_order_line`（hive 三级分区 system_book/bizday/hour），
+      声明见 `staging/sources.yml`；列全集与空值性以
+      `contracts/common/lemeng.retail_order_line.json`（18 列）为准。
+      分区键的定型机制（显式 cast，为什么不是 hive_types）见模型文件头注。
+    columns:
+      # ── 分区键三列（由路径字符串重推断 + 显式 cast 定型）──────────────────────────────
+      - name: system_book
+        description: '账套（3120 熊喵 / 64188 品品甜）。**hive 分区键**：路径 `system_book=<账套>/` 推断，湖里被自动转成 BIGINT，本层 `::varchar` 定型回契约类型。'
+      - name: bizday
+        description: '营业日（**hive 分区键**，路径 `bizday=<日期>/` 推断为 DATE；管线侧由 shift_table_bizday 定型）。'
+      - name: hour
+        description: '成交时间所在小时 0-23（**hive 分区键**，路径 `hour=<时>/` 推断；零填充目录读回 VARCHAR、无前导零目录读回 BIGINT ⇒ 本层 `::int` 统一）。'
+      # ── 自然键两列（行粒度）──────────────────────────────────────────────────────────
+      - name: order_no
+        description: '订单号。**自然键之一**（行粒度键 = order_no × order_detail_num）。'
+        tests:
+          - not_null
+      - name: order_detail_num
+        description: '明细行号。**自然键之一**（varchar：外部系统编号，长度不受我们控制）。'
+        tests:
+          - not_null
+      # ── 其余列（一对一透传，语义见契约；这里只登记形状，不做口径）────────────────────
+      - name: batch_id
+        description: '批次标记（采集 run id）。**载荷列**（`batch.unique=false`）：同窗重跑会换值，幂等靠对象覆盖写 —— 别拿它做去重或幂等判据。'
+      - name: branch_num
+        description: '门店号（账套内编号）。'
+      - name: branch_name
+        description: '门店名（契约里可空）。'
+      - name: order_time
+        description: '成交时间（湖里已定型为 timestamp，不再是旧湖的字符串）。'
+      - name: order_operate_time
+        description: '操作时间（契约里可空）。'
+      - name: state
+        description: >-
+          单据状态。⚠️ 契约（contracts/…retail_order_line.json）把它写成开放式枚举
+          「FINISHED/CANCELED/REPAID/…」，故下面的 accepted_values 是**2026-09-23 真机实测**到的
+          全集（FINISHED 18566 / CANCELED 1002 / REPAID 110 行），**不是**从契约抄的。
+          出现新状态 ⇒ 本条会红 —— 那正是想要的摩擦（先看见，再决定并入还是单列），
+          别为了变绿随手放宽。
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['FINISHED', 'CANCELED', 'REPAID']
+      - name: order_source
+        description: '订单来源（契约里可空）。'
+      - name: item_num
+        description: '商品号（账套内编号，varchar 防撑爆）。'
+      - name: item_code
+        description: '商品业务码（跨品牌归并键；契约里可空）。'
+      - name: sale_money
+        description: '行成交金额（元，decimal(14,2)）。**净销售额口径的输入列** —— 但口径不在这里定义（含作废/取消行的处理见 fct_retail_sale 头注）。'
+      - name: discount_money
+        description: '行折扣金额（元，decimal(14,2)）。'
+      - name: payment_money
+        description: '行收款金额（元，decimal(14,2)）。'
+      - name: quantity
+        description: '行数量（decimal(14,3)）。'
+
+# 行粒度自然键 **(order_no, order_detail_num)** 的唯一性由 singular test 手写
+# （单列 `unique` 判不了复合键；引 dbt_utils 要加 packages.yml —— 多一层依赖、解析期还要联网）：
+#   dbt/tests/assert_stg_lemeng_retail_order_line_key_unique.sql
