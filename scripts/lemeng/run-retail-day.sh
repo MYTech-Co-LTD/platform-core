@@ -64,10 +64,11 @@ window)
     -e BRANCH_NUMS -e SYSTEM_BOOK -e BATCH_ID="$BATCH_ID" \
     duckle --pipeline "$PIPELINE" --workspace /workspace --duckdb "$(duckdb_bin)" --log-dir "$LOG_ROOT/${H}${SUF}" 2>&1)
   rc=$?
-  status=$(printf '%s' "$out" | grep -oE 'status: [a-z]+' | head -1)
-  sink=$(printf '%s' "$out" | grep -E '^sink ' | head -1)
-  printf 'window hour=%s exit=%s %s sink=%s\n' "$H" "$rc" "${status:-status:none}" "${sink:-none}"
-  [ "$rc" -ne 0 ] && printf '%s\n' "$out" | tail -12
+  status=$(printf '%s' "$out" | grep -oiE 'status[: ]+[a-z]+' | head -1)
+  sink=$(printf '%s' "$out" | grep -iE 'sink' | tail -1)
+  printf 'window hour=%s exit=%s %s\n' "$H" "$rc" "${status:-status:NONE}"
+  printf '%s\n' "$out" | tail -14
+  if [ "$rc" -ne 0 ]; then exit "$rc"; fi
   ;;
 windows)
   for H in $(seq -w 0 23); do sh "$0" window "$H"; done
