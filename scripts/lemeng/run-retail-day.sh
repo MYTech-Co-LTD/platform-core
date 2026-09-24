@@ -24,15 +24,25 @@
 #   已退役模式（`idem`）恒 exit 2，不参与任何判断。
 #
 # 依赖 env: LEMENG_TOKEN / DUCKLE_TOKEN / ZOS_BUCKET / ZOS_ENDPOINT / ZOS_REGION /
-#           ZOS_ACCESS_KEY / ZOS_SECRET_KEY / BRANCH_NUMS / SYSTEM_BOOK / BIZDAY
+#           ZOS_ACCESS_KEY / ZOS_SECRET_KEY / BRANCH_NUMS / SYSTEM_BOOK
+#           BIZDAY 不传时按 **Asia/Shanghai 日历日的昨天** 推（显式钉 TZ，不继承系统 TZ——
+#           数据面机系统 TZ 实测 CST，但 openship cron 实测按 UTC 解释；见 task-10-report.md「时区实测」）。
 # 可选 env: LEMENG_LIST_MAX_KEYS —— 列举单页上限，默认 1000（= S3 ListObjectsV2 单页硬上限，安全值）。
 #           只用于测试时临时给小值强制触发「截断即判红」；默认值不得为可测而放小。
+#           OPS_SINK_ENV —— _ops 投递通道凭据文件，默认 /etc/openobserve-ingest.env（OO_BASE/OO_ORG/OO_AUTH）。
+#           OPS_STREAM   —— OpenObserve 流名，默认 retail-day。
+#           观测通道缺失/失败 ⇒ 打印 OPS_SINK=DISABLED|FAILED，**不影响本脚本退出码**（采集的判定
+#           只由验证项决定），但也绝不静默——字面量可 grep（防「假装在报」）。
 set -u
 REPO=${REPO:-/opt/platform-core-data/platform-core}
 COMPOSE="docker compose -f $REPO/deploy/data-compose.yml"
 PIPELINE=${PIPELINE:-/pipelines/common/lemeng.retail_order_line.json}
 LOG_ROOT=/workspace/logs
-BIZDAY=${BIZDAY:-$(date -u -d yesterday +%Y-%m-%d 2>/dev/null || date -u -v-1d +%Y-%m-%d)}
+# 营业日 = Asia/Shanghai 日历日的昨天。**显式钉 TZ，不继承系统 TZ**——继承等于让偶然决定正确性。
+# 为什么钉死：数据面机系统 TZ 实测为 Asia/Shanghai（CST +0800），但 openship cron 实测按 **UTC** 解释
+# （`17 3 * * *` 的实际 startedAt 逐日为 03:17:00Z ⇒ 11:17 CST）；两种解释下「上海日历日的昨天」
+# 都是同一答案，故钉死后对 cron 语义不敏感（详见 task-10-report.md「时区实测」）。
+BIZDAY=${BIZDAY:-$(TZ=Asia/Shanghai date -d yesterday +%Y-%m-%d 2>/dev/null || TZ=Asia/Shanghai date -v-1d +%Y-%m-%d)}
 SYSTEM_BOOK=${SYSTEM_BOOK:-3120}
 PREFIX="lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY"
 # 当日对象前缀（'=' 必须 pct 编码：S3 prefix 里的裸 '=' 会被 SigV4 判无效——Task 8 实测）。
@@ -112,6 +122,56 @@ else:
 PY
 }
 
+# ── _ops 观测（spec §6「观测：_ops 指标（行数/页数/窗口/耗时）」；§160「_ops 由 job wrapper 写 OpenObserve」）
+# 每窗一行 JSON 到 stdout（字段：ts/job/system_book/bizday/hour/rows/status），并按 SOP 的文件日志通道
+# 投递到 OpenObserve。rows **复用 window 模式已解析的 sink 输出**（同一行 `sink ok (N rows)`），
+# 不另造一次计数——两次计数会漂移。
+OPS_SINK_ENV=${OPS_SINK_ENV:-/etc/openobserve-ingest.env}
+OPS_STREAM=${OPS_STREAM:-retail-day}
+
+ops_rows() { # $1=duckle 输出全文 → 从既有 sink 节点行取行数；取不到按 null（不猜数）
+  r=$(printf '%s\n' "$1" | grep -oE 'sink [a-z]+ \([0-9]+ rows\)' | tail -1 \
+      | grep -oE '\([0-9]+ rows\)' | tr -dc '0-9')
+  [ -n "$r" ] && printf '%s' "$r" || printf 'null'
+}
+
+ops_ship() { # $1=一行 _ops JSON → 投递；**任何情况下都返回 0**（观测通道不影响采集的判定）
+  # 凭据走服务器本地 root-only 文件，变量名与既有 job `infra-health-check-to-openobserve` 同一套
+  # （OO_BASE/OO_ORG/OO_AUTH）。文件缺失 ⇒ DISABLED：采集成功不因观测通道缺失判红，
+  # 但也**绝不静默**——DISABLED/FAILED 都是显式可 grep 的字面量（防「假装在报」）。
+  if [ ! -r "$OPS_SINK_ENV" ]; then
+    printf 'OPS_SINK=DISABLED reason=no_ingest_env file=%s\n' "$OPS_SINK_ENV"
+    return 0
+  fi
+  OO_BASE=''; OO_ORG=''; OO_AUTH=''
+  # shellcheck disable=SC1090
+  . "$OPS_SINK_ENV"
+  if [ -z "$OO_BASE" ] || [ -z "$OO_ORG" ] || [ -z "$OO_AUTH" ]; then
+    printf 'OPS_SINK=DISABLED reason=incomplete_ingest_env file=%s\n' "$OPS_SINK_ENV"
+    return 0
+  fi
+  rm -f /tmp/ops_ship.out
+  code=$(curl -s -o /tmp/ops_ship.out -w '%{http_code}' --max-time 15 \
+    -H "Authorization: Basic $OO_AUTH" -X POST \
+    "$OO_BASE/api/$OO_ORG/$OPS_STREAM/_json" -H 'Content-Type: application/json' \
+    -d "[$1]" 2>/dev/null) || code=000
+  if [ "$code" = "200" ]; then
+    printf 'OPS_SINK=OK stream=%s code=%s\n' "$OPS_STREAM" "$code"
+  else
+    printf 'OPS_SINK=FAILED stream=%s code=%s body=%s\n' \
+      "$OPS_STREAM" "$code" "$(head -c 160 /tmp/ops_ship.out 2>/dev/null | tr -d '\n')"
+  fi
+  rm -f /tmp/ops_ship.out
+  return 0
+}
+
+ops_emit() { # $1=hour $2=rows(number|null) $3=status → stdout 一行 + 投递
+  j=$(printf '{"ts":"%s","job":"retail-day","system_book":"%s","bizday":"%s","hour":"%s","rows":%s,"status":"%s"}' \
+      "$(date -u +%FT%TZ)" "$SYSTEM_BOOK" "$BIZDAY" "$1" "$2" "$3")
+  printf '%s\n' "$j"
+  ops_ship "$j"
+}
+
 case "${1:-}" in
 probe)
   echo "== env presence (names + lengths only) =="
@@ -149,6 +209,9 @@ window)
   sink=$(printf '%s' "$out" | grep -iE 'sink' | tail -1)
   printf 'window hour=%s exit=%s %s\n' "$H" "$rc" "${status:-status:NONE}"
   printf '%s\n' "$out" | tail -14
+  # _ops 行**在判红之前**发出：失败窗也要在观测面留痕（rows=null 而非 0——0 会被误读成「跑了但没数据」）
+  st=$(printf '%s' "$status" | sed 's/^status[: ]*//'); [ -n "$st" ] || st=NONE
+  ops_emit "$H" "$(ops_rows "$out")" "$st"
   if [ "$rc" -ne 0 ]; then exit "$rc"; fi
   ;;
 windows)
