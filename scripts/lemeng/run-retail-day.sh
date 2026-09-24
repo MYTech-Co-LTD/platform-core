@@ -130,7 +130,10 @@ OPS_SINK_ENV=${OPS_SINK_ENV:-/etc/openobserve-ingest.env}
 OPS_STREAM=${OPS_STREAM:-retail-day}
 
 ops_rows() { # $1=duckle 输出全文 → 从既有 sink 节点行取行数；取不到按 null（不猜数）
-  r=$(printf '%s\n' "$1" | grep -oE 'sink [a-z]+ \([0-9]+ rows\)' | tail -1 \
+  # 真机格式是**列对齐**的：`  sink                 ok (31 rows) - ┌───┐` —— 节点名与状态之间是
+  # 多个空格（首次真机全量跑暴露：按单空格写会让每窗 rows 恒为 null，静默丢指标）。故用
+  # [[:space:]]+ 容忍任意空白，不假设列宽。
+  r=$(printf '%s\n' "$1" | grep -oE 'sink[[:space:]]+[a-z]+[[:space:]]*\([0-9]+ rows\)' | tail -1 \
       | grep -oE '\([0-9]+ rows\)' | tr -dc '0-9')
   [ -n "$r" ] && printf '%s' "$r" || printf 'null'
 }
