@@ -140,7 +140,7 @@ Expected: exit 0，stdout `check-data-models: OK（…）`。若报列/分区跨
 
 - [ ] **Step 3: 样本校对列全集（首跑前，Task 8 之前完成）**
 
-拉一个整日样本（Task 7 管线 ready 后跑 `page_size=100` 全翻页到本地 /tmp），`jq` 列出 detail 行全部字段；对照契约——缺列补进（毛利/成本类若返回则补 `profit` decimal 列，敏感口径由消费层权限管，采集不筛）；多列不删（落盘即定型，宁全勿缺）。
+拉一个整日样本（Task 7 管线 ready 后跑 `page_size=100` 全翻页到本地 /tmp；**订正 2026-09-24**：实际发布版为 `page_size=200 × 8 页`，见 Task 7 修复环），`jq` 列出 detail 行全部字段；对照契约——缺列补进（毛利/成本类若返回则补 `profit` decimal 列，敏感口径由消费层权限管，采集不筛）；多列不删（落盘即定型，宁全勿缺）。
 Run: `tsx scripts/check-data-models.mjs`（补列后再过门）
 
 - [ ] **Step 4: Commit**
@@ -249,7 +249,7 @@ Expected: 行数=1、类型=DECIMAL(14,2)（与契约一致）。
 
 - [ ] **Step 1: 经 MCP `create_pipeline` 生成**（以下为参数清单，节点 id/结构以引擎产出为准）
 
-  1. **src.rest 页节点 ×8**（p1..p8，固定页容量）：POST `https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find`，headers `Authorization: Bearer ${ENV:LEMENG_TOKEN}`，body（每节点 page_number=1..8）：`{"branch_nums": <ENV:BRANCH_NUMS>, "date_from": "${ENV:BIZDAY}", "date_to": "${ENV:BIZDAY}", "time_from": "${ENV:HOUR_FROM}", "time_to": "${ENV:HOUR_TO}", "page_number": N, "page_size": 100}`；`data.schema` 声明标量列（order_no/state/order_time/branch…），**不声明 pos_order_details**（嵌套留推导）。0 行页靠声明过的 schema 正常类型化（已知坑）。
+  1. **src.rest 页节点 ×8**（p1..p8，固定页容量）：POST `https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find`，headers `Authorization: Bearer ${ENV:LEMENG_TOKEN}`，body（每节点 page_number=1..8）：`{"branch_nums": <ENV:BRANCH_NUMS>, "date_from": "${ENV:BIZDAY}", "date_to": "${ENV:BIZDAY}", "time_from": "${ENV:HOUR_FROM}", "time_to": "${ENV:HOUR_TO}", "page_number": N, "page_size": 200}`（**订正 2026-09-24（Task 7 修复环）**：文档实写 max=200，`page_size=100` 容量不足——2026-09-23 峰值窗 19 点 1311 单会把守卫打红。发布版为 **200 × 8 页**；守卫在 p8 哨兵页有行即 `die` ⇒ **真实静默通过阈值 7×200=1400 单/时**，1401–1600 区间是 fail-loud 不丢数；余量按 1400 算，不要写 1600）；`data.schema` 声明标量列（order_no/state/order_time/branch…），**不声明 pos_order_details**（嵌套留推导）。0 行页靠声明过的 schema 正常类型化（已知坑）。
   2. **merge + code.sql 展开定型**：`SELECT <契约列> , '${ENV:SYSTEM_BOOK}' AS system_book, CAST(strptime(order_detail_bizday,'%Y%m%d') AS DATE) AS bizday, <hour 由 order_time 推导>, '${ENV:BATCH_ID}' AS batch_id FROM input o CROSS JOIN UNNEST(o.pos_order_details) AS unnest`（列引用 `unnest.item_num` 等；cast 目标用 numeric/float，**禁 double**）。
   3. **qa.contract**（gate 透传/拒绝）：order_no、order_detail_num、system_book、bizday、hour、batch_id 非空；sale_money 介于 -1e6..1e6。
   4. **ctl.die 末页守卫**：`condition=has-rows` 于 p8——第 8 页仍有行 = 容量截断，中止（消息含窗口标识）。
@@ -387,7 +387,7 @@ git add dbt/ && git commit -m "feat(dbt): 零售域切新湖——staging 重写
 ### Task 10: 日调度 job 注册 + _ops 观测
 
 **Files:**
-- Create: `scripts/lemeng/run-retail-day.sh`（薄 wrapper：窗口 env 计算 + 24 时窗循环 + `_ops` JSON 行输出）
+- **订正 2026-09-24**：`scripts/lemeng/run-retail-day.sh` **已由 Task 8 建成并真机验证**（多模式：`probe/windows/listing/idem/drift/agg/rb/branches/envfile`），本任务**不 Create、只 Modify**（补 `_ops` JSON 行输出与日终模式落地）。原「Create」措辞在 Task 8 提前交付后失效——照抄会重复建文件。
 - openship job（数据面 project，非仓库文件）
 
 **Interfaces:** Consumes: Task 7 管线；Produces: 每日自动采集 + OO 可查的 `_ops` 流
@@ -408,7 +408,8 @@ for H in $(seq -w 0 23); do
 done
 ```
 
-- [ ] **Step 2: 注册 openship job**（openship MCP）：`label=lemeng-retail-3120-daily`，cron `30 2 * * *`，serverId=数据面机，env 注 `LEMENG_TOKEN`（isSecret）/`SYSTEM_BOOK=3120`/`BRANCH_NUMS`/`ZOS_*`；命令 = `bash /opt/platform-core-data/platform-core/scripts/lemeng/run-retail-day.sh`
+- [ ] **Step 2: 注册 openship job**（openship MCP）：`label=lemeng-retail-3120-daily`，cron `30 2 * * *`，serverId=数据面机（`8281d598-af73-4d0b-99dd-bc8681fcc8bb`）；**命令必须带模式参数**：`sh /opt/lemeng-run.sh windows`（**订正 2026-09-24**：无参 = usage + exit 2 = 天天红；且脚本现经 `/opt/lemeng-run.sh` 落点，不在 `/opt/platform-core-data/platform-core/scripts/`）。
+  **env 注入订正（Task 8 实测）**：**openship job 读不到 project env**（job schema 无 `projectId`、服务器无 env 物化文件）⇒ 凭据走 **job 自己的 `secrets` 字段**（7 键：`LEMENG_TOKEN`/`ZOS_ACCESS_KEY`/`ZOS_SECRET_KEY`/`ZOS_ENDPOINT`/`ZOS_REGION`/`ZOS_BUCKET`/`DUCKLE_TOKEN`），非密参数走 `env`（`SYSTEM_BOOK=3120`/`BRANCH_NUMS`/`BIZDAY`）。注意命名分叉：project env 用 `LEMENG_ZOS_*` 前缀（dbt 消费），管线与脚本用 `ZOS_*`（job secrets 供给）——**轮换须同时动三处**。
 
 - [ ] **Step 3: 验收**
 
@@ -418,7 +419,7 @@ Expected: job 历史 success ×2（手动+自动）；OO 查到 _ops 行。
 - [ ] **Step 4: 提交 + S1 出口清单勾账**
 
 ```bash
-git add scripts/lemeng/run-retail-day.sh
+git add scripts/lemeng/run-retail-day.sh   # 本任务只加「_ops JSON 行」等改动（文件 Task 8 已入库）
 git commit -m "feat(jobs): 乐檬零售日采集 wrapper——窗口计算+24时窗循环+_ops (#150)"
 ```
 
