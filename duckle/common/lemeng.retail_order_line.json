@@ -1,0 +1,637 @@
+{
+  "name": "lemeng.retail_order_line",
+  "nodes": [
+    {
+      "id": "p1",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page 1",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${ENV:BIZDAY}\", \"date_to\": \"${ENV:BIZDAY}\", \"time_from\": \"${ENV:HOUR_FROM}\", \"time_to\": \"${ENV:HOUR_TO}\", \"page_number\": 1, \"page_size\": 100}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p2",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 120
+      },
+      "data": {
+        "label": "page 2",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${ENV:BIZDAY}\", \"date_to\": \"${ENV:BIZDAY}\", \"time_from\": \"${ENV:HOUR_FROM}\", \"time_to\": \"${ENV:HOUR_TO}\", \"page_number\": 2, \"page_size\": 100}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p3",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 240
+      },
+      "data": {
+        "label": "page 3",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${ENV:BIZDAY}\", \"date_to\": \"${ENV:BIZDAY}\", \"time_from\": \"${ENV:HOUR_FROM}\", \"time_to\": \"${ENV:HOUR_TO}\", \"page_number\": 3, \"page_size\": 100}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p4",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 360
+      },
+      "data": {
+        "label": "page 4",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${ENV:BIZDAY}\", \"date_to\": \"${ENV:BIZDAY}\", \"time_from\": \"${ENV:HOUR_FROM}\", \"time_to\": \"${ENV:HOUR_TO}\", \"page_number\": 4, \"page_size\": 100}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p5",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 480
+      },
+      "data": {
+        "label": "page 5",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${ENV:BIZDAY}\", \"date_to\": \"${ENV:BIZDAY}\", \"time_from\": \"${ENV:HOUR_FROM}\", \"time_to\": \"${ENV:HOUR_TO}\", \"page_number\": 5, \"page_size\": 100}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p6",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 600
+      },
+      "data": {
+        "label": "page 6",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${ENV:BIZDAY}\", \"date_to\": \"${ENV:BIZDAY}\", \"time_from\": \"${ENV:HOUR_FROM}\", \"time_to\": \"${ENV:HOUR_TO}\", \"page_number\": 6, \"page_size\": 100}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p7",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 720
+      },
+      "data": {
+        "label": "page 7",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${ENV:BIZDAY}\", \"date_to\": \"${ENV:BIZDAY}\", \"time_from\": \"${ENV:HOUR_FROM}\", \"time_to\": \"${ENV:HOUR_TO}\", \"page_number\": 7, \"page_size\": 100}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p8",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 840
+      },
+      "data": {
+        "label": "page 8",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find",
+          "method": "POST",
+          "body": "{\"branch_nums\": ${ENV:BRANCH_NUMS}, \"date_from\": \"${ENV:BIZDAY}\", \"date_to\": \"${ENV:BIZDAY}\", \"time_from\": \"${ENV:HOUR_FROM}\", \"time_to\": \"${ENV:HOUR_TO}\", \"page_number\": 8, \"page_size\": 100}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "order_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_operate_time",
+            "type": "timestamp"
+          },
+          {
+            "name": "order_source",
+            "type": "string"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "pos_order_details",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "guard",
+      "type": "transform",
+      "position": {
+        "x": 260,
+        "y": 840
+      },
+      "data": {
+        "label": "last-page guard (capacity truncation)",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "lemeng retail_order_line 容量截断：第 8 页仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK} bizday=${ENV:BIZDAY} hour=${ENV:HOUR} ${ENV:HOUR_FROM}~${ENV:HOUR_TO}）——缩小窗口或提高页容量后重跑"
+        }
+      }
+    },
+    {
+      "id": "merge",
+      "type": "transform",
+      "position": {
+        "x": 520,
+        "y": 420
+      },
+      "data": {
+        "label": "merge pages 1-8",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "flatten",
+      "type": "transform",
+      "position": {
+        "x": 780,
+        "y": 420
+      },
+      "data": {
+        "label": "UNNEST pos_order_details + 定型到契约列",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  '${ENV:BATCH_ID}' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST(strptime(json_extract_string(u.d, '$.order_detail_bizday'), '%Y%m%d') AS DATE) AS bizday,\n  CAST(date_part('hour', CAST(o.order_time AS TIMESTAMP)) AS INTEGER) AS hour,\n  CAST(o.order_no AS VARCHAR) AS order_no,\n  CAST(json_extract_string(u.d, '$.order_detail_num') AS VARCHAR) AS order_detail_num,\n  CAST(json_extract_string(u.d, '$.branch_num') AS INTEGER) AS branch_num,\n  json_extract_string(CAST(o.branch AS JSON), '$.branch_name') AS branch_name,\n  CAST(o.order_time AS TIMESTAMP) AS order_time,\n  CAST(o.order_operate_time AS TIMESTAMP) AS order_operate_time,\n  CAST(o.state AS VARCHAR) AS state,\n  CAST(o.order_source AS VARCHAR) AS order_source,\n  CAST(json_extract_string(u.d, '$.item_num') AS VARCHAR) AS item_num,\n  json_extract_string(u.d, '$.item_code') AS item_code,\n  CAST(json_extract_string(u.d, '$.order_detail_money') AS DECIMAL(14,2)) AS sale_money,\n  CAST(json_extract_string(u.d, '$.order_detail_discount') AS DECIMAL(14,2)) AS discount_money,\n  CAST(json_extract_string(u.d, '$.order_detail_payment_money') AS DECIMAL(14,2)) AS payment_money,\n  CAST(json_extract_string(u.d, '$.order_detail_amount') AS DECIMAL(14,3)) AS quantity\nFROM input o\nCROSS JOIN UNNEST(from_json(CAST(o.pos_order_details AS JSON), '[\"JSON\"]')) AS u(d)"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "transform",
+      "position": {
+        "x": 1040,
+        "y": 420
+      },
+      "data": {
+        "label": "contract gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "order_no": "not_null",
+            "order_detail_num": "not_null",
+            "system_book": "not_null",
+            "bizday": "not_null",
+            "hour": "not_null",
+            "batch_id": "not_null",
+            "sale_money": "in_range:-1000000,1000000"
+          }
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 1300,
+        "y": 420
+      },
+      "data": {
+        "label": "retail_order_line all.parquet",
+        "componentId": "snk.minio",
+        "properties": {
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/retail_order_line/system_book=${ENV:SYSTEM_BOOK}/bizday=${ENV:BIZDAY}/hour=${ENV:HOUR}/all.parquet",
+          "endpoint": "${ENV:ZOS_ENDPOINT}",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "accessKey": "${ENV:ZOS_ACCESS_KEY}",
+          "secretKey": "${ENV:ZOS_SECRET_KEY}",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_p1",
+      "source": "p1",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p2",
+      "source": "p2",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_2",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p3",
+      "source": "p3",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_3",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p4",
+      "source": "p4",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_4",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p5",
+      "source": "p5",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_5",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p6",
+      "source": "p6",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_6",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p7",
+      "source": "p7",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_7",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p8",
+      "source": "p8",
+      "target": "guard",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_guard",
+      "source": "guard",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_8",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_merge",
+      "source": "merge",
+      "target": "flatten",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_flat",
+      "source": "flatten",
+      "target": "gate",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_sink",
+      "source": "gate",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ],
+  "version": 1,
+  "id": "p_84167_1"
+}
