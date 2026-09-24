@@ -387,12 +387,14 @@ git add dbt/ && git commit -m "feat(dbt): 零售域切新湖——staging 重写
 ### Task 10: 日调度 job 注册 + _ops 观测
 
 **Files:**
-- **订正 2026-09-24**：`scripts/lemeng/run-retail-day.sh` **已由 Task 8 建成并真机验证**（多模式：`probe/windows/listing/idem/drift/agg/rb/branches/envfile`），本任务**不 Create、只 Modify**（补 `_ops` JSON 行输出与日终模式落地）。原「Create」措辞在 Task 8 提前交付后失效——照抄会重复建文件。
+- **订正 2026-09-24**：`scripts/lemeng/run-retail-day.sh` **已由 Task 8 建成并真机验证**（多模式：`probe/window/windows/listing/hour_meta/idem3/drift/agg/rb/branches/envfile/diag`；`idem` 已于 Task 8 修复环 2 **退役**、恒 exit 2，**接线别用它**），本任务**不 Create、只 Modify**（补 `_ops` JSON 行输出与日终模式落地）。原「Create」措辞在 Task 8 提前交付后失效——照抄会重复建文件。
 - openship job（数据面 project，非仓库文件）
 
 **Interfaces:** Consumes: Task 7 管线；Produces: 每日自动采集 + OO 可查的 `_ops` 流
 
 - [ ] **Step 1: wrapper 脚本**（要点：`date -u` 推昨日 bizday；BIZDAY 用营业日格式 `YYYY-MM-DD`；BRANCH_NUMS 由 `whoami` 缓存文件或 env 常量注入；每窗 run 后写一行 `{"ts":…,"job":"retail-day","window":…,"rows":…,"status":…}` 到 stdout——openship job 日志 → OO 按 SOP 文件日志通道）
+
+  **订正 2026-09-24（下方范文块是旧稿，勿照抄）**：该块假设本任务**重建**一个「循环直调 `duckle --pipeline`」的 wrapper —— 与 Task 8 已交付**并真机验证**的事实矛盾。实际交付物是 `scripts/lemeng/run-retail-day.sh`（多模式：`probe`/`window`/`windows`/`listing`/`hour_meta`/`idem3`/`drift`/`agg`/`rb`/`branches`/`envfile`/`diag`；`idem` 已于修复环 2 **退役**、恒 exit 2 —— 其前提「换 batch_id 仍 ETag 一致」被真机证伪（`batch_id` 是载荷列），真命题归 `idem3`，**接线别用它**），job 侧只调 `sh /opt/lemeng-run.sh windows`（见 Step 2）。本任务**只在该已建脚本上 Modify**（补 `_ops` JSON 行输出 + 日终模式落地），**不要**按此块重建循环——重建会丢掉 Task 8 真机验证过的退出码传播与清单截断判红（防假绿）行为。下方块**仅作「wrapper 的职责是什么」的示意**保留。
 
 ```bash
 #!/usr/bin/env bash
