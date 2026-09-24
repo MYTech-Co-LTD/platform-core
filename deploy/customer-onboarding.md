@@ -179,6 +179,8 @@ PATCH .../env             # 数据栈自己的 env（CUSTOMER=<客户>、对象�
   明值，或服务 env 直接写字面值；另有首轮初始化先于 secret 写入的坑（metabase-db 落了默认口令）
   用 `ALTER USER` 对齐。
 
+> 数据面部署完整 SOP 与坑清单见 `deploy/data-plane-deploy-sop.md`。
+
 ### 阶段 6：数据初始化
 | 动作 | 验收 |
 |---|---|
