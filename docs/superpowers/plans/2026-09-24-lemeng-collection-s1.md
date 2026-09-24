@@ -245,7 +245,7 @@ Expected: 行数=1、类型=DECIMAL(14,2)（与契约一致）。
 
 **Interfaces:**
 - Consumes: Task 3 契约（列/类型/分区）、Task 4 组件字段面、Task 5 G1 结论
-- Produces: 可被 `duckle-runner --pipeline` 执行的管线；窗口/凭据全部 env 注入（Task 8/10 的调用面）：`LEMENG_TOKEN`、`BIZDAY`、`HOUR`（两位数字符串，如 `14`）、`HOUR_FROM`/`HOUR_TO`（LocalTime，如 `14:00:00`/`14:59:59`）、`BRANCH_NUMS`（JSON 数组字符串）、`SYSTEM_BOOK`、`ZOS_*`（五键）、`BATCH_ID`
+- Produces: 可被 `duckle --pipeline` 执行的管线；窗口/凭据全部 env 注入（Task 8/10 的调用面）：`LEMENG_TOKEN`、`BIZDAY`、`HOUR`（两位数字符串，如 `14`）、`HOUR_FROM`/`HOUR_TO`（LocalTime，如 `14:00:00`/`14:59:59`）、`BRANCH_NUMS`（JSON 数组字符串）、`SYSTEM_BOOK`、`ZOS_*`（五键）、`BATCH_ID`
 
 - [ ] **Step 1: 经 MCP `create_pipeline` 生成**（以下为参数清单，节点 id/结构以引擎产出为准）
 
@@ -255,7 +255,7 @@ Expected: 行数=1、类型=DECIMAL(14,2)（与契约一致）。
   4. **ctl.die 末页守卫**：`condition=has-rows` 于 p8——第 8 页仍有行 = 容量截断，中止（消息含窗口标识）。
   5. **snk.minio**（或 G1 退路本地 sink+上传段）：key `lemeng/retail_order_line/system_book=${ENV:SYSTEM_BOOK}/bizday=${ENV:BIZDAY}/hour=${ENV:HOUR}/all.parquet`，`mode=overwrite`、`format=parquet`、`compression=zstd`。
 
-- [ ] **Step 2: `validate_pipeline` 过 + `duckle-runner validate` 过**
+- [ ] **Step 2: `validate_pipeline` 过 + `duckle validate` 过**（CLI 即 runner）
 
 Run（runner 形态）：`/tmp/duckle-venv/bin/duckle validate /tmp/lemeng.retail_order_line.json`
 Expected: `0 failed`。
@@ -307,7 +307,7 @@ Expected: ETag 相同；不同则记录差异根因（时区内新单属正常�
 
 - [ ] **Step 4: drift 门禁核（spec S1 出口项，main 未验清单 #1/#3 的就地核）**
 
-在数据面对已落管线跑 `duckle-runner drift`（带 `--token` 的授权作业路径，`duckle/README.md` §7.5）：先断言管线 `data.schema` 声明存在（防假绿——三坑 #1），再跑 drift，期望 exit 0 且结论基于真实比对（非「未声明即绿」）；同场即完成「容器内行为」核（T8 全程在 runner 容器内执行，本步通过 = 未验 #3 就地销）。结论记入 PR 描述（通/不通+形态），不通则 S2 起以 `qa.contract` + 契约静态门禁为唯一列门禁（记进 spec）。
+在数据面对已落管线跑 drift（子命令形态以 `duckle --help` 实测为准，仓文档写 `duckle-runner drift`）（带 `--token` 的授权作业路径，`duckle/README.md` §7.5）：先断言管线 `data.schema` 声明存在（防假绿——三坑 #1），再跑 drift，期望 exit 0 且结论基于真实比对（非「未声明即绿」）；同场即完成「容器内行为」核（T8 全程在 runner 容器内执行，本步通过 = 未验 #3 就地销）。结论记入 PR 描述（通/不通+形态），不通则 S2 起以 `qa.contract` + 契约静态门禁为唯一列门禁（记进 spec）。
 
 ---
 
