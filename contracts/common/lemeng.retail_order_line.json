@@ -19,7 +19,7 @@
   },
   "columns": [
     { "name": "batch_id", "type": "varchar", "nullable": false, "description": "批次标记（采集 run id）" },
-    { "name": "system_book", "type": "varchar", "nullable": false, "description": "账套（3120/64188）；分区键，来源=明细行 system_book_code" },
+    { "name": "system_book", "type": "varchar", "nullable": false, "description": "账套（3120/64188）；分区键，来源=**采集侧按账套常量注入**（管线 env `SYSTEM_BOOK`，见 duckle/common/lemeng.retail_order_line.json 的 code.sql 节点）——**不是**取自明细行的 system_book_code（该字段网关确实返回，但不在本契约 18 列内）" },
     { "name": "bizday", "type": "date", "nullable": false, "description": "营业日（shift_table_bizday，YYYYMMDD 落盘即定型为 date）；分区键" },
     { "name": "hour", "type": "integer", "nullable": false, "description": "成交时间所在小时（0-23）；分区键，由 order_time 推导" },
     { "name": "order_no", "type": "varchar", "nullable": false, "description": "订单号（自然键之一）" },

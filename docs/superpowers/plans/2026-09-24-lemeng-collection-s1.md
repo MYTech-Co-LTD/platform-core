@@ -10,11 +10,11 @@
 
 ## Global Constraints
 
-- 分层纪律：staging 一对一不改义；口径只在 marts；L1 唯一事实源 `dbt/semantics/l1_metrics.yml` 本计划**零改动**（实现换源，声明不动）。
+- 分层纪律：staging 一对一不改义；口径只在 marts；L1 唯一事实源 `dbt/semantics/l1_metrics.yml` 本计划**语义声明**零改动（`name`/`definition`/`expression`/`grain`/`owner`/`tier` 一字未动；**`sources` 指针随换源更新**——留旧湖路径等于留假指针，该偏离已由 Task 9 brief 授权）。
 - 契约纪律：`contracts/` 元 schema（`_schema.schema.json`）判据——`partitionStyle=hive`、`fileName=all.parquet`、分区键列不可空、外部标识一律 `varchar`、`decimal` 必带 precision/scale、`batch.markerColumn` 必填。
 - duckle 三坑（`duckle/README.md` §7.3）：`drift` 假绿（先断言声明存在）；`qa.freshness` 时区坑（**不用它**，新鲜度由 job receipt + 回读承担）；`pipelineHash` 是代码指纹不是数据指纹。
 - 管线 JSON 由真引擎产出（duckle MCP `create_pipeline`/`validate_pipeline`），**禁止手写后不验证就落仓**；`data.schema` 只声明标量列；路径一律绝对路径；`ctl.foreach` 不用（凭据作用域坑）。
-- AGI 网关事实（spec §3.1）：分页在 body（`page_number/page_size` 上限 100）、query 无效、无 total、`branch_nums` 非空、作废单照采、单店跨度≤3月/多店≤1月。
+- AGI 网关事实（spec §3.1）：分页在 body（`page_number/page_size`，**文档实写上限 200**；本仓发布版 `page_size=200 × 8 页`，见 Task 7 修复环订正与 spec §6 的容量口径）、query 无效、无 total、`branch_nums` 非空、作废单照采、单店跨度≤3月/多店≤1月。
 - 提交纪律：feat/fix 引用 issue #150；`tsx scripts/check-data-models.mjs` 必须每次过门（exit 0）；密钥只在 openship env（isSecret），任何文件不落明文。
 - 执行分支：spec PR（#195）合入 main 后从 main 开新分支执行；本计划所有仓库改动基于该分支。
 
