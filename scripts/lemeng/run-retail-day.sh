@@ -121,13 +121,13 @@ SELECT 'states' AS section, state, count(*) AS rows, sum(sale_money) AS amt FROM
 SQL
 )"
   $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
-    -e RB_QUERY="$SQL" -v "$RB_HELPER":/rb.sh:ro duckle -c 'sh /rb.sh' 2>&1 | grep -vE '^ *Container |^ *Network ' | tail -45
+    -e RB_QUERY="$SQL" -v "$RB_HELPER":/rb.sh:ro --entrypoint sh duckle -c 'sh /rb.sh' 2>&1 | grep -vE '^ *Container |^ *Network ' | tail -45
   echo "== agg end =="
   ;;
 branches)
   SQL="SELECT branch_num, sum(sale_money) AS fin_amt, count(*) AS rows FROM read_parquet('s3://$ZOS_BUCKET/lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY/**/*.parquet', hive_partitioning=1) WHERE state='FINISHED' GROUP BY branch_num ORDER BY branch_num;"
   $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
-    -e RB_QUERY="$SQL" -v "$RB_HELPER":/rb.sh:ro duckle -c 'sh /rb.sh' 2>&1 | grep -vE '^ *Container |^ *Network ' | tail -200
+    -e RB_QUERY="$SQL" -v "$RB_HELPER":/rb.sh:ro --entrypoint sh duckle -c 'sh /rb.sh' 2>&1 | grep -vE '^ *Container |^ *Network ' | tail -200
   echo "== branches end =="
   ;;
 diag)
@@ -142,7 +142,7 @@ diag)
 rb)
   shift
   $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
-    -e RB_QUERY="$*" -v "$RB_HELPER":/rb.sh:ro duckle -c 'sh /rb.sh' 2>&1 | tail -40
+    -e RB_QUERY="$*" -v "$RB_HELPER":/rb.sh:ro --entrypoint sh duckle -c 'sh /rb.sh' 2>&1 | tail -40
   ;;
 idem)
   H="${2:-03}"
