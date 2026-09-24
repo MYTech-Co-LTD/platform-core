@@ -31,6 +31,23 @@ s3_list() { # $1=prefix
     "https://${ZOS_ENDPOINT}/${ZOS_BUCKET}?list-type=2&prefix=$1"
 }
 
+hour_meta() { # $1=hour  -> "hour=NN size=S etag=E"（取出该 hour 对象的 ETag/Size，供幂等比对）
+  s3_list "lemeng/" > /tmp/m.xml
+  python3 - "$1" <<'PY'
+import re, sys
+h = sys.argv[1]
+x = open('/tmp/m.xml').read()
+for b in re.findall(r'<Contents>(.*?)</Contents>', x, re.S):
+    k = re.search(r'<Key>(.*?)</Key>', b).group(1)
+    if k.endswith('/hour=%s/all.parquet' % h):
+        print('hour=%s size=%s etag=%s' % (h, re.search(r'<Size>(\d+)</Size>', b).group(1),
+              re.search(r'<ETag>(.*?)</ETag>', b).group(1).strip('"&quot;')))
+        break
+else:
+    print('hour=%s NOT_FOUND' % h)
+PY
+}
+
 case "${1:-}" in
 probe)
   echo "== env presence (names + lengths only) =="
@@ -74,17 +91,44 @@ windows)
   for H in $(seq -w 0 23); do sh "$0" window "$H"; done
   ;;
 listing)
-  for H in $(seq -w 0 23); do
-    resp=$(s3_list "$PREFIX/hour=$H/")
-    key=$(printf '%s' "$resp" | grep -o '<Key>[^<]*</Key>' | head -1 | sed 's/<[^>]*>//g')
-    size=$(printf '%s' "$resp" | grep -o '<Size>[0-9]*</Size>' | head -1 | sed 's/<[^>]*>//g')
-    etag=$(printf '%s' "$resp" | grep -o '<ETag>[^<]*</ETag>' | head -1 | sed 's/<[^>]*>//g' | tr -d '"')
-    n=$(printf '%s' "$resp" | grep -c '<Key>')
-    printf 'hour=%s count=%s size=%s etag=%s key=%s\n' "$H" "$n" "${size:-none}" "${etag:-none}" "${key:-none}"
-  done
-  echo "== literal-placeholder scan over lemeng/ (must be empty) =="
-  s3_list "lemeng/" | grep -o '<Key>[^<]*</Key>' | sed 's/<[^>]*>//g' | grep -F '${ENV' | head -3
+  s3_list "lemeng/" > /tmp/ls.xml
+  python3 <<'PY'
+import re
+x=open('/tmp/ls.xml').read()
+if '<Contents>' not in x:
+    print('NON_LIST_RESPONSE:', x[:300]); raise SystemExit(1)
+rows=re.findall(r'<Contents>(.*?)</Contents>', x, re.S)
+tr=re.search(r'<IsTruncated>(.*?)</IsTruncated>', x)
+print('objects=%d truncated=%s' % (len(rows), tr.group(1) if tr else '?'))
+for b in sorted(rows, key=lambda b: re.search(r'<Key>(.*?)</Key>', b).group(1)):
+    k=re.search(r'<Key>(.*?)</Key>', b).group(1)
+    print('key=%s size=%s etag=%s' % (k, re.search(r'<Size>(\d+)</Size>', b).group(1),
+          re.search(r'<ETag>(.*?)</ETag>', b).group(1).strip('"&quot;')))
+PY
+  echo "== literal-placeholder scan in keys (must be empty) =="
+  grep -o '<Key>[^<]*</Key>' /tmp/ls.xml | grep -F '${ENV' | head -3
+  echo "== prefix probe: plain '=' vs pct-encoded '=' (encoding sensitivity) =="
+  printf 'plain_eq_keys=%s\n' "$(s3_list "$PREFIX/hour=03/" | grep -c '<Key>')"
+  printf 'pct_eq_keys=%s\n' "$(s3_list "lemeng/retail_order_line/system_book%3D3120/bizday%3D$BIZDAY/hour%3D03/" | grep -c '<Key>')"
   echo "== scan end =="
+  ;;
+agg)
+  SQL="$(cat <<SQL
+SELECT 'per_hour' AS section, CAST(hour AS VARCHAR) AS hour, count(*) AS rows, sum(sale_money) AS amt, sum(CASE WHEN state='FINISHED' THEN sale_money ELSE 0 END) AS finished_amt FROM read_parquet('s3://$ZOS_BUCKET/lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY/**/*.parquet', hive_partitioning=1) GROUP BY hour ORDER BY hour;
+SELECT 'totals' AS section, count(*) AS rows, sum(sale_money) AS amt, sum(CASE WHEN state='FINISHED' THEN sale_money ELSE 0 END) AS finished_amt FROM read_parquet('s3://$ZOS_BUCKET/lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY/**/*.parquet', hive_partitioning=1);
+SELECT 'hour17_finished' AS section, count(*) AS rows, sum(sale_money) AS amt FROM read_parquet('s3://$ZOS_BUCKET/lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY/**/*.parquet', hive_partitioning=1) WHERE CAST(hour AS VARCHAR)='17' AND state='FINISHED';
+SELECT 'states' AS section, state, count(*) AS rows, sum(sale_money) AS amt FROM read_parquet('s3://$ZOS_BUCKET/lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY/**/*.parquet', hive_partitioning=1) GROUP BY state ORDER BY state;
+SQL
+)"
+  $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
+    -e RB_QUERY="$SQL" -v "$RB_HELPER":/rb.sh:ro duckle -c 'sh /rb.sh' 2>&1 | grep -vE '^ *Container |^ *Network ' | tail -45
+  echo "== agg end =="
+  ;;
+branches)
+  SQL="SELECT branch_num, sum(sale_money) AS fin_amt, count(*) AS rows FROM read_parquet('s3://$ZOS_BUCKET/lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY/**/*.parquet', hive_partitioning=1) WHERE state='FINISHED' GROUP BY branch_num ORDER BY branch_num;"
+  $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
+    -e RB_QUERY="$SQL" -v "$RB_HELPER":/rb.sh:ro duckle -c 'sh /rb.sh' 2>&1 | grep -vE '^ *Container |^ *Network ' | tail -200
+  echo "== branches end =="
   ;;
 diag)
   echo "== root listing (no prefix) =="
@@ -102,11 +146,9 @@ rb)
   ;;
 idem)
   H="${2:-03}"
-  before=$(s3_list "$PREFIX/hour=$H/" | grep -oE '<(ETag|Size)>[^<]*</(ETag|Size)>' | tr -d '\n')
-  echo "before=$before"
+  before=$(hour_meta "$H"); echo "before=$before"
   sh "$0" window "$H" "-idem"
-  after=$(s3_list "$PREFIX/hour=$H/" | grep -oE '<(ETag|Size)>[^<]*</(ETag|Size)>' | tr -d '\n')
-  echo "after=$after"
+  after=$(hour_meta "$H"); echo "after=$after"
   if [ "$before" = "$after" ]; then echo "IDEMPOTENT=PASS"; else echo "IDEMPOTENT=FAIL"; fi
   ;;
 drift)
@@ -126,7 +168,7 @@ envfile)
   echo "envfile keys=$(cut -d= -f1 "$REPO/deploy/.env" | tr '\n' ',') mode=$(stat -c '%a' "$REPO/deploy/.env")"
   ;;
 *)
-  echo "usage: $0 <probe|window H [suffix]|windows|listing|rb SQL|idem H|drift|envfile>"
+  echo "usage: $0 <probe|diag|window H [suffix]|windows|listing|agg|branches|rb SQL|idem H|drift|envfile>"
   exit 2
   ;;
 esac
