@@ -106,7 +106,7 @@ openship jobs（数据面机，cron）
 
 | Gate | 内容 | 不通时的退路 |
 |---|---|---|
-| G1 | `snk.minio` 对象 key 能否 `${ENV:…}` 参数化（tick 按 hour 分区直写） | tick 落本地湖 → wrapper 用 DuckDB httpfs 上传（已投产通道） |
+| G1 | ~~`snk.minio` 对象 key 能否 `${ENV:…}` 参数化（tick 按 hour 分区直写）~~ **部分销账（G1a 2026-09-24 实测）**：本地 sink 路径 env 模板**通**——`snk.parquet` `path=/tmp/g1a/hour=${ENV:PROBE_HOUR}/all.parquet` 两跑 PROBE_HOUR=07/08 落两个目录各一文件；`mode=overwrite` 同 env 重跑为**覆盖**（inode 换新、行数仍 1、不报错不追加）。G1b（ZOS `snk.minio` key 原位确认）并入 S1 Task 8 首次真机写，失败即走退路 | 退路维持：tick 落本地湖 → wrapper 用 DuckDB httpfs 上传（已投产通道） |
 | G2 | duckle（DuckDB 1.5.4）写 parquet ↔ pg_duckdb（1.4.3）回读兼容 | main 已列 Gate-E（T6），沿用其处置 |
 | G3 | ~~调拨/批发明细嵌套行的稳定行键（order_no+item 是否够）~~ **已销（2026-09-24 实测）**：**不够**——调拨行无 id/序号列且同品多批次拆行（100 单 655 行，8 单 item_num 重复，`(item_num, lot_number)` 残余重复 0）⇒ 键 `(order_no, item_num, lot_number)`；批发行自带稠密序号（100 单 352 行全 1..N）⇒ 键 `(wholesale_order_fid, order_detail_num)`；退货 3120 近 126 天 0 单无法实测，按 OpenAPI 文档钉 `(wholesale_return_fid, return_detail_num)`（该文档形状经 #3 实测交叉验证可信） | 三键入契约时各配唯一性断言（staging 护栏）；调拨 `lot_number` 空/NULL（121/655 行）须 COALESCE 后入键；#4 首个真实样本落地时以断言复核 |
 | G4 | ~~64188 token 的 whoami/能力面与 3120 一致~~ **已销（2026-09-24 实测）**：whoami `company_id=64188`、可见门店 129 家；能力面与 3120 同形（`posorder.find` 行含 `order_no`/`pos_order_details`，明细含 `order_detail_num`/`item_num`/`system_book_code`，行键范式成立） | ⚠️ 探针方法学：64188 单店单日可能空窗（店 1/99 七天窗均 0 单），探针/铺开须多店合查 |
