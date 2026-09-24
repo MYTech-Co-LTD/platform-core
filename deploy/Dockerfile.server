@@ -31,7 +31,15 @@ FROM node:22-alpine AS build
 # `npm i -g pnpm@^11.x` 那条路正是这种漂移面）。
 # COREPACK_HOME 固定到 /opt：默认位置在 $HOME/.cache 下，而运行阶段切了 USER（HOME 变化）
 # ——固定后 shim 在运行期不会因为找不到缓存而重新联网下载。
-ENV COREPACK_HOME=/opt/corepack
+# COREPACK_NPM_REGISTRY / npm_config_registry 走国内镜像（corepack 下载 pnpm 与 pnpm 拉
+# 包共用）：构建机（境内）直连 registry.npmjs.org 抖动大——corepack 短超时 3s 量级即断
+# （2026-09-24 mytech 真机实测：主机 curl npmjs 2.35s 勉强通、构建容器内 corepack 3.3s
+# 失败；npmmirror 0.3s）。RUN 步骤不继承 dockerd 代理 ⇒ 依赖下载没有代理可倚；而下面的
+# COPY 是目录级、任一源文件变更即整层缓存失效 ⇒ pnpm/corepack 重新联网是常态而非偶发。
+# 不配镜像源 = 构建定时炸弹。
+ENV COREPACK_HOME=/opt/corepack \
+    COREPACK_NPM_REGISTRY=https://registry.npmmirror.com \
+    npm_config_registry=https://registry.npmmirror.com
 RUN corepack enable
 WORKDIR /app
 
