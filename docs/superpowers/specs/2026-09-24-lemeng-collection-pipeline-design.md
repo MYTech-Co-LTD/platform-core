@@ -50,7 +50,7 @@
 ## 2 主体模型：账套 ≠ 租户
 
 - 山海一果 = 一个客户 = 一个 project = **平台一个租户**（对齐 `deploy/customer-onboarding.md`）。
-- **账套是租户内的数据主体**，不是租户边界：两账套数据同桶同 schema，`company_id` 是数据列 + hive 分区键（消欠账 C3）。
+- **账套是租户内的数据主体**，不是租户边界：两账套数据同桶同 schema，`system_book` 是数据列 + hive 分区键（消欠账 C3）。
 - 隔离沿用定稿：每租户一桶一凭据一 schema；双 PAT 存数据面 env（openship isSecret），按主体路由到对应管线。
 - **旧湖退役**：`lemeng/retail_detail/<账套>/<日期>/all.parquet`（非 hive、全 VARCHAR、字段漂移）被回填替代后整前缀下线；现有 `stg_lemeng_retail_detail`/`fct_retail_sale` 随新湖重写对齐（§7）。
 
@@ -65,8 +65,8 @@
 | 3 | 批发销售单 | `nhsoft.whs.ai.wholesaleorder.find` | 3120 | 同上 | `(wholesale_order_fid, 明细行键)`⚠️G3 |
 | 4 | 批发退货单 | `nhsoft.whs.ai.wholesalereturn.find` | 3120 | 同上 | 同上 |
 | 5 | 要货单 | `nhsoft.ama.ai.request.order.find` | **双** | 同上 | `(order_no, item_num)`（补货管线已实证 0 重复） |
-| 6 | 门店维 | `nhsoft.user.ai.branch.find` | **双** | 全量快照日更 | `(company_id, branch_num)` |
-| 7 | 商品维 | `nhsoft.base.ai.item.find`（+分类/品牌/部门） | **双** | 全量快照日更 | `(company_id, item_num)` |
+| 6 | 门店维 | `nhsoft.user.ai.branch.find` | **双** | 全量快照日更 | `(system_book, branch_num)` |
+| 7 | 商品维 | `nhsoft.base.ai.item.find`（+分类/品牌/部门） | **双** | 全量快照日更 | `(system_book, item_num)` |
 
 批发客户维**不采集**：`whs.ai.client.find` 实测 HTTP 500（在架不可用）→ `dim_customer` 从批发明细派生（§7.2）。
 
@@ -75,7 +75,7 @@
 ### 3.1 网关语义事实（设计已内化的，操作细节见经验库条目）
 
 1. **分页双风格**：#1/#5/#6/#7 用 body `page_number/page_size`（上限 100）；#3/#4 用 `paging/limit/offset`；query 参数一律无效。
-2. **日期语义三分域**：#1 按**营业日** + LocalTime 时段（全目录唯一支持时段过滤的域，实测真过滤）；#2/#5 按制单日（营业日最多晚 4 天 ⇒ 拉窗 [D-7, D] 再按 business_date 过滤）；#3/#4 `date_type` 显式选「制单时间/审核时间」，**时间分量被网关静默忽略**（文档 format=date-time 是假象，实测 06-07 点窗返回 10:43 的单）⇒ **单据系的 5 分钟增量靠「日窗全拉 + 客户端 create_time 过滤」实现**：tick 全拉当日 → 管线内过滤 `create_time ≥ now-10min` → 只落增量切片；新单 5 分钟可见，**状态变更（审核/作废）由每小时全量 part 刷新**（≤1h 迟到，等价旧平台「5min 增量 + 每小时全量核对」）。三条单据响应均实测带 `create_time`/`audit_time`，过滤列现成。
+2. **日期语义三分域**：#1 按**营业日** + LocalTime 时段（全目录唯一支持时段过滤的域，实测真过滤）；#2/#5 按制单日（营业日最多晚 4 天 ⇒ 拉窗 [D-7, D] 再按 business_date 过滤）；#3/#4 `date_type` 显式选「制单时间/审核时间」，**时间分量被网关静默忽略**（文档 format=date-time 是假象，实测 06-07 点窗返回 10:43 的单）⇒ **单据系的 5 分钟增量靠「当日全拉 + 按 business_date 拆写覆盖」实现**：tick 全拉制单日=今日的单据、重写当日各 bizday 文件——新单 5 分钟可见；**近 7 日单据的状态变更（审核/作废）由每小时 [D-7,D] 全量覆盖刷新**（≤1h 可见，等价旧平台「5min 增量 + 每小时全量核对」）。
 3. **跨度上限**（#1 文档明示）：单店 ≤3 个月 / 多店 ≤1 个月 ⇒ 回填分批策略（§9）。
 4. **无 count 能力**（响应无 total）⇒ 翻页到短页 + 末页守卫；对账靠预聚合端点（§10）。
 5. `branch_nums` 必须显式非空（空数组 400）；实测 100 店/批 × 30 分钟窗 0.6s。
@@ -119,46 +119,47 @@ openship jobs（数据面机，cron）
 
 ```
 s3://<山海桶>/lemeng/
-  retail_order_line/company_id=3120/bizday=2026-09-24/hour=14/part-<runid>.parquet  ← 每 run 追加一个 part
-  retail_order_line/company_id=64188/…
-  transfer_out/     company_id=3120/bizday=2026-09-24/part-<runid>.parquet
-  wholesale_order/  company_id=3120/bizday=…/part-<runid>.parquet
-  wholesale_return/ company_id=3120/bizday=…/part-<runid>.parquet
-  request_order/    company_id=3120/bizday=…/part-<runid>.parquet
-  dim_branch/       company_id=3120/snapshot=2026-09-24/part-<runid>.parquet
-  dim_item/         company_id=64188/snapshot=…/part-<runid>.parquet
+  retail_order_line/system_book=3120/bizday=2026-09-24/hour=14/all.parquet  ← 覆盖写=该小时当前完整内容
+  retail_order_line/system_book=64188/…
+  transfer_out/     system_book=3120/bizday=2026-09-24/all.parquet
+  wholesale_order/  system_book=3120/bizday=…/all.parquet
+  wholesale_return/ system_book=3120/bizday=…/all.parquet
+  request_order/    system_book=3120/bizday=…/all.parquet
+  request_order/    system_book=64188/bizday=…/all.parquet
+  dim_branch/       system_book=3120/snapshot=2026-09-24/all.parquet
+  dim_item/         system_book=64188/snapshot=…/all.parquet
 ```
 
-**写模型 = append-only**（对齐分层正典「② 落地原样保留、不覆盖历史、可回溯」）：每次 run 写自己的 part（`<runid>` 唯一），重放/回溯也只是再追加一个 part；**同一自然键的多版本由 staging 去重收敛**（保留最新拉取批次）。这与补货管线「按日覆盖写同一对象键、字节级幂等」的已验证范式是**有意的范式选择差异**——选 append-only 的理由：① 与分层设计 §2 正典一致；② Raw 层保留每次拉到的原始状态（含状态迁移痕迹），可回溯可审计。代价（重放/全量刷新的多份存储，有界：零售每窗最多重拉 ~8 次；单据系每日 = 288 个增量小 part + 24 个全量 part/域/账套）按 parquet 压缩后可接受。幂等验收相应改为「同窗重跑后 staging 收敛结果一致」（§10）。
+**写模型 = 分区单文件覆盖写**（每叶子分区一个 `all.parquet`，内容 = 该分区**当前完整内容**）：与 `contracts/` 元 schema（`fileName` 锁死 `all.parquet`）和补货管线已验证的字节级幂等范式一致。分层正典「② 不覆盖历史」的落法：① 分区文件随当日推进增长（重写=自然形态）；② **历史修正**（迟到审核/作废/改归属）由重放层幂等覆盖，同内容重跑 ETag 逐字节一致（snk.minio 实测特性）；③ 可回溯性由 `_ops` 运行记录 + 契约批次标记列承担。（曾评估过 append-only part 模型——保留每次拉取的原始状态——但与契约机器面冲突且存储翻倍，弃；记录在此防复读。）零售小时文件的完整内容由「全拉当前小时窗」保证（§6 tick 语义），单据系日文件由「全拉窗口后按 business_date 拆写」保证，**staging 不承担跨 part 去重**，只保留自然键唯一性断言作护栏。
 
 | 旧欠账（handbook §4） | 本设计怎么消 |
 |---|---|
 | 列全 VARCHAR（C1） | duckle `data.schema` 落盘定型（金额 numeric/时间 timestamp/日期 date） |
-| 账套只在路径（C3） | `company_id=` hive 分区键 + 行内列（零售明细行自带 sbc，其余域由管线常量注入） |
+| 账套只在路径（C3） | `system_book=` hive 分区键 + 行内列（零售明细行自带 sbc，其余域由管线常量注入） |
 | 非 hive 命名 | 全域 hive 分区 |
 | 字段集漂移（C2） | `data.schema` 声明 + `qa.contract` + `drift` 门禁（先断言声明存在，防假绿） |
 | 双日期格式 | 落盘即定型为 date/timestamp |
 
-嵌套明细（订单头↔行）：duckle 侧**不展开**（schema 只声明标量列、嵌套列交给真实数据推导——实测纪律），行粒度展开在 dbt staging 用 `UNNEST` 完成（引用列名必须用 `unnest.` 别名规则）。
+嵌套明细（订单头↔行）：**管线内展开成行粒度**（code.sql `UNNEST`，引用列名必须用 `unnest.` 别名规则），湖里落平的行——契约列全标量、staging 免二次展开。
 
 ---
 
 ## 6 调度矩阵（openship jobs）
 
-| job | cron | 窗口 | 追加 part 到 |
+| job | cron | 窗口 | 覆盖写对象 |
 |---|---|---|---|
-| 零售 tick | `*/5` 全天 | bizday=今日（00:00–06:00 的 tick 同时打**昨日** bizday），`time_from=now-10min, time_to=now` | 当前 hour 目录 |
-| 零售时窗重放 | 每小时 `05` | 上一完整小时窗（抓迟到状态变更——时段过滤按成交时间） | 该 hour 目录 |
-| 零售日终重放 | 02:00 | 昨 bizday 全天 | 昨日各 hour 目录 |
-| 回溯重放 | 04:00 | 零售 [D-8, D-2] 逐日 + 单据系制单日 [D-8, D-2] 逐日（营业日最多晚 4 天，留余量） | 各日各 hour / bizday 目录 |
-| 单据系 5min tick | `*/5`（07:00–23:00） | 制单日=今日，**日窗全拉后管线内过滤 `create_time ≥ now-10min`**（服务端时间分量无效）；拉回单据按 business_date 拆写 | 当日 bizday 目录（增量小 part） |
-| 单据系每小时全量 | 每小时 `10` | 制单日 [D-7, D] 全量（不过滤），按 business_date 拆写——刷新当日单据状态（审核/作废） | 各 bizday 目录（全量 part） |
+| 零售 tick | `*/5` 全天 | bizday=今日（00:00–06:00 的 tick 同时打**昨日** bizday），`time_from=当前小时整点, time_to=now`（小时窗随时间增长，天然自愈漏 tick） | 当前 `hour=HH/all.parquet` |
+| 零售时窗重放 | 每小时 `05` | 上一完整小时窗（抓迟到状态变更——时段过滤按成交时间） | 该 hour 文件 |
+| 零售日终重放 | 02:00 | 昨 bizday 全天 24 个时窗 | 昨日全部 hour 文件 |
+| 零售回溯重放 | 04:00 | [D-8, D-2] 逐日逐时窗（营业日最多晚 4 天，留余量） | 各日各 hour 文件 |
+| 单据系 5min tick | `*/5`（07:00–23:00） | 制单日=今日 全拉（服务端时间分量无效，不做切片），拉回单据**按 business_date 拆写** | 当日各 `bizday/all.parquet` |
+| 单据系每小时全量 | 每小时 `10` | 制单日 [D-7, D] 全量拆写——刷新近 7 日单据状态（审核/作废，≤1h 可见） | 各 bizday 文件 |
 | 维度快照 | 05:00 | 全量翻页 | 当日 snapshot 目录 |
 | 回填 | 手动/一次性 job | §9 | 同上 |
 
 失败处理：job 失败 = openship job 告警（失败可见，不静默）；下一 tick 自然重试窗口（重叠式窗口天然容错一次漏拉）。观测：`_ops` 指标（行数/页数/窗口/耗时）由 job wrapper 写 OpenObserve（文件日志按 SOP 接入）。
 
-**请求量估算（单据系 5min 的代价，写在这里让人看得见）**：每域每账套每天 ≈ 288 次当日全拉（2–5 页）+ 24 次 [D-7,D] 多日全量；五条单据管线（调拨×1 + 批发×2 + 要货×2）合计 ~5k 请求/天、传输量为「当日单据全量 × 312 次」——网关实测单请求 0.6s 级，量级可承受；若实测晚高峰响应体积超标，降级方案是单据系 tick 降频至 15min（零售不受影响）。
+**请求量估算（单据系 5min 的代价，写在这里让人看得见）**：每域每账套每天 ≈ 288 次当日全拉（2–5 页）+ 24 次 [D-7,D] 七日全量 ≈ **456 个「日窗当量」**；五条单据管线（调拨×1 + 批发×2 + 要货×2）合计 ~2.3k 次请求/天——网关实测单请求 0.6s 级，量级可承受；若实测晚高峰响应体积超标，降级方案是单据系 tick 降频至 15min（零售不受影响）。
 
 ---
 
@@ -167,7 +168,7 @@ s3://<山海桶>/lemeng/
 ### 7.1 staging（一对一，只定型不改义）
 
 `stg_lemeng_retail_order_line` / `stg_lemeng_transfer_out` / `stg_lemeng_wholesale_order` / `stg_lemeng_wholesale_return` / `stg_lemeng_request_order` / `stg_lemeng_branch` / `stg_lemeng_item`。
-命名纪律 = `stg_<source>_<table>` 与 `sources.yml` 双向机检（main 已有门禁）。零售 staging 重写要点：UNNEST 明细 → 行粒度 + 自然键去重（append-only 多版本的收敛点）+ 状态/交易类型透传。
+命名纪律 = `stg_<source>_<table>` 与 `sources.yml` 双向机检（main 已有门禁）。零售 staging 重写要点：湖已是行粒度定型列（管线内 UNNEST 已完成）→ 直接取列 + 自然键唯一性断言（覆盖写幂等的护栏）+ 状态/交易类型透传。
 
 ### 7.2 维度（marts）
 
@@ -188,7 +189,7 @@ s3://<山海桶>/lemeng/
 净销售额   retail_order_line 有效单 SUM（state/交易类型白名单；退货单据为负）
 ```
 
-粒度：事实四张 `fct_retail_sale`（重写）/ `fct_transfer_out` / `fct_wholesale` / `fct_replenish`，全部带 `company_id + bizday`，星型挂维度。dbt tests：自然键 unique/not_null、state accepted_values、金额范围。
+粒度：事实四张 `fct_retail_sale`（重写）/ `fct_transfer_out` / `fct_wholesale` / `fct_replenish`，全部带 `system_book + bizday`，星型挂维度。dbt tests：自然键 unique/not_null、state accepted_values、金额范围。
 
 ---
 
@@ -215,7 +216,7 @@ s3://<山海桶>/lemeng/
 | 层 | 机制 | 抓什么 |
 |---|---|---|
 | 自证 | 写后回读对象存储（行数/金额） | 上传/转换失败 |
-| 幂等 | 同窗重跑后 **staging 收敛结果一致**（append-only 原始层 + 自然键去重，见 §5 写模型） | 不确定性/重复累积 |
+| 幂等 | 同窗重跑 ETag/字节一致（snk.minio 覆盖写实测特性，补货管线已验证） | 不确定性/重复累积 |
 | 独立通道 | branchindicator/itemsales 预聚合 vs 明细聚合（dbt audit） | 引擎/口径侧 bug |
 | 跨系统 | 回填后与旧平台同期关键指标一次性对比 | 口径/语义分歧 |
 
