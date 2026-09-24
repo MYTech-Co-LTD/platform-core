@@ -51,7 +51,7 @@
 
 - 山海一果 = 一个客户 = 一个 project = **平台一个租户**（对齐 `deploy/customer-onboarding.md`）。
 - **账套是租户内的数据主体**，不是租户边界：两账套数据同桶同 schema，`system_book` 是数据列 + hive 分区键（消欠账 C3）。
-- 隔离沿用定稿：每租户一桶一凭据一 schema；双 PAT 存数据面 env（openship isSecret），按主体路由到对应管线。
+- 隔离沿用定稿：每租户一桶一凭据一 schema；双 PAT 存数据面 env（openship isSecret），按主体路由到对应管线。**山海租户的湖桶已定名 `shanhai-data`**（2026-09-24 真机写入确认；endpoint 取内网 `xinan-1-internal.zos.ctyun.cn`、region `xinan1`、path-style、useSsl=true，五键键名按 `dbt/profiles.example.yml` 登记：`LEMENG_ZOS_BUCKET/ENDPOINT/REGION/ACCESS_KEY/SECRET`，已 isSecret 落 openship 数据面 project env）。
 - **旧湖退役**：`lemeng/retail_detail/<账套>/<日期>/all.parquet`（非 hive、全 VARCHAR、字段漂移）被回填替代后整前缀下线；现有 `stg_lemeng_retail_detail`/`fct_retail_sale` 随新湖重写对齐（§7）。
 
 ---
@@ -106,7 +106,7 @@ openship jobs（数据面机，cron）
 
 | Gate | 内容 | 不通时的退路 |
 |---|---|---|
-| G1 | ~~`snk.minio` 对象 key 能否 `${ENV:…}` 参数化（tick 按 hour 分区直写）~~ **部分销账（G1a 2026-09-24 实测）**：本地 sink 路径 env 模板**通**——`snk.parquet` `path=/tmp/g1a/hour=${ENV:PROBE_HOUR}/all.parquet` 两跑 PROBE_HOUR=07/08 落两个目录各一文件；`mode=overwrite` 同 env 重跑为**覆盖**（inode 换新、行数仍 1、不报错不追加）。G1b（ZOS `snk.minio` key 原位确认）并入 S1 Task 8 首次真机写，失败即走退路 | 退路维持：tick 落本地湖 → wrapper 用 DuckDB httpfs 上传（已投产通道） |
+| G1 | ~~`snk.minio` 对象 key 能否 `${ENV:…}` 参数化（tick 按 hour 分区直写）~~ **部分销账（G1a 2026-09-24 实测）**：本地 sink 路径 env 模板**通**——`snk.parquet` `path=/tmp/g1a/hour=${ENV:PROBE_HOUR}/all.parquet` 两跑 PROBE_HOUR=07/08 落两个目录各一文件；`mode=overwrite` 同 env 重跑为**覆盖**（inode 换新、行数仍 1、不报错不追加）。**G1b 已销（2026-09-24 真机）**：数据面机（project `platform-core-shanhai-data`）在 duckle runner 容器内跑昨日 24 时窗，回读对象存储逐条确认 key 为 `lemeng/retail_order_line/system_book=3120/bizday=2026-09-23/hour=NN/all.parquet`（24/24 窗 `status: ok`，空窗亦落空 schema 文件 550B），**key 内无 `${ENV:` 字面量残留**（全桶 key 扫描为空）⇒ `${ENV:…}` 模板在 snk.minio 的 bucket/key/凭据五字段上原位成立 | 退路未触发（本地湖+httpfs 上传通道保留为灾备） |
 | G2 | ~~duckle（DuckDB 1.5.4）写 parquet ↔ pg_duckdb（1.4.3）回读兼容~~ **已销（2026-09-24 本机实测）**：**通**——`pgduckdb/pgduckdb:18-v1.1.1`（Postgres 18.1 + pg_duckdb 1.1.1，容器内 DuckDB 自证 v1.4.3）经 `duckdb.raw_query` 回读 1.5.4 写方（duckle 同源 CLI，`FORMAT PARQUET, COMPRESSION 'ZSTD'`）产物全通过：①Task5 zstd 样本 1 行读得出；②契约 18 列全类型面样本类型逐一吻合（VARCHAR×9、INTEGER×2、DATE、TIMESTAMP×2、DECIMAL(14,2)×3、DECIMAL(14,3)），decimal 边界值（±千亿级、0.01、-0.125、999.999）与 NULL/date/timestamp 值级保真；③hive 分区 glob 读通。⚠ 附带发现：`partitionBy` 剥离的分区键类型由路径字符串重推断——`system_book`（契约 varchar）读回 BIGINT、零填充目录 `hour=07` 读回 VARCHAR，staging 读侧须显式 cast 或 `hive_types` 钉死 | main 已列 Gate-E（T6），沿用其处置 |
 | G3 | ~~调拨/批发明细嵌套行的稳定行键（order_no+item 是否够）~~ **已销（2026-09-24 实测）**：**不够**——调拨行无 id/序号列且同品多批次拆行（100 单 655 行，8 单 item_num 重复，`(item_num, lot_number)` 残余重复 0）⇒ 键 `(order_no, item_num, lot_number)`；批发行自带稠密序号（100 单 352 行全 1..N）⇒ 键 `(wholesale_order_fid, order_detail_num)`；退货 3120 近 126 天 0 单无法实测，按 OpenAPI 文档钉 `(wholesale_return_fid, return_detail_num)`（该文档形状经 #3 实测交叉验证可信） | 三键入契约时各配唯一性断言（staging 护栏）；调拨 `lot_number` 空/NULL（121/655 行）须 COALESCE 后入键；#4 首个真实样本落地时以断言复核 |
 | G4 | ~~64188 token 的 whoami/能力面与 3120 一致~~ **已销（2026-09-24 实测）**：whoami `company_id=64188`、可见门店 129 家；能力面与 3120 同形（`posorder.find` 行含 `order_no`/`pos_order_details`，明细含 `order_detail_num`/`item_num`/`system_book_code`，行键范式成立） | ⚠️ 探针方法学：64188 单店单日可能空窗（店 1/99 七天窗均 0 单），探针/铺开须多店合查 |
@@ -118,7 +118,7 @@ openship jobs（数据面机，cron）
 ## 5 落地布局（消欠账对照）
 
 ```
-s3://<山海桶>/lemeng/
+s3://shanhai-data/lemeng/
   retail_order_line/system_book=3120/bizday=2026-09-24/hour=14/all.parquet  ← 覆盖写=该小时当前完整内容
   retail_order_line/system_book=64188/…
   transfer_out/     system_book=3120/bizday=2026-09-24/all.parquet
@@ -224,11 +224,13 @@ s3://<山海桶>/lemeng/
 
 | 阶段 | 内容 | 出口（硬验收） |
 |---|---|---|
-| S1 | 首源范式：retail 3120 **日粒度**三件套（契约/管线/staging）+ G1–G4 实核 + 引擎产管线 + drift/容器行为核 | 新湖落桶；回读自证过；pg_duckdb 读得出（G2） |
+| S1 | 首源范式：retail 3120 **日粒度**三件套（契约/管线/staging）+ G1–G4 实核 + 引擎产管线 + drift/容器行为核 | **已达成（2026-09-24 真机）**：新湖落桶（`shanhai-data` 24 对象、key 形态逐条正确、无字面量残留）；回读自证过（DuckDB httpfs：19,678 行 / 合计 1,622,276.08，FINISHED 18,566 行 / 1,522,801.61；hour=17 窗合计 **126,596.06 与既有基线逐分吻合**）；幂等**强判**通过（同 batch_id 重跑 ETag/Size 逐字节一致、对象数恒 1；换 batch_id 则 ETag 变——batch_id 是载荷列，by design）；drift 门禁**有效**（8 源声明断言 + 5 源实际比对、added-only 非阻断、exit 0；首跑 0 checked 仍 exit 0 = 实证「防假绿」断言的必要）；容器内行为**已核**（runner 容器内跑管线/回读/drift 全通）。⚠ 逐店对账未归零（149/149 全为正、合计 +17,250.91 / +1.15%），作 S2 口径对齐基线（见 §11 注） |
 | S2 | dbt 域扩展：staging 七源 + 四事实 + 三维 + 口径五条 + 对账 tests（含 recon 管线） | 口径表 vs branchindicator 逐店逐日 diff=0 |
 | S3 | 在线全域：零售 + 单据系 5min 调度全量铺开（tick/每小时全量/日终/回溯）+ 64188 双账套 | 双账户全域在线 5min；漏拉注入测试（跳 tick 后下一窗自愈）；状态变更 ≤1h 可见 |
 | S4 | AGI 回填（§9） | 回填期对账全绿 + 与旧平台一次性对比记录 |
 | S5 | L1 指标补全转正 + Metabase 看板（modules/data 报表面）+ 问数三通道接通 | 端到端问数（词表=L1 声明） |
+
+> **S1 对账注（2026-09-24 真机，S2 对齐起点）**：湖内 FINISHED 明细行 SUM 逐店 vs AGI branchindicator 当日 `sale_money`——149 家有值门店**全部为正差**（无负差、无湖内独有店），合计 +17,250.91（+1.15%），逐店相对差 0.00%~39.28%（均值 1.11%），最大绝对差 +5,940.21（branch 157 保山隆阳2店）。全正的系统性偏置指向口径差（branchindicator 侧疑为扣除/净额口径），**非抽取缺失**——支撑证据：hour=17 窗合计与既有基线 126,596.06 逐分吻合。S2 口径对齐后该表应归零。另：branchindicator 单次 `branch_nums` 上限 100 家（269 家须 3 批拉取），已入 S2 实现约束。
 
 每阶段开工前对照 `docs/architecture.md` 架构先行门；实现 PR 引用 issue #150（数据栈）或按需开新 issue。
 
