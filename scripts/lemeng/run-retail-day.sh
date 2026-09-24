@@ -32,7 +32,11 @@
 #           OPS_SINK_ENV —— _ops 投递通道凭据文件，默认 /etc/openobserve-ingest.env（OO_BASE/OO_ORG/OO_AUTH）。
 #           OPS_STREAM   —— OpenObserve 流名，默认 retail-day。
 #           观测通道缺失/失败 ⇒ 打印 OPS_SINK=DISABLED|FAILED，**不影响本脚本退出码**（采集的判定
-#           只由验证项决定），但也绝不静默——字面量可 grep（防「假装在报」）。
+#           只由验证项决定），但也绝不静默——字面量可 grep（防「假装在报」）。该文件**按文本白名单解析、
+#           绝不 source**（source 会让文件里一行未闭合引号把子进程打成 exit 2 ⇒ 被当成采集失败）。
+#           取不到 sink 行 ⇒ 打印 OPS_ROWS_UNPARSED:（同族字面量），rows 记 null。
+# 失败字面量（可 grep）：BIZDAY_DERIVE_FAILED:（营业日不可用，exit 3）/ OPS_ROWS_UNPARSED: /
+#           OPS_SINK=DISABLED|FAILED / LISTING_FAILED: / IDEM_RETIRED: / DRIFT_VERDICT=VACUOUS / ASSERT_FAIL:
 set -u
 REPO=${REPO:-/opt/platform-core-data/platform-core}
 COMPOSE="docker compose -f $REPO/deploy/data-compose.yml"
@@ -42,7 +46,32 @@ LOG_ROOT=/workspace/logs
 # 为什么钉死：数据面机系统 TZ 实测为 Asia/Shanghai（CST +0800），但 openship cron 实测按 **UTC** 解释
 # （`17 3 * * *` 的实际 startedAt 逐日为 03:17:00Z ⇒ 11:17 CST）；两种解释下「上海日历日的昨天」
 # 都是同一答案，故钉死后对 cron 语义不敏感（详见 task-10-report.md「时区实测」）。
-BIZDAY=${BIZDAY:-$(TZ=Asia/Shanghai date -d yesterday +%Y-%m-%d 2>/dev/null || TZ=Asia/Shanghai date -v-1d +%Y-%m-%d)}
+#
+# ⚠️ 父进程**只推一次**并 **export** 给每个窗口子进程：`windows` 是 `sh "$0" window "$H"` 起子进程，
+# 而**未 export 的 shell 变量子进程看不见**（dash 实测：子进程拿到的是 UNSET ⇒ 各自重推一次）。
+# 一次**跨上海 00:00** 的跑（全量实测 17m42s）就会把 0..k 窗写进 bizday=D、其余窗写进 D+1，
+# **D 日永久残缺**（次日只盯 D+1，缺口不自愈）而退出码 0、行数正常——正是本任务要防的静默错采。
+BIZDAY=${BIZDAY:-}
+if [ -z "$BIZDAY" ]; then
+  BIZDAY=$(TZ=Asia/Shanghai date -d yesterday +%Y-%m-%d 2>/dev/null) || BIZDAY=''
+  [ -n "$BIZDAY" ] || BIZDAY=$(TZ=Asia/Shanghai date -v-1d +%Y-%m-%d 2>/dev/null) || BIZDAY=''
+fi
+# 推导值**与传入值**都必须真像 YYYY-MM-DD：无断言就等于放任 `bizday=` 这种空营业日静默写进湖
+# （前缀会退化成 `.../bizday=/`，写到一个谁都不会再读的位置）。这是**采集侧**失败，允许硬失败。
+case "$BIZDAY" in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+  *)
+    # 只在「真要写湖」的模式上硬失败：usage / idem / probe / diag / envfile 不需要营业日，
+    # 保持既有退出码（idem 与未知模式 exit 2、usage exit 2）逐字不变。
+    case " window windows listing agg branches rb idem3 drift " in
+      *" ${1:-} "*)
+        echo "BIZDAY_DERIVE_FAILED: 营业日不可用（TZ=Asia/Shanghai date 推导失败，或传入值非 YYYY-MM-DD：'${BIZDAY}'）——不确定营业日就绝不写湖，判红" >&2
+        exit 3
+        ;;
+    esac
+    ;;
+esac
+export BIZDAY
 SYSTEM_BOOK=${SYSTEM_BOOK:-3120}
 PREFIX="lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY"
 # 当日对象前缀（'=' 必须 pct 编码：S3 prefix 里的裸 '=' 会被 SigV4 判无效——Task 8 实测）。
@@ -124,39 +153,60 @@ PY
 
 # ── _ops 观测（spec §6「观测：_ops 指标（行数/页数/窗口/耗时）」；§160「_ops 由 job wrapper 写 OpenObserve」）
 # 每窗一行 JSON 到 stdout（字段：ts/job/system_book/bizday/hour/rows/status），并按 SOP 的文件日志通道
-# 投递到 OpenObserve。rows **复用 window 模式已解析的 sink 输出**（同一行 `sink ok (N rows)`），
+# 投递到 OpenObserve。rows **复用 window 模式已解析的 sink 输出**（同一行 sink 节点），
 # 不另造一次计数——两次计数会漂移。
 OPS_SINK_ENV=${OPS_SINK_ENV:-/etc/openobserve-ingest.env}
 OPS_STREAM=${OPS_STREAM:-retail-day}
+# sink 节点行：**行首锚定**（只有真正的 sink 节点行才会匹配），不用「整段输出 tail -1」——
+# 后者会把任何同形噪声当结果。节点名与状态之间是**列对齐的多个空格**（首次真机全量跑暴露：
+# 按单空格写会让每窗 rows 恒 null，指标静默消失）。
+OPS_SINK_NODE_RE='^[[:space:]]*sink[[:space:]]+[a-z]+[[:space:]]*\([0-9]+ rows\)'
 
-ops_rows() { # $1=duckle 输出全文 → 从既有 sink 节点行取行数；取不到按 null（不猜数）
-  # 真机格式是**列对齐**的：`  sink                 ok (31 rows) - ┌───┐` —— 节点名与状态之间是
-  # 多个空格（首次真机全量跑暴露：按单空格写会让每窗 rows 恒为 null，静默丢指标）。故用
-  # [[:space:]]+ 容忍任意空白，不假设列宽。
-  r=$(printf '%s\n' "$1" | grep -oE 'sink[[:space:]]+[a-z]+[[:space:]]*\([0-9]+ rows\)' | tail -1 \
-      | grep -oE '\([0-9]+ rows\)' | tr -dc '0-9')
-  [ -n "$r" ] && printf '%s' "$r" || printf 'null'
+ops_sink_rows() { # $1=duckle 输出全文 → 该窗 sink 行数；**未唯一定位到 sink 行 ⇒ 非零**（调用方据此发独特字面量）
+  n=$(printf '%s\n' "$1" | grep -cE "$OPS_SINK_NODE_RE")
+  [ "$n" = "1" ] || return 1
+  printf '%s\n' "$1" | grep -oE "$OPS_SINK_NODE_RE" | tr -dc '0-9'
+}
+
+ops_val() { # $1=键名 → 从通道文件取该键的值（**白名单**：只认这一个键名；**不 source**）
+  # 为什么不能 source：注入文件里一行未闭合引号会让 shell 直接报语法错**退出 2**（dash 实测），
+  # 而该子进程被 windows 循环判成「采集失败并停止续跑」⇒ 红的原因是**观测**，既违背本函数下方
+  # 「观测不影响采集判定」的承诺，也违背本任务「_ops 不得改任何退出码」的契约。
+  # 这里只把文件当**文本**读：畸形行只是「不匹配的行」，不执行、不注入本进程命名空间。
+  # 同一键名出现多行取最后一条；去掉 CR（防 CRLF 文件把 \r 带进 Basic 头）。
+  sed -n "s/^$1=//p" "$OPS_SINK_ENV" 2>/dev/null | tail -1 | tr -d '\r'
 }
 
 ops_ship() { # $1=一行 _ops JSON → 投递；**任何情况下都返回 0**（观测通道不影响采集的判定）
-  # 凭据走服务器本地 root-only 文件，变量名与既有 job `infra-health-check-to-openobserve` 同一套
-  # （OO_BASE/OO_ORG/OO_AUTH）。文件缺失 ⇒ DISABLED：采集成功不因观测通道缺失判红，
-  # 但也**绝不静默**——DISABLED/FAILED 都是显式可 grep 的字面量（防「假装在报」）。
+  # 凭据走服务器本地 root-only 文件，键名与既有 job `infra-health-check-to-openobserve` 同一套
+  # （OO_BASE/OO_ORG/OO_AUTH）。文件缺失 / 格式不合法 / 键缺失 ⇒ 走 DISABLED 支路，**退出码不变**。
   if [ ! -r "$OPS_SINK_ENV" ]; then
     printf 'OPS_SINK=DISABLED reason=no_ingest_env file=%s\n' "$OPS_SINK_ENV"
     return 0
   fi
-  OO_BASE=''; OO_ORG=''; OO_AUTH=''
-  # shellcheck disable=SC1090
-  . "$OPS_SINK_ENV"
-  if [ -z "$OO_BASE" ] || [ -z "$OO_ORG" ] || [ -z "$OO_AUTH" ]; then
-    printf 'OPS_SINK=DISABLED reason=incomplete_ingest_env file=%s\n' "$OPS_SINK_ENV"
+  # POSIX sh 无 local ⇒ 用 ooss_ 私有前缀，绝不覆盖采集侧变量（BIZDAY/SYSTEM_BOOK/ZOS_* 等）
+  ooss_base=$(ops_val OO_BASE); ooss_org=$(ops_val OO_ORG); ooss_auth=$(ops_val OO_AUTH)
+  # 键缺失 与 值形状不合法 分开报（都走 DISABLED，退出码不变）：前者是没配，后者是配歪了
+  if [ -z "$ooss_base" ] || [ -z "$ooss_org" ] || [ -z "$ooss_auth" ]; then
+    printf 'OPS_SINK=DISABLED reason=missing_key_in_ingest_env file=%s\n' "$OPS_SINK_ENV"
     return 0
   fi
+  # 值形状白名单：畸形值（含引号/空白等）**不上 wire**——否则每次 POST 必失败且难查，
+  # 而正确的做法是明确走 DISABLED（不假装在报，也不把观测故障混进采集判定）。
+  case "$ooss_base" in
+    http://*|https://*) ;;
+    *) printf 'OPS_SINK=DISABLED reason=invalid_ingest_env key=OO_BASE\n'; return 0 ;;
+  esac
+  case "$ooss_org" in
+    *[!A-Za-z0-9_-]*) printf 'OPS_SINK=DISABLED reason=invalid_ingest_env key=OO_ORG\n'; return 0 ;;
+  esac
+  case "$ooss_auth" in
+    *[!A-Za-z0-9+/=._:-]*) printf 'OPS_SINK=DISABLED reason=invalid_ingest_env key=OO_AUTH\n'; return 0 ;;
+  esac
   rm -f /tmp/ops_ship.out
   code=$(curl -s -o /tmp/ops_ship.out -w '%{http_code}' --max-time 15 \
-    -H "Authorization: Basic $OO_AUTH" -X POST \
-    "$OO_BASE/api/$OO_ORG/$OPS_STREAM/_json" -H 'Content-Type: application/json' \
+    -H "Authorization: Basic $ooss_auth" -X POST \
+    "$ooss_base/api/$ooss_org/$OPS_STREAM/_json" -H 'Content-Type: application/json' \
     -d "[$1]" 2>/dev/null) || code=000
   if [ "$code" = "200" ]; then
     printf 'OPS_SINK=OK stream=%s code=%s\n' "$OPS_STREAM" "$code"
@@ -214,7 +264,15 @@ window)
   printf '%s\n' "$out" | tail -14
   # _ops 行**在判红之前**发出：失败窗也要在观测面留痕（rows=null 而非 0——0 会被误读成「跑了但没数据」）
   st=$(printf '%s' "$status" | sed 's/^status[: ]*//'); [ -n "$st" ] || st=NONE
-  ops_emit "$H" "$(ops_rows "$out")" "$st"
+  # 取不到 sink 行**必须可观测**：否则 `rows:null + status:ok` 与「该窗确实没有 sink 行」不可区分，
+  # 将来 sink 节点改名 / 状态词离开 [a-z]+ / 多出一条同形行，都会让本任务唯一要交付的指标
+  # 无声消失（exit 0、无独特字面量可 grep）。故失败时发一条与 LISTING_FAILED:/ASSERT_FAIL: 同族的字面量。
+  if sink_rows=$(ops_sink_rows "$out"); then
+    ops_emit "$H" "$sink_rows" "$st"
+  else
+    printf 'OPS_ROWS_UNPARSED: 未能唯一定位本窗 sink 节点行（改名/状态词变化/多条同形行）⇒ rows 记 null；此处即「指标缺失」的可见处\n'
+    ops_emit "$H" "null" "$st"
+  fi
   if [ "$rc" -ne 0 ]; then exit "$rc"; fi
   ;;
 windows)
