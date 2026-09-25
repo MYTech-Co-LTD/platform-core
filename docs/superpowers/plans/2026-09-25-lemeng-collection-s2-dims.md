@@ -84,7 +84,7 @@ Expected（2026-09-25 已探到的基线，用它们核对）：
 Run:
 ```bash
 git add docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md
-git commit -m "docs(spec): §3 补「量级（实测）」列——维度面探针结论 (#<新issue>)"
+git commit -m "docs(spec): §3 补「量级（实测）」列——维度面探针结论 (##214)"
 ```
 
 ---
@@ -203,7 +203,7 @@ Expected: 后者**红**（新文件未进 lock）⇒ 跑 `pnpm exec tsx scripts/
 ```bash
 git add contracts/common/lemeng.branch.json duckle/common/lemeng.branch.json \
         dbt/models/common/staging/stg_lemeng_branch.sql deploy/data-plane.lock
-git commit -m "feat(lemeng): 门店维三件套——契约/管线/staging（双账套全量快照） (#<新issue>)"
+git commit -m "feat(lemeng): 门店维三件套——契约/管线/staging（双账套全量快照） (##214)"
 ```
 
 ---
@@ -238,7 +238,7 @@ git commit -m "feat(lemeng): 门店维三件套——契约/管线/staging（双
 pnpm exec tsx scripts/lemeng/data-plane-lock.mjs
 git add contracts/common/lemeng.item.json duckle/common/lemeng.item.json \
         dbt/models/common/staging/stg_lemeng_item.sql deploy/data-plane.lock
-git commit -m "feat(lemeng): 商品维三件套——契约/管线/staging（双账套全量快照） (#<新issue>)"
+git commit -m "feat(lemeng): 商品维三件套——契约/管线/staging（双账套全量快照） (##214)"
 ```
 
 ---
@@ -270,38 +270,74 @@ having count(*) > 1
 
 ---
 
-### Task 5: job 注册 + 投递 + 真机验
+### Task 5a: wrapper 的 `dim` 模式（**分支内**）
 
-**Interfaces:** Consumes Task 2/3 的管线文件与湖路径；Produces 两个 openship job + 真机落湖证据
+**Interfaces:** Consumes Task 2/3 的管线文件名；Produces `run-retail-day.sh` 的 `dim` 模式（Task 5b 的 job 按它发命令）
 
-- [ ] **Step 1: 给 wrapper 加 `dim` 模式**（`scripts/lemeng/run-retail-day.sh`）
+> **为什么 5a/5b 拆开（2026-09-25 拍板）**：投递程序按**全 SHA** 从 GitHub 取件。若在分支 SHA 上投递，等于**生产跑未合并的代码**而 main 上没有对应提交 —— 与仓规「merge main 才上线」冲突。故**仓内代码走 PR，生产动作留到合并后**。
 
-新增一个模式，按 `DIM_FACE=branch|item` 跑对应管线，窗口参数换成 `SNAPSHOT`（Asia/Shanghai 当日）。**照抄现有 `window` 分支的形状**（`$COMPOSE run --rm` + `-e` 传参 + `_ops` 行），**并复用启动自证门**（`IDENTITY_CHECKED` 的 export 语义见现有注释）。
+- [ ] **Step 1: 加 `dim` 模式**
 
-- [ ] **Step 2: 投递**（openship MCP `post_system_servers_by_id_exec`）
+在 `scripts/lemeng/run-retail-day.sh` 的 `case` 里新增 `dim`：按 `DIM_FACE=branch|item` 跑对应管线（`/pipelines/common/lemeng.<face>.json`），窗口参数换成 `SNAPSHOT`（`TZ=Asia/Shanghai date +%F`，**显式钉时区**，与 `BIZDAY` 同理），并**复用启动自证门**（`IDENTITY_CHECKED` 的 export 语义见 `windows` 分支注释）。
+
+照现有 `window` 分支的形状写：`$COMPOSE run --rm -e LEMENG_TOKEN … -e BATCH_ID="$BATCH_ID" duckle --pipeline "$PIPELINE" …`，跑完发一行 `_ops`（`{"ts","job":"dim","system_book","snapshot","face","rows","status"}`），退出码契约与现有模式一致（失败非零）。
+
+⚠️ 改完**必须跑全文件邻接扫描**（`$VAR` 紧跟非 ASCII 会打挂 bash 3.2，本仓一天咬过两次，见 #212）。
+
+- [ ] **Step 2: 更新头注 + lock + 门禁 + 提交**
+
+头注的用法串与退出码契约要加 `dim`（`#   sh run-retail-day.sh dim      # 维度快照（DIM_FACE=branch|item，双账套）`）。
 
 ```bash
-sh /opt/lemeng-sync.sh <全SHA> --check    # 先只比不写
-sh /opt/lemeng-sync.sh <全SHA>            # 正式
+pnpm exec tsx scripts/lemeng/data-plane-lock.mjs      # wrapper 是投递单元，必须重生成
+pnpm exec tsx scripts/check-data-plane-lock.mjs       # 期望绿
+git add scripts/lemeng/run-retail-day.sh deploy/data-plane.lock
+git commit -m "feat(lemeng): wrapper 加 dim 模式——维度快照（双账套全量） (#214)"
 ```
 
-Expected: `SYNC_OK 25/25` 且末行 `# revision <全SHA>`。**全 SHA 逐字复制，绝不手工补**。
+---
 
-- [ ] **Step 3: 注册两个 job**（openship MCP `post_jobs`）
+### Task 5b: 投递 + 注册 job + 真机验（**合并之后另起一段执行**）
 
-- `lemeng-dim-branch-runner`：cron `0 2 * * *`（= 北京 10:00），`serverIds: ["8281d598-af73-4d0b-99dd-bc8681fcc8bb"]`，env `{SYSTEM_BOOK, SNAPSHOT, DIM_FACE=branch}`，secrets 照抄零售 job 的 7 键。
-- `lemeng-dim-item-runner`：cron `0 11 * * *`（= 北京 19:00），其余同，`DIM_FACE=item`。
+**Interfaces:** Consumes 已合并进 main 的 Task 2/3/5a；Produces 4 条 openship job + 真机落湖证据
 
-⚠️ **两个账套各要一条 job**（`SYSTEM_BOOK` 不同、`LEMENG_TOKEN` 不同）——即**4 条 job**。64188 那条的令牌见「计划外事实」。
+> **前置**：本 Task **不在功能分支内执行**。先把 Task 1–5a 的 PR 合并进 main，**再从 main 的合并提交**做投递与注册。
 
-- [ ] **Step 4: 手动触发一次并回读自证**
+- [ ] **Step 1: 投递**（openship MCP `post_system_servers_by_id_exec`）
 
-Run: openship MCP `post_jobs_by_key_run` → 读 run 输出
-Expected: exit 0、`_ops` 行 `status: ok`、sink 行数 = 预期（branch 3120=270 / 64188=129；item ≈1.9万/账套）
+```bash
+sh /opt/lemeng-sync.sh <合并提交全SHA> --check    # 先只比不写
+sh /opt/lemeng-sync.sh <合并提交全SHA>            # 正式
+```
 
-- [ ] **Step 5: 真机回读**（用 wrapper 的 `rb` 模式或 pg_duckdb 直读）
+Expected: `SYNC_OK 25/25` 且末行 `# revision <全SHA>`。**全 SHA 逐字复制，绝不手工补。**
 
-Expected: `select count(*) from read_parquet('s3://…/dim_branch/**/*.parquet')` 与 sink 行数一致；分区键 `system_book`/`snapshot` 可读且类型合契约（`::varchar` / `::date`）。
+- [ ] **Step 2: 注册 4 条 job**（openship MCP `post_jobs`）
+
+| job | cron（UTC） | env |
+|---|---|---|
+| `lemeng-dim-branch-3120` | `0 2 * * *`（北京 10:00） | `DIM_FACE=branch, SYSTEM_BOOK=3120, SNAPSHOT` |
+| `lemeng-dim-branch-64188` | `0 2 * * *` | `DIM_FACE=branch, SYSTEM_BOOK=64188` |
+| `lemeng-dim-item-3120` | `0 11 * * *`（北京 19:00） | `DIM_FACE=item, SYSTEM_BOOK=3120` |
+| `lemeng-dim-item-64188` | `0 11 * * *` | `DIM_FACE=item, SYSTEM_BOOK=64188` |
+
+- `serverIds: ["8281d598-af73-4d0b-99dd-bc8681fcc8bb"]`；命令 `sh /opt/lemeng-run.sh dim`；`timeoutMs` 按商品维量级给足（≥1800000）；secrets 照抄零售 job 的 7 键。
+- **3120 的 `BRANCH_NUMS`** = `1..270 \ {99} ∪ {888}`（269 家，照零售 job）。
+- **64188 的 `BRANCH_NUMS`** = **全要 129 家**（`{1..128} ∪ {999}`，含 99 —— 2026-09-25 拍板；与 3120 口径不同，**别照抄**）。
+- ⚠️ **64188 的 `LEMENG_TOKEN`**：`LEMENG_TOKEN` 是**按账套绑定**的。生产侧 64188 令牌需另行落进 job secrets（值不经 agent 转手）。
+
+- [ ] **Step 3: 各触发一次 + 回读自证**
+
+Run: openship MCP `post_jobs_by_key_run`（4 条）→ 读 run 输出
+Expected: exit 0、`_ops` 行 `status: ok`、sink 行数 = 预期（branch 3120=**270** / 64188=**129**；item ≈**1.9 万**/账套）
+
+- [ ] **Step 4: 真机回读**（wrapper 的 `rb` 模式或 pg_duckdb 直读）
+
+```sql
+select system_book, snapshot, count(*) from read_parquet('s3://<桶>/lemeng/dim_branch/**/*.parquet') group by 1,2;
+```
+
+Expected: 与 sink 行数一致；分区键 `system_book`（varchar）/ `snapshot`（date）可读且类型合契约。
 
 ---
 
@@ -311,10 +347,12 @@ Expected: `select count(*) from read_parquet('s3://…/dim_branch/**/*.parquet')
 - **duckle 引擎在本地桌面版**：`~/Library/Application Support/io.duckle.app/engines/`（MCP 已接）。`run_pipeline` 需要 `DUCKLE_DUCKDB_BIN`；`${ENV:...}` 取自 **MCP 进程的 env**，不在管线里写死。
 - **网关分页事实（2026-09-25 实测）**：`page_size` 上限 **200**（201 报 `每页条数不能超过200`）；响应**无 total** ⇒ 页空即止；**query 里的 `page_number` 被完全无视**（页码必须进 body）；`item.find` 不支持 `offset/limit`（返回 0 行）。
 - **64188 令牌**：本地 `~/.zshrc` 有 `LEMON_TOKEN_64188`（已验可用：`company_id=64188`、门店 129 家）。**生产侧的 64188 令牌需另行落进 openship job secrets**（按公司规矩，密钥值不经 agent 转手）。
-- **门店清单口径**：3120 的采集清单是 `1..270 \ {99} ∪ {888}`（269 家，99=熊喵中央店故意排除）；**64188 的清单尚未定**（可见 129 家 = `{1..128} ∪ {999}`，含 99）——**需要业务拍板**后填进 job env。
+- **门店清单口径（2026-09-25 拍板）**：3120 = `1..270 \ {99} ∪ {888}`（**269 家**，99=熊喵中央店故意排除）；**64188 = 全要 129 家**（`{1..128} ∪ {999}`，**含 99**）——**两账套口径不同，别互相照抄**。
+- **Task 5 拆成 5a/5b（2026-09-25 拍板）**：仓内代码（wrapper 的 `dim` 模式 + lock）走 PR；**投递 / 注册 job / 真机验留到合并之后**——投递按全 SHA 取件，分支 SHA 投上去等于生产跑未合并代码。
+- **承载 issue：#214**。`dim_customer` / `dim_date` / 四事实 / 口径五条 / 对账 `diff=0` 属 **S2-b**，另开 issue 与计划。
 
 ## Self-Review（写完自查）
 
 - **spec 覆盖**：§3 两个维度面 ✓ Task 2/3；§5 湖布局（`dim_branch/`、`dim_item/` 的 `snapshot=` 分区）✓；§7.2 dim 设计（两账套各自保留）✓ Task 3 Step 1；§11 S2 的「四事实三维」——**本计划只覆盖「三维」里的二（branch/item）**，`dim_customer`（从批发明细派生，依赖批发面数据）与 `dim_date`、以及「四事实」「口径五条」「对账 diff=0」**不在本计划**，属 S2-b，开工前另写计划。
-- **占位符**：无 TBD/TODO；`<新issue>` 是**开工前要开的 issue 号**，不是待填内容。
+- **占位符**：无 TBD/TODO；`#214` 是**开工前要开的 issue 号**，不是待填内容。
 - **类型一致**：契约用 JSON Schema 类型名（`integer/varchar/boolean`），管线 `data.schema` 用引擎词表（`int64/string/bool`），staging 用 SQL cast（`::int/::varchar/::date`）——三套词表**故意不同**，各自对齐自己的机器面；名字必须能一一对上（见 Task 2 Step 1 的 `type` 列警告）。
