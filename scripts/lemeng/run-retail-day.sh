@@ -4,7 +4,7 @@
 # 用法（job/exec 内，秘密值来自 job env——本脚本只读不写，任何输出都不回显值）：
 #   sh run-retail-day.sh probe                     # 环境/桶/容器/token 闸 体检（只打印长度与状态码）
 #   sh run-retail-day.sh window 07 [suffix]        # 单时窗
-#   sh run-retail-day.sh windows                   # 昨日 24 时窗全量（任一窗失败即整体非零，不再续跑）
+#   sh run-retail-day.sh windows                   # 昨日 24 时窗全量（逐窗尽力采；失败窗登记后继续，末尾统一判红）
 #   sh run-retail-day.sh listing                   # 当日对象清单（bizday 前缀；断言：非空 + 未截断 + 无 ${ENV 字面量）
 #   sh run-retail-day.sh rb "<duckdb SQL>"         # 容器内 duckdb httpfs 回读（值由容器 env 展开）
 #   sh run-retail-day.sh idem3 03                  # 幂等强判（同 batch_id 字节一致 + 换 batch_id 因果对照）
@@ -21,7 +21,10 @@
 # 退出码契约（job 据此判红——S1 教训：「打印 FAIL/VACUOUS 但仍 exit 0」= 假绿，等于没验）：
 #   0 = 该模式全部验证项通过；非 0 = 至少一项验证失败。
 #   取清单失败 / 清单被截断 / 清单为空 / key 里残留 ${ENV 字面量 / 幂等目标对象 NOT_FOUND / 0 检查（drift VACUOUS）一律非 0。
-#   windows：任一窗失败 ⇒ 立即非零退出，不再续跑后续窗。
+#   windows：**逐窗尽力采**——任一窗失败仍继续采后续窗（本 job 只采「昨天」且无回溯重放，
+#            「一窗失败即停」= 失败点之后的窗口当天永久缺失，见 #209）；失败窗逐一登记，
+#            **末尾** `WINDOWS_FAILED hours:…` + 非零退出（红灯照旧，只是不再拿覆盖率换安静）。
+#            连续 `WINDOWS_MAX_CONSEC` 窗失败 ⇒ `WINDOWS_ABORT` 中止（网关不可用时不空转撞超时）。
 #   identity：凭据/清单与账套错配、或 whoami 重试 3 次仍不可达 ⇒ 非零。**身份未证绝不写湖**
 #             （`windows` / `window` 在开跑前自证；见 identity_assert 的注释说为什么必须有）。
 #   已退役模式（`idem`）恒 exit 2，不参与任何判断。
@@ -38,9 +41,13 @@
 #           只由验证项决定），但也绝不静默——字面量可 grep（防「假装在报」）。该文件**按文本白名单解析、
 #           绝不 source**（source 会让文件里一行未闭合引号把子进程打成 exit 2 ⇒ 被当成采集失败）。
 #           取不到 sink 行 ⇒ 打印 OPS_ROWS_UNPARSED:（同族字面量），rows 记 null。
+#           WINDOWS_MAX_CONSEC —— 逐窗尽力采时「连续失败多少窗即中止」，默认 3（#209）。
+#           只用于测试时临时给小值强制触发 WINDOWS_ABORT；默认值不得为可测而放小。
 #           LEMENG_AGI_URL —— whoami 自证端点，默认 `https://cloud.nhsoft.cn/agi/mcp`（#205 启动自证用）。
 #           只用于换网关/本机演练；默认值即生产网关。
-# 失败字面量（可 grep）：BIZDAY_DERIVE_FAILED:（营业日不可用，exit 3）/ OPS_ROWS_UNPARSED: /
+# 失败字面量（可 grep）：WINDOWS_FAILED hours:（末尾汇总，非零）/ WINDOWS_ABORT（连续失败中止）/
+#           WINDOW_FAILED hour=（单窗失败，仍继续）/ WINDOWS_IDENTITY_FAILED（自证未过）/
+#           BIZDAY_DERIVE_FAILED:（营业日不可用，exit 3）/ OPS_ROWS_UNPARSED: /
 #           OPS_SINK=DISABLED|FAILED / LISTING_FAILED: / IDEM_RETIRED: / DRIFT_VERDICT=VACUOUS / ASSERT_FAIL:
 set -u
 REPO=${REPO:-/opt/platform-core-data/platform-core}
@@ -83,6 +90,8 @@ PREFIX="lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY"
 # 收窄到 bizday 一级：既避免「跨日同 hour key」被误匹配，也让清单不随天数增长（恒 ≤24 键）。
 DAY_PREFIX="lemeng/retail_order_line/system_book%3D$SYSTEM_BOOK/bizday%3D$BIZDAY/"
 LIST_MAX_KEYS=${LEMENG_LIST_MAX_KEYS:-1000}
+# 逐窗尽力采（#209）：连续失败多少窗即判定网关不可用并停止续跑（避免空转 24 窗撞 job 超时 1h）。
+WINDOWS_MAX_CONSEC=${WINDOWS_MAX_CONSEC:-3}
 RB_HELPER=$REPO/lemeng-readback.sh
 
 duckdb_bin() { $COMPOSE run --rm --entrypoint sh duckle -c 'command -v duckdb' 2>/dev/null | tr -d '\r' | tail -1; }
@@ -375,8 +384,16 @@ window)
   if [ "$rc" -ne 0 ]; then exit "$rc"; fi
   ;;
 windows)
-  # 原实现只让循环状态等于**最后一个窗**：中间某个 hour 失败只在日志里一行，进程仍 exit 0。
-  # 现在任一窗失败 ⇒ 立即非零退出且不再续跑（job 据此判红）。
+  # 原实现（修「假绿」那轮）只让循环状态等于**最后一个窗**：中间某个 hour 失败只在日志里一行，
+  # 进程仍 exit 0。当时的修法是「任一窗失败 ⇒ 立即非零退出且不再续跑」——**红灯对了，但代价是覆盖率**。
+  # 本轮的修法（issue #209，两条真实案例见下）：**逐窗尽力采 + 末尾统一判红**。
+  # 为什么要改：本 job **只采「昨天」**（BIZDAY = 上海昨日）、**没有回溯重放**（属 S3，未建）
+  # ⇒ 「一窗失败即停」意味着**失败点之后的窗口当天永久缺失且不会自愈**，唯一兜底是人工重跑。
+  # 案例：2026-09-25 02:30Z 的 schedule 轮失败（靠 03:10Z 人工重跑才补上）；
+  #       同日 07:00Z 的 hour 17 撞上游 504「page 3: REST HTTP 504」⇒ 18–23 被整段跳过。
+  # 但绝不静默：失败窗逐一登记，**末尾一次性判红**（`WINDOWS_FAILED hours:…` + exit 非零），
+  # 并配 job 的 retry（openship 配置）给整轮第二次机会。
+  # 连续失败达 `WINDOWS_MAX_CONSEC` 即中止：网关整体不可用时不该空转 24 窗去撞 job 超时（1h）。
   # 启动自证（#205）放在**最前**：任何一窗都不该在身份未证时开跑（错账套的 24 窗全落错分区，
   # 而退出码 0、行数正常——正是本自证要防的静默错采）。
   # IDENTITY_CHECKED **必须 export**：下面是 `sh "$0" window "$H"` 起的**子进程**，未导出的 shell
@@ -384,12 +401,30 @@ windows)
   if [ "${IDENTITY_CHECKED:-}" != "1" ]; then
     sh "$0" identity
     irc=$?
-    if [ "$irc" -ne 0 ]; then echo "WINDOWS_FAILED identity 自证未过(exit=$irc)，拒绝写湖"; exit "$irc"; fi
+    if [ "$irc" -ne 0 ]; then echo "WINDOWS_IDENTITY_FAILED 自证未过(exit=$irc)，拒绝写湖"; exit "$irc"; fi
     IDENTITY_CHECKED=1; export IDENTITY_CHECKED
   fi
+  w_failed=""; w_consec=0
   for H in $(seq -w 0 23); do
-    sh "$0" window "$H" || { wrc=$?; echo "WINDOWS_FAILED hour=$H exit=$wrc (已停止续跑)"; exit "$wrc"; }
+    if sh "$0" window "$H"; then
+      w_consec=0
+    else
+      wrc=$?
+      w_failed="$w_failed $H"
+      w_consec=$((w_consec+1))
+      # ⚠️ `${wrc}` 的花括号是必须的：`$wrc` 紧跟全角 `（` 时，本机 /bin/sh（bash 3.2）会把一个
+      # 字节吃进变量名 ⇒ `wrc<乱码>: unbound variable`（#208 在 AGI_URL 上已踩过同一个坑、同一条路径）。
+      echo "WINDOW_FAILED hour=$H exit=${wrc}（已登记，继续采后续窗）"
+      if [ "$w_consec" -ge "$WINDOWS_MAX_CONSEC" ]; then
+        echo "WINDOWS_ABORT 连续 $w_consec 窗失败 ⇒ 判定网关不可用，停止续跑"
+        break
+      fi
+    fi
   done
+  if [ -n "$w_failed" ]; then
+    echo "WINDOWS_FAILED hours:${w_failed# } —— 共 $(printf '%s' "$w_failed" | wc -w | tr -d ' ') 窗未采（其余窗已采；job 判红，等 retry 或人工重跑）"
+    exit 1
+  fi
   echo "WINDOWS_ALL_OK 24/24 windows"
   ;;
 listing)
