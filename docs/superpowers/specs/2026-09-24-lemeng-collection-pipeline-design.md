@@ -58,15 +58,15 @@
 
 ## 3 数据源清单（7 采集面，AGI 实测 2026-09-24）
 
-| # | 域 | ability | 账套 | 节奏（§6） | 自然键（行粒度） |
-|---|---|---|---|---|---|
-| 1 | 零售明细 | `nhsoft.retail.ai.pos.posorder.find` | **双** | 5min 时段窗 + 多层重放 | `(order_no, order_detail_num)` |
-| 2 | 调拨单（内部配送源） | `nhsoft.ama.ai.transfer.out.order.find` | 3120 | 5min 增量 + 每小时全量 + 回溯 | `(order_no, item_num, lot_number)`（2026-09-24 实测：行无 id/序号列；单据内同品按批次拆行致 item_num 重复（100 单 655 行中 8 单重复），`(item_num, lot_number)` 残余重复 0；lot_number 有 121/655 行为空串/NULL，入键需 COALESCE） |
-| 3 | 批发销售单 | `nhsoft.whs.ai.wholesaleorder.find` | 3120 | 同上 | `(wholesale_order_fid, order_detail_num)`（2026-09-24 实测：行自带 int 序号 `order_detail_num`，100 单 352 行全部 1..N 稠密 0 重复；item_num 单据内有重复（3/100 单）⇒ 序号列必需且充分） |
-| 4 | 批发退货单 | `nhsoft.whs.ai.wholesalereturn.find` | 3120 | 同上 | `(wholesale_return_fid, return_detail_num)`（文档钉死：3120 近 126 天 0 退货单无法实测；OpenAPI 明细 DTO `AiWholesaleReturnDetailDTO` 自带 int 序号 `return_detail_num`，文档形状经 #3 实测交叉验证；首个真实样本落地时以唯一性断言复核） |
-| 5 | 要货单 | `nhsoft.ama.ai.request.order.find` | **双** | 同上 | `(order_no, item_num)`（补货管线已实证 0 重复） |
-| 6 | 门店维 | `nhsoft.user.ai.branch.find` | **双** | 全量快照日更 | `(system_book, branch_num)` |
-| 7 | 商品维 | `nhsoft.base.ai.item.find`（+分类/品牌/部门） | **双** | 全量快照日更 | `(system_book, item_num)` |
+| # | 域 | ability | 账套 | 节奏（§6） | 自然键（行粒度） | 量级（实测） |
+|---|---|---|---|---|---|---|
+| 1 | 零售明细 | `nhsoft.retail.ai.pos.posorder.find` | **双** | 5min 时段窗 + 多层重放 | `(order_no, order_detail_num)` | 峰值 **1459 单/时**（2026-09-24 19 点，生产实测，见 §6/#197） |
+| 2 | 调拨单（内部配送源） | `nhsoft.ama.ai.transfer.out.order.find` | 3120 | 5min 增量 + 每小时全量 + 回溯 | `(order_no, item_num, lot_number)`（2026-09-24 实测：行无 id/序号列；单据内同品按批次拆行致 item_num 重复（100 单 655 行中 8 单重复），`(item_num, lot_number)` 残余重复 0；lot_number 有 121/655 行为空串/NULL，入键需 COALESCE） | 本任务未测 |
+| 3 | 批发销售单 | `nhsoft.whs.ai.wholesaleorder.find` | 3120 | 同上 | `(wholesale_order_fid, order_detail_num)`（2026-09-24 实测：行自带 int 序号 `order_detail_num`，100 单 352 行全部 1..N 稠密 0 重复；item_num 单据内有重复（3/100 单）⇒ 序号列必需且充分） | 本任务未测 |
+| 4 | 批发退货单 | `nhsoft.whs.ai.wholesalereturn.find` | 3120 | 同上 | `(wholesale_return_fid, return_detail_num)`（文档钉死：3120 近 126 天 0 退货单无法实测；OpenAPI 明细 DTO `AiWholesaleReturnDetailDTO` 自带 int 序号 `return_detail_num`，文档形状经 #3 实测交叉验证；首个真实样本落地时以唯一性断言复核） | 本任务未测（3120 近 126 天 0 单） |
+| 5 | 要货单 | `nhsoft.ama.ai.request.order.find` | **双** | 同上 | `(order_no, item_num)`（补货管线已实证 0 重复） | 本任务未测（§3 注：补货管线实测 3120≈3,002 / 64188≈1,117 单每月） |
+| 6 | 门店维 | `nhsoft.user.ai.branch.find` | **双** | 全量快照日更 | `(system_book, branch_num)` | **3120=270、64188=129 家**（全量枚举核对） |
+| 7 | 商品维 | `nhsoft.base.ai.item.find`（+分类/品牌/部门） | **双** | 全量快照日更 | `(system_book, item_num)` | **3120=17,132、64188=24,736 条**（分页边界二分 + 边界页 page_size=200 两法交叉，结果一致） |
 
 批发客户维**不采集**：`whs.ai.client.find` 实测 HTTP 500（在架不可用）→ `dim_customer` 从批发明细派生（§7.2）。
 

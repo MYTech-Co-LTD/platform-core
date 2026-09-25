@@ -48,7 +48,7 @@
 
 **背景（已实测，别重做）**：引擎 `src.rest` 的 `paginationType: page` + `pageParam` **只把页码拼进 query**（实测 URL `…?page_number=1`），而**本网关无视 query**：`POST branch.find?page_number=2` 与 `?page_number=5` 返回的都是第 1 页（`[142,16,38]`，而 body 传 `page_number:2` 得到 `[69,888,9]`）。且 `{page}` 写进 body **不替换**（原样发出 ⇒ 网关 400 JSON parse error）。⇒ 引擎自带分页对本网关**不可用**，页码必须进 body。
 
-- [ ] **Step 1: 验扇出能否把「逐行值」送进 body**
+- [x] **Step 1: 验扇出能否把「逐行值」送进 body**
 
 造一条两节点管线：`src.inline`（一列 `pg`、值 `2`、重复 2 行）→ `src.rest`（`url` = branch.find，`method: POST`，`body` = `{"page_number": {pg}, "page_size": 3}`，`urlTemplate` = 同 URL，`parentKeyColumn` = `pg`，`maxPages: 1`）。
 
@@ -59,7 +59,7 @@ Expected（判别式）：
 
 把结论逐字记进本计划末尾「计划外事实」，再动 Task 2。
 
-- [ ] **Step 2: 两账套拉全量样本，钉列全集**
+- [x] **Step 2: 两账套拉全量样本，钉列全集**
 
 对 `nhsoft.user.ai.branch.find`（body `{"page_number":1,"page_size":200}`）与 `nhsoft.base.ai.item.find`（同形状，`page_size` 上限 **200**，201 报 `每页条数不能超过200`），**各用 3120 与 64188 两个令牌**取样本：
 
@@ -77,7 +77,7 @@ Expected（2026-09-25 已探到的基线，用它们核对）：
 - `item.find` **~97 列**，含嵌套：`item_department`(对象)、`scope_list`(数组)、`item_specs`、`item_tag_relations`、`extended_property_relation_list`、`pos_item_area_dto`、`sale_commission_dto`
 - 行量：`branch` 3120=**270**、64188=**129**；`item` 两账套均 **>17000 且 <20000**（`page 17000` 存在、`20000` 不存在）
 
-- [ ] **Step 3: 结论回写 spec 与计划**
+- [x] **Step 3: 结论回写 spec 与计划**
 
 改 `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` §3 的表：**加一列「量级（实测）」**，填 `branch 270/129`、`item ≈1.9万/账套`、`retail 峰值 1459 单/时`。
 
@@ -346,6 +346,11 @@ Expected: 与 sink 行数一致；分区键 `system_book`（varchar）/ `snapsho
 - **代理**：本机 git 走 7897 间歇挂——push 失败先重试 2~5 次，再走 `ssh://git@ssh.gitlab…`/`ssh.github.com:443` 兜底。**别断定「代理死了」去改配置**。
 - **duckle 引擎在本地桌面版**：`~/Library/Application Support/io.duckle.app/engines/`（MCP 已接）。`run_pipeline` 需要 `DUCKLE_DUCKDB_BIN`；`${ENV:...}` 取自 **MCP 进程的 env**，不在管线里写死。
 - **网关分页事实（2026-09-25 实测）**：`page_size` 上限 **200**（201 报 `每页条数不能超过200`）；响应**无 total** ⇒ 页空即止；**query 里的 `page_number` 被完全无视**（页码必须进 body）；`item.find` 不支持 `offset/limit`（返回 0 行）。
+- **⭐ `responsePath` 分域不同（2026-09-25 Task 1 实测，Task 2/3 照此写）**：维度两端点 `result` 是**分页信封对象** `{page_number,page_size,content:[…]}` ⇒ 指针必须写 **`/result/content`**（写 `/result` 只得 **1 行信封**，列变成 `page_number,page_size,content`）。**同族反例**：`posorder.find` 的 `result` **就是行数组**（实测 `type(result)=='list'`）⇒ 零售链路沿用 `/result` 是对的，**不要顺手去改 S1 的管线**。⚠️ 本计划 **Task 2 Step 3** 的节点形状写着 `responsePath: "/result"`（照抄 S1 而来）——**照抄即错**，维度面要写 `/result/content`。
+- **⭐ 扇出进 body：不成立（2026-09-25 Task 1 判别式实测）**：`urlTemplate` + `parentKeyColumn` 扇出**能**发 N 次请求（实测 2 个上游行 ⇒ 2 页 / 6 行；URL 里 `?pg={pg}` 确认已替换），但**逐行值送不进 body**——body 里**任何** `{…}`（含 `{pg}`、`{{pg}}`、乃至不存在的 `{zzz}`）都被引擎替换成一个**对象**，网关据此回 400 `Cannot deserialize value of type java.lang.Integer from Object value (token JsonToken.START_OBJECT)`；`${pg}` / `${ENV:…}` 在 body 里**一概不替换**（原样发出）。⇒ **Task 2/3 一律走「N 个显式 `src.rest` 页节点 + `ctl.merge`」**（门店维 2 页；商品维 **86 / 124 页**）。
+- **⭐ `src.inline` 不可用（2026-09-25 Task 1 实测）**：其 manifest **只建模了 `notes`**（无列/值字段），穷举 **14** 种属性形状（`columns:[{name,value}]`、`rows`、`values`、`rowCount`、`count`、`path`、放 `data` 层…）**全部 0 行 + 单列 NULL**。⇒ **别计划用 `src.inline`**；要造控制行就用 `src.csv`（本任务探针即用它）。
+- **⭐ 商品维量级/列数按实测（2026-09-25 Task 1）**：行数 **3120=17,132 / 64188=24,736**（**不是**「两账套均 ≈1.9 万」）⇒ `page_size=200` 需 **86 / 124 页**（末页 132 / 136 行，**不是约 95 页**）。⚠️ **连带 Task 3 Step 4 的哨兵口径作废**：那里写「约 95 页——末页哨兵写 **120 页（24000 容量）**留余量」，而 64188 实测 **24,736 > 24,000** ⇒ 照原样写会在 64188 上**哨兵命中、fail-loud 中止**（不丢数，但采不下来）。**页数按 124（3120 86）+ 哨兵余量重算**。列全集两账套一致 = **98 列**（89 标量 + **9** 个嵌套字段，**不是 7**），且**哪个嵌套字段有值逐账套不同**：3120 侧 `extended_property_relation_list` / `item_tag_relations` 有数组值，64188 侧 `sale_commission_dto` 才有对象值（两账套键名都在，只是值 null 的分布不同）。
+- **duckle MCP 公网请求**：Task 1 首次 `run_pipeline` 打公网曾**超时一次**（重试即通）——遇 `Operation timed out (os error 60)` 先重试，别当成网络不可用。需要快速迭代管线形状时，可用本地 `duckle-runner --pipeline <abs.json> --duckdb <abs duckdb>` 直跑（同一引擎，省 MCP 往返）。
 - **64188 令牌**：本地 `~/.zshrc` 有 `LEMON_TOKEN_64188`（已验可用：`company_id=64188`、门店 129 家）。**生产侧的 64188 令牌需另行落进 openship job secrets**（按公司规矩，密钥值不经 agent 转手）。
 - **门店清单口径（2026-09-25 拍板）**：3120 = `1..270 \ {99} ∪ {888}`（**269 家**，99=熊喵中央店故意排除）；**64188 = 全要 129 家**（`{1..128} ∪ {999}`，**含 99**）——**两账套口径不同，别互相照抄**。
 - **Task 5 拆成 5a/5b（2026-09-25 拍板）**：仓内代码（wrapper 的 `dim` 模式 + lock）走 PR；**投递 / 注册 job / 真机验留到合并之后**——投递按全 SHA 取件，分支 SHA 投上去等于生产跑未合并代码。
