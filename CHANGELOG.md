@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.28.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.27.1...v0.28.0) - 2026-09-25
+- 【新增】lemeng: 采集 job 启动自证——凭据↔账套 / 门店清单↔账套（fail-loud） ([#208](https://github.com/MYTech-Co-LTD/platform-core/pull/208), [9f28ec9](https://github.com/MYTech-Co-LTD/platform-core/commit/9f28ec97241a1686b20e95770196cbbfc74158d9))
+
+
 ## [0.27.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.27.0...v0.27.1) - 2026-09-25
 - 【修复】duckle: 零售链路页容量 8→12，静默通过阈值 1400→2200 单/时 ([#201](https://github.com/MYTech-Co-LTD/platform-core/pull/201), [740c1fa](https://github.com/MYTech-Co-LTD/platform-core/commit/740c1fa9503267cf06cba226c43e7830683019b2))
 
