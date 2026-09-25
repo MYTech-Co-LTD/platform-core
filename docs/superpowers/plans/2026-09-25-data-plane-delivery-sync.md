@@ -223,9 +223,13 @@ Step 2 → Step 4 的 `--check` 前/后对照 + 独立回读三连 sha256 相等
 1. **`deploy/data-compose.yml:103` 的 `../dbt:/usr/app:ro` 与 SOP :168/:181「不带 `:ro`（dbt 要写
    target/logs）」自相矛盾**，且机器上 `dbt/target`、`dbt/logs` 已存在 ⇒ 生产挂载实际可写。
    **本次不解决**，另开 issue。
-2. **`mytech-data-plane-prep` job 的 `serverId` 指向 WeKnora 机，不是数据面机**；那台机上有一份更新的
-   checkout（CHANGELOG 78103 B vs 数据面 77329 B）⇒ 该 job 今天重跑**不会**刷新数据面，且那台机的
-   checkout 像是游离物。**本次不动**（另一台机、另一件事，需要自己的证据），另开 issue。
+2. ~~`mytech-data-plane-prep` job 的 `serverId` 指向 WeKnora 机，不是数据面机；那台机的 checkout 像是
+   游离物。**本次不动**，另开 issue。~~ —— **本条为假发现，已撤回（不开 issue；2026-09-25 复验）**。
+   原判断错在**假设只有一台数据面机**。复验证据：`23a1091e` 机上跑着
+   `openship-platform-core-data-metabase` / `-data-metabase-db` / `-data-pg_duckdb`
+   ⇒ **它跑的是它自己的数据面**。该 job 指向的就是**与它名字相符的那台机**，那份 checkout 是该数据面的
+   checkout、**不是游离物**。事实是**两台机各有一个数据面**（mytech 自己一台 + 山海交付一台）。
+   ⚠️ 留此注记防复发：后来者别照抄本条去「找那个该开的 issue」——它不存在，且不该存在。
 3. **自举例外**：`/opt/lemeng-sync.sh` 自身的更新仍需手工（循环依赖），SOP §E.5 已写明。
 4. **命令长度上限**：同步经 MCP `exec` 传参，命令上限 10,000 字符。当前条目数充裕；增长到接近上限时
    的分批方案记**「待沉淀」**，不编。
