@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.28.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.28.0...v0.28.1) - 2026-09-25
+- 【修复】lemeng: windows 改「逐窗尽力采 + 末尾判红」——「一窗失败即停」会让当天剩余窗口永久缺失 ([#211](https://github.com/MYTech-Co-LTD/platform-core/pull/211), [5b321a3](https://github.com/MYTech-Co-LTD/platform-core/commit/5b321a38877e16c17591bf1657edb1dd70736813))
+
+
 ## [0.28.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.27.1...v0.28.0) - 2026-09-25
 - 【新增】lemeng: 采集 job 启动自证——凭据↔账套 / 门店清单↔账套（fail-loud） ([#208](https://github.com/MYTech-Co-LTD/platform-core/pull/208), [9f28ec9](https://github.com/MYTech-Co-LTD/platform-core/commit/9f28ec97241a1686b20e95770196cbbfc74158d9))
 
