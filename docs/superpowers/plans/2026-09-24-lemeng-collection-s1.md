@@ -277,7 +277,7 @@ git commit -m "feat(duckle): 乐檬零售明细采集管线——8页容量+末�
 
 - [ ] **Step 1: 在数据面机执行昨日 24 时窗循环**（openship MCP server exec 或一次性 job；环境变量从 project env 注入）
 
-**前置（SOP P2 钉 SHA 法）**：数据面机 checkout `/opt/platform-core-data/platform-core` 更新到本分支 HEAD 全 SHA（`git fetch && git checkout <全 SHA>`，SHA 从命令输出逐字复制），否则新管线文件不在 `/pipelines` 挂载里。
+**前置（投递，不是「检出」）**：数据面机 checkout `/opt/platform-core-data/platform-core` 更新到本分支 HEAD 全 SHA——**按 SOP §E 的投递程序做**，不是 `git fetch && git checkout`：该 checkout 是 tarball 解包、**没有 `.git`**（SOP §E.1），且消费面是**多个路径**（§E.2 表），不是单个脚本。否则新管线文件不在 `/pipelines` 挂载里。
 
 ```bash
 # 伪码（实际经 openship jobs 一次性 run；分支列表 = whoami.branch_nums 去 99）：

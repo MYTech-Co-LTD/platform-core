@@ -183,43 +183,121 @@ dbt-postgres 1.9 线只到 `1.9.1`。
 
 ---
 
-## E 生产脚本投递程序（仓 → 数据面机 `/opt/lemeng-run.sh`）
+## E 数据面工件投递程序（仓 → 数据面机）
 
-> **适用**：仓里的采集执行器 / 管线要落到**数据面机**上跑。当前唯一一例是
-> `scripts/lemeng/run-retail-day.sh` → 数据面 `/opt/lemeng-run.sh`（**落地改了名**）。
-> ⚠️ 这**不是部署的一部分**——部署不会把它送过去（E.1），必须按 E.2 的取件程序**显式投递**。
-> 案例（无案例不立标准）：2026-09-24 / 2026-09-25 两次投递（`69ca1e5`、`7ec67bf`），
-> 逐次读数见 S1 的 `task-10-report.md`「投递」两节。
+> **适用**：仓里的**数据面工件**要落到**数据面机**（`ecm-7d66` / 内网 `10.0.0.5`）上跑。
+> **不是一个脚本**——机器实际消费 **7 个路径 / 4 个落地位置**（E.2 的表）。
+> ⚠️ 这**不是部署的一部分**：部署不会把它们送过去（E.1），必须按 E.3 的程序**显式投递**。
+> 案例（无案例不立标准）：2026-09-24 / 2026-09-25 两次**手工**投递（`69ca1e5`、`7ec67bf`，
+> 逐次读数见 S1 的 `task-10-report.md`「投递」两节）；**清单化同步**首次落地见 issue #199。
 
 ### E.1 为什么 `merge main` 送不到生产（先理解这条，再谈投递）
 
 数据面机的检出 `/opt/platform-core-data/platform-core` 是 **tarball 解包**（P2 的「钉全 SHA 检出」），
 **没有 `.git`** ⇒ `git pull` / `merge main` 这条通路在数据面机上**根本不存在**。
-⇒ 仓里那份脚本与 `/opt/` 那份是**两份副本、无任何同步机制**：改了仓 ≠ 改了生产，改了生产 ≠ 改了仓。
-**每次改脚本都要显式投递一次**，并把投递读数记下来（E.2 末）。
+⇒ 仓里那份工件与 `/opt/` 那份是**两份副本、无任何自动同步机制**：改了仓 ≠ 改了生产。
+**每次改工件都要显式投递一次**，并把投递读数记下来（E.3 末）。
 
-### E.2 投递三件（顺序不能换）
+### E.2 消费面：机器实际读的是这些（不是「一个脚本」）
 
-1. **取件**：按**全 SHA** 从 `raw.githubusercontent.com` 取（**不用分支名**——分支会漂移，投递物必须与
-   仓内 commit 逐字节对应；全 SHA 只能从命令输出逐字复制，**绝不手工补**）；**必须经 smart-proxy**
-   ——**公网 EIP** `113.250.177.229:4878`（控制面内网 `10.0.0.8:4878` 被云安全组拦；**直连不通**，
-   实测 code=000）。
-2. **逐文件 sha256 断言**：取到的字节的 sha256 必须与**仓内那份**逐字节相符；不符 ⇒ **重取**（截断是
-   间歇的，重取即可，见 E.3）。
-3. **落地**：写到**同目录**的临时文件 → 断言通过后**原子改名**（`mv -f`；跨目录 rename 不原子）→
-   补**执行位**（job / `exec` 直调 `/opt/lemeng-run.sh` 需要它）。
+| 仓内路径 | 机器落地 | 谁读 |
+|---|---|---|
+| `deploy/data-compose.yml` | 同名 | `run-retail-day.sh` 的 `docker compose -f` |
+| `duckle/**` | 同名 | compose bind `../duckle:/pipelines:ro`；宿主侧另有直读（drift 前置断言） |
+| `dbt/**` | 同名 | compose bind `../dbt:/usr/app` |
+| `deploy/duckle/entrypoint.sh` | 同名 | 仅作构建上下文（`deploy/duckle/Dockerfile` 的 COPY） |
+| `scripts/lemeng/run-retail-day.sh` | `/opt/lemeng-run.sh`（**改名**） | job / `exec` 直调 |
+| `scripts/lemeng/readback-helper.sh` | `<checkout>/lemeng-readback.sh`（**改名**） | 挂进容器跑回读 |
 
-**投递后必做的读数**：仓内那份的 sha256、取件字节的 sha256、`/opt/` 落地后的 sha256（外加大小）
-——**三个相等才算过**；再加一个 `sh -n` 语法检查（**附加**，不替代 sha 断言）。
+**消费面怎么定的**（三条，缺一会漏）：① `run-retail-day.sh` 里对 `$REPO/<路径>` 的**每一处引用**；
+② `data-compose.yml` 里的**每一处 bind**（源路径即仓内路径）；③ 各 Dockerfile 的 **COPY 来源**。
+⇒ **改了其中任一目录/文件，都要重投**——「只投了 `run-retail-day.sh`」正是本节要根治的漏法。
 
-### E.3 为什么 sha256 断言是必须的（不是「保险起见」）
+**机器本地物（不在仓里，投递永不触及）**：`deploy/.env`（运行时写，mode 600）、`dbt/profiles.yml`、
+`dbt/target/`、`dbt/logs/`、`dbt/.user.yml`。这是「就地同步」相对「整目录换版」的关键优势：投递只按
+**仓里那份**的清单下行，机器上的本地状态原地保留。
+
+### E.3 投递程序：清单 + 就地核验同步 + 版本标记
+
+**① 清单** `deploy/data-plane-manifest.txt`（人维护，改消费面才动）。三列，`#` 注释、空行忽略：
+
+```
+# 仓内路径(文件或目录)                落地路径                              模式
+deploy/data-compose.yml               ${REPO}/deploy/data-compose.yml      0644
+deploy/duckle/entrypoint.sh           ${REPO}/deploy/duckle/entrypoint.sh  0644
+duckle/                               ${REPO}/duckle/                      0644
+dbt/                                  ${REPO}/dbt/                         0644
+scripts/lemeng/run-retail-day.sh      /opt/lemeng-run.sh                   0755
+scripts/lemeng/readback-helper.sh     ${REPO}/lemeng-readback.sh           0755
+```
+
+`${REPO}` = 检出根。**目录条目 = 递归**（生成侧按 `git ls-tree -r` 展开成受版本控制的文件清单），
+⇒ 仓内新增文件自动被覆盖，**清单不必跟着改**。
+
+**② lock** `deploy/data-plane.lock`（派生，随 PR 提交）。首行是**其余部分**的 sha256（自校验）：
+
+```
+sha256-of-rest <全表 sha256>
+<文件 sha256> <仓内路径> <落地路径> <模式>
+...
+```
+
+生成：`pnpm exec tsx scripts/lemeng/data-plane-lock.mjs [全SHA]`（默认 `HEAD`）。
+**⚠️ 有意的摩擦**：改动清单覆盖的**任一文件**后必须重跑上面这条，否则 `gates` 红（守卫会直接给出该命令）。
+
+**③ 同步**（在**机器上**跑，POSIX sh —— 该机无 node）：
+
+```
+sh /opt/lemeng-sync.sh <全SHA>            # 同步
+sh /opt/lemeng-sync.sh <全SHA> --check    # 只比不写
+```
+
+四步：**取 lock**（按全 SHA 经 smart-proxy **公网 EIP** `113.250.177.229:4878`；控制面内网
+`10.0.0.8:4878` 被云安全组拦、**直连不通**，实测 code=000）→ **验 lock 自校验** → **逐条取件**
+（同目录临时文件 → sha256 断言 → 补模式 → 原子 `mv -f`；跨目录 rename 不原子）→ **最后**写
+`<checkout>/.data-plane-revision`。
+
+**版本标记语义**：**标记在 = 这套文件是全的**。单文件 `mv` 是原子的，但**整套不是**——中途失败会停在
+半应用状态，靠「标记缺失 / 与 `--check` 不符」把它显性化，而不是静默。
+
+**输出契约**：每文件一行 `<状态> <落地路径> <期望 sha256> <实际 sha256>`（状态 `OK`/`DRIFT`）；
+末尾 `SYNC_OK <n>/<n>` 或 `SYNC_DRIFT <n> mismatched`。失败字面量：`LOCK_FETCH_FAILED:` /
+`LOCK_SELFTEST_FAILED:` / `FETCH_FAILED: <path>` / `REVISION_WRITE_FAILED:`。取件失败**重试至多
+10 次**（截断是间歇的且可能连败，见 E.4）。
+
+**全 SHA 从命令输出逐字复制，绝不手工补**（分支名会漂移，投递物必须与 commit 逐字节对应）。
+
+### E.4 为什么 sha256 断言是必须的（不是「保险起见」）
 
 **智能代理会把流截断在 9.3 ~ 11.3 KB 附近**——实测多次：目标 23,243 B 停在 **9,324 B**、
 目标 27,891 B 停在 **11,341 B**（同一次投递里可能连续 6 次都截断，第 7 次「清盘 + 续传」才拿到全量；
 截断是**间歇**的、不是必现）。⇒ 按「HTTP 200 即成功」写，装上去的是**半截脚本**，而半截的 shell
 **未必语法报错**（可能只是缺了几段断言）——**逐文件 sha256 断言是唯一能拦住它的东西**。
 
-### E.4 时间解释：openship cron 按 **UTC**（影响每一个后续注册的 job）
+### E.5 自举：同步程序自己怎么上去（循环依赖，明写）
+
+`/opt/lemeng-sync.sh` **不在清单里**——它若在，就得先有它才能投它（循环）。它的更新仍是**手工**：
+按 E.3 ③ 的落地法做一次（取件 / sha256 断言 / **同目录**临时文件 / 原子 `mv -f` / 补模式），并留档
+**三连 sha256**（仓内 / 取件 / 落地）+ 大小 + 模式。首次落它见 issue #199 的真机步骤。
+
+⇒ 结论：**它是这套机制里唯一需要手工的环节**，所以它的逻辑改动要**尽量少**——能靠清单/lock 表达
+的差异，都不要写进脚本。
+
+### E.6 为什么不是 `releases/<全SHA>/` + `current` 软链（本次裁决留档）
+
+**更「正确」的方案是有的**：每次同步解到 `releases/<全SHA>/`，再把 `current` 软链一指——真·整套原子、
+回滚瞬时。**本次不取**，三条理由：
+
+1. **机器上有 5 处目录内本地状态**（E.2 末那张表）——整目录换版会把它们连同目录一起换掉/打断。
+   要保留就得先把它们搬进独立卷，那是**另一个变更**。
+2. **软链方案要改 `deploy/data-compose.yml` 的两处 bind**（源从 `<checkout>/dbt` 改成
+   `current/dbt`）⇒ 属**改架构**，须走「先经人同意 → 更新架构文档 → 再写代码」的顺序。
+3. **本机没有「docker 跟随软链 bind 源」的实测案例**。按根本法则「无案例不立标准」，**不立**。
+
+⇒ **R1a 的触发条件**（满足其一即重议，届时按第 2 条的架构顺序走）：① 「整套半应用」**成为实际故障**
+（不是理论风险）；② 清单条目增长到**手改清单不可行**（E.3 的摩擦从「有意的」变成「受不了的」）。
+
+### E.7 时间解释：openship cron 按 **UTC**（影响每一个后续注册的 job）
 
 **平台事实**：openship job 的 cron 表达式按 **UTC** 解释，**不是**服务器本地时区（数据面机系统 TZ
 实测为 `Asia/Shanghai`）。**证据** = 既有 job `audit:retention-prune` 的 `17 3 * * *`，逐日 `startedAt`
@@ -236,5 +314,7 @@ dbt-postgres 1.9 线只到 `1.9.1`。
 
 - `deploy/customer-onboarding.md` §5 阶段 5（拆缝建数据面 project 的入口决策）
 - `deploy/data-compose.yml`（数据面编排本体；三常驻 + etl profile 的定义处）
+- `deploy/data-plane-manifest.txt` / `deploy/data-plane.lock`（§E 的清单与 lock；守卫见 `scripts/check-data-plane-lock.mjs`）
+- `scripts/lemeng/sync-data-plane.sh`（§E.3 的同步程序；落成机器上的 `/opt/lemeng-sync.sh`）
 - `deploy/openship-adopt.md`（平台面 adopt runbook）
-- issue #150（数据栈 P0–P3）、#187（T6 真机三坑）、#190 / #192（A 层根治笔）
+- issue #150（数据栈 P0–P3）、#187（T6 真机三坑）、#190 / #192（A 层根治笔）、#199（§E 投递机制）
