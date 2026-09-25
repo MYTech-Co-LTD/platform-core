@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.27.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.26.0...v0.27.0) - 2026-09-25
+- 【新增】data-plane: 工件投递升为「清单 + 就地核验同步 + 版本标记」+ CI 守卫 ([#200](https://github.com/MYTech-Co-LTD/platform-core/pull/200), [0b8fdf5](https://github.com/MYTech-Co-LTD/platform-core/commit/0b8fdf579ae1aafa97bf62835ce17b4b74347252))
+
+
 ## [0.26.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.25.2...v0.26.0) - 2026-09-25
 - 【新增】lemeng: 乐檬门店销售明细采集链路 S1（5 分钟粒度 → duckle → ZOS parquet 湖 → pg_duckdb → dbt） ([#198](https://github.com/MYTech-Co-LTD/platform-core/pull/198), [eef2456](https://github.com/MYTech-Co-LTD/platform-core/commit/eef245685a5fc189918888167dc82c91af455fb4))
 
