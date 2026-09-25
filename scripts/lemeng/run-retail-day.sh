@@ -9,6 +9,7 @@
 #   sh run-retail-day.sh rb "<duckdb SQL>"         # 容器内 duckdb httpfs 回读（值由容器 env 展开）
 #   sh run-retail-day.sh idem3 03                  # 幂等强判（同 batch_id 字节一致 + 换 batch_id 因果对照）
 #   sh run-retail-day.sh drift [H]                 # 契约漂移门禁（先断言 data.schema 声明存在）
+#   sh run-retail-day.sh identity                  # 启动自证：凭据↔账套 / 门店清单↔账套（fail-loud；#205）
 #   sh run-retail-day.sh envfile                   # 把 DUCKLE_TOKEN 物化成 deploy/.env（600；compose 插值用）
 #
 # 已退役模式（**不要恢复**）——`idem`：
@@ -21,6 +22,8 @@
 #   0 = 该模式全部验证项通过；非 0 = 至少一项验证失败。
 #   取清单失败 / 清单被截断 / 清单为空 / key 里残留 ${ENV 字面量 / 幂等目标对象 NOT_FOUND / 0 检查（drift VACUOUS）一律非 0。
 #   windows：任一窗失败 ⇒ 立即非零退出，不再续跑后续窗。
+#   identity：凭据/清单与账套错配、或 whoami 重试 3 次仍不可达 ⇒ 非零。**身份未证绝不写湖**
+#             （`windows` / `window` 在开跑前自证；见 identity_assert 的注释说为什么必须有）。
 #   已退役模式（`idem`）恒 exit 2，不参与任何判断。
 #
 # 依赖 env: LEMENG_TOKEN / DUCKLE_TOKEN / ZOS_BUCKET / ZOS_ENDPOINT / ZOS_REGION /
@@ -35,6 +38,8 @@
 #           只由验证项决定），但也绝不静默——字面量可 grep（防「假装在报」）。该文件**按文本白名单解析、
 #           绝不 source**（source 会让文件里一行未闭合引号把子进程打成 exit 2 ⇒ 被当成采集失败）。
 #           取不到 sink 行 ⇒ 打印 OPS_ROWS_UNPARSED:（同族字面量），rows 记 null。
+#           LEMENG_AGI_URL —— whoami 自证端点，默认 `https://cloud.nhsoft.cn/agi/mcp`（#205 启动自证用）。
+#           只用于换网关/本机演练；默认值即生产网关。
 # 失败字面量（可 grep）：BIZDAY_DERIVE_FAILED:（营业日不可用，exit 3）/ OPS_ROWS_UNPARSED: /
 #           OPS_SINK=DISABLED|FAILED / LISTING_FAILED: / IDEM_RETIRED: / DRIFT_VERDICT=VACUOUS / ASSERT_FAIL:
 set -u
@@ -225,7 +230,93 @@ ops_emit() { # $1=hour $2=rows(number|null) $3=status → stdout 一行 + 投递
   ops_ship "$j"
 }
 
+# ── 启动自证（#205）─────────────────────────────────────────────────────────────
+# 为什么必须有：`system_book` 是**采集侧按账套常量注入**的（契约 §columns 明写；管线里列值与 sink 路径
+# 同源于同一个 `ENV:SYSTEM_BOOK`），所以**标错账套不会自己暴露**——列值和分区路径会一起错。而
+# 「这家店本来就没单」与「账套/凭据配错了」在数据面上**都是 0 行、长得一模一样**（spec §4.2 G4 探针
+# 方法学：64188 店 1/99 七天窗均 0 单）。多店合查只降低误判概率；**开跑前自证才能把二者从根上分开**。
+AGI_URL=${LEMENG_AGI_URL:-https://cloud.nhsoft.cn/agi/mcp}
+
+whoami_probe() { # 拉 whoami 到 /tmp/whoami.json；**传输层**失败（网络 / HTTP 非 200）非零
+  # 不用 `-f`：`-f` 会连 body 一起丢掉，而 4xx/5xx 的 body 恰是排障要看的 —— 改用 `-w` 取状态码自己判。
+  # 这一层判 HTTP 是必须的：不判的话，502/504 会被下游当成「答了、答得不对」而**不重试直接判红**，
+  # 与「传输失败重试 3 次」的设计意图相反。
+  code=$(curl -sS --max-time 20 -o /tmp/whoami.json -w '%{http_code}' -X POST "$AGI_URL" \
+    -H "Authorization: Bearer $LEMENG_TOKEN" \
+    -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"whoami","arguments":{}}}' \
+    2>>/tmp/whoami.err) || return 1
+  [ "$code" = "200" ] || { echo "whoami HTTP $code" >> /tmp/whoami.err; return 1; }
+  return 0
+}
+
+whoami_verdict() { # 读 /tmp/whoami.json 判定；通过 exit 0，否则打印 ASSERT_FAIL: 并 exit 1
+  # 判据两条（#205 定）：① 凭据账套 == SYSTEM_BOOK；② 配置门店 ⊆ 本账套可见门店。
+  # ② 的方向不能反：账套可见门店里**有多余**是正常的（99 是熊喵中央店，采集清单故意排除），
+  # 「配了一个本账套看不见的店」才是错配信号。
+  python3 - "$SYSTEM_BOOK" "$BRANCH_NUMS" <<'PY'
+import json, re, sys
+sb, cfg_raw = sys.argv[1], sys.argv[2]
+m = re.findall(r'^data: (.*)$', open('/tmp/whoami.json').read(), re.M)
+if not m:
+    print('ASSERT_FAIL: whoami 响应里没有 data: 行（网关形状变了？）'); raise SystemExit(1)
+d = json.loads(m[-1])
+if 'error' in d:
+    print('ASSERT_FAIL: whoami RPC error: %s' % json.dumps(d['error'], ensure_ascii=False)[:200])
+    raise SystemExit(1)
+j = json.loads(d['result']['content'][0]['text'])
+cid = str(j.get('company_id'))
+if cid != sb:
+    print('ASSERT_FAIL: 凭据账套(%s) != SYSTEM_BOOK(%s) ⇒ 防串账套，拒绝写湖' % (cid, sb))
+    raise SystemExit(1)
+try:
+    cfg = set(json.loads(cfg_raw))
+except Exception as e:
+    print('ASSERT_FAIL: BRANCH_NUMS 不是合法 JSON 数组: %s' % e); raise SystemExit(1)
+who = set(j.get('branch_nums') or [])
+missing = sorted(cfg - who)
+if missing:
+    print('ASSERT_FAIL: %d 个配置门店在本账套不可见（前 20：%s）⇒ 清单/账套错配，拒绝写湖'
+          % (len(missing), missing[:20]))
+    raise SystemExit(1)
+print('IDENTITY_OK company_id=%s visible=%d configured=%d (配置门店全部可见)'
+      % (cid, len(who), len(cfg)))
+PY
+}
+
+identity_assert() { # 通过 return 0；任何失败 return 非 0（调用方据此判红）
+  [ -n "${LEMENG_TOKEN:-}" ] || { echo "ASSERT_FAIL: LEMENG_TOKEN 未注入 ⇒ 无法自证身份，拒绝写湖"; return 1; }
+  [ -n "${BRANCH_NUMS:-}" ] || { echo "ASSERT_FAIL: BRANCH_NUMS 未注入 ⇒ 无法自证清单，拒绝写湖"; return 1; }
+  # 两类失败**分开处理**：传输失败（网络抖动）重试 3 次——不该把一天的采集中断在一次抖动上；
+  # 但「答了、答得不对」是确定性的错配，重试同一个错答案没有意义 ⇒ whoami_verdict 里立即判红、不重试。
+  i=1; ok=0
+  while [ "$i" -le 3 ]; do
+    : > /tmp/whoami.err
+    if whoami_probe; then ok=1; break; fi
+    echo "identity: whoami 第 $i 次传输失败（网络/HTTP），重试" >&2
+    i=$((i+1)); sleep 2
+  done
+  if [ "$ok" -ne 1 ]; then
+    # ⚠️ 这里**必须写 `${AGI_URL}`**：本机 `/bin/sh`（bash 3.2）实测会把紧跟 `$VAR` 的**全角字符**
+    # （这里原本是 `）`）吃进变量名 ⇒ `AGI_URL<乱码>: unbound variable`，在传输失败这条**最需要它出声**
+    # 的路径上反而不出声。全角紧邻时一律加花括号，不要赌目标机的 shell 是否 UTF-8 感知。
+    echo "ASSERT_FAIL: whoami 传输失败 3 次（url=${AGI_URL}）⇒ 身份未证，拒绝写湖"
+    head -c 200 /tmp/whoami.err 2>/dev/null; echo
+    return 1
+  fi
+  whoami_verdict > /tmp/identity.out 2>&1
+  irc=$?
+  cat /tmp/identity.out
+  [ "$irc" -eq 0 ] || return 1
+  return 0
+}
+
 case "${1:-}" in
+identity)
+  echo "== identity assert（凭据↔账套 / 门店清单↔账套；#205） =="
+  identity_assert || exit 1
+  echo "IDENTITY_ASSERT=PASS"
+  ;;
 probe)
   echo "== env presence (names + lengths only) =="
   for v in LEMENG_TOKEN DUCKLE_TOKEN ZOS_BUCKET ZOS_ENDPOINT ZOS_REGION ZOS_ACCESS_KEY ZOS_SECRET_KEY BRANCH_NUMS SYSTEM_BOOK BIZDAY; do
@@ -251,6 +342,14 @@ probe)
   ;;
 window)
   H="${2:?hour}"; SUF="${3:-}"
+  # 启动自证（#205）：独立调用（含 idem3 的逐窗调用）时也要过。`windows` 已证过会导出
+  # IDENTITY_CHECKED=1 ⇒ 这里跳过，避免 24 次重复 whoami（见 windows 分支的 export 说明）。
+  if [ "${IDENTITY_CHECKED:-}" != "1" ]; then
+    sh "$0" identity
+    irc=$?
+    if [ "$irc" -ne 0 ]; then echo "WINDOW_FAILED identity 自证未过(exit=$irc)，拒绝写湖"; exit "$irc"; fi
+    IDENTITY_CHECKED=1; export IDENTITY_CHECKED
+  fi
   BATCH_ID="${BATCH_ID_OVERRIDE:-retail-${SYSTEM_BOOK}-$(date -u +%Y%m%dT%H%M%SZ)-${H}${SUF}}"
   out=$($COMPOSE run --rm \
     -e LEMENG_TOKEN -e DUCKLE_TOKEN -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
@@ -278,6 +377,16 @@ window)
 windows)
   # 原实现只让循环状态等于**最后一个窗**：中间某个 hour 失败只在日志里一行，进程仍 exit 0。
   # 现在任一窗失败 ⇒ 立即非零退出且不再续跑（job 据此判红）。
+  # 启动自证（#205）放在**最前**：任何一窗都不该在身份未证时开跑（错账套的 24 窗全落错分区，
+  # 而退出码 0、行数正常——正是本自证要防的静默错采）。
+  # IDENTITY_CHECKED **必须 export**：下面是 `sh "$0" window "$H"` 起的**子进程**，未导出的 shell
+  # 变量子进程看不见（本文件 BIZDAY 一处已踩过同一个坑）⇒ 不导出会让每窗各自重证一次。
+  if [ "${IDENTITY_CHECKED:-}" != "1" ]; then
+    sh "$0" identity
+    irc=$?
+    if [ "$irc" -ne 0 ]; then echo "WINDOWS_FAILED identity 自证未过(exit=$irc)，拒绝写湖"; exit "$irc"; fi
+    IDENTITY_CHECKED=1; export IDENTITY_CHECKED
+  fi
   for H in $(seq -w 0 23); do
     sh "$0" window "$H" || { wrc=$?; echo "WINDOWS_FAILED hour=$H exit=$wrc (已停止续跑)"; exit "$wrc"; }
   done
@@ -424,7 +533,7 @@ envfile)
   echo "envfile keys=$(cut -d= -f1 "$REPO/deploy/.env" | tr '\n' ',') mode=$(stat -c '%a' "$REPO/deploy/.env")"
   ;;
 *)
-  echo "usage: $0 <probe|diag|window H [suffix]|windows|listing|agg|branches|rb SQL|idem3 H|drift [H]|envfile>"
+  echo "usage: $0 <probe|identity|diag|window H [suffix]|windows|listing|agg|branches|rb SQL|idem3 H|drift [H]|envfile>"
   echo "exit: 0=全项通过；非 0=有验证项失败（含 0 检查/清单截断/清单为空/残留 \${ENV 字面量/NOT_FOUND/取清单失败）"
   echo "retired: 'idem' 恒 exit 2 —— 用 idem3（见文件头「已退役模式」）"
   exit 2
