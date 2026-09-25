@@ -6,10 +6,10 @@
 #            （loader / routes/auth-wecom / migrate / routes/auth / tenant，共 50 条）。
 #            不给 DATABASE_URL 时它们是**静默跳过**的——「全绿」会绿在一个休眠基线上：
 #            会话/登录/登出/租户解析/seed/迁移/装载器/企微登录这半边一条都不执行。
-#   gates —— 门禁：typecheck（全 workspace 包 + scripts/）+ 六个守卫脚本对真实仓跑。
+#   gates —— 门禁：typecheck（全 workspace 包 + scripts/）+ 七个守卫脚本对真实仓跑。
 #            typecheck 与守卫单测（跑在 unit 的 test:guard 里）是两件事：单测拿 fixture 验
 #            守卫逻辑，本 job 拿真仓验守卫结论，且 typecheck 只在 CI 真跑才有意义。
-#            六个守卫里只有 check-tenant-isolation 要真库（issue #77 的真库对账），故本 job 也挂了
+#            七个守卫里只有 check-tenant-isolation 要真库（issue #77 的真库对账），故本 job 也挂了
 #            postgres service——为什么不是挂在 unit / smoke，见那条 step 的注释。
 #   web   —— 前端单测 + 构建（构建内含 `tsc -b`，即 apps/web 的 strict typecheck）。
 #   smoke —— 装载冒烟（scripts/smoke-load.mjs）：真进程 + 真端口 + 真 HTTP 跑双形态。
@@ -91,6 +91,14 @@ jobs:
       # ⚠️ 它的扫描面只有 `dbt/`（dbt 工件）——**不含** env 键（那归上面的 check-env-example，
       #    而 B9 不扫 dbt/），也不含 `duckle/` 与 `contracts/`（正典里明写着当前无机检）。
       - run: pnpm exec tsx scripts/check-data-models.mjs
+      # 数据面投递门禁（issue #199；正典 deploy/data-plane-deploy-sop.md §E.3）：判据三条——
+      # ① lock 首行自校验（截断/被改必对不上）；② lock ↔ 工作区逐文件 sha256/落地路径/模式一致
+      # （**改了清单覆盖的任一文件却忘了重跑生成器，这里红**——S1 之前 dbt/ 有 5 个文件静默漂在
+      # d2de3b1 就是这么漏的）；③ 消费面覆盖：脚本里每个 `$REPO/<路径>` 引用都要被清单的落地路径
+      # 集合覆盖（防「新引一个路径、清单忘登记」复发——SOP 原先自述消费面「唯一一例」，实测 7 条）。
+      # 纯静态：不连库、不取网络。**怎么修**：跑 `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`
+      # 重新生成 deploy/data-plane.lock（失败信息里会复述这条命令）。
+      - run: pnpm exec tsx scripts/check-data-plane-lock.mjs
       # 租户隔离门禁（issue #77；正典 docs/module-protocol.md「租户数据隔离」）：真库对账——
       # 真跑各模块的 migrations（跑进脚本自建的**一次性库** platform_tenant_isolation_check），
       # 再查 information_schema 要 org 列。判据按「全部 migrations 的累积终态」，不按文件判
