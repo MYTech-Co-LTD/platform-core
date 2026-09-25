@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.26.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.25.2...v0.26.0) - 2026-09-25
+- 【新增】lemeng: 乐檬门店销售明细采集链路 S1（5 分钟粒度 → duckle → ZOS parquet 湖 → pg_duckdb → dbt） ([#198](https://github.com/MYTech-Co-LTD/platform-core/pull/198), [eef2456](https://github.com/MYTech-Co-LTD/platform-core/commit/eef245685a5fc189918888167dc82c91af455fb4))
+
+
 ## [0.25.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.25.1...v0.25.2) - 2026-09-23
 - 【修复】data-stack: T6 真机收尾——Jinja 注释/dbt 版本配对/services 三坑登记/gate 销账 (#150) ([#187](https://github.com/MYTech-Co-LTD/platform-core/pull/187), [3148390](https://github.com/MYTech-Co-LTD/platform-core/commit/314839036eb58256af2cedaad1a379d08038bbd3))
 
