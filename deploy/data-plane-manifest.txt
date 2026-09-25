@@ -1,0 +1,24 @@
+# 数据面工件清单（SOP §E.3 ①）——「仓里哪些工件要落到数据面机」的唯一事实源。
+#
+# 三列，空白分隔；`#` 注释行与空行忽略：
+#   ① 仓内路径   ② 落地路径（`${REPO}` = 检出根 /opt/platform-core-data/platform-core）   ③ 模式（八进制）
+#
+# **目录条目（以 / 结尾）= 递归**：展开成该目录下「受版本控制 + 未被 .gitignore 忽略」的全部文件，
+# 落地路径 = ② 作前缀 + 目录内相对路径。⇒ 仓里新增 dbt/tests/*.sql 自动被覆盖，**本文件不必跟着改**。
+#
+# 谁该进这张表（三条判据，缺一会漏，见 SOP §E.2）：① 脚本里 `$REPO/<路径>` 的引用点；
+# ② `deploy/data-compose.yml` 的 bind 源；③ Dockerfile 的 COPY 源。
+# 机器本地物（`deploy/.env`、`dbt/profiles.yml`、`dbt/target/`、`dbt/logs/`、`dbt/.user.yml`）
+# **不在仓里 ⇒ 不进表、永不被投递触及**（这是「就地同步」相对「整目录换版」的关键优势）。
+#
+# ⚠️ 改动本表覆盖的**任一文件**后，必须重跑下面这条重新生成 lock，否则 CI 的 gates 会红
+#    （守卫：scripts/check-data-plane-lock.mjs，失败信息里会复述这条命令）：
+#      pnpm exec tsx scripts/lemeng/data-plane-lock.mjs
+#
+# 仓内路径                                落地路径                                  模式
+deploy/data-compose.yml                  ${REPO}/deploy/data-compose.yml           0644
+deploy/duckle/entrypoint.sh              ${REPO}/deploy/duckle/entrypoint.sh       0644
+duckle/                                  ${REPO}/duckle/                           0644
+dbt/                                     ${REPO}/dbt/                              0644
+scripts/lemeng/run-retail-day.sh         /opt/lemeng-run.sh                        0755
+scripts/lemeng/readback-helper.sh        ${REPO}/lemeng-readback.sh                0755

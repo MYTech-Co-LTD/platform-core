@@ -213,6 +213,12 @@ dbt-postgres 1.9 线只到 `1.9.1`。
 ② `data-compose.yml` 里的**每一处 bind**（源路径即仓内路径）；③ 各 Dockerfile 的 **COPY 来源**。
 ⇒ **改了其中任一目录/文件，都要重投**——「只投了 `run-retail-day.sh`」正是本节要根治的漏法。
 
+**⚠️ 明写不做：Dockerfile 本体不进清单**（`deploy/duckle/Dockerfile`、`deploy/dbt/Dockerfile`）。
+判据 ③ 只取它们的 **COPY 来源**（= `deploy/duckle/entrypoint.sh`，已在表内），Dockerfile 本身**不在
+消费面**，两条依据：① 它们只在**镜像构建期**被读，而构建走 openship 部署通路（部署会把构建上下文
+送上去），不经本投递程序；② 实测佐证——S1 的 24 窗口全量跑 + probe 均通过，而这两个文件**从未投递过**。
+⇒ 反过来，**若哪天把构建搬到数据面机上本机跑**，这条就不成立，届时要连 Dockerfile 一起登记。
+
 **机器本地物（不在仓里，投递永不触及）**：`deploy/.env`（运行时写，mode 600）、`dbt/profiles.yml`、
 `dbt/target/`、`dbt/logs/`、`dbt/.user.yml`。这是「就地同步」相对「整目录换版」的关键优势：投递只按
 **仓里那份**的清单下行，机器上的本地状态原地保留。
@@ -231,8 +237,15 @@ scripts/lemeng/run-retail-day.sh      /opt/lemeng-run.sh                   0755
 scripts/lemeng/readback-helper.sh     ${REPO}/lemeng-readback.sh           0755
 ```
 
-`${REPO}` = 检出根。**目录条目 = 递归**（生成侧按 `git ls-tree -r` 展开成受版本控制的文件清单），
-⇒ 仓内新增文件自动被覆盖，**清单不必跟着改**。
+`${REPO}` = 检出根。**目录条目 = 递归**（生成侧按 `git ls-files` 展开成**受版本控制 + 未被 .gitignore
+忽略**的文件清单），⇒ 仓内新增文件自动被覆盖，**清单不必跟着改**。
+
+> **为什么是 `git ls-files`（索引 + 未跟踪未忽略）而不是 `git ls-tree -r <commit>`**：生成器锁的是
+> **工作区**，不是某个 commit。用法是「改动清单覆盖的任一文件 → 重跑生成器 → 提交」；若内容取自
+> `<commit>:<path>`，改完文件后重跑取到的仍是**旧内容** ⇒ 守卫恒红、这条路永远追不上工作区，于是
+> 那个 `[全SHA]` 参数**没有存在意义**——所以**不带**（位置参数是 `rootDir`，仅供单测的夹具用）。
+> 顺带这也把 `dbt/target/`、`dbt/logs/` 这类**本地产物**挡在门外：它们在 `.gitignore` 里，而它们
+> 正是机器上的本地状态，绝不能被登记。
 
 **② lock** `deploy/data-plane.lock`（派生，随 PR 提交）。首行是**其余部分**的 sha256（自校验）：
 
@@ -242,8 +255,9 @@ sha256-of-rest <全表 sha256>
 ...
 ```
 
-生成：`pnpm exec tsx scripts/lemeng/data-plane-lock.mjs [全SHA]`（默认 `HEAD`）。
+生成：`pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`（**锁工作区**，不带 SHA —— 见 ① 的注）。
 **⚠️ 有意的摩擦**：改动清单覆盖的**任一文件**后必须重跑上面这条，否则 `gates` 红（守卫会直接给出该命令）。
+守卫 = `scripts/check-data-plane-lock.mjs`（CI 的 `gates` job 里跑），三条判据见该文件头注。
 
 **③ 同步**（在**机器上**跑，POSIX sh —— 该机无 node）：
 
