@@ -10,11 +10,11 @@
 
 ## Global Constraints
 
-- 分层纪律：staging 一对一不改义；口径只在 marts；L1 唯一事实源 `dbt/semantics/l1_metrics.yml` 本计划**零改动**（实现换源，声明不动）。
+- 分层纪律：staging 一对一不改义；口径只在 marts；L1 唯一事实源 `dbt/semantics/l1_metrics.yml` 本计划**语义声明**零改动 —— `name`/`expression`/`grain`/`owner`/`tier` 与 **`definition` 的口径语义**（口径表述本身）一字未动。**两处注记更新**（都随换源 / 实证走，**逐一点名**，不算进「零改动」）：① **`sources` 指针随换源更新**——留旧湖路径等于留假指针（Task 9 brief 授权）；② **`definition` 内的证据状态注记随实证收窄**——把过期的「staging 里 `order_no` 是暂定列」换成「列**存在且非空** = 已证 / 是否**即业务单号**与 `count(distinct order_no)` 的**去重语义** = 未证」（终评 M8 裁定的过期指针订正；**口径表述本身未动**）。
 - 契约纪律：`contracts/` 元 schema（`_schema.schema.json`）判据——`partitionStyle=hive`、`fileName=all.parquet`、分区键列不可空、外部标识一律 `varchar`、`decimal` 必带 precision/scale、`batch.markerColumn` 必填。
 - duckle 三坑（`duckle/README.md` §7.3）：`drift` 假绿（先断言声明存在）；`qa.freshness` 时区坑（**不用它**，新鲜度由 job receipt + 回读承担）；`pipelineHash` 是代码指纹不是数据指纹。
 - 管线 JSON 由真引擎产出（duckle MCP `create_pipeline`/`validate_pipeline`），**禁止手写后不验证就落仓**；`data.schema` 只声明标量列；路径一律绝对路径；`ctl.foreach` 不用（凭据作用域坑）。
-- AGI 网关事实（spec §3.1）：分页在 body（`page_number/page_size` 上限 100）、query 无效、无 total、`branch_nums` 非空、作废单照采、单店跨度≤3月/多店≤1月。
+- AGI 网关事实（spec §3.1）：分页在 body（`page_number/page_size`，**文档实写上限 200**；本仓发布版 `page_size=200 × 8 页`，见 Task 7 修复环订正与 spec §6 的容量口径）、query 无效、无 total、`branch_nums` 非空、作废单照采、单店跨度≤3月/多店≤1月。
 - 提交纪律：feat/fix 引用 issue #150；`tsx scripts/check-data-models.mjs` 必须每次过门（exit 0）；密钥只在 openship env（isSecret），任何文件不落明文。
 - 执行分支：spec PR（#195）合入 main 后从 main 开新分支执行；本计划所有仓库改动基于该分支。
 
@@ -140,7 +140,7 @@ Expected: exit 0，stdout `check-data-models: OK（…）`。若报列/分区跨
 
 - [ ] **Step 3: 样本校对列全集（首跑前，Task 8 之前完成）**
 
-拉一个整日样本（Task 7 管线 ready 后跑 `page_size=100` 全翻页到本地 /tmp），`jq` 列出 detail 行全部字段；对照契约——缺列补进（毛利/成本类若返回则补 `profit` decimal 列，敏感口径由消费层权限管，采集不筛）；多列不删（落盘即定型，宁全勿缺）。
+拉一个整日样本（Task 7 管线 ready 后跑 `page_size=100` 全翻页到本地 /tmp；**订正 2026-09-24**：实际发布版为 `page_size=200 × 8 页`，见 Task 7 修复环），`jq` 列出 detail 行全部字段；对照契约——缺列补进（毛利/成本类若返回则补 `profit` decimal 列，敏感口径由消费层权限管，采集不筛）；多列不删（落盘即定型，宁全勿缺）。
 Run: `tsx scripts/check-data-models.mjs`（补列后再过门）
 
 - [ ] **Step 4: Commit**
@@ -177,11 +177,13 @@ Expected: 拿到 5 个组件的 schema JSON；`snk.minio` 存在且字段与 `du
 
 ---
 
-### Task 5: G1 探针——snk.minio key 的 env 参数化
+### Task 5: G1 探针——sink key 的 env 参数化（两段式）
 
-**Files:** 无仓库改动（探针管线留 /tmp，不落仓）；Modify: spec §4.2 G1 行（销账或退路裁定）
+> **环境订正（2026-09-24 执行时发现）**：本机无 ZOS 凭据（凭据只在数据面机/openship env，取不出明文）。原「本地直写 ZOS 测试桶」改为：**G1a 本地零凭据信号探针**（snk.parquet 本地路径的 env 参数化——同一模板引擎，强信号）+ **G1b 原位确认**（并入 Task 8 首次真机写 ZOS，失败即走退路）。spec G1 行在 G1b 确认前保持「部分销账（G1a 信号 + 待 G1b）」。
 
-**Interfaces:** Produces: 覆盖写对象的 key 生成方式（Task 7 管线 sink 参数形态）
+**Files:** 无仓库改动（探针管线留 /tmp，不落仓）；Modify: spec §4.2 G1 行（部分销账标注）
+
+**Interfaces:** Produces: key 模板化的信号结论 + Task 8 的 G1b 验收点（Task 7 管线 sink 参数按信号结论先定形态）
 
 - [ ] **Step 1: 造最小探针管线（引擎产）**
 
@@ -243,19 +245,19 @@ Expected: 行数=1、类型=DECIMAL(14,2)（与契约一致）。
 
 **Interfaces:**
 - Consumes: Task 3 契约（列/类型/分区）、Task 4 组件字段面、Task 5 G1 结论
-- Produces: 可被 `duckle-runner --pipeline` 执行的管线；窗口/凭据全部 env 注入（Task 8/10 的调用面）：`LEMENG_TOKEN`、`BIZDAY`、`HOUR`（两位数字符串，如 `14`）、`HOUR_FROM`/`HOUR_TO`（LocalTime，如 `14:00:00`/`14:59:59`）、`BRANCH_NUMS`（JSON 数组字符串）、`SYSTEM_BOOK`、`ZOS_*`（五键）、`BATCH_ID`
+- Produces: 可被 `duckle --pipeline` 执行的管线；窗口/凭据全部 env 注入（Task 8/10 的调用面）：`LEMENG_TOKEN`、`BIZDAY`、`HOUR`（两位数字符串，如 `14`）、`HOUR_FROM`/`HOUR_TO`（LocalTime，如 `14:00:00`/`14:59:59`）、`BRANCH_NUMS`（JSON 数组字符串）、`SYSTEM_BOOK`、`ZOS_*`（五键）、`BATCH_ID`
 
 - [ ] **Step 1: 经 MCP `create_pipeline` 生成**（以下为参数清单，节点 id/结构以引擎产出为准）
 
-  1. **src.rest 页节点 ×8**（p1..p8，固定页容量）：POST `https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find`，headers `Authorization: Bearer ${ENV:LEMENG_TOKEN}`，body（每节点 page_number=1..8）：`{"branch_nums": <ENV:BRANCH_NUMS>, "date_from": "${ENV:BIZDAY}", "date_to": "${ENV:BIZDAY}", "time_from": "${ENV:HOUR_FROM}", "time_to": "${ENV:HOUR_TO}", "page_number": N, "page_size": 100}`；`data.schema` 声明标量列（order_no/state/order_time/branch…），**不声明 pos_order_details**（嵌套留推导）。0 行页靠声明过的 schema 正常类型化（已知坑）。
+  1. **src.rest 页节点 ×8**（p1..p8，固定页容量）：POST `https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find`，headers `Authorization: Bearer ${ENV:LEMENG_TOKEN}`，body（每节点 page_number=1..8）：`{"branch_nums": <ENV:BRANCH_NUMS>, "date_from": "${ENV:BIZDAY}", "date_to": "${ENV:BIZDAY}", "time_from": "${ENV:HOUR_FROM}", "time_to": "${ENV:HOUR_TO}", "page_number": N, "page_size": 200}`（**订正 2026-09-24（Task 7 修复环）**：文档实写 max=200，`page_size=100` 容量不足——2026-09-23 峰值窗 19 点 1311 单会把守卫打红。发布版为 **200 × 8 页**；守卫在 p8 哨兵页有行即 `die` ⇒ **真实静默通过阈值 7×200=1400 单/时**，1401–1600 区间是 fail-loud 不丢数；余量按 1400 算，不要写 1600）；`data.schema` 声明标量列（order_no/state/order_time/branch…），**不声明 pos_order_details**（嵌套留推导）。0 行页靠声明过的 schema 正常类型化（已知坑）。
   2. **merge + code.sql 展开定型**：`SELECT <契约列> , '${ENV:SYSTEM_BOOK}' AS system_book, CAST(strptime(order_detail_bizday,'%Y%m%d') AS DATE) AS bizday, <hour 由 order_time 推导>, '${ENV:BATCH_ID}' AS batch_id FROM input o CROSS JOIN UNNEST(o.pos_order_details) AS unnest`（列引用 `unnest.item_num` 等；cast 目标用 numeric/float，**禁 double**）。
   3. **qa.contract**（gate 透传/拒绝）：order_no、order_detail_num、system_book、bizday、hour、batch_id 非空；sale_money 介于 -1e6..1e6。
   4. **ctl.die 末页守卫**：`condition=has-rows` 于 p8——第 8 页仍有行 = 容量截断，中止（消息含窗口标识）。
   5. **snk.minio**（或 G1 退路本地 sink+上传段）：key `lemeng/retail_order_line/system_book=${ENV:SYSTEM_BOOK}/bizday=${ENV:BIZDAY}/hour=${ENV:HOUR}/all.parquet`，`mode=overwrite`、`format=parquet`、`compression=zstd`。
 
-- [ ] **Step 2: `validate_pipeline` 过 + `duckle-runner validate` 过**
+- [ ] **Step 2: `validate_pipeline` 过 + `duckle validate` 过**（CLI 即 runner）
 
-Run（runner 形态）：`/tmp/duckle-venv/bin/duckle-runner validate /tmp/lemeng.retail_order_line.json`
+Run（runner 形态）：`/tmp/duckle-venv/bin/duckle validate /tmp/lemeng.retail_order_line.json`
 Expected: `0 failed`。
 
 - [ ] **Step 3: 落仓提交**
@@ -275,12 +277,14 @@ git commit -m "feat(duckle): 乐檬零售明细采集管线——8页容量+末�
 
 - [ ] **Step 1: 在数据面机执行昨日 24 时窗循环**（openship MCP server exec 或一次性 job；环境变量从 project env 注入）
 
+**前置（SOP P2 钉 SHA 法）**：数据面机 checkout `/opt/platform-core-data/platform-core` 更新到本分支 HEAD 全 SHA（`git fetch && git checkout <全 SHA>`，SHA 从命令输出逐字复制），否则新管线文件不在 `/pipelines` 挂载里。
+
 ```bash
 # 伪码（实际经 openship jobs 一次性 run；分支列表 = whoami.branch_nums 去 99）：
 for H in $(seq -w 0 23); do
   BATCH_ID="retail-3120-$(date -u +%Y%m%dT%H%M%SZ)-$H"
-  duckle-runner --pipeline /pipelines/common/lemeng.retail_order_line.json --workspace /workspace \
-    --duckdb $(command -v duckdb) --log-dir /workspace/logs --name "retail-d-$H"   # env: LEMENG_TOKEN/BIZDAY=昨日/HOUR_FROM=$H:00:00/HOUR_TO=$H:59:59/BRANCH_NUMS/SYSTEM_BOOK=3120/ZOS_*/BATCH_ID
+  duckle --pipeline /pipelines/common/lemeng.retail_order_line.json --workspace /workspace \
+    --duckdb "$(command -v duckdb)" --log-dir /workspace/logs/$H   # env: LEMENG_TOKEN/BIZDAY=昨日/HOUR=$H/HOUR_FROM=$H:00:00/HOUR_TO=$H:59:59/BRANCH_NUMS/SYSTEM_BOOK=3120/ZOS_*/BATCH_ID；CLI 无 --name，按 log-dir 区分（Task 5 实测订正）
 done
 ```
 
@@ -303,7 +307,7 @@ Expected: ETag 相同；不同则记录差异根因（时区内新单属正常�
 
 - [ ] **Step 4: drift 门禁核（spec S1 出口项，main 未验清单 #1/#3 的就地核）**
 
-在数据面对已落管线跑 `duckle-runner drift`（带 `--token` 的授权作业路径，`duckle/README.md` §7.5）：先断言管线 `data.schema` 声明存在（防假绿——三坑 #1），再跑 drift，期望 exit 0 且结论基于真实比对（非「未声明即绿」）；同场即完成「容器内行为」核（T8 全程在 runner 容器内执行，本步通过 = 未验 #3 就地销）。结论记入 PR 描述（通/不通+形态），不通则 S2 起以 `qa.contract` + 契约静态门禁为唯一列门禁（记进 spec）。
+在数据面对已落管线跑 drift（子命令形态以 `duckle --help` 实测为准，仓文档写 `duckle-runner drift`）（带 `--token` 的授权作业路径，`duckle/README.md` §7.5）：先断言管线 `data.schema` 声明存在（防假绿——三坑 #1），再跑 drift，期望 exit 0 且结论基于真实比对（非「未声明即绿」）；同场即完成「容器内行为」核（T8 全程在 runner 容器内执行，本步通过 = 未验 #3 就地销）。结论记入 PR 描述（通/不通+形态），不通则 S2 起以 `qa.contract` + 契约静态门禁为唯一列门禁（记进 spec）。
 
 ---
 
@@ -383,28 +387,31 @@ git add dbt/ && git commit -m "feat(dbt): 零售域切新湖——staging 重写
 ### Task 10: 日调度 job 注册 + _ops 观测
 
 **Files:**
-- Create: `scripts/lemeng/run-retail-day.sh`（薄 wrapper：窗口 env 计算 + 24 时窗循环 + `_ops` JSON 行输出）
+- **订正 2026-09-24**：`scripts/lemeng/run-retail-day.sh` **已由 Task 8 建成并真机验证**（多模式：`probe/window/windows/listing/hour_meta/idem3/drift/agg/rb/branches/envfile/diag`；`idem` 已于 Task 8 修复环 2 **退役**、恒 exit 2，**接线别用它**），本任务**不 Create、只 Modify**（补 `_ops` JSON 行输出与日终模式落地）。原「Create」措辞在 Task 8 提前交付后失效——照抄会重复建文件。
 - openship job（数据面 project，非仓库文件）
 
 **Interfaces:** Consumes: Task 7 管线；Produces: 每日自动采集 + OO 可查的 `_ops` 流
 
 - [ ] **Step 1: wrapper 脚本**（要点：`date -u` 推昨日 bizday；BIZDAY 用营业日格式 `YYYY-MM-DD`；BRANCH_NUMS 由 `whoami` 缓存文件或 env 常量注入；每窗 run 后写一行 `{"ts":…,"job":"retail-day","window":…,"rows":…,"status":…}` 到 stdout——openship job 日志 → OO 按 SOP 文件日志通道）
 
+  **订正 2026-09-24（下方范文块是旧稿，勿照抄）**：该块假设本任务**重建**一个「循环直调 `duckle --pipeline`」的 wrapper —— 与 Task 8 已交付**并真机验证**的事实矛盾。实际交付物是 `scripts/lemeng/run-retail-day.sh`（多模式：`probe`/`window`/`windows`/`listing`/`hour_meta`/`idem3`/`drift`/`agg`/`rb`/`branches`/`envfile`/`diag`；`idem` 已于修复环 2 **退役**、恒 exit 2 —— 其前提「换 batch_id 仍 ETag 一致」被真机证伪（`batch_id` 是载荷列），真命题归 `idem3`，**接线别用它**），job 侧只调 `sh /opt/lemeng-run.sh windows`（见 Step 2）。本任务**只在该已建脚本上 Modify**（补 `_ops` JSON 行输出 + 日终模式落地），**不要**按此块重建循环——重建会丢掉 Task 8 真机验证过的退出码传播与清单截断判红（防假绿）行为。下方块**仅作「wrapper 的职责是什么」的示意**保留。
+
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-BIZDAY=$(date -u -v-1d +%F)          # macOS; 数据面 Linux 用 date -u -d 'yesterday' +%F
+BIZDAY=$(date -u -v-1d +%F)          # macOS; 数据面 Linux 用 date -u -d 'yesterday' +%F；duckle 即 runner（无 duckle-runner 二进制）
 for H in $(seq -w 0 23); do
   BATCH_ID="retail-${SYSTEM_BOOK}-$(date -u +%Y%m%dT%H%M%SZ)-$H"
   export HOUR="$H" HOUR_FROM="${H}:00:00" HOUR_TO="${H}:59:59" BATCH_ID
-  duckle-runner --pipeline /pipelines/common/lemeng.retail_order_line.json \
+  duckle --pipeline /pipelines/common/lemeng.retail_order_line.json \
     --workspace /workspace --duckdb "$(command -v duckdb)" \
-    --log-dir /workspace/logs --name "retail-${BIZDAY}-$H"
+    --log-dir /workspace/logs/${BIZDAY}/$H
   echo "{\"ts\":\"$(date -u +%FT%TZ)\",\"job\":\"retail-day\",\"system_book\":\"$SYSTEM_BOOK\",\"bizday\":\"$BIZDAY\",\"hour\":\"$H\",\"status\":\"ok\"}"
 done
 ```
 
-- [ ] **Step 2: 注册 openship job**（openship MCP）：`label=lemeng-retail-3120-daily`，cron `30 2 * * *`，serverId=数据面机，env 注 `LEMENG_TOKEN`（isSecret）/`SYSTEM_BOOK=3120`/`BRANCH_NUMS`/`ZOS_*`；命令 = `bash /opt/platform-core-data/platform-core/scripts/lemeng/run-retail-day.sh`
+- [ ] **Step 2: 注册 openship job**（openship MCP）：`label=lemeng-retail-3120-daily`，cron `30 2 * * *`，serverId=数据面机（`8281d598-af73-4d0b-99dd-bc8681fcc8bb`）；**命令必须带模式参数**：`sh /opt/lemeng-run.sh windows`（**订正 2026-09-24**：无参 = usage + exit 2 = 天天红；且脚本现经 `/opt/lemeng-run.sh` 落点，不在 `/opt/platform-core-data/platform-core/scripts/`）。
+  **env 注入订正（Task 8 实测）**：**openship job 读不到 project env**（job schema 无 `projectId`、服务器无 env 物化文件）⇒ 凭据走 **job 自己的 `secrets` 字段**（7 键：`LEMENG_TOKEN`/`ZOS_ACCESS_KEY`/`ZOS_SECRET_KEY`/`ZOS_ENDPOINT`/`ZOS_REGION`/`ZOS_BUCKET`/`DUCKLE_TOKEN`），非密参数走 `env`（`SYSTEM_BOOK=3120`/`BRANCH_NUMS`/`BIZDAY`）。注意命名分叉：project env 用 `LEMENG_ZOS_*` 前缀（dbt 消费），管线与脚本用 `ZOS_*`（job secrets 供给）——**轮换须同时动三处**。
 
 - [ ] **Step 3: 验收**
 
@@ -414,7 +421,7 @@ Expected: job 历史 success ×2（手动+自动）；OO 查到 _ops 行。
 - [ ] **Step 4: 提交 + S1 出口清单勾账**
 
 ```bash
-git add scripts/lemeng/run-retail-day.sh
+git add scripts/lemeng/run-retail-day.sh   # 本任务只加「_ops JSON 行」等改动（文件 Task 8 已入库）
 git commit -m "feat(jobs): 乐檬零售日采集 wrapper——窗口计算+24时窗循环+_ops (#150)"
 ```
 

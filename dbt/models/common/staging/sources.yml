@@ -19,14 +19,19 @@ version: 2
 sources:
   - name: lemeng
     description: >-
-      乐檬零售域（对象存储 parquet 湖）。路径约定 `lemeng/retail_detail/<账套>/<日期>/all.parquet`，
-      账套 = 主体维度（3120 熊喵 / 64188 品品甜）。出处：docs/data-platform-handbook.md §2。
+      乐檬零售域（对象存储 parquet 湖）。账套 = 主体维度（3120 熊喵 / 64188 品品甜）。
+      出处：docs/data-platform-handbook.md §2。
+      ⚠️ 本 source 下**两张表两套路径约定**（双轨期）：下面的 source 级 `path_convention` /
+      `partitioning` 描述的是**旧湖** `retail_detail`；每张表自己的 `meta` 才是它那套约定的
+      事实源（新湖 `retail_order_line` 是 hive 命名，见该表 meta）——别把 source 级那两行
+      当成「本域通用」。
     # 落地位置的机读事实（`meta` 是 dbt 允许任意键的地方，不参与 dbt 校验）
     meta:
       path_convention: 'lemeng/retail_detail/<账套>/<日期>/all.parquet'
       account_books: ['3120', '64188']
       # ⚠️ 路径**非 hive 分区命名**（`3120/` 而不是 `system_book=3120/`）⇒ 下游拿不到自动分区列，
       # 账套只能由 var 供值或从路径解析（handbook §4 / 标准 §4.1 欠账）。
+      # **仅描述旧湖 retail_detail**；新湖 retail_order_line 是 hive 命名，见该表 meta。
       partitioning: '非 hive（目录名不带键名）；账套列当前由 dbt var `account_book` 供值'
     tables:
       - name: retail_detail
@@ -47,3 +52,23 @@ sources:
             description: '交易时间，字符串格式 `%Y-%m-%d %H:%M:%S`（实测样例 `2026-07-01 10:02:34`）'
           - name: order_detail_bizday
             description: '业务日，字符串格式 `%Y%m%d`（实测样例 `20260707`）——**与 order_time 两种格式并存**（坑 #3）'
+
+      - name: retail_order_line
+        description: '零售订单明细行（新湖，2026-09-24 契约）：hive 三级分区 system_book/bizday/hour，落盘即定型（numeric/timestamp/date），作废单照采。'
+        meta:
+          path_convention: 'lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
+          # 读路径不是 source()（见文件头 1），这里是**人读的**说明。⚠️ 写的是本仓 staging 的
+          # **实测生效形态**（函数别名 r + 位置参数，无命名形参）：
+          #   · pg_duckdb 把 `read_parquet(...)` 暴露成 **PG 函数**，只认位置参数 ⇒ 命名形参递不进去。
+          #     2026-09-24 真机实测原文：`… , hive_partitioning = 1)` →
+          #       `ERROR:  column "hive_partitioning" does not exist`；
+          #     `… , hive_partitioning := 1)` →
+          #       `ERROR:  function read_parquet(unknown, hive_partitioning => integer) does not exist`。
+          #     **别把 `hive_partitioning=1` 写回来** —— 它在这条栈上不可执行（不是风格问题）。
+          #   · 分区推断本身仍生效（DuckDB 默认 hive_partitioning=auto，路径 `key=value` 段自动成列），
+          #     故不需要显式开关；但推断出的类型**不合约**（system_book→bigint、hour→varchar），
+          #     定型落在 staging 的**显式 cast**里（不是 hive_types —— 那个形参同样递不进去）。
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/lemeng/retail_order_line/system_book={{ var(\"account_book\") }}/**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday', 'hour']
+          partition_key_typing: '由路径字符串重推断；三列在 staging 显式 cast（system_book::varchar / bizday::date / hour::int）'
+          pagination: '新湖由 duckle 管线写入（duckle/common/lemeng.retail_order_line.json）'

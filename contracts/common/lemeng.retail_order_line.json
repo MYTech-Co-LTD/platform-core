@@ -1,0 +1,40 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 1,
+  "domain": "lemeng",
+  "table": "retail_order_line",
+  "owner": "data-platform",
+  "description": "乐檬零售订单明细行（posorder.find 拉回后管线内 UNNEST 成行粒度）。两账套各采各的；作废/取消单照采，口径在 marts。",
+  "layout": {
+    "prefix": "lemeng/retail_order_line",
+    "partitionStyle": "hive",
+    "partitionBy": ["system_book", "bizday", "hour"],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id（job wrapper 生成：retail-<UTC时间戳>-<窗口标识>）。同窗重跑换新 run id，幂等靠对象覆盖写。"
+  },
+  "columns": [
+    { "name": "batch_id", "type": "varchar", "nullable": false, "description": "批次标记（采集 run id）" },
+    { "name": "system_book", "type": "varchar", "nullable": false, "description": "账套（3120/64188）；分区键，来源=**采集侧按账套常量注入**（管线 env `SYSTEM_BOOK`，见 duckle/common/lemeng.retail_order_line.json 的 code.sql 节点）——**不是**取自明细行的 system_book_code（该字段网关确实返回，但不在本契约 18 列内）" },
+    { "name": "bizday", "type": "date", "nullable": false, "description": "营业日（shift_table_bizday，YYYYMMDD 落盘即定型为 date）；分区键" },
+    { "name": "hour", "type": "integer", "nullable": false, "description": "成交时间所在小时（0-23）；分区键，由 order_time 推导" },
+    { "name": "order_no", "type": "varchar", "nullable": false, "description": "订单号（自然键之一）" },
+    { "name": "order_detail_num", "type": "varchar", "nullable": false, "description": "明细行号（自然键之一）" },
+    { "name": "branch_num", "type": "integer", "nullable": false, "description": "门店号（账套内编号）" },
+    { "name": "branch_name", "type": "varchar", "nullable": true, "description": "门店名" },
+    { "name": "order_time", "type": "timestamp", "nullable": true, "description": "成交时间" },
+    { "name": "order_operate_time", "type": "timestamp", "nullable": true, "description": "操作时间" },
+    { "name": "state", "type": "varchar", "nullable": false, "description": "单据状态（FINISHED/CANCELED/REPAID/…）" },
+    { "name": "order_source", "type": "varchar", "nullable": true, "description": "订单来源" },
+    { "name": "item_num", "type": "varchar", "nullable": false, "description": "商品号（账套内编号，varchar 防撑爆）" },
+    { "name": "item_code", "type": "varchar", "nullable": true, "description": "商品业务码（跨品牌归并键）" },
+    { "name": "sale_money", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "行成交金额（元）" },
+    { "name": "discount_money", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "行折扣金额（元）" },
+    { "name": "payment_money", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "行收款金额（元）" },
+    { "name": "quantity", "type": "decimal", "precision": 14, "scale": 3, "nullable": true, "description": "行数量" }
+  ]
+}

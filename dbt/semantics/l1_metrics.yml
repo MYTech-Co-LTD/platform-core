@@ -37,7 +37,7 @@ metrics:
     owner: data-platform
     tier: experimental
     sources:
-      - 's3://<bucket>/lemeng/retail_detail/<账套>/<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
     # 对账（每个声明指标一条独立复算，layered §7 硬约束 7）：对应的 singular test 文件名**不在这里写**
     # —— 名字由 `:` → `__` 的映射函数算出（scripts/check-data-models.mjs 导出的 metricToAuditFileName()，
     #   唯一事实源）。在这里再写一遍文件名 = 两处事实源，映射一改这两行就悄悄过期。
@@ -48,11 +48,16 @@ metrics:
       零售明细里按单号去重的订单笔数（口径模型 fct_retail_sale，粒度 = 账套 × 业务日）。
       **上滚语义**：更粗粒度上对 expression 求和 = 各业务日去重笔数之和（跨日重号的订单会被重复计入）
       —— 这是本口径的**已知边界**，要「跨日唯一订单数」得单独声明一个新指标，不许改本定义。
-      **暂定**：单号列的列名与去重语义待 T6 按实测样本核对（staging 里 `order_no` 是暂定列）；
-      若样本里没有稳定的单号列，本声明应**删除**而不是替换成近似口径（口径不能猜）。
+      **暂定（收窄到语义面）**：**已证**的只是 `order_no` 列**存在且非空**（新湖契约列
+      `nullable=false` + 管线 `qa.contract` 非空闸 + 2026-09-24 真机
+      `not_null_stg_lemeng_retail_order_line_order_no` 过；列名与类型合契约）；
+      **未证**的是「该列**就是业务意义上的单号**」与 `count(distinct order_no)` 的**去重语义**
+      —— 两者都属**口径转正**（S5，边界同 `dbt/tests/audit_retail__order_count.sql` 头注）。
+      ⚠️ **别把「列存在且非空」读成「口径已确认」**。
+      若业务侧核不出稳定的单号语义，本声明应**删除**而不是替换成近似口径（口径不能猜）。
     expression: 'sum(fct_retail_sale.order_count)'
     grain: [system_book, bizday]
     owner: data-platform
     tier: experimental
     sources:
-      - 's3://<bucket>/lemeng/retail_detail/<账套>/<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
