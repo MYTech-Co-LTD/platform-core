@@ -37,6 +37,14 @@ curl -sS -X POST "https://cloud.nhsoft.cn/agi/mcp" \
 ```
 
 token 取法：openship 数据面 project env `LEMON_AGI_TOKEN_64188`（isSecret）。本地执行时从 env 读；**不回显 token 值**。
+
+> **订正（2026-09-25 实测，见 #205）**：上面这条**取法写错了**，照抄会在入口就失败。
+> - openship 数据面 project env（`platform-core-shanhai-data`）里**没有** `LEMON_AGI_TOKEN_*` 这个键——只有一枚 **`LEMENG_TOKEN`**（无账套后缀，PAT 绑定单账套）；
+> - 本机 `~/.zshrc` 里 64188 的令牌实际叫 **`LEMON_TOKEN_64188`**（同一文件里另有裸的 `LEMON_AGI_TOKEN`）；
+> - ⇒ 上面命令里的 `$LEMON_AGI_TOKEN_64188` 按**本机实际变量名**取。**三处命名互不相同**，铺 64188 前先定死一套。
+>
+> 下面的 `Expected` / 退路逻辑不受影响（G4 已销，结论仍成立）。
+
 Expected: `company_id= 64188`，branch_nums 非空。若 401 → 记录「token 未落/失效」，G4 转「待补」，不阻断 S1 其余任务（S1 只用 3120）。
 
 - [ ] **Step 2: 能力面一致性抽查**（64188 token 调 posorder 1 行，确认与 3120 同形）
@@ -434,4 +442,8 @@ git commit -m "feat(jobs): 乐檬零售日采集 wrapper——窗口计算+24时
 - **代理**：本机 git 走 7897 间歇挂——push 失败先重试，再走 `ssh://git@ssh.github.com:443/`（本会话已验证可用）。
 - **数据面已存在**：shanhai 全量站 2026-09-23 部署（含 etl），操作序列全在 `deploy/data-plane-deploy-sop.md`；**不要重新部署**，只在现有 project 上加 job/env。
 - **凭据位置**：`LEMON_AGI_TOKEN_3120/64188`、`LEMENG_ZOS_*` 五键、`DUCKLE_TOKEN`——全部 openship 数据面 project env（isSecret），取法见 SOP P3；任何输出不回显值。
+  > **订正（2026-09-25 实测，见 #205）**：本条**两处与实测不符**——
+  > ① `LEMON_AGI_TOKEN_*` 这两个键在 project env 里**不存在**（实际只有一枚 `LEMENG_TOKEN`）；
+  > ② 「全部在 project env」**与本文件 Task 8 自己的订正互相矛盾**：openship **job 读不到 project env**（job schema 无 `projectId`、服务器无 env 物化文件）⇒ 采集凭据实际走 **job 自己的 `secrets` 字段**（实测 7 键：`LEMENG_TOKEN` + `ZOS_{ACCESS_KEY,SECRET_KEY,ENDPOINT,REGION,BUCKET}` + `DUCKLE_TOKEN`），project env 侧只服务 dbt（`LEMENG_ZOS_*`）。
+  > ⇒ **轮换须同时动三处**（project env / job secrets / 本机 zshrc）；命名规则见 #205。
 - **S2–S5 不在本计划**：域扩展/5min 调度/回填/语义 BI 各自成计划，依赖本计划销掉的 G1–G4 结论。
