@@ -1,4 +1,4 @@
-# schema.yml — staging 层的模型描述 + 列级 dbt tests（新湖 `stg_lemeng_retail_order_line`）。
+# schema.yml — staging 层的模型描述 + 列级 dbt tests（新湖三模型：retail_order_line / branch / item）。
 #
 # ⚠️ 落点纪律：**本文件只描述 staging 模型**；`fct_retail_sale` 的描述与测试仍在
 #   `dbt/models/common/marts/schema.yml`（口径模型与清洗模型各自归各自，别互相塞）。
@@ -7,12 +7,17 @@
 # 本文件的两类断言（都不替代对账 —— 对账是 `dbt/tests/audit_*.sql` 的独立复算）：
 #   · 列级 `tests:`（dbt 原生）—— 钉「这一列该有的形状」
 #   · 结构断言（singular test）—— 钉「单列约束抓不住的形状」，见
-#     `dbt/tests/assert_stg_lemeng_retail_order_line_key_unique.sql`（**复合自然键唯一性**）
+#     `dbt/tests/assert_stg_lemeng_*_key_unique.sql`（**复合自然键唯一性**）
 #
-# ⚠️ 两种「空」都要当心（本文件两条测试都是**非空断言**，空表上照样绿）：
+# ⚠️ 两种「空」都要当心（本文件的列级测试都是**非空断言**，空表上照样绿）：
 #   ① 表是空的 ⇒ 一切列级测试通过，而那不是「数据对」，是「没有数据」；
 #   ② 本层的 cast 写错（截断/取整/精度）⇒ 列级测试一条都不红。抓 ② 的是 `dbt/tests/audit_*.sql`
 #      （绕开 staging 直接打 parquet 的独立复算）。
+#
+# ⚠️ **逐列描述只写「本层引入的形状」**（分区键的 cast / 自然键 / 载荷列），**不复制契约的文字**：
+#   两张维度的**列名集合**由契约钉死（`contracts/common/lemeng.branch.json` 16 列、
+#   `contracts/common/lemeng.item.json` 108 列），下面 `columns:` 是那份集合在 dbt 侧的登记面；
+#   **类型 / 语义 / 空值性的事实源仍是契约**，在这里抄第二份只会漂。
 version: 2
 
 models:
@@ -78,6 +83,182 @@ models:
       - name: quantity
         description: '行数量（decimal(14,3)）。'
 
-# 行粒度自然键 **(order_no, order_detail_num)** 的唯一性由 singular test 手写
-# （单列 `unique` 判不了复合键；引 dbt_utils 要加 packages.yml —— 多一层依赖、解析期还要联网）：
-#   dbt/tests/assert_stg_lemeng_retail_order_line_key_unique.sql
+  - name: stg_lemeng_branch
+    description: >-
+      乐檬门店维 staging（新湖）。**一对一、只规范化不改义**：取列 / 命名 / 透传 / 分区键定型，
+      不做聚合、不做 join、不定义口径（口径只在 marts 定义一次）。源 = 湖表 `lemeng.branch`
+      （hive 两级分区 system_book/snapshot，**全量快照**不是增量：改名/停用靠快照自愈，没有游标），
+      声明见 `staging/sources.yml`；列全集与空值性以 `contracts/common/lemeng.branch.json`（16 列）为准。
+      分区键的定型机制（显式 cast，为什么不是 hive_types）见模型文件头注。
+      ⚠️ 与零售 stg 的**结构差异**：本模型**一个模型读两个账套**（路径 `*/snapshot=**/`，
+      `system_book` 是**列**、不是 var）⇒ 断言与测试都必须带 `system_book` 这一维。
+    columns:
+      # ── 分区键两列 + 载荷列（由路径字符串重推断 + 显式 cast 定型）────────────
+      - name: batch_id
+        description: '批次标记（采集 run id）。**载荷列**（契约 `batch.unique=false`）：同快照重跑会换值，幂等靠对象覆盖写 —— 别拿它做去重或幂等判据（幂等由 singular test 断言）。'
+      - name: system_book
+        description: '账套（3120 熊喵 / 64188 品品甜）。**hive 分区键**：路径 `system_book=<账套>/` 推断，湖里被自动转成 BIGINT，本层 `::varchar` 定型回契约类型。'
+      - name: snapshot
+        description: '快照日（Asia/Shanghai 日历日）。**hive 分区键**：路径 `snapshot=<YYYY-MM-DD>/` 推断，本层 `::date` 定型。'
+      # ── 自然键一列（全量快照的行粒度键 = 账套 × 快照日 × 门店号）─────────────
+      - name: branch_num
+        description: '门店号（账套内编号）。**自然键之一**（自然键 = system_book × snapshot × branch_num：全量快照下一行一店）。'
+        tests:
+          - not_null
+      # ── 其余 11 源列（一对一透传，类型/语义见契约；这里只登记名字，不做口径）──
+      - name: code
+      - name: name
+      - name: pinyin
+      - name: type
+      - name: enable
+      - name: region_id
+      - name: province
+      - name: city
+      - name: district
+      - name: contact
+      - name: phone
+      - name: address
+
+  - name: stg_lemeng_item
+    description: >-
+      乐檬商品维 staging（新湖）。**一对一、只规范化不改义**：取列 / 命名 / 透传 / 分区键定型，
+      不做聚合、不做 join、不定义口径（口径只在 marts 定义一次）。源 = 湖表 `lemeng.item`
+      （hive 两级分区 system_book/snapshot，**全量快照**不是增量），声明见 `staging/sources.yml`；
+      列全集与空值性以 `contracts/common/lemeng.item.json`（108 列）为准。
+      列数构成：**3 注入列 + 89 标量列 + 16 摊平列**（3 个嵌套对象 item_department 3 /
+      item_category 9 / item_brand 4 摊平；另 6 个数组/深层对象字段按契约的投影规则**丢弃**）。
+      分区键的定型机制（显式 cast，为什么不是 hive_types）见模型文件头注。
+      ⚠️ 与零售 stg 的**结构差异**同 stg_lemeng_branch：一个模型读两个账套，`system_book` 是列。
+    columns:
+      # ── 注入 3 列：分区键两列（显式 cast 定型）+ 载荷列 ──────────────────────
+      - name: batch_id
+        description: '批次标记（采集 run id）。**载荷列**（契约 `batch.unique=false`）：同快照重跑会换值，幂等靠对象覆盖写 —— 别拿它做去重或幂等判据（幂等由 singular test 断言）。'
+      - name: system_book
+        description: '账套（3120 熊喵 / 64188 品品甜）。**hive 分区键**：路径 `system_book=<账套>/` 推断，湖里被自动转成 BIGINT，本层 `::varchar` 定型回契约类型。'
+      - name: snapshot
+        description: '快照日（Asia/Shanghai 日历日）。**hive 分区键**：路径 `snapshot=<YYYY-MM-DD>/` 推断，本层 `::date` 定型。'
+      # ── 自然键列（全量快照的行粒度键 = 账套 × 快照日 × 商品号）───────────────
+      - name: item_num
+        description: '商品号（账套内编号）。**自然键之一**（自然键 = system_book × snapshot × item_num）。契约类型 `varchar`（外部系统编号，长度不受我们控制）；源 API 把该字段声明为 int，定型落在管线 `code.sql` 的逐列 cast，本层不重复 cast。'
+        tests:
+          - not_null
+      - name: item_code
+        description: '商品业务码（跨品牌归并键；契约里可空）。'
+      # ── 其余 87 标量列（一对一透传，类型/语义见契约；这里只登记名字，不做口径）──
+      - name: bar_code
+      - name: pinyin
+      - name: item_name
+      - name: spec
+      - name: item_type
+      - name: item_flag_names
+      - name: unit_name
+      - name: unit_group_name
+      - name: tax_code
+      - name: valid_period
+      - name: made_in
+      - name: eliminate_flag
+      - name: eliminate_at
+      - name: eliminate_operator
+      - name: item_sale_cease_flag
+      - name: description
+      - name: item_point_value
+      - name: item_sale_no_store
+      - name: item_weight_flag
+      - name: item_in_tax
+      - name: item_out_tax
+      - name: free_tax_flag
+      - name: created_at
+      - name: updated_at
+      - name: created_by
+      - name: creator
+      - name: updated_by
+      - name: item_sequence
+      - name: deleted_flag
+      - name: item_cost_mode
+      - name: item_method
+      - name: item_gross_rate
+      - name: item_direct_rate
+      - name: item_en_name
+      - name: item_note_info
+      - name: item_stock_cease_flag
+      - name: item_status
+      - name: item_remind_period
+      - name: item_transfer_day
+      - name: item_purchase_scope
+      - name: item_store_place
+      - name: item_assist_unit
+      - name: item_assist_rate
+      - name: item_purchase_unit
+      - name: item_purchase_rate
+      - name: item_inventory_unit
+      - name: item_inventory_rate
+      - name: item_transfer_unit
+      - name: item_transfer_rate
+      - name: item_wholesale_unit
+      - name: item_wholesale_rate
+      - name: item_price_tag_flag
+      - name: item_print_label_flag
+      - name: item_cost_price
+      - name: item_transfer_price
+      - name: item_transfer_fix_type
+      - name: item_wholesale_fix_type
+      - name: item_fix_assist_transfer_price
+      - name: item_fix_assist_wholesale_price
+      - name: item_wholesale_price
+      - name: item_level2_wholesale
+      - name: item_level3_wholesale
+      - name: item_level4_wholesale
+      - name: item_transfer_gross
+      - name: item_transfer_fixed_gross
+      - name: item_wholesale_gross
+      - name: item_wholesale_fixed_gross
+      - name: item_wholesale_gross2
+      - name: item_wholesale_gross3
+      - name: item_wholesale_gross4
+      - name: item_wholesale_fixed_gross2
+      - name: item_wholesale_fixed_gross3
+      - name: item_wholesale_fixed_gross4
+      - name: item_wholesale_fix_type2
+      - name: item_wholesale_fix_type3
+      - name: item_wholesale_fix_type4
+      - name: item_manufacture_flag
+      - name: item_need_product_date
+      - name: item_price_adj
+      - name: item_transfer_return_flag
+      - name: no_stock_no_request
+      - name: item_fix_assist_cost_price
+      - name: test_market_end_date
+      - name: new_crease
+      - name: request_not_over_center_stock
+      - name: material_url
+      - name: wholesale_book_allow_over_center_stock
+      # ── 摊平列 16 列（3 个嵌套对象 → 逐列 json_extract；本层一对一透传）───────
+      #   item_department 3 列：item_department_id, item_department_name, item_department_code
+      #   item_category   9 列：item_category_code, item_category_en_name, item_category_name, item_category_id, item_category_level, item_category_parent_id, item_category_pinyin, item_category_sort, item_category_tax_code
+      #   item_brand      4 列：item_brand_code, item_brand_name, item_brand_pinyin, item_brand_id
+      - name: item_department_id
+      - name: item_department_name
+      - name: item_department_code
+      - name: item_category_code
+      - name: item_category_en_name
+      - name: item_category_name
+      - name: item_category_id
+      - name: item_category_level
+      - name: item_category_parent_id
+      - name: item_category_pinyin
+      - name: item_category_sort
+      - name: item_category_tax_code
+      - name: item_brand_code
+      - name: item_brand_name
+      - name: item_brand_pinyin
+      - name: item_brand_id
+
+# 两张维度的**行粒度自然键**唯一性由 singular test 手写（单列 `unique` 判不了复合键；
+# 引 dbt_utils 要加 packages.yml —— 多一层依赖、解析期还要联网）：
+#   dbt/tests/assert_stg_lemeng_branch_key_unique.sql  —— (system_book, snapshot, branch_num)
+#   dbt/tests/assert_stg_lemeng_item_key_unique.sql    —— (system_book, snapshot, item_num)
+#
+# 列级测试的**范围**（有意为之，不是漏做）：只给**自然键列**挂 `not_null`（与
+# stg_lemeng_retail_order_line 的形状一致 —— 它也只给同名的两个自然键列挂）。
+# 契约里 batch_id / system_book / snapshot 同样 `nullable=false`，但这三列在本层是
+# 「路径推断 + cast」的产物，非空性由上游分区结构保证；要不要把它们也升成断言属**独立决定**。
