@@ -14,7 +14,7 @@
 - 契约纪律：`contracts/` 元 schema（`_schema.schema.json`）判据——`partitionStyle=hive`、`fileName=all.parquet`、分区键列不可空、外部标识一律 `varchar`、`decimal` 必带 precision/scale、`batch.markerColumn` 必填。
 - duckle 三坑（`duckle/README.md` §7.3）：`drift` 假绿（先断言声明存在）；`qa.freshness` 时区坑（**不用它**，新鲜度由 job receipt + 回读承担）；`pipelineHash` 是代码指纹不是数据指纹。
 - 管线 JSON 由真引擎产出（duckle MCP `create_pipeline`/`validate_pipeline`），**禁止手写后不验证就落仓**；`data.schema` 只声明标量列；路径一律绝对路径；`ctl.foreach` 不用（凭据作用域坑）。
-- AGI 网关事实（spec §3.1）：分页在 body（`page_number/page_size`，**文档实写上限 200**；本仓发布版 `page_size=200 × 8 页`，见 Task 7 修复环订正与 spec §6 的容量口径）、query 无效、无 total、`branch_nums` 非空、作废单照采、单店跨度≤3月/多店≤1月。
+- AGI 网关事实（spec §3.1）：分页在 body（`page_number/page_size`，**文档实写上限 200**；本仓发布版 `page_size=200 × 12 页`——2026-09-25 按 issue #197 从 8 页扩容，见 Task 7 修复环订正与 spec §6 的容量口径）、query 无效、无 total、`branch_nums` 非空、作废单照采、单店跨度≤3月/多店≤1月。
 - 提交纪律：feat/fix 引用 issue #150；`tsx scripts/check-data-models.mjs` 必须每次过门（exit 0）；密钥只在 openship env（isSecret），任何文件不落明文。
 - 执行分支：spec PR（#195）合入 main 后从 main 开新分支执行；本计划所有仓库改动基于该分支。
 
@@ -140,7 +140,7 @@ Expected: exit 0，stdout `check-data-models: OK（…）`。若报列/分区跨
 
 - [ ] **Step 3: 样本校对列全集（首跑前，Task 8 之前完成）**
 
-拉一个整日样本（Task 7 管线 ready 后跑 `page_size=100` 全翻页到本地 /tmp；**订正 2026-09-24**：实际发布版为 `page_size=200 × 8 页`，见 Task 7 修复环），`jq` 列出 detail 行全部字段；对照契约——缺列补进（毛利/成本类若返回则补 `profit` decimal 列，敏感口径由消费层权限管，采集不筛）；多列不删（落盘即定型，宁全勿缺）。
+拉一个整日样本（Task 7 管线 ready 后跑 `page_size=100` 全翻页到本地 /tmp；**订正 2026-09-24**：实际发布版为 `page_size=200 × 8 页`，见 Task 7 修复环；**再订正 2026-09-25**：当前为 `200 × 12 页`，见 #197），`jq` 列出 detail 行全部字段；对照契约——缺列补进（毛利/成本类若返回则补 `profit` decimal 列，敏感口径由消费层权限管，采集不筛）；多列不删（落盘即定型，宁全勿缺）。
 Run: `tsx scripts/check-data-models.mjs`（补列后再过门）
 
 - [ ] **Step 4: Commit**
@@ -249,10 +249,10 @@ Expected: 行数=1、类型=DECIMAL(14,2)（与契约一致）。
 
 - [ ] **Step 1: 经 MCP `create_pipeline` 生成**（以下为参数清单，节点 id/结构以引擎产出为准）
 
-  1. **src.rest 页节点 ×8**（p1..p8，固定页容量）：POST `https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find`，headers `Authorization: Bearer ${ENV:LEMENG_TOKEN}`，body（每节点 page_number=1..8）：`{"branch_nums": <ENV:BRANCH_NUMS>, "date_from": "${ENV:BIZDAY}", "date_to": "${ENV:BIZDAY}", "time_from": "${ENV:HOUR_FROM}", "time_to": "${ENV:HOUR_TO}", "page_number": N, "page_size": 200}`（**订正 2026-09-24（Task 7 修复环）**：文档实写 max=200，`page_size=100` 容量不足——2026-09-23 峰值窗 19 点 1311 单会把守卫打红。发布版为 **200 × 8 页**；守卫在 p8 哨兵页有行即 `die` ⇒ **真实静默通过阈值 7×200=1400 单/时**，1401–1600 区间是 fail-loud 不丢数；余量按 1400 算，不要写 1600）；`data.schema` 声明标量列（order_no/state/order_time/branch…），**不声明 pos_order_details**（嵌套留推导）。0 行页靠声明过的 schema 正常类型化（已知坑）。
+  1. **src.rest 页节点 ×8**（p1..p8，固定页容量）——**订正 2026-09-25（issue #197 扩容）**：当前发布版是 **×12**（p1..p12，哨兵页 p12），静默通过阈值 **11×200 = 2200 单/时**；**本步下面的「×8 / page_number=1..8 / 阈值 1400」是 S1 发布时的史实，保留不改**（照抄实现会退回旧容量）：POST `https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find`，headers `Authorization: Bearer ${ENV:LEMENG_TOKEN}`，body（每节点 page_number=1..8）：`{"branch_nums": <ENV:BRANCH_NUMS>, "date_from": "${ENV:BIZDAY}", "date_to": "${ENV:BIZDAY}", "time_from": "${ENV:HOUR_FROM}", "time_to": "${ENV:HOUR_TO}", "page_number": N, "page_size": 200}`（**订正 2026-09-24（Task 7 修复环）**：文档实写 max=200，`page_size=100` 容量不足——2026-09-23 峰值窗 19 点 1311 单会把守卫打红。发布版为 **200 × 8 页**；守卫在 p8 哨兵页有行即 `die` ⇒ **真实静默通过阈值 7×200=1400 单/时**，1401–1600 区间是 fail-loud 不丢数；余量按 1400 算，不要写 1600）；`data.schema` 声明标量列（order_no/state/order_time/branch…），**不声明 pos_order_details**（嵌套留推导）。0 行页靠声明过的 schema 正常类型化（已知坑）。
   2. **merge + code.sql 展开定型**：`SELECT <契约列> , '${ENV:SYSTEM_BOOK}' AS system_book, CAST(strptime(order_detail_bizday,'%Y%m%d') AS DATE) AS bizday, <hour 由 order_time 推导>, '${ENV:BATCH_ID}' AS batch_id FROM input o CROSS JOIN UNNEST(o.pos_order_details) AS unnest`（列引用 `unnest.item_num` 等；cast 目标用 numeric/float，**禁 double**）。
   3. **qa.contract**（gate 透传/拒绝）：order_no、order_detail_num、system_book、bizday、hour、batch_id 非空；sale_money 介于 -1e6..1e6。
-  4. **ctl.die 末页守卫**：`condition=has-rows` 于 p8——第 8 页仍有行 = 容量截断，中止（消息含窗口标识）。
+  4. **ctl.die 末页守卫**：`condition=has-rows` 于 p8——第 8 页仍有行 = 容量截断，中止（消息含窗口标识）。**订正 2026-09-25（#197）**：哨兵页现为 **p12**（第 12 页仍有行 = 截断，阈值 2200 单/时），守卫位置与消息页码随之改；本句的 p8/1400 是 S1 发布时史实。
   5. **snk.minio**（或 G1 退路本地 sink+上传段）：key `lemeng/retail_order_line/system_book=${ENV:SYSTEM_BOOK}/bizday=${ENV:BIZDAY}/hour=${ENV:HOUR}/all.parquet`，`mode=overwrite`、`format=parquet`、`compression=zstd`。
 
 - [ ] **Step 2: `validate_pipeline` 过 + `duckle validate` 过**（CLI 即 runner）
