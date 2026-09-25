@@ -27,7 +27,7 @@ models:
           - accepted_values:
               values: ['3120', '64188']
       - name: bizday
-        description: 业务日（来自 parquet 的 `order_detail_bizday`，格式 `%Y%m%d`）。
+        description: 业务日。**新湖（现行）**：列名就是 `bizday`，是 **hive 分区键**（路径 `bizday=<日期>/` 推断）且**落盘即定型为 DATE**（管线侧由 shift_table_bizday 定型）——`order_detail_bizday` 与 `%Y%m%d` 是**旧湖** `stg_lemeng_retail_detail`（双轨期保留件）的形态，不再是本模型的来源。
         tests:
           - not_null
       - name: net_amount

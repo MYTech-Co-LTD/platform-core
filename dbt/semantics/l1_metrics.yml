@@ -48,11 +48,12 @@ metrics:
       零售明细里按单号去重的订单笔数（口径模型 fct_retail_sale，粒度 = 账套 × 业务日）。
       **上滚语义**：更粗粒度上对 expression 求和 = 各业务日去重笔数之和（跨日重号的订单会被重复计入）
       —— 这是本口径的**已知边界**，要「跨日唯一订单数」得单独声明一个新指标，不许改本定义。
-      **暂定（口径面，不是列面）**：单号列 `order_no` 的**列名与取值已实证** —— 新湖契约列
-      （`contracts/…retail_order_line.json`，`nullable=false`）+ 管线 `qa.contract` 非空闸 +
-      2026-09-24 真机（staging 落 19,678 行、`not_null_stg_lemeng_retail_order_line_order_no` 过）；
-      仍未确认的是**去重语义**（`count(distinct order_no)` 是否就是业务口径的「订单笔数」），
-      属**口径转正**（S5，见 `dbt/tests/audit_retail__order_count.sql` 头注）。
+      **暂定（收窄到语义面）**：**已证**的只是 `order_no` 列**存在且非空**（新湖契约列
+      `nullable=false` + 管线 `qa.contract` 非空闸 + 2026-09-24 真机
+      `not_null_stg_lemeng_retail_order_line_order_no` 过；列名与类型合契约）；
+      **未证**的是「该列**就是业务意义上的单号**」与 `count(distinct order_no)` 的**去重语义**
+      —— 两者都属**口径转正**（S5，边界同 `dbt/tests/audit_retail__order_count.sql` 头注）。
+      ⚠️ **别把「列存在且非空」读成「口径已确认」**。
       若业务侧核不出稳定的单号语义，本声明应**删除**而不是替换成近似口径（口径不能猜）。
     expression: 'sum(fct_retail_sale.order_count)'
     grain: [system_book, bizday]

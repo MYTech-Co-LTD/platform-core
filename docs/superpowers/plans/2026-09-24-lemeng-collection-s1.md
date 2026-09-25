@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- 分层纪律：staging 一对一不改义；口径只在 marts；L1 唯一事实源 `dbt/semantics/l1_metrics.yml` 本计划**语义声明**零改动（`name`/`definition`/`expression`/`grain`/`owner`/`tier` 一字未动；**`sources` 指针随换源更新**——留旧湖路径等于留假指针，该偏离已由 Task 9 brief 授权）。
+- 分层纪律：staging 一对一不改义；口径只在 marts；L1 唯一事实源 `dbt/semantics/l1_metrics.yml` 本计划**语义声明**零改动 —— `name`/`expression`/`grain`/`owner`/`tier` 与 **`definition` 的口径语义**（口径表述本身）一字未动。**两处注记更新**（都随换源 / 实证走，**逐一点名**，不算进「零改动」）：① **`sources` 指针随换源更新**——留旧湖路径等于留假指针（Task 9 brief 授权）；② **`definition` 内的证据状态注记随实证收窄**——把过期的「staging 里 `order_no` 是暂定列」换成「列**存在且非空** = 已证 / 是否**即业务单号**与 `count(distinct order_no)` 的**去重语义** = 未证」（终评 M8 裁定的过期指针订正；**口径表述本身未动**）。
 - 契约纪律：`contracts/` 元 schema（`_schema.schema.json`）判据——`partitionStyle=hive`、`fileName=all.parquet`、分区键列不可空、外部标识一律 `varchar`、`decimal` 必带 precision/scale、`batch.markerColumn` 必填。
 - duckle 三坑（`duckle/README.md` §7.3）：`drift` 假绿（先断言声明存在）；`qa.freshness` 时区坑（**不用它**，新鲜度由 job receipt + 回读承担）；`pipelineHash` 是代码指纹不是数据指纹。
 - 管线 JSON 由真引擎产出（duckle MCP `create_pipeline`/`validate_pipeline`），**禁止手写后不验证就落仓**；`data.schema` 只声明标量列；路径一律绝对路径；`ctl.foreach` 不用（凭据作用域坑）。

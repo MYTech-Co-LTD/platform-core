@@ -154,7 +154,7 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
 | `read_parquet` 读得通对象存储 + 自定义 endpoint / path-style 的建密钥函数支持 | **实证** | spec §9.4 / WeKnora 两条条目 |
 | 账套在**路径**里（`lemeng/retail_detail/<账套>/…`） | **实证** | handbook §2 + §4 欠账 |
 | **列全集** | **分裂两档**（2026-09-25 订正） | **新湖** `stg_lemeng_retail_order_line` = 契约 18 列、**实证**（2026-09-24 真机 `dbt run` 落 19,678 行）；**旧湖** `stg_lemeng_retail_detail` 的列全集仍**暂定**（该文件从未跑过、待 S4 删） |
-| **`order_no`**（订单数指标的唯一依赖列） | **列面实证 / 口径面暂定** | 列名与取值**已实证**（新湖契约列 + 管线 `qa.contract` 非空闸 + 真机 `not_null_…_order_no` 过）；仍待**业务**确认的是**去重语义**（口径转正，S5）。核不到就**删掉该指标声明**，不换近似口径 |
+| **`order_no`**（订单数指标的唯一依赖列） | **列存在已证 / 语义未证** | **已证** = 新湖契约列**存在且非空**（`nullable=false` + 管线 `qa.contract` 非空闸 + 真机 `not_null_…_order_no` 过，列名与类型合契约）；**未证** = 「该列**就是业务意义上的单号**」与 `count(distinct order_no)` 的**去重语义**（两者都属**口径转正**，S5）。⚠️ 别把「列存在且非空」读成「口径已确认」；核不到就**删掉该指标声明**，不换近似口径 |
 | **账套取值方式** | **新湖实证 / 旧湖暂定** | 新湖 = **路径解析进列**（hive 分区键 `system_book=<账套>/` 被 read_parquet 推断成列，真机 `::varchar` 定型通过）；`account_book` var 只用于**拼读路径**、不灌数据。旧湖（双轨期）仍只能 var 供值 |
 | **跨列集分组的读法**（§6 的目标形态） | **暂定 → T6 实测** | 分组形参是否透传未知 |
 | **S3 凭据注入形态**（§4 的候选 ①②） | **暂定 → T6 实测** | 只能在真 pg_duckdb 上验；⚠️ 真机 `dbt run` 能读 S3 靠的是「会话里已有的 secret」（非本次接线），**pg_duckdb 一重启即失效** |
@@ -175,7 +175,7 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
 2. **新湖链的 SQL 形态已实证**：`r['列名']` 取列（**函数别名形态**，见 §3 第 1 行）、`::varchar` / `::int` /
    `::date` 三个 cast 目标、物化落点 `table`，四处均经真机 `dbt run` PASS=2 验证。
    **仍未验的是旧湖** `stg_lemeng_retail_detail.sql` 的 CTE 取列 + `try_strptime` + `::timestamptz`
-   形态（该文件从未跑过，见 §8 最后两行）。
+   形态（该文件从未跑过，见 §8 最后一行）。
 3. **对账/断言测试已在真数据上跑过**：真机 `dbt test` **PASS=14 WARN=0 ERROR=0**（含两条 `audit_*.sql`
    的独立复算与 `assert_*` 结构断言）。⚠️ 「对账绿」只说明**两侧算的是同一件事**，**不是**「口径已确认」
    （见 `audit_retail__order_count.sql` 头注）。
