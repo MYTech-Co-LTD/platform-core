@@ -1,4 +1,4 @@
-sha256-of-rest 6b5fcf1da4dfcb14ea87bf716d51144c6350e61f3b513118d83a3152dc27184f
+sha256-of-rest adf7e4c884c4b0283dd5fe00839127510e7f9dd109382d0681653a6107f784ea
 014fc1e7a7879d70a69f6741a0284a99b20febf7d6cfdd7b6d942264e191c16f dbt/README.md ${REPO}/dbt/README.md 0644
 944a60546ed34e1d60c499f74f0e0af49821f163e90c1cab130c8eff3dbf9a89 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 1f429020c4c115e9cc24828043566f7de6de35d5605ace67b1de0f62cccbd30e dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -23,4 +23,4 @@ fe106a406b22c577ec34e9da724892b7f0b95277d5aab65418f95767ea40542c duckle/README.m
 7ff8974585bd0882c272c9c02683342bfbd96c52ba95c3ce0c568915938aa78d duckle/common/lemeng.retail_order_line.json ${REPO}/duckle/common/lemeng.retail_order_line.json 0644
 691d2f8416d4588f656c174cc00528e4bfa65b85ceb84758900086ca756b2e26 duckle/customers/README.md ${REPO}/duckle/customers/README.md 0644
 d3c7fb72c9a2c243b6973177432294b446a10770b3bbad4da731fd306cad2e97 scripts/lemeng/readback-helper.sh ${REPO}/lemeng-readback.sh 0755
-f3d8699ce01237e73b7eaf1af6d26bef5e58d95134c002351ba21f7371e474b0 scripts/lemeng/run-retail-day.sh /opt/lemeng-run.sh 0755
+ec1aa68b299845830053ae04b420fb470a7105fa590b90cddeaf697d0bc1833a scripts/lemeng/run-retail-day.sh /opt/lemeng-run.sh 0755
