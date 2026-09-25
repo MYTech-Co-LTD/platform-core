@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.27.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.27.0...v0.27.1) - 2026-09-25
+- 【修复】duckle: 零售链路页容量 8→12，静默通过阈值 1400→2200 单/时 ([#201](https://github.com/MYTech-Co-LTD/platform-core/pull/201), [740c1fa](https://github.com/MYTech-Co-LTD/platform-core/commit/740c1fa9503267cf06cba226c43e7830683019b2))
+
+
 ## [0.27.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.26.0...v0.27.0) - 2026-09-25
 - 【新增】data-plane: 工件投递升为「清单 + 就地核验同步 + 版本标记」+ CI 守卫 ([#200](https://github.com/MYTech-Co-LTD/platform-core/pull/200), [0b8fdf5](https://github.com/MYTech-Co-LTD/platform-core/commit/0b8fdf579ae1aafa97bf62835ce17b4b74347252))
 
