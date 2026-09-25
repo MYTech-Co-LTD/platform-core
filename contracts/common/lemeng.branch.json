@@ -4,7 +4,7 @@
   "domain": "lemeng",
   "table": "branch",
   "owner": "data-platform",
-  "description": "乐檬门店维（nhsoft.user.ai.branch.find 全量快照）。两账套各采各的；快照自愈（改名/停用无需增量游标）。",
+  "description": "乐檬门店维（nhsoft.user.ai.branch.find 全量快照）。两账套各采各的；快照自愈（改名/停用无需增量游标）。【行粒度】一行 = 一个账套在一个快照日的一个门店；自然键 `(system_book, snapshot, branch_num)`（全量快照日更 ⇒ 湖里的行粒度含 `snapshot` 分区键；`(system_book, branch_num)` 是实体粒度，不是行粒度）。【容量】管线总 5 页（4 个数据页 + 1 个哨兵页），page_size=200 ⇒ 真阈值 = 4×200 = 800 家/账套（哨兵页不计容量，口径同 spec §6）。页数硬编码、哨兵页是唯一防线；命中 = 当日该账套快照 fail-loud 中止（不静默丢数）。扩页数 = 加数据页节点 + 同步算式与哨兵页 page_number + 重生成 data-plane lock + 走 PR。【layout 说明】prefix 写 `lemeng/dim_branch`（本域维度表落湖一律带 `dim_` 段——spec §5 湖布局即如此），故它**不等于** `domain/table`（= `lemeng/branch`）—— 契约元 schema `$comment` 第 ② 条要求的正是那条等式，在本域按既有口径**不成立**；`table` 保持 `branch`（文件名 `lemeng.branch.json`、staging 名 `stg_lemeng_branch`、gate 规则④的合成名都由它钉死）。这不是笔误，登记在此避免被当成笔误改掉。",
   "layout": {
     "prefix": "lemeng/dim_branch",
     "partitionStyle": "hive",

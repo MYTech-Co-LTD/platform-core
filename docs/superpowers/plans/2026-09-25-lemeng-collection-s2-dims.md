@@ -55,7 +55,7 @@
 Run: duckle MCP `run_pipeline`，`target` = 那个 `src.rest` 节点（**只跑到 source，不落 sink**）
 Expected（判别式）：
 - **返回 `[69,888,9]`（= 第 2 页）⇒ 扇出成立** ⇒ Task 2/3 用 **2 节点**形状：`src.inline` 产出页码行 + 一个 `src.rest` 发 N 次请求。
-- **返回 400 `JSON parse error` ⇒ 扇出不成立** ⇒ Task 2/3 退回 **零售范式：N 个显式 `src.rest` 页节点 + `ctl.merge`**（门店维 **2 页 + 1 哨兵**；商品维 **86 / 124 个数据页 + 各 1 哨兵**——**这是实测值**，旧稿「商品维约 95 个」已作废，见 Task 3 Step 4 与「计划外事实」）。【**实际命中本分支**】
+- **返回 400 `JSON parse error` ⇒ 扇出不成立** ⇒ Task 2/3 退回 **零售范式：N 个显式 `src.rest` 页节点 + `ctl.merge`**（商品维 **86 / 124 个数据页 + 各 1 哨兵**——**这是实测值**；门店维**不足 3 页成案**、**定稿 5 页**（p1–p4 取数 + p5 哨兵，真阈值 800），页数以 Task 2 Step 3 为定稿口径。旧稿「商品维约 95 个」已作废，见 Task 3 Step 4 与「计划外事实」）。【**实际命中本分支**】
 
 把结论逐字记进本计划末尾「计划外事实」，再动 Task 2。
 
@@ -75,6 +75,7 @@ curl -sS -X POST "https://cloud.nhsoft.cn/agi/mcp" -H "Authorization: Bearer ${T
 Expected（2026-09-25 已探到的基线，用它们核对）：
 - `branch.find` **13 列**：`branch_num, code, name, pinyin, type, enable, region_id, province, city, district, contact, phone, address`
 - `item.find` **~97 列**，含嵌套：`item_department`(对象)、`scope_list`(数组)、`item_specs`、`item_tag_relations`、`extended_property_relation_list`、`pos_item_area_dto`、`sale_commission_dto`
+  > ⚠️ **本行的「~97 列 / 7 个嵌套」已作废**（原文保留以见演进）：实测是 **98 = 89 标量 + 9 个嵌套字段**，**不是 7** —— 逐项见「计划外事实」。
 - 行量：`branch` 3120=**270**、64188=**129**；`item` 两账套均 **>17000 且 <20000**（`page 17000` 存在、`20000` 不存在）
 
 - [x] **Step 3: 结论回写 spec 与计划**
@@ -157,7 +158,7 @@ Expected: exit 0
 
 > ⚠️ `responsePath` **不是** `/result`（照抄零售会错）。维度两端点的 `result` 是**分页信封对象** `{page_number,page_size,content:[…]}`，写 `/result` 只得到 **1 行信封**（列变成 `page_number,page_size,content`）。**别反向改回去**：零售 `posorder.find` 的 `result` 经实测**就是行数组**（`type(result)=='list'`）⇒ 零售那份 `/result` 是对的，两者**故意不同源**。依据见「计划外事实」。
 
-- 取数节点：**2 页足够**（270 行 = 200+70），但仍按 Task 1 的结论选形状；**末页挂 `ctl.die` 哨兵**（`condition: "has-rows"`）。写 **5 页**（第 5 页 = 哨兵）⇒ **真阈值 = 非哨兵页数 × 200 = 4×200 = 800 家**（不是 5×200=1000 —— 哨兵页那一页不算容量，口径同 spec §6 的 `200×12 页 ⇒ 阈值 11×200`）。64188(129)/3120(270) 都在 800 以内，余量 ≥530 家。
+- 取数节点（**门店维页数的定稿口径**；本计划其余处出现的页数一律以此为准）：实测 **2 页就够装**（270 行 = 200+70），**但「2 页 + 1 哨兵」不足 3 页成案** —— 总 3 页的真阈值只有 `非哨兵页数 2 × 200 = 400` 家，而 3120 已有 **270** 家 ⇒ 只剩 **130** 家余量（≈48%）就被哨兵页拦住；页数硬编码、哨兵页是唯一防线，**击穿 = 当天该账套快照 fail-loud 中止（不丢数，但采不下来）**。这与商品维的取舍同源（那里把「余量 0.26% 的硬下限 125 页」直接判为不可用、改取 150 页）：**余量本身要留够**，故本面定稿 **写 5 页**（p1–p4 取数 + p5 哨兵）⇒ **真阈值 = 非哨兵页数 × 200 = 4×200 = 800 家**（不是 5×200=1000 —— 哨兵页那一页不算容量，口径同 spec §6 的 `200×12 页 ⇒ 阈值 11×200`）。64188(129)/3120(270) 都在 800 以内，余量 ≥530 家。**末页挂 `ctl.die` 哨兵**（`condition: "has-rows"`）。
 - `data.schema` 只声明用到的标量列（`branch_num: int64, code: string, name: string, pinyin: string, type: string, enable: bool, region_id: int64, province: string, city: string, district: string, contact: string, phone: string, address: string`）。
 - sink：`key` = `lemeng/dim_branch/system_book=${ENV:SYSTEM_BOOK}/snapshot=${ENV:SNAPSHOT}/all.parquet`，`mode: overwrite`，其余照抄零售 sink。
 - `code.sql` 必须注入三列：`'${ENV:BATCH_ID}' as batch_id`、`'${ENV:SYSTEM_BOOK}' as system_book`、`CAST('${ENV:SNAPSHOT}' AS DATE) as snapshot`。
@@ -228,7 +229,7 @@ git commit -m "feat(lemeng): 门店维三件套——契约/管线/staging（双
   - `item_department` → `item_department_id`(int64) / `item_department_name`(varchar) / `item_department_code`(varchar)；
   - `item_category`（对象，**3120/64188 样本均非 null**，19 个一级键）——分类是分析维，spec §3 的「商品维（+分类/品牌/部门）」已把它算在范围内；
   - `item_brand`（对象，**但 3120 样本 199/200 行、64188 187/200 行为 null** ⇒ 摊平后大部分行是 NULL，属正常，不是 bug）；
-- **丢弃 6 个数组/深层对象**：`scope_list`、`item_specs`、`item_tag_relations`、`extended_property_relation_list`、`pos_item_area_dto`、`sale_commission_dto` —— 它们是**运营配置**（销售范围、提成、POS 区域），不是分析维；`data.schema` 只认标量，硬塞成 json 列会与 README §4 第 1 条坑相撞。**要时再加**（回填可重跑快照）。
+- **丢弃 6 个数组/深层对象**：`scope_list`、`item_specs`、`item_tag_relations`、`extended_property_relation_list`、`pos_item_area_dto`、`sale_commission_dto` —— 它们是**运营配置**（销售范围、规格、标签、扩展属性、POS 区域、提成），不是分析维。**丢弃理由分两桶**（别把两桶说成一桶）：① **4 个数组**（`scope_list`/`item_specs`/`item_tag_relations`/`extended_property_relation_list`）—— 除运营配置外，`data.schema` 只认标量，硬塞成 json 列还会与 README §4 第 1 条坑相撞；② **2 个对象**（`pos_item_area_dto`/`sale_commission_dto`）—— 它们是**对象不是数组**，那条「数组塞 json 相撞」的理由**对它们不成立**，不摊平的唯一理由是「属运营配置、不是分析维」。**要时再加**（回填可重跑快照）。
 - **计数对账（防再次漂移）**：嵌套字段 **9 = 摊平 3（`item_department`/`item_category`/`item_brand`）+ 丢弃 6**。改任一边都要让这条等式继续成立。
 
 - [ ] **Step 2: 写契约**（同 Task 2 形状；`partitionBy: ["system_book","snapshot"]`、`prefix: "lemeng/dim_item"`、列按 Step 1 规则，外部标识一律 `varchar`、`decimal` 必带 precision/scale）
@@ -341,7 +342,8 @@ sh /opt/lemeng-sync.sh <合并提交全SHA> --check    # 先只比不写
 sh /opt/lemeng-sync.sh <合并提交全SHA>            # 正式
 ```
 
-Expected: `SYNC_OK 25/25` 且末行 `# revision <全SHA>`。**全 SHA 逐字复制，绝不手工补。**
+Expected: `SYNC_OK 31/31` 且末行 `# revision <全SHA>`。**全 SHA 逐字复制，绝不手工补。**
+（**31** = 本分支 +6 后的 lock 条目数：`deploy/data-plane-manifest.txt` 的 6 条里 `duckle/`、`dbt/` 两个目录自展开 ⇒ 计数以 lock 的逐文件行为准；改 manifest/lock 后这个分母要同步改。）
 
 - [ ] **Step 2: 注册 4 条 job**（openship MCP `post_jobs`）
 
@@ -377,7 +379,7 @@ Expected: 与 sink 行数一致；分区键 `system_book`（varchar）/ `snapsho
 - **代理**：本机 git 走 7897 间歇挂——push 失败先重试 2~5 次，再走 `ssh://git@ssh.gitlab…`/`ssh.github.com:443` 兜底。**别断定「代理死了」去改配置**。
 - **duckle 引擎在本地桌面版**：`~/Library/Application Support/io.duckle.app/engines/`（MCP 已接）。`run_pipeline` 需要 `DUCKLE_DUCKDB_BIN`；`${ENV:...}` 取自 **MCP 进程的 env**，不在管线里写死。
 - **网关分页事实（2026-09-25 实测）**：`page_size` 上限 **200**（201 报 `每页条数不能超过200`）；响应**无 total** ⇒ 页空即止；**query 里的 `page_number` 被完全无视**（页码必须进 body）；`item.find` 不支持 `offset/limit`（返回 0 行）。
-- **⭐ `responsePath` 分域不同（2026-09-25 Task 1 实测，Task 2/3 照此写）**：维度两端点 `result` 是**分页信封对象** `{page_number,page_size,content:[…]}` ⇒ 指针必须写 **`/result/content`**（写 `/result` 只得 **1 行信封**，列变成 `page_number,page_size,content`）。**同族反例**：`posorder.find` 的 `result` **就是行数组**（实测 `type(result)=='list'`）⇒ 零售链路沿用 `/result` 是对的，**不要顺手去改 S1 的管线**。⚠️ 本计划 **Task 2 Step 3** 的节点形状写着 `responsePath: "/result"`（照抄 S1 而来）——**照抄即错**，维度面要写 `/result/content`。
+- **⭐ `responsePath` 分域不同（2026-09-25 Task 1 实测，Task 2/3 照此写）**：维度两端点 `result` 是**分页信封对象** `{page_number,page_size,content:[…]}` ⇒ 指针必须写 **`/result/content`**（写 `/result` 只得 **1 行信封**，列变成 `page_number,page_size,content`）。**同族反例**：`posorder.find` 的 `result` **就是行数组**（实测 `type(result)=='list'`）⇒ 零售链路沿用 `/result` 是对的，**不要顺手去改 S1 的管线**。⚠️ 本计划 **Task 2 Step 3** 的节点形状**曾写** `responsePath: "/result"`（照抄 S1 而来）——**已就地订正为 `/result/content`**（见 `4c4791a`）；**S1 零售那份 `/result` 是对的，别反向改**。
 - **⭐ 扇出进 body：不成立（2026-09-25 Task 1 判别式实测）**：`urlTemplate` + `parentKeyColumn` 扇出**能**发 N 次请求（实测 2 个上游行 ⇒ 2 页 / 6 行；URL 里 `?pg={pg}` 确认已替换），但**逐行值送不进 body**——body 里**任何** `{…}`（含 `{pg}`、`{{pg}}`、乃至不存在的 `{zzz}`）都被引擎替换成一个**对象**，网关据此回 400 `Cannot deserialize value of type java.lang.Integer from Object value (token JsonToken.START_OBJECT)`；`${pg}` / `${ENV:…}` 在 body 里**一概不替换**（原样发出）。⇒ **Task 2/3 一律走「N 个显式 `src.rest` 页节点 + `ctl.merge`」**（门店维 2 页；商品维 **86 / 124 页**）。
 - **⭐ `src.inline` 不可用（2026-09-25 Task 1 实测）**：其 manifest **只建模了 `notes`**（无列/值字段），穷举 **14** 种属性形状（`columns:[{name,value}]`、`rows`、`values`、`rowCount`、`count`、`path`、放 `data` 层…）**全部 0 行 + 单列 NULL**。⇒ **别计划用 `src.inline`**；要造控制行就用 `src.csv`（本任务探针即用它）。
 - **⭐ 商品维量级按实测（2026-09-25 Task 1）**：行数 **3120=17,132 / 64188=24,736**（**不是**「两账套均 ≈1.9 万」，
@@ -416,6 +418,12 @@ Expected: 与 sink 行数一致；分区键 `system_book`（varchar）/ `snapsho
 - **64188 令牌**：本地 `~/.zshrc` 有 `LEMON_TOKEN_64188`（已验可用：`company_id=64188`、门店 129 家）。**生产侧的 64188 令牌需另行落进 openship job secrets**（按公司规矩，密钥值不经 agent 转手）。
 - **门店清单口径（2026-09-25 拍板）**：3120 = `1..270 \ {99} ∪ {888}`（**269 家**，99=熊喵中央店故意排除）；**64188 = 全要 129 家**（`{1..128} ∪ {999}`，**含 99**）——**两账套口径不同，别互相照抄**。
 - **Task 5 拆成 5a/5b（2026-09-25 拍板）**：仓内代码（wrapper 的 `dim` 模式 + lock）走 PR；**投递 / 注册 job / 真机验留到合并之后**——投递按全 SHA 取件，分支 SHA 投上去等于生产跑未合并代码。
+- **⭐ `dim` 面没有 drift 通道（登记为后续项，本轮不泛化）**：本计划 Architecture 首句把机器面列成
+  `node.data.schema` + `qa.contract` + **`drift`** 三件，但**两张维度管线只落了前两件**——
+  wrapper 的 `drift` 模式与**零售**管线硬耦合（S1 形状），本分支没有为维度面接线。
+  ⇒ **泛化 drift = 行为改动**，不属 S2-a 的收尾面（本轮只做文档/注释修复）⇒ **显式登记为后续项**：
+  归 **S2-b** 或单独一单（建议同时在 issue **#214** 留一条评论挂住它）。在那之前，别把
+  「`qa.contract` 绿」读成「维度面的列漂移也被守住了」。
 - **承载 issue：#214**。`dim_customer` / `dim_date` / 四事实 / 口径五条 / 对账 `diff=0` 属 **S2-b**，另开 issue 与计划。
 
 ## Self-Review（写完自查）

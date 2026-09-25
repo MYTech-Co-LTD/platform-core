@@ -2,7 +2,7 @@
     config(materialized='table')
 }}
 -- stg_lemeng_branch.sql — 乐檬门店维 staging（新湖；一对一、只规范化不改义）
--- 分区键推断类型不合约 ⇒ 三列显式 cast；取列必须 `from read_parquet(...) r` 函数别名形态
+-- 分区键推断类型不合约 ⇒ 两列显式 cast（system_book::varchar / snapshot::date）；取列必须 `from read_parquet(...) r` 函数别名形态
 -- （CTE 形态在 pg_duckdb 上取列即报错，见 stg_lemeng_retail_order_line.sql 头注【二】）。
 --
 -- 【前缀单点】`lemeng/dim_branch` 段不写死字面量 —— 用 `dbt_project.yml` 的同源 var

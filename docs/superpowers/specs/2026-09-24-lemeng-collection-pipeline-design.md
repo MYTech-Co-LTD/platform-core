@@ -65,8 +65,13 @@
 | 3 | 批发销售单 | `nhsoft.whs.ai.wholesaleorder.find` | 3120 | 同上 | `(wholesale_order_fid, order_detail_num)`（2026-09-24 实测：行自带 int 序号 `order_detail_num`，100 单 352 行全部 1..N 稠密 0 重复；item_num 单据内有重复（3/100 单）⇒ 序号列必需且充分） | 本任务未测 |
 | 4 | 批发退货单 | `nhsoft.whs.ai.wholesalereturn.find` | 3120 | 同上 | `(wholesale_return_fid, return_detail_num)`（文档钉死：3120 近 126 天 0 退货单无法实测；OpenAPI 明细 DTO `AiWholesaleReturnDetailDTO` 自带 int 序号 `return_detail_num`，文档形状经 #3 实测交叉验证；首个真实样本落地时以唯一性断言复核） | 本任务未测（3120 近 126 天 0 单） |
 | 5 | 要货单 | `nhsoft.ama.ai.request.order.find` | **双** | 同上 | `(order_no, item_num)`（补货管线已实证 0 重复） | 本任务未测（§3 注：补货管线实测 3120≈3,002 / 64188≈1,117 单每月） |
-| 6 | 门店维 | `nhsoft.user.ai.branch.find` | **双** | 全量快照日更 | `(system_book, branch_num)` | **3120=270、64188=129 家**（全量枚举核对） |
-| 7 | 商品维 | `nhsoft.base.ai.item.find`（+分类/品牌/部门） | **双** | 全量快照日更 | `(system_book, item_num)` | **3120=17,132、64188=24,736 条**（分页边界二分 + 边界页 page_size=200 两法交叉，结果一致） |
+| 6 | 门店维 | `nhsoft.user.ai.branch.find` | **双** | 全量快照日更 | `(system_book, snapshot, branch_num)` | **3120=270、64188=129 家**（全量枚举核对） |
+| 7 | 商品维 | `nhsoft.base.ai.item.find`（+分类/品牌/部门） | **双** | 全量快照日更 | `(system_book, snapshot, item_num)` | **3120=17,132、64188=24,736 条**（分页边界二分 + 边界页 page_size=200 两法交叉，结果一致） |
+
+> **第 6/7 行自然键的粒度（2026-09-26 订正；原写 `(system_book, branch_num)` / `(system_book, item_num)`）**：
+> 这两域是**全量快照日更** ⇒ **湖里一行 = 一个实体 × 一个快照日**，行粒度键必须含 `snapshot`
+> （契约的 `layout.partitionBy`、`dbt` 的两条唯一性断言与两份 staging 都用三段键）。
+> 不带 `snapshot` 的那两段是**实体粒度**（一个门店 / 一个商品），**不是湖行粒度** —— 两者别混用。
 
 批发客户维**不采集**：`whs.ai.client.find` 实测 HTTP 500（在架不可用）→ `dim_customer` 从批发明细派生（§7.2）。
 

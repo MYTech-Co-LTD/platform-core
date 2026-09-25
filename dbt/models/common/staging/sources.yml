@@ -19,7 +19,7 @@ version: 2
 sources:
   - name: lemeng
     description: >-
-      乐檬零售域（对象存储 parquet 湖）。账套 = 主体维度（3120 熊喵 / 64188 品品甜）。
+      乐檬域（零售 + 维度；对象存储 parquet 湖）。账套 = 主体维度（3120 熊喵 / 64188 品品甜）。
       出处：docs/data-platform-handbook.md §2。
       ⚠️ 本 source 下**两张表两套路径约定**（双轨期）：下面的 source 级 `path_convention` /
       `partitioning` 描述的是**旧湖** `retail_detail`；每张表自己的 `meta` 才是它那套约定的
@@ -87,7 +87,7 @@ sources:
           pagination: '新湖由 duckle 管线写入（duckle/common/lemeng.branch.json）：N 个显式页节点 + ctl.merge，末页挂 ctl.die 哨兵（无 total 字段 ⇒ 只能页空即止）'
 
       - name: item
-        description: '乐檬商品维（新湖，2026-09-25 契约）：**全量快照**（不是增量），hive 两级分区 system_book/snapshot，落盘即定型（varchar/boolean/integer/bigint/decimal(18,8)/date）。两账套档案各自完整保留；列集 = 89 标量 + 摊平 3 个嵌套对象（item_department/item_category/item_brand）= 108 列，6 个数组/深层对象按投影规则丢弃（见契约 description）。'
+        description: '乐檬商品维（新湖，2026-09-25 契约）：**全量快照**（不是增量），hive 两级分区 system_book/snapshot，落盘即定型（varchar/boolean/integer/bigint/decimal(18,8)/date）。两账套档案各自完整保留；列集 = **3 注入列 + 89 标量列 + 16 摊平列 = 108 列**（摊平的是 3 个嵌套对象：item_department 3 / item_category 9 / item_brand 4），6 个数组/深层对象按投影规则丢弃（见契约 description）。'
         meta:
           path_convention: 'lemeng/dim_item/system_book=<账套>/snapshot=<YYYY-MM-DD>/all.parquet'
           # 读路径不是 source()（见文件头 1）。形态与上面 branch 同源：函数别名 r + 位置参数

@@ -105,7 +105,7 @@ models:
         description: '门店号（账套内编号）。**自然键之一**（自然键 = system_book × snapshot × branch_num：全量快照下一行一店）。'
         tests:
           - not_null
-      # ── 其余 11 源列（一对一透传，类型/语义见契约；这里只登记名字，不做口径）──
+      # ── 其余 12 源列（一对一透传，类型/语义见契约；这里只登记名字，不做口径）──
       - name: code
       - name: name
       - name: pinyin

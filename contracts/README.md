@@ -85,6 +85,12 @@ JSON Schema 没有跨字段引用能力。以下六条**过了 schema 也可能�
 
 1. partitionBy 里的每个键必须是 columns 里出现过的列名
 2. layout.prefix 必须等于 domain + '/' + table
+   ⚠️ **本仓「维度面」是这条的已知例外**（只登记口径，不改校验逻辑）：按
+   `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` §5 的湖布局，
+   维度表落湖一律带 **`dim_` 段**（`lemeng/dim_branch`、`lemeng/dim_item`）⇒ 规则 ② 在该面
+   **不适用**（`layout.prefix ≠ domain/table`）。两份维度契约（`common/lemeng.branch.json`、
+   `common/lemeng.item.json`）的 description 里都写了「layout 说明」段声明这一点——
+   **别把它们的前缀当笔误改掉**。其余面（零售/批发等）仍照规则 ② 走。
 3. columns 的 name 不得重复
 4. batch.markerColumn 必须是 columns 里出现过的列名
 5. decimal 的 scale 必须 ≤ precision
