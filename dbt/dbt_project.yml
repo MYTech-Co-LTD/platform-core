@@ -48,6 +48,14 @@ vars:
   # 出处：docs/data-platform-handbook.md §2 的源清单（`lemeng/retail_detail/<主体>/<日期>/all.parquet`）
   # 非 hive 命名（目录名不带键名）⇒ 账套只能由 var 供值（见 sources.yml 的 source 级 meta）。
   lemeng_retail_prefix: 'lemeng/retail_detail'
+  #
+  # ── S2-a **维度面**前缀（新湖；与上面零售那两个是**另一组**，别混）────────────────────
+  # 乐檬**门店维**前缀（全量快照；不含 bucket / 协议）：
+  # s3://<bucket>/lemeng/dim_branch/system_book=<账套>/snapshot=<YYYY-MM-DD>/all.parquet
+  # 出处：contracts/common/lemeng.branch.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
+  # 消费者 = `stg_lemeng_branch`（唯一）；分域单点：每个域一个 var，谁读哪个见对应 staging 的头注。
+  lemeng_branch_prefix: 'lemeng/dim_branch'
+  #
   # 账套 = 主体维度（3120 熊喵 / 64188 品品甜；handbook §2）。
   # ⚠️ 值来自**路径**、不在数据里（handbook §4 欠账「账套只在路径、数据里没有」/ 标准 C3 身份跟着数据走）
   # ⇒ 存量阶段由本 var 供值、每个账套跑一份；路径解析进列（`filename` + 正则）**待 T6 按实测形态钉死**。

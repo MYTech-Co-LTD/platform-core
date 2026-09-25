@@ -72,3 +72,16 @@ sources:
           partition_keys: ['system_book', 'bizday', 'hour']
           partition_key_typing: '由路径字符串重推断；三列在 staging 显式 cast（system_book::varchar / bizday::date / hour::int）'
           pagination: '新湖由 duckle 管线写入（duckle/common/lemeng.retail_order_line.json）'
+
+      - name: branch
+        description: '乐檬门店维（新湖，2026-09-25 契约）：**全量快照**（不是增量），hive 两级分区 system_book/snapshot，落盘即定型（integer/varchar/boolean/date）。两账套各采各的；改名/停用靠快照自愈，没有游标。'
+        meta:
+          path_convention: 'lemeng/dim_branch/system_book=<账套>/snapshot=<YYYY-MM-DD>/all.parquet'
+          # 读路径不是 source()（见文件头 1）。形态与上面 retail_order_line 同源：函数别名 r +
+          # 位置参数（命名形参在 pg_duckdb 上递不进去，原文见上一张表的注释）。
+          # 与零售的**唯一差异**：路径段写 `*/snapshot=**/` 而不是钉单账套 —— 门店维在 dbt 侧
+          # 一个模型读两个账套分区（`system_book` 是**列**，所以这里不用 `account_book` var）。
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_branch_prefix\") }}/*/snapshot=**/all.parquet') r"
+          partition_keys: ['system_book', 'snapshot']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / snapshot::date）'
+          pagination: '新湖由 duckle 管线写入（duckle/common/lemeng.branch.json）：N 个显式页节点 + ctl.merge，末页挂 ctl.die 哨兵（无 total 字段 ⇒ 只能页空即止）'
