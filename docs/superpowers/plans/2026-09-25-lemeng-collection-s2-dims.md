@@ -266,13 +266,23 @@ git commit -m "feat(lemeng): 商品维三件套——契约/管线/staging（双
 
 ### Task 4: dbt 接线（sources / vars / 断言）
 
-**Files:** Modify `dbt/dbt_project.yml`（+2 vars）、`dbt/models/common/staging/sources.yml`（+2 sources）、`dbt/models/common/staging/schema.yml`（+2 模型列契约）、Create `dbt/tests/assert_stg_lemeng_branch_key_unique.sql`、`dbt/tests/assert_stg_lemeng_item_key_unique.sql`
+**Files:** Modify `dbt/models/common/staging/schema.yml`（+2 模型列契约）、Create `dbt/tests/assert_stg_lemeng_branch_key_unique.sql`、`dbt/tests/assert_stg_lemeng_item_key_unique.sql`
 
 **Interfaces:** Consumes Task 2/3 的 staging 模型名与列名；Produces 下游 marts（S2-b）可挂载的两张维度
 
-- [ ] **Step 1: 加 prefix var**（路径单点，与 `lemeng_retail_order_line_prefix` 同处）
+> **订正（2026-09-25，由 Task 3 评审提出；本 Task 的范围据此收窄）**
+>
+> 本 Task 原有的 **Step 1/2**（`dbt_project.yml` 的 2 个 prefix var、`sources.yml` 的 2 个 source 条目）**已由 Task 2/3 提前落地** —— 它们的 staging SQL 直接 `var(...)`、且门禁规则④是**双向机检**（staging 模型在 `sources.yml` 里找不到对应源即报违规，见 `scripts/check-data-models.mjs`），不先把那两处接上，Task 2/3 自己就过不了 Step 5/6 的门禁。
+>
+> ⇒ **不要再加一遍**：在同一 `tables:` 列表里重复一条同 source 的条目，门禁会报「合成同一个 staging 模型名」。开工前先核这两处**已在**，再往下走。
+>
+> 原 Step 1/2 的正文如下（保留为史实，防照抄退回）：
+> - ~~Step 1: 加 prefix var（路径单点，与 `lemeng_retail_order_line_prefix` 同处）~~
+> - ~~Step 2: 加 source 条目（照现有 `sources.yml` 形状：`access_path` 用 `read_parquet('s3://{{ var("zos_bucket") }}/…/**/*.parquet') r`）~~
 
-- [ ] **Step 2: 加 source 条目**（照现有 `sources.yml` 形状：`access_path` 用 `read_parquet('s3://{{ var("zos_bucket") }}/…/**/*.parquet') r`）
+- [x] **Step 1: 加 prefix var** —— **已由 Task 2/3 落地**（`dbt/dbt_project.yml` 的 `lemeng_branch_prefix` / `lemeng_item_prefix`）
+
+- [x] **Step 2: 加 source 条目** —— **已由 Task 2/3 落地**（`sources.yml` 的 `branch` / `item`）
 
 - [ ] **Step 3: 写两条自然键唯一性断言**
 
