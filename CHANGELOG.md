@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.31.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.30.0...v0.31.0) - 2026-09-26
+- 【新增】lemeng: console 的声明式定义——薄管线 + 两账套调度（并纳入投递清单） ([#227](https://github.com/MYTech-Co-LTD/platform-core/pull/227), [b02ce60](https://github.com/MYTech-Co-LTD/platform-core/commit/b02ce600bdf1123ed146e061d3d4999629107bb1))
+
+
 ## [0.30.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.29.0...v0.30.0) - 2026-09-26
 - 【新增】lemeng: wrapper 加「容器内调用模式」——调度下沉到 duckle 自带调度器的前置件 ([#224](https://github.com/MYTech-Co-LTD/platform-core/pull/224), [ae8a0dd](https://github.com/MYTech-Co-LTD/platform-core/commit/ae8a0dd95b27e556e8152e6ab48a298a396848ea))
 
