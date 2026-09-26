@@ -758,7 +758,8 @@ git commit -m "docs(collection): 正典 §1.6 案例库（17 条实测）+ §1.7
 cd /Users/duo/orca/workspaces/platform-core/采集板块
 echo "待补残留（应为 0）:"; grep -c "<待补>" docs/data-platform-handbook.md
 echo "§4/§5 里每一处「标准」都必须在括号里标明「尚未合入」（人工逐条看）:"
-sed -n '/^## 4 /,/^## 6 /p' docs/data-platform-handbook.md | grep -n "标准"
+sed -n '/^## 4 /,/^## 6 /p' docs/data-platform-handbook.md | grep -v '^## 6' | grep -n "标准"
+# 上面 grep -v 掉的是 sed 区间的**终止行**（§6 标题本身会被 sed 打印出来），它不属于 §4/§5
 echo "§2 仍在:"; grep -n "^## 2 本项目的数据源清单" docs/data-platform-handbook.md
 echo "§3 仍在:"; grep -n "^## 3 落地位置" docs/data-platform-handbook.md
 echo "§4 仍在:"; grep -n "^## 4 已知欠账" docs/data-platform-handbook.md
