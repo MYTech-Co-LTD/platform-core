@@ -335,6 +335,14 @@ git commit -m "feat(lemeng): wrapper 加 dim 模式——维度快照（双账�
 
 > **前置**：本 Task **不在功能分支内执行**。先把 Task 1–5a 的 PR 合并进 main，**再从 main 的合并提交**做投递与注册。
 
+> **⚠️ 2026-09-26 实测：Step 1 投递被代理链路卡住**（本 Task 于合并提交 `325c3ad` 上执行时遇到）
+> —— `lemeng.branch.json`（13.6KB）落地 ✓，**`lemeng.item.json`（1.44MB）取不下来**（`MAX_TRIES=10 ×
+> CURL_TIMEOUT=30` 十次全败，0 字节），版本标记未推进 ⇒ **半应用状态**（按设计可检测、无功能影响：
+> 尚无 job 消费它）。根因**尚未定案**，已排除「代理本身 / 境外那一跳 / 缓存中毒 / 路由判错」四条，
+> 跟踪 **`MYTech-Co-LTD/openship-platform#15`**（需在控制面读代理日志定位哪一跳）；口径已写进
+> `deploy/data-plane-deploy-sop.md` §E.4。
+> ⇒ **重新执行本 Task 前先确认 #15 已定案/已修**；**不要**为了过这一步去换投递通道（换 CDN 之类）。
+
 - [ ] **Step 1: 投递**（openship MCP `post_system_servers_by_id_exec`）
 
 ```bash
