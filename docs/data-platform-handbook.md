@@ -284,10 +284,12 @@
 
 | 域 | 表 / 前缀 | 主体维度 | 状态 | 备注 |
 |---|---|---|---|---|
-| 乐檬 | `lemeng/retail_detail/<主体>/<日期>/all.parquet` | 账套（3120 熊喵 / 64188 品品甜） | ⚠️ **已落盘但未达标** | 见下「已知欠账」 |
-| 乐檬 | `dims/*.parquet` | — | ⚠️ 同上 | 维度表 |
-| duckle | `duckle/<域>/_ops/…` | — | 待评估 | duckle 自己的产出 |
-| 抖音 | `douyin/sku_daily/<月>/all.parquet` | — | 待接入 | |
+| 乐檬 | `lemeng/retail_order_line/<主体>/<日>/<时>/all.parquet` | 账套（3120 熊喵 / 64188 品品甜） | **已落盘**（3120；64188 未落） | 新湖口径见 §1.7；旧前缀 `lemeng/retail_detail/…` 待退役（§1.3 阶段 I） |
+| 乐檬 | `lemeng/dim_branch`、`lemeng/dim_item`（`system_book=` + `snapshot=`） | 同上 | **已落盘**（双账套） | 全量快照日更；行粒度键含 `snapshot`（§1.1.2） |
+| 乐檬 | 调拨 / 批发 / 退货 / 要货（`transfer_out` / `wholesale_order` / `wholesale_return` / `request_order`） | 3120（要货双账套） | **摸清源**（设计定稿，未落） | 见 `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` |
+| 抖音 | `douyin/sku_daily/<月>/all.parquet` | — | **摸清源**（待接入） | 分区键名未定；见 `contracts/README.md` §7 |
+
+> 「`_ops`」不是本仓目录约定（实测订正见 duckle/README.md §5）——桶内路径猜想，别再照抄。
 
 ---
 
@@ -295,17 +297,19 @@
 
 | 东西 | 在哪 |
 |---|---|
-| duckle 管线 | `<待补>` |
-| dbt 项目 | `<待补>`（建议 `data/dbt/`，按域分目录） |
-| 语义声明 | `<待补>` |
-| 采集契约（落盘 schema 声明） | `<待补>`（**按标准 §4.1 的形态，进仓库走 PR**） |
-| 物化调度 | openship jobs |
+| duckle 管线 | `duckle/common/<源>.<表>.json`（客户级覆盖 `duckle/customers/`）；约定见 `duckle/README.md` §2 |
+| duckle console 定义 | `deploy/duckle/console/{pipelines,schedules}/`（seed 进各账套 workspace 卷） |
+| dbt 项目 | `dbt/`（按域分目录；staging / marts / semantics / tests） |
+| 语义声明 | `dbt/semantics/l1_metrics.yml`（L1 唯一事实源）+ `dbt/models/common/marts/schema.yml` |
+| 采集契约（落盘 schema 声明的**意图源**） | `contracts/<域>/<源>.<表>.json`（机器面在管线：`node.data.schema` + `qa.contract` + `drift`） |
+| 数据面编排 | `deploy/data-compose.yml`（部署单元 B；全仓只两份 compose，B7 守） |
+| **物化调度** | **openship job**（归口）——⚠️ **现状：没有任何 job 在跑 dbt**，PG 物化停在 09-23（§0 / §1.5） |
 
 ---
 
 ## 4 已知欠账（对照标准的差距）
 
-> 按标准 §2 硬约束逐条对账；**这些是「已落盘但不符合标准」的存量**，重构时一并改。
+> 按 §1.2 硬约束清单逐条对账；**这些是「已落盘但不符合标准」的存量**，重构时一并改。
 
 | 欠账 | 违反标准哪条 | 表现 |
 |---|---|---|
@@ -315,13 +319,13 @@
 | 字段集漂移（同域不同日 46 vs 43 列） | **C2 字段集稳定** | 跨日 union 直接读不出 |
 | 同一表两种日期格式（`2026-07-01 10:02:34` vs `20260707`） | **C1** | 需要逐列 `strptime` |
 
-**⇒ 重构时按标准 §3 的 SOP 重走一遍，这些一并消掉。**
+**⇒ 重构时按 §1.3 的生命周期 SOP 重走一遍，这些一并消掉。**
 
 ---
 
 ## 5 验收记录
 
-> 每接完一个源，记一行：跑过哪些验收、结论、卡点（卡点进标准 §6 案例库）。
+> 每接完一个源，记一行：跑过哪些验收、结论、卡点（卡点进 §1.6 案例库，并登记进 §1.7）。
 
 | 日期 | 数据源 | 验收范围 | 结论 | 卡点 → 案例号 |
 |---|---|---|---|---|
