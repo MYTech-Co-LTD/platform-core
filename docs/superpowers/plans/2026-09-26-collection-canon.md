@@ -830,12 +830,12 @@ cd /Users/duo/orca/workspaces/platform-core/采集板块
 grep -q "采集正典" AGENTS.md && echo "AGENTS.md 路由 ✓"
 grep -q "不常驻.*已被 ADR-0014 取代" docs/architecture.md && echo "architecture 订正 ✓"
 grep -q "data-platform-handbook.md.*必读" docs/architecture.md && echo "architecture 文档地图 ✓"
-grep -q "1.1.4" deploy/data-plane-deploy-sop.md && echo "SOP §F 指针 ✓"
+grep -qF '§1.1.4' deploy/data-plane-deploy-sop.md && echo "SOP §F 指针 ✓"   # 必须 -F 且带 §：pattern `1.1.4` 的裸点会匹配 SOP:96 的 `127.0.0.1:15432`，**改前即为真**（无鉴别力）
 # 顺带确认没把「不常驻」那句删掉（订正是追加指针，不是改写历史结论的措辞）
 grep -c "不常驻" docs/architecture.md
 ```
 
-**Expected:** 四行 `✓`；最后一条输出 ≥ 2（原文那句还在 + 订正里引了它）。
+**Expected:** 四行 `✓`；最后一条输出 **`4`**——逐处是：`:142` 原文那句（**必须还在**，订正是追加不是改写）、`:143`/`:145` 订正块里引它两次、`:157` 是**无关的 dbt 条目**自己也有「不常驻」（dbt 确非常驻，未漂）。⇒ 判据是「≥ 2 且 `:142` 那句逐字还在」，不是盯总数。
 
 - [ ] **Step 6: Commit**
 
