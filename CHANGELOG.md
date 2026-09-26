@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.33.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.33.1...v0.33.2) - 2026-09-26
+- 【修复】duckle: 镜像里装 curl——wrapper 全程用它，容器内实测 curl: not found ([#235](https://github.com/MYTech-Co-LTD/platform-core/pull/235), [fc20664](https://github.com/MYTech-Co-LTD/platform-core/commit/fc20664d3f5ff07be672f769abbe52758d173396))
+
+
 ## [0.33.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.33.0...v0.33.1) - 2026-09-26
 - 【修复】lemeng: 告警客户端 curl→python3（演练实测：镜像里没有 curl，告警永远发不出去） ([#233](https://github.com/MYTech-Co-LTD/platform-core/pull/233), [ab39e4e](https://github.com/MYTech-Co-LTD/platform-core/commit/ab39e4e6188c4f054e7c9e2370aa253fcf3868fb))
 
