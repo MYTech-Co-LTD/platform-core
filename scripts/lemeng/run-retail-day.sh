@@ -67,6 +67,18 @@
 set -u
 REPO=${REPO:-/opt/platform-core-data/platform-core}
 COMPOSE="docker compose -f $REPO/deploy/data-compose.yml"
+# ── 容器内调用模式（2026-09-26；见 openship-platform ADR-0014 与
+#    docs/superpowers/plans/2026-09-26-lemeng-scheduling-via-duckle.md）
+#
+# 背景：调度改由 duckle 自带调度器承担后，它只能触发「管线」，而本脚本是**宿主级编排器**
+# （一律用 compose 起一个**新容器**跑引擎，宿主上并没有 duckle 可执行文件）⇒ 两者接不上。
+# 解法：在 console 容器内，**引擎就在同一镜像里**，于是「起引擎」退化成**直接调用**。
+# 用一个同名 shim 顶掉 `$COMPOSE`，**11 处调用点一行不改**。
+#
+# 宿主（默认）与容器内走**同一份守卫逻辑**（自证/判红/观测行都在本文件）——不复制第二份。
+if [ "${LEMENG_IN_CONTAINER:-0}" = "1" ]; then
+  COMPOSE=lemeng_compose_shim
+fi
 PIPELINE=${PIPELINE:-/pipelines/common/lemeng.retail_order_line.json}
 LOG_ROOT=/workspace/logs
 # 营业日 = Asia/Shanghai 日历日的昨天。**显式钉 TZ，不继承系统 TZ**——继承等于让偶然决定正确性。
@@ -109,6 +121,34 @@ LIST_MAX_KEYS=${LEMENG_LIST_MAX_KEYS:-1000}
 # 逐窗尽力采（#209）：连续失败多少窗即判定网关不可用并停止续跑（避免空转 24 窗撞 job 超时 1h）。
 WINDOWS_MAX_CONSEC=${WINDOWS_MAX_CONSEC:-3}
 RB_HELPER=$REPO/lemeng-readback.sh
+
+# 只实现本脚本**实际用到的那一种形态**：`run --rm [-e K[=V]]… [--entrypoint X] duckle <args>`。
+# · `-e K=V` ⇒ 子进程环境变量（容器内直接用 env 注入）；`-e K`（透传）⇒ 容器内本就继承，无需动作。
+# · 遇到任何**别的**参数一律判红（exit 2），不猜、不静默——静默吞掉一个不认识的旗标，就是让某次
+#   运行悄悄少了一层参数（本仓反复吃过的"静默错数据"形态）。
+# ⚠️ 值含空白会被 `env $EA` 拆开：本脚本传的都是无空白的令牌/路径。将来要传含空白的值，改这里。
+lemeng_compose_shim() {
+  [ "${1:-}" = "run" ] || { echo "SHIM_UNSUPPORTED: 只支持 run（收到 '${1:-}'）" >&2; return 2; }
+  shift
+  _shim_env=''
+  _shim_entry=''
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --rm)         shift ;;
+      -e)           shift
+                    case "${1:-}" in *"="*) _shim_env="$_shim_env ${1}" ;; esac
+                    shift ;;
+      --entrypoint) shift; _shim_entry=${1:-}; shift ;;
+      duckle)       shift; break ;;
+      *)            echo "SHIM_UNSUPPORTED: 未预期参数 '${1:-}'" >&2; return 2 ;;
+    esac
+  done
+  if [ -n "$_shim_entry" ]; then
+    env $_shim_env "$_shim_entry" "$@"
+  else
+    env $_shim_env duckle "$@"
+  fi
+}
 
 duckdb_bin() { $COMPOSE run --rm --entrypoint sh duckle -c 'command -v duckdb' 2>/dev/null | tr -d '\r' | tail -1; }
 
