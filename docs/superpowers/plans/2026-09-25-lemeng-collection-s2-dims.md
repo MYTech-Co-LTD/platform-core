@@ -338,10 +338,20 @@ git commit -m "feat(lemeng): wrapper 加 dim 模式——维度快照（双账�
 > **⚠️ 2026-09-26 实测：Step 1 投递被代理链路卡住**（本 Task 于合并提交 `325c3ad` 上执行时遇到）
 > —— `lemeng.branch.json`（13.6KB）落地 ✓，**`lemeng.item.json`（1.44MB）取不下来**（`MAX_TRIES=10 ×
 > CURL_TIMEOUT=30` 十次全败，0 字节），版本标记未推进 ⇒ **半应用状态**（按设计可检测、无功能影响：
-> 尚无 job 消费它）。根因**尚未定案**，已排除「代理本身 / 境外那一跳 / 缓存中毒 / 路由判错」四条，
-> 跟踪 **`MYTech-Co-LTD/openship-platform#15`**（需在控制面读代理日志定位哪一跳）；口径已写进
-> `deploy/data-plane-deploy-sop.md` §E.4。
-> ⇒ **重新执行本 Task 前先确认 #15 已定案/已修**；**不要**为了过这一步去换投递通道（换 CDN 之类）。
+> 尚无 job 消费它）。
+>
+> **根因已定案（2026-09-26）**：上游对**可压缩内容**把 Range 作用在 **gzip 压缩表示**上 ——
+> `content-range` 的分母是压缩后长度（1.44MB 的 gzip 长度 = 22,733），返回体与声明不符；
+> **代理据这个错数声明 `content-length`** ⇒ 客户端拿到的字节数被截到该值。**确定性复现、不是间歇**。
+> 已排除「CF 边缘缓存（`cf-cache-status: DYNAMIC`）/ 代理 / Worker（回显证明是上游自己回的）/
+> 换上游请求头（四种全同）」；完整 GET 始终正确。详见 `deploy/data-plane-deploy-sop.md` §E.4。
+>
+> **修法**：改代理两行（`useChunks` 去掉 `|| mitm`、单请求路径的 `content-length` 只采信上游响应的值）。
+> 补丁 + 验证记录已交付 `openship-platform` 仓根（`smart-proxy-range-fix.patch` / `.README.md`），
+> **尚未落地**。跟踪 **`MYTech-Co-LTD/openship-platform#15`**。
+>
+> ⇒ **重新执行本 Task 前先确认该补丁已落地**；**不要**去 purge CF 缓存（没有可清的东西）、
+> **不要**为了过这一步去换投递通道（换 CDN —— 两个 CDN 是同一类问题）。
 
 - [ ] **Step 1: 投递**（openship MCP `post_system_servers_by_id_exec`）
 
