@@ -69,46 +69,55 @@ Expected: 五行全 `SAME`。**任一行 `DIFF` ⇒ 停在这里**，先修项�
 > 它**根本还没有 `ZOS_*` 这几个键**（表现为空串 ⇒ 同样 `DIFF`）。先确认该容器创建时间晚于 env 写入，
 > 否则本步的结论不成立。
 
-## Task 2: 先把 wrapper 的 dim 守卫**搬进管线**，再写调度定义
+## Task 2: 让调度触发「薄管线」——脚本加一个容器内调用模式，dim 管线一行不改
 
-> **为什么有这一步（2026-09-26 实测发现，用户裁决 A）**
-> wrapper `/opt/lemeng-run.sh` 是**宿主级编排器**（13 处 `$COMPOSE run --rm … duckle`；
-> 宿主上**没有** `duckle` 可执行文件，引擎只在镜像里；它还用 `docker exec` 回读）。
-> 而 **duckle 的调度器只能触发「管线」，触发不了宿主脚本** ⇒ 二者接不上。
-> 三个选项里选 **A：把那层守卫与记账搬进管线**（弃 B「容器内入口 + 壳管线」= 逻辑复制两份必然漂移；
-> 弃 D「容器挂 docker socket」= 把宿主 root 交给该容器，是不能顺手做的安全决策）。
-> **A 之所以可行**：wrapper 最重的那件事（起引擎 + 注入 env）在 console 世界里**已经不需要了**
-> —— 引擎就在同进程、env 就在 console 进程里；剩下的只是守卫与记账，而它们**都有原生对应物**。
+> **本节结论是三轮实测换来的（2026-09-26）。前两版方案都已作废，别再回到它们 —— 留档如下：**
+>
+> - **初版**（把 wrapper 的守卫搬进管线、用 `ctl.setvar` 算快照）→ **已证伪**：见 2.1 第 4 条 ——
+>   `setvar` 的值**不能用在 sink 路径中间**，而 dim 的 `…/snapshot=<日期>/all.parquet` 正是路径中间
+>   ⇒ 「每天变」的日期**无法由管线自算**，必须是**编译期**值（`ENV:` 那种）。而常驻 console 的 env
+>   在创建时就固定了 ⇒ 也提供不了每天变的值。**此路不通。**
+> - 备选 B（容器内另写一份入口）→ **逻辑复制两份 ⇒ 必然漂移**（今天吃的亏正是漂移）；
+> - 备选 D（容器挂 docker socket）→ **把宿主 root 交给该容器**，属安全决策，不顺手做。
 
-### 2.1 移植清单（逐条对应，**不许漏**）
+### 2.1 核对点结论（已做，2026-09-26；probe 脚本在 /tmp，可重跑）
 
-| wrapper 的职责 | 管线里的形态 | 依据 |
+| # | 结论 | 证据 |
 |---|---|---|
-| 7 个凭据 + `SYSTEM_BOOK` 注入 | **console 进程 env**（逐账套，见 Task 3） | ADR-0014 决策 |
-| `SNAPSHOT` 推导（`TZ=Asia/Shanghai date +%F`） | **`ctl.setvar`**：`value` 是 **SQL 表达式**（实测其 schema 原文示例即 `current_date`）⇒ 用 `AT TIME ZONE 'Asia/Shanghai'` 保持同一语义 | 实测 `ctl.setvar` schema |
-| `identity_assert`（#205）：变量缺失即判红 / 传输失败重试 3 次 / verdict 比对 | `src.rest`（whoami）→ **节点自带 Retry**（与「传输失败重试 3 次」同义；`retry` 组件自陈「per-stage retry 已在 Advanced」）→ 比对 → **`ctl.die`** 判红 | 已读 `identity_assert()` |
-| 状态解析 + `_ops` 观测行 | console 的 **run 历史**（`last_run_status` 等）+ Task 5 的告警链路 | ADR-0014 / 本计划 Task 5 |
-| `--log-dir` | console 自管 | 实测 |
-| 失败判红（非零退出） | 管线 `ctl.die` + 引擎非零退出 | 引擎 EXIT CODES |
+| 1 | ✅ `AT TIME ZONE 'Asia/Shanghai'` 与 `timezone('Asia/Shanghai', now())` 在引擎里**都可用** | tz-probe |
+| 2 | ⚠️ **`current_date` 是「会话时区今天」，不是上海今天** —— 数据面容器 **TZ=UTC**（已实测）⇒ **夜间跑会写进前一天的 `snapshot=` 分区，且不报错** | tz-probe（本机 +08 恰好掩盖了它） |
+| 3 | ✅ `${SNAPSHOT}`（setvar）**能**替换进下游的 **SQL 文本** | setvar-probe：`CAST('${SNAPSHOT}' AS DATE)` → `2026-09-26` |
+| 4 | ❌ `${SNAPSHOT}` **不能**用于 **sink 路径中间**：引擎发出 `'…/snapshot=' \|\| (SELECT …) \|\| '/all.csv'`，`COPY … TO` 直接解析失败 | path-subst-probe 的真实报错 |
 
-**纪律：只加节点，不改现有取数/写湖节点**（dim 管线是 S3-a 刚交付验证过的；守卫挂在写湖之前）。
+> **由此立一条纪律**：管线里凡**按日期分区**的**路径**，日期必须来自 **`ENV:`（编译期）**，
+> **不能**用 setvar。setvar 只适合放进 SQL 文本。
 
-> ⚠️ **核对点（移植前必须做的实测）**：`AT TIME ZONE 'Asia/Shanghai'` 在**管线上下文里**真的可用
-> （`ctl.setvar` 的 SQL 由引擎求值 —— 与直接在 DuckDB 里跑是两件事，别按"显然可用"处理）。
+### 2.2 做法（三件，缺一不可）
 
-### 2.2 写定义文件（移植完成后再做）
+1. **给 `/opt/lemeng-run.sh` 加一个「容器内调用模式」**：把 `$COMPOSE run --rm … duckle …`
+   换成**直接调引擎**（引擎就在同一镜像里，`/pipelines` 只读挂载、`/workspace` 是卷 ⇒ 语义可 1:1 复现）。
+   **只加模式、不改现有宿主路径** —— 宿主那条今天在跑，一行都别动。
+2. **新增薄管线**（每条脸一条）：单个 `code.shell` 节点，命令形如 `sh /opt/lemeng-run.sh dim`；
+   脚本以**只读**方式挂进 console 容器。
+3. **dim 管线一行不改**（S3-a 刚交付验证过，保持原样）。
 
-- [ ] **Step 1: 写定义**（`deploy/duckle/schedules/<账套>.json`）：只写定义字段，不写运行状态。
+⇒ 这样**守卫逻辑仍只有一份**（脚本），宿主与 console 走同一份；**SNAPSHOT 仍由脚本按 `TZ=Asia/Shanghai` 算**
+（避开 2.1 第 2 条的陷阱）；调度只多了一条薄管线。
 
-| 账套 | 管线（`id`） | 形态 | 排班（**UTC**，已实测容器 TZ=UTC） |
+### 2.3 写定义文件（上面三件做完后再做）
+
+- [ ] **Step 1: 写定义**（`deploy/duckle/schedules/<账套>.json`）：只写定义字段，不写运行状态；
+  `pipeline_id` 指向**薄管线**。
+
+| 账套 | 薄管线 | 形态 | 排班（**UTC**） |
 |---|---|---|---|
-| 3120 | 门店维 / 商品维 | `cron` 或 `interval` | 照 S2-a 计划：北京 10:00 ⇒ `0 2 * * *`；19:00 ⇒ `0 11 * * *` |
+| 3120 | 门店维 / 商品维 各一条 | `cron` 或 `interval` | 北京 10:00 ⇒ `0 2 * * *`；19:00 ⇒ `0 11 * * *` |
 | 64188 | 同上 | 同上 | 同上 |
 
 **口径照抄（issue #17 已标注载荷作废、但口径仍有效）**：3120 的 `BRANCH_NUMS` = 269 家（照零售 job）；
-64188 = `{1..128} ∪ {999}`（129 家，**含 99**）；**`SNAPSHOT` 不要传**（现在改由管线自己算，见 2.1）。
+64188 = `{1..128} ∪ {999}`（129 家，**含 99**）。
 
-- [x] **Step 2: 排班时区核对** —— ✅ 已做（2026-09-26）：**容器 TZ = UTC**（`date`/`date -u` 一致、`TZ` 空、无 `/etc/timezone`）⇒ **排班一律按 UTC 写**。
+- [x] **Step 2: 排班时区核对** —— ✅ **容器 TZ = UTC**（`date`/`date -u` 一致、`TZ` 空、无 `/etc/timezone`）⇒ **排班一律按 UTC 写**。
 
 ## Task 3: compose 加两个常驻 console（**只绑回环、各自 env**）
 
