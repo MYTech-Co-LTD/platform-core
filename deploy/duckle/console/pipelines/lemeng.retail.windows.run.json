@@ -1,0 +1,78 @@
+{
+  "name": "lemeng.retail.windows.run",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "run",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "componentId": "code.shell",
+        "label": "run retail windows",
+        "properties": {
+          "code": "LEMENG_IN_CONTAINER=1 LEMENG_NOTIFY=1 sh /opt/lemeng-run.sh windows",
+          "language": "bash"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "quality",
+      "position": {
+        "x": 260,
+        "y": 0
+      },
+      "data": {
+        "componentId": "qa.contract",
+        "label": "wrapper 必须 exit 0",
+        "properties": {
+          "rules": {
+            "exit_code": "in_range:0,0"
+          }
+        }
+      }
+    },
+    {
+      "id": "record",
+      "type": "sink",
+      "position": {
+        "x": 520,
+        "y": 0
+      },
+      "data": {
+        "componentId": "snk.csv",
+        "label": "run record",
+        "properties": {
+          "mode": "overwrite",
+          "path": "/workspace/logs/retail-windows-run.csv"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "run",
+      "sourceHandle": "main",
+      "target": "gate",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e2",
+      "source": "gate",
+      "sourceHandle": "main",
+      "target": "record",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ],
+  "id": "p_55878_1"
+}
