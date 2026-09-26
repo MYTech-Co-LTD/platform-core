@@ -1,10 +1,10 @@
-sha256-of-rest 2d83b8e4cb4c088e1b85ffa1048466a3bb41be0090a07a2ab55aab922043b9eb
+sha256-of-rest edc1daae53c7e489880926f0653dbbfda099d0af729e9c87710a946093fe2e67
 aef4c9fed8fc63da20a01c5687c5a173ca15111cf0485d5208de54d1fc5c6c9b dbt/README.md ${REPO}/dbt/README.md 0644
 cc1d78b5c825d5902d22be9b17fbabdc0833afb3c25912e392f8765004a76776 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
 d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subject_org.sql ${REPO}/dbt/macros/subject_org.sql 0644
 e10d65bc0cb9c3471dfe2f6583c886835e7671a625d22d02a34567a1a6805954 dbt/models/common/marts/fct_retail_sale.sql ${REPO}/dbt/models/common/marts/fct_retail_sale.sql 0644
-765059ccfe159809c9282061f30b80b631f8428785a7b7eb06ab9a35b4405214 dbt/models/common/marts/schema.yml ${REPO}/dbt/models/common/marts/schema.yml 0644
+4aadf438c760d83ddec4a0a10eb77d116e8ca0190efb08722bc2c8bc8b297cc8 dbt/models/common/marts/schema.yml ${REPO}/dbt/models/common/marts/schema.yml 0644
 242e6368f07402484c8b1ce20437a4fc6f0118ba2d4afab057a2d8015f55cd07 dbt/models/common/staging/schema.yml ${REPO}/dbt/models/common/staging/schema.yml 0644
 3d1de1b8f2984ec3dfe2ad745497932acb9cc11be0ffecb03f3691300e13f926 dbt/models/common/staging/sources.yml ${REPO}/dbt/models/common/staging/sources.yml 0644
 0502560ba41634ae18340cfa2fbd47ab1aa549fd4379d4149f4825c9f07f1e26 dbt/models/common/staging/stg_lemeng_branch.sql ${REPO}/dbt/models/common/staging/stg_lemeng_branch.sql 0644
