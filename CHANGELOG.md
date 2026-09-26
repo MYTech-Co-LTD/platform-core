@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.34.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.34.1...v0.34.2) - 2026-09-26
+- 【修复】deploy: dbt 挂载去掉 :ro——否则 dbt build 写不了 target/logs ([#248](https://github.com/MYTech-Co-LTD/platform-core/pull/248), [ce35190](https://github.com/MYTech-Co-LTD/platform-core/commit/ce3519069db3e5f0b26cf62705fe9234bacace7e))
+
+
 ## [0.34.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.34.0...v0.34.1) - 2026-09-26
 - 【修复】lemeng: wrapper 自带失败窗重试——把 job 的 retry 语义收回，解「迁 console 即丢自愈」 ([#245](https://github.com/MYTech-Co-LTD/platform-core/pull/245), [5b7687f](https://github.com/MYTech-Co-LTD/platform-core/commit/5b7687fbad57b0f874c3d438bf95acf87a0fff9b))
 
