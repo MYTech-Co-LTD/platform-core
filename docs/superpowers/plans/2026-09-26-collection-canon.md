@@ -61,7 +61,7 @@
   1.7     逐源决策登记区
 §2        本项目的数据源清单      ← 保号
 §3        落地位置                ← 补齐 4 个 <待补>
-§4        已知欠账（对照标准的差距） ← 保号
+§4        已知欠账（对照硬约束的差距） ← 保号
 §5        验收记录
 §6        下钻清单 + 公司标准指针
 §7        待沉淀（无案例，先标明，不编）
@@ -988,5 +988,5 @@ gh pr checks --watch
 | 4 | 零售链路从 openship job 迁到 duckle console | 正在跑的生产链路，迁移需单独决定与观察（SOP §F.5） |
 | 5 | **修 `duckle/README.md` 的自相矛盾**：`§6`（该文件 137 行）写「未验**四项**」，而 `§7.4` 实际枚举**五项**（漏「非回环 `UNCLAIMED` 分支」） | 属那份下钻文档自身；spec 非目标明确「下钻文档正文不改」⇒ 本计划只**绕开**它（正典不枚举、只给指针），漂移本身另开一处修。<br>⚠️ **修它时必须同时重跑 `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`**——`duckle/` 是 `deploy/data-plane-manifest.txt` 的**递归条目**，`data-plane.lock` 钉着 `duckle/**` 每个文件的 sha256，`check-data-plane-lock` 在 `gates` 里跑 ⇒ 只改 README 不动 lock，**CI 直接红**。（这条是我在 Task 3 评审时才知道的，原先漏了。） |
 | 6 | **订正 `scripts/check-data-models.mjs:56` 与 `.github/workflows/ci.yml:92` 的同类过宽措辞**（都写「`duckle/` 与 `contracts/` 不在任何扫描面内」）。二者在各自上下文里（env 键覆盖 / 那一条守门的扫描根）仍准确，但按本正典 §1.2 已订正的口径（`duckle/**` **受投递完整性门禁**）读会偏宽 | Task 3 复评的 out-of-scope 观察；既存、非本计划引入。**注意 ci.yml 是 CI 定义本身，改它要另行评审** |
-| 8 | **三处「引 §2 的转述」在本轮后变陈旧**（**锚点没断，是引文漂了**）：① `contracts/README.md:157-160` 把抖音现状引作 `**待接入**`，§2 现为 `**摸清源**（待接入）`；② `duckle/README.md:121` 与 `.gitignore:26` 引 §2 的「duckle 自己的产出」——该措辞已被强的 `_ops` 订正句取代（`_ops` 仍在 §2）；③ `dbt/dbt_project.yml:48` 引的是旧乐檬全路径，§2 现缩写成 `lemeng/retail_detail/…` 并标「待退役」 | Task 7 实现者报的三条 cross-file concern。**四个文件都不在本计划改动面内**（spec §6 只列 handbook/AGENTS.md/architecture.md/SOP §F，且 contracts 与 duckle 的 README 属 spec 非目标「下钻文档正文不改」）⇒ 本计划**不扩面**，另开一处按需订正；**危害低**：都带「出处：」前缀，读者顺着指针读到的就是新内容 |
+| 8 | **五处「引 §2 的转述」在本轮后变陈旧**（实现者报 3 处，Task 7 复评普查又找出 2 处：`contracts/README.md:63`、`contracts/common/_schema.schema.json:73`）（**锚点没断，是引文漂了**）：① `contracts/README.md:157-160` 把抖音现状引作 `**待接入**`，§2 现为 `**摸清源**（待接入）`；② `duckle/README.md:121` 与 `.gitignore:26` 引 §2 的「duckle 自己的产出」——该措辞已被强的 `_ops` 订正句取代（`_ops` 仍在 §2）；③ `dbt/dbt_project.yml:48` 引的是旧乐檬全路径，§2 现缩写成 `lemeng/retail_detail/…` 并标「待退役」 | Task 7 实现者报的三条 cross-file concern。**四个文件都不在本计划改动面内**（spec §6 只列 handbook/AGENTS.md/architecture.md/SOP §F，且 contracts 与 duckle 的 README 属 spec 非目标「下钻文档正文不改」）⇒ 本计划**不扩面**，另开一处按需订正；**危害低**：都带「出处：」前缀，读者顺着指针读到的就是新内容 |
 | 7 | **`deploy/data-plane-deploy-sop.md` §F.4 有同一条越权指令**：它也让运维「`docker logs <console>`」，与**根本法则·唯一通道**（看日志也走 openship MCP）冲突。本计划 Task 5 已把**正典侧**改成走 MCP，**SOP 侧未动**（不在本计划文件面内）⇒ 两处口径**暂时不一致**，需另开一处把 SOP 也订正 | Task 5 复评的 out-of-scope 观察。**这是纪律级问题**（不是笔误）：正典若不动就成了「教人违规」，所以正典先改；SOP 跟上另议 |
