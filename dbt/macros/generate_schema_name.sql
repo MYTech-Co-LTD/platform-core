@@ -16,6 +16,10 @@
   **租户键 = `platform.tenant.casdoor_org`**（不是 slug）——理由是身份面一致：模块里的
   `identity.orgId` 就是 casdoor org，marts 表里的 org 列也是它 ⇒ 「数据面 schema / 会话绑定 /
   行内 org」三者同源。取值口径与取法见 dbt/README.md「多租户跑法」节。
+  ⚠️ **行内 `org` 列不由本 macro 产生**：它由 `macros/subject_org.sql` 注入（env 键
+  `LEMENG_SUBJECT_ORG`），与本 macro 的 `var('tenant')` **刻意解耦** —— 不给 `tenant` var 时
+  本 macro 回内置行为（P1 单租户跑法是合法的），而 `org` 列**任何时候都必须有值**。
+  已落地（2026-09-26），静态门禁见 scripts/check-data-models.mjs 规则 ⑩。
 
   ⚠️ **测试替身/单租户不用管**：不给 `tenant` var ⇒ **逐字回到 dbt 内置行为**（见下），
   P1 私有化单租户跑法（`profiles.example.yml` 的 `schema: staging`）零变化。

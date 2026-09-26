@@ -216,6 +216,14 @@ done
 `identity.orgId`、marts 行里的 `org` 列、数据面 schema 三者同源，换成 slug 会让「谁能看到哪份数据」
 在三个地方各说各话。取法：平台库 `select casdoor_org from platform.tenant`（**不写进任何文档/日志的值面**）。
 
+**主体列 `org` 怎么来的（2026-09-26 起，spec `2026-09-26-subject-org-column-design`）**：
+`staging` 与 `marts` 模型由 `macros/subject_org.sql` 注入一列 `org`（值 = 上面那个租户键），
+**env 键 `LEMENG_SUBJECT_ORG`**。它是**必填且非空**两道 fail-closed：**缺键** ⇒ dbt 编译期报错；
+**键在但值为空串** ⇒ macro 报错（`env_var` 对空串**不**报错，所以这道理在 macro 里，不在 dbt）。
+⚠️ **与 schema 名解耦**：不给 `tenant` var（P1 单租户跑法）**仍然合法**，但
+`LEMENG_SUBJECT_ORG` **任何时候都必须给**——两者不是同一个东西（一个是物化落点、一个是行内主体）。
+静态门禁：`scripts/check-data-models.mjs` 规则 ⑩。
+
 **schema 名的派生只有一处实现**：`macros/generate_schema_name.sql`（`tenant_` + 键折小写 +
 连字符改下划线，如 `acme-org` → `tenant_acme_org`）。**同一份模型、不同 `--vars` ⇒ 落进不同 schema**；
 会话绑哪个 schema 就只能看到哪个租户的物化结果（spec §11.5 #3 的 per-schema + `search_path`）。

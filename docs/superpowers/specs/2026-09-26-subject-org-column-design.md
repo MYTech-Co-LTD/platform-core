@@ -100,16 +100,22 @@
 | `stg_lemeng_retail_order_line` | 加一列 `{{ subject_org() }} as org` |
 | `stg_lemeng_branch` | 同上 |
 | `stg_lemeng_item` | 同上（108 列 → 109） |
-| `fct_retail_sale` | 加一列 `{{ subject_org() }} as org`，**从 staging 透传**（`select … , org from …`，不再二次注入） |
+| `fct_retail_sale` | 加一列 `{{ subject_org() }} as org`（**注入常量，不从 staging 透传**——理由见本节末的**2026-09-26 实施订正**） |
 | `stg_lemeng_retail_detail` | **豁免**——旧湖、待退役、且自身列集是暂定（该文件头注「列全集按 T6 实测样本补齐」） |
 
 **豁免必须显式登记在门禁规则里**（文件级白名单 + 注释写明理由），不许靠「没扫到」——本仓既有先例是
 `check-tenant-isolation.mjs` 的 `--global-table:` 标记与 `lint-architecture` 的白名单。
 
 **列的位置**：**staging 里紧随 `system_book` 之后**（`stg_lemeng_item.sql` 头注即写「**3 注入列** +
-89 标量列 + 16 摊平列」，注入列在前是既有排布）；**marts 里同样紧随 `system_book`**，即
-`select system_book, org, bizday, sum(…) …`。`schema.yml` 的列清单（`staging/schema.yml` /
-`marts/schema.yml`）要同步登记，含 `not_null` 测试。
+89 标量列 + 16 摊平列」，注入列在前是既有排布）；**marts 里同样紧随 `system_book`**。`schema.yml`
+的列清单（`staging/schema.yml` / `marts/schema.yml`）要同步登记，含 `not_null` 测试。
+
+> **2026-09-26 实施订正（计划 Task 2 实测）**：marts **不用透传、改为注入常量**，即
+> `select system_book, {{ subject_org() }} as org, bizday, …`（且 `org` **不进 GROUP BY** —— 常量不必进）。
+> 两个理由：① §2.3 的判据是**单一形状** `as org`，透传形态（裸 `org,`）**守不住**它；
+> ② **模型自足**：新加 marts 模型时不必先确认上游 staging 有没有那一列。
+> 同一轮运行里 macro 取的是同一个 env ⇒ 与 staging 的 `org` **恒等**，不存在两份值。
+> ⇒ 本条是**计划的自相矛盾**（Task 1 写透传、Task 2 的判据按注入写）在规则上线时被门禁抓出来的结果。
 
 **语义声明与 grain 都不动**：`l1_metrics.yml` 的 `grain: [system_book, bizday]` 保持；
 `authorize` 拼出的 `… from fct_retail_sale WHERE org = '<orgId>' GROUP BY system_book, bizday`
@@ -120,7 +126,8 @@
 
 **静态（`scripts/check-data-models.mjs` 加一条规则）**——判据三条：
 
-1. **扫描面**：`dbt/models/**/marts/fct_*.sql` 与 `dbt/models/**/staging/stg_*.sql`
+1. **扫描面**：`dbt/models/**/marts/*.sql`（含 `fct_*` 与将来的 `dim_*`——主数据维度表同样按租户物化）
+   与 `dbt/models/**/staging/stg_*.sql`
    （沿用该文件已有的 `STAGING_RE` 形态，新增 marts 一条）。
 2. **判据**：**注释掩码后**文本必须出现 `as org`（掩码口径沿用该文件实现判断①——注释里提一句
    `as org` **不算**满足，否则「写句注释就过关」）。

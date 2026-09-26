@@ -4,7 +4,7 @@
 
 **Goal:** 让 dbt 的 staging / marts 模型带上主体列 `org`，使 `modules/data` 的行级授权谓词 `WHERE org = '<orgId>'` 在数据面上真的有着力点。
 
-**Architecture:** 新增单定义点 macro `dbt/macros/subject_org.sql`（读 env 键 `LEMENG_SUBJECT_ORG`，缺失或空串都响亮失败）；新湖三个 staging 模型各加一列，marts 从 staging **透传**（不二次注入）；再给 `scripts/check-data-models.mjs` 加一条**静态门禁**把这个形状钉住。
+**Architecture:** 新增单定义点 macro `dbt/macros/subject_org.sql`（读 env 键 `LEMENG_SUBJECT_ORG`，缺失或空串都响亮失败）；新湖三个 staging 模型与 marts 各**注入**一列（marts 不用「从 staging 透传」—— 判据要单一形状 `as org`，且模型自足，见 Task 1 Step 4 的实施订正）；再给 `scripts/check-data-models.mjs` 加一条**静态门禁**把这个形状钉住。
 
 **Tech Stack:** dbt（Jinja macro + YAML schema）、Node ESM（`.mjs` 静态门禁）、vitest（门禁 fixtures）。
 
@@ -33,7 +33,7 @@
 | `dbt/models/common/staging/stg_lemeng_retail_order_line.sql` | 改 | 加一列 `org` |
 | `dbt/models/common/staging/stg_lemeng_branch.sql` | 改 | 加一列 `org` |
 | `dbt/models/common/staging/stg_lemeng_item.sql` | 改 | 加一列 `org` |
-| `dbt/models/common/marts/fct_retail_sale.sql` | 改 | `org` 从 staging 透传 + 进 GROUP BY |
+| `dbt/models/common/marts/fct_retail_sale.sql` | 改 | 注入 `org` 常量（`{{ subject_org() }} as org`，**不透传**） |
 | `dbt/models/common/staging/schema.yml` | 改 | 三个模型各登记 `org` 列（`not_null`）+ 订正 `:30` 那句 |
 | `dbt/models/common/marts/schema.yml` | 改 | 登记 `org` 列（`not_null` + 说明「relation 内单值」） |
 | `scripts/check-data-models.mjs` | 改 | 新增规则 ⑩（主体列形状）+ 豁免名单 + 空转自检 |
@@ -169,7 +169,7 @@ Refs #176"
   `…（16 列全带，本层不加语义；**另加 dbt 注入列 `org`**）。`
 - `stg_lemeng_item.sql:17`：同上，`108 列全带` → `108 列全带，本层不加语义；**另加 dbt 注入列 `org`**）。`
 
-- [ ] **Step 4: marts 透传 + 进 GROUP BY**
+- [ ] **Step 4: marts 注入主体列**
 
 `dbt/models/common/marts/fct_retail_sale.sql`，把
 
@@ -190,24 +190,32 @@ group by
 ```jinja
 select
     system_book,
-    org,
+    {{ subject_org() }} as org,
     bizday,
     sum(sale_money)::numeric(20,2) as net_amount,
     count(distinct order_no)       as order_count
 from {{ ref('stg_lemeng_retail_order_line') }}
 group by
     system_book,
-    org,
     bizday
 ```
+
+> ⚠️ **2026-09-26 实施订正（原计划写的是「从 staging 透传 + 进 GROUP BY」，那是错的）**：
+> 透传形态是**裸 `org,`**，而 Step 2 的门禁判据是 **`as org`**（单一形状）——两者自相矛盾，
+> 规则一上线就把真仓的 `fct_retail_sale.sql` 判红。改为**注入常量**：判据守得住，
+> 且 marts 模型自足（不必先确认上游 staging 有没有那一列）。同一轮运行里 macro 取同一个 env
+> ⇒ 与 staging 的 `org` 恒等。`org` **不进 GROUP BY**（常量不必进）。
 
 并在该文件的**粒度头注**（`-- 粒度（grain）：**(system_book, bizday)** —— 账套 × 业务日` 那一段）后追加：
 
 ```jinja
 -- ⚠️ `org` 是**主体列**（行级授权谓词 WHERE org = … 的着力点，见 dbt/macros/subject_org.sql）：
---    它从 staging 透传、**不参与口径**。每个租户物化进自己的 schema（macros/generate_schema_name.sql）
---    ⇒ **单个 relation 内 org 恒为单值**，故上面的粒度仍写作 (system_book, bizday)。
---    它进 GROUP BY 是必需的（聚合查询里非聚合列必须在 GROUP BY 里），不是口径的一部分。
+--   本模型用 `{{ subject_org() }}` **直接注入常量**（**不从 staging 透传**）—— 两个理由：
+--   ① 规则 ⑩ 的判据是**单一形状** `as org`（scripts/check-data-models.mjs），注入形态才守得住；
+--   ② 模型自足：新加 marts 模型时不必先确认上游 staging 有没有那一列。
+--   同一轮运行里 macro 取的是同一个 env ⇒ 与 staging 的 org **恒等**，不存在两份值。
+--   它是常量、**不参与口径**，故不进 GROUP BY；每个租户物化进自己的 schema
+--   （macros/generate_schema_name.sql）⇒ **单个 relation 内 org 恒为单值**，粒度仍写作 (system_book, bizday)。
 ```
 
 - [ ] **Step 5: `staging/schema.yml` 登记三处 + 订正 `:30`**
@@ -241,7 +249,7 @@ group by
 
 ```yaml
       - name: org
-        description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。从 staging 透传、不参与口径；每个租户物化进自己的 schema ⇒ **单个 relation 内恒为单值**，故模型粒度仍写作 (system_book, bizday)。行级授权谓词 `WHERE org = …` 的着力点（modules/data/domain/authz.ts）。'
+        description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。本模型由 `{{ subject_org() }}` 注入常量（不从 staging 透传，理由见模型头注）；不参与口径，每个租户物化进自己的 schema ⇒ **单个 relation 内恒为单值**，故模型粒度仍写作 (system_book, bizday)。行级授权谓词 `WHERE org = …` 的着力点（modules/data/domain/authz.ts）。'
         tests:
           - not_null
 ```
@@ -249,7 +257,7 @@ group by
 同时把该模型的 `description`（`:17-19` 那段）末尾补一句：
 
 ```yaml
-      含**主体列 `org`**（从 staging 透传，见 dbt/macros/subject_org.sql）；粒度不受它影响 ——
+      含**主体列 `org`**（由 `{{ subject_org() }}` 注入常量，见 dbt/macros/subject_org.sql）；粒度不受它影响 ——
       每个租户物化进自己的 schema，relation 内 org 恒为单值。
 ```
 
@@ -284,7 +292,7 @@ Expected: `data-plane-lock: 写入 deploy/data-plane.lock（8 条清单条目 �
 
 ```bash
 git add dbt/macros/subject_org.sql dbt/models/common/staging dbt/models/common/marts
-git commit -m "feat(data-stack): 数据面主体列 org 落地——macro + 三个 staging + marts 透传（Refs #N）"
+git commit -m "feat(data-stack): 数据面主体列 org 落地——macro + 三个 staging + marts 注入（Refs #N）"
 ```
 
 （把 `#N` 换成 Step 0 的 issue 号。）
@@ -387,7 +395,8 @@ describe('格⑩：主体列 org（issue #176 缺口 A / spec 2026-09-26-subject
 pnpm run test:guard
 ```
 
-Expected: 格⑩-2 / ⑩-3 / ⑩-4 **FAIL**（规则还不存在）；其余全绿。
+Expected: 格⑩-2 / ⑩-3 / ⑩-4 / **⑩-5 FAIL**（规则还不存在，空转自检自然也还没有）
+—— ⑩-5 是**实测补充**（原计划只列了前三格）；其余全绿（含既有的 258 条）。
 
 - [ ] **Step 4: 写常量**
 
@@ -511,7 +520,11 @@ git commit -m "feat(guard): check-data-models 加主体列门禁——staging/ma
 
 - [ ] **Step 3: 全量门禁 + 类型 + 提交**
 
+> ⚠️ **`dbt/README.md` 与 `dbt/macros/generate_schema_name.sql` 也在投递清单里**（`dbt/**`）
+> ⇒ 本任务同样要重跑投递 lock（同 Task 1 Step 8；2026-09-26 实测第二次踩到）：
+
 ```bash
+pnpm exec tsx scripts/lemeng/data-plane-lock.mjs   # dbt/** 改了就必须重跑（见上）
 pnpm exec tsx scripts/check-manifests.mjs
 pnpm exec tsx scripts/lint-architecture.mjs
 pnpm exec tsx scripts/check-compose.mjs
