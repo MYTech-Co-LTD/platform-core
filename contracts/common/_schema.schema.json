@@ -70,7 +70,7 @@
           }
         },
         "fileName": {
-          "description": "分区目录内的文件名。取 all.parquet——本仓已有的两条路径规范都这么写（handbook §2 的乐檬 `…/<日期>/all.parquet` 与抖音 `douyin/sku_daily/<月>/all.parquet`，layered design §4 的 `s3://<bucket>/<domain>/<table>/<date>/all.parquet`）。**多文件形态（含 duckle 分片产出）尚未有实测案例** ⇒ 真要放开得先有案例，改的是本 schema 的版本号，不是就地放宽。",
+          "description": "分区目录内的文件名。取 all.parquet——本仓已有的两条路径规范都这么写（handbook §2 的乐檬 `…/<日>/<时>/all.parquet` 与抖音 `douyin/sku_daily/<月>/all.parquet`，layered design §4 的 `s3://<bucket>/<domain>/<table>/<date>/all.parquet`）。**多文件形态（含 duckle 分片产出）尚未有实测案例** ⇒ 真要放开得先有案例，改的是本 schema 的版本号，不是就地放宽。",
           "const": "all.parquet"
         }
       }

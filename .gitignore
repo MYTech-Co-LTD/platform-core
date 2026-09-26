@@ -23,7 +23,7 @@ dbt/dbt_packages/
 
 # ② duckle 本地产物。
 #    `duckle/**/_ops/` 取自计划 L688 给的形态（数据湖路径 `duckle/<域>/_ops/…`，
-#    出处 docs/data-platform-handbook.md §2「duckle 自己的产出」）。
+#    出处 docs/data-platform-handbook.md §2——该条已订正为「不是本仓目录约定」）。
 #    ⚠️ **待实测核对**：v0.7.3 的 runner 二进制里**检索不到 `_ops` 产物名**（strings 实测），
 #    它是**桶里的路径**而不是引擎写进工作区的本地状态目录 ⇒ 本规则实际触发概率低，
 #    属防御性冗余。留着是为了「有人把湖物化到本地也不会误提交」，**别读成「引擎会生成 _ops/」**。

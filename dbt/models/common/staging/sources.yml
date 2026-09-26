@@ -30,7 +30,7 @@ sources:
       path_convention: 'lemeng/retail_detail/<账套>/<日期>/all.parquet'
       account_books: ['3120', '64188']
       # ⚠️ 路径**非 hive 分区命名**（`3120/` 而不是 `system_book=3120/`）⇒ 下游拿不到自动分区列，
-      # 账套只能由 var 供值或从路径解析（handbook §4 / 标准 §4.1 欠账）。
+      # 账套只能由 var 供值或从路径解析（handbook §4 欠账 / 公司标准 §4.1——**该标准尚未合入**）。
       # **仅描述旧湖 retail_detail**；新湖 retail_order_line 是 hive 命名，见该表 meta。
       partitioning: '非 hive（目录名不带键名）；账套列当前由 dbt var `account_book` 供值'
     tables:
