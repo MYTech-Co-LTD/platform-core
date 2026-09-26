@@ -1,0 +1,78 @@
+{
+  "edges": [
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e1",
+      "source": "run",
+      "sourceHandle": "main",
+      "target": "gate",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e2",
+      "source": "gate",
+      "sourceHandle": "main",
+      "target": "record",
+      "targetHandle": "main"
+    }
+  ],
+  "name": "lemeng.dim.item.run",
+  "nodes": [
+    {
+      "data": {
+        "componentId": "code.shell",
+        "label": "run dim (item)",
+        "properties": {
+          "code": "LEMENG_IN_CONTAINER=1 DIM_FACE=item sh /opt/lemeng-run.sh dim",
+          "language": "bash"
+        }
+      },
+      "id": "run",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "qa.contract",
+        "label": "wrapper 必须 exit 0",
+        "properties": {
+          "rules": {
+            "exit_code": "in_range:0,0"
+          }
+        }
+      },
+      "id": "gate",
+      "position": {
+        "x": 260,
+        "y": 0
+      },
+      "type": "quality"
+    },
+    {
+      "data": {
+        "componentId": "snk.csv",
+        "label": "run record",
+        "properties": {
+          "mode": "overwrite",
+          "path": "/workspace/logs/dim-item-run.csv"
+        }
+      },
+      "id": "record",
+      "position": {
+        "x": 520,
+        "y": 0
+      },
+      "type": "sink"
+    }
+  ],
+  "version": 1,
+  "id": "p_57577_9"
+}
