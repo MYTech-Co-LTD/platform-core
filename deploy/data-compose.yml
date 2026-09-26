@@ -105,7 +105,68 @@ services:
       - pg_duckdb
     # 无 ports
 
+  # ── duckle console ×2：**每账套一个**，承担「何时跑」（ADR-0014）────────────────────
+  # · 为什么按账套分：调度条目**带不了自己的 env**（实测：塞 env/args/params 会被静默丢弃），
+  #   而 `LEMENG_TOKEN` **按账套绑定** ⇒ 共用一个 console 必然有一个拿到错 token，且会
+  #   **静默采错数据**（不是报错）。见 `deploy/duckle/console/README.md`。
+  # · 为什么绑回环：调度靠**进程内 tick**，不需要对外开端口 ⇒ serve 文档那条「绑非回环且无凭据时
+  #   15 分钟内任何人可 claim 成管理员」的风险**从根上不存在**（entrypoint 的凭据闸仍在）。
+  # · 为什么**不挂 profiles**：它要常驻 —— 这是对拍板 #4「零常驻」的**局部有意偏离**（ADR-0014 留档）。
+  #   代价：它会出现在**每个**用本 compose 的项目的下次部署 ⇒ 不需要它的项目必须 patch
+  #   `enabled: false`（实测语义：**不部署 + 拆旧容器**）。**别忘这一步**。
+  # · 为什么挂 `/opt/lemeng-run.sh`：薄管线用 `code.shell` 调它；脚本内含 `LEMENG_IN_CONTAINER`
+  #   调用模式（PR #224），在容器内直接调引擎、不经 compose。宿主绝对路径（compose 在宿主执行）。
+  lemeng-console-3120:
+    image: platform-core-duckle:local
+    restart: unless-stopped
+    environment:
+      SYSTEM_BOOK: "3120"
+      DUCKLE_TOKEN: ${DUCKLE_TOKEN:-}          # 兼作 console 登录令牌（entrypoint 翻成引擎正式名）
+      LEMENG_TOKEN: ${LEMENG_TOKEN:-}
+      ZOS_ACCESS_KEY: ${ZOS_ACCESS_KEY:-}
+      ZOS_SECRET_KEY: ${ZOS_SECRET_KEY:-}
+      ZOS_BUCKET: ${ZOS_BUCKET:-}
+      ZOS_ENDPOINT: ${ZOS_ENDPOINT:-}
+      ZOS_REGION: ${ZOS_REGION:-}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - lemeng-console-3120-ws:/workspace
+      - ../duckle:/pipelines:ro
+      - /opt/lemeng-run.sh:/opt/lemeng-run.sh:ro
+    ports:
+      - "127.0.0.1:18080:18080"                # 只绑回环
+    # --duckdb 必给：不给则每次触发都记 "DuckDB engine isn't installed yet."（实测）
+    command: ["serve", "--host", "0.0.0.0", "--port", "18080",
+              "--workspace", "/workspace", "--duckdb", "/usr/local/bin/duckdb"]
+
+  lemeng-console-64188:
+    image: platform-core-duckle:local
+    restart: unless-stopped
+    environment:
+      SYSTEM_BOOK: "64188"
+      DUCKLE_TOKEN: ${DUCKLE_TOKEN:-}
+      LEMENG_TOKEN: ${LEMENG_TOKEN_64188:-}    # ← 这个账套自己的令牌（项目 env 里带后缀存）
+      ZOS_ACCESS_KEY: ${ZOS_ACCESS_KEY:-}
+      ZOS_SECRET_KEY: ${ZOS_SECRET_KEY:-}
+      ZOS_BUCKET: ${ZOS_BUCKET:-}
+      ZOS_ENDPOINT: ${ZOS_ENDPOINT:-}
+      ZOS_REGION: ${ZOS_REGION:-}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - lemeng-console-64188-ws:/workspace
+      - ../duckle:/pipelines:ro
+      - /opt/lemeng-run.sh:/opt/lemeng-run.sh:ro
+    ports:
+      - "127.0.0.1:18081:18081"
+    command: ["serve", "--host", "0.0.0.0", "--port", "18081",
+              "--workspace", "/workspace", "--duckdb", "/usr/local/bin/duckdb"]
+
 volumes:
   pgduckdata:        # 物化表/语义 schema（可从 parquet 重算，备份=省重建时间，spec §8）
   mbdata:            # Metabase 应用库（❌不可重建，必须备份——报表/集合/权限的真相所在）
   duckle-workspace:  # 管线定义的真源在仓内 duckle/；workspace 是中间产物（可重建）
+  # 两个账套各自的 console 工作区（放 schedules.json 与引擎状态）。
+  # **必须按账套分开**：调度条目带不了 env ⇒ 一个 workspace 只有一套 env（见 console/README.md）。
+  # dim 管线实测**无跨运行状态组件** ⇒ 分卷不会丢状态；将来若接有状态的管线，迁移要连状态一起搬。
+  lemeng-console-3120-ws:
+  lemeng-console-64188-ws:
