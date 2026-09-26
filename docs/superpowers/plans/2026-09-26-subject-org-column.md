@@ -249,7 +249,7 @@ group by
 
 ```yaml
       - name: org
-        description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。本模型由 `{{ subject_org() }}` 注入常量（不从 staging 透传，理由见模型头注）；不参与口径，每个租户物化进自己的 schema ⇒ **单个 relation 内恒为单值**，故模型粒度仍写作 (system_book, bizday)。行级授权谓词 `WHERE org = …` 的着力点（modules/data/domain/authz.ts）。'
+        description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。本模型由 `subject_org` 宏注入常量（**只写宏名，不写调用形态** —— 见下面的警告）；不参与口径，每个租户物化进自己的 schema ⇒ **单个 relation 内恒为单值**，故模型粒度仍写作 (system_book, bizday)。行级授权谓词 `WHERE org = …` 的着力点（modules/data/domain/authz.ts）。'
         tests:
           - not_null
 ```
@@ -257,9 +257,15 @@ group by
 同时把该模型的 `description`（`:17-19` 那段）末尾补一句：
 
 ```yaml
-      含**主体列 `org`**（由 `{{ subject_org() }}` 注入常量，见 dbt/macros/subject_org.sql）；粒度不受它影响 ——
+      含**主体列 `org`**（由 `subject_org` 宏注入常量，见 dbt/macros/subject_org.sql）；粒度不受它影响 ——
       每个租户物化进自己的 schema，relation 内 org 恒为单值。
 ```
+
+> ⚠️ **2026-09-26 实测订正（issue #261）**：上面两处**原稿写的是 Jinja 调用形态**（双大括号 + 宏名 + 括号），
+> 那会**把 `dbt parse` 打挂**——description 在**解析期**就被渲染，而那时的上下文里**项目 macro 不可见**
+> ⇒ 报 `'<宏名>' is undefined`。本仓的 `marts/schema.yml` 因此把**生产物化 job 打红过一次**。
+> ⇒ **凡是写在 `.yml` 的 `description` 里的文字，一律只写宏名、不写调用形态**；连当反例写也不许
+> （反例同样会被渲染）。模型 `.sql` 里的调用**不受此限**（那是正常用法）。
 
 - [ ] **Step 7: 跑门禁与单测（此刻应当**全绿**：新列不违反任何既有规则）**
 
