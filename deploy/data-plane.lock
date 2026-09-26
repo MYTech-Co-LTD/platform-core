@@ -1,4 +1,4 @@
-sha256-of-rest 40666c4668df656b4ac16a4093c2c21900ec30aa429223a99ed106a8d824a003
+sha256-of-rest cf2c10c075e7e32ac1b7169ef954748bf238c3f740a5e4992145e091997bdbaa
 7ee38140aa09250bc09b63460f6dd99c2e06e456d00c9da6575c1a0255158699 dbt/README.md ${REPO}/dbt/README.md 0644
 6e1e96bb9bb31fca91390ae0e0d12789a82e956801de3a9005092bcfbd15ce1b dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 1f429020c4c115e9cc24828043566f7de6de35d5605ace67b1de0f62cccbd30e dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -21,6 +21,11 @@ fe8339e0c38c1f17ca75be63fefd86718cbccdb0c68a9d70697473ddecbb356d dbt/tests/asser
 f61350765bd5a7b6f8d5e7cc55b3b915f666835812746f441a4111757554aa9e dbt/tests/audit_retail__net_sales.sql ${REPO}/dbt/tests/audit_retail__net_sales.sql 0644
 e5996e3505203746c3a2dc5dfab9b9a8a793806d31b82e9ecaeb18acf1b82417 dbt/tests/audit_retail__order_count.sql ${REPO}/dbt/tests/audit_retail__order_count.sql 0644
 e52a780a53eb622680a7eb20d531f48c26cb21431d4856a52a7da6ce39257e37 deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
+1e8e609cea2e00811094ba21c7156c705b1a35c16264e24ca984762672c31b07 deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
+41b899203c1c8baa6259fa3b7d9fe2120db223b157389127b36e0c82562fb4df deploy/duckle/console/pipelines/lemeng.dim.branch.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.branch.run.json 0644
+a286d64a7c74667e6e9d76e930fe6b1b3e28f55603f64a87d39c242194d3fb13 deploy/duckle/console/pipelines/lemeng.dim.item.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item.run.json 0644
+778ebb1ec42b5aa7f5979888496c2c454a891247770af8b93f70f3c23e7724c5 deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
+778ebb1ec42b5aa7f5979888496c2c454a891247770af8b93f70f3c23e7724c5 deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
 a6d73597b4cb6dad45f30b9201acf8af48ec42672c79a43989b6d7e71099dd92 deploy/duckle/entrypoint.sh ${REPO}/deploy/duckle/entrypoint.sh 0644
 fe106a406b22c577ec34e9da724892b7f0b95277d5aab65418f95767ea40542c duckle/README.md ${REPO}/duckle/README.md 0644
 9c48a28d51a5c5d4f2232609c4312ea82fe4040edbd768b5966b49182ad6eef8 duckle/common/README.md ${REPO}/duckle/common/README.md 0644
