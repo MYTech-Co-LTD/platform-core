@@ -49,7 +49,6 @@
 **升级后 handbook 的节次（目标态）**：
 
 ```
-
 头部      定位改写：正典正文即在本文件
 §0        本文管什么 / 不管什么（含「采集完成」判据）
 §1        采集正典
@@ -964,3 +963,4 @@ gh pr checks --watch
 | 3 | 修物化断链（建 dbt 物化 job）+ 观测通道 #210 | 是正典 §1.5 的**输入**，不是本计划的交付物；各自按独立 issue 走 |
 | 4 | 零售链路从 openship job 迁到 duckle console | 正在跑的生产链路，迁移需单独决定与观察（SOP §F.5） |
 | 5 | **修 `duckle/README.md` 的自相矛盾**：`§6`（该文件 137 行）写「未验**四项**」，而 `§7.4` 实际枚举**五项**（漏「非回环 `UNCLAIMED` 分支」） | 属那份下钻文档自身；spec 非目标明确「下钻文档正文不改」⇒ 本计划只**绕开**它（正典不枚举、只给指针），漂移本身另开一处修。<br>⚠️ **修它时必须同时重跑 `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`**——`duckle/` 是 `deploy/data-plane-manifest.txt` 的**递归条目**，`data-plane.lock` 钉着 `duckle/**` 每个文件的 sha256，`check-data-plane-lock` 在 `gates` 里跑 ⇒ 只改 README 不动 lock，**CI 直接红**。（这条是我在 Task 3 评审时才知道的，原先漏了。） |
+| 6 | **订正 `scripts/check-data-models.mjs:56` 与 `.github/workflows/ci.yml:92` 的同类过宽措辞**（都写「`duckle/` 与 `contracts/` 不在任何扫描面内」）。二者在各自上下文里（env 键覆盖 / 那一条守门的扫描根）仍准确，但按本正典 §1.2 已订正的口径（`duckle/**` **受投递完整性门禁**）读会偏宽 | Task 3 复评的 out-of-scope 观察；既存、非本计划引入。**注意 ci.yml 是 CI 定义本身，改它要另行评审** |
