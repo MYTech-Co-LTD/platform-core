@@ -48,18 +48,18 @@
 
 **背景（已实测，别重做）**：引擎 `src.rest` 的 `paginationType: page` + `pageParam` **只把页码拼进 query**（实测 URL `…?page_number=1`），而**本网关无视 query**：`POST branch.find?page_number=2` 与 `?page_number=5` 返回的都是第 1 页（`[142,16,38]`，而 body 传 `page_number:2` 得到 `[69,888,9]`）。且 `{page}` 写进 body **不替换**（原样发出 ⇒ 网关 400 JSON parse error）。⇒ 引擎自带分页对本网关**不可用**，页码必须进 body。
 
-- [ ] **Step 1: 验扇出能否把「逐行值」送进 body**
+- [x] **Step 1: 验扇出能否把「逐行值」送进 body**
 
 造一条两节点管线：`src.inline`（一列 `pg`、值 `2`、重复 2 行）→ `src.rest`（`url` = branch.find，`method: POST`，`body` = `{"page_number": {pg}, "page_size": 3}`，`urlTemplate` = 同 URL，`parentKeyColumn` = `pg`，`maxPages: 1`）。
 
 Run: duckle MCP `run_pipeline`，`target` = 那个 `src.rest` 节点（**只跑到 source，不落 sink**）
 Expected（判别式）：
 - **返回 `[69,888,9]`（= 第 2 页）⇒ 扇出成立** ⇒ Task 2/3 用 **2 节点**形状：`src.inline` 产出页码行 + 一个 `src.rest` 发 N 次请求。
-- **返回 400 `JSON parse error`（`{pg}` 原样发出）⇒ 扇出不成立** ⇒ Task 2/3 退回 **零售范式：N 个显式 `src.rest` 页节点 + `ctl.merge`**（商品维约 95 个，门店维 2 个）。
+- **返回 400 `JSON parse error` ⇒ 扇出不成立** ⇒ Task 2/3 退回 **零售范式：N 个显式 `src.rest` 页节点 + `ctl.merge`**（商品维 **86 / 124 个数据页 + 各 1 哨兵**——**这是实测值**；门店维**不足 3 页成案**、**定稿 5 页**（p1–p4 取数 + p5 哨兵，真阈值 800），页数以 Task 2 Step 3 为定稿口径。旧稿「商品维约 95 个」已作废，见 Task 3 Step 4 与「计划外事实」）。【**实际命中本分支**】
 
 把结论逐字记进本计划末尾「计划外事实」，再动 Task 2。
 
-- [ ] **Step 2: 两账套拉全量样本，钉列全集**
+- [x] **Step 2: 两账套拉全量样本，钉列全集**
 
 对 `nhsoft.user.ai.branch.find`（body `{"page_number":1,"page_size":200}`）与 `nhsoft.base.ai.item.find`（同形状，`page_size` 上限 **200**，201 报 `每页条数不能超过200`），**各用 3120 与 64188 两个令牌**取样本：
 
@@ -75,11 +75,13 @@ curl -sS -X POST "https://cloud.nhsoft.cn/agi/mcp" -H "Authorization: Bearer ${T
 Expected（2026-09-25 已探到的基线，用它们核对）：
 - `branch.find` **13 列**：`branch_num, code, name, pinyin, type, enable, region_id, province, city, district, contact, phone, address`
 - `item.find` **~97 列**，含嵌套：`item_department`(对象)、`scope_list`(数组)、`item_specs`、`item_tag_relations`、`extended_property_relation_list`、`pos_item_area_dto`、`sale_commission_dto`
+  > ⚠️ **本行的「~97 列 / 7 个嵌套」已作废**（原文保留以见演进）：实测是 **98 = 89 标量 + 9 个嵌套字段**，**不是 7** —— 逐项见「计划外事实」。
 - 行量：`branch` 3120=**270**、64188=**129**；`item` 两账套均 **>17000 且 <20000**（`page 17000` 存在、`20000` 不存在）
 
-- [ ] **Step 3: 结论回写 spec 与计划**
+- [x] **Step 3: 结论回写 spec 与计划**
 
 改 `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` §3 的表：**加一列「量级（实测）」**，填 `branch 270/129`、`item ≈1.9万/账套`、`retail 峰值 1459 单/时`。
+> 执行时 **item 这一格按实测填**：**3120=17,132 / 64188=24,736**（**不是 ≈1.9 万**——列名就叫「实测」，填一个已被证伪的数就是往正典里写假）。依据与两法交叉见「计划外事实」。
 
 Run:
 ```bash
@@ -152,9 +154,11 @@ Expected: exit 0
 
 - [ ] **Step 3: 产管线**（duckle MCP `create_pipeline`，`validate=true` 落 `duckle/common/lemeng.branch.json`）
 
-节点形状参照 `duckle/common/lemeng.retail_order_line.json`：`src.rest`（`url`/`method: POST`/`body` 含 `page_number` 与 `page_size: 200`/`headers.Authorization: "Bearer ${ENV:LEMENG_TOKEN}"`/`responsePath: "/result"`）→ `code.sql`（定型 + 注入 `batch_id`/`system_book`/`snapshot`）→ `qa.contract` → `snk.minio`。
+节点形状参照 `duckle/common/lemeng.retail_order_line.json`：`src.rest`（`url`/`method: POST`/`body` 含 `page_number` 与 `page_size: 200`/`headers.Authorization: "Bearer ${ENV:LEMENG_TOKEN}"`/**`responsePath: "/result/content"`**）→ `code.sql`（定型 + 注入 `batch_id`/`system_book`/`snapshot`）→ `qa.contract` → `snk.minio`。
 
-- 取数节点：**2 页足够**（270 行 = 200+70），但仍按 Task 1 的结论选形状；**末页挂 `ctl.die` 哨兵**（`condition: "has-rows"`），阈值留余量（写 5 页 = 1000 家）。
+> ⚠️ `responsePath` **不是** `/result`（照抄零售会错）。维度两端点的 `result` 是**分页信封对象** `{page_number,page_size,content:[…]}`，写 `/result` 只得到 **1 行信封**（列变成 `page_number,page_size,content`）。**别反向改回去**：零售 `posorder.find` 的 `result` 经实测**就是行数组**（`type(result)=='list'`）⇒ 零售那份 `/result` 是对的，两者**故意不同源**。依据见「计划外事实」。
+
+- 取数节点（**门店维页数的定稿口径**；本计划其余处出现的页数一律以此为准）：实测 **2 页就够装**（270 行 = 200+70），**但「2 页 + 1 哨兵」不足 3 页成案** —— 总 3 页的真阈值只有 `非哨兵页数 2 × 200 = 400` 家，而 3120 已有 **270** 家 ⇒ 只剩 **130** 家余量（占现有 270 家的 ≈48%、占 3 页阈值 400 的 32.5%）就被哨兵页拦住；页数硬编码、哨兵页是唯一防线，**击穿 = 当天该账套快照 fail-loud 中止（不丢数，但采不下来）**。这与商品维的取舍同源（那里把「余量 0.26% 的硬下限 125 页」直接判为不可用、改取 150 页）：**余量本身要留够**，故本面定稿 **写 5 页**（p1–p4 取数 + p5 哨兵）⇒ **真阈值 = 非哨兵页数 × 200 = 4×200 = 800 家**（不是 5×200=1000 —— 哨兵页那一页不算容量，口径同 spec §6 的 `200×12 页 ⇒ 阈值 11×200`）。64188(129)/3120(270) 都在 800 以内，余量 ≥530 家。**末页挂 `ctl.die` 哨兵**（`condition: "has-rows"`）。
 - `data.schema` 只声明用到的标量列（`branch_num: int64, code: string, name: string, pinyin: string, type: string, enable: bool, region_id: int64, province: string, city: string, district: string, contact: string, phone: string, address: string`）。
 - sink：`key` = `lemeng/dim_branch/system_book=${ENV:SYSTEM_BOOK}/snapshot=${ENV:SNAPSHOT}/all.parquet`，`mode: overwrite`，其余照抄零售 sink。
 - `code.sql` 必须注入三列：`'${ENV:BATCH_ID}' as batch_id`、`'${ENV:SYSTEM_BOOK}' as system_book`、`CAST('${ENV:SNAPSHOT}' AS DATE) as snapshot`。
@@ -169,7 +173,7 @@ Expected: `valid`
     config(materialized='table')
 }}
 -- stg_lemeng_branch.sql — 乐檬门店维 staging（新湖；一对一、只规范化不改义）
--- 分区键推断类型不合约 ⇒ 三列显式 cast；取列必须 `from read_parquet(...) r` 函数别名形态
+-- 分区键推断类型不合约 ⇒ 两列显式 cast（`system_book::varchar` / `snapshot::date`）；取列必须 `from read_parquet(...) r` 函数别名形态
 -- （CTE 形态在 pg_duckdb 上取列即报错，见 stg_lemeng_retail_order_line.sql 头注【二】）。
 select
   r['batch_id']              as batch_id,
@@ -218,17 +222,35 @@ git commit -m "feat(lemeng): 门店维三件套——契约/管线/staging（双
 
 `spec §7.2` 的「完整保留」指的是**两账套档案各自保留**（不合并），不是「列一个不落」。故：
 
-- **标量列全留**（含 `item_num, item_code, bar_code, pinyin, item_name, spec, item_type, item_brand, item_category, unit_name, …`）；
-- **摊平 1 个嵌套对象**：`item_department` → `item_department_id`(int64) / `item_department_name`(varchar) / `item_department_code`(varchar)；
-- **丢弃 6 个数组/深层对象**：`scope_list`、`item_specs`、`item_tag_relations`、`extended_property_relation_list`、`pos_item_area_dto`、`sale_commission_dto` —— 它们是**运营配置**（销售范围、提成、POS 区域），不是分析维；`data.schema` 只认标量，硬塞成 json 列会与 README §4 第 1 条坑相撞。**要时再加**（回填可重跑快照）。
+- **标量列全留**（89 列，含 `item_num, item_code, bar_code, pinyin, item_name, spec, item_type, unit_name, …`，全集见「计划外事实」）；
+  ⚠️ **`item_brand` / `item_category` 不在标量列里**——它们是 **对象**（实测，见「计划外事实」逐字段形状表），
+  按 `data.schema` 只认标量这条硬约束，**声明成标量列 = 违纪**（不是笔误），必须走下面「摊平」那条；
+- **摊平 3 个嵌套对象**（先摊平、再进 `data.schema`；取哪些子键由本步决定，一级键清单见「计划外事实」）：
+  - `item_department` → `item_department_id`(int64) / `item_department_name`(varchar) / `item_department_code`(varchar)；
+  - `item_category`（对象，**3120/64188 样本均非 null**，19 个一级键）——分类是分析维，spec §3 的「商品维（+分类/品牌/部门）」已把它算在范围内；
+  - `item_brand`（对象，**但 3120 样本 199/200 行、64188 187/200 行为 null** ⇒ 摊平后大部分行是 NULL，属正常，不是 bug）；
+- **丢弃 6 个数组/深层对象**：`scope_list`、`item_specs`、`item_tag_relations`、`extended_property_relation_list`、`pos_item_area_dto`、`sale_commission_dto` —— 它们是**运营配置**（销售范围、规格、标签、扩展属性、POS 区域、提成），不是分析维。**丢弃理由分两桶**（别把两桶说成一桶）：① **4 个数组**（`scope_list`/`item_specs`/`item_tag_relations`/`extended_property_relation_list`）—— 除运营配置外，`data.schema` 只认标量，硬塞成 json 列还会与 README §4 第 1 条坑相撞；② **2 个对象**（`pos_item_area_dto`/`sale_commission_dto`）—— 它们是**对象不是数组**，那条「数组塞 json 相撞」的理由**对它们不成立**，不摊平的唯一理由是「属运营配置、不是分析维」。**要时再加**（回填可重跑快照）。
+- **计数对账（防再次漂移）**：嵌套字段 **9 = 摊平 3（`item_department`/`item_category`/`item_brand`）+ 丢弃 6**。改任一边都要让这条等式继续成立。
 
 - [ ] **Step 2: 写契约**（同 Task 2 形状；`partitionBy: ["system_book","snapshot"]`、`prefix: "lemeng/dim_item"`、列按 Step 1 规则，外部标识一律 `varchar`、`decimal` 必带 precision/scale）
 
 - [ ] **Step 3: 过静态门禁** — Run: `pnpm exec tsx scripts/check-data-models.mjs`；Expected: exit 0
 
-- [ ] **Step 4: 产管线**（引擎产 + `validate`；**约 95 页**——末页哨兵写 **120 页（24000 容量）留余量**，超了 fail-loud 不静默截断）
+- [ ] **Step 4: 产管线**（引擎产 + `validate`；**总 150 页**——第 150 页 = 哨兵页，超了 fail-loud 不静默截断）
 
-⚠️ **本条是「页数」风险点**：商品会增长，页数是硬编码的。哨兵页是唯一防线，务必留足余量并把「如何扩页数」写进管线头注。
+**页数与哨兵容量**（按 2026-09-25 Task 1 实测重算；旧稿「约 95 页 / 120 页（24000 容量）」**已作废**）：
+
+- 实测行数：**3120 = 17,132**（需 **86** 个数据页）、**64188 = 24,736**（需 **124** 个数据页，末页 136 行）。
+- **算法（照 spec §6 先例，别用宽松读法）**：`page_size=200` 固定，最后一个页节点是**哨兵页**（挂 `ctl.die`，`has-rows` ⇒ 中止）
+  ⇒ **真阈值 = 非哨兵页数 × 200**，**不是**总页数 × 200。spec §6 的先例：写「200 × 12 页」时阈值是 **11×200 = 2200**，不是 2400。
+- **硬下限**：64188 需 124 数据页 ⇒ 总页数 ≥125 ⇒ 阈值 124×200 = **24,800**，余量仅 **64 行（0.26%）**
+  ⇒ **不可用**：这不是「留余量」，是一次新商品批次就击穿。
+- **取总 150 页（本步默认，两账套同形）**：第 150 页哨兵 ⇒ 真阈值 **149×200 = 29,800**。
+  - 64188：利用率 **83.0%**，余量 **5,064 行（17.0%）**；
+  - 3120：利用率 **57.5%**，余量 12,668 行。
+  - 两账套同形 = 少维护一套形状；多出的请求可忽略（150 页 × 2 账套 = 300 请求/次，日更）。
+- （若确要按账套分档：3120 可缩到总 100 页 ⇒ 阈值 99×200 = **19,800**，余量 2,668 行（13.5%）。默认不做。）
+- ⚠️ 余量不是「一次到位」：**商品会增长**，页数是硬编码的，哨兵页是唯一防线。某天哨兵命中 = 当日该账套快照**中止**（fail-loud，不静默丢数）。扩页数 = 加数据页节点 + 同步本算式 + 重生成 lock + 走 PR；把这条写进管线头注。
 
 - [ ] **Step 5: 写 staging**（照 Task 2 的 cast + `r['col']` 形态，列数按 Step 1；`from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_item_prefix") }}/*/snapshot=**/all.parquet') r`）
 
@@ -245,13 +267,23 @@ git commit -m "feat(lemeng): 商品维三件套——契约/管线/staging（双
 
 ### Task 4: dbt 接线（sources / vars / 断言）
 
-**Files:** Modify `dbt/dbt_project.yml`（+2 vars）、`dbt/models/common/staging/sources.yml`（+2 sources）、`dbt/models/common/staging/schema.yml`（+2 模型列契约）、Create `dbt/tests/assert_stg_lemeng_branch_key_unique.sql`、`dbt/tests/assert_stg_lemeng_item_key_unique.sql`
+**Files:** Modify `dbt/models/common/staging/schema.yml`（+2 模型列契约）、Create `dbt/tests/assert_stg_lemeng_branch_key_unique.sql`、`dbt/tests/assert_stg_lemeng_item_key_unique.sql`
 
 **Interfaces:** Consumes Task 2/3 的 staging 模型名与列名；Produces 下游 marts（S2-b）可挂载的两张维度
 
-- [ ] **Step 1: 加 prefix var**（路径单点，与 `lemeng_retail_order_line_prefix` 同处）
+> **订正（2026-09-25，由 Task 3 评审提出；本 Task 的范围据此收窄）**
+>
+> 本 Task 原有的 **Step 1/2**（`dbt_project.yml` 的 2 个 prefix var、`sources.yml` 的 2 个 source 条目）**已由 Task 2/3 提前落地** —— 它们的 staging SQL 直接 `var(...)`、且门禁规则④是**双向机检**（staging 模型在 `sources.yml` 里找不到对应源即报违规，见 `scripts/check-data-models.mjs`），不先把那两处接上，Task 2/3 自己就过不了 Step 5/6 的门禁。
+>
+> ⇒ **不要再加一遍**：在同一 `tables:` 列表里重复一条同 source 的条目，门禁会报「合成同一个 staging 模型名」。开工前先核这两处**已在**，再往下走。
+>
+> 原 Step 1/2 的正文如下（保留为史实，防照抄退回）：
+> - ~~Step 1: 加 prefix var（路径单点，与 `lemeng_retail_order_line_prefix` 同处）~~
+> - ~~Step 2: 加 source 条目（照现有 `sources.yml` 形状：`access_path` 用 `read_parquet('s3://{{ var("zos_bucket") }}/…/**/*.parquet') r`）~~
 
-- [ ] **Step 2: 加 source 条目**（照现有 `sources.yml` 形状：`access_path` 用 `read_parquet('s3://{{ var("zos_bucket") }}/…/**/*.parquet') r`）
+- [x] **Step 1: 加 prefix var** —— **已由 Task 2/3 落地**（`dbt/dbt_project.yml` 的 `lemeng_branch_prefix` / `lemeng_item_prefix`）
+
+- [x] **Step 2: 加 source 条目** —— **已由 Task 2/3 落地**（`sources.yml` 的 `branch` / `item`）
 
 - [ ] **Step 3: 写两条自然键唯一性断言**
 
@@ -310,7 +342,8 @@ sh /opt/lemeng-sync.sh <合并提交全SHA> --check    # 先只比不写
 sh /opt/lemeng-sync.sh <合并提交全SHA>            # 正式
 ```
 
-Expected: `SYNC_OK 25/25` 且末行 `# revision <全SHA>`。**全 SHA 逐字复制，绝不手工补。**
+Expected: `SYNC_OK 31/31` 且末行 `# revision <全SHA>`。**全 SHA 逐字复制，绝不手工补。**
+（**31** = 本分支 +6 后的 lock 条目数：`deploy/data-plane-manifest.txt` 的 6 条里 `duckle/`、`dbt/` 两个目录自展开 ⇒ 计数以 lock 的逐文件行为准；改 manifest/lock 后这个分母要同步改。）
 
 - [ ] **Step 2: 注册 4 条 job**（openship MCP `post_jobs`）
 
@@ -329,7 +362,7 @@ Expected: `SYNC_OK 25/25` 且末行 `# revision <全SHA>`。**全 SHA 逐字复�
 - [ ] **Step 3: 各触发一次 + 回读自证**
 
 Run: openship MCP `post_jobs_by_key_run`（4 条）→ 读 run 输出
-Expected: exit 0、`_ops` 行 `status: ok`、sink 行数 = 预期（branch 3120=**270** / 64188=**129**；item ≈**1.9 万**/账套）
+Expected: exit 0、`_ops` 行 `status: ok`、sink 行数 = 预期（branch 3120=**270** / 64188=**129**；item **3120 ≥17,132 / 64188 ≥24,736** 且 **< 真阈值 29,800**）。判据：**低于基线 = 拉漏**（要查），**触到阈值 = 哨兵已中止**（不是成功）；**不要求与基线逐字相等**——商品会增长，基线是 2026-09-25 实测值（见「计划外事实」）。
 
 - [ ] **Step 4: 真机回读**（wrapper 的 `rb` 模式或 pg_duckdb 直读）
 
@@ -346,9 +379,51 @@ Expected: 与 sink 行数一致；分区键 `system_book`（varchar）/ `snapsho
 - **代理**：本机 git 走 7897 间歇挂——push 失败先重试 2~5 次，再走 `ssh://git@ssh.gitlab…`/`ssh.github.com:443` 兜底。**别断定「代理死了」去改配置**。
 - **duckle 引擎在本地桌面版**：`~/Library/Application Support/io.duckle.app/engines/`（MCP 已接）。`run_pipeline` 需要 `DUCKLE_DUCKDB_BIN`；`${ENV:...}` 取自 **MCP 进程的 env**，不在管线里写死。
 - **网关分页事实（2026-09-25 实测）**：`page_size` 上限 **200**（201 报 `每页条数不能超过200`）；响应**无 total** ⇒ 页空即止；**query 里的 `page_number` 被完全无视**（页码必须进 body）；`item.find` 不支持 `offset/limit`（返回 0 行）。
+- **⭐ `responsePath` 分域不同（2026-09-25 Task 1 实测，Task 2/3 照此写）**：维度两端点 `result` 是**分页信封对象** `{page_number,page_size,content:[…]}` ⇒ 指针必须写 **`/result/content`**（写 `/result` 只得 **1 行信封**，列变成 `page_number,page_size,content`）。**同族反例**：`posorder.find` 的 `result` **就是行数组**（实测 `type(result)=='list'`）⇒ 零售链路沿用 `/result` 是对的，**不要顺手去改 S1 的管线**。⚠️ 本计划 **Task 2 Step 3** 的节点形状**曾写** `responsePath: "/result"`（照抄 S1 而来）——**已就地订正为 `/result/content`**（见 `4c4791a`）；**S1 零售那份 `/result` 是对的，别反向改**。
+- **⭐ 扇出进 body：不成立（2026-09-25 Task 1 判别式实测）**：`urlTemplate` + `parentKeyColumn` 扇出**能**发 N 次请求（实测 2 个上游行 ⇒ 2 页 / 6 行；URL 里 `?pg={pg}` 确认已替换），但**逐行值送不进 body**——body 里**任何** `{…}`（含 `{pg}`、`{{pg}}`、乃至不存在的 `{zzz}`）都被引擎替换成一个**对象**，网关据此回 400 `Cannot deserialize value of type java.lang.Integer from Object value (token JsonToken.START_OBJECT)`；`${pg}` / `${ENV:…}` 在 body 里**一概不替换**（原样发出）。⇒ **Task 2/3 一律走「N 个显式 `src.rest` 页节点 + `ctl.merge`」**（**定稿页数**：门店维 5 页 = p1–p4 取数 + p5 哨兵；商品维 150 页 = p1–p149 取数 + p150 哨兵。实测**需要**的数据页数是 86 / 124 —— 那是量级，不是定稿页数，定稿口径见 Task 2 Step 3）。
+- **⭐ `src.inline` 不可用（2026-09-25 Task 1 实测）**：其 manifest **只建模了 `notes`**（无列/值字段），穷举 **14** 种属性形状（`columns:[{name,value}]`、`rows`、`values`、`rowCount`、`count`、`path`、放 `data` 层…）**全部 0 行 + 单列 NULL**。⇒ **别计划用 `src.inline`**；要造控制行就用 `src.csv`（本任务探针即用它）。
+- **⭐ 商品维量级按实测（2026-09-25 Task 1）**：行数 **3120=17,132 / 64188=24,736**（**不是**「两账套均 ≈1.9 万」，
+  该基线只在 3120 成立：64188 的 `page_number=20000` 实测**返回 1 行**）⇒ `page_size=200` 需 **86 / 124** 个数据页
+  （末页 132 / 136 行，**不是约 95 页**）。已据此**就地改写 Task 3 Step 4**（总 150 页 / 真阈值 149×200 = 29,800），
+  **旧稿「约 95 页、120 页哨兵（24000 容量）」已作废**——64188 实测 24,736 > 24,000，照原样写在 64188 上会哨兵命中、fail-loud 中止。
+  两法交叉验证（`page_size=1` 二分「最后一个非空页」+ 边界页 `page_size=200`）结果一致，且已排除「深页被网关夹住」（page 100000/1000000 均 0 行）。
+- **⭐ 商品维列全集（2026-09-25 Task 1 实测）**：两账套**键名完全一致** = **98 列 = 89 标量 + 9 个嵌套字段**（**不是 7**）。
+  **9 个嵌套字段逐个点名**（Task 3 Step 1 的分类必须与这里对齐）：
+  - **对象，须摊平（3）**：`item_department`、**`item_category`**、**`item_brand`**
+  - **数组/深层对象，须丢弃（6）**：`scope_list`、`item_specs`、`item_tag_relations`、`extended_property_relation_list`、`pos_item_area_dto`、`sale_commission_dto`
+  - ⇒ **3 + 6 = 9**，且 **`item_brand` / `item_category` 绝不可当标量列进 `data.schema`**（对象列声明成标量 = 违纪）。
+  - ⚠️ **哪个嵌套字段「有值」逐账套不同**（键名都在，只是 null 分布不同）：3120 侧
+    `extended_property_relation_list` / `item_tag_relations` 有数组值；64188 侧 `sale_commission_dto` 才有对象值。
+    契约列集按 **union（98）** 写，**别按单账套样本裁列**。
+
+**逐字段形状表（Task 3 列投影的原始依据；2026-09-25 实测，两账套各取 `page_size=200` 第 1 页）**：
+
+| 字段 | 3120 样本 | 64188 样本 | 一级键名（union） |
+|---|---|---|---|
+| `item_category` | **对象** | **对象** | category_code, category_en_name, category_name, client_over_center_inventory_qty, disallow_item_apply_use_flag, enable_exceed_amount, enable_exceed_price, front_sale_unshow, id, level, parent_id, pinyin, planning_enable_flag, planning_max_num, planning_min_num, pos_sale_no_show_by_parent, request_over_center_inventory_qty, sort, tax_code（19） |
+| `item_department` | **对象** | **对象** | id, item_department_code, item_department_name（3） |
+| `item_brand` | **对象**（200 行中 199 行 null） | **对象**（187 行 null） | brand_code, brand_img_url, brand_name, brand_pinyin, id（5） |
+| `pos_item_area_dto` | **对象** | **对象** | length_width_high, pos_item_area_high, pos_item_area_length, pos_item_area_size, pos_item_area_tare, pos_item_area_weight, pos_item_area_width（7） |
+| `sale_commission_dto` | 键在、**值全 null**（200/200） | **对象**（180 行 null） | commission_base, commission_max, commission_money, commission_type, commission_without_promotion（5） |
+| `item_specs` | **数组**（1..5 元素） | **数组**（1 元素） | bar_code, spec_code, spec_name, spec_num, spec_pinyin, spec_alias, spec_unit_name, online_spec_name, main_spec_flag, weight_flag, convert_rate, custom_sort, barcode_scale_label_num, **scene_list**, 及 16 个 `item_grade_*`（共 31） |
+| `scope_list` | **数组**（2 元素） | **数组**（1..16 元素） | id, business_scope_name, branch, branch_nums（4） |
+| `extended_property_relation_list` | **数组**（1..2 元素） | 键在、**值全 null**（200/200） | extended_property_id, extended_property_name, extended_property_type_enum, item_num, params, property_value, required_flag, sort_num（8） |
+| `item_tag_relations` | **数组**（1..2 元素） | 键在、**值全 null**（200/200） | created_at, created_by, item_num, item_tag, serial_num, tag_id, updated_at, updated_by（8） |
+
+**二级嵌套（若要展开必须知道）**：`item_specs[].scene_list` = **字符串数组**（实测 `["OFFLINE","ONLINE"]`）；
+`extended_property_relation_list[].params` = **null 或对象**；`scope_list[].branch` = **字符串**（不是对象）；
+`scope_list[].branch_nums` = **数字数组**（实测 `[1]`）。
+
+- **duckle MCP 公网请求**：Task 1 首次 `run_pipeline` 打公网曾**超时一次**（重试即通）——遇 `Operation timed out (os error 60)` 先重试，别当成网络不可用。需要快速迭代管线形状时，可用本地 `duckle-runner --pipeline <abs.json> --duckdb <abs duckdb>` 直跑（同一引擎，省 MCP 往返）。
 - **64188 令牌**：本地 `~/.zshrc` 有 `LEMON_TOKEN_64188`（已验可用：`company_id=64188`、门店 129 家）。**生产侧的 64188 令牌需另行落进 openship job secrets**（按公司规矩，密钥值不经 agent 转手）。
 - **门店清单口径（2026-09-25 拍板）**：3120 = `1..270 \ {99} ∪ {888}`（**269 家**，99=熊喵中央店故意排除）；**64188 = 全要 129 家**（`{1..128} ∪ {999}`，**含 99**）——**两账套口径不同，别互相照抄**。
 - **Task 5 拆成 5a/5b（2026-09-25 拍板）**：仓内代码（wrapper 的 `dim` 模式 + lock）走 PR；**投递 / 注册 job / 真机验留到合并之后**——投递按全 SHA 取件，分支 SHA 投上去等于生产跑未合并代码。
+- **⭐ `dim` 面没有 drift 通道（登记为后续项，本轮不泛化）**：本计划 Architecture 首句把机器面列成
+  `node.data.schema` + `qa.contract` + **`drift`** 三件，但**两张维度管线只落了前两件**——
+  wrapper 的 `drift` 模式与**零售**管线硬耦合（S1 形状），本分支没有为维度面接线。
+  ⇒ **泛化 drift = 行为改动**，不属 S2-a 的收尾面（本轮只做文档/注释修复）⇒ **显式登记为后续项**：
+  归 **S2-b** 或单独一单（建议同时在 issue **#214** 留一条评论挂住它）。在那之前，别把
+  「`qa.contract` 绿」读成「维度面的列漂移也被守住了」。
 - **承载 issue：#214**。`dim_customer` / `dim_date` / 四事实 / 口径五条 / 对账 `diff=0` 属 **S2-b**，另开 issue 与计划。
 
 ## Self-Review（写完自查）

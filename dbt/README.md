@@ -19,6 +19,8 @@ dbt/
 │   ├── sources.yml            落地声明（**不是读路径**，见 §2）
 │   ├── schema.yml             列描述 + dbt tests
 │   ├── stg_lemeng_retail_order_line.sql   **新湖（现行）**：S1 换源后的零售 staging
+│   ├── stg_lemeng_branch.sql             门店维（**全量快照**，S2-a 新增）——列全集见 §8/§9
+│   ├── stg_lemeng_item.sql               商品维（**全量快照**，S2-a 新增）——列全集见 §8/§9
 │   └── stg_lemeng_retail_detail.sql       旧湖（**双轨期保留，待 S4 删**）——取列形态在本栈报错，
 │                                          故裸 `dbt run` 会因它红（见 §3 第 1 行、§9 第 6 条）
 ├── models/common/marts/       ④ 建模：口径只在这里定义一次
@@ -153,7 +155,7 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
 | 同域不同日列数不等（46 vs 43） | **实证** | 坑 #2（同上） |
 | `read_parquet` 读得通对象存储 + 自定义 endpoint / path-style 的建密钥函数支持 | **实证** | spec §9.4 / WeKnora 两条条目 |
 | 账套在**路径**里（`lemeng/retail_detail/<账套>/…`） | **实证** | handbook §2 + §4 欠账 |
-| **列全集** | **分裂两档**（2026-09-25 订正） | **新湖** `stg_lemeng_retail_order_line` = 契约 18 列、**实证**（2026-09-24 真机 `dbt run` 落 19,678 行）；**旧湖** `stg_lemeng_retail_detail` 的列全集仍**暂定**（该文件从未跑过、待 S4 删） |
+| **列全集** | **分裂三档**（2026-09-25 订正） | **新湖零售** `stg_lemeng_retail_order_line` = 契约 18 列、**实证**（2026-09-24 真机 `dbt run` 落 19,678 行）；**两张维度 staging** = `stg_lemeng_branch` 16 列 / `stg_lemeng_item` 108 列，**契约钉死 + 静态门禁绿，未在真库跑过**（见 §9 第 7 条）；**旧湖** `stg_lemeng_retail_detail` 的列全集仍**暂定**（该文件从未跑过、待 S4 删） |
 | **`order_no`**（订单数指标的唯一依赖列） | **列存在已证 / 语义未证** | **已证** = 新湖契约列**存在且非空**（`nullable=false` + 管线 `qa.contract` 非空闸 + 真机 `not_null_…_order_no` 过，列名与类型合契约）；**未证** = 「该列**就是业务意义上的单号**」与 `count(distinct order_no)` 的**去重语义**（两者都属**口径转正**，S5）。⚠️ 别把「列存在且非空」读成「口径已确认」；核不到就**删掉该指标声明**，不换近似口径 |
 | **账套取值方式** | **新湖实证 / 旧湖暂定** | 新湖 = **路径解析进列**（hive 分区键 `system_book=<账套>/` 被 read_parquet 推断成列，真机 `::varchar` 定型通过）；`account_book` var 只用于**拼读路径**、不灌数据。旧湖（双轨期）仍只能 var 供值 |
 | **跨列集分组的读法**（§6 的目标形态） | **暂定 → T6 实测** | 分组形参是否透传未知 |
@@ -193,6 +195,11 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
    = `PASS=14`（2026-09-24 数据面，证据见 `.superpowers/…/task-9-report.md` §5）。
    ⇒ **跑 dbt 一律带 `--select`**，别把「静态门禁绿」读成「裸 `dbt run` 绿」；S4 删掉旧湖文件后这条消失
    （**S4 可考虑直接删**）。
+7. **两张维度 staging 与两条维度唯一性断言从未执行过**：`stg_lemeng_branch` / `stg_lemeng_item` 与
+   `dbt/tests/assert_stg_lemeng_branch_key_unique.sql` / `assert_stg_lemeng_item_key_unique.sql`
+   都是 S2-a 新加的，**没在真库上跑过**（本机无 dbt / pg_duckdb），当前只有「契约钉死 + 静态门禁绿」
+   这一档证据（§8「列全集」行）。真机验收归 **S2-a Task 5b**（投递 + 注册 job + 真机回读那段）——
+   在那之前，别把静态门禁绿读成「维度面跑过了」（这条正是本节存在的意义）。
 
 ## 10 多租户跑法（P3 / T11：每租户一个 schema）
 

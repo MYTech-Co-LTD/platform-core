@@ -1,0 +1,568 @@
+{
+  "name": "lemeng.branch",
+  "nodes": [
+    {
+      "id": "p1",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page 1",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.user.ai.branch.find",
+          "method": "POST",
+          "body": "{\"page_number\": 1, \"page_size\": 200}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result/content",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "code",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "pinyin",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "enable",
+            "type": "bool"
+          },
+          {
+            "name": "region_id",
+            "type": "int64"
+          },
+          {
+            "name": "province",
+            "type": "string"
+          },
+          {
+            "name": "city",
+            "type": "string"
+          },
+          {
+            "name": "district",
+            "type": "string"
+          },
+          {
+            "name": "contact",
+            "type": "string"
+          },
+          {
+            "name": "phone",
+            "type": "string"
+          },
+          {
+            "name": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p2",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 120
+      },
+      "data": {
+        "label": "page 2",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.user.ai.branch.find",
+          "method": "POST",
+          "body": "{\"page_number\": 2, \"page_size\": 200}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result/content",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "code",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "pinyin",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "enable",
+            "type": "bool"
+          },
+          {
+            "name": "region_id",
+            "type": "int64"
+          },
+          {
+            "name": "province",
+            "type": "string"
+          },
+          {
+            "name": "city",
+            "type": "string"
+          },
+          {
+            "name": "district",
+            "type": "string"
+          },
+          {
+            "name": "contact",
+            "type": "string"
+          },
+          {
+            "name": "phone",
+            "type": "string"
+          },
+          {
+            "name": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p3",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 240
+      },
+      "data": {
+        "label": "page 3",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.user.ai.branch.find",
+          "method": "POST",
+          "body": "{\"page_number\": 3, \"page_size\": 200}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result/content",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "code",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "pinyin",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "enable",
+            "type": "bool"
+          },
+          {
+            "name": "region_id",
+            "type": "int64"
+          },
+          {
+            "name": "province",
+            "type": "string"
+          },
+          {
+            "name": "city",
+            "type": "string"
+          },
+          {
+            "name": "district",
+            "type": "string"
+          },
+          {
+            "name": "contact",
+            "type": "string"
+          },
+          {
+            "name": "phone",
+            "type": "string"
+          },
+          {
+            "name": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p4",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 360
+      },
+      "data": {
+        "label": "page 4",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.user.ai.branch.find",
+          "method": "POST",
+          "body": "{\"page_number\": 4, \"page_size\": 200}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result/content",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "code",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "pinyin",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "enable",
+            "type": "bool"
+          },
+          {
+            "name": "region_id",
+            "type": "int64"
+          },
+          {
+            "name": "province",
+            "type": "string"
+          },
+          {
+            "name": "city",
+            "type": "string"
+          },
+          {
+            "name": "district",
+            "type": "string"
+          },
+          {
+            "name": "contact",
+            "type": "string"
+          },
+          {
+            "name": "phone",
+            "type": "string"
+          },
+          {
+            "name": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p5",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 480
+      },
+      "data": {
+        "label": "page 5",
+        "componentId": "src.rest",
+        "properties": {
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.user.ai.branch.find",
+          "method": "POST",
+          "body": "{\"page_number\": 5, \"page_size\": 200}",
+          "headers": {
+            "Authorization": "Bearer ${ENV:LEMENG_TOKEN}"
+          },
+          "responsePath": "/result/content",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "code",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "pinyin",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "enable",
+            "type": "bool"
+          },
+          {
+            "name": "region_id",
+            "type": "int64"
+          },
+          {
+            "name": "province",
+            "type": "string"
+          },
+          {
+            "name": "city",
+            "type": "string"
+          },
+          {
+            "name": "district",
+            "type": "string"
+          },
+          {
+            "name": "contact",
+            "type": "string"
+          },
+          {
+            "name": "phone",
+            "type": "string"
+          },
+          {
+            "name": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "guard",
+      "type": "transform",
+      "position": {
+        "x": 260,
+        "y": 480
+      },
+      "data": {
+        "label": "last-page guard (capacity truncation)",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "lemeng dim_branch 容量截断：第 5 页（哨兵页）仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK}）⇒ 门店数已击穿真阈值 800 家（算式：真阈值 = 非哨兵页数 4 × page_size 200 = 800，哨兵页那一页不计容量；口径同 spec §6 的 200×12 页 ⇒ 阈值 11×200 = 2200，不是 2400）。处置：加数据页节点 → 同步改本算式与 p5 的 page_number → 重生成 data-plane lock → 走 PR"
+        }
+      }
+    },
+    {
+      "id": "merge",
+      "type": "transform",
+      "position": {
+        "x": 520,
+        "y": 420
+      },
+      "data": {
+        "label": "merge pages 1-5",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "shape",
+      "type": "transform",
+      "position": {
+        "x": 780,
+        "y": 420
+      },
+      "data": {
+        "label": "注入 batch_id/system_book/snapshot + 定型到契约列",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  '${ENV:BATCH_ID}' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${ENV:SNAPSHOT}' AS DATE) AS snapshot,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.code AS VARCHAR) AS code,\n  CAST(o.name AS VARCHAR) AS name,\n  CAST(o.pinyin AS VARCHAR) AS pinyin,\n  CAST(o.type AS VARCHAR) AS type,\n  CAST(o.enable AS BOOLEAN) AS enable,\n  CAST(o.region_id AS INTEGER) AS region_id,\n  CAST(o.province AS VARCHAR) AS province,\n  CAST(o.city AS VARCHAR) AS city,\n  CAST(o.district AS VARCHAR) AS district,\n  CAST(o.contact AS VARCHAR) AS contact,\n  CAST(o.phone AS VARCHAR) AS phone,\n  CAST(o.address AS VARCHAR) AS address\nFROM input o"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "transform",
+      "position": {
+        "x": 1040,
+        "y": 420
+      },
+      "data": {
+        "label": "contract gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "snapshot": "not_null",
+            "branch_num": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 1300,
+        "y": 420
+      },
+      "data": {
+        "label": "dim_branch all.parquet",
+        "componentId": "snk.minio",
+        "properties": {
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/dim_branch/system_book=${ENV:SYSTEM_BOOK}/snapshot=${ENV:SNAPSHOT}/all.parquet",
+          "endpoint": "${ENV:ZOS_ENDPOINT}",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "accessKey": "${ENV:ZOS_ACCESS_KEY}",
+          "secretKey": "${ENV:ZOS_SECRET_KEY}",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_p1",
+      "source": "p1",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p2",
+      "source": "p2",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_2",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p3",
+      "source": "p3",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_3",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p4",
+      "source": "p4",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_4",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p5",
+      "source": "p5",
+      "target": "guard",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_guard",
+      "source": "guard",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_5",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_merge",
+      "source": "merge",
+      "target": "shape",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_shape",
+      "source": "shape",
+      "target": "gate",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_sink",
+      "source": "gate",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ],
+  "version": 1,
+  "id": "p_5179_1"
+}

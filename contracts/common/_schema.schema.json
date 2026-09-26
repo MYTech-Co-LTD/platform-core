@@ -3,7 +3,7 @@
   "$id": "https://raw.githubusercontent.com/MYTech-Co-Ltd/platform-core/main/contracts/common/_schema.schema.json",
   "title": "采集契约（落盘 schema 声明）—— 契约本身的元 schema",
   "description": "校验「一个采集契约文档」的形状。契约 = 落盘即定型的机器面：声明新数据源落 parquet 时的表身份、列名与类型、可空性、分区键、批次标记与 owner。落盘前按契约校验，类型不符即失败，不静默降级成 VARCHAR。适用面 = 新数据源接入（存量乐檬 parquet 不重落盘、由 dbt staging 手写 cast 补，见 docs/superpowers/specs/2026-09-21-data-platform-layered-design.md §10 拍板记录·分叉 1）。形态与约定见 contracts/README.md。",
-  "$comment": "本 schema 只覆盖「单文档内部」的约束。以下六条是**它表达不了**的（JSON Schema 没有跨字段引用能力），属校验器要补的规则——不要以为过了本 schema 就算合规，见 contracts/README.md §4：① partitionBy 里的每个键必须是 columns 里出现过的列名；② layout.prefix 必须等于 domain + '/' + table；③ columns 的 name 不得重复；④ batch.markerColumn 必须是 columns 里出现过的列名；⑤ decimal 的 scale 必须 ≤ precision；⑥ 分区键列不得声明 nullable = true。",
+  "$comment": "本 schema 只覆盖「单文档内部」的约束。以下六条是**它表达不了**的（JSON Schema 没有跨字段引用能力），属校验器要补的规则——不要以为过了本 schema 就算合规，见 contracts/README.md §4：① partitionBy 里的每个键必须是 columns 里出现过的列名；② layout.prefix 必须等于 domain + '/' + table；③ columns 的 name 不得重复；④ batch.markerColumn 必须是 columns 里出现过的列名；⑤ decimal 的 scale 必须 ≤ precision；⑥ 分区键列不得声明 nullable = true。⚠️ 其中规则 ② 有一条**本仓已知例外**（只登记口径，校验器不必为它特判）：按 spec §5 湖布局，**维度面**（`contracts/common/lemeng.branch.json` / `lemeng.item.json`）落湖一律带 `dim_` 段 ⇒ `layout.prefix`（`lemeng/dim_branch`）**不等于** `domain/table`（`lemeng/branch`），规则 ② 在该面**不适用**；两份契约的 description 都登记了「这不是笔误」。别把那个前缀改成 `lemeng/branch`。",
   "type": "object",
   "additionalProperties": false,
   "required": [

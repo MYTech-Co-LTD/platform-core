@@ -5,6 +5,7 @@
 #   sh run-retail-day.sh probe                     # 环境/桶/容器/token 闸 体检（只打印长度与状态码）
 #   sh run-retail-day.sh window 07 [suffix]        # 单时窗
 #   sh run-retail-day.sh windows                   # 昨日 24 时窗全量（逐窗尽力采；失败窗登记后继续，末尾统一判红）
+#   sh run-retail-day.sh dim                       # 维度快照（DIM_FACE=branch|item，双账套全量）
 #   sh run-retail-day.sh listing                   # 当日对象清单（bizday 前缀；断言：非空 + 未截断 + 无 ${ENV 字面量）
 #   sh run-retail-day.sh rb "<duckdb SQL>"         # 容器内 duckdb httpfs 回读（值由容器 env 展开）
 #   sh run-retail-day.sh idem3 03                  # 幂等强判（同 batch_id 字节一致 + 换 batch_id 因果对照）
@@ -27,12 +28,24 @@
 #            连续 `WINDOWS_MAX_CONSEC` 窗失败 ⇒ `WINDOWS_ABORT` 中止（网关不可用时不空转撞超时）。
 #   identity：凭据/清单与账套错配、或 whoami 重试 3 次仍不可达 ⇒ 非零。**身份未证绝不写湖**
 #             （`windows` / `window` 在开跑前自证；见 identity_assert 的注释说为什么必须有）。
+#   dim：快照日不可用（`SNAPSHOT_DERIVE_FAILED:`）/ DIM_FACE 非法（`DIM_FACE_INVALID:`）/
+#        启动自证未过（`DIM_FAILED`）/ 管线非零退出 ⇒ 非 0。
+#        ⚠️ `OPS_ROWS_UNPARSED:`（sink 行取不到）**不属于**上面这一档——它只告警、**不改退出码**
+#        （它是「指标缺失」的可见处，不是「本次采集失败」；别把它读成判红条件）。
+#        维度面分区是 **`snapshot=`**，**不消费 BIZDAY**——故它**不在**上面那张
+#        「营业日不可用即硬失败」的名单里（营业日脏不该拦住维度快照）；反之 `dim` 也不校验 BIZDAY。
 #   已退役模式（`idem`）恒 exit 2，不参与任何判断。
 #
 # 依赖 env: LEMENG_TOKEN / DUCKLE_TOKEN / ZOS_BUCKET / ZOS_ENDPOINT / ZOS_REGION /
 #           ZOS_ACCESS_KEY / ZOS_SECRET_KEY / BRANCH_NUMS / SYSTEM_BOOK
 #           BIZDAY 不传时按 **Asia/Shanghai 日历日的昨天** 推（显式钉 TZ，不继承系统 TZ——
 #           数据面机系统 TZ 实测 CST，但 openship cron 实测按 UTC 解释；见 task-10-report.md「时区实测」）。
+#           DIM_FACE / SNAPSHOT —— **仅 `dim` 模式**。DIM_FACE ∈ branch|item（选哪张维度管线）；
+#           SNAPSHOT 不传时按 **Asia/Shanghai 日历日的今天** 推（同样显式钉 TZ——维度是「此刻的
+#           全量」，分区日必须由 TZ 决定而不是由运行环境偶然决定）。SNAPSHOT 也可显式传入以重跑/
+#           补跑某一天的快照（与 BIZDAY 同一形状：传入值同样要过 YYYY-MM-DD 断言）。
+#           BRANCH_NUMS 只是**自证门**在 wrapper 自己的 shell 里读（配置门店 ⊆ 账套可见门店）；
+#           维度管线不做门店扇出（快照是全账套的），故**不往容器里传**。
 # 可选 env: LEMENG_LIST_MAX_KEYS —— 列举单页上限，默认 1000（= S3 ListObjectsV2 单页硬上限，安全值）。
 #           只用于测试时临时给小值强制触发「截断即判红」；默认值不得为可测而放小。
 #           OPS_SINK_ENV —— _ops 投递通道凭据文件，默认 /etc/openobserve-ingest.env（OO_BASE/OO_ORG/OO_AUTH）。
@@ -48,6 +61,8 @@
 # 失败字面量（可 grep）：WINDOWS_FAILED hours:（末尾汇总，非零）/ WINDOWS_ABORT（连续失败中止）/
 #           WINDOW_FAILED hour=（单窗失败，仍继续）/ WINDOWS_IDENTITY_FAILED（自证未过）/
 #           BIZDAY_DERIVE_FAILED:（营业日不可用，exit 3）/ OPS_ROWS_UNPARSED: /
+#           DIM_FAILED（dim 自证未过）/ DIM_FACE_INVALID:（DIM_FACE 非 branch|item，exit 2）/
+#           SNAPSHOT_DERIVE_FAILED:（快照日不可用，exit 3）/
 #           OPS_SINK=DISABLED|FAILED / LISTING_FAILED: / IDEM_RETIRED: / DRIFT_VERDICT=VACUOUS / ASSERT_FAIL:
 set -u
 REPO=${REPO:-/opt/platform-core-data/platform-core}
@@ -75,6 +90,7 @@ case "$BIZDAY" in
   *)
     # 只在「真要写湖」的模式上硬失败：usage / idem / probe / diag / envfile 不需要营业日，
     # 保持既有退出码（idem 与未知模式 exit 2、usage exit 2）逐字不变。
+    # `dim` **故意不在本名单**：维度面分区是 snapshot=，不消费 BIZDAY（脏 BIZDAY 不该拦住快照）；
     case " window windows listing agg branches rb idem3 drift " in
       *" ${1:-} "*)
         echo "BIZDAY_DERIVE_FAILED: 营业日不可用（TZ=Asia/Shanghai date 推导失败，或传入值非 YYYY-MM-DD：'${BIZDAY}'）——不确定营业日就绝不写湖，判红" >&2
@@ -235,6 +251,16 @@ ops_ship() { # $1=一行 _ops JSON → 投递；**任何情况下都返回 0**�
 ops_emit() { # $1=hour $2=rows(number|null) $3=status → stdout 一行 + 投递
   j=$(printf '{"ts":"%s","job":"retail-day","system_book":"%s","bizday":"%s","hour":"%s","rows":%s,"status":"%s"}' \
       "$(date -u +%FT%TZ)" "$SYSTEM_BOOK" "$BIZDAY" "$1" "$2" "$3")
+  printf '%s\n' "$j"
+  ops_ship "$j"
+}
+
+ops_emit_dim() { # $1=face $2=snapshot $3=rows(number|null) $4=status → stdout 一行 + 投递
+  # 与 ops_emit **并列**而不是把它参数化：上面那条路已被 `window` 在用，改签名等于给既有观测面
+  # 引入回归风险（而这里要加的字段——`face`——只对维度面有意义）。
+  # `face` 不可省：两条维度线同一天各跑一次，只凭 job 名/时间在观测面上分不开 branch 与 item。
+  j=$(printf '{"ts":"%s","job":"dim","system_book":"%s","snapshot":"%s","face":"%s","rows":%s,"status":"%s"}' \
+      "$(date -u +%FT%TZ)" "$SYSTEM_BOOK" "$2" "$1" "$3" "$4")
   printf '%s\n' "$j"
   ops_ship "$j"
 }
@@ -427,6 +453,68 @@ windows)
   fi
   echo "WINDOWS_ALL_OK 24/24 windows"
   ;;
+dim)
+  # 维度快照（spec §5 湖布局）：一次拉全账套的门店维 / 商品维，落 `snapshot=<日期>` 分区。
+  # 本分支与 window **同构**（同 `$COMPOSE run --rm` + 一串 -e + 解析 status/sink + 发 _ops + 失败非零），
+  # 只把「时窗参数」（BIZDAY/HOUR/HOUR_FROM/HOUR_TO）换成「快照参数」（SNAPSHOT）——读一份就懂另一份。
+  # 容量哨兵在管线**内部**（`ctl.die` 的 has-rows：branch 第 5 页 / item 第 150 页仍非空即自行中止）。
+  # ⚠️ 哨兵**至今从未触发过**（Task 2/3 的采样与全量跑里哨兵页均为空）⇒「命中时长什么样」**没有实测案例**，
+  # 本分支**不替它预设形状、也不另造一套判据**：沿用 window 的判据——**只看管线退出码**（本分支末尾
+  # `rc` 非 0 即红）；`status` 只进 `_ops` 的观测面，**不参与 gating**。这正是复用 window 那条判定链的意义。
+  # 真机首次命中时回来把本注释订正成实测形状（别照抄想象）。
+  case "${DIM_FACE:-}" in
+    branch|item) ;;
+    *)
+      echo "DIM_FACE_INVALID: DIM_FACE='${DIM_FACE:-}'（应为 branch|item）——脸别错：错了要么读到不存在的管线，要么把快照写进错的分区，判红" >&2
+      exit 2
+      ;;
+  esac
+  # 快照日 = Asia/Shanghai 日历日的**今天**（维度是「此刻的全量」，不是某个营业日）。
+  # **显式钉 TZ，不继承系统 TZ**——理由同 BIZDAY：数据面机系统 TZ 实测 CST，但 openship cron 按 UTC
+  # 解释，继承等于让偶然决定分区名。传入值同样要过形状断言（空 SNAPSHOT 会把快照写进 `snapshot=/`，
+  # 那是谁都不会再读的位置——这是采集侧失败，允许硬失败，退出码同 BIZDAY_DERIVE_FAILED）。
+  SNAPSHOT=${SNAPSHOT:-}
+  [ -n "$SNAPSHOT" ] || SNAPSHOT=$(TZ=Asia/Shanghai date +%F 2>/dev/null) || SNAPSHOT=''
+  case "$SNAPSHOT" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *)
+      echo "SNAPSHOT_DERIVE_FAILED: 快照日不可用（TZ=Asia/Shanghai date 推导失败，或传入值非 YYYY-MM-DD：'${SNAPSHOT}'）——不确定快照日就绝不写湖，判红" >&2
+      exit 3
+      ;;
+  esac
+  # 启动自证（#205）与 window 同门：**身份未证绝不写湖**。维度面尤其要证——快照是**全账套**的，
+  # 账套错配不会像零售那样表现为「某店 0 行」，而是整张维表落进错的 system_book 分区且行数正常。
+  # IDENTITY_CHECKED 的 export 语义同 windows 分支：本模式将来若被某个父进程包裹调用，
+  # 未导出会让每个子进程各自重证一次。
+  if [ "${IDENTITY_CHECKED:-}" != "1" ]; then
+    sh "$0" identity
+    irc=$?
+    if [ "$irc" -ne 0 ]; then echo "DIM_FAILED identity 自证未过(exit=${irc})，拒绝写湖"; exit "$irc"; fi
+    IDENTITY_CHECKED=1; export IDENTITY_CHECKED
+  fi
+  DIM_PIPELINE="/pipelines/common/lemeng.${DIM_FACE}.json"
+  # batch_id 形状同 window（`<face>-<book>-<UTC 时刻>`）：同一账套的两张维度脸互不撞名。
+  # 仍留 BATCH_ID_OVERRIDE 口子（idem3 用同一手法钉固定 batch_id 做字节级对照）。
+  BATCH_ID="${BATCH_ID_OVERRIDE:-dim-${SYSTEM_BOOK}-${DIM_FACE}-$(date -u +%Y%m%dT%H%M%SZ)}"
+  out=$($COMPOSE run --rm \
+    -e LEMENG_TOKEN -e DUCKLE_TOKEN -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
+    -e SNAPSHOT="$SNAPSHOT" -e SYSTEM_BOOK -e BATCH_ID="$BATCH_ID" \
+    duckle --pipeline "$DIM_PIPELINE" --workspace /workspace --duckdb "$(duckdb_bin)" --log-dir "$LOG_ROOT/dim-${SNAPSHOT}-${DIM_FACE}" 2>&1)
+  rc=$?
+  status=$(printf '%s' "$out" | grep -oiE 'status[: ]+[a-z]+' | head -1)
+  printf 'dim face=%s snapshot=%s exit=%s %s\n' "$DIM_FACE" "$SNAPSHOT" "$rc" "${status:-status:NONE}"
+  printf '%s\n' "$out" | tail -14
+  # _ops 行**在判红之前**发出（失败也要在观测面留痕；rows=null 而非 0——0 会被误读成「跑了但没数据」）。
+  # 取不到 sink 行必须可观测：否则 `rows:null + status:ok` 与「确实没有 sink 行」不可区分（同 window）。
+  st=$(printf '%s' "$status" | sed 's/^status[: ]*//'); [ -n "$st" ] || st=NONE
+  if sink_rows=$(ops_sink_rows "$out"); then
+    ops_emit_dim "$DIM_FACE" "$SNAPSHOT" "$sink_rows" "$st"
+  else
+    printf 'OPS_ROWS_UNPARSED: 未能唯一定位本次 sink 节点行（改名/状态词变化/多条同形行）⇒ rows 记 null；此处即「指标缺失」的可见处\n'
+    ops_emit_dim "$DIM_FACE" "$SNAPSHOT" "null" "$st"
+  fi
+  if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+  ;;
 listing)
   # 先清陈旧产物：取清单失败时若留着上一次的 /tmp/ls.xml，下面的扫描会拿旧清单报绿
   rm -f /tmp/ls.xml
@@ -568,8 +656,9 @@ envfile)
   echo "envfile keys=$(cut -d= -f1 "$REPO/deploy/.env" | tr '\n' ',') mode=$(stat -c '%a' "$REPO/deploy/.env")"
   ;;
 *)
-  echo "usage: $0 <probe|identity|diag|window H [suffix]|windows|listing|agg|branches|rb SQL|idem3 H|drift [H]|envfile>"
+  echo "usage: $0 <probe|identity|diag|window H [suffix]|windows|dim|listing|agg|branches|rb SQL|idem3 H|drift [H]|envfile>"
   echo "exit: 0=全项通过；非 0=有验证项失败（含 0 检查/清单截断/清单为空/残留 \${ENV 字面量/NOT_FOUND/取清单失败）"
+  echo "dim: DIM_FACE=branch|item  sh $0 dim   （维度快照；SNAPSHOT 不传按上海今日）"
   echo "retired: 'idem' 恒 exit 2 —— 用 idem3（见文件头「已退役模式」）"
   exit 2
   ;;
