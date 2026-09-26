@@ -22,5 +22,17 @@
     "last_run_duration_ms": null,
     "last_run_error": null,
     "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.retail.windows.run",
+    "pipeline_id": "lemeng.retail.windows.run",
+    "name": "lemeng.retail.windows.run",
+    "enabled": true,
+    "kind": { "type": "cron", "expr": "30 2 * * *" },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
   }
 ]
