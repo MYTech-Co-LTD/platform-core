@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.36.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.35.1...v0.36.0) - 2026-09-26
+- 【新增】data-stack: 数据面主体列 org 落地 + dbt 侧门禁（Closes #257） ([#258](https://github.com/MYTech-Co-LTD/platform-core/pull/258), [42efc4b](https://github.com/MYTech-Co-LTD/platform-core/commit/42efc4be121ab1f4024e75eb977be1faaba988ca))
+
+
 ## [0.35.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.35.0...v0.35.1) - 2026-09-26
 - 【修复】data-stack: 新湖零售读路径改通配两账套（64188 落湖却进不了物化） ([#253](https://github.com/MYTech-Co-LTD/platform-core/pull/253), [c910cca](https://github.com/MYTech-Co-LTD/platform-core/commit/c910cca1e2db7c80be55e32e054a30dc170db775))
 
