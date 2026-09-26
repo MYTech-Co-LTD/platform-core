@@ -8,6 +8,11 @@
 
 **Tech Stack:** 纯 Markdown + 本仓既有的 shell/grep 核验；不引入新工具、不改任何脚本。
 
+> ⚠️ **本计划已执行完毕；之后又落了一轮「终审修复波」（commit `4bece28`）——下列各 Task 的 fenced 范文块
+> 是**当时的**生成文本，**未反向同步那 11 处终审订正**。⇒ 任何时候**以 `docs/data-platform-handbook.md` 的现状为准**，
+> 不要把本计划的范文块当最新正文照抄（照抄会把终审的 9 处订正回退掉）。
+> 本仓惯例：计划执行完后的事实订正，**只追加带日期的注记、不改写原文**（保留执行记录原貌）。
+
 ## Global Constraints
 
 - **设计源**：`docs/superpowers/specs/2026-09-26-collection-canon-design.md`（已获用户确认，commit `9460612`）。本计划实现它；冲突处以 spec 为准。
