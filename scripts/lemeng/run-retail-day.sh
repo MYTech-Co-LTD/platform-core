@@ -56,9 +56,12 @@
 #           取不到 sink 行 ⇒ 打印 OPS_ROWS_UNPARSED:（同族字面量），rows 记 null。
 #           WINDOWS_MAX_CONSEC —— 逐窗尽力采时「连续失败多少窗即中止」，默认 3（#209）。
 #           只用于测试时临时给小值强制触发 WINDOWS_ABORT；默认值不得为可测而放小。
+#           WINDOWS_RETRY_ATTEMPTS / WINDOWS_RETRY_BACKOFF —— 失败窗的**有界自动重试**（批次数 / 批间退避秒），
+#           默认 2 / 60。wrapper **自带**重试（不再依赖 job 的 retry）；设 ATTEMPTS=0 整关。只重试失败的窗，不整轮重跑。
 #           LEMENG_AGI_URL —— whoami 自证端点，默认 `https://cloud.nhsoft.cn/agi/mcp`（#205 启动自证用）。
 #           只用于换网关/本机演练；默认值即生产网关。
 # 失败字面量（可 grep）：WINDOWS_FAILED hours:（末尾汇总，非零）/ WINDOWS_ABORT（连续失败中止）/
+#           WINDOWS_RETRY hours:（重试批次开跑）/ WINDOWS_RETRY_OK（重试后补齐）/ WINDOWS_RETRY_FAILED（重试后仍缺）/
 #           WINDOW_FAILED hour=（单窗失败，仍继续）/ WINDOWS_IDENTITY_FAILED（自证未过）/
 #           BIZDAY_DERIVE_FAILED:（营业日不可用，exit 3）/ OPS_ROWS_UNPARSED: /
 #           DIM_FAILED（dim 自证未过）/ DIM_FACE_INVALID:（DIM_FACE 非 branch|item，exit 2）/
@@ -120,6 +123,13 @@ DAY_PREFIX="lemeng/retail_order_line/system_book%3D$SYSTEM_BOOK/bizday%3D$BIZDAY
 LIST_MAX_KEYS=${LEMENG_LIST_MAX_KEYS:-1000}
 # 逐窗尽力采（#209）：连续失败多少窗即判定网关不可用并停止续跑（避免空转 24 窗撞 job 超时 1h）。
 WINDOWS_MAX_CONSEC=${WINDOWS_MAX_CONSEC:-3}
+# 失败窗**自动重试**（wrapper 自带，不再依赖 job 的 retry）：批次数 + 批间退避秒数。
+# 为什么要自带：openship job 的 retry 是**外层**兜底；调度若交给 duckle console（薄管线）就**没有外层重试**
+#   ⇒ wrapper 必须自足，否则迁移即丢自愈（2026-09-26 实测：09-25 那次容量失败正是靠 job 的 retry 补回的）。
+# 压的是**瞬时**故障（网关 504 / 限流）；**治不了容量截断**（同数据量重试后照旧红，那是对的）。
+# 设 0 可整关（测试/诊断用）；默认值不得为可测而放小。
+WINDOWS_RETRY_ATTEMPTS=${WINDOWS_RETRY_ATTEMPTS:-2}
+WINDOWS_RETRY_BACKOFF=${WINDOWS_RETRY_BACKOFF:-60}
 RB_HELPER=$REPO/lemeng-readback.sh
 
 # 只实现本脚本**实际用到的那一种形态**：`run --rm [-e K[=V]]… [--entrypoint X] duckle <args>`。
@@ -421,6 +431,53 @@ except Exception as e:
   fi
   return 0
 }
+# ── 逐窗采集与失败重试（windows 模式用）────────────────────────────────────────────
+# 单一调用点：**一个窗怎么跑**只有这一处。抽出来既让重试能复用，也让测试能替换它（stub）而不复制实现。
+run_one_window() { # $1 = 小时（两位）
+  sh "$0" window "$1"
+}
+
+# 采一组指定的小时窗；失败的**登记到全局 `w_failed`**（调用方负责先清零要重试的那批）。
+# 连续失败达 `WINDOWS_MAX_CONSEC` 即中止（网关整体不可用时别空转）——**重试批次同样适用**。
+collect_windows() { # $1 = 空格分隔的小时列表
+  _cw_consec=0
+  for _cw_h in $1; do
+    if run_one_window "$_cw_h"; then
+      _cw_consec=0
+    else
+      _cw_rc=$?
+      w_failed="$w_failed $_cw_h"
+      _cw_consec=$((_cw_consec+1))
+      echo "WINDOW_FAILED hour=$_cw_h exit=${_cw_rc}（已登记，继续采后续窗）"
+      if [ "$_cw_consec" -ge "$WINDOWS_MAX_CONSEC" ]; then
+        echo "WINDOWS_ABORT 连续 $_cw_consec 窗失败 ⇒ 判定网关不可用，停止续跑"
+        break
+      fi
+    fi
+  done
+}
+
+# 对 `w_failed` 里的窗做**有界重试**：每轮只重试**当前仍失败**的那些（不整轮重跑——已成功的窗是覆盖写幂等的，重跑纯浪费）。
+# 全补齐 ⇒ `WINDOWS_RETRY_OK` 并返回 0；否则把仍失败的留在 `w_failed` 里返回 1（调用方照旧判红）。
+retry_failed_windows() {
+  _rw_att=0
+  while [ "$_rw_att" -lt "$WINDOWS_RETRY_ATTEMPTS" ] && [ -n "$w_failed" ]; do
+    _rw_att=$((_rw_att+1))
+    _rw_list="${w_failed# }"
+    echo "WINDOWS_RETRY attempt=$_rw_att/$WINDOWS_RETRY_ATTEMPTS hours:$_rw_list —— 退避 ${WINDOWS_RETRY_BACKOFF}s 后只重试这些窗"
+    if [ "$WINDOWS_RETRY_BACKOFF" -gt 0 ] 2>/dev/null; then sleep "$WINDOWS_RETRY_BACKOFF"; fi
+    w_failed=""
+    collect_windows "$_rw_list"
+  done
+  if [ -n "$w_failed" ]; then
+    # 只在**真的重试过**时才打这个字面量：ATTEMPTS=0（整关）不是「重试失败」。
+    if [ "$_rw_att" -gt 0 ]; then echo "WINDOWS_RETRY_FAILED hours:${w_failed# } —— 已重试 $_rw_att 轮仍未补齐"; fi
+    return 1
+  fi
+  echo "WINDOWS_RETRY_OK 重试 $_rw_att 轮后全部补齐"
+  return 0
+}
+
 # EXIT trap：只在非零退出时告警；**保留原退出码**（别把判红变成绿）
 trap '_rc=$?; if [ "$_rc" -ne 0 ]; then notify_fail "$_rc"; fi; exit "$_rc"' EXIT
 
@@ -508,25 +565,12 @@ windows)
     if [ "$irc" -ne 0 ]; then echo "WINDOWS_IDENTITY_FAILED 自证未过(exit=$irc)，拒绝写湖"; exit "$irc"; fi
     IDENTITY_CHECKED=1; export IDENTITY_CHECKED
   fi
-  w_failed=""; w_consec=0
-  for H in $(seq -w 0 23); do
-    if sh "$0" window "$H"; then
-      w_consec=0
-    else
-      wrc=$?
-      w_failed="$w_failed $H"
-      w_consec=$((w_consec+1))
-      # ⚠️ `${wrc}` 的花括号是必须的：`$wrc` 紧跟全角 `（` 时，本机 /bin/sh（bash 3.2）会把一个
-      # 字节吃进变量名 ⇒ `wrc<乱码>: unbound variable`（#208 在 AGI_URL 上已踩过同一个坑、同一条路径）。
-      echo "WINDOW_FAILED hour=$H exit=${wrc}（已登记，继续采后续窗）"
-      if [ "$w_consec" -ge "$WINDOWS_MAX_CONSEC" ]; then
-        echo "WINDOWS_ABORT 连续 $w_consec 窗失败 ⇒ 判定网关不可用，停止续跑"
-        break
-      fi
-    fi
-  done
+  w_failed=""
+  collect_windows "$(seq -w 0 23)"
+  # 有失败就先**自己在 wrapper 里重试**（见常量块注释：调度交给 console 后没有外层重试）。
+  if [ -n "$w_failed" ]; then retry_failed_windows || :; fi
   if [ -n "$w_failed" ]; then
-    echo "WINDOWS_FAILED hours:${w_failed# } —— 共 $(printf '%s' "$w_failed" | wc -w | tr -d ' ') 窗未采（其余窗已采；job 判红，等 retry 或人工重跑）"
+    echo "WINDOWS_FAILED hours:${w_failed# } —— 共 $(printf '%s' "$w_failed" | wc -w | tr -d ' ') 窗未采（其余窗已采；已重试 ${WINDOWS_RETRY_ATTEMPTS} 轮，判红）"
     exit 1
   fi
   echo "WINDOWS_ALL_OK 24/24 windows"

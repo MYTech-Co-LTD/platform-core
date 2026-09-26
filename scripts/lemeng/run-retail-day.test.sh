@@ -107,7 +107,55 @@ out=$(LEMENG_NOTIFY=1 sh "$SRC" nosuchmode 2>&1 >/dev/null); rc=$?
 ok "$rc" "2"
 case "$out" in *NOTIFY_SKIPPED*) pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 缺 URL 时应打 NOTIFY_SKIPPED";; esac
 
+# ── 失败窗重试（collect_windows / retry_failed_windows，2026-09-26 新增）──────────
+# 抽**真函数**测；把 `run_one_window`（唯一调用点）换成 stub 来控制每窗成败——不复制实现。
+COLLECT=$(awk '/^collect_windows\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$SRC")
+RETRY=$(awk '/^retry_failed_windows\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$SRC")
+if [ -n "$COLLECT" ] && [ -n "$RETRY" ]; then pass=$((pass+1)); else
+  fail=$((fail+1)); echo "  FAIL: 抽不到 collect_windows / retry_failed_windows（脚本结构变了？）"
+fi
+WINDOWS_MAX_CONSEC=99; WINDOWS_RETRY_ATTEMPTS=2; WINDOWS_RETRY_BACKOFF=0
+eval "$COLLECT"; eval "$RETRY"
+
+CNT=$(mktemp); OUT=$(mktemp)
+FAILSET=""
+# stub：在 FAILSET 里的 hour 返回非零；同时数调用次数（写文件，跨子 shell 也不丢）
+run_one_window() { echo "$1" >> "$CNT"; case " $FAILSET " in *" $1 "*) return 1;; *) return 0;; esac; }
+
+# D) 全成功 ⇒ w_failed 为空，且不重试
+: > "$CNT"; w_failed=""; collect_windows "01 02 03"
+ok "$w_failed" ""
+ok "$(wc -l < "$CNT" | tr -d ' ')" "3"
+
+# E) 首轮 2 窗失败 ⇒ 只重试这些窗，且补齐后清空 w_failed、打 WINDOWS_RETRY_OK
+FAILSET="02 03"; : > "$CNT"; w_failed=""; collect_windows "01 02 03"
+ok "$w_failed" " 02 03"
+ok "$(wc -l < "$CNT" | tr -d ' ')" "3"
+FAILSET=""            # 次轮网关恢复
+retry_failed_windows > "$OUT" 2>&1; rc=$?
+ok "$rc" "0"
+ok "$w_failed" ""
+ok "$(wc -l < "$CNT" | tr -d ' ')" "5"          # 3 首轮 + 2 重试（只重试失败的，不整轮重跑）
+grep -q 'WINDOWS_RETRY attempt=1/2 hours:02 03' "$OUT" && pass=$((pass+1)) || { fail=$((fail+1)); echo "  FAIL: 重试批次该只含失败窗并带 attempt 标记：$(head -c 120 "$OUT")"; }
+grep -q 'WINDOWS_RETRY_OK' "$OUT" && pass=$((pass+1)) || { fail=$((fail+1)); echo "  FAIL: 补齐后应打 WINDOWS_RETRY_OK"; }
+
+# F) 一直失败 ⇒ **有界**（不无限重试）+ WINDOWS_RETRY_FAILED + 返回 1
+FAILSET="07"; : > "$CNT"; w_failed=""; collect_windows "07"
+retry_failed_windows > "$OUT" 2>&1; rc=$?
+ok "$rc" "1"
+ok "$w_failed" " 07"
+ok "$(wc -l < "$CNT" | tr -d ' ')" "3"          # 1 首轮 + 2 重试批次（ATTEMPTS=2）⇒ 恰好 3 次，不多
+grep -q 'WINDOWS_RETRY_FAILED' "$OUT" && pass=$((pass+1)) || { fail=$((fail+1)); echo "  FAIL: 仍失败应打 WINDOWS_RETRY_FAILED"; }
+
+# G) ATTEMPTS=0 ⇒ 整关（一次都不重试）
+WINDOWS_RETRY_ATTEMPTS=0; FAILSET="08"; : > "$CNT"; w_failed=" 08"
+retry_failed_windows > "$OUT" 2>&1; rc=$?
+ok "$rc" "1"
+ok "$(wc -l < "$CNT" | tr -d ' ')" "0"
+WINDOWS_RETRY_ATTEMPTS=2
+rm -f "$CNT" "$OUT"
+
 kill "$SRV" 2>/dev/null; rm -rf "$FAKE"
-echo "compose-shim+notify: pass=$pass fail=$fail"
+echo "compose-shim+notify+retry: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ] || exit 1
 echo "compose-shim: OK"
