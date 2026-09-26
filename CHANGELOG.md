@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.33.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.33.0...v0.33.1) - 2026-09-26
+- 【修复】lemeng: 告警客户端 curl→python3（演练实测：镜像里没有 curl，告警永远发不出去） ([#233](https://github.com/MYTech-Co-LTD/platform-core/pull/233), [ab39e4e](https://github.com/MYTech-Co-LTD/platform-core/commit/ab39e4e6188c4f054e7c9e2370aa253fcf3868fb))
+
+
 ## [0.33.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.32.0...v0.33.0) - 2026-09-26
 - 【新增】lemeng: 调度失败告警——接在 wrapper 的 EXIT trap（含「该发/不该发」的测试） ([#231](https://github.com/MYTech-Co-LTD/platform-core/pull/231), [cdfe240](https://github.com/MYTech-Co-LTD/platform-core/commit/cdfe240619138c816a4aa970b7dfd1664ac84940))
 
