@@ -53,7 +53,7 @@
 | **cron 按 UTC 解释** | 登记于 `06:54:22Z` → 触发于 `06:55:03Z`；容器 TZ 实测为 **UTC** |
 | **会重复触发**（不是只跑一次） | `last_run_at` 从 `06:57:03Z` 走到 `06:58:03Z`；serve 日志两条 `scheduled tick -> ok` |
 | 失败**如实入账** | 失败时 `last_run_status=error` + `last_run_error=<原因>`（不是静默绿） |
-| ⚠️ **`/api/schedules` 的 GET 不回运行状态** | 文件里已有 `last_run_at`，GET 却一直返回 `null` ⇒ **观测要读 `schedules.json` 或 serve 日志**，别信那个 GET |
+| ⚠️ **`/api/schedules` 的 GET 只回定义、不回运行状态** | 它返回**以 `pipeline_id` 为键的字典**（**不是数组**），每条字段是 `{id, enabled, cron, intervalSeconds, intervalMinutes, planId, timezone, exclude, misfire, catchup}`——**没有任何 `last_run_*`** ⇒ 观测要读 `schedules.json` 或 serve 日志，别信那个 GET。<br>✅ **但它适合自证「定义加载了没」**：GET 到的条目数与 seed 的一致即生效（2026-09-26 实测：零售条目 seed + 重启后即出现在 GET 里，并带上了 console 补的 `misfire`/`catchup`） |
 | `next_run_at` 对 cron 恒为 `null` | 不是故障（interval 形态才有） |
 
 ## 为什么「一账套一个 workspace」

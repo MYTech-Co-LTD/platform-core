@@ -397,13 +397,28 @@ sh /opt/lemeng-sync.sh <全SHA> --check    # 只比不写
 **一账套一个 console**：调度条目**带不了自己的 env**（实测：塞 `env/args/params` 会被静默丢弃）⇒
 一个 console 只有一套凭据 ⇒ 共用必然有一个拿到错 token，**且会静默采错数据**（不是报错）。
 
-### F.2 改了定义之后怎么让它生效（**两步都别漏**）
+### F.2 改了定义之后怎么让它生效
 
-1. **重新 seed**：把 `deploy/duckle/console/` 里的文件拷进该账套的 workspace 卷
-   （卷名 `<project>-lemeng-console-<账套>-ws`）；
-2. **重建 console 容器**：**文件 bind-mount 钉的是 inode**，原子替换（同步程序就是这么做的）后
-   运行中的容器**仍看到旧文件** ⇒ 必须重建才生效。同理 `/opt/lemeng-run.sh` 更新后也要重建。
-   （用 `serviceIds` **定向部署**；**别全量部署** —— 会重启 `pg_duckdb`。）
+**先分清改的是哪一类——三类的最小动作不一样**（2026-09-26 实测定分）：
+
+| 改了什么 | 最小动作 | 为什么 |
+|---|---|---|
+| **`schedules/` 或 `pipelines/` 的定义**（本节日常改动） | **seed + 重启容器** | 定义 seed 进的是**命名卷** `/workspace`（`<project>-lemeng-console-<账套>-ws`）——**不是 bind-mount** ⇒ 卷内容·重启即重新读取。**不必定向部署。** |
+| **bind-mount 进来的文件**：仓内 `duckle/`（挂 `/pipelines:ro`）、`/opt/lemeng-run.sh` | seed/同步 + **重建容器** | **bind-mount 钉的是 inode**，原子替换（同步程序就是这么做的）后运行中的容器**仍看到旧文件** ⇒ 只有重建才换。 |
+| **新增/改服务**（compose 服务集变了） | `post_projects_by_id_services_sync` → 按 `serviceIds` **定向部署** | 只重建点名的那几个；**别全量部署** —— 会重启 `pg_duckdb`。 |
+
+**第 1 类怎么自证它真读到了**（别只看「文件写进去了」——那不等于 console 读了）：带凭据打 console 自己的调度 API，看**已加载**的条目：
+
+```sh
+curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/schedules
+```
+
+它返回**以 `pipeline_id` 为键的字典**（不是数组）；条目数与 seed 的一致即算生效。
+⚠️ 该端点**只回定义、不回运行状态**——形状与用途见 `deploy/duckle/console/README.md`。
+
+> **2026-09-26 实测**：零售薄管线 + 第三条排班 seed 进卷后**只重启**（未定向部署），
+> `/api/schedules` 即列出三条，且 console 对新条目**补上了 `misfire` / `catchup` 默认值**
+> ——那是「它真的解析过该条目」的证据。
 
 ### F.3 排班与时区
 
