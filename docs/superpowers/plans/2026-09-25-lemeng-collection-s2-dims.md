@@ -158,7 +158,7 @@ Expected: exit 0
 
 > ⚠️ `responsePath` **不是** `/result`（照抄零售会错）。维度两端点的 `result` 是**分页信封对象** `{page_number,page_size,content:[…]}`，写 `/result` 只得到 **1 行信封**（列变成 `page_number,page_size,content`）。**别反向改回去**：零售 `posorder.find` 的 `result` 经实测**就是行数组**（`type(result)=='list'`）⇒ 零售那份 `/result` 是对的，两者**故意不同源**。依据见「计划外事实」。
 
-- 取数节点（**门店维页数的定稿口径**；本计划其余处出现的页数一律以此为准）：实测 **2 页就够装**（270 行 = 200+70），**但「2 页 + 1 哨兵」不足 3 页成案** —— 总 3 页的真阈值只有 `非哨兵页数 2 × 200 = 400` 家，而 3120 已有 **270** 家 ⇒ 只剩 **130** 家余量（≈48%）就被哨兵页拦住；页数硬编码、哨兵页是唯一防线，**击穿 = 当天该账套快照 fail-loud 中止（不丢数，但采不下来）**。这与商品维的取舍同源（那里把「余量 0.26% 的硬下限 125 页」直接判为不可用、改取 150 页）：**余量本身要留够**，故本面定稿 **写 5 页**（p1–p4 取数 + p5 哨兵）⇒ **真阈值 = 非哨兵页数 × 200 = 4×200 = 800 家**（不是 5×200=1000 —— 哨兵页那一页不算容量，口径同 spec §6 的 `200×12 页 ⇒ 阈值 11×200`）。64188(129)/3120(270) 都在 800 以内，余量 ≥530 家。**末页挂 `ctl.die` 哨兵**（`condition: "has-rows"`）。
+- 取数节点（**门店维页数的定稿口径**；本计划其余处出现的页数一律以此为准）：实测 **2 页就够装**（270 行 = 200+70），**但「2 页 + 1 哨兵」不足 3 页成案** —— 总 3 页的真阈值只有 `非哨兵页数 2 × 200 = 400` 家，而 3120 已有 **270** 家 ⇒ 只剩 **130** 家余量（占现有 270 家的 ≈48%、占 3 页阈值 400 的 32.5%）就被哨兵页拦住；页数硬编码、哨兵页是唯一防线，**击穿 = 当天该账套快照 fail-loud 中止（不丢数，但采不下来）**。这与商品维的取舍同源（那里把「余量 0.26% 的硬下限 125 页」直接判为不可用、改取 150 页）：**余量本身要留够**，故本面定稿 **写 5 页**（p1–p4 取数 + p5 哨兵）⇒ **真阈值 = 非哨兵页数 × 200 = 4×200 = 800 家**（不是 5×200=1000 —— 哨兵页那一页不算容量，口径同 spec §6 的 `200×12 页 ⇒ 阈值 11×200`）。64188(129)/3120(270) 都在 800 以内，余量 ≥530 家。**末页挂 `ctl.die` 哨兵**（`condition: "has-rows"`）。
 - `data.schema` 只声明用到的标量列（`branch_num: int64, code: string, name: string, pinyin: string, type: string, enable: bool, region_id: int64, province: string, city: string, district: string, contact: string, phone: string, address: string`）。
 - sink：`key` = `lemeng/dim_branch/system_book=${ENV:SYSTEM_BOOK}/snapshot=${ENV:SNAPSHOT}/all.parquet`，`mode: overwrite`，其余照抄零售 sink。
 - `code.sql` 必须注入三列：`'${ENV:BATCH_ID}' as batch_id`、`'${ENV:SYSTEM_BOOK}' as system_book`、`CAST('${ENV:SNAPSHOT}' AS DATE) as snapshot`。
@@ -173,7 +173,7 @@ Expected: `valid`
     config(materialized='table')
 }}
 -- stg_lemeng_branch.sql — 乐檬门店维 staging（新湖；一对一、只规范化不改义）
--- 分区键推断类型不合约 ⇒ 三列显式 cast；取列必须 `from read_parquet(...) r` 函数别名形态
+-- 分区键推断类型不合约 ⇒ 两列显式 cast（`system_book::varchar` / `snapshot::date`）；取列必须 `from read_parquet(...) r` 函数别名形态
 -- （CTE 形态在 pg_duckdb 上取列即报错，见 stg_lemeng_retail_order_line.sql 头注【二】）。
 select
   r['batch_id']              as batch_id,
@@ -380,7 +380,7 @@ Expected: 与 sink 行数一致；分区键 `system_book`（varchar）/ `snapsho
 - **duckle 引擎在本地桌面版**：`~/Library/Application Support/io.duckle.app/engines/`（MCP 已接）。`run_pipeline` 需要 `DUCKLE_DUCKDB_BIN`；`${ENV:...}` 取自 **MCP 进程的 env**，不在管线里写死。
 - **网关分页事实（2026-09-25 实测）**：`page_size` 上限 **200**（201 报 `每页条数不能超过200`）；响应**无 total** ⇒ 页空即止；**query 里的 `page_number` 被完全无视**（页码必须进 body）；`item.find` 不支持 `offset/limit`（返回 0 行）。
 - **⭐ `responsePath` 分域不同（2026-09-25 Task 1 实测，Task 2/3 照此写）**：维度两端点 `result` 是**分页信封对象** `{page_number,page_size,content:[…]}` ⇒ 指针必须写 **`/result/content`**（写 `/result` 只得 **1 行信封**，列变成 `page_number,page_size,content`）。**同族反例**：`posorder.find` 的 `result` **就是行数组**（实测 `type(result)=='list'`）⇒ 零售链路沿用 `/result` 是对的，**不要顺手去改 S1 的管线**。⚠️ 本计划 **Task 2 Step 3** 的节点形状**曾写** `responsePath: "/result"`（照抄 S1 而来）——**已就地订正为 `/result/content`**（见 `4c4791a`）；**S1 零售那份 `/result` 是对的，别反向改**。
-- **⭐ 扇出进 body：不成立（2026-09-25 Task 1 判别式实测）**：`urlTemplate` + `parentKeyColumn` 扇出**能**发 N 次请求（实测 2 个上游行 ⇒ 2 页 / 6 行；URL 里 `?pg={pg}` 确认已替换），但**逐行值送不进 body**——body 里**任何** `{…}`（含 `{pg}`、`{{pg}}`、乃至不存在的 `{zzz}`）都被引擎替换成一个**对象**，网关据此回 400 `Cannot deserialize value of type java.lang.Integer from Object value (token JsonToken.START_OBJECT)`；`${pg}` / `${ENV:…}` 在 body 里**一概不替换**（原样发出）。⇒ **Task 2/3 一律走「N 个显式 `src.rest` 页节点 + `ctl.merge`」**（门店维 2 页；商品维 **86 / 124 页**）。
+- **⭐ 扇出进 body：不成立（2026-09-25 Task 1 判别式实测）**：`urlTemplate` + `parentKeyColumn` 扇出**能**发 N 次请求（实测 2 个上游行 ⇒ 2 页 / 6 行；URL 里 `?pg={pg}` 确认已替换），但**逐行值送不进 body**——body 里**任何** `{…}`（含 `{pg}`、`{{pg}}`、乃至不存在的 `{zzz}`）都被引擎替换成一个**对象**，网关据此回 400 `Cannot deserialize value of type java.lang.Integer from Object value (token JsonToken.START_OBJECT)`；`${pg}` / `${ENV:…}` 在 body 里**一概不替换**（原样发出）。⇒ **Task 2/3 一律走「N 个显式 `src.rest` 页节点 + `ctl.merge`」**（**定稿页数**：门店维 5 页 = p1–p4 取数 + p5 哨兵；商品维 150 页 = p1–p149 取数 + p150 哨兵。实测**需要**的数据页数是 86 / 124 —— 那是量级，不是定稿页数，定稿口径见 Task 2 Step 3）。
 - **⭐ `src.inline` 不可用（2026-09-25 Task 1 实测）**：其 manifest **只建模了 `notes`**（无列/值字段），穷举 **14** 种属性形状（`columns:[{name,value}]`、`rows`、`values`、`rowCount`、`count`、`path`、放 `data` 层…）**全部 0 行 + 单列 NULL**。⇒ **别计划用 `src.inline`**；要造控制行就用 `src.csv`（本任务探针即用它）。
 - **⭐ 商品维量级按实测（2026-09-25 Task 1）**：行数 **3120=17,132 / 64188=24,736**（**不是**「两账套均 ≈1.9 万」，
   该基线只在 3120 成立：64188 的 `page_number=20000` 实测**返回 1 行**）⇒ `page_size=200` 需 **86 / 124** 个数据页
