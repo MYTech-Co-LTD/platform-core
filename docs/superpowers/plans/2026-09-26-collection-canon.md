@@ -528,7 +528,7 @@ git commit -m "docs(collection): 正典 §1.3 生命周期 SOP A→I + A 阶段�
 |---|---|---|---|
 | **自证** | 写后**回读对象存储**（行数 / 金额） | 上传 / 转换失败 | 过（19,678 行 / 合计 1,622,276.08；hour=17 窗 126,596.06 与既有基线**逐分吻合**） |
 | **幂等** | **同 `batch_id`** 重跑 ETag / Size **逐字节一致**；**换** `batch_id` 则 ETag 变（**by design**——`batch_id` 是载荷列） | 不确定性 / 重复累积 | 强判通过 |
-| **独立通道** | 预聚合端点 vs 明细聚合（dbt `audit_*` 独立复算） | 引擎 / 口径侧 bug | **未归零**：+17,250.91（**+1.15%**），149 家有值门店**全为正差**、无负差、无湖内独有店 ⇒ 指向**口径差**而非抽取缺失 |
+| **独立通道** | 预聚合端点（`branchindicator` / `itemsales`）vs 明细聚合；固化为 dbt `audit_*` 独立复算 | 引擎 / 口径侧 bug | **未归零**：+17,250.91（**+1.15%**），149 家有值门店**全为正差**、无负差、无湖内独有店 ⇒ 指向**口径差**而非抽取缺失。⚠️ 这个数是 **S1 湖内逐店对账**跑出来的，**不是** `audit_*` 的产出——后者是让它**可重复、进 CI** 的机制（S2 起） |
 | **跨系统** | 与旧平台同期关键指标一次性对比 | 口径 / 语义分歧 | 待回填后做 |
 
 > ⚠️ **「引擎说 ok」≠「对象真的到了」**：`k1 ok (3 rows)` 只是引擎自认为成功，**必须回读**才算数。
@@ -543,8 +543,8 @@ git commit -m "docs(collection): 正典 §1.3 生命周期 SOP A→I + A 阶段�
 ```markdown
 | 现象 | 先看哪 |
 |---|---|
-| 排班没触发 / console 本身有问题 | `docker logs <console>`——正常应是**四行**：console on / workspace / DuckDB / **sign-in required** |
-| 跑了但失败 | `schedules.json` 的 `last_run_status` / `last_run_error`；以及该账套卷里 `logs/*.csv`（薄管线的运行记录，含 wrapper 完整 stdout） |
+| 排班没触发 / console 本身有问题 | **经 openship MCP** 读该 console 服务的日志（数据面 project → 服务 → 日志端点）——正常应是**四行**：console on / workspace / DuckDB / **sign-in required**。⚠️ **别裸 SSH 上机敲 `docker logs`**（根本法则·唯一通道；console 是 openship 管的服务，日志走 MCP 拿得到） |
+| 跑了但失败 | `schedules.json` 的 `last_run_status` / `last_run_error`；以及该账套卷里 `logs/*.csv`（薄管线的运行记录，含 wrapper 完整 stdout）。⚠️ 这两样在**容器/卷里**，同样**经 MCP 的容器内执行端点**读，**不要上机** |
 | ⚠️ **`/api/schedules` 的 GET 不回运行状态** | 文件里已有 `last_run_at`，GET 却恒 `null` ⇒ **别信那个 GET**，读 `schedules.json` 或 serve 日志 |
 | 自证没过（`ASSERT_FAIL:` / `DIM_FAILED`） | **拒写湖是正确行为**（#205），**不是故障** |
 | 容量撞顶 | 末页哨兵命中 ⇒ **fail-loud 不丢数**。**余量按阈值算，不按「页数 × 容量」算**——哨兵页占一页，真实阈值 = (页数 − 1) × 页容量 |
@@ -968,3 +968,4 @@ gh pr checks --watch
 | 4 | 零售链路从 openship job 迁到 duckle console | 正在跑的生产链路，迁移需单独决定与观察（SOP §F.5） |
 | 5 | **修 `duckle/README.md` 的自相矛盾**：`§6`（该文件 137 行）写「未验**四项**」，而 `§7.4` 实际枚举**五项**（漏「非回环 `UNCLAIMED` 分支」） | 属那份下钻文档自身；spec 非目标明确「下钻文档正文不改」⇒ 本计划只**绕开**它（正典不枚举、只给指针），漂移本身另开一处修。<br>⚠️ **修它时必须同时重跑 `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`**——`duckle/` 是 `deploy/data-plane-manifest.txt` 的**递归条目**，`data-plane.lock` 钉着 `duckle/**` 每个文件的 sha256，`check-data-plane-lock` 在 `gates` 里跑 ⇒ 只改 README 不动 lock，**CI 直接红**。（这条是我在 Task 3 评审时才知道的，原先漏了。） |
 | 6 | **订正 `scripts/check-data-models.mjs:56` 与 `.github/workflows/ci.yml:92` 的同类过宽措辞**（都写「`duckle/` 与 `contracts/` 不在任何扫描面内」）。二者在各自上下文里（env 键覆盖 / 那一条守门的扫描根）仍准确，但按本正典 §1.2 已订正的口径（`duckle/**` **受投递完整性门禁**）读会偏宽 | Task 3 复评的 out-of-scope 观察；既存、非本计划引入。**注意 ci.yml 是 CI 定义本身，改它要另行评审** |
+| 7 | **`deploy/data-plane-deploy-sop.md` §F.4 有同一条越权指令**：它也让运维「`docker logs <console>`」，与**根本法则·唯一通道**（看日志也走 openship MCP）冲突。本计划 Task 5 已把**正典侧**改成走 MCP，**SOP 侧未动**（不在本计划文件面内）⇒ 两处口径**暂时不一致**，需另开一处把 SOP 也订正 | Task 5 复评的 out-of-scope 观察。**这是纪律级问题**（不是笔误）：正典若不动就成了「教人违规」，所以正典先改；SOP 跟上另议 |
