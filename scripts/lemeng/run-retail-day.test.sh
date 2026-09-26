@@ -61,3 +61,51 @@ rm -rf "$BIN"
 echo "compose-shim: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ] || exit 1
 echo "compose-shim: OK"
+
+# ── 失败告警（notify_fail + EXIT trap）─────────────────────────────────────────
+# 用**真脚本**跑一个必然失败的模式（未知模式 ⇒ exit 2，无副作用），配一个假的企微端点收请求。
+FAKE=$(mktemp -d)
+PORT=$(( (RANDOM % 20000) + 20000 ))
+python3 -c "
+import http.server
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get('content-length') or 0)
+        open('$FAKE/hit','a').write(self.rfile.read(n).decode('utf-8','replace')+'\n')
+        self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers()
+        self.wfile.write(b'{\"errcode\":0,\"errmsg\":\"ok\"}')
+    def log_message(self,*a): pass
+http.server.HTTPServer(('127.0.0.1',$PORT),H).serve_forever()
+" & SRV=$!
+sleep 1
+
+# A) 没设 LEMENG_NOTIFY ⇒ **不该**发告警（人工/诊断跑失败不刷群）
+rm -f "$FAKE/hit"
+sh "$SRC" nosuchmode >/dev/null 2>&1; rc=$?
+ok "$rc" "2"                                   # 退出码原样
+[ -f "$FAKE/hit" ] && { fail=$((fail+1)); echo "  FAIL: 未设 LEMENG_NOTIFY 却发了告警"; } || pass=$((pass+1))
+
+# B) 设了 LEMENG_NOTIFY=1 ⇒ **该**发，且退出码仍是 2（trap 不改判红）
+rm -f "$FAKE/hit"
+LEMENG_NOTIFY=1 WECOM_WEBHOOK_URL="http://127.0.0.1:$PORT/send" SYSTEM_BOOK=3120 DIM_FACE=branch \
+  sh "$SRC" nosuchmode >/dev/null 2>&1; rc=$?
+ok "$rc" "2"
+if [ -f "$FAKE/hit" ]; then
+  pass=$((pass+1))
+  case "$(cat "$FAKE/hit")" in
+    *'"msgtype":"text"'*'乐檬采集失败'*) pass=$((pass+1));;
+    *) fail=$((fail+1)); echo "  FAIL: 告警体形状不对: $(cat "$FAKE/hit" | head -c 80)";;
+  esac
+else
+  fail=$((fail+1)); echo "  FAIL: 设了 LEMENG_NOTIFY=1 却**没**发告警"
+fi
+
+# C) 设了 NOTIFY 但缺 WECOM_WEBHOOK_URL ⇒ 明确报「没发出去」，不静默
+out=$(LEMENG_NOTIFY=1 sh "$SRC" nosuchmode 2>&1 >/dev/null); rc=$?
+ok "$rc" "2"
+case "$out" in *NOTIFY_SKIPPED*) pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 缺 URL 时应打 NOTIFY_SKIPPED";; esac
+
+kill "$SRV" 2>/dev/null; rm -rf "$FAKE"
+echo "compose-shim+notify: pass=$pass fail=$fail"
+[ "$fail" -eq 0 ] || exit 1
+echo "compose-shim: OK"

@@ -28,7 +28,7 @@
         "componentId": "code.shell",
         "label": "run dim (branch)",
         "properties": {
-          "code": "LEMENG_IN_CONTAINER=1 DIM_FACE=branch sh /opt/lemeng-run.sh dim",
+          "code": "LEMENG_IN_CONTAINER=1 LEMENG_NOTIFY=1 DIM_FACE=branch sh /opt/lemeng-run.sh dim",
           "language": "bash"
         }
       },

@@ -386,6 +386,34 @@ identity_assert() { # 通过 return 0；任何失败 return 非 0（调用方据
   return 0
 }
 
+# ── 失败告警（调度跑挂了要有人知道）─────────────────────────────────────────────
+#
+# 为什么放在**脚本里**而不是管线的 `ctl.try`：`ctl.try` 的配置**未建模**（schema 只有 notes），
+# 靠猜属性名去配它，得到的会是「静默不生效」——正是本仓反复吃的亏。放在这里：**一份代码**，
+# 且 `EXIT` trap 天然覆盖**所有**失败路径（包括我此刻没想到的那些）。
+#
+# 为什么只在 `LEMENG_NOTIFY=1` 时才告警：人工 / 诊断跑失败不该刷告警群 —— 噪声会让人开始忽略告警，
+# 那比没有告警更坏。薄管线（`deploy/duckle/console/pipelines/*.run.json`）会设这个变量。
+#
+# 告警本身**绝不影响退出码**：curl 失败只打一行 NOTIFY_*，原来那个错仍带原样退出码。
+notify_fail() { # $1=退出码
+  [ "${LEMENG_NOTIFY:-0}" = "1" ] || return 0
+  if [ -z "${WECOM_WEBHOOK_URL:-}" ]; then
+    echo "NOTIFY_SKIPPED: WECOM_WEBHOOK_URL 未注入 ⇒ 告警没发出去（检查 project env）" >&2
+    return 0
+  fi
+  _msg="【乐檬采集失败】账套=${SYSTEM_BOOK:-?} 模式=${DIM_FACE:-${1:-?}} 退出码=$1 主机=$(hostname) $(date -u +%FT%TZ)"
+  if _resp=$(curl -sS --max-time 10 -H 'Content-Type: application/json' \
+      -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"${_msg}\"}}" "$WECOM_WEBHOOK_URL" 2>&1); then
+    echo "NOTIFY: ${_resp}" >&2
+  else
+    echo "NOTIFY_FAILED: curl 没成功（告警未送达）" >&2
+  fi
+  return 0
+}
+# EXIT trap：只在非零退出时告警；**保留原退出码**（别把判红变成绿）
+trap '_rc=$?; if [ "$_rc" -ne 0 ]; then notify_fail "$_rc"; fi; exit "$_rc"' EXIT
+
 case "${1:-}" in
 identity)
   echo "== identity assert（凭据↔账套 / 门店清单↔账套；#205） =="
