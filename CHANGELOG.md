@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.36.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.36.0...v0.36.1) - 2026-09-26
+- 【修复】dbt: schema.yml 的 description 里不许调项目 macro（它把生产物化 job 打红了） ([#262](https://github.com/MYTech-Co-LTD/platform-core/pull/262), [29ee651](https://github.com/MYTech-Co-LTD/platform-core/commit/29ee651b543a18b2fa3f5fbefd63434691dd1a6b))
+
+
 ## [0.36.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.35.1...v0.36.0) - 2026-09-26
 - 【新增】data-stack: 数据面主体列 org 落地 + dbt 侧门禁（Closes #257） ([#258](https://github.com/MYTech-Co-LTD/platform-core/pull/258), [42efc4b](https://github.com/MYTech-Co-LTD/platform-core/commit/42efc4be121ab1f4024e75eb977be1faaba988ca))
 
