@@ -330,9 +330,16 @@ sh /opt/lemeng-sync.sh <全SHA> --check    # 只比不写
   （一次探测就拉满整个对象）、并在 Worker 侧缓冲最多 16MB ⇒ **流量翻倍 + OOM 面**，判定「起瓢」；
 - **不要为了绕过它换投递通道**（换 CDN）：两个 CDN 是同一类问题，换了不解决；
 - **修法**：改**代理**（`openship-platform/scripts/smart-proxy/smart-proxy.mjs`）两行 ——
-  `useChunks` 去掉 `|| mitm`、单请求路径的 `content-length` 只采信上游响应的值。补丁与验证记录已交付
-  `openship-platform` 仓根（`smart-proxy-range-fix.patch` / `.README.md`，2026-09-26，**尚未落地**）。
-  跟踪：**`MYTech-Co-LTD/openship-platform#15`**。
+  `useChunks` 去掉 `|| mitm`、单请求路径的 `content-length` 只采信上游响应的值。
+  **已落地（2026-09-26）**：PR `openship-platform#16`（base `docs/manual-skeleton-local`）合并为 `62d31c3`，
+  生产代理已换镜像 `e7b3011fd32c`；回滚点 = 镜像 tag `smart-proxy:pre-range-fix-20260926`
+  + 源码 `smart-proxy.mjs.bak-20260926`。**Worker 无需改动**（生产本就放行两个来源）。
+  部署案例与调用序列见 `openship-platform#17`。跟踪：**`MYTech-Co-LTD/openship-platform#15`**。
+- **代理的构建/运维陷阱**（本次实地踩到，写下来省下一次）：
+  `docker compose build smart-proxy` 是**空操作**且 `rc=0`（该服务只有 `image:` 没有 `build:` 段）
+  ⇒ 必须手工 `docker build -t <tag> /opt/smart-proxy`；
+  `docker compose config` 会把 env **明文**打出来（含对象存储 AK/SK）⇒ 看配置只取键名；
+  现有的缓存清理工具是**清空整桶**，缺「按 key 精准失效」⇒ 别拿它当精准删除用。
 
 ### E.5 自举：同步程序自己怎么上去（循环依赖，明写）
 

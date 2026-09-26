@@ -335,25 +335,30 @@ git commit -m "feat(lemeng): wrapper 加 dim 模式——维度快照（双账�
 
 > **前置**：本 Task **不在功能分支内执行**。先把 Task 1–5a 的 PR 合并进 main，**再从 main 的合并提交**做投递与注册。
 
-> **⚠️ 2026-09-26 实测：Step 1 投递被代理链路卡住**（本 Task 于合并提交 `325c3ad` 上执行时遇到）
-> —— `lemeng.branch.json`（13.6KB）落地 ✓，**`lemeng.item.json`（1.44MB）取不下来**（`MAX_TRIES=10 ×
-> CURL_TIMEOUT=30` 十次全败，0 字节），版本标记未推进 ⇒ **半应用状态**（按设计可检测、无功能影响：
-> 尚无 job 消费它）。
+> **✅ 2026-09-26 已解决：Step 1 投递的阻塞已消除**（本 Task 于合并提交 `325c3ad` 上曾卡住）
 >
-> **根因已定案（2026-09-26）**：上游对**可压缩内容**把 Range 作用在 **gzip 压缩表示**上 ——
-> `content-range` 的分母是压缩后长度（1.44MB 的 gzip 长度 = 22,733），返回体与声明不符；
-> **代理据这个错数声明 `content-length`** ⇒ 客户端拿到的字节数被截到该值。**确定性复现、不是间歇**。
+> **曾经的症状**：`lemeng.branch.json`（13.6KB）落地 ✓，`lemeng.item.json`（1.44MB）取不下来
+> （`MAX_TRIES=10 × CURL_TIMEOUT=30` 十次全败，0 字节），版本标记未推进 ⇒ 半应用状态。
+>
+> **根因（已定案）**：上游对**可压缩内容**把 Range 作用在 **gzip 压缩表示**上 —— `content-range`
+> 的分母是压缩后长度（1.44MB 的 gzip 长度 = 22,733），返回体与声明不符；**代理据这个错数声明
+> `content-length`** ⇒ 客户端拿到的字节数被截到该值。**确定性复现、不是间歇**。
 > 已排除「CF 边缘缓存（`cf-cache-status: DYNAMIC`）/ 代理 / Worker（回显证明是上游自己回的）/
 > 换上游请求头（四种全同）」；完整 GET 始终正确。详见 `deploy/data-plane-deploy-sop.md` §E.4。
 >
-> **修法**：改代理两行（`useChunks` 去掉 `|| mitm`、单请求路径的 `content-length` 只采信上游响应的值）。
-> 补丁 + 验证记录已交付 `openship-platform` 仓根（`smart-proxy-range-fix.patch` / `.README.md`），
-> **尚未落地**。跟踪 **`MYTech-Co-LTD/openship-platform#15`**。
+> **修法已落地**：改代理两行（`useChunks` 去掉 `|| mitm`、单请求路径的 `content-length` 只采信上游
+> 响应的值）⇒ `openship-platform#16` 合并为 `62d31c3`，生产代理已换镜像 `e7b3011fd32c`。
+> 部署案例与回滚步骤见 `openship-platform#17`；跟踪 **`MYTech-Co-LTD/openship-platform#15`**。
 >
-> ⇒ **重新执行本 Task 前先确认该补丁已落地**；**不要**去 purge CF 缓存（没有可清的东西）、
-> **不要**为了过这一步去换投递通道（换 CDN —— 两个 CDN 是同一类问题）。
+> **Step 1 已于 2026-09-26 重跑通过**：`SYNC_OK 31/31`，`lemeng.item.json` 落地 sha 与 lock 一致，
+> 标记推进到 `325c3ad…`；顺带同步掉一处先前漂移的 `/opt/lemeng-run.sh`。
+> **Step 2–4（注册 4 条 job / 触发并回读自证 / 真机回读）仍未执行。**
+>
+> 两个**不要**依然有效：**不要**去 purge CF 缓存（没有可清的东西）、
+> **不要**为了绕过去换投递通道（换 CDN —— 两个 CDN 是同一类问题）。
 
-- [ ] **Step 1: 投递**（openship MCP `post_system_servers_by_id_exec`）
+- [x] **Step 1: 投递**（openship MCP `post_system_servers_by_id_exec`）
+  —— ✅ 2026-09-26 执行通过：`SYNC_OK 31/31`，标记推进到 `325c3ad…`（此前因代理链路截断卡住，已修）
 
 ```bash
 sh /opt/lemeng-sync.sh <合并提交全SHA> --check    # 先只比不写
