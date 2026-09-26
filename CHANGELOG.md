@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.34.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.34.0...v0.34.1) - 2026-09-26
+- 【修复】lemeng: wrapper 自带失败窗重试——把 job 的 retry 语义收回，解「迁 console 即丢自愈」 ([#245](https://github.com/MYTech-Co-LTD/platform-core/pull/245), [5b7687f](https://github.com/MYTech-Co-LTD/platform-core/commit/5b7687fbad57b0f874c3d438bf95acf87a0fff9b))
+
+
 ## [0.34.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.33.2...v0.34.0) - 2026-09-26
 - 【新增】lemeng: 零售采集的调度定义进仓——薄管线 + 排班（enabled:false，未切流） ([#241](https://github.com/MYTech-Co-LTD/platform-core/pull/241), [0efde0a](https://github.com/MYTech-Co-LTD/platform-core/commit/0efde0af500e6e5f833922330d0048559509950d))
 
