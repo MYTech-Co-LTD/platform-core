@@ -92,10 +92,12 @@ LEMENG_NOTIFY=1 WECOM_WEBHOOK_URL="http://127.0.0.1:$PORT/send" SYSTEM_BOOK=3120
 ok "$rc" "2"
 if [ -f "$FAKE/hit" ]; then
   pass=$((pass+1))
-  case "$(cat "$FAKE/hit")" in
-    *'"msgtype":"text"'*'乐檬采集失败'*) pass=$((pass+1));;
-    *) fail=$((fail+1)); echo "  FAIL: 告警体形状不对: $(cat "$FAKE/hit" | head -c 80)";;
-  esac
+  # 容忍 JSON 里的空白（json.dumps 默认带空格）——用 grep -E 而不是字面量匹配
+  if grep -qE '"msgtype"[[:space:]]*:[[:space:]]*"text"' "$FAKE/hit" && grep -q '乐檬采集失败' "$FAKE/hit"; then
+    pass=$((pass+1))
+  else
+    fail=$((fail+1)); echo "  FAIL: 告警体形状不对: $(head -c 100 "$FAKE/hit")"
+  fi
 else
   fail=$((fail+1)); echo "  FAIL: 设了 LEMENG_NOTIFY=1 却**没**发告警"
 fi

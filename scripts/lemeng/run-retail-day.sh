@@ -403,11 +403,21 @@ notify_fail() { # $1=退出码
     return 0
   fi
   _msg="【乐檬采集失败】账套=${SYSTEM_BOOK:-?} 模式=${DIM_FACE:-${1:-?}} 退出码=$1 主机=$(hostname) $(date -u +%FT%TZ)"
-  if _resp=$(curl -sS --max-time 10 -H 'Content-Type: application/json' \
-      -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"${_msg}\"}}" "$WECOM_WEBHOOK_URL" 2>&1); then
-    echo "NOTIFY: ${_resp}" >&2
-  else
-    echo "NOTIFY_FAILED: curl 没成功（告警未送达）" >&2
+  # 用 **python3** 发，不用 curl：本镜像（python:3.12-slim + pip 装 duckle）**没有 curl** ——
+  # 2026-09-26 演练实测 `curl: not found` ⇒ 告警会永远发不出去（幸好演练了，没等真故障才发现）。
+  # 失败时**把原因打出来**（类型 + 消息），否则「告警没送达」本身又会变成一个静默故障。
+  if LEMENG_NOTIFY_MSG="$_msg" python3 -c '
+import json, os, urllib.request
+body = json.dumps({"msgtype": "text", "text": {"content": os.environ["LEMENG_NOTIFY_MSG"]}},
+                    ensure_ascii=False).encode()
+req = urllib.request.Request(os.environ["WECOM_WEBHOOK_URL"], data=body,
+                             headers={"Content-Type": "application/json"})
+try:
+    print("NOTIFY:", urllib.request.urlopen(req, timeout=10).read().decode()[:200])
+except Exception as e:
+    print("NOTIFY_FAILED:", type(e).__name__, str(e)[:150])
+' >&2; then :; else
+    echo "NOTIFY_FAILED: python3 没跑起来（告警未送达）" >&2
   fi
   return 0
 }
