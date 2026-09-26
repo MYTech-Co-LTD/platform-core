@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.29.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.28.1...v0.29.0) - 2026-09-26
+- 【新增】lemeng: S2-a 维度面——门店维/商品维三件套（双账套全量快照） ([#215](https://github.com/MYTech-Co-LTD/platform-core/pull/215), [325c3ad](https://github.com/MYTech-Co-LTD/platform-core/commit/325c3ad534d26bcbad044b3689fa090bf12bfae8))
+
+
 ## [0.28.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.28.0...v0.28.1) - 2026-09-25
 - 【修复】lemeng: windows 改「逐窗尽力采 + 末尾判红」——「一窗失败即停」会让当天剩余窗口永久缺失 ([#211](https://github.com/MYTech-Co-LTD/platform-core/pull/211), [5b321a3](https://github.com/MYTech-Co-LTD/platform-core/commit/5b321a38877e16c17591bf1657edb1dd70736813))
 
