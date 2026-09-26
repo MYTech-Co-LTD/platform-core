@@ -64,7 +64,9 @@ vars:
   # 账套 = 主体维度（3120 熊喵 / 64188 品品甜；handbook §2）。
   # ⚠️ 值来自**路径**、不在数据里（handbook §4 欠账「账套只在路径、数据里没有」/ C3 身份跟着数据走——
   # C1/C2/C3 是**公司标准的编号，该标准尚未合入**，本正典 §4 有注）
-  # ⇒ 存量阶段由本 var 供值、每个账套跑一份；路径解析进列（`filename` + 正则）**待 T6 按实测形态钉死**。
+  # ⇒ **只服务旧湖** `stg_lemeng_retail_detail`（那条路径非 hive、账套位无键名，只能由 var 供值）。
+  # ⚠️ **新湖不靠本 var**：`stg_lemeng_retail_order_line` 与两条 `audit_retail__*` 一律读 `system_book=*/`
+  #   通配两账套、`system_book` 走 hive 自动推断成列（2026-09-26 改：原「每账套跑一份」会让 64188 落湖却进不了物化，issue #250）。
   account_book: '3120'
   # ── 敏感：只留「非密」三项作 var（bucket / endpoint / region）────────────────
   # ⚠️ AK/SK **刻意不做 dbt var**：vars 会落进 target/manifest.json、编译产物与 `dbt run` 日志。
