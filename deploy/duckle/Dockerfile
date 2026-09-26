@@ -66,6 +66,15 @@ RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ \
       --timeout 60 --retries 5 \
       "duckle==${DUCKLE_VERSION}"
 
+# curl：采集 wrapper（`/opt/lemeng-run.sh`）**全程用它** —— whoami 身份自证 / S3 清单 / 观测投递。
+# 2026-09-26 真跑实测：本镜像**没有 curl** ⇒ 自证直接失败（`curl: not found`）⇒ 拒绝写湖。
+# （宿主上一直有 curl，所以这个依赖从没暴露过；只有把脚本搬进容器跑才现形。）
+# 与上面 pip 同理走国内镜像：RUN 步骤**不继承 dockerd 代理**，直连 deb.debian.org 会被掐。
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*
+
 # 入口（安全闸 + token 名字翻译 + exec 透传）。见文件头 §③。
 # 单独成文件而非 `sh -c` 内联：它的行为可在本机用 `sh` 直接跑全套用例（含拒跑分支），
 # 内联写法只能靠「读起来对」——而 `docker build --check` 不验运行期行为，本任务又不构建镜像。
