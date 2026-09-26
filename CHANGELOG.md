@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.35.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.34.2...v0.35.0) - 2026-09-26
+- 【新增】lemeng: 64188（品品甜）零售排班进仓——console-64188 加 retail，直接启用 ([#251](https://github.com/MYTech-Co-LTD/platform-core/pull/251), [685f624](https://github.com/MYTech-Co-LTD/platform-core/commit/685f624ca499fa7327e7a9ed68ebdcd7461768f4))
+
+
 ## [0.34.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.34.1...v0.34.2) - 2026-09-26
 - 【修复】deploy: dbt 挂载去掉 :ro——否则 dbt build 写不了 target/logs ([#248](https://github.com/MYTech-Co-LTD/platform-core/pull/248), [ce35190](https://github.com/MYTech-Co-LTD/platform-core/commit/ce3519069db3e5f0b26cf62705fe9234bacace7e))
 
