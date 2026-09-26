@@ -35,6 +35,17 @@
 3. **console 必须显式给 `--duckdb`。**
    实测：不给时每次触发都记 `last_run_error: "DuckDB engine isn't installed yet."`（管线没跑起来）。
 
+## 失败告警怎么接（2026-09-26）
+
+**接在 wrapper 里，不接在管线的 `ctl.try`** —— 因为 `ctl.try` 的配置**未建模**（schema 只有 `notes`），
+靠猜属性名配它得到的会是「**静默不生效**」。wrapper 里一个 `EXIT` trap 覆盖**所有**失败路径，
+且**只有一份代码**。
+
+- 只在该变量为 `1` 时告警：`LEMENG_NOTIFY`（**薄管线会设它**）⇒ 人工/诊断跑失败不刷告警群
+  （噪声会让人开始忽略告警，那比没有告警更坏）；
+- 通道：企微机器人 webhook，URL 走 **project env 的 `WECOM_WEBHOOK_URL`**；
+- 缺 URL 时打 `NOTIFY_SKIPPED`（**不静默**）；**告警绝不改退出码**（别把判红变成绿）。
+
 ## ✅ 调度器的实测事实（2026-09-26，本地真跑）
 
 | 事实 | 证据 |
