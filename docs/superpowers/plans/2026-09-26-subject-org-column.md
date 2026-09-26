@@ -263,7 +263,24 @@ pnpm run test:guard
 Expected: 两条都是 exit 0。**注意这两条绿的语义**：它证明的是「**没有回归**」，
 **不是**「org 列写对了」——后者要等 Task 2 的规则 ⑩ 与 spec B 的 `dbt parse`。
 
-- [ ] **Step 8: commit**
+- [ ] **Step 8: 重跑投递 lock（**改了 `dbt/` 下的文件就必须有这一步**）**
+
+`dbt/**` 在数据面投递清单里 ⇒ 改一个字节、加一个文件，`deploy/data-plane.lock` 就对不上，
+`check-data-plane-lock` 会红。
+
+```bash
+pnpm exec tsx scripts/lemeng/data-plane-lock.mjs
+pnpm exec tsx scripts/check-data-plane-lock.mjs
+```
+
+Expected: `data-plane-lock: 写入 deploy/data-plane.lock（8 条清单条目 → 39 个文件）`，随后自检 `OK`
+（新增 macro 会多出一行；文件数 38 → 39）。
+
+⚠️ **本步是实测踩空后的回填**：2026-09-26 执行本计划时，Step 7 的 `pnpm run test:guard` 先把
+`check-data-plane-lock` 的 CLI 用例打红了（`deploy/data-plane.lock: 7 处违规`），才发现原计划漏了它。
+**别把它当预防性步骤跳过**——`test:guard` 里那条用例就是它的检测器。
+
+- [ ] **Step 9: commit**
 
 ```bash
 git add dbt/macros/subject_org.sql dbt/models/common/staging dbt/models/common/marts
