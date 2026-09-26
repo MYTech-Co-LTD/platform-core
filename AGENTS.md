@@ -16,6 +16,7 @@ Casdoor 后台运营，租户管理员在 console 自建页管理——spec D4 �
 |---|---|
 | 改架构 / 模块协议 / 任何结构性改动 | `docs/architecture.md`（架构不变量）+ `docs/module-protocol.md`（模块接入契约） |
 | 新接一个业务模块 | `docs/module-onboarding.md`（接入步骤/全字段参考/验收清单/故障速查）；协议语义正典仍是 `docs/module-protocol.md` |
+| 接采集任务 / 改采集链路 / 改调度 | `docs/data-platform-handbook.md`（**采集正典**：决策 / 生命周期 SOP / 四层验收 / 运维速查 / 逐源决策登记 + 数据源台账） |
 | 设计稿与实施计划 | `docs/superpowers/specs/`、`docs/superpowers/plans/`（按日期命名；SaaS 管理域 spec 是现行主线的正典） |
 | 部署 / 接入 / 回滚 | `deploy/openship-adopt.md`（含自动部署与控制面 API 前缀坑）、`deploy/branch-protection-runbook.md` |
 | 冒烟验收 | `docs/m0-smoke-checklist.md` |
