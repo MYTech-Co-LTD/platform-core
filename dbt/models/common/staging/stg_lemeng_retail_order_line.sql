@@ -83,5 +83,9 @@ select
 -- （spec §9.4 可见性坑）⇒ 它只出现在 staging 模型内部，物化落点由上面的 config + 项目缺省保证
 -- 是 PG 可见关系（gate 2）。
 from read_parquet(
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book={{ var("account_book") }}/**/*.parquet'
+  -- ⚠️ 路径段写 `system_book=*/` **通配两个账套**（故此处不用 `account_book` var）——与门店维/商品维**同源形态**
+  -- （见 sources.yml 的 branch 条目注释）。`system_book` 是**列**：由路径 `system_book=<值>/` 自动推断
+  -- （类型推成 bigint，下面显式 `::varchar` 定型）。
+  -- 2026-09-26 改：64188（品品甜）铺开后，钉单账套的路径会让它的数据**落湖了却进不了物化**（issue #250）。
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/**/*.parquet'
 ) r

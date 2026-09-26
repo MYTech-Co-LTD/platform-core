@@ -68,7 +68,7 @@ sources:
           #   · 分区推断本身仍生效（DuckDB 默认 hive_partitioning=auto，路径 `key=value` 段自动成列），
           #     故不需要显式开关；但推断出的类型**不合约**（system_book→bigint、hour→varchar），
           #     定型落在 staging 的**显式 cast**里（不是 hive_types —— 那个形参同样递不进去）。
-          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/lemeng/retail_order_line/system_book={{ var(\"account_book\") }}/**/*.parquet') r"
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/lemeng/retail_order_line/system_book=*/**/*.parquet') r"
           partition_keys: ['system_book', 'bizday', 'hour']
           partition_key_typing: '由路径字符串重推断；三列在 staging 显式 cast（system_book::varchar / bizday::date / hour::int）'
           pagination: '新湖由 duckle 管线写入（duckle/common/lemeng.retail_order_line.json）'

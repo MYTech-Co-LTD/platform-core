@@ -28,7 +28,8 @@ with recheck as (
         r['bizday']::date         as bizday,
         count(distinct r['order_no']) as order_count
     from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book={{ var("account_book") }}/**/*.parquet'
+        -- ⚠️ 与 staging **同路径**（通配两账套）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/**/*.parquet'
     ) r
     group by 1, 2
 ),
