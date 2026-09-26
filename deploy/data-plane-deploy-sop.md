@@ -382,6 +382,7 @@ sh /opt/lemeng-sync.sh <全SHA> --check    # 只比不写
 > **决策与依据**：`openship-platform` 仓 **ADR-0014**（含实证与两条已完成的实施前验证）。
 > **实现细节（为什么这么设计、每条实测事实）**：`deploy/duckle/console/README.md` —— 本文**不复制**，
 > 只写运维视角要看的东西。
+> **归口口径（「什么时候该归 console、什么时候归 job」）**：`docs/data-platform-handbook.md` §1.1.4 —— 本文只讲怎么运维。
 
 ### F.1 现状：谁在跑、跑在哪
 

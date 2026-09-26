@@ -140,6 +140,10 @@
 - **输入**：`duckle/` 的管线定义（**仓内为真源**，容器里只读挂载）+ 源凭据（运行期注入）。
 - **输出**：湖里的 parquet + 运行回执 / 门禁退出码 / catalog。
 - **不做什么**：**不建模**（口径在 dbt）、**不做语义与权限**（在 `modules/data`）、**不常驻**。
+  ⚠️ **订正（2026-09-26）**：其中「**不常驻**」一句**已被 ADR-0014 取代**——`deploy/data-compose.yml` 起
+  两个**常驻** `lemeng-console-3120` / `lemeng-console-64188` 服务（`duckle-runner serve` 的调度 tick，
+  只绑回环，见 `deploy/data-plane-deploy-sop.md` §F）。**「不常驻」对它不再成立**；`etl` profile 的
+  一次性 runner 语义不变。归口口径见 `docs/data-platform-handbook.md` §1.1.4。
 - **依赖关系**：写对象存储；`drift` / `review --data` 要凭据与网络 ⇒ **etl job 显式带 `--token` 跑**
   （**不是**放宽 `deploy/duckle/entrypoint.sh` 的闸）。引擎能力的接入口径与三条坑读
   `duckle/README.md` §7，**未验清单是 gate**。
@@ -399,6 +403,7 @@ env，多租户同进程部署就只能共用一份 ⇒ 无 BYO、单密钥爆�
 | `docs/superpowers/specs/` | 单特性设计（历史档）；新设计也落这里 |
 | `docs/superpowers/plans/` | 实现计划（历史档） |
 | `deploy/openship-adopt.md` | 部署接入 |
+| `docs/data-platform-handbook.md` | 接采集任务 / 改采集链路 / 改调度前**必读**（采集正典 + 数据源台账） |
 | `deploy/branch-protection-runbook.md` | 提交纪律的四层软机制与「七条局限」 |
 | `docs/m0-smoke-checklist.md` | 验收 / 手工冒烟清单 |
 | `README.md` | 布局 / 常用命令 / 提交纪律 |
