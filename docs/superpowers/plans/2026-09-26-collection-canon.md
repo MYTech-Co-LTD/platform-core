@@ -14,7 +14,9 @@
 - **保号约束（硬）**：`docs/data-platform-handbook.md` 的 **§2 与 §4 节号与内容必须留住**——三处按节号引用它：`contracts/README.md:58`（→§4）、`contracts/README.md:157`（→§2）、`duckle/README.md:121`（→§2）。破坏了它们是**静默**的（无人会红）。
 - **零新增文件**：不新建文档、不新建脚本、不新建目录。
 - **不复制正文**：本仓规矩是「正文不复制，只给指针」（`AGENTS.md:4`、`docs/architecture.md:320`）。正典写**采集专属**内容；通用不变量指向 `docs/architecture.md` §4。
-- **历史快照不改**：`docs/superpowers/specs/**` 与 `docs/superpowers/plans/**` 的既有文件一律不动。
+- **历史快照不改**：`docs/superpowers/specs/**` 与**本分支之外的** `docs/superpowers/plans/**` 既有文件一律不动（那是已合入的历史稿）。
+  ⚠️ **例外**：本分支正在执行的计划文件 `docs/superpowers/plans/2026-09-26-collection-canon.md` **可改**——本仓纪律是「规划先行，调整先改规划」，
+  中途调整的**第一步就是改规划稿**（否则实现者照旧稿做，错就固化）。改它不算违反本条。
 - **不许编**：无案例支撑的一律写进 §7 待沉淀并标注，**不编**（根本法则：无案例不立标准）。
 - **不可碰的受管文件**：`deploy/data-plane-manifest.txt` 覆盖的文件改了会让 `check-data-plane-lock.mjs` 红。**本计划触碰的 4 个文件（handbook / AGENTS.md / architecture.md / data-plane-deploy-sop.md）都不在清单内**，因此**无需**重跑 `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`。若执行中决定改到清单内文件，必须重跑该生成器。
 - **CI 对本计划的改动是「全绿」且这不构成证据**：五条守卫（`lint-architecture` / `check-compose` / `check-env-example` / `check-data-models` / `check-data-plane-lock`）**都不扫 `docs/` 与 `AGENTS.md`**。⇒ 本计划的正确性**只能**由下面的核验步骤与人工评审保证，**不要**拿「CI 绿」当完成证据。
