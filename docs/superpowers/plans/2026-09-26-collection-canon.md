@@ -613,7 +613,7 @@ git commit -m "docs(collection): 正典 §1.4 四层验收 + §1.5 运维速查�
 | 14 | 同一张表里两个时间列**两种格式**（`2026-07-01 10:02:34` vs `20260707`） | §1.1.2「落盘即定型」 |
 | 15 | pg_duckdb **不接受 `DOUBLE`** 作 cast 目标（`type "double" is only a shell`） | `contracts/` 类型枚举里**故意不含 `double`** |
 | 16 | 读 parquet 点名取列必须 **`r['列名']` + 别名 `r`**；`SELECT *` 能过、点名报 `column does not exist` | dbt staging 门禁（`check-data-models` 第 ① 项） |
-| 17 | **物化断链**：采集每天绿、湖每天长，而 PG **停在 09-23**；37 个 job 无一跑 dbt；**没有任何东西报错** | §0 完成判据「落湖归我、下游看得见」；§1.5 末行 |
+| 17 | **物化断链**：采集每天绿、湖每天长，而 PG **停在 09-23**；37 个 job 无一跑 dbt；**没有任何东西报错** | §0 完成判据「落湖归我、下游看得见」；§1.5「下游数据陈旧」一条 |
 ```
 
 - [ ] **Step 2: 写入 §1.7 正文**
@@ -625,12 +625,12 @@ git commit -m "docs(collection): 正典 §1.4 四层验收 + §1.5 运维速查�
 
 | 源 / 表 | 通道 | 例外证据 | 落点前缀 | 分区键 | 节奏 | 调度归口 | 验收结论 |
 |---|---|---|---|---|---|---|---|
-| 乐檬零售明细（3120） | duckle | — | `lemeng/retail_order_line` | `system_book=` + `hour=` | **设计** 5min tick / **现行**日粒度 | **openship job**（`lemeng-retail-3120-runner`，`30 2 * * *`，**尚未迁 console**） | 自证 ✓ / 幂等 ✓ / 独立通道 **✗ 未归零（+1.15%）** / 跨系统 待回填 |
+| 乐檬零售明细（3120） | duckle | — | `lemeng/retail_order_line` | `system_book=` + `hour=` | **设计** 5min tick / **现行**日粒度 | **openship job**（`lemeng-retail-3120-runner`，`30 2 * * *` **UTC**，**尚未迁 console**） | 自证 ✓ / 幂等 ✓ / 独立通道 **✗ 未归零（+1.15%）** / 跨系统 待回填 |
 | 乐檬零售明细（64188） | duckle | — | 同上 | 同上 | 同 3120 | 未落 | — |
-| 乐檬门店维 / 商品维（双账套） | duckle | — | `lemeng/dim_branch`、`lemeng/dim_item` | `system_book=` + `snapshot=` | 日更（全量快照） | **duckle console** ×2（UTC `0 2 * * *` / `0 11 * * *`） | 自证 ✓（拒写湖行为已验证） |
+| 乐檬门店维 / 商品维（双账套） | duckle | — | `lemeng/dim_branch`、`lemeng/dim_item` | `system_book=` + `snapshot=` | 日更（全量快照） | **duckle console** ×2（UTC `0 2 * * *` / `0 11 * * *`） | 首次真跑销账（**拒写湖**路径已验证）——**不是「四层全过」** |
 | 乐檬调拨 / 批发 / 退货 / 要货（5 源） | duckle（设计定稿） | — | `lemeng/transfer_out` 等 | `system_book=` + `bizday=` | 5min 增量 + 每小时全量（设计） | 未落 | — |
 | 抖音 `sku_daily` | 未定 | — | `douyin/sku_daily` | 月（**键名未定**） | 未定 | 未落 | 待接入 |
-| 抖音接收器（`dy-upload`，生产在跑） | **E1**（长驻接收） | 待核实（§7 #3） | 待核实 | 待核实 | 常驻 | 待核实 | — |
+| 抖音接收器（`dy-upload`，生产在跑） | **E1**（长驻接收） | 长驻接收器**在跑**（生产 project `dy-upload` 以 `bare` runtime 跑 `/opt/douyin-life/capture/dy_receiver_run.py`）⇒ 命中 E1；**落盘形态等细节待核实**（§7 #3） | 待核实 | 待核实 | 常驻 | 待核实 | — |
 ```
 
 > ⚠️ **上表的「验收结论」列**才是这个登记区的价值所在：**空着 = 没验过**，别用「跑起来了」当验收。
@@ -643,7 +643,7 @@ git commit -m "docs(collection): 正典 §1.4 四层验收 + §1.5 运维速查�
 
 | 位置 | 原文 | 改为 |
 |---|---|---|
-| §1.1.1 的 E1 行末格 | `有案例（细节见 §7 待沉淀 #3）` | `有案例（细节见 §1.6 案例库；通道定性待核实，见 §7 #3）` |
+| §1.1.1 的 E1 行末格 | `有案例（细节见 §7 待沉淀 #3）` | `有案例（细节待核实后补；见 §7 #3）` |
 
 > ⚠️ **原文那句要按上面这个写法逐字匹配**（初稿把「原文」写成了缩略的 `细节见 §7 #3`，与文档实际不符）。
 > 更要紧的是：**守卫要能红**。初稿给的 `grep -c "细节见 §7 #3"` 在**改动前就已经是 0**（文档里从没出现过那个缩略形式）
@@ -658,14 +658,14 @@ git commit -m "docs(collection): 正典 §1.4 四层验收 + §1.5 运维速查�
 cd /Users/duo/orca/workspaces/platform-core/采集板块
 grep -q "1.7 逐源决策登记区" docs/data-platform-handbook.md && echo "§1.7 OK"
 grep -q "物化断链" docs/data-platform-handbook.md && echo "案例 17 在"
-echo "E1 承诺已修（应 ≥1）:"; grep -c "细节见 §1.6 案例库" docs/data-platform-handbook.md
+echo "E1 承诺已修（应 ≥1）:"; grep -c "细节待核实后补" docs/data-platform-handbook.md
 echo "旧承诺已消（应为 0）:"; grep -c "细节见 §7 待沉淀 #3" docs/data-platform-handbook.md
 # 登记表里的每一条都要与本文档 §2 的源清单对得上（数目一致）
 grep -c "^| 乐檬\|^| 抖音" docs/data-platform-handbook.md
 grep -c "（Task 6 填）" docs/data-platform-handbook.md
 ```
 
-**Expected:** 两行 OK；`细节见 §1.6 案例库` 计数 ≥ 1；`细节见 §7 #3` 计数 `0`；登记表行数 ≥ 6；占位计数 `0`。
+**Expected:** 两行 OK；`细节见 §1.6 案例库` 计数 ≥ 1；`细节见 §7 待沉淀 #3` 计数 `0`、`细节待核实后补` 计数 ≥ 1；登记表行数 ≥ 6；占位计数 `0`。
 
 - [ ] **Step 5: Commit**
 
