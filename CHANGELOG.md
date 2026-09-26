@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.30.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.29.0...v0.30.0) - 2026-09-26
+- 【新增】lemeng: wrapper 加「容器内调用模式」——调度下沉到 duckle 自带调度器的前置件 ([#224](https://github.com/MYTech-Co-LTD/platform-core/pull/224), [ae8a0dd](https://github.com/MYTech-Co-LTD/platform-core/commit/ae8a0dd95b27e556e8152e6ab48a298a396848ea))
+
+
 ## [0.29.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.28.1...v0.29.0) - 2026-09-26
 - 【新增】lemeng: S2-a 维度面——门店维/商品维三件套（双账套全量快照） ([#215](https://github.com/MYTech-Co-LTD/platform-core/pull/215), [325c3ad](https://github.com/MYTech-Co-LTD/platform-core/commit/325c3ad534d26bcbad044b3689fa090bf12bfae8))
 
