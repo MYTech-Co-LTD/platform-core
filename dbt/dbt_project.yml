@@ -45,7 +45,7 @@ vars:
   # 出处：contracts/common/lemeng.retail_order_line.json 的 `layout.prefix` / `partitionBy`（hive 三级分区）
   lemeng_retail_order_line_prefix: 'lemeng/retail_order_line'
   # 乐檬零售**明细（旧湖）**前缀：s3://<bucket>/lemeng/retail_detail/<账套>/**/*.parquet
-  # 出处：docs/data-platform-handbook.md §2 的源清单（`lemeng/retail_detail/<主体>/<日期>/all.parquet`）
+  # 出处：docs/data-platform-handbook.md §2 的源清单（旧前缀现写作 `lemeng/retail_detail/…`，已标「待退役（§1.3 阶段 I）」）
   # 非 hive 命名（目录名不带键名）⇒ 账套只能由 var 供值（见 sources.yml 的 source 级 meta）。
   lemeng_retail_prefix: 'lemeng/retail_detail'
   #
@@ -62,7 +62,8 @@ vars:
   lemeng_item_prefix: 'lemeng/dim_item'
   #
   # 账套 = 主体维度（3120 熊喵 / 64188 品品甜；handbook §2）。
-  # ⚠️ 值来自**路径**、不在数据里（handbook §4 欠账「账套只在路径、数据里没有」/ 标准 C3 身份跟着数据走）
+  # ⚠️ 值来自**路径**、不在数据里（handbook §4 欠账「账套只在路径、数据里没有」/ C3 身份跟着数据走——
+  # C1/C2/C3 是**公司标准的编号，该标准尚未合入**，本正典 §4 有注）
   # ⇒ 存量阶段由本 var 供值、每个账套跑一份；路径解析进列（`filename` + 正则）**待 T6 按实测形态钉死**。
   account_book: '3120'
   # ── 敏感：只留「非密」三项作 var（bucket / endpoint / region）────────────────

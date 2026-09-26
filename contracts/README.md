@@ -61,7 +61,7 @@ contracts/
 ### 3.2 文件名只接受 `all.parquet`
 
 **依据**：本仓已有的三处路径规范都这么写 —— handbook §2 的乐檬
-`lemeng/retail_detail/<主体>/<日期>/all.parquet` 与抖音 `douyin/sku_daily/<月>/all.parquet`，
+`lemeng/retail_order_line/<主体>/<日>/<时>/all.parquet`（旧前缀 `lemeng/retail_detail/…` 已标「待退役」）与抖音 `douyin/sku_daily/<月>/all.parquet`，
 layered design §4 的 `s3://<bucket>/<domain>/<table>/<date>/all.parquet`。
 
 ⚠️ **这是「当前无案例支持放宽」的硬约束，不是「永远这样」**：多文件形态（含 duckle 分片产出）
@@ -158,7 +158,7 @@ pg_duckdb 不接受 `DOUBLE` 作 cast 目标（报错 `type "double" is only a s
 
 | 域 | 表 / 前缀 | 状态 |
 |---|---|---|
-| 抖音 | `douyin/sku_daily/<月>/all.parquet` | **待接入** |
+| 抖音 | `douyin/sku_daily/<月>/all.parquet` | **摸清源**（待接入） |
 
 **⇒ 已确定的只有三件事**：`domain = douyin`、`table = sku_daily`、分区粒度到**月**。
 
