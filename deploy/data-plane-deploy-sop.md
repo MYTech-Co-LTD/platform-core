@@ -448,6 +448,47 @@ curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/sch
 - **回滚**：停掉两个 console 服务（或对不需要它的项目设 `enabled:false`）⇒ 即回到「没有调度」；
   零售链路**全程未动** ⇒ 无需恢复。
 
+### F.6 物化 job（dbt）——「非 duckle runner ⇒ openship job」那条口径的实例
+
+**job**：`lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`），cron **`20 3 * * *` UTC**，
+`retry 2×/300s`、`timeoutMs 30min`、**仅 `failed` 时告警**（企微渠道）。跑在数据面机（`8281d598`）。
+
+**⚠️ 调 dbt 的正确口径与「计划里写的那条」不同——两者都要知道**：
+
+| | 口径 |
+|---|---|
+| **计划/本 SOP 早先写的** | `docker compose -f deploy/data-compose.yml --profile etl run --rm dbt build …` |
+| **实际可用的（2026-09-26 实测）** | `docker run --rm --network openship-platform-core-shanhai-data -v <检出>/dbt:/usr/app … platform-core-dbt:local build … --profiles-dir /usr/app` |
+
+**为什么 compose 那条不通**（两条独立原因，都得知道）：
+1. **网络**：openship 用**自己的项目名/网络**部署（`openship-platform-core-shanhai-data`），
+   而 compose 顶层 `name:` 是 `platform-core-data` ⇒ `compose run` 会去 `platform-core-data_default` 网
+   （实测该网**空的**）⇒ **解析不到 `pg_duckdb`**；
+2. **没有 `deploy/.env`**：该机的 env 真值在 **openship project env**，机器上没有 `.env` 文件 ⇒
+   compose 插值拿不到值。
+
+**必须注入的 env 键（少一个就响亮失败，别只传 `DBT_*`）**：
+
+- `DBT_HOST=pg_duckdb` / `DBT_USER` / `DBT_PASSWORD` / `DBT_DBNAME`（连接）
+- **`LEMENG_ZOS_BUCKET` / `LEMENG_ZOS_ENDPOINT` / `LEMENG_ZOS_REGION`**（**模型拼 S3 路径用**）
+  —— 由 `dbt_project.yml` 的 `vars.zos_*` 经 `env_var()` 取。**缺了会拼成 `s3:///…`**；
+  项目里**刻意给空串默认** ⇒ **运行期响亮失败**（`IO Error: URL needs to contain a bucket name`），
+  **不会静默读到别的东西**——这是设计对的地方，别把空串默认「修」成别的值。
+- 凭据**不落 job 配置、不落 argv**：job 命令在运行时从运行中的容器 `docker inspect` 取进变量，
+  再用 `docker run -e VAR`（**透传形态**）传给容器 ⇒ 值不进 `ps`。
+
+**`--select` 是硬编码的**：当前 = `stg_lemeng_retail_order_line stg_lemeng_branch stg_lemeng_item fct_retail_sale`
+（「被消费的组合」，**按需物化、不全量**）。⚠️ **将来加模型必须同步改这里**——
+**忘了不会报错，只会那个模型永远不物化**。旧湖模型 `stg_lemeng_retail_detail` **不在内**
+（它读的前缀不存在，见 §F.6 之上与正典 §2 的注）。
+
+**怎么自证**（跑完别只看 job 绿）：在 `pg_duckdb` 里查物化表的行数与**最新日期**，
+跟湖里的**逐域对**——2026-09-26 实测：零售 73,622 行 / max `09-25`（湖同）、门店维 399、
+商品维 41,870 / 快照 `09-26`，**逐一对上**才算过。
+
+> **遗留（已知，不阻塞）**：job 的命令目前只活在 openship 里（无版本、无 diff 可评审）。
+> 按本仓惯例应抽成 `scripts/lemeng/materialize.sh` 进仓 + 进投递清单，job 只调 `sh /opt/lemeng-materialize.sh`。
+
 ---
 
 ## 关联
