@@ -83,7 +83,7 @@
 | | |
 |---|---|
 | **管** | 采集的**全生命周期**：接一个新采集任务 → 选型 → 契约 → 管线 → 调度 → 验收 → 运维 → 变更/回填 → 退役 |
-| **不管** | 清洗 / 建模 / 语义 / 物化 / 消费层的口径与流程（在 `docs/superpowers/specs/2026-09-21-data-platform-layered-design.md` 与 `2026-09-22-data-stack.md`）；**部署**（在 `deploy/data-plane-deploy-sop.md`）；公司级纪律正文（在 `team-harness`，见 §6） |
+| **不管** | 清洗 / 建模 / 语义 / 物化 / 消费层的口径与流程（在 `docs/superpowers/specs/2026-09-21-data-platform-layered-design.md` 与 `docs/superpowers/plans/2026-09-22-data-stack.md`）；**部署**（在 `deploy/data-plane-deploy-sop.md`）；公司级纪律正文（在 `team-harness`，见 §6） |
 
 **「采集完成」的判据（两个方向都写死）**：
 
@@ -669,23 +669,41 @@ git commit -m "docs(collection): 正典 §1.6 案例库（17 条实测）+ §1.7
 > 「duckle 管线」相关行或在 §2 表后加一句：
 > `> 「`_ops`」不是本仓目录约定（实测订正见 duckle/README.md §5）——桶内路径猜想，别再照抄。`
 
-- [ ] **Step 3: 核验**
+- [ ] **Step 3: 修 §4 / §5 里指向「未合入的公司标准」的陈旧引用**
+
+§2–§5 的正文在 Task 1 里被冻结保留，但其中三处引用的是 **`team-harness` 那份尚未合入**的标准
+（写作「标准 §N」）——本正典升级后，它们应当指回本正典自己的节。逐处改：
+
+| 位置 | 原文 | 改为 |
+|---|---|---|
+| §4 开头引用块 | `> 按标准 §2 硬约束逐条对账；…重构时一并改。` | `> 按 §1.2 硬约束清单逐条对账；…重构时一并改。` |
+| §4 末句 | `**⇒ 重构时按标准 §3 的 SOP 重走一遍，这些一并消掉。**` | `**⇒ 重构时按 §1.3 的生命周期 SOP 重走一遍，这些一并消掉。**` |
+| §5 开头引用块 | `> 每接完一个源，记一行：…卡点进标准 §6 案例库）。` | `> 每接完一个源，记一行：…卡点进 §1.6 案例库，并登记进 §1.7）。` |
+
+（§3 里那处 `按标准 §4.1 的形态` 已被 Step 1 整表替换掉，不必单独改。）
+
+⚠️ **只改这三处的引用目标，不动 §4/§5 的其余内容，也不动它们的节号**——
+`contracts/README.md:58` 仍按节号引用 §4，改号即静默破引用。
+
+- [ ] **Step 4: 核验**
 
 ```sh
 cd /Users/duo/orca/workspaces/platform-core/采集板块
 echo "待补残留（应为 0）:"; grep -c "<待补>" docs/data-platform-handbook.md
+echo "陈旧「标准 §N」引用（应为 0）:"; grep -c "标准 §" docs/data-platform-handbook.md
 echo "§2 仍在:"; grep -n "^## 2 本项目的数据源清单" docs/data-platform-handbook.md
 echo "§3 仍在:"; grep -n "^## 3 落地位置" docs/data-platform-handbook.md
+echo "§4 仍在:"; grep -n "^## 4 已知欠账" docs/data-platform-handbook.md
 echo "duckle/README.md:121 引用的 §2 内容仍有落点:"; grep -q "_ops" docs/data-platform-handbook.md && echo "  ✓ 有" || echo "  ✗ 缺"
 ```
 
-**Expected:** 待补残留 `0`；§2/§3 标题各打印一行；最后打印 `✓ 有`。
+**Expected:** 前两个计数都是 `0`；§2/§3/§4 标题各打印一行；最后打印 `✓ 有`。
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add docs/data-platform-handbook.md
-git commit -m "docs(collection): 台账补齐——§3 四个 <待补> 填实 + §2 数据源清单按实际现状更新"
+git commit -m "docs(collection): 台账补齐——§3 四个 <待补> 填实 + §2 按现状更新 + §4/§5 陈旧标准引用改指本正典"
 ```
 
 ---
