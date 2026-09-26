@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.35.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.35.0...v0.35.1) - 2026-09-26
+- 【修复】data-stack: 新湖零售读路径改通配两账套（64188 落湖却进不了物化） ([#253](https://github.com/MYTech-Co-LTD/platform-core/pull/253), [c910cca](https://github.com/MYTech-Co-LTD/platform-core/commit/c910cca1e2db7c80be55e32e054a30dc170db775))
+
+
 ## [0.35.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.34.2...v0.35.0) - 2026-09-26
 - 【新增】lemeng: 64188（品品甜）零售排班进仓——console-64188 加 retail，直接启用 ([#251](https://github.com/MYTech-Co-LTD/platform-core/pull/251), [685f624](https://github.com/MYTech-Co-LTD/platform-core/commit/685f624ca499fa7327e7a9ed68ebdcd7461768f4))
 
