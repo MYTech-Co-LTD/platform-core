@@ -17,9 +17,12 @@
 --   按它聚合的指标静默偏大，而**没有任何单列约束抓得住**（system_book 与 bizday 各自都不唯一）。
 --
 -- ⚠️ `org` 是**主体列**（行级授权谓词 `WHERE org = …` 的着力点，见 dbt/macros/subject_org.sql）：
---   它从 staging 透传、**不参与口径**。每个租户物化进自己的 schema（macros/generate_schema_name.sql）
---   ⇒ **单个 relation 内 org 恒为单值**，故上面的粒度仍写作 (system_book, bizday)。
---   它进 GROUP BY 是必需的（聚合查询里非聚合列必须在 GROUP BY 里），不是口径的一部分。
+--   本模型用 `{{ subject_org() }}` **直接注入常量**（**不从 staging 透传**）—— 两个理由：
+--   ① 规则 ⑩ 的判据是**单一形状** `as org`（scripts/check-data-models.mjs），注入形态才守得住；
+--   ② 模型自足：新加 marts 模型时不必先确认上游 staging 有没有那一列。
+--   同一轮运行里 macro 取的是同一个 env ⇒ 与 staging 的 org **恒等**，不存在两份值。
+--   它是常量、**不参与口径**，故不进 GROUP BY；每个租户物化进自己的 schema
+--   （macros/generate_schema_name.sql）⇒ **单个 relation 内 org 恒为单值**，粒度仍写作 (system_book, bizday)。
 --
 -- 指标口径（逐字，与 l1_metrics.yml 的 `definition` 同源）：
 --   · 净销售额 = 有效零售订单的成交金额合计（当前实现 = `sum(sale_money)`）
@@ -67,12 +70,11 @@
 -- 不会静默截断）。
 select
     system_book,
-    org,
+    {{ subject_org() }} as org,
     bizday,
     sum(sale_money)::numeric(20,2) as net_amount,
     count(distinct order_no)       as order_count
 from {{ ref('stg_lemeng_retail_order_line') }}
 group by
     system_book,
-    org,
     bizday

@@ -17,7 +17,7 @@ models:
     description: >-
       零售销售事实（口径模型）。粒度 **(system_book, bizday)**；口径只在此定义一次。
       指标声明见 dbt/semantics/l1_metrics.yml（L1 事实源）。
-      含**主体列 `org`**（从 staging 透传，见 dbt/macros/subject_org.sql）；粒度不受它影响 ——
+      含**主体列 `org`**（由 `{{ subject_org() }}` 注入常量，见 dbt/macros/subject_org.sql）；粒度不受它影响 ——
       每个租户物化进自己的 schema，relation 内 org 恒为单值。
     columns:
       - name: system_book
@@ -29,7 +29,7 @@ models:
           - accepted_values:
               values: ['3120', '64188']
       - name: org
-        description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。从 staging 透传、不参与口径；每个租户物化进自己的 schema ⇒ **单个 relation 内恒为单值**，故模型粒度仍写作 (system_book, bizday)。行级授权谓词 `WHERE org = …` 的着力点（modules/data/domain/authz.ts）。'
+        description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。本模型由 `{{ subject_org() }}` 注入常量（不从 staging 透传，理由见模型头注）；不参与口径，每个租户物化进自己的 schema ⇒ **单个 relation 内恒为单值**，故模型粒度仍写作 (system_book, bizday)。行级授权谓词 `WHERE org = …` 的着力点（modules/data/domain/authz.ts）。'
         tests:
           - not_null
       - name: bizday

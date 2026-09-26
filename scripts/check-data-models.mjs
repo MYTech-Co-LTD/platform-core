@@ -133,6 +133,21 @@ const DBT_DIR = 'dbt'
 const SKIP_DIRS = new Set(['node_modules', '.git', 'target', 'logs', 'dbt_packages', 'dbt_modules', '.tmp'])
 /** staging 模型：`dbt/models/**\/staging/stg_*.sql` */
 const STAGING_RE = /^dbt\/models\/(?:.+\/)?staging\/stg_[A-Za-z0-9_]+\.sql$/
+/** marts 模型：`dbt/models/**\/marts/*.sql`（含 `fct_*` 与将来的 `dim_*`——主数据维度表同样按租户物化） */
+const MARTS_RE = /^dbt\/models\/(?:.+\/)?marts\/[A-Za-z0-9_]+\.sql$/
+/** 规则 ⑩：主体列（`org`）的注入形态 `… as org`。**注释掩码后**判（注释里提一句不算，同实现判断①） */
+export const SUBJECT_ORG_RE = /\bas\s+org\b/
+/**
+ * 规则 ⑩ 的**文件级豁免**（必须显式登记 + 写理由；不许靠「没扫到」）。
+ * `stg_lemeng_retail_detail.sql`：旧湖、**待退役**，且该文件自身列集是暂定
+ * （头注「列全集按 T6 实测样本补齐」）⇒ 不为它补 org。**退役那笔要顺手收回本条豁免。**
+ */
+export const SUBJECT_ORG_EXEMPT = new Map([
+  [
+    'dbt/models/common/staging/stg_lemeng_retail_detail.sql',
+    '旧湖（待退役）且自身列集是暂定；退役那笔要顺手收回本条豁免',
+  ],
+])
 /** 规则 ①：`r['列名']`（单双引号都算；坑 #5 要的是「点名取列」这个构造，不是某一种引号） */
 const R_COLUMN_RE = /r\s*\[\s*['"]/
 /** 规则 ②：DuckDB shell 类型 `double`——**两种写法都拦**（`::double` 与 `CAST(x AS double)`，见头注判断②）；`double precision` 是 PG 原生类型 ⇒ 放行 */
@@ -676,6 +691,41 @@ export function checkDataModels(rootDir) {
         `staging 模型 \`${model}\` 在 sources.yml 里找不到对应的源 —— 要么补 \`${DBT_DIR}/models/common/staging/sources.yml\` 的声明，要么这个模型读的不是 declared 源（一对一要求双向都对上）`,
       )
     }
+  }
+
+  // ── 规则 ⑩：数据面主体列（org）───────────────────────────────────────────────
+  // 为什么这条必须是**静态门禁**而不只靠 dbt 测试：`modules/data/domain/authz.ts` 的 authorize()
+  // **恒拼** `WHERE <主体列> = '<orgId>'`，而主体列写死为 `org`（scripts/sync-data-semantics.mjs
+  // 的 L1_SUBJECT_COLUMN）⇒ 关系里少这一列，拼出的 SQL 必然以仓库错误（502）收场，而
+  // **静态看不出来**（旧状态正是这样活了很久，issue #176 缺口 A）。本规则只管**形状**
+  // （模型里有没有这一列）；**值非空**由 dbt 测试管（schema.yml 的 not_null）。
+  // 设计：docs/superpowers/specs/2026-09-26-subject-org-column-design.md
+  const subjectFiles = sqlFiles.filter((f) => STAGING_RE.test(f) || MARTS_RE.test(f))
+  let subjectScanned = 0
+  for (const rel of subjectFiles) {
+    if (SUBJECT_ORG_EXEMPT.has(rel)) continue
+    subjectScanned++
+    const masked = maskSqlComments(readFileSync(join(rootDir, rel), 'utf8'))
+    if (!SUBJECT_ORG_RE.test(masked)) {
+      push(
+        rel,
+        0,
+        'staging / marts 模型里没有主体列 `org`（须形如 `{{ subject_org() }} as org`，macro 见 dbt/macros/subject_org.sql）—— 行级授权的谓词是 `WHERE org = <orgId>`（modules/data/domain/authz.ts 恒拼），关系里少这一列 ⇒ 查询必以仓库错误（502）收场。设计见 docs/superpowers/specs/2026-09-26-subject-org-column-design.md',
+      )
+    }
+  }
+  // 空转自检：规则什么都没扫到（或全落豁免里）= 它存在与否没有区别 ⇒ 判违规
+  // （形态同 check-tenant-isolation.mjs 的空转自检）。
+  // ⚠️ 前置一道「这个 rootDir 里**有没有 `dbt/`**」：检测面**没有 dbt 的 fixture 是合法形态**
+  // （T9 那两条端到端用例就是「真模块文件副本 + 无 dbt/」，它们断言的是规则 ⑧ 在文件面上
+  // 不空转也不误伤）⇒ 那种 rootDir 对本规则**不适用**，不该被空转自检判红。
+  const hasDbtFiles = allFiles.some((f) => f.startsWith(`${DBT_DIR}/`))
+  if (hasDbtFiles && (subjectScanned === 0 || SUBJECT_ORG_EXEMPT.size >= subjectFiles.length)) {
+    push(
+      DBT_DIR,
+      0,
+      '主体列门禁没有扫到任何模型（或全部落在豁免名单里）—— 规则空转 = 门禁不存在，判违规：改扫描面或收窄豁免名单',
+    )
   }
 
   // ── 规则 ⑤⑥⑦：语义声明 ───────────────────────────────────────────────────────

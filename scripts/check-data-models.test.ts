@@ -56,6 +56,11 @@ const AUDIT = 'dbt/tests/audit_retail__net_sales.sql'
  *      `::double` 不同形，照规格放行；
  *   ③ staging 文件名与 sources.yml 的 `lemeng` + `retail_detail` 严格同构
  *      （`stg_<source>_<table>.sql`）——④ 是**双向**的，只对一半就红。
+ *
+ * 主体列（规则 ⑩）在基线里的**有意不对称**，别当成漏写：
+ *   · `MARTS` **带** `'acme' as org` —— 它不在豁免名单里，必须有这一列；
+ *   · `STAGING` 常量指向的正是**豁免文件**（`stg_lemeng_retail_detail.sql`，旧湖待退役），
+ *     所以它**没有** org 而基线仍然干净 —— 格⑩-1 同时钉住了「豁免真的生效」这一半。
  */
 function compliant(): Record<string, string> {
   return {
@@ -80,6 +85,7 @@ function compliant(): Record<string, string> {
     [MARTS]: [
       'select',
       "    '3120' as system_book,",
+      "    'acme' as org,",
       '    sum(amount)::double precision as net_amount',
       'from staging.stg_lemeng_retail_detail',
       'group by 1',
@@ -234,7 +240,10 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
 
   it('格④附带：反向 —— staging 模型没有对应的源声明 → 违规（指到那个模型文件本身）', () => {
     const root = variant((f) => {
-      f['dbt/models/common/staging/stg_lemeng_retail_orphan.sql'] = "select r['amount'] from r\n"
+      // 带 `as org`：本格测的是规则 ④（孤儿 staging），其余规则必须**不**掺进来 ——
+      // 否则违例数变 2、断言 toHaveLength(1) 就不在测 ④ 了（规则 ⑩ 上线时实测踩到）
+      f['dbt/models/common/staging/stg_lemeng_retail_orphan.sql'] =
+        "select r['amount'] as amount, 'acme' as org from r\n"
     })
     const violations = checkDataModels(root)
     expect(violations).toHaveLength(1)
@@ -307,6 +316,63 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
     expect(violations).toHaveLength(1)
     expect(violations[0]?.message).toContain('audit_retail__a__b.sql')
     expect(violations[0]?.message).toContain('retail__a:b')
+  })
+})
+
+describe('格⑩：主体列 org（issue #176 缺口 A / spec 2026-09-26-subject-org-column-design）', () => {
+  it('格⑩-1：基线干净 —— 同时覆盖「豁免文件缺列不算违规」这一半', () => {
+    // 基线的 STAGING 常量 = stg_lemeng_retail_detail.sql（在豁免名单里），它**没有** `as org`；
+    // 基线的 MARTS 带了（见 compliant 的头注「有意不对称」）⇒ 这里必须恰好 0 违例。
+    expect(checkDataModels(fixture(compliant()))).toEqual([])
+  })
+
+  it('格⑩-2：marts 缺 `as org` → 恰好 1 条，且指到那个模型文件', () => {
+    const root = variant((f) => {
+      f[MARTS] = f[MARTS].replace("    'acme' as org,\n", '')
+    })
+    const violations = checkDataModels(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.file).toBe(MARTS)
+    expect(violations[0]?.message).toContain('org')
+  })
+
+  it('格⑩-3：只在**注释**里写 `as org` → 仍违规（注释位不算代码位，同实现判断①）', () => {
+    // 把真列换成注释里的一句话：掩码后代码位没有 `as org` ⇒ 必须红（否则「写句注释就过关」）
+    const root = variant((f) => {
+      f[MARTS] = `-- 被注掉了：'acme' as org\n` + f[MARTS].replace("    'acme' as org,\n", '')
+    })
+    const violations = checkDataModels(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.file).toBe(MARTS)
+  })
+
+  it('格⑩-4：**非豁免** staging 缺 `as org` → 恰好 1 条（staging 侧同样在扫描面内）', () => {
+    const root = variant((f) => {
+      // 非豁免的 staging 必须同时有源声明，否则会先因规则 ④ 变红 ⇒ 这里补一份源（6 空格缩进，
+      // 与基线里 `- name: retail_detail` 同级）
+      f[SOURCES] = f[SOURCES] + '      - name: retail_order_line\n'
+      f['dbt/models/common/staging/stg_lemeng_retail_order_line.sql'] = [
+        "with r as (select * from read_parquet('s3://bucket/lemeng/retail_order_line/**/*.parquet'))",
+        'select',
+        "    r['system_book']::varchar as system_book",
+        'from r',
+        '',
+      ].join('\n')
+    })
+    const violations = checkDataModels(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.file).toBe('dbt/models/common/staging/stg_lemeng_retail_order_line.sql')
+  })
+
+  it('格⑩-5：扫描面全落豁免上 ⇒ 空转自检报违规（规则空转 = 门禁不存在）', () => {
+    // 只留「声明的源 + 那个**豁免**的 staging 文件」，不建任何 marts ⇒ subjectScanned === 0。
+    // 规则 ④ 双向在这一份里是满足的（lemeng.retail_detail ↔ stg_lemeng_retail_detail），
+    // 所以这一条违规只能来自空转自检。
+    const files = compliant()
+    delete files[MARTS]
+    const violations = checkDataModels(fixture(files))
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.message).toContain('空转')
   })
 })
 
