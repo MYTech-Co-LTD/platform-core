@@ -1,4 +1,4 @@
-sha256-of-rest c82b41ae0d1299c8cdefe8f8efe245dcdf734afb2f52f73a93b0f931f49658f3
+sha256-of-rest d0ea767bc716bdcf3e60ddcafbcbed34af4454468d4e510a249016a9bb9c9bc4
 7ee38140aa09250bc09b63460f6dd99c2e06e456d00c9da6575c1a0255158699 dbt/README.md ${REPO}/dbt/README.md 0644
 9c0cd6146b0e821ac05cadfbdbc0030723b19830d09b93acececceab754e0ff7 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 1f429020c4c115e9cc24828043566f7de6de35d5605ace67b1de0f62cccbd30e dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -20,7 +20,7 @@ fe8339e0c38c1f17ca75be63fefd86718cbccdb0c68a9d70697473ddecbb356d dbt/tests/asser
 61417386685c4a9e527f0dac3b53c799c9ead100f97d4b1077e2f6ed1f19e130 dbt/tests/assert_stg_lemeng_retail_order_line_key_unique.sql ${REPO}/dbt/tests/assert_stg_lemeng_retail_order_line_key_unique.sql 0644
 f61350765bd5a7b6f8d5e7cc55b3b915f666835812746f441a4111757554aa9e dbt/tests/audit_retail__net_sales.sql ${REPO}/dbt/tests/audit_retail__net_sales.sql 0644
 e5996e3505203746c3a2dc5dfab9b9a8a793806d31b82e9ecaeb18acf1b82417 dbt/tests/audit_retail__order_count.sql ${REPO}/dbt/tests/audit_retail__order_count.sql 0644
-37ecdadb3e397453397c1bb90743ec45c34452737f513c714647f05bfd7a1c33 deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
+1c6621720fe664dc2a96bf4a1e73726dfb441664a29cdb755025654986a71abf deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
 768ac0089b86e9a1d5d70d2674eeda0a3833eadad54e7c8bfebfbaf4264de30b deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
 bd5a8d9c381dc8a29c8eb4e8c8ac5f62ca61d63629a4184d2be705c7cd10ba05 deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
 a19c1453054c99b02555d0827c5c8748644d9477d943ce94614d9e6c421fc8ac deploy/duckle/console/pipelines/lemeng.dim.branch.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.branch.run.json 0644

@@ -100,7 +100,7 @@ services:
       DBT_DBNAME: ${PGDUCK_DB:-warehouse}
       # ZOS/S3 凭据键见 dbt/profiles.example.yml——真值只在 project env（openship isSecret）
     volumes:
-      - ../dbt:/usr/app:ro
+      - ../dbt:/usr/app                              # ⚠️ **不带 `:ro`**：dbt 要写 target/logs（相对路径 ⇒ 解析到 /usr/app）；见 SOP 的挂载要求与 issue #202
     depends_on:
       - pg_duckdb
     # 无 ports
