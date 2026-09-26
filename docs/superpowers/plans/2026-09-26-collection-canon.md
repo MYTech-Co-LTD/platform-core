@@ -11,7 +11,20 @@
 ## Global Constraints
 
 - **设计源**：`docs/superpowers/specs/2026-09-26-collection-canon-design.md`（已获用户确认，commit `9460612`）。本计划实现它；冲突处以 spec 为准。
-- **保号约束（硬）**：`docs/data-platform-handbook.md` 的 **§2 与 §4 节号与内容必须留住**——三处按节号引用它：`contracts/README.md:58`（→§4）、`contracts/README.md:157`（→§2）、`duckle/README.md:121`（→§2）。破坏了它们是**静默**的（无人会红）。
+- **保号约束（硬）**：`docs/data-platform-handbook.md` 的 **§2 与 §4 节号与内容必须留住**。按节号引用它的站点**实测共 8 处**（2026-09-26 全仓清点；**不是「三处」**——初稿数漏了 5 处，评审抓出）：
+
+  | 站点 | 指向 | 引用的是 |
+  |---|---|---|
+  | `dbt/dbt_project.yml:48` | §2 | 源清单里的旧乐檬路径 |
+  | `dbt/models/common/staging/sources.yml:23` | §2 | 源清单 |
+  | `contracts/README.md:58` | §4 | 欠账「路径非 hive」 |
+  | `contracts/README.md:157` | §2 | 抖音现状行 |
+  | `contracts/common/_schema.schema.json:49` | §4 | 路径规范正典 |
+  | `contracts/common/_schema.schema.json:60` | §4 | 非 hive 欠账 |
+  | `duckle/README.md:121` | §2 | `_ops` 那条记录 |
+  | `.gitignore:26` | §2 | `_ops`「duckle 自己的产出」 |
+
+  破坏了它们是**静默**的（无人会红）⇒ 任何动 §2/§4 的任务（尤其 **Task 7**）必须逐条对照上表保留内容与节号。
 - **零新增文件**：不新建文档、不新建脚本、不新建目录。
 - **不复制正文**：本仓规矩是「正文不复制，只给指针」（`AGENTS.md:4`、`docs/architecture.md:320`）。正典写**采集专属**内容；通用不变量指向 `docs/architecture.md` §4。
 - **历史快照不改**：`docs/superpowers/specs/**` 与**本分支之外的** `docs/superpowers/plans/**` 既有文件一律不动（那是已合入的历史稿）。
@@ -604,24 +617,38 @@ git commit -m "docs(collection): 正典 §1.4 四层验收 + §1.5 运维速查�
 
 > ⚠️ **上表的「验收结论」列**才是这个登记区的价值所在：**空着 = 没验过**，别用「跑起来了」当验收。
 
-- [ ] **Step 3: 核验**
+- [ ] **Step 3: 修 §1.1 里一处兑现不了的承诺（Task 2 评审抓出）**
+
+§1.1.1 的 E1 行现在写「有案例（细节见 §7 #3）」，但 §7 第 3 行本身就是一个**待沉淀项**
+（「需先核实其实现与落盘形态」）⇒ 指针能解析，**却兑现不了「有细节」这个承诺**。
+§1.6 案例库落地后，把 E1 那一格改成指向它：
+
+| 位置 | 原文 | 改为 |
+|---|---|---|
+| §1.1.1 的 E1 行末格 | `有案例（细节见 §7 #3）` | `有案例（细节见 §1.6 案例库；通道定性待核实，见 §7 #3）` |
+
+> ⚠️ 只改这一格。别顺手改 E2/E3 两格——E2 本就是「无案例」（§7 #1），E3 指向 `duckle/README.md` §1.4，两者都对。
+
+- [ ] **Step 4: 核验**
 
 ```sh
 cd /Users/duo/orca/workspaces/platform-core/采集板块
 grep -q "1.7 逐源决策登记区" docs/data-platform-handbook.md && echo "§1.7 OK"
 grep -q "物化断链" docs/data-platform-handbook.md && echo "案例 17 在"
+echo "E1 承诺已修（应命中）:"; grep -c "细节见 §1.6 案例库" docs/data-platform-handbook.md
+echo "旧承诺已消（应为 0）:"; grep -c "细节见 §7 #3" docs/data-platform-handbook.md
 # 登记表里的每一条都要与本文档 §2 的源清单对得上（数目一致）
 grep -c "^| 乐檬\|^| 抖音" docs/data-platform-handbook.md
 grep -c "（Task 6 填）" docs/data-platform-handbook.md
 ```
 
-**Expected:** 两行 OK；第三条输出 ≥ 6（§1.7 登记表行数多于 §2，因为 §1.7 按「源 / 表」而 §2 按「域」）；占位计数 `0`。
+**Expected:** 两行 OK；`细节见 §1.6 案例库` 计数 ≥ 1；`细节见 §7 #3` 计数 `0`；登记表行数 ≥ 6；占位计数 `0`。
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add docs/data-platform-handbook.md
-git commit -m "docs(collection): 正典 §1.6 案例库（17 条实测）+ §1.7 逐源决策登记区"
+git commit -m "docs(collection): 正典 §1.6 案例库（17 条实测）+ §1.7 逐源决策登记区 + 修 §1.1 E1 承诺"
 ```
 
 ---
