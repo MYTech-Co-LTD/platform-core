@@ -4,7 +4,7 @@
 
 **Goal:** 把 `docs/data-platform-handbook.md` 从 3.2KB 的薄指针升级为本项目的**采集正典**（正典正文 + 台账合一），并补上 `AGENTS.md` 文档地图里缺失的采集路由、修掉 `docs/architecture.md` 里 duckle「不常驻」的漂移。
 
-**Architecture:** 零新增文件。正典落在既有入口 handbook 上：新的 §1 装采集正典正文，§2/§3/§4/§5 保持节号（三处外仓内引用按节号指向它们），新增 §6 下钻清单与 §7 待沉淀。下钻的四份文档（`contracts/README.md`、`duckle/README.md`、`deploy/duckle/console/README.md`、`docs/architecture.md` §2.2）**正文一律不动**——它们是目录自述/架构节，正典只挂指针。
+**Architecture:** 零新增文件。正典落在既有入口 handbook 上：新的 §1 装采集正典正文，§2/§3/§4/§5 保持节号（**8 处**外仓内引用按节号指向它们），新增 §6 下钻清单与 §7 待沉淀。下钻的四份文档（`contracts/README.md`、`duckle/README.md`、`deploy/duckle/console/README.md`、`docs/architecture.md` §2.2）**正文一律不动**——它们是目录自述/架构节，正典只挂指针。
 
 **Tech Stack:** 纯 Markdown + 本仓既有的 shell/grep 核验；不引入新工具、不改任何脚本。
 
@@ -212,7 +212,7 @@ cd /Users/duo/orca/workspaces/platform-core/采集板块
 # ① §2 与 §4 的标题仍在，且顺序为 2 < 3 < 4 < 5
 grep -n "^## " docs/data-platform-handbook.md
 
-# ② 三处外仓内引用仍对得上（这三行必须都打印出内容）
+# ② 8 处外仓内引用仍对得上（下面三行只是其中按节号引它的样本，必须都打印出内容）
 echo "--- contracts/README.md:58 → §4"; sed -n '58p' contracts/README.md
 echo "--- contracts/README.md:157 → §2"; sed -n '157p' contracts/README.md
 echo "--- duckle/README.md:121 → §2"; sed -n '121p' duckle/README.md
@@ -729,8 +729,8 @@ git commit -m "docs(collection): 正典 §1.6 案例库（17 条实测）+ §1.7
 
 - [ ] **Step 3: 修 §4 / §5 里指向「未合入的公司标准」的陈旧引用**
 
-§2–§5 的正文在 Task 1 里被冻结保留，但其中三处引用的是 **`team-harness` 那份尚未合入**的标准
-（写作「标准 §N」）——本正典升级后，它们应当指回本正典自己的节。逐处改：
+§2–§5 的正文在 Task 1 里被冻结保留，但其中**多处**引用的是 **`team-harness` 那份尚未合入**的标准
+（有的写作「标准 §N」，有的**把「标准」二字省了**——如 `§4.1 路径规范`）——本正典升级后，它们应当指回本正典自己的节，**或就地说明出处**。逐处改：
 
 | 位置 | 原文 | 改为 |
 |---|---|---|
@@ -749,7 +749,7 @@ git commit -m "docs(collection): 正典 §1.6 案例库（17 条实测）+ §1.7
 
 （§3 里那处 `按标准 §4.1 的形态` 已被 Step 1 整表替换掉，不必单独改。）
 
-⚠️ **只改这三处的引用目标，不动 §4/§5 的其余内容，也不动它们的节号**——
+⚠️ **只改上表这些处的引用目标，不动 §4/§5 的其余内容，也不动它们的节号**——
 `contracts/README.md:58` 仍按节号引用 §4，改号即静默破引用。
 
 - [ ] **Step 4: 核验**
@@ -860,7 +860,7 @@ git commit -m "docs(collection): 补 AGENTS.md 文档地图采集路由 + 订正
 ```sh
 cd /Users/duo/orca/workspaces/platform-core/采集板块
 
-echo "===== ① 保号约束：三处外仓内引用仍对得上 ====="
+echo "===== ① 保号约束：8 处外仓内引用仍对得上（打印三个样本）====="
 sed -n '58p' contracts/README.md
 sed -n '157p' contracts/README.md
 sed -n '121p' duckle/README.md
