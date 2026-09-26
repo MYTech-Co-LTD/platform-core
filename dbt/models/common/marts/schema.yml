@@ -17,6 +17,8 @@ models:
     description: >-
       零售销售事实（口径模型）。粒度 **(system_book, bizday)**；口径只在此定义一次。
       指标声明见 dbt/semantics/l1_metrics.yml（L1 事实源）。
+      含**主体列 `org`**（由 `{{ subject_org() }}` 注入常量，见 dbt/macros/subject_org.sql）；粒度不受它影响 ——
+      每个租户物化进自己的 schema，relation 内 org 恒为单值。
     columns:
       - name: system_book
         description: 账套（主体维度，3120 熊喵 / 64188 品品甜）。**已实证**——身份跟着数据走：值来自**路径**（新湖 hive 分区键 `system_book=<账套>/` 被 read_parquet 自动推断成列，staging 只把它 `::varchar` 定型；2026-09-24 真机 dbt run 通过）。⚠️ `account_book` var 只用于**拼读路径**、不灌数据；「由 var 供值」那套只在双轨期保留的旧湖 `stg_lemeng_retail_detail` 里。
@@ -26,6 +28,10 @@ models:
           # 新增账套要改这里（有意的摩擦：账套集合变了是件该被看见的事）。
           - accepted_values:
               values: ['3120', '64188']
+      - name: org
+        description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。本模型由 `{{ subject_org() }}` 注入常量（不从 staging 透传，理由见模型头注）；不参与口径，每个租户物化进自己的 schema ⇒ **单个 relation 内恒为单值**，故模型粒度仍写作 (system_book, bizday)。行级授权谓词 `WHERE org = …` 的着力点（modules/data/domain/authz.ts）。'
+        tests:
+          - not_null
       - name: bizday
         description: 业务日。**新湖（现行）**：列名就是 `bizday`，是 **hive 分区键**（路径 `bizday=<日期>/` 推断）且**落盘即定型为 DATE**（管线侧由 shift_table_bizday 定型）——`order_detail_bizday` 与 `%Y%m%d` 是**旧湖** `stg_lemeng_retail_detail`（双轨期保留件）的形态，不再是本模型的来源。
         tests:
