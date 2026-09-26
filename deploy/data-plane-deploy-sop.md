@@ -416,7 +416,7 @@ sh /opt/lemeng-sync.sh <全SHA> --check    # 只比不写
 
 | 现象 | 先看哪 |
 |---|---|
-| 排班没触发 / console 本身有问题 | `docker logs <console>` —— 正常应是四行：console on / workspace / DuckDB / **sign-in required** |
+| 排班没触发 / console 本身有问题 | **经 openship MCP** 读该 console 服务的日志（数据面 project → 服务 → 日志端点）——正常应是四行：console on / workspace / DuckDB / **sign-in required**。⚠️ **别裸 SSH 上机敲 `docker logs`**（根本法则·唯一通道） |
 | 跑了但失败 | `schedules.json` 的 `last_run_status` / `last_run_error`，以及该账套卷里 `logs/dim-*-run.csv`（薄管线的运行记录，含 wrapper 完整 stdout） |
 | 自证没过 | 输出里的 `ASSERT_FAIL: …` / `DIM_FAILED` —— **拒写湖是正确行为**（#205），不是故障 |
 
