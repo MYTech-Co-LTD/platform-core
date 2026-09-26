@@ -111,7 +111,36 @@
 
 ### 1.2 硬约束清单
 
-（Task 3 填）
+> **先看清是哪一档。** 第一档违反 = CI 红；第二档违反 = 门禁不拦，靠评审与人。
+> **通用不变量不在此复制**（见 `docs/architecture.md` §4）；本节只列**采集专属**的。
+
+#### 第一档：门禁固化（在 CI 真跑，且会红）
+
+| 规则 | 守什么 | 固化处 | 跑在 |
+|---|---|---|---|
+| **B7** 部署面 | 全仓**只两份** compose（`deploy/docker-compose.yml` 单元 A + `deploy/data-compose.yml` 单元 B/数据面）；两份里**所有** `ports` 必须 `127.0.0.1:` 起头 | `scripts/check-compose.mjs` | `gates` |
+| **B9** env 契约 | `.env.example` 键齐全 | `scripts/check-env-example.mjs` | `gates` |
+| **dbt 工件七项** | staging 必含 `r['列名']` 取列模式 / 禁 `::double` / 禁 `union_by_name` / staging 一对一双向 / 语义声明必填字段 / 指标命名空间与同名唯一 / 每个声明指标一条对账 test | `scripts/check-data-models.mjs` | `gates` |
+| **数据面投递** | lock 首行自校验 + lock ↔ 工作区逐文件 sha256/落地路径/模式一致 + 消费面覆盖 | `scripts/check-data-plane-lock.mjs` | `gates` |
+
+#### 第二档：仅文档（无门禁，靠评审与人守）
+
+采集侧「目前没人守」的诚实清单（源：`contracts/README.md` §5 + `docs/architecture.md` §2/§5.1）：
+
+| 约定 | 谁在守 |
+|---|---|
+| 契约元 schema 的字段级约束 | ⚠️ **只有人手动跑**（`contracts/README.md` §4.3 那条命令），CI 不跑 |
+| 契约的六条跨字段规则 | ❌ 没人守——连元 schema 都表达不了 |
+| 「新源必须先有契约再落盘」的**顺序** | ❌ 流程约束，无机器判据 |
+| **三件套同一个 PR**（契约 + 管线 + dbt staging；供操作面消费时加 `modules/data` 引用表与稳定视图 = 四件套） | ❌ 流程约束，**当前无静态门禁**（`docs/architecture.md` §5.1 明写） |
+| `contracts/**` 与 `duckle/**` 的 env 键 | ❌ **不在 B9 扫描面内**（`docs/architecture.md` §2 明写「当前没有任何静态门禁」） |
+| 契约类型 ↔ duckle `data.schema` 类型的枚举映射 | ⚠️ **未实测核对**（两套词汇不同，别直抄） |
+| `_` 前缀 = 不是契约 | ❌ 只在自动发现场景才有意义，而自动发现尚不存在 |
+| 「例外的红线」五条（§1.1.1） | ❌ 流程约束，无机器判据 |
+
+> ⚠️ **读这张表的方式**：「第二档」不等于「不重要」，而是「目前没有自动化的守门人」。
+> 把某一条升级成门禁是**另一个决定**，需要单独的真实案例支撑（本仓规矩：**无案例不立标准**）。
+> **别把「CI 绿」读成「采集纪律都守住了」**——CI 根本不扫 `contracts/`、`duckle/` 与本文档。
 
 ### 1.3 生命周期 SOP（A→I）
 
