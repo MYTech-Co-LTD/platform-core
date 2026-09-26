@@ -109,11 +109,25 @@ Expected: 明确容器的 TZ。**若容器是 UTC 而业务要求北京时间排
 
 - [ ] **Step 2: `--duckdb` 与凭据闸**已实测可用（ADR-0014 §验证一：`DuckDB /usr/local/bin/duckdb` / `sign-in required`）⇒ 本步不重复验证，但**首次部署后仍要回读日志确认这两行**。
 
-> ⚠️ **本计划最高风险点（Step 3 前必须先确认）**：往 compose 加服务后，「部署」会不会**recreate 整个栈**
-> —— 那会**重启 `pg_duckdb`（数据库）与 metabase**。**先确认 openship 的 scoped 部署路径**：
-> `post_projects_by_id_services_sync`（把 compose 的服务集同步进项目）→ 再按 `serviceIds` **只部署新增服务**。
-> **若确认不了 scoped 部署，则本 Task 停手**，改为「先在数据面用一次性容器跑通观察期，最后再一次性上 compose」
-> —— 宁可慢，不可重启数据库。
+> ✅ **本 Task 的前置已确认（2026-09-26），风险点与两条新发现如下。**
+>
+> **① 可用路径 = `serviceIds` 定向部署。** 本仓已有实测：`serviceIds` 定向部署时**其余容器 kept running**
+> （`deploy/customer-onboarding.md` §6 纪律 2 与 §9 实测 **Test 4a**，证据 `dep_JtcT7EsUQOnL5_lo`）；
+> 反面对照同处写明：**全量部署会重建该 project 全部容器（把客户 pg/Metabase 全重启）**。
+> ⇒ 做法固定为：`post_projects_by_id_services_sync`（把 compose 服务集同步进项目）→ 再按 `serviceIds`
+> **只部署新增的两个服务**。**禁止全量部署。**
+>
+> **② 传播面（新发现，必须处置）**：`deploy/data-compose.yml` 是**两个数据面项目共用**的
+> （`platform-core-data`@`23a1091e` 与 `platform-core-shanhai-data`@`8281d598`）
+> ⇒ 新服务会**自动出现在两个项目的下次部署**（同处实测 Test 3）。
+> 而 `ZOS_*` 五个别名与 `LEMENG_TOKEN_64188` **只写在 shanhai 项目的 env 里**
+> ⇒ 另一个项目起这两个服务会**被凭据闸拒跑**（`entrypoint.sh` 对空 token 默认拒），
+> 叠加 `restart: unless-stopped` ⇒ **可能反复重启**。
+> ⇒ 处置：部署后对**不需要该服务的项目**把这两个服务 patch `enabled: false`
+> （同处实测 Test 2 的语义：**不部署 + 拆旧容器**）。
+>
+> **③ 不能靠「拆出一份单独 compose」规避**：本仓约束 **B7 = compose 全仓只两份**
+> （白名单 `deploy/docker-compose.yml` + `deploy/data-compose.yml`，见 `AGENTS.md`）⇒ 第三份即违规。
 
 ## Task 4: 部署与冷启动自证
 
