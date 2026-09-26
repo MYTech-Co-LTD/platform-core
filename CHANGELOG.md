@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.34.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.33.2...v0.34.0) - 2026-09-26
+- 【新增】lemeng: 零售采集的调度定义进仓——薄管线 + 排班（enabled:false，未切流） ([#241](https://github.com/MYTech-Co-LTD/platform-core/pull/241), [0efde0a](https://github.com/MYTech-Co-LTD/platform-core/commit/0efde0af500e6e5f833922330d0048559509950d))
+
+
 ## [0.33.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.33.1...v0.33.2) - 2026-09-26
 - 【修复】duckle: 镜像里装 curl——wrapper 全程用它，容器内实测 curl: not found ([#235](https://github.com/MYTech-Co-LTD/platform-core/pull/235), [fc20664](https://github.com/MYTech-Co-LTD/platform-core/commit/fc20664d3f5ff07be672f769abbe52758d173396))
 
