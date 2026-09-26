@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.33.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.32.0...v0.33.0) - 2026-09-26
+- 【新增】lemeng: 调度失败告警——接在 wrapper 的 EXIT trap（含「该发/不该发」的测试） ([#231](https://github.com/MYTech-Co-LTD/platform-core/pull/231), [cdfe240](https://github.com/MYTech-Co-LTD/platform-core/commit/cdfe240619138c816a4aa970b7dfd1664ac84940))
+
+
 ## [0.32.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.31.0...v0.32.0) - 2026-09-26
 - 【新增】lemeng: compose 加两个常驻 duckle console（每账套一个，只绑回环） ([#229](https://github.com/MYTech-Co-LTD/platform-core/pull/229), [c6ff3ec](https://github.com/MYTech-Co-LTD/platform-core/commit/c6ff3ec8ada791407d4734c7d059186bb376e705))
 
