@@ -23,3 +23,4 @@ dbt/                                     ${REPO}/dbt/                           
 scripts/lemeng/run-retail-day.sh         /opt/lemeng-run.sh                        0755
 scripts/lemeng/readback-helper.sh        ${REPO}/lemeng-readback.sh                0755
 deploy/duckle/console/                    ${REPO}/deploy/duckle/console/             0644
+deploy/duckle/Dockerfile                    ${REPO}/deploy/duckle/Dockerfile             0644
