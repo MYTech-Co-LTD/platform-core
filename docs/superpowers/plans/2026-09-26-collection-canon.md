@@ -643,7 +643,12 @@ git commit -m "docs(collection): 正典 §1.4 四层验收 + §1.5 运维速查�
 
 | 位置 | 原文 | 改为 |
 |---|---|---|
-| §1.1.1 的 E1 行末格 | `有案例（细节见 §7 #3）` | `有案例（细节见 §1.6 案例库；通道定性待核实，见 §7 #3）` |
+| §1.1.1 的 E1 行末格 | `有案例（细节见 §7 待沉淀 #3）` | `有案例（细节见 §1.6 案例库；通道定性待核实，见 §7 #3）` |
+
+> ⚠️ **原文那句要按上面这个写法逐字匹配**（初稿把「原文」写成了缩略的 `细节见 §7 #3`，与文档实际不符）。
+> 更要紧的是：**守卫要能红**。初稿给的 `grep -c "细节见 §7 #3"` 在**改动前就已经是 0**（文档里从没出现过那个缩略形式）
+> ⇒ 它**永远不可能失败**，是个假绿守卫——正是本正典 §1.5 在批的那类东西。
+> 有牙的判据是这两条**同时**成立：`grep -c "细节见 §7 待沉淀 #3"` = `0`（旧格确已消失）**且** `grep -c "细节见 §1.6 案例库"` ≥ `1`（新格确已落地）。
 
 > ⚠️ 只改这一格。别顺手改 E2/E3 两格——E2 本就是「无案例」（§7 #1），E3 指向 `duckle/README.md` §1.4，两者都对。
 
@@ -653,8 +658,8 @@ git commit -m "docs(collection): 正典 §1.4 四层验收 + §1.5 运维速查�
 cd /Users/duo/orca/workspaces/platform-core/采集板块
 grep -q "1.7 逐源决策登记区" docs/data-platform-handbook.md && echo "§1.7 OK"
 grep -q "物化断链" docs/data-platform-handbook.md && echo "案例 17 在"
-echo "E1 承诺已修（应命中）:"; grep -c "细节见 §1.6 案例库" docs/data-platform-handbook.md
-echo "旧承诺已消（应为 0）:"; grep -c "细节见 §7 #3" docs/data-platform-handbook.md
+echo "E1 承诺已修（应 ≥1）:"; grep -c "细节见 §1.6 案例库" docs/data-platform-handbook.md
+echo "旧承诺已消（应为 0）:"; grep -c "细节见 §7 待沉淀 #3" docs/data-platform-handbook.md
 # 登记表里的每一条都要与本文档 §2 的源清单对得上（数目一致）
 grep -c "^| 乐檬\|^| 抖音" docs/data-platform-handbook.md
 grep -c "（Task 6 填）" docs/data-platform-handbook.md
