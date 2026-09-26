@@ -11,7 +11,7 @@
 | | |
 |---|---|
 | **管** | 采集的**全生命周期**：接一个新采集任务 → 选型 → 契约 → 管线 → 调度 → 验收 → 运维 → 变更/回填 → 退役 |
-| **不管** | 清洗 / 建模 / 语义 / 物化 / 消费层的口径与流程（在 `docs/superpowers/specs/2026-09-21-data-platform-layered-design.md` 与 `2026-09-22-data-stack.md`）；**部署**（在 `deploy/data-plane-deploy-sop.md`）；公司级纪律正文（在 `team-harness`，见 §6） |
+| **不管** | 清洗 / 建模 / 语义 / 物化 / 消费层的口径与流程（在 `docs/superpowers/specs/2026-09-21-data-platform-layered-design.md` 与 `docs/superpowers/plans/2026-09-22-data-stack.md`）；**部署**（在 `deploy/data-plane-deploy-sop.md`）；公司级纪律正文（在 `team-harness`，见 §6） |
 
 **「采集完成」的判据（两个方向都写死）**：
 
