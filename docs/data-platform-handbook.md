@@ -211,7 +211,7 @@
 |---|---|---|---|
 | **自证** | 写后**回读对象存储**（行数 / 金额） | 上传 / 转换失败 | 过（19,678 行 / 合计 1,622,276.08；hour=17 窗 126,596.06 与既有基线**逐分吻合**） |
 | **幂等** | **同 `batch_id`** 重跑 ETag / Size **逐字节一致**；**换** `batch_id` 则 ETag 变（**by design**——`batch_id` 是载荷列） | 不确定性 / 重复累积 | 强判通过 |
-| **独立通道** | 预聚合端点 vs 明细聚合（dbt `audit_*` 独立复算） | 引擎 / 口径侧 bug | **未归零**：+17,250.91（**+1.15%**），149 家有值门店**全为正差**、无负差、无湖内独有店 ⇒ 指向**口径差**而非抽取缺失 |
+| **独立通道** | 预聚合端点（`branchindicator` / `itemsales`）vs 明细聚合；固化为 dbt `audit_*` 独立复算 | 引擎 / 口径侧 bug | **未归零**：+17,250.91（**+1.15%**），149 家有值门店**全为正差**、无负差、无湖内独有店 ⇒ 指向**口径差**而非抽取缺失。⚠️ 这个数是 **S1 湖内逐店对账**跑出来的，**不是** `audit_*` 的产出——后者是让它**可重复、进 CI** 的机制（S2 起） |
 | **跨系统** | 与旧平台同期关键指标一次性对比 | 口径 / 语义分歧 | 待回填后做 |
 
 > ⚠️ **「引擎说 ok」≠「对象真的到了」**：`k1 ok (3 rows)` 只是引擎自认为成功，**必须回读**才算数。
@@ -222,8 +222,8 @@
 
 | 现象 | 先看哪 |
 |---|---|
-| 排班没触发 / console 本身有问题 | `docker logs <console>`——正常应是**四行**：console on / workspace / DuckDB / **sign-in required** |
-| 跑了但失败 | `schedules.json` 的 `last_run_status` / `last_run_error`；以及该账套卷里 `logs/*.csv`（薄管线的运行记录，含 wrapper 完整 stdout） |
+| 排班没触发 / console 本身有问题 | **经 openship MCP** 读该 console 服务的日志（数据面 project → 服务 → 日志端点）——正常应是**四行**：console on / workspace / DuckDB / **sign-in required**。⚠️ **别裸 SSH 上机敲 `docker logs`**（根本法则·唯一通道；console 是 openship 管的服务，日志走 MCP 拿得到） |
+| 跑了但失败 | `schedules.json` 的 `last_run_status` / `last_run_error`；以及该账套卷里 `logs/*.csv`（薄管线的运行记录，含 wrapper 完整 stdout）。⚠️ 这两样在**容器/卷里**，同样**经 MCP 的容器内执行端点**读，**不要上机** |
 | ⚠️ **`/api/schedules` 的 GET 不回运行状态** | 文件里已有 `last_run_at`，GET 却恒 `null` ⇒ **别信那个 GET**，读 `schedules.json` 或 serve 日志 |
 | 自证没过（`ASSERT_FAIL:` / `DIM_FAILED`） | **拒写湖是正确行为**（#205），**不是故障** |
 | 容量撞顶 | 末页哨兵命中 ⇒ **fail-loud 不丢数**。**余量按阈值算，不按「页数 × 容量」算**——哨兵页占一页，真实阈值 = (页数 − 1) × 页容量 |
