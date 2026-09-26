@@ -69,26 +69,46 @@ Expected: 五行全 `SAME`。**任一行 `DIFF` ⇒ 停在这里**，先修项�
 > 它**根本还没有 `ZOS_*` 这几个键**（表现为空串 ⇒ 同样 `DIFF`）。先确认该容器创建时间晚于 env 写入，
 > 否则本步的结论不成立。
 
-## Task 2: 两个账套的 workspace 与调度定义（进仓）
+## Task 2: 先把 wrapper 的 dim 守卫**搬进管线**，再写调度定义
 
-- [ ] **Step 1: 写定义文件**（`deploy/duckle/schedules/<账套>.json`）
+> **为什么有这一步（2026-09-26 实测发现，用户裁决 A）**
+> wrapper `/opt/lemeng-run.sh` 是**宿主级编排器**（13 处 `$COMPOSE run --rm … duckle`；
+> 宿主上**没有** `duckle` 可执行文件，引擎只在镜像里；它还用 `docker exec` 回读）。
+> 而 **duckle 的调度器只能触发「管线」，触发不了宿主脚本** ⇒ 二者接不上。
+> 三个选项里选 **A：把那层守卫与记账搬进管线**（弃 B「容器内入口 + 壳管线」= 逻辑复制两份必然漂移；
+> 弃 D「容器挂 docker socket」= 把宿主 root 交给该容器，是不能顺手做的安全决策）。
+> **A 之所以可行**：wrapper 最重的那件事（起引擎 + 注入 env）在 console 世界里**已经不需要了**
+> —— 引擎就在同进程、env 就在 console 进程里；剩下的只是守卫与记账，而它们**都有原生对应物**。
 
-**只写定义字段**，不写运行状态（`last_run_*` / `next_run_at` 由 console 自己维护）：
+### 2.1 移植清单（逐条对应，**不许漏**）
 
-| 账套 | 管线（`id`） | 形态 | 排班 |
+| wrapper 的职责 | 管线里的形态 | 依据 |
+|---|---|---|
+| 7 个凭据 + `SYSTEM_BOOK` 注入 | **console 进程 env**（逐账套，见 Task 3） | ADR-0014 决策 |
+| `SNAPSHOT` 推导（`TZ=Asia/Shanghai date +%F`） | **`ctl.setvar`**：`value` 是 **SQL 表达式**（实测其 schema 原文示例即 `current_date`）⇒ 用 `AT TIME ZONE 'Asia/Shanghai'` 保持同一语义 | 实测 `ctl.setvar` schema |
+| `identity_assert`（#205）：变量缺失即判红 / 传输失败重试 3 次 / verdict 比对 | `src.rest`（whoami）→ **节点自带 Retry**（与「传输失败重试 3 次」同义；`retry` 组件自陈「per-stage retry 已在 Advanced」）→ 比对 → **`ctl.die`** 判红 | 已读 `identity_assert()` |
+| 状态解析 + `_ops` 观测行 | console 的 **run 历史**（`last_run_status` 等）+ Task 5 的告警链路 | ADR-0014 / 本计划 Task 5 |
+| `--log-dir` | console 自管 | 实测 |
+| 失败判红（非零退出） | 管线 `ctl.die` + 引擎非零退出 | 引擎 EXIT CODES |
+
+**纪律：只加节点，不改现有取数/写湖节点**（dim 管线是 S3-a 刚交付验证过的；守卫挂在写湖之前）。
+
+> ⚠️ **核对点（移植前必须做的实测）**：`AT TIME ZONE 'Asia/Shanghai'` 在**管线上下文里**真的可用
+> （`ctl.setvar` 的 SQL 由引擎求值 —— 与直接在 DuckDB 里跑是两件事，别按"显然可用"处理）。
+
+### 2.2 写定义文件（移植完成后再做）
+
+- [ ] **Step 1: 写定义**（`deploy/duckle/schedules/<账套>.json`）：只写定义字段，不写运行状态。
+
+| 账套 | 管线（`id`） | 形态 | 排班（**UTC**，已实测容器 TZ=UTC） |
 |---|---|---|---|
-| 3120 | 门店维 / 商品维 两条 | `interval` 或 `cron` | 照 S2-a 计划：`0 2 * * *` / `0 11 * * *`（**UTC** ⇒ 北京 10:00 / 19:00） |
-| 64188 | 同上两条 | 同上 | 同上 |
+| 3120 | 门店维 / 商品维 | `cron` 或 `interval` | 照 S2-a 计划：北京 10:00 ⇒ `0 2 * * *`；19:00 ⇒ `0 11 * * *` |
+| 64188 | 同上 | 同上 | 同上 |
 
-**口径照抄已作废载荷里仍然有效的部分**（issue #17 已标注）：3120 的 `BRANCH_NUMS` = 269 家（照零售 job）；
-64188 = `{1..128} ∪ {999}`（129 家，**含 99**）；**`SNAPSHOT` 不要传**（脚本要求 `YYYY-MM-DD`，传非日期会 `SNAPSHOT_DERIVE_FAILED` 判红；不传则按 Asia/Shanghai 今日推）。
+**口径照抄（issue #17 已标注载荷作废、但口径仍有效）**：3120 的 `BRANCH_NUMS` = 269 家（照零售 job）；
+64188 = `{1..128} ∪ {999}`（129 家，**含 99**）；**`SNAPSHOT` 不要传**（现在改由管线自己算，见 2.1）。
 
-- [ ] **Step 2: 排班时区核对点（**必做**）**
-
-Run: `docker run --rm --entrypoint sh platform-core-duckle:local -c 'date; date -u; cat /etc/timezone 2>/dev/null'`
-
-Expected: 明确容器的 TZ。**若容器是 UTC 而业务要求北京时间排班**，则定义里按 UTC 写（或显式设 TZ），并把结论记进 SOP。
-（ADR/本计划**都没有**假定容器 TZ —— 这是实测项，不许编。）
+- [x] **Step 2: 排班时区核对** —— ✅ 已做（2026-09-26）：**容器 TZ = UTC**（`date`/`date -u` 一致、`TZ` 空、无 `/etc/timezone`）⇒ **排班一律按 UTC 写**。
 
 ## Task 3: compose 加两个常驻 console（**只绑回环、各自 env**）
 
