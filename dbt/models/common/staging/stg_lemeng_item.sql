@@ -14,11 +14,12 @@
 -- 【覆盖双账套】路径段写 `*/snapshot=**/` 而不是钉单账套 —— 商品维在 dbt 侧是**一个模型读两个
 --   账套分区**（`system_book` 是**列**、不是 var）。
 --
--- 列与空值性以 `contracts/common/lemeng.item.json` 为准（108 列全带，本层不加语义）。
+-- 列与空值性以 `contracts/common/lemeng.item.json` 为准（108 列全带，本层不加语义；**另加 dbt 注入列 `org`**）。
 -- 列数构成：3 注入列 + 89 标量列 + 16 摊平列（item_department 3 / item_category 9 / item_brand 4）。
 select
   r['batch_id'] as batch_id,
   r['system_book']::varchar as system_book,
+  {{ subject_org() }} as org,
   r['snapshot']::date as snapshot,
   r['item_num'] as item_num,
   r['item_code'] as item_code,

@@ -16,6 +16,11 @@
 --   （`dbt/tests/assert_fct_retail_sale_grain_unique.sql`）：粒度漂移（多出来一行）会让所有
 --   按它聚合的指标静默偏大，而**没有任何单列约束抓得住**（system_book 与 bizday 各自都不唯一）。
 --
+-- ⚠️ `org` 是**主体列**（行级授权谓词 `WHERE org = …` 的着力点，见 dbt/macros/subject_org.sql）：
+--   它从 staging 透传、**不参与口径**。每个租户物化进自己的 schema（macros/generate_schema_name.sql）
+--   ⇒ **单个 relation 内 org 恒为单值**，故上面的粒度仍写作 (system_book, bizday)。
+--   它进 GROUP BY 是必需的（聚合查询里非聚合列必须在 GROUP BY 里），不是口径的一部分。
+--
 -- 指标口径（逐字，与 l1_metrics.yml 的 `definition` 同源）：
 --   · 净销售额 = 有效零售订单的成交金额合计（当前实现 = `sum(sale_money)`）
 --   · 订单数   = 按单号去重的订单笔数（当前实现 = `count(distinct order_no)`）
@@ -62,10 +67,12 @@
 -- 不会静默截断）。
 select
     system_book,
+    org,
     bizday,
     sum(sale_money)::numeric(20,2) as net_amount,
     count(distinct order_no)       as order_count
 from {{ ref('stg_lemeng_retail_order_line') }}
 group by
     system_book,
+    org,
     bizday

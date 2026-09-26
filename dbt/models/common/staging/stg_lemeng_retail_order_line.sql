@@ -54,6 +54,7 @@
 --
 -- ════════════════════════════════════════════════════════════════════════════════════════
 -- 【三】契约 18 列**全带**（一对一不许丢列）
+--    （另加 **dbt 注入列 `org`**：主体列，非契约列，见 dbt/macros/subject_org.sql）
 -- ════════════════════════════════════════════════════════════════════════════════════════
 -- `hour` 与 `order_operate_time` 也在内 —— 下游 marts 用不用是 marts 的事，③ 层没有资格替它裁。
 -- 列的空值性以 `contracts/common/lemeng.retail_order_line.json` 为准（本层不加语义）。
@@ -63,6 +64,7 @@
 select
   r['batch_id']             as batch_id,
   r['system_book']::varchar as system_book,
+  {{ subject_org() }}       as org,
   r['bizday']::date         as bizday,
   r['hour']::int            as hour,
   r['order_no']             as order_no,

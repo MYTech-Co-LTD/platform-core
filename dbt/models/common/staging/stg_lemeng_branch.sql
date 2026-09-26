@@ -14,10 +14,11 @@
 --   账套分区**（`system_book` 是**列**、不是 var）；`account_book` var 只服务旧湖 retail_detail
 --   那条非 hive 路径（它账套只能由 var 供值）。
 --
--- 列与空值性以 `contracts/common/lemeng.branch.json` 为准（16 列全带，本层不加语义）。
+-- 列与空值性以 `contracts/common/lemeng.branch.json` 为准（16 列全带，本层不加语义；**另加 dbt 注入列 `org`**）。
 select
   r['batch_id']              as batch_id,
   r['system_book']::varchar  as system_book,
+  {{ subject_org() }}        as org,
   r['snapshot']::date        as snapshot,
   r['branch_num']            as branch_num,
   r['code']                  as code,
