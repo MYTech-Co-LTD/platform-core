@@ -377,6 +377,63 @@ sh /opt/lemeng-sync.sh <全SHA> --check    # 只比不写
 
 ---
 
+## F 调度（「何时跑」归谁）—— 2026-09-26 起改由 duckle 自带调度器承担
+
+> **决策与依据**：`openship-platform` 仓 **ADR-0014**（含实证与两条已完成的实施前验证）。
+> **实现细节（为什么这么设计、每条实测事实）**：`deploy/duckle/console/README.md` —— 本文**不复制**，
+> 只写运维视角要看的东西。
+
+### F.1 现状：谁在跑、跑在哪
+
+| | |
+|---|---|
+| **执行器** | duckle 自带调度器（`duckle-runner serve` 的 tick 循环），**不再**走 openship job |
+| **宿主** | `deploy/data-compose.yml` 里两个**常驻**服务 `lemeng-console-3120` / `lemeng-console-64188` |
+| **端口** | **只绑回环**（`127.0.0.1:18080` / `:18081`）—— 调度靠进程内 tick，不需要对外开端口 |
+| **定义** | 仓内 `deploy/duckle/console/{pipelines,schedules}/` → **seed 进各账套的 workspace 卷** |
+| **凭据** | project env（每账套一份；`LEMENG_TOKEN` 与 `LEMENG_TOKEN_64188` 不同 ⇒ 一账套一 workspace 的理由） |
+
+**一账套一个 console**：调度条目**带不了自己的 env**（实测：塞 `env/args/params` 会被静默丢弃）⇒
+一个 console 只有一套凭据 ⇒ 共用必然有一个拿到错 token，**且会静默采错数据**（不是报错）。
+
+### F.2 改了定义之后怎么让它生效（**两步都别漏**）
+
+1. **重新 seed**：把 `deploy/duckle/console/` 里的文件拷进该账套的 workspace 卷
+   （卷名 `<project>-lemeng-console-<账套>-ws`）；
+2. **重建 console 容器**：**文件 bind-mount 钉的是 inode**，原子替换（同步程序就是这么做的）后
+   运行中的容器**仍看到旧文件** ⇒ 必须重建才生效。同理 `/opt/lemeng-run.sh` 更新后也要重建。
+   （用 `serviceIds` **定向部署**；**别全量部署** —— 会重启 `pg_duckdb`。）
+
+### F.3 排班与时区
+
+容器 **TZ = UTC**（实测）⇒ **排班按 UTC 写**（与 openship cron 同口径）。当前：门店维 `0 2 * * *`、
+商品维 `0 11 * * *`（= 北京 10:00 / 19:00）。
+⚠️ **快照日由 wrapper 显式钉 `Asia/Shanghai` 推**（同 §E.7 的道理）：引擎的 `current_date` 是
+**会话时区的今天**，在 UTC 容器里夜间跑会算成**前一天**并写进**前一天的分区**，且**不报错**。
+
+### F.4 失败怎么看、排障从哪进
+
+| 现象 | 先看哪 |
+|---|---|
+| 排班没触发 / console 本身有问题 | `docker logs <console>` —— 正常应是四行：console on / workspace / DuckDB / **sign-in required** |
+| 跑了但失败 | `schedules.json` 的 `last_run_status` / `last_run_error`，以及该账套卷里 `logs/dim-*-run.csv`（薄管线的运行记录，含 wrapper 完整 stdout） |
+| 自证没过 | 输出里的 `ASSERT_FAIL: …` / `DIM_FAILED` —— **拒写湖是正确行为**（#205），不是故障 |
+
+⚠️ **`/api/schedules` 的 GET 不回运行状态**（文件里已有、GET 恒 `null`）⇒ **别信那个 GET**。
+
+**告警**：wrapper 的 `EXIT` trap 发企微（仅当 `LEMENG_NOTIFY=1`，**薄管线会设** ⇒ 人工/诊断跑不刷群）。
+缺 `WECOM_WEBHOOK_URL` 时打 `NOTIFY_SKIPPED`（不静默）；**告警绝不改退出码**。
+⚠️ 已知未通项：`OPS_SINK=DISABLED reason=no_ingest_env` ⇒ 观测投递没接（见 open issue **#210**）。
+
+### F.5 尚未迁移 + 回滚
+
+- **零售 job（`lemeng-retail-3120-runner`）仍在 openship job 上** ✓ 本次**未动**它；
+  迁移需单独决定与观察（它是正在跑的生产链路）。
+- **回滚**：停掉两个 console 服务（或对不需要它的项目设 `enabled:false`）⇒ 即回到「没有调度」；
+  零售链路**全程未动** ⇒ 无需恢复。
+
+---
+
 ## 关联
 
 - `deploy/customer-onboarding.md` §5 阶段 5（拆缝建数据面 project 的入口决策）

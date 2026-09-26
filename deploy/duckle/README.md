@@ -248,3 +248,30 @@ duckle-runner catalog|review|drift|audit|branch|import|runs|sql|components|pytho
   属**另一起决定**（要动就先改 `entrypoint.sh` 的注释正典并走独立评审，见 §6 第 4 条）。
 - **未验项不变**：`duckle/README.md` §7.4 的四项（远端源 drift / `review --data` / 容器内行为 /
   非回环 UNCLAIMED 分支）**本文件一条都不销账**，`docker build` 与「容器内真跑管线」仍见 §4/§6。
+
+## 9. 调度（duckle console）—— 2026-09-26 起「何时跑」由引擎自带调度器承担
+
+本镜像现在有两种用法，**共用同一个镜像**：
+
+| 用法 | 谁拉起 | 什么时候 |
+|---|---|---|
+| **按需 runner**（`profiles: ["etl"]`，`docker compose run duckle …`） | 人工 / 旧链路 | 平时不起 |
+| **常驻 console**（`lemeng-console-<账套>`，`serve` + tick 循环） | compose 常驻（`restart: unless-stopped`） | 承担排班 |
+
+**运维口径全文在 `deploy/duckle/console/README.md`**（为什么一账套一 workspace、薄管线为什么
+必须以 sink 收尾、`ctl.try` 为什么不用、调度器的实测事实…）—— 本文**不复制**。
+SOP 侧的运维视角见 `deploy/data-plane-deploy-sop.md` **§F**。
+
+**§6 的「首次真跑逐条销账」有了第一批证据**（2026-09-26，两个账套各跑一次门店维）：
+
+```
+3120 :  IDENTITY_OK company_id=3120  visible=270 configured=269   IDENTITY_ASSERT=PASS
+        dim face=branch snapshot=2026-09-26 exit=0   sink ok (270 rows)   ← 与基线一致
+64188:  IDENTITY_OK company_id=64188 visible=129 configured=129   IDENTITY_ASSERT=PASS
+        dim face=branch snapshot=2026-09-26 exit=0   "rows":129           ← 与基线一致
+```
+
+顺带销一条**镜像级**的账：**本镜像原先没有 `curl`**，而采集 wrapper **全程依赖它**
+（whoami 自证 / S3 清单 / 观测投递）⇒ 容器内真跑时 `ASSERT_FAIL … curl: not found`（拒绝写湖）。
+已修（Dockerfile 装 curl；PR #234）。**教训**：把宿主脚本搬进容器跑时，要**清点它依赖的外部命令**
+——宿主上一直有的东西，容器里未必有。
