@@ -122,7 +122,7 @@ Expected: 打出用法/模式提示（证明脚本与依赖在容器内可达）
 **Interfaces:**
 - Produces: 正典里的「console 手动触发 SOP」——Task 3 观察期与日后回填都用它
 
-- [ ] **Step 1: 用维度管线做一次 HTTP 手动触发的真实验证**
+- [x] **Step 1: 用维度管线做一次 HTTP 手动触发的真实验证**
 
 ⚠️ 选**维度管线**（不是零售——零售归 Task 3 的调度首跑；维度是幂等当日覆盖，风险低）。经 MCP exec 在 console 容器内：
 
@@ -135,16 +135,16 @@ docker exec "$C" sh -c "curl -s -X POST http://127.0.0.1:8080/api/run/async -H \
 
 Expected: `202` + runId。**若同管线已有 run 在跑 ⇒ 409 Conflict**（Task 0 §0.1 的锁）——把两种都记下来（这本身就是锁结论的行为验证）。
 
-- [ ] **Step 2: 轮询 status 至结束，读 receipt 取耗时**
+- [x] **Step 2: 轮询 status 至结束，读 receipt 取耗时**
 
 `GET /api/run/status?runId=`（注意：排队中也会报 `running`）→ 结束后经 exec 读 `/workspace/runs/receipts/` 对应 receipt 的 `durationMs`。
 Expected: dim.branch ~8 秒级完成、`status: ok`；湖里当日 `snapshot=` 分区被幂等覆盖。
 
-- [ ] **Step 3: 正典落口径（§1.1.6 ⑥ 后追加）**
+- [x] **Step 3: 正典落口径（§1.1.6 ⑥ 后追加）**
 
 内容（要点 + 实测注）：手动跑用 `POST /api/run/async`（202+runId）；`/api/run/status` 轮询（**排队也报 running、无 queue_ms ⇒ 排队证据读 receipt**）；失败也 200 ⇒ **读 body status**；取消 `DELETE /api/run?runId=`；同管线冲突 **409**（调度/HTTP/CLI 三路同锁，同 workspace 内互斥）；**桌面手 Run 不在此锁内**（别在桌面触发生产管线）。每条注后标「（2026-09-27 实测）」或「（源码 serve.rs:2673）」。
 
-- [ ] **Step 4: 门禁 + 提交**
+- [x] **Step 4: 门禁 + 提交**
 
 ```bash
 pnpm exec tsx scripts/check-data-plane-lock.mjs; echo "lock=$?"   # 期望 0（duckle/** 若未动，lock 应无变化）
