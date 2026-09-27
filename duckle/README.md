@@ -176,6 +176,33 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    真机**必验一条**：**用 duckle 写一个 parquet ⇒ 让 pg_duckdb `read_parquet` 读**（读得出、列类型符合预期）。
    这条是**镜像从「自建（DuckDB v1.5.5）」切到「官方镜像（v1.4.3）」时新引入的面**——
    归 **T6 的 Gate-E**（计划 `docs/superpowers/plans/2026-09-22-data-stack.md` Task 6 Step 1 第 10 项）。
+6. **`release` CLI 在本项目 compose 上可用** —— 未验
+   （`duckle-runner release build/verify/diff/activate/rollback/list` 是「整份控制面版本化 + 环境指针」，
+   ⚠️ **不含密钥**）。最小验证：在一个账套 workspace 卷上 `build` → `activate` → `rollback`，
+   看指针与产物。销账归 **P1 Wave 2**（本仓 spec
+   `docs/superpowers/specs/2026-09-27-duckle-first-collection-flow-design.md` §3.5）。
+7. **两端外壳保真度（占位符替换 / 默认并发）** —— 未验：桌面 canvas 的占位符替换是 **TypeScript**、
+   服务端是 **Rust**（**手工同步、无编译期约束**）；默认并发**桌面 8 / 服务端 1**。
+   最小验证：同一份含 `${date}` 的管线在 CLI 与 `serve` 上各跑一次，比对取到的日期；
+   并实测 `serve` 侧的并发默认值。销账归 **P1 Wave 2**。
+8. **`ext.*` 在本项目 console 镜像里的可用面** —— **已验 4 项**（2026-09-27，**本机隔离实验室、
+   零生产**；证据 `.superpowers/sdd/2026-09-27-duckle-first-collection-flow-p1/task-2b-report.md`
+   与 `/tmp/duckle-lab-p1/wsext/evidence-*.txt`）：
+   ① **能在真 pipeline 里 `spawn` 并完成数据往返**（`src.csv → ext.probe → snk.json`，sink 真拿到 3 行）；
+   ② **子进程继承宿主 env**（`sha256` 前 8 位与独立算出的逐位相符）；
+   ③ **`components conform` 10 passed / 0 failed**（引擎自带 10 用例行为验收套件）；
+   ④ **`build` 产物不打包 `components/`**（产物清单只有 `bin/duckdb` / `pipeline/*.json` /
+   `secrets.env.example`；把它搬到**无 `components/` 的裸目录**隔离跑 ⇒ **exit 1**，报错干净、
+   点名 `looked in components/`）⇒ **带 `ext.*` 的分发必须随附 `components/`**。
+   **仍未验**：**能否解析 `pg_duckdb`**（需真 postgres / 数据面）。
+   🚧 **blocker（必须先知道）**：**MCP `validate_pipeline` 把 `ext.*` 判成 preview 组件而直接失败**
+   （`(ext.probe) isn't executable on the DuckDB engine yet - it's a preview component.`）
+   ⇒ **校验含 `ext.*` 的管线不能走 MCP，改用 CLI `validate`**（同一份管线 CLI 放行、`exit 0`；
+   ⚠️ 但 CLI 也**查不了 ext 组件的属性** ⇒ **属性名写错能过 `validate`、到运行时才炸**）。
+   ⚠️ **`catalog` 与 MCP 都看不见 `ext.*`**（`components schema --json` 411 项里 `ext.*` 为 **0**；
+   MCP `list_components` / `get_component_schema` 同样返回不了）——**唯一**能发现它的列举面是
+   **`duckle components external --workspace <ws>`**。
+   ⇒ W4 前置 gate 三项，现状 **已清 2/3**（剩「能否解析 `pg_duckdb`」）+ **新增上面这条 blocker**。
 
 ### 7.5 接入方式（**凭据与网络从哪来**）
 
