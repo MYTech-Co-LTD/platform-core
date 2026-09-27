@@ -44,5 +44,29 @@ ok "$(cat "$WS/ws/pipelines/p1.json")" "HAND"
 case "$out" in *KEEP*p1.json*) pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 手改文件未点名 KEEP";; esac
 ok "$(cat "$WS/ws/pipelines/common/heavy.json")" "B2"  # 与新正本一致 ⇒ KEEP 保持（第 4 步已收回仓）
 
+# 6) assemble 生成桌面元数据：duckle.json jobs 数 = 正本管线数（p1 + heavy = 2）
+ok "$(grep -c '"dirty":false' "$WS/ws/duckle.json")" "2"
+
+# 7) repository.json：每条 pipeline 的 parentId 都在树里有对应 id
+pids=$(sed -n 's/.*"type":"pipeline","parentId":"\([^"]*\)".*/\1/p' "$WS/ws/repository.json")
+tree_ok=1; [ -n "$pids" ] || tree_ok=0
+for pid in $pids; do
+  grep -q "\"id\":\"${pid}\"" "$WS/ws/repository.json" || tree_ok=0
+done
+ok "$tree_ok" "1"
+
+# 8) 已有元数据不被覆盖（ASSEMBLE_OVERWRITE=1 重跑也只 keep 不覆盖）
+echo HANDTREE > "$WS/ws/repository.json"
+echo HANDJOBS > "$WS/ws/duckle.json"
+out=$(REPO_ROOT="$FR" ASSEMBLE_OVERWRITE=1 sh "$SRC" assemble 3120 "$WS/ws" 2>&1)
+ok "$(cat "$WS/ws/repository.json")" "HANDTREE"
+ok "$(cat "$WS/ws/duckle.json")" "HANDJOBS"
+case "$out" in *keep\ metadata*) pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 已有元数据未点名 keep metadata";; esac
+
+# 9) collect 不碰桌面元数据（不属于映射表）
+out=$(REPO_ROOT="$FR" sh "$SRC" collect 3120 "$WS/ws" 2>&1)
+ok "$(cat "$WS/ws/repository.json")" "HANDTREE"
+ok "$(cat "$WS/ws/duckle.json")" "HANDJOBS"
+
 rm -rf "$FR" "$WS"
 echo "pass=$pass fail=$fail"; [ "$fail" = "0" ]
