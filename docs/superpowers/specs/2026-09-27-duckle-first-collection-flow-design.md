@@ -245,7 +245,7 @@
 | 未验项 | 最小验证动作 |
 |---|---|
 | **`release` CLI 能否用在我们的 compose 上**（release store / 环境指针 / rollback 单次 rename） | 在一个账套 workspace 卷上 `release build` → `activate` → `rollback`，看指针与产物 |
-| **`ext.*` 能否在我们的 console 镜像里 spawn** | = **W4 的前置 gate**：一个只 `echo` 的 `ext.probe`（能否 spawn / 能否读 `SYSTEM_BOOK` + `ZOS_*` / 能否解析 `pg_duckdb`） |
+| **`ext.*` 路线** | **2026-09-27 实测（Task 2b，本机隔离实验室）**：**已验** spawn + 数据往返 / 子进程继承宿主 env（sha256 逐位相符）/ `components conform` **10 passed 0 failed** / `build` 不打包 `components/`。**仍未验**：能否解析 `pg_duckdb`。⚠️ **blocker**：**MCP `validate_pipeline` 把 `ext.*` 判成 preview 组件而失败**（校验含 `ext.*` 的管线**改走 CLI `validate`**）；**只有 `components external` 列举面能发现它**（`catalog`/MCP 看不见——这一条**订正**了本 spec 早先的「一等公民」说法） |
 | **`duckle-runner test` 能否当我们的 CI 门** | 它**只有 CLI 有**（**服务端没有任何 test / validate 端点**）；**官方 CI 模板只接 `validate`**，而 `validate` 自陈「**不是充分证明**」；**树内没有任何 `.test.json` 实例** ⇒ **要拿它当门，得自己写 fixtures、自己接线** |
 
 ⚠️ **`test` 值得单独一提**（它正好对上 W3）：它用 fixture 跑**真实 reader**，比的是**被断言节点的完整关系**
