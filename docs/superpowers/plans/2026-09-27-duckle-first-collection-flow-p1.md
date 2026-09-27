@@ -406,11 +406,15 @@ cd "$(git rev-parse --show-toplevel)"
 #    ⇒ 定稿改为**结构性断言**（验形状，不验会被后续任务改写的字面量）：§7.4 的编号项数。实测 Task 3 之前 = 5、当前 = 8。
 test "$(sed -n '/### 7.4 未验清单/,/^### 7.5/p' duckle/README.md | grep -c '^[0-9]\+\. \*\*')" -ge 8 && echo "C1 OK" || echo "C1 FAIL"
 grep -q '两端外壳保真度' duckle/README.md && echo "C2 OK" || echo "C2 FAIL"
-# 正典只给指针、不枚举：§1.1.6 里不许出现条目正文的标识串
-grep -q 'ext.probe' docs/data-platform-handbook.md && echo "❌ 正典抄了条目" || echo "✅ 正典只给指针"
+# 正典只给指针、不枚举：指针纪律句在场 + §7.4 条目标识串不在场
+# ⚠️ 原第三版断言（文件级 grep 'ext.probe'）在 HEAD 恒红——该词是 Task 2b 实测出处（正典 §1.3.3 W4 前置 gate）的
+#    合法引用、不是「抄了 §7.4 条目」。2026-09-27 终审裁决：**不改正典凑断言**，改结构性判据——
+#    ① 纪律句本身在场（§1.2「故意不枚举条目」那条）；② §7.4 条目标题（以第 7 项为探针）不出现在正典。
+grep -q '故意不枚举条目' docs/data-platform-handbook.md && echo "✅ 指针纪律句在场" || echo "❌ 指针纪律句缺失"
+grep -q '两端外壳保真度' docs/data-platform-handbook.md && echo "❌ 正典抄了条目" || echo "✅ 未抄 §7.4 条目标题"
 ```
 
-Expected: `C1 OK` / `C2 OK` / `✅ 正典只给指针`
+Expected: `C1 OK` / `C2 OK` / `✅ 指针纪律句在场` / `✅ 未抄 §7.4 条目标题`
 
 - [ ] **Step 5: 🔴 重跑 lock（`duckle/**` 在数据面 manifest 覆盖范围内）**
 

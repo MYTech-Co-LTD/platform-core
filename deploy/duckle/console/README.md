@@ -46,7 +46,7 @@
 - 通道：企微机器人 webhook，URL 走 **project env 的 `WECOM_WEBHOOK_URL`**；
 - 缺 URL 时打 `NOTIFY_SKIPPED`（**不静默**）；**告警绝不改退出码**（别把判红变成绿）。
 
-## 引擎原生告警 `alerts.json`（2026-09-27；链路经 OpenObserve，端到端实测通过）
+## 引擎原生告警 `alerts.json`（2026-09-27；链路经 OpenObserve，端到端实测通过——末跳群侧两条消息为目视确认开环）
 
 **与上面那条并存，不替换** —— 两条覆盖不同的面：
 
@@ -57,7 +57,7 @@
 | 凭据 | project env `WECOM_WEBHOOK_URL` | OO 三键：project env `OO_BASE`/`OO_ORG`/`OO_AUTH(isSecret)`（与数据面机 `/etc/openobserve-ingest.env` 同名同值——那份是**宿主**凭据面，容器不读它，容器侧走 openship project env 整体注入） |
 | 事件 | 只有失败 | `failure` + `recovery`（恢复通知**不受冷却压制**，源码 `Event::is_all_clear`） |
 
-- **投递链路（2026-09-27 用户拍板 + 端到端实测通过）**：引擎 POST → OO JSON 摄取
+- **投递链路（2026-09-27 用户拍板 + 端到端实测通过；机器侧证据止于 OO 告警 firing——企微群侧两条消息为目视确认开环，见 #210 待确认项）**：引擎 POST → OO JSON 摄取
   （`${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json`，`Authorization: Basic ${ENV:OO_AUTH}`）
   → OO 告警（org=miyuan，**scheduled 1 分钟频次**两条：`data_alerts_failure` / `data_alerts_recovery`
   ——⚠️ realtime 评估器在本部署实测**不触发**（现存 12 条生产告警也全是 scheduled），故用调度频次，
