@@ -199,11 +199,14 @@ git commit -m "docs(handbook): 正典加 duckle-first 判据（三档）+ A→I 
 cd "$(git rev-parse --show-toplevel)"
 H=docs/data-platform-handbook.md
 grep -q '资产类 × 谁维护' "$H" && echo "B1 OK" || echo "B1 FAIL"          # 投递矩阵
-grep -q 'ext\.\* 首选' "$H" && echo "B2 OK" || echo "B2 FAIL"            # 自定义代码/扩展判定
+# ⚠️ B2 原写法（要求字面 `ext.* 首选`：星号后紧跟空格、**无反引号**）与逐字块的写法（`` `ext.*` 首选 ``）**互斥**
+#    —— 是**断言的错**，2026-09-27 裁决改为两条与正文写法解耦的判据：
+grep -q '内建级不做' "$H" && echo "B2 OK" || echo "B2 FAIL"               # 三路线判定串
+grep -q 'components conform' "$H" && echo "B2b OK" || echo "B2b FAIL"     # conformance 验收套件
 grep -q '打开它是一个独立的动作' "$H" && echo "B3 OK" || echo "B3 FAIL"  # deploy 强制 enabled:false
 ```
 
-Expected: 三条全 `FAIL`
+Expected: 四条全 `FAIL`（B1 / B2 / B2b / B3）
 
 - [ ] **Step 2: 在 §1.1.6 的 ①—⑦ 之后追加五个小节**
 
@@ -298,8 +301,8 @@ Expected: 三条全 `FAIL`
 
 - [ ] **Step 4: 跑断言，必须全绿**
 
-Run: 重跑 Step 1 三条命令
-Expected: `B1 OK` / `B2 OK` / `B3 OK`
+Run: 重跑 Step 1 四条命令
+Expected: `B1 OK` / `B2 OK` / `B2b OK` / `B3 OK`
 
 - [ ] **Step 5: 查全节无残留旧指针**
 
