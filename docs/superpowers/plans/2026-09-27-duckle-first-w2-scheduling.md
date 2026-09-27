@@ -56,9 +56,9 @@
 - Create: `.superpowers/sdd/<本计划目录>/task-0-job-archive.json`（存档文件，git-ignored；同时把关键面贴进 issue）
 
 **Interfaces:**
-- Produces: issue 号（后续 PR `Closes` 用）；job 完整配置存档（Task 6 退役后回退的唯一依据）
+- Produces: issue **#265**（PR 用 `Closes #265`）；job key=`custom:NchVfw7_7ffc_WJT`（cron `30 2 * * *`、retry 3/600s、timeout 1h、7 secrets 键名已存档）——Task 3/5 按 key 逐字引用
 
-- [ ] **Step 1: 开 issue**
+- [x] **Step 1: 开 issue**（#265）
 
 标题：`feat(lemeng): 3120 零售调度切 duckle console（对齐 64188 先例）+ 观察期后退役 openship job`
 Body 必含：上位依据（spec §6 W2、#221「另议」）、范围（只切归口不提频，#260 另案）、双跑防线是顺序的源码依据（§0.1）、验收（Task 4 四件套）、回退（Task 3 的回退节）。
