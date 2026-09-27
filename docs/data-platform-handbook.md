@@ -292,11 +292,11 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
    （面别口径见 `duckle/README.md` §7.4 第 7 项 ④⑤）；**桌面 Settings 的三项服务端不读**
    （`spill_dir` / `allow_unsigned_extensions` / `https_proxy`）；**扩展预装两端不同**（桌面 11 / 服务端镜像 12，多 `inet`）。
 
-**W4 前置 gate（`ext.probe`）现状**（2026-09-27 实测回填；spec §W4「前置 gate」行那三项）：**已清 2/3 + 新增 1 条 blocker**——
+**W4 前置 gate（`ext.probe`）现状**（2026-09-27 实测回填；spec §W4「前置 gate」行那三项）：**已清 3/3 + 新增 1 条 blocker**——
 **能否 spawn ✅ 已清**（真 pipeline 里 spawn / 干活 / 数据往返均成功）；
 **能否读 `SYSTEM_BOOK` + `ZOS_*` ✅ 已清**（引擎 spawn 的组件自己回报全部 `present=true`，**机制层面无碍**；
 ⚠️ 注意这**只证了「能读」，没证「有得读」**——生产 console 容器里那些值是否真注入，**未验**）；
-**能否解析 `pg_duckdb` ❌ 仍开着**（需真 postgres/数据面，零生产约束下未测）；
+**能否解析 `pg_duckdb` ✅ 已清**（2026-09-27 第三轮实测：本机隔离实验室 `/tmp/duckle-lab-p1`、零生产，引擎 spawn 的 `ext.pgprobe` 经 postgres 线协议连官方镜像 `pgduckdb/pgduckdb:18-v1.1.1`，CLI `validate` exit 0 + run `ok`（`n2 rows=3`）+ 三条 DuckDB 方言证据；证据 `/tmp/duckle-lab-p1/wsext/evidence-pgduckdb.txt`，详见 `duckle/README.md` §7.4 第 8 条实测块）；
 ⚠️ **新增 blocker**：**MCP `validate_pipeline` 对 `ext.*` 直接报错**（见上「gate 级 blocker」）
 ⇒ **W4 开工前必须先定「管线校验走哪个 validate 面」**。
 
