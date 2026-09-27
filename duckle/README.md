@@ -306,23 +306,35 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    `docker compose run --rm`（`deploy/data-compose.yml`，其 `name: platform-core-data`）的默认卷名
    `<project>_<volume>`，console 侧是 openship 起的卷。
    ⚠️ **「项目」这一层按原始标签逐字重写（2026-09-27 只读取证 · 数据面机 `113.249.104.181`／`10.0.0.5` · `openship MCP`）**：
-   ① **job 那卷有 compose 标签** —— `docker volume inspect platform-core-data_duckle-workspace --format '{{json .Labels}}'` 回
+   ⓐ **job 那卷有 compose 标签** —— `docker volume inspect platform-core-data_duckle-workspace --format '{{json .Labels}}'` 回
    `{"com.docker.compose.config-hash":"f384111d…","com.docker.compose.project":"platform-core-data","com.docker.compose.version":"5.5.0","com.docker.compose.volume":"duckle-workspace"}`
    ⇒ 它确是 compose 项目 `platform-core-data` 的卷（`deploy/data-compose.yml:5` 的 `name:`）。
-   ② **console 那卷一个标签都没有** —— 同命令对 `openship-platform-core-shanhai-data-lemeng-console-3120-ws` 回 **`null`**
-   ⇒ **它是 openship 起的卷**，其上拿不到任何 compose 归属（卷名 = openship 命名空间 `openship-platform-core-shanhai-data`
-   ＋服务自报卷名 `lemeng-console-3120-ws`；`64188` 同形，2/2 一致）。
-   ③ **带 compose 标签的是那只容器、不是它的卷** —— `docker inspect openship-platform-core-shanhai-data-lemeng-console-3120 --format '{{json .Config.Labels}}'` 回
+   ⓑ **console 那卷一个标签都没有** —— 同命令对 `openship-platform-core-shanhai-data-lemeng-console-3120-ws` 回 **`null`**
+   ⇒ **它是 openship 起的卷**，其上拿不到任何 compose 归属（卷名形如 openship 命名空间
+   `openship-platform-core-shanhai-data` ＋服务自报卷名 `lemeng-console-3120-ws`；`64188` 同形，**2/2 一致**）。
+   ⚠️ **「前缀 ＋ 服务自报卷名」这一层是「推断」、不是实测**：本轮只验了 **2/2 同名规律**，
+   **未读 openship 源码**逐字验证拼接机制 ⇒ 只写「2/2 一致」，**不写「openship 的实现是……」**（无案例不立标准）。
+   ⓒ **带 compose 标签的是那只容器、不是它的卷** —— `docker inspect openship-platform-core-shanhai-data-lemeng-console-3120 --format '{{json .Config.Labels}}'` 回
    `{"com.docker.compose.project":"platform-core-data","com.docker.compose.service":"duckle","com.docker.compose.version":"5.5.0","openship.deployment":"dep_rTS9-HYzqkAuG89n","openship.project":"proj_AFbJvyb0onaX7LVr","openship.service":"lemeng-console-3120"}`
    ⇒ **两个名字空间要分开看**：`com.docker.compose.project` = `platform-core-data`（来自 compose 文件 `name:`），
    而 openship 的**网络与卷名**一律走 `openship-platform-core-shanhai-data`（该容器实挂网络即此名）。
    ⇒ ⚠️ **「两卷同属一个项目」不成立，「两卷分属两个 compose 项目」也不成立**——差别在**谁创建了卷**：
    **job 那卷是 compose 建的（有标签），console 那卷是 openship 建的（无标签）**。
-   ⚠️ **对 W2（3120 切 console、job 退役）的含义**：卷的归属写在 **openship 项目配置**里、不在 `data-compose.yml`——
-   openship 侧 `duckle` 服务声明的是 `duckle-workspace:/workspace`（**该服务 `enabled:false`、机器上无对应容器**），
-   而两个 **enabled** 的 console 服务**各自声明自己的卷**（`lemeng-console-3120-ws` / `lemeng-console-64188-ws`，
-   均 `namespaceVolumes:true`）⇒ **「改一处 `volumes:` 映射就让 job 与 console 同卷」这条路不通**；
-   且 console **一账套一卷** ⇒ 要统一得改 openship 侧**每个** console 服务的卷映射（贵的那条路）。
+   ⚠️ **对 W2（3120 切 console、job 退役）的含义**——**「改哪里」按仓内文件逐字核过（2026-09-27）**：
+   卷的**定义就在 `deploy/data-compose.yml`**（**不是**「只在 openship 项目配置里」）——顶层 `volumes:`（`:164-172`）
+   声明 `duckle-workspace` / `lemeng-console-3120-ws` / `lemeng-console-64188-ws`（＋`pgduckdata` / `mbdata`），
+   服务里再各映射一次（`:87` 的 `duckle-workspace:/workspace`、`:133` 的 `lemeng-console-3120-ws:/workspace`、
+   `:156` 的 `lemeng-console-64188-ws:/workspace`）；该文件即数据栈部署单元的 compose
+   （`deploy/customer-onboarding.md:30` / `:161` 的 `composePath=deploy/data-compose.yml`）。
+   **openship 项目配置侧声明的卷串与它逐字相同**（`duckle-workspace:/workspace` / `lemeng-console-3120-ws:/workspace` /
+   `lemeng-console-64188-ws:/workspace`）——**openship 独有的只是 `namespaceVolumes:true` 带来的前缀**
+   （实卷名 = `openship-platform-core-shanhai-data-` ＋该串，**2/2 一致**；⚠️ 见 ⓑ 的「推断」限定）
+   ⇒ **名字不同，定义同源**。（openship 侧那条 `duckle` 服务声明的是 `duckle-workspace:/workspace`，
+   **该服务 `enabled:false`、机器上无对应容器**。）
+   ⇒ **结论不变：「改一处 `volumes:` 映射就让 job 与 console 同卷」这条路不通** —— 因为
+   **console 一账套一卷**（3120 / 64188 **各自一条**映射，`deploy/data-compose.yml:133` / `:156`），
+   且**每账套一套凭据**（同文件 `:168-169`：调度条目带不了 env ⇒ 一个 workspace 只有一套 env）
+   ⇒ 要统一得**逐账套**改（贵的那条路），**改一处不够**。
    反向的便宜路正是 W2 本来就要做的「把调度收进 console」——那样 run 天然落在 console 自己的卷里。
    ⇒ ⚠️ **console 的 `/api/runs` / `/metrics` / `/api/run/status` 看不到 job 的 run**：
    console 侧 `duckle_run_last_timestamp_seconds{pipeline="lemeng.retail_order_line"}` 停在
