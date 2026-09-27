@@ -305,7 +305,25 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    `volume …-lemeng-console-3120-ws -> /workspace`；两卷的**分属**由载体坐实——job 侧是宿主机
    `docker compose run --rm`（`deploy/data-compose.yml`，其 `name: platform-core-data`）的默认卷名
    `<project>_<volume>`，console 侧是 openship 起的卷。
-   ⚠️ **两卷同属 compose 项目 `platform-core-data`**（console 容器标签也是它）——**差的不是项目，是卷名**。
+   ⚠️ **「项目」这一层按原始标签逐字重写（2026-09-27 只读取证 · 数据面机 `113.249.104.181`／`10.0.0.5` · `openship MCP`）**：
+   ① **job 那卷有 compose 标签** —— `docker volume inspect platform-core-data_duckle-workspace --format '{{json .Labels}}'` 回
+   `{"com.docker.compose.config-hash":"f384111d…","com.docker.compose.project":"platform-core-data","com.docker.compose.version":"5.5.0","com.docker.compose.volume":"duckle-workspace"}`
+   ⇒ 它确是 compose 项目 `platform-core-data` 的卷（`deploy/data-compose.yml:5` 的 `name:`）。
+   ② **console 那卷一个标签都没有** —— 同命令对 `openship-platform-core-shanhai-data-lemeng-console-3120-ws` 回 **`null`**
+   ⇒ **它是 openship 起的卷**，其上拿不到任何 compose 归属（卷名 = openship 命名空间 `openship-platform-core-shanhai-data`
+   ＋服务自报卷名 `lemeng-console-3120-ws`；`64188` 同形，2/2 一致）。
+   ③ **带 compose 标签的是那只容器、不是它的卷** —— `docker inspect openship-platform-core-shanhai-data-lemeng-console-3120 --format '{{json .Config.Labels}}'` 回
+   `{"com.docker.compose.project":"platform-core-data","com.docker.compose.service":"duckle","com.docker.compose.version":"5.5.0","openship.deployment":"dep_rTS9-HYzqkAuG89n","openship.project":"proj_AFbJvyb0onaX7LVr","openship.service":"lemeng-console-3120"}`
+   ⇒ **两个名字空间要分开看**：`com.docker.compose.project` = `platform-core-data`（来自 compose 文件 `name:`），
+   而 openship 的**网络与卷名**一律走 `openship-platform-core-shanhai-data`（该容器实挂网络即此名）。
+   ⇒ ⚠️ **「两卷同属一个项目」不成立，「两卷分属两个 compose 项目」也不成立**——差别在**谁创建了卷**：
+   **job 那卷是 compose 建的（有标签），console 那卷是 openship 建的（无标签）**。
+   ⚠️ **对 W2（3120 切 console、job 退役）的含义**：卷的归属写在 **openship 项目配置**里、不在 `data-compose.yml`——
+   openship 侧 `duckle` 服务声明的是 `duckle-workspace:/workspace`（**该服务 `enabled:false`、机器上无对应容器**），
+   而两个 **enabled** 的 console 服务**各自声明自己的卷**（`lemeng-console-3120-ws` / `lemeng-console-64188-ws`，
+   均 `namespaceVolumes:true`）⇒ **「改一处 `volumes:` 映射就让 job 与 console 同卷」这条路不通**；
+   且 console **一账套一卷** ⇒ 要统一得改 openship 侧**每个** console 服务的卷映射（贵的那条路）。
+   反向的便宜路正是 W2 本来就要做的「把调度收进 console」——那样 run 天然落在 console 自己的卷里。
    ⇒ ⚠️ **console 的 `/api/runs` / `/metrics` / `/api/run/status` 看不到 job 的 run**：
    console 侧 `duckle_run_last_timestamp_seconds{pipeline="lemeng.retail_order_line"}` 停在
    **09-26T12:55Z**（那次是容器内手工跑、撞 429 中止），而当日的 24 窗 job 在**另一卷**里。
