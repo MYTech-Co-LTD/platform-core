@@ -46,6 +46,33 @@
 - 通道：企微机器人 webhook，URL 走 **project env 的 `WECOM_WEBHOOK_URL`**；
 - 缺 URL 时打 `NOTIFY_SKIPPED`（**不静默**）；**告警绝不改退出码**（别把判红变成绿）。
 
+## 引擎原生告警 `alerts.json`（2026-09-27）
+
+**与上面那条并存，不替换** —— 两条覆盖不同的面：
+
+| | wrapper 的 `EXIT` trap（上一节） | 引擎原生 `alerts.json`（本节） |
+|---|---|---|
+| 覆盖 | 「wrapper 自己判红」（采集/自证失败） | 「引擎把这次 run 记成非 ok」——**含 wrapper 之前就失败的路径**（源不存在、DuckDB 起不来、判据失败…），这些 wrapper 看不见 |
+| 门槛 | 仅 `LEMENG_NOTIFY=1`（薄管线会设）⇒ 人工/诊断跑不刷群 | 无门槛：打进这个 console 的 run 都算 |
+| 凭据 | project env `WECOM_WEBHOOK_URL` | **同一个键**（`url` 写 `${ENV:WECOM_WEBHOOK_URL}`——引擎自己认 `${ENV:...}`） |
+| 事件 | 只有失败 | `failure` + `recovery`（恢复通知**不受冷却压制**，源码 `Event::is_all_clear`） |
+
+- **文件位置**：`deploy/duckle/console/alerts.json` → seed 进该账套 workspace 卷的 **`/workspace/alerts.json`**
+  （**不在** `/workspace/pipelines/` 里）。字段语义、冷却计法、凭据来路都写在**文件头的 `_note`**
+  （serde 无 `deny_unknown_fields` ⇒ 未知键被忽略；实测无 parse 报错）。
+- **生效动作**：`/workspace` 是卷 ⇒ 与 `schedules/`、`pipelines/` 同类，**seed + 重启容器**即生效
+  （SOP §F.2 第 1 类，**不必定向部署**）。更强的一条：`alerts::load()` 在**每次 notify 时现读盘**
+  ⇒ 严格说连重启都不需要。**但 seed 那步不能漏**——漏了 = 改了没生效**且不报错**。
+- **🔴 覆盖边界**：只覆盖**打进这个 console 的 run**（`/workspace/pipelines/` 下的薄管线）。
+  **零售的每日生产 run 走 openship job、落在另一个卷 ⇒ 本规则看不到它**，零售面告警待 W2。
+  **别把本文件读成「采集全链路的告警」。**
+- **🔴 已知未通（2026-09-27 实测；跟踪 issue #210）**：`WECOM_WEBHOOK_URL` 是企微群机器人
+  **原生**端点，要求 `{"msgtype":"text","text":{"content":…}}`；引擎发的 body **没有 `msgtype`** ⇒
+  实测引擎形状回 `HTTP 200 + errcode 40008 "invalid message type"`（**被拒**），而同一条 webhook 的
+  企微形状回 `errcode 0 "ok"`（**收下**）。而 `deliver()` 只看传输成功（`send_json` 拿 2xx 即 Ok）
+  ⇒ **引擎记成「已发送」并写进 `last_sent`**。⇒ **群里收不到，且不报错**（故障与假绿同时发生）。
+  **撤掉本条前先复测。**
+
 ## ✅ 调度器的实测事实（2026-09-26，本地真跑）
 
 | 事实 | 证据 |
