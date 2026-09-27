@@ -46,6 +46,38 @@
 - 通道：企微机器人 webhook，URL 走 **project env 的 `WECOM_WEBHOOK_URL`**；
 - 缺 URL 时打 `NOTIFY_SKIPPED`（**不静默**）；**告警绝不改退出码**（别把判红变成绿）。
 
+## 引擎原生告警 `alerts.json`（2026-09-27；链路经 OpenObserve，端到端实测通过——末跳群侧两条消息为目视确认开环）
+
+**与上面那条并存，不替换** —— 两条覆盖不同的面：
+
+| | wrapper 的 `EXIT` trap（上一节） | 引擎原生 `alerts.json`（本节） |
+|---|---|---|
+| 覆盖 | 「wrapper 自己判红」（采集/自证失败） | 「引擎把这次 run 记成非 ok」——**含 wrapper 之前就失败的路径**（源不存在、DuckDB 起不来、判据失败…），这些 wrapper 看不见 |
+| 门槛 | 仅 `LEMENG_NOTIFY=1`（薄管线会设）⇒ 人工/诊断跑不刷群 | 无门槛：打进这个 console 的 run 都算 |
+| 凭据 | project env `WECOM_WEBHOOK_URL` | OO 三键：project env `OO_BASE`/`OO_ORG`/`OO_AUTH(isSecret)`（与数据面机 `/etc/openobserve-ingest.env` 同名同值——那份是**宿主**凭据面，容器不读它，容器侧走 openship project env 整体注入） |
+| 事件 | 只有失败 | `failure` + `recovery`（恢复通知**不受冷却压制**，源码 `Event::is_all_clear`） |
+
+- **投递链路（2026-09-27 用户拍板 + 端到端实测通过；机器侧证据止于 OO 告警 firing——企微群侧两条消息为目视确认开环，见 #210 待确认项）**：引擎 POST → OO JSON 摄取
+  （`${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json`，`Authorization: Basic ${ENV:OO_AUTH}`）
+  → OO 告警（org=miyuan，**scheduled 1 分钟频次**两条：`data_alerts_failure` / `data_alerts_recovery`
+  ——⚠️ realtime 评估器在本部署实测**不触发**（现存 12 条生产告警也全是 scheduled），故用调度频次，
+  延迟 ≤1 分钟；silence 10 分钟与引擎冷却 15 **刻意错开**；分两条是因 OO 条件只 AND 不能 OR，
+  合并会把恢复消息用 silence 存没）
+  → OO 目的地 `data_alerts_wecom`（http 模板 `data_alerts_wecom_markdown`＝企微 markdown 形状；
+  **企微群机器人 URL 只存 OO 服务端，不进仓**）→ 企微群。
+  证据链与三跳排障口径（流里见行 / 告警触发记录 / 目的地投递错误）见 issue #210 终态评论与
+  `alerts.json` 头注。旧案「引擎直发企微 errcode 40008 假绿」与「经 Novu 落个人」均已推翻（路线对比见 #210）。
+- **文件位置**：`deploy/duckle/console/alerts.json` → seed 进该账套 workspace 卷的 **`/workspace/alerts.json`**
+  （**不在** `/workspace/pipelines/` 里）。字段语义、冷却计法、凭据来路都写在**文件头的 `_note`**
+  （serde 无 `deny_unknown_fields` ⇒ 未知键被忽略；实测无 parse 报错）。
+- **生效动作**：`/workspace` 是卷 ⇒ 与 `schedules/`、`pipelines/` 同类，**seed + 重启容器**即生效
+  （SOP §F.2 第 1 类，**不必定向部署**）。更强的一条：`alerts::load()` 在**每次 notify 时现读盘**
+  ⇒ 严格说连重启都不需要。**但 seed 那步不能漏**——漏了 = 改了没生效**且不报错**。
+  （改 **env 键**另说：env 是容器创建时注入 ⇒ 必须 refresh 重建容器才拿到新值，2026-09-27 实测。）
+- **🔴 覆盖边界**：只覆盖**打进这个 console 的 run**（`/workspace/pipelines/` 下的薄管线）。
+  **零售的每日生产 run 走 openship job、落在另一个卷 ⇒ 本规则看不到它**，零售面告警待 W2。
+  **别把本文件读成「采集全链路的告警」。** 另：账套 **64188 的卷尚未 seed 这版**（要不要切是独立决定）。
+
 ## ✅ 调度器的实测事实（2026-09-26，本地真跑）
 
 | 事实 | 证据 |

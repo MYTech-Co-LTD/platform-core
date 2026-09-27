@@ -234,7 +234,7 @@ duckle-runner catalog|review|drift|audit|branch|import|runs|sql|components|pytho
 
 ## 8. 引擎能力接入（指针 + **入口闸口径**，2026-09-23）
 
-**事实源在 `duckle/README.md` §7**（三条原生可替代 / 一条半替代 / 三个坑 / 四项未验）。
+**事实源在 `duckle/README.md` §7**（三条原生可替代 / 一条半替代 / 三个坑 / **未验清单见 §7.4**）。
 本节**只记与本镜像入口闸直接相关的那一条**，避免两处各写一份：
 
 **接入「要凭据与网络」的能力（`drift` / `review --data` —— 见 `duckle/README.md` §7.1/§7.5）时，
@@ -246,8 +246,8 @@ duckle-runner catalog|review|drift|audit|branch|import|runs|sql|components|pytho
   **job 管「授权作业带凭据做什么」**。
 - ⚠️ **不因为「本轮要接引擎能力」而移动这条边界**——那会把 §4/§6 记录的安全姿态一起改掉，
   属**另一起决定**（要动就先改 `entrypoint.sh` 的注释正典并走独立评审，见 §6 第 4 条）。
-- **未验项不变**：`duckle/README.md` §7.4 的四项（远端源 drift / `review --data` / 容器内行为 /
-  非回环 UNCLAIMED 分支）**本文件一条都不销账**，`docker build` 与「容器内真跑管线」仍见 §4/§6。
+- **未验项不变**：`duckle/README.md` §7.4 的**未验清单**（远端源 drift / `review --data` / 容器内行为 /
+  非回环 UNCLAIMED 分支**等，全表见 §7.4 原处**）**本文件一条都不销账**，`docker build` 与「容器内真跑管线」仍见 §4/§6。
 
 ## 9. 调度（duckle console）—— 2026-09-26 起「何时跑」由引擎自带调度器承担
 
