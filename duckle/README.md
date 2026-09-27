@@ -210,27 +210,35 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    ⑦ **验证姿势（生产零接触）**：在该卷的 **scratch 副本** `/workspace/tmp/relws`（3 个 pipelines +
    `schedules.json` 的**逐字副本**）上跑全链，跑完删除 ⇒ **生产控制面文件 sha256 前后逐字不变**
    （`4085e3b4…` / `a19c1453…` / `df0a3cb3…` / `54e57b13…`）。
-7. **两端外壳保真度（占位符替换 / 默认并发）** —— **已验：两端都把 `${date}` 解成同一天（UTC）、
-   服务端默认并发 = 1**（2026-09-27，**真机 · 数据面机 3120 账套**；证据
+7. **两端外壳保真度（占位符替换 / 默认并发）** —— ⚠️ **先把面别摆明**（标题的「两端」= 桌面 / 服务端，
+   而**实测只落在 Rust 外壳侧**、**桌面这一端本轮未实测** ⇒ **别读成「两端都验过并一致」**）：
+   **已验的只有 Rust 外壳侧**（①CLI 与 ②`serve` 的 HTTP 面，**同一条 `apply_time_builtins`**）——
+   两侧都把 `${date}` 解成同一天（UTC）、**实测并发默认 = 1**；**调度器侧**同名 `default` 默认 = **8**
+   （**源码级，未在本环境复现**，见 ⑤）；**桌面侧未实测**（③ 只到 TS 源文件级；桌面 App 的 8 = 源码级，见 ③⑤）。
+   （2026-09-27，**真机 · 数据面机 3120 账套**；证据
    `.superpowers/sdd/2026-09-27-duckle-first-collection-flow-p1/task-5-report.md`）：
    机 = `platform-core-shanhai-data`（`proj_AFbJvyb0onaX7LVr`）/ 服务 `lemeng-console-3120`
    （`svc_srQwfTvdkjxbCeoA`，`commandArgv: serve --host 0.0.0.0 --port 18080 --workspace /workspace
    --duckdb /usr/local/bin/duckdb`）/ 卷 `lemeng-console-3120-ws`，容器内 duckle **0.7.3**、DuckDB **1.5.4**。
    探针 = `src.inline`（`columns` 放 `${date}` / `${datetime}` / `${now}`）→ `snk.csv`
-   （`${workspace}/tmp/probe-${date}.csv`），**同一份字节**（sha256 `22f459b3…`）两端各跑一次：
+   （`${workspace}/tmp/probe-${date}.csv`），**同一份字节**（sha256 `22f459b3…`）在 **Rust 外壳侧的两个入口**
+   （①②）各跑一次：
    ① **CLI 侧**（容器内全路径 `…/duckle/duckle-runner`；`validate` exit 0，run `status: ok` 86 ms）⇒
    文件名 `probe-2026-09-27.csv`，行值 `2026-09-27` / `2026-09-27_030734` / `2026-09-27T03:07:34Z`。
    ② **HTTP 侧**（`POST /api/run`，body `{"file":"tmp/_probe.date.json"}`）⇒ **HTTP 200 且 body
    `status:"ok"`**（61 ms）⇒ 同一文件名，行值 `2026-09-27` / `2026-09-27_030740` / `2026-09-27T03:07:40Z`。
    两侧 `${now}` 与容器 `date -u` **逐秒相同** ⇒ **无缺口、均为 UTC**。
-   ⚠️ 但 ① 与 ② **都是 Rust 外壳**（同一 `apply_time_builtins`）——真正的 TS/Rust 分叉见 ③。
+   ⚠️ 但 ① 与 ② **都是 Rust 外壳**（同一 `apply_time_builtins`）⇒ **这两条只证「同一外壳的两条入口一致」，
+   不证「桌面 / 服务端两端一致」**；真正的 TS/Rust 分叉见 ③（而 ③ 只到源文件级，桌面 App 仍未验）。
    ③ **桌面（TS）侧**：`frontend/src/run-resolve.ts` 的 `formatTimeBuiltin` 全用 `getUTC*`，与 Rust
    `context.rs:110 format_time_builtin` 逐字段同形；以 `TZ=Asia/Shanghai` 直接执行该源文件 ⇒ 宿主本地
    `11:08:50 +0800`，而 `date` / `datetime` / `now` 仍是 `2026-09-27` / `2026-09-27_030850` /
    `2026-09-27T03:08:50Z` ⇒ **同一 UTC、不吃宿主时区**。**跑的是 TS 源文件本身，不是打包 App** ⇒
    桌面 GUI 未验（无桌面运行环境）。
-   ④ **服务端默认并发 = 1（实测坐实）**：容器 env 无 `DUCKLE_MAX_CONCURRENT_RUNS`、无 `DUCKLE_POOLS_FILE`，
-   工作区无 `.duckle/pools.json` ⇒ 默认池上限 1（`pools.rs:63 env_default`）。两个 `sleep 8` 探针**同时**
+   ④ **Rust 外壳侧（CLI 与 `serve` 的 HTTP 面）默认并发 = 1（实测坐实，只限此面）**：容器 env 无
+   `DUCKLE_MAX_CONCURRENT_RUNS`、无 `DUCKLE_POOLS_FILE`，工作区无 `.duckle/pools.json` ⇒ 该面默认池上限 1
+   （`pools.rs:63 env_default`）。**它 ≠「服务端 = 1」**——服务端同进程里的**调度器**走**另一条**限流器、
+   默认 **8**（源码级，见 ⑤）。两个 `sleep 8` 探针**同时**
    `POST /api/run/async` ⇒ 乙 `queueMs: 0`、甲 **`queueMs: 8267`**（≈乙 `durationMs 8264`），且甲的
    `startedAt` = 乙的完成时刻 ⇒ **串行**；两份 receipt 都落 `resourcePool: "default"`。
    ⚠️ **判定口径**：**`/api/run/status` 的 `state: "running"` 不是「正在执行」**——它把排队中的甲也报成
@@ -240,9 +248,16 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    ⇒ **排队时长只能读 `<ws>/runs/receipts/<runId>.json`**。
    ⑤ ⚠️ **「8」在另一条限流器上，不是 runner 的**：`crates/scheduler/src/lib.rs:1060` 的调度信号量
    `.unwrap_or(8)`，且它对自己的 default 池**保留 8**（注释自陈「deliberately generous rather than 1」）⇒
-   **同一个 `default` 名字，runner 侧 1 / 调度器侧 8**——同进程**两个**限流器，正是该模块注释所告的形态。
+   **同一个 `default` 名字，Rust 外壳侧 1 / 调度器侧 8**——同进程**两个**限流器，正是该模块注释所告的形态。
+   ⚠️ **这条 8 属「源码级，未在本环境复现」**：本轮实测只覆盖 Rust 外壳侧那一侧，调度器侧的排队行为未取证。
    ⚠️ **`serve.rs:182 max_concurrent_runs()` 在 0.7.3 是死代码**（只有定义、无调用点），真正生效的是
-   `pools.rs:63 env_default()` ——读这一项别读错函数。**桌面 App 的 8 本轮未实测**。
+   `pools.rs:63 env_default()` ——读这一项别读错函数。
+   ⚠️ **桌面 App 的 8 = 源码级，未在本环境复现**（出处是既有记载「桌面 scheduler 默认 8」，
+   `docs/data-platform-handbook.md:147`；本轮**没在桌面上取过证**，也没回源复核它在 0.7.3 的落点）。
+   **最小验证动作（未做——本环境没有可运行的桌面产物）**：在桌面侧沿**会取并发许可的那条路径**（调度触发）
+   同时排两条 `sleep 8` 管线，看第二条是**并发**还是**排队** ⇒ 并发即排除「桌面默认 = 1」（与记载的 8 相符）；
+   排队则桌面侧默认也是 1、与记载不符。⚠️ **别拿手动 Run 当判据**——既有记载说桌面手动 Run
+   **不取运行锁**（`docs/data-platform-handbook.md:276`）。
    ⑥ **两条新差异**（W1/W2 用得上）：**(a) CLI 这次真写了运行历史与 metrics** ——
    `runs/_probe.date.json` 里 **两次都在**（`…454477` CLI 86 ms / `…460858` HTTP 61 ms）、
    CLI 的 receipt 也在盘、`duckle_runs_window{pipeline="_probe.date",status="ok"} 2` ⇒ 与上游
