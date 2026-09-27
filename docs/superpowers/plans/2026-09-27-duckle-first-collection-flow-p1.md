@@ -354,7 +354,9 @@ git commit -m "docs(handbook): §1.1.6 扩写资产面——投递矩阵 + 自�
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-grep -q 'duckle-runner release' duckle/README.md && echo "C1 OK" || echo "C1 FAIL"
+# ⚠️ C1 原用字面量 `duckle-runner release` —— **该前提是错的**（实测：该入口不在 PATH、exit 127；真入口是 `duckle release`）。
+#    Task 4 的销账按实测改写了正文 ⇒ 旧断言自 52e33d0 起恒红。2026-09-27 裁决：**改断言、不把错字面量写回正文**（它改动前 = 0 次，仍不空转）。
+grep -q 'duckle release' duckle/README.md && echo "C1 OK" || echo "C1 FAIL"
 grep -q '两端外壳保真度' duckle/README.md && echo "C2 OK" || echo "C2 FAIL"
 ```
 
@@ -396,7 +398,9 @@ Expected: 仍是 4 行，**未被改动**
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-grep -q 'duckle-runner release' duckle/README.md && echo "C1 OK" || echo "C1 FAIL"
+# ⚠️ C1 原用字面量 `duckle-runner release` —— **该前提是错的**（实测：该入口不在 PATH、exit 127；真入口是 `duckle release`）。
+#    Task 4 的销账按实测改写了正文 ⇒ 旧断言自 52e33d0 起恒红。2026-09-27 裁决：**改断言、不把错字面量写回正文**（它改动前 = 0 次，仍不空转）。
+grep -q 'duckle release' duckle/README.md && echo "C1 OK" || echo "C1 FAIL"
 grep -q '两端外壳保真度' duckle/README.md && echo "C2 OK" || echo "C2 FAIL"
 # 正典只给指针、不枚举：§1.1.6 里不许出现条目正文的标识串
 grep -q 'ext.probe' docs/data-platform-handbook.md && echo "❌ 正典抄了条目" || echo "✅ 正典只给指针"
