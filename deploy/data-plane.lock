@@ -1,4 +1,4 @@
-sha256-of-rest cdea3bb4ce5e36ef61550b65a44fb76bfe445a68b2b5648afedc77934c437ced
+sha256-of-rest 6d9048636745e6df74cfc155e525311d729c1fcd66edcba42f3b1e1e96cd4aab
 aef4c9fed8fc63da20a01c5687c5a173ca15111cf0485d5208de54d1fc5c6c9b dbt/README.md ${REPO}/dbt/README.md 0644
 cc1d78b5c825d5902d22be9b17fbabdc0833afb3c25912e392f8765004a76776 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -22,7 +22,7 @@ fe8339e0c38c1f17ca75be63fefd86718cbccdb0c68a9d70697473ddecbb356d dbt/tests/asser
 5d35c2a2ee23e98b59711b911d00a642d35e44762de526497df16ea55ba804e2 dbt/tests/audit_retail__net_sales.sql ${REPO}/dbt/tests/audit_retail__net_sales.sql 0644
 d43c40d2e1dd6c80db95782f3a7481028472868c77a2df31a46296fcfd908860 dbt/tests/audit_retail__order_count.sql ${REPO}/dbt/tests/audit_retail__order_count.sql 0644
 1c6621720fe664dc2a96bf4a1e73726dfb441664a29cdb755025654986a71abf deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
-768ac0089b86e9a1d5d70d2674eeda0a3833eadad54e7c8bfebfbaf4264de30b deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
+8679ed09c1ac5c65194c59fb2044e9edb2b7e5266ce08af4e08bd90bd4c70f6d deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
 caffb0d78fd5cc4f2575292a0a106e5c46ea3ccd4fe443731273b99d77524605 deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
 7386a4eba6b5751a13c29ea36c2ec421824f8dcb9c7fed40d636c0ea61ac3df0 deploy/duckle/console/alerts.json ${REPO}/deploy/duckle/console/alerts.json 0644
 c82af530685ea889ea6c3a532e545aaa166f30c34a46a71fd19b726deb95e3b3 deploy/duckle/console/owners.json ${REPO}/deploy/duckle/console/owners.json 0644
