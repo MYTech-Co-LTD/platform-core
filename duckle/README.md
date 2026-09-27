@@ -189,8 +189,14 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    `previous`**（只有一次 ⇒ **exit 1** `has no previous release to go back to`）⇒
    **「`build` → `activate` → `rollback` 一次到底」不成立，回滚面至少要有两版**。
    ④ ⚠️ **`activate` / `rollback` 都 `materialise`**：把快照的控制面文件**写回 workspace**、
-   并**移除快照里没有的**控制面文件（实测打印 4 条路径）；activate 在 workspace 有 drift 时**拒绝**
-   （除非 `--force`）。
+   并**移除快照里没有的**控制面文件（实测打印 4 条路径）；
+   ⚠️ **`activate` 在 workspace 有 drift 时拒绝**（除非 `--force`）——**源码级，未在本环境复现**：
+   出处 `duckle@v0.7.3`（与容器内 `duckle==0.7.3` 同版）`crates/duckle-runner/src/release_cmd.rs:305–318`
+   ——`release::drift(&ws, &release)` 非空且未给 `--force` ⇒ 打印 `would overwrite …` /
+   `would remove … (not part of this release)` 并 **exit 1**；drift 的定义是逐文件比 sha256，
+   见 `crates/duckdb-engine/src/release.rs:341`。**此闸只在 `activate`**：`rollback`（同文件 `:375`）
+   **刻意不过 drift 闸**。最小验证动作（**未做——需再进生产，本轮未做**）：scratch 工作区 `build` 后
+   手改任一控制面文件 ⇒ `activate` 应 exit 1；加 `--force` ⇒ 应 exit 0。
    ⑤ ⚠️ **W2 用它之前必须先知道**：本项目 `schedules.json` 是**运行状态**
    （`last_run_at` / `last_run_status` 由 console 写），而 release 把它**整份**当控制面快照 ⇒
    **rollback 会把调度记账回退到快照时刻**（实测：`4085e3b4…` → 模拟一次运行 `786bdde1…` →
