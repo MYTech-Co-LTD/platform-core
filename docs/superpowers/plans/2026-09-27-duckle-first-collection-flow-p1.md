@@ -19,7 +19,7 @@
 - **正典只给指针、不枚举**：`duckle/README.md` §7.4 未验清单**不许抄进正典**（它已经在漂——同节写「四项」，§7.4 实列「五项」）。
 - **未验项不许升级为既定**：源码级确认 ≠ 本环境验过。只有**本环境实测**才能把它从「未验」升为「首选」。
 - **CHANGELOG 禁止手写**（由 `release.mjs` 生成）；**feat/fix 必须先有 issue**；**可见变更必须走 PR**（squash）。
-- **波内不得改同一文件**；**波末**收齐产出 → 跑**全量**验证（该仓 CI 跑的全部命令）→ 再进下一波。
+- **同一波内「并行」的任务不得改同一文件**（**串行**任务不受此限——本文三个波次**全是串行**，故 Wave 1 三个任务同改 `handbook` 是允许的）；**波末**收齐产出 → 跑**全量**验证（该仓 CI 跑的全部命令）→ 再进下一波。
 - **🔴 改了 `duckle/**` 或 `deploy/duckle/**` ⇒ 必须重跑 lock**：
   `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`，并把 `deploy/data-plane.lock` 一起提交。
   这两条路径**都在 `deploy/data-plane-manifest.txt` 的覆盖范围内**（仓根 `duckle/` 整目录、`deploy/duckle/console/` 整目录）
@@ -67,8 +67,8 @@ cd "$(git rev-parse --show-toplevel)"
 H=docs/data-platform-handbook.md
 # 断言 1：判据三档存在
 grep -q '引擎有但未验 ⇒ 先挂 gate' "$H" && echo "A1 OK" || echo "A1 FAIL"
-# 断言 2：A→I 表每段都有「首选」那一栏（9 段应出现 ≥9 次）
-test "$(grep -c 'duckle 原生首选' "$H")" -ge 1 && echo "A2 OK" || echo "A2 FAIL"
+# 断言 2：A→I 表 9 段每段都带分档标记（改动前 = 0 次 ⇒ 不空转）
+test "$(grep -c '①首选\|②首选（未验）\|③归我方' "$H")" -ge 9 && echo "A2 OK" || echo "A2 FAIL"
 # 断言 3：三条「坑」已升格（旧措辞「三个实测坑」应消失）
 grep -q '三个实测坑' "$H" && echo "A3 FAIL（旧措辞还在）" || echo "A3 OK"
 ```
@@ -315,9 +315,11 @@ git commit -m "docs(handbook): §1.1.6 扩写资产面——投递矩阵 + 自�
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-grep -q 'release' duckle/README.md && echo "C1 OK" || echo "C1 FAIL"
+grep -q 'duckle-runner release' duckle/README.md && echo "C1 OK" || echo "C1 FAIL"
 grep -q '两端外壳保真度' duckle/README.md && echo "C2 OK" || echo "C2 FAIL"
 ```
+
+⚠️ **C1 故意不用裸词 `release`**：那个词**改动前就已经出现 2 次**（README 里有「release 二进制」一节）⇒ 裸词断言**在改动前就会通过**，等于什么都没验。
 
 - [ ] **Step 2: 在 §7.4 追加三条（编号接在现有第 5 项之后）**
 
@@ -351,7 +353,7 @@ Expected: 仍是 4 行，**未被改动**
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-grep -q 'release' duckle/README.md && echo "C1 OK" || echo "C1 FAIL"
+grep -q 'duckle-runner release' duckle/README.md && echo "C1 OK" || echo "C1 FAIL"
 grep -q '两端外壳保真度' duckle/README.md && echo "C2 OK" || echo "C2 FAIL"
 # 正典只给指针、不枚举：§1.1.6 里不许出现条目正文的标识串
 grep -q 'ext.probe' docs/data-platform-handbook.md && echo "❌ 正典抄了条目" || echo "✅ 正典只给指针"
