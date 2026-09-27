@@ -220,7 +220,8 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    `.superpowers/sdd/2026-09-27-duckle-first-collection-flow-p1/task-5-report.md`）：
    机 = `platform-core-shanhai-data`（`proj_AFbJvyb0onaX7LVr`）/ 服务 `lemeng-console-3120`
    （`svc_srQwfTvdkjxbCeoA`，`commandArgv: serve --host 0.0.0.0 --port 18080 --workspace /workspace
-   --duckdb /usr/local/bin/duckdb`）/ 卷 `lemeng-console-3120-ws`，容器内 duckle **0.7.3**、DuckDB **1.5.4**。
+   --duckdb /usr/local/bin/duckdb`）/ 卷 `openship-platform-core-shanhai-data-lemeng-console-3120-ws`
+   （**全名，理由见第 9 项 ② 的 ⚠️**），容器内 duckle **0.7.3**、DuckDB **1.5.4**。
    探针 = `src.inline`（`columns` 放 `${date}` / `${datetime}` / `${now}`）→ `snk.csv`
    （`${workspace}/tmp/probe-${date}.csv`），**同一份字节**（sha256 `22f459b3…`）在 **Rust 外壳侧的两个入口**
    （①②）各跑一次：
@@ -294,25 +295,42 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    `.superpowers/sdd/2026-09-27-duckle-first-collection-flow-p1/task-6-report.md` 与 issue #210）：
    ① **openship job 侧**（`lemeng-retail-3120-runner`，`sh /opt/lemeng-run.sh windows`）的 run 落在
    **`platform-core-data_duckle-workspace`** 卷——实测 09-27T02:30Z 那轮 **24 窗的 `run_id` / `rows` /
-   `duration_ms` 全在该卷 `runs/lemeng.retail_order_line.json` 里**；② **console 侧**
-   （`lemeng-console-3120` 常驻 `serve`）落在 **`lemeng-console-3120-ws`**，**是另一个卷**。
+   `duration_ms` 全在该卷 `runs/lemeng.retail_order_line.json` 里**；② **console 侧**（容器
+   `openship-platform-core-shanhai-data-lemeng-console-3120` 常驻 `serve`）落在
+   **`openship-platform-core-shanhai-data-lemeng-console-3120-ws`**，**是另一个卷**。
+   ⚠️ **两个卷名一律用 `docker volume ls` 的全名**：短名 `lemeng-console-3120-ws`
+   **在 `docker volume ls` 里不存在**（openship 部署时另起卷名）⇒ **认卷别用短名**。
+   **怎么认出的**（2026-09-27，数据面机 `113.249.104.181`／`10.0.0.5`，**openship MCP 只读**）：
+   `docker volume ls --format '{{.Name}}'` 出全名；`docker inspect` 那只 console 容器见
+   `volume …-lemeng-console-3120-ws -> /workspace`；两卷的**分属**由载体坐实——job 侧是宿主机
+   `docker compose run --rm`（`deploy/data-compose.yml`，其 `name: platform-core-data`）的默认卷名
+   `<project>_<volume>`，console 侧是 openship 起的卷。
+   ⚠️ **两卷同属 compose 项目 `platform-core-data`**（console 容器标签也是它）——**差的不是项目，是卷名**。
    ⇒ ⚠️ **console 的 `/api/runs` / `/metrics` / `/api/run/status` 看不到 job 的 run**：
    console 侧 `duckle_run_last_timestamp_seconds{pipeline="lemeng.retail_order_line"}` 停在
    **09-26T12:55Z**（那次是容器内手工跑、撞 429 中止），而当日的 24 窗 job 在**另一卷**里。
    **挂告警/看板前先定「挂哪个 workspace」**——挂错面 = 盯着一只空桶。
-   ③ **四面都能定位到具体一次 run**（同一 run 探针实测）：`/api/run/status?runId=` 给
-   `state` / `status` / `durationMs` / 逐节点 `rows`；`/metrics` 给 `duckle_run_last_rows` /
-   `duckle_run_last_duration_seconds` / `duckle_runs_window`（**按 pipeline 打标**）；
-   **receipt**（`<ws>/runs/receipts/<runId>.json`）与 **NDJSON `runtime.log`** 逐行带 `run_id`；
-   `<ws>/runs/<pipeline>.json` 历史带 `run_id` + `rows` + `duration_ms`。
-   ⚠️ **`/api/runs` 与 `/metrics` 都不带 `runId`**（只有 pipeline 名 + `at`/时间戳）
-   ⇒ **按 runId 定位只能靠 `/api/run/status`、receipt、NDJSON、历史文件这四处**。
+   ③ **四处能按 `runId` 定位到具体一次 run**（同一 run 探针实测）：`/api/run/status?runId=` 给
+   `state` / `status` / `durationMs` / 逐节点 `rows`；**receipt**（`<ws>/runs/receipts/<runId>.json`）
+   与 **NDJSON `runtime.log`** 逐行带 `run_id`；`<ws>/runs/<pipeline>.json` 历史带 `run_id` +
+   `rows` + `duration_ms`。
+   ⚠️ **`/metrics` 与 `/api/runs` 都不带 `runId`，不在这四处里**（R1 逐字回读原始响应）：
+   `/metrics` 只按 **pipeline** 打标（`duckle_run_last_rows` / `duckle_run_last_duration_seconds` /
+   `duckle_runs_window`）⇒ 是**聚合面**；`/api/runs` 每条是
+   `{id, name, file, at, status, durationMs, rows, nodeCount, trigger, error, category}`——**无 `runId`**，
+   且**只覆盖 console 自己 `pipelines/` 目录里登记的管线**（本轮实测：无参返回 **6 条 / 3 个 id**，
+   全是 `lemeng.*.run`；`?id=_t6.probe` ⇒ **`{"runs":[]}`**——**跑过的临时管线根本不进来**）
+   ⇒ **不能拿它当「本次 run 的历史」**（`?id=<已登记管线>` 是有效过滤器，`?pipeline=` 被忽略）。
    ④ ⚠️ **job 侧只有落盘文件、没有 HTTP 面**（那个卷上没有 `serve` 在跑）⇒ 从 console 读不到它；
    要读只能读文件（`runs/*.json` / `runs/receipts/*` / `logs/<hour>/<pipeline>/runtime.log` /
    `logs/duckle_metrics.prom`）。CLI receipt **不带 `queuedAt`/`startedAt`/`queueMs`**（console 侧那份才带）。
-   ⑤ `_ops` 行（job stdout）与引擎原生 `rows` **对账 24/24 全等**（合计 **9470 = 9470**）；
+   ⑤ `_ops` 行（job stdout）与引擎原生 `rows` **对账：逐窗计数一致（24/24）、合计一致**
+   （**9470 = 9470**）——⚠️ 比的是**每个窗的 `rows` 计数与合计**，**不是逐字段/逐列**；
+   **口径 = 该 run 的 `sink` 节点行数**（receipt `nodes.sink.rows`；历史条目的 `rows` 与之同值——
+   样本 `16 = 16`；`node_count: 17` 是**节点数**，**不是** rows 口径），`_ops` 也取自 sink 行 ⇒ 三者同源；
    而 **`_ops` 行里没有「耗时」字段**（实测键只有 `ts` / `job` / `system_book` / `bizday` / `hour` /
-   `rows` / `status`）⇒ spec §6 的「行数/页数/窗口/耗时」四项里，**「页数」与「耗时」从未实现**；
+   `rows` / `status`）⇒ spec §6 的「行数/页数/窗口/耗时」四项里，**「页数」与「耗时」从未进入
+   `_ops` 行**（本条只证「该行键集里没有」，**不证代码里没有**）；
    引擎原生侧两项都有（`duration_ms` 逐 run、`duckle_run_last_duration_seconds`）。
 
 ### 7.5 接入方式（**凭据与网络从哪来**）
