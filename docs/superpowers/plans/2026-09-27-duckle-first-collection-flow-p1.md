@@ -67,13 +67,17 @@ cd "$(git rev-parse --show-toplevel)"
 H=docs/data-platform-handbook.md
 # 断言 1：判据三档存在
 grep -q '引擎有但未验 ⇒ 先挂 gate' "$H" && echo "A1 OK" || echo "A1 FAIL"
-# 断言 2：A→I 表 9 段每段都带分档标记（改动前 = 0 次 ⇒ 不空转）
-test "$(grep -c '①首选\|②首选（未验）\|③归我方' "$H")" -ge 9 && echo "A2 OK" || echo "A2 FAIL"
+# 断言 2：A→I 表带分档标记的段数 ≥8（改动前 = 0 次 ⇒ 不空转）
+# ⚠️ 阈值经裁决 9→8：B 段是**选型决策**不是引擎能力，它的 ① 属定义域错配（评审 M6）⇒ 去掉后
+#    「9 段各一标记」不再是正确的不变量。带分档的是 A③/C①/D①/E①/F②/G②/H②/I② = 8。
+test "$(grep -c '①首选\|②首选（未验）\|③归我方' "$H")" -ge 8 && echo "A2 OK" || echo "A2 FAIL"
 # 断言 3：三条「坑」已升格（旧措辞「三个实测坑」应消失）
 grep -q '三个实测坑' "$H" && echo "A3 FAIL（旧措辞还在）" || echo "A3 OK"
+# 断言 4：B 段分档格必须显式写「决策纪律」——不许留空、不许再写 ①（替代被去掉的计数直觉）
+grep -q '决策纪律，见 §1.1' "$H" && echo "A4 OK" || echo "A4 FAIL"
 ```
 
-Expected: `A1 FAIL` / `A2 FAIL` / `A3 FAIL（旧措辞还在）`
+Expected: `A1 FAIL` / `A2 FAIL` / `A3 FAIL（旧措辞还在）` / `A4 FAIL`
 
 - [ ] **Step 2: 在 §1.1 的表后插入判据（宪法级）**
 
