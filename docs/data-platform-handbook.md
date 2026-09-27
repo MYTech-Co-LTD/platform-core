@@ -188,6 +188,77 @@
 > **生产引擎版本在此钉死：`duckle` 0.7.3**（`duckdb-cli` 1.5.4）——`{incremental}` 走 header 在 0.7.3 ✅、
 > **桌面 app 自带引擎 0.7.1 ❌**；**不钉版本，下次用桌面 app 验出来的是假阴性**（§1.1.6 ③ 第五条）。
 
+**⑧ 资产面：桌面端管什么、怎么到服务器侧**（2026-09-27 追加；出处同上，分析件 §6/§7）
+
+**总拓扑**：**桌面（+Git）= authoring 与唯一事实源；服务器 = runtime，只运行、不编辑**（**单向**）。
+⚠️ 上游逐字：桌面与 runner **同时**打开一个 workspace 是「**从笔记本搬到服务器的中途形态**」，
+**不是推荐的长期拓扑**。⇒「**桌面端永远保留资产**」成立的条件是「资产在桌面与 Git，**服务器不反向持有唯一副本**」，
+**不是**「两端同时开着同一个 workspace」。
+
+**三个动作别混**：
+
+| 动作 | 产物 | 去向 | 我们用它做什么 |
+|---|---|---|---|
+| **Deploy** | **pipeline JSON 原文**（⚠️ 占位符**不解析**）| 服务器 workspace **根**（非 `pipelines/`；临时文件 + rename；**可覆盖**、盲覆盖）| **单份管线快速上线** |
+| **Build** | 自包含单文件可执行（内嵌引擎 + DuckDB + 已用扩展 + **已解析**管线 + 密钥）| **本机磁盘**（**不是服务器**）| 无 duckle 环境的交付。⚠️ **不打包 `components/`** ⇒ `ext.*` 在别的机器上**直接失败** |
+| **Release** | **控制面全量快照**（hash 寻址）+ 环境指针（`activate`/`rollback`，单次 rename）| 服务器 workspace 的 release store | **整份版本化 + 可回滚**（⚠️ **不含密钥**）——**未验** |
+
+⚠️ **Deploy 与 release 在源码里没有任何调用关系**。**上线是两个动作**：
+**Deploy = Admin**（理由逐字：部署就是**交出代码执行权**，因为管线会在这台机上跑 shell 与 SQL）；
+**启用调度 = Operator**，且**随部署下发的调度一律被强制 `enabled:false`**
+（逐字理由：「在笔记本上设的节奏不该一到生产就开始点火，**打开它是一个独立的动作**」）。
+
+**资产类 × 谁维护 × 怎么投**：
+
+| 资产类 | 进 Git？ | 谁维护 | 怎么到服务器 |
+|---|---|---|---|
+| 管线 `pipelines/*.json` | ✅ | 桌面（真引擎产出，**仓内不手编**）| Deploy **或** Git seed——**二选一，别混** |
+| 调度 / 告警 / 所有者 / 编排（`schedules.json`、`alerts.json`、`owners.json`、`plans.json`）| ✅ | 仓内 | **seed 进 workspace 卷 + 重建容器**（§1.3.2 **两步都做**）|
+| 契约 / 语义（`contracts/`、`dbt/`）| ✅ | 仓内 | 随仓（与 §1.3 的 A/C 段同源）|
+| 连接 `connections/*.json`（**密文**）| ✅ | 桌面 | ⚠️ **换机 clone 后解不开**——解它的 `.duckle/keys/secret.key` **永不进 Git** ⇒ 密钥**另行分发** |
+| 上下文 / 例程（`contexts/`、`routines/`）| ✅ | 桌面 | 与管线同路 |
+| **自定义代码** | ⚠️ 分三种 | 桌面 + 仓 | **三种载体三种投法**（见下）|
+| **扩展 `ext.*`** | ⚠️ 目录进仓 | 桌面 + 仓 | **`<workspace>/components/<name>/` 一个目录**（docker = **挂卷**）⇒ **seed 进每个账套各自的卷** |
+| 运行态正确性状态（`state/`：**水位**、checkpoints、baselines）| ❌ **由运行产生** | 引擎 | ⚠️ **不是缓存，是正确性状态**——决定「下次采哪些」。跟着 workspace 卷走，**不进 Git、别手改**；回填用 `watermarks` |
+| 历史与派生物（`runs/`、`receipts/`、`logs/`、`cache/`、`manifests/`）| ❌ | 引擎 | 不用投——引擎自产（§1.5 观测面吃它）|
+| 机器本地 `.duckle/`（`keys/`、`secrets/`、`locks/`、`settings.json`、`deploy-targets.json`、`console.db`、`environments/`）| ❌ **绝不** | 各机自持 | **永不投递**。⚠️ 官方每次 commit 前重写 `.duckle/.gitignore`，但它走 `git add -A` ⇒ 那份 ignore 是**最后防线，不是建议** |
+
+**自定义代码与扩展：三种载体**——
+
+| 路线 | 形态 | 状态 | 分发单元 |
+|---|---|---|---|
+| **① `ext.*` 外部组件** | `<workspace>/components/<name>/duckle-component.json` + **任意语言可执行文件**（stdin JSON 请求 / stdout JSON 应答；数据走 Parquet）| **生产可用、官方文档化** | **workspace 里一个目录**（docker = 挂卷）|
+| **② 管线内 `code.*` 节点** | `code.sql` / `sqltemplate` / `python` / `javascript` / `shell` / `wasm` **available**；⚠️ **`code.rust` 是 planned 且零实现** | 可用 | **随管线** |
+| **③ 内建级组件**（`src.*` / `xf.*` 那种）| 改上游 Rust 5 处 + 重生成 catalog；`crates/plugin-sdk` 是**已废弃脚手架** | 只能 fork | 维护分叉——**不做** |
+
+⇒ **判定：`ext.*` 首选 / `code.*` 兜底 / 内建级不做**。理由：`ext.*` 有**一等公民待遇**
+（调色板 / catalog / MCP / capabilities / **policy 门禁** / run 回执 `Used`·`used_by`）
+**外加 `components conform <id>` 的 10 用例行为验收套件**（initialize 不许干活 / 零行进零行出 /
+20 万行大批 / 崩了要干净报错 / **secret 脱敏**（查实际发出的字节）/ 超时上界），**输出 json 能直接卡 CI 门禁**。
+⇒ **凡「会长期存在的自建逻辑」优先做成 `ext.*`**；`code.*` 用在「一次性 / 只这一段用」。
+
+⚠️ **两条安全空档（设计如此，不是疏漏）**：① **`allowed_paths` 与 `allowed_domains` 对 `code.*` 全部失效**
+（子进程可连任意主机、读任意文件，policy 看不见——`code.*` 就是「跑任意程序」，**有意留着**）；
+② **没有 per-execution 审计事件**（审计记的是**鉴权动作**，不记「某个 `code.*` 被执行了」）⇒ 留痕靠 run manifest + retry 回执。
+⇒ **纪律**：能进 policy 的尽量进 policy（`ext.` 前缀 ⇒ `executes_process()=true`；`components.deny:["ext.*"]` 一票否决）。
+
+**投递的五条硬纪律**（不守会**静默**坏数 / **静默**覆盖）：
+
+1. **服务器只运行、不编辑** —— ⚠️ **没有回拉，也没有漂移检测**（源码里穷举 `reconcile`/`drift`/`desync`/
+   `diverged`/`out_of_sync` **均无此语义**）⇒ 有人在服务器改了管线，下次 deploy **静默覆盖**它，而桌面**不会知道**。
+   这是「桌面为源」模型**唯一的真实风险**，靠纪律规避（**回滚 = Git 里那一版重发**）。
+2. **一个 pipeline 只在一侧跑** —— 桌面**手动 Run 不取运行锁**（引擎注释自认）⇒ 与服务器同管线的调度跑**可并发**、
+   **同时写同一 sink、同时推进同一水位** ⇒ **静默丢数**。锁只覆盖「调度触发」那一条路径。
+3. **管线里机密只用 `${ENV:...}`** ——「**已保存连接**」的解密值会被**复制进管线文件、随 deploy 传出去**
+   （官方逐字：「Picking a saved connection does not, by itself, protect the credential」）。
+   ⚠️ **组件侧方向相反**：`ext.*` 组件**继承宿主 env** ⇒ **只传引用名 + 组件自己读 `std::env`**；
+   **别在组件属性里用 `${ENV:...}`**（宿主会把**真值**替换进属性再塞进 stdin 的 JSON）。**两条路别套用同一条纪律。**
+4. **deploy 完不会跑** —— 见上「上线是两个动作」。
+5. **两端外壳有缺口，别只在一端验**：🔴 **占位符替换是两份实现**（桌面 canvas = TypeScript、服务端 = Rust，
+   **手工同步、无编译期约束**）⇒ 凡涉 `${date}` / context 优先级**必须在 CLI 或 `serve` 上再验一次**；
+   **默认并发桌面 8 / 服务端 1** ⇒ 桌面跑得动 ≠ 服务器跑得动；**桌面 Settings 的三项服务端不读**
+   （`spill_dir` / `allow_unsigned_extensions` / `https_proxy`）；**扩展预装两端不同**（桌面 11 / 服务端镜像 12，多 `inet`）。
+
 ### 1.2 硬约束清单
 
 > **先看清是哪一档。** 第一档违反 = CI 红；第二档违反 = 门禁不拦，靠评审与人。
@@ -228,8 +299,11 @@
 >
 > ⚠️ **「未验清单」那行故意不枚举条目**：只给 `§7.4` 的指针，不抄几条、也不抄是哪几条。
 > 两条理由：① 本正典的纪律是**不复制正文**（枚举就是把下钻文档的正文搬过来）；
-> ② 那份清单**已经在漂**——`duckle/README.md:137`（§6）写「**四项**」，而 §7.4 实际枚举**五项**
-> （漏的是第 5 项「跨组件 parquet 格式兼容」——该项是本仓切官方镜像时才新引入的面）。**照着抄就会把这个错一起抄进正典**。
+> ② 那份清单**已经在漂**——`deploy/duckle/README.md:249` 写「§7.4 的**四项**」，
+> 而 `duckle/README.md` §7.4 实列**五项**（漏的是第 5 项「跨组件 parquet 格式兼容」——本仓切官方镜像时新引入的面）。
+> **照着抄就会把这个错一起抄进正典**。
+> ⚠️ **本仓有两份同名前缀的 README，别混**：**仓根 `duckle/README.md` §7.4 = 引擎能力面**；
+> **`deploy/duckle/README.md` §6 = 镜像/构建面**（`docker build --check`、容器内实跑…）。
 
 ### 1.3 生命周期 SOP（A→I）
 
