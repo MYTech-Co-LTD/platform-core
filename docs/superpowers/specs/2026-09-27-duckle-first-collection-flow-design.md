@@ -130,7 +130,7 @@
 |---|---|---|---|
 | **Deploy** | **pipeline JSON 原文**（⚠️ 占位符**不解析**） | 服务器 workspace **根**（临时文件 + rename，**可覆盖**） | **单份管线快速上线** |
 | **Build** | 自包含单文件可执行（内嵌引擎 + DuckDB CLI + 已用扩展 + **已解析**管线 + 密钥） | **本机磁盘**（**不是服务器**） | 交付给无 duckle 环境的场景。⚠️ **不打包 `components/`** ⇒ `ext.*` 节点在没有该 workspace 的机器上**直接失败** |
-| **Release** | **控制面全量快照**（hash 寻址）+ 环境指针（`activate`/`rollback`，**单次 rename** ⇒ 读者只会看到上一个完整版本或新的完整版本） | 服务器 workspace 的 release store | **整份版本化 + 可回滚**（⚠️ **不含密钥**，`release.rs:29` 逐字 `## No secrets`）——**未验**，见 §3.5 |
+| **Release** | **控制面全量快照**（hash 寻址）+ 环境指针（`activate`/`rollback`，**单次 rename** ⇒ 读者只会看到上一个完整版本或新的完整版本） | 服务器 workspace 的 release store | **整份版本化 + 可回滚**（⚠️ **不含密钥**，`release.rs:29` 逐字 `## No secrets`；**2026-09-27 真机实测**：64188 卷 scratch 副本上 `build/list/verify/diff/activate/rollback` 全链 exit 0、零 docker 零网络，7 个凭据环境变量逐值 grep 全 absent）——**已验（支持）**。⚠️ **三条实测偏差**：`duckle-runner` 不在 PATH（用 `duckle release`）、`activate` 必须带 `--environment`、**`rollback` 需两次 release 才有 previous**。🔴 **W2 硬约束**：`schedules.json` 是**运行状态**（含 `last_run_at`/`last_run_status`），**release 整份快照它 ⇒ rollback 会把调度记账倒退到快照时刻**（已实测）|
 
 ⚠️ **Deploy 与 release 在源码里没有任何调用关系**（`deploy_into` 全文不碰 release）。
 **Deploy 是盲覆盖**（只回 `replaced: true/false`，不比对、也不警告「服务器那份更新」）。
