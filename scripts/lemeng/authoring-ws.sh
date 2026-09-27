@@ -21,7 +21,7 @@
 #
 # 映射表（唯一事实源，assemble/collect 共用；枚举一律基于 REPO_ROOT，不依赖调用方 CWD）：
 #   deploy/duckle/console/pipelines/<name>.json    ⇄ pipelines/<name>.json
-#   duckle/common/<name>.json                      ⇄ pipelines/common/<name>.json
+#   duckle/common/<name>.json                      ⇄ pipelines/<name>.json（重管线也平铺，见下「桌面坑 2」）
 #   deploy/duckle/console/schedules/<account>.json ⇄ schedules.json
 #   deploy/duckle/console/alerts.json              ⇄ alerts.json
 #   deploy/duckle/console/owners.json              ⇄ owners.json
@@ -39,7 +39,7 @@ map_list() { # $1=account $2=wsdir → stdout: "repo相对路径 ws绝对路径"
   done
   for f in "$REPO_ROOT"/duckle/common/*.json; do
     [ -f "$f" ] || continue
-    printf '%s %s\n' "${f#"$REPO_ROOT"/}" "$2/pipelines/common/$(basename "$f")"
+    printf '%s %s\n' "${f#"$REPO_ROOT"/}" "$2/pipelines/$(basename "$f")"
   done
   printf '%s %s\n' "$CONSOLE/schedules/$1.json" "$2/schedules.json"
   printf '%s %s\n' "$CONSOLE/alerts.json" "$2/alerts.json"
@@ -52,6 +52,10 @@ map_list() { # $1=account $2=wsdir → stdout: "repo相对路径 ws绝对路径"
 # "activeJobId":""}）。App 对新目录会生成默认样例树，外来管线被自动收编成 parentId 指向不存在
 # 的节点 ⇒ 不渲染。故 assemble 在缺失时生成这两个文件；已存在绝不覆盖（用户可能整理过树），
 # collect 也不碰它们。id 规则：管线一律用文件 stem（文件名去 .json），与桌面自动收编一致。
+# 桌面坑 2（2026-09-27 晚实测）：桌面按 pipelines/<id>.json 在**根目录平铺**解析管线文件——
+# 子目录（pipelines/common/）里的文件树条目找不到，桌面自动建 0 节点空管线、画布空白。
+# 故工作区侧一律平铺（重管线也落 pipelines/ 根；文件名与薄管线不冲突，已核对）；树元数据里
+# common 文件夹收纳的重管线条目 id 仍=文件 stem，文件平铺不影响树。
 json_tree_nodes() { # $1=account → stdout：repository.json 节点行（根 parentId=""，两 folder 挂根下）
   rid="authoring-$1"
   printf '{"id":"%s","name":"%s","type":"project","parentId":""}\n' "$rid" "$rid"
@@ -68,7 +72,7 @@ json_tree_nodes() { # $1=account → stdout：repository.json 节点行（根 pa
     printf '{"id":"%s","name":"%s","type":"pipeline","parentId":"common"}\n' "$s" "$s"
   done
 }
-json_jobs() { # → stdout：duckle.json 的 jobs 行（覆盖 pipelines/ 与 pipelines/common/ 全部管线）
+json_jobs() { # → stdout：duckle.json 的 jobs 行（覆盖 console/pipelines 与 duckle/common 全部管线）
   for f in "$REPO_ROOT/$CONSOLE"/pipelines/*.json "$REPO_ROOT"/duckle/common/*.json; do
     [ -f "$f" ] || continue
     s=$(basename "$f" .json)
@@ -99,7 +103,7 @@ case "${1:-}" in
     if [ -d "$DIR" ] && [ "${ASSEMBLE_OVERWRITE:-0}" != "1" ]; then
       FAIL "${DIR} 已存在（换目录，或 ASSEMBLE_OVERWRITE=1 覆盖一致文件）"
     fi
-    mkdir -p "$DIR/pipelines/common"
+    mkdir -p "$DIR/pipelines"
     MAP=$(map_list "$ACC" "$DIR")
     while read -r rp wp; do
       [ -n "$rp" ] || continue
@@ -132,7 +136,7 @@ MAPLIST
     done <<MAPLIST
 $MAP
 MAPLIST
-    WSNEW=$(for f in "$DIR"/pipelines/*.json "$DIR"/pipelines/common/*.json; do
+    WSNEW=$(for f in "$DIR"/pipelines/*.json; do
       [ -f "$f" ] || continue
       b=$(basename "$f")
       printf '%s\n' "$MAP" | grep -q " $b\$" || echo "$f"

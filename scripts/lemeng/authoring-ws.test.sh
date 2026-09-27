@@ -16,8 +16,12 @@ echo OW > "$FR/deploy/duckle/console/owners.json"
 out=$(REPO_ROOT="$FR" sh "$SRC" assemble 3120 "$WS/ws" 2>&1); rc=$?
 ok "$rc" "0"
 ok "$(cat "$WS/ws/pipelines/p1.json" 2>/dev/null)" "A"
-ok "$(cat "$WS/ws/pipelines/common/heavy.json" 2>/dev/null)" "B"
+ok "$(cat "$WS/ws/pipelines/heavy.json" 2>/dev/null)" "B"
 ok "$(cat "$WS/ws/schedules.json" 2>/dev/null)" "S"
+
+# 1b) 重管线平铺后位于 pipelines/ 根（桌面按 pipelines/<id>.json 根目录解析，不得进子目录）
+[ -f "$WS/ws/pipelines/heavy.json" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "  FAIL: 重管线未平铺到 pipelines/ 根"; }
+[ ! -e "$WS/ws/pipelines/common" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "  FAIL: 不应创建 pipelines/common 子目录"; }
 
 # 2) 重复 assemble 无覆盖旗标 ⇒ 拒绝 exit 2
 out=$(REPO_ROOT="$FR" sh "$SRC" assemble 3120 "$WS/ws" 2>&1; echo "rc=$?")
@@ -28,7 +32,7 @@ out=$(REPO_ROOT="$FR" sh "$SRC" assemble 9999 "$WS/ws2" 2>&1; echo "rc=$?")
 ok "$(printf '%s' "$out" | tail -1)" "rc=2"
 
 # 4) collect：工作区改动回收 + 新文件跳过
-echo B2 > "$WS/ws/pipelines/common/heavy.json"
+echo B2 > "$WS/ws/pipelines/heavy.json"
 echo NEW > "$WS/ws/pipelines/brand.new.json"
 out=$(REPO_ROOT="$FR" sh "$SRC" collect 3120 "$WS/ws" 2>&1)
 ok "$(cat "$FR/duckle/common/heavy.json")" "B2"
@@ -42,7 +46,7 @@ echo HAND > "$WS/ws/pipelines/p1.json"
 out=$(REPO_ROOT="$FR" ASSEMBLE_OVERWRITE=1 sh "$SRC" assemble 3120 "$WS/ws" 2>&1)
 ok "$(cat "$WS/ws/pipelines/p1.json")" "HAND"
 case "$out" in *KEEP*p1.json*) pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 手改文件未点名 KEEP";; esac
-ok "$(cat "$WS/ws/pipelines/common/heavy.json")" "B2"  # 与新正本一致 ⇒ KEEP 保持（第 4 步已收回仓）
+ok "$(cat "$WS/ws/pipelines/heavy.json")" "B2"  # 与新正本一致 ⇒ KEEP 保持（第 4 步已收回仓）
 
 # 6) assemble 生成桌面元数据：duckle.json jobs 数 = 正本管线数（p1 + heavy = 2）
 ok "$(grep -c '"dirty":false' "$WS/ws/duckle.json")" "2"
