@@ -178,10 +178,30 @@
 **判定**：我们自建那部分 ⇒ **① `ext.*` 首选、② `code.*` 兜底**（分析件 §7.2 给了**逐件事**的判定表：搬 / 半搬 / 不该搬）。
 **不该搬的**：**部署投递**（`data-plane.lock` + 就地核验同步）与**容器生命周期**——**不是 duckle 的领域**（§4.2 已列）。
 
-**`ext.*` 的待遇比 `code.*` 好**：独立调色板分类 / catalog / MCP / capabilities 注册表 / **policy 门禁** /
-run 回执 `Used`/`used_by`，**外加 `components conform <id>` 的 10 用例行为验收套件**
-（先验「initialize 不许干活」「零行进零行出」「20 万行大批」「崩了要干净报错」「**secret 脱敏**（查实际发出的字节）」「超时上界」）
-⇒ **输出 json，能直接卡 CI 门禁**。
+**`ext.*` 的待遇是「半套」，不是「比 `code.*` 好」的一等公民**（**2026-09-27 实测订正**：
+原文写「独立调色板分类 / catalog / MCP / capabilities 注册表 / policy 门禁 / run 回执」一句打包，
+**实测与其中两项相反**）：
+
+- ✅ **成立**：**policy 门禁**（`ext.` 前缀 ⇒ `executes_process()=true`）、**run 回执** `Used`/`used_by`，
+  以及 **`components conform <id>` 行为验收套件**（先验「initialize 不许干活」「零行进零行出」「20 万行大批」
+  「崩了要干净报错」「**secret 脱敏**（查实际发出的字节）」「超时上界」）⇒ **输出 json，能直接卡 CI 门禁**。
+  ⚠️ **用例数随组件 kind 变**：source（0 输入）时第 4/5/6/9 条显示 **`n/a`（不适用）——`n/a` 不等于绿**；
+  要 10 pass / 0 n/a，须 transform 形态**且**应答里带 `rejects` / `artifacts`。**引用「10 用例」必须带上这两个前提。**
+- ❌ **不成立**：**`catalog` 与 MCP 都看不见 `ext.*`** —— `duckle components schema` 导出 **411 条全是内建、
+  0 条 `ext.*`**；MCP `list_components` / `get_component_schema` 同样返回不了。
+  **唯一**能发现它的列举面是 **`duckle components external --workspace <ws>`**。
+
+🚧 **gate 级 blocker（2026-09-27 实测）**：**MCP `validate_pipeline` 会把含 `ext.*` 的管线判死在门口**
+（`(ext.probe) isn't executable on the DuckDB engine yet - it's a preview component.`）
+⇒ **我们惯用的 MCP 通道不能用来校验含 `ext.*` 的管线，改用 CLI `validate`**（同一份管线 CLI 放行、`exit 0`）。
+⚠️ 但 CLI 也**查不了 ext 组件的属性**（自认 `component_not_in_catalog … its properties cannot be checked`）
+⇒ **属性名写错能过 `validate`、到运行时才炸**。
+
+**① 的实测出处（2026-09-27 补验）**：本机隔离实验室（darwin/arm64，**零生产**）、**pip `duckle` 0.7.3** +
+`duckdb` CLI 1.5.4；命中 **spawn/干活/数据往返 ✅、子进程继承宿主 env ✅（sha256 前 8 位逐位相符）、
+`components conform` 10 passed/0 failed ✅、分发单元（`build` 不打包 `components/`，隔离跑 exit 1 且报错干净）✅**。
+原始输出见 `.superpowers/sdd/2026-09-27-duckle-first-collection-flow-p1/task-2b-report.md`。
+
 ⇒ **纪律**：**凡「会长期存在的自建逻辑」优先做成 `ext.*`**（有验收套件）；`code.*` 用在「一次性 / 只这一段用」。
 
 ⚠️ **两条安全空档（设计如此，不是疏漏）**：
@@ -196,6 +216,8 @@ run 回执 `Used`/`used_by`，**外加 `components conform <id>` 的 10 用例�
 - **凭据走引用名，不走值**：`ext.*` 组件**继承宿主 env**（spawn 处无 `env_clear`）⇒ **只传引用名 + 组件自己读 `std::env`**（这是 `plugin.rs` 的设计意图）；
   ⚠️ **别在 ext 组件属性里用 `${ENV:...}`**——宿主会把**真值**替换进属性、再塞进 stdin 的 JSON，**与「secrets absent」的设计相悖**。
   ⚠️ **这与「管线里用 `${ENV:...}`」方向相反**（管线是**从宿主 env 取值**，组件是**读宿主 env 本身**）——**两条路别套用同一条纪律**。
+  ⚠️ **静默坑（2026-09-27 实测）**：占位符**未解析时不报错**——只发 warning（`${ENV:…} is unresolved …`）、
+  **run 仍 `status: ok`**、且**字面量原样下发**给组件 ⇒ 密钥没配好**不会红**。
 
 ### 3.4 投递的五条硬纪律（不守会**静默**坏数 / **静默**覆盖）
 

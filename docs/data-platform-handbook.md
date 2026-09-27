@@ -191,7 +191,7 @@
 **⑧ 资产面：桌面端管什么、怎么到服务器侧**（2026-09-27 追加；出处同上，分析件 §6/§7）
 
 **总拓扑**：**桌面（+Git）= authoring 与唯一事实源；服务器 = runtime，只运行、不编辑**（**单向**）。
-⚠️ 上游逐字：桌面与 runner **同时**打开一个 workspace 是「**从笔记本搬到服务器的中途形态**」，
+⚠️ 上游原意（**原文为英文，此处是译文**；出处 = 本节抬头那份分析件 **§6.7(a)**）：桌面与 runner **同时**打开一个 workspace 是「**从笔记本搬到服务器的中途形态**」，
 **不是推荐的长期拓扑**。⇒「**桌面端永远保留资产**」成立的条件是「资产在桌面与 Git，**服务器不反向持有唯一副本**」，
 **不是**「两端同时开着同一个 workspace」。
 
@@ -204,9 +204,11 @@
 | **Release** | **控制面全量快照**（hash 寻址）+ 环境指针（`activate`/`rollback`，单次 rename）| 服务器 workspace 的 release store | **整份版本化 + 可回滚**（⚠️ **不含密钥**）——**未验** |
 
 ⚠️ **Deploy 与 release 在源码里没有任何调用关系**。**上线是两个动作**：
-**Deploy = Admin**（理由逐字：部署就是**交出代码执行权**，因为管线会在这台机上跑 shell 与 SQL）；
+**Deploy = Admin**（理由：部署就是**交出代码执行权**，因为管线会在这台机上跑 shell 与 SQL
+——**原文为英文，此处是译文**，出处 = 分析件 **§6.4**（`audit.rs:362-369`））；
 **启用调度 = Operator**，且**随部署下发的调度一律被强制 `enabled:false`**
-（逐字理由：「在笔记本上设的节奏不该一到生产就开始点火，**打开它是一个独立的动作**」）。
+（理由：「在笔记本上设的节奏不该一到生产就开始点火，**打开它是一个独立的动作**」
+——**原文为英文，此处是译文**，出处 = 分析件 **§6.3**（`serve.rs:3429`））。
 
 **资产类 × 谁维护 × 怎么投**：
 
@@ -231,10 +233,34 @@
 | **② 管线内 `code.*` 节点** | `code.sql` / `sqltemplate` / `python` / `javascript` / `shell` / `wasm` **available**；⚠️ **`code.rust` 是 planned 且零实现** | 可用 | **随管线** |
 | **③ 内建级组件**（`src.*` / `xf.*` 那种）| 改上游 Rust 5 处 + 重生成 catalog；`crates/plugin-sdk` 是**已废弃脚手架** | 只能 fork | 维护分叉——**不做** |
 
-⇒ **判定：`ext.*` 首选 / `code.*` 兜底 / 内建级不做**。理由：`ext.*` 有**一等公民待遇**
-（调色板 / catalog / MCP / capabilities / **policy 门禁** / run 回执 `Used`·`used_by`）
-**外加 `components conform <id>` 的 10 用例行为验收套件**（initialize 不许干活 / 零行进零行出 /
-20 万行大批 / 崩了要干净报错 / **secret 脱敏**（查实际发出的字节）/ 超时上界），**输出 json 能直接卡 CI 门禁**。
+⇒ **判定：`ext.*` 首选 / `code.*` 兜底 / 内建级不做**。
+
+**① 的实测出处（2026-09-27 补验；「无案例不立标准」——原先本仓零 `ext.*` 案例）**：
+本机隔离实验室（darwin/arm64，**零生产**）、**pip `duckle` 0.7.3** + `duckdb` CLI 1.5.4。
+命中的四条：**① 真 pipeline 里 spawn 成功、干活成功、数据往返成功**（`src.csv → ext.probe → snk.json`，
+sink 真拿到 3 行）；**② 子进程继承宿主 env**（`sha256` 前 8 位与独立算出的逐位相符）；
+**③ `components conform` 10 passed / 0 failed**；**④ 分发单元成立**（`build` 产物不打包 `components/`，
+搬到无 `components/` 的裸目录隔离跑 **exit 1 且报错干净**——点名 `looked in components/`）。
+原始输出见 `.superpowers/sdd/2026-09-27-duckle-first-collection-flow-p1/task-2b-report.md`。
+
+⚠️ **`ext.*` 的待遇是「半套」，别看成一等公民**（**2026-09-27 实测订正**：原文写「调色板 / catalog / MCP /
+capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两项相反**）：
+- ✅ **成立**：**policy 门禁**（`ext.` 前缀 ⇒ `executes_process()=true`）、**run 回执** `Used`·`used_by`、
+  以及 **`components conform <id>` 行为验收套件**（initialize 不许干活 / 零行进零行出 / 20 万行大批 /
+  崩了要干净报错 / **secret 脱敏**（查实际发出的字节）/ 超时上界），**输出 json 能直接卡 CI 门禁**；
+  ⚠️ **用例数随组件 kind 变**：source（0 输入）时第 4/5/6/9 条显示 **`n/a`（不适用）——`n/a` 不等于绿**；
+  transform 形态那 4 条才真跑，而**要 10 pass / 0 n/a 还得应答里带 `rejects` / `artifacts`**（否则这两条判 `n/a`）。
+  ⇒ **引用「10 用例」时必须带上组件 kind 与应答字段**，否则不诚实。
+- ❌ **不成立**：**`catalog` 与 MCP 都看不见 `ext.*`** —— `duckle components schema` 导出 **411 条全是内建、
+  0 条 `ext.*`**；MCP `list_components` / `get_component_schema` 同样返回不了。
+  **唯一**能发现它的列举面是 **`duckle components external --workspace <ws>`**。
+
+🚧 **gate 级 blocker（2026-09-27 实测，必须先知道）**：**MCP `validate_pipeline` 会把含 `ext.*` 的管线判死在门口**
+——`(ext.probe) isn't executable on the DuckDB engine yet - it's a preview component.`
+⇒ **我们惯用的 MCP 通道不能用来校验含 `ext.*` 的管线，改用 CLI `validate`**（同一份管线 CLI 放行、`exit 0`）。
+⚠️ 但 CLI 也**查不了 ext 组件的属性**（它自认 `component_not_in_catalog … its properties cannot be checked`）
+⇒ **属性名写错能过 `validate`、到运行时才炸**。
+
 ⇒ **凡「会长期存在的自建逻辑」优先做成 `ext.*`**；`code.*` 用在「一次性 / 只这一段用」。
 
 ⚠️ **两条安全空档（设计如此，不是疏漏）**：① **`allowed_paths` 与 `allowed_domains` 对 `code.*` 全部失效**
@@ -253,11 +279,22 @@
    （官方逐字：「Picking a saved connection does not, by itself, protect the credential」）。
    ⚠️ **组件侧方向相反**：`ext.*` 组件**继承宿主 env** ⇒ **只传引用名 + 组件自己读 `std::env`**；
    **别在组件属性里用 `${ENV:...}`**（宿主会把**真值**替换进属性再塞进 stdin 的 JSON）。**两条路别套用同一条纪律。**
+   ⚠️ **静默坑（2026-09-27 实测）**：属性里的占位符**未解析时不报错**——只发一句 warning
+   （`${ENV:…} is unresolved …`），**run 仍 `status: ok`**，且**字面量原样下发**给组件
+   ⇒ 密钥没配好**不会红**，组件收到的是一个看着正常的字符串（**静默错配面**）。
 4. **deploy 完不会跑** —— 见上「上线是两个动作」。
 5. **两端外壳有缺口，别只在一端验**：🔴 **占位符替换是两份实现**（桌面 canvas = TypeScript、服务端 = Rust，
    **手工同步、无编译期约束**）⇒ 凡涉 `${date}` / context 优先级**必须在 CLI 或 `serve` 上再验一次**；
    **默认并发桌面 8 / 服务端 1** ⇒ 桌面跑得动 ≠ 服务器跑得动；**桌面 Settings 的三项服务端不读**
    （`spill_dir` / `allow_unsigned_extensions` / `https_proxy`）；**扩展预装两端不同**（桌面 11 / 服务端镜像 12，多 `inet`）。
+
+**W4 前置 gate（`ext.probe`）现状**（2026-09-27 实测回填；spec §W4「前置 gate」行那三项）：**已清 2/3 + 新增 1 条 blocker**——
+**能否 spawn ✅ 已清**（真 pipeline 里 spawn / 干活 / 数据往返均成功）；
+**能否读 `SYSTEM_BOOK` + `ZOS_*` ✅ 已清**（引擎 spawn 的组件自己回报全部 `present=true`，**机制层面无碍**；
+⚠️ 注意这**只证了「能读」，没证「有得读」**——生产 console 容器里那些值是否真注入，**未验**）；
+**能否解析 `pg_duckdb` ❌ 仍开着**（需真 postgres/数据面，零生产约束下未测）；
+⚠️ **新增 blocker**：**MCP `validate_pipeline` 对 `ext.*` 直接报错**（见上「gate 级 blocker」）
+⇒ **W4 开工前必须先定「管线校验走哪个 validate 面」**。
 
 ### 1.2 硬约束清单
 
