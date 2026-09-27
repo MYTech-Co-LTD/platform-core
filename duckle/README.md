@@ -134,7 +134,8 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
 5. **资源预算四个参数**（`--memory-limit` / `--threads` / `--temp-dir` / `--max-temp-size`）——
    引擎帮助已实测（见 `deploy/duckle/README.md` §5），但**本仓的部署里给什么值未定**，
    且**环境变量形态未实测**（只实测了命令行开关）。
-6. **引擎能力接入的三条坑与八项未验** —— 见 §7（C3 的三条坑**已实测，按纪律对待**；C4 的五项**扩到八项**，**都是 gate**）。
+6. **引擎能力接入的三条坑与九项未验** —— 见 §7（C3 的三条坑**已实测，按纪律对待**；C4 的五项**扩到八项**，
+   W1 观测面任务再补**第 9 项**，**都是 gate**）。
 
 ## 7 引擎能力接入（spike 实测结论，2026-09-23）
 
@@ -288,6 +289,31 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    MCP `list_components` / `get_component_schema` 同样返回不了）——**唯一**能发现它的列举面是
    **`duckle components external --workspace <ws>`**。
    ⇒ W4 前置 gate 三项，现状 **已清 2/3**（剩「能否解析 `pg_duckdb`」）+ **新增上面这条 blocker**。
+9. **生产采集 run 的引擎原生观测面「在哪个 workspace」** —— **已验：job 侧与 console 侧是
+   两个卷、互不可见**（2026-09-27，**真机 · 数据面机 3120 账套**；证据
+   `.superpowers/sdd/2026-09-27-duckle-first-collection-flow-p1/task-6-report.md` 与 issue #210）：
+   ① **openship job 侧**（`lemeng-retail-3120-runner`，`sh /opt/lemeng-run.sh windows`）的 run 落在
+   **`platform-core-data_duckle-workspace`** 卷——实测 09-27T02:30Z 那轮 **24 窗的 `run_id` / `rows` /
+   `duration_ms` 全在该卷 `runs/lemeng.retail_order_line.json` 里**；② **console 侧**
+   （`lemeng-console-3120` 常驻 `serve`）落在 **`lemeng-console-3120-ws`**，**是另一个卷**。
+   ⇒ ⚠️ **console 的 `/api/runs` / `/metrics` / `/api/run/status` 看不到 job 的 run**：
+   console 侧 `duckle_run_last_timestamp_seconds{pipeline="lemeng.retail_order_line"}` 停在
+   **09-26T12:55Z**（那次是容器内手工跑、撞 429 中止），而当日的 24 窗 job 在**另一卷**里。
+   **挂告警/看板前先定「挂哪个 workspace」**——挂错面 = 盯着一只空桶。
+   ③ **四面都能定位到具体一次 run**（同一 run 探针实测）：`/api/run/status?runId=` 给
+   `state` / `status` / `durationMs` / 逐节点 `rows`；`/metrics` 给 `duckle_run_last_rows` /
+   `duckle_run_last_duration_seconds` / `duckle_runs_window`（**按 pipeline 打标**）；
+   **receipt**（`<ws>/runs/receipts/<runId>.json`）与 **NDJSON `runtime.log`** 逐行带 `run_id`；
+   `<ws>/runs/<pipeline>.json` 历史带 `run_id` + `rows` + `duration_ms`。
+   ⚠️ **`/api/runs` 与 `/metrics` 都不带 `runId`**（只有 pipeline 名 + `at`/时间戳）
+   ⇒ **按 runId 定位只能靠 `/api/run/status`、receipt、NDJSON、历史文件这四处**。
+   ④ ⚠️ **job 侧只有落盘文件、没有 HTTP 面**（那个卷上没有 `serve` 在跑）⇒ 从 console 读不到它；
+   要读只能读文件（`runs/*.json` / `runs/receipts/*` / `logs/<hour>/<pipeline>/runtime.log` /
+   `logs/duckle_metrics.prom`）。CLI receipt **不带 `queuedAt`/`startedAt`/`queueMs`**（console 侧那份才带）。
+   ⑤ `_ops` 行（job stdout）与引擎原生 `rows` **对账 24/24 全等**（合计 **9470 = 9470**）；
+   而 **`_ops` 行里没有「耗时」字段**（实测键只有 `ts` / `job` / `system_book` / `bizday` / `hour` /
+   `rows` / `status`）⇒ spec §6 的「行数/页数/窗口/耗时」四项里，**「页数」与「耗时」从未实现**；
+   引擎原生侧两项都有（`duration_ms` 逐 run、`duckle_run_last_duration_seconds`）。
 
 ### 7.5 接入方式（**凭据与网络从哪来**）
 
