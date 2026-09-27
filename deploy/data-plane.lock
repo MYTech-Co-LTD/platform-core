@@ -1,4 +1,4 @@
-sha256-of-rest 0cd8e050f39cf92d22bfeb20b23707b0053bc0d8a53592245d9e4c85e0a0b596
+sha256-of-rest d8eaaf9772f515a61b46267fd3ae2c373a1432f2e9c3e149a09dff09d9949522
 aef4c9fed8fc63da20a01c5687c5a173ca15111cf0485d5208de54d1fc5c6c9b dbt/README.md ${REPO}/dbt/README.md 0644
 cc1d78b5c825d5902d22be9b17fbabdc0833afb3c25912e392f8765004a76776 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -24,7 +24,8 @@ d43c40d2e1dd6c80db95782f3a7481028472868c77a2df31a46296fcfd908860 dbt/tests/audit
 1c6621720fe664dc2a96bf4a1e73726dfb441664a29cdb755025654986a71abf deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
 768ac0089b86e9a1d5d70d2674eeda0a3833eadad54e7c8bfebfbaf4264de30b deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
 f93ed8881bebab1198118d563dbf94b704b163a772963edcf48352462f3b6570 deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
-4e3fc7c41f28b403e26d7f2192ea534716c0c4caaa544dc3ba58c24016bce670 deploy/duckle/console/alerts.json ${REPO}/deploy/duckle/console/alerts.json 0644
+7386a4eba6b5751a13c29ea36c2ec421824f8dcb9c7fed40d636c0ea61ac3df0 deploy/duckle/console/alerts.json ${REPO}/deploy/duckle/console/alerts.json 0644
+4109ce7e02c94373b884ab736ebfa8cd50ce43ddfd8d5e198c1bce932ce84cc8 deploy/duckle/console/owners.json ${REPO}/deploy/duckle/console/owners.json 0644
 a19c1453054c99b02555d0827c5c8748644d9477d943ce94614d9e6c421fc8ac deploy/duckle/console/pipelines/lemeng.dim.branch.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.branch.run.json 0644
 df0a3cb3f4e8d3054a98f18f4f6f56cfe0376ad02d4dce1b8f1d322be1946afb deploy/duckle/console/pipelines/lemeng.dim.item.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item.run.json 0644
 54e57b13d412d4fccd954565a7652ef3759cc14e1276520827c38df1b91c15d7 deploy/duckle/console/pipelines/lemeng.retail.windows.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.windows.run.json 0644

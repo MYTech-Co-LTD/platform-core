@@ -76,12 +76,26 @@
     "      silence 压住；scheduled 有最多 1 分钟评估延迟，别按 realtime 预期秒回）；",
     "   c. OO→企微：OO 告警历史里的目的地投递错误（模板/URL 坏了在那里可见）；**群侧有没有消息只能人看**。",
     "   ⚠️ 旧版「HTTP 200 + errcode 40008 假绿」是企微原生端点的形状问题，已随链路切换消失，",
-    "      排障时别再按那套找。"
+    "      排障时别再按那套找。",
+    "",
+    "⑦【SLA 巡检事件订阅（2026-09-27 Task 8 起；源码级+实测）】on 现为四事件：",
+    "   failure / recovery / stale / refreshed。stale/refreshed 来自引擎的新鲜度巡检",
+    "   （owners.json 的 maximumAge，60s 一轮），走 notify_subject()（alerts.rs :414-487）——",
+    "   它与 run 事件共用本文件：同样过 on 过滤（:439，漏订就整个滤掉）、同样按",
+    "   「subject|事件|规则 match|通道 id」计冷却（subject=资产路径）、refreshed 同样跳冷却。",
+    "   ⚠️ owner/tags 路由**只对这条通路生效**（notify_subject 才调 routes()）——规则里不写",
+    "   owner/tags = 全收（现配即如此）；写了就按 owners.json 规则的 owner/tags 过滤。",
+    "   stale 的 body：pipeline 字段装的是**资产路径**（不是管线名），durationMs=0，",
+    "   status=event 字面量，text 是一行摘要（含 limit 与 last written）。",
+    "   ⚠️ **进流不进群**：OO 侧两条告警（data_alerts_failure/data_alerts_recovery）只匹配",
+    "   event=failure/recovery ⇒ stale/refreshed 只落 data_alerts 流、**不会发企微群**。",
+    "   要让停更也吵群 = 另加一条匹配 event='stale' 的 OO 告警，那是独立决定，别默认已生效。",
+    "   巡检声明本体见 owners.json（阈值/字段语义/为什么不用 expectedAfterSchedule 都在那头）。"
   ],
   "rules": [
     {
       "match": "*",
-      "on": ["failure", "recovery"],
+      "on": ["failure", "recovery", "stale", "refreshed"],
       "cooldownMinutes": 15,
       "channel": "webhook",
       "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
