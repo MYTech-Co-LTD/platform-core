@@ -363,7 +363,7 @@
 | 项 | 内容 |
 |---|---|
 | **做什么** | **本轮只登记，不实施**。裁的是：物化与 dbt 是否归 console（含「dbt 进不进 console」）。**理由**：`xf.dbt` 已判**不可用**（四条独立阻塞：落 DuckDB 文件丢门禁② / `r['列名']` SQL 方言 / adapter 不可配 / console 镜像无 dbt），而 `ext.*`（外部组件 #307）只是**有条件**可行 ⇒ **翻案需要真机证据，不是文档推论** |
-| **前置 gate** | **`ext.probe` 最小验证**（分析件 §7.5 待办 ⑧）：能否 spawn / 能否读 `SYSTEM_BOOK` + `ZOS_*` / 能否解析 `pg_duckdb` |
+| **前置 gate** | **`ext.probe` 最小验证**（分析件 §7.5 待办 ⑧）：能否 spawn / 能否读 `SYSTEM_BOOK` + `ZOS_*` / 能否解析 `pg_duckdb`。<br>**2026-09-27 实测更新（Task 2b，本机实验室）**：**已清 2/3** —— spawn ✅、读宿主 env ✅（`components conform` **10 passed / 0 failed**）；**「能否解析 `pg_duckdb`」仍未验**。<br>⚠️ **并新增两条 blocker**：① **MCP `validate_pipeline` 把 `ext.*` 判成 preview 组件直接失败**（⇒ 校验含 `ext.*` 的管线**不能走 MCP**，改用 CLI `validate`）；② 属性里的占位符**未解析只发 warning、run 仍 `ok` 且字面量原样下发**。<br>⚠️ 同时**订正分析件的一句话**：`ext.*` **不是** catalog/MCP 一等公民——实测**只有 `components external` 列举面能发现它** |
 | **验收** | 见分析件 §7.5 判定表 |
 | **回退** | 不实施即无回退面 |
 | **登记要求** | 开 issue；**并给 §5 的未验清单补一条** |

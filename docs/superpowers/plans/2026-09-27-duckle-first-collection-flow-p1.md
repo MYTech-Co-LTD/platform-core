@@ -285,6 +285,12 @@ Expected: 四条全 `FAIL`（B1 / B2 / B2b / B3）
    （`spill_dir` / `allow_unsigned_extensions` / `https_proxy`）；**扩展预装两端不同**（桌面 11 / 服务端镜像 12，多 `inet`）。
 ````
 
+- [ ] **Step 2.5（协调者补记，2026-09-27）**：上面的逐字块**已被裁决取代**，**不要照抄**：
+  ① B2 断言作废重定（见 Step 1 的注）；② `ext.*` 的定级按用户裁决走「**补实测升 ①**」——
+  实测（Task 2b，本机实验室）已给出四条出处，并**推翻了原本的「catalog / MCP 一等公民」描述**
+  （实测：只有 `components external` 列举面可见，`catalog` 与 MCP 都看不见；且 **MCP `validate_pipeline` 把 `ext.*` 判成 preview 组件直接失败**）。
+  ⇒ **落地文本以提交 `9f35c0b` 为准**；本块只作历史留存。
+
 - [ ] **Step 3: 修掉 §1.1.6 里那处引错的出处**
 
 §1.1.6 的注里现写「`duckle/README.md:137`（§6）写「**四项**」」——**引错**：
