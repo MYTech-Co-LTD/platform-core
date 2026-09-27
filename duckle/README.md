@@ -176,11 +176,34 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    真机**必验一条**：**用 duckle 写一个 parquet ⇒ 让 pg_duckdb `read_parquet` 读**（读得出、列类型符合预期）。
    这条是**镜像从「自建（DuckDB v1.5.5）」切到「官方镜像（v1.4.3）」时新引入的面**——
    归 **T6 的 Gate-E**（计划 `docs/superpowers/plans/2026-09-22-data-stack.md` Task 6 Step 1 第 10 项）。
-6. **`release` CLI 在本项目 compose 上可用** —— 未验
-   （`duckle-runner release build/verify/diff/activate/rollback/list` 是「整份控制面版本化 + 环境指针」，
-   ⚠️ **不含密钥**）。最小验证：在一个账套 workspace 卷上 `build` → `activate` → `rollback`，
-   看指针与产物。销账归 **P1 Wave 2**（本仓 spec
-   `docs/superpowers/specs/2026-09-27-duckle-first-collection-flow-design.md` §3.5）。
+6. **`release` CLI 在本项目 compose 上可用** —— **已验：支持**（2026-09-27，**真机 · 数据面机
+   64188 账套**；证据 `.superpowers/sdd/2026-09-27-duckle-first-collection-flow-p1/task-4-report.md`）：
+   机 = `platform-core-shanhai-data`（`proj_AFbJvyb0onaX7LVr`）/ 服务 `lemeng-console-64188`
+   （`svc_u4pvEqZPfstnE5vI`），duckle **0.7.3**，**不需要 docker / 网络**——「未知子命令 / 要 docker」
+   那条不成立。
+   ① **入口**：**`duckle-runner` 不在 PATH**（`sh: not found`，exit 127）⇒ 用 PATH 上的
+   **`duckle release …`**，或全路径 `/usr/local/lib/python3.12/site-packages/duckle/duckle-runner`。
+   ② `build` exit 0 ⇒ **hash 寻址**的 release id（`8be4835f…`）；`list` / `verify`（打印 `verifies`）/
+   `diff` 均 exit 0。
+   ③ **`activate` 必须带 `--environment E`**（省略 ⇒ exit 2）；**`rollback` 要两次 release 才有
+   `previous`**（只有一次 ⇒ **exit 1** `has no previous release to go back to`）⇒
+   **「`build` → `activate` → `rollback` 一次到底」不成立，回滚面至少要有两版**。
+   ④ ⚠️ **`activate` / `rollback` 都 `materialise`**：把快照的控制面文件**写回 workspace**、
+   并**移除快照里没有的**控制面文件（实测打印 4 条路径）；activate 在 workspace 有 drift 时**拒绝**
+   （除非 `--force`）。
+   ⑤ ⚠️ **W2 用它之前必须先知道**：本项目 `schedules.json` 是**运行状态**
+   （`last_run_at` / `last_run_status` 由 console 写），而 release 把它**整份**当控制面快照 ⇒
+   **rollback 会把调度记账回退到快照时刻**（实测：`4085e3b4…` → 模拟一次运行 `786bdde1…` →
+   activate 后仍 `786bdde1…` → rollback 后**回到** `4085e3b4…`）⇒
+   **别把 release 当「不含状态的配置回滚面」**。
+   ⑥ **「不含密钥」名副其实**：store 里只有 release doc（键 `files` / `formatVersion` / `id` /
+   `pipelines` / `schedulesHash` / `schemaVersion`）+ 内容寻址对象副本；`DUCKLE_TOKEN` /
+   `LEMENG_TOKEN` / `ZOS_ACCESS_KEY` / `ZOS_SECRET_KEY` / `ZOS_BUCKET` / `ZOS_ENDPOINT` 逐值
+   grep **全 absent**（**只判有无、未回显任何值**）。⚠️ 但这条保证是**条件性**的——成立的前提是
+   「凭据在 env、不在文件」；凭据一旦写进控制面文件，release 会照单收下。
+   ⑦ **验证姿势（生产零接触）**：在该卷的 **scratch 副本** `/workspace/tmp/relws`（3 个 pipelines +
+   `schedules.json` 的**逐字副本**）上跑全链，跑完删除 ⇒ **生产控制面文件 sha256 前后逐字不变**
+   （`4085e3b4…` / `a19c1453…` / `df0a3cb3…` / `54e57b13…`）。
 7. **两端外壳保真度（占位符替换 / 默认并发）** —— 未验：桌面 canvas 的占位符替换是 **TypeScript**、
    服务端是 **Rust**（**手工同步、无编译期约束**）；默认并发**桌面 8 / 服务端 1**。
    最小验证：同一份含 `${date}` 的管线在 CLI 与 `serve` 上各跑一次，比对取到的日期；
