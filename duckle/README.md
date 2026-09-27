@@ -210,10 +210,51 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    ⑦ **验证姿势（生产零接触）**：在该卷的 **scratch 副本** `/workspace/tmp/relws`（3 个 pipelines +
    `schedules.json` 的**逐字副本**）上跑全链，跑完删除 ⇒ **生产控制面文件 sha256 前后逐字不变**
    （`4085e3b4…` / `a19c1453…` / `df0a3cb3…` / `54e57b13…`）。
-7. **两端外壳保真度（占位符替换 / 默认并发）** —— 未验：桌面 canvas 的占位符替换是 **TypeScript**、
-   服务端是 **Rust**（**手工同步、无编译期约束**）；默认并发**桌面 8 / 服务端 1**。
-   最小验证：同一份含 `${date}` 的管线在 CLI 与 `serve` 上各跑一次，比对取到的日期；
-   并实测 `serve` 侧的并发默认值。销账归 **P1 Wave 2**。
+7. **两端外壳保真度（占位符替换 / 默认并发）** —— **已验：两端都把 `${date}` 解成同一天（UTC）、
+   服务端默认并发 = 1**（2026-09-27，**真机 · 数据面机 3120 账套**；证据
+   `.superpowers/sdd/2026-09-27-duckle-first-collection-flow-p1/task-5-report.md`）：
+   机 = `platform-core-shanhai-data`（`proj_AFbJvyb0onaX7LVr`）/ 服务 `lemeng-console-3120`
+   （`svc_srQwfTvdkjxbCeoA`，`commandArgv: serve --host 0.0.0.0 --port 18080 --workspace /workspace
+   --duckdb /usr/local/bin/duckdb`）/ 卷 `lemeng-console-3120-ws`，容器内 duckle **0.7.3**、DuckDB **1.5.4**。
+   探针 = `src.inline`（`columns` 放 `${date}` / `${datetime}` / `${now}`）→ `snk.csv`
+   （`${workspace}/tmp/probe-${date}.csv`），**同一份字节**（sha256 `22f459b3…`）两端各跑一次：
+   ① **CLI 侧**（容器内全路径 `…/duckle/duckle-runner`；`validate` exit 0，run `status: ok` 86 ms）⇒
+   文件名 `probe-2026-09-27.csv`，行值 `2026-09-27` / `2026-09-27_030734` / `2026-09-27T03:07:34Z`。
+   ② **HTTP 侧**（`POST /api/run`，body `{"file":"tmp/_probe.date.json"}`）⇒ **HTTP 200 且 body
+   `status:"ok"`**（61 ms）⇒ 同一文件名，行值 `2026-09-27` / `2026-09-27_030740` / `2026-09-27T03:07:40Z`。
+   两侧 `${now}` 与容器 `date -u` **逐秒相同** ⇒ **无缺口、均为 UTC**。
+   ⚠️ 但 ① 与 ② **都是 Rust 外壳**（同一 `apply_time_builtins`）——真正的 TS/Rust 分叉见 ③。
+   ③ **桌面（TS）侧**：`frontend/src/run-resolve.ts` 的 `formatTimeBuiltin` 全用 `getUTC*`，与 Rust
+   `context.rs:110 format_time_builtin` 逐字段同形；以 `TZ=Asia/Shanghai` 直接执行该源文件 ⇒ 宿主本地
+   `11:08:50 +0800`，而 `date` / `datetime` / `now` 仍是 `2026-09-27` / `2026-09-27_030850` /
+   `2026-09-27T03:08:50Z` ⇒ **同一 UTC、不吃宿主时区**。**跑的是 TS 源文件本身，不是打包 App** ⇒
+   桌面 GUI 未验（无桌面运行环境）。
+   ④ **服务端默认并发 = 1（实测坐实）**：容器 env 无 `DUCKLE_MAX_CONCURRENT_RUNS`、无 `DUCKLE_POOLS_FILE`，
+   工作区无 `.duckle/pools.json` ⇒ 默认池上限 1（`pools.rs:63 env_default`）。两个 `sleep 8` 探针**同时**
+   `POST /api/run/async` ⇒ 乙 `queueMs: 0`、甲 **`queueMs: 8267`**（≈乙 `durationMs 8264`），且甲的
+   `startedAt` = 乙的完成时刻 ⇒ **串行**；两份 receipt 都落 `resourcePool: "default"`。
+   ⚠️ **判定口径**：**`/api/run/status` 的 `state: "running"` 不是「正在执行」**——它把排队中的甲也报成
+   `running`（与 receipt 的 `queueMs: 8267` 直接矛盾）；真因是 `serve.rs:3963` 在**取许可之前**就把
+   pipeline id 塞进 `state.running`，而 `run_lock.acquire` 在 `:4057`（该字段的注释 `:3002-3004`
+   与实现不符）。且 **`queue_ms` 只写在 receipt 里**（`serve.rs:1249`），**任何 HTTP 响应都不带**
+   ⇒ **排队时长只能读 `<ws>/runs/receipts/<runId>.json`**。
+   ⑤ ⚠️ **「8」在另一条限流器上，不是 runner 的**：`crates/scheduler/src/lib.rs:1060` 的调度信号量
+   `.unwrap_or(8)`，且它对自己的 default 池**保留 8**（注释自陈「deliberately generous rather than 1」）⇒
+   **同一个 `default` 名字，runner 侧 1 / 调度器侧 8**——同进程**两个**限流器，正是该模块注释所告的形态。
+   ⚠️ **`serve.rs:182 max_concurrent_runs()` 在 0.7.3 是死代码**（只有定义、无调用点），真正生效的是
+   `pools.rs:63 env_default()` ——读这一项别读错函数。**桌面 App 的 8 本轮未实测**。
+   ⑥ **两条新差异**（W1/W2 用得上）：**(a) CLI 这次真写了运行历史与 metrics** ——
+   `runs/_probe.date.json` 里 **两次都在**（`…454477` CLI 86 ms / `…460858` HTTP 61 ms）、
+   CLI 的 receipt 也在盘、`duckle_runs_window{pipeline="_probe.date",status="ok"} 2` ⇒ 与上游
+   `docs/current/ci-and-orchestration.md`「CLI：Records run history = No / Updates the metrics file = No」
+   **不符**（0.7.3 实测）；**(b) CLI 的 receipt 无 `queuedAt`/`startedAt`/`queueMs`**（console 侧有）⇒
+   「等了多久」只有 console 侧答得出。
+   ⑦ **取证姿势与残留（如实记）**：探针只写 `/workspace/tmp/`（跑前不存在、跑后 `rm -rf`）+ 探针名下的
+   lock（已删）；`schedules.json` 与 3 条生产管线 sha256 **前后逐字不变**（`9156af41…` `a19c1453…`
+   `df0a3cb3…` `54e57b13…`）。**HTTP 跑不可避免地在 console 自己的记账面留下探针记录**：
+   `logs/_probe.{date,slow.a,slow.b}/`、`runs/_probe.*.json`、`runs/receipts/run-*_probe*`（4 个）、
+   `logs/duckle_metrics.prom` 的 `_probe.*` 序列、`logs/audit.ndjson` 追加行；**未手工清理**
+   （那要手改 console 活状态，超出授权）。`schedules.json` / `occurrences.ndjson` **未被触碰**。
 8. **`ext.*` 在本项目 console 镜像里的可用面** —— **已验 4 项**（2026-09-27，**本机隔离实验室、
    零生产**；证据 `.superpowers/sdd/2026-09-27-duckle-first-collection-flow-p1/task-2b-report.md`
    与 `/tmp/duckle-lab-p1/wsext/evidence-*.txt`）：
