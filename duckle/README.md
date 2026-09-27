@@ -281,7 +281,24 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    ④ **`build` 产物不打包 `components/`**（产物清单只有 `bin/duckdb` / `pipeline/*.json` /
    `secrets.env.example`；把它搬到**无 `components/` 的裸目录**隔离跑 ⇒ **exit 1**，报错干净、
    点名 `looked in components/`）⇒ **带 `ext.*` 的分发必须随附 `components/`**。
-   **仍未验**：**能否解析 `pg_duckdb`**（需真 postgres / 数据面）。
+   **已验：能解析 `pg_duckdb`**（2026-09-27 第三轮实测，**本机隔离实验室 `/tmp/duckle-lab-p1`、
+   零生产**；证据 `/tmp/duckle-lab-p1/wsext/evidence-pgduckdb.txt` 与同目录
+   `report-pgduckdb-gate8.md`）——判据形态 = **引擎 spawn 的 ext 组件**
+   （`components/ext.pgprobe/`）**经 postgres 线协议连真 `pg_duckdb`**：官方镜像
+   `pgduckdb/pgduckdb:18-v1.1.1`（digest `sha256:44c88eb92079…`；实测 PG 18.1 +
+   pg_duckdb 扩展 1.1.0 + 内嵌 DuckDB v1.4.3）。
+   ① **CLI `validate` exit 0**（含 `ext.*` 的管线；MCP 面不可用的既有 blocker 不变，见下 🚧）；
+   ② **run `status: ok`**（`run-manual-ext-pgduckdb-1790504959104`，`n2 rows=3`）；
+   ③ **三条方言证据**：`r['列名']` 下标（**函数别名形态**）3 行；用返回值构造的二次查询 1 行
+   （**证明往返真实**）；`duckdb.query` 内 `[1,2,3]` 列表字面量（**原生 PG 语法错误 ⇒
+   DuckDB 方言坐实**）；
+   ④ **主验证的 parquet 由 pg_duckdb 自己写**（写方 `1.4.3` ⇒ **把 duckle `1.5.4` 写方
+   隔离出本 gate**）；
+   ⑤ ⚠️ **副产品观察（只登记，不并入第 5 条 gate）**：duckle `1.5.4` 写的 parquet 被
+   pg_duckdb `1.4.3` 读通；镜像直连拉取失败（context deadline）改用本机经 `docker.1ms.run`
+   镜像源拉得的同 tag 镜像（digest 锚定 + 可运行冒烟），**未改任何 Docker 全局配置**；
+   ⑥ ⚠️ **未测边界（如实列）**：dbt 本体、console 容器内形态、s3 远端、并发/超时。
+   口令纪律：密码只经 env 传入（管线文件仅记引用名 `passwordEnv`）+ sha8 双向核对，零明文。
    🚧 **blocker（必须先知道）**：**MCP `validate_pipeline` 把 `ext.*` 判成 preview 组件而直接失败**
    （`(ext.probe) isn't executable on the DuckDB engine yet - it's a preview component.`）
    ⇒ **校验含 `ext.*` 的管线不能走 MCP，改用 CLI `validate`**（同一份管线 CLI 放行、`exit 0`；
@@ -289,7 +306,8 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    ⚠️ **`catalog` 与 MCP 都看不见 `ext.*`**（`components schema --json` 411 项里 `ext.*` 为 **0**；
    MCP `list_components` / `get_component_schema` 同样返回不了）——**唯一**能发现它的列举面是
    **`duckle components external --workspace <ws>`**。
-   ⇒ W4 前置 gate 三项，现状 **已清 2/3**（剩「能否解析 `pg_duckdb`」）+ **新增上面这条 blocker**。
+   ⇒ W4 前置 gate 三项，现状 **3/3 全清**（「能否解析 `pg_duckdb`」已于 2026-09-27 第三轮实测清账）
+   + **上面这条 blocker 仍在**。
 9. **生产采集 run 的引擎原生观测面「在哪个 workspace」** —— **已验：job 侧与 console 侧是
    两个卷、互不可见**（2026-09-27，**真机 · 数据面机 3120 账套**；证据
    `.superpowers/sdd/2026-09-27-duckle-first-collection-flow-p1/task-6-report.md` 与 issue #210）：

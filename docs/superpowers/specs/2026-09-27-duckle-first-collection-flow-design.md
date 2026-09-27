@@ -247,7 +247,7 @@
 | 未验项 | 最小验证动作 |
 |---|---|
 | **`release` CLI 在本项目 compose 上** —— **已验（支持）**（2026-09-27 真机 scratch 副本全链 exit 0、零 docker 零网络；三条实测偏差与 W2 硬约束见 §3.1 Release 行与 `duckle/README.md` §7.4 #6）。**仍留一条未验**：`activate` 在 workspace 有 drift 时拒绝（源码级，未在本环境复现） | scratch 工作区 `build` 后手改任一控制面文件 ⇒ `activate` 应 exit 1；加 `--force` ⇒ 应 exit 0 |
-| **`ext.*` 路线** | **2026-09-27 实测（Task 2b，本机隔离实验室）**：**已验** spawn + 数据往返 / 子进程继承宿主 env（sha256 逐位相符）/ `components conform` **10 passed 0 failed** / `build` 不打包 `components/`。**仍未验**：能否解析 `pg_duckdb`。⚠️ **blocker**：**MCP `validate_pipeline` 把 `ext.*` 判成 preview 组件而失败**（校验含 `ext.*` 的管线**改走 CLI `validate`**）；**只有 `components external` 列举面能发现它**（`catalog`/MCP 看不见——这一条**订正**了本 spec 早先的「一等公民」说法） |
+| **`ext.*` 路线** | **2026-09-27 实测（Task 2b，本机隔离实验室）**：**已验** spawn + 数据往返 / 子进程继承宿主 env（sha256 逐位相符）/ `components conform` **10 passed 0 failed** / `build` 不打包 `components/`。**已验（同日第三轮实测，见 `duckle/README.md` §7.4 第 8 条实测块）**：能解析 `pg_duckdb`。⚠️ **blocker**：**MCP `validate_pipeline` 把 `ext.*` 判成 preview 组件而失败**（校验含 `ext.*` 的管线**改走 CLI `validate`**）；**只有 `components external` 列举面能发现它**（`catalog`/MCP 看不见——这一条**订正**了本 spec 早先的「一等公民」说法） |
 | **`duckle-runner test` 能否当我们的 CI 门** | 它**只有 CLI 有**（**服务端没有任何 test / validate 端点**）；**官方 CI 模板只接 `validate`**，而 `validate` 自陈「**不是充分证明**」；**树内没有任何 `.test.json` 实例** ⇒ **要拿它当门，得自己写 fixtures、自己接线** |
 
 ⚠️ **`test` 值得单独一提**（它正好对上 W3）：它用 fixture 跑**真实 reader**，比的是**被断言节点的完整关系**
@@ -365,7 +365,7 @@
 | 项 | 内容 |
 |---|---|
 | **做什么** | **本轮只登记，不实施**。裁的是：物化与 dbt 是否归 console（含「dbt 进不进 console」）。**理由**：`xf.dbt` 已判**不可用**（四条独立阻塞：落 DuckDB 文件丢门禁② / `r['列名']` SQL 方言 / adapter 不可配 / console 镜像无 dbt），而 `ext.*`（外部组件 #307）只是**有条件**可行 ⇒ **翻案需要真机证据，不是文档推论** |
-| **前置 gate** | **`ext.probe` 最小验证**（分析件 §7.5 待办 ⑧）：能否 spawn / 能否读 `SYSTEM_BOOK` + `ZOS_*` / 能否解析 `pg_duckdb`。<br>**2026-09-27 实测更新（Task 2b，本机实验室）**：**已清 2/3** —— spawn ✅、读宿主 env ✅（`components conform` **10 passed / 0 failed**）；**「能否解析 `pg_duckdb`」仍未验**。<br>⚠️ **并新增两条 blocker**：① **MCP `validate_pipeline` 把 `ext.*` 判成 preview 组件直接失败**（⇒ 校验含 `ext.*` 的管线**不能走 MCP**，改用 CLI `validate`）；② 属性里的占位符**未解析只发 warning、run 仍 `ok` 且字面量原样下发**。<br>⚠️ 同时**订正分析件的一句话**：`ext.*` **不是** catalog/MCP 一等公民——实测**只有 `components external` 列举面能发现它** |
+| **前置 gate** | **`ext.probe` 最小验证**（分析件 §7.5 待办 ⑧）：能否 spawn / 能否读 `SYSTEM_BOOK` + `ZOS_*` / 能否解析 `pg_duckdb`。<br>**2026-09-27 实测更新（Task 2b，本机实验室）**：**已清 3/3** —— spawn ✅、读宿主 env ✅（`components conform` **10 passed / 0 failed**）；**「能否解析 `pg_duckdb`」✅ 已清**（同日第三轮实测，证据摘要见 `duckle/README.md` §7.4 第 8 条实测块）。<br>⚠️ **并新增两条 blocker**：① **MCP `validate_pipeline` 把 `ext.*` 判成 preview 组件直接失败**（⇒ 校验含 `ext.*` 的管线**不能走 MCP**，改用 CLI `validate`）；② 属性里的占位符**未解析只发 warning、run 仍 `ok` 且字面量原样下发**。<br>⚠️ 同时**订正分析件的一句话**：`ext.*` **不是** catalog/MCP 一等公民——实测**只有 `components external` 列举面能发现它** |
 | **验收** | 见分析件 §7.5 判定表 |
 | **回退** | 不实施即无回退面 |
 | **登记要求** | 开 issue；**并给 §5 的未验清单补一条** |
@@ -439,7 +439,7 @@ W4 的前置 gate（`ext.probe`）**没跑**，W2① 之前要先实测那条锁
 | **P1（本轮）** | **正典改写 + W1（#210）** | 无 | ✅ **能** |
 | **P2** | W2（#221 第二片） | W1 完成；那条锁的疑点**实测**过 | ❌ 等 P1 |
 | **P3** | W3（#260） | W2 完成；**#260 的语义问题有答案** | ❌ 等答复 |
-| **P4** | W4 | 先 **开 issue** + `ext.probe` 最小验证 | ❌ 待裁 |
+| **P4** | W4 | 先 **开 issue** + `ext.probe` 最小验证 ✅ 已清（2026-09-27） | ❌ 待裁 |
 
 ### 10.2 P1 的内容（本轮真正要做的）
 
