@@ -102,7 +102,8 @@ create index if not exists data_reports_renderer_idx on data.reports(renderer);
 
 - [ ] **Step 3: 跑测试（需要库）**
 
-Run: `DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/platform pnpm --filter data test -- module.test.ts`
+Run: `DATABASE_URL=postgres://platform:platform@127.0.0.1:5432/platform pnpm --filter data test -- module.test.ts`
+（这是本机与 CI 的实际口径；**别用 `postgres:postgres`**，那个角色在本机不存在）
 Expected: PASS（先确认 `docker compose -f deploy/docker-compose.yml up -d postgres` 已起，或本地有库）
 
 - [ ] **Step 4: 跑**没有**库时也应全绿**
