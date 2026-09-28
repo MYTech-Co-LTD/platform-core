@@ -399,12 +399,17 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
         · retryAttempts = N（同 run 同窗重试）
         · 子管线内 src.rest 声明 checkpoint ← 跨 run 只补失败/未采窗
      汇总 + 末尾判红（die）               ← 替代 wrapper 的失败登记与 EXIT 判红
- └─ 业务子管线（= 现「重管线」，**但 `${ENV:*}` 必须改写**——见下 ⚠️；另加 checkpoint）
-     ⚠️ 子管线**读不到 `${ENV:...}`、也不认 `connectionRef`**（runner 的 env 解析只作用于顶层文档，
-     源码注释原文 "the parent arrives pre-resolved, a foreach/runjob child does not"）⇒ **照抄现重管线
-     一跑就挂**（挂法是「URL 变相对路径」）。原生通路只有两条：`${ITER_ITEM_*}` 行值 或 workspace
-     context 变量——**两者都把密钥带进数据面**（行值进 run 记录与日志；context 明文落 console 卷），
-     与「管线不碰密钥落盘」冲突 ⇒ **这是 L1 首航的阻塞决策点（D1），未拍板不得开工**
+ └─ 业务子管线（= 现「重管线」，**凭据改走 `connectionRef`、`${ENV:*}` 一律删**；另加 checkpoint）
+     ⚠️ 子管线**不解析 `${ENV:...}`**（只顶层解析）⇒ 凭据不许用 env 占位符；**正解 = `connectionRef`**
+     （引擎为子管线专设，runjob/iterate/foreach/batch items/install fallback **五条子路径全覆盖**，
+     含 queue worker——比「顶层 contextVariables 下传」还稳，后者到不了 worker）。凭据值住
+     `connections/<id>.json`（**密文** `enc:v2:`），管线 JSON 里**一个密钥字符都没有**。
+     两条必须守的边界：① **建连接必须用会加密的写入方**（桌面 app / `duckle-runner web --dist` /
+     按源码自封——**MCP `create_connection` 写明文，禁用**）；② **加载失败是静默的**（fail-open，
+     非 Salesforce 连接出错返回 Ok ⇒ 表现为空凭据、静默 401）⇒ 必须有独立探测。
+     ⚠️ **「零明文」的边界**：解密钥匙 `.duckle/keys/secret.key` 就在 workspace 里 ⇒ 这层加密保护的是
+     「**连接文件单独流出**」（进 git/备份/镜像/分享包），**不是**「拿到整个 workspace 的人」——
+     **`.duckle/keys/` 必须与 `connections/` 分开管控**（备份/快照/镜像构建上下文一律排除它）。
      src.rest 分页 → schema 校验 → 写湖分区
 ```
 
@@ -416,7 +421,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 新采集任务（要跨窗） | **L1**：窗口表 + 子管线 + foreach；重试/幂等全部原生声明 |
 | 连败 ≥N 中止 | **默认不做**——跨 run 补采已保证正确性，缺的只是止损（代价有界：网关全挂时每窗快速失败）。真出事故（压力/告警风暴）→ **`ext.*` 自定义组件兜底**（2026-09-28 拍板，触发条件即「必须处理且上游无方案」）|
 | 诊断 / 对账 / ETag 验收 / 身份探针工具 | **独立只读入口，永不进采集主链**（合并只增耦合）——这些验收的是引擎之外的世界（湖对象、网关），引擎无视角 |
-| 密钥物化 / 宿主编排 / 凭据治理 | **平台层**（openship/env 注入），管线不碰密钥落盘——⚠️ 与上面 L1 的 D1 冲突，正在解 |
+| 凭据（密钥/token）| **保存的连接**（`connectionRef`）：值住 `connections/`（密文），管线与子管线只写引用名；**密钥物化仍在平台层**（建连接用会加密的写入方，禁用 MCP `create_connection`）|
 | sink 写法 | **照现重管线抄**：一窗一 key 的单对象覆盖、分区写进 key、**不开 `partitionBy`**（0.7.4 实测：云 sink 上被**静默忽略**，同 run 两个 sink 写同一 key 会**静默丢数**）|
 
 **现状与迁移波次（诚实记账：本形态尚无生产首航案例）**：
@@ -424,7 +429,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 波 | 内容 | 前置 |
 |---|---|---|
 | **Wave 0**（进行中） | 零售 tick 按 #260 已批的**薄壳形态**投递——**不切形态**（试点期间不动） | W2 收口 |
-| **Wave 1 首航** | 挑**最小最稳**的存量任务回迁 L1（建议 `lemeng.branch`：单窗日频、体量小），新旧**并行跑数日逐分对比**，通过后切流；通过即把 L1 从 ② 升 ① | **① D1 密钥通路拍板（阻塞项）**；② P1/P2 观测告警面小实验（OO/WeCom）；③ 真网关分页复核 ✅ 已完成（零改动，末页哨兵是唯一停止信号）；④ sink 语义 ✅ 已定案（见配套决策表） |
+| **Wave 1 首航** | 挑**最小最稳**的存量任务回迁 L1（建议 `lemeng.branch`：单窗日频、体量小），新旧**并行跑数日逐分对比**，通过后切流；通过即把 L1 从 ② 升 ① | **① D1 凭据通路 ✅ 已定（`connectionRef`，两层保住了）**——剩「用哪个加密写入方建连接」**一次性 setup** 待选；② 观测面 ✅ 可原生切（OO 实测）；告警面 ✅ 机制通（WeCom 实测）——**其明文问题同样由 `connectionRef` 解**（待补验）；③ 分页 ✅ 零改动；④ sink 语义 ✅ 定案 |
 | **Wave 2** | 零售日批回迁（foreach 父替 `windows` wrapper，约 −400 行 shell）；tick 随后评估（子管线 checkpoint **必须关**——累积窗会冻结在首快照，报告 §7.2） | Wave 1 案例成立 |
 
 ### 1.2 硬约束清单
