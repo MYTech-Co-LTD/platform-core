@@ -176,29 +176,51 @@ export async function upsertDashboard(
 }
 
 export interface DashcardRef {
-  id: number; cardId: number
+  id: number
+  /**
+   * 卡片 id。**`null` = 非 card 的 dashcard**（Metabase 的文本/虚拟卡，同版本镜像实测
+   * `card_id=None`，内容在 `visualization_settings.text`）。
+   *
+   * ⚠️ 对 `null` 抛形状错是**灾难性**的：本设计的前提正是「人会往这些 dashboard 上加东西」，
+   *    只要有一张文本卡，那张报表的发布路径就**恒 502**，且只回一个 `METABASE_ERROR` 看不出原因。
+   */
+  cardId: number | null
   row: number; col: number; sizeX: number; sizeY: number
   /**
-   * 该 dashcard 是否已映射到 tenant 参数（Task 6 的对账用它判「锁了但绑不到」）。
+   * 该 dashcard **有 ≥1 条** `parameter_mappings` —— **不是**「已映射到 tenant 参数」。
+   *
+   * ⚠️ 命名必须如实：对账范围**包含人手动建的** dashboard，一张挂了别个参数（如 region）的卡
+   *    用「是否映射到 tenant」的判据会返回 true ⇒ 把租户过滤并未绑上的卡判成合格（**假绿**，
+   *    与本计划「消灭静默失败」的目标正相反）。判「锁了但绑不到」由**消费者**用
+   *    `parameterMappings` 自己比 tenant 的参数 id —— `metabase.ts` 是纯 HTTP 客户端，
+   *    **不该知道平台侧的参数命名约定**（`tenant` / `tenant-param` 都归调用方）。
    *
    * ⚠️ 可选：它是**读侧派生**出来的布尔（`getDashboardFull` 恒填），而写侧（`putDashboardMerged`
-   *    的 patch）只关心 `id/cardId/布局/parameterMappings`——patch 由调用方现造时没有"是否已映射"
-   *    可言（Task 5 是由回读结果 spread 出来的，故照常带上）。要求它必填就等于让 patch 编造一个
-   *    它并不掌握的事实。读侧消费者按 `=== true` 判即可（缺省 = 未映射 = 对账该报出来的那一侧）。
+   *    的 patch）只关心 `id/cardId/布局/透传字段`——patch 由调用方现造时没有"挂没挂映射"可言
+   *    （Task 5 是由回读结果 spread 出来的，故照常带上）。要求它必填等于让 patch 编造事实。
    */
-  mappedToTenant?: boolean
-  /**
-   * 映射明细，**原样透传**（不解释结构——它是 Metabase 的字段，不是我们的契约）。
-   * 发布（Task 5）写它、回读（Task 6）只看 `mappedToTenant` 这个派生布尔。
-   */
+  hasParameterMappings?: boolean
+  /** 映射明细，**原样透传**（不解释结构——它是 Metabase 的字段，不是我们的契约）。 */
   parameterMappings?: unknown[]
+  /**
+   * 可视化设置，**原样透传**（同样不解释结构）。
+   * ⚠️ **文本卡的内容就在这里**（`visualization_settings.text`）：回写漏了它 = 把人的文字清掉。
+   */
+  visualizationSettings?: unknown
 }
 
 export interface DashboardFull {
   id: number
   name: string
   dashcards: DashcardRef[]
-  parameters: { slug: string }[]
+  /**
+   * dashboard 参数，**原样保留**（不窄化）。
+   *
+   * ⚠️ 窄化成 `[{slug}]` 回写会被真机**拒收**（同版本镜像实测：`400 parameters[0].id:
+   *    missing required key`）——即不是"静默丢字段"而是**只要 dashboard 有参数，发布就恒 400**。
+   *    平台侧需要 slug 的地方（如对账）自己读 `.slug`，**回写一律用原值**。
+   */
+  parameters: Record<string, unknown>[]
   embeddingParams: Record<string, string>
 }
 
@@ -214,20 +236,24 @@ export async function getDashboardFull(deps: MetabaseDeps, dashboardId: number):
   }
   const dashcards = rec.dashcards.map((dc): DashcardRef => {
     const d = dc as Record<string, unknown> | null
-    if (typeof d?.id !== 'number' || typeof d.card_id !== 'number') throw new MetabaseError(200, SHAPE_ERROR)
+    if (typeof d?.id !== 'number') throw new MetabaseError(200, SHAPE_ERROR)
+    // ⚠️ `card_id` **允许显式 null**（文本/虚拟卡，同版本镜像实测）；但**缺键**或别的类型仍算
+    //    「读不出」⇒ 抛：把缺键归一成 null 会在回写时把一张真卡改写成文本卡（静默改写，比 502 坏）。
+    const cid = d.card_id
+    if (cid !== null && typeof cid !== 'number') throw new MetabaseError(200, SHAPE_ERROR)
     const pm = d.parameter_mappings
     return {
-      id: d.id, cardId: d.card_id,
+      id: d.id, cardId: cid,
       row: Number(d.row ?? 0), col: Number(d.col ?? 0),
       sizeX: Number(d.size_x ?? 12), sizeY: Number(d.size_y ?? 6),
-      mappedToTenant: Array.isArray(pm) && pm.length > 0,
-      // 原样留着：发布时要把它**写回去**（丢了就等于把已有映射清掉）
+      hasParameterMappings: Array.isArray(pm) && pm.length > 0,
+      // 原样留着：发布时要把它**写回去**（丢了就等于把已有映射/文本卡内容清掉）
       parameterMappings: Array.isArray(pm) ? pm : undefined,
+      visualizationSettings: d.visualization_settings,
     }
   })
-  const params = Array.isArray(rec.parameters)
-    ? (rec.parameters as { slug?: unknown }[]).map((p) => ({ slug: String(p?.slug ?? '') }))
-    : []
+  // ⚠️ **别窄化**（见 `DashboardFull.parameters` 的注）：原样保留，回写才不会被真机拒收。
+  const params = Array.isArray(rec.parameters) ? (rec.parameters as Record<string, unknown>[]) : []
   const ep = (rec.embedding_params ?? {}) as Record<string, string>
   return { id: rec.id, name: rec.name, dashcards, parameters: params, embeddingParams: ep }
 }
@@ -250,7 +276,12 @@ export async function putDashboardMerged(
      * 取消了「把已存在的 dashboard 移进某集合」这个语义。给了才带（别塞 undefined 进 body）。
      */
     collection_id?: number
-    parameters?: { id: string; name: string; slug: string; type: string; sectionId?: string }[]
+    /**
+     * dashboard 参数。**类型故意宽松**：真机对参数对象有 schema 校验，而这份类型没法把它表达全
+     * （不同参数类型字段不同），写死成收窄形状反而会诱导调用方"投影一下再传"——那正是会被 400 的写法。
+     * 语义是「**整份**参数列表原样替换」，要给就给完整对象（`id`/`name`/`slug`/`type` 至少齐）。
+     */
+    parameters?: Record<string, unknown>[]
     dashcards?: DashcardRef[]
     enable_embedding?: boolean
     embedding_type?: 'signed'
@@ -265,6 +296,8 @@ export async function putDashboardMerged(
       id: d.id, card_id: d.cardId, row: d.row, col: d.col, size_x: d.sizeX, size_y: d.sizeY,
       // 已有映射必须**写回去**：漏了它，一次发布就把之前映射好的卡解绑了（静默失效）
       ...(d.parameterMappings ? { parameter_mappings: d.parameterMappings } : {}),
+      // 可视化设置也必须写回：**文本卡的内容就在这里**，不回写 = 把人的文字清掉
+      ...(d.visualizationSettings !== undefined ? { visualization_settings: d.visualizationSettings } : {}),
     })),
   }
   if (patch.collection_id !== undefined) body.collection_id = patch.collection_id

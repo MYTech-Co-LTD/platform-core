@@ -12,6 +12,7 @@ import {
   MetabaseError,
   dashboardName,
   getDashboardEmbeddingParams,
+  getDashboardFull,
   listEmbeddableDashboards,
   metabaseFromEnv,
   parseDashboardName,
@@ -52,12 +53,15 @@ const headerOf = (c: Rec, name: string): string | undefined =>
 /** 真机 `GET /api/dashboard/{id}` 里 dashcard 的形状（snake_case；`parameter_mappings` 可缺）。 */
 interface MbDashcardSeed {
   id: number
-  card_id: number
+  /** `null` = **文本/虚拟卡**（真机实测：人手动加的文本卡就是 `card_id=None`）。 */
+  card_id: number | null
   row: number
   col: number
   size_x: number
   size_y: number
   parameter_mappings?: unknown[]
+  /** 文本卡的文字在 `visualization_settings.text` 里；其它卡的 viz 配置也走这里。 */
+  visualization_settings?: unknown
 }
 
 /** 一张 dashboard 的种子。同一个 `id` 出现多次 ⇒ 卡片**累加**（见 `fakeMetabaseWithCards`）。 */
@@ -65,14 +69,15 @@ interface MbDashboardSeed {
   id: number
   name: string
   dashcards?: MbDashcardSeed[]
-  parameters?: { slug: string }[]
+  /** dashboard 参数：**原样**存取（真机对 PUT 的 `parameters` 有 schema 校验，桩不许替它收窄）。 */
+  parameters?: Record<string, unknown>[]
 }
 
 interface FakeDashboardState {
   id: number
   name: string
   dashcards: MbDashcardSeed[]
-  parameters: { slug: string }[]
+  parameters: Record<string, unknown>[]
   embedding_params: Record<string, string> | null
 }
 
@@ -138,7 +143,7 @@ function fakeMetabaseWithCards(
       if (typeof body?.name === 'string') d.name = body.name
       // 替换语义（口径②）：缺键 ⇒ 清空
       d.dashcards = Array.isArray(body?.dashcards) ? (body.dashcards as MbDashcardSeed[]) : []
-      d.parameters = Array.isArray(body?.parameters) ? (body.parameters as { slug: string }[]) : []
+      d.parameters = Array.isArray(body?.parameters) ? (body.parameters as Record<string, unknown>[]) : []
       if (body !== undefined && 'embedding_params' in body) {
         d.embedding_params = (body.embedding_params ?? null) as Record<string, string> | null
       }
@@ -344,6 +349,76 @@ describe('putDashboardMerged：PUT 不得清掉已存在的卡片', () => {
     const deps = { fetcher, baseUrl: 'http://mb', apiKey: 'k' }
     await putDashboardMerged(deps, 8, { dashcards: [{ id: 1, cardId: 21, row: 0, col: 0, sizeX: 6, sizeY: 6 }] })
     expect(state.dashboards[0].dashcards[0].size_x).toBe(6)
+  })
+})
+
+describe('读全量/合并写回：真机形状的三条硬约束（站内同版本镜像实测）', () => {
+  const mbDeps = (fetcher: FetchLike): MetabaseDeps =>
+    ({ fetcher, baseUrl: 'http://mb', apiKey: 'k' })
+
+  it('★ 参数**不许窄化**：窄化成 [{slug}] 回写会被真机 400（实测 parameters[0].id: missing required key）', async () => {
+    // 窄化的后果不是"静默丢字段"而是**恒 400**：只要 dashboard 上有参数，发布就永远失败。
+    // 而 Task 5 干的正是"给 dashboard 建 tenant 参数" ⇒ 这条是那条主路径的前提。
+    const param = { id: 'p-tenant', name: 'tenant', slug: 'tenant', type: 'category', sectionId: 'string' }
+    const { state, fetcher } = fakeMetabaseWithCards([
+      { id: 7, name: 'o/a', dashcards: [], parameters: [param] },
+    ])
+    const deps = mbDeps(fetcher)
+    // 读侧：原样保留（要 slug 的人自己读 `.slug`）
+    expect((await getDashboardFull(deps, 7)).parameters).toEqual([param])
+    // 写侧：patch 没给 parameters ⇒ 把读回来的**原值**写回
+    await putDashboardMerged(deps, 7, { name: 'o/a-renamed' })
+    expect(state.dashboards[0].parameters).toEqual([param])
+  })
+
+  it('★ hasParameterMappings 如实报「挂了任意参数」——挂 region 的卡也是 true（判 tenant 不在这里）', async () => {
+    // 名字若叫 mappedToTenant，Task 6 就会把「挂了别个参数的卡」判成合格 ⇒ 对账假绿。
+    // metabase.ts 是纯 HTTP 客户端，不认平台侧的参数命名；判 tenant 归消费者（它手里有 parameterMappings）。
+    const mapping = { parameter_id: 'p-region', card_id: 11, target: ['variable', ['template-tag', 'region']] }
+    const { fetcher } = fakeMetabaseWithCards([
+      { id: 7, name: 'o/a', dashcards: [
+        { id: 1, card_id: 11, row: 0, col: 0, size_x: 12, size_y: 6, parameter_mappings: [mapping] },
+      ] },
+      { id: 7, name: 'o/a', dashcards: [
+        { id: 2, card_id: 12, row: 6, col: 0, size_x: 6, size_y: 4 },
+      ] },
+    ])
+    const full = await getDashboardFull(mbDeps(fetcher), 7)
+    expect(full.dashcards.map((d) => d.hasParameterMappings)).toEqual([true, false])
+    expect(full.dashcards[0].parameterMappings).toEqual([mapping])
+  })
+
+  it('★ 文本卡（card_id: null）不抛形状错，且文字逐字回写（否则加过文本卡的报表发布恒 502）', async () => {
+    const textCard = {
+      id: 2, card_id: null, row: 6, col: 0, size_x: 6, size_y: 4,
+      visualization_settings: { text: '这是人手动加的文本卡' },
+    }
+    const { state, fetcher } = fakeMetabaseWithCards([
+      { id: 7, name: 'o/a', dashcards: [{ id: 1, card_id: 11, row: 0, col: 0, size_x: 12, size_y: 6 }, textCard] },
+    ])
+    const deps = mbDeps(fetcher)
+    expect((await getDashboardFull(deps, 7)).dashcards[1].cardId).toBeNull()
+    await putDashboardMerged(deps, 7, { name: 'o/a-renamed' })
+    // 逐字：card_id 仍是 null，且 visualization_settings.text **还在**（不回写它 = 把人的文字清掉）
+    expect(state.dashboards[0].dashcards[1]).toEqual(textCard)
+  })
+
+  it('★ 但真正读不出的形状照旧抛（fail-closed 的边界没被放宽）', async () => {
+    // dashcards 不是数组
+    await expect(getDashboardFull(mbDeps(stub([{ body: { id: 7, name: 'o/a' } }]).fetcher), 7))
+      .rejects.toThrow(MetabaseError)
+    // card_id 既不是数字也不是显式 null：真机上不存在这个形状 ⇒ 读不出就是读不出
+    await expect(getDashboardFull(mbDeps(stub([
+      { body: { id: 7, name: 'o/a', dashcards: [{ id: 1, card_id: 'x' }] } },
+    ]).fetcher), 7)).rejects.toThrow(MetabaseError)
+    // 缺键（`card_id` 整个不在）同样算读不出
+    await expect(getDashboardFull(mbDeps(stub([
+      { body: { id: 7, name: 'o/a', dashcards: [{ id: 1 }] } },
+    ]).fetcher), 7)).rejects.toThrow(MetabaseError)
+    // dashcard 自己的 id 非数字
+    await expect(getDashboardFull(mbDeps(stub([
+      { body: { id: 7, name: 'o/a', dashcards: [{ card_id: 11 }] } },
+    ]).fetcher), 7)).rejects.toThrow(MetabaseError)
   })
 })
 
