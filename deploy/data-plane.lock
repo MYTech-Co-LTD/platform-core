@@ -1,4 +1,4 @@
-sha256-of-rest b170f69dd58574ac31291eefd554efbd684a98afaa7566f237b414a9dc9e3109
+sha256-of-rest 4f6c86bb1dd67832a5952af90bafadaf8ec7e21de44afe6c662f51056fae075a
 aef4c9fed8fc63da20a01c5687c5a173ca15111cf0485d5208de54d1fc5c6c9b dbt/README.md ${REPO}/dbt/README.md 0644
 cc1d78b5c825d5902d22be9b17fbabdc0833afb3c25912e392f8765004a76776 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -24,7 +24,7 @@ d43c40d2e1dd6c80db95782f3a7481028472868c77a2df31a46296fcfd908860 dbt/tests/audit
 1c6621720fe664dc2a96bf4a1e73726dfb441664a29cdb755025654986a71abf deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
 8679ed09c1ac5c65194c59fb2044e9edb2b7e5266ce08af4e08bd90bd4c70f6d deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
 caffb0d78fd5cc4f2575292a0a106e5c46ea3ccd4fe443731273b99d77524605 deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
-430f65468ef6a588c58504824ac17c1170cdc7ae09f7c56d3102212c65569855 deploy/duckle/console/alerts.json ${REPO}/deploy/duckle/console/alerts.json 0644
+17df45e5c3d0d20c893e84595506dc9102d03f9b5193eb78946375c60ff03540 deploy/duckle/console/alerts.json ${REPO}/deploy/duckle/console/alerts.json 0644
 c7e4a8883c7c6929333a1c30edcb10418cc8852ae3fa3d08fe853681689451a3 deploy/duckle/console/owners.json ${REPO}/deploy/duckle/console/owners.json 0644
 ee2b88c4099066c164bcb6cba5e765fe6ac08ee6ef4c1cc8f9d51aff52923348 deploy/duckle/console/pipelines/lemeng.dim.branch.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.branch.run.json 0644
 f735fee86b2daac945a25717a907b07d7e50fcfc0202c96f4b08a701f1ffb87f deploy/duckle/console/pipelines/lemeng.dim.item.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item.run.json 0644
@@ -41,4 +41,4 @@ edd9fc6a08b4700df789bebdcfb443e96a9bd2ecae0c95df4164ac15fb5d5184 duckle/common/l
 7ff8974585bd0882c272c9c02683342bfbd96c52ba95c3ce0c568915938aa78d duckle/common/lemeng.retail_order_line.json ${REPO}/duckle/common/lemeng.retail_order_line.json 0644
 691d2f8416d4588f656c174cc00528e4bfa65b85ceb84758900086ca756b2e26 duckle/customers/README.md ${REPO}/duckle/customers/README.md 0644
 d3c7fb72c9a2c243b6973177432294b446a10770b3bbad4da731fd306cad2e97 scripts/lemeng/readback-helper.sh ${REPO}/lemeng-readback.sh 0755
-f363d7600fe12dfb8524e0d0b538a6397aa390ba48d2cdb72a471c2564f9e83b scripts/lemeng/run-retail-day.sh /opt/lemeng-run.sh 0755
+7eb2a2edd2140c03aa892b5a6b9bf9bb4b6e2e868188b8b902b7038d675ebfd8 scripts/lemeng/run-retail-day.sh /opt/lemeng-run.sh 0755
