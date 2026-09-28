@@ -80,13 +80,22 @@ describePg('迁移（需要 DATABASE_URL）', () => {
 
   it('004：data.reports.renderer 列存在、非空、且取值域含 metabase/platform', async () => {
     await applyMigrations(pool)
-    // 判据面：列存在且 not null（default 值不在此断言——列已存在时 add column 整句 no-op，
-    // 重读 default 会假红）
+    // 判据面三条：列存在 / not null / **default 是 'metabase'**。
+    // ⚠️ 上一稿在这里写着「default 不在此断言——列已存在时 add column 整句 no-op，重读 default
+    //    会假红」，那个理由是**错的**（评审 Important 订正）：本列**只由本迁移建**，本文件的两条
+    //    路径（applyMigrations 与裸跑迁移 SQL）都**带着 default** 建它 ⇒ 库里不可能存在「没有
+    //    default 的 renderer」⇒ 这条断言在本套件里不会假红。
+    //    而它挡的恰恰是**最贵的一种回归**：把 004 的字面量改成 `default 'platform'` 时，列还在、
+    //    仍然 NOT NULL、约束定义里两个串也都还在 ⇒ 其余断言全绿，**只有这一条会红**。生产上那一改
+    //    意味着**每一行存量被静默标成"平台自绘"**，而渲染器尚未实现 ⇒ 点开是空白，且**从库里看不
+    //    出它们标错了**——迁移头注（004_report_renderer.sql）论证「绝不能发生」的正是这一条。
     const c = await pool.query(
-      `select column_name, is_nullable from information_schema.columns
+      `select column_name, is_nullable, column_default from information_schema.columns
         where table_schema = 'data' and table_name = 'reports' and column_name = 'renderer'`,
     )
-    expect(c.rows).toEqual([{ column_name: 'renderer', is_nullable: 'NO' }])
+    expect(c.rows).toEqual([
+      { column_name: 'renderer', is_nullable: 'NO', column_default: "'metabase'::text" },
+    ])
 
     // 取值域由 check 约束兜（与 003 的 source 同一口径：枚举写错一个字母会走另一条渲染路径）
     const k = await pool.query(
