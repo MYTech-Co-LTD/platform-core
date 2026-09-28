@@ -264,7 +264,8 @@ git commit -m "feat(data): report-store 带 renderer（缺省 metabase，platfor
 - Consumes: `call` / `MetabaseDeps` / `MetabaseError`（本文件私有/既有）
 - Produces:
   - `interface DashcardRef { id: number; cardId: number; row: number; col: number; sizeX: number; sizeY: number }`
-  - `interface DashboardFull { id: number; name: string; dashcards: DashcardRef[]; parameters: { slug: string }[]; embeddingParams: Record<string,string> }`
+  - `interface DashboardFull { id: number; name: string; dashcards: DashcardRef[]; parameters: Record<string, unknown>[]; embeddingParams: Record<string,string> }`
+    （`parameters` **原样**——Task 3 实测：窄化成 `{slug}` 回写会被 Metabase 拒收）
   - `getDashboardFull(deps, dashboardId): Promise<DashboardFull>`
   - `putDashboardMerged(deps, dashboardId, patch: { name?; parameters?; dashcards?; enable_embedding?; embedding_type?; embedding_params? }): Promise<void>`
   - `getCardTemplateTags(deps, cardId): Promise<string[]>`（返回该卡原生查询里的模板标签名）
@@ -584,7 +585,8 @@ export interface DashboardContent extends DashboardFull {
  */
 export function fingerprintOf(input: {
   dashcards: DashcardRef[]
-  parameters: { slug: string }[]
+  /** **原样**（与 `DashboardFull.parameters` 同形——窄化会与 Task 3 的类型冲突，且实测会 400）。 */
+  parameters: Record<string, unknown>[]
   embeddingParams: Record<string, string>
   cardSqlDigests: Record<number, string>
 }): string {
@@ -592,7 +594,7 @@ export function fingerprintOf(input: {
     dashcards: [...input.dashcards]
       .sort((a, b) => a.id - b.id)
       .map((d) => [d.id, d.cardId, d.row, d.col, d.sizeX, d.sizeY]),
-    parameters: [...input.parameters].map((p) => p.slug).sort(),
+    parameters: [...input.parameters].map((p) => String(p['slug'] ?? '')).sort(),
     embeddingParams: Object.entries(input.embeddingParams).sort(([a], [b]) => (a < b ? -1 : 1)),
     cardSqlDigests: Object.entries(input.cardSqlDigests).sort(([a], [b]) => Number(a) - Number(b)),
   }
@@ -639,7 +641,13 @@ export async function readDashboardContent(
       getCardSql(deps, dc.cardId),
     ])
     cardTags[dc.cardId] = tags
-    cardSqlDigests[dc.cardId] = createHash('sha256').update(sql).digest('hex').slice(0, 16)
+    // ⚠️ 摘要要覆盖**整个查询定义**，不能只摘要 native SQL 字符串：
+    //    Metabase UI 建的卡是 **MBQL**（`stages[0].native` 不存在 ⇒ 摘要恒为空串）⇒
+    //    人改了那种卡的查询，指纹**不动**，写保护就漏了——而"人在编辑器里改"正是本设计的前提。
+    //    故摘要取 `dataset_query` 的规范化 JSON（native 卡与 MBQL 卡都覆盖）。
+    cardSqlDigests[dc.cardId] = createHash('sha256')
+      .update(JSON.stringify(dc.datasetQuery ?? null))
+      .digest('hex').slice(0, 16)
 ```
 
 并**补一条测试**：同一张卡，SQL 从 `select 1` 改成 `select 2` ⇒ 指纹变。
@@ -854,7 +862,7 @@ Expected: FAIL —— `tenantUnbound` 是 `undefined`
       continue
     }
     // ① 参数没声明 或 ② 有卡带 tenant 标签但没映射 ⇒ 锁了也绑不到任何东西
-    const declared = content.parameters.some((p) => p.slug === TENANT_SLUG)
+    const declared = content.parameters.some((p) => p['slug'] === TENANT_SLUG)
     const needsMapping = content.dashcards.some((d) => (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG))
     // 「映射到 tenant」**在这里判**（不在 metabase.ts）：比 parameter_id，而不是"有没有映射"
     const isTenantMapped = (d: { parameterMappings?: unknown[] }) =>
