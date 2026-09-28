@@ -18,7 +18,7 @@
     "id": "panel-lemeng.dim.item.run",
     "pipeline_id": "lemeng.dim.item.run",
     "name": "lemeng.dim.item.run",
-    "enabled": true,
+    "enabled": false,
     "kind": {
       "type": "cron",
       "expr": "0 11 * * *"
@@ -82,6 +82,26 @@
     "kind": {
       "type": "cron",
       "expr": "0 2 * * *"
+    },
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.dim.item.l0",
+    "pipeline_id": "lemeng.dim.item.l0",
+    "name": "lemeng.dim.item.l0",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "0 11 * * *"
     },
     "misfire": "skip",
     "catchup": {
