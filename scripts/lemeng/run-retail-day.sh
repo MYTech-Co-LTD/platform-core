@@ -7,6 +7,9 @@
 #   sh run-retail-day.sh windows                   # 昨日 24 时窗全量（逐窗尽力采；失败窗登记后继续，末尾统一判红）
 #   sh run-retail-day.sh tick [close]              # 当日增量（cur+prev 两窗，各覆盖写自己的 hour= 分区）；
 #                                                   #   close = 闭窗尾款（仅昨日 23 点档；北京 00:00 专用）
+#   sh run-retail-day.sh recon 07                   # tick 对账（只读，#260 裁决口径）：该 hour 湖分区
+#                                                   #   count(*)/count(DISTINCT batch_id)（rb 通路回读）
+#                                                   #   vs 网关当刻累计明细行数；闭窗小时应全等（容差 0）
 #   sh run-retail-day.sh dim                       # 维度快照（DIM_FACE=branch|item，双账套全量）
 #   sh run-retail-day.sh listing                   # 当日对象清单（bizday 前缀；断言：非空 + 未截断 + 无 ${ENV 字面量）
 #   sh run-retail-day.sh rb "<duckdb SQL>"         # 容器内 duckdb httpfs 回读（值由容器 env 展开）
@@ -30,6 +33,9 @@
 #            连续 `WINDOWS_MAX_CONSEC` 窗失败 ⇒ `WINDOWS_ABORT` 中止（网关不可用时不空转撞超时）。
 #   tick：逐窗尽力 + 末尾统一判红（`TICK_FAILED hours:…` + 非零），但**单 tick 内不自动重试**——
 #         每 5 分钟下一 tick 覆盖写同两窗，天然即重试（与 windows 的**有意差异**，见 tick 分支注释）。
+#   recon：**只读对账**（#260 裁决口径）——任一侧取数失败、闭窗小时行数不等（容差 0）、
+#          或该 hour 分区内 batch_id 不止一个 ⇒ 非零；对「今天」的未闭窗小时直接拒比（2），
+#          因为湖=最近 tick 快照、网关=当刻累计，两者**合法不等**——比了必假红。
 #   identity：凭据/清单与账套错配、或 whoami 重试 3 次仍不可达 ⇒ 非零。**身份未证绝不写湖**
 #             （`windows` / `window` 在开跑前自证；见 identity_assert 的注释说为什么必须有）。
 #   dim：快照日不可用（`SNAPSHOT_DERIVE_FAILED:`）/ DIM_FACE 非法（`DIM_FACE_INVALID:`）/
@@ -71,7 +77,8 @@
 #           BIZDAY_DERIVE_FAILED:（营业日不可用，exit 3）/ OPS_ROWS_UNPARSED: /
 #           DIM_FAILED（dim 自证未过）/ DIM_FACE_INVALID:（DIM_FACE 非 branch|item，exit 2）/
 #           SNAPSHOT_DERIVE_FAILED:（快照日不可用，exit 3）/
-#           OPS_SINK=DISABLED|FAILED / LISTING_FAILED: / IDEM_RETIRED: / DRIFT_VERDICT=VACUOUS / ASSERT_FAIL:
+#           OPS_SINK=DISABLED|FAILED / LISTING_FAILED: / IDEM_RETIRED: / DRIFT_VERDICT=VACUOUS / ASSERT_FAIL: /
+#           RECON_FAILED:lake|gateway|rows|batches|hour|hour_open（recon 对账各失败面，非零）
 set -u
 REPO=${REPO:-/opt/platform-core-data/platform-core}
 COMPOSE="docker compose -f $REPO/deploy/data-compose.yml"
@@ -111,7 +118,7 @@ case "$BIZDAY" in
     # 只在「真要写湖」的模式上硬失败：usage / idem / probe / diag / envfile 不需要营业日，
     # 保持既有退出码（idem 与未知模式 exit 2、usage exit 2）逐字不变。
     # `dim` **故意不在本名单**：维度面分区是 snapshot=，不消费 BIZDAY（脏 BIZDAY 不该拦住快照）；
-    case " window windows listing agg branches rb idem3 drift " in
+    case " window windows listing agg branches rb idem3 drift recon " in
       *" ${1:-} "*)
         echo "BIZDAY_DERIVE_FAILED: 营业日不可用（TZ=Asia/Shanghai date 推导失败，或传入值非 YYYY-MM-DD：'${BIZDAY}'）——不确定营业日就绝不写湖，判红" >&2
         exit 3
@@ -234,6 +241,15 @@ else:
           file=sys.stderr)
     raise SystemExit(6)
 PY
+}
+
+rb_run() { # $1=SQL [$2=duckdb 旗标（如 -csv）] → duckdb 原始输出到 stdout；引擎非零退出原样透传
+  # rb 通路的**单一调用形状**（agg / branches / rb / recon 四处共用，别再抄第五份）：
+  # 在 duckle 容器内跑 readback-helper.sh（RB_HELPER 挂成 /rb.sh）——凭据由容器 env 展开，
+  # 值不进命令行、不进日志（helper 的存在理由，见其头注）。RB_FLAGS 空串 = 无旗标（helper 的
+  # `${RB_FLAGS:-}` 兜底），恒传一个 `-e` 让两个分支不分行。
+  $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
+    -e RB_FLAGS="${2:-}" -e RB_QUERY="$1" -v "$RB_HELPER":/rb.sh:ro --entrypoint sh duckle -c 'sh /rb.sh'
 }
 
 # ── _ops 观测（spec §6「观测：_ops 指标（行数/页数/窗口/耗时）」；§160「_ops 由 job wrapper 写 OpenObserve」）
@@ -558,6 +574,112 @@ tick_windows() { # $1=模拟 CST 墙钟 "YYYY-MM-DD HH:MM"（空=真 now）；$2
   esac
 }
 
+# ── recon：tick 对账（#260 裁决口径，只读）─────────────────────────────────────────
+# 对照两侧：湖侧 = 该 hour 分区**单文件**精读（经 rb 通路：readback-helper.sh + 容器内 duckdb，
+#   同 agg/branches 那条路，不另造第二套）；网关侧 = 按「window 模式的管线 src.rest」**同一调用形状**
+#   翻页查询（同 URL / 同 body 键 / page_size=200 / responsePath=/result——
+#   duckle/common/lemeng.retail_order_line.json 是这套形状的唯一事实源，改那边要同步这里）。
+# 计数单位两侧同为**明细行**（管线 flatten 是 UNNEST(pos_order_details)，湖一行=一条明细）⇒
+#   网关侧按「每单的明细条数」求和，不是数订单数。
+# 判据（闭窗小时，容差 0）：湖 count(*) == 网关当刻累计，且分区内恰一个 batch_id（最新完整快照）。
+#   「count(DISTINCT batch_id) 按 hour=1」作为**独立验收锚**只对日批兜底层继续成立（handbook §1.3）。
+RECON_GW_URL=https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.pos.posorder.find
+RECON_PAGES=12   # 与管线容量闸同数（12 页 × 200）；第 12 页仍满 = 网关累计取不全 = 判红（同末页守卫语义）
+
+recon_lake_sql() { # $1=bizday $2=hour $3=system_book → 精读该 hour 单文件的 SQL；对象不在 ⇒ duckdb IO 错 ⇒ 红
+  # 不带 hive_partitioning、点名单文件：路径里 hour=NN 与载荷列 hour 同名，hive 列会引入遮蔽歧义；
+  # 单文件精读让 count(*)/count(DISTINCT batch_id) 只来自载荷本身。
+  printf "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://%s/lemeng/retail_order_line/system_book=%s/bizday=%s/hour=%s/all.parquet');" \
+    "$ZOS_BUCKET" "$3" "$1" "$2"
+}
+
+recon_parse_lake_csv() { # $1=duckdb -csv 输出 → stdout "rows batches"；找不到「两字段皆数值」的数据行 ⇒ 非零
+  # 表头/噪声行（如 CREATE SECRET 万一有输出）天然不匹配数值判据 ⇒ 被跳过；一个数值行都找不到 =
+  # 比空气也算过，判红（同 list_guard 的哲学：宁可红，不许静默退化）。
+  printf '%s\n' "$1" | awk -F, '{ gsub(/\r/, "") }
+    NF >= 2 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { print $1+0, $2+0; found=1; exit }
+    END { exit found ? 0 : 1 }'
+}
+
+recon_gw_page() { # $1=page $2=bizday $3=hour → stdout=该页明细行数（0=空页=翻尽信号）；传输/HTTP/形状失败非零
+  # curl 判 HTTP 的手法与 whoami_probe 同款：不用 -f（会丢 body），-w 取状态码自己判。
+  # token 只进请求头、绝不回显（同全脚本纪律）；body 形状逐字对齐管线 src.rest 的 body 模板。
+  code=$(curl -sS --max-time 25 -o /tmp/recon_gw.json -w '%{http_code}' -X POST "$RECON_GW_URL" \
+    -H "Authorization: Bearer $LEMENG_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"branch_nums\": $BRANCH_NUMS, \"date_from\": \"$2\", \"date_to\": \"$2\", \"time_from\": \"$3:00:00\", \"time_to\": \"$3:59:59\", \"page_number\": $1, \"page_size\": 200}") || return 1
+  [ "$code" = "200" ] || { echo "recon_gw_page: HTTP ${code} page=${1}（hour=${3}）" >&2; return 1; }
+  python3 - "$1" <<'PY'
+import json, sys
+page = sys.argv[1]
+try:
+    d = json.load(open('/tmp/recon_gw.json'))
+except Exception as e:
+    print('RECON_GW_SHAPE: page=%s 响应不是 JSON：%s' % (page, str(e)[:120]), file=sys.stderr); raise SystemExit(1)
+r = d.get('result') if isinstance(d, dict) else None
+if not isinstance(r, list):
+    print('RECON_GW_SHAPE: page=%s result 不是数组（网关形状变了？）' % page, file=sys.stderr); raise SystemExit(1)
+n = 0
+for o in r:
+    if not isinstance(o, dict):
+        print('RECON_GW_SHAPE: page=%s 订单项不是对象' % page, file=sys.stderr); raise SystemExit(1)
+    det = o.get('pos_order_details')
+    if isinstance(det, str):   # 允许「JSON 字符串」形态（src.rest 定型后是数组；两种都收，数错单位=白对账）
+        try: det = json.loads(det)
+        except Exception: det = None
+    if det is None: continue   # 缺明细字段 ⇒ 贡献 0 行（与管线 UNNEST 空数组 = 0 行一致）
+    if not isinstance(det, list):
+        print('RECON_GW_SHAPE: page=%s pos_order_details 非数组' % page, file=sys.stderr); raise SystemExit(1)
+    n += len(det)
+print(n)
+PY
+}
+
+recon_gateway_rows() { # $1=bizday $2=hour → stdout=网关当刻累计明细行数；翻页到空页；末页仍满 ⇒ 判红
+  _rgr_total=0; _rgr_p=1
+  while [ "$_rgr_p" -le "$RECON_PAGES" ]; do
+    if ! _rgr_n=$(recon_gw_page "$_rgr_p" "$1" "$2"); then
+      echo "RECON_FAILED:gateway 网关第 ${_rgr_p} 页取数失败（hour=${2}）——传输/HTTP/形状，见上" >&2
+      return 1
+    fi
+    [ "$_rgr_n" -gt 0 ] || break   # 空页 = 翻尽（引擎 page 风格的停止信号，§1.3 阶段 D 实测结论）
+    _rgr_total=$((_rgr_total + _rgr_n))
+    _rgr_p=$((_rgr_p + 1))
+  done
+  if [ "$_rgr_p" -gt "$RECON_PAGES" ]; then
+    echo "RECON_FAILED:gateway 第 ${RECON_PAGES} 页仍有数据 ⇒ 容量上限（${RECON_PAGES} 页×200）取不全，对账无从谈起（同管线末页守卫语义；hour=${2}）" >&2
+    return 1
+  fi
+  echo "$_rgr_total"
+}
+
+recon_hour_open() { # $1=bizday $2=hour [$3=模拟 CST 墙钟 "YYYY-MM-DD HH:MM"（空=真 now；纯函数可测）] → 0=未闭窗；1=已闭窗
+  # 未闭窗小时拒比：湖=最近一次 tick 的快照、网关=当刻累计，两者**合法不等**——比了必假红。
+  # bizday 不是「今天」⇒ 全天必已闭（BIZDAY 缺省=昨日）。墙钟推导同 tick_windows 的手法。
+  _rho_now=${3:-$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')}
+  _rho_today=${_rho_now%% *}
+  [ "$1" = "$_rho_today" ] || return 1
+  _rho_h=${_rho_now##* }; _rho_h=${_rho_h%%:*}
+  [ "$(( ${2#0} ))" -ge "$(( ${_rho_h#0} ))" ] && return 0
+  return 1
+}
+
+recon_verdict() { # $1=lake_rows $2=lake_batches $3=gateway_rows $4=bizday $5=hour → 全等 0；任一判据破 ⇒ 1
+  printf 'RECON bizday=%s hour=%s lake_rows=%s lake_batches=%s gateway_rows=%s（闭窗小时，容差 0）\n' \
+    "$4" "$5" "$1" "$2" "$3"
+  _rv_rc=0
+  if [ "$2" != "1" ]; then
+    echo "RECON_FAILED:batches hour=${5} 分区内 batch_id 不止一个（count(DISTINCT)=${2}）——#260 口径：应恰一个（最新完整快照）" >&2
+    _rv_rc=1
+  fi
+  if [ "$1" != "$3" ]; then
+    echo "RECON_FAILED:rows hour=${5} 湖行数(${1}) != 网关累计(${3})，差 $(( ${1} - ${3} ))（容差 0）" >&2
+    _rv_rc=1
+  fi
+  [ "$_rv_rc" -ne 0 ] && return 1
+  echo "RECON_OK hour=${5} rows=${3} batches=${2}"
+  return 0
+}
+
 # EXIT trap：只在非零退出时告警；**保留原退出码**（别把判红变成绿）
 trap '_rc=$?; if [ "$_rc" -ne 0 ]; then notify_fail "$_rc"; fi; exit "$_rc"' EXIT
 
@@ -655,6 +777,40 @@ tick)
   done
   [ -n "$w_failed" ] && { echo "TICK_FAILED hours:${w_failed# }"; exit 1; }
   echo "TICK_OK $(echo $pairs | wc -w | tr -d ' ') windows"
+  ;;
+recon)
+  # tick 对账（#260 裁决口径，只读）：湖侧 rb 通路回读该 hour 分区，网关侧按管线同款形状翻页取
+  # 「当刻累计」，闭窗小时两者应全等（容差 0）+ 分区内恰一个 batch_id。全程无写（湖只 SELECT、
+  # 网关只 POST 查询端点）；对象不在位也是红（不是 0 行——同 hour_meta 的 NOT_FOUND 哲学）。
+  # 注意：本模式走 `-v` 挂载 rb.sh，与 rb/agg/branches 同为**宿主侧**模式（容器内 shim 不支持 -v）。
+  H="${2:?hour}"
+  case "$H" in
+    [0-9][0-9]) ;;
+    *) echo "RECON_FAILED:hour '${H}' 非 HH 两位数字——分区地址由它拼出，脏值判红" >&2; exit 2 ;;
+  esac
+  if recon_hour_open "$BIZDAY" "$H"; then
+    echo "RECON_FAILED:hour_open bizday=${BIZDAY} hour=${H} 尚未闭窗——湖=最近 tick 快照、网关=当刻累计，合法不等，不对账" >&2
+    exit 2
+  fi
+  if [ "${IDENTITY_CHECKED:-}" != "1" ]; then
+    sh "$0" identity || exit $?   # 身份未证绝不碰网关（同 window/tick；错账套的对账 = 白比）
+    IDENTITY_CHECKED=1; export IDENTITY_CHECKED
+  fi
+  _rc_csv=$(rb_run "$(recon_lake_sql "$BIZDAY" "$H" "$SYSTEM_BOOK")" -csv 2>/tmp/recon_lake.err)
+  _rc_rc=$?
+  if [ "$_rc_rc" -ne 0 ]; then
+    echo "RECON_FAILED:lake 湖回读非零退出 exit=${_rc_rc}（hour=${H} 对象缺失/凭据/网络）" >&2
+    cat /tmp/recon_lake.err >&2
+    exit 1
+  fi
+  if ! _rc_lb=$(recon_parse_lake_csv "$_rc_csv"); then
+    echo "RECON_FAILED:lake 回读输出无数据行（形状变了？）——比空气也算过，判红；原始输出：" >&2
+    printf '%s\n' "$_rc_csv" >&2
+    exit 1
+  fi
+  _rc_lrows=${_rc_lb%% *}; _rc_lbatches=${_rc_lb##* }
+  _rc_gw=$(recon_gateway_rows "$BIZDAY" "$H") || exit 1
+  recon_verdict "$_rc_lrows" "$_rc_lbatches" "$_rc_gw" "$BIZDAY" "$H"
   ;;
 dim)
   # 维度快照（spec §5 湖布局）：一次拉全账套的门店维 / 商品维，落 `snapshot=<日期>` 分区。
@@ -774,14 +930,12 @@ SELECT 'hour17_finished' AS section, count(*) AS rows, sum(sale_money) AS amt FR
 SELECT 'states' AS section, state, count(*) AS rows, sum(sale_money) AS amt FROM read_parquet('s3://$ZOS_BUCKET/lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY/**/*.parquet', hive_partitioning=1) GROUP BY state ORDER BY state;
 SQL
 )"
-  $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
-    -e RB_QUERY="$SQL" -v "$RB_HELPER":/rb.sh:ro --entrypoint sh duckle -c 'sh /rb.sh' 2>&1 | grep -vE '^ *Container |^ *Network ' | tail -45
+  rb_run "$SQL" 2>&1 | grep -vE '^ *Container |^ *Network ' | tail -45
   echo "== agg end =="
   ;;
 branches)
   SQL="SELECT branch_num, sum(sale_money) AS fin_amt, count(*) AS rows FROM read_parquet('s3://$ZOS_BUCKET/lemeng/retail_order_line/system_book=$SYSTEM_BOOK/bizday=$BIZDAY/**/*.parquet', hive_partitioning=1) WHERE state='FINISHED' GROUP BY branch_num ORDER BY branch_num;"
-  $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
-    -e RB_FLAGS=-csv -e RB_QUERY="$SQL" -v "$RB_HELPER":/rb.sh:ro --entrypoint sh duckle -c 'sh /rb.sh' 2>&1 | grep -vE '^ *Container |^ *Network ' | tail -200
+  rb_run "$SQL" -csv 2>&1 | grep -vE '^ *Container |^ *Network ' | tail -200
   echo "== branches end =="
   ;;
 diag)
@@ -795,8 +949,7 @@ diag)
   ;;
 rb)
   shift
-  $COMPOSE run --rm -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
-    -e RB_QUERY="$*" -v "$RB_HELPER":/rb.sh:ro --entrypoint sh duckle -c 'sh /rb.sh' 2>&1 | tail -40
+  rb_run "$*" 2>&1 | tail -40
   ;;
 idem)
   # 已退役（修复环 2/5；理由见文件头「已退役模式」）。原语义要求「只换 batch_id、ETag/Size 仍相等」，
@@ -859,7 +1012,7 @@ envfile)
   echo "envfile keys=$(cut -d= -f1 "$REPO/deploy/.env" | tr '\n' ',') mode=$(stat -c '%a' "$REPO/deploy/.env")"
   ;;
 *)
-  echo "usage: $0 <probe|identity|diag|window H [suffix]|windows|tick [close]|dim|listing|agg|branches|rb SQL|idem3 H|drift [H]|envfile>"
+  echo "usage: $0 <probe|identity|diag|window H [suffix]|windows|tick [close]|recon H|dim|listing|agg|branches|rb SQL|idem3 H|drift [H]|envfile>"
   echo "exit: 0=全项通过；非 0=有验证项失败（含 0 检查/清单截断/清单为空/残留 \${ENV 字面量/NOT_FOUND/取清单失败）"
   echo "dim: DIM_FACE=branch|item  sh $0 dim   （维度快照；SNAPSHOT 不传按上海今日）"
   echo "retired: 'idem' 恒 exit 2 —— 用 idem3（见文件头「已退役模式」）"

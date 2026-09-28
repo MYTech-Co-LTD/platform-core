@@ -169,7 +169,116 @@ ok "$(tick_windows '2026-09-27 23:55' '')"   '2026-09-27,23 2026-09-27,22'   # �
 ok "$(tick_windows '2026-09-28 00:00' close)" '2026-09-27,23'                # 闭窗：昨日 23 点档（bizday 跨日）
 ok "$(tick_windows '2026-10-01 00:00' close)" '2026-09-30,23'                # 跨月
 
+# ── recon（tick 对账，#260：湖分区 vs 网关当刻累计，闭窗小时容差 0）──────────────────
+# 抽**真函数**测（同上：不复制实现）。RECON_PAGES / RECON_GW_URL / ZOS_BUCKET 是脚本顶层
+# 常量/env，抽函数带不过来 ⇒ 这里显式设成与脚本一致的值（脚本改值时此处要跟着改）。
+# 跑不了真网关的部分（recon_gw_page 真打网关）用假 curl 顶掉——测的是**计数与判红逻辑**。
+RECON_PAGES=12
+RECON_GW_URL=http://recon.test/f
+ZOS_BUCKET=recon-test-bucket
+export RECON_PAGES RECON_GW_URL ZOS_BUCKET
+_rn=0
+for _fn in recon_lake_sql recon_parse_lake_csv recon_gw_page recon_gateway_rows recon_hour_open recon_verdict; do
+  _fb=$(awk -v fn="$_fn" '$0 ~ "^"fn"\\(\\) \\{" {f=1} f{print} f&&/^}$/{exit}' "$SRC")
+  if [ -n "$_fb" ]; then eval "$_fb"; _rn=$((_rn+1)); else fail=$((fail+1)); echo "  FAIL: 抽不到 ${_fn}（脚本结构变了？）"; fi
+done
+ok "$_rn" "6"
+# 留一份**真** recon_gw_page 函数体：N 段会用 stub 顶掉它做翻页逻辑测试，P 段要还原回来测真计数逻辑
+_gw_real=$(awk -v fn=recon_gw_page '$0 ~ "^"fn"\\(\\) \\{" {f=1} f{print} f&&/^}$/{exit}' "$SRC")
+
+# H) recon_lake_sql：SQL 逐字钉住（单文件精读、不带 hive_partitioning——载荷列 hour 不得被分区列遮蔽）
+ok "$(recon_lake_sql 2026-09-27 17 3120)" \
+   "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://recon-test-bucket/lemeng/retail_order_line/system_book=3120/bizday=2026-09-27/hour=17/all.parquet');"
+
+# I) recon_parse_lake_csv：表头+数据行 → "rows batches"
+ok "$(recon_parse_lake_csv 'n_rows,n_batches
+123,1')" "123 1"
+
+# J) 噪声行（非数值字段跳过）+ CRLF
+ok "$(recon_parse_lake_csv "$(printf 'zos_rb,s3\r\n42,1\r\n')")" "42 1"
+
+# K) 只有表头（duckdb 没吐数据行）⇒ 非零：比空气也算过 = 红
+recon_parse_lake_csv 'n_rows,n_batches' >/dev/null 2>&1; ok "$?" "1"
+
+# L) 纯垃圾 ⇒ 非零
+recon_parse_lake_csv 'oops' >/dev/null 2>&1; ok "$?" "1"
+
+# M) recon_hour_open（墙钟可注入——同 tick_windows 的纯函数手法）
+recon_hour_open 2026-09-27 23 '2026-09-28 14:05' >/dev/null; ok "$?" "1"   # bizday 非今天 ⇒ 全天已闭
+recon_hour_open 2026-09-28 14 '2026-09-28 14:05' >/dev/null; ok "$?" "0"   # 当前小时未闭窗
+recon_hour_open 2026-09-28 13 '2026-09-28 14:05' >/dev/null; ok "$?" "1"   # 整点已过 ⇒ 已闭
+recon_hour_open 2026-09-28 00 '2026-09-28 00:30' >/dev/null; ok "$?" "0"   # 00 档在 01 点前未闭
+
+# N) recon_gateway_rows（stub recon_gw_page 控制成败——测翻页/停止/判红逻辑，不测网关本身）
+recon_gw_page() { case "$1" in 1) echo 100;; 2) echo 50;; *) echo 0;; esac; }
+ok "$(recon_gateway_rows 2026-09-27 17)" "150"          # 翻到第 3 页空页止
+recon_gw_page() { echo 0; }
+ok "$(recon_gateway_rows 2026-09-27 03)" "0"            # 首页即空（两边 0 行 = 全等）
+recon_gw_page() { echo 200; }
+out=$(recon_gateway_rows 2026-09-27 19 2>&1); rc=$?
+ok "$rc" "1"
+case "$out" in *RECON_FAILED:gateway*) pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 末页仍满应打 RECON_FAILED:gateway";; esac
+recon_gw_page() { case "$1" in 1) echo 100;; *) echo "RECON_GW_SHAPE: x" >&2; return 1;; esac; }
+out=$(recon_gateway_rows 2026-09-27 17 2>&1); rc=$?
+ok "$rc" "1"
+case "$out" in *"第 2 页"*) pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 中途取页失败应点名页号：$(printf '%s' "$out" | head -c 120)";; esac
+
+# O) recon_verdict：全等 ⇒ RECON_OK；rows / batches 任一破 ⇒ 各自字面量 + 非零
+out=$(recon_verdict 150 1 150 2026-09-27 17 2>&1); rc=$?
+ok "$rc" "0"
+ok "$(printf '%s' "$out" | tail -1)" "RECON_OK hour=17 rows=150 batches=1"
+out=$(recon_verdict 149 1 150 2026-09-27 17 2>&1); rc=$?
+ok "$rc" "1"
+case "$out" in *RECON_FAILED:rows*) pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 行数不等应打 RECON_FAILED:rows";; esac
+out=$(recon_verdict 150 2 150 2026-09-27 17 2>&1); rc=$?
+ok "$rc" "1"
+case "$out" in *RECON_FAILED:batches*) pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: batch 不止一个应打 RECON_FAILED:batches";; esac
+out=$(recon_verdict 149 2 150 2026-09-27 17 2>&1); rc=$?
+ok "$rc" "1"
+if printf '%s' "$out" | grep -q 'RECON_FAILED:rows' && printf '%s' "$out" | grep -q 'RECON_FAILED:batches'; then pass=$((pass+1)); else fail=$((fail+1)); echo "  FAIL: 两条判据都破应两条都打"; fi
+
+# P) recon_gw_page 的真计数逻辑（订单数 → 明细行数的单位换算）：curl 用假件顶掉
+eval "$_gw_real"   # 还原真函数体（N 段的 stub 已完成使命）
+RBIN2=$(mktemp -d)
+cat > "$RBIN2/curl" <<'EOF'
+#!/bin/sh
+out=''; prev=''
+for a in "$@"; do
+  [ "$prev" = "-o" ] && out="$a"
+  prev="$a"
+done
+[ -n "${CURL_FIXTURE:-}" ] && cat "$CURL_FIXTURE" > "$out"
+echo "${CURL_CODE:-200}"
+EOF
+chmod +x "$RBIN2/curl"
+PATH="$RBIN2:$PATH"; export PATH
+LEMENG_TOKEN=recon-tok; BRANCH_NUMS='[1,99]'; export LEMENG_TOKEN BRANCH_NUMS
+FX=$(mktemp -d)
+printf '%s' '{"result":[{"order_no":"a","pos_order_details":[{},{},{}]},{"order_no":"b","pos_order_details":[{},{}]}]}' > "$FX/p5.json"
+printf '%s' '{"result":[{"order_no":"a","pos_order_details":"[{},{},{},{}]"}]}' > "$FX/pstr.json"
+printf '%s' '{"result":[{"order_no":"a"},{"order_no":"b","pos_order_details":[{}]}]}' > "$FX/pmiss.json"
+printf '%s' '{"result":[]}' > "$FX/pempty.json"
+printf '%s' '{"error":"boom"}' > "$FX/pbad.json"
+CURL_FIXTURE="$FX/p5.json"; export CURL_FIXTURE
+ok "$(recon_gw_page 1 2026-09-27 17)" "5"                    # 3+2 条明细
+CURL_FIXTURE="$FX/pstr.json"
+ok "$(recon_gw_page 1 2026-09-27 17)" "4"                    # JSON 字符串形态也按明细条数
+CURL_FIXTURE="$FX/pmiss.json"
+ok "$(recon_gw_page 1 2026-09-27 17)" "1"                    # 缺明细字段贡献 0 行
+CURL_FIXTURE="$FX/pempty.json"
+ok "$(recon_gw_page 1 2026-09-27 17)" "0"                    # 空页 = 翻尽信号
+CURL_FIXTURE="$FX/pbad.json"
+out=$(recon_gw_page 1 2026-09-27 17 2>&1); rc=$?
+ok "$rc" "1"
+case "$out" in *RECON_GW_SHAPE*) pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 形状不对应打 RECON_GW_SHAPE";; esac
+CURL_CODE=500; export CURL_CODE
+out=$(recon_gw_page 1 2026-09-27 17 2>&1); rc=$?
+ok "$rc" "1"
+case "$out" in *"HTTP 500"*) pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: HTTP 非 200 应点名状态码";; esac
+unset CURL_CODE
+rm -rf "$RBIN2" "$FX"
+
 kill "$SRV" 2>/dev/null; rm -rf "$FAKE"
-echo "compose-shim+notify+retry: pass=$pass fail=$fail"
+echo "compose-shim+notify+retry+tick+recon: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ] || exit 1
 echo "compose-shim: OK"
