@@ -99,13 +99,14 @@
     "     但 object 资产的时钟**端到端没在生产验过** ⇒ 切流前按 ⑤ 自检确认：seed + 重建 catalog +",
     "     成功跑一次 L0 之后，freshness.json 里该资产必须**出现且非 unknown**。若它恒 Stale 而 L0 确在",
     "     成功跑，则回落方案 = 给 L0 加运行记录节点（`code.sql` 出单行汇总 → `snk.csv` 覆盖写）",
-    "     ——**先验再切**，别带着未验的锚切流。"
+    "     ——**先验再切**，别带着未验的锚切流。",
+    "⑨【2026-09-28 Wave A 新鲜度锚换点：item 面改锚**湖对象**（与 ⑧ 的 branch 同形）】\n   · 改前：`/workspace/logs/dim-item-run.csv` 是**薄管线** `lemeng.dim.item.run` 的 `snk.csv` 运行记录\n     （catalog kind=file）。薄壳停跑后它不再被写 ⇒ 留着就是**永久 Stale**。\n   · 新锚（本次替换）：L0 管线 `lemeng.dim.item.l0` 的 `snk.minio` 目标，catalog 里 kind=**object**，\n     id = `minio://${ENV:ZOS_BUCKET}/lemeng/dim_item/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/all.parquet`。\n     匹配 glob `minio://*/lemeng/dim_item/system_book=*/snapshot=*/all.parquet`——**本机 `duckle catalog owners`\n     实测匹配通过**（同 ⑧ 的复核手法，不靠猜）。阈值 36h，公式同 ③（日频 24h + 12h 余量；item 调度 UTC 11:00）。\n   · ⚠️ **与 ⑧ 的做法有一处刻意不同，记在这里**：branch 当年是「**过渡期两条规则并存**（薄壳 CSV + L0 湖对象），\n     到切流那一批才删 CSV」；本次按 Wave A 计划「**观测面同批**」**一次做完**（删 CSV + 挂新锚）。\n     代价：若切流延后，**过渡期里「薄壳 item 是否还在按日写」不再有独立告警**——只有新锚那条在把 L0 的关。\n     判据取舍：新旧两条锚**指向同一件事**（item 面当天采集是否发生），并行期两条并存会让「L0 已挂但手动触发\n     ⇒ 36h 无写 ⇒ Stale」与「薄壳正常」同时成立、读数互相打架（⑧ 已记载 branch 过渡期会出现这个**预期读数**）。\n     ⇒ 本批选**单锚**：以 **L0 湖对象**为准（切流后它就是唯一真相）。若切流延后于本批交付，这是**已知观测缺口**。\n   · ⚠️ **未验项（同 ⑧ 如实带走）**：object 资产的时钟**端到端仍未在生产验过** ⇒ 切流前按 ⑤ 自检确认：\n     seed + 重建 catalog + 成功跑一次 L0 之后，`freshness.json` 里该资产必须**出现且非 unknown**。"
   ],
   "assets": [
     {
-      "match": "/workspace/logs/dim-item-run.csv",
+      "match": "minio://*/lemeng/dim_item/system_book=*/snapshot=*/all.parquet",
       "owner": "data-eng",
-      "description": "商品维每日采集的成功凭证（薄管线 lemeng.dim.item.run 的 run record sink；写入=当天采集成功）",
+      "description": "商品维每日采集的成功凭证（L0 管线 lemeng.dim.item.l0 的 snk.minio 目标；写入=当天采集成功）。⚠️ 换锚理由与过渡期取舍见 ⑨；占位符不展开是**正常**的（见 ⑧）；该资产时钟只在**重建 catalog 之后**的成功 run 上起算",
       "tags": [
         "lemeng",
         "dim"

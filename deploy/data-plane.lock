@@ -1,4 +1,4 @@
-sha256-of-rest 67d07945b5930073e6eb48523c42bcac52324f4ca277880e76d4aba053ba932e
+sha256-of-rest 38440d157926d8d0c63c0a27477b99b514d91d2c6a871303dd8feb453f06e6e3
 d76cda3f506128316019928fe02a4458a230880368b55cf788395cc996024eb2 dbt/README.md ${REPO}/dbt/README.md 0644
 cc1d78b5c825d5902d22be9b17fbabdc0833afb3c25912e392f8765004a76776 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -25,9 +25,10 @@ d43c40d2e1dd6c80db95782f3a7481028472868c77a2df31a46296fcfd908860 dbt/tests/audit
 8679ed09c1ac5c65194c59fb2044e9edb2b7e5266ce08af4e08bd90bd4c70f6d deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
 c1b82232a31a6cdb199f7a5f0a6456ec11c188467fa0e9596a9fd820e86988a6 deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
 2fe9d55e370c7c1aa35d876eeb225b7a9d4583115ee22cafe464ddb37c794bc3 deploy/duckle/console/alerts.json ${REPO}/deploy/duckle/console/alerts.json 0644
-81816838f569685bf2d507df46f78b05bfefe96e24b265803b8291e4f0390e1a deploy/duckle/console/owners.json ${REPO}/deploy/duckle/console/owners.json 0644
+2a3f0814b2808d99da6987cd0145c6be7037871b5bac98edb9ea64fd7b243b75 deploy/duckle/console/owners.json ${REPO}/deploy/duckle/console/owners.json 0644
 70f4eea18187b50fed5144aac7e8fb7c5e644983a42063cc91ae00580d8a6a03 deploy/duckle/console/pipelines/lemeng.dim.branch.l0.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.branch.l0.json 0644
 ee2b88c4099066c164bcb6cba5e765fe6ac08ee6ef4c1cc8f9d51aff52923348 deploy/duckle/console/pipelines/lemeng.dim.branch.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.branch.run.json 0644
+f27414725b75d8f8764645e7366c45ad8da85a836106656f7490c45370b0d968 deploy/duckle/console/pipelines/lemeng.dim.item.l0.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item.l0.json 0644
 f735fee86b2daac945a25717a907b07d7e50fcfc0202c96f4b08a701f1ffb87f deploy/duckle/console/pipelines/lemeng.dim.item.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item.run.json 0644
 ff747107af2e06a397b22f388e2436c90b7cddbfe2d1736b1e7ee2ed97b31d45 deploy/duckle/console/pipelines/lemeng.retail.close.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.close.run.json 0644
 f7a5bc18f39207a0f49e06467a25d5afa771b576508fa23a776ca3458923a5b6 deploy/duckle/console/pipelines/lemeng.retail.tick.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.tick.run.json 0644
