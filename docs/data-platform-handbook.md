@@ -176,6 +176,37 @@
 **⑥ 上生产后的观测**：用 `/api/run/async` + `/api/run/status`、`/metrics`、`runs`、`alerts.json`
 （规则 + 冷却 + 恢复通知）；**别再自己起容器解析 stdout**。
 
+**⑥a 手动触发口径（console HTTP 面；2026-09-27 实测 + v0.7.3 源码注）**：手动跑生产管线一律走
+console 的 HTTP API（容器内 curl `127.0.0.1:18080`，Bearer=`DUCKLE_TOKEN`——entrypoint 翻译来的键，
+**不回显值**；端口实测 `duckle serve --host 0.0.0.0 --port 18080`）。「实测」= 当日 console-3120 用
+`lemeng.dim.branch.run` 真触发（幂等维度面）；行号 = `source-analysis/duckle`（v0.7.3）。
+
+- **提交**：`POST /api/run/async`，body `{"file":"pipelines/<id>.json","params":{…}}`——`file` 必填、
+  workspace 相对路径，`params` 可选供 `${...}` 占位符，需 operator 角色（源码 serve.rs:2650-2660；
+  上游 `docs/current/ci-and-orchestration.md` 同形）→ **202 + `runId`**（2026-09-27 实测；body 的
+  `status:"queued"` 只是受理回执，**不是运行态**）。
+- **轮询**：`GET /api/run/status?runId=`。**等并发闸门的 run 也报 `state:"running"`**——`running` 集合
+  在执行体**入口**登记、早于闸门（源码 serve.rs:3965-3968 登记先于 4056 取闸），且响应**无 `queue_ms`**
+  ⇒ **排队证据读 receipt**：`<workspace>/runs/receipts/<runId>.json` 的 `queueMs`（源码 serve.rs:4057；
+  实测 queueMs:0、逐节点 durationMs 在 receipt、整 run `durationMs` 在 status 的 `result`——实测 6464ms）。
+- **判绿红必读 body 的 `status`，别信 HTTP 状态码**：**失败/取消也是 200**（实测：cancelled run 全程 200；
+  同步口 `POST /api/run` 跑而失败同样 `respond_json` 200——源码 serve.rs:2635-2645）。`status` ∈
+  `ok`/`error`/`cancelled`；**404 只代表 runId 不存在**。
+- **取消**：`DELETE /api/run?runId=` → 200 `{"cancelling":true}`，终态 `status:"cancelled"`（实测）。
+  ⚠️ **cancel 只杀薄管线的外层 shell 节点**——内层引擎是 shim 直调的子进程，成**孤儿继续跑完并写湖**
+  （实测：cancel 后 run 2.1s 即终态 cancelled、receipt `nodes:{}`，湖 `snapshot=` 分区却出现**该 run 的
+  batch_id** 且行数完整）⇒ **取消 ≠ 数据面急停**；取消后湖被覆盖是预期，别误读成「没取消掉」。
+- **同管线冲突 409**：调度 / HTTP / CLI **三路同锁**（`claim_for_run` 在 202 前申请——源码 serve.rs:2673；
+  CLI 裸跑同锁 main.rs:515/916），**但只在同 workspace 内互斥**：锁文件是
+  `<workspace>/.duckle/locks/<pipeline>.lock`（源码 runlock.rs:82-83）⇒ **跨卷不互斥**（job 侧
+  `platform-core-data_duckle-workspace` 与 console 侧
+  `openship-platform-core-shanhai-data-lemeng-console-3120-ws` 两卷同机并存，2026-09-27 实测）；
+  **桌面手 Run 不在此锁内**（⑤1——**别在桌面触发生产管线**）。409 body 自带处置文案（实测：
+  「…is already running in this workspace, so this run was refused rather than started beside it…」）。
+- **验收尾巴**：手动跑完照 §1.4 回读湖分区（实测：`snapshot=2026-09-27` 270 行 / **1** 个 batch_id /
+  batch 已换成该 run 的）——console 容器内 `/etc/openobserve-ingest.env` 缺失 ⇒ `_ops` 观测行走
+  **#210 已知缺口**（OPS_SINK=DISABLED），别拿「OO 没数据」当失败判据。
+
 **⑦ 待裁决（无案例不立标准）**：把采集从「shell 算窗口 + 固定分页」迁到引擎原生的
 `src.rest`（分页 + 请求侧增量）与水位状态 —— 它与「采集调度迁 duckle 自带调度器」（§1.1.4）
 是**同一批决定**；候选、风险与实测代价见 §1.3.3 与分析件。
