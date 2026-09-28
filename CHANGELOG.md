@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.42.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.41.0...v0.42.0) - 2026-09-28
+- 【新增】lemeng: tick 对账口径 recon 模式与正典同步 (#260) ([#284](https://github.com/MYTech-Co-LTD/platform-core/pull/284), [5420bdb](https://github.com/MYTech-Co-LTD/platform-core/commit/5420bdbe8a5b8c0f385e970f71d1372f88783d3f))
+
+
 ## [0.41.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.40.0...v0.41.0) - 2026-09-28
 - 【新增】duckle: 零售 tick 告警与新鲜度规则（192/天级重推导） (#260) ([#283](https://github.com/MYTech-Co-LTD/platform-core/pull/283), [bf0d960](https://github.com/MYTech-Co-LTD/platform-core/commit/bf0d9608ce6737e6e72979680989ea38a6413257))
 
