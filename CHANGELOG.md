@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.42.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.42.0...v0.42.1) - 2026-09-28
+- 【修复】lemeng: authoring-ws REPO_ROOT 上跳两层——裸调不再误报未知账套 (#289) ([#290](https://github.com/MYTech-Co-LTD/platform-core/pull/290), [5711c18](https://github.com/MYTech-Co-LTD/platform-core/commit/5711c18661f89a63b56524b8e984c1491e738a8d))
+
+
 ## [0.42.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.41.0...v0.42.0) - 2026-09-28
 - 【新增】lemeng: tick 对账口径 recon 模式与正典同步 (#260) ([#284](https://github.com/MYTech-Co-LTD/platform-core/pull/284), [5420bdb](https://github.com/MYTech-Co-LTD/platform-core/commit/5420bdbe8a5b8c0f385e970f71d1372f88783d3f))
 
