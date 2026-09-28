@@ -356,11 +356,16 @@ export async function getDashboardFull(deps: MetabaseDeps, dashboardId: number):
   }
   const dashcards = rec.dashcards.map((dc): DashcardRef => {
     const d = dc as Record<string, unknown> | null
-    if (typeof d?.id !== 'number' || typeof d.card_id !== 'number') throw new MetabaseError(200, SHAPE_ERROR)
-    // ⚠️ `card_id` 允许 null：Metabase 的**文本/虚拟卡**就是 null（实测），而"人会往报表上
-    //    加东西"正是本设计的前提 ⇒ 对 null 抛错会让那张报表的发布**恒 502**。
+    if (typeof d?.id !== 'number') throw new MetabaseError(200, SHAPE_ERROR)
+    // ⚠️ `card_id` 的三种情况要分开：
+    //    · `number` = 真卡
+    //    · `null`   = **Metabase 的文本/虚拟卡**（实测 `type=NoneType`）⇒ 必须允许，
+    //                 否则人一加文本卡，那张报表的发布就**恒 502**
+    //    · **缺键** = 形状不认识 ⇒ **仍抛**（别容忍成 null）：把缺键回写成 null 会把**真卡改成
+    //                 文本卡**，那是**静默改写**，比响亮 502 更坏
     const cid = d.card_id
-    if (cid !== null && cid !== undefined && typeof cid !== 'number') throw new MetabaseError(200, SHAPE_ERROR)
+    if (cid === undefined) throw new MetabaseError(200, SHAPE_ERROR)
+    if (cid !== null && typeof cid !== 'number') throw new MetabaseError(200, SHAPE_ERROR)
     const pm = d.parameter_mappings
     return {
       id: d.id,
@@ -602,6 +607,8 @@ export async function readDashboardContent(
   const cardSqlDigests: Record<number, string> = {}
   const seen = new Set<number>()
   for (const dc of full.dashcards) {
+    // ⚠️ 文本/虚拟卡没有 card ⇒ 没有模板标签也没有 SQL 可摘要。**跳过**（而不是当 id=null 去查）。
+    if (dc.cardId === null) continue
     if (seen.has(dc.cardId)) continue
     seen.add(dc.cardId)
     const tags = await getCardTemplateTags(deps, dc.cardId)
@@ -627,7 +634,7 @@ export async function readDashboardContent(
 
 ```ts
     const [tags, sql] = await Promise.all([
-      getCardTemplateTags(deps, dc.cardId),
+      getCardTemplateTags(deps, dc.cardId),   // 循环开头已 `if (dc.cardId === null) continue`
       getCardSql(deps, dc.cardId),
     ])
     cardTags[dc.cardId] = tags
