@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.39.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.38.0...v0.39.0) - 2026-09-28
+- 【新增】duckle: 零售 5min tick/close 管线与调度定义（3120 试点、64188 备用） (#260) ([#281](https://github.com/MYTech-Co-LTD/platform-core/pull/281), [20e1513](https://github.com/MYTech-Co-LTD/platform-core/commit/20e15137c49a5de5daa29fcd945aa981c0e82545))
+
+
 ## [0.38.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.37.1...v0.38.0) - 2026-09-28
 - 【新增】duckle: 3120 零售调度切 console 正典落账 + W2 计划/手动触发口径 ([#279](https://github.com/MYTech-Co-LTD/platform-core/pull/279), [09092ea](https://github.com/MYTech-Co-LTD/platform-core/commit/09092ea5ac732cf8111ae59712c9943c45bb004c))
 
