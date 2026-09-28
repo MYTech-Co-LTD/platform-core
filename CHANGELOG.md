@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.41.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.40.0...v0.41.0) - 2026-09-28
+- 【新增】duckle: 零售 tick 告警与新鲜度规则（192/天级重推导） (#260) ([#283](https://github.com/MYTech-Co-LTD/platform-core/pull/283), [bf0d960](https://github.com/MYTech-Co-LTD/platform-core/commit/bf0d9608ce6737e6e72979680989ea38a6413257))
+
+
 ## [0.40.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.39.0...v0.40.0) - 2026-09-28
 - 【新增】lemeng: 零售日采集 wrapper 新增 tick 模式（当日增量+闭窗尾款） (#260) ([#282](https://github.com/MYTech-Co-LTD/platform-core/pull/282), [fa5795a](https://github.com/MYTech-Co-LTD/platform-core/commit/fa5795a206efc41368a74de9785a0bbe33851c4d))
 
