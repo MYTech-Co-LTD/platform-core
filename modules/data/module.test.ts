@@ -77,4 +77,24 @@ describePg('迁移（需要 DATABASE_URL）', () => {
     )
     expect(u.rows.map((r) => r.indexdef).some((d) => /[(]token_hash[)]/.test(d))).toBe(true)
   })
+
+  it('004：data.reports.renderer 列存在、非空、且取值域含 metabase/platform', async () => {
+    await applyMigrations(pool)
+    // 判据面：列存在且 not null（default 值不在此断言——列已存在时 add column 整句 no-op，
+    // 重读 default 会假红）
+    const c = await pool.query(
+      `select column_name, is_nullable from information_schema.columns
+        where table_schema = 'data' and table_name = 'reports' and column_name = 'renderer'`,
+    )
+    expect(c.rows).toEqual([{ column_name: 'renderer', is_nullable: 'NO' }])
+
+    // 取值域由 check 约束兜（与 003 的 source 同一口径：枚举写错一个字母会走另一条渲染路径）
+    const k = await pool.query(
+      `select pg_get_constraintdef(oid) as def from pg_constraint
+        where conname = 'data_reports_renderer_check'`,
+    )
+    expect(k.rowCount).toBe(1)
+    expect(k.rows[0].def).toContain('metabase')
+    expect(k.rows[0].def).toContain('platform')
+  })
 })
