@@ -496,6 +496,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 排班没触发 / console 本身有问题 | **经 openship MCP** 读该 console 服务的日志（数据面 project → 服务 → 日志端点）——正常应是**四行**：console on / workspace / DuckDB / **sign-in required**。⚠️ **别裸 SSH 上机敲 `docker logs`**（根本法则·唯一通道；console 是 openship 管的服务，日志走 MCP 拿得到） |
 | 跑了但失败 | `schedules.json` 的 `last_run_status` / `last_run_error`；以及该账套卷里 `logs/*.csv`（薄管线的运行记录，含 wrapper 完整 stdout）。⚠️ 这两样在**容器/卷里**，同样**经 MCP 的容器内执行端点**读，**不要上机** |
 | ⚠️ **`/api/schedules` 的 GET 不回运行状态** | 文件里已有 `last_run_at`，GET 却恒 `null` ⇒ **别信那个 GET**，读 `schedules.json` 或 serve 日志 |
+| ⚠️ **回执账里的 `run-manual-*` ≠ 有人手点** | 薄管线班的**内层引擎直调**（wrapper「起引擎退化成直接调用」）共享同一 workspace 回执账，CLI 直调一律标 `trigger=manual`——识别法：数量恰=时窗数、逐窗时刻与外层 `run-scheduled-*` 的窗口推进对齐（2026-09-28 首跑验收实测，差点当入侵查） |
 | 自证没过（`ASSERT_FAIL:` / `DIM_FAILED`） | **拒写湖是正确行为**（#205），**不是故障** |
 | 容量撞顶 | 末页哨兵命中 ⇒ **fail-loud 不丢数**。**余量按阈值算，不按「页数 × 容量」算**——哨兵页占一页，真实阈值 = (页数 − 1) × 页容量 |
 | 漂移 | 先看**声明是否存在**：`drift` 在「源未声明 schema」时**静默 `exit 0`（假绿）** ⇒ 门禁必须先断言「声明存在」，再判 drift 结论 |
