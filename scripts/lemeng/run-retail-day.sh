@@ -5,6 +5,8 @@
 #   sh run-retail-day.sh probe                     # 环境/桶/容器/token 闸 体检（只打印长度与状态码）
 #   sh run-retail-day.sh window 07 [suffix]        # 单时窗
 #   sh run-retail-day.sh windows                   # 昨日 24 时窗全量（逐窗尽力采；失败窗登记后继续，末尾统一判红）
+#   sh run-retail-day.sh tick [close]              # 当日增量（cur+prev 两窗，各覆盖写自己的 hour= 分区）；
+#                                                   #   close = 闭窗尾款（仅昨日 23 点档；北京 00:00 专用）
 #   sh run-retail-day.sh dim                       # 维度快照（DIM_FACE=branch|item，双账套全量）
 #   sh run-retail-day.sh listing                   # 当日对象清单（bizday 前缀；断言：非空 + 未截断 + 无 ${ENV 字面量）
 #   sh run-retail-day.sh rb "<duckdb SQL>"         # 容器内 duckdb httpfs 回读（值由容器 env 展开）
@@ -26,6 +28,8 @@
 #            「一窗失败即停」= 失败点之后的窗口当天永久缺失，见 #209）；失败窗逐一登记，
 #            **末尾** `WINDOWS_FAILED hours:…` + 非零退出（红灯照旧，只是不再拿覆盖率换安静）。
 #            连续 `WINDOWS_MAX_CONSEC` 窗失败 ⇒ `WINDOWS_ABORT` 中止（网关不可用时不空转撞超时）。
+#   tick：逐窗尽力 + 末尾统一判红（`TICK_FAILED hours:…` + 非零），但**单 tick 内不自动重试**——
+#         每 5 分钟下一 tick 覆盖写同两窗，天然即重试（与 windows 的**有意差异**，见 tick 分支注释）。
 #   identity：凭据/清单与账套错配、或 whoami 重试 3 次仍不可达 ⇒ 非零。**身份未证绝不写湖**
 #             （`windows` / `window` 在开跑前自证；见 identity_assert 的注释说为什么必须有）。
 #   dim：快照日不可用（`SNAPSHOT_DERIVE_FAILED:`）/ DIM_FACE 非法（`DIM_FACE_INVALID:`）/
@@ -60,7 +64,8 @@
 #           默认 2 / 60。wrapper **自带**重试（不再依赖 job 的 retry）；设 ATTEMPTS=0 整关。只重试失败的窗，不整轮重跑。
 #           LEMENG_AGI_URL —— whoami 自证端点，默认 `https://cloud.nhsoft.cn/agi/mcp`（#205 启动自证用）。
 #           只用于换网关/本机演练；默认值即生产网关。
-# 失败字面量（可 grep）：WINDOWS_FAILED hours:（末尾汇总，非零）/ WINDOWS_ABORT（连续失败中止）/
+# 失败字面量（可 grep）：WINDOWS_FAILED hours:（末尾汇总，非零）/ TICK_FAILED hours:（tick 末尾汇总，非零）/
+#           WINDOWS_ABORT（连续失败中止）/
 #           WINDOWS_RETRY hours:（重试批次开跑）/ WINDOWS_RETRY_OK（重试后补齐）/ WINDOWS_RETRY_FAILED（重试后仍缺）/
 #           WINDOW_FAILED hour=（单窗失败，仍继续）/ WINDOWS_IDENTITY_FAILED（自证未过）/
 #           BIZDAY_DERIVE_FAILED:（营业日不可用，exit 3）/ OPS_ROWS_UNPARSED: /
@@ -298,9 +303,11 @@ ops_ship() { # $1=一行 _ops JSON → 投递；**任何情况下都返回 0**�
   return 0
 }
 
-ops_emit() { # $1=hour $2=rows(number|null) $3=status → stdout 一行 + 投递
-  j=$(printf '{"ts":"%s","job":"retail-day","system_book":"%s","bizday":"%s","hour":"%s","rows":%s,"status":"%s"}' \
-      "$(date -u +%FT%TZ)" "$SYSTEM_BOOK" "$BIZDAY" "$1" "$2" "$3")
+ops_emit() { # $1=hour $2=rows(number|null) $3=status [$4=job 缺省 retail-day] → stdout 一行 + 投递
+  # job 取第 4 参（缺省 retail-day ⇒ 既有 window/windows 调用点不改，存量观测行逐字不变；
+  # tick 模式传 retail-tick，#260）。
+  j=$(printf '{"ts":"%s","job":"%s","system_book":"%s","bizday":"%s","hour":"%s","rows":%s,"status":"%s"}' \
+      "$(date -u +%FT%TZ)" "${4:-retail-day}" "$SYSTEM_BOOK" "$BIZDAY" "$1" "$2" "$3")
   printf '%s\n' "$j"
   ops_ship "$j"
 }
@@ -478,6 +485,79 @@ retry_failed_windows() {
   return 0
 }
 
+# ── 单窗管线调用体（原 `window` case 分支的调用体原样抽出；`tick` 模式复用，#260）────
+run_window_window() { # $1=bizday $2=hour $3=suffix $4=ops_job(缺省 retail-day) → 沿用原 case 分支的退出码语义
+  # 与原 window 分支逐字同体，仅三处取自参数：
+  #   BIZDAY="$1"（命令前缀赋值 + -e BIZDAY="$1"）、HOUR/HOUR_FROM/HOUR_TO 用 "$2" 推、
+  #   ops_emit 的 job 字段取 "$4"（缺省 retail-day；tick 传 retail-tick）
+  # BIZDAY/H/SUF 在此重绑（POSIX sh 无 local）：ops_emit 读的就是全局 BIZDAY，而 tick 的
+  # cur/prev 两窗可各自落在不同 bizday（跨日边界）⇒ 不重绑会把 prev 窗的 _ops 行记到错的营业日。
+  # 末尾把原分支的 `exit "$rc"` 换成 `return`：tick 循环里单窗失败要**登记后续跑**，不能整进程退出；
+  # 对 `window` 调用方，case 分支末条命令即本函数 ⇒ 进程退出码仍逐字等于原语义。
+  BIZDAY="$1"; H="$2"; SUF="${3:-}"
+  BATCH_ID="${BATCH_ID_OVERRIDE:-retail-${SYSTEM_BOOK}-$(date -u +%Y%m%dT%H%M%SZ)-${H}${SUF}}"
+  out=$(BIZDAY="$1" $COMPOSE run --rm \
+    -e LEMENG_TOKEN -e DUCKLE_TOKEN -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
+    -e BIZDAY="$1" -e HOUR="$H" -e HOUR_FROM="$H:00:00" -e HOUR_TO="$H:59:59" \
+    -e BRANCH_NUMS -e SYSTEM_BOOK -e BATCH_ID="$BATCH_ID" \
+    duckle --pipeline "$PIPELINE" --workspace /workspace --duckdb "$(duckdb_bin)" --log-dir "$LOG_ROOT/${H}${SUF}" 2>&1)
+  rc=$?
+  status=$(printf '%s' "$out" | grep -oiE 'status[: ]+[a-z]+' | head -1)
+  sink=$(printf '%s' "$out" | grep -iE 'sink' | tail -1)
+  printf 'window hour=%s exit=%s %s\n' "$H" "$rc" "${status:-status:NONE}"
+  printf '%s\n' "$out" | tail -14
+  # _ops 行**在判红之前**发出：失败窗也要在观测面留痕（rows=null 而非 0——0 会被误读成「跑了但没数据」）
+  st=$(printf '%s' "$status" | sed 's/^status[: ]*//'); [ -n "$st" ] || st=NONE
+  # 取不到 sink 行**必须可观测**：否则 `rows:null + status:ok` 与「该窗确实没有 sink 行」不可区分，
+  # 将来 sink 节点改名 / 状态词离开 [a-z]+ / 多出一条同形行，都会让本任务唯一要交付的指标
+  # 无声消失（exit 0、无独特字面量可 grep）。故失败时发一条与 LISTING_FAILED:/ASSERT_FAIL: 同族的字面量。
+  if sink_rows=$(ops_sink_rows "$out"); then
+    ops_emit "$H" "$sink_rows" "$st" "${4:-retail-day}"
+  else
+    printf 'OPS_ROWS_UNPARSED: 未能唯一定位本窗 sink 节点行（改名/状态词变化/多条同形行）⇒ rows 记 null；此处即「指标缺失」的可见处\n'
+    ops_emit "$H" "null" "$st" "${4:-retail-day}"
+  fi
+  if [ "$rc" -ne 0 ]; then return "$rc"; fi
+  return 0
+}
+
+# ── tick 窗口推导（#260：当日增量 + 闭窗尾款；本计划唯一新逻辑，纯函数可抽出测试）────
+tick_windows() { # $1=模拟 CST 墙钟 "YYYY-MM-DD HH:MM"（空=真 now）；$2=""|close → stdout: "bizday,hour" 对（cur 在前 prev 在后）
+  # 纯函数：墙钟一律取 $1（可测），不直接读系统钟。
+  #   d=墙钟日期、dy=昨日（复用脚本既有 GNU/BSD 双回退推导）、h=墙钟钟点。
+  #   钟点防八进制：计划原稿写 `10#` 记法，但 dash 实测不支持 `$((10#08))`（Debian 容器与
+  #   宿主 /bin/sh 皆是 dash，撞上即致命算术错）⇒ 改为剥单个前导零（"08"→"8"、"00"→"0"），效果等同。
+  #   分派：
+  #     h=0  → 只输出 "$dy,23"                              # 闭窗 tick：补昨日 23 点档
+  #     h=1  → "$1的日期,01" "$1的日期,00"                   # 00 点档同日
+  #     其他 → "$1的日期,$h" "$1的日期,printf %02d $((h-1))"
+  #   close 形态只输出 prev 对（cur 留给次日开市 tick——营业时段外无 cur 可采）
+  _tw_now=${1:-$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')}
+  _tw_d=${_tw_now%% *}
+  # 昨日：GNU 先试、BSD 回退（同 BIZDAY 的双回退模式；解析**给定日期**须加 -j——否则 BSD date
+  # 会去设系统时钟，而只调当前时间的 -v-1d 形态（BIZDAY 用）没这个问题）。跨月/跨年由 date 自己算。
+  _tw_dy=$(TZ=Asia/Shanghai date -d "$_tw_d 1 day ago" +%Y-%m-%d 2>/dev/null) || _tw_dy=''
+  [ -n "$_tw_dy" ] || _tw_dy=$(TZ=Asia/Shanghai date -j -v-1d -f '%Y-%m-%d' "$_tw_d" +%Y-%m-%d 2>/dev/null) || _tw_dy=''
+  _tw_h=${_tw_now##* }              # "HH:MM"
+  _tw_h=${_tw_h%%:*}                # "HH"（可能带前导 0）
+  _tw_h=$(( ${_tw_h#0} ))           # 钟点；剥单个前导零（"08"→"8"、"00"→"0"）防 08/09 八进制，见上
+  case "${2:-}" in
+    close) # 闭窗补采：只输出 prev 对
+      case "$_tw_h" in
+        0) printf '%s\n' "$_tw_dy,23" ;;
+        *) printf '%s,%02d\n' "$_tw_d" "$((_tw_h - 1))" ;;
+      esac
+      ;;
+    '') # 常规 tick：cur（当前小时至今）在前、prev（上一小时闭窗尾款）在后
+      case "$_tw_h" in
+        0) printf '%s\n' "$_tw_dy,23" ;;          # 北京 00:00：营业时段外，只有昨日 23 点档可补
+        1) printf '%s\n' "$_tw_d,01 $_tw_d,00" ;; # 00 点档同日
+        *) printf '%s,%02d %s,%02d\n' "$_tw_d" "$_tw_h" "$_tw_d" "$((_tw_h - 1))" ;;
+      esac
+      ;;
+  esac
+}
+
 # EXIT trap：只在非零退出时告警；**保留原退出码**（别把判红变成绿）
 trap '_rc=$?; if [ "$_rc" -ne 0 ]; then notify_fail "$_rc"; fi; exit "$_rc"' EXIT
 
@@ -520,29 +600,9 @@ window)
     if [ "$irc" -ne 0 ]; then echo "WINDOW_FAILED identity 自证未过(exit=$irc)，拒绝写湖"; exit "$irc"; fi
     IDENTITY_CHECKED=1; export IDENTITY_CHECKED
   fi
-  BATCH_ID="${BATCH_ID_OVERRIDE:-retail-${SYSTEM_BOOK}-$(date -u +%Y%m%dT%H%M%SZ)-${H}${SUF}}"
-  out=$($COMPOSE run --rm \
-    -e LEMENG_TOKEN -e DUCKLE_TOKEN -e ZOS_BUCKET -e ZOS_ENDPOINT -e ZOS_REGION -e ZOS_ACCESS_KEY -e ZOS_SECRET_KEY \
-    -e BIZDAY="$BIZDAY" -e HOUR="$H" -e HOUR_FROM="$H:00:00" -e HOUR_TO="$H:59:59" \
-    -e BRANCH_NUMS -e SYSTEM_BOOK -e BATCH_ID="$BATCH_ID" \
-    duckle --pipeline "$PIPELINE" --workspace /workspace --duckdb "$(duckdb_bin)" --log-dir "$LOG_ROOT/${H}${SUF}" 2>&1)
-  rc=$?
-  status=$(printf '%s' "$out" | grep -oiE 'status[: ]+[a-z]+' | head -1)
-  sink=$(printf '%s' "$out" | grep -iE 'sink' | tail -1)
-  printf 'window hour=%s exit=%s %s\n' "$H" "$rc" "${status:-status:NONE}"
-  printf '%s\n' "$out" | tail -14
-  # _ops 行**在判红之前**发出：失败窗也要在观测面留痕（rows=null 而非 0——0 会被误读成「跑了但没数据」）
-  st=$(printf '%s' "$status" | sed 's/^status[: ]*//'); [ -n "$st" ] || st=NONE
-  # 取不到 sink 行**必须可观测**：否则 `rows:null + status:ok` 与「该窗确实没有 sink 行」不可区分，
-  # 将来 sink 节点改名 / 状态词离开 [a-z]+ / 多出一条同形行，都会让本任务唯一要交付的指标
-  # 无声消失（exit 0、无独特字面量可 grep）。故失败时发一条与 LISTING_FAILED:/ASSERT_FAIL: 同族的字面量。
-  if sink_rows=$(ops_sink_rows "$out"); then
-    ops_emit "$H" "$sink_rows" "$st"
-  else
-    printf 'OPS_ROWS_UNPARSED: 未能唯一定位本窗 sink 节点行（改名/状态词变化/多条同形行）⇒ rows 记 null；此处即「指标缺失」的可见处\n'
-    ops_emit "$H" "null" "$st"
-  fi
-  if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+  # 调用体已抽成 run_window_window（#260：tick 复用同一入口）。case 分支末条命令即本调用
+  # ⇒ 进程退出码逐字透传（含 rc=0 与原 `exit "$rc"` 两形态）。
+  run_window_window "$BIZDAY" "$H" "${SUF}"
   ;;
 windows)
   # 原实现（修「假绿」那轮）只让循环状态等于**最后一个窗**：中间某个 hour 失败只在日志里一行，
@@ -574,6 +634,27 @@ windows)
     exit 1
   fi
   echo "WINDOWS_ALL_OK 24/24 windows"
+  ;;
+tick)
+  # 语义：营业时段每 5 分钟由 console 调度触发；每 tick 查「当前小时至今 + 上一小时（闭窗尾款）」
+  # 两个时窗、各覆盖写自己的 hour= 分区（幂等口径见 #260 裁决评论：小时窗查询返回该小时至今
+  # 累计，覆盖写安全）。close 形态只在 UTC 16:00（北京 00:00）跑，只补昨日 23 点档尾款。
+  # 失败重试：**单 tick 内不做自动重试**——与 `windows` 模式的**有意差异**：windows 是日批、
+  # 无回溯重放，失败必须当轮自救（collect+retry）；tick 每 5 分钟一发，覆盖写幂等使
+  # 「下一 tick 即重试」（重查同两窗、覆盖写）天然成立，当轮重试只会在同一份网关数据上空转。
+  if [ "${IDENTITY_CHECKED:-}" != "1" ]; then
+    sh "$0" identity || exit $?   # 身份未证绝不碰网关（同 window）
+    IDENTITY_CHECKED=1; export IDENTITY_CHECKED
+  fi
+  pairs=$(tick_windows "" "${2:-}")
+  w_failed=""
+  for pair in $pairs; do
+    bd=${pair%%,*}; hr=${pair##*,}
+    if run_window_window "$bd" "$hr" "-t" retail-tick; then :; else w_failed="$w_failed $bd/$hr"; fi
+    # 每窗 _ops 行由 run_window_window 内既有 ops_emit 发出（job=retail-tick，含 bizday/hour）
+  done
+  [ -n "$w_failed" ] && { echo "TICK_FAILED hours:${w_failed# }"; exit 1; }
+  echo "TICK_OK $(echo $pairs | wc -w | tr -d ' ') windows"
   ;;
 dim)
   # 维度快照（spec §5 湖布局）：一次拉全账套的门店维 / 商品维，落 `snapshot=<日期>` 分区。
@@ -778,7 +859,7 @@ envfile)
   echo "envfile keys=$(cut -d= -f1 "$REPO/deploy/.env" | tr '\n' ',') mode=$(stat -c '%a' "$REPO/deploy/.env")"
   ;;
 *)
-  echo "usage: $0 <probe|identity|diag|window H [suffix]|windows|dim|listing|agg|branches|rb SQL|idem3 H|drift [H]|envfile>"
+  echo "usage: $0 <probe|identity|diag|window H [suffix]|windows|tick [close]|dim|listing|agg|branches|rb SQL|idem3 H|drift [H]|envfile>"
   echo "exit: 0=全项通过；非 0=有验证项失败（含 0 检查/清单截断/清单为空/残留 \${ENV 字面量/NOT_FOUND/取清单失败）"
   echo "dim: DIM_FACE=branch|item  sh $0 dim   （维度快照；SNAPSHOT 不传按上海今日）"
   echo "retired: 'idem' 恒 exit 2 —— 用 idem3（见文件头「已退役模式」）"
