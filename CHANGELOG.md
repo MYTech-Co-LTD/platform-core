@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.40.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.39.0...v0.40.0) - 2026-09-28
+- 【新增】lemeng: 零售日采集 wrapper 新增 tick 模式（当日增量+闭窗尾款） (#260) ([#282](https://github.com/MYTech-Co-LTD/platform-core/pull/282), [fa5795a](https://github.com/MYTech-Co-LTD/platform-core/commit/fa5795a206efc41368a74de9785a0bbe33851c4d))
+
+
 ## [0.39.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.38.0...v0.39.0) - 2026-09-28
 - 【新增】duckle: 零售 5min tick/close 管线与调度定义（3120 试点、64188 备用） (#260) ([#281](https://github.com/MYTech-Co-LTD/platform-core/pull/281), [20e1513](https://github.com/MYTech-Co-LTD/platform-core/commit/20e15137c49a5de5daa29fcd945aa981c0e82545))
 
