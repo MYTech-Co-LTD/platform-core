@@ -319,22 +319,28 @@ Expected: FAIL —— `putDashboardMerged is not a function`
 
 ```ts
 export interface DashcardRef {
-  id: number; cardId: number
+  id: number
+  /** `null` = **非 card 的 dashcard**（Metabase 的文本/虚拟卡，实测 `card_id=None`）。 */
+  cardId: number | null
   row: number; col: number; sizeX: number; sizeY: number
-  /** 该 dashcard 是否已映射到 tenant 参数（Task 6 的对账用它判「锁了但绑不到」）。 */
-  mappedToTenant: boolean
   /**
-   * 映射明细，**原样透传**（不解释结构——它是 Metabase 的字段，不是我们的契约）。
-   * 发布（Task 5）写它、回读（Task 6）只看 `mappedToTenant` 这个派生布尔。
+   * 该 dashcard **有 ≥1 条** `parameter_mappings` —— **不是**「已映射到 tenant」。
+   * 命名如实：Task 6 判「锁了但绑不到」要用 `parameterMappings` 自己比 tenant 的参数 id，
+   * 因为 `metabase.ts` 是纯 HTTP 客户端，**不该知道平台的参数命名约定**。
    */
+  hasParameterMappings: boolean
+  /** 映射明细，**原样透传**（不解释结构——它是 Metabase 的字段，不是我们的契约）。 */
   parameterMappings?: unknown[]
+  /** 可视化设置，**原样透传**：文本卡的内容就在 `visualization_settings.text`，不回写就把它清掉了。 */
+  visualizationSettings?: unknown
 }
 
 export interface DashboardFull {
   id: number
   name: string
   dashcards: DashcardRef[]
-  parameters: { slug: string }[]
+  /** **原样**（不窄化——窄化后回写会被 Metabase 拒收，见 `getDashboardFull` 的注）。 */
+  parameters: Record<string, unknown>[]
   embeddingParams: Record<string, string>
 }
 
@@ -351,19 +357,26 @@ export async function getDashboardFull(deps: MetabaseDeps, dashboardId: number):
   const dashcards = rec.dashcards.map((dc): DashcardRef => {
     const d = dc as Record<string, unknown> | null
     if (typeof d?.id !== 'number' || typeof d.card_id !== 'number') throw new MetabaseError(200, SHAPE_ERROR)
+    // ⚠️ `card_id` 允许 null：Metabase 的**文本/虚拟卡**就是 null（实测），而"人会往报表上
+    //    加东西"正是本设计的前提 ⇒ 对 null 抛错会让那张报表的发布**恒 502**。
+    const cid = d.card_id
+    if (cid !== null && cid !== undefined && typeof cid !== 'number') throw new MetabaseError(200, SHAPE_ERROR)
     const pm = d.parameter_mappings
     return {
-      id: d.id, cardId: d.card_id,
+      id: d.id,
+      cardId: typeof cid === 'number' ? cid : null,
       row: Number(d.row ?? 0), col: Number(d.col ?? 0),
       sizeX: Number(d.size_x ?? 12), sizeY: Number(d.size_y ?? 6),
-      mappedToTenant: Array.isArray(pm) && pm.length > 0,
-      // 原样留着：发布时要把它**写回去**（丢了就等于把已有映射清掉）
+      hasParameterMappings: Array.isArray(pm) && pm.length > 0,
+      // 原样留着：发布时要**写回去**（丢了就等于把已有映射/文本卡内容清掉）
       parameterMappings: Array.isArray(pm) ? pm : undefined,
+      visualizationSettings: d.visualization_settings,
     }
   })
-  const params = Array.isArray(rec.parameters)
-    ? (rec.parameters as { slug?: unknown }[]).map((p) => ({ slug: String(p?.slug ?? '') }))
-    : []
+  // ⚠️ **别窄化**：Metabase 对参数对象有 schema 校验，窄化成 `{slug}` 回写会被**拒收**
+  //    （实测 `400 parameters[0].id: missing required key`）⇒ 只要 dashboard 有参数，发布就恒 400。
+  //    原样保留（需要 slug 的地方读 `.slug`）。
+  const params = Array.isArray(rec.parameters) ? (rec.parameters as Record<string, unknown>[]) : []
   const ep = (rec.embedding_params ?? {}) as Record<string, string>
   return { id: rec.id, name: rec.name, dashcards, parameters: params, embeddingParams: ep }
 }
@@ -380,7 +393,7 @@ export async function putDashboardMerged(
   dashboardId: number,
   patch: {
     name?: string
-    parameters?: { id: string; name: string; slug: string; type: string; sectionId?: string }[]
+    parameters?: Record<string, unknown>[]
     dashcards?: DashcardRef[]
     enable_embedding?: boolean
     embedding_type?: 'signed'
@@ -395,6 +408,8 @@ export async function putDashboardMerged(
       id: d.id, card_id: d.cardId, row: d.row, col: d.col, size_x: d.sizeX, size_y: d.sizeY,
       // 已有映射必须**写回去**：漏了它，一次发布就把之前映射好的卡解绑了（静默失效）
       ...(d.parameterMappings ? { parameter_mappings: d.parameterMappings } : {}),
+      // 可视化设置也必须写回：**文本卡的内容就在这里**，不回写 = 把人的文字清掉
+      ...(d.visualizationSettings !== undefined ? { visualization_settings: d.visualizationSettings } : {}),
     })),
   }
   if (patch.enable_embedding !== undefined) body.enable_embedding = patch.enable_embedding
@@ -710,7 +725,7 @@ export async function publishWithTenantBinding(
   let mapped = 0
   // 逐卡决定：**带 tenant 模板标签的**才映射（不带的映射了会报错），布局与已有映射原样保留
   const dashcards = cur.dashcards.map((d) => {
-    const hasTenant = (cur.cardTags[d.cardId] ?? []).includes(TENANT_SLUG)
+    const hasTenant = d.cardId !== null && (cur.cardTags[d.cardId] ?? []).includes(TENANT_SLUG)
     if (hasTenant) mapped += 1
     return {
       ...d,
@@ -833,8 +848,13 @@ Expected: FAIL —— `tenantUnbound` 是 `undefined`
     // ① 参数没声明 或 ② 有卡带 tenant 标签但没映射 ⇒ 锁了也绑不到任何东西
     const declared = content.parameters.some((p) => p.slug === TENANT_SLUG)
     const needsMapping = content.dashcards.some((d) => (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG))
+    // 「映射到 tenant」**在这里判**（不在 metabase.ts）：比 parameter_id，而不是"有没有映射"
+    const isTenantMapped = (d: { parameterMappings?: unknown[] }) =>
+      (d.parameterMappings ?? []).some(
+        (m) => (m as { parameter_id?: unknown }).parameter_id === TENANT_PARAM_ID,
+      )
     const anyMapped = content.dashcards.some(
-      (d) => (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG) && d.mappedToTenant,
+      (d) => d.cardId !== null && (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG) && isTenantMapped(d),
     )
     if (!declared || (needsMapping && !anyMapped)) {
       tenantUnbound.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
@@ -842,9 +862,13 @@ Expected: FAIL —— `tenantUnbound` 是 `undefined`
   }
 ```
 
-⚠️ `DashcardRef` 需要带 `mappedToTenant`（Task 3 里加）：
-`getDashboardFull` 读 `dc.parameter_mappings`，非空即 `mappedToTenant: true`。
-并把它并进 `fingerprintOf` 的输入（映射状态变了，指纹就该变）。
+⚠️ 这一段用到的 `TENANT_PARAM_ID` 在 `report-content.ts`（Task 5 定义）——**从那里 import**，
+别在本文件再写一份字面量（否则两处会漂）。
+⚠️ 「映射到 tenant」是**在这里判**的（比 `parameter_id`），**不是**在 `metabase.ts` 里判——
+后者是纯 HTTP 客户端，不该知道平台的参数命名约定（它只如实报 `hasParameterMappings`）。
+⚠️ 指纹的输入要不要带映射状态：**要**（映射变了指纹就该变）。`fingerprintOf` 的入参目前是
+`dashcards/parameters/embeddingParams/cardSqlDigests`——把 dashcard 侧的 `parameterMappings`
+一并纳入 `dashcards` 的规范化里（Task 4 的 `fingerprintOf` 已把 dashcard 摊成数组，加一列即可）。
 
 `ok` 的判据加上 `&& tenantUnbound.length === 0`，响应体带上 `tenantUnbound`。
 
@@ -876,10 +900,11 @@ git commit -m "fix(data): 对账加厚——报出「锁了但绑不到」（参
 **2. 占位符扫描**：无 TBD/TODO。两处 ⚠️ 注（Task 4 Step 3、Task 5 Step 3）是**必须处理的设计岔路**，
 各给了明确选择与推荐，不是留空。
 
-**3. 类型一致性**：`DashcardRef`（Task 3 产，含 `mappedToTenant` / `parameterMappings`）在 Task 4/5/6 一致使用；
+**3. 类型一致性**：`DashcardRef`（Task 3 产，含 `cardId: number | null` / `hasParameterMappings` /
+`parameterMappings` / `visualizationSettings`）在 Task 4/5/6 一致使用；
 `TENANT_SLUG`（Task 5 产）在 Task 6 用它；`readDashboardContent`（Task 4 产）在 Task 5/6 用它。
 **自审订正过一处**：初稿 Task 5 调用了一个并不存在的 `putDashcardMappings`，且 Task 6 要用的
-`mappedToTenant` 没有在 Task 3 定义 ⇒ 已把两者都收进 `DashcardRef`（Task 3），
+一个字段定义缺位 ⇒ 已把它收进 `DashcardRef`（Task 3），
 Task 5 改为**透传 `parameterMappings`**（不再需要额外函数）。
 
 ---
