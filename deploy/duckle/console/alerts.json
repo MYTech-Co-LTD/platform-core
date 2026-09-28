@@ -68,6 +68,8 @@
     "      本规则**看不到它** ⇒ 零售面的告警待 W2。别把本文件读成「采集全链路的告警」。",
     "   另：账套 64188 的 console 卷**尚未 seed 这版**（它还是旧的「直发企微」版，那条本来就不通）——",
     "   要不要切是个独立决定，别顺手带。",
+    "   （2026-09-28 订正：W2（#265）后零售日批已迁入本 console——retail.windows.run 调度 enabled、",
+    "   run record 每天落本工作区；上面「零售面的告警待 W2」「看不到零售 run」两句已过时，现行形状见 ⑧。）",
     "",
     "⑥【排障路径（2026-09-27 端到端实测通过后的口径）】三跳分开查，别只看「有没有报错」：",
     "   a. 引擎→OO：SearchSQL 查 data_alerts 流里有没有那行。deliver() 只看传输成功的老坑在「引擎→OO」",
@@ -90,13 +92,71 @@
     "   ⚠️ **进流不进群**：OO 侧两条告警（data_alerts_failure/data_alerts_recovery）只匹配",
     "   event=failure/recovery ⇒ stale/refreshed 只落 data_alerts 流、**不会发企微群**。",
     "   要让停更也吵群 = 另加一条匹配 event='stale' 的 OO 告警，那是独立决定，别默认已生效。",
-    "   巡检声明本体见 owners.json（阈值/字段语义/为什么不用 expectedAfterSchedule 都在那头）。"
+    "   巡检声明本体见 owners.json（阈值/字段语义/为什么不用 expectedAfterSchedule 都在那头）。",
+    "",
+    "⑧【2026-09-28 重推导（#260：零售 tick 提频到 5 分钟、192 次/天量级）——规则从单条 * 拆成五条】",
+    "   引擎事实（源码 notify / notify_subject 都是 for rule in rules 全量循环、冷却键含规则 match，见 ①）：",
+    "   **所有命中规则各自独立发**，没有先到先得 ⇒ 若保留一条覆盖 * 的 failure 规则，tick 失败风暴",
+    "   仍会经它每 15 分钟重发，60 分钟冷却形同虚设。拆分不是风格选择，是引擎语义所迫：",
+    "     · * 规则只订 stale/refreshed——这两个事件按**资产路径**匹配（notify_subject 的 subject 占",
+    "       pipeline 的位，见 ⑦），资产 SLA 依旧全兜；failure/recovery 改为按管线显式分组。",
+    "     · lemeng.dim.*.run 与 lemeng.retail.windows.run = 日批节奏（一天一跑，失败风暴结构上不可能），",
+    "       冷却 15（行为与拆分前一致）。",
+    "     · lemeng.retail.tick.run / lemeng.retail.close.run = 高频节奏，冷却 60：失败风暴降噪上限 =",
+    "       每小时至多一条；风暴期间的静默缺口由 OO 侧「营业时段 tick 缺席」告警兜（它按缺席触发，",
+    "       与本文件按失败触发互补）。recovery 是 all-clear 不吃冷却（见 ①），恢复消息不会被 60 分钟吞掉。",
+    "   ⚠️ 有意代价：failure 不再有 * 兜底 ⇒ **往本 console 加新管线必须同步在这里加它的",
+    "   failure/recovery 规则**，否则该管线失败静默（引擎不会替你发现漏配）。stale/refreshed 不受影响。",
+    "   channel 整块随每条规则复制（serde flatten 必填，见 ①——漏一条整个文件作废）。",
+    "   OO 侧对应物：data_alerts_failure / data_alerts_recovery 两条不变（按 event 字段路由，与本文",
+    "   规则怎么拆无关）；「营业时段 tick 缺席」是独立 scheduled alert，建为 paused（tick 未投递前启用",
+    "   = 立刻假告警刷屏），Task 6 投递并验证 _ops 行落地后才启用——阈值取舍见 owners.json ④。"
   ],
   "rules": [
     {
       "match": "*",
-      "on": ["failure", "recovery", "stale", "refreshed"],
+      "on": ["stale", "refreshed"],
       "cooldownMinutes": 15,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
+    },
+    {
+      "match": "lemeng.dim.*.run",
+      "on": ["failure", "recovery"],
+      "cooldownMinutes": 15,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
+    },
+    {
+      "match": "lemeng.retail.windows.run",
+      "on": ["failure", "recovery"],
+      "cooldownMinutes": 15,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
+    },
+    {
+      "match": "lemeng.retail.tick.run",
+      "on": ["failure", "recovery"],
+      "cooldownMinutes": 60,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
+    },
+    {
+      "match": "lemeng.retail.close.run",
+      "on": ["failure", "recovery"],
+      "cooldownMinutes": 60,
       "channel": "webhook",
       "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
       "headers": {
