@@ -33,12 +33,15 @@ const json = (b: unknown, status = 200) =>
 /** 真机 `GET /api/dashboard/{id}` 里 dashcard 的形状（snake_case；`parameter_mappings` 可缺）。 */
 interface FakeDashcard {
   id: number
-  card_id: number
+  /** `null` = **文本/虚拟卡**（真机实测 `card_id=None`，内容在 `visualization_settings.text`）。 */
+  card_id: number | null
   row: number
   col: number
   size_x: number
   size_y: number
   parameter_mappings?: unknown[]
+  /** 文本卡的文字在这里 —— 桩必须能存/读它，否则「合并 PUT 不清文字」这件事在路由级测不出来。 */
+  visualization_settings?: unknown
 }
 
 /** dashboard 参数（Metabase 侧形状）。平台只依赖 `slug`，其余原样流转。 */
