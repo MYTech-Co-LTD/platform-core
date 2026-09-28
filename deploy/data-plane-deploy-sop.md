@@ -112,6 +112,17 @@ docker exec "$S" node -e "const n=require('net'),s=n.connect(5432,'pg_duckdb');s
 
 预期 `DNS_OK 172.18.0.x` + `TCP_OK`。
 
+⇒ **上面这两步（重做 + 断言）已固化成脚本，别再照本文手敲**（issue #303）：
+`scripts/lemeng/wire-warehouse.sh` → 投递到 `/opt/lemeng-wire-warehouse.sh`。
+
+```sh
+sh /opt/lemeng-wire-warehouse.sh            # 重做两条接线（幂等），末尾自动复查
+sh /opt/lemeng-wire-warehouse.sh --check    # **只读**复查：三条断言全过 exit 0，任一不过 exit 1
+```
+
+它把 P7 与 P8b **一起**做掉（两条都是「掉了不报错」，分开治理只会漏一条），
+并且参数不硬编：role / db 从平台容器的 `DATA_WAREHOUSE_URL` 现取（**不碰口令**）。
+
 ### P8 平台侧接线
 
 | 动作 | 过门条件 |
@@ -141,6 +152,16 @@ ALTER ROLE <DATA_WAREHOUSE_URL 的 user> IN DATABASE <DATA_WAREHOUSE_URL 的 db>
   读出来再写回 project env；角色级设置**同一层生效、免重部署、不碰凭据**。代价见下一条。
 - ⚠️ **这是库内隐藏状态**：仓库卷重建即失效，**且没有任何东西会报** ⇒ 它是新机 provision 的必经一步。
 - 验收（用**真连接**、且**不带 schema**）：`select count(*) from fct_retail_sale` 应出数。
+
+**本条与 P7 合在一起已固化成脚本**：`sh /opt/lemeng-wire-warehouse.sh`（重做，幂等）/
+`sh /opt/lemeng-wire-warehouse.sh --check`（只读复查三条断言：DNS / TCP / 真查询）。
+
+**配套探活 job**：openship job 定时跑 `--check`，**失败即告警**（不许 `continue-on-error`——
+静默漂移 = 回到「没有复查」的状态）。
+
+**反向测试已做（别把「探针绿」读成「探针有用」）**：两种形态都**确实 exit 1**，不是恒绿——
+① 探针表名指错（`WIRE_PROBE_TABLE=no_such_table_zzz`）⇒ 断言③红；
+② **真断开 Gate-B**（`docker network disconnect`）⇒ 三条断言全红 `ENOTFOUND`，复接后回绿。
 
 ### P9 Casdoor 订阅
 
@@ -224,7 +245,8 @@ dbt-postgres 1.9 线只到 `1.9.1`。
 ## E 数据面工件投递程序（仓 → 数据面机）
 
 > **适用**：仓里的**数据面工件**要落到**数据面机**（`ecm-7d66` / 内网 `10.0.0.5`）上跑。
-> **不是一个脚本**——机器实际消费 **7 个路径 / 4 个落地位置**（E.2 的表）。
+> **不是一个脚本**——机器实际消费的是一份**清单**（E.2 的表）。⚠️ **这里的条目数刻意不写死**：
+> 它随接新工件增长，写死的数字一定会漂（本仓已有先例）⇒ **以 `deploy/data-plane-manifest.txt` 为准**。
 > ⚠️ 这**不是部署的一部分**：部署不会把它们送过去（E.1），必须按 E.3 的程序**显式投递**。
 > 案例（无案例不立标准）：2026-09-24 / 2026-09-25 两次**手工**投递（`69ca1e5`、`7ec67bf`，
 > 逐次读数见 S1 的 `task-10-report.md`「投递」两节）；**清单化同步**首次落地见 issue #199。
@@ -245,17 +267,33 @@ dbt-postgres 1.9 线只到 `1.9.1`。
 | `dbt/**` | 同名 | compose bind `../dbt:/usr/app` |
 | `deploy/duckle/entrypoint.sh` | 同名 | 仅作构建上下文（`deploy/duckle/Dockerfile` 的 COPY） |
 | `scripts/lemeng/run-retail-day.sh` | `/opt/lemeng-run.sh`（**改名**） | job / `exec` 直调 |
+| `scripts/lemeng/wire-warehouse.sh` | `/opt/lemeng-wire-warehouse.sh`（**改名**） | 探活 job 直调（`--check`）；接线重做时手调 |
 | `scripts/lemeng/readback-helper.sh` | `<checkout>/lemeng-readback.sh`（**改名**） | 挂进容器跑回读 |
+| `deploy/duckle/console/**` | 同名 | seed 进各账套 workspace 卷（`schedules/` / `pipelines/`） |
+| `deploy/duckle/Dockerfile` | 同名 | 镜像构建（见下面那段的**待核实**） |
 
-**消费面怎么定的**（三条，缺一会漏）：① `run-retail-day.sh` 里对 `$REPO/<路径>` 的**每一处引用**；
-② `data-compose.yml` 里的**每一处 bind**（源路径即仓内路径）；③ 各 Dockerfile 的 **COPY 来源**。
+**消费面怎么定的**（**四条**，缺一会漏）：① `run-retail-day.sh` 里对 `$REPO/<路径>` 的**每一处引用**；
+② `data-compose.yml` 里的**每一处 bind**（源路径即仓内路径）；③ 各 Dockerfile 的 **COPY 来源**；
+④ **机器上被 job/`exec` 直接执行**的脚本（job 命令里点到它）——判据 ①②③ 都是「谁读这个文件」，
+漏掉了「谁**执行**这个文件」：`/opt/lemeng-*.sh` 那一类。它同样必须与仓内那份逐字节一致，
+否则「job 跑的是哪个版本」无据可查。
 ⇒ **改了其中任一目录/文件，都要重投**——「只投了 `run-retail-day.sh`」正是本节要根治的漏法。
 
-**⚠️ 明写不做：Dockerfile 本体不进清单**（`deploy/duckle/Dockerfile`、`deploy/dbt/Dockerfile`）。
+**⚠️ 订正（2026-09-28）：下面这段「明写不做」与清单现状**矛盾**，别照它推断。**
+本节原判 = Dockerfile 本体不进清单（判据 ③ 只取 COPY 来源）。**但 `deploy/data-plane-manifest.txt`
+现在列着 `deploy/duckle/Dockerfile`**。两种可能（**未核实，别猜**）：冗余投递，
+或者有人在部署通路之外用那个文件跑构建。⇒ 读者按**清单**判「哪些文件会被投递」（清单是机器实际消费的那份，
+且被 `check-data-plane-lock` 守着），本节这段只当**历史决策**读。
+
+<details><summary>原文（保留以留可追溯性）</summary>
+
 判据 ③ 只取它们的 **COPY 来源**（= `deploy/duckle/entrypoint.sh`，已在表内），Dockerfile 本身**不在
 消费面**，两条依据：① 它们只在**镜像构建期**被读，而构建走 openship 部署通路（部署会把构建上下文
 送上去），不经本投递程序；② 实测佐证——S1 的 24 窗口全量跑 + probe 均通过，而这两个文件**从未投递过**。
 ⇒ 反过来，**若哪天把构建搬到数据面机上本机跑**，这条就不成立，届时要连 Dockerfile 一起登记。
+
+</details>
+
 
 **机器本地物（不在仓里，投递永不触及）**：`deploy/.env`（运行时写，mode 600）、`dbt/profiles.yml`、
 `dbt/target/`、`dbt/logs/`、`dbt/.user.yml`。这是「就地同步」相对「整目录换版」的关键优势：投递只按

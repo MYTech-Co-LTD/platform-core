@@ -6,8 +6,10 @@
 # **目录条目（以 / 结尾）= 递归**：展开成该目录下「受版本控制 + 未被 .gitignore 忽略」的全部文件，
 # 落地路径 = ② 作前缀 + 目录内相对路径。⇒ 仓里新增 dbt/tests/*.sql 自动被覆盖，**本文件不必跟着改**。
 #
-# 谁该进这张表（三条判据，缺一会漏，见 SOP §E.2）：① 脚本里 `$REPO/<路径>` 的引用点；
-# ② `deploy/data-compose.yml` 的 bind 源；③ Dockerfile 的 COPY 源。
+# 谁该进这张表（**四条**判据，缺一会漏，见 SOP §E.2）：① 脚本里 `$REPO/<路径>` 的引用点；
+# ② `deploy/data-compose.yml` 的 bind 源；③ Dockerfile 的 COPY 源；
+# ④ **机器上被 job/exec 直接执行**的脚本（job 命令里点到它）——它同样必须与仓内那份逐字节一致，
+#    否则「job 跑的是哪个版本」无据可查。
 # 机器本地物（`deploy/.env`、`dbt/profiles.yml`、`dbt/target/`、`dbt/logs/`、`dbt/.user.yml`）
 # **不在仓里 ⇒ 不进表、永不被投递触及**（这是「就地同步」相对「整目录换版」的关键优势）。
 #
@@ -21,6 +23,7 @@ deploy/duckle/entrypoint.sh              ${REPO}/deploy/duckle/entrypoint.sh    
 duckle/                                  ${REPO}/duckle/                           0644
 dbt/                                     ${REPO}/dbt/                              0644
 scripts/lemeng/run-retail-day.sh         /opt/lemeng-run.sh                        0755
+scripts/lemeng/wire-warehouse.sh         /opt/lemeng-wire-warehouse.sh             0755
 scripts/lemeng/readback-helper.sh        ${REPO}/lemeng-readback.sh                0755
 deploy/duckle/console/                    ${REPO}/deploy/duckle/console/             0644
 deploy/duckle/Dockerfile                    ${REPO}/deploy/duckle/Dockerfile             0644
