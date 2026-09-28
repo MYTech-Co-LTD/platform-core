@@ -1,5 +1,5 @@
-sha256-of-rest 4f6c86bb1dd67832a5952af90bafadaf8ec7e21de44afe6c662f51056fae075a
-aef4c9fed8fc63da20a01c5687c5a173ca15111cf0485d5208de54d1fc5c6c9b dbt/README.md ${REPO}/dbt/README.md 0644
+sha256-of-rest 9b023bece8b59c4d7a9069dfc284b4df3e472d1ab6f47802d510c27ae94b34bb
+d76cda3f506128316019928fe02a4458a230880368b55cf788395cc996024eb2 dbt/README.md ${REPO}/dbt/README.md 0644
 cc1d78b5c825d5902d22be9b17fbabdc0833afb3c25912e392f8765004a76776 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
 d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subject_org.sql ${REPO}/dbt/macros/subject_org.sql 0644

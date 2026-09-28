@@ -97,6 +97,21 @@ docker network connect --alias pg_duckdb <平台网络名> <数据面 pg_duckdb 
   容器里的 127.0.0.1 是自己的 netns）；
 - 验收：从**平台 server 容器**内 `nc -zv pg_duckdb 5432` 通。
 
+⚠️ **2026-09-28 实测：这条真的会掉，而掉的时候只有问数 502，别处没有任何报错。**
+当时现场 = 平台容器只在 `openship-platform-core-shanhai`、pg_duckdb 只在 `…-shanhai-data`，
+容器内 `dns.lookup('pg_duckdb')` 回 **ENOTFOUND**（而 `DATA_WAREHOUSE_URL` 形状是对的）。
+
+⇒ **重做后必跑这两条断言**。注意 DNS 与 TCP **分开判**——`nc` 在平台镜像里**没有**（node:22），
+且它报 `bad address` 是**解析失败**、不是「连不上」：
+
+```sh
+S=openship-platform-core-shanhai-server
+docker exec "$S" node -e "require('dns').lookup('pg_duckdb',(e,a)=>console.log(e?('ERR '+e.code):('DNS_OK '+a)))"
+docker exec "$S" node -e "const n=require('net'),s=n.connect(5432,'pg_duckdb');s.on('connect',()=>{console.log('TCP_OK');s.end()});s.on('error',e=>console.log('TCP_ERR '+e.code))"
+```
+
+预期 `DNS_OK 172.18.0.x` + `TCP_OK`。
+
 ### P8 平台侧接线
 
 | 动作 | 过门条件 |
@@ -106,6 +121,26 @@ docker network connect --alias pg_duckdb <平台网络名> <数据面 pg_duckdb 
 > mytech 实测：部署把 `DATABASE_URL` **重写成无口令形态** ⇒ `client password must be a string`
 > crash loop。修法：从 postgres 容器读真口令 → **服务级 PATCH 写回** → 重部署。同类问题一律
 > 「读真值 → 服务级写回 → 重部署 → 再验形状」。
+
+### P8b 仓库连接的 `search_path`（**2026-09-28 新增**）
+
+**为什么需要它**：dbt 物化落在 schema **`staging`**，而
+`modules/data/domain/semantic-compiler.ts` 产出的 SQL **关系名不带 schema**
+（该文件 111-112 行明写「关系名可带 schema…多租户下 schema 由会话 search_path 绑」）。
+仓库连接的默认 `search_path` 是 `"$user", public` ⇒ 问数会以
+**`relation "<模型名>" does not exist`** 收场。**这个报错看着像「表不存在」，其实是解析不到 schema**——
+2026-09-28 实测：同一条 SQL 补上 `staging.` 或先 `set search_path` 就出数。
+
+```sh
+# 在数据面 pg_duckdb 容器内跑一次；role / db 取自 DATA_WAREHOUSE_URL（本部署 = platform / warehouse）
+ALTER ROLE <DATA_WAREHOUSE_URL 的 user> IN DATABASE <DATA_WAREHOUSE_URL 的 db>
+  SET search_path TO staging, public;
+```
+
+- **为什么不用 URL 参数**（`?options=-csearch_path%3Dstaging`）：两者等效，但那个形态要把仓库口令
+  读出来再写回 project env；角色级设置**同一层生效、免重部署、不碰凭据**。代价见下一条。
+- ⚠️ **这是库内隐藏状态**：仓库卷重建即失效，**且没有任何东西会报** ⇒ 它是新机 provision 的必经一步。
+- 验收（用**真连接**、且**不带 schema**）：`select count(*) from fct_retail_sale` 应出数。
 
 ### P9 Casdoor 订阅
 
@@ -124,6 +159,9 @@ docker network connect --alias pg_duckdb <平台网络名> <数据面 pg_duckdb 
 - [ ] `/api/platform/config` 模块集 = 预期（mod-data 在列）
 - [ ] **edge healthz 200**——别走宿主回环（mytech 实测：宿主回环 curl 000 而 edge 200，回环形态会误判「挂了」）
 - [ ] 端口全回环（`docker port` 或 `ss -lnt` 复核 15432/13030 只绑 127.0.0.1）
+- [ ] **Gate-B 断言过**（P7 那两条：`DNS_OK` + `TCP_OK`）——**每次重建容器后都要重跑**
+- [ ] **`search_path` 已绑且真查询出数**（P8b：不带 schema 的 `select count(*) from fct_retail_sale`）
+- [ ] **L1 词表已物化**（`data.metrics` 非空；命令见 §F.6 末的订正注）——**这一步当前没有 job，必须手工触发**
 
 ---
 
@@ -488,6 +526,25 @@ curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/sch
 
 > **遗留（已知，不阻塞）**：job 的命令目前只活在 openship 里（无版本、无 diff 可评审）。
 > 按本仓惯例应抽成 `scripts/lemeng/materialize.sh` 进仓 + 进投递清单，job 只调 `sh /opt/lemeng-materialize.sh`。
+
+⚠️ **2026-09-28 订正 —— 这个 job 只做 dbt 模型物化；L1 语义词表是另一件事，且当前没有 job。**
+`scripts/sync-data-semantics.mjs`（`dbt/semantics/l1_metrics.yml` → PG 表 `data.metrics`）是 L1 词表的**唯一**通道，
+生产上**从未跑过** ⇒ `data.metrics` 为 **0 行**、AI 侧 `GET /metrics` 回空表、MCP `tools/list` 无工具可给。
+它可在**平台容器**里直接跑（镜像 COPY 面含 `scripts/`、`dbt/` 与 tsx，**不必另建 node 环境**）：
+
+```sh
+docker exec openship-platform-core-shanhai-server pnpm exec tsx scripts/sync-data-semantics.mjs
+# --check 是 dry-run（跑前后 data.metrics 行数必须不变）；有漂移 exit 1、用法错 exit 2
+```
+
+两条边界（都实测过）：
+
+1. **它读的是平台镜像里那份 `dbt/`**，与 §E 投递到**数据面检出**的那份**是两份、没有任何比对机制**
+   ⇒ 镜像旧 = 物化出旧口径（2026-09-28 实际发生过，见 issue **#300**）。
+2. **没有 job ⇒ 改了 `l1_metrics.yml` 不会自动同步**（跟踪 **#297**）。
+
+**闭环自证（2026-09-28 实测读数）**：物化前 `data.metrics` **0 行** → 跑一次 = 新增 2 / 回读 2 →
+**再跑一次 = 未变 2**（幂等）→ `--check` = 无漂移 exit 0。
 
 ---
 
