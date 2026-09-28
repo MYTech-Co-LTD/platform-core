@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.44.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.43.0...v0.44.0) - 2026-09-28
+- 【新增】duckle: branch 采集 L0 管线（一条管线替代薄壳+shell 三层，凭据走 connectionRef） ([#312](https://github.com/MYTech-Co-LTD/platform-core/pull/312), [0456dc5](https://github.com/MYTech-Co-LTD/platform-core/commit/0456dc5fbaefbedfb77d345a7023110417a73910))
+
+
 ## [0.43.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.42.2...v0.43.0) - 2026-09-28
 - 【新增】duckle: 加密连接一次性 setup 脚本（connectionRef 写入方·路径 iii 自封） ([#306](https://github.com/MYTech-Co-LTD/platform-core/pull/306), [5408672](https://github.com/MYTech-Co-LTD/platform-core/commit/5408672c364012cb4b5477262caf9355cb2dce3d))
 
