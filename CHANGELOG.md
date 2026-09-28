@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.42.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.42.1...v0.42.2) - 2026-09-28
+- 【修复】ops: 平台↔仓库两条易失接线固化——幂等重做脚本 + 只读复查，三种反向测试都真红 ([#304](https://github.com/MYTech-Co-LTD/platform-core/pull/304), [de3edfe](https://github.com/MYTech-Co-LTD/platform-core/commit/de3edfe246fb3515971cac2cce7ef67aef1a4ee1))
+
+
 ## [0.42.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.42.0...v0.42.1) - 2026-09-28
 - 【修复】lemeng: authoring-ws REPO_ROOT 上跳两层——裸调不再误报未知账套 (#289) ([#290](https://github.com/MYTech-Co-LTD/platform-core/pull/290), [5711c18](https://github.com/MYTech-Co-LTD/platform-core/commit/5711c18661f89a63b56524b8e984c1491e738a8d))
 
