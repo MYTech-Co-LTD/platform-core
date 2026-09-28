@@ -11,6 +11,15 @@
 
 ## [Unreleased]
 
+## [0.37.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.37.0...v0.37.1) - 2026-09-27
+- 【修复】lemeng: authoring-ws 重管线平铺装配（桌面按根目录 id 解析，#275） ([#274](https://github.com/MYTech-Co-LTD/platform-core/pull/274), [7d61c57](https://github.com/MYTech-Co-LTD/platform-core/commit/7d61c5772bcd7b140c293da81909e34f0403bac7))
+
+
+## [0.37.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.36.1...v0.37.0) - 2026-09-27
+- 【修复】lemeng: 薄管线 qa 节点 type 改 transform（桌面画布兼容，#272） ([#273](https://github.com/MYTech-Co-LTD/platform-core/pull/273), [b6755f9](https://github.com/MYTech-Co-LTD/platform-core/commit/b6755f94d11862ae0823c60bc30103c49175c2a4))
+- 【新增】lemeng: authoring 工作区组装/回收工具（资产面⑧.a 配套） ([#271](https://github.com/MYTech-Co-LTD/platform-core/pull/271), [1f33728](https://github.com/MYTech-Co-LTD/platform-core/commit/1f337280f07c1809c5fdfb61088e3479073c29a0))
+
+
 ## [0.36.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.36.0...v0.36.1) - 2026-09-26
 - 【修复】dbt: schema.yml 的 description 里不许调项目 macro（它把生产物化 job 打红了） ([#262](https://github.com/MYTech-Co-LTD/platform-core/pull/262), [29ee651](https://github.com/MYTech-Co-LTD/platform-core/commit/29ee651b543a18b2fa3f5fbefd63434691dd1a6b))
 

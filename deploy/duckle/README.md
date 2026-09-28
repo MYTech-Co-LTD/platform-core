@@ -26,7 +26,7 @@
 
 ```dockerfile
 FROM python:3.12-slim
-ARG DUCKLE_VERSION=0.7.3
+ARG DUCKLE_VERSION=0.7.4
 RUN pip install --no-cache-dir "duckle==${DUCKLE_VERSION}"
 COPY deploy/duckle/entrypoint.sh /usr/local/bin/duckle-entrypoint
 ```
@@ -77,8 +77,8 @@ duckle 自己的入口垫片也证实这条路：`duckle/__main__.py` 的 `_find
 
 | 组件 | 本镜像钉的值 | 依据 |
 |---|---|---|
-| duckle | `0.7.3` | PyPI 实返最新；与 release `v0.7.3` 同一版 |
-| DuckDB CLI | `1.5.4`（**传递依赖，非本镜像显式钉**） | duckle 0.7.3 自己的 `Requires-Dist: duckdb-cli==1.5.4` |
+| duckle | `0.7.4` | PyPI 实返；#277 升级评估零破坏 |
+| DuckDB CLI | `1.5.5`（**传递依赖，非本镜像显式钉**） | duckle 0.7.4 自己的 `Requires-Dist: duckdb-cli==1.5.5` |
 | Python | `3.12-slim` | 计划范文同值；duckle 声明 `Requires-Python: >=3.8` |
 
 ### ⚠️ 与计划的版本分歧：~~计划要 `DUCKDB_VERSION=1.5.5`（对齐 pg_duckdb 内核）~~，本镜像**没有照做**

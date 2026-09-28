@@ -56,13 +56,16 @@
 
 FROM python:3.12-slim
 
-# 钉死版本：0.7.3 = PyPI 实测最新（2026-09-16 发布），也是 release v0.7.3 的同一版。
+# 钉死版本：0.7.4 = PyPI 实测最新（2026-09-28 核对）；#277 升级评估零破坏——
+# 六管线 validate 双版（0.7.3/0.7.4）逐字节一致，gate5 预演 1.5.5 写 1.4.3 读 PASS。
 # 升级前先看 deploy/duckle/README.md §3「版本与升级」——那里记着 CLI 面的核对点。
-ARG DUCKLE_VERSION=0.7.3
+ARG DUCKLE_VERSION=0.7.4
 # -i 走国内镜像：与 Dockerfile.server 的 npmmirror 同因（2026-09-23/24 两站实测）——
 # RUN 步骤不继承 dockerd 代理，pip 直连 pypi.org 在境内构建容器里会被掐；经代理则
 # MITM 无 CA 校验不过。镜像源是唯一「可达 + 快 + 不需要装 CA」的路（shanhai 实测 8s 建完）。
-RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ \
+# 2026-09-28 源从 aliyun 切 tuna：实测 aliyun 未同步 duckle 0.7.4（页面最高 0.7.3），而
+# tuna/tencent/ustc 已有；duckdb-cli 1.5.5 两边都有。apt 源仍走 aliyun（下方），不动。
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple/ \
       --timeout 60 --retries 5 \
       "duckle==${DUCKLE_VERSION}"
 

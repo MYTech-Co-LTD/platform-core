@@ -323,13 +323,33 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
    （面别口径见 `duckle/README.md` §7.4 第 7 项 ④⑤）；**桌面 Settings 的三项服务端不读**
    （`spill_dir` / `allow_unsigned_extensions` / `https_proxy`）；**扩展预装两端不同**（桌面 11 / 服务端镜像 12，多 `inet`）。
 
-**W4 前置 gate（`ext.probe`）现状**（2026-09-27 实测回填；spec §W4「前置 gate」行那三项）：**已清 2/3 + 新增 1 条 blocker**——
+**W4 前置 gate（`ext.probe`）现状**（2026-09-27 实测回填；spec §W4「前置 gate」行那三项）：**已清 3/3 + 新增 1 条 blocker**——
 **能否 spawn ✅ 已清**（真 pipeline 里 spawn / 干活 / 数据往返均成功）；
 **能否读 `SYSTEM_BOOK` + `ZOS_*` ✅ 已清**（引擎 spawn 的组件自己回报全部 `present=true`，**机制层面无碍**；
 ⚠️ 注意这**只证了「能读」，没证「有得读」**——生产 console 容器里那些值是否真注入，**未验**）；
-**能否解析 `pg_duckdb` ❌ 仍开着**（需真 postgres/数据面，零生产约束下未测）；
+**能否解析 `pg_duckdb` ✅ 已清**（2026-09-27 第三轮实测：本机隔离实验室 `/tmp/duckle-lab-p1`、零生产，引擎 spawn 的 `ext.pgprobe` 经 postgres 线协议连官方镜像 `pgduckdb/pgduckdb:18-v1.1.1`，CLI `validate` exit 0 + run `ok`（`n2 rows=3`）+ 三条 DuckDB 方言证据；证据 `/tmp/duckle-lab-p1/wsext/evidence-pgduckdb.txt`，详见 `duckle/README.md` §7.4 第 8 条实测块）；
 ⚠️ **新增 blocker**：**MCP `validate_pipeline` 对 `ext.*` 直接报错**（见上「gate 级 blocker」）
 ⇒ **W4 开工前必须先定「管线校验走哪个 validate 面」**。
+
+**⑧.a 新采集任务操作卡（2026-09-27 晚定稿；每步带当日真案例背书）**
+
+> 分工一句话：**桌面管编、Git 管版、release 管滚、console 管跑**。桌面=authoring 面（不是版本面）；
+> 版本正源始终是 Git；服务器只运行不编辑（本节总拓扑的单向性）。
+
+| # | 步骤 | 要点与案例 |
+|---|---|---|
+| 1 | **立题** | issue 六必答：源/账套｜**频率与窗口语义**（先实测——#260 探针 30 分钟定了整个提频地基）｜**幂等口径**（覆盖写/追加 + batch_id 含义）｜容量预估（对照 12页×200 闸）｜失败语义｜消费方。先查本表 §2 + WeKnora |
+| 2 | **桌面 authoring**（本地零生产） | 打开与服务器卷**同构布局**的本地工作区（pipelines/+schedules.json；2026-09-27 桌面首案例）→ 画布搭/复制改 → 本地试跑 → 产出 json。**仓内不手编** |
+| 3 | **落仓一次 PR 齐活** | pipelines + schedules/<账套> + alerts + owners + 契约 schema。验收锚看 build 的「N pipeline(s)」计数——⚠️ build 对解析失败 json **静默跳过**（2026-09-27 实测：exit 0、hash 不变、零警告） |
+| 4 | **投递** | push → 机器 sync 按 SHA 取件（不 push=404）→ seed 进账套卷 → **定向重建容器**（两步都做，serviceIds 定向） |
+| 5 | **启用 + 首验** | Operator API 启用（与部署分离）。四验：**receipts startedAt**（判触发；last_run_at 是完成时刻）｜湖分区当日 batch｜_ops 行到 OO｜告警面静默 |
+| 6 | **release 快照**（推荐） | 改动前后各一版 ⇒ 有单步 rollback。边界（实测）：previous=你来时那版；会把 schedules.json 运行记账一起回退；**不覆盖 alerts/owners**；被跟踪文件切版即删、散文件不动；drift 闸 exit 1 可依赖 |
+| 7 | **沉淀** | 台账回填 §2 → WeKnora 查重沉淀 |
+
+**资产一致性盘点（上线资产的「正本核对」，改完/定期跑）**：
+两账套卷面 5+3 份控制面资产 `sha256sum` 对照仓内正本（2026-09-27 实测**全部逐字节一致**）；
+重管线在容器 `/pipelines/common/`（宿主机盘 **ro 挂载** ← 机器 repo ← Git main，两账套 3/3 一致）——
+溯源闭环成立。⚠️ 64188 卷缺 alerts/owners 的缺口见当日记录（待补课：seed + catalog 前置 + 定向重建）。
 
 ### 1.2 硬约束清单
 

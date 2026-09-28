@@ -20,7 +20,7 @@
     },
     {
       "id": "gate",
-      "type": "quality",
+      "type": "transform",
       "position": {
         "x": 260,
         "y": 0
