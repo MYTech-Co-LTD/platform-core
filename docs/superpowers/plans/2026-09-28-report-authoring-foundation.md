@@ -129,12 +129,13 @@ git commit -m "feat(data): 报表登记加 renderer 列（Metabase 标准图 / �
 - Consumes: Task 1 的列
 - Produces:
   - `type ReportRenderer = 'metabase' | 'platform'`
-  - `interface ReportRow { id; title; metabaseId: number | null; embedParams; requiredScope; renderer: ReportRenderer }`
+  - `interface ReportRow { id; title; metabaseId: number; embedParams; requiredScope; renderer: ReportRenderer }`
+    （`renderer='platform'` 的行 `metabaseId` 为 **0**，即哨兵——本任务**不改列**）
   - `upsertReport(pool, org, input: { title; metabaseId: number | null; embedParams; requiredScope; renderer?: ReportRenderer }): Promise<string>`
   - `listReports` / `getReport` / `listAllReports` 的投影都带 `renderer`
 
-⚠️ `metabaseId` 由 `number` 放宽成 `number | null`：`renderer='platform'` 的行**没有** Metabase dashboard。
-迁移里 `metabase_id` 是 `integer not null` ⇒ 本任务**不改列**，平台自绘行先写 `0`（哨兵），
+`renderer='platform'` 的行**没有** Metabase dashboard。迁移里 `metabase_id` 是 `integer not null`
+⇒ 本任务**不改列**，平台自绘行先写 `0`（哨兵），
 并在写路径上禁止把 `0` 当成真 dashboard id 用（Task 3 起，凡读 `metabaseId` 前先判 `renderer`）。
 （**为什么不现在就加迁移放宽它为 null**：放宽需 `drop not null`——那是一条独立的破坏性 DDL，
 而当前**没有任何** platform 行；等计划 3 真写第一行时一起做，避免本轮动存量列。）
@@ -429,8 +430,13 @@ export async function setEmbedding(
 - [ ] **Step 4: 跑测试**
 
 Run: `pnpm --filter data test -- domain/metabase.test.ts routes/reports.test.ts`
-Expected: PASS（`routes/reports.test.ts` 里的 `fakeMetabase` 已实现 `GET/PUT /api/dashboard/{id}`；
-若因 `parameters` 字段缺失而红，**在桩里补 `parameters: []`**——真机必回该键）
+Expected: **先红后绿**——`routes/reports.test.ts` 的既有用例会红，因为它的 `fakeMetabase` 桩的
+`GET /api/dashboard/{id}` **只回 `{id, name, embedding_params}`**，而 `getDashboardFull` 在 `dashcards`
+不是数组时**抛 SHAPE_ERROR**（这是有意的：读不出就是读不出）。
+⇒ **必须扩桩**：给 `FakeDash` 加 `dashcards?: ...` 与 `parameters?: ...` 两个可选字段，
+在 `GET` 分支回 `dashcards: d.dashcards ?? []`、`parameters: d.parameters ?? []`，
+并在 `PUT` 分支把 `body.dashcards` / `body.parameters` **存回去**（否则「不清卡」那条断言测不出来）。
+改完再跑，两条文件都应 PASS。（`domain/metabase.test.ts` 的薄桩同样要补。）
 
 - [ ] **Step 5: Commit**
 
@@ -497,10 +503,10 @@ describe('fingerprintOf', () => {
   })
 
   it('dashcards 顺序不影响（同一集合不同序 ⇒ 同指纹）', () => {
-    const a = { ...base, dashcards: [
-      { id: 1, cardId: 11, row: 0, col: 0, sizeX: 12, sizeY: 6 },
-      { id: 2, cardId: 12, row: 6, col: 0, sizeX: 6, sizeY: 4 }] }
-    const b = { ...base, dashcards: [a.dashcards[1], a.dashcards[0]], cardSqlDigests: { 11: 'aaaa', 12: 'cccc' } }
+    const two = { id: 2, cardId: 12, row: 6, col: 0, sizeX: 6, sizeY: 4 }
+    const one = { id: 1, cardId: 11, row: 0, col: 0, sizeX: 12, sizeY: 6 }
+    const a = { ...base, dashcards: [one, two], cardSqlDigests: { 11: 'aaaa', 12: 'cccc' } }
+    const b = { ...base, dashcards: [two, one], cardSqlDigests: { 11: 'aaaa', 12: 'cccc' } }
     expect(fingerprintOf(a)).toBe(fingerprintOf(b))
   })
 })
@@ -777,11 +783,13 @@ git commit -m "feat(data): 发布一次做全三件套（声明参数/只映射�
     state.dashboards[0].dashcards = [{ id: 9, card_id: 900, row: 0, col: 0, size_x: 12, size_y: 6 }]
     state.dashboards[0].parameters = []
     vi.stubGlobal('fetch', fetcher)
-    // …建登记行指向 metabase_id=300（用 upsertReport 直插，见本文件既有写法）…
+    const id = await upsertReport(pool, ORG, {
+      title: '未绑定', metabaseId: 300, embedParams: {}, requiredScope: null,
+    })
     const res = await app.request('/reports/reconcile', { method: 'POST' })
     const body = await res.json()
     expect(body.ok).toBe(false)
-    expect(body.tenantUnbound.map((r: { id: string }) => r.id)).toContain(登记行id)
+    expect(body.tenantUnbound.map((r: { id: string }) => r.id)).toContain(id)
   })
 ```
 
