@@ -30,6 +30,25 @@ const SECRET = 'aaaa1111-bbbb-2222-cccc-333344445555'
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
 
+/** 真机 `GET /api/dashboard/{id}` 里 dashcard 的形状（snake_case；`parameter_mappings` 可缺）。 */
+interface FakeDashcard {
+  id: number
+  card_id: number
+  row: number
+  col: number
+  size_x: number
+  size_y: number
+  parameter_mappings?: unknown[]
+}
+
+/** dashboard 参数（Metabase 侧形状）。平台只依赖 `slug`，其余原样流转。 */
+interface FakeDashParam {
+  slug: string
+  id?: string
+  name?: string
+  type?: string
+}
+
 interface FakeDash {
   id: number
   name: string
@@ -37,11 +56,19 @@ interface FakeDash {
   archived: boolean
   embedding_params?: Record<string, string>
   enable_embedding?: boolean
+  /** 卡片的**全量**读侧形状：`getDashboardFull` 靠它把「不带 dashcards 的 PUT」变成非破坏性。 */
+  dashcards?: FakeDashcard[]
+  parameters?: FakeDashParam[]
 }
 
 /**
  * 内存版 Metabase 桩。**search 故意做成模糊**（`includes`）——真机 `/api/search` 就是模糊匹配，
  * 桩若做成全等，领域层「必须 name 全等才算命中」的判据在路由测试里就永远不被行使。
+ *
+ * ⚠️ `PUT /api/dashboard/{id}` 对 `dashcards` / `parameters` 是**替换**语义（body 里没有该键
+ *    ⇒ 清空）：这正是真机上「裸 PUT 会把卡片表列整条替换掉」的机制（本计划的 bug 本体）。
+ *    桩若做成「给了才改」，`putDashboardMerged` 退化成裸 PUT 时**不会有任何断言变红**——
+ *    桩于是成了「怎么改都绿」的假面（`getDashboardFull` 读不出 dashcards 时抛形状错也是同理）。
  */
 function fakeMetabase(seed: FakeDash[] = []) {
   const state = { dashboards: [...seed], nextId: 100, calls: [] as { url: string; init?: RequestInit }[] }
@@ -68,10 +95,15 @@ function fakeMetabase(seed: FakeDash[] = []) {
     }
     const m = /^\/api\/dashboard\/(\d+)$/.exec(u.pathname)
     // 对账回读（RR9②）：`GET /api/dashboard/{id}`。未发布过的 dashboard 真机回 `embedding_params: null`。
+    // `dashcards` / `parameters` 是真机会回的**全量**字段（缺了它们，`getDashboardFull` 会抛形状错）。
     if (m && method === 'GET') {
       const d = state.dashboards.find((x) => x.id === Number(m[1]))
       if (!d) return json({ message: 'not found' }, 404)
-      return json({ id: d.id, name: d.name, embedding_params: d.embedding_params ?? null })
+      return json({
+        id: d.id, name: d.name,
+        dashcards: d.dashcards ?? [], parameters: d.parameters ?? [],
+        embedding_params: d.embedding_params ?? null,
+      })
     }
     if (m && method === 'PUT') {
       const d = state.dashboards.find((x) => x.id === Number(m[1]))
@@ -82,6 +114,9 @@ function fakeMetabase(seed: FakeDash[] = []) {
         d.embeddable = body.enable_embedding
       }
       if (body?.embedding_params) d.embedding_params = body.embedding_params as Record<string, string>
+      // 替换语义（见桩头注）：body 里没有该键 ⇒ 清空。**存回去**是「不清卡」那条断言能被行使的前提。
+      d.dashcards = Array.isArray(body?.dashcards) ? body.dashcards as FakeDashcard[] : []
+      d.parameters = Array.isArray(body?.parameters) ? body.parameters as FakeDashParam[] : []
       return json(d)
     }
     return json({ message: 'not found' }, 404)

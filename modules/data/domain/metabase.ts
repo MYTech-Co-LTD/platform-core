@@ -167,6 +167,114 @@ export async function upsertDashboard(
   return { id: idOf(created), created: true }
 }
 
+export interface DashcardRef {
+  id: number; cardId: number
+  row: number; col: number; sizeX: number; sizeY: number
+  /**
+   * 该 dashcard 是否已映射到 tenant 参数（Task 6 的对账用它判「锁了但绑不到」）。
+   *
+   * ⚠️ 可选：它是**读侧派生**出来的布尔（`getDashboardFull` 恒填），而写侧（`putDashboardMerged`
+   *    的 patch）只关心 `id/cardId/布局/parameterMappings`——patch 由调用方现造时没有"是否已映射"
+   *    可言（Task 5 是由回读结果 spread 出来的，故照常带上）。要求它必填就等于让 patch 编造一个
+   *    它并不掌握的事实。读侧消费者按 `=== true` 判即可（缺省 = 未映射 = 对账该报出来的那一侧）。
+   */
+  mappedToTenant?: boolean
+  /**
+   * 映射明细，**原样透传**（不解释结构——它是 Metabase 的字段，不是我们的契约）。
+   * 发布（Task 5）写它、回读（Task 6）只看 `mappedToTenant` 这个派生布尔。
+   */
+  parameterMappings?: unknown[]
+}
+
+export interface DashboardFull {
+  id: number
+  name: string
+  dashcards: DashcardRef[]
+  parameters: { slug: string }[]
+  embeddingParams: Record<string, string>
+}
+
+/** 回读一张 dashboard 的**全量**内容。形状不对 ⇒ 抛（读不出就是读不出，不回落到 `{}`）。 */
+export async function getDashboardFull(deps: MetabaseDeps, dashboardId: number): Promise<DashboardFull> {
+  const body = await call(deps, 'GET', `/api/dashboard/${dashboardId}`)
+  const rec = body as {
+    id?: unknown; name?: unknown; dashcards?: unknown
+    parameters?: unknown; embedding_params?: unknown
+  } | null
+  if (typeof rec?.id !== 'number' || typeof rec.name !== 'string' || !Array.isArray(rec.dashcards)) {
+    throw new MetabaseError(200, SHAPE_ERROR)
+  }
+  const dashcards = rec.dashcards.map((dc): DashcardRef => {
+    const d = dc as Record<string, unknown> | null
+    if (typeof d?.id !== 'number' || typeof d.card_id !== 'number') throw new MetabaseError(200, SHAPE_ERROR)
+    const pm = d.parameter_mappings
+    return {
+      id: d.id, cardId: d.card_id,
+      row: Number(d.row ?? 0), col: Number(d.col ?? 0),
+      sizeX: Number(d.size_x ?? 12), sizeY: Number(d.size_y ?? 6),
+      mappedToTenant: Array.isArray(pm) && pm.length > 0,
+      // 原样留着：发布时要把它**写回去**（丢了就等于把已有映射清掉）
+      parameterMappings: Array.isArray(pm) ? pm : undefined,
+    }
+  })
+  const params = Array.isArray(rec.parameters)
+    ? (rec.parameters as { slug?: unknown }[]).map((p) => ({ slug: String(p?.slug ?? '') }))
+    : []
+  const ep = (rec.embedding_params ?? {}) as Record<string, string>
+  return { id: rec.id, name: rec.name, dashcards, parameters: params, embeddingParams: ep }
+}
+
+/**
+ * **非破坏性**的 dashboard 更新：先 GET 全量，把 patch 合并进去，再 PUT。
+ *
+ * ⚠️ 为什么不是"直接 PUT patch"：Metabase 的 PUT 会替换卡片表列 ⇒ 不带 `dashcards` 的 PUT
+ * 会把别人（人手动 / agent）刚加的卡清掉。实测过。
+ * `dashcards` 的字段名在这里做一次转换（内部用 camelCase，线上契约是 snake_case）。
+ */
+export async function putDashboardMerged(
+  deps: MetabaseDeps,
+  dashboardId: number,
+  patch: {
+    name?: string
+    parameters?: { id: string; name: string; slug: string; type: string; sectionId?: string }[]
+    dashcards?: DashcardRef[]
+    enable_embedding?: boolean
+    embedding_type?: 'signed'
+    embedding_params?: Record<string, string>
+  },
+): Promise<void> {
+  const cur = await getDashboardFull(deps, dashboardId)
+  const body: Record<string, unknown> = {
+    name: patch.name ?? cur.name,
+    parameters: patch.parameters ?? cur.parameters,
+    dashcards: (patch.dashcards ?? cur.dashcards).map((d) => ({
+      id: d.id, card_id: d.cardId, row: d.row, col: d.col, size_x: d.sizeX, size_y: d.sizeY,
+      // 已有映射必须**写回去**：漏了它，一次发布就把之前映射好的卡解绑了（静默失效）
+      ...(d.parameterMappings ? { parameter_mappings: d.parameterMappings } : {}),
+    })),
+  }
+  if (patch.enable_embedding !== undefined) body.enable_embedding = patch.enable_embedding
+  if (patch.embedding_type !== undefined) body.embedding_type = patch.embedding_type
+  if (patch.embedding_params !== undefined) body.embedding_params = patch.embedding_params
+  await call(deps, 'PUT', `/api/dashboard/${dashboardId}`, body)
+}
+
+/** 该卡原生查询里的模板标签名（v0.63 的 MBQL stages 形态）。取不到 ⇒ 抛。 */
+export async function getCardTemplateTags(deps: MetabaseDeps, cardId: number): Promise<string[]> {
+  const body = await call(deps, 'GET', `/api/card/${cardId}`)
+  const stages = ((body as { dataset_query?: { stages?: unknown } } | null)?.dataset_query?.stages)
+  if (!Array.isArray(stages)) throw new MetabaseError(200, SHAPE_ERROR)
+  const first = stages[0] as { 'template-tags'?: unknown } | undefined
+  const tags = first?.['template-tags']
+  if (tags === undefined || tags === null) return []
+  if (typeof tags !== 'object') throw new MetabaseError(200, SHAPE_ERROR)
+  // 数组形态（我们编译产的）与字典形态（Metabase UI 产的）都要认
+  const names = Array.isArray(tags)
+    ? (tags as { name?: unknown }[]).map((t) => String(t?.name ?? ''))
+    : Object.keys(tags as Record<string, unknown>)
+  return names.filter((n) => n.length > 0)
+}
+
 /**
  * 发布嵌入 + 锁参数：`PUT /api/dashboard/{id}`。
  *
@@ -177,16 +285,18 @@ export async function upsertDashboard(
  *    signed 语义。spec §6.5 明确 `PUT /api/dashboard/{id}` 接受 `embedding_type`。
  *    两者都写 ⇒ 不依赖实例默认值（依赖默认值是**静默**漂移面）。
  *    若真机不认这个字段 ⇒ 此处**响亮**失败（非 2xx 抛），不会被吞成假绿；真机 e2e 归 T10。
+ *
+ * ⚠️ 本函数**不再**直接发 PUT：改走 `putDashboardMerged`（先 GET 全量 → 合并 → 再 PUT）。
+ *    「只带三个 embedding 字段的 PUT」在真机上会把 dashboard 上已有的卡片**清掉**（实测），
+ *    重跑 `POST /reports` 就会把用户/agent 手工加进报表的卡静默抹掉。
  */
 export async function setEmbedding(
   deps: MetabaseDeps, dashboardId: number, params: EmbedParamSpec[],
 ): Promise<void> {
   const embedding_params: Record<string, EmbedParamSpec['mode']> = {}
   for (const p of params) embedding_params[p.name] = p.mode
-  await call(deps, 'PUT', `/api/dashboard/${dashboardId}`, {
-    enable_embedding: true,
-    embedding_type: 'signed',
-    embedding_params,
+  await putDashboardMerged(deps, dashboardId, {
+    enable_embedding: true, embedding_type: 'signed', embedding_params,
   })
 }
 

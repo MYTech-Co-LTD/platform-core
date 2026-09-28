@@ -15,6 +15,7 @@ import {
   listEmbeddableDashboards,
   metabaseFromEnv,
   parseDashboardName,
+  putDashboardMerged,
   setEmbedding,
   signEmbedToken,
   upsertDashboard,
@@ -47,6 +48,95 @@ const depsOf = (fetcher: FetchLike): MetabaseDeps =>
 
 const headerOf = (c: Rec, name: string): string | undefined =>
   (c.init?.headers as Record<string, string> | undefined)?.[name]
+
+/** 真机 `GET /api/dashboard/{id}` 里 dashcard 的形状（snake_case；`parameter_mappings` 可缺）。 */
+interface MbDashcardSeed {
+  id: number
+  card_id: number
+  row: number
+  col: number
+  size_x: number
+  size_y: number
+  parameter_mappings?: unknown[]
+}
+
+/** 一张 dashboard 的种子。同一个 `id` 出现多次 ⇒ 卡片**累加**（见 `fakeMetabaseWithCards`）。 */
+interface MbDashboardSeed {
+  id: number
+  name: string
+  dashcards?: MbDashcardSeed[]
+  parameters?: { slug: string }[]
+}
+
+interface FakeDashboardState {
+  id: number
+  name: string
+  dashcards: MbDashcardSeed[]
+  parameters: { slug: string }[]
+  embedding_params: Record<string, string> | null
+}
+
+/**
+ * **有状态**的 Metabase 桩（只做本任务用到的面：`GET` / `PUT /api/dashboard/{id}`）。
+ *
+ * 与上面的 `stub()` 分工不同：那个是**按序回放**的无状态桩（「一次调用 ⇒ 一串响应」够用），
+ * 而「裸 PUT 会不会把卡片清掉」这件事**必须有状态**才测得出——PUT 得真的改到 GET 之后读得出来的状态。
+ *
+ * ⚠️ 两条形状口径照**真机行为**（不是照好写）：
+ *  ① 同一个 `id` 的种子合并成**一张** dashboard、`dashcards` 按出现顺序累加：测试用两次同 id
+ *     种子的写法表达「这张 dashboard 上已经躺着 2 张卡」。
+ *  ② `PUT` 对 `dashcards` / `parameters` 是**替换语义**（body 里没有该键 ⇒ 清空）——这正是真机上
+ *     「不带 dashcards 的 PUT 会替换卡片表列」的机制（本文件要修的 bug）。桩若做成「给了才改」，
+ *     把实现退化回裸 PUT 的变异体就**不会**变红 ⇒ 那条断言等于没测。
+ */
+function fakeMetabaseWithCards(
+  seed: MbDashboardSeed[],
+): { state: { dashboards: FakeDashboardState[]; calls: Rec[] }; fetcher: FetchLike } {
+  const dashboards: FakeDashboardState[] = []
+  for (const s of seed) {
+    let d = dashboards.find((x) => x.id === s.id)
+    if (d === undefined) {
+      d = { id: s.id, name: s.name, dashcards: [], parameters: [], embedding_params: null }
+      dashboards.push(d)
+    }
+    d.dashcards.push(...(s.dashcards ?? []))
+    if (s.parameters !== undefined) d.parameters = s.parameters
+  }
+  const state = { dashboards, calls: [] as Rec[] }
+  const respond = (b: unknown, status = 200) =>
+    new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
+
+  const fetcher: FetchLike = async (url, init) => {
+    state.calls.push({ url, init })
+    const method = init?.method ?? 'GET'
+    const body = init?.body === undefined
+      ? undefined
+      : (JSON.parse(String(init.body)) as Record<string, unknown>)
+    const m = /^\/api\/dashboard\/(\d+)$/.exec(new URL(url).pathname)
+    const d = m === null ? undefined : state.dashboards.find((x) => x.id === Number(m[1]))
+    // 未知路径 / 未知 id 一律 404（真机形状；不回落成 200 空体——那会让形状断言永远成立）
+    if (d === undefined) return respond({ message: 'not found' }, 404)
+
+    if (method === 'GET') {
+      return respond({
+        id: d.id, name: d.name, dashcards: d.dashcards, parameters: d.parameters,
+        embedding_params: d.embedding_params,
+      })
+    }
+    if (method === 'PUT') {
+      if (typeof body?.name === 'string') d.name = body.name
+      // 替换语义（口径②）：缺键 ⇒ 清空
+      d.dashcards = Array.isArray(body?.dashcards) ? (body.dashcards as MbDashcardSeed[]) : []
+      d.parameters = Array.isArray(body?.parameters) ? (body.parameters as { slug: string }[]) : []
+      if (body !== undefined && 'embedding_params' in body) {
+        d.embedding_params = (body.embedding_params ?? null) as Record<string, string> | null
+      }
+      return respond({ id: d.id, name: d.name })
+    }
+    return respond({ message: 'not found' }, 404)
+  }
+  return { state, fetcher }
+}
 
 describe('upsertDashboard：幂等（幂等要自实现——API 无按名 upsert，spec §6.5）', () => {
   it('search 命中同名 dashboard ⇒ PUT 覆盖，**不** POST（两次调用只产生一次创建）', async () => {
@@ -149,17 +239,37 @@ describe('dashboardName / parseDashboardName：Metabase 侧身份按 org 命名�
 })
 
 describe('setEmbedding：发布 + 锁参数（只有未版本化老 API 能做，spec §6.4）', () => {
+  /**
+   * 一次 `setEmbedding` 的**第一条**响应：真机形状的 `GET /api/dashboard/{id}`。
+   * 实现改成「先 GET 全量 → 合并 → 再 PUT」后，这三个 embedding 字段是**合并**进全量里的，
+   * 所以队列首条必须是 `dashcards` 为数组的那份读侧响应（否则 `getDashboardFull` 抛形状错——
+   * 那是**有意的** fail-closed：读不出就是读不出）。
+   */
+  const dashOf = (dashcards: unknown[] = []) =>
+    ({ body: { id: 7, name: 'org-a/日报', dashcards, parameters: [] } })
+
   it('PUT /api/dashboard/{id} 载荷含 enable_embedding + embedding_type=signed + embedding_params 映射', async () => {
-    const { calls, fetcher } = stub([{ body: { id: 7 } }])
+    const { calls, fetcher } = stub([
+      dashOf([{ id: 1, card_id: 11, row: 0, col: 0, size_x: 12, size_y: 6 }]),
+      { body: { id: 7 } },
+    ])
     await setEmbedding(depsOf(fetcher), 7, [
       { name: 'tenant', mode: 'locked' },
       { name: 'region', mode: 'enabled' },
       { name: 'internal', mode: 'disabled' },
     ])
-    expect(calls).toHaveLength(1)
-    expect(calls[0].init?.method).toBe('PUT')
+    // 走 putDashboardMerged ⇒ 一次 setEmbedding = GET（读全量）+ PUT（合并写回）两次调用
+    expect(calls).toHaveLength(2)
+    expect(calls[0].init?.method ?? 'GET').toBe('GET')
     expect(calls[0].url).toBe('https://mb.test/api/dashboard/7')
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+    expect(calls[1].init?.method).toBe('PUT')
+    expect(calls[1].url).toBe('https://mb.test/api/dashboard/7')
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({
+      // 全量里的 name / parameters / dashcards 一个都不能丢
+      name: 'org-a/日报',
+      parameters: [],
+      // ★ 已有的卡**必须写回去**：这一条就是本文件要修的 bug 本体的断言（裸 PUT 会把它清成 []）
+      dashcards: [{ id: 1, card_id: 11, row: 0, col: 0, size_x: 12, size_y: 6 }],
       enable_embedding: true,
       embedding_type: 'signed',
       embedding_params: { tenant: 'locked', region: 'enabled', internal: 'disabled' },
@@ -167,9 +277,31 @@ describe('setEmbedding：发布 + 锁参数（只有未版本化老 API 能做�
   })
 
   it('零参数 ⇒ embedding_params 是空映射（不是 undefined/缺键）', async () => {
-    const { calls, fetcher } = stub([{ body: {} }])
+    const { calls, fetcher } = stub([dashOf(), { body: {} }])
     await setEmbedding(depsOf(fetcher), 7, [])
-    expect(JSON.parse(String(calls[0].init?.body)).embedding_params).toEqual({})
+    expect(JSON.parse(String(calls[1].init?.body)).embedding_params).toEqual({})
+  })
+})
+
+describe('putDashboardMerged：PUT 不得清掉已存在的卡片', () => {
+  it('对已有 2 张卡的 dashboard 只改 name，卡片仍为 2', async () => {
+    const { state, fetcher } = fakeMetabaseWithCards([
+      { id: 7, name: 'o/a', dashcards: [{ id: 1, card_id: 11, row: 0, col: 0, size_x: 12, size_y: 6 }] },
+      { id: 7, name: 'o/a', dashcards: [{ id: 2, card_id: 12, row: 6, col: 0, size_x: 6, size_y: 4 }] },
+    ])
+    const deps = { fetcher, baseUrl: 'http://mb', apiKey: 'k' }
+    await putDashboardMerged(deps, 7, { name: 'o/a-renamed' })
+    expect(state.dashboards[0].name).toBe('o/a-renamed')
+    expect(state.dashboards[0].dashcards).toHaveLength(2)  // ← 关键断言
+  })
+
+  it('patch 里给了 dashcards ⇒ 用 patch 的；没给 ⇒ 保留 GET 回来的', async () => {
+    const { state, fetcher } = fakeMetabaseWithCards([
+      { id: 8, name: 'o/b', dashcards: [{ id: 1, card_id: 21, row: 0, col: 0, size_x: 12, size_y: 6 }] },
+    ])
+    const deps = { fetcher, baseUrl: 'http://mb', apiKey: 'k' }
+    await putDashboardMerged(deps, 8, { dashcards: [{ id: 1, cardId: 21, row: 0, col: 0, sizeX: 6, sizeY: 6 }] })
+    expect(state.dashboards[0].dashcards[0].size_x).toBe(6)
   })
 })
 
