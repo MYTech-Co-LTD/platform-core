@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.48.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.47.0...v0.48.0) - 2026-09-28
+- 【新增】duckle: Wave A 切流——dim.item 改走 L0（薄壳停、L0 起） (#322) ([#323](https://github.com/MYTech-Co-LTD/platform-core/pull/323), [ca96345](https://github.com/MYTech-Co-LTD/platform-core/commit/ca963457a43621203a8ac2ac80febd29b0b98352))
+
+
 ## [0.47.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.46.0...v0.47.0) - 2026-09-28
 - 【新增】duckle: item 采集 L0 形态管线（一条管线替代薄壳+shell 三层） ([#321](https://github.com/MYTech-Co-LTD/platform-core/pull/321), [f63c186](https://github.com/MYTech-Co-LTD/platform-core/commit/f63c186ebc797543502a3434d9b6a0be754479d7))
 
