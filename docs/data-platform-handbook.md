@@ -335,6 +335,12 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 > 分工一句话：**桌面管编、Git 管版、release 管滚、console 管跑**。桌面=authoring 面（不是版本面）；
 > 版本正源始终是 Git；服务器只运行不编辑（本节总拓扑的单向性）。
+>
+> **桌面端自带 Git 面板 ＝ 草稿保险箱，非正典版本面**（2026-09-28 定位并启用）：工作区可关联私有备份仓
+> `platform-core-authoring-backup` 防草稿丢失——泄密面已核（源码 `workspace_git.rs` 的 GITIGNORE_SAFETY
+> 每次提交前强制排除 settings.json/keys/secrets 等，fail-closed）；两条边界：① connections 密文进仓但
+> **换机解不开**（解密钥匙 `.duckle/keys/` 永不进 Git，按规矩另行分发）；② 备份仓**永远不是正典**——
+> 正式版本一律 collect 回仓走 PR（操作卡 3）。
 
 | # | 步骤 | 要点与案例 |
 |---|---|---|
