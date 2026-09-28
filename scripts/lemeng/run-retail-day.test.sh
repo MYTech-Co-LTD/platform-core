@@ -155,6 +155,20 @@ ok "$(wc -l < "$CNT" | tr -d ' ')" "0"
 WINDOWS_RETRY_ATTEMPTS=2
 rm -f "$CNT" "$OUT"
 
+# ── tick_windows（tick 模式的窗口推导：当日增量 + 闭窗尾款；#260）──────────────────
+# 抽**真函数**测（同上：不复制实现）。传参 = 模拟的 CST 墙钟 "YYYY-MM-DD HH:MM"——
+# 纯函数不依赖墙钟，这正是它可测的原因（stub date 反而把测试绑死在 date 的实现上）。
+FUNC2=$(awk '/^tick_windows\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$SRC")
+if [ -n "$FUNC2" ]; then eval "$FUNC2"; pass=$((pass+1)); else
+  fail=$((fail+1)); echo "  FAIL: 抽不到 tick_windows（脚本结构变了？）"
+fi
+# 用例（传参 = 模拟的 CST 墙钟 "YYYY-MM-DD HH:MM"）：
+ok "$(tick_windows '2026-09-27 19:35' '')"   '2026-09-27,19 2026-09-27,18'   # 普通下午 tick
+ok "$(tick_windows '2026-09-27 08:00' '')"   '2026-09-27,08 2026-09-27,07'   # 开市首 tick
+ok "$(tick_windows '2026-09-27 23:55' '')"   '2026-09-27,23 2026-09-27,22'   # 末班 tick
+ok "$(tick_windows '2026-09-28 00:00' close)" '2026-09-27,23'                # 闭窗：昨日 23 点档（bizday 跨日）
+ok "$(tick_windows '2026-10-01 00:00' close)" '2026-09-30,23'                # 跨月
+
 kill "$SRV" 2>/dev/null; rm -rf "$FAKE"
 echo "compose-shim+notify+retry: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ] || exit 1
