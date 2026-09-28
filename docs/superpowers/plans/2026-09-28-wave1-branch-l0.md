@@ -4,7 +4,7 @@
 
 **Goal:** 把 `lemeng.dim.branch`（当前 = 薄管线 + wrapper + 重管线三层）迁成 **L0：一条管线**，全程无 shell；凭据改走 `connectionRef`（即使 L0 并不需要，也为 Wave 2 提前生产验证）。
 
-**Architecture:** 单管线 = 身份门 → `src.rest`×5（分页）→ `ctl.merge` → 末页哨兵 `ctl.die` → `code.sql` 成形 → `qa.contract` 闸 → `snk.minio`。**非凭据运行参数**（`SYSTEM_BOOK`/`SNAPSHOT`/`BATCH_ID`）在 L0 继续用 `${ENV:}`（顶层文档可解析）；**凭据**（`LEMENG_TOKEN` / `ZOS_*`）改走 `connectionRef`。
+**Architecture:** 单管线 = 身份门 → **期望值形状闸 `gv`+`dv`** → `src.rest`×5（分页）→ `ctl.merge` → 末页哨兵 `ctl.die` → `code.sql` 成形 → `qa.contract` 闸 → `snk.minio`（**19 节点 / 22 边**）。**每部署恒定的非凭据运行参数**（`SYSTEM_BOOK`）保持 `${ENV:}`；**每次 run 变化的值**（`SNAPSHOT` 分区日、`BATCH_ID` run 号）改用**引擎内建**（`${date+8h}` / `${datetime}`）——理由：`${ENV:}` 由 console **进程环境**解析，而 console 是常驻进程、调度条目带不了 env ⇒ 不重建容器这两个值就**冻在容器创建那刻**（分区路径天天一样、`batch_id` 天天一样）；且 `${ENV:}` 在**调度路径**上无法被每 run 更新（`run_scheduled` 传空 params）。内建是**属性级替换**，能进 sink `key` / 文件路径 / `code.sql`。⚠️ `+8h` 是「Asia/Shanghai = UTC+8、自 1991 年起无 DST」的显式编码，**必须在管线 `_note` 里写死这条理由**；换时区/换区划要重估。**凭据**（`LEMENG_TOKEN` / `ZOS_*`）改走 `connectionRef`。
 
 **Tech Stack:** duckle 0.7.4（产线已升）+ 现成的 `scripts/duckle/connection-setup.py` + openship MCP（运维面）。
 
@@ -62,9 +62,10 @@
 - [ ] **Step 1: 写管线**（对照 `duckle/common/lemeng.branch.json` 逐节点搬，差异如下）
   - `src.rest`×5：`headers.Authorization` 由 `${ENV:LEMENG_TOKEN}` 改为 `connectionRef:"lemeng"` 提供（**连接优先于内联值**）
   - `sink`：`connectionRef:"zos"` 提供 `accessKey/secretKey/endpoint`；`bucket`/`key` 保持（非敏感配置）
-  - `shape`（`code.sql`）与 `guard`（`ctl.die`）里的 `${ENV:SYSTEM_BOOK}`/`${ENV:SNAPSHOT}`/`${ENV:BATCH_ID}` **保持原样**（L0 是顶层文档，env 合法）
+  - `shape`（`code.sql`）里的 `${ENV:SNAPSHOT}`/`${ENV:BATCH_ID}`，以及 `w0.rawResponseDestination` 与 `g0` 的 `read_text` 里那处 raw 原件路径（**同一路径两处，必须一起改**），改用**引擎内建**：分区日 `${date+8h}`、run 号 `'dim-' || '${ENV:SYSTEM_BOOK}' || '-branch-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'`（形状与原 `${ENV:BATCH_ID}` 逐字节相同）；`${ENV:SYSTEM_BOOK}` / `${ENV:BRANCH_NUMS}` **保持原样**（L0 是顶层文档，env 对**每部署恒定**的键合法）
   - **身份门节点**：按 Task 1 的结论插入（或明确空缺，把理由写进 pipeline 的 `_note`）
   - ⚠️ 方言坑：`window`/`rows` 是 DuckDB 保留字必须引号；`code.sql` 开头不能写 `WITH`；`${ENV:}` 在 `code.sql` 里可替换
+  - **期望值形状闸 `gv`+`dv`（Task 3.5 结论，必需）**：`gv` 只算常量、**不读 `input`**（读 input 会跟上游一起静默）；必须在 `d1` **之后**、五条触发边**之前**（放中间会顶掉 `g3` 的 input 报 Binder Error）。覆盖面：`BRANCH_NUMS` / `SYSTEM_BOOK` / `SNAPSHOT` / `BATCH_ID` 四者的形状。⚠️ **`BRANCH_NUMS=[]` 判红是有意比现 wrapper 更严**（空清单在生产里只可能是配置错，fail-closed 正确）——`_note` 里记这条偏离
 - [ ] **Step 2: 本地校验**：MCP `validate_pipeline`（**注意**：含 `ext.*` 才需走 CLI；本管线无 ext，MCP 可用）+ `node scripts/lint-architecture.mjs`
 - [ ] **Step 3: lock 重生成与守卫**：`pnpm exec tsx scripts/lemeng/data-plane-lock.mjs` → `node scripts/check-data-plane-lock.mjs`
 - [ ] **Step 4: Commit** — `feat(duckle): branch 采集 L0 形态管线（一条管线替代薄壳+shell 三层） (#276)`
@@ -78,7 +79,7 @@
   - 内容：**逐行逐列 sha256**（除 `batch_id` 外应完全一致——`batch_id` 是载荷列，两边必然不同）
   - `snapshot`/`system_book` 分区值正确
   - `_ops` 观测行（若 L0 已含观测节点）与告警面
-- [ ] **Step 4: 重复 ≥3 次**（不同日期或同日重跑，验证幂等：同 `batch_id` 重跑 ETag 逐字节一致）
+- [ ] **Step 4: 重复 ≥3 次**（不同日期或同日重跑，验证幂等：**同日重跑：除 `batch_id` 外逐列 sha256 一致 + 分区路径一致 + 行数一致**——`batch_id` 每次 run 必然不同，这正是改用内建后的正确行为；旧的「同 `batch_id` 重跑」口径在新形态下不可表达，它能成立恰恰因为当时 `batch_id` 被冻在容器创建那刻）
 - [ ] **Step 5: 有差异就停**——报告差异面，不切流
 
 ### Task 5: 切流与收口

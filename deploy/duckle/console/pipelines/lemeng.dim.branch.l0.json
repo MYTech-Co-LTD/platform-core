@@ -1,0 +1,896 @@
+{
+  "_note": [
+    "lemeng.dim.branch 的 L0 形态 —— 一条管线替代「薄管线 + wrapper + 重管线」三层（全程无 shell）。",
+    "",
+    "①【形态】L0 直连：单窗/日频/无跨窗编排 ⇒ 一条管线 + 一条调度，没有第二种文件。",
+    "   依据：docs/data-platform-handbook.md §1.1.7（L0/L1 定义与判定表）；",
+    "   迁移计划 docs/superpowers/plans/2026-09-28-wave1-branch-l0.md Task 3。",
+    "   ⚠️ 与薄壳 lemeng.dim.branch.run.json **并行期共存**，本文件在 Task 4 之前不启用调度（手动触发对照）。",
+    "",
+    "②【身份门 = D2 候选 1（实测判定「L0 不缺前闸」）】w0→g0→g1→g2→d0→g3→d1，7 个节点。",
+    "   证据：/tmp/d2-lab/report-d2.md §3.3（可直接抄的节点写法）§3.4（四条护栏）§3.5（已知弱点）。",
+    "   · 先证后采：d1 用 trigger 边（data.connectionType=\"on-subjob-ok\"）定序到 p1..p5 ——「after this，只定序不接线」",
+    "     ⇒ 身份未证时**一个采集请求都不发**（实测：错配时 branch.find 次数 = 0、零写湖）。",
+    "   · 四条护栏**缺一即静默失效**：",
+    "     ① w0 必须声明 data.schema —— 探针恒 0 行，缺了它每次必炸（query returned 0 records and no schema is declared）；",
+    "     ② d0（ctl.die no-rows）是**形状反闸** —— 缺了它，网关换形状时 0 行一路走到底、静默放行；",
+    "     ③ 期望值缺参/形状非法 ⇒ **gv（code.sql 形状断言）+ dv（ctl.die has-rows）判红**，",
+    "        且闸在采集开始**之前**判（5 条触发边挂在 dv 上）⇒ 实测 branch.find=0、湖零写入；",
+    "        ⚠️ 断言**不读 input**（读则随上游一起静默失效），只断言替换后文本的形状；",
+    "        ⚠️ 刻意偏离 wrapper：`BRANCH_NUMS=[]` 空数组在本护栏下**判红**（wrapper 放行）——",
+    "        理由：空清单 ⇒ 身份门什么都不校验，是 fail-open；",
+    "     ④ 传输失败要显式 retryAttempts（本文件 3 次 + 后退 2000ms，对齐 wrapper 的重试 3 次）。",
+    "   ⚠️ 第 ③ 条已由 gv/dv 结构性收口（Task 3.5 结论；实测见 report-t35 §4.5）。",
+    "",
+    "③【凭据走 connectionRef —— 本文件不含任何凭据值】",
+    "   · w0 与 p1..p5 → connectionRef=\"lemeng\"（kind=rest, authType=bearer, authToken=密文）；",
+    "     Authorization 由连接供给（duckle-secrets merge_rest_connection + builders push_rest_auth），",
+    "     节点里**已删掉**原来的 \"Authorization\": \"Bearer ${ENV:LEMENG_TOKEN}\"。",
+    "   · sink → connectionRef=\"zos\"（kind=s3）供给 accessKey/secretKey/endpoint；",
+    "     bucket/key 非敏感 ⇒ 保留在节点（连接值对通用键**优先于**节点，保留值只是同值的文档化默认）。",
+    "   ⚠️ 连接加载失败是 **fail-open**（实测：exit 0、凭据空 ⇒ 静默 401）⇒ 连接自检不可省（Task 2 的 setup 自检 + Task 4 的缺凭据用例）。",
+    "",
+    "④【非凭据运行参数拆两类】**每部署恒定**的 `SYSTEM_BOOK` / `BRANCH_NUMS` 保持 `${ENV:}`；",
+    "   **每次 run 变化**的 `SNAPSHOT`（分区日）/ `BATCH_ID`（run 号）/ raw 原件名改用**引擎内建**。",
+    "   理由：`${ENV:}` 由 console **进程环境**解析，而 console 是常驻进程、调度条目带不了 env",
+    "   ⇒ 不重建容器这两个值就**冻在容器创建那刻**（分区路径天天一样、batch_id 天天一样）；",
+    "   且 `${ENV:}` 在**调度路径**上无法被每 run 更新（run_scheduled 传空 params）。",
+    "   内建是**属性级替换**（apply_time_builtins 改的是节点 properties）⇒ 能同时进 sink key /",
+    "   raw 文件路径 / code.sql 三处；且由 chrono::Utc::now() 计算 ⇒ 与进程 TZ 无关（4 个 TZ 实测同解）。",
+    "   ⚠️ `${date+8h}` 的 `+8h` 是「**Asia/Shanghai = UTC+8、自 1991 年起无 DST**」的**显式编码**",
+    "   （**换时区 / 换区划必须重估**）：引擎按 UTC 取日，上海日历日 == UTC 日历日 ⟺ UTC 小时 < 16，",
+    "   `+8h` 先平移再按 UTC 格式化 ⇒ 两侧边界逐格等于 `AT TIME ZONE 'Asia/Shanghai'`。",
+    "   本文件是**顶层文档**，${ENV:} 合法（只有子文档里才不许写 ${ENV:...}）。",
+    "   依据：report-t35 §2.2 / §3（Task 3b 落地）。",
+    "",
+    "⑤【D2 报告的已知弱点 —— 照实带走，未修】",
+    "   · **未闭合 '<' 会假红**（fail-closed 的误报）：whoami 载荷含未闭合尖括号 ⇒ xml 模式解析报错 ⇒ 当天采集被拒。",
+    "   · rawResponseDestination 落盘的原件含 name/phone 等操作员 PII ⇒ **绝不许写成 s3://**（会把明文 PII 写进对象存储）。",
+    "     本文件落在 console workspace 卷内的 /workspace/.duckle-raw/，路径带 ${datetime} 防并发互覆。",
+    "     ⚠️ /workspace 是**命名卷**（不随容器回收）⇒ 「PII 随容器消失」在本仓不成立，需要清理/轮换策略（未决）。",
+    "   · responseFormat=\"xml\" 是**借来的开关**（真实语义是「别解析，只留原件」）⇒ 上游给 raw/text 模式后可撤它。",
+    "",
+    "⑥【方言坑（照 D2 与 orchestration-capability-survey §10 带走）】",
+    "   · code.sql 开头**不能写 WITH**（引擎会包一层 WITH input AS）—— 本文件全是单 SELECT。",
+    "   · DuckDB 保留字（window / rows）作列名**必须引号** —— 本文件无此类列。",
+    "   · ctl.merge 的 targetHandle 必须是 **main_1..main_5**（5 个编号输入口），不是全 main。",
+    "   · sink 一对象覆盖 + 分区写进 key，**不开 partitionBy**（云 sink 上被静默忽略；同 run 两 sink 同 key 会静默丢数）。",
+    "",
+    "⑦【未决 / 边界】薄壳退役、调度切流、run-retail-day.sh 的 dim 分支标废弃 = Task 5（另做）。",
+    "   ~~SNAPSHOT/BATCH_ID 这类「每天变」的值在 L0 下从哪来~~ ⇒ 已解（本文件 ④：改用引擎内建）。",
+    "   · 本护栏是 **branch 专用**（写死了 `-branch-` 脸名）：若给 dim.item 复用，",
+    "     BATCH_ID 那条正则与表达式里的 `-branch-` 必须改成 `-item-`。",
+    "   · gv 把 `${ENV:X}` 直接写进 SQL 字符串字面量（沿用既有 shape 的同一手法）；",
+    "     值里若含单引号会破坏语句 —— ops 侧注入不该出现单引号。"
+  ],
+  "name": "lemeng.dim.branch.l0",
+  "version": 1,
+  "id": "lemeng.dim.branch.l0",
+  "nodes": [
+    {
+      "id": "w0",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": -600
+      },
+      "data": {
+        "label": "whoami 身份探针（xml + raw 落原件）",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/mcp",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"
+          },
+          "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"whoami\", \"arguments\": {}}}",
+          "paginationType": "none",
+          "responseFormat": "xml",
+          "rawResponseDestination": "/workspace/.duckle-raw/whoami-${datetime}.sse",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        },
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "g0",
+      "type": "transform",
+      "position": {
+        "x": 240,
+        "y": -600
+      },
+      "data": {
+        "label": "抠出全部 SSE data: 行",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/whoami-${datetime}.sse')"
+        }
+      }
+    },
+    {
+      "id": "g1",
+      "type": "transform",
+      "position": {
+        "x": 480,
+        "y": -600
+      },
+      "data": {
+        "label": "取最后一条 + 拆 JSON-RPC 外壳（对齐 wrapper 的 m[-1]）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()"
+        }
+      }
+    },
+    {
+      "id": "g2",
+      "type": "transform",
+      "position": {
+        "x": 720,
+        "y": -600
+      },
+      "data": {
+        "label": "取身份事实 company_id / branch_nums",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input"
+        }
+      }
+    },
+    {
+      "id": "d0",
+      "type": "control",
+      "position": {
+        "x": 960,
+        "y": -600
+      },
+      "data": {
+        "label": "反向闸：抠不出身份 ⇒ 红（挡网关形状漂移）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "g3",
+      "type": "transform",
+      "position": {
+        "x": 1200,
+        "y": -600
+      },
+      "data": {
+        "label": "两条断言：① 账套 ② 配置门店 ⊆ 可见门店",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}' UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) WHERE w.branch_num IS NULL"
+        }
+      }
+    },
+    {
+      "id": "d1",
+      "type": "control",
+      "position": {
+        "x": 1440,
+        "y": -600
+      },
+      "data": {
+        "label": "有违规行 ⇒ 红；其后才 trigger 采集（先证后采）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "p1",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "page 1",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.user.ai.branch.find",
+          "method": "POST",
+          "body": "{\"page_number\": 1, \"page_size\": 200}",
+          "responsePath": "/result/content",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "code",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "pinyin",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "enable",
+            "type": "bool"
+          },
+          {
+            "name": "region_id",
+            "type": "int64"
+          },
+          {
+            "name": "province",
+            "type": "string"
+          },
+          {
+            "name": "city",
+            "type": "string"
+          },
+          {
+            "name": "district",
+            "type": "string"
+          },
+          {
+            "name": "contact",
+            "type": "string"
+          },
+          {
+            "name": "phone",
+            "type": "string"
+          },
+          {
+            "name": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p2",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 120
+      },
+      "data": {
+        "label": "page 2",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.user.ai.branch.find",
+          "method": "POST",
+          "body": "{\"page_number\": 2, \"page_size\": 200}",
+          "responsePath": "/result/content",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "code",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "pinyin",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "enable",
+            "type": "bool"
+          },
+          {
+            "name": "region_id",
+            "type": "int64"
+          },
+          {
+            "name": "province",
+            "type": "string"
+          },
+          {
+            "name": "city",
+            "type": "string"
+          },
+          {
+            "name": "district",
+            "type": "string"
+          },
+          {
+            "name": "contact",
+            "type": "string"
+          },
+          {
+            "name": "phone",
+            "type": "string"
+          },
+          {
+            "name": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p3",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 240
+      },
+      "data": {
+        "label": "page 3",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.user.ai.branch.find",
+          "method": "POST",
+          "body": "{\"page_number\": 3, \"page_size\": 200}",
+          "responsePath": "/result/content",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "code",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "pinyin",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "enable",
+            "type": "bool"
+          },
+          {
+            "name": "region_id",
+            "type": "int64"
+          },
+          {
+            "name": "province",
+            "type": "string"
+          },
+          {
+            "name": "city",
+            "type": "string"
+          },
+          {
+            "name": "district",
+            "type": "string"
+          },
+          {
+            "name": "contact",
+            "type": "string"
+          },
+          {
+            "name": "phone",
+            "type": "string"
+          },
+          {
+            "name": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p4",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 360
+      },
+      "data": {
+        "label": "page 4",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.user.ai.branch.find",
+          "method": "POST",
+          "body": "{\"page_number\": 4, \"page_size\": 200}",
+          "responsePath": "/result/content",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "code",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "pinyin",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "enable",
+            "type": "bool"
+          },
+          {
+            "name": "region_id",
+            "type": "int64"
+          },
+          {
+            "name": "province",
+            "type": "string"
+          },
+          {
+            "name": "city",
+            "type": "string"
+          },
+          {
+            "name": "district",
+            "type": "string"
+          },
+          {
+            "name": "contact",
+            "type": "string"
+          },
+          {
+            "name": "phone",
+            "type": "string"
+          },
+          {
+            "name": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "p5",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 480
+      },
+      "data": {
+        "label": "page 5",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.user.ai.branch.find",
+          "method": "POST",
+          "body": "{\"page_number\": 5, \"page_size\": 200}",
+          "responsePath": "/result/content",
+          "paginationType": "none"
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "code",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "pinyin",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "enable",
+            "type": "bool"
+          },
+          {
+            "name": "region_id",
+            "type": "int64"
+          },
+          {
+            "name": "province",
+            "type": "string"
+          },
+          {
+            "name": "city",
+            "type": "string"
+          },
+          {
+            "name": "district",
+            "type": "string"
+          },
+          {
+            "name": "contact",
+            "type": "string"
+          },
+          {
+            "name": "phone",
+            "type": "string"
+          },
+          {
+            "name": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "guard",
+      "type": "transform",
+      "position": {
+        "x": 260,
+        "y": 480
+      },
+      "data": {
+        "label": "last-page guard (capacity truncation)",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "lemeng dim_branch 容量截断：第 5 页（哨兵页）仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK}）⇒ 门店数已击穿真阈值 800 家（算式：真阈值 = 非哨兵页数 4 × page_size 200 = 800，哨兵页那一页不计容量；口径同 spec §6 的 200×12 页 ⇒ 阈值 11×200 = 2200，不是 2400）。处置：加数据页节点 → 同步改本算式与 p5 的 page_number → 重生成 data-plane lock → 走 PR"
+        }
+      }
+    },
+    {
+      "id": "merge",
+      "type": "transform",
+      "position": {
+        "x": 520,
+        "y": 420
+      },
+      "data": {
+        "label": "merge pages 1-5",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "shape",
+      "type": "transform",
+      "position": {
+        "x": 780,
+        "y": 420
+      },
+      "data": {
+        "label": "注入 batch_id/system_book/snapshot + 定型到契约列",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  'dim-' || '${ENV:SYSTEM_BOOK}' || '-branch-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date+8h}' AS DATE) AS snapshot,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.code AS VARCHAR) AS code,\n  CAST(o.name AS VARCHAR) AS name,\n  CAST(o.pinyin AS VARCHAR) AS pinyin,\n  CAST(o.type AS VARCHAR) AS type,\n  CAST(o.enable AS BOOLEAN) AS enable,\n  CAST(o.region_id AS INTEGER) AS region_id,\n  CAST(o.province AS VARCHAR) AS province,\n  CAST(o.city AS VARCHAR) AS city,\n  CAST(o.district AS VARCHAR) AS district,\n  CAST(o.contact AS VARCHAR) AS contact,\n  CAST(o.phone AS VARCHAR) AS phone,\n  CAST(o.address AS VARCHAR) AS address\nFROM input o"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "transform",
+      "position": {
+        "x": 1040,
+        "y": 420
+      },
+      "data": {
+        "label": "contract gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "snapshot": "not_null",
+            "branch_num": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 1300,
+        "y": 420
+      },
+      "data": {
+        "label": "dim_branch all.parquet",
+        "componentId": "snk.minio",
+        "properties": {
+          "connectionRef": "zos",
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/dim_branch/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/all.parquet",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd"
+        }
+      }
+    },
+    {
+      "id": "gv",
+      "type": "control",
+      "position": {
+        "x": 1680,
+        "y": -600
+      },
+      "data": {
+        "label": "Assert expected-value shapes",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule\nWHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]')\nUNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only'\nWHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}')\nUNION ALL SELECT 'SNAPSHOT', '${date+8h}', 'YYYY-MM-DD'\nWHERE NOT regexp_full_match('${date+8h}', '[0-9]{4}-[0-9]{2}-[0-9]{2}')\nUNION ALL SELECT 'BATCH_ID', 'dim-' || '${ENV:SYSTEM_BOOK}' || '-branch-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'dim-<book>-branch-YYYYMMDDTHHMMSSZ'\nWHERE NOT regexp_full_match('dim-' || '${ENV:SYSTEM_BOOK}' || '-branch-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'dim-[0-9]+-branch-[0-9]{8}T[0-9]{6}Z')"
+        }
+      }
+    },
+    {
+      "id": "dv",
+      "type": "control",
+      "position": {
+        "x": 1920,
+        "y": -600
+      },
+      "data": {
+        "label": "Die on missing/malformed expected values",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖（等价于 wrapper 在 run-retail-day.sh:383/397 的 ASSERT_FAIL 硬失败）。处置：检查该管线调度/触发面的 env 注入"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_w0_g0",
+      "source": "w0",
+      "target": "g0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_g0_g1",
+      "source": "g0",
+      "target": "g1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_g1_g2",
+      "source": "g1",
+      "target": "g2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_g2_d0",
+      "source": "g2",
+      "target": "d0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_d0_g3",
+      "source": "d0",
+      "target": "g3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_g3_d1",
+      "source": "g3",
+      "target": "d1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_d1_gv",
+      "source": "d1",
+      "target": "gv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_gv_dv",
+      "source": "gv",
+      "target": "dv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t_dv_p1",
+      "source": "dv",
+      "target": "p1",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t_dv_p2",
+      "source": "dv",
+      "target": "p2",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t_dv_p3",
+      "source": "dv",
+      "target": "p3",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t_dv_p4",
+      "source": "dv",
+      "target": "p4",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t_dv_p5",
+      "source": "dv",
+      "target": "p5",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e_p1_merge",
+      "source": "p1",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p2_merge",
+      "source": "p2",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_2",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p3_merge",
+      "source": "p3",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_3",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p4_merge",
+      "source": "p4",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_4",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_p5_guard",
+      "source": "p5",
+      "target": "guard",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_guard_merge",
+      "source": "guard",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_5",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_merge_shape",
+      "source": "merge",
+      "target": "shape",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_shape_gate",
+      "source": "shape",
+      "target": "gate",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_gate_sink",
+      "source": "gate",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}
