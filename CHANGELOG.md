@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.38.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.37.1...v0.38.0) - 2026-09-28
+- 【新增】duckle: 3120 零售调度切 console 正典落账 + W2 计划/手动触发口径 ([#279](https://github.com/MYTech-Co-LTD/platform-core/pull/279), [09092ea](https://github.com/MYTech-Co-LTD/platform-core/commit/09092ea5ac732cf8111ae59712c9943c45bb004c))
+
+
 ## [0.37.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.37.0...v0.37.1) - 2026-09-27
 - 【修复】lemeng: authoring-ws 重管线平铺装配（桌面按根目录 id 解析，#275） ([#274](https://github.com/MYTech-Co-LTD/platform-core/pull/274), [7d61c57](https://github.com/MYTech-Co-LTD/platform-core/commit/7d61c5772bcd7b140c293da81909e34f0403bac7))
 
