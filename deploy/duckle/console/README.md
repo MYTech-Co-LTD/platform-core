@@ -78,6 +78,51 @@
   **零售的每日生产 run 走 openship job、落在另一个卷 ⇒ 本规则看不到它**，零售面告警待 W2。
   **别把本文件读成「采集全链路的告警」。** 另：账套 **64188 的卷尚未 seed 这版**（要不要切是独立决定）。
 
+## L0 形态管线的观测面与排障口径（2026-09-28 Wave 1；#276）
+
+> **本节只放口径与指针**；阈值理由 / 取舍正文在 `alerts.json`、`owners.json` 两个文件的 `_note`
+> （⑨ / ⑧），以及管线自己的 `_note` ⑧。**有冲突时以那三处为准**（本节不复制正文）。
+
+L0 形态（一条管线替代「薄管线 + shell + 重管线」，正典 §1.1.7）**没有 `snk.csv` 运行记录**。
+首例 = `pipelines/lemeng.dim.branch.l0.json`。三件事各归谁：
+
+| 面 | 落点 | 备注 |
+|---|---|---|
+| **运行记录 / 排障入口** | **引擎回执**（`runs/receipts/`） | 不是文件凭证——回执由引擎自产，**不用投递**（正典 §1.6 派生物表） |
+| **失败告警** | `alerts.json` 的 `lemeng.dim.*.l0` 规则 | ⚠️ 按**形态末段**分组，不是宽 glob；取舍见 alerts.json ⑨ |
+| **新鲜度 SLA** | `owners.json` 的湖对象条目（`snk.minio` 目标） | 过渡期两套资产并存，形状见 owners.json ⑧ |
+
+### 排障三问怎么答（L0 管线，容器内经 openship MCP 的容器执行端点）
+
+| 问 | 答法 |
+|---|---|
+| **今天跑没跑** | `runs/receipts/` 里 `run-*<pipeline_id>*.json` 的 `startedAt`（⚠️ 判触发看 `startedAt`，`schedules.json` 的 `last_run_at` 是**完成**时刻） |
+| **几行** | 同一份 receipt 的 `nodes.sink.rows`（= 落湖行数） |
+| **什么状态** | receipt 的 `status` + 逐节点 `nodes.<id>.status/rows/durationMs`；逐节点时间线看 `logs/<pipeline_id>/runtime.log`（每次 run 首尾各一行 `run_started`/`run_finished`） |
+
+一条命令答完三问（容器内 `python3` 恒在，不必装 `jq`）：
+
+```sh
+python3 -c "import json,glob,os;fs=glob.glob('/workspace/runs/receipts/*branch_l0*.json');f=max(fs,key=os.path.getmtime);r=json.load(open(f));print(os.path.basename(f),r['status'],r['startedAt'],'sink_rows=',r['nodes']['sink']['rows'])"
+```
+
+⚠️ **回执有保留上限**（`runs/receipts/` 200 条、`runs/` 50 条/管线——正典 §1.6）⇒ 它是**近期**
+排障入口，不是长期审计账。日频管线 ≈ 200 天。
+
+### 🔴 新增 L0 管线的硬前置：**重建 catalog**
+
+`owners.json` 的新鲜度**依赖 catalog**（见其 ②）：catalog 是**静态扫描 `pipelines/` 的产物**、
+不是每次 run 现推 ⇒ **管线文件进卷后不重建 catalog，该管线的 run record 整条不带 `assets` 字段**
+（2026-09-28 实测：三次 L0 run 的 receipt 全无 `assets`，而同日薄管线正常带）。
+⇒ 新 L0 管线**上线清单必须含**：
+
+1. seed 管线 + seed `alerts.json` / `owners.json`（同路，进 `/workspace/`）+ 定向重建容器；
+2. **重建 catalog**（Operator `POST /api/catalog`，或容器内 `duckle catalog build --workspace /workspace`）；
+3. 跑一次成功 run，确认**新回执带 `assets`** ⇒ 新鲜度时钟才起算（历史回执**不追溯**补）。
+
+⚠️ 自查「规则挂上没有」按 `owners.json` ⑤：freshness.json 里该资产**出现且非 unknown**；
+恒 `unknown` = 规则没挂；恒 `stale` 而管线确在成功跑 = 时钟没起算（查第 2 步）。
+
 ## ✅ 调度器的实测事实（2026-09-26，本地真跑）
 
 | 事实 | 证据 |
