@@ -107,13 +107,13 @@ create index if not exists data_reports_renderer_idx on data.reports(renderer);
 
 - [ ] **Step 3: 跑测试（需要库）**
 
-Run: `DATABASE_URL=postgres://platform:platform@127.0.0.1:5432/platform pnpm --filter data test -- module.test.ts`
+Run: `DATABASE_URL=postgres://platform:platform@127.0.0.1:5432/platform pnpm --filter data exec vitest run module.test.ts`
 （这是本机与 CI 的实际口径；**别用 `postgres:postgres`**，那个角色在本机不存在）
 Expected: PASS（先确认 `docker compose -f deploy/docker-compose.yml up -d postgres` 已起，或本地有库）
 
 - [ ] **Step 4: 跑**没有**库时也应全绿**
 
-Run: `pnpm --filter data test -- module.test.ts`
+Run: `pnpm --filter data exec vitest run module.test.ts`
 Expected: PASS（`describePg` 在无 `DATABASE_URL` 时 skip；**不许**因为没库而红）
 
 - [ ] **Step 5: Commit**
@@ -182,7 +182,7 @@ describePg('renderer', () => {
 
 - [ ] **Step 2: 跑测试确认它失败**
 
-Run: `DATABASE_URL=… pnpm --filter data test -- report-store.test.ts`
+Run: `DATABASE_URL=… pnpm --filter data exec vitest run report-store.test.ts`
 Expected: FAIL —— `renderer` 不在返回对象上（`undefined`）
 
 - [ ] **Step 3: 改实现**
@@ -236,7 +236,7 @@ export async function upsertReport(
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `DATABASE_URL=… pnpm --filter data test -- report-store.test.ts`
+Run: `DATABASE_URL=… pnpm --filter data exec vitest run report-store.test.ts`
 Expected: PASS
 
 - [ ] **Step 5: 跑全模块，确认没有别的调用方被签名变更打破**
@@ -309,7 +309,7 @@ describe('putDashboardMerged：PUT 不得清掉已存在的卡片', () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `pnpm --filter data test -- domain/metabase.test.ts`
+Run: `pnpm --filter data exec vitest run domain/metabase.test.ts`
 Expected: FAIL —— `putDashboardMerged is not a function`
 
 - [ ] **Step 3: 实现**
@@ -435,7 +435,7 @@ export async function setEmbedding(
 
 - [ ] **Step 4: 跑测试**
 
-Run: `pnpm --filter data test -- domain/metabase.test.ts routes/reports.test.ts`
+Run: `pnpm --filter data exec vitest run domain/metabase.test.ts routes/reports.test.ts`
 Expected: **先红后绿**——`routes/reports.test.ts` 的既有用例会红，因为它的 `fakeMetabase` 桩的
 `GET /api/dashboard/{id}` **只回 `{id, name, embedding_params}`**，而 `getDashboardFull` 在 `dashcards`
 不是数组时**抛 SHAPE_ERROR**（这是有意的：读不出就是读不出）。
@@ -520,7 +520,7 @@ describe('fingerprintOf', () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `pnpm --filter data test -- domain/report-content.test.ts`
+Run: `pnpm --filter data exec vitest run domain/report-content.test.ts`
 Expected: FAIL —— 模块不存在
 
 - [ ] **Step 3: 实现**
@@ -611,7 +611,7 @@ export async function readDashboardContent(
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `pnpm --filter data test -- domain/report-content.test.ts domain/metabase.test.ts`
+Run: `pnpm --filter data exec vitest run domain/report-content.test.ts domain/metabase.test.ts`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -672,7 +672,7 @@ describe('publishWithTenantBinding', () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `pnpm --filter data test -- domain/report-content.test.ts`
+Run: `pnpm --filter data exec vitest run domain/report-content.test.ts`
 Expected: FAIL —— `publishWithTenantBinding is not a function`
 
 - [ ] **Step 3: 实现**
@@ -750,7 +750,7 @@ export async function publishWithTenantBinding(
 
 - [ ] **Step 5: 跑测试**
 
-Run: `pnpm --filter data test -- domain/report-content.test.ts routes/reports.test.ts`
+Run: `pnpm --filter data exec vitest run domain/report-content.test.ts routes/reports.test.ts`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
@@ -801,7 +801,7 @@ git commit -m "feat(data): 发布一次做全三件套（声明参数/只映射�
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `pnpm --filter data test -- routes/reports.test.ts`
+Run: `pnpm --filter data exec vitest run routes/reports.test.ts`
 Expected: FAIL —— `tenantUnbound` 是 `undefined`
 
 - [ ] **Step 3: 实现**
