@@ -112,7 +112,26 @@
     "   channel 整块随每条规则复制（serde flatten 必填，见 ①——漏一条整个文件作废）。",
     "   OO 侧对应物：data_alerts_failure / data_alerts_recovery 两条不变（按 event 字段路由，与本文",
     "   规则怎么拆无关）；「营业时段 tick 缺席」是独立 scheduled alert，建为 paused（tick 未投递前启用",
-    "   = 立刻假告警刷屏），Task 6 投递并验证 _ops 行落地后才启用——阈值取舍见 owners.json ④。"
+    "   = 立刻假告警刷屏），Task 6 投递并验证 _ops 行落地后才启用——阈值取舍见 owners.json ④。",
+    "",
+    "⑨【2026-09-28 Wave 1 观测面接线（L0 首航前置；#276）——新增 dim 的 L0 形态规则】",
+    "   match = \"lemeng.dim.*.l0\"，on failure/recovery，cooldown 15。",
+    "   · 为什么按**形态末段**分组：L0 形态管线的 id 统一以 `.l0` 结尾（现 lemeng.dim.branch.l0；",
+    "     后续 dim.item 回迁同形）⇒ 条数不随新增管线线性增长，且节奏与日批同档（15 分钟冷却，同 ⑧ 的",
+    "     `lemeng.dim.*.run` 那一组）。",
+    "   ⚠️ **为什么不改成更宽的 `lemeng.dim.*`（本次评估过，明确不采纳）**：⑧ 的拆分判据是**节奏**，",
+    "     而 `lemeng.dim.*` 的 `*` 会把将来的 `lemeng.dim.*.tick` 一类高频管线一并吞进来 ⇒ 它同时命中",
+    "     「宽规则(15)」与「显式 tick 规则(60)」，而引擎是**所有命中规则各自独立发**（见 ① 与 ⑧）",
+    "     ⇒ 15 分钟冷却重新统治，正是 ⑧ 拆掉的那场风暴。**宽 glob 表达不了节奏** ⇒ 按",
+    "     `<family>.<face>.<形态>` 分组，形态段即节奏档。",
+    "   ⚠️ 旧规则 `lemeng.dim.*.run`（薄壳）**保留不动**：并行期薄壳仍是 dim 面的生产路径，",
+    "     它的退役在 Task 5 Step 3（届时连这条规则一起删）。",
+    "   ⚠️ ⑧ 那条「往本 console 加新管线必须同步加规则」的有意代价，本次**再次应验**——L0 管线",
+    "     2026-09-28 合入时没有任何一条规则匹配它（`lemeng.dim.*.run` 不匹配 `lemeng.dim.branch.l0`）",
+    "     ⇒ 失败静默。**唯一的防线是「加管线的那个 PR 里带一条规则」**：引擎不替你发现漏配；",
+    "     `catalog lint` 只查 owners 的**死规则**（匹配不到任何资产），不查 alerts 的**漏规则**",
+    "     ——方向相反的两件事，别指望它兜（见 owners.json ⑧）。",
+    "   📌 生效前提：seed 进卷才生效（与 pipelines/ 同路），落地路径 = /workspace/alerts.json。"
   ],
   "rules": [
     {
@@ -127,6 +146,16 @@
     },
     {
       "match": "lemeng.dim.*.run",
+      "on": ["failure", "recovery"],
+      "cooldownMinutes": 15,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
+    },
+    {
+      "match": "lemeng.dim.*.l0",
       "on": ["failure", "recovery"],
       "cooldownMinutes": 15,
       "channel": "webhook",
