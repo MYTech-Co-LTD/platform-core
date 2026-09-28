@@ -34,12 +34,21 @@
     "   （吸收：当日重试、上游接口午间维护、巡检与调度时差）⇒ 语义是「昨天的采集没发生，",
     "   到第二天中午还没补上才算事故」。两资产同节奏 ⇒ 同阈值。",
     "",
-    "④【为什么不给 retail-windows 资产配规则】lemeng.retail.windows.run 在 3120 的 schedules.json 里",
-    "   enabled:false（零售生产走 openship job 另一个卷，见 README/alerts.json 头注）——给它配",
-    "   maximumAge 会因「从未在本 console 写入」永久 Stale（天天假告警）；配 expectedAfterSchedule",
-    "   更糟：sla.rs schedule_deadline_passed（:166-198）对**禁用调度直接判 Some(true)=Stale**，",
-    "   与写入新旧无关。⇒ 该资产不声明，Unknown 是正确答案。同理：**expectedAfterSchedule 的",
-    "   「禁用即 Stale」语义本仓刻意不用**（要抓停更用 maximumAge 就够，且不会因调度侧正常禁用误报）。",
+    "④【retail 资产规则（2026-09-28 #260 重推导；取代本节旧稿「不给 retail-windows 配规则」的结论）】",
+    "   · 旧理据已消失：旧稿写的是 retail-windows 调度 enabled:false、零售生产走 openship job 落另一个",
+    "     卷、从未在本 console 写入 ⇒ 配了必是天天假 Stale（连带 expectedAfterSchedule 的禁用即 Stale",
+    "     更糟，sla.rs schedule_deadline_passed :166-198）。W2（#265）后零售日批已迁入本 console",
+    "     （schedules 02:30Z enabled、run record 每天写本工作区）——假 Stale 的成因不复存在。",
+    "   · 现行：retail-windows-run.csv 配 maximumAge:36h，语义 = 兜底日批健康（采集周期 24h + 12h 余量，",
+    "     与 §③ 维度面同一公式；它同时是 tick 停摆时的最终自愈层，36h 内兜底批没写才算事故）。",
+    "   · tick/close 资产（retail-tick-run.csv / retail-close-run.csv）**不声明**：maximumAge 是静态阈值，",
+    "     表达不了「营业时段每 15 分钟该有写、闭市后整夜无写也正常」——配短（如 1h）则每天闭市起假",
+    "     Stale 刷到开市；配长（≥16h）则营业时段停更也哑火，两头都是哑弹。营业时段新鲜度交给 OO 侧",
+    "     「营业时段 tick 缺席」scheduled alert（15 分钟窗口 count<1、SQL 内限定 UTC 营业时段；建为",
+    "     paused，Task 6 投递并验证 _ops 行落地后启用）；闭窗尾款与日批兜底由本节 36h + alerts.json 的",
+    "     close.run failure 规则覆盖。⇒ 这两类资产不声明，Unknown 是正确答案。",
+    "   · expectedAfterSchedule 的「禁用即 Stale」语义本仓依旧刻意不用（旧稿理由仍成立；且 tick 调度在",
+    "     64188 侧 enabled:false 属正常预备态，用它必误报）。",
     "",
     "⑤【生效自检（判据，非目视）】seed 后 ≤2 个巡检周期（120s）内 .duckle/freshness.json 必须出现",
     "   两条资产且状态非 unknown——fresh=正常在写；stale 也是 seed 成功（声明了但尚未写入或已停更，",
@@ -54,8 +63,10 @@
     "   OO 侧两条告警只匹配 event=failure/recovery ⇒ stale/refreshed 进 data_alerts 流但不进群；",
     "   要让停更也吵群是另一个决定（加一条 OO 告警），别默认它已经会吵。",
     "",
-    "⑦【覆盖边界：只有本 console 工作区】与 alerts.json 头注 ⑤ 同一边界——零售每日生产 run 走",
-    "   openship job 落另一个卷，本巡检看不到它；64188 账套未 seed 本文件（要不要切是独立决定）。"
+    "⑦【覆盖边界：只有本 console 工作区】（2026-09-28 订正：W2（#265）后零售日批已迁入本 console，",
+    "   旧稿「零售每日生产 run 走 openship job 落另一个卷、本巡检看不到它」已过时——现巡检覆盖",
+    "   dim×2 + retail-windows；tick/close 资产按 ④ 有意不声明。）64188 账套未 seed 本文件",
+    "   （要不要切是独立决定）。"
   ],
   "assets": [
     {
@@ -70,6 +81,13 @@
       "owner": "data-eng",
       "description": "商品维每日采集的成功凭证（薄管线 lemeng.dim.item.run 的 run record sink；写入=当天采集成功）",
       "tags": ["lemeng", "dim"],
+      "maximumAge": "36h"
+    },
+    {
+      "match": "/workspace/logs/retail-windows-run.csv",
+      "owner": "data-eng",
+      "description": "零售日批兜底层采集成功凭证（薄管线 lemeng.retail.windows.run 的 run record sink；写入=昨日 24 窗兜底采集成功，亦是 tick 停摆时的最终自愈层）",
+      "tags": ["lemeng", "retail"],
       "maximumAge": "36h"
     }
   ]
