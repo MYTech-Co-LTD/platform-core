@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.43.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.42.2...v0.43.0) - 2026-09-28
+- 【新增】duckle: 加密连接一次性 setup 脚本（connectionRef 写入方·路径 iii 自封） ([#306](https://github.com/MYTech-Co-LTD/platform-core/pull/306), [5408672](https://github.com/MYTech-Co-LTD/platform-core/commit/5408672c364012cb4b5477262caf9355cb2dce3d))
+
+
 ## [0.42.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.42.1...v0.42.2) - 2026-09-28
 - 【修复】ops: 平台↔仓库两条易失接线固化——幂等重做脚本 + 只读复查，三种反向测试都真红 ([#304](https://github.com/MYTech-Co-LTD/platform-core/pull/304), [de3edfe](https://github.com/MYTech-Co-LTD/platform-core/commit/de3edfe246fb3515971cac2cce7ef67aef1a4ee1))
 
