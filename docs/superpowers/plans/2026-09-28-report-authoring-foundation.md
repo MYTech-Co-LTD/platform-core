@@ -420,7 +420,15 @@ export async function getCardTemplateTags(deps: MetabaseDeps, cardId: number): P
 }
 ```
 
-⚠️ 同时把 `setEmbedding` 的**实现**改成走 `putDashboardMerged`（保持签名不变，调用方不用改）：
+**⚠️ `upsertDashboard` 也必须改（本条是 Task 3 首轮漏掉的，实现者当场指出）**：
+`POST /reports` 的路径是 `upsertDashboard` → `setEmbedding`，而 `upsertDashboard` 对**已存在**的
+dashboard 发的也是**裸 `PUT {name}`**（`metabase.ts:161`）⇒ 它**排在前面**，等 `setEmbedding`
+去 GET 时卡片**已经被它清掉了**。只修 `setEmbedding` ⇒ Goal（"发布不破坏已有内容"）**没达成**。
+改法同上：对已存在的那条路径也走 `putDashboardMerged(deps, id, { name })`（签名不变）。
+并**补一条测试**：*已存在的 dashboard 上重跑 upsert，`dashcards` 不变* ——
+这条是 Goal 的判据，不能只留在 Task 5。既有 5 条 upsert 单测若断言了裸 PUT 的形状，按新形态更新。
+
+同样把 `setEmbedding` 的**实现**改成走 `putDashboardMerged`（保持签名不变，调用方不用改）：
 
 ```ts
 export async function setEmbedding(
