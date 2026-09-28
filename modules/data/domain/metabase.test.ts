@@ -77,15 +77,17 @@ interface FakeDashboardState {
 }
 
 /**
- * **有状态**的 Metabase 桩（只做本任务用到的面：`GET` / `PUT /api/dashboard/{id}`）。
+ * **有状态**的 Metabase 桩（只做本任务用到的面：`GET /api/search` 与 `GET` / `PUT /api/dashboard/{id}`）。
  *
  * 与上面的 `stub()` 分工不同：那个是**按序回放**的无状态桩（「一次调用 ⇒ 一串响应」够用），
  * 而「裸 PUT 会不会把卡片清掉」这件事**必须有状态**才测得出——PUT 得真的改到 GET 之后读得出来的状态。
  *
- * ⚠️ 两条形状口径照**真机行为**（不是照好写）：
- *  ① 同一个 `id` 的种子合并成**一张** dashboard、`dashcards` 按出现顺序累加：测试用两次同 id
+ * ⚠️ 三条形状口径照**真机行为**（不是照好写）：
+ *  ① `GET /api/search` 是**模糊**匹配（`includes`），且命中与否由**领域层**判 `name` 全等——
+ *     桩做成全等的话，那条判据就永远不被行使（口径同 routes/reports.test.ts 的 fakeMetabase）。
+ *  ② 同一个 `id` 的种子合并成**一张** dashboard、`dashcards` 按出现顺序累加：测试用两次同 id
  *     种子的写法表达「这张 dashboard 上已经躺着 2 张卡」。
- *  ② `PUT` 对 `dashcards` / `parameters` 是**替换语义**（body 里没有该键 ⇒ 清空）——这正是真机上
+ *  ③ `PUT` 对 `dashcards` / `parameters` 是**替换语义**（body 里没有该键 ⇒ 清空）——这正是真机上
  *     「不带 dashcards 的 PUT 会替换卡片表列」的机制（本文件要修的 bug）。桩若做成「给了才改」，
  *     把实现退化回裸 PUT 的变异体就**不会**变红 ⇒ 那条断言等于没测。
  */
@@ -112,7 +114,16 @@ function fakeMetabaseWithCards(
     const body = init?.body === undefined
       ? undefined
       : (JSON.parse(String(init.body)) as Record<string, unknown>)
-    const m = /^\/api\/dashboard\/(\d+)$/.exec(new URL(url).pathname)
+    const u = new URL(url)
+    if (u.pathname === '/api/search') {
+      const q = u.searchParams.get('q') ?? ''
+      return respond({
+        data: state.dashboards
+          .filter((d) => d.name.includes(q))
+          .map((d) => ({ id: d.id, name: d.name, model: 'dashboard' })),
+      })
+    }
+    const m = /^\/api\/dashboard\/(\d+)$/.exec(u.pathname)
     const d = m === null ? undefined : state.dashboards.find((x) => x.id === Number(m[1]))
     // 未知路径 / 未知 id 一律 404（真机形状；不回落成 200 空体——那会让形状断言永远成立）
     if (d === undefined) return respond({ message: 'not found' }, 404)
@@ -139,24 +150,54 @@ function fakeMetabaseWithCards(
 }
 
 describe('upsertDashboard：幂等（幂等要自实现——API 无按名 upsert，spec §6.5）', () => {
-  it('search 命中同名 dashboard ⇒ PUT 覆盖，**不** POST（两次调用只产生一次创建）', async () => {
+  it('★ 已存在的 dashboard 上重跑 upsert ⇒ dashcards **不变**（Goal 判据：幂等更新不得破坏已有内容）', async () => {
+    // 这条是 Goal 的判据本身：`POST /reports` 的路径是 upsertDashboard → setEmbedding，而 upsert 排在
+    // 前面；它若发裸 PUT {name}，等 setEmbedding 去 GET 时卡片**已经被清掉了**（合并也救不回来）。
+    const { state, fetcher } = fakeMetabaseWithCards([
+      { id: 7, name: 'o/a', dashcards: [{ id: 1, card_id: 11, row: 0, col: 0, size_x: 12, size_y: 6 }] },
+      { id: 7, name: 'o/a', dashcards: [{ id: 2, card_id: 12, row: 6, col: 0, size_x: 6, size_y: 4 }] },
+    ])
+    // search 命中同名 ⇒ 走「已存在」那条分支
+    expect(await upsertDashboard(depsOf(fetcher), 'o/a')).toEqual({ id: 7, created: false })
+    expect(state.dashboards[0].name).toBe('o/a')
+    expect(state.dashboards[0].dashcards).toHaveLength(2)  // ← 关键断言：裸 PUT 会把它清成 0
+  })
+
+  it('search 命中同名 dashboard ⇒ PUT 覆盖，**不** POST（只产生一次创建）', async () => {
     const { calls, fetcher } = stub([
       { body: { data: [{ id: 7, name: '销售日报', model: 'dashboard' }], total: 1 } },
+      // 命中后的更新走 putDashboardMerged ⇒ 多一次「读全量」（真机形状：dashcards 是数组）
+      { body: { id: 7, name: '销售日报', dashcards: [], parameters: [] } },
       { body: { id: 7, name: '销售日报' } },
     ])
     const out = await upsertDashboard(depsOf(fetcher), '销售日报')
     expect(out).toEqual({ id: 7, created: false })
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(3)
     expect(calls[0].init?.method ?? 'GET').toBe('GET')
     expect(calls[0].url).toContain('/api/search?')
     // q 必须带上（否则搜不出来）+ models 收窄到 dashboard（否则 card/collection 混进来）
     expect(calls[0].url).toContain(`q=${encodeURIComponent('销售日报')}`)
     expect(calls[0].url).toContain('models=dashboard')
-    expect(calls[1].init?.method).toBe('PUT')
+    // ① 读全量（合并的输入）② 合并写回。载荷里 name/parameters/dashcards 三键齐 —— 不再是有啥发啥的裸 PUT
+    expect(calls[1].init?.method ?? 'GET').toBe('GET')
     expect(calls[1].url).toBe('https://mb.test/api/dashboard/7')
-    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ name: '销售日报' })
+    expect(calls[2].init?.method).toBe('PUT')
+    expect(calls[2].url).toBe('https://mb.test/api/dashboard/7')
+    expect(JSON.parse(String(calls[2].init?.body))).toEqual({
+      name: '销售日报', parameters: [], dashcards: [],
+    })
     // 每个请求都带 API key（否则真机 401，而单测里若桩不校验就结构性看不见）
     for (const c of calls) expect(headerOf(c, 'x-api-key')).toBe('mb-api-key')
+  })
+
+  it('已存在 + 给了 collectionId ⇒ 合并 PUT 仍带上 collection_id（不许静默丢掉「移进集合」这个语义）', async () => {
+    const { calls, fetcher } = stub([
+      { body: { data: [{ id: 7, name: 'o/a', model: 'dashboard' }] } },
+      { body: { id: 7, name: 'o/a', dashcards: [], parameters: [] } },
+      { body: { id: 7 } },
+    ])
+    await upsertDashboard(depsOf(fetcher), 'o/a', 3)
+    expect(JSON.parse(String(calls[2].init?.body))).toMatchObject({ name: 'o/a', collection_id: 3 })
   })
 
   it('search 未命中 ⇒ POST 创建，返回体里的 id', async () => {
@@ -203,10 +244,11 @@ describe('upsertDashboard：幂等（幂等要自实现——API 无按名 upser
         { id: 30, name: '日报', model: 'dashboard' },
         { id: 8, name: '日报', model: 'dashboard' },
       ] } },
+      { body: { id: 8, name: '日报', dashcards: [], parameters: [] } },
       { body: { id: 8 } },
     ])
     expect(await upsertDashboard(depsOf(fetcher), '日报')).toEqual({ id: 8, created: false })
-    expect(calls[1].url).toBe('https://mb.test/api/dashboard/8')
+    expect(calls[2].url).toBe('https://mb.test/api/dashboard/8')
   })
 })
 

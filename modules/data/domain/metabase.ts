@@ -150,6 +150,9 @@ async function findDashboardIdByName(deps: MetabaseDeps, name: string): Promise<
  * 幂等建/更 dashboard：命中同名则 `PUT`（改名到同一个 name，幂等），否则 `POST` 创建。
  * 返回 `created` 是**可观测的幂等证据**（第二次 POST /reports 应为 false）。
  *
+ * ⚠️ 命中的那条路径是**非破坏性**的（走 `putDashboardMerged`：先 GET 全量 → 合并 → 再 PUT）。
+ *    裸 `PUT {name}` 在真机上会替换卡片表列 ⇒ 重跑 `POST /reports` 就把已有报表的卡清空了。
+ *
  * ⚠️ `name` 传的是 `dashboardName(org, title)`（含 org 的规范名，I-1）——**不许**传裸 title：
  *    裸 title 会让两个租户的同名报表命中同一张 dashboard（跨租户改写/归档）。
  */
@@ -158,8 +161,13 @@ export async function upsertDashboard(
 ): Promise<MbUpsertResult> {
   const existing = await findDashboardIdByName(deps, name)
   if (existing !== null) {
-    await call(deps, 'PUT', `/api/dashboard/${existing}`,
-      collectionId === undefined ? { name } : { name, collection_id: collectionId })
+    // ⚠️ **非破坏性**（同 `putDashboardMerged`）：这里曾经发的是只带 `{name}` 的裸 PUT，而真机上
+    //    不带 `dashcards` 的 PUT 会**替换卡片表列** ⇒ 重跑 `POST /reports` 会把用户/agent 手工加进
+    //    报表的卡静默清掉。而且本函数在 `POST /reports` 里**排在 `setEmbedding` 之前**：先被这里清掉，
+    //    后面那次「读全量再合并」读到的就是**已经空了**的卡片，救不回来 ⇒ 本函数必须一起走合并路径。
+    await putDashboardMerged(deps, existing, collectionId === undefined
+      ? { name }
+      : { name, collection_id: collectionId })
     return { id: existing, created: false }
   }
   const created = await call(deps, 'POST', '/api/dashboard',
@@ -236,6 +244,12 @@ export async function putDashboardMerged(
   dashboardId: number,
   patch: {
     name?: string
+    /**
+     * 归属集合。**本任务新增的唯一字段**：`upsertDashboard` 在「命中同名 ⇒ 更新」这条路径上原本就支持
+     * 带 `collectionId`（裸 PUT `{name, collection_id}`），改走合并路径时若把它丢掉，就等于**静默**
+     * 取消了「把已存在的 dashboard 移进某集合」这个语义。给了才带（别塞 undefined 进 body）。
+     */
+    collection_id?: number
     parameters?: { id: string; name: string; slug: string; type: string; sectionId?: string }[]
     dashcards?: DashcardRef[]
     enable_embedding?: boolean
@@ -253,6 +267,7 @@ export async function putDashboardMerged(
       ...(d.parameterMappings ? { parameter_mappings: d.parameterMappings } : {}),
     })),
   }
+  if (patch.collection_id !== undefined) body.collection_id = patch.collection_id
   if (patch.enable_embedding !== undefined) body.enable_embedding = patch.enable_embedding
   if (patch.embedding_type !== undefined) body.embedding_type = patch.embedding_type
   if (patch.embedding_params !== undefined) body.embedding_params = patch.embedding_params
