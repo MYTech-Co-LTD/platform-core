@@ -632,22 +632,39 @@ export async function readDashboardContent(
 ```
 
 ⚠️ **Step 3 的注（必须处理，别跳过）**：上面的 `cardSqlDigests` 只摘要了**模板标签名**，
-覆盖不了"人改了 SQL 但不改标签"。要在 `metabase.ts` 再加一个 `getCardSql(deps, cardId): Promise<string>`
-（同样从 `dataset_query.stages[0].native` 取），并在 `readDashboardContent` 里改用它算摘要：
+覆盖不了"人改了查询但不改标签"。
+
+⚠️⚠️ **摘要必须覆盖「整个查询定义」，不能只取 native SQL 字符串**：Metabase **UI 建的卡是 MBQL**
+（`dataset_query.stages[0].native` **不存在**）⇒ 只摘要 native 会让这类卡的摘要**恒为空串** ⇒
+人改了它的查询，指纹**不动**，写保护就漏了——而"**人在编辑器里改**"正是本设计的前提。
+
+⇒ 在 `metabase.ts` 加**一个**函数，**一次 GET 取两份快照**：
 
 ```ts
-    const [tags, sql] = await Promise.all([
-      getCardTemplateTags(deps, dc.cardId),   // 循环开头已 `if (dc.cardId === null) continue`
-      getCardSql(deps, dc.cardId),
-    ])
-    cardTags[dc.cardId] = tags
-    // ⚠️ 摘要要覆盖**整个查询定义**，不能只摘要 native SQL 字符串：
-    //    Metabase UI 建的卡是 **MBQL**（`stages[0].native` 不存在 ⇒ 摘要恒为空串）⇒
-    //    人改了那种卡的查询，指纹**不动**，写保护就漏了——而"人在编辑器里改"正是本设计的前提。
-    //    故摘要取 `dataset_query` 的规范化 JSON（native 卡与 MBQL 卡都覆盖）。
-    cardSqlDigests[dc.cardId] = createHash('sha256')
-      .update(JSON.stringify(dc.datasetQuery ?? null))
-      .digest('hex').slice(0, 16)
+/** 一次读回该卡的模板标签与**整个查询定义**（规范化 JSON）。形状不对 ⇒ 抛。 */
+export async function getCard(
+  deps: MetabaseDeps, cardId: number,
+): Promise<{ tags: string[]; queryJson: string }> {
+  const body = await call(deps, 'GET', `/api/card/${cardId}`)
+  const dq = (body as { dataset_query?: unknown } | null)?.dataset_query
+  if (dq === undefined) throw new MetabaseError(200, SHAPE_ERROR)
+  // tags 的取法见既有 getCardTemplateTags（数组/字典两种形态都要认）——把它改成基于本函数的投影
+  return { tags: tagsOf(dq), queryJson: JSON.stringify(dq) }
+}
+```
+
+`getCardTemplateTags` **保留为它的投影**（契约不变、既有测试继续管它）。
+
+**为什么是一个函数、一次 GET，不是一个取标签一个取 SQL**：每张卡读两次会让一次指纹的请求数翻倍
+（Task 5 每次发布要算两次 `readDashboardContent` ⇒ **2N vs 4N**），且两次响应之间可能是**撕裂读**
+（同一张卡的两份快照来自不同时刻）。
+
+摘要那一行随之改成：
+
+```ts
+    const card = await getCard(deps, dc.cardId)   // 循环开头已 `if (dc.cardId === null) continue`
+    cardTags[dc.cardId] = card.tags
+    cardSqlDigests[dc.cardId] = createHash('sha256').update(card.queryJson).digest('hex').slice(0, 16)
 ```
 
 并**补一条测试**：同一张卡，SQL 从 `select 1` 改成 `select 2` ⇒ 指纹变。
