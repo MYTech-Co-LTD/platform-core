@@ -3,16 +3,32 @@
 // 隔离键一律是 **org（text，值 = 该租户的 Casdoor org）**，不是 tenant_id：
 // 正典 docs/module-protocol.md「租户数据隔离」，机器判据 scripts/check-tenant-isolation.mjs。
 // 三处读写**全部**带 `where org = $1`——漏一处就是跨租户串数据。
+//
+// `renderer` 区分渲染器：`metabase` = 嵌 Metabase dashboard（有真 `metabase_id`）；
+// `platform` = 平台自绘，**没有** Metabase dashboard（`metabase_id` 落 0，见 ReportRow）。
 import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
+
+/** 渲染器取值域，与库侧 check 约束 `data_reports_renderer_check` 同域（列默认 'metabase'）。 */
+export type ReportRenderer = 'metabase' | 'platform'
 
 export interface ReportRow {
   id: string
   title: string
+  /**
+   * **`renderer='platform'` 的行为 0，即哨兵——凡用它之前先判 renderer。**
+   *
+   * 为什么是 0 而不是 null：`metabase_id` 是 `integer not null`（迁移 003），放宽它为 null
+   * 需要 `drop not null`——那是一条独立的破坏性 DDL，而眼下**没有任何** platform 行；
+   * 等真写第一行 platform 时与迁移一起做，避免本轮动存量列。
+   * 0 在 Metabase 里不可能是真 dashboard id（id 从 1 起）⇒ 拿 0 当 id 去请求必然失败，
+   * 不会静默指向别的 dashboard。
+   */
   metabaseId: number
   /** 本报表除 `tenant` 外要锁的参数 → 值（`tenant` 的平台保留值不在此列，见 routes/reports.ts）。 */
   embedParams: Record<string, string>
   requiredScope: string | null
+  renderer: ReportRenderer
 }
 
 /** 行 → ReportRow。`metabase_id` 是 int4 ⇒ pg 回 JS number（**bigint 会回 string**，故列类型选 int4）。 */
@@ -24,13 +40,14 @@ function toReportRow(row: Record<string, unknown>): ReportRow {
     // embed_params 是 jsonb：pg 已反序列化成对象，**不要**再 JSON.parse（那是第二个事实源）
     embedParams: row.embed_params as Record<string, string>,
     requiredScope: row.required_scope as string | null,
+    renderer: row.renderer as ReportRenderer,
   }
 }
 
 /** 本 org 的全部登记。`order by title`：顺序确定，对账差集与 console 列表都不必猜。 */
 export async function listReports(pool: Pool, org: string): Promise<ReportRow[]> {
   const r = await pool.query(
-    `select id, title, metabase_id, embed_params, required_scope
+    `select id, title, metabase_id, embed_params, required_scope, renderer
        from data.reports
       where org = $1
       order by title`,
@@ -42,7 +59,7 @@ export async function listReports(pool: Pool, org: string): Promise<ReportRow[]>
 /** 单行读取。**必须带 org**——否则 id 就是跨租户探测句柄。 */
 export async function getReport(pool: Pool, org: string, id: string): Promise<ReportRow | null> {
   const r = await pool.query(
-    `select id, title, metabase_id, embed_params, required_scope
+    `select id, title, metabase_id, embed_params, required_scope, renderer
        from data.reports
       where org = $1 and id = $2`,
     [org, id],
@@ -67,7 +84,7 @@ export interface RegisteredReport extends ReportRow {
  */
 export async function listAllReports(pool: Pool): Promise<RegisteredReport[]> {
   const r = await pool.query(
-    `select org, id, title, metabase_id, embed_params, required_scope
+    `select org, id, title, metabase_id, embed_params, required_scope, renderer
        from data.reports
       order by org, title`,
   )
@@ -81,26 +98,33 @@ export async function listAllReports(pool: Pool): Promise<RegisteredReport[]> {
  * 侧的身份就是它的 name（`API 无按名 upsert`，平台自己按 name 找 → spec §6.5）。按 id 做冲突
  * 键的话，每次 POST 都会生成新 uuid ⇒ 每次都新增一行，正是要防的那个 bug。
  *
- * 二次 POST 覆盖 metabase_id / embed_params / required_scope，但**不换 id**（老 id 保留 ⇒
+ * 二次 POST 覆盖 metabase_id / embed_params / required_scope / renderer，但**不换 id**（老 id 保留 ⇒
  * 已经发出去的嵌入 URL 指向的行不会凭空消失），也不碰 created_at（那是「这行什么时候进来的」）。
  * 返回登记行的 id（稳定）。
+ *
+ * `renderer` 是可选参数（缺省 `metabase`，与列默认同值）⇒ 既有调用方不传也对，
+ * 且改渲染器 = 二次 upsert 带上它即可（冲突分支把 excluded 整列覆盖）。
  */
 export async function upsertReport(
   pool: Pool,
   org: string,
-  input: { title: string; metabaseId: number; embedParams: Record<string, string>; requiredScope: string | null },
+  input: {
+    title: string; metabaseId: number; embedParams: Record<string, string>
+    requiredScope: string | null; renderer?: ReportRenderer
+  },
 ): Promise<string> {
   const r = await pool.query(
-    `insert into data.reports (org, id, title, metabase_id, embed_params, required_scope)
-     values ($1, $2, $3, $4, $5, $6)
+    `insert into data.reports (org, id, title, metabase_id, embed_params, required_scope, renderer)
+     values ($1, $2, $3, $4, $5, $6, $7)
      on conflict (org, title) do update set
        metabase_id    = excluded.metabase_id,
        embed_params   = excluded.embed_params,
        required_scope = excluded.required_scope,
+       renderer       = excluded.renderer,
        updated_at     = now()
      returning id`,
     [org, randomUUID(), input.title, input.metabaseId,
-      JSON.stringify(input.embedParams), input.requiredScope],
+      JSON.stringify(input.embedParams), input.requiredScope, input.renderer ?? 'metabase'],
   )
   return r.rows[0].id as string
 }
