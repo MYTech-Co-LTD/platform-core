@@ -328,7 +328,8 @@ export interface DashcardRef {
    * 命名如实：Task 6 判「锁了但绑不到」要用 `parameterMappings` 自己比 tenant 的参数 id，
    * 因为 `metabase.ts` 是纯 HTTP 客户端，**不该知道平台的参数命名约定**。
    */
-  hasParameterMappings: boolean
+  /** **可选**：读侧派生字段；缺省即「未映射」（安全侧）。只关心布局的测试字面量可省略。 */
+  hasParameterMappings?: boolean
   /** 映射明细，**原样透传**（不解释结构——它是 Metabase 的字段，不是我们的契约）。 */
   parameterMappings?: unknown[]
   /** 可视化设置，**原样透传**：文本卡的内容就在 `visualization_settings.text`，不回写就把它清掉了。 */
