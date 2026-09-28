@@ -81,13 +81,18 @@ create index if not exists data_reports_renderer_idx on data.reports(renderer);
 ```ts
   it('004：data.reports.renderer 列存在、非空、且取值域含 metabase/platform', async () => {
     await applyMigrations(pool)
-    // 判据面：列存在且 not null（default 值不在此断言——列已存在时 add column 整句 no-op，
-    // 重读 default 会假红）
+    // 判据面：列存在、not null、**且 default 值正确**。
+    // ⚠️ default 必须断言：它是本迁移的核心语义（'metabase' = 存量行的事实），
+    //    而"不断言它"会让「把 default 改成 'platform'」这种**静默改标**回归全绿通过。
+    //    （初稿曾以"重读 default 会假红"为由省略——那条理由是错的：这一列由本迁移建，
+    //    在本套件里不可能不带 default 存在。）
     const c = await pool.query(
-      `select column_name, is_nullable from information_schema.columns
+      `select column_name, is_nullable, column_default from information_schema.columns
         where table_schema = 'data' and table_name = 'reports' and column_name = 'renderer'`,
     )
-    expect(c.rows).toEqual([{ column_name: 'renderer', is_nullable: 'NO' }])
+    expect(c.rows).toEqual([
+      { column_name: 'renderer', is_nullable: 'NO', column_default: "'metabase'::text" },
+    ])
 
     // 取值域由 check 约束兜（与 003 的 source 同一口径：枚举写错一个字母会走另一条渲染路径）
     const k = await pool.query(
