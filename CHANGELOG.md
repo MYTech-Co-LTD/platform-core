@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.46.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.45.0...v0.46.0) - 2026-09-28
+- 【新增】duckle: Wave 1 切流——branch 采集改走 L0（薄壳调度停、L0 调度起） ([#317](https://github.com/MYTech-Co-LTD/platform-core/pull/317), [efdc005](https://github.com/MYTech-Co-LTD/platform-core/commit/efdc005f8b52e47b6344e0040fe5079a47414e2c))
+
+
 ## [0.45.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.44.0...v0.45.0) - 2026-09-28
 - 【新增】duckle: Wave 1 L0 观测面接线（告警规则 + 新鲜度锚 + 运行记录口径） ([#314](https://github.com/MYTech-Co-LTD/platform-core/pull/314), [1550954](https://github.com/MYTech-Co-LTD/platform-core/commit/1550954132c96a5651259d62ff6f6d912e4fd732))
 
