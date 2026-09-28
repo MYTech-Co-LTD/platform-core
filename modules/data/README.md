@@ -55,8 +55,12 @@
     （C1 的实况：3/4 条用了只回本 org 的 `loadOrgCatalog`，于是同一个 metricId 在
     console 上显示平台口径、在 `/query` 上跑租户那条 SQL，且无任何可观测信号）。
     机器判据：`modules/data/catalog-consumers.test.ts`（四通道一致性 + 来源守卫）。
-  - ⚠️ **可见 ≠ 查得通**：marts 还没有 `org` 列 ⇒ L1 指标在真库上会以仓库错误（502）收场，
-    见下面「L2 的已知边界」第 4 条与 issue #176。
+  - ⚠️ **可见 ≠ 查得通**：~~marts 还没有 `org` 列 ⇒ L1 指标在真库上会以仓库错误（502）收场，
+    见下面「L2 的已知边界」第 4 条与 issue #176。~~
+    **2026-09-28 订正：这一条已闭合**——`macros/subject_org.sql` 已给 staging/marts 注入 `org` 列，
+    真机上 L1 指标**查得通**（`POST /query retail:net_sales` → 200 / 8 行 / `subject=shanhaiyiguo-org`）。
+    ⚠️ 但**必须有另外两步接线**才查得通，两者失败都静默：① Gate-B 网络（SOP P7）；
+    ② 仓库连接的 `search_path`（SOP P8b）——不设则报 `relation "fct_retail_sale" does not exist`。
 
 ### agent 接入面：**预留，本轮不实现**（拍板 #5）
 
@@ -80,10 +84,15 @@ L2 定义 API **就是**将来的 agent 接入面，而且已经具备接入所�
    ⚠️ **不许**拿 `tenant:admin` 兼作平台门：那会给租户引入跨租户写能力。
 3. **`tier` / `owner` / `sources` 不落库**：`data.metrics` 没有对应列。它们仍是治理面的事实源
    （在 dbt YAML 里、被静态门禁规则 ⑤ 强制必填），只是不在这张表上体现。
-4. **L1 物化的行在真库上还跑不通**：`dbt/models/**` 当前**没有 `org` 列**，而 `authz.authorize`
+4. ~~**L1 物化的行在真库上还跑不通**：`dbt/models/**` 当前**没有 `org` 列**，而 `authz.authorize`
    恒拼 `WHERE <主体列> = '<org>'` ⇒ 这些 L1 指标的查询要等 marts 补上 org 列
    （`dbt/README.md` §10 与 `macros/generate_schema_name.sql` 头注把「marts 行里的 org 列」
-   写成了**目标形态**，尚未落地）。**物化行先落、真跑等后续**——这是计划 Task 8 的既定取舍。
+   写成了**目标形态**，尚未落地）。**物化行先落、真跑等后续**——这是计划 Task 8 的既定取舍。~~
+   **✅ 2026-09-28 实测闭合**：`macros/subject_org.sql` 已注入 `org` 列，物化行带
+   `org = shanhaiyiguo-org`，`POST /query` 真库出数（`retail:net_sales` 200 / 8 行、
+   `retail:order_count` 200 / 8 行，数值与直连仓库逐字一致，回包带 `subject`）。
+   ⚠️ **但它依赖两条部署侧接线，两者失败都静默**：Gate-B 网络（SOP P7）与仓库连接的
+   `search_path`（SOP P8b）——少了任一条都会以「仓库错误」收场。见 **#297**。
 
 ## 报表面（Metabase 嵌入；issue #150 / T7）：`tenant` 参数约定
 
