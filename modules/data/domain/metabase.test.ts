@@ -11,6 +11,8 @@ import { describe, expect, it } from 'vitest'
 import {
   MetabaseError,
   dashboardName,
+  getCard,
+  getCardTemplateTags,
   getDashboardEmbeddingParams,
   getDashboardFull,
   listEmbeddableDashboards,
@@ -419,6 +421,51 @@ describe('读全量/合并写回：真机形状的三条硬约束（站内同版
     await expect(getDashboardFull(mbDeps(stub([
       { body: { id: 7, name: 'o/a', dashcards: [{ card_id: 11 }] } },
     ]).fetcher), 7)).rejects.toThrow(MetabaseError)
+  })
+})
+
+describe('getCard / getCardTemplateTags：卡片原生查询的读侧产物（v0.63 的 MBQL stages 形态）', () => {
+  /** 一次 `GET /api/card/{id}` 的真机响应形状（阶段数组里才有 native 与 template-tags）。 */
+  const cardOf = (stage: Record<string, unknown>) => ({ body: { dataset_query: { stages: [stage] } } })
+
+  it('数组形态的 template-tags（我们编译产的）⇒ 取每项的 name', async () => {
+    const { calls, fetcher } = stub([
+      cardOf({ native: 'select 1', 'template-tags': [{ name: 'tenant' }, { name: 'region' }] }),
+    ])
+    expect(await getCardTemplateTags(depsOf(fetcher), 11)).toEqual(['tenant', 'region'])
+    expect(calls[0].url).toBe('https://mb.test/api/card/11')
+    expect(calls[0].init?.method ?? 'GET').toBe('GET')
+    expect(headerOf(calls[0], 'x-api-key')).toBe('mb-api-key')
+  })
+
+  it('字典形态的 template-tags（人直接在 Metabase UI 里建的）⇒ 取键名', async () => {
+    const { fetcher } = stub([
+      cardOf({ native: 'select 1', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } }),
+    ])
+    expect(await getCardTemplateTags(depsOf(fetcher), 11)).toEqual(['tenant'])
+  })
+
+  it('template-tags 为 null ⇒ 空数组（**不是抛**：这只是"该卡没挂标签"这个结论本身）', async () => {
+    const { fetcher } = stub([cardOf({ native: 'select 1', 'template-tags': null })])
+    expect(await getCardTemplateTags(depsOf(fetcher), 11)).toEqual([])
+  })
+
+  it('★ getCard **一次** GET 同时给出标签与 SQL 正文；MBQL 卡（无 native）⇒ sql 为 \'\'（合法，不是回落）', async () => {
+    // 一次 GET 是「1 次 dashboard 读 + N 次卡片读」这条成本口径的落点：分两次调用会翻倍
+    const { calls, fetcher } = stub([
+      cardOf({ native: 'select * from item', 'template-tags': { tenant: { name: 'tenant' } } }),
+      // 人在 UI 里用查询构造器建的卡：阶段里没有 native，只有 source-table
+      cardOf({ 'source-table': 3, 'template-tags': { tenant: { name: 'tenant' } } }),
+    ])
+    const deps = depsOf(fetcher)
+    expect(await getCard(deps, 11)).toEqual({ tags: ['tenant'], sql: 'select * from item' })
+    expect(await getCard(deps, 12)).toEqual({ tags: ['tenant'], sql: '' })
+    expect(calls).toHaveLength(2)
+  })
+
+  it('★ stages 不是数组 ⇒ 抛（读不出就是读不出，不许回落成"没标签、没 SQL"）', async () => {
+    await expect(getCard(depsOf(stub([{ body: { dataset_query: {} } }]).fetcher), 11))
+      .rejects.toThrow(MetabaseError)
   })
 })
 

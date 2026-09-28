@@ -307,20 +307,52 @@ export async function putDashboardMerged(
   await call(deps, 'PUT', `/api/dashboard/${dashboardId}`, body)
 }
 
-/** 该卡原生查询里的模板标签名（v0.63 的 MBQL stages 形态）。取不到 ⇒ 抛。 */
-export async function getCardTemplateTags(deps: MetabaseDeps, cardId: number): Promise<string[]> {
-  const body = await call(deps, 'GET', `/api/card/${cardId}`)
-  const stages = ((body as { dataset_query?: { stages?: unknown } } | null)?.dataset_query?.stages)
-  if (!Array.isArray(stages)) throw new MetabaseError(200, SHAPE_ERROR)
-  const first = stages[0] as { 'template-tags'?: unknown } | undefined
-  const tags = first?.['template-tags']
+/** 一次 `GET /api/card/{id}` 的读侧产物：模板标签名 + 原生查询正文（v0.63 的 MBQL stages 形态）。 */
+export interface CardRead {
+  /** 该卡原生查询里的模板标签名。 */
+  tags: string[]
+  /** 该卡原生查询的 SQL 正文；`''` = 该卡没有 native SQL（MBQL 卡，见 `getCard` 的注）。 */
+  sql: string
+}
+
+/**
+ * `template-tags` 的两种真机形态 → 标签名数组。
+ * 数组形态（我们编译产的）与字典形态（Metabase UI 产的）都要认；形状不认识 ⇒ 抛。
+ */
+function tagNamesOf(tags: unknown): string[] {
   if (tags === undefined || tags === null) return []
   if (typeof tags !== 'object') throw new MetabaseError(200, SHAPE_ERROR)
-  // 数组形态（我们编译产的）与字典形态（Metabase UI 产的）都要认
   const names = Array.isArray(tags)
     ? (tags as { name?: unknown }[]).map((t) => String(t?.name ?? ''))
     : Object.keys(tags as Record<string, unknown>)
   return names.filter((n) => n.length > 0)
+}
+
+/**
+ * 该卡的**原生查询**读侧产物：模板标签名 + SQL 正文。
+ *
+ * ⚠️ 为什么合成**一次** GET（而不是「取标签」「取 SQL」各发一次）：两者读的是同一份响应
+ *    （`dataset_query.stages[0]`），分两次调用 = 对同一资源取两份快照，且调用方每张卡付 2 次
+ *    GET。指纹的代价因此是「1 次 dashboard 读 + N 次卡片读」（N = 卡片数）。
+ *
+ * ⚠️ `sql` 为 `''` 是**合法**情形、不是回落：人在 Metabase UI 里用查询构造器建的卡是 MBQL 形态，
+ *    本来就没有 native SQL（`stages[0]` 里是 `source-table` 之类）。**形状不认识**（`stages` 不是
+ *    数组）仍然抛——读不出就是读不出，不回落成空。
+ */
+export async function getCard(deps: MetabaseDeps, cardId: number): Promise<CardRead> {
+  const body = await call(deps, 'GET', `/api/card/${cardId}`)
+  const stages = ((body as { dataset_query?: { stages?: unknown } } | null)?.dataset_query?.stages)
+  if (!Array.isArray(stages)) throw new MetabaseError(200, SHAPE_ERROR)
+  const first = stages[0] as { native?: unknown; 'template-tags'?: unknown } | undefined
+  return {
+    tags: tagNamesOf(first?.['template-tags']),
+    sql: typeof first?.native === 'string' ? first.native : '',
+  }
+}
+
+/** 该卡原生查询里的模板标签名（`getCard` 的投影：同一份读取，只留标签那半）。 */
+export async function getCardTemplateTags(deps: MetabaseDeps, cardId: number): Promise<string[]> {
+  return (await getCard(deps, cardId)).tags
 }
 
 /**
