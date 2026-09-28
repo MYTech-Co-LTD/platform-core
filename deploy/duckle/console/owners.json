@@ -103,31 +103,33 @@
   ],
   "assets": [
     {
-      "match": "/workspace/logs/dim-branch-run.csv",
-      "owner": "data-eng",
-      "description": "门店维每日采集的成功凭证（薄管线 lemeng.dim.branch.run 的 run record sink；写入=当天采集成功）",
-      "tags": ["lemeng", "dim"],
-      "maximumAge": "36h"
-    },
-    {
       "match": "/workspace/logs/dim-item-run.csv",
       "owner": "data-eng",
       "description": "商品维每日采集的成功凭证（薄管线 lemeng.dim.item.run 的 run record sink；写入=当天采集成功）",
-      "tags": ["lemeng", "dim"],
+      "tags": [
+        "lemeng",
+        "dim"
+      ],
       "maximumAge": "36h"
     },
     {
       "match": "minio://*/lemeng/dim_branch/system_book=*/snapshot=*/all.parquet",
       "owner": "data-eng",
       "description": "门店维每日采集的成功凭证（L0 管线 lemeng.dim.branch.l0 的 snk.minio 目标；写入=当天采集成功）。⚠️ 占位符不展开是**正常**的（见 ⑧）；该资产时钟只在**重建 catalog 之后**的成功 run 上起算",
-      "tags": ["lemeng", "dim"],
+      "tags": [
+        "lemeng",
+        "dim"
+      ],
       "maximumAge": "36h"
     },
     {
       "match": "/workspace/logs/retail-windows-run.csv",
       "owner": "data-eng",
       "description": "零售日批兜底层采集成功凭证（薄管线 lemeng.retail.windows.run 的 run record sink；写入=昨日 24 窗兜底采集成功，亦是 tick 停摆时的最终自愈层）",
-      "tags": ["lemeng", "retail"],
+      "tags": [
+        "lemeng",
+        "retail"
+      ],
       "maximumAge": "36h"
     }
   ]
