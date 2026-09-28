@@ -72,5 +72,14 @@ out=$(REPO_ROOT="$FR" sh "$SRC" collect 3120 "$WS/ws" 2>&1)
 ok "$(cat "$WS/ws/repository.json")" "HANDTREE"
 ok "$(cat "$WS/ws/duckle.json")" "HANDJOBS"
 
+# 10) 回归（#289）：不设 REPO_ROOT 裸调 ⇒ 脚本必须自证仓根（两层上跳），对真仓 assemble 成功
+#     （历史 bug：REPO_ROOT 只上跳一层，裸调恒报「未知账套」；此前测试全用假仓根掩盖了它）
+SRC2=$(cd "$(dirname "$0")" && pwd)/authoring-ws.sh
+WSB=$(mktemp -d)
+out=$(env -u REPO_ROOT sh "$SRC2" assemble 3120 "$WSB/bare" 2>&1); rc=$?
+ok "$rc" "0"
+[ -f "$WSB/bare/schedules.json" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "  FAIL: 裸调未产出 schedules.json"; }
+rm -rf "$WSB"
+
 rm -rf "$FR" "$WS"
 echo "pass=$pass fail=$fail"; [ "$fail" = "0" ]
