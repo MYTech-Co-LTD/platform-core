@@ -168,6 +168,19 @@ wrapper 职责清单取自任务书 + 通读 `run-retail-day.sh`（1021 行）�
 
 ## 8. 合并后管线形态草案（设计，不实施）
 
+> ⚠️ **实施订正（2026-09-28 晚，Wave 1 前置实验后）**：本节草案有 **3 处已被实测证伪或阻塞**，
+> 实施以 `2026-09-28-duckle-l1-wave1-prep.md` 为准：
+> 1. **「子管线＝现重管线逐字保留」不成立**（本文 §8 的核心假设）：`ctl.foreach` 子管线**读不到
+>    `${ENV:...}`、也不认 `connectionRef`**（runner 的 env 解析只作用于顶层文档；源码注释
+>    "the parent arrives pre-resolved, a foreach/runjob child does not"）⇒ 照抄一跑就挂（URL 变相对路径）。
+>    这是 **L1 首航的阻塞决策点 D1**（密钥怎么进子管线，四选项见该报告 §6.1）。
+> 2. **身份门的承载面**：本文设想的 `src.rest POST whoami` 对真网关**不可实现**——真 `whoami` 是 SSE，
+>    而 `src.rest` 只认 JSON（负对照已复现）⇒ 身份门需换承载面或退回平台/诊断层（D2）。
+> 3. **sink 写法**：本文未涉及；实测 `snk.minio` 的 `partitionBy` 在云 sink 上**被静默忽略**，
+>    同 run 两个 sink 写同一 key 会**静默丢数** ⇒ 照现重管线抄、别开 `partitionBy`。
+>
+> 另：`§7.2` 的「sink 分区覆盖语义」一项**已销账**（同上）；OO / WeCom 两项仍未验（首航前的小实验 P1/P2）。
+
 **推荐形态：foreach 父管线 + 现重管线(加 checkpoint)作子**——重管线逐字保留（战场验证的 flatten/contract/sink 语义零改动），只把 shell 循环翻成管线；**备选：reject 单管线形**（少一层子管线，但欠 sink 分区覆盖语义验证）。
 
 ```
