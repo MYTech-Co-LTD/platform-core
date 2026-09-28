@@ -539,7 +539,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 | 源 / 表 | 通道 | 例外证据 | 落点前缀 | 分区键 | 节奏 | 调度归口 | 验收结论 |
 |---|---|---|---|---|---|---|---|
-| 乐檬零售明细（3120） | duckle | — | `lemeng/retail_order_line` | `system_book=` + `hour=` | **日批在跑** + 5min tick 已定义（**试点待投递**，Task 6 未投——别读成「现行 5min」） | **openship job**（`lemeng-retail-3120-runner`，`30 2 * * *` **UTC**，**尚未迁 console**） | 自证 ✓ / 幂等 ✓ / 独立通道 **✗ 未归零（+1.15%）** / 跨系统 待回填 |
+| 乐檬零售明细（3120） | duckle | — | `lemeng/retail_order_line` | `system_book=` + `hour=` | **日批在跑** + 5min tick 已定义（**试点待投递**，Task 6 未投——别读成「现行 5min」） | **duckle console**（调度 enabled，cron 不变；openship job 已先禁、观察期 ≥3 运行日后退役——#265） | 自证 ✓ / 幂等 ✓ / 独立通道 **✗ 未归零（+1.15%）** / 跨系统 待回填 |
 | 乐檬零售明细（64188） | duckle | — | 同上 | 同上 | 同 3120 | 未落 | — |
 | 乐檬门店维 / 商品维（双账套） | duckle | — | `lemeng/dim_branch`、`lemeng/dim_item` | `system_book=` + `snapshot=` | 日更（全量快照） | **duckle console** ×2（UTC `0 2 * * *` / `0 11 * * *`） | 首次真跑销账（**拒写湖**路径已验证；门店维见 `deploy/duckle/README.md` §9，商品维 2026-09-26 两账套 cron 真跑）——**不是「四层全过」** |
 | 乐檬调拨 / 批发 / 退货 / 要货（5 源） | duckle（设计定稿） | — | `lemeng/transfer_out` 等 | `system_book=` + `bizday=` | 5min 增量 + 每小时全量（设计） | 未落 | — |
