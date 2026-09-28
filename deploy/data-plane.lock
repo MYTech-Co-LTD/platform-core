@@ -1,4 +1,4 @@
-sha256-of-rest bf15cb7378ce3eb477bb12a6040b7dcc9cbe0672f37bccc8a3965900c02c0d15
+sha256-of-rest 9c01d0c284b4d81cc260c80b03d77954a553ec27bab529ec03fdfef4c86ba0ed
 d76cda3f506128316019928fe02a4458a230880368b55cf788395cc996024eb2 dbt/README.md ${REPO}/dbt/README.md 0644
 cc1d78b5c825d5902d22be9b17fbabdc0833afb3c25912e392f8765004a76776 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -26,6 +26,7 @@ d43c40d2e1dd6c80db95782f3a7481028472868c77a2df31a46296fcfd908860 dbt/tests/audit
 caffb0d78fd5cc4f2575292a0a106e5c46ea3ccd4fe443731273b99d77524605 deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
 17df45e5c3d0d20c893e84595506dc9102d03f9b5193eb78946375c60ff03540 deploy/duckle/console/alerts.json ${REPO}/deploy/duckle/console/alerts.json 0644
 c7e4a8883c7c6929333a1c30edcb10418cc8852ae3fa3d08fe853681689451a3 deploy/duckle/console/owners.json ${REPO}/deploy/duckle/console/owners.json 0644
+3630902dbb15629517817f955be06e37c80e2fb26f43acf40c0653c79c3d94c1 deploy/duckle/console/pipelines/lemeng.dim.branch.l0.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.branch.l0.json 0644
 ee2b88c4099066c164bcb6cba5e765fe6ac08ee6ef4c1cc8f9d51aff52923348 deploy/duckle/console/pipelines/lemeng.dim.branch.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.branch.run.json 0644
 f735fee86b2daac945a25717a907b07d7e50fcfc0202c96f4b08a701f1ffb87f deploy/duckle/console/pipelines/lemeng.dim.item.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item.run.json 0644
 ff747107af2e06a397b22f388e2436c90b7cddbfe2d1736b1e7ee2ed97b31d45 deploy/duckle/console/pipelines/lemeng.retail.close.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.close.run.json 0644
