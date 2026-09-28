@@ -34,5 +34,29 @@
     "last_run_duration_ms": null,
     "last_run_error": null,
     "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.retail.tick.run",
+    "pipeline_id": "lemeng.retail.tick.run",
+    "name": "lemeng.retail.tick.run",
+    "enabled": false,
+    "kind": { "type": "cron", "expr": "*/5 0-15 * * *" },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.retail.close.run",
+    "pipeline_id": "lemeng.retail.close.run",
+    "name": "lemeng.retail.close.run",
+    "enabled": false,
+    "kind": { "type": "cron", "expr": "0 16 * * *" },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
   }
 ]
