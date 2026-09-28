@@ -28,7 +28,7 @@
 #
 # 壳法纪律：FAIL 不在管道子壳里调（子壳的 exit 杀不掉全脚本）；变量与全角字符相邻一律 ${VAR}。
 set -u
-REPO_ROOT=${REPO_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}
+REPO_ROOT=${REPO_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 CONSOLE=deploy/duckle/console
 FAIL() { echo "AUTHORING_WS_FAILED: $*"; exit 2; }
 
