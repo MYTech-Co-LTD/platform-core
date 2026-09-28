@@ -307,12 +307,12 @@ export async function putDashboardMerged(
   await call(deps, 'PUT', `/api/dashboard/${dashboardId}`, body)
 }
 
-/** 一次 `GET /api/card/{id}` 的读侧产物：模板标签名 + 原生查询正文（v0.63 的 MBQL stages 形态）。 */
+/** 一次 `GET /api/card/{id}` 的读侧产物：模板标签名 + **整个查询定义**（v0.63 的 MBQL stages 形态）。 */
 export interface CardRead {
-  /** 该卡原生查询里的模板标签名。 */
+  /** 该卡查询里的模板标签名。 */
   tags: string[]
-  /** 该卡原生查询的 SQL 正文；`''` = 该卡没有 native SQL（MBQL 卡，见 `getCard` 的注）。 */
-  sql: string
+  /** 该卡 `dataset_query` 的规范化序列化（**native 卡与 MBQL 卡都覆盖**，见 `getCard` 的注）。 */
+  queryJson: string
 }
 
 /**
@@ -329,25 +329,28 @@ function tagNamesOf(tags: unknown): string[] {
 }
 
 /**
- * 该卡的**原生查询**读侧产物：模板标签名 + SQL 正文。
+ * 该卡的**查询定义**读侧产物：模板标签名 + `dataset_query` 的序列化。
  *
- * ⚠️ 为什么合成**一次** GET（而不是「取标签」「取 SQL」各发一次）：两者读的是同一份响应
- *    （`dataset_query.stages[0]`），分两次调用 = 对同一资源取两份快照，且调用方每张卡付 2 次
- *    GET。指纹的代价因此是「1 次 dashboard 读 + N 次卡片读」（N = 卡片数）。
+ * ⚠️ 为什么合成**一次** GET（而不是「取标签」「取查询」各发一次）：两者读的是同一份响应
+ *    （`dataset_query`），分两次调用 = 对同一资源取两份快照，且调用方每张卡付 2 次 GET。
+ *    指纹的代价因此是「1 次 dashboard 读 + N 次卡片读」（N = 卡片数）。
  *
- * ⚠️ `sql` 为 `''` 是**合法**情形、不是回落：人在 Metabase UI 里用查询构造器建的卡是 MBQL 形态，
- *    本来就没有 native SQL（`stages[0]` 里是 `source-table` 之类）。**形状不认识**（`stages` 不是
- *    数组）仍然抛——读不出就是读不出，不回落成空。
+ * ⚠️ 为什么取**整个 `dataset_query`** 而不是 `stages[0].native` 那个 SQL 字符串：
+ *    人在 Metabase UI 里建的卡**默认是 MBQL**（结构化查询，阶段里是 `source-table` 之类、
+ *    **没有 `native`**）⇒ 只取 SQL 的话这类卡的摘要恒为空串 ⇒ **人改了它的查询而指纹不动**，
+ *    写保护漏掉一整类改动（而本设计的前提正是"人会进编辑器改"）。
+ *    取整个查询定义则 native 卡与 MBQL 卡都在覆盖内；代价是**非 native 部分**（如更新频率等
+ *    被服务端规范化的字段）也会进摘要——那是把"改过"判宽的方向，不是漏判的方向。
+ *
+ * ⚠️ **形状不认识**（`dataset_query.stages` 不是数组）仍然抛——读不出就是读不出，不回落成空。
  */
 export async function getCard(deps: MetabaseDeps, cardId: number): Promise<CardRead> {
   const body = await call(deps, 'GET', `/api/card/${cardId}`)
-  const stages = ((body as { dataset_query?: { stages?: unknown } } | null)?.dataset_query?.stages)
+  const dq = (body as { dataset_query?: unknown } | null)?.dataset_query
+  const stages = (dq as { stages?: unknown } | null | undefined)?.stages
   if (!Array.isArray(stages)) throw new MetabaseError(200, SHAPE_ERROR)
-  const first = stages[0] as { native?: unknown; 'template-tags'?: unknown } | undefined
-  return {
-    tags: tagNamesOf(first?.['template-tags']),
-    sql: typeof first?.native === 'string' ? first.native : '',
-  }
+  const first = stages[0] as { 'template-tags'?: unknown } | undefined
+  return { tags: tagNamesOf(first?.['template-tags']), queryJson: JSON.stringify(dq) }
 }
 
 /** 该卡原生查询里的模板标签名（`getCard` 的投影：同一份读取，只留标签那半）。 */

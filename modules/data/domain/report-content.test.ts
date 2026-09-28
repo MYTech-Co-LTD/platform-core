@@ -61,11 +61,13 @@ interface DashSeed {
   embedding_params?: Record<string, string>
 }
 
-/** `GET /api/card/{id}` 的种子。**可变**：测试用改 `native` 来模拟"人在 Metabase 里改了 SQL"。 */
-interface CardSeed {
-  native?: string
-  'template-tags'?: unknown
-}
+/**
+ * `GET /api/card/{id}` 的种子 = 该卡 `dataset_query.stages[0]` 那一阶段。**可变**：
+ * 测试改它来模拟"人在 Metabase 里改了这张卡"。
+ * 两种真机形态都要造得出：**native 卡**（`{ native }`，我们编译产的）与
+ * **MBQL 卡**（`{ 'source-table': … }`，**没有 `native`**，人在 Metabase UI 用查询构造器建的）。
+ */
+type CardSeed = Record<string, unknown>
 
 /**
  * 极简 Metabase 桩：只认 `GET /api/dashboard/{id}` 与 `GET /api/card/{id}`，其余 404。
@@ -89,9 +91,7 @@ function mbStub(
     const m = /^\/api\/card\/(\d+)$/.exec(path)
     const seed = m === null ? undefined : cards[Number(m[1])]
     if (seed === undefined) return respond({ message: 'not found' }, 404)
-    return respond({
-      dataset_query: { stages: [{ native: seed.native, 'template-tags': seed['template-tags'] }] },
-    })
+    return respond({ dataset_query: { stages: [seed] } })
   }
   return { calls, fetcher }
 }
@@ -105,13 +105,19 @@ const dc = (id: number, cardId: number | null): DashSeed['dashcards'][number] =>
 const dashOf = (dashcards: DashSeed['dashcards']): DashSeed =>
   ({ id: 7, name: 'org-a/日报', dashcards })
 
-/** 一张挂了 tenant 标签的卡（形式同我们编译产的：字典形态，Metabase UI 亦同）。 */
-const tenantCard = (native: string): CardSeed =>
-  ({ native, 'template-tags': { tenant: { name: 'tenant', type: 'text' } } })
+/** 挂在卡上的 tenant 模板标签（字典形态，Metabase UI 亦同）。 */
+const TENANT_TAG = { tenant: { name: 'tenant', type: 'text' } }
+
+/** 一张挂了 tenant 标签的 **native** 卡（SQL 形态，我们编译产的）。 */
+const nativeCard = (native: string): CardSeed => ({ native, 'template-tags': TENANT_TAG })
+
+/** 一张挂了 tenant 标签的 **MBQL** 卡（人在 Metabase UI 里建的：结构化查询，**没有 `native`**）。 */
+const mbqlCard = (sourceTable: number): CardSeed =>
+  ({ 'source-table': sourceTable, 'template-tags': TENANT_TAG })
 
 describe('readDashboardContent：读真实内容 + 现算指纹', () => {
   it('★ 同一张卡 SQL 从 select 1 改成 select 2（模板标签没变）⇒ 指纹变——updated_at 抓不到的正是这一层', async () => {
-    const cards: Record<number, CardSeed> = { 11: tenantCard('select 1') }
+    const cards: Record<number, CardSeed> = { 11: nativeCard('select 1') }
     const { fetcher } = mbStub(dashOf([dc(1, 11)]), cards)
     const deps = depsOf(fetcher)
     const before = await readDashboardContent(deps, 7)
@@ -122,8 +128,21 @@ describe('readDashboardContent：读真实内容 + 现算指纹', () => {
     expect(after.fingerprint).not.toBe(before.fingerprint)
   })
 
+  it('★ MBQL 卡（人在 Metabase UI 建的：无 native、只有 source-table）改查询 ⇒ 指纹变', async () => {
+    // ⚠️ UI 建的卡**默认就是 MBQL**：摘要若只取 native SQL 字符串，这类卡恒得 hash('')
+    // ⇒ 人改了它的查询而指纹不动 = 写保护漏掉**一整类**改动（只摘要 native 的实现下这条会红）。
+    const cards: Record<number, CardSeed> = { 11: mbqlCard(3) }
+    const { fetcher } = mbStub(dashOf([dc(1, 11)]), cards)
+    const deps = depsOf(fetcher)
+    const before = await readDashboardContent(deps, 7)
+    cards[11] = mbqlCard(4)   // 人把来源表从 3 换成 4（仍是 MBQL，全程没有 native）
+    const after = await readDashboardContent(deps, 7)
+    expect(after.cardTags).toEqual(before.cardTags)
+    expect(after.fingerprint).not.toBe(before.fingerprint)
+  })
+
   it('文本卡（card_id: null）跳过，且同一张卡只读一次（1 次 dashboard 读 + N 次卡片读）', async () => {
-    const { calls, fetcher } = mbStub(dashOf([dc(1, null), dc(2, 11), dc(3, 11)]), { 11: tenantCard('select 1') })
+    const { calls, fetcher } = mbStub(dashOf([dc(1, null), dc(2, 11), dc(3, 11)]), { 11: nativeCard('select 1') })
     const out = await readDashboardContent(depsOf(fetcher), 7)
     expect(out.cardTags).toEqual({ 11: ['tenant'] })
     // 文本卡没有卡可读、重复的卡只读一次 ⇒ 卡片请求恰好 1 次（不是 3 次）
@@ -141,7 +160,7 @@ describe('readDashboardContent：读真实内容 + 现算指纹', () => {
     const param = { id: 'p-tenant', name: 'tenant', slug: 'tenant', type: 'category' }
     const { fetcher } = mbStub(
       { ...dashOf([dc(1, 11), dc(2, null)]), parameters: [param], embedding_params: { tenant: 'locked' } },
-      { 11: tenantCard('select 1') },
+      { 11: nativeCard('select 1') },
     )
     const out = await readDashboardContent(depsOf(fetcher), 7)
     expect(out.name).toBe('org-a/日报')

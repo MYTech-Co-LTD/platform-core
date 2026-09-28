@@ -450,16 +450,22 @@ describe('getCard / getCardTemplateTags：卡片原生查询的读侧产物（v0
     expect(await getCardTemplateTags(depsOf(fetcher), 11)).toEqual([])
   })
 
-  it('★ getCard **一次** GET 同时给出标签与 SQL 正文；MBQL 卡（无 native）⇒ sql 为 \'\'（合法，不是回落）', async () => {
-    // 一次 GET 是「1 次 dashboard 读 + N 次卡片读」这条成本口径的落点：分两次调用会翻倍
-    const { calls, fetcher } = stub([
-      cardOf({ native: 'select * from item', 'template-tags': { tenant: { name: 'tenant' } } }),
-      // 人在 UI 里用查询构造器建的卡：阶段里没有 native，只有 source-table
-      cardOf({ 'source-table': 3, 'template-tags': { tenant: { name: 'tenant' } } }),
-    ])
+  it('★ getCard **一次** GET 同时给出标签与**整个查询定义**；MBQL 卡（无 native）也在 queryJson 里', async () => {
+    // 一次 GET 是「1 次 dashboard 读 + N 次卡片读」这条成本口径的落点：分两次调用会翻倍。
+    // ⚠️ queryJson 取的是**整个 `dataset_query`**（不是 native SQL 字符串）：UI 建的卡默认是 MBQL
+    //    （阶段里没有 native），只取 SQL 的话这类卡的摘要恒为空 ⇒ 人改它的查询指纹不动。
+    const nativeStage = { native: 'select * from item', 'template-tags': { tenant: { name: 'tenant' } } }
+    const mbqlStage = { 'source-table': 3, 'template-tags': { tenant: { name: 'tenant' } } }
+    const { calls, fetcher } = stub([cardOf(nativeStage), cardOf(mbqlStage)])
     const deps = depsOf(fetcher)
-    expect(await getCard(deps, 11)).toEqual({ tags: ['tenant'], sql: 'select * from item' })
-    expect(await getCard(deps, 12)).toEqual({ tags: ['tenant'], sql: '' })
+    const native = await getCard(deps, 11)
+    expect(native.tags).toEqual(['tenant'])
+    expect(JSON.parse(native.queryJson)).toEqual({ stages: [nativeStage] })
+    const mbql = await getCard(deps, 12)
+    expect(mbql.tags).toEqual(['tenant'])
+    // MBQL 卡**不是空摘要**：它的查询定义（source-table 等）逐字在里面，且与 native 卡不同
+    expect(JSON.parse(mbql.queryJson)).toEqual({ stages: [mbqlStage] })
+    expect(mbql.queryJson).not.toBe(native.queryJson)
     expect(calls).toHaveLength(2)
   })
 

@@ -54,11 +54,12 @@ export async function readDashboardContent(
     if (dc.cardId === null) continue
     if (seen.has(dc.cardId)) continue
     seen.add(dc.cardId)
-    // 一次 GET 同时取标签与 SQL 正文（`getCard` 的注：分两次调用 = 同一资源取两份快照）。
-    const { tags, sql } = await getCard(deps, dc.cardId)
+    // 一次 GET 同时取标签与查询定义（`getCard` 的注：分两次调用 = 同一资源取两份快照）。
+    const { tags, queryJson } = await getCard(deps, dc.cardId)
     cardTags[dc.cardId] = tags
-    // SQL 摘要：模板标签名参与不了"人改了 SQL 但标签没变"那种改动 ⇒ 摘要要覆盖查询正文
-    cardSqlDigests[dc.cardId] = createHash('sha256').update(sql).digest('hex').slice(0, 16)
+    // 查询摘要：模板标签名参与不了"人改了查询但标签没变"那种改动 ⇒ 摘要要覆盖**查询定义本身**
+    // （取 native SQL 字符串的话 MBQL 卡恒得 hash('')，那类卡的改动就整类漏掉）。
+    cardSqlDigests[dc.cardId] = createHash('sha256').update(queryJson).digest('hex').slice(0, 16)
   }
   return {
     ...full, cardTags,
