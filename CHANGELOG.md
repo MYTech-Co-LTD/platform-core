@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.47.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.46.0...v0.47.0) - 2026-09-28
+- 【新增】duckle: item 采集 L0 形态管线（一条管线替代薄壳+shell 三层） ([#321](https://github.com/MYTech-Co-LTD/platform-core/pull/321), [f63c186](https://github.com/MYTech-Co-LTD/platform-core/commit/f63c186ebc797543502a3434d9b6a0be754479d7))
+
+
 ## [0.46.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.45.0...v0.46.0) - 2026-09-28
 - 【新增】duckle: Wave 1 切流——branch 采集改走 L0（薄壳调度停、L0 调度起） ([#317](https://github.com/MYTech-Co-LTD/platform-core/pull/317), [efdc005](https://github.com/MYTech-Co-LTD/platform-core/commit/efdc005f8b52e47b6344e0040fe5079a47414e2c))
 
