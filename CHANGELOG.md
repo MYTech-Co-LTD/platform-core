@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.45.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.44.0...v0.45.0) - 2026-09-28
+- 【新增】duckle: Wave 1 L0 观测面接线（告警规则 + 新鲜度锚 + 运行记录口径） ([#314](https://github.com/MYTech-Co-LTD/platform-core/pull/314), [1550954](https://github.com/MYTech-Co-LTD/platform-core/commit/1550954132c96a5651259d62ff6f6d912e4fd732))
+
+
 ## [0.44.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.43.0...v0.44.0) - 2026-09-28
 - 【新增】duckle: branch 采集 L0 管线（一条管线替代薄壳+shell 三层，凭据走 connectionRef） ([#312](https://github.com/MYTech-Co-LTD/platform-core/pull/312), [0456dc5](https://github.com/MYTech-Co-LTD/platform-core/commit/0456dc5fbaefbedfb77d345a7023110417a73910))
 
