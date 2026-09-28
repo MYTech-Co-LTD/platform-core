@@ -137,7 +137,8 @@ git commit -m "feat(data): 报表登记加 renderer 列（Metabase 标准图 / �
   - `type ReportRenderer = 'metabase' | 'platform'`
   - `interface ReportRow { id; title; metabaseId: number; embedParams; requiredScope; renderer: ReportRenderer }`
     （`renderer='platform'` 的行 `metabaseId` 为 **0**，即哨兵——本任务**不改列**）
-  - `upsertReport(pool, org, input: { title; metabaseId: number | null; embedParams; requiredScope; renderer?: ReportRenderer }): Promise<string>`
+  - `upsertReport(pool, org, input: { title; metabaseId: number; embedParams; requiredScope; renderer?: ReportRenderer }): Promise<string>`
+    （**注意**：这里也是 `number`，不是 `number | null`——`renderer='platform'` 用 0 哨兵，本任务**不改列**）
   - `listReports` / `getReport` / `listAllReports` 的投影都带 `renderer`
 
 `renderer='platform'` 的行**没有** Metabase dashboard。迁移里 `metabase_id` 是 `integer not null`
