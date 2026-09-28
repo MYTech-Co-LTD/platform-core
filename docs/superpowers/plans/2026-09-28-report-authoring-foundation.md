@@ -400,6 +400,9 @@ export async function putDashboardMerged(
   if (patch.enable_embedding !== undefined) body.enable_embedding = patch.enable_embedding
   if (patch.embedding_type !== undefined) body.embedding_type = patch.embedding_type
   if (patch.embedding_params !== undefined) body.embedding_params = patch.embedding_params
+  // `collection_id`：**保留** upsertDashboard 命中同名时的既有语义（把 dashboard 移进集合）。
+  // 不保留它 = 把这条语义**静默丢掉**（未给该参数时与上面逐字一致，所以这是个超集）。
+  if (patch.collection_id !== undefined) body.collection_id = patch.collection_id
   await call(deps, 'PUT', `/api/dashboard/${dashboardId}`, body)
 }
 
