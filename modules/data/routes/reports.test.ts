@@ -290,6 +290,16 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   const post = (app: Hono, body: unknown) => app.request('/reports', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   })
+  /**
+   * 登记侧版本回读（管理清单 = console 的取版本通路；Task 3 起 PUT/DELETE 必须回带它）。
+   * 刻意不写死数字：版本由库侧维护，测试从**消费方看到的那个值**取，才与前端同路。
+   */
+  const versionOf = async (app: Hono, id: string): Promise<number> => {
+    const body = await (await app.request('/reports/manage')).json() as {
+      reports: { id: string; version: number }[]
+    }
+    return body.reports.find((r) => r.id === id)!.version
+  }
 
   it('环境未配置 Metabase ⇒ 503 METABASE_UNCONFIGURED（配置状态，不是 500）', async () => {
     delete process.env.DATA_METABASE_URL
@@ -451,45 +461,95 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   it('PUT /reports/:id：改页门落库并返回整行；置 null = 发布', async () => {
     const { app } = manage()
     const { id } = await (await post(app, { title: '销售日报', requiredScope: 'sales:read' })).json()
+    // 登记侧写保护（Task 3）：PUT 必带 expectedVersion，从管理清单读回来（console 同路）
+    const v0 = await versionOf(app, id)
 
     const res = await app.request(`/reports/${id}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requiredScope: 'finance:read' }),
+      body: JSON.stringify({ requiredScope: 'finance:read', expectedVersion: v0 }),
     })
     expect(res.status).toBe(200)
     expect(await res.json())
       .toMatchObject({ id, title: '销售日报', requiredScope: 'finance:read', renderer: 'metabase' })
+    // 成功响应体回带**推进后**的版本（写保护的读侧契约）
+    expect((await pool.query('select version from data.reports where id = $1', [id])).rows[0].version)
+      .toBe(v0 + 1)
     const db = await pool.query('select required_scope from data.reports where id = $1', [id])
     expect(db.rows[0].required_scope).toBe('finance:read')
 
     const pub = await app.request(`/reports/${id}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requiredScope: null }),
+      body: JSON.stringify({ requiredScope: null, expectedVersion: v0 + 1 }),
     })
     expect(pub.status).toBe(200)
     expect((await pub.json()).requiredScope).toBeNull()
   })
 
+  it('★ 登记侧写保护：缺版本 400 / 陈旧 409（带 currentVersion）/ 命中 200 且版本 +1', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '登记写保护' })).json()
+
+    const listed = await (await app.request('/reports/manage')).json() as { reports: { id: string; version: number }[] }
+    const v0 = listed.reports.find((r) => r.id === id)!.version
+    expect(v0).toBe(1)
+
+    // 缺 expectedVersion ⇒ 400（strict + 必填）
+    const missing = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'sales:read' }),
+    })
+    expect(missing.status).toBe(400)
+
+    // 命中 ⇒ 200 且版本推进
+    const ok = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'sales:read', expectedVersion: v0 }),
+    })
+    expect(ok.status).toBe(200)
+    expect((await ok.json()).version).toBe(v0 + 1)
+
+    // 陈旧（拿 v0 再写）⇒ 409 + 当前版本
+    const stale = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'finance:read', expectedVersion: v0 }),
+    })
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toEqual({ error: 'STALE_WRITE', currentVersion: v0 + 1 })
+  })
+
+  it('★ 回收也带版本：陈旧 ⇒ 409，且**没有被归档**（Metabase 侧无调用）', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '回收写保护' })).json()
+    mb.state.calls.length = 0
+    const stale = await app.request(`/reports/${id}?expectedVersion=99`, { method: 'DELETE' })
+    expect(stale.status).toBe(409)
+    expect(mb.state.calls).toHaveLength(0)     // 守卫必须先于归档
+    expect((await app.request(`/reports/${id}?expectedVersion=1`, { method: 'DELETE' })).status).toBe(204)
+  })
+
   it('★ PUT 负测：多余键 400（strict）/ 空串 400 / 跨租户 404 且写不动', async () => {
     const { app, identity } = manage()
     const { id } = await (await post(app, { title: '销售日报' })).json()
+    // 版本回带**必须合法**，否则三条负测都退化成「缺版本 400」而不再验各自那条（Task 3 收严）
+    const v = await versionOf(app, id)
 
     const extra = await app.request(`/reports/${id}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requiredScope: 'a:read', title: '顺手改名' }),
+      body: JSON.stringify({ requiredScope: 'a:read', title: '顺手改名', expectedVersion: v }),
     })
     expect(extra.status).toBe(400)
 
     const empty = await app.request(`/reports/${id}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requiredScope: '' }),
+      body: JSON.stringify({ requiredScope: '', expectedVersion: v }),
     })
     expect(empty.status).toBe(400)
 
     const other = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] })).app
     const cross = await other.request(`/reports/${id}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requiredScope: 'hacked:scope' }),
+      // 带着**本 org 的当前版本**跨租户写：404 必须由 org 隔离产生，而不是版本不符
+      body: JSON.stringify({ requiredScope: 'hacked:scope', expectedVersion: v }),
     })
     expect(cross.status).toBe(404)
     const db = await pool.query('select org, required_scope from data.reports where id = $1', [id])
@@ -529,13 +589,16 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     const other = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] }))
     expect((await (await other.app.request('/reports')).json()).reports).toEqual([])
     expect((await other.app.request(`/reports/${id}/embed-url`)).status).toBe(404)
-    expect((await other.app.request(`/reports/${id}`, { method: 'DELETE' })).status).toBe(404)
+    // 带**本 org 的当前版本**跨租户删：404 必须由 org 隔离产生（版本合法 ⇒ 不准推到 409/400 上）
+    const v = await versionOf(app, id)
+    expect((await other.app.request(`/reports/${id}?expectedVersion=${v}`, { method: 'DELETE' })).status).toBe(404)
   })
 
   it('DELETE /reports/:id：Metabase 侧归档 + 删登记行（对账差集的合法消除路径）', async () => {
     const { app } = manage()
     const { id } = await (await post(app, { title: '销售日报' })).json()
-    expect((await app.request(`/reports/${id}`, { method: 'DELETE' })).status).toBe(204)
+    const v = await versionOf(app, id)
+    expect((await app.request(`/reports/${id}?expectedVersion=${v}`, { method: 'DELETE' })).status).toBe(204)
     expect(mb.state.dashboards[0].archived).toBe(true)
     expect((await pool.query('select 1 from data.reports where org = $1', [ORG])).rowCount).toBe(0)
     // 归档后不再出现在可嵌入集里 ⇒ 对账干净（这正是「先归档、再删行」的理由）
@@ -545,7 +608,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       unregistered: { recoverable: [], needsHuman: [] },
     })
     // 未知 id：404（不泄露存在性）
-    expect((await app.request('/reports/nope', { method: 'DELETE' })).status).toBe(404)
+    expect((await app.request('/reports/nope?expectedVersion=1', { method: 'DELETE' })).status).toBe(404)
   })
 
   it('★ 对账：双向差集**显式返回**，不静默（登记指向已消失的 dashboard / Metabase 有未登记的报表）', async () => {
@@ -841,7 +904,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       title: '自绘报表', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
     })
     const { app } = manage()
-    const res = await app.request(`/reports/${id}`, { method: 'DELETE' })
+    const res = await app.request(`/reports/${id}?expectedVersion=${await versionOf(app, id)}`, { method: 'DELETE' })
     expect(res.status).toBe(204)
     // 登记行照删（跳过的只是 Metabase 侧动作，不是删除本身）
     expect((await pool.query('select 1 from data.reports where org = $1', [ORG])).rowCount).toBe(0)
@@ -938,7 +1001,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       .toEqual({ tenant: 'locked' })
 
     // ③ B 的 DELETE 只归档 B 那张；A 的报表照旧可取嵌入 URL（跨租户归档被结构上消除）
-    expect((await b.app.request(`/reports/${rb.id}`, { method: 'DELETE' })).status).toBe(204)
+    expect((await b.app.request(`/reports/${rb.id}?expectedVersion=${await versionOf(b.app, rb.id)}`, { method: 'DELETE' })).status).toBe(204)
     expect(mb.state.dashboards.find((d) => d.id === rb.metabaseId)?.archived).toBe(true)
     expect(mb.state.dashboards.find((d) => d.id === ra.metabaseId)?.archived).toBe(false)
     expect((await a.app.request(`/reports/${ra.id}/embed-url`)).status).toBe(200)
@@ -1024,7 +1087,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       { id: TENANT, casdoor_org: ORG },
     )
 
-    const res = await broken.request(`/reports/${id}`, { method: 'DELETE' })
+    const res = await broken.request(`/reports/${id}?expectedVersion=${await versionOf(app, id)}`, { method: 'DELETE' })
     expect(res.status).not.toBe(204) // 删行失败 ⇒ 不许回「删成功」
     expect(res.status).toBeGreaterThanOrEqual(500)
     // ★ 顺序的落点：归档**在前**，所以此刻它已经发生（顺序倒过来这条必红，见报告「变异回归」）

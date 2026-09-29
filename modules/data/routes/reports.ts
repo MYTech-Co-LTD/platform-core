@@ -41,6 +41,7 @@ import {
 import {
   deleteReport,
   getReport,
+  getReportVersion,
   listAllReports,
   listReports,
   updateRequiredScope,
@@ -177,18 +178,27 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const rows = await listReports(ctx.pool, c.get('tenant').casdoor_org)
     return c.json({
+      // `version` 是**登记侧**版本（写保护的读侧）：console 从本清单拿它、写时回带。
+      // 观看面 GET /reports 刻意不带它（那里没有写动作，外泄版本号无消费方）。
       reports: rows.map((row) => ({
-        id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
+        id: row.id, title: row.title, requiredScope: row.requiredScope,
+        renderer: row.renderer, version: row.version,
       })),
     })
   })
 
-  const GateBody = z.object({ requiredScope: z.string().min(1).nullable() }).strict()
+  const GateBody = z.object({
+    requiredScope: z.string().min(1).nullable(),
+    // 登记侧版本（写保护；人裁 fail-closed）：必填，缺则 400
+    expectedVersion: z.number().int().positive(),
+  }).strict()
 
   // ── 页门改动（管理面动作：页门/发布/回收之「页门」「发布」）─────────────────────────
   // 发布 = requiredScope 置 null；改页门 = 换成新 scope。**没有独立的 published 列**
   // （见函数头顶注与计划 Global Constraints 1）。
-  // ⚠️ 写保护（陈旧版本写 409）归计划 4（spec §8 步骤 2）——这里**故意**没有版本守卫。
+  // ⚠️ 写保护（spec §3③）：**版本从请求体取**（`expectedVersion`，必填——fail-closed 人裁
+  //    2026-09-29），条件更新（`version = expectedVersion` 才落）。Task 1 的过渡形态是
+  //    「handler 先读版本再传进去」——那等于守卫自己给自己盖章（并发写都命中），本任务已换掉。
   r.put('/reports/:id', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
@@ -197,14 +207,18 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const parsed = GateBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const org = c.get('tenant').casdoor_org
-    // 临时形态（Task 3 会把 expectedVersion 改成从请求体/查询串取）：
-    const before = await getReport(ctx.pool, org, id)
-    if (before === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    const row = await updateRequiredScope(ctx.pool, org, id, parsed.data.requiredScope, before.version)
-    // 跨租户/不存在一律 404——不给存在性探针（口径同 DELETE）
-    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)   // 走到这里只可能是并发删行
+    const row = await updateRequiredScope(ctx.pool, org, id, parsed.data.requiredScope, parsed.data.expectedVersion)
+    if (row === null) {
+      // 存储层把「不存在 / 跨租户 / 版本陈旧」合流成 null（不给存在性探针）⇒ 这里再查一次分清楚。
+      // 带 org 查（跨租户在这里同样得 null ⇒ 404，不泄漏别的租户有没有这一行）。
+      const cur = await getReportVersion(ctx.pool, org, id)
+      if (cur === null) return c.json({ error: 'NOT_FOUND' }, 404)
+      return c.json({ error: 'STALE_WRITE', currentVersion: cur }, 409)
+    }
+    // 成功响应回带**推进后**的版本（调用方据此续写下一次，无需再读一次）
     return c.json({
-      id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
+      id: row.id, title: row.title, requiredScope: row.requiredScope,
+      renderer: row.renderer, version: row.version,
     })
   })
 
@@ -281,8 +295,24 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (!cfg) return c.json({ error: 'METABASE_UNCONFIGURED' }, 503)
     const id = reportIdOf(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    const row = await getReport(ctx.pool, c.get('tenant').casdoor_org, id)
+    // 登记侧版本（写保护，spec §3③）：DELETE 走**查询串**（无 body）——`?expectedVersion=N`。
+    // 缺/非正整数 ⇒ 400（fail-closed：不接受「省略 = 强制删」）。**先验参再落库**：非法的版本
+    // 是调用方缺陷，不该先花一次查询；与 PUT 的「body 先 parse 再查库」同序。
+    const expectedVersion = Number(c.req.query('expectedVersion'))
+    if (!Number.isInteger(expectedVersion) || expectedVersion <= 0) {
+      return c.json({ error: 'INVALID_BODY' }, 400)
+    }
+    const org = c.get('tenant').casdoor_org
+    const row = await getReport(ctx.pool, org, id)
     if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // ⚠️ **版本判定必须发生在 `archiveDashboard` 之前**（Task 3 硬约束）：本端点是「先归档、再删行」
+    //    的两步序列（顺序见下），版本守卫若挪到归档后，被拒的请求**已经改过 Metabase** ——
+    //    「拒」就只剩一个响应码。由 routes/reports.test.ts 的「陈旧 ⇒ 409 且 mb.state.calls 为空」钉住。
+    //    版本取**这一行**（`row.version`，本次请求唯一一次读）而不是再发一次 getReportVersion：
+    //    两次读之间夹一次并发写就会拿到两个版本号，单一读是更强的判据。
+    if (row.version !== expectedVersion) {
+      return c.json({ error: 'STALE_WRITE', currentVersion: row.version }, 409)
+    }
 
     const deps = metabaseDeps(cfg)
     // renderer=platform（终审修复 3）：没有 Metabase dashboard 可归档（metabaseId=0 是哨兵，
@@ -301,7 +331,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         throw err
       }
     }
-    await deleteReport(ctx.pool, c.get('tenant').casdoor_org, row.id)
+    await deleteReport(ctx.pool, org, row.id)
     return c.body(null, 204)
   })
 
