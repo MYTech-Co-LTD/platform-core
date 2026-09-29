@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.51.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.50.0...v0.51.0) - 2026-09-29
+- 【新增】data: 报表制作域写路径底座——迁移/登记/读全量合并写/内容指纹/发布三件套/对账 ([#329](https://github.com/MYTech-Co-LTD/platform-core/pull/329), [2c4c439](https://github.com/MYTech-Co-LTD/platform-core/commit/2c4c43978f3055ffc72a9e464b8edc6d7045410c))
+
+
 ## [0.50.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.49.0...v0.50.0) - 2026-09-29
 - 【新增】duckle: #294 retail_order_line 补采 6 对账字段（契约 v2 + item_code 语义归位） ([#327](https://github.com/MYTech-Co-LTD/platform-core/pull/327), [91ea693](https://github.com/MYTech-Co-LTD/platform-core/commit/91ea69357024f994cefc100c09d5340815434aec))
 
