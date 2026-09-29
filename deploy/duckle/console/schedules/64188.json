@@ -58,5 +58,108 @@
     "last_run_duration_ms": null,
     "last_run_error": null,
     "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.dim.branch.l0",
+    "pipeline_id": "lemeng.dim.branch.l0",
+    "name": "lemeng.dim.branch.l0",
+    "enabled": false,
+    "kind": {
+      "type": "cron",
+      "expr": "0 2 * * *"
+    },
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.dim.item.l0",
+    "pipeline_id": "lemeng.dim.item.l0",
+    "name": "lemeng.dim.item.l0",
+    "enabled": false,
+    "kind": {
+      "type": "cron",
+      "expr": "0 11 * * *"
+    },
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.retail.windows.l1",
+    "pipeline_id": "lemeng.retail.windows.l1",
+    "name": "lemeng.retail.windows.l1",
+    "enabled": false,
+    "kind": {
+      "type": "cron",
+      "expr": "30 2,10 * * *"
+    },
+    "timezone": "UTC",
+    "misfire": "all",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.retail.tick.l1",
+    "pipeline_id": "lemeng.retail.tick.l1",
+    "name": "lemeng.retail.tick.l1",
+    "enabled": false,
+    "kind": {
+      "type": "cron",
+      "expr": "*/5 0-15 * * *"
+    },
+    "timezone": "UTC",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.retail.close.l1",
+    "pipeline_id": "lemeng.retail.close.l1",
+    "name": "lemeng.retail.close.l1",
+    "enabled": false,
+    "kind": {
+      "type": "cron",
+      "expr": "0 16 * * *"
+    },
+    "timezone": "UTC",
+    "misfire": "all",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
   }
 ]
