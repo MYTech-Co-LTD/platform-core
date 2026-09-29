@@ -381,9 +381,12 @@ export interface ProxyConfig {
 
 export function loadProxyConfig(env: Record<string, string | undefined> = process.env): ProxyConfig {
   // ⚠️ 访问器**必须叫 `requireValue`**（就是宿主 `apps/server/src/config.ts:62` 那个名字）：
-  //    B9 门禁（`scripts/check-env-example.mjs:57-73`）只认四种构造——`process.env.KEY`、
-  //    `process.env['KEY']`、`env.KEY`、以及按**标识符**匹配的 `requireValue('KEY')`/`optional('KEY')`。
-  //    自己起名 `need(...)` ⇒ 这些键**不被机械守住**（删掉 `.env.example` 声明门禁也照样绿，只靠人记得）。
+  //    B9 门禁只认四种**读法构造**——点号取 env、方括号取 env、以及按**标识符**匹配的
+  //    `requireValue(<键名>)` / `optional(<键名>)`。自己起名 `need(...)` ⇒ 这些键**不被机械守住**
+  //    （删掉 `.env.example` 里的声明，门禁也照样绿，只靠人记得）。
+  //    ⚠️ 这条注释本身也踩过坑：B9 **不剥注释**（与 lint-architecture 的注释掩码不同）⇒ 在注释里
+  //    写「点号取 env 的范例」会被当成真读法、报出「KEY 未声明」的假阳性。所以本文件里**只写
+  //    `<键名>` 占位**，别写真实形态的范例（改回去必红）。
   const requireValue = (k: string): string => {
     const v = env[k]
     if (v === undefined || v.trim() === '') throw new Error(`缺少必填环境变量 ${k}`)
@@ -486,7 +489,9 @@ git commit -m "feat(mb-proxy): 编辑页反代服务骨架（自有 Cookie + /he
 
 **Files:**
 - Create: `apps/mb-proxy/src/handoff.ts`
-- Create: `apps/mb-proxy/src/app.ts`——**把 Hono app 抽出来导出**，`index.ts` 只留 `serve()`
+- Create: `apps/mb-proxy/src/app.ts`——**抽成工厂 `export function createApp(cfg: ProxyConfig): Hono`**
+  （⚠️ 订正记录 2026-09-29：原稿写「导出 app」。**必须**是工厂——模块级 `app` 在 import 期就要全量
+  env（`loadProxyConfig()` 会抛），拆分的目的就落空了），`index.ts` 只留 `loadProxyConfig()` + `serve()`
   （Task 2 的 `index.ts` 顶层就 `serve()`，HTTP 级测试会**真绑端口**；照 `apps/server` 的
   `app.ts`/`index.ts` 分工。Task 2 的 `app.get('/healthz')` 随之搬到 `app.ts`）
 - Modify: `apps/mb-proxy/src/index.ts`（import `app` 并 serve）
@@ -514,7 +519,11 @@ const SECRET = 'test-secret-test-secret-test-secret!'
 describe('handoff 验签', () => {
   it('★ 金样本（与 modules/data/domain/edit-handoff.test.ts 同一个串）', () => {
     const t = '<GOLDEN_TOKEN>'   // ← 与模块侧测试里的**同一个** token 串
-    expect(verifyEditHandoff(t, SECRET, 1_700_000_120)).toMatchObject({ org: 'acme', did: 7, nonce: 'golden' })
+    // ⚠️ 订正记录（2026-09-29，Task 3 实施中发现）：原稿这里写 `now = 1_700_000_120`，而该串的
+    //    `exp` 恰是 1_700_000_120 ⇒ 按下面实现的 `exp <= now ⇒ 过期` 语义，这条**必然失败**（自相矛盾）。
+    //    契约是「exp 当秒即失效」（半开区间），故断言取**到期前 1 秒**，边界单独钉一条：
+    expect(verifyEditHandoff(t, SECRET, 1_700_000_119)).toMatchObject({ org: 'acme', did: 7, nonce: 'golden' })
+    expect(verifyEditHandoff(t, SECRET, 1_700_000_120)).toBeNull()   // ★ 边界：exp 当秒即过期
   })
 
   it('坏签名 / 过期 / 结构错 ⇒ null（不抛）', () => {
@@ -628,7 +637,14 @@ app.get('/handoff', (c) => {
 })
 ```
 
-（`signProxySession` 放 `src/handoff.ts`：payload `{org, did, iat, exp: now+EDIT_TTL_SEC}`——**不含 nonce**（会话可复用）。Task 4 的鉴权中间件用它解身份。）
+（`signProxySession` 放 `src/handoff.ts`：payload `{org, did, iat, exp: now+EDIT_TTL_SEC}`——**不含 nonce**（会话可复用）。
+Task 4 的鉴权中间件用它解身份——**必须**用同一个导出 `proxySessionKey`。）
+
+⚠️ **订正记录（2026-09-29，Task 3 实施中发现）**：`signProxySession` **也必须用派生密钥**
+（标签串 `'mb-edit-session-v1'`，独立于 `'edit-handoff-v1'`）：不派生的话，宿主会话验签
+`verifySession` 会把这枚 8 小时 Cookie 当成**合法平台会话**收下（空 scope 身份）——与 Task 1
+修掉的 I-1 同一类串用，只是方向相反。导出 `proxySessionKey(rootSecret)` 供 Task 4 与测试独立复算。
+测试要照 Task 1 的做法：**独立复算**派生（不复用被测函数），并断言「原始密钥签同 payload ⇒ 签名不同」。
 
 - [ ] **Step 5: 跑测试确认绿**
 
@@ -637,7 +653,8 @@ Run: `pnpm --filter @platform/mb-proxy exec vitest run` → PASS；`pnpm typeche
 - [ ] **Step 6: Commit**
 
 ```bash
-git add apps/mb-proxy/src/handoff.ts apps/mb-proxy/src/handoff.test.ts apps/mb-proxy/src/test-sign.ts apps/mb-proxy/src/index.ts
+git add apps/mb-proxy/src/handoff.ts apps/mb-proxy/src/handoff.test.ts apps/mb-proxy/src/test-sign.ts \
+        apps/mb-proxy/src/app.ts apps/mb-proxy/src/index.ts   # ⚠️ app.ts 别漏（订正记录：原稿漏了它）
 git commit -m "feat(mb-proxy): handoff 兑换（验签+一次性 nonce+自有 Cookie+302）"
 ```
 
@@ -647,7 +664,8 @@ git commit -m "feat(mb-proxy): handoff 兑换（验签+一次性 nonce+自有 Co
 
 **Files:**
 - Create: `apps/mb-proxy/src/rules.ts`（规则表，**纯函数、可单测**）、`apps/mb-proxy/src/upstream.ts`（透传 + 头改写）
-- Modify: `apps/mb-proxy/src/index.ts`（鉴权中间件 + 规则中间件 + 兜底）
+- Modify: `apps/mb-proxy/src/app.ts`（鉴权中间件 + 规则中间件 + 兜底——⚠️ 订正记录 2026-09-29：
+  原稿写 `index.ts`，但 Task 3 已把组装搬进 `createApp(cfg)` 工厂，这里要改的是 **app.ts**）
 - Test: `apps/mb-proxy/src/rules.test.ts`
 
 **Interfaces:**
