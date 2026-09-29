@@ -905,7 +905,7 @@ git commit -m "feat(mb-proxy): 授权规则表（deny-by-default，封枚举面�
    `expect(calls.some((c) => c.url.endsWith(`/reports/r1/edit-url`))).toBe(true)`——
    否则「只有 edit-url 才回 url」的 mock 只是**间接**钉住路径。
 3. **兜底必须真能开**：断言点击「在新标签打开」会**再次**请求 `edit-url`（`calls` 里该 url 出现两次）
-   并以**新票**调用 `window.open`（测试里 stub `window.open` 收参数）。删掉这次重新领票 ⇒ 必红。
+   并以**同步预开窗**（`window.open('about:blank','_blank')` → 拿到新票后 `pre.location.replace(url)`；⚠️ features 不可带 `noopener`，Chromium 恒返 null）把新票在新标签里用掉（测试里 stub `window.open`，并断言「第二次 `edit-url` 未返回时 open 已收到 about:blank」以钉住**同步性**）。删掉这次重新领票 ⇒ 必红。
 
 - [ ] **Step 2: 跑测试确认红** → `pnpm --filter data exec vitest run console/reports/index.test.tsx`，FAIL。
 
