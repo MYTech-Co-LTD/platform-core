@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.56.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.56.0...v0.56.1) - 2026-09-29
+- 【修复】duckle: #370 补 tick 新鲜度锚（首次用 expectedAfterSchedule） ([#371](https://github.com/MYTech-Co-LTD/platform-core/pull/371), [9f3fc7f](https://github.com/MYTech-Co-LTD/platform-core/commit/9f3fc7f4a60b58c9f855fbb198fad5d45863b8e8))
+
+
 ## [0.56.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.55.0...v0.56.0) - 2026-09-29
 - 【新增】data: #346 报表编辑页反代会话——专用入口 / 一次性 handoff / deny-by-default 隔离 ([#366](https://github.com/MYTech-Co-LTD/platform-core/pull/366), [8743b8e](https://github.com/MYTech-Co-LTD/platform-core/commit/8743b8eaa43da7bbd4da4eebf3520fb9be21caf8))
 
