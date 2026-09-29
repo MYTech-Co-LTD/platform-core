@@ -593,4 +593,5 @@ docker exec openship-platform-core-shanhai-server pnpm exec tsx scripts/sync-dat
 - `deploy/data-plane-manifest.txt` / `deploy/data-plane.lock`（§E 的清单与 lock；守卫见 `scripts/check-data-plane-lock.mjs`）
 - `scripts/lemeng/sync-data-plane.sh`（§E.3 的同步程序；落成机器上的 `/opt/lemeng-sync.sh`）
 - `deploy/openship-adopt.md`（平台面 adopt runbook）
+- `deploy/mb-edit-proxy-runbook.md`（**报表编辑页反代的每客户接线 SOP**——专用 host / 平台↔Metabase 网络接线（P7 同款）/ env 顺序与验收判据；跨单元，独立成文）
 - issue #150（数据栈 P0–P3）、#187（T6 真机三坑）、#190 / #192（A 层根治笔）、#199（§E 投递机制）
