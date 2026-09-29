@@ -59,7 +59,9 @@ const ReportBody = z.object({
   lockedParams: z.record(z.string()).default({}),
   /** NULL = 所有拿到本模块的人可见（口径同 data.metrics.required_scope）。 */
   requiredScope: z.string().min(1).nullable().default(null),
-})
+  // 内容侧版本（写保护）：更新既有 dashboard 时**必填**；见 handler 里的 fail-closed 分支
+  expectedFingerprint: z.string().min(1).nullable().default(null),
+}).strict()
 
 /**
  * 报表 id 的解析口径（text，uuid）。**只挡「空/缺失」**，一律 404——与 aftersales /
@@ -101,8 +103,23 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       // ⚠️ 查找/创建都用**含 org 的规范名**（I-1）：Metabase 是单实例多租户共用，裸 title 会让
       //    两个租户的同名报表命中同一张 dashboard ⇒ 跨租户改写 embedding_params / 跨租户归档。
       const up = await upsertDashboard(deps, dashboardName(org, parsed.data.title))
+      // ── 内容侧写保护（spec §3③；人裁 2026-09-29 fail-closed）──────────────────────────
+      // 命中同名 ⇒ 这是**更新既有对象**：必须回带它当前的指纹，否则一律拒（不带就让人先读再写，
+      // 不接受「省略 = 强制覆盖」——那正是实测里"人的两张图被静默抹掉"的那条路）。
+      // ⚠️ 位置是契约的一半：必须在**任何发布写入之前**判——挪到 `publishWithTenantBinding` 之后，
+      //    被拒的请求已经先写过 Metabase 了（「拒」就只是回了个码），且有卡的表上判到的还是
+      //    发布后的内容。这条由 routes/reports.test.ts 的「守卫必须在写之前」用例钉住。
+      if (!up.created) {
+        const cur = await readDashboardContent(deps, up.id)
+        if (parsed.data.expectedFingerprint === null) {
+          return c.json({ error: 'VERSION_REQUIRED', currentFingerprint: cur.fingerprint }, 409)
+        }
+        if (parsed.data.expectedFingerprint !== cur.fingerprint) {
+          return c.json({ error: 'STALE_WRITE', currentFingerprint: cur.fingerprint }, 409)
+        }
+      }
       // 一次做全三件（声明参数 / 只映射带标签的卡 / 锁参）；额外的 lockedParams 由 setEmbedding 合并
-      await publishWithTenantBinding(deps, up.id)
+      const pub = await publishWithTenantBinding(deps, up.id)
       if (Object.keys(parsed.data.lockedParams).length > 0) {
         await setEmbedding(deps, up.id, [
           { name: TENANT_SLUG, mode: 'locked' },
@@ -115,7 +132,14 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         embedParams: parsed.data.lockedParams,
         requiredScope: parsed.data.requiredScope,
       })
-      return c.json({ id, metabaseId: up.id, created: up.created }, 201)
+      // `version` 是**登记侧**版本（与内容侧指纹分属两条通路，别混名）：**写后**回读，不复用写前的值。
+      // `fingerprint` 直接复用发布那次的现算结果——零额外请求（publishWithTenantBinding 已算过）。
+      const row = await getReport(ctx.pool, org, id)
+      if (row === null) throw new Error('upsertReport 后登记行应可读（同一请求内的一致性假设被打破）')
+      return c.json({
+        id, metabaseId: up.id, created: up.created,
+        fingerprint: pub.fingerprint, version: row.version,
+      }, 201)
     } catch (err) {
       // 上游失败与「没配」分开表达（502 vs 503）。`created` 的幂等证据也随之不可得——
       // 不在这里造一个假值。Metabase 侧可能已建出 dashboard 而登记行没写成（setEmbedding

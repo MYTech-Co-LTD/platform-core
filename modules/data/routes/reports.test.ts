@@ -328,7 +328,11 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   it('★ 幂等：同 title 连发两次 ⇒ 不重复建（同一 id、库里 1 行、Metabase 只创建一次）', async () => {
     const { app } = manage()
     const first = await (await post(app, { title: '库存日报' })).json()
-    const second = await (await post(app, { title: '库存日报', lockedParams: { region: 'cn' } })).json()
+    // 内容侧写保护（Task 2）：二次 POST = **更新既有 dashboard** ⇒ 必须回带当前指纹（201 已回带它）。
+    // 本用例的题意不变（同 title 连发不重复建），同时兼作「回带的指纹是当前那个 ⇒ 被接受」的直证。
+    const second = await (await post(app, {
+      title: '库存日报', lockedParams: { region: 'cn' }, expectedFingerprint: first.fingerprint,
+    })).json()
     expect(second.id).toBe(first.id)
     expect(second.created).toBe(false)
     expect(mb.state.dashboards).toHaveLength(1)
@@ -354,7 +358,15 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       102: { native: 'select 2' },
     }
 
-    const second = await (await post(app, { title: '已有卡的报表' })).json()
+    // 内容侧写保护（Task 2）：人往报表上加了卡 ⇒ 内容已**不是**首建那一份 ⇒ 重跑必须先取**当前**指纹。
+    // 走一遍 fail-closed 的发现路径（不带 ⇒ 409 VERSION_REQUIRED 回带 currentFingerprint）再重跑——
+    // 本用例考的是「重跑不清卡」，不是「不带指纹会被拒」（后者由写保护用例咬）。
+    const probe = await post(app, { title: '已有卡的报表' })
+    expect(probe.status).toBe(409)
+    const { currentFingerprint } = await probe.json() as { currentFingerprint: string }
+    const second = await (await post(app, {
+      title: '已有卡的报表', expectedFingerprint: currentFingerprint,
+    })).json()
     expect(second.created).toBe(false)
     expect(second.id).toBe(first.id)
     // 卡片没被清（三件套那次合并 PUT 也不清卡——旧 bug 的路由级形态就是这里变成 0 张）
@@ -1064,6 +1076,74 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     const { app } = manage()
     expect((await post(app, {})).status).toBe(400)
     expect((await post(app, { title: '' })).status).toBe(400)
+    // `.strict()`：多余键不再被**静默丢弃**（本任务按 brief Step 3 加、计划 Constraint 5 声明它在）。
+    // 承重理由：非 strict 时拼错的 `expectedFingerprint` 会被 zod 丢掉 ⇒ 守卫看到 null ⇒ 恒 409
+    // 「VERSION_REQUIRED」——把「传错字段名」伪装成「你没带版本」，正是 fail-closed 要消灭的静默。
+    expect((await post(app, { title: '多余键', bogus: 1 })).status).toBe(400)
     expect(mb.state.calls).toHaveLength(0)
+  })
+
+  // ── 内容侧写保护（Task 2，spec §3③；人裁 2026-09-29 fail-closed）────────────────────────
+  it('★ 内容侧写保护：命中同名（更新既有）不带 expectedFingerprint ⇒ 409 VERSION_REQUIRED + 当前指纹', async () => {
+    const { app } = manage()
+    const first = await (await post(app, { title: '写保护报表' })).json() as { fingerprint: string }
+    expect(typeof first.fingerprint).toBe('string')          // 201 回指纹（此前没有）
+
+    const res = await post(app, { title: '写保护报表' })      // 第二次 = 更新既有 dashboard
+    expect(res.status).toBe(409)
+    const body = await res.json()
+    expect(body.error).toBe('VERSION_REQUIRED')
+    expect(typeof body.currentFingerprint).toBe('string')
+
+    // 带对的指纹 ⇒ 201；带过期的 ⇒ 409 STALE_WRITE
+    const ok = await post(app, { title: '写保护报表', expectedFingerprint: first.fingerprint })
+    expect(ok.status).toBe(201)
+    const stale = await post(app, { title: '写保护报表', expectedFingerprint: 'deadbeef' })
+    expect(stale.status).toBe(409)
+    expect((await stale.json()).error).toBe('STALE_WRITE')
+  })
+
+  it('★ 首次创建不需要版本（没有可覆盖的东西）', async () => {
+    const { app } = manage()
+    expect((await post(app, { title: '全新报表' })).status).toBe(201)
+  })
+
+  // ── 承重补测（brief 之外，实施时发现两条要求没有被 brief 的断言咬住）────────────────────
+  it('★ 201 回带登记侧 version（**写后**回读；与内容侧指纹分属两条通路）+ 新建时带 expectedFingerprint 被接受并忽略', async () => {
+    const { app } = manage()
+    const first = await (await post(app, { title: '版本回带报表' }))
+      .json() as { fingerprint: string; version: number }
+    expect(typeof first.fingerprint).toBe('string')
+    expect(first.version).toBe(1)          // 首建 = 列默认 1
+
+    // 新建路径**不要求**版本：给一个（哪怕是假的）也接受——没有可覆盖的东西（`!up.created` 之外不判）
+    expect((await post(app, { title: '带了指纹的新建', expectedFingerprint: 'whatever' })).status).toBe(201)
+
+    // 更新既有 ⇒ 版本推进到 2；这同时钉住「**写后**回读」——若在 upsertReport 之前读，这里会是 1
+    const second = await (await post(app, { title: '版本回带报表', expectedFingerprint: first.fingerprint }))
+      .json() as { version: number }
+    expect(second.version).toBe(2)
+  })
+
+  it('★ 守卫必须在**写之前**：被 409 拒掉的请求不许先改 Metabase（否则「拒」是假的）', async () => {
+    const { app } = manage()
+    const first = await (await post(app, { title: '守卫在写前' })).json() as { fingerprint: string; created: boolean }
+    expect(first.created).toBe(true)
+    const dash = mb.state.dashboards[0]
+    // 等价于「另一个人在 Metabase 侧把租户绑定拆了」：publishWithTenantBinding 若先跑，
+    // 它会把手动状态**改写回去**（补 tenant 参数、重新锁参）——那时「拒」只是回了个 409，写已经发生了。
+    dash.parameters = []
+    dash.embedding_params = {}
+
+    const rejected = await post(app, { title: '守卫在写前' })                 // 不带指纹 ⇒ 必被拒
+    expect(rejected.status).toBe(409)
+    expect(dash.parameters).toEqual([])          // 参数没被补回来
+    expect(dash.embedding_params).toEqual({})    // 尤其：tenant 没被重新锁上
+
+    // 同一件事的另一面：外部改动后，旧指纹必须 STALE_WRITE（守卫若在 publish 之后，publish 会先把内容
+    // 修回旧指纹那一份 ⇒ 这条会变成 201 且真的写了 —— 变异确认见任务报告）
+    const stale = await post(app, { title: '守卫在写前', expectedFingerprint: first.fingerprint })
+    expect(stale.status).toBe(409)
+    expect((await stale.json()).error).toBe('STALE_WRITE')
   })
 })
