@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.57.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.56.2...v0.57.0) - 2026-09-29
+- 【新增】duckle: #367 只读诊断工具 diagnose.sh（替代 recon/rb，P1–P7 落地） ([#368](https://github.com/MYTech-Co-LTD/platform-core/pull/368), [6966d95](https://github.com/MYTech-Co-LTD/platform-core/commit/6966d9549864933a7019b251b1405df5ecaf1254))
+
+
 ## [0.56.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.56.1...v0.56.2) - 2026-09-29
 - 【修复】deploy: mb-proxy 启停闸门改为 openship 服务级 enabled（compose profiles 对部署无效，已致一次 crash loop） ([#372](https://github.com/MYTech-Co-LTD/platform-core/pull/372), [97b7bd6](https://github.com/MYTech-Co-LTD/platform-core/commit/97b7bd6e45dbe79a73ce587bdeb099d44d943b43))
 
