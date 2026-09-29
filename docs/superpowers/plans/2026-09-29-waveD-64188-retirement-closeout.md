@@ -196,7 +196,13 @@ cron `30 2 * * *`），本计划只换形态，不涉 job 退役。
 
 ```sh
 # ① 把脚本送进运行中的容器（不重建镜像）
-docker cp scripts/duckle/connection-setup.py <container>:/opt/connection-setup.py
+#    ⚠️ **在机器上跑，源路径用宿主那份**——2026-09-29 只读实测订正：
+#    机器检出（`${REPO}`）里**没有** `scripts/duckle/connection-setup.py`（manifest 把它落在
+#    宿主 `/opt/connection-setup.py`，不进检出）。照抄仓内相对路径会 **No such file**。
+#    宿主那份**已锁校验**：sha256 = a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814
+#    （与 repo@main 那份、以及 lock 里 `scripts/duckle/connection-setup.py → /opt/connection-setup.py 0755`
+#     那一行**逐字相同**）。
+docker cp /opt/connection-setup.py <container>:/opt/connection-setup.py
 
 # ② 湖（S3 兼容：天翼云 ZOS）
 docker exec <container> python3 /opt/connection-setup.py --workspace /workspace --id zos --profile zos-s3
@@ -205,6 +211,12 @@ docker exec <container> python3 /opt/connection-setup.py --workspace /workspace 
 docker exec <container> python3 /opt/connection-setup.py --workspace /workspace --id lemeng \
     --profile rest-bearer --token-env LEMENG_TOKEN
 ```
+
+- 🔑 **`docker cp` 进来的副本在容器重建后消失**（spec §5.1 已注）——2026-09-29 实测复核成立：
+  3120 容器内 `/opt/connection-setup.py` **不存在**，而连接文件在（`/workspace/connections/` 的
+  `zos.json` / `lemeng.json`，2026-09-28 12:04 生成）⇒ **这正是「一次性 setup」该有的样子**，
+  不是「脚本丢了」。别据此以为 setup 没跑过、也别把它补进镜像。
+- 🔑 **若宿主那份的 sha 对不上 lock**（检出被换过版本）⇒ 回 ② 的报错处置，别用宿主副本。
 
 - **`--token-env LEMENG_TOKEN`** 是对的（D1/D2）：容器内键名两侧都是 `LEMENG_TOKEN`。
 - 先干跑：加 `--dry-run`（不建钥匙、不落盘）。
