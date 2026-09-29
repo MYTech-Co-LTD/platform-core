@@ -28,8 +28,11 @@ export function verifyEditHandoff(token: string, secret: string, now?: number): 
     const header = JSON.parse(b64urlToBuf(h).toString('utf8')) as { alg?: string }
     if (header.alg !== 'HS256') return null
     const c = JSON.parse(b64urlToBuf(p).toString('utf8')) as Record<string, unknown>
-    const exp = Number(c.exp)
-    if (!Number.isFinite(exp) || exp <= (now ?? Math.floor(Date.now() / 1000))) return null
+    // exp 走**严格类型**（`typeof === 'number'`）而不是 `Number(c.exp)`：与下面 org/did/nonce 的
+    // 口径一致。`Number()` 会收下 `'1700000000'` 这类字符串（不可利用——签名已过——纯纵深防御：
+    // 不为「载荷里能塞进非数字 exp」留任何解释空间，也别让将来某处把 claims 原样回写时带上怪类型）。
+    if (typeof c.exp !== 'number' || !Number.isFinite(c.exp)) return null
+    if (c.exp <= (now ?? Math.floor(Date.now() / 1000))) return null
     if (typeof c.org !== 'string' || !c.org) return null
     if (!Number.isInteger(c.did)) return null
     if (typeof c.nonce !== 'string' || !c.nonce) return null

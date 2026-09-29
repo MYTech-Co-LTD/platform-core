@@ -9,6 +9,19 @@ import { signForTest } from './test-sign'   // 测试专用：与模块 signEdit
 
 const SECRET = 'test-secret-test-secret-test-secret!'
 
+/**
+ * 用**派生**子密钥签一个**任意** payload（独立复算，不复用被测的 `handoffKey`）。
+ * 为什么要它：`signForTest` 只接受形状合法的入参，签不出「缺 did / nonce 是数字」这类畸形载荷；
+ * 而形状守卫只有在**签名已经通过**时才走得到——所以畸形用例必须用派生密钥签（用原始密钥签的话
+ * 一定在签名步就返回 null，那样测的是签名、不是形状，正是本轮评审抓到的假证据）。
+ */
+function signRaw(payload: Record<string, unknown>): string {
+  const h = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
+  const p = Buffer.from(JSON.stringify(payload)).toString('base64url')
+  const key = createHmac('sha256', SECRET).update('edit-handoff-v1').digest()
+  return `${h}.${p}.${createHmac('sha256', key).update(`${h}.${p}`).digest('base64url')}`
+}
+
 describe('handoff 验签', () => {
   it('★ 金样本（与 modules/data/domain/edit-handoff.test.ts 同一个串）', () => {
     const t = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJvcmciOiJhY21lIiwiZGlkIjo3LCJub25jZSI6ImdvbGRlbiIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.oSuZ8-zjA2GF42ugFh-KgGgMGHhRrqZHi2oTtAVX3xE'
@@ -29,8 +42,11 @@ describe('handoff 验签', () => {
     expect(verifyEditHandoff(good, 'another-secret-another-secret!!', 1000)).toBeNull()
   })
 
-  it('★ 域分隔（评审 I-1/I-2）：**会话形状**的 token（原始密钥签、有 org/scopes/exp、无 did/nonce）⇒ null', async () => {
-    // 这是「只持 data:query 的登录用户拿自己的会话 Cookie 当票据使」的攻击面
+  it('★ 域分隔（评审 I-1/I-2）：**会话形状**的 token（原始密钥签）⇒ null —— 在**签名步**即被拒，与形状无关', async () => {
+    // 这是「只持 data:query 的登录用户拿自己的会话 Cookie 当票据使」的攻击面。
+    // ⚠️ 本用例只证明**密钥维度**（派生 vs 原始）：它用原始密钥签 ⇒ 签名比对就返回 null 了，
+    //    payload 里有没有 did/nonce 根本没被看到。**不得**拿它当形状守卫的证据——那是下面
+    //    「payload 形状守卫」组的职责（评审 Important）。
     const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
     const payload = Buffer.from(JSON.stringify({
       sub: 'u1', org: 'acme', name: '路人', scopes: ['data:query'], authVia: 'password',
@@ -38,6 +54,38 @@ describe('handoff 验签', () => {
     })).toString('base64url')
     const sig = createHmac('sha256', SECRET).update(`${header}.${payload}`).digest('base64url')
     expect(verifyEditHandoff(`${header}.${payload}.${sig}`, SECRET, 1000)).toBeNull()
+  })
+})
+
+describe('★ payload 形状守卫（评审 Important：守卫必须被咬住）', () => {
+  const base = { org: 'acme', did: 7, nonce: 'shape-ok', iat: 1000, exp: 9_999_999_999 }
+
+  it('正向对照：同一签名器签**合法** payload ⇒ 通过（否则整组恒真、什么都没测到）', () => {
+    expect(verifyEditHandoff(signRaw(base), SECRET, 1000)).toMatchObject({ org: 'acme', did: 7, nonce: 'shape-ok' })
+  })
+
+  const malformed: [label: string, payload: Record<string, unknown>][] = [
+    // did
+    ['did 缺失', { org: 'acme', nonce: 'n', iat: 1000, exp: 9_999_999_999 }],
+    ['did 是字符串 "7"', { ...base, did: '7' }],
+    ['did 是小数 1.5', { ...base, did: 1.5 }],
+    ['did 是 null', { ...base, did: null }],
+    // nonce
+    ['nonce 缺失', { org: 'acme', did: 7, iat: 1000, exp: 9_999_999_999 }],
+    ['nonce 是数字 123', { ...base, nonce: 123 }],
+    ['nonce 是空串', { ...base, nonce: '' }],
+    // org
+    ['org 缺失', { did: 7, nonce: 'n', iat: 1000, exp: 9_999_999_999 }],
+    ['org 是空串', { ...base, org: '' }],
+    ['org 是 null', { ...base, org: null }],
+    // exp（本轮 Minor ③ 的严格类型：字符串 exp 不收）
+    ['exp 缺失', { org: 'acme', did: 7, nonce: 'n', iat: 1000 }],
+    ['exp 是数字字符串 "9999999999"', { ...base, exp: '9999999999' }],
+    ['exp 是 null', { ...base, exp: null }],
+  ]
+
+  it.each(malformed)('%s ⇒ null（签名已过，只有形状检查能拒）', (_label, payload) => {
+    expect(verifyEditHandoff(signRaw(payload), SECRET, 1000)).toBeNull()
   })
 })
 
@@ -78,6 +126,8 @@ describe('GET /handoff 兑换', () => {
     const res = await app.request(`/handoff?t=${encodeURIComponent(signNow('acme', 7, 'http-ok'))}`)
     expect(res.status).toBe(302)
     expect(res.headers.get('location')).toBe('/dashboard/7')
+    // 票据就在 URL 里：兑换响应不许被任何缓存留档（否则「一次性」能被缓存命中绕过）
+    expect(res.headers.get('cache-control')).toBe('no-store')
     const raw = res.headers.get('set-cookie') ?? ''
     expect(raw).toMatch(/^mb_edit=/)
     expect(raw).toContain('HttpOnly')
@@ -105,6 +155,7 @@ describe('GET /handoff 兑换', () => {
       expect(res.status).toBe(401)
       expect(await res.json()).toEqual({ error: 'INVALID_HANDOFF' })
       expect(res.headers.get('set-cookie')).toBeNull()
+      expect(res.headers.get('cache-control')).toBe('no-store')
     }
   })
 
