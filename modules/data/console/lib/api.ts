@@ -54,6 +54,14 @@ const MESSAGES: Record<string, string> = {
   // 列表里的「打开」已对该类行置灰，这条是**防御性**文案——只有「加载后该行才变成 platform」
   // 这种陈旧视图/竞态才会点到；服务端守卫见 `GET /reports/:id/embed-url`（409 同码）。
   RENDERER_NOT_EMBEDDABLE: '平台自绘报表没有嵌入预览通道',
+  // 编辑入口（#346 计划 3）。与上面那条**同构**：列表里 platform 行的「编辑」已不渲染
+  // （逐行按 renderer 判），这条是**防御性**文案——只有陈旧视图/竞态才会点到；
+  // 服务端守卫见 `GET /reports/:id/edit-url`（409 同码）。
+  RENDERER_NOT_EDITABLE: '平台自绘报表没有可编辑的 Metabase 页面',
+  // 「没配」与「配了但坏了」要分开：本条 = 配置状态（`MB_PROXY_PUBLIC_ORIGIN` 缺配/非 https，
+  // 或 `PLATFORM_SESSION_SECRET` 过短——均属运维侧，见 `modules/data/routes/reports.ts` 的
+  // fail-closed 前置检查）。用户自己做什么都没用，所以直接说联系运维，别让他反复重试。
+  EDIT_PROXY_UNCONFIGURED: '编辑入口未配置（请联系运维）',
   // 页门未放行（spec：管理清单**不裁行**，所以「门是自己没有的 scope」的行会出现在管理员表里）。
   // 列表里这类行的「打开」已按页门置灰，这条与上面那条同样是**防御性**文案——只有陈旧视图/竞态
   // 才会点到；没有它时界面直接吐英文裸码 `FORBIDDEN`。

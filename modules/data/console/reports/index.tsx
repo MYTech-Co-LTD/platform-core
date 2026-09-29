@@ -1,6 +1,6 @@
 // console/reports/index.tsx — 「报表」页签：观看面（清单 + 嵌入预览）+ 管理面（data:manage）。
 //
-// 三条纪律落在这个文件里：
+// 四条纪律落在这个文件里：
 //  ① **不发 Metabase 凭据、不自己拼嵌入 URL**：iframe 的 src 只能来自平台的
 //     `GET /reports/:id/embed-url`（服务端签的短期 JWT，locked.tenant = 调用者 org）。
 //     前端拿不到 secret，也就没有「自己换租户」的面。
@@ -10,6 +10,12 @@
 //     登记/改登记内容（标题、锁参）仍走 API/管线，不在消费层第二次定义口径。
 //  ③ renderer='platform'（平台自绘）的行**没有 Metabase 嵌入通道**——「打开」置灰；
 //     服务端 embed-url 同样守卫（409 RENDERER_NOT_EMBEDDABLE），这里是前置体验。
+//  ④ **编辑入口**（#346 计划 3）：「编辑」换的是 `GET /reports/:id/edit-url` 给的**一次性 handoff
+//     URL**（专用入口 origin，票据兑换与自有 Cookie 都在代理侧完成）——前端照旧**不碰 Metabase
+//     凭据**。iframe 能直接打开是因为专用入口与 console **同父域**（反代的 SameSite=Lax Cookie
+//     照发）。逐行按 renderer 给按钮（platform 行没有可编辑的 dashboard），同 ③ 一样只是视图选择。
+//     ⚠️ 正因为票据**一次性**，「在新标签打开」兜底不能复用 iframe 那枚票，必须**重新领票**
+//     （见 `edit` 的 opts.newTab）——否则兜底在最需要它的场景下必然 401。
 import { useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { Button, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
@@ -33,6 +39,9 @@ export default function ReportsPage() {
 
   const [rows, setRows] = useState<ReportRow[]>([])
   const [embed, setEmbed] = useState<{ title: string; url: string } | null>(null)
+  const [editUrl, setEditUrl] = useState<{ title: string; url: string } | null>(null)
+  // `editRow` 记住当前要编辑的那一行：兜底按钮要用它**重新领票**（票据一次性，见 JSX 注）。
+  const [editRow, setEditRow] = useState<ReportRow | null>(null)
   const [gateEdit, setGateEdit] = useState<ReportRow | null>(null)
   const [gateDraft, setGateDraft] = useState('')
   const [messageApi, ctx] = message.useMessage()
@@ -52,6 +61,49 @@ export default function ReportsPage() {
       const b = await apiGet(`/reports/${r.id}/embed-url`) as { url: string }
       setEmbed({ title: r.title, url: b.url })
     } catch (e) {
+      messageApi.error(messageOf(e))
+    }
+  }
+
+  /**
+   * 编辑 = 向平台换一次**专用入口**的 handoff URL（Task 1 的 `GET /reports/:id/edit-url`）。
+   *
+   * 与「打开」同一条纪律：URL 只能来自平台，前端拿不到任何 Metabase 凭据。
+   * handoff URL 一次性 + 短时票据，代理侧兑换成自有 host-only Cookie；面板用 iframe 打开
+   * 是因为专用入口与 console **同父域**（反代的 SameSite=Lax Cookie 照发）。失败只提示，
+   * 不留半开的面板（与 open 同款）。
+   *
+   * `opts.newTab` = 兜底通路：**重新领一张票**（票据一次性，理由见面板按钮上的订正记录），
+   * 在新标签里用掉；此时不设 `editUrl`，因为 iframe 里那枚票已被消费、不该被覆盖。
+   * ⚠️ 这条通路**必须同步预开窗**，且**不能带 `noopener`**——两条都在函数体内详注。
+   */
+  const edit = async (r: ReportRow, opts?: { newTab?: boolean }) => {
+    // ⚠️ 订正记录（2026-09-29，Task 5 终审修复轮 I-5）：**同步**预开一个空白标签页——浏览器只认
+    //    **同步点击上下文**里的 `window.open`，`await` 之后再开会被判成弹窗直接拦掉，用户看到的是
+    //    「点了没反应」；而「CSP 挡住 iframe」正是**唯一**需要这条兜底的场景 ⇒ 那条路不能靠运气。
+    // ⚠️ 这里**不带 `noopener`/`noreferrer`**（计划原稿带了，实测**不可用**）：按规范，带 `noopener`
+    //    时 `window.open` **恒返回 `null`**（MDN `window.open` 的 `noopener` 条目：「…and returns
+    //    `null`」；真机 Chromium 实测同结论——带它 `pre` 恒 null）⇒ 下面的 `pre.location.replace`
+    //    永远够不到，兜底会退化成「每次只弹一句『被拦下了』」。
+    //    等价改法：同步开窗后**立刻**断掉 `opener`（真机实测可赋值）——同样让新页拿不到
+    //    `window.opener`，反制 tab-nabbing 的效果与 `noopener` 一致；导航仍然由我们完成。
+    const pre = opts?.newTab === true ? window.open('about:blank', '_blank') : null
+    if (pre !== null) pre.opener = null
+    try {
+      const b = await apiGet(`/reports/${r.id}/edit-url`) as { url: string }
+      setEditRow(r)
+      if (opts?.newTab === true) {
+        // 开不出来（弹窗被拦，或用户已把那个空白页关掉）⇒ 明说，别让人以为「点了没反应」
+        if (pre === null || pre.closed) {
+          messageApi.warning('浏览器拦下了新标签页，请允许本站弹窗后重试')
+          return
+        }
+        pre.location.replace(b.url)   // 兜底：新票在**已开好的**那个标签页里用掉
+        return
+      }
+      setEditUrl({ title: r.title, url: b.url })
+    } catch (e) {
+      pre?.close()          // 失败时别把空白标签留在用户眼前
       messageApi.error(messageOf(e))
     }
   }
@@ -140,6 +192,12 @@ export default function ReportsPage() {
           title: '操作', render: (_: unknown, r: ReportRow) => (
             <Space size="small">
               {openBtn(r)}
+              {/* 「编辑」与「打开」是**两条不同通路**：打开 = 嵌入预览（embed-url，只读令牌）；
+                  编辑 = 专用入口反代会话（edit-url，可写）。平台自绘行没有 Metabase dashboard 可编辑，
+                  故按 renderer 逐行给按钮（服务端同守卫：409 RENDERER_NOT_EDITABLE）。 */}
+              {canManage && r.renderer === 'metabase' && (
+                <Button size="small" onClick={() => void edit(r)}>编辑</Button>
+              )}
               {canManage && (
                 <>
                   <Button size="small" onClick={() => { setGateEdit(r); setGateDraft(r.requiredScope ?? '') }}>
@@ -189,6 +247,29 @@ export default function ReportsPage() {
             src={embed.url}
             style={{ width: '100%', height: 640, border: '1px solid #f0f0f0', marginTop: 8 }}
           />
+        </div>
+      )}
+      {/* 收窄 `editRow`（**不用 `editRow!`**，见下条订正记录）——面板与兜底按钮同属这个分支 */}
+      {editUrl !== null && editRow !== null && (
+        <div>
+          <Typography.Text type="secondary">
+            {editUrl.title}——编辑页（专用入口；会话 8 小时有效，关闭后需从列表重新进入）
+          </Typography.Text>
+          {/* 同父域 ⇒ iframe 内仍是同站，反代的 SameSite=Lax Cookie 照发 */}
+          <iframe
+            title={`报表编辑：${editUrl.title}`}
+            src={editUrl.url}
+            style={{ width: '100%', height: 720, border: '1px solid #f0f0f0', marginTop: 8 }}
+          />
+          {/* ⚠️ 订正记录（2026-09-29，Task 5 评审轮）：**兜底不能复用同一枚票据**——票据是
+              一次性（nonce 在 `/handoff` 即被消费），iframe 一渲染它就用掉了；若兜底链接的 href 也指向
+              它，点开必然 401，而「CSP 挡住 iframe」那种**最需要兜底**的场景下票据同样已被消费 ⇒
+              兜底路径整体失效。改为**重新领取**：再打一次 `edit-url` 换一枚新票，在新标签打开。 */}
+          {/* ⚠️ 订正记录（2026-09-29，Task 5 修复轮）：这个按钮必须在 `editRow !== null` 的分支里——
+              否则 `editRow: ReportRow | null` 传给 `edit(r: ReportRow, …)` 是 TS2345（实测复现）。
+              外层条件写成 `editUrl !== null && editRow !== null &&` 即**自然收窄**；
+              **不要**图省事写 `editRow!`（非空断言是类型逃逸，收窄才是正解）。 */}
+          <Button size="small" onClick={() => void edit(editRow, { newTab: true })}>在新标签打开</Button>
         </div>
       )}
     </Space>

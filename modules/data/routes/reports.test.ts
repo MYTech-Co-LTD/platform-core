@@ -190,13 +190,15 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('七个端点都声明了，且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('八个端点都声明了，且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
     expect(declared.get('POST /reports')).toBe('data:manage')
     expect(declared.get('GET /reports')).toBe('data:query')
     expect(declared.get('GET /reports/:id/embed-url')).toBe('data:query')
+    // 编辑入口是**管理动作**（能改报表的人才拿得到），与观看面的 embed-url 分档
+    expect(declared.get('GET /reports/:id/edit-url')).toBe('data:manage')
     expect(declared.get('DELETE /reports/:id')).toBe('data:manage')
     expect(declared.get('POST /reports/reconcile')).toBe('data:manage')
     expect(declared.get('GET /reports/manage')).toBe('data:manage')
@@ -258,6 +260,9 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     process.env.DATA_METABASE_URL = 'https://mb.test/'
     process.env.DATA_METABASE_API_KEY = 'mb-api-key'
     process.env.DATA_METABASE_SECRET_KEY = SECRET
+    // 编辑入口的 fail-closed（评审 I-3）要求会话密钥 ≥32 字符才签票据；测试里走真 env 通路，
+    // 与上面 DATA_METABASE_* 同款卫生（afterEach 清理）。
+    process.env.PLATFORM_SESSION_SECRET = 'test-session-secret-test-session-secret!'
   })
 
   afterEach(() => {
@@ -265,6 +270,9 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     delete process.env.DATA_METABASE_URL
     delete process.env.DATA_METABASE_API_KEY
     delete process.env.DATA_METABASE_SECRET_KEY
+    delete process.env.PLATFORM_SESSION_SECRET
+    // 评审 M-1：编辑入口的 origin 也收进统一清理，别只靠每个用例自己删。
+    delete process.env.MB_PROXY_PUBLIC_ORIGIN
   })
 
   afterAll(async () => {
@@ -839,6 +847,51 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(await res.json()).toEqual({ error: 'RENDERER_NOT_EMBEDDABLE' })
     // 守卫必须发生在任何 Metabase 调用之前（metabaseId=0 是哨兵，拿它签 token = 签死链）
     expect(mb.state.calls).toHaveLength(0)
+  })
+
+  it('★ GET /reports/:id/edit-url：本租户 metabase 行 → 200 + 票据可解出本 org', async () => {
+    process.env.MB_PROXY_PUBLIC_ORIGIN = 'https://mb.example.test'
+    const { app, identity } = manage()
+    const { id } = await (await post(app, { title: '销售日报' })).json()
+
+    const res = await app.request(`/reports/${id}/edit-url`)
+    expect(res.status).toBe(200)
+    const { url } = await res.json() as { url: string }
+    expect(url.startsWith('https://mb.example.test/handoff?t=')).toBe(true)
+    const payload = JSON.parse(Buffer.from(url.split('t=')[1].split('.')[1], 'base64url').toString('utf8'))
+    expect(payload).toMatchObject({ org: identity.orgId })
+    expect(payload.did).toBeGreaterThan(0)
+    delete process.env.MB_PROXY_PUBLIC_ORIGIN
+  })
+
+  it('★ 负测：platform 行 409 / 跨租户 404 / 未配代理 origin 503', async () => {
+    const { app, identity } = manage()
+    const id = await upsertReport(pool, identity.orgId, {
+      title: '自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+    })
+    delete process.env.MB_PROXY_PUBLIC_ORIGIN
+    expect((await app.request(`/reports/${id}/edit-url`)).status).toBe(503)
+
+    process.env.MB_PROXY_PUBLIC_ORIGIN = 'https://mb.example.test'
+    expect((await app.request(`/reports/${id}/edit-url`)).status).toBe(409)
+
+    const other = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] })).app
+    const { id: realId } = await (await post(app, { title: '别租户看不见' })).json()
+    expect((await other.request(`/reports/${realId}/edit-url`)).status).toBe(404)
+    delete process.env.MB_PROXY_PUBLIC_ORIGIN
+  })
+
+  it('★ 负测（评审 I-3）：origin 非 https / 带尾斜杠 的形状都 fail-closed 或归一', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '形状用例' })).json()
+
+    process.env.MB_PROXY_PUBLIC_ORIGIN = 'http://mb.example.test'      // 非 https ⇒ 503（不许降级）
+    expect((await app.request(`/reports/${id}/edit-url`)).status).toBe(503)
+
+    process.env.MB_PROXY_PUBLIC_ORIGIN = 'https://mb.example.test///'  // 尾斜杠 ⇒ 归一，不许出 '//handoff'
+    const { url } = await (await app.request(`/reports/${id}/edit-url`)).json() as { url: string }
+    expect(url.startsWith('https://mb.example.test/handoff?t=')).toBe(true)
+    delete process.env.MB_PROXY_PUBLIC_ORIGIN
   })
 
   it('★ I-1 两个 org 同 title ⇒ Metabase 侧两张不同 dashboard；B 的写 / 删都不碰 A 的', async () => {
