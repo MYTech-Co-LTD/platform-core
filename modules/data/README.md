@@ -119,14 +119,36 @@ L2 定义 API **就是**将来的 agent 接入面，而且已经具备接入所�
   的分野是**行裁剪**：观看面按行 `required_scope` 过滤（`visibleTo`），管理面**不裁**——
   页门未放行的行对管理员必须可见、可改，否则没人能把未发布的报表发出来。
 - 跨租户 / 不存在的 id 一律 **404**（不给存在性探针）；`PUT` body 用 `.strict()`（多余键 400）。
-- ⚠️ **写保护（陈旧版本写 409 / If-Match）尚未落地**，归计划 4（spec §8 步骤 2）。
+- ⚠️ **写保护（陈旧版本写 409）已落地** —— 见下方「写保护：两条版本通路 + 每对象一把锁」小节（spec §8 步骤 2）。
 - ⚠️ **入口可见性**：本模块 console 入口声明是单值 `data:query`（`manifest.yaml` 的
   `frontend.console`）⇒ 只持 `data:manage` 的人**看不到本模块入口**。这是模块入口的既有口径，
   非管理面引入；要改成「任一持有即可进」得先改宿主 `frontend.console` 的 scope 语义（架构先行）。
 - ⚠️ **重登记会重置页门**：`POST /reports` body 的 `requiredScope` 缺省是 `null`（= 发布）⇒ 幂等重跑
   登记（部署注记里那条预期运维动作）会把**手工设好的页门静默清成「所有人可见」**。走过那条路径之后
   必须回管理面确认页门，或重登记时显式带上原 scope。（把「缺省」与「显式置 null」区分开是写路径的
-  契约变更，归计划 4。）
+  契约变更，见下方「写保护」小节的边界条（`dash:`/`row:` 键空间不相交）。）
+
+### 写保护：两条版本通路 + 每对象一把锁（spec §3③）
+
+| 写什么 | 比对物 | 谁提供 | 哪里读 |
+|---|---|---|---|
+| Metabase 报表**内容**（布局/参数/卡片/锁参） | **内容指纹**（现算 24 hex） | 平台算（`readDashboardContent`） | `POST /reports` 的 201 响应 `fingerprint` |
+| **登记行**（页门/发布/回收） | **登记表版本号**（整数，每次写 +1） | 平台算（`data.reports.version`） | `GET /reports/manage` 每行 `version` |
+
+- **调用方义务（fail-closed）**：**更新既有对象必须回带版本**。两条通路的**缺失语义不同**（别混）：
+  - **登记侧**（`PUT`/`DELETE`）：`expectedVersion` 是 **zod 必填** ⇒ 缺/非法 ⇒ **`400 INVALID_BODY`**；不符 ⇒ **`409 STALE_WRITE`**（带 `currentVersion`）。
+  - **内容侧**（`POST /reports` 更新既有 dashboard）：`expectedFingerprint` 缺 ⇒ **`409 VERSION_REQUIRED`**（带 `currentFingerprint`，因为"缺"本身是**语义**判断：只有命中同名才知道该不该要）；不符 ⇒ **`409 STALE_WRITE`**。
+  ⇒ 两种情况都读最新的再重试。首次创建无需版本（没有可覆盖的东西）。
+- ⚠️ **重跑登记（`POST /reports`）现在也需要指纹**：它是"更新既有 dashboard"这条路 ⇒ 先读一次再写。
+- **每对象一把锁**：进程内（同键串行）。⚠️ **单实例成立**；多副本部署时退化为"只有版本比对生效"（不静默，只是并发窗口变宽）。
+- **`DELETE` 的版本载体是 query 串**（`?expectedVersion=N`），**不是请求体** —— DELETE 体可能被中间层（edge 是 OpenResty）剥掉，故走 query。
+
+**已知边界（Task 2/3/4 登记项；都不静默，只是并发窗口变宽）**：
+
+- **`putDashboardMerged` 的 GET→PUT 之间仍有丢失更新窗口**：人侧在 Metabase UI 里编辑同一张 dashboard 时，进程内那把锁覆盖不到（锁只在平台侧同键请求之间串行）。
+- **`DELETE` 是「JS 比较版本 + 无条件删行」**（不像 `PUT` 走条件 `UPDATE ... WHERE version = ?`）⇒ 并发窗口由进程内锁收窄，**跨进程仍存在**。
+- **`dash:`（`POST`）与 `row:`（`PUT`/`DELETE`）键空间不相交** ⇒ 同一既有报表上 `POST` 与 `PUT`/`DELETE` **不互斥**（与既有的「重登记会重置页门」是同一条口径）。
+- ⚠️ **待真机验（尚未实测，别当已验）**：合并 `PUT` 现在带 `embedding_params`（回写读到的值）但**不带** `enable_embedding`/`embedding_type` —— 该组合的真机接受度**未实测**（若被拒会响亮报错，不静默）。
 
 ### Metabase 侧的名称 = `<org>/<title>`（**命名空间**，跨租户串味的结构性防线）
 
