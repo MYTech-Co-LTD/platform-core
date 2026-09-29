@@ -319,7 +319,11 @@ print(r['status'], r.get('at'), 'assets=', [a['id'] for a in r.get('assets',[])]
    但 catalog **命名不了这个节点** ⇒ 指向它的 owners 规则**匹配不到任何东西** ⇒ **零售 36h 陈旧不告警**。
    这正是「**能写 ≠ 能被观测面命名**」；且**任何地方都不报错**。
    判据只能是 `catalog lint` exit 0 + `catalog owners` 覆盖 ≥1（**不是**「重建没报错」）。
-   ⚠️ **CI 里没有 catalog lint 这道守卫**（跟踪 #337）⇒ 只有手工跑一次才看得见。
+   ✅ **CI 已有这道守卫**（`#337` 已由 `#341` 落地）：`scripts/check-duckle-catalog.mjs` 挂在 gates job 尾部，
+   **真跑** `catalog build`（断言 stderr 无 `could not be named`）+ `catalog lint`（断言 exit 0），跑不起来则 exit 2
+   响亮失败 ⇒ **这类缺陷在 PR 阶段即红**，不必再靠人记得手工跑。
+   ⚠️ 但它**不覆盖本步**：④ 的重建是**投递时的手工动作**（CI 管不到卷内），且它**不覆盖** `alerts.json`
+   与仓根 `duckle/common/*.json`（守卫的空缺见 #341 报告 §5）⇒ ④ 的三条判据仍要逐条跑。
 
 4. **≥2 tick 缺口的真补法不是 misfire，是补采 SOP**
    catchup **结构上补不回**错过的窗（窗口由执行时刻算，§2）。tick 漏 **1** 次由下一次 tick 的 `prev` **自愈**；
