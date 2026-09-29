@@ -16,10 +16,13 @@ const json = (b: unknown, status = 200) =>
 
 // `version` = **登记侧**版本（写保护的读侧，`GET /reports/manage` 回带）：console 从管理清单
 // 读到它、写时回带。自绘行（r3）**也给**——登记侧版本与渲染器无关（platform 行的登记行同样有版本）。
+// ⚠️ **三行必须互不相同**（评审 I-1，2026-09-29）：若三行同值，「硬写常量」与「读到该行版本」
+//    不可区分 ⇒ 写用例全是**假绿**（实测：全行 = 1 时把实现硬写成常量 1，五条写用例照样绿）。
+//    互异后，硬写任一常量（含 `1`）都会被**别的行**的断言咬住；断言一律 `ROWS[i].version`，**不硬写**。
 const ROWS = [
   { id: 'r1', title: '销售日报', requiredScope: null, renderer: 'metabase', version: 1 },
-  { id: 'r2', title: '未放行报表', requiredScope: 'sales:read', renderer: 'metabase', version: 1 },
-  { id: 'r3', title: '自绘大盘', requiredScope: null, renderer: 'platform', version: 1 },
+  { id: 'r2', title: '未放行报表', requiredScope: 'sales:read', renderer: 'metabase', version: 2 },
+  { id: 'r3', title: '自绘大盘', requiredScope: null, renderer: 'platform', version: 3 },
 ]
 
 function renderPage(scopes: string[]) {
@@ -160,7 +163,8 @@ describe('报表页签双视图', () => {
     await waitFor(() => {
       const del = calls.find((c) => c.init?.method === 'DELETE')
       // ⚠️ DELETE 的版本走**查询串**（不是请求体）——`?expectedVersion=N`（Task 3 硬约束）
-      expect(del?.url).toMatch(/\/reports\/r[123]\?expectedVersion=1$/)
+      // 版本从**夹具**读（`buttons('回收')[0]` = r1），不硬写数值（互异夹具下硬写会被咬住）
+      expect(del?.url).toMatch(new RegExp(`/reports/r1\\?expectedVersion=${ROWS[0].version}$`))
     })
   })
 
@@ -327,7 +331,8 @@ describe('报表页签双视图', () => {
     // ① 请求体带版本（ROWS[1].version）② 409 出人话 ③ 列表被重新拉取（reload）
     await waitFor(() => {
       const put = calls.find((c) => c.init?.method === 'PUT')!
-      expect(JSON.parse(String(put.init?.body))).toMatchObject({ requiredScope: null, expectedVersion: ROWS[1].version })
+      // `toEqual`（不是 `toMatchObject`，评审 Minor ①）：多带键/带错键也要咬得住
+      expect(JSON.parse(String(put.init?.body))).toEqual({ requiredScope: null, expectedVersion: ROWS[1].version })
     })
     expect(await screen.findByText('这份报表刚被别人改过，已为你刷新，请重试')).toBeInTheDocument()
     await waitFor(() => expect(reloads).toBeGreaterThan(1))
@@ -336,23 +341,77 @@ describe('报表页签双视图', () => {
   it('★ 回收 409（版本陈旧）⇒ 出人话并自动刷新列表（DELETE 版本走查询串）', async () => {
     // 与上一条同构，但走 **DELETE** 通路：版本在**查询串**里（`?expectedVersion=N`），
     // 且 recycle 的 `catch` 也必须 `await load()`（三条写动作的 catch 各自独立，互不覆盖）。
+    // ⚠️ 刻意按**第二行**（r2，version 2 ≠ 1）：DELETE 通路若只测第一行，就与「硬写 1 / 恒取首行版本」
+    //    不可区分（评审 I-1 的反面）；用非首行 + 夹具读值同时咬住硬写与取错行。
     let reloads = 0
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: [ROWS[0]] }) }
+      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: [ROWS[0], ROWS[1]] }) }
       if (init?.method === 'DELETE') return json({ error: 'STALE_WRITE', currentVersion: 9 }, 409)
       return json({})
     })
     renderPage(['data:query', 'data:manage'])
-    await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
-    fireEvent.click(buttons('回收')[0])
+    await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
+    fireEvent.click(buttons('回收')[1])   // 第二行 = r2（`buttons` 按 DOM 序 = 数据源序）
     await confirmPopconfirm('确认回收')
 
     await waitFor(() => {
       const del = calls.find((c) => c.init?.method === 'DELETE')!
-      expect(del.url).toMatch(/\/reports\/r1\?expectedVersion=1$/)
+      expect(del.url).toMatch(new RegExp(`/reports/r2\\?expectedVersion=${ROWS[1].version}$`))
     })
     expect(await screen.findByText('这份报表刚被别人改过，已为你刷新，请重试')).toBeInTheDocument()
     await waitFor(() => expect(reloads).toBeGreaterThan(1))
+  })
+
+  it('★ 改页门 409 ⇒ 出人话 + 关掉 Modal（陈旧快照不得留在框内）+ 刷新列表', async () => {
+    // 评审 I-2：`saveGate` 的 Modal 持的是**加载时**的行快照；列表刷新后 `gateEdit` 仍指旧行。
+    // 若不关框，用户照着「请重试」在框内再点「确定」⇒ 再发一次**陈旧版本** ⇒ 再 409（死循环的假象）。
+    // 故 409 必须 `setGateEdit(null)`：重试只能从**刷新后的列表**重新进入。
+    let reloads = 0
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: [ROWS[0]] }) }
+      if (init?.method === 'PUT') return json({ error: 'STALE_WRITE', currentVersion: 9 }, 409)
+      return json({})
+    })
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
+    fireEvent.click(buttons('改页门')[0])
+    fireEvent.change(screen.getByPlaceholderText('如 sales:read'), { target: { value: 'finance:read' } })
+    fireEvent.click(button('确定'))
+
+    expect(await screen.findByText('这份报表刚被别人改过，已为你刷新，请重试')).toBeInTheDocument()
+    // ── 「Modal 消失」在本环境只能观测成**离场态**（订正记录 2026-09-29）──────────────────
+    // antd Modal 关闭 = `open=false` ⇒ rc-motion 给 `.ant-modal` 加 `ant-zoom-leave*`（mask 上
+    // `ant-fade-leave*`），真浏览器要等 `transitionend` 才把 DOM 摘掉。⚠️ happy-dom **不派发
+    // transitionend**（实测：手动 `fireEvent.transitionEnd` / `animationEnd` 也不摘），且离场期间
+    // rc-motion **冻结子树**（标题/输入仍是旧值）⇒ **不能**用「标题不见」判消失（试过，恒真失败）。
+    // 故判据 = 离场类出现（或 DOM 已摘，覆盖真浏览器形态）。
+    const modalClosing = () => {
+      const modal = document.querySelector('.ant-modal')
+      return modal === null || modal.className.includes('-leave')
+    }
+    await waitFor(() => expect(modalClosing()).toBe(true))
+    await waitFor(() => expect(reloads).toBeGreaterThan(1))
+  })
+
+  it('★ 管理清单漏带 version ⇒ fail-closed 出人话，不落成可写的坏快照', async () => {
+    // 评审 Minor ③：`load` 里 `b as { reports: ReportRow[] }` 是无校验断言——服务端若漏带
+    // `version`（契约破损 / 旧版本服务端），硬落进 state 后写动作会发出 `?expectedVersion=undefined`
+    // （PUT 亦然）⇒ 服务端 400「输入不合法」，**根因被静默**。这里 fail-closed：坏快照**不落地**。
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) {
+        // 缺 `version`（其余字段齐备——单看形状是「正常」的，这正是要拦的那类静默）
+        return json({ reports: [{ id: 'r1', title: '销售日报', requiredScope: 'sales:read', renderer: 'metabase' }] })
+      }
+      return json({})
+    })
+    renderPage(['data:query', 'data:manage'])
+
+    expect(await screen.findByText('报表清单缺少版本号，请刷新页面；若仍如此请联系平台侧')).toBeInTheDocument()
+    // 坏快照不落地 ⇒ 表里没有行，也就没有能发出坏版本的写按钮
+    expect(screen.queryByRole('button', { name: /^发\s*布$/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('销售日报')).not.toBeInTheDocument()
   })
 })

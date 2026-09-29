@@ -88,7 +88,14 @@ const MESSAGES: Record<string, string> = {
   // ⚠️ console **不调这个端点**（登记在 API/管线侧），本条纯属**防御性**文案：若将来把重登记
   //    搬进 console，裸码 `VERSION_REQUIRED` 会直接漏到界面上。与 `STALE_WRITE` 同族但不是同一件事
   //    （一个「没带版本」、一个「版本过期」），故分成两条。
-  VERSION_REQUIRED: '需要先读取最新版本再提交（页面已为你刷新）',
+  // ⚠️ 文案**不含**「已为你刷新」（评审 Minor ②，2026-09-29）：那句承诺的前提是 `catch` 里
+  //    `await load()`，而本码唯一的产出方 `POST /reports` **不由 console 驱动** ⇒ 刷新根本没发生，
+  //    写上就是**撒谎**（真到这一步的用户照「已刷新」去重试只会再撞）。补语去掉，只留可验证的动作。
+  VERSION_REQUIRED: '缺少版本信息，请先读取最新版本再提交',
+  // **客户端侧**自检码（无 HTTP 状态：本表里唯一不由服务端产出的码）。管理清单若有行缺
+  // `version`，写动作会发出 `?expectedVersion=undefined`（PUT 则整键被 JSON 丢弃）⇒ 服务端只回
+  // 400「输入不合法」，**清单契约破损被静默**。console 于是 fail-closed：坏快照不落地并说这句。
+  SNAPSHOT_INVALID: '报表清单缺少版本号，请刷新页面；若仍如此请联系平台侧',
 }
 
 /** 已知码给中文文案；未知码回落成码本身（便于排障）。 */
