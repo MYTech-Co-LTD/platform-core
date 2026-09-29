@@ -631,7 +631,7 @@ git commit -m "fix(data): reconcile 回读失败按行降级，一行坏不再�
 // index.test.tsx — 报表页签：双视图选择（session.scopes）+ 管理动作（页门/发布/回收）。
 // 挂载形态照宿主壳真实结构：ReportsPage 经 Outlet 注入 session（demo 模块先例）。
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Outlet, RouterProvider, createMemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -701,7 +701,8 @@ describe('报表页签双视图', () => {
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
     expect(calls[0]?.url.endsWith('/reports/manage')).toBe(true)
-    expect(screen.getByText('平台自绘')).toBeInTheDocument()
+    // 徽章在管理视图出现**两次**（标题内联 + 渲染器列）⇒ 复数断言（订正记录见实现块）
+    expect(screen.getAllByText('平台自绘').length).toBeGreaterThanOrEqual(2)
     expect(screen.getByRole('button', { name: /发\s*布/ })).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: /回\s*收/ }).length).toBeGreaterThan(0)
     expect(screen.getAllByRole('button', { name: /改\s*页\s*门/ }).length).toBeGreaterThan(0)
@@ -714,6 +715,8 @@ describe('报表页签双视图', () => {
     expect(screen.queryByRole('button', { name: /发\s*布/ })).not.toBeInTheDocument()
     const selfDrawnRow = screen.getByText('自绘大盘').closest('tr')!
     expect((selfDrawnRow.querySelector('button') as HTMLButtonElement).disabled).toBe(true)
+    // ⭐ spec ❌ 的修复验收点：观看视图**也**必须看得到平台自绘徽章（不能只靠置灰按钮/Tooltip）
+    expect(within(selfDrawnRow).getAllByText('平台自绘').length).toBeGreaterThan(0)
   })
 
   it('发布：Popconfirm 确认 ⇒ PUT requiredScope=null', async () => {
@@ -879,7 +882,19 @@ export default function ReportsPage() {
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {ctx}
       <Table rowKey="id" dataSource={rows} pagination={false} columns={[
-        { title: '报表标题', dataIndex: 'title' },
+        // ⚠️ 订正记录（2026-09-29，Task 5 评审 spec ❌ + 人裁「两视图都加」）：徽章必须内联在**标题**里
+        //    ——原稿把它只放在管理视图的条件列里，观看视图就只剩一个置灰按钮；而本仓 antd 6.6.3 已移除
+        //    v5 的 `getDisabledCompatibleChildren`，**Tooltip 在禁用按钮上不保证弹**，普通员工会看到
+        //    一个没有理由的灰按钮。徽章自己承担「为什么这行点不开」。管理视图另留一列「渲染器」便于扫读。
+        {
+          title: '报表标题', dataIndex: 'title',
+          render: (v: string, r: ReportRow) => (
+            <Space size={4}>
+              {v}
+              {r.renderer === 'platform' && <Tag color="purple">平台自绘</Tag>}
+            </Space>
+          ),
+        },
         ...(canManage ? [{
           title: '渲染器', dataIndex: 'renderer',
           render: (v: ReportRow['renderer']) => (v === 'platform' ? <Tag color="purple">平台自绘</Tag> : <Tag>Metabase</Tag>),
