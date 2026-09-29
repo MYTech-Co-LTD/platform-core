@@ -82,13 +82,36 @@ export default function ReportsPage() {
     } catch (e) { messageApi.error(messageOf(e)) }
   }
 
+  /**
+   * 「打开」的可用性 = **渲染器 + 页门**两个体验层判据（与观看面的 `visibleTo` 同构）。
+   *
+   * ⚠️ 页门这一维是本分支新打通的路径：管理清单按 spec **不裁行**（管理员必须看得见、能改页门），
+   * 于是一个「门是自己没有的 scope」的行会出现在表里——它的 `embed-url` 服务端必然 **403**
+   * （改前 console 只渲染裁过的清单，这条路不可达）。这里把「按了必然失败」前置成不可按。
+   *
+   * **服务端仍是权威**：本函数只是视图层的前置体验，不是鉴权（前端不重复判权，见文件头②）。
+   */
+  const canOpen = (r: ReportRow) =>
+    r.renderer !== 'platform' && (r.requiredScope === null || session.scopes.includes(r.requiredScope))
+
+  /**
+   * 置灰的**原因**（Tooltip 文案）：平台自绘与页门不足是两件完全不同的事，用户该做的动作也不同。
+   *
+   * ⚠️ antd 6.6.3 已移除 v5 的 `getDisabledCompatibleChildren` ⇒ **Tooltip 在禁用的原生 button 上
+   * 不保证弹**。所以表格里的「页门」列是**兜底说明**（它恒在，不依赖悬停）；Tooltip 是锦上添花。
+   */
+  const openBlockReason = (r: ReportRow): string =>
+    r.renderer === 'platform'
+      ? '平台自绘报表暂无嵌入预览通道（渲染通路接入后开放）'
+      : `你的账号没有这张报表的页门权限（${r.requiredScope}）`
+
   const openBtn = (r: ReportRow) =>
-    r.renderer === 'platform' ? (
-      <Tooltip title="平台自绘报表暂无嵌入预览通道（渲染通路接入后开放）">
+    canOpen(r) ? (
+      <Button size="small" onClick={() => void open(r)}>打开</Button>
+    ) : (
+      <Tooltip title={openBlockReason(r)}>
         <Button size="small" disabled>打开</Button>
       </Tooltip>
-    ) : (
-      <Button size="small" onClick={() => void open(r)}>打开</Button>
     )
 
   return (

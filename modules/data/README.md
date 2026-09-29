@@ -113,7 +113,7 @@ L2 定义 API **就是**将来的 agent 接入面，而且已经具备接入所�
 |---|---|---|
 | 发布（所有人可见） | 把页门清空 | `PUT /reports/:id` body `{"requiredScope": null}` |
 | 改页门（换成新 scope） | 换一个 scope 串 | `PUT /reports/:id` body `{"requiredScope":"sales:read"}` |
-| 回收 | 归档 dashboard + 删登记行 | `DELETE /reports/:id`（既有） |
+| 回收 | 归档 dashboard（`renderer='platform'` 的行**跳过归档**，只删登记行——它没有 Metabase dashboard） + 删登记行 | `DELETE /reports/:id`（既有） |
 
 - **管理清单 `GET /reports/manage`**（`data:manage`）与观看清单 `GET /reports`（`data:query`）
   的分野是**行裁剪**：观看面按行 `required_scope` 过滤（`visibleTo`），管理面**不裁**——
@@ -123,6 +123,10 @@ L2 定义 API **就是**将来的 agent 接入面，而且已经具备接入所�
 - ⚠️ **入口可见性**：本模块 console 入口声明是单值 `data:query`（`manifest.yaml` 的
   `frontend.console`）⇒ 只持 `data:manage` 的人**看不到本模块入口**。这是模块入口的既有口径，
   非管理面引入；要改成「任一持有即可进」得先改宿主 `frontend.console` 的 scope 语义（架构先行）。
+- ⚠️ **重登记会重置页门**：`POST /reports` body 的 `requiredScope` 缺省是 `null`（= 发布）⇒ 幂等重跑
+  登记（部署注记里那条预期运维动作）会把**手工设好的页门静默清成「所有人可见」**。走过那条路径之后
+  必须回管理面确认页门，或重登记时显式带上原 scope。（把「缺省」与「显式置 null」区分开是写路径的
+  契约变更，归计划 4。）
 
 ### Metabase 侧的名称 = `<org>/<title>`（**命名空间**，跨租户串味的结构性防线）
 
@@ -171,6 +175,8 @@ env 三键（`DATA_METABASE_URL` / `_API_KEY` / `_SECRET_KEY`）见根 `.env.exa
 
 `contentUnreadable` 非空 ⇒ `ok:false`；回读按**行**降级——一个 dashboard 回读失败只把那一行报出来，
 不让整租户的对账整单 502（对账的意义就是把「哪里坏了」显式报出来）。
+⚠️ 只对 `MetabaseError` 降级（上游明确对**这一张**说不行，含读卡片 `GET /api/card/{id}` 失败）；
+连接层/代码缺陷类异常仍然**整单失败**（不把缺陷伪装成业务状态）。
 
 `unregistered` **不能**按 `title` 求差：那样同名孤儿（幂等窗口/并发造出的重复 dashboard）看不见，
 且多租户下会把别人的 dashboard 恒报成本租户未登记——两种都是**假绿**。跨 org 读是**平台级

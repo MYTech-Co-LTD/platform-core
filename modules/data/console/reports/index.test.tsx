@@ -98,6 +98,23 @@ describe('报表页签双视图', () => {
     expect(within(selfDrawnRow).getAllByText('平台自绘').length).toBeGreaterThan(0)
   })
 
+  it('管理清单里「门是自己没有的 scope」的行：打开被禁用（服务端 embed-url 对它是 403）', async () => {
+    // 管理清单按 spec **不裁行**（管理员必须看得见、能改页门）⇒ 「打开」只按 renderer 置灰是不够的：
+    // 页门未放行的行（r2 = sales:read，而本 session 只有 data:query/data:manage）点开必然 403。
+    // 改前 console 只渲染裁过的清单，这条路径**不可达**——是本分支新打通的。
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
+
+    const gatedRow = screen.getByText('未放行报表').closest('tr')!
+    const gatedOpen = within(gatedRow).getByRole('button', { name: /打\s*开/ }) as HTMLButtonElement
+    expect(gatedOpen.disabled).toBe(true)
+
+    // 反证：同一张表里页门为 null 的行「打开」仍可用 ⇒ 禁用是**逐行**判的，不是整页一刀切
+    const openRow = screen.getByText('销售日报').closest('tr')!
+    const okOpen = within(openRow).getByRole('button', { name: /打\s*开/ }) as HTMLButtonElement
+    expect(okOpen.disabled).toBe(false)
+  })
+
   it('发布：Popconfirm 确认 ⇒ PUT requiredScope=null', async () => {
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
