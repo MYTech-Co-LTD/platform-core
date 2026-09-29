@@ -70,11 +70,18 @@ describe('edit-handoff 票据', () => {
     expect(p).toMatchObject({ org: 'acme', did: 42, nonce: 'n-1', iat: now, exp: now + 120 })
   })
 
-  it('签名是 HS256(secret)（用 node:crypto 独立复算，钉死算法与密钥编码）', () => {
+  it('签名是 HS256(**派生**子密钥)（独立复算，同时钉死 KDF 标签串）', () => {
     const t = signEditHandoff({ org: 'acme', did: 7, nonce: 'n-2' }, SECRET, 120, 1_700_000_000)
     const [h, p, s] = t.split('.')
-    const expectSig = createHmac('sha256', SECRET).update(`${h}.${p}`).digest('base64url')
-    expect(s).toBe(expectSig)
+    // 独立复算派生（不复用被测的 editHandoffKey）——把 'edit-handoff-v1' 这个标签也钉住
+    const key = createHmac('sha256', SECRET).update('edit-handoff-v1').digest()
+    expect(s).toBe(createHmac('sha256', key).update(`${h}.${p}`).digest('base64url'))
+  })
+
+  it('⚠️ 用**原始**密钥签同 payload ⇒ 与派生密钥的签名不同（域分隔真的生效）', () => {
+    const t = signEditHandoff({ org: 'acme', did: 7, nonce: 'n-3' }, SECRET, 120, 1_700_000_000)
+    const [h, p, s] = t.split('.')
+    expect(s).not.toBe(createHmac('sha256', SECRET).update(`${h}.${p}`).digest('base64url'))
   })
 
   it('★ 金样本（跨实现契约）：同一输入必须给出同一 token 串', () => {
@@ -100,12 +107,26 @@ Expected: FAIL（`signEditHandoff is not a function`）。
 //
 // 为什么由**模块**签而不是平台签：登记表 data.reports 只有模块能读（B1：apps/packages 只许
 // platform schema）⇒「该 dashboard 确属本 org 且已登记」这一判定只能发生在这里。
-import { createHmac } from 'node:crypto'
+import { createHmac, randomUUID } from 'node:crypto'
 
 /** 编辑票据的存活秒数。**短**是安全设计的一部分：它只用来把身份一次性渡给反代。 */
 export const EDIT_HANDOFF_TTL_SEC = 120
 
 const b64url = (s: string): string => Buffer.from(s, 'utf8').toString('base64url')
+
+/**
+ * 票据密钥：从 `PLATFORM_SESSION_SECRET` **派生**的子密钥（域分隔），**不是**直接复用原始密钥。
+ *
+ * ⚠️ 为什么必须派生（Task 1 评审 I-1/I-2，2026-09-29 人裁修）：原始密钥有**双向串用**风险——
+ *   ① 票据（会出现在 URL 里）用原始密钥签的话，宿主会话验签 `verifySession` 会把 120s 票据
+ *      当**合法会话**收下，甚至被「滑动续期」分支重签成 7 天 Cookie（空 scope 身份）；
+ *   ② 反过来，任何登录用户的会话 Cookie（7 天、带 org）在代理眼里也是合法票据 ⇒ 只持 `data:query`
+ *      的人可能绕过 `data:manage` 页门换到编辑会话。
+ *   派生后两侧**互不承认**（密钥不同），且**不新增任何 env 密钥**（派生是确定性的，两侧同式）。
+ */
+export function editHandoffKey(sessionSecret: string): Buffer {
+  return createHmac('sha256', sessionSecret).update('edit-handoff-v1').digest()
+}
 
 /**
  * 签一枚编辑票据。payload `{org, did, nonce, iat, exp}`。
@@ -122,7 +143,8 @@ export function signEditHandoff(
   const payload = b64url(JSON.stringify({
     org: input.org, did: input.did, nonce: input.nonce, iat: now, exp: now + ttlSec,
   }))
-  const sig = createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url')
+  // ⚠️ 用**派生**子密钥（editHandoffKey），不是 secret 本身——见函数头顶注（I-1/I-2）
+  const sig = createHmac('sha256', editHandoffKey(secret)).update(`${header}.${payload}`).digest('base64url')
   return `${header}.${payload}.${sig}`
 }
 ```
@@ -166,7 +188,49 @@ Run: 同 Step 2。Expected: 前两条 PASS；第三条 FAIL（占位符不匹配
     expect((await other.request(`/reports/${realId}/edit-url`)).status).toBe(404)
     delete process.env.MB_PROXY_PUBLIC_ORIGIN
   })
+
+  it('★ 负测（评审 I-3）：origin 非 https / 带尾斜杠 的形状都 fail-closed 或归一', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '形状用例' })).json()
+
+    process.env.MB_PROXY_PUBLIC_ORIGIN = 'http://mb.example.test'      // 非 https ⇒ 503（不许降级）
+    expect((await app.request(`/reports/${id}/edit-url`)).status).toBe(503)
+
+    process.env.MB_PROXY_PUBLIC_ORIGIN = 'https://mb.example.test///'  // 尾斜杠 ⇒ 归一，不许出 '//handoff'
+    const { url } = await (await app.request(`/reports/${id}/edit-url`)).json() as { url: string }
+    expect(url.startsWith('https://mb.example.test/handoff?t=')).toBe(true)
+    delete process.env.MB_PROXY_PUBLIC_ORIGIN
+  })
 ```
+
+> ⚠️ 同文件既有的 `afterEach` 里**补上** `delete process.env.MB_PROXY_PUBLIC_ORIGIN`（与相邻的
+> `DATA_METABASE_*` 卫生约定一致，评审 M-1）——别只靠每个用例自己删。
+
+- [ ] **Step 5b: 宿主侧隔离测试（新建 `apps/server/src/edit-handoff-isolation.test.ts`）**
+
+把 I-1 的修复**端到端钉住**：票据（派生密钥签）**不得**被会话验签接受。用金样本串做常量，**不** import
+任何模块文件（宿主引模块内部是反向依赖）：
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { verifySession } from '@platform/auth-core'
+
+// Task 1 回填的金样本（与 modules/data/domain/edit-handoff.test.ts 同一串、与代理侧测试同一串）
+const GOLDEN_HANDOFF =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJvcmciOiJhY21lIiwiZGlkIjo3LCJub25jZSI6ImdvbGRlbiIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.<按你回填的签名>'
+const SECRET = 'test-secret-test-secret-test-secret!'
+
+describe('★ 票据与会话互不承认（域分隔，评审 I-1）', () => {
+  it('编辑票据**不得**被 verifySession 接受（否则会被续签分支放大成 7 天会话）', async () => {
+    expect(await verifySession(GOLDEN_HANDOFF, SECRET)).toBeNull()
+  })
+})
+```
+
+> ⚠️ 判据是「**同一个** root secret，票据仍不被会话验签接受」——所以 `SECRET` 必须与模块侧生成金样本
+> 用的密钥**逐字相同**；否则验签失败只是因为密钥不对，这条测试就变恒真、咬不住 I-1。
+> **变异确认（必须做）**：临时把 fixture 换成「同 payload 但用**原始** `SECRET` 签」的 token ⇒
+> 这条测试**应变红**（`verifySession` 会接受它）——红了才证明它真的在测域分隔；确认后还原。
 
 - [ ] **Step 6: 实现端点**（`routes/reports.ts`：import `signEditHandoff`；在 PUT handler 之后加）
 
@@ -177,17 +241,25 @@ Run: 同 Step 2。Expected: 前两条 PASS；第三条 FAIL（占位符不匹配
   r.get('/reports/:id/edit-url', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
-    const proxyOrigin = process.env.MB_PROXY_PUBLIC_ORIGIN
-    if (!proxyOrigin) return c.json({ error: 'EDIT_PROXY_UNCONFIGURED' }, 503)
+    // ⚠️ fail-closed（评审 I-3）：缺配/形状不对一律 503——**不许** `?? ''` 用空密钥签票据，
+    //    也不许把非 https 或带尾斜杠的 origin 直接拼进 URL。
+    const proxyOrigin = process.env.MB_PROXY_PUBLIC_ORIGIN?.trim().replace(/\/+$/, '')
+    const sessionSecret = process.env.PLATFORM_SESSION_SECRET ?? ''
+    if (!proxyOrigin || !proxyOrigin.startsWith('https://') || sessionSecret.length < 32) {
+      return c.json({ error: 'EDIT_PROXY_UNCONFIGURED' }, 503)
+    }
     const id = reportIdOf(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const row = await getReport(ctx.pool, c.get('tenant').casdoor_org, id)
     if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
     // platform 自绘行没有 Metabase dashboard（metabaseId=0 是哨兵）⇒ 没有可编辑的页
     if (row.renderer === 'platform') return c.json({ error: 'RENDERER_NOT_EDITABLE' }, 409)
+    // 票据只绑 org + 单张 dashboard（不绑用户）：代理侧只按这两个维度授权，用户维度由本端点的
+    // `data:manage` 页门把关。残余风险（同租户成员截获票据后 120s 内使用）由「短 TTL + 一次性
+    // nonce + 入口即清 t + no-referrer」共同压缩——见 Task 3 与 spec §3⑦。
     const t = signEditHandoff(
       { org: requester.orgId, did: row.metabaseId, nonce: randomUUID() },
-      process.env.PLATFORM_SESSION_SECRET ?? '',
+      sessionSecret,
     )
     return c.json({ url: `${proxyOrigin}/handoff?t=${t}` })
   })
@@ -421,9 +493,12 @@ git commit -m "feat(mb-proxy): 编辑页反代服务骨架（自有 Cookie + /he
 - [ ] **Step 1: 写失败测试**（`apps/mb-proxy/src/handoff.test.ts`）
 
 ```ts
+import { createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { claimNonce, verifyEditHandoff } from './handoff'
 import { signForTest } from './test-sign'   // 测试专用：与模块 signEditHandoff 同算法的**极小**复刻
+                                            // ⚠️ 它也必须走**派生**子密钥（同 'edit-handoff-v1' 标签），
+                                            //    否则「坏签名 ⇒ null」那条会因为密钥不对而恒真
 
 const SECRET = 'test-secret-test-secret-test-secret!'
 
@@ -439,6 +514,17 @@ describe('handoff 验签', () => {
     expect(verifyEditHandoff(good, SECRET, 1061)).toBeNull()          // exp=1060 < now
     expect(verifyEditHandoff('not-a-jwt', SECRET, 1000)).toBeNull()
     expect(verifyEditHandoff(good, 'another-secret-another-secret!!', 1000)).toBeNull()
+  })
+
+  it('★ 域分隔（评审 I-1/I-2）：**会话形状**的 token（原始密钥签、有 org/scopes/exp、无 did/nonce）⇒ null', async () => {
+    // 这是「只持 data:query 的登录用户拿自己的会话 Cookie 当票据使」的攻击面
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
+    const payload = Buffer.from(JSON.stringify({
+      sub: 'u1', org: 'acme', name: '路人', scopes: ['data:query'], authVia: 'password',
+      iat: 1000, exp: 9_999_999_999, sfa: 1000,
+    })).toString('base64url')
+    const sig = createHmac('sha256', SECRET).update(`${header}.${payload}`).digest('base64url')
+    expect(verifyEditHandoff(`${header}.${payload}.${sig}`, SECRET, 1000)).toBeNull()
   })
 })
 
@@ -472,12 +558,20 @@ interface HandoffClaims { org: string; did: number; nonce: string }
 
 const b64urlToBuf = (s: string): Buffer => Buffer.from(s, 'base64url')
 
+/**
+ * 票据密钥 = 从 root secret **派生**的子密钥，**与模块侧同式**（`'edit-handoff-v1'` 标签必须逐字相同）。
+ * 域分隔保证：会话 Cookie（原始密钥签）在这里**验不过**，票据在宿主会话验签那边也**验不过**（评审 I-1/I-2）。
+ */
+function handoffKey(rootSecret: string): Buffer {
+  return createHmac('sha256', rootSecret).update('edit-handoff-v1').digest()
+}
+
 /** 验签 + 校验 exp。任何失败返回 null（不抛——照 auth-core 的 verifySession 风格）。 */
 export function verifyEditHandoff(token: string, secret: string, now?: number): HandoffClaims | null {
   const parts = token.split('.')
   if (parts.length !== 3) return null
   const [h, p, s] = parts
-  const expect = createHmac('sha256', secret).update(`${h}.${p}`).digest()
+  const expect = createHmac('sha256', handoffKey(secret)).update(`${h}.${p}`).digest()
   const got = b64urlToBuf(s)
   if (got.length !== expect.length || !timingSafeEqual(got, expect)) return null
   try {
