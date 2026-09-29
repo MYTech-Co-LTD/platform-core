@@ -1,0 +1,573 @@
+{
+  "_note": [
+    "lemeng.retail.close 的 **L1 顶层**（close 形：营业日末跑一次，**只收一个闭窗** = prev）。",
+    "父管线 = 本文件；**子管线复用 lemeng.retail_order_line.window.json**（不新建变体 —— 理由见 ④）。",
+    "来源：由 lemeng.retail.windows.l1.json **机械改写**（身份门 13 节点逐字照抄；窗口表 → 单行 prev；路径/判红文案 → close 形）。",
+    "改动面（逐条可核）：v0.rawResponseDestination / g0 → retail-close-*；gv 的 BIZDAY_SET+WINDOW_SET；w0 单行窗口表；wsink / rep 路径；dz 文案。",
+    "**其余节点与全部边逐字未动**；fe.pipelineRef 仍指 .window（与 windows.l1 同一个子管线）。",
+    "",
+    "①【身份门】**与 windows.l1 逐字同源**（v0 探针声明 schema + retryAttempts=3/backoff 2000 → d0 形状反闸 → g3 两条身份断言 → d1 → gv → dv），",
+    "先证后采：dv → w0 的 on-subjob-ok ⇒ 身份未证时业务请求数 0。",
+    "",
+    "②【close 的窗集合（与 shell 的 `tick_windows close` 逐字同形）】锚 = 一次 run 算一次的上海墙钟 h：",
+    "   h = 0 ⇒ (昨日, '23')；h ≥ 1 ⇒ (今日, lpad(h-1))。**恒 1 行、只 prev**——close 收的是**已闭**的小时。",
+    "计划里的调度取 16:00Z = 上海 00:00（h=0）⇒ 目标恒为「昨日 23 点档」，正是 shell close 的语义。",
+    "",
+    "③【batch_id 带 -t 后缀（与 tick 同形）】shell 的 close 是 `tick close` 的同一入口（SUF='-t'、ops job 'retail-tick'）",
+    "⇒ 本文件与 tick 父管线的 batch_id 都写成 `retail-<book>-<run_token>Z-<HH>-t`，与包装脚本逐字节同形。",
+    "gv 的 BATCH_ID 断言同步带上 `-t`。",
+    "",
+    "④【为什么 close **可以**复用 .window（checkpoint=true）：闭窗 + 跨子管线不串味（**lab 实测**，2026-09-29 Wave C；场景 S2/S3）】",
+    "   (a) **语义**：复用键 = 节点配置指纹 + 父行，**不含上游内容指纹** ⇒ 只有「内容会变」的窗才不能开。close 的 prev 是**已闭合**小时，",
+    "       内容不再变 ⇒ 开它正确（与 windows 形同理；tick 的 cur 是开着的窗，故 tick 必须关）。",
+    "   (b) **碰撞探测**：tick 的 cur 窗在上海 23:5x 收的是 (今日,23)，5 分钟后 close 在 00:0x 收的也是 (昨日的)23 ——",
+    "       **两者代入后的 body/key 逐字节相同**。若不串味则复用安全，若串味则 close 会复用 tick 那份**残缺快照**（正是要防的冻住首快照）。",
+    "       实测结论：**不串味，且比预期更彻底**（2026-09-29 Wave C lab，场景 S2/S3）。实测形状（**拼写照抄**，别按示意写）：",
+    "         · 状态目录 = state/<子管线文件词干（点→下划线）>_<itemKey 值>/checkpoints/p<N>.ndjson；本次全会话只出现",
+    "           state/lemeng_retail_order_line_window_23/checkpoints/p1..p12.ndjson 一个目录，即 close 自己那份（12 页一页一个）。",
+    "           ⚠️ Wave B 子管线 _note ① 里写的 `<文件名>@<hour>` 是示意写法——引擎实际用下划线拼接，grep 请按上行拼写。",
+    "         · tick 侧**一个字节的状态都不写**：checkpoint=false 的窗不建目录（同一会话 tick 跑过 h=23/00/01 三窗，state/ 下无任何 *_tick_* 条目）。",
+    "        ⇒ 两条独立机制叠加：① **子管线文件名**是状态身份的一部分（不同名字不同桶）；② checkpoint=false 的子管线**根本不产生状态**。",
+    "        ⇒ 同一 (D,23) 窗先由 tick 子管线采、再由 close 采，close 发出的是**完整 12 页**请求（0 复用）——「不串味」的正面证据。",
+    "       ⚠️ 推论（必须知情）：**重命名子管线文件 = 该子管线的状态全部失效**（会重采、不会错采——失效是安全方向）。",
+    "       ⚠️ 过渡期风险：老的 windows.l1 若与 close 收同一个 (bizday,hour)，两者**共用** .window 的状态 —— 此时复用是**期望行为**",
+    "       （同一份数据、谁先谁后被 checkpoint 归并），但切流清单里要写明「同一窗不要并行两条路径」这一条比 tick 更严。",
+    "",
+    "⑤【汇总与末尾判红】与 windows.l1 同一套：收据 CSV /workspace/logs/retail-windows/<bizday>-<hour>.csv 是每窗成色的唯一事实源",
+    "（由子管线在湖对象落盘后写），su 用 run_token 限定到本次 run；wm/wsink 落 _close-pending.csv（同目录，兼作 read_csv 的非空锚）；",
+    "a2 保证先落盘后判红；dz 报 CLOSE_FAILED。**收据目录与 windows 共用**（子管线是同一份）⇒ 只有 run_token 能把两者的收据分开。",
+    "",
+    "⑥【retryAttempts=4（= 3 次尝试）】close 是日批、不在 5 分钟的节奏里 ⇒ 沿用 windows.l1 的标定（N ⇒ N−1，取 4 得 3 次，",
+    "对齐 shell 的「1 次首跑 + WINDOWS_RETRY_ATTEMPTS=2 轮」+ 60s 退避）。⚠️ N/N−1 差异未定位，换子管线形状必须重测。",
+    "",
+    "⑦【调度与 misfire】close = 16:00Z（= 上海 00:00）日批一次；misfire = **all**（与 tick 相反）：",
+    "close 的窗只在「紧邻的当天凌晨」可重建，目标第二天就不一样了，且没有任何更近的调度会覆盖它 ⇒ 停机期间的逾期界**必须补**（代价 = 1 窗 12 页）。",
+    "论证详见本批报告。",
+    "",
+    "⑧【本批不做的事】不投递、不激活调度（enabled:false）、不改 owners.json / 薄壳（lemeng.retail.close.run）；",
+    "alerts.json 的 close L1 规则按日批档（冷却 15）另加。"
+  ],
+  "name": "lemeng.retail.close.l1",
+  "version": 1,
+  "id": "lemeng.retail.close.l1",
+  "nodes": [
+    {
+      "id": "v0",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": -600
+      },
+      "data": {
+        "label": "whoami 身份探针（xml + raw 落原件）",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/mcp",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"
+          },
+          "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"whoami\", \"arguments\": {}}}",
+          "paginationType": "none",
+          "responseFormat": "xml",
+          "rawResponseDestination": "/workspace/.duckle-raw/retail-close-whoami-${datetime}.sse",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        },
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "g0",
+      "type": "transform",
+      "position": {
+        "x": 500,
+        "y": -600
+      },
+      "data": {
+        "label": "抠出全部 SSE data: 行",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/retail-close-whoami-${datetime}.sse')"
+        }
+      }
+    },
+    {
+      "id": "g1",
+      "type": "transform",
+      "position": {
+        "x": 740,
+        "y": -600
+      },
+      "data": {
+        "label": "取最后一条 + 拆 JSON-RPC 外壳（对齐 wrapper 的 m[-1]）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()"
+        }
+      }
+    },
+    {
+      "id": "g2",
+      "type": "transform",
+      "position": {
+        "x": 980,
+        "y": -600
+      },
+      "data": {
+        "label": "取身份事实 company_id / branch_nums",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input"
+        }
+      }
+    },
+    {
+      "id": "d0",
+      "type": "control",
+      "position": {
+        "x": 1220,
+        "y": -600
+      },
+      "data": {
+        "label": "反向闸：抠不出身份 ⇒ 红（挡网关形状漂移）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "g3",
+      "type": "transform",
+      "position": {
+        "x": 1460,
+        "y": -600
+      },
+      "data": {
+        "label": "两条断言：① 账套 ② 配置门店 ⊆ 可见门店",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}' UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) WHERE w.branch_num IS NULL"
+        }
+      }
+    },
+    {
+      "id": "d1",
+      "type": "control",
+      "position": {
+        "x": 1700,
+        "y": -600
+      },
+      "data": {
+        "label": "有违规行 ⇒ 红；其后才 trigger 采集（先证后采）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "gv",
+      "type": "control",
+      "position": {
+        "x": 1940,
+        "y": -600
+      },
+      "data": {
+        "label": "Assert expected-value shapes",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule\nWHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]')\nUNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only'\nWHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}')\nUNION ALL SELECT 'BIZDAY_SET', string_agg(DISTINCT b.d, ','), 'YYYY-MM-DD，∈ {今日,昨日}（Asia/Shanghai 日历日；tick/close 的两窗可跨日）'\nFROM (SELECT strftime(z.ts, '%Y-%m-%d') AS d FROM (SELECT now() AT TIME ZONE 'Asia/Shanghai' AS ts) z\n      UNION\n      SELECT strftime(z.ts - INTERVAL 1 DAY, '%Y-%m-%d') FROM (SELECT now() AT TIME ZONE 'Asia/Shanghai' AS ts) z) b\nHAVING count(*) <> 2\n    OR sum(CASE WHEN regexp_full_match(b.d, '[0-9]{4}-[0-9]{2}-[0-9]{2}') THEN 0 ELSE 1 END) <> 0\n    OR max(CAST(b.d AS DATE)) - min(CAST(b.d AS DATE)) <> 1\nUNION ALL SELECT 'RUN_TOKEN', t.tok, 'YYYYMMDDTHHMMSSZ'\nFROM (SELECT replace(replace('${datetime}','-',''),'_','T') || 'Z' AS tok) t\nWHERE NOT regexp_full_match(t.tok, '[0-9]{8}T[0-9]{6}Z')\nUNION ALL SELECT 'BATCH_ID', x.bid, 'retail-<book>-YYYYMMDDTHHMMSSZ-HH-t（tick/close 形态带 -t 后缀）'\nFROM (SELECT 'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || replace(replace('${datetime}','-',''),'_','T') || 'Z-23-t' AS bid) x\nWHERE NOT regexp_full_match(x.bid, 'retail-[0-9]+-[0-9]{8}T[0-9]{6}Z-[0-9]{2}-t')\nUNION ALL SELECT 'WINDOW_SET',\n       CAST(count(*) AS VARCHAR) || ' rows / ' || string_agg(w.hour, ',' ORDER BY w.hour) || ' / ' || string_agg(w.bizday, ',' ORDER BY w.hour),\n       '恒 1 行：prev=(今日或昨日, 前一小时)；h=0 ⇒ (昨日,23)。close 只收闭窗'\nFROM (SELECT t.prev_h AS hour,\n             CASE WHEN t.h = 0 THEN t.dy ELSE t.today END AS bizday,\n             t.prev_h || ':00:00' AS hour_from,\n             t.prev_h || ':59:59' AS hour_to,\n             t.h AS h, t.prev_h AS prev_h, t.today AS today, t.dy AS dy\n      FROM (SELECT z.ts AS ts,\n             replace(replace('${datetime}','-',''),'_','T') AS run_token,\n             CAST(EXTRACT(hour FROM z.ts) AS INTEGER) AS h,\n             strftime(z.ts, '%Y-%m-%d') AS today,\n             strftime(z.ts - INTERVAL 1 DAY, '%Y-%m-%d') AS dy,\n             lpad(CAST(EXTRACT(hour FROM z.ts) AS VARCHAR), 2, '0') AS cur_h,\n             CASE WHEN EXTRACT(hour FROM z.ts) = 0 THEN '23'\n                  ELSE lpad(CAST(EXTRACT(hour FROM z.ts) - 1 AS VARCHAR), 2, '0') END AS prev_h\n      FROM (SELECT now() AT TIME ZONE 'Asia/Shanghai' AS ts) z) t) w\nHAVING count(*) <> 1\n    OR max(CASE WHEN w.hour <> w.prev_h THEN 1 ELSE 0 END) <> 0\n    OR max(CASE WHEN length(w.hour) <> 2 THEN 1 ELSE 0 END) <> 0\n    OR max(CASE WHEN w.hour_from <> w.hour || ':00:00' OR w.hour_to <> w.hour || ':59:59' THEN 1 ELSE 0 END) <> 0\n    OR max(CASE WHEN w.bizday <> w.today AND w.bizday <> w.dy THEN 1 ELSE 0 END) <> 0\n    OR max(CASE WHEN w.bizday = w.dy AND w.h <> 0 THEN 1 ELSE 0 END) <> 0"
+        }
+      }
+    },
+    {
+      "id": "dv",
+      "type": "control",
+      "position": {
+        "x": 2180,
+        "y": -600
+      },
+      "data": {
+        "label": "Die on missing/malformed expected values",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖（等价于 wrapper 在 run-retail-day.sh:383/397 的 ASSERT_FAIL 硬失败）。处置：检查该管线调度/触发面的 env 注入"
+        }
+      }
+    },
+    {
+      "id": "w0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 1200
+      },
+      "data": {
+        "label": "窗口表（close：仅 prev，恒 1 行；bizday + hour + run_token + batch_id）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  t.run_token AS run_token,\n  CASE WHEN t.h = 0 THEN t.dy ELSE t.today END AS bizday,\n  t.prev_h AS hour,\n  t.prev_h || ':00:00' AS hour_from,\n  t.prev_h || ':59:59' AS hour_to,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  '${ENV:BRANCH_NUMS}' AS branch_nums,\n  'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || t.run_token || 'Z-' || t.prev_h || '-t' AS batch_id\nFROM (SELECT z.ts AS ts,\n             replace(replace('${datetime}','-',''),'_','T') AS run_token,\n             CAST(EXTRACT(hour FROM z.ts) AS INTEGER) AS h,\n             strftime(z.ts, '%Y-%m-%d') AS today,\n             strftime(z.ts - INTERVAL 1 DAY, '%Y-%m-%d') AS dy,\n             lpad(CAST(EXTRACT(hour FROM z.ts) AS VARCHAR), 2, '0') AS cur_h,\n             CASE WHEN EXTRACT(hour FROM z.ts) = 0 THEN '23'\n                  ELSE lpad(CAST(EXTRACT(hour FROM z.ts) - 1 AS VARCHAR), 2, '0') END AS prev_h\n      FROM (SELECT now() AT TIME ZONE 'Asia/Shanghai' AS ts) z) t"
+        }
+      }
+    },
+    {
+      "id": "fe",
+      "type": "control",
+      "position": {
+        "x": 260,
+        "y": 1200
+      },
+      "data": {
+        "label": "逐窗跑业务子管线",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "pipelineRef": "${workspace}/pipelines/lemeng.retail_order_line.window.json",
+          "itemKey": "hour",
+          "concurrency": 1,
+          "retryAttempts": 4,
+          "retryBackoffMs": 60000,
+          "continueOnFailure": true
+        }
+      }
+    },
+    {
+      "id": "wm",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 1440
+      },
+      "data": {
+        "label": "窗口表 → 收据形状（status=pending）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT run_token AS run_token, system_book AS system_book, bizday AS bizday,\n  hour AS hour, 0 AS \"rows\", 'pending' AS status\nFROM input"
+        }
+      }
+    },
+    {
+      "id": "wsink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 1680
+      },
+      "data": {
+        "label": "本 run 的窗口清单落盘（收据目录的 schema 锚）",
+        "componentId": "snk.csv",
+        "properties": {
+          "path": "/workspace/logs/retail-windows/_close-pending.csv",
+          "mode": "overwrite"
+        }
+      }
+    },
+    {
+      "id": "a1",
+      "type": "control",
+      "position": {
+        "x": 520,
+        "y": 1320
+      },
+      "data": {
+        "label": "整批跑完再汇总",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "su",
+      "type": "transform",
+      "position": {
+        "x": 520,
+        "y": 1200
+      },
+      "data": {
+        "label": "汇总每窗（收据 × 窗口表）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT w.hour AS hour, w.bizday AS bizday,\n  w.run_token AS run_token,\n  COALESCE(r.\"rows\", 0) AS \"rows\",\n  COALESCE(r.status, 'missing') AS status\nFROM (SELECT DISTINCT hour, bizday, run_token FROM input) w\nLEFT JOIN (SELECT hour, run_token, \"rows\", status\n           FROM read_csv('/workspace/logs/retail-windows/*.csv', header = true, union_by_name = true)\n           WHERE status = 'ok') r\n  ON r.hour = w.hour AND r.run_token = w.run_token\nORDER BY w.hour"
+        }
+      }
+    },
+    {
+      "id": "rep",
+      "type": "sink",
+      "position": {
+        "x": 780,
+        "y": 1080
+      },
+      "data": {
+        "label": "汇总表落盘（运行记录）",
+        "componentId": "snk.csv",
+        "properties": {
+          "path": "/workspace/logs/retail-close-summary.csv",
+          "mode": "overwrite"
+        }
+      }
+    },
+    {
+      "id": "sr",
+      "type": "transform",
+      "position": {
+        "x": 780,
+        "y": 1200
+      },
+      "data": {
+        "label": "缺口窗（判红输入）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT * FROM input WHERE status <> 'ok'"
+        }
+      }
+    },
+    {
+      "id": "a2",
+      "type": "control",
+      "position": {
+        "x": 1040,
+        "y": 1140
+      },
+      "data": {
+        "label": "先落盘后判红",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "dz",
+      "type": "control",
+      "position": {
+        "x": 1300,
+        "y": 1200
+      },
+      "data": {
+        "label": "末尾统一判红",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "CLOSE_FAILED {rows} 窗未采到（system_book=${ENV:SYSTEM_BOOK}）⇒ 本轮判红。⚠️ close 只收「prev」一个**闭窗**（营业日末 = 上海 00:00 收昨日 23 点档），且无回溯重放 ⇒ 本轮失败**不会**被别的调度自然补齐（下一次 close 是 24 小时后、目标是另一个窗）；misfire=all 可补停机期间的逾期界；缺口明细见 /workspace/logs/retail-close-summary.csv"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "v0",
+      "target": "g0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e2",
+      "source": "g0",
+      "target": "g1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e3",
+      "source": "g1",
+      "target": "g2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e4",
+      "source": "g2",
+      "target": "d0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e5",
+      "source": "d0",
+      "target": "g3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e6",
+      "source": "g3",
+      "target": "d1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e7",
+      "source": "d1",
+      "target": "gv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e8",
+      "source": "gv",
+      "target": "dv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t9",
+      "source": "dv",
+      "target": "w0",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e10",
+      "source": "w0",
+      "target": "fe",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e11",
+      "source": "w0",
+      "target": "wm",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e12",
+      "source": "w0",
+      "target": "su",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e22",
+      "source": "wm",
+      "target": "wsink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t13",
+      "source": "fe",
+      "target": "a1",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t14",
+      "source": "wsink",
+      "target": "a1",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t15",
+      "source": "a1",
+      "target": "su",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e16",
+      "source": "su",
+      "target": "rep",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e17",
+      "source": "su",
+      "target": "sr",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t18",
+      "source": "rep",
+      "target": "a2",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t19",
+      "source": "sr",
+      "target": "a2",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t20",
+      "source": "a2",
+      "target": "dz",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e21",
+      "source": "sr",
+      "target": "dz",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}

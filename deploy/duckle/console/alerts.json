@@ -148,7 +148,25 @@
     "     失败经父管线 continueOnFailure + 末尾判红（WINDOWS_FAILED）汇成父 run 红 ⇒ 走本条规则告警；",
     "     逐窗配规则会让一次缺口刷最多 24 条告警（冷却还压不住首轮）。窗级明细看",
     "     /workspace/logs/retail-windows-summary.csv（父管线 _note ⑤）。",
-    "   📌 生效前提同 ⑨：seed 进卷 + 投递批次「重建 catalog」之后 L1 的湖对象锚才起算（owners.json ⑩）。"
+    "   📌 生效前提同 ⑨：seed 进卷 + 投递批次「重建 catalog」之后 L1 的湖对象锚才起算（owners.json ⑩）。",
+    "",
+    "⑪【2026-09-29 Wave C：retail tick / close 的 **L1 形**规则（#332；声明态，随管线同批 seed）】",
+    "   · 新增 `lemeng.retail.tick.l1`（failure/recovery，冷却 **60**）——tick 5 分钟一次、192 次/营业日，",
+    "     与薄壳 `lemeng.retail.tick.run` 同档（⑧ 的分档判据：**节奏**）。",
+    "   · 新增 `lemeng.retail.close.l1`（failure/recovery，冷却 **15**）——close 日批一次（16:00Z），日批档，",
+    "     与 `lemeng.retail.windows.l1` / dim 两组同档。",
+    "   ⚠️ **有意不一致，别顺手「对齐」**：薄壳 `lemeng.retail.close.run` 的冷却是 60（⑧ 写的口径是",
+    "      「tick/close 同属高频节奏」），但 close 的调度一直是 `0 16 * * *` 日批一次——⑧ 那半句对 close 是**过宽**的。",
+    "      本次不为薄壳改值（它在 64188 侧仍是生产路径，改它就是另一批的事）；只让新的 L1 规则按 ⑨ 的判据",
+    "      （形态段即节奏档）取 15。两者并行期内 close 面由薄壳规则先行，冷却差 45 分钟不影响任何告警的可见性。",
+    "   · 为什么不合并成一条 `lemeng.retail.*.l1`：⑩ 已定案——retail 各 face 节奏不同档，宽 glob 表达不了节奏。",
+    "   ⚠️ ⑧ 那条「加管线必须同批加规则」的有意代价**本次没有踩**：两个新管线 id 在本批就带上了自己的规则",
+    "      （这正是 ⑨ 末那句「唯一的防线是加管线的那个 PR 里带一条规则」的执行）。",
+    "   · 子管线 `lemeng.retail_order_line.tick` / `.window` 的逐窗 run **有意不配规则**：窗级失败经父管线",
+    "      continueOnFailure + 末尾判红（TICK_FAILED / CLOSE_FAILED）汇成**父 run 红** ⇒ 走本组规则告警；",
+    "      逐窗配规则会让一次 192 次/天的高频面刷出最多 2 条/轮的告警（同 ⑩ 的理由）。",
+    "   📌 生效前提同 ⑨⑩：seed 进卷；且**调度仍 enabled:false**（声明就绪、不激活，激活是投递批次的独立决定）",
+    "      ⇒ 现在不会产出任何 run 事件。"
   ],
   "rules": [
     {
@@ -193,6 +211,26 @@
     },
     {
       "match": "lemeng.retail.windows.l1",
+      "on": ["failure", "recovery"],
+      "cooldownMinutes": 15,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
+    },
+    {
+      "match": "lemeng.retail.tick.l1",
+      "on": ["failure", "recovery"],
+      "cooldownMinutes": 60,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
+    },
+    {
+      "match": "lemeng.retail.close.l1",
       "on": ["failure", "recovery"],
       "cooldownMinutes": 15,
       "channel": "webhook",
