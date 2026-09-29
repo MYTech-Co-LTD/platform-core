@@ -746,6 +746,21 @@ describe('publishWithTenantBinding', () => {
       .toEqual([{ parameter_id: 'tenant-param', card_id: 101, target: ['variable', ['template-tag', 'tenant']] }])
     expect(state.dashboards[0].dashcards[1].parameter_mappings ?? []).toEqual([])
   })
+
+  it('重发布保留人声明的其它参数（合并不替换，人裁 2026-09-29）', async () => {
+    // fixture 需支持预置 parameters（fakeMetabaseWithContent 不支持就扩它）
+    const { state, fetcher } = fakeMetabaseWithContent({
+      id: 21, name: 'o/r2',
+      parameters: [{ id: 'human-1', slug: 'region', name: 'region', type: 'category' }],
+      dashcards: [], cardTags: {}, cardSql: {},
+    })
+    const deps = { fetcher, baseUrl: 'http://mb', apiKey: 'k' }
+    await publishWithTenantBinding(deps, 21)
+
+    const slugs = state.dashboards[0].parameters.map((p: { slug?: unknown }) => p.slug)
+    expect(slugs).toContain('tenant')
+    expect(slugs).toContain('region')   // ← 人的参数没被抹
+  })
 })
 ```
 
@@ -787,8 +802,14 @@ export async function publishWithTenantBinding(
         : {}),
     }
   })
+  // ⚠️ 参数是**合并保留**不是整表替换（人裁 2026-09-29）：putDashboardMerged 对 parameters 是
+  // `patch.parameters ?? cur.parameters` 整表替换——单元素列表会把人在 Metabase 手动声明的其它
+  // 参数静默抹掉（与 Task 3「裸 PUT 清卡」同构，作用在参数维度）。先剔旧 tenant 项再追加。
+  const tenantParam = { id: TENANT_PARAM_ID, name: TENANT_SLUG, slug: TENANT_SLUG, type: 'category', sectionId: 'string' }
+  const otherParams = cur.parameters.filter(
+    (p) => p['id'] !== TENANT_PARAM_ID && p['slug'] !== TENANT_SLUG)
   await putDashboardMerged(deps, dashboardId, {
-    parameters: [{ id: TENANT_PARAM_ID, name: TENANT_SLUG, slug: TENANT_SLUG, type: 'category', sectionId: 'string' }],
+    parameters: [...otherParams, tenantParam],
     dashcards,
     enable_embedding: true, embedding_type: 'signed',
     embedding_params: { [TENANT_SLUG]: 'locked' },
