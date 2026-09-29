@@ -140,11 +140,18 @@ git commit -m "feat(data): report-store 页门改动 updateRequiredScope（null=
 
   it('★ 页门负测：只有 data:query ⇒ 管理清单 / 页门改动同样 403', async () => {
     const app = gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), null)
-    expect((await app.request('/reports/manage')).status).toBe(403)
-    expect((await app.request('/reports/whatever', {
+    // ⚠️ 断言必须带 body（`need: 'data:manage'`），不能只断 status（订正记录 2026-09-29，Task 2
+    // 实施中发现）：**未声明**的路径走门卫的 `!hit` 兜底，同样给 403——只断 status 的话，这条负测
+    // 在「manifest 还没加两行声明」的红跑里就是绿的，manifest 声明根本没被这测试承重。
+    const list = await app.request('/reports/manage')
+    expect(list.status).toBe(403)
+    expect(await list.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
+    const put = await app.request('/reports/whatever', {
       method: 'PUT', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ requiredScope: null }),
-    })).status).toBe(403)
+    })
+    expect(put.status).toBe(403)
+    expect(await put.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
   })
 ```
 
@@ -153,21 +160,33 @@ git commit -m "feat(data): report-store 页门改动 updateRequiredScope（null=
 ```ts
   it('GET /reports/manage：data:manage 身份看全量本 org 行（含页门未放行的）+ renderer', async () => {
     const { app, identity } = manage()
-    await post(app, { title: '公开报表', requiredScope: null })
-    await post(app, { title: '未放行报表', requiredScope: 'sales:read' })
+    // 插入序刻意与标题序**不一致**（platform 行先插、标题最大的反而最先落库）——见下「订正记录」
     await upsertReport(pool, identity.orgId, {
-      title: '自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      title: '3 自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
     })
+    await post(app, { title: '2 未放行报表', requiredScope: 'sales:read' })
+    await post(app, { title: '1 已发布报表', requiredScope: null })
+
     const res = await app.request('/reports/manage')
     expect(res.status).toBe(200)
     const body = await res.json()
-    // 行序 = order by title（listReports 既有口径）
+    // 行序 = order by title（listReports 既有口径）。⚠️ 三条订正记录（2026-09-29，Task 2 实施 +
+    // 评审后由人裁定「现在修」）：
+    //  ① 原稿期望值 ['公开报表','自绘大盘','未放行报表'] 与同一句声明的公式 order by title 冲突——
+    //     原稿是错的（控制器已 psql 独立复核本库次序）。
+    //  ② 但**照实测值硬写中文次序**等于把库的 CJK collation 钉进测试（repo 未 pin locale，
+    //     `order by title` 也没写 COLLATE）⇒ 换 locale 就红。改为标题带 **ASCII 数字前缀**：
+    //     次序由 ASCII 决定，与 collation 无关。
+    //  ③ 且插入序必须**不等于**标题序：否则「按 title 排」与「按堆序（=插入序）返回」两种实现
+    //     都绿 ⇒ 断言不承重（删掉 order by title 也发现不了）。故 platform 行先插。
+    // 这条断言同时兼作「管理面不按行裁剪」的证据：若误用 visibleTo 裁行，
+    // 「2 未放行报表」会消失、此处变 2 行而红。
     expect(body.reports.map((r: { title: string }) => r.title)).toEqual(
-      ['公开报表', '自绘大盘', '未放行报表'],
+      ['1 已发布报表', '2 未放行报表', '3 自绘大盘'],
     )
-    expect(body.reports.find((r: { title: string }) => r.title === '未放行报表'))
+    expect(body.reports.find((r: { title: string }) => r.title === '2 未放行报表'))
       .toMatchObject({ requiredScope: 'sales:read', renderer: 'metabase' })
-    expect(body.reports.find((r: { title: string }) => r.title === '自绘大盘'))
+    expect(body.reports.find((r: { title: string }) => r.title === '3 自绘大盘'))
       .toMatchObject({ renderer: 'platform' })
   })
 
@@ -180,6 +199,9 @@ git commit -m "feat(data): report-store 页门改动 updateRequiredScope（null=
     expect(body.reports).toHaveLength(1)
     expect(body.reports[0]).toMatchObject({ title: '公开报表', renderer: 'metabase' })
   })
+  // ⚠️ 注意：观看面投影多一个 `renderer` 会**连带打破**文件里既有的「投影键集」断言
+  //    （形如 `toEqual({ id, title, requiredScope })`）——这是必然的，按新四元组同步订正即可，
+  //    不是回归。
 
   it('PUT /reports/:id：改页门落库并返回整行；置 null = 发布', async () => {
     const { app } = manage()
@@ -230,7 +252,9 @@ git commit -m "feat(data): report-store 页门改动 updateRequiredScope（null=
   })
 ```
 
-③文件头 `report-store` import 行补 `updateRequiredScope`（与 `upsertReport` 并列）。
+③（订正记录 2026-09-29：原稿此处要求「文件头 import 补 `updateRequiredScope`」——**本任务的测试
+不消费它**（用 `upsertReport` 直插行即可，页门改动由 HTTP 端到端覆盖），加了就是死 import。
+该指令已作废；若实施者已加，属待清理项。）
 
 - [ ] **Step 2: 跑测试确认红**
 
@@ -305,10 +329,36 @@ Run: `DATABASE_URL='postgres://platform:platform@127.0.0.1:5432/platform' pnpm -
 Expected: PASS。
 Run: `pnpm --filter data test`（全模块，含 manifest 双向核对/隔离守卫）Expected: PASS。
 
-- [ ] **Step 5: Commit**（路由 + manifest **同一提交**）
+- [ ] **Step 5: 文档**（`modules/data/README.md` 的「报表面」小节补**管理面**语义；人裁 2026-09-29「加一小节」）
+
+在「### Metabase 侧的名称 = `<org>/<title>`」小节**之前**插入下述内容（锚点：紧随页门/数据门那张两列表格下方，即 `| 数据门 | ... ` 那一行之后空行处）：
+
+````markdown
+### 管理面（改页门 / 发布 / 回收）：动作都在平台，**没有独立的 published 状态**
+
+「未发布」不是一种状态位，而是**页门未放行在观看面的表现**（`data.reports` **没有** `published`
+列，也不打算加）：
+
+| 动作 | 怎么做 | 端点 |
+|---|---|---|
+| 发布（所有人可见） | 把页门清空 | `PUT /reports/:id` body `{"requiredScope": null}` |
+| 改页门（换成新 scope） | 换一个 scope 串 | `PUT /reports/:id` body `{"requiredScope":"sales:read"}` |
+| 回收 | 归档 dashboard + 删登记行 | `DELETE /reports/:id`（既有） |
+
+- **管理清单 `GET /reports/manage`**（`data:manage`）与观看清单 `GET /reports`（`data:query`）
+  的分野是**行裁剪**：观看面按行 `required_scope` 过滤（`visibleTo`），管理面**不裁**——
+  页门未放行的行对管理员必须可见、可改，否则没人能把未发布的报表发出来。
+- 跨租户 / 不存在的 id 一律 **404**（不给存在性探针）；`PUT` body 用 `.strict()`（多余键 400）。
+- ⚠️ **写保护（陈旧版本写 409 / If-Match）尚未落地**，归计划 4（spec §8 步骤 2）。
+- ⚠️ **入口可见性**：本模块 console 入口声明是单值 `data:query`（`manifest.yaml` 的
+  `frontend.console`）⇒ 只持 `data:manage` 的人**看不到本模块入口**。这是模块入口的既有口径，
+  非管理面引入；要改成「任一持有即可进」得先改宿主 `frontend.console` 的 scope 语义（架构先行）。
+````
+
+- [ ] **Step 6: Commit**（路由 + manifest **同一提交**）
 
 ```bash
-git add modules/data/routes/reports.ts modules/data/routes/reports.test.ts modules/data/manifest.yaml
+git add modules/data/routes/reports.ts modules/data/routes/reports.test.ts modules/data/manifest.yaml modules/data/README.md
 git commit -m "feat(data): 报表管理面端点——管理清单 GET /reports/manage + 页门 PUT /reports/:id"
 ```
 
@@ -411,6 +461,54 @@ git commit -m "fix(data): embed-url 对 platform 行显式 409，不再签死链
     // 好盘照常判：可嵌入但 tenant 没锁 ⇒ tenantUnlocked 照报（降级不吞别的差集）
     expect(body.tenantUnlocked).toEqual([{ id: goodId, title: '未锁盘', metabaseId: 6 }])
   })
+
+  // ⚠️ 订正记录（2026-09-29，Task 4 实施者用变异验证发现）：**上面这一条不够承重**——
+  //    ① 把 `ok` 判据里 `contentUnreadable.length === 0` 那一项删掉，它照样绿（那条断言里还有
+  //       别的差集非空在撑 ok:false）；② 把 per-row catch 改成「全吞」（不分 MetabaseError）也照样绿。
+  //    两条都是本任务的明确要求，「不被断言钉住的要求 = 下一个人删掉它不会有任何红」。故各补一条：
+  it('★ ok 判据承重：contentUnreadable 是**唯一**非空差集时 ok 也 false（其余四项全空，只有这一项撑着）', async () => {
+    const { app, identity } = manage()
+    const badId = await upsertReport(pool, identity.orgId, {
+      title: '唯一坏盘', metabaseId: 7, embedParams: {}, requiredScope: null,
+    })
+    mb.state.dashboards.push(
+      { id: 7, name: `${identity.orgId}/唯一坏盘`, embeddable: true, archived: false },
+    )
+    const inner = mb.fetcher
+    vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
+      if (new URL(String(url)).pathname === '/api/dashboard/7') return json({ message: 'boom' }, 500)
+      return inner(String(url), init)
+    })
+
+    const body = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(body.contentUnreadable).toEqual([{ id: badId, title: '唯一坏盘', metabaseId: 7 }])
+    // 其余四个差集与 unregistered 都空 —— 故 ok 只可能被 contentUnreadable 那一项压成 false
+    expect(body.missingInMetabase).toEqual([])
+    expect(body.tenantUnlocked).toEqual([])
+    expect(body.tenantUnbound).toEqual([])
+    expect(body.unregistered).toEqual({ recoverable: [], needsHuman: [] })
+    expect(body.ok).toBe(false)
+  })
+
+  it('★ 只吞 MetabaseError：回读抛的不是 MetabaseError（代码缺陷 / 连接层异常）⇒ 继续往上抛 500，不伪装成按行降级', async () => {
+    const { app, identity } = manage()
+    await upsertReport(pool, identity.orgId, {
+      title: '连接炸盘', metabaseId: 8, embedParams: {}, requiredScope: null,
+    })
+    mb.state.dashboards.push(
+      { id: 8, name: `${identity.orgId}/连接炸盘`, embeddable: true, archived: false },
+    )
+    const inner = mb.fetcher
+    // fetch 自己抛（连不上/被中止）——metabase.ts 的 call() 不包这一层 ⇒ 原样上抛，不是 MetabaseError。
+    // 全吞式 catch 会把它误报成「这一行读不出」= 把代码缺陷降级成业务状态（静默）；500 才是它的位置。
+    vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
+      if (new URL(String(url)).pathname === '/api/dashboard/8') throw new Error('socket hang up')
+      return inner(String(url), init)
+    })
+
+    const res = await app.request('/reports/reconcile', { method: 'POST' })
+    expect(res.status).toBe(500)
+  })
 ```
 
 - [ ] **Step 2: 跑测试确认红**
@@ -494,10 +592,23 @@ Expected: FAIL——现状整单 502 `METABASE_ERROR`。
 Run: `DATABASE_URL='postgres://platform:platform@127.0.0.1:5432/platform' pnpm --filter data exec vitest run routes/reports.test.ts`
 Expected: PASS（既有对账用例语义不变）。
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: 文档**（`modules/data/README.md`：差集表加第五行 + 改小标题）
+
+把 `### \`POST /reports/reconcile\` 的四个差集（spec §7 双写面对账）` 的标题改为
+`### \`POST /reports/reconcile\` 的五个差集（spec §7 双写面对账）`，并在表格 `unregistered.needsHuman`
+那一行**之后**追加：
+
+```markdown
+| `contentUnreadable` | 回读 `GET /api/dashboard/{id}` 抛 `MetabaseError`（上游对**这一张**说不行） | **本 org**（逐行降级：不再整单 502） |
+```
+
+并在该表下方补一句：`contentUnreadable` 非空 ⇒ `ok:false`；回读按**行**降级——一个 dashboard
+回读失败只把那一行报出来，不让整租户的对账整单 502（对账的意义就是把「哪里坏了」显式报出来）。
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add modules/data/routes/reports.ts modules/data/routes/reports.test.ts
+git add modules/data/routes/reports.ts modules/data/routes/reports.test.ts modules/data/README.md
 git commit -m "fix(data): reconcile 回读失败按行降级，一行坏不再整单 502"
 ```
 
@@ -552,10 +663,21 @@ function renderPage(scopes: string[]) {
   render(<RouterProvider router={router} />)
 }
 
-/** antd v5 Popconfirm 的确认按钮（selector 与 metrics 页测试的写法对齐） */
-const confirmPopconfirm = () => {
-  const btn = document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLButtonElement
-  fireEvent.click(btn)
+// ⚠️ 订正记录（2026-09-29，Task 5 实施中的实测；**as-built 权威版本在仓库文件里**）——本节代码块
+//    是按 **antd v5** 的惯用法写的，本仓实际是 **antd 6.6.3**，四处必须改：
+//    ① 确认按钮查询：不要用 DOM 结构 selector（`.ant-popconfirm .ant-btn-primary` 随版本/主题漂，
+//       v6 里 primary 已是 color/variant 三元组）⇒ 改用**显式 okText + Role 文案查询**（见下 helper）；
+//       ⚠️ 结论：**给每个 Popconfirm 显式写 `okText`**（`确认发布`/`确认回收`），否则默认取 locale
+//       （无宿主 ConfigProvider 时是 "OK"，测试会随宿主 locale 漂）。
+//    ② 中文按钮名必须用**容空白正则**查：antd v6 的 `spaceChildren` 会在两个汉字之间插入**真实空格**，
+//       `{ name: /发\s*布/ }` 必然找不到 ⇒ 一律写成 `{ name: /发\s*布/ }`（同理 `/回\s*收/`、`/改\s*页\s*门/`、
+//       `/打\s*开/`、`/确\s*定/`）。
+//    ③ Modal 必须**显式** `okText="确定"`：无宿主 ConfigProvider 时 antd 默认是 `OK`，本文件实现块
+//       若漏写而测试按「确 定」查 ⇒ 该用例必红。实现块已同步补 `okText="确定" cancelText="取消"`。
+//    ④ 「回收」按钮**每一行都有** ⇒ 单数 `getByRole` 会 multiple，要用 `getAllByRole` 后取 [0]。
+const confirmPopconfirm = async (okText: string) => {
+  // 按 Role + 显式 okText 文案查——不赌 DOM 结构、也不赌宿主 locale
+  fireEvent.click(await screen.findByRole('button', { name: okText }))
 }
 
 beforeEach(() => {
@@ -580,16 +702,16 @@ describe('报表页签双视图', () => {
     await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
     expect(calls[0]?.url.endsWith('/reports/manage')).toBe(true)
     expect(screen.getByText('平台自绘')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '发布' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '回收' })).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: '改页门' }).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /发\s*布/ })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /回\s*收/ }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('button', { name: /改\s*页\s*门/ }).length).toBeGreaterThan(0)
   })
 
   it('只有 data:query ⇒ 拉观看清单（不发 /reports/manage），无管理动作，platform 行打开置灰', async () => {
     renderPage(['data:query'])
     await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
     expect(calls.some((c) => c.url.endsWith('/reports/manage'))).toBe(false)
-    expect(screen.queryByRole('button', { name: '发布' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /发\s*布/ })).not.toBeInTheDocument()
     const selfDrawnRow = screen.getByText('自绘大盘').closest('tr')!
     expect((selfDrawnRow.querySelector('button') as HTMLButtonElement).disabled).toBe(true)
   })
@@ -597,8 +719,8 @@ describe('报表页签双视图', () => {
   it('发布：Popconfirm 确认 ⇒ PUT requiredScope=null', async () => {
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: '发布' }))
-    confirmPopconfirm()
+    fireEvent.click(screen.getByRole('button', { name: /发\s*布/ }))
+    await confirmPopconfirm('确认发布')
     await waitFor(() => {
       const put = calls.find((c) => c.init?.method === 'PUT')
       expect(put?.url).toMatch(/\/reports\/r2$/)
@@ -609,9 +731,9 @@ describe('报表页签双视图', () => {
   it('改页门：Modal 输入 scope 保存 ⇒ PUT requiredScope=<值>', async () => {
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
-    fireEvent.click(screen.getAllByRole('button', { name: '改页门' })[0])
+    fireEvent.click(screen.getAllByRole('button', { name: /改\s*页\s*门/ })[0])
     fireEvent.change(screen.getByPlaceholderText('如 sales:read'), { target: { value: 'finance:read' } })
-    fireEvent.click(screen.getByRole('button', { name: '确 定' }))
+    fireEvent.click(screen.getByRole('button', { name: /确\s*定/ }))
     await waitFor(() => {
       const put = calls.find((c) => c.init?.method === 'PUT')
       expect(put?.url).toMatch(/\/reports\/r[123]$/)
@@ -622,25 +744,31 @@ describe('报表页签双视图', () => {
   it('回收：Popconfirm 确认 ⇒ DELETE', async () => {
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: '回收' }))
-    confirmPopconfirm()
+    fireEvent.click(screen.getAllByRole('button', { name: /回\s*收/ })[0])
+    await confirmPopconfirm('确认回收')
     await waitFor(() => {
       const del = calls.find((c) => c.init?.method === 'DELETE')
       expect(del?.url).toMatch(/\/reports\/r[123]$/)
     })
   })
 
-  it('PUT 409 ⇒ 出人话文案（RENDERER_NOT_EMBEDDABLE）', async () => {
+  it('打开时服务端 409 ⇒ 出人话文案（RENDERER_NOT_EMBEDDABLE；真实通路 = embed-url）', async () => {
+    // ⚠️ 订正记录（2026-09-29，Task 3 评审提出）：原稿这里桩的是 **PUT** 返回该码——**假通路**：
+    // 全仓唯一产出 `RENDERER_NOT_EMBEDDABLE` 的是 `GET /reports/:id/embed-url`（Task 3 的守卫），
+    // PUT 永远不会返它。改桩 embed-url，同时这也是**唯一**能走到该文案的路径：
+    // 列表里的 platform 行「打开」已置灰（前一条用例），只有「加载后该行才变成 platform」这种
+    // 陈旧视图/竞态才会点到——即该 MESSAGES 条目是**防御性**的，不是主路径。
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) return json({ reports: [ROWS[1]] })
-      if (init?.method === 'PUT') return json({ error: 'RENDERER_NOT_EMBEDDABLE' }, 409)
+      if (url.endsWith('/reports/manage')) return json({ reports: [ROWS[0]] })   // 销售日报（metabase 行）
+      if (/\/reports\/[^/]+\/embed-url$/.test(url)) {
+        return json({ error: 'RENDERER_NOT_EMBEDDABLE' }, 409)
+      }
       return json({})
     })
     renderPage(['data:query', 'data:manage'])
-    await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: '发布' }))
-    confirmPopconfirm()
+    await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /打\s*开/ }))
     expect(await screen.findByText('平台自绘报表没有嵌入预览通道')).toBeInTheDocument()
   })
 })
@@ -768,11 +896,13 @@ export default function ReportsPage() {
                   </Button>
                   {r.requiredScope !== null && (
                     <Popconfirm title={`发布后所有拿到本模块的人都能看到「${r.title}」，确定？`}
+                                okText="确认发布" cancelText="取消"
                                 onConfirm={() => void publish(r)}>
                       <Button size="small">发布</Button>
                     </Popconfirm>
                   )}
                   <Popconfirm title={`回收会删除「${r.title}」及其报表本体，确定？`}
+                              okText="确认回收" cancelText="取消"
                               okButtonProps={{ danger: true }}
                               onConfirm={() => void recycle(r)}>
                     <Button size="small" danger>回收</Button>
@@ -786,6 +916,7 @@ export default function ReportsPage() {
       <Modal title={`改页门：${gateEdit?.title ?? ''}`}
              open={gateEdit !== null}
              onOk={() => void saveGate()}
+             okText="确定" cancelText="取消"
              okButtonProps={{ disabled: gateDraft.trim() === '' }}
              onCancel={() => setGateEdit(null)}>
         <Typography.Paragraph type="secondary">
