@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "noEmit": true },
+  // 测试文件**纳入** typecheck（与 apps/server/tsconfig.json 同款：issue #68 收口后测试替身的
+  // 形状漂移由 `pnpm typecheck` 机械拦住，别再 exclude `src/**/*.test.ts`）。
+  "include": ["src"]
+}
