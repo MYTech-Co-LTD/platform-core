@@ -45,12 +45,14 @@ interface FakeDashcard {
   visualization_settings?: unknown
 }
 
-/** dashboard 参数（Metabase 侧形状）。平台只依赖 `slug`，其余原样流转。 */
+/** dashboard 参数（Metabase 侧形状）。平台只依赖 `slug`，其余原样流转。
+ * `sectionId`：publishWithTenantBinding 声明 tenant 参数时带的真机字段（staging 段落）。 */
 interface FakeDashParam {
   slug: string
   id?: string
   name?: string
   type?: string
+  sectionId?: string
 }
 
 interface FakeDash {
@@ -470,8 +472,8 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   })
 
   // ── 对账判据加厚（spec §7 待办 2）：「锁了但绑不到」── embedding_params.tenant=locked 只说明
-  //    锁了，锁值还要**绑得到东西**才生效。四条各咬一个子判据（变异确认见任务报告）：
-  //    卡未映射 / 参数未声明 / 映射挂错参数 / 反证正常态不误伤。
+  //    锁了，锁值还要**绑得到东西**才生效。五条各咬一个子判据（变异确认见任务报告）：
+  //    卡未映射 / 半绑定（单卡粒度，人裁 2026-09-29）/ 参数未声明 / 映射挂错参数 / 反证正常态不误伤。
   it('reconcile 报出「锁了但绑不到」：有 locked 但卡片未映射 ⇒ tenantUnbound 非空、ok=false', async () => {
     // 造一张"只锁了参、没映射"的 dashboard（桩里 parameters 为空、dashcards 无 mappings）。
     // 卡 900 带 tenant 模板标签（真机形状的 dataset_query.stages[0]）——不带标签就进不了
@@ -488,6 +490,38 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     vi.stubGlobal('fetch', fetcher)
     const id = await upsertReport(pool, ORG, {
       title: '未绑定', metabaseId: 300, embedParams: {}, requiredScope: null,
+    })
+    const { app } = manage()
+    const res = await app.request('/reports/reconcile', { method: 'POST' })
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(false)
+    expect(body.tenantUnbound.map((r: { id: string }) => r.id)).toContain(id)
+  })
+
+  it('reconcile 半绑定也报：两张 tenant 卡只映射一张 ⇒ tenantUnbound 非空（单卡粒度，人裁 2026-09-29）', async () => {
+    // 参数已声明（①不触发）；两张卡都带 tenant 标签，只映射了一张 ⇒ ②单卡粒度必须报
+    const { state, fetcher } = fakeMetabase(
+      [{
+        id: 301, name: `${ORG}/半绑定`, embeddable: true, archived: false,
+        enable_embedding: true, embedding_params: { tenant: 'locked' },
+      }],
+      {
+        901: { native: 'select 1 where t = {{tenant}}', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } },
+        902: { native: 'select 2 where t = {{tenant}}', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } },
+      },
+    )
+    state.dashboards[0].dashcards = [
+      { id: 11, card_id: 901, row: 0, col: 0, size_x: 6, size_y: 6,
+        parameter_mappings: [{ parameter_id: 'tenant-param', card_id: 901,
+                               target: ['variable', ['template-tag', 'tenant']] }] },
+      { id: 12, card_id: 902, row: 0, col: 6, size_x: 6, size_y: 6 },
+    ]
+    state.dashboards[0].parameters = [{ id: 'tenant-param', name: 'tenant', slug: 'tenant',
+                                        type: 'category', sectionId: 'string' }]
+    vi.stubGlobal('fetch', fetcher)
+    const id = await upsertReport(pool, ORG, {
+      title: '半绑定', metabaseId: 301, embedParams: {}, requiredScope: null,
     })
     const { app } = manage()
     const res = await app.request('/reports/reconcile', { method: 'POST' })

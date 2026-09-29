@@ -243,7 +243,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 失效模式全是静默的（页面照常显示**未过滤**的数据）。同一循环判两件事：
     //   ③a 锁没锁：回读 `embedding_params.tenant === 'locked'`，不满足落 `tenantUnlocked`；
     //   ③b 锁了但**绑不到**：① dashboard 没声明 slug=tenant 的参数（没声明 ⇒ 锁值无处挂），
-    //      或 ② 有卡带 {{tenant}} 模板标签但没有一条映射挂到 tenant 参数上 ⇒ 落 `tenantUnbound`。
+    //      或 ② **任一**带 {{tenant}} 模板标签的卡没有映射挂到 tenant 参数上（单卡粒度，
+    //      人裁 2026-09-29：半绑定也报）⇒ 落 `tenantUnbound`。
     // 两判用**同一次** readDashboardContent 回读（别多发请求）。
     // 只读**本 org** 的行：它是「我们登记的报表锁没锁住」的自检；跨 org 读会把别人的行内状态
     // 暴露给本租户（而 unregistered 的跨 org 读是**必需**的——不取全局并集就有假阳性）。
@@ -259,11 +260,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
           tenantUnlocked.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
           continue
         }
-        // ① 参数没声明 或 ② 有卡带 tenant 标签但没映射 ⇒ 锁了也绑不到任何东西
+        // ① 参数没声明 或 ② 任一卡带 tenant 标签但**没映射** ⇒ 锁了但绑不到。
+        //    ② 是**单卡粒度**（人裁 2026-09-29）：半绑定——两张 tenant 卡只映射一张——也要报；
+        //    dashboard 粒度的 anyMapped（"有一张映射了就不报"）会漏检它，未映射那张卡在嵌入语境
+        //    拿不到 tenant 值、静默显示未过滤数据——正是本任务要抓的失效家族。
         const declared = content.parameters.some((p) => p['slug'] === TENANT_SLUG)
-        const needsMapping = content.dashcards.some(
-          (d) => d.cardId !== null && (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG),
-        )
         // 「映射到 tenant」**在这里判**（不在 metabase.ts）：比 parameter_id，而不是"有没有映射"
         // ——挂了别个参数（如 region）的卡用「有映射」判会得 true ⇒ 假绿（Task 3 已清除该启发式，
         // 不许回来）。metabase.ts 是纯 HTTP 客户端，不该知道平台的参数命名约定。
@@ -271,10 +272,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
           (d.parameterMappings ?? []).some(
             (m) => (m as { parameter_id?: unknown }).parameter_id === TENANT_PARAM_ID,
           )
-        const anyMapped = content.dashcards.some(
-          (d) => d.cardId !== null && (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG) && isTenantMapped(d),
+        const unboundCards = content.dashcards.filter(
+          (d) => d.cardId !== null && (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG) && !isTenantMapped(d),
         )
-        if (!declared || (needsMapping && !anyMapped)) {
+        if (!declared || unboundCards.length > 0) {
           tenantUnbound.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
         }
       }
