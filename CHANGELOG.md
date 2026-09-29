@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.57.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.57.0...v0.57.1) - 2026-09-29
+- 【优化】duckle: #379 退役最后一里——指针改向 + P7 断言事实源改向 ([#380](https://github.com/MYTech-Co-LTD/platform-core/pull/380), [f68029f](https://github.com/MYTech-Co-LTD/platform-core/commit/f68029f6d79e966270afa43daf0d1a68b5c3ad64))
+
+
 ## [0.57.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.56.2...v0.57.0) - 2026-09-29
 - 【新增】duckle: #367 只读诊断工具 diagnose.sh（替代 recon/rb，P1–P7 落地） ([#368](https://github.com/MYTech-Co-LTD/platform-core/pull/368), [6966d95](https://github.com/MYTech-Co-LTD/platform-core/commit/6966d9549864933a7019b251b1405df5ecaf1254))
 
