@@ -21,7 +21,8 @@
 2. **迁移必须幂等**（既有纪律）：`alter table … add column if not exists …`；`005` 号段**已核**（2026-09-29：仓内实际只有 001–004）——**原稿写的是 `006`，是错的**（没有 005 就跳号）；实施前仍照纪律 `ls modules/data/migrations/` 再确认一次。
 3. **跨 schema 纪律（架构 lint B1）**：只动 `modules/data/**`（schema = `data`）。**不碰** `apps/server/**`、`apps/mb-proxy/**`（编辑反代今天 deny `PUT /api/dashboard/{did}`，与写保护正交，见"不在范围"）。
 4. **不引依赖**（B2 与仓内惯例）：锁手搓、指纹复用既有 `createHash`，**不加** `async-mutex` / `p-limit` / `jose`。
-5. **`POST /reports` 的 body 是 `.strict()`**（`ReportBody`）——新增键必须同时进 schema，否则 400。
+5. **`POST /reports` 的 body 要加 `.strict()`**（⚠️ 订正记录 2026-09-29，Task 2 实施中用 `git log -S` 证实：原稿说它「已经是 `.strict()`」**是错的**，它此前**从未** strict）。
+   本计划给它加上，副作用是**多余键由「静默丢弃」变成 `400 INVALID_BODY`**（仓内 `POST /reports` 无调用方、console 只 GET，故无破坏；已补断言钉住该行为）。新增键（`expectedFingerprint`）必须同时进 schema 才不会 400。
 6. **`DELETE` 的版本走 query 串**（`?expectedVersion=N`）而**不是**请求体：DELETE 体可能被中间层剥掉（openship edge 是 OpenResty），query 串没有这个风险。`apiSend` 已支持 DELETE（方法集 `'POST' | 'PUT' | 'DELETE'`，无 PATCH）。
 7. **进程内锁的边界要写在代码注释与 README 里**：单实例成立；多副本部署时会退化成"只有版本比对生效"（不静默，只是并发窗口变宽）。别把它说成分布式锁。
 8. **既有并发用例的期望要按设计变化更新**：`modules/data/routes/reports.test.ts` 里那条「并发建同名 ⇒ 造出孤儿 dashboard」的用例，在加锁后**应当**不再造孤儿——改断言并在注释里写明"这条不变量由写保护改了，不是回归"。
@@ -313,8 +314,10 @@ git commit -m "feat(data): 内容侧写保护——回指纹 + 更新既有报�
 ```ts
 const GateBody = z.object({
   requiredScope: z.string().min(1).nullable(),
-  // 登记侧版本（写保护；人裁 fail-closed）：必填，缺则 400
-  expectedVersion: z.number().int().positive(),
+  // 登记侧版本（写保护；人裁 fail-closed）：必填，缺则 400。
+  // ⚠️ 订正记录（2026-09-29，Task 3 评审 F1）：**必须带上界**——不加 `.max()` 时客户端送
+  //    `3000000000` 会过 zod、再撞 int4 溢出，落成 **500**（契约应是 400，且 5xx 会污染监控）。
+  expectedVersion: z.number().int().positive().max(2147483647),
 }).strict()
 ```
 
@@ -339,6 +342,7 @@ const GateBody = z.object({
 ```
 
 DELETE：把 `expectedVersion` 从 query 串取（`Number(c.req.query('expectedVersion'))`，非正整数 ⇒ 400），**先**用 `updateRequiredScope` 同款条件做版本判定——但删除语义不同（要真删），所以拆两步：先 `getReportVersion` 比版本（不符 ⇒ 409），相符再走既有「先归档、再删行」序列。⚠️ 步骤 1 的用例已断言 409 时 `mb.state.calls` 为空 ⇒ **版本判定必须发生在 `archiveDashboard` 之前**。
+> ⚠️ **已登记残余（Task 3 评审 F3，非缺陷）**：DELETE 的版本判定是「JS 比较 + 无条件删行」，**不像 PUT 那样有条件 UPDATE** ⇒ 判定到删行之间仍有 TOCTOU 窗口（并发 PUT 可在这中间推进版本，而行照样被删）。**由 Task 4 的每对象锁收窄**（进程内同键串行）；跨进程窗口写进 Task 6 的边界一节。
 
 - [ ] **Step 4: 跑测试确认绿 + 全模块**
 
@@ -548,8 +552,10 @@ git commit -m "feat(data): console 写动作携带版本 + 409 冲突人话与�
 | Metabase 报表**内容**（布局/参数/卡片/锁参） | **内容指纹**（现算 24 hex） | 平台算（`readDashboardContent`） | `POST /reports` 的 201 响应 `fingerprint` |
 | **登记行**（页门/发布/回收） | **登记表版本号**（整数，每次写 +1） | 平台算（`data.reports.version`） | `GET /reports/manage` 每行 `version` |
 
-- **调用方义务（fail-closed）**：**更新既有对象必须回带版本**。缺 ⇒ `409 VERSION_REQUIRED`，不符 ⇒ `409 STALE_WRITE`（响应带 `currentVersion`/`currentFingerprint`）⇒ 读最新的再重试。
-  首次创建无需版本（没有可覆盖的东西）。
+- **调用方义务（fail-closed）**：**更新既有对象必须回带版本**。两条通路的**缺失语义不同**（别混）：
+  - **登记侧**（`PUT`/`DELETE`）：`expectedVersion` 是 **zod 必填** ⇒ 缺/非法 ⇒ **`400 INVALID_BODY`**；不符 ⇒ **`409 STALE_WRITE`**（带 `currentVersion`）。
+  - **内容侧**（`POST /reports` 更新既有 dashboard）：`expectedFingerprint` 缺 ⇒ **`409 VERSION_REQUIRED`**（带 `currentFingerprint`，因为"缺"本身是**语义**判断：只有命中同名才知道该不该要）；不符 ⇒ **`409 STALE_WRITE`**。
+  ⇒ 两种情况都读最新的再重试。首次创建无需版本（没有可覆盖的东西）。
 - ⚠️ **重跑登记（`POST /reports`）现在也需要指纹**：它是"更新既有 dashboard"这条路 ⇒ 先读一次再写。
 - **每对象一把锁**：进程内（同键串行）。⚠️ **单实例成立**；多副本部署时退化为"只有版本比对生效"（不静默，只是并发窗口变宽）。
 ````
