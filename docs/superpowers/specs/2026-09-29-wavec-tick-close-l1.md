@@ -226,7 +226,7 @@ canon 里 `count(DISTINCT batch_id)` 按 hour = 1 的那条锚**只对日批兜�
 > **close 取 `all`**：代价小（1 窗）、与先例一致，但**必须写清楚它不是补窗机制**。
 >
 > **⚠️ 缺口的真实补法不在 misfire**：≥2 tick 的漏采必须走**投递批次的补采 SOP**
-> （canon #260：`run-retail-day.sh recon <H>` 对照 + 定点重跑）。本报告把它列为**待定项**（§9），
+> （canon #260：**`sh /opt/lemeng-diagnose.sh recon <H>`** 对照 + 定点重跑——🟢 **2026-09-29 换工具**：原 `run-retail-day.sh recon`；新工具已落地并经新旧同参数对照**逐字相同**验证，见 `2026-09-29-diagnostic-tool-implementation.md`）。本报告把它列为**待定项**（§9），
 > 因为「怎么定点补一个已过去的小时」目前没有现成工具——`run-retail-day.sh` 是否支持指定小时
 > 重跑，本批**未验**（零生产约束下不去碰 64188）。
 
@@ -401,7 +401,7 @@ MinIO root 凭据（`docker inspect waveB-lab-minio`）与 mock bearer 重新封
 
 - **并行对照**：L1 tick 与薄壳 `run-retail-day.sh tick` **并行跑一段**，逐小时比对
   `hour` 分区对象的内容（batch_id / 行数）。
-- **canon #260 对账**：闭窗小时后跑 `run-retail-day.sh recon <H>`，**容差 0**。
+- **canon #260 对账**：闭窗小时后跑 **`sh /opt/lemeng-diagnose.sh recon <H>`**，**容差 0**（2026-09-29 换工具，判据未改；§9 原列的「定点补采工具未验」**待定项**随之销账：新工具 `recon` 并入了 pg_duckdb 免凭据复核）。
 
 ### 8.3 激活后自查
 

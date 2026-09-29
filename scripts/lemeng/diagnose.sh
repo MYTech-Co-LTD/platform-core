@@ -219,8 +219,10 @@ pg_duckdb_query() { # $1=SQL → stdout（-tA -F, 无表头 CSV）；容器不�
 # ── recon：tick 对账（#260 裁决口径，只读）─────────────────────────────────────────
 # 对照两侧：湖侧 = 该 hour 分区**单文件**精读（两条通道各自回读，见上）；网关侧 = 按「window 模式的
 #   管线 src.rest」**同一调用形状**翻页查询（同 URL / 同 body 键 / page_size=200 / responsePath=/result
-#   ——`duckle/common/lemeng.retail_order_line.json` 是这套形状的唯一事实源，改那边要同步这里，
-#   静态门禁 `scripts/check-diagnostic-tool.mjs` 盯这条耦合）。
+#   ——🔴 2026-09-29 改向：事实源是**在用的** L1 子管线
+#   `deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json`（原先指已退役的
+#   `duckle/common/lemeng.retail_order_line.json`）；改那边要同步这里，静态门禁
+#   `scripts/check-diagnostic-tool.mjs` 盯这条耦合）。
 # 计数单位两侧同为**明细行**（管线 flatten 是 UNNEST(pos_order_details)，湖一行=一条明细）⇒
 #   网关侧按「每单的明细条数」求和，不是数订单数。
 # 判据（闭窗小时，容差 0）：两通道湖读数相等，且 == 网关当刻累计；分区内恰一个 batch_id。
