@@ -167,11 +167,13 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const parsed = GateBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
-    const row = await updateRequiredScope(
-      ctx.pool, c.get('tenant').casdoor_org, id, parsed.data.requiredScope,
-    )
+    const org = c.get('tenant').casdoor_org
+    // 临时形态（Task 3 会把 expectedVersion 改成从请求体/查询串取）：
+    const before = await getReport(ctx.pool, org, id)
+    if (before === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const row = await updateRequiredScope(ctx.pool, org, id, parsed.data.requiredScope, before.version)
     // 跨租户/不存在一律 404——不给存在性探针（口径同 DELETE）
-    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)   // 走到这里只可能是并发删行
     return c.json({
       id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
     })
