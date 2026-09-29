@@ -35,7 +35,7 @@
 
 **两道安全阀**：
 
-1. **env 先于 profile**：`MB_PROXY_CONSOLE_ORIGIN` 等键**没备齐就打开 `edit-proxy` 开关** ⇒
+1. **env 先于启用**：`MB_PROXY_CONSOLE_ORIGIN` 等键**没备齐就把该服务置 `enabled: true`** ⇒
    mb-proxy 启动期直接抛（fail-fast）⇒ **crash loop + 健康看板开事故**。顺序不能反（§B-E1 → §B-E2）。
 2. **接线是运行态步骤**：`docker network connect` 不是配置——**容器/网络重建后要重做**（P7 同款）。
    掉了只有「编辑页打不开」，别处**没有任何报错**（§B-E3）。
@@ -88,7 +88,7 @@
 | 键 | 值形态（占位） | 用途 / **取值位置** | 是否新增 |
 |---|---|---|---|
 | `MB_PROXY_PUBLIC_ORIGIN` | `https://mb.<客户域>` | **模块**（`GET /reports/:id/edit-url`）用来拼 handoff URL。**缺配 / 非 https / `PLATFORM_SESSION_SECRET` 过短** ⇒ 该端点 **503 `EDIT_PROXY_UNCONFIGURED`**（尾斜杠**会被归一**，不 503——见下注） | **本计划新增** |
-| `MB_PROXY_CONSOLE_ORIGIN` | `https://<console origin>` | **代理**用来设 CSP `frame-ancestors`。**必填**——缺则 mb-proxy **启动期抛**（这正是必须挂 `edit-proxy` profile 的原因） | **本计划新增** |
+| `MB_PROXY_CONSOLE_ORIGIN` | `https://<console origin>` | **代理**用来设 CSP `frame-ancestors`。**必填**——缺则 mb-proxy **启动期抛**（故**未备 env 之前不得启用该服务**） | **本计划新增** |
 | `PLATFORM_SESSION_SECRET` | （≥32 字符） | 派生 handoff / 会话两条子密钥（模块签、代理验）。**取值位置**：openship 项目 env `isSecret`（已有键，复用） | 复用 |
 | `DATA_METABASE_URL` | 见下「两种形态」 | 代理的上游基址；**也是模块报表面 facade 的上游**（同一把口径） | 复用 |
 | `DATA_METABASE_API_KEY` | （服务身份） | 代理调上游用的 **`x-api-key`**（与模块同一把，服务身份）。**取值位置**：openship 项目 env `isSecret` | 复用 |
@@ -151,15 +151,21 @@
   实测——**单传它触发了全量重建**（把 `pg_duckdb` / `metabase-db` 一并重启）。`refreshServiceIds` 的
   语义是「**不重新构建**、只按新 env 重建点名服务」，**别拿它当重建开关用**。
 
-> ⚠️ **待真机核实（本仓无案例）**：`services_sync` **是否会把挂了 compose `profiles:` 的服务一并带出**、
-> 以及 openship 侧「打开 profile」的确切落点，本 SOP **未取得实测**。以 ① 的**服务面清单**为准：
-> **出现 `mb-proxy` 行 ⇒ 置 `enabled:true` 即等价**；**没出现 ⇒ 用「新增服务」接口按 compose 定义补一行**
-> （镜像 `platform-core-mb-proxy:local`、`command` 覆盖为 `pnpm --filter @platform/mb-proxy start`、
-> 端口 `13010`；E1 的那些 env 前提同）。**别把「清单里有」当默认假设。**
+> ✅ **已实测（2026-09-29，PR #366 合并当天的生产事故）**：**compose `profiles` 对 openship 部署无效**——
+> 该服务照样被拉起，缺 `MB_PROXY_CONSOLE_ORIGIN` ⇒ 启动期抛 ⇒ **crash loop**（13 次重启），健康看板开事故并发出 1 条通知。
+> 机制：`docker compose config` 里它确实只在 `--profile` 下出现（**本地**默认启停语义成立），
+> 但 **openship 按自己的服务清单逐服务显式启停**（服务表从 compose 同步出 `mb-proxy` 一行）⇒ profile 拦不住。
 >
-> ⚠️ **`profiles` 不是服务面字段**：`profiles: ['edit-proxy']` 是 **compose 文件**里的声明；
-> openship **服务面契约里没有 `profiles` 字段**——它在服务面的**等价物是该服务的启用开关**（`enabled`）。
-> 别把 `profiles` 当字段传给服务面 API（服务面字段是 `enabled` / `exposed` / … 那一套）。
+> **⇒ 启停闸门只能用 openship 的服务级开关**（`enabled`）：
+> - **停用**（默认态）：`patch_projects_by_id_services_by_serviceId`，body `{"enabled": false}`，
+>   需要时再 `post_projects_by_id_services_byServiceId_stop` 立刻停机（事故会随之 auto-resolve）。
+> - **启用**：先把 E1 的 env 备齐，**再** `{"enabled": true}`，然后按 §E2 的定向部署把服务起出来。
+> - ⚠️ **`services_sync`（从 compose 同步服务表）可能重置 `enabled`** ⇒ **每次同步后回查该服务的开关**，
+>   别让「同步一下」把闸门又打开（本次事故就是「闸门失效 + env 未备」的组合）。
+> - ⚠️ 别把 `profiles` 当服务面字段传给 API（服务面认 `enabled` / `exposed` 那一套）。
+>
+> 服务行没出现时用「新增服务」接口按 compose 定义补一行（镜像 `platform-core-mb-proxy:local`、
+> `command` 覆盖为 `pnpm --filter @platform/mb-proxy start`、端口 `13010`；E1 的 env 前提同）。
 
 ### E3 平台 ↔ Metabase 网络接线 + 断言（**同机形态下恒需接线**；跨机无通路 ⇒ 见下分支说明）
 
@@ -295,12 +301,12 @@ E2–E4 过后**不要**直接收工——按 **§C 的判据（①–⑫）**�
 
 | # | 坑 | 防法 |
 |---|---|---|
-| 6 | **env 未备就开 profile ⇒ crash loop**（`MB_PROXY_CONSOLE_ORIGIN` 缺则启动期抛） | **E1 先于 E2**（顺序不能反） |
+| 6 | **env 未备就置 `enabled:true` ⇒ crash loop**（`MB_PROXY_CONSOLE_ORIGIN` 缺则启动期抛；**2026-09-29 生产实测**） | **E1 先于 E2**（顺序不能反）；compose `profiles` **不是**部署闸门 |
 | 7 | **`docker network connect` 是运行态步骤**，重建后掉 | E3 后必跑两条 node 断言；**每次重建容器后重做**（P7 已固化成脚本，本 SOP 尚未） |
 | 8 | 部署可能重写服务 env（丢值 ⇒ crash loop） | **部署后必验 env 形状**（读真值 → 服务级 PATCH 写回 → 重部署 → 再验形状） |
 | 9 | 全量部署会重启该客户 pg/Metabase | **定向部署**（`build_access` + `serviceIds`；别 `refreshServiceIds` 单参、别 `post_deployments`） |
 | 10 | 只加域名不暴露服务 ⇒ 域名被路由同步剪掉 | **先暴露服务再建域名/再部署**（E2③→④；adopt §4 订正） |
-| 11 | **服务面没有 `profiles` 字段**（那是 compose 概念） | 服务面只认 `enabled` / `exposed` 等；「打开 profile」的等价动作 = 置 `enabled` |
+| 11 | **服务面没有 `profiles` 字段**（那是 compose 概念，且对 openship 部署无效） | 服务面只认 `enabled` / `exposed` 等；**闸门 = 置 `enabled`**；`services_sync` 后要回查 |
 
 ### C 层：环境前置（检查项 + 判定）
 
@@ -335,7 +341,7 @@ E2–E4 过后**不要**直接收工——按 **§C 的判据（①–⑫）**�
 ## 关联
 
 - `docs/superpowers/specs/2026-09-28-report-authoring-design.md` §3⑦（本 SOP 的规范来源：三条硬约束 + 实测读数。**该 spec 随本计划所在的分支/PR 系列落地**——本分支（`feat/346-edit-proxy`）此刻尚无该文件，Task 7 会把它一并纳入）
-- `deploy/docker-compose.yml`（`mb-proxy` 服务定义：`profiles: ['edit-proxy']`、`command` 覆盖、`127.0.0.1:13010:13010`）
+- `deploy/docker-compose.yml`（`mb-proxy` 服务定义：`command` 覆盖、`127.0.0.1:13010:13010`；`profiles: ['edit-proxy']` 只是**本机 compose 的默认启停语义**，**不是** openship 的部署闸门）
 - `deploy/data-compose.yml`（Metabase 本体：`metabase` 服务、容器内端口 3000、宿主回环 `127.0.0.1:13030:3000`）——**它在独立 project，故接线必做**
 - `apps/mb-proxy/src/config.ts`（env 契约与形状校验）/ `rules.ts`（放行表 deny-by-default）/ `session.ts`（Cookie 属性）/ `handoff.ts`（票据/会话两条派生密钥）
 - `modules/data/manifest.yaml`（`GET /reports/:id/edit-url` 的页门 = `data:manage`）

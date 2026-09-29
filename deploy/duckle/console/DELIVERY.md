@@ -9,7 +9,7 @@
 > **正典指针（本文件不复述正文，有冲突以正典为准）**：
 > 投递程序 = SOP §E（`deploy/data-plane-deploy-sop.md`）· 生效动作三类 = SOP §F.2 · 定义/排障口径 =
 > `deploy/duckle/console/README.md` · 引擎调度实测事实 = 同 README §「调度器的实测事实」。
-> ⚠️ **本文件不覆盖排障口径**——失败怎么看、从哪进，在 SOP §F.4 与 handbook §1.5，**其收口属 Wave D**，本文件不抢跑。
+> ⚠️ **本文件不覆盖排障口径**——失败怎么看、从哪进，在 SOP §F.4 与 handbook §1.5。（**✅ 其收口已于 2026-09-29 完成**：两处已按形态分——L0/L1 看 `runs/receipts/`（回执）与 `runs/<pipeline_id>.json`（运行记录，**`assets` 只在这里**）；薄壳形态看 `logs/*.csv`。）
 >
 > **性质**：纯执行单。写它的时候零生产操作。
 
@@ -178,7 +178,7 @@ curl -s -X POST http://127.0.0.1:18080/api/catalog \
   2026-09-26 实测：seed + 只重启，`/api/schedules` 即列出新条目）。**bind-mount 类**（`duckle/`、`/opt/lemeng-run.sh`）
   才需要按 `serviceIds` **定向重建**；本批不碰它们。
   > ⚠️ **措辞差异（如实标注）**：handbook §1.3.2 把这个动作写成「重新 seed + **重建容器**」。
-  > 本文件取 SOP §F.2 第 1 类（卷内定义 ⇒ 重启足够，且有实测背书）。两处措辞不一致已记入投递报告，**待 Wave D 收口统一**。
+  > 本文件取 SOP §F.2 第 1 类（卷内定义 ⇒ 重启足够，且有实测背书）。**✅ 已统一（2026-09-29，Wave D 收口）**：handbook §1.3.2 已按类分订正——卷内定义 = **seed + 重启**；bind-mount（仓内 `duckle/`、`/opt/lemeng-run.sh`）= **同步 + 定向重建**。
 - 判据：「定义加载了没」——带凭据打 console 自己的调度 API，**条目数必须等于 `schedules/3120.json` 里的条目数**
   （本批投递时仓内 = 10 条；**判据是「相等」，不是写死某个数字**）：
 
@@ -214,7 +214,7 @@ curl -s -X POST http://127.0.0.1:18080/api/catalog \
 - 判据：**看运行记录判触发**（最新一条的 `at` = **开始**时刻），**不是** `schedules.json` 的 `last_run_at`（那是**完成**时刻）。
   （同一时刻在**回执**里叫 `startedAt`——两处字段名不同，别互相找。）
 - 失败处置：失败先看 run 记录的 `error` 与 `logs/<pipeline_id>/runtime.log`；
-  **排障口径在 SOP §F.4 / handbook §1.5，本文件不复制**（Wave D 收口）。
+  **排障口径在 SOP §F.4 / handbook §1.5，本文件不复制**（**已按形态分收口，2026-09-29**）。
 
 ### ⑦ 按 §3 走五点验收 → 再进观察期（≥3 运行日）
 
