@@ -1,7 +1,7 @@
 // index.test.tsx — 报表页签：双视图选择（session.scopes）+ 管理动作（页门/发布/回收）。
 // 挂载形态照宿主壳真实结构：ReportsPage 经 Outlet 注入 session（demo 模块先例）。
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Outlet, RouterProvider, createMemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -76,7 +76,8 @@ describe('报表页签双视图', () => {
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
     expect(calls[0]?.url.endsWith('/reports/manage')).toBe(true)
-    expect(screen.getByText('平台自绘')).toBeInTheDocument()
+    // 徽章在管理视图出现**两次**（标题内联 + 渲染器列）⇒ 复数断言（见实现块里的订正记录）
+    expect(screen.getAllByText('平台自绘').length).toBeGreaterThanOrEqual(2)
     expect(button('发布')).toBeInTheDocument()
     // 回收是**逐行**给的（三行都有）⇒ 按复数查；「发布」只在页门未放行的那一行（r2）出现，故是单数
     expect(buttons('回收').length).toBeGreaterThan(0)
@@ -90,6 +91,11 @@ describe('报表页签双视图', () => {
     expect(screen.queryByRole('button', { name: /^发\s*布$/ })).not.toBeInTheDocument()
     const selfDrawnRow = screen.getByText('自绘大盘').closest('tr')!
     expect((selfDrawnRow.querySelector('button') as HTMLButtonElement).disabled).toBe(true)
+    // ⭐ spec ❌ 的修复验收点（2026-09-29 评审 + 人裁「两视图都加」）：观看视图**也**必须看得到
+    // 平台自绘徽章——不能只靠置灰按钮/Tooltip。本仓 antd 6.6.3 已移除 v5 的
+    // `getDisabledCompatibleChildren`，**Tooltip 在禁用的原生 button 上不保证弹** ⇒
+    // 普通员工否则只看到一个**没有理由的灰按钮**；徽章自己承担「为什么这行点不开」。
+    expect(within(selfDrawnRow).getAllByText('平台自绘').length).toBeGreaterThan(0)
   })
 
   it('发布：Popconfirm 确认 ⇒ PUT requiredScope=null', async () => {
