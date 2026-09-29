@@ -242,6 +242,11 @@ export async function getDashboardFull(deps: MetabaseDeps, dashboardId: number):
     const cid = d.card_id
     if (cid !== null && typeof cid !== 'number') throw new MetabaseError(200, SHAPE_ERROR)
     const pm = d.parameter_mappings
+    // ⚠️ 畸形映射（truthy 非数组）⇒ 抛（终审修复 2，口径同上面的畸形 card_id）：读侧把它静默
+    //    归 undefined 的话，合并写路径（putDashboardMerged）回写时该卡就不带 parameter_mappings
+    //    键 ⇒ 真机替换语义下，这条卡的现有映射在**下一次发布**时被清掉——正是本支要防的失效类。
+    //    读不出就是读不出，不猜、不静默降级。
+    if (pm != null && !Array.isArray(pm)) throw new MetabaseError(200, SHAPE_ERROR)
     return {
       id: d.id, cardId: cid,
       row: Number(d.row ?? 0), col: Number(d.col ?? 0),

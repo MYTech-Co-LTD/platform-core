@@ -615,6 +615,34 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     })
   })
 
+  // ── renderer 守卫（终审修复 3，Task 2「凡读 metabaseId 前先判 renderer」的落地）──
+  it('★ renderer=platform 的行不被对账报出（metabaseId=0 哨兵不进 missingInMetabase/tenantUnlocked/tenantUnbound）', async () => {
+    await upsertReport(pool, ORG, {
+      title: '自绘报表', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+    })
+    const { app } = manage()
+    const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    // ok 不受 platform 行影响：它没有 Metabase dashboard，对账的三个差集都不该碰它
+    expect(rec).toMatchObject({
+      ok: true, registered: 1, embeddable: 0,
+      missingInMetabase: [], tenantUnlocked: [], tenantUnbound: [],
+      unregistered: { recoverable: [], needsHuman: [] },
+    })
+  })
+
+  it('★ renderer=platform 的行 DELETE 不发归档请求（没有 Metabase dashboard 可归档），登记行照删', async () => {
+    const id = await upsertReport(pool, ORG, {
+      title: '自绘报表', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+    })
+    const { app } = manage()
+    const res = await app.request(`/reports/${id}`, { method: 'DELETE' })
+    expect(res.status).toBe(204)
+    // 登记行照删（跳过的只是 Metabase 侧动作，不是删除本身）
+    expect((await pool.query('select 1 from data.reports where org = $1', [ORG])).rowCount).toBe(0)
+    // 桩上一条 PUT 都没发（不碰 Metabase——尤其不许拿 metabaseId=0 哨柄去 PUT /api/dashboard/0）
+    expect(mb.state.calls.filter((c) => (c.init?.method ?? 'GET') === 'PUT')).toEqual([])
+  })
+
   it('★ I-1 两个 org 同 title ⇒ Metabase 侧两张不同 dashboard；B 的写 / 删都不碰 A 的', async () => {
     const a = shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }))
     const b = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] }))

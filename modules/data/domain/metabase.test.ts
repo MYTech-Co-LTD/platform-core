@@ -422,6 +422,17 @@ describe('读全量/合并写回：真机形状的三条硬约束（站内同版
       { body: { id: 7, name: 'o/a', dashcards: [{ card_id: 11 }] } },
     ]).fetcher), 7)).rejects.toThrow(MetabaseError)
   })
+
+  it('★ 畸形 parameter_mappings（truthy 非数组）⇒ throw，不静默丢（终审修复：静默丢 = 该卡映射下次发布被清）', async () => {
+    // 读侧把畸形映射静默归 undefined 的话，合并写路径（putDashboardMerged）回写时该卡就不带
+    // parameter_mappings 键 ⇒ 真机替换语义下，这条卡的现有映射在**下一次发布**时被清掉——
+    // 正是本支要防的失效类。口径同畸形 card_id：读不出就是读不出，不猜、不静默降级。
+    for (const bad of ['oops', { parameter_id: 'p-region' }]) {
+      await expect(getDashboardFull(mbDeps(stub([
+        { body: { id: 7, name: 'o/a', dashcards: [{ id: 1, card_id: 11, parameter_mappings: bad }] } },
+      ]).fetcher), 7)).rejects.toThrow(MetabaseError)
+    }
+  })
 })
 
 describe('getCard / getCardTemplateTags：卡片原生查询的读侧产物（v0.63 的 MBQL stages 形态）', () => {
