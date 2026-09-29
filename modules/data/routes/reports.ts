@@ -109,6 +109,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       // ⚠️ 位置是契约的一半：必须在**任何发布写入之前**判——挪到 `publishWithTenantBinding` 之后，
       //    被拒的请求已经先写过 Metabase 了（「拒」就只是回了个码），且有卡的表上判到的还是
       //    发布后的内容。这条由 routes/reports.test.ts 的「守卫必须在写之前」用例钉住。
+      //    而它放在 `upsertDashboard` **之后**是**刻意**的：那条同名路径只做**内容保持**的合并 PUT
+      //    （`putDashboardMerged`：name 同值、dashcards/parameters/embedding_params 全部原值回写），
+      //    对内容而言是 no-op ⇒ 不构成「先写」。守卫要拦的是**会改内容/锁参**的那两步
+      //    （publish 与 setEmbedding），所以别再往「更靠前」挪（判指纹要先读内容，前置到
+      //    upsert 之前只会多一次读，拦不到任何东西）。
       if (!up.created) {
         const cur = await readDashboardContent(deps, up.id)
         if (parsed.data.expectedFingerprint === null) {

@@ -1125,13 +1125,15 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(second.version).toBe(2)
   })
 
-  it('★ 守卫必须在**写之前**：被 409 拒掉的请求不许先改 Metabase（否则「拒」是假的）', async () => {
+  it('★ 守卫必须在**写之前**：被 409 拒掉的请求不许先改**内容**（否则「拒」是假的）', async () => {
     const { app } = manage()
     const first = await (await post(app, { title: '守卫在写前' })).json() as { fingerprint: string; created: boolean }
     expect(first.created).toBe(true)
     const dash = mb.state.dashboards[0]
     // 等价于「另一个人在 Metabase 侧把租户绑定拆了」：publishWithTenantBinding 若先跑，
     // 它会把手动状态**改写回去**（补 tenant 参数、重新锁参）——那时「拒」只是回了个 409，写已经发生了。
+    // ⚠️ 断言的是「**内容**不被改」：`upsertDashboard` 那次合并 PUT 仍会发（name 同值、dashcards/
+    //    parameters/embedding_params 原值回写 = 内容 no-op），那是刻意保留的（见 routes 里 guard 的注）。
     dash.parameters = []
     dash.embedding_params = {}
 
@@ -1145,5 +1147,25 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     const stale = await post(app, { title: '守卫在写前', expectedFingerprint: first.fingerprint })
     expect(stale.status).toBe(409)
     expect((await stale.json()).error).toBe('STALE_WRITE')
+  })
+
+  it('★ 合并 PUT **恒回写** embedding_params（不赌上游「缺键」语义）：被 409 拒的请求也不会抹掉锁参', async () => {
+    const { app } = manage()
+    await post(app, { title: '锁参回写' })
+    const dash = mb.state.dashboards[0]
+    expect(dash.embedding_params).toEqual({ tenant: 'locked' })   // 首次发布锁上的
+
+    // 命中同名（= 更新既有）⇒ upsertDashboard 走合并 PUT。守卫在 publish 之前 ⇒ 这次被拒的请求
+    // 只发了**那一次**合并 PUT：它若不带 embedding_params 而真机是替换语义，锁参当场被抹掉，
+    // 而单测仍绿（桩是「缺键不改」）——正是「静默解开租户绑定」在测试里结构性看不见的形态。
+    const before = mb.state.calls.length
+    const rejected = await post(app, { title: '锁参回写', expectedFingerprint: 'deadbeef' })
+    expect(rejected.status).toBe(409)
+    const puts = mb.state.calls.slice(before).filter((c) => (c.init?.method ?? 'GET') === 'PUT')
+    expect(puts).toHaveLength(1)
+    const body = JSON.parse(String(puts[0].init?.body)) as Record<string, unknown>
+    expect(body).toHaveProperty('embedding_params')                // 键**恒在**
+    expect(body.embedding_params).toEqual({ tenant: 'locked' })    // 值 = 刚读到的当前值
+    expect(dash.embedding_params).toEqual({ tenant: 'locked' })    // 锁参仍在（没被抹）
   })
 })
