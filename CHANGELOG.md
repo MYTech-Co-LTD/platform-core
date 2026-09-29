@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.54.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.53.2...v0.54.0) - 2026-09-29
+- 【新增】duckle: #361 64188 切流——L0/L1 接管、三条薄壳置停 ([#362](https://github.com/MYTech-Co-LTD/platform-core/pull/362), [4458686](https://github.com/MYTech-Co-LTD/platform-core/commit/4458686f4b6d3d7fd3ffa1d3a3c2f832140cd2b3))
+
+
 ## [0.53.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.53.1...v0.53.2) - 2026-09-29
 - 【修复】duckle: 零售新鲜度锚换点（原湖 glob 机制上不参与评估） ([#358](https://github.com/MYTech-Co-LTD/platform-core/pull/358), [87f0634](https://github.com/MYTech-Co-LTD/platform-core/commit/87f0634deace457de099c0015abfb7c79545cdf3))
 
