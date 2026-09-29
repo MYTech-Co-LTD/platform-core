@@ -896,15 +896,36 @@ git commit -m "feat(mb-proxy): 授权规则表（deny-by-default，封枚举面�
   })
 ```
 
+- [ ] **Step 1b: 三条必须补的断言**（⚠️ 订正记录 2026-09-29，Task 5 评审轮）
+
+1. **`canManage` 那半条硬约束必须有覆盖**：评审判定「删掉 `canManage &&` 后 10 条全绿」——即现有的
+   「只有 `data:query`」用例只咬住了 `renderer` 那一半。在该用例里补：该行的**编辑按钮缺席**，
+   同时**「打开」仍在**（正向对照，防「整页没渲染」冒充通过）。
+2. **请求路径可断言**：新用例里 `calls` 已记录请求，补一条
+   `expect(calls.some((c) => c.url.endsWith(`/reports/r1/edit-url`))).toBe(true)`——
+   否则「只有 edit-url 才回 url」的 mock 只是**间接**钉住路径。
+3. **兜底必须真能开**：断言点击「在新标签打开」会**再次**请求 `edit-url`（`calls` 里该 url 出现两次）
+   并以**新票**调用 `window.open`（测试里 stub `window.open` 收参数）。删掉这次重新领票 ⇒ 必红。
+
 - [ ] **Step 2: 跑测试确认红** → `pnpm --filter data exec vitest run console/reports/index.test.tsx`，FAIL。
 
 - [ ] **Step 3: 实现**（`reports/index.tsx`：加 `editUrl` state + `edit()`；管理视图行内、`renderer === 'metabase'` 时给「编辑」按钮；面板与嵌入面板同构）
 
 ```tsx
-  const edit = async (r: ReportRow) => {
+  // ⚠️ 订正记录（2026-09-29，Task 5 实施中发现）：取 URL 的函数叫 `edit`，**state 必须叫
+  //    `editUrl`**（原稿的片段里写成 `setEdit(...)`，与函数名撞名 ⇒ esbuild 报 symbol 已声明）。
+  //    面板里的引用一律用 `editUrl`。
+  // `editRow` 记住当前要编辑的那一行：兜底按钮要用它**重新领票**（票据一次性，见 JSX 注）。
+  const [editRow, setEditRow] = useState<ReportRow | null>(null)
+  const edit = async (r: ReportRow, opts?: { newTab?: boolean }) => {
     try {
       const b = await apiGet(`/reports/${r.id}/edit-url`) as { url: string }
-      setEdit({ title: r.title, url: b.url })
+      setEditRow(r)
+      if (opts?.newTab === true) {
+        window.open(b.url, '_blank', 'noopener,noreferrer')   // 兜底：新票在新标签里用掉
+        return
+      }
+      setEditUrl({ title: r.title, url: b.url })
     } catch (e) {
       messageApi.error(messageOf(e))
     }
@@ -912,18 +933,22 @@ git commit -m "feat(mb-proxy): 授权规则表（deny-by-default，封枚举面�
 ```
 
 ```tsx
-      {edit !== null && (
+      {editUrl !== null && (
         <div>
           <Typography.Text type="secondary">
-            {edit.title}——编辑页（专用入口；会话 8 小时有效，关闭后需从列表重新进入）
+            {editUrl.title}——编辑页（专用入口；会话 8 小时有效，关闭后需从列表重新进入）
           </Typography.Text>
           {/* 同父域 ⇒ iframe 内仍是同站，反代的 SameSite=Lax Cookie 照发 */}
           <iframe
-            title={`报表编辑：${edit.title}`}
-            src={edit.url}
+            title={`报表编辑：${editUrl.title}`}
+            src={editUrl.url}
             style={{ width: '100%', height: 720, border: '1px solid #f0f0f0', marginTop: 8 }}
           />
-          <Button size="small" href={edit.url} target="_blank" rel="noreferrer">在新标签打开</Button>
+          {/* ⚠️ 订正记录（2026-09-29，Task 5 评审轮）：**兜底不能复用同一枚票据**——票据是
+              一次性（nonce 在 `/handoff` 即被消费），iframe 一渲染它就用掉了；若兜底链接的 href 也指向
+              它，点开必然 401，而「CSP 挡住 iframe」那种**最需要兜底**的场景下票据同样已被消费 ⇒
+              兜底路径整体失效。改为**重新领取**：再打一次 `edit-url` 换一枚新票，在新标签打开。 */}
+          <Button size="small" onClick={() => void edit(editRow, { newTab: true })}>在新标签打开</Button>
         </div>
       )}
 ```
