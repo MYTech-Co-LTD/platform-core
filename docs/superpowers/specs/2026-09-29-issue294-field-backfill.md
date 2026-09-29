@@ -187,6 +187,8 @@ If you are trying to read files with different schemas, try setting union_by_nam
 | `validate_pipeline`（子/父） | ok / ok |
 | `lint-architecture` / `check-compose` / `check-env-example` / `check-manifests` / `check-data-models` | 全 OK |
 | `pnpm typecheck` | exit 0 |
+| PR CI：unit / web / smoke | **pass** |
+| PR CI：discipline / gates | **fail** ——唯一成因：任务书要求 PR body 写 **Refs #294 不写 Closes**，而 `check-pr-discipline.mjs` 对 feat 类 PR 硬性要求 `Closes #N`（与 X-Issue/分支号一致）或 `skip-issue` 标签。**代码相关检查全绿，无其他红因**。处置选项（A=skip-issue 标签（推荐）/ B=改 Closes / C=保持红）已 escalade 给协调者裁决（worker 不擅自改 PR）；裁决前无人能合（CLEAN 才可合），状态安全 |
 | 分支/PR | `ylwzzs/issue294-fields`（当日 fetch 后与 origin/main `8dd839d` 一致）；PR **Refs #294**（不写 Closes），不合并 |
 
 ## 6. 挂账（已写进 #294 评论，未实施）
