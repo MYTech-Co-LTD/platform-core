@@ -79,7 +79,7 @@ models:
       - name: item_num
         description: '商品号（账套内编号，varchar 防撑爆）。'
       - name: item_code
-        description: '商品业务码（跨品牌归并键；契约里可空）。'
+        description: '上游订单 API 无此字段（PosOrderDetailAiVO/PosOrderAiVO 均无），恒空串；跨品牌归并键职责由 dim_item.item_code 承担（实测两账套 100% 有值），join 键 item_num。'
       - name: sale_money
         description: '行成交金额（元，decimal(14,2)）。**净销售额口径的输入列** —— 但口径不在这里定义（含作废/取消行的处理见 fct_retail_sale 头注）。'
       - name: discount_money
@@ -159,7 +159,7 @@ models:
         tests:
           - not_null
       - name: item_code
-        description: '商品业务码（跨品牌归并键；契约里可空）。'
+        description: '商品业务码（跨品牌归并键；契约里可空）。实测两账套 100% 有值（2026-09-28 归因核验）——retail_order_line.item_code 恒空串，跨品牌归并键职责由本列承担（join 键 item_num）。'
       # ── 其余 87 标量列（一对一透传，类型/语义见契约；这里只登记名字，不做口径）──
       - name: bar_code
       - name: pinyin
