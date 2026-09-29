@@ -131,8 +131,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
       - lemeng-console-3120-ws:/workspace
-      - ../duckle:/pipelines:ro
-      - /opt/lemeng-run.sh:/opt/lemeng-run.sh:ro
     ports:
       - "127.0.0.1:18080:18080"                # 只绑回环
     # --duckdb 必给：不给则每次触发都记 "DuckDB engine isn't installed yet."（实测）
@@ -154,8 +152,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
       - lemeng-console-64188-ws:/workspace
-      - ../duckle:/pipelines:ro
-      - /opt/lemeng-run.sh:/opt/lemeng-run.sh:ro
     ports:
       - "127.0.0.1:18081:18081"
     command: ["serve", "--host", "0.0.0.0", "--port", "18081",
