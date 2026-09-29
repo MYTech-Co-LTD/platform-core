@@ -322,9 +322,14 @@ describe('★ 卡片集合：fail-closed（取不到 ⇒ 空集 ⇒ 卡片面不
       ? new Response(JSON.stringify({ dashcards: [{ id: 1, card_id: 70 }] }), { headers: { 'content-type': 'application/json' } })
       : new Response('{"data":{}}', { headers: { 'content-type': 'application/json' } }))
     const app = createApp(cfg)
-    // did 对 + cid 属于本 dashboard ⇒ 放行
-    const ok = await app.request('/api/dashboard/111/dashcard/3/card/70/query', { headers: { cookie: cookieFor(111) } })
-    expect(ok.status).toBe(200)
+    // did 对 + cid 属于本 dashboard ⇒ 放行。**POST 是真机形态**（卡片查询走 POST）
+    const okPost = await app.request('/api/dashboard/111/dashcard/3/card/70/query', {
+      method: 'POST', headers: { cookie: cookieFor(111), 'content-type': 'application/json' }, body: '{"parameters":[]}',
+    })
+    expect(okPost.status).toBe(200)
+    // GET 同一路径也放行——**这条路径本任务不加方法闸**（加读方法闸会误伤真机；口子靠路径形状收，
+    // 见 rules.ts 该条注释）。这里两个方法各断言一次，把「有意不设闸」钉成事实而不是遗漏。
+    expect((await app.request('/api/dashboard/111/dashcard/3/card/70/query', { headers: { cookie: cookieFor(111) } })).status).toBe(200)
     // did 对但 cid 不在集合里（借本 dashboard 的壳查别张卡）⇒ 403，且不得到上游
     const alien = await app.request('/api/dashboard/111/dashcard/3/card/999/query', { headers: { cookie: cookieFor(111) } })
     expect(alien.status).toBe(403)

@@ -45,6 +45,10 @@ export function decide(
   if (isRead && path === `/dashboard/${ctx.did}`) return 'allow'
   if (isRead && path === `/api/dashboard/${ctx.did}`) return 'allow'
   // dashcard 查询：**did 与 cid 都要过**（订正记录 ②）
+  // ⚠️ 这一条**不加读方法闸**（订正记录 2026-09-29，重审明确）：真机上卡片查询走 **POST**
+  //    （`POST /api/dashboard/:did/dashcard/:n/card/:cid/query`），若照壳/静态那套只放 GET/HEAD
+  //    就会**误伤真机编辑态**。这里的口子由**路径形状**收口（三段 id 全数字 + 末段固定 `query`），
+  //    方法维度不参与——别为了「看起来统一」给它补闸。
   const dc = /^\/api\/dashboard\/(\d+)\/dashcard\/\d+\/card\/(\d+)\/query$/.exec(path)
   if (dc && Number(dc[1]) === ctx.did && ctx.cards.has(Number(dc[2]))) return 'allow'
 
