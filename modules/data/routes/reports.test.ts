@@ -1063,34 +1063,22 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     })
   })
 
-  it('★ I-2 / M-4 并发建同名（search 竞态）：加锁后**不再造孤儿** ⇒ 恰 1 次 201 + 1 次 409 VERSION_REQUIRED', async () => {
+  it('★ I-2 / M-4 并发建同名：写保护串行化 ⇒ 后到者命中同名被内容守卫拒（1×201 + 1×409），不再造孤儿', async () => {
     const { app } = manage()
-    // 把「先 search 后写」的窗口**卡死**成确定性的竞态：两个请求都先做完 search（都看到空集），
-    // 再各自 POST。sleep 做不到这件事——Node 会在两个 timer 之间排空微任务，先到的请求会一路跑完。
-    const base = mb.fetcher
-    let arrived = 0
-    let open: () => void = () => {}
-    const bothArrived = new Promise<void>((resolve) => { open = resolve })
-    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
-      if (new URL(url).pathname === '/api/search') {
-        arrived += 1
-        if (arrived >= 2) open()
-        // 兜底 500ms：加锁后第二个 search 要等第一个请求**整段跑完**才会发出（下面 bothArrived
-        // 等不到第二名），于是这里必然走超时分支——不影响断言，只让本用例慢 500ms。
-        await Promise.race([bothArrived, new Promise((r) => setTimeout(r, 500))])
-      }
-      return base(url, init)
-    })
-    // 两个请求在数组字面量里**同时发起**（不是先 await 一个再发下一个），再由 Promise.all 收齐
+    // 两个请求在数组字面量里**同时发起**（不是先 await 一个再发下一个），再由 Promise.all 收齐。
+    // ⚠️ 加锁后两者**不再并发跑写序列**：后到者在 `withObjectLock` 上排队，等第一个**整段写序列**
+    //    跑完才进临界区。旧版本那套 `bothArrived` 装置（把两次 `/api/search` 卡在同一个窗口里
+    //    人造「先 search 后写」竞态）**已随加锁失效**——第二次 search 根本不会与第一次并发，
+    //    装置成了死代码、其 500ms 兜底必然触发 ⇒ 已删除。
     const pending = [post(app, { title: '并发报表' }), post(app, { title: '并发报表' })]
     const results = await Promise.all(pending)
     const observed = await Promise.all(results.map(async (r) => ({ status: r.status, body: await r.json() })))
 
     // ⚠️ 这条不变量由写保护改了，**不是回归**：加锁前两个请求都先 search 到空集 ⇒ 各建一张
     //    dashboard（created:true ×2），登记行只有 1 行（unique (org, title)）⇒ 必有一张是孤儿。
-    //    加锁后第二个请求要等第一个**整段写序列**跑完，它的 `upsertDashboard` 于是命中同名 ⇒
-    //    `created === false` ⇒ Task 2 的内容守卫（不带 expectedFingerprint 一律拒）给出
-    //    409 VERSION_REQUIRED。孤儿从「事后由对账报出」变成「结构上不再产生」。
+    //    加锁后后到者的 `upsertDashboard` 命中同名 ⇒ `created === false` ⇒ Task 2 的内容守卫
+    //    （不带 expectedFingerprint 一律拒）给出 409 VERSION_REQUIRED。
+    //    孤儿从「事后由对账报出」变成「结构上不再产生」。
     const accepted = observed.filter((r) => r.status === 201)
     const rejected = observed.filter((r) => r.status === 409)
     expect(accepted).toHaveLength(1)
@@ -1124,6 +1112,10 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       body: JSON.stringify({ requiredScope: 'sales:read', expectedVersion: v0 }),
     }))
     const results = await Promise.all((await Promise.all(pending)).map((r) => r.status))
+    // ⚠️ **这条不是 Task 4 锁的证据**：恰一胜者由 Task 3 的**条件 UPDATE**（`where … and version = $4`）
+    //    在 **DB 层**保证——把 `withObjectLock` 换成直接 `fn()`，本用例**依然全绿**（报告「变异确认①」）。
+    //    它钉的是写保护下端到端的**账实相符读数**（6 并发恰 1 落、版本只 +1），不是锁的承重；
+    //    锁的承重用例是下面两条（同名串行化 / DELETE↔PUT 交错）。
     expect(results.filter((s) => s === 200)).toHaveLength(1)
     expect(results.filter((s) => s === 409)).toHaveLength(5)
     const after = await (await app.request('/reports/manage')).json() as { reports: { id: string; version: number }[] }
@@ -1131,17 +1123,39 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   })
 
   it('★ 并发：DELETE 与同版本 PUT 交错 ⇒ 行锁串行化（无锁时 PUT 会写进一个随即被删掉的行 = 丢更新）', async () => {
-    const { app } = manage()
-    const { id } = await (await post(app, { title: '删改并发保护' })).json()
+    const { app: seed } = manage()
+    const { id } = await (await post(seed, { title: '删改并发保护' })).json()
     const dashId = mb.state.dashboards[0].id
-    const v0 = await versionOf(app, id)
+    const v0 = await versionOf(seed, id)
 
-    // 把 DELETE 卡在「已读版本、已过比对、正归档」的那一刻——归档是本端点唯一的 await 窗口。
-    // 此刻让同版本的 PUT 冲进来：`updateRequiredScope` 是**条件 UPDATE**（DB 保证恰一胜者），
-    // 但它落在**还没被删**的行上 ⇒ 无锁时它能拿 200，而那一行**随即**被 DELETE 抹掉 ⇒ 丢更新。
-    // 有行锁 ⇒ PUT 排在 DELETE 之后，等它删完再跑 ⇒ 条件 UPDATE 命中 0 行 ⇒ 404。
-    // ⚠️ 这条是**行锁**（`${org}/row:${id}`）唯一的承重用例：去掉锁必红（6 PUT 那条不会——
-    //    条件 UPDATE 自己就保证了恰一胜者，见报告「变异确认①」）。
+    // ── PUT 侧闸门（评审 ⚠️1）：给 PUT 的落库语句挂一个**完成信号**，放 DELETE 之前先等它。
+    //    这让「无锁 ⇒ PUT 先落」成为**确定性读数**，而不是靠微任务调度序（旧版正是靠后者，
+    //    跨环境未必稳定红）。有行锁 ⇒ DELETE 持锁期间 PUT **根本发不出**这条 UPDATE（信号永不亮）；
+    //    无行锁 ⇒ 它当场发出并完成（一次本地 DB 往返）⇒ 信号必亮。
+    //    ⚠️ 下面的 500ms 只是「信号永不亮」时的**兜底上限，不是判据**：断言不依赖等了多久，
+    //       只依赖“信号亮没亮”（亮的条件 = PUT 真的写了库）。
+    let putWrote: () => void = () => {}
+    const putWriteDone = new Promise<void>((r) => { putWrote = r })
+    const spyPool = new Proxy(pool, {
+      get(target, prop, receiver) {
+        if (prop === 'query') {
+          return async (text: unknown, params?: unknown) => {
+            const out = await (target.query as (t: unknown, p?: unknown) => Promise<unknown>)(text, params)
+            if (typeof text === 'string' && /update\s+data\.reports\s+set\s+required_scope/i.test(text)) putWrote()
+            return out
+          }
+        }
+        return Reflect.get(target, prop, receiver) as unknown
+      },
+    }) as Pool
+    const app = buildTestApp(
+      mod,
+      makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }),
+      { pool: spyPool },
+      { id: TENANT, casdoor_org: ORG },
+    )
+
+    // DELETE 卡在「已读版本、已过比对、正归档」的那一刻——归档是本端点临界区内唯一的 await 窗口。
     const base = mb.fetcher
     let archiveStarted: () => void = () => {}
     const started = new Promise<void>((r) => { archiveStarted = r })
@@ -1158,13 +1172,16 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     })
 
     const del = app.request(`/reports/${id}?expectedVersion=${v0}`, { method: 'DELETE' })
-    await started   // DELETE 已持锁并卡在归档；PUT 若来只能排队（无锁则会当场跑完 UPDATE）
+    await started   // DELETE 已持锁并卡在归档
     const put = app.request(`/reports/${id}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ requiredScope: 'sales:read', expectedVersion: v0 }),
     })
+    await Promise.race([putWriteDone, new Promise((r) => setTimeout(r, 500))])   // ★ 闸门
     releaseArchive()
     const [delRes, putRes] = await Promise.all([del, put])
+    // 有锁：PUT 的 UPDATE 从未发出（信号未亮）⇒ 排在 DELETE 之后 ⇒ 行已删 ⇒ 404；
+    // 无锁：PUT 的 UPDATE 已**完成**（信号已亮）⇒ 写进一个**随即被 DELETE 抹掉**的行 ⇒ 200 = 丢更新。
     expect(delRes.status).toBe(204)
     expect(putRes.status).toBe(404)   // 行已被删 ⇒ 与 PUT 的 404 同形（不给存在性探针）
     expect((await pool.query('select 1 from data.reports where org = $1 and id = $2', [ORG, id])).rowCount).toBe(0)
