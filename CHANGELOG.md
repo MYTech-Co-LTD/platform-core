@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.56.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.55.0...v0.56.0) - 2026-09-29
+- 【新增】data: #346 报表编辑页反代会话——专用入口 / 一次性 handoff / deny-by-default 隔离 ([#366](https://github.com/MYTech-Co-LTD/platform-core/pull/366), [8743b8e](https://github.com/MYTech-Co-LTD/platform-core/commit/8743b8eaa43da7bbd4da4eebf3520fb9be21caf8))
+
+
 ## [0.55.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.54.0...v0.55.0) - 2026-09-29
 - 【新增】duckle: #364 Wave D 薄壳退役批 + tick/close L1 激活 ([#365](https://github.com/MYTech-Co-LTD/platform-core/pull/365), [5bcb9b1](https://github.com/MYTech-Co-LTD/platform-core/commit/5bcb9b17c5cb04c8b0b02cc540c2958b4a31cc4d))
 
