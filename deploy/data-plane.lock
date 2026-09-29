@@ -1,4 +1,4 @@
-sha256-of-rest d913ba50bc20e72e79124fc210662e8d43d14fb3192176e5ac0dc0f3d8c74e48
+sha256-of-rest 147571d81fd34d625bfa2c8c8710187b145f19fc207bf7850bc515f287d5f32b
 d76cda3f506128316019928fe02a4458a230880368b55cf788395cc996024eb2 dbt/README.md ${REPO}/dbt/README.md 0644
 cc1d78b5c825d5902d22be9b17fbabdc0833afb3c25912e392f8765004a76776 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -23,7 +23,7 @@ fe8339e0c38c1f17ca75be63fefd86718cbccdb0c68a9d70697473ddecbb356d dbt/tests/asser
 d43c40d2e1dd6c80db95782f3a7481028472868c77a2df31a46296fcfd908860 dbt/tests/audit_retail__order_count.sql ${REPO}/dbt/tests/audit_retail__order_count.sql 0644
 1c6621720fe664dc2a96bf4a1e73726dfb441664a29cdb755025654986a71abf deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
 8679ed09c1ac5c65194c59fb2044e9edb2b7e5266ce08af4e08bd90bd4c70f6d deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
-c771ea72d3fb2c86c17270033007d7f4baa315ed1bdc626f995cea1d89f8b02b deploy/duckle/console/DELIVERY.md ${REPO}/deploy/duckle/console/DELIVERY.md 0644
+fae65f5c78f61da83e9f859648ce870ccf64742837835482e34d34e98490a276 deploy/duckle/console/DELIVERY.md ${REPO}/deploy/duckle/console/DELIVERY.md 0644
 c1b82232a31a6cdb199f7a5f0a6456ec11c188467fa0e9596a9fd820e86988a6 deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
 09cfb2623bcd979b4e6edaf0fc2175597899694c647f5d05f20027ccbbf2b84f deploy/duckle/console/alerts.json ${REPO}/deploy/duckle/console/alerts.json 0644
 db9452b7f2d5db5be6181a2f919b98efb21bc7f392142b3e9176c051461c51a6 deploy/duckle/console/owners.json ${REPO}/deploy/duckle/console/owners.json 0644
