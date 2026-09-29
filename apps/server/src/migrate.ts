@@ -123,6 +123,34 @@ export async function runMigrations(
     warn: options.warn ?? ((message: string) => console.warn(message)),
   }
 
+  // 列目录（**先于取锁**，issue #310）：不存在 → 静默跳过；其余错误（权限/非目录）照抛。
+  //
+  // 为什么必须挪到锁之前：这段扫的是**纯文件系统**信息，和 DB 竞态毫无关系。放在锁后面，会让
+  // 「目录不存在」「一个 .sql 都没有」这类**本就无事可做**的调用，先白排一次全局 advisory lock、
+  // 再白跑一遍建表 DDL。而锁键 `platform.schema_migrations` 是**全库唯一**的（见文件头：刻意不按
+  // module 分键）——于是每个「无迁移模块」都在跟**别的进程的真迁移**抢同一把锁。
+  //
+  // 这不是纸面推论。实测（#310）：apps/server 的 loader 测试 37 个用例几乎全走这条路径，而
+  // `pnpm -r --if-present test` 让最多 4 个 workspace 包**并发**打同一台 PG
+  // （modules/data 与 modules/aftersales 的 test-util 直接 import 本文件，共用同一把锁）。
+  // 抢不到锁的一方按 `MIGRATION_LOCK_RETRY_INTERVAL_MS`（2000ms）**整量子**地睡 ——
+  // 单用例耗时从 ~50ms 涨到 2~4s（实测 2053/2139/4106ms，恰是 1~2 个量子），
+  // 直接撞穿 vitest 的 5s 单测默认值，表现为「间歇超时、重跑即过」。
+  //
+  // 无事可做就该**零成本**——文件头那句「对无 migrations/ 的模块零负担」原本只在「不报错」
+  // 这一维成立，这次把它补成真的负担为零。
+  let entries: string[]
+  try {
+    entries = await readdir(dir)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw err
+  }
+  const files = entries.filter((f) => f.endsWith('.sql')).sort()
+  // 没有待应用的迁移文件 ⇒ 不取锁、不建表、不查账本。记账表由**确实有文件**的那次调用负责创建
+  // （platform 迁移与各模块的第一批迁移都算），此处跳过不会让任何一次真迁移失去账本。
+  if (files.length === 0) return []
+
   // 锁持在**一条专用连接**上，且整段迁移都走它（不再 pool.query / 每文件另取连接）：
   //   ① advisory lock 是 **session 级**的 —— 走 pool.query 每次可能拿到不同连接，锁会加在
   //      一条连接上、解锁试在另一条上，当场失效（这是本修法最容易写错的一点）；
@@ -162,23 +190,13 @@ export async function runMigrations(
       );
     `)
 
-    // ⑤ 列目录：不存在 → 静默跳过；其余错误（权限/非目录）照抛
-    let entries: string[]
-    try {
-      entries = await readdir(dir)
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
-      throw err
-    }
-    const files = entries.filter((f) => f.endsWith('.sql')).sort()
-
     const appliedRows = await client.query<{ version: string }>(
       'select version from platform.schema_migrations where module = $1',
       [module],
     )
     const done = new Set(appliedRows.rows.map((r) => r.version))
 
-    // ⑥ 未记账者逐个：单事务内 执行 + 记账
+    // ⑤ 未记账者逐个：单事务内 执行 + 记账
     const ran: string[] = []
     for (const file of files) {
       const version = file.slice(0, -'.sql'.length)
@@ -200,7 +218,7 @@ export async function runMigrations(
     }
     return ran
   } finally {
-    // ⑦ 异常路径也必须放锁：session 级 advisory lock **不随事务回滚释放**，漏放一次就把后续
+    // ⑥ 异常路径也必须放锁：session 级 advisory lock **不随事务回滚释放**，漏放一次就把后续
     //    所有迁移（含别进程的启动期迁移）永久堵死。解锁失败（连接已断）吞掉即可 —— 那种情况下
     //    服务端会随 session 结束自行释放，而原始错误更值得往上抛。
     //    只在**确实持锁**时解：没持锁还去 unlock 会返回 false（不报错），但那是「本进程以为

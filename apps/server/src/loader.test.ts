@@ -26,7 +26,28 @@ const serverMigrationsDir = fileURLToPath(new URL('./migrations', import.meta.ur
 // apps/server/ 下的 fixture 根（URL('..') 从 src/ 退一级）
 const fixtureRootBase = path.join(fileURLToPath(new URL('..', import.meta.url)), '.tmp-loader-fixtures')
 
-describe.skipIf(!dbUrl)('loadModules', () => {
+/**
+ * 集成级 suite 的时长口径（issue #310）。
+ *
+ * 5s 是 **vitest 的单测默认值**，套在「真 PG（连接池 + 迁移 + 全局 advisory lock）+ 真 HTTP
+ * MockCasdoor + 动态 import TS fixture」的集成 suite 上，是**默认值套错了对象**——上限该按
+ * **集成开销**定，不按单测定。实测（复现与耗时表见
+ * `docs/superpowers/specs/2026-09-29-loader-test-flake-fix.md`）：
+ *   · 本机隔离跑：整文件 ~0.4s、单用例 max ~50ms；
+ *   · CI：整文件 7.4~9.7s —— 同一台 runner 上 `pnpm -r` 并发跑 4 个包，而它们共用**同一把**
+ *     迁移锁（`modules/{data,aftersales}/test-util` 直接 import `apps/server/src/migrate`）；
+ *   · 根因修掉后（`migrate.ts` 把「列目录」挪到取锁之前），本机并发复现单用例 max 4106ms → 99ms。
+ *
+ * 15s 是**余量**、不是**替代**：根因已单独修掉，这里只兜「CI 慢一档 + 恰好撞上一次迁移锁量子」
+ * 不让真实回归淹成假红。真卡死（如锁被占满 `MIGRATION_LOCK_TIMEOUT_MS` 的 60s）照样会红。
+ */
+const INTEGRATION_SUITE_TIMEOUT_MS = 15_000
+const INTEGRATION_SUITE = {
+  timeout: INTEGRATION_SUITE_TIMEOUT_MS,
+  hookTimeout: INTEGRATION_SUITE_TIMEOUT_MS,
+} as const
+
+describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
   let pool: Pool
   const mock = new MockCasdoor()
 
@@ -1266,7 +1287,7 @@ describe.skipIf(!dbUrl)('loadModules', () => {
 })
 
 // ---- D9：平台内置码 tenant:admin 随装载扇出（M3，issue #46） ----
-describe.skipIf(!dbUrl)('平台内置权限码（D9）', () => {
+describe.skipIf(!dbUrl)('平台内置权限码（D9）', INTEGRATION_SUITE, () => {
   let pool: Pool
   const mock = new MockCasdoor()
   const fixtureRoot = path.join(fileURLToPath(new URL('..', import.meta.url)), '.tmp-loader-fixtures-d9')
