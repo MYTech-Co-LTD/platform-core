@@ -102,8 +102,8 @@ jobs:
       - run: pnpm exec tsx scripts/check-data-plane-lock.mjs
       # 只读诊断工具静态门禁（P7；正典 `docs/superpowers/specs/2026-09-29-diagnostic-tool-replacement.md`
       # §5.1 P7）。它盯的是**今天没有任何门禁盯的那条耦合**：`recon` 的容量闸 `RECON_PAGES` /
-      # `RECON_PAGE_SIZE` 与网关调用形状的事实源（`duckle/common/lemeng.retail_order_line.json` 的
-      # 12 个 `src.rest` 节点）必须同源。管线分了 13 页、工具还按 12 页翻 ⇒ 末页守卫永不触发 ⇒
+      # `RECON_PAGE_SIZE` 与网关调用形状的事实源（🔴 2026-09-29 改向：**在用的** L1 子管线
+      # `deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json` 的 12 个 `src.rest` 节点；原指已退役的 `duckle/common/lemeng.retail_order_line.json`）必须同源。管线分了 13 页、工具还按 12 页翻 ⇒ 末页守卫永不触发 ⇒
       # 网关侧**悄悄少算一页**，而 `RECON bizday=… lake_rows=… gateway_rows=…` 看着一切正常 ——
       # 这是**静默错**（退出码、字面量、人眼全绿，只有数字错了）。
       # 六条判据：① 工具在场 + 可执行位 ② 清单落地条目 0755 ③ E6 退出码契约字面量在场
