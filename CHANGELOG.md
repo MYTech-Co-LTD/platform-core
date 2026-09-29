@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.53.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.53.0...v0.53.1) - 2026-09-29
+- 【修复】server: #310 loader.test.ts 间歇 5s 超时——无迁移模块不再抢全局迁移锁 ([#345](https://github.com/MYTech-Co-LTD/platform-core/pull/345), [e4aec6b](https://github.com/MYTech-Co-LTD/platform-core/commit/e4aec6b1bfd2cc8d1371fa81f2a4fb4877a62513))
+
+
 ## [0.53.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.52.1...v0.53.0) - 2026-09-29
 - 【新增】data: #336 报表统一管理面——管理清单/页门/发布/回收 + 对账按行降级 + renderer 守卫 ([#338](https://github.com/MYTech-Co-LTD/platform-core/pull/338), [6979273](https://github.com/MYTech-Co-LTD/platform-core/commit/697927364aa8282184b5f3ba345208174c323069))
 
