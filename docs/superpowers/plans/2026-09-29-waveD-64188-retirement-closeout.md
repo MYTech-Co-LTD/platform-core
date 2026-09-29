@@ -228,7 +228,7 @@ docker exec <container> python3 /opt/connection-setup.py --workspace /workspace 
 | 改 | 内容 |
 |---|---|
 | **不改** 管线文件 | L0/L1 六个文件（`lemeng.dim.branch.l0` / `lemeng.dim.item.l0` / `lemeng.retail.windows.l1` / `lemeng.retail.tick.l1` / `lemeng.retail.close.l1` / `lemeng.retail_order_line.{window,tick}`）**逐字复用**（D3/D5：账套无关、阈值够用） |
-| **改** `deploy/duckle/console/schedules/64188.json` | ① 三条薄壳 `enabled:false`；② 新增 `panel-lemeng.dim.branch.l0` / `-dim.item.l0` / `-retail.windows.l1`（**形态逐字照抄 `schedules/3120.json` 的对应条目**：`misfire` / `catchup` / `timezone` 三处别自创）；③ `panel-lemeng.retail.tick.l1` / `-close.l1` 以 `enabled:false` **声明就绪**（同 3120）；④ **删掉** `tick.run` / `close.run` 两条从未在生产存在过的薄壳声明（§4.2） |
+| **改** `deploy/duckle/console/schedules/64188.json` | ① 三条薄壳 `enabled:false`；② 新增 `panel-lemeng.dim.branch.l0` / `-dim.item.l0` / `-retail.windows.l1`（**形态逐字照抄 `schedules/3120.json` 的对应条目**：`misfire` / `catchup` / `timezone` 三处别自创）；③ `panel-lemeng.retail.tick.l1` / `-close.l1` 以 `enabled:false` **声明就绪**（同 3120）；④ `tick.run` / `close.run` 两条薄壳声明**怎么处理（留作 `enabled:false` 还是删）见 §7-U2**——3120 的现成做法是**留着置 `false`**，**本计划不替人决定** |
 | **不改** `owners.json` / `alerts.json` | 仓内已是**共用版**（seed 到两个 console，`alerts` ⑤）⇒ 64188 只需**首次 seed 同一份**（D8 的「跨三代」正是在这一步发生：卷内的旧版被一次替换成湖对象锚 + 9 条规则） |
 | **必须重跑** lock | `deploy/duckle/console/` 在 `deploy/data-plane-manifest.txt` 里是**递归目录条目** ⇒ 改 `schedules/64188.json` 后：`pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`（否则 `check-data-plane-lock` 红） |
 
