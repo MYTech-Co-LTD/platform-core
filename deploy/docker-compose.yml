@@ -105,11 +105,12 @@ services:
     # ⚠️ **必须覆盖 command**：Dockerfile.server 的 CMD 是跑 @platform/server（`Dockerfile.server:118`），
     #    不覆盖的话这个容器会把**平台宿主**再起一遍（同镜像、错入口）。
     command: ['pnpm', '--filter', '@platform/mb-proxy', 'start']
-    # ⚠️ **必须挂 profile**（与数据面 duckle/dbt 同款做法，`data-compose.yml:77-106`）：本服务启动时要
-    #    `MB_PROXY_CONSOLE_ORIGIN`（+ 复用的 `PLATFORM_SESSION_SECRET`/`DATA_METABASE_URL`/`DATA_METABASE_API_KEY`），
-    #    而这些是**每客户**才备的；`MB_PROXY_PUBLIC_ORIGIN` 只被**模块端点**（Task 1）读，不是代理的启动前提。
-    #    不挂 profile 就并入默认启停 ⇒ merge 当天生产上没有这些 env ⇒ 容器 crash loop + 健康看板开事故。
-    #    启用 = 该客户的部署单元显式打开 profile（见 Task 6 SOP）。
+    # ⚠️ **`profiles` 只是本机 `docker compose` 的默认启停语义，不是部署闸门**（2026-09-29 生产实测，issue #369）：
+    #    openship **按自己的服务清单逐服务显式启停**，`profiles` 对它**无效** ⇒ 合并当天这台机器上该服务
+    #    照样被拉起，而它启动需要 `MB_PROXY_CONSOLE_ORIGIN`（+ 复用的 `PLATFORM_SESSION_SECRET`/
+    #    `DATA_METABASE_URL`/`DATA_METABASE_API_KEY`，这些都是**每客户**才备的）⇒ 启动期抛 ⇒ crash loop + 开事故。
+    #    **真正的闸门 = openship 服务级 `enabled` 开关**（默认 false；启用某客户时先备 env 再置 true）。
+    #    详见 `deploy/mb-edit-proxy-runbook.md` §E2 与其后的实测注记。
     profiles: ['edit-proxy']
     env_file:
       - path: ../.env
