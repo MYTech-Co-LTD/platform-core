@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.53.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.53.1...v0.53.2) - 2026-09-29
+- 【修复】duckle: 零售新鲜度锚换点（原湖 glob 机制上不参与评估） ([#358](https://github.com/MYTech-Co-LTD/platform-core/pull/358), [87f0634](https://github.com/MYTech-Co-LTD/platform-core/commit/87f0634deace457de099c0015abfb7c79545cdf3))
+
+
 ## [0.53.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.53.0...v0.53.1) - 2026-09-29
 - 【修复】server: #310 loader.test.ts 间歇 5s 超时——无迁移模块不再抢全局迁移锁 ([#345](https://github.com/MYTech-Co-LTD/platform-core/pull/345), [e4aec6b](https://github.com/MYTech-Co-LTD/platform-core/commit/e4aec6b1bfd2cc8d1371fa81f2a4fb4877a62513))
 
