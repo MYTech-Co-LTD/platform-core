@@ -505,7 +505,8 @@ git commit -m "feat(data): 每对象一把锁（进程内）+ 并发写承重测
     // ① 请求体带版本（ROWS[0].version）② 409 出人话 ③ 列表被重新拉取（reload）
     await waitFor(() => {
       const put = calls.find((c) => c.init?.method === 'PUT')!
-      expect(JSON.parse(String(put.init?.body))).toMatchObject({ requiredScope: null, expectedVersion: ROWS[0].version })
+      // ⚠️ 用 `ROWS[1]`（桩里那行 = 有页门的行）且**从夹具读版本**——别硬写常量（夹具值互异就是为了让硬写咬得住）
+      expect(JSON.parse(String(put.init?.body))).toEqual({ requiredScope: null, expectedVersion: ROWS[1].version })
     })
     expect(await screen.findByText('这份报表刚被别人改过，已为你刷新，请重试')).toBeInTheDocument()
     await waitFor(() => expect(reloads).toBeGreaterThan(1))
