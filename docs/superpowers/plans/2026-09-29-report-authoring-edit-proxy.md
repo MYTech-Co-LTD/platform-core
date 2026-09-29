@@ -437,11 +437,12 @@ serve({ fetch: app.fetch, port: cfg.port }, (i) => {
     # ⚠️ **必须覆盖 command**：Dockerfile.server 的 CMD 是跑 @platform/server（`Dockerfile.server:118`），
     #    不覆盖的话这个容器会把**平台宿主**再起一遍（同镜像、错入口）。
     command: ['pnpm', '--filter', '@platform/mb-proxy', 'start']
-    # ⚠️ **必须挂 profile**（与数据面 duckle/dbt 同款做法，`data-compose.yml:77-106`）：本服务启动时要
+    # ⚠️ **`profiles` 只是本机 `docker compose` 的默认启停语义，不是部署闸门**（2026-09-29 生产实测，issue #369）：
     #    `MB_PROXY_CONSOLE_ORIGIN`（+ 复用的 `PLATFORM_SESSION_SECRET`/`DATA_METABASE_URL`/`DATA_METABASE_API_KEY`），
     #    而这些是**每客户**才备的；`MB_PROXY_PUBLIC_ORIGIN` 只被**模块端点**（Task 1）读，不是代理的启动前提。
-    #    不挂 profile 就并入默认启停 ⇒ merge 当天生产上没有这些 env ⇒ 容器 crash loop + 健康看板开事故。
-    #    启用 = 该客户的部署单元显式打开 profile（见 Task 6 SOP）。
+    #    openship **按服务清单逐服务显式启停**、**不认 `profiles`** ⇒ 合并当天它照样被拉起、缺 env 即
+    #    crash loop（**实测：13 次重启 + 健康看板开事故 + 发出通知**）。
+    #    **真正的闸门 = openship 服务级 `enabled`**（默认 false；启用某客户时先备 env 再置 true）。
     profiles: ['edit-proxy']
     env_file:
       - path: ../.env
@@ -453,8 +454,9 @@ serve({ fetch: app.fetch, port: cfg.port }, (i) => {
     restart: unless-stopped
 ```
 
-**（本条是硬约束，别「顺手去掉 profile 图省事」）**：`profiles` 让服务**声明在案但不默认启动**，与
-「每客户专用 host + 每客户 env」的交付形态一致；漏挂 profile 的后果是**生产 crash loop**（未配 env ⇒
+**（订正记录 2026-09-29，issue #369：下面这段原写「profile 让服务声明在案但不默认启动」——**已被生产证伪**，
+别照旧稿理解）**：`profiles` 只对**本机 `docker compose`** 的默认启停有效；**openship 不认它** ⇒ 闸门必须落在
+**服务级 `enabled`** 上。原稿误以为「漏挂 profile 的后果是生产 crash loop」，实际「挂了也一样」（未配 env ⇒
 `loadProxyConfig` 启动期抛 ⇒ 容器反复重启 ⇒ 健康看板报事故）。
 
 （**不加** `depends_on`：代理不碰数据库、不依赖 server。探活由镜像自带的 HEALTHCHECK（`Dockerfile.server:113-118` 的 `wget /healthz`，端口读 `${PORT}`）覆盖。）
@@ -1011,9 +1013,10 @@ git commit -m "feat(data): console 加「编辑 Metabase」入口（专用入口
 1. **专用 host**：为客户域新增一个 host（如 `mb.<客户域>`）；openship 侧加路由 → 该客户项目的 `mb-proxy` 服务；签证书（openship edge 原生）。
 2. **平台↔Metabase 网络**：照 `data-plane-deploy-sop.md` P7 的 `pg_duckdb` 先例，把 **metabase 容器**连进平台网络并给 alias：
    `docker network connect --alias metabase <平台网络> <metabase 容器>`；随后平台侧 `DATA_METABASE_URL` 可用容器名（或保留 `127.0.0.1:13030`，由 env 决定——**两点都要在 SOP 里写明哪种形态用哪个值**）。
-3. **env 清单 + 启用 profile（顺序不能反）**（每客户）：先在该客户项目的 env 里备好
+3. **env 清单 + 启用服务（顺序不能反）**（每客户）：先在该客户项目的 env 里备好
    `MB_PROXY_PUBLIC_ORIGIN=https://mb.<客户域>`、`MB_PROXY_CONSOLE_ORIGIN=https://platform.<客户域>`，
-   **再**打开 compose profile `edit-proxy`（未备 env 就开 = crash loop）；复用键：
+   **再**把该项目的 `mb-proxy` 服务置 `enabled: true`（未备 env 就启用 = crash loop）；⚠️ `services_sync`
+   可能重置该开关 ⇒ **每次同步后回查**；复用键：
    `PLATFORM_SESSION_SECRET`、`DATA_METABASE_URL`、`DATA_METABASE_API_KEY`（**取值位置**：openship 项目 env isSecret，不落文档）。
 4. **验收判据**（照 spec §3⑦ 的实测读数逐条）：本租户打开编辑页 200 且参数可改；**别租户 403**；无凭证 401；`/api/search` 403；样例 dashboard 403。
 5. **已知边界**（写进 SOP）：编辑页内**不能**搜索/浏览其他报表（这是设计，不是缺陷——枚举面被主动封掉）；跨租户对象一律 403。
