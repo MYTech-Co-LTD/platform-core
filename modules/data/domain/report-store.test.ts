@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
-import { getReport, upsertReport } from './report-store'
+import { getReport, updateRequiredScope, upsertReport } from './report-store'
 import { applyMigrations } from '../test-util'
 
 const dbUrl = process.env.DATABASE_URL
@@ -41,5 +41,24 @@ describePg('report-store 的 renderer（需要 DATABASE_URL）', () => {
       title: 'C', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
     })
     expect((await getReport(pool, org, id))!.renderer).toBe('platform')
+  })
+
+  it('updateRequiredScope：改页门落库并返回整行；没命中（跨租户/不存在）返回 null', async () => {
+    const org = 'org-gate-store'
+    await pool.query('delete from data.reports where org = $1', [org])
+    const id = await upsertReport(pool, org, {
+      title: 'D', metabaseId: 13, embedParams: {}, requiredScope: 'sales:read',
+    })
+
+    const updated = await updateRequiredScope(pool, org, id, 'finance:read')
+    expect(updated).toMatchObject({ id, title: 'D', requiredScope: 'finance:read', renderer: 'metabase' })
+    const db = await pool.query('select required_scope from data.reports where org = $1 and id = $2', [org, id])
+    expect(db.rows[0].required_scope).toBe('finance:read')
+
+    // 发布（置 null）
+    expect((await updateRequiredScope(pool, org, id, null))!.requiredScope).toBeNull()
+
+    // 跨租户 org ⇒ null（不存在性的唯一表达，不给存在性探针）
+    expect(await updateRequiredScope(pool, 'org-gate-store-other', id, null)).toBeNull()
   })
 })

@@ -190,7 +190,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('五个端点都声明了，且页门分档：制作/登记/对账=data:manage，观看面=data:query', () => {
+  it('七个端点都声明了，且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -199,6 +199,24 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('GET /reports/:id/embed-url')).toBe('data:query')
     expect(declared.get('DELETE /reports/:id')).toBe('data:manage')
     expect(declared.get('POST /reports/reconcile')).toBe('data:manage')
+    expect(declared.get('GET /reports/manage')).toBe('data:manage')
+    expect(declared.get('PUT /reports/:id')).toBe('data:manage')
+  })
+
+  it('★ 页门负测：只有 data:query ⇒ 管理清单 / 页门改动同样 403', async () => {
+    const app = gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), null)
+    // ⚠️ 断言必须带 body（`need: 'data:manage'`），不能只断 status（订正记录 2026-09-29，Task 2
+    // 实施中发现）：**未声明**的路径走门卫的 `!hit` 兜底，同样给 403——只断 status 的话，这条负测
+    // 在「manifest 还没加两行声明」的红跑里就是绿的，manifest 声明根本没被这测试承重。
+    const list = await app.request('/reports/manage')
+    expect(list.status).toBe(403)
+    expect(await list.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
+    const put = await app.request('/reports/whatever', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: null }),
+    })
+    expect(put.status).toBe(403)
+    expect(await put.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
   })
 
   it('★ 页门负测：只有 data:query ⇒ 建报表被门卫 403（模块自己不写 requireScope）', async () => {
@@ -355,17 +373,107 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(rows.rowCount).toBe(0)
   })
 
-  it('GET /reports：只回本 org 的登记，投影 id/title/requiredScope', async () => {
+  it('GET /reports：只回本 org 的登记，投影 id/title/requiredScope/renderer', async () => {
     const { app } = manage()
     await post(app, { title: '销售日报' })
     await post(app, { title: '仅管理员', requiredScope: 'data:manage' })
     const body = await (await viewer().app.request('/reports')).json()
     // viewer 只有 data:query ⇒ 行级 requiredScope 把它裁掉
     expect(body.reports.map((r: { title: string }) => r.title)).toEqual(['销售日报'])
-    expect(Object.keys(body.reports[0]).sort()).toEqual(['id', 'requiredScope', 'title'])
+    expect(Object.keys(body.reports[0]).sort()).toEqual(['id', 'renderer', 'requiredScope', 'title'])
 
     const admin = await (await manage().app.request('/reports')).json()
     expect(admin.reports).toHaveLength(2)
+  })
+
+  it('GET /reports/manage：data:manage 身份看全量本 org 行（含页门未放行的）+ renderer', async () => {
+    const { app, identity } = manage()
+    // 插入序刻意与标题序**不一致**（platform 行先插、标题最大的反而最先落库）——见下「订正记录」
+    await upsertReport(pool, identity.orgId, {
+      title: '3 自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+    })
+    await post(app, { title: '2 未放行报表', requiredScope: 'sales:read' })
+    await post(app, { title: '1 已发布报表', requiredScope: null })
+
+    const res = await app.request('/reports/manage')
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    // 行序 = order by title（listReports 既有口径）。⚠️ 三条订正记录（2026-09-29，Task 2 实施 +
+    // 评审后由人裁定「现在修」）：
+    //  ① 原稿期望值 ['公开报表','自绘大盘','未放行报表'] 与同一句声明的公式 order by title 冲突——
+    //     原稿是错的（控制器已 psql 独立复核本库次序）。
+    //  ② 但**照实测值硬写中文次序**等于把库的 CJK collation 钉进测试（repo 未 pin locale，
+    //     `order by title` 也没写 COLLATE）⇒ 换 locale 就红。改为标题带 **ASCII 数字前缀**：
+    //     次序由 ASCII 决定，与 collation 无关。
+    //  ③ 且插入序必须**不等于**标题序：否则「按 title 排」与「按堆序（=插入序）返回」两种实现
+    //     都绿 ⇒ 断言不承重（删掉 order by title 也发现不了）。故 platform 行先插。
+    // 这条断言同时兼作「管理面不按行裁剪」的证据：若误用 visibleTo 裁行，
+    // 「2 未放行报表」会消失、此处变 2 行而红。
+    expect(body.reports.map((r: { title: string }) => r.title)).toEqual(
+      ['1 已发布报表', '2 未放行报表', '3 自绘大盘'],
+    )
+    expect(body.reports.find((r: { title: string }) => r.title === '2 未放行报表'))
+      .toMatchObject({ requiredScope: 'sales:read', renderer: 'metabase' })
+    expect(body.reports.find((r: { title: string }) => r.title === '3 自绘大盘'))
+      .toMatchObject({ renderer: 'platform' })
+  })
+
+  it('GET /reports（观看面）投影补 renderer；页门未放行的行照旧不可见', async () => {
+    const { app } = manage()
+    await post(app, { title: '公开报表', requiredScope: null })
+    await post(app, { title: '未放行报表', requiredScope: 'data:manage' })
+    const viewerApp = shell(makeIdentity({ orgId: ORG, scopes: ['data:query'] })).app
+    const body = await (await viewerApp.request('/reports')).json()
+    expect(body.reports).toHaveLength(1)
+    expect(body.reports[0]).toMatchObject({ title: '公开报表', renderer: 'metabase' })
+  })
+
+  it('PUT /reports/:id：改页门落库并返回整行；置 null = 发布', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '销售日报', requiredScope: 'sales:read' })).json()
+
+    const res = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'finance:read' }),
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json())
+      .toMatchObject({ id, title: '销售日报', requiredScope: 'finance:read', renderer: 'metabase' })
+    const db = await pool.query('select required_scope from data.reports where id = $1', [id])
+    expect(db.rows[0].required_scope).toBe('finance:read')
+
+    const pub = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: null }),
+    })
+    expect(pub.status).toBe(200)
+    expect((await pub.json()).requiredScope).toBeNull()
+  })
+
+  it('★ PUT 负测：多余键 400（strict）/ 空串 400 / 跨租户 404 且写不动', async () => {
+    const { app, identity } = manage()
+    const { id } = await (await post(app, { title: '销售日报' })).json()
+
+    const extra = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'a:read', title: '顺手改名' }),
+    })
+    expect(extra.status).toBe(400)
+
+    const empty = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: '' }),
+    })
+    expect(empty.status).toBe(400)
+
+    const other = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] })).app
+    const cross = await other.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'hacked:scope' }),
+    })
+    expect(cross.status).toBe(404)
+    const db = await pool.query('select org, required_scope from data.reports where id = $1', [id])
+    expect(db.rows[0]).toMatchObject({ org: identity.orgId, required_scope: null })
   })
 
   it('★ 数据门：embed-url 的 locked tenant 恒 = 调用者 org（入参带 tenant 一律忽略）', async () => {
@@ -469,6 +577,84 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     dash.embedding_params = { tenant: 'locked' }
     const clean = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
     expect(clean).toMatchObject({ ok: true, tenantUnlocked: [] })
+  })
+
+  it('★ 对账按行降级：一行回读 500 只落 contentUnreadable，其余行照常判（不再整单 502）', async () => {
+    const { app, identity } = manage()
+    const badId = await upsertReport(pool, identity.orgId, {
+      title: '坏盘', metabaseId: 5, embedParams: {}, requiredScope: null,
+    })
+    const goodId = await upsertReport(pool, identity.orgId, {
+      title: '未锁盘', metabaseId: 6, embedParams: {}, requiredScope: null,
+    })
+    // 两张都在可嵌入集（否则会先落 missingInMetabase 而不是走到回读）
+    mb.state.dashboards.push(
+      { id: 5, name: `${identity.orgId}/坏盘`, embeddable: true, archived: false },
+      { id: 6, name: `${identity.orgId}/未锁盘`, embeddable: true, archived: false },
+    )
+    // dashboard 5 的 GET 回 500 ⇒ readDashboardContent 抛 MetabaseError；其余透传原桩
+    const inner = mb.fetcher
+    vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
+      if (new URL(String(url)).pathname === '/api/dashboard/5') return json({ message: 'boom' }, 500)
+      return inner(String(url), init)
+    })
+
+    const res = await app.request('/reports/reconcile', { method: 'POST' })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.ok).toBe(false)
+    expect(body.contentUnreadable).toEqual([{ id: badId, title: '坏盘', metabaseId: 5 }])
+    // 好盘照常判：可嵌入但 tenant 没锁 ⇒ tenantUnlocked 照报（降级不吞别的差集）
+    expect(body.tenantUnlocked).toEqual([{ id: goodId, title: '未锁盘', metabaseId: 6 }])
+  })
+
+  // ── 承重补测（brief 之外，实施时变异回归发现两条**声明了但没被断言钉住**的要求）──
+  //    上一条用例里 `ok:false` 由 tenantUnlocked 非空撑着 ⇒ 删掉 `&& contentUnreadable.length === 0`
+  //    它照样绿（实测：变异存活）。同理 `只吞 MetabaseError` 那一支（非 MetabaseError 继续往上抛）
+  //    没有任何用例咬到（实测：把 catch 改成全吞，40/40 依旧绿）。两条都是本任务的明确要求，
+  //    「不被断言钉住的要求 = 下一个人删掉它不会有任何红」——各补一条。
+  it('★ ok 判据承重：contentUnreadable 是**唯一**非空差集时 ok 也 false（其余四项全空，只有这一项撑着）', async () => {
+    const { app, identity } = manage()
+    const badId = await upsertReport(pool, identity.orgId, {
+      title: '唯一坏盘', metabaseId: 7, embedParams: {}, requiredScope: null,
+    })
+    mb.state.dashboards.push(
+      { id: 7, name: `${identity.orgId}/唯一坏盘`, embeddable: true, archived: false },
+    )
+    const inner = mb.fetcher
+    vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
+      if (new URL(String(url)).pathname === '/api/dashboard/7') return json({ message: 'boom' }, 500)
+      return inner(String(url), init)
+    })
+
+    const body = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(body.contentUnreadable).toEqual([{ id: badId, title: '唯一坏盘', metabaseId: 7 }])
+    // 其余四个差集与 unregistered 都空 —— 故 ok 只可能被 contentUnreadable 那一项压成 false
+    expect(body.missingInMetabase).toEqual([])
+    expect(body.tenantUnlocked).toEqual([])
+    expect(body.tenantUnbound).toEqual([])
+    expect(body.unregistered).toEqual({ recoverable: [], needsHuman: [] })
+    expect(body.ok).toBe(false)
+  })
+
+  it('★ 只吞 MetabaseError：回读抛的不是 MetabaseError（代码缺陷 / 连接层异常）⇒ 继续往上抛 500，不伪装成按行降级', async () => {
+    const { app, identity } = manage()
+    await upsertReport(pool, identity.orgId, {
+      title: '连接炸盘', metabaseId: 8, embedParams: {}, requiredScope: null,
+    })
+    mb.state.dashboards.push(
+      { id: 8, name: `${identity.orgId}/连接炸盘`, embeddable: true, archived: false },
+    )
+    const inner = mb.fetcher
+    // fetch 自己抛（连不上/被中止）——metabase.ts 的 call() 不包这一层 ⇒ 原样上抛，不是 MetabaseError。
+    // 全吞式 catch 会把它误报成「这一行读不出」= 把代码缺陷降级成业务状态（静默）；500 才是它的位置。
+    vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
+      if (new URL(String(url)).pathname === '/api/dashboard/8') throw new Error('socket hang up')
+      return inner(String(url), init)
+    })
+
+    const res = await app.request('/reports/reconcile', { method: 'POST' })
+    expect(res.status).toBe(500)
   })
 
   // ── 对账判据加厚（spec §7 待办 2）：「锁了但绑不到」── embedding_params.tenant=locked 只说明
@@ -641,6 +827,18 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect((await pool.query('select 1 from data.reports where org = $1', [ORG])).rowCount).toBe(0)
     // 桩上一条 PUT 都没发（不碰 Metabase——尤其不许拿 metabaseId=0 哨柄去 PUT /api/dashboard/0）
     expect(mb.state.calls.filter((c) => (c.init?.method ?? 'GET') === 'PUT')).toEqual([])
+  })
+
+  it('★ renderer=platform ⇒ embed-url 409 RENDERER_NOT_EMBEDDABLE（不签死链 token）', async () => {
+    const { app, identity } = manage()
+    const id = await upsertReport(pool, identity.orgId, {
+      title: '自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+    })
+    const res = await app.request(`/reports/${id}/embed-url`)
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'RENDERER_NOT_EMBEDDABLE' })
+    // 守卫必须发生在任何 Metabase 调用之前（metabaseId=0 是哨兵，拿它签 token = 签死链）
+    expect(mb.state.calls).toHaveLength(0)
   })
 
   it('★ I-1 两个 org 同 title ⇒ Metabase 侧两张不同 dashboard；B 的写 / 删都不碰 A 的', async () => {

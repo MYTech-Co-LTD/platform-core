@@ -41,6 +41,7 @@ import {
   getReport,
   listAllReports,
   listReports,
+  updateRequiredScope,
   upsertReport,
 } from '../domain/report-store'
 import {
@@ -130,7 +131,47 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 只投影消费面要的字段：metabase_id / embed_params 是实现细节，不外泄
     return c.json({
       reports: rows.filter((row) => visibleTo(row, requester))
-        .map((row) => ({ id: row.id, title: row.title, requiredScope: row.requiredScope })),
+        .map((row) => ({
+          id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
+        })),
+    })
+  })
+
+  // ── 管理清单（spec §3⑤：租户管理员看**全量**本 org 行，含页门未放行的）─────────────
+  // 与观看清单 GET /reports 的分野：观看面按行 required_scope 裁剪（visibleTo），管理面**不裁**
+  // ——页门未放行的行对管理员必须可见、可改，否则没人能把未发布的报表发出来。
+  // 授权由宿主门卫按 manifest（data:manage）施加，handler 不再判权限。
+  r.get('/reports/manage', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const rows = await listReports(ctx.pool, c.get('tenant').casdoor_org)
+    return c.json({
+      reports: rows.map((row) => ({
+        id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
+      })),
+    })
+  })
+
+  const GateBody = z.object({ requiredScope: z.string().min(1).nullable() }).strict()
+
+  // ── 页门改动（管理面动作：页门/发布/回收之「页门」「发布」）─────────────────────────
+  // 发布 = requiredScope 置 null；改页门 = 换成新 scope。**没有独立的 published 列**
+  // （见函数头顶注与计划 Global Constraints 1）。
+  // ⚠️ 写保护（陈旧版本写 409）归计划 4（spec §8 步骤 2）——这里**故意**没有版本守卫。
+  r.put('/reports/:id', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const parsed = GateBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const row = await updateRequiredScope(
+      ctx.pool, c.get('tenant').casdoor_org, id, parsed.data.requiredScope,
+    )
+    // 跨租户/不存在一律 404——不给存在性探针（口径同 DELETE）
+    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    return c.json({
+      id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
     })
   })
 
@@ -146,6 +187,13 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 数据门之二（行级）：行上 required_scope 比页门更细
     if (!visibleTo(row, requester)) {
       return c.json({ error: 'FORBIDDEN', need: row.requiredScope }, 403)
+    }
+
+    // 渲染器通道守卫：platform 行没有 Metabase dashboard（metabaseId=0 是哨兵），给它签 token
+    // = 签一张**指向不存在 dashboard 的死链**。显式 409，等平台自绘渲染通路（计划 4）接上后
+    // 由前端按 renderer 走另一条观看通道。
+    if (row.renderer === 'platform') {
+      return c.json({ error: 'RENDERER_NOT_EMBEDDABLE' }, 409)
     }
 
     // ★★ 安全论断的落点：locked.tenant 恒 = 调用者身份里的 org。
@@ -250,42 +298,50 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 暴露给本租户（而 unregistered 的跨 org 读是**必需**的——不取全局并集就有假阳性）。
     const tenantUnlocked: { id: string; title: string; metabaseId: number }[] = []
     const tenantUnbound: { id: string; title: string; metabaseId: number }[] = []
-    try {
-      for (const r of rows) {
-        // renderer=platform（终审修复 3）：平台自绘，没有 Metabase dashboard（metabaseId=0 是哨兵，
-        // 凡读它之前先判 renderer——Task 2 的承诺）。整体跳过：拿哨兵比对可嵌入集会把它报成
-        // missingInMetabase 的永久噪声，回读也会 404。
-        if (r.renderer === 'platform') continue
-        // 已经报成 missingInMetabase 的行不重复报（回读也只会 404）
-        if (!embeddableIds.has(r.metabaseId)) continue
-        const content = await readDashboardContent(deps, r.metabaseId)
-        const params = content.embeddingParams
-        if (params[TENANT_SLUG] !== 'locked') {
-          tenantUnlocked.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
+    // 按行降级（计划 2）：一行回读失败（上游对**这一个** dashboard 说不行）只落 contentUnreadable，
+    // 不再让整单 502——对账的存在意义就是把「哪里坏了」**显式报出来**，一行坏拖死全租户的报告
+    // 恰是相反。只有非 MetabaseError（代码缺陷等）才继续往上抛。
+    const contentUnreadable: { id: string; title: string; metabaseId: number }[] = []
+    for (const r of rows) {
+      // renderer=platform（终审修复 3）：平台自绘，没有 Metabase dashboard（metabaseId=0 是哨兵，
+      // 凡读它之前先判 renderer——Task 2 的承诺）。整体跳过：拿哨兵比对可嵌入集会把它报成
+      // missingInMetabase 的永久噪声，回读也会 404。
+      if (r.renderer === 'platform') continue
+      // 已经报成 missingInMetabase 的行不重复报（回读也只会 404）
+      if (!embeddableIds.has(r.metabaseId)) continue
+      let content: Awaited<ReturnType<typeof readDashboardContent>>
+      try {
+        content = await readDashboardContent(deps, r.metabaseId)
+      } catch (err) {
+        if (err instanceof MetabaseError) {
+          contentUnreadable.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
           continue
         }
-        // ① 参数没声明 或 ② 任一卡带 tenant 标签但**没映射** ⇒ 锁了但绑不到。
-        //    ② 是**单卡粒度**（人裁 2026-09-29）：半绑定——两张 tenant 卡只映射一张——也要报；
-        //    dashboard 粒度的 anyMapped（"有一张映射了就不报"）会漏检它，未映射那张卡在嵌入语境
-        //    拿不到 tenant 值、静默显示未过滤数据——正是本任务要抓的失效家族。
-        const declared = content.parameters.some((p) => p['slug'] === TENANT_SLUG)
-        // 「映射到 tenant」**在这里判**（不在 metabase.ts）：比 parameter_id，而不是"有没有映射"
-        // ——挂了别个参数（如 region）的卡用「有映射」判会得 true ⇒ 假绿（Task 3 已清除该启发式，
-        // 不许回来）。metabase.ts 是纯 HTTP 客户端，不该知道平台的参数命名约定。
-        const isTenantMapped = (d: { parameterMappings?: unknown[] }) =>
-          (d.parameterMappings ?? []).some(
-            (m) => (m as { parameter_id?: unknown }).parameter_id === TENANT_PARAM_ID,
-          )
-        const unboundCards = content.dashcards.filter(
-          (d) => d.cardId !== null && (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG) && !isTenantMapped(d),
-        )
-        if (!declared || unboundCards.length > 0) {
-          tenantUnbound.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
-        }
+        throw err
       }
-    } catch (err) {
-      if (err instanceof MetabaseError) return c.json({ error: 'METABASE_ERROR' }, 502)
-      throw err
+      const params = content.embeddingParams
+      if (params[TENANT_SLUG] !== 'locked') {
+        tenantUnlocked.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
+        continue
+      }
+      // ① 参数没声明 或 ② 任一卡带 tenant 标签但**没映射** ⇒ 锁了但绑不到。
+      //    ② 是**单卡粒度**（人裁 2026-09-29）：半绑定——两张 tenant 卡只映射一张——也要报；
+      //    dashboard 粒度的 anyMapped（"有一张映射了就不报"）会漏检它，未映射那张卡在嵌入语境
+      //    拿不到 tenant 值、静默显示未过滤数据——正是本任务要抓的失效家族。
+      const declared = content.parameters.some((p) => p['slug'] === TENANT_SLUG)
+      // 「映射到 tenant」**在这里判**（不在 metabase.ts）：比 parameter_id，而不是"有没有映射"
+      // ——挂了别个参数（如 region）的卡用「有映射」判会得 true ⇒ 假绿（Task 3 已清除该启发式，
+      // 不许回来）。metabase.ts 是纯 HTTP 客户端，不该知道平台的参数命名约定。
+      const isTenantMapped = (d: { parameterMappings?: unknown[] }) =>
+        (d.parameterMappings ?? []).some(
+          (m) => (m as { parameter_id?: unknown }).parameter_id === TENANT_PARAM_ID,
+        )
+      const unboundCards = content.dashcards.filter(
+        (d) => d.cardId !== null && (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG) && !isTenantMapped(d),
+      )
+      if (!declared || unboundCards.length > 0) {
+        tenantUnbound.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
+      }
     }
 
     const ok = missingInMetabase.length === 0
@@ -293,6 +349,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       && unregistered.needsHuman.length === 0
       && tenantUnlocked.length === 0
       && tenantUnbound.length === 0
+      && contentUnreadable.length === 0
 
     // 差集非空 ⇒ 打一条可检索的告警行：对账结果只在响应体里返回的话，只有**主动去调**的人
     // 才看得见（这正是 #M3c 那条「配了但不对，在请求路径上不可观测」的病）。
@@ -302,7 +359,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         + `missingInMetabase=${missingInMetabase.length} `
         + `unregistered=${unregistered.recoverable.length}自愈+${unregistered.needsHuman.length}需人看 `
         + `tenantUnlocked=${tenantUnlocked.length} `
-        + `tenantUnbound=${tenantUnbound.length}`,
+        + `tenantUnbound=${tenantUnbound.length} `
+        + `contentUnreadable=${contentUnreadable.length}`,
       )
     }
     return c.json({
@@ -312,6 +370,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       missingInMetabase,
       tenantUnlocked,
       tenantUnbound,
+      contentUnreadable,
       unregistered,
     })
   })

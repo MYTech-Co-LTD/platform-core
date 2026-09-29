@@ -104,6 +104,30 @@ L2 定义 API **就是**将来的 agent 接入面，而且已经具备接入所�
 | 页门 | 「谁**能看**」 | 本模块的 platform scope（宿主按 manifest 施加）：制作/登记/对账 `data:manage`，观看面 `data:query` |
 | 数据门 | 「看**哪个租户的数据**」 | 嵌入 JWT 里 `locked` 的参数值，由 `GET /reports/:id/embed-url` **现签** |
 
+### 管理面（改页门 / 发布 / 回收）：动作都在平台，**没有独立的 published 状态**
+
+「未发布」不是一种状态位，而是**页门未放行在观看面的表现**（`data.reports` **没有** `published`
+列，也不打算加）：
+
+| 动作 | 怎么做 | 端点 |
+|---|---|---|
+| 发布（所有人可见） | 把页门清空 | `PUT /reports/:id` body `{"requiredScope": null}` |
+| 改页门（换成新 scope） | 换一个 scope 串 | `PUT /reports/:id` body `{"requiredScope":"sales:read"}` |
+| 回收 | 归档 dashboard（`renderer='platform'` 的行**跳过归档**，只删登记行——它没有 Metabase dashboard） + 删登记行 | `DELETE /reports/:id`（既有） |
+
+- **管理清单 `GET /reports/manage`**（`data:manage`）与观看清单 `GET /reports`（`data:query`）
+  的分野是**行裁剪**：观看面按行 `required_scope` 过滤（`visibleTo`），管理面**不裁**——
+  页门未放行的行对管理员必须可见、可改，否则没人能把未发布的报表发出来。
+- 跨租户 / 不存在的 id 一律 **404**（不给存在性探针）；`PUT` body 用 `.strict()`（多余键 400）。
+- ⚠️ **写保护（陈旧版本写 409 / If-Match）尚未落地**，归计划 4（spec §8 步骤 2）。
+- ⚠️ **入口可见性**：本模块 console 入口声明是单值 `data:query`（`manifest.yaml` 的
+  `frontend.console`）⇒ 只持 `data:manage` 的人**看不到本模块入口**。这是模块入口的既有口径，
+  非管理面引入；要改成「任一持有即可进」得先改宿主 `frontend.console` 的 scope 语义（架构先行）。
+- ⚠️ **重登记会重置页门**：`POST /reports` body 的 `requiredScope` 缺省是 `null`（= 发布）⇒ 幂等重跑
+  登记（部署注记里那条预期运维动作）会把**手工设好的页门静默清成「所有人可见」**。走过那条路径之后
+  必须回管理面确认页门，或重登记时显式带上原 scope。（把「缺省」与「显式置 null」区分开是写路径的
+  契约变更，归计划 4。）
+
 ### Metabase 侧的名称 = `<org>/<title>`（**命名空间**，跨租户串味的结构性防线）
 
 平台的 Metabase 是**单实例多租户共用**的，dashboard 在那边只有 `name` 这一个身份。
@@ -137,7 +161,7 @@ dashboard ⇒ B 的 `setEmbedding` 覆盖 A 的 `embedding_params`、B 的 `DELE
 env 三键（`DATA_METABASE_URL` / `_API_KEY` / `_SECRET_KEY`）见根 `.env.example`；
 `SECRET_KEY` 决定「看哪个租户数据」那一半权限，泄露 = 能签任意租户的嵌入凭证。
 
-### `POST /reports/reconcile` 的四个差集（spec §7 双写面对账）
+### `POST /reports/reconcile` 的五个差集（spec §7 双写面对账）
 
 响应体 + `console.warn` 双通道（**显式可见**，不静默——M3c 教训）：
 
@@ -147,6 +171,12 @@ env 三键（`DATA_METABASE_URL` / `_API_KEY` / `_SECRET_KEY`）见根 `.env.exa
 | `tenantUnlocked` | 回读 `embedding_params.tenant !== "locked"` | **本 org** |
 | `unregistered.recoverable` | 可嵌入集里**不属于任何 org 的任何一行 `metabase_id`**，且名字能解出 `<org>/<title>`（归属确定 ⇒ 重跑 `POST /reports` 按全等命中接管） | 登记侧取**全部租户**并集 |
 | `unregistered.needsHuman` | 同上但名字解不出归属（人在 Metabase 侧直接建的 / 本约定之前的遗留）⇒ 必须人判 | 同上 |
+| `contentUnreadable` | 回读 `GET /api/dashboard/{id}` 抛 `MetabaseError`（上游对**这一张**说不行） | **本 org**（逐行降级：不再整单 502） |
+
+`contentUnreadable` 非空 ⇒ `ok:false`；回读按**行**降级——一个 dashboard 回读失败只把那一行报出来，
+不让整租户的对账整单 502（对账的意义就是把「哪里坏了」显式报出来）。
+⚠️ 只对 `MetabaseError` 降级（上游明确对**这一张**说不行，含读卡片 `GET /api/card/{id}` 失败）；
+连接层/代码缺陷类异常仍然**整单失败**（不把缺陷伪装成业务状态）。
 
 `unregistered` **不能**按 `title` 求差：那样同名孤儿（幂等窗口/并发造出的重复 dashboard）看不见，
 且多租户下会把别人的 dashboard 恒报成本租户未登记——两种都是**假绿**。跨 org 读是**平台级
