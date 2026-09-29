@@ -751,6 +751,18 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(mb.state.calls.filter((c) => (c.init?.method ?? 'GET') === 'PUT')).toEqual([])
   })
 
+  it('★ renderer=platform ⇒ embed-url 409 RENDERER_NOT_EMBEDDABLE（不签死链 token）', async () => {
+    const { app, identity } = manage()
+    const id = await upsertReport(pool, identity.orgId, {
+      title: '自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+    })
+    const res = await app.request(`/reports/${id}/embed-url`)
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'RENDERER_NOT_EMBEDDABLE' })
+    // 守卫必须发生在任何 Metabase 调用之前（metabaseId=0 是哨兵，拿它签 token = 签死链）
+    expect(mb.state.calls).toHaveLength(0)
+  })
+
   it('★ I-1 两个 org 同 title ⇒ Metabase 侧两张不同 dashboard；B 的写 / 删都不碰 A 的', async () => {
     const a = shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }))
     const b = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] }))

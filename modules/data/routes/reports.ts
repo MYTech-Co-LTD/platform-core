@@ -189,6 +189,13 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       return c.json({ error: 'FORBIDDEN', need: row.requiredScope }, 403)
     }
 
+    // 渲染器通道守卫：platform 行没有 Metabase dashboard（metabaseId=0 是哨兵），给它签 token
+    // = 签一张**指向不存在 dashboard 的死链**。显式 409，等平台自绘渲染通路（计划 4）接上后
+    // 由前端按 renderer 走另一条观看通道。
+    if (row.renderer === 'platform') {
+      return c.json({ error: 'RENDERER_NOT_EMBEDDABLE' }, 409)
+    }
+
     // ★★ 安全论断的落点：locked.tenant 恒 = 调用者身份里的 org。
     //    · 查询串/请求体里的 tenant **从不读取**（本 handler 里没有任何 c.req.query('tenant')）；
     //    · 展开顺序也钉死：平台值放**最后**，即便库里被手工塞了一条带 tenant 的 embed_params
