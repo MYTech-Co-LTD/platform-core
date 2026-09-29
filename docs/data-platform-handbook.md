@@ -258,7 +258,7 @@ console 的 HTTP API（容器内 curl `127.0.0.1:18080`，Bearer=`DUCKLE_TOKEN`�
 | 资产类 | 进 Git？ | 谁维护 | 怎么到服务器 |
 |---|---|---|---|
 | 管线 `pipelines/*.json` | ✅ | 桌面（真引擎产出，**仓内不手编**）| Deploy **或** Git seed——**二选一，别混** |
-| 调度 / 告警 / 所有者 / 编排（`schedules.json`、`alerts.json`、`owners.json`、`plans.json`）| ✅ | 仓内 | **seed 进 workspace 卷 + 重建容器**（§1.3.2 **两步都做**）|
+| 调度 / 告警 / 所有者 / 编排（`schedules.json`、`alerts.json`、`owners.json`、`plans.json`）| ✅ | 仓内 | **seed 进 workspace 卷 + 重启容器**（§1.3.2 的「两步」；⚠️ **2026-09-29 投递实测订正**：**卷内定义重启即读**——`schedules`/`pipelines`/`owners`/`alerts` 进的是命名卷，重启后 console 重新加载。**「定向重建」只对需换 env 的改动必要**，因为 env 在容器创建时注入；原文三处写「重建容器」对此过度）|
 | 契约 / 语义（`contracts/`、`dbt/`）| ✅ | 仓内 | 随仓（与 §1.3 的 A/C 段同源）|
 | 连接 `connections/*.json`（**密文**）| ✅ | 桌面 | ⚠️ **换机 clone 后解不开**——解它的 `.duckle/keys/secret.key` **永不进 Git** ⇒ 密钥**另行分发** |
 | 上下文 / 例程（`contexts/`、`routines/`）| ✅ | 桌面 | 与管线同路 |
@@ -357,7 +357,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 1 | **立题** | issue 六必答：源/账套｜**频率与窗口语义**（先实测——#260 探针 30 分钟定了整个提频地基）｜**幂等口径**（覆盖写/追加 + batch_id 含义）｜容量预估（对照 12页×200 闸）｜失败语义｜消费方。**先按 §1.1.7 定形态**（L0 直连 / L1 父子两层），再查本表 §2 + WeKnora |
 | 2 | **桌面 authoring**（本地零生产） | 打开与服务器卷**同构布局**的本地工作区（pipelines/+schedules.json；2026-09-27 桌面首案例）→ 画布搭/复制改 → 本地试跑 → 产出 json。**仓内不手编**。⚠️ 节点 `type` 词汇表只有 `source`/`transform`/`sink`：`qa.contract` 写 `"type":"quality"` 引擎照跑，但桌面画布把它渲染成**无端口芯片**——连不出线、下游看似空画布（#272 实测、#273 修复） |
 | 3 | **落仓一次 PR 齐活** | pipelines + schedules/<账套> + alerts + owners + 契约 schema。验收锚看 build 的「N pipeline(s)」计数——⚠️ build 对解析失败 json **静默跳过**（2026-09-27 实测：exit 0、hash 不变、零警告） |
-| 4 | **投递** | push → 机器 sync 按 SHA 取件（不 push=404）→ seed 进账套卷 → **定向重建容器**（两步都做，serviceIds 定向） |
+| 4 | **投递** | push → 机器 sync 按 SHA 取件（不 push=404）→ seed 进账套卷 → **重启容器**（两步都做；卷内定义重启即读，**改 env 键**才走定向重建） |
 | 5 | **启用 + 首验** | Operator API 启用（与部署分离）。四验：**receipts startedAt**（判触发；last_run_at 是完成时刻）｜湖分区当日 batch｜_ops 行到 OO｜告警面静默 |
 | 6 | **release 快照**（推荐） | 改动前后各一版 ⇒ 有单步 rollback。边界（实测）：previous=你来时那版；会把 schedules.json 运行记账一起回退；**不覆盖 alerts/owners**；被跟踪文件切版即删、散文件不动；drift 闸 exit 1 可依赖 |
 | 7 | **沉淀** | 台账回填 §2 → WeKnora 查重沉淀 |
@@ -426,14 +426,22 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | **身份门（凭据↔账套自证）** | **可原生化，不必留 shell**（2026-09-28 D2 实测）：`src.rest` + `responseFormat:"xml"` + `rawResponseDestination` 把 SSE 原样落盘 → `code.sql` 抠 `^data: ` → 断 `company_id` 与门店子集 → `ctl.die`；身份不符实测 **0 次业务调用 + 0 写湖 + rc=1**。**四条护栏一条不许少**：探针节点必须带 `data.schema`；必须有「抠不出身份 ⇒ 红」的反向闸；⚠️ `${ENV:X}` 解析不到 duckle **只警告不报错**（期望值缺参 ⇒ 闸静默半失效，本仓吃过的亏）；传输失败要 `retryAttempts`。已知弱点：raw 路径必须**绝对路径**且带 `BATCH_ID`、**绝不写 `s3://`**（PII 落对象存储）；载荷含未闭合 `<` 会 fail-closed 假红（上游诉求）|
 | sink 写法 | **照现重管线抄**：一窗一 key 的单对象覆盖、分区写进 key、**不开 `partitionBy`**（0.7.4 实测：云 sink 上被**静默忽略**，同 run 两个 sink 写同一 key 会**静默丢数**）|
 
-**现状与迁移波次（诚实记账：本形态尚无生产首航案例）**：
+**现状与迁移波次（🔴 2026-09-29 订正：原文写「本形态尚无生产首航案例」——已过时，现有三个）**：
 
-| 波 | 内容 | 前置 |
+| 波 | 内容 | 状态（2026-09-29 实测） |
 |---|---|---|
-| **Wave 0**（进行中） | 零售 tick 按 #260 已批的**薄壳形态**投递——**不切形态**（试点期间不动） | W2 收口 |
-| **Wave 1 首航（L0 首验）** | `lemeng.branch` 回迁 **L0**（⚠️ **订正**：原写「回迁 L1」有误——它是**单窗日频**，按本节的分类属 L0，**不需要 foreach**）。形态 = **一条管线替代「薄管线 + shell + 重管线」三层**；凭据照样走 `connectionRef`（L0 本可用 `${ENV:}`，**故意用它是为 Wave 2 在生产预验凭据机制**）| **① D1 凭据通路 ✅ 定案（`connectionRef`）**；写入方 ✅ 脚本已进仓（容器内实跑于本波收口）；② 观测 ✅ / 告警 ✅（机制通）；③ 分页 ✅；④ sink ✅。**计划**：`docs/superpowers/plans/2026-09-28-wave1-branch-l0.md` |
-| **Wave 2（L1 首验）** | 零售日批回迁 **L1**（foreach 父替 `windows` wrapper，约 −400 行 shell）——**foreach 在这里才第一次上生产**（branch 是单窗，没验到它）；tick 随后评估（子管线 checkpoint **必须关**——累积窗会冻结在首快照）| Wave 1（L0）案例成立 |
-| **Wave 3** | 64188 跟进 + 试点收口 | Wave 2 案例成立 |
+| **Wave 0** | 零售 tick 按 #260 已批的**薄壳形态**投递——不切形态 | **从未投递**（tick 薄壳在生产上不存在）⇒ 由 Wave C 的 L1 形态直接取代，不经薄壳阶段 |
+| **Wave 1 首航（L0 首验）** | `lemeng.branch` 回迁 **L0**（⚠️ 原写「回迁 L1」有误——它是**单窗日频**，按本节分类属 L0，**不需要 foreach**）。形态 = **一条管线替代「薄管线 + shell + 重管线」三层**；凭据走 `connectionRef`（L0 本可用 `${ENV:}`，**故意用它是为后续在生产预验凭据机制**） | ✅ **已投产**（2026-09-28 切流；09-29 首次「**调度触发**」五点验收全绿）。**首个 L0 生产案例** |
+| **Wave A** | `lemeng.dim.item` → L0 | ✅ **已投产**（09-29 首跑五点全绿：17,135 行 / `batch_id` 唯一 / 运行记录带写资产） |
+| **Wave 2 / Wave B（L1 首验）** | 零售日批回迁 **L1**（foreach 父替 `windows` wrapper，约 −400 行 shell）——**foreach 在这里才第一次上生产** | ✅ **已投递**（09-29：L1 接管、薄壳置停；foreach **24 窗**首飞 `ok`）。**首个 L1 / foreach 生产案例** |
+| **Wave C** | `tick` / `close` → L1（**tick 形**） | ⏸️ **管线与调度已落，`enabled:false` 未激活**；`tick.l1` 取 `misfire:skip`（**catchup 结构上补不回错过的窗**——窗口由执行时刻算）|
+| **Wave D** | 64188 跟进 + 试点收口 | 🔄 **进行中**（09-29：64188 投递 `dim.branch.l0`（129 行，与哨兵 `visible=129` 吻合）/ `retail.windows.l1`（24 窗，对照臂 4,348→4,353）；薄壳退役、本文收口见 `docs/superpowers/plans/2026-09-29-waveD-64188-retirement-closeout.md`）|
+
+**首个生产案例得来的三条（🆕 有案例才写）**：
+
+1. **L0/L1 形态在生产上成立**：两条 dim L0 + 一条 retail L1 跑通，含 **foreach 24 窗**、`connectionRef` 凭据、身份门与期望值形状闸。**L0/L1 不再是「待验形态」。**
+2. **观测面的选锚判据（Wave B 投递当天发现，源码级）**：新鲜度锚**必须指向「有运行记录的管线」自己写**的资产——**别指向 foreach 子管线写的对象**。子管线不产运行记录 ⇒ 该锚**从不参与评估**（`freshness.json` 里压根不出现，比 `unknown` 更阴）。判据与修法见 **#359**。
+3. **双点火的价值被实测证实**：同一营业日两次点火，第二次捞回「后结算」的数据（3120 **+36 行 / +24 单**；64188 **+5 行**）——前一次采的是尚未收敛的当日快照。
 
 ### 1.2 硬约束清单
 
@@ -585,7 +593,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 观测没数据 | `OPS_SINK=DISABLED reason=no_ingest_env` ⇒ 观测投递未接通，见 issue **#210** |
 | **下游数据陈旧（采集绿、报表陈）** | **先查物化有没有在跑**——2026-09-26 实测：37 个 job 无一跑 dbt，PG 停在 09-23（详见 §0 与 §1.6）。⚠️ **2026-09-28 起物化 job 已在跑**（见 §3），这个现象不再由「没 job」引起 ⇒ **别照这条判，先看下一行** |
 | **下游看不见（物化在跑、消费端却空）** | 四步查，**四处都是静默失败**（2026-09-28 实测；跟踪 #297 / #298）：① **路由挂没挂**——无身份打 `POST /api/modules/data/{query,mcp}` 应回 **401**（**404 = 没挂载**）；② **三张表的行数**——`data.metrics`（空 = 词表没物化）/ `data.reports`（空 = 报表没登记）/ `data.query_audit`（空 = 从没人问过）；③ **Gate-B**——平台容器内 `dns.lookup('pg_duckdb')` 必须解析（**ENOTFOUND ⇒ 网络掉了**，容器重建即掉，重做步骤见 SOP P7）；④ **仓库连接的 `search_path`**——不设则报 `relation "<模型名>" does not exist`（见 SOP P8b） |
-| 改定义后没生效 | 检查**两步**是否都做了：re-seed 进 workspace 卷 + **重建容器**（§1.3.2） |
+| 改定义后没生效 | 检查**两步**是否都做了：re-seed 进 workspace 卷 + **重启容器**（卷内定义重启即读；改 env 键才需定向重建） |
 
 **告警**：接在 wrapper 的 `EXIT` trap（覆盖**所有**失败路径，且只有一份代码），**不接在管线的 `ctl.try`**
 （其配置未建模，靠猜属性名配它 = **静默不生效**）。仅当 `LEMENG_NOTIFY=1` 时发（**薄管线会设** ⇒
