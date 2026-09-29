@@ -677,6 +677,13 @@ git commit -m "feat(mb-proxy): handoff 兑换（验签+一次性 nonce+自有 Co
 
 - [ ] **Step 1: 写规则表测试**（先写测试，穷举放行/拒绝面）
 
+> ⚠️ **订正记录（2026-09-29，Task 4 实施中由变异确认挖出）**：**判定路径必须先归一化，且判的路径
+> = 上行给 Metabase 的路径**。实测 Hono 的 `c.req.path` 只走 `decodeURI`、**不解析 `%2f`** ⇒
+> `GET /app/..%2f..%2fapi/search` 会**命中 `/app/` 前缀被放行（200）并原样上行**，
+> 「封枚举面」那条被整条绕过。修法：加 `normalizePath()`（拒绝任何仍含 `%` 的路径 = fail-closed，
+> 其余解析出 `..`/`.` 段并归约），**规则表与透传共用同一个归约结果**。
+> 测试必须含这条绕过样本（`/app/..%2f..%2fapi/search` ⇒ deny）与「含 `%` 的合法路径被拒」的取舍断言。
+
 ```ts
 import { describe, expect, it } from 'vitest'
 import { decide } from './rules'
@@ -777,11 +784,16 @@ export async function proxy(cfg, req): Promise<Response>                        
 
 `index.ts` 挂中间件顺序：`/healthz` → `/handoff` → **鉴权**（解 `mb_edit` Cookie，失败 401）→ **规则**（`decide` 不过 403）→ 透传。
 
+> ⚠️ **残余风险（订正记录 2026-09-29，Task 4 实施中登记）**：透传用 `redirect: 'manual'` ⇒
+> 上游的 3xx 会把 `location` 原样回给浏览器，**那条 location 必须也落在放行表内**才走得通；
+> 真机下 `/` 回 200 还是 3xx **未验**（Task 7 必须确认；若是 3xx，要么把该 location 纳入放行表、
+> 要么改为跟随重定向但**逐跳复检**）。
+
 - [ ] **Step 4b: 上游纪律的 HTTP 级测试**（新建 `apps/mb-proxy/src/app.test.ts`；用 `createApp(cfg)` + 桩掉 `globalThis.fetch`，照模块测试 `fakeMetabase` 的形态）
 
 至少要咬住三条**安全不变量**（写在测试名里，别让它们只活在注释里）：
 1. **浏览器 Cookie 绝不上行**：带合法 `mb_edit` Cookie 请求一条放行路径 ⇒ 断言桩收到的请求头里**没有** `cookie`，且**有** `x-api-key`（服务身份）。
-2. **头改写**：桩返回 `x-frame-options: DENY` + 正常 body ⇒ 断言响应**没有** `x-frame-options`，且有 `content-security-policy: frame-ancestors <cfg.consoleOrigin>`。
+2. **头改写**：桩返回 `x-frame-options: DENY` + 正常 body ⇒ 断言响应**没有** `x-frame-options`，且有 `content-security-policy: frame-ancestors <cfg.consoleOrigin>`；**并且上游 `set-cookie` 必须被剥掉**（纪律②的镜像面：不许上游把会话 Cookie 种到反代自己的域上——订正记录 2026-09-29，Task 4 实施中补）。
 3. **401/403 契约**：无 Cookie ⇒ 401；有 Cookie 但路径不在规则表 ⇒ 403（**这两条是 Task 2 欠下的契约**，本任务必须兑现；`/healthz` 除外，它免鉴权）。
 
 - [ ] **Step 5: 跑测试确认绿 + typecheck**
@@ -791,7 +803,8 @@ Run: `pnpm --filter @platform/mb-proxy exec vitest run`（rules + session + hand
 - [ ] **Step 6: Commit**
 
 ```bash
-git add apps/mb-proxy/src/rules.ts apps/mb-proxy/src/rules.test.ts apps/mb-proxy/src/upstream.ts apps/mb-proxy/src/index.ts
+git add apps/mb-proxy/src/rules.ts apps/mb-proxy/src/rules.test.ts apps/mb-proxy/src/upstream.ts \
+        apps/mb-proxy/src/app.ts apps/mb-proxy/src/app.test.ts apps/mb-proxy/src/handoff.ts   # ⚠️ 订正记录：组装在 app.ts，原稿误列 index.ts
 git commit -m "feat(mb-proxy): 授权规则表（deny-by-default，封枚举面与任意查询面）+ 上游透传"
 ```
 
