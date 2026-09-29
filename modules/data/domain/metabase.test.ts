@@ -11,10 +11,14 @@ import { describe, expect, it } from 'vitest'
 import {
   MetabaseError,
   dashboardName,
+  getCard,
+  getCardTemplateTags,
   getDashboardEmbeddingParams,
+  getDashboardFull,
   listEmbeddableDashboards,
   metabaseFromEnv,
   parseDashboardName,
+  putDashboardMerged,
   setEmbedding,
   signEmbedToken,
   upsertDashboard,
@@ -48,25 +52,159 @@ const depsOf = (fetcher: FetchLike): MetabaseDeps =>
 const headerOf = (c: Rec, name: string): string | undefined =>
   (c.init?.headers as Record<string, string> | undefined)?.[name]
 
+/** 真机 `GET /api/dashboard/{id}` 里 dashcard 的形状（snake_case；`parameter_mappings` 可缺）。 */
+interface MbDashcardSeed {
+  id: number
+  /** `null` = **文本/虚拟卡**（真机实测：人手动加的文本卡就是 `card_id=None`）。 */
+  card_id: number | null
+  row: number
+  col: number
+  size_x: number
+  size_y: number
+  parameter_mappings?: unknown[]
+  /** 文本卡的文字在 `visualization_settings.text` 里；其它卡的 viz 配置也走这里。 */
+  visualization_settings?: unknown
+}
+
+/** 一张 dashboard 的种子。同一个 `id` 出现多次 ⇒ 卡片**累加**（见 `fakeMetabaseWithCards`）。 */
+interface MbDashboardSeed {
+  id: number
+  name: string
+  dashcards?: MbDashcardSeed[]
+  /** dashboard 参数：**原样**存取（真机对 PUT 的 `parameters` 有 schema 校验，桩不许替它收窄）。 */
+  parameters?: Record<string, unknown>[]
+}
+
+interface FakeDashboardState {
+  id: number
+  name: string
+  dashcards: MbDashcardSeed[]
+  parameters: Record<string, unknown>[]
+  embedding_params: Record<string, string> | null
+}
+
+/**
+ * **有状态**的 Metabase 桩（只做本任务用到的面：`GET /api/search` 与 `GET` / `PUT /api/dashboard/{id}`）。
+ *
+ * 与上面的 `stub()` 分工不同：那个是**按序回放**的无状态桩（「一次调用 ⇒ 一串响应」够用），
+ * 而「裸 PUT 会不会把卡片清掉」这件事**必须有状态**才测得出——PUT 得真的改到 GET 之后读得出来的状态。
+ *
+ * ⚠️ 三条形状口径照**真机行为**（不是照好写）：
+ *  ① `GET /api/search` 是**模糊**匹配（`includes`），且命中与否由**领域层**判 `name` 全等——
+ *     桩做成全等的话，那条判据就永远不被行使（口径同 routes/reports.test.ts 的 fakeMetabase）。
+ *  ② 同一个 `id` 的种子合并成**一张** dashboard、`dashcards` 按出现顺序累加：测试用两次同 id
+ *     种子的写法表达「这张 dashboard 上已经躺着 2 张卡」。
+ *  ③ `PUT` 对 `dashcards` / `parameters` 是**替换语义**（body 里没有该键 ⇒ 清空）——这正是真机上
+ *     「不带 dashcards 的 PUT 会替换卡片表列」的机制（本文件要修的 bug）。桩若做成「给了才改」，
+ *     把实现退化回裸 PUT 的变异体就**不会**变红 ⇒ 那条断言等于没测。
+ */
+function fakeMetabaseWithCards(
+  seed: MbDashboardSeed[],
+): { state: { dashboards: FakeDashboardState[]; calls: Rec[] }; fetcher: FetchLike } {
+  const dashboards: FakeDashboardState[] = []
+  for (const s of seed) {
+    let d = dashboards.find((x) => x.id === s.id)
+    if (d === undefined) {
+      d = { id: s.id, name: s.name, dashcards: [], parameters: [], embedding_params: null }
+      dashboards.push(d)
+    }
+    d.dashcards.push(...(s.dashcards ?? []))
+    if (s.parameters !== undefined) d.parameters = s.parameters
+  }
+  const state = { dashboards, calls: [] as Rec[] }
+  const respond = (b: unknown, status = 200) =>
+    new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
+
+  const fetcher: FetchLike = async (url, init) => {
+    state.calls.push({ url, init })
+    const method = init?.method ?? 'GET'
+    const body = init?.body === undefined
+      ? undefined
+      : (JSON.parse(String(init.body)) as Record<string, unknown>)
+    const u = new URL(url)
+    if (u.pathname === '/api/search') {
+      const q = u.searchParams.get('q') ?? ''
+      return respond({
+        data: state.dashboards
+          .filter((d) => d.name.includes(q))
+          .map((d) => ({ id: d.id, name: d.name, model: 'dashboard' })),
+      })
+    }
+    const m = /^\/api\/dashboard\/(\d+)$/.exec(u.pathname)
+    const d = m === null ? undefined : state.dashboards.find((x) => x.id === Number(m[1]))
+    // 未知路径 / 未知 id 一律 404（真机形状；不回落成 200 空体——那会让形状断言永远成立）
+    if (d === undefined) return respond({ message: 'not found' }, 404)
+
+    if (method === 'GET') {
+      return respond({
+        id: d.id, name: d.name, dashcards: d.dashcards, parameters: d.parameters,
+        embedding_params: d.embedding_params,
+      })
+    }
+    if (method === 'PUT') {
+      if (typeof body?.name === 'string') d.name = body.name
+      // 替换语义（口径②）：缺键 ⇒ 清空
+      d.dashcards = Array.isArray(body?.dashcards) ? (body.dashcards as MbDashcardSeed[]) : []
+      d.parameters = Array.isArray(body?.parameters) ? (body.parameters as Record<string, unknown>[]) : []
+      if (body !== undefined && 'embedding_params' in body) {
+        d.embedding_params = (body.embedding_params ?? null) as Record<string, string> | null
+      }
+      return respond({ id: d.id, name: d.name })
+    }
+    return respond({ message: 'not found' }, 404)
+  }
+  return { state, fetcher }
+}
+
 describe('upsertDashboard：幂等（幂等要自实现——API 无按名 upsert，spec §6.5）', () => {
-  it('search 命中同名 dashboard ⇒ PUT 覆盖，**不** POST（两次调用只产生一次创建）', async () => {
+  it('★ 已存在的 dashboard 上重跑 upsert ⇒ dashcards **不变**（Goal 判据：幂等更新不得破坏已有内容）', async () => {
+    // 这条是 Goal 的判据本身：`POST /reports` 的路径是 upsertDashboard → setEmbedding，而 upsert 排在
+    // 前面；它若发裸 PUT {name}，等 setEmbedding 去 GET 时卡片**已经被清掉了**（合并也救不回来）。
+    const { state, fetcher } = fakeMetabaseWithCards([
+      { id: 7, name: 'o/a', dashcards: [{ id: 1, card_id: 11, row: 0, col: 0, size_x: 12, size_y: 6 }] },
+      { id: 7, name: 'o/a', dashcards: [{ id: 2, card_id: 12, row: 6, col: 0, size_x: 6, size_y: 4 }] },
+    ])
+    // search 命中同名 ⇒ 走「已存在」那条分支
+    expect(await upsertDashboard(depsOf(fetcher), 'o/a')).toEqual({ id: 7, created: false })
+    expect(state.dashboards[0].name).toBe('o/a')
+    expect(state.dashboards[0].dashcards).toHaveLength(2)  // ← 关键断言：裸 PUT 会把它清成 0
+  })
+
+  it('search 命中同名 dashboard ⇒ PUT 覆盖，**不** POST（只产生一次创建）', async () => {
     const { calls, fetcher } = stub([
       { body: { data: [{ id: 7, name: '销售日报', model: 'dashboard' }], total: 1 } },
+      // 命中后的更新走 putDashboardMerged ⇒ 多一次「读全量」（真机形状：dashcards 是数组）
+      { body: { id: 7, name: '销售日报', dashcards: [], parameters: [] } },
       { body: { id: 7, name: '销售日报' } },
     ])
     const out = await upsertDashboard(depsOf(fetcher), '销售日报')
     expect(out).toEqual({ id: 7, created: false })
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(3)
     expect(calls[0].init?.method ?? 'GET').toBe('GET')
     expect(calls[0].url).toContain('/api/search?')
     // q 必须带上（否则搜不出来）+ models 收窄到 dashboard（否则 card/collection 混进来）
     expect(calls[0].url).toContain(`q=${encodeURIComponent('销售日报')}`)
     expect(calls[0].url).toContain('models=dashboard')
-    expect(calls[1].init?.method).toBe('PUT')
+    // ① 读全量（合并的输入）② 合并写回。载荷里 name/parameters/dashcards 三键齐 —— 不再是有啥发啥的裸 PUT
+    expect(calls[1].init?.method ?? 'GET').toBe('GET')
     expect(calls[1].url).toBe('https://mb.test/api/dashboard/7')
-    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ name: '销售日报' })
+    expect(calls[2].init?.method).toBe('PUT')
+    expect(calls[2].url).toBe('https://mb.test/api/dashboard/7')
+    expect(JSON.parse(String(calls[2].init?.body))).toEqual({
+      name: '销售日报', parameters: [], dashcards: [],
+    })
     // 每个请求都带 API key（否则真机 401，而单测里若桩不校验就结构性看不见）
     for (const c of calls) expect(headerOf(c, 'x-api-key')).toBe('mb-api-key')
+  })
+
+  it('已存在 + 给了 collectionId ⇒ 合并 PUT 仍带上 collection_id（不许静默丢掉「移进集合」这个语义）', async () => {
+    const { calls, fetcher } = stub([
+      { body: { data: [{ id: 7, name: 'o/a', model: 'dashboard' }] } },
+      { body: { id: 7, name: 'o/a', dashcards: [], parameters: [] } },
+      { body: { id: 7 } },
+    ])
+    await upsertDashboard(depsOf(fetcher), 'o/a', 3)
+    expect(JSON.parse(String(calls[2].init?.body))).toMatchObject({ name: 'o/a', collection_id: 3 })
   })
 
   it('search 未命中 ⇒ POST 创建，返回体里的 id', async () => {
@@ -113,10 +251,11 @@ describe('upsertDashboard：幂等（幂等要自实现——API 无按名 upser
         { id: 30, name: '日报', model: 'dashboard' },
         { id: 8, name: '日报', model: 'dashboard' },
       ] } },
+      { body: { id: 8, name: '日报', dashcards: [], parameters: [] } },
       { body: { id: 8 } },
     ])
     expect(await upsertDashboard(depsOf(fetcher), '日报')).toEqual({ id: 8, created: false })
-    expect(calls[1].url).toBe('https://mb.test/api/dashboard/8')
+    expect(calls[2].url).toBe('https://mb.test/api/dashboard/8')
   })
 })
 
@@ -149,17 +288,37 @@ describe('dashboardName / parseDashboardName：Metabase 侧身份按 org 命名�
 })
 
 describe('setEmbedding：发布 + 锁参数（只有未版本化老 API 能做，spec §6.4）', () => {
+  /**
+   * 一次 `setEmbedding` 的**第一条**响应：真机形状的 `GET /api/dashboard/{id}`。
+   * 实现改成「先 GET 全量 → 合并 → 再 PUT」后，这三个 embedding 字段是**合并**进全量里的，
+   * 所以队列首条必须是 `dashcards` 为数组的那份读侧响应（否则 `getDashboardFull` 抛形状错——
+   * 那是**有意的** fail-closed：读不出就是读不出）。
+   */
+  const dashOf = (dashcards: unknown[] = []) =>
+    ({ body: { id: 7, name: 'org-a/日报', dashcards, parameters: [] } })
+
   it('PUT /api/dashboard/{id} 载荷含 enable_embedding + embedding_type=signed + embedding_params 映射', async () => {
-    const { calls, fetcher } = stub([{ body: { id: 7 } }])
+    const { calls, fetcher } = stub([
+      dashOf([{ id: 1, card_id: 11, row: 0, col: 0, size_x: 12, size_y: 6 }]),
+      { body: { id: 7 } },
+    ])
     await setEmbedding(depsOf(fetcher), 7, [
       { name: 'tenant', mode: 'locked' },
       { name: 'region', mode: 'enabled' },
       { name: 'internal', mode: 'disabled' },
     ])
-    expect(calls).toHaveLength(1)
-    expect(calls[0].init?.method).toBe('PUT')
+    // 走 putDashboardMerged ⇒ 一次 setEmbedding = GET（读全量）+ PUT（合并写回）两次调用
+    expect(calls).toHaveLength(2)
+    expect(calls[0].init?.method ?? 'GET').toBe('GET')
     expect(calls[0].url).toBe('https://mb.test/api/dashboard/7')
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+    expect(calls[1].init?.method).toBe('PUT')
+    expect(calls[1].url).toBe('https://mb.test/api/dashboard/7')
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({
+      // 全量里的 name / parameters / dashcards 一个都不能丢
+      name: 'org-a/日报',
+      parameters: [],
+      // ★ 已有的卡**必须写回去**：这一条就是本文件要修的 bug 本体的断言（裸 PUT 会把它清成 []）
+      dashcards: [{ id: 1, card_id: 11, row: 0, col: 0, size_x: 12, size_y: 6 }],
       enable_embedding: true,
       embedding_type: 'signed',
       embedding_params: { tenant: 'locked', region: 'enabled', internal: 'disabled' },
@@ -167,9 +326,163 @@ describe('setEmbedding：发布 + 锁参数（只有未版本化老 API 能做�
   })
 
   it('零参数 ⇒ embedding_params 是空映射（不是 undefined/缺键）', async () => {
-    const { calls, fetcher } = stub([{ body: {} }])
+    const { calls, fetcher } = stub([dashOf(), { body: {} }])
     await setEmbedding(depsOf(fetcher), 7, [])
-    expect(JSON.parse(String(calls[0].init?.body)).embedding_params).toEqual({})
+    expect(JSON.parse(String(calls[1].init?.body)).embedding_params).toEqual({})
+  })
+})
+
+describe('putDashboardMerged：PUT 不得清掉已存在的卡片', () => {
+  it('对已有 2 张卡的 dashboard 只改 name，卡片仍为 2', async () => {
+    const { state, fetcher } = fakeMetabaseWithCards([
+      { id: 7, name: 'o/a', dashcards: [{ id: 1, card_id: 11, row: 0, col: 0, size_x: 12, size_y: 6 }] },
+      { id: 7, name: 'o/a', dashcards: [{ id: 2, card_id: 12, row: 6, col: 0, size_x: 6, size_y: 4 }] },
+    ])
+    const deps = { fetcher, baseUrl: 'http://mb', apiKey: 'k' }
+    await putDashboardMerged(deps, 7, { name: 'o/a-renamed' })
+    expect(state.dashboards[0].name).toBe('o/a-renamed')
+    expect(state.dashboards[0].dashcards).toHaveLength(2)  // ← 关键断言
+  })
+
+  it('patch 里给了 dashcards ⇒ 用 patch 的；没给 ⇒ 保留 GET 回来的', async () => {
+    const { state, fetcher } = fakeMetabaseWithCards([
+      { id: 8, name: 'o/b', dashcards: [{ id: 1, card_id: 21, row: 0, col: 0, size_x: 12, size_y: 6 }] },
+    ])
+    const deps = { fetcher, baseUrl: 'http://mb', apiKey: 'k' }
+    await putDashboardMerged(deps, 8, { dashcards: [{ id: 1, cardId: 21, row: 0, col: 0, sizeX: 6, sizeY: 6 }] })
+    expect(state.dashboards[0].dashcards[0].size_x).toBe(6)
+  })
+})
+
+describe('读全量/合并写回：真机形状的三条硬约束（站内同版本镜像实测）', () => {
+  const mbDeps = (fetcher: FetchLike): MetabaseDeps =>
+    ({ fetcher, baseUrl: 'http://mb', apiKey: 'k' })
+
+  it('★ 参数**不许窄化**：窄化成 [{slug}] 回写会被真机 400（实测 parameters[0].id: missing required key）', async () => {
+    // 窄化的后果不是"静默丢字段"而是**恒 400**：只要 dashboard 上有参数，发布就永远失败。
+    // 而 Task 5 干的正是"给 dashboard 建 tenant 参数" ⇒ 这条是那条主路径的前提。
+    const param = { id: 'p-tenant', name: 'tenant', slug: 'tenant', type: 'category', sectionId: 'string' }
+    const { state, fetcher } = fakeMetabaseWithCards([
+      { id: 7, name: 'o/a', dashcards: [], parameters: [param] },
+    ])
+    const deps = mbDeps(fetcher)
+    // 读侧：原样保留（要 slug 的人自己读 `.slug`）
+    expect((await getDashboardFull(deps, 7)).parameters).toEqual([param])
+    // 写侧：patch 没给 parameters ⇒ 把读回来的**原值**写回
+    await putDashboardMerged(deps, 7, { name: 'o/a-renamed' })
+    expect(state.dashboards[0].parameters).toEqual([param])
+  })
+
+  it('★ hasParameterMappings 如实报「挂了任意参数」——挂 region 的卡也是 true（判 tenant 不在这里）', async () => {
+    // 名字若叫 mappedToTenant，Task 6 就会把「挂了别个参数的卡」判成合格 ⇒ 对账假绿。
+    // metabase.ts 是纯 HTTP 客户端，不认平台侧的参数命名；判 tenant 归消费者（它手里有 parameterMappings）。
+    const mapping = { parameter_id: 'p-region', card_id: 11, target: ['variable', ['template-tag', 'region']] }
+    const { fetcher } = fakeMetabaseWithCards([
+      { id: 7, name: 'o/a', dashcards: [
+        { id: 1, card_id: 11, row: 0, col: 0, size_x: 12, size_y: 6, parameter_mappings: [mapping] },
+      ] },
+      { id: 7, name: 'o/a', dashcards: [
+        { id: 2, card_id: 12, row: 6, col: 0, size_x: 6, size_y: 4 },
+      ] },
+    ])
+    const full = await getDashboardFull(mbDeps(fetcher), 7)
+    expect(full.dashcards.map((d) => d.hasParameterMappings)).toEqual([true, false])
+    expect(full.dashcards[0].parameterMappings).toEqual([mapping])
+  })
+
+  it('★ 文本卡（card_id: null）不抛形状错，且文字逐字回写（否则加过文本卡的报表发布恒 502）', async () => {
+    const textCard = {
+      id: 2, card_id: null, row: 6, col: 0, size_x: 6, size_y: 4,
+      visualization_settings: { text: '这是人手动加的文本卡' },
+    }
+    const { state, fetcher } = fakeMetabaseWithCards([
+      { id: 7, name: 'o/a', dashcards: [{ id: 1, card_id: 11, row: 0, col: 0, size_x: 12, size_y: 6 }, textCard] },
+    ])
+    const deps = mbDeps(fetcher)
+    expect((await getDashboardFull(deps, 7)).dashcards[1].cardId).toBeNull()
+    await putDashboardMerged(deps, 7, { name: 'o/a-renamed' })
+    // 逐字：card_id 仍是 null，且 visualization_settings.text **还在**（不回写它 = 把人的文字清掉）
+    expect(state.dashboards[0].dashcards[1]).toEqual(textCard)
+  })
+
+  it('★ 但真正读不出的形状照旧抛（fail-closed 的边界没被放宽）', async () => {
+    // dashcards 不是数组
+    await expect(getDashboardFull(mbDeps(stub([{ body: { id: 7, name: 'o/a' } }]).fetcher), 7))
+      .rejects.toThrow(MetabaseError)
+    // card_id 既不是数字也不是显式 null：真机上不存在这个形状 ⇒ 读不出就是读不出
+    await expect(getDashboardFull(mbDeps(stub([
+      { body: { id: 7, name: 'o/a', dashcards: [{ id: 1, card_id: 'x' }] } },
+    ]).fetcher), 7)).rejects.toThrow(MetabaseError)
+    // 缺键（`card_id` 整个不在）同样算读不出
+    await expect(getDashboardFull(mbDeps(stub([
+      { body: { id: 7, name: 'o/a', dashcards: [{ id: 1 }] } },
+    ]).fetcher), 7)).rejects.toThrow(MetabaseError)
+    // dashcard 自己的 id 非数字
+    await expect(getDashboardFull(mbDeps(stub([
+      { body: { id: 7, name: 'o/a', dashcards: [{ card_id: 11 }] } },
+    ]).fetcher), 7)).rejects.toThrow(MetabaseError)
+  })
+
+  it('★ 畸形 parameter_mappings（truthy 非数组）⇒ throw，不静默丢（终审修复：静默丢 = 该卡映射下次发布被清）', async () => {
+    // 读侧把畸形映射静默归 undefined 的话，合并写路径（putDashboardMerged）回写时该卡就不带
+    // parameter_mappings 键 ⇒ 真机替换语义下，这条卡的现有映射在**下一次发布**时被清掉——
+    // 正是本支要防的失效类。口径同畸形 card_id：读不出就是读不出，不猜、不静默降级。
+    for (const bad of ['oops', { parameter_id: 'p-region' }]) {
+      await expect(getDashboardFull(mbDeps(stub([
+        { body: { id: 7, name: 'o/a', dashcards: [{ id: 1, card_id: 11, parameter_mappings: bad }] } },
+      ]).fetcher), 7)).rejects.toThrow(MetabaseError)
+    }
+  })
+})
+
+describe('getCard / getCardTemplateTags：卡片原生查询的读侧产物（v0.63 的 MBQL stages 形态）', () => {
+  /** 一次 `GET /api/card/{id}` 的真机响应形状（阶段数组里才有 native 与 template-tags）。 */
+  const cardOf = (stage: Record<string, unknown>) => ({ body: { dataset_query: { stages: [stage] } } })
+
+  it('数组形态的 template-tags（我们编译产的）⇒ 取每项的 name', async () => {
+    const { calls, fetcher } = stub([
+      cardOf({ native: 'select 1', 'template-tags': [{ name: 'tenant' }, { name: 'region' }] }),
+    ])
+    expect(await getCardTemplateTags(depsOf(fetcher), 11)).toEqual(['tenant', 'region'])
+    expect(calls[0].url).toBe('https://mb.test/api/card/11')
+    expect(calls[0].init?.method ?? 'GET').toBe('GET')
+    expect(headerOf(calls[0], 'x-api-key')).toBe('mb-api-key')
+  })
+
+  it('字典形态的 template-tags（人直接在 Metabase UI 里建的）⇒ 取键名', async () => {
+    const { fetcher } = stub([
+      cardOf({ native: 'select 1', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } }),
+    ])
+    expect(await getCardTemplateTags(depsOf(fetcher), 11)).toEqual(['tenant'])
+  })
+
+  it('template-tags 为 null ⇒ 空数组（**不是抛**：这只是"该卡没挂标签"这个结论本身）', async () => {
+    const { fetcher } = stub([cardOf({ native: 'select 1', 'template-tags': null })])
+    expect(await getCardTemplateTags(depsOf(fetcher), 11)).toEqual([])
+  })
+
+  it('★ getCard **一次** GET 同时给出标签与**整个查询定义**；MBQL 卡（无 native）也在 queryJson 里', async () => {
+    // 一次 GET 是「1 次 dashboard 读 + N 次卡片读」这条成本口径的落点：分两次调用会翻倍。
+    // ⚠️ queryJson 取的是**整个 `dataset_query`**（不是 native SQL 字符串）：UI 建的卡默认是 MBQL
+    //    （阶段里没有 native），只取 SQL 的话这类卡的摘要恒为空 ⇒ 人改它的查询指纹不动。
+    const nativeStage = { native: 'select * from item', 'template-tags': { tenant: { name: 'tenant' } } }
+    const mbqlStage = { 'source-table': 3, 'template-tags': { tenant: { name: 'tenant' } } }
+    const { calls, fetcher } = stub([cardOf(nativeStage), cardOf(mbqlStage)])
+    const deps = depsOf(fetcher)
+    const native = await getCard(deps, 11)
+    expect(native.tags).toEqual(['tenant'])
+    expect(JSON.parse(native.queryJson)).toEqual({ stages: [nativeStage] })
+    const mbql = await getCard(deps, 12)
+    expect(mbql.tags).toEqual(['tenant'])
+    // MBQL 卡**不是空摘要**：它的查询定义（source-table 等）逐字在里面，且与 native 卡不同
+    expect(JSON.parse(mbql.queryJson)).toEqual({ stages: [mbqlStage] })
+    expect(mbql.queryJson).not.toBe(native.queryJson)
+    expect(calls).toHaveLength(2)
+  })
+
+  it('★ stages 不是数组 ⇒ 抛（读不出就是读不出，不许回落成"没标签、没 SQL"）', async () => {
+    await expect(getCard(depsOf(stub([{ body: { dataset_query: {} } }]).fetcher), 11))
+      .rejects.toThrow(MetabaseError)
   })
 })
 

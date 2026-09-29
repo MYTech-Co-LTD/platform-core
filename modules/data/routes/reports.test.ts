@@ -16,6 +16,7 @@ import { Hono } from 'hono'
 import { Pool } from 'pg'
 import { declaredScopeGate } from '@platform/sdk'
 import mod from '../index'
+import { upsertReport } from '../domain/report-store'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import type { ModuleVars } from './context'
 
@@ -30,6 +31,30 @@ const SECRET = 'aaaa1111-bbbb-2222-cccc-333344445555'
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
 
+/** 真机 `GET /api/dashboard/{id}` 里 dashcard 的形状（snake_case；`parameter_mappings` 可缺）。 */
+interface FakeDashcard {
+  id: number
+  /** `null` = **文本/虚拟卡**（真机实测 `card_id=None`，内容在 `visualization_settings.text`）。 */
+  card_id: number | null
+  row: number
+  col: number
+  size_x: number
+  size_y: number
+  parameter_mappings?: unknown[]
+  /** 文本卡的文字在这里 —— 桩必须能存/读它，否则「合并 PUT 不清文字」这件事在路由级测不出来。 */
+  visualization_settings?: unknown
+}
+
+/** dashboard 参数（Metabase 侧形状）。平台只依赖 `slug`，其余原样流转。
+ * `sectionId`：publishWithTenantBinding 声明 tenant 参数时带的真机字段（staging 段落）。 */
+interface FakeDashParam {
+  slug: string
+  id?: string
+  name?: string
+  type?: string
+  sectionId?: string
+}
+
 interface FakeDash {
   id: number
   name: string
@@ -37,14 +62,28 @@ interface FakeDash {
   archived: boolean
   embedding_params?: Record<string, string>
   enable_embedding?: boolean
+  /** 卡片的**全量**读侧形状：`getDashboardFull` 靠它把「不带 dashcards 的 PUT」变成非破坏性。 */
+  dashcards?: FakeDashcard[]
+  parameters?: FakeDashParam[]
 }
 
 /**
  * 内存版 Metabase 桩。**search 故意做成模糊**（`includes`）——真机 `/api/search` 就是模糊匹配，
  * 桩若做成全等，领域层「必须 name 全等才算命中」的判据在路由测试里就永远不被行使。
+ *
+ * `cards` = cardId → `dataset_query.stages[0]`（发布路径要读每张卡的模板标签，见
+ * `publishWithTenantBinding`）；不在 `cards` 里的卡 404——与真机「读不出就是读不出」一致。
+ *
+ * ⚠️ `PUT /api/dashboard/{id}` 对 `dashcards` / `parameters` 是**替换**语义（body 里没有该键
+ *    ⇒ 清空）：这正是真机上「裸 PUT 会把卡片表列整条替换掉」的机制（本计划的 bug 本体）。
+ *    桩若做成「给了才改」，`putDashboardMerged` 退化成裸 PUT 时**不会有任何断言变红**——
+ *    桩于是成了「怎么改都绿」的假面（`getDashboardFull` 读不出 dashcards 时抛形状错也是同理）。
  */
-function fakeMetabase(seed: FakeDash[] = []) {
-  const state = { dashboards: [...seed], nextId: 100, calls: [] as { url: string; init?: RequestInit }[] }
+function fakeMetabase(seed: FakeDash[] = [], cards: Record<number, Record<string, unknown>> = {}) {
+  const state = {
+    dashboards: [...seed], cards, nextId: 100,
+    calls: [] as { url: string; init?: RequestInit }[],
+  }
   const fetcher = async (url: string, init?: RequestInit): Promise<Response> => {
     state.calls.push({ url, init })
     const method = init?.method ?? 'GET'
@@ -68,10 +107,15 @@ function fakeMetabase(seed: FakeDash[] = []) {
     }
     const m = /^\/api\/dashboard\/(\d+)$/.exec(u.pathname)
     // 对账回读（RR9②）：`GET /api/dashboard/{id}`。未发布过的 dashboard 真机回 `embedding_params: null`。
+    // `dashcards` / `parameters` 是真机会回的**全量**字段（缺了它们，`getDashboardFull` 会抛形状错）。
     if (m && method === 'GET') {
       const d = state.dashboards.find((x) => x.id === Number(m[1]))
       if (!d) return json({ message: 'not found' }, 404)
-      return json({ id: d.id, name: d.name, embedding_params: d.embedding_params ?? null })
+      return json({
+        id: d.id, name: d.name,
+        dashcards: d.dashcards ?? [], parameters: d.parameters ?? [],
+        embedding_params: d.embedding_params ?? null,
+      })
     }
     if (m && method === 'PUT') {
       const d = state.dashboards.find((x) => x.id === Number(m[1]))
@@ -82,7 +126,16 @@ function fakeMetabase(seed: FakeDash[] = []) {
         d.embeddable = body.enable_embedding
       }
       if (body?.embedding_params) d.embedding_params = body.embedding_params as Record<string, string>
+      // 替换语义（见桩头注）：body 里没有该键 ⇒ 清空。**存回去**是「不清卡」那条断言能被行使的前提。
+      d.dashcards = Array.isArray(body?.dashcards) ? body.dashcards as FakeDashcard[] : []
+      d.parameters = Array.isArray(body?.parameters) ? body.parameters as FakeDashParam[] : []
       return json(d)
+    }
+    const cm = /^\/api\/card\/(\d+)$/.exec(u.pathname)
+    if (cm && method === 'GET') {
+      const stage = state.cards[Number(cm[1])]
+      if (stage === undefined) return json({ message: 'not found' }, 404)
+      return json({ dataset_query: { stages: [stage] } })
     }
     return json({ message: 'not found' }, 404)
   }
@@ -259,6 +312,39 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(mb.state.calls.filter((c) => (c.init?.method ?? 'GET') === 'POST')).toHaveLength(1)
   })
 
+  it('★ 路由级回归：已有卡的 dashboard 上重跑 POST /reports ⇒ 卡不被清，且三件套成立', async () => {
+    const { app } = manage()
+    const first = await (await post(app, { title: '已有卡的报表' })).json()
+    const dash = mb.state.dashboards.find((d) => d.id === first.metabaseId)
+    if (dash === undefined) throw new Error('首次 POST 后 dashboard 应在桩里')
+    // 人/agent 已往这张报表上放了卡：一张带 tenant 标签（该映射）、一张不带（不许映射）、一张文本卡
+    dash.dashcards = [
+      { id: 1, card_id: 101, row: 0, col: 0, size_x: 12, size_y: 6 },
+      { id: 2, card_id: 102, row: 6, col: 0, size_x: 6, size_y: 4 },
+      { id: 3, card_id: null, row: 6, col: 6, size_x: 6, size_y: 4, visualization_settings: { text: '备注' } },
+    ]
+    mb.state.cards = {
+      101: { native: 'select 1 where t = {{tenant}}', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } },
+      102: { native: 'select 2' },
+    }
+
+    const second = await (await post(app, { title: '已有卡的报表' })).json()
+    expect(second.created).toBe(false)
+    expect(second.id).toBe(first.id)
+    // 卡片没被清（三件套那次合并 PUT 也不清卡——旧 bug 的路由级形态就是这里变成 0 张）
+    expect(dash.dashcards).toHaveLength(3)
+    // 只映射带 tenant 标签的那张；文本卡与不带标签的卡都不动
+    expect(dash.dashcards[0].parameter_mappings).toEqual([
+      { parameter_id: 'tenant-param', card_id: 101, target: ['variable', ['template-tag', 'tenant']] },
+    ])
+    expect(dash.dashcards[1].parameter_mappings ?? []).toEqual([])
+    expect(dash.dashcards[2]).toMatchObject({ card_id: null, visualization_settings: { text: '备注' } })
+    expect(dash.dashcards[2].parameter_mappings ?? []).toEqual([])
+    // 声明了 dashboard 级 tenant 参数 + 锁参（三件套在路由出口也成立）
+    expect((dash.parameters ?? []).map((p) => p.slug)).toContain('tenant')
+    expect(dash.embedding_params).toEqual({ tenant: 'locked' })
+  })
+
   it('★ 保留参数 tenant 不许外部给：POST /reports 带 lockedParams.tenant ⇒ 400，且不碰 Metabase', async () => {
     const { app } = manage()
     const res = await post(app, { title: '越权', lockedParams: { tenant: OTHER_ORG } })
@@ -383,6 +469,178 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     dash.embedding_params = { tenant: 'locked' }
     const clean = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
     expect(clean).toMatchObject({ ok: true, tenantUnlocked: [] })
+  })
+
+  // ── 对账判据加厚（spec §7 待办 2）：「锁了但绑不到」── embedding_params.tenant=locked 只说明
+  //    锁了，锁值还要**绑得到东西**才生效。五条各咬一个子判据（变异确认见任务报告）：
+  //    卡未映射 / 半绑定（单卡粒度，人裁 2026-09-29）/ 参数未声明 / 映射挂错参数 / 反证正常态不误伤。
+  it('reconcile 报出「锁了但绑不到」：有 locked 但卡片未映射 ⇒ tenantUnbound 非空、ok=false', async () => {
+    // 造一张"只锁了参、没映射"的 dashboard（桩里 parameters 为空、dashcards 无 mappings）。
+    // 卡 900 带 tenant 模板标签（真机形状的 dataset_query.stages[0]）——不带标签就进不了
+    // 「需要映射」这半边判据；不在 cards 里则回读直接 404 ⇒ 502，红得不是地方。
+    const { state, fetcher } = fakeMetabase(
+      [{
+        id: 300, name: `${ORG}/未绑定`, embeddable: true, archived: false,
+        enable_embedding: true, embedding_params: { tenant: 'locked' },
+      }],
+      { 900: { native: 'select 1 where t = {{tenant}}', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } } },
+    )
+    state.dashboards[0].dashcards = [{ id: 9, card_id: 900, row: 0, col: 0, size_x: 12, size_y: 6 }]
+    state.dashboards[0].parameters = []
+    vi.stubGlobal('fetch', fetcher)
+    const id = await upsertReport(pool, ORG, {
+      title: '未绑定', metabaseId: 300, embedParams: {}, requiredScope: null,
+    })
+    const { app } = manage()
+    const res = await app.request('/reports/reconcile', { method: 'POST' })
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(false)
+    expect(body.tenantUnbound.map((r: { id: string }) => r.id)).toContain(id)
+  })
+
+  it('reconcile 半绑定也报：两张 tenant 卡只映射一张 ⇒ tenantUnbound 非空（单卡粒度，人裁 2026-09-29）', async () => {
+    // 参数已声明（①不触发）；两张卡都带 tenant 标签，只映射了一张 ⇒ ②单卡粒度必须报
+    const { state, fetcher } = fakeMetabase(
+      [{
+        id: 301, name: `${ORG}/半绑定`, embeddable: true, archived: false,
+        enable_embedding: true, embedding_params: { tenant: 'locked' },
+      }],
+      {
+        901: { native: 'select 1 where t = {{tenant}}', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } },
+        902: { native: 'select 2 where t = {{tenant}}', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } },
+      },
+    )
+    state.dashboards[0].dashcards = [
+      { id: 11, card_id: 901, row: 0, col: 0, size_x: 6, size_y: 6,
+        parameter_mappings: [{ parameter_id: 'tenant-param', card_id: 901,
+                               target: ['variable', ['template-tag', 'tenant']] }] },
+      { id: 12, card_id: 902, row: 0, col: 6, size_x: 6, size_y: 6 },
+    ]
+    state.dashboards[0].parameters = [{ id: 'tenant-param', name: 'tenant', slug: 'tenant',
+                                        type: 'category', sectionId: 'string' }]
+    vi.stubGlobal('fetch', fetcher)
+    const id = await upsertReport(pool, ORG, {
+      title: '半绑定', metabaseId: 301, embedParams: {}, requiredScope: null,
+    })
+    const { app } = manage()
+    const res = await app.request('/reports/reconcile', { method: 'POST' })
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(false)
+    expect(body.tenantUnbound.map((r: { id: string }) => r.id)).toContain(id)
+  })
+
+  it('★ 锁了但参数没声明 ⇒ 同样报 tenantUnbound（声明了别个参数不算——declared 比 slug=tenant）', async () => {
+    const { state, fetcher } = fakeMetabase([{
+      id: 301, name: `${ORG}/未声明`, embeddable: true, archived: false,
+      enable_embedding: true, embedding_params: { tenant: 'locked' },
+    }])
+    // 无卡（needsMapping 不触发）、parameters 里只有 region ⇒ 唯一能咬到的是「tenant 没声明」
+    state.dashboards[0].dashcards = []
+    state.dashboards[0].parameters = [
+      { id: 'region-param', name: 'region', slug: 'region', type: 'category' },
+    ]
+    vi.stubGlobal('fetch', fetcher)
+    const id = await upsertReport(pool, ORG, {
+      title: '未声明', metabaseId: 301, embedParams: {}, requiredScope: null,
+    })
+    const { app } = manage()
+    const body = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(body.ok).toBe(false)
+    expect(body.tenantUnbound).toEqual([
+      expect.objectContaining({ id, title: '未声明', metabaseId: 301 }),
+    ])
+  })
+
+  it('★ 锁了、也声明了，但映射挂在了别的参数上 ⇒ 报 tenantUnbound（「有任意映射就算」是假绿，不许回来）', async () => {
+    const { state, fetcher } = fakeMetabase(
+      [{
+        id: 302, name: `${ORG}/映射错参`, embeddable: true, archived: false,
+        enable_embedding: true, embedding_params: { tenant: 'locked' },
+      }],
+      { 901: { native: 'select 1 where t = {{tenant}}', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } } },
+    )
+    // 卡 901 带 tenant 标签、tenant 参数也声明了，但卡上的映射挂的是 region 参数
+    // ⇒ 锁住的 tenant 值绑不到它。判据必须比 parameter_id，不是「有没有映射」。
+    state.dashboards[0].dashcards = [{
+      id: 10, card_id: 901, row: 0, col: 0, size_x: 12, size_y: 6,
+      parameter_mappings: [
+        { parameter_id: 'region-param', card_id: 901, target: ['variable', ['template-tag', 'region']] },
+      ],
+    }]
+    state.dashboards[0].parameters = [
+      { id: 'region-param', name: 'region', slug: 'region', type: 'category' },
+      { id: 'tenant-param', name: 'tenant', slug: 'tenant', type: 'category' },
+    ]
+    vi.stubGlobal('fetch', fetcher)
+    const id = await upsertReport(pool, ORG, {
+      title: '映射错参', metabaseId: 302, embedParams: {}, requiredScope: null,
+    })
+    const { app } = manage()
+    const body = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(body.ok).toBe(false)
+    expect(body.tenantUnbound).toEqual([
+      expect.objectContaining({ id, title: '映射错参', metabaseId: 302 }),
+    ])
+  })
+
+  it('★ 反证：锁了、声明了、tenant 标签卡也映射到 tenant 参数 ⇒ 不报（发布三件套产物不误伤）', async () => {
+    // 这正是 publishWithTenantBinding 落地后的真机形状（见上方「已有卡的报表」用例的断言）
+    const { state, fetcher } = fakeMetabase(
+      [{
+        id: 303, name: `${ORG}/绑定完好`, embeddable: true, archived: false,
+        enable_embedding: true, embedding_params: { tenant: 'locked' },
+      }],
+      { 902: { native: 'select 1 where t = {{tenant}}', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } } },
+    )
+    state.dashboards[0].dashcards = [{
+      id: 11, card_id: 902, row: 0, col: 0, size_x: 12, size_y: 6,
+      parameter_mappings: [
+        { parameter_id: 'tenant-param', card_id: 902, target: ['variable', ['template-tag', 'tenant']] },
+      ],
+    }]
+    state.dashboards[0].parameters = [
+      { id: 'tenant-param', name: 'tenant', slug: 'tenant', type: 'category' },
+    ]
+    vi.stubGlobal('fetch', fetcher)
+    await upsertReport(pool, ORG, {
+      title: '绑定完好', metabaseId: 303, embedParams: {}, requiredScope: null,
+    })
+    const { app } = manage()
+    const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(rec).toMatchObject({
+      ok: true, missingInMetabase: [], tenantUnlocked: [], tenantUnbound: [],
+      unregistered: { recoverable: [], needsHuman: [] },
+    })
+  })
+
+  // ── renderer 守卫（终审修复 3，Task 2「凡读 metabaseId 前先判 renderer」的落地）──
+  it('★ renderer=platform 的行不被对账报出（metabaseId=0 哨兵不进 missingInMetabase/tenantUnlocked/tenantUnbound）', async () => {
+    await upsertReport(pool, ORG, {
+      title: '自绘报表', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+    })
+    const { app } = manage()
+    const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    // ok 不受 platform 行影响：它没有 Metabase dashboard，对账的三个差集都不该碰它
+    expect(rec).toMatchObject({
+      ok: true, registered: 1, embeddable: 0,
+      missingInMetabase: [], tenantUnlocked: [], tenantUnbound: [],
+      unregistered: { recoverable: [], needsHuman: [] },
+    })
+  })
+
+  it('★ renderer=platform 的行 DELETE 不发归档请求（没有 Metabase dashboard 可归档），登记行照删', async () => {
+    const id = await upsertReport(pool, ORG, {
+      title: '自绘报表', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+    })
+    const { app } = manage()
+    const res = await app.request(`/reports/${id}`, { method: 'DELETE' })
+    expect(res.status).toBe(204)
+    // 登记行照删（跳过的只是 Metabase 侧动作，不是删除本身）
+    expect((await pool.query('select 1 from data.reports where org = $1', [ORG])).rowCount).toBe(0)
+    // 桩上一条 PUT 都没发（不碰 Metabase——尤其不许拿 metabaseId=0 哨柄去 PUT /api/dashboard/0）
+    expect(mb.state.calls.filter((c) => (c.init?.method ?? 'GET') === 'PUT')).toEqual([])
   })
 
   it('★ I-1 两个 org 同 title ⇒ Metabase 侧两张不同 dashboard；B 的写 / 删都不碰 A 的', async () => {
