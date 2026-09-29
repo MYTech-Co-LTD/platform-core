@@ -479,7 +479,7 @@ sh /opt/lemeng-sync.sh <全SHA> --check    # 只比不写
 
 | 改了什么 | 最小动作 | 为什么 |
 |---|---|---|
-| **`schedules/` 或 `pipelines/` 的定义**（本节日常改动） | **seed + 重启容器** | 定义 seed 进的是**命名卷** `/workspace`（`<project>-lemeng-console-<账套>-ws`）——**不是 bind-mount** ⇒ 卷内容·重启即重新读取。**不必定向部署。** |
+| **`schedules/` 或 `pipelines/` 的定义**（本节日常改动） | **seed + 重启容器** | 定义 seed 进的是**命名卷** `/workspace`（`<project>-lemeng-console-<账套>-ws`）——**不是 bind-mount** ⇒ 卷内容·重启即重新读取。**不必定向部署。**（同类还有 `alerts.json`/`owners.json`。**本节即统一口径**，handbook §1.3.2 已于 2026-09-29 按此订正为「按类分」；2026-09-29 两账套投递再次实测：只用服务级 `…/restart`，新调度立刻生效。） |
 | **bind-mount 进来的文件**：仓内 `duckle/`（挂 `/pipelines:ro`）、`/opt/lemeng-run.sh` | seed/同步 + **重建容器**（**用 `serviceIds` 定向部署**） | **bind-mount 钉的是 inode**，原子替换（同步程序就是这么做的）后运行中的容器**仍看到旧文件** ⇒ 只有重建才换。<br>⚠️ **重建就用 `serviceIds`，别单传 `refreshServiceIds`**——后者名字很像「只重建点名的那个」，但 **2026-09-26 实测：单传它触发了全量重建**，把 `pg_duckdb` 与 `metabase-db` 一并重启（正是本表第三类要避免的）。那次靠卷持久化**数据无损**（实测物化表逐字不变、5 服务全 healthy、outage 0）——但**别把「没出事」读成「这个参数没问题」**。<br>**自证**：重建后**进容器**比对（`$CONTAINER 内` 的 sha256 ≠ 宿主上的 sha256 ⇒ 仍是旧 inode）。 |
 | **新增/改服务**（compose 服务集变了） | `post_projects_by_id_services_sync` → 按 `serviceIds` **定向部署** | 只重建点名的那几个；**别全量部署** —— 会重启 `pg_duckdb`。 |
 
@@ -508,13 +508,12 @@ curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/sch
 | 现象 | 先看哪 |
 |---|---|
 | 排班没触发 / console 本身有问题 | **经 openship MCP** 读该 console 服务的日志（数据面 project → 服务 → 日志端点）——正常应是四行：console on / workspace / DuckDB / **sign-in required**。⚠️ **别裸 SSH 上机敲 `docker logs`**（根本法则·唯一通道） |
-| 跑了但失败 | `schedules.json` 的 `last_run_status` / `last_run_error`，以及该账套卷里 `logs/dim-*-run.csv`（薄管线的运行记录，含 wrapper 完整 stdout） |
+| 跑了但失败 | **按形态分**（2026-09-29 收口：薄壳已退役）：<br>· **L0/L1（现行）**：`runs/receipts/run-*.json`（**回执**，逐节点 status/rows/耗时）＋ `runs/<pipeline_id>.json`（**运行记录**，终态 + **写了哪些资产**——`assets` **只在这里**，回执对任何管线都不带）；<br>· **薄壳（仅历史形态）**：卷里 `logs/dim-*-run.csv`（含 wrapper 完整 stdout） |
 | 自证没过 | 输出里的 `ASSERT_FAIL: …` / `DIM_FAILED` —— **拒写湖是正确行为**（#205），不是故障 |
 
 ⚠️ **`/api/schedules` 的 GET 不回运行状态**（文件里已有、GET 恒 `null`）⇒ **别信那个 GET**。
 
-**告警**：wrapper 的 `EXIT` trap 发企微（仅当 `LEMENG_NOTIFY=1`，**薄管线会设** ⇒ 人工/诊断跑不刷群）。
-缺 `WECOM_WEBHOOK_URL` 时打 `NOTIFY_SKIPPED`（不静默）；**告警绝不改退出码**。
+**告警（两条并存；🔴 2026-09-29 收口）**：① **引擎原生 `alerts.json`** = **L0/L1 的告警面**（打进本 console 的**任何非 ok run**，**无门槛**，经 OO 转投）；② wrapper 的 `EXIT` trap = **仅薄壳形态适用**（已退役）——仅当 `LEMENG_NOTIFY=1` 发企微（**薄管线会设** ⇒ 人工/诊断跑不刷群）；缺 `WECOM_WEBHOOK_URL` 时打 `NOTIFY_SKIPPED`（不静默）；**告警绝不改退出码**。
 ⚠️ 已知未通项：`OPS_SINK=DISABLED reason=no_ingest_env` ⇒ 观测投递没接（见 open issue **#210**）。
 
 ### F.5 尚未迁移 + 回滚
