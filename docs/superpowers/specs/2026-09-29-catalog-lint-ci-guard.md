@@ -20,7 +20,7 @@
 |---|---|---|
 | 装得上吗 | 能。`pip install duckle==0.7.4`（PyPI JSON 实查：`Requires-Python: >=3.8`） | `python3.12 -m venv v && v/bin/pip install --no-cache-dir "duckle==0.7.4"` |
 | 体积 | duckle wheel（`manylinux2014_x86_64`）**31.6 MB** + 传递依赖 `duckdb-cli==1.5.5`（`manylinux_2_17_x86_64`）**21.3 MB** ≈ **53 MB** | PyPI JSON 的 `urls[].size` |
-| 耗时 | **16.1 s**（本机、`--no-cache-dir`、冷） | `time v/bin/pip install …` |
+| 耗时 | 本机 **16.1 s**（`--no-cache-dir`、冷）；**GHA 实测 2.4 s** | `time v/bin/pip install …` ／ CI step 时间戳（见 §3） |
 | Python 版本 | 3.12（与运行镜像 `python:3.12-slim` 同）；CI 用 `actions/setup-python@v5` | `deploy/duckle/Dockerfile:57` |
 | 要不要另装 DuckDB | **不要**。duckle wheel 自带 `duckle-runner` 二进制，`duckdb-cli` 自带 `duckdb` 控制台脚本，duckle 的入口垫片会自己找到它 | `deploy/duckle/README.md` §2.1（本轮复核仍成立：装完 `duckle catalog --help` 直接可用） |
 | 子命令面 | `build` / `assets` / `impact` / `orphans` / `owners` / `lint` / `diff` | `duckle catalog --help` 实拉 |
@@ -108,8 +108,27 @@ pnpm exec tsx scripts/check-duckle-catalog.mjs [源目录] [--duckle <bin>] [--k
 **不照抄 Dockerfile 的 `-i 清华源`**：那是镜像在**境内**构建才需要的；GitHub runner 直连 PyPI 更快，
 且镜像源同步有滞后（Dockerfile 注释里记着 aliyun 未同步 0.7.4 那件事）。
 
-**时长影响**：`setup-python`（秒级，有工具缓存）+ `pip install`（~53 MB，本机 16 s；GHA 实测数以本 PR
-的 CI run 为准）+ 门禁本身 1 s。`gates` 的 `timeout-minutes: 20` 余量充足。
+**时长影响（GHA 实测，PR #341 的 run `36551939620`）**
+
+| step | 起止 | 耗时 |
+|---|---|---|
+| `actions/setup-python@v5` | 09:53:18 → 09:53:18 | **0 s**（runner 镜像自带 3.12，命中工具缓存） |
+| `安装 duckle（版本取自 Dockerfile…）` | 09:53:18.98 → 09:53:21.36 | **2.4 s**（`Successfully installed duckdb-cli-1.5.5 duckle-0.7.4`） |
+| `pnpm exec tsx scripts/check-duckle-catalog.mjs` | 09:53:21 → 09:53:22 | **1 s** |
+
+⇒ 本门禁给 `gates` 增加约 **4 s**（该 job 总时长 69 s，`timeout-minutes: 20` 余量充足）。
+**注意：GHA 上比本机快 6 倍多**（2.4 s vs 16.1 s）—— runner 到 PyPI 是一等公民链路，
+所以「装包代价过大 ⇒ 让步用静态检查」这条路**在本仓的 CI 上不成立**。
+
+**GHA 侧绿证据（逐字，取自该 run 的 gates job 日志）**：
+
+```
+duckle 版本（取自 Dockerfile）：0.7.4
+Successfully installed duckdb-cli-1.5.5 duckle-0.7.4
+check-duckle-catalog: OK（12 pipelines, 20 assets, 201 links.；12 个管线文件；catalog lint 无 finding）
+```
+
+四个门禁 job（unit / gates / web / smoke）全 success。
 
 ## 4 红绿双证据（逐字）
 
@@ -213,6 +232,18 @@ exit=1
 > 替身的边界照实说：它**只建模两条规则**（`snk.minio` 缺 `bucket` ⇒ 命名不了；owners 错拼 ⇒ 死规则），
 > 不是引擎模拟器。**真机判定由 CI 那步真跑负责**，替身锁的是「守卫拿到这套输出后红/绿与文案对不对」。
 
+### 4.6 红/绿各自是在哪里证的（照实说，别读宽）
+
+- **绿**：**本机与 GHA 两侧都证了**（GHA 逐字见 §3）。
+- **红（①②③）**：在本机用**同一个 `duckle==0.7.4`**、**同一个脚本**、**同一套工作区构造法**实证
+  （§4.2 用的是真仓真文件、改后撤回；§4.3/§4.4 是工作区注入）。**没有**在 GHA 上造一次红 ——
+  造法只能是「往分支里真写坏管线 + 开 PR 触发」，那要污染一个已合并语义的仓面、还多花两条 PR，
+  与「反例必须撤回、管线内容零改动」的纪律冲突。
+  红绿两条路径的差异只有「引擎在哪个平台输出什么」；**绿已经在 GHA 上跑通**，且引擎版本
+  由「从 Dockerfile 读」**同源钉住**（不是各写各的），解析层与平台无关。
+- 残余风险（照实记）：若将来 duckle 改了判据①的文案，**本机/GHA 都会一起失效**，而单测的替身
+  转录是死的 ⇒ 那时判据②（lint 退出码）仍会红，是本守卫的第二道保险。
+
 ## 5 覆盖边界与遗留（照实记，别读宽）
 
 1. **`alerts.json` 不参与 `catalog lint`**（实测：把它放进工作区，lint 输出与退出码**不变**）
@@ -225,4 +256,5 @@ exit=1
    本门禁不覆盖。它拦的是「声明本身命不了名」。
 4. **「能被命名」≠「探测能命中具体对象」**：asset id 里是不展开的 `${ENV:ZOS_BUCKET}` 模板串
    （沿用 #334 的诚实标注）。本门禁只解决「能否命名」。
-5. **GHA 上的实测时长**以本 PR 的 CI run 为准（本机数：pip 16.1 s + 门禁 0.52 s）。
+5. **GHA 实测时长已回填**（§3：pip 2.4 s + 门禁 1 s，`gates` 共增 ~4 s）。
+6. **红没在 GHA 上造过一次**（只在同一引擎版本的本机造）——理由与残余风险见 §4.6。
