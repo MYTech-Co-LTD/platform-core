@@ -469,9 +469,12 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       body: JSON.stringify({ requiredScope: 'finance:read', expectedVersion: v0 }),
     })
     expect(res.status).toBe(200)
-    expect(await res.json())
+    const body = await res.json() as { version: number }
+    expect(body)
       .toMatchObject({ id, title: '销售日报', requiredScope: 'finance:read', renderer: 'metabase' })
-    // 成功响应体回带**推进后**的版本（写保护的读侧契约）
+    // 成功响应体回带**推进后**的版本（写保护的读侧契约——console 据此续写下一次，无需再读一遍）
+    expect(body.version).toBe(v0 + 1)
+    // 库里也真的推进了：响应体与落库同源，两处都得对（只断一处，另一处写错也看不见）
     expect((await pool.query('select version from data.reports where id = $1', [id])).rows[0].version)
       .toBe(v0 + 1)
     const db = await pool.query('select required_scope from data.reports where id = $1', [id])
@@ -525,6 +528,29 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(stale.status).toBe(409)
     expect(mb.state.calls).toHaveLength(0)     // 守卫必须先于归档
     expect((await app.request(`/reports/${id}?expectedVersion=1`, { method: 'DELETE' })).status).toBe(204)
+  })
+
+  it('★ expectedVersion 超 int4 上界 ⇒ 400 INVALID_BODY（不是 500：客户端可控的取值不许污染 5xx）', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '版本上界' })).json()
+    // 3000000000 能过 `.int().positive()`，但 `version` 是 int4 列、这个值会被绑进 SQL ⇒
+    // 无上界时 Postgres 报 22003、被兜成 500。契约是「非法入参 ⇒ 400」，且 5xx 会污染监控。
+    const over = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'sales:read', expectedVersion: 3000000000 }),
+    })
+    expect(over.status).toBe(400)
+    expect(await over.json()).toEqual({ error: 'INVALID_BODY' })
+    // 且写没落：拒的是这一次请求，不是把行改坏
+    expect((await pool.query('select version from data.reports where id = $1', [id])).rows[0].version).toBe(1)
+    // 反证上界是**闭区间**、不是把大值一律拒掉：int4 上界本身合法，能走到 SQL 与版本比对（陈旧 ⇒ 409）。
+    // （这条同时钉住 `.max()` 没写成 `.lt()`/off-by-one——那时这里会变 400 而红。）
+    const edge = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'sales:read', expectedVersion: 2147483647 }),
+    })
+    expect(edge.status).toBe(409)
+    expect((await edge.json()).currentVersion).toBe(1)
   })
 
   it('★ PUT 负测：多余键 400（strict）/ 空串 400 / 跨租户 404 且写不动', async () => {

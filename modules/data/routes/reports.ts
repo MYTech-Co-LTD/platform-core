@@ -189,8 +189,12 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
 
   const GateBody = z.object({
     requiredScope: z.string().min(1).nullable(),
-    // 登记侧版本（写保护；人裁 fail-closed）：必填，缺则 400
-    expectedVersion: z.number().int().positive(),
+    // 登记侧版本（写保护；人裁 fail-closed）：必填，缺则 400。
+    // ⚠️ **必须带上界** `.max(2147483647)`（int4 上限）：这个值会被绑进 SQL 与 `version`（int4 列）
+    //    比较，无上界时 `3000000000` 这类**客户端可控**的取值会让 Postgres 报 22003、被兜成 500
+    //    ——契约是「非法入参 ⇒ 400」，且 5xx 会污染监控。**闭区间**：int4 上限本身合法（仍走比对）。
+    //    （DELETE 的同名字段**不需要**上界：它只在 JS 里与 `row.version` 比较，从不进 SQL。）
+    expectedVersion: z.number().int().positive().max(2147483647),
   }).strict()
 
   // ── 页门改动（管理面动作：页门/发布/回收之「页门」「发布」）─────────────────────────
