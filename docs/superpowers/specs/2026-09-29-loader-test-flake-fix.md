@@ -253,7 +253,19 @@ issue 的建议 (2) 是「若每用例重建 DB / 重跑迁移 ⇒ 用 `beforeAl
 - gates：`check-manifests` / `lint-architecture` / `check-compose` / `check-env-example` /
   `check-data-models` / `check-tenant-isolation` 全部 EXIT=0。
 
-（远端 CI 结论以 PR 检查为准；本文不替 CI 下结论。）
+**远端 CI（PR #345，run `36560174447`）：unit / gates / web / smoke / discipline 全 pass。**
+（main-guard 与 deploy 在 PR 上按设计 skip。）unit job 各包：
+
+| 包 | Test Files | Tests | Duration |
+|---|---|---|---|
+| apps/server（含 `loader.test.ts`） | 17 passed | 221 passed | 42.56s |
+| modules/aftersales | 29 passed | 220 passed | 35.45s |
+| modules/data | 22 passed | 270 passed | 44.61s |
+| test:guard（仓根 `scripts/`） | 13 passed | 299 passed | 8.58s |
+
+> 首轮（`bc03044`，只有 `loader.test.ts` 那两处改动）unit **红**在 `modules/data`，
+> 即 §3.3 那族兄弟 flake —— 那是既有问题、不是本 PR 引入的（对照见 §3.3）。
+> 本表是补上 §3.3 两处配置后的复跑结果。
 
 ## 5. 残留与未决（**不隐藏**）
 
