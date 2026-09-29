@@ -433,6 +433,12 @@ export function withObjectLock<T>(key: string, fn: () => Promise<T>): Promise<T>
 
 - [ ] **Step 5: 写并发承重测试**（照既有 `reports.test.ts:965` 的确定性竞态范式）
 
+> ⚠️ **订正记录（2026-09-29，Task 4 实施中实测）**：**下面那条「6 并发同版本 PUT ⇒ 恰 1 落」并不是锁的承重证据**——
+> 去掉 `withObjectLock` 后它**仍然绿**：恰一胜者是 Task 3 的条件 UPDATE（`where … and version = $4`）在 **DB 层**
+> 保证的，与锁无关。锁的**唯一承重证据**必须是「锁能挡住 version 比对挡不住的那条路」，即
+> **DELETE（JS 比较 + 无条件删行）与 PUT 交错**那条：无锁时 PUT 会拿到 200 却是**丢更新**，有锁时串行化后
+> PUT 拿 **404**（行已被删）。两条都要写，但**别把前者当锁的证据**（后者才是）。
+
 ```ts
   it('★ 并发写：6 个同版本 PUT ⇒ 恰 1 成功 + 5 × 409（账实相符，spec §3③ 读数）', async () => {
     const { app } = manage()
