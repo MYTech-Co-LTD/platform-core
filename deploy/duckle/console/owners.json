@@ -49,6 +49,8 @@
     "     close.run failure 规则覆盖。⇒ 这两类资产不声明，Unknown 是正确答案。",
     "   · expectedAfterSchedule 的「禁用即 Stale」语义本仓依旧刻意不用（旧稿理由仍成立；且 tick 调度在",
     "     64188 侧 enabled:false 属正常预备态，用它必误报）。",
+    "   （2026-09-29 订正：retail 锚已随 Wave B 切 L1 改指**湖对象**（见 ⑩）；本节 retail-windows-run.csv",
+    "     的描述为切换前历史，「兜底日批健康」语义由新锚承接。）",
     "",
     "⑤【生效自检（判据，非目视）】seed 后 ≤2 个巡检周期（120s）内 .duckle/freshness.json 必须出现",
     "   两条资产且状态非 unknown——fresh=正常在写；stale 也是 seed 成功（声明了但尚未写入或已停更，",
@@ -100,7 +102,8 @@
     "     成功跑一次 L0 之后，freshness.json 里该资产必须**出现且非 unknown**。若它恒 Stale 而 L0 确在",
     "     成功跑，则回落方案 = 给 L0 加运行记录节点（`code.sql` 出单行汇总 → `snk.csv` 覆盖写）",
     "     ——**先验再切**，别带着未验的锚切流。",
-    "⑨【2026-09-28 Wave A 新鲜度锚换点：item 面改锚**湖对象**（与 ⑧ 的 branch 同形）】\n   · 改前：`/workspace/logs/dim-item-run.csv` 是**薄管线** `lemeng.dim.item.run` 的 `snk.csv` 运行记录\n     （catalog kind=file）。薄壳停跑后它不再被写 ⇒ 留着就是**永久 Stale**。\n   · 新锚（本次替换）：L0 管线 `lemeng.dim.item.l0` 的 `snk.minio` 目标，catalog 里 kind=**object**，\n     id = `minio://${ENV:ZOS_BUCKET}/lemeng/dim_item/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/all.parquet`。\n     匹配 glob `minio://*/lemeng/dim_item/system_book=*/snapshot=*/all.parquet`——**本机 `duckle catalog owners`\n     实测匹配通过**（同 ⑧ 的复核手法，不靠猜）。阈值 36h，公式同 ③（日频 24h + 12h 余量；item 调度 UTC 11:00）。\n   · ⚠️ **与 ⑧ 的做法有一处刻意不同，记在这里**：branch 当年是「**过渡期两条规则并存**（薄壳 CSV + L0 湖对象），\n     到切流那一批才删 CSV」；本次按 Wave A 计划「**观测面同批**」**一次做完**（删 CSV + 挂新锚）。\n     代价：若切流延后，**过渡期里「薄壳 item 是否还在按日写」不再有独立告警**——只有新锚那条在把 L0 的关。\n     判据取舍：新旧两条锚**指向同一件事**（item 面当天采集是否发生），并行期两条并存会让「L0 已挂但手动触发\n     ⇒ 36h 无写 ⇒ Stale」与「薄壳正常」同时成立、读数互相打架（⑧ 已记载 branch 过渡期会出现这个**预期读数**）。\n     ⇒ 本批选**单锚**：以 **L0 湖对象**为准（切流后它就是唯一真相）。若切流延后于本批交付，这是**已知观测缺口**。\n   · ⚠️ **未验项（同 ⑧ 如实带走）**：object 资产的时钟**端到端仍未在生产验过** ⇒ 切流前按 ⑤ 自检确认：\n     seed + 重建 catalog + 成功跑一次 L0 之后，`freshness.json` 里该资产必须**出现且非 unknown**。"
+    "⑨【2026-09-28 Wave A 新鲜度锚换点：item 面改锚**湖对象**（与 ⑧ 的 branch 同形）】\n   · 改前：`/workspace/logs/dim-item-run.csv` 是**薄管线** `lemeng.dim.item.run` 的 `snk.csv` 运行记录\n     （catalog kind=file）。薄壳停跑后它不再被写 ⇒ 留着就是**永久 Stale**。\n   · 新锚（本次替换）：L0 管线 `lemeng.dim.item.l0` 的 `snk.minio` 目标，catalog 里 kind=**object**，\n     id = `minio://${ENV:ZOS_BUCKET}/lemeng/dim_item/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/all.parquet`。\n     匹配 glob `minio://*/lemeng/dim_item/system_book=*/snapshot=*/all.parquet`——**本机 `duckle catalog owners`\n     实测匹配通过**（同 ⑧ 的复核手法，不靠猜）。阈值 36h，公式同 ③（日频 24h + 12h 余量；item 调度 UTC 11:00）。\n   · ⚠️ **与 ⑧ 的做法有一处刻意不同，记在这里**：branch 当年是「**过渡期两条规则并存**（薄壳 CSV + L0 湖对象），\n     到切流那一批才删 CSV」；本次按 Wave A 计划「**观测面同批**」**一次做完**（删 CSV + 挂新锚）。\n     代价：若切流延后，**过渡期里「薄壳 item 是否还在按日写」不再有独立告警**——只有新锚那条在把 L0 的关。\n     判据取舍：新旧两条锚**指向同一件事**（item 面当天采集是否发生），并行期两条并存会让「L0 已挂但手动触发\n     ⇒ 36h 无写 ⇒ Stale」与「薄壳正常」同时成立、读数互相打架（⑧ 已记载 branch 过渡期会出现这个**预期读数**）。\n     ⇒ 本批选**单锚**：以 **L0 湖对象**为准（切流后它就是唯一真相）。若切流延后于本批交付，这是**已知观测缺口**。\n   · ⚠️ **未验项（同 ⑧ 如实带走）**：object 资产的时钟**端到端仍未在生产验过** ⇒ 切流前按 ⑤ 自检确认：\n     seed + 重建 catalog + 成功跑一次 L0 之后，`freshness.json` 里该资产必须**出现且非 unknown**。",
+    "⑩【2026-09-29 Wave B 新鲜度锚换点：retail 面改锚**湖对象**（retail.windows 切 L1 的投递准备；#330）】\n   · 改前：`/workspace/logs/retail-windows-run.csv` 是**薄管线** `lemeng.retail.windows.run` 的 run record\n     sink（见 ④）。同批声明已把该薄壳调度关停（schedules/3120.json enabled:false）⇒ 停止写入 ⇒\n     留着就是**永久 Stale**（同 ⑧ branch 的形状）⇒ 本批按 ⑨ 的「观测面同批」口径**一次换完**（删 CSV + 挂新锚）。\n   · 新锚（本文件替换条目）：L1 **子管线** `lemeng.retail_order_line.window` 的 `snk.minio` 目标，\n     key = `lemeng/retail_order_line/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/hour=${ITER_ITEM_HOUR}/all.parquet`\n     （由父管线 `lemeng.retail.windows.l1` 的 foreach 逐窗写入）。catalog kind=**object**；匹配 glob\n     `minio://*/lemeng/retail_order_line/system_book=*/bizday=*/hour=*/all.parquet`——同 ⑧⑨ 的写法：\n     `*` 吸收**不展开的占位符**（${ITER_ITEM_*} 同 ${ENV:…} 不展开，见 ⑧）与桶名段，匹配不靠猜。\n     阈值 36h，公式同 ③（日更 24h + 12h 余量；L1 调度 UTC 02:30/10:30 双点火）。\n   · **L1 双点火同日重写、锚按对象写时刻起算**：两轮点火写的是**同一个**「上海昨天」bizday 的 24 个\n     hour 分区对象（10:30 轮覆盖 02:30 轮）⇒ 新鲜度钟每天被刷两次；36h 的语义 = 整整一天半没有任何\n     一窗成功写湖才算事故。\n   · 粒度与 dim 锚的差异（有意，非疏漏）：dim 是日快照**单对象**；本锚按 bizday/hour 分区（一营业日\n     24 对象）。判定取 glob 命中资产的**最近一次成功写**（①），分区多少不改变判定语义，节奏仍是日更。\n   · tick/薄壳**不污染本锚**：它们经 wrapper 的 `/pipelines/common/` 重管线写湖，不在本 console\n     workspace 的 catalog 里 ⇒ 不进新鲜度钟；catalog 中唯一命中该 glob 的资产就是本子管线 sink。\n   · ⚠️ **同 ⑧⑨ 的硬前置与未验项**：投递时必须 seed 本文件 + **重建 catalog**（Operator\n     `POST /api/catalog`）+ 成功跑一次 L1；`freshness.json` 该资产**出现且非 unknown** 才算锚挂上\n     （⑤ 判据）。object 资产（含 foreach 子管线的资产）时钟端到端未在生产验过——**先验再切**。\n   · 64188 账套未 seed 本文件（⑦ 口径不变，要不要切是独立决定）⇒ 本锚只对 3120 生效。"
   ],
   "assets": [
     {
@@ -124,9 +127,9 @@
       "maximumAge": "36h"
     },
     {
-      "match": "/workspace/logs/retail-windows-run.csv",
+      "match": "minio://*/lemeng/retail_order_line/system_book=*/bizday=*/hour=*/all.parquet",
       "owner": "data-eng",
-      "description": "零售日批兜底层采集成功凭证（薄管线 lemeng.retail.windows.run 的 run record sink；写入=昨日 24 窗兜底采集成功，亦是 tick 停摆时的最终自愈层）",
+      "description": "零售订单线窗口采集的成功凭证（L1 子管线 lemeng.retail_order_line.window 的 snk.minio 目标，由父管线 lemeng.retail.windows.l1 每日双点火逐窗写入；写入=昨日 24 窗采集成功）。⚠️ L1 双点火同日重写、锚按对象写时刻起算（见 ⑩）；占位符不展开是**正常**的（见 ⑧）；该资产时钟只在**重建 catalog 之后**的成功 run 上起算",
       "tags": [
         "lemeng",
         "retail"
