@@ -61,12 +61,35 @@
 2. **并行对照**要特别小心：两条路径写**同一个湖分区** ⇒ 用「先备份旧产物 → 跑 L1 → 逐列比 → 有差异即回写」的方式（branch 已验证此手法）
 3. 切流 + 观察 ≥3 运行日
 
+#### ✅ 已投递（2026-09-29，3120）——逐条回填
+
+> **前置的偏离（如实记）**：**观察期未满 3 运行日**（Day 1 之后由人裁决提前投递）。Day 1 已取得：branch/item 两条 L0 首跑五点全绿 + **告警链路受控失败实测**（引擎→OO 那一跳，见 #316 评论）。
+
+| 步 | 实测 |
+|---|---|
+| 回滚点 | 卷内 `schedules.json`/`owners.json`/`alerts.json` 留档 `/opt/pre-delivery-20260929/`（sha 已记） |
+| ② sync | `SYNC_OK 53/53`（投递 SHA `4b66d8bc`；`--check` 语义与代理见 `DELIVERY.md`） |
+| ③ seed | **只 seed 那 8 个文件**；判据「**卷内 sha == 检出 sha**」逐字对齐 ✓ |
+| ④ catalog | `10 pipelines / 18 assets`（基线 5/8；stderr 无 `could not be named`）· `lint` **exit 0** · 3 条锚有 owner |
+| ⑤ 重启 | `/api/schedules` **10 条**（= 仓内）· `windows.l1=True`（接管）· `windows.run`/`tick.run`/`close.run` 全 **False**（含两条从未部署的薄壳）· `tick.l1`/`close.l1` 就绪不激活 |
+| ⑥ 首飞 | L1 双管 **`status: ok`**、19 节点全 ok、**foreach 24 窗**、约 2.5 分钟 |
+| 判据 2 | 湖 `bizday=2026-09-28` 17 个 hour 分区、**每 hour `count(DISTINCT batch_id)=1`**、**24 列**、新列有值（`order_transaction_type`：SALE 8451 / 退货类 83） |
+| 判据 5 | OO `data_alerts` **无该管线 failure** |
+
+**与投递前基线的对照（并行对照的实际读数）**：前 12 个小时行数**逐个相同**，18–22 点共 **+36 行 / +24 单**——薄壳那次采于北京 10:32、L1 这次采于北京 20:12，晚采捞回了当日更完整的数据。⇒ **双点火（02:30/10:30 UTC）的价值被这次对照实测证实**。
+
+**🔴 本批发现的偏差（判据 3/4 起初未过，已修并实测）**：零售新鲜度锚原指向**湖对象 glob**，而**写湖的是 foreach 子管线、子管线不产运行记录** ⇒ 该锚在新鲜度评估里**两头不占、从不参与评估**（`freshness.json` 里压根不出现）。根因在 `sla::evaluate`，修法是把锚换到**父管线自己写、且是字面路径**的资产（父的收尾汇总 CSV，仅 24 窗全成后才写）。详见 **#359**（含源码判据与「以后给 L1 选锚」的衍生判据）。
+
+**未做（留 Wave D）**：`tick.l1`/`close.l1` **未激活**（声明就绪）；薄壳**未删**（只置停，回滚位保留）；64188 未迁移。
+
 ### Wave C —— `tick` / `close` → L1（tick 形）**直接首飞**
 
 1. 窗口表 = setvar 推导 `[cur, prev]` / 仅 prev（wave1-prep 已原型化）
 2. 子管线 **checkpoint=false**（硬约束）
 3. 因是首飞，验证只能靠**并行对照**（与手动跑的 shell 形态比一次）——`run-retail-day.sh tick` 仍在，可作为对照臂
 4. 投递 + 重建 catalog + 启用调度 + 观察一个完整营业日（192 tick）
+
+> **2026-09-29 状态**：tick/close 的 L1 **管线与调度声明已随 Wave B 同批投递**（`schedules/3120.json` 里为 `enabled:false`，就绪不激活），且 `tick.run`/`close.run` **两条从未部署的薄壳同步置停**（否则 seed 整文件会把它们激活——见 #334）。**"启用调度 + 观察 192 tick"尚未做**，留作独立决定：`tick.l1` 的 misfire 取 `skip`（catchup 结构上补不回错过的窗，见 Wave C 报告 §4），真正需要干预的 **≥2 tick 缺口**要靠补采 SOP。
 
 ### Wave D —— 64188 跟进 + 全量收口
 
