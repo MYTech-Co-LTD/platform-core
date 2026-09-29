@@ -1,65 +1,5 @@
 [
   {
-    "id": "panel-lemeng.dim.branch.run",
-    "pipeline_id": "lemeng.dim.branch.run",
-    "name": "lemeng.dim.branch.run",
-    "enabled": false,
-    "kind": { "type": "cron", "expr": "0 2 * * *" },
-    "last_run_at": null,
-    "last_run_status": null,
-    "last_run_duration_ms": null,
-    "last_run_error": null,
-    "next_run_at": null
-  },
-  {
-    "id": "panel-lemeng.dim.item.run",
-    "pipeline_id": "lemeng.dim.item.run",
-    "name": "lemeng.dim.item.run",
-    "enabled": false,
-    "kind": { "type": "cron", "expr": "0 11 * * *" },
-    "last_run_at": null,
-    "last_run_status": null,
-    "last_run_duration_ms": null,
-    "last_run_error": null,
-    "next_run_at": null
-  },
-  {
-    "id": "panel-lemeng.retail.windows.run",
-    "pipeline_id": "lemeng.retail.windows.run",
-    "name": "lemeng.retail.windows.run",
-    "enabled": false,
-    "kind": { "type": "cron", "expr": "30 2 * * *" },
-    "last_run_at": null,
-    "last_run_status": null,
-    "last_run_duration_ms": null,
-    "last_run_error": null,
-    "next_run_at": null
-  },
-  {
-    "id": "panel-lemeng.retail.tick.run",
-    "pipeline_id": "lemeng.retail.tick.run",
-    "name": "lemeng.retail.tick.run",
-    "enabled": false,
-    "kind": { "type": "cron", "expr": "*/5 0-15 * * *" },
-    "last_run_at": null,
-    "last_run_status": null,
-    "last_run_duration_ms": null,
-    "last_run_error": null,
-    "next_run_at": null
-  },
-  {
-    "id": "panel-lemeng.retail.close.run",
-    "pipeline_id": "lemeng.retail.close.run",
-    "name": "lemeng.retail.close.run",
-    "enabled": false,
-    "kind": { "type": "cron", "expr": "0 16 * * *" },
-    "last_run_at": null,
-    "last_run_status": null,
-    "last_run_duration_ms": null,
-    "last_run_error": null,
-    "next_run_at": null
-  },
-  {
     "id": "panel-lemeng.dim.branch.l0",
     "pipeline_id": "lemeng.dim.branch.l0",
     "name": "lemeng.dim.branch.l0",
@@ -124,7 +64,7 @@
     "id": "panel-lemeng.retail.tick.l1",
     "pipeline_id": "lemeng.retail.tick.l1",
     "name": "lemeng.retail.tick.l1",
-    "enabled": false,
+    "enabled": true,
     "kind": {
       "type": "cron",
       "expr": "*/5 0-15 * * *"
@@ -145,7 +85,7 @@
     "id": "panel-lemeng.retail.close.l1",
     "pipeline_id": "lemeng.retail.close.l1",
     "name": "lemeng.retail.close.l1",
-    "enabled": false,
+    "enabled": true,
     "kind": {
       "type": "cron",
       "expr": "0 16 * * *"

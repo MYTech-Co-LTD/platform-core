@@ -166,7 +166,8 @@
     "      continueOnFailure + 末尾判红（TICK_FAILED / CLOSE_FAILED）汇成**父 run 红** ⇒ 走本组规则告警；",
     "      逐窗配规则会让一次 192 次/天的高频面刷出最多 2 条/轮的告警（同 ⑩ 的理由）。",
     "   📌 生效前提同 ⑨⑩：seed 进卷；且**调度仍 enabled:false**（声明就绪、不激活，激活是投递批次的独立决定）",
-    "      ⇒ 现在不会产出任何 run 事件。"
+    "      ⇒ 现在不会产出任何 run 事件。",
+    "⑫【2026-09-29 Wave D 薄壳退役（#361 之后两账套都切完 L0/L1）】按 ⑧ ⑩ 记下的先例，本批把 4 条薄壳规则（`lemeng.dim.*.run` / `lemeng.retail.windows.run` / `lemeng.retail.tick.run` / `lemeng.retail.close.run`）**连同 3120 侧残留一起删除**——判据正是先例那句：**规则的生死由两个账套的并集决定**；两侧都切完后并集为空。保留 5 条：`*`（SLA）+ `lemeng.dim.*.l0` + 三条 retail `.l1`。⚠️ 与「删薄管线文件」**同批**做（仓内文件 + 卷内文件 + 调度条目 + 本规则）——只删一半的话，残留物会**不再被任何规则覆盖**，正是 ⑧ 要避免的那类静默。"
   ],
   "rules": [
     {
@@ -180,27 +181,7 @@
       }
     },
     {
-      "match": "lemeng.dim.*.run",
-      "on": ["failure", "recovery"],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
       "match": "lemeng.dim.*.l0",
-      "on": ["failure", "recovery"],
-      "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.retail.windows.run",
       "on": ["failure", "recovery"],
       "cooldownMinutes": 15,
       "channel": "webhook",
@@ -233,26 +214,6 @@
       "match": "lemeng.retail.close.l1",
       "on": ["failure", "recovery"],
       "cooldownMinutes": 15,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.retail.tick.run",
-      "on": ["failure", "recovery"],
-      "cooldownMinutes": 60,
-      "channel": "webhook",
-      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
-      "headers": {
-        "Authorization": "Basic ${ENV:OO_AUTH}"
-      }
-    },
-    {
-      "match": "lemeng.retail.close.run",
-      "on": ["failure", "recovery"],
-      "cooldownMinutes": 60,
       "channel": "webhook",
       "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
       "headers": {
