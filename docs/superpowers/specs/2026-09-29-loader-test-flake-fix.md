@@ -13,9 +13,13 @@
   而 `modules/{data,aftersales}/test-util` **直接 import** `apps/server/src/migrate` —— 四个包共用**同一把锁键**。
 - 抢不到锁的一方按 `MIGRATION_LOCK_RETRY_INTERVAL_MS = 2000` **整量子**地睡，
   单用例耗时从 ~50ms 变成 2~4s（实测量子：2053 / 2139 / 4106ms），撞穿 vitest 的 5s 单测默认值。
-- 修复两段：①**根因**——把列目录挪到取锁之前（35/37 个用例从此完全不碰锁）；
-  ②**余量**——本文件级 `testTimeout`/`hookTimeout` 15s（有实测证明该选项生效，见 §3.2）。
-- 本机按 CI 拓扑复现：单用例 max **4106ms → 99ms**；连续 14 次有效跑全部通过（§4.1）。
+- 修复三段：①**根因**——把列目录挪到取锁之前（`loader.test.ts` 35/37 个用例从此完全不碰锁）；
+  ②**余量**——`loader.test.ts` 两个集成 suite 级 `timeout`/`hookTimeout` 15s；
+  ③**同族兄弟包** `modules/data`、`modules/aftersales` 的 backend project 加同一条
+  `testTimeout`/`hookTimeout` 15s（两包都有**实测失败案例**，不是预防性放宽）。
+- 本机按 CI 拓扑复现：`loader.test.ts` 单用例 max **4106ms → 99ms**；连续 14 次有效跑全部通过（§4.1）。
+- **这不是 `loader.test.ts` 独有的**——`modules/data` 的 vitest 配置里**早就自述过同一根因**
+  （issue #169，2026-09-24，当时用「本包内串行」缓解）；本 PR 修的是那条缓解够不到的**跨包**那半。
 
 ## 1. 现象与硬证据（CI 侧）
 
@@ -144,7 +148,47 @@ apps/server test: [migrate] 等待 migration advisory lock（platform.schema_mig
 - **该选项确实生效**（不靠类型定义猜）：临时把常量改成 `30` 再跑，
   失败信息逐字变成 `Test timed out in 30ms`（**3 处**），而不是默认的 5000ms；随后改回 `15_000`。
 
-### 3.3 为什么没走「`beforeAll` 收敛共享初始化」
+### 3.3 同族的兄弟包：`modules/data`、`modules/aftersales`
+
+排查过程中发现**这不是 `loader.test.ts` 独有的**，而是「凡真的取迁移锁的集成套件」共有的暴露面。
+两处都**不是本次改动引入的**（有对照证据），但都会被 CI 咬：
+
+**`modules/data`** —— 该包 `vitest.config.ts` 里**早就自述过同一根因**（issue #169，2026-09-24）：
+
+> 「迁移 advisory lock（固定 2s 重试）在 CI 4 核争用下单测偶发超 vitest 5s 默认超时
+> （实测命中 agent-loop/mcp/query 等，重跑即绿——竞态签名）」
+
+当时拍板的是**方案 A：本包内串行**（`fileParallelism: false`）——缓解了**包内**并行，
+挡不住**跨包**那半（该注释自己也承认「会被本包的并行打库拖累（实测 loader.test.ts 超时与
+mcp.test.ts 同期）」）。本 PR 的 #345 首轮 CI 就红在
+`domain/report-store.test.ts > upsert 不带 renderer`（`Test timed out in 5000ms`）。
+
+**这不是本 PR 引入的**——同一拓扑在本机跑 `origin/main` 的 `migrate.ts`（修前）对 `modules/data`：
+
+| `modules/data` · 同一 4 包并发拓扑 · 全新库 | max | 失败 |
+|---|---|---|
+| 修前（origin/main，5 轮） | 10013 / 6141 / 4132 / 2162 / 2085ms | **1 次失败** |
+| 修后（本分支，5 轮） | 4166 / 4014 / 2082 / 343 / 339ms | 0 |
+
+⇒ 修前就红、修后**明显缓解但消不掉**（它的 `applyMigrations` 目录**真有** `.sql`，必须真取锁）。
+
+**`modules/aftersales`** —— 本机全量 `pnpm test` 直接复现了它：
+`module.test.ts > applyMigrations 幂等：连跑两次，第二次不新应用任何版本`（**连抢两次锁**）
+⇒ `Error: Test timed out in 5000ms.`。它**没有** `fileParallelism: false`，
+29 个文件并行打同一台 PG，是全仓三个包里最容易撞上的。
+
+**处置**：对这两个包的 backend project 施加与 `loader.test.ts` **同一条**、同样写明理由的
+`testTimeout` / `hookTimeout = 15_000`。范围止步于此——其余包（`packages/*`、`modules/demo`）
+**没有**任何失败案例，按「无案例不立标准」不动。
+
+> ⚠️ **配置坑（实测，值得记）**：在 `vitest.config.ts` 里这份超时**只有一种写法真的生效**——
+> 写在 **project 的 `test` 块内**、键名 **`testTimeout`**。逐项设成 `1ms` 验证过：
+> project 级写 `timeout`（错键名）⇒ 用例照样全绿（被静默忽略）；
+> 根级写 `testTimeout`（用 `projects` 时**不下传**）⇒ 用例照样全绿；
+> 只有 project 级 `testTimeout` 才会让失败信息变成 `Test timed out in 1ms`。
+> 与 #169 那条「`fileParallelism` 必须写根级」恰好相反 —— **两类选项的层不一样**，别互相类推。
+
+### 3.4 为什么没走「`beforeAll` 收敛共享初始化」
 
 issue 的建议 (2) 是「若每用例重建 DB / 重跑迁移 ⇒ 用 `beforeAll` 收敛」。
 实测后**没有采纳**，理由：
@@ -213,10 +257,18 @@ issue 的建议 (2) 是「若每用例重建 DB / 重跑迁移 ⇒ 用 `beforeAl
 
 ## 5. 残留与未决（**不隐藏**）
 
-1. **残留量子仍在**：`happy path`（fixture 声明了迁移）在跨包并发下仍可能吃 1 个 2000ms 量子
-   （实测 2133 / 2096ms）。这是**合法**取锁，本 PR 不消除它，只用本文件级 15s 给它留出余量。
-   若要根治，得动**锁的粒度**（按 module 分键）——那会动到「挡住全新库上并发建表竞态」的既定
-   设计（文件头有专门论证），**属于独立决定，本 PR 不做**。
+1. **残留量子仍在**：凡**真的**取锁的用例（`happy path`、`modules/data` 的 `applyMigrations`、
+   `modules/aftersales` 的 `applyMigrations 幂等`）在并发下仍可能吃 1~2 个 2000ms 量子
+   （实测 2133 / 2096 / 4166 / 10013ms）。这是**合法**取锁，本 PR 不消除它，只给三个包各留 15s 余量。
+   两条**独立**的根治方向，都需要单独拍板（本 PR 不做）：
+   - **锁粒度**：`platform.schema_migrations` 现在全库一个键。按 module 分键能消掉跨模块排队，
+     但会动到「挡住全新库上**并发建表**竞态」的既定设计（`migrate.ts` 文件头有专门论证为什么
+     「刻意不按 module 分键」）——那是**设计决定**，不是顺手能改的。
+   - **重试量子**：`MIGRATION_LOCK_RETRY_INTERVAL_MS = 2000` 是固定间隔，所以等待天然量化成
+     2s 的整数倍。改成「50ms 起、指数退避、封顶 2000ms」能让等待者在锁释放后 ~50ms 内拿到锁
+     （把量子从 2000ms 压到 ~50ms），60s 上限与告警节流都不变（重试更密但告警按
+     `LOCK_WARN_EVERY_N_ATTEMPTS` 节流，实测告警条数反而更少）。代价是**改生产常量与部署期取锁行为**，
+     故留给协调者定夺。
 2. **第 9 轮无效**：该轮 `apps/server` 的 `beforeAll` 失败（文件 status `failed`、
    35 个用例 skipped、D9 suite 2 个通过），**失败原文丢失**——当时只挂了 `--reporter=json`，
    而它不落 `console.warn`/错误正文（§2.2 末尾那条坑）。随后按同一脚本重跑该轮**通过**，

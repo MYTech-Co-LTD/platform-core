@@ -18,6 +18,20 @@ export default defineConfig({
         test: {
           name: 'backend',
           environment: 'node',
+          // 集成级 suite 的时长口径（issue #310，与 apps/server 的 loader.test.ts 同一处理）。
+          // 本包**没有** modules/data / apps/server 那样的 fileParallelism:false ⇒ 29 个文件
+          // 并行打同一台 PG，而每个文件的 beforeAll / 用例里的 applyMigrations() 都要抢
+          // **全库唯一**的迁移 advisory lock（migrate.ts 刻意不按 module 分键）；
+          // `pnpm -r --if-present test` 又叠加**跨包**并发。抢不到锁就按重试间隔**整量子**地睡。
+          // 实测（#310 复现，2026-09-28 的 CI 失败 + 本机 `pnpm test` 全量跑）：
+          //   `module.test.ts > applyMigrations 幂等：连跑两次…`（**连抢两次锁**）
+          //   ⇒ `Error: Test timed out in 5000ms.`
+          // 15s 是**余量**不是**替代**：#310 已从源头修掉「无迁移模块也抢锁」，本条只兜
+          // 「真取锁 + 并发」的残余；真卡死（锁被占满 60s）照样会红。
+          // ⚠️ 必须写在 project 的 `test` 里且键名是 `testTimeout`（modules/data 实测：
+          //    project 级写 `timeout`、或根级写 `testTimeout`，都会被静默忽略）。
+          testTimeout: 15_000,
+          hookTimeout: 15_000,
           include: ['domain/**/*.test.ts', 'routes/**/*.test.ts', 'migration/**/*.test.ts', '*.test.ts'],
         },
       },

@@ -18,6 +18,23 @@ export default defineConfig({
         test: {
           name: 'backend',
           environment: 'node',
+          // 集成级 suite 的时长口径（issue #310，与 apps/server 的 loader.test.ts 同一处理）。
+          // 每个文件 beforeAll / 用例里的 applyMigrations() 都**真的**跑迁移，因而要抢
+          // **全库唯一**的迁移 advisory lock；`pnpm -r --if-present test` 又让 4 个包并发打
+          // 同一台 PG。抢不到锁的一方按 migrate.ts 的重试间隔**整量子**地睡 —— 上面那条
+          // fileParallelism:false 只串行了**本包内部**（#169 的缓解），挡不住**跨包**那半。
+          // 实测（#310 本机复现，同一 4 包并发拓扑 + 全新库）：本包单用例最坏
+          // 10013ms（1 次失败）/ 6141ms / 4166ms —— 全是量子的整数倍，正是「5s 单测默认值
+          // 套错了对象」。15s 是**余量**不是**替代**：#310 已从源头修掉「无迁移模块也抢锁」，
+          // 本条只兜「真取锁 + CI 慢一档」的残余；真卡死（锁被占满 60s）照样会红。
+          //
+          // ⚠️ 位置与键名都踩过坑（实测，不是推断）：本项**必须写在 project 的 `test` 里**，
+          //    且键名是 `testTimeout`。逐项设 1ms 验证过：
+          //      · project 级写 `timeout`（错键名）⇒ 用例照样全绿（静默忽略）
+          //      · 根级写 `testTimeout`（用 projects 时不下传）⇒ 用例照样全绿
+          //      · project 级写 `testTimeout` ⇒ 才真的生效
+          testTimeout: 15_000,
+          hookTimeout: 15_000,
           include: ['domain/**/*.test.ts', 'routes/**/*.test.ts', '*.test.ts'],
         },
       },
