@@ -579,6 +579,84 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(clean).toMatchObject({ ok: true, tenantUnlocked: [] })
   })
 
+  it('★ 对账按行降级：一行回读 500 只落 contentUnreadable，其余行照常判（不再整单 502）', async () => {
+    const { app, identity } = manage()
+    const badId = await upsertReport(pool, identity.orgId, {
+      title: '坏盘', metabaseId: 5, embedParams: {}, requiredScope: null,
+    })
+    const goodId = await upsertReport(pool, identity.orgId, {
+      title: '未锁盘', metabaseId: 6, embedParams: {}, requiredScope: null,
+    })
+    // 两张都在可嵌入集（否则会先落 missingInMetabase 而不是走到回读）
+    mb.state.dashboards.push(
+      { id: 5, name: `${identity.orgId}/坏盘`, embeddable: true, archived: false },
+      { id: 6, name: `${identity.orgId}/未锁盘`, embeddable: true, archived: false },
+    )
+    // dashboard 5 的 GET 回 500 ⇒ readDashboardContent 抛 MetabaseError；其余透传原桩
+    const inner = mb.fetcher
+    vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
+      if (new URL(String(url)).pathname === '/api/dashboard/5') return json({ message: 'boom' }, 500)
+      return inner(String(url), init)
+    })
+
+    const res = await app.request('/reports/reconcile', { method: 'POST' })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.ok).toBe(false)
+    expect(body.contentUnreadable).toEqual([{ id: badId, title: '坏盘', metabaseId: 5 }])
+    // 好盘照常判：可嵌入但 tenant 没锁 ⇒ tenantUnlocked 照报（降级不吞别的差集）
+    expect(body.tenantUnlocked).toEqual([{ id: goodId, title: '未锁盘', metabaseId: 6 }])
+  })
+
+  // ── 承重补测（brief 之外，实施时变异回归发现两条**声明了但没被断言钉住**的要求）──
+  //    上一条用例里 `ok:false` 由 tenantUnlocked 非空撑着 ⇒ 删掉 `&& contentUnreadable.length === 0`
+  //    它照样绿（实测：变异存活）。同理 `只吞 MetabaseError` 那一支（非 MetabaseError 继续往上抛）
+  //    没有任何用例咬到（实测：把 catch 改成全吞，40/40 依旧绿）。两条都是本任务的明确要求，
+  //    「不被断言钉住的要求 = 下一个人删掉它不会有任何红」——各补一条。
+  it('★ ok 判据承重：contentUnreadable 是**唯一**非空差集时 ok 也 false（其余四项全空，只有这一项撑着）', async () => {
+    const { app, identity } = manage()
+    const badId = await upsertReport(pool, identity.orgId, {
+      title: '唯一坏盘', metabaseId: 7, embedParams: {}, requiredScope: null,
+    })
+    mb.state.dashboards.push(
+      { id: 7, name: `${identity.orgId}/唯一坏盘`, embeddable: true, archived: false },
+    )
+    const inner = mb.fetcher
+    vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
+      if (new URL(String(url)).pathname === '/api/dashboard/7') return json({ message: 'boom' }, 500)
+      return inner(String(url), init)
+    })
+
+    const body = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(body.contentUnreadable).toEqual([{ id: badId, title: '唯一坏盘', metabaseId: 7 }])
+    // 其余四个差集与 unregistered 都空 —— 故 ok 只可能被 contentUnreadable 那一项压成 false
+    expect(body.missingInMetabase).toEqual([])
+    expect(body.tenantUnlocked).toEqual([])
+    expect(body.tenantUnbound).toEqual([])
+    expect(body.unregistered).toEqual({ recoverable: [], needsHuman: [] })
+    expect(body.ok).toBe(false)
+  })
+
+  it('★ 只吞 MetabaseError：回读抛的不是 MetabaseError（代码缺陷 / 连接层异常）⇒ 继续往上抛 500，不伪装成按行降级', async () => {
+    const { app, identity } = manage()
+    await upsertReport(pool, identity.orgId, {
+      title: '连接炸盘', metabaseId: 8, embedParams: {}, requiredScope: null,
+    })
+    mb.state.dashboards.push(
+      { id: 8, name: `${identity.orgId}/连接炸盘`, embeddable: true, archived: false },
+    )
+    const inner = mb.fetcher
+    // fetch 自己抛（连不上/被中止）——metabase.ts 的 call() 不包这一层 ⇒ 原样上抛，不是 MetabaseError。
+    // 全吞式 catch 会把它误报成「这一行读不出」= 把代码缺陷降级成业务状态（静默）；500 才是它的位置。
+    vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
+      if (new URL(String(url)).pathname === '/api/dashboard/8') throw new Error('socket hang up')
+      return inner(String(url), init)
+    })
+
+    const res = await app.request('/reports/reconcile', { method: 'POST' })
+    expect(res.status).toBe(500)
+  })
+
   // ── 对账判据加厚（spec §7 待办 2）：「锁了但绑不到」── embedding_params.tenant=locked 只说明
   //    锁了，锁值还要**绑得到东西**才生效。五条各咬一个子判据（变异确认见任务报告）：
   //    卡未映射 / 半绑定（单卡粒度，人裁 2026-09-29）/ 参数未声明 / 映射挂错参数 / 反证正常态不误伤。

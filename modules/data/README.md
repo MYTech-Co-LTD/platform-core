@@ -157,7 +157,7 @@ dashboard ⇒ B 的 `setEmbedding` 覆盖 A 的 `embedding_params`、B 的 `DELE
 env 三键（`DATA_METABASE_URL` / `_API_KEY` / `_SECRET_KEY`）见根 `.env.example`；
 `SECRET_KEY` 决定「看哪个租户数据」那一半权限，泄露 = 能签任意租户的嵌入凭证。
 
-### `POST /reports/reconcile` 的四个差集（spec §7 双写面对账）
+### `POST /reports/reconcile` 的五个差集（spec §7 双写面对账）
 
 响应体 + `console.warn` 双通道（**显式可见**，不静默——M3c 教训）：
 
@@ -167,6 +167,10 @@ env 三键（`DATA_METABASE_URL` / `_API_KEY` / `_SECRET_KEY`）见根 `.env.exa
 | `tenantUnlocked` | 回读 `embedding_params.tenant !== "locked"` | **本 org** |
 | `unregistered.recoverable` | 可嵌入集里**不属于任何 org 的任何一行 `metabase_id`**，且名字能解出 `<org>/<title>`（归属确定 ⇒ 重跑 `POST /reports` 按全等命中接管） | 登记侧取**全部租户**并集 |
 | `unregistered.needsHuman` | 同上但名字解不出归属（人在 Metabase 侧直接建的 / 本约定之前的遗留）⇒ 必须人判 | 同上 |
+| `contentUnreadable` | 回读 `GET /api/dashboard/{id}` 抛 `MetabaseError`（上游对**这一张**说不行） | **本 org**（逐行降级：不再整单 502） |
+
+`contentUnreadable` 非空 ⇒ `ok:false`；回读按**行**降级——一个 dashboard 回读失败只把那一行报出来，
+不让整租户的对账整单 502（对账的意义就是把「哪里坏了」显式报出来）。
 
 `unregistered` **不能**按 `title` 求差：那样同名孤儿（幂等窗口/并发造出的重复 dashboard）看不见，
 且多租户下会把别人的 dashboard 恒报成本租户未登记——两种都是**假绿**。跨 org 读是**平台级
