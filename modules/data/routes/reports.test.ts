@@ -260,6 +260,9 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     process.env.DATA_METABASE_URL = 'https://mb.test/'
     process.env.DATA_METABASE_API_KEY = 'mb-api-key'
     process.env.DATA_METABASE_SECRET_KEY = SECRET
+    // 编辑入口的 fail-closed（评审 I-3）要求会话密钥 ≥32 字符才签票据；测试里走真 env 通路，
+    // 与上面 DATA_METABASE_* 同款卫生（afterEach 清理）。
+    process.env.PLATFORM_SESSION_SECRET = 'test-session-secret-test-session-secret!'
   })
 
   afterEach(() => {
@@ -267,6 +270,9 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     delete process.env.DATA_METABASE_URL
     delete process.env.DATA_METABASE_API_KEY
     delete process.env.DATA_METABASE_SECRET_KEY
+    delete process.env.PLATFORM_SESSION_SECRET
+    // 评审 M-1：编辑入口的 origin 也收进统一清理，别只靠每个用例自己删。
+    delete process.env.MB_PROXY_PUBLIC_ORIGIN
   })
 
   afterAll(async () => {
@@ -872,6 +878,19 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     const other = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] })).app
     const { id: realId } = await (await post(app, { title: '别租户看不见' })).json()
     expect((await other.request(`/reports/${realId}/edit-url`)).status).toBe(404)
+    delete process.env.MB_PROXY_PUBLIC_ORIGIN
+  })
+
+  it('★ 负测（评审 I-3）：origin 非 https / 带尾斜杠 的形状都 fail-closed 或归一', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '形状用例' })).json()
+
+    process.env.MB_PROXY_PUBLIC_ORIGIN = 'http://mb.example.test'      // 非 https ⇒ 503（不许降级）
+    expect((await app.request(`/reports/${id}/edit-url`)).status).toBe(503)
+
+    process.env.MB_PROXY_PUBLIC_ORIGIN = 'https://mb.example.test///'  // 尾斜杠 ⇒ 归一，不许出 '//handoff'
+    const { url } = await (await app.request(`/reports/${id}/edit-url`)).json() as { url: string }
+    expect(url.startsWith('https://mb.example.test/handoff?t=')).toBe(true)
     delete process.env.MB_PROXY_PUBLIC_ORIGIN
   })
 

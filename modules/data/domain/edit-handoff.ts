@@ -12,9 +12,23 @@ export const EDIT_HANDOFF_TTL_SEC = 120
 const b64url = (s: string): string => Buffer.from(s, 'utf8').toString('base64url')
 
 /**
+ * 票据密钥：从 `PLATFORM_SESSION_SECRET` **派生**的子密钥（域分隔），**不是**直接复用原始密钥。
+ *
+ * ⚠️ 为什么必须派生（Task 1 评审 I-1/I-2，2026-09-29 人裁修）：原始密钥有**双向串用**风险——
+ *   ① 票据（会出现在 URL 里）用原始密钥签的话，宿主会话验签 `verifySession` 会把 120s 票据
+ *      当**合法会话**收下，甚至被「滑动续期」分支重签成 7 天 Cookie（空 scope 身份）；
+ *   ② 反过来，任何登录用户的会话 Cookie（7 天、带 org）在代理眼里也是合法票据 ⇒ 只持 `data:query`
+ *      的人可能绕过 `data:manage` 页门换到编辑会话。
+ * 派生后两侧**互不承认**（密钥不同），且**不新增任何 env 密钥**（派生是确定性的，两侧同式）。
+ */
+export function editHandoffKey(sessionSecret: string): Buffer {
+  return createHmac('sha256', sessionSecret).update('edit-handoff-v1').digest()
+}
+
+/**
  * 签一枚编辑票据。payload `{org, did, nonce, iat, exp}`。
  * ⚠️ 格式是**跨包契约**：代理侧 `apps/mb-proxy/src/handoff.ts` 独立实现验签，两侧用同一金样本
- * 钉住（见两处测试里的 `<GOLDEN_TOKEN>`）。改这里必须同步改那边。
+ * 钉住（见两处测试里的金样本串）。改这里必须同步改那边。
  */
 export function signEditHandoff(
   input: { org: string; did: number; nonce: string },
@@ -26,6 +40,7 @@ export function signEditHandoff(
   const payload = b64url(JSON.stringify({
     org: input.org, did: input.did, nonce: input.nonce, iat: now, exp: now + ttlSec,
   }))
-  const sig = createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url')
+  // ⚠️ 用**派生**子密钥（editHandoffKey），不是 secret 本身——见函数头顶注（I-1/I-2）
+  const sig = createHmac('sha256', editHandoffKey(secret)).update(`${header}.${payload}`).digest('base64url')
   return `${header}.${payload}.${sig}`
 }

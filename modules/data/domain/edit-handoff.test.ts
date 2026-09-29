@@ -19,11 +19,18 @@ describe('edit-handoff 票据', () => {
     expect(p).toMatchObject({ org: 'acme', did: 42, nonce: 'n-1', iat: now, exp: now + 120 })
   })
 
-  it('签名是 HS256(secret)（用 node:crypto 独立复算，钉死算法与密钥编码）', () => {
+  it('签名是 HS256(**派生**子密钥)（独立复算，同时钉死 KDF 标签串）', () => {
     const t = signEditHandoff({ org: 'acme', did: 7, nonce: 'n-2' }, SECRET, 120, 1_700_000_000)
     const [h, p, s] = t.split('.')
-    const expectSig = createHmac('sha256', SECRET).update(`${h}.${p}`).digest('base64url')
-    expect(s).toBe(expectSig)
+    // 独立复算派生（不复用被测的 editHandoffKey）——把 'edit-handoff-v1' 这个标签也钉住
+    const key = createHmac('sha256', SECRET).update('edit-handoff-v1').digest()
+    expect(s).toBe(createHmac('sha256', key).update(`${h}.${p}`).digest('base64url'))
+  })
+
+  it('⚠️ 用**原始**密钥签同 payload ⇒ 与派生密钥的签名不同（域分隔真的生效）', () => {
+    const t = signEditHandoff({ org: 'acme', did: 7, nonce: 'n-3' }, SECRET, 120, 1_700_000_000)
+    const [h, p, s] = t.split('.')
+    expect(s).not.toBe(createHmac('sha256', SECRET).update(`${h}.${p}`).digest('base64url'))
   })
 
   it('★ 金样本（跨实现契约）：同一输入必须给出同一 token 串', () => {
@@ -31,7 +38,7 @@ describe('edit-handoff 票据', () => {
     // 任一侧改格式 ⇒ 另一侧红。改这一行必须同时改另一处。
     const t = signEditHandoff({ org: 'acme', did: 7, nonce: 'golden' }, SECRET, 120, 1_700_000_000)
     expect(t).toBe(
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJvcmciOiJhY21lIiwiZGlkIjo3LCJub25jZSI6ImdvbGRlbiIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.lrJSexm5ecq0FA87205P6omvuyGm_ybdzn09xWp2C8U',
-    )   // ← 实跑回填；同一串必须出现在 apps/mb-proxy/src/handoff.test.ts（Task 3）
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJvcmciOiJhY21lIiwiZGlkIjo3LCJub25jZSI6ImdvbGRlbiIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMTIwfQ.oSuZ8-zjA2GF42ugFh-KgGgMGHhRrqZHi2oTtAVX3xE',
+    )   // ← 实跑回填（派生密钥版）；同一串必须出现在 apps/mb-proxy/src/handoff.test.ts（Task 3）
   })
 })

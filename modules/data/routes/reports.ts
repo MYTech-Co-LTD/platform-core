@@ -183,17 +183,25 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/reports/:id/edit-url', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
-    const proxyOrigin = process.env.MB_PROXY_PUBLIC_ORIGIN
-    if (!proxyOrigin) return c.json({ error: 'EDIT_PROXY_UNCONFIGURED' }, 503)
+    // ⚠️ fail-closed（评审 I-3）：缺配/形状不对一律 503——**不许** `?? ''` 用空密钥签票据，
+    //    也不许把非 https 或带尾斜杠的 origin 直接拼进 URL。
+    const proxyOrigin = process.env.MB_PROXY_PUBLIC_ORIGIN?.trim().replace(/\/+$/, '')
+    const sessionSecret = process.env.PLATFORM_SESSION_SECRET ?? ''
+    if (!proxyOrigin || !proxyOrigin.startsWith('https://') || sessionSecret.length < 32) {
+      return c.json({ error: 'EDIT_PROXY_UNCONFIGURED' }, 503)
+    }
     const id = reportIdOf(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const row = await getReport(ctx.pool, c.get('tenant').casdoor_org, id)
     if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
     // platform 自绘行没有 Metabase dashboard（metabaseId=0 是哨兵）⇒ 没有可编辑的页
     if (row.renderer === 'platform') return c.json({ error: 'RENDERER_NOT_EDITABLE' }, 409)
+    // 票据只绑 org + 单张 dashboard（不绑用户）：代理侧只按这两个维度授权，用户维度由本端点的
+    // `data:manage` 页门把关。残余风险（同租户成员截获票据后 120s 内使用）由「短 TTL + 一次性
+    // nonce + 入口即清 t + no-referrer」共同压缩——见 Task 3 与 spec §3⑦。
     const t = signEditHandoff(
       { org: requester.orgId, did: row.metabaseId, nonce: randomUUID() },
-      process.env.PLATFORM_SESSION_SECRET ?? '',
+      sessionSecret,
     )
     return c.json({ url: `${proxyOrigin}/handoff?t=${t}` })
   })
