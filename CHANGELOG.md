@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.49.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.48.0...v0.49.0) - 2026-09-29
+- 【新增】duckle: Wave B——retail.windows 迁 L1（foreach 首飞，含截尾决策与双点火兜底实测） (#324) ([#325](https://github.com/MYTech-Co-LTD/platform-core/pull/325), [61f1632](https://github.com/MYTech-Co-LTD/platform-core/commit/61f163257a5e956f22aea1b7a4f7a52454aec529))
+
+
 ## [0.48.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.47.0...v0.48.0) - 2026-09-28
 - 【新增】duckle: Wave A 切流——dim.item 改走 L0（薄壳停、L0 起） (#322) ([#323](https://github.com/MYTech-Co-LTD/platform-core/pull/323), [ca96345](https://github.com/MYTech-Co-LTD/platform-core/commit/ca963457a43621203a8ac2ac80febd29b0b98352))
 
