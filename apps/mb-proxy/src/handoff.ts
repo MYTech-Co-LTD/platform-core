@@ -68,6 +68,40 @@ export function proxySessionKey(rootSecret: string): Buffer {
 }
 
 /**
+ * 验一枚代理会话（`mb_edit` Cookie 里那枚）并解出身份。**任何失败返回 null（不抛）**。
+ *
+ * ⚠️ 与 `verifyEditHandoff` 是**两条独立密钥**：这里必须走 `proxySessionKey`（标签 `'mb-edit-session-v1'`）。
+ *    走错（比如复用 handoffKey 或原始 secret）不是「验签更松」而是**验签永假**——所有请求恒 401。
+ *    校验顺序与票据侧同款：签名 → `alg` → `exp` → 载荷形状（org/did）。载荷**不含 nonce**（会话可复用）。
+ *
+ * 为什么形状检查与签名检查并列：签名只证「这枚串是我们签的」，不证「载荷是我们写的形状」。
+ * 将来某处把 claims 原样回写（或签发侧漏字段）时，形状检查是唯一能拒的一层。
+ */
+export function verifyProxySession(
+  token: string, secret: string, now?: number,
+): { org: string; did: number } | null {
+  const parts = token.split('.')
+  if (parts.length !== 3) return null
+  const [h, p, s] = parts
+  const expect = createHmac('sha256', proxySessionKey(secret)).update(`${h}.${p}`).digest()
+  const got = b64urlToBuf(s)
+  if (got.length !== expect.length || !timingSafeEqual(got, expect)) return null
+  try {
+    const header = JSON.parse(b64urlToBuf(h).toString('utf8')) as { alg?: string }
+    if (header.alg !== 'HS256') return null
+    const c = JSON.parse(b64urlToBuf(p).toString('utf8')) as Record<string, unknown>
+    // exp 走**严格类型**（同 verifyEditHandoff）：不给「载荷里塞非数字 exp」留解释空间
+    if (typeof c.exp !== 'number' || !Number.isFinite(c.exp)) return null
+    if (c.exp <= (now ?? Math.floor(Date.now() / 1000))) return null
+    if (typeof c.org !== 'string' || !c.org) return null
+    if (!Number.isInteger(c.did)) return null
+    return { org: c.org, did: c.did as number }
+  } catch {
+    return null
+  }
+}
+
+/**
  * 签一枚代理会话票据。payload `{org, did, iat, exp: now + EDIT_TTL_SEC}`——**不含 nonce**（会话可复用）。
  */
 export function signProxySession(

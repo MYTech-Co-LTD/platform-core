@@ -7,12 +7,21 @@
 // ⚠️ 用**工厂**（`createApp(cfg)`）而不是模块级 `export const app`：配置是**参数**，不在 import 期
 //    读 env——否则「import app 即要 env」这条会把上面那个目的原样带回。
 import { Hono } from 'hono'
+import { getCookie } from 'hono/cookie'
 import type { ProxyConfig } from './config'
-import { claimNonce, signProxySession, verifyEditHandoff } from './handoff'
-import { serializeEditCookie } from './session'
+import { claimNonce, signProxySession, verifyEditHandoff, verifyProxySession } from './handoff'
+import { decide, normalizePath } from './rules'
+import { EDIT_COOKIE, serializeEditCookie } from './session'
+import { fetchDashboardCards, proxy } from './upstream'
 
-export function createApp(cfg: ProxyConfig): Hono {
-  const app = new Hono()
+/**
+ * 中间件之间传的东西：鉴权解出来的身份 + **归一化后的路径**。
+ * `proxyPath` 存在的唯一理由：让兜底**发出去的就是规则表判过的那一份路径**（见 rules.normalizePath 头注）。
+ */
+type AppVars = { Variables: { did: number; proxyPath: string } }
+
+export function createApp(cfg: ProxyConfig): Hono<AppVars> {
+  const app = new Hono<AppVars>()
 
   // ① /healthz 在鉴权之前（照宿主 app.ts:205 的位置纪律：探活不带业务身份）
   app.get('/healthz', (c) => c.json({ ok: true }))
@@ -42,6 +51,48 @@ export function createApp(cfg: ProxyConfig): Hono {
     })
   })
 
-  // ③ T4 挂鉴权中间件 + 授权规则表 + 上游透传
+  // ③ 鉴权中间件：解 `mb_edit` Cookie（自有会话，代理侧派生密钥）⇒ 失败 **401**（Task 2 欠下的契约）。
+  //    ⚠️ 这条 `use('*')` 注册在 `/healthz`、`/handoff` **之后** ⇒ 那两个路由先命中并直接返回，
+  //       中间件链就此停下（Hono 按注册序执行，不调 `next()` 的处理器会短路后面所有层）。
+  //       **这不是巧合而是被测试钉住的**：app.test.ts 有「/healthz 无 Cookie ⇒ 200」与
+  //       handoff.test.ts 的「/handoff 无 Cookie ⇒ 仍能兑换」两侧；将来有人把 `use` 提到前面，
+  //       那两处会立刻变红。故**不要**在中间件里再抄一份路径白名单——两处白名单迟早分叉。
+  app.use('*', async (c, next) => {
+    const token = getCookie(c, EDIT_COOKIE)
+    const claims = token === undefined ? null : verifyProxySession(token, cfg.sessionSecret)
+    if (claims === null) {
+      // 不区分「没 Cookie」与「Cookie 坏/过期」：区分等于给攻击者一个「这枚串结构对了」的探针。
+      // no-store：401 也不许被缓存（否则一次失败能在共享缓存里被回放给别的请求）。
+      return c.json({ error: 'UNAUTHORIZED' }, 401, { 'Cache-Control': 'no-store' })
+    }
+    c.set('did', claims.did)
+    await next()
+  })
+
+  // ④ 授权规则表：`decide` 不过 ⇒ **403**。卡片集合现取（60s 缓存；取不到 ⇒ 空集 ⇒ fail-closed）。
+  app.use('*', async (c, next) => {
+    // 先归一化（判的路径 == 将要上行的路径；见 rules.normalizePath 头注）。归一不了 ⇒ 不信 ⇒ 403。
+    const path = normalizePath(c.req.path)
+    if (path === null) return c.json({ error: 'NOT_ALLOWED' }, 403, { 'Cache-Control': 'no-store' })
+    const cards = await fetchDashboardCards(cfg, c.get('did'))
+    if (decide(path, c.req.method, { did: c.get('did'), cards }) === 'deny') {
+      return c.json({ error: 'NOT_ALLOWED' }, 403, { 'Cache-Control': 'no-store' })
+    }
+    c.set('proxyPath', path)
+    await next()
+  })
+
+  // ⑤ 兜底：走到这里的请求**已经**过了鉴权 + 规则表 ⇒ 透传到上游（头改写见 upstream.ts）。
+  //    上行路径用 `proxyPath`（= 规则表判过的那一份），**不**再自己从 url 里取——那会重新打开
+  //    「判的是 A、发的是 B」的口子。
+  app.all('*', (c) => proxy(cfg, c.req.raw, c.get('proxyPath')))
+
+  // 未捕获异常（如上游网络错）统一成 JSON 500：**不回显上游的错误文本**（供应商常把请求原文——
+  // 含 API key——写进 message，回显即泄凭证；口径同 modules/data/domain/metabase.ts 的 MetabaseError）。
+  app.onError((err, c) => {
+    console.error(`[mb-proxy] unhandled: ${err.message}`)
+    return c.json({ error: 'UPSTREAM_ERROR' }, 500, { 'Cache-Control': 'no-store' })
+  })
+
   return app
 }
