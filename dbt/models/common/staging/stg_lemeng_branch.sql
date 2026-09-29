@@ -8,7 +8,7 @@
 -- 【前缀单点】`lemeng/dim_branch` 段不写死字面量 —— 用 `dbt_project.yml` 的同源 var
 --   `lemeng_branch_prefix`（出处：contracts/common/lemeng.branch.json 的 `layout.prefix`）。
 --   分区键顺序 `["system_book","snapshot"]` 与管线的 sink `key` 逐段一致（见
---   duckle/common/lemeng.branch.json 的 sink 节点）。
+--   **在用的** L0 管线 `deploy/duckle/console/pipelines/lemeng.dim.branch.l0.json` 的 sink 节点；🔴 2026-09-29 改向，原指已退役的 `duckle/common/lemeng.branch.json`）。
 --
 -- 【覆盖双账套】路径段写 `*/snapshot=**/` 而不是钉单账套 —— 门店维在 dbt 侧是**一个模型读两个
 --   账套分区**（`system_book` 是**列**、不是 var）；`account_book` var 只服务旧湖 retail_detail

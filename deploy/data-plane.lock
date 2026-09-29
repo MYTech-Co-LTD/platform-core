@@ -1,4 +1,4 @@
-sha256-of-rest 64ccd9b59ee0e01525bd78848024d076c33ee6af3709fd20731bd77a505cd1cf
+sha256-of-rest 222c29711837c44e8f7e57220a069cd8d27a01014af3f051dad8e0eefe0a90de
 d76cda3f506128316019928fe02a4458a230880368b55cf788395cc996024eb2 dbt/README.md ${REPO}/dbt/README.md 0644
 cc1d78b5c825d5902d22be9b17fbabdc0833afb3c25912e392f8765004a76776 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -6,9 +6,9 @@ d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subj
 e10d65bc0cb9c3471dfe2f6583c886835e7671a625d22d02a34567a1a6805954 dbt/models/common/marts/fct_retail_sale.sql ${REPO}/dbt/models/common/marts/fct_retail_sale.sql 0644
 4aadf438c760d83ddec4a0a10eb77d116e8ca0190efb08722bc2c8bc8b297cc8 dbt/models/common/marts/schema.yml ${REPO}/dbt/models/common/marts/schema.yml 0644
 7ab18ad82346fea625a47d4bcff0b9dcc405978ef1375fb06bb172eb7e3ce316 dbt/models/common/staging/schema.yml ${REPO}/dbt/models/common/staging/schema.yml 0644
-3d1de1b8f2984ec3dfe2ad745497932acb9cc11be0ffecb03f3691300e13f926 dbt/models/common/staging/sources.yml ${REPO}/dbt/models/common/staging/sources.yml 0644
-0502560ba41634ae18340cfa2fbd47ab1aa549fd4379d4149f4825c9f07f1e26 dbt/models/common/staging/stg_lemeng_branch.sql ${REPO}/dbt/models/common/staging/stg_lemeng_branch.sql 0644
-57ea9f4fa8cc3f0c06605e7f31d1d1a26d7f6ec64290ac014aa54bdb75d8f650 dbt/models/common/staging/stg_lemeng_item.sql ${REPO}/dbt/models/common/staging/stg_lemeng_item.sql 0644
+1285d200fbdee454d174a104699d18ee2230726c9a965d70a27d44ab3b83fc33 dbt/models/common/staging/sources.yml ${REPO}/dbt/models/common/staging/sources.yml 0644
+cb40dbc3af2788d9dda0f8a578f1e22e76ac0124be89ea2a08a3534d4be0c78d dbt/models/common/staging/stg_lemeng_branch.sql ${REPO}/dbt/models/common/staging/stg_lemeng_branch.sql 0644
+9e793e49fb2c04cef1d6a0ee5bb7415eef441b03a29a19817e829bb159801f43 dbt/models/common/staging/stg_lemeng_item.sql ${REPO}/dbt/models/common/staging/stg_lemeng_item.sql 0644
 d840857c96653e912b3b645348fdfa837736e9f03a089d0891d277bf6bf842a9 dbt/models/common/staging/stg_lemeng_retail_detail.sql ${REPO}/dbt/models/common/staging/stg_lemeng_retail_detail.sql 0644
 781b55fbc0da0efaa4732b0854872e83d39485209bb9315da9b426083babd0a3 dbt/models/common/staging/stg_lemeng_retail_order_line.sql ${REPO}/dbt/models/common/staging/stg_lemeng_retail_order_line.sql 0644
 f3f9750050670f32dc20a3992abc007b412605f0b5c7576f1267cb6512a42e0b dbt/models/customers/README.md ${REPO}/dbt/models/customers/README.md 0644
