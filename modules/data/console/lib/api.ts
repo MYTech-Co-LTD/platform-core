@@ -79,6 +79,16 @@ const MESSAGES: Record<string, string> = {
   TARGET_NOT_SUPPORTED: '目标值当前没有存储位置，暂不支持',
   L1_BASE_SQL_INVALID: '平台指标的 SQL 形状不合契约，请联系平台侧处理',
   ID_MISMATCH: '路径 id 与提交内容不一致',
+  // ── 写保护（spec §3③）───────────────────────────────────────────────────────────
+  // **登记侧**冲突：`PUT`/`DELETE /reports/:id` 带回的版本 ≠ 服务端现值（别人刚改过）。
+  // 文案说的是**已经发生**的事（页面动作：catch 里 `await load()` 重新拉列表）——别在这句里
+  // 承诺「已回滚」之类没有的动作。两条端点同码（PUT 232 行 / DELETE 335 行）。
+  STALE_WRITE: '这份报表刚被别人改过，已为你刷新，请重试',
+  // **内容侧**缺失指纹：`POST /reports`（重登记既有报表）不带 `expectedFingerprint` ⇒ 409。
+  // ⚠️ console **不调这个端点**（登记在 API/管线侧），本条纯属**防御性**文案：若将来把重登记
+  //    搬进 console，裸码 `VERSION_REQUIRED` 会直接漏到界面上。与 `STALE_WRITE` 同族但不是同一件事
+  //    （一个「没带版本」、一个「版本过期」），故分成两条。
+  VERSION_REQUIRED: '需要先读取最新版本再提交（页面已为你刷新）',
 }
 
 /** 已知码给中文文案；未知码回落成码本身（便于排障）。 */

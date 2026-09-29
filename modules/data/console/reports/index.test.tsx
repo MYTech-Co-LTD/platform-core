@@ -14,10 +14,12 @@ const calls: { url: string; init?: RequestInit }[] = []
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
 
+// `version` = **登记侧**版本（写保护的读侧，`GET /reports/manage` 回带）：console 从管理清单
+// 读到它、写时回带。自绘行（r3）**也给**——登记侧版本与渲染器无关（platform 行的登记行同样有版本）。
 const ROWS = [
-  { id: 'r1', title: '销售日报', requiredScope: null, renderer: 'metabase' },
-  { id: 'r2', title: '未放行报表', requiredScope: 'sales:read', renderer: 'metabase' },
-  { id: 'r3', title: '自绘大盘', requiredScope: null, renderer: 'platform' },
+  { id: 'r1', title: '销售日报', requiredScope: null, renderer: 'metabase', version: 1 },
+  { id: 'r2', title: '未放行报表', requiredScope: 'sales:read', renderer: 'metabase', version: 1 },
+  { id: 'r3', title: '自绘大盘', requiredScope: null, renderer: 'platform', version: 1 },
 ]
 
 function renderPage(scopes: string[]) {
@@ -131,7 +133,8 @@ describe('报表页签双视图', () => {
     await waitFor(() => {
       const put = calls.find((c) => c.init?.method === 'PUT')
       expect(put?.url).toMatch(/\/reports\/r2$/)
-      expect(JSON.parse(String(put?.init?.body))).toEqual({ requiredScope: null })
+      // 版本**从管理清单读回**（Task 3 起 PUT 必带 expectedVersion，缺 ⇒ 400 INVALID_BODY）
+      expect(JSON.parse(String(put?.init?.body))).toEqual({ requiredScope: null, expectedVersion: ROWS[1].version })
     })
   })
 
@@ -144,7 +147,8 @@ describe('报表页签双视图', () => {
     await waitFor(() => {
       const put = calls.find((c) => c.init?.method === 'PUT')
       expect(put?.url).toMatch(/\/reports\/r[123]$/)
-      expect(JSON.parse(String(put?.init?.body))).toEqual({ requiredScope: 'finance:read' })
+      // 「改页门」按的也是**该行**读回的版本（buttons('改页门')[0] = r1）
+      expect(JSON.parse(String(put?.init?.body))).toEqual({ requiredScope: 'finance:read', expectedVersion: ROWS[0].version })
     })
   })
 
@@ -155,7 +159,8 @@ describe('报表页签双视图', () => {
     await confirmPopconfirm('确认回收')
     await waitFor(() => {
       const del = calls.find((c) => c.init?.method === 'DELETE')
-      expect(del?.url).toMatch(/\/reports\/r[123]$/)
+      // ⚠️ DELETE 的版本走**查询串**（不是请求体）——`?expectedVersion=N`（Task 3 硬约束）
+      expect(del?.url).toMatch(/\/reports\/r[123]\?expectedVersion=1$/)
     })
   })
 
@@ -298,5 +303,56 @@ describe('报表页签双视图', () => {
     await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: /编\s*辑/ }))
     expect(await screen.findByText('编辑入口未配置（请联系运维）')).toBeInTheDocument()
+  })
+
+  it('★ 写请求带上读到的版本；409 ⇒ 出人话并自动刷新列表', async () => {
+    // ⚠️ 订正记录（2026-09-29，Task 5 实施）：计划原稿这里管理清单返回 `[ROWS[0]]` 却点「发布」——
+    //    而「发布」按钮**只在 `requiredScope !== null` 的行渲染**（见 index.tsx 的
+    //    `{r.requiredScope !== null && (<Popconfirm …发布…)}`），ROWS[0]（销售日报）页门为 null
+    //    ⇒ 原稿取不到按钮、用例连路径都走不到。最小订正：改用 ROWS[1]（未放行报表，sales:read），
+    //    它正是页门未放行、复现「发布」入口的那一行；`expectedVersion` 的期望值同步取 ROWS[1].version
+    //    （本轮夹具所有行都是 1，故数值与计划原稿一致，仅取数来源更贴行）。
+    let reloads = 0
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: [ROWS[1]] }) }
+      if (init?.method === 'PUT') return json({ error: 'STALE_WRITE', currentVersion: 9 }, 409)
+      return json({})
+    })
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /发\s*布/ }))
+    await confirmPopconfirm('确认发布')
+
+    // ① 请求体带版本（ROWS[1].version）② 409 出人话 ③ 列表被重新拉取（reload）
+    await waitFor(() => {
+      const put = calls.find((c) => c.init?.method === 'PUT')!
+      expect(JSON.parse(String(put.init?.body))).toMatchObject({ requiredScope: null, expectedVersion: ROWS[1].version })
+    })
+    expect(await screen.findByText('这份报表刚被别人改过，已为你刷新，请重试')).toBeInTheDocument()
+    await waitFor(() => expect(reloads).toBeGreaterThan(1))
+  })
+
+  it('★ 回收 409（版本陈旧）⇒ 出人话并自动刷新列表（DELETE 版本走查询串）', async () => {
+    // 与上一条同构，但走 **DELETE** 通路：版本在**查询串**里（`?expectedVersion=N`），
+    // 且 recycle 的 `catch` 也必须 `await load()`（三条写动作的 catch 各自独立，互不覆盖）。
+    let reloads = 0
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: [ROWS[0]] }) }
+      if (init?.method === 'DELETE') return json({ error: 'STALE_WRITE', currentVersion: 9 }, 409)
+      return json({})
+    })
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
+    fireEvent.click(buttons('回收')[0])
+    await confirmPopconfirm('确认回收')
+
+    await waitFor(() => {
+      const del = calls.find((c) => c.init?.method === 'DELETE')!
+      expect(del.url).toMatch(/\/reports\/r1\?expectedVersion=1$/)
+    })
+    expect(await screen.findByText('这份报表刚被别人改过，已为你刷新，请重试')).toBeInTheDocument()
+    await waitFor(() => expect(reloads).toBeGreaterThan(1))
   })
 })

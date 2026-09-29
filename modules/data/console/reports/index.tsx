@@ -31,6 +31,12 @@ interface ReportRow {
   title: string
   requiredScope: string | null
   renderer: 'metabase' | 'platform'
+  // **登记侧**版本（写保护的读侧）：`GET /reports/manage` 每行回带；三个写动作回带它
+  // （PUT 走 body `expectedVersion`、DELETE 走查询串 `?expectedVersion=`）。服务端不服 ⇒ 409 STALE_WRITE。
+  // ⚠️ 观看面 `GET /reports` **刻意不带**它（那里没有写动作）——本类型只服务管理面，故必填。
+  // ⚠️ 本仓有**第二份**同名 `ReportRow`（`modules/data/domain/report-store.ts`，Task 1/3 已加 version）：
+  //    两处不同文件、编译器不会互相提醒，加字段时都要改（Task 1 已知 minor）。
+  version: number
 }
 
 export default function ReportsPage() {
@@ -108,30 +114,46 @@ export default function ReportsPage() {
     }
   }
 
+  // ── 三个写动作的共同纪律（写保护，spec §3③）─────────────────────────────────────
+  // ① **必带该行读到的版本**：服务端 fail-closed（PUT 缺 `expectedVersion` ⇒ 400 INVALID_BODY；
+  //    DELETE 缺/非法 `?expectedVersion=` ⇒ 400）。版本一律取**本行** `r.version`（管理清单读回），
+  //    不是页面级缓存、更不是常量——取错行的版本会被 409 拦下（这正是写保护要的）。
+  // ② **catch 里总是 `await load()`**：409（STALE_WRITE = 别人刚改过）之后列表必须刷新，
+  //    否则用户拿着陈旧版本重试必然再撞一次；文案「已为你刷新」也因此为真。
   const publish = async (r: ReportRow) => {
     try {
-      await apiSend(`/reports/${r.id}`, 'PUT', { requiredScope: null })
+      await apiSend(`/reports/${r.id}`, 'PUT', { requiredScope: null, expectedVersion: r.version })
       messageApi.success(`已发布「${r.title}」`)
-      await load()
-    } catch (e) { messageApi.error(messageOf(e)) }
+    } catch (e) {
+      messageApi.error(messageOf(e))
+    }
+    await load()
   }
 
   const recycle = async (r: ReportRow) => {
     try {
-      await apiSend(`/reports/${r.id}`, 'DELETE')
+      // ⚠️ DELETE **无 body**：版本走**查询串**（`?expectedVersion=N`，Task 3 硬约束）
+      await apiSend(`/reports/${r.id}?expectedVersion=${r.version}`, 'DELETE')
       messageApi.success(`已回收「${r.title}」`)
-      await load()
-    } catch (e) { messageApi.error(messageOf(e)) }
+    } catch (e) {
+      messageApi.error(messageOf(e))
+    }
+    await load()
   }
 
   const saveGate = async () => {
     if (gateEdit === null || gateDraft.trim() === '') return
     try {
-      await apiSend(`/reports/${gateEdit.id}`, 'PUT', { requiredScope: gateDraft.trim() })
+      await apiSend(`/reports/${gateEdit.id}`, 'PUT', {
+        requiredScope: gateDraft.trim(),
+        expectedVersion: gateEdit.version,
+      })
       messageApi.success('页门已更新')
       setGateEdit(null)
-      await load()
-    } catch (e) { messageApi.error(messageOf(e)) }
+    } catch (e) {
+      messageApi.error(messageOf(e))
+    }
+    await load()
   }
 
   /**
