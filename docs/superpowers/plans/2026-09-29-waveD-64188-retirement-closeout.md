@@ -492,6 +492,17 @@ docker exec <container> python3 /opt/connection-setup.py --workspace /workspace 
 | **U3** | **`run-retail-day.sh` 的分形态废弃边界落在哪？** | (a) 只废**采集调用形**（`dim`/`window`/`windows`/`tick`），保留**只读诊断形**（§4.5 的建议）；(b) 废更多（连 `recon`/`rb` 一起，改由新工具承担）；(c) 暂不废（脚本整体留着） | 拍板。**论据明写**：① 正典 §1.1.7 明令「诊断/对账工具**独立只读入口，永不进采集主链**」⇒ 它们**不随采集形态淘汰**；② `recon` 是 `DELIVERY.md` §3 判据 2 的**指定工具**；③ Wave C 把 `tick` 形当**对照臂**（母计划原文）⇒ **废弃时点必须晚于 Wave C 对照完成**；④ 删 `duckle/common/*.json`（§4.3）会**先**让采集形失效 ⇒ 两者**同批** |
 | **U4** | **`BRANCH_NUMS`（F3）怎么补？** | (a) 补进 `deploy/data-compose.yml`，每服务一行（`BRANCH_NUMS: ${BRANCH_NUMS:-}` / `${BRANCH_NUMS_64188:-}`），并补 `.env.example`；(b) 不动 compose，书面记录它以服务级 env 注入（**但这条通路不在仓里**）；(c) 改成不用 env（不现实——L0/L1 已逐字依赖） | 拍板。**论据明写**：① 两账套值**不同**（len 970 vs 409）⇒ 必须**按键名分账套**；② 缺口会让任何「按 compose 重建 console」的动作**丢掉它** ⇒ dim/retail 全批判红（**响亮，但仍是停摆**）；③ B9 门禁**不扫** `duckle/**` 的 env 键（正典 §1.2 第二档原句）⇒ **没有门禁会替你发现**；④ 补 compose 需**同批重跑 lock**（`deploy/data-compose.yml` 在 manifest 里） |
 
+### 7.1 决定已拍板（2026-09-29，人裁决）
+
+| # | 裁决 | 由本裁决产生的新动作 / 新前置 |
+|---|---|---|
+| **U1** | **(a) 上**，64188 与 3120 同构 | Wave D 需为 64188 seed `owners.json` + `alerts.json`；⚠️ 记牢 `alerts.json` 是**同一份文件**喂两个 console ⇒ 规则内容公用，任何删规则动作**两侧同时生效**。 |
+| **U2** | **(a) 彻底**：仓内删文件 + **卷内删文件** + 删调度条目 | ⚠️ **新前置**：本仓**没有「卷内删文件」工具**（`DELIVERY.md` §1③ 只有「怎么放进去」）⇒ Wave D 需先补这一步（`docker exec … rm`，属**生产写操作**，须走 openship MCP 并留档）。回滚位改由 **git 历史**承担（文件可取回 + 重新 seed），代价是回滚多一步。 |
+| **U3** | **(b) 连 `recon`/`rb` 一起废** —— **人选，非本计划推荐项**（推荐是 (a)） | 🔴 **硬前置**：先造**替代的只读对账工具**。`recon` 是 `DELIVERY.md` §3 **判据 2 的指定工具**，也是缺口排障的现成手段；无替代即废 = 自断手脚。另：废弃时点仍须**晚于 Wave C 对照完成**，且与删 `duckle/common/*.json` **同批**（原 §7 论据 ③④ 不变）。 |
+| **U4** | **(b) 仓内书面记录「在哪、怎么取」**（按安全基线，**不写明文**） | **实测补正（2026-09-29）**：`BRANCH_NUMS` 由 **openship 服务级 env** 注入——`lemeng-console-3120`（`svc_srQwfTvdkjxbCeoA`）与 `lemeng-console-64188`（`svc_u4pvEqZPfstnE5vI`）**各一份**，经 openship MCP 服务查询可读（值打码）；**project env（27 键）里没有**，仓内也没有。⇒ 记录位置 + 取法即可。**残余缺口如实保留**：按 compose 裸重建（不经 openship）仍会丢它 ⇒ dim/retail 全批判红（响亮但停摆），这是本选项**接受**的代价。 |
+
+> 读法：本表是**裁决结果**；上表的选项与论据保留为**决策留档**（为什么当时有这些选项、代价各是什么）。
+
 ---
 
 ## 8. 风险与回滚
