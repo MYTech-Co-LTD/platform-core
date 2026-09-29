@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.55.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.54.0...v0.55.0) - 2026-09-29
+- 【新增】duckle: #364 Wave D 薄壳退役批 + tick/close L1 激活 ([#365](https://github.com/MYTech-Co-LTD/platform-core/pull/365), [5bcb9b1](https://github.com/MYTech-Co-LTD/platform-core/commit/5bcb9b17c5cb04c8b0b02cc540c2958b4a31cc4d))
+
+
 ## [0.54.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.53.2...v0.54.0) - 2026-09-29
 - 【新增】duckle: #361 64188 切流——L0/L1 接管、三条薄壳置停 ([#362](https://github.com/MYTech-Co-LTD/platform-core/pull/362), [4458686](https://github.com/MYTech-Co-LTD/platform-core/commit/4458686f4b6d3d7fd3ffa1d3a3c2f832140cd2b3))
 
