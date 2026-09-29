@@ -203,8 +203,14 @@ curl -s -X POST http://127.0.0.1:18080/api/catalog \
 
   ⚠️ body 的键是 **`file`**（值 = **工作区相对路径**，引擎按 `${workspace}/<file>` 解析），**不是** `pipeline`。
   载入会等整条跑完；长跑用 `/api/run/async`。
-  同法逐个触发 `lemeng.retail.tick.l1` / `lemeng.retail.close.l1`（后两条调度仍是 `enabled:false`，
-  手动触发**不会**让它们产生 run 事件告警，见 alerts `_note` ⑪）。
+  同法逐个触发 `lemeng.retail.tick.l1` / `lemeng.retail.close.l1`（后两条调度仍是 `enabled:false`）。
+  🔴 **订正（2026-09-29 实测）**：本节原写「手动触发**不会**让它们产生 run 事件告警」——**不成立**。
+  实测：手动触发一条**故意失败**的管线 ⇒ 引擎照样产出 `event=failure` 并 POST 进 OO `data_alerts`
+  （`pipeline=lemeng.dim.alerttest.l0`、`status=error`、text=`Duckle: … FAILED after 0.1s …`）。
+  ⇒ **手动 run 也走告警**（与 alerts §「无门槛：打进这个 console 的 run 都算」一致）；
+  `_note` ⑪ 的「不产出 run 事件」说的是**调度 disabled ⇒ 没有到点的调度事件**，不是「手动跑不告警」。
+  ⇒ 本步手动触发那两条时，**如果有 run 失败，群会真的响**（别当成意外）。
+  （当日实测记录见 issue #316 评论；测试管线已删，只留运行记录当证据。）
 - 判据：**看运行记录判触发**（最新一条的 `at` = **开始**时刻），**不是** `schedules.json` 的 `last_run_at`（那是**完成**时刻）。
   （同一时刻在**回执**里叫 `startedAt`——两处字段名不同，别互相找。）
 - 失败处置：失败先看 run 记录的 `error` 与 `logs/<pipeline_id>/runtime.log`；
