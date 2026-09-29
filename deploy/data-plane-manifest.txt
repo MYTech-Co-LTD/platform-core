@@ -22,7 +22,6 @@ deploy/data-compose.yml                  ${REPO}/deploy/data-compose.yml        
 deploy/duckle/entrypoint.sh              ${REPO}/deploy/duckle/entrypoint.sh       0644
 duckle/                                  ${REPO}/duckle/                           0644
 dbt/                                     ${REPO}/dbt/                              0644
-scripts/lemeng/run-retail-day.sh         /opt/lemeng-run.sh                        0755
 scripts/lemeng/wire-warehouse.sh         /opt/lemeng-wire-warehouse.sh             0755
 scripts/lemeng/readback-helper.sh        ${REPO}/lemeng-readback.sh                0755
 scripts/lemeng/diagnose.sh               /opt/lemeng-diagnose.sh                   0755
