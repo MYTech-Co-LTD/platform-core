@@ -491,7 +491,9 @@ git commit -m "feat(data): 每对象一把锁（进程内）+ 并发写承重测
     let reloads = 0
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: [ROWS[0]] }) }
+      // ⚠️ 订正记录（2026-09-29，Task 5 实施中发现）：原稿这里桩 `[ROWS[0]]` 却点「发布」——
+      //    「发布」只在 `requiredScope !== null` 的行渲染（`ROWS[1]` 才是那行），原稿取不到按钮。
+      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: [ROWS[1]] }) }
       if (init?.method === 'PUT') return json({ error: 'STALE_WRITE', currentVersion: 9 }, 409)
       return json({})
     })
@@ -510,7 +512,9 @@ git commit -m "feat(data): 每对象一把锁（进程内）+ 并发写承重测
   })
 ```
 
-（`ROWS` 夹具要补 `version` 字段——所有行给 1，自绘行也给（登记侧版本与渲染器无关）。）
+（`ROWS` 夹具要补 `version` 字段——⚠️ **三行给互不相同的值**（如 1/2/3），自绘行也给（登记侧版本与渲染器无关）。
+⚠️ 别给所有行同一个值：那样"硬写常量"与"读到该行版本"**不可区分**，断言会变成假绿——Task 5 实施时用常量变异证明了这点，
+这条要求就是那次发现的落地。）
 
 - [ ] **Step 2: 跑测试确认红**
 
@@ -526,6 +530,9 @@ git commit -m "feat(data): 每对象一把锁（进程内）+ 并发写承重测
 ```
 
 - 三处 `catch` 里：`messageOf(e)` 出人话后**总是** `await load()`（冲突后列表即刷新，与文案一致）。
+- ⚠️ **改页门那条要额外收口重试入口**（订正记录 2026-09-29，Task 5 实施中发现）：`saveGate` 的 Modal 持的是**陈旧快照**，
+  列表刷新后用户不关框再点「确定」会**再发一次陈旧版本 ⇒ 再一个 409**。所以 409 时**关掉 Modal**（`setGateEdit(null)`），
+  让重试必须从刷新后的列表重新进入。别只刷新列表而不收口。
 
 - [ ] **Step 4: 跑测试确认绿 + 回归**
 
