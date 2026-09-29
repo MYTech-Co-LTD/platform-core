@@ -309,7 +309,8 @@ git commit -m "feat(data): 编辑页一次性票据 + GET /reports/:id/edit-url�
 - Produces:
   - `loadProxyConfig(env = process.env)` → `{ port, sessionSecret, consoleOrigin, upstreamUrl, upstreamApiKey }`，缺必填即抛（照 `apps/server/src/config.ts` 的 fail-fast 风格）。
   - `EDIT_COOKIE = 'mb_edit'`；`serializeEditCookie(token)` / `clearEditCookie()`（host-only：**不设 Domain**；`Path=/; HttpOnly; Secure; SameSite=Lax`）。
-  - 服务入口：`/healthz` → `{ok:true}`（**在任何鉴权之前**，照宿主 `app.ts:205` 的位置纪律）；其余路径先验 `mb_edit` Cookie，无效 → `401 {error:'UNAUTHENTICATED'}`。
+  - 服务入口：`/healthz` → `{ok:true}`（**在任何鉴权之前**，照宿主 `app.ts:205` 的位置纪律）。
+  - ⚠️ **「非 `/healthz` 一律 401」这条契约归 Task 4**（本任务只搭骨架，`index.ts` 里尚未挂鉴权中间件，所以此刻其余路径是 404）：Task 4 挂上鉴权后必须兑现——别以为 Task 2 已经做了。
 
 - [ ] **Step 1: 写失败测试**（`apps/mb-proxy/src/session.test.ts`）
 
@@ -379,21 +380,25 @@ export interface ProxyConfig {
 }
 
 export function loadProxyConfig(env: Record<string, string | undefined> = process.env): ProxyConfig {
-  const need = (k: string): string => {
+  // ⚠️ 访问器**必须叫 `requireValue`**（就是宿主 `apps/server/src/config.ts:62` 那个名字）：
+  //    B9 门禁（`scripts/check-env-example.mjs:57-73`）只认四种构造——`process.env.KEY`、
+  //    `process.env['KEY']`、`env.KEY`、以及按**标识符**匹配的 `requireValue('KEY')`/`optional('KEY')`。
+  //    自己起名 `need(...)` ⇒ 这些键**不被机械守住**（删掉 `.env.example` 声明门禁也照样绿，只靠人记得）。
+  const requireValue = (k: string): string => {
     const v = env[k]
     if (v === undefined || v.trim() === '') throw new Error(`缺少必填环境变量 ${k}`)
     return v
   }
-  const secret = need('PLATFORM_SESSION_SECRET')
+  const secret = requireValue('PLATFORM_SESSION_SECRET')
   if (secret.length < 32) throw new Error(`PLATFORM_SESSION_SECRET 至少 32 字符（当前 ${secret.length}）`)
-  const port = Number(need('PORT'))
+  const port = Number(requireValue('PORT'))
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`PORT 必须是 1-65535 的整数`)
   return {
     port,
     sessionSecret: secret,
-    consoleOrigin: need('MB_PROXY_CONSOLE_ORIGIN'),
-    upstreamUrl: need('DATA_METABASE_URL').replace(/\/+$/, ''),
-    upstreamApiKey: need('DATA_METABASE_API_KEY'),
+    consoleOrigin: requireValue('MB_PROXY_CONSOLE_ORIGIN'),
+    upstreamUrl: requireValue('DATA_METABASE_URL').replace(/\/+$/, ''),
+    upstreamApiKey: requireValue('DATA_METABASE_API_KEY'),
   }
 }
 ```
@@ -429,9 +434,10 @@ serve({ fetch: app.fetch, port: cfg.port }, (i) => {
     # ⚠️ **必须覆盖 command**：Dockerfile.server 的 CMD 是跑 @platform/server（`Dockerfile.server:118`），
     #    不覆盖的话这个容器会把**平台宿主**再起一遍（同镜像、错入口）。
     command: ['pnpm', '--filter', '@platform/mb-proxy', 'start']
-    # ⚠️ **必须挂 profile**（与数据面 duckle/dbt 同款做法，`data-compose.yml:77-106`）：本服务要
-    #    `MB_PROXY_PUBLIC_ORIGIN`/`MB_PROXY_CONSOLE_ORIGIN` 才能启动，而这两个键是**每客户**才备的。
-    #    不挂 profile 就并入默认启停 ⇒ merge 当天生产上没有这两个 env ⇒ 容器 crash loop + 健康看板开事故。
+    # ⚠️ **必须挂 profile**（与数据面 duckle/dbt 同款做法，`data-compose.yml:77-106`）：本服务启动时要
+    #    `MB_PROXY_CONSOLE_ORIGIN`（+ 复用的 `PLATFORM_SESSION_SECRET`/`DATA_METABASE_URL`/`DATA_METABASE_API_KEY`），
+    #    而这些是**每客户**才备的；`MB_PROXY_PUBLIC_ORIGIN` 只被**模块端点**（Task 1）读，不是代理的启动前提。
+    #    不挂 profile 就并入默认启停 ⇒ merge 当天生产上没有这些 env ⇒ 容器 crash loop + 健康看板开事故。
     #    启用 = 该客户的部署单元显式打开 profile（见 Task 6 SOP）。
     profiles: ['edit-proxy']
     env_file:
@@ -480,7 +486,10 @@ git commit -m "feat(mb-proxy): 编辑页反代服务骨架（自有 Cookie + /he
 
 **Files:**
 - Create: `apps/mb-proxy/src/handoff.ts`
-- Modify: `apps/mb-proxy/src/index.ts`（挂 `/handoff`）
+- Create: `apps/mb-proxy/src/app.ts`——**把 Hono app 抽出来导出**，`index.ts` 只留 `serve()`
+  （Task 2 的 `index.ts` 顶层就 `serve()`，HTTP 级测试会**真绑端口**；照 `apps/server` 的
+  `app.ts`/`index.ts` 分工。Task 2 的 `app.get('/healthz')` 随之搬到 `app.ts`）
+- Modify: `apps/mb-proxy/src/index.ts`（import `app` 并 serve）
 - Test: `apps/mb-proxy/src/handoff.test.ts`
 
 **Interfaces:**
