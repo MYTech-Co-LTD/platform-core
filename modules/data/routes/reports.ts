@@ -44,6 +44,7 @@ import {
   listReports,
   upsertReport,
 } from '../domain/report-store'
+import { publishWithTenantBinding } from '../domain/report-content'
 
 /**
  * 平台**保留**的锁定参数名：它的值恒为调用者 org、只在签 token 时现写。
@@ -102,11 +103,14 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       // ⚠️ 查找/创建都用**含 org 的规范名**（I-1）：Metabase 是单实例多租户共用，裸 title 会让
       //    两个租户的同名报表命中同一张 dashboard ⇒ 跨租户改写 embedding_params / 跨租户归档。
       const up = await upsertDashboard(deps, dashboardName(org, parsed.data.title))
-      // 发布 + 锁参数。tenant 恒锁（值不在这里，在签名时现写）——这行是「租户绑定成立」的前提
-      await setEmbedding(deps, up.id, [
-        { name: TENANT_PARAM, mode: 'locked' },
-        ...Object.keys(parsed.data.lockedParams).map((name) => ({ name, mode: 'locked' as const })),
-      ])
+      // 一次做全三件（声明参数 / 只映射带标签的卡 / 锁参）；额外的 lockedParams 由 setEmbedding 合并
+      await publishWithTenantBinding(deps, up.id)
+      if (Object.keys(parsed.data.lockedParams).length > 0) {
+        await setEmbedding(deps, up.id, [
+          { name: TENANT_PARAM, mode: 'locked' },
+          ...Object.keys(parsed.data.lockedParams).map((name) => ({ name, mode: 'locked' as const })),
+        ])
+      }
       const id = await upsertReport(ctx.pool, org, {
         title: parsed.data.title,
         metabaseId: up.id,

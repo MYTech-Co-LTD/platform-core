@@ -68,13 +68,19 @@ interface FakeDash {
  * 内存版 Metabase 桩。**search 故意做成模糊**（`includes`）——真机 `/api/search` 就是模糊匹配，
  * 桩若做成全等，领域层「必须 name 全等才算命中」的判据在路由测试里就永远不被行使。
  *
+ * `cards` = cardId → `dataset_query.stages[0]`（发布路径要读每张卡的模板标签，见
+ * `publishWithTenantBinding`）；不在 `cards` 里的卡 404——与真机「读不出就是读不出」一致。
+ *
  * ⚠️ `PUT /api/dashboard/{id}` 对 `dashcards` / `parameters` 是**替换**语义（body 里没有该键
  *    ⇒ 清空）：这正是真机上「裸 PUT 会把卡片表列整条替换掉」的机制（本计划的 bug 本体）。
  *    桩若做成「给了才改」，`putDashboardMerged` 退化成裸 PUT 时**不会有任何断言变红**——
  *    桩于是成了「怎么改都绿」的假面（`getDashboardFull` 读不出 dashcards 时抛形状错也是同理）。
  */
-function fakeMetabase(seed: FakeDash[] = []) {
-  const state = { dashboards: [...seed], nextId: 100, calls: [] as { url: string; init?: RequestInit }[] }
+function fakeMetabase(seed: FakeDash[] = [], cards: Record<number, Record<string, unknown>> = {}) {
+  const state = {
+    dashboards: [...seed], cards, nextId: 100,
+    calls: [] as { url: string; init?: RequestInit }[],
+  }
   const fetcher = async (url: string, init?: RequestInit): Promise<Response> => {
     state.calls.push({ url, init })
     const method = init?.method ?? 'GET'
@@ -121,6 +127,12 @@ function fakeMetabase(seed: FakeDash[] = []) {
       d.dashcards = Array.isArray(body?.dashcards) ? body.dashcards as FakeDashcard[] : []
       d.parameters = Array.isArray(body?.parameters) ? body.parameters as FakeDashParam[] : []
       return json(d)
+    }
+    const cm = /^\/api\/card\/(\d+)$/.exec(u.pathname)
+    if (cm && method === 'GET') {
+      const stage = state.cards[Number(cm[1])]
+      if (stage === undefined) return json({ message: 'not found' }, 404)
+      return json({ dataset_query: { stages: [stage] } })
     }
     return json({ message: 'not found' }, 404)
   }
@@ -295,6 +307,39 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(rows.rowCount).toBe(1)
     // 第二次是覆盖（PUT），创建只发生过一次
     expect(mb.state.calls.filter((c) => (c.init?.method ?? 'GET') === 'POST')).toHaveLength(1)
+  })
+
+  it('★ 路由级回归：已有卡的 dashboard 上重跑 POST /reports ⇒ 卡不被清，且三件套成立', async () => {
+    const { app } = manage()
+    const first = await (await post(app, { title: '已有卡的报表' })).json()
+    const dash = mb.state.dashboards.find((d) => d.id === first.metabaseId)
+    if (dash === undefined) throw new Error('首次 POST 后 dashboard 应在桩里')
+    // 人/agent 已往这张报表上放了卡：一张带 tenant 标签（该映射）、一张不带（不许映射）、一张文本卡
+    dash.dashcards = [
+      { id: 1, card_id: 101, row: 0, col: 0, size_x: 12, size_y: 6 },
+      { id: 2, card_id: 102, row: 6, col: 0, size_x: 6, size_y: 4 },
+      { id: 3, card_id: null, row: 6, col: 6, size_x: 6, size_y: 4, visualization_settings: { text: '备注' } },
+    ]
+    mb.state.cards = {
+      101: { native: 'select 1 where t = {{tenant}}', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } },
+      102: { native: 'select 2' },
+    }
+
+    const second = await (await post(app, { title: '已有卡的报表' })).json()
+    expect(second.created).toBe(false)
+    expect(second.id).toBe(first.id)
+    // 卡片没被清（三件套那次合并 PUT 也不清卡——旧 bug 的路由级形态就是这里变成 0 张）
+    expect(dash.dashcards).toHaveLength(3)
+    // 只映射带 tenant 标签的那张；文本卡与不带标签的卡都不动
+    expect(dash.dashcards[0].parameter_mappings).toEqual([
+      { parameter_id: 'tenant-param', card_id: 101, target: ['variable', ['template-tag', 'tenant']] },
+    ])
+    expect(dash.dashcards[1].parameter_mappings ?? []).toEqual([])
+    expect(dash.dashcards[2]).toMatchObject({ card_id: null, visualization_settings: { text: '备注' } })
+    expect(dash.dashcards[2].parameter_mappings ?? []).toEqual([])
+    // 声明了 dashboard 级 tenant 参数 + 锁参（三件套在路由出口也成立）
+    expect((dash.parameters ?? []).map((p) => p.slug)).toContain('tenant')
+    expect(dash.embedding_params).toEqual({ tenant: 'locked' })
   })
 
   it('★ 保留参数 tenant 不许外部给：POST /reports 带 lockedParams.tenant ⇒ 400，且不碰 Metabase', async () => {

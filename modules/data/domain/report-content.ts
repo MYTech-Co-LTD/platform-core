@@ -4,7 +4,7 @@
 // 不碰路由、不碰登记表（那是 report-store）、不碰 Metabase 的 HTTP（那是 metabase.ts）。
 import { createHash } from 'node:crypto'
 import {
-  getCard, getDashboardFull,
+  getCard, getDashboardFull, putDashboardMerged,
 } from './metabase'
 import type { DashcardRef, DashboardFull, MetabaseDeps } from './metabase'
 
@@ -72,4 +72,50 @@ export async function readDashboardContent(
       embeddingParams: full.embeddingParams, cardSqlDigests,
     }),
   }
+}
+
+/** 平台保留的锁定参数名（与 routes/reports.ts 的 TENANT_PARAM 同值；两处必须一致）。 */
+export const TENANT_SLUG = 'tenant'
+/**
+ * dashboard 级 tenant 参数在 Metabase 侧的 `id`（参数声明与卡片 `parameter_mappings` 都指它）。
+ * 对账判「锁了但绑不到」要按 `parameter_id === TENANT_PARAM_ID` 自己比——**从这里 import**，
+ * 别另写一份字面量（两处漂移 ⇒ 对账恒假绿）。
+ */
+export const TENANT_PARAM_ID = 'tenant-param'
+
+/**
+ * 发布：**一次做全三件**（spec §3②）。
+ *   ① 声明 dashboard 级 `tenant` 参数（缺它 ⇒ 锁住的值**绑不到任何东西**）
+ *   ② 把**真正用到** `{{tenant}}` 模板标签的卡片映射到它（不带的别映射，映射了会报错）
+ *   ③ 设 `embedding_params.tenant = 'locked'`
+ * 全程走 `putDashboardMerged`（非破坏性）。
+ *
+ * 返回发布后的 `fingerprint`（现算）——写保护守卫（计划 3）的比对物由这里产出；
+ * 只回读 `embedding_params` 的对账会把「只锁参、没声明/没映射」判成 OK（静默失效）。
+ */
+export async function publishWithTenantBinding(
+  deps: MetabaseDeps, dashboardId: number,
+): Promise<{ mapped: number; fingerprint: string; embeddingParams: Record<string, string> }> {
+  const cur = await readDashboardContent(deps, dashboardId)
+  let mapped = 0
+  // 逐卡决定：**带 tenant 模板标签的**才映射（不带的映射了会报错），布局与已有映射原样保留
+  const dashcards = cur.dashcards.map((d) => {
+    const hasTenant = d.cardId !== null && (cur.cardTags[d.cardId] ?? []).includes(TENANT_SLUG)
+    if (hasTenant) mapped += 1
+    return {
+      ...d,
+      ...(hasTenant
+        ? { parameterMappings: [{ parameter_id: TENANT_PARAM_ID, card_id: d.cardId,
+                                  target: ['variable', ['template-tag', TENANT_SLUG]] }] }
+        : {}),
+    }
+  })
+  await putDashboardMerged(deps, dashboardId, {
+    parameters: [{ id: TENANT_PARAM_ID, name: TENANT_SLUG, slug: TENANT_SLUG, type: 'category', sectionId: 'string' }],
+    dashcards,
+    enable_embedding: true, embedding_type: 'signed',
+    embedding_params: { [TENANT_SLUG]: 'locked' },
+  })
+  const after = await readDashboardContent(deps, dashboardId)
+  return { mapped, fingerprint: after.fingerprint, embeddingParams: after.embeddingParams }
 }
