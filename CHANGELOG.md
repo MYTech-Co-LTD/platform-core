@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.53.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.52.1...v0.53.0) - 2026-09-29
+- 【新增】data: #336 报表统一管理面——管理清单/页门/发布/回收 + 对账按行降级 + renderer 守卫 ([#338](https://github.com/MYTech-Co-LTD/platform-core/pull/338), [6979273](https://github.com/MYTech-Co-LTD/platform-core/commit/697927364aa8282184b5f3ba345208174c323069))
+
+
 ## [0.52.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.52.0...v0.52.1) - 2026-09-29
 - 【修复】duckle: #334 retail 子管线 sink 补 bucket（修复新鲜度锚死规则）+ tick/close 薄壳声明置停 ([#335](https://github.com/MYTech-Co-LTD/platform-core/pull/335), [e899107](https://github.com/MYTech-Co-LTD/platform-core/commit/e89910719013a82ef0674b438599ab9ef18e55cb))
 
