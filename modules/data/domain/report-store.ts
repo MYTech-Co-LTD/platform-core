@@ -134,3 +134,24 @@ export async function deleteReport(pool: Pool, org: string, id: string): Promise
   const r = await pool.query('delete from data.reports where org = $1 and id = $2', [org, id])
   return (r.rowCount ?? 0) > 0
 }
+
+/**
+ * 页门改动（管理面动作，spec §3⑤）：`requiredScope` 传 null = **发布**（所有拿到本模块的人
+ * 可见，口径同 `data.metrics.required_scope`）。**没有独立的 published 列**——「未发布」就是
+ * 页门未放行在观看面的表现，不为管理动作新增状态列。
+ *
+ * 返回更新后的整行（`updatedAt` 由 SQL 侧 `updated_at = now()` 维护，不在投影里）；
+ * 没命中（跨租户 / id 不存在）返回 null ⇒ 路由层一律 404。
+ */
+export async function updateRequiredScope(
+  pool: Pool, org: string, id: string, requiredScope: string | null,
+): Promise<ReportRow | null> {
+  const r = await pool.query(
+    `update data.reports
+        set required_scope = $3, updated_at = now()
+      where org = $1 and id = $2
+      returning id, title, metabase_id, embed_params, required_scope, renderer`,
+    [org, id, requiredScope],
+  )
+  return r.rowCount === 0 ? null : toReportRow(r.rows[0])
+}
