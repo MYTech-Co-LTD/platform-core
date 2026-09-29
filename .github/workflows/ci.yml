@@ -6,11 +6,12 @@
 #            （loader / routes/auth-wecom / migrate / routes/auth / tenant，共 50 条）。
 #            不给 DATABASE_URL 时它们是**静默跳过**的——「全绿」会绿在一个休眠基线上：
 #            会话/登录/登出/租户解析/seed/迁移/装载器/企微登录这半边一条都不执行。
-#   gates —— 门禁：typecheck（全 workspace 包 + scripts/）+ 七个守卫脚本对真实仓跑。
+#   gates —— 门禁：typecheck（全 workspace 包 + scripts/）+ 八个守卫脚本对真实仓跑。
 #            typecheck 与守卫单测（跑在 unit 的 test:guard 里）是两件事：单测拿 fixture 验
 #            守卫逻辑，本 job 拿真仓验守卫结论，且 typecheck 只在 CI 真跑才有意义。
-#            七个守卫里只有 check-tenant-isolation 要真库（issue #77 的真库对账），故本 job 也挂了
-#            postgres service——为什么不是挂在 unit / smoke，见那条 step 的注释。
+#            八个守卫里只有 check-tenant-isolation 要真库（issue #77 的真库对账），故本 job 也挂了
+#            postgres service——为什么不是挂在 unit / smoke，见那条 step 的注释；
+#            只有 check-duckle-catalog 要 Python（真跑 duckle 引擎），见那条 step 的注释。
 #   web   —— 前端单测 + 构建（构建内含 `tsc -b`，即 apps/web 的 strict typecheck）。
 #   smoke —— 装载冒烟（scripts/smoke-load.mjs）：真进程 + 真端口 + 真 HTTP 跑双形态。
 #            与 unit 的差别是「进程内直调 app」覆盖不到的那一层（启动期装配、Host 语义、
@@ -151,6 +152,36 @@ jobs:
           EVENT="${{ github.event_name }}" PR="${{ github.event.pull_request.number }}" \
           BEFORE="${{ github.event.before }}" \
           node scripts/check-pr-discipline.mjs
+      # 观测面命名门禁（issue #337；缺陷案例 #334）：**真跑 duckle 引擎**的 catalog build/lint。
+      #
+      # 为什么必须真跑引擎、不做静态检查：判据是「引擎能不能给节点**命名**」，而命名规则住在
+      # 引擎里（哪些字段 required、连接字段合不合并…）—— 静态脚本要复刻这套规则，等于把
+      # 引擎的实现抄一份进仓，**抄错就会静默放行**（正是本门禁要防的那种假绿）。
+      # 代价实测可接受：pip install duckle==0.7.4 拉 31.6MB(duckle) + 21.3MB(duckdb-cli)，
+      # 本机实测 16s；引擎只扫两份 JSON，秒级。
+      #
+      # 为什么放在 gates 的**末尾**：它是「守卫脚本对真实仓跑」这一族（上面六条同址 ⇒
+      # 找门禁的人只看一处），但 Python 装配是本 job 最重的一步（~30s），显式放最后，
+      # 让前面那些秒级守卫先失败先反馈。
+      #
+      # 引擎版本**从 Dockerfile 读**，本文件不写第二个版本号：CI 判的引擎必须与运行镜像同版，
+      # 否则会出现「CI 绿 / 生产红」这类最难查的漂移。deploy/duckle/Dockerfile 的
+      # ARG DUCKLE_VERSION 是唯一事实源（该文件也是本仓唯一的引擎版本落点）。
+      # 不照抄 Dockerfile 的 `-i 清华源`：镜像在境内构建才需要，GitHub runner 直连 PyPI 更快，
+      # 且镜像源同步有滞后（Dockerfile 里记着 aliyun 未同步 0.7.4 那件事）。
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: 安装 duckle（版本取自 Dockerfile，与运行镜像同源）
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^ARG DUCKLE_VERSION=//p' deploy/duckle/Dockerfile | head -1 | tr -d '[:space:]')
+          if [ -z "${VERSION}" ]; then
+            echo "::error::deploy/duckle/Dockerfile 里读不到 ARG DUCKLE_VERSION —— 版本事实源丢了，门禁拒绝跑"
+            exit 1
+          fi
+          echo "duckle 版本（取自 Dockerfile）：${VERSION}"
+          pip install --no-cache-dir "duckle==${VERSION}"
+      - run: pnpm exec tsx scripts/check-duckle-catalog.mjs
 
   web:
     runs-on: ubuntu-latest
