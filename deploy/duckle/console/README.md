@@ -88,7 +88,8 @@ L0 形态（一条管线替代「薄管线 + shell + 重管线」，正典 §1.1
 
 | 面 | 落点 | 备注 |
 |---|---|---|
-| **运行记录 / 排障入口** | **引擎回执**（`runs/receipts/`） | 不是文件凭证——回执由引擎自产，**不用投递**（正典 §1.6 派生物表） |
+| **排障入口** | **引擎回执**（`runs/receipts/`） | 不是文件凭证——回执由引擎自产，**不用投递**（正典 §1.6 派生物表） |
+| **写资产（`assets`）** | **运行记录**（`runs/<pipeline_id>.json`，数组、留 50 条） | 🔴 **`assets` 只在运行记录里；回执对任何管线都不带 `assets`**——两个词曾在本节与 issue #316 混用，2026-09-29 实测订正，**以本条为准** |
 | **失败告警** | `alerts.json` 的 `lemeng.dim.*.l0` 规则 | ⚠️ 按**形态末段**分组，不是宽 glob；取舍见 alerts.json ⑨ |
 | **新鲜度 SLA** | `owners.json` 的湖对象条目（`snk.minio` 目标） | 过渡期两套资产并存，形状见 owners.json ⑧ |
 
@@ -113,12 +114,14 @@ python3 -c "import json,glob,os;fs=glob.glob('/workspace/runs/receipts/*branch_l
 
 `owners.json` 的新鲜度**依赖 catalog**（见其 ②）：catalog 是**静态扫描 `pipelines/` 的产物**、
 不是每次 run 现推 ⇒ **管线文件进卷后不重建 catalog，该管线的 run record 整条不带 `assets` 字段**
-（2026-09-28 实测：三次 L0 run 的 receipt 全无 `assets`，而同日薄管线正常带）。
+（2026-09-29 复核订正：当时据「三次 L0 run 的回执全无 `assets`、同日薄管线正常带」得出「L0 有问题」——
+**那个对比本身不成立**：**回执对任何管线都不带 `assets`**，两边其实都没有。真正该看的是**运行记录**
+`runs/<pipeline_id>.json`：重建 catalog 前**运行记录**整条无 `assets`，重建后才有）。
 ⇒ 新 L0 管线**上线清单必须含**：
 
 1. seed 管线 + seed `alerts.json` / `owners.json`（同路，进 `/workspace/`）+ 定向重建容器；
 2. **重建 catalog**（Operator `POST /api/catalog`，或容器内 `duckle catalog build --workspace /workspace`）；
-3. 跑一次成功 run，确认**新回执带 `assets`** ⇒ 新鲜度时钟才起算（历史回执**不追溯**补）。
+3. 跑一次成功 run，确认**新的运行记录**（`runs/<pipeline_id>.json` 最新一条）带 `assets` ⇒ 新鲜度时钟才起算（历史 run **不追溯**补）。
 
 ⚠️ 自查「规则挂上没有」按 `owners.json` ⑤：freshness.json 里该资产**出现且非 unknown**；
 恒 `unknown` = 规则没挂；恒 `stale` 而管线确在成功跑 = 时钟没起算（查第 2 步）。
