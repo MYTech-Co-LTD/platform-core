@@ -4,7 +4,7 @@
   "domain": "lemeng",
   "table": "retail_order_line",
   "owner": "data-platform",
-  "description": "乐檬零售订单明细行（posorder.find 拉回后管线内 UNNEST 成行粒度）。两账套各采各的；作废/取消单照采，口径在 marts。",
+  "description": "乐檬零售订单明细行（posorder.find 拉回后管线内 UNNEST 成行粒度）。两账套各采各的；作废/取消单照采，口径在 marts。2026-09-29 列集 v2（#294）：18→24 列，补采 6 个对账字段（订单级 order_transaction_type / order_ref_billno，明细级 order_detail_share_discount / order_detail_std_price / order_detail_price / order_detail_online_qty）；契约格式未变，contractVersion 不动。",
   "layout": {
     "prefix": "lemeng/retail_order_line",
     "partitionStyle": "hive",
@@ -31,10 +31,16 @@
     { "name": "state", "type": "varchar", "nullable": false, "description": "单据状态（FINISHED/CANCELED/REPAID/…）" },
     { "name": "order_source", "type": "varchar", "nullable": true, "description": "订单来源" },
     { "name": "item_num", "type": "varchar", "nullable": false, "description": "商品号（账套内编号，varchar 防撑爆）" },
-    { "name": "item_code", "type": "varchar", "nullable": true, "description": "商品业务码（跨品牌归并键）" },
+    { "name": "item_code", "type": "varchar", "nullable": true, "description": "商品业务码。⚠️ 上游订单 API 无此字段（PosOrderDetailAiVO / PosOrderAiVO 均无，2026-09-28 归因 §5.1 核验），本列恒空串；跨品牌归并键职责由 dim_item.item_code 承担（join 键 item_num）" },
     { "name": "sale_money", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "行成交金额（元）" },
     { "name": "discount_money", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "行折扣金额（元）" },
     { "name": "payment_money", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "行收款金额（元）" },
-    { "name": "quantity", "type": "decimal", "precision": 14, "scale": 3, "nullable": true, "description": "行数量" }
+    { "name": "quantity", "type": "decimal", "precision": 14, "scale": 3, "nullable": true, "description": "行数量" },
+    { "name": "order_transaction_type", "type": "varchar", "nullable": true, "description": "订单交易类型（订单级：SALE_ORDER / PARTIAL_ORDER_RETURN / FULL_ORDER_RETURN / NO_ORDER_RETURN）。非 SALE 订单行金额逐分等于平台 return_money（2026-09-28 归因 §3.2 实测）。v2（#294）补采" },
+    { "name": "order_ref_billno", "type": "varchar", "nullable": true, "description": "退货关联原单号（订单级，仅退货类订单有值）。v2（#294）补采" },
+    { "name": "order_detail_share_discount", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "订单明细分摊金额（官方语义确认；分支级 sd 可由它自算，摆脱报表依赖。真机非满员：43/67 行有值）。v2（#294）补采" },
+    { "name": "order_detail_std_price", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "明细标准价（复核折扣/改价口径；真机 67/67 行有值）。v2（#294）补采" },
+    { "name": "order_detail_price", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "明细售价（复核折扣/改价口径；真机 67/67 行有值）。v2（#294）补采" },
+    { "name": "order_detail_online_qty", "type": "decimal", "precision": 14, "scale": 3, "nullable": true, "description": "线上单规格换算数量（团购渠道；真机 67/67 行有值）。v2（#294）补采" }
   ]
 }
