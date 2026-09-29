@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.56.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.56.1...v0.56.2) - 2026-09-29
+- 【修复】deploy: mb-proxy 启停闸门改为 openship 服务级 enabled（compose profiles 对部署无效，已致一次 crash loop） ([#372](https://github.com/MYTech-Co-LTD/platform-core/pull/372), [97b7bd6](https://github.com/MYTech-Co-LTD/platform-core/commit/97b7bd6e45dbe79a73ce587bdeb099d44d943b43))
+
+
 ## [0.56.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.56.0...v0.56.1) - 2026-09-29
 - 【修复】duckle: #370 补 tick 新鲜度锚（首次用 expectedAfterSchedule） ([#371](https://github.com/MYTech-Co-LTD/platform-core/pull/371), [9f3fc7f](https://github.com/MYTech-Co-LTD/platform-core/commit/9f3fc7f4a60b58c9f855fbb198fad5d45863b8e8))
 
