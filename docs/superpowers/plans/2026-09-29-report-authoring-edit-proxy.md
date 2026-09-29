@@ -919,7 +919,13 @@ git commit -m "feat(mb-proxy): 授权规则表（deny-by-default，封枚举面�
   const [editRow, setEditRow] = useState<ReportRow | null>(null)
   const edit = async (r: ReportRow, opts?: { newTab?: boolean }) => {
     // 兜底路径要**同步**预开一个空白标签页（见下行注：await 之后再 window.open 会被弹窗拦截）
-    const pre = opts?.newTab === true ? window.open('about:blank', '_blank', 'noopener,noreferrer') : null
+    // ⚠️ 订正记录（2026-09-29，终审修复轮实测）：**features 里不要写 `noopener`**——Chromium 下
+    //    带 `noopener` 时 `window.open` **恒返回 null**（MDN + 本机 Chromium 实测），于是「预开窗 +
+    //    判 null 提示被拦」这套模式会退化成「每次都说被拦」。正确做法：同步开普通窗，拿到引用后
+    //    **立刻切断 opener**（反 tab-nabbing 的等价反制）；`noreferrer` 也不必（Referer 只带 console
+    //    origin，不含票据）。
+    const pre = opts?.newTab === true ? window.open('about:blank', '_blank') : null
+    if (pre !== null) pre.opener = null
     try {
       const b = await apiGet(`/reports/${r.id}/edit-url`) as { url: string }
       setEditRow(r)
