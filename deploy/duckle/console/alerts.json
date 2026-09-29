@@ -131,7 +131,24 @@
     "     ⇒ 失败静默。**唯一的防线是「加管线的那个 PR 里带一条规则」**：引擎不替你发现漏配；",
     "     `catalog lint` 只查 owners 的**死规则**（匹配不到任何资产），不查 alerts 的**漏规则**",
     "     ——方向相反的两件事，别指望它兜（见 owners.json ⑧）。",
-    "   📌 生效前提：seed 进卷才生效（与 pipelines/ 同路），落地路径 = /workspace/alerts.json。"
+    "   📌 生效前提：seed 进卷才生效（与 pipelines/ 同路），落地路径 = /workspace/alerts.json。",
+    "",
+    "⑩【2026-09-29 Wave B 投递准备：retail 切 L1 的告警接线（#330；依据 #324 定案）】",
+    "   · 新增 `lemeng.retail.windows.l1`（failure/recovery，冷却 15）——L1 双点火 2 次/天，日批节奏档",
+    "     （⑧ 的分档判据：失败风暴结构上不可能），冷却与 windows.run / dim 两组同档。",
+    "   · 为什么**不**用 `lemeng.retail.*.l1` 宽 glob（L1 管线 _note ⑦ 曾这样草拟）：retail 各 face",
+    "     节奏不同档（windows 日批 / tick 5 分钟 / close 日批），tick 若将来迁 L1 属高频档、需冷却 60 ⇒",
+    "     宽 glob 表达不了节奏（⑨ 判据原文），按 face 精确列；tick/close 迁 L1 时各自补自己的规则。",
+    "   · 薄壳 `lemeng.retail.windows.run` 规则**保留**——「被退役资产同批删」在本批**不适用**：本文件",
+    "     seed 到两个 console（⑤），64188 侧薄壳 retail 调度仍 enabled（schedules/64188.json；Wave B",
+    "     只切 3120）⇒ 现在删规则 = 64188 日批失败静默（⑧ 的「漏规则即静默」正是要避免的形状）。",
+    "     先例：`lemeng.dim.*.run` 在 3120 侧薄壳已 disabled 后仍保留至今，同一个理由。待 64188 也切",
+    "     L1（独立决定，别顺手带）的那一批，再把薄壳规则连同 3120 侧残留一起删。",
+    "   · 子管线 `lemeng.retail_order_line.window` 的 run（名带 @<hour> 后缀）**有意不配规则**：窗级",
+    "     失败经父管线 continueOnFailure + 末尾判红（WINDOWS_FAILED）汇成父 run 红 ⇒ 走本条规则告警；",
+    "     逐窗配规则会让一次缺口刷最多 24 条告警（冷却还压不住首轮）。窗级明细看",
+    "     /workspace/logs/retail-windows-summary.csv（父管线 _note ⑤）。",
+    "   📌 生效前提同 ⑨：seed 进卷 + 投递批次「重建 catalog」之后 L1 的湖对象锚才起算（owners.json ⑩）。"
   ],
   "rules": [
     {
@@ -166,6 +183,16 @@
     },
     {
       "match": "lemeng.retail.windows.run",
+      "on": ["failure", "recovery"],
+      "cooldownMinutes": 15,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
+    },
+    {
+      "match": "lemeng.retail.windows.l1",
       "on": ["failure", "recovery"],
       "cooldownMinutes": 15,
       "channel": "webhook",
