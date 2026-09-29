@@ -1010,6 +1010,14 @@ Task 5 改为**透传 `parameterMappings`**（不再需要额外函数）。
 
 ---
 
+### 终审修复（2026-09-29，最终整支评审人裁——三条进同一次 fix dispatch）
+
+1. **TENANT_PARAM 单一来源**：`routes/reports.ts` 不再自持 `'tenant'` 字面量，改从 `domain/report-content` import `TENANT_SLUG`。失效模式：TENANT_PARAM 漂移 ⇒ lockedParams 路径 `setEmbedding` 整表替换时丢 `tenant:'locked'` ⇒ 静默解锁租户。单一来源后相等性由构造保证（无需测试钉死）。
+2. **getDashboardFull 畸形 `parameter_mappings` 改 throw**：`pm != null && !Array.isArray(pm) ⇒ MetabaseError`（同文件对畸形 `card_id` 已是 throw，fail-closed 口径一致）。静默丢在合并写路径上 = 该卡现有映射**下次发布被清掉**——正是本支要防的失效类。
+3. **renderer 守卫落地**（Task 2「凡读 metabaseId 前先判 renderer」的承诺）：reconcile 对 `renderer === 'platform'` 的行**整体跳过**（不读 metabase、不进 tenantUnlocked/tenantUnbound）；DELETE **跳过 `archiveDashboard`**（登记行删除照旧）。platform 行今天无生产写入方，守卫是给计划 2/3 的消费方铺路。
+
+测试纪律：每条先红后绿；(2)(3) 各配变异确认（退回旧形状 ⇒ 恰自己那条红）。
+
 ## 与另两份计划的关系（建议的拆分）
 
 | 计划 | 内容 | 依赖 |
