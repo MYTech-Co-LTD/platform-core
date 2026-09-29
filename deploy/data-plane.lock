@@ -1,4 +1,4 @@
-sha256-of-rest d0e7a1440c8abd3a41a86439932b5ed093f6913e7b03c47073dc277840f836b3
+sha256-of-rest f712011247f805f77f05ef2d126e16ffae8cde453e810afdc5601b03b7e955e3
 d76cda3f506128316019928fe02a4458a230880368b55cf788395cc996024eb2 dbt/README.md ${REPO}/dbt/README.md 0644
 cc1d78b5c825d5902d22be9b17fbabdc0833afb3c25912e392f8765004a76776 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -32,7 +32,9 @@ f27414725b75d8f8764645e7366c45ad8da85a836106656f7490c45370b0d968 deploy/duckle/c
 f735fee86b2daac945a25717a907b07d7e50fcfc0202c96f4b08a701f1ffb87f deploy/duckle/console/pipelines/lemeng.dim.item.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item.run.json 0644
 ff747107af2e06a397b22f388e2436c90b7cddbfe2d1736b1e7ee2ed97b31d45 deploy/duckle/console/pipelines/lemeng.retail.close.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.close.run.json 0644
 f7a5bc18f39207a0f49e06467a25d5afa771b576508fa23a776ca3458923a5b6 deploy/duckle/console/pipelines/lemeng.retail.tick.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.tick.run.json 0644
+5a73eb2bdf831058f99e174c4684419cc2627876ba5ce2974405e9e4f8c46923 deploy/duckle/console/pipelines/lemeng.retail.windows.l1.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.windows.l1.json 0644
 63b6f17ad7a6c5290c748d209ef92f14d51207e270d7872dc89ab1087b7c574f deploy/duckle/console/pipelines/lemeng.retail.windows.run.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.windows.run.json 0644
+8e1d5df274382d386010e4a985fd4400bce15ade5d3ff6fe701d400790f7246e deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json 0644
 fa9fbfe0383fcb76c148eceff080159382fdc72ed2f0895378a5ad9381370828 deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
 1d554e8ebbe5f2cb06a1e6b5ece98f5e27f44110f02e81fc244f48f1ad996a90 deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
 a6d73597b4cb6dad45f30b9201acf8af48ec42672c79a43989b6d7e71099dd92 deploy/duckle/entrypoint.sh ${REPO}/deploy/duckle/entrypoint.sh 0644
