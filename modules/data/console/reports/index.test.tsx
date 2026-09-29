@@ -170,4 +170,44 @@ describe('报表页签双视图', () => {
     fireEvent.click(button('打开'))
     expect(await screen.findByText('平台自绘报表没有嵌入预览通道')).toBeInTheDocument()
   })
+
+  it('编辑：点击后向平台换 handoff URL，并用 iframe 打开（同父域 ⇒ SameSite=Lax 可用）', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) return json({ reports: [ROWS[0]] })
+      if (/\/reports\/[^/]+\/edit-url$/.test(url)) return json({ url: 'https://mb.test/handoff?t=T' })
+      return json({})
+    })
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /编\s*辑/ }))
+    await waitFor(() => {
+      const f = document.querySelector('iframe[title^="报表编辑"]') as HTMLIFrameElement
+      expect(f?.src).toBe('https://mb.test/handoff?t=T')
+    })
+  })
+
+  it('platform 行没有「编辑」（没有 Metabase dashboard 可编辑）', async () => {
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+    const row = screen.getByText('自绘大盘').closest('tr')!
+    expect(within(row).queryByRole('button', { name: /编\s*辑/ })).not.toBeInTheDocument()
+    // 正向对照：同一张表里 metabase 行**有**「编辑」⇒ 上面那条查不到是**逐行**判 renderer 的结果，
+    // 不是「整页崩了/按钮压根没实现」造成的恒真。
+    const metabaseRow = screen.getByText('销售日报').closest('tr')!
+    expect(within(metabaseRow).getByRole('button', { name: /编\s*辑/ })).toBeInTheDocument()
+  })
+
+  it('★ 服务端 503（未配代理 origin）⇒ 出人话文案', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) return json({ reports: [ROWS[0]] })
+      if (/\/reports\/[^/]+\/edit-url$/.test(url)) return json({ error: 'EDIT_PROXY_UNCONFIGURED' }, 503)
+      return json({})
+    })
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /编\s*辑/ }))
+    expect(await screen.findByText('编辑入口未配置（请联系运维）')).toBeInTheDocument()
+  })
 })

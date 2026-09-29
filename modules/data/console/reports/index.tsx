@@ -10,6 +10,10 @@
 //     登记/改登记内容（标题、锁参）仍走 API/管线，不在消费层第二次定义口径。
 //  ③ renderer='platform'（平台自绘）的行**没有 Metabase 嵌入通道**——「打开」置灰；
 //     服务端 embed-url 同样守卫（409 RENDERER_NOT_EMBEDDABLE），这里是前置体验。
+//  ④ **编辑入口**（#346 计划 3）：「编辑」换的是 `GET /reports/:id/edit-url` 给的**一次性 handoff
+//     URL**（专用入口 origin，票据兑换与自有 Cookie 都在代理侧完成）——前端照旧**不碰 Metabase
+//     凭据**。iframe 能直接打开是因为专用入口与 console **同父域**（反代的 SameSite=Lax Cookie
+//     照发）。逐行按 renderer 给按钮（platform 行没有可编辑的 dashboard），同 ③ 一样只是视图选择。
 import { useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { Button, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
@@ -33,6 +37,7 @@ export default function ReportsPage() {
 
   const [rows, setRows] = useState<ReportRow[]>([])
   const [embed, setEmbed] = useState<{ title: string; url: string } | null>(null)
+  const [editUrl, setEditUrl] = useState<{ title: string; url: string } | null>(null)
   const [gateEdit, setGateEdit] = useState<ReportRow | null>(null)
   const [gateDraft, setGateDraft] = useState('')
   const [messageApi, ctx] = message.useMessage()
@@ -51,6 +56,23 @@ export default function ReportsPage() {
     try {
       const b = await apiGet(`/reports/${r.id}/embed-url`) as { url: string }
       setEmbed({ title: r.title, url: b.url })
+    } catch (e) {
+      messageApi.error(messageOf(e))
+    }
+  }
+
+  /**
+   * 编辑 = 向平台换一次**专用入口**的 handoff URL（Task 1 的 `GET /reports/:id/edit-url`）。
+   *
+   * 与「打开」同一条纪律：URL 只能来自平台，前端拿不到任何 Metabase 凭据。
+   * handoff URL 一次性 + 短时票据，代理侧兑换成自有 host-only Cookie；面板用 iframe 打开
+   * 是因为专用入口与 console **同父域**（反代的 SameSite=Lax Cookie 照发）。失败只提示，
+   * 不留半开的面板（与 open 同款）。
+   */
+  const edit = async (r: ReportRow) => {
+    try {
+      const b = await apiGet(`/reports/${r.id}/edit-url`) as { url: string }
+      setEditUrl({ title: r.title, url: b.url })
     } catch (e) {
       messageApi.error(messageOf(e))
     }
@@ -140,6 +162,12 @@ export default function ReportsPage() {
           title: '操作', render: (_: unknown, r: ReportRow) => (
             <Space size="small">
               {openBtn(r)}
+              {/* 「编辑」与「打开」是**两条不同通路**：打开 = 嵌入预览（embed-url，只读令牌）；
+                  编辑 = 专用入口反代会话（edit-url，可写）。平台自绘行没有 Metabase dashboard 可编辑，
+                  故按 renderer 逐行给按钮（服务端同守卫：409 RENDERER_NOT_EDITABLE）。 */}
+              {canManage && r.renderer === 'metabase' && (
+                <Button size="small" onClick={() => void edit(r)}>编辑</Button>
+              )}
               {canManage && (
                 <>
                   <Button size="small" onClick={() => { setGateEdit(r); setGateDraft(r.requiredScope ?? '') }}>
@@ -189,6 +217,20 @@ export default function ReportsPage() {
             src={embed.url}
             style={{ width: '100%', height: 640, border: '1px solid #f0f0f0', marginTop: 8 }}
           />
+        </div>
+      )}
+      {editUrl !== null && (
+        <div>
+          <Typography.Text type="secondary">
+            {editUrl.title}——编辑页（专用入口；会话 8 小时有效，关闭后需从列表重新进入）
+          </Typography.Text>
+          {/* 同父域 ⇒ iframe 内仍是同站，反代的 SameSite=Lax Cookie 照发 */}
+          <iframe
+            title={`报表编辑：${editUrl.title}`}
+            src={editUrl.url}
+            style={{ width: '100%', height: 720, border: '1px solid #f0f0f0', marginTop: 8 }}
+          />
+          <Button size="small" href={editUrl.url} target="_blank" rel="noreferrer">在新标签打开</Button>
         </div>
       )}
     </Space>
