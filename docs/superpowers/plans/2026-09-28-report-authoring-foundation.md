@@ -897,12 +897,38 @@ git commit -m "feat(data): 发布一次做全三件套（声明参数/只映射�
     expect(body.ok).toBe(false)
     expect(body.tenantUnbound.map((r: { id: string }) => r.id)).toContain(id)
   })
+
+  it('reconcile 半绑定也报：两张 tenant 卡只映射一张 ⇒ tenantUnbound 非空（单卡粒度，人裁 2026-09-29）', async () => {
+    // 参数已声明（①不触发）；两张卡都带 tenant 标签，只映射了一张 ⇒ ②单卡粒度必须报
+    const { state, fetcher } = fakeMetabase([{
+      id: 301, name: `${ORG}/半绑定`, embeddable: true, archived: false,
+      enable_embedding: true, embedding_params: { tenant: 'locked' },
+    }])
+    state.dashboards[0].dashcards = [
+      { id: 11, card_id: 901, row: 0, col: 0, size_x: 6, size_y: 6,
+        parameter_mappings: [{ parameter_id: 'tenant-param', card_id: 901,
+                               target: ['variable', ['template-tag', 'tenant']] }] },
+      { id: 12, card_id: 902, row: 0, col: 6, size_x: 6, size_y: 6 },
+    ]
+    state.dashboards[0].parameters = [{ id: 'tenant-param', name: 'tenant', slug: 'tenant',
+                                        type: 'category', sectionId: 'string' }]
+    // 桩的 cards 若无 901/902，按现有 fakeMetabase 形状 seed（template tags 含 'tenant'）
+    vi.stubGlobal('fetch', fetcher)
+    const id = await upsertReport(pool, ORG, {
+      title: '半绑定', metabaseId: 301, embedParams: {}, requiredScope: null,
+    })
+    const res = await app.request('/reports/reconcile', { method: 'POST' })
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(false)
+    expect(body.tenantUnbound.map((r: { id: string }) => r.id)).toContain(id)
+  })
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `pnpm --filter data exec vitest run routes/reports.test.ts`
-Expected: FAIL —— `tenantUnbound` 是 `undefined`
+Expected: FAIL —— 第一条：`tenantUnbound` 是 `undefined`；第二条：dashboard 粒度旧判据下半绑定不报（`ok` 仍 true / `tenantUnbound` 不含该行）
 
 - [ ] **Step 3: 实现**
 
@@ -918,18 +944,20 @@ Expected: FAIL —— `tenantUnbound` 是 `undefined`
       tenantUnlocked.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
       continue
     }
-    // ① 参数没声明 或 ② 有卡带 tenant 标签但没映射 ⇒ 锁了也绑不到任何东西
+    // ① 参数没声明 或 ② 任一卡带 tenant 标签但**没映射** ⇒ 锁了但绑不到。
+    //    ② 是**单卡粒度**（人裁 2026-09-29）：半绑定——两张 tenant 卡只映射一张——也要报；
+    //    dashboard 粒度的 anyMapped（"有一张映射了就不报"）会漏检它，未映射那张卡在嵌入语境
+    //    拿不到 tenant 值、静默显示未过滤数据——正是本任务要抓的失效家族。
     const declared = content.parameters.some((p) => p['slug'] === TENANT_SLUG)
-    const needsMapping = content.dashcards.some((d) => (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG))
     // 「映射到 tenant」**在这里判**（不在 metabase.ts）：比 parameter_id，而不是"有没有映射"
     const isTenantMapped = (d: { parameterMappings?: unknown[] }) =>
       (d.parameterMappings ?? []).some(
         (m) => (m as { parameter_id?: unknown }).parameter_id === TENANT_PARAM_ID,
       )
-    const anyMapped = content.dashcards.some(
-      (d) => d.cardId !== null && (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG) && isTenantMapped(d),
+    const unboundCards = content.dashcards.filter(
+      (d) => d.cardId !== null && (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG) && !isTenantMapped(d),
     )
-    if (!declared || (needsMapping && !anyMapped)) {
+    if (!declared || unboundCards.length > 0) {
       tenantUnbound.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
     }
   }
