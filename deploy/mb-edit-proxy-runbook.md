@@ -23,22 +23,39 @@
   **P7**（`pg_duckdb` 先例；含「平台镜像里没有 `nc`，用 node 断言」这条）；
 - **一客户一 project / 一机不够才沿缝拆**的口径 → `customer-onboarding.md §0`。
 
-⚠️ **案例状态（无案例不立标准）**：本 SOP 的**形态**逐条有真机出处（见上）；但**本 SOP 自身的接线
-读数尚未产生**——它是 Task 7 的产物，回填到 §F「实测记录」。**在那之前，§C 的判据是「必须打勾的
-清单」，不是「已被验证的结论」。** 凡本 SOP 里标「**待真机核实**」的条目，都是**没有本仓案例**的
-推断，照做时先验证再相信。
+**案例状态（无案例不立标准）**：
+
+- 本 SOP 的**形态**逐条有真机出处（见上）；但**本 SOP 自身的接线读数尚未产生**——它是 Task 7 的产物，
+  回填到 §F「实测记录」。**在那之前，§C 的判据是「必须打勾的清单」，不是「已被验证的结论」。**
+- 凡本 SOP 里标「**待真机核实**」的条目，都是**没有本仓案例**的推断，照做时先验证再相信。
+- ⚠️ **本 runbook 是新接线、尚未固化为工具**：P7 那条先例已经把「重做 + 断言」固化成脚本
+  （`scripts/lemeng/wire-warehouse.sh` → 投递为 `/opt/lemeng-wire-warehouse.sh`，配探活 job），
+  并明确「**别照文档手敲**」。**本 SOP 的 §B-E3 目前仍是手敲**——按同一口径，
+  下次接线时应把 E3 抽成脚本 + 探活 job（掉了要能告警，而不是等人发现编辑页打不开）。
 
 **两道安全阀**：
 
 1. **env 先于 profile**：`MB_PROXY_CONSOLE_ORIGIN` 等键**没备齐就打开 `edit-proxy` 开关** ⇒
-   mb-proxy 启动期直接抛（fail-fast）⇒ **crash loop + 健康看板开事故**。顺序不能反（§E-B3）。
+   mb-proxy 启动期直接抛（fail-fast）⇒ **crash loop + 健康看板开事故**。顺序不能反（§B-E1 → §B-E2）。
 2. **接线是运行态步骤**：`docker network connect` 不是配置——**容器/网络重建后要重做**（P7 同款）。
-   掉了只有「编辑页打不开」，别处**没有任何报错**（§E-B2）。
+   掉了只有「编辑页打不开」，别处**没有任何报错**（§B-E3）。
 
 ---
 
 ## B 操作单（E0–E5）
 
+> **依赖关系（先看这句，别只靠编号猜）**：
+> **E1（备 env）⇒ E2（让服务存在：服务面 → 开关 → 暴露+绑域名 → 定向部署）⇒ E3（网络接线）/ E4（域名证书 + edge 探活）⇒ E5（§C 逐条验收）**。
+> 两条硬依赖：
+> ① **E1 早于一切服务动作**——`MB_PROXY_CONSOLE_ORIGIN` 没备齐就启 mb-proxy ⇒ 启动期抛（crash loop）；
+> ② **E2 早于所有「可观测断言」**——`/healthz`、两条 node 断言、edge 探活**都要 mb-proxy 的服务行与
+>    容器先存在**；没有它，那几道门**不可能通过**。
+>
+> ⇒ **先让服务存在，再断言**。⚠️ 本 SOP 的**上一版把断言排在了「让服务存在」之前**（且写着「E1 未过
+> 就不要进 E2」）——那样照顺序执行，**第一步就撞上一道不可能通过的门**。本版已按依赖重排。
+>
+> E3 与 E4 相互独立，可任序；两者都以 **E2 的容器存在**为前提。
+>
 > 每 Phase 三件套：**动作 / 命令或面板路径 / 过门条件**。过门条件不满足就停在那一步。
 
 ### E0 盘点与前置决策
@@ -46,78 +63,34 @@
 | 动作 | 命令 / 面板 | 过门条件 |
 |---|---|---|
 | 定专用 host 名 | 拍板：`mb.<客户域>`（**只写占位，不写具体域名**） | host 名在手，且该客户**尚未占用**它 |
-| 定 console origin | 取该客户项目的 `PUBLIC_ORIGIN`（**逐字**，见 §B-E3 的表） | 一个 `https://<host>`，**无路径、无尾斜杠** |
-| 同机还是拆缝 | 见 `customer-onboarding.md §0` / `§3 决策 1` | 拍板：mb-proxy 与 Metabase 是否在**同一 compose 网络**（决定 E2 做不做、E3 的 URL 形态） |
+| 定 console origin | 取该客户项目的 `PUBLIC_ORIGIN`（**逐字**，见 §B-E1 表） | 一个 `https://<host>`，**无路径、无尾斜杠** |
+| **取票前置：调用者须持 `data:manage`** | `GET /reports/:id/edit-url` 的页门由 manifest 声明为 **`data:manage`**（`modules/data/manifest.yaml`；宿主门卫按声明施加）。**运维/验收账号必须有该 scope** | 缺 scope ⇒ **403 `{"error":"FORBIDDEN","need":"data:manage"}`**（**不是**「编辑页坏了」——**别对着 403 猜**）；完全未认证才是 403 `UNAUTHENTICATED` |
+| 同机还是拆缝 | 见 `customer-onboarding.md §0` / `§3 决策 1` | 拍板：**平台单元与数据面单元是否在同一台机**（**不影响 E3——接线恒需做**，见 §B-E3） |
 | 目标机在线 | openship 面板「服务器」页（控制面 servers 列表） | serverId 在手、机器在线 |
 | 该客户已登记 ≥1 张 Metabase 报表 | 平台后台报表页 | 有 `renderer='metabase'` 的行（`platform` 自绘行没有可编辑的页，`GET /reports/:id/edit-url` 回 409 `RENDERER_NOT_EDITABLE`） |
 
-### E1 专用 host：暴露 `mb-proxy` 服务 → 绑域名 → 签证书
-
-**顺序不能反**（`openship-adopt.md §4` 的订正逐字适用：只加域名、服务却还是 `exposed:false`，
-**部署的路由同步会把该域名剪掉**）。
-
-| 动作 | 命令 / 面板 | 过门条件 |
-|---|---|---|
-| ① 暴露 `mb-proxy` 服务并绑域名 | openship MCP `patch_projects_by_id_services_by_serviceId`（面板：项目 → 服务 → `mb-proxy` → 暴露 + 自定义域名）。**用服务 id，不是项目 id**；`exposedPort` = **`13010`**（= compose 里 `PORT`，也是宿主回环映射左端的容器侧端口） | 服务 `exposed=true`、`publicEndpoints` 含该 host |
-| ② 回读域名记录 | openship MCP `get_domains`（或 `get_projects_by_id` 的域名列表） | 该 host **在列**（不依赖域名自动建出的时点，看不到就显式 `post_domains`） |
-| ③ DNS 落到生产机 | 按面板提示给 `<客户域>` 指向目标生产机的 CNAME/A（形态见 adopt §4） | 解析生效 |
-| ④ 验证 + 签证书 | openship MCP `post_domains_by_id_verify` → `post_domains_by_id_verify_ssl`（面板：域名 → 验证 / 签证书） | **回读** `verify` / `ssl` 状态为通过——**别只看 POST 的 2xx** |
-| ⑤ edge 探活 | `curl -i https://mb.<客户域>/healthz` | **`200` + `{"ok":true}`**（`/healthz` 在鉴权之前，**不带 Cookie 也应 200**——这是「edge 路由 + 证书」都通了的判据） |
-
-> ⚠️ **E1 未过就不要进 E2**：域名没绑上/证书没签，后面所有验收都会以「证书错」或「404」收场，
-> 但根因在 E1，不在反代。
-
-### E2 平台 ↔ Metabase 网络接线（照 P7 先例）
-
-**先判断形态**（E0 拍板）：
-
-| 形态 | 是否需要接线 | `DATA_METABASE_URL` 取值（见 §B-E3 表） |
-|---|---|---|
-| **同一项目 / 同一 compose 网络**（默认一客户一 project） | **不需要**——服务名即主机名，mb-proxy 直接解析到 `metabase` | `http://metabase:3000` |
-| **拆缝**（mb-proxy 在平台单元、Metabase 在数据面单元） | **需要**：把 metabase 容器连进**平台网络**并给 alias | `http://metabase:3000`（靠 alias） |
-
-**接线命令（拆缝形态；在目标机上跑，走 openship MCP `post_system_servers_by_id_exec`，别裸 SSH）**：
-
-```sh
-docker network connect --alias metabase <平台网络> <metabase 容器>
-```
-
-- `<平台网络>` = 平台部署单元的 compose 网络（形如 `openship-<平台 project 名>`；以 `docker network ls` 实测为准）；
-- `<metabase 容器>` = 数据面单元里那个 metabase 容器（以 `docker ps` 实测为准）；
-- **alias 必须是 `metabase`**——env 里的 URL 就按这个别名解析。
-
-**重做与断言（P7 逐字同款：这是运行态步骤，重建后必重做；DNS 与 TCP 分开判）**：
-平台镜像基于 `node:22`，**没有 `nc`**；且 `nc` 报 `bad address` 是**解析失败**、不是「连不上」。
-
-```sh
-# $MBPROXY = mb-proxy 容器名（以 docker ps 实测为准）
-docker exec "$MBPROXY" node -e "require('dns').lookup('metabase',(e,a)=>console.log(e?('ERR '+e.code):('DNS_OK '+a)))"
-docker exec "$MBPROXY" node -e "const n=require('net'),s=n.connect(3000,'metabase');s.on('connect',()=>{console.log('TCP_OK');s.end()});s.on('error',e=>console.log('TCP_ERR '+e.code))"
-```
-
-预期：`DNS_OK 172.x.x.x` + `TCP_OK`。
-
-> ⚠️ **端口是容器侧 `3000`**（Metabase 在容器里监听 3000），**不是宿主映射的 `13030`**。
-> `13030` 只是 `deploy/data-compose.yml` 给**宿主机**用的回环映射（`127.0.0.1:13030:3000`）——
-> 见 §B-E3 两种形态的取值口径。
-
-### E3 env 清单（**先备 env，再开 profile**；顺序不能反）
+### E1 备 env（**最早**；服务能启动的前提）
 
 **在该客户项目的 project env 里备齐下列键**（openship MCP `patch_projects_by_id_env`；
 面板：项目 → 环境变量）。**密钥一律 `isSecret`，值不进本文、不进 git**。
 
 | 键 | 值形态（占位） | 用途 / **取值位置** | 是否新增 |
 |---|---|---|---|
-| `MB_PROXY_PUBLIC_ORIGIN` | `https://mb.<客户域>` | **模块**（`GET /reports/:id/edit-url`）用来拼 handoff URL。缺配/非 https/尾斜杠 ⇒ 该端点 **503 `EDIT_PROXY_UNCONFIGURED`** | **本计划新增** |
+| `MB_PROXY_PUBLIC_ORIGIN` | `https://mb.<客户域>` | **模块**（`GET /reports/:id/edit-url`）用来拼 handoff URL。**缺配 / 非 https / `PLATFORM_SESSION_SECRET` 过短** ⇒ 该端点 **503 `EDIT_PROXY_UNCONFIGURED`**（尾斜杠**会被归一**，不 503——见下注） | **本计划新增** |
 | `MB_PROXY_CONSOLE_ORIGIN` | `https://<console origin>` | **代理**用来设 CSP `frame-ancestors`。**必填**——缺则 mb-proxy **启动期抛**（这正是必须挂 `edit-proxy` profile 的原因） | **本计划新增** |
 | `PLATFORM_SESSION_SECRET` | （≥32 字符） | 派生 handoff / 会话两条子密钥（模块签、代理验）。**取值位置**：openship 项目 env `isSecret`（已有键，复用） | 复用 |
 | `DATA_METABASE_URL` | 见下「两种形态」 | 代理的上游基址；**也是模块报表面 facade 的上游**（同一把口径） | 复用 |
 | `DATA_METABASE_API_KEY` | （服务身份） | 代理调上游用的 **`x-api-key`**（与模块同一把，服务身份）。**取值位置**：openship 项目 env `isSecret` | 复用 |
 | `PORT` | `13010` | mb-proxy 容器内监听端口。**compose 已写死**（`environment.PORT`），一般**不必**在 env 里再配 | 复用（compose 内定） |
 
+> ⚠️ **尾斜杠的实测口径（别写反）**：`MB_PROXY_PUBLIC_ORIGIN` 的**尾斜杠是归一**，不是 503——
+> 模块侧 `.replace(/\/+$/, '')` 之后再校验（`modules/data/routes/reports.ts`），代理侧
+> `MB_PROXY_CONSOLE_ORIGIN` 同样先归一（`apps/mb-proxy/src/config.ts`）。**503 的触发条件是
+> 「缺配 / 非 `https://` / secret < 32 字符」，尾斜杠不在其列。**
+
 **两个 origin 的取值口径（本 SOP 最容易配错的两处）**：
 
-- `MB_PROXY_PUBLIC_ORIGIN` = **专用入口**的 origin（E1 那个 host），**无尾斜杠、无路径**；
+- `MB_PROXY_PUBLIC_ORIGIN` = **专用入口**的 origin（E2③ 绑的那个 host），**无路径、无尾斜杠**（写了也会被归一）；
 - `MB_PROXY_CONSOLE_ORIGIN` = **console 的真实 origin**，**必须与该客户项目的 `PUBLIC_ORIGIN` 逐字一致**
   （`.env.example:18` 就是它；生产上 = 后台实际访问域名，形如 `https://platform.<客户域>`）。
   ⚠️ **配错的后果是 fail-open 且线上静默**：代理**剥掉了上游的 X-Frame-Options**，只用这条 CSP 兜底——
@@ -129,60 +102,130 @@ docker exec "$MBPROXY" node -e "const n=require('net'),s=n.connect(3000,'metabas
 
 | 消费方 / 形态 | 取什么值 | 为什么 |
 |---|---|---|
-| **容器内消费**（mb-proxy 容器、平台 server 容器——**生产恒是这一种**） | `http://metabase:3000` | 容器里的 `127.0.0.1` 是**自己的 netns**，指不到宿主回环（P7 同款道理）；靠 E2 的网络/alias 或同网络服务名解析 |
+| **容器内消费**（mb-proxy 容器、平台 server 容器——**生产恒是这一种**） | `http://metabase:3000` | 容器里的 `127.0.0.1` 是**自己的 netns**，指不到宿主回环（P7 同款道理）；靠 E3 的 `alias metabase`（或同网络服务名）解析 |
 | **宿主进程消费**（本地 dev-stack、或平台进程未容器化） | `http://127.0.0.1:13030` | `13030` 是 `deploy/data-compose.yml` 的**宿主**回环映射端口，只有宿主上的进程够得到 |
 
 > ⚠️ **不要照抄「127.0.0.1:13030」到生产**：mb-proxy 与 server **都在容器里**，用宿主回环形态
 > 会解析到它们各自的 netns ⇒ 上游不可达。生产取 `http://metabase:3000`。
 
-### E4 启用 `edit-proxy` 开关 + 定向部署
+### E2 让服务存在：服务面 → 开关 → 暴露+绑域名 → 定向部署
 
-**过门条件：E3 的键全部已落**（`MB_PROXY_CONSOLE_ORIGIN` 尤其）——否则本步会 crash loop。
+**过门条件：E1 的键全部已落**（`MB_PROXY_CONSOLE_ORIGIN` 尤其）——否则本步起的容器会 crash loop。
 
 | 动作 | 命令 / 面板 | 过门条件 |
 |---|---|---|
-| ① 同步服务面 | openship MCP `post_projects_by_id_services_sync`（传回 compose 的完整 services 数组） | 服务清单里**出现 `mb-proxy` 行** |
-| ② 打开 `edit-proxy` 开关 | 服务级置启用态（面板：项目 → 服务 → `mb-proxy` → 启用；REST/MCP 形态 = 服务级 `enabled:true`）。语义 = 「该客户的部署单元显式打开 profile `edit-proxy`」 | `mb-proxy` **enabled** |
-| ③ 定向部署 | openship MCP `post_deployments_build_access` 或 `post_deployments`，**传 `serviceIds` 只含 `mb-proxy`**（照 `data-plane-deploy-sop.md` F.2 的纪律：**别全量部署**——会重启该客户的 pg/Metabase） | `mb-proxy` 容器起来 |
-| ④ 验容器**真换了** | `docker ps` 看 mb-proxy 的创建时间 > 镜像构建时间；再 `docker inspect` 抽查 env 形状（**逐键看物化结果，不是看配置面**） | 新容器 + `MB_PROXY_CONSOLE_ORIGIN` 非空 |
-| ⑤ 探活 | `curl -i https://mb.<客户域>/healthz` | `200 {"ok":true}` |
+| ① 同步服务面 | openship MCP `post_projects_by_id_services_sync`（传回 compose 的完整 services 数组） | 服务清单里**出现 `mb-proxy` 行**（**没有它，②③ 都无从下手**） |
+| ② 打开 `edit-proxy` 开关 | 服务级置启用态（面板：项目 → 服务 → `mb-proxy` → 启用；MCP 服务级 PATCH 的 `enabled:true`） | `mb-proxy` **enabled** |
+| ③ 暴露服务 + 绑域名（**先暴露再部署**） | openship MCP `patch_projects_by_id_services_by_serviceId`：`exposed=true`、`exposedPort="13010"`、`customDomain="mb.<客户域>"`、`domainType="custom"`、`publicEndpoints=[{port:13010,domainType:"custom",customDomain:"mb.<客户域>"}]`。**用服务 id，不是项目 id** | 服务 `exposed=true`、`publicEndpoints` 含该 host；域名记录随之建出（§B-E4 回读） |
+| ④ **定向部署**（只重建 mb-proxy） | 见下「**定向部署的正确调用**」 | mb-proxy 容器起来 |
+| ⑤ 验容器**真换了** | `docker ps` 看 mb-proxy 创建时间 > 镜像构建时间；`docker inspect` 抽查 env 形状（**逐键看物化结果，不是看配置面**） | 新容器 + `MB_PROXY_CONSOLE_ORIGIN` 非空 |
 
-> ⚠️ **待真机核实（本仓无案例）**：`services_sync` **是否会把挂了 `profiles:` 的服务一并带出**、
-> 以及 openship 侧「打开 profile」的确切落点（服务级 `enabled` 开关 vs 控制面的 compose profiles
-> 选项），本 SOP **未取得实测**。照做时以 ① 的**服务面清单**为准：
-> **出现 `mb-proxy` 行 ⇒ 置 enabled 即等价**；**没出现 ⇒ 用「新增服务」接口按 compose 定义补一行**
+**定向部署的正确调用（按真实 schema，别照抄等价项）**：
+
+```jsonc
+// openship MCP: post_deployments_build_access
+{ "projectId": "<该客户项目 id>", "serviceIds": ["<mb-proxy 服务 id>"] }
+```
+
+- **依据（逐参数核对过工具 schema）**：`post_deployments_build_access` 的入参**支持 `serviceIds` /
+  `refreshServiceIds`**（且 `projectId` 必填）⇒ **只有它**表达得出「只重建 mb-proxy」。
+- ⚠️ **`post_deployments` 没有 `serviceIds` 参数**——它的 body 只有 `projectId` / `branch` /
+  `commitSha` / `environment` / `serverId`。⇒ **照它走 = 全量部署**，会把该客户的 `pg_duckdb` /
+  `metabase-db` **一并重启**。**上一版把 `post_deployments` 当成 `build_access` 的等价项，是错的且危险；
+  本版已删。** **不许**留一条会被误读成「安全的部分重建」的命令。
+- **若确无「只重建 mb-proxy」的路径**（本仓**未实测**过该定向部署）⇒ 只能**整栈重建**，
+  **必须**：① 明写风险（重启客户 pg/Metabase，有中断窗口）；② **降级建议：先在非生产客户验证**，
+  再上生产客户。
+- ⚠️ **别用 `refreshServiceIds` 顶替 `serviceIds` 去表达「重建」**：`data-plane-deploy-sop.md` F.2
+  实测——**单传它触发了全量重建**（把 `pg_duckdb` / `metabase-db` 一并重启）。`refreshServiceIds` 的
+  语义是「**不重新构建**、只按新 env 重建点名服务」，**别拿它当重建开关用**。
+
+> ⚠️ **待真机核实（本仓无案例）**：`services_sync` **是否会把挂了 compose `profiles:` 的服务一并带出**、
+> 以及 openship 侧「打开 profile」的确切落点，本 SOP **未取得实测**。以 ① 的**服务面清单**为准：
+> **出现 `mb-proxy` 行 ⇒ 置 `enabled:true` 即等价**；**没出现 ⇒ 用「新增服务」接口按 compose 定义补一行**
 > （镜像 `platform-core-mb-proxy:local`、`command` 覆盖为 `pnpm --filter @platform/mb-proxy start`、
-> 端口 `13010`、`profiles: ['edit-proxy']` 的那些 env 前提同 E3）。**别把「清单里有」当默认假设。**
+> 端口 `13010`；E1 的那些 env 前提同）。**别把「清单里有」当默认假设。**
+>
+> ⚠️ **`profiles` 不是服务面字段**：`profiles: ['edit-proxy']` 是 **compose 文件**里的声明；
+> openship **服务面契约里没有 `profiles` 字段**——它在服务面的**等价物是该服务的启用开关**（`enabled`）。
+> 别把 `profiles` 当字段传给服务面 API（服务面字段是 `enabled` / `exposed` / … 那一套）。
 
-> ⚠️ **别用 `refreshServiceIds` 顶替 `serviceIds`**：`data-plane-deploy-sop.md` F.2 实测——单传
-> `refreshServiceIds` 会触发**全量重建**（把 `pg_duckdb` / `metabase-db` 一并重启）。
+### E3 平台 ↔ Metabase 网络接线 + 断言（**本仓恒需接线**）
+
+**先纠正一句陈旧口径**：`customer-onboarding.md §0` 写「一个 project 的 compose 含**数据栈全部服务**」，
+**与本仓两份 compose 的事实不符**——`deploy/docker-compose.yml`（部署单元 A）**没有 metabase**；
+Metabase 只在 **`deploy/data-compose.yml`**（部署单元 B）里（`deploy/data-compose.yml:61`），
+而 B 是**独立 project**（`platform-core-<客户>-data`，见 `customer-onboarding.md §5 阶段 5`）。
+⇒ **不存在「同一 compose 网络所以不用接线」这条捷径**；**接线是必做的**（漏了 ⇒ 编辑页静默打不开）。
+
+**接线命令（照 P7 先例；在目标机上跑，走 openship MCP `post_system_servers_by_id_exec`，别裸 SSH）**：
+
+```sh
+# ① 先取三个实名（都以实测为准，别照抄）：
+#   <平台网络>      : docker network ls    → 形如 openship-<平台 project 名>
+#   <metabase 容器> : docker ps            → 数据面 project 里那个 metabase
+#   <mb-proxy 容器> : docker ps            → E2④ 刚起的那个
+# ② 接进去（alias 固定为 metabase）：
+docker network connect --alias metabase <平台网络> <metabase 容器>
+```
+
+- **alias 必须是 `metabase`**——E1 的 `DATA_METABASE_URL` 就按这个别名解析（`http://metabase:3000`）。
+
+**重做与断言（P7 逐字同款：这是运行态步骤，容器/网络重建后必重做；DNS 与 TCP 分开判）**：
+平台镜像基于 `node:22`，**没有 `nc`**；且 `nc` 报 `bad address` 是**解析失败**、不是「连不上」。
+
+```sh
+# $MBPROXY = mb-proxy 容器名（E2④ 起的那个；以 docker ps 实测为准）
+docker exec "$MBPROXY" node -e "require('dns').lookup('metabase',(e,a)=>console.log(e?('ERR '+e.code):('DNS_OK '+a)))"
+docker exec "$MBPROXY" node -e "const n=require('net'),s=n.connect(3000,'metabase');s.on('connect',()=>{console.log('TCP_OK');s.end()});s.on('error',e=>console.log('TCP_ERR '+e.code))"
+```
+
+预期：`DNS_OK 172.x.x.x` + `TCP_OK`。
+
+> ⚠️ **端口是容器侧 `3000`**（Metabase 在容器里监听 3000），**不是宿主映射的 `13030`**。
+> `13030` 只是 `deploy/data-compose.yml` 给**宿主机**用的回环映射（`127.0.0.1:13030:3000`）——
+> 见 §B-E1 两种形态的取值口径。
+
+### E4 域名验证 + 签证书 + edge 探活
+
+| 动作 | 命令 / 面板 | 过门条件 |
+|---|---|---|
+| ① 回读域名记录 | openship MCP `get_domains`（或 `get_projects_by_id` 的域名列表） | 该 host **在列**（E2③ 暴露服务时应已自动建出；看不到就显式 `post_domains`） |
+| ② DNS 落到生产机 | 按面板提示给 `<客户域>` 指向目标生产机的 CNAME/A（形态见 adopt §4） | 解析生效 |
+| ③ 验证 + 签证书 | openship MCP `post_domains_by_id_verify` → `post_domains_by_id_verify_ssl`（面板：域名 → 验证 / 签证书） | **回读** `verify` / `ssl` 状态为通过——**别只看 POST 的 2xx** |
+| ④ edge 探活（**本阶段第一条可观测断言**） | `curl -i https://mb.<客户域>/healthz` | **`200` + `{"ok":true}`**（`/healthz` 在鉴权之前，**不带 Cookie 也应 200**——这是「edge 路由 + 证书 + mb-proxy 容器」三者都通了的判据） |
+
+> ⚠️ **E2 / E3 未过就别进 E4**：容器没起或网络没接，`/healthz` 会以「502 / 证书错」收场，
+> 但根因在 E2 / E3，不在域名。
 
 ### E5 每客户接线的「收工自证」（进 §C 逐条勾）
 
-E4 过后**不要**直接收工——按 **§C 的判据（①–⑫）**逐条打勾。§C 即 Task 7 的验收清单。
+E2–E4 过后**不要**直接收工——按 **§C 的判据（①–⑫）**逐条打勾。§C 即 Task 7 的验收清单。
 
 ---
 
 ## C 验收判据（**Task 7 逐条勾**；缺一不可）
 
-> 前置：E1（host + 证书）与 E4（服务启用 + 部署）都已过门；已有一枚**本租户**的有效 handoff → 已兑换成
-> `mb_edit` Cookie（经 `GET /reports/:id/edit-url` 拿 URL，再 `GET /handoff?t=…` 走 302）。
+> 前置：E2（服务启用 + 定向部署）、E3（网络接线）、E4（host + 证书）都已过门；
+> 已有一枚**本租户**的有效 handoff → 已兑换成 `mb_edit` Cookie
+> （经 `GET /reports/:id/edit-url` 拿 URL——**该端点需调用者持 `data:manage`**，缺则 403 `FORBIDDEN`；
+> 再 `GET /handoff?t=…` 走 302）。
 > 除 ⑨（浏览器里比对 origin）与 ⑫（容器内 node 断言）外，其余全部用 `curl -i`（带/不带 Cookie）断言**响应码**。
 
 | # | 判据 | 断言 | 期望 | 备注 |
 |---|---|---|---|---|
 | ① | **本租户经专用入口打开编辑页 200，且参数可改** | `GET /handoff?t=<本租户票>` → 再 `GET /dashboard/<本租户 did>`、`GET /api/dashboard/<本租户 did>` | handoff **302** + `Set-Cookie: mb_edit=…`；dashboard 页与 API 均 **200** | 「参数可改」= 编辑态租户参数是**普通参数**（spec §3⑦ 尾注 / 全局约束 2）——**别当缺陷修**，人工在页面上确认可改 |
-| ② | **别租户对象 403** | 持**本租户**有效 Cookie，`GET /dashboard/<别租户 did>` | **403** `{"error":"NOT_ALLOWED"}` | 代理只授权**票据里那一张** did（`rules.ts`） |
+| ② | **别租户对象 403** | 持**本租户**有效 Cookie，`GET /dashboard/<别租户 did>` | **403** `{"error":"NOT_ALLOWED"}` | **别租户 did 怎么取**：取别租户**已登记报表**行的 `metabase_id`（Task 7 Step 1 种两租户数据时即有；也可从平台库 `data.reports` 按另一 org 查 `metabase_id`）。代理只授权**票据里那一张** did（`rules.ts`） |
 | ③ | **无凭证 401** | **不带** `mb_edit` Cookie，`GET /dashboard/<本租户 did>` | **401** `{"error":"UNAUTHORIZED"}` | `/healthz` 与 `/handoff` 例外（在鉴权之前） |
 | ④ | **`/api/search` 403** | `GET /api/search?q=…`（带有效 Cookie） | **403** | 枚举面**永久禁止**（全局约束 6） |
 | ⑤ | **`/api/dataset` 403**（「编辑页不能任意查询」） | `POST /api/dataset`（带有效 Cookie） | **403** | 任意查询面**永久禁止**（全局约束 6）——这是「只编辑已登记报表」能力面的边界 |
 | ⑥ | **canonicalization 探针全 403** | 逐条打 `/app/..;/api/search`、`/app/..%20/api/search`、`/app/..%00/api/search`、`/app/..%2f..%2fapi/search`（**四条必打**）；另可加打 `/app/..%3b..%3bapi/search`（Task 7 清单同款变体） | **全部 403** | 本地只证到「归一化收口后拒」（`normalizePath` 段白名单）；**上游 Jetty 如何解释由真机定论**——故必须真机打 |
 | ⑦ | **真机 `GET /` 的读数** | `GET /`（带有效 Cookie）、`curl -i` | 记下**是 200 还是 3xx**；若 3xx，记 `location` 且**确认它落在放行表内**（`/app/`、`/static/`、`/assets/`、`/`、`/index.html`、`/favicon.ico`、`/api/session/properties`、`/dashboard/<did>`），并确认 **`location` 里无内网主机名泄露** | 代理**不跟**上游重定向（`redirect:'manual'`），3xx 原样给浏览器 ⇒ **`location` 不在表内则编辑页首页打不开** |
-| ⑧ | **服务 API key 在 Metabase 的权限档位** | 在该 Metabase 实例查 `DATA_METABASE_API_KEY` 对应 user/group 的权限（或建 key 时用的 group） | **记下档位**（admin / 非 admin 专用 group） | 若为 **admin 档**，代理的放行表就是**唯一边界**（决定「放行表被绕过」的严重度）；口径见 `.env.example` 的 `DATA_METABASE_API_KEY` 注（**最小权限**：非 admin 专用 group） |
+| ⑧ | **服务 API key 在 Metabase 的权限档位** | **只能在 Metabase 管理界面看**：Metabase 后台 → Settings / Admin → **Authentication → API keys**（具体菜单路径随版本，以该实例实际菜单为准），点开该 key 看它**所属 group 的权限** | **记下档位**（admin / 非 admin 专用 group） | ⚠️ 本仓**没有**该查询的既定只读端点，**别照猜的端点打**（各版本路径不同）。若为 **admin 档**，代理的放行表就是**唯一边界**（决定「放行表被绕过」的严重度）；口径见 `.env.example` 的 `DATA_METABASE_API_KEY` 注（**最小权限**：非 admin 专用 group） |
 | ⑨ | **console 实际 origin == `MB_PROXY_CONSOLE_ORIGIN`** | ① 读一条经代理的响应头 `content-security-policy`（应 = `frame-ancestors <console origin>`）；② 在浏览器里看 console 的 `window.location.origin` | **两者相等**，且等于该客户项目的 `PUBLIC_ORIGIN` | **不等 ⇒ CSP 挡住 iframe ⇒ 编辑页白屏**（且线上静默）。这是 Task 5 遗留的必验项（progress：console 实际 origin 必须等于 `MB_PROXY_CONSOLE_ORIGIN`） |
-| ⑩ | **样例 / 未登记对象 403** | `GET /dashboard/<未在本租户登记的 did>`（如 Metabase 自带样例） | **403** | 与 ② 同一条「只授权票据里那一张」规则 |
-| ⑪ | **探活** | `GET /healthz`（不带 Cookie） | **200** `{"ok":true}` | E1⑤ / E4⑤ 已打过，收工再复跑一次 |
-| ⑫ | **网络接线仍在**（拆缝形态） | 复跑 §E-B2 的两条 node 断言 | `DNS_OK` + `TCP_OK` | **容器/网络重建后必重跑** |
+| ⑩ | **样例 / 未登记对象 403** | `GET /dashboard/<未在本租户登记的 did>` | **403** | **样例 did 怎么取**：在 Metabase 里打开自带样例 dashboard，看 URL 的 `/dashboard/<id>`；或任取一个**不在 `data.reports` 里**的 did。与 ② 同一条「只授权票据里那一张」规则 |
+| ⑪ | **探活** | `GET /healthz`（不带 Cookie） | **200** `{"ok":true}` | E4④ 已打过，收工再复跑一次 |
+| ⑫ | **网络接线仍在** | 复跑 §B-E3 的两条 node 断言 | `DNS_OK` + `TCP_OK` | **容器/网络重建后必重跑** |
 
 **记档要求**（Task 7 Step 5）：把命令、响应码、关键响应体片段回填到 §F「实测记录」，
 **含日期与镜像 ID**；若实测与 spec §3⑦ 有出入，**订正 spec 并说明**（别留一份自相矛盾的正文）。
@@ -215,28 +258,31 @@ E4 过后**不要**直接收工——按 **§C 的判据（①–⑫）**逐条�
 | 1 | 归一化只折精确 `..` ⇒ `/app/..;/api/search` 等被放行并上行 | Task 4 改**逐段白名单** `SEG_RE`（含 `%`/空白/NUL/非 ASCII 一律拒）；`proxyPath` 保证「判的路径 == 上行的路径」 |
 | 2 | dashcard 只判 did ⇒ 任意卡片 id 借壳上行 | Task 4 补 `cid ∈ cards`（fail-closed：取不到卡片集合 ⇒ 空集 ⇒ 不放行） |
 | 3 | console 兜底复用已消费的一次性票据 ⇒ 死路 | Task 5 改**重新领票**（`edit-url` 换新票 + `window.open`） |
+| 4 | **本接线文档（上一版）把「可观测断言」排在「让服务存在」之前** ⇒ 照顺序走第一步就撞上**不可能通过**的门 | 本版重排 §B（E1 env → E2 让服务存在 → E3/E4 断言），并在 §B 段首用「依赖关系」句固定该次序 |
+| 5 | 把 `post_deployments`（**无 `serviceIds`**）当定向部署 ⇒ **全量重建**、重启客户 pg/Metabase | 本版删该等价项，改 `post_deployments_build_access` + `serviceIds`（§B-E2 附依据；B 层第 9 条同源风险） |
 
 ### B 层：结构性（靠固定序列防）
 
 | # | 坑 | 防法 |
 |---|---|---|
-| 4 | **env 未备就开 profile ⇒ crash loop**（`MB_PROXY_CONSOLE_ORIGIN` 缺则启动期抛） | **E3 先于 E4**（顺序不能反） |
-| 5 | **`docker network connect` 是运行态步骤**，重建后掉 | E2 后必跑两条 node 断言；**每次重建容器后重做** |
-| 6 | 服务面 env 不解析 `${VAR:-default}` 模板（数据面固有） | 一律写字面真值 / project env 明值 |
-| 7 | 部署可能重写服务 env（丢值 ⇒ crash loop） | **部署后必验 env 形状**（读真值 → 服务级 PATCH 写回 → 重部署 → 再验形状） |
-| 8 | 全量部署会重启该客户 pg/Metabase | **定向部署**（`serviceIds`，别 `refreshServiceIds`） |
-| 9 | 只加域名不暴露服务 ⇒ 域名被路由同步剪掉 | **先暴露服务再建域名**（E1①→②；adopt §4 订正） |
+| 6 | **env 未备就开 profile ⇒ crash loop**（`MB_PROXY_CONSOLE_ORIGIN` 缺则启动期抛） | **E1 先于 E2**（顺序不能反） |
+| 7 | **`docker network connect` 是运行态步骤**，重建后掉 | E3 后必跑两条 node 断言；**每次重建容器后重做**（P7 已固化成脚本，本 SOP 尚未） |
+| 8 | 部署可能重写服务 env（丢值 ⇒ crash loop） | **部署后必验 env 形状**（读真值 → 服务级 PATCH 写回 → 重部署 → 再验形状） |
+| 9 | 全量部署会重启该客户 pg/Metabase | **定向部署**（`build_access` + `serviceIds`；别 `refreshServiceIds` 单参、别 `post_deployments`） |
+| 10 | 只加域名不暴露服务 ⇒ 域名被路由同步剪掉 | **先暴露服务再建域名/再部署**（E2③→④；adopt §4 订正） |
+| 11 | **服务面没有 `profiles` 字段**（那是 compose 概念） | 服务面只认 `enabled` / `exposed` 等；「打开 profile」的等价动作 = 置 `enabled` |
 
 ### C 层：环境前置（检查项 + 判定）
 
 | # | 检查项 | 判定 |
 |---|---|---|
-| 10 | 专用 host 的 DNS + 证书 | `post_domains_by_id_verify` / `verify_ssl` **回读**状态（别只看 POST 2xx） |
-| 11 | `MB_PROXY_CONSOLE_ORIGIN` 是不是**console 的真实** origin | §C ⑨ 实测（写错形态=起不来，写成合法但错的=静默 fail-open） |
-| 12 | `DATA_METABASE_URL` 是不是**容器视角** | 生产 = `http://metabase:3000`；宿主进程才用 `127.0.0.1:13030` |
-| 13 | 服务 API key 的权限档位 | §C ⑧ 记下（admin 档 ⇒ 放行表是唯一边界） |
-| 14 | `renderer='platform'` 的行没有可编辑的页 | `GET /reports/:id/edit-url` 回 **409 `RENDERER_NOT_EDITABLE`**（预期，不是故障）；列表里该行的「编辑」不渲染 |
-| 15 | 多层 env 物化分叉（inline 覆盖 project） | 排障「回滚正常 + 新构建崩」先查 inline 层 |
+| 12 | 专用 host 的 DNS + 证书 | `post_domains_by_id_verify` / `verify_ssl` **回读**状态（别只看 POST 2xx） |
+| 13 | `MB_PROXY_CONSOLE_ORIGIN` 是不是**console 的真实** origin | §C ⑨ 实测（写错形态=起不来，写成合法但错的=静默 fail-open） |
+| 14 | `DATA_METABASE_URL` 是不是**容器视角** | 生产 = `http://metabase:3000`；宿主进程才用 `127.0.0.1:13030` |
+| 15 | 服务 API key 的权限档位 | §C ⑧ 记下（admin 档 ⇒ 放行表是唯一边界）；本仓无只读端点，看 Metabase 管理界面 |
+| 16 | 取票前置：调用者须持 `data:manage` | 缺 ⇒ 403 `{"error":"FORBIDDEN","need":"data:manage"}`（**不是**编辑页故障） |
+| 17 | `renderer='platform'` 的行没有可编辑的页 | `GET /reports/:id/edit-url` 回 **409 `RENDERER_NOT_EDITABLE`**（预期，不是故障）；列表里该行的「编辑」不渲染 |
+| 18 | 多层 env 物化分叉（inline 覆盖 project） | 排障「回滚正常 + 新构建崩」先查 inline 层 |
 
 ---
 
@@ -245,7 +291,10 @@ E4 过后**不要**直接收工——按 **§C 的判据（①–⑫）**逐条�
 > 回填格式：日期 + 镜像 ID（`docker inspect` 取）+ 逐条判据的响应码与关键响应体片段。
 > **在回填之前，§C 的判据是「待打勾」，不是「已验证」。**
 
-- [ ] E1⑤ `/healthz` 200 + E4⑤ 200
+- [ ] E1 env 已落（键名齐全、`MB_PROXY_CONSOLE_ORIGIN` 非空）
+- [ ] E2 mb-proxy 服务行 + 容器起来（创建时间 > 镜像构建时间）
+- [ ] E3 `DNS_OK` + `TCP_OK`
+- [ ] E4 `/healthz` 200
 - [ ] §C ①②③④⑤⑥⑦⑧⑨⑩⑪⑫ 逐条读数
 - [ ] spec §3⑦ 是否需订正（有出入才动）
 
@@ -255,7 +304,9 @@ E4 过后**不要**直接收工——按 **§C 的判据（①–⑫）**逐条�
 
 - `docs/superpowers/specs/2026-09-28-report-authoring-design.md` §3⑦（本 SOP 的规范来源：三条硬约束 + 实测读数。**该 spec 随本计划所在的分支/PR 系列落地**——本分支（`feat/346-edit-proxy`）此刻尚无该文件，Task 7 会把它一并纳入）
 - `deploy/docker-compose.yml`（`mb-proxy` 服务定义：`profiles: ['edit-proxy']`、`command` 覆盖、`127.0.0.1:13010:13010`）
+- `deploy/data-compose.yml`（Metabase 本体：`metabase` 服务、容器内端口 3000、宿主回环 `127.0.0.1:13030:3000`）——**它在独立 project，故接线必做**
 - `apps/mb-proxy/src/config.ts`（env 契约与形状校验）/ `rules.ts`（放行表 deny-by-default）/ `session.ts`（Cookie 属性）/ `handoff.ts`（票据/会话两条派生密钥）
+- `modules/data/manifest.yaml`（`GET /reports/:id/edit-url` 的页门 = `data:manage`）
 - `deploy/data-plane-deploy-sop.md` P7（`docker network connect` 范式与 DNS/TCP 断言）/ §F.2（定向部署纪律）
 - `deploy/openship-adopt.md` §4（先暴露服务、再加域名、再签证书）
-- `deploy/customer-onboarding.md` §0 / §5 阶段 5（一客户一 project / 沿缝拆分）
+- `deploy/customer-onboarding.md` §0 / §5 阶段 5（一客户一 project / 沿缝拆分）——**§0 那句「compose 含数据栈全部服务」是陈旧口径，与本仓两份 compose 的事实不符**（见 §B-E3）
