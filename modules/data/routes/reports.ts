@@ -28,7 +28,6 @@ import {
   archiveDashboard,
   dashboardName,
   embedDashboardUrl,
-  getDashboardEmbeddingParams,
   listEmbeddableDashboards,
   metabaseDeps,
   metabaseFromEnv,
@@ -44,7 +43,9 @@ import {
   listReports,
   upsertReport,
 } from '../domain/report-store'
-import { publishWithTenantBinding } from '../domain/report-content'
+import {
+  TENANT_PARAM_ID, TENANT_SLUG, publishWithTenantBinding, readDashboardContent,
+} from '../domain/report-content'
 
 /**
  * 平台**保留**的锁定参数名：它的值恒为调用者 org、只在签 token 时现写。
@@ -238,19 +239,43 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       needsHuman: unregisteredAll.filter((d) => parseDashboardName(d.name) === null),
     }
 
-    // ── 差集③（RR9②）：「建 dashboard 的人必须把租户过滤参数叫 `tenant`」这条约定只能靠人记得，
-    // 失效模式还是静默的（页面显示未过滤数据）⇒ 对账时**回读** dashboard，断言
-    // `embedding_params.tenant === 'locked'`，不满足就显式报出来。这是那条约定的机械防线。
+    // ── 差集③（RR9② + spec §7 待办 2 的加厚）：「锁参三件套」这族约定只能靠机械防线，
+    // 失效模式全是静默的（页面照常显示**未过滤**的数据）。同一循环判两件事：
+    //   ③a 锁没锁：回读 `embedding_params.tenant === 'locked'`，不满足落 `tenantUnlocked`；
+    //   ③b 锁了但**绑不到**：① dashboard 没声明 slug=tenant 的参数（没声明 ⇒ 锁值无处挂），
+    //      或 ② 有卡带 {{tenant}} 模板标签但没有一条映射挂到 tenant 参数上 ⇒ 落 `tenantUnbound`。
+    // 两判用**同一次** readDashboardContent 回读（别多发请求）。
     // 只读**本 org** 的行：它是「我们登记的报表锁没锁住」的自检；跨 org 读会把别人的行内状态
     // 暴露给本租户（而 unregistered 的跨 org 读是**必需**的——不取全局并集就有假阳性）。
     const tenantUnlocked: { id: string; title: string; metabaseId: number }[] = []
+    const tenantUnbound: { id: string; title: string; metabaseId: number }[] = []
     try {
       for (const r of rows) {
         // 已经报成 missingInMetabase 的行不重复报（回读也只会 404）
         if (!embeddableIds.has(r.metabaseId)) continue
-        const params = await getDashboardEmbeddingParams(deps, r.metabaseId)
-        if (params[TENANT_PARAM] !== 'locked') {
+        const content = await readDashboardContent(deps, r.metabaseId)
+        const params = content.embeddingParams
+        if (params[TENANT_SLUG] !== 'locked') {
           tenantUnlocked.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
+          continue
+        }
+        // ① 参数没声明 或 ② 有卡带 tenant 标签但没映射 ⇒ 锁了也绑不到任何东西
+        const declared = content.parameters.some((p) => p['slug'] === TENANT_SLUG)
+        const needsMapping = content.dashcards.some(
+          (d) => d.cardId !== null && (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG),
+        )
+        // 「映射到 tenant」**在这里判**（不在 metabase.ts）：比 parameter_id，而不是"有没有映射"
+        // ——挂了别个参数（如 region）的卡用「有映射」判会得 true ⇒ 假绿（Task 3 已清除该启发式，
+        // 不许回来）。metabase.ts 是纯 HTTP 客户端，不该知道平台的参数命名约定。
+        const isTenantMapped = (d: { parameterMappings?: unknown[] }) =>
+          (d.parameterMappings ?? []).some(
+            (m) => (m as { parameter_id?: unknown }).parameter_id === TENANT_PARAM_ID,
+          )
+        const anyMapped = content.dashcards.some(
+          (d) => d.cardId !== null && (content.cardTags[d.cardId] ?? []).includes(TENANT_SLUG) && isTenantMapped(d),
+        )
+        if (!declared || (needsMapping && !anyMapped)) {
+          tenantUnbound.push({ id: r.id, title: r.title, metabaseId: r.metabaseId })
         }
       }
     } catch (err) {
@@ -262,6 +287,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       && unregistered.recoverable.length === 0
       && unregistered.needsHuman.length === 0
       && tenantUnlocked.length === 0
+      && tenantUnbound.length === 0
 
     // 差集非空 ⇒ 打一条可检索的告警行：对账结果只在响应体里返回的话，只有**主动去调**的人
     // 才看得见（这正是 #M3c 那条「配了但不对，在请求路径上不可观测」的病）。
@@ -270,7 +296,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         `[data.reports] 对账差集 org=${org} `
         + `missingInMetabase=${missingInMetabase.length} `
         + `unregistered=${unregistered.recoverable.length}自愈+${unregistered.needsHuman.length}需人看 `
-        + `tenantUnlocked=${tenantUnlocked.length}`,
+        + `tenantUnlocked=${tenantUnlocked.length} `
+        + `tenantUnbound=${tenantUnbound.length}`,
       )
     }
     return c.json({
@@ -279,6 +306,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       embeddable: embeddable.length,
       missingInMetabase,
       tenantUnlocked,
+      tenantUnbound,
       unregistered,
     })
   })

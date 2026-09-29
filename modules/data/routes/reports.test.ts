@@ -16,6 +16,7 @@ import { Hono } from 'hono'
 import { Pool } from 'pg'
 import { declaredScopeGate } from '@platform/sdk'
 import mod from '../index'
+import { upsertReport } from '../domain/report-store'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import type { ModuleVars } from './context'
 
@@ -466,6 +467,118 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     dash.embedding_params = { tenant: 'locked' }
     const clean = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
     expect(clean).toMatchObject({ ok: true, tenantUnlocked: [] })
+  })
+
+  // ── 对账判据加厚（spec §7 待办 2）：「锁了但绑不到」── embedding_params.tenant=locked 只说明
+  //    锁了，锁值还要**绑得到东西**才生效。四条各咬一个子判据（变异确认见任务报告）：
+  //    卡未映射 / 参数未声明 / 映射挂错参数 / 反证正常态不误伤。
+  it('reconcile 报出「锁了但绑不到」：有 locked 但卡片未映射 ⇒ tenantUnbound 非空、ok=false', async () => {
+    // 造一张"只锁了参、没映射"的 dashboard（桩里 parameters 为空、dashcards 无 mappings）。
+    // 卡 900 带 tenant 模板标签（真机形状的 dataset_query.stages[0]）——不带标签就进不了
+    // 「需要映射」这半边判据；不在 cards 里则回读直接 404 ⇒ 502，红得不是地方。
+    const { state, fetcher } = fakeMetabase(
+      [{
+        id: 300, name: `${ORG}/未绑定`, embeddable: true, archived: false,
+        enable_embedding: true, embedding_params: { tenant: 'locked' },
+      }],
+      { 900: { native: 'select 1 where t = {{tenant}}', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } } },
+    )
+    state.dashboards[0].dashcards = [{ id: 9, card_id: 900, row: 0, col: 0, size_x: 12, size_y: 6 }]
+    state.dashboards[0].parameters = []
+    vi.stubGlobal('fetch', fetcher)
+    const id = await upsertReport(pool, ORG, {
+      title: '未绑定', metabaseId: 300, embedParams: {}, requiredScope: null,
+    })
+    const { app } = manage()
+    const res = await app.request('/reports/reconcile', { method: 'POST' })
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(false)
+    expect(body.tenantUnbound.map((r: { id: string }) => r.id)).toContain(id)
+  })
+
+  it('★ 锁了但参数没声明 ⇒ 同样报 tenantUnbound（声明了别个参数不算——declared 比 slug=tenant）', async () => {
+    const { state, fetcher } = fakeMetabase([{
+      id: 301, name: `${ORG}/未声明`, embeddable: true, archived: false,
+      enable_embedding: true, embedding_params: { tenant: 'locked' },
+    }])
+    // 无卡（needsMapping 不触发）、parameters 里只有 region ⇒ 唯一能咬到的是「tenant 没声明」
+    state.dashboards[0].dashcards = []
+    state.dashboards[0].parameters = [
+      { id: 'region-param', name: 'region', slug: 'region', type: 'category' },
+    ]
+    vi.stubGlobal('fetch', fetcher)
+    const id = await upsertReport(pool, ORG, {
+      title: '未声明', metabaseId: 301, embedParams: {}, requiredScope: null,
+    })
+    const { app } = manage()
+    const body = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(body.ok).toBe(false)
+    expect(body.tenantUnbound).toEqual([
+      expect.objectContaining({ id, title: '未声明', metabaseId: 301 }),
+    ])
+  })
+
+  it('★ 锁了、也声明了，但映射挂在了别的参数上 ⇒ 报 tenantUnbound（「有任意映射就算」是假绿，不许回来）', async () => {
+    const { state, fetcher } = fakeMetabase(
+      [{
+        id: 302, name: `${ORG}/映射错参`, embeddable: true, archived: false,
+        enable_embedding: true, embedding_params: { tenant: 'locked' },
+      }],
+      { 901: { native: 'select 1 where t = {{tenant}}', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } } },
+    )
+    // 卡 901 带 tenant 标签、tenant 参数也声明了，但卡上的映射挂的是 region 参数
+    // ⇒ 锁住的 tenant 值绑不到它。判据必须比 parameter_id，不是「有没有映射」。
+    state.dashboards[0].dashcards = [{
+      id: 10, card_id: 901, row: 0, col: 0, size_x: 12, size_y: 6,
+      parameter_mappings: [
+        { parameter_id: 'region-param', card_id: 901, target: ['variable', ['template-tag', 'region']] },
+      ],
+    }]
+    state.dashboards[0].parameters = [
+      { id: 'region-param', name: 'region', slug: 'region', type: 'category' },
+      { id: 'tenant-param', name: 'tenant', slug: 'tenant', type: 'category' },
+    ]
+    vi.stubGlobal('fetch', fetcher)
+    const id = await upsertReport(pool, ORG, {
+      title: '映射错参', metabaseId: 302, embedParams: {}, requiredScope: null,
+    })
+    const { app } = manage()
+    const body = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(body.ok).toBe(false)
+    expect(body.tenantUnbound).toEqual([
+      expect.objectContaining({ id, title: '映射错参', metabaseId: 302 }),
+    ])
+  })
+
+  it('★ 反证：锁了、声明了、tenant 标签卡也映射到 tenant 参数 ⇒ 不报（发布三件套产物不误伤）', async () => {
+    // 这正是 publishWithTenantBinding 落地后的真机形状（见上方「已有卡的报表」用例的断言）
+    const { state, fetcher } = fakeMetabase(
+      [{
+        id: 303, name: `${ORG}/绑定完好`, embeddable: true, archived: false,
+        enable_embedding: true, embedding_params: { tenant: 'locked' },
+      }],
+      { 902: { native: 'select 1 where t = {{tenant}}', 'template-tags': { tenant: { name: 'tenant', type: 'text' } } } },
+    )
+    state.dashboards[0].dashcards = [{
+      id: 11, card_id: 902, row: 0, col: 0, size_x: 12, size_y: 6,
+      parameter_mappings: [
+        { parameter_id: 'tenant-param', card_id: 902, target: ['variable', ['template-tag', 'tenant']] },
+      ],
+    }]
+    state.dashboards[0].parameters = [
+      { id: 'tenant-param', name: 'tenant', slug: 'tenant', type: 'category' },
+    ]
+    vi.stubGlobal('fetch', fetcher)
+    await upsertReport(pool, ORG, {
+      title: '绑定完好', metabaseId: 303, embedParams: {}, requiredScope: null,
+    })
+    const { app } = manage()
+    const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
+    expect(rec).toMatchObject({
+      ok: true, missingInMetabase: [], tenantUnlocked: [], tenantUnbound: [],
+      unregistered: { recoverable: [], needsHuman: [] },
+    })
   })
 
   it('★ I-1 两个 org 同 title ⇒ Metabase 侧两张不同 dashboard；B 的写 / 删都不碰 A 的', async () => {
