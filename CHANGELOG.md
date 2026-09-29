@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.50.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.49.0...v0.50.0) - 2026-09-29
+- 【新增】duckle: #294 retail_order_line 补采 6 对账字段（契约 v2 + item_code 语义归位） ([#327](https://github.com/MYTech-Co-LTD/platform-core/pull/327), [91ea693](https://github.com/MYTech-Co-LTD/platform-core/commit/91ea69357024f994cefc100c09d5340815434aec))
+
+
 ## [0.49.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.48.0...v0.49.0) - 2026-09-29
 - 【新增】duckle: Wave B——retail.windows 迁 L1（foreach 首飞，含截尾决策与双点火兜底实测） (#324) ([#325](https://github.com/MYTech-Co-LTD/platform-core/pull/325), [61f1632](https://github.com/MYTech-Co-LTD/platform-core/commit/61f163257a5e956f22aea1b7a4f7a52454aec529))
 
