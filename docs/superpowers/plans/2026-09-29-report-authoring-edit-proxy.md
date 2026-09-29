@@ -735,6 +735,16 @@ describe('deny-by-default 规则表', () => {
 
 - [ ] **Step 2: 跑测试确认红** → `pnpm --filter @platform/mb-proxy exec vitest run`，FAIL。
 
+> ⚠️ **订正记录（2026-09-29，Task 4 评审轮，四条一并做）**：
+> 1. **卡片集合缓存键必须带 org**（`${org}:${did}`）：现在只有 `did`，靠「did 全局唯一 + 单实例单 key」
+>    两个未落码的前提才不串味——把那两个前提写进缓存键更省心。
+> 2. **`cfg.consoleOrigin` 要校验形状**（`https://` 起头 + 去尾斜杠，照 `DATA_METABASE_URL` 的归一）：
+>    配错时现在的后果是「CSP 失效 + XFO 已剥」= 任意站可 iframe（fail-open）。
+> 3. **透传响应也加 `Cache-Control: no-store`**（与 401/403/handoff 口径一致）。
+> 4. **`claims.org` 解出来但没人用**：那是**有意的**——隔离由 Task 1 在**签发侧**按会话 org 定死，
+>    代理只认「票据里那一张 dashboard」。要在代码里写一句注释说明，别让后人以为是漏用。
+
+
 - [ ] **Step 3: 实现 `src/rules.ts`**
 
 ```ts
@@ -743,20 +753,45 @@ describe('deny-by-default 规则表', () => {
 // 设计上只授权**票据里那一张 dashboard**（+ 它的卡片的 query 面）：比「本租户全部已登记对象」
 // 更严，代价是编辑页里不能跳去别的报表（console 列表才是导航面，每张各自领一张票据）。
 // 每条放行都必须写明用途；枚举类与任意查询类**永久禁止**（见 denied 测试的注释）。
+//
+// ⚠️ **两条订正记录（2026-09-29，Task 4 评审轮）**：
+//   ① **归一化必须按「段白名单」收口**，不能只折精确 `..` 段——实测 `/app/..;/api/search`、
+//      `/app/..%20/api/search`、`/app/..%00/api/search` 都能满足 `/app/` 前缀而被放行并上行
+//      （上游 Jetty 对 `;`/空白/NUL 的 canonicalization 不可控 ⇒ 不能赌它）。任何含白名单外
+//      字符的段**整条路径拒**（含 `%`：合法路径里几乎不出现，fail-closed 的代价可接受）。
+//   ② **dashcard 路径必须同时校验卡片归属**（`cid ∈ cards`），否则「卡片集合」那道 fail-closed
+//      门形同虚设（只判 did 时，任何卡片 id 都能借本 dashboard 的壳上行）。
+const SEG_RE = /^[A-Za-z0-9._~-]+$/
+
+/** 归约路径；任何不合规段返回 null（= 调用方按 deny 处理）。判定与上行**共用**它的结果。 */
+export function normalizePath(rawPath: string): string | null {
+  const out: string[] = []
+  for (const seg of rawPath.split('/')) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') { if (out.length === 0) return null; out.pop(); continue }
+    if (!SEG_RE.test(seg)) return null          // '..;' / '%20' / '%00' / 空白 / 非 ASCII 一律拒
+    out.push(seg)
+  }
+  return '/' + out.join('/')
+}
+
 const SHELL_PREFIXES = ['/app/', '/static/', '/assets/'] as const
 const SHELL_EXACT = new Set(['/', '/index.html', '/favicon.ico', '/api/session/properties'])
+const SHELL_METHODS = new Set(['GET', 'HEAD'])   // 壳/静态只读：PUT/DELETE /app/** 不放行
 
 export function decide(
   path: string, method: string, ctx: { did: number; cards: ReadonlySet<number> },
 ): 'allow' | 'deny' {
-  if (SHELL_EXACT.has(path)) return 'allow'
-  if (SHELL_PREFIXES.some((p) => path.startsWith(p))) return 'allow'
+  const isRead = SHELL_METHODS.has(method)
+  if (SHELL_EXACT.has(path) && isRead) return 'allow'
+  if (isRead && SHELL_PREFIXES.some((p) => path.startsWith(p))) return 'allow'
 
-  // 本票据授权的那张 dashboard：页面 + 它的 API（含 dashcard 查询路径）
-  if (path === `/dashboard/${ctx.did}`) return 'allow'
-  if (path === `/api/dashboard/${ctx.did}`) return 'allow'
-  const dc = /^\/api\/dashboard\/(\d+)\/dashcard\/\d+\/card\/\d+\/query$/.exec(path)
-  if (dc && Number(dc[1]) === ctx.did) return 'allow'
+  // 本票据授权的那张 dashboard：页面 + 它的 API
+  if (isRead && path === `/dashboard/${ctx.did}`) return 'allow'
+  if (isRead && path === `/api/dashboard/${ctx.did}`) return 'allow'
+  // dashcard 查询：**did 与 cid 都要过**（订正记录 ②）
+  const dc = /^\/api\/dashboard\/(\d+)\/dashcard\/\d+\/card\/(\d+)\/query$/.exec(path)
+  if (dc && Number(dc[1]) === ctx.did && ctx.cards.has(Number(dc[2]))) return 'allow'
 
   // 卡片**查询**面：只放行属于本 dashboard 的卡片，且只有 query 这一个动作
   if (method === 'POST') {
@@ -956,6 +991,11 @@ git commit -m "docs(deploy): 编辑页反代的每客户接线 SOP（专用 host
 - [ ] **Step 2: 断言本租户可用**：经专用入口打开 `/handoff?t=…` → 302 + `Set-Cookie: mb_edit=…`；随后 `/dashboard/<did>` 200、`/api/dashboard/<did>` 200；**参数可改**（编辑态租户参数是普通参数，Constraint 2）。
 - [ ] **Step 3: 断言四条负读数**：别租户对象 → 403；无 Cookie → 401；`/api/search` → 403；样例 dashboard（未登记）→ 403。
 - [ ] **Step 4: 断言「编辑页不能任意查询」**：`POST /api/dataset` → 403（Constraint 6 的口子实测关上）。
+- [ ] **Step 4b: 上游重定向与 canonicalization 探针**（评审轮补的必验项，**不得静默丢**）
+  1. 真机 `GET /` 回的是 **200 还是 3xx**？若是 3xx，其 `location` **是否落在放行表内**（不落 ⇒ 编辑页首页打不开；落 ⇒ 记下它，且确认 `location` 里没有内网主机名泄露）。
+  2. **canonicalization 绕过探针**：逐条打 `/app/..;/api/search`、`/app/..%3b..%3bapi/search`、`/app/..%20/api/search`、`/app/..%00/api/search`，**全部必须 403**（本地只证到「归一化收口后拒」，上游 Jetty 如何解释由真机定论）。
+  3. 记下**服务 API key 在 Metabase 的权限档位**（若为 admin 档，代理的放行表就是唯一边界——这决定 Important 项的严重度）。
+
 - [ ] **Step 5: 记档**：把命令、响应码、关键响应体片段写进 SOP 的「实测记录」小节（**含日期与镜像 ID**），并更新 spec 若实测与 §3⑦ 有出入（有出入就订正 spec 并说明）。
 - [ ] **Step 6: Commit**（文档与实测记录）
 
