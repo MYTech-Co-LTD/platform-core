@@ -133,7 +133,7 @@ wrapper 职责清单取自任务书 + 通读 `run-retail-day.sh`（1021 行）�
 | 11 | _ops 观测行（sink 行正则解析 rows + OO 投递；不影响退出码 L255-339, L520-535） | **部分替代**：行数=节点原生 rows（正则解析消失；OPS_ROWS_UNPARSED 整类问题消失）；OO 投递可用管线内 snk.webhook 分支发 `_json`，或引擎 metrics（logs/duckle_metrics.prom 实存）——**OO 通道接线未实测，标待沉淀** | **部分替代（差投递通道验证）** | `out/` 各回执节点行；`logs/duckle_metrics.prom` |
 | 12 | 失败告警（EXIT trap + WeCom webhook，LEMENG_NOTIFY 门 L422-456, L683-684） | **部分替代（设计已通未实测）**：`ctl.try` 兜底子管线（snk.webhook POST WeCom）恰是「失败时跑一次」的语义；trap 的「任何退出路径都覆盖」= try 作用域「其后任何 stage 失败」（装配点之后全管——放管线头即全管） | **部分替代（待实测）** | `lib.rs:3044-3058`；§8 设计 |
 | 13 | 容器/进程编排（$COMPOSE run 每窗新容器 + shim L83-196） | 合并形一个进程跑整管线，**这层整体消失**（这正是拆壳的收益本体） | **原生替代（消失）** | — |
-| 14 | 诊断/验收模式（probe/listing/idem3/drift/recon/agg/rb/envfile） | drift 已是引擎子命令（thin 管线在用）；recon 可管线化（duckdb s3 回读+翻页比对+die）但属独立只读流程；listing/idem3 是验收工具 | **部分保留**：诊断入口保留薄壳（或独立诊断管线），不进采集主管线 | wrapper 各分支；`duckle drift` 实存 |
+| 14 | 诊断/验收模式（probe/listing/idem3/drift/recon/agg/rb/envfile）〔🟢 2026-09-29 补：替代形态 = **独立只读 shell** `scripts/lemeng/diagnose.sh`（落 `/opt/lemeng-diagnose.sh`），**非管线**——与 §7.3「不该下沉」结论一致，见 `specs/2026-09-29-diagnostic-tool-implementation.md`〕 | drift 已是引擎子命令（thin 管线在用）；recon 可管线化（duckdb s3 回读+翻页比对+die）但属独立只读流程；listing/idem3 是验收工具 | **部分保留**：诊断入口保留薄壳（或独立诊断管线），不进采集主管线 | wrapper 各分支；`duckle drift` 实存 |
 
 ---
 

@@ -9,7 +9,9 @@
 //
 // ── 它盯的是哪条**今天没有任何门禁**盯的耦合（P7 的原始动机）────────────────────
 // `recon` 的容量闸 `RECON_PAGES=12` 与网关调用形状（URL / body 键 / `page_size`）**不是它的私有
-// 常量**：事实源是 `duckle/common/lemeng.retail_order_line.json` 的 12 个 `src.rest` 节点
+// 常量**：事实源是**在用的** L1 子管线 `deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json`
+// 的 12 个 `src.rest` 节点（🔴 2026-09-29 改向：原先指 `duckle/common/lemeng.retail_order_line.json`——
+// 那是**已退役**的内层重管线，指它会让「删退役件」与「门禁事实源」互相卡死）
 // （`paginationType:none` + 12 节点硬扇出，每节点 body 里写死自己的 `page_number`/`page_size`）。
 // ⇒ **管线分了 13 页、工具还按 12 页翻** ⇒ 末页守卫永不触发 ⇒ 网关侧**悄悄少算**一页的数据，
 // 而工具会报一张看着很正常的 `RECON bizday=… lake_rows=… gateway_rows=…`。这是**静默错**：
@@ -31,9 +33,10 @@
 // ⚠️ **不剥注释**（本仓 B9 的教训）：判据 ④ 按**行**判（只判含 `read_parquet(` 的代码行），
 //    所以注释里出现 `hive_partitioning` 这个词**不会**误报；但**代码行**里出现即红。
 //    这样既不放过真回归，也不把「解释为什么不能这么做」的注释当成违规。
-// ⚠️ **覆盖边界**：只盯 `duckle/common/lemeng.retail_order_line.json`（该管线的**定义处**）。
-//    它**不是**运行中的 console 工作区（`deploy/duckle/console/` 那份由
-//    `scripts/check-duckle-catalog.mjs` 守观测面命名）——两处都改才算改完，本门禁看不见后者。
+// ⚠️ **覆盖边界**：只盯 `deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json`**这一份**。
+//    同一个 console 目录里还有**其它**管线（`lemeng.dim.*.l0` 等），本门禁**不**逐个比它们的形状；
+//    观测面命名那一面由 `scripts/check-duckle-catalog.mjs` 守——两处都改才算改完，本门禁看不见后者。
+//    ⚠️ 内层重管线 `duckle/common/*.json` 已**退役**（两账套均切 L0/L1）⇒ 本门禁**不再**以它为事实源。
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -45,7 +48,7 @@ export const SCRIPT_NAME = 'check-diagnostic-tool'
 /** 工具的仓内路径（唯一事实源；改这里 = 改门禁的瞄准点）。 */
 export const TOOL_PATH = 'scripts/lemeng/diagnose.sh'
 /** 网关调用形状的事实源（管线定义）。 */
-export const PIPELINE_PATH = 'duckle/common/lemeng.retail_order_line.json'
+export const PIPELINE_PATH = 'deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json'
 /** E6：退出码契约里**必须逐字在场**的字面量（`RECON_FAILED:` 的七个失败面 + 通过面）。 */
 export const E6_LITERALS = [
   'RECON_OK',

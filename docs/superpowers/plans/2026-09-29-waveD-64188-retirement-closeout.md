@@ -378,7 +378,11 @@ docker exec <container> python3 /opt/connection-setup.py --workspace /workspace 
 | **采集调用形**（可废弃） | `dim` · `window` · `windows` · `tick`（含 `tick close` 闭窗形） | 逐窗/快照**采集**的实际执行体 | 被 L0/L1 完全取代后废弃；**但删 `duckle/common/*.json`（§4.3）会先让它失效** ⇒ 两者必须**同批** |
 | **只读诊断形**（**不废弃**） | `identity` · `probe` · `recon` · `listing` · `agg` · `branches` · `diag` · `rb` · `idem` · `idem3` · `drift` · `envfile` | 身份探针 / 对账 / 清单 / ETag / 幂等 / 漂移 | **保留**——正典 §1.1.7 原句：「**诊断 / 对账 / ETag 验收 / 身份探针工具** | **独立只读入口，永不进采集主链**（合并只增耦合）——这些验收的是引擎之外的世界（湖对象、网关），引擎无视角」 |
 
-⚠️ **两个必须一起看的约束**：
+🟢 **替代路径已落地（2026-09-29）**：`scripts/lemeng/diagnose.sh`（落 `/opt/lemeng-diagnose.sh 0755`，现代码 `recon`/`rb`/`identity` 三个只读 subs；新旧工具**同参数对照逐字相同**、被替脚本**逐字同 sha**，见 `docs/superpowers/specs/2026-09-29-diagnostic-tool-implementation.md`）。
+⇒ **下条「不废弃」的结论据此可以撤销**：只读诊断形改由新工具承接；物理删除按 P6 批序排在**指针改向**之后。
+⚠️ **另一处待改的依赖（2026-09-29 发现）**：`duckle/common/lemeng.retail_order_line.json` **仍是** P7 静态断言（`scripts/check-diagnostic-tool.mjs` 的 `PIPELINE_PATH`）的**事实源** ⇒ 删它之前必须先把该断言改指向**在用的** L1 子管线（`deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json`）。
+
+⚠️ **两个必须一起看的约束**（下列为**决策当时**的原记，保留作留档）：
 1. `recon` **不**是「采集的附属」，它是 `DELIVERY.md` §3 判据 2 的**指定工具**（`sh /opt/lemeng-run.sh recon <H>`）⇒ 删它会**打断 L0/L1 的验收链**。
 2. Wave C 的验签仍把 `run-retail-day.sh tick` 当**对照臂**（母计划 Wave C 第 3 条：「`run-retail-day.sh tick` 仍在，可作为对照臂」）
    ⇒ **`tick` 形的废弃时点必须晚于 Wave C 的对照完成**。

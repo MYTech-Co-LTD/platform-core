@@ -108,7 +108,7 @@ function fixture(
   //    会被当成"没覆盖"** ⇒ 「工具不存在」那条用例会静默退化成「工具正常」，假绿。
   const files: Array<[string, string | null]> = [
     ['scripts/lemeng/diagnose.sh', 'tool' in over ? (over.tool ?? null) : toolSrc()],
-    ['duckle/common/lemeng.retail_order_line.json', 'pipeline' in over ? (over.pipeline ?? null) : pipelineSrc()],
+    ['deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json', 'pipeline' in over ? (over.pipeline ?? null) : pipelineSrc()],
     ['deploy/data-plane-manifest.txt', 'manifest' in over ? (over.manifest ?? null) : MANIFEST],
   ]
   for (const [rel, content] of files) {

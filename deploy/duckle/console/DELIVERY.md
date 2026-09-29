@@ -257,7 +257,9 @@ curl -s -X POST http://127.0.0.1:18080/api/catalog \
 | **日批兜底层** | `windows.l1` / `close.l1` | 该 `hour` 分区文件内 **`count(DISTINCT batch_id) == 1`** 且行数 > 0 |
 | **tick 层** | `tick.l1` | **快照等值**：文件内容 = 网关**当刻**累计（每 5 分钟换 `batch_id` 覆盖写）⇒ **不是**去重计数 |
 
-- 工具：既有的只读对账模式 `sh /opt/lemeng-run.sh recon <H>`（该 hour 湖回读 vs 网关翻页累计，**容差 0**）。
+- 工具：**`sh /opt/lemeng-diagnose.sh recon <H>`**（该 hour 湖回读 vs 网关翻页累计，**容差 0**）。
+  ⚠️ **2026-09-29 换工具**：原 `sh /opt/lemeng-run.sh recon <H>`（旧脚本已退役）；**判据本身一字未改**——新工具的 `recon`
+  **已把下面那条「换通道复核」落成判据的一部分**（两侧不等 ⇒ `RECON_FAILED:cross`；通道不可用 ⇒ **不静默退化**）。
 - 免凭据独立回读（换一条通道复核，**别复用被测方的通路**）：`pg_duckdb` 已配 S3 secret，可直读湖。
   ⚠️ **DuckDB SQL 必须用 `duckdb.query($$…$$)` 包裹**，否则报误导性的
   `column "hive_partitioning" does not exist`。
@@ -361,7 +363,7 @@ print(r['status'], r.get('at'), 'assets=', [a['id'] for a in r.get('assets',[])]
 4. **≥2 tick 缺口的真补法不是 misfire，是补采 SOP**
    catchup **结构上补不回**错过的窗（窗口由执行时刻算，§2）。tick 漏 **1** 次由下一次 tick 的 `prev` **自愈**；
    **≥2 个 tick（≥10 分钟）**的缺口，任何 misfire 取值都无能为力 ⇒ 必须走**投递批次的补采 SOP**
-   （`run-retail-day.sh recon <H>` 对照 + 定点重跑）。
+   （`sh /opt/lemeng-diagnose.sh recon <H>` 对照 + 定点重跑）。
    ⚠️ 「**怎么定点补一个已过去的小时**」目前**没有现成工具**（Wave C §9 待定项）——缺口出现时先挂号，别指望 misfire。
 
 5. **`assets` 在运行记录，不在回执**（见判据 3 的 ⚠️）——术语撞车，本仓已经踩过一次。
@@ -375,7 +377,7 @@ print(r['status'], r.get('at'), 'assets=', [a['id'] for a in r.get('assets',[])]
 | 不覆盖 | 归谁 |
 |---|---|
 | **账套 64188** 的 L1 切换 | 独立决定（其卷未 seed 本版 `owners.json` / `alerts.json`；要不要切另议） |
-| **Wave D 收口** | 薄壳退役（删条目 + 删管线文件 + 删 `alerts.json` 里的死规则）、`run-retail-day.sh` 的 `dim`/零售分支标废弃、**正典统一**（handbook §1.5 与 SOP §F.4 的排障口径、§1.1.7 Wave 表 + L0/L1 档补首个生产案例） |
+| **Wave D 收口** | ✅ **已收口（2026-09-29）**：薄壳退役（仓内删 + **卷内删** + 调度条目删 + `alerts.json` 死规则删，见 #364）；**正典统一**（§1.1.7 波次表 + 首个生产案例、§1.5/§F.4 排障口径按形态分、§1.3.2 按类分，见 #363/#373）。⚠️ 仍**未做**：`run-retail-day.sh` 与 `duckle/common/*.json` 的**物理删除**——替代工具（`scripts/lemeng/diagnose.sh`，落 `/opt/lemeng-diagnose.sh`）已落地，删除批按 P6 的批序排在**指针改向**之后（本文件即指针改向的一处）。 |
 | **历史回填** | **#328**（`retail_order_line` 回填；硬前置是先迁读侧） |
 | **投递程序本体** | SOP §E（本文件只引用命令，不复述机制） |
 | **排障口径** | SOP §F.4 / handbook §1.5（**Wave D 收口，本文件不抢跑**） |
