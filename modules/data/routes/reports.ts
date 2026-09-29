@@ -20,9 +20,11 @@
 //   两个租户的同名报表经 `GET /api/search` 命中同一张 ⇒ 跨租户**改写**（setEmbedding 覆盖
 //   embedding_params）与跨租户**归档**（DELETE 删掉别人的报表）。四处口径必须一致：
 //   查找 / 创建（都过 `dashboardName`）、发布与归档（按 upsert / 登记行给出的 id 走）。
+import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { ModuleHono, RouteCtx } from './context'
 import { requesterOf } from './context'
+import { signEditHandoff } from '../domain/edit-handoff'
 import {
   MetabaseError,
   archiveDashboard,
@@ -173,6 +175,27 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     return c.json({
       id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
     })
+  })
+
+  // ── 编辑页入口（spec §3⑦：把 Metabase 编辑页经反代搬进后台）─────────────────────────
+  // 判定只能在这里做（登记表只有模块能读）；签一枚 120s 一次性票据，身份由**专用入口**的反代替换
+  // 成它自己的 host-only Cookie（平台会话 Cookie 不设 Domain、不扩散）。
+  r.get('/reports/:id/edit-url', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const proxyOrigin = process.env.MB_PROXY_PUBLIC_ORIGIN
+    if (!proxyOrigin) return c.json({ error: 'EDIT_PROXY_UNCONFIGURED' }, 503)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const row = await getReport(ctx.pool, c.get('tenant').casdoor_org, id)
+    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // platform 自绘行没有 Metabase dashboard（metabaseId=0 是哨兵）⇒ 没有可编辑的页
+    if (row.renderer === 'platform') return c.json({ error: 'RENDERER_NOT_EDITABLE' }, 409)
+    const t = signEditHandoff(
+      { org: requester.orgId, did: row.metabaseId, nonce: randomUUID() },
+      process.env.PLATFORM_SESSION_SECRET ?? '',
+    )
+    return c.json({ url: `${proxyOrigin}/handoff?t=${t}` })
   })
 
   r.get('/reports/:id/embed-url', async (c) => {

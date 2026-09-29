@@ -51,6 +51,9 @@ api:
     - { method: POST,   path: /reports,               scope: data:manage }
     - { method: GET,    path: /reports,               scope: data:query }
     - { method: GET,    path: /reports/:id/embed-url, scope: data:query }
+    # 编辑页入口（spec §3⑦）：把身份经 120s 一次性票据渡给专用反代 ⇒ 属**管理动作**（data:manage），
+    # 与观看面的 embed-url（data:query）分档——能改报表的人才拿得到编辑入口。
+    - { method: GET,    path: /reports/:id/edit-url,  scope: data:manage }
     - { method: DELETE, path: /reports/:id,           scope: data:manage }
     - { method: POST,   path: /reports/reconcile,     scope: data:manage }
     # 管理清单与页门改动（管理面动作：页门/发布/回收）：**不做 visibleTo 行裁剪**——页门未放行
