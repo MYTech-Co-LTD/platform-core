@@ -74,7 +74,7 @@ export async function readDashboardContent(
   }
 }
 
-/** 平台保留的锁定参数名（与 routes/reports.ts 的 TENANT_PARAM 同值；两处必须一致）。 */
+/** 平台保留的锁定参数名（routes 侧直接 import 本常量——单一来源，终审修复 2026-09-29）。 */
 export const TENANT_SLUG = 'tenant'
 /**
  * dashboard 级 tenant 参数在 Metabase 侧的 `id`（参数声明与卡片 `parameter_mappings` 都指它）。
