@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.57.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.57.1...v0.57.2) - 2026-09-29
+- 【修复】duckle: #383 close 层补新鲜度锚（首点成功后随批补） ([#384](https://github.com/MYTech-Co-LTD/platform-core/pull/384), [2b1d7f0](https://github.com/MYTech-Co-LTD/platform-core/commit/2b1d7f00dc86bd5e32ba6816ebf464db4725722c))
+
+
 ## [0.57.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.57.0...v0.57.1) - 2026-09-29
 - 【优化】duckle: #379 退役最后一里——指针改向 + P7 断言事实源改向 ([#380](https://github.com/MYTech-Co-LTD/platform-core/pull/380), [f68029f](https://github.com/MYTech-Co-LTD/platform-core/commit/f68029f6d79e966270afa43daf0d1a68b5c3ad64))
 
