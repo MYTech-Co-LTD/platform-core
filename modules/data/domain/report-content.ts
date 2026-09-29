@@ -33,7 +33,11 @@ export function fingerprintOf(input: {
   const canonical = {
     dashcards: [...input.dashcards]
       .sort((a, b) => a.id - b.id)
-      .map((d) => [d.id, d.cardId, d.row, d.col, d.sizeX, d.sizeY]),
+      // ⚠️ 投影带 `visualizationSettings` + `parameterMappings`（人裁 2026-09-29）：前者是文本卡
+      // （cardId=null）内容的唯一居所——丢了它，"人改文本卡文字"指纹不动；后者是 Task 5 要写的
+      // 东西——丢了它，人手动改映射指纹也不动。两类都是写保护该看见的改动。
+      .map((d) => [d.id, d.cardId, d.row, d.col, d.sizeX, d.sizeY,
+                   d.visualizationSettings, d.parameterMappings]),
     parameters: [...input.parameters].map((p) => String(p['slug'] ?? '')).sort(),
     embeddingParams: Object.entries(input.embeddingParams).sort(([a], [b]) => (a < b ? -1 : 1)),
     cardSqlDigests: Object.entries(input.cardSqlDigests).sort(([a], [b]) => Number(a) - Number(b)),

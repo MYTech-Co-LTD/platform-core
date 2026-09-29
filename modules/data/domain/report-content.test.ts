@@ -34,6 +34,21 @@ describe('fingerprintOf', () => {
     expect(fingerprintOf(edited)).not.toBe(fingerprintOf(base))
   })
 
+  it('文本卡内容变 ⇒ 指纹变（内容在 visualization_settings，cardId=null）', () => {
+    const textCard = { id: 2, cardId: null, row: 6, col: 0, sizeX: 12, sizeY: 4,
+                       visualizationSettings: { text: '说明' } }
+    const withText = { ...base, dashcards: [...base.dashcards, textCard] }
+    const textEdited = { ...withText, dashcards: [
+      ...base.dashcards, { ...textCard, visualizationSettings: { text: '改了' } }] }
+    expect(fingerprintOf(withText)).not.toBe(fingerprintOf(textEdited))
+  })
+
+  it('参数映射变 ⇒ 指纹变（映射是 Task 5 要写的东西）', () => {
+    const mapped = { ...base, dashcards: [
+      { ...base.dashcards[0], parameterMappings: [{ parameter_id: 'p1' }] }] }
+    expect(fingerprintOf(mapped)).not.toBe(fingerprintOf(base))
+  })
+
   it('锁参状态变 ⇒ 指纹变', () => {
     const unlocked = { ...base, embeddingParams: {} as Record<string, string> }
     expect(fingerprintOf(unlocked)).not.toBe(fingerprintOf(base))
