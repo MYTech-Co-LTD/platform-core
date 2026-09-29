@@ -53,6 +53,11 @@ api:
     - { method: GET,    path: /reports/:id/embed-url, scope: data:query }
     - { method: DELETE, path: /reports/:id,           scope: data:manage }
     - { method: POST,   path: /reports/reconcile,     scope: data:manage }
+    # 管理清单与页门改动（管理面动作：页门/发布/回收）：**不做 visibleTo 行裁剪**——页门未放行
+    # 的行对管理员必须可见可改，否则没人能把未发布的报表发出来（观看面 GET /reports 才裁）。
+    # 「发布」= requiredScope 置 null，没有独立的 published 列（见 report-store 头注）。
+    - { method: GET,    path: /reports/manage,        scope: data:manage }
+    - { method: PUT,    path: /reports/:id,           scope: data:manage }
 frontend:
   console:
     - { path: /console/data, title: 数据问数, icon: BarChartOutlined, scope: data:query, entry: ./console/index.tsx }

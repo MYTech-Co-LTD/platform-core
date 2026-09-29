@@ -16,7 +16,7 @@ import { Hono } from 'hono'
 import { Pool } from 'pg'
 import { declaredScopeGate } from '@platform/sdk'
 import mod from '../index'
-import { upsertReport } from '../domain/report-store'
+import { updateRequiredScope, upsertReport } from '../domain/report-store'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import type { ModuleVars } from './context'
 
@@ -190,7 +190,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('五个端点都声明了，且页门分档：制作/登记/对账=data:manage，观看面=data:query', () => {
+  it('七个端点都声明了，且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -199,6 +199,24 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('GET /reports/:id/embed-url')).toBe('data:query')
     expect(declared.get('DELETE /reports/:id')).toBe('data:manage')
     expect(declared.get('POST /reports/reconcile')).toBe('data:manage')
+    expect(declared.get('GET /reports/manage')).toBe('data:manage')
+    expect(declared.get('PUT /reports/:id')).toBe('data:manage')
+  })
+
+  it('★ 页门负测：只有 data:query ⇒ 管理清单 / 页门改动同样 403', async () => {
+    const app = gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), null)
+    const list = await app.request('/reports/manage')
+    expect(list.status).toBe(403)
+    // 断言 body 而不只是 status：两种 403 要分得开——`need` 在场 ⇒ 是**已声明**端点上的
+    // scope 判定（本条要证的）；缺 `need` ⇒ 只是「未声明即不可达」的兜底，那样本用例即便
+    // manifest 漏声明也照样绿（实测：Step 2 的**红**跑里这条就是绿着过的）。
+    expect(await list.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
+    const put = await app.request('/reports/whatever', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: null }),
+    })
+    expect(put.status).toBe(403)
+    expect(await put.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
   })
 
   it('★ 页门负测：只有 data:query ⇒ 建报表被门卫 403（模块自己不写 requireScope）', async () => {
@@ -355,17 +373,99 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(rows.rowCount).toBe(0)
   })
 
-  it('GET /reports：只回本 org 的登记，投影 id/title/requiredScope', async () => {
+  it('GET /reports：只回本 org 的登记，投影 id/title/requiredScope/renderer', async () => {
     const { app } = manage()
     await post(app, { title: '销售日报' })
     await post(app, { title: '仅管理员', requiredScope: 'data:manage' })
     const body = await (await viewer().app.request('/reports')).json()
     // viewer 只有 data:query ⇒ 行级 requiredScope 把它裁掉
     expect(body.reports.map((r: { title: string }) => r.title)).toEqual(['销售日报'])
-    expect(Object.keys(body.reports[0]).sort()).toEqual(['id', 'requiredScope', 'title'])
+    expect(Object.keys(body.reports[0]).sort()).toEqual(['id', 'renderer', 'requiredScope', 'title'])
 
     const admin = await (await manage().app.request('/reports')).json()
     expect(admin.reports).toHaveLength(2)
+  })
+
+  it('GET /reports/manage：data:manage 身份看全量本 org 行（含页门未放行的）+ renderer', async () => {
+    const { app, identity } = manage()
+    await post(app, { title: '公开报表', requiredScope: null })
+    await post(app, { title: '未放行报表', requiredScope: 'sales:read' })
+    await upsertReport(pool, identity.orgId, {
+      title: '自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+    })
+    const res = await app.request('/reports/manage')
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    // 行序 = order by title（listReports 既有口径）。此处的**字面次序**是实测值，不是拼音序：
+    // PG 的 C 序（CI 的 postgres:16-alpine 以 C 建库）与 en_US.UTF-8（本机 Homebrew PG）对
+    // 这三个标题都给**码点序** 公(516C) < 未(672A) < 自(81EA)——两环境实测一致（见任务报告）。
+    // 全量性也由本断言钉住：manage 身份并不持有 'sales:read' ⇒ 若 handler 误用 visibleTo
+    // 裁行，「未放行报表」会消失、此处变 2 行而红。
+    expect(body.reports.map((r: { title: string }) => r.title)).toEqual(
+      ['公开报表', '未放行报表', '自绘大盘'],
+    )
+    expect(body.reports.find((r: { title: string }) => r.title === '未放行报表'))
+      .toMatchObject({ requiredScope: 'sales:read', renderer: 'metabase' })
+    expect(body.reports.find((r: { title: string }) => r.title === '自绘大盘'))
+      .toMatchObject({ renderer: 'platform' })
+  })
+
+  it('GET /reports（观看面）投影补 renderer；页门未放行的行照旧不可见', async () => {
+    const { app } = manage()
+    await post(app, { title: '公开报表', requiredScope: null })
+    await post(app, { title: '未放行报表', requiredScope: 'data:manage' })
+    const viewerApp = shell(makeIdentity({ orgId: ORG, scopes: ['data:query'] })).app
+    const body = await (await viewerApp.request('/reports')).json()
+    expect(body.reports).toHaveLength(1)
+    expect(body.reports[0]).toMatchObject({ title: '公开报表', renderer: 'metabase' })
+  })
+
+  it('PUT /reports/:id：改页门落库并返回整行；置 null = 发布', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '销售日报', requiredScope: 'sales:read' })).json()
+
+    const res = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'finance:read' }),
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json())
+      .toMatchObject({ id, title: '销售日报', requiredScope: 'finance:read', renderer: 'metabase' })
+    const db = await pool.query('select required_scope from data.reports where id = $1', [id])
+    expect(db.rows[0].required_scope).toBe('finance:read')
+
+    const pub = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: null }),
+    })
+    expect(pub.status).toBe(200)
+    expect((await pub.json()).requiredScope).toBeNull()
+  })
+
+  it('★ PUT 负测：多余键 400（strict）/ 空串 400 / 跨租户 404 且写不动', async () => {
+    const { app, identity } = manage()
+    const { id } = await (await post(app, { title: '销售日报' })).json()
+
+    const extra = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'a:read', title: '顺手改名' }),
+    })
+    expect(extra.status).toBe(400)
+
+    const empty = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: '' }),
+    })
+    expect(empty.status).toBe(400)
+
+    const other = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] })).app
+    const cross = await other.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'hacked:scope' }),
+    })
+    expect(cross.status).toBe(404)
+    const db = await pool.query('select org, required_scope from data.reports where id = $1', [id])
+    expect(db.rows[0]).toMatchObject({ org: identity.orgId, required_scope: null })
   })
 
   it('★ 数据门：embed-url 的 locked tenant 恒 = 调用者 org（入参带 tenant 一律忽略）', async () => {

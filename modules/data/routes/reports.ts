@@ -41,6 +41,7 @@ import {
   getReport,
   listAllReports,
   listReports,
+  updateRequiredScope,
   upsertReport,
 } from '../domain/report-store'
 import {
@@ -130,7 +131,47 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 只投影消费面要的字段：metabase_id / embed_params 是实现细节，不外泄
     return c.json({
       reports: rows.filter((row) => visibleTo(row, requester))
-        .map((row) => ({ id: row.id, title: row.title, requiredScope: row.requiredScope })),
+        .map((row) => ({
+          id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
+        })),
+    })
+  })
+
+  // ── 管理清单（spec §3⑤：租户管理员看**全量**本 org 行，含页门未放行的）─────────────
+  // 与观看清单 GET /reports 的分野：观看面按行 required_scope 裁剪（visibleTo），管理面**不裁**
+  // ——页门未放行的行对管理员必须可见、可改，否则没人能把未发布的报表发出来。
+  // 授权由宿主门卫按 manifest（data:manage）施加，handler 不再判权限。
+  r.get('/reports/manage', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const rows = await listReports(ctx.pool, c.get('tenant').casdoor_org)
+    return c.json({
+      reports: rows.map((row) => ({
+        id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
+      })),
+    })
+  })
+
+  const GateBody = z.object({ requiredScope: z.string().min(1).nullable() }).strict()
+
+  // ── 页门改动（管理面动作：页门/发布/回收之「页门」「发布」）─────────────────────────
+  // 发布 = requiredScope 置 null；改页门 = 换成新 scope。**没有独立的 published 列**
+  // （见函数头顶注与计划 Global Constraints 1）。
+  // ⚠️ 写保护（陈旧版本写 409）归计划 4（spec §8 步骤 2）——这里**故意**没有版本守卫。
+  r.put('/reports/:id', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const parsed = GateBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const row = await updateRequiredScope(
+      ctx.pool, c.get('tenant').casdoor_org, id, parsed.data.requiredScope,
+    )
+    // 跨租户/不存在一律 404——不给存在性探针（口径同 DELETE）
+    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    return c.json({
+      id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
     })
   })
 
