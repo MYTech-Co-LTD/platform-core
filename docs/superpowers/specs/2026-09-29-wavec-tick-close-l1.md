@@ -446,7 +446,7 @@ MinIO root 凭据（`docker inspect waveB-lab-minio`）与 mock bearer 重新封
 7. **生产 `.duckle/keys/` 生命周期未决**（§7）：换机/重建后密钥由谁分发，仍是人确认项。
 8. **≥2 tick 缺口的补采工具未验**（§4.6）：`run-retail-day.sh` 能否定点重跑指定小时，零生产约束下
    没去碰 64188；本报告列为**待定 SOP**。
-9. **`catalog lint` 不在 CI 守卫里**（§6.2）：本批**没有**顺手加守卫（超出 TASK 授权）；
+9. **`catalog lint` 不在 CI 守卫里**（§6.2）：本批**没有**顺手加守卫（超出 TASK 授权）。🟢 **勘正（2026-09-29）**：该项**已落地**——`ci(guards): #337 catalog 观测面门禁进 CI`（**#341**，2026-09-29 合并）新增 `scripts/check-duckle-catalog.mjs`，在 gates job 尾部**真跑** `catalog build` + `catalog lint`（判据：build 的 stderr 无 `could not be named` 且 lint exit 0；跑不起来则 exit 2 响亮失败）。⇒ 本行原话「不在 CI 守卫里」**已过时**，保留作历史；
    §6 那类缺陷在 CI 仍然不可见——建议作为独立 issue。
 10. **lab 与生产的路径差异**：lab 把 `/workspace/` 换成 lab ws（形状不变），但真实 workspace 的
     挂载、权限、磁盘布局未验。
