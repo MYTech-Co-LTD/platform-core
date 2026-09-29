@@ -788,6 +788,7 @@
         "componentId": "snk.minio",
         "properties": {
           "connectionRef": "zos",
+          "bucket": "${ENV:ZOS_BUCKET}",
           "key": "lemeng/retail_order_line/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/hour=${ITER_ITEM_HOUR}/all.parquet",
           "format": "parquet",
           "mode": "overwrite",

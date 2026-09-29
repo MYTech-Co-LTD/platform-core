@@ -48,7 +48,7 @@
     "id": "panel-lemeng.retail.tick.run",
     "pipeline_id": "lemeng.retail.tick.run",
     "name": "lemeng.retail.tick.run",
-    "enabled": true,
+    "enabled": false,
     "kind": {
       "type": "cron",
       "expr": "*/5 0-15 * * *"
@@ -63,7 +63,7 @@
     "id": "panel-lemeng.retail.close.run",
     "pipeline_id": "lemeng.retail.close.run",
     "name": "lemeng.retail.close.run",
-    "enabled": true,
+    "enabled": false,
     "kind": {
       "type": "cron",
       "expr": "0 16 * * *"
