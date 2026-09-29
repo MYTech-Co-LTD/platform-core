@@ -54,7 +54,9 @@
 > ⇒ **先让服务存在，再断言**。⚠️ 本 SOP 的**上一版把断言排在了「让服务存在」之前**（且写着「E1 未过
 > 就不要进 E2」）——那样照顺序执行，**第一步就撞上一道不可能通过的门**。本版已按依赖重排。
 >
-> E3 与 E4 相互独立，可任序；两者都以 **E2 的容器存在**为前提。
+> ⚠️ **E3 与 E4 同层**（都在 E2 之后、都只需 E2 的容器已存在），**两者之间无依赖**：
+> 接线不依赖证书、签证书也不依赖接线。**但 `/healthz` 只证 E2/E4，不证 E3**——
+> 它免鉴权、**不触上游**（`apps/mb-proxy/src/app.ts`），过了只说明「edge 路由 + 证书 + 容器」通了。
 >
 > 每 Phase 三件套：**动作 / 命令或面板路径 / 过门条件**。过门条件不满足就停在那一步。
 
@@ -64,10 +66,19 @@
 |---|---|---|
 | 定专用 host 名 | 拍板：`mb.<客户域>`（**只写占位，不写具体域名**） | host 名在手，且该客户**尚未占用**它 |
 | 定 console origin | 取该客户项目的 `PUBLIC_ORIGIN`（**逐字**，见 §B-E1 表） | 一个 `https://<host>`，**无路径、无尾斜杠** |
-| **取票前置：调用者须持 `data:manage`** | `GET /reports/:id/edit-url` 的页门由 manifest 声明为 **`data:manage`**（`modules/data/manifest.yaml`；宿主门卫按声明施加）。**运维/验收账号必须有该 scope** | 缺 scope ⇒ **403 `{"error":"FORBIDDEN","need":"data:manage"}`**（**不是**「编辑页坏了」——**别对着 403 猜**）；完全未认证才是 403 `UNAUTHENTICATED` |
-| 同机还是拆缝 | 见 `customer-onboarding.md §0` / `§3 决策 1` | 拍板：**平台单元与数据面单元是否在同一台机**（**不影响 E3——接线恒需做**，见 §B-E3） |
+| **取票前置：调用者须持 `data:manage`** | `GET /reports/:id/edit-url` 的页门由 manifest 声明为 **`data:manage`**（`modules/data/manifest.yaml`；宿主门卫按声明施加）。**运维/验收账号必须有该 scope** | 缺 scope ⇒ **403 `{"error":"FORBIDDEN","need":"data:manage"}`**（**不是**「编辑页坏了」——**别对着 403 猜**）。⚠️ **`UNAUTHENTICATED` 的码位别归错层**（订正 2026-09-29，终审 I-1）：**完全未认证经宿主门卫是 `401`**（`apps/server/src/loader.ts` 的通配 fallback：`!identity ⇒ 401 UNAUTHENTICATED`；`packages/platform-sdk/src/module.ts` 的 `requireScope` 同形）；而 **`403 UNAUTHENTICATED` 来自模块自身**的 fail-closed 守卫（`modules/data/routes/reports.ts`：门卫放行了但 `requesterOf(c) === null` ⇒ 取不到 requester/orgId）。⇒ 见 401 = 「没登上/会话没了」，见 **403 `UNAUTHENTICATED` = 「门卫放行但模块取不到身份」（配置/上下文问题）**，两者不是一回事 |
+| **专用 host 与 console 必须同父域（same-site）** | 拍板 host 名时一并定：console 的 host 与专用 host 必须**互为兄弟子域**（同一 registrable domain，形如 `platform.<客户域>` + `mb.<客户域>`） | 两者**同 registrable domain**（cookies 的 same-site 判据）；⚠️ **缺这条 ⇒ 编辑页 401 + 白屏且线上静默**——理由见本节末注 |
+| 同机还是拆缝 | 见 `customer-onboarding.md §0` / `§3 决策 1` | 拍板：**平台单元与数据面单元是否在同一台机**。⚠️ **这一条决定 E3 有没有通路**：`docker network connect` 要求**同一 docker daemon**，且 `data-compose.yml` 的 metabase **不发布宿主端口** ⇒ **数据面在另一台机时本 runbook 无任何通路**（分支说明见 §B-E3） |
 | 目标机在线 | openship 面板「服务器」页（控制面 servers 列表） | serverId 在手、机器在线 |
 | 该客户已登记 ≥1 张 Metabase 报表 | 平台后台报表页 | 有 `renderer='metabase'` 的行（`platform` 自绘行没有可编辑的页，`GET /reports/:id/edit-url` 回 409 `RENDERER_NOT_EDITABLE`） |
+
+> ⚠️ **为什么「同父域」是硬前提（订正 2026-09-29，终审 I-4）**：编辑页是在 console 的 **iframe** 里打开的
+> （`modules/data/console/reports/index.tsx` 的编辑面板），而反代发的 `mb_edit` 是
+> **`SameSite=Lax`**（`apps/mb-proxy/src/session.ts`：`Path=/; HttpOnly; Secure; SameSite=Lax`，**无 `Domain`**）。
+> `Lax` 只放行 **same-site** 的请求；iframe 属**子资源**、不是顶层导航 ⇒ **跨站时浏览器根本不带这枚 Cookie**
+> ⇒ iframe 内 401 + 白屏（console 只看得到一块空白，**别处没有任何报错**）。
+> **§C ⑨ 盖不住这条**：⑨ 比对的是 CSP `frame-ancestors` 的 **origin**（「谁能嵌」），
+> 而 same-site 是 cookie 的**发送**判据（「嵌进来时带不带凭证」）——两件事，各查各的。
 
 ### E1 备 env（**最早**；服务能启动的前提）
 
@@ -150,13 +161,24 @@
 > openship **服务面契约里没有 `profiles` 字段**——它在服务面的**等价物是该服务的启用开关**（`enabled`）。
 > 别把 `profiles` 当字段传给服务面 API（服务面字段是 `enabled` / `exposed` / … 那一套）。
 
-### E3 平台 ↔ Metabase 网络接线 + 断言（**本仓恒需接线**）
+### E3 平台 ↔ Metabase 网络接线 + 断言（**同机形态下恒需接线**；跨机无通路 ⇒ 见下分支说明）
 
 **先纠正一句陈旧口径**：`customer-onboarding.md §0` 写「一个 project 的 compose 含**数据栈全部服务**」，
 **与本仓两份 compose 的事实不符**——`deploy/docker-compose.yml`（部署单元 A）**没有 metabase**；
 Metabase 只在 **`deploy/data-compose.yml`**（部署单元 B）里（`deploy/data-compose.yml:61`），
 而 B 是**独立 project**（`platform-core-<客户>-data`，见 `customer-onboarding.md §5 阶段 5`）。
-⇒ **不存在「同一 compose 网络所以不用接线」这条捷径**；**接线是必做的**（漏了 ⇒ 编辑页静默打不开）。
+⇒ **不存在「同一 compose 网络所以不用接线」这条捷径**；**同机形态下接线是必做的**（漏了 ⇒ 编辑页静默打不开）——**跨机形态没有通路，见下分支说明**。
+
+> ⚠️ **分支：数据面在另一台机时，本 SOP 无通路**（订正 2026-09-29，终审 I-3——**上一条「接线恒需做」
+> 只在同机形态下成立**）：
+> - `docker network connect` 要求两个容器**同一 docker daemon**——跨机接不了；
+> - 而 `deploy/data-compose.yml` 的 `metabase` **不发布宿主端口**（只有宿主回环 `127.0.0.1:13030:3000`，
+>   `data-compose.yml:73`）⇒ 跨机时**也没有**一个可让平台侧指向的已发布端口。
+>
+> ⇒ 跨机（「沿缝拆开两台机」）时，本 runbook 的接线**没有任何可用通路**，结果是**编辑页打不开且线上静默**
+> （别处无报错）。**跨机需另定架构**（例如数据面发布一个受控端口 / 隧道，并相应改写 `DATA_METABASE_URL`）
+> ——**本仓尚无案例，标「待沉淀」，别照本文硬做**。
+> **本仓默认「一客户一机」⇒ 同机才是本 runbook 的支持形态**（`customer-onboarding.md §0`）。
 
 **接线命令（照 P7 先例；在目标机上跑，走 openship MCP `post_system_servers_by_id_exec`，别裸 SSH）**：
 
@@ -195,8 +217,10 @@ docker exec "$MBPROXY" node -e "const n=require('net'),s=n.connect(3000,'metabas
 | ③ 验证 + 签证书 | openship MCP `post_domains_by_id_verify` → `post_domains_by_id_verify_ssl`（面板：域名 → 验证 / 签证书） | **回读** `verify` / `ssl` 状态为通过——**别只看 POST 的 2xx** |
 | ④ edge 探活（**本阶段第一条可观测断言**） | `curl -i https://mb.<客户域>/healthz` | **`200` + `{"ok":true}`**（`/healthz` 在鉴权之前，**不带 Cookie 也应 200**——这是「edge 路由 + 证书 + mb-proxy 容器」三者都通了的判据） |
 
-> ⚠️ **E2 / E3 未过就别进 E4**：容器没起或网络没接，`/healthz` 会以「502 / 证书错」收场，
-> 但根因在 E2 / E3，不在域名。
+> ⚠️ **E4④ 的 `/healthz` 失败 ⇒ 归因「容器 / 进程没起来」**（订正 2026-09-29，终审 I-2）：
+> `/healthz` 在 `apps/mb-proxy/src/app.ts` 里注册在**鉴权之前**、且**不触上游**（不查 Metabase）
+> ⇒ 它**与 E3 的平台↔Metabase 接线无关**。502 / 证书错 ⇒ 查 **E2（容器起没起、edge 路由绑没绑）**
+> 与 **E4①②③（DNS 解析 + 验证 + 证书）**，**别去查 E3 的网络**（那是条对不上号的岔路）。
 
 ### E5 每客户接线的「收工自证」（进 §C 逐条勾）
 
@@ -211,6 +235,12 @@ E2–E4 过后**不要**直接收工——按 **§C 的判据（①–⑫）**�
 > （经 `GET /reports/:id/edit-url` 拿 URL——**该端点需调用者持 `data:manage`**，缺则 403 `FORBIDDEN`；
 > 再 `GET /handoff?t=…` 走 302）。
 > 除 ⑨（浏览器里比对 origin）与 ⑫（容器内 node 断言）外，其余全部用 `curl -i`（带/不带 Cookie）断言**响应码**。
+>
+> ⚠️ **另一个前置（只存在于浏览器侧、`curl` 测不出）：专用 host 与 console 必须同父域（same-site）**（订正
+> 2026-09-29，终审 I-4）。`mb_edit` 是 **`SameSite=Lax`**（`apps/mb-proxy/src/session.ts`），而编辑面板是
+> console 里的 **iframe** ⇒ 跨站时浏览器**不带**这枚 Cookie ⇒ **401 + 白屏且线上静默**。
+> **⑨ 盖不住这条**：⑨ 比对 CSP `frame-ancestors` 的 **origin**（「谁能嵌」），本条是 cookie 的**发送**判据
+> （「嵌进来时带不带凭证」）。⇒ 拍 host 名时就定死（§B-E0「专用 host 与 console 必须同父域」）。
 
 | # | 判据 | 断言 | 期望 | 备注 |
 |---|---|---|---|---|
@@ -257,7 +287,7 @@ E2–E4 过后**不要**直接收工——按 **§C 的判据（①–⑫）**�
 |---|---|---|
 | 1 | 归一化只折精确 `..` ⇒ `/app/..;/api/search` 等被放行并上行 | Task 4 改**逐段白名单** `SEG_RE`（含 `%`/空白/NUL/非 ASCII 一律拒）；`proxyPath` 保证「判的路径 == 上行的路径」 |
 | 2 | dashcard 只判 did ⇒ 任意卡片 id 借壳上行 | Task 4 补 `cid ∈ cards`（fail-closed：取不到卡片集合 ⇒ 空集 ⇒ 不放行） |
-| 3 | console 兜底复用已消费的一次性票据 ⇒ 死路 | Task 5 改**重新领票**（`edit-url` 换新票 + `window.open`） |
+| 3 | console 兜底复用已消费的一次性票据 ⇒ 死路 | Task 5 改**重新领票**（`edit-url` 换新票 + `window.open`）；**并且**：预开窗必须**同步**（`await` 之后再 `window.open` 会被弹窗拦截）、且**不能带 `noopener`**（带它 `window.open` **恒返 `null`**，拿不到句柄 ⇒ 兜底退化成「每次都弹一句被拦」）——终审 I-5，见 `reports/index.tsx` 内的订正记录 |
 | 4 | **本接线文档（上一版）把「可观测断言」排在「让服务存在」之前** ⇒ 照顺序走第一步就撞上**不可能通过**的门 | 本版重排 §B（E1 env → E2 让服务存在 → E3/E4 断言），并在 §B 段首用「依赖关系」句固定该次序 |
 | 5 | 把 `post_deployments`（**无 `serviceIds`**）当定向部署 ⇒ **全量重建**、重启客户 pg/Metabase | 本版删该等价项，改 `post_deployments_build_access` + `serviceIds`（§B-E2 附依据；B 层第 9 条同源风险） |
 
@@ -283,6 +313,7 @@ E2–E4 过后**不要**直接收工——按 **§C 的判据（①–⑫）**�
 | 16 | 取票前置：调用者须持 `data:manage` | 缺 ⇒ 403 `{"error":"FORBIDDEN","need":"data:manage"}`（**不是**编辑页故障） |
 | 17 | `renderer='platform'` 的行没有可编辑的页 | `GET /reports/:id/edit-url` 回 **409 `RENDERER_NOT_EDITABLE`**（预期，不是故障）；列表里该行的「编辑」不渲染 |
 | 18 | 多层 env 物化分叉（inline 覆盖 project） | 排障「回滚正常 + 新构建崩」先查 inline 层 |
+| 19 | 专用 host 与 console 是否**同父域**（same-site） | `SameSite=Lax` 的 `mb_edit` 要经 **iframe** 送到专用 host ⇒ **必须同 registrable domain**（形如 `platform.<域>` + `mb.<域>`）；跨站 ⇒ **401 + 白屏且线上静默**。**§C ⑨ 不覆盖此条**（⑨ 查的是 CSP origin）。§B-E0 拍板时定死 |
 
 ---
 
@@ -295,6 +326,7 @@ E2–E4 过后**不要**直接收工——按 **§C 的判据（①–⑫）**�
 - [ ] E2 mb-proxy 服务行 + 容器起来（创建时间 > 镜像构建时间）
 - [ ] E3 `DNS_OK` + `TCP_OK`
 - [ ] E4 `/healthz` 200
+- [ ] **专用 host 与 console 同父域（same-site）已确认**（§C 前置 / §E#19；**⑨ 不覆盖此条**——浏览器里真开一次 iframe 看它是否 401 才算数）
 - [ ] §C ①②③④⑤⑥⑦⑧⑨⑩⑪⑫ 逐条读数
 - [ ] spec §3⑦ 是否需订正（有出入才动）
 

@@ -210,10 +210,60 @@ describe('报表页签双视图', () => {
     expect(within(metabaseRow).getByRole('button', { name: /编\s*辑/ })).toBeInTheDocument()
   })
 
-  it('★ 兜底「在新标签打开」重新领票（一次性票据不可复用）⇒ 再打一次 edit-url 并以新票 window.open', async () => {
+  it('★ 兜底「在新标签打开」重新领票（一次性票据不可复用）⇒ 同步预开空白页 + 新票导航它', async () => {
     // 票据是**一次性**的（nonce 在代理 `/handoff` 即被消费）：iframe 一渲染，第一枚票就用掉了。
     // 兜底若复用同一枚票，**最需要它**的场景（CSP 挡住 iframe）恰恰必然 401 ⇒ 必须重新领票。
-    // 本用例每次 edit-url 发一枚不同的票（t=T1、t=T2）以区分「新票」与「已消费的旧票」。
+    // 本用例每次 edit-url 发一枚不同的票（t=T1、t=T2）以区分「新票」与「已消费的旧票」；
+    // **第二次领票被卡住不立刻回**，用来证明 `window.open` 是在**同步点击上下文**里调用的
+    // （等 fetch 回来再 open 会被浏览器判成弹窗直接拦掉——这正是本次修复要咬住的回归）。
+    let issued = 0
+    let releaseSecond: (() => void) | null = null
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) return json({ reports: [ROWS[0]] })
+      if (/\/reports\/[^/]+\/edit-url$/.test(url)) {
+        if (issued === 1) await new Promise<void>((r) => { releaseSecond = () => r() })
+        return json({ url: `https://mb.test/handoff?t=T${++issued}` })
+      }
+      return json({})
+    })
+    // window.open 返回**句柄**（真机同形状）：同步预开的是 about:blank，拿到新票后再导航它。
+    // ⚠️ 不能按「open 直接收新票 URL」断言——那样会逼实现去带 `noopener`，而带 noopener 时
+    //    open **恒返 null**（MDN；真机 Chromium 实测），句柄拿不到、兜底整体失效。
+    const replace = vi.fn()
+    const fakeWin = { closed: false, location: { replace } } as unknown as Window
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => fakeWin)
+    try {
+      renderPage(['data:query', 'data:manage'])
+      await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: /编\s*辑/ }))
+      await waitFor(() => {
+        const f = document.querySelector('iframe[title^="报表编辑"]') as HTMLIFrameElement
+        expect(f?.src).toBe('https://mb.test/handoff?t=T1')
+      })
+      // 兜底是 **button**（不是复用票据的 `<a href>`）；按 Role 查即同时钉住了这一点
+      fireEvent.click(screen.getByRole('button', { name: /在新标签打开/ }))
+      // ⭐ 同步性：此刻第二次 edit-url **还没回**（上面被卡住），而空白页**已经**开好了。
+      //    把 `window.open` 挪到 `await` 之后再写 ⇒ 这里立刻红。
+      expect(openSpy).toHaveBeenCalledWith('about:blank', '_blank')
+      expect(replace).not.toHaveBeenCalled()   // 新票没到手之前不导航
+      releaseSecond!()
+      // 新票到手后导航**那个已开好的标签页**（不是覆盖 iframe 里那枚已消费的旧票）
+      await waitFor(() => expect(replace).toHaveBeenCalledWith('https://mb.test/handoff?t=T2'))
+      expect(calls.filter((c) => c.url.endsWith('/reports/r1/edit-url'))).toHaveLength(2)
+      expect(replace).not.toHaveBeenCalledWith('https://mb.test/handoff?t=T1')
+      // 兜底不覆盖 iframe：面板里仍是第一次那枚票
+      const f = document.querySelector('iframe[title^="报表编辑"]') as HTMLIFrameElement
+      expect(f?.src).toBe('https://mb.test/handoff?t=T1')
+    } finally {
+      openSpy.mockRestore()
+    }
+  })
+
+  it('★ 兜底：window.open 返回 null（弹窗被拦）⇒ 明说「浏览器拦下了新标签页」', async () => {
+    // 同步预开窗也可能开不出来（浏览器弹窗拦截）——此时**必须明说**：兜底唯一的失败形态，
+    // 不说就只剩「点了没反应」。这条同时也守着「别给 open 带 noopener」那个坑
+    // （带 noopener ⇒ open 恒返 null ⇒ 每次点兜底都只弹这句，而线上根本没人拦）。
     let issued = 0
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
@@ -230,17 +280,8 @@ describe('报表页签双视图', () => {
         const f = document.querySelector('iframe[title^="报表编辑"]') as HTMLIFrameElement
         expect(f?.src).toBe('https://mb.test/handoff?t=T1')
       })
-      // 兜底是 **button**（不是复用票据的 `<a href>`）；按 Role 查即同时钉住了这一点
       fireEvent.click(screen.getByRole('button', { name: /在新标签打开/ }))
-      await waitFor(() => {
-        expect(calls.filter((c) => c.url.endsWith('/reports/r1/edit-url'))).toHaveLength(2)
-      })
-      // 开的是**新票**，不是已消费的那枚
-      expect(openSpy).toHaveBeenCalledWith('https://mb.test/handoff?t=T2', '_blank', 'noopener,noreferrer')
-      expect(openSpy).not.toHaveBeenCalledWith('https://mb.test/handoff?t=T1', '_blank', 'noopener,noreferrer')
-      // 兜底不覆盖 iframe：面板里仍是第一次那枚票
-      const f = document.querySelector('iframe[title^="报表编辑"]') as HTMLIFrameElement
-      expect(f?.src).toBe('https://mb.test/handoff?t=T1')
+      expect(await screen.findByText('浏览器拦下了新标签页，请允许本站弹窗后重试')).toBeInTheDocument()
     } finally {
       openSpy.mockRestore()
     }

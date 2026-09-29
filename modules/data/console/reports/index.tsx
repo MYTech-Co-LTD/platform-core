@@ -75,17 +75,35 @@ export default function ReportsPage() {
    *
    * `opts.newTab` = 兜底通路：**重新领一张票**（票据一次性，理由见面板按钮上的订正记录），
    * 在新标签里用掉；此时不设 `editUrl`，因为 iframe 里那枚票已被消费、不该被覆盖。
+   * ⚠️ 这条通路**必须同步预开窗**，且**不能带 `noopener`**——两条都在函数体内详注。
    */
   const edit = async (r: ReportRow, opts?: { newTab?: boolean }) => {
+    // ⚠️ 订正记录（2026-09-29，Task 5 终审修复轮 I-5）：**同步**预开一个空白标签页——浏览器只认
+    //    **同步点击上下文**里的 `window.open`，`await` 之后再开会被判成弹窗直接拦掉，用户看到的是
+    //    「点了没反应」；而「CSP 挡住 iframe」正是**唯一**需要这条兜底的场景 ⇒ 那条路不能靠运气。
+    // ⚠️ 这里**不带 `noopener`/`noreferrer`**（计划原稿带了，实测**不可用**）：按规范，带 `noopener`
+    //    时 `window.open` **恒返回 `null`**（MDN `window.open` 的 `noopener` 条目：「…and returns
+    //    `null`」；真机 Chromium 实测同结论——带它 `pre` 恒 null）⇒ 下面的 `pre.location.replace`
+    //    永远够不到，兜底会退化成「每次只弹一句『被拦下了』」。
+    //    等价改法：同步开窗后**立刻**断掉 `opener`（真机实测可赋值）——同样让新页拿不到
+    //    `window.opener`，反制 tab-nabbing 的效果与 `noopener` 一致；导航仍然由我们完成。
+    const pre = opts?.newTab === true ? window.open('about:blank', '_blank') : null
+    if (pre !== null) pre.opener = null
     try {
       const b = await apiGet(`/reports/${r.id}/edit-url`) as { url: string }
       setEditRow(r)
       if (opts?.newTab === true) {
-        window.open(b.url, '_blank', 'noopener,noreferrer')   // 兜底：新票在新标签里用掉
+        // 开不出来（弹窗被拦，或用户已把那个空白页关掉）⇒ 明说，别让人以为「点了没反应」
+        if (pre === null || pre.closed) {
+          messageApi.warning('浏览器拦下了新标签页，请允许本站弹窗后重试')
+          return
+        }
+        pre.location.replace(b.url)   // 兜底：新票在**已开好的**那个标签页里用掉
         return
       }
       setEditUrl({ title: r.title, url: b.url })
     } catch (e) {
+      pre?.close()          // 失败时别把空白标签留在用户眼前
       messageApi.error(messageOf(e))
     }
   }
@@ -231,7 +249,8 @@ export default function ReportsPage() {
           />
         </div>
       )}
-      {editUrl !== null && (
+      {/* 收窄 `editRow`（**不用 `editRow!`**，见下条订正记录）——面板与兜底按钮同属这个分支 */}
+      {editUrl !== null && editRow !== null && (
         <div>
           <Typography.Text type="secondary">
             {editUrl.title}——编辑页（专用入口；会话 8 小时有效，关闭后需从列表重新进入）
@@ -245,10 +264,12 @@ export default function ReportsPage() {
           {/* ⚠️ 订正记录（2026-09-29，Task 5 评审轮）：**兜底不能复用同一枚票据**——票据是
               一次性（nonce 在 `/handoff` 即被消费），iframe 一渲染它就用掉了；若兜底链接的 href 也指向
               它，点开必然 401，而「CSP 挡住 iframe」那种**最需要兜底**的场景下票据同样已被消费 ⇒
-              兜底路径整体失效。改为**重新领取**：再打一次 `edit-url` 换一枚新票，在新标签打开。
-              （`editRow!`：本按钮只在 `editUrl !== null` 的面板里渲染，而面板必由 `edit()` 打开
-                ⇒ `editRow` 已非 null；类型上仍需 `!` 收窄，见 brief 订正版。） */}
-          <Button size="small" onClick={() => void edit(editRow!, { newTab: true })}>在新标签打开</Button>
+              兜底路径整体失效。改为**重新领取**：再打一次 `edit-url` 换一枚新票，在新标签打开。 */}
+          {/* ⚠️ 订正记录（2026-09-29，Task 5 修复轮）：这个按钮必须在 `editRow !== null` 的分支里——
+              否则 `editRow: ReportRow | null` 传给 `edit(r: ReportRow, …)` 是 TS2345（实测复现）。
+              外层条件写成 `editUrl !== null && editRow !== null &&` 即**自然收窄**；
+              **不要**图省事写 `editRow!`（非空断言是类型逃逸，收窄才是正解）。 */}
+          <Button size="small" onClick={() => void edit(editRow, { newTab: true })}>在新标签打开</Button>
         </div>
       )}
     </Space>
