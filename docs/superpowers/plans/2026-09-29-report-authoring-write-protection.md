@@ -18,7 +18,7 @@
 ## Global Constraints
 
 1. **两条版本通路不许混名**（记忆里的教训：先确认术语指哪条通路）：内容侧一律叫 **`expectedFingerprint`（string）**，登记侧一律叫 **`expectedVersion`（integer）**。任何地方出现「version」都指登记侧、出现「fingerprint」都指内容侧。
-2. **迁移必须幂等**（既有纪律）：`alter table … add column if not exists …`；`006` 号段续在既有 004/005 之后（写前先 `ls modules/data/migrations/` 确认号段，别撞号）。
+2. **迁移必须幂等**（既有纪律）：`alter table … add column if not exists …`；`005` 号段**已核**（2026-09-29：仓内实际只有 001–004）——**原稿写的是 `006`，是错的**（没有 005 就跳号）；实施前仍照纪律 `ls modules/data/migrations/` 再确认一次。
 3. **跨 schema 纪律（架构 lint B1）**：只动 `modules/data/**`（schema = `data`）。**不碰** `apps/server/**`、`apps/mb-proxy/**`（编辑反代今天 deny `PUT /api/dashboard/{did}`，与写保护正交，见"不在范围"）。
 4. **不引依赖**（B2 与仓内惯例）：锁手搓、指纹复用既有 `createHash`，**不加** `async-mutex` / `p-limit` / `jose`。
 5. **`POST /reports` 的 body 是 `.strict()`**（`ReportBody`）——新增键必须同时进 schema，否则 400。
@@ -34,7 +34,7 @@
 ### Task 1: 登记表版本列 + 存储层带上版本
 
 **Files:**
-- Create: `modules/data/migrations/006_report_version.sql`
+- Create: `modules/data/migrations/005_report_version.sql`
 - Modify: `modules/data/domain/report-store.ts`
 - Test: `modules/data/domain/report-store.test.ts`（追加）
 
@@ -49,7 +49,7 @@
 - [ ] **Step 1: 写迁移**（幂等；先 `ls modules/data/migrations/` 确认号段没被占）
 
 ```sql
--- 006_report_version.sql — 登记侧版本号（spec §3③ 的「登记表上的单调计数」形态）。
+-- 005_report_version.sql — 登记侧版本号（spec §3③ 的「登记表上的单调计数」形态）。
 -- 幂等：重复执行不报错（部署脚本每次全量重跑全部迁移）。
 alter table data.reports add column if not exists version integer not null default 1;
 ```
@@ -148,7 +148,7 @@ Run: `DATABASE_URL='postgres://platform:platform@127.0.0.1:5432/platform' pnpm -
 - [ ] **Step 6: Commit**
 
 ```bash
-git add modules/data/migrations/006_report_version.sql modules/data/domain/report-store.ts modules/data/domain/report-store.test.ts
+git add modules/data/migrations/005_report_version.sql modules/data/domain/report-store.ts modules/data/domain/report-store.test.ts
 git commit -m "feat(data): 登记表加 version 列（写保护：登记侧单调计数 + 条件更新）"
 ```
 
