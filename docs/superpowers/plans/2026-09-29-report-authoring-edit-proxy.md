@@ -777,6 +777,13 @@ export async function proxy(cfg, req): Promise<Response>                        
 
 `index.ts` 挂中间件顺序：`/healthz` → `/handoff` → **鉴权**（解 `mb_edit` Cookie，失败 401）→ **规则**（`decide` 不过 403）→ 透传。
 
+- [ ] **Step 4b: 上游纪律的 HTTP 级测试**（新建 `apps/mb-proxy/src/app.test.ts`；用 `createApp(cfg)` + 桩掉 `globalThis.fetch`，照模块测试 `fakeMetabase` 的形态）
+
+至少要咬住三条**安全不变量**（写在测试名里，别让它们只活在注释里）：
+1. **浏览器 Cookie 绝不上行**：带合法 `mb_edit` Cookie 请求一条放行路径 ⇒ 断言桩收到的请求头里**没有** `cookie`，且**有** `x-api-key`（服务身份）。
+2. **头改写**：桩返回 `x-frame-options: DENY` + 正常 body ⇒ 断言响应**没有** `x-frame-options`，且有 `content-security-policy: frame-ancestors <cfg.consoleOrigin>`。
+3. **401/403 契约**：无 Cookie ⇒ 401；有 Cookie 但路径不在规则表 ⇒ 403（**这两条是 Task 2 欠下的契约**，本任务必须兑现；`/healthz` 除外，它免鉴权）。
+
 - [ ] **Step 5: 跑测试确认绿 + typecheck**
 
 Run: `pnpm --filter @platform/mb-proxy exec vitest run`（rules + session + handoff 三套）→ PASS；`pnpm typecheck` → OK。
