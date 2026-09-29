@@ -143,6 +143,21 @@ curl -s -X POST http://127.0.0.1:18080/api/catalog \
   只有 lint 与 owner 覆盖率看得见（#335 / Wave C §6 实测）。
 - 失败处置：命中第 3 条 ⇒ 按 §5 陷阱 3 查 sink 节点自身属性。
 
+#### ④-b **投递前基线**（2026-09-29 只读彩排实测，给投递当天做差用）
+
+投递**前**在 3120 console 卷内跑 ④ 那三条命令，读数如下（**投递后必须与它不同**，否则说明新管线没被吃进 catalog）：
+
+| 命令 | 投递前读数（2026-09-29） |
+|---|---|
+| `catalog build` | `5 pipelines, 8 assets, 162 links.`；stderr **无** `could not be named` |
+| `catalog lint` | exit **0**，`nothing to report.`；另报 `5 asset(s) have no owner (not a failure; use --strict)` |
+| `catalog owners` | 有 owner 的资产 **2 条**（`dim_branch` / `dim_item` 的湖对象锚）；retail 锚**不在列表**（尚未 seed） |
+
+**预期增量（按仓内文件数推算，投递前未实测）**：pipelines **5 → 10**（+`windows.l1` / `tick.l1` / `close.l1` / 两个子管线）、assets **8 → 10**（+两个子管线的 sink）、**retail 湖对象资产从「规则不存在」变为「出现且有 owner」**（与 dim 两条并列）。
+⇒ 判据写成 **「与基线相比有变化 + retail 规则出现」**，而不是写死某个数字——数字随仓内文件数变。
+
+> 彩排本身只跑了 ④ 的三条只读命令（`catalog build/lint/owners`），**未 seed、未重建、未重启**；本条的目的是让投递当天能用「与基线不同」当判据，而不是只看「命令没报错」。
+
 ### ⑤ 重启 console（卷内定义重新加载）
 
 - 经 openship MCP `post_projects_by_id_services_by_serviceId_restart`（服务级重启）。
