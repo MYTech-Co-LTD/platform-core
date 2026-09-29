@@ -1063,7 +1063,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     })
   })
 
-  it('★ I-2 / M-4 并发建同名（search 竞态）也会造孤儿 ⇒ 同样显式报出', async () => {
+  it('★ I-2 / M-4 并发建同名（search 竞态）：加锁后**不再造孤儿** ⇒ 恰 1 次 201 + 1 次 409 VERSION_REQUIRED', async () => {
     const { app } = manage()
     // 把「先 search 后写」的窗口**卡死**成确定性的竞态：两个请求都先做完 search（都看到空集），
     // 再各自 POST。sleep 做不到这件事——Node 会在两个 timer 之间排空微任务，先到的请求会一路跑完。
@@ -1075,31 +1075,99 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       if (new URL(url).pathname === '/api/search') {
         arrived += 1
         if (arrived >= 2) open()
-        // 兜底 500ms：万一只有一方到（不该发生）也只是断言失败，不是挂死
+        // 兜底 500ms：加锁后第二个 search 要等第一个请求**整段跑完**才会发出（下面 bothArrived
+        // 等不到第二名），于是这里必然走超时分支——不影响断言，只让本用例慢 500ms。
         await Promise.race([bothArrived, new Promise((r) => setTimeout(r, 500))])
       }
       return base(url, init)
     })
     // 两个请求在数组字面量里**同时发起**（不是先 await 一个再发下一个），再由 Promise.all 收齐
     const pending = [post(app, { title: '并发报表' }), post(app, { title: '并发报表' })]
-    const [x, y] = await Promise.all(pending.map(async (r) => (await r).json()))
-    expect(x.created).toBe(true)
-    expect(y.created).toBe(true)
-    // Metabase 侧两张 dashboard，登记行仍 1 行（unique (org, title) 挡着）⇒ 必有一张是孤儿
-    expect(mb.state.dashboards).toHaveLength(2)
+    const results = await Promise.all(pending)
+    const observed = await Promise.all(results.map(async (r) => ({ status: r.status, body: await r.json() })))
+
+    // ⚠️ 这条不变量由写保护改了，**不是回归**：加锁前两个请求都先 search 到空集 ⇒ 各建一张
+    //    dashboard（created:true ×2），登记行只有 1 行（unique (org, title)）⇒ 必有一张是孤儿。
+    //    加锁后第二个请求要等第一个**整段写序列**跑完，它的 `upsertDashboard` 于是命中同名 ⇒
+    //    `created === false` ⇒ Task 2 的内容守卫（不带 expectedFingerprint 一律拒）给出
+    //    409 VERSION_REQUIRED。孤儿从「事后由对账报出」变成「结构上不再产生」。
+    const accepted = observed.filter((r) => r.status === 201)
+    const rejected = observed.filter((r) => r.status === 409)
+    expect(accepted).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+    expect(accepted[0].body).toMatchObject({ created: true })
+    expect(rejected[0].body).toMatchObject({ error: 'VERSION_REQUIRED' })
+    // Metabase 侧**只有 1 张** dashboard（不再造孤儿）；登记行 1 行，且指向的就是那张
+    expect(mb.state.dashboards).toHaveLength(1)
     const reg = await pool.query(
       'select metabase_id from data.reports where org = $1 and title = $2', [ORG, '并发报表'],
     )
     expect(reg.rowCount).toBe(1)
-    const registeredId = reg.rows[0].metabase_id as number
-    const orphanId = [x.metabaseId as number, y.metabaseId as number].find((i) => i !== registeredId)
-
+    expect(reg.rows[0].metabase_id).toBe((accepted[0].body as { metabaseId: number }).metabaseId)
+    // 无孤儿 ⇒ 对账 ok（旧用例这里断言 ok:false + recoverable 一条孤儿；现在结构上不产生了）
     const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
-    expect(rec.ok).toBe(false)
-    expect(rec.unregistered).toEqual({
-      recoverable: [{ metabaseId: orphanId, name: `${ORG}/并发报表` }],
-      needsHuman: [],
+    expect(rec).toMatchObject({
+      ok: true, registered: 1, embeddable: 1,
+      unregistered: { recoverable: [], needsHuman: [] },
     })
+  })
+
+  it('★ 并发写：6 个同版本 PUT ⇒ 恰 1 成功 + 5 × 409（账实相符，spec §3③ 读数）', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '并发写保护' })).json()
+    const listed = await (await app.request('/reports/manage')).json() as { reports: { id: string; version: number }[] }
+    const v0 = listed.reports.find((r) => r.id === id)!.version
+
+    // 数组字面量里同时发起（真并发；本包 fileParallelism:false，串行描述块不会替我们制造并发）
+    const pending = Array.from({ length: 6 }, () => app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'sales:read', expectedVersion: v0 }),
+    }))
+    const results = await Promise.all((await Promise.all(pending)).map((r) => r.status))
+    expect(results.filter((s) => s === 200)).toHaveLength(1)
+    expect(results.filter((s) => s === 409)).toHaveLength(5)
+    const after = await (await app.request('/reports/manage')).json() as { reports: { id: string; version: number }[] }
+    expect(after.reports.find((r) => r.id === id)!.version).toBe(v0 + 1)   // 只落一次
+  })
+
+  it('★ 并发：DELETE 与同版本 PUT 交错 ⇒ 行锁串行化（无锁时 PUT 会写进一个随即被删掉的行 = 丢更新）', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '删改并发保护' })).json()
+    const dashId = mb.state.dashboards[0].id
+    const v0 = await versionOf(app, id)
+
+    // 把 DELETE 卡在「已读版本、已过比对、正归档」的那一刻——归档是本端点唯一的 await 窗口。
+    // 此刻让同版本的 PUT 冲进来：`updateRequiredScope` 是**条件 UPDATE**（DB 保证恰一胜者），
+    // 但它落在**还没被删**的行上 ⇒ 无锁时它能拿 200，而那一行**随即**被 DELETE 抹掉 ⇒ 丢更新。
+    // 有行锁 ⇒ PUT 排在 DELETE 之后，等它删完再跑 ⇒ 条件 UPDATE 命中 0 行 ⇒ 404。
+    // ⚠️ 这条是**行锁**（`${org}/row:${id}`）唯一的承重用例：去掉锁必红（6 PUT 那条不会——
+    //    条件 UPDATE 自己就保证了恰一胜者，见报告「变异确认①」）。
+    const base = mb.fetcher
+    let archiveStarted: () => void = () => {}
+    const started = new Promise<void>((r) => { archiveStarted = r })
+    let releaseArchive: () => void = () => {}
+    const hold = new Promise<void>((r) => { releaseArchive = r })
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const u = new URL(url)
+      if (u.pathname === `/api/dashboard/${dashId}` && init?.method === 'PUT'
+        && String(init.body).includes('"archived"')) {
+        archiveStarted()
+        await hold
+      }
+      return base(url, init)
+    })
+
+    const del = app.request(`/reports/${id}?expectedVersion=${v0}`, { method: 'DELETE' })
+    await started   // DELETE 已持锁并卡在归档；PUT 若来只能排队（无锁则会当场跑完 UPDATE）
+    const put = app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'sales:read', expectedVersion: v0 }),
+    })
+    releaseArchive()
+    const [delRes, putRes] = await Promise.all([del, put])
+    expect(delRes.status).toBe(204)
+    expect(putRes.status).toBe(404)   // 行已被删 ⇒ 与 PUT 的 404 同形（不给存在性探针）
+    expect((await pool.query('select 1 from data.reports where org = $1 and id = $2', [ORG, id])).rowCount).toBe(0)
   })
 
   it('★ M-1 删除顺序钉死：先归档、后删行（删行失败 ⇒ 归档**已经**发生，报 missingInMetabase 而非未登记噪声）', async () => {
