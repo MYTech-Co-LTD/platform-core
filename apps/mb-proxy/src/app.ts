@@ -18,7 +18,7 @@ import { fetchDashboardCards, proxy } from './upstream'
  * 中间件之间传的东西：鉴权解出来的身份 + **归一化后的路径**。
  * `proxyPath` 存在的唯一理由：让兜底**发出去的就是规则表判过的那一份路径**（见 rules.normalizePath 头注）。
  */
-type AppVars = { Variables: { did: number; proxyPath: string } }
+type AppVars = { Variables: { org: string; did: number; proxyPath: string } }
 
 export function createApp(cfg: ProxyConfig): Hono<AppVars> {
   const app = new Hono<AppVars>()
@@ -65,6 +65,12 @@ export function createApp(cfg: ProxyConfig): Hono<AppVars> {
       // no-store：401 也不许被缓存（否则一次失败能在共享缓存里被回放给别的请求）。
       return c.json({ error: 'UNAUTHORIZED' }, 401, { 'Cache-Control': 'no-store' })
     }
+    // ⚠️ `claims.org` 解出来但**有意不参与授权判定**（订正记录 2026-09-29，Task 4 评审轮 Minor ④）：
+    //    租户隔离在**签发侧**就定死了（Task 1 只给「本 org 已登记的那一张 dashboard」签票），
+    //    代理只认「票据里那一张 dashboard」，不自行按 org 放行任何东西——别把这里读成漏用。
+    //    它唯一的用途是给卡片缓存做命名空间（`${org}:${did}`，见 upstream.ts）。
+    //    若将来要按 org 判权，那是**新增授权语义**，必须回 spec，不是在中间件里顺手加。
+    c.set('org', claims.org)
     c.set('did', claims.did)
     await next()
   })
@@ -72,9 +78,10 @@ export function createApp(cfg: ProxyConfig): Hono<AppVars> {
   // ④ 授权规则表：`decide` 不过 ⇒ **403**。卡片集合现取（60s 缓存；取不到 ⇒ 空集 ⇒ fail-closed）。
   app.use('*', async (c, next) => {
     // 先归一化（判的路径 == 将要上行的路径；见 rules.normalizePath 头注）。归一不了 ⇒ 不信 ⇒ 403。
+    // **绝不**在归约失败时回落到原始 path 上行（那正是本层要堵的洞）。
     const path = normalizePath(c.req.path)
     if (path === null) return c.json({ error: 'NOT_ALLOWED' }, 403, { 'Cache-Control': 'no-store' })
-    const cards = await fetchDashboardCards(cfg, c.get('did'))
+    const cards = await fetchDashboardCards(cfg, c.get('org'), c.get('did'))
     if (decide(path, c.req.method, { did: c.get('did'), cards }) === 'deny') {
       return c.json({ error: 'NOT_ALLOWED' }, 403, { 'Cache-Control': 'no-store' })
     }

@@ -48,9 +48,14 @@ function consoleCsp(consoleOrigin: string): string {
   return `frame-ancestors ${consoleOrigin}`
 }
 
-/** dashboard 的卡片集合缓存：60s。⚠️ 进程内状态（多副本各持一份，本任务单进程形态）。 */
+/**
+ * dashboard 的卡片集合缓存：60s。
+ * ⚠️ 键是 `${org}:${did}`（订正记录 2026-09-29，Task 4 评审轮）：只拿 `did` 当键要靠「did 全局唯一
+ *    且单实例单 key」两个**未落码**的前提才不串味——把 org 写进键，串味的前提就不必成立。
+ *    进程内状态（多副本各持一份，本任务单进程形态）。
+ */
 const CARD_CACHE_TTL_MS = 60_000
-const cardCache = new Map<number, { cards: Set<number>; expires: number }>()
+const cardCache = new Map<string, { cards: Set<number>; expires: number }>()
 
 /**
  * 取 `<upstream>/api/dashboard/<did>` 的 dashcards，归成 `Set<cardId>`（`decide` 的输入口）。
@@ -60,10 +65,15 @@ const cardCache = new Map<number, { cards: Set<number>; expires: number }>()
  *
  * ⚠️ **失败不写缓存**：缓存一次瞬时故障的空集，等于把 60s 的锁死窗口送给一次抖动；不缓存则
  *    恢复即刻生效（代价是故障期间每个请求重试一次——但那期间透传本身就是不通的，无放大）。
+ *
+ * ⚠️ **已知窗口（记录，不修）**：某张卡被移出 dashboard 后，最多 60s 内仍可被 query
+ *    （缓存没失效）。方向是 fail-closed 侧无害（不是「多放行了别人的数据」，只是「本 dashboard
+ *    刚摘下的卡还能查一小会儿」），且该卡本就属本 dashboard，故接受。
  */
-export async function fetchDashboardCards(cfg: ProxyConfig, did: number): Promise<Set<number>> {
+export async function fetchDashboardCards(cfg: ProxyConfig, org: string, did: number): Promise<Set<number>> {
   const now = Date.now()
-  const hit = cardCache.get(did)
+  const key = `${org}:${did}`
+  const hit = cardCache.get(key)
   if (hit !== undefined && hit.expires > now) return hit.cards
   try {
     const res = await fetch(`${cfg.upstreamUrl}/api/dashboard/${did}`, {
@@ -79,7 +89,7 @@ export async function fetchDashboardCards(cfg: ProxyConfig, did: number): Promis
       // `card_id === null` = 文本/虚拟卡（真机实测，见 domain/metabase.ts），它没有可查询的卡 ⇒ 跳过
       if (typeof cid === 'number') cards.add(cid)
     }
-    cardCache.set(did, { cards, expires: now + CARD_CACHE_TTL_MS })
+    cardCache.set(key, { cards, expires: now + CARD_CACHE_TTL_MS })
     return cards
   } catch {
     return new Set()
@@ -127,6 +137,11 @@ export async function proxy(cfg: ProxyConfig, req: Request, path: string): Promi
     out.append(k, v)
   }
   out.set('content-security-policy', consoleCsp(cfg.consoleOrigin))
+  // 透传响应也 no-store（订正记录 2026-09-29，Task 4 评审轮 Minor ③）：与 401/403/handoff 同口径，
+  // 且这些响应是**带服务身份取的**（同一个上游对话里既有别的租户的 dashboard，也有本租户的卡片），
+  // 一律不许被中间缓存落盘复用。代价：编辑页的静态资源也不再被浏览器缓存（每刷一次多一趟上游）——
+  // 本代理单实例、console 内嵌使用，接受；若将来要放开，必须**按路径**区分（只对 `/app/**` 等静态面放开）。
+  out.set('cache-control', 'no-store')
 
   // 流式回传（不整体缓冲）：编辑页的静态资源与查询响应都可能是长流。
   // ⚠️ 透传 status：上游的 4xx/5xx 是**上游对已授权请求**的答复，不能吞成 200（那会把失败变假绿）。

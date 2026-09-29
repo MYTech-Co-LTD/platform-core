@@ -25,10 +25,19 @@ export function loadProxyConfig(env: Record<string, string | undefined> = proces
   if (secret.length < 32) throw new Error(`PLATFORM_SESSION_SECRET 至少 32 字符（当前 ${secret.length}）`)
   const port = Number(requireValue('PORT'))
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`PORT 必须是 1-65535 的整数`)
+  // ⚠️ `MB_PROXY_CONSOLE_ORIGIN` 的形状**必须校验**（订正记录 2026-09-29，Task 4 评审轮）：
+  //    它是 CSP `frame-ancestors` 的**唯一**来源，而本代理同时又**剥掉了上游的 X-Frame-Options**
+  //    ⇒ 这个值配错（空串/含路径/写成 `*`/忘了 scheme）的后果不是「启动报错」而是
+  //    **CSP 失效 + XFO 已剥 = 任意站点都能 iframe 编辑页**（fail-open，且线上静默）。
+  //    归一：去尾斜杠（`https://a.com/` 与 `https://a.com` 必须等价，否则 CSP 值带斜杠不匹配）。
+  const consoleOrigin = requireValue('MB_PROXY_CONSOLE_ORIGIN').replace(/\/+$/, '')
+  if (!consoleOrigin.startsWith('https://')) {
+    throw new Error(`MB_PROXY_CONSOLE_ORIGIN 必须是 https:// 起头的来源（当前 ${consoleOrigin}）`)
+  }
   return {
     port,
     sessionSecret: secret,
-    consoleOrigin: requireValue('MB_PROXY_CONSOLE_ORIGIN'),
+    consoleOrigin,
     upstreamUrl: requireValue('DATA_METABASE_URL').replace(/\/+$/, ''),
     upstreamApiKey: requireValue('DATA_METABASE_API_KEY'),
   }

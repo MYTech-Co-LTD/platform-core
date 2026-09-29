@@ -218,12 +218,21 @@ describe('★ 401/403 契约（Task 2 欠下的）', () => {
     expect(await res.json()).toEqual({ ok: true })
   })
 
-  it('★ 编码分隔符绕过（`/app/..%2f..%2fapi/search`）⇒ 403，且那次枚举请求**没到上游**', async () => {
-    // did=107。不做归一化的话这条会 200 且上游收到 `/api/search`（放行表被前缀骗过）——
+  it('★ 归一化收口：`/app/` 前缀骗术全族 ⇒ 403，且那次枚举请求**没到上游**', async () => {
+    // did=107。这一族每一条的**原始串都满足 `/app/` 前缀**（实测，见 rules.test.ts 的表），
+    // 不做归一化收口的话会 200 且上游收到 `/api/search`（上游再 canonicalize 一次）——
     // 这正是「判的是 A、发的 B」的开洞方式，见 rules.normalizePath 头注。
     const { calls } = installFetch()
     const app = createApp(cfg)
-    for (const p of ['/app/..%2f..%2fapi/search', '/app/..%252f..%252fapi/search', '/app/..%5c..%5capi/search']) {
+    for (const p of [
+      '/app/..%2f..%2fapi/search',        // 编码分隔符（实施轮修）
+      '/app/..;/api/search',              // `;`（Jetty 的 path-param 语义不可控）
+      '/app/..%3b..%3bapi/search',        // `%3b`（decodeURI 不解保留字 ⇒ 原样到达）
+      '/app/..%20/api/search',            // 空白
+      '/app/..%00/api/search',            // NUL
+      '/app/..%252f..%252fapi/search',    // 嵌套编码
+      '/app/..%5c..%5capi/search',        // 反斜杠
+    ]) {
       const res = await app.request(p, { headers: { cookie: cookieFor(107) } })
       expect(res.status, p).toBe(403)
       expect(await res.json(), p).toEqual({ error: 'NOT_ALLOWED' })
@@ -233,16 +242,25 @@ describe('★ 401/403 契约（Task 2 欠下的）', () => {
   })
 
   it('★ 上行的路径就是判过的那一份（归一化结果，不是原串）', async () => {
-    // did=108：`/app/dist%2fmain.js` 的 `%2f` 原样留在 Hono 的 c.req.path 里（decodeURI 不解保留字），
-    // 归一化后才是 `/app/dist/main.js`。上行必须是**归一后**那份（若各自现取，两条就分叉了）。
+    // did=108：`/app/dist//x.js` 的**空段**会原样留在 Hono 的 c.req.path 里（URL 解析器不折空段），
+    // 归一化后才是 `/app/dist/x.js`。上行必须是**归一后**那份（若各自现取，两条就分叉了）。
     const { calls } = installFetch()
     const app = createApp(cfg)
-    const res = await app.request('/app/dist%2fmain.js', { headers: { cookie: cookieFor(108) } })
+    const res = await app.request('/app/dist//x.js', { headers: { cookie: cookieFor(108) } })
     expect(res.status).toBe(200)
     const proxied = calls.filter((c) => c.pathname !== '/api/dashboard/108')
     expect(proxied).toHaveLength(1)
-    expect(proxied[0].pathname).toBe('/app/dist/main.js')
-    expect(proxied[0].url).toBe(`${UPSTREAM}/app/dist/main.js`)
+    expect(proxied[0].pathname).toBe('/app/dist/x.js')
+    expect(proxied[0].url).toBe(`${UPSTREAM}/app/dist/x.js`)
+  })
+
+  it('★ 归约失败 ⇒ 403 且**绝不**回落成原始 path 上行', async () => {
+    // did=110
+    const { calls } = installFetch()
+    const app = createApp(cfg)
+    const res = await app.request('/app/..%00/api/search', { headers: { cookie: cookieFor(110) } })
+    expect(res.status).toBe(403)
+    expect(calls.filter((c) => c.pathname.includes('search'))).toHaveLength(0)
   })
 
   it('★ 上游的 Set-Cookie 不许落到反代自己的域上（纪律 ② 的镜像面）', async () => {
@@ -296,6 +314,65 @@ describe('★ 卡片集合：fail-closed（取不到 ⇒ 空集 ⇒ 卡片面不
     expect(other.status).toBe(403)
     // 卡片**内容**面（GET /api/card/70）仍拒
     expect((await app.request('/api/card/70', { headers: { cookie: cookieFor(106) } })).status).toBe(403)
+  })
+
+  it('★ dashcard 路径要**同时**校验 did 与 cid（只判 did ⇒ 任何 cid 都能借壳）', async () => {
+    // did=111，本 dashboard 只有卡 70
+    const { calls } = installFetch((p) => /^\/api\/dashboard\/111$/.test(p)
+      ? new Response(JSON.stringify({ dashcards: [{ id: 1, card_id: 70 }] }), { headers: { 'content-type': 'application/json' } })
+      : new Response('{"data":{}}', { headers: { 'content-type': 'application/json' } }))
+    const app = createApp(cfg)
+    // did 对 + cid 属于本 dashboard ⇒ 放行
+    const ok = await app.request('/api/dashboard/111/dashcard/3/card/70/query', { headers: { cookie: cookieFor(111) } })
+    expect(ok.status).toBe(200)
+    // did 对但 cid 不在集合里（借本 dashboard 的壳查别张卡）⇒ 403，且不得到上游
+    const alien = await app.request('/api/dashboard/111/dashcard/3/card/999/query', { headers: { cookie: cookieFor(111) } })
+    expect(alien.status).toBe(403)
+    expect(await alien.json()).toEqual({ error: 'NOT_ALLOWED' })
+    expect(calls.filter((c) => c.pathname.includes('999'))).toHaveLength(0)
+  })
+})
+
+describe('★ 评审轮 Minor：壳只读 / 透传 no-store / 缓存键带 org', () => {
+  const dashWith = (did: number, cardIds: number[]) => (p: string) =>
+    /^\/api\/dashboard\/\d+$/.test(p)
+      ? new Response(JSON.stringify({ dashcards: cardIds.map((cid, i) => ({ id: i + 1, card_id: cid })) }),
+        { headers: { 'content-type': 'application/json' } })
+      : new Response('{}', { headers: { 'content-type': 'application/json' } })
+
+  it('壳/静态只放行读方法：PUT/DELETE /app/** 与 /api/session/properties 一律 403', async () => {
+    // did=112
+    const { calls } = installFetch(dashWith(112, [70]))
+    const app = createApp(cfg)
+    for (const [m, p] of [['PUT', '/app/dist/main.js'], ['DELETE', '/static/app-main.js'],
+      ['POST', '/api/session/properties'], ['PUT', '/']] as const) {
+      const res = await app.request(p, { method: m, headers: { cookie: cookieFor(112) } })
+      expect(res.status, `${m} ${p}`).toBe(403)
+    }
+    // 写方法一次都没上行（GET 那条腿=卡片集合）
+    expect(calls.filter((c) => c.method !== 'GET')).toHaveLength(0)
+  })
+
+  it('透传响应带 Cache-Control: no-store（与 401/403/handoff 同口径，覆盖上游自带的缓存头）', async () => {
+    // did=113
+    installFetch((p) => /^\/api\/dashboard\/113$/.test(p)
+      ? new Response(JSON.stringify({ dashcards: [] }), { headers: { 'content-type': 'application/json' } })
+      : new Response('{}', { headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=3600' } }))
+    const app = createApp(cfg)
+    const res = await app.request('/api/session/properties', { headers: { cookie: cookieFor(113) } })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+  })
+
+  it('卡片缓存键带 org：同 did、不同 org ⇒ 不互相串味（上游被问两次）', async () => {
+    // did=114
+    const { calls } = installFetch(dashWith(114, [70]))
+    const app = createApp(cfg)
+    const cookieOf = (org: string): string => `mb_edit=${signProxySession({ org, did: 114 }, SECRET)}`
+    await app.request('/api/session/properties', { headers: { cookie: cookieOf('acme') } })
+    await app.request('/api/session/properties', { headers: { cookie: cookieOf('other') } })
+    // 键不同 ⇒ 上游被问**两次**；键若只有 did，第二次会命中缓存（本断言即变 1）
+    expect(calls.filter((c) => c.pathname === '/api/dashboard/114')).toHaveLength(2)
   })
 })
 

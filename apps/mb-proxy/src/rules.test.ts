@@ -12,6 +12,10 @@ const allowed = [
   ['GET', `/api/dashboard/${ctx.did}/dashcard/3/card/70/query`],
   ['POST', `/api/card/70/query`],
   ['GET', '/api/session/properties'],
+  // 壳/静态是**读**面：HEAD 按读算（Hono 把 HEAD 派发给 GET，本项目 AGENTS.md 硬约束 4）
+  ['HEAD', '/'],
+  ['HEAD', '/app/dist/main.js'],
+  ['HEAD', '/api/session/properties'],
 ] as const
 const denied = [
   // ① 枚举面（spec §3⑦ ③：封掉「列出全站」的口子）
@@ -35,51 +39,85 @@ const denied = [
   // ④ 页面壳也要判（非白名单路径一律拒）
   ['GET', '/collection/1'],
   ['GET', '/admin/settings'],
+  // ⑤ **归一化收口**（订正记录 2026-09-29，评审实测）：这些路径的**原始串都满足 `/app/` 前缀**，
+  //    只折精确 `..` 段是拦不住的 —— 拦截发生在**归一化那一层**（`normalizePath` ⇒ null）。
+  //    ⚠️ 故本列断言走 `gate()`（归一化 → decide，与中间件同构）；直接喂 `decide` 的话这几条会
+  //    变绿（`decide` 是「路径已归一」这条前提下的纯函数），变异也就咬不住。
+  ['GET', '/app/..%2f..%2fapi/search'],      // 编码分隔符（实施轮已修）
+  ['GET', '/app/..;/api/search'],            // `;`（Jetty 的 path-param canonicalization 不可控）
+  ['GET', '/app/..%3b..%3bapi/search'],      // `%3b` = `;`（decodeURI 不解保留字 ⇒ 原样到达）
+  ['GET', '/app/..%20/api/search'],          // 空白
+  ['GET', '/app/..%00/api/search'],          // NUL
+  // ⑥ dashcard 路径的**卡片归属**（订正记录 ②）：did 对但 cid 不在本 dashboard 的卡片集合里
+  ['GET', `/api/dashboard/${ctx.did}/dashcard/3/card/999/query`],
+  // ⑦ 壳/静态**只读**（订正记录 2026-09-29 评审轮 Minor ①）：写方法一律不放行
+  ['PUT', '/app/dist/main.js'],
+  ['DELETE', '/static/app-main.js'],
+  ['PUT', '/api/session/properties'],
+  ['POST', '/api/session/properties'],
+  ['DELETE', `/dashboard/${ctx.did}`],
+  ['PUT', `/api/dashboard/${ctx.did}`],
+  // ⑧ 取舍：**含白名单外字符的路径一律拒**（含 `%`）——合法路径里几乎不出现，
+  //    换来的是「上游 canonicalization 不再是我方安全的依赖」
+  ['GET', '/app/dist/main%20.js'],
 ] as const
 
+/** 与 `app.ts` 的中间件链**同构**：先归一化（归不了 ⇒ 直接 deny），再进规则表。 */
+const gate = (p: string, m: string): 'allow' | 'deny' => {
+  const n = normalizePath(p)
+  return n === null ? 'deny' : decide(n, m, ctx)
+}
+
 describe('deny-by-default 规则表', () => {
-  it.each(allowed)('放行 %s %s', (m, p) => expect(decide(p, m, ctx)).toBe('allow'))
-  it.each(denied)('拒绝 %s %s', (m, p) => expect(decide(p, m, ctx)).toBe('deny'))
+  it.each(allowed)('放行 %s %s', (m, p) => expect(gate(p, m)).toBe('allow'))
+  it.each(denied)('拒绝 %s %s', (m, p) => expect(gate(p, m)).toBe('deny'))
   it('未知路径一律 deny（兜底）', () => {
-    expect(decide('/whatever/unknown', 'GET', ctx)).toBe('deny')
+    expect(gate('/whatever/unknown', 'GET')).toBe('deny')
   })
 })
 
-// —— 归一化层（brief 未列；**加它的理由**见 rules.ts `normalizePath` 头注：不加这条，
-//    `/app/..%2f..%2fapi/search` 会命中 `/app/` 前缀被**放行**，上游再解一层 `%2f` 就成枚举面。
-//    即上面那张放行表要真的成立，必须先归一化。）——
+// —— 归一化层（brief 未列；**加它的理由**见 rules.ts 头注：不加这条，`/app/..%2f..%2fapi/search`
+//    一类路径会命中 `/app/` 前缀被**放行**，上游再 canonicalize 一次就成枚举面。
+//    即上面那张放行表要真的成立，必须先归一化收口。）——
 describe('★ 路径归一化（判的路径必须与上行的路径同源）', () => {
   it('放行面里的正常路径：归一化是恒等（不误伤）', () => {
     for (const p of ['/', '/index.html', '/favicon.ico', '/api/session/properties',
       '/app/dist/main.js', '/static/app-main.js', '/assets/x.css',
-      '/dashboard/7', '/api/dashboard/7', '/api/dashboard/7/dashcard/3/card/70/query']) {
+      '/dashboard/7', '/api/dashboard/7', '/api/dashboard/7/dashcard/3/card/70/query',
+      '/api/card/70/query']) {
       expect(normalizePath(p), p).toBe(p)
     }
   })
 
-  it('★ 封掉编码分隔符绕过：`%2f` 解出来再判定 ⇒ 落回枚举面', () => {
-    // 这是空转测试会漏掉的那条：Hono 的 c.req.path 不解 `%2f`（decodeURI），原样带 `/app/` 前缀
-    expect(normalizePath('/app/..%2f..%2fapi/search')).toBe('/api/search')
-    expect(decide(normalizePath('/app/..%2f..%2fapi/search') ?? '/', 'GET', ctx)).toBe('deny')
-    // 嵌套一层编码（`%252f`）同样要解开
-    expect(normalizePath('/app/..%252f..%252fapi/search')).toBe('/api/search')
-    // 反斜杠也是分隔符（WHATWG 特殊 scheme）
-    expect(normalizePath('/app/..%5c..%5capi/search')).toBe('/api/search')
-    // 大小写不同的转义一视同仁
-    expect(normalizePath('/app/..%2F..%2Fapi/search')).toBe('/api/search')
+  it('段白名单是唯一判据：`;` / 编码 `%` / 空白 / NUL / 非 ASCII 任一出现 ⇒ 整条 null', () => {
+    // ⚠️ 这几条**不是**「折掉 `..` 就好了」的那类：它们的 `..` 后面挂着别的字符，
+    //    只折精确 `..` 段时它们会**原样通过**（实测原串都满足 `/app/` 前缀）。
+    for (const p of [
+      '/app/..;/api/search', '/app/..%3b..%3bapi/search', '/app/..%20/api/search',
+      '/app/..%00/api/search', '/app/..%2f..%2fapi/search', '/app/..%5c..%5capi/search',
+      '/app/dist%2fmain.js', '/app/dist/main%20.js', '/app/x%00.js', '/app/中文.js', '/a%zz',
+    ]) {
+      expect(normalizePath(p), p).toBeNull()
+    }
   })
 
-  it('字面量 `..` 段也折掉（不能靠上游替我们折）', () => {
+  it('精确的 `.` / `..` 段照常归约（栈式）', () => {
     expect(normalizePath('/app/../api/search')).toBe('/api/search')
     expect(normalizePath('/dashboard/7/../../api/search')).toBe('/api/search')
+    expect(normalizePath('/app/./dist/./x.js')).toBe('/app/dist/x.js')
+    expect(normalizePath('/app/dist//x.js')).toBe('/app/dist/x.js')   // 空段跳过
+    expect(normalizePath('/')).toBe('/')
   })
 
-  it('不可信 ⇒ null（调用方 deny）：畸形转义 / 解不干净 / 相对路径', () => {
-    expect(normalizePath('/a%zz')).toBeNull()
-    expect(normalizePath('/a%')).toBeNull()
-    // 4 轮解不完的深层嵌套
-    expect(normalizePath('/app/..%252525252f..%252525252fapi/search')).toBeNull()
-    expect(normalizePath('dashboard/7')).toBeNull()
-    expect(normalizePath('')).toBeNull()
+  it('栈空还弹 ⇒ null（`/..` 不许逃到根以外）', () => {
+    expect(normalizePath('/..')).toBeNull()
+    expect(normalizePath('/../x')).toBeNull()
+    expect(normalizePath('/app/../../x')).toBeNull()
+  })
+
+  it('`...` / `..x` 是**普通段**、不是上跳（不误判）', () => {
+    // `.`/`..` 之外的点开头段按字面量走白名单（点本身在白名单里）——避免「见了点就紧张」的假拒
+    expect(normalizePath('/app/.../x')).toBe('/app/.../x')
+    expect(normalizePath('/app/..x/y')).toBe('/app/..x/y')
   })
 })
