@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.52.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.51.0...v0.52.0) - 2026-09-29
+- 【新增】duckle: #332 Wave C——retail tick/close 以 L1 tick 形首建（含 tick misfire:skip 论证） ([#333](https://github.com/MYTech-Co-LTD/platform-core/pull/333), [95468cb](https://github.com/MYTech-Co-LTD/platform-core/commit/95468cbf50c060453baf907d0ee9045a90ad00b7))
+
+
 ## [0.51.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.50.0...v0.51.0) - 2026-09-29
 - 【新增】data: 报表制作域写路径底座——迁移/登记/读全量合并写/内容指纹/发布三件套/对账 ([#329](https://github.com/MYTech-Co-LTD/platform-core/pull/329), [2c4c439](https://github.com/MYTech-Co-LTD/platform-core/commit/2c4c43978f3055ffc72a9e464b8edc6d7045410c))
 
