@@ -918,22 +918,32 @@ git commit -m "feat(mb-proxy): 授权规则表（deny-by-default，封枚举面�
   // `editRow` 记住当前要编辑的那一行：兜底按钮要用它**重新领票**（票据一次性，见 JSX 注）。
   const [editRow, setEditRow] = useState<ReportRow | null>(null)
   const edit = async (r: ReportRow, opts?: { newTab?: boolean }) => {
+    // 兜底路径要**同步**预开一个空白标签页（见下行注：await 之后再 window.open 会被弹窗拦截）
+    const pre = opts?.newTab === true ? window.open('about:blank', '_blank', 'noopener,noreferrer') : null
     try {
       const b = await apiGet(`/reports/${r.id}/edit-url`) as { url: string }
       setEditRow(r)
       if (opts?.newTab === true) {
-        window.open(b.url, '_blank', 'noopener,noreferrer')   // 兜底：新票在新标签里用掉
+        // ⚠️ 订正记录（2026-09-29，Task 5 重审轮）：**弹窗必须在 await 之前就打开**——浏览器只认
+        //    同步点击上下文里的 window.open，`await fetch` 之后再开会被判成弹窗、直接拦掉，
+        //    用户看到的是「点了没反应」。故先开空白窗（上面 `pre`），拿到新票后再导航；开不出就明说。
+        if (pre === null || pre.closed) {
+          messageApi.warning('浏览器拦下了新标签页，请允许本站弹窗后重试')
+          return
+        }
+        pre.location.replace(b.url)
         return
       }
       setEditUrl({ title: r.title, url: b.url })
     } catch (e) {
+      pre?.close()          // 失败时别把空白标签留在用户眼前
       messageApi.error(messageOf(e))
     }
   }
 ```
 
 ```tsx
-      {editUrl !== null && (
+      {editUrl !== null && editRow !== null && (   // 收窄 editRow（**别用 `editRow!`**，见下行注）
         <div>
           <Typography.Text type="secondary">
             {editUrl.title}——编辑页（专用入口；会话 8 小时有效，关闭后需从列表重新进入）
@@ -949,6 +959,10 @@ git commit -m "feat(mb-proxy): 授权规则表（deny-by-default，封枚举面�
               它，点开必然 401，而「CSP 挡住 iframe」那种**最需要兜底**的场景下票据同样已被消费 ⇒
               兜底路径整体失效。改为**重新领取**：再打一次 `edit-url` 换一枚新票，在新标签打开。 */}
           <Button size="small" onClick={() => void edit(editRow, { newTab: true })}>在新标签打开</Button>
+          {/* ⚠️ 订正记录（2026-09-29，Task 5 修复轮）：**上面这个按钮要在 `editRow !== null` 的分支里**，
+              否则 `editRow: ReportRow | null` 传给 `edit(r: ReportRow, …)` 是 TS2345（实测复现）。
+              把外层条件写成 `{editUrl !== null && editRow !== null && (` 即可自然收窄，
+              **不要**图省事用 `editRow!`（非空断言是类型逃逸，收窄才是正解）。 */}
         </div>
       )}
 ```
@@ -1021,11 +1035,13 @@ git commit -m "docs(deploy): 编辑页反代的每客户接线 SOP（专用 host
   2. **canonicalization 绕过探针**：逐条打 `/app/..;/api/search`、`/app/..%3b..%3bapi/search`、`/app/..%20/api/search`、`/app/..%00/api/search`，**全部必须 403**（本地只证到「归一化收口后拒」，上游 Jetty 如何解释由真机定论）。
   3. 记下**服务 API key 在 Metabase 的权限档位**（若为 admin 档，代理的放行表就是唯一边界——这决定 Important 项的严重度）。
 
-- [ ] **Step 5: 记档**：把命令、响应码、关键响应体片段写进 SOP 的「实测记录」小节（**含日期与镜像 ID**），并更新 spec 若实测与 §3⑦ 有出入（有出入就订正 spec 并说明）。
+- [ ] **Step 5: 记档**：把命令、响应码、关键响应体片段写进 **`deploy/mb-edit-proxy-runbook.md` 的 §F 实测记录**小节
+  （⚠️ 订正记录 2026-09-29：Task 6 选了新文件而非 `data-plane-deploy-sop.md`，回填落点随之改；含**日期与镜像 ID**），
+  并更新 spec 若实测与 §3⑦ 有出入（有出入就订正 spec 并说明）。
 - [ ] **Step 6: Commit**（文档与实测记录）
 
 ```bash
-git add deploy/data-plane-deploy-sop.md docs/superpowers/specs/2026-09-28-report-authoring-design.md
+git add deploy/mb-edit-proxy-runbook.md docs/superpowers/specs/2026-09-28-report-authoring-design.md
 git commit -m "docs(deploy): 编辑页反代真机验收记录（本租户 200/别租户 403/无凭证 401/搜索面 403/样例 403）"
 ```
 
