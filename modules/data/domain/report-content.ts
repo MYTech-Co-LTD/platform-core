@@ -110,8 +110,14 @@ export async function publishWithTenantBinding(
         : {}),
     }
   })
+  // ⚠️ 参数是**合并保留**不是整表替换（人裁 2026-09-29）：putDashboardMerged 对 parameters 是
+  // `patch.parameters ?? cur.parameters` 整表替换——单元素列表会把人在 Metabase 手动声明的其它
+  // 参数静默抹掉（与 Task 3「裸 PUT 清卡」同构，作用在参数维度）。先剔旧 tenant 项再追加。
+  const tenantParam = { id: TENANT_PARAM_ID, name: TENANT_SLUG, slug: TENANT_SLUG, type: 'category', sectionId: 'string' }
+  const otherParams = cur.parameters.filter(
+    (p) => p['id'] !== TENANT_PARAM_ID && p['slug'] !== TENANT_SLUG)
   await putDashboardMerged(deps, dashboardId, {
-    parameters: [{ id: TENANT_PARAM_ID, name: TENANT_SLUG, slug: TENANT_SLUG, type: 'category', sectionId: 'string' }],
+    parameters: [...otherParams, tenantParam],
     dashcards,
     enable_embedding: true, embedding_type: 'signed',
     embedding_params: { [TENANT_SLUG]: 'locked' },

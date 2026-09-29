@@ -303,6 +303,21 @@ describe('publishWithTenantBinding', () => {
     expect(state.dashboards[0].dashcards[1].parameter_mappings ?? []).toEqual([])
   })
 
+  it('重发布保留人声明的其它参数（合并不替换，人裁 2026-09-29）', async () => {
+    // fixture 需支持预置 parameters（fakeMetabaseWithContent 不支持就扩它）
+    const { state, fetcher } = fakeMetabaseWithContent({
+      id: 21, name: 'o/r2',
+      parameters: [{ id: 'human-1', slug: 'region', name: 'region', type: 'category' }],
+      dashcards: [], cardTags: {}, cardSql: {},
+    })
+    const deps = { fetcher, baseUrl: 'http://mb', apiKey: 'k' }
+    await publishWithTenantBinding(deps, 21)
+
+    const slugs = state.dashboards[0].parameters.map((p: { slug?: unknown }) => p.slug)
+    expect(slugs).toContain('tenant')
+    expect(slugs).toContain('region')   // ← 人的参数没被抹
+  })
+
   it('★ 不带 tenant 标签的卡：既有映射原样保留；带的卡：重绑到 tenant（重跑发布收口）', async () => {
     const { state, fetcher } = fakeMetabaseWithContent({
       id: 21, name: 'o/r2', dashcards: [
