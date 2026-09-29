@@ -537,6 +537,21 @@ describe('fingerprintOf', () => {
     expect(fingerprintOf(edited)).not.toBe(fingerprintOf(base))
   })
 
+  it('文本卡内容变 ⇒ 指纹变（内容在 visualization_settings，cardId=null）', () => {
+    const textCard = { id: 2, cardId: null, row: 6, col: 0, sizeX: 12, sizeY: 4,
+                       visualizationSettings: { text: '说明' } }
+    const withText = { ...base, dashcards: [...base.dashcards, textCard] }
+    const textEdited = { ...withText, dashcards: [
+      ...base.dashcards, { ...textCard, visualizationSettings: { text: '改了' } }] }
+    expect(fingerprintOf(withText)).not.toBe(fingerprintOf(textEdited))
+  })
+
+  it('参数映射变 ⇒ 指纹变（映射是 Task 5 要写的东西）', () => {
+    const mapped = { ...base, dashcards: [
+      { ...base.dashcards[0], parameterMappings: [{ parameter_id: 'p1' }] }] }
+    expect(fingerprintOf(mapped)).not.toBe(fingerprintOf(base))
+  })
+
   it('锁参状态变 ⇒ 指纹变', () => {
     const unlocked = { ...base, embeddingParams: {} as Record<string, string> }
     expect(fingerprintOf(unlocked)).not.toBe(fingerprintOf(base))
@@ -593,7 +608,11 @@ export function fingerprintOf(input: {
   const canonical = {
     dashcards: [...input.dashcards]
       .sort((a, b) => a.id - b.id)
-      .map((d) => [d.id, d.cardId, d.row, d.col, d.sizeX, d.sizeY]),
+      // ⚠️ 投影带 `visualizationSettings` + `parameterMappings`（人裁 2026-09-29）：前者是文本卡
+      // （cardId=null）内容的唯一居所——丢了它，"人改文本卡文字"指纹不动；后者是 Task 5 要写的
+      // 东西——丢了它，人手动改映射指纹也不动。两类都是写保护该看见的改动。
+      .map((d) => [d.id, d.cardId, d.row, d.col, d.sizeX, d.sizeY,
+                   d.visualizationSettings, d.parameterMappings]),
     parameters: [...input.parameters].map((p) => String(p['slug'] ?? '')).sort(),
     embeddingParams: Object.entries(input.embeddingParams).sort(([a], [b]) => (a < b ? -1 : 1)),
     cardSqlDigests: Object.entries(input.cardSqlDigests).sort(([a], [b]) => Number(a) - Number(b)),
@@ -899,9 +918,9 @@ Expected: FAIL —— `tenantUnbound` 是 `undefined`
 别在本文件再写一份字面量（否则两处会漂）。
 ⚠️ 「映射到 tenant」是**在这里判**的（比 `parameter_id`），**不是**在 `metabase.ts` 里判——
 后者是纯 HTTP 客户端，不该知道平台的参数命名约定（它只如实报 `hasParameterMappings`）。
-⚠️ 指纹的输入要不要带映射状态：**要**（映射变了指纹就该变）。`fingerprintOf` 的入参目前是
-`dashcards/parameters/embeddingParams/cardSqlDigests`——把 dashcard 侧的 `parameterMappings`
-一并纳入 `dashcards` 的规范化里（Task 4 的 `fingerprintOf` 已把 dashcard 摊成数组，加一列即可）。
+⚠️ 指纹的输入要不要带映射状态：**要**（映射变了指纹就该变）——**Task 4 已落实**（人裁
+2026-09-29：投影元组含 `parameterMappings` 与 `visualizationSettings`，后者让文本卡改字也被
+指纹看见）。Task 5 无需再加列，直接依赖 `fingerprintOf` 的现行为。
 
 `ok` 的判据加上 `&& tenantUnbound.length === 0`，响应体带上 `tenantUnbound`。
 
