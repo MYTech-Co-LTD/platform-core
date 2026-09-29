@@ -1,6 +1,6 @@
 // console/reports/index.tsx — 「报表」页签：观看面（清单 + 嵌入预览）+ 管理面（data:manage）。
 //
-// 三条纪律落在这个文件里：
+// 四条纪律落在这个文件里：
 //  ① **不发 Metabase 凭据、不自己拼嵌入 URL**：iframe 的 src 只能来自平台的
 //     `GET /reports/:id/embed-url`（服务端签的短期 JWT，locked.tenant = 调用者 org）。
 //     前端拿不到 secret，也就没有「自己换租户」的面。
@@ -14,6 +14,8 @@
 //     URL**（专用入口 origin，票据兑换与自有 Cookie 都在代理侧完成）——前端照旧**不碰 Metabase
 //     凭据**。iframe 能直接打开是因为专用入口与 console **同父域**（反代的 SameSite=Lax Cookie
 //     照发）。逐行按 renderer 给按钮（platform 行没有可编辑的 dashboard），同 ③ 一样只是视图选择。
+//     ⚠️ 正因为票据**一次性**，「在新标签打开」兜底不能复用 iframe 那枚票，必须**重新领票**
+//     （见 `edit` 的 opts.newTab）——否则兜底在最需要它的场景下必然 401。
 import { useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { Button, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
@@ -38,6 +40,8 @@ export default function ReportsPage() {
   const [rows, setRows] = useState<ReportRow[]>([])
   const [embed, setEmbed] = useState<{ title: string; url: string } | null>(null)
   const [editUrl, setEditUrl] = useState<{ title: string; url: string } | null>(null)
+  // `editRow` 记住当前要编辑的那一行：兜底按钮要用它**重新领票**（票据一次性，见 JSX 注）。
+  const [editRow, setEditRow] = useState<ReportRow | null>(null)
   const [gateEdit, setGateEdit] = useState<ReportRow | null>(null)
   const [gateDraft, setGateDraft] = useState('')
   const [messageApi, ctx] = message.useMessage()
@@ -68,10 +72,18 @@ export default function ReportsPage() {
    * handoff URL 一次性 + 短时票据，代理侧兑换成自有 host-only Cookie；面板用 iframe 打开
    * 是因为专用入口与 console **同父域**（反代的 SameSite=Lax Cookie 照发）。失败只提示，
    * 不留半开的面板（与 open 同款）。
+   *
+   * `opts.newTab` = 兜底通路：**重新领一张票**（票据一次性，理由见面板按钮上的订正记录），
+   * 在新标签里用掉；此时不设 `editUrl`，因为 iframe 里那枚票已被消费、不该被覆盖。
    */
-  const edit = async (r: ReportRow) => {
+  const edit = async (r: ReportRow, opts?: { newTab?: boolean }) => {
     try {
       const b = await apiGet(`/reports/${r.id}/edit-url`) as { url: string }
+      setEditRow(r)
+      if (opts?.newTab === true) {
+        window.open(b.url, '_blank', 'noopener,noreferrer')   // 兜底：新票在新标签里用掉
+        return
+      }
       setEditUrl({ title: r.title, url: b.url })
     } catch (e) {
       messageApi.error(messageOf(e))
@@ -230,7 +242,13 @@ export default function ReportsPage() {
             src={editUrl.url}
             style={{ width: '100%', height: 720, border: '1px solid #f0f0f0', marginTop: 8 }}
           />
-          <Button size="small" href={editUrl.url} target="_blank" rel="noreferrer">在新标签打开</Button>
+          {/* ⚠️ 订正记录（2026-09-29，Task 5 评审轮）：**兜底不能复用同一枚票据**——票据是
+              一次性（nonce 在 `/handoff` 即被消费），iframe 一渲染它就用掉了；若兜底链接的 href 也指向
+              它，点开必然 401，而「CSP 挡住 iframe」那种**最需要兜底**的场景下票据同样已被消费 ⇒
+              兜底路径整体失效。改为**重新领取**：再打一次 `edit-url` 换一枚新票，在新标签打开。
+              （`editRow!`：本按钮只在 `editUrl !== null` 的面板里渲染，而面板必由 `edit()` 打开
+                ⇒ `editRow` 已非 null；类型上仍需 `!` 收窄，见 brief 订正版。） */}
+          <Button size="small" onClick={() => void edit(editRow!, { newTab: true })}>在新标签打开</Button>
         </div>
       )}
     </Space>

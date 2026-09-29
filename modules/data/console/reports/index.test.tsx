@@ -91,6 +91,14 @@ describe('报表页签双视图', () => {
     expect(screen.queryByRole('button', { name: /^发\s*布$/ })).not.toBeInTheDocument()
     const selfDrawnRow = screen.getByText('自绘大盘').closest('tr')!
     expect((selfDrawnRow.querySelector('button') as HTMLButtonElement).disabled).toBe(true)
+    // ★ 订正记录（2026-09-29，Task 5 评审轮）：「编辑」是**管理动作**，其显隐由 `canManage` 与
+    //    `renderer === 'metabase'` **两半**共同决定；原稿只咬住了 renderer 那一半
+    //    （评审判定：删掉 `canManage &&` 后 10 条全绿）⇒ 这里补上 canManage 这一半的直接断言。
+    //    （服务端权威仍是 manifest 的 `scope: data:manage`；本页的 canManage 只是视图选择。）
+    const watchRow = screen.getByText('销售日报').closest('tr')!
+    expect(within(watchRow).queryByRole('button', { name: /编\s*辑/ })).not.toBeInTheDocument()
+    // 正向对照：同一行的「打开」**在** ⇒ 上面「编辑缺席」不是「整行/整页没渲染」冒充的
+    expect(within(watchRow).getByRole('button', { name: /打\s*开/ })).toBeInTheDocument()
     // ⭐ spec ❌ 的修复验收点（2026-09-29 评审 + 人裁「两视图都加」）：观看视图**也**必须看得到
     // 平台自绘徽章——不能只靠置灰按钮/Tooltip。本仓 antd 6.6.3 已移除 v5 的
     // `getDisabledCompatibleChildren`，**Tooltip 在禁用的原生 button 上不保证弹** ⇒
@@ -185,6 +193,10 @@ describe('报表页签双视图', () => {
       const f = document.querySelector('iframe[title^="报表编辑"]') as HTMLIFrameElement
       expect(f?.src).toBe('https://mb.test/handoff?t=T')
     })
+    // ★ 订正记录（2026-09-29，Task 5 评审轮）：上面那个 mock 是「**只有** edit-url 才回 url」，
+    //    所以 iframe 拿到 URL 只算**间接**证明路径对——任何别的路径都会回 `{}` 而让断言以别的方式炸。
+    //    这里直接把请求路径钉住（模块端点，不含平台前缀）。
+    expect(calls.some((c) => c.url.endsWith('/reports/r1/edit-url'))).toBe(true)
   })
 
   it('platform 行没有「编辑」（没有 Metabase dashboard 可编辑）', async () => {
@@ -196,6 +208,42 @@ describe('报表页签双视图', () => {
     // 不是「整页崩了/按钮压根没实现」造成的恒真。
     const metabaseRow = screen.getByText('销售日报').closest('tr')!
     expect(within(metabaseRow).getByRole('button', { name: /编\s*辑/ })).toBeInTheDocument()
+  })
+
+  it('★ 兜底「在新标签打开」重新领票（一次性票据不可复用）⇒ 再打一次 edit-url 并以新票 window.open', async () => {
+    // 票据是**一次性**的（nonce 在代理 `/handoff` 即被消费）：iframe 一渲染，第一枚票就用掉了。
+    // 兜底若复用同一枚票，**最需要它**的场景（CSP 挡住 iframe）恰恰必然 401 ⇒ 必须重新领票。
+    // 本用例每次 edit-url 发一枚不同的票（t=T1、t=T2）以区分「新票」与「已消费的旧票」。
+    let issued = 0
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) return json({ reports: [ROWS[0]] })
+      if (/\/reports\/[^/]+\/edit-url$/.test(url)) return json({ url: `https://mb.test/handoff?t=T${++issued}` })
+      return json({})
+    })
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    try {
+      renderPage(['data:query', 'data:manage'])
+      await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: /编\s*辑/ }))
+      await waitFor(() => {
+        const f = document.querySelector('iframe[title^="报表编辑"]') as HTMLIFrameElement
+        expect(f?.src).toBe('https://mb.test/handoff?t=T1')
+      })
+      // 兜底是 **button**（不是复用票据的 `<a href>`）；按 Role 查即同时钉住了这一点
+      fireEvent.click(screen.getByRole('button', { name: /在新标签打开/ }))
+      await waitFor(() => {
+        expect(calls.filter((c) => c.url.endsWith('/reports/r1/edit-url'))).toHaveLength(2)
+      })
+      // 开的是**新票**，不是已消费的那枚
+      expect(openSpy).toHaveBeenCalledWith('https://mb.test/handoff?t=T2', '_blank', 'noopener,noreferrer')
+      expect(openSpy).not.toHaveBeenCalledWith('https://mb.test/handoff?t=T1', '_blank', 'noopener,noreferrer')
+      // 兜底不覆盖 iframe：面板里仍是第一次那枚票
+      const f = document.querySelector('iframe[title^="报表编辑"]') as HTMLIFrameElement
+      expect(f?.src).toBe('https://mb.test/handoff?t=T1')
+    } finally {
+      openSpy.mockRestore()
+    }
   })
 
   it('★ 服务端 503（未配代理 origin）⇒ 出人话文案', async () => {
