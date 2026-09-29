@@ -1,0 +1,253 @@
+# `loader.test.ts` 间歇 5s 超时：真因与修复（issue #310）
+
+> 状态：已修，待合。分支 `fix/310-loader-test-flake`。
+> 本文是**案例**（真因 / 判定实验 / 修复 / 耗时表 / 残留），不是标准。
+> 复现配方见 §6，可原样重跑核对。
+
+## 0. TL;DR
+
+- `apps/server/src/loader.test.ts` 间歇 5s 超时的真因**不在测试里**，在 `migrate.ts`：
+  每次 `runMigrations()` 都在**取全局 advisory lock + 跑建表 DDL 之后**才去看「这个模块到底有没有迁移文件」。
+  于是**无事可做**的调用（模块没有 `migrations/`）也要排一次全库唯一的锁。
+- 放大它的是 CI 的测试拓扑：`pnpm -r --if-present test` 让最多 **4 个 workspace 包并发**跑同一台 PG，
+  而 `modules/{data,aftersales}/test-util` **直接 import** `apps/server/src/migrate` —— 四个包共用**同一把锁键**。
+- 抢不到锁的一方按 `MIGRATION_LOCK_RETRY_INTERVAL_MS = 2000` **整量子**地睡，
+  单用例耗时从 ~50ms 变成 2~4s（实测量子：2053 / 2139 / 4106ms），撞穿 vitest 的 5s 单测默认值。
+- 修复两段：①**根因**——把列目录挪到取锁之前（35/37 个用例从此完全不碰锁）；
+  ②**余量**——本文件级 `testTimeout`/`hookTimeout` 15s（有实测证明该选项生效，见 §3.2）。
+- 本机按 CI 拓扑复现：单用例 max **4106ms → 99ms**；连续 14 次有效跑全部通过（§4.1）。
+
+## 1. 现象与硬证据（CI 侧）
+
+issue 报的三次都在 2026-09-28，症状一致：`Error: Test timed out in 5000ms.`，**重跑即过**。
+
+失败跑拿到的原文（run `36442845122`，job `unit`，15:21:25Z）：
+
+```
+apps/server test:  ❯ src/loader.test.ts (37 tests | 1 failed) 9045ms
+apps/server test:      → Test timed out in 5000ms.
+apps/server test:  FAIL  src/loader.test.ts > loadModules > happy path：装载 1 模块 + 迁移记账 + 权限 upsert + mount 后 /ping 通
+apps/server test:  Error: Test timed out in 5000ms.
+```
+
+同一文件在**通过**的跑里也不便宜（run `36551459812`）：`✓ src/loader.test.ts (37 tests) 7429ms`。
+
+关键对照——**本机隔离跑同一文件**：
+
+| 场景 | 整文件 | 单用例 max |
+|---|---|---|
+| 本机 · 已迁移的库 | 430ms | 52ms |
+| 本机 · 全新空库 | 470ms | 61ms |
+
+**CI 比本机慢 16~19 倍**，而单用例本机只有 50ms。这个差距不是「机器慢」能解释的量级，
+说明 CI 上有一个**本机隔离跑不存在的**开销。
+
+## 2. 真因
+
+### 2.1 机制
+
+`loadModules()` 的步骤 ③ 无条件调用 `runMigrations(pool, manifest.id, dir)`（`loader.ts:330`）。
+而 `runMigrations`（`apps/server/src/migrate.ts`）的**修改前**顺序是：
+
+1. `pool.connect()`
+2. **取 advisory lock**（`pg_try_advisory_lock(hashtext('platform.schema_migrations'))`）
+3. **跑幂等 DDL**：`create schema if not exists platform; create table if not exists platform.schema_migrations(…)`
+4. `readdir(dir)` —— **这里才发现目录不存在 / 没有 `.sql`** → `return []`
+5. 读账本、逐个应用、记账
+6. 放锁、归还连接
+
+问题出在 2、3 与 4 的**顺序**：
+
+- 锁键是**全库唯一**的（文件头明确写了「刻意**不**按 module 分键，一个键串行化所有模块的迁移」），
+  目的是挡住「两个模块并发在全新库上建表」的 pg 系统目录竞态。
+- 但「没有迁移文件」是**纯文件系统事实**，跟 DB 竞态毫无关系，却被排在取锁**之后** ——
+  于是**每个无迁移模块都要排一次全库唯一的锁**。
+
+抢不到锁的代价不是一个 RTT，而是**一个整量子**：`acquireMigrationLockBounded` 拿不到就
+`await sleep(min(2000, remaining))` 再试（`MIGRATION_LOCK_RETRY_INTERVAL_MS = 2_000`）。
+**所以等待时长天然落在 2000 / 4000 / 6000ms 这几档上**——这正是后文观测到的量子。
+
+放大它的是 CI 的测试拓扑：
+
+- `pnpm test` = `pnpm -r --if-present test`，pnpm 递归跑 workspace 包是**并发**的；
+- `modules/data`（22 个测试文件）与 `modules/aftersales`（29 个文件，且**没有** `fileParallelism: false`）
+  的 `test-util.ts` 都**直接 import** `../../apps/server/src/migrate` —— 同一份代码、**同一把锁**；
+- 三方都在 `beforeAll`/用例里跑 `runMigrations`，于是同一台 PG 上互相排队。
+
+`loader.test.ts` 有 37 个用例，几乎每个都调 `loadModules` —— 等于 37 次抢锁，
+**每一次都可能撞上别包持锁的窗口**。
+
+### 2.2 判定实验（一次只动一个变量）
+
+| # | 变量 | 整文件 | 单用例 max | 结论 |
+|---|---|---|---|---|
+| B | 4 包并发 · **同一个**库（CI 拓扑） | **9696ms** | **4106ms** | 复现 |
+| E1 | 4 包并发 · **各自不同的**库（CPU 负载不变） | 1287ms | 154ms | **不是 CPU 争抢** |
+| E6 | 同文件**两份并发**（同一个库） | 414 / 436ms | 45 / 73ms | 迁移早已应用 ⇒ 持锁极短，自争用不显著 |
+
+E1 是关键：**CPU 负载一模一样，只是把库分开**，整文件从 9696ms 掉到 1287ms（7.5×）。
+⇒ 代价来自**共用的那台 PG**，不来自「4 个 vitest 进程抢 CPU」。
+
+再把量子钉死。慢下来的耗时**反复落在 2000 的整数倍附近**：2053 / 2139 / 4106 / 2063 / 2020ms。
+代码里唯一的 2000 常量就是 `MIGRATION_LOCK_RETRY_INTERVAL_MS`（已全仓 grep 排除其他候选）。
+
+最后是**直接证据**——用 default reporter 跑（`--reporter=json` 会把 `console.warn` 吞掉，
+第一轮排查就栽在这上面，见 §5）：
+
+```
+apps/server test: [migrate] 等待 migration advisory lock（platform.schema_migrations）…已被占 10ms；每 2000ms 重试，上限 60000ms
+apps/server test: [migrate] 等待 migration advisory lock（platform.schema_migrations）…已被占 2ms；每 2000ms 重试，上限 60000ms
+```
+
+**`apps/server` 自己确实在等这把锁。** 机制闭合。
+
+## 3. 修复
+
+### 3.1 根因修复：`migrate.ts` 把「列目录」挪到取锁之前
+
+`apps/server/src/migrate.ts`：先 `readdir` + 过滤 `.sql`，**没有文件就直接 `return []`**，
+后面的 `pool.connect` / 取锁 / DDL / 查账本一概不跑。
+
+- 语义不变：原本这条路也是「什么都不做、返回 `[]`」，只是白排了一次锁、白跑了一遍 DDL。
+- 记账表由**确实有文件**的那次调用负责创建（platform 迁移与各模块的第一批迁移都算），
+  不存在「跳过之后某次真迁移失去账本」。
+- 对生产也是净收益：启动期为 N 个无迁移模块各排一次全库锁的开销直接归零
+  （文件头那句「对无 `migrations/` 的模块零负担」原本只在「不报错」这一维成立，这次补成真的负担为零）。
+
+**不动 `migrate.test.ts` 的语义**：`空目录：跑过且零 applied` 与 `目录不存在：静默跳过不抛`
+断言的都是返回值 `[]`（仍然成立）；两条取锁用例（`取锁超时` / `取锁重试`）用的目录**都带
+`001_*.sql`**，照常取锁。
+
+效果（本机 CI 拓扑，同一套 4 包并发 + 全新库）：
+
+| | 整文件 | 单用例 max |
+|---|---|---|
+| 修前 | 9696ms | 4106ms |
+| 修后（3 轮） | 967 / 705 / 455ms | **99 / 78 / 66ms** |
+
+### 3.2 余量：本文件级 15s（**不是**替代根因）
+
+根因修完后仍有一个**合法**的取锁方：`happy path` 用例的 fixture **确实声明了迁移**
+（`loader.test.ts:223`），它必须真的建表记账。在跨包并发下它仍可能吃到一个 2000ms 量子——
+实测 runs 11/15 就分别出现 2133ms / 2096ms（且**仍在 5s 内通过**）。
+
+而 CI 上这个数字要再乘上一个「CI 慢一档」的系数（整文件 16~19×）：
+50ms 的自身开销 → ~0.8s，叠加 1~2 个量子（2~4s）就能摸到 5s。
+**CI 上实际超时的那个用例，正是 `happy path`** —— 和这条推理完全对得上。
+
+所以给这两个集成级 `describe` 显式写死 `timeout` / `hookTimeout = 15_000`：
+
+- **作用域**：写在 `describe.skipIf(...)(name, options, fn)` 的 options 里，
+  只覆盖本文件这两个 suite，**不动** `apps/server/vitest.config.ts`（那会波及同包其他文件）。
+- **不是掩盖**：根因另有专门修复；15s 只兜「CI 慢一档 + 恰好撞上一个锁量子」，
+  真卡死（例如锁被占满 `MIGRATION_LOCK_TIMEOUT_MS` 的 60s）**照样会红**。
+- **该选项确实生效**（不靠类型定义猜）：临时把常量改成 `30` 再跑，
+  失败信息逐字变成 `Test timed out in 30ms`（**3 处**），而不是默认的 5000ms；随后改回 `15_000`。
+
+### 3.3 为什么没走「`beforeAll` 收敛共享初始化」
+
+issue 的建议 (2) 是「若每用例重建 DB / 重跑迁移 ⇒ 用 `beforeAll` 收敛」。
+实测后**没有采纳**，理由：
+
+- `loader.test.ts` 的共享初始化（platform 迁移 + `seedDemo` + `MockCasdoor.start()`）
+  **本来就在 `beforeAll` 里**，不在用例里；
+- 剩下的 DB 动作是**每个用例各自要的**：每个用例写自己那套 fixture 模块目录，
+  `loadModules` 必须为目标模块跑迁移——这是**被测行为本身**，不是可收敛的重复初始化；
+- 真正「可避免的重复」是 §3.1 那条路径（无迁移模块也取锁），已在**源头**修掉，
+  比在测试里绕开更彻底（生产同样受益）。
+
+## 4. 验收
+
+### 4.1 连续 15 轮（每轮：全新空库 + 4 包并发 = CI 拓扑）
+
+每轮：`dropdb/createdb` → 同时起 `apps/server`(loader) + `modules/data` + `modules/aftersales` + `apps/web`。
+
+| 轮 | 整文件 | 单用例 max | 失败 | 备注 |
+|---|---|---|---|---|
+| 1 | 560ms | 53ms | 0 | |
+| 2 | 3002ms | 111ms | 0 | |
+| 3 | 765ms | 87ms | 0 | |
+| 4 | 848ms | 87ms | 0 | |
+| 5 | 885ms | 70ms | 0 | |
+| 6 | 830ms | 88ms | 0 | |
+| 7 | 962ms | 68ms | 0 | |
+| 8 | 574ms | 65ms | 0 | |
+| 9 | — | — | — | **无效轮**，见 §5 |
+| 10 | 411ms | 53ms | 0 | |
+| 11 | 3274ms | 2133ms | 0 | 残留量子（`happy path` 真迁移） |
+| 12 | 1178ms | 106ms | 0 | |
+| 13 | 433ms | 67ms | 0 | |
+| 14 | 409ms | 47ms | 0 | |
+| 15 | 5145ms | 2096ms | 0 | 残留量子（同上） |
+
+**14 次有效轮，0 失败，0 超时**；单用例最坏 2133ms，距 5000ms 默认值尚有 2.3× 余量，
+距本文件写死的 15s 有 7× 余量。
+
+> ⚠️ 本机是 M 系列 Mac，比 GHA `ubuntu-latest` 快得多。本表证明的是「**同一拓扑下的相对改善**
+> 与「不再撞穿 5s」」，**不能**当作 CI 的绝对耗时承诺；绝对口径见 §4.3 的 CI 实测。
+
+### 4.2 「为什么 5s 不够」——量化
+
+```
+5s 的来历      ：vitest 的**单测**默认值，假定用例是「纯 CPU、无外部依赖、毫秒级」。
+本文件实际形态 ：集成级——真 PG（连接池 + 迁移 + 全库 advisory lock）
+                + 真 HTTP MockCasdoor + 动态 import TS fixture。
+自身开销       ：本机 50ms / 命中 2 个量子时 4106ms。
+等待的量子粒度 ：2000ms（MIGRATION_LOCK_RETRY_INTERVAL_MS）——**一次抢不到就是 +2s**。
+⇒ 5s 只够 2 个量子 + 一点点自身开销；第 3 次重试必然越界。
+   在 CI（比本机慢 16~19×）上，自身开销就吃掉 ~0.8s，**1~2 个量子即触顶**。
+⇒ 上限必须按「集成开销 + 至少 3 个锁量子」定，而不是按单测定。15s ≈ 自身开销 + 6 个量子。
+```
+
+### 4.3 CI 全绿
+
+本机按 CI 的 unit job 口径全量跑通（全新库 `pr_ci`）：
+
+- `pnpm test`：platform-sdk 69 / auth-core 117 / aftersales-mobile 67 / apps-web 55 /
+  demo 3 / aftersales 220 / data 270 / **apps/server 221（17 文件）** / test:guard 299 —— 全通过；
+- `pnpm typecheck`：EXIT=0；
+- gates：`check-manifests` / `lint-architecture` / `check-compose` / `check-env-example` /
+  `check-data-models` / `check-tenant-isolation` 全部 EXIT=0。
+
+（远端 CI 结论以 PR 检查为准；本文不替 CI 下结论。）
+
+## 5. 残留与未决（**不隐藏**）
+
+1. **残留量子仍在**：`happy path`（fixture 声明了迁移）在跨包并发下仍可能吃 1 个 2000ms 量子
+   （实测 2133 / 2096ms）。这是**合法**取锁，本 PR 不消除它，只用本文件级 15s 给它留出余量。
+   若要根治，得动**锁的粒度**（按 module 分键）——那会动到「挡住全新库上并发建表竞态」的既定
+   设计（文件头有专门论证），**属于独立决定，本 PR 不做**。
+2. **第 9 轮无效**：该轮 `apps/server` 的 `beforeAll` 失败（文件 status `failed`、
+   35 个用例 skipped、D9 suite 2 个通过），**失败原文丢失**——当时只挂了 `--reporter=json`，
+   而它不落 `console.warn`/错误正文（§2.2 末尾那条坑）。随后按同一脚本重跑该轮**通过**，
+   再补跑的 5 轮（11–15）也全部通过；所有轮次的输出里**没有**连接/认证类报错
+   （`too many clients` / `ECONNREFUSED` 等，已 grep 全轮输出），PG `max_connections=100`、
+   空闲期占用 6。**结论：观察到 1 次未复现的 `beforeAll` 失败，机制未查明**，按「无案例不立标准」
+   如实登记，不编解释。下一轮若再现，**第一件事是加 default reporter 留下原文**。
+3. **`migrate.test.ts` 自身**有两条并发用例**按设计**各花 ~2000ms（等一个重试量子）。
+   它们不在本 issue 的报障范围内，本 PR 未动；但同属「量子粒度」的暴露面，登记在此。
+
+## 6. 复现配方（可原样重跑）
+
+```sh
+# ① 全新空库（不带 DATABASE_URL 时本文件整体 skip，别拿旧库冒充「全新」）
+PGPASSWORD=platform psql -h 127.0.0.1 -U platform -d platform \
+  -c 'drop database if exists pr_repro' -c 'create database pr_repro'
+
+# ② 摆出 CI 的拓扑：4 个包并发打**同一个**库
+export DSN='postgres://platform:platform@127.0.0.1:5432/pr_repro'
+( cd apps/server && DATABASE_URL="${DSN}" npx vitest run src/loader.test.ts \
+    --reporter=default --reporter=json --outputFile=/tmp/s.json >/tmp/s.out 2>&1 ) &
+( cd modules/data       && DATABASE_URL="${DSN}" npx vitest run --passWithNoTests >/tmp/d.out 2>&1 ) &
+( cd modules/aftersales && DATABASE_URL="${DSN}" npx vitest run --passWithNoTests >/tmp/a.out 2>&1 ) &
+( cd apps/web           && npx vitest run >/tmp/w.out 2>&1 ) &
+wait
+
+# ③ 看量子 + 看锁告警（**必须带 default reporter**，json 会吞掉 console 输出）
+grep -a 'migration advisory lock' /tmp/s.out
+node -e "const f=require('/tmp/s.json').testResults[0];console.log('wall',Math.round(f.endTime-f.startTime))"
+
+# ④ 对照组：把三个 DB 包的 DSN 换成**另一个**库，CPU 负载不变 ⇒ 应回落到 ~1.3s
+```
+
+对照「修前」可 `git stash` 掉本 PR 的 `migrate.ts` 改动后重跑 ②。
