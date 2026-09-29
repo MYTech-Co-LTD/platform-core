@@ -50,6 +50,10 @@ const MESSAGES: Record<string, string> = {
   METABASE_UNCONFIGURED: '本站未接报表服务（未配置 Metabase）',
   METABASE_ERROR: '报表服务暂时不可用，请稍后重试',
   TENANT_PARAM_RESERVED: 'tenant 参数由平台保留，不能自定义',
+  // renderer='platform' 的行**没有** Metabase 嵌入通道（#150：平台自绘报表的渲染通路未接）。
+  // 列表里的「打开」已对该类行置灰，这条是**防御性**文案——只有「加载后该行才变成 platform」
+  // 这种陈旧视图/竞态才会点到；服务端守卫见 `GET /reports/:id/embed-url`（409 同码）。
+  RENDERER_NOT_EMBEDDABLE: '平台自绘报表没有嵌入预览通道',
   // L2 派生指标（#150 T8）。逐码给文案：这几个都是**调用方改一下就能过**的错，
   // 回落成裸码（如 UNKNOWN_DIM）会让用户不知道该改什么——而这一页的用户正是要自己定义指标的人。
   L1_BASE_NOT_FOUND: '要派生的平台指标不存在（平台词表以 dbt 声明为准）',
