@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.52.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.52.0...v0.52.1) - 2026-09-29
+- 【修复】duckle: #334 retail 子管线 sink 补 bucket（修复新鲜度锚死规则）+ tick/close 薄壳声明置停 ([#335](https://github.com/MYTech-Co-LTD/platform-core/pull/335), [e899107](https://github.com/MYTech-Co-LTD/platform-core/commit/e89910719013a82ef0674b438599ab9ef18e55cb))
+
+
 ## [0.52.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.51.0...v0.52.0) - 2026-09-29
 - 【新增】duckle: #332 Wave C——retail tick/close 以 L1 tick 形首建（含 tick misfire:skip 论证） ([#333](https://github.com/MYTech-Co-LTD/platform-core/pull/333), [95468cb](https://github.com/MYTech-Co-LTD/platform-core/commit/95468cbf50c060453baf907d0ee9045a90ad00b7))
 
