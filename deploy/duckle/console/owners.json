@@ -127,9 +127,9 @@
       "maximumAge": "36h"
     },
     {
-      "match": "minio://*/lemeng/retail_order_line/system_book=*/bizday=*/hour=*/all.parquet",
+      "match": "/workspace/logs/retail-windows-summary.csv",
       "owner": "data-eng",
-      "description": "零售订单线窗口采集的成功凭证（L1 子管线 lemeng.retail_order_line.window 的 snk.minio 目标，由父管线 lemeng.retail.windows.l1 每日双点火逐窗写入；写入=昨日 24 窗采集成功）。⚠️ L1 双点火同日重写、锚按对象写时刻起算（见 ⑩）；占位符不展开是**正常**的（见 ⑧）；该资产时钟只在**重建 catalog 之后**的成功 run 上起算",
+      "description": "零售日批采集的成功凭证（L1 父管线 lemeng.retail.windows.l1 每轮跑的收尾汇总 snk.csv，仅当 24 窗 foreach 全部成功才写、rows=24）。⚠️ 2026-09-29 换锚（源码级根因）：原锚是湖对象 glob，但 freshness 的资产集 = 「运行记录里 direction=write 的资产」∪「pattern 不含 * 的规则」，而写湖的是 foreach **子管线**、子管线不产运行记录 ⇒ 湖锚两头不占、永不参与评估（实测：freshness.json 里压根不出现）。本锚是**字面路径**（无 *）且由**父管线自己写**（其运行记录里 direction=write）⇒ 两条都占、判定成立。语义仍是「日批跑成功了吗」，且比湖 glob 更贴：汇总只在 24 窗全成后才写。",
       "tags": [
         "lemeng",
         "retail"
