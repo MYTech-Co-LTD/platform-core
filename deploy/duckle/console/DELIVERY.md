@@ -109,15 +109,27 @@ for f in lemeng.retail.windows.l1 lemeng.retail_order_line.window \
 done
 ```
 
-- **判据（唯一硬判据）**：逐文件比「卷内 sha256 == `deploy/data-plane.lock` 里该路径那一行」。
+- **判据（唯一硬判据）**：逐文件比「卷内 sha256 == **检出**里同一路径的 sha256」。
   「命令没报错」**不是**判据。
   ```sh
   docker exec "${CT}" sha256sum /workspace/schedules.json /workspace/owners.json /workspace/alerts.json \
     /workspace/pipelines/lemeng.retail.windows.l1.json /workspace/pipelines/lemeng.retail_order_line.window.json \
     /workspace/pipelines/lemeng.retail.tick.l1.json /workspace/pipelines/lemeng.retail_order_line.tick.json \
     /workspace/pipelines/lemeng.retail.close.l1.json
+  # 同一批路径在检出侧再算一次（${REPO} = /opt/platform-core-data/platform-core）：
+  sha256sum "${REPO}"/deploy/duckle/console/schedules/3120.json "${REPO}"/deploy/duckle/console/owners.json \
+            "${REPO}"/deploy/duckle/console/alerts.json "${REPO}"/deploy/duckle/console/pipelines/lemeng.retail.{windows.l1,order_line.window,tick.l1,order_line.tick,close.l1}.json
   ```
+  ⇒ **两侧逐字对齐 = 通过**。
+- 🔑 **为什么比检出、而不是比 lock**（2026-09-29 只读实测）：**机器检出里根本没有 `deploy/data-plane.lock`**
+  —— 它是 ② 的**输入**，sync 把它取到临时目录用完即弃（`/opt/lemeng-sync.sh` 头注：四步「取 lock → 验自校验 →
+  逐文件取件断言 → 最后写版本标记」）。而 ② 的 sync **对每个文件都做过 sha256 断言（基准就是 lock）**
+  ⇒ **检出文件 == lock 已经由 ② 保证** ⇒ 「卷内 == 检出」是它的等价且**在机器上可一眼跑完**的形式。
+  替代法（要从 lock 直接比）：lock 得另行取——⚠️ **该机直连 `raw.githubusercontent.com` 实测不通**
+  （sync 脚本头注记「code=000」），须走脚本内建同一个代理：`${SYNC_PROXY:-http://113.250.177.229:4878}`。
 - 失败处置：sha 不符 ⇒ 重做该文件的 `docker cp`（**别整目录重来**）；反复不符 ⇒ 查检出那份是不是本批 SHA（回 ②）。
+- 旁注：检出根当前 `REPO=/opt/platform-core-data/platform-core`，版本标记在 `<检出>/.data-plane-revision`
+  （四步里的**最后**一步写；**标记缺失/落后本身就是信号**，见 ② 的失败处置）。
 
 ### ④ 重建 catalog（**漏了 = 新锚永久 Stale**）
 
@@ -142,6 +154,21 @@ curl -s -X POST http://127.0.0.1:18080/api/catalog \
 - ⚠️ **「重建没报错」≠「规则活了」**：缺失必需属性（如 `bucket`）时 build **照样 exit 0**，
   只有 lint 与 owner 覆盖率看得见（#335 / Wave C §6 实测）。
 - 失败处置：命中第 3 条 ⇒ 按 §5 陷阱 3 查 sink 节点自身属性。
+
+#### ④-b **投递前基线**（2026-09-29 只读彩排实测，给投递当天做差用）
+
+投递**前**在 3120 console 卷内跑 ④ 那三条命令，读数如下（**投递后必须与它不同**，否则说明新管线没被吃进 catalog）：
+
+| 命令 | 投递前读数（2026-09-29） |
+|---|---|
+| `catalog build` | `5 pipelines, 8 assets, 162 links.`；stderr **无** `could not be named` |
+| `catalog lint` | exit **0**，`nothing to report.`；另报 `5 asset(s) have no owner (not a failure; use --strict)` |
+| `catalog owners` | 有 owner 的资产 **2 条**（`dim_branch` / `dim_item` 的湖对象锚）；retail 锚**不在列表**（尚未 seed） |
+
+**预期增量（按仓内文件数推算，投递前未实测）**：pipelines **5 → 10**（+`windows.l1` / `tick.l1` / `close.l1` / 两个子管线）、assets **8 → 10**（+两个子管线的 sink）、**retail 湖对象资产从「规则不存在」变为「出现且有 owner」**（与 dim 两条并列）。
+⇒ 判据写成 **「与基线相比有变化 + retail 规则出现」**，而不是写死某个数字——数字随仓内文件数变。
+
+> 彩排本身只跑了 ④ 的三条只读命令（`catalog build/lint/owners`），**未 seed、未重建、未重启**；本条的目的是让投递当天能用「与基线不同」当判据，而不是只看「命令没报错」。
 
 ### ⑤ 重启 console（卷内定义重新加载）
 
