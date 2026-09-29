@@ -16,7 +16,7 @@ import { Hono } from 'hono'
 import { Pool } from 'pg'
 import { declaredScopeGate } from '@platform/sdk'
 import mod from '../index'
-import { updateRequiredScope, upsertReport } from '../domain/report-store'
+import { upsertReport } from '../domain/report-store'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import type { ModuleVars } from './context'
 
@@ -205,11 +205,11 @@ describe('报表面声明（不需要数据库）', () => {
 
   it('★ 页门负测：只有 data:query ⇒ 管理清单 / 页门改动同样 403', async () => {
     const app = gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), null)
+    // ⚠️ 断言必须带 body（`need: 'data:manage'`），不能只断 status（订正记录 2026-09-29，Task 2
+    // 实施中发现）：**未声明**的路径走门卫的 `!hit` 兜底，同样给 403——只断 status 的话，这条负测
+    // 在「manifest 还没加两行声明」的红跑里就是绿的，manifest 声明根本没被这测试承重。
     const list = await app.request('/reports/manage')
     expect(list.status).toBe(403)
-    // 断言 body 而不只是 status：两种 403 要分得开——`need` 在场 ⇒ 是**已声明**端点上的
-    // scope 判定（本条要证的）；缺 `need` ⇒ 只是「未声明即不可达」的兜底，那样本用例即便
-    // manifest 漏声明也照样绿（实测：Step 2 的**红**跑里这条就是绿着过的）。
     expect(await list.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
     const put = await app.request('/reports/whatever', {
       method: 'PUT', headers: { 'content-type': 'application/json' },
@@ -388,25 +388,33 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
 
   it('GET /reports/manage：data:manage 身份看全量本 org 行（含页门未放行的）+ renderer', async () => {
     const { app, identity } = manage()
-    await post(app, { title: '公开报表', requiredScope: null })
-    await post(app, { title: '未放行报表', requiredScope: 'sales:read' })
+    // 插入序刻意与标题序**不一致**（platform 行先插、标题最大的反而最先落库）——见下「订正记录」
     await upsertReport(pool, identity.orgId, {
-      title: '自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      title: '3 自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
     })
+    await post(app, { title: '2 未放行报表', requiredScope: 'sales:read' })
+    await post(app, { title: '1 已发布报表', requiredScope: null })
+
     const res = await app.request('/reports/manage')
     expect(res.status).toBe(200)
     const body = await res.json()
-    // 行序 = order by title（listReports 既有口径）。此处的**字面次序**是实测值，不是拼音序：
-    // PG 的 C 序（CI 的 postgres:16-alpine 以 C 建库）与 en_US.UTF-8（本机 Homebrew PG）对
-    // 这三个标题都给**码点序** 公(516C) < 未(672A) < 自(81EA)——两环境实测一致（见任务报告）。
-    // 全量性也由本断言钉住：manage 身份并不持有 'sales:read' ⇒ 若 handler 误用 visibleTo
-    // 裁行，「未放行报表」会消失、此处变 2 行而红。
+    // 行序 = order by title（listReports 既有口径）。⚠️ 三条订正记录（2026-09-29，Task 2 实施 +
+    // 评审后由人裁定「现在修」）：
+    //  ① 原稿期望值 ['公开报表','自绘大盘','未放行报表'] 与同一句声明的公式 order by title 冲突——
+    //     原稿是错的（控制器已 psql 独立复核本库次序）。
+    //  ② 但**照实测值硬写中文次序**等于把库的 CJK collation 钉进测试（repo 未 pin locale，
+    //     `order by title` 也没写 COLLATE）⇒ 换 locale 就红。改为标题带 **ASCII 数字前缀**：
+    //     次序由 ASCII 决定，与 collation 无关。
+    //  ③ 且插入序必须**不等于**标题序：否则「按 title 排」与「按堆序（=插入序）返回」两种实现
+    //     都绿 ⇒ 断言不承重（删掉 order by title 也发现不了）。故 platform 行先插。
+    // 这条断言同时兼作「管理面不按行裁剪」的证据：若误用 visibleTo 裁行，
+    // 「2 未放行报表」会消失、此处变 2 行而红。
     expect(body.reports.map((r: { title: string }) => r.title)).toEqual(
-      ['公开报表', '未放行报表', '自绘大盘'],
+      ['1 已发布报表', '2 未放行报表', '3 自绘大盘'],
     )
-    expect(body.reports.find((r: { title: string }) => r.title === '未放行报表'))
+    expect(body.reports.find((r: { title: string }) => r.title === '2 未放行报表'))
       .toMatchObject({ requiredScope: 'sales:read', renderer: 'metabase' })
-    expect(body.reports.find((r: { title: string }) => r.title === '自绘大盘'))
+    expect(body.reports.find((r: { title: string }) => r.title === '3 自绘大盘'))
       .toMatchObject({ renderer: 'platform' })
   })
 

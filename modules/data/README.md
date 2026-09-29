@@ -104,6 +104,26 @@ L2 定义 API **就是**将来的 agent 接入面，而且已经具备接入所�
 | 页门 | 「谁**能看**」 | 本模块的 platform scope（宿主按 manifest 施加）：制作/登记/对账 `data:manage`，观看面 `data:query` |
 | 数据门 | 「看**哪个租户的数据**」 | 嵌入 JWT 里 `locked` 的参数值，由 `GET /reports/:id/embed-url` **现签** |
 
+### 管理面（改页门 / 发布 / 回收）：动作都在平台，**没有独立的 published 状态**
+
+「未发布」不是一种状态位，而是**页门未放行在观看面的表现**（`data.reports` **没有** `published`
+列，也不打算加）：
+
+| 动作 | 怎么做 | 端点 |
+|---|---|---|
+| 发布（所有人可见） | 把页门清空 | `PUT /reports/:id` body `{"requiredScope": null}` |
+| 改页门（换成新 scope） | 换一个 scope 串 | `PUT /reports/:id` body `{"requiredScope":"sales:read"}` |
+| 回收 | 归档 dashboard + 删登记行 | `DELETE /reports/:id`（既有） |
+
+- **管理清单 `GET /reports/manage`**（`data:manage`）与观看清单 `GET /reports`（`data:query`）
+  的分野是**行裁剪**：观看面按行 `required_scope` 过滤（`visibleTo`），管理面**不裁**——
+  页门未放行的行对管理员必须可见、可改，否则没人能把未发布的报表发出来。
+- 跨租户 / 不存在的 id 一律 **404**（不给存在性探针）；`PUT` body 用 `.strict()`（多余键 400）。
+- ⚠️ **写保护（陈旧版本写 409 / If-Match）尚未落地**，归计划 4（spec §8 步骤 2）。
+- ⚠️ **入口可见性**：本模块 console 入口声明是单值 `data:query`（`manifest.yaml` 的
+  `frontend.console`）⇒ 只持 `data:manage` 的人**看不到本模块入口**。这是模块入口的既有口径，
+  非管理面引入；要改成「任一持有即可进」得先改宿主 `frontend.console` 的 scope 语义（架构先行）。
+
 ### Metabase 侧的名称 = `<org>/<title>`（**命名空间**，跨租户串味的结构性防线）
 
 平台的 Metabase 是**单实例多租户共用**的，dashboard 在那边只有 `name` 这一个身份。
