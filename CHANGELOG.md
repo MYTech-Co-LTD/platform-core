@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.60.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.59.0...v0.60.0) - 2026-09-30
+- 【新增】data: #389 语义的源维度——租户已接入源登记/投影/裁剪/写入闸 + 指标命名三段式 ([#390](https://github.com/MYTech-Co-LTD/platform-core/pull/390), [41d8bdf](https://github.com/MYTech-Co-LTD/platform-core/commit/41d8bdf2715554c8b648cf445aeca92bc193e091))
+
+
 ## [0.59.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.58.0...v0.59.0) - 2026-09-30
 - 【新增】duckle: #387 分批回填工具链（两道 fail-closed 闸 + 五批降序 + 批后判据） ([#388](https://github.com/MYTech-Co-LTD/platform-core/pull/388), [3f59b1d](https://github.com/MYTech-Co-LTD/platform-core/commit/3f59b1d25f37ff60903226911f03a20d27d34ca9))
 
