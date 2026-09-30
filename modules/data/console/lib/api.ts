@@ -50,14 +50,19 @@ const MESSAGES: Record<string, string> = {
   METABASE_UNCONFIGURED: '本站未接报表服务（未配置 Metabase）',
   METABASE_ERROR: '报表服务暂时不可用，请稍后重试',
   TENANT_PARAM_RESERVED: 'tenant 参数由平台保留，不能自定义',
-  // renderer='platform' 的行**没有** Metabase 嵌入通道（#150：平台自绘报表的渲染通路未接）。
-  // 列表里的「打开」已对该类行置灰，这条是**防御性**文案——只有「加载后该行才变成 platform」
-  // 这种陈旧视图/竞态才会点到；服务端守卫见 `GET /reports/:id/embed-url`（409 同码）。
+  // renderer='platform' 的行**没有** Metabase 嵌入通道（#150/#391：platform 行的「打开」自
+  // 2026-09-30 Task 4 起改走平台自绘渲染器 SpecView，**不**调 embed-url——见报表页接线用例）。
+  // 这条因此是**防御性**文案——只有「加载后该行才变成 platform」这种陈旧视图/竞态才会点到；
+  // 服务端守卫见 `GET /reports/:id/embed-url`（409 同码）。
   RENDERER_NOT_EMBEDDABLE: '平台自绘报表没有嵌入预览通道',
   // 编辑入口（#346 计划 3）。与上面那条**同构**：列表里 platform 行的「编辑」已不渲染
   // （逐行按 renderer 判），这条是**防御性**文案——只有陈旧视图/竞态才会点到；
   // 服务端守卫见 `GET /reports/:id/edit-url`（409 同码）。
   RENDERER_NOT_EDITABLE: '平台自绘报表没有可编辑的 Metabase 页面',
+  // 自绘规格读写（#391 计划 6 Task 3）：打到 metabase 行上的 `GET/PUT /reports/:id/spec`。
+  // 与上面两条 renderer 守卫同族——列表按 renderer 分流后正常点不到，这条是**防御性**文案
+  // （陈旧视图/竞态才会点到）；服务端守卫见 routes/reports.ts 的两个 /spec 端点（409 同码）。
+  RENDERER_NOT_SELF_DRAWN: '只有平台自绘报表才能读写规格',
   // 「没配」与「配了但坏了」要分开：本条 = 配置状态（`MB_PROXY_PUBLIC_ORIGIN` 缺配/非 https，
   // 或 `PLATFORM_SESSION_SECRET` 过短——均属运维侧，见 `modules/data/routes/reports.ts` 的
   // fail-closed 前置检查）。用户自己做什么都没用，所以直接说联系运维，别让他反复重试。
@@ -96,6 +101,9 @@ const MESSAGES: Record<string, string> = {
   // `version`，写动作会发出 `?expectedVersion=undefined`（PUT 则整键被 JSON 丢弃）⇒ 服务端只回
   // 400「输入不合法」，**清单契约破损被静默**。console 于是 fail-closed：坏快照不落地并说这句。
   SNAPSHOT_INVALID: '报表清单缺少版本号，请刷新页面；若仍如此请联系平台侧',
+  INVALID_SPEC: '报表规格不合法（含不支持的字段或取值）',
+  UNKNOWN_CHART_TYPE: '这个图型平台还不支持（图型白名单由平台代码维护）',
+  SPEC_TOO_LARGE: '报表规格过大（面板数超出上限）',
 }
 
 /** 已知码给中文文案；未知码回落成码本身（便于排障）。 */

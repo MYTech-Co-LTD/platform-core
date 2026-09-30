@@ -265,3 +265,27 @@ env 三键（`DATA_METABASE_URL` / `_API_KEY` / `_SECRET_KEY`）见根 `.env.exa
 对账动作**的一部分（spec §7），只用于这里的并集判据。
 报表删除走「**先归档、再删行**」：只删登记行会让该报表恒留在未登记差集里（消不掉的噪声）；
 先归档、删行失败则报成 `missingInMetabase`（可恢复、显式可见）。
+
+### 平台自绘：声明式规格 + 代码常量白名单（spec §3⑥/§5）
+
+- **规格存 `data.reports.spec`（jsonb）**，只对 `renderer='platform'` 的行非空（跨列 check 兜着）；
+  **规格写保护复用登记表版本守卫**（`PUT /reports/:id/spec` 必带 `expectedVersion`，不符 ⇒ 409 `STALE_WRITE`）。
+- **严格白名单是机检落点**：规格每层 `.strict()`，白名单外的键一律 400——**不是** strip
+  （spec §3⑥ 实测：没有白名单时，规格里多塞一个可执行字段会被**照单接受**）。
+- **图型白名单是代码常量**（`domain/report-spec.ts` 的 `CHART_TYPES`）：**加图型 = 改常量 + 加渲染分支 + 测试，走 PR**；
+  **不做** env/DB 可配（那会让「渲染器能力」与「平台代码」脱钩 ⇒ 库里加了图型而渲染器不认 = 静默空白）。
+- **「判据同源」证到什么程度（Task 5 评审转办，别写成更强的结论）**：Task 5 的断言证的是
+  「**同一行语义声明 ⇒ 同一 SQL 骨架**」（同一 `metricId`、A/B 两租户各自注入自己的主体值、主体值抹平后两条 SQL 全等）。
+  **不含**「自绘路与 Metabase 嵌入路**跨路径**同源」的断言（那要另立用例）。写文档时**别把它说成后者**。
+- **`panel.dims` 的语义（Task 4 评审裁决，必须写清）**：dims 是**渲染层的透视轴**——`dims[0]` 为 x 轴、
+  其余为系列维度；**不进 `/query`**（`QueryBody` 只有 `{metricId, args}`）。**分组跟随指标自身的 grain**
+  （L1 grain / L2 visibleDims，`GROUP BY ${metric.groupBy}`）；`args` 只做等值过滤。**别把 dims 写成"控制分组"**——
+  它控制的是图表怎么摆，不是数据怎么聚。
+- **数据通路 = 既有 `POST /query`，一个面板一次**：语义裁剪、授权、**按调用者身份注入主体值**、逐查询落
+  `data.query_audit`，全部复用 ⇒ 自绘**不依赖 Metabase 锁定参数**，与 Metabase 那条路**判据同源**。
+  别为了省往返造「整报表数据」端点——那会把 N 次授权/审计合并成一次。
+- **两条实测渲染坑（spec §5）**：多系列要**透视数据集**（否则多出来的点会被连成一条线）；画布要收 `overflow`
+  （否则溢出到隔壁格子）。**渲染器质量归我们**，这两条是渲染层的活、不是数据问题。
+- ⚠️ **部署 007 前查既有行**：目标库若有无规格的 `renderer='platform'` 行（跨列 check 会拒），
+  先清理再迁移：`select org,id,title from data.reports where renderer='platform' and spec is null;`
+  ——有结果就先删行（或补规格），再上 007。

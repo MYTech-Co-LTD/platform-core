@@ -46,8 +46,10 @@ import {
   listAllReports,
   listReports,
   updateRequiredScope,
+  updateSpec,
   upsertReport,
 } from '../domain/report-store'
+import { parseReportSpec } from '../domain/report-spec'
 import {
   TENANT_PARAM_ID, TENANT_SLUG, publishWithTenantBinding, readDashboardContent,
 } from '../domain/report-content'
@@ -57,13 +59,38 @@ const EMBED_TTL_SECONDS = 600
 
 const ReportBody = z.object({
   title: z.string().trim().min(1).max(200),
-  /** 除 tenant 外要锁的参数 → 值。锁定即「观看者不可见不可改」，值由我们签进 JWT。 */
+  /**
+   * 渲染器（#391 计划 6）：`metabase` = 嵌 Metabase dashboard（默认，既有行为）；
+   * `platform` = 平台自绘（规格存 `data.reports.spec`，渲染通路归计划 6 Task 4）。
+   */
+  renderer: z.enum(['metabase', 'platform']).default('metabase'),
+  /**
+   * 平台自绘的声明式规格（`renderer='platform'` 时必给，形状由 `parseReportSpec` 白名单判）；
+   * metabase 行必须 null——与库侧跨列 check `data_reports_spec_by_renderer` 同一口径，但
+   * **防线只有下面那个 superRefine**：metabase 路径的 `upsertReport` 根本不传 spec（路由层
+   * 丢弃，库侧 check 看不到入参），不在这里拒就是**静默丢弃**（不是库侧报错）。
+   */
+  spec: z.record(z.unknown()).nullable().default(null),
+  /** 除 tenant 外要锁的参数 → 值。锁定即「观看者不可见不可改」，值由我们签进 JWT。
+   *  ⚠️ 仅 metabase 行有意义（嵌入 token 的 locked 值）；platform 行没有嵌入通道 ⇒ 见 superRefine。 */
   lockedParams: z.record(z.string()).default({}),
   /** NULL = 所有拿到本模块的人可见（口径同 data.metrics.required_scope）。 */
   requiredScope: z.string().min(1).nullable().default(null),
   // 内容侧版本（写保护）：更新既有 dashboard 时**必填**；见 handler 里的 fail-closed 分支
   expectedFingerprint: z.string().min(1).nullable().default(null),
 }).strict()
+  // 两渲染器的入参面**正交**（fail-closed，不是静默忽略）。⚠️ 本 refine 是这两支组合的
+  // **唯一防线**（拒绝之后无库侧兜底）：metabase 路径的 `upsertReport` 不传 spec、platform
+  // 分支硬编码 `embedParams:{}`——两支若无此 refine，入参会被**静默丢弃**而非报错，调用方
+  // 以为存了规格/锁了参（TENANT_PARAM_RESERVED 同款理由：拒绝优于静默）。拒成 400 INVALID_BODY。
+  .superRefine((d, ctx) => {
+    if (d.renderer === 'platform' && Object.keys(d.lockedParams).length > 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['lockedParams'], message: 'lockedParams 仅 metabase 行接受' })
+    }
+    if (d.renderer === 'metabase' && d.spec !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['spec'], message: 'spec 仅 platform 行接受' })
+    }
+  })
 
 /**
  * 报表 id 的解析口径（text，uuid）。**只挡「空/缺失」**，一律 404——与 aftersales /
@@ -84,11 +111,40 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 入口先判身份：不给匿名者「本站有没有接报表服务」的探测信号（fail-closed）
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    // body 解析先于 metabaseFromEnv()（platform 分支要读 renderer/spec，且 400「调用方缺陷」
+    // 本就该先于 503「配置状态」——先验参再查环境，与 PUT 的「先 parse 再查库」同序）。
+    const parsed = ReportBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    // ── 平台自绘分支（#391 计划 6 Task 3）────────────────────────────────────────
+    // ⚠️ **分支位置是硬要求**：必须在 `metabaseFromEnv()` 那次 503 检查**之前**——自绘报表
+    //    不碰 Metabase，不该因为「Metabase 没配」而建不出来；顺序反了会在「平台自绘可用、
+    //    Metabase 未配」的环境里**误报 503**（routes 测试「不设 DATA_METABASE_* 仍 201」钉住）。
+    //    完全不碰 Metabase：不 upsertDashboard、不 publish、不 setEmbedding——也没有
+    //    「search 后建」的竞态窗口 ⇒ 不需要 metabase 路径那把 `${org}/dash:` 对象锁。
+    if (parsed.data.renderer === 'platform') {
+      // 规格过白名单（机检落点在 parseReportSpec）：不合法 ⇒ 400 带专门码；缺 spec 同样落
+      // INVALID_SPEC（safeParse(null) 不通过）——「自绘必须有规格」不靠调用方自觉。
+      const spec = parseReportSpec(parsed.data.spec)
+      if (!spec.ok) return c.json({ error: spec.code }, 400)
+      const org = c.get('tenant').casdoor_org
+      const id = await upsertReport(ctx.pool, org, {
+        title: parsed.data.title,
+        metabaseId: 0,                    // 哨兵：platform 行没有 Metabase dashboard（见 ReportRow）
+        embedParams: {},                  // 入参面正交：非空 lockedParams 已在 zod 层被拒
+        requiredScope: parsed.data.requiredScope,
+        renderer: 'platform',
+        spec: spec.spec,
+      })
+      // `version` 是登记侧版本，**写后**回读（与 metabase 路径同口径）。自绘没有内容侧指纹
+      // （内容就是 spec 本身，写保护走 PUT /spec 的 expectedVersion）也没有 `created` 证据
+      // （upsertReport 只回 id）⇒ 响应体相应少这两键。
+      const row = await getReport(ctx.pool, org, id)
+      if (row === null) throw new Error('upsertReport 后登记行应可读（同一请求内的一致性假设被打破）')
+      return c.json({ id, metabaseId: 0, version: row.version }, 201)
+    }
     const cfg = metabaseFromEnv()
     // 没配 Metabase ⇒ 可解释的 503（配置状态，不是故障；口径同 LLM_UNCONFIGURED）
     if (!cfg) return c.json({ error: 'METABASE_UNCONFIGURED' }, 503)
-    const parsed = ReportBody.safeParse(await c.req.json().catch(() => null))
-    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     // 保留名一律拒（在碰 Metabase 之前）。TENANT_SLUG 是平台**保留**的锁定参数名：值恒 = 调用者
     // org、只在签 token 时现写；给了它 ⇒ 400（不是「静默忽略」：静默会让调用方以为锁定了别的
     // 租户而实际没锁）。⚠️ 同名必须出现在 Metabase 的 embedding_params 且为 locked，机械防线在
@@ -237,6 +293,70 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         renderer: row.renderer, version: row.version,
       })
     })
+  })
+
+  // ── 自绘规格读写（#391 计划 6 Task 3）────────────────────────────────────────────
+  // 写 = 管理面动作（改规格就是改报表内容，与 PUT /reports/:id 同档）；读 = 观看面（Task 4 的
+  // 渲染器从这取规格）。两端点都**不查 metabaseFromEnv**：自绘通路的可用性与 Metabase 配置
+  // 完全无关（这正是 POST 里 platform 分支先于 503 检查的同一口径）。
+  const SpecBody = z.object({
+    // 形状由 parseReportSpec 白名单判（本层只保证「是个对象 + 版本必带 + 无多余键」）
+    spec: z.record(z.unknown()),
+    // 与 GateBody 同款上界（int4）：值会绑进 SQL 与 version 列比较，无上界 ⇒ 22003 被兜成 500
+    // （客户端可控的取值不许污染 5xx；闭区间：int4 上限本身合法，仍走版本比对）。
+    expectedVersion: z.number().int().positive().max(2147483647),
+  }).strict()
+
+  r.put('/reports/:id/spec', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const parsed = SpecBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    // 规格先过白名单再落库：库侧跨列 check 只判「platform 行 spec 非空」，不判形状——
+    // 写路径若不判，垃圾规格（含可执行字段的旧形态）会静默入库（spec §3⑥ 要消灭的正是这个）。
+    const spec = parseReportSpec(parsed.data.spec)
+    if (!spec.ok) return c.json({ error: spec.code }, 400)
+    const org = c.get('tenant').casdoor_org
+    // ── 每对象一把锁：与 PUT /reports/:id、DELETE 同键（`${org}/row:${id}`）——同一行的
+    //    页门改动 / 删行 / 改规格三类写必须互斥（「先读行分流 + 条件 UPDATE + 陈旧时二次读」
+    //    全程同锁，否则两次读之间夹一次并发写会拿到互相矛盾的版本）。
+    return await withObjectLock(`${org}/row:${id}`, async () => {
+      // 先读行分流（updateSpec 把「不存在/跨租户/陈旧」合流成 null，不给存在性探针）：
+      // 非自绘行在这里拦成 409，而不是让 updateSpec 撞库侧跨列 check 炸 500
+      // （metabase 行 spec 必须-null 那半边——「非法入参 ⇒ 4xx」的契约位置）。
+      const row = await getReport(ctx.pool, org, id)
+      if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+      if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
+      const updated = await updateSpec(ctx.pool, org, id, spec.spec, parsed.data.expectedVersion)
+      if (updated === null) {
+        const cur = await getReportVersion(ctx.pool, org, id)
+        if (cur === null) return c.json({ error: 'NOT_FOUND' }, 404)
+        return c.json({ error: 'STALE_WRITE', currentVersion: cur }, 409)
+      }
+      // 回带推进后的版本（调用方据此续写下一次，无需再读一次——与 PUT /reports/:id 同契约）
+      return c.json({ version: updated.version })
+    })
+  })
+
+  r.get('/reports/:id/spec', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const row = await getReport(ctx.pool, c.get('tenant').casdoor_org, id)
+    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // 数据门之二（行级，照 embed-url 的口径）：行上 required_scope 比页门更细——页门未放行的行
+    // 对观看者不存在（403 带 need）。规格里的 metricId 可见性另由 /query 的语义裁剪兜底，
+    // 但「这份规格存不存在」本身先过行门。
+    if (!visibleTo(row, requester)) {
+      return c.json({ error: 'FORBIDDEN', need: row.requiredScope }, 403)
+    }
+    // 渲染器通道守卫：metabase 行的「内容」在 Metabase 侧，没有可读的 spec（列必为 null）
+    // ⇒ 显式 409，与 embed-url/edit-url 的守卫同族。
+    if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
+    return c.json({ spec: row.spec, version: row.version })
   })
 
   // ── 编辑页入口（spec §3⑦：把 Metabase 编辑页经反代搬进后台）─────────────────────────

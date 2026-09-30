@@ -10,6 +10,7 @@
   "dependencies": {
     "@platform/sdk": "workspace:*",
     "antd": "^6.0.0",
+    "echarts": "^6.1.0",
     "hono": "^4.13.0",
     "pg": "^8.16.0",
     "react": "^19.2.0",

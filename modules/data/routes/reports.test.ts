@@ -190,10 +190,13 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('八个端点都声明了，且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('十个报表端点都声明了（api.internal 全模块共 21 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
+    // 总数钉 21（原 19 + 本任务两条 /spec 端点）：穷举口径（同 module.test.ts 的表清单）——
+    // 别处加端点而漏改这里会红，逼着声明与测试一起动。
+    expect(declared).toHaveLength(21)
     expect(declared.get('POST /reports')).toBe('data:manage')
     expect(declared.get('GET /reports')).toBe('data:query')
     expect(declared.get('GET /reports/:id/embed-url')).toBe('data:query')
@@ -203,6 +206,10 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('POST /reports/reconcile')).toBe('data:manage')
     expect(declared.get('GET /reports/manage')).toBe('data:manage')
     expect(declared.get('PUT /reports/:id')).toBe('data:manage')
+    // ── 自绘规格读写（#391 计划 6 Task 3）：读=观看面（行级页门照 embed-url 的 visibleTo），
+    //    写=管理面（改规格就是改报表内容，与 PUT /reports/:id 同档）。
+    expect(declared.get('GET /reports/:id/spec')).toBe('data:query')
+    expect(declared.get('PUT /reports/:id/spec')).toBe('data:manage')
   })
 
   it('★ 页门负测：只有 data:query ⇒ 管理清单 / 页门改动同样 403', async () => {
@@ -241,6 +248,21 @@ describe('报表面声明（不需要数据库）', () => {
     const res = await app.request('/reports/reconcile', { method: 'POST' })
     // 该壳未配 Metabase env（本 describe 不设）⇒ 应落到 503，而不是门卫的 403
     expect(res.status).not.toBe(403)
+  })
+
+  it('★ 页门负测：只有 data:query ⇒ PUT /reports/:id/spec 403（带 need）；GET /reports/:id/spec 过门', async () => {
+    const app = gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), null)
+    const put = await app.request('/reports/whatever/spec', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ spec: { panels: [] }, expectedVersion: 1 }),
+    })
+    // 断言带 body（need: 'data:manage'）：只断 status 的话「未声明路径」的 !hit 兜底同样 403，
+    // manifest 那两行声明就没被这条负测承重（同上方管理清单负测的订正口径）。
+    expect(put.status).toBe(403)
+    expect(await put.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
+    // GET 是观看面：data:query 恰好够 ⇒ 门卫放行（壳里 pool=null ⇒ 后续 404/500 都可能，唯独不许 403）
+    const get = await app.request('/reports/whatever/spec')
+    expect(get.status).not.toBe(403)
   })
 })
 
@@ -421,6 +443,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     // 插入序刻意与标题序**不一致**（platform 行先插、标题最大的反而最先落库）——见下「订正记录」
     await upsertReport(pool, identity.orgId, {
       title: '3 自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] }, // 迁移 007 起库侧强制：自绘行必须带规格（跨列 check）
     })
     await post(app, { title: '2 未放行报表', requiredScope: 'sales:read' })
     await post(app, { title: '1 已发布报表', requiredScope: null })
@@ -914,6 +937,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   it('★ renderer=platform 的行不被对账报出（metabaseId=0 哨兵不进 missingInMetabase/tenantUnlocked/tenantUnbound）', async () => {
     await upsertReport(pool, ORG, {
       title: '自绘报表', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] }, // 迁移 007 起库侧强制：自绘行必须带规格（跨列 check）
     })
     const { app } = manage()
     const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
@@ -928,6 +952,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   it('★ renderer=platform 的行 DELETE 不发归档请求（没有 Metabase dashboard 可归档），登记行照删', async () => {
     const id = await upsertReport(pool, ORG, {
       title: '自绘报表', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] }, // 迁移 007 起库侧强制：自绘行必须带规格（跨列 check）
     })
     const { app } = manage()
     const res = await app.request(`/reports/${id}?expectedVersion=${await versionOf(app, id)}`, { method: 'DELETE' })
@@ -942,12 +967,141 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     const { app, identity } = manage()
     const id = await upsertReport(pool, identity.orgId, {
       title: '自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] }, // 迁移 007 起库侧强制：自绘行必须带规格（跨列 check）
     })
     const res = await app.request(`/reports/${id}/embed-url`)
     expect(res.status).toBe(409)
     expect(await res.json()).toEqual({ error: 'RENDERER_NOT_EMBEDDABLE' })
     // 守卫必须发生在任何 Metabase 调用之前（metabaseId=0 是哨兵，拿它签 token = 签死链）
     expect(mb.state.calls).toHaveLength(0)
+  })
+
+  // ── 自绘创建 + 规格读写（#391 计划 6 Task 3）────────────────────────────────────
+  it('★ 自绘报表：创建完全不碰 Metabase，规格经白名单校验', async () => {
+    const { app } = manage()
+    mb.state.calls.length = 0
+    const res = await post(app, {
+      title: '自绘大盘', renderer: 'platform', spec: { panels: [] },
+    })
+    expect(res.status).toBe(201)
+    expect(mb.state.calls).toHaveLength(0)         // 一条 Metabase 调用都没有
+    expect((await res.json()).metabaseId).toBe(0)  // 哨兵
+
+    const bad = await post(app, {
+      title: '坏规格', renderer: 'platform', spec: { panels: [], selectSql: 'select 1' },
+    })
+    expect(bad.status).toBe(400)
+    expect((await bad.json()).error).toBe('INVALID_SPEC')
+  })
+
+  it('★ 分支位置钉住：不设 DATA_METABASE_* 时创建自绘报表仍 201（自绘不依赖 Metabase 配置）', async () => {
+    delete process.env.DATA_METABASE_URL
+    delete process.env.DATA_METABASE_API_KEY
+    delete process.env.DATA_METABASE_SECRET_KEY
+    const { app } = manage()
+    const res = await post(app, { title: '无 Metabase 的自绘', renderer: 'platform', spec: { panels: [] } })
+    // platform 分支必须在 metabaseFromEnv() 那次 503 检查**之前**——顺序反了这里会误报 503
+    expect(res.status).toBe(201)
+    expect(mb.state.calls).toHaveLength(0)
+    // 反证：同一环境下 metabase 创建照旧 503（不是「整个端点把 cfg 检查删了」）
+    const mbRes = await post(app, { title: '无 Metabase 的普通报表' })
+    expect(mbRes.status).toBe(503)
+    expect(await mbRes.json()).toEqual({ error: 'METABASE_UNCONFIGURED' })
+  })
+
+  it('★ 自绘创建的入参正交：platform 带 lockedParams ⇒ 400；metabase 带 spec ⇒ 400（都不静默）', async () => {
+    const { app } = manage()
+    // platform 行没有嵌入通道可锁。拒（400）而不是静默丢：platform 分支硬编码 embedParams:{}，
+    // superRefine 是唯一防线——没有它这里就静默丢参（调用方以为锁了参，TENANT_PARAM_RESERVED 同款理由）。
+    const withLock = await post(app, {
+      title: '带锁参的自绘', renderer: 'platform', spec: { panels: [] }, lockedParams: { region: 'cn' },
+    })
+    expect(withLock.status).toBe(400)
+    expect(await withLock.json()).toEqual({ error: 'INVALID_BODY' })
+    // metabase 行带 spec ⇒ 400（metabase 路径的 upsertReport 不传 spec，zod 层是唯一防线——
+    // 没有它这里就静默丢规格；库侧跨列 check 根本看不到这条入参）
+    const withSpec = await post(app, { title: '带规格的 metabase', spec: { panels: [] } })
+    expect(withSpec.status).toBe(400)
+    expect(await withSpec.json()).toEqual({ error: 'INVALID_BODY' })
+    expect(mb.state.calls).toHaveLength(0)
+    expect((await pool.query(
+      'select 1 from data.reports where org = $1 and title = any($2)',
+      [ORG, ['带锁参的自绘', '带规格的 metabase']],
+    )).rowCount).toBe(0)
+  })
+
+  it('★ 规格读写：页门先判（403）、版本必带（409）、非自绘行 409', async () => {
+    // 自绘行（requiredScope='sales:read'）+ 本 org 无该 scope 的 viewer
+    const { app } = manage()
+    const { id } = await (await post(app, {
+      title: '页门内的自绘', renderer: 'platform', spec: { panels: [] }, requiredScope: 'sales:read',
+    })).json()
+
+    // GET /spec ⇒ 403 { error:'FORBIDDEN', need:'sales:read' }（页门先判，照 embed-url 的口径）
+    const denied = await viewer().app.request(`/reports/${id}/spec`)
+    expect(denied.status).toBe(403)
+    expect(await denied.json()).toEqual({ error: 'FORBIDDEN', need: 'sales:read' })
+
+    // 放行的 viewer（有 sales:read）读得到：200 且回整份规格 + 当前版本（渲染器的取数通路）
+    const allowed = shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'sales:read'] })).app
+    const read = await allowed.request(`/reports/${id}/spec`)
+    expect(read.status).toBe(200)
+    expect(await read.json()).toEqual({ spec: { panels: [] }, version: 1 })
+
+    // PUT /spec 缺 expectedVersion ⇒ 400（strict + 必填）；多余键同样 400（.strict()）
+    const missing = await app.request(`/reports/${id}/spec`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ spec: { panels: [] } }),
+    })
+    expect(missing.status).toBe(400)
+    const extra = await app.request(`/reports/${id}/spec`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ spec: { panels: [] }, expectedVersion: 1, title: '顺手改名' }),
+    })
+    expect(extra.status).toBe(400)
+    // 坏规格在 PUT 侧同样过白名单（写路径不许把垃圾规格落库——库侧 check 只判非空，不判形状）
+    const badSpec = await app.request(`/reports/${id}/spec`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ spec: { panels: [{ chart: 'sankey3d' }] }, expectedVersion: 1 }),
+    })
+    expect(badSpec.status).toBe(400)
+    expect(await badSpec.json()).toEqual({ error: 'UNKNOWN_CHART_TYPE' })
+
+    // 命中 ⇒ 200 且 version+1（成功响应回带推进后的版本，console 据此续写）
+    const v0 = await versionOf(app, id)
+    const ok = await app.request(`/reports/${id}/spec`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ spec: { panels: [] }, expectedVersion: v0 }),
+    })
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toEqual({ version: v0 + 1 })
+
+    // 陈旧 ⇒ 409 STALE_WRITE + currentVersion
+    const stale = await app.request(`/reports/${id}/spec`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ spec: { panels: [] }, expectedVersion: v0 }),
+    })
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toEqual({ error: 'STALE_WRITE', currentVersion: v0 + 1 })
+
+    // 对 metabase 行 PUT /spec ⇒ 409 RENDERER_NOT_SELF_DRAWN（GET 同码）
+    const { id: mbId } = await (await post(app, { title: '普通 Metabase 报表' })).json()
+    const putMb = await app.request(`/reports/${mbId}/spec`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ spec: { panels: [] }, expectedVersion: 1 }),
+    })
+    expect(putMb.status).toBe(409)
+    expect(await putMb.json()).toEqual({ error: 'RENDERER_NOT_SELF_DRAWN' })
+    const getMb = await app.request(`/reports/${mbId}/spec`)
+    expect(getMb.status).toBe(409)
+    expect(await getMb.json()).toEqual({ error: 'RENDERER_NOT_SELF_DRAWN' })
+
+    // 行不存在 ⇒ 404（不给存在性探针；跨租户同形——getReport/updateSpec 都带 org）
+    expect((await app.request('/reports/nope/spec')).status).toBe(404)
+    expect((await app.request('/reports/nope/spec', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ spec: { panels: [] }, expectedVersion: 1 }),
+    })).status).toBe(404)
   })
 
   it('★ GET /reports/:id/edit-url：本租户 metabase 行 → 200 + 票据可解出本 org', async () => {
@@ -969,6 +1123,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     const { app, identity } = manage()
     const id = await upsertReport(pool, identity.orgId, {
       title: '自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] }, // 迁移 007 起库侧强制：自绘行必须带规格（跨列 check）
     })
     delete process.env.MB_PROXY_PUBLIC_ORIGIN
     expect((await app.request(`/reports/${id}/edit-url`)).status).toBe(503)
