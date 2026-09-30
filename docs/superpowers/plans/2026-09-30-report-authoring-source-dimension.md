@@ -321,6 +321,15 @@ git commit -m "feat(data): 指标命名改三段式 <源>:<业务域>:<指标>�
 
 - [ ] **Step 3: 实现**（`visibleMetrics` 加参；四处调用点从**投影**取集合——`c.get(TENANT_SOURCES) ?? []`；`writeL2` 加闸）
 
+> ⚠️ **订正记录（2026-09-30，Task 5 实施 + 人裁）**，两件本任务必须知道的事：
+> 1. **`adoptedSources` 设为必填参数**（不是可选）：域层没有 Hono context，源集合要由**路由经 deps 穿下去**——
+>    除四个消费方外还要动 `routes/query.ts`、`routes/chat.ts` 与 `test-util.ts`（+ 3 个测试文件的机械适配）。
+>    **不许改成可选或默认为空集**：那样调用方漏接时会**静默跳过过滤**（fail-open）；必填把漏接变成**编译错**。
+> 2. **reason 语义（人裁 2026-09-30：保留现形态）**：先把 source+scope 一起裁、再授权 ⇒
+>    「指标存在但 scope 不够」与「源未接入」**都回 `metric_not_declared`**。
+>    理由：两者在这条通道上**互斥**——任何区别回包本身就是**存在性探针**；本仓内无下游按旧 reason 处置。
+>    **别为了 agent 体验回退成区分**（回退 = 探针 + 三面重分叉）。
+
 > ⚠️ 四处调用点**必须都改**——漏一处会让那条路径**放行未接入源的指标**（而 `catalog-consumers.test.ts` 正是防这个的机器判据，先扩展它再改代码）。
 
 - [ ] **Step 4: 跑测试确认绿 + 全模块** → `DATABASE_URL=… pnpm --filter data test`
@@ -369,6 +378,8 @@ git commit -m "feat(scripts): 已接入源对账（平台登记 ↔ console 声�
 - Modify: `deploy/data-plane-deploy-sop.md`（console 的 `ADOPTED_SOURCES` 声明键 + 对账命令 + 纳入验收清单）
 
 - [ ] **Step 1: 写文档**（逐字要点：
+  - **管理面例外（订正记录 2026-09-30，Task 5 评审转办）**：`GET /metrics/all`（`data:manage`）**绕开裁剪**——
+    持 manage 者会看到**未接入源**的 L1 行；这是有意的（管理面要能看全），**README 必须写明这个例外**。
   - **数据侧影响（订正记录 2026-09-30，Task 4 评审转办）**：改名**不动既有 L2 行的 SQL**（L2 落库的是**编译后的** `select_sql`，`data.metrics` 没有 `base_metric` 列）——只有 `description` 文本里的「L2 派生自 <旧 id>」会陈旧；而 **MCP 工具名 = 指标 id**，故改名**对外可见**（属预期）。① `l1_metrics.yml` 的 `sources`（存储路径）与新 `source`（源系统）**语义不同，别混**；② 命名 `<源>:<业务域>:<指标>`；③ 裁剪在 `visibleMetrics` 一处收口 + 写入闸 403 的形状；④ 无身份 **401 由宿主门卫给**，不是模块判的；⑤ 对账命令与「值从 openship env 取」；⑥ **源登记 ↔ 契约 `domain` 只要求同名约定，本计划不做自动映射**）
 - [ ] **Step 2: Commit**
 
