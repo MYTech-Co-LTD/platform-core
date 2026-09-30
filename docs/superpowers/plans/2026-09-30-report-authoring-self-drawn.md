@@ -386,6 +386,10 @@ git commit -m "test(data): 自绘数据通路与 Metabase 判据同源 + 逐查�
   （spec §3⑥ 实测：没有白名单时，规格里多塞一个可执行字段会被**照单接受**）。
 - **图型白名单是代码常量**（`domain/report-spec.ts` 的 `CHART_TYPES`）：**加图型 = 改常量 + 加渲染分支 + 测试，走 PR**；
   **不做** env/DB 可配（那会让「渲染器能力」与「平台代码」脱钩 ⇒ 库里加了图型而渲染器不认 = 静默空白）。
+- **`panel.dims` 的语义（Task 4 评审裁决，必须写清）**：dims 是**渲染层的透视轴**——`dims[0]` 为 x 轴、
+  其余为系列维度；**不进 `/query`**（`QueryBody` 只有 `{metricId, args}`）。**分组跟随指标自身的 grain**
+  （L1 grain / L2 visibleDims，`GROUP BY ${metric.groupBy}`）；`args` 只做等值过滤。**别把 dims 写成"控制分组"**——
+  它控制的是图表怎么摆，不是数据怎么聚。
 - **数据通路 = 既有 `POST /query`，一个面板一次**：语义裁剪、授权、**按调用者身份注入主体值**、逐查询落
   `data.query_audit`，全部复用 ⇒ 自绘**不依赖 Metabase 锁定参数**，与 Metabase 那条路**判据同源**。
   别为了省往返造「整报表数据」端点——那会把 N 次授权/审计合并成一次。
