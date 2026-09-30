@@ -25,7 +25,10 @@
 2. **B1 是本计划的形状来源**：`platform.tenant_source` 只能被 `apps/`+`packages/` 读；`modules/data/**` **不得**出现 `platform.` 引用（会红）。模块要的数据一律走**宿主投影**（`c.set` → `c.get`）。
 3. **投影的挂载序是硬约束**（`apps/server/src/loader.ts:483-499` 的既有注释）：投影中间件必须在**启用闸门之后**、`app.route(base, m.router)` **之前**——否则中间件永不执行，模块 `c.get(...)` 恒 `undefined`。
 4. **两侧迁移都幂等**：`apps/server/src/migrations/007_*.sql`（平台侧，记账表 `platform.schema_migrations`）与 `modules/data/migrations/006_*.sql`（模块侧）都写成可重复执行（`if not exists` / `exception when duplicate_object then null`）。**写前先 `ls` 两侧目录确认号段**。
-5. **改名必须一次改全**（漏一处 = 门禁红或运行期 404）：`dbt/semantics/l1_metrics.yml` 声明、`check-data-models.mjs` 的 `METRIC_NAME_RE`（`:157`）、`sync-data-semantics.mjs` 的兜底正则（`:75-76`）、`metricToAuditFileName` 派生的**文件名**（`dbt/tests/audit_<源>__<业务域>__<指标>.sql`，映射唯一事实源在 `check-data-models.mjs:221-233`）、`deploy/data-plane.lock`（**重生成命令**：`pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`，见 `data-plane-manifest.txt:16-18`）、四个测试文件的夹具、以及 `dbt/README.md` 与 `modules/data/README.md` 的示例串。
+5. ⚠️ **动 `dbt/**` 就必须同提交重生成 lock**（订正记录 2026-09-30，Task 3 实施中发现）：`deploy/data-plane-manifest.txt` 把 `dbt/` 作为**目录条目**覆盖，
+   而 `scripts/check-data-plane-lock.mjs` 逐文件比 **sha256** ⇒ 改 `l1_metrics.yml` 后不重生成 lock，`gates` 必红。
+   命令：`pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`（**Task 3 与 Task 4 各自都要做一次**；原稿只排在 Task 4，是分工错误）。
+6. **改名必须一次改全**（漏一处 = 门禁红或运行期 404）：`dbt/semantics/l1_metrics.yml` 声明、`check-data-models.mjs` 的 `METRIC_NAME_RE`（`:157`）、`sync-data-semantics.mjs` 的兜底正则（`:75-76`）、`metricToAuditFileName` 派生的**文件名**（`dbt/tests/audit_<源>__<业务域>__<指标>.sql`，映射唯一事实源在 `check-data-models.mjs:221-233`）、`deploy/data-plane.lock`（**重生成命令**：`pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`，见 `data-plane-manifest.txt:16-18`）、四个测试文件的夹具、以及 `dbt/README.md` 与 `modules/data/README.md` 的示例串。
 6. **裁剪必须收口一处**：只改 `modules/data/domain/authz.ts` 的 `visibleMetrics`，**四消费方**（`GET /metrics` / MCP `tools/list` / `list_agent` 的 `list_metrics` / `query_metric` 解析路径）都经它；并**扩展** `modules/data/catalog-consumers.test.ts` 钉住新签名（防将来新消费方绕开）。
 7. **零新依赖**；只动 `apps/server/**`、`packages/platform-sdk/**`、`modules/data/**`、`dbt/**`、`scripts/**`、`deploy/**`；**不碰** `apps/mb-proxy/**`。
 8. **提交**：Conventional Commits，**单 scope**（`feat(data):` / `feat(platform):` / `chore(dbt):`），每任务一提交；不删改 provenance trailer。
@@ -208,6 +211,9 @@ git commit -m "feat(platform): 宿主把「已接入源」按请求投影给模�
 - Modify: `scripts/sync-data-semantics.mjs`（不再丢弃 → 落 `source_system`；`ComparableMetric` 与 `comparableOf` 加该字段，使漂移可比）
 - Modify: `scripts/check-data-models.mjs`（`REQUIRED_METRIC_FIELDS` 加 `source`；新增形状规则 `^[a-z][a-z0-9_]*$`；文件头注与 `:756` 的说明串同步）
 - Modify: `modules/data/domain/metric-store.ts`（`MetricRow` 加 `sourceSystem: string | null`）+ `upsertL1Metric` 写入
+- Modify: `deploy/data-plane.lock`（⚠️ **重生成**，不是手改：`pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`）
+- Modify: `dbt/README.md`（两处「必填 N 项」清单会因新增必填字段而过期）
+- Modify（类型收严强制，夹具补字段）：`modules/data/catalog-consumers.test.ts`、`modules/data/routes/metrics.test.ts`、`modules/data/domain/semantic-compiler.test.ts`、`modules/data/domain/metric-store.test.ts`
 - Test: `scripts/sync-data-semantics.test.ts`、`scripts/check-data-models.test.ts`、`modules/data/domain/metric-store.test.ts`
 
 **Interfaces:**
@@ -234,6 +240,11 @@ alter table data.metrics add column if not exists source_system text;
 
 - [ ] **Step 4: 跑测试确认绿 + `pnpm exec tsx scripts/sync-data-semantics.mjs --check`（应报「无漂移」）**
 
+> ⚠️ **顺序告诫（2026-09-30，Task 3 实施中发现）**：「无漂移」**只在 sync 写库之后读**才有意义——既有测试卫生问题：
+> `modules/data/routes/metrics.test.ts` 的 L1 夹具 id 与真实声明同名、其 `afterAll` 会删掉**平台桶里的真行**；
+> `metric-store` 测试的 `source_probe`/`entry_l1` 又不带前缀、不被清理 ⇒ 本机跑完 data 测试后 `--check` 会报「新增 1 / 删除 2」。
+> 顺序：`sync`（写库）→ `--check`（读）→ 再跑 data 测试。
+
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -250,7 +261,7 @@ git commit -m "feat(data): L1 声明加必填 source + 落库 source_system（�
 - Rename: `dbt/tests/audit_retail__net_sales.sql` → `dbt/tests/audit_lemeng__retail__net_sales.sql`
 - Modify: `scripts/check-data-models.mjs`（`METRIC_NAME_RE` 三段 + 头注与 `:756` 说明串）
 - Modify: `scripts/sync-data-semantics.mjs`（兜底正则三段）
-- Modify: `deploy/data-plane.lock`（**重生成**，不是手改）
+- Modify: `deploy/data-plane.lock`（**重生成**，不是手改。Task 3 已建立同款先例：**每次动 `dbt/**` 都要重生成**）
 - Modify: 四个测试文件的夹具 + `dbt/README.md` + `modules/data/README.md` 的示例
 - Test: 上述各测试
 
