@@ -14,6 +14,8 @@ import { createRequire } from 'node:module'
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { parse as parseYaml } from 'yaml'
+// tenant_source 的 SQL 单一事实源（与 admin PUT /sources 共用）——改列名/冲突目标只需改那一处
+import { SOURCES_UPSERT_SQL } from '../apps/server/src/tenant-source.ts'
 
 export function tenantProvisionSteps(slug, opts = {}) {
   const org = opts.org ?? `${slug}-org`
@@ -133,12 +135,10 @@ export function tenantRowUpsert(opts) {
 /** 已接入源写入（platform.tenant_source，007 迁移）的 SQL + 参数（纯核，便于不起库钉住语义）。
  *  `--source` 是**开通动作**：只置 enabled=true，**绝不**因某个源这次没传就把它关掉 ——
  *  关/换源是管理端点（PUT /sources 整体替换）的事，开通流程不该具备「顺手禁用」的破坏力。
- *  一条语句多行：`unnest` 展开源清单，`on conflict do update set enabled = true` 让重跑幂等。 */
+ *  `unnest` 展开源清单，`on conflict do update set enabled = true` 让重跑幂等。
+ *  SQL 文本来自 tenant-source.ts（**单一事实源**，与 admin PUT 共用；本函数只做「配参数」）。 */
 export function tenantSourceUpsert(tenantId, sources) {
-  const text = `insert into platform.tenant_source(tenant_id, source, enabled)
-     select $1, s, true from unnest($2::text[]) as s
-     on conflict (tenant_id, source) do update set enabled = true`
-  return { text, values: [tenantId, sources] }
+  return { text: SOURCES_UPSERT_SQL, values: [tenantId, sources] }
 }
 
 /** 权限扇出清单 = 内置码在前 + 模块码（spec-3 §2.1：开通即可挂 tenant:admin，不等宿主重启） */

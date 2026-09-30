@@ -16,6 +16,7 @@ import type { TenantStorageConfig } from '@platform/sdk'
 import type { TenantEnv, TenantRow } from '../tenant'
 import type { CasdoorFactory, SessionEnv } from '../session-middleware'
 import { probeStorage, type ProbeResult } from '../storage-probe'
+import { replaceTenantSources, SOURCES_SELECT_SQL } from '../tenant-source'
 
 /** 订阅锚用户名（casdoor-client ensureAnchorUser 同款；单处定义防漂移） */
 export const ANCHOR_USER = 'tenantsub'
@@ -331,13 +332,24 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
   // 与 platform.tenant_module 同构的「租户 × 标识」登记：**整体替换启用集**（列表里 enabled=true、
   // 不在列表里 enabled=false，**不删行** —— 保留痕迹便于对账与审计）。
   // org 锁 / scope 门禁 / 写 CSRF 三道结构锁由本文件顶部中间件统一施加，这里不重复实现。
+  // SQL 本身在 tenant-source.ts（单一事实源，与开通 CLI 共用）。
 
-  const SourcesBody = z.object({ sources: z.array(z.string().min(1).max(64)).max(50) }).strict()
+  /**
+   * `sources` 去重**收在这里**（不是靠 SQL 兜底）：同一条 `insert ... on conflict do update` 里
+   * 同一个键出现两次，Postgres 报 21000 `cannot affect row a second time` ⇒ **客户端可控的 500**。
+   *
+   * 选「去重放行」而非「`.refine` 拒绝」：本端点的契约是**启用集**（集合语义）——重复元素不携带
+   * 任何额外含义，落库结果与去重后逐字相同。为此回 400 会让「客户端把两个列表拼在一起」这种
+   * 无害输入失败，而本端点本就该是幂等的（同 body 重放结果一致）。`.strict()` 拒「多余键」是
+   * 另一回事：那是**未知字段**（可能意味着调用方理解错了契约），集合内的重复不是。
+   */
+  const SourcesBody = z.object({
+    sources: z.array(z.string().min(1).max(64)).max(50).transform((a) => [...new Set(a)]),
+  }).strict()
 
   app.get('/sources', async (c) => {
     const t = c.get('tenant')
-    const { rows } = await deps.pool.query(
-      'select source, enabled from platform.tenant_source where tenant_id = $1 order by source', [t.id])
+    const { rows } = await deps.pool.query(SOURCES_SELECT_SQL, [t.id])
     return c.json({ sources: rows })
   })
 
@@ -345,15 +357,20 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
     const t = c.get('tenant')
     const parsed = SourcesBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
-    // 整体替换**不删行**（保留 enabled=false 的痕迹，便于对账与审计）
-    await deps.pool.query(
-      `insert into platform.tenant_source (tenant_id, source, enabled)
-       select $1, s, (s = any($2::text[])) from unnest($2::text[]) as s
-       on conflict (tenant_id, source) do update set enabled = excluded.enabled`,
-      [t.id, parsed.data.sources])
-    await deps.pool.query(
-      `update platform.tenant_source set enabled = false where tenant_id = $1 and not (source = any($2::text[]))`,
-      [t.id, parsed.data.sources])
+    // 两句（upsert + 禁用不在列表里的）**必须同事务**：否则中途失败会留下「已启用的启用、
+    // 该禁的没禁」的半应用态 —— 正是本端点要防的状态，且比整体失败更难查。
+    // 事务形状照 migrate.ts:200-220 / seed.ts:93-100 的既有写法（本仓无 withTx 助手，不新立一套）。
+    const client = await deps.pool.connect()
+    try {
+      await client.query('begin')
+      await replaceTenantSources(client, t.id, parsed.data.sources)
+      await client.query('commit')
+    } catch (err) {
+      await client.query('rollback').catch(() => {}) // 连接级故障时 rollback 可能再抛，吞掉保留原错误
+      throw err
+    } finally {
+      client.release()
+    }
     await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.sources.update', { sources: parsed.data.sources })
     return c.json({ ok: true })
   })
