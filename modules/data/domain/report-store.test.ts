@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
-import { getReport, updateRequiredScope, upsertReport } from './report-store'
+import { getReport, updateRequiredScope, updateSpec, upsertReport } from './report-store'
 import { applyMigrations } from '../test-util'
 
 const dbUrl = process.env.DATABASE_URL
@@ -27,6 +27,7 @@ describePg('report-store 的 renderer（需要 DATABASE_URL）', () => {
     })
     const idB = await upsertReport(pool, org, {
       title: 'B', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] }, // 迁移 007 起库侧强制：自绘行必须带规格
     })
 
     expect((await getReport(pool, org, idA))!.renderer).toBe('metabase')
@@ -39,6 +40,7 @@ describePg('report-store 的 renderer（需要 DATABASE_URL）', () => {
     await upsertReport(pool, org, { title: 'C', metabaseId: 12, embedParams: {}, requiredScope: null })
     const id = await upsertReport(pool, org, {
       title: 'C', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] }, // 同上：metabase→platform 的改渲染器路径也要带上规格
     })
     expect((await getReport(pool, org, id))!.renderer).toBe('platform')
   })
@@ -84,5 +86,25 @@ describePg('report-store 的 renderer（需要 DATABASE_URL）', () => {
     // 重新登记（upsert 冲突分支）也 +1
     await upsertReport(pool, org, { title: 'V', metabaseId: 21, embedParams: {}, requiredScope: null })
     expect((await getReport(pool, org, id))!.version).toBe(3)
+  })
+
+  it('★ spec：自绘行必须带规格；条件更新（陈旧版本不落）', async () => {
+    const org = 'org-spec-store'
+    await pool.query('delete from data.reports where org = $1', [org])
+    // 自绘行没有 spec ⇒ 库侧直接拒（跨列 check）
+    await expect(upsertReport(pool, org, {
+      title: 'S', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+    })).rejects.toThrow()
+
+    const id = await upsertReport(pool, org, {
+      title: 'S', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] },
+    })
+    expect((await getReport(pool, org, id))!.spec).toEqual({ panels: [] })
+    expect((await getReport(pool, org, id))!.version).toBe(1)
+
+    expect(await updateSpec(pool, org, id, { panels: [] }, 99)).toBeNull()          // 陈旧 ⇒ null
+    const ok = await updateSpec(pool, org, id, { panels: [] }, 1)
+    expect(ok).toMatchObject({ version: 2 })
   })
 })

@@ -421,6 +421,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     // 插入序刻意与标题序**不一致**（platform 行先插、标题最大的反而最先落库）——见下「订正记录」
     await upsertReport(pool, identity.orgId, {
       title: '3 自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] }, // 迁移 007 起库侧强制：自绘行必须带规格（跨列 check）
     })
     await post(app, { title: '2 未放行报表', requiredScope: 'sales:read' })
     await post(app, { title: '1 已发布报表', requiredScope: null })
@@ -914,6 +915,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   it('★ renderer=platform 的行不被对账报出（metabaseId=0 哨兵不进 missingInMetabase/tenantUnlocked/tenantUnbound）', async () => {
     await upsertReport(pool, ORG, {
       title: '自绘报表', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] }, // 迁移 007 起库侧强制：自绘行必须带规格（跨列 check）
     })
     const { app } = manage()
     const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
@@ -928,6 +930,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   it('★ renderer=platform 的行 DELETE 不发归档请求（没有 Metabase dashboard 可归档），登记行照删', async () => {
     const id = await upsertReport(pool, ORG, {
       title: '自绘报表', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] }, // 迁移 007 起库侧强制：自绘行必须带规格（跨列 check）
     })
     const { app } = manage()
     const res = await app.request(`/reports/${id}?expectedVersion=${await versionOf(app, id)}`, { method: 'DELETE' })
@@ -942,6 +945,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     const { app, identity } = manage()
     const id = await upsertReport(pool, identity.orgId, {
       title: '自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] }, // 迁移 007 起库侧强制：自绘行必须带规格（跨列 check）
     })
     const res = await app.request(`/reports/${id}/embed-url`)
     expect(res.status).toBe(409)
@@ -969,6 +973,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     const { app, identity } = manage()
     const id = await upsertReport(pool, identity.orgId, {
       title: '自绘大盘', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] }, // 迁移 007 起库侧强制：自绘行必须带规格（跨列 check）
     })
     delete process.env.MB_PROXY_PUBLIC_ORIGIN
     expect((await app.request(`/reports/${id}/edit-url`)).status).toBe(503)

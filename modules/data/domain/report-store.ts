@@ -8,6 +8,7 @@
 // `platform` = 平台自绘，**没有** Metabase dashboard（`metabase_id` 落 0，见 ReportRow）。
 import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
+import type { ReportSpec } from './report-spec'
 
 /** 渲染器取值域，与库侧 check 约束 `data_reports_renderer_check` 同域（列默认 'metabase'）。 */
 export type ReportRenderer = 'metabase' | 'platform'
@@ -29,15 +30,21 @@ export interface ReportRow {
   embedParams: Record<string, string>
   requiredScope: string | null
   renderer: ReportRenderer
+  /**
+   * 平台自绘的**声明式规格**（spec §3⑥；迁移 007）：`renderer='platform'` ⇒ 必非空，
+   * `renderer='metabase'` ⇒ 必为 null（库侧跨列 check `data_reports_spec_by_renderer` 把两边都钉死）。
+   * 读侧不再 JSON.parse——jsonb pg 已反序列化成对象（与 embed_params 同口径）。
+   */
+  spec: ReportSpec | null
   /** 登记侧版本号（spec §3③）：每次写 +1；写请求必须回带它（人裁 2026-09-29 fail-closed）。 */
   version: number
 }
 
 /**
- * 六列投影提成常量：四处 `select/returning` 共用（避免漏改一处导致 `toReportRow` 拿到 `undefined`）。
+ * 七列投影提成常量：四处 `select/returning` 共用（避免漏改一处导致 `toReportRow` 拿到 `undefined`）。
  * `data.reports` 的读取一律走它，新增列只改这一行。
  */
-const REPORT_COLS = 'id, title, metabase_id, embed_params, required_scope, renderer, version'
+const REPORT_COLS = 'id, title, metabase_id, embed_params, required_scope, renderer, version, spec'
 
 /** 行 → ReportRow。`metabase_id` 是 int4 ⇒ pg 回 JS number（**bigint 会回 string**，故列类型选 int4）。 */
 function toReportRow(row: Record<string, unknown>): ReportRow {
@@ -50,6 +57,7 @@ function toReportRow(row: Record<string, unknown>): ReportRow {
     requiredScope: row.required_scope as string | null,
     renderer: row.renderer as ReportRenderer,
     version: row.version as number,
+    spec: (row.spec ?? null) as ReportSpec | null,
   }
 }
 
@@ -113,28 +121,36 @@ export async function listAllReports(pool: Pool): Promise<RegisteredReport[]> {
  *
  * `renderer` 是可选参数（缺省 `metabase`，与列默认同值）⇒ 既有调用方不传也对，
  * 且改渲染器 = 二次 upsert 带上它即可（冲突分支把 excluded 整列覆盖）。
+ * `spec` 同为可选（缺省落 SQL null）：既有 Metabase 调用点（routes/reports.ts 的
+ * `POST /reports`）不传也照常编译运行；自绘调用方必须显式带 spec，否则库侧跨列 check
+ * `data_reports_spec_by_renderer`（迁移 007）直接拒——「自绘行必须有规格」不靠调用方自觉。
  */
 export async function upsertReport(
   pool: Pool,
   org: string,
   input: {
     title: string; metabaseId: number; embedParams: Record<string, string>
-    requiredScope: string | null; renderer?: ReportRenderer
+    requiredScope: string | null; renderer?: ReportRenderer; spec?: ReportSpec | null
   },
 ): Promise<string> {
   const r = await pool.query(
-    `insert into data.reports (org, id, title, metabase_id, embed_params, required_scope, renderer)
-     values ($1, $2, $3, $4, $5, $6, $7)
+    `insert into data.reports (org, id, title, metabase_id, embed_params, required_scope, renderer, spec)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
      on conflict (org, title) do update set
        metabase_id    = excluded.metabase_id,
        embed_params   = excluded.embed_params,
        required_scope = excluded.required_scope,
        renderer       = excluded.renderer,
+       spec           = excluded.spec,
        version        = data.reports.version + 1,
        updated_at     = now()
      returning id`,
     [org, randomUUID(), input.title, input.metabaseId,
-      JSON.stringify(input.embedParams), input.requiredScope, input.renderer ?? 'metabase'],
+      JSON.stringify(input.embedParams), input.requiredScope, input.renderer ?? 'metabase',
+      // 缺省必须是 **SQL null**（不是 jsonb 的 'null' 字面量）——后者在 `spec is null` 里为假，
+      // 会把 Metabase 行钉死在跨列 check 上。pg 收到 JS null 才发 SQL NULL（与 embed_params
+      // 同款显式 stringify：不依赖驱动对对象的隐式序列化）。
+      input.spec == null ? null : JSON.stringify(input.spec)],
   )
   return r.rows[0].id as string
 }
@@ -167,6 +183,28 @@ export async function updateRequiredScope(
       where org = $1 and id = $2 and version = $4
       returning ${REPORT_COLS}`,
     [org, id, requiredScope, expectedVersion],
+  )
+  return r.rowCount === 0 ? null : toReportRow(r.rows[0])
+}
+
+/**
+ * 规格改写（自绘报表的管理面动作，spec §3⑥）：与 `updateRequiredScope` 同款**条件更新**——
+ * 只有 `version = expectedVersion` 才落（并 `version + 1`）；没命中（陈旧版本 / 跨租户 /
+ * id 不存在）都返回 null，三种原因合流是刻意的（不给存在性探针，路由层先 `getReport` 再分流，
+ * 见 Task 3）。规格本身已在装载前经 `parseReportSpec` 校验（白名单），存储层不再重复解析。
+ *
+ * 非自绘行（`renderer='metabase'`）不在此拦：本函数只在自绘编辑通路上被调用；对 metabase 行
+ * 误用会撞上跨列 check（metabase ⇒ spec 必须 null）而抛错——库侧兜底，不是静默写坏。
+ */
+export async function updateSpec(
+  pool: Pool, org: string, id: string, spec: ReportSpec, expectedVersion: number,
+): Promise<ReportRow | null> {
+  const r = await pool.query(
+    `update data.reports
+        set spec = $3, version = version + 1, updated_at = now()
+      where org = $1 and id = $2 and version = $4
+      returning ${REPORT_COLS}`,
+    [org, id, JSON.stringify(spec), expectedVersion],
   )
   return r.rowCount === 0 ? null : toReportRow(r.rows[0])
 }
