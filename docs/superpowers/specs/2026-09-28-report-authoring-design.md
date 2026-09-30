@@ -288,11 +288,25 @@ data.reports
    （问数是把主体值写死；报表要写成**锁定参数**）
 4. 自绘那面的 **规格 schema** 与渲染器边界（哪些图型进白名单、由谁定、怎么加）
 5. **反代会话**三条约束落成 SOP（专用入口 / 服务端会话 / 按租户放行且封搜索面）
-6. **「租户 ↔ 已接入源」的登记与对账**（§3⑧ 的前提，**这是本域唯一的新增基础设施**）
-   → 展开见下面「**建议方案**」（**待拍**）
-7. **语义的命名要一次改到位**：`retail:net_sales` 现在**同时暗示"零售域通用"与"乐檬专用"**
-   （名字说前者、实现是后者）⇒ 要么加**显式的源/适用域字段**并让它参与裁剪（§3⑧ 已验的形态），
-   要么把命名改成 `<源>:<域>:<指标>`。**改之前别把它当成一个确定的词**——agent 已经在引用它。
+6. ~~**「租户 ↔ 已接入源」的登记与对账**~~ → ✅ **已定（2026-09-30 人裁，采纳下面「建议方案」的形态，并把两处它没表态的地方钉死）**：
+   - **表落 `platform.tenant_source`**（与 `tenant_module` 同构：`tenant_id` + 源标识 + `enabled`），**不放模块 schema**——
+     理由是**架构 lint B1**（`apps/`+`packages/` 只许 `platform`、`modules/<id>/` 只许自己的 schema，
+     `scripts/lint-architecture.mjs:271-275`）：登记若放 `data.*`，平台管理面/开通/对账都读不到，得绕模块 API。
+   - **模块怎么读**：宿主**按请求投影**给模块（**现成先例** `TENANT_STORAGE`：宿主 `loader.ts` 写、模块
+     `aftersales` 读，键常量在 `packages/platform-sdk/src/module.ts`），**不新增机制**。
+   - **防漂对账照抄 `scripts/reconcile-data-tenants.mjs`** 的四桶双向差集 + 出口码 0/1/2（平台登记 ↔ console env 声明）。
+   - ⚠️ 实施前须知道的两条实测事实：**契约 `domain`（如 `lemeng`）与指标命名空间前缀（如 `retail`）不是一回事、全仓无映射**；
+     而「某租户有哪些契约」**今天不存在于任何地方**（契约是仓内资产，`contracts/customers/` 仍空）。
+7. ~~**语义的命名要一次改到位**~~ → ✅ **已定（2026-09-30 人裁）：两条都做**——
+   **① 改名三段式 `<源>:<业务域>:<指标>`**（如 `lemeng:retail:net_sales`）：`(org,id)` 主键下，
+   第二源才能用**同一个业务概念名**声明而不撞 `duplicate key`（§3⑧ 实测的就是这条）；
+   **② 同时把 `sources` 字段落库**：它**本来就在** `dbt/semantics/l1_metrics.yml` 里，只是
+   `scripts/sync-data-semantics.mjs` 显式丢弃（"`data.metrics` 没有对应列"）——它承载「这条口径适用于哪些源」，
+   是**可展示/可审计的显式事实**（只做①的话，这条事实在库里仍无处可取）。
+   - **时机**：趁 §8 步骤 5（agent 通路）**尚未上线**做——「agent 已在引用它」指的是实验室。
+   - **已知影响面**（改名会动到，实施计划里要逐条覆盖）：**MCP 工具名 = 指标 id**（对外契约面，`routes/mcp.ts`）、
+     L2 行的 `baseMetric` 引用与 `description: L2 派生自 <id>`、`deploy/data-plane.lock` 的哈希、
+     `metricToAuditFileName` 的 `__` 映射（`audit_<域>__<指标>.sql` 文件名）、4 个测试文件的大批夹具。
 8. **`list_metrics` 这类"按身份裁剪"的读面要统一 fail-closed**：无身份 ⇒ **401**，
    不得退化成空列表（§3⑧ 实测的 fail-open）
 
