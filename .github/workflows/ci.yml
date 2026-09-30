@@ -110,6 +110,14 @@ jobs:
       # ④ 湖侧 SQL 点名单文件 / 写 s3:// / 不带 hive_partitioning ⑤ 容量闸同源 ⑥ 网关 body 键集合同源。
       # 纯静态：不连库、不取网络、不起容器（读两份文本 + 一次 stat）。
       - run: pnpm exec tsx scripts/check-diagnostic-tool.mjs
+      # 回填工具链的行为测试（issue #387；判据正典 spec `2026-09-29-read-side-migration.md` §4 Phase 0/1）。
+      #
+      # 为什么它该进 CI（而别的 `.test.sh` 没进）：本工具的判据是**数字与顺序**——Phase 0 探针必须
+      # =19 行（18 列）、批后必须 =25 行（24 列）、批次表必须「bizday 降序 + 3120/09-23 最后」。
+      # 这些一旦漂移，回填会以**看起来一切正常**的方式把混代湖写坏（最老分区先变 24 列 ⇒ 整湖混读
+      # 以 `schema mismatch in glob` 整挂，spec §4.0/B-3），而**静态守卫看不见数字**。
+      # 它是纯 sh（从脚本里抽真函数测，不复制实现）：不连库、不取网络、不起容器，秒级。
+      - run: sh scripts/lemeng/backfill-retail-order-line.test.sh
       # 租户隔离门禁（issue #77；正典 docs/module-protocol.md「租户数据隔离」）：真库对账——
       # 真跑各模块的 migrations（跑进脚本自建的**一次性库** platform_tenant_isolation_check），
       # 再查 information_schema 要 org 列。判据按「全部 migrations 的累积终态」，不按文件判
