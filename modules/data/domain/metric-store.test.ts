@@ -311,7 +311,9 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
 
       const merged = await loadMergedCatalog(pool, ORG)
       const requester = { ...makeIdentity({ orgId: ORG, scopes: ['data:query'] }), orgId: ORG, channel: 'session' as const, keyId: null }
-      const visible = visibleMetrics(merged, requester)
+      // 已接入源给本文件的 L1 夹具默认源（`l1Def` 的 `lemeng`）——否则下面那两条 L1 断言
+      // 会因为**源维度**（不是 scope）而红；本用例验的是「只按 scope 减」，源维度必须中性化。
+      const visible = visibleMetrics(merged, requester, new Set(['lemeng']))
 
       // 只少不多：可见集是合并集的子集
       expect(visible.every((m) => merged.some((x) => x.id === m.id))).toBe(true)

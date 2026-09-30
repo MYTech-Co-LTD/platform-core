@@ -34,6 +34,14 @@ const L1_PREFIX = 't8c:'
 
 const PLATFORM_ID = `${L1_PREFIX}net_sales`
 const CLASH_ID = `${L1_PREFIX}clash`
+/** 存在、但本租户**未接入**的源（`shanhai`）的 L1 指标 —— 源维度裁剪的探针（计划 5 Task 5）。 */
+const FOREIGN_ID = `${L1_PREFIX}shanhai_margin`
+
+/**
+ * 本租户**已接入的源**（宿主投影 `TENANT_SOURCES` 的测试替身）。夹具里的 `lemeng` 是当前
+ * 唯一已接入源；`FOREIGN` 那条挂在 `shanhai` 上 ⇒ 它对本租户**处处不可见**（四条面都要如此）。
+ */
+const ADOPTED = ['lemeng']
 
 /**
  * 平台 L1 指标（夹具经 `upsertL1Metric` 落平台桶 = sync 的产物；管理 API 写不出 l1 行）。
@@ -71,6 +79,15 @@ const LLM_ENV: Record<string, string> = {
   DATA_LLM_MODEL: 'test-model',
 }
 
+/** 「未接入源」的 L1 夹具（`lemeng` 之外 ⇒ 源维度裁剪应把它从四条面上全部拿掉）。 */
+const L1_FOREIGN: L1MetricDef = {
+  id: FOREIGN_ID, title: '山海毛利', description: '别的源的平台口径',
+  requiredScope: null, subjectColumn: 'org',
+  selectSql: 'select sum(fct_t8c.foreign_amount) as value from fct_t8c',
+  groupBy: '', params: {},
+  sourceSystem: 'shanhai',
+}
+
 const post = (app: Hono, path: string, body: unknown) => app.request(path, {
   method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
 })
@@ -93,6 +110,16 @@ describe('消费面词表的来源守卫（不需要数据库）', () => {
     'routes/mcp.ts', // ② MCP tools/list
     'routes/metrics.ts', // ④ GET /metrics
   ] as const
+  /**
+   * 读宿主「已接入源」投影的**接线点**：四个路由文件（域层经 deps 收，路由层读投影）。
+   * 与 CONSUMERS 是两个不同的集合：CONSUMERS 是「谁裁词表」，WIRING 是「谁把源集合供给裁剪」。
+   */
+  const WIRING = [
+    'routes/metrics.ts', // ④ GET /metrics
+    'routes/mcp.ts', // ② MCP tools/list + tools/call
+    'routes/query.ts', // ① POST /query 的接线（域层的 runQuery 经 deps 收）
+    'routes/chat.ts', // ③ chat 的接线（域层的 runAgentLoop 经 deps 收）
+  ] as const
   const sourceOf = (rel: string) => readFileSync(new URL(`./${rel}`, import.meta.url), 'utf8')
 
   it('四条面的来源都引用**合并**加载器 loadMergedCatalog（= L1 ∪ 本 org 的单一落点）', () => {
@@ -108,6 +135,29 @@ describe('消费面词表的来源守卫（不需要数据库）', () => {
         .not.toMatch(/\bloadOrgCatalog\b/)
     }
   })
+
+  /**
+   * 源维度裁剪（计划 5 Task 5）的来源守卫：裁剪只许经 `visibleMetrics`（授权核心单实现），
+   * 且「本租户已接入源」必须真的读到了宿主投影。为什么还要机器判一层：`visibleMetrics` 的
+   * 第三参是**必填**（漏传是编译错），但编译器管不住「传了个空集 / 传了个恒全集」——
+   * 而这两种错法都不可观测（一个整片消失、一个放行未接入源）。故把两件事分别钉住：
+   *   · 谁裁词表（CONSUMERS）——都经唯一裁剪函数；
+   *   · 谁供源集合（WIRING）——都在路由层读宿主投影 `TENANT_SOURCES`（域层经 deps 收，
+   *     路由层是唯一能读 context 的地方）。
+   */
+  it('四条面的词表裁剪都经唯一裁剪函数 visibleMetrics（绕开它就不知道源维度）', () => {
+    for (const rel of CONSUMERS) {
+      expect(sourceOf(rel), `${rel} 没引用唯一裁剪函数 visibleMetrics ⇒ 这条通道不裁（源维度失效）`)
+        .toMatch(/\bvisibleMetrics\b/)
+    }
+  })
+
+  it('四条面的「已接入源」都取自宿主投影 TENANT_SOURCES（漏一处 = 那条路径拿不到源集合）', () => {
+    for (const rel of WIRING) {
+      expect(sourceOf(rel), `${rel} 没读宿主投影 TENANT_SOURCES ⇒ 这条通道拿不到已接入源`)
+        .toMatch(/\bTENANT_SOURCES\b/)
+    }
+  })
 })
 
 describePg('消费面词表四通道一致（需要 DATABASE_URL）', () => {
@@ -119,14 +169,15 @@ describePg('消费面词表四通道一致（需要 DATABASE_URL）', () => {
     return { columns: ['value'], rows: [[1]] }
   }
   const ctx = { pool, execute }
-  const app = (org = ORG) =>
+  const app = (org = ORG, sources: string[] = ADOPTED) =>
     buildTestApp(mod, makeIdentity({ orgId: org, scopes: ['data:query', 'data:manage'] }), ctx,
-      { id: 1, casdoor_org: org })
+      { id: 1, casdoor_org: org }, sources)
 
   beforeAll(async () => {
     await applyMigrations(pool)
     await upsertL1Metric(pool, L1_PLATFORM)
     await upsertL1Metric(pool, L1_CLASH)
+    await upsertL1Metric(pool, L1_FOREIGN)
     // 撞 id 的 L2 行直落存储层（等价于「租户先建、平台后物化」那条合法时序；
     // 走管理 API 建不出来——写侧闸门会以 409 ID_RESERVED_BY_L1 拦下）
     await upsertMetric(pool, ORG, L2_CLASH)
@@ -224,5 +275,36 @@ describePg('消费面词表四通道一致（需要 DATABASE_URL）', () => {
     const res = await app().request('/metrics')
     const clash = (await res.json()).metrics.find((m: { id: string }) => m.id === CLASH_ID)
     expect(clash).toMatchObject({ title: '平台版', description: '平台版说明' })
+  })
+
+  // ── 源维度裁剪：四条面都不许放行「未接入源」的指标（计划 5 Task 5）────────────────
+  // 与上面「同一 id 四条面同胜者」同一精神：**四条面放在同一份夹具上对比**。
+  // 未接入源的那条 L1（`sourceSystem: 'shanhai'`，本租户只接了 `lemeng`）报得出 id 也不行——
+  // /query 与 chat 的解析路径经裁剪后按「未声明」拒（看不见，不是报错），MCP / GET /metrics
+  // 直接不出现。任何一条面放行它，「四消费方都经 visibleMetrics」就出现了绕开点。
+  it('面① POST /query：未接入源的 L1 一律拒（metric_not_declared），且从不触达仓库', async () => {
+    const res = await post(app(), '/query', { metricId: FOREIGN_ID, args: {} })
+    expect(res.status, '未接入源的指标在 /query 上被放行了').toBe(403)
+    expect((await res.json()).reason).toBe('metric_not_declared')
+    expect(executed, '被拒的请求不该跑任何 SQL').toEqual([])
+  })
+
+  it('面② MCP tools/list：未接入源的 L1 不出现在工具面里（agent 连它存不存在都看不到）', async () => {
+    const res = await rpc(app(), { jsonrpc: '2.0', id: 91, method: 'tools/list' })
+    const names = (await res.json()).result.tools.map((t: { name: string }) => t.name)
+    expect(names, '未接入源的指标出现在 MCP 工具面里').not.toContain(FOREIGN_ID)
+  })
+
+  it('面③ chat：未接入源的 L1 查不到（工具结果是 denied，末事件不带表）', async () => {
+    const events = await ask(FOREIGN_ID)
+    const final = events.at(-1) as { type: string; table?: unknown }
+    expect(final.type).toBe('final')
+    expect(final.table, '未接入源的指标在 chat 上被查出来了').toBeUndefined()
+  })
+
+  it('面④ GET /metrics：未接入源的 L1 不在列表里', async () => {
+    const res = await app().request('/metrics')
+    const ids = (await res.json()).metrics.map((m: { id: string }) => m.id)
+    expect(ids, '未接入源的指标出现在 GET /metrics 上').not.toContain(FOREIGN_ID)
   })
 })

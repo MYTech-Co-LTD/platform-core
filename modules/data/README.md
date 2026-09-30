@@ -62,6 +62,30 @@
     ⚠️ 但**必须有另外两步接线**才查得通，两者失败都静默：① Gate-B 网络（SOP P7）；
     ② 仓库连接的 `search_path`（SOP P8b）——不设则报 `relation "fct_retail_sale" does not exist`。
 
+### 源维度（spec §3⑧ / 计划 5）：裁剪 + 写入闸，两道缺一不可
+
+L1 **不是跨源通用语义**，是**逐源**的标准口径 ⇒ 词表行的第二维是**源**（库列 `source_system`；
+`MetricRow.sourceSystem`）：**L1 行** = 声明的 `source`（如 `lemeng`），**L2 行 = `null`**（本租户
+自己写的，没有源维度）。「某租户接了哪些源」这条事实由宿主投影（`platform.tenant_source` 里
+`enabled=true` 的集合 → context 键 `TENANT_SOURCES`；模块 manifest 声明 `tenantSources: true`）。
+
+- **裁剪**收口在**唯一**一处：`domain/authz.ts` 的 `visibleMetrics(catalog, requester, adoptedSources)`
+  （第三参必填）。规则：`sourceSystem === null || adoptedSources.has(sourceSystem)` 与 scope 判定**同时**成立才可见
+  ⇒ **L2 行恒可见**，未接入源的 L1 行**看不见**（不是报错）。四个消费方（`GET /metrics`、MCP
+  `tools/list`、chat 的 `list_metrics`、`query_metric` 的解析路径）**都**经它；`tenantSources`
+  的投影由**路由层**读（域层没有 Hono context，经 deps 穿下去）。
+  机器判据：`catalog-consumers.test.ts`（四条面的行为断言 + 来源守卫）。
+- **写入闸**在 `routes/metrics.ts` 的 `writeL2`（`resolveL1Base` 之后）：用未接入源的 L1 当
+  `baseMetric` ⇒ **403** `{ error: 'METRIC_SOURCE_NOT_ADOPTED', its_source, your_sources }`
+  （`its_source` = 那条 L1 的源；`your_sources` = 本租户已接入的源）。只裁剪不装闸，则
+  那条 L2 会**写入时看着成功、读取时被裁掉**——一次「成功的空操作」。
+- ⚠️ **无身份的 `GET /metrics` 是宿主门卫给的 401**（`declaredScopeGate` 的
+  `UNAUTHENTICATED`，`packages/platform-sdk`），**不是模块判的**——本模块没有鉴权代码。
+  模块内「空词表」那条分支只有 `identity.orgId === ''`（门卫放行之后）才够得着。
+  这是 spec §3⑧ 记的那条 fail-open 的修法：**无身份 ≠ 没接入任何源**，前者必须 401。
+- ⚠️ 与 `dbt/semantics/l1_metrics.yml` 的 `sources`（**对象存储路径列表**）**语义不同，别混**：
+  那个是人读的路径提示，这个才是源维度。
+
 ### agent 接入面：**预留，本轮不实现**（拍板 #5）
 
 L2 定义 API **就是**将来的 agent 接入面，而且已经具备接入所需的两件事：**PAT 通道**

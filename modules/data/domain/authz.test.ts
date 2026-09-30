@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
   MAX_QUERY_ROWS, authorize, sqlQuote, visibleMetrics,
-  type MetricDef, type MetricParamType, type Requester,
+  type MetricDef, type MetricParamType, type Requester, type SourceTaggedMetric,
 } from './authz'
 
-// 词表形状照 /tmp/iam-lab/mcp_authz_server.py 的 CATALOG（原型实测 11/11 的那份）
-const CATALOG: MetricDef[] = [
+/** 本文件默认租户**已接入的源**（当前唯一已接入源 = lemeng；`lemeng` 之外的源都没接）。 */
+const LEMENG = new Set(['lemeng'])
+
+// 词表形状照 /tmp/iam-lab/mcp_authz_server.py 的 CATALOG（原型实测 11/11 的那份）。
+// 每行带 `sourceSystem`：裁剪（visibleMetrics）的第三参读它，故这里的类型是
+// `SourceTaggedMetric`（= MetricDef + 源维度）；`authorize` 仍只认 MetricDef（子类型可传）。
+const CATALOG: SourceTaggedMetric[] = [
   {
     id: 'mart_sales_daily',
     title: '销售日明细',
@@ -15,6 +20,7 @@ const CATALOG: MetricDef[] = [
     selectSql: 'SELECT org, day, category, revenue, orders FROM marts.mart_sales_daily',
     groupBy: '',
     params: { day_from: { column: 'day', type: 'date' }, day_to: { column: 'day', type: 'date' } },
+    sourceSystem: 'lemeng',
   },
   {
     id: 'metrics_revenue_mom',
@@ -25,6 +31,7 @@ const CATALOG: MetricDef[] = [
     selectSql: 'SELECT org, round(sum(revenue)) AS revenue, count(*) AS rows FROM marts.mart_sales_daily',
     groupBy: 'org',
     params: {},
+    sourceSystem: 'lemeng',
   },
   {
     id: 'finance_margin',
@@ -35,6 +42,7 @@ const CATALOG: MetricDef[] = [
     selectSql: 'SELECT org, margin FROM marts.mart_margin',
     groupBy: 'org',
     params: {},
+    sourceSystem: 'lemeng',
   },
 ]
 
@@ -53,17 +61,55 @@ function req(over: Partial<Requester> = {}): Requester {
 
 describe('visibleMetrics —— 词表裁剪（看不见，不是报错）', () => {
   it('A1 有 data:query → 见两条 query 指标，看不见 finance 那条', () => {
-    expect(visibleMetrics(CATALOG, req()).map((m) => m.id))
+    expect(visibleMetrics(CATALOG, req(), LEMENG).map((m) => m.id))
       .toEqual(['mart_sales_daily', 'metrics_revenue_mom'])
   })
 
   it('B1 只有部分码 → 只见到对应子集', () => {
-    expect(visibleMetrics(CATALOG, req({ scopes: ['data:finance'] })).map((m) => m.id))
+    expect(visibleMetrics(CATALOG, req({ scopes: ['data:finance'] }), LEMENG).map((m) => m.id))
       .toEqual(['finance_margin'])
   })
 
   it('C1 无任何码 → 词表为空（fail-closed）', () => {
-    expect(visibleMetrics(CATALOG, req({ scopes: [] }))).toEqual([])
+    expect(visibleMetrics(CATALOG, req({ scopes: [] }), LEMENG)).toEqual([])
+  })
+})
+
+describe('visibleMetrics —— 源维度裁剪（spec §3⑧：未接入源的指标看不见）', () => {
+  /**
+   * 三行词表，正是「源维度」的三种行形状：
+   *   · 已接入源（lemeng）的 L1 —— 本租户接了 ⇒ 可见；
+   *   · 未接入源（shanhai）的 L1 —— 存在、但本租户没接 ⇒ **不可见**（是「看不见」不是报错）；
+   *   · L2 行（`sourceSystem: null`）—— 本租户自己写的、没有源维度 ⇒ **恒可见**。
+   * 这三条是 Task 2 转办来的断言要求（此前「三态」只有类型把守、没有消费方）：
+   * 每条各断言一次，任何一条语义漂掉都必须在这里红。
+   */
+  const SOURCED: SourceTaggedMetric[] = [
+    { ...CATALOG[0]!, id: 'l1_lemeng', sourceSystem: 'lemeng' },
+    { ...CATALOG[0]!, id: 'l1_shanhai', sourceSystem: 'shanhai' },
+    { ...CATALOG[1]!, id: 'l2_mine', sourceSystem: null },
+  ]
+
+  it('★ 三态：已接入源的 L1 可见 / 未接入源的 L1 不可见 / L2 行恒可见', () => {
+    const ids = visibleMetrics(SOURCED, req(), LEMENG).map((m) => m.id)
+    // (a) 已接入源（lemeng）的 L1 行 ⇒ 可见
+    expect(ids, '已接入源的 L1 行不可见 ⇒ 平台指标对租户整条消失').toContain('l1_lemeng')
+    // (b) 未接入源（shanhai）的 L1 行 ⇒ 不可见（裁剪，不是报错）
+    expect(ids, '未接入源的 L1 行可见 ⇒ 源维度没被裁（agent 会看到别的源的指标）').not.toContain('l1_shanhai')
+    // (c) L2 行（sourceSystem === null）⇒ 恒可见（它是本租户自己写的，没有源维度）
+    expect(ids, 'L2 行被按源裁掉了 ⇒ 租户自己声明过的指标把自己裁没了').toContain('l2_mine')
+  })
+
+  it('一个源都没接（空集）⇒ 只剩 L2 行（L1 一律裁掉，不是报错）', () => {
+    expect(visibleMetrics(SOURCED, req(), new Set()).map((m) => m.id)).toEqual(['l2_mine'])
+  })
+
+  it('裁源与裁 scope 是**同一条** filter（两个条件都要满足才可见）', () => {
+    // 已接入源但有 data:finance 门槛的行：只有 data:query ⇒ 依然不可见（源接了不等于越权）
+    const both: SourceTaggedMetric[] = [
+      { ...CATALOG[2]!, id: 'l1_lemeng_finance', sourceSystem: 'lemeng' },
+    ]
+    expect(visibleMetrics(both, req(), LEMENG)).toEqual([])
   })
 })
 

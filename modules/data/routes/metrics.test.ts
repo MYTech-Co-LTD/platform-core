@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Hono } from 'hono'
 import { Pool } from 'pg'
-import { TENANT_SOURCES } from '@platform/sdk'
+import { TENANT_SOURCES, declaredScopeGate } from '@platform/sdk'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import { L1_ORG, upsertL1Metric, upsertMetric } from '../domain/metric-store'
@@ -60,8 +60,20 @@ const L1_FINANCE = l1Def({
   selectSql: 'select sum(fct_retail_sale.margin) as value, system_book from fct_retail_sale',
   groupBy: 'system_book',
 })
+/**
+ * 存在、但本租户**未接入**的源（`shanhai`）的 L1 行 —— 写入闸的探针（计划 5 Task 5）。
+ * 它与 L1_SALES 的唯一差别是源维度 ⇒ 「403 是不是真按源判的」只有它能验。
+ * `l1Def` 默认把 sourceSystem 写成 lemeng，故这里**后覆盖**（不是传参——传参会被默认值顶掉）。
+ */
+const L1_FOREIGN = { ...l1Def({
+  id: `${L1_ID_PREFIX}shanhai_margin`, title: '山海毛利',
+  selectSql: 'select sum(fct_retail_sale.foreign) as value, system_book from fct_retail_sale',
+  groupBy: 'system_book',
+}), sourceSystem: 'shanhai' }
 /** M-① 的撞 id 探针：**先**由租户建 L2、**后**由平台物化同 id（唯一能造出撞 id 的合法时序）。 */
 const L1_CLASH_PROBE = `${L1_ID_PREFIX}clash_probe`
+/** 本租户已接入的源（宿主投影 TENANT_SOURCES 的测试替身）——未接入的源就是 `lemeng` 之外的。 */
+const ADOPTED = ['lemeng']
 
 /** 合法 L2 声明（各用例只覆盖自己关心的字段）。 */
 const l2Body = (over: Record<string, unknown> = {}) => ({
@@ -71,8 +83,9 @@ const l2Body = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
-function app(org: string, scopes: string[]) {
-  return buildTestApp(mod, makeIdentity({ orgId: org, scopes }), { pool }, { id: 1, casdoor_org: org })
+function app(org: string, scopes: string[], sources: string[] | undefined = ADOPTED) {
+  return buildTestApp(mod, makeIdentity({ orgId: org, scopes }), { pool },
+    { id: 1, casdoor_org: org }, sources)
 }
 
 async function post(body: unknown, org = ORG, scopes = ['data:manage', 'data:query']) {
@@ -93,6 +106,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     // （管理 API 侧没有任何途径写出 l1 行，见 metric-store 的两个写入口）。
     await upsertL1Metric(pool, L1_SALES)
     await upsertL1Metric(pool, L1_FINANCE)
+    await upsertL1Metric(pool, L1_FOREIGN)
   })
 
   afterAll(async () => {
@@ -281,6 +295,73 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     const again = await app(ORG, ['data:manage']).request(`/metrics/${clashId}`, { method: 'DELETE' })
     expect(again.status).toBe(409)
     expect((await again.json()).error).toBe('READONLY_L1')
+  })
+
+  // ── 写入闸：未接入源的 L1 不许当 L2 的基底（计划 5 Task 5，spec §3⑧）──────────────
+  it('★ POST 用未接入源的 L1 当 baseMetric ⇒ 403 METRIC_SOURCE_NOT_ADOPTED（带 its_source / your_sources）', async () => {
+    // 前提核对：这条 L1 存在（否则会先撞 L1_BASE_NOT_FOUND，本用例就名不副实）
+    expect(L1_FOREIGN.sourceSystem).toBe('shanhai')
+    const res = await post(l2Body({ id: 'l2_from_foreign', baseMetric: L1_FOREIGN.id }))
+    expect(res.status, '未接入源的 L1 当基底被放行了（应在 resolveL1Base 之后按源拒）').toBe(403)
+    expect(await res.json()).toEqual({
+      error: 'METRIC_SOURCE_NOT_ADOPTED',
+      its_source: 'shanhai',        // 这条 L1 的源
+      your_sources: ['lemeng'],     // 本租户已接入的源
+    })
+    // 拒绝不是「先写后拒」：本租户桶里不留任何痕迹
+    const raw = await pool.query(
+      'select count(*)::int as n from data.metrics where org = $1 and id = $2', [ORG, 'l2_from_foreign'])
+    expect(raw.rows[0].n).toBe(0)
+  })
+
+  it('PUT 打同一条未接入源的基底 ⇒ 同样 403（写路径两条路由的源闸必须同形）', async () => {
+    const res = await app(ORG, ['data:manage']).request('/metrics/l2_from_foreign', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(l2Body({ id: 'l2_from_foreign', baseMetric: L1_FOREIGN.id })),
+    })
+    expect(res.status).toBe(403)
+    expect((await res.json()).error).toBe('METRIC_SOURCE_NOT_ADOPTED')
+  })
+
+  it('已接入源的 L1 当基底照常 201（源闸不是「一律拒」——别把整条写路径锁死）', async () => {
+    const res = await post(l2Body({ id: 'l2_from_adopted', baseMetric: L1_SALES.id }))
+    expect(res.status).toBe(201)
+    // 清理：本用例自己造的行（避免污染后续断言「词表里有什么」）
+    await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, 'l2_from_adopted'])
+  })
+
+  it('未接入源的 L1 不可见：GET /metrics 里没有它（但它**在**平台词表里——裁剪 ≠ 不存在）', async () => {
+    const ids = (await (await app(ORG, ['data:query']).request('/metrics')).json())
+      .metrics.map((m: { id: string }) => m.id)
+    expect(ids, '未接入源的 L1 出现在消费面词表里').not.toContain(L1_FOREIGN.id)
+    // 管理面（/metrics/all，不经裁剪）仍看得到它 ⇒ 上面那条不是「夹具没落库」
+    const all = (await (await app(ORG, ['data:manage']).request('/metrics/all')).json())
+      .metrics.map((m: { id: string }) => m.id)
+    expect(all).toContain(L1_FOREIGN.id)
+  })
+
+  // ── fail-open 复核（spec §3⑧ 的「无身份 vs 没接源」）──────────────────────────
+  // ⚠️ 无身份的 **401 是宿主门卫给的**（`declaredScopeGate`：`packages/platform-sdk/src/module.ts`
+  //    里 `if (!identity) return c.json({ error: 'UNAUTHENTICATED' }, 401)`）——**不是**模块判的。
+  //    模块自己**没有**任何鉴权代码（manifest 的 api.internal 由宿主施加），它内部那条
+  //    「requester === null ⇒ 空词表」分支只有 `identity.orgId === ''`（门卫放行之后）才够得着。
+  //    本组两条断言把这两个状态**分开**钉住：门卫在 ⇒ 401；门卫放行但 org 为空 ⇒ 空列表。
+  //    （spec 原文的 fail-open 是「无身份与没接入源长得一样，都回空列表」——修法就是这一条 401。）
+  it('★ 无身份（不经模块自身判定）的 GET /metrics ⇒ 宿主门卫给 401，不是空词表', async () => {
+    // 照宿主 loader 的包裹层挂法：门卫先于模块路由，声明路径用模块相对路径（挂载前同基准）
+    const shell = new Hono<ModuleVars>()
+    shell.use('/metrics', declaredScopeGate([{ method: 'GET', path: '/metrics', scope: 'data:query' }]))
+    shell.route('/', mod.createRouter({ pool }))
+    const res = await (shell as unknown as Hono).request('/metrics')
+    expect(res.status, '无身份请求没被门卫挡下（模块侧没有第二道鉴权）').toBe(401)
+    expect(await res.json()).toEqual({ error: 'UNAUTHENTICATED' })
+  })
+
+  it('门卫放行但 orgId 为空串（模块侧唯一够得着「空词表」分支的形态）⇒ 200 空列表，不是报错', async () => {
+    const res = await app('', ['data:query']).request('/metrics')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ metrics: [] })
   })
 
   // ── 宿主投影的「已接入源」（计划 5）────────────────────────────────────────────

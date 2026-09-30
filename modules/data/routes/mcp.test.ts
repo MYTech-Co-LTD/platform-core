@@ -180,7 +180,7 @@ describePg('POST /mcp 的方法面（需要 DATABASE_URL）', () => {
     expect(callTextOf(body)).toMatchObject({ status: 'denied', reason: 'metric_not_declared' })
   })
 
-  it('tools/call 未授权指标（finance_mrr / data:finance）→ denied/metric_not_authorized', async () => {
+  it('tools/call scope 不够的指标（finance_mrr / data:finance）→ denied/metric_not_declared（被裁剪）', async () => {
     const app = await seededApp()
     const res = await rpc(app, {
       jsonrpc: '2.0', id: 4, method: 'tools/call',
@@ -189,7 +189,10 @@ describePg('POST /mcp 的方法面（需要 DATABASE_URL）', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.result.isError).toBe(true)
-    expect(callTextOf(body)).toMatchObject({ status: 'denied', reason: 'metric_not_authorized' })
+    // ★ 计划 5 起 reason 是 `metric_not_declared`（此前 `metric_not_authorized`）：runQuery 先经
+    //   `visibleMetrics` 裁剪再 authorize ⇒ 与本文件的 tools/list（finance_mrr 根本不在工具面里）
+    //   口径一致。此前两条路径分叉：工具面说「没有这个工具」，直接调却说「存在但没权限」。
+    expect(callTextOf(body)).toMatchObject({ status: 'denied', reason: 'metric_not_declared' })
   })
 
   it('tools/call 在 arguments 里传 org → denied/subject_pinned_by_platform（拒因出自 runQuery，MCP 层不自建判定）', async () => {

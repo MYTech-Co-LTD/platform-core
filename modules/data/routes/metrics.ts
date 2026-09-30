@@ -16,6 +16,7 @@
 //     改它只能改仓内 dbt YAML 再物化（口径变更走代码评审，不能经 API 就地改）。
 import { z } from 'zod'
 import type { Context } from 'hono'
+import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf } from './context'
 import { visibleMetrics } from '../domain/authz'
@@ -80,6 +81,16 @@ const metricIdOf = (raw: string | undefined): string | null =>
 const orgOf = (c: Context<ModuleVars>): string => c.get('tenant').casdoor_org
 
 /**
+ * 宿主投影的「本租户已接入源」（计划 5）→ 裁剪/写闸用的集合。
+ *
+ * `?? []` 的语义是**刻意的 fail-closed**：宿主没投影（本模块没声明 `tenantSources`、或请求
+ * 不在租户上下文里）⇒ 空集 ⇒ **看不到任何 L1 行**（L2 行不受影响）。反过来（缺投影就不裁）
+ * 是 fail-open，正是 spec §3⑧ 要堵的。两种「空」的区别见 `ModuleVars` 里那个键的注记。
+ */
+const adoptedSourcesOf = (c: Context<ModuleVars>): ReadonlySet<string> =>
+  new Set(c.get(TENANT_SOURCES) ?? [])
+
+/**
  * 编译失败 → HTTP。分两类是**有意的**：
  *   · 调用方的问题（引用不存在的 base、维度越界、过滤子句错）⇒ 400，且回**具体 code**，
  *     让调用方能自助改（而不是猜「400 到底哪里不对」）。
@@ -127,6 +138,28 @@ async function writeL2(
     throw e
   }
 
+  // ★ 源维度的**写入闸**（spec §3⑧ 的第二道，计划 5 Task 5）：L1 是**逐源**的标准口径，
+  //   租户只能在自己的源上裁 L2。基底属于「本租户未接入的源」⇒ **拒绝**（不是静默忽略）。
+  //
+  //   为什么闸在**这里**（resolveL1Base 之后）：那是本函数第一次拿到 base 行、也就第一次
+  //   看得到 `base.sourceSystem` 的地方；在它之前只有 id 字符串，判不了源。
+  //   为什么用 `loadPlatformCatalog`（**不裁源**）解析基底：若先把未接入源的 L1 从基底面裁掉，
+  //   调用方只会拿到含混的 `L1_BASE_NOT_FOUND`（400）——而真相是「这条口径在，但它在别的源上」，
+  //   那是**403 + 可解释体**该说的话（`its_source` / `your_sources` 让调用方能自助判断）。
+  //   顺序上它还必须**先于** compileL2：拒绝要拒绝得早，不留半成品。
+  //
+  //   与裁剪的关系（spec：「只装一道都不够」）：裁剪让**读**看不见未接入源的指标（歧义消失），
+  //   本闸让**写**造不出基于未接入源的 L2（否则那条 L2 会在写入时看着成功、随后在读取侧
+  //   被裁掉——一次「成功的空操作」，最难查的那种）。
+  const adoptedSources = adoptedSourcesOf(c)
+  if (base.sourceSystem !== null && !adoptedSources.has(base.sourceSystem)) {
+    return c.json({
+      error: 'METRIC_SOURCE_NOT_ADOPTED',
+      its_source: base.sourceSystem,       // 这条 L1 的源
+      your_sources: [...adoptedSources],   // 本租户已接入的源
+    }, 403)
+  }
+
   let compiled: { selectSql: string; title: string; groupBy: string }
   try {
     compiled = compileL2(base, decl as L2Declaration)
@@ -157,11 +190,19 @@ async function writeL2(
 export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/metrics', async (c) => {
     const requester = requesterOf(c)
-    // M3 守卫拒掉的请求者：词表对其「看不见」（约束 3）——空词表，不是报错
+    // M3 守卫拒掉的请求者：词表对其「看不见」（约束 3）——空词表，不是报错。
+    //
+    // ⚠️ 这条分支**只有 `identity.orgId === ''`（宿主门卫放行之后）才够得着**。
+    //    「无身份」根本不进本模块：**401 是宿主门卫给的**（`declaredScopeGate`，
+    //    packages/platform-sdk/src/module.ts 里 `if (!identity) return 401 UNAUTHENTICATED`），
+    //    本模块**没有**任何鉴权代码（manifest 的 api.internal 由宿主施加）。
+    //    这不是模块自己判的，是门卫判的——spec §3⑧ 记的那条 fail-open（「无身份」与
+    //    「没接入任何源」都回空列表 ⇒ agent 把"没认证"误读成"词表坏了"）正是靠这条 401 修的。
+    //    断言在 metrics.test.ts（两条分开钉：门卫在 ⇒ 401；放行但 org 空 ⇒ 空列表）。
     if (requester === null) return c.json({ metrics: [] })
-    // 消费面词表 = L1（平台）∪ L2（本 org）
+    // 消费面词表 = L1（平台）∪ L2（本 org），再按 **scope + 已接入源** 裁（计划 5 §3⑧）
     const all = await loadMergedCatalog(ctx.pool, orgOf(c))
-    return c.json({ metrics: visibleMetrics(all, requester).map(publicView) })
+    return c.json({ metrics: visibleMetrics(all, requester, adoptedSourcesOf(c)).map(publicView) })
   })
 
   r.get('/metrics/all', async (c) => {
