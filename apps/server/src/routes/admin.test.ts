@@ -482,13 +482,16 @@ describe('admin 路由：租户已接入源（platform.tenant_source）', () => 
   /** 有状态替身（**仅本组**用）：既有 `fakePool` 恒回 `rows: []`，撑不起「PUT 后 GET 回读」那两条
    *  断言。这里按本组实现**发出的语句形状**维护一张极小内存表 —— 只为让回读断言可测。
    *  实现真正发出的 SQL 形状另有 params 断言独立钉住（见下「整体替换不删行」那条），不靠本替身兜底。
-   *  `connect()` 是给「两句同事务」用的：真实现走 pool.connect() + begin/commit（见 admin.ts），
-   *  替身把同一套 query 交给一个假 client —— 事务边界本身由真 PG 组（见文件末尾）负责证明。 */
+   *
+   *  `via` 标明语句**跑在哪条连接**上（'pool' = `deps.pool.query`，'client' = `pool.connect()` 拿到的事务
+   *  连接）。没有它时事务断言有强度上限：`pool.query` 与 `client.query` 共用一本台账 ⇒ 把实现改回
+   *  `deps.pool.query`（丢掉事务）依旧放行。有了 via，那种改法立刻被「写语句必须走 client」抓住。
+   *  事务边界**本身**（begin/commit 真起效、失败真回滚）仍由真 PG 组负责证明，替身只证「走了哪条连接」。 */
   function sourcePool() {
     const enabled = new Map<string, boolean>()
-    const audits: Array<{ sql: string; params: unknown[] }> = []
-    const query = async (sql: string, params?: unknown[]) => {
-      audits.push({ sql, params: params ?? [] })
+    const audits: Array<{ via: 'pool' | 'client'; sql: string; params: unknown[] }> = []
+    const makeQuery = (via: 'pool' | 'client') => async (sql: string, params?: unknown[]) => {
+      audits.push({ via, sql, params: params ?? [] })
       if (/insert into platform[.]tenant_source/i.test(sql)) {
         for (const s of (params?.[1] ?? []) as string[]) enabled.set(s, true)
         return { rows: [] }
@@ -507,8 +510,8 @@ describe('admin 路由：租户已接入源（platform.tenant_source）', () => 
       }
       return { rows: [] }
     }
-    const client = { query, release() {} }
-    const pool = { query, connect: async () => client } as unknown as Pool
+    const client = { query: makeQuery('client'), release() {} }
+    const pool = { query: makeQuery('pool'), connect: async () => client } as unknown as Pool
     return { pool, audits, enabled }
   }
 
@@ -592,22 +595,32 @@ describe('admin 路由：租户已接入源（platform.tenant_source）', () => 
     expect(audit?.params[3]).toEqual({ sources: ['lemeng', 'woke'] })
   })
 
-  it('两句同事务：begin → 两句 → commit，且 commit 之后才写审计', async () => {
+  it('两句同事务：begin → 两句 → commit，两句都跑在事务连接上，且 commit 之后才写审计', async () => {
     const sp = sourcePool()
     const app = mount(deps({ pool: sp.pool }), { scopes: ['tenant:admin'] })
     await app.request(sourcesPath, { method: 'PUT', headers: withCsrf, body: JSON.stringify({ sources: ['lemeng'] }) })
+
+    const isWrite = (sql: string) =>
+      /insert into platform[.]tenant_source/i.test(sql) || /set enabled = false/i.test(sql)
     const seq = sp.audits.map((q) => q.sql.trim().toLowerCase())
     expect(seq.indexOf('begin')).toBe(0)
     expect(seq.indexOf('commit')).toBeGreaterThan(seq.indexOf('begin'))
-    // 两句都在 begin 与 commit 之间
+
+    // ① 两句都在 begin 与 commit **之间**
     const begin = seq.indexOf('begin')
     const commit = seq.indexOf('commit')
-    for (const sql of seq) {
-      if (/insert into platform[.]tenant_source/i.test(sql) || /set enabled = false/i.test(sql)) {
-        expect(seq.indexOf(sql)).toBeGreaterThan(begin)
-        expect(seq.indexOf(sql)).toBeLessThan(commit)
-      }
+    for (const [i, q] of sp.audits.entries()) {
+      if (!isWrite(q.sql)) continue
+      expect(i).toBeGreaterThan(begin)
+      expect(i).toBeLessThan(commit)
     }
+    // ② 两句都跑在**事务连接**上（不是直接打在 pool 上）—— 这一条才真正把「包了事务」钉住：
+    //    否则把实现改回 deps.pool.query（事务丢掉）也照样通过上面 ① 的次序断言。
+    expect(sp.audits.filter((q) => isWrite(q.sql)).map((q) => q.via)).toEqual(['client', 'client'])
+    expect(sp.audits.filter((q) => isWrite(q.sql) && q.via === 'pool')).toEqual([])
+    // ③ 审计在 commit 之后（先落库、再记账，与本文件其他写端点同款口径）
+    const auditAt = sp.audits.findIndex((q) => /insert into platform[.]audit/i.test(q.sql))
+    expect(auditAt).toBeGreaterThan(commit)
   })
 })
 

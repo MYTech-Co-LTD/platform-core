@@ -141,6 +141,16 @@ export function tenantSourceUpsert(tenantId, sources) {
   return { text: SOURCES_UPSERT_SQL, values: [tenantId, sources] }
 }
 
+/** `--source` 可重复；返回**去重且保序**的清单（先出现者在前）。
+ *  为什么必须去重：同一键在同一条 upsert（`unnest` 展开）里出现两次，Postgres 报
+ *  21000 `ON CONFLICT DO UPDATE command cannot affect row a second time` ⇒ **CLI 直接崩**。
+ *  重复项本身不是错误（与路由侧同口径：启用集是集合语义），故去重放行、不报错。
+ *  取法沿用 `--module` 的 flatMap（末尾裸 `--source` 取到 undefined ⇒ filter 掉）。 */
+export function parseSources(args) {
+  const raw = args.flatMap((a, i) => (a === '--source' ? [args[i + 1]] : [])).filter(Boolean)
+  return [...new Set(raw)] // Set 保插入序 ⇒ 去重不改变先出现者优先
+}
+
 /** 权限扇出清单 = 内置码在前 + 模块码（spec-3 §2.1：开通即可挂 tenant:admin，不等宿主重启） */
 export function provisionPerms(modulePerms, builtin = []) {
   return [...builtin, ...modulePerms]
@@ -152,7 +162,7 @@ async function main() {
   const slug = allTenants ? undefined : args[0]
   const org = (() => { const i = args.indexOf('--org'); return i > 0 ? args[i + 1] : (slug ? `${slug}-org` : '') })()
   const modules = args.flatMap((a, i) => (a === '--module' ? [args[i + 1]] : []))
-  const sources = args.flatMap((a, i) => (a === '--source' ? [args[i + 1]] : [])).filter(Boolean)
+  const sources = parseSources(args) // 去重在解析处（同一键重复会让写库 upsert 撞 21000，见该函数）
   const productName = (() => { const i = args.indexOf('--product-name'); return i > 0 ? args[i + 1] : undefined })()
   const loginMethodsRaw = (() => { const i = args.indexOf('--login-methods'); return i > 0 ? args[i + 1] : undefined })()
   const loginMethods = parseLoginMethods(loginMethodsRaw) // 入口拦：坏值在任何 IO（Casdoor/DB）之前退出

@@ -34,7 +34,12 @@ export type SqlExecutor = Pick<Pool | PoolClient, 'query'>
  *
  * ⚠️ `sources` 必须是**去重后**的：同一键在同一条 `insert ... on conflict do update` 里出现两次，
  * Postgres 直接报 `ON CONFLICT DO UPDATE command cannot affect row a second time`（21000）
- * ⇒ 客户端可控的 500。去重收在路由的 zod 层（唯一入口），此处不再兜底（见 admin.ts 的 SourcesBody）。
+ * —— 在路由上是**客户端可控的 500**，在 CLI 上是**开通命令直接崩**。
+ *
+ * 去重**收在各调用方**，SQL 层不兜底（本模块不替调用方猜语义，也不静默改它的输入）：
+ *   · 路由：`admin.ts` 的 `SourcesBody`（zod 层的 `transform`，去重放行 —— 启用集是集合语义）；
+ *   · CLI：`scripts/provision-tenant.mjs` 的 `parseSources`（参数解析处去重）。
+ * ⇒ **本模块新增调用方时，去重是调用方的责任**，别假定这里会帮你挡掉。
  *
  * 事务由**调用方**就地开（照 migrate.ts:200-220 / seed.ts:93-100 的既有形状：connect → begin →
  * commit，失败 `rollback().catch(()=>{})` 后原样抛，finally release）—— 本仓没有 withTx 之类

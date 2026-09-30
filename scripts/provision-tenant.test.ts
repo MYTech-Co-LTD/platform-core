@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  maskWechatOaAppId, maskWecomCorpId, parseLoginMethods, parseWechatOaArgs, parseWecomArgs,
+  maskWechatOaAppId, maskWecomCorpId, parseLoginMethods, parseSources, parseWechatOaArgs, parseWecomArgs,
   planAllTenantGrants, provisionPerms, tenantProvisionSteps, tenantRowUpsert, tenantSourceUpsert,
 } from './provision-tenant.mjs'
 
@@ -167,6 +167,20 @@ describe('tenantRowUpsert（纯核：给了才写那两列 = 幂等重跑不误�
     })
     expect(text).toContain('wechat_oa_app_id, wechat_oa_secret, wecom_corp_id, wecom_secret')
     expect(values).toEqual(['acme', 'o1', 'acme', ['password'], 'wx123', 'app-secret-9', 'ww10086', 'corp-secret-9'])
+  })
+})
+
+describe('parseSources（--source 可重复；去重防撞键）', () => {
+  it('重复的 --source 去重且不抛（同一键进同一条 upsert ⇒ 21000 把 CLI 打挂）', () => {
+    expect(parseSources(['acme', '--source', 'lemeng', '--source', 'lemeng'])).toEqual(['lemeng'])
+    expect(parseSources(['--source', 'woke', '--source', 'lemeng', '--source', 'woke'])).toEqual(['woke', 'lemeng'])
+  })
+  it('去重保序（先出现者在前，不重排）', () => {
+    expect(parseSources(['--source', 'b', '--source', 'a', '--source', 'b'])).toEqual(['b', 'a'])
+  })
+  it('没有 --source ⇒ 空清单；末尾裸 --source（取值 undefined）⇒ 丢弃不进清单', () => {
+    expect(parseSources(['acme', '--module', 'demo'])).toEqual([])
+    expect(parseSources(['acme', '--source'])).toEqual([])
   })
 })
 
