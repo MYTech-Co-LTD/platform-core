@@ -68,6 +68,32 @@ L1 **不是跨源通用语义**，是**逐源**的标准口径 ⇒ 词表行的�
 `MetricRow.sourceSystem`）：**L1 行** = 声明的 `source`（如 `lemeng`），**L2 行 = `null`**（本租户
 自己写的，没有源维度）。「某租户接了哪些源」这条事实由宿主投影（`platform.tenant_source` 里
 `enabled=true` 的集合 → context 键 `TENANT_SOURCES`；模块 manifest 声明 `tenantSources: true`）。
+投影的契约（含「模块靠自身中间件授权会读到 `undefined`」那条边界）在 `docs/module-protocol.md`
+的「租户级源投影」节，**本文不复述**。
+
+**三个都叫「source」的东西，别混**（认错一个就静默错位）：
+
+| 名字 | 在哪 | 含义 | 必填 / 门禁 |
+|---|---|---|---|
+| `source` | `dbt/semantics/l1_metrics.yml`（**逐 metric、单值**） | **源系统**（如 `lemeng`）——这条口径的数据来自哪个源 | **必填**、静态门禁校验、**落库**、参与裁剪与写入闸 |
+| `sources` | 同上（**逐 metric、列表**） | 该指标背后**实际读的对象存储路径** | **选填**、**人读**、不落库、**无门禁** |
+| `source` | **`data.metrics` 的列** | `'l1'` / `'l2'`（这行是平台物化还是租户派生） | DB 列，与上面两个**不是一回事** |
+
+⇒ 源维度的库列名是 **`source_system`**——**不叫** `source`，那个名字已被 `l1`/`l2` 占用。
+
+**命名 `<源>:<业务域>:<指标>`**（三段式，如 `lemeng:retail:net_sales`）：`(org, id)` 主键下，
+**带源段**才能让**第二个源**用同一个业务概念名声明而不撞键（spec §3⑧ 实测：`retail:net_sales`
+在第二源上直接 `duplicate key`）。三段都小写蛇形；正则的**唯一事实源**是
+`scripts/check-data-models.mjs` 的 `METRIC_NAME_RE`（`scripts/sync-data-semantics.mjs` 另有一份
+逐字相同的兜底），对账文件名由 `metricToAuditFileName()` 的 `:`→`__` 映射派生。
+
+- **源登记 ↔ 契约 `domain` 只约定「同名」**：登记值（`platform.tenant_source.source`）与被引用契约
+  的 `domain`（如 `domain: lemeng`）要求**逐字同名**，但**本计划不做自动映射/校验**——契约 `domain`
+  与指标命名空间的**业务域段**（`retail`）**本来就不是一回事、全仓无映射**（spec §7 待办 6 实测）。
+- **改名的数据侧影响**（Task 4 实测口径）：**既有 L2 行的 SQL 不动**——L2 落库的是**编译后的**
+  `select_sql`，`data.metrics` **没有 `base_metric` 列** ⇒ 旧 L2 照跑；**只有** `description`
+  文本里的「L2 派生自 <旧 id>」会陈旧（描述性文字，无功能面）。而 **MCP 工具名 = 指标 id**
+  （`routes/mcp.ts`）⇒ 改名**对外可见**，属**预期**（agent 通路尚未上线，正是待办 7 的时机）。
 
 - **裁剪**收口在**唯一**一处：`domain/authz.ts` 的 `visibleMetrics(catalog, requester, adoptedSources)`
   （第三参必填）。规则：`sourceSystem === null || adoptedSources.has(sourceSystem)` 与 scope 判定**同时**成立才可见
@@ -75,16 +101,23 @@ L1 **不是跨源通用语义**，是**逐源**的标准口径 ⇒ 词表行的�
   `tools/list`、chat 的 `list_metrics`、`query_metric` 的解析路径）**都**经它；`tenantSources`
   的投影由**路由层**读（域层没有 Hono context，经 deps 穿下去）。
   机器判据：`catalog-consumers.test.ts`（四条面的行为断言 + 来源守卫）。
+- ⚠️ **管理面例外**：`GET /metrics/all`（`data:manage`）**绕开裁剪**（直用 `loadMergedCatalog`，
+  **不调** `visibleMetrics`）⇒ 持 manage 者会看到**未接入源**的 L1 行。这是**有意**的（管理面
+  要能看全；写入闸 403 的回包也把 `its_source` 给了 manage 者）——别把「四消费方都经
+  `visibleMetrics`」误读成「所有读面都被裁」。
 - **写入闸**在 `routes/metrics.ts` 的 `writeL2`（`resolveL1Base` 之后）：用未接入源的 L1 当
   `baseMetric` ⇒ **403** `{ error: 'METRIC_SOURCE_NOT_ADOPTED', its_source, your_sources }`
   （`its_source` = 那条 L1 的源；`your_sources` = 本租户已接入的源）。只裁剪不装闸，则
   那条 L2 会**写入时看着成功、读取时被裁掉**——一次「成功的空操作」。
+- **「未接入源」与「scope 不够」在通道上不区分**（人裁 2026-09-30）：`POST /query`（及 MCP
+  `tools/call`、agent 通路）两种**都回 `metric_not_declared`**，理由 = **不泄漏存在性**——
+  给出两种 reason 就把回包变成一条「这个指标存在、但你看不到」的探针。⇒ **别**从 `/query` 的
+  reason 反推是哪一种。`authorize` 自身的 `metric_not_authorized` 分支仍在（`authz.test.ts`
+  的 C2 钉着），但四条消费面都在它**之前**先按「scope + 源」裁掉 ⇒ **够不着**它。
 - ⚠️ **无身份的 `GET /metrics` 是宿主门卫给的 401**（`declaredScopeGate` 的
   `UNAUTHENTICATED`，`packages/platform-sdk`），**不是模块判的**——本模块没有鉴权代码。
   模块内「空词表」那条分支只有 `identity.orgId === ''`（门卫放行之后）才够得着。
   这是 spec §3⑧ 记的那条 fail-open 的修法：**无身份 ≠ 没接入任何源**，前者必须 401。
-- ⚠️ 与 `dbt/semantics/l1_metrics.yml` 的 `sources`（**对象存储路径列表**）**语义不同，别混**：
-  那个是人读的路径提示，这个才是源维度。
 
 ### agent 接入面：**预留，本轮不实现**（拍板 #5）
 
@@ -107,7 +140,10 @@ L2 定义 API **就是**将来的 agent 接入面，而且已经具备接入所�
    管本 org 的 L2；`org='platform'` 的 l2 行（全租户可见的平台级派生）**暂不开口**（fail-closed）。
    ⚠️ **不许**拿 `tenant:admin` 兼作平台门：那会给租户引入跨租户写能力。
 3. **`tier` / `owner` / `sources` 不落库**：`data.metrics` 没有对应列。它们仍是治理面的事实源
-   （在 dbt YAML 里、被静态门禁规则 ⑤ 强制必填），只是不在这张表上体现。
+   （在 dbt YAML 里），只是不在这张表上体现。⚠️ 三者的门禁强度**不同**：`tier` / `owner` 被静态
+   门禁规则 ⑤ **强制必填**（`REQUIRED_METRIC_FIELDS`），而 **`sources` 是选填**（人读的对象存储
+   路径，无门禁，见上「三个都叫 source 的东西」表）。⚠️ 与源维度**落库**的那个 `source`（单值，
+   → 列 `source_system`）不是一回事。
 4. ~~**L1 物化的行在真库上还跑不通**：`dbt/models/**` 当前**没有 `org` 列**，而 `authz.authorize`
    恒拼 `WHERE <主体列> = '<org>'` ⇒ 这些 L1 指标的查询要等 marts 补上 org 列
    （`dbt/README.md` §10 与 `macros/generate_schema_name.sql` 头注把「marts 行里的 org 列」
