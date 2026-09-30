@@ -50,9 +50,10 @@ const MESSAGES: Record<string, string> = {
   METABASE_UNCONFIGURED: '本站未接报表服务（未配置 Metabase）',
   METABASE_ERROR: '报表服务暂时不可用，请稍后重试',
   TENANT_PARAM_RESERVED: 'tenant 参数由平台保留，不能自定义',
-  // renderer='platform' 的行**没有** Metabase 嵌入通道（#150：平台自绘报表的渲染通路未接）。
-  // 列表里的「打开」已对该类行置灰，这条是**防御性**文案——只有「加载后该行才变成 platform」
-  // 这种陈旧视图/竞态才会点到；服务端守卫见 `GET /reports/:id/embed-url`（409 同码）。
+  // renderer='platform' 的行**没有** Metabase 嵌入通道（#150/#391：platform 行的「打开」自
+  // 2026-09-30 Task 4 起改走平台自绘渲染器 SpecView，**不**调 embed-url——见报表页接线用例）。
+  // 这条因此是**防御性**文案——只有「加载后该行才变成 platform」这种陈旧视图/竞态才会点到；
+  // 服务端守卫见 `GET /reports/:id/embed-url`（409 同码）。
   RENDERER_NOT_EMBEDDABLE: '平台自绘报表没有嵌入预览通道',
   // 编辑入口（#346 计划 3）。与上面那条**同构**：列表里 platform 行的「编辑」已不渲染
   // （逐行按 renderer 判），这条是**防御性**文案——只有陈旧视图/竞态才会点到；

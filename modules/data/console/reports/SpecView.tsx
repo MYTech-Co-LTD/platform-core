@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Alert, Button, Card, Col, Row, Spin, Table, Typography } from 'antd'
 import { init, use } from 'echarts/core'
-import type { EChartsCoreOption } from 'echarts/core'
+import type { EChartsCoreOption, EChartsType } from 'echarts/core'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -28,11 +28,18 @@ import type { ReportSpec } from '../../domain/report-spec'
 
 type Panel = ReportSpec['panels'][number]
 
-// echarts 按需注册（最小集：折线/柱状 + 网格/提示/图例 + canvas 渲染器）。
-// ⚠️ 不 `import * as echarts`：全量包体积数倍于此，按需模块导入让 bundler 只留用到的
-//    chart/component/renderer（chunk 尺寸由 `pnpm --filter web build` 验收）。
-// `chart === 'table'` 不进 echarts——antd Table 直渲染（见 PanelBody）。
-use([LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
+/**
+ * echarts 按需注册清单（最小集：折线/柱状 + 网格/提示/图例 + canvas 渲染器）。
+ * ⚠️ 不 `import * as echarts`：全量包体积数倍于此，按需模块导入让 bundler 只留用到的
+ *    chart/component/renderer（chunk 尺寸由 `pnpm --filter web build` 验收）。
+ * **导出清单供机检断言**（评审 Minor ③，2026-09-30）：漏注册某 chart 时组件测试**照绿**
+ * （`use` 在测试里是桩，不真装配）——注册面必须有一条不依赖真渲染的闭环（见 SpecView.test.tsx）。
+ * `chart === 'table'` 不进 echarts——antd Table 直渲染（见 PanelBody）。
+ */
+export const ECHARTS_REGISTRY = [
+  LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer,
+]
+use(ECHARTS_REGISTRY)
 
 /** 一个面板的查询结局。denied 单列一类：它不是错误，是「这条口径对这个租户不可见」（spec：看不见）。 */
 type PanelResult =
@@ -66,8 +73,13 @@ function buildOption(panel: Panel, chart: 'line' | 'bar', result: Extract<PanelR
     if (!xLabels.includes(x)) xLabels.push(x)
     const seriesKey = seriesDims.map((d) => String(row[cols.indexOf(d)])).join('/')
     if (seriesDims.length > 0 && !seriesKeys.includes(seriesKey)) seriesKeys.push(seriesKey)
-    const num = Number(row[valueIdx])
-    if (!Number.isFinite(num)) continue // 非数值/空行画不了（table 路径不受影响，原始值仍可见）
+    // ⚠️ 先判 null/undefined 再 Number()（评审 Minor ②，2026-09-30）：`Number(null) === 0` 且
+    //    finite ⇒ 裸 Number() 会把「这天没数」洗成 0 画出去（撒谎的折线）。这里跳过 ⇒ 格子
+    //    落空 ⇒ series data 里是 `null`，echarts 默认**断线**（connectNulls 不开）——正确语义。
+    const raw = row[valueIdx]
+    if (raw === null || raw === undefined) continue
+    const num = Number(raw)
+    if (!Number.isFinite(num)) continue // 非数值行画不了（table 路径不受影响，原始值仍可见）
     const key = `${x}\u0000${seriesKey}`
     cells.set(key, (cells.get(key) ?? 0) + num)
   }
@@ -90,19 +102,31 @@ function buildOption(panel: Panel, chart: 'line' | 'bar', result: Extract<PanelR
   }
 }
 
-/** echarts 挂载点：容器 overflow:hidden + 固定高度（spec §5 实测坑 2 的容器半边）。 */
+/**
+ * echarts 挂载点：容器 overflow:hidden + 固定高度（spec §5 实测坑 2 的容器半边）。
+ *
+ * effect 拆两个（评审 Minor ①，2026-09-30）：**init 只在挂载时做一次**（卸载才 dispose），
+ * option 变化只走 setOption。若合成一个以 `[option]` 为依赖的 effect，option 是每次父级
+ * 渲染的新对象 ⇒ **任一**兄弟面板结果到达都会把已挂图表全部 dispose+init 重来（首图最多
+ * N−1 次重挂）。两个 effect 的声明顺序保证挂载时先 init 后 setOption。
+ */
 function EChart({ option }: { option: EChartsCoreOption }) {
   const ref = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<EChartsType | null>(null)
   useEffect(() => {
     if (ref.current === null) return
     const chart = init(ref.current)
-    chart.setOption(option)
+    chartRef.current = chart
     const onResize = () => chart.resize()
     window.addEventListener('resize', onResize)
     return () => {
       window.removeEventListener('resize', onResize)
       chart.dispose()
+      chartRef.current = null
     }
+  }, [])
+  useEffect(() => {
+    chartRef.current?.setOption(option)
   }, [option])
   return <div ref={ref} style={{ width: '100%', height: 280, overflow: 'hidden' }} />
 }

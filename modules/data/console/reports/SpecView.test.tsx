@@ -27,11 +27,15 @@ vi.mock('echarts/charts', () => ({ LineChart: {}, BarChart: {} }))
 vi.mock('echarts/components', () => ({ GridComponent: {}, TooltipComponent: {}, LegendComponent: {} }))
 vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 import { platformFetch } from '@platform/sdk/web'
-import { init } from 'echarts/core'
-import SpecView from './SpecView'
+import { init, use } from 'echarts/core'
+import { BarChart, LineChart } from 'echarts/charts'
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+import SpecView, { ECHARTS_REGISTRY } from './SpecView'
 
 const m = vi.mocked(platformFetch)
 const mInit = vi.mocked(init)
+const mUse = vi.mocked(use)
 const calls: { url: string; init?: RequestInit }[] = []
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
@@ -190,5 +194,80 @@ describe('自绘渲染器 SpecView', () => {
     expect(await screen.findByText('自绘大盘')).toBeInTheDocument()
     fireEvent.click(button('关闭'))
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('★ 图表 init 收口：每图恰一次（兄弟面板结果先后到达不重建已挂画布）——评审 Minor ①', async () => {
+    // 两块 line 面板，慢面板的 /query 被卡住不回：快面板先挂 ⇒ init=1；慢面板到达触发**父级
+    // 重渲染** ⇒ 旧实现（effect 依赖每次渲染都是新对象的 option）会把快面板 dispose+init 重来
+    // （init 变 3）——修法后每图只在挂载时 init 一次，总数恒等于面板数。
+    let releaseSlow: (() => void) | null = null
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (/\/reports\/[^/]+\/spec$/.test(url)) {
+        return json({
+          spec: {
+            panels: [
+              { chart: 'line', title: '快面板', metricId: 'm1', dims: ['bizday'], args: {}, span: 12 },
+              { chart: 'line', title: '慢面板', metricId: 'm2', dims: ['bizday'], args: {}, span: 12 },
+            ],
+          },
+          version: 7,
+        })
+      }
+      if (url.endsWith('/query')) {
+        const body = JSON.parse(String(init?.body)) as { metricId: string }
+        const rows = body.metricId === 'm1' ? [['2026-09-01', 1]] : [['2026-09-01', 2]]
+        if (body.metricId === 'm2') await new Promise<void>((r) => { releaseSlow = r })
+        return json({ status: 'ok', truncated: false, columns: ['bizday', 'value'], rows })
+      }
+      return json({})
+    })
+    renderView()
+    // 快面板数据到达并挂图 ⇒ 恰 1 次 init（慢面板还卡着，不可能更多）
+    await waitFor(() => expect(mInit).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(releaseSlow).not.toBeNull())
+    releaseSlow!()
+    // 慢面板到达 ⇒ 第二块首挂 ⇒ 总数恰 2（不是「快面板重建 + 慢面板首挂」的 3）
+    await waitFor(() => expect(mInit).toHaveBeenCalledTimes(2))
+    // 稳态复核：再等一拍仍是 2（防「断言时第 3 次还没轮到」的早断言假绿）
+    await new Promise((r) => setTimeout(r, 50))
+    expect(mInit).toHaveBeenCalledTimes(2)
+  })
+
+  it('★ 空度量值保留 null（断线，不画成 0）——评审 Minor ②', async () => {
+    // Number(null) === 0 且 finite ⇒ 裸 Number() 会把「无值」洗成 0 画出去（撒谎的折线）。
+    // null 在 echarts 里默认断线（connectNulls 不开），正是「这天没数」的正确语义。
+    stub({
+      panels: [{ chart: 'line', title: '断线面板', metricId: 'm1', dims: ['bizday'], args: {}, span: 12 }],
+    }, {
+      m1: { columns: ['value', 'bizday'], rows: [[100, '2026-09-01'], [null, '2026-09-02']] },
+    }, new Set())
+    renderView()
+    await waitFor(() => expect(mInit).toHaveBeenCalled())
+    const chartStub = mInit.mock.results[0].value as unknown as { setOption: ReturnType<typeof vi.fn> }
+    const option = chartStub.setOption.mock.calls[0][0] as { series: Array<{ data: Array<number | null> }> }
+    expect(option.series[0].data).toEqual([100, null])
+  })
+
+  it('★ bar 面板走 BarChart 分支（series type=bar）+ use 注册清单机检——评审 Minor ③', async () => {
+    // 注册面闭环：漏注册 BarChart 时组件测试照绿（use 是桩，不真装配）、真机才炸——
+    // 这里对**导出的注册清单**做恒等断言（测试与实现 import 同一 mock 模块 ⇒ 同一对象引用）。
+    for (const item of [LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]) {
+      expect(ECHARTS_REGISTRY).toContain(item)
+    }
+    // 闭环的另一半（评审 Minor ③ 原话「一行 `expect(use).toHaveBeenCalledWith([...])` 可闭环」）：
+    // 清单必须**真的**被交给 `use()`——只断言常量的话，把调用点改成 `use([LineChart])` 仍照绿，
+    // 而真机上 bar 面板会因组件未注册直接空白。两条合起来才叫「注册面有机检」。
+    expect(mUse).toHaveBeenCalledWith(ECHARTS_REGISTRY)
+    stub({
+      panels: [{ chart: 'bar', title: '柱状面板', metricId: 'm1', dims: ['bizday'], args: {}, span: 12 }],
+    }, {
+      m1: { columns: ['value', 'bizday'], rows: [[80, '2026-09-01']] },
+    }, new Set())
+    renderView()
+    await waitFor(() => expect(mInit).toHaveBeenCalled())
+    const chartStub = mInit.mock.results[0].value as unknown as { setOption: ReturnType<typeof vi.fn> }
+    const option = chartStub.setOption.mock.calls[0][0] as { series: Array<{ name: string; type: string }> }
+    expect(option.series).toEqual([{ name: '', type: 'bar', data: [80] }])
   })
 })

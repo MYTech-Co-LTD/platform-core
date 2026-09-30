@@ -215,8 +215,10 @@ describe('报表页签双视图', () => {
     // ⚠️ 订正记录（2026-09-29，Task 3 评审提出）：原稿这里桩的是 **PUT** 返回该码——**假通路**：
     // 全仓唯一产出 `RENDERER_NOT_EMBEDDABLE` 的是 `GET /reports/:id/embed-url`（Task 3 的守卫），
     // PUT 永远不会返它。改桩 embed-url，同时这也是**唯一**能走到该文案的路径：
-    // 列表里的 platform 行「打开」已置灰（前一条用例），只有「加载后该行才变成 platform」这种
-    // 陈旧视图/竞态才会点到——即该 MESSAGES 条目是**防御性**的，不是主路径。
+    // ⚠️ 再订正（2026-09-30，Task 4）：platform 行的「打开」已**不再置灰**，改走自绘视图
+    // （`<SpecView/>`，见前一条用例），压根不调 embed-url ⇒ 本条夹具（客户端当它是 metabase
+    // 行、服务端却答 409）正模拟「两边 renderer 不一致 / 视图陈旧」这一类竞态。即该 MESSAGES
+    // 条目是**防御性**的，不是主路径。
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
       if (url.endsWith('/reports/manage')) return json({ reports: [ROWS[0]] })   // 销售日报（metabase 行）
