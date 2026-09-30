@@ -53,7 +53,7 @@
 -- 门禁与真机（CTE 形态只满足门禁、真机报错 —— 那正是「静态绿 ≠ 跑得动」的形态）。
 --
 -- ════════════════════════════════════════════════════════════════════════════════════════
--- 【三】契约 18 列**全带**（一对一不许丢列）
+-- 【三】契约 **24 列**全带（一对一不许丢列；18→24 见 2026-09-30 Phase 2 与契约 v2）
 --    （另加 **dbt 注入列 `org`**：主体列，非契约列，见 dbt/macros/subject_org.sql）
 -- ════════════════════════════════════════════════════════════════════════════════════════
 -- `hour` 与 `order_operate_time` 也在内 —— 下游 marts 用不用是 marts 的事，③ 层没有资格替它裁。
@@ -80,7 +80,16 @@ select
   r['sale_money']           as sale_money,
   r['discount_money']       as discount_money,
   r['payment_money']        as payment_money,
-  r['quantity']             as quantity
+  r['quantity']             as quantity,
+  -- ── v2 新增 6 列（2026-09-30 Phase 2，#294/#328）：契约 v2 = 24 列；湖已于 2026-09-30
+  --    完成分批回填（#328：五批全 done、全湖均一为 24 列）⇒ 此处投影可安全加上。
+  --    类型照抄契约：varchar ×2 + decimal ×4（③ 层不改义，只透传并显式 cast 定型）。
+  r['order_transaction_type']::varchar      as order_transaction_type,
+  r['order_ref_billno']::varchar            as order_ref_billno,
+  r['order_detail_share_discount']::numeric as order_detail_share_discount,
+  r['order_detail_std_price']::numeric      as order_detail_std_price,
+  r['order_detail_price']::numeric          as order_detail_price,
+  r['order_detail_online_qty']::numeric     as order_detail_online_qty
 -- pg_duckdb 把 read_parquet 委托给 DuckDB 执行。裸扫描结果**不是 PG 关系、不进 pg_class**
 -- （spec §9.4 可见性坑）⇒ 它只出现在 staging 模型内部，物化落点由上面的 config + 项目缺省保证
 -- 是 PG 可见关系（gate 2）。
