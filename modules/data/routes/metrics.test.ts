@@ -34,28 +34,39 @@ function def(over: Partial<MetricDef> = {}): MetricDef {
 // 必须满足 select_sql 的**形状契约**（`select <表达式> as value[, <维度>] from <关系>`），
 // 否则 L2 编译点会抛 BAD_BASE_SQL —— 那正是它该做的（形状不合契约就不许当 base）。
 /**
+ * ⚠️ **L1 夹具 id 一律带本文件专用前缀 `t6test:`**（与 `catalog-consumers.test.ts` 的 `t8c:`、
+ * `metric-store.test.ts` 的 `t8test:` 同一手法，互不相同）。
+ *
+ * 为什么必须加前缀：平台桶（`data.metrics` 的 `org='platform'`）是**跨测试文件共用**的固定桶，
+ * 而清理只能按 id 删 —— 夹具 id 一旦与**真实声明**（`dbt/semantics/l1_metrics.yml` 的 `name`）同名，
+ * 本文件的 `afterAll` 就会删掉平台桶里那条**真行**。实测（2026-09-30，本文件曾用 `retail:net_sales`）：
+ * 跑完本文件后 `sync-data-semantics.mjs --check` 报「新增 1（retail:net_sales）」——真声明与库里的
+ * 物化行被一个测试的清理步骤打掉了。加了前缀之后，「测试跑完」与「库和声明分叉」不再有关系。
+ */
+const L1_ID_PREFIX = 't6test:'
+/**
  * L1 物化路径的入参 = `MetricDef` + **源系统**（源维度：L1 声明里 `source` 必填 ⇒ L1 行恒有源）。
  * 本文件的 L1 夹具都是 sync 的产物，故与声明同形（`lemeng` = 当前唯一已接入源）；
  * 不给源的 L1 行在 Task 5 的裁剪里会被判成「未接入源」而**没人看得见**——那是不该出现在夹具里的形状。
  */
 const l1Def = (over: Partial<MetricDef> = {}): L1MetricDef => ({ ...def(over), sourceSystem: 'lemeng' })
 const L1_SALES = l1Def({
-  id: 'retail:net_sales', title: '净销售额',
+  id: `${L1_ID_PREFIX}net_sales`, title: '净销售额',
   selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale',
   groupBy: 'system_book, bizday',
 })
 const L1_FINANCE = l1Def({
-  id: 'retail:margin', title: '毛利', requiredScope: 'data:finance',
+  id: `${L1_ID_PREFIX}margin`, title: '毛利', requiredScope: 'data:finance',
   selectSql: 'select sum(fct_retail_sale.margin) as value, system_book from fct_retail_sale',
   groupBy: 'system_book',
 })
 /** M-① 的撞 id 探针：**先**由租户建 L2、**后**由平台物化同 id（唯一能造出撞 id 的合法时序）。 */
-const L1_CLASH_PROBE = 'retail:clash_probe'
+const L1_CLASH_PROBE = `${L1_ID_PREFIX}clash_probe`
 
 /** 合法 L2 声明（各用例只覆盖自己关心的字段）。 */
 const l2Body = (over: Record<string, unknown> = {}) => ({
   id: 'l2_net_sales_xiongmao',
-  baseMetric: 'retail:net_sales',
+  baseMetric: L1_SALES.id,
   op: { kind: 'refine' },
   ...over,
 })
@@ -87,9 +98,11 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   afterAll(async () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
     await pool.query('delete from data.metrics where org = any($1::text[])', [[ORG, OTHER_ORG]]).catch(() => {})
-    // L1 桶跨文件共用 ⇒ 只删本文件放进去的两条（别 `where org='platform'`，会删掉并行兄弟的夹具）
-    await pool.query('delete from data.metrics where org = $1 and id = any($2::text[])',
-      [L1_ORG, [L1_SALES.id, L1_FINANCE.id, L1_CLASH_PROBE]]).catch(() => {})
+    // L1 桶跨文件共用 ⇒ 只删**本文件前缀**的那些（别 `where org='platform'`，会删掉并行兄弟的夹具）。
+    // 按前缀收口（而不是逐个列 id）是第二道保险：将来新增夹具却忘了登记 id，清理也不会越界——
+    // 而越界正是「测试删掉平台桶里的真声明行」那个缺陷的成因（见上面 L1_ID_PREFIX 的说明）。
+    await pool.query('delete from data.metrics where org = $1 and id like $2',
+      [L1_ORG, `${L1_ID_PREFIX}%`]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
@@ -99,11 +112,11 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     const ids = body.metrics.map((m: { id: string }) => m.id)
-    expect(ids).toContain('retail:net_sales')
-    expect(ids, 'data:finance 的 L1 指标对只有 data:query 的人可见了').not.toContain('retail:margin')
+    expect(ids).toContain(L1_SALES.id)
+    expect(ids, 'data:finance 的 L1 指标对只有 data:query 的人可见了').not.toContain(L1_FINANCE.id)
     // 消费面投影：严格三字段——selectSql/subjectColumn 属实现细节，不外泄
-    expect(body.metrics.find((m: { id: string }) => m.id === 'retail:net_sales'))
-      .toEqual({ id: 'retail:net_sales', title: '净销售额', description: def().description })
+    expect(body.metrics.find((m: { id: string }) => m.id === L1_SALES.id))
+      .toEqual({ id: L1_SALES.id, title: '净销售额', description: def().description })
   })
 
   it('GET /metrics 不掺别家 L2 行（跨租户串词表是禁止的）', async () => {
@@ -115,7 +128,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   it('GET /metrics/all（管理面）带 source：L1 标 l1、本租户标 l2（管理员据此知道哪行只读）', async () => {
     const body = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
     const byId = new Map(body.metrics.map((m: { id: string }) => [m.id, m]))
-    expect(byId.get('retail:net_sales')).toMatchObject({ source: 'l1', subjectColumn: 'org' })
+    expect(byId.get(L1_SALES.id)).toMatchObject({ source: 'l1', subjectColumn: 'org' })
     expect(byId.get('other_org_l2')).toBeUndefined()
   })
 
@@ -149,7 +162,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   })
 
   it('POST baseMetric 不在 L1 词表 ⇒ 400 L1_BASE_NOT_FOUND', async () => {
-    const res = await post(l2Body({ baseMetric: 'retail:not_declared' }))
+    const res = await post(l2Body({ baseMetric: `${L1_ID_PREFIX}not_declared` }))
     expect(res.status).toBe(400)
     expect((await res.json()).error).toBe('L1_BASE_NOT_FOUND')
   })
@@ -179,11 +192,11 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   })
 
   it('★ POST 用 L1 的 id ⇒ 409 ID_RESERVED_BY_L1（占下会静默无效：加载侧 L1 赢）', async () => {
-    const res = await post(l2Body({ id: 'retail:net_sales' }))
+    const res = await post(l2Body({ id: L1_SALES.id }))
     expect(res.status).toBe(409)
     expect((await res.json()).error).toBe('ID_RESERVED_BY_L1')
     // 且**没有**写进去任何东西（不留下一条加载侧永远看不见的僵尸 L2 行）
-    const raw = await pool.query('select count(*)::int as n from data.metrics where org = $1 and id = $2', [ORG, 'retail:net_sales'])
+    const raw = await pool.query('select count(*)::int as n from data.metrics where org = $1 and id = $2', [ORG, L1_SALES.id])
     expect(raw.rows[0].n).toBe(0)
   })
 
@@ -212,21 +225,21 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   })
 
   it('★ PUT / DELETE 打到 L1 的 id ⇒ 409 READONLY_L1（平台词表经 API 只读）', async () => {
-    const put = await app(ORG, ['data:manage']).request('/metrics/retail:net_sales', {
+    const put = await app(ORG, ['data:manage']).request(`/metrics/${L1_SALES.id}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(l2Body({ id: 'retail:net_sales' })),
+      body: JSON.stringify(l2Body({ id: L1_SALES.id })),
     })
     expect(put.status).toBe(409)
     expect((await put.json()).error).toBe('ID_RESERVED_BY_L1')
 
-    const del = await app(ORG, ['data:manage']).request('/metrics/retail:net_sales', { method: 'DELETE' })
+    const del = await app(ORG, ['data:manage']).request(`/metrics/${L1_SALES.id}`, { method: 'DELETE' })
     expect(del.status).toBe(409)
     expect((await del.json()).error).toBe('READONLY_L1')
 
     // L1 行安然无恙（没被改名也没被删）
     const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
-    expect(all.metrics.find((m: { id: string }) => m.id === 'retail:net_sales')).toMatchObject({
+    expect(all.metrics.find((m: { id: string }) => m.id === L1_SALES.id)).toMatchObject({
       title: '净销售额', source: 'l1',
     })
   })

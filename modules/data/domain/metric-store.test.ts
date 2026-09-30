@@ -19,7 +19,18 @@ const describePg = dbUrl ? describe : describe.skip
 /** 隔离键（text，值 = 该租户的 Casdoor org）——各测试文件用互不相同的 org，避免互相擦数据。 */
 const ORG = 'org-t3-metric'
 const OTHER_ORG = 'org-t3-metric-other'
-/** L1 行的 id 前缀：与真实 sync 物化的 id 区分开，避免测试与「真跑过一次 sync」互相干扰。 */
+/**
+ * L1 行的 id 前缀（本文件专用；`catalog-consumers.test.ts` 用 `t8c:`、`routes/metrics.test.ts` 用 `t6test:`）。
+ *
+ * ⚠️ **每一条写进平台桶（`org='platform'`）的夹具都必须带它**，且 `afterAll` 只按它清理——
+ * 两个方向都会出事，两个方向都是实测过的：
+ *   · 不带前缀、而 id 又恰好与**真实声明**（`dbt/semantics/l1_metrics.yml` 的 `name`）同名
+ *     ⇒ 清理会把平台桶里那条**真行**删掉（兄弟文件 `routes/metrics.test.ts` 曾用 `retail:net_sales`
+ *     当夹具 id，跑完测试后 `sync --check` 报「新增 1」就是这个成因）；
+ *   · 不带前缀的夹具行**不被清理** ⇒ 留在桶里，`sync --check` 把它读成「仓内声明里没有的行」
+ *     而报「删除 N」（本文件原先的 `source_probe` / `entry_l1` 就是这个成因）。
+ * 名字里的 `t8` 是历史（本文件随 T8 落地），关键是「与真实声明不可能同名」。
+ */
 const L1_ID_PREFIX = 't8test:'
 
 /** 词表形状照 domain/authz.ts 的 `MetricDef`（原型 CATALOG 同形）。 */
@@ -111,7 +122,9 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
   })
 
   it('★ upsert 不改 source：来源标注只由首次插入确定（写动作改不掉「谁写的」）', async () => {
-    const id = 'source_probe'
+    // ⚠️ id 带本文件前缀（理由见 L1_ID_PREFIX 的说明）：不带前缀的平台行**不被本文件清理**
+    // ⇒ 留在桶里被 sync 的 `--check` 当成「仓内声明里没有的行」报删除漂移。
+    const id = `${L1_ID_PREFIX}source_probe`
     // 先由**物化路径**落一行 l1（org = platform）
     await upsertL1Metric(pool, l1({ id, title: '平台口径' }))
     // 再由租户写路径覆盖同一 (org, id)：内容被覆盖，但 source 必须**留在** l1
@@ -169,10 +182,10 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
   })
 
   it('两个写入口各自钉死自己的 source（upsertMetric 写不出 l1、upsertL1Metric 只落 platform）', async () => {
-    await upsertL1Metric(pool, l1({ id: 'entry_l1' }))
+    await upsertL1Metric(pool, l1({ id: `${L1_ID_PREFIX}entry_l1` }))
     await put(ORG, def({ id: 'entry_l2' }))
 
-    expect((await pool.query('select org, source from data.metrics where id = $1', ['entry_l1'])).rows[0])
+    expect((await pool.query('select org, source from data.metrics where id = $1', [`${L1_ID_PREFIX}entry_l1`])).rows[0])
       .toMatchObject({ org: L1_ORG, source: 'l1' })
     expect((await pool.query('select org, source from data.metrics where id = $1', ['entry_l2'])).rows[0])
       .toMatchObject({ org: ORG, source: 'l2' })

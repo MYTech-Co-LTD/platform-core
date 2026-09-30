@@ -86,9 +86,17 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
 
   it('label 缺省回落到 name（title 不许是空串：管理面靠它认指标）', () => {
     const rows = declarationsFromYaml(yaml([
-      { name: 'x:y', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
+      { name: 'x:y', source: 'lemeng', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
     ]))
     expect(rows[0].title).toBe('x:y')
+  })
+
+  it('★ 声明缺 `source` ⇒ 抛（不许落字符串 "undefined"：源维度坏了，该指标对所有租户静默不可见）', () => {
+    // 为什么这条要 fail-closed：`String(undefined)` 是**非空**字符串 ⇒ 不拦的话行照落、sync 照报成功，
+    // 而消费侧的裁剪拿 `'undefined'` 去与「已接入源」比对 ⇒ 永远不匹配 ⇒ 指标查不出来且不报错。
+    expect(() => declarationsFromYaml(yaml([
+      { name: 'x:y', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
+    ]))).toThrow(/source/)
   })
 
   it('grain 为空数组 ⇒ 抛（grain 同时是 L2 的维度白名单来源，空 = 什么都不能裁）', () => {

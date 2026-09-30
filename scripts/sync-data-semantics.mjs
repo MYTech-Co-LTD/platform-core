@@ -192,6 +192,20 @@ export function declarationsFromYaml(parsed) {
     if (!Array.isArray(m.grain) || m.grain.length === 0) {
       throw new Error(`指标 \`${name}\` 的 grain 必须是非空数组（grain 同时是 L2 的维度白名单来源）`)
     }
+    // 源系统（源维度）**必填**——缺了就响亮失败，绝不落一个「看起来有值、实际是垃圾」的源。
+    // 为什么不能只靠 `String(m.source)` 的默认行为：缺字段时它产出**字符串** `'undefined'`，
+    // 于是行照样落库、sync 照样报成功，而消费侧的裁剪会拿这个值与「已接入源」比对 ⇒ 该指标
+    // 对**所有**租户静默不可见（没有任何租户接过名为 `undefined` 的源）——坏在数据里，不报错。
+    // ⚠️ 声明面的必填由门禁规则 ⑤ 把守（唯一事实源 = 仓内 YAML）**且**这里再拦一道：
+    //    本脚本会被手跑（不经 CI），事实源的位置将来也可能变——门禁是权威，这条是兜底。
+    const sourceSystem = String(m.source ?? '')
+    if (sourceSystem === '') {
+      throw new Error(
+        `指标 \`${name}\` 缺 \`source\`（源系统，如 \`lemeng\`）—— 它会被物化成 `
+        + '`data.metrics.source_system` 并被消费侧拿去与「已接入源」比对，缺了它指标就查不出来了'
+        + '（静默，不是报错）。请在声明里补 `source`（形状：小写蛇形）。',
+      )
+    }
     const grain = m.grain.map((/** @type {unknown} */ g) => String(g))
     const relation = deriveRelation(expression, name)
     return {
@@ -204,8 +218,8 @@ export function declarationsFromYaml(parsed) {
       groupBy: grain.join(', '),
       // L1 声明没有查询参数（params 是问数参数面的东西，L2 也暂不开放）
       params: /** @type {Record<string, MetricParamDef>} */ ({}),
-      // 源系统（源维度）：声明的 `source` 是必填字段（门禁规则 ⑤），故 L1 行恒有源。
-      sourceSystem: String(m.source),
+      // 源系统（源维度）：上面已拦掉缺字段的情形，故这里的取值恒是非空串。
+      sourceSystem,
     }
   })
 }
