@@ -149,6 +149,23 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
 **已知边界**：这条对账能保证「两边算的是同一件事」，**保证不了**「列的含义就是业务意义上的那个」——
 那要第三档（人工抽样）与 T6 的样本核对。
 
+### 7.1 对账判别式族（文件名带 `recon_` 段，**不挂指标**，2026-09-30 起）
+
+除「每指标一条」的第二档外，`dbt/tests/` 里还有一族**对账判别式的湖侧自洽断言**：判别式正典 =
+`docs/superpowers/specs/2026-09-30-recon-zeroing-self-attribution.md`（赠品/退货两个判别式 +
+归零公式），族内现有两条：
+
+- `audit_lemeng__retail__recon_gift_hit.sql` — 赠品判别式命中集：parquet 复算 vs staging 投影
+  （判别式依赖的 v2 列 cast 漂移能抓）+ 空转自检（全湖零命中 = 判别式失明）。
+- `audit_lemeng__retail__recon_return_attribution.sql` — 退货归属完备性：退货行集两侧一致、
+  FULL/PARTIAL 缺 ref 硬闸、FINISHED 行 txn 为空、NO_ORDER_RETURN 带 ref 矛盾、
+  ref 归属 bizday 歧义、空转自检。
+
+它们与指标 audit 的关系：门禁规则 ⑦ 是**单向**的（每个声明指标必须有对账文件）——这族文件
+**不对应任何 `l1_metrics.yml` 指标**（判别式未转正、无 marts 落点，对账面到 staging 为止），
+文件头注都标了「★ 本文件不挂指标」。验证与边界见
+`docs/superpowers/specs/2026-09-30-audit-gift-return-assertions.md`。
+
 ## 8 实证 vs 暂定（**别把暂定当已定**）
 
 | 项 | 状态 | 依据 / 待办 |

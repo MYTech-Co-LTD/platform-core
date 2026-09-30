@@ -1,5 +1,5 @@
-sha256-of-rest 76ddc8db91d0e3418ef88afd05d3e1da1a32920d24d352d297d70dcfeabe865c
-9f238b5a8e1441cfa6863e23afc65c88136792b660afa68135f176404f828eff dbt/README.md ${REPO}/dbt/README.md 0644
+sha256-of-rest 860b916989f324ad1dc990db834934b799135ff9e4a0ab6b51c9e0711499c4b2
+6254af57cc4a739426d735fc6304d518d4706cbed4e0488a48b6b928b12b933a dbt/README.md ${REPO}/dbt/README.md 0644
 dedddd922494d878ea2930b841067caaa8eba5360374e8304154eaed44a93f63 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
 d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subject_org.sql ${REPO}/dbt/macros/subject_org.sql 0644
@@ -21,6 +21,8 @@ fe8339e0c38c1f17ca75be63fefd86718cbccdb0c68a9d70697473ddecbb356d dbt/tests/asser
 61417386685c4a9e527f0dac3b53c799c9ead100f97d4b1077e2f6ed1f19e130 dbt/tests/assert_stg_lemeng_retail_order_line_key_unique.sql ${REPO}/dbt/tests/assert_stg_lemeng_retail_order_line_key_unique.sql 0644
 fd91e6128760b284636108804e5e24137b6dc255be3ede2aaf8e4efb14b6395f dbt/tests/audit_lemeng__retail__net_sales.sql ${REPO}/dbt/tests/audit_lemeng__retail__net_sales.sql 0644
 069890e1d0059e25d9df6e2fc1adcf793c824e370db84fed916fbb95f87a9a3c dbt/tests/audit_lemeng__retail__order_count.sql ${REPO}/dbt/tests/audit_lemeng__retail__order_count.sql 0644
+88a0c6c5625ffa3d7e083fa070ad5356111e7fa88395856822133a8e88b43b35 dbt/tests/audit_lemeng__retail__recon_gift_hit.sql ${REPO}/dbt/tests/audit_lemeng__retail__recon_gift_hit.sql 0644
+aa0311a075513c01eb80b57f9e1cab0fc50ff2d574a1d7f423d17aae3e577309 dbt/tests/audit_lemeng__retail__recon_return_attribution.sql ${REPO}/dbt/tests/audit_lemeng__retail__recon_return_attribution.sql 0644
 2f8f1d2a0b26ff430cd0bf65e51bddae522ac3ecc66cd9c326b322250871438b deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
 8679ed09c1ac5c65194c59fb2044e9edb2b7e5266ce08af4e08bd90bd4c70f6d deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
 af9925a320216cdf63a5e1375715cf647ab84624dce11343dccf745743475821 deploy/duckle/console/DELIVERY.md ${REPO}/deploy/duckle/console/DELIVERY.md 0644
