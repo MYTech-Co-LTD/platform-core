@@ -368,7 +368,8 @@ git commit -m "feat(scripts): 已接入源对账（平台登记 ↔ console 声�
 - Modify: `modules/data/README.md`（「语义（词表）」小节：源维度的两列、裁剪与写入闸、命名三段式）
 - Modify: `deploy/data-plane-deploy-sop.md`（console 的 `ADOPTED_SOURCES` 声明键 + 对账命令 + 纳入验收清单）
 
-- [ ] **Step 1: 写文档**（逐字要点：① `l1_metrics.yml` 的 `sources`（存储路径）与新 `source`（源系统）**语义不同，别混**；② 命名 `<源>:<业务域>:<指标>`；③ 裁剪在 `visibleMetrics` 一处收口 + 写入闸 403 的形状；④ 无身份 **401 由宿主门卫给**，不是模块判的；⑤ 对账命令与「值从 openship env 取」；⑥ **源登记 ↔ 契约 `domain` 只要求同名约定，本计划不做自动映射**）
+- [ ] **Step 1: 写文档**（逐字要点：
+  - **数据侧影响（订正记录 2026-09-30，Task 4 评审转办）**：改名**不动既有 L2 行的 SQL**（L2 落库的是**编译后的** `select_sql`，`data.metrics` 没有 `base_metric` 列）——只有 `description` 文本里的「L2 派生自 <旧 id>」会陈旧；而 **MCP 工具名 = 指标 id**，故改名**对外可见**（属预期）。① `l1_metrics.yml` 的 `sources`（存储路径）与新 `source`（源系统）**语义不同，别混**；② 命名 `<源>:<业务域>:<指标>`；③ 裁剪在 `visibleMetrics` 一处收口 + 写入闸 403 的形状；④ 无身份 **401 由宿主门卫给**，不是模块判的；⑤ 对账命令与「值从 openship env 取」；⑥ **源登记 ↔ 契约 `domain` 只要求同名约定，本计划不做自动映射**）
 - [ ] **Step 2: Commit**
 
 ```bash
