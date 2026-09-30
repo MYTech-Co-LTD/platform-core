@@ -28,74 +28,7 @@
 
 ---
 
-### Task 1: 迁移 007 —— `data.reports.spec` + 存储层带上规格
-
-**Files:**
-- Create: `modules/data/migrations/007_report_spec.sql`（**先 `ls modules/data/migrations/` 确认号段**）
-- Modify: `modules/data/domain/report-store.ts`（`ReportRow` 加 `spec: ReportSpec | null`；`upsertReport` 写入；新 `updateSpec(...)` 条件更新）
-- Test: `modules/data/domain/report-store.test.ts`（追加）
-
-**Interfaces:**
-- Consumes: 既有 `REPORT_COLS` 常量、`toReportRow`、plan 4 的 `version` 列与条件更新范式。
-- Produces:
-  - `data.reports.spec jsonb`（**可空**）+ 一条跨列 check（`renderer='platform'` ⇒ `spec` 非空）。
-  - `updateSpec(pool, org, id, spec, expectedVersion): Promise<ReportRow | null>`（与 `updateRequiredScope` 同款条件更新，`version = version + 1`）。
-
-- [ ] **Step 1: 写迁移**（幂等）
-
-```sql
--- 007_report_spec.sql — 平台自绘报表的**声明式规格**（spec §3⑥；计划 6）。
--- 存成一列而非另开表：这样规格写保护**免费复用**登记表版本守卫（plan 4），
--- 且与既有裁决「不为发布另开状态列」一致。
-alter table data.reports add column if not exists spec jsonb;
--- 跨列约束：自绘行必须有规格（Metabase 行必须没有——两边都不许半吊子）
-do $$ begin
-  alter table data.reports add constraint data_reports_spec_by_renderer check (
-    (renderer = 'platform' and spec is not null) or (renderer = 'metabase' and spec is null)
-  );
-exception when duplicate_object then null; end $$;
-```
-
-- [ ] **Step 2: 写失败测试**（`report-store.test.ts` 的 `describePg` 内）
-
-```ts
-  it('★ spec：自绘行必须带规格；条件更新（陈旧版本不落）', async () => {
-    const org = 'org-spec-store'
-    await pool.query('delete from data.reports where org = $1', [org])
-    // 自绘行没有 spec ⇒ 库侧直接拒（跨列 check）
-    await expect(upsertReport(pool, org, {
-      title: 'S', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
-    })).rejects.toThrow()
-
-    const id = await upsertReport(pool, org, {
-      title: 'S', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
-      spec: { panels: [] },
-    })
-    expect((await getReport(pool, org, id))!.spec).toEqual({ panels: [] })
-    expect((await getReport(pool, org, id))!.version).toBe(1)
-
-    expect(await updateSpec(pool, org, id, { panels: [] }, 99)).toBeNull()          // 陈旧 ⇒ null
-    const ok = await updateSpec(pool, org, id, { panels: [] }, 1)
-    expect(ok).toMatchObject({ version: 2 })
-  })
-```
-
-- [ ] **Step 3: 跑测试确认红** → `DATABASE_URL='postgres://platform:platform@127.0.0.1:5432/platform' pnpm --filter data exec vitest run domain/report-store.test.ts`
-
-- [ ] **Step 4: 实现**（`REPORT_COLS` 加 `spec`；`ReportRow.spec: ReportSpec | null`；`upsertReport` 的 insert/冲突分支都写 `spec`；新增 `updateSpec` 照 `updateRequiredScope` 的条件更新写）
-
-- [ ] **Step 5: 跑测试确认绿 + 全模块** → `DATABASE_URL=… pnpm --filter data test`
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add modules/data/migrations/007_report_spec.sql modules/data/domain/report-store.ts modules/data/domain/report-store.test.ts
-git commit -m "feat(data): 自绘规格落 data.reports.spec（跨列 check + 条件更新）"
-```
-
----
-
-### Task 2: 规格 schema + 图型白名单（严格白名单 = 机检落点）
+### Task 1: 规格 schema + 图型白名单（严格白名单 = 机检落点）
 
 **Files:**
 - Create: `modules/data/domain/report-spec.ts`、`modules/data/domain/report-spec.test.ts`
@@ -217,6 +150,73 @@ git commit -m "feat(data): 自绘规格 schema + 图型白名单（严格白名�
 
 ---
 
+### Task 2: 迁移 007 —— `data.reports.spec` + 存储层带上规格
+
+**Files:**
+- Create: `modules/data/migrations/007_report_spec.sql`（**先 `ls modules/data/migrations/` 确认号段**）
+- Modify: `modules/data/domain/report-store.ts`（`ReportRow` 加 `spec: ReportSpec | null`；`upsertReport` 写入；新 `updateSpec(...)` 条件更新）
+- Test: `modules/data/domain/report-store.test.ts`（追加）
+
+**Interfaces:**
+- Consumes: 既有 `REPORT_COLS` 常量、`toReportRow`、plan 4 的 `version` 列与条件更新范式；**Task 1 的 `ReportSpec` 类型**。
+- Produces:
+  - `data.reports.spec jsonb`（**可空**）+ 一条跨列 check（`renderer='platform'` ⇒ `spec` 非空）。
+  - `updateSpec(pool, org, id, spec, expectedVersion): Promise<ReportRow | null>`（与 `updateRequiredScope` 同款条件更新，`version = version + 1`）。
+
+- [ ] **Step 1: 写迁移**（幂等）
+
+```sql
+-- 007_report_spec.sql — 平台自绘报表的**声明式规格**（spec §3⑥；计划 6）。
+-- 存成一列而非另开表：这样规格写保护**免费复用**登记表版本守卫（plan 4），
+-- 且与既有裁决「不为发布另开状态列」一致。
+alter table data.reports add column if not exists spec jsonb;
+-- 跨列约束：自绘行必须有规格（Metabase 行必须没有——两边都不许半吊子）
+do $$ begin
+  alter table data.reports add constraint data_reports_spec_by_renderer check (
+    (renderer = 'platform' and spec is not null) or (renderer = 'metabase' and spec is null)
+  );
+exception when duplicate_object then null; end $$;
+```
+
+- [ ] **Step 2: 写失败测试**（`report-store.test.ts` 的 `describePg` 内）
+
+```ts
+  it('★ spec：自绘行必须带规格；条件更新（陈旧版本不落）', async () => {
+    const org = 'org-spec-store'
+    await pool.query('delete from data.reports where org = $1', [org])
+    // 自绘行没有 spec ⇒ 库侧直接拒（跨列 check）
+    await expect(upsertReport(pool, org, {
+      title: 'S', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+    })).rejects.toThrow()
+
+    const id = await upsertReport(pool, org, {
+      title: 'S', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
+      spec: { panels: [] },
+    })
+    expect((await getReport(pool, org, id))!.spec).toEqual({ panels: [] })
+    expect((await getReport(pool, org, id))!.version).toBe(1)
+
+    expect(await updateSpec(pool, org, id, { panels: [] }, 99)).toBeNull()          // 陈旧 ⇒ null
+    const ok = await updateSpec(pool, org, id, { panels: [] }, 1)
+    expect(ok).toMatchObject({ version: 2 })
+  })
+```
+
+- [ ] **Step 3: 跑测试确认红** → `DATABASE_URL='postgres://platform:platform@127.0.0.1:5432/platform' pnpm --filter data exec vitest run domain/report-store.test.ts`
+
+- [ ] **Step 4: 实现**（`REPORT_COLS` 加 `spec`；`ReportRow.spec: ReportSpec | null`；`upsertReport` 的 insert/冲突分支都写 `spec`；新增 `updateSpec` 照 `updateRequiredScope` 的条件更新写）
+
+- [ ] **Step 5: 跑测试确认绿 + 全模块** → `DATABASE_URL=… pnpm --filter data test`
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add modules/data/migrations/007_report_spec.sql modules/data/domain/report-store.ts modules/data/domain/report-store.test.ts
+git commit -m "feat(data): 自绘规格落 data.reports.spec（跨列 check + 条件更新）"
+```
+
+---
+
 ### Task 3: 写入与读取面（三个端点 + manifest 同提交）
 
 **Files:**
@@ -225,7 +225,7 @@ git commit -m "feat(data): 自绘规格 schema + 图型白名单（严格白名�
 - Test: `modules/data/routes/reports.test.ts`（追加 + 声明用例 19 → 21）
 
 **Interfaces:**
-- Consumes: Task 2 的 `parseReportSpec`；Task 1 的 `updateSpec`；既有 `visibleTo`（页门）。
+- Consumes: Task 1 的 `parseReportSpec`；Task 2 的 `updateSpec`；既有 `visibleTo`（页门）。
 - Produces:
   - `POST /reports` body 加 **`renderer: 'metabase' | 'platform'`（默认 `metabase`）** 与 **`spec: object | null`（默认 `null`）**；`renderer='platform'` 时：**完全不碰 Metabase**（不 `upsertDashboard`、不 `publish`、不 `setEmbedding`），`metabaseId` 写哨兵 `0`，规格经 `parseReportSpec` 校验（不合法 ⇒ 400 带专门码）。
   - `PUT /reports/:id/spec`（`data:manage`）：body `{ spec, expectedVersion }`（**`.strict()`**）⇒ 200 `{version}`；行不存在/跨租户 ⇒ 404；版本不符 ⇒ 409 `STALE_WRITE` + `currentVersion`；非自绘行 ⇒ **409 `RENDERER_NOT_SELF_DRAWN`**。
@@ -402,9 +402,9 @@ git commit -m "docs(data): 平台自绘的接线与边界 + spec 待办 4 结案
 
 ## Self-Review（写完后自查）
 
-**1. spec 覆盖**：§3⑥ 的三条（agent 出**声明式规格**不出代码 → 整份计划；**严格字段白名单是机检落点** → Task 2 的「多塞可执行字段 ⇒ 400」回归；渲染器边界/图型白名单 → Task 2 常量 + Task 4 渲染分支）；§5 的两条路边界（**自绘直连物化层、按身份注入主体值** → Task 5 的验证断言）与两条实测坑（Task 4）。§7 **待办 4** → Task 6 结案。
+**1. spec 覆盖**：§3⑥ 的三条（agent 出**声明式规格**不出代码 → 整份计划；**严格字段白名单是机检落点** → Task 1 的「多塞可执行字段 ⇒ 400」回归；渲染器边界/图型白名单 → Task 1 常量 + Task 4 渲染分支）；§5 的两条路边界（**自绘直连物化层、按身份注入主体值** → Task 5 的验证断言）与两条实测坑（Task 4）。§7 **待办 4** → Task 6 结案。
 **2. 占位符扫描**：无 TBD；`…` 只用于命令里的 `DATABASE_URL` 重复前缀与「同款条件更新」这类**已在本仓存在的范式**指代（范式在 Task 1 里给了逐字实现）。
-**3. 类型一致性**：`ReportSpec`（Task 2 产）在 Task 1/3/4 一致；`parseReportSpec` 的三个错误码（Task 2 产）在 Task 3 的路由与 Task 2 的 `MESSAGES` 同码；`updateSpec(pool, org, id, spec, expectedVersion)`（Task 1 产，Task 3 消）；`RENDERER_NOT_SELF_DRAWN` 在 Task 3 产出、Task 4 消费（`MESSAGES` 补文案）。
+**3. 类型一致性**：`ReportSpec` 与 `parseReportSpec`（Task 1 产）在 Task 2/3/4 一致——三个错误码在 Task 3 的路由与 Task 1 的 `MESSAGES` 同码；`updateSpec(pool, org, id, spec, expectedVersion)`（Task 2 产，Task 3 消）；`RENDERER_NOT_SELF_DRAWN` 在 Task 3 产出、Task 4 消费（`MESSAGES` 补文案）。
 
 ## 已定裁决（人裁 2026-09-30，实施前不要再翻）
 
