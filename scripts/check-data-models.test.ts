@@ -130,6 +130,9 @@ function runCli(args: string[]): { status: number; stdout: string; stderr: strin
 }
 
 describe('metricToAuditFileName：`: ` → `__` 的**唯一映射规则**（T9 消费同一个函数，禁止另造一套）', () => {
+  // ⚠️ 本格的 `aftersales:refund_ratio` 是**刻意保留的计划 L645 逐字样例**（两段），**不是**当前生效的
+  //    声明名（现行声明名是三段式 `<源>:<业务域>:<指标>`，见 l1_metrics.yml）。保留它 = 保住对计划
+  //    原文的引用；`metricToAuditFileName` 对段数不敏感 ⇒ 拿它测「每个 `:` 都换 `__`」仍然有效。
   it('计划 L645 的逐字样例：aftersales:refund_ratio → audit_aftersales__refund_ratio.sql', () => {
     expect(metricToAuditFileName('aftersales:refund_ratio')).toBe('audit_aftersales__refund_ratio.sql')
   })
