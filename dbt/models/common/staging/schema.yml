@@ -27,7 +27,7 @@ models:
       分区键定型，不做聚合、不做 join、不定义口径（口径只在 marts 的 fct_retail_sale 定义一次）。
       源 = 湖表 `lemeng.retail_order_line`（hive 三级分区 system_book/bizday/hour），
       声明见 `staging/sources.yml`；列全集与空值性以
-      `contracts/common/lemeng.retail_order_line.json`（18 列）为准；**另加 dbt 注入列 `org`**（主体列，
+      `contracts/common/lemeng.retail_order_line.json`（**24 列**，v2；18→24 见 2026-09-30 Phase 2）为准；**另加 dbt 注入列 `org`**（主体列，
       非契约列，见 `dbt/macros/subject_org.sql`）。
       分区键的定型机制（显式 cast，为什么不是 hive_types）见模型文件头注。
     columns:
@@ -36,7 +36,7 @@ models:
         description: '账套（3120 熊喵 / 64188 品品甜）。**hive 分区键**：路径 `system_book=<账套>/` 推断，湖里被自动转成 BIGINT，本层 `::varchar` 定型回契约类型。'
       # ── dbt 注入的主体列（非契约列；行级授权谓词 WHERE org = … 的着力点）────────────────
       - name: org
-        description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。**不是契约列**：契约只有 18 列，本列由 dbt 层加（dbt/macros/subject_org.sql）。'
+        description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。**不是契约列**：契约只有 24 列（v2），本列由 dbt 层加（dbt/macros/subject_org.sql）。'
         tests:
           - not_null
       - name: bizday
@@ -88,6 +88,19 @@ models:
         description: '行收款金额（元，decimal(14,2)）。'
       - name: quantity
         description: '行数量（decimal(14,3)）。'
+      # ── v2 新增 6 列（2026-09-30 Phase 2，#294/#328）：湖已回填至全 24 列 ⇒ staging 可投影。
+      - name: order_transaction_type
+        description: '订单交易类型（订单级：SALE_ORDER / PARTIAL_ORDER_RETURN / FULL_ORDER_RETURN / NO_ORDER_RETURN）。退货对账归零的关键列。'
+      - name: order_ref_billno
+        description: '退货关联原单号（订单级，仅退货类订单有值）。'
+      - name: order_detail_share_discount
+        description: '订单明细分摊金额（decimal(14,2)；分支级分摊折扣可由它自算）。'
+      - name: order_detail_std_price
+        description: '明细标准价（decimal(14,2)；复核折扣/改价口径）。'
+      - name: order_detail_price
+        description: '明细售价（decimal(14,2)；复核折扣/改价口径）。'
+      - name: order_detail_online_qty
+        description: '线上单规格换算数量（decimal(14,3)；团购渠道）。'
 
   - name: stg_lemeng_branch
     description: >-
