@@ -48,9 +48,9 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
   it('读**仓内真实事实源**：两个指标都在，字段映射齐（id/title/description/subjectColumn）', () => {
     const rows = readDeclarations(ROOT)
     const byId = new Map(rows.map((r) => [r.id, r]))
-    expect(byId.has('retail:net_sales')).toBe(true)
-    expect(byId.has('retail:order_count')).toBe(true)
-    expect(byId.get('retail:net_sales')).toMatchObject({
+    expect(byId.has('lemeng:retail:net_sales')).toBe(true)
+    expect(byId.has('lemeng:retail:order_count')).toBe(true)
+    expect(byId.get('lemeng:retail:net_sales')).toMatchObject({
       title: '净销售额',
       subjectColumn: 'org',
       requiredScope: null,
@@ -62,7 +62,7 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
     // ⚠️ 与既有的 `sources`（对象存储路径，选填、人读）不是一回事：这里映射的是**源系统**。
     const rows = declarationsFromYaml(yaml([
       {
-        name: 'x:y', source: 'lemeng', definition: 'd', expression: 'sum(t.c)',
+        name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(t.c)',
         grain: ['g'], owner: 'o', tier: 'certified',
       },
     ]))
@@ -86,16 +86,16 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
 
   it('label 缺省回落到 name（title 不许是空串：管理面靠它认指标）', () => {
     const rows = declarationsFromYaml(yaml([
-      { name: 'x:y', source: 'lemeng', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
+      { name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
     ]))
-    expect(rows[0].title).toBe('x:y')
+    expect(rows[0].title).toBe('x:y:z')
   })
 
   it('★ 声明缺 `source` ⇒ 抛（不许落字符串 "undefined"：源维度坏了，该指标对所有租户静默不可见）', () => {
     // 为什么这条要 fail-closed：`String(undefined)` 是**非空**字符串 ⇒ 不拦的话行照落、sync 照报成功，
     // 而消费侧的裁剪拿 `'undefined'` 去与「已接入源」比对 ⇒ 永远不匹配 ⇒ 指标查不出来且不报错。
     expect(() => declarationsFromYaml(yaml([
-      { name: 'x:y', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
+      { name: 'x:y:z', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
     ]))).toThrow(/source/)
   })
 
@@ -105,7 +105,7 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
     for (const bad of ['   ', ' lemeng ', 'lemeng ', ' lemeng']) {
       expect(
         () => declarationsFromYaml(yaml([
-          { name: 'x:y', source: bad, definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
+          { name: 'x:y:z', source: bad, definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
         ])),
         `source: ${JSON.stringify(bad)} 没被拦下`,
       ).toThrow(/source/)
@@ -114,7 +114,7 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
 
   it('grain 为空数组 ⇒ 抛（grain 同时是 L2 的维度白名单来源，空 = 什么都不能裁）', () => {
     expect(() => declarationsFromYaml(yaml([
-      { name: 'x:y', definition: 'd', expression: 'sum(t.c)', grain: [], owner: 'o', tier: 'certified' },
+      { name: 'x:y:z', definition: 'd', expression: 'sum(t.c)', grain: [], owner: 'o', tier: 'certified' },
     ]))).toThrow(/grain/)
   })
 
@@ -144,7 +144,7 @@ describe('deriveRelation：从 expression 反推 FROM 关系名', () => {
   })
 
   it('无限定引用（如 count(*)）⇒ 抛，且错误信息说清该怎么做', () => {
-    expect(() => deriveRelation('count(*)', 'x:y')).toThrow(/关系\.列/)
+    expect(() => deriveRelation('count(*)', 'x:y:z')).toThrow(/关系\.列/)
   })
 
   it('buildSelectSql 的两种形态（有/无维度）', () => {

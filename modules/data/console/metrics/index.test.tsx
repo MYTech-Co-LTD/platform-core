@@ -23,12 +23,12 @@ const json = (b: unknown) =>
 const CATALOG = {
   metrics: [
     {
-      id: 'retail:net_sales', title: '净销售额', description: '口径定义', requiredScope: null,
+      id: 'lemeng:retail:net_sales', title: '净销售额', description: '口径定义', requiredScope: null,
       subjectColumn: 'org', selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale',
       groupBy: 'system_book, bizday', params: {}, source: 'l1',
     },
     {
-      id: 'xiongmao:net_sales', title: '熊喵净销售', description: 'L2 派生自 retail:net_sales', requiredScope: null,
+      id: 'xiongmao:net_sales', title: '熊喵净销售', description: 'L2 派生自 lemeng:retail:net_sales', requiredScope: null,
       subjectColumn: 'org', selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book from fct_retail_sale',
       groupBy: 'system_book', params: {}, source: 'l2',
     },
@@ -64,7 +64,7 @@ const button = (label: string) =>
 describe('指标管理页', () => {
   it('列出两层：L1 标「平台（只读）」且不给删改，L2 给编辑/删除', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByText('retail:net_sales')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('lemeng:retail:net_sales')).toBeInTheDocument())
 
     expect(screen.getByText('平台（只读）')).toBeInTheDocument()
     expect(screen.getByText('本租户派生')).toBeInTheDocument()
@@ -103,7 +103,7 @@ describe('指标管理页', () => {
       expect(post, '没有发出 POST').toBeTruthy()
       expect(post?.body).toMatchObject({
         id: 'xiongmao:gross',
-        baseMetric: 'retail:net_sales',
+        baseMetric: 'lemeng:retail:net_sales',
         op: { kind: 'refine' },
         alias: '熊喵毛利',
         visibility: { dims: ['system_book'] },
@@ -127,7 +127,7 @@ describe('指标管理页', () => {
 
     await waitFor(() => {
       const post = calls.find((c) => c.method === 'POST')
-      expect(post?.body).toMatchObject({ id: 'xiongmao:plain', baseMetric: 'retail:net_sales' })
+      expect(post?.body).toMatchObject({ id: 'xiongmao:plain', baseMetric: 'lemeng:retail:net_sales' })
       expect((post?.body as Record<string, unknown>).alias).toBeUndefined()
       // 未裁剪维度 ⇒ 不带 visibility（= 继承平台指标的全部维度，而不是「零维度」）
       expect((post?.body as Record<string, unknown>).visibility).toBeUndefined()

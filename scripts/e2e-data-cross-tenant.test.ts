@@ -54,7 +54,7 @@ async function suite(): Promise<any> {
 /** `QueryOk` 的二维 rows 形态（不是 `[{...}]` —— 那个形状真机上不存在）。 */
 function queryOk(rows: unknown[][]): unknown {
   return {
-    status: 'ok', subject: 'tenant', metricId: 'retail:net_sales',
+    status: 'ok', subject: 'tenant', metricId: 'lemeng:retail:net_sales',
     columns: ['org', 'customer', 'amount'], rows, truncated: false,
   }
 }
@@ -91,7 +91,7 @@ const PROBES = { a: 'ACME-CUSTOMER', b: 'BRAVO-CUSTOMER' }
 function fullEnv(over: Record<string, string> = {}): Record<string, string> {
   return {
     E2E_PLATFORM_URL: 'https://platform.example.com',
-    E2E_METRIC_ID: 'retail:net_sales',
+    E2E_METRIC_ID: 'lemeng:retail:net_sales',
     E2E_REPORT_ID: '7',
     E2E_TENANT_A_ORG: 'acme', E2E_TENANT_A_PAT: 'pat-a', E2E_TENANT_A_PROBE: PROBES.a,
     E2E_TENANT_B_ORG: 'bravo', E2E_TENANT_B_PAT: 'pat-b', E2E_TENANT_B_PROBE: PROBES.b,
@@ -209,8 +209,8 @@ describe('judgeQueryResult：面① 问数 API（词表裁剪 + 主体钉死的�
   it('问数**没成功**（denied / error）⇒ violation：把「没跑到」当通过是最典型的假绿', async () => {
     const { judgeQueryResult } = await suite()
     for (const outcome of [
-      { status: 'denied', metricId: 'retail:net_sales', reason: 'not_authorized' },
-      { status: 'error', metricId: 'retail:net_sales', reason: 'warehouse_error', detail: 'boom' },
+      { status: 'denied', metricId: 'lemeng:retail:net_sales', reason: 'not_authorized' },
+      { status: 'error', metricId: 'lemeng:retail:net_sales', reason: 'warehouse_error', detail: 'boom' },
     ]) {
       const out = judgeQueryResult({
         tenant: 'acme', probe: PROBES.a, foreignProbe: PROBES.b, outcome,
@@ -422,10 +422,10 @@ describe('judgeCatalog：面④ L2 词表（GET /metrics 与 MCP tools/list）',
     const { judgeCatalog } = await suite()
     const out = judgeCatalog({
       foreignMetricIds: FOREIGN,
-      metrics: { metrics: [{ id: 'retail:net_sales', title: '净销', description: '' }] },
+      metrics: { metrics: [{ id: 'lemeng:retail:net_sales', title: '净销', description: '' }] },
       tools: {
         jsonrpc: '2.0', id: 1,
-        result: { tools: [{ name: 'retail:net_sales', description: '净销', inputSchema: { type: 'object', properties: {}, required: [] } }] },
+        result: { tools: [{ name: 'lemeng:retail:net_sales', description: '净销', inputSchema: { type: 'object', properties: {}, required: [] } }] },
       },
     })
     expect(out.violations).toEqual([])
@@ -472,8 +472,8 @@ describe('judgeCatalog：面④ L2 词表（GET /metrics 与 MCP tools/list）',
     const { judgeCatalog } = await suite()
     const out = judgeCatalog({
       foreignMetricIds: [],
-      metrics: { metrics: [{ id: 'retail:net_sales', title: '净销', description: '' }] },
-      tools: { jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'retail:net_sales', description: '', inputSchema: {} }] } },
+      metrics: { metrics: [{ id: 'lemeng:retail:net_sales', title: '净销', description: '' }] },
+      tools: { jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'lemeng:retail:net_sales', description: '', inputSchema: {} }] } },
     })
     expect(out.notes.some((n: string) => /均未出现/.test(n))).toBe(false)
     expect(out.notes.some((n: string) => /空集/.test(n))).toBe(true)
@@ -564,8 +564,8 @@ describe('runSuite：四面编排（I/O 全桩）', () => {
   function loadConfigStub(): any {
     return {
       platformUrl: 'https://platform.example.com',
-      metricIds: ['retail:net_sales'],
-      metricId: 'retail:net_sales',
+      metricIds: ['lemeng:retail:net_sales'],
+      metricId: 'lemeng:retail:net_sales',
       reportIdA: 'a',
       reportIdB: 'b',
       tenantA: { org: 'acme', pat: 'pat-a', probe: PROBES.a },
@@ -664,7 +664,7 @@ describe('runSuite：四面编排（I/O 全桩）', () => {
     const inner = deps.fetch
     deps.fetch = async (url: string) => (url.includes('/api/modules/data/query')
       // 真机形状（评审实测）：HTTP 403 + `{status:'denied',metricId,reason}`
-      ? { ok: false, status: 403, json: async () => ({ status: 'denied', metricId: 'retail:net_sales', reason: 'metric_not_visible' }), text: async () => '' }
+      ? { ok: false, status: 403, json: async () => ({ status: 'denied', metricId: 'lemeng:retail:net_sales', reason: 'metric_not_visible' }), text: async () => '' }
       : inner(url))
     const out = await runSuite(deps)
     expect(exitCodeOf(out)).toBe(EXIT_VIOLATION)
@@ -677,7 +677,7 @@ describe('runSuite：四面编排（I/O 全桩）', () => {
     const deps = healthyDeps()
     const inner = deps.fetch
     deps.fetch = async (url: string) => (url.includes('/api/modules/data/query')
-      ? { ok: false, status: 502, json: async () => ({ status: 'error', metricId: 'retail:net_sales', reason: 'warehouse_error', detail: 'boom' }), text: async () => '' }
+      ? { ok: false, status: 502, json: async () => ({ status: 'error', metricId: 'lemeng:retail:net_sales', reason: 'warehouse_error', detail: 'boom' }), text: async () => '' }
       : inner(url))
     const out = await runSuite(deps)
     expect(exitCodeOf(out)).toBe(EXIT_VIOLATION)
@@ -690,7 +690,7 @@ describe('runSuite：四面编排（I/O 全桩）', () => {
     const inner = deps.fetch
     deps.fetch = async (url: string) => {
       if (url.includes('/api/modules/data/query')) {
-        return { ok: false, status: 403, json: async () => ({ status: 'denied', metricId: 'retail:net_sales', reason: 'metric_not_visible' }), text: async () => '' }
+        return { ok: false, status: 403, json: async () => ({ status: 'denied', metricId: 'lemeng:retail:net_sales', reason: 'metric_not_visible' }), text: async () => '' }
       }
       if (url.includes('/api/embed/dashboard/')) {
         // 面② 也做成红的（B 拿 A 的）—— 若面② 没跑，这条 violation 就缺席

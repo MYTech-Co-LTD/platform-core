@@ -31,7 +31,7 @@
 //
 // ── ⚠️ 与计划正文的一处**有意偏离**（事实源文件的位置）────────────────────────────
 // 计划 Task 8 写的是「读 `dbt/models/**/schema.yml` 的语义声明」。**实际事实源不是那里**：
-// T4 已把 L1 声明落在 `dbt/semantics/l1_metrics.yml`——理由是指标名是 `<域>:<指标名>` 形态
+// T4 已把 L1 声明落在 `dbt/semantics/l1_metrics.yml`——理由是指标名是 `<源>:<业务域>:<指标>` 形态
 // （**含冒号**），而 dbt 资源名不允许冒号，放进 dbt 会扫的 schema 文件有让 `dbt parse` 挂掉的
 // 风险（见 `dbt/README.md` §5「L1 语义声明的落点」原文，静态门禁两处都扫）。
 // ⇒ 本脚本读的是**实际的事实源**。照计划原文去读 `models/**/schema.yml` 会**一条声明都读不到**
@@ -72,8 +72,8 @@ export const L1_SUBJECT_COLUMN = 'org'
  */
 const QUALIFIED_REF_RE = /([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\.([A-Za-z_][A-Za-z0-9_]*)/g
 
-/** 指标名形态 `<域>:<指标名>`（与 scripts/check-data-models.mjs 规则 ⑥ 同一句；门禁是权威，这里只兜底）。 */
-const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
+/** 指标名形态 `<源>:<业务域>:<指标>`（与 scripts/check-data-models.mjs 规则 ⑥ 同一句；门禁是权威，这里只兜底）。 */
+const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
 
 /**
  * 差集比对的**唯一形状**：本脚本要用的全部字段，一个不少、一个不多。
@@ -185,7 +185,7 @@ export function declarationsFromYaml(parsed) {
     const m = /** @type {Record<string, unknown>} */ (raw)
     const name = String(m.name ?? '')
     if (!METRIC_NAME_RE.test(name)) {
-      throw new Error(`指标名 \`${name}\` 不合命名空间形态 \`<域>:<指标名>\`（小写蛇形，两段）`)
+      throw new Error(`指标名 \`${name}\` 不合命名空间形态 \`<源>:<业务域>:<指标>\`（小写蛇形，三段）`)
     }
     const expression = String(m.expression ?? '')
     if (expression === '') throw new Error(`指标 \`${name}\` 缺 expression`)

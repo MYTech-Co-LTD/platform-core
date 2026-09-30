@@ -1,12 +1,12 @@
--- audit_retail__order_count.sql — 指标 `retail:order_count` 的**独立复算**（对账）。
+-- audit_lemeng__retail__order_count.sql — 指标 `lemeng:retail:order_count` 的**独立复算**（对账）。
 --
--- 契约与理由同 audit_retail__net_sales.sql（dbt singular test：**返回任何行即失败**；
+-- 契约与理由同 audit_lemeng__retail__net_sales.sql（dbt singular test：**返回任何行即失败**；
 -- 独立复算的「为什么要刻意重复 cast」那段在那边写透了，这里不复制正文）。
 -- 文件名由指标名经 `:` → `__` 映射得出（唯一事实源 = scripts/check-data-models.mjs 的
 -- metricToAuditFileName()）。
 --
 -- ⚠️ 本指标的「暂定」**收窄到语义面**（2026-09-25 订正；三处同源 = 本头注 /
---    `l1_metrics.yml` 的 `retail:order_count` / `dbt/README.md` §8 的 `order_no` 行）：
+--    `l1_metrics.yml` 的 `lemeng:retail:order_count` / `dbt/README.md` §8 的 `order_no` 行）：
 --    **已证**的只是 `order_no` 列**存在且非空**（新湖契约列 `nullable=false` + 管线 `qa.contract`
 --    非空闸 + 2026-09-24 真机 `not_null_stg_lemeng_retail_order_line_order_no` 过，列名与类型合契约）；
 --    **未证**的是「该列**就是业务意义上的单号**」与 `count(distinct order_no)` 的**去重语义**

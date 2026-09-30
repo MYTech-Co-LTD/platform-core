@@ -61,7 +61,7 @@ select
     try_strptime(r['order_detail_bizday'], '%Y%m%d')::date           as bizday,
 
     -- ── 【暂定·待 T6 按样本核对列名】单号：order_count 指标（按单号去重）的唯一依赖列 ──────────
-    -- 列名与去重语义都要按实测样本复核；若样本里没有稳定的单号列，`retail:order_count` 这个声明
+    -- 列名与去重语义都要按实测样本复核；若样本里没有稳定的单号列，`lemeng:retail:order_count` 这个声明
     -- 应该**删掉**而不是换成别的近似口径（口径不能猜）。
     r['order_no']                               as order_no,
 

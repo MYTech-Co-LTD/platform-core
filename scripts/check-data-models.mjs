@@ -14,7 +14,7 @@
 //   ④ staging 一对一（staging 模型 ↔ sources.yml 的源，**双向**）
 //   ⑤ 语义声明必填字段齐全（owner / tier / grain / definition / source + name / expression）
 //      + `source`（**源系统**）的形状（小写蛇形）。⚠️ 与选填的 `sources`（对象存储路径）不是一回事
-//   ⑥ 指标名 `<域>:<指标名>` 命名空间前缀 + 同名唯一（跨文件）
+//   ⑥ 指标名 `<源>:<业务域>:<指标>` 命名空间前缀 + 同名唯一（跨文件）
 //      + **保留命名空间**：声明名不得以测试夹具专用前缀开头（`RESERVED_METRIC_ID_PREFIXES`）
 //   ⑦ 每个声明指标有对应 `dbt/tests/audit_<指标>.sql` + 该文件名映射无碰撞
 //   ⑧ **L2 声明静态面**（T9 / 拍板 #5 的「门禁③机检范围覆盖用户产生的声明」）：
@@ -156,8 +156,8 @@ const R_COLUMN_RE = /r\s*\[\s*['"]/
 const DOUBLE_CAST_RE = /(?:::\s*|\bas\s+)double\b(?!\s+precision)/gi
 /** 规则 ③：`union_by_name` 兜列集漂移 */
 const UNION_BY_NAME_RE = /union_by_name/gi
-/** 规则 ⑥：指标名的命名空间形态 `<域>:<指标名>`（两段都小写蛇形） */
-const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
+/** 规则 ⑥：指标名的命名空间形态 `<源>:<业务域>:<指标>`（三段都小写蛇形） */
+const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
 /**
  * 规则 ⑤：语义声明必填字段（owner/tier/grain/definition/source + name/expression；见计划 Step 4 的字段清单）。
  * `source` = **源系统**（如 `lemeng`）——spec §3⑧ 的源维度，Task 5 的裁剪按它判「这个源接没接入」。
@@ -179,7 +179,7 @@ const METRIC_SOURCE_RE = /^[a-z][a-z0-9_]*$/
  * 平台桶里那条**真行**删掉（实测过一次：`routes/metrics.test.ts` 曾用 `retail:net_sales` 当夹具 id，
  * 跑完测试后 `sync --check` 报「新增 1」）。测试侧已把夹具 id 收进各自的前缀（清理也改成
  * `id like '<前缀>%'` 的谓词级收口），但「这些前缀不会被真声明占用」此前**只是约定**——
- * `t6test:net_sales` 完全合 `METRIC_NAME_RE`，门禁一句话都不说。万一将来真声明占了这个命名空间，
+ * `t6test:retail:net_sales` 完全合 `METRIC_NAME_RE`，门禁一句话都不说。万一将来真声明占了这个命名空间，
  * 上面那类「测试删真行」会原样复发。故把约定写成机检：**声明名一律不得以这些前缀开头**。
  *
  * ⚠️ 这个清单必须与仓内测试文件实际用的前缀**同源**（`check-data-models.test.ts` 有一条用例
@@ -250,7 +250,7 @@ function firstMatchLine(masked, re) {
  * 计划 L645 要求 T9 的机检消费同一条规则、不许两个 worker 各造一套 —— 故它是导出函数，
  * 文档只引用、不复述（详细语义见 dbt/README.md「T9 接口」）。
  *
- * 语义三条（逐字）：① 入参 = 语义声明的 `name` 原值（`<域>:<指标名>` 命名空间形态）；
+ * 语义三条（逐字）：① 入参 = 语义声明的 `name` 原值（`<源>:<业务域>:<指标>` 命名空间形态）；
  * ② **每一个** `:` 都替换成 `__`（不是只换第一个；名字里若还有别的下划线一律不动）；
  * ③ 返回值 `audit_<替换后>.sql`，落点是 `dbt/tests/`。
  *
@@ -781,7 +781,7 @@ export function checkDataModels(rootDir) {
       push(
         metric.file,
         0,
-        `指标名 \`${metric.name || '(空)'}\` 不合规 —— 必须是 \`<域>:<指标名>\` 命名空间形态（两段都小写蛇形，如 \`retail:net_sales\`）。命名空间是「同名唯一」能成立的前提（layered §6）`,
+        `指标名 \`${metric.name || '(空)'}\` 不合规 —— 必须是 \`<源>:<业务域>:<指标>\` 命名空间形态（三段都小写蛇形，如 \`lemeng:retail:net_sales\`）。命名空间是「同名唯一」能成立的前提（layered §6）`,
       )
       continue
     }

@@ -2,12 +2,13 @@
 # 引擎（Ossie 等）只当**编译产物**（spec §11.7「押架构不押规范」）。
 #
 # 为什么这个文件**不在** `models/` 下（也就不在 dbt 的扫描面内）—— 一句话版：
-#   指标 `name` 是命名空间形态 `<域>:<指标名>`（含冒号），而 **dbt 资源名不允许冒号**；
+#   指标 `name` 是命名空间形态 `<源>:<业务域>:<指标>`（含冒号），而 **dbt 资源名不允许冒号**；
 #   放进 dbt 会扫的 schema 文件有让 `dbt parse` 挂掉的风险。完整理由 + T6 的核对步见 README
 #   「L1 语义声明的落点」。**静态门禁两处都扫**（本目录 + `dbt/models/**`），两种落点都不漏检。
 #
 # ── 字段约定（静态门禁 rules ⑤⑥⑦ 的判据面，改这里必须同步改 README 与门禁）─────────────────
-#   name        必填。`<域>:<指标名>`，两段都小写蛇形。命名空间是「同名唯一」能成立的前提
+#   name        必填。`<源>:<业务域>:<指标>`，三段都小写蛇形（`(org,id)` 主键下，**带源段**才能让
+#               第二个源用同一业务概念名声明而不撞键）。命名空间是「同名唯一」能成立的前提
 #               （layered §6）；它同时决定对账文件名（`:` → `__`，映射函数只有一处事实源：
 #               scripts/check-data-models.mjs 导出的 metricToAuditFileName()）。
 #   label       人读名字（进词表 / BI 展示面）。
@@ -29,7 +30,7 @@
 version: 1
 
 metrics:
-  - name: 'retail:net_sales'
+  - name: 'lemeng:retail:net_sales'
     label: 净销售额
     definition: >-
       有效零售订单的成交金额合计（口径模型 fct_retail_sale，粒度 = 账套 × 业务日）。
@@ -47,7 +48,7 @@ metrics:
     # —— 名字由 `:` → `__` 的映射函数算出（scripts/check-data-models.mjs 导出的 metricToAuditFileName()，
     #   唯一事实源）。在这里再写一遍文件名 = 两处事实源，映射一改这两行就悄悄过期。
 
-  - name: 'retail:order_count'
+  - name: 'lemeng:retail:order_count'
     label: 订单数
     definition: >-
       零售明细里按单号去重的订单笔数（口径模型 fct_retail_sale，粒度 = 账套 × 业务日）。
@@ -57,7 +58,7 @@ metrics:
       `nullable=false` + 管线 `qa.contract` 非空闸 + 2026-09-24 真机
       `not_null_stg_lemeng_retail_order_line_order_no` 过；列名与类型合契约）；
       **未证**的是「该列**就是业务意义上的单号**」与 `count(distinct order_no)` 的**去重语义**
-      —— 两者都属**口径转正**（S5，边界同 `dbt/tests/audit_retail__order_count.sql` 头注）。
+      —— 两者都属**口径转正**（S5，边界同 `dbt/tests/audit_lemeng__retail__order_count.sql` 头注）。
       ⚠️ **别把「列存在且非空」读成「口径已确认」**。
       若业务侧核不出稳定的单号语义，本声明应**删除**而不是替换成近似口径（口径不能猜）。
     expression: 'sum(fct_retail_sale.order_count)'

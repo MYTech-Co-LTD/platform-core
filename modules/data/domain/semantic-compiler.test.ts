@@ -40,7 +40,7 @@ function localDay(v: unknown): string {
  */
 function l1(over: Partial<MetricRow> = {}): MetricRow {
   return {
-    id: 'retail:net_sales',
+    id: 'lemeng:retail:net_sales',
     title: '净销售额',
     description: '有效零售订单的成交金额合计',
     requiredScope: null,
@@ -59,7 +59,7 @@ function l1(over: Partial<MetricRow> = {}): MetricRow {
 const L1_CATALOG: MetricRow[] = [
   l1(),
   l1({
-    id: 'retail:order_count',
+    id: 'lemeng:retail:order_count',
     title: '订单数',
     selectSql: 'select sum(fct_retail_sale.order_count) as value, system_book, bizday from fct_retail_sale',
   }),
@@ -67,7 +67,7 @@ const L1_CATALOG: MetricRow[] = [
 
 /** 最小合法声明；各用例只覆盖自己关心的字段。 */
 const decl = (over: Partial<Parameters<typeof compileL2>[1]> = {}) => ({
-  baseMetric: 'retail:net_sales',
+  baseMetric: 'lemeng:retail:net_sales',
   op: { kind: 'refine' as const },
   ...over,
 })
@@ -117,7 +117,7 @@ describe('dimensionNamesOf：L1 声明的维度清单', () => {
 
 describe('resolveL1Base：base 必须命中 L1 词表', () => {
   it('命中则返回该行', () => {
-    expect(resolveL1Base(L1_CATALOG, 'retail:net_sales').title).toBe('净销售额')
+    expect(resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales').title).toBe('净销售额')
   })
 
   it('base 不存在于 L1 ⇒ 抛 L1_BASE_NOT_FOUND', () => {
@@ -132,7 +132,7 @@ describe('resolveL1Base：base 必须命中 L1 词表', () => {
 
 describe('compileL2：写时校验（机检，不是运行时才发现）', () => {
   it('op.kind 只支持 refine（B 中档的受限表达式不私自放行）', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     expectThrow(
       () => compileL2(base, decl({ op: { kind: 'expression' } as unknown as { kind: 'refine' } })),
       'OP_UNSUPPORTED',
@@ -140,7 +140,7 @@ describe('compileL2：写时校验（机检，不是运行时才发现）', () =
   })
 
   it('filters 的维度名不在 L1 声明 ⇒ 抛 UNKNOWN_DIM（并点名是哪个维度）', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     expectThrow(
       () => compileL2(base, decl({ filters: [{ dim: 'store_id', op: '=', values: ['S1'] }] })),
       'UNKNOWN_DIM',
@@ -148,7 +148,7 @@ describe('compileL2：写时校验（机检，不是运行时才发现）', () =
   })
 
   it('visibility 的维度名不在 L1 声明 ⇒ 抛 UNKNOWN_DIM', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     expectThrow(
       () => compileL2(base, decl({ visibility: { dims: ['system_book', 'store_id'] } })),
       'UNKNOWN_DIM',
@@ -156,7 +156,7 @@ describe('compileL2：写时校验（机检，不是运行时才发现）', () =
   })
 
   it('维度名不是标识符（想借维度名注入）⇒ 抛 UNKNOWN_DIM', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     expectThrow(
       () => compileL2(base, decl({ visibility: { dims: ['system_book) or 1=1 --'] } })),
       'UNKNOWN_DIM',
@@ -164,7 +164,7 @@ describe('compileL2：写时校验（机检，不是运行时才发现）', () =
   })
 
   it('= 只许一个值、in 至少要一个值 ⇒ 否则抛 BAD_FILTER', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     expectThrow(() => compileL2(base, decl({ filters: [{ dim: 'bizday', op: '=', values: [] }] })), 'BAD_FILTER')
     expectThrow(
       () => compileL2(base, decl({ filters: [{ dim: 'bizday', op: '=', values: ['a', 'b'] }] })),
@@ -176,7 +176,7 @@ describe('compileL2：写时校验（机检，不是运行时才发现）', () =
 
 describe('compileL2：产物形状', () => {
   it('不声明 visibility ⇒ 维度继承 L1 的 grain，标题仍是 L1 标题', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     const { selectSql, title, groupBy } = compileL2(base, decl())
     expect(title).toBe('净销售额')
     expect(selectSql).toBe('select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale')
@@ -185,7 +185,7 @@ describe('compileL2：产物形状', () => {
   })
 
   it('groupBy 与 SELECT 的可见维度**同源**（裁剪后两边一起变，不会各说各话）', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     const { selectSql, groupBy } = compileL2(base, decl({ visibility: { dims: ['bizday'] } }))
     expect(groupBy).toBe('bizday')
     expect(selectSql).toContain(', bizday')
@@ -193,14 +193,14 @@ describe('compileL2：产物形状', () => {
   })
 
   it('visibility 重复维度去重（同一个维度写两遍不该让 SELECT 出现重复列）', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     const { selectSql, groupBy } = compileL2(base, decl({ visibility: { dims: ['bizday', 'bizday'] } }))
     expect(groupBy).toBe('bizday')
     expect(selectSql).toBe('select sum(fct_retail_sale.net_amount) as value, bizday from fct_retail_sale')
   })
 
   it('filters 形态下 groupBy 也回可见维度（派生表那支同样不能漏）', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     const { groupBy } = compileL2(base, decl({
       visibility: { dims: ['system_book'] },
       filters: [{ dim: 'bizday', op: '=', values: ['2026-01-01'] }],
@@ -209,31 +209,31 @@ describe('compileL2：产物形状', () => {
   })
 
   it('alias ⇒ 标题换成别名（口径不变，只是换个叫法）', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     expect(compileL2(base, decl({ alias: '熊喵净销售' })).title).toBe('熊喵净销售')
   })
 
   it('visibility.dims 裁掉维度（裁剪只少不多）', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     const { selectSql } = compileL2(base, decl({ visibility: { dims: ['system_book'] } }))
     expect(selectSql).toContain('system_book')
     expect(selectSql).not.toContain('bizday')
   })
 
   it('visibility.dims 空数组 ⇒ 只出汇总值（不带任何维度）', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     const { selectSql } = compileL2(base, decl({ visibility: { dims: [] } }))
     expect(selectSql).toBe('select sum(fct_retail_sale.net_amount) as value from fct_retail_sale')
   })
 
   it('L2 不改 L1 口径：值表达式逐字来自 base（不是 L2 自己写的）', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     const { selectSql } = compileL2(base, decl({ alias: 'x', visibility: { dims: ['bizday'] } }))
     expect(selectSql).toContain('sum(fct_retail_sale.net_amount) as value')
   })
 
   it('filters 走 FROM 派生表：值表达式与关系名原样保留（schema 限定形态也不破）', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     const { selectSql } = compileL2(base, decl({ filters: [{ dim: 'system_book', op: '=', values: ['3120'] }] }))
     // 派生表里带过滤，外层再聚合 ⇒ 值表达式的限定名仍然可解析（派生表没改关系名）
     expect(selectSql).toContain('from (select sum(fct_retail_sale.net_amount) as value, system_book, bizday, org')
@@ -242,13 +242,13 @@ describe('compileL2：产物形状', () => {
   })
 
   it('filter 值单引号双写（走 authz 的 sqlQuote 单一实现，不另写转义）', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     const { selectSql } = compileL2(base, decl({ filters: [{ dim: 'system_book', op: '=', values: ["a'b"] }] }))
     expect(selectSql).toContain(`= ${sqlQuote("a'b")}`)
   })
 
   it('★ 产物是纯 SELECT：无分号、无 DDL/DML 关键字（禁任意 SQL 的可机检落点）', () => {
-    const base = resolveL1Base(L1_CATALOG, 'retail:net_sales')
+    const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     const outputs = [
       compileL2(base, decl()).selectSql,
       compileL2(base, decl({ visibility: { dims: [] } })).selectSql,
@@ -306,7 +306,7 @@ describePg('compileL2 产物在真库上可执行（需要 DATABASE_URL）', () 
       [l1({
         selectSql: `select sum(${SCHEMA}.fct_retail_sale.net_amount) as value, system_book, bizday from ${SCHEMA}.fct_retail_sale`,
       })],
-      'retail:net_sales',
+      'lemeng:retail:net_sales',
     )
 
   /** 与 domain/authz.ts 的 authorize 同形地拼出最终 SQL（主体钉死 + 可选 GROUP BY + LIMIT）。 */
