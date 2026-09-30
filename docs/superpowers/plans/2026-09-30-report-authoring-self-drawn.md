@@ -165,6 +165,13 @@ git commit -m "feat(data): 自绘规格 schema + 图型白名单（严格白名�
 
 - [ ] **Step 1: 写迁移**（幂等）
 
+> ⚠️ **订正记录（2026-09-30，Task 2 实施中发现，两件）**：
+> 1. **跨列 check 会打破既有 platform 夹具**——`routes/reports.test.ts` 5 处与 `report-store.test.ts`
+>    2 处的 platform 行夹具**必须机械补 `spec: { panels: [] }`** 才能过约束（这是夹具适配，
+>    **允许**越「不碰 routes/**」的字面禁令；零 handler/manifest 改动的口径不变）。
+> 2. **部署顺序风险**：007 上线前，目标库若存在**无规格的既有 platform 行**（dev 库实测有一条陈旧行），
+>    迁移的 check 会建不上（或行持续违约）。部署前跑一条检查、有则先清——这条写进 Task 6 的文档与部署注意。
+
 ```sql
 -- 007_report_spec.sql — 平台自绘报表的**声明式规格**（spec §3⑥；计划 6）。
 -- 存成一列而非另开表：这样规格写保护**免费复用**登记表版本守卫（plan 4），
@@ -381,6 +388,14 @@ git commit -m "test(data): 自绘数据通路与 Metabase 判据同源 + 逐查�
 - **两条实测渲染坑（spec §5）**：多系列要**透视数据集**（否则多出来的点会被连成一条线）；画布要收 `overflow`
   （否则溢出到隔壁格子）。**渲染器质量归我们**，这两条是渲染层的活、不是数据问题。
 ````
+
+- [ ] **Step 1b: 部署注意写进 README**（Task 2 实施中发现的顺序风险）：
+
+```markdown
+- ⚠️ **部署 007 前查既有行**：目标库若有无规格的 `renderer='platform'` 行（跨列 check 会拒），
+  先清理再迁移：`select org,id,title from data.reports where renderer='platform' and spec is null;`
+  ——有结果就先删行（或补规格），再上 007。
+```
 
 - [ ] **Step 2: spec 待办 4 结案**
 
