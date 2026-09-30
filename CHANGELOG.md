@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.60.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.60.0...v0.60.1) - 2026-09-30
+- 【修复】duckle: #392 回填工具两处缺口（判据排除当天 + runbook 前置补全） ([#393](https://github.com/MYTech-Co-LTD/platform-core/pull/393), [3f62f82](https://github.com/MYTech-Co-LTD/platform-core/commit/3f62f82cf4f9d5ae8afdc0ebb0609438cf55d299))
+
+
 ## [0.60.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.59.0...v0.60.0) - 2026-09-30
 - 【新增】data: #389 语义的源维度——租户已接入源登记/投影/裁剪/写入闸 + 指标命名三段式 ([#390](https://github.com/MYTech-Co-LTD/platform-core/pull/390), [41d8bdf](https://github.com/MYTech-Co-LTD/platform-core/commit/41d8bdf2715554c8b648cf445aeca92bc193e091))
 
