@@ -16,6 +16,8 @@ import path from 'node:path'
 import { parse as parseYaml } from 'yaml'
 // tenant_source 的 SQL 单一事实源（与 admin PUT /sources 共用）——改列名/冲突目标只需改那一处
 import { SOURCES_UPSERT_SQL } from '../apps/server/src/tenant-source.ts'
+// 源标识形状的单一事实源（与声明侧 check-data-models 规则 ⑤、登记侧 admin SourcesBody 共用）
+import { METRIC_SOURCE_RE } from '../packages/platform-sdk/src/module.ts'
 
 export function tenantProvisionSteps(slug, opts = {}) {
   const org = opts.org ?? `${slug}-org`
@@ -145,9 +147,20 @@ export function tenantSourceUpsert(tenantId, sources) {
  *  为什么必须去重：同一键在同一条 upsert（`unnest` 展开）里出现两次，Postgres 报
  *  21000 `ON CONFLICT DO UPDATE command cannot affect row a second time` ⇒ **CLI 直接崩**。
  *  重复项本身不是错误（与路由侧同口径：启用集是集合语义），故去重放行、不报错。
- *  取法沿用 `--module` 的 flatMap（末尾裸 `--source` 取到 undefined ⇒ filter 掉）。 */
+ *  取法沿用 `--module` 的 flatMap（末尾裸 `--source` 取到 undefined ⇒ filter 掉）。
+ *
+ *  ⚠️ **形状必须校验**（`METRIC_SOURCE_RE`，与声明侧/路由侧同一个字面量）：整条链按
+ *  「登记值 === 声明的 `source`」逐字比，`--source Lemeng` 会让该源的全部 L1 指标对**所有**租户
+ *  静默不可见（无报错、门禁不红、对账还报 clean）。故在**任何 IO 之前**响亮失败 ——
+ *  与本文件 `parseLoginMethods` / `parseWechatOaArgs` / `parseWecomArgs` 的入口拦同一脾气。 */
 export function parseSources(args) {
   const raw = args.flatMap((a, i) => (a === '--source' ? [args[i + 1]] : [])).filter(Boolean)
+  for (const s of raw) {
+    if (!METRIC_SOURCE_RE.test(s)) {
+      throw new Error(`--source 非法值：${JSON.stringify(s)}（合法形态：小写蛇形、首字符是字母，如 lemeng；`
+        + '写成 Lemeng/lemeng-erp 会与 L1 声明的 source 比对不上 ⇒ 该源指标对所有租户静默不可见）')
+    }
+  }
   return [...new Set(raw)] // Set 保插入序 ⇒ 去重不改变先出现者优先
 }
 

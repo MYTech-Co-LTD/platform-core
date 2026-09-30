@@ -11,7 +11,7 @@ import type { Context } from 'hono'
 import type { Pool } from 'pg'
 import { z } from 'zod'
 import { csrfToken } from '@platform/auth-core'
-import { normalizeEndpoint, platformStorageFromEnv, requireScope } from '@platform/sdk'
+import { METRIC_SOURCE_RE, normalizeEndpoint, platformStorageFromEnv, requireScope } from '@platform/sdk'
 import type { TenantStorageConfig } from '@platform/sdk'
 import type { TenantEnv, TenantRow } from '../tenant'
 import type { CasdoorFactory, SessionEnv } from '../session-middleware'
@@ -344,7 +344,10 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
    * 另一回事：那是**未知字段**（可能意味着调用方理解错了契约），集合内的重复不是。
    */
   const SourcesBody = z.object({
-    sources: z.array(z.string().min(1).max(64)).max(50).transform((a) => [...new Set(a)]),
+    // 形状校验（`METRIC_SOURCE_RE`）与声明侧**同源**：整条链按「登记值 === 声明的 source」逐字比，
+    // 一头松就会让该源的全部 L1 指标对所有租户**静默不可见**（无报错、门禁不红、对账还报 clean）。
+    sources: z.array(z.string().min(1).max(64).regex(METRIC_SOURCE_RE)).max(50)
+      .transform((a) => [...new Set(a)]),
   }).strict()
 
   app.get('/sources', async (c) => {

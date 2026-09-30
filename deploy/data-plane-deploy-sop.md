@@ -182,7 +182,14 @@ ALTER ROLE <DATA_WAREHOUSE_URL 的 user> IN DATABASE <DATA_WAREHOUSE_URL 的 db>
 - [ ] 端口全回环（`docker port` 或 `ss -lnt` 复核 15432/13030 只绑 127.0.0.1）
 - [ ] **Gate-B 断言过**（P7 那两条：`DNS_OK` + `TCP_OK`）——**每次重建容器后都要重跑**
 - [ ] **`search_path` 已绑且真查询出数**（P8b：不带 schema 的 `select count(*) from fct_retail_sale`）
-- [ ] **L1 词表已物化**（`data.metrics` 非空；命令见 §F.6 末的订正注）——**这一步当前没有 job，必须手工触发**
+- [ ] **L1 词表已物化且 `source_system` 非空**（命令见 §F.6 末的订正注）——**这一步当前没有 job，必须手工触发**。
+  ⚠️ 判据是「**L1 行的 `source_system` 非空**」，**不是「`data.metrics` 非空」**：`006` 加的列
+  **可空**，迁移时库里**已存在**的旧 L1 行在重跑一次 `sync-data-semantics.mjs` 之前
+  `source_system` 是 `NULL`，而 `visibleMetrics` 把 `null` 判为「恒可见」（L2 语义）
+  ⇒ 这些行对**所有**租户可见、写闸也不触发 —— 即「**没登记的源反而全可见**」。
+  此时「`data.metrics` 非空」是**假绿**（旧行本来就非空）。故：物化后**必须**按 source_system
+  复核一遍（示例：`select count(*) filter (where source_system is null) as nulls, count(*) from data.metrics`，
+  `nulls` 应为 **0**）；非 0 ⇒ 说明存量行还没被 sync 刷新，补跑一次再验。
 - [ ] **源维度对账过**（P11：`reconcile-tenant-sources.mjs` **exit 0**，四桶全空）——exit 1（漂移）
   与 exit 2（对不成账）都算**不过**，处置不同、都要人看
 

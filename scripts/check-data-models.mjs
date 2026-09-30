@@ -112,6 +112,9 @@ import { parse as parseYaml } from 'yaml'
 // 「⑧⑨ 为什么值得占用静态门禁的位置」）。值 import（不是 type）——契约面全是运行期
 // 函数与常量，断言要真调它们；该脚本的 main 有 `process.argv[1]` 守卫，import 不会执行它。
 import * as syncContract from './sync-data-semantics.mjs'
+// 规则 ⑤ 的形状正则：**声明侧与登记侧共用同一个字面量**，事实源在 platform-sdk（见该处注释）。
+// 本文件刻意不再自己定义一份——两头漂开时症状是「指标对所有租户静默不可见」，门禁不红。
+import { METRIC_SOURCE_RE } from '../packages/platform-sdk/src/module.ts'
 
 export const SCRIPT_NAME = 'check-data-models'
 /** 违规行前缀标签（与 lint-architecture 的 [B1]/[B7]、check-compose 的 [B7] 同形，便于 grep） */
@@ -169,8 +172,12 @@ const REQUIRED_METRIC_FIELDS = ['expression', 'grain', 'owner', 'tier', 'definit
  * 为什么值得一条形状规则而不是「非空即可」：`source` 会被拿去与「已接入源」的登记值**比对**
  * （Task 5 的裁剪、Task 6 的对账）⇒ `Lemeng` / `lemeng-erp` 这类写法会比对不上，
  * 症状是「指标对所有人都不可见」而不是报错（fail-closed 但极难定位）。
+ *
+ * ⚠️ 正则本身**不在这里定义**——它是声明侧与登记侧共用的同一个字面量，事实源在
+ * `packages/platform-sdk/src/module.ts` 的 `METRIC_SOURCE_RE`（登记侧：admin 的 `SourcesBody`、
+ * 开通 CLI 的 `parseSources` 引的是同一个）。**别在本文件里再抄一份**：两头漂开时症状是
+ * 静默不可见，门禁不红、对账还报 clean。
  */
-const METRIC_SOURCE_RE = /^[a-z][a-z0-9_]*$/
 /**
  * 规则 ⑥-c：**保留给测试夹具**的指标命名空间（声明名不得占用）。
  *

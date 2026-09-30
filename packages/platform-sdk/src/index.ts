@@ -6,7 +6,7 @@ export { DECLARED_GATE_APPROVED, defineModule, requireScope, declaredScopeGate }
 export type {
   DeclaredEndpoint, Identity, ModuleContext, ModuleDefinition, ModulePorts, ResolvedPatKey,
 } from './module'
-export { TENANT_SOURCES, TENANT_STORAGE } from './module'
+export { METRIC_SOURCE_RE, TENANT_SOURCES, TENANT_STORAGE } from './module'
 export type { TenantStorageConfig } from './module'
 export { PLATFORM_STORAGE_ENV_KEYS, normalizeEndpoint, platformStorageFromEnv, storageRefOf } from './storage'
 export { REQUESTER_CHANNEL, REQUESTER_KEY_ID } from './requester-vars'

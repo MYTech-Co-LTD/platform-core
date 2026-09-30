@@ -595,6 +595,25 @@ describe('admin 路由：租户已接入源（platform.tenant_source）', () => 
     expect(audit?.params[3]).toEqual({ sources: ['lemeng', 'woke'] })
   })
 
+  // 反向：登记值与声明的 source 逐字比 ⇒ 形状不对（`Lemeng`）会让该源指标对所有租户**静默不可见**
+  it('sources 元素形状非法 ⇒ 400 INVALID_BODY 且不落库（与声明侧同一正则，防静默不可见）', async () => {
+    const sp = sourcePool()
+    const app = mount(deps({ pool: sp.pool }), { scopes: ['tenant:admin'] })
+    for (const bad of ['Lemeng', 'lemeng-erp', '1lemeng', 'le meng']) {
+      const res = await app.request(sourcesPath, {
+        method: 'PUT', headers: withCsrf, body: JSON.stringify({ sources: [bad] }),
+      })
+      expect(res.status, `${bad} 应被拒`).toBe(400)
+      expect((await res.json()).error).toBe('INVALID_BODY')
+    }
+    // 一个都不该写下去（连事务都不该开）
+    expect(sp.audits.filter((q) => /tenant_source/i.test(q.sql))).toEqual([])
+    // 合法形状照常放行
+    expect((await app.request(sourcesPath, {
+      method: 'PUT', headers: withCsrf, body: JSON.stringify({ sources: ['lemeng', 'l1_src'] }),
+    })).status).toBe(200)
+  })
+
   it('两句同事务：begin → 两句 → commit，两句都跑在事务连接上，且 commit 之后才写审计', async () => {
     const sp = sourcePool()
     const app = mount(deps({ pool: sp.pool }), { scopes: ['tenant:admin'] })

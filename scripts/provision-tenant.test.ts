@@ -182,6 +182,17 @@ describe('parseSources（--source 可重复；去重防撞键）', () => {
     expect(parseSources(['acme', '--module', 'demo'])).toEqual([])
     expect(parseSources(['acme', '--source'])).toEqual([])
   })
+  // 反向：登记值与声明的 source 逐字比 ⇒ 形状不对会让该源指标对所有租户**静默不可见**
+  it('形状非法的 --source ⇒ 抛错（在任何 IO 之前响亮失败，不静默登记一个比不上的值）', () => {
+    expect(() => parseSources(['acme', '--source', 'Lemeng'])).toThrow(/非法值/)
+    expect(() => parseSources(['acme', '--source', 'lemeng-erp'])).toThrow(/非法值/)   // 连字符
+    expect(() => parseSources(['acme', '--source', '1lemeng'])).toThrow(/非法值/)      // 首字符非字母
+    expect(() => parseSources(['acme', '--source', 'le meng'])).toThrow(/非法值/)
+  })
+  it('形状合法的照常放行（lemeng / l1_src / a）', () => {
+    expect(parseSources(['--source', 'lemeng', '--source', 'l1_src'])).toEqual(['lemeng', 'l1_src'])
+    expect(parseSources(['--source', 'a'])).toEqual(['a'])
+  })
 })
 
 describe('tenantSourceUpsert（纯核：开通只置 true，绝不「顺手禁用」）', () => {
