@@ -15,6 +15,7 @@
 //   ⑤ 语义声明必填字段齐全（owner / tier / grain / definition / source + name / expression）
 //      + `source`（**源系统**）的形状（小写蛇形）。⚠️ 与选填的 `sources`（对象存储路径）不是一回事
 //   ⑥ 指标名 `<域>:<指标名>` 命名空间前缀 + 同名唯一（跨文件）
+//      + **保留命名空间**：声明名不得以测试夹具专用前缀开头（`RESERVED_METRIC_ID_PREFIXES`）
 //   ⑦ 每个声明指标有对应 `dbt/tests/audit_<指标>.sql` + 该文件名映射无碰撞
 //   ⑧ **L2 声明静态面**（T9 / 拍板 #5 的「门禁③机检范围覆盖用户产生的声明」）：
 //      `modules/data/domain/semantic-compiler.ts` 里**写时校验**（zod schema）与**唯一编译点**
@@ -170,6 +171,21 @@ const REQUIRED_METRIC_FIELDS = ['expression', 'grain', 'owner', 'tier', 'definit
  * 症状是「指标对所有人都不可见」而不是报错（fail-closed 但极难定位）。
  */
 const METRIC_SOURCE_RE = /^[a-z][a-z0-9_]*$/
+/**
+ * 规则 ⑥-c：**保留给测试夹具**的指标命名空间（声明名不得占用）。
+ *
+ * 为什么需要这条机检：平台桶（`data.metrics` 的 `org='platform'`）是**跨测试文件共用**的固定桶，
+ * 而各测试文件的清理只能按 id 删 ⇒ 夹具 id 与**真实声明**同名时，一个测试的 `afterAll` 就会把
+ * 平台桶里那条**真行**删掉（实测过一次：`routes/metrics.test.ts` 曾用 `retail:net_sales` 当夹具 id，
+ * 跑完测试后 `sync --check` 报「新增 1」）。测试侧已把夹具 id 收进各自的前缀（清理也改成
+ * `id like '<前缀>%'` 的谓词级收口），但「这些前缀不会被真声明占用」此前**只是约定**——
+ * `t6test:net_sales` 完全合 `METRIC_NAME_RE`，门禁一句话都不说。万一将来真声明占了这个命名空间，
+ * 上面那类「测试删真行」会原样复发。故把约定写成机检：**声明名一律不得以这些前缀开头**。
+ *
+ * ⚠️ 这个清单必须与仓内测试文件实际用的前缀**同源**（`check-data-models.test.ts` 有一条用例
+ *    逐文件核对，防它悄悄过期）。新增夹具前缀时：先加进本清单，再在测试文件里用它。
+ */
+export const RESERVED_METRIC_ID_PREFIXES = ['t6test:', 't8test:', 't8c:']
 
 /** @param {string} p */
 const toPosix = (p) => p.split(sep).join('/')
@@ -766,6 +782,18 @@ export function checkDataModels(rootDir) {
         metric.file,
         0,
         `指标名 \`${metric.name || '(空)'}\` 不合规 —— 必须是 \`<域>:<指标名>\` 命名空间形态（两段都小写蛇形，如 \`retail:net_sales\`）。命名空间是「同名唯一」能成立的前提（layered §6）`,
+      )
+      continue
+    }
+    // ⑥-c 保留命名空间（测试夹具专用前缀）：见 RESERVED_METRIC_ID_PREFIXES 的说明。
+    // 位置在 ⑥-b 之前、⑥-a 之后：名字本身不合规时只报 ⑥-a（免得一串噪声），
+    // 而占保留位时也不再进 `nameToFile` / 不再要它的对账文件（同 ⑥-a 的处置：只报这一条）。
+    const reservedPrefix = RESERVED_METRIC_ID_PREFIXES.find((p) => metric.name.startsWith(p))
+    if (reservedPrefix !== undefined) {
+      push(
+        metric.file,
+        0,
+        `指标名 \`${metric.name}\` 占用了**保留给测试夹具**的命名空间 \`${reservedPrefix}\` —— 这些前缀（${RESERVED_METRIC_ID_PREFIXES.join(' / ')}）留给测试夹具，因为平台桶（\`data.metrics\` 的 \`org='platform'\`）跨测试文件共用、清理只能按 id 删：真声明一旦占用，某个测试的 afterAll 就会把这条**真行**删掉（实测过：sync --check 会因此报「新增 N」）。改指标名（别占用保留前缀），不要改本清单`,
       )
       continue
     }

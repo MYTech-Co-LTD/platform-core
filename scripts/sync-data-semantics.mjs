@@ -198,12 +198,26 @@ export function declarationsFromYaml(parsed) {
     // 对**所有**租户静默不可见（没有任何租户接过名为 `undefined` 的源）——坏在数据里，不报错。
     // ⚠️ 声明面的必填由门禁规则 ⑤ 把守（唯一事实源 = 仓内 YAML）**且**这里再拦一道：
     //    本脚本会被手跑（不经 CI），事实源的位置将来也可能变——门禁是权威，这条是兜底。
+    //
+    // ⚠️ 第二个坑是**首尾空白**（同一类静默失效，只是触发条件收窄）：`' lemeng '` 这种值在门禁侧
+    //    是合法声明（`asText` 先 trim 再判，故门禁校验的其实是 `lemeng`），若原样落库，库里的值
+    //    就与「已接入源」的登记值**逐字比对不上** ⇒ 同样静默不可见。这里选择**拒绝**而不是 trim：
+    //    本脚本的脾气是「取不到/说不准就响亮失败」，静默 trim 等于替作者改他的声明，而「声明写了
+    //    什么」与「库里存了什么」必须是同一个值。代价：本脚本对空白比门禁**更严**——方向是安全的
+    //    （响亮失败，不是坏值落库），且真事实源（`dbt/semantics/l1_metrics.yml`）本来就不带空白。
     const sourceSystem = String(m.source ?? '')
-    if (sourceSystem === '') {
+    if (sourceSystem.trim() === '') {
       throw new Error(
-        `指标 \`${name}\` 缺 \`source\`（源系统，如 \`lemeng\`）—— 它会被物化成 `
+        `指标 \`${name}\` 缺 \`source\`（源系统，如 \`lemeng\`；全为空白也算缺）—— 它会被物化成 `
         + '`data.metrics.source_system` 并被消费侧拿去与「已接入源」比对，缺了它指标就查不出来了'
         + '（静默，不是报错）。请在声明里补 `source`（形状：小写蛇形）。',
+      )
+    }
+    if (sourceSystem !== sourceSystem.trim()) {
+      throw new Error(
+        `指标 \`${name}\` 的 \`source\` ${JSON.stringify(sourceSystem)} 首尾带空白 —— 它要与`
+        + '「已接入源」的登记值**逐字**比对，带空白的值匹配不上（症状：该指标对所有人都查不出来，'
+        + `且不报错）。请把它写成 \`${sourceSystem.trim()}\`（本脚本不替声明做 trim）。`,
       )
     }
     const grain = m.grain.map((/** @type {unknown} */ g) => String(g))

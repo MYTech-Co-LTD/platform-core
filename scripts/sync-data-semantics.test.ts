@@ -99,6 +99,19 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
     ]))).toThrow(/source/)
   })
 
+  it('★ `source` 全为空白 / 首尾带空白 ⇒ 抛（逐字比对 ⇒ 带空白落库后该指标静默查不出来）', () => {
+    // 与上一条同一类失效，只是触发条件收窄：门禁侧 `asText` 会先 trim（故门禁校验的是 `lemeng`），
+    // 若本脚本原样落库，库里的值就与「已接入源」的登记值对不上 ⇒ 静默不可见。这里**拒绝**而不是 trim。
+    for (const bad of ['   ', ' lemeng ', 'lemeng ', ' lemeng']) {
+      expect(
+        () => declarationsFromYaml(yaml([
+          { name: 'x:y', source: bad, definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
+        ])),
+        `source: ${JSON.stringify(bad)} 没被拦下`,
+      ).toThrow(/source/)
+    }
+  })
+
   it('grain 为空数组 ⇒ 抛（grain 同时是 L2 的维度白名单来源，空 = 什么都不能裁）', () => {
     expect(() => declarationsFromYaml(yaml([
       { name: 'x:y', definition: 'd', expression: 'sum(t.c)', grain: [], owner: 'o', tier: 'certified' },

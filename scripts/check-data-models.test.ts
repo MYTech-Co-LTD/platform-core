@@ -11,12 +11,12 @@
 // ⚠️ 门禁的**结构可解析**（YAML/SQL 形态）在本文件里是真验的；**dbt 语义可解析**（`dbt parse`）
 //    **未验**——本机没有 dbt，见 dbt/README.md「未验清单」。
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
-import { checkDataModels, metricToAuditFileName } from './check-data-models.mjs'
+import { RESERVED_METRIC_ID_PREFIXES, checkDataModels, metricToAuditFileName } from './check-data-models.mjs'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const scriptsDir = join(repoRoot, 'scripts')
@@ -170,6 +170,39 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
     expect(violations[0]?.file).toBe(METRICS)
     expect(violations[0]?.message).toContain('source')
     expect(violations[0]?.message).toContain('retail:net_sales')
+  })
+
+  // ── 规则 ⑥-c：保留给测试夹具的命名空间（把「夹具前缀不撞真声明」从约定变机检）────────────
+  // 背景：平台桶（`data.metrics` 的 `org='platform'`）跨测试文件共用、清理只能按 id 删 ⇒
+  // 真声明一旦占用夹具前缀的命名空间，某个测试的 afterAll 就会删掉那条**真行**（实测过一次）。
+  it('格⑤附带：声明名占用**保留给测试夹具**的命名空间 → 违规', () => {
+    for (const prefix of RESERVED_METRIC_ID_PREFIXES) {
+      const root = variant((f) => {
+        f[METRICS] = f[METRICS].replace('"retail:net_sales"', `"${prefix}net_sales"`)
+        // 不需要造对账文件：⑥-c 命中即 `continue`（与 ⑥-a 同一处置），⑦ 不会为它报第二条
+      })
+      const violations = checkDataModels(root)
+      expect(violations, `声明名 ${prefix}net_sales 没被判违规`).toHaveLength(1)
+      expect(violations[0]?.message).toContain(prefix)
+      expect(violations[0]?.message).toContain('保留给测试夹具')
+    }
+  })
+
+  it('★ 保留清单与仓内测试夹具前缀**同源**（清单过期 = 这条机检对这种前缀失效）', () => {
+    // 为什么需要这条：保留清单写在门禁里（唯一事实源），而前缀写在各自测试文件里。
+    // 二者一旦不同步（新增夹具前缀却忘了登记），那条前缀就**不受 ⑥-c 保护**——
+    // 而这正是「测试删真行」复发的入口。故逐文件核对：每个夹具前缀都必须在清单里。
+    const FIXTURE_FILES = [
+      'modules/data/domain/metric-store.test.ts',
+      'modules/data/routes/metrics.test.ts',
+      'modules/data/catalog-consumers.test.ts',
+    ]
+    for (const rel of FIXTURE_FILES) {
+      const src = readFileSync(join(repoRoot, rel), 'utf8')
+      const m = src.match(/^const (?:L1_ID_PREFIX|L1_PREFIX) = '([^']+)'/m)
+      expect(m, `${rel} 里找不到夹具前缀常量（改过名字就要同步本用例）`).not.toBeNull()
+      expect(RESERVED_METRIC_ID_PREFIXES, `${rel} 的前缀 ${m?.[1]} 不在保留清单里`).toContain(m?.[1])
+    }
   })
 
   it('格⑤附带：source 形状不合（大写 / 连字符 / 前导数字）→ 违规', () => {
