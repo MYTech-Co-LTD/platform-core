@@ -121,6 +121,10 @@ services:
     restart: unless-stopped
     environment:
       SYSTEM_BOOK: "3120"
+      # 本账套声明的「已接入源」（逗号分隔）：**声明侧**，对账的另一侧是平台登记
+      # `platform.tenant_source`。真值走 project env（openship），键名带账套后缀
+      # ——宿主侧对账用 `pnpm exec tsx scripts/reconcile-tenant-sources.mjs` 读同名键。
+      ADOPTED_SOURCES: ${ADOPTED_SOURCES_3120:-}
       DUCKLE_TOKEN: ${DUCKLE_TOKEN:-}          # 兼作 console 登录令牌（entrypoint 翻成引擎正式名）
       LEMENG_TOKEN: ${LEMENG_TOKEN:-}
       ZOS_ACCESS_KEY: ${ZOS_ACCESS_KEY:-}
@@ -142,6 +146,8 @@ services:
     restart: unless-stopped
     environment:
       SYSTEM_BOOK: "64188"
+      # 同 3120：本账套的「已接入源」声明（真值走 project env 的 ADOPTED_SOURCES_64188）
+      ADOPTED_SOURCES: ${ADOPTED_SOURCES_64188:-}
       DUCKLE_TOKEN: ${DUCKLE_TOKEN:-}
       LEMENG_TOKEN: ${LEMENG_TOKEN_64188:-}    # ← 这个账套自己的令牌（项目 env 里带后缀存）
       ZOS_ACCESS_KEY: ${ZOS_ACCESS_KEY:-}
