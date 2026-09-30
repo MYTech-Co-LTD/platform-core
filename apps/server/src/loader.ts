@@ -515,6 +515,12 @@ export async function loadModules(
         //     挪到后面的表现是模块 `c.get(TENANT_SOURCES)` 恒 undefined，代码里看不出问题）。
         //   · 判据是 `=== true`（不是「键存在」）：manifest 的值是 boolean，显式 `false` = 关掉。
         //   · 无租户上下文 ⇒ 不 set（放行给后续层，与 storage 投影同一分支）。
+        //   · **无 identity（匿名）⇒ 不查库**（与紧邻那条启用闸门同款 guard，理由同 ⑥.5 的 S5）：
+        //     匿名请求最终必被模块门卫 401 挡下 ⇒ 投影结果无人消费，查表纯属白费；而模块 API
+        //     **没有独立限流** ⇒ 不 guard 就等于给匿名流量开了一条放大 DB 的口子（一次索引查表
+        //     也算放大）。**合法请求不会因此饿死**：session / PAT / 企微三条通道都在
+        //     `runtime.mount` 之前注入 identity ⇒ 投影执行时 identity 必已可用（实测守卫见
+        //     loader.test.ts 的匿名用例：匿名 0 次查表、已登录恒 1 次）。
         //   · 无登记行 ⇒ set **空数组**（不是不 set）：声明了就有值，「本租户一个源都没接」与
         //     「本模块不声明源」是两个状态，模块侧得分辨得出。
         //  ⚠️ 与 `TENANT_STORAGE` 的一个**刻意不同**：storage 的投影是**零 IO**（读的是租户行上
@@ -523,6 +529,7 @@ export async function loadModules(
         //     （「无案例不立标准」）；要压测有了数再加 TTL，**别提前加**（隐式窗口语义是另一回事）。
         if (m.manifest.tenantSources === true) {
           const projectSources: MiddlewareHandler<MountEnv> = async (c, next) => {
+            if (!c.get('identity')) return next() // 匿名：不查库（见上方·无 identity 那条）
             const t = c.get('tenant') as TenantRow | undefined
             // 读 SQL 在 tenant-source.ts（那张表的单一事实源，与写入方共用一处）
             if (t) c.set(TENANT_SOURCES, await listEnabledSources(deps.pool, t.id))

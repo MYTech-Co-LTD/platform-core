@@ -1338,6 +1338,71 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
       .toEqual({ sources: null })
   })
 
+  it('匿名（无 identity）打声明 tenantSources 的模块：投影**不查表**（不放大成库查询），门卫照旧 401', async () => {
+    cleanupModules.push('srcmod', 'srcmod-off', 'plainmod')
+    const modulesDir = await newModulesDir()
+    await writeSourceFixtures(modulesDir)
+
+    // 真池外面套一层**记录台账**（只记 SQL 文本，原样转交）：唯一能证明「这次请求有没有查那张表」
+    // 的证据面——断言响应体只能证明「值没被设」，证明不了「库没被查」（两者是不同的病）。
+    const sqlLog: string[] = []
+    const recording = new Proxy(pool, {
+      get(target, prop, recv) {
+        if (prop === 'query') {
+          return (text: unknown, values?: unknown[]) => {
+            sqlLog.push(typeof text === 'string'
+              ? text
+              : String((text as { text?: unknown } | null)?.text ?? text))
+            // 原样转交（含 (config, values) 两种调用形状），不改变语义
+            return (target.query as (...a: unknown[]) => unknown).call(target, text, values)
+          }
+        }
+        const v = Reflect.get(target, prop, recv)
+        return typeof v === 'function' ? v.bind(target) : v
+      },
+    }) as Pool
+
+    const runtime = await loadModules(modulesDir, {
+      pool: recording,
+      casdoorFor: casdoorFactoryFor(),
+    })
+    const acme = await acmeTenant()
+    /** 本次请求里打 `platform.tenant_source` 的查询条数（`run` 的返回不关心：
+     *  `app.request` 在 Hono 里可能同步返回 Response，故签名收 `unknown | Promise<unknown>`） */
+    const sourceQueries = async (run: () => unknown | Promise<unknown>): Promise<number> => {
+      const before = sqlLog.filter((s) => /tenant_source/i.test(s)).length
+      await run()
+      return sqlLog.filter((s) => /tenant_source/i.test(s)).length - before
+    }
+
+    // ① 匿名（只注入租户，**不注入 identity** —— 与 SPA 壳/未登录探针同一形态）：
+    //    请求先被启用闸门放行（匿名不在其职责内，见 loader.ts ⑥.5），投影**必须**同样跳过查库，
+    //    最后落在模块门卫的 401。旧实现（投影只看租户）在这里白查一次表 —— 模块 API 无限流
+    //    ⇒ 匿名流量可被用来放大 DB，正是紧邻那条闸门明令禁止的（R4 评审 S5）。
+    const anon = new Hono<TestEnv>()
+    anon.use('*', injectTenant(acme))
+    runtime.mount(anon)
+    const anonRes = await anon.request('/api/modules/srcmod/ping')
+    expect(anonRes.status).toBe(401)
+    expect(await anonRes.json()).toEqual({ error: 'UNAUTHENTICATED' })
+    expect(
+      await sourceQueries(() => anon.request('/api/modules/srcmod/ping')),
+      '匿名请求查了 platform.tenant_source ⇒ 白白的库放大',
+    ).toBe(0)
+
+    // ② 已登录（identity 在）⇒ 投影照常查一次（guard 只豁免匿名，别退化成「谁都不投影」）：
+    //    四条通道（session / pat / wecom / guest）都在 runtime.mount **之前**注入 identity，
+    //    故这一步在真实链路上恒成立，投影不会饿死任何合法请求。
+    const authed = new Hono<TestEnv>()
+    authed.use('*', injectTenant(acme))
+    authed.use('*', injectIdentity(['srcmod:view']))
+    runtime.mount(authed)
+    expect(await sourceQueries(async () => {
+      const res = await authed.request('/api/modules/srcmod/ping')
+      expect(res.status).toBe(200)
+    })).toBe(1)
+  })
+
   // ---- 模块端口（正典 docs/module-protocol.md「模块端口：createPorts」）----
 
   /** 声明了 createPorts 的 fixture（端口名只有 resolvePatKey 一个成员，与 SDK 契约一致）。
