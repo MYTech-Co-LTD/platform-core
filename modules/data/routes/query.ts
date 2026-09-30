@@ -2,6 +2,7 @@
 // 状态码映射（#30 订正）：ok → 200；denied → 403；error → **502**——
 // warehouse_unconfigured 与 warehouse_error 都是上游数据仓库不可用，不是本服务的 bug ⇒ 不是 500。
 import { z } from 'zod'
+import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, RouteCtx } from './context'
 import { requesterOf } from './context'
 import { runQuery } from '../domain/query-service'
@@ -21,8 +22,13 @@ export function registerQuery(r: ModuleHono, ctx: RouteCtx): void {
 
     // `execute` 必须透传：缺省会让 runQuery 去建真仓库连接，测试里就变成「断言被网络错误顶掉」。
     // requesterOf 的 M3 守卫在此收口：空 orgId → null → runQuery 的 unauthenticated 路径。
+    //
+    // `adoptedSources` 是本路由的**接线点**（计划 5 §3⑧）：域层（query-service）没有 Hono
+    // context，宿主投影只能在这里读，再经 deps 穿下去。宿主没投影 ⇒ `?? []` ⇒ 空集
+    // ⇒ 平台 L1 一律不可见（fail-closed；「未接入源」与「宿主没给这条事实」都不放行）。
+    const adoptedSources = new Set(c.get(TENANT_SOURCES) ?? [])
     const outcome = await runQuery(
-      { pool: ctx.pool, execute: ctx.execute },
+      { pool: ctx.pool, execute: ctx.execute, adoptedSources },
       org, requesterOf(c), parsed.data.metricId, parsed.data.args,
     )
 

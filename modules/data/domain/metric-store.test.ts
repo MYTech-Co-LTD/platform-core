@@ -19,7 +19,18 @@ const describePg = dbUrl ? describe : describe.skip
 /** 隔离键（text，值 = 该租户的 Casdoor org）——各测试文件用互不相同的 org，避免互相擦数据。 */
 const ORG = 'org-t3-metric'
 const OTHER_ORG = 'org-t3-metric-other'
-/** L1 行的 id 前缀：与真实 sync 物化的 id 区分开，避免测试与「真跑过一次 sync」互相干扰。 */
+/**
+ * L1 行的 id 前缀（本文件专用；`catalog-consumers.test.ts` 用 `t8c:`、`routes/metrics.test.ts` 用 `t6test:`）。
+ *
+ * ⚠️ **每一条写进平台桶（`org='platform'`）的夹具都必须带它**，且 `afterAll` 只按它清理——
+ * 两个方向都会出事，两个方向都是实测过的：
+ *   · 不带前缀、而 id 又恰好与**真实声明**（`dbt/semantics/l1_metrics.yml` 的 `name`）同名
+ *     ⇒ 清理会把平台桶里那条**真行**删掉（兄弟文件 `routes/metrics.test.ts` 曾用 `retail:net_sales`
+ *     当夹具 id，跑完测试后 `sync --check` 报「新增 1」就是这个成因）；
+ *   · 不带前缀的夹具行**不被清理** ⇒ 留在桶里，`sync --check` 把它读成「仓内声明里没有的行」
+ *     而报「删除 N」（本文件原先的 `source_probe` / `entry_l1` 就是这个成因）。
+ * 名字里的 `t8` 是历史（本文件随 T8 落地），关键是「与真实声明不可能同名」。
+ */
 const L1_ID_PREFIX = 't8test:'
 
 /** 词表形状照 domain/authz.ts 的 `MetricDef`（原型 CATALOG 同形）。 */
@@ -41,6 +52,13 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
   const pool = new Pool({ connectionString: dbUrl })
   /** 租户写路径（source='l2'）。平台物化路径是另一个入口 `upsertL1Metric`。 */
   const put = (org: string, d: MetricDef) => upsertMetric(pool, org, d)
+
+  /**
+   * L1 物化路径的入参形状：`MetricDef` + **源系统**（L1 声明里 `source` 必填 ⇒ L1 行恒有源）。
+   * sync 脚本传进来的正是它的 ComparableMetric（同形）。默认 `lemeng`（当前唯一已接入源）。
+   */
+  const l1 = (over: Partial<MetricDef> = {}, sourceSystem: string | null = 'lemeng') =>
+    ({ ...def(over), sourceSystem })
 
   afterAll(async () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
@@ -104,9 +122,11 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
   })
 
   it('★ upsert 不改 source：来源标注只由首次插入确定（写动作改不掉「谁写的」）', async () => {
-    const id = 'source_probe'
+    // ⚠️ id 带本文件前缀（理由见 L1_ID_PREFIX 的说明）：不带前缀的平台行**不被本文件清理**
+    // ⇒ 留在桶里被 sync 的 `--check` 当成「仓内声明里没有的行」报删除漂移。
+    const id = `${L1_ID_PREFIX}source_probe`
     // 先由**物化路径**落一行 l1（org = platform）
-    await upsertL1Metric(pool, def({ id, title: '平台口径' }))
+    await upsertL1Metric(pool, l1({ id, title: '平台口径' }))
     // 再由租户写路径覆盖同一 (org, id)：内容被覆盖，但 source 必须**留在** l1
     await put(L1_ORG, def({ id, title: '换个标题' }))
 
@@ -115,11 +135,57 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
     expect(r.rows[0].source, 'source 被 upsert 改掉了 ⇒ 来源标注失去意义').toBe('l1')
   })
 
+  it('★ L1 行的 source_system 等于声明的 source；L2 行为 null', async () => {
+    // 源维度（spec §3⑧）的两种**行形状**：L1（平台声明）带源系统；L2（租户编译）没有源。
+    const l1Id = `${L1_ID_PREFIX}src_dim`
+    const l2Id = 'l2_no_source'
+    await upsertL1Metric(pool, l1({ id: l1Id }, 'lemeng'))
+    await put(ORG, def({ id: l2Id }))
+
+    const r = await pool.query(
+      'select id, source, source_system from data.metrics where id = any($1::text[])',
+      [[l1Id, l2Id]],
+    )
+    const byId = new Map(r.rows.map((row) => [row.id, row]))
+    expect(byId.get(l1Id), 'L1 行的 source_system 没有等于声明的 source').toMatchObject({
+      source: 'l1', source_system: 'lemeng',
+    })
+    expect(byId.get(l2Id), 'L2 行不该有源系统（它是租户编译出来的，不来自某个源）').toMatchObject({
+      source: 'l2', source_system: null,
+    })
+    // 加载面也要带上（映射保真，别只让表里有值而 MetricRow 里没有）
+    expect((await loadPlatformCatalog(pool)).find((m) => m.id === l1Id)?.sourceSystem).toBe('lemeng')
+    expect((await loadOrgCatalog(pool, ORG)).find((m) => m.id === l2Id)?.sourceSystem).toBeNull()
+  })
+
+  it('★ 声明的 source 改了 ⇒ 重新物化把 source_system 一起刷（否则 sync --check 永远检出漂移）', async () => {
+    const id = `${L1_ID_PREFIX}src_flip`
+    await upsertL1Metric(pool, l1({ id }, 'lemeng'))
+    await upsertL1Metric(pool, l1({ id }, 'other_erp'))
+    expect((await loadPlatformCatalog(pool)).find((m) => m.id === id)?.sourceSystem).toBe('other_erp')
+  })
+
+  it('★ upsertMetric 不碰 source_system（与 source 同一纪律：来源标注只由首次插入确定）', async () => {
+    // 租户写路径撞上同 (org, id) 的 L1 行时，只覆盖内容：既不改 source，也不把 source_system 抹成 null
+    // （抹了 = 平台行的源维度被一次租户写动作清掉，而 sync 的 --check 会因此长期报漂移）。
+    const id = `${L1_ID_PREFIX}src_keep`
+    await upsertL1Metric(pool, l1({ id }, 'lemeng'))
+    await put(L1_ORG, def({ id, title: '租户路径覆盖同 id 行' }))
+
+    const r = await pool.query(
+      'select title, source, source_system from data.metrics where org = $1 and id = $2',
+      [L1_ORG, id],
+    )
+    expect(r.rows[0]).toMatchObject({
+      title: '租户路径覆盖同 id 行', source: 'l1', source_system: 'lemeng',
+    })
+  })
+
   it('两个写入口各自钉死自己的 source（upsertMetric 写不出 l1、upsertL1Metric 只落 platform）', async () => {
-    await upsertL1Metric(pool, def({ id: 'entry_l1' }))
+    await upsertL1Metric(pool, l1({ id: `${L1_ID_PREFIX}entry_l1` }))
     await put(ORG, def({ id: 'entry_l2' }))
 
-    expect((await pool.query('select org, source from data.metrics where id = $1', ['entry_l1'])).rows[0])
+    expect((await pool.query('select org, source from data.metrics where id = $1', [`${L1_ID_PREFIX}entry_l1`])).rows[0])
       .toMatchObject({ org: L1_ORG, source: 'l1' })
     expect((await pool.query('select org, source from data.metrics where id = $1', ['entry_l2'])).rows[0])
       .toMatchObject({ org: ORG, source: 'l2' })
@@ -143,7 +209,7 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
     // 反向：别家租户的行一条都不能出现（隔离键 org 的判据）
     expect(catalog.map((m) => m.id)).not.toContain('other_org_only')
     // 映射保真：逐字段等于写入的那个对象 + source 标注（多出来的列没被塞进来、jsonb 没被序列化成字符串）
-    expect(catalog.find((m) => m.id === 'finance_margin')).toEqual({ ...mine, source: 'l2' })
+    expect(catalog.find((m) => m.id === 'finance_margin')).toEqual({ ...mine, source: 'l2', sourceSystem: null })
   })
 
   it('deleteMetric 返「是否真删了一行」，且只删本租户的', async () => {
@@ -158,8 +224,8 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
 
   // ── T8：L1（平台）与 L2（租户）两层 ──────────────────────────────────────────────
   describe('L1 / L2 两层', () => {
-    const l1Def = (over: Partial<MetricDef> = {}): MetricDef =>
-      def({ id: `${L1_ID_PREFIX}net_sales`, title: '净销售额', ...over })
+    const l1Def = (over: Partial<MetricDef> = {}) =>
+      l1({ id: `${L1_ID_PREFIX}net_sales`, title: '净销售额', ...over })
 
     it('loadPlatformCatalog 只回 org=platform 的 l1 行（不含任何 l2 行）', async () => {
       await upsertL1Metric(pool, l1Def())
@@ -186,7 +252,7 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
 
     it('★ L2 不可覆盖 L1 口径：同 id 撞上时 L1 赢（加载侧的第二道闸）', async () => {
       const id = `${L1_ID_PREFIX}collide`
-      await upsertL1Metric(pool, def({ id, title: '平台口径', selectSql: 'select sum(x) as value from t' }))
+      await upsertL1Metric(pool, l1({ id, title: '平台口径', selectSql: 'select sum(x) as value from t' }))
       // 绕过写侧闸门直接落一条同 id 的 L2 行（模拟历史数据/直写库）
       await pool.query(
         `insert into data.metrics (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source)
@@ -245,7 +311,9 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
 
       const merged = await loadMergedCatalog(pool, ORG)
       const requester = { ...makeIdentity({ orgId: ORG, scopes: ['data:query'] }), orgId: ORG, channel: 'session' as const, keyId: null }
-      const visible = visibleMetrics(merged, requester)
+      // 已接入源给本文件的 L1 夹具默认源（`l1Def` 的 `lemeng`）——否则下面那两条 L1 断言
+      // 会因为**源维度**（不是 scope）而红；本用例验的是「只按 scope 减」，源维度必须中性化。
+      const visible = visibleMetrics(merged, requester, new Set(['lemeng']))
 
       // 只少不多：可见集是合并集的子集
       expect(visible.every((m) => merged.some((x) => x.id === m.id))).toBe(true)

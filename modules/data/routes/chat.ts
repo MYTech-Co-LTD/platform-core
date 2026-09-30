@@ -1,6 +1,7 @@
 // routes/chat.ts — POST /chat：通道 A。SSE：activity 事件（工具调用过程）+ final 事件（答案）+ error 事件。
 // LLM 编排在**平台后端**（spec §2 已拍板）：key 在服务端 env 不落浏览器；审计集中；权限单点强制。
 import { z } from 'zod'
+import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, RouteCtx } from './context'
 import { requesterOf } from './context'
 import { llmFromEnv, LlmError, openAiCompatModel } from '../domain/llm'
@@ -21,7 +22,15 @@ export function registerChat(r: ModuleHono, ctx: RouteCtx): void {
     // runAgentLoop 的签名收非空 Requester——这里不拦，typecheck 都过不了）
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
 
-    const deps = { pool: ctx.pool, org: c.get('tenant').casdoor_org, execute: ctx.execute }
+    // `adoptedSources`：宿主投影的「本租户已接入源」（计划 5 §3⑧）的**接线点**——agent loop
+    // 在域层、拿不到 Hono context，投影只能在这里读再穿下去（`?? []` = 没投影 ⇒ 空集，
+    // 语义与 metrics/mcp/query 三处逐字相同：fail-closed，L2 行不受影响）。
+    const deps = {
+      pool: ctx.pool,
+      org: c.get('tenant').casdoor_org,
+      execute: ctx.execute,
+      adoptedSources: new Set(c.get(TENANT_SOURCES) ?? []),
+    }
     const model = openAiCompatModel(cfg)
     const encoder = new TextEncoder()
 

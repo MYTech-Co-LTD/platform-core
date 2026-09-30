@@ -65,7 +65,7 @@ vars:
   # ⚠️ 值来自**路径**、不在数据里（handbook §4 欠账「账套只在路径、数据里没有」/ C3 身份跟着数据走——
   # C1/C2/C3 是**公司标准的编号，该标准尚未合入**，本正典 §4 有注）
   # ⇒ **只服务旧湖** `stg_lemeng_retail_detail`（那条路径非 hive、账套位无键名，只能由 var 供值）。
-  # ⚠️ **新湖不靠本 var**：`stg_lemeng_retail_order_line` 与两条 `audit_retail__*` 一律读 `system_book=*/`
+  # ⚠️ **新湖不靠本 var**：`stg_lemeng_retail_order_line` 与两条 `audit_lemeng__retail__*` 一律读 `system_book=*/`
   #   通配两账套、`system_book` 走 hive 自动推断成列（2026-09-26 改：原「每账套跑一份」会让 64188 落湖却进不了物化，issue #250）。
   account_book: '3120'
   # ── 敏感：只留「非密」三项作 var（bucket / endpoint / region）────────────────

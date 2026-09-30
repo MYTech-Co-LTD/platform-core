@@ -12,8 +12,10 @@
 //      报 `type "double" is only a shell`；两种写法同一条路，故同拦）
 //   ③ 禁 `union_by_name`（漂移必须显式处理，不许引擎替我们猜列集）
 //   ④ staging 一对一（staging 模型 ↔ sources.yml 的源，**双向**）
-//   ⑤ 语义声明必填字段齐全（owner / tier / grain / definition + name / expression）
-//   ⑥ 指标名 `<域>:<指标名>` 命名空间前缀 + 同名唯一（跨文件）
+//   ⑤ 语义声明必填字段齐全（owner / tier / grain / definition / source + name / expression）
+//      + `source`（**源系统**）的形状（小写蛇形）。⚠️ 与选填的 `sources`（对象存储路径）不是一回事
+//   ⑥ 指标名 `<源>:<业务域>:<指标>` 命名空间前缀 + 同名唯一（跨文件）
+//      + **保留命名空间**：声明名不得以测试夹具专用前缀开头（`RESERVED_METRIC_ID_PREFIXES`）
 //   ⑦ 每个声明指标有对应 `dbt/tests/audit_<指标>.sql` + 该文件名映射无碰撞
 //   ⑧ **L2 声明静态面**（T9 / 拍板 #5 的「门禁③机检范围覆盖用户产生的声明」）：
 //      `modules/data/domain/semantic-compiler.ts` 里**写时校验**（zod schema）与**唯一编译点**
@@ -110,6 +112,9 @@ import { parse as parseYaml } from 'yaml'
 // 「⑧⑨ 为什么值得占用静态门禁的位置」）。值 import（不是 type）——契约面全是运行期
 // 函数与常量，断言要真调它们；该脚本的 main 有 `process.argv[1]` 守卫，import 不会执行它。
 import * as syncContract from './sync-data-semantics.mjs'
+// 规则 ⑤ 的形状正则：**声明侧与登记侧共用同一个字面量**，事实源在 platform-sdk（见该处注释）。
+// 本文件刻意不再自己定义一份——两头漂开时症状是「指标对所有租户静默不可见」，门禁不红。
+import { METRIC_SOURCE_RE } from '../packages/platform-sdk/src/module.ts'
 
 export const SCRIPT_NAME = 'check-data-models'
 /** 违规行前缀标签（与 lint-architecture 的 [B1]/[B7]、check-compose 的 [B7] 同形，便于 grep） */
@@ -154,10 +159,40 @@ const R_COLUMN_RE = /r\s*\[\s*['"]/
 const DOUBLE_CAST_RE = /(?:::\s*|\bas\s+)double\b(?!\s+precision)/gi
 /** 规则 ③：`union_by_name` 兜列集漂移 */
 const UNION_BY_NAME_RE = /union_by_name/gi
-/** 规则 ⑥：指标名的命名空间形态 `<域>:<指标名>`（两段都小写蛇形） */
-const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
-/** 规则 ⑤：语义声明必填字段（owner/tier/grain/definition + name/expression；见计划 Step 4 的字段清单） */
-const REQUIRED_METRIC_FIELDS = ['expression', 'grain', 'owner', 'tier', 'definition']
+/** 规则 ⑥：指标名的命名空间形态 `<源>:<业务域>:<指标>`（三段都小写蛇形） */
+const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
+/**
+ * 规则 ⑤：语义声明必填字段（owner/tier/grain/definition/source + name/expression；见计划 Step 4 的字段清单）。
+ * `source` = **源系统**（如 `lemeng`）——spec §3⑧ 的源维度，Task 5 的裁剪按它判「这个源接没接入」。
+ * ⚠️ 与选填的 `sources`（对象存储路径，人读）**不是一回事**，别把两者合并。
+ */
+const REQUIRED_METRIC_FIELDS = ['expression', 'grain', 'owner', 'tier', 'definition', 'source']
+/**
+ * 规则 ⑤ 的形状：`source` 的形态（与指标名每一段同一形态：小写蛇形、首字符是字母）。
+ * 为什么值得一条形状规则而不是「非空即可」：`source` 会被拿去与「已接入源」的登记值**比对**
+ * （Task 5 的裁剪、Task 6 的对账）⇒ `Lemeng` / `lemeng-erp` 这类写法会比对不上，
+ * 症状是「指标对所有人都不可见」而不是报错（fail-closed 但极难定位）。
+ *
+ * ⚠️ 正则本身**不在这里定义**——它是声明侧与登记侧共用的同一个字面量，事实源在
+ * `packages/platform-sdk/src/module.ts` 的 `METRIC_SOURCE_RE`（登记侧：admin 的 `SourcesBody`、
+ * 开通 CLI 的 `parseSources` 引的是同一个）。**别在本文件里再抄一份**：两头漂开时症状是
+ * 静默不可见，门禁不红、对账还报 clean。
+ */
+/**
+ * 规则 ⑥-c：**保留给测试夹具**的指标命名空间（声明名不得占用）。
+ *
+ * 为什么需要这条机检：平台桶（`data.metrics` 的 `org='platform'`）是**跨测试文件共用**的固定桶，
+ * 而各测试文件的清理只能按 id 删 ⇒ 夹具 id 与**真实声明**同名时，一个测试的 `afterAll` 就会把
+ * 平台桶里那条**真行**删掉（实测过一次：`routes/metrics.test.ts` 曾用 `retail:net_sales` 当夹具 id，
+ * 跑完测试后 `sync --check` 报「新增 1」）。测试侧已把夹具 id 收进各自的前缀（清理也改成
+ * `id like '<前缀>%'` 的谓词级收口），但「这些前缀不会被真声明占用」此前**只是约定**——
+ * `t6test:retail:net_sales` 完全合 `METRIC_NAME_RE`，门禁一句话都不说。万一将来真声明占了这个命名空间，
+ * 上面那类「测试删真行」会原样复发。故把约定写成机检：**声明名一律不得以这些前缀开头**。
+ *
+ * ⚠️ 这个清单必须与仓内测试文件实际用的前缀**同源**（`check-data-models.test.ts` 有一条用例
+ *    逐文件核对，防它悄悄过期）。新增夹具前缀时：先加进本清单，再在测试文件里用它。
+ */
+export const RESERVED_METRIC_ID_PREFIXES = ['t6test:', 't8test:', 't8c:']
 
 /** @param {string} p */
 const toPosix = (p) => p.split(sep).join('/')
@@ -222,7 +257,7 @@ function firstMatchLine(masked, re) {
  * 计划 L645 要求 T9 的机检消费同一条规则、不许两个 worker 各造一套 —— 故它是导出函数，
  * 文档只引用、不复述（详细语义见 dbt/README.md「T9 接口」）。
  *
- * 语义三条（逐字）：① 入参 = 语义声明的 `name` 原值（`<域>:<指标名>` 命名空间形态）；
+ * 语义三条（逐字）：① 入参 = 语义声明的 `name` 原值（`<源>:<业务域>:<指标>` 命名空间形态）；
  * ② **每一个** `:` 都替换成 `__`（不是只换第一个；名字里若还有别的下划线一律不动）；
  * ③ 返回值 `audit_<替换后>.sql`，落点是 `dbt/tests/`。
  *
@@ -753,7 +788,19 @@ export function checkDataModels(rootDir) {
       push(
         metric.file,
         0,
-        `指标名 \`${metric.name || '(空)'}\` 不合规 —— 必须是 \`<域>:<指标名>\` 命名空间形态（两段都小写蛇形，如 \`retail:net_sales\`）。命名空间是「同名唯一」能成立的前提（layered §6）`,
+        `指标名 \`${metric.name || '(空)'}\` 不合规 —— 必须是 \`<源>:<业务域>:<指标>\` 命名空间形态（三段都小写蛇形，如 \`lemeng:retail:net_sales\`）。命名空间是「同名唯一」能成立的前提（layered §6）`,
+      )
+      continue
+    }
+    // ⑥-c 保留命名空间（测试夹具专用前缀）：见 RESERVED_METRIC_ID_PREFIXES 的说明。
+    // 位置在 ⑥-b 之前、⑥-a 之后：名字本身不合规时只报 ⑥-a（免得一串噪声），
+    // 而占保留位时也不再进 `nameToFile` / 不再要它的对账文件（同 ⑥-a 的处置：只报这一条）。
+    const reservedPrefix = RESERVED_METRIC_ID_PREFIXES.find((p) => metric.name.startsWith(p))
+    if (reservedPrefix !== undefined) {
+      push(
+        metric.file,
+        0,
+        `指标名 \`${metric.name}\` 占用了**保留给测试夹具**的命名空间 \`${reservedPrefix}\` —— 这些前缀（${RESERVED_METRIC_ID_PREFIXES.join(' / ')}）留给测试夹具，因为平台桶（\`data.metrics\` 的 \`org='platform'\`）跨测试文件共用、清理只能按 id 删：真声明一旦占用，某个测试的 afterAll 就会把这条**真行**删掉（实测过：sync --check 会因此报「新增 N」）。改指标名（别占用保留前缀），不要改本清单`,
       )
       continue
     }
@@ -779,7 +826,19 @@ export function checkDataModels(rootDir) {
       push(
         metric.file,
         0,
-        `指标 \`${metric.name}\` 的语义声明缺必填字段：${missing.join(' / ')} —— owner/tier/grain/definition 是治理门禁的必填面（spec §10 机制① 的 dbt 原生对应物），expression 是口径本体；缺了它，指标就无法登记、无法溯源、无法按 tier 收敛`,
+        `指标 \`${metric.name}\` 的语义声明缺必填字段：${missing.join(' / ')} —— owner/tier/grain/definition 是治理门禁的必填面（spec §10 机制① 的 dbt 原生对应物），expression 是口径本体，source（**源系统**，如 \`lemeng\`）是源维度的事实源（消费侧的裁剪按它判「这个源接没接入」）；缺了它，指标就无法登记、无法溯源、无法按 tier 收敛、无法按源裁剪`,
+      )
+    }
+
+    // ⑤-b `source` 的形状（**源系统**：小写蛇形）
+    // ⚠️ 与选填的 `sources`（对象存储路径）无关：那条路**不**在本门禁的判据面里，原样保留。
+    // 缺字段的情形已由上面 ⑤ 报过 ⇒ 这里只判「给了值但形态不对」，同一处不报两条。
+    const source = asText(metric.fields?.source)
+    if (source !== '' && !METRIC_SOURCE_RE.test(source)) {
+      push(
+        metric.file,
+        0,
+        `指标 \`${metric.name}\` 的 \`source\`（源系统）\`${source}\` 形态不合规 —— 必须是小写蛇形（\`^[a-z][a-z0-9_]*$\`，如 \`lemeng\`）。它要与「已接入源」的登记值**逐字比对**（消费侧裁剪、对账），大写/连字符/前导数字这类写法会比对不上，症状是「指标谁都看不见」而不是报错`,
       )
     }
 

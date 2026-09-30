@@ -33,6 +33,9 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
   let lastSql = ''
   const deps: QueryDeps = {
     pool,
+    // 已接入源：本文件的夹具全部经 `upsertMetric` 落库（= L2 行，`sourceSystem: null`）
+    // ⇒ 它们**不受源维度裁剪影响**，空集就够（空集只裁掉 L1 行——本文件一条 L1 都没有）。
+    adoptedSources: new Set<string>(),
     execute: async (sql) => {
       lastSql = sql
       return { columns: ['org', 'day'], rows: [['org_a', '2026-08-15']] }
@@ -65,15 +68,22 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     expect(a.rows[0]).toMatchObject({ channel: 'session', key_id: null, verdict: 'ok', row_count: 1 })
   })
 
-  it('denied：未授权指标 —— 不执行 SQL，但审计照写', async () => {
+  it('denied：scope 不够的指标 —— 被**裁剪**掉（metric_not_declared），不执行 SQL，但审计照写', async () => {
     // ⚠️ 清零必须在 runQuery **之前**：写在之后等于把这次调用留下的证据擦掉，
     //    断言恒真（跑没跑 SQL 都绿）——「从未触达仓库」就变成一句没人验的话。
     lastSql = ''
     const out = await runQuery(deps, ORG, req({ scopes: [] }), 'sales_daily', {})
-    expect(out).toEqual({ status: 'denied', metricId: 'sales_daily', reason: 'metric_not_authorized' })
+    // ★ 计划 5 起 reason 是 `metric_not_declared`（此前是 `metric_not_authorized`）：
+    //   runQuery 现在与另外三条消费面**同款**——先经 `visibleMetrics` 裁剪（scope **与** 源维度），
+    //   再交给 authorize。scope 不够的指标在 authorize 看到它之前就没了 ⇒ 对它「不可见」
+    //   （spec §5 约束 3 的原文口径）。在此之前，`list_metrics`/`GET /metrics`/MCP 都已隐藏它，
+    //   只有 /query 会回一句「存在但你没权限」——那是个**存在性探针**，与被裁的三条面自相矛盾。
+    //   `authorize` 自身的 `metric_not_authorized` 分支未变（authz.test.ts 的 C2 仍钉着它）：
+    //   它仍是本核心的契约，只是消费面在它之前已把词表收窄。
+    expect(out).toEqual({ status: 'denied', metricId: 'sales_daily', reason: 'metric_not_declared' })
     const a = await pool.query(
       `select verdict, reason from data.query_audit where org = $1 order by id desc limit 1`, [ORG])
-    expect(a.rows[0]).toMatchObject({ verdict: 'denied', reason: 'metric_not_authorized' })
+    expect(a.rows[0]).toMatchObject({ verdict: 'denied', reason: 'metric_not_declared' })
     expect(lastSql).toBe('')                                   // 被拒 ⇒ 从未触达仓库
   })
 
@@ -99,7 +109,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
   })
 
   it('error：仓库执行抛错 → status:error + 审计 verdict=error', async () => {
-    const bad: QueryDeps = { pool, execute: async () => { throw new Error('boom') } }
+    const bad: QueryDeps = { pool, adoptedSources: new Set(), execute: async () => { throw new Error('boom') } }
     const out = await runQuery(bad, ORG, req(), 'sales_daily', {})
     expect(out.status).toBe('error')
     if (out.status !== 'error') return
@@ -114,6 +124,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     // （常量从 './warehouse' import，query-service 以 === 全等判 err.message）——不造近似值。
     const unconfigured: QueryDeps = {
       pool,
+      adoptedSources: new Set(),
       execute: async () => { throw new Error(DATA_WAREHOUSE_UNCONFIGURED) },
     }
     const out = await runQuery(unconfigured, ORG, req(), 'sales_daily', {})
@@ -129,6 +140,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
   it('truncated：行数达到上限时置位', async () => {
     const many: QueryDeps = {
       pool,
+      adoptedSources: new Set(),
       execute: async () => ({ columns: ['org'], rows: Array.from({ length: 1000 }, () => ['org_a']) }),
     }
     const out = await runQuery(many, ORG, req(), 'sales_daily', {})

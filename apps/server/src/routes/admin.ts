@@ -9,12 +9,14 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import type { Pool } from 'pg'
+import { z } from 'zod'
 import { csrfToken } from '@platform/auth-core'
-import { normalizeEndpoint, platformStorageFromEnv, requireScope } from '@platform/sdk'
+import { METRIC_SOURCE_RE, normalizeEndpoint, platformStorageFromEnv, requireScope } from '@platform/sdk'
 import type { TenantStorageConfig } from '@platform/sdk'
 import type { TenantEnv, TenantRow } from '../tenant'
 import type { CasdoorFactory, SessionEnv } from '../session-middleware'
 import { probeStorage, type ProbeResult } from '../storage-probe'
+import { replaceTenantSources, SOURCES_SELECT_SQL } from '../tenant-source'
 
 /** 订阅锚用户名（casdoor-client ensureAnchorUser 同款；单处定义防漂移） */
 export const ANCHOR_USER = 'tenantsub'
@@ -40,7 +42,7 @@ async function writeAudit(
   tenantId: number,
   actor: string,
   action: 'admin.user.create' | 'admin.user.update' | 'admin.user.delete' | 'admin.grant' | 'admin.revoke'
-    | 'admin.storage.update' | 'admin.storage.clear',
+    | 'admin.storage.update' | 'admin.storage.clear' | 'admin.sources.update',
   detail: Record<string, unknown>,
 ): Promise<void> {
   await pool.query(
@@ -322,6 +324,57 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
     // 清掉的值记进 detail（取证用；仍只有 endpoint/bucket，无凭据）
     await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.storage.clear',
       { endpoint: cols[0], bucket: cols[2] })
+    return c.json({ ok: true })
+  })
+
+  // ---- 租户已接入源（计划 5，spec §3⑧ 的前提）----
+  //
+  // 与 platform.tenant_module 同构的「租户 × 标识」登记：**整体替换启用集**（列表里 enabled=true、
+  // 不在列表里 enabled=false，**不删行** —— 保留痕迹便于对账与审计）。
+  // org 锁 / scope 门禁 / 写 CSRF 三道结构锁由本文件顶部中间件统一施加，这里不重复实现。
+  // SQL 本身在 tenant-source.ts（单一事实源，与开通 CLI 共用）。
+
+  /**
+   * `sources` 去重**收在这里**（不是靠 SQL 兜底）：同一条 `insert ... on conflict do update` 里
+   * 同一个键出现两次，Postgres 报 21000 `cannot affect row a second time` ⇒ **客户端可控的 500**。
+   *
+   * 选「去重放行」而非「`.refine` 拒绝」：本端点的契约是**启用集**（集合语义）——重复元素不携带
+   * 任何额外含义，落库结果与去重后逐字相同。为此回 400 会让「客户端把两个列表拼在一起」这种
+   * 无害输入失败，而本端点本就该是幂等的（同 body 重放结果一致）。`.strict()` 拒「多余键」是
+   * 另一回事：那是**未知字段**（可能意味着调用方理解错了契约），集合内的重复不是。
+   */
+  const SourcesBody = z.object({
+    // 形状校验（`METRIC_SOURCE_RE`）与声明侧**同源**：整条链按「登记值 === 声明的 source」逐字比，
+    // 一头松就会让该源的全部 L1 指标对所有租户**静默不可见**（无报错、门禁不红、对账还报 clean）。
+    sources: z.array(z.string().min(1).max(64).regex(METRIC_SOURCE_RE)).max(50)
+      .transform((a) => [...new Set(a)]),
+  }).strict()
+
+  app.get('/sources', async (c) => {
+    const t = c.get('tenant')
+    const { rows } = await deps.pool.query(SOURCES_SELECT_SQL, [t.id])
+    return c.json({ sources: rows })
+  })
+
+  app.put('/sources', async (c) => {
+    const t = c.get('tenant')
+    const parsed = SourcesBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    // 两句（upsert + 禁用不在列表里的）**必须同事务**：否则中途失败会留下「已启用的启用、
+    // 该禁的没禁」的半应用态 —— 正是本端点要防的状态，且比整体失败更难查。
+    // 事务形状照 migrate.ts:200-220 / seed.ts:93-100 的既有写法（本仓无 withTx 助手，不新立一套）。
+    const client = await deps.pool.connect()
+    try {
+      await client.query('begin')
+      await replaceTenantSources(client, t.id, parsed.data.sources)
+      await client.query('commit')
+    } catch (err) {
+      await client.query('rollback').catch(() => {}) // 连接级故障时 rollback 可能再抛，吞掉保留原错误
+      throw err
+    } finally {
+      client.release()
+    }
+    await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.sources.update', { sources: parsed.data.sources })
     return c.json({ ok: true })
   })
 

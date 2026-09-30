@@ -95,7 +95,7 @@ dbt/
 ## 5 L1 语义声明的落点与形状（T9 的接口）
 
 **落点**：`dbt/semantics/l1_metrics.yml`。**为什么不在 `marts/schema.yml`**（计划原文指的是那里）：
-指标 `name` 是命名空间形态 `<域>:<指标名>`（含**冒号**），而 **dbt 资源名不允许冒号** ⇒ 把带冒号的
+指标 `name` 是命名空间形态 `<源>:<业务域>:<指标>`（含**冒号**），而 **dbt 资源名不允许冒号** ⇒ 把带冒号的
 `name` 放进 dbt 会扫的 schema 文件里，有让 `dbt parse` 挂掉的风险，而「`dbt parse` 可过」是本任务的
 验收面之一。故声明放在 **dbt 扫描面之外**的 `semantics/`，指标名保持 `:` 形态不变。
 **静态门禁两处都扫**（`dbt/semantics/**` 与 `dbt/models/**`），所以即便将来有人把声明挪进
@@ -103,14 +103,17 @@ dbt/
 **T6 的核对步**：真机 `dbt parse` 若证实 dbt 接受带冒号的指标名（`metrics:` 块），可把本文件并入
 `marts/schema.yml`；核不过就维持现状（本文件的形状不依赖 dbt）。
 
-**字段**：`name` / `label` / `definition` / `expression` / `grain` / `owner` / `tier`（必填六项：
+**字段**：`name` / `label` / `definition` / `expression` / `grain` / `owner` / `tier` / `source`（必填七项：
 除 `label`、`sources` 外全必填；`sources` 选填人读）。取舍与「为什么」在文件头注里。
+⚠️ **`source` 与 `sources` 不是一回事**（同名不同义，最容易混的一对）：`source` = **源系统**
+（小写蛇形，如 `lemeng`，必填、**落库** `data.metrics.source_system`，消费侧按它判「这个源接没接入」）；
+`sources` = 背后**实际读的对象存储路径**（选填、人读、不落库）。
 
 **T9 消费的那条规则（唯一事实源）**：指标名 → 对账文件名，由
 `scripts/check-data-models.mjs` **导出的函数**给出，**文档不复述规则**：
 
 ```js
-metricToAuditFileName(metricName: string): string   // 例：'retail:net_sales' → 'audit_retail__net_sales.sql'
+metricToAuditFileName(metricName: string): string   // 例：'lemeng:retail:net_sales' → 'audit_lemeng__retail__net_sales.sql'
 ```
 
 语义三条：入参 = 声明的 `name` 原值；**每一个** `:` 替换成 `__`（其余下划线不动）；返回值是
@@ -180,7 +183,7 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
    形态（该文件从未跑过，见 §8 最后一行）。
 3. **对账/断言测试已在真数据上跑过**：真机 `dbt test` **PASS=14 WARN=0 ERROR=0**（含两条 `audit_*.sql`
    的独立复算与 `assert_*` 结构断言）。⚠️ 「对账绿」只说明**两侧算的是同一件事**，**不是**「口径已确认」
-   （见 `audit_retail__order_count.sql` 头注）。
+   （见 `audit_lemeng__retail__order_count.sql` 头注）。
 4. **`dbt/` 的 env 键没有任何静态门禁**：B9（`check-env-example.mjs`）的扫描根只有
    `apps/ packages/ modules/`，**不扫 `dbt/`**（T2 评审实测确认）。`.env.example` 里那段 dbt 键是
    **键面事实源的文档化**，不是被门禁守住的约定。
@@ -262,7 +265,7 @@ dbt / pg_duckdb）；「不给 var 时回内置行为」依赖 dbt-core 的 `gen
 
 | 机制（spec §10） | 仓内落点 | 谁守着它 |
 |---|---|---|
-| ① 记录 | `dbt/semantics/l1_metrics.yml` 的必填六项（`name`/`definition`/`expression`/`grain`/`owner`/`tier`） | 门禁规则 ⑤（静态必填）；`sync-data-semantics.mjs` 物化进 `data.metrics` |
+| ① 记录 | `dbt/semantics/l1_metrics.yml` 的必填七项（`name`/`definition`/`expression`/`grain`/`owner`/`tier`/`source`） | 门禁规则 ⑤（静态必填 + `source` 形状）；`sync-data-semantics.mjs` 物化进 `data.metrics`（`source` → `source_system`） |
 | ② 血缘 | `dbt docs generate` 产物（见 §11.2） | 本节 runbook；**无静态门禁**（产物要 dbt 环境） |
 | ③ 测试 | `dbt/tests/audit_<指标>.sql`（singular test，**独立复算**） | 门禁规则 ⑦（存在性 + 文件名映射无碰撞，事实源 = `metricToAuditFileName()`） |
 | ④ 状态选择 | `dbt run --select …` 的按需物化 + `sync-data-semantics.mjs --check` 对账 | 本节 §11.4（job）；`--check` 的**契约**由门禁规则 ⑨ 守着 |
@@ -347,7 +350,7 @@ psql "$DATABASE_URL" -c "select distinct v.view_schema||'.'||v.view_name as view
 
 | # | 步 | 命令 |
 |---|---|---|
-| ① | **读声明**（口径的事实源） | `sed -n "/name: 'retail:net_sales'/,/^  - name:/p" dbt/semantics/l1_metrics.yml` |
+| ① | **读声明**（口径的事实源） | `sed -n "/name: 'lemeng:retail:net_sales'/,/^  - name:/p" dbt/semantics/l1_metrics.yml` |
 | ② | **dbt docs 看依赖**（这一层读了谁） | `dbt docs generate --project-dir dbt && echo '开 dbt/target/index.html → 选模型 → Lineage'` |
 | ③ | **看 PG 里实际的关系定义** | `psql "$DATABASE_URL" -c '\d+ <schema>.fct_retail_sale'` |
 | ④ | **抽 parquet 源核对**（上游真值长什么样） | `psql "$DATABASE_URL" -c "select r['order_detail_bizday'], r['amount'] from read_parquet('s3://<桶>/lemeng/retail_detail/<账套>/<日期>/all.parquet') r limit 5"` |
@@ -365,7 +368,7 @@ psql "$DATABASE_URL" -c "select distinct v.view_schema||'.'||v.view_name as view
 **阶梯命令的订正依据（T9 评审 I-4 / I-5 / M-3 / M-4；全部**离线可查**，不依赖真机）**：
 （I-3 的 `--profiles-dir` 订正在 §11.2，同属本节这一批）
 
-- **① 的锚点必须带引号**（M-3）：`l1_metrics.yml` 里写的是 `  - name: 'retail:net_sales'`（**带单引号**）。
+- **① 的锚点必须带引号**（M-3）：`l1_metrics.yml` 里写的是 `  - name: 'lemeng:retail:net_sales'`（**带单引号**）。
   原文的不带引号模式**匹配不到任何行** ⇒ `sed` **静默输出空、exit 0**，排查者会据此判「声明压根不存在」。
   实测：不带引号 `0` 行；带引号 `18` 行。⚠️ 外层用**双引号**，别用单引号（`sed -n '…/name: 'x'…'` 会写坏）。
 - **③ 不能用 `pg_get_viewdef`**（I-4）：本仓 marts / staging **全部 `materialized='table'`**
@@ -384,17 +387,17 @@ psql "$DATABASE_URL" -c "select distinct v.view_schema||'.'||v.view_name as view
   ——该句已于 2026-09-25 随换源订正为「列面实证 / 口径面待业务确认」，见 `l1_metrics.yml`）
   ⇒ 拿未实证列去抽查源，报错概率高、且报错会被归因错。故改抽**已实证的** `order_detail_bizday` + `amount`。
 - **⑤ 必须与声明的 grain 同量**（M-4）：`l1_metrics.yml` 的 `grain: [system_book, bizday]`，
-  `dbt/tests/audit_retail__net_sales.sql` 也是按 `(system_book, bizday)` 对齐的。原文的
+  `dbt/tests/audit_lemeng__retail__net_sales.sql` 也是按 `(system_book, bizday)` 对齐的。原文的
   **不带 `group by` 的总计**与粒度级声明**不同量** ⇒ 判读表那条「① 与 ⑤ 数不一致」**按字面不可执行**。
   故 ⑤ 采用与 audit **同一形态**的 `group by`（`try_strptime(...)::date` 也是照抄 audit 的写法）。
 - **④⑤ 的 parquet 路径形态必须与正典逐段一致**（I-5）：正典（**四处一致**，皆在仓内）是
   `s3://<bucket>/lemeng/retail_detail/<账套>/<日期>/all.parquet` —— `dbt/semantics/l1_metrics.yml` 的
   `sources`、`dbt/models/common/staging/sources.yml` 的 `meta.path_convention` 与 `access_path`、
-  `dbt_project.yml` 的 vars 头注、`dbt/tests/audit_retail__net_sales.sql` 的实际读路径。
+  `dbt_project.yml` 的 vars 头注、`dbt/tests/audit_lemeng__retail__net_sales.sql` 的实际读路径。
   原文写成 `<桶前缀>/retail_detail/<账套>/<日期>.parquet`：**丢了 `lemeng/` 段**，且把目录里的
   **叶子文件 `all.parquet` 换成了以日期命名的文件**（后者无论怎么读 `<桶前缀>` 都错）。
   这类错误「照着跑读不到东西」，而原判读表把它归因到**凭据** ⇒ **误判方向**。
-  ⚠️ 模型与 audit 的实际读路径是**通配**（`…/<账套>/**/*.parquet`，见 `audit_retail__net_sales.sql`）；
+  ⚠️ 模型与 audit 的实际读路径是**通配**（`…/<账套>/**/*.parquet`，见 `audit_lemeng__retail__net_sales.sql`）；
   这里读**某一天的叶子文件**是**抽查**形态（同一份源、范围更小），不是模型的正式读路径。
 
 ⚠️ ④⑤ 两条的 `read_parquet` **要求同会话已建 secret**（pg_duckdb 的 secret 按**连接**生效，

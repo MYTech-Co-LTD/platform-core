@@ -11,12 +11,12 @@
 // ⚠️ 门禁的**结构可解析**（YAML/SQL 形态）在本文件里是真验的；**dbt 语义可解析**（`dbt parse`）
 //    **未验**——本机没有 dbt，见 dbt/README.md「未验清单」。
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
-import { checkDataModels, metricToAuditFileName } from './check-data-models.mjs'
+import { RESERVED_METRIC_ID_PREFIXES, checkDataModels, metricToAuditFileName } from './check-data-models.mjs'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const scriptsDir = join(repoRoot, 'scripts')
@@ -43,7 +43,7 @@ const SOURCES = 'dbt/models/common/staging/sources.yml'
 const STAGING = 'dbt/models/common/staging/stg_lemeng_retail_detail.sql'
 const MARTS = 'dbt/models/common/marts/fct_retail_sale.sql'
 const METRICS = 'dbt/semantics/l1_metrics.yml'
-const AUDIT = 'dbt/tests/audit_retail__net_sales.sql'
+const AUDIT = 'dbt/tests/audit_lemeng__retail__net_sales.sql'
 
 /**
  * 基线：一份**最小但完整**的合规 dbt 目录。
@@ -93,11 +93,12 @@ function compliant(): Record<string, string> {
     ].join('\n'),
     [METRICS]: [
       'metrics:',
-      '  - name: "retail:net_sales"',
+      '  - name: "lemeng:retail:net_sales"',
       '    expression: "sum(fct_retail_sale.net_amount)"',
       '    grain: [system_book, bizday]',
       '    owner: data-platform',
       '    tier: certified',
+      '    source: lemeng',
       '    definition: 净销售额 = 有效零售订单成交金额合计',
       '',
     ].join('\n'),
@@ -129,13 +130,16 @@ function runCli(args: string[]): { status: number; stdout: string; stderr: strin
 }
 
 describe('metricToAuditFileName：`: ` → `__` 的**唯一映射规则**（T9 消费同一个函数，禁止另造一套）', () => {
+  // ⚠️ 本格的 `aftersales:refund_ratio` 是**刻意保留的计划 L645 逐字样例**（两段），**不是**当前生效的
+  //    声明名（现行声明名是三段式 `<源>:<业务域>:<指标>`，见 l1_metrics.yml）。保留它 = 保住对计划
+  //    原文的引用；`metricToAuditFileName` 对段数不敏感 ⇒ 拿它测「每个 `:` 都换 `__`」仍然有效。
   it('计划 L645 的逐字样例：aftersales:refund_ratio → audit_aftersales__refund_ratio.sql', () => {
     expect(metricToAuditFileName('aftersales:refund_ratio')).toBe('audit_aftersales__refund_ratio.sql')
   })
 
   it('返回值是**文件名**（不含 dbt/tests/ 前缀），且只替换冒号、不动其他下划线', () => {
-    expect(metricToAuditFileName('retail:net_sales')).toBe('audit_retail__net_sales.sql')
-    expect(metricToAuditFileName('data__x:y')).toBe('audit_data__x__y.sql')
+    expect(metricToAuditFileName('lemeng:retail:net_sales')).toBe('audit_lemeng__retail__net_sales.sql')
+    expect(metricToAuditFileName('data__x:y:z')).toBe('audit_data__x__y__z.sql')
   })
 })
 
@@ -153,7 +157,67 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
     expect(violations).toHaveLength(1)
     expect(violations[0]?.file).toBe(METRICS)
     expect(violations[0]?.message).toContain('owner')
-    expect(violations[0]?.message).toContain('retail:net_sales')
+    expect(violations[0]?.message).toContain('lemeng:retail:net_sales')
+  })
+
+  // ── 规则 ⑤ 的**源维度**那一半（计划 5 Task 3）：`source` 必填 + 形状 ────────────────────
+  // ⚠️ 与既有的 `sources`（**对象存储路径**，人读、选填、无门禁）**不是一回事**：
+  //    `source` 是**源系统**（如 `lemeng`），Task 5 的裁剪与 Task 6 的对账都靠它。
+  //    本格只钉「缺了就报」，不碰 `sources`。
+  it('格⑤附带：语义声明缺 source（源系统）→ 违规（没有它，源维度在声明面就没有事实源）', () => {
+    const root = variant((f) => {
+      f[METRICS] = f[METRICS].replace('    source: lemeng\n', '')
+    })
+    const violations = checkDataModels(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.file).toBe(METRICS)
+    expect(violations[0]?.message).toContain('source')
+    expect(violations[0]?.message).toContain('lemeng:retail:net_sales')
+  })
+
+  // ── 规则 ⑥-c：保留给测试夹具的命名空间（把「夹具前缀不撞真声明」从约定变机检）────────────
+  // 背景：平台桶（`data.metrics` 的 `org='platform'`）跨测试文件共用、清理只能按 id 删 ⇒
+  // 真声明一旦占用夹具前缀的命名空间，某个测试的 afterAll 就会删掉那条**真行**（实测过一次）。
+  it('格⑤附带：声明名占用**保留给测试夹具**的命名空间 → 违规', () => {
+    for (const prefix of RESERVED_METRIC_ID_PREFIXES) {
+      const root = variant((f) => {
+        f[METRICS] = f[METRICS].replace('"lemeng:retail:net_sales"', `"${prefix}retail:net_sales"`)
+        // 不需要造对账文件：⑥-c 命中即 `continue`（与 ⑥-a 同一处置），⑦ 不会为它报第二条
+      })
+      const violations = checkDataModels(root)
+      expect(violations, `声明名 ${prefix}net_sales 没被判违规`).toHaveLength(1)
+      expect(violations[0]?.message).toContain(prefix)
+      expect(violations[0]?.message).toContain('保留给测试夹具')
+    }
+  })
+
+  it('★ 保留清单与仓内测试夹具前缀**同源**（清单过期 = 这条机检对这种前缀失效）', () => {
+    // 为什么需要这条：保留清单写在门禁里（唯一事实源），而前缀写在各自测试文件里。
+    // 二者一旦不同步（新增夹具前缀却忘了登记），那条前缀就**不受 ⑥-c 保护**——
+    // 而这正是「测试删真行」复发的入口。故逐文件核对：每个夹具前缀都必须在清单里。
+    const FIXTURE_FILES = [
+      'modules/data/domain/metric-store.test.ts',
+      'modules/data/routes/metrics.test.ts',
+      'modules/data/catalog-consumers.test.ts',
+    ]
+    for (const rel of FIXTURE_FILES) {
+      const src = readFileSync(join(repoRoot, rel), 'utf8')
+      const m = src.match(/^const (?:L1_ID_PREFIX|L1_PREFIX) = '([^']+)'/m)
+      expect(m, `${rel} 里找不到夹具前缀常量（改过名字就要同步本用例）`).not.toBeNull()
+      expect(RESERVED_METRIC_ID_PREFIXES, `${rel} 的前缀 ${m?.[1]} 不在保留清单里`).toContain(m?.[1])
+    }
+  })
+
+  it('格⑤附带：source 形状不合（大写 / 连字符 / 前导数字）→ 违规', () => {
+    // 三个反例各跑一次：形状规则是 `^[a-z][a-z0-9_]*$`（小写蛇形，与指标名三段同一形态）
+    for (const bad of ['Le-meng', 'LEMENG', '3lemeng']) {
+      const root = variant((f) => {
+        f[METRICS] = f[METRICS].replace('    source: lemeng', `    source: ${bad}`)
+      })
+      const violations = checkDataModels(root)
+      expect(violations, `source: ${bad} 没被判违规`).toHaveLength(1)
+      expect(violations[0]?.message).toContain('source')
+    }
   })
 
   it('格③：staging 用 `::double` → 违规（`::double precision` 不报，见格①的反面对照）', () => {
@@ -255,11 +319,12 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
     const root = variant((f) => {
       f['dbt/semantics/l2_tenant_metrics.yml'] = [
         'metrics:',
-        '  - name: "retail:net_sales"',
+        '  - name: "lemeng:retail:net_sales"',
         '    expression: "sum(fct_retail_sale.net_amount)"',
         '    grain: [system_book, bizday]',
         '    owner: tenant-admin',
         '    tier: experimental',
+        '    source: lemeng',
         '    definition: 同名但另一处定义（口径分叉）',
         '',
       ].join('\n')
@@ -268,12 +333,12 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
     expect(violations).toHaveLength(1)
     expect(violations[0]?.file).toBe('dbt/semantics/l2_tenant_metrics.yml')
     expect(violations[0]?.message).toContain('同名')
-    expect(violations[0]?.message).toContain('retail:net_sales')
+    expect(violations[0]?.message).toContain('lemeng:retail:net_sales')
   })
 
   it('格⑤附带：指标名缺命名空间前缀 → 违规', () => {
     const root = variant((f) => {
-      f[METRICS] = f[METRICS].replace('"retail:net_sales"', '"net_sales"')
+      f[METRICS] = f[METRICS].replace('"lemeng:retail:net_sales"', '"net_sales"')
     })
     const violations = checkDataModels(root)
     expect(violations).toHaveLength(1)
@@ -287,35 +352,37 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
     const violations = checkDataModels(root)
     expect(violations).toHaveLength(1)
     expect(violations[0]?.file).toBe(AUDIT)
-    expect(violations[0]?.message).toContain('retail:net_sales')
+    expect(violations[0]?.message).toContain('lemeng:retail:net_sales')
   })
 
   it('附加格：两个指标名映射到同一个 audit 文件名 → 违规（映射规则必须无碰撞）', () => {
     const root = variant((f) => {
       f[METRICS] = [
         'metrics:',
-        '  - name: "retail:a__b"',
+        '  - name: "lemeng:retail:a__b"',
         '    expression: "sum(fct_retail_sale.net_amount)"',
         '    grain: [system_book]',
         '    owner: data-platform',
         '    tier: certified',
+        '    source: lemeng',
         '    definition: 甲',
-        '  - name: "retail__a:b"',
+        '  - name: "lemeng:retail__a:b"',
         '    expression: "sum(fct_retail_sale.net_amount)"',
         '    grain: [system_book]',
         '    owner: data-platform',
         '    tier: certified',
+        '    source: lemeng',
         '    definition: 乙',
         '',
       ].join('\n')
-      // 两个名字都映射到 audit_retail__a__b.sql ⇒ 只存在一个文件时，⑦ 的存在性检查会对两边都通过
+      // 两个名字都映射到 audit_lemeng__retail__a__b.sql ⇒ 只存在一个文件时，⑦ 的存在性检查会对两边都通过
       delete f[AUDIT]
-      f['dbt/tests/audit_retail__a__b.sql'] = 'select 1 where false\n'
+      f['dbt/tests/audit_lemeng__retail__a__b.sql'] = 'select 1 where false\n'
     })
     const violations = checkDataModels(root)
     expect(violations).toHaveLength(1)
-    expect(violations[0]?.message).toContain('audit_retail__a__b.sql')
-    expect(violations[0]?.message).toContain('retail__a:b')
+    expect(violations[0]?.message).toContain('audit_lemeng__retail__a__b.sql')
+    expect(violations[0]?.message).toContain('lemeng:retail__a:b')
   })
 })
 

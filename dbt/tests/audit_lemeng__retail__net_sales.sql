@@ -1,4 +1,4 @@
--- audit_retail__net_sales.sql — 指标 `retail:net_sales` 的**独立复算**（对账）。
+-- audit_lemeng__retail__net_sales.sql — 指标 `lemeng:retail:net_sales` 的**独立复算**（对账）。
 --
 -- 契约：dbt 的 singular test **返回任何行即失败** ⇒ 本查询只在「复算 ≠ 物化结果」时出行。
 -- 文件名由指标名经 `:` → `__` 映射得出（唯一事实源 = scripts/check-data-models.mjs 的

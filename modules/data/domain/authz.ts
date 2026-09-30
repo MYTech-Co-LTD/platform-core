@@ -31,6 +31,22 @@ export interface MetricDef {
   params: Record<string, MetricParamDef>
 }
 
+/**
+ * 带**源维度**的词表行 = 授权契约 + `sourceSystem`（裁剪时读的第三维）。
+ *
+ * 为什么是这里的**结构化最小形状**，而不是直接 import `metric-store` 的 `MetricRow`：
+ *   · 本文件是**纯的**（头注：不得 import pool / env / Hono），不认识存储层；
+ *   · `MetricRow` 还带 `source`（l1/l2 分层）——那是「谁写的、谁能改」，与授权判定无关；
+ *   · 用泛型（见 `visibleMetrics`）保子类型：传 `MetricRow[]` 出去仍是 `MetricRow[]`，
+ *     调用方不需要任何断言。
+ *
+ * `sourceSystem` 的语义（spec §3⑧）：**L1 行** = 声明的 `source`（如 `lemeng`）；
+ * **L2 行** = `null`（本租户自己写的，没有源维度 ⇒ 不受裁剪影响）。
+ */
+export interface SourceTaggedMetric extends MetricDef {
+  sourceSystem: string | null
+}
+
 export type Channel = 'session' | 'pat' | 'wecom'
 
 export interface Requester {
@@ -66,9 +82,31 @@ export type AuthzResult =
   | { ok: true; plan: { sql: string; metricId: string; subject: string } }
   | { ok: false; reason: DenyReason; metricId: string; detail?: string }
 
-/** 词表裁剪：**看不见**，不是调了报错（spec §5 约束 3）。 */
-export function visibleMetrics(catalog: MetricDef[], requester: Requester): MetricDef[] {
-  return catalog.filter((m) => m.requiredScope === null || requester.hasScope(m.requiredScope))
+/**
+ * 词表裁剪：**看不见**，不是调了报错（spec §5 约束 3）。
+ *
+ * 两个维度**都要**过才可见（`&&`，不是二选一）：
+ *   ① `requiredScope`：无门槛（null）或调用方持有该码；
+ *   ② `sourceSystem`（spec §3⑧ 的源维度）：**L1 行**只在「本租户已接入该源」时可见；
+ *      **L2 行**（`sourceSystem === null`）**恒可见**——它是本租户自己写的声明，没有源维度。
+ *
+ * 第三参**必填**（不是可选 + 默认空集）：漏传是编译错。若给它一个「恒空 / 不裁」的默认值，
+ * 「某个消费通道忘了接投影」就退化成**静默错答**——而它的两种错法都不可观测：
+ * 默认空集 ⇒ 该通道整片平台指标消失（fail-closed 但仍无声）；默认不裁 ⇒ 放行未接入源的指标
+ * （fail-open，正是 spec 要堵的）。故这里没有默认值这个选项。
+ *
+ * 收口一处：四个消费方（`routes/metrics.ts`、`routes/mcp.ts`、`domain/agent-loop.ts`、
+ * `domain/query-service.ts`）**都**经本函数；机器判据在 `catalog-consumers.test.ts`
+ * （来源守卫 + 四通道行为一致，防将来新增第五个消费方绕开）。
+ */
+export function visibleMetrics<T extends SourceTaggedMetric>(
+  catalog: readonly T[],
+  requester: Requester,
+  adoptedSources: ReadonlySet<string>,
+): T[] {
+  return catalog.filter((m) =>
+    (m.requiredScope === null || requester.hasScope(m.requiredScope)) &&
+    (m.sourceSystem === null || adoptedSources.has(m.sourceSystem)))
 }
 
 /** 单引号双写（SQL 标准转义）。**只**用于已通过类型校验的值。 */

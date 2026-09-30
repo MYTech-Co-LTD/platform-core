@@ -10,6 +10,7 @@
 //
 // 授权不自建：词表裁剪只调 visibleMetrics、执行只调 runQuery（保留键拒 / 未声明拒 /
 // 未授权拒全部出自那条链——本文件不做第二份判定，约束 1）。
+import { TENANT_SOURCES } from '@platform/sdk'
 import type { MetricDef } from '../domain/authz'
 import { visibleMetrics } from '../domain/authz'
 import { loadMergedCatalog } from '../domain/metric-store'
@@ -56,6 +57,11 @@ export function registerMcp(r: ModuleHono, ctx: RouteCtx): void {
     // 隔离键 org（text）= 租户的 Casdoor org——与 /query 同一口径，不是数字 id
     const org = c.get('tenant').casdoor_org
 
+    // 宿主投影的「本租户已接入源」（计划 5）——tools/list 与 tools/call **共用同一份事实**：
+    // 两个方法各读一次 context 会让「工具面列出的」与「实际可调的」有机会分叉。
+    // `?? []` = 宿主没投影 ⇒ 空集 ⇒ 看不到任何 L1 工具（fail-closed，见 metrics.ts 同名注记）。
+    const adoptedSources = new Set(c.get(TENANT_SOURCES) ?? [])
+
     const requester = requesterOf(c)
     const reply = (result: unknown) => c.json({ jsonrpc: '2.0', id: msg.id, result })
     const rpcError = (code: number, message: string) =>
@@ -75,14 +81,19 @@ export function registerMcp(r: ModuleHono, ctx: RouteCtx): void {
       if (requester === null) return reply({ tools: [] })
       // 合并加载器（L1 ∪ 本 org）——与 /query、chat、GET /metrics 同一落点，
       // 否则平台指标不出现在 agent 的工具面里（T8 评审 C1）。
-      return reply({ tools: visibleMetrics(await loadMergedCatalog(ctx.pool, org), requester).map(toTool) })
+      // 裁剪带源维度（计划 5 §3⑧）：未接入源的指标不出现在工具面 ⇒ agent 连它存不存在都看不到。
+      return reply({
+        tools: visibleMetrics(
+          await loadMergedCatalog(ctx.pool, org), requester, adoptedSources).map(toTool),
+      })
     }
     if (msg.method === 'tools/call') {
       const name = String(msg.params?.name ?? '')
       const args = (msg.params?.arguments ?? {}) as Record<string, unknown>
-      // execute 必须透传：缺省会让 runQuery 去建真仓库连接，测试里就变成「断言被网络错误顶掉」
+      // execute 必须透传：缺省会让 runQuery 去建真仓库连接，测试里就变成「断言被网络错误顶掉」。
+      // `adoptedSources` 同理必须透传：runQuery 的解析路径也裁源（与 tools/list 同一份事实）。
       const out = await runQuery(
-        { pool: ctx.pool, execute: ctx.execute }, org, requester, name, args,
+        { pool: ctx.pool, execute: ctx.execute, adoptedSources }, org, requester, name, args,
       )
       // 拒绝/出错也走 result + isError（MCP 的工具级错误形态），JSON-RPC error 只留给协议层
       return reply({

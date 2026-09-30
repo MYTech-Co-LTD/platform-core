@@ -48,14 +48,27 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
   it('读**仓内真实事实源**：两个指标都在，字段映射齐（id/title/description/subjectColumn）', () => {
     const rows = readDeclarations(ROOT)
     const byId = new Map(rows.map((r) => [r.id, r]))
-    expect(byId.has('retail:net_sales')).toBe(true)
-    expect(byId.has('retail:order_count')).toBe(true)
-    expect(byId.get('retail:net_sales')).toMatchObject({
+    expect(byId.has('lemeng:retail:net_sales')).toBe(true)
+    expect(byId.has('lemeng:retail:order_count')).toBe(true)
+    expect(byId.get('lemeng:retail:net_sales')).toMatchObject({
       title: '净销售额',
       subjectColumn: 'org',
       requiredScope: null,
       groupBy: 'system_book, bizday',
     })
+  })
+
+  it('★ 声明的 `source`（源系统）→ `sourceSystem`（源维度进声明面；L1 行恒有源）', () => {
+    // ⚠️ 与既有的 `sources`（对象存储路径，选填、人读）不是一回事：这里映射的是**源系统**。
+    const rows = declarationsFromYaml(yaml([
+      {
+        name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(t.c)',
+        grain: ['g'], owner: 'o', tier: 'certified',
+      },
+    ]))
+    expect(rows[0].sourceSystem).toBe('lemeng')
+    // 仓内真实事实源的两条声明都带上了源（否则物化出的 L1 行没有源维度）
+    for (const row of readDeclarations(ROOT)) expect(row.sourceSystem, `${row.id} 没有源`).toBe('lemeng')
   })
 
   it('★ 形状契约两侧同源：sync 物化的每一条都能被唯一编译点解析（写侧↔读侧）', () => {
@@ -73,14 +86,35 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
 
   it('label 缺省回落到 name（title 不许是空串：管理面靠它认指标）', () => {
     const rows = declarationsFromYaml(yaml([
-      { name: 'x:y', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
+      { name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
     ]))
-    expect(rows[0].title).toBe('x:y')
+    expect(rows[0].title).toBe('x:y:z')
+  })
+
+  it('★ 声明缺 `source` ⇒ 抛（不许落字符串 "undefined"：源维度坏了，该指标对所有租户静默不可见）', () => {
+    // 为什么这条要 fail-closed：`String(undefined)` 是**非空**字符串 ⇒ 不拦的话行照落、sync 照报成功，
+    // 而消费侧的裁剪拿 `'undefined'` 去与「已接入源」比对 ⇒ 永远不匹配 ⇒ 指标查不出来且不报错。
+    expect(() => declarationsFromYaml(yaml([
+      { name: 'x:y:z', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
+    ]))).toThrow(/source/)
+  })
+
+  it('★ `source` 全为空白 / 首尾带空白 ⇒ 抛（逐字比对 ⇒ 带空白落库后该指标静默查不出来）', () => {
+    // 与上一条同一类失效，只是触发条件收窄：门禁侧 `asText` 会先 trim（故门禁校验的是 `lemeng`），
+    // 若本脚本原样落库，库里的值就与「已接入源」的登记值对不上 ⇒ 静默不可见。这里**拒绝**而不是 trim。
+    for (const bad of ['   ', ' lemeng ', 'lemeng ', ' lemeng']) {
+      expect(
+        () => declarationsFromYaml(yaml([
+          { name: 'x:y:z', source: bad, definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
+        ])),
+        `source: ${JSON.stringify(bad)} 没被拦下`,
+      ).toThrow(/source/)
+    }
   })
 
   it('grain 为空数组 ⇒ 抛（grain 同时是 L2 的维度白名单来源，空 = 什么都不能裁）', () => {
     expect(() => declarationsFromYaml(yaml([
-      { name: 'x:y', definition: 'd', expression: 'sum(t.c)', grain: [], owner: 'o', tier: 'certified' },
+      { name: 'x:y:z', definition: 'd', expression: 'sum(t.c)', grain: [], owner: 'o', tier: 'certified' },
     ]))).toThrow(/grain/)
   })
 
@@ -110,7 +144,7 @@ describe('deriveRelation：从 expression 反推 FROM 关系名', () => {
   })
 
   it('无限定引用（如 count(*)）⇒ 抛，且错误信息说清该怎么做', () => {
-    expect(() => deriveRelation('count(*)', 'x:y')).toThrow(/关系\.列/)
+    expect(() => deriveRelation('count(*)', 'x:y:z')).toThrow(/关系\.列/)
   })
 
   it('buildSelectSql 的两种形态（有/无维度）', () => {
@@ -120,9 +154,9 @@ describe('deriveRelation：从 expression 反推 FROM 关系名', () => {
 })
 
 describe('diffDeclarations：双向差集的四态分类', () => {
-  const row = (id: string, title: string) => ({
+  const row = (id: string, title: string, sourceSystem: string | null = 'lemeng') => ({
     id, title, description: '', requiredScope: null,
-    subjectColumn: 'org', selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {},
+    subjectColumn: 'org', selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {}, sourceSystem,
   })
   const declared = [row('a', 'A'), row('b', 'B2'), row('c', 'C')]
   const current = [row('a', 'A'), row('b', 'B1'), row('d', 'D')]
@@ -148,6 +182,19 @@ describe('diffDeclarations：双向差集的四态分类', () => {
     const newer = declared.map((r) => ({ ...r, created_at: new Date(0), updated_at: new Date(9) }))
     expect(diffDeclarations(withTs, newer).updated).toEqual([])
     expect(diffDeclarations(withTs, newer).unchanged.length).toBe(3)
+  })
+
+  it('★ 改了声明的 source 而库里没跟上 ⇒ 判为「更新」（漂移可比；缺这条 --check 会假绿）', () => {
+    // 这条用例存在的理由：`--check` 的全部价值是「声明的变化能被检出」。
+    // `sourceSystem` 若**不进** comparableOf，改了声明的 source 而库里还是旧值 ⇒ 判「未变」
+    // ⇒ 门禁报「无漂移」（假绿），而库里的源维度已经与声明分叉。
+    const declaredSrc = [row('a', 'A', 'lemeng')]
+    const currentOld = [row('a', 'A', 'legacy_erp')]
+    expect(diffDeclarations(declaredSrc, currentOld)).toMatchObject({
+      added: [], updated: ['a'], removed: [], unchanged: [],
+    })
+    // 反向对照：source 一致 ⇒ 仍然判「未变」（否则「可比」会退化成「恒判更新」）
+    expect(diffDeclarations(declaredSrc, [row('a', 'A', 'lemeng')]).unchanged).toEqual(['a'])
   })
 })
 

@@ -24,6 +24,13 @@ export interface ModuleManifest {
    *  缺省 = 不声明 = 宿主不注入（`c.get(TENANT_STORAGE)` 恒 undefined），行为与今天逐字相同。
    *  ⚠️ 声明的是**能力**不是**租户**：这里写不出 bucket / AK / org，只写得出 kind。 */
   storage?: { kind: 's3' }
+  /** 计划 5（spec §3⑧）：声明本模块需要**本租户已接入的源**（`platform.tenant_source` 里
+   *  `enabled = true` 的集合）。宿主据此刻向模块的 Hono context 写 `TENANT_SOURCES`；
+   *  缺省/false = 不声明 = 宿主不投影（`c.get(TENANT_SOURCES)` 恒 undefined），行为与今天逐字相同。
+   *  ⚠️ 键名**不是 `sources`**：那已被「存储路径」（dbt 声明的 `sources`）占用，撞名就是 Constraint 1
+   *     要防的那种「两个维度共用一个词」。
+   *  ⚠️ 声明的是**能力**不是**租户**：这里写不出任何租户/源标识，只写得出「我要这份投影」。 */
+  tenantSources?: boolean
   frontend?: { userApp?: { mount: string; dist: string };
     console?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }>;
     /** 模块管理页协议（2026-09-20 spec）：模块自有的「管理」组子页。门禁 = tenant:admin（组门，
@@ -71,6 +78,9 @@ const ManifestObject = z.object({
   // 枚举**收窄**到 s3：写别的值 ⇒ schema 拒绝 ⇒ 装载失败（进程起不来，不是告警）——
   // 与 api.internal[].scope / guest.scope 的 fail-fast 同风格。
   storage: z.object({ kind: z.enum(['s3']) }).optional(),
+  // 计划 5：声明需要「本租户已接入的源」投影（键名刻意不叫 `sources`——见 ModuleManifest 的注记）。
+  // 只认 boolean：写别的值 ⇒ schema 拒绝 ⇒ 装载失败（与 storage.kind 的 fail-fast 同风格）。
+  tenantSources: z.boolean().optional(),
   frontend: z.object({
     userApp: z.object({ mount: z.string(), dist: z.string() }).optional(),
     console: z.array(z.object({

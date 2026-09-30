@@ -25,14 +25,32 @@ export type MetricSource = 'l1' | 'l2'
 export const L1_ORG = 'platform'
 
 /**
- * 存储行 = 授权契约（`MetricDef`）+ **来源标注**。
+ * 存储行 = 授权契约（`MetricDef`）+ **来源标注** + **源系统**。
  *
  * 为什么把 `source` 放在剥壳类型上而不是塞进 `MetricDef`：`MetricDef` 是**授权核心的契约**
  * （domain/authz.ts 只消费语义字段），来源是**存储/治理**属性，与授权判定无关。
  * 混进去会让授权核心的每次构造都要带上它，而它一个字都不读。
+ *
+ * `sourceSystem`（库列 `source_system`）与 `source` 是本文件里最容易混的一对：
+ *   · `source`       = 取值 `l1`/`l2` ——「**谁写的**」（来源分层，决定谁能改）。
+ *   · `sourceSystem` = 取值如 `lemeng` ——「**数据来自哪个源系统**」（源维度，spec §3⑧）。
+ * 故列的命名刻意错开（`source_system` 而不是塞进 `source`）——同名不同义是静默错答的温床。
+ * 可空：L2 行由租户声明编译而来，**没有**源系统；L1 行的值恒等于声明的 `source`。
  */
 export interface MetricRow extends MetricDef {
   source: MetricSource
+  sourceSystem: string | null
+}
+
+/**
+ * **L1 写入口**的入参形状：授权契约 + 源系统（`upsertL1Metric` 专用）。
+ *
+ * 为什么把源系统写成**必填**而不是可选：L1 声明里 `source` 是必填字段（门禁规则 ⑤），
+ * 物化出的 L1 行因此恒有源。写成可选会给「漏传 ⇒ 静默落 null」留门，而那正是
+ * 「平台行的源维度凭空消失、Task 5 的裁剪把它判成未接入源」的失败形态。
+ */
+export interface L1MetricDef extends MetricDef {
+  sourceSystem: string | null
 }
 
 /** 行 → MetricRow：只映射契约里的字段（created_at/updated_at 不外泄给授权核心）。 */
@@ -48,12 +66,13 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     // params 是 jsonb：pg 已把它反序列化成对象，**不要**再 JSON.parse（那是第二个事实源）
     params: row.params as Record<string, MetricParamDef>,
     source: row.source as MetricSource,
+    sourceSystem: row.source_system as string | null,
   }
 }
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
@@ -142,11 +161,15 @@ export async function loadMergedCatalog(pool: Pool, org: string): Promise<Metric
 //    upsert 是改内容不是重建行，抹掉它就丢了唯一的时间锚。
 // ⚠️ 冲突分支**不碰 source**：来源只由「首次插入」确定。让它被 excluded 覆盖，等于任何一次写
 //    都能把这行从 L1 改标成 L2（或反之）——来源标注被写动作改掉，它就失去了意义。
+// ⚠️ 冲突分支**同样不碰 source_system**（与 source 同一纪律，理由比它更实）：L2 行没有源
+//    （插入值显式 `null`），而冲突分支若把它写成 excluded，则「租户写路径撞上同 (org,id) 的
+//    L1 行」这一次写动作就会把**平台行的源维度抹成 null**——而 sync 的 `--check` 拿声明比对
+//    库内 L1 行时会因此**长期报漂移**（一次租户写，永久红）。
 export async function upsertMetric(pool: Pool, org: string, def: MetricDef): Promise<void> {
   await pool.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2')
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -169,12 +192,16 @@ export async function upsertMetric(pool: Pool, org: string, def: MetricDef): Pro
  * ⚠️ 唯一的合法调用方是 `scripts/sync-data-semantics.mjs`（L1 的 select_sql 只能从仓内 dbt
  *    YAML 物化）。管理 API **不得**调它——那等于让租户经 HTTP 写平台词表（跨租户能力）。
  *    测试里直调它是为了造 L1 夹具（等价于 sync 的产物）。
+ *
+ * 源系统（`source_system`）与其它语义字段**同进退**：声明是 L1 行的真值，故冲突分支也刷它
+ * （改了声明的 `source` ⇒ 重新物化就跟上）。若只写首次插入，声明的源改了而库里不动，
+ * `sync --check` 会永远报同一条漂移——而漂移报告是那套对账机制的全部产出。
  */
-export async function upsertL1Metric(pool: Pool, def: MetricDef): Promise<void> {
+export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void> {
   await pool.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1')
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -183,10 +210,11 @@ export async function upsertL1Metric(pool: Pool, def: MetricDef): Promise<void> 
        select_sql     = excluded.select_sql,
        group_by       = excluded.group_by,
        params         = excluded.params,
+       source_system  = excluded.source_system,
        updated_at     = now()`,
     [
       L1_ORG, def.id, def.title, def.description, def.requiredScope,
-      def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params),
+      def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params), def.sourceSystem,
     ],
   )
 }

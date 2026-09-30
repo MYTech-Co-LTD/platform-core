@@ -182,7 +182,67 @@ ALTER ROLE <DATA_WAREHOUSE_URL 的 user> IN DATABASE <DATA_WAREHOUSE_URL 的 db>
 - [ ] 端口全回环（`docker port` 或 `ss -lnt` 复核 15432/13030 只绑 127.0.0.1）
 - [ ] **Gate-B 断言过**（P7 那两条：`DNS_OK` + `TCP_OK`）——**每次重建容器后都要重跑**
 - [ ] **`search_path` 已绑且真查询出数**（P8b：不带 schema 的 `select count(*) from fct_retail_sale`）
-- [ ] **L1 词表已物化**（`data.metrics` 非空；命令见 §F.6 末的订正注）——**这一步当前没有 job，必须手工触发**
+- [ ] **L1 词表已物化且 `source_system` 非空**（命令见 §F.6 末的订正注）——**这一步当前没有 job，必须手工触发**。
+  ⚠️ 判据是「**L1 行的 `source_system` 非空**」，**不是「`data.metrics` 非空」**：`006` 加的列
+  **可空**，迁移时库里**已存在**的旧 L1 行在重跑一次 `sync-data-semantics.mjs` 之前
+  `source_system` 是 `NULL`，而 `visibleMetrics` 把 `null` 判为「恒可见」（L2 语义）
+  ⇒ 这些行对**所有**租户可见、写闸也不触发 —— 即「**没登记的源反而全可见**」。
+  此时「`data.metrics` 非空」是**假绿**（旧行本来就非空）。故：物化后**必须**按 source_system
+  复核一遍（示例：`select count(*) filter (where source_system is null) as nulls, count(*) from data.metrics`，
+  `nulls` 应为 **0**）；非 0 ⇒ 说明存量行还没被 sync 刷新，补跑一次再验。
+- [ ] **源维度对账过**（P11：`reconcile-tenant-sources.mjs` **exit 0**，四桶全空）——exit 1（漂移）
+  与 exit 2（对不成账）都算**不过**，处置不同、都要人看
+
+### P11 源维度接线与对账（console 声明 ↔ 平台登记）
+
+> 依据：spec §3⑧ 与 §7 待办 6（2026-09-30 人裁）；对账脚本 = `scripts/reconcile-tenant-sources.mjs`。
+> 它是「**声明 ↔ 事实**」的对账：平台侧登记（`platform.tenant_source`）是**裁决用的事实**——词表
+> 按租户已接入源裁剪、未接入源的写入闸 403，都在**请求路径**上读它；而 console 侧
+> `ADOPTED_SOURCES_<账套>` 只是一句**声明**。两侧一旦分叉，症状是**静默**的（从任何一条请求的
+> 返回里都看不出来）⇒ 必须显式打差集、用退出码让 job 变红，不靠人读日志。
+
+**① 接线：console 的「已接入源」声明键**
+
+键 = **`ADOPTED_SOURCES_<账套>`**（如 `ADOPTED_SOURCES_3120`），值 = 逗号分隔的源（如 `lemeng`）。
+两个形态**别混**：
+
+| 形态 | 在哪 | 谁读 |
+|---|---|---|
+| `ADOPTED_SOURCES_<账套>`（**带账套后缀**）——真正的事实源 | **openship 项目 env** | 宿主侧对账（运行方传入脚本） |
+| `ADOPTED_SOURCES`（**裸**） | 容器内（`deploy/data-compose.yml` 注入的形态 `${ADOPTED_SOURCES_3120:-}`） | **当前无消费方**——它是给镜像/运维看的**声明**，不是运行时被读的键 |
+
+- 一账套一 console（ADR-0014）；**键在而值为空** = 「该 console 一个源都没声明」（合法，不是缺配）。
+
+**② 对账命令**（在能连平台库的地方跑；**声明的值从 openship 项目 env 取——别去 SSH 读 console 的 env**，那违反唯一通道）：
+
+```sh
+DATABASE_URL=<平台库连接串> \
+  ADOPTED_SOURCES_3120=lemeng ADOPTED_SOURCES_64188=lemeng \
+  pnpm exec tsx scripts/reconcile-tenant-sources.mjs [--json]
+```
+
+- **出口码**就是 job 的信号面：**0 = 干净**（四桶全空）；**1 = 有差集**（逐条打印，job 变红）；
+  **2 = 对不成账**（缺 `DATABASE_URL` / 查库失败 / **一个前缀键都没有**）。⚠️ **exit 1 与 exit 2
+  必须可区分**：2 是脚本/环境坏了，1 是被观测的系统漂移了，处置完全不同。
+- **四桶**（双向差集，判据写死在脚本头注，别在别处复述）：`missingInConsole`（平台启用了、没 console
+  声明）/ `missingInPlatform`（console 声明了、平台一行都没有）/ `disabledButDeclared`（平台该行
+  `enabled=false`、仍被声明）/ `declaredButDisabled`（整源停用、仍被声明）。
+- ⚠️ **「对不成账」（exit 2）≠「漂移为空」**：空声明侧会把平台侧每一行都误报成 `missingInConsole`
+  ⇒ 脚本对「一个前缀键都没有」**响亮失败**（exit 2），不给假读数。
+
+**③ 三条已知边界（都是接口边界，补桶也补不上——别当漏检）**
+
+1. **无「账套 ↔ org」映射** ⇒ 「B 的 console 声明了只在 A 启用的源」会被读成 **clean（静默 clean）**。
+   两侧键空间不同（平台侧按 **org**、声明侧按 **账套**），脚本只按**源名**做集合差 ⇒ 跨租户的归属
+   错配看不出来。这是**接口边界**——**补桶补不上**（缺的是映射本身）。
+2. **新键不受 B9 管**（`.env.example` 门禁的扫描面 = `apps/`、`packages/`、`modules/`，**不含**
+   `deploy/`、`scripts/`）⇒ compose 里的键名与脚本读的前缀**仅靠命名约定**：compose 出现
+   `ADOPTED_SOURCES:` 时，其 `${ADOPTED_SOURCES_<x>}` 变量名**必须**以脚本的 `ADOPTED_SOURCES_PREFIX`
+   （`ADOPTED_SOURCES_`）打头。**没有机检**，改键名时人守着。
+3. **改 env 键后必须 refresh 重建容器才吃到**——openship 在**容器创建时**注入 env，光重启进程不够；
+   按 §F.2 的实测口径**用 `serviceIds` 定向部署**（**别单传 `refreshServiceIds`**：2026-09-26 实测它
+   触发了全量重建，把 `pg_duckdb` / `metabase-db` 一并重启）。且**宿主侧对账读的是 project env 里
+   带账套后缀的键**，不是容器内那个裸键（见 ① 的表）。
 
 ---
 

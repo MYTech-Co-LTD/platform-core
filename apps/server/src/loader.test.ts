@@ -15,6 +15,7 @@ import { Pool } from 'pg'
 import { CasdoorClient } from '@platform/auth-core'
 import { MockCasdoor } from '@platform/auth-core/src/test-util/mock-casdoor'
 import { probeAnonymous } from '@platform/sdk/test-util/anonymous-probe'
+import { TENANT_SOURCES } from '@platform/sdk'
 import type { Identity } from '@platform/sdk'
 import { runMigrations } from './migrate'
 import { seedDemo } from './seed'
@@ -175,6 +176,44 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
     await writeModule(modulesDir, 'storagemod', {
       'manifest.yaml': manifestYaml('storagemod', 'storage: { kind: s3 }'),
       'index.ts': echoIndexTs('storagemod'),
+    })
+    await writeModule(modulesDir, 'plainmod', {
+      'manifest.yaml': manifestYaml('plainmod'),
+      'index.ts': echoIndexTs('plainmod'),
+    })
+  }
+
+  /** 计划 5 源投影的 fixture：srcmod（声明 `tenantSources: true`）+ srcmod-off（显式 false）
+   *  + plainmod（**不写**该键）。三组**共用同一份 handler 源码**，唯一差别是 manifest.yaml 里
+   *  那一行的写法 ⇒ 排除「handler 写法不同」这个第三变量（照 storage fixture 的手法）。
+   *  ⚠️ 声明必须写在 **manifest.yaml**：装载器读的是它（apps/server/src/loader.ts:280），
+   *     index.ts 里的内联 manifest 不参与装载。 */
+  async function writeSourceFixtures(modulesDir: string): Promise<void> {
+    const echoIndexTs = (id: string): string => [
+      "import { Hono } from 'hono'",
+      "import { TENANT_SOURCES, defineModule } from '@platform/sdk'",
+      '',
+      'export default defineModule({',
+      '  manifest: {',
+      `    id: '${id}', name: '${id}', version: '1.0.0', platform: '>=0.1.0',`,
+      `    permissions: [{ code: '${id}:view', name: '查看' }],`,
+      `    api: { internal: [{ method: 'GET', path: '/ping', scope: '${id}:view' }] },`,
+      '  },',
+      '  createRouter: () => {',
+      '    const app = new Hono()',
+      "    app.get('/ping', (c) => c.json({ sources: c.get(TENANT_SOURCES) ?? null }))",
+      '    return app',
+      '  },',
+      '})',
+      '',
+    ].join('\n')
+    await writeModule(modulesDir, 'srcmod', {
+      'manifest.yaml': manifestYaml('srcmod', 'tenantSources: true'),
+      'index.ts': echoIndexTs('srcmod'),
+    })
+    await writeModule(modulesDir, 'srcmod-off', {
+      'manifest.yaml': manifestYaml('srcmod-off', 'tenantSources: false'),
+      'index.ts': echoIndexTs('srcmod-off'),
     })
     await writeModule(modulesDir, 'plainmod', {
       'manifest.yaml': manifestYaml('plainmod'),
@@ -1214,6 +1253,154 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
     } finally {
       restoreEnv()
     }
+  })
+
+  // ---- 计划 5：宿主把「已接入源」按请求投影给模块（照 TENANT_STORAGE 先例）----
+
+  it('声明 tenantSources 的模块：投影中间件注入【本租户】enabled=true 的源集合（未声明则恒 undefined）', async () => {
+    cleanupModules.push('srcmod', 'srcmod-off', 'plainmod')
+    // 清理由本用例种下的登记行（按 slug 定位租户，不内插 id）
+    cleanupSqls.push(
+      "delete from platform.tenant_source where tenant_id in"
+        + " (select id from platform.tenant where slug in ('acme', 'beta'))",
+    )
+    const modulesDir = await newModulesDir()
+    await writeSourceFixtures(modulesDir)
+
+    // 契约值钉死（键名是宿主 set / 模块 get 的约定，编译器不连线）：两边都引 SDK 常量 ⇒
+    // 常量写错/没导出时两边一起错（fixture 与宿主用的是同一个 undefined 键，照样能对上），
+    // 故字面量必须单独钉一次。
+    expect(TENANT_SOURCES).toBe('platform.tenantSources')
+
+    const runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
+
+    const acme = await acmeTenant()
+    const { rows: betaRows } = await pool.query<TenantRow>(
+      "select * from platform.tenant where slug = 'beta'",
+    )
+    const beta = betaRows[0]!
+
+    // 登记三行：两条 enabled、一条**停用的**（投影值必须是 enabled=true 的子集，不是全表）
+    await pool.query(
+      `insert into platform.tenant_source(tenant_id, source, enabled)
+       values ($1, 'lemeng', true), ($1, 'shanhai', true), ($1, 'retired', false)`,
+      [acme.id],
+    )
+
+    // 门卫按 manifest 声明施加：identity 必须带这三个码，否则请求在门卫处就 403、到不了 handler
+    // （验的是**注入**不是授权 ⇒ 码给全，让请求真的落到模块 handler 上）。与 storage 用例同一手法。
+    const app = new Hono<TestEnv>()
+    app.use('*', injectTenant(acme))
+    app.use('*', injectIdentity(['srcmod:view', 'srcmod-off:view', 'plainmod:view']))
+    runtime.mount(app)
+
+    // ① 声明了 ⇒ 注入本租户 enabled=true 的集合（停用的 'retired' **不在**里面）
+    const on = await app.request('/api/modules/srcmod/ping')
+    expect(on.status).toBe(200)
+    expect(await on.json()).toEqual({ sources: ['lemeng', 'shanhai'] })
+
+    // ② 未声明 ⇒ 同一个 handler 恒 undefined（「不声明 = 拿不到」，与「未声明路径 = 不可达」同构）
+    const off = await app.request('/api/modules/plainmod/ping')
+    expect(await off.json()).toEqual({ sources: null })
+
+    // ③ 显式声明 false ⇒ 同上（键的值是 boolean，「关掉」不等于「声明了」——
+    //    判据必须是 `=== true`，写成「键存在就挂」会让这条静默变绿）
+    const offExplicit = await app.request('/api/modules/srcmod-off/ping')
+    expect(await offExplicit.json()).toEqual({ sources: null })
+
+    // ④ 按【本次请求所属租户】投影：另一个租户的请求拿的是它自己的集合，跨租户不串
+    const betaApp = new Hono<TestEnv>()
+    betaApp.use('*', injectTenant(beta))
+    betaApp.use('*', injectIdentity(['srcmod:view']))
+    runtime.mount(betaApp)
+
+    // ④a 无任何登记行 ⇒ **空数组**（不是 null）：声明了就有值，「本租户一个源都没接」与
+    //     「这个模块不声明源投影」是**两个不同的状态**，模块得能分辨（否则只能当没接源处理）
+    const betaEmpty = await betaApp.request('/api/modules/srcmod/ping')
+    expect(await betaEmpty.json()).toEqual({ sources: [] })
+
+    // ④b beta 自己接的源只出现在 beta 的请求里
+    await pool.query(
+      "insert into platform.tenant_source(tenant_id, source, enabled) values ($1, 'beta_only', true)",
+      [beta.id],
+    )
+    const betaOn = await betaApp.request('/api/modules/srcmod/ping')
+    expect(await betaOn.json()).toEqual({ sources: ['beta_only'] })
+    // 而 acme 的请求不受影响（同一模块实例、同一进程，差异只来自请求所属租户）
+    expect(await (await app.request('/api/modules/srcmod/ping')).json())
+      .toEqual({ sources: ['lemeng', 'shanhai'] })
+
+    // ⑤ 无租户上下文 ⇒ 不 set（放行给后续层，与 storage 投影同一分支）
+    const noTenant = new Hono<TestEnv>()
+    noTenant.use('*', injectIdentity(['srcmod:view']))
+    runtime.mount(noTenant)
+    expect(await (await noTenant.request('/api/modules/srcmod/ping')).json())
+      .toEqual({ sources: null })
+  })
+
+  it('匿名（无 identity）打声明 tenantSources 的模块：投影**不查表**（不放大成库查询），门卫照旧 401', async () => {
+    cleanupModules.push('srcmod', 'srcmod-off', 'plainmod')
+    const modulesDir = await newModulesDir()
+    await writeSourceFixtures(modulesDir)
+
+    // 真池外面套一层**记录台账**（只记 SQL 文本，原样转交）：唯一能证明「这次请求有没有查那张表」
+    // 的证据面——断言响应体只能证明「值没被设」，证明不了「库没被查」（两者是不同的病）。
+    const sqlLog: string[] = []
+    const recording = new Proxy(pool, {
+      get(target, prop, recv) {
+        if (prop === 'query') {
+          return (text: unknown, values?: unknown[]) => {
+            sqlLog.push(typeof text === 'string'
+              ? text
+              : String((text as { text?: unknown } | null)?.text ?? text))
+            // 原样转交（含 (config, values) 两种调用形状），不改变语义
+            return (target.query as (...a: unknown[]) => unknown).call(target, text, values)
+          }
+        }
+        const v = Reflect.get(target, prop, recv)
+        return typeof v === 'function' ? v.bind(target) : v
+      },
+    }) as Pool
+
+    const runtime = await loadModules(modulesDir, {
+      pool: recording,
+      casdoorFor: casdoorFactoryFor(),
+    })
+    const acme = await acmeTenant()
+    /** 本次请求里打 `platform.tenant_source` 的查询条数（`run` 的返回不关心：
+     *  `app.request` 在 Hono 里可能同步返回 Response，故签名收 `unknown | Promise<unknown>`） */
+    const sourceQueries = async (run: () => unknown | Promise<unknown>): Promise<number> => {
+      const before = sqlLog.filter((s) => /tenant_source/i.test(s)).length
+      await run()
+      return sqlLog.filter((s) => /tenant_source/i.test(s)).length - before
+    }
+
+    // ① 匿名（只注入租户，**不注入 identity** —— 与 SPA 壳/未登录探针同一形态）：
+    //    请求先被启用闸门放行（匿名不在其职责内，见 loader.ts ⑥.5），投影**必须**同样跳过查库，
+    //    最后落在模块门卫的 401。旧实现（投影只看租户）在这里白查一次表 —— 模块 API 无限流
+    //    ⇒ 匿名流量可被用来放大 DB，正是紧邻那条闸门明令禁止的（R4 评审 S5）。
+    const anon = new Hono<TestEnv>()
+    anon.use('*', injectTenant(acme))
+    runtime.mount(anon)
+    const anonRes = await anon.request('/api/modules/srcmod/ping')
+    expect(anonRes.status).toBe(401)
+    expect(await anonRes.json()).toEqual({ error: 'UNAUTHENTICATED' })
+    expect(
+      await sourceQueries(() => anon.request('/api/modules/srcmod/ping')),
+      '匿名请求查了 platform.tenant_source ⇒ 白白的库放大',
+    ).toBe(0)
+
+    // ② 已登录（identity 在）⇒ 投影照常查一次（guard 只豁免匿名，别退化成「谁都不投影」）：
+    //    四条通道（session / pat / wecom / guest）都在 runtime.mount **之前**注入 identity，
+    //    故这一步在真实链路上恒成立，投影不会饿死任何合法请求。
+    const authed = new Hono<TestEnv>()
+    authed.use('*', injectTenant(acme))
+    authed.use('*', injectIdentity(['srcmod:view']))
+    runtime.mount(authed)
+    expect(await sourceQueries(async () => {
+      const res = await authed.request('/api/modules/srcmod/ping')
+      expect(res.status).toBe(200)
+    })).toBe(1)
   })
 
   // ---- 模块端口（正典 docs/module-protocol.md「模块端口：createPorts」）----

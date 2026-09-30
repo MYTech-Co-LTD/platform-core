@@ -3,7 +3,7 @@
 // 通道差别到 Requester 为止：拿到 Requester 之后，会话/PAT/企微走的是同一条路径。
 // 审计在**所有**结局都写（spec §5 约束 7）——包括被拒与出错，否则「为什么被拒」查不出来。
 import type { Pool } from 'pg'
-import { MAX_QUERY_ROWS, authorize, type DenyReason, type Requester } from './authz'
+import { MAX_QUERY_ROWS, authorize, visibleMetrics, type DenyReason, type Requester } from './authz'
 import { loadMergedCatalog } from './metric-store'
 import { writeAudit } from './audit-store'
 import { DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './warehouse'
@@ -15,6 +15,15 @@ export interface QueryDeps {
   pool: Pool
   /** 缺省 = 真仓库（惰性连接）。测试注入假执行器。 */
   execute?: SqlExecutor
+  /**
+   * 本租户**已接入的源**（宿主投影 `TENANT_SOURCES`；计划 5）。
+   *
+   * **必填**（不是可选 + 默认空集）：本函数是 `query_metric` 的解析路径，不裁源就等于放行
+   * 「agent 记住 id ⇒ 硬编码绕过」那条路（spec §3⑧：只装裁剪这一道本来就不够，但少了它更糟）。
+   * 两个来源：路由（`routes/query.ts` / `routes/mcp.ts`）直接读投影；agent loop 把自己的
+   * `deps.adoptedSources` 透传下来（同一份事实，不再读一次投影）。
+   */
+  adoptedSources: ReadonlySet<string>
 }
 
 export interface QueryOk {
@@ -63,7 +72,18 @@ export async function runQuery(
   // 词表 = L1（平台）∪ L2（本 org）——**合并加载器**，与 `GET /metrics`/MCP/chat 同一落点
   // （T8 评审 C1：这里曾用只回本 org 的加载器 ⇒ 平台指标在 /query 上 403「未声明」，
   //  而 console 把它列了出来——同一 id 在两条通道上胜负相反且无任何可观测信号）。
-  const catalog = await loadMergedCatalog(deps.pool, org)
+  //
+  // ★ 裁剪（scope **与** 源维度）**必须在 authorize 之前**（计划 5 §3⑧ 把裁剪收口在
+  //   `visibleMetrics` 一处，本文件不自建第二份判定）：
+  //   · 未接入源的指标被裁掉 ⇒ `authorize` 看到的是「这个词表里没有这个 id」⇒
+  //     `metric_not_declared`（看不见，不是报错，与约束 3 一致）。硬编码 id 也绕不过。
+  //   · **顺带**把 scope 不够的指标的 reason 也从 `metric_not_authorized` 变成
+  //     `metric_not_declared`：另外三条消费面（GET /metrics、MCP tools/list、chat 的
+  //     list_metrics）**本来就**看不见它，只有 /query 会回「存在但你没权限」——那是个存在性
+  //     探针，与三条面自相矛盾。`authorize` 自身的 `metric_not_authorized` 分支未变
+  //     （authz.test.ts C2 仍钉着它：它是本核心的契约，只是消费面在它之前已把词表收窄）。
+  const catalog = visibleMetrics(
+    await loadMergedCatalog(deps.pool, org), requester, deps.adoptedSources)
   const authz = authorize(catalog, requester, metricId, args)
   if (!authz.ok) {
     await audit('denied', authz.reason, null)

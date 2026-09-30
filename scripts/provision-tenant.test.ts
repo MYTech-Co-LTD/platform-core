@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  maskWechatOaAppId, maskWecomCorpId, parseLoginMethods, parseWechatOaArgs, parseWecomArgs,
-  planAllTenantGrants, provisionPerms, tenantProvisionSteps, tenantRowUpsert,
+  maskWechatOaAppId, maskWecomCorpId, parseLoginMethods, parseSources, parseWechatOaArgs, parseWecomArgs,
+  planAllTenantGrants, provisionPerms, tenantProvisionSteps, tenantRowUpsert, tenantSourceUpsert,
 } from './provision-tenant.mjs'
 
 describe('tenantProvisionSteps（纯核）', () => {
@@ -33,6 +33,19 @@ describe('tenantProvisionSteps（纯核）', () => {
     expect(tenantProvisionSteps('acme', { org: 'o1', wecomCorpId: 'ww889900' })).toEqual([
       'org:o1', 'tenant-row:acme', 'wecom ww8899…', 'anchor', 'permissions',
     ])
+  })
+  it('带已接入源（计划 5）：每源一步 source:<源>，与 wechat-oa/wecom 同簇（tenant-row 后、anchor 前）', () => {
+    expect(tenantProvisionSteps('acme', { org: 'o1', sources: ['lemeng', 'woke'] })).toEqual([
+      'org:o1', 'tenant-row:acme', 'source:lemeng', 'source:woke', 'anchor', 'permissions',
+    ])
+    // 与公众号/企微同给时：三簇都排在 tenant-row 之后、anchor 之前
+    expect(tenantProvisionSteps('acme', {
+      org: 'o1', wechatOaAppId: 'wx0123456789abcdef', wecomCorpId: 'ww88990011223344', sources: ['lemeng'],
+    })).toEqual(['org:o1', 'tenant-row:acme', 'wechat-oa wx0123…', 'wecom ww8899…', 'source:lemeng', 'anchor', 'permissions'])
+  })
+  it('不带 --source：计划里没有任何 source 步（与既有计划逐字一致）', () => {
+    expect(tenantProvisionSteps('acme', { org: 'o1' })).toEqual(['org:o1', 'tenant-row:acme', 'anchor', 'permissions'])
+    expect(tenantProvisionSteps('acme', { org: 'o1', sources: [] })).toEqual(['org:o1', 'tenant-row:acme', 'anchor', 'permissions'])
   })
 })
 
@@ -154,6 +167,46 @@ describe('tenantRowUpsert（纯核：给了才写那两列 = 幂等重跑不误�
     })
     expect(text).toContain('wechat_oa_app_id, wechat_oa_secret, wecom_corp_id, wecom_secret')
     expect(values).toEqual(['acme', 'o1', 'acme', ['password'], 'wx123', 'app-secret-9', 'ww10086', 'corp-secret-9'])
+  })
+})
+
+describe('parseSources（--source 可重复；去重防撞键）', () => {
+  it('重复的 --source 去重且不抛（同一键进同一条 upsert ⇒ 21000 把 CLI 打挂）', () => {
+    expect(parseSources(['acme', '--source', 'lemeng', '--source', 'lemeng'])).toEqual(['lemeng'])
+    expect(parseSources(['--source', 'woke', '--source', 'lemeng', '--source', 'woke'])).toEqual(['woke', 'lemeng'])
+  })
+  it('去重保序（先出现者在前，不重排）', () => {
+    expect(parseSources(['--source', 'b', '--source', 'a', '--source', 'b'])).toEqual(['b', 'a'])
+  })
+  it('没有 --source ⇒ 空清单；末尾裸 --source（取值 undefined）⇒ 丢弃不进清单', () => {
+    expect(parseSources(['acme', '--module', 'demo'])).toEqual([])
+    expect(parseSources(['acme', '--source'])).toEqual([])
+  })
+  // 反向：登记值与声明的 source 逐字比 ⇒ 形状不对会让该源指标对所有租户**静默不可见**
+  it('形状非法的 --source ⇒ 抛错（在任何 IO 之前响亮失败，不静默登记一个比不上的值）', () => {
+    expect(() => parseSources(['acme', '--source', 'Lemeng'])).toThrow(/非法值/)
+    expect(() => parseSources(['acme', '--source', 'lemeng-erp'])).toThrow(/非法值/)   // 连字符
+    expect(() => parseSources(['acme', '--source', '1lemeng'])).toThrow(/非法值/)      // 首字符非字母
+    expect(() => parseSources(['acme', '--source', 'le meng'])).toThrow(/非法值/)
+  })
+  it('形状合法的照常放行（lemeng / l1_src / a）', () => {
+    expect(parseSources(['--source', 'lemeng', '--source', 'l1_src'])).toEqual(['lemeng', 'l1_src'])
+    expect(parseSources(['--source', 'a'])).toEqual(['a'])
+  })
+})
+
+describe('tenantSourceUpsert（纯核：开通只置 true，绝不「顺手禁用」）', () => {
+  it('一条语句写多源：unnest 展开 + on conflict do update set enabled = true（重跑幂等）', () => {
+    const { text, values } = tenantSourceUpsert(7, ['lemeng', 'woke'])
+    expect(text).toContain('insert into platform.tenant_source(tenant_id, source, enabled)')
+    expect(text).toContain('select $1, s, true from unnest($2::text[]) as s')
+    expect(text).toContain('on conflict (tenant_id, source) do update set enabled = true')
+    expect(values).toEqual([7, ['lemeng', 'woke']])
+  })
+  it('SQL 里没有把 enabled 置 false 的路径 —— 开通流程不具备「顺手禁用」的破坏力', () => {
+    const { text } = tenantSourceUpsert(7, ['lemeng'])
+    expect(text).not.toMatch(/enabled\s*=\s*false/i)
+    expect(text).not.toMatch(/delete/i)
   })
 })
 

@@ -45,6 +45,40 @@ export interface TenantStorageConfig {
 export const TENANT_STORAGE = 'platform.tenantStorage'
 
 /**
+ * 「本租户已接入的源」的 Hono context 变量键（计划 5）。
+ * 同 TENANT_STORAGE：**宿主 set / 模块 get 的约定**，编译器不连线 ⇒ 改名是破坏性变更。
+ * 值与 `platform.tenant_source` 里 `enabled = true` 的集合一致（宿主按**本次请求所属租户**投影）。
+ *
+ * ⚠️ 与存储路径不是一回事：那在 manifest 的 `storage`/dbt 声明里（源与「源的数据落在哪」是两
+ * 个维度）。本键名因此**不叫 `sources`**——`sources` 已被「存储路径」占用（Constraint 1）。
+ *
+ * 三态（模块**必须**分辨，别把后两者混成一种）：
+ *   · `undefined` —— 本模块没声明 `tenantSources`（宿主不投影，与「未声明路径 = 不可达」同构）；
+ *   · `[]` —— 声明了，但本租户一个源都没接（声明了就有值）；
+ *   · `['lemeng', …]` —— 本租户 enabled 的源集合。
+ */
+export const TENANT_SOURCES = 'platform.tenantSources'
+
+/**
+ * 「源标识」的形状：小写蛇形、首字符是字母。**声明侧与登记侧共用这一个字面量。**
+ *
+ * 为什么它是共享常量而不是各自写一份：本功能的整条链全靠「`platform.tenant_source.source` 的
+ * **登记值**」与「L1 声明的 `source`」**逐字相等**——裁剪（`visibleMetrics` 的 `adoptedSources.has(...)`）、
+ * 写入闸（`resolveL1Base` 后的 403）、对账（`reconcile-tenant-sources.mjs`）三处都按 `===` 比。
+ * 两头只要有一头松，`Lemeng` / `lemeng-erp` 这种写法就会让该源的全部 L1 指标对**所有**租户
+ * **静默不可见**：没有报错、门禁不红、对账（只比「登记 ↔ console 声明」）还报 clean。
+ *
+ * 三个消费点（**任何一侧都别复制这个字面量**，复制出来的两份迟早漂开）：
+ *   · 声明侧：`scripts/check-data-models.mjs` 规则 ⑤（校验 `l1_metrics.yml` 的 `source`）；
+ *   · 登记侧：`apps/server/src/routes/admin.ts` 的 `SourcesBody`（`PUT /sources`）；
+ *   · 开通侧：`scripts/provision-tenant.mjs` 的 `parseSources`（`--source`，不合法则在任何 IO 之前抛）。
+ *
+ * 无 `g`/`y` 标志 ⇒ `.test()` 是**无状态**的，可安全共享（带 `g` 的正则跨调用记 `lastIndex`，
+ * 共享会给相邻调用塞进假阴性——那是复用正则的经典坑）。
+ */
+export const METRIC_SOURCE_RE = /^[a-z][a-z0-9_]*$/
+
+/**
  * 模块端口（正典 `docs/module-protocol.md`「模块端口：`createPorts`」，2026-09-21 拍板）：
  * 有些能力宿主**必须在 `runtime.mount` 之前**就拿到（最典型的是 PAT 凭证解析——中间件要在模块
  * 路由之前把 `Bearer dkq_…` 解析成主体才能注入 `identity`），而这份能力的**数据**在模块自己的

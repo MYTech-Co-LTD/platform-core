@@ -31,7 +31,7 @@
 //
 // ── ⚠️ 与计划正文的一处**有意偏离**（事实源文件的位置）────────────────────────────
 // 计划 Task 8 写的是「读 `dbt/models/**/schema.yml` 的语义声明」。**实际事实源不是那里**：
-// T4 已把 L1 声明落在 `dbt/semantics/l1_metrics.yml`——理由是指标名是 `<域>:<指标名>` 形态
+// T4 已把 L1 声明落在 `dbt/semantics/l1_metrics.yml`——理由是指标名是 `<源>:<业务域>:<指标>` 形态
 // （**含冒号**），而 dbt 资源名不允许冒号，放进 dbt 会扫的 schema 文件有让 `dbt parse` 挂掉的
 // 风险（见 `dbt/README.md` §5「L1 语义声明的落点」原文，静态门禁两处都扫）。
 // ⇒ 本脚本读的是**实际的事实源**。照计划原文去读 `models/**/schema.yml` 会**一条声明都读不到**
@@ -72,8 +72,8 @@ export const L1_SUBJECT_COLUMN = 'org'
  */
 const QUALIFIED_REF_RE = /([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\.([A-Za-z_][A-Za-z0-9_]*)/g
 
-/** 指标名形态 `<域>:<指标名>`（与 scripts/check-data-models.mjs 规则 ⑥ 同一句；门禁是权威，这里只兜底）。 */
-const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
+/** 指标名形态 `<源>:<业务域>:<指标>`（与 scripts/check-data-models.mjs 规则 ⑥ 同一句；门禁是权威，这里只兜底）。 */
+const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
 
 /**
  * 差集比对的**唯一形状**：本脚本要用的全部字段，一个不少、一个不多。
@@ -86,6 +86,11 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  * 单个具体形状（字段恒在、无联合）也正合 scripts/ 是 checkJs 工程的脾气：
  * JSDoc 里写可辨识联合会被加宽，窄化随之失效。
  *
+ * `sourceSystem` 必须**进**这个形状（而不只是进 `MetricDef` 的传递）：它是 `comparableOf` 的
+ * 比对面之一，而 `comparableOf` 是 `--check` 判「有没有漂移」的唯一判据。少了它，改了声明的
+ * `source` 而库里的 `source_system` 还是旧值 ⇒ 判「未变」⇒ 门禁报「无漂移」（假绿），
+ * 而这恰恰是 sync 存在的理由（把声明的变化变成一次可见的写）。
+ *
  * @typedef {object} ComparableMetric
  * @property {string} id
  * @property {string} title
@@ -95,6 +100,7 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  * @property {string} selectSql
  * @property {string} groupBy
  * @property {Record<string, MetricParamDef>} params
+ * @property {string | null} sourceSystem
  */
 
 /**
@@ -160,6 +166,9 @@ export function buildSelectSql(expression, grain, relation) {
  *   `requiredScope` → **恒 null**：L1 指标对所有拿到本模块的人可见。`tier` **不**映射成
  *                     requiredScope——spec §10 明写 tier 是**标记不是强制**（「本仓不靠它挡谁，
  *                     靠它让人一眼看见成熟度」），拿它当权限会凭空造出一条谁也说不清的授权规则。
+ *   `source`      → `sourceSystem`（库列 `source_system`）：**源系统**（如 `lemeng`），
+ *                     spec §3⑧ 的源维度。⚠️ 与同一份声明里的 `sources`（对象存储路径，人读）
+ *                     **不是一回事**；也与库里的 `source`（取值 l1/l2 = 谁写的）不是一回事。
  *   `owner` / `tier` / `sources` → **不落库**（`data.metrics` 没有对应列）。它们仍是治理面的
  *                     事实源（在 YAML 里、被静态门禁规则 ⑤ 强制必填），只是不在这张表上体现。
  *                     ⚠️ 这是本任务的一处**已知边界**，见 README「L2 的已知边界」。
@@ -176,12 +185,40 @@ export function declarationsFromYaml(parsed) {
     const m = /** @type {Record<string, unknown>} */ (raw)
     const name = String(m.name ?? '')
     if (!METRIC_NAME_RE.test(name)) {
-      throw new Error(`指标名 \`${name}\` 不合命名空间形态 \`<域>:<指标名>\`（小写蛇形，两段）`)
+      throw new Error(`指标名 \`${name}\` 不合命名空间形态 \`<源>:<业务域>:<指标>\`（小写蛇形，三段）`)
     }
     const expression = String(m.expression ?? '')
     if (expression === '') throw new Error(`指标 \`${name}\` 缺 expression`)
     if (!Array.isArray(m.grain) || m.grain.length === 0) {
       throw new Error(`指标 \`${name}\` 的 grain 必须是非空数组（grain 同时是 L2 的维度白名单来源）`)
+    }
+    // 源系统（源维度）**必填**——缺了就响亮失败，绝不落一个「看起来有值、实际是垃圾」的源。
+    // 为什么不能只靠 `String(m.source)` 的默认行为：缺字段时它产出**字符串** `'undefined'`，
+    // 于是行照样落库、sync 照样报成功，而消费侧的裁剪会拿这个值与「已接入源」比对 ⇒ 该指标
+    // 对**所有**租户静默不可见（没有任何租户接过名为 `undefined` 的源）——坏在数据里，不报错。
+    // ⚠️ 声明面的必填由门禁规则 ⑤ 把守（唯一事实源 = 仓内 YAML）**且**这里再拦一道：
+    //    本脚本会被手跑（不经 CI），事实源的位置将来也可能变——门禁是权威，这条是兜底。
+    //
+    // ⚠️ 第二个坑是**首尾空白**（同一类静默失效，只是触发条件收窄）：`' lemeng '` 这种值在门禁侧
+    //    是合法声明（`asText` 先 trim 再判，故门禁校验的其实是 `lemeng`），若原样落库，库里的值
+    //    就与「已接入源」的登记值**逐字比对不上** ⇒ 同样静默不可见。这里选择**拒绝**而不是 trim：
+    //    本脚本的脾气是「取不到/说不准就响亮失败」，静默 trim 等于替作者改他的声明，而「声明写了
+    //    什么」与「库里存了什么」必须是同一个值。代价：本脚本对空白比门禁**更严**——方向是安全的
+    //    （响亮失败，不是坏值落库），且真事实源（`dbt/semantics/l1_metrics.yml`）本来就不带空白。
+    const sourceSystem = String(m.source ?? '')
+    if (sourceSystem.trim() === '') {
+      throw new Error(
+        `指标 \`${name}\` 缺 \`source\`（源系统，如 \`lemeng\`；全为空白也算缺）—— 它会被物化成 `
+        + '`data.metrics.source_system` 并被消费侧拿去与「已接入源」比对，缺了它指标就查不出来了'
+        + '（静默，不是报错）。请在声明里补 `source`（形状：小写蛇形）。',
+      )
+    }
+    if (sourceSystem !== sourceSystem.trim()) {
+      throw new Error(
+        `指标 \`${name}\` 的 \`source\` ${JSON.stringify(sourceSystem)} 首尾带空白 —— 它要与`
+        + '「已接入源」的登记值**逐字**比对，带空白的值匹配不上（症状：该指标对所有人都查不出来，'
+        + `且不报错）。请把它写成 \`${sourceSystem.trim()}\`（本脚本不替声明做 trim）。`,
+      )
     }
     const grain = m.grain.map((/** @type {unknown} */ g) => String(g))
     const relation = deriveRelation(expression, name)
@@ -195,13 +232,21 @@ export function declarationsFromYaml(parsed) {
       groupBy: grain.join(', '),
       // L1 声明没有查询参数（params 是问数参数面的东西，L2 也暂不开放）
       params: /** @type {Record<string, MetricParamDef>} */ ({}),
+      // 源系统（源维度）：上面已拦掉缺字段的情形，故这里的取值恒是非空串。
+      sourceSystem,
     }
   })
 }
 
-/** 内容比对用的一行摘要（**只比**决定「要不要写」的字段；created_at/updated_at 不参与）。 */
+/**
+ * 内容比对用的一行摘要（**只比**决定「要不要写」的字段；created_at/updated_at 不参与）。
+ *
+ * `sourceSystem` 必须在场：否则「改了声明的 source、库里没跟上」会被判成「未变」——
+ * 而 `--check` 只认这个判据，于是门禁假绿（见上面 ComparableMetric 的说明）。
+ */
 const comparableOf = (/** @type {ComparableMetric} */ row) => JSON.stringify([
   row.title, row.description, row.requiredScope, row.subjectColumn, row.selectSql, row.groupBy, row.params,
+  row.sourceSystem,
 ])
 
 /**

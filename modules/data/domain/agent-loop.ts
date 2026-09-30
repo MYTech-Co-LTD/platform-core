@@ -13,7 +13,18 @@ export type AgentEvent =
   | { type: 'final'; text: string; table?: { columns: string[]; rows: unknown[][] } }
   | { type: 'error'; reason: string; detail?: string }
 
-export interface AgentDeps { pool: Pool; org: string; execute?: SqlExecutor }
+export interface AgentDeps {
+  pool: Pool
+  org: string
+  execute?: SqlExecutor
+  /**
+   * 本租户**已接入的源**（宿主投影 `TENANT_SOURCES`；计划 5）。**必填**——理由与
+   * `QueryDeps.adoptedSources` 同：少了它，`list_metrics` 会把别的源的指标列给 agent、
+   * `query_metric` 会放行硬编码的未接入源 id（两条都正是 spec §3⑧ 要堵的）。
+   * 由路由（`routes/chat.ts`）读投影后传入；本函数再把它透传给 `runQuery`（同一份事实）。
+   */
+  adoptedSources: ReadonlySet<string>
+}
 
 /** 硬上限。超出即收尾出 `final`，**不是**抛错、更不是继续转。 */
 export const MAX_AGENT_TURNS = 6
@@ -67,7 +78,10 @@ export async function* runAgentLoop(
   // 词表在本轮对话开始时裁剪一次（同一次对话内权限漂移不做中途刷新——改权限下一次问答生效）
   // ★ 必须是**合并**加载器（L1 ∪ 本 org）：用只回本 org 的那个，平台指标对 agent 就不存在
   //   （它连"看不见"都不会说——`list_metrics` 里直接没有这条 id）。T8 评审 C1。
-  const catalog = visibleMetrics(await loadMergedCatalog(deps.pool, deps.org), requester)
+  // ★ 裁剪带**源维度**（计划 5 §3⑧）：agent 只该看到「本租户已接入源」的指标——否则单源
+  //   租户会看到别的源的同名口径，只能停下来问人（spec 实测的那个歧义）。
+  const catalog = visibleMetrics(
+    await loadMergedCatalog(deps.pool, deps.org), requester, deps.adoptedSources)
   const messages: ChatMessage[] = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: question },
@@ -122,7 +136,11 @@ async function runTool(
   const args = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
     ? (rawArgs as Record<string, unknown>) : {}
   // 与 MCP 通道**同一个** runQuery ⇒ 同一个授权核心。这里不做任何权限判断。
-  return runQuery({ pool: deps.pool, execute: deps.execute }, deps.org, requester, metricId, args)
+  // `adoptedSources` 必须透传：runQuery 自己会再裁一次（同一条 `visibleMetrics`），漏传就
+  // 等于这条路径不裁——`catalog-consumers.test.ts` 的面③ 行为断言正是钉这个的。
+  return runQuery(
+    { pool: deps.pool, execute: deps.execute, adoptedSources: deps.adoptedSources },
+    deps.org, requester, metricId, args)
 }
 
 /** 活动事件的展示文案。**只放 id 与非敏感参数**——SQL、主体值、凭证都不进事件流。 */

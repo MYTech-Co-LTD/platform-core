@@ -16,6 +16,14 @@ const describePg = dbUrl ? describe : describe.skip
 /** 隔离键（text，值 = 该租户的 Casdoor org）——与 metrics/query/keys/mcp 各文件互不相同。 */
 const ORG = 'org-t9-agent'
 
+/**
+ * `AgentDeps.adoptedSources` 在本文件一律空集（计划 5）：夹具全部经 `upsertMetric` 落库，
+ * 即 **L2 行**（`sourceSystem: null`）——L2 行不受源维度裁剪影响，故「接了哪些源」与
+ * 本文件验的编排语义正交。源的裁剪语义另有专测（`authz.test.ts` 的三态 +
+ * `catalog-consumers.test.ts` 的四条面）。
+ */
+const NO_SOURCES = new Set<string>()
+
 const SALES_DAILY: MetricDef = {
   id: 'sales_daily', title: '销售日明细', description: '按日汇总的销售明细',
   requiredScope: null, subjectColumn: 'org',
@@ -92,7 +100,7 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
       { content: '2026-09-01 的收入是 42。', toolCalls: [] },
     ])
     const events = await collect(
-      runAgentLoop({ pool, org: ORG, execute: fakeExecute() }, sessionRequester(), model, '上个月销售额'),
+      runAgentLoop({ pool, org: ORG, execute: fakeExecute(), adoptedSources: NO_SOURCES }, sessionRequester(), model, '上个月销售额'),
     )
     expect(events).toHaveLength(3)
     expect(events[0]).toMatchObject({ type: 'activity', tool: 'list_metrics' })
@@ -111,7 +119,7 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
       { content: '', toolCalls: [{ id: 'c2', name: 'query_metric', arguments: { metricId: 'sales_daily', args: { day_from: '2026-09-01' } } }] },
       { content: '答完了', toolCalls: [] },
     ])
-    await collect(runAgentLoop({ pool, org: ORG, execute: fakeExecute() }, sessionRequester(), model, 'q'))
+    await collect(runAgentLoop({ pool, org: ORG, execute: fakeExecute(), adoptedSources: NO_SOURCES }, sessionRequester(), model, 'q'))
     // 第二轮：应看到 c1 的 tool 消息，content 是带 status:'metrics' 的 JSON
     const round2Tool = model.calls[1]!.messages.find((m) => m.role === 'tool')
     expect(round2Tool?.toolCallId).toBe('c1')
@@ -138,7 +146,7 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
       { content: '', toolCalls: [{ id: 'cx', name: 'query_metric', arguments: { metricId: 'sales_daily', args: { day_from: '2026-09-01' } } }] },
     ])
     const events = await collect(
-      runAgentLoop({ pool, org: ORG, execute: fakeExecute(sqlLog) }, sessionRequester(), model, 'q'),
+      runAgentLoop({ pool, org: ORG, execute: fakeExecute(sqlLog), adoptedSources: NO_SOURCES }, sessionRequester(), model, 'q'),
     )
     expect(model.calls).toHaveLength(MAX_AGENT_TURNS)
     expect(events.filter((e) => (e as { type: string }).type === 'activity')).toHaveLength(MAX_AGENT_TURNS)
@@ -150,7 +158,7 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
     expect(sqlLog).toHaveLength(MAX_AGENT_TURNS)
   })
 
-  it('模型要未授权指标（finance_mrr）→ 工具结果是可解释 reason（denied），不是 SQL 错误', async () => {
+  it('模型要 scope 不够的指标（finance_mrr）→ 被裁剪（denied/metric_not_declared），不是 SQL 错误', async () => {
     await seed()
     const sqlLog: string[] = []
     const model = new FakeChatModel([
@@ -158,14 +166,18 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
       { content: '你没有权限查看该指标。', toolCalls: [] },
     ])
     const events = await collect(
-      runAgentLoop({ pool, org: ORG, execute: fakeExecute(sqlLog) }, sessionRequester(), model, 'q'),
+      runAgentLoop({ pool, org: ORG, execute: fakeExecute(sqlLog), adoptedSources: NO_SOURCES }, sessionRequester(), model, 'q'),
     )
-    // 拒绝发生在授权核心 ⇒ 根本没到 SQL
+    // 拒绝发生在授权核心（裁剪 + authorize）⇒ 根本没到 SQL
     expect(sqlLog).toHaveLength(0)
     const toolMsg = model.calls[1]!.messages.find((m) => m.role === 'tool')
     const denied = JSON.parse(toolMsg!.content) as { status: string; reason: string }
     expect(denied.status).toBe('denied')
-    expect(denied.reason).toBe('metric_not_authorized')
+    // ★ 计划 5 起是 `metric_not_declared`（此前 `metric_not_authorized`）：runQuery 现在与
+    //   `list_metrics` 同款——先经 `visibleMetrics` 裁剪再 authorize，而 `list_metrics` 里
+    //   finance_mrr **本来就看不到**（上面第二条用例钉着）。两条路径不一致时，agent 能靠
+    //   query_metric 的存在性回包推断出「有个我看不见的指标叫 finance_mrr」——裁剪的价值就漏了。
+    expect(denied.reason).toBe('metric_not_declared')
     expect(toolMsg!.content).not.toMatch(/SQL|syntax|error/i)
     expect(events.at(-1)).toMatchObject({ type: 'final', text: '你没有权限查看该指标。' })
   })
@@ -180,7 +192,7 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
         { content: '', toolCalls: [{ id: 'c1', name: 'list_metrics', arguments: {} }] },
         { content: '好了', toolCalls: [] },
       ])
-      await collect(runAgentLoop({ pool, org: ORG }, sessionRequester(), model, 'q'))
+      await collect(runAgentLoop({ pool, org: ORG, adoptedSources: NO_SOURCES }, sessionRequester(), model, 'q'))
       expect(model.calls.length).toBeGreaterThan(0)
       for (const call of model.calls) {
         const dump = JSON.stringify(call.messages)
@@ -195,7 +207,7 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
   it('T2 取舍原样告知：query_metric 的工具描述写明等值语义与「同列参数不要同时传」', async () => {
     await seed()
     const model = new FakeChatModel([{ content: '直接答了', toolCalls: [] }])
-    await collect(runAgentLoop({ pool, org: ORG }, sessionRequester(), model, 'q'))
+    await collect(runAgentLoop({ pool, org: ORG, adoptedSources: NO_SOURCES }, sessionRequester(), model, 'q'))
     const tools = model.calls[0]!.tools
     expect(tools.map((t) => t.name).sort()).toEqual(['list_metrics', 'query_metric'])
     const spec = tools.find((t) => t.name === 'query_metric')!

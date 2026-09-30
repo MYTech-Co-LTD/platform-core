@@ -412,6 +412,59 @@ if (!cfg) return c.json({ error: 'ZOS_NOT_CONFIGURED' }, 503)
 > 消费方是**宿主自己的路由**（它直接 `c.get('tenant')`），**从来没有交付给模块**过。本节是**新增的
 > 一条交付通路**，不是复用既有通路——别以为「照公众号抄一下就行」。
 
+## 租户级源投影：`tenantSources`（计划 5 / issue #389，2026-09-30）
+
+> 适用：`modules/<id>/manifest.yaml` 的**可选** `tenantSources` 字段 + 宿主在模块 API 子树上挂的
+> 同一条投影通路。契约源是 `packages/platform-sdk/src/{manifest,module}.ts`。
+> 与上一节 `storage` **同机制、不同值**：值不是租户行上的配置，而是**查表得到的一个集合**。
+
+**它解决的是什么**：语义（L1 指标）是**逐源**的标准口径，租户只该看到**自己已接入源**的指标。
+「某租户接了哪些源」登记在 `platform.tenant_source`，而模块**结构性读不到** `platform` schema（B1，
+`scripts/lint-architecture.mjs`）⇒ 照 `TENANT_STORAGE` 的现成先例由**宿主投影**，**不新增机制**。
+
+### 模块侧：怎么声明（**不声明 = 拿不到**）
+
+```yaml
+# modules/<id>/manifest.yaml
+tenantSources: true     # 缺省 = 不声明 = 宿主不挂这条中间件
+```
+
+- 字段**可选**（`z.boolean().optional()`），现有模块一行不改仍装载通过；判据是 `=== true`
+  （不是「键存在」）——显式 `false` = 关掉。
+- ⚠️ 键名是 **`tenantSources`**，**不是** `sources`：`sources` 已被「指标背后的对象存储路径」占用
+  （`dbt/semantics/l1_metrics.yml`），两者语义无关，别合并。
+
+### 宿主侧：注入的键、形状与位置
+
+| 名 | 值 / 形状 | 出处 |
+|---|---|---|
+| context 键常量 | `TENANT_SOURCES`，值 `'platform.tenantSources'` | `packages/platform-sdk/src/module.ts` |
+| 值的类型 | `string[]`（本租户 `enabled=true` 的源；查询 `order by source`） | 同上 |
+| 注入点 | `<模块 API 基路径> + '/*'`（**仅声明了 `tenantSources` 的模块的 API 子树**） | `apps/server/src/loader.ts` 的 `mount()` |
+
+**三态契约**（模块必须按三态写，别把后两者当同一件事）：
+`undefined`（宿主**没投影**：没声明 / 无租户上下文 / **模块自身中间件授权**，见下）·
+`[]`（投影了，但本租户一个源都没接）· 非空数组（本租户已接入的源集合）。
+
+- **挂载顺序同 `storage`**（硬约束）：**在启用闸门之后、`app.route(base, m.router)` 之前**——
+  挪到后面的表现是模块 `c.get(TENANT_SOURCES)` 恒 `undefined`，代码里看不出问题。
+- **与 `storage` 的一点刻意不同**：`storage` 的投影**零 IO**（读的是请求链早已取过的租户行列）；
+  本投影**每请求一查** `platform.tenant_source`（源是**集合**，租户行上放不下）。量小 ⇒
+  **先不做缓存**（「无案例不立标准」；要压测有了数再加 TTL）。
+- **匿名请求不查库**（与紧邻的启用闸门同款 guard）：`identity` 不在 ⇒ 直接放行给后续层。匿名请求
+  终将被模块门卫 401 挡下，投影结果无人消费，而模块 API 无独立限流 ⇒ guard 掉的是「给匿名流量
+  开一条放大 DB 的口子」。合法请求不受影响（三条通道都在 `runtime.mount` 之前注入 identity）。
+- ⚠️ **它不是门卫**：只做投影、**不返回 401/403**（与 `storage` 同）。
+
+### ⚠️ 边界：靠模块自身中间件授权会读到 `undefined`
+
+宿主投影**只在宿主解析出 `c.get('tenant')` 之后**执行。若某模块将来**不经宿主 identity**、而是
+**靠自身的中间件**做授权，那条通路走到本投影时 `c.get(TENANT_SOURCES)` 会是 **`undefined`**——
+**与「没声明 / 没接入任何源」同形**，代码里看不出问题（与紧邻闸门的既有行为同构）。
+
+⇒ 声明 `tenantSources` 的模块**一律以宿主施加的门禁（manifest `api.internal[].scope`）为准**；
+自建授权通路要**自己承接**这个 `undefined` 并 **fail-closed**（把它当「拿不到源集合」而非「没有源」）。
+
 ## 模块端口：`createPorts`（宿主在 mount 前索取模块能力，2026-09-21 拍板）
 
 > 适用：`modules/<id>/index.ts` 的**可选** `createPorts` + 宿主装载器暴露的 `port()` 取用面。

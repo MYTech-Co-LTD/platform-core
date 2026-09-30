@@ -4,11 +4,15 @@
 // 这里验裁剪语义（「看不见」不是报错）与管理面写路径的**新契约**——
 // 写路径只收结构化 `L2Declaration`，自由 SQL 入参一律 400（全局约束 12）。
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { Hono } from 'hono'
 import { Pool } from 'pg'
+import { TENANT_SOURCES, declaredScopeGate } from '@platform/sdk'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import { L1_ORG, upsertL1Metric, upsertMetric } from '../domain/metric-store'
+import type { L1MetricDef } from '../domain/metric-store'
 import type { MetricDef } from '../domain/authz'
+import type { ModuleVars } from './context'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -29,29 +33,59 @@ function def(over: Partial<MetricDef> = {}): MetricDef {
 // ── L1 夹具（平台词表）───────────────────────────────────────────────────────────
 // 必须满足 select_sql 的**形状契约**（`select <表达式> as value[, <维度>] from <关系>`），
 // 否则 L2 编译点会抛 BAD_BASE_SQL —— 那正是它该做的（形状不合契约就不许当 base）。
-const L1_SALES = def({
-  id: 'retail:net_sales', title: '净销售额',
+/**
+ * ⚠️ **L1 夹具 id 一律带本文件专用前缀 `t6test:`**（与 `catalog-consumers.test.ts` 的 `t8c:`、
+ * `metric-store.test.ts` 的 `t8test:` 同一手法，互不相同）。
+ *
+ * 为什么必须加前缀：平台桶（`data.metrics` 的 `org='platform'`）是**跨测试文件共用**的固定桶，
+ * 而清理只能按 id 删 —— 夹具 id 一旦与**真实声明**（`dbt/semantics/l1_metrics.yml` 的 `name`）同名，
+ * 本文件的 `afterAll` 就会删掉平台桶里那条**真行**。实测（2026-09-30，本文件曾用 `retail:net_sales`）：
+ * 跑完本文件后 `sync-data-semantics.mjs --check` 报「新增 1（retail:net_sales）」——真声明与库里的
+ * 物化行被一个测试的清理步骤打掉了。加了前缀之后，「测试跑完」与「库和声明分叉」不再有关系。
+ */
+const L1_ID_PREFIX = 't6test:'
+/**
+ * L1 物化路径的入参 = `MetricDef` + **源系统**（源维度：L1 声明里 `source` 必填 ⇒ L1 行恒有源）。
+ * 本文件的 L1 夹具都是 sync 的产物，故与声明同形（`lemeng` = 当前唯一已接入源）；
+ * 不给源的 L1 行在 Task 5 的裁剪里会被判成「未接入源」而**没人看得见**——那是不该出现在夹具里的形状。
+ */
+const l1Def = (over: Partial<MetricDef> = {}): L1MetricDef => ({ ...def(over), sourceSystem: 'lemeng' })
+const L1_SALES = l1Def({
+  id: `${L1_ID_PREFIX}net_sales`, title: '净销售额',
   selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale',
   groupBy: 'system_book, bizday',
 })
-const L1_FINANCE = def({
-  id: 'retail:margin', title: '毛利', requiredScope: 'data:finance',
+const L1_FINANCE = l1Def({
+  id: `${L1_ID_PREFIX}margin`, title: '毛利', requiredScope: 'data:finance',
   selectSql: 'select sum(fct_retail_sale.margin) as value, system_book from fct_retail_sale',
   groupBy: 'system_book',
 })
+/**
+ * 存在、但本租户**未接入**的源（`shanhai`）的 L1 行 —— 写入闸的探针（计划 5 Task 5）。
+ * 它与 L1_SALES 的唯一差别是源维度 ⇒ 「403 是不是真按源判的」只有它能验。
+ * `l1Def` 默认把 sourceSystem 写成 lemeng，故这里**后覆盖**（不是传参——传参会被默认值顶掉）。
+ */
+const L1_FOREIGN = { ...l1Def({
+  id: `${L1_ID_PREFIX}shanhai_margin`, title: '山海毛利',
+  selectSql: 'select sum(fct_retail_sale.foreign) as value, system_book from fct_retail_sale',
+  groupBy: 'system_book',
+}), sourceSystem: 'shanhai' }
 /** M-① 的撞 id 探针：**先**由租户建 L2、**后**由平台物化同 id（唯一能造出撞 id 的合法时序）。 */
-const L1_CLASH_PROBE = 'retail:clash_probe'
+const L1_CLASH_PROBE = `${L1_ID_PREFIX}clash_probe`
+/** 本租户已接入的源（宿主投影 TENANT_SOURCES 的测试替身）——未接入的源就是 `lemeng` 之外的。 */
+const ADOPTED = ['lemeng']
 
 /** 合法 L2 声明（各用例只覆盖自己关心的字段）。 */
 const l2Body = (over: Record<string, unknown> = {}) => ({
   id: 'l2_net_sales_xiongmao',
-  baseMetric: 'retail:net_sales',
+  baseMetric: L1_SALES.id,
   op: { kind: 'refine' },
   ...over,
 })
 
-function app(org: string, scopes: string[]) {
-  return buildTestApp(mod, makeIdentity({ orgId: org, scopes }), { pool }, { id: 1, casdoor_org: org })
+function app(org: string, scopes: string[], sources: string[] | undefined = ADOPTED) {
+  return buildTestApp(mod, makeIdentity({ orgId: org, scopes }), { pool },
+    { id: 1, casdoor_org: org }, sources)
 }
 
 async function post(body: unknown, org = ORG, scopes = ['data:manage', 'data:query']) {
@@ -72,14 +106,17 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     // （管理 API 侧没有任何途径写出 l1 行，见 metric-store 的两个写入口）。
     await upsertL1Metric(pool, L1_SALES)
     await upsertL1Metric(pool, L1_FINANCE)
+    await upsertL1Metric(pool, L1_FOREIGN)
   })
 
   afterAll(async () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
     await pool.query('delete from data.metrics where org = any($1::text[])', [[ORG, OTHER_ORG]]).catch(() => {})
-    // L1 桶跨文件共用 ⇒ 只删本文件放进去的两条（别 `where org='platform'`，会删掉并行兄弟的夹具）
-    await pool.query('delete from data.metrics where org = $1 and id = any($2::text[])',
-      [L1_ORG, [L1_SALES.id, L1_FINANCE.id, L1_CLASH_PROBE]]).catch(() => {})
+    // L1 桶跨文件共用 ⇒ 只删**本文件前缀**的那些（别 `where org='platform'`，会删掉并行兄弟的夹具）。
+    // 按前缀收口（而不是逐个列 id）是第二道保险：将来新增夹具却忘了登记 id，清理也不会越界——
+    // 而越界正是「测试删掉平台桶里的真声明行」那个缺陷的成因（见上面 L1_ID_PREFIX 的说明）。
+    await pool.query('delete from data.metrics where org = $1 and id like $2',
+      [L1_ORG, `${L1_ID_PREFIX}%`]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
@@ -89,11 +126,11 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     const ids = body.metrics.map((m: { id: string }) => m.id)
-    expect(ids).toContain('retail:net_sales')
-    expect(ids, 'data:finance 的 L1 指标对只有 data:query 的人可见了').not.toContain('retail:margin')
+    expect(ids).toContain(L1_SALES.id)
+    expect(ids, 'data:finance 的 L1 指标对只有 data:query 的人可见了').not.toContain(L1_FINANCE.id)
     // 消费面投影：严格三字段——selectSql/subjectColumn 属实现细节，不外泄
-    expect(body.metrics.find((m: { id: string }) => m.id === 'retail:net_sales'))
-      .toEqual({ id: 'retail:net_sales', title: '净销售额', description: def().description })
+    expect(body.metrics.find((m: { id: string }) => m.id === L1_SALES.id))
+      .toEqual({ id: L1_SALES.id, title: '净销售额', description: def().description })
   })
 
   it('GET /metrics 不掺别家 L2 行（跨租户串词表是禁止的）', async () => {
@@ -105,7 +142,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   it('GET /metrics/all（管理面）带 source：L1 标 l1、本租户标 l2（管理员据此知道哪行只读）', async () => {
     const body = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
     const byId = new Map(body.metrics.map((m: { id: string }) => [m.id, m]))
-    expect(byId.get('retail:net_sales')).toMatchObject({ source: 'l1', subjectColumn: 'org' })
+    expect(byId.get(L1_SALES.id)).toMatchObject({ source: 'l1', subjectColumn: 'org' })
     expect(byId.get('other_org_l2')).toBeUndefined()
   })
 
@@ -139,7 +176,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   })
 
   it('POST baseMetric 不在 L1 词表 ⇒ 400 L1_BASE_NOT_FOUND', async () => {
-    const res = await post(l2Body({ baseMetric: 'retail:not_declared' }))
+    const res = await post(l2Body({ baseMetric: `${L1_ID_PREFIX}not_declared` }))
     expect(res.status).toBe(400)
     expect((await res.json()).error).toBe('L1_BASE_NOT_FOUND')
   })
@@ -169,11 +206,11 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   })
 
   it('★ POST 用 L1 的 id ⇒ 409 ID_RESERVED_BY_L1（占下会静默无效：加载侧 L1 赢）', async () => {
-    const res = await post(l2Body({ id: 'retail:net_sales' }))
+    const res = await post(l2Body({ id: L1_SALES.id }))
     expect(res.status).toBe(409)
     expect((await res.json()).error).toBe('ID_RESERVED_BY_L1')
     // 且**没有**写进去任何东西（不留下一条加载侧永远看不见的僵尸 L2 行）
-    const raw = await pool.query('select count(*)::int as n from data.metrics where org = $1 and id = $2', [ORG, 'retail:net_sales'])
+    const raw = await pool.query('select count(*)::int as n from data.metrics where org = $1 and id = $2', [ORG, L1_SALES.id])
     expect(raw.rows[0].n).toBe(0)
   })
 
@@ -202,21 +239,21 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   })
 
   it('★ PUT / DELETE 打到 L1 的 id ⇒ 409 READONLY_L1（平台词表经 API 只读）', async () => {
-    const put = await app(ORG, ['data:manage']).request('/metrics/retail:net_sales', {
+    const put = await app(ORG, ['data:manage']).request(`/metrics/${L1_SALES.id}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(l2Body({ id: 'retail:net_sales' })),
+      body: JSON.stringify(l2Body({ id: L1_SALES.id })),
     })
     expect(put.status).toBe(409)
     expect((await put.json()).error).toBe('ID_RESERVED_BY_L1')
 
-    const del = await app(ORG, ['data:manage']).request('/metrics/retail:net_sales', { method: 'DELETE' })
+    const del = await app(ORG, ['data:manage']).request(`/metrics/${L1_SALES.id}`, { method: 'DELETE' })
     expect(del.status).toBe(409)
     expect((await del.json()).error).toBe('READONLY_L1')
 
     // L1 行安然无恙（没被改名也没被删）
     const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
-    expect(all.metrics.find((m: { id: string }) => m.id === 'retail:net_sales')).toMatchObject({
+    expect(all.metrics.find((m: { id: string }) => m.id === L1_SALES.id)).toMatchObject({
       title: '净销售额', source: 'l1',
     })
   })
@@ -236,7 +273,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     const clashId = L1_CLASH_PROBE
     const post1 = await post(l2Body({ id: clashId }))
     expect(post1.status, '撞 id 的 L2 行没建起来（夹具前提不成立）').toBe(201)
-    await upsertL1Metric(pool, def({ id: clashId, title: '平台同 id 版' }))
+    await upsertL1Metric(pool, l1Def({ id: clashId, title: '平台同 id 版' }))
 
     // 前提核对：合并词表里这条 id 由 **L1 赢**（租户那行在消费面上看不见）
     const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
@@ -258,5 +295,120 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     const again = await app(ORG, ['data:manage']).request(`/metrics/${clashId}`, { method: 'DELETE' })
     expect(again.status).toBe(409)
     expect((await again.json()).error).toBe('READONLY_L1')
+  })
+
+  // ── 写入闸：未接入源的 L1 不许当 L2 的基底（计划 5 Task 5，spec §3⑧）──────────────
+  it('★ POST 用未接入源的 L1 当 baseMetric ⇒ 403 METRIC_SOURCE_NOT_ADOPTED（带 its_source / your_sources）', async () => {
+    // 前提核对：这条 L1 存在（否则会先撞 L1_BASE_NOT_FOUND，本用例就名不副实）
+    expect(L1_FOREIGN.sourceSystem).toBe('shanhai')
+    const res = await post(l2Body({ id: 'l2_from_foreign', baseMetric: L1_FOREIGN.id }))
+    expect(res.status, '未接入源的 L1 当基底被放行了（应在 resolveL1Base 之后按源拒）').toBe(403)
+    expect(await res.json()).toEqual({
+      error: 'METRIC_SOURCE_NOT_ADOPTED',
+      its_source: 'shanhai',        // 这条 L1 的源
+      your_sources: ['lemeng'],     // 本租户已接入的源
+    })
+    // 拒绝不是「先写后拒」：本租户桶里不留任何痕迹
+    const raw = await pool.query(
+      'select count(*)::int as n from data.metrics where org = $1 and id = $2', [ORG, 'l2_from_foreign'])
+    expect(raw.rows[0].n).toBe(0)
+  })
+
+  it('PUT 打同一条未接入源的基底 ⇒ 同样 403（写路径两条路由的源闸必须同形）', async () => {
+    const res = await app(ORG, ['data:manage']).request('/metrics/l2_from_foreign', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(l2Body({ id: 'l2_from_foreign', baseMetric: L1_FOREIGN.id })),
+    })
+    expect(res.status).toBe(403)
+    expect((await res.json()).error).toBe('METRIC_SOURCE_NOT_ADOPTED')
+  })
+
+  it('已接入源的 L1 当基底照常 201（源闸不是「一律拒」——别把整条写路径锁死）', async () => {
+    const res = await post(l2Body({ id: 'l2_from_adopted', baseMetric: L1_SALES.id }))
+    expect(res.status).toBe(201)
+    // 清理：本用例自己造的行（避免污染后续断言「词表里有什么」）
+    await pool.query('delete from data.metrics where org = $1 and id = $2', [ORG, 'l2_from_adopted'])
+  })
+
+  it('未接入源的 L1 不可见：GET /metrics 里没有它（但它**在**平台词表里——裁剪 ≠ 不存在）', async () => {
+    const ids = (await (await app(ORG, ['data:query']).request('/metrics')).json())
+      .metrics.map((m: { id: string }) => m.id)
+    expect(ids, '未接入源的 L1 出现在消费面词表里').not.toContain(L1_FOREIGN.id)
+    // 管理面（/metrics/all，不经裁剪）仍看得到它 ⇒ 上面那条不是「夹具没落库」
+    const all = (await (await app(ORG, ['data:manage']).request('/metrics/all')).json())
+      .metrics.map((m: { id: string }) => m.id)
+    expect(all).toContain(L1_FOREIGN.id)
+  })
+
+  // ── fail-open 复核（spec §3⑧ 的「无身份 vs 没接源」）──────────────────────────
+  // ⚠️ 无身份的 **401 是宿主门卫给的**（`declaredScopeGate`：`packages/platform-sdk/src/module.ts`
+  //    里 `if (!identity) return c.json({ error: 'UNAUTHENTICATED' }, 401)`）——**不是**模块判的。
+  //    模块自己**没有**任何鉴权代码（manifest 的 api.internal 由宿主施加），它内部那条
+  //    「requester === null ⇒ 空词表」分支只有 `identity.orgId === ''`（门卫放行之后）才够得着。
+  //    本组两条断言把这两个状态**分开**钉住：门卫在 ⇒ 401；门卫放行但 org 为空 ⇒ 空列表。
+  //    （spec 原文的 fail-open 是「无身份与没接入源长得一样，都回空列表」——修法就是这一条 401。）
+  it('★ 无身份（不经模块自身判定）的 GET /metrics ⇒ 宿主门卫给 401，不是空词表', async () => {
+    // 照宿主 loader 的包裹层挂法：门卫先于模块路由，声明路径用模块相对路径（挂载前同基准）
+    const shell = new Hono<ModuleVars>()
+    shell.use('/metrics', declaredScopeGate([{ method: 'GET', path: '/metrics', scope: 'data:query' }]))
+    shell.route('/', mod.createRouter({ pool }))
+    const res = await (shell as unknown as Hono).request('/metrics')
+    expect(res.status, '无身份请求没被门卫挡下（模块侧没有第二道鉴权）').toBe(401)
+    expect(await res.json()).toEqual({ error: 'UNAUTHENTICATED' })
+  })
+
+  it('门卫放行但 orgId 为空串（模块侧唯一够得着「空词表」分支的形态）⇒ 200 空列表，不是报错', async () => {
+    const res = await app('', ['data:query']).request('/metrics')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ metrics: [] })
+  })
+
+  // ── 宿主投影的「已接入源」（计划 5）────────────────────────────────────────────
+  // 宿主（apps/server/src/loader.ts）对声明 `tenantSources` 的模块按请求 set
+  // `TENANT_SOURCES`；本模块只是**读**方。这里验两件事：
+  //   ① 键进没进模块的 Env（`ModuleVars`）—— 读点写在 `Context<ModuleVars>` 上，
+  //      键缺席就是 **typecheck 红**（不是运行期 undefined），这正是模块侧唯一的接线证据；
+  //   ② 运行期读得到宿主 set 的值（设了是数组，没设是 undefined ⇒ 模块得按「宿主没投影」处置）。
+  it('★ 模块变量表能读到宿主投影的已接入源（TENANT_SOURCES）：宿主 set 了就是数组，没 set 是 undefined', async () => {
+    // 契约值钉死：键名是**宿主 set / 模块 get 的约定**（编译器不连线 ⇒ 改名是破坏性变更）。
+    // 两边都引 SDK 常量 ⇒ 常量写错（或压根没导出，vitest 会把缺失的具名导出当 undefined 放行）
+    // 时两边**一起错**，只有把字面量钉在断言里才拦得住——本用例的第一条红就是它。
+    expect(TENANT_SOURCES).toBe('platform.tenantSources')
+
+    const seen: Array<string[] | undefined> = []
+    const shell = new Hono<ModuleVars>()
+    shell.use('*', async (c, next) => {
+      c.set('identity', makeIdentity({ orgId: ORG, scopes: ['data:query'] }))
+      c.set('tenant', { id: 1, casdoor_org: ORG })
+      c.set(TENANT_SOURCES, ['lemeng', 'shanhai'])
+      await next()
+    })
+    // 读点（宿主投影 → 模块消费的接线）；`seen` 的元素类型由 c.get 推出 ⇒ 类型不符即编译红
+    shell.use('*', async (c, next) => {
+      seen.push(c.get(TENANT_SOURCES))
+      await next()
+    })
+    shell.route('/', mod.createRouter({ pool }))
+
+    const res = await (shell as unknown as Hono).request('/metrics')
+    expect(res.status, '模块路由在被投影的请求上照常工作').toBe(200)
+    expect(seen, '模块侧读不到宿主投影的值（键没进 ModuleVars？）').toEqual([['lemeng', 'shanhai']])
+
+    // 宿主没投影（未声明 tenantSources 的部署形态）⇒ undefined：模块必须把它与「空集」分开处置
+    const bare = new Hono<ModuleVars>()
+    const bareSeen: Array<string[] | undefined> = []
+    bare.use('*', async (c, next) => {
+      c.set('identity', makeIdentity({ orgId: ORG, scopes: ['data:query'] }))
+      c.set('tenant', { id: 1, casdoor_org: ORG })
+      await next()
+    })
+    bare.use('*', async (c, next) => {
+      bareSeen.push(c.get(TENANT_SOURCES))
+      await next()
+    })
+    bare.route('/', mod.createRouter({ pool }))
+    expect((await (bare as unknown as Hono).request('/metrics')).status).toBe(200)
+    expect(bareSeen).toEqual([undefined])
   })
 })
