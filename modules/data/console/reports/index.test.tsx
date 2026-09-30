@@ -6,6 +6,15 @@ import { Outlet, RouterProvider, createMemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
+// SpecView（Task 4 起被本页引入）依赖 echarts；happy-dom 的 canvas.getContext('2d') 返回 null
+// （实测）⇒ 真 echarts init 必抛。桩掉 SpecView 用到的表面（形状见 SpecView.test.tsx 头注）。
+vi.mock('echarts/core', () => ({
+  use: vi.fn(),
+  init: vi.fn(() => ({ setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn() })),
+}))
+vi.mock('echarts/charts', () => ({ LineChart: {}, BarChart: {} }))
+vi.mock('echarts/components', () => ({ GridComponent: {}, TooltipComponent: {}, LegendComponent: {} }))
+vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 import { platformFetch } from '@platform/sdk/web'
 import ReportsPage from './index'
 
@@ -89,13 +98,15 @@ describe('报表页签双视图', () => {
     expect(buttons('改页门').length).toBeGreaterThan(0)
   })
 
-  it('只有 data:query ⇒ 拉观看清单（不发 /reports/manage），无管理动作，platform 行打开置灰', async () => {
+  it('只有 data:query ⇒ 拉观看清单（不发 /reports/manage），无管理动作，platform 行打开可点（Task 4 起打开自绘视图）', async () => {
     renderPage(['data:query'])
     await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
     expect(calls.some((c) => c.url.endsWith('/reports/manage'))).toBe(false)
     expect(screen.queryByRole('button', { name: /^发\s*布$/ })).not.toBeInTheDocument()
     const selfDrawnRow = screen.getByText('自绘大盘').closest('tr')!
-    expect((selfDrawnRow.querySelector('button') as HTMLButtonElement).disabled).toBe(true)
+    // ★ 订正记录（2026-09-30，Task 4）：platform 行的「打开」从**置灰**改为**打开自绘视图**
+    //    （spec §5 的渲染通路接入）——前置体验里只剩「页门不足」这一个置灰理由（见下一条用例）。
+    expect((selfDrawnRow.querySelector('button') as HTMLButtonElement).disabled).toBe(false)
     // ★ 订正记录（2026-09-29，Task 5 评审轮）：「编辑」是**管理动作**，其显隐由 `canManage` 与
     //    `renderer === 'metabase'` **两半**共同决定；原稿只咬住了 renderer 那一半
     //    （评审判定：删掉 `canManage &&` 后 10 条全绿）⇒ 这里补上 canManage 这一半的直接断言。
@@ -105,7 +116,8 @@ describe('报表页签双视图', () => {
     // 正向对照：同一行的「打开」**在** ⇒ 上面「编辑缺席」不是「整行/整页没渲染」冒充的
     expect(within(watchRow).getByRole('button', { name: /打\s*开/ })).toBeInTheDocument()
     // ⭐ spec ❌ 的修复验收点（2026-09-29 评审 + 人裁「两视图都加」）：观看视图**也**必须看得到
-    // 平台自绘徽章——不能只靠置灰按钮/Tooltip。本仓 antd 6.6.3 已移除 v5 的
+    // 平台自绘徽章（Task 4 前的理由是「只有置灰按钮没有解释」；现在打开走自绘视图，
+    // 徽章继续承担「这行走哪条渲染路」的扫读）。本仓 antd 6.6.3 已移除 v5 的
     // `getDisabledCompatibleChildren`，**Tooltip 在禁用的原生 button 上不保证弹** ⇒
     // 普通员工否则只看到一个**没有理由的灰按钮**；徽章自己承担「为什么这行点不开」。
     expect(within(selfDrawnRow).getAllByText('平台自绘').length).toBeGreaterThan(0)
@@ -126,6 +138,37 @@ describe('报表页签双视图', () => {
     const openRow = screen.getByText('销售日报').closest('tr')!
     const okOpen = within(openRow).getByRole('button', { name: /打\s*开/ }) as HTMLButtonElement
     expect(okOpen.disabled).toBe(false)
+  })
+
+  it('★ platform 行「打开」⇒ 打开自绘视图（GET /spec + 逐面板 /query）；metabase 行仍走 embed-url', async () => {
+    // Task 4 接线：同一个「打开」按钮按 renderer 分流——platform 行**不再**碰 embed-url
+    // （服务端对它 409 RENDERER_NOT_EMBEDDABLE），改渲染 <SpecView/>；metabase 行一字不动。
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports')) return json({ reports: ROWS.filter((r) => r.requiredScope === null) })
+      if (/\/reports\/[^/]+\/embed-url$/.test(url)) return json({ url: 'https://mb.test/embed/abc' })
+      if (/\/reports\/[^/]+\/spec$/.test(url)) {
+        return json({ spec: { panels: [{ chart: 'table', title: '净销售额趋势', metricId: 'm1', dims: [], args: {}, span: 12 }] }, version: ROWS[2].version })
+      }
+      if (url.endsWith('/query')) return json({ status: 'ok', truncated: false, columns: ['value'], rows: [['1234']] })
+      return json({})
+    })
+    renderPage(['data:query'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+
+    // 对照组先走：metabase 行（销售日报）的「打开」仍是嵌入预览那条路
+    fireEvent.click(within(screen.getByText('销售日报').closest('tr')!).getByRole('button', { name: /打\s*开/ }))
+    await waitFor(() => {
+      const f = document.querySelector('iframe[title^="报表嵌入预览"]') as HTMLIFrameElement
+      expect(f?.src).toBe('https://mb.test/embed/abc')
+    })
+
+    // platform 行（自绘大盘）：点开 ⇒ SpecView 挂载（拉规格 + 面板查询），**不**碰 embed-url
+    fireEvent.click(within(screen.getByText('自绘大盘').closest('tr')!).getByRole('button', { name: /打\s*开/ }))
+    expect(await screen.findByText('净销售额趋势')).toBeInTheDocument()
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/reports/r3/spec'))).toBe(true))
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/query'))).toBe(true))
+    expect(calls.filter((c) => /\/reports\/[^/]+\/embed-url$/.test(c.url))).toHaveLength(1)   // 只有 metabase 那次
   })
 
   it('发布：Popconfirm 确认 ⇒ PUT requiredScope=null', async () => {

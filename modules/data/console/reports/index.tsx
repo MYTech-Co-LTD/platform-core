@@ -8,8 +8,9 @@
 //     scope 判定读 Console 壳经 Outlet 注入的 session.scopes（demo 模块先例），这只是
 //     **视图选择**；真正的授权由宿主门卫按 manifest 施加，前端不重复判权。
 //     登记/改登记内容（标题、锁参）仍走 API/管线，不在消费层第二次定义口径。
-//  ③ renderer='platform'（平台自绘）的行**没有 Metabase 嵌入通道**——「打开」置灰；
-//     服务端 embed-url 同样守卫（409 RENDERER_NOT_EMBEDDABLE），这里是前置体验。
+//  ③ renderer='platform'（平台自绘）的行**没有 Metabase 嵌入通道**——「打开」走平台自绘渲染器
+//     `<SpecView/>`（拉规格 + 逐面板 POST /query，Task 4），不碰 embed-url；服务端 embed-url
+//     对该类行仍守卫（409 RENDERER_NOT_EMBEDDABLE），那条是陈旧视图/竞态的防御。
 //  ④ **编辑入口**（#346 计划 3）：「编辑」换的是 `GET /reports/:id/edit-url` 给的**一次性 handoff
 //     URL**（专用入口 origin，票据兑换与自有 Cookie 都在代理侧完成）——前端照旧**不碰 Metabase
 //     凭据**。iframe 能直接打开是因为专用入口与 console **同父域**（反代的 SameSite=Lax Cookie
@@ -20,6 +21,7 @@ import { useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { Button, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
+import SpecView from './SpecView'
 
 /** Console 壳 Outlet context 的结构子集（壳侧真实形状见 apps/web ConsoleOutletContext；demo 模块先例） */
 interface ConsoleContext {
@@ -45,6 +47,9 @@ export default function ReportsPage() {
 
   const [rows, setRows] = useState<ReportRow[]>([])
   const [embed, setEmbed] = useState<{ title: string; url: string } | null>(null)
+  // platform 行的「打开」渲染 <SpecView/>（Task 4）：数据面在组件内自取（规格 + 逐面板 /query），
+  // 这里只记「哪张报表」，关闭即清。
+  const [selfDrawn, setSelfDrawn] = useState<{ title: string; id: string } | null>(null)
   const [editUrl, setEditUrl] = useState<{ title: string; url: string } | null>(null)
   // `editRow` 记住当前要编辑的那一行：兜底按钮要用它**重新领票**（票据一次性，见 JSX 注）。
   const [editRow, setEditRow] = useState<ReportRow | null>(null)
@@ -177,35 +182,36 @@ export default function ReportsPage() {
   }
 
   /**
-   * 「打开」的可用性 = **渲染器 + 页门**两个体验层判据（与观看面的 `visibleTo` 同构）。
+   * 「打开」的可用性 = **页门**这一个体验层判据（与观看面的 `visibleTo` 同构）。
    *
    * ⚠️ 页门这一维是本分支新打通的路径：管理清单按 spec **不裁行**（管理员必须看得见、能改页门），
-   * 于是一个「门是自己没有的 scope」的行会出现在表里——它的 `embed-url` 服务端必然 **403**
-   * （改前 console 只渲染裁过的清单，这条路不可达）。这里把「按了必然失败」前置成不可按。
+   * 于是一个「门是自己没有的 scope」的行会出现在表里——它的 `embed-url` **和** `GET /spec`
+   * 服务端都必然 403（改前 console 只渲染裁过的清单，这条路不可达）。这里把「按了必然失败」
+   * 前置成不可按——**两条渲染路（embed-url / 自绘 spec）判的是同一道门**。
+   *
+   * ⚠️ 订正记录（2026-09-30，Task 4）：renderer='platform' 不再是置灰理由——自绘渲染通路
+   * （`<SpecView/>`）已接入，「打开」对 platform 行改为打开自绘视图。
    *
    * **服务端仍是权威**：本函数只是视图层的前置体验，不是鉴权（前端不重复判权，见文件头②）。
    */
   const canOpen = (r: ReportRow) =>
-    r.renderer !== 'platform' && (r.requiredScope === null || session.scopes.includes(r.requiredScope))
-
-  /**
-   * 置灰的**原因**（Tooltip 文案）：平台自绘与页门不足是两件完全不同的事，用户该做的动作也不同。
-   *
-   * ⚠️ antd 6.6.3 已移除 v5 的 `getDisabledCompatibleChildren` ⇒ **Tooltip 在禁用的原生 button 上
-   * 不保证弹**。所以表格里的「页门」列是**兜底说明**（它恒在，不依赖悬停）；Tooltip 是锦上添花。
-   */
-  const openBlockReason = (r: ReportRow): string =>
-    r.renderer === 'platform'
-      ? '平台自绘报表暂无嵌入预览通道（渲染通路接入后开放）'
-      : `你的账号没有这张报表的页门权限（${r.requiredScope}）`
+    r.requiredScope === null || session.scopes.includes(r.requiredScope)
 
   const openBtn = (r: ReportRow) =>
-    canOpen(r) ? (
-      <Button size="small" onClick={() => void open(r)}>打开</Button>
-    ) : (
-      <Tooltip title={openBlockReason(r)}>
+    !canOpen(r) ? (
+      // ⚠️ antd 6.6.3 已移除 v5 的 `getDisabledCompatibleChildren` ⇒ Tooltip 在禁用的原生 button
+      // 上不保证弹；表格里的「页门」列是兜底说明（恒在，不依赖悬停），Tooltip 是锦上添花。
+      <Tooltip title={`你的账号没有这张报表的页门权限（${r.requiredScope}）`}>
         <Button size="small" disabled>打开</Button>
       </Tooltip>
+    ) : r.renderer === 'platform' ? (
+      // platform 行：打开自绘视图（Tooltip 说明这条「打开」与 Metabase 嵌入预览不是一回事）
+      <Tooltip title="打开自绘视图">
+        <Button size="small" onClick={() => setSelfDrawn({ title: r.title, id: r.id })}>打开</Button>
+      </Tooltip>
+    ) : (
+      // metabase 行：既有行为一字不动（embed-url 那条路，见 open）
+      <Button size="small" onClick={() => void open(r)}>打开</Button>
     )
 
   return (
@@ -278,6 +284,11 @@ export default function ReportsPage() {
         </Typography.Paragraph>
         <Input value={gateDraft} onChange={(e) => setGateDraft(e.target.value)} placeholder="如 sales:read" />
       </Modal>
+      {/* platform 行的「打开」面板（Task 4）：标题栏与关闭按钮由 SpecView 自带；
+          数据面（GET /spec + 逐面板 POST /query）全在组件内——本页不替它转发任何请求。 */}
+      {selfDrawn !== null && (
+        <SpecView reportId={selfDrawn.id} title={selfDrawn.title} onClose={() => setSelfDrawn(null)} />
+      )}
       {embed !== null && (
         <div>
           <Typography.Text type="secondary">
