@@ -1011,14 +1011,15 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
 
   it('★ 自绘创建的入参正交：platform 带 lockedParams ⇒ 400；metabase 带 spec ⇒ 400（都不静默）', async () => {
     const { app } = manage()
-    // platform 行没有嵌入通道可锁 ⇒ lockedParams 是死数据。拒（400）而不是静默存/静默丢：
-    // 静默会让调用方以为锁了参（TENANT_PARAM_RESERVED 同款理由）。
+    // platform 行没有嵌入通道可锁。拒（400）而不是静默丢：platform 分支硬编码 embedParams:{}，
+    // superRefine 是唯一防线——没有它这里就静默丢参（调用方以为锁了参，TENANT_PARAM_RESERVED 同款理由）。
     const withLock = await post(app, {
       title: '带锁参的自绘', renderer: 'platform', spec: { panels: [] }, lockedParams: { region: 'cn' },
     })
     expect(withLock.status).toBe(400)
     expect(await withLock.json()).toEqual({ error: 'INVALID_BODY' })
-    // metabase 行带 spec ⇒ 400（在 zod 层拦，不是落到库侧跨列 check 炸 500——非法入参的契约位置是 400）
+    // metabase 行带 spec ⇒ 400（metabase 路径的 upsertReport 不传 spec，zod 层是唯一防线——
+    // 没有它这里就静默丢规格；库侧跨列 check 根本看不到这条入参）
     const withSpec = await post(app, { title: '带规格的 metabase', spec: { panels: [] } })
     expect(withSpec.status).toBe(400)
     expect(await withSpec.json()).toEqual({ error: 'INVALID_BODY' })

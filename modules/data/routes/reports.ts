@@ -66,8 +66,9 @@ const ReportBody = z.object({
   renderer: z.enum(['metabase', 'platform']).default('metabase'),
   /**
    * 平台自绘的声明式规格（`renderer='platform'` 时必给，形状由 `parseReportSpec` 白名单判）；
-   * metabase 行必须 null——库侧跨列 check `data_reports_spec_by_renderer` 同款口径，
-   * 但在**这里**就拒（400），不许落到库侧炸 500（非法入参的契约位置是 400）。
+   * metabase 行必须 null——与库侧跨列 check `data_reports_spec_by_renderer` 同一口径，但
+   * **防线只有下面那个 superRefine**：metabase 路径的 `upsertReport` 根本不传 spec（路由层
+   * 丢弃，库侧 check 看不到入参），不在这里拒就是**静默丢弃**（不是库侧报错）。
    */
   spec: z.record(z.unknown()).nullable().default(null),
   /** 除 tenant 外要锁的参数 → 值。锁定即「观看者不可见不可改」，值由我们签进 JWT。
@@ -78,9 +79,10 @@ const ReportBody = z.object({
   // 内容侧版本（写保护）：更新既有 dashboard 时**必填**；见 handler 里的 fail-closed 分支
   expectedFingerprint: z.string().min(1).nullable().default(null),
 }).strict()
-  // 两渲染器的入参面**正交**（fail-closed，不是静默忽略）：platform 行收 lockedParams 会存进
-  // embed_params 成为永不消费的死数据（调用方还以为锁了参——TENANT_PARAM_RESERVED 同款理由）；
-  // metabase 行收 spec 会撞库侧跨列 check 炸 500。两支都拒成 400 INVALID_BODY。
+  // 两渲染器的入参面**正交**（fail-closed，不是静默忽略）。⚠️ 本 refine 是这两支组合的
+  // **唯一防线**（拒绝之后无库侧兜底）：metabase 路径的 `upsertReport` 不传 spec、platform
+  // 分支硬编码 `embedParams:{}`——两支若无此 refine，入参会被**静默丢弃**而非报错，调用方
+  // 以为存了规格/锁了参（TENANT_PARAM_RESERVED 同款理由：拒绝优于静默）。拒成 400 INVALID_BODY。
   .superRefine((d, ctx) => {
     if (d.renderer === 'platform' && Object.keys(d.lockedParams).length > 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['lockedParams'], message: 'lockedParams 仅 metabase 行接受' })
