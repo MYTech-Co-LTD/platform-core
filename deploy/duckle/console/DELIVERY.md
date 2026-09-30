@@ -56,6 +56,20 @@
 > 覆盖本目录**全部**受版本控制的文件（含 `README.md`、本 `DELIVERY.md`）——那是给**机器检出**用的，
 > **不是**给 console 卷用的。**seed 只投 §0.2 这 8 个**。两个面别混。
 
+### 0.3 附：**回填变体父管线**的投递（2026-09-30，#387；不在本批，单独一批）
+
+`pipelines/lemeng.retail.windows.backfill.json` 是 18→24 列回填的**变体父管线**（与 §0.2 第 4 项
+`lemeng.retail.windows.l1.json` 的差异**只有窗口来源**：`${BIZDAY}` 参数替代 `now()-昨天`）。
+
+- **它进清单、不进调度**：受 `deploy/duckle/console/` 目录条目覆盖（会被投递到机器检出），
+  但**任何 `schedules/*.json` 里都不得出现它**——它由 `scripts/lemeng/backfill-retail-order-line.sh`
+  经 `POST /api/run/async` 逐日驱动（一次只跑一批，见该脚本的用法头注）。
+- **要回填时才 seed**：按 §1③ 的同形做，把 `lemeng.retail.windows.backfill.json` 与
+  `lemeng.retail_order_line.window.json`（**子管线，回填复用**）一起 `docker cp` 进**两个账套各自的**
+  `/workspace/pipelines/`；seed 后按 §1④ **重建 catalog**（新管线要能被观测面命名）。
+- **不要重启调度**：它是手动触发的管线，没有调度条目可生效；`docker cp` 进卷即可。
+- 完整判据、批次表、出事处置见 `docs/superpowers/specs/2026-09-30-backfill-toolchain.md`。
+
 ---
 
 ## 1. 硬步骤与顺序
