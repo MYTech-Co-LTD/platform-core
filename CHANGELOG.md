@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.59.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.58.0...v0.59.0) - 2026-09-30
+- 【新增】duckle: #387 分批回填工具链（两道 fail-closed 闸 + 五批降序 + 批后判据） ([#388](https://github.com/MYTech-Co-LTD/platform-core/pull/388), [3f59b1d](https://github.com/MYTech-Co-LTD/platform-core/commit/3f59b1d25f37ff60903226911f03a20d27d34ca9))
+
+
 ## [0.58.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.57.2...v0.58.0) - 2026-09-30
 - 【新增】data: #377 报表写保护——两条版本通路必填 + 每对象一把锁 + 可解释 409 ([#385](https://github.com/MYTech-Co-LTD/platform-core/pull/385), [3c3f52d](https://github.com/MYTech-Co-LTD/platform-core/commit/3c3f52d8a03d61c498508989d4d7a16708473b78))
 
