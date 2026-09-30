@@ -3,6 +3,7 @@
 // provision-tenant.mjs — 租户开通 CLI（spec D7；#41）：org→租户行→锚用户→权限扇出→初始订阅
 // 用法：npx tsx scripts/provision-tenant.mjs <slug> [--org <casdoorOrg>] [--module <id>]...
 //       [--product-name <名>] [--login-methods password,wecom-qr] [--domain <host>]
+//       [--source <源>]...（租户已接入源，可重复；平台侧登记表 platform.tenant_source）
 //       [--wechat-oa-app-id <id> --wechat-oa-secret <secret>]
 //       [--wecom-corp-id <id> [--wecom-agent-id <id>] --wecom-secret <secret>]（org 缺省 <slug>-org）
 //       npx tsx scripts/provision-tenant.mjs --all-tenants --module <id>...（批量发放：遍历 platform.tenant 各 org）
@@ -21,6 +22,8 @@ export function tenantProvisionSteps(slug, opts = {}) {
   // 与下方 main() 的执行序一致（domain 在 anchor 之后，因为它是独立一条 insert）。
   if (opts.wechatOaAppId) steps.push('wechat-oa ' + maskWechatOaAppId(opts.wechatOaAppId))
   if (opts.wecomCorpId) steps.push('wecom ' + maskWecomCorpId(opts.wecomCorpId))
+  // 已接入源与 wechat-oa/wecom 同簇：都要先有 tenantId 才能写 ⇒ 紧跟 tenant-row，与 main() 执行序一致。
+  for (const s of opts.sources ?? []) steps.push('source:' + s)
   steps.push('anchor')
   if (opts.domain) steps.push('domain:' + opts.domain)
   steps.push('permissions')
@@ -127,6 +130,17 @@ export function tenantRowUpsert(opts) {
   return { text, values }
 }
 
+/** 已接入源写入（platform.tenant_source，007 迁移）的 SQL + 参数（纯核，便于不起库钉住语义）。
+ *  `--source` 是**开通动作**：只置 enabled=true，**绝不**因某个源这次没传就把它关掉 ——
+ *  关/换源是管理端点（PUT /sources 整体替换）的事，开通流程不该具备「顺手禁用」的破坏力。
+ *  一条语句多行：`unnest` 展开源清单，`on conflict do update set enabled = true` 让重跑幂等。 */
+export function tenantSourceUpsert(tenantId, sources) {
+  const text = `insert into platform.tenant_source(tenant_id, source, enabled)
+     select $1, s, true from unnest($2::text[]) as s
+     on conflict (tenant_id, source) do update set enabled = true`
+  return { text, values: [tenantId, sources] }
+}
+
 /** 权限扇出清单 = 内置码在前 + 模块码（spec-3 §2.1：开通即可挂 tenant:admin，不等宿主重启） */
 export function provisionPerms(modulePerms, builtin = []) {
   return [...builtin, ...modulePerms]
@@ -138,6 +152,7 @@ async function main() {
   const slug = allTenants ? undefined : args[0]
   const org = (() => { const i = args.indexOf('--org'); return i > 0 ? args[i + 1] : (slug ? `${slug}-org` : '') })()
   const modules = args.flatMap((a, i) => (a === '--module' ? [args[i + 1]] : []))
+  const sources = args.flatMap((a, i) => (a === '--source' ? [args[i + 1]] : [])).filter(Boolean)
   const productName = (() => { const i = args.indexOf('--product-name'); return i > 0 ? args[i + 1] : undefined })()
   const loginMethodsRaw = (() => { const i = args.indexOf('--login-methods'); return i > 0 ? args[i + 1] : undefined })()
   const loginMethods = parseLoginMethods(loginMethodsRaw) // 入口拦：坏值在任何 IO（Casdoor/DB）之前退出
@@ -171,6 +186,7 @@ async function main() {
     // 企微三参同族同口径（#115）。
     if (wechatOa) throw new Error('--all-tenants 不支持 --wechat-oa-*（公众号配置按租户各配，请逐租户跑本 CLI）')
     if (wecom) throw new Error('--all-tenants 不支持 --wecom-*（企微配置按租户各配，请逐租户跑本 CLI）')
+    if (sources.length > 0) throw new Error('--all-tenants 不支持 --source（已接入源按租户各配，请逐租户跑本 CLI）')
     const { rows } = await pool.query('select distinct casdoor_org from platform.tenant order by casdoor_org')
     const orgs = rows.map((r) => r.casdoor_org)
     console.log('[provision] 批量发放计划：', planAllTenantGrants(orgs, modules).join(' → '))
@@ -186,8 +202,8 @@ async function main() {
     return
   }
 
-  if (!slug) throw new Error('用法: npx tsx scripts/provision-tenant.mjs <slug> [--org <org>] [--module <id>]... [--product-name <名>] [--login-methods password,wecom-qr] [--domain <host>] [--wechat-oa-app-id <id> --wechat-oa-secret <secret>] [--wecom-corp-id <id> [--wecom-agent-id <id>] --wecom-secret <secret>] | --all-tenants --module <id>...')
-  console.log('[provision] 计划：', tenantProvisionSteps(slug, { org, modules, domain, wechatOaAppId: wechatOa?.appId, wecomCorpId: wecom?.corpId }).join(' → '))
+  if (!slug) throw new Error('用法: npx tsx scripts/provision-tenant.mjs <slug> [--org <org>] [--module <id>]... [--product-name <名>] [--login-methods password,wecom-qr] [--domain <host>] [--source <源>]... [--wechat-oa-app-id <id> --wechat-oa-secret <secret>] [--wecom-corp-id <id> [--wecom-agent-id <id>] --wecom-secret <secret>] | --all-tenants --module <id>...')
+  console.log('[provision] 计划：', tenantProvisionSteps(slug, { org, modules, domain, sources, wechatOaAppId: wechatOa?.appId, wecomCorpId: wecom?.corpId }).join(' → '))
   const { provisionModulePermissions, PLATFORM_BUILTIN_PERMISSIONS } = await import('../apps/server/src/loader.ts')
   const c = makeClient(org)
   await c.ensureOrg(org); console.log('  ✓ org')
@@ -196,6 +212,11 @@ async function main() {
   const tenantId = rows[0].id; console.log('  ✓ tenant-row #' + tenantId)
   if (wechatOa) console.log('  ✓ wechat-oa ' + maskWechatOaAppId(wechatOa.appId))
   if (wecom) console.log('  ✓ wecom ' + maskWecomCorpId(wecom.corpId))
+  if (sources.length > 0) {
+    const srcUpsert = tenantSourceUpsert(tenantId, sources)
+    await pool.query(srcUpsert.text, srcUpsert.values)
+    console.log('  ✓ source ×' + sources.length + ' ' + sources.join(','))
+  }
   await c.ensureAnchorUser(org); console.log('  ✓ anchor')
   if (domain) {
     await pool.query('insert into platform.tenant_domain(tenant_id, domain) values ($1, $2) on conflict (domain) do nothing', [tenantId, domain])

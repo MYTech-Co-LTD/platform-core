@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   maskWechatOaAppId, maskWecomCorpId, parseLoginMethods, parseWechatOaArgs, parseWecomArgs,
-  planAllTenantGrants, provisionPerms, tenantProvisionSteps, tenantRowUpsert,
+  planAllTenantGrants, provisionPerms, tenantProvisionSteps, tenantRowUpsert, tenantSourceUpsert,
 } from './provision-tenant.mjs'
 
 describe('tenantProvisionSteps（纯核）', () => {
@@ -33,6 +33,19 @@ describe('tenantProvisionSteps（纯核）', () => {
     expect(tenantProvisionSteps('acme', { org: 'o1', wecomCorpId: 'ww889900' })).toEqual([
       'org:o1', 'tenant-row:acme', 'wecom ww8899…', 'anchor', 'permissions',
     ])
+  })
+  it('带已接入源（计划 5）：每源一步 source:<源>，与 wechat-oa/wecom 同簇（tenant-row 后、anchor 前）', () => {
+    expect(tenantProvisionSteps('acme', { org: 'o1', sources: ['lemeng', 'woke'] })).toEqual([
+      'org:o1', 'tenant-row:acme', 'source:lemeng', 'source:woke', 'anchor', 'permissions',
+    ])
+    // 与公众号/企微同给时：三簇都排在 tenant-row 之后、anchor 之前
+    expect(tenantProvisionSteps('acme', {
+      org: 'o1', wechatOaAppId: 'wx0123456789abcdef', wecomCorpId: 'ww88990011223344', sources: ['lemeng'],
+    })).toEqual(['org:o1', 'tenant-row:acme', 'wechat-oa wx0123…', 'wecom ww8899…', 'source:lemeng', 'anchor', 'permissions'])
+  })
+  it('不带 --source：计划里没有任何 source 步（与既有计划逐字一致）', () => {
+    expect(tenantProvisionSteps('acme', { org: 'o1' })).toEqual(['org:o1', 'tenant-row:acme', 'anchor', 'permissions'])
+    expect(tenantProvisionSteps('acme', { org: 'o1', sources: [] })).toEqual(['org:o1', 'tenant-row:acme', 'anchor', 'permissions'])
   })
 })
 
@@ -154,6 +167,21 @@ describe('tenantRowUpsert（纯核：给了才写那两列 = 幂等重跑不误�
     })
     expect(text).toContain('wechat_oa_app_id, wechat_oa_secret, wecom_corp_id, wecom_secret')
     expect(values).toEqual(['acme', 'o1', 'acme', ['password'], 'wx123', 'app-secret-9', 'ww10086', 'corp-secret-9'])
+  })
+})
+
+describe('tenantSourceUpsert（纯核：开通只置 true，绝不「顺手禁用」）', () => {
+  it('一条语句写多源：unnest 展开 + on conflict do update set enabled = true（重跑幂等）', () => {
+    const { text, values } = tenantSourceUpsert(7, ['lemeng', 'woke'])
+    expect(text).toContain('insert into platform.tenant_source(tenant_id, source, enabled)')
+    expect(text).toContain('select $1, s, true from unnest($2::text[]) as s')
+    expect(text).toContain('on conflict (tenant_id, source) do update set enabled = true')
+    expect(values).toEqual([7, ['lemeng', 'woke']])
+  })
+  it('SQL 里没有把 enabled 置 false 的路径 —— 开通流程不具备「顺手禁用」的破坏力', () => {
+    const { text } = tenantSourceUpsert(7, ['lemeng'])
+    expect(text).not.toMatch(/enabled\s*=\s*false/i)
+    expect(text).not.toMatch(/delete/i)
   })
 })
 

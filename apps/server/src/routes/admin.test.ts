@@ -468,3 +468,96 @@ describe('admin 路由：租户级存储配置（M3c）', () => {
     expect(res.status).toBe(403)
   })
 })
+
+// ---- 租户已接入源登记（计划 5，spec §3⑧ 的前提）----
+
+describe('admin 路由：租户已接入源（platform.tenant_source）', () => {
+  /** 有状态替身（**仅本组**用）：既有 `fakePool` 恒回 `rows: []`，撑不起「PUT 后 GET 回读」那两条
+   *  断言。这里按本组实现**发出的语句形状**维护一张极小内存表 —— 只为让回读断言可测。
+   *  实现真正发出的 SQL 形状另有 params 断言独立钉住（见下「整体替换不删行」那条），不靠本替身兜底。 */
+  function sourcePool() {
+    const enabled = new Map<string, boolean>()
+    const audits: Array<{ sql: string; params: unknown[] }> = []
+    const pool = {
+      async query(sql: string, params?: unknown[]) {
+        audits.push({ sql, params: params ?? [] })
+        if (/insert into platform[.]tenant_source/i.test(sql)) {
+          for (const s of (params?.[1] ?? []) as string[]) enabled.set(s, true)
+          return { rows: [] }
+        }
+        if (/update platform[.]tenant_source\s+set enabled = false/i.test(sql)) {
+          const listed = (params?.[1] ?? []) as string[]
+          for (const s of [...enabled.keys()]) if (!listed.includes(s)) enabled.set(s, false)
+          return { rows: [] }
+        }
+        if (/select source, enabled from platform[.]tenant_source/i.test(sql)) {
+          return {
+            rows: [...enabled.entries()]
+              .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+              .map(([source, on]) => ({ source, enabled: on })),
+          }
+        }
+        return { rows: [] }
+      },
+    } as unknown as Pool
+    return { pool, audits }
+  }
+
+  const sourcesPath = '/api/platform/admin/sources'
+
+  it('★ 已接入源：PUT 整体替换 + GET 回读；非 tenant:admin 403', async () => {
+    const sp = sourcePool()
+    const app = mount(deps({ pool: sp.pool }), { scopes: ['tenant:admin'] })
+    const put = await app.request(sourcesPath, {
+      method: 'PUT', headers: withCsrf,
+      body: JSON.stringify({ sources: ['lemeng'] }),
+    })
+    expect(put.status).toBe(200)
+    const got = await (await app.request(sourcesPath)).json()
+    expect(got.sources).toEqual([{ source: 'lemeng', enabled: true }])
+
+    // 整体替换语义：换成另一个源 ⇒ 前一个 enabled=false（不删行，保留痕迹）
+    await app.request(sourcesPath, {
+      method: 'PUT', headers: withCsrf,
+      body: JSON.stringify({ sources: [] }),
+    })
+    expect((await (await app.request(sourcesPath)).json()).sources)
+      .toEqual([{ source: 'lemeng', enabled: false }])
+
+    // 多余键 ⇒ 400（.strict()）
+    expect((await app.request(sourcesPath, {
+      method: 'PUT', headers: withCsrf,
+      body: JSON.stringify({ sources: [], extra: 1 }),
+    })).status).toBe(400)
+
+    // 结构锁②：无 tenant:admin 一律 403（连路由形状都探不到）
+    expect((await mount(deps(), { scopes: [] }).request(sourcesPath)).status).toBe(403)
+    expect((await mount(deps(), { scopes: [] }).request(sourcesPath, {
+      method: 'PUT', headers: withCsrf, body: JSON.stringify({ sources: [] }),
+    })).status).toBe(403)
+  })
+
+  it('PUT 整体替换的 SQL 形状：第二句把不在列表里的置 false（不删行）+ 审计 admin.sources.update', async () => {
+    const sp = sourcePool()
+    const app = mount(deps({ pool: sp.pool }), { scopes: ['tenant:admin'] })
+    await app.request(sourcesPath, { method: 'PUT', headers: withCsrf, body: JSON.stringify({ sources: ['lemeng'] }) })
+    await app.request(sourcesPath, { method: 'PUT', headers: withCsrf, body: JSON.stringify({ sources: ['other'] }) })
+
+    const upsert = sp.audits.find((q) => /insert into platform[.]tenant_source/i.test(q.sql))
+    expect(upsert?.sql).toMatch(/on conflict \(tenant_id, source\) do update set enabled = excluded[.]enabled/)
+    expect(upsert?.params).toEqual([1, ['lemeng']])
+    // 「整体替换」= 覆盖句在 insert 之后单独发一次；去掉它就成了「只加不删」（变异确认点）
+    const clears = sp.audits.filter((q) => /update platform[.]tenant_source set enabled = false/i.test(q.sql))
+    expect(clears.at(-1)?.params).toEqual([1, ['other']])
+
+    const audit = sp.audits.find((q) => /insert into platform[.]audit/i.test(q.sql))
+    expect(JSON.stringify(audit?.params)).toContain('admin.sources.update')
+  })
+
+  it('写操作的 CSRF 由整路由中间件统一施加（源端点不例外）', async () => {
+    const res = await mount(deps(), { scopes: ['tenant:admin'] }).request(sourcesPath, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sources: [] }),
+    })
+    expect(res.status).toBe(403)
+  })
+})

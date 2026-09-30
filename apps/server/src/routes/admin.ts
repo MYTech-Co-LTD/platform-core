@@ -9,6 +9,7 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import type { Pool } from 'pg'
+import { z } from 'zod'
 import { csrfToken } from '@platform/auth-core'
 import { normalizeEndpoint, platformStorageFromEnv, requireScope } from '@platform/sdk'
 import type { TenantStorageConfig } from '@platform/sdk'
@@ -40,7 +41,7 @@ async function writeAudit(
   tenantId: number,
   actor: string,
   action: 'admin.user.create' | 'admin.user.update' | 'admin.user.delete' | 'admin.grant' | 'admin.revoke'
-    | 'admin.storage.update' | 'admin.storage.clear',
+    | 'admin.storage.update' | 'admin.storage.clear' | 'admin.sources.update',
   detail: Record<string, unknown>,
 ): Promise<void> {
   await pool.query(
@@ -322,6 +323,38 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
     // 清掉的值记进 detail（取证用；仍只有 endpoint/bucket，无凭据）
     await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.storage.clear',
       { endpoint: cols[0], bucket: cols[2] })
+    return c.json({ ok: true })
+  })
+
+  // ---- 租户已接入源（计划 5，spec §3⑧ 的前提）----
+  //
+  // 与 platform.tenant_module 同构的「租户 × 标识」登记：**整体替换启用集**（列表里 enabled=true、
+  // 不在列表里 enabled=false，**不删行** —— 保留痕迹便于对账与审计）。
+  // org 锁 / scope 门禁 / 写 CSRF 三道结构锁由本文件顶部中间件统一施加，这里不重复实现。
+
+  const SourcesBody = z.object({ sources: z.array(z.string().min(1).max(64)).max(50) }).strict()
+
+  app.get('/sources', async (c) => {
+    const t = c.get('tenant')
+    const { rows } = await deps.pool.query(
+      'select source, enabled from platform.tenant_source where tenant_id = $1 order by source', [t.id])
+    return c.json({ sources: rows })
+  })
+
+  app.put('/sources', async (c) => {
+    const t = c.get('tenant')
+    const parsed = SourcesBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    // 整体替换**不删行**（保留 enabled=false 的痕迹，便于对账与审计）
+    await deps.pool.query(
+      `insert into platform.tenant_source (tenant_id, source, enabled)
+       select $1, s, (s = any($2::text[])) from unnest($2::text[]) as s
+       on conflict (tenant_id, source) do update set enabled = excluded.enabled`,
+      [t.id, parsed.data.sources])
+    await deps.pool.query(
+      `update platform.tenant_source set enabled = false where tenant_id = $1 and not (source = any($2::text[]))`,
+      [t.id, parsed.data.sources])
+    await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.sources.update', { sources: parsed.data.sources })
     return c.json({ ok: true })
   })
 
