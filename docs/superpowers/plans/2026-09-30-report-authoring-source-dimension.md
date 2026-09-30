@@ -378,6 +378,12 @@ git commit -m "feat(scripts): 已接入源对账（平台登记 ↔ console 声�
 - Modify: `deploy/data-plane-deploy-sop.md`（console 的 `ADOPTED_SOURCES` 声明键 + 对账命令 + 纳入验收清单）
 
 - [ ] **Step 1: 写文档**（逐字要点：
+  - **对账的三条已知边界（订正记录 2026-09-30，Task 6 评审转办，逐条都要写）**：
+    ① **无「账套 ↔ org」映射** ⇒ 「B 的 console 声明了只在 A 启用的源」会被读成 **clean（静默 clean）**——
+       这是接口边界，**补桶也补不上**（缺的是映射本身），必须写进 SOP 让人知道它有盲区；
+    ② **新 env 键不受 B9 管**（扫描面不含 `deploy/`、`scripts/`）⇒ compose 里的键名与脚本读的前缀**仅靠命名约定**；
+    ③ **改 env 键后必须 refresh 重建容器才吃到**——且宿主侧读的是**project env 里带账套后缀的键**
+       （`ADOPTED_SOURCES_<账套>`；仓内那个裸 `ADOPTED_SOURCES` 目前**无消费方**，是给镜像/运维看的声明）。
   - **管理面例外（订正记录 2026-09-30，Task 5 评审转办）**：`GET /metrics/all`（`data:manage`）**绕开裁剪**——
     持 manage 者会看到**未接入源**的 L1 行；这是有意的（管理面要能看全），**README 必须写明这个例外**。
   - **数据侧影响（订正记录 2026-09-30，Task 4 评审转办）**：改名**不动既有 L2 行的 SQL**（L2 落库的是**编译后的** `select_sql`，`data.metrics` 没有 `base_metric` 列）——只有 `description` 文本里的「L2 派生自 <旧 id>」会陈旧；而 **MCP 工具名 = 指标 id**，故改名**对外可见**（属预期）。① `l1_metrics.yml` 的 `sources`（存储路径）与新 `source`（源系统）**语义不同，别混**；② 命名 `<源>:<业务域>:<指标>`；③ 裁剪在 `visibleMetrics` 一处收口 + 写入闸 403 的形状；④ 无身份 **401 由宿主门卫给**，不是模块判的；⑤ 对账命令与「值从 openship env 取」；⑥ **源登记 ↔ 契约 `domain` 只要求同名约定，本计划不做自动映射**）
