@@ -296,7 +296,11 @@ git commit -m "feat(data): 自绘报表创建 + 规格读写端点（页门先�
 - Modify: `modules/data/console/reports/index.tsx`（platform 行的「打开」从置灰改为打开自绘视图）
 
 **Interfaces:**
-- Consumes: `GET /reports/:id/spec`（Task 3）、既有 `POST /query`（**面板数据唯一通路**，不新造端点）。
+- Consumes: `GET /reports/:id/spec`（Task 3，回 `{spec, version}`——version 供后续 PUT 回带）、既有 `POST /query`（**面板数据唯一通路**，不新造端点）。
+  ⚠️ 接口形状备忘（Task 3 评审转办）：**platform 路径的 `POST /reports` 响应是 `{id, metabaseId: 0, version}`**——
+  与 Metabase 路径（`{id, metabaseId, created, fingerprint, version}`）**刻意不一致**（人裁记录 2026-09-30：
+  不补 `created: true` 常量——它在 `(org,title)` upsert 命中既有行时撒谎；fingerprint 对自绘无语义）。
+  console/agent 消费方**别按同一 shape 解析**，文档（Task 6）要写明这个差异。
 - Produces: `<SpecView reportId title onClose />`——拉规格 → 逐面板 `POST /query` → 渲染。
 
 - [ ] **Step 1: 加依赖**（`pnpm --filter data add echarts`，按需引入，别 `import * as echarts`）
