@@ -4,11 +4,14 @@
 // 这里验裁剪语义（「看不见」不是报错）与管理面写路径的**新契约**——
 // 写路径只收结构化 `L2Declaration`，自由 SQL 入参一律 400（全局约束 12）。
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { Hono } from 'hono'
 import { Pool } from 'pg'
+import { TENANT_SOURCES } from '@platform/sdk'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import { L1_ORG, upsertL1Metric, upsertMetric } from '../domain/metric-store'
 import type { MetricDef } from '../domain/authz'
+import type { ModuleVars } from './context'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -258,5 +261,53 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     const again = await app(ORG, ['data:manage']).request(`/metrics/${clashId}`, { method: 'DELETE' })
     expect(again.status).toBe(409)
     expect((await again.json()).error).toBe('READONLY_L1')
+  })
+
+  // ── 宿主投影的「已接入源」（计划 5）────────────────────────────────────────────
+  // 宿主（apps/server/src/loader.ts）对声明 `tenantSources` 的模块按请求 set
+  // `TENANT_SOURCES`；本模块只是**读**方。这里验两件事：
+  //   ① 键进没进模块的 Env（`ModuleVars`）—— 读点写在 `Context<ModuleVars>` 上，
+  //      键缺席就是 **typecheck 红**（不是运行期 undefined），这正是模块侧唯一的接线证据；
+  //   ② 运行期读得到宿主 set 的值（设了是数组，没设是 undefined ⇒ 模块得按「宿主没投影」处置）。
+  it('★ 模块变量表能读到宿主投影的已接入源（TENANT_SOURCES）：宿主 set 了就是数组，没 set 是 undefined', async () => {
+    // 契约值钉死：键名是**宿主 set / 模块 get 的约定**（编译器不连线 ⇒ 改名是破坏性变更）。
+    // 两边都引 SDK 常量 ⇒ 常量写错（或压根没导出，vitest 会把缺失的具名导出当 undefined 放行）
+    // 时两边**一起错**，只有把字面量钉在断言里才拦得住——本用例的第一条红就是它。
+    expect(TENANT_SOURCES).toBe('platform.tenantSources')
+
+    const seen: Array<string[] | undefined> = []
+    const shell = new Hono<ModuleVars>()
+    shell.use('*', async (c, next) => {
+      c.set('identity', makeIdentity({ orgId: ORG, scopes: ['data:query'] }))
+      c.set('tenant', { id: 1, casdoor_org: ORG })
+      c.set(TENANT_SOURCES, ['lemeng', 'shanhai'])
+      await next()
+    })
+    // 读点（宿主投影 → 模块消费的接线）；`seen` 的元素类型由 c.get 推出 ⇒ 类型不符即编译红
+    shell.use('*', async (c, next) => {
+      seen.push(c.get(TENANT_SOURCES))
+      await next()
+    })
+    shell.route('/', mod.createRouter({ pool }))
+
+    const res = await (shell as unknown as Hono).request('/metrics')
+    expect(res.status, '模块路由在被投影的请求上照常工作').toBe(200)
+    expect(seen, '模块侧读不到宿主投影的值（键没进 ModuleVars？）').toEqual([['lemeng', 'shanhai']])
+
+    // 宿主没投影（未声明 tenantSources 的部署形态）⇒ undefined：模块必须把它与「空集」分开处置
+    const bare = new Hono<ModuleVars>()
+    const bareSeen: Array<string[] | undefined> = []
+    bare.use('*', async (c, next) => {
+      c.set('identity', makeIdentity({ orgId: ORG, scopes: ['data:query'] }))
+      c.set('tenant', { id: 1, casdoor_org: ORG })
+      await next()
+    })
+    bare.use('*', async (c, next) => {
+      bareSeen.push(c.get(TENANT_SOURCES))
+      await next()
+    })
+    bare.route('/', mod.createRouter({ pool }))
+    expect((await (bare as unknown as Hono).request('/metrics')).status).toBe(200)
+    expect(bareSeen).toEqual([undefined])
   })
 })

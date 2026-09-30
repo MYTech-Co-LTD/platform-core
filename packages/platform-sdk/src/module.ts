@@ -45,6 +45,21 @@ export interface TenantStorageConfig {
 export const TENANT_STORAGE = 'platform.tenantStorage'
 
 /**
+ * 「本租户已接入的源」的 Hono context 变量键（计划 5）。
+ * 同 TENANT_STORAGE：**宿主 set / 模块 get 的约定**，编译器不连线 ⇒ 改名是破坏性变更。
+ * 值与 `platform.tenant_source` 里 `enabled = true` 的集合一致（宿主按**本次请求所属租户**投影）。
+ *
+ * ⚠️ 与存储路径不是一回事：那在 manifest 的 `storage`/dbt 声明里（源与「源的数据落在哪」是两
+ * 个维度）。本键名因此**不叫 `sources`**——`sources` 已被「存储路径」占用（Constraint 1）。
+ *
+ * 三态（模块**必须**分辨，别把后两者混成一种）：
+ *   · `undefined` —— 本模块没声明 `tenantSources`（宿主不投影，与「未声明路径 = 不可达」同构）；
+ *   · `[]` —— 声明了，但本租户一个源都没接（声明了就有值）；
+ *   · `['lemeng', …]` —— 本租户 enabled 的源集合。
+ */
+export const TENANT_SOURCES = 'platform.tenantSources'
+
+/**
  * 模块端口（正典 `docs/module-protocol.md`「模块端口：`createPorts`」，2026-09-21 拍板）：
  * 有些能力宿主**必须在 `runtime.mount` 之前**就拿到（最典型的是 PAT 凭证解析——中间件要在模块
  * 路由之前把 `Bearer dkq_…` 解析成主体才能注入 `identity`），而这份能力的**数据**在模块自己的

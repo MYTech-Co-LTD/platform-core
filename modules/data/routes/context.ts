@@ -3,7 +3,7 @@
 import type { Context, Hono } from 'hono'
 import type { Pool } from 'pg'
 import type { Identity, RequesterVars } from '@platform/sdk'
-import { REQUESTER_CHANNEL, REQUESTER_KEY_ID } from '@platform/sdk'
+import { REQUESTER_CHANNEL, REQUESTER_KEY_ID, TENANT_SOURCES } from '@platform/sdk'
 import type { Requester } from '../domain/authz'
 import type { SqlExecutor } from '../domain/query-service'
 
@@ -24,7 +24,16 @@ export interface DataTenant {
  * `Variables` **内层**——⚠️ 写成 `ModuleVars & RequesterVars` 会把键搁到 Env 顶层，
  * `c.get(REQUESTER_CHANNEL)` 恒 undefined。见 T5 `requester-vars.ts` 的注记。
  */
-export type ModuleVars = { Variables: { identity: Identity; tenant: DataTenant } & RequesterVars }
+export type ModuleVars = {
+  Variables: {
+    identity: Identity
+    tenant: DataTenant
+    /** 宿主投影的「本租户已接入的源」（计划 5；manifest 已声明 `tenantSources: true`）。
+     *  `undefined` = 宿主没投影（本模块没声明 / 无租户上下文）/ `[]` = 声明了但一个源都没接
+     *  / 非空 = enabled 的源集合 —— 三种状态，消费方别把前两者混成一种。 */
+    [TENANT_SOURCES]?: string[]
+  } & RequesterVars
+}
 
 /** 模块路由实例的统一类型。 */
 export type ModuleHono = Hono<ModuleVars>

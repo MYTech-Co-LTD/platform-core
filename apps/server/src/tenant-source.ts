@@ -22,8 +22,27 @@ export const SOURCES_DISABLE_SQL =
 export const SOURCES_SELECT_SQL =
   'select source, enabled from platform.tenant_source where tenant_id = $1 order by source'
 
+/** 宿主按请求投影给模块的**值形状**：只有 enabled 的那些（`order by` 让投影值可比对）。 */
+export const SOURCES_ENABLED_SQL =
+  'select source from platform.tenant_source where tenant_id = $1 and enabled = true order by source'
+
 /** 能执行查询的最小面（`Pool` 与事务用的 `PoolClient` 都满足）。 */
 export type SqlExecutor = Pick<Pool | PoolClient, 'query'>
+
+/**
+ * 本租户**已接入**（`enabled = true`）的源集合 —— 宿主投影给模块的那个值（计划 5）。
+ *
+ * 为什么读 SQL 也在这里（而不是内联进 loader.ts）：本文件是这张表 SQL 的单一事实源，
+ * 读与写分散到两处正是本文件开头点名的病（改列名要同改两处，漏一处是运行时错）。
+ *
+ * 只认 `enabled = true`：停用行（`enabled = false`）**保留在表里便于对账**（见 SOURCES_DISABLE_SQL），
+ * 不是「已接入」⇒ 绝不进投影值。无行 ⇒ 空数组（**不是** undefined：投影有没有值是模块声明决定的，
+ * 由中间件决定 set 不 set；本函数只回答「本租户的已接入集是什么」）。
+ */
+export async function listEnabledSources(exec: SqlExecutor, tenantId: number): Promise<string[]> {
+  const { rows } = await exec.query<{ source: string }>(SOURCES_ENABLED_SQL, [tenantId])
+  return rows.map((r) => r.source)
+}
 
 /**
  * **整体替换**（PUT /sources 的唯一实现）：两句按序执行 —— 列表里的 upsert 为 true，

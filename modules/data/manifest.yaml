@@ -65,3 +65,9 @@ frontend:
   console:
     - { path: /console/data, title: 数据问数, icon: BarChartOutlined, scope: data:query, entry: ./console/index.tsx }
 migrations: { dir: ./migrations }
+# 源投影（计划 5，spec §3⑧）：本模块需要「本租户已接入的源」——宿主按请求把
+# `platform.tenant_source` 里 enabled=true 的集合 set 到 context 的 TENANT_SOURCES 键。
+# ⚠️ 键名是 `tenantSources`（**不是** `sources`）：`sources` 已被「存储路径」占用（上面的 dbt 声明），
+#     两个维度不能共用一个词（Constraint 1）。声明 true 之后本模块的每个 API 请求多一次查表
+#     （宿主侧刻意不做缓存，见 loader.ts 的注记）。
+tenantSources: true

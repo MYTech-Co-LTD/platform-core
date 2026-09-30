@@ -22,6 +22,7 @@ import type { CasdoorClient } from '@platform/auth-core'
 import {
   DECLARED_GATE_APPROVED,
   ManifestSchema,
+  TENANT_SOURCES,
   TENANT_STORAGE,
   declaredScopeGate,
   type DeclaredEndpoint,
@@ -35,6 +36,7 @@ import { Hono } from 'hono'
 import type { Env, MiddlewareHandler } from 'hono'
 import type { Pool } from 'pg'
 import { runMigrations } from './migrate'
+import { listEnabledSources } from './tenant-source'
 import { resolveTenantStorage } from './tenant-storage'
 import type { TenantRow } from './tenant'
 
@@ -59,7 +61,14 @@ export interface LoadedModule {
  * 键名用**计算属性**引 SDK 常量：写死字符串就是第二份事实源（改名时它不会跟着改，静默失效）。
  */
 export interface MountEnv {
-  Variables: { tenant: TenantRow; identity: Identity; [TENANT_STORAGE]?: TenantStorageConfig }
+  Variables: {
+    tenant: TenantRow
+    identity: Identity
+    [TENANT_STORAGE]?: TenantStorageConfig
+    /** 源投影的产出位（可选 = 不注入是常态：模块没声明 `tenantSources` / 无租户上下文）。
+     *  空数组与缺席是**两个状态**（`[]` = 声明了但本租户一个源都没接），模块侧别混为一谈。 */
+    [TENANT_SOURCES]?: string[]
+  }
 }
 
 /**
@@ -496,6 +505,30 @@ export async function loadModules(
             await next()
           }
           app.use(base + '/*', project)
+        }
+
+        // 源投影（计划 5，spec §3⑧）：**只对声明了 `tenantSources` 的模块**挂——把本租户
+        // 「已接入的源」（`platform.tenant_source` 里 `enabled = true` 的集合）投给模块的
+        // context。模块据它做「这个租户的数据里有哪些源」的判断；宿主不替它选，只给事实。
+        //   · 位置同 storage（硬约束，别挪）：启用闸门之后（停用模块该拿 404 就先拿 404）、
+        //     `app.route` **之前**（Hono 里 handler 先注册、use 后注册 ⇒ 中间件**永不执行**——
+        //     挪到后面的表现是模块 `c.get(TENANT_SOURCES)` 恒 undefined，代码里看不出问题）。
+        //   · 判据是 `=== true`（不是「键存在」）：manifest 的值是 boolean，显式 `false` = 关掉。
+        //   · 无租户上下文 ⇒ 不 set（放行给后续层，与 storage 投影同一分支）。
+        //   · 无登记行 ⇒ set **空数组**（不是不 set）：声明了就有值，「本租户一个源都没接」与
+        //     「本模块不声明源」是两个状态，模块侧得分辨得出。
+        //  ⚠️ 与 `TENANT_STORAGE` 的一个**刻意不同**：storage 的投影是**零 IO**（读的是租户行上
+        //     已有的列）；本投影**每请求一查**（源是集合，落在表里，租户行上放不下）。
+        //     量级小（本机同库、`primary key(tenant_id, source)` 命中索引）⇒ **先不做缓存**
+        //     （「无案例不立标准」）；要压测有了数再加 TTL，**别提前加**（隐式窗口语义是另一回事）。
+        if (m.manifest.tenantSources === true) {
+          const projectSources: MiddlewareHandler<MountEnv> = async (c, next) => {
+            const t = c.get('tenant') as TenantRow | undefined
+            // 读 SQL 在 tenant-source.ts（那张表的单一事实源，与写入方共用一处）
+            if (t) c.set(TENANT_SOURCES, await listEnabledSources(deps.pool, t.id))
+            await next()
+          }
+          app.use(base + '/*', projectSources)
         }
 
         app.route(base, m.router)
