@@ -290,6 +290,16 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   const post = (app: Hono, body: unknown) => app.request('/reports', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   })
+  /**
+   * 登记侧版本回读（管理清单 = console 的取版本通路；Task 3 起 PUT/DELETE 必须回带它）。
+   * 刻意不写死数字：版本由库侧维护，测试从**消费方看到的那个值**取，才与前端同路。
+   */
+  const versionOf = async (app: Hono, id: string): Promise<number> => {
+    const body = await (await app.request('/reports/manage')).json() as {
+      reports: { id: string; version: number }[]
+    }
+    return body.reports.find((r) => r.id === id)!.version
+  }
 
   it('环境未配置 Metabase ⇒ 503 METABASE_UNCONFIGURED（配置状态，不是 500）', async () => {
     delete process.env.DATA_METABASE_URL
@@ -328,7 +338,11 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   it('★ 幂等：同 title 连发两次 ⇒ 不重复建（同一 id、库里 1 行、Metabase 只创建一次）', async () => {
     const { app } = manage()
     const first = await (await post(app, { title: '库存日报' })).json()
-    const second = await (await post(app, { title: '库存日报', lockedParams: { region: 'cn' } })).json()
+    // 内容侧写保护（Task 2）：二次 POST = **更新既有 dashboard** ⇒ 必须回带当前指纹（201 已回带它）。
+    // 本用例的题意不变（同 title 连发不重复建），同时兼作「回带的指纹是当前那个 ⇒ 被接受」的直证。
+    const second = await (await post(app, {
+      title: '库存日报', lockedParams: { region: 'cn' }, expectedFingerprint: first.fingerprint,
+    })).json()
     expect(second.id).toBe(first.id)
     expect(second.created).toBe(false)
     expect(mb.state.dashboards).toHaveLength(1)
@@ -354,7 +368,15 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       102: { native: 'select 2' },
     }
 
-    const second = await (await post(app, { title: '已有卡的报表' })).json()
+    // 内容侧写保护（Task 2）：人往报表上加了卡 ⇒ 内容已**不是**首建那一份 ⇒ 重跑必须先取**当前**指纹。
+    // 走一遍 fail-closed 的发现路径（不带 ⇒ 409 VERSION_REQUIRED 回带 currentFingerprint）再重跑——
+    // 本用例考的是「重跑不清卡」，不是「不带指纹会被拒」（后者由写保护用例咬）。
+    const probe = await post(app, { title: '已有卡的报表' })
+    expect(probe.status).toBe(409)
+    const { currentFingerprint } = await probe.json() as { currentFingerprint: string }
+    const second = await (await post(app, {
+      title: '已有卡的报表', expectedFingerprint: currentFingerprint,
+    })).json()
     expect(second.created).toBe(false)
     expect(second.id).toBe(first.id)
     // 卡片没被清（三件套那次合并 PUT 也不清卡——旧 bug 的路由级形态就是这里变成 0 张）
@@ -439,45 +461,121 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   it('PUT /reports/:id：改页门落库并返回整行；置 null = 发布', async () => {
     const { app } = manage()
     const { id } = await (await post(app, { title: '销售日报', requiredScope: 'sales:read' })).json()
+    // 登记侧写保护（Task 3）：PUT 必带 expectedVersion，从管理清单读回来（console 同路）
+    const v0 = await versionOf(app, id)
 
     const res = await app.request(`/reports/${id}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requiredScope: 'finance:read' }),
+      body: JSON.stringify({ requiredScope: 'finance:read', expectedVersion: v0 }),
     })
     expect(res.status).toBe(200)
-    expect(await res.json())
+    const body = await res.json() as { version: number }
+    expect(body)
       .toMatchObject({ id, title: '销售日报', requiredScope: 'finance:read', renderer: 'metabase' })
+    // 成功响应体回带**推进后**的版本（写保护的读侧契约——console 据此续写下一次，无需再读一遍）
+    expect(body.version).toBe(v0 + 1)
+    // 库里也真的推进了：响应体与落库同源，两处都得对（只断一处，另一处写错也看不见）
+    expect((await pool.query('select version from data.reports where id = $1', [id])).rows[0].version)
+      .toBe(v0 + 1)
     const db = await pool.query('select required_scope from data.reports where id = $1', [id])
     expect(db.rows[0].required_scope).toBe('finance:read')
 
     const pub = await app.request(`/reports/${id}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requiredScope: null }),
+      body: JSON.stringify({ requiredScope: null, expectedVersion: v0 + 1 }),
     })
     expect(pub.status).toBe(200)
     expect((await pub.json()).requiredScope).toBeNull()
   })
 
+  it('★ 登记侧写保护：缺版本 400 / 陈旧 409（带 currentVersion）/ 命中 200 且版本 +1', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '登记写保护' })).json()
+
+    const listed = await (await app.request('/reports/manage')).json() as { reports: { id: string; version: number }[] }
+    const v0 = listed.reports.find((r) => r.id === id)!.version
+    expect(v0).toBe(1)
+
+    // 缺 expectedVersion ⇒ 400（strict + 必填）
+    const missing = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'sales:read' }),
+    })
+    expect(missing.status).toBe(400)
+
+    // 命中 ⇒ 200 且版本推进
+    const ok = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'sales:read', expectedVersion: v0 }),
+    })
+    expect(ok.status).toBe(200)
+    expect((await ok.json()).version).toBe(v0 + 1)
+
+    // 陈旧（拿 v0 再写）⇒ 409 + 当前版本
+    const stale = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'finance:read', expectedVersion: v0 }),
+    })
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toEqual({ error: 'STALE_WRITE', currentVersion: v0 + 1 })
+  })
+
+  it('★ 回收也带版本：陈旧 ⇒ 409，且**没有被归档**（Metabase 侧无调用）', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '回收写保护' })).json()
+    mb.state.calls.length = 0
+    const stale = await app.request(`/reports/${id}?expectedVersion=99`, { method: 'DELETE' })
+    expect(stale.status).toBe(409)
+    expect(mb.state.calls).toHaveLength(0)     // 守卫必须先于归档
+    expect((await app.request(`/reports/${id}?expectedVersion=1`, { method: 'DELETE' })).status).toBe(204)
+  })
+
+  it('★ expectedVersion 超 int4 上界 ⇒ 400 INVALID_BODY（不是 500：客户端可控的取值不许污染 5xx）', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '版本上界' })).json()
+    // 3000000000 能过 `.int().positive()`，但 `version` 是 int4 列、这个值会被绑进 SQL ⇒
+    // 无上界时 Postgres 报 22003、被兜成 500。契约是「非法入参 ⇒ 400」，且 5xx 会污染监控。
+    const over = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'sales:read', expectedVersion: 3000000000 }),
+    })
+    expect(over.status).toBe(400)
+    expect(await over.json()).toEqual({ error: 'INVALID_BODY' })
+    // 且写没落：拒的是这一次请求，不是把行改坏
+    expect((await pool.query('select version from data.reports where id = $1', [id])).rows[0].version).toBe(1)
+    // 反证上界是**闭区间**、不是把大值一律拒掉：int4 上界本身合法，能走到 SQL 与版本比对（陈旧 ⇒ 409）。
+    // （这条同时钉住 `.max()` 没写成 `.lt()`/off-by-one——那时这里会变 400 而红。）
+    const edge = await app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'sales:read', expectedVersion: 2147483647 }),
+    })
+    expect(edge.status).toBe(409)
+    expect((await edge.json()).currentVersion).toBe(1)
+  })
+
   it('★ PUT 负测：多余键 400（strict）/ 空串 400 / 跨租户 404 且写不动', async () => {
     const { app, identity } = manage()
     const { id } = await (await post(app, { title: '销售日报' })).json()
+    // 版本回带**必须合法**，否则三条负测都退化成「缺版本 400」而不再验各自那条（Task 3 收严）
+    const v = await versionOf(app, id)
 
     const extra = await app.request(`/reports/${id}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requiredScope: 'a:read', title: '顺手改名' }),
+      body: JSON.stringify({ requiredScope: 'a:read', title: '顺手改名', expectedVersion: v }),
     })
     expect(extra.status).toBe(400)
 
     const empty = await app.request(`/reports/${id}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requiredScope: '' }),
+      body: JSON.stringify({ requiredScope: '', expectedVersion: v }),
     })
     expect(empty.status).toBe(400)
 
     const other = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] })).app
     const cross = await other.request(`/reports/${id}`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requiredScope: 'hacked:scope' }),
+      // 带着**本 org 的当前版本**跨租户写：404 必须由 org 隔离产生，而不是版本不符
+      body: JSON.stringify({ requiredScope: 'hacked:scope', expectedVersion: v }),
     })
     expect(cross.status).toBe(404)
     const db = await pool.query('select org, required_scope from data.reports where id = $1', [id])
@@ -517,13 +615,16 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     const other = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] }))
     expect((await (await other.app.request('/reports')).json()).reports).toEqual([])
     expect((await other.app.request(`/reports/${id}/embed-url`)).status).toBe(404)
-    expect((await other.app.request(`/reports/${id}`, { method: 'DELETE' })).status).toBe(404)
+    // 带**本 org 的当前版本**跨租户删：404 必须由 org 隔离产生（版本合法 ⇒ 不准推到 409/400 上）
+    const v = await versionOf(app, id)
+    expect((await other.app.request(`/reports/${id}?expectedVersion=${v}`, { method: 'DELETE' })).status).toBe(404)
   })
 
   it('DELETE /reports/:id：Metabase 侧归档 + 删登记行（对账差集的合法消除路径）', async () => {
     const { app } = manage()
     const { id } = await (await post(app, { title: '销售日报' })).json()
-    expect((await app.request(`/reports/${id}`, { method: 'DELETE' })).status).toBe(204)
+    const v = await versionOf(app, id)
+    expect((await app.request(`/reports/${id}?expectedVersion=${v}`, { method: 'DELETE' })).status).toBe(204)
     expect(mb.state.dashboards[0].archived).toBe(true)
     expect((await pool.query('select 1 from data.reports where org = $1', [ORG])).rowCount).toBe(0)
     // 归档后不再出现在可嵌入集里 ⇒ 对账干净（这正是「先归档、再删行」的理由）
@@ -533,7 +634,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       unregistered: { recoverable: [], needsHuman: [] },
     })
     // 未知 id：404（不泄露存在性）
-    expect((await app.request('/reports/nope', { method: 'DELETE' })).status).toBe(404)
+    expect((await app.request('/reports/nope?expectedVersion=1', { method: 'DELETE' })).status).toBe(404)
   })
 
   it('★ 对账：双向差集**显式返回**，不静默（登记指向已消失的 dashboard / Metabase 有未登记的报表）', async () => {
@@ -829,7 +930,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       title: '自绘报表', metabaseId: 0, embedParams: {}, requiredScope: null, renderer: 'platform',
     })
     const { app } = manage()
-    const res = await app.request(`/reports/${id}`, { method: 'DELETE' })
+    const res = await app.request(`/reports/${id}?expectedVersion=${await versionOf(app, id)}`, { method: 'DELETE' })
     expect(res.status).toBe(204)
     // 登记行照删（跳过的只是 Metabase 侧动作，不是删除本身）
     expect((await pool.query('select 1 from data.reports where org = $1', [ORG])).rowCount).toBe(0)
@@ -926,7 +1027,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       .toEqual({ tenant: 'locked' })
 
     // ③ B 的 DELETE 只归档 B 那张；A 的报表照旧可取嵌入 URL（跨租户归档被结构上消除）
-    expect((await b.app.request(`/reports/${rb.id}`, { method: 'DELETE' })).status).toBe(204)
+    expect((await b.app.request(`/reports/${rb.id}?expectedVersion=${await versionOf(b.app, rb.id)}`, { method: 'DELETE' })).status).toBe(204)
     expect(mb.state.dashboards.find((d) => d.id === rb.metabaseId)?.archived).toBe(true)
     expect(mb.state.dashboards.find((d) => d.id === ra.metabaseId)?.archived).toBe(false)
     expect((await a.app.request(`/reports/${ra.id}/embed-url`)).status).toBe(200)
@@ -962,43 +1063,128 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     })
   })
 
-  it('★ I-2 / M-4 并发建同名（search 竞态）也会造孤儿 ⇒ 同样显式报出', async () => {
+  it('★ I-2 / M-4 并发建同名：写保护串行化 ⇒ 后到者命中同名被内容守卫拒（1×201 + 1×409），不再造孤儿', async () => {
     const { app } = manage()
-    // 把「先 search 后写」的窗口**卡死**成确定性的竞态：两个请求都先做完 search（都看到空集），
-    // 再各自 POST。sleep 做不到这件事——Node 会在两个 timer 之间排空微任务，先到的请求会一路跑完。
-    const base = mb.fetcher
-    let arrived = 0
-    let open: () => void = () => {}
-    const bothArrived = new Promise<void>((resolve) => { open = resolve })
-    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
-      if (new URL(url).pathname === '/api/search') {
-        arrived += 1
-        if (arrived >= 2) open()
-        // 兜底 500ms：万一只有一方到（不该发生）也只是断言失败，不是挂死
-        await Promise.race([bothArrived, new Promise((r) => setTimeout(r, 500))])
-      }
-      return base(url, init)
-    })
-    // 两个请求在数组字面量里**同时发起**（不是先 await 一个再发下一个），再由 Promise.all 收齐
+    // 两个请求在数组字面量里**同时发起**（不是先 await 一个再发下一个），再由 Promise.all 收齐。
+    // ⚠️ 加锁后两者**不再并发跑写序列**：后到者在 `withObjectLock` 上排队，等第一个**整段写序列**
+    //    跑完才进临界区。旧版本那套 `bothArrived` 装置（把两次 `/api/search` 卡在同一个窗口里
+    //    人造「先 search 后写」竞态）**已随加锁失效**——第二次 search 根本不会与第一次并发，
+    //    装置成了死代码、其 500ms 兜底必然触发 ⇒ 已删除。
     const pending = [post(app, { title: '并发报表' }), post(app, { title: '并发报表' })]
-    const [x, y] = await Promise.all(pending.map(async (r) => (await r).json()))
-    expect(x.created).toBe(true)
-    expect(y.created).toBe(true)
-    // Metabase 侧两张 dashboard，登记行仍 1 行（unique (org, title) 挡着）⇒ 必有一张是孤儿
-    expect(mb.state.dashboards).toHaveLength(2)
+    const results = await Promise.all(pending)
+    const observed = await Promise.all(results.map(async (r) => ({ status: r.status, body: await r.json() })))
+
+    // ⚠️ 这条不变量由写保护改了，**不是回归**：加锁前两个请求都先 search 到空集 ⇒ 各建一张
+    //    dashboard（created:true ×2），登记行只有 1 行（unique (org, title)）⇒ 必有一张是孤儿。
+    //    加锁后后到者的 `upsertDashboard` 命中同名 ⇒ `created === false` ⇒ Task 2 的内容守卫
+    //    （不带 expectedFingerprint 一律拒）给出 409 VERSION_REQUIRED。
+    //    孤儿从「事后由对账报出」变成「结构上不再产生」。
+    const accepted = observed.filter((r) => r.status === 201)
+    const rejected = observed.filter((r) => r.status === 409)
+    expect(accepted).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+    expect(accepted[0].body).toMatchObject({ created: true })
+    expect(rejected[0].body).toMatchObject({ error: 'VERSION_REQUIRED' })
+    // Metabase 侧**只有 1 张** dashboard（不再造孤儿）；登记行 1 行，且指向的就是那张
+    expect(mb.state.dashboards).toHaveLength(1)
     const reg = await pool.query(
       'select metabase_id from data.reports where org = $1 and title = $2', [ORG, '并发报表'],
     )
     expect(reg.rowCount).toBe(1)
-    const registeredId = reg.rows[0].metabase_id as number
-    const orphanId = [x.metabaseId as number, y.metabaseId as number].find((i) => i !== registeredId)
-
+    expect(reg.rows[0].metabase_id).toBe((accepted[0].body as { metabaseId: number }).metabaseId)
+    // 无孤儿 ⇒ 对账 ok（旧用例这里断言 ok:false + recoverable 一条孤儿；现在结构上不产生了）
     const rec = await (await app.request('/reports/reconcile', { method: 'POST' })).json()
-    expect(rec.ok).toBe(false)
-    expect(rec.unregistered).toEqual({
-      recoverable: [{ metabaseId: orphanId, name: `${ORG}/并发报表` }],
-      needsHuman: [],
+    expect(rec).toMatchObject({
+      ok: true, registered: 1, embeddable: 1,
+      unregistered: { recoverable: [], needsHuman: [] },
     })
+  })
+
+  it('★ 并发写：6 个同版本 PUT ⇒ 恰 1 成功 + 5 × 409（账实相符，spec §3③ 读数）', async () => {
+    const { app } = manage()
+    const { id } = await (await post(app, { title: '并发写保护' })).json()
+    const listed = await (await app.request('/reports/manage')).json() as { reports: { id: string; version: number }[] }
+    const v0 = listed.reports.find((r) => r.id === id)!.version
+
+    // 数组字面量里同时发起（真并发；本包 fileParallelism:false，串行描述块不会替我们制造并发）
+    const pending = Array.from({ length: 6 }, () => app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'sales:read', expectedVersion: v0 }),
+    }))
+    const results = await Promise.all((await Promise.all(pending)).map((r) => r.status))
+    // ⚠️ **这条不是 Task 4 锁的证据**：恰一胜者由 Task 3 的**条件 UPDATE**（`where … and version = $4`）
+    //    在 **DB 层**保证——把 `withObjectLock` 换成直接 `fn()`，本用例**依然全绿**（报告「变异确认①」）。
+    //    它钉的是写保护下端到端的**账实相符读数**（6 并发恰 1 落、版本只 +1），不是锁的承重；
+    //    锁的承重用例是下面两条（同名串行化 / DELETE↔PUT 交错）。
+    expect(results.filter((s) => s === 200)).toHaveLength(1)
+    expect(results.filter((s) => s === 409)).toHaveLength(5)
+    const after = await (await app.request('/reports/manage')).json() as { reports: { id: string; version: number }[] }
+    expect(after.reports.find((r) => r.id === id)!.version).toBe(v0 + 1)   // 只落一次
+  })
+
+  it('★ 并发：DELETE 与同版本 PUT 交错 ⇒ 行锁串行化（无锁时 PUT 会写进一个随即被删掉的行 = 丢更新）', async () => {
+    const { app: seed } = manage()
+    const { id } = await (await post(seed, { title: '删改并发保护' })).json()
+    const dashId = mb.state.dashboards[0].id
+    const v0 = await versionOf(seed, id)
+
+    // ── PUT 侧闸门（评审 ⚠️1）：给 PUT 的落库语句挂一个**完成信号**，放 DELETE 之前先等它。
+    //    这让「无锁 ⇒ PUT 先落」成为**确定性读数**，而不是靠微任务调度序（旧版正是靠后者，
+    //    跨环境未必稳定红）。有行锁 ⇒ DELETE 持锁期间 PUT **根本发不出**这条 UPDATE（信号永不亮）；
+    //    无行锁 ⇒ 它当场发出并完成（一次本地 DB 往返）⇒ 信号必亮。
+    //    ⚠️ 下面的 500ms 只是「信号永不亮」时的**兜底上限，不是判据**：断言不依赖等了多久，
+    //       只依赖“信号亮没亮”（亮的条件 = PUT 真的写了库）。
+    let putWrote: () => void = () => {}
+    const putWriteDone = new Promise<void>((r) => { putWrote = r })
+    const spyPool = new Proxy(pool, {
+      get(target, prop, receiver) {
+        if (prop === 'query') {
+          return async (text: unknown, params?: unknown) => {
+            const out = await (target.query as (t: unknown, p?: unknown) => Promise<unknown>)(text, params)
+            if (typeof text === 'string' && /update\s+data\.reports\s+set\s+required_scope/i.test(text)) putWrote()
+            return out
+          }
+        }
+        return Reflect.get(target, prop, receiver) as unknown
+      },
+    }) as Pool
+    const app = buildTestApp(
+      mod,
+      makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }),
+      { pool: spyPool },
+      { id: TENANT, casdoor_org: ORG },
+    )
+
+    // DELETE 卡在「已读版本、已过比对、正归档」的那一刻——归档是本端点临界区内唯一的 await 窗口。
+    const base = mb.fetcher
+    let archiveStarted: () => void = () => {}
+    const started = new Promise<void>((r) => { archiveStarted = r })
+    let releaseArchive: () => void = () => {}
+    const hold = new Promise<void>((r) => { releaseArchive = r })
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const u = new URL(url)
+      if (u.pathname === `/api/dashboard/${dashId}` && init?.method === 'PUT'
+        && String(init.body).includes('"archived"')) {
+        archiveStarted()
+        await hold
+      }
+      return base(url, init)
+    })
+
+    const del = app.request(`/reports/${id}?expectedVersion=${v0}`, { method: 'DELETE' })
+    await started   // DELETE 已持锁并卡在归档
+    const put = app.request(`/reports/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requiredScope: 'sales:read', expectedVersion: v0 }),
+    })
+    await Promise.race([putWriteDone, new Promise((r) => setTimeout(r, 500))])   // ★ 闸门
+    releaseArchive()
+    const [delRes, putRes] = await Promise.all([del, put])
+    // 有锁：PUT 的 UPDATE 从未发出（信号未亮）⇒ 排在 DELETE 之后 ⇒ 行已删 ⇒ 404；
+    // 无锁：PUT 的 UPDATE 已**完成**（信号已亮）⇒ 写进一个**随即被 DELETE 抹掉**的行 ⇒ 200 = 丢更新。
+    expect(delRes.status).toBe(204)
+    expect(putRes.status).toBe(404)   // 行已被删 ⇒ 与 PUT 的 404 同形（不给存在性探针）
+    expect((await pool.query('select 1 from data.reports where org = $1 and id = $2', [ORG, id])).rowCount).toBe(0)
   })
 
   it('★ M-1 删除顺序钉死：先归档、后删行（删行失败 ⇒ 归档**已经**发生，报 missingInMetabase 而非未登记噪声）', async () => {
@@ -1012,7 +1198,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       { id: TENANT, casdoor_org: ORG },
     )
 
-    const res = await broken.request(`/reports/${id}`, { method: 'DELETE' })
+    const res = await broken.request(`/reports/${id}?expectedVersion=${await versionOf(app, id)}`, { method: 'DELETE' })
     expect(res.status).not.toBe(204) // 删行失败 ⇒ 不许回「删成功」
     expect(res.status).toBeGreaterThanOrEqual(500)
     // ★ 顺序的落点：归档**在前**，所以此刻它已经发生（顺序倒过来这条必红，见报告「变异回归」）
@@ -1064,6 +1250,96 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     const { app } = manage()
     expect((await post(app, {})).status).toBe(400)
     expect((await post(app, { title: '' })).status).toBe(400)
+    // `.strict()`：多余键不再被**静默丢弃**（本任务按 brief Step 3 加、计划 Constraint 5 声明它在）。
+    // 承重理由：非 strict 时拼错的 `expectedFingerprint` 会被 zod 丢掉 ⇒ 守卫看到 null ⇒ 恒 409
+    // 「VERSION_REQUIRED」——把「传错字段名」伪装成「你没带版本」，正是 fail-closed 要消灭的静默。
+    expect((await post(app, { title: '多余键', bogus: 1 })).status).toBe(400)
     expect(mb.state.calls).toHaveLength(0)
+  })
+
+  // ── 内容侧写保护（Task 2，spec §3③；人裁 2026-09-29 fail-closed）────────────────────────
+  it('★ 内容侧写保护：命中同名（更新既有）不带 expectedFingerprint ⇒ 409 VERSION_REQUIRED + 当前指纹', async () => {
+    const { app } = manage()
+    const first = await (await post(app, { title: '写保护报表' })).json() as { fingerprint: string }
+    expect(typeof first.fingerprint).toBe('string')          // 201 回指纹（此前没有）
+
+    const res = await post(app, { title: '写保护报表' })      // 第二次 = 更新既有 dashboard
+    expect(res.status).toBe(409)
+    const body = await res.json()
+    expect(body.error).toBe('VERSION_REQUIRED')
+    expect(typeof body.currentFingerprint).toBe('string')
+
+    // 带对的指纹 ⇒ 201；带过期的 ⇒ 409 STALE_WRITE
+    const ok = await post(app, { title: '写保护报表', expectedFingerprint: first.fingerprint })
+    expect(ok.status).toBe(201)
+    const stale = await post(app, { title: '写保护报表', expectedFingerprint: 'deadbeef' })
+    expect(stale.status).toBe(409)
+    expect((await stale.json()).error).toBe('STALE_WRITE')
+  })
+
+  it('★ 首次创建不需要版本（没有可覆盖的东西）', async () => {
+    const { app } = manage()
+    expect((await post(app, { title: '全新报表' })).status).toBe(201)
+  })
+
+  // ── 承重补测（brief 之外，实施时发现两条要求没有被 brief 的断言咬住）────────────────────
+  it('★ 201 回带登记侧 version（**写后**回读；与内容侧指纹分属两条通路）+ 新建时带 expectedFingerprint 被接受并忽略', async () => {
+    const { app } = manage()
+    const first = await (await post(app, { title: '版本回带报表' }))
+      .json() as { fingerprint: string; version: number }
+    expect(typeof first.fingerprint).toBe('string')
+    expect(first.version).toBe(1)          // 首建 = 列默认 1
+
+    // 新建路径**不要求**版本：给一个（哪怕是假的）也接受——没有可覆盖的东西（`!up.created` 之外不判）
+    expect((await post(app, { title: '带了指纹的新建', expectedFingerprint: 'whatever' })).status).toBe(201)
+
+    // 更新既有 ⇒ 版本推进到 2；这同时钉住「**写后**回读」——若在 upsertReport 之前读，这里会是 1
+    const second = await (await post(app, { title: '版本回带报表', expectedFingerprint: first.fingerprint }))
+      .json() as { version: number }
+    expect(second.version).toBe(2)
+  })
+
+  it('★ 守卫必须在**写之前**：被 409 拒掉的请求不许先改**内容**（否则「拒」是假的）', async () => {
+    const { app } = manage()
+    const first = await (await post(app, { title: '守卫在写前' })).json() as { fingerprint: string; created: boolean }
+    expect(first.created).toBe(true)
+    const dash = mb.state.dashboards[0]
+    // 等价于「另一个人在 Metabase 侧把租户绑定拆了」：publishWithTenantBinding 若先跑，
+    // 它会把手动状态**改写回去**（补 tenant 参数、重新锁参）——那时「拒」只是回了个 409，写已经发生了。
+    // ⚠️ 断言的是「**内容**不被改」：`upsertDashboard` 那次合并 PUT 仍会发（name 同值、dashcards/
+    //    parameters/embedding_params 原值回写 = 内容 no-op），那是刻意保留的（见 routes 里 guard 的注）。
+    dash.parameters = []
+    dash.embedding_params = {}
+
+    const rejected = await post(app, { title: '守卫在写前' })                 // 不带指纹 ⇒ 必被拒
+    expect(rejected.status).toBe(409)
+    expect(dash.parameters).toEqual([])          // 参数没被补回来
+    expect(dash.embedding_params).toEqual({})    // 尤其：tenant 没被重新锁上
+
+    // 同一件事的另一面：外部改动后，旧指纹必须 STALE_WRITE（守卫若在 publish 之后，publish 会先把内容
+    // 修回旧指纹那一份 ⇒ 这条会变成 201 且真的写了 —— 变异确认见任务报告）
+    const stale = await post(app, { title: '守卫在写前', expectedFingerprint: first.fingerprint })
+    expect(stale.status).toBe(409)
+    expect((await stale.json()).error).toBe('STALE_WRITE')
+  })
+
+  it('★ 合并 PUT **恒回写** embedding_params（不赌上游「缺键」语义）：被 409 拒的请求也不会抹掉锁参', async () => {
+    const { app } = manage()
+    await post(app, { title: '锁参回写' })
+    const dash = mb.state.dashboards[0]
+    expect(dash.embedding_params).toEqual({ tenant: 'locked' })   // 首次发布锁上的
+
+    // 命中同名（= 更新既有）⇒ upsertDashboard 走合并 PUT。守卫在 publish 之前 ⇒ 这次被拒的请求
+    // 只发了**那一次**合并 PUT：它若不带 embedding_params 而真机是替换语义，锁参当场被抹掉，
+    // 而单测仍绿（桩是「缺键不改」）——正是「静默解开租户绑定」在测试里结构性看不见的形态。
+    const before = mb.state.calls.length
+    const rejected = await post(app, { title: '锁参回写', expectedFingerprint: 'deadbeef' })
+    expect(rejected.status).toBe(409)
+    const puts = mb.state.calls.slice(before).filter((c) => (c.init?.method ?? 'GET') === 'PUT')
+    expect(puts).toHaveLength(1)
+    const body = JSON.parse(String(puts[0].init?.body)) as Record<string, unknown>
+    expect(body).toHaveProperty('embedding_params')                // 键**恒在**
+    expect(body.embedding_params).toEqual({ tenant: 'locked' })    // 值 = 刚读到的当前值
+    expect(dash.embedding_params).toEqual({ tenant: 'locked' })    // 锁参仍在（没被抹）
   })
 })

@@ -25,6 +25,7 @@ import { z } from 'zod'
 import type { ModuleHono, RouteCtx } from './context'
 import { requesterOf } from './context'
 import { signEditHandoff } from '../domain/edit-handoff'
+import { withObjectLock } from '../domain/object-lock'
 import {
   MetabaseError,
   archiveDashboard,
@@ -41,6 +42,7 @@ import {
 import {
   deleteReport,
   getReport,
+  getReportVersion,
   listAllReports,
   listReports,
   updateRequiredScope,
@@ -59,7 +61,9 @@ const ReportBody = z.object({
   lockedParams: z.record(z.string()).default({}),
   /** NULL = 所有拿到本模块的人可见（口径同 data.metrics.required_scope）。 */
   requiredScope: z.string().min(1).nullable().default(null),
-})
+  // 内容侧版本（写保护）：更新既有 dashboard 时**必填**；见 handler 里的 fail-closed 分支
+  expectedFingerprint: z.string().min(1).nullable().default(null),
+}).strict()
 
 /**
  * 报表 id 的解析口径（text，uuid）。**只挡「空/缺失」**，一律 404——与 aftersales /
@@ -97,25 +101,60 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const org = c.get('tenant').casdoor_org
     const deps = metabaseDeps(cfg)
     try {
-      // 幂等（API 无按名 upsert，spec §6.5）：命中同名 ⇒ PUT、否则 POST。
-      // ⚠️ 查找/创建都用**含 org 的规范名**（I-1）：Metabase 是单实例多租户共用，裸 title 会让
-      //    两个租户的同名报表命中同一张 dashboard ⇒ 跨租户改写 embedding_params / 跨租户归档。
-      const up = await upsertDashboard(deps, dashboardName(org, parsed.data.title))
-      // 一次做全三件（声明参数 / 只映射带标签的卡 / 锁参）；额外的 lockedParams 由 setEmbedding 合并
-      await publishWithTenantBinding(deps, up.id)
-      if (Object.keys(parsed.data.lockedParams).length > 0) {
-        await setEmbedding(deps, up.id, [
-          { name: TENANT_SLUG, mode: 'locked' },
-          ...Object.keys(parsed.data.lockedParams).map((name) => ({ name, mode: 'locked' as const })),
-        ])
-      }
-      const id = await upsertReport(ctx.pool, org, {
-        title: parsed.data.title,
-        metabaseId: up.id,
-        embedParams: parsed.data.lockedParams,
-        requiredScope: parsed.data.requiredScope,
+      // ── 每对象一把锁（spec §3③）：整段写序列（upsert → 守卫 → publish → setEmbedding →
+      //    登记 → 回读）串行化，收窄「先读后写」的并发窗口（version/fingerprint 比对本身只能
+      //    事后发现，锁让同对象的两个写不再交错）。
+      // ⚠️ 键用**规范名**（`dashboardName` 含 org，见 I-1）：创建前还没有 id，唯一稳定的对象身份
+      //    就是名字；顺带把「并发建同名」也串起来——否则两个请求都 search 到空集 ⇒ 各建一张
+      //    ⇒ 一张成为孤儿（既有 routes/reports.test.ts 的确定性竞态用例正是这条）。
+      return await withObjectLock(`${org}/dash:${dashboardName(org, parsed.data.title)}`, async () => {
+        // 幂等（API 无按名 upsert，spec §6.5）：命中同名 ⇒ PUT、否则 POST。
+        // ⚠️ 查找/创建都用**含 org 的规范名**（I-1）：Metabase 是单实例多租户共用，裸 title 会让
+        //    两个租户的同名报表命中同一张 dashboard ⇒ 跨租户改写 embedding_params / 跨租户归档。
+        const up = await upsertDashboard(deps, dashboardName(org, parsed.data.title))
+        // ── 内容侧写保护（spec §3③；人裁 2026-09-29 fail-closed）────────────────────────
+        // 命中同名 ⇒ 这是**更新既有对象**：必须回带它当前的指纹，否则一律拒（不带就让人先读再写，
+        // 不接受「省略 = 强制覆盖」——那正是实测里"人的两张图被静默抹掉"的那条路）。
+        // ⚠️ 位置是契约的一半：必须在**任何发布写入之前**判——挪到 `publishWithTenantBinding` 之后，
+        //    被拒的请求已经先写过 Metabase 了（「拒」就只是回了个码），且有卡的表上判到的还是
+        //    发布后的内容。这条由 routes/reports.test.ts 的「守卫必须在写之前」用例钉住。
+        //    而它放在 `upsertDashboard` **之后**是**刻意**的：那条同名路径只做**内容保持**的合并 PUT
+        //    （`putDashboardMerged`：name 同值、dashcards/parameters/embedding_params 全部原值回写），
+        //    对内容而言是 no-op ⇒ 不构成「先写」。守卫要拦的是**会改内容/锁参**的那两步
+        //    （publish 与 setEmbedding），所以别再往「更靠前」挪（判指纹要先读内容，前置到
+        //    upsert 之前只会多一次读，拦不到任何东西）。
+        if (!up.created) {
+          const cur = await readDashboardContent(deps, up.id)
+          if (parsed.data.expectedFingerprint === null) {
+            return c.json({ error: 'VERSION_REQUIRED', currentFingerprint: cur.fingerprint }, 409)
+          }
+          if (parsed.data.expectedFingerprint !== cur.fingerprint) {
+            return c.json({ error: 'STALE_WRITE', currentFingerprint: cur.fingerprint }, 409)
+          }
+        }
+        // 一次做全三件（声明参数 / 只映射带标签的卡 / 锁参）；额外的 lockedParams 由 setEmbedding 合并
+        const pub = await publishWithTenantBinding(deps, up.id)
+        if (Object.keys(parsed.data.lockedParams).length > 0) {
+          await setEmbedding(deps, up.id, [
+            { name: TENANT_SLUG, mode: 'locked' },
+            ...Object.keys(parsed.data.lockedParams).map((name) => ({ name, mode: 'locked' as const })),
+          ])
+        }
+        const id = await upsertReport(ctx.pool, org, {
+          title: parsed.data.title,
+          metabaseId: up.id,
+          embedParams: parsed.data.lockedParams,
+          requiredScope: parsed.data.requiredScope,
+        })
+        // `version` 是**登记侧**版本（与内容侧指纹分属两条通路，别混名）：**写后**回读，不复用写前的值。
+        // `fingerprint` 直接复用发布那次的现算结果——零额外请求（publishWithTenantBinding 已算过）。
+        const row = await getReport(ctx.pool, org, id)
+        if (row === null) throw new Error('upsertReport 后登记行应可读（同一请求内的一致性假设被打破）')
+        return c.json({
+          id, metabaseId: up.id, created: up.created,
+          fingerprint: pub.fingerprint, version: row.version,
+        }, 201)
       })
-      return c.json({ id, metabaseId: up.id, created: up.created }, 201)
     } catch (err) {
       // 上游失败与「没配」分开表达（502 vs 503）。`created` 的幂等证据也随之不可得——
       // 不在这里造一个假值。Metabase 侧可能已建出 dashboard 而登记行没写成（setEmbedding
@@ -148,18 +187,31 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const rows = await listReports(ctx.pool, c.get('tenant').casdoor_org)
     return c.json({
+      // `version` 是**登记侧**版本（写保护的读侧）：console 从本清单拿它、写时回带。
+      // 观看面 GET /reports 刻意不带它（那里没有写动作，外泄版本号无消费方）。
       reports: rows.map((row) => ({
-        id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
+        id: row.id, title: row.title, requiredScope: row.requiredScope,
+        renderer: row.renderer, version: row.version,
       })),
     })
   })
 
-  const GateBody = z.object({ requiredScope: z.string().min(1).nullable() }).strict()
+  const GateBody = z.object({
+    requiredScope: z.string().min(1).nullable(),
+    // 登记侧版本（写保护；人裁 fail-closed）：必填，缺则 400。
+    // ⚠️ **必须带上界** `.max(2147483647)`（int4 上限）：这个值会被绑进 SQL 与 `version`（int4 列）
+    //    比较，无上界时 `3000000000` 这类**客户端可控**的取值会让 Postgres 报 22003、被兜成 500
+    //    ——契约是「非法入参 ⇒ 400」，且 5xx 会污染监控。**闭区间**：int4 上限本身合法（仍走比对）。
+    //    （DELETE 的同名字段**不需要**上界：它只在 JS 里与 `row.version` 比较，从不进 SQL。）
+    expectedVersion: z.number().int().positive().max(2147483647),
+  }).strict()
 
   // ── 页门改动（管理面动作：页门/发布/回收之「页门」「发布」）─────────────────────────
   // 发布 = requiredScope 置 null；改页门 = 换成新 scope。**没有独立的 published 列**
   // （见函数头顶注与计划 Global Constraints 1）。
-  // ⚠️ 写保护（陈旧版本写 409）归计划 4（spec §8 步骤 2）——这里**故意**没有版本守卫。
+  // ⚠️ 写保护（spec §3③）：**版本从请求体取**（`expectedVersion`，必填——fail-closed 人裁
+  //    2026-09-29），条件更新（`version = expectedVersion` 才落）。Task 1 的过渡形态是
+  //    「handler 先读版本再传进去」——那等于守卫自己给自己盖章（并发写都命中），本任务已换掉。
   r.put('/reports/:id', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
@@ -167,13 +219,23 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const parsed = GateBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
-    const row = await updateRequiredScope(
-      ctx.pool, c.get('tenant').casdoor_org, id, parsed.data.requiredScope,
-    )
-    // 跨租户/不存在一律 404——不给存在性探针（口径同 DELETE）
-    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    return c.json({
-      id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
+    const org = c.get('tenant').casdoor_org
+    // ── 每对象一把锁（spec §3③）：条件 UPDATE + 「陈旧时分清 404/409」的二次读**同锁**，
+    //    否则两次读之间夹一次并发写会拿到互相矛盾的版本。键用行 id（写对象已在，id 才是身份）。
+    return await withObjectLock(`${org}/row:${id}`, async () => {
+      const row = await updateRequiredScope(ctx.pool, org, id, parsed.data.requiredScope, parsed.data.expectedVersion)
+      if (row === null) {
+        // 存储层把「不存在 / 跨租户 / 版本陈旧」合流成 null（不给存在性探针）⇒ 这里再查一次分清楚。
+        // 带 org 查（跨租户在这里同样得 null ⇒ 404，不泄漏别的租户有没有这一行）。
+        const cur = await getReportVersion(ctx.pool, org, id)
+        if (cur === null) return c.json({ error: 'NOT_FOUND' }, 404)
+        return c.json({ error: 'STALE_WRITE', currentVersion: cur }, 409)
+      }
+      // 成功响应回带**推进后**的版本（调用方据此续写下一次，无需再读一次）
+      return c.json({
+        id: row.id, title: row.title, requiredScope: row.requiredScope,
+        renderer: row.renderer, version: row.version,
+      })
     })
   })
 
@@ -250,28 +312,49 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (!cfg) return c.json({ error: 'METABASE_UNCONFIGURED' }, 503)
     const id = reportIdOf(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    const row = await getReport(ctx.pool, c.get('tenant').casdoor_org, id)
-    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
-
-    const deps = metabaseDeps(cfg)
-    // renderer=platform（终审修复 3）：没有 Metabase dashboard 可归档（metabaseId=0 是哨兵，
-    // 拿它发 PUT 只会 404 ⇒ 删除恒 502）——跳过归档，登记行删除照旧。
-    if (row.renderer !== 'platform') {
-      try {
-        // 先归档、再删行。顺序不能倒：只删登记行而把 dashboard 留在可嵌入集里 ⇒ 它恒出现在
-        // 对账的 unregistered 差集里（一条永远消不掉的噪声）。反过来先归档、删行失败 ⇒
-        // 登记行还在，对账会把它报成 missingInMetabase（可恢复的、显式可见的状态）。
-        // M-1：本顺序由 routes/reports.test.ts 的「先归档后删行」用例 + 变异回归钉住。
-        // ⚠️ 归档只按 id（不按名）：id 就是创建时那次 `dashboardName(org, title)` upsert 的返回值，
-        //    命名空间一致性由 POST 那一处保证（少一处口径就留一条串味路径）。
-        await archiveDashboard(deps, row.metabaseId)
-      } catch (err) {
-        if (err instanceof MetabaseError) return c.json({ error: 'METABASE_ERROR' }, 502)
-        throw err
-      }
+    // 登记侧版本（写保护，spec §3③）：DELETE 走**查询串**（无 body）——`?expectedVersion=N`。
+    // 缺/非正整数 ⇒ 400（fail-closed：不接受「省略 = 强制删」）。**先验参再落库**：非法的版本
+    // 是调用方缺陷，不该先花一次查询；与 PUT 的「body 先 parse 再查库」同序。
+    const expectedVersion = Number(c.req.query('expectedVersion'))
+    if (!Number.isInteger(expectedVersion) || expectedVersion <= 0) {
+      return c.json({ error: 'INVALID_BODY' }, 400)
     }
-    await deleteReport(ctx.pool, c.get('tenant').casdoor_org, row.id)
-    return c.body(null, 204)
+    const org = c.get('tenant').casdoor_org
+    // ── 每对象一把锁（spec §3③）：DELETE 是「JS 比较版本 + 无条件删行」（Task 3 的已知窗口）——
+    //    「读版本 → 比较 → 删行」三步同锁后，与 PUT 的「条件 UPDATE」互斥。键与 PUT 同源
+    //    （`${org}/row:${id}`）：同一行的删与改必须串行。
+    return await withObjectLock(`${org}/row:${id}`, async () => {
+      const row = await getReport(ctx.pool, org, id)
+      if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+      // ⚠️ **版本判定必须发生在 `archiveDashboard` 之前**（Task 3 硬约束）：本端点是「先归档、再删行」
+      //    的两步序列（顺序见下），版本守卫若挪到归档后，被拒的请求**已经改过 Metabase** ——
+      //    「拒」就只剩一个响应码。由 routes/reports.test.ts 的「陈旧 ⇒ 409 且 mb.state.calls 为空」钉住。
+      //    版本取**这一行**（`row.version`，本次请求唯一一次读）而不是再发一次 getReportVersion：
+      //    两次读之间夹一次并发写就会拿到两个版本号，单一读是更强的判据。
+      if (row.version !== expectedVersion) {
+        return c.json({ error: 'STALE_WRITE', currentVersion: row.version }, 409)
+      }
+
+      const deps = metabaseDeps(cfg)
+      // renderer=platform（终审修复 3）：没有 Metabase dashboard 可归档（metabaseId=0 是哨兵，
+      // 拿它发 PUT 只会 404 ⇒ 删除恒 502）——跳过归档，登记行删除照旧。
+      if (row.renderer !== 'platform') {
+        try {
+          // 先归档、再删行。顺序不能倒：只删登记行而把 dashboard 留在可嵌入集里 ⇒ 它恒出现在
+          // 对账的 unregistered 差集里（一条永远消不掉的噪声）。反过来先归档、删行失败 ⇒
+          // 登记行还在，对账会把它报成 missingInMetabase（可恢复的、显式可见的状态）。
+          // M-1：本顺序由 routes/reports.test.ts 的「先归档后删行」用例 + 变异回归钉住。
+          // ⚠️ 归档只按 id（不按名）：id 就是创建时那次 `dashboardName(org, title)` upsert 的返回值，
+          //    命名空间一致性由 POST 那一处保证（少一处口径就留一条串味路径）。
+          await archiveDashboard(deps, row.metabaseId)
+        } catch (err) {
+          if (err instanceof MetabaseError) return c.json({ error: 'METABASE_ERROR' }, 502)
+          throw err
+        }
+      }
+      await deleteReport(ctx.pool, org, row.id)
+      return c.body(null, 204)
+    })
   })
 
   r.post('/reports/reconcile', async (c) => {

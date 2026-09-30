@@ -308,7 +308,13 @@ export async function putDashboardMerged(
   if (patch.collection_id !== undefined) body.collection_id = patch.collection_id
   if (patch.enable_embedding !== undefined) body.enable_embedding = patch.enable_embedding
   if (patch.embedding_type !== undefined) body.embedding_type = patch.embedding_type
-  if (patch.embedding_params !== undefined) body.embedding_params = patch.embedding_params
+  // ⚠️ `embedding_params` **恒回写**（不是「给了才带」）：真机对 dashboard 的 PUT 是**替换**语义
+  //    （`dashcards` 缺键 ⇒ 卡片表列被清空，已实测），而 `embedding_params` **缺键**的语义无实测。
+  //    缺键若同样是替换（或清空）⇒ 一次只改 name 的合并 PUT 就抹掉 `{tenant:'locked'}`
+  //    ＝**静默解开租户绑定**（页面照常显示未过滤的数据，正是本计划最贵的失效面）。
+  //    写回刚读到的同值 = 语义 no-op，但键恒在 ⇒ 不再赌「缺键」的语义。
+  //    显式传值的那条路（`publishWithTenantBinding` / `setEmbedding`）不受影响：patch 优先。
+  body.embedding_params = patch.embedding_params ?? cur.embeddingParams
   await call(deps, 'PUT', `/api/dashboard/${dashboardId}`, body)
 }
 

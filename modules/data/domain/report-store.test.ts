@@ -50,15 +50,39 @@ describePg('report-store 的 renderer（需要 DATABASE_URL）', () => {
       title: 'D', metabaseId: 13, embedParams: {}, requiredScope: 'sales:read',
     })
 
-    const updated = await updateRequiredScope(pool, org, id, 'finance:read')
+    const updated = await updateRequiredScope(pool, org, id, 'finance:read', 1)
     expect(updated).toMatchObject({ id, title: 'D', requiredScope: 'finance:read', renderer: 'metabase' })
     const db = await pool.query('select required_scope from data.reports where org = $1 and id = $2', [org, id])
     expect(db.rows[0].required_scope).toBe('finance:read')
 
     // 发布（置 null）
-    expect((await updateRequiredScope(pool, org, id, null))!.requiredScope).toBeNull()
+    expect((await updateRequiredScope(pool, org, id, null, 2))!.requiredScope).toBeNull()
 
     // 跨租户 org ⇒ null（不存在性的唯一表达，不给存在性探针）
-    expect(await updateRequiredScope(pool, 'org-gate-store-other', id, null)).toBeNull()
+    expect(await updateRequiredScope(pool, 'org-gate-store-other', id, null, 3)).toBeNull()
+  })
+
+  it('version：新建行 = 1；每次写 +1；expectedVersion 不符 ⇒ 不更新', async () => {
+    const org = 'org-version-store'
+    await pool.query('delete from data.reports where org = $1', [org])
+    const id = await upsertReport(pool, org, {
+      title: 'V', metabaseId: 21, embedParams: {}, requiredScope: null,
+    })
+    expect((await getReport(pool, org, id))!.version).toBe(1)
+
+    // 命中版本 ⇒ 更新且 +1
+    const ok = await updateRequiredScope(pool, org, id, 'sales:read', 1)
+    expect(ok).toMatchObject({ requiredScope: 'sales:read', version: 2 })
+
+    // 陈旧版本 ⇒ null（不更新）
+    expect(await updateRequiredScope(pool, org, id, 'finance:read', 1)).toBeNull()
+    expect((await getReport(pool, org, id))!.requiredScope).toBe('sales:read')
+
+    // 跨租户 ⇒ null
+    expect(await updateRequiredScope(pool, 'org-version-store-other', id, null, 2)).toBeNull()
+
+    // 重新登记（upsert 冲突分支）也 +1
+    await upsertReport(pool, org, { title: 'V', metabaseId: 21, embedParams: {}, requiredScope: null })
+    expect((await getReport(pool, org, id))!.version).toBe(3)
   })
 })

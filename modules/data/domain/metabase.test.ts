@@ -185,13 +185,16 @@ describe('upsertDashboard：幂等（幂等要自实现——API 无按名 upser
     // q 必须带上（否则搜不出来）+ models 收窄到 dashboard（否则 card/collection 混进来）
     expect(calls[0].url).toContain(`q=${encodeURIComponent('销售日报')}`)
     expect(calls[0].url).toContain('models=dashboard')
-    // ① 读全量（合并的输入）② 合并写回。载荷里 name/parameters/dashcards 三键齐 —— 不再是有啥发啥的裸 PUT
+    // ① 读全量（合并的输入）② 合并写回。载荷里 name/parameters/dashcards/embedding_params 四键齐
+    // —— 不再是有啥发啥的裸 PUT。⚠️ `embedding_params` **恒在**（本轮修复）：GET 侧缺键归一成 `{}`，
+    // 此处同样回写 `{}`；缺键语义无实测，缺了它「一次只改 name 的合并 PUT」可能就抹掉
+    // `{tenant:'locked'}`（静默解开租户绑定）。
     expect(calls[1].init?.method ?? 'GET').toBe('GET')
     expect(calls[1].url).toBe('https://mb.test/api/dashboard/7')
     expect(calls[2].init?.method).toBe('PUT')
     expect(calls[2].url).toBe('https://mb.test/api/dashboard/7')
     expect(JSON.parse(String(calls[2].init?.body))).toEqual({
-      name: '销售日报', parameters: [], dashcards: [],
+      name: '销售日报', parameters: [], dashcards: [], embedding_params: {},
     })
     // 每个请求都带 API key（否则真机 401，而单测里若桩不校验就结构性看不见）
     for (const c of calls) expect(headerOf(c, 'x-api-key')).toBe('mb-api-key')
@@ -351,6 +354,23 @@ describe('putDashboardMerged：PUT 不得清掉已存在的卡片', () => {
     const deps = { fetcher, baseUrl: 'http://mb', apiKey: 'k' }
     await putDashboardMerged(deps, 8, { dashcards: [{ id: 1, cardId: 21, row: 0, col: 0, sizeX: 6, sizeY: 6 }] })
     expect(state.dashboards[0].dashcards[0].size_x).toBe(6)
+  })
+
+  it('★ 合并 PUT 恒回写 embedding_params（键恒在；值 = 刚 GET 到的当前值）——不赌上游「缺键」的语义', async () => {
+    const { state, fetcher } = fakeMetabaseWithCards([{ id: 9, name: 'o/c' }])
+    const deps = { fetcher, baseUrl: 'http://mb', apiKey: 'k' }
+    state.dashboards[0].embedding_params = { tenant: 'locked' }
+    await putDashboardMerged(deps, 9, { name: 'o/c-renamed' })
+    const body = JSON.parse(String(state.calls[state.calls.length - 1].init?.body)) as Record<string, unknown>
+    expect(body).toHaveProperty('embedding_params')            // 缺键语义无实测 ⇒ 键恒在
+    expect(body.embedding_params).toEqual({ tenant: 'locked' }) // 同值回写 = 语义 no-op
+
+    // 未发布过（读侧 `embedding_params: null` 归一成 `{}`）时也带键：`{}` 是既有合法载荷
+    // （`setEmbedding` 零参数那条路已在发它，见上一条 describe），真正**没实测**的是「缺键」。
+    state.dashboards[0].embedding_params = null
+    await putDashboardMerged(deps, 9, { name: 'o/c-again' })
+    const again = JSON.parse(String(state.calls[state.calls.length - 1].init?.body)) as Record<string, unknown>
+    expect(again.embedding_params).toEqual({})
   })
 })
 

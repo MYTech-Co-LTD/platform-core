@@ -29,7 +29,15 @@ export interface ReportRow {
   embedParams: Record<string, string>
   requiredScope: string | null
   renderer: ReportRenderer
+  /** 登记侧版本号（spec §3③）：每次写 +1；写请求必须回带它（人裁 2026-09-29 fail-closed）。 */
+  version: number
 }
+
+/**
+ * 六列投影提成常量：四处 `select/returning` 共用（避免漏改一处导致 `toReportRow` 拿到 `undefined`）。
+ * `data.reports` 的读取一律走它，新增列只改这一行。
+ */
+const REPORT_COLS = 'id, title, metabase_id, embed_params, required_scope, renderer, version'
 
 /** 行 → ReportRow。`metabase_id` 是 int4 ⇒ pg 回 JS number（**bigint 会回 string**，故列类型选 int4）。 */
 function toReportRow(row: Record<string, unknown>): ReportRow {
@@ -41,13 +49,14 @@ function toReportRow(row: Record<string, unknown>): ReportRow {
     embedParams: row.embed_params as Record<string, string>,
     requiredScope: row.required_scope as string | null,
     renderer: row.renderer as ReportRenderer,
+    version: row.version as number,
   }
 }
 
 /** 本 org 的全部登记。`order by title`：顺序确定，对账差集与 console 列表都不必猜。 */
 export async function listReports(pool: Pool, org: string): Promise<ReportRow[]> {
   const r = await pool.query(
-    `select id, title, metabase_id, embed_params, required_scope, renderer
+    `select ${REPORT_COLS}
        from data.reports
       where org = $1
       order by title`,
@@ -59,7 +68,7 @@ export async function listReports(pool: Pool, org: string): Promise<ReportRow[]>
 /** 单行读取。**必须带 org**——否则 id 就是跨租户探测句柄。 */
 export async function getReport(pool: Pool, org: string, id: string): Promise<ReportRow | null> {
   const r = await pool.query(
-    `select id, title, metabase_id, embed_params, required_scope, renderer
+    `select ${REPORT_COLS}
        from data.reports
       where org = $1 and id = $2`,
     [org, id],
@@ -84,7 +93,7 @@ export interface RegisteredReport extends ReportRow {
  */
 export async function listAllReports(pool: Pool): Promise<RegisteredReport[]> {
   const r = await pool.query(
-    `select org, id, title, metabase_id, embed_params, required_scope, renderer
+    `select org, ${REPORT_COLS}
        from data.reports
       order by org, title`,
   )
@@ -121,6 +130,7 @@ export async function upsertReport(
        embed_params   = excluded.embed_params,
        required_scope = excluded.required_scope,
        renderer       = excluded.renderer,
+       version        = data.reports.version + 1,
        updated_at     = now()
      returning id`,
     [org, randomUUID(), input.title, input.metabaseId,
@@ -141,17 +151,28 @@ export async function deleteReport(pool: Pool, org: string, id: string): Promise
  * 页门未放行在观看面的表现，不为管理动作新增状态列。
  *
  * 返回更新后的整行（`updatedAt` 由 SQL 侧 `updated_at = now()` 维护，不在投影里）；
- * 没命中（跨租户 / id 不存在）返回 null ⇒ 路由层一律 404。
+ * 没命中返回 null ⇒ 路由层一律 404。
+ *
+ * **条件更新（写保护，spec §3③）**：只有 `version = expectedVersion` 才落（并 `version + 1`）。
+ * 不命中（陈旧版本 / 跨租户 / id 不存在）都返回 null——**三种原因合流**，是刻意的：
+ * 存储层不区分它们、也不给存在性探针；路由层要先 `getReport` 才能把「不存在」判 404、
+ * 把「陈旧」判 409（见 Task 3）。
  */
 export async function updateRequiredScope(
-  pool: Pool, org: string, id: string, requiredScope: string | null,
+  pool: Pool, org: string, id: string, requiredScope: string | null, expectedVersion: number,
 ): Promise<ReportRow | null> {
   const r = await pool.query(
     `update data.reports
-        set required_scope = $3, updated_at = now()
-      where org = $1 and id = $2
-      returning id, title, metabase_id, embed_params, required_scope, renderer`,
-    [org, id, requiredScope],
+        set required_scope = $3, version = version + 1, updated_at = now()
+      where org = $1 and id = $2 and version = $4
+      returning ${REPORT_COLS}`,
+    [org, id, requiredScope, expectedVersion],
   )
   return r.rowCount === 0 ? null : toReportRow(r.rows[0])
+}
+
+/** 轻量只读：只为 409 的 currentVersion（给客户端重试用）。 */
+export async function getReportVersion(pool: Pool, org: string, id: string): Promise<number | null> {
+  const r = await pool.query('select version from data.reports where org = $1 and id = $2', [org, id])
+  return r.rowCount === 0 ? null : (r.rows[0].version as number)
 }

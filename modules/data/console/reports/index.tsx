@@ -19,7 +19,7 @@
 import { useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { Button, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
-import { apiGet, apiSend, messageOf } from '../lib/api'
+import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 
 /** Console 壳 Outlet context 的结构子集（壳侧真实形状见 apps/web ConsoleOutletContext；demo 模块先例） */
 interface ConsoleContext {
@@ -31,6 +31,12 @@ interface ReportRow {
   title: string
   requiredScope: string | null
   renderer: 'metabase' | 'platform'
+  // **登记侧**版本（写保护的读侧）：`GET /reports/manage` 每行回带；三个写动作回带它
+  // （PUT 走 body `expectedVersion`、DELETE 走查询串 `?expectedVersion=`）。服务端不服 ⇒ 409 STALE_WRITE。
+  // ⚠️ 观看面 `GET /reports` **刻意不带**它（那里没有写动作）——本类型只服务管理面，故必填。
+  // ⚠️ 本仓有**第二份**同名 `ReportRow`（`modules/data/domain/report-store.ts`，Task 1/3 已加 version）：
+  //    两处不同文件、编译器不会互相提醒，加字段时都要改（Task 1 已知 minor）。
+  version: number
 }
 
 export default function ReportsPage() {
@@ -50,7 +56,21 @@ export default function ReportsPage() {
     // 视图选择（不是鉴权）：manage 身份用管理清单（含页门未放行的行），观看清单不变
     const path = canManage ? '/reports/manage' : '/reports'
     return apiGet(path)
-      .then((b) => setRows((b as { reports: ReportRow[] }).reports))
+      .then((b) => {
+        const reports = (b as { reports: ReportRow[] }).reports
+        // ── fail-closed（评审 Minor ③，2026-09-29）────────────────────────────────
+        // 无校验断言 `as ReportRow[]` 曾把「服务端漏带 version」静默成坏快照：写动作随后发出
+        // `?expectedVersion=undefined`（PUT 则 body 里 undefined 被 JSON 丢掉 ⇒ 缺键）——服务端
+        // 只回一句 400 `INVALID_BODY`「输入不合法」，**根因（清单契约破损）彻底静默**。
+        // 这里提前拦：**坏快照不落地**（不 setRows ⇒ 表里没有行、也就没有能发出坏版本的写按钮），
+        // 并把「缺版本」这件事明说。只在管理清单上判——观看清单 `GET /reports` **刻意不带** version
+        // （那里没有写动作），对它判会把正常观看视图误判成坏数据。
+        if (canManage && !reports.every((r) => Number.isInteger(r.version) && r.version > 0)) {
+          // 客户端侧错误（非 HTTP 响应）⇒ status 传 0；`messageOf` 只认 `code`。
+          throw new ApiError(0, 'SNAPSHOT_INVALID')
+        }
+        setRows(reports)
+      })
       .catch((e) => messageApi.error(messageOf(e)))
   }
   useEffect(() => { void load() }, [])
@@ -108,30 +128,52 @@ export default function ReportsPage() {
     }
   }
 
+  // ── 三个写动作的共同纪律（写保护，spec §3③）─────────────────────────────────────
+  // ① **必带该行读到的版本**：服务端 fail-closed（PUT 缺 `expectedVersion` ⇒ 400 INVALID_BODY；
+  //    DELETE 缺/非法 `?expectedVersion=` ⇒ 400）。版本一律取**本行** `r.version`（管理清单读回），
+  //    不是页面级缓存、更不是常量——取错行的版本会被 409 拦下（这正是写保护要的）。
+  // ② **catch 里总是 `await load()`**：409（STALE_WRITE = 别人刚改过）之后列表必须刷新，
+  //    否则用户拿着陈旧版本重试必然再撞一次；文案「已为你刷新」也因此为真。
   const publish = async (r: ReportRow) => {
     try {
-      await apiSend(`/reports/${r.id}`, 'PUT', { requiredScope: null })
+      await apiSend(`/reports/${r.id}`, 'PUT', { requiredScope: null, expectedVersion: r.version })
       messageApi.success(`已发布「${r.title}」`)
-      await load()
-    } catch (e) { messageApi.error(messageOf(e)) }
+    } catch (e) {
+      messageApi.error(messageOf(e))
+    }
+    await load()
   }
 
   const recycle = async (r: ReportRow) => {
     try {
-      await apiSend(`/reports/${r.id}`, 'DELETE')
+      // ⚠️ DELETE **无 body**：版本走**查询串**（`?expectedVersion=N`，Task 3 硬约束）
+      await apiSend(`/reports/${r.id}?expectedVersion=${r.version}`, 'DELETE')
       messageApi.success(`已回收「${r.title}」`)
-      await load()
-    } catch (e) { messageApi.error(messageOf(e)) }
+    } catch (e) {
+      messageApi.error(messageOf(e))
+    }
+    await load()
   }
 
   const saveGate = async () => {
     if (gateEdit === null || gateDraft.trim() === '') return
     try {
-      await apiSend(`/reports/${gateEdit.id}`, 'PUT', { requiredScope: gateDraft.trim() })
+      await apiSend(`/reports/${gateEdit.id}`, 'PUT', {
+        requiredScope: gateDraft.trim(),
+        expectedVersion: gateEdit.version,
+      })
       messageApi.success('页门已更新')
       setGateEdit(null)
-      await load()
-    } catch (e) { messageApi.error(messageOf(e)) }
+    } catch (e) {
+      messageApi.error(messageOf(e))
+      // ⚠️ 冲突（409 STALE_WRITE）必须**同时关掉 Modal**（评审 I-2，2026-09-29）：`gateEdit` 是
+      //    **加载时**的行快照，`load()` 刷新的是 `rows`、刷不到它。若不关框，用户照着「请重试」
+      //    在框内再点「确定」⇒ 再发一次**陈旧** `gateEdit.version` ⇒ 再一个 409（看起来像坏掉了）。
+      //    关框 = **收口重试入口**：重试只能从刷新后的列表重新进入，那时拿到的才是新版本。
+      //    只对 409 关：其余错（403/404/5xx/网络）关框会**丢掉用户刚敲的 scope**，反而更差。
+      if (e instanceof ApiError && e.status === 409) setGateEdit(null)
+    }
+    await load()
   }
 
   /**
