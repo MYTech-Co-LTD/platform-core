@@ -41,7 +41,7 @@ export interface ReportRow {
 }
 
 /**
- * 七列投影提成常量：四处 `select/returning` 共用（避免漏改一处导致 `toReportRow` 拿到 `undefined`）。
+ * 八列投影提成常量：五处 `select/returning` 共用（避免漏改一处导致 `toReportRow` 拿到 `undefined`）。
  * `data.reports` 的读取一律走它，新增列只改这一行。
  */
 const REPORT_COLS = 'id, title, metabase_id, embed_params, required_scope, renderer, version, spec'
