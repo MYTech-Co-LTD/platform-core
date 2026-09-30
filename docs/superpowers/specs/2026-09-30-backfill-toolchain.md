@@ -117,12 +117,14 @@ sh backfill-retail-order-line.sh run [--batch N] [--force] # 守卫 → 顺序�
 
 ### 4.1 前置（只读，先做）
 
-1. **seed 管线**：把 `lemeng.retail.windows.backfill.json`（父）与
-   `lemeng.retail_order_line.window.json`（子，**回填复用**）`docker cp` 进**两个账套各自的**
+1. 🔴 **seed 管线（硬前置——2026-09-30 生产实例：漏了这步，触发即 `HTTP 400 not found: pipelines/lemeng.retail.windows.backfill.json`）**：
+   把 `lemeng.retail.windows.backfill.json`（父）与 `lemeng.retail_order_line.window.json`（子，**回填复用**；若该账套已在跑 L1 则**卷内已有**，确认即可）`docker cp` 进**两个账套各自的**
    `/workspace/pipelines/`，随后**重建 catalog**（见 `deploy/duckle/console/DELIVERY.md` §0.3 与 §1④）。
    **别碰 `schedules.json`**：本管线不进调度。
+   ⚠️ 注意 sync **不会 seed**（sync 只刷新检出；卷内要靠 `docker cp`），且**检出更新不等于卷内更新**——两件事分别确认。
 2. **凭据**：`DUCKLE_TOKEN`（两个 console 的 Bearer）——值在 openship env(isSecret)，**不写明文**。
-   `ZOS_BUCKET` 供湖侧寻址（pg_duckdb 通道本身免凭据）。
+   🟢 2026-09-30 生产实例的**取法**（宿主上没有该 env）：`DUCKLE_TOKEN=$(docker exec <console容器> printenv DUCKLE_TOKEN)`——**在命令内现取**，值只活在当次进程内存，**不回显、不落日志**。
+   `ZOS_BUCKET` 供湖侧寻址（pg_duckdb 通道本身免凭据）；🟢 同一实例：裸 exec 上**没有** `ZOS_BUCKET` ⇒ 不给就 `LAKE_CHANNEL_UNAVAILABLE`（fail-closed，正确行为），调用时带上即可。
 3. **定位 console**：一账套一 console（3120 → `127.0.0.1:18080`，64188 → `127.0.0.1:18081`）；
    用 openship MCP 实测定位容器与所在机，**别凭记忆**（`DELIVERY.md` §0.1）。
 4. **只读确认读数**：`sh /opt/lemeng-backfill.sh plan` —— 五批状态 + `next: batch 1`；
@@ -163,6 +165,17 @@ sh /opt/lemeng-backfill.sh run --batch 1     # 之后 2 / 3 / 4 / 5，逐条来
 
 🔴 **回填本身不可逆**：它用新管线覆盖写，旧 18 列管线已退役 ⇒ **没有任何办法把分区改回 18 列**。
 「不再继续回填」是可行的**暂停**（湖停在混代），**不是回滚**（spec §4 回滚点，逐字照搬）。
+
+---
+
+## 4.5 🟢 生产实跑记录与两处订正（2026-09-30，五批全部完成）
+
+**结果**：五批全 `done`、`next:（全完成）`；终态 `n == orders == 146,743`、跨度 2026-09-23..09-30、最老分区 `parquet_schema = 25`（= 24 列）⇒ **全湖均一**。全程现行读法可读。逐批读数见 issue **#328** 评论。
+
+**两处当场暴露、本 PR 已修的工具缺口**：
+
+1. **整湖判据撞「当天分区」的写入竞态**：批 3 重写成功，但整湖判据报 `BACKFILL_FAILED:whole-lake 判据通道失败`——复现确认根因是**扫到正被 tick 每 5 分钟覆盖写的当天分区**（`ETag … file has changed` 原文在 #328）。**fail-closed 停住是对的**；人工判明性质后从批 4 续跑即通过（间歇竞态）。⇒ 修法：判据 SQL **排除「当天及以后」的 bizday**（当天恒 24 列、对不变量无信息量）+ 通道失败**重试一次**（输出留痕，非静默）。
+2. **runbook 前置不完整**：首次触发报 `not found: pipelines/…backfill.json`（变体管线没进卷）⇒ seed 步骤升为**硬前置**并写明报错形状；`DUCKLE_TOKEN` 在宿主上**没有** env 来源 ⇒ 补「从 console 容器现取」的取法（值只在进程内存）。
 
 ---
 

@@ -135,11 +135,17 @@ batch_schema_sql() { # $1=day $2..=books → 该批**全部分区**（每 book �
   done
 }
 
-whole_lake_sql() { # 批后「整湖混读仍通」判据（spec §4 Phase 1 **逐字**）
+whole_lake_sql() { # 批后「整湖混读仍通」判据（spec §4 Phase 1 **逐字**，🟢 2026-09-30 订正：排除当天）
   # ⚠️ 别用 `count(*)` 当判据 —— 它对列集不敏感（spec §2.2/§4 明写）。判据是 `orders = n` + `mind`。
   # ⚠️ 形态必须留在 `from read_parquet(glob) r` + `r['列名']`：这正是门禁规则① 守的形态
   #    （`dbt/README.md` §6 / `scripts/check-data-models.mjs`），也是 D1=B「读侧不动」的全部意义。
-  printf "SELECT count(*) AS n, count(r['order_no']) AS orders, min(r['bizday']::date) AS mind, max(r['bizday']::date) AS maxd FROM read_parquet('%s') r" \
+  # 🟢 2026-09-30 生产实例订正（#328 评论）：**排除「当天及以后」的 bizday**。
+  #   当天分区正被 tick 每 5 分钟覆盖写 ⇒ 整湖扫描与写并发 ⇒ ETag 校验报
+  #   「file has changed」（实测原文见 #328），且当天分区恒 24 列、对不变量**没有信息量**
+  #   ⇒ 排除它既消除竞态，判据语义不变（不变量关心的是「历史旧形分区」）。
+  # ⚠️ 这里的 `r['bizday']` 是**载荷列**（契约 24 列之一，管线 flatten 时写入），**不是** hive 分区列
+  #   ⇒ 不开 `hive_partitioning`（那条「分区列遮蔽载荷列」的禁令原样成立，见批 schema 判据的注释）。
+  printf "SELECT count(*) AS n, count(r['order_no']) AS orders, min(r['bizday']::date) AS mind, max(r['bizday']::date) AS maxd FROM read_parquet('%s') r WHERE r['bizday']::date < CURRENT_DATE" \
     "$(lake_glob)"
 }
 
@@ -330,7 +336,15 @@ cmd_verify() { # $1=batch
   _vf_whole=$(lake_query "$(whole_lake_sql)")
   _vf_rc=$?
   if [ "${_vf_rc}" -ne 0 ]; then
-    echo "BACKFILL_FAILED:whole-lake 判据通道失败（rc=${_vf_rc}）"
+    # 🟢 2026-09-30（#328 生产实例）：湖侧读会在「扫到正被写的对象」时报 ETag 类错误
+    #   （file has changed）。排除当天后已大幅收敛，但仍可能撞上（如跨零点瞬间）。
+    #   重试**一次**并在输出里留痕——这不是静默重试：两行都可见，第二次仍失败才判失败。
+    echo "  whole-lake: 首次通道失败（rc=${_vf_rc}），1 次竞态重试（排除当天的订正后仍撞 ⇒ 可能是别的病，别硬跑）"
+    _vf_whole=$(lake_query "$(whole_lake_sql)")
+    _vf_rc=$?
+  fi
+  if [ "${_vf_rc}" -ne 0 ]; then
+    echo "BACKFILL_FAILED:whole-lake 判据通道失败（rc=${_vf_rc}，含 1 次重试）"
     return 3
   fi
   printf '%s\n' "${_vf_whole}" | whole_lake_verdict "${OLDEST_DAY}" || return 1
