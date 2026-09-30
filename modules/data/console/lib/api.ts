@@ -96,6 +96,9 @@ const MESSAGES: Record<string, string> = {
   // `version`，写动作会发出 `?expectedVersion=undefined`（PUT 则整键被 JSON 丢弃）⇒ 服务端只回
   // 400「输入不合法」，**清单契约破损被静默**。console 于是 fail-closed：坏快照不落地并说这句。
   SNAPSHOT_INVALID: '报表清单缺少版本号，请刷新页面；若仍如此请联系平台侧',
+  INVALID_SPEC: '报表规格不合法（含不支持的字段或取值）',
+  UNKNOWN_CHART_TYPE: '这个图型平台还不支持（图型白名单由平台代码维护）',
+  SPEC_TOO_LARGE: '报表规格过大（面板数超出上限）',
 }
 
 /** 已知码给中文文案；未知码回落成码本身（便于排障）。 */
