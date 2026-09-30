@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.61.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.60.1...v0.61.0) - 2026-09-30
+- 【新增】dbt: #394 读侧 Phase 2——staging 加契约 v2 的 6 列 ([#395](https://github.com/MYTech-Co-LTD/platform-core/pull/395), [77bf082](https://github.com/MYTech-Co-LTD/platform-core/commit/77bf082458ac4a0c635a6a454fdd28fc7476be63))
+
+
 ## [0.60.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.60.0...v0.60.1) - 2026-09-30
 - 【修复】duckle: #392 回填工具两处缺口（判据排除当天 + runbook 前置补全） ([#393](https://github.com/MYTech-Co-LTD/platform-core/pull/393), [3f62f82](https://github.com/MYTech-Co-LTD/platform-core/commit/3f62f82cf4f9d5ae8afdc0ebb0609438cf55d299))
 
