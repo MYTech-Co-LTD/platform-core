@@ -1,7 +1,7 @@
 # 对账判别式落 dbt audit：赠品命中集 + 退货归属完备性
 
 > 2026-09-30 ｜ 依据：判别式正典 `2026-09-30-recon-zeroing-self-attribution.md`（#396 定案）+
-> `2026-09-28-lemeng-recon-attribution.md` §3 末的收紧设想 ｜ Refs #287 #396
+> `2026-09-28-lemeng-recon-attribution.md` §3 末的收紧设想 ｜ Closes #397（PR #398）· Refs #287 #396
 > 结论一句话：**两个判别式已从「单日人工验证」变成每天自动守的 dbt singular test，且两条测试的
 > 编译形态 SQL 已在真库（pg_duckdb 免凭据只读通道）上全量跑过——settled 日全绿，唯一出行的是
 > 当天新鲜度竞态（与既有两条指标 audit 同性质，非本族新增风险）。**
