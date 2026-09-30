@@ -98,6 +98,7 @@ function compliant(): Record<string, string> {
       '    grain: [system_book, bizday]',
       '    owner: data-platform',
       '    tier: certified',
+      '    source: lemeng',
       '    definition: 净销售额 = 有效零售订单成交金额合计',
       '',
     ].join('\n'),
@@ -154,6 +155,33 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
     expect(violations[0]?.file).toBe(METRICS)
     expect(violations[0]?.message).toContain('owner')
     expect(violations[0]?.message).toContain('retail:net_sales')
+  })
+
+  // ── 规则 ⑤ 的**源维度**那一半（计划 5 Task 3）：`source` 必填 + 形状 ────────────────────
+  // ⚠️ 与既有的 `sources`（**对象存储路径**，人读、选填、无门禁）**不是一回事**：
+  //    `source` 是**源系统**（如 `lemeng`），Task 5 的裁剪与 Task 6 的对账都靠它。
+  //    本格只钉「缺了就报」，不碰 `sources`。
+  it('格⑤附带：语义声明缺 source（源系统）→ 违规（没有它，源维度在声明面就没有事实源）', () => {
+    const root = variant((f) => {
+      f[METRICS] = f[METRICS].replace('    source: lemeng\n', '')
+    })
+    const violations = checkDataModels(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.file).toBe(METRICS)
+    expect(violations[0]?.message).toContain('source')
+    expect(violations[0]?.message).toContain('retail:net_sales')
+  })
+
+  it('格⑤附带：source 形状不合（大写 / 连字符 / 前导数字）→ 违规', () => {
+    // 三个反例各跑一次：形状规则是 `^[a-z][a-z0-9_]*$`（小写蛇形，与指标名两段同一形态）
+    for (const bad of ['Le-meng', 'LEMENG', '3lemeng']) {
+      const root = variant((f) => {
+        f[METRICS] = f[METRICS].replace('    source: lemeng', `    source: ${bad}`)
+      })
+      const violations = checkDataModels(root)
+      expect(violations, `source: ${bad} 没被判违规`).toHaveLength(1)
+      expect(violations[0]?.message).toContain('source')
+    }
   })
 
   it('格③：staging 用 `::double` → 违规（`::double precision` 不报，见格①的反面对照）', () => {
@@ -260,6 +288,7 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
         '    grain: [system_book, bizday]',
         '    owner: tenant-admin',
         '    tier: experimental',
+        '    source: lemeng',
         '    definition: 同名但另一处定义（口径分叉）',
         '',
       ].join('\n')
@@ -299,12 +328,14 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
         '    grain: [system_book]',
         '    owner: data-platform',
         '    tier: certified',
+        '    source: lemeng',
         '    definition: 甲',
         '  - name: "retail__a:b"',
         '    expression: "sum(fct_retail_sale.net_amount)"',
         '    grain: [system_book]',
         '    owner: data-platform',
         '    tier: certified',
+        '    source: lemeng',
         '    definition: 乙',
         '',
       ].join('\n')

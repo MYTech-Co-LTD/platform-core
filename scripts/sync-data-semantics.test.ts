@@ -58,6 +58,19 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
     })
   })
 
+  it('★ 声明的 `source`（源系统）→ `sourceSystem`（源维度进声明面；L1 行恒有源）', () => {
+    // ⚠️ 与既有的 `sources`（对象存储路径，选填、人读）不是一回事：这里映射的是**源系统**。
+    const rows = declarationsFromYaml(yaml([
+      {
+        name: 'x:y', source: 'lemeng', definition: 'd', expression: 'sum(t.c)',
+        grain: ['g'], owner: 'o', tier: 'certified',
+      },
+    ]))
+    expect(rows[0].sourceSystem).toBe('lemeng')
+    // 仓内真实事实源的两条声明都带上了源（否则物化出的 L1 行没有源维度）
+    for (const row of readDeclarations(ROOT)) expect(row.sourceSystem, `${row.id} 没有源`).toBe('lemeng')
+  })
+
   it('★ 形状契约两侧同源：sync 物化的每一条都能被唯一编译点解析（写侧↔读侧）', () => {
     const rows = readDeclarations(ROOT)
     expect(rows.length).toBeGreaterThan(0)
@@ -120,9 +133,9 @@ describe('deriveRelation：从 expression 反推 FROM 关系名', () => {
 })
 
 describe('diffDeclarations：双向差集的四态分类', () => {
-  const row = (id: string, title: string) => ({
+  const row = (id: string, title: string, sourceSystem: string | null = 'lemeng') => ({
     id, title, description: '', requiredScope: null,
-    subjectColumn: 'org', selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {},
+    subjectColumn: 'org', selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {}, sourceSystem,
   })
   const declared = [row('a', 'A'), row('b', 'B2'), row('c', 'C')]
   const current = [row('a', 'A'), row('b', 'B1'), row('d', 'D')]
@@ -148,6 +161,19 @@ describe('diffDeclarations：双向差集的四态分类', () => {
     const newer = declared.map((r) => ({ ...r, created_at: new Date(0), updated_at: new Date(9) }))
     expect(diffDeclarations(withTs, newer).updated).toEqual([])
     expect(diffDeclarations(withTs, newer).unchanged.length).toBe(3)
+  })
+
+  it('★ 改了声明的 source 而库里没跟上 ⇒ 判为「更新」（漂移可比；缺这条 --check 会假绿）', () => {
+    // 这条用例存在的理由：`--check` 的全部价值是「声明的变化能被检出」。
+    // `sourceSystem` 若**不进** comparableOf，改了声明的 source 而库里还是旧值 ⇒ 判「未变」
+    // ⇒ 门禁报「无漂移」（假绿），而库里的源维度已经与声明分叉。
+    const declaredSrc = [row('a', 'A', 'lemeng')]
+    const currentOld = [row('a', 'A', 'legacy_erp')]
+    expect(diffDeclarations(declaredSrc, currentOld)).toMatchObject({
+      added: [], updated: ['a'], removed: [], unchanged: [],
+    })
+    // 反向对照：source 一致 ⇒ 仍然判「未变」（否则「可比」会退化成「恒判更新」）
+    expect(diffDeclarations(declaredSrc, [row('a', 'A', 'lemeng')]).unchanged).toEqual(['a'])
   })
 })
 

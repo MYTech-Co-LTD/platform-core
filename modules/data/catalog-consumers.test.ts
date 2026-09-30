@@ -21,6 +21,7 @@ import type { Hono } from 'hono'
 import mod from './index'
 import { applyMigrations, buildTestApp, makeIdentity } from './test-util'
 import { L1_ORG, upsertL1Metric, upsertMetric } from './domain/metric-store'
+import type { L1MetricDef } from './domain/metric-store'
 import type { MetricDef } from './domain/authz'
 import type { SqlExecutor } from './domain/query-service'
 
@@ -39,19 +40,22 @@ const CLASH_ID = `${L1_PREFIX}clash`
  * `select_sql` 里的 `fct_t8c.platform_amount` 是**它在 SQL 里的指纹**——
  * 断言「这一条真的被查了」时认这个串，而不是认「200」。
  */
-const L1_PLATFORM: MetricDef = {
+const L1_PLATFORM: L1MetricDef = {
   id: PLATFORM_ID, title: '平台净销售额', description: '平台口径净销售额',
   requiredScope: null, subjectColumn: 'org',
   selectSql: 'select sum(fct_t8c.platform_amount) as value from fct_t8c',
   groupBy: '', params: {},
+  // L1 行恒有源（源维度进声明面 = Task 3）——本夹具是「sync 的产物」，故与声明同形。
+  sourceSystem: 'lemeng',
 }
 
 /** 撞 id 的两个版本：租户**先**建 L2，平台**事后**同 id 物化（写侧闸门只拦「L1 已存在」的时序）。 */
-const L1_CLASH: MetricDef = {
+const L1_CLASH: L1MetricDef = {
   id: CLASH_ID, title: '平台版', description: '平台版说明',
   requiredScope: null, subjectColumn: 'org',
   selectSql: 'select sum(fct_t8c.l1_amount) as value from fct_t8c',
   groupBy: '', params: {},
+  sourceSystem: 'lemeng',
 }
 const L2_CLASH: MetricDef = {
   id: CLASH_ID, title: '租户版', description: '租户版说明',

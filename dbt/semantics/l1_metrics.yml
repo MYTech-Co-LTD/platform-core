@@ -17,7 +17,11 @@
 #   owner       必填。口径负责人（谁改谁负责；治理机制①）。
 #   tier        必填。`certified`（已认证，可直接对外）| `experimental`（试验口径，消费方自担）。
 #               ⚠️ tier 是**标记**不是强制（spec §10 软肋③）：本仓不靠它挡谁，靠它让人一眼看见成熟度。
-#   sources     选填（人读）。指标背后**实际读的对象存储路径**。
+#   source      必填。**源系统**（小写蛇形，如 `lemeng`）—— 这条口径的数据来自哪个源。
+#               ⚠️ 与下面的 `sources` **不是一回事**（一个是源系统、一个是存储路径），别合并：
+#               它会**落库**（`data.metrics.source_system`，sync 物化）并被消费侧拿去与
+#               「已接入源」比对（未接入该源的租户看不到这条指标）⇒ 写法必须与登记值逐字一致。
+#   sources     选填（人读）。指标背后**实际读的对象存储路径**（不落库、无门禁）。
 #
 # ⚠️ 「声明 ↔ 实现一致」（expression 指向的模型/列真的存在且口径一致）这条**当前没有机检**
 #    —— 它需要真库（spec §10 门禁③ 的形态）。当前只有：本文件的**存在性/字段/命名/对账文件**机检
@@ -36,6 +40,7 @@ metrics:
     grain: [system_book, bizday]
     owner: data-platform
     tier: experimental
+    source: lemeng
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
     # 对账（每个声明指标一条独立复算，layered §7 硬约束 7）：对应的 singular test 文件名**不在这里写**
@@ -59,5 +64,6 @@ metrics:
     grain: [system_book, bizday]
     owner: data-platform
     tier: experimental
+    source: lemeng
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'

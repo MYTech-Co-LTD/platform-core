@@ -49,6 +49,8 @@ function l1(over: Partial<MetricRow> = {}): MetricRow {
     groupBy: 'system_book, bizday',
     params: {},
     source: 'l1',
+    // 源系统（源维度）：L1 声明里 `source` 必填 ⇒ sync 物化出的 L1 行恒有源。
+    sourceSystem: 'lemeng',
     ...over,
   }
 }

@@ -12,7 +12,8 @@
 //      报 `type "double" is only a shell`；两种写法同一条路，故同拦）
 //   ③ 禁 `union_by_name`（漂移必须显式处理，不许引擎替我们猜列集）
 //   ④ staging 一对一（staging 模型 ↔ sources.yml 的源，**双向**）
-//   ⑤ 语义声明必填字段齐全（owner / tier / grain / definition + name / expression）
+//   ⑤ 语义声明必填字段齐全（owner / tier / grain / definition / source + name / expression）
+//      + `source`（**源系统**）的形状（小写蛇形）。⚠️ 与选填的 `sources`（对象存储路径）不是一回事
 //   ⑥ 指标名 `<域>:<指标名>` 命名空间前缀 + 同名唯一（跨文件）
 //   ⑦ 每个声明指标有对应 `dbt/tests/audit_<指标>.sql` + 该文件名映射无碰撞
 //   ⑧ **L2 声明静态面**（T9 / 拍板 #5 的「门禁③机检范围覆盖用户产生的声明」）：
@@ -156,8 +157,19 @@ const DOUBLE_CAST_RE = /(?:::\s*|\bas\s+)double\b(?!\s+precision)/gi
 const UNION_BY_NAME_RE = /union_by_name/gi
 /** 规则 ⑥：指标名的命名空间形态 `<域>:<指标名>`（两段都小写蛇形） */
 const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
-/** 规则 ⑤：语义声明必填字段（owner/tier/grain/definition + name/expression；见计划 Step 4 的字段清单） */
-const REQUIRED_METRIC_FIELDS = ['expression', 'grain', 'owner', 'tier', 'definition']
+/**
+ * 规则 ⑤：语义声明必填字段（owner/tier/grain/definition/source + name/expression；见计划 Step 4 的字段清单）。
+ * `source` = **源系统**（如 `lemeng`）——spec §3⑧ 的源维度，Task 5 的裁剪按它判「这个源接没接入」。
+ * ⚠️ 与选填的 `sources`（对象存储路径，人读）**不是一回事**，别把两者合并。
+ */
+const REQUIRED_METRIC_FIELDS = ['expression', 'grain', 'owner', 'tier', 'definition', 'source']
+/**
+ * 规则 ⑤ 的形状：`source` 的形态（与指标名每一段同一形态：小写蛇形、首字符是字母）。
+ * 为什么值得一条形状规则而不是「非空即可」：`source` 会被拿去与「已接入源」的登记值**比对**
+ * （Task 5 的裁剪、Task 6 的对账）⇒ `Lemeng` / `lemeng-erp` 这类写法会比对不上，
+ * 症状是「指标对所有人都不可见」而不是报错（fail-closed 但极难定位）。
+ */
+const METRIC_SOURCE_RE = /^[a-z][a-z0-9_]*$/
 
 /** @param {string} p */
 const toPosix = (p) => p.split(sep).join('/')
@@ -779,7 +791,19 @@ export function checkDataModels(rootDir) {
       push(
         metric.file,
         0,
-        `指标 \`${metric.name}\` 的语义声明缺必填字段：${missing.join(' / ')} —— owner/tier/grain/definition 是治理门禁的必填面（spec §10 机制① 的 dbt 原生对应物），expression 是口径本体；缺了它，指标就无法登记、无法溯源、无法按 tier 收敛`,
+        `指标 \`${metric.name}\` 的语义声明缺必填字段：${missing.join(' / ')} —— owner/tier/grain/definition 是治理门禁的必填面（spec §10 机制① 的 dbt 原生对应物），expression 是口径本体，source（**源系统**，如 \`lemeng\`）是源维度的事实源（消费侧的裁剪按它判「这个源接没接入」）；缺了它，指标就无法登记、无法溯源、无法按 tier 收敛、无法按源裁剪`,
+      )
+    }
+
+    // ⑤-b `source` 的形状（**源系统**：小写蛇形）
+    // ⚠️ 与选填的 `sources`（对象存储路径）无关：那条路**不**在本门禁的判据面里，原样保留。
+    // 缺字段的情形已由上面 ⑤ 报过 ⇒ 这里只判「给了值但形态不对」，同一处不报两条。
+    const source = asText(metric.fields?.source)
+    if (source !== '' && !METRIC_SOURCE_RE.test(source)) {
+      push(
+        metric.file,
+        0,
+        `指标 \`${metric.name}\` 的 \`source\`（源系统）\`${source}\` 形态不合规 —— 必须是小写蛇形（\`^[a-z][a-z0-9_]*$\`，如 \`lemeng\`）。它要与「已接入源」的登记值**逐字比对**（消费侧裁剪、对账），大写/连字符/前导数字这类写法会比对不上，症状是「指标谁都看不见」而不是报错`,
       )
     }
 

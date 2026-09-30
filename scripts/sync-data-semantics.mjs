@@ -86,6 +86,11 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  * 单个具体形状（字段恒在、无联合）也正合 scripts/ 是 checkJs 工程的脾气：
  * JSDoc 里写可辨识联合会被加宽，窄化随之失效。
  *
+ * `sourceSystem` 必须**进**这个形状（而不只是进 `MetricDef` 的传递）：它是 `comparableOf` 的
+ * 比对面之一，而 `comparableOf` 是 `--check` 判「有没有漂移」的唯一判据。少了它，改了声明的
+ * `source` 而库里的 `source_system` 还是旧值 ⇒ 判「未变」⇒ 门禁报「无漂移」（假绿），
+ * 而这恰恰是 sync 存在的理由（把声明的变化变成一次可见的写）。
+ *
  * @typedef {object} ComparableMetric
  * @property {string} id
  * @property {string} title
@@ -95,6 +100,7 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  * @property {string} selectSql
  * @property {string} groupBy
  * @property {Record<string, MetricParamDef>} params
+ * @property {string | null} sourceSystem
  */
 
 /**
@@ -160,6 +166,9 @@ export function buildSelectSql(expression, grain, relation) {
  *   `requiredScope` → **恒 null**：L1 指标对所有拿到本模块的人可见。`tier` **不**映射成
  *                     requiredScope——spec §10 明写 tier 是**标记不是强制**（「本仓不靠它挡谁，
  *                     靠它让人一眼看见成熟度」），拿它当权限会凭空造出一条谁也说不清的授权规则。
+ *   `source`      → `sourceSystem`（库列 `source_system`）：**源系统**（如 `lemeng`），
+ *                     spec §3⑧ 的源维度。⚠️ 与同一份声明里的 `sources`（对象存储路径，人读）
+ *                     **不是一回事**；也与库里的 `source`（取值 l1/l2 = 谁写的）不是一回事。
  *   `owner` / `tier` / `sources` → **不落库**（`data.metrics` 没有对应列）。它们仍是治理面的
  *                     事实源（在 YAML 里、被静态门禁规则 ⑤ 强制必填），只是不在这张表上体现。
  *                     ⚠️ 这是本任务的一处**已知边界**，见 README「L2 的已知边界」。
@@ -195,13 +204,21 @@ export function declarationsFromYaml(parsed) {
       groupBy: grain.join(', '),
       // L1 声明没有查询参数（params 是问数参数面的东西，L2 也暂不开放）
       params: /** @type {Record<string, MetricParamDef>} */ ({}),
+      // 源系统（源维度）：声明的 `source` 是必填字段（门禁规则 ⑤），故 L1 行恒有源。
+      sourceSystem: String(m.source),
     }
   })
 }
 
-/** 内容比对用的一行摘要（**只比**决定「要不要写」的字段；created_at/updated_at 不参与）。 */
+/**
+ * 内容比对用的一行摘要（**只比**决定「要不要写」的字段；created_at/updated_at 不参与）。
+ *
+ * `sourceSystem` 必须在场：否则「改了声明的 source、库里没跟上」会被判成「未变」——
+ * 而 `--check` 只认这个判据，于是门禁假绿（见上面 ComparableMetric 的说明）。
+ */
 const comparableOf = (/** @type {ComparableMetric} */ row) => JSON.stringify([
   row.title, row.description, row.requiredScope, row.subjectColumn, row.selectSql, row.groupBy, row.params,
+  row.sourceSystem,
 ])
 
 /**

@@ -10,6 +10,7 @@ import { TENANT_SOURCES } from '@platform/sdk'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import { L1_ORG, upsertL1Metric, upsertMetric } from '../domain/metric-store'
+import type { L1MetricDef } from '../domain/metric-store'
 import type { MetricDef } from '../domain/authz'
 import type { ModuleVars } from './context'
 
@@ -32,12 +33,18 @@ function def(over: Partial<MetricDef> = {}): MetricDef {
 // ── L1 夹具（平台词表）───────────────────────────────────────────────────────────
 // 必须满足 select_sql 的**形状契约**（`select <表达式> as value[, <维度>] from <关系>`），
 // 否则 L2 编译点会抛 BAD_BASE_SQL —— 那正是它该做的（形状不合契约就不许当 base）。
-const L1_SALES = def({
+/**
+ * L1 物化路径的入参 = `MetricDef` + **源系统**（源维度：L1 声明里 `source` 必填 ⇒ L1 行恒有源）。
+ * 本文件的 L1 夹具都是 sync 的产物，故与声明同形（`lemeng` = 当前唯一已接入源）；
+ * 不给源的 L1 行在 Task 5 的裁剪里会被判成「未接入源」而**没人看得见**——那是不该出现在夹具里的形状。
+ */
+const l1Def = (over: Partial<MetricDef> = {}): L1MetricDef => ({ ...def(over), sourceSystem: 'lemeng' })
+const L1_SALES = l1Def({
   id: 'retail:net_sales', title: '净销售额',
   selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale',
   groupBy: 'system_book, bizday',
 })
-const L1_FINANCE = def({
+const L1_FINANCE = l1Def({
   id: 'retail:margin', title: '毛利', requiredScope: 'data:finance',
   selectSql: 'select sum(fct_retail_sale.margin) as value, system_book from fct_retail_sale',
   groupBy: 'system_book',
@@ -239,7 +246,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     const clashId = L1_CLASH_PROBE
     const post1 = await post(l2Body({ id: clashId }))
     expect(post1.status, '撞 id 的 L2 行没建起来（夹具前提不成立）').toBe(201)
-    await upsertL1Metric(pool, def({ id: clashId, title: '平台同 id 版' }))
+    await upsertL1Metric(pool, l1Def({ id: clashId, title: '平台同 id 版' }))
 
     // 前提核对：合并词表里这条 id 由 **L1 赢**（租户那行在消费面上看不见）
     const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
