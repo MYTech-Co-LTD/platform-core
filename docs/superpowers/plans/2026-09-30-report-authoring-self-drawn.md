@@ -386,6 +386,9 @@ git commit -m "test(data): 自绘数据通路与 Metabase 判据同源 + 逐查�
   （spec §3⑥ 实测：没有白名单时，规格里多塞一个可执行字段会被**照单接受**）。
 - **图型白名单是代码常量**（`domain/report-spec.ts` 的 `CHART_TYPES`）：**加图型 = 改常量 + 加渲染分支 + 测试，走 PR**；
   **不做** env/DB 可配（那会让「渲染器能力」与「平台代码」脱钩 ⇒ 库里加了图型而渲染器不认 = 静默空白）。
+- **「判据同源」证到什么程度（Task 5 评审转办，别写成更强的结论）**：Task 5 的断言证的是
+  「**同一行语义声明 ⇒ 同一 SQL 骨架**」（同一 `metricId`、A/B 两租户各自注入自己的主体值、主体值抹平后两条 SQL 全等）。
+  **不含**「自绘路与 Metabase 嵌入路**跨路径**同源」的断言（那要另立用例）。写文档时**别把它说成后者**。
 - **`panel.dims` 的语义（Task 4 评审裁决，必须写清）**：dims 是**渲染层的透视轴**——`dims[0]` 为 x 轴、
   其余为系列维度；**不进 `/query`**（`QueryBody` 只有 `{metricId, args}`）。**分组跟随指标自身的 grain**
   （L1 grain / L2 visibleDims，`GROUP BY ${metric.groupBy}`）；`args` 只做等值过滤。**别把 dims 写成"控制分组"**——
