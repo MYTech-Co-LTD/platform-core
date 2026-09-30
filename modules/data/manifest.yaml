@@ -61,6 +61,11 @@ api:
     # 「发布」= requiredScope 置 null，没有独立的 published 列（见 report-store 头注）。
     - { method: GET,    path: /reports/manage,        scope: data:manage }
     - { method: PUT,    path: /reports/:id,           scope: data:manage }
+    # ── 自绘规格读写（#391 计划 6 Task 3）：读 = 观看面（行级页门照 embed-url 的 visibleTo
+    #    裁剪，Task 4 渲染器从这里取规格）；写 = 管理面动作（改规格就是改报表内容）。
+    #    注册序保持字面量在前、param 在后（#145 口径）。──
+    - { method: GET,    path: /reports/:id/spec,      scope: data:query }
+    - { method: PUT,    path: /reports/:id/spec,      scope: data:manage }
 frontend:
   console:
     - { path: /console/data, title: 数据问数, icon: BarChartOutlined, scope: data:query, entry: ./console/index.tsx }

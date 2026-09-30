@@ -58,6 +58,10 @@ const MESSAGES: Record<string, string> = {
   // （逐行按 renderer 判），这条是**防御性**文案——只有陈旧视图/竞态才会点到；
   // 服务端守卫见 `GET /reports/:id/edit-url`（409 同码）。
   RENDERER_NOT_EDITABLE: '平台自绘报表没有可编辑的 Metabase 页面',
+  // 自绘规格读写（#391 计划 6 Task 3）：打到 metabase 行上的 `GET/PUT /reports/:id/spec`。
+  // 与上面两条 renderer 守卫同族——列表按 renderer 分流后正常点不到，这条是**防御性**文案
+  // （陈旧视图/竞态才会点到）；服务端守卫见 routes/reports.ts 的两个 /spec 端点（409 同码）。
+  RENDERER_NOT_SELF_DRAWN: '只有平台自绘报表才能读写规格',
   // 「没配」与「配了但坏了」要分开：本条 = 配置状态（`MB_PROXY_PUBLIC_ORIGIN` 缺配/非 https，
   // 或 `PLATFORM_SESSION_SECRET` 过短——均属运维侧，见 `modules/data/routes/reports.ts` 的
   // fail-closed 前置检查）。用户自己做什么都没用，所以直接说联系运维，别让他反复重试。
