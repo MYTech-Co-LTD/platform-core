@@ -1,4 +1,4 @@
-sha256-of-rest e70b768101795b2ee18b0302b97fba0c90baeeba775e8316b1c5a77975c0aa09
+sha256-of-rest b600bf01f66ce4478fa688b8acff8596ce8e336ee682b6ba0c49c8c9a0ffd41c
 d76cda3f506128316019928fe02a4458a230880368b55cf788395cc996024eb2 dbt/README.md ${REPO}/dbt/README.md 0644
 cc1d78b5c825d5902d22be9b17fbabdc0833afb3c25912e392f8765004a76776 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -23,7 +23,7 @@ fe8339e0c38c1f17ca75be63fefd86718cbccdb0c68a9d70697473ddecbb356d dbt/tests/asser
 d43c40d2e1dd6c80db95782f3a7481028472868c77a2df31a46296fcfd908860 dbt/tests/audit_retail__order_count.sql ${REPO}/dbt/tests/audit_retail__order_count.sql 0644
 2987511c432bf3a97f33ea4e62dac299bd882e51111974d2c33e012480dbe331 deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
 8679ed09c1ac5c65194c59fb2044e9edb2b7e5266ce08af4e08bd90bd4c70f6d deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
-795fb0dfa828591c2106296a25c88e55028a607943fc18ee522211835d43d008 deploy/duckle/console/DELIVERY.md ${REPO}/deploy/duckle/console/DELIVERY.md 0644
+af9925a320216cdf63a5e1375715cf647ab84624dce11343dccf745743475821 deploy/duckle/console/DELIVERY.md ${REPO}/deploy/duckle/console/DELIVERY.md 0644
 1641a5665e8b29cb5c71a3d40d2c9e0edeef32b1b22b75871a6ea3a58a1a30fa deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
 f3013c607460e595c471698d24ae3da0723aa5e31e139b3ba07e5db40ee59278 deploy/duckle/console/alerts.json ${REPO}/deploy/duckle/console/alerts.json 0644
 4ed2f3b59e4633448e9ddd0979ca0e7585af24949bfa0c7bb12710b7601c55f7 deploy/duckle/console/owners.json ${REPO}/deploy/duckle/console/owners.json 0644
@@ -31,6 +31,7 @@ f3013c607460e595c471698d24ae3da0723aa5e31e139b3ba07e5db40ee59278 deploy/duckle/c
 f27414725b75d8f8764645e7366c45ad8da85a836106656f7490c45370b0d968 deploy/duckle/console/pipelines/lemeng.dim.item.l0.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item.l0.json 0644
 f5e6362e6de401399f05ec538cb003ee58eca0f49ef0698541b8eb4f4a15e757 deploy/duckle/console/pipelines/lemeng.retail.close.l1.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.close.l1.json 0644
 6b5182c6527ce507eb60035b66c3af4e15b587f577cb63ed4e4d4954ba1aee8a deploy/duckle/console/pipelines/lemeng.retail.tick.l1.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.tick.l1.json 0644
+158885e757c771a2b163d870fe834b73b6df92adb0dd65f49cf728abd733fe65 deploy/duckle/console/pipelines/lemeng.retail.windows.backfill.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.windows.backfill.json 0644
 5a73eb2bdf831058f99e174c4684419cc2627876ba5ce2974405e9e4f8c46923 deploy/duckle/console/pipelines/lemeng.retail.windows.l1.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.windows.l1.json 0644
 5e86dbd6970ac4ef386372d799dbb77568dd30921ef7a604c88e3ae4f72d07a9 deploy/duckle/console/pipelines/lemeng.retail_order_line.tick.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail_order_line.tick.json 0644
 c54543d8b50f2e252b56681e39e4eba700cd109b02d12d98505245c4d2d6514b deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json 0644
@@ -41,6 +42,7 @@ e5692c786e70ea50917462573d035bc4cc4c9e25c81f9489fc5b3bb8070e6f64 duckle/README.m
 9c48a28d51a5c5d4f2232609c4312ea82fe4040edbd768b5966b49182ad6eef8 duckle/common/README.md ${REPO}/duckle/common/README.md 0644
 691d2f8416d4588f656c174cc00528e4bfa65b85ceb84758900086ca756b2e26 duckle/customers/README.md ${REPO}/duckle/customers/README.md 0644
 a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814 scripts/duckle/connection-setup.py /opt/connection-setup.py 0755
+ed4032d754da8742574ea0f3b70a3bccf66f474ad5c24e859720ce79739a3149 scripts/lemeng/backfill-retail-order-line.sh /opt/lemeng-backfill.sh 0755
 a71e92404d6b77bfc265197c6d13ac42a9e11b14cb24aaae210355dd534855d9 scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755
 d3c7fb72c9a2c243b6973177432294b446a10770b3bbad4da731fd306cad2e97 scripts/lemeng/readback-helper.sh ${REPO}/lemeng-readback.sh 0755
 50e5822c1051755a5b68d2c2dbff22a53d24d6b2be918f5ee0dfaaa4d33327b6 scripts/lemeng/wire-warehouse.sh /opt/lemeng-wire-warehouse.sh 0755
