@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.58.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.57.2...v0.58.0) - 2026-09-30
+- 【新增】data: #377 报表写保护——两条版本通路必填 + 每对象一把锁 + 可解释 409 ([#385](https://github.com/MYTech-Co-LTD/platform-core/pull/385), [3c3f52d](https://github.com/MYTech-Co-LTD/platform-core/commit/3c3f52d8a03d61c498508989d4d7a16708473b78))
+
+
 ## [0.57.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.57.1...v0.57.2) - 2026-09-29
 - 【修复】duckle: #383 close 层补新鲜度锚（首点成功后随批补） ([#384](https://github.com/MYTech-Co-LTD/platform-core/pull/384), [2b1d7f0](https://github.com/MYTech-Co-LTD/platform-core/commit/2b1d7f00dc86bd5e32ba6816ebf464db4725722c))
 
