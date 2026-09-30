@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.62.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.61.0...v0.62.0) - 2026-09-30
+- 【新增】data: #391 平台自绘——声明式规格/代码常量图型白名单/echarts 渲染器/判据同源数据通路 ([#401](https://github.com/MYTech-Co-LTD/platform-core/pull/401), [0d5345e](https://github.com/MYTech-Co-LTD/platform-core/commit/0d5345ece883595db9a13a9064daa1149458758a))
+
+
 ## [0.61.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.60.1...v0.61.0) - 2026-09-30
 - 【新增】dbt: #394 读侧 Phase 2——staging 加契约 v2 的 6 列 ([#395](https://github.com/MYTech-Co-LTD/platform-core/pull/395), [77bf082](https://github.com/MYTech-Co-LTD/platform-core/commit/77bf082458ac4a0c635a6a454fdd28fc7476be63))
 
