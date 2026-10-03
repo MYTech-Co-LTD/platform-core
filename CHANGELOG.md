@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.64.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.64.0...v0.64.1) - 2026-10-03
+- 【修复】duckle: #414 回退 L0 的 _ops 投递（该链上 snk.webhook 恒发 Success:true） ([#415](https://github.com/MYTech-Co-LTD/platform-core/pull/415), [ed14511](https://github.com/MYTech-Co-LTD/platform-core/commit/ed14511f4b8f52abb53fabbdf31c2fdf055b01d0))
+
+
 ## [0.64.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.63.0...v0.64.0) - 2026-10-03
 - 【新增】duckle: #410 _ops 观测行投递推广四条管线（windows/close/L0×2） ([#411](https://github.com/MYTech-Co-LTD/platform-core/pull/411), [e0b5194](https://github.com/MYTech-Co-LTD/platform-core/commit/e0b51944c75275754c743fef201df3e40a4b042b))
 
