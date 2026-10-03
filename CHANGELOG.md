@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.63.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.62.0...v0.63.0) - 2026-10-03
+- 【新增】duckle: #406 tick L1 补 _ops 观测行投递（su→op→wh 投 OO retail_day） ([#407](https://github.com/MYTech-Co-LTD/platform-core/pull/407), [a6f162e](https://github.com/MYTech-Co-LTD/platform-core/commit/a6f162ed1d867a50dc4fa69522f53d960be67e6c))
+
+
 ## [0.62.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.61.0...v0.62.0) - 2026-09-30
 - 【新增】data: #391 平台自绘——声明式规格/代码常量图型白名单/echarts 渲染器/判据同源数据通路 ([#401](https://github.com/MYTech-Co-LTD/platform-core/pull/401), [0d5345e](https://github.com/MYTech-Co-LTD/platform-core/commit/0d5345ece883595db9a13a9064daa1149458758a))
 
