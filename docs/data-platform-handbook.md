@@ -594,7 +594,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 自证没过（`ASSERT_FAIL:` / `DIM_FAILED`） | **拒写湖是正确行为**（#205），**不是故障** |
 | 容量撞顶 | 末页哨兵命中 ⇒ **fail-loud 不丢数**。**余量按阈值算，不按「页数 × 容量」算**——哨兵页占一页，真实阈值 = (页数 − 1) × 页容量 |
 | 漂移 | 先看**声明是否存在**：`drift` 在「源未声明 schema」时**静默 `exit 0`（假绿）** ⇒ 门禁必须先断言「声明存在」，再判 drift 结论 |
-| 观测没数据（OO 流里没有 `_ops` 行） | **按管线查**：五条采集管线（tick/windows/close/L0×2）均已自带管线内 `_ops` 投递（tick/windows/close=`su→op→wh`，#406；L0=`sink→锚→op→wh`，#410；缺口窗 status=missing 也投）。⚠️ OO 不可达时 tick run 会**红**——error 指 observe.hookflow.cn 即此因，**不是采集失败**（方言见管线 `_note` ⑩）。旧字面量 `OPS_SINK=DISABLED`（薄壳形态、issue **#210**）随 wrapper 退役成为历史 |
+| 观测没数据（OO 流里没有 `_ops` 行） | **按管线查**：**零售三条已自带管线内 `_ops` 投递**（tick/windows/close，`su→op→wh`，#406/#410——tick 与 close 已实测在收行）；**L0 两条回退待查**（同挂法在该链上 `wh` 恒发 `{"Success":true}`，见 #414），其 `_ops` 目前仍缺。⚠️ OO 不可达时 tick run 会**红**——error 指 observe.hookflow.cn 即此因，**不是采集失败**（方言见管线 `_note` ⑩）。旧字面量 `OPS_SINK=DISABLED`（薄壳形态、issue **#210**）随 wrapper 退役成为历史 |
 | **下游数据陈旧（采集绿、报表陈）** | **先查物化有没有在跑**——2026-09-26 实测：37 个 job 无一跑 dbt，PG 停在 09-23（详见 §0 与 §1.6）。⚠️ **2026-09-28 起物化 job 已在跑**（见 §3），这个现象不再由「没 job」引起 ⇒ **别照这条判，先看下一行** |
 | **下游看不见（物化在跑、消费端却空）** | 四步查，**四处都是静默失败**（2026-09-28 实测；跟踪 #297 / #298）：① **路由挂没挂**——无身份打 `POST /api/modules/data/{query,mcp}` 应回 **401**（**404 = 没挂载**）；② **三张表的行数**——`data.metrics`（空 = 词表没物化）/ `data.reports`（空 = 报表没登记）/ `data.query_audit`（空 = 从没人问过）；③ **Gate-B**——平台容器内 `dns.lookup('pg_duckdb')` 必须解析（**ENOTFOUND ⇒ 网络掉了**，容器重建即掉，重做步骤见 SOP P7）；④ **仓库连接的 `search_path`**——不设则报 `relation "<模型名>" does not exist`（见 SOP P8b） |
 | 改定义后没生效 | 检查**两步**是否都做了：re-seed 进 workspace 卷 + **重启容器**（卷内定义重启即读；改 env 键才需定向重建） |

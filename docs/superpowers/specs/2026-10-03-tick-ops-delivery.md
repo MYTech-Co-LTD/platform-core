@@ -69,7 +69,15 @@ su（每窗汇总）
 
 - 行落地验证后：**启用** OO 告警 `retail_tick_absent_business_hours` 并更新其 description
   （删「tick 尚未投递」的暂停理由，补方言 3.1 的红-run 含义）；
-- ✅ **已迁（当日拍板，#410/后续 PR）**：其余四条管线（windows/close/L0×2）同批补上——windows/close 用与 tick 同构的 `su→op→wh`；L0 单链用 `sink→锚→op（自读 gate 计数）→wh`。观察期按 tick 端到端实测销账（用户拍板「9 月就在观测，能迁就迁」），不再另设。
+- ✅ **已完成（当日拍板 #410/#411，用户口径「能迁就迁」）**：零售管线的**同构补迁**——
+  `windows.l1` / `close.l1` 用与 tick 逐字同形的 `su→op→wh` + `wh→a2`。**实测验证**：close.l1 手动触发后
+  OO `retail_day` 收到 `job=retail-close / system_book=3120 / rows=844 / ok`；tick 自 #407 起逐窗在收。
+  observations 期按端到端实测销账，不另设。
+- ❌ **L0 两条已回退（#414）**：
+  同样的 `op→wh` 挂在 L0 上，`wh` **恒发 `{"Success":true}` 而非上游行**。已排除上游接线/列类型/输入节点/是否读 `input`/
+  节点配置（与 tick 逐字相同）/组件本身（同组件 + `src.csv` 上游正常）；同节点**只换 componentId 为 `snk.csv` 就写出正确行**
+  ⇒ 上游与行内容都是对的，坏在 webhook sink 在这条链上取不到行。怀疑与「上游是视图而非物化表」（tick 的 `su` 是 TABLE）
+  或链上的 `qa.contract` 有关。最小复现与根因见 **#414**；根因未清前不重上（避免每天往 OO 写垃圾行）。
 
 ## 7. 关联
 
