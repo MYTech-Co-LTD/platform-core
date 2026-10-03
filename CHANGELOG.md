@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.64.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.64.1...v0.64.2) - 2026-10-03
+- 【修复】data: #412 嵌入 URL 改回 signed embedding 页径（原拼成公开分享页径，界面恒空图） ([#413](https://github.com/MYTech-Co-LTD/platform-core/pull/413), [44eb22a](https://github.com/MYTech-Co-LTD/platform-core/commit/44eb22a827b42c2a284ff0e3d0fd6f76dbfc39aa))
+
+
 ## [0.64.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.64.0...v0.64.1) - 2026-10-03
 - 【修复】duckle: #414 回退 L0 的 _ops 投递（该链上 snk.webhook 恒发 Success:true） ([#415](https://github.com/MYTech-Co-LTD/platform-core/pull/415), [ed14511](https://github.com/MYTech-Co-LTD/platform-core/commit/ed14511f4b8f52abb53fabbdf31c2fdf055b01d0))
 
