@@ -469,9 +469,21 @@ export function signEmbedToken(
   return `${head}.${body}.${sig}`
 }
 
-/** 嵌入页的公开地址（signed embedding 的常规路径）。 */
+/**
+ * 嵌入页地址：**signed embedding 的正典页径是 `/embed/dashboard/<jwt>`**。
+ *
+ * ⚠️ 2026-10-03 实测订正（原实现在此**拼错路径**）：原值 `/public/dashboard/<jwt>` 是
+ * **公开分享（public sharing）** 的页径——它认的是 dashboard 的 `public_uuid`，不是签出来的 JWT。
+ * 后果不是「报错」而是**静默空图**：页壳能开，页内数据请求会打到
+ * `/api/public/embed/dashboard/<jwt>/dashcard/…`（一个前后端都不存在的杂交端点）⇒ 每张卡
+ * 都显示「There was a problem displaying this chart」，而服务端四条链（登记/嵌入签名/对账/问数）
+ * 全绿 ⇒ 只有人打开界面才看得见。改为 `/embed/dashboard/<jwt>` 后三张卡即刻出数（真机实测）。
+ *
+ * 真机证据：shanhai 实例 2026-10-03，同一 token 两个页径对照——`/public/dashboard/` 空白页，
+ * `/embed/dashboard/` 出折线+柱状+明细表（20 行）。
+ */
 export function embedDashboardUrl(baseUrl: string, token: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}/public/dashboard/${token}`
+  return `${baseUrl.replace(/\/+$/, '')}/embed/dashboard/${token}`
 }
 
 /**
