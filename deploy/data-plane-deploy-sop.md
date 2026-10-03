@@ -624,9 +624,8 @@ curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/sch
 > **遗留（已知，不阻塞）**：job 的命令目前只活在 openship 里（无版本、无 diff 可评审）。
 > 按本仓惯例应抽成 `scripts/lemeng/materialize.sh` 进仓 + 进投递清单，job 只调 `sh /opt/lemeng-materialize.sh`。
 
-⚠️ **2026-09-28 订正 —— 这个 job 只做 dbt 模型物化；L1 语义词表是另一件事，且当前没有 job。**
-`scripts/sync-data-semantics.mjs`（`dbt/semantics/l1_metrics.yml` → PG 表 `data.metrics`）是 L1 词表的**唯一**通道，
-生产上**从未跑过** ⇒ `data.metrics` 为 **0 行**、AI 侧 `GET /metrics` 回空表、MCP `tools/list` 无工具可给。
+⚠️ **2026-09-28 订正 —— 这个 job 只做 dbt 模型物化；L1 语义词表是另一件事。**
+`scripts/sync-data-semantics.mjs`（`dbt/semantics/l1_metrics.yml` → PG 表 `data.metrics`）是 L1 词表的**唯一**通道。
 它可在**平台容器**里直接跑（镜像 COPY 面含 `scripts/`、`dbt/` 与 tsx，**不必另建 node 环境**）：
 
 ```sh
@@ -634,14 +633,32 @@ docker exec openship-platform-core-shanhai-server pnpm exec tsx scripts/sync-dat
 # --check 是 dry-run（跑前后 data.metrics 行数必须不变）；有漂移 exit 1、用法错 exit 2
 ```
 
-两条边界（都实测过）：
+一条边界（实测过）：
 
 1. **它读的是平台镜像里那份 `dbt/`**，与 §E 投递到**数据面检出**的那份**是两份、没有任何比对机制**
    ⇒ 镜像旧 = 物化出旧口径（2026-09-28 实际发生过，见 issue **#300**）。
-2. **没有 job ⇒ 改了 `l1_metrics.yml` 不会自动同步**（跟踪 **#297**）。
 
 **闭环自证（2026-09-28 实测读数）**：物化前 `data.metrics` **0 行** → 跑一次 = 新增 2 / 回读 2 →
 **再跑一次 = 未变 2**（幂等）→ `--check` = 无漂移 exit 0。
+
+### F.6b L1 词表物化 job（2026-10-03 注册，销 #297 的「最大缺口」）
+
+**job**：`L1 词表物化（sync-data-semantics，#297）`（`custom:tuQ06mlxBe_2TlTo`），cron **`33 4 * * *` UTC**
+（排在 `20 3` 的 dbt 物化之后、避开整点与其他 job），`retry 2×/300s`、`timeoutMs 5min`，**仅 shanhai 机**（`8281d598`——
+命令里钉了 shanhai 的容器名，**不许**扩到别的机器，否则会打到错误实例的库）。
+
+**命令形态**（与 §F.6 的 dbt job 同款「容器内直跑」）：
+
+```sh
+docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx scripts/sync-data-semantics.mjs
+```
+
+- 用 `node_modules/.bin/tsx` 直调（不裹 `pnpm exec`，少一层进程）；`-w /app` 钉工作目录。
+- **首跑已验（2026-10-03 手动触发）**：exit 0 / 425ms /「未变 2；回读 2」——幂等成立。
+- **注册前照 README §11.4 的协议核过 `--check` 是真 dry-run**（未变 2 / exit 0）。
+- ⚠️ **#300 边界仍然成立**：本 job 物化的是**平台镜像快照**——实例不升级，新声明进不了词表。
+  「L1 对账（`--check`）」job **暂不注册**：分叉解决前它近乎恒绿（库内行与快照同源），恒绿探针 = 假保险。
+- 与 `--check` 的 dry-run 契约一样，**每次改 sync 脚本都要重测一次**（T8 的坑：未知 flag 被静默忽略）。
 
 ---
 

@@ -422,8 +422,8 @@ cast 错了、源列漂移了，下一次物化就会红。
 | 行 | 现场 |
 |---|---|
 | 物化（带 tests） | **已注册**：`lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`），实际 cron **`20 3 * * *` UTC**（**不是**本表的 `17 2`），`retry 2×/300s`、`timeoutMs 30min`、仅 `failed` 告警；命令形态见 `deploy/data-plane-deploy-sop.md` §F.6 |
-| **L1 物化**（`sync-data-semantics.mjs` **不带 flag**） | ❌ **没有 job**——本表**从来没有这一行**，而它才是「词表从哪来」的那一步 ⇒ 生产上 `data.metrics` **0 行**、AI 侧词表空。**这是本表最大的缺口**，跟踪 **#297** |
-| L1 对账（`--check`） | ❌ 未注册 |
+| **L1 物化**（`sync-data-semantics.mjs` **不带 flag**） | ✅ **已注册（2026-10-03，销 #297 的最大缺口）**：`L1 词表物化`（`custom:tuQ06mlxBe_2TlTo`），cron **`33 4 * * *` UTC**（排在 `20 3` 的 dbt 物化之后、避开整点），`retry 2×/300s`、`timeoutMs 5min`，仅 shanhai 机；命令形态与首跑验证见 `deploy/data-plane-deploy-sop.md` §F.6b。⚠️ **它物化的是平台镜像里那份 `dbt/` 快照**（#300 的分叉仍在：镜像更新前，新声明进不了词表——这是已知边界，不是本 job 的缺陷） |
+| L1 对账（`--check`） | ❌ **暂不注册（2026-10-03 拍板）**：#300 分叉解决前它近乎恒绿——库内行与镜像快照同源（都出自同一个 sync），对账只能抓「手改库」抓不到「声明取错副本」⇒ 注册一个恒绿探针 = 假保险。#300 落地（两份 `dbt/` 有比对机制）后再回来注册 |
 | 租户对账 | ❌ 未注册 |
 | 血缘产物 | ❌ 未注册 |
 
