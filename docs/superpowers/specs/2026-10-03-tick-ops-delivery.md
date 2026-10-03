@@ -73,11 +73,16 @@ su（每窗汇总）
   `windows.l1` / `close.l1` 用与 tick 逐字同形的 `su→op→wh` + `wh→a2`。**实测验证**：close.l1 手动触发后
   OO `retail_day` 收到 `job=retail-close / system_book=3120 / rows=844 / ok`；tick 自 #407 起逐窗在收。
   observations 期按端到端实测销账，不另设。
-- ❌ **L0 两条已回退（#414）**：
-  同样的 `op→wh` 挂在 L0 上，`wh` **恒发 `{"Success":true}` 而非上游行**。已排除上游接线/列类型/输入节点/是否读 `input`/
-  节点配置（与 tick 逐字相同）/组件本身（同组件 + `src.csv` 上游正常）；同节点**只换 componentId 为 `snk.csv` 就写出正确行**
-  ⇒ 上游与行内容都是对的，坏在 webhook sink 在这条链上取不到行。怀疑与「上游是视图而非物化表」（tick 的 `su` 是 TABLE）
-  或链上的 `qa.contract` 有关。最小复现与根因见 **#414**；根因未清前不重上（避免每天往 OO 写垃圾行）。
+- **L0 两条：决定不做 `_ops`（#414 定案，2026-10-03）** —— 这是**取舍**，不是待办：
+  同样的 `op→wh` 挂在 L0 上，`wh` 恒发 `{"Success":true}` 而非上游行。**根因在上游 duckle 引擎，不在我们的管线写法**：
+  引擎把 `CREATE SECRET …;` 前导挂到**每个** stage 的脚本上（每个 stage 是新 CLI 会话，凭据必须重下），而
+  **DuckDB 的 `CREATE SECRET` 语句自己会返回一行**；sink 取行用的 `run_rows` 取的是**第一个** JSON 数组 ⇒ 拿到的是 secret 那一行。
+  触发条件是**管线声明了会生成前导的凭据**（云凭据，或**带密码的 ATTACH**）——与「写不写 S3」无关；
+  tick/windows/close 只有 REST 连接（REST 不需要 DuckDB secret）⇒ 前导为空 ⇒ 正常。
+  同类受影响的上游函数 **13 个**（无一处用现成的 `run_last_rows`），修法一行。上游**已知**此陷阱——他们 2026-09-29 在
+  **inspect** 路径上修过同一个病（`fix(inspect): read an S3 source's schema, not its secret's answer`），只是没扫到 sink 家族。
+  ⇒ **L0 的观测面改用已有的两个**：`owners.json` 的湖对象新鲜度锚（`dim_branch` / `dim_item`）+ 每次 run 的
+  **运行记录 / 回执**（行数与逐节点状态，经 openship MCP 可读）。上游修好后若要重上，另起 issue。
 
 ## 7. 关联
 
