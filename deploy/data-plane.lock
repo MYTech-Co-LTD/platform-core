@@ -1,4 +1,4 @@
-sha256-of-rest 76ddc8db91d0e3418ef88afd05d3e1da1a32920d24d352d297d70dcfeabe865c
+sha256-of-rest 0c36ac6eff93424a9c8aeea14709076e8828a512faeabc68abf32002743bbff3
 9f238b5a8e1441cfa6863e23afc65c88136792b660afa68135f176404f828eff dbt/README.md ${REPO}/dbt/README.md 0644
 dedddd922494d878ea2930b841067caaa8eba5360374e8304154eaed44a93f63 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -30,7 +30,7 @@ f3013c607460e595c471698d24ae3da0723aa5e31e139b3ba07e5db40ee59278 deploy/duckle/c
 70f4eea18187b50fed5144aac7e8fb7c5e644983a42063cc91ae00580d8a6a03 deploy/duckle/console/pipelines/lemeng.dim.branch.l0.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.branch.l0.json 0644
 f27414725b75d8f8764645e7366c45ad8da85a836106656f7490c45370b0d968 deploy/duckle/console/pipelines/lemeng.dim.item.l0.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item.l0.json 0644
 f5e6362e6de401399f05ec538cb003ee58eca0f49ef0698541b8eb4f4a15e757 deploy/duckle/console/pipelines/lemeng.retail.close.l1.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.close.l1.json 0644
-6b5182c6527ce507eb60035b66c3af4e15b587f577cb63ed4e4d4954ba1aee8a deploy/duckle/console/pipelines/lemeng.retail.tick.l1.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.tick.l1.json 0644
+99e4437d424e790c6765086a5295a3fc04d7847514041efb9dca439265d5aa26 deploy/duckle/console/pipelines/lemeng.retail.tick.l1.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.tick.l1.json 0644
 158885e757c771a2b163d870fe834b73b6df92adb0dd65f49cf728abd733fe65 deploy/duckle/console/pipelines/lemeng.retail.windows.backfill.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.windows.backfill.json 0644
 5a73eb2bdf831058f99e174c4684419cc2627876ba5ce2974405e9e4f8c46923 deploy/duckle/console/pipelines/lemeng.retail.windows.l1.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail.windows.l1.json 0644
 5e86dbd6970ac4ef386372d799dbb77568dd30921ef7a604c88e3ae4f72d07a9 deploy/duckle/console/pipelines/lemeng.retail_order_line.tick.json ${REPO}/deploy/duckle/console/pipelines/lemeng.retail_order_line.tick.json 0644

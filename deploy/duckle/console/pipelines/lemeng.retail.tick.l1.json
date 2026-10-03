@@ -50,7 +50,18 @@
     "alerts.json 的 tick L1 规则按高频档（冷却 60）另加。",
     "",
     "⑨【方言坑（踩过的）】code.sql **不能以 WITH 开头**（引擎会包成 `WITH input AS …`）；window/rows 是保留字要引号；",
-    "聚合断言用 `UNION ALL SELECT '<名字>', <值>, '<规则>' … HAVING <违反条件>` 的形状（本文件的 gv 即此形，且不读 input）。"
+    "聚合断言用 `UNION ALL SELECT '<名字>', <值>, '<规则>' … HAVING <违反条件>` 的形状（本文件的 gv 即此形，且不读 input）。",
+    "",
+    "⑩【_ops 观测行投递（#406；承接退役 wrapper 的 ops_ship 职责）】su 的每窗汇总再扇出一支：op 行成形",
+    "   （ts / job='retail-tick' / system_book / bizday / hour / rows / status / run_token——**缺口窗也投**（status=missing），",
+    "   与 wrapper「每窗一行」同形）→ wh = snk.webhook POST 到 OO 摄取端点（url=${ENV:OO_BASE}/api/${ENV:OO_ORG}/retail-day/_json，",
+    "   头 Authorization: Basic ${ENV:OO_AUTH}；三键 console env 已有，与 alerts.json 同源；OO 端点把流名清洗成 retail_day——",
+    "   连字符→下划线，2026-09-28 实测）。wh→a2 触发边 ⇒ **先投递后判红**（对齐 wrapper 语义：观测行落了才轮到 dz 说话）。",
+    "   ⚠️ 方言（survey §4 实测）：引擎里 stage 错误**必然 run 红**——continueOnFailure 只保后续 stage、不消红。",
+    "   故 wh 带 continueOnFailure:true + retryAttempts:3（吞瞬态抖动）；OO 持续不可达 ⇒ tick run 红（此刻 OO 告警链",
+    "   整体致盲、无企微噪声，但运行记录会红——排障时先看 error 是不是 observe.hookflow.cn 再定责，别当采集失败）。",
+    "   env 进 sink 属性（url/headers）有生产先例（snk.minio 的 bucket/key），**headers 值内的替换未经生产验证**",
+    "   ⇒ 投递后首个 run 必查 OO retail_day 真收到行（#406 验收 2）。"
   ],
   "name": "lemeng.retail.tick.l1",
   "version": 1,
@@ -307,6 +318,45 @@
       }
     },
     {
+      "id": "op",
+      "type": "transform",
+      "position": {
+        "x": 780,
+        "y": 1560
+      },
+      "data": {
+        "label": "_ops 行成形（wrapper ops_ship 同形：每窗一行，缺口窗 status=missing 也投）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-tick' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n  bizday, hour, \"rows\", status, run_token FROM input"
+        }
+      }
+    },
+    {
+      "id": "wh",
+      "type": "sink",
+      "position": {
+        "x": 1040,
+        "y": 1560
+      },
+      "data": {
+        "label": "_ops 行投 OO retail_day（软 stage：失败不拦判红链，但 run 会红——见 _note ⑩）",
+        "componentId": "snk.webhook",
+        "properties": {
+          "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/retail-day/_json",
+          "method": "POST",
+          "headers": {
+            "Authorization": "Basic ${ENV:OO_AUTH}",
+            "Content-Type": "application/json"
+          },
+          "batchMode": "one",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000,
+          "continueOnFailure": true
+        }
+      }
+    },
+    {
       "id": "rep",
       "type": "sink",
       "position": {
@@ -538,6 +588,34 @@
       "targetHandle": "main",
       "data": {
         "connectionType": "main"
+      }
+    },
+    {
+      "id": "e23",
+      "source": "su",
+      "target": "op",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e24",
+      "source": "op",
+      "target": "wh",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t25",
+      "source": "wh",
+      "target": "a2",
+      "data": {
+        "connectionType": "on-subjob-ok"
       }
     },
     {
