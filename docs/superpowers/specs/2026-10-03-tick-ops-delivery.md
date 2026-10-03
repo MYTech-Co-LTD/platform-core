@@ -69,8 +69,7 @@ su（每窗汇总）
 
 - 行落地验证后：**启用** OO 告警 `retail_tick_absent_business_hours` 并更新其 description
   （删「tick 尚未投递」的暂停理由，补方言 3.1 的红-run 含义）；
-- 其余管线（windows/close/L0）要不要同样补 `_ops`：**待议**——它们的「停摆」由日批告警 +
-  新鲜度锚兜着，紧迫性不同，不随本批夹带。
+- ✅ **已迁（当日拍板，#410/后续 PR）**：其余四条管线（windows/close/L0×2）同批补上——windows/close 用与 tick 同构的 `su→op→wh`；L0 单链用 `sink→锚→op（自读 gate 计数）→wh`。观察期按 tick 端到端实测销账（用户拍板「9 月就在观测，能迁就迁」），不再另设。
 
 ## 7. 关联
 
