@@ -82,7 +82,8 @@
     "     pipelines/ 的产物、不是每次 run 现推 ⇒ 不重建则本管线的 run record **整条不带 assets**",
     "     （实测：2026-09-28 三次 L0 run 的 receipt 全无 assets 字段）⇒ 新鲜度规则声明了也永远 Stale。",
     "     重建 = Operator `POST /api/catalog` 或容器内 `duckle catalog build --workspace /workspace`；",
-    "     **必须排在切流后第一次 run 之前**（历史 receipt 不追溯补 assets）。切流前清单见 owners.json ⑧。"
+    "     **必须排在切流后第一次 run 之前**（历史 receipt 不追溯补 assets）。切流前清单见 owners.json ⑧。",
+    "⑪【_ops 观测行投递（#410；挂法与零售不同——L0 无 su 判红结构）】sink→a1（on-subjob-ok 锚：先落湖）→op（行成形 job=dim-branch：ts/system_book/snapshot/rows/status=ok，**自读 gate 计数、不读 input**——同 gv 先例）→wh=snk.webhook 投 OO retail_day；方言同 #407（软 stage+retry×3；OO 不可达 ⇒ run 红，error 指 observe.hookflow.cn，非采集失败）。"
   ],
   "name": "lemeng.dim.branch.l0",
   "version": 1,
@@ -700,6 +701,58 @@
           "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖（等价于 wrapper 在 run-retail-day.sh:383/397 的 ASSERT_FAIL 硬失败）。处置：检查该管线调度/触发面的 env 注入"
         }
       }
+    },
+    {
+      "id": "a1",
+      "type": "control",
+      "position": {
+        "x": 1620,
+        "y": 420
+      },
+      "data": {
+        "label": "先落湖后报（_ops 定序锚）",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "op",
+      "type": "transform",
+      "position": {
+        "x": 1860,
+        "y": 420
+      },
+      "data": {
+        "label": "_ops 行成形（job=dim-branch；自读 gate 计数，不读 input——同 gv 先例）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'dim-branch' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n  max(snapshot) AS snapshot, count(*) AS \"rows\", 'ok' AS status FROM \"gate\""
+        }
+      }
+    },
+    {
+      "id": "wh",
+      "type": "sink",
+      "position": {
+        "x": 2100,
+        "y": 420
+      },
+      "data": {
+        "label": "_ops 行投 OO retail_day（软 stage；方言同 #407 tick _note ⑩）",
+        "componentId": "snk.webhook",
+        "properties": {
+          "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/retail-day/_json",
+          "method": "POST",
+          "headers": {
+            "Authorization": "Basic ${ENV:OO_AUTH}",
+            "Content-Type": "application/json"
+          },
+          "batchMode": "one",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000,
+          "continueOnFailure": true
+        }
+      }
     }
   ],
   "edges": [
@@ -907,6 +960,34 @@
       "id": "e_gate_sink",
       "source": "gate",
       "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t_sink_a1",
+      "source": "sink",
+      "target": "a1",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e_a1_op",
+      "source": "a1",
+      "target": "op",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_op_wh",
+      "source": "op",
+      "target": "wh",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {

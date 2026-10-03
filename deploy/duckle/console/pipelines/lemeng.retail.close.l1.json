@@ -45,7 +45,8 @@
     "论证详见本批报告。",
     "",
     "⑧【本批不做的事】不投递、不激活调度（enabled:false）、不改 owners.json / 薄壳（lemeng.retail.close.run）；",
-    "alerts.json 的 close L1 规则按日批档（冷却 15）另加。"
+    "alerts.json 的 close L1 规则按日批档（冷却 15）另加。",
+    "⑪【_ops 观测行投递（#410，同 tick ⑩/#407 的形状）】su→op（行成形 job=retail-close，缺口窗 status=missing 也投）→wh=snk.webhook 投 OO retail_day；wh→a2 先投递后判红；方言同 #407（软 stage+retry×3；OO 不可达 ⇒ run 红，error 指 observe.hookflow.cn，非采集失败）。"
   ],
   "name": "lemeng.retail.close.l1",
   "version": 1,
@@ -302,6 +303,45 @@
       }
     },
     {
+      "id": "op",
+      "type": "transform",
+      "position": {
+        "x": 780,
+        "y": 1560
+      },
+      "data": {
+        "label": "_ops 行成形（job=retail-close，wrapper ops_ship 同形：每窗一行，缺口窗也投）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-close' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n  bizday, hour, \"rows\", status, run_token FROM input"
+        }
+      }
+    },
+    {
+      "id": "wh",
+      "type": "sink",
+      "position": {
+        "x": 1040,
+        "y": 1560
+      },
+      "data": {
+        "label": "_ops 行投 OO retail_day（软 stage：失败不拦判红链，但 run 会红——同 tick _note ⑩）",
+        "componentId": "snk.webhook",
+        "properties": {
+          "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/retail-day/_json",
+          "method": "POST",
+          "headers": {
+            "Authorization": "Basic ${ENV:OO_AUTH}",
+            "Content-Type": "application/json"
+          },
+          "batchMode": "one",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000,
+          "continueOnFailure": true
+        }
+      }
+    },
+    {
       "id": "rep",
       "type": "sink",
       "position": {
@@ -533,6 +573,34 @@
       "targetHandle": "main",
       "data": {
         "connectionType": "main"
+      }
+    },
+    {
+      "id": "e23",
+      "source": "su",
+      "target": "op",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e24",
+      "source": "op",
+      "target": "wh",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t25",
+      "source": "wh",
+      "target": "a2",
+      "data": {
+        "connectionType": "on-subjob-ok"
       }
     },
     {
