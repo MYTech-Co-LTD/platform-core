@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.64.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.63.0...v0.64.0) - 2026-10-03
+- 【新增】duckle: #410 _ops 观测行投递推广四条管线（windows/close/L0×2） ([#411](https://github.com/MYTech-Co-LTD/platform-core/pull/411), [e0b5194](https://github.com/MYTech-Co-LTD/platform-core/commit/e0b51944c75275754c743fef201df3e40a4b042b))
+
+
 ## [0.63.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.62.0...v0.63.0) - 2026-10-03
 - 【新增】duckle: #406 tick L1 补 _ops 观测行投递（su→op→wh 投 OO retail_day） ([#407](https://github.com/MYTech-Co-LTD/platform-core/pull/407), [a6f162e](https://github.com/MYTech-Co-LTD/platform-core/commit/a6f162ed1d867a50dc4fa69522f53d960be67e6c))
 
