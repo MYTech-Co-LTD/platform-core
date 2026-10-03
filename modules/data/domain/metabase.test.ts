@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MetabaseError,
   dashboardName,
+  embedDashboardUrl,
   getCard,
   getCardTemplateTags,
   getDashboardEmbeddingParams,
@@ -607,6 +608,22 @@ describe('signEmbedToken：HS256 嵌入 JWT', () => {
     const a = signEmbedToken(SECRET, { type: 'dashboard', id: 7 }, { tenant: 'org-a' })
     const b = signEmbedToken('other-secret', { type: 'dashboard', id: 7 }, { tenant: 'org-a' })
     expect(a.split('.')[2]).not.toBe(b.split('.')[2])
+  })
+})
+
+describe('embedDashboardUrl：嵌入页径必须是 signed embedding 那条（#412）', () => {
+  it('★ 拼的是 /embed/dashboard/<token>，且**不是**公开分享页径 /public/dashboard/', () => {
+    const url = embedDashboardUrl('https://mb.example.com', 'tok.abc.def')
+    expect(url).toBe('https://mb.example.com/embed/dashboard/tok.abc.def')
+    // 反向断言才是本用例的价值所在：`/public/dashboard/` 是 public sharing 的页径（认 public_uuid、不认 JWT）。
+    // 拼错时页壳照开、页内数据请求打到 /api/public/embed/... 那个前后端都不存在的杂交端点 ⇒
+    // **服务端四条链全绿而每张卡报「There was a problem displaying this chart」**（2026-10-03 真机实测）。
+    // 写死这条负例，免得日后被「看着更像公开地址」改回去。
+    expect(url).not.toContain('/public/dashboard/')
+  })
+
+  it('尾斜杠归一：baseUrl 带不带 / 都拼出同一条', () => {
+    expect(embedDashboardUrl('https://mb.example.com/', 't')).toBe(embedDashboardUrl('https://mb.example.com', 't'))
   })
 })
 
