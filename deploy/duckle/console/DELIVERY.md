@@ -41,13 +41,16 @@
 | # | 仓内路径 | 卷内落点 | 角色 |
 |---|---|---|---|
 | 1 | `deploy/duckle/console/schedules/3120.json` | `/workspace/schedules.json`（**改名**） | 调度定义（3 条 L1 + 2 条 L0 启用/就绪；零售三条薄壳全部置停） |
-| 2 | `deploy/duckle/console/owners.json` | `/workspace/owners.json` | 新鲜度 SLA（retail 锚 = 湖对象） |
-| 3 | `deploy/duckle/console/alerts.json` | `/workspace/alerts.json` | 失败告警规则（引擎原生，经 OO） |
+| 2 | `deploy/duckle/console/owners.<源系统>.json` | `/workspace/owners.json` | 新鲜度 SLA（retail 锚 = 湖对象） |
+| 3 | `deploy/duckle/console/alerts.<源系统>.json` | `/workspace/alerts.json` | 失败告警规则（引擎原生，经 OO） |
 | 4 | `deploy/duckle/console/pipelines/lemeng.retail.windows.l1.json` | `/workspace/pipelines/…` | Wave B **父**（身份门 → 窗口表 → foreach → 汇总判红） |
 | 5 | `deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json` | 同上 | window 形**子**（父 4 与 8 共用；#335 补 `bucket`） |
 | 6 | `deploy/duckle/console/pipelines/lemeng.retail.tick.l1.json` | 同上 | Wave C tick **父**（`enabled:false`，声明就绪） |
 | 7 | `deploy/duckle/console/pipelines/lemeng.retail_order_line.tick.json` | 同上 | tick 形**子**（#335 补 `bucket`） |
 | 8 | `deploy/duckle/console/pipelines/lemeng.retail.close.l1.json` | 同上 | Wave C close **父**（`enabled:false`） |
+
+> 📌 **owners / alerts 按【源系统】分文件**（`#419`，2026-10-05）：落地名**不变**（引擎只认 `/workspace/owners.json`、`/workspace/alerts.json`），
+> seed 时按「**客户 → 源系统**」选源文件 —— 今天只有一个源系统，故都是 `*.lemeng.json`。新增源系统时加 `owners.<源系统>.json` 并在本表登记。
 
 **不在本批**：`schedules/64188.json`（见 §6 边界）、`lemeng.dim.*`（前批已投）、
 `lemeng.retail.*.run` 薄管线文件（退役待 Wave D；**其调度条目在仓内已 `enabled:false`**）。
@@ -118,8 +121,8 @@ CT=$(docker ps --format '{{.Names}}' | grep lemeng-console-3120)
 
 docker exec "${CT}" mkdir -p /workspace/pipelines
 docker cp "${REPO}/deploy/duckle/console/schedules/3120.json" "${CT}:/workspace/schedules.json"
-docker cp "${REPO}/deploy/duckle/console/owners.json"        "${CT}:/workspace/owners.json"
-docker cp "${REPO}/deploy/duckle/console/alerts.json"        "${CT}:/workspace/alerts.json"
+docker cp "${REPO}/deploy/duckle/console/owners.lemeng.json" "${CT}:/workspace/owners.json"
+docker cp "${REPO}/deploy/duckle/console/alerts.lemeng.json" "${CT}:/workspace/alerts.json"
 for f in lemeng.retail.windows.l1 lemeng.retail_order_line.window \
          lemeng.retail.tick.l1 lemeng.retail_order_line.tick lemeng.retail.close.l1 ; do
   docker cp "${REPO}/deploy/duckle/console/pipelines/${f}.json" "${CT}:/workspace/pipelines/${f}.json"
@@ -134,8 +137,8 @@ done
     /workspace/pipelines/lemeng.retail.tick.l1.json /workspace/pipelines/lemeng.retail_order_line.tick.json \
     /workspace/pipelines/lemeng.retail.close.l1.json
   # 同一批路径在检出侧再算一次（${REPO} = /opt/platform-core-data/platform-core）：
-  sha256sum "${REPO}"/deploy/duckle/console/schedules/3120.json "${REPO}"/deploy/duckle/console/owners.json \
-            "${REPO}"/deploy/duckle/console/alerts.json "${REPO}"/deploy/duckle/console/pipelines/lemeng.retail.{windows.l1,order_line.window,tick.l1,order_line.tick,close.l1}.json
+  sha256sum "${REPO}"/deploy/duckle/console/schedules/3120.json "${REPO}"/deploy/duckle/console/owners.lemeng.json \
+            "${REPO}"/deploy/duckle/console/alerts.lemeng.json "${REPO}"/deploy/duckle/console/pipelines/lemeng.retail.{windows.l1,order_line.window,tick.l1,order_line.tick,close.l1}.json
   ```
   ⇒ **两侧逐字对齐 = 通过**。
 - 🔑 **为什么比检出、而不是比 lock**（2026-09-29 只读实测）：**机器检出里根本没有 `deploy/data-plane.lock`**

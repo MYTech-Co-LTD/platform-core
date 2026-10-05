@@ -12,7 +12,7 @@
 // **真机逐字拷贝**，退出码也与真机一致。真机的抓取方式（duckle==0.7.4，2026-09-29）：
 //
 //   cd /tmp && python3.12 -m venv v && ./v/bin/pip install "duckle==0.7.4"
-//   # 工作区 = deploy/duckle/console 的 pipelines/ + owners.json 拷进临时目录
+//   # 工作区 = deploy/duckle/console 的 pipelines/ + owners.<源系统>.json 合并进临时目录
 //   ./v/bin/duckle catalog build --workspace <ws>   # 纯绿：exit 0 / 有缺陷：stderr 点名节点、**exit 仍 0**
 //   ./v/bin/duckle catalog lint  --workspace <ws>   # 纯绿：exit 0 / 有缺陷：stdout 列 findings、exit 1
 //
@@ -147,7 +147,7 @@ beforeAll(() => {
   chmodSync(stubPath, 0o755)
 })
 
-/** 建一个最小工作区夹具（只 pipelines/ + owners.json，与守卫的构造法一致）。 */
+/** 建一个最小工作区夹具（只 pipelines/ + owners.<源系统>.json，与守卫合并前的源形状一致）。 */
 function workspace(opts: { owners?: boolean; bucket: boolean }): string {
   const root = tmpdirFor('duckle-guard-ws-')
   mkdirSync(join(root, 'pipelines'), { recursive: true })
@@ -159,7 +159,7 @@ function workspace(opts: { owners?: boolean; bucket: boolean }): string {
     JSON.stringify({ name: 'lemeng.a', nodes: [{ id: 'sink', data: { componentId: 'snk.minio', properties: JSON.parse(sink) } }], edges: [] }),
   )
   if (opts.owners !== false) {
-    writeFileSync(join(root, 'owners.json'), JSON.stringify({ assets: [{ match: 'minio://*/lemeng/x/all.parquet', owner: 'data-eng' }] }))
+    writeFileSync(join(root, 'owners.lemeng.json'), JSON.stringify({ assets: [{ match: 'minio://*/lemeng/x/all.parquet', owner: 'data-eng' }] }))
   }
   return root
 }
@@ -168,7 +168,7 @@ function workspace(opts: { owners?: boolean; bucket: boolean }): string {
 function workspaceWithTypo(): string {
   const root = workspace({ bucket: true })
   writeFileSync(
-    join(root, 'owners.json'),
+    join(root, 'owners.lemeng.json'),
     JSON.stringify({ assets: [{ match: 'minio://*/lemeng/x/bizdy=*/all.parquet', owner: 'data-eng' }] }),
   )
   return root
@@ -217,10 +217,10 @@ describe('check-duckle-catalog', () => {
     expect(r.stderr).toContain('找不到 duckle')
   })
 
-  it('源目录缺 owners.json → exit 2（不许静默降级成「只判命名」）', () => {
+  it('源目录缺 owners.<源系统>.json → exit 2（不许静默降级成「只判命名」）', () => {
     const r = runGuard([workspace({ owners: false, bucket: true }), '--duckle', stubPath])
     expect(r.status).toBe(2)
-    expect(r.stderr).toContain('owners.json')
+    expect(r.stderr).toContain('owners.<源系统>.json')
   })
 })
 

@@ -2,7 +2,7 @@
 // 观测面命名门禁（issue #337；缺陷案例 #334）。
 //
 // 用法：pnpm exec tsx scripts/check-duckle-catalog.mjs [源目录] [--duckle <bin>] [--keep]
-//   源目录默认 = <仓库根>/deploy/duckle/console（**唯一**带 owners.json 的 duckle 工作区）。
+//   源目录默认 = <仓库根>/deploy/duckle/console（观测面工作区：pipelines/ 与 owners.<源系统>.json 同址）。
 //   --duckle 覆盖引擎路径（默认 `duckle`，即 PATH 上的 PyPI 入口；CI 里由 pip 装出来）。
 //   --keep 保留临时工作区（排障用；平时用完即删）。
 //
@@ -35,7 +35,7 @@
 // #334 那一类（**声明了规则却匹配不到资产**）在**不加 strict 时就已经是失败**，无需 strict。
 //
 // ── 工作区怎么来：最小构造，**不需要任何凭据** ─────────────────────────────────
-// 只要 `pipelines/` + `owners.json` 两样，**不要** connections/、keys/、secrets.env。
+// 只要 `pipelines/` + `owners.<源系统>.json` 两样，**不要** connections/、keys/、secrets.env。
 // 这一点是实测的（2026-09-29，duckle==0.7.4）：
 //   · 同一份 pipelines 下，加/不加 `connections/zos.json`（带 bucket + 假凭据），
 //     `catalog build` 的资产数、命名结果、`catalog lint` 的退出码**逐字相同** ⇒
@@ -43,13 +43,14 @@
 //   · 所以「桶里那点真凭据」在本门禁里既不需要、也不该进来（凭据不进仓）。
 //
 // ⚠️ **覆盖边界（照实记，别读宽）**：
-//   · 扫的是 `deploy/duckle/console/`（**观测面工作区**：管线 + owners.json 同址的那个）。
-//     仓根 `duckle/common/*.json` 是**另一处**管线定义（不叫 `pipelines/`、也没有 owners.json）
+//   · 扫的是 `deploy/duckle/console/`（**观测面工作区**：管线 + owners.<源系统>.json 同址的那个）。
+//     2026-10-05 起 owners 按源系统分文件（#419）：工作区里仍合并成一份 `owners.json`（引擎只认这个名）。
+//     仓根 `duckle/common/*.json` 是**另一处**管线定义（不叫 `pipelines/`、也没有 owners 规则文件）
 //     ⇒ **不在本门禁扫描面内**。
 //   · `alerts.json` **不参与** `catalog lint`（实测：把它放进工作区，lint 输出与退出码**不变**）
 //     ⇒ 告警规则的「匹配不到任何东西」这类死规则**本门禁看不见**，属已知空缺。
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -133,12 +134,19 @@ const { srcDir, duckleBin, keep } = parseArgs(process.argv.slice(2))
 
 // ── 前置①：源工作区形状（少了任何一个，本门禁都会**变成空转**——宁可响亮失败）────────
 const srcPipelines = join(srcDir, 'pipelines')
-const srcOwners = join(srcDir, 'owners.json')
 if (!existsSync(srcPipelines) || !statSync(srcPipelines).isDirectory()) {
   failPrecondition(`源目录里没有 pipelines/ 目录：${srcPipelines}`)
 }
-if (!existsSync(srcOwners) || !statSync(srcOwners).isFile()) {
-  failPrecondition(`源目录里没有 owners.json：${srcOwners}（没有它，owners 死规则这一类判据无从谈起）`)
+// owners 按**源系统**分文件（`owners.<源系统>.json`）：规则里的路径前缀是源系统特有的。
+// 一个都没有 ⇒ 响亮失败，**不许降级**成「只判命名」——那正是本门禁要防的空转。
+const srcOwnersFiles = readdirSync(srcDir)
+  .filter((f) => /^owners\.[^./]+\.json$/.test(f))
+  .sort()
+if (srcOwnersFiles.length === 0) {
+  failPrecondition(
+    `源目录里没有 owners.<源系统>.json：${srcDir}（没有它，owners 死规则这一类判据无从谈起；` +
+      `owners 按源系统分文件，进工作区时合并为 owners.json）`,
+  )
 }
 const pipelineFiles = readdirSync(srcPipelines).filter((f) => f.endsWith('.json'))
 if (pipelineFiles.length === 0) {
@@ -167,7 +175,27 @@ process.on('SIGINT', () => {
 })
 
 cpSync(srcPipelines, join(ws, 'pipelines'), { recursive: true })
-cpSync(srcOwners, join(ws, 'owners.json'))
+// 合并各源系统的 owners：assets 取**并集**。同一 match 出现两条规则 ⇒ 响亮失败——
+// 谁生效不该由文件名的排序决定，那会让死规则（或真规则）静默消失。
+const mergedAssets = []
+const matchOwner = new Map()
+for (const f of srcOwnersFiles) {
+  const doc = JSON.parse(readFileSync(join(srcDir, f), 'utf8'))
+  for (const a of Array.isArray(doc.assets) ? doc.assets : []) {
+    const key = typeof a?.match === 'string' ? a.match : JSON.stringify(a)
+    if (matchOwner.has(key)) {
+      failPrecondition(
+        `owners 规则重复：${key}\n     同时出现在 ${matchOwner.get(key)} 与 ${f} —— 合并后谁生效不该由文件名决定`,
+      )
+    }
+    matchOwner.set(key, f)
+    mergedAssets.push(a)
+  }
+}
+writeFileSync(
+  join(ws, 'owners.json'),
+  JSON.stringify({ _note: [`由 check-duckle-catalog 合并：${srcOwnersFiles.join('、')}`], assets: mergedAssets }, null, 2),
+)
 
 // ── 判据①：catalog build —— 退出码 0 + stderr 不得出现 "could not be named" ──────────
 const build = runDuckle(duckleBin, ['catalog', 'build', '--workspace', ws])

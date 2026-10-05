@@ -67,7 +67,7 @@
   **企微群机器人 URL 只存 OO 服务端，不进仓**）→ 企微群。
   证据链与三跳排障口径（流里见行 / 告警触发记录 / 目的地投递错误）见 issue #210 终态评论与
   `alerts.json` 头注。旧案「引擎直发企微 errcode 40008 假绿」与「经 Novu 落个人」均已推翻（路线对比见 #210）。
-- **文件位置**：`deploy/duckle/console/alerts.json` → seed 进该账套 workspace 卷的 **`/workspace/alerts.json`**
+- **文件位置**：`deploy/duckle/console/alerts.<源系统>.json`（#419 起按源系统分文件，今天 = `alerts.lemeng.json`）→ seed 进该账套 workspace 卷的 **`/workspace/alerts.json`**
   （**不在** `/workspace/pipelines/` 里）。字段语义、冷却计法、凭据来路都写在**文件头的 `_note`**
   （serde 无 `deny_unknown_fields` ⇒ 未知键被忽略；实测无 parse 报错）。
 - **生效动作**：`/workspace` 是卷 ⇒ 与 `schedules/`、`pipelines/` 同类，**seed + 重启容器**即生效
