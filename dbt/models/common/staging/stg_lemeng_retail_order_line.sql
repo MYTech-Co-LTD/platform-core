@@ -53,7 +53,9 @@
 -- 门禁与真机（CTE 形态只满足门禁、真机报错 —— 那正是「静态绿 ≠ 跑得动」的形态）。
 --
 -- ════════════════════════════════════════════════════════════════════════════════════════
--- 【三】契约 **25 列**全带（一对一不许丢列；18→24 见 2026-09-30 Phase 2 与契约 v2；24→25 见 2026-10-05 issue #430）
+-- 【三】契约列集：v1 = 18 列、v2 = 24 列（2026-09-30 Phase 2 / #294）、v3 = 25 列（2026-10-05 / #430）。
+--   ⚠️ **本层当前只投影 24 列** —— v3 的 `order_total_money` 在**展开期故意不投影**（理由见文件末尾注；
+--   契约里 `consumerVersion = 2` 就声明了这个合法中间态，门禁 B10 按它放行）。迁移在封版之后（#431）。
 --    （另加 **dbt 注入列 `org`**：主体列，非契约列，见 dbt/macros/subject_org.sql）
 -- ════════════════════════════════════════════════════════════════════════════════════════
 -- `hour` 与 `order_operate_time` 也在内 —— 下游 marts 用不用是 marts 的事，③ 层没有资格替它裁。
@@ -89,12 +91,14 @@ select
   r['order_detail_share_discount']::numeric as order_detail_share_discount,
   r['order_detail_std_price']::numeric      as order_detail_std_price,
   r['order_detail_price']::numeric          as order_detail_price,
-  r['order_detail_online_qty']::numeric     as order_detail_online_qty,
-  -- ── v3 新增 1 列（2026-10-05，#430）：契约 v3 = 25 列。**换货判别的事实源**：
-  --    平台 sale_money 只算换货单的「送出半边」= (Σ非赠品行额 + order_total_money)/2。
-  --    ⚠️ 回填完成前，历史分区的该列**不存在** ⇒ 下游 marts/对账在旧分区上会报
-  --    `column "order_total_money" does not exist`（不是静默 NULL）。回填进度见 issue #430。
-  r['order_total_money']::numeric           as order_total_money
+  r['order_detail_online_qty']::numeric     as order_detail_online_qty
+  -- ── v3 的 `order_total_money`（2026-10-05，#430）**本层暂不投影 —— 这是「展开期」** ──────
+  --    生产者（管线）已经写这一列（#432），但湖里的历史分区**还没回填完**、也**还没落封版标记**
+  --    （`_SCHEMA/v3.parquet`）。此时读者若引用它，旧分区上会**响亮地报**
+  --    `column "order_total_money" does not exist`（不是静默 NULL）。
+  --    ⇒ 迁移（本层补上这一列 + 封版断言 + 契约 `consumerVersion` 置 3）必须排在**封版之后**。
+  --    契约里 `consumerVersion = 2` 就是在声明这个**合法中间态**；门禁 B10 按它放行、并打印一行提示。
+  --    正典：docs/architecture.md §5.2「展开 → 迁移」；进度：#431。
 -- pg_duckdb 把 read_parquet 委托给 DuckDB 执行。裸扫描结果**不是 PG 关系、不进 pg_class**
 -- （spec §9.4 可见性坑）⇒ 它只出现在 staging 模型内部，物化落点由上面的 config + 项目缺省保证
 -- 是 PG 可见关系（gate 2）。
