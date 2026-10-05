@@ -16,7 +16,13 @@
 //      每个生产者文件里必须**恰好一个** `code.sql` 节点的输出别名序列 == 契约列序列（同序）。
 //      其余 `code.sql` 节点（`qa.contract` 前的守卫、回执等）不参与比对。
 //   ③ **消费面**：`dbt/models/common/staging/stg_<domain>_<table>.sql` 的投影别名序列
-//      （去掉 dbt 注入的 `org`）必须 == 契约列序列（同序）。
+//      （去掉 dbt 注入的 `org`）必须是契约列序列的**同序前缀**；再按 `consumerVersion` 定档：
+//        · `consumerVersion == schemaVersion` ⇒ 前缀必须补齐成**完全相等**（迁移做完了）；
+//        · `consumerVersion <  schemaVersion` ⇒ 前缀必须**严格更短**，且门禁**打印一行提示**
+//          （展开期中、迁移未完成）——**不是红，但也不沉默**；
+//        · `consumerVersion >  schemaVersion` ⇒ 红（消费者读的版本还不存在）。
+//      ⚠️ 前缀这个形状有个前提：**新列一律追加在末尾**（见 docs/architecture.md §5.2）。
+//      中间插列会让所有消费者的投影不再是前缀 ⇒ 必然红——这是有意的，插列本就该走「加新列 + 停用旧列」。
 //
 // ## 为什么比「序列」而不是「集合」
 //
@@ -153,7 +159,7 @@ function collectJson(root, relDir) {
  *
  * @param {string} root
  * @param {string} rel
- * @returns {{ rel: string, domain: string, table: string, prefix: string, schemaVersion: unknown, columns: string[] } | null}
+ * @returns {{ rel: string, domain: string, table: string, prefix: string, schemaVersion: unknown, consumerVersion: unknown, columns: string[] } | null}
  */
 function readContract(root, rel) {
   /** @type {any} */
@@ -171,6 +177,7 @@ function readContract(root, rel) {
     table: String(doc?.table ?? ''),
     prefix: String(layout.prefix ?? ''),
     schemaVersion: doc?.schemaVersion,
+    consumerVersion: doc?.consumerVersion,
     columns: cols.map((/** @type {any} */ c) => String(c?.name ?? '')),
   }
 }
@@ -207,6 +214,8 @@ export function checkDataContract(rootDir) {
           `封版标记（_SCHEMA/v<N>.parquet）与读侧断言都引用它。见 docs/architecture.md §5.2 ①`,
       })
     }
+    /** 已收窄的 schemaVersion（非法时为 null）——下面各处比较都用它，避免 unknown 参与运算。 */
+    const svNum = typeof sv === 'number' && Number.isInteger(sv) && sv >= 1 ? sv : null
 
     // ② 生产面：文本含 prefix 的管线 = 这张表的生产者
     const producers = pipelines.filter((p) => {
@@ -252,7 +261,20 @@ export function checkDataContract(rootDir) {
       }
     }
 
-    // ③ 消费面：staging 投影（去掉注入列）必须与契约逐列同序
+    // ③ 消费面：staging 投影（去掉注入列）必须是契约的**同序前缀**，并按 consumerVersion 定档
+    const cv = c.consumerVersion
+    if (typeof cv !== 'number' || !Number.isInteger(cv) || cv < 1) {
+      violations.push({
+        file: rel,
+        message: `契约缺少合法的 consumerVersion（收到 ${JSON.stringify(cv)}）—— 它是「消费者已采纳到哪一版」，展开期靠它区分「还没迁移」与「漏改」。见 docs/architecture.md §5.2`,
+      })
+    } else if (svNum !== null && cv > svNum) {
+      violations.push({
+        file: rel,
+        message: `consumerVersion(${cv}) > schemaVersion(${sv}) —— 消费者读的版本还不存在`,
+      })
+    }
+
     const stgRel = `dbt/models/common/staging/stg_${c.domain}_${c.table}.sql`
     if (!existsSync(join(rootDir, stgRel))) {
       violations.push({
@@ -263,16 +285,31 @@ export function checkDataContract(rootDir) {
       const aliases = extractStagingAliases(readFileSync(join(rootDir, stgRel), 'utf8')).filter(
         (a) => !INJECTED_STAGING_COLUMNS.includes(a),
       )
-      if (aliases.join('\u0000') !== c.columns.join('\u0000')) {
+      const isPrefixOfContract = aliases.every((a, i) => c.columns[i] === a) && aliases.length <= c.columns.length
+      if (!isPrefixOfContract) {
         const missing = c.columns.filter((x) => !aliases.includes(x))
         const extra = aliases.filter((x) => !c.columns.includes(x))
         violations.push({
           file: stgRel,
           message:
-            `staging 投影与契约 \`${where}\` 不一致（须逐列同序）。` +
+            `staging 投影必须是契约列的**同序前缀**（新列一律追加在末尾——见 docs/architecture.md §5.2）。` +
             `契约有而 staging 缺：${missing.join(', ') || '无'}；staging 有而契约无：${extra.join(', ') || '无'}；` +
             `列数 ${aliases.length} vs ${c.columns.length}`,
         })
+      } else if (typeof cv === 'number' && svNum !== null && cv === svNum && aliases.length !== c.columns.length) {
+        violations.push({
+          file: stgRel,
+          message:
+            `consumerVersion == schemaVersion(${svNum}) 声明消费者已跟上，但 staging 只有 ${aliases.length}/${c.columns.length} 列` +
+            `（缺 ${c.columns.slice(aliases.length).join(', ')}）—— 迁移没做完就改版本号`,
+        })
+      } else if (typeof cv === 'number' && svNum !== null && cv < svNum) {
+        // 展开期：不是红，但**也不沉默**
+        console.log(
+          `${SCRIPT_NAME}: 展开期中 ${where} —— 生产者 v${svNum}、消费者 v${cv}（staging 落后 ${c.columns.length - aliases.length} 列：${c.columns
+            .slice(aliases.length)
+            .join(', ')}）；迁移（§5.2 的 migrate 步）未完成`,
+        )
       }
     }
   }

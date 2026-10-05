@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 
 import {
   checkDataContract,
@@ -28,7 +28,8 @@ const COLS = ['batch_id', 'system_book', 'bizday', 'amount']
  * 造一棵最小假仓。`over` 里的字段用来做变异。
  *
  * @param {{ contractCols?: string[], pipelineCols?: string[], stagingCols?: string[],
- *           schemaVersion?: number | null, pipelineText?: string, sinkKey?: string }} [over]
+ *           schemaVersion?: number | null, consumerVersion?: number | null,
+ *           pipelineText?: string, sinkKey?: string }} [over]
  * @returns {string} 临时仓根
  */
 function fixture(over: {
@@ -36,6 +37,7 @@ function fixture(over: {
   pipelineCols?: string[]
   stagingCols?: string[]
   schemaVersion?: number | null
+  consumerVersion?: number | null
   pipelineText?: string
   sinkKey?: string
 } = {}): string {
@@ -53,6 +55,8 @@ function fixture(over: {
   }
   const sv = over.schemaVersion === undefined ? 1 : over.schemaVersion
   if (sv !== null) contract.schemaVersion = sv
+  const cv = over.consumerVersion === undefined ? sv : over.consumerVersion
+  if (cv !== null) contract.consumerVersion = cv
 
   const pipeline = {
     nodes: [
@@ -71,7 +75,7 @@ function fixture(over: {
         },
       },
       // 另一个 code.sql 节点（守卫/回执），列集与契约不同 —— 必须**不被**当成投影
-      { id: 'summ', data: { componentId: 'code.sql', properties: { sql: "SELECT 'r' AS run_token, 'ok' AS status" } } },
+      { id: 'summ', data: { componentId: 'code.sql', properties: { sql: "SELECT 'r' AS run_token, 'ok' AS status" } }, },
       // 生产者是靠**文本里出现 prefix** 机械推导的；真实管线由 sink 的 key 承载它
       { id: 'sink', data: { componentId: 'snk.minio', properties: { key: over.sinkKey ?? 'x/y/bizday=${D}/all.parquet' } } },
     ],
@@ -113,11 +117,38 @@ describe('check-data-contract', () => {
     expect(checkDataContract(fixture())).toEqual([])
   })
 
-  it('staging 少一列 ⇒ 红，且点名那一列', () => {
+  it('尾列缺失 + 版本号已跟上 ⇒ 红（点名「迁移没做完就改版本号」）', () => {
     const v = checkDataContract(fixture({ stagingCols: COLS.slice(0, -1) }))
     expect(v).toHaveLength(1)
+    expect(v[0]!.message).toContain('迁移没做完就改版本号')
     expect(v[0]!.message).toContain('amount')
-    expect(v[0]!.message).toContain('staging 有而契约无')
+  })
+
+  it('**展开期**：consumerVersion 落后 + staging 是同序前缀 ⇒ 不红，但打提示', () => {
+    const logs: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((m: unknown) => logs.push(String(m)))
+    const v = checkDataContract(fixture({ stagingCols: COLS.slice(0, -1), schemaVersion: 2, consumerVersion: 1 }))
+    spy.mockRestore()
+    expect(v).toEqual([])
+    expect(logs.join('\n')).toContain('展开期中')
+  })
+
+  it('中间少一列（不是前缀）⇒ 红', () => {
+    const v = checkDataContract(fixture({ stagingCols: ['batch_id', 'bizday', 'amount'] }))
+    expect(v).toHaveLength(1)
+    expect(v[0]!.message).toContain('同序前缀')
+  })
+
+  it('consumerVersion > schemaVersion ⇒ 红', () => {
+    const v = checkDataContract(fixture({ schemaVersion: 1, consumerVersion: 2 }))
+    expect(v).toHaveLength(1)
+    expect(v[0]!.message).toContain('消费者读的版本还不存在')
+  })
+
+  it('缺 consumerVersion ⇒ 红', () => {
+    const v = checkDataContract(fixture({ consumerVersion: null }))
+    expect(v).toHaveLength(1)
+    expect(v[0]!.message).toContain('consumerVersion')
   })
 
   it('管线投影少一列 ⇒ 红（点名「恰好一个」判据）', () => {
@@ -133,9 +164,9 @@ describe('check-data-contract', () => {
   })
 
   it('契约缺 schemaVersion ⇒ 红', () => {
+    // schemaVersion 缺失时 consumerVersion 也无从默认 ⇒ 两条都报（各自点名）
     const v = checkDataContract(fixture({ schemaVersion: null }))
-    expect(v).toHaveLength(1)
-    expect(v[0]!.message).toContain('schemaVersion')
+    expect(v.map((x) => x.message).join('\n')).toContain('schemaVersion')
   })
 
   it('没有生产者（没有任何管线写着该 prefix）⇒ 红', () => {
