@@ -4,7 +4,7 @@
   "domain": "lemeng",
   "table": "retail_order_line",
   "owner": "data-platform",
-  "description": "乐檬零售订单明细行（posorder.find 拉回后管线内 UNNEST 成行粒度）。两账套各采各的；作废/取消单照采，口径在 marts。2026-09-29 列集 v2（#294）：18→24 列，补采 6 个对账字段（订单级 order_transaction_type / order_ref_billno，明细级 order_detail_share_discount / order_detail_std_price / order_detail_price / order_detail_online_qty）；契约格式未变，contractVersion 不动。",
+  "description": "乐檬零售订单明细行（posorder.find 拉回后管线内 UNNEST 成行粒度）。两账套各采各的；作废/取消单照采，口径在 marts。2026-09-29 列集 v2（#294）：18→24 列，补采 6 个对账字段（订单级 order_transaction_type / order_ref_billno，明细级 order_detail_share_discount / order_detail_std_price / order_detail_price / order_detail_online_qty）；契约格式未变，contractVersion 不动。2026-10-05 列集 v3（#430）：24→25 列，补采订单级 order_total_money —— 平台 sale_money 口径的换货半边靠它算；契约格式仍未变，contractVersion 不动。",
   "layout": {
     "prefix": "lemeng/retail_order_line",
     "partitionStyle": "hive",
@@ -36,11 +36,12 @@
     { "name": "discount_money", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "行折扣金额（元）" },
     { "name": "payment_money", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "行收款金额（元）" },
     { "name": "quantity", "type": "decimal", "precision": 14, "scale": 3, "nullable": true, "description": "行数量" },
-    { "name": "order_transaction_type", "type": "varchar", "nullable": true, "description": "订单交易类型（订单级：SALE_ORDER / PARTIAL_ORDER_RETURN / FULL_ORDER_RETURN / NO_ORDER_RETURN）。非 SALE 订单行金额逐分等于平台 return_money（2026-09-28 归因 §3.2 实测）。v2（#294）补采" },
-    { "name": "order_ref_billno", "type": "varchar", "nullable": true, "description": "退货关联原单号（订单级，仅退货类订单有值）。v2（#294）补采" },
+    { "name": "order_transaction_type", "type": "varchar", "nullable": true, "description": "订单交易类型（订单级：SALE_ORDER / PARTIAL_ORDER_RETURN / FULL_ORDER_RETURN / NO_ORDER_RETURN）。⚠️ 2026-10-05 订正：旧描述「非 SALE 订单行金额逐分等于平台 return_money」**会误导**——平台的 sale_money **不冲减退货单**（退货单只是不进 gross），且**同一张 SALE_ORDER 内部也可能装着换货的退回行**（靠本列看不出来）。口径正典见 issue #430。v2（#294）补采" },
+    { "name": "order_ref_billno", "type": "varchar", "nullable": true, "description": "退货关联原单号（订单级，仅退货类订单有值）。⚠️ 2026-10-05 起**对账不再依赖它**：平台 sale_money 不按原单日冲减退货（issue #430）。v2（#294）补采" },
     { "name": "order_detail_share_discount", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "订单明细分摊金额（官方语义确认；分支级 sd 可由它自算，摆脱报表依赖。真机非满员：43/67 行有值）。v2（#294）补采" },
     { "name": "order_detail_std_price", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "明细标准价（复核折扣/改价口径；真机 67/67 行有值）。v2（#294）补采" },
     { "name": "order_detail_price", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "明细售价（复核折扣/改价口径；真机 67/67 行有值）。v2（#294）补采" },
-    { "name": "order_detail_online_qty", "type": "decimal", "precision": 14, "scale": 3, "nullable": true, "description": "线上单规格换算数量（团购渠道；真机 67/67 行有值）。v2（#294）补采" }
+    { "name": "order_detail_online_qty", "type": "decimal", "precision": 14, "scale": 3, "nullable": true, "description": "线上单规格换算数量（团购渠道；真机 67/67 行有值）。v2（#294）补采" },
+    { "name": "order_total_money", "type": "decimal", "precision": 14, "scale": 2, "nullable": true, "description": "订单级总额（元，订单级字段逐行冗余）。**换货判别的事实源**：换货单的「送出半边」= (Σ非赠品行额 + order_total_money) / 2 —— 等价换货（礼盒↔散货）总额 0 ⇒ Σ/2；差价换货（退 A 换 B 补差）总额 = 净补差 ⇒ (Σ+总额)/2。真机 2026-10-05 实测：带它后 4 天 × 13 店逐分归零（issue #430）。v3 补采" }
   ]
 }

@@ -53,7 +53,7 @@
 -- 门禁与真机（CTE 形态只满足门禁、真机报错 —— 那正是「静态绿 ≠ 跑得动」的形态）。
 --
 -- ════════════════════════════════════════════════════════════════════════════════════════
--- 【三】契约 **24 列**全带（一对一不许丢列；18→24 见 2026-09-30 Phase 2 与契约 v2）
+-- 【三】契约 **25 列**全带（一对一不许丢列；18→24 见 2026-09-30 Phase 2 与契约 v2；24→25 见 2026-10-05 issue #430）
 --    （另加 **dbt 注入列 `org`**：主体列，非契约列，见 dbt/macros/subject_org.sql）
 -- ════════════════════════════════════════════════════════════════════════════════════════
 -- `hour` 与 `order_operate_time` 也在内 —— 下游 marts 用不用是 marts 的事，③ 层没有资格替它裁。
@@ -89,7 +89,12 @@ select
   r['order_detail_share_discount']::numeric as order_detail_share_discount,
   r['order_detail_std_price']::numeric      as order_detail_std_price,
   r['order_detail_price']::numeric          as order_detail_price,
-  r['order_detail_online_qty']::numeric     as order_detail_online_qty
+  r['order_detail_online_qty']::numeric     as order_detail_online_qty,
+  -- ── v3 新增 1 列（2026-10-05，#430）：契约 v3 = 25 列。**换货判别的事实源**：
+  --    平台 sale_money 只算换货单的「送出半边」= (Σ非赠品行额 + order_total_money)/2。
+  --    ⚠️ 回填完成前，历史分区的该列**不存在** ⇒ 下游 marts/对账在旧分区上会报
+  --    `column "order_total_money" does not exist`（不是静默 NULL）。回填进度见 issue #430。
+  r['order_total_money']::numeric           as order_total_money
 -- pg_duckdb 把 read_parquet 委托给 DuckDB 执行。裸扫描结果**不是 PG 关系、不进 pg_class**
 -- （spec §9.4 可见性坑）⇒ 它只出现在 staging 模型内部，物化落点由上面的 config + 项目缺省保证
 -- 是 PG 可见关系（gate 2）。
