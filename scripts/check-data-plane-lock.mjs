@@ -66,6 +66,28 @@ export const REPO_REF_EXCLUSIONS = [
     ref: '.$REVISION_REL.tmp.$$',
     reason: '上一条的同目录临时文件（`mv -f` 前的落点，原子换名用）——同上，机器本地、写后即消失，不进清单',
   },
+  {
+    ref: 'deploy/data-plane.lock',
+    reason:
+      '**同步程序自己取的那份清单**（`lemeng-sync.sh` 第一步按全 SHA 取 lock、第二步自校验），' +
+      '不是被投递物——它是投递的**输入**。`scripts/lemeng/seed-console.sh` 需要在机器上读它来决定' +
+      '「这个 revision 该有哪些文件」（**故意的**：见下一条），故登记为豁免。',
+  },
+  {
+    ref: '.data-plane-revision',
+    reason:
+      '**同步程序自己写出的版本标记**（`<检出>/.data-plane-revision`）——与上面 `$REVISION_REL` 是同一个文件，' +
+      '只是 `seed-console.sh` 是按**字面路径**引它（要读全 SHA 去重取 lock，见该脚本头注）：' +
+      '它是投递的**产物**，机器本地、仓里没有、也不该有。',
+  },
+  {
+    ref: '${rel}',
+    reason:
+      '**运行时才解析的计算路径**，不是字面量：`seed-console.sh` 从 `data-plane.lock` 逐行取出' +
+      '仓内相对路径 `rel`，再拼成 `$REPO/$rel` 去比对。提取器是纯文本的（不解析变量），' +
+      '所以这里剥出来的是字符串 `$rel` 本身——它没有对应的仓内文件，不该进清单。' +
+      '该脚本真正引用的那些路径由 lock 逐行给出，本豁免不缩小任何覆盖面。',
+  },
 ]
 
 /**
@@ -201,7 +223,20 @@ export function findViolations(rootDir) {
     for (const ref of extractRepoRefs(readFileSync(join(rootDir, script), 'utf8'))) {
       if (excluded.has(ref)) continue
       const want = `${REPO_SENTINEL}/${ref}`
-      const covered = landings.some((l) => (l.isDir ? want.startsWith(l.path) : want === l.path))
+      // ⚠️ 两侧都要**归一化尾斜杠**再比。提取器会把 `$REPO/<目录>/` 的尾斜杠剥掉，而目录条目的
+      // 落地路径**是带斜杠的**（`${REPO}/deploy/duckle/console/`）⇒ 不归一化时
+      // 「引用被登记的那个**目录本身**」会被判成「未登记」——2026-10-05 实测：
+      // `scripts/lemeng/seed-console.sh` 引用 `$REPO/deploy/duckle/console` 时被误报，
+      // 而清单里明明就有这条目录条目。误报的代价是逼人去加一条本不该有的 EXCLUSIONS。
+      // 去掉尾斜杠。⚠️ `scripts/` 是 checkJs：箭头函数赋给 const 时**`@param` 不生效**
+      // （那是函数声明的写法），必须用 `@type`，否则 TS7006 隐式 any。
+      /** @type {(p: string) => string} */
+      const normPath = (p) => p.replace(/\/+$/, '')
+      const covered = landings.some((l) => {
+        const lp = normPath(l.path)
+        const w = normPath(want)
+        return l.isDir ? w === lp || w.startsWith(`${lp}/`) : w === lp
+      })
       if (!covered) {
         violations.push({
           file: script,
