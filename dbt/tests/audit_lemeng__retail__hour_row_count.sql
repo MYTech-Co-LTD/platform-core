@@ -19,6 +19,16 @@
 --   （为什么必须有 T-3 那条：湖里 T-1 两次点火后就冻结，而源更久之后仍在变 ⇒ 冻住的湖会永久短于
 --   稳态的源，见 §1.4.1「定稿线」。）
 --
+-- ★ **已知边界**（2026-10-05 代码评审登记，别当已解决）：
+--   ① **判据对象假设「昨天的日批已跑完」**（即 §1.4.1 的「第二次点火之后」），而**本条无法自证
+--      这个前提**：若在第二次点火之前被跑（或日批延迟），昨天还是半成品 ⇒ 误报。
+--      ⇒ 只能由**调度**保证顺序（排在日批之后）；SQL 侧不猜运行时机。
+--   ② **全湖扫描**：路径不带日期下界，成本随历史线性涨（现只两周数据，尚可）。
+--      ⇒ 待办：加日期下界/分区裁剪（另两条 audit 同此形态，宜一并改）。
+--   ③ **占用「指标对账」的文件名范式**：将来若真声明指标 `lemeng:retail:hour_row_count`，
+--      门禁规则 ⑦（每个指标必须有对账）会被这条**不相干**的测试蒙过。
+--      ⇒ 届时给本条**改名**（它算量级/断崖，不是指标的独立复算）。
+--
 -- ── 形态：与另两条 audit **同一套实测形态**（2026-09-24 数据面真机）──────────────────────
 --   ① 取列用 `from read_parquet('…') r` + `r['列名']`（别名挂函数调用上；CTE 形态取列报
 --      `cannot subscript type record`）；
@@ -90,27 +100,55 @@ history as (
      and l.bizday >= u.bizday - 14
     group by 1, 2
 )
+-- ⚠️ **从 history 左连到 today**（不是内连接）：整块缺席的小时在 `today` 里**根本没有行**，
+--    内连接会把它悄悄丢掉 —— 而「一个本该繁忙的小时整块没落」正是最该抓、也最静默的那种「丢了」。
 select
-    t.system_book,
-    t.bizday,
-    t.hour,
-    t.rows_landed  as today_rows,
-    h.median_rows  as history_median,
+    h.system_book,
+    u.bizday      as bizday,
+    h.hour,
+    t.rows_landed as today_rows,
+    h.median_rows as history_median,
     h.history_days,
-    '本小时行数较同小时历史中位数骤降（量级判据，§1.4.1）' as note
-from today t
-join history h
+    case when t.system_book is null
+         then '本小时在目标营业日**整块缺席**（历史常态有量）——最严重的那种「丢了」（§1.4.1）'
+         else '本小时行数较同小时历史中位数骤降（量级判据，§1.4.1）' end as note
+from history h
+join latest u
+  on u.system_book = h.system_book
+left join today t
   on t.system_book = h.system_book
  and t.hour        = h.hour
-where h.history_days >= 3                 -- 历史不够不判（冷启动不误伤）
-  and h.median_rows  > 0                  -- 常态为空的窗不判（合法空窗，如凌晨）
-  and t.rows_landed  < h.median_rows * 0.5 -- 只抓断崖：低于同小时历史中位数的一半
+where h.history_days >= 3                                   -- 历史不够不判（冷启动不误伤）
+  -- **只判「常态繁忙」的小时**（下限 50 行/小时）。为什么不写 `median_rows > 0`：
+  --   实测（2026-10-05 变异确认）有小时**历史上就只有零星几行**（如 3120 的 01 时中位数 3、
+  --   07 时中位数 12；64188 的 07 时中位数 2.5，8 天里大半为 0）——这种小时「今天没有」是正常，
+  --   不是丢数。门槛取 >0 会把它们全报成「整块缺席」。
+  --   ⚠️ 这个 50 是按**真实分布标定**的（繁忙小时数百~上千行、零星小时个位数），不是拍的；
+  --      换源/换账套后应重新标定。
+  and h.median_rows  >= 50
+  and (t.system_book is null                                 -- ① 整块缺席
+       or t.rows_landed < h.median_rows * 0.5)               -- ② 骤降（低于中位数一半）
 
 union all
 
--- 空集自检（同族：另两条 audit 与本仓 check-tenant-isolation 都有这一段）：
--- 湖里一行都没有时，上面的 join 恒不出行 = 「通过」，而那个通过毫无信息量。
+-- 空集自检**三连**（同族：另两条 audit 与本仓 check-tenant-isolation 都有这一段）。
+-- 只自检 `landed` 为空是不够的：`landed` 非空、而 `today`/`history` 为空时（冷启动、或目标日
+-- 整天没落），主查询恒不出行 = 「通过」，而那个通过**什么都没比过**。三种空都要显式出行。
 select
     null, null, null, null, null, null,
     '湖里一行都没有：空集上「通过」是空转绿（不是对上了）'
 where not exists (select 1 from landed)
+
+union all
+
+select
+    null, null, null, null, null, null,
+    '目标营业日一行都没有（today 为空）：没有任何小时进入判据——空转绿（不是对上了）'
+where not exists (select 1 from today)
+
+union all
+
+select
+    null, null, null, null, null, null,
+    '没有任何历史可作基线（history 为空）：判据从未跑过——空转绿（不是对上了）'
+where not exists (select 1 from history)
