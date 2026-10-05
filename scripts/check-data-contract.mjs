@@ -24,6 +24,14 @@
 //      ⚠️ 前缀这个形状有个前提：**新列一律追加在末尾**（见 docs/architecture.md §5.2）。
 //      中间插列会让所有消费者的投影不再是前缀 ⇒ 必然红——这是有意的，插列本就该走「加新列 + 停用旧列」。
 //
+//   ④ **申报面**：投影里引用的 `<输入别名>.<字段>`，必须都在**喂它的那几路 `src.rest`** 的
+//      `data.schema` 里逐条申报。🔴 为什么非有不可：**空响应时引擎按「申报」构造关系**
+//      （非空响应才靠实际字段兜住）⇒ 没申报的字段会 `Binder Error`，而**平时完全看不出来**。
+//      2026-10-05 实测（#432 的教训）：只改 flatten 的 SQL、没改申报 ⇒ 24 个窗口里
+//      **只有空窗失败**（23 个照常成功），报 `Values list "o" does not have a column named …`。
+//      ⚠️ 「喂它的那几路」= **`ctl.merge` 的直接 `src.rest` 父**——不能一把抓全部 src.rest（身份闸门
+//      `w0` 也是投影的上游，但它是**控制父**，不喂数据 ⇒ 会误报），也不能取并集（一个节点漏申报就够了）。
+//
 // ## 为什么比「序列」而不是「集合」
 //
 // 同序也是有意义的：它让「按契约顺序读 parquet 的列位置」这种朴素写法不会在换列时静默错位。
@@ -241,23 +249,98 @@ export function checkDataContract(rootDir) {
         continue
       }
       const nodes = Array.isArray(doc?.nodes) ? doc.nodes : []
-      /** @type {string[][]} */
+      /** @type {{ id: string, aliases: string[], sql: string }[]} */
       const projections = []
       for (const n of nodes) {
         if (n?.data?.componentId !== 'code.sql') continue
         const sql = n?.data?.properties?.sql
         if (typeof sql !== 'string') continue
         const aliases = extractPipelineAliases(sql)
-        if (aliases.length > 0) projections.push(aliases)
+        if (aliases.length > 0) projections.push({ id: String(n?.id ?? ''), aliases, sql })
       }
-      const hits = projections.filter((a) => a.join('\u0000') === c.columns.join('\u0000'))
+      const hits = projections.filter((x) => x.aliases.join('\u0000') === c.columns.join('\u0000'))
       if (hits.length !== 1) {
         violations.push({
           file: p,
           message:
             `作为 \`${where}\` 的生产者，必须**恰好一个** \`code.sql\` 节点的输出列与契约逐列同序；` +
-            `实测命中 ${hits.length} 个（候选列数：${projections.map((a) => a.length).join('/') || '无'}，契约 ${c.columns.length} 列）`,
+            `实测命中 ${hits.length} 个（候选列数：${projections.map((x) => x.aliases.length).join('/') || '无'}，契约 ${c.columns.length} 列）`,
         })
+      } else {
+        // ④ **申报面**：投影里引用的 `<输入别名>.<字段>` 必须都在 `src.rest` 节点的 `data.schema` 里。
+        // 🔴 为什么这条非有不可：**空响应时引擎按「申报」构造关系**（非空响应才靠实际字段兜住）
+        //    ⇒ 引用了没申报的字段会 `Binder Error`，而**平时完全看不出来**。
+        //    2026-10-05 实测（#432 的教训）：只改了 flatten 的 SQL、没改申报 ⇒ 24 个窗口里
+        //    **只有空窗失败**（23 个照常成功），报 `Values list "o" does not have a column named …`。
+        // ⚠️ 判据是**逐个 src.rest 节点**，不是它们的并集：**任何一个**节点返回空，都会让引擎
+        //    按**那个节点自己的申报**构造关系 ⇒ 只要有一个节点没申报，那条路就会 Binder Error。
+        //    （第一版写成了并集，变异测试没变红——12 个节点只删一个，并集里还有，判据形同虚设。）
+        const proj = hits[0]
+        // ⚠️ 只查**投影真正吃的上游** `src.rest`（反向 BFS 沿 edges 走）。
+        //    一把抓全部 src.rest 会误报：身份链上的 `w0`（whoami，申报只有 1 个字段）
+        //    根本不喂投影，却被判「没申报」——2026-10-05 实测就是这么误报的两条维表管线。
+        const edges = Array.isArray(doc?.edges) ? doc.edges : []
+        /** @type {Map<string, string[]>} */
+        const parents = new Map()
+        for (const e of edges) {
+          const t = String(e?.target ?? '')
+          const sp = String(e?.source ?? '')
+          if (!parents.has(t)) parents.set(t, [])
+          parents.get(t)?.push(sp)
+        }
+        /** @type {Set<string>} */
+        const anc = new Set()
+        const stack = [...(parents.get(proj?.id ?? '') ?? [])]
+        while (stack.length > 0) {
+          const x = stack.pop() ?? ''
+          if (anc.has(x)) continue
+          anc.add(x)
+          for (const y of parents.get(x) ?? []) stack.push(y)
+        }
+        // ⚠️ 但「上游」还不够：身份闸门是**控制父**（`dv → p1`，先证后采），它也在 ancestors 里，
+        //    却根本不喂投影（`w0` = whoami，申报只有 1 个字段）。要点是**数据汇合点 `ctl.merge`**：
+        //    只有它的直接父才是「喂给投影的那几路 REST」。2026-10-05 实测：不这么收会误报两条维表管线。
+        const byId = new Map(nodes.map((/** @type {any} */ n) => [String(n?.id ?? ''), n]))
+        /** @type {Set<string>} */
+        const feederIds = new Set()
+        for (const id of anc) {
+          if (byId.get(id)?.data?.componentId !== 'ctl.merge') continue
+          for (const sp of parents.get(id) ?? []) {
+            if (byId.get(sp)?.data?.componentId === 'src.rest') feederIds.add(sp)
+          }
+        }
+        const srcNodes = nodes.filter((/** @type {any} */ n) => feederIds.has(String(n?.id ?? '')))
+        if (srcNodes.length > 0 && proj) {
+          const m = /\bFROM\s+input\s+([a-z][a-z0-9_]*)\b/i.exec(proj.sql)
+          const alias = m?.[1] ?? 'o'
+          /** @type {Set<string>} */
+          const refs = new Set()
+          const re = new RegExp(`\\b${alias}\\.([a-z_][a-z0-9_]*)`, 'g')
+          let mm
+          while ((mm = re.exec(maskSqlComments(proj.sql))) !== null) refs.add(mm[1])
+          /** @type {string[]} */
+          const badNodes = []
+          /** @type {Set<string>} */
+          const missing = new Set()
+          for (const sn of srcNodes) {
+            const names = new Set((sn?.data?.schema ?? []).map((/** @type {any} */ f) => String(f?.name ?? '')))
+            const und = [...refs].filter((f) => !names.has(f))
+            if (und.length > 0) {
+              badNodes.push(String(sn?.id ?? '?'))
+              for (const f of und) missing.add(f)
+            }
+          }
+          if (badNodes.length > 0) {
+            violations.push({
+              file: p,
+              message:
+                `投影节点引用 \`${alias}.<字段>\`，但有 ${badNodes.length}/${srcNodes.length} 个 \`src.rest\` 节点的 ` +
+                `\`data.schema\` **没申报**：${[...missing].sort().join(', ')}（节点：${badNodes.slice(0, 6).join(', ')}${badNodes.length > 6 ? ' …' : ''}）` +
+                ` ⇒ **空响应时**引擎按申报构造关系 ⇒ \`Binder Error\`；而**非空窗口照常成功**（实测 #432：24 窗只有空窗失败）。` +
+                `修法：把缺的字段补进该文件**每一个** \`src.rest\` 节点。`,
+            })
+          }
+        }
       }
     }
 
