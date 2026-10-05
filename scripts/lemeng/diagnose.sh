@@ -1,8 +1,10 @@
 #!/bin/sh
-# diagnose.sh — 乐檬**只读**诊断工具（替代 `run-retail-day.sh` 的只读形：`recon` / `rb` / `identity`）
+# diagnose.sh — 乐檬**只读**诊断工具（替代 `run-retail-day.sh` 的只读形：`recon` / `recon-day` / `rb` / `identity`）
 #
 # 用法（在**数据面机宿主**上跑；秘密值来自 job env——本脚本只读不写，任何输出都不回显值）：
 #   sh diagnose.sh recon <H>          # 对账（#260 裁决口径，只读）：该 hour 湖分区 vs 网关当刻累计
+#   sh diagnose.sh recon-day <YYYY-MM-DD>  # 定稿线（§1.4.1）：该营业日逐小时跑 recon（00..23），
+#                                          # 任一小时不平即整体判红；未闭窗与**合法空窗**跳过
 #   sh diagnose.sh rb "<duckdb SQL>"  # 容器内 duckdb 只读 SQL 口（**带护栏**：写面关键字一律拒）
 #   sh diagnose.sh identity           # 身份自证：凭据↔账套 / 门店清单↔账套（fail-loud；#205）
 #
@@ -35,6 +37,13 @@
 #   recon：RECON_FAILED:lake|gateway|rows|batches|hour|hour_open|cross|cross_unavailable
 #          （前六个是 #260 契约的**逐字保留**，后两个是本工具新增的「换通道复核」面）；
 #          通过时打 `RECON_OK hour=<H> rows=<N> batches=<N>`（逐字保留，执行单/巡检靠它）。
+#   recon-day（2026-10-05 新增，§1.4.1 定稿线）：
+#          逐小时复用 recon；通过打 `RECON_DAY_OK bizday=<D> hours=<N>`（N = 实际对到的小时数）；
+#          未对平打 `RECON_DAY_FAILED bizday=<D> 未对平小时=<n> 已对小时=<n>`；
+#          **跳过**的小时打 `RECON_SKIP hour=<H> <理由>`（两种：未闭窗 / 合法空窗——「网关 0 单
+#          且湖无分区」，两侧都 0 才跳过；网关非 0 而湖 0 = 真缺口，判红）；
+#          **整日一个都没对到**（`hours=0`）也判红——空转绿不是绿。
+#          这三个字面量同样受 `scripts/check-diagnostic-tool.mjs` 的 E6 门禁保护。
 #   rb：写面关键字 ⇒ `RB_REJECTED:` + exit 2；引擎非零 ⇒ `RB_FAILED:` + exit 1；
 #       输出超过 `RB_MAX_ROWS` ⇒ `RB_TRUNCATED:` + exit 3（**显式**截断，绝不静默丢行）。
 #   identity：`ASSERT_FAIL:` + 非零；通过打 `IDENTITY_ASSERT=PASS`。
