@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.65.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.64.2...v0.65.0) - 2026-10-05
+- 【新增】duckle: #419 owners/alerts 按源系统分文件（拆掉第二个源系统的唯一阻塞点） ([#420](https://github.com/MYTech-Co-LTD/platform-core/pull/420), [d4853af](https://github.com/MYTech-Co-LTD/platform-core/commit/d4853af55aea1f5c8ddc5e4c167090b9a0842390))
+
+
 ## [0.64.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.64.1...v0.64.2) - 2026-10-03
 - 【修复】data: #412 嵌入 URL 改回 signed embedding 页径（原拼成公开分享页径，界面恒空图） ([#413](https://github.com/MYTech-Co-LTD/platform-core/pull/413), [44eb22a](https://github.com/MYTech-Co-LTD/platform-core/commit/44eb22a827b42c2a284ff0e3d0fd6f76dbfc39aa))
 
