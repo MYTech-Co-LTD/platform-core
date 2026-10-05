@@ -82,13 +82,20 @@ _CUT=$(date -d "${TODAY} - ${SETTLE_DAYS} days" +%F 2>/dev/null) || _CUT=""
 if [ -n "${_CUT}" ] && [ "${BIZDAY}" \> "${_CUT}" ]; then SETTLED=0; fi
 
 # ── 凭据：优先 env；缺失则从容器 env **运行时**现取（不落命令行、不落文件）──
+# ⚠️ **两个 console 的变量名不一样**（服务 env 实测）：64188 用 `LEMENG_TOKEN_64188`、
+#    3120 用**不带后缀**的 `LEMENG_TOKEN`。只认带后缀那一个 ⇒ 3120 上会报
+#    「取不到令牌」而看起来像"没权限"，其实只是名字不同。
 _tok_var="LEMENG_TOKEN_${BOOK}"
 TOKEN=$(eval "printf %s \"\${${_tok_var}:-}\"")
 if [ -z "${TOKEN}" ]; then
   TOKEN=$(docker inspect "${CONSOLE_CT}" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
           | sed -n "s/^${_tok_var}=//p")
 fi
-[ -n "${TOKEN}" ] || { echo "PREAGG_FAILED:token 取不到 ${_tok_var}（env 没有、容器 ${CONSOLE_CT} 也读不到）" >&2; exit 3; }
+if [ -z "${TOKEN}" ]; then
+  TOKEN=$(docker inspect "${CONSOLE_CT}" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+          | sed -n 's/^LEMENG_TOKEN=//p')
+fi
+[ -n "${TOKEN}" ] || { echo "PREAGG_FAILED:token 取不到 ${_tok_var} 或 LEMENG_TOKEN（env 没有、容器 ${CONSOLE_CT} 也读不到）" >&2; exit 3; }
 
 PGDUCK_CONTAINER=${PGDUCK_CONTAINER:-$(docker ps --format '{{.Names}}' 2>/dev/null | grep -m1 'pg_duckdb')}
 [ -n "${PGDUCK_CONTAINER}" ] || { echo "PREAGG_FAILED:lake_unavailable 找不到 pg_duckdb 容器" >&2; exit 3; }
