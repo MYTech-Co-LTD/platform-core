@@ -133,24 +133,30 @@ PRE = ("CREATE OR REPLACE SECRET zos (TYPE S3, KEY_ID %s, SECRET %s, ENDPOINT %s
 def duck(sql):
     """跑一条 SQL。返回 (rows, err)；rows 是**扁平化**的字典列表（跳过 Success 行）。
 
-    ⚠️ DuckDB `-json` 的多行输出是**两种形状混在一起**（实测，别按一种解）：
-      第 1 行是 `[{...}]`（数组），其后的行是**裸对象** `{...}`，一行一个；
-      另外 `CREATE SECRET` 会先吐一行 `[{"Success":true}]`。
-    只取「最后一行」或只按数组解，都会**静默拿到 0 行**（本脚本第一版就是这么错的：
-    探针报 `SCHEMA_PROBE_INCOMPLETE: 只拿到 0/558 个文件`，而查询本身是成功的）。
+    ⚠️ DuckDB `-json` 的输出形状是实测出来的，**别按直觉解**：
+      · 每条语句吐**一个 JSON 文档**；`CREATE SECRET` 那条先吐 `[{"Success":true}]`；
+      · 多行结果的**数组是折行的**：第 1 行 `[{...},`、中间每行 `{...},`、末行 `{...}]`
+        —— 也就是说**逐行 `json.loads` 会每行都失败**（尾逗号 / 半截数组）。
+    本脚本第一版就是逐行解 ⇒ 静默拿到 0 行（探针报 `SCHEMA_PROBE_INCOMPLETE: 只拿到 0/558`，
+    而查询本身 rc=0、284KB 输出一切正常）。
+    正解：把整段当**文档流**走一遍 `raw_decode`（`-noheader` 下不会有表头噪声）。
     """
     p = subprocess.run(['duckdb', '-json', '-noheader'], input=PRE + sql, capture_output=True, text=True)
     if p.returncode != 0:
         return None, (p.stderr or '').strip()
+    s = p.stdout or ''
+    dec = json.JSONDecoder()
     rows = []
-    for line in (p.stdout or '').split('\n'):
-        line = line.strip()
-        if not line:
-            continue
+    i = 0
+    while i < len(s):
+        while i < len(s) and s[i] in ' \t\r\n':
+            i += 1
+        if i >= len(s):
+            break
         try:
-            obj = json.loads(line)
+            obj, i = dec.raw_decode(s, i)
         except Exception:
-            continue
+            break
         for it in (obj if isinstance(obj, list) else [obj]):
             if isinstance(it, dict) and 'Success' not in it:
                 rows.append(it)
