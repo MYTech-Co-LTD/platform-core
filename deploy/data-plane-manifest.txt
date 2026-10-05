@@ -22,11 +22,13 @@ deploy/data-compose.yml                  ${REPO}/deploy/data-compose.yml        
 deploy/duckle/entrypoint.sh              ${REPO}/deploy/duckle/entrypoint.sh       0644
 duckle/                                  ${REPO}/duckle/                           0644
 dbt/                                     ${REPO}/dbt/                              0644
+contracts/                               ${REPO}/contracts/                        0644
 scripts/lemeng/wire-warehouse.sh         /opt/lemeng-wire-warehouse.sh             0755
 scripts/lemeng/readback-helper.sh        ${REPO}/lemeng-readback.sh                0755
 scripts/lemeng/diagnose.sh               /opt/lemeng-diagnose.sh                   0755
 scripts/lemeng/backfill-retail-order-line.sh  /opt/lemeng-backfill.sh              0755
 scripts/lemeng/recon-day-heal.sh          /opt/lemeng-recon-day-heal.sh             0755
+scripts/lemeng/seal-lake.sh              /opt/lemeng-seal.sh                     0755
 scripts/duckle/connection-setup.py       /opt/connection-setup.py                  0755
 deploy/duckle/console/                    ${REPO}/deploy/duckle/console/             0644
 deploy/duckle/Dockerfile                    ${REPO}/deploy/duckle/Dockerfile             0644
