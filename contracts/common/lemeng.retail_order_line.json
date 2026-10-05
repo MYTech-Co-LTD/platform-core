@@ -2,7 +2,7 @@
   "$schema": "./_schema.schema.json",
   "contractVersion": 1,
   "schemaVersion": 3,
-  "consumerVersion": 2,
+  "consumerVersion": 3,
   "domain": "lemeng",
   "table": "retail_order_line",
   "owner": "data-platform",
