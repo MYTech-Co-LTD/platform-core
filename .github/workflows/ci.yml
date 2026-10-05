@@ -96,8 +96,17 @@ jobs:
       # 取列模式 / 禁 `::double` / 禁 `union_by_name` / staging 一对一双向 / 语义声明必填字段 /
       # 指标命名空间与同名唯一 / 每个声明指标一条对账 test。纯静态：不连库、不读 parquet。
       # ⚠️ 它的扫描面只有 `dbt/`（dbt 工件）——**不含** env 键（那归上面的 check-env-example，
-      #    而 B9 不扫 dbt/），也不含 `duckle/` 与 `contracts/`（正典里明写着当前无机检）。
+      #    而 B9 不扫 dbt/）；`contracts/` 与 `duckle/` 的**列集**由下面那条 check-data-contract 管
+      #    （2026-10-05 起，issue #430；正典 docs/architecture.md §5.2）。
       - run: pnpm exec tsx scripts/check-data-models.mjs
+      # 数据契约注册门禁（正典 docs/architecture.md §5.2 ① / 不变量 B10；案例 = order_total_money
+      # 补采 #430/#432）。判据三条：① 契约必须有 `schemaVersion`；② 凡**文本里写着该契约
+      # `layout.prefix`** 的管线都算它的生产者（机械推导、不靠手登记），每个生产者文件里必须
+      # **恰好一个** `code.sql` 节点的输出列与契约**逐列同序**；③ 对应 staging 模型的投影
+      # （去掉 dbt 注入的 `org`）同样逐列同序。
+      # 它防的是「加一列要改 5 处、漏改一处没人拦」——在它之前 `contracts/` 与 `duckle/` 无任何机检。
+      # 纯静态：不连库、不读 parquet。
+      - run: pnpm exec tsx scripts/check-data-contract.mjs
       # 数据面投递门禁（issue #199；正典 deploy/data-plane-deploy-sop.md §E.3）：判据三条——
       # ① lock 首行自校验（截断/被改必对不上）；② lock ↔ 工作区逐文件 sha256/落地路径/模式一致
       # （**改了清单覆盖的任一文件却忘了重跑生成器，这里红**——S1 之前 dbt/ 有 5 个文件静默漂在
@@ -131,6 +140,9 @@ jobs:
       # 这类漂移没有任何静态守卫看得见（脚本语法对、字面量对、退出码对，只有**判别面**错了）。
       # 同为纯 sh（抽真函数测，不复制实现）：不连库、不取网络、不起容器，秒级。
       - run: sh scripts/lemeng/recon-day-heal.test.sh
+      # 封版判定（`seal-lake.sh` 的 `seal_verdict`）的测试。放行错了，读者的 fail-closed 断言就会
+      # 拿一个**半写的湖**当完整的用 —— 那正是实测踩过的静默错（392 行 vs 完整 796 行，rc=0）。
+      - run: sh scripts/lemeng/seal-lake.test.sh
       # 租户隔离门禁（issue #77；正典 docs/module-protocol.md「租户数据隔离」）：真库对账——
       # 真跑各模块的 migrations（跑进脚本自建的**一次性库** platform_tenant_isolation_check），
       # 再查 information_schema 要 org 列。判据按「全部 migrations 的累积终态」，不按文件判
