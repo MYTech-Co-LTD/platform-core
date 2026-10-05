@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.70.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.70.2...v0.70.3) - 2026-10-05
+- 【修复】lemeng: recon-preagg 换口径（湖侧自算「送出半边」）+ 三份文档订正 ([#443](https://github.com/MYTech-Co-LTD/platform-core/pull/443), [ca5b022](https://github.com/MYTech-Co-LTD/platform-core/commit/ca5b022b5eb1fd7400ed5cfb92f7a70a50363e08))
+
+
 ## [0.70.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.70.1...v0.70.2) - 2026-10-05
 - 【修复】lemeng: 迁移步——staging 补 order_total_money + 封版断言（consumerVersion 3） ([#442](https://github.com/MYTech-Co-LTD/platform-core/pull/442), [8d00070](https://github.com/MYTech-Co-LTD/platform-core/commit/8d000702c8f9d43f79bf091c218c7a4a8e59cc83))
 
