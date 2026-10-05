@@ -211,6 +211,20 @@ describe('守卫：三个必报的窟窿', () => {
     expect(g.stderr).toContain('引用了 $REPO/contracts/common/x.json')
   })
 
+  it('引用目录条目**本身**（不带尾斜杠）⇒ 不算未覆盖', () => {
+    // 2026-10-05 实测误报：`scripts/lemeng/seed-console.sh` 引 `$REPO/deploy/duckle/console`
+    // 被判「未登记」，而清单里明明有这条**目录条目** —— 提取器会把尾斜杠剥掉，
+    // 而目录条目的落地路径是带斜杠的 ⇒ 不归一化就永远对不上。误报的代价是逼人加一条
+    // 本不该有的 REPO_REF_EXCLUSIONS（那等于缩小守卫覆盖面，且掩盖真问题）。
+    const root = fixture(BASE_FILES)
+    const scriptAbs = join(root, 'scripts/lemeng/run.sh')
+    writeFileSync(scriptAbs, `${readFileSync(scriptAbs, 'utf8')}ls "$REPO/dbt"\n`)
+    expect(generate(root).status).toBe(0)
+
+    const g = guard(root)
+    expect(g.status).toBe(0)
+  })
+
   it('目录条目覆盖到子路径 ⇒ 前缀命中，不报未覆盖（即便该文件并不存在）', () => {
     // ⚠️ 这是**有意的边界**，不是漏判：判据 3 问的是「这个引用有没有被清单覆盖」，不是「这个文件在不在」。
     // 加存在性检查反而会误报——`dbt/target/`、`dbt/logs/` 这些**机器本地状态**正住在被 `dbt/` 覆盖的
