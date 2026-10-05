@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.68.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.67.0...v0.68.0) - 2026-10-05
+- 【新增】lemeng: 补采订单级 order_total_money（换货半边口径的事实源，24→25 列） ([#432](https://github.com/MYTech-Co-LTD/platform-core/pull/432), [16dc5b7](https://github.com/MYTech-Co-LTD/platform-core/commit/16dc5b7adfd44716ad3ab5de1b09820781a30d7a))
+
+
 ## [0.67.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.66.0...v0.67.0) - 2026-10-05
 - 【新增】lemeng: 定稿线对账的失败动作——不平⇒自动回填⇒复验（闭环驱动） ([#427](https://github.com/MYTech-Co-LTD/platform-core/pull/427), [7deccdc](https://github.com/MYTech-Co-LTD/platform-core/commit/7deccdc3a0d59920e4bdf6cf9dc99f322b051438))
 
