@@ -54,8 +54,8 @@
 --
 -- ════════════════════════════════════════════════════════════════════════════════════════
 -- 【三】契约列集：v1 = 18 列、v2 = 24 列（2026-09-30 Phase 2 / #294）、v3 = 25 列（2026-10-05 / #430）。
---   ⚠️ **本层当前只投影 24 列** —— v3 的 `order_total_money` 在**展开期故意不投影**（理由见文件末尾注；
---   契约里 `consumerVersion = 2` 就声明了这个合法中间态，门禁 B10 按它放行）。迁移在封版之后（#431）。
+--   本层**全带 25 列**，并在 FROM 段带**封版断言** —— 即 docs/architecture.md §5.2 的**迁移**步已完成
+--   （前提：湖已回填齐 + `_SCHEMA/v3.parquet` 已落；契约 `consumerVersion` 同步置 3）。
 --    （另加 **dbt 注入列 `org`**：主体列，非契约列，见 dbt/macros/subject_org.sql）
 -- ════════════════════════════════════════════════════════════════════════════════════════
 -- `hour` 与 `order_operate_time` 也在内 —— 下游 marts 用不用是 marts 的事，③ 层没有资格替它裁。
@@ -91,14 +91,12 @@ select
   r['order_detail_share_discount']::numeric as order_detail_share_discount,
   r['order_detail_std_price']::numeric      as order_detail_std_price,
   r['order_detail_price']::numeric          as order_detail_price,
-  r['order_detail_online_qty']::numeric     as order_detail_online_qty
-  -- ── v3 的 `order_total_money`（2026-10-05，#430）**本层暂不投影 —— 这是「展开期」** ──────
-  --    生产者（管线）已经写这一列（#432），但湖里的历史分区**还没回填完**、也**还没落封版标记**
-  --    （`_SCHEMA/v3.parquet`）。此时读者若引用它，旧分区上会**响亮地报**
-  --    `column "order_total_money" does not exist`（不是静默 NULL）。
-  --    ⇒ 迁移（本层补上这一列 + 封版断言 + 契约 `consumerVersion` 置 3）必须排在**封版之后**。
-  --    契约里 `consumerVersion = 2` 就是在声明这个**合法中间态**；门禁 B10 按它放行、并打印一行提示。
-  --    正典：docs/architecture.md §5.2「展开 → 迁移」；进度：#431。
+  r['order_detail_online_qty']::numeric     as order_detail_online_qty,
+  -- ── v3 新增 1 列（2026-10-05，#430）：**换货判别的事实源** ────────────────────────
+  --    平台 `sale_money` 只算换货单的「送出半边」= (Σ非赠品行额 + order_total_money)/2。
+  --    **迁移步**：湖已回填齐并落了 `_SCHEMA/v3.parquet` 封版标记，故此处可以引用它——
+  --    下面 FROM 里那条封版断言就是它的前提（契约 `consumerVersion` 同步置 3）。
+  r['order_total_money']::numeric           as order_total_money
 -- pg_duckdb 把 read_parquet 委托给 DuckDB 执行。裸扫描结果**不是 PG 关系、不进 pg_class**
 -- （spec §9.4 可见性坑）⇒ 它只出现在 staging 模型内部，物化落点由上面的 config + 项目缺省保证
 -- 是 PG 可见关系（gate 2）。
@@ -108,4 +106,18 @@ from read_parquet(
   -- （类型推成 bigint，下面显式 `::varchar` 定型）。
   -- 2026-09-26 改：64188（品品甜）铺开后，钉单账套的路径会让它的数据**落湖了却进不了物化**（issue #250）。
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/**/*.parquet'
-) r
+) r,
+-- ── 封版断言（正典 docs/architecture.md §5.2 ③）────────────────────────────────
+-- 湖是一堆**分区**：回填逐个改写，中途任何时刻都可能「读得到、但没齐」。实测过它的后果——
+-- **半写的湖会被读者静默读成「完整」**（392 行 vs 完整 796 行，rc=0），那比响亮报错危险得多。
+-- ⇒ 读者必须**同 FROM 带一份封版标记**：`_SCHEMA/v<N>.parquet` 是整表写全之后才落的**唯一凭据**
+--   （同 `.data-plane-revision` 的思想：**标记在 = 齐**）；它不在 ⇒ 404 ⇒ 带名字地失败。
+-- ⚠️ 这里的 `v3` / `schema_version = 3` 必须与契约 `contracts/common/lemeng.retail_order_line.json`
+--   的 `schemaVersion` **一致**（当前 3）——改契约就得改这里，两处漂开会让断言形同虚设。
+-- ⚠️ 标记**在表根、不在 `system_book=*` 之下** ⇒ 不进上面那条读湖 glob（真机实测命中 0）。
+--   若哪天有人把它挪到数据目录下面，`**/*.parquet` 会把它当**数据文件**读进来、结构体被解析成
+--   标记的列（实测报 `Could not find key "sale_money" … Candidate Entries: "sealed_at"…`）。
+  read_parquet(
+    's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_SCHEMA/v3.parquet'
+  ) sealed
+where sealed['schema_version'] = 3
