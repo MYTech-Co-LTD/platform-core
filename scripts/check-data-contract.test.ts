@@ -29,7 +29,8 @@ const COLS = ['batch_id', 'system_book', 'bizday', 'amount']
  *
  * @param {{ contractCols?: string[], pipelineCols?: string[], stagingCols?: string[],
  *           schemaVersion?: number | null, consumerVersion?: number | null,
- *           pipelineText?: string, sinkKey?: string }} [over]
+ *           pipelineText?: string, sinkKey?: string,
+ *           srcSchema?: Array<{name: string, type: string}> }} [over]
  * @returns {string} 临时仓根
  */
 function fixture(over: {
@@ -40,6 +41,7 @@ function fixture(over: {
   consumerVersion?: number | null
   pipelineText?: string
   sinkKey?: string
+  srcSchema?: Array<{ name: string, type: string }>
 } = {}): string {
   const cc = over.contractCols ?? COLS
   const pc = over.pipelineCols ?? cc
@@ -60,6 +62,9 @@ function fixture(over: {
 
   const pipeline = {
     nodes: [
+      // 数据链：src.rest → ctl.merge → flat（新判据 ④ 只看 `ctl.merge` 的直接 src.rest 父）
+      { id: 'src1', data: { componentId: 'src.rest', schema: over.srcSchema ?? [...pc.map((c) => ({ name: c, type: 'string' })), { name: 'd', type: 'json' }] } },
+      { id: 'mrg', data: { componentId: 'ctl.merge' } },
       {
         id: 'flat',
         data: {
@@ -79,7 +84,10 @@ function fixture(over: {
       // 生产者是靠**文本里出现 prefix** 机械推导的；真实管线由 sink 的 key 承载它
       { id: 'sink', data: { componentId: 'snk.minio', properties: { key: over.sinkKey ?? 'x/y/bizday=${D}/all.parquet' } } },
     ],
-    edges: [],
+    edges: [
+      { id: 'e1', source: 'src1', target: 'mrg' },
+      { id: 'e2', source: 'mrg', target: 'flat' },
+    ],
   }
   const staging = ['select', ...sc.map((c) => `  r['${c}'] as ${c},`), '  {{ subject_org() }} as org', 'from t'].join('\n')
 
@@ -161,6 +169,19 @@ describe('check-data-contract', () => {
     const swapped = [...COLS].reverse()
     const v = checkDataContract(fixture({ pipelineCols: swapped }))
     expect(v).toHaveLength(1)
+  })
+
+  it('投影引用的字段没在 src.rest 申报 ⇒ 红（空响应才会炸的那一类）', () => {
+    // 2026-10-05 实测（#432 的教训）：只改 flatten 的 SQL、没改 src.rest 的 data.schema
+    // ⇒ **非空窗口照常成功**、只有空窗 Binder Error（24 窗里只炸 1 个）。
+    const v = checkDataContract(fixture({ srcSchema: [{ name: 'batch_id', type: 'string' }, { name: 'd', type: 'json' }] }))
+    expect(v).toHaveLength(1)
+    expect(v[0]!.message).toContain('amount')
+    expect(v[0]!.message).toContain('src.rest')
+  })
+
+  it('申报齐全 ⇒ 不报（对照组）', () => {
+    expect(checkDataContract(fixture({ srcSchema: [...COLS.map((c) => ({ name: c, type: 'string' })), { name: 'd', type: 'json' }] }))).toEqual([])
   })
 
   it('契约缺 schemaVersion ⇒ 红', () => {
