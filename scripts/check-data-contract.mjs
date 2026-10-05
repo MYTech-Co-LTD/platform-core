@@ -1,0 +1,308 @@
+// scripts/check-data-contract.mjs — 「湖的列集只有一个事实源」的门禁（architecture.md §5.2 ① / 不变量 B10）。
+//
+// ## 它防的是哪一类
+//
+// 加一列 / 改一列要同时改好几处：契约、写湖的管线 `code.sql` 投影、staging 投影。
+// 在 2026-10-05 之前**这三处没有任何机检**：`check-data-models.mjs` 头注明写
+// 「`duckle/` 与 `contracts/` **不在任何扫描面内**」——于是「漏改一处」只能靠人记得。
+// 实测代价：`order_total_money` 那次补采（#430/#432）改动了 5 处，**没有任何门禁拦得住漏改**。
+//
+// 本门禁把契约钉成**唯一事实源**，其余两处机械核对：
+//
+//   ① **契约必须有 `schemaVersion`**（正整数）——它是「这套文件是哪一版」的对外名字，
+//      封版标记（`_SCHEMA/v<N>.parquet`）与读侧断言都引用它。没有它 = 没登记。
+//   ② **生产面**：凡**文本里出现该契约 `layout.prefix`** 的管线文件，都算这张表的**生产者**
+//      （机械推导、不靠手登记 ⇒ 不会有"新管线忘了登记"这种漂移）。
+//      每个生产者文件里必须**恰好一个** `code.sql` 节点的输出别名序列 == 契约列序列（同序）。
+//      其余 `code.sql` 节点（`qa.contract` 前的守卫、回执等）不参与比对。
+//   ③ **消费面**：`dbt/models/common/staging/stg_<domain>_<table>.sql` 的投影别名序列
+//      （去掉 dbt 注入的 `org`）必须 == 契约列序列（同序）。
+//
+// ## 为什么比「序列」而不是「集合」
+//
+// 同序也是有意义的：它让「按契约顺序读 parquet 的列位置」这种朴素写法不会在换列时静默错位。
+// 且实测三张表现状都是同序的（见 scripts/check-data-contract.test.ts 的夹具）。
+//
+// ## 已知的取列形态与本门禁的适配
+//
+// - 管线侧：`CAST(...) AS col`、`'${VAR}' AS col`；`CAST(x AS JSON)`／`AS u(d)` 这类
+//   **类型名与表别名**不是投影列，靠「只认小写标识符」+「别名后不许紧跟 `(`」两条排除。
+// - staging 侧：`r['col'] as col`、`{{ subject_org() }} as org`。SQL 注释先掩掉再取
+//   （注释里有大量英文散文，"as" 满天飞）。
+//
+// 用法：`pnpm exec tsx scripts/check-data-contract.mjs [rootDir]`（rootDir 默认仓根，测试用）。
+
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
+
+/** 脚本名（输出前缀）。 */
+export const SCRIPT_NAME = 'check-data-contract'
+
+/** 契约目录（相对仓根）。 */
+const CONTRACT_DIR = 'contracts'
+/** 管线目录（相对仓根）——生产者的推导面。 */
+const PIPELINE_DIRS = ['deploy/duckle/console/pipelines', 'duckle']
+/** 契约里不是「真契约」的文件名（元 schema 与模板）。 */
+const NON_CONTRACT = new Set(['_schema.schema.json', '_template.contract.json'])
+
+/** dbt 在 staging 层注入的列（不属契约；见 dbt/macros/subject_org.sql）。 */
+export const INJECTED_STAGING_COLUMNS = ['org']
+
+/**
+ * @typedef {{ file: string, message: string }} Violation
+ */
+
+/**
+ * 掩掉 SQL 注释（`--` 行注释与块注释）。**不掩字符串**——取列正则只认小写标识符，
+ * 字符串里的内容不会误命中。与 check-tenant-isolation / check-data-models 同一手法。
+ *
+ * @param {string} src
+ * @returns {string}
+ */
+export function maskSqlComments(src) {
+  let out = ''
+  let state = 'code'
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i]
+    const n = src[i + 1]
+    if (state === 'code') {
+      if (c === '-' && n === '-') {
+        state = 'line'
+        out += '  '
+        i++
+      } else if (c === '/' && n === '*') {
+        state = 'block'
+        out += '  '
+        i++
+      } else out += c
+      continue
+    }
+    if (state === 'line') {
+      if (c === '\n') {
+        state = 'code'
+        out += c
+      } else out += ' '
+      continue
+    }
+    // block
+    if (c === '*' && n === '/') {
+      state = 'code'
+      out += '  '
+      i++
+    } else out += c === '\n' ? '\n' : ' '
+  }
+  return out
+}
+
+/**
+ * 从管线 `code.sql` 的 SQL 里取输出别名序列。
+ *
+ * 只认**小写**标识符（排除 `CAST(x AS JSON)` 这类大写类型名），且别名后**不许紧跟 `(`**
+ * （排除 `CROSS JOIN UNNEST(...) AS u(d)` 那种表别名）。
+ *
+ * @param {string} sql
+ * @returns {string[]}
+ */
+export function extractPipelineAliases(sql) {
+  /** @type {string[]} */
+  const out = []
+  const re = /\bAS\s+([a-z][a-z0-9_]*)\b(?!\s*\()/g
+  let m
+  while ((m = re.exec(maskSqlComments(sql))) !== null) out.push(m[1])
+  return out
+}
+
+/**
+ * 从 staging 模型的 SQL 里取投影别名序列（先掩注释；`as` 一律小写是本仓写法）。
+ *
+ * @param {string} sql
+ * @returns {string[]}
+ */
+export function extractStagingAliases(sql) {
+  /** @type {string[]} */
+  const out = []
+  const re = /\bas\s+([a-z][a-z0-9_]*)\b/g
+  let m
+  const masked = maskSqlComments(sql)
+  while ((m = re.exec(masked)) !== null) out.push(m[1])
+  return out
+}
+
+/**
+ * 递归收集目录下的 `.json` 文件（相对仓根的 posix 路径）。
+ *
+ * @param {string} root
+ * @param {string} relDir
+ * @returns {string[]}
+ */
+function collectJson(root, relDir) {
+  const abs = join(root, relDir)
+  if (!existsSync(abs)) return []
+  /** @type {string[]} */
+  const out = []
+  for (const ent of readdirSync(abs, { withFileTypes: true })) {
+    const rel = `${relDir}/${ent.name}`
+    if (ent.isDirectory()) out.push(...collectJson(root, rel))
+    else if (ent.name.endsWith('.json')) out.push(rel)
+  }
+  return out
+}
+
+/**
+ * 读取一份契约的关键字段（缺字段时返回 null 由调用方报违规）。
+ *
+ * @param {string} root
+ * @param {string} rel
+ * @returns {{ rel: string, domain: string, table: string, prefix: string, schemaVersion: unknown, columns: string[] } | null}
+ */
+function readContract(root, rel) {
+  /** @type {any} */
+  let doc
+  try {
+    doc = JSON.parse(readFileSync(join(root, rel), 'utf8'))
+  } catch (e) {
+    return null
+  }
+  const layout = doc && typeof doc.layout === 'object' && doc.layout !== null ? doc.layout : {}
+  const cols = Array.isArray(doc?.columns) ? doc.columns : []
+  return {
+    rel,
+    domain: String(doc?.domain ?? ''),
+    table: String(doc?.table ?? ''),
+    prefix: String(layout.prefix ?? ''),
+    schemaVersion: doc?.schemaVersion,
+    columns: cols.map((/** @type {any} */ c) => String(c?.name ?? '')),
+  }
+}
+
+/**
+ * 跑全部门禁判据。
+ *
+ * @param {string} rootDir 仓根
+ * @returns {Violation[]}
+ */
+export function checkDataContract(rootDir) {
+  /** @type {Violation[]} */
+  const violations = []
+  const contractFiles = collectJson(rootDir, CONTRACT_DIR).filter(
+    (p) => !NON_CONTRACT.has(p.split('/').pop() ?? ''),
+  )
+  const pipelines = PIPELINE_DIRS.flatMap((d) => collectJson(rootDir, d))
+
+  for (const rel of contractFiles) {
+    const c = readContract(rootDir, rel)
+    if (c === null) {
+      violations.push({ file: rel, message: '契约不是合法 JSON —— 无法核对' })
+      continue
+    }
+    const where = `${c.domain}/${c.table}`
+
+    // ① schemaVersion 必须登记
+    const sv = c.schemaVersion
+    if (typeof sv !== 'number' || !Number.isInteger(sv) || sv < 1) {
+      violations.push({
+        file: rel,
+        message:
+          `契约缺少合法的 schemaVersion（收到 ${JSON.stringify(sv)}）—— 它是「这套文件是哪一版」的对外名字，` +
+          `封版标记（_SCHEMA/v<N>.parquet）与读侧断言都引用它。见 docs/architecture.md §5.2 ①`,
+      })
+    }
+
+    // ② 生产面：文本含 prefix 的管线 = 这张表的生产者
+    const producers = pipelines.filter((p) => {
+      try {
+        return readFileSync(join(rootDir, p), 'utf8').includes(c.prefix)
+      } catch {
+        return false
+      }
+    })
+    if (producers.length === 0) {
+      violations.push({
+        file: rel,
+        message: `找不到任何写着 \`${c.prefix}\` 的管线 —— 这张表没有生产者？契约 prefix 写错？`,
+      })
+    }
+    for (const p of producers) {
+      /** @type {any} */
+      let doc
+      try {
+        doc = JSON.parse(readFileSync(join(rootDir, p), 'utf8'))
+      } catch {
+        violations.push({ file: p, message: '管线不是合法 JSON —— 无法核对' })
+        continue
+      }
+      const nodes = Array.isArray(doc?.nodes) ? doc.nodes : []
+      /** @type {string[][]} */
+      const projections = []
+      for (const n of nodes) {
+        if (n?.data?.componentId !== 'code.sql') continue
+        const sql = n?.data?.properties?.sql
+        if (typeof sql !== 'string') continue
+        const aliases = extractPipelineAliases(sql)
+        if (aliases.length > 0) projections.push(aliases)
+      }
+      const hits = projections.filter((a) => a.join('\u0000') === c.columns.join('\u0000'))
+      if (hits.length !== 1) {
+        violations.push({
+          file: p,
+          message:
+            `作为 \`${where}\` 的生产者，必须**恰好一个** \`code.sql\` 节点的输出列与契约逐列同序；` +
+            `实测命中 ${hits.length} 个（候选列数：${projections.map((a) => a.length).join('/') || '无'}，契约 ${c.columns.length} 列）`,
+        })
+      }
+    }
+
+    // ③ 消费面：staging 投影（去掉注入列）必须与契约逐列同序
+    const stgRel = `dbt/models/common/staging/stg_${c.domain}_${c.table}.sql`
+    if (!existsSync(join(rootDir, stgRel))) {
+      violations.push({
+        file: rel,
+        message: `找不到对应 staging 模型 \`${stgRel}\` —— ③ 层是唯一碰原始类型的地方，不许跳过`,
+      })
+    } else {
+      const aliases = extractStagingAliases(readFileSync(join(rootDir, stgRel), 'utf8')).filter(
+        (a) => !INJECTED_STAGING_COLUMNS.includes(a),
+      )
+      if (aliases.join('\u0000') !== c.columns.join('\u0000')) {
+        const missing = c.columns.filter((x) => !aliases.includes(x))
+        const extra = aliases.filter((x) => !c.columns.includes(x))
+        violations.push({
+          file: stgRel,
+          message:
+            `staging 投影与契约 \`${where}\` 不一致（须逐列同序）。` +
+            `契约有而 staging 缺：${missing.join(', ') || '无'}；staging 有而契约无：${extra.join(', ') || '无'}；` +
+            `列数 ${aliases.length} vs ${c.columns.length}`,
+        })
+      }
+    }
+  }
+
+  return violations
+}
+
+/**
+ * CLI 入口。
+ *
+ * @param {string[]} argv
+ * @returns {number} 退出码
+ */
+export function main(argv) {
+  const root = argv[2] ?? process.cwd()
+  const violations = checkDataContract(root)
+  if (violations.length > 0) {
+    console.error(`${SCRIPT_NAME}: 发现 ${violations.length} 条违规`)
+    for (const v of violations) console.error(`  ✗ ${v.file}\n      ${v.message}`)
+    console.error(
+      '\n修法：以 contracts/**/*.json 为准，改齐管线的 `code.sql` 投影与 staging 投影；' +
+        '口径与顺序见 docs/architecture.md §5.2。',
+    )
+    return 1
+  }
+  console.log(`${SCRIPT_NAME}: OK（契约 = 湖列集的唯一事实源；生产者与 staging 均已对齐）`)
+  return 0
+}
+
+const invoked = process.argv[1] ? relative(process.cwd(), process.argv[1]).split(sep).join('/') : ''
+if (invoked.endsWith(`scripts/${SCRIPT_NAME}.mjs`)) {
+  process.exit(main(process.argv))
+}

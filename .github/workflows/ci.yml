@@ -96,8 +96,17 @@ jobs:
       # 取列模式 / 禁 `::double` / 禁 `union_by_name` / staging 一对一双向 / 语义声明必填字段 /
       # 指标命名空间与同名唯一 / 每个声明指标一条对账 test。纯静态：不连库、不读 parquet。
       # ⚠️ 它的扫描面只有 `dbt/`（dbt 工件）——**不含** env 键（那归上面的 check-env-example，
-      #    而 B9 不扫 dbt/），也不含 `duckle/` 与 `contracts/`（正典里明写着当前无机检）。
+      #    而 B9 不扫 dbt/）；`contracts/` 与 `duckle/` 的**列集**由下面那条 check-data-contract 管
+      #    （2026-10-05 起，issue #430；正典 docs/architecture.md §5.2）。
       - run: pnpm exec tsx scripts/check-data-models.mjs
+      # 数据契约注册门禁（正典 docs/architecture.md §5.2 ① / 不变量 B10；案例 = order_total_money
+      # 补采 #430/#432）。判据三条：① 契约必须有 `schemaVersion`；② 凡**文本里写着该契约
+      # `layout.prefix`** 的管线都算它的生产者（机械推导、不靠手登记），每个生产者文件里必须
+      # **恰好一个** `code.sql` 节点的输出列与契约**逐列同序**；③ 对应 staging 模型的投影
+      # （去掉 dbt 注入的 `org`）同样逐列同序。
+      # 它防的是「加一列要改 5 处、漏改一处没人拦」——在它之前 `contracts/` 与 `duckle/` 无任何机检。
+      # 纯静态：不连库、不读 parquet。
+      - run: pnpm exec tsx scripts/check-data-contract.mjs
       # 数据面投递门禁（issue #199；正典 deploy/data-plane-deploy-sop.md §E.3）：判据三条——
       # ① lock 首行自校验（截断/被改必对不上）；② lock ↔ 工作区逐文件 sha256/落地路径/模式一致
       # （**改了清单覆盖的任一文件却忘了重跑生成器，这里红**——S1 之前 dbt/ 有 5 个文件静默漂在

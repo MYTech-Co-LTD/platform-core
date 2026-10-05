@@ -1,6 +1,7 @@
 {
   "$schema": "./_schema.schema.json",
   "contractVersion": 1,
+  "schemaVersion": 1,
   "domain": "lemeng",
   "table": "item",
   "owner": "data-platform",

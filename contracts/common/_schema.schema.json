@@ -13,12 +13,18 @@
     "owner",
     "layout",
     "batch",
-    "columns"
+    "columns",
+    "schemaVersion"
   ],
   "properties": {
     "$schema": {
       "description": "编辑器提示用的自引用（指向本文件）。**不是契约语义的一部分**，校验器可以不看它——但它必须被允许，否则 `additionalProperties: false` 会把每个带它的契约文件都判成违规。",
       "type": "string"
+    },
+    "schemaVersion": {
+      "description": "**列集代数**。加列 / 改类型 / 改名后必须递增——它是「湖上这套文件是哪一版」的对外名字，封版标记（`_SCHEMA/v<N>.parquet`）与读侧 fail-closed 断言都引用它（见 docs/architecture.md §5.2）。\n\n计数口径：自本字段引入（2026-10-05）起为 1；本字段引入**之前**已发生过的列集变更一条条回溯补上（`lemeng.retail_order_line` 回溯为 3：18 列 → 24 列 → 25 列）。\n\n⚠️ 它与 `contractVersion` 不是一回事：后者是**契约文档格式**的版本（格式要改时才动，当前恒 1），前者是**被描述的那张表**的列集代数。别把两者合并。",
+      "type": "integer",
+      "minimum": 1
     },
     "contractVersion": {
       "description": "契约格式版本。格式本身要改时递增，并同步本文件与 README 的迁移说明——不要原地改语义而不动版本号。",

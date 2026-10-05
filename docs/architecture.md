@@ -327,6 +327,7 @@
 | **租户隔离** | 模块迁移建表必须有 `org`。判据是**真库对账**（跑一遍模块 migrations 再查 `information_schema`），且按**累积终态**判、不按文件判——按文件判会误报 `modules/demo`（它的 org 在 `003` 才补），而 demo 正是新模块照抄的模板。契约与豁免出口见 `docs/module-protocol.md`「租户隔离 CI 门禁」 | `scripts/check-tenant-isolation.mjs` | `gates` |
 | 装置完好 | `.githooks/pre-push` 带执行位 + 根 `prepare` 接线未被改掉（本地防线被改掉时**不会有任何报错**，只会"从此刻起拦不住"） | `.github/workflows/ci.yml` 的 gates | `gates` |
 | typecheck | 聚合 `tsc --noEmit`，**含 `scripts/`**（只跑包内会漏 `scripts/*.mjs` 的类型错误） | `.github/workflows/ci.yml` | `gates` |
+| **B10** 数据契约注册 | 湖的列集**只有一个事实源**：`contracts/*.json`。管线 `flatten` 的投影列集与对应 staging 模型的投影列集（去掉 dbt 注入的 `org`）必须与它**逐列一致**——漏改任一处 ⇒ 红。这条正是 §5.2 ① 的机检面：**"加一列要改 5 处"从此由门禁兜** | `scripts/check-data-contract.mjs` | `gates` |
 | 测试 / 冒烟 | 挂真 PG 的全量测试 / 双形态**真进程**装载冒烟 | `.github/workflows/ci.yml` | `unit` / `smoke` |
 
 > B1 的 schema 侧由门禁守；`id` → API 前缀由 `moduleApiBasePath(id)`（`apps/server/src/loader.ts:102`）
@@ -431,6 +432,45 @@ env，多租户同进程部署就只能共用一份 ⇒ 无 BYO、单密钥爆�
 3. **动部署形态**（并入单元 A 还是拆成独立 project）：只改 `composePath` 与服务裁剪开关，**不新建
    第三份 compose**——B7 白名单只有两份（见 §1.2「部署单元 B」）。接线模型读
    `deploy/customer-onboarding.md` §5。
+
+### 5.2 湖的 schema 演进（加列 / 改列 / 改名）——**四件套 + 展开→迁移**
+
+> 触发案例：`order_total_money` 补采（#430/#432）暴露的 flag day。设计稿与真机验证见
+> `docs/superpowers/specs/2026-10-05-lake-schema-registration.md`。
+
+**先看病灶。** 湖的分区**不可变**、读者用**一条 glob 读整湖** ⇒ 「生产者写新列」与「消费者读新列」
+之间必须有一次跨全湖切换。危险的不是切换本身，是**切换半途且无人知道**：真机实测（spec §2）
+**半写的湖会被读者静默读成"完整"**（392 行 / 完整 796 行，rc=0）。
+
+**所以「加一列」不是改 5 个地方，而是四件套 + 一个顺序：**
+
+| # | 件 | 守什么 |
+|---|---|---|
+| ① | **契约注册**：`contracts/*.json` 的 `schemaVersion` + 列集是**单一事实源** | 管线 `flatten` 投影与 staging 投影必须与它一致（门禁 B10，§4.1） |
+| ② | **表级封版标记** `…/_SCHEMA/v<N>.parquet`（**表根**；内容含 `schema_version` / `column_fingerprint` / `partitions` / `rows_expected` / `sealed_at`） | 「**这套文件是齐的**」的唯一凭据（同 `.data-plane-revision` 的思想：**标记在 = 齐**） |
+| ③ | **读侧 fail-closed 断言**：读者路径不变，但**必须**同 FROM 带 `read_parquet('…/_SCHEMA/v<N>.parquet')` | 未封版 ⇒ 标记 404 ⇒ **带名字地失败**（真机验过：CLI 与 pg_duckdb 两条路径都响亮），而不是静默算错 |
+| ④ | **注册表驱动回填** + **展开→迁移顺序** | 顺序不变量（glob 首文件列集必须是最小子集）从"注释里的纪律"升为**前置闸** |
+
+```
+展开(expand)  ：只上生产者 → 回填历史 → 湖齐版 → 落封版标记        ← 旧读者全程不受影响（实测）
+迁移(migrate) ：再上消费者（引用新列 + 断言封版）
+```
+
+**三条硬约束（每条都有实测支撑，别绕）：**
+
+1. 🔴 **封版标记绝不能落在任何读湖 glob 的射程内。** 实测：标记若与数据同目录，
+   `…/**/*.parquet` 会把它当数据文件读进来，**结构体被解析成标记的列**
+   （`Could not find key "sale_money" … Candidate Entries: "sealed_at"…`）。
+   放**表根**（`<prefix>/_SCHEMA/…`）而读者 glob 是 `<prefix>/system_book=*/**/*.parquet` ⇒ 不在射程内（实测 `glob()` 命中 0）。
+2. **不采用「版本化前缀」**（`…/v<N>/…`）：它唯一多买到的是「消费者可任意插队迁移」，
+   而本项目**两侧投递都由我们控制、可排期**（展开期零窗口，已实测）⇒ 为这点自由度改路径布局、
+   并永久背一条遗留路径，不划算。将来若出现**无法排期的消费者**（多团队并发/24-7），
+   或需要**原地改名/改类型且不留旧列**，再升级到它——② ③ 可直接复用。
+3. **改列/改名/改类型 = 展开→迁移的再组合**（加新列 → 回填 → 翻读者 → 停用旧列），
+   **不要**指望"原地换"。
+
+**读湖的唯一合法姿势**（第三方/临时查询同样适用）：`<prefix>/system_book=*/**/*.parquet`
+**并且**同 FROM 带上 `<prefix>/_SCHEMA/v<N>.parquet`。**绕过封版断言直接读湖 = 读到半写的湖而不自知。**
 
 ## 6. 文档地图
 
