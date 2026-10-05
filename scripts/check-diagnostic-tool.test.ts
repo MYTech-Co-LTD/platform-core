@@ -12,6 +12,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
+// 夹具的字面量表**从守卫导出派生**，不手抄一份 —— 抄一份 = 漂移源（2026-10-05：扩了 E6 而
+// fixture 没跟着加，CI unit 直接红）。同族先例：check-data-models.test.ts 也 import 守卫常量。
+import { E6_LITERALS } from './check-diagnostic-tool.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const GUARD = join(repoRoot, 'scripts/check-diagnostic-tool.mjs')
@@ -46,15 +49,7 @@ function guard(rootDir: string): RunResult {
 function toolSrc(
   opts: { pages?: number; pageSize?: number; dropLiteral?: string; hive?: boolean } = {},
 ): string {
-  const literals = [
-    'RECON_OK',
-    'RECON_FAILED:lake',
-    'RECON_FAILED:gateway',
-    'RECON_FAILED:rows',
-    'RECON_FAILED:batches',
-    'RECON_FAILED:hour',
-    'RECON_FAILED:hour_open',
-  ].filter((l) => l !== opts.dropLiteral)
+  const literals = [...E6_LITERALS].filter((l) => l !== opts.dropLiteral)
   const gwBody =
     '\\"branch_nums\\": $BRANCH_NUMS, \\"date_from\\": \\"$2\\", \\"date_to\\": \\"$2\\", ' +
     '\\"time_from\\": \\"$3:00:00\\", \\"time_to\\": \\"$3:59:59\\", \\"page_number\\": $1, ' +
