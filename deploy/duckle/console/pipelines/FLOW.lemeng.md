@@ -21,23 +21,27 @@
 
 ## 图 1 · L0 直连（维度面：全量快照）
 
+图例：**①** 纯 duckle · **②** duckle 组件 + 我们的规则/配置 · **③** 纯手写代码（`code.sql`）
+
 ```mermaid
 flowchart TD
-  S["调度 console：cron / misfire / catchup"]:::eng
-  S --> W0["w0 src.rest 身份探针<br/>引擎：REST 源 + SSE 原件落盘 + 重试<br/>自写：探针体 / data.schema / 绝对路径（不写 s3://）"]:::own
-  W0 --> G0["g0 g1 g2 code.sql<br/>引擎：执行 SQL<br/>自写：拆 SSE → 取最后一条 → 抠 company_id / 门店表"]:::own
-  G0 --> D0["d0 ctl.die 反向闸<br/>引擎：无行即红<br/>自写：判据=抠不出身份就红（挡网关形状漂移）"]:::own
-  D0 --> G3["g3 code.sql 两条断言<br/>自写：1 账套相符 2 配置门店⊆可见门店"]:::own
-  G3 --> D1["d1 ctl.die<br/>引擎：有违规即红并阻断下游<br/>自写：先证后采（未证即 0 业务调用 / 0 写湖）"]:::own
-  D1 --> GV["gv / dv 期望值形状闸<br/>自写：批号 / 账套 / 快照 / 页数的形状<br/>引擎：不合即红"]:::own
-  GV --> P["p1…pN src.rest 分页<br/>引擎：分页抓取 + 重试 + 每页落盘<br/>自写：页数与页容量（阈值 = 页数-1 × 页容量）"]:::own
-  P --> GUARD["guard ctl.die 末页哨兵<br/>自写：容量截断判据<br/>引擎：命中即红（fail-loud 不丢数）"]:::own
-  GUARD --> MG["merge ctl.merge"]:::eng
-  MG --> SH["shape code.sql 定型<br/>自写：注入 batch_id / system_book / snapshot + 全列定型"]:::own
-  SH --> GT["gate qa.contract<br/>引擎：求值契约<br/>自写：哪几列 not_null"]:::own
-  GT --> SK["sink snk.minio<br/>引擎：写对象存储<br/>自写：分区写进 key + 单对象覆盖（幂等）"]:::own
-  classDef eng fill:#e8f0fe,stroke:#4285f4,color:#0b3d91
-  classDef own fill:#fff4e5,stroke:#e8710a,color:#7a3300
+  S["① 调度 console：cron / misfire / catchup"]:::e1
+  S --> W0["② w0 src.rest 身份探针<br/>组件的：REST 请求 + 重试 + SSE 原件落盘<br/>我们的：探针体 / data.schema / 绝对路径（不写 s3://）"]:::e2
+  W0 --> G0["③ g0 g1 g2 code.sql<br/>壳：SQL 执行<br/>我们写的：拆 SSE → 取最后一条 → 抠 company_id / 门店表"]:::e3
+  G0 --> D0["② d0 ctl.die 反向闸<br/>组件的：无行即红<br/>我们的：判据 = 抠不出身份就红（挡网关形状漂移）"]:::e2
+  D0 --> G3["③ g3 code.sql 两条断言<br/>我们写的：账套相符 + 配置门店 ⊆ 可见门店"]:::e3
+  G3 --> D1["② d1 ctl.die<br/>组件的：有违规即红并阻断下游<br/>我们的：先证后采（未证 ⇒ 0 业务调用 / 0 写湖）"]:::e2
+  D1 --> GV["③ gv code.sql 期望值形状闸<br/>我们写的：批号 / 账套 / 快照 / 页数的形状"]:::e3
+  GV --> DV["② dv ctl.die（我们的：形状不合即红）"]:::e2
+  DV --> P["② p1…pN src.rest 分页<br/>组件的：分页抓取 + 重试 + 每页落盘<br/>我们的：页数与页容量（阈值 = 页数-1 × 页容量）"]:::e2
+  P --> GUARD["② guard ctl.die 末页哨兵<br/>组件的：命中即红（fail-loud 不丢数）<br/>我们的：容量截断判据"]:::e2
+  GUARD --> MG["① merge ctl.merge（零逻辑）"]:::e1
+  MG --> SH["③ shape code.sql 定型<br/>我们写的：注入 batch_id / system_book / snapshot + 全列定型"]:::e3
+  SH --> GT["② gate qa.contract<br/>组件的：契约求值<br/>我们的：哪几列 not_null"]:::e2
+  GT --> SK["② sink snk.minio<br/>组件的：写对象存储<br/>我们的：分区写进 key + 单对象覆盖（幂等）"]:::e2
+  classDef e1 fill:#e8f0fe,stroke:#4285f4,color:#0b3d91
+  classDef e2 fill:#fff4e5,stroke:#e8710a,color:#7a3300
+  classDef e3 fill:#e6f4ea,stroke:#137333,color:#0d5221
 ```
 
 > `item.l0` 同形，差别只有：分页到 **150 页**、`shape` 多一步「摊平 3 对象」。
@@ -48,39 +52,59 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  S["调度 console：cron / misfire / catchup / timezone"]:::eng
-  S --> ID["身份门（同图 1 的 9 个节点）<br/>引擎：die + 定序<br/>自写：4 条判定 SQL"]:::own
-  ID --> W0["w0 code.sql 窗口表<br/>自写：要采哪些窗"]:::own
-  W0 --> FE["fe ctl.foreach<br/>引擎：逐窗循环 + 并发 + 同 run 同窗重试"]:::eng
-  W0 --> WM["wm code.sql 收据形状 pending<br/>自写：窗口清单形状"]:::own
-  WM --> WS["wsink snk.csv 本 run 窗口清单"]:::eng
+  S["① 调度 console：cron / misfire / catchup / timezone"]:::e1
+  S --> ID["身份门（同图 1 的那 9 个节点）<br/>② ctl.die 判定 · ③ code.sql 四条判定 SQL"]:::e3
+  ID --> W0["③ w0 code.sql 窗口表<br/>我们写的：要采哪些窗"]:::e3
+  W0 --> FE["① fe ctl.foreach<br/>循环 + 并发 + 同 run 同窗重试<br/>（我们只给 pipelineRef / itemKey / retryAttempts）"]:::e1
+  W0 --> WM["③ wm code.sql 收据形状 pending"]:::e3
+  WM --> WS["② wsink snk.csv 本 run 窗口清单（我们的：路径 + 覆盖）"]:::e2
   FE --> CH
   subgraph CH["业务子管线 · 单窗怎么采（window / tick 两个变体）"]
     direction TB
-    C1["p1…p12 src.rest 分页<br/>引擎：分页 + 重试<br/>自写：页数/游标"]:::own --> C2["guard ctl.die 末页哨兵"]:::own
-    C2 --> C3["merge ctl.merge"]:::eng
-    C3 --> C4["flatten code.sql<br/>自写：UNNEST pos_order_details + 定型到契约列"]:::own
-    C4 --> C5["gate qa.contract<br/>自写：契约列"]:::own
-    C5 --> C6["sink snk.minio 写湖<br/>自写：一窗一 key 覆盖写"]:::own
-    C6 --> C7["ordered ctl.anchor<br/>引擎：湖对象先落盘"]:::eng
-    C7 --> C8["summ code.sql 本窗收据行"]:::own
-    C8 --> C9["receipt snk.csv 单窗收据"]:::eng
+    C1["② p1…p12 src.rest 分页<br/>组件的：分页 + 重试 · 我们的：页数 / 游标"]:::e2 --> C2["② guard ctl.die 末页哨兵"]:::e2
+    C2 --> C3["① merge ctl.merge"]:::e1
+    C3 --> C4["③ flatten code.sql<br/>我们写的：UNNEST pos_order_details + 定型到契约列"]:::e3
+    C4 --> C5["② gate qa.contract（我们的：契约列）"]:::e2
+    C5 --> C6["② sink snk.minio 写湖（我们的：一窗一 key、覆盖写）"]:::e2
+    C6 --> C7["① ordered ctl.anchor（零逻辑，只定序：湖对象先落盘）"]:::e1
+    C7 --> C8["③ summ code.sql 本窗收据行"]:::e3
+    C8 --> C9["② receipt snk.csv 单窗收据"]:::e2
   end
-  FE --> A1["a1 ctl.anchor 整批跑完再汇总"]:::eng
+  FE --> A1["① a1 ctl.anchor（整批跑完再汇总）"]:::e1
   WS --> A1
-  A1 --> SU["su code.sql 汇总（收据 × 窗口表）<br/>自写：每窗成色的唯一事实源"]:::own
-  SU --> REP["rep snk.csv 汇总表（运行记录）"]:::eng
-  SU --> OP["op code.sql _ops 行成形"]:::own
-  OP --> WH["wh snk.webhook 投 OO"]:::eng
-  SU --> SR["sr code.sql 缺口窗"]:::own
-  REP --> A2["a2 ctl.anchor 先落盘后判红"]:::eng
+  A1 --> SU["③ su code.sql 汇总（收据 × 窗口表）<br/>我们写的：每窗成色的唯一事实源"]:::e3
+  SU --> REP["② rep snk.csv 汇总表（运行记录）"]:::e2
+  SU --> OP["③ op code.sql _ops 行成形"]:::e3
+  OP --> WH["② wh snk.webhook 投 OO（我们的：url / 头 / 批次模式）"]:::e2
+  SU --> SR["③ sr code.sql 缺口窗"]:::e3
+  REP --> A2["① a2 ctl.anchor（先落盘后判红）"]:::e1
   SR --> A2
   WH --> A2
-  A2 --> DZ["dz ctl.die 末尾统一判红<br/>引擎：判红<br/>自写：判红文案"]:::own
+  A2 --> DZ["② dz ctl.die 末尾统一判红（我们的：判红文案）"]:::e2
   SR --> DZ
-  classDef eng fill:#e8f0fe,stroke:#4285f4,color:#0b3d91
-  classDef own fill:#fff4e5,stroke:#e8710a,color:#7a3300
+  classDef e1 fill:#e8f0fe,stroke:#4285f4,color:#0b3d91
+  classDef e2 fill:#fff4e5,stroke:#e8710a,color:#7a3300
+  classDef e3 fill:#e6f4ea,stroke:#137333,color:#0d5221
 ```
+
+---
+
+## 管线之外：③ 纯手写的那一层（图里原先看不见的那半张图）
+
+管线只是链路的一段。围着它转的这些件**不属于 duckle**，是我们自己写/配的：
+
+| 件 | 在哪 | 干什么 | 档 |
+|---|---|---|---|
+| `lemeng-wire-warehouse.sh` | `/opt/` | 平台↔仓库两条**易失接线**的幂等重做 + 只读复查 | ③ |
+| `lemeng-diagnose.sh` | `/opt/` | 诊断 / 对账（湖 vs 网关翻页累计，容差 0） | ③ |
+| `lemeng-backfill.sh` | `/opt/` | 回填驱动（两道 fail-closed 闸 + 五批降序） | ③ |
+| `lemeng-readback.sh` | 检出内 | **免凭据**独立回读湖（换通道复核，不复用被测通路） | ③ |
+| `connection-setup.py` | `/opt/` | 建**密文**连接（禁用明文写入方） | ③ |
+| `authoring-ws.sh` | 仓内 `scripts/` | 装配桌面 authoring 工作区（仓 ⇄ 工作区映射） | ③ |
+| CI 守卫 8 条 | 仓内 `scripts/check-*.mjs` | catalog 命名 / 数据面 lock / 清单 / compose / env 模板 … | ③ |
+| openship jobs | 控制面 | 观测行采集 · 接线探活（每 5 分钟）· **部署后接线重做** · 构建缓存兜底清理 | ③ |
+
+**读法**：图 1 / 图 2 画的是「管线里面」；上面这张表是「管线外面」。**两半合起来才是完整链路** —— 而**只有管线里面**才要求「① ② ③ 分明」；管线外面本来就是③，不必再分。
 
 **三兄弟的差别只在窗口表**：`windows` = 24 窗（日批，零点在 UTC 02:30 / 10:30 双点火）；
 `tick` = 当前小时 + 前一小时（每 5 分钟，`misfire:skip`，catchup 结构上补不回错过的窗）；
