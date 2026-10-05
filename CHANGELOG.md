@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.70.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.70.1...v0.70.2) - 2026-10-05
+- 【修复】lemeng: 迁移步——staging 补 order_total_money + 封版断言（consumerVersion 3） ([#442](https://github.com/MYTech-Co-LTD/platform-core/pull/442), [8d00070](https://github.com/MYTech-Co-LTD/platform-core/commit/8d000702c8f9d43f79bf091c218c7a4a8e59cc83))
+
+
 ## [0.70.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.70.0...v0.70.1) - 2026-10-05
 - 【修复】lemeng: 补齐 src.rest 的 data.schema + B10 加「申报面」判据（#432 只改了 flatten） ([#440](https://github.com/MYTech-Co-LTD/platform-core/pull/440), [0c77eb4](https://github.com/MYTech-Co-LTD/platform-core/commit/0c77eb4f6aa2c801da529b921225a48062489645))
 
