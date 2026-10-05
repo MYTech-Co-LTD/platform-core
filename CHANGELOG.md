@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.69.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.68.0...v0.69.0) - 2026-10-05
+- 【新增】lemeng: 数据契约注册门禁（B10）+ 架构文档 §5.2 —— 湖 schema 演进四件套 ([#433](https://github.com/MYTech-Co-LTD/platform-core/pull/433), [61ba861](https://github.com/MYTech-Co-LTD/platform-core/commit/61ba861cba52c4793b68ef2a22e6a0db351a7690))
+
+
 ## [0.68.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.67.0...v0.68.0) - 2026-10-05
 - 【新增】lemeng: 补采订单级 order_total_money（换货半边口径的事实源，24→25 列） ([#432](https://github.com/MYTech-Co-LTD/platform-core/pull/432), [16dc5b7](https://github.com/MYTech-Co-LTD/platform-core/commit/16dc5b7adfd44716ad3ab5de1b09820781a30d7a))
 
