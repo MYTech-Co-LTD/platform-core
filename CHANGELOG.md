@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.67.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.66.0...v0.67.0) - 2026-10-05
+- 【新增】lemeng: 定稿线对账的失败动作——不平⇒自动回填⇒复验（闭环驱动） ([#427](https://github.com/MYTech-Co-LTD/platform-core/pull/427), [7deccdc](https://github.com/MYTech-Co-LTD/platform-core/commit/7deccdc3a0d59920e4bdf6cf9dc99f322b051438))
+
+
 ## [0.66.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.65.0...v0.66.0) - 2026-10-05
 - 【新增】lemeng: 按 §1.4.1 补「量级」判据与定稿线对账（dbt 量级 audit + recon-day） ([#425](https://github.com/MYTech-Co-LTD/platform-core/pull/425), [86d11a4](https://github.com/MYTech-Co-LTD/platform-core/commit/86d11a48aab452ec5984059226e5349236d10f6a))
 
