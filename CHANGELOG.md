@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.69.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.69.0...v0.69.1) - 2026-10-05
+- 【修复】lemeng: 展开期——staging 暂不投影 order_total_money（consumerVersion 2） ([#436](https://github.com/MYTech-Co-LTD/platform-core/pull/436), [77c133d](https://github.com/MYTech-Co-LTD/platform-core/commit/77c133d7947d09b9b5f05e09811265130fbe6579))
+
+
 ## [0.69.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.68.0...v0.69.0) - 2026-10-05
 - 【新增】lemeng: 数据契约注册门禁（B10）+ 架构文档 §5.2 —— 湖 schema 演进四件套 ([#433](https://github.com/MYTech-Co-LTD/platform-core/pull/433), [61ba861](https://github.com/MYTech-Co-LTD/platform-core/commit/61ba861cba52c4793b68ef2a22e6a0db351a7690))
 
