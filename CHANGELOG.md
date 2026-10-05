@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.70.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.70.0...v0.70.1) - 2026-10-05
+- 【修复】lemeng: 补齐 src.rest 的 data.schema + B10 加「申报面」判据（#432 只改了 flatten） ([#440](https://github.com/MYTech-Co-LTD/platform-core/pull/440), [0c77eb4](https://github.com/MYTech-Co-LTD/platform-core/commit/0c77eb4f6aa2c801da529b921225a48062489645))
+
+
 ## [0.70.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.69.1...v0.70.0) - 2026-10-05
 - 【新增】lemeng: seed-console.sh + 修 check-data-plane-lock 的目录条目误报 ([#438](https://github.com/MYTech-Co-LTD/platform-core/pull/438), [412fd7e](https://github.com/MYTech-Co-LTD/platform-core/commit/412fd7e11aa3d94809c95b959cea07959b4518ad))
 
