@@ -56,6 +56,9 @@
 > 覆盖本目录**全部**受版本控制的文件（含 `README.md`、本 `DELIVERY.md`）——那是给**机器检出**用的，
 > **不是**给 console 卷用的。**seed 只投 §0.2 这 8 个**。两个面别混。
 
+> 📐 **新增账套 / 客户 / 源系统时怎么放文件、seed 清单怎么演进**：见 `docs/superpowers/plans/2026-10-05-collection-layout-convention.md`。
+> 要点：**管线文件名即 id，`pipelines/` 永远平铺**（引擎按 `pipelines/<id>.json` 解析排班）；新源系统加**文件名前缀**，不是加目录。
+
 ### 0.3 附：**回填变体父管线**的投递（2026-09-30，#387；不在本批，单独一批）
 
 `pipelines/lemeng.retail.windows.backfill.json` 是 18→24 列回填的**变体父管线**（与 §0.2 第 4 项
