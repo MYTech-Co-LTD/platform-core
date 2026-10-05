@@ -66,6 +66,21 @@ export const REPO_REF_EXCLUSIONS = [
     ref: '.$REVISION_REL.tmp.$$',
     reason: '上一条的同目录临时文件（`mv -f` 前的落点，原子换名用）——同上，机器本地、写后即消失，不进清单',
   },
+  {
+    ref: 'deploy/data-plane.lock',
+    reason:
+      '**同步程序自己取的那份清单**（`lemeng-sync.sh` 第一步按全 SHA 取 lock、第二步自校验），' +
+      '不是被投递物——它是投递的**输入**。`scripts/lemeng/seed-console.sh` 需要在机器上读它来决定' +
+      '「这个 revision 该有哪些文件」（**故意的**：见下一条），故登记为豁免。',
+  },
+  {
+    ref: '${rel}',
+    reason:
+      '**运行时才解析的计算路径**，不是字面量：`seed-console.sh` 从 `data-plane.lock` 逐行取出' +
+      '仓内相对路径 `rel`，再拼成 `$REPO/$rel` 去比对。提取器是纯文本的（不解析变量），' +
+      '所以这里剥出来的是字符串 `$rel` 本身——它没有对应的仓内文件，不该进清单。' +
+      '该脚本真正引用的那些路径由 lock 逐行给出，本豁免不缩小任何覆盖面。',
+  },
 ]
 
 /**
