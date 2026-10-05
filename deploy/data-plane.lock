@@ -1,4 +1,4 @@
-sha256-of-rest 40b83c8681462d2bc3d3715ff5548cac81ad7673a5bd89d1086e7ba779abcade
+sha256-of-rest 8c9618a50ea45804a2124d7eac1e4079e7affb44e2081dde04b5642d0d3bb989
 7fffd3496b865037d505c1f6e28f9d6323609f6d0ad347d7df15307958e57f37 dbt/README.md ${REPO}/dbt/README.md 0644
 dedddd922494d878ea2930b841067caaa8eba5360374e8304154eaed44a93f63 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
@@ -46,6 +46,6 @@ e5692c786e70ea50917462573d035bc4cc4c9e25c81f9489fc5b3bb8070e6f64 duckle/README.m
 691d2f8416d4588f656c174cc00528e4bfa65b85ceb84758900086ca756b2e26 duckle/customers/README.md ${REPO}/duckle/customers/README.md 0644
 a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814 scripts/duckle/connection-setup.py /opt/connection-setup.py 0755
 bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/backfill-retail-order-line.sh /opt/lemeng-backfill.sh 0755
-a71e92404d6b77bfc265197c6d13ac42a9e11b14cb24aaae210355dd534855d9 scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755
+9bcb47a39a9d0626cb2e65a0bbb773383202a5e286850d65ad97fb5ba53e2ff8 scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755
 d3c7fb72c9a2c243b6973177432294b446a10770b3bbad4da731fd306cad2e97 scripts/lemeng/readback-helper.sh ${REPO}/lemeng-readback.sh 0755
 50e5822c1051755a5b68d2c2dbff22a53d24d6b2be918f5ee0dfaaa4d33327b6 scripts/lemeng/wire-warehouse.sh /opt/lemeng-wire-warehouse.sh 0755

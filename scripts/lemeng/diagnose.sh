@@ -339,6 +339,8 @@ usage() {
   cat >&2 <<'USAGE'
 用法：sh diagnose.sh <模式> [参数]
   recon <H>           该 hour 湖分区（双通道复核）vs 网关当刻累计，闭窗小时**容差 0**
+  recon-day <YYYY-MM-DD>  该营业日**逐小时**跑 recon（00..23），任一小时不平即整体判红
+                          （§1.4.1 定稿线：对象应是**已定稿**的营业日，如 T-3；未闭窗的小时跳过）
   rb "<duckdb SQL>"   容器内 duckdb 只读 SQL 口（写面关键字一律拒；输出上限 RB_MAX_ROWS）
   identity            身份自证：凭据↔账套 / 门店清单↔账套
 退出码：0 = 全过；非 0 = 有失败面（字面量见脚本头注）。
@@ -419,12 +421,54 @@ recon)
   _rc_gw=$(recon_gateway_rows "$BIZDAY" "$H") || exit 1
   recon_verdict "$_rc_lrows" "$_rc_lbatches" "$_rc_gw" "$BIZDAY" "$H"
   ;;
+recon-day)
+  # §1.4.1「定稿线」的常设形态（只读）：对一个**已定稿的营业日**逐小时跑同一套判据
+  # （湖回读 vs 网关当刻累计，**容差 0**），任一小时不平即整体判红。
+  #   · 为什么要有这一天级：湖在 T-1 两次点火后就**冻结**，而源在更久之后仍会变
+  #     （实测同一窗 472 → 476 → 482）⇒ **冻住的湖可能永久短于稳态的源**；
+  #     T-3 的整日对账就是发现这段差额、并触发回填的那道闸。
+  #   · 0 明细单**不必特判**：它们对 `gw_rows` 的贡献是 0，行级比对天然把它们抵掉
+  #     （实测 2026-10-02 全天逐小时 湖行 == 网关行，残差 0）。
+  #   · 未闭窗的小时**跳过**（合法不等，与 recon 同名判据一致）；整日一个都没对到 ⇒ 判红
+  #     （空转绿不是绿）。
+  _rd_day="${2:-}"
+  case "$_rd_day" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) echo "RECON_FAILED:recon-day 需要一个 YYYY-MM-DD 营业日（收到 '${_rd_day}'）" >&2; exit 2 ;;
+  esac
+  _rd_checked=0; _rd_failed=0
+  for _rd_h in 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23; do
+    _rd_out=$(BIZDAY="$_rd_day" sh "$0" recon "$_rd_h" 2>&1) && _rd_rc=0 || _rd_rc=$?
+    if [ "$_rd_rc" -eq 0 ]; then
+      _rd_checked=$((_rd_checked + 1))
+      printf '%s\n' "$_rd_out"
+    else
+      case "$_rd_out" in
+        *RECON_FAILED:hour_open*)
+          echo "RECON_SKIP hour=${_rd_h} 未闭窗（合法不等，不判）" >&2 ;;
+        *)
+          printf '%s\n' "$_rd_out" >&2
+          echo "RECON_FAILED:day bizday=${_rd_day} hour=${_rd_h} 该小时未对平" >&2
+          _rd_failed=$((_rd_failed + 1)) ;;
+      esac
+    fi
+  done
+  if [ "$_rd_failed" -ne 0 ]; then
+    echo "RECON_DAY_FAILED bizday=${_rd_day} 未对平小时=${_rd_failed} 已对小时=${_rd_checked}" >&2
+    exit 1
+  fi
+  if [ "$_rd_checked" -eq 0 ]; then
+    echo "RECON_FAILED:day bizday=${_rd_day} 整日没有任何小时被对到——空转绿不是绿" >&2
+    exit 1
+  fi
+  echo "RECON_DAY_OK bizday=${_rd_day} hours=${_rd_checked}"
+  ;;
 ''|-h|--help|help|usage)
   usage
   exit 2
   ;;
 *)
-  echo "UNKNOWN_MODE: '${1}' 不是本工具的模式（recon / rb / identity）——本工具**只读**，采集形不在其列" >&2
+  echo "UNKNOWN_MODE: '${1}' 不是本工具的模式（recon / recon-day / rb / identity）——本工具**只读**，采集形不在其列" >&2
   usage
   exit 2
   ;;
