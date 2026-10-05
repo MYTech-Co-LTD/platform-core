@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.66.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.65.0...v0.66.0) - 2026-10-05
+- 【新增】lemeng: 按 §1.4.1 补「量级」判据与定稿线对账（dbt 量级 audit + recon-day） ([#425](https://github.com/MYTech-Co-LTD/platform-core/pull/425), [86d11a4](https://github.com/MYTech-Co-LTD/platform-core/commit/86d11a48aab452ec5984059226e5349236d10f6a))
+
+
 ## [0.65.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.64.2...v0.65.0) - 2026-10-05
 - 【新增】duckle: #419 owners/alerts 按源系统分文件（拆掉第二个源系统的唯一阻塞点） ([#420](https://github.com/MYTech-Co-LTD/platform-core/pull/420), [d4853af](https://github.com/MYTech-Co-LTD/platform-core/commit/d4853af55aea1f5c8ddc5e4c167090b9a0842390))
 
