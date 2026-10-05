@@ -63,23 +63,32 @@ case "${ONLY}" in
 esac
 
 CONSOLE_CT=${CONSOLE_CT:-openship-platform-core-shanhai-data-lemeng-console-${BOOK}}
-SRC_DIR="${REPO}/deploy/duckle/console"
-[ -d "${SRC_DIR}/pipelines" ] || { echo "SEED_FAILED:deps 源目录不在：${SRC_DIR}" >&2; exit 3; }
+CONSOLE_REL="deploy/duckle/console/"
+LOCK="${REPO}/deploy/data-plane.lock"
+[ -f "${LOCK}" ] || { echo "SEED_FAILED:deps 检出里没有 ${LOCK}（sync 没跑过？）" >&2; exit 3; }
 docker inspect "${CONSOLE_CT}" >/dev/null 2>&1 \
   || { echo "SEED_FAILED:deps console 容器 ${CONSOLE_CT} 不在" >&2; exit 3; }
 
-# ── 待 seed 的 (仓内路径 → 卷内路径) 清单 ──
-# `pipelines/` 是**目录**（逐件）；其余是**单文件改名**（仓内按域命名，卷里是引擎认的固定名）。
+# ── 待 seed 的 (仓内相对路径 → 卷内路径) —— **以 `data-plane.lock` 为准，不按目录 glob** ──
+# 🔴 为什么不 glob：`lemeng-sync.sh` **只取件、不删件** ⇒ 机器检出会**永久堆积孤儿**
+#    （2026-10-05 实测：仓里 **2026-09-29 就删掉**的 5 个退役薄壳 `*.run.json`，在检出里还躺着）。
+#    按目录 glob 会把它们**重新灌回生产卷** —— 那才是「把退役件灌回去」这件事的真实来源
+#    （不是仓里有，是检出里有）。lock 是 sync 用的那份清单 = **本次同步到的 revision 的准确文件集**
+#    ⇒ 以它为准，孤儿天然进不来。
+# ⚠️ 检出里多出来的文件（孤儿）**既不报错也不 seed**：它们不属于这个 revision。
 _pairs() {
-  for f in "${SRC_DIR}"/pipelines/*.json; do
-    [ -f "${f}" ] || continue
-    printf '%s\t%s\n' "${f}" "/workspace/pipelines/$(basename "${f}")"
-  done
-  if [ "${ONLY}" = "all" ]; then
-    printf '%s\t%s\n' "${SRC_DIR}/schedules/${BOOK}.json" "/workspace/schedules.json"
-    printf '%s\t%s\n' "${SRC_DIR}/alerts.lemeng.json" "/workspace/alerts.json"
-    printf '%s\t%s\n' "${SRC_DIR}/owners.lemeng.json" "/workspace/owners.json"
-  fi
+  # ⚠️ 别用 `/^pipelines\/[^/]+\.json$/` 这种字面量：awk 的 `/.../ ` 定界符**不认字符类里的斜杠**，
+  #    `[^/]` 会把正则**提前截断**（实测报 `nonterminated character class`）。用 split 判段数，稳。
+  awk -v pre="${CONSOLE_REL}" -v book="${BOOK}" -v only="${ONLY}" '
+    /^sha256-of-rest/ { next }
+    NF >= 4 && index($2, pre) == 1 {
+      rel = substr($2, length(pre) + 1)
+      np = split(rel, p, "/")
+      if (np == 2 && p[1] == "pipelines" && p[2] ~ /\.json$/)      print rel "\t/workspace/" rel
+      else if (only == "all" && rel == "schedules/" book ".json")  print rel "\t/workspace/schedules.json"
+      else if (only == "all" && rel == "alerts.lemeng.json")       print rel "\t/workspace/alerts.json"
+      else if (only == "all" && rel == "owners.lemeng.json")       print rel "\t/workspace/owners.json"
+    }' "${LOCK}"
 }
 
 # ── sha256 工具在两边**名字不一样**（2026-10-05 真机实测，别想当然）─────────────
@@ -92,9 +101,10 @@ _host_sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else
 _vol_sha() { docker exec "${CONSOLE_CT}" sh -c "if command -v sha256sum >/dev/null 2>&1; then sha256sum '$1'; else shasum -a 256 '$1'; fi" 2>/dev/null | cut -d' ' -f1; }
 
 n=0; bad=0
-while IFS="$(printf '\t')" read -r src dst; do
-  [ -n "${src}" ] || continue
-  [ -f "${src}" ] || { echo "SEED_FAILED:deps 源文件缺：${src}" >&2; exit 3; }
+while IFS="$(printf '\t')" read -r rel dst; do
+  [ -n "${rel}" ] || continue
+  src="${REPO}/${rel}"
+  [ -f "${src}" ] || { echo "SEED_FAILED:deps lock 登记了 ${rel}，但检出里没有：${src}" >&2; exit 3; }
   want=$(_host_sha "${src}")
   got=$(_vol_sha "${dst}")
   n=$((n + 1))
@@ -117,6 +127,10 @@ while IFS="$(printf '\t')" read -r src dst; do
 done <<EOF
 $(_pairs)
 EOF
+
+# 一件都没匹配上 = 这份 lock 里没有 console 条目（revision 不对？）⇒ **判红**，
+# 而不是静默报 `SEED_OK files=0`（"零覆盖的门禁会空转通过"是本仓点过名的坑）。
+[ "${n}" -gt 0 ] || { echo "SEED_FAILED:deps lock 里一条 console 条目都没匹配到：${LOCK}" >&2; exit 3; }
 
 if [ "${bad}" -gt 0 ]; then
   echo "SEED_DRIFT ${BOOK} mismatched=${bad}/${n}" >&2
