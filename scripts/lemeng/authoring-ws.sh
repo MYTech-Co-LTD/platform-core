@@ -23,13 +23,16 @@
 #   deploy/duckle/console/pipelines/<name>.json    ⇄ pipelines/<name>.json
 #   duckle/common/<name>.json                      ⇄ pipelines/<name>.json（重管线也平铺，见下「桌面坑 2」）
 #   deploy/duckle/console/schedules/<account>.json ⇄ schedules.json
-#   deploy/duckle/console/alerts.json              ⇄ alerts.json
-#   deploy/duckle/console/owners.json              ⇄ owners.json
+#   deploy/duckle/console/alerts.<源系统>.json      ⇄ alerts.json（#419：按源系统分文件）
+#   deploy/duckle/console/owners.<源系统>.json      ⇄ owners.json（同上）
 #
 # 壳法纪律：FAIL 不在管道子壳里调（子壳的 exit 杀不掉全脚本）；变量与全角字符相邻一律 ${VAR}。
 set -u
 REPO_ROOT=${REPO_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 CONSOLE=deploy/duckle/console
+# #419：owners/alerts 按**源系统**分文件；工作区里的落地名不变（桌面/引擎认这两个名）。
+OWNERS_SRC=${OWNERS_SRC:-owners.lemeng.json}
+ALERTS_SRC=${ALERTS_SRC:-alerts.lemeng.json}
 FAIL() { echo "AUTHORING_WS_FAILED: $*"; exit 2; }
 
 map_list() { # $1=account $2=wsdir → stdout: "repo相对路径 ws绝对路径" 逐行
@@ -42,8 +45,8 @@ map_list() { # $1=account $2=wsdir → stdout: "repo相对路径 ws绝对路径"
     printf '%s %s\n' "${f#"$REPO_ROOT"/}" "$2/pipelines/$(basename "$f")"
   done
   printf '%s %s\n' "$CONSOLE/schedules/$1.json" "$2/schedules.json"
-  printf '%s %s\n' "$CONSOLE/alerts.json" "$2/alerts.json"
-  printf '%s %s\n' "$CONSOLE/owners.json" "$2/owners.json"
+  printf '%s %s\n' "$CONSOLE/$ALERTS_SRC" "$2/alerts.json"
+  printf '%s %s\n' "$CONSOLE/$OWNERS_SRC" "$2/owners.json"
 }
 
 # 桌面坑（2026-09-27 实测）：仅把管线 json 放进工作区目录，桌面项目树**不显示**——Duckle 桌面的

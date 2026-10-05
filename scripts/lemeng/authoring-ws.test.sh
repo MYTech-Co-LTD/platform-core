@@ -9,8 +9,8 @@ mkdir -p "$FR/deploy/duckle/console/pipelines" "$FR/deploy/duckle/console/schedu
 echo A > "$FR/deploy/duckle/console/pipelines/p1.json"
 echo B > "$FR/duckle/common/heavy.json"
 echo S > "$FR/deploy/duckle/console/schedules/3120.json"
-echo AL > "$FR/deploy/duckle/console/alerts.json"
-echo OW > "$FR/deploy/duckle/console/owners.json"
+echo AL > "$FR/deploy/duckle/console/alerts.lemeng.json"
+echo OW > "$FR/deploy/duckle/console/owners.lemeng.json"
 
 # 1) assemble：文件落位且逐字节一致
 out=$(REPO_ROOT="$FR" sh "$SRC" assemble 3120 "$WS/ws" 2>&1); rc=$?

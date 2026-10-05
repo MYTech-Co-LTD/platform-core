@@ -57,12 +57,14 @@ deploy/duckle/console/
 | **客户 / 账套**（账户号、可见门店、桶、凭据） | **`env` + `connections/` + `schedules/<账套>.json`** | `SYSTEM_BOOK` / `BRANCH_NUMS` / `ZOS_*` 走容器 env；凭据走 `connectionRef` |
 | **湖落点**（桶 / 前缀） | **`env`** | sink 的 `bucket`/`key` 里带 env 占位符 |
 
-### 2.3 唯一需要将来调整的一处：`owners.json` / `alerts.json` 是**单一共享文件**
+### 2.3 `owners` / `alerts` 按源系统分文件（✅ 已于 2026-10-05 提前拆掉，#419）
 
 - **对「同源系统的新客户」不构成阻塞**：锚串里桶与 `system_book` 都是 env 参数化的 ⇒ 一份文件服务多个客户。
 - **对「新源系统」构成阻塞**：锚串中间那段源系统路径前缀（`lemeng/dim_branch`）是写死的，新源系统匹配不到。
-- **触发条件**：等**第一条非乐檬源**真实接入时，拆成 `owners.<源系统>.json` / `alerts.<源系统>.json`，
-  seed 时按「客户 → 源系统」映射落地为 `/workspace/owners.json`（引擎只认这个文件名）。
+- ✅ **已拆（#419）**：`owners.<源系统>.json` / `alerts.<源系统>.json`（今天 = `*.lemeng.json`）；
+  seed 时按「客户 → 源系统」选源文件，**落地名不变**（引擎只认 `owners.json` / `alerts.json`）—— 见 `DELIVERY.md §0.2`。
+- **配套**：CI 守卫 `check-duckle-catalog` 会读源目录里**全部** `owners.<源系统>.json` 并**合并**成工作区的
+  `owners.json`（同一 `match` 两条规则 ⇒ 响亮失败）；一个都没有 ⇒ 仍 exit 2（不许降级成只判命名）。
 
 ## 3. 四条扩展清单（照抄执行）
 
