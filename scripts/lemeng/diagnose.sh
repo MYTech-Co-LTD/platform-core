@@ -446,6 +446,20 @@ recon-day)
       case "$_rd_out" in
         *RECON_FAILED:hour_open*)
           echo "RECON_SKIP hour=${_rd_h} 未闭窗（合法不等，不判）" >&2 ;;
+        *RECON_FAILED:batches*)
+          # **合法空窗**：网关 0 单 **且** 湖无分区 —— 两侧都 0，行数其实对平；`recon` 的 batches
+          # 判据要求「分区内恰一个 batch_id」，空分区拿不到 ⇒ 单小时调用会判红。
+          # ⚠️ **只在两侧都为 0 时跳过**（网关非 0 而湖为 0 = 真缺口，照旧判红）—— 否则是假绿。
+          # 依据：2026-10-05 实测（bizday=2026-10-02 hour=03：lake_rows=0 / gateway_rows=0，
+          # 而该日 01–07 共 7 个合法空窗 ⇒ 不跳过则整日恒红）。
+          if printf '%s' "$_rd_out" | grep -qE 'lake_rows=0([^0-9]|$)' \
+             && printf '%s' "$_rd_out" | grep -qE 'gateway_rows=0([^0-9]|$)'; then
+            echo "RECON_SKIP hour=${_rd_h} 合法空窗（网关 0 单、湖无分区）" >&2
+          else
+            printf '%s\n' "$_rd_out" >&2
+            echo "RECON_FAILED:day bizday=${_rd_day} hour=${_rd_h} 该小时未对平" >&2
+            _rd_failed=$((_rd_failed + 1))
+          fi ;;
         *)
           printf '%s\n' "$_rd_out" >&2
           echo "RECON_FAILED:day bizday=${_rd_day} hour=${_rd_h} 该小时未对平" >&2
