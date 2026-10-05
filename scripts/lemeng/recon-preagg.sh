@@ -31,6 +31,21 @@
 #   · 已过定稿线（T-3 及更早）⇒ 残差属**真缺口** ⇒ 判红，交既有闭环 `recon-day-heal.sh`（不平 ⇒ 回填 ⇒ 复验）。
 # ⇒ **对 T-3 的数据（且随时可重复）对账是必要的**，本脚本默认就是这个日子。
 #
+# ── 边界（已实测，2026-10-05）：退货通道有「平台报得出、我们取不到」的部分 ──────────
+# 残差恒等于：`diff = −(平台 return_money − 湖可取到的退货) + 未解释项`。实测 64188：
+#   · 09-27 / 10-02：平台 1308.00 vs 湖 1309.25；785.40 vs 787.61 ⇒ 两段几乎相消，残差 1~2 元；
+#   · 09-26：平台退货比湖**多 +1,560.06** ⇒ 全天残差 −1,568.66 基本全由它构成。
+# 那些「多出来的退货」**在本通道取不到**（四条实证）：
+#   ① `posorder.find` 官方定义 = 「已结账单查询」（**销售单**）；该店该日只返回 39 单、**全是 SALE_ORDER**，
+#      与湖里该店该日的 39 个 order_no **逐一相同**（故排除 time 窗 confound）；
+#   ② 跨 09-26~10-05 全量拉取，**没有任何 `order_ref_billno` 指向那几笔被退的销售**；
+#   ③ 参数化回填该营业日（24 个窗口全跑、status=ok）后，湖**逐行未变**（4673 行、残差一字不差）；
+#   ④ RETAIL 的 AGI 能力面（15 个）**没有零售退货单查询**。
+# ⇒ 本脚本**如实打出** `PREAGG_RETGAP`（platform_return / lake_return / gap / unexplained）：
+#   残差 100% 有名字，`unexplained` 才是属于我们的面。
+#   ⚠️ **别把 `gap` 当我们的缺口去回填**——回填治不了它（③ 已证）；要归零只能拿**退货单的取数途径**
+#      （这正是《对账口径确认清单-致乐檬》要的东西，别把它读成"已自主归零"）。
+#
 # ── 退出码契约（判红靠它；「打印 FAIL 但仍 exit 0」= 假绿）──────────────────────
 #   0 = 通过（含「有极小差但在容差内」打 `PREAGG_DRIFT`；含未过定稿线的 `PREAGG_UNSETTLED`）
 #   1 = 判据破（`branch_missing` / `threshold`）      2 = 用法错      3 = 依赖不可用
@@ -171,8 +186,9 @@ resp = json.load(open('/tmp/_preagg_resp.json'))
 if resp.get('code') != 0:
     print('PREAGG_FAILED:pre_call 预聚合端点返回 code=%s msg=%s' % (resp.get('code'), str(resp.get('msg'))[:80]))
     sys.exit(3)
-pre = {int(x['branch_num']): float(x.get('sale_money') or 0)
-       for x in ((resp.get('result') or {}).get('rows') or [])}
+rows = (resp.get('result') or {}).get('rows') or []
+pre = {int(x['branch_num']): float(x.get('sale_money') or 0) for x in rows}
+pre_ret = round(sum(float(x.get('return_money') or 0) for x in rows), 2)
 
 miss = [b for b in net if b not in pre]        # 湖有、源无 ⇒ **真缺口**
 extra = [b for b in pre if b not in net]
@@ -185,6 +201,19 @@ tol = max(abs_tol, abs(pt) * max_pct / 100.0)
 
 print('PREAGG book=%s bizday=%s branches=%d total_lake=%.2f total_pre=%.2f diff=%s%.2f pct=%s%.2f%% tol=%.2f'
       % (book, day, len(net), lt, pt, sign, diff, sign, pct, tol))
+
+# ── 残差归因：把「平台的 return_money」与「湖可取到的退货」之差摆出来 ──────────────
+# 恒等式：diff = −(平台 return_money − 湖退货) + 未解释项。⇒ 未解释项才是**属于我们的**残差。
+# ⚠️ 已实测（2026-10-05）：这些「平台有、取不到」的退货**不在订单通道里** ——
+#    posorder.find 对该店该日只返回 39 单、**全是 SALE_ORDER**（与湖的 39 个 order_no 逐一相同，
+#    无 time 窗 confound）；跨 10 天无任何 order_ref_billno 指向它；回填 24 窗重跑湖**逐行未变**；
+#    RETAIL 的 AGI 面 15 个能力里**没有零售退货单查询**（posorder.find 官方定义 = 「已结账单」= 销售单）。
+#    ⇒ 这一段是**源侧通道边界**，不是我们的缺口、也不是口径错。
+lake_ret = round(sum(v[0] for v in ret_rows.values()), 2)
+ret_gap = round(pre_ret - lake_ret, 2)
+unexplained = round(diff + ret_gap, 2)
+print('PREAGG_RETGAP book=%s bizday=%s platform_return=%.2f lake_return=%.2f gap=%.2f unexplained=%s%.2f'
+      % (book, day, pre_ret, lake_ret, ret_gap, '+' if unexplained >= 0 else '', unexplained))
 
 # 未过定稿线 ⇒ 源仍在变，只报数（判红是噪声；对账必要性见脚本头注「定稿线」）
 if not settled:
