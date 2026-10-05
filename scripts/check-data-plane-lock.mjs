@@ -74,6 +74,13 @@ export const REPO_REF_EXCLUSIONS = [
       '「这个 revision 该有哪些文件」（**故意的**：见下一条），故登记为豁免。',
   },
   {
+    ref: '.data-plane-revision',
+    reason:
+      '**同步程序自己写出的版本标记**（`<检出>/.data-plane-revision`）——与上面 `$REVISION_REL` 是同一个文件，' +
+      '只是 `seed-console.sh` 是按**字面路径**引它（要读全 SHA 去重取 lock，见该脚本头注）：' +
+      '它是投递的**产物**，机器本地、仓里没有、也不该有。',
+  },
+  {
     ref: '${rel}',
     reason:
       '**运行时才解析的计算路径**，不是字面量：`seed-console.sh` 从 `data-plane.lock` 逐行取出' +

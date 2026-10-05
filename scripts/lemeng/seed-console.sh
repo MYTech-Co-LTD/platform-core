@@ -64,8 +64,32 @@ esac
 
 CONSOLE_CT=${CONSOLE_CT:-openship-platform-core-shanhai-data-lemeng-console-${BOOK}}
 CONSOLE_REL="deploy/duckle/console/"
-LOCK="${REPO}/deploy/data-plane.lock"
-[ -f "${LOCK}" ] || { echo "SEED_FAILED:deps 检出里没有 ${LOCK}（sync 没跑过？）" >&2; exit 3; }
+
+# ── lock 从哪来：检出里**没有**它（实测：`lemeng-sync.sh` 把取回的 lock 放在**临时目录**、用完即弃）
+#    ⇒ 按 `.data-plane-revision` 记下的**全 SHA** 重新取一份。与 sync 同一手法：
+#      raw.githubusercontent **按全 SHA 匿名可读**（sync 头注也这么写）。
+#    ⚠️ 代理地址**不进本仓**（B8 禁公网 IP 字面量）⇒ 用与 sync **同名同义**的 `SYNC_PROXY`；
+#      不设就直连（该机直连实测不通，故生产上要设）。仓库 slug 不是敏感值，可写死。
+SYNC_BASE=${SYNC_BASE:-https://raw.githubusercontent.com/MYTech-Co-LTD/platform-core}
+# ⚠️ **别写成 `${LOCK:-〈检出〉/deploy/data-plane.lock}`**：`check-data-plane-lock` 的引用提取器是
+#   **纯文本**的，会把 `〈检出〉/<路径>` 后面紧跟的 `}` 一起剥进路径（实测报 `deploy/data-plane.lock}`），
+#   于是这条永远判「未登记」。分两行写，让 `〈检出〉/…` 后面紧跟的是引号。
+LOCK=${LOCK:-}
+[ -n "${LOCK}" ] || LOCK="${REPO}/deploy/data-plane.lock"
+_LOCK_TMP=''
+if [ ! -f "${LOCK}" ]; then
+  _rev=$(sed -n 's/^sha //p' "${REPO}/.data-plane-revision" 2>/dev/null)
+  [ -n "${_rev}" ] || { echo "SEED_FAILED:deps 检出里没有 ${LOCK}，也读不到 ${REPO}/.data-plane-revision" >&2; exit 3; }
+  _LOCK_TMP="${TMPDIR:-/tmp}/.seed-lock-$$"
+  if [ -n "${SYNC_PROXY:-}" ]; then
+    curl -sS -f --max-time 30 -x "${SYNC_PROXY}" -o "${_LOCK_TMP}" "${SYNC_BASE}/${_rev}/deploy/data-plane.lock" >/dev/null 2>&1
+  else
+    curl -sS -f --max-time 30 -o "${_LOCK_TMP}" "${SYNC_BASE}/${_rev}/deploy/data-plane.lock" >/dev/null 2>&1
+  fi
+  [ -s "${_LOCK_TMP}" ] || { echo "SEED_FAILED:deps 取不到 lock（${SYNC_BASE}/${_rev}/deploy/data-plane.lock）；设 SYNC_PROXY 再试" >&2; rm -f "${_LOCK_TMP}"; exit 3; }
+  LOCK="${_LOCK_TMP}"
+  trap 'rm -f "${_LOCK_TMP}"' EXIT
+fi
 docker inspect "${CONSOLE_CT}" >/dev/null 2>&1 \
   || { echo "SEED_FAILED:deps console 容器 ${CONSOLE_CT} 不在" >&2; exit 3; }
 
@@ -84,7 +108,7 @@ _pairs() {
     NF >= 4 && index($2, pre) == 1 {
       rel = substr($2, length(pre) + 1)
       np = split(rel, p, "/")
-      if (np == 2 && p[1] == "pipelines" && p[2] ~ /\.json$/)      print rel "\t/workspace/" rel
+      if (np == 2 && p[1] == "pipelines" && p[2] ~ /\.json$/)      print $2 "\t/workspace/" rel
       else if (only == "all" && rel == "schedules/" book ".json")  print rel "\t/workspace/schedules.json"
       else if (only == "all" && rel == "alerts.lemeng.json")       print rel "\t/workspace/alerts.json"
       else if (only == "all" && rel == "owners.lemeng.json")       print rel "\t/workspace/owners.json"
