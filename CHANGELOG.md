@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.70.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.69.1...v0.70.0) - 2026-10-05
+- 【新增】lemeng: seed-console.sh + 修 check-data-plane-lock 的目录条目误报 ([#438](https://github.com/MYTech-Co-LTD/platform-core/pull/438), [412fd7e](https://github.com/MYTech-Co-LTD/platform-core/commit/412fd7e11aa3d94809c95b959cea07959b4518ad))
+
+
 ## [0.69.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.69.0...v0.69.1) - 2026-10-05
 - 【修复】lemeng: 展开期——staging 暂不投影 order_total_money（consumerVersion 2） ([#436](https://github.com/MYTech-Co-LTD/platform-core/pull/436), [77c133d](https://github.com/MYTech-Co-LTD/platform-core/commit/77c133d7947d09b9b5f05e09811265130fbe6579))
 
