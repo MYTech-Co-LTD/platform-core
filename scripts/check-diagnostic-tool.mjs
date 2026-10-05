@@ -49,7 +49,8 @@ export const SCRIPT_NAME = 'check-diagnostic-tool'
 export const TOOL_PATH = 'scripts/lemeng/diagnose.sh'
 /** 网关调用形状的事实源（管线定义）。 */
 export const PIPELINE_PATH = 'deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json'
-/** E6：退出码契约里**必须逐字在场**的字面量（`RECON_FAILED:` 的七个失败面 + 通过面）。 */
+/** E6：退出码契约里**必须逐字在场**的字面量（`RECON_FAILED:` 的七个失败面 + 通过面
+ *  + `recon-day` 的三个面）。执行单/巡检 grep 的就是它们——改文案等于悄悄打断依赖方。 */
 export const E6_LITERALS = [
   'RECON_OK',
   'RECON_FAILED:lake',
@@ -58,6 +59,9 @@ export const E6_LITERALS = [
   'RECON_FAILED:batches',
   'RECON_FAILED:hour',
   'RECON_FAILED:hour_open',
+  'RECON_DAY_OK',
+  'RECON_DAY_FAILED',
+  'RECON_SKIP',
 ]
 /** 落地模式：可执行（`sh <path>`）。 */
 const EXEC_MODE = '0755'

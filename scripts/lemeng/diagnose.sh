@@ -1,8 +1,10 @@
 #!/bin/sh
-# diagnose.sh — 乐檬**只读**诊断工具（替代 `run-retail-day.sh` 的只读形：`recon` / `rb` / `identity`）
+# diagnose.sh — 乐檬**只读**诊断工具（替代 `run-retail-day.sh` 的只读形：`recon` / `recon-day` / `rb` / `identity`）
 #
 # 用法（在**数据面机宿主**上跑；秘密值来自 job env——本脚本只读不写，任何输出都不回显值）：
 #   sh diagnose.sh recon <H>          # 对账（#260 裁决口径，只读）：该 hour 湖分区 vs 网关当刻累计
+#   sh diagnose.sh recon-day <YYYY-MM-DD>  # 定稿线（§1.4.1）：该营业日逐小时跑 recon（00..23），
+#                                          # 任一小时不平即整体判红；未闭窗与**合法空窗**跳过
 #   sh diagnose.sh rb "<duckdb SQL>"  # 容器内 duckdb 只读 SQL 口（**带护栏**：写面关键字一律拒）
 #   sh diagnose.sh identity           # 身份自证：凭据↔账套 / 门店清单↔账套（fail-loud；#205）
 #
@@ -35,6 +37,13 @@
 #   recon：RECON_FAILED:lake|gateway|rows|batches|hour|hour_open|cross|cross_unavailable
 #          （前六个是 #260 契约的**逐字保留**，后两个是本工具新增的「换通道复核」面）；
 #          通过时打 `RECON_OK hour=<H> rows=<N> batches=<N>`（逐字保留，执行单/巡检靠它）。
+#   recon-day（2026-10-05 新增，§1.4.1 定稿线）：
+#          逐小时复用 recon；通过打 `RECON_DAY_OK bizday=<D> hours=<N>`（N = 实际对到的小时数）；
+#          未对平打 `RECON_DAY_FAILED bizday=<D> 未对平小时=<n> 已对小时=<n>`；
+#          **跳过**的小时打 `RECON_SKIP hour=<H> <理由>`（两种：未闭窗 / 合法空窗——「网关 0 单
+#          且湖无分区」，两侧都 0 才跳过；网关非 0 而湖 0 = 真缺口，判红）；
+#          **整日一个都没对到**（`hours=0`）也判红——空转绿不是绿。
+#          这三个字面量同样受 `scripts/check-diagnostic-tool.mjs` 的 E6 门禁保护。
 #   rb：写面关键字 ⇒ `RB_REJECTED:` + exit 2；引擎非零 ⇒ `RB_FAILED:` + exit 1；
 #       输出超过 `RB_MAX_ROWS` ⇒ `RB_TRUNCATED:` + exit 3（**显式**截断，绝不静默丢行）。
 #   identity：`ASSERT_FAIL:` + 非零；通过打 `IDENTITY_ASSERT=PASS`。
@@ -339,6 +348,8 @@ usage() {
   cat >&2 <<'USAGE'
 用法：sh diagnose.sh <模式> [参数]
   recon <H>           该 hour 湖分区（双通道复核）vs 网关当刻累计，闭窗小时**容差 0**
+  recon-day <YYYY-MM-DD>  该营业日**逐小时**跑 recon（00..23），任一小时不平即整体判红
+                          （§1.4.1 定稿线：对象应是**已定稿**的营业日，如 T-3；未闭窗的小时跳过）
   rb "<duckdb SQL>"   容器内 duckdb 只读 SQL 口（写面关键字一律拒；输出上限 RB_MAX_ROWS）
   identity            身份自证：凭据↔账套 / 门店清单↔账套
 退出码：0 = 全过；非 0 = 有失败面（字面量见脚本头注）。
@@ -419,12 +430,68 @@ recon)
   _rc_gw=$(recon_gateway_rows "$BIZDAY" "$H") || exit 1
   recon_verdict "$_rc_lrows" "$_rc_lbatches" "$_rc_gw" "$BIZDAY" "$H"
   ;;
+recon-day)
+  # §1.4.1「定稿线」的常设形态（只读）：对一个**已定稿的营业日**逐小时跑同一套判据
+  # （湖回读 vs 网关当刻累计，**容差 0**），任一小时不平即整体判红。
+  #   · 为什么要有这一天级：湖在 T-1 两次点火后就**冻结**，而源在更久之后仍会变
+  #     （实测同一窗 472 → 476 → 482）⇒ **冻住的湖可能永久短于稳态的源**；
+  #     T-3 的整日对账就是发现这段差额、并触发回填的那道闸。
+  #   · 0 明细单**不必特判**：它们对 `gw_rows` 的贡献是 0，行级比对天然把它们抵掉
+  #     （实测 2026-10-02 全天逐小时 湖行 == 网关行，残差 0）。
+  #   · 未闭窗的小时**跳过**（合法不等，与 recon 同名判据一致）；整日一个都没对到 ⇒ 判红
+  #     （空转绿不是绿）。
+  _rd_day="${2:-}"
+  case "$_rd_day" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) echo "RECON_FAILED:recon-day 需要一个 YYYY-MM-DD 营业日（收到 '${_rd_day}'）" >&2; exit 2 ;;
+  esac
+  _rd_checked=0; _rd_failed=0
+  for _rd_h in 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23; do
+    _rd_out=$(BIZDAY="$_rd_day" sh "$0" recon "$_rd_h" 2>&1) && _rd_rc=0 || _rd_rc=$?
+    if [ "$_rd_rc" -eq 0 ]; then
+      _rd_checked=$((_rd_checked + 1))
+      printf '%s\n' "$_rd_out"
+    else
+      case "$_rd_out" in
+        *RECON_FAILED:hour_open*)
+          echo "RECON_SKIP hour=${_rd_h} 未闭窗（合法不等，不判）" >&2 ;;
+        *RECON_FAILED:batches*)
+          # **合法空窗**：网关 0 单 **且** 湖无分区 —— 两侧都 0，行数其实对平；`recon` 的 batches
+          # 判据要求「分区内恰一个 batch_id」，空分区拿不到 ⇒ 单小时调用会判红。
+          # ⚠️ **只在两侧都为 0 时跳过**（网关非 0 而湖为 0 = 真缺口，照旧判红）—— 否则是假绿。
+          # 依据：2026-10-05 实测（bizday=2026-10-02 hour=03：lake_rows=0 / gateway_rows=0，
+          # 而该日 01–07 共 7 个合法空窗 ⇒ 不跳过则整日恒红）。
+          if printf '%s' "$_rd_out" | grep -qE 'lake_rows=0([^0-9]|$)' \
+             && printf '%s' "$_rd_out" | grep -qE 'gateway_rows=0([^0-9]|$)'; then
+            echo "RECON_SKIP hour=${_rd_h} 合法空窗（网关 0 单、湖无分区）" >&2
+          else
+            printf '%s\n' "$_rd_out" >&2
+            echo "RECON_FAILED:day bizday=${_rd_day} hour=${_rd_h} 该小时未对平" >&2
+            _rd_failed=$((_rd_failed + 1))
+          fi ;;
+        *)
+          printf '%s\n' "$_rd_out" >&2
+          echo "RECON_FAILED:day bizday=${_rd_day} hour=${_rd_h} 该小时未对平" >&2
+          _rd_failed=$((_rd_failed + 1)) ;;
+      esac
+    fi
+  done
+  if [ "$_rd_failed" -ne 0 ]; then
+    echo "RECON_DAY_FAILED bizday=${_rd_day} 未对平小时=${_rd_failed} 已对小时=${_rd_checked}" >&2
+    exit 1
+  fi
+  if [ "$_rd_checked" -eq 0 ]; then
+    echo "RECON_FAILED:day bizday=${_rd_day} 整日没有任何小时被对到——空转绿不是绿" >&2
+    exit 1
+  fi
+  echo "RECON_DAY_OK bizday=${_rd_day} hours=${_rd_checked}"
+  ;;
 ''|-h|--help|help|usage)
   usage
   exit 2
   ;;
 *)
-  echo "UNKNOWN_MODE: '${1}' 不是本工具的模式（recon / rb / identity）——本工具**只读**，采集形不在其列" >&2
+  echo "UNKNOWN_MODE: '${1}' 不是本工具的模式（recon / recon-day / rb / identity）——本工具**只读**，采集形不在其列" >&2
   usage
   exit 2
   ;;
