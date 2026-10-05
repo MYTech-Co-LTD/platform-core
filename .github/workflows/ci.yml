@@ -124,6 +124,13 @@ jobs:
       # 以 `schema mismatch in glob` 整挂，spec §4.0/B-3），而**静态守卫看不见数字**。
       # 它是纯 sh（从脚本里抽真函数测，不复制实现）：不连库、不取网络、不起容器，秒级。
       - run: sh scripts/lemeng/backfill-retail-order-line.test.sh
+      # 闭环驱动（`recon-day-heal.sh`）的**判别逻辑**测试（issue #426；正典 §1.4.1 定稿线的失败动作）。
+      #
+      # 为什么它该进 CI：本工具的判据是「**该不该往生产写**」——把「我们的通道/身份坏了」（cross/
+      # lake/gateway/assert）**误判成「数据缺了」**，它就会在错误状态下触发**整日回填写生产分区**。
+      # 这类漂移没有任何静态守卫看得见（脚本语法对、字面量对、退出码对，只有**判别面**错了）。
+      # 同为纯 sh（抽真函数测，不复制实现）：不连库、不取网络、不起容器，秒级。
+      - run: sh scripts/lemeng/recon-day-heal.test.sh
       # 租户隔离门禁（issue #77；正典 docs/module-protocol.md「租户数据隔离」）：真库对账——
       # 真跑各模块的 migrations（跑进脚本自建的**一次性库** platform_tenant_isolation_check），
       # 再查 information_schema 要 org 列。判据按「全部 migrations 的累积终态」，不按文件判
