@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.71.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.71.0...v0.71.1) - 2026-10-06
+- 【修复】lemeng: seed-console all 模式三件配置源路径补回 console 前缀（Closes #449） ([#450](https://github.com/MYTech-Co-LTD/platform-core/pull/450), [39fbec9](https://github.com/MYTech-Co-LTD/platform-core/commit/39fbec90b814b11da93e22842ee91d298d2a04ed))
+
+
 ## [0.71.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.70.3...v0.71.0) - 2026-10-06
 - 【新增】data-plane: recon-preagg 判据迁入 console 接调度（首个判据类迁移案例） ([#447](https://github.com/MYTech-Co-LTD/platform-core/pull/447), [24f561b](https://github.com/MYTech-Co-LTD/platform-core/commit/24f561ba268173e1f938829e84a5bc7e4efcc197))
 
