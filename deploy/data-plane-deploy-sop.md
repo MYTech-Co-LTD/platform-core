@@ -590,7 +590,8 @@ curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/sch
 
 ### F.6 物化 job（dbt）——「非 duckle runner ⇒ openship job」那条口径的实例
 
-**job**：`lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`），cron **`20 3 * * *` UTC**，
+**job**：`lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`），cron **`27 3 * * *` UTC**
+（2026-10-06 由 `20 3` 错峰：与 tick `*/5` 同分钟点火天天撞 ETag，#452 E1 定案；retry 配置未变），
 `retry 2×/300s`、`timeoutMs 30min`、**仅 `failed` 时告警**（企微渠道）。跑在数据面机（`8281d598`）。
 
 **⚠️ 调 dbt 的正确口径与「计划里写的那条」不同——两者都要知道**：

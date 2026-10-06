@@ -40,8 +40,8 @@
 
 - **提频已落地**：#260（零售采集提频到 5 分钟）于 **2026-09-30 关闭**；`lemeng.retail.tick.l1`
   按 **`*/5 0-15 * * *`（UTC）= 上海 08:00–23:55 每 5 分钟**在跑（`misfire: skip`）。
-  「在跑」的证据不是排班声明而是**运行侧**：物化 job 每天 03:20 UTC 首跑撞上 tick 正在重写
-  当天分区（issue #452 实测），audit 读湖撞同款竞态（#462 实测，run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。
+  「在跑」的证据不是排班声明而是**运行侧**：物化 job（2026-10-06 前的 cron）每天 03:20 UTC 首跑撞上 tick 正在重写
+  当天分区（issue #452 实测；该撞面已由 #452 E1 错峰至 03:27 UTC 消解），audit 读湖撞同款竞态（#462 实测，run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。
 - **3120 的 console 那条「`enabled:false`」已不是**：3120 与 64188 两个 console 都在跑
   （各 5 条排班，2026-10-05 实测 `GET /api/schedules`）。
 - **排班条目集合的事实源** = 各 console 的 `deploy/duckle/console/schedules/*.json`。
@@ -92,12 +92,12 @@
 
 ### 1.5 物化 job 的两处现状（2026-10-06 更新）
 
-- 命令**只活在 openship 里**（`lemeng-dbt-materialize`，cron `20 3 * * *`）：
+- 命令**只活在 openship 里**（`lemeng-dbt-materialize`，cron `27 3 * * *`——2026-10-06 由 `20 3` 错峰，#452 E1）：
   SOP §F.6 记的遗留「无版本、无 diff 可评审」**至今未收口**（`scripts/lemeng/materialize.sh` 仍不在仓）。
 - `--select` 是**硬编码**的四个模型；**不带 `--vars '{tenant: …}'`** ⇒ 现状一切落进默认 schema
   （**per-tenant schema 这条能力至今没有在真机上被行使过**）。
 - **定时可靠性已验**（09-26 那条「未验」已过期）：job 每天在跑。但 **#452 记录了它的常态苗头**：
-  03:20 UTC 首跑读湖恰逢 tick 重写当天分区 ⇒ **天天撞 ETag 竞态**、靠重试兜住（attempt 2 才绿）。
+  （2026-10-06 前的 cron 是 03:20 UTC）首跑读湖恰逢 tick 重写当天分区 ⇒ **天天撞 ETag 竞态**、靠重试兜住（attempt 2 才绿；已由 #452 E1 错峰终结）。
   这就是 gate 3 的事实来源——**物化表一天一次、重试兜得起；视图是每个消费查询都在读今天，兜不起**（§5）。
 - ~~文档漂移（handbook:308「没有任何 job 在跑 dbt」）~~：后续收口那笔已修，不再展开。
 
