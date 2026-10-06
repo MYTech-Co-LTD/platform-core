@@ -726,6 +726,10 @@ git commit -m "docs(collection): 正典 §1.6 案例库（17 条实测）+ §1.7
 | 抖音 | `douyin/sku_daily/<月>/all.parquet` | — | **摸清源**（待接入） | 分区键名未定；见 `contracts/README.md` §7 |
 ```
 
+> ⚠️ **2026-10-06**：上面这段是**当时**粘贴进 §2 的原文（史实，不改）。§2 的乐檬行此后又长了两段——
+> 「旧前缀所在桶已核实 = `lemeng-datasource`」「旧前缀仍在被写（`data-analysis` 每 5 min）
+> ⇒ 不能下线」+「本仓侧已仓内退役」。**现行正典看 `docs/data-platform-handbook.md` §2，不看本计划里的引用块。**
+
 > ⚠️ 删掉原来那一行 `duckle/<域>/_ops/…`（备注「duckle 自己的产出」）——`duckle/README.md` §5 已实测订正：
 > `_ops` 是**桶里的路径猜想**、在 runner 二进制里检索不到，不是本仓的目录约定。
 > **但 `duckle/README.md:121` 仍然引用本文档 §2**——所以那句订正的**落脚点**要留：把该行的信息并入上表

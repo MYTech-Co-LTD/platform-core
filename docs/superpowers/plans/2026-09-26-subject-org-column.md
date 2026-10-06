@@ -11,6 +11,22 @@
 **设计正典：** `docs/superpowers/specs/2026-09-26-subject-org-column-design.md`（已合入 main）。
 **上位：** `docs/architecture.md` §2.2 末注「缺口 A」、issue #176。
 
+> ⚠️ **2026-10-06 订正（本计划**已执行完毕**，下面是「哪些文字已不再等于仓内现状」）** ——适用于本文件**每一处**提到
+> `SUBJECT_ORG_EXEMPT` / `stg_lemeng_retail_detail` 的段落（含 Task 1 Step 1 的括注、Task 2 Step 1 的「不用动它」、
+> 格⑩-1 的标题与注释、Task 2 Step 4 的常量代码块、Task 3 引文、以及末节「一致性」里那一行）：
+>
+> 1. **豁免名单已清空**：spec §「未验/不做」第 4 条要求的那笔已执行 —— 旧湖 `stg_lemeng_retail_detail.sql`
+>    **仓内退役**（`git rm`）⇒ `SUBJECT_ORG_EXEMPT` 现在是**空 `Map`**。**Task 2 Step 4 里那份单条豁免的
+>    代码块是历史原文，别照它抄回仓**（照抄 = 给一个已不存在的文件留豁免）。
+> 2. **基线不再依赖豁免**：`compliant()` 的 STAGING 现在也带 `'acme' as org` ⇒ 格⑩-1 从「靠豁免才对」变成
+>    「**无条件**恰好 0 违例」；用例文件里 `STAGING` / `retail_detail` 那组名字已注明是**夹具内合成名**
+>    （真仓同名文件已删，别因为「仓里搜不到」去改夹具）。
+> 3. **豁免机制没被删，是被「注入」保住了**：唯一活体豁免用例改由 `checkDataModels(rootDir, opts)` 的
+>    `opts.subjectOrgExempt` **注入缝**供给（`check-data-models.test.ts` 格⑩-6）——否则「登记了就静默」
+>    这一半会跟着真名单一起消失。规则 ⑩ 本体的空转自检也已同步改成读 `opts` 后的名单。
+> 4. **只退了仓内**：湖上前缀 `lemeng/retail_detail/…` **未下线**（生产方 `data-analysis` 每 5 min 仍在写）
+>    —— 偏离与理由见 `docs/data-platform-handbook.md` §1.3 阶段 I 订正块 + §2 旧前缀行。
+
 ---
 
 ## Global Constraints

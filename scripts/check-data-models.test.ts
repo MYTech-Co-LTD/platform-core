@@ -40,6 +40,9 @@ afterAll(() => {
 })
 
 const SOURCES = 'dbt/models/common/staging/sources.yml'
+// ⚠️ 下面这组是**夹具内的合成名**（`retail_detail` / `stg_lemeng_retail_detail`），只活在临时目录里：
+//    真仓那份同名的旧湖 staging 已于 2026-10-06 **仓内退役**（`git rm`）——本文件的同名常量与它无关，
+//    别因为「仓里搜不到这个文件」就去改夹具（规律 ④ 的双向配对靠它自己的一对源/模型成立）。
 const STAGING = 'dbt/models/common/staging/stg_lemeng_retail_detail.sql'
 const MARTS = 'dbt/models/common/marts/fct_retail_sale.sql'
 const METRICS = 'dbt/semantics/l1_metrics.yml'
@@ -57,10 +60,9 @@ const AUDIT = 'dbt/tests/audit_lemeng__retail__net_sales.sql'
  *   ③ staging 文件名与 sources.yml 的 `lemeng` + `retail_detail` 严格同构
  *      （`stg_<source>_<table>.sql`）——④ 是**双向**的，只对一半就红。
  *
- * 主体列（规则 ⑩）在基线里的**有意不对称**，别当成漏写：
- *   · `MARTS` **带** `'acme' as org` —— 它不在豁免名单里，必须有这一列；
- *   · `STAGING` 常量指向的正是**豁免文件**（`stg_lemeng_retail_detail.sql`，旧湖待退役），
- *     所以它**没有** org 而基线仍然干净 —— 格⑩-1 同时钉住了「豁免真的生效」这一半。
+ * 主体列（规则 ⑩）：基线里 `MARTS` 与 `STAGING` **都带** `'acme' as org` —— 基线必须**无条件干净**，
+ *   不依赖任何豁免（真名单 `SUBJECT_ORG_EXEMPT` 已随 2026-10-06 的旧湖 staging 仓内退役**清空**）。
+ *   「豁免真的生效」这一半改由**注入合成豁免**的格⑩-6 单独钉住（不再让基线替它背书）。
  */
 function compliant(): Record<string, string> {
   return {
@@ -78,7 +80,8 @@ function compliant(): Record<string, string> {
       "    select * from read_parquet('s3://bucket/lemeng/retail_detail/3120/**/*.parquet')",
       ')',
       'select',
-      "    r['amount']::numeric as amount",
+      "    r['amount']::numeric as amount,",
+      "    'acme' as org",
       'from r',
       '',
     ].join('\n'),
@@ -265,7 +268,10 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
     const root = variant((f) => {
       f[STAGING] = [
         'with r as (',
-        "    select * from read_parquet('s3://bucket/lemeng/retail_detail/3120/**/*.parquet')",
+        // 带 `as org`：本格测的是规则 ①（缺 `r['`），规则 ⑩ 必须**不**掺进来 —— 否则违例数变 2，
+        // `toHaveLength(1)` 就不在测 ① 了（豁免名单清空后这一条才暴露：基线以外全文替换 STAGING 的格
+        // 都得自己带上 org）。
+        "    select *, 'acme' as org from read_parquet('s3://bucket/lemeng/retail_detail/3120/**/*.parquet')",
         ')',
         'select * from r',
         '',
@@ -386,10 +392,17 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
   })
 })
 
+/** 合成豁免（测试注入用）：真名单 `SUBJECT_ORG_EXEMPT` 已随旧湖 staging（`stg_lemeng_retail_detail.sql`）
+ *  的 2026-10-06 仓内退役清空 ⇒ 豁免机制的活体用例改由这个**注入的 Map** 供给，
+ *  免得「登记了就静默」这一半跟着真名单一起消失（门禁本体见 `checkDataModels(rootDir, opts)`）。 */
+function syntheticExempt(): Map<string, string> {
+  return new Map([[STAGING, '测试注入：合成豁免（真名单已随旧湖 staging 退役清空）']])
+}
+
 describe('格⑩：主体列 org（issue #176 缺口 A / spec 2026-09-26-subject-org-column-design）', () => {
-  it('格⑩-1：基线干净 —— 同时覆盖「豁免文件缺列不算违规」这一半', () => {
-    // 基线的 STAGING 常量 = stg_lemeng_retail_detail.sql（在豁免名单里），它**没有** `as org`；
-    // 基线的 MARTS 带了（见 compliant 的头注「有意不对称」）⇒ 这里必须恰好 0 违例。
+  it('格⑩-1：基线干净 —— 每个主体模型都带 `as org`（不依赖豁免）', () => {
+    // 基线的 STAGING 与 MARTS **都**带 `'acme' as org`（见 compliant 头注）⇒ 这里必须恰好 0 违例。
+    // 规则 ⑩ 的豁免机制**不在**这格里测（真名单已清空）——它由格⑩-5 / 格⑩-6 用注入的豁免覆盖。
     expect(checkDataModels(fixture(compliant()))).toEqual([])
   })
 
@@ -432,14 +445,26 @@ describe('格⑩：主体列 org（issue #176 缺口 A / spec 2026-09-26-subject
   })
 
   it('格⑩-5：扫描面全落豁免上 ⇒ 空转自检报违规（规则空转 = 门禁不存在）', () => {
-    // 只留「声明的源 + 那个**豁免**的 staging 文件」，不建任何 marts ⇒ subjectScanned === 0。
-    // 规则 ④ 双向在这一份里是满足的（lemeng.retail_detail ↔ stg_lemeng_retail_detail），
-    // 所以这一条违规只能来自空转自检。
+    // 只留「声明的源 + 一个**被豁免**的 staging 文件」，不建任何 marts ⇒ subjectScanned === 0。
+    // 规则 ④ 双向在这一份里是满足的（与基线同形），所以这一条违规只能来自空转自检。
+    // ⚠️ 豁免改由**注入**供给（真名单已清空）——注入的名单把 STAGING 划出扫描面，
+    //    这正是「全落豁免上」这个前提的构造方式；不注入的话本格在真名单清空后就不成立了。
     const files = compliant()
     delete files[MARTS]
-    const violations = checkDataModels(fixture(files))
+    const violations = checkDataModels(fixture(files), { subjectOrgExempt: syntheticExempt() })
     expect(violations).toHaveLength(1)
     expect(violations[0]?.message).toContain('空转')
+  })
+
+  it('格⑩-6：**注入的豁免真的静默**缺 org 的模型（豁免机制不因真名单清空而失效）', () => {
+    // 把 STAGING 的真列 `'acme' as org` 拿掉（连它的逗号一起，别留下悬空逗号），
+    // 同时把它注入豁免名单 ⇒ 规则 ⑩ 必须放行（0 违例）。
+    // 与格⑩-4（非豁免 staging 缺列 → 红）配对：一个证「没登记就报」，一个证「登记了就静默」，
+    // 两侧都不空转 —— 这是真名单清空后，豁免机制仍然有活体用例的唯一依据。
+    const files = compliant()
+    files[STAGING] = files[STAGING].replace("    r['amount']::numeric as amount,\n    'acme' as org\n", "    r['amount']::numeric as amount\n")
+    const violations = checkDataModels(fixture(files), { subjectOrgExempt: syntheticExempt() })
+    expect(violations).toEqual([])
   })
 })
 
@@ -645,7 +670,7 @@ describe('T11 格②：reconcile-data-tenants 的纯核（两侧集合的各种�
     const { tenantKeyOf } = await core()
     expect(tenantKeyOf('tenant_acme')).toBe('acme')
     expect(tenantKeyOf('tenant_acme_org')).toBe('acme_org')
-    for (const unknown of ['public', 'tenant_', 'tenant_acme-org', 'stg_lemeng_retail_detail']) {
+    for (const unknown of ['public', 'tenant_', 'tenant_acme-org', 'stg_lemeng_retail_order_line']) {
       expect(tenantKeyOf(unknown), `认不出的名字 ${unknown}`).toBe('')
     }
   })

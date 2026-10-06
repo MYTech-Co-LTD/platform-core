@@ -61,7 +61,7 @@ contracts/
 ### 3.2 文件名只接受 `all.parquet`
 
 **依据**：本仓已有的三处路径规范都这么写 —— handbook §2 的乐檬
-`lemeng/retail_order_line/<主体>/<日>/<时>/all.parquet`（旧前缀 `lemeng/retail_detail/…` 已标「待退役」）与抖音 `douyin/sku_daily/<月>/all.parquet`，
+`lemeng/retail_order_line/<主体>/<日>/<时>/all.parquet`（旧前缀 `lemeng/retail_detail/…` 已**仓内退役**：仓里不再有读它的模型，但**湖上未下线**——在 `lemeng-datasource` 桶、且一直有生产方在写，见 handbook §2 的旧前缀行）与抖音 `douyin/sku_daily/<月>/all.parquet`，
 layered design §4 的 `s3://<bucket>/<domain>/<table>/<date>/all.parquet`。
 
 ⚠️ **这是「当前无案例支持放宽」的硬约束，不是「永远这样」**：多文件形态（含 duckle 分片产出）

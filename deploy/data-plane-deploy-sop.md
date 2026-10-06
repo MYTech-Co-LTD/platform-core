@@ -619,8 +619,11 @@ curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/sch
 
 **`--select` 是硬编码的**：当前 = `stg_lemeng_retail_order_line stg_lemeng_branch stg_lemeng_item fct_retail_sale`
 （「被消费的组合」，**按需物化、不全量**）。⚠️ **将来加模型必须同步改这里**——
-**忘了不会报错，只会那个模型永远不物化**。旧湖模型 `stg_lemeng_retail_detail` **不在内**
-（它读的前缀不存在，见 §F.6 之上与正典 §2 的注）。
+**忘了不会报错，只会那个模型永远不物化**。（原文在此处写「旧湖模型 `stg_lemeng_retail_detail` 不在内，
+它读的前缀不存在」——**后半句是错的、已订正**：那个前缀在 `lemeng-datasource` 桶里、且**一直有生产方在写**
+（2026-10-06 实测：`data-analysis` 每 5 min 一轮），并不是「不存在」，只是**本仓没有读它的模型**）。
+该模型同批已 **仓内退役**（`git rm`，2026-10-06）⇒ 投递清单里自然不再有它；湖上前缀**未下线**，
+状态与出处见正典 §2 的旧前缀行。）
 
 **怎么自证**（跑完别只看 job 绿）：在 `pg_duckdb` 里查物化表的行数与**最新日期**，
 跟湖里的**逐域对**——2026-09-26 实测：零售 73,622 行 / max `09-25`（湖同）、门店维 399、

@@ -53,6 +53,11 @@
 - **账套是租户内的数据主体**，不是租户边界：两账套数据同桶同 schema，`system_book` 是数据列 + hive 分区键（消欠账 C3）。
 - 隔离沿用定稿：每租户一桶一凭据一 schema；双 PAT 存数据面 env（openship isSecret），按主体路由到对应管线。**山海租户的湖桶已定名 `shanhai-data`**（2026-09-24 真机写入确认；endpoint 取内网 `xinan-1-internal.zos.ctyun.cn`、region `xinan1`、path-style、useSsl=true，五键键名按 `dbt/profiles.example.yml` 登记：`LEMENG_ZOS_BUCKET/ENDPOINT/REGION/ACCESS_KEY/SECRET`，已 isSecret 落 openship 数据面 project env）。
 - **旧湖退役**：`lemeng/retail_detail/<账套>/<日期>/all.parquet`（非 hive、全 VARCHAR、字段漂移）被回填替代后整前缀下线；现有 `stg_lemeng_retail_detail`/`fct_retail_sale` 随新湖重写对齐（§7）。
+  ⚠️ **2026-10-06 订正（只走了前半）**：仓内那半已做——`stg_lemeng_retail_detail` 已 `git rm`、`fct_retail_sale` 已切新源；
+  但「**整前缀下线**」**不具备条件**：该前缀仍在被写（生产方 `data-analysis` 每 5 min 一轮，**不受本仓控制**）⇒
+  观察期无法开始 ⇒ **前缀一字未动、保留**。这是**有意提前**的「半步退役」，不是本条约定的完整执行。
+  全部事实与出处见 `docs/data-platform-handbook.md` §1.3 阶段 I 订正块 + §2 旧前缀行 + §7 #2。
+  ⚠️ 另：本条末句「`stg_lemeng_retail_detail`/`fct_retail_sale` 随新湖重写对齐（§7）」里 `fct_retail_sale` 那半**已兑现**（已 ref 新 staging）。
 
 ---
 

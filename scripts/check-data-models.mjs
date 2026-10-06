@@ -144,14 +144,16 @@ const MARTS_RE = /^dbt\/models\/(?:.+\/)?marts\/[A-Za-z0-9_]+\.sql$/
 export const SUBJECT_ORG_RE = /\bas\s+org\b/
 /**
  * 规则 ⑩ 的**文件级豁免**（必须显式登记 + 写理由；不许靠「没扫到」）。
- * `stg_lemeng_retail_detail.sql`：旧湖、**待退役**，且该文件自身列集是暂定
- * （头注「列全集按 T6 实测样本补齐」）⇒ 不为它补 org。**退役那笔要顺手收回本条豁免。**
+ *
+ * **当前为空**：唯一一条 —— 旧湖 `stg_lemeng_retail_detail.sql`（「待退役、列集暂定」）——
+ * 已随 2026-10-06 的**仓内退役**按当时写下的约定**收回**（那份文件已删）。
+ * 空表**刻意保留**：豁免机制的读写两侧都由 `check-data-models.test.ts` 用**注入的合成豁免**
+ * 继续钉住（格⑩-5 空转自检 / 格⑩-6 豁免真的静默缺列文件），下一个「暂时不该补 org」的
+ * 文件按同一形状登记即可，不必重新发明机制。
+ * @type {Map<string, string>}
  */
 export const SUBJECT_ORG_EXEMPT = new Map([
-  [
-    'dbt/models/common/staging/stg_lemeng_retail_detail.sql',
-    '旧湖（待退役）且自身列集是暂定；退役那笔要顺手收回本条豁免',
-  ],
+  // （空）登记形状：['dbt/models/.../stg_xxx.sql', '<为什么可以暂时不补 org + 何时收回>']
 ])
 /** 规则 ①：`r['列名']`（单双引号都算；坑 #5 要的是「点名取列」这个构造，不是某一种引号） */
 const R_COLUMN_RE = /r\s*\[\s*['"]/
@@ -623,9 +625,13 @@ const asText = (v) => (typeof v === 'string' ? v.trim() : '')
 
 /**
  * 主入口：对 rootDir 下的 `dbt/` 跑七项检查。
- * @param {string} rootDir @returns {Violation[]}
+ * @param {string} rootDir
+ * @param {{ subjectOrgExempt?: Map<string, string> }} [opts] `subjectOrgExempt` 是规则 ⑩ 的
+ *   豁免名单**注入缝**（默认 = 仓内事实源 `SUBJECT_ORG_EXEMPT`）：测试用它喂合成豁免，
+ *   好让「豁免真的静默缺列文件」这一半在**真名单清空后**仍有活体用例。
+ * @returns {Violation[]}
  */
-export function checkDataModels(rootDir) {
+export function checkDataModels(rootDir, opts = {}) {
   /** @type {Violation[]} */
   const violations = []
   const push = (/** @type {string} */ file, /** @type {number} */ line, /** @type {string} */ message) =>
@@ -735,10 +741,11 @@ export function checkDataModels(rootDir) {
   // **静态看不出来**（旧状态正是这样活了很久，issue #176 缺口 A）。本规则只管**形状**
   // （模型里有没有这一列）；**值非空**由 dbt 测试管（schema.yml 的 not_null）。
   // 设计：docs/superpowers/specs/2026-09-26-subject-org-column-design.md
+  const subjectOrgExempt = opts.subjectOrgExempt ?? SUBJECT_ORG_EXEMPT
   const subjectFiles = sqlFiles.filter((f) => STAGING_RE.test(f) || MARTS_RE.test(f))
   let subjectScanned = 0
   for (const rel of subjectFiles) {
-    if (SUBJECT_ORG_EXEMPT.has(rel)) continue
+    if (subjectOrgExempt.has(rel)) continue
     subjectScanned++
     const masked = maskSqlComments(readFileSync(join(rootDir, rel), 'utf8'))
     if (!SUBJECT_ORG_RE.test(masked)) {
@@ -755,7 +762,7 @@ export function checkDataModels(rootDir) {
   // （T9 那两条端到端用例就是「真模块文件副本 + 无 dbt/」，它们断言的是规则 ⑧ 在文件面上
   // 不空转也不误伤）⇒ 那种 rootDir 对本规则**不适用**，不该被空转自检判红。
   const hasDbtFiles = allFiles.some((f) => f.startsWith(`${DBT_DIR}/`))
-  if (hasDbtFiles && (subjectScanned === 0 || SUBJECT_ORG_EXEMPT.size >= subjectFiles.length)) {
+  if (hasDbtFiles && (subjectScanned === 0 || subjectOrgExempt.size >= subjectFiles.length)) {
     push(
       DBT_DIR,
       0,

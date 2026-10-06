@@ -730,6 +730,12 @@ gh pr create --title "build(data-stack): deploy/data-compose.yml + dbt runner �
 
 `dbt/models/common/staging/stg_lemeng_retail_detail.sql` 骨架（**模式**是交付物，列清单是 gate）：
 
+> ⚠️ **2026-10-06 订正（别照抄这段骨架）**：① 该文件**已随旧湖仓内退役删除**（`git rm`），
+> 下面这份骨架是**历史原文**；② 它的取列形态（CTE 形态，`with r as (select * from read_parquet(…))`）
+> **已在 2026-09-24 真机证伪**（`cannot subscript type record`）——现行范文是
+> **函数别名形态** `from read_parquet(…) r` + `r['列名']`，见 `stg_lemeng_retail_order_line.sql`。
+> 保留本段只为**记录当时的设计意图**，不是可粘贴的模板。
+
 ```sql
 -- stg_lemeng_retail_detail.sql — 乐檬零售明细 staging（layered §3：一对一、只规范化不改义）。
 -- 拍板 #1：存量 parquet 列全是 VARCHAR（坑 #1）不重落盘，cast 全部在本层手写，

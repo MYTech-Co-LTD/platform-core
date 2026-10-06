@@ -32,7 +32,7 @@
 --      **不许**把 l1_metrics.yml 里的 definition 改写成「全部行」来迁就实现（那是口径追着实现跑）。
 --
 -- ── 换源（2026-09-24 / issue #150 的 S1 Task 9）：旧湖 → 新湖 ─────────────────────────────
---   输入从 `ref('stg_lemeng_retail_detail')` 换成 `ref('stg_lemeng_retail_order_line')`。
+--   输入从 `ref('stg_lemeng_retail_detail')`（旧湖 staging，该文件已于 2026-10-06 仓内退役）换成 `ref('stg_lemeng_retail_order_line')`。
 --   **列名与语义零改动**（`net_amount` / `order_count` / `system_book` / `bizday`）⇒ 本模型对外的
 --   列契约不变：`dbt/models/common/marts/schema.yml` 的 `fct_retail_sale` 段、L1 声明的
 --   `expression`（`sum(fct_retail_sale.net_amount)` 等）、两个 audit 的口径面**都不需要动**。
