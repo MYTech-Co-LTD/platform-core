@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.71.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.70.3...v0.71.0) - 2026-10-06
+- 【新增】data-plane: recon-preagg 判据迁入 console 接调度（首个判据类迁移案例） ([#447](https://github.com/MYTech-Co-LTD/platform-core/pull/447), [24f561b](https://github.com/MYTech-Co-LTD/platform-core/commit/24f561ba268173e1f938829e84a5bc7e4efcc197))
+
+
 ## [0.70.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.70.2...v0.70.3) - 2026-10-05
 - 【修复】lemeng: recon-preagg 换口径（湖侧自算「送出半边」）+ 三份文档订正 ([#443](https://github.com/MYTech-Co-LTD/platform-core/pull/443), [ca5b022](https://github.com/MYTech-Co-LTD/platform-core/commit/ca5b022b5eb1fd7400ed5cfb92f7a70a50363e08))
 
