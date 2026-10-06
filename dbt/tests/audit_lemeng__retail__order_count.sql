@@ -31,6 +31,10 @@ with recheck as (
         -- ⚠️ 与 staging **同路径**（通配两账套）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/**/*.parquet'
     ) r
+    -- ⚠️ 只比**已闭窗营业日**（bizday < 上海今天）：今天的文件被 tick 重写 ⇒ 与物化建表互撞
+    --    ETag 竞态、报 ERROR（实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。
+    --    今天未定稿不判；两侧都滤，才是同量对比。
+    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
     group by 1, 2
 ),
 materialized as (
@@ -39,6 +43,7 @@ materialized as (
         bizday,
         order_count
     from {{ ref('fct_retail_sale') }}
+    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,

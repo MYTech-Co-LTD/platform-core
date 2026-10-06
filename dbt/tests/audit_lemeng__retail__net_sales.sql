@@ -38,6 +38,11 @@ with recheck as (
         -- ⚠️ 与 staging **同路径**（通配两账套）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/**/*.parquet'
     ) r
+    -- ⚠️ 只比**已闭窗营业日**（bizday < 上海今天）：今天的文件正被 5 分钟一班的 tick 重写，
+    --    与「物化建表 → 本测试读湖」之间构成 ETag 竞态 ⇒ 读到中途被改的文件直接 **ERROR**
+    --    （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1 就红在这，报 ETag 变化）。
+    --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
+    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
     group by 1, 2
 ),
 materialized as (
@@ -46,6 +51,7 @@ materialized as (
         bizday,
         net_amount as net_sales
     from {{ ref('fct_retail_sale') }}
+    where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,
