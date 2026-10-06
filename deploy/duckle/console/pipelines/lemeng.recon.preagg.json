@@ -35,7 +35,7 @@
         "properties": {
           "connectionRef": "zos",
           "bucket": "${ENV:ZOS_BUCKET}",
-          "key": "lemeng/retail_order_line/system_book=${ENV:SYSTEM_BOOK}/bizday=**/*.parquet",
+          "key": "lemeng/retail_order_line/system_book=${ENV:SYSTEM_BOOK}/**/*.parquet",
           "glob": true,
           "format": "parquet"
         }
@@ -50,7 +50,7 @@
         "componentId": "code.sql",
         "properties": {
           "rawSql": true,
-          "sql": "WITH d AS (SELECT CAST(CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + INTERVAL 8 HOUR AS DATE) AS sh_today)\nSELECT strftime(d.sh_today - 3, '%Y-%m-%d') AS bizday,\n       1 AS settled,\n       '[' || COALESCE(string_agg(DISTINCT CAST(branch_num AS VARCHAR), ',' ORDER BY CAST(branch_num AS INTEGER)), '') || ']' AS branch_nums_json\nFROM \"plake\" CROSS JOIN d\nWHERE CAST(bizday AS DATE) = d.sh_today - 3\n  AND CAST(state AS VARCHAR) = 'FINISHED'\n  AND CAST(order_transaction_type AS VARCHAR) = 'SALE_ORDER'"
+          "sql": "WITH d AS (SELECT CAST(CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + INTERVAL 8 HOUR AS DATE) AS sh_today),\nf AS (SELECT * FROM \"plake\" WHERE CAST(bizday AS DATE) = (SELECT sh_today FROM d) - 3\n  AND CAST(state AS VARCHAR) = 'FINISHED'\n  AND CAST(order_transaction_type AS VARCHAR) = 'SALE_ORDER'),\nb AS (SELECT DISTINCT CAST(branch_num AS INTEGER) AS bn FROM f),\nj AS (SELECT '[' || string_agg(CAST(bn AS VARCHAR), ',' ORDER BY bn) || ']' AS branch_nums_json FROM b HAVING count(*) > 0)\nSELECT strftime((SELECT sh_today FROM d) - 3, '%Y-%m-%d') AS bizday,\n       1 AS settled,\n       branch_nums_json\nFROM j"
         }
       }
     },
