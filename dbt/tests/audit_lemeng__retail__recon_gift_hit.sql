@@ -49,6 +49,14 @@
 --      `JOIN/USING types duckdb.unresolved_type and integer cannot be matched` ⇒ 键逐个显式 cast。
 --   ③ DuckDB 侧聚合值与**字面量**做 coalesce 也要先 cast：`coalesce(a.hit_amount, 0)` 报
 --      `COALESCE types duckdb.unresolved_type and integer cannot be matched` ⇒ 先 `::numeric` 再 coalesce。
+--
+-- ── 2026-10-06 定稿补充：只比 **已闭窗营业日**（bizday < 上海今天）──────────────────────
+--   上面「新鲜度竞态」在真 harness 里实测会**真红**：物化 job 03:20 UTC 物化 staging、约
+--   03:26 跑 tests——两次读湖之间 16~40 秒，tick 每 5 分钟重写当日窗口文件 ⇒ 每晚约 5~13%
+--   概率假红（03:20 首跑撞 ETag 的同族竞态，见 #452）。修法与正典定稿线同一哲学：
+--   **未定稿日（上海今天）不判**——两侧 CTE 各自过滤 `bizday < 上海今天`。
+--   tick 只重写当天的窗口文件 ⇒ 剔除当天后两侧读的是**不可变历史**，竞态窗口归零。
+--   （2026-10-06 真机：ad-hoc 对拍剔除当天后 0 差；当天 8 行全部落在当天。）
 with recheck as (
     -- 复算：直接打 parquet，按归零公式的消费粒度 (账套,日,店,商品) 聚合命中集。
     select
@@ -67,6 +75,7 @@ with recheck as (
       and r['sale_money']::numeric > 0
       and r['quantity']::numeric > 0
       and abs(r['discount_money']::numeric - r['order_detail_std_price']::numeric * r['quantity']::numeric) <= 0.02
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
     group by 1, 2, 3, 4
 ),
 materialized as (
@@ -86,6 +95,7 @@ materialized as (
       and sale_money > 0
       and quantity > 0
       and abs(discount_money - order_detail_std_price * quantity) <= 0.02
+      and bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
     group by 1, 2, 3, 4
 )
 select

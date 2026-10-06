@@ -24,6 +24,9 @@
 --
 -- ── 形态坑（与同族文件同一套实测形态，出处见 recon_gift_hit 头注 ①②③）────────────────
 --   r['列'] 算术先 ::numeric；键/字面量 coalesce 先 cast；read_parquet 只认位置参数。
+--   ⚠️ 同 recon_gift_hit 的 2026-10-06 定稿：part1 两侧只看**已闭窗营业日**（bizday < 上海今天）
+--   ——今天未定稿不判，且消掉「物化→测试之间 tick 重写当日文件」的假红竞态。part2 空转自检
+--   看全湖（它是断供探测，不参与两侧对拍，无竞态面）。
 with src_pq as (
     select
         r['system_book']::varchar          as system_book,
@@ -35,6 +38,7 @@ with src_pq as (
     ) r
     where r['state'] = 'FINISHED'
       and r['order_transaction_type'] = 'SALE_ORDER'
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 ),
 src_stg as (
     select
@@ -45,6 +49,7 @@ src_stg as (
     from {{ ref('stg_lemeng_retail_order_line') }}
     where state = 'FINISHED'
       and order_transaction_type = 'SALE_ORDER'
+      and bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 ),
 bad_pq as (
     select
