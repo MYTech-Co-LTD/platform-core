@@ -40,8 +40,9 @@
 -- 【二】取列形态：`from read_parquet('…') r` —— 别名挂在**函数调用**上（不是 CTE 形态）
 -- ════════════════════════════════════════════════════════════════════════════════════════
 -- `r['列名']` 是 pg_duckdb 的构造，它要求 `r` 是 **read_parquet 调用的别名**，而**不是**一个 PG
--- 子查询/CTE。既有 `stg_lemeng_retail_detail.sql`（旧湖）用的是
+-- 子查询/CTE。~~既有 `stg_lemeng_retail_detail.sql`（旧湖）用的是~~
 -- `with r as (select * from read_parquet(…)) select r['…']` 形态 —— 那个形态在本栈上**取列即报错**
+-- （承此教训的旧湖文件已于 2026-10-06 仓内退役；下面这段原文保留为**反例留证**，不是现役代码）
 -- （它从未在真机跑过：数据面 `/opt/…/dbt/target/` 里只有 `dbt parse` 的产物，没有 run_results）。
 -- 2026-09-24 真机实测原文：
 --   `with r as (select * from read_parquet('…')) select r['order_no'] from r`
@@ -108,7 +109,7 @@ select
 -- （spec §9.4 可见性坑）⇒ 它只出现在 staging 模型内部，物化落点由上面的 config + 项目缺省保证
 -- 是 PG 可见关系（gate 2）。
 from read_parquet(
-  -- ⚠️ 路径段写 `system_book=*/` **通配两个账套**（故此处不用 `account_book` var）——与门店维/商品维**同源形态**
+  -- ⚠️ 路径段写 `system_book=*/` **通配两个账套**（账套靠 hive 推断成列，不按账套分 var）——与门店维/商品维**同源形态**
   -- （见 sources.yml 的 branch 条目注释）。`system_book` 是**列**：由路径 `system_book=<值>/` 自动推断
   -- （类型推成 bigint，下面显式 `::varchar` 定型）。
   -- 2026-09-26 改：64188（品品甜）铺开后，钉单账套的路径会让它的数据**落湖了却进不了物化**（issue #250）。

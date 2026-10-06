@@ -20,9 +20,9 @@ dbt/
 │   ├── schema.yml             列描述 + dbt tests
 │   ├── stg_lemeng_retail_order_line.sql   **新湖（现行）**：S1 换源后的零售 staging
 │   ├── stg_lemeng_branch.sql             门店维（**全量快照**，S2-a 新增）——列全集见 §8/§9
-│   ├── stg_lemeng_item.sql               商品维（**全量快照**，S2-a 新增）——列全集见 §8/§9
-│   └── stg_lemeng_retail_detail.sql       旧湖（**双轨期保留，待 S4 删**）——取列形态在本栈报错，
-│                                          故裸 `dbt run` 会因它红（见 §3 第 1 行、§9 第 6 条）
+│   └── stg_lemeng_item.sql               商品维（**全量快照**，S2-a 新增）——列全集见 §8/§9
+│   （旧湖 `stg_lemeng_retail_detail.sql` **已于 2026-10-06 仓内退役**（`git rm`）：湖上前缀
+│    `lemeng/retail_detail/…` **未下线**，退役的是仓内工件，见 handbook §2 的旧前缀行）
 ├── models/common/marts/       ④ 建模：口径只在这里定义一次
 │   ├── schema.yml             列描述 + dbt tests
 │   └── fct_retail_sale.sql
@@ -37,7 +37,7 @@ dbt/
 ### 2.1 `source()` 不是读路径
 
 本仓用 **pg_duckdb**（Postgres 扩展）读对象存储：读路径是 `read_parquet('s3://…')`。
-而 dbt 通过 **dbt-postgres** 适配器连它 ⇒ `{{ source('lemeng','retail_detail') }}` 会被渲染成
+而 dbt 通过 **dbt-postgres** 适配器连它 ⇒ `{{ source('lemeng','retail_order_line') }}` 会被渲染成
 `"db"."schema"."table"` 这种 **PG 关系名**，湖上没有那个关系，渲染出来必然查不到。
 （能直接读 parquet 的 `external_location` 是 **dbt-duckdb** 适配器的能力，本仓不用它。）
 
@@ -66,9 +66,11 @@ dbt/
 | 时间列**各自 try、各自成列** | 坑 #3：同表两列两种格式（`order_time` = `%Y-%m-%d %H:%M:%S`、`order_detail_bizday` = `%Y%m%d`） | 无（形态靠评审；`not_null` 在 marts 兜漏解析） |
 | 不做聚合、不做 join、不改口径 | layered §3：③ 的职责只有「规范化」 | 无（纪律靠评审） |
 
-**与计划范文块的一处有意偏离**（已在 `stg_lemeng_retail_detail.sql` 头注标明）：范文把两个时间列
-`coalesce` 成一个 `order_time`。它们是**两列两种语义**（交易时间 vs 业务日），coalesce 会把两种语义
-压成一个字段并静默丢掉一半信息 ⇒ 本实现各自定型、各自成列。
+**与计划范文块的一处有意偏离**（原落点是已退役的 `stg_lemeng_retail_detail.sql` 头注）：范文把两个
+时间列 `coalesce` 成一个 `order_time`。它们是**两列两种语义**（交易时间 vs 业务日），coalesce 会把两种
+语义压成一个字段并静默丢掉一半信息 ⇒ 当时的实现各自定型、各自成列。⚠️ 该模型连同这两列已于
+2026-10-06 **仓内退役**；偏离**本身**的结论仍在 `docs/superpowers/plans/2026-09-22-data-stack.md`
+的偏离登记里（新湖链不存在这个问题：`bizday` 是 hive 分区键、落盘即 DATE）。
 
 ## 4 S3 凭据注入的核对结论（gate 1）
 
@@ -157,15 +159,15 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
 | 两个时间列两种格式 + 各自格式串 | **实证** | 坑 #3（同上） |
 | 同域不同日列数不等（46 vs 43） | **实证** | 坑 #2（同上） |
 | `read_parquet` 读得通对象存储 + 自定义 endpoint / path-style 的建密钥函数支持 | **实证** | spec §9.4 / WeKnora 两条条目 |
-| 账套在**路径**里（`lemeng/retail_detail/<账套>/…`） | **实证** | handbook §2 + §4 欠账 |
-| **列全集** | **分裂三档**（2026-09-25 订正） | **新湖零售** `stg_lemeng_retail_order_line` = 契约 18 列、**实证**（2026-09-24 真机 `dbt run` 落 19,678 行）；**两张维度 staging** = `stg_lemeng_branch` 16 列 / `stg_lemeng_item` 108 列，**契约钉死 + 静态门禁绿，未在真库跑过**（见 §9 第 7 条）；**旧湖** `stg_lemeng_retail_detail` 的列全集仍**暂定**（该文件从未跑过、待 S4 删） |
+| 账套在**路径**里（旧湖 `lemeng/retail_detail/<账套>/…`；新湖 `lemeng/retail_order_line/system_book=<账套>/…` 且**推断成列**） | **实证** | handbook §2（⚠️ 旧前缀仍在湖上被写、**仓内工件已退役**） |
+| **列全集** | **分裂两档**（2026-10-06 订正） | **新湖零售** `stg_lemeng_retail_order_line` = 契约 18 列、**实证**（2026-09-24 真机 `dbt run` 落 19,678 行）；**两张维度 staging** = `stg_lemeng_branch` 16 列 / `stg_lemeng_item` 108 列，**契约钉死 + 静态门禁绿，未在真库跑过**（见 §9 第 7 条）。**旧湖** `stg_lemeng_retail_detail`（当时列全集仍是**暂定**）已于 2026-10-06 **仓内退役**、不再是一档——注意这与它自己的「待 S4 删」约定**不同**：提前退了仓内工件，湖上前缀未下线 |
 | **`order_no`**（订单数指标的唯一依赖列） | **列存在已证 / 语义未证** | **已证** = 新湖契约列**存在且非空**（`nullable=false` + 管线 `qa.contract` 非空闸 + 真机 `not_null_…_order_no` 过，列名与类型合契约）；**未证** = 「该列**就是业务意义上的单号**」与 `count(distinct order_no)` 的**去重语义**（两者都属**口径转正**，S5）。⚠️ 别把「列存在且非空」读成「口径已确认」；核不到就**删掉该指标声明**，不换近似口径 |
-| **账套取值方式** | **新湖实证 / 旧湖暂定** | 新湖 = **路径解析进列**（hive 分区键 `system_book=<账套>/` 被 read_parquet 推断成列，真机 `::varchar` 定型通过）；`account_book` var 只用于**拼读路径**、不灌数据。旧湖（双轨期）仍只能 var 供值 |
+| **账套取值方式** | **新湖实证** | 新湖 = **路径解析进列**（hive 分区键 `system_book=<账套>/` 被 read_parquet 推断成列，真机 `::varchar` 定型通过）。⚠️ 旧湖那套「`account_book` var 供值、账套位非 hive 无键名」已随 2026-10-06 的仓内退役删除（`dbt_project.yml` 不再有 `account_book` / `lemeng_retail_prefix` 两个 var） |
 | **跨列集分组的读法**（§6 的目标形态） | **暂定 → T6 实测** | 分组形参是否透传未知 |
 | **S3 凭据注入形态**（§4 的候选 ①②） | **暂定 → T6 实测** | 只能在真 pg_duckdb 上验；⚠️ 真机 `dbt run` 能读 S3 靠的是「会话里已有的 secret」（非本次接线），**pg_duckdb 一重启即失效** |
 | **物化落点形态**（table / view / `USING duckdb` 外表） | **已定：`table`** | 「必须是 PG 可见关系」实证；「用哪一种」T6 已选定 `table`（真机 PASS=2，两个模型都落成 PG 表）；`USING duckdb` 外表仍未实测 |
 | **「有效订单」的判定条件**（退货/赠品/作废是否剔除） | **暂定 → 业务确认** | 当前实现 = 全部明细行合计，与该缺口同址的注记在 `fct_retail_sale.sql` 与 `l1_metrics.yml` |
-| `try_strptime` / `::timestamptz` / `::date` 在 pg_duckdb 会话内可用 | **部分实证** | 新湖链实证的是 `::varchar` / `::int` / `::date`（真机 PASS=2）；`try_strptime` 与 `::timestamptz` 只出现在**旧湖**模型里，**仍未验**（该文件从未跑过 ⇒ 裸 `dbt run` 会红，见 §9 第 6 条） |
+| `try_strptime` / `::timestamptz` / `::date` 在 pg_duckdb 会话内可用 | **部分实证** | 新湖链实证的是 `::varchar` / `::int` / `::date`（真机 PASS=2）；`try_strptime` 与 `::timestamptz` **至今未验**——它们只出现在**旧湖**模型里，而那份模型已于 2026-10-06 仓内退役 ⇒ 这个「未验」不再是仓内待办，而是**已消失的形态**（新湖落盘即定型，本就不需要它们） |
 
 ## 9 未验清单（诚实边界，一条都不含糊）
 
@@ -179,8 +181,8 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
    项目可解析；本仓 `scripts/check-data-models.mjs` 跑真仓 = `check-data-models: OK` 给的是**结构可解析**）。
 2. **新湖链的 SQL 形态已实证**：`r['列名']` 取列（**函数别名形态**，见 §3 第 1 行）、`::varchar` / `::int` /
    `::date` 三个 cast 目标、物化落点 `table`，四处均经真机 `dbt run` PASS=2 验证。
-   **仍未验的是旧湖** `stg_lemeng_retail_detail.sql` 的 CTE 取列 + `try_strptime` + `::timestamptz`
-   形态（该文件从未跑过，见 §8 最后一行）。
+   ~~旧湖 `stg_lemeng_retail_detail.sql` 的 CTE 取列 + `try_strptime` + `::timestamptz` 形态未验~~
+   ——该文件已于 2026-10-06 **仓内退役**（`git rm`），这条「未验」随之消失：仓内不再有第二种 staging 形态。
 3. **对账/断言测试已在真数据上跑过**：真机 `dbt test` **PASS=14 WARN=0 ERROR=0**（含两条 `audit_*.sql`
    的独立复算与 `assert_*` 结构断言）。⚠️ 「对账绿」只说明**两侧算的是同一件事**，**不是**「口径已确认」
    （见 `audit_lemeng__retail__order_count.sql` 头注）。
@@ -190,14 +192,16 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
 5. **本目录不碰 `.gitignore`**（T5 是唯一写入方）：`dbt/target/`、`dbt/logs/`、`dbt/dbt_packages/`
    是 `dbt parse/run` 的本地生成物，**不 `git add`、不提交**；静态门禁自己也跳过这三个目录。
    若需要忽略规则，见 T4 任务报告的「需要协调方转给 T5」段。
-6. **双轨期「裸 `dbt run`（不带 `--select`）会红」**（S1 Task 9 结论；**推断**，未直接试跑——已知为红、
-   不想在生产库留失败痕迹）：旧湖 `stg_lemeng_retail_detail.sql` 仍在项目里且会被裸 `dbt run` 选中，
-   它的取列形态正是本栈拒绝的 **CTE 形态**（§3 第 1 行；真机原文 `cannot subscript type record …`）
-   ⇒ 一取列就报错。**验证过的形态是带 `--select`**：真机
+6. **~~双轨期「裸 `dbt run`（不带 `--select`）会红」~~ —— 2026-10-06 已解除**（原结论出自 S1 Task 9，
+   为**推断**、未直接试跑——当时已知为红、不想在生产库留失败痕迹）：当时旧湖
+   `stg_lemeng_retail_detail.sql` 在项目里、会被裸 `dbt run` 选中，而它的取列形态正是本栈拒绝的
+   **CTE 形态**（§3 第 1 行；真机原文 `cannot subscript type record …`）⇒ 一取列就报错。
+   **该文件已 `git rm`** ⇒ 仓内不再有会被裸 `dbt run` 选中的已知坏形态。
+   ⚠️ **别把这条读成「裸 `dbt run` 已在真机验过」**：退役只移除了已知的失败源，
+   「裸 `dbt run` 全绿」本身**仍未实测**。验证过的形态仍是带 `--select`：真机
    `dbt run --select stg_lemeng_retail_order_line fct_retail_sale` = `PASS=2`，`dbt test`（全量 14 条）
    = `PASS=14`（2026-09-24 数据面，证据见 `.superpowers/…/task-9-report.md` §5）。
-   ⇒ **跑 dbt 一律带 `--select`**，别把「静态门禁绿」读成「裸 `dbt run` 绿」；S4 删掉旧湖文件后这条消失
-   （**S4 可考虑直接删**）。
+   ⇒ 下次真机跑 dbt 时**顺手验一次裸跑**，绿了再把本条收成「已验」。
 7. **两张维度 staging 与两条维度唯一性断言从未执行过**：`stg_lemeng_branch` / `stg_lemeng_item` 与
    `dbt/tests/assert_stg_lemeng_branch_key_unique.sql` / `assert_stg_lemeng_item_key_unique.sql`
    都是 S2-a 新加的，**没在真库上跑过**（本机无 dbt / pg_duckdb），当前只有「契约钉死 + 静态门禁绿」
@@ -339,22 +343,22 @@ psql "$DATABASE_URL" -c "select distinct v.view_schema||'.'||v.view_name as view
 口径出问题的典型症状是「数不对」——**先定位到哪一层，再改**。五步的**顺序即收敛方向**：
 从「我们**说要**算什么」逐步走到「源数据**这次真的**是什么」。
 
-> ⚠️ **本阶梯的 ④⑤ 命令写的是「旧湖」形态**（路径 `lemeng/retail_detail/…`、列 `order_detail_bizday` /
-> `amount`、`try_strptime`）。S1 换源（2026-09-24）后**现行**零售链路的形态是
-> `s3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日>/hour=<时>/all.parquet`，
-> 列取 `bizday` / `sale_money` / `order_no`（**湖里已定型，不再 `try_strptime`**）。
-> ⇒ **照抄 ④⑤ 会停在旧湖读法上**；新湖的等价口径见 §2.1、`staging/sources.yml` 的 `retail_order_line`
-> 段与 `stg_lemeng_retail_order_line.sql` 头注。（下面 I-5 那条「四处一致」写于**换源前**：换源后
-> `l1_metrics.yml` 的 `sources` 与两个 `audit_*` 的读路径都已指向**新湖**，旧湖只剩
-> `stg_lemeng_retail_detail.sql` 与 `dbt_project.yml` 的旧 var 头注。）
+> ✅ **订正（2026-10-06）**：本阶梯的 ④⑤ 命令原写「旧湖」形态（路径 `lemeng/retail_detail/…`、列
+> `order_detail_bizday` / `amount`、`try_strptime`），已随旧湖 staging 的**仓内退役**（`git rm`）一并
+> 改到**现行**零售链路形态：`s3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日>/hour=<时>/all.parquet`，
+> 列取 `bizday` / `sale_money`（**湖里已定型，不再 `try_strptime`**）。
+> ⇒ 路径与列名的**唯一事实源**是 `staging/sources.yml` 的 `retail_order_line` 段
+> （`meta.path_convention` / `access_path`）与 `stg_lemeng_retail_order_line.sql` 头注；两账套由
+> `system_book=*/` 通配。⚠️ 湖上前缀 `lemeng/retail_detail/…` **仍在被写、未下线**（只是仓内没有
+> 读它的模型了）——核旧数据时才可能还要它，见 handbook §2 的旧前缀行。
 
 | # | 步 | 命令 |
 |---|---|---|
 | ① | **读声明**（口径的事实源） | `sed -n "/name: 'lemeng:retail:net_sales'/,/^  - name:/p" dbt/semantics/l1_metrics.yml` |
 | ② | **dbt docs 看依赖**（这一层读了谁） | `dbt docs generate --project-dir dbt && echo '开 dbt/target/index.html → 选模型 → Lineage'` |
 | ③ | **看 PG 里实际的关系定义** | `psql "$DATABASE_URL" -c '\d+ <schema>.fct_retail_sale'` |
-| ④ | **抽 parquet 源核对**（上游真值长什么样） | `psql "$DATABASE_URL" -c "select r['order_detail_bizday'], r['amount'] from read_parquet('s3://<桶>/lemeng/retail_detail/<账套>/<日期>/all.parquet') r limit 5"` |
-| ⑤ | **独立复算**（不复用 dbt 任何产物） | `psql "$DATABASE_URL" -c "select '<账套>' as system_book, try_strptime(r['order_detail_bizday'], '%Y%m%d')::date as bizday, sum(r['amount']::numeric) as net_sales from read_parquet('s3://<桶>/lemeng/retail_detail/<账套>/<日期>/all.parquet') r group by 1, 2"` |
+| ④ | **抽 parquet 源核对**（上游真值长什么样） | `psql "$DATABASE_URL" -c "select r['bizday'], r['sale_money'] from read_parquet('s3://<桶>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=*/all.parquet') r limit 5"` |
+| ⑤ | **独立复算**（不复用 dbt 任何产物） | `psql "$DATABASE_URL" -c "select r['system_book']::varchar as system_book, r['bizday']::date as bizday, sum(r['sale_money']) as net_sales from read_parquet('s3://<桶>/lemeng/retail_order_line/system_book=*/bizday=<日期>/hour=*/all.parquet') r group by 1, 2"` |
 
 **每步的判读**：
 - ① 与 ⑤ **按 grain 对齐后数不一致** ⇒ 先怀疑 **cast / 列名**（§3）或**列集漂移**（§6）——这正是
@@ -381,23 +385,25 @@ psql "$DATABASE_URL" -c "select distinct v.view_schema||'.'||v.view_name as view
   ⇒ 改读**关系定义本身**（`\d+` 列出列与类型，实测可用）；`<schema>` 按 `search_path` /
   `tenant_<租户键>` 取，**`dbt` 不是本仓的任何 schema**。等价写法：
   `select column_name, data_type from information_schema.columns where table_schema='<schema>' and table_name='fct_retail_sale' order by ordinal_position`。
-- **④ 只用「已实证」的列**（M-4）：`sources.yml` 只登记**三列**（`amount` / `order_time` /
-  `order_detail_bizday`）；原文抽的 `order_no` 在 L1 声明里**当时**明确标**「暂定」**（`retail:order_count`
-  的 definition **当时的原文**：*「单号列的列名与去重语义待 T6 按实测样本核对（staging 里 `order_no` 是暂定列）」*
-  ——该句已于 2026-09-25 随换源订正为「列面实证 / 口径面待业务确认」，见 `l1_metrics.yml`）
-  ⇒ 拿未实证列去抽查源，报错概率高、且报错会被归因错。故改抽**已实证的** `order_detail_bizday` + `amount`。
+- **④ 只用「已实证」的列**（M-4 原则保留，列名随换源订正）：现抽**新湖契约里**的 `bizday` + `sale_money`
+  （真机 `dbt run` 用过、两个 `audit_*` 也在用）。原文抽的是旧湖的 `order_detail_bizday` + `amount`，
+  并提到「`order_no` 当时标暂定」——`order_no` 的**列存在**已于 2026-09-25 实证（契约 + 真机
+  `not_null_stg_lemeng_retail_order_line_order_no` 过），但**去重语义**仍属**口径转正**（§8「`order_no`」行）
+  ⇒ 抽查源仍不用它：拿它去核源就是**把未定的口径当事实**。
 - **⑤ 必须与声明的 grain 同量**（M-4）：`l1_metrics.yml` 的 `grain: [system_book, bizday]`，
   `dbt/tests/audit_lemeng__retail__net_sales.sql` 也是按 `(system_book, bizday)` 对齐的。原文的
   **不带 `group by` 的总计**与粒度级声明**不同量** ⇒ 判读表那条「① 与 ⑤ 数不一致」**按字面不可执行**。
   故 ⑤ 采用与 audit **同一形态**的 `group by`（`try_strptime(...)::date` 也是照抄 audit 的写法）。
-- **④⑤ 的 parquet 路径形态必须与正典逐段一致**（I-5）：正典（**四处一致**，皆在仓内）是
-  `s3://<bucket>/lemeng/retail_detail/<账套>/<日期>/all.parquet` —— `dbt/semantics/l1_metrics.yml` 的
-  `sources`、`dbt/models/common/staging/sources.yml` 的 `meta.path_convention` 与 `access_path`、
-  `dbt_project.yml` 的 vars 头注、`dbt/tests/audit_lemeng__retail__net_sales.sql` 的实际读路径。
-  原文写成 `<桶前缀>/retail_detail/<账套>/<日期>.parquet`：**丢了 `lemeng/` 段**，且把目录里的
-  **叶子文件 `all.parquet` 换成了以日期命名的文件**（后者无论怎么读 `<桶前缀>` 都错）。
-  这类错误「照着跑读不到东西」，而原判读表把它归因到**凭据** ⇒ **误判方向**。
-  ⚠️ 模型与 audit 的实际读路径是**通配**（`…/<账套>/**/*.parquet`，见 `audit_lemeng__retail__net_sales.sql`）；
+- **④⑤ 的 parquet 路径形态必须与正典逐段一致**（I-5）：现行正典（**四处一致**，皆在仓内）是
+  `s3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet`
+  —— `dbt/semantics/l1_metrics.yml` 的 `sources`、`dbt/models/common/staging/sources.yml` 的
+  `meta.path_convention` 与 `access_path`、`dbt_project.yml` 的 `lemeng_retail_order_line_prefix` 段头注、
+  `dbt/tests/audit_lemeng__retail__net_sales.sql` 的实际读路径。（订正前正典写的是旧湖
+  `lemeng/retail_detail/<账套>/<日期>/all.parquet`——该前缀**仍在湖上被写**，只是仓内已无读它的模型。）
+  原文曾写成 `<桶前缀>/retail_detail/<账套>/<日期>.parquet`：**丢了 `lemeng/` 段**，且把目录里的
+  **叶子文件 `all.parquet` 换成了以日期命名的文件**（后者无论怎么读 `<桶前缀>` 都错）。这类错误
+  「照着跑读不到东西」，而原判读表把它归因到**凭据** ⇒ **误判方向**（这条教训与新旧湖无关，永久有效）。
+  ⚠️ 模型与 audit 的实际读路径是**通配**（`system_book=*/**/*.parquet`，见 `audit_lemeng__retail__net_sales.sql`）；
   这里读**某一天的叶子文件**是**抽查**形态（同一份源、范围更小），不是模型的正式读路径。
 
 ⚠️ ④⑤ 两条的 `read_parquet` **要求同会话已建 secret**（pg_duckdb 的 secret 按**连接**生效，

@@ -11,8 +11,9 @@
 --   **在用的** L0 管线 `deploy/duckle/console/pipelines/lemeng.dim.branch.l0.json` 的 sink 节点；🔴 2026-09-29 改向，原指已退役的 `duckle/common/lemeng.branch.json`）。
 --
 -- 【覆盖双账套】路径段写 `*/snapshot=**/` 而不是钉单账套 —— 门店维在 dbt 侧是**一个模型读两个
---   账套分区**（`system_book` 是**列**、不是 var）；`account_book` var 只服务旧湖 retail_detail
---   那条非 hive 路径（它账套只能由 var 供值）。
+--   账套分区**（`system_book` 是**列**、不是 var）。⚠️ 原文提到的 `account_book` var（只服务旧湖
+--   `retail_detail` 那条非 hive 路径：账套位无键名、只能由 var 供值）已于 2026-10-06 随旧湖
+--   staging 的**仓内退役**删除，`dbt_project.yml` 里不再有该 var（`lemeng_retail_prefix` 同批删）。
 --
 -- 列与空值性以 `contracts/common/lemeng.branch.json` 为准（16 列全带，本层不加语义；**另加 dbt 注入列 `org`**）。
 select

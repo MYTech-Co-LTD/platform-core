@@ -8,6 +8,13 @@
 
 **Tech Stack:** duckle 0.7.3（PyPI，自带 duckdb-cli 1.5.4）/ pgduckdb/pgduckdb:18-v1.1.1（DuckDB 1.4.3）/ dbt 1.9 + dbt-postgres / 天翼云 ZOS（snk.minio 或 httpfs 退路）/ openship MCP（jobs 与数据面操作唯一通道）。
 
+> ⚠️ **2026-10-06 订正（本计划**已执行完毕**，下面是已漂离现状的地方）**：
+> 本文出现的 `var("account_book")`（如 Task 里的 `lemeng/retail_order_line/{{ var("account_book") }}/…`）
+> 是**中途形态**，**已被取代**：现行新湖路径写 `system_book=*/` **通配两个账套**（账套靠 hive 推断成列），
+> 且 `account_book` / `lemeng_retail_prefix` 两个 var 已于 2026-10-06 **一并删除**（连同旧湖 staging 的仓内退役）
+> ⇒ **照抄本文里带该 var 的路径会直接编译失败**。现行形态见 `stg_lemeng_retail_order_line.sql`。
+> 另：本文 Delete 项那条（旧湖 staging「待 S4 后删、本任务先保留双轨」）**已被提前终结**，该处另有就地订正。
+
 ## Global Constraints
 
 - 分层纪律：staging 一对一不改义；口径只在 marts；L1 唯一事实源 `dbt/semantics/l1_metrics.yml` 本计划**语义声明**零改动 —— `name`/`expression`/`grain`/`owner`/`tier` 与 **`definition` 的口径语义**（口径表述本身）一字未动。**两处注记更新**（都随换源 / 实证走，**逐一点名**，不算进「零改动」）：① **`sources` 指针随换源更新**——留旧湖路径等于留假指针（Task 9 brief 授权）；② **`definition` 内的证据状态注记随实证收窄**——把过期的「staging 里 `order_no` 是暂定列」换成「列**存在且非空** = 已证 / 是否**即业务单号**与 `count(distinct order_no)` 的**去重语义** = 未证」（终评 M8 裁定的过期指针订正；**口径表述本身未动**）。
@@ -326,6 +333,9 @@ Expected: ETag 相同；不同则记录差异根因（时区内新单属正常�
 - Create: `dbt/models/common/staging/stg_lemeng_retail_order_line.sql`
 - Modify: `dbt/models/common/marts/fct_retail_sale.sql`（换源适配）、`dbt/tests/audit_retail__*.sql`（若引用旧列名）
 - Delete（迁移完成判据）: `dbt/models/common/staging/stg_lemeng_retail_detail.sql`（旧湖 staging，待 S4 回填覆盖同域后删；**本任务先保留双轨**——staging 改名并行，fct 切新源）
+  - ⚠️ **2026-10-06 实际**：该文件**已删**（`git rm`），但**不是**走完了上面那个判据（「待 S4 回填覆盖同域后删」）——
+    是一次**提前的仓内退役**：**湖上前缀 `lemeng/retail_detail/…` 保留、仍在被写**（生产方 `data-analysis` 每 5 min）。
+    ⇒ 本条「先保留双轨」的约定**被有意提前终结**，偏离已记进 `docs/data-platform-handbook.md` §1.3 阶段 I 订正块（含为什么只能退半步）。
 
 **Interfaces:**
 - Consumes: 湖表 `lemeng/retail_order_line`（Task 8 产出）

@@ -42,6 +42,8 @@
    ⇒ `org` 是 **dbt 层的注入列**，**不是契约列** ⇒ **不改 `contracts/`**。
 4. **注入字面量在 staging 已有先例**：`stg_lemeng_retail_detail.sql:74` 用
    `'{{ var("account_book") }}' as system_book`（旧湖路径非 hive、账套位无键名 ⇒ 只能由 var 供值）。
+   ⚠️ **2026-10-06 订正**：该先例文件（连同它用的 `account_book` var）已随**旧湖仓内退役**删除
+   ⇒ 上面的「文件:行号」引用**已失效**（本条文作为历史记录保留，别按它去找文件）。
 5. **「契约 N 列全带」的声明散在三处、用词不同**（订正时要逐处改，别只改一处）：
    `stg_lemeng_retail_order_line.sql:56`（「契约 18 列**全带**（一对一不许丢列）」）、
    `stg_lemeng_branch.sql:17`（「16 列全带」）、`stg_lemeng_item.sql:17`（「108 列全带」）；
@@ -101,7 +103,7 @@
 | `stg_lemeng_branch` | 同上 |
 | `stg_lemeng_item` | 同上（108 列 → 109） |
 | `fct_retail_sale` | 加一列 `{{ subject_org() }} as org`（**注入常量，不从 staging 透传**——理由见本节末的**2026-09-26 实施订正**） |
-| `stg_lemeng_retail_detail` | **豁免**——旧湖、待退役、且自身列集是暂定（该文件头注「列全集按 T6 实测样本补齐」） |
+| `stg_lemeng_retail_detail` | **豁免**——旧湖、待退役、且自身列集是暂定（该文件头注「列全集按 T6 实测样本补齐」）。⚠️ **2026-10-06：该行已随旧湖仓内退役注销**——文件被删、豁免理由消失，`SUBJECT_ORG_EXEMPT` **已清空**（见本节末第 4 条的执行记录） |
 
 **豁免必须显式登记在门禁规则里**（文件级白名单 + 注释写明理由），不许靠「没扫到」——本仓既有先例是
 `check-tenant-isolation.mjs` 的 `--global-table:` 标记与 `lint-architecture` 的白名单。
@@ -217,3 +219,12 @@ done
    本 macro 的那句报错）。
 3. **单个 relation 内 `org` 单值**没有被任何测试断言（§2.3 的刻意不做）。
 4. **旧湖 `stg_lemeng_retail_detail` 的豁免**是在「待退役」判断下的临时做法——退役那笔要顺手收回豁免。
+   ✅ **2026-10-06 已执行（就是这一笔）**：旧湖 staging 仓内退役（`git rm`），`check-data-models.mjs` 的
+   `SUBJECT_ORG_EXEMPT` 随之清空。⚠️ **收回豁免会带走两样东西，都当场补齐了**（别在别处重犯）：
+   ① 规则 ⑩ 的**唯一活体豁免用例**没了 ⇒ 给 `checkDataModels(rootDir, opts)` 加了**豁免注入缝**
+      （`opts.subjectOrgExempt`），用例改用**注入的**豁免 Map（`check-data-models.test.ts` 格⑩-6），
+      否则「登记了就静默」这一半跟着真名单一起消失；
+   ② 豁免名单里那份文件同时是**规则 ④ 双向配对**（`lemeng.retail_detail` ↔ `stg_lemeng_retail_detail`）
+      的一方 ⇒ 删文件必须**同 PR 删 `sources.yml` 的 `retail_detail` 声明**，否则装载期/门禁红。
+   **⚠️ 两处都只退了仓内**：湖上前缀 `lemeng/retail_detail/…` 仍在被写（`data-analysis` 每 5 min）
+   ⇒ 前缀**没有**下线。见 `docs/data-platform-handbook.md` §1.3 阶段 I 订正块。
