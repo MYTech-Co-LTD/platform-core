@@ -1,10 +1,10 @@
-sha256-of-rest 1e496fa1f8400b6bba13a97bdd38b901eae55db4a3c699d1d35935ac030c9255
-58edb38e6c192d9f3821333d7016b8abb284ba383a08042165e603cdecebd69e contracts/README.md ${REPO}/contracts/README.md 0644
-514e26ab3d419761808868355ac62eabf0e984b327c69f864cd08ee23754ca05 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
-c9111b4f5739bf1d2a96eceb7db9745f0103de50db73b3ed429cb99e1ead40e0 contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
-70b0b5c0573787e586df1b8abb6b40a5e92d9580f43f1e7c7feb050bc97348de contracts/common/lemeng.branch.json ${REPO}/contracts/common/lemeng.branch.json 0644
-55abd4460fb420f714269624921a4dc64788dd09024ba9a0eb0039bc2aaea782 contracts/common/lemeng.item.json ${REPO}/contracts/common/lemeng.item.json 0644
-035c014a5f3273fd19f18e5403ebd392e2bc9967af34acd6cd02aa3bc3dd6dad contracts/common/lemeng.retail_order_line.json ${REPO}/contracts/common/lemeng.retail_order_line.json 0644
+sha256-of-rest 394d71c20f75a829e587593bdf7e8cf68ce21e95f0a9e7e4d27dd3ddc29aae86
+f802548ccd3fa169bfb21a39bb87a377b5613401d77e359473c99e102f377ff3 contracts/README.md ${REPO}/contracts/README.md 0644
+5f2b5a68028671166b3a0cd62d62a08a12f8a10af5034a2b5e4cadb50c1fb264 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
+1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
+f72e37682e3f03316ee0c3a41b74a159d6bca09c4b983048a2d1e25618de65de contracts/common/lemeng.branch.json ${REPO}/contracts/common/lemeng.branch.json 0644
+7c903a36d76f8bf4013afa4630e98a98e3943f0525d019210a9fb4b5b96a0025 contracts/common/lemeng.item.json ${REPO}/contracts/common/lemeng.item.json 0644
+b444f90399b8fb687564e2eb1f9a0049621a3b35fde2f06222fa4d0c845e0eb9 contracts/common/lemeng.retail_order_line.json ${REPO}/contracts/common/lemeng.retail_order_line.json 0644
 a9209aad12e3020eefc11f94f51d935c49d1bff9eabf94fb0262d182a6a37c7a contracts/customers/README.md ${REPO}/contracts/customers/README.md 0644
 7fffd3496b865037d505c1f6e28f9d6323609f6d0ad347d7df15307958e57f37 dbt/README.md ${REPO}/dbt/README.md 0644
 dedddd922494d878ea2930b841067caaa8eba5360374e8304154eaed44a93f63 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644

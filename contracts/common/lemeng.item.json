@@ -1,6 +1,6 @@
 {
   "$schema": "./_schema.schema.json",
-  "contractVersion": 1,
+  "contractVersion": 2,
   "schemaVersion": 1,
   "consumerVersion": 1,
   "domain": "lemeng",
