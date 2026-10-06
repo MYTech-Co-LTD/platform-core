@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.73.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.72.0...v0.73.0) - 2026-10-06
+- 【新增】dbt: 对账判别式落 audit——赠品命中集复算重落 + 换货半边输入形状守卫（Closes #444） ([#453](https://github.com/MYTech-Co-LTD/platform-core/pull/453), [83ad5fd](https://github.com/MYTech-Co-LTD/platform-core/commit/83ad5fd6c0e5c07d3efeb1cc3025239733b330da))
+
+
 ## [0.72.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.71.1...v0.72.0) - 2026-10-06
 - 【新增】data: 「下游看得见」探测落地——探活链增 PG 新鲜度/词表非空断言 + 台账订正 ([#451](https://github.com/MYTech-Co-LTD/platform-core/pull/451), [0602d49](https://github.com/MYTech-Co-LTD/platform-core/commit/0602d49c10b798ae57c09c1b5a3d7796e5c6a6db))
 
