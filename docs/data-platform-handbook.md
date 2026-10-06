@@ -26,7 +26,8 @@
 > ⚠️ 本段只写**量过的东西**：09-26 当天有没有入湖**未测**，故不写（「job 绿」不等于「数据到了」）。
 >
 > **订正（2026-09-28）：「没有一个在跑 dbt」已不成立，但假绿的形态换了，教训不变。**
-> 物化 job `lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`，UTC `20 3 * * *`）已注册并逐日成功
+> 物化 job `lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`，UTC `20 3 * * *`【2026-10-06 起
+> 错峰为 `27 3 * * *`，#452 E1】）已注册并逐日成功
 > ——2026-09-28 那次 **PASS=26 WARN=0 ERROR=0**，PG 物化到 **09-27**，且与湖**逐行对上**
 > （3120 / bizday=09-27：湖 9,233 行 18 窗 = PG 9,233 行 18 窗）。
 > 但同日端到端验下游时，**三条消费链的接线全没接**，失败依旧**全部静默**：
@@ -768,7 +769,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 语义声明 | `dbt/semantics/l1_metrics.yml`（L1 唯一事实源）+ `dbt/models/common/marts/schema.yml` |
 | 采集契约（落盘 schema 声明的**意图源**） | `contracts/<域>/<源>.<表>.json`（机器面在管线：`node.data.schema` + `qa.contract` + `drift`） |
 | 数据面编排 | `deploy/data-compose.yml`（部署单元 B；全仓只两份 compose，B7 守） |
-| **物化调度** | **openship job**（归口）：`lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`，UTC `20 3 * * *`，重试 2×/300s，仅 `failed` 告警）——2026-09-28 订正：**已在跑**，命令形态见 `deploy/data-plane-deploy-sop.md` §F.6 |
+| **物化调度** | **openship job**（归口）：`lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`，UTC `27 3 * * *`（2026-10-06 由 `20 3` 错峰，#452 E1：避开 tick `*/5` 同分钟点火），重试 2×/300s，仅 `failed` 告警）——2026-09-28 订正：**已在跑**，命令形态见 `deploy/data-plane-deploy-sop.md` §F.6 |
 | **L1 语义词表物化** | **openship job** `L1 词表物化`（`custom:tuQ06mlxBe_2TlTo`，UTC `33 4 * * *`，重试 2×/300s）——2026-10-03 注册、当日首跑（原「无 job」状态已消，#297）。⚠️ 它物化的是**平台镜像里那份 `dbt/` 快照**（镜像更新前新声明进不了词表——分叉与比对机制见 **#300**）；对账 `--check` job **有意未注册**（#300 落地前近乎恒绿 = 假保险，裁决见 `dbt/README.md` §11.4 回填表）。「词表被清空 / PG 停更」由探活 job 的 ④⑤ 断言盯（SOP §P8b） |
 
 ---
