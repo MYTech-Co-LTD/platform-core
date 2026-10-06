@@ -23,7 +23,7 @@
 // 尚未回填 ⇒ **整份契约跳过**（③ 与 ④ 都不动；否则会拿空表达式覆盖掉现存投影）。
 // 这正是「先 --seed 回填，再生成」的两步式（设计稿 §4）。
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
@@ -32,6 +32,7 @@ import {
   collectJson,
   findProducerPipelines,
   findProjectionNode,
+  maskSqlComments,
   readContractDoc,
 } from './lib/data-contract.mjs'
 
@@ -73,16 +74,24 @@ export function splitTopLevelCommas(s) {
 }
 
 /**
- * 列区边界：开头 `SELECT` 的起点 … 顶层 `FROM` 前那个换行的下标。
+ * 列区边界：**第一个** `SELECT` 的起点 … 紧随其后的顶层 `FROM` 前那个换行的下标。
  * 找不着（无 SELECT / 无顶层 FROM）返回 null。
+ *
+ * ⚠️ 先在**掩掉注释**的文本上定位（索引与原串等长，可直接用于原串）——两个原因：
+ *   ① 管线投影以 `SELECT` 开头，但 **staging 模型不是**：它前面有 `{{ config(...) }}` 块
+ *      与文件头注释（`-- …`）。若锚在 `^\s*select`，staging 恒返回 null ⇒ ④ 永远抛错。
+ *   ② 注释里「select」二字满天飞（本仓散文式注释尤甚）⇒ 不掩就会锚错。
+ * 定位「第一个 `select`」而非「行首 select」：Jinja 块与注释已被掩/跳过后，第一个 `select`
+ * 就是投影关键字。越界形态（选列里带子查询等）由调用方 `rewriteSelectList` 抛错兜底。
  *
  * @param {string} sql
  * @returns {{ selectStart: number, fromStart: number } | null}
  */
 export function selectListBounds(sql) {
-  const sel = /^\s*select\b/i.exec(sql)
+  const masked = maskSqlComments(sql)
+  const sel = /\bselect\b/i.exec(masked)
   if (!sel) return null
-  const rest = sql.slice(sel.index)
+  const rest = masked.slice(sel.index)
   const from = /\n\s*from\b/i.exec(rest)
   if (!from) return null
   return { selectStart: sel.index, fromStart: sel.index + from.index }
@@ -132,7 +141,37 @@ export function extractPipelineExprs(sql) {
 }
 
 /**
- * 生成主流程。对每份**已回填 `expr`** 的契约，重写其全部生产者管线的投影节点列区。
+ * 契约类型 → staging 的 DuckDB SQL 类型文本（照现有 staging 用法）。
+ *
+ * @param {{ type: string }} col
+ * @returns {string}
+ */
+export function sqlType(col) {
+  if (col.type === 'decimal') return 'numeric'
+  if (col.type === 'integer' || col.type === 'smallint' || col.type === 'bigint') return 'int'
+  return col.type
+}
+
+/**
+ * 契约列 → staging 列区文本（每列显式 cast；`org` 注入在 orgAfter 之后）。
+ *
+ * @param {{ name: string, type: string }[]} columns
+ * @param {string} orgAfter
+ * @returns {string}
+ */
+export function buildStagingSelect(columns, orgAfter) {
+  /** @type {string[]} */
+  const lines = []
+  for (const c of columns) {
+    lines.push(`  r['${c.name}']::${sqlType(c)} as ${c.name}`)
+    if (c.name === orgAfter) lines.push('  {{ subject_org() }}       as org')
+  }
+  return 'select\n' + lines.join(',\n')
+}
+
+/**
+ * 生成主流程。对每份**已回填 `expr`** 的契约：重写其全部生产者管线的投影节点列区（③），
+ * 以及对应 staging 模型的列区（④，`org` 注入在 `system_book` 之后，无则首列之后）。
  *
  * @param {string} rootDir 仓根
  * @param {{ seed?: boolean, check?: boolean }} [opts]
@@ -172,6 +211,19 @@ export function runGenerate(rootDir, opts = {}) {
       if (!opts.check) {
         for (const n of doc.nodes) if (n?.id === proj.id) n.data.properties.sql = next
         writeFileSync(abs, JSON.stringify(doc, null, 2) + '\n')
+      }
+    }
+
+    // ④ 消费面：staging 模型列区归一（每列显式 ::type）+ org 注入。
+    const stgRel = `dbt/models/common/staging/stg_${c.domain}_${c.table}.sql`
+    const stgAbs = join(rootDir, stgRel)
+    if (existsSync(stgAbs)) {
+      const stgSql = readFileSync(stgAbs, 'utf8')
+      const orgAfter = colNames.includes('system_book') ? 'system_book' : (colNames[0] ?? '')
+      const nextStg = rewriteSelectList(stgSql, buildStagingSelect(c.columns, orgAfter))
+      if (nextStg !== stgSql) {
+        changed++
+        if (!opts.check) writeFileSync(stgAbs, nextStg)
       }
     }
   }

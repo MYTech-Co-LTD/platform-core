@@ -13,9 +13,11 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import {
   buildPipelineSelect,
+  buildStagingSelect,
   extractPipelineExprs,
   rewriteSelectList,
   runGenerate,
+  sqlType,
 } from './gen-data-projection.mjs'
 
 const roots: string[] = []
@@ -110,5 +112,27 @@ describe('生成器 ③', () => {
     d.nodes[0].data.properties.sql = d.nodes[0].data.properties.sql.replace("'lit'", "'other'")
     writeFileSync(f, JSON.stringify(d, null, 2))
     expect(runGenerate(root, { check: true })).toBe(1)
+  })
+})
+
+describe('生成器 ④', () => {
+  it('类型映射：decimal→numeric、integer→int、varchar 原样', () => {
+    expect(sqlType({ type: 'decimal' })).toBe('numeric')
+    expect(sqlType({ type: 'integer' })).toBe('int')
+    expect(sqlType({ type: 'varchar' })).toBe('varchar')
+  })
+
+  it('org 注入在 system_book 之后，其它列按契约序', () => {
+    const out = buildStagingSelect(
+      [
+        { name: 'batch_id', type: 'varchar' },
+        { name: 'system_book', type: 'varchar' },
+        { name: 'amt', type: 'decimal' },
+      ],
+      'system_book',
+    )
+    expect(out).toBe(
+      "select\n  r['batch_id']::varchar as batch_id,\n  r['system_book']::varchar as system_book,\n  {{ subject_org() }}       as org,\n  r['amt']::numeric as amt",
+    )
   })
 })
