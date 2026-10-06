@@ -107,6 +107,10 @@ jobs:
       # 它防的是「加一列要改 5 处、漏改一处没人拦」——在它之前 `contracts/` 与 `duckle/` 无任何机检。
       # 纯静态：不连库、不读 parquet。
       - run: pnpm exec tsx scripts/check-data-contract.mjs
+      # 生成物 == committed：契约一处改，投影由 scripts/gen-data-projection.mjs 生成。
+      # 手改投影/漏跑生成器 ⇒ 这里红（B10 已降级为保险丝）。
+      # ⚠️ 契约未回填 `expr` 时生成器**跳过**该契约（打印一行提示，不是红）——存量回填后此闸才覆盖其产出。
+      - run: pnpm exec tsx scripts/gen-data-projection.mjs --check
       # 数据面投递门禁（issue #199；正典 deploy/data-plane-deploy-sop.md §E.3）：判据三条——
       # ① lock 首行自校验（截断/被改必对不上）；② lock ↔ 工作区逐文件 sha256/落地路径/模式一致
       # （**改了清单覆盖的任一文件却忘了重跑生成器，这里红**——S1 之前 dbt/ 有 5 个文件静默漂在
