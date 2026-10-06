@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.75.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.74.2...v0.75.0) - 2026-10-06
+- 【新增】docs: #468 采集接源流程固化成 collect-source skill（A→I 判停门 + 公司化触发条件） ([#469](https://github.com/MYTech-Co-LTD/platform-core/pull/469), [95a3c8b](https://github.com/MYTech-Co-LTD/platform-core/commit/95a3c8bab7d4f3b8538f46e2a9102b89234962bd))
+
+
 ## [0.74.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.74.1...v0.74.2) - 2026-10-06
 - 【修复】data: #452 A+E1——问数咽喉 ETag 重试恰一次 + 物化 job 错峰 ([#465](https://github.com/MYTech-Co-LTD/platform-core/pull/465), [6058f1d](https://github.com/MYTech-Co-LTD/platform-core/commit/6058f1d5215b593f687b152eb14468a5abef1958))
 
