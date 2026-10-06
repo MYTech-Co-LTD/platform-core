@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.74.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.74.0...v0.74.1) - 2026-10-06
+- 【修复】dbt: 对账四条 audit 只比已闭窗营业日——消读湖撞 tick 的 ETag 竞态（Closes #462） ([#463](https://github.com/MYTech-Co-LTD/platform-core/pull/463), [2fd1f1a](https://github.com/MYTech-Co-LTD/platform-core/commit/2fd1f1ac02208c834e05751e63ed144f800cd6d4))
+
+
 ## [0.74.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.73.0...v0.74.0) - 2026-10-06
 - 【新增】contracts: 契约生成器 —— 契约一处改，管线投影与 staging 由生成器产出（B10 降级为保险丝） ([#461](https://github.com/MYTech-Co-LTD/platform-core/pull/461), [05fa858](https://github.com/MYTech-Co-LTD/platform-core/commit/05fa858bd79ee9a07a4c83f25ef171b11d554ab3))
 
