@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.74.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.73.0...v0.74.0) - 2026-10-06
+- 【新增】contracts: 契约生成器 —— 契约一处改，管线投影与 staging 由生成器产出（B10 降级为保险丝） ([#461](https://github.com/MYTech-Co-LTD/platform-core/pull/461), [05fa858](https://github.com/MYTech-Co-LTD/platform-core/commit/05fa858bd79ee9a07a4c83f25ef171b11d554ab3))
+
+
 ## [0.73.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.72.0...v0.73.0) - 2026-10-06
 - 【新增】dbt: 对账判别式落 audit——赠品命中集复算重落 + 换货半边输入形状守卫（Closes #444） ([#453](https://github.com/MYTech-Co-LTD/platform-core/pull/453), [83ad5fd](https://github.com/MYTech-Co-LTD/platform-core/commit/83ad5fd6c0e5c07d3efeb1cc3025239733b330da))
 
