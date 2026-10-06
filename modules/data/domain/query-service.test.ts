@@ -18,6 +18,10 @@ const ORG = 'org_a'
 const RACE_MSG =
   'HTTP Error: ETag on reading file "s3://shanhai-data/lemeng/retail_order_line/system_book=3120/bizday=2026-10-06/hour=10/all.parquet" was initially "a" and now it returned "b", this likely means the remote file has changed.'
 
+/** #466 M2 负样本：**同面异形**——同为 DuckDB「读文件失败」错误形状、但**无 ETag 词**。
+ *  钉住窄匹配不是「/on reading file/ 就重试」：正则若放宽丢了 ETag，本例必须红。 */
+const NON_RACE_MSG = 'HTTP Error: 500 on reading file "s3://x/y.parquet"'
+
 const METRIC = {
   id: 'sales_daily', title: '销售日明细', description: '',
   requiredScope: 'data:query', subjectColumn: 'org',
@@ -135,7 +139,9 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
         return { columns: ['org', 'day'], rows: [['org_a', '2026-08-15']] }
       },
     }
+    const startedAt = Date.now()                             // #466 M1：0 注入必须=立即——
     const out = await runQuery(flaky, ORG, req(), 'sales_daily', {})
+    expect(Date.now() - startedAt).toBeLessThan(500)         // 实现若忽略注入、写死 1000ms 默认，这里红
     expect(out.status).toBe('ok')
     expect(calls).toBe(2)                                    // 恰一次：不是 0 次也不是 ≥3 次
     // 重试成功也留痕：reason=lake_race_retry 是 spec §3.5 判「重试长期是否够用」的数据源
@@ -162,18 +168,41 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     expect(a.rows[0]).toMatchObject({ verdict: 'error', reason: 'warehouse_transient' })
   })
 
+  it('race：注入 30ms 则真等（≥25ms）又不等默认 1000ms（<500ms）——raceRetryDelayMs 被真实消费', async () => {
+    // #466 M1 正方向：钉「注入值被消费」本身，不只钉 0——
+    //   若实现把注入值丢掉（恒 0）→ <25ms 红；若写死默认 1000ms → <500ms 红。
+    let calls = 0
+    const flaky: QueryDeps = {
+      pool, adoptedSources: new Set(),
+      raceRetryDelayMs: 30,
+      execute: async () => {
+        calls++
+        if (calls === 1) throw new Error(RACE_MSG)
+        return { columns: ['org', 'day'], rows: [['org_a', '2026-08-15']] }
+      },
+    }
+    const startedAt = Date.now()
+    const out = await runQuery(flaky, ORG, req(), 'sales_daily', {})
+    const elapsed = Date.now() - startedAt
+    expect(elapsed).toBeGreaterThanOrEqual(25)               // 真等了（Node 计时器不早发，30ms 注入实际 ≥30）
+    expect(elapsed).toBeLessThan(500)                        // 又没等默认的 1000ms
+    expect(out.status).toBe('ok')
+    expect(calls).toBe(2)
+  })
+
   it('race：非 ETag 错误不重试（calls=1）→ 原样 warehouse_error（窄匹配的回归护栏）', async () => {
     let calls = 0
     const bad: QueryDeps = {
       pool, adoptedSources: new Set(),
       raceRetryDelayMs: 0,
-      execute: async () => { calls++; throw new Error('boom') },
+      execute: async () => { calls++; throw new Error(NON_RACE_MSG) },
     }
     const out = await runQuery(bad, ORG, req(), 'sales_daily', {})
-    expect(calls).toBe(1)
+    expect(calls).toBe(1)                                    // 同面异形：读了文件但不是 ETag 竞态 ⇒ 不重试
     expect(out.status).toBe('error')
     if (out.status !== 'error') return
     expect(out.reason).toBe('warehouse_error')
+    expect(out.detail).toBe(NON_RACE_MSG)                    // 原文供排障
   })
 
   it('error：未配仓库 → reason=warehouse_unconfigured（不是 warehouse_error）', async () => {
