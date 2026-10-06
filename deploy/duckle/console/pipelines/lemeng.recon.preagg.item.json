@@ -226,7 +226,7 @@
         "label": "report 逐店明细落盘（覆盖写=幂等）",
         "componentId": "snk.csv",
         "properties": {
-          "path": "${workspace}/reports/recon-preagg/recon-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.csv",
+          "path": "/workspace/reports/recon-preagg/recon-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.csv",
           "mode": "overwrite"
         }
       }
