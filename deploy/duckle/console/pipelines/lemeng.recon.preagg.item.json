@@ -46,6 +46,19 @@
       }
     },
     {
+      "id": "lmat",
+      "type": "transform",
+      "position": { "x": 130, "y": 0 },
+      "data": {
+        "label": "lmat 物化湖行（控制节点上下文丢 S3 连接配置，先落 TABLE）",
+        "componentId": "code.sql",
+        "properties": {
+          "pureSql": true,
+          "sql": "CREATE OR REPLACE TABLE \"lmat\" AS SELECT * FROM \"lake\""
+        }
+      }
+    },
+    {
       "id": "lguard",
       "type": "transform",
       "position": { "x": 260, "y": 0 },
@@ -218,7 +231,8 @@
     }
   ],
   "edges": [
-    { "id": "e_lake_lguard", "source": "lake", "target": "lguard", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_lake_lmat", "source": "lake", "target": "lmat", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_lmat_lguard", "source": "lmat", "target": "lguard", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
     { "id": "e_lguard_lagg", "source": "lguard", "target": "lagg", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
     { "id": "e_lagg_merge", "source": "lagg", "target": "merge", "sourceHandle": "main", "targetHandle": "main_1", "data": { "connectionType": "main" } },
     { "id": "e_pre_pnormal", "source": "pre", "target": "pnormal", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
