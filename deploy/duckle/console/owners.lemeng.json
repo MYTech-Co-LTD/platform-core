@@ -156,6 +156,16 @@
       ],
       "maximumAge": "36h",
       "description": "close 层「昨晚的闭窗尾款收了吗」的凭证（L1 父管线 lemeng.retail.close.l1 每轮写）。2026-09-29 首点成功（两账套 16:00 UTC 各一次）后随下一批补——按 _note ⑪ 定的口径：**日更型用 maximumAge**（不用 expectedAfterSchedule），阈值 36h 与本文件既有三条同口径（日更 24h + 12h 余量）。"
+    },
+    {
+      "match": "/workspace/reports/recon-preagg/recon-*.csv",
+      "owner": "data-eng",
+      "tags": [
+        "lemeng",
+        "recon"
+      ],
+      "maximumAge": "36h",
+      "description": "独立通道对账的成功凭证（子管线 lemeng.recon.preagg.item 的 snk.csv 逐店明细；父管线 lemeng.recon.preagg 每日 16:30 UTC 派发 T-3 一跑）。2026-10-06 随首个判据类管线迁入 console 新增（spec: 2026-10-06-console-vs-job-for-judgements）——写发生 = 判据跑过且未红（红走 alerts.json 的 failure 规则）。⚠️ 时钟只在**重建 catalog 之后**的首个成功 run 起算（见 _note ⑧ 硬前置）。"
     }
   ]
 }

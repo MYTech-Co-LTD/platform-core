@@ -1,0 +1,251 @@
+{
+  "_note": [
+    "独立通道对账 · 子管线（被 lemeng.recon.preagg 的 foreach 派发，每营业日一次）。",
+    "判据：湖侧明细按已对齐口径净化后的净额 vs 网关预聚合端点（nhsoft.report.ai.itemsales.find），逐店 diff。",
+    "【取参口径】book/bucket/day/settled/门店清单**全部来自父管线 ITER 行**——foreach 只替 ${ITER_*}，",
+    "子管线（尤其 tmp/ 直跑时）不吃 ${ENV:} ⇒ 本文件上下文无关，探针态与工作区态同形。",
+    "",
+    "【口径唯一事实源】scripts/lemeng/recon-preagg.sh 头注：",
+    "  net(店) = Σ_订单[(Σ非赠品行额 + order_total_money)/2] − Σ分摊折扣，只收 FINISHED + SALE_ORDER；",
+    "  赠品判别式 = std_price>0 AND sale_money>0 AND qty>0 AND |折扣 − 标价×数量| ≤ 0.02；",
+    "  逐订单归并**不能省**（按行算会把「总额×行数」加进去）；不扣退货单。本文件 lagg 逐字对应该公式。",
+    "",
+    "【gate ↔ 脚本退出码映射】（判红靠它，与 alerts.json 的 failure/recovery 规则接同一张网）",
+    "  lguard / gcode  = 脚本 exit 3（依赖不可用）——湖分区空 / 预聚合端点 code≠0",
+    "  gbranch / gthresh = 脚本 exit 1（判据破）——门店缺 / 差超容差",
+    "  全静默          = 脚本 exit 0（通过；未定稿日也走这条，只报数不判红）",
+    "",
+    "【为什么先看 envelope（gcode 排在最前）】端点业务失败（如 3120 的恒 10006）是 HTTP 200 +",
+    "  code≠0，/result/rows 会是空 ⇒ 若不看 envelope 直接比行，会把「依赖坏了」误判成",
+    "  「全部门店缺失」（假红，且诊断错方向）。rawResponseDestination 落原始报文，",
+    "  envelope 从字节里抠 code——「对源的疑问从字节答，不靠争」（src.rest 该字段的文档语义）。",
+    "",
+    "【容差】tol = max(1.00, |源合计|×0.01%)（脚本 PREAGG_ABS_TOL / PREAGG_MAX_PCT 同款）。",
+    "【两档】settled 由父管线按 T-3 定线传入；violation SQL 恒带 settled=1 条件 ⇒ 未定稿日",
+    "  两闸恒静默、report 照写 = 「只报数不判红」（脚本 PREAGG_UNSETTLED 同义）。",
+    "【产物】/workspace/reports/recon-preagg/recon-<book>-<bizday>.csv（逐店明细，单对象覆盖=幂等）；",
+    "  owners.lemeng.json 以 *.csv maximumAge 36h 作「没有失败的停更」锚（close.l1 同公式：24h+12h）。",
+    "源有而湖无的门店（当日无销售）按脚本同款**只在明细里可见、不判红**。"
+  ],
+  "name": "lemeng.recon.preagg.item",
+  "version": 1,
+  "id": "lemeng.recon.preagg.item",
+  "nodes": [
+    {
+      "id": "lake",
+      "type": "source",
+      "position": { "x": 0, "y": 0 },
+      "data": {
+        "label": "lake T-3 单日零售明细（精确分区）",
+        "componentId": "src.minio",
+        "properties": {
+          "connectionRef": "zos",
+          "bucket": "${ITER_ITEM_BUCKET}",
+          "key": "lemeng/retail_order_line/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/**/*.parquet",
+          "glob": true,
+          "format": "parquet"
+        }
+      }
+    },
+    {
+      "id": "lmat",
+      "type": "transform",
+      "position": { "x": 130, "y": 0 },
+      "data": {
+        "label": "lmat 物化湖行（控制节点上下文丢 S3 连接配置，先落 TABLE）",
+        "componentId": "code.sql",
+        "properties": {
+          "pureSql": true,
+          "sql": "CREATE OR REPLACE TABLE \"lmat\" AS SELECT * FROM \"lake\""
+        }
+      }
+    },
+    {
+      "id": "lguard",
+      "type": "transform",
+      "position": { "x": 260, "y": 0 },
+      "data": {
+        "label": "lguard 湖空即死（exit3 语义）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "recon 依赖不可用（lake_unavailable）：bizday=${ITER_ITEM_BIZDAY} 分区为空——采集未跑或分区缺失"
+        }
+      }
+    },
+    {
+      "id": "lagg",
+      "type": "transform",
+      "position": { "x": 520, "y": 0 },
+      "data": {
+        "label": "lagg 湖侧净化净额（逐订单归并，口径=recon-preagg.sh）",
+        "componentId": "code.sql",
+        "properties": {
+          "rawSql": true,
+          "sql": "WITH per_order AS (\n  SELECT CAST(branch_num AS INTEGER) AS b,\n         CAST(order_no AS VARCHAR) AS o,\n         sum(CASE WHEN CAST(order_detail_std_price AS DOUBLE) > 0\n                    AND CAST(sale_money AS DOUBLE) > 0\n                    AND CAST(quantity AS DOUBLE) > 0\n                    AND abs(CAST(discount_money AS DOUBLE)\n                            - CAST(order_detail_std_price AS DOUBLE) * CAST(quantity AS DOUBLE)) <= 0.02\n                  THEN 0 ELSE CAST(sale_money AS DOUBLE) END) AS ng,\n         max(CAST(order_total_money AS DOUBLE)) AS tot,\n         sum(CAST(order_detail_share_discount AS DOUBLE)) AS sd\n  FROM \"lguard\"\n  WHERE CAST(state AS VARCHAR) = 'FINISHED'\n    AND CAST(order_transaction_type AS VARCHAR) = 'SALE_ORDER'\n  GROUP BY 1, 2)\nSELECT b AS branch_num,\n       round(sum((ng + tot) / 2 - sd), 2) AS net,\n       'lake' AS side\nFROM per_order GROUP BY b ORDER BY b"
+        }
+      }
+    },
+    {
+      "id": "pre",
+      "type": "source",
+      "position": { "x": 0, "y": 260 },
+      "data": {
+        "label": "pre 预聚合端点（branch 汇总）+ 原始报文落盘",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.itemsales.find",
+          "method": "POST",
+          "headers": { "Content-Type": "application/json" },
+          "body": "{\"bizday_start\":\"${ITER_ITEM_BIZDAY}\",\"bizday_end\":\"${ITER_ITEM_BIZDAY}\",\"summary_types\":[\"branch\"],\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS_JSON}}",
+          "responsePath": "/result/rows",
+          "paginationType": "none",
+          "rawResponseDestination": "/workspace/reports/recon-preagg/raw-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.json",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "pnormal",
+      "type": "transform",
+      "position": { "x": 260, "y": 260 },
+      "data": {
+        "label": "pnormal 源侧行定型（对齐湖侧形状）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(sale_money AS DOUBLE) AS net,\n       'pre' AS side\nFROM input"
+        }
+      }
+    },
+    {
+      "id": "envelope",
+      "type": "transform",
+      "position": { "x": 260, "y": 420 },
+      "data": {
+        "label": "envelope 从原始报文抠网关 code（≠0 的行）",
+        "componentId": "code.sql",
+        "properties": {
+          "rawSql": true,
+          "sql": "SELECT CAST(code AS INTEGER) AS code, CAST(msg AS VARCHAR) AS msg\nFROM read_json_auto('/workspace/reports/recon-preagg/raw-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.json')\nWHERE CAST(code AS INTEGER) <> 0"
+        }
+      }
+    },
+    {
+      "id": "gcode",
+      "type": "transform",
+      "position": { "x": 520, "y": 420 },
+      "data": {
+        "label": "gcode 依赖闸：code≠0 即死（exit3 语义）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "recon 依赖不可用（pre_call）：预聚合端点返回非 0 code（{rows} 条）——bizday=${ITER_ITEM_BIZDAY}，修依赖不是查账"
+        }
+      }
+    },
+    {
+      "id": "merge",
+      "type": "transform",
+      "position": { "x": 780, "y": 120 },
+      "data": {
+        "label": "merge 两侧并流（UNION ALL）",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "diff",
+      "type": "transform",
+      "position": { "x": 1040, "y": 120 },
+      "data": {
+        "label": "diff 逐店透视（任一侧缺=NULL）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       max(CASE WHEN side = 'lake' THEN net END) AS net_lake,\n       max(CASE WHEN side = 'pre' THEN net END) AS net_pre,\n       round(max(CASE WHEN side = 'pre' THEN net END)\n           - max(CASE WHEN side = 'lake' THEN net END), 2) AS diff\nFROM input GROUP BY 1 ORDER BY 1"
+        }
+      }
+    },
+    {
+      "id": "vbranch",
+      "type": "transform",
+      "position": { "x": 1300, "y": 0 },
+      "data": {
+        "label": "vbranch 门店缺失违规行（未定稿恒空）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT branch_num, net_lake FROM input\nWHERE net_pre IS NULL AND ${ITER_ITEM_SETTLED} = 1"
+        }
+      }
+    },
+    {
+      "id": "gbranch",
+      "type": "transform",
+      "position": { "x": 1560, "y": 0 },
+      "data": {
+        "label": "gbranch 判据闸：湖有源无即死（exit1 语义）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "recon 判据破（branch_missing）：湖有而源无 {rows} 家——bizday=${ITER_ITEM_BIZDAY}"
+        }
+      }
+    },
+    {
+      "id": "vthresh",
+      "type": "transform",
+      "position": { "x": 1300, "y": 220 },
+      "data": {
+        "label": "vthresh 容差违规（单行，未定稿恒空）",
+        "componentId": "code.sql",
+        "properties": {
+          "rawSql": true,
+          "sql": "WITH t AS (SELECT round(sum(net_lake), 2) AS lt, round(sum(net_pre), 2) AS pt FROM \"diff\"),\nv AS (SELECT lt, pt, round(pt - lt, 2) AS diff,\n      CASE WHEN pt > 0 THEN round((pt - lt) / pt * 100, 4) ELSE 0.0 END AS pct,\n      round(greatest(1.00, abs(COALESCE(pt, 0)) * 0.0001), 2) AS tol\n      FROM t)\nSELECT lt, pt, diff, pct, tol FROM v\nWHERE ${ITER_ITEM_SETTLED} = 1 AND abs(COALESCE(diff, 0)) > tol"
+        }
+      }
+    },
+    {
+      "id": "gthresh",
+      "type": "transform",
+      "position": { "x": 1560, "y": 220 },
+      "data": {
+        "label": "gthresh 判据闸：差超容差即死（exit1 语义）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "recon 判据破（threshold）：总差超容差（bizday=${ITER_ITEM_BIZDAY}；违规行 {rows} 行，lt/pt/diff/pct/tol 数值见本 run 的 vthresh 节点输出与 reports/recon-preagg/*.csv）"
+        }
+      }
+    },
+    {
+      "id": "report",
+      "type": "sink",
+      "position": { "x": 1300, "y": 400 },
+      "data": {
+        "label": "report 逐店明细落盘（覆盖写=幂等）",
+        "componentId": "snk.csv",
+        "properties": {
+          "path": "/workspace/reports/recon-preagg/recon-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.csv",
+          "mode": "overwrite"
+        }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e_lake_lmat", "source": "lake", "target": "lmat", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_lmat_lguard", "source": "lmat", "target": "lguard", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_lguard_lagg", "source": "lguard", "target": "lagg", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_lagg_merge", "source": "lagg", "target": "merge", "sourceHandle": "main", "targetHandle": "main_1", "data": { "connectionType": "main" } },
+    { "id": "e_pre_pnormal", "source": "pre", "target": "pnormal", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_pnormal_merge", "source": "pnormal", "target": "merge", "sourceHandle": "main", "targetHandle": "main_2", "data": { "connectionType": "main" } },
+    { "id": "e_pre_envelope", "source": "pre", "target": "envelope", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_envelope_gcode", "source": "envelope", "target": "gcode", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_merge_diff", "source": "merge", "target": "diff", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_diff_report", "source": "diff", "target": "report", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_diff_vbranch", "source": "diff", "target": "vbranch", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_vbranch_gbranch", "source": "vbranch", "target": "gbranch", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_diff_vthresh", "source": "diff", "target": "vthresh", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_vthresh_gthresh", "source": "vthresh", "target": "gthresh", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } }
+  ]
+}

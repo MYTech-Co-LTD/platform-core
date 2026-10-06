@@ -1,0 +1,90 @@
+{
+  "_note": [
+    "独立通道对账（正典 §1.4 第三层）· 父管线：定出 T-3 营业日与门店清单，交子管线 lemeng.recon.preagg.item 执行判据。",
+    "判据与口径的**唯一事实源** = scripts/lemeng/recon-preagg.sh 头注（赠品判别式 / 逐订单归并 / 不扣退货 / 容差 / 定稿线）；本管线不复制公式正文。",
+    "",
+    "调度语义：16:30 UTC = 上海 00:30。上海日 = CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + 8h",
+    "（引擎 current_date 是 UTC，别直接用——SOP §E.7 同款教训）。bizday = 上海日 - 3 = 定稿线 T-3：",
+    "过线的营业日源侧不再变 ⇒ 零容差判；未过线只报数。settled 列随行传给子管线的判据闸。",
+    "",
+    "pguard（no-rows 即死）：T-3 分区无 FINISHED SALE_ORDER 行 = 分区缺失**或当日零销**，",
+    "按脚本同款保守判「依赖不可用」（脚本 exit 3 语义），不是判据破。",
+    "",
+    "已知代价：plake 是**全书** glob（bizday=**）——编译期 key 拿不到运行时日期（占位符不做算术，",
+    "见 windows.l1 的注）。只为取 T-3 的门店清单；重活（单日明细判据）在子管线里按精确 key 读。",
+    "数据面按年增长后若变慢，优化点在这里（先算日期再读），不在子管线。",
+    "",
+    "无 retry：判据红是真红，自动重试只会重复吵群。瞬时抖动由次日的 recovery 告警自愈。",
+    "",
+    "3120 不排班本管线：其报表族端点自 2026-09-30 起恒 10006（回归未修），",
+    "排上去只会天天刷「依赖不可用」红——这正是销账判据里「3120 通道坏不刷红」的处理方式：**不排**，修好再加。",
+    "",
+    "样板出处：docs/superpowers/specs/2026-10-06-console-vs-job-for-judgements.md（C 方案可行性实测）+ issue #428（接调度）。"
+  ],
+  "name": "lemeng.recon.preagg",
+  "version": 1,
+  "id": "lemeng.recon.preagg",
+  "nodes": [
+    {
+      "id": "plake",
+      "type": "source",
+      "position": { "x": 0, "y": 0 },
+      "data": {
+        "label": "plake 全书零售明细（只取门店清单）",
+        "componentId": "src.minio",
+        "properties": {
+          "connectionRef": "zos",
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/retail_order_line/system_book=${ENV:SYSTEM_BOOK}/**/*.parquet",
+          "glob": true,
+          "format": "parquet"
+        }
+      }
+    },
+    {
+      "id": "pday",
+      "type": "transform",
+      "position": { "x": 280, "y": 0 },
+      "data": {
+        "label": "pday 定稿日 T-3 + 门店清单 + settled",
+        "componentId": "code.sql",
+        "properties": {
+          "pureSql": true,
+          "sql": "CREATE OR REPLACE TABLE \"pday\" AS\nWITH d AS (SELECT CAST(CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + INTERVAL 8 HOUR AS DATE) AS sh_today),\nf AS (SELECT * FROM \"plake\" WHERE CAST(bizday AS DATE) = (SELECT sh_today FROM d) - 3\n  AND CAST(state AS VARCHAR) = 'FINISHED'\n  AND CAST(order_transaction_type AS VARCHAR) = 'SALE_ORDER'),\nb AS (SELECT DISTINCT CAST(branch_num AS INTEGER) AS bn FROM f),\nj AS (SELECT '[' || string_agg(CAST(bn AS VARCHAR), ',' ORDER BY bn) || ']' AS branch_nums_json FROM b HAVING count(*) > 0)\nSELECT strftime((SELECT sh_today FROM d) - 3, '%Y-%m-%d') AS bizday,\n       1 AS settled,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       '${ENV:ZOS_BUCKET}' AS bucket,\n       branch_nums_json\nFROM j"
+        }
+      }
+    },
+    {
+      "id": "pguard",
+      "type": "transform",
+      "position": { "x": 560, "y": 0 },
+      "data": {
+        "label": "pguard 依赖闸：T-3 无行即死",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "recon 依赖不可用（lake_unavailable）：T-3（上海日-3）无 FINISHED SALE_ORDER 行——分区缺失或当日零销，保守判依赖不判账（脚本 exit 3 同款）。book=${ENV:SYSTEM_BOOK}"
+        }
+      }
+    },
+    {
+      "id": "pfe",
+      "type": "transform",
+      "position": { "x": 840, "y": 0 },
+      "data": {
+        "label": "pfe 逐日派发（当前恒 1 行：T-3）",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "pipelineRef": "${workspace}/pipelines/lemeng.recon.preagg.item.json",
+          "itemKey": "bizday",
+          "concurrency": 1
+        }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e_plake_pday", "source": "plake", "target": "pday", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_pday_pguard", "source": "pday", "target": "pguard", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
+    { "id": "e_pguard_pfe", "source": "pguard", "target": "pfe", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } }
+  ]
+}

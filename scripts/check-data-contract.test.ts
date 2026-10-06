@@ -196,6 +196,28 @@ describe('check-data-contract', () => {
     expect(v[0]!.message).toContain('没有生产者')
   })
 
+  it('只读不写（src.* 引用 prefix、无 snk.*）不是生产者 ⇒ 不参与列比对（#447 收窄）', () => {
+    const root = fixture()
+    // 读者：只在 src.minio 的 key 里引用 prefix，没有任何 snk.* 写它。
+    // 旧判定（文本含 prefix 即生产者）会把它拉去比对 code.sql 投影 ⇒ 红；
+    // 收窄后豁免 ⇒ 整仓绿。判据/对账类管线（lemeng.recon.preagg）首撞的正是这个形状。
+    writeFileSync(
+      join(root, 'deploy/duckle/console/pipelines/x.y.reader.json'),
+      JSON.stringify(
+        {
+          nodes: [
+            { id: 'r', data: { componentId: 'src.minio', properties: { bucket: 'b', key: 'x/y/bizday=2026-01-01/**/*.parquet', glob: true } } },
+            { id: 'agg', data: { componentId: 'code.sql', properties: { sql: 'SELECT 1 AS whatever' } } },
+          ],
+          edges: [],
+        },
+        null,
+        2,
+      ),
+    )
+    expect(checkDataContract(root)).toEqual([])
+  })
+
   it('同一 prefix 的**每个**生产者都要对（两个文件，一个错 ⇒ 红）', () => {
     const root = fixture()
     writeFileSync(

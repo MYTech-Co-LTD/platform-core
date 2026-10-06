@@ -101,5 +101,26 @@
     "last_run_duration_ms": null,
     "last_run_error": null,
     "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.recon.preagg",
+    "pipeline_id": "lemeng.recon.preagg",
+    "name": "lemeng.recon.preagg",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "30 16 * * *"
+    },
+    "timezone": "UTC",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
   }
 ]

@@ -8,7 +8,7 @@
 > `_note` 与 handbook §1.6 案例库。**本文件不复制正文。**
 > **维护约定**：改了乐檬任何管线的节点/边 ⇒ 改本图，并重跑 `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`。
 
-## 乐檬的三形态 × 8 条管线
+## 乐檬的四形态 × 10 条管线
 
 | 形态 | 文件 | 份数 |
 |---|---|---|
@@ -16,6 +16,7 @@
 | **L1 编排**（跨窗循环） | `lemeng.retail.windows.l1.json` · `lemeng.retail.tick.l1.json` · `lemeng.retail.close.l1.json` | 3 |
 | **业务子管线**（单窗怎么采，被 L1 复用） | `lemeng.retail_order_line.window.json` · `lemeng.retail_order_line.tick.json` | 2 |
 | **回填变体**（只差窗口来源，不进调度） | `lemeng.retail.windows.backfill.json` | 1 |
+| **判据/对账**（管线外判据落进管线，不采数不写湖） | `lemeng.recon.preagg.json` · `lemeng.recon.preagg.item.json` | 文件双账套同；**仅 64188 排班** |
 
 ---
 
@@ -133,6 +134,57 @@ flowchart TD
 **三兄弟的差别只在窗口表**：`windows` = 24 窗（日批，零点在 UTC 02:30 / 10:30 双点火）；
 `tick` = 当前小时 + 前一小时（每 5 分钟，`misfire:skip`，catchup 结构上补不回错过的窗）；
 `close` = 仅前一小时（1 窗）。`backfill` 变体与 `windows` 同形，**只差窗口来源是参数**（`BIZDAY`），且**不含 `op`/`wh`**（手动驱动、不进调度）。
+
+---
+
+## 图 3 · 独立通道对账（判据类，2026-10-06 迁入）
+
+> **判据类管线**：不采数、不写湖 —— 拿湖内明细按**已对齐口径**净化后与网关**预聚合端点**逐店比对
+> （正典 §1.4 第三层）。判据与口径的**唯一事实源** = `scripts/lemeng/recon-preagg.sh`（定稿线 T-3、
+> 容差、退出码契约都在它头注里）；本图只是它的 console 落法。**3120 不排班**（报表族端点恒 10006
+> 回归未修，排上去 = 天天刷依赖红；修好再加 `schedules/3120.json` 条目）。
+> gate ↔ 脚本退出码：`lguard`/`gcode` = exit3（依赖不可用），`gbranch`/`gthresh` = exit1（判据破），
+> 全静默 = exit0（未定稿日也走这条，只报数）。
+
+```mermaid
+flowchart TD
+  PD["③ pday code.sql —— 定稿日 T-3（上海日-3）+ 门店清单 + settled<br/>上海日 = CURRENT_TIMESTAMP+8h（引擎 current_date 是 UTC）"]:::e3
+  PD --> PG["② pguard ctl.die 依赖闸 —— T-3 分区无行即红（exit3：<br/>分区缺失或零销日，保守判依赖不判账）"]:::e2
+  PG --> FE["① pfe ctl.foreach —— 单行派发子管线（itemKey=bizday）"]:::e1
+  FE --> LK["② lake src.minio 精确分区（bizday=ITER 占位）"]:::e2
+  LK --> LG["② lguard ctl.die 湖空即红（exit3）"]:::e2
+  LG --> LA["③ lagg code.sql —— 湖侧净化净额（逐订单归并，口径=脚本）"]:::e3
+  FE --> PR["② pre src.rest 预聚合端点（itemsales.find branch 汇总）<br/>原始报文落盘 rawResponseDestination"]:::e2
+  PR --> EN["③ envelope code.sql —— 从落盘报文抠网关 code（≠0 的行）"]:::e3
+  EN --> GC["② gcode ctl.die 依赖闸 —— code≠0 即红（exit3）<br/>先于判据闸：防「依赖坏」被误诊成「门店缺失」假红"]:::e2
+  PR --> PN["③ pnormal code.sql —— 源侧行定型"]:::e3
+  LA --> MG["① merge ctl.merge —— 两侧并流（UNION ALL BY NAME）"]:::e1
+  PN --> MG
+  MG --> DF["③ diff code.sql —— 逐店透视（任一侧缺=NULL）"]:::e3
+  DF --> VB["③ vbranch code.sql —— 门店缺失违规行（未定稿恒空）"]:::e3
+  VB --> GB["② gbranch ctl.die 判据闸（exit1：湖有源无）"]:::e2
+  DF --> VT["③ vthresh code.sql —— 容差违规单行（未定稿恒空）"]:::e3
+  VT --> GT["② gthresh ctl.die 判据闸（exit1：差超容差）"]:::e2
+  DF --> RP["② report snk.csv —— 逐店明细落盘（覆盖写=幂等；<br/>owners 以 *.csv maximumAge 36h 作停更锚）"]:::e2
+  classDef e1 fill:#e8f0fe,stroke:#4285f4,color:#0b3d91
+  classDef e2 fill:#fff4e5,stroke:#e8710a,color:#7a3300
+  classDef e3 fill:#e6f4ea,stroke:#137333,color:#0d5221
+```
+
+| 节点 | 档 | 组件的 | 我们的 |
+|---|---|---|---|
+| `pday` | ③ | SQL 执行壳 | T-3 定稿线（上海日-3）· 门店清单 JSON · settled 两档 |
+| `pguard` / `lguard` | ② | 无行即红 | 空分区/零销日 = 依赖不可用（脚本 exit3 同款保守） |
+| `lagg` | ③ | SQL 执行壳 | 净额口径逐字对应 `recon-preagg.sh`（赠品判别式 / 逐订单归并 / 不扣退货） |
+| `pre` | ② | REST · 重试 · 原始报文落盘 | 请求体（bizday / 门店清单来自 ITER）· `responsePath=/result/rows` |
+| `envelope` + `gcode` | ③+② | rawSql 读落盘字节 · 有行即红 | **先看 envelope 再判行**：code≠0 是依赖坏（10006 形状），不判会假红成「门店缺失」 |
+| `diff` | ③ | SQL 执行壳 | 逐店透视（两侧 UNION BY NAME，缺侧=NULL） |
+| `vbranch`/`gbranch` · `vthresh`/`gthresh` | ③+② | SQL 壳 + 有行即红 | 判据两档：violation SQL 恒带 `settled=1` ⇒ 未定稿日只报数不判红 |
+| `report` | ② | CSV 覆盖写 | 逐店明细 = 审计工件 + owners 停更锚（36h） |
+
+**与脚本（`recon-preagg.sh`）的关系**：判据本体已迁入本管线；脚本保留为**免 console 的手工/排障入口**
+（防漂移一致性测试见 spec §7，待补）；写动作（回填闭环 `recon-day-heal.sh`）**不进管线**，仍走
+openship job —— 切分依据 = spec `docs/superpowers/specs/2026-10-06-console-vs-job-for-judgements.md` §5/§7。
 
 ---
 
