@@ -38,7 +38,7 @@ contracts/
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `contractVersion` | ✅ | 只接受 `1`。改格式要递增版本号并同步元 schema 与本节，**不许原地改语义** |
+| `contractVersion` | ✅ | 只接受 `2`。改格式要递增版本号并同步元 schema 与本节，**不许原地改语义**（`1 → 2`：列上新增 `expr`、顶层预留 `sourceFields`） |
 | `domain` / `table` | ✅ | 数据域与表名；与 `layout.prefix` 必须一致（跨字段，校验器补检） |
 | `owner` | ✅ | 负责方（团队/角色名）。**不写个人联系方式**——联系方式的取法在 owners.json / README，不在契约里 |
 | `layout.prefix` | ✅ | 桶内前缀，等于 `<domain>/<table>` |
@@ -47,6 +47,8 @@ contracts/
 | `layout.fileName` | ✅ | 只接受 `all.parquet`，见 §3 |
 | `batch.markerColumn` / `batch.type` | ✅ | 批次标记的列名与类型 |
 | `columns[]` | ✅ | `name` / `type` / `nullable` 三者必填；`decimal` 另需 `precision` + `scale` |
+| `columns[].expr` | ⬜ 可选 | **该列从投影节点的输入关系到该列的完整 SQL 表达式**（逐字，含 cast）。契约生成器（`scripts/gen-data-projection.mjs`）用它产出管线投影 / staging 投影；缺省 = 该契约尚未回填，生成器跳过 |
+| `sourceFields` | ⬜ 可选 | **预留（本批不消费）**：源侧原始字段清单（`name` + `type`），供生成器产出 `src.rest` 的 `data.schema`。留位是为了后续不再动格式；当前允许缺省 |
 
 ## 3 两条写死在 schema 里的纪律（不是风格偏好）
 
@@ -97,6 +99,15 @@ JSON Schema 没有跨字段引用能力。以下六条**过了 schema 也可能�
 6. 分区键列不得声明 nullable = true
 
 ### 4.3 校验器：**当前不存在**（这是本任务最大的一条欠账）
+
+> ⚠️ **2026-10-06 订正：本目录已有消费方** —— `scripts/check-data-contract.mjs`（B10 门禁，把契约钉成「湖列集的唯一事实源」）**已消费 `contracts/**`**；同一实施计划（`docs/superpowers/plans/2026-10-06-contract-projection-generator.md`）的契约生成器 `scripts/gen-data-projection.mjs` **也已落地**（把管线投影与 staging 投影变成**生成物**）。**本节原文「本仓没有任何脚本消费 `contracts/`」已过时**——保留下文作历史记录，别照抄它的结论。
+>
+> **生成器入口（改列集只动契约一处）**：
+> `pnpm exec tsx scripts/gen-data-projection.mjs --seed`（一次性回填：从现存投影反抽 `columns[].expr` 写回本目录，只填空缺项）
+> → `pnpm exec tsx scripts/gen-data-projection.mjs`（按契约重写 ③ 管线投影 + ④ staging 投影）
+> → `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`（dbt/ 变了必须重生成 lock）。
+> `--check` 形态跑在 CI `gates`（生成物 == committed；手改投影/漏跑生成器 ⇒ 红）。
+> 注意区分两件事：上面这条消费是**跨文件一致性门禁**（契约 ↔ 管线 ↔ staging 三处列集对齐），**不是**用本元 schema 校验契约文档本身；§4.2 那六条跨字段规则**仍不在任何 CI 里**（见 §5）。
 
 本仓**没有任何脚本消费 `contracts/`**——没有校验器、没有 CI 步骤、没有 dbt/duckle 侧的读取方。
 `docs/architecture.md` §2 的原话就是「它们的 env 键等约束**当前没有任何静态门禁**」。

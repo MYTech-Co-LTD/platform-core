@@ -327,7 +327,7 @@
 | **租户隔离** | 模块迁移建表必须有 `org`。判据是**真库对账**（跑一遍模块 migrations 再查 `information_schema`），且按**累积终态**判、不按文件判——按文件判会误报 `modules/demo`（它的 org 在 `003` 才补），而 demo 正是新模块照抄的模板。契约与豁免出口见 `docs/module-protocol.md`「租户隔离 CI 门禁」 | `scripts/check-tenant-isolation.mjs` | `gates` |
 | 装置完好 | `.githooks/pre-push` 带执行位 + 根 `prepare` 接线未被改掉（本地防线被改掉时**不会有任何报错**，只会"从此刻起拦不住"） | `.github/workflows/ci.yml` 的 gates | `gates` |
 | typecheck | 聚合 `tsc --noEmit`，**含 `scripts/`**（只跑包内会漏 `scripts/*.mjs` 的类型错误） | `.github/workflows/ci.yml` | `gates` |
-| **B10** 数据契约注册 | 湖的列集**只有一个事实源**：`contracts/*.json`。管线 `flatten` 的投影列集与对应 staging 模型的投影列集（去掉 dbt 注入的 `org`）必须与它**逐列一致**——漏改任一处 ⇒ 红。这条正是 §5.2 ① 的机检面：**"加一列要改 5 处"从此由门禁兜** | `scripts/check-data-contract.mjs` | `gates` |
+| **B10** 数据契约注册 | 湖的列集**只有一个事实源**：`contracts/*.json`。管线 `flatten` 的投影列集与对应 staging 模型的投影列集（去掉 dbt 注入的 `org`）必须与它**逐列一致**——漏改任一处 ⇒ 红。**2026-10-06 起（#460）③④ 已由 `scripts/gen-data-projection.mjs` 生成 ⇒ B10 从"事后查两处一致"降级为保险丝**（真正把关的是 `gen-data-projection --check`：生成物 == committed）；**改列集现在 = 改契约一处 + 跑生成器**。这条正是 §5.2 ① 的机检面 | `scripts/check-data-contract.mjs` + `scripts/gen-data-projection.mjs --check` | `gates` |
 | 测试 / 冒烟 | 挂真 PG 的全量测试 / 双形态**真进程**装载冒烟 | `.github/workflows/ci.yml` | `unit` / `smoke` |
 
 > B1 的 schema 侧由门禁守；`id` → API 前缀由 `moduleApiBasePath(id)`（`apps/server/src/loader.ts:102`）
@@ -450,6 +450,11 @@ env，多租户同进程部署就只能共用一份 ⇒ 无 BYO、单密钥爆�
 | ② | **表级封版标记** `…/_SCHEMA/v<N>.parquet`（**表根**；内容含 `schema_version` / `column_fingerprint` / `partitions` / `rows_expected` / `sealed_at`） | 「**这套文件是齐的**」的唯一凭据（同 `.data-plane-revision` 的思想：**标记在 = 齐**） |
 | ③ | **读侧 fail-closed 断言**：读者路径不变，但**必须**同 FROM 带 `read_parquet('…/_SCHEMA/v<N>.parquet')` | 未封版 ⇒ 标记 404 ⇒ **带名字地失败**（真机验过：CLI 与 pg_duckdb 两条路径都响亮），而不是静默算错 |
 | ④ | **注册表驱动回填** + **展开→迁移顺序** | 顺序不变量（glob 首文件列集必须是最小子集）从"注释里的纪律"升为**前置闸** |
+
+> **2026-10-06（#460）起，管线 `flatten` 投影与 staging 投影是生成物**：`scripts/gen-data-projection.mjs`
+> 按 `contracts/*.json` 重写二者的列区（**只重写列区，`FROM` 及其后逐字保留**），CI `gates` 跑
+> `--check` 兜「生成物 == committed」。⇒ 上表 ① 的「单一事实源」从**人手同步多处**变成
+> **改契约一处 + 跑生成器**。（契约未回填 `columns[].expr` 时生成器**跳过**该契约；存量回填用 `--seed`。）
 
 ```
 展开(expand)  ：只上生产者 → 回填历史 → 湖齐版 → 落封版标记        ← 旧读者全程不受影响（实测）

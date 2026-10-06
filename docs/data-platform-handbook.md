@@ -458,8 +458,15 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 |---|---|---|---|
 | **B7** 部署面 | 全仓**只两份** compose（`deploy/docker-compose.yml` 单元 A + `deploy/data-compose.yml` 单元 B/数据面）；两份里**所有** `ports` 必须 `127.0.0.1:` 起头 | `scripts/check-compose.mjs` | `gates` |
 | **B9** env 契约 | `.env.example` 键齐全 | `scripts/check-env-example.mjs` | `gates` |
+| **B10** 数据契约注册 | 湖列集唯一事实源 = `contracts/*.json`；管线 `flatten` 投影与对应 staging 投影必须与它**逐列一致** | `scripts/check-data-contract.mjs` **+ 生成器 `scripts/gen-data-projection.mjs --check`** | `gates` |
 | **dbt 工件七项** | staging 必含 `r['列名']` 取列模式 / 禁 `::double` / 禁 `union_by_name` / staging 一对一双向 / 语义声明必填字段 / 指标命名空间与同名唯一 / 每个声明指标一条对账 test | `scripts/check-data-models.mjs` | `gates` |
 | **数据面投递** | lock 首行自校验 + lock ↔ 工作区逐文件 sha256/落地路径/模式一致 + 消费面覆盖 | `scripts/check-data-plane-lock.mjs` | `gates` |
+
+> **B10 的形态在 2026-10-06（#460）变了**：生成器 `scripts/gen-data-projection.mjs` 已把**管线 `flatten`
+> 投影与 staging 投影**变成生成物 ⇒ B10 从"事后查两处一致"**降级为保险丝**，真正把关的是
+> `gen-data-projection.mjs --check`（生成物 == committed）。**改列集现在 = 改契约一处 + 跑生成器**
+> （未回填 `columns[].expr` 的契约会被跳过，存量回填跑 `--seed`）；dbt/ 变了记得重生成
+> `deploy/data-plane.lock`。正典：`docs/architecture.md` §4.1（B10）/ §5.2。
 
 #### 第二档：仅文档（无门禁，靠评审与人守）
 
