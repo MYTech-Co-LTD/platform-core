@@ -225,10 +225,22 @@ export function checkDataContract(rootDir) {
     /** 已收窄的 schemaVersion（非法时为 null）——下面各处比较都用它，避免 unknown 参与运算。 */
     const svNum = typeof sv === 'number' && Number.isInteger(sv) && sv >= 1 ? sv : null
 
-    // ② 生产面：文本含 prefix 的管线 = 这张表的生产者
+    // ② 生产面：对该 prefix 有**写**（snk.* 节点属性里引用它）的管线 = 这张表的生产者。
+    //    只在 src.*（读）里引用 prefix 的是**读者**（判据/对账类管线），不参与生产者比对。
+    //    （2026-10-06 收窄：旧判定「文本含 prefix」会把读者误判成生产者——首个判据类管线
+    //    lemeng.recon.preagg 只读湖不写湖，首撞。#447）
     const producers = pipelines.filter((p) => {
       try {
-        return readFileSync(join(rootDir, p), 'utf8').includes(c.prefix)
+        /** @type {any} */
+        const doc = JSON.parse(readFileSync(join(rootDir, p), 'utf8'))
+        const nodes = Array.isArray(doc?.nodes) ? doc.nodes : []
+        return nodes.some(
+          /** @param {any} n */
+          (n) =>
+            typeof n?.data?.componentId === 'string' &&
+            n.data.componentId.startsWith('snk.') &&
+            JSON.stringify(n?.data?.properties ?? {}).includes(c.prefix),
+        )
       } catch {
         return false
       }
