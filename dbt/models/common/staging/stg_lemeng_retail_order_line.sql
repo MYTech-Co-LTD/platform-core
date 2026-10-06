@@ -63,6 +63,20 @@
 --
 -- 【前缀单点】`lemeng_retail_order_line` 段不写死字面量 —— 用 `dbt_project.yml` 的同源 var
 --   `lemeng_retail_order_line_prefix`（与两个 audit 共用一处，避免三份路径字符串各自漂移）。
+--
+-- ⚠️ 下面 `select … from` 之间的**选列区是生成物**：由 `scripts/gen-data-projection.mjs` 按
+--   `contracts/common/lemeng.retail_order_line.json` 重写（**勿手改**；改列集 = 改契约一处 + 跑生成器
+--   + 重生成 `deploy/data-plane.lock`，CI `gates` 的 `--check` 兜「生成物 == committed」）。
+--   生成器只认契约列区、**不保留 `select…from` 之间的注释** ⇒ 原先写在选列里的说明行（2026-10-06
+--   #460）搬到这里保留：
+--     · **v2 新增 6 列**（2026-09-30 Phase 2，#294/#328）：契约 v2 = 24 列；湖已于 2026-09-30 完成分批
+--       回填（#328：五批全 done、全湖均一为 24 列）⇒ 投影可安全加上。类型照抄契约：
+--       varchar ×2（order_transaction_type / order_ref_billno）+ decimal ×4
+--       （order_detail_share_discount / order_detail_std_price / order_detail_price / order_detail_online_qty）。
+--     · **v3 新增 1 列**（2026-10-05，#430，**换货判别的事实源**）：平台 `sale_money` 只算换货单的
+--       「送出半边」= (Σ非赠品行额 + order_total_money) / 2（口径正典见 issue #430；同义描述见契约
+--       `order_total_money` 列的 description）。**迁移步**：湖已回填齐并落了 `_SCHEMA/v3.parquet` 封版
+--       标记 ⇒ 下面 FROM 里那条封版断言就是它的前提（契约 `consumerVersion` 同步置 3）。
 select
   r['batch_id']::varchar as batch_id,
   r['system_book']::varchar as system_book,

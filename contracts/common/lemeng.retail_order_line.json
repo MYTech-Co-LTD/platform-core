@@ -6,7 +6,7 @@
   "domain": "lemeng",
   "table": "retail_order_line",
   "owner": "data-platform",
-  "description": "乐檬零售订单明细行（posorder.find 拉回后管线内 UNNEST 成行粒度）。两账套各采各的；作废/取消单照采，口径在 marts。2026-09-29 列集 v2（#294）：18→24 列，补采 6 个对账字段（订单级 order_transaction_type / order_ref_billno，明细级 order_detail_share_discount / order_detail_std_price / order_detail_price / order_detail_online_qty）；契约格式未变，contractVersion 不动。2026-10-05 列集 v3（#430）：24→25 列，补采订单级 order_total_money —— 平台 sale_money 口径的换货半边靠它算；契约格式仍未变，contractVersion 不动。",
+  "description": "乐檬零售订单明细行（posorder.find 拉回后管线内 UNNEST 成行粒度）。两账套各采各的；作废/取消单照采，口径在 marts。2026-09-29 列集 v2（#294）：18→24 列，补采 6 个对账字段（订单级 order_transaction_type / order_ref_billno，明细级 order_detail_share_discount / order_detail_std_price / order_detail_price / order_detail_online_qty）——该次**只增列、未动契约格式**。2026-10-05 列集 v3（#430）：24→25 列，补采订单级 order_total_money —— 平台 sale_money 口径的换货半边靠它算；同样**只增列、未动契约格式**。⚠️ 上面两处「未动契约格式」指的是**那两次列集变更发生时**；**2026-10-06（#460）起契约格式已升 v2**（`contractVersion: 2`，列上新增 `expr` 供生成器产出投影），别读成当前仍是 v1。",
   "layout": {
     "prefix": "lemeng/retail_order_line",
     "partitionStyle": "hive",
