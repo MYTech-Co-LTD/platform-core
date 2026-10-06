@@ -42,6 +42,18 @@
 #
 # ⚠️ **为什么复查要打一张「不带 schema 的表名」**：那正是 #297 实测的回归形态。
 #    模型改名时这条会红 —— 那是**要的行为**（说明复查面没跟上），改 `WIRE_PROBE_TABLE` 即可。
+#
+# ── ④⑤「下游看得见」探测（2026-10-06 新增；issue #297 最后一条待办 + handbook §7 #4 落地）──
+#    前三条只证「**接线**在」；这两条证「**产物**在且新」——它们同样只会静默失败：
+#
+#   ④ PG 侧新鲜度：fct（日粒度 mart）的 max(bizday) 必须 ≥ 上海今天 − WIRE_FRESH_DAYS（默认 2）。
+#      抓的形状：dbt 物化 job 绿、但读湖读**短了**（少读几天 ⇒ fct 被重建得更短，无任何报错）；
+#      湖侧停更另有 owners 锚（36h）管，这里管「湖有、下游没跟上」。
+#   ⑤ 词表非空：`data.metrics` 行数 ≥ 1（L1 词表被清空/物化出 0 行 ⇒ GET /metrics 回空、MCP 无工具可给）。
+#      L1 job 的回读行有这信息，但 job 不会为它红——这里补上闸。
+#
+#    ④⑤与前几条共用「平台容器 + 平台自己的连接串」的通路 ⇒ **顺带持续 exercising Gate-B 与
+#    search_path**——这正是「看得见下游」的判据：从**消费方**那条路问，不从旁路问。
 
 set -eu
 
@@ -50,11 +62,13 @@ PG_CONTAINER=${WIRE_PG_CONTAINER:-openship-platform-core-shanhai-data-pg_duckdb}
 PLATFORM_CONTAINER=${WIRE_PLATFORM_CONTAINER:-openship-platform-core-shanhai-server}
 SCHEMA=${WIRE_SCHEMA:-staging}
 PROBE_TABLE=${WIRE_PROBE_TABLE:-fct_retail_sale}
+FRESH_DAYS=${WIRE_FRESH_DAYS:-2}
+METRICS_TABLE=${WIRE_METRICS_TABLE:-data.metrics}
 
 die() { echo "WIRE_FAILED: $*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,58p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # 取容器 env 里某个键的值（供**内部**使用；调用方不得把它回显出去）
@@ -67,7 +81,7 @@ need_container() { # <container>
   [ "$(docker inspect --format '{{.State.Running}}' "$1")" = "true" ] || die "容器没在跑：$1"
 }
 
-# ── 三条断言（每条各自 exit 非零；只读，不写任何东西）────────────────────────────
+# ── 五条断言（每条各自 exit 非零；只读，不写任何东西）────────────────────────────
 
 assert_dns() {
   printf '① DNS：%s 内解析 pg_duckdb —— ' "$PLATFORM_CONTAINER"
@@ -98,13 +112,51 @@ const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
 "
 }
 
+# ④ PG 侧新鲜度：日粒度 mart 的 max(bizday) 不得落后上海今天 WIRE_FRESH_DAYS 天以上。
+#    ISO 日期串按字典序比较即日期序，直接在 JS 里比。
+assert_fresh() {
+  printf '④ 新鲜度（%s 的 max(bizday) ≥ 上海今天-%s 天）—— ' "$PROBE_TABLE" "$FRESH_DAYS"
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
+(async()=>{try{
+  await c.connect();
+  const r=await c.query(\"select coalesce(max(bizday)::text,'') as maxday, ((now() at time zone 'Asia/Shanghai')::date - ${FRESH_DAYS})::text as cutoff from ${PROBE_TABLE}\");
+  const {maxday,cutoff}=r.rows[0];
+  if(!maxday){console.log('ERR 表空（max(bizday) 为 null）');process.exit(1)}
+  if(maxday<cutoff){console.log('ERR 停更 max='+maxday+' < 容差线='+cutoff);process.exit(1)}
+  console.log('OK max='+maxday+'（容差线 '+cutoff+'）');
+  await c.end();
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
+# ⑤ 词表非空：平台主库的 data.metrics 至少 1 行（清空 = GET /metrics 空、MCP 无工具可给）。
+assert_metrics() {
+  printf '⑤ 词表非空（%s ≥ 1 行）—— ' "$METRICS_TABLE"
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const c=new Client({connectionString:process.env.DATABASE_URL});
+(async()=>{try{
+  await c.connect();
+  const r=await c.query('select count(*)::int as n from ${METRICS_TABLE}');
+  const n=r.rows[0].n;
+  if(n<1){console.log('ERR 词表 0 行');process.exit(1)}
+  console.log('OK rows='+n);
+  await c.end();
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
 do_check() {
   rc=0
   assert_dns || rc=1
   assert_tcp || rc=1
   assert_query || rc=1
+  assert_fresh || rc=1
+  assert_metrics || rc=1
   if [ "$rc" -eq 0 ]; then
-    echo "wire-warehouse: OK（三条断言全过）"
+    echo "wire-warehouse: OK（五条断言全过）"
   else
     echo "wire-warehouse: FAILED（见上）—— 重做：sh $0" >&2
   fi

@@ -154,7 +154,11 @@ ALTER ROLE <DATA_WAREHOUSE_URL 的 user> IN DATABASE <DATA_WAREHOUSE_URL 的 db>
 - 验收（用**真连接**、且**不带 schema**）：`select count(*) from fct_retail_sale` 应出数。
 
 **本条与 P7 合在一起已固化成脚本**：`sh /opt/lemeng-wire-warehouse.sh`（重做，幂等）/
-`sh /opt/lemeng-wire-warehouse.sh --check`（只读复查三条断言：DNS / TCP / 真查询）。
+`sh /opt/lemeng-wire-warehouse.sh --check`（只读复查**五条**断言：DNS / TCP / 真查询 /
+**④ PG 新鲜度**（fct 的 max(bizday) ≥ 上海今天−2，抓「dbt 绿但读湖读短了」的静默变短）/
+**⑤ 词表非空**（`data.metrics` ≥ 1 行，抓「词表被清空」）——④⑤ 是「下游看得见」探测的落地
+（2026-10-06，#297 最后一格 + handbook §7 #4 转正），且与前三条共用「平台容器 + 平台自己的
+连接串」通路 ⇒ 顺带持续 exercising Gate-B 与 search_path）。
 
 **配套探活 job**：openship job 定时跑 `--check`，**失败即告警**（不许 `continue-on-error`——
 静默漂移 = 回到「没有复查」的状态）。
@@ -182,7 +186,8 @@ ALTER ROLE <DATA_WAREHOUSE_URL 的 user> IN DATABASE <DATA_WAREHOUSE_URL 的 db>
 - [ ] 端口全回环（`docker port` 或 `ss -lnt` 复核 15432/13030 只绑 127.0.0.1）
 - [ ] **Gate-B 断言过**（P7 那两条：`DNS_OK` + `TCP_OK`）——**每次重建容器后都要重跑**
 - [ ] **`search_path` 已绑且真查询出数**（P8b：不带 schema 的 `select count(*) from fct_retail_sale`）
-- [ ] **L1 词表已物化且 `source_system` 非空**（命令见 §F.6 末的订正注）——**这一步当前没有 job，必须手工触发**。
+- [ ] **L1 词表已物化且 `source_system` 非空**（命令见 §F.6 末的订正注）——job 已注册（2026-10-03：
+  `L1 词表物化`，cron `33 4 * * *` UTC；「词表被清空」另有探活 job 的 ⑤ 断言盯着，#297）。
   ⚠️ 判据是「**L1 行的 `source_system` 非空**」，**不是「`data.metrics` 非空」**：`006` 加的列
   **可空**，迁移时库里**已存在**的旧 L1 行在重跑一次 `sync-data-semantics.mjs` 之前
   `source_system` 是 `NULL`，而 `visibleMetrics` 把 `null` 判为「恒可见」（L2 语义）
