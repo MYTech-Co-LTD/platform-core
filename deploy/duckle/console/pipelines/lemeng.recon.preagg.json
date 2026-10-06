@@ -50,7 +50,7 @@
         "componentId": "code.sql",
         "properties": {
           "pureSql": true,
-          "sql": "CREATE OR REPLACE TABLE \"pday\" AS\nWITH d AS (SELECT CAST(CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + INTERVAL 8 HOUR AS DATE) AS sh_today),\nf AS (SELECT * FROM \"plake\" WHERE CAST(bizday AS DATE) = (SELECT sh_today FROM d) - 3\n  AND CAST(state AS VARCHAR) = 'FINISHED'\n  AND CAST(order_transaction_type AS VARCHAR) = 'SALE_ORDER'),\nb AS (SELECT DISTINCT CAST(branch_num AS INTEGER) AS bn FROM f),\nj AS (SELECT '[' || string_agg(CAST(bn AS VARCHAR), ',' ORDER BY bn) || ']' AS branch_nums_json FROM b HAVING count(*) > 0)\nSELECT strftime((SELECT sh_today FROM d) - 3, '%Y-%m-%d') AS bizday,\n       1 AS settled,\n       branch_nums_json\nFROM j"
+          "sql": "CREATE OR REPLACE TABLE \"pday\" AS\nWITH d AS (SELECT CAST(CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + INTERVAL 8 HOUR AS DATE) AS sh_today),\nf AS (SELECT * FROM \"plake\" WHERE CAST(bizday AS DATE) = (SELECT sh_today FROM d) - 3\n  AND CAST(state AS VARCHAR) = 'FINISHED'\n  AND CAST(order_transaction_type AS VARCHAR) = 'SALE_ORDER'),\nb AS (SELECT DISTINCT CAST(branch_num AS INTEGER) AS bn FROM f),\nj AS (SELECT '[' || string_agg(CAST(bn AS VARCHAR), ',' ORDER BY bn) || ']' AS branch_nums_json FROM b HAVING count(*) > 0)\nSELECT strftime((SELECT sh_today FROM d) - 3, '%Y-%m-%d') AS bizday,\n       1 AS settled,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       '${ENV:ZOS_BUCKET}' AS bucket,\n       branch_nums_json\nFROM j"
         }
       }
     },

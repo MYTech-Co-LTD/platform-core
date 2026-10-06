@@ -2,6 +2,8 @@
   "_note": [
     "独立通道对账 · 子管线（被 lemeng.recon.preagg 的 foreach 派发，每营业日一次）。",
     "判据：湖侧明细按已对齐口径净化后的净额 vs 网关预聚合端点（nhsoft.report.ai.itemsales.find），逐店 diff。",
+    "【取参口径】book/bucket/day/settled/门店清单**全部来自父管线 ITER 行**——foreach 只替 ${ITER_*}，",
+    "子管线（尤其 tmp/ 直跑时）不吃 ${ENV:} ⇒ 本文件上下文无关，探针态与工作区态同形。",
     "",
     "【口径唯一事实源】scripts/lemeng/recon-preagg.sh 头注：",
     "  net(店) = Σ_订单[(Σ非赠品行额 + order_total_money)/2] − Σ分摊折扣，只收 FINISHED + SALE_ORDER；",
@@ -38,8 +40,8 @@
         "componentId": "src.minio",
         "properties": {
           "connectionRef": "zos",
-          "bucket": "${ENV:ZOS_BUCKET}",
-          "key": "lemeng/retail_order_line/system_book=${ENV:SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/**/*.parquet",
+          "bucket": "${ITER_ITEM_BUCKET}",
+          "key": "lemeng/retail_order_line/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/**/*.parquet",
           "glob": true,
           "format": "parquet"
         }
@@ -126,7 +128,7 @@
         "componentId": "code.sql",
         "properties": {
           "rawSql": true,
-          "sql": "SELECT CAST(code AS INTEGER) AS code, CAST(msg AS VARCHAR) AS msg\nFROM read_json_auto('/workspace/reports/recon-preagg/raw-${ENV:SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.json')\nWHERE CAST(code AS INTEGER) <> 0"
+          "sql": "SELECT CAST(code AS INTEGER) AS code, CAST(msg AS VARCHAR) AS msg\nFROM read_json_auto('/workspace/reports/recon-preagg/raw-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.json')\nWHERE CAST(code AS INTEGER) <> 0"
         }
       }
     },
@@ -224,7 +226,7 @@
         "label": "report 逐店明细落盘（覆盖写=幂等）",
         "componentId": "snk.csv",
         "properties": {
-          "path": "${workspace}/reports/recon-preagg/recon-${ENV:SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.csv",
+          "path": "${workspace}/reports/recon-preagg/recon-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.csv",
           "mode": "overwrite"
         }
       }
