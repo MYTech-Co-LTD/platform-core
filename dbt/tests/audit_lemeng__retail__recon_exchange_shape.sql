@@ -35,6 +35,9 @@ with src_pq as (
     ) r
     where r['state'] = 'FINISHED'
       and r['order_transaction_type'] = 'SALE_ORDER'
+      -- 只比已闭窗营业日：今天的分区被 tick 重写 ⇒ 与物化建表互撞 ETag 竞态而报 ERROR
+      -- （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。两侧都滤，才是同量。
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 ),
 src_stg as (
     select
@@ -45,6 +48,7 @@ src_stg as (
     from {{ ref('stg_lemeng_retail_order_line') }}
     where state = 'FINISHED'
       and order_transaction_type = 'SALE_ORDER'
+      and bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 ),
 bad_pq as (
     select

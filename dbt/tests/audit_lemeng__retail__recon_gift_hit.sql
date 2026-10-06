@@ -67,6 +67,9 @@ with recheck as (
       and r['sale_money']::numeric > 0
       and r['quantity']::numeric > 0
       and abs(r['discount_money']::numeric - r['order_detail_std_price']::numeric * r['quantity']::numeric) <= 0.02
+      -- 只比已闭窗营业日（今天的分区被 tick 重写 ⇒ ETag 竞态报 ERROR；实测 2026-10-06
+      -- run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。两侧都滤，才是同量。
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
     group by 1, 2, 3, 4
 ),
 materialized as (
@@ -86,6 +89,7 @@ materialized as (
       and sale_money > 0
       and quantity > 0
       and abs(discount_money - order_detail_std_price * quantity) <= 0.02
+      and bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
     group by 1, 2, 3, 4
 )
 select
