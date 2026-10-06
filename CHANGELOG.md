@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.72.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.71.1...v0.72.0) - 2026-10-06
+- 【新增】data: 「下游看得见」探测落地——探活链增 PG 新鲜度/词表非空断言 + 台账订正 ([#451](https://github.com/MYTech-Co-LTD/platform-core/pull/451), [0602d49](https://github.com/MYTech-Co-LTD/platform-core/commit/0602d49c10b798ae57c09c1b5a3d7796e5c6a6db))
+
+
 ## [0.71.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.71.0...v0.71.1) - 2026-10-06
 - 【修复】lemeng: seed-console all 模式三件配置源路径补回 console 前缀（Closes #449） ([#450](https://github.com/MYTech-Co-LTD/platform-core/pull/450), [39fbec9](https://github.com/MYTech-Co-LTD/platform-core/commit/39fbec90b814b11da93e22842ee91d298d2a04ed))
 
