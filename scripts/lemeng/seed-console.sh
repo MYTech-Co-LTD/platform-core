@@ -109,9 +109,9 @@ _pairs() {
       rel = substr($2, length(pre) + 1)
       np = split(rel, p, "/")
       if (np == 2 && p[1] == "pipelines" && p[2] ~ /\.json$/)      print $2 "\t/workspace/" rel
-      else if (only == "all" && rel == "schedules/" book ".json")  print rel "\t/workspace/schedules.json"
-      else if (only == "all" && rel == "alerts.lemeng.json")       print rel "\t/workspace/alerts.json"
-      else if (only == "all" && rel == "owners.lemeng.json")       print rel "\t/workspace/owners.json"
+      else if (only == "all" && rel == "schedules/" book ".json")  print $2 "\t/workspace/schedules.json"
+      else if (only == "all" && rel == "alerts.lemeng.json")       print $2 "\t/workspace/alerts.json"
+      else if (only == "all" && rel == "owners.lemeng.json")       print $2 "\t/workspace/owners.json"
     }' "${LOCK}"
 }
 
