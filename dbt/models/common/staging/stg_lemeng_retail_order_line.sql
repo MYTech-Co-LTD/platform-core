@@ -64,39 +64,32 @@
 -- 【前缀单点】`lemeng_retail_order_line` 段不写死字面量 —— 用 `dbt_project.yml` 的同源 var
 --   `lemeng_retail_order_line_prefix`（与两个 audit 共用一处，避免三份路径字符串各自漂移）。
 select
-  r['batch_id']             as batch_id,
+  r['batch_id']::varchar as batch_id,
   r['system_book']::varchar as system_book,
   {{ subject_org() }}       as org,
-  r['bizday']::date         as bizday,
-  r['hour']::int            as hour,
-  r['order_no']             as order_no,
-  r['order_detail_num']     as order_detail_num,
-  r['branch_num']           as branch_num,
-  r['branch_name']          as branch_name,
-  r['order_time']           as order_time,
-  r['order_operate_time']   as order_operate_time,
-  r['state']                as state,
-  r['order_source']         as order_source,
-  r['item_num']             as item_num,
-  r['item_code']            as item_code,
-  r['sale_money']           as sale_money,
-  r['discount_money']       as discount_money,
-  r['payment_money']        as payment_money,
-  r['quantity']             as quantity,
-  -- ── v2 新增 6 列（2026-09-30 Phase 2，#294/#328）：契约 v2 = 24 列；湖已于 2026-09-30
-  --    完成分批回填（#328：五批全 done、全湖均一为 24 列）⇒ 此处投影可安全加上。
-  --    类型照抄契约：varchar ×2 + decimal ×4（③ 层不改义，只透传并显式 cast 定型）。
-  r['order_transaction_type']::varchar      as order_transaction_type,
-  r['order_ref_billno']::varchar            as order_ref_billno,
-  r['order_detail_share_discount']::numeric as order_detail_share_discount,
-  r['order_detail_std_price']::numeric      as order_detail_std_price,
-  r['order_detail_price']::numeric          as order_detail_price,
-  r['order_detail_online_qty']::numeric     as order_detail_online_qty,
-  -- ── v3 新增 1 列（2026-10-05，#430）：**换货判别的事实源** ────────────────────────
-  --    平台 `sale_money` 只算换货单的「送出半边」= (Σ非赠品行额 + order_total_money)/2。
-  --    **迁移步**：湖已回填齐并落了 `_SCHEMA/v3.parquet` 封版标记，故此处可以引用它——
-  --    下面 FROM 里那条封版断言就是它的前提（契约 `consumerVersion` 同步置 3）。
-  r['order_total_money']::numeric           as order_total_money
+  r['bizday']::date as bizday,
+  r['hour']::int as hour,
+  r['order_no']::varchar as order_no,
+  r['order_detail_num']::varchar as order_detail_num,
+  r['branch_num']::int as branch_num,
+  r['branch_name']::varchar as branch_name,
+  r['order_time']::timestamp as order_time,
+  r['order_operate_time']::timestamp as order_operate_time,
+  r['state']::varchar as state,
+  r['order_source']::varchar as order_source,
+  r['item_num']::varchar as item_num,
+  r['item_code']::varchar as item_code,
+  r['sale_money']::numeric(14,2) as sale_money,
+  r['discount_money']::numeric(14,2) as discount_money,
+  r['payment_money']::numeric(14,2) as payment_money,
+  r['quantity']::numeric(14,3) as quantity,
+  r['order_transaction_type']::varchar as order_transaction_type,
+  r['order_ref_billno']::varchar as order_ref_billno,
+  r['order_detail_share_discount']::numeric(14,2) as order_detail_share_discount,
+  r['order_detail_std_price']::numeric(14,2) as order_detail_std_price,
+  r['order_detail_price']::numeric(14,2) as order_detail_price,
+  r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
+  r['order_total_money']::numeric(14,2) as order_total_money
 -- pg_duckdb 把 read_parquet 委托给 DuckDB 执行。裸扫描结果**不是 PG 关系、不进 pg_class**
 -- （spec §9.4 可见性坑）⇒ 它只出现在 staging 模型内部，物化落点由上面的 config + 项目缺省保证
 -- 是 PG 可见关系（gate 2）。

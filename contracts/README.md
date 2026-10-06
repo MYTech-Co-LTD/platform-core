@@ -100,7 +100,13 @@ JSON Schema 没有跨字段引用能力。以下六条**过了 schema 也可能�
 
 ### 4.3 校验器：**当前不存在**（这是本任务最大的一条欠账）
 
-> ⚠️ **2026-10-06 订正：本目录已有消费方** —— `scripts/check-data-contract.mjs`（B10 门禁，把契约钉成「湖列集的唯一事实源」）**已消费 `contracts/**`**；同一实施计划（`docs/superpowers/plans/2026-10-06-contract-projection-generator.md`）的 Phase 2 契约生成器 `scripts/gen-data-projection.mjs` 也将消费它（把管线投影与 staging 投影变成**生成物**）。**本节原文「本仓没有任何脚本消费 `contracts/`」已过时**——保留下文作历史记录，别照抄它的结论。
+> ⚠️ **2026-10-06 订正：本目录已有消费方** —— `scripts/check-data-contract.mjs`（B10 门禁，把契约钉成「湖列集的唯一事实源」）**已消费 `contracts/**`**；同一实施计划（`docs/superpowers/plans/2026-10-06-contract-projection-generator.md`）的契约生成器 `scripts/gen-data-projection.mjs` **也已落地**（把管线投影与 staging 投影变成**生成物**）。**本节原文「本仓没有任何脚本消费 `contracts/`」已过时**——保留下文作历史记录，别照抄它的结论。
+>
+> **生成器入口（改列集只动契约一处）**：
+> `pnpm exec tsx scripts/gen-data-projection.mjs --seed`（一次性回填：从现存投影反抽 `columns[].expr` 写回本目录，只填空缺项）
+> → `pnpm exec tsx scripts/gen-data-projection.mjs`（按契约重写 ③ 管线投影 + ④ staging 投影）
+> → `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`（dbt/ 变了必须重生成 lock）。
+> `--check` 形态跑在 CI `gates`（生成物 == committed；手改投影/漏跑生成器 ⇒ 红）。
 > 注意区分两件事：上面这条消费是**跨文件一致性门禁**（契约 ↔ 管线 ↔ staging 三处列集对齐），**不是**用本元 schema 校验契约文档本身；§4.2 那六条跨字段规则**仍不在任何 CI 里**（见 §5）。
 
 本仓**没有任何脚本消费 `contracts/`**——没有校验器、没有 CI 步骤、没有 dbt/duckle 侧的读取方。

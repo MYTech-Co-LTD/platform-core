@@ -17,6 +17,7 @@ import {
   extractPipelineExprs,
   rewriteSelectList,
   runGenerate,
+  seedContractText,
   sqlType,
 } from './gen-data-projection.mjs'
 
@@ -116,10 +117,24 @@ describe('生成器 ③', () => {
 })
 
 describe('生成器 ④', () => {
-  it('类型映射：decimal→numeric、integer→int、varchar 原样', () => {
-    expect(sqlType({ type: 'decimal' })).toBe('numeric')
+  it('整数族**逐列保宽**：integer→int、bigint→bigint、smallint→smallint', () => {
+    // 塌成 `int` 会把契约的 bigint 列静默窄化（实测 3000000000::BIGINT::int 直接 out of range）。
     expect(sqlType({ type: 'integer' })).toBe('int')
+    expect(sqlType({ type: 'bigint' })).toBe('bigint')
+    expect(sqlType({ type: 'smallint' })).toBe('smallint')
+  })
+
+  it('decimal 带 precision/scale ⇒ numeric(p,s)；缺则裸 numeric', () => {
+    // 塌成裸 `numeric` 在 DuckDB 是 DECIMAL(18,3)，会把 (18,8) 静默截到 3 位小数。
+    expect(sqlType({ type: 'decimal', precision: 18, scale: 8 })).toBe('numeric(18,8)')
+    expect(sqlType({ type: 'decimal', precision: 14, scale: 2 })).toBe('numeric(14,2)')
+    expect(sqlType({ type: 'decimal' })).toBe('numeric')
+  })
+
+  it('其余类型逐字照抄契约', () => {
     expect(sqlType({ type: 'varchar' })).toBe('varchar')
+    expect(sqlType({ type: 'boolean' })).toBe('boolean')
+    expect(sqlType({ type: 'date' })).toBe('date')
   })
 
   it('org 注入在 system_book 之后，其它列按契约序', () => {
@@ -133,6 +148,60 @@ describe('生成器 ④', () => {
     )
     expect(out).toBe(
       "select\n  r['batch_id']::varchar as batch_id,\n  r['system_book']::varchar as system_book,\n  {{ subject_org() }}       as org,\n  r['amt']::numeric as amt",
+    )
+  })
+
+  it('decimal(p,s)、bigint、boolean 在列区里逐列照抄类型', () => {
+    const out = buildStagingSelect(
+      [
+        { name: 'created_by', type: 'bigint' },
+        { name: 'flag', type: 'boolean' },
+        { name: 'price', type: 'decimal', precision: 18, scale: 8 },
+      ],
+      'created_by',
+    )
+    expect(out).toBe(
+      "select\n  r['created_by']::bigint as created_by,\n  {{ subject_org() }}       as org,\n  r['flag']::boolean as flag,\n  r['price']::numeric(18,8) as price",
+    )
+  })
+})
+
+describe('生成器 --seed（反抽 expr 回填契约）', () => {
+  it('从现存投影回填**缺失**的 expr（多行列对象形态）', () => {
+    const root = fixture({ x: 'CAST(a AS VARCHAR)', y: "'lit'" }, { contractHasExpr: false })
+    const rel = join(root, 'contracts/common/x.y.json')
+    expect(JSON.parse(readFileSync(rel, 'utf8')).columns.every((c: { expr?: string }) => c.expr === undefined)).toBe(
+      true,
+    )
+    expect(runGenerate(root, { seed: true })).toBe(0)
+    const cols = JSON.parse(readFileSync(rel, 'utf8')).columns as { name: string; expr?: string }[]
+    expect(cols.find((c) => c.name === 'x')?.expr).toBe('CAST(a AS VARCHAR)')
+    expect(cols.find((c) => c.name === 'y')?.expr).toBe("'lit'")
+    // 回填后：生成 == 现存投影（③ 零 diff）
+    expect(runGenerate(root, { check: true })).toBe(0)
+  })
+
+  it('单行列对象形态也支持（真契约的形态）', () => {
+    const text = '{\n  "columns": [\n    { "name": "a", "type": "varchar" },\n    { "name": "b", "type": "varchar" }\n  ]\n}\n'
+    const out = seedContractText(text, { a: 'CAST(x AS VARCHAR)' })
+    expect(out).toBe(
+      '{\n  "columns": [\n    { "name": "a", "type": "varchar", "expr": "CAST(x AS VARCHAR)" },\n    { "name": "b", "type": "varchar" }\n  ]\n}\n',
+    )
+    expect(JSON.parse(out).columns[0].expr).toBe('CAST(x AS VARCHAR)')
+  })
+
+  it('已有 expr 不覆盖，且重复跑幂等（只填空缺项）', () => {
+    const root = fixture({ x: 'CAST(a AS VARCHAR)', y: "'lit'" }, { contractHasExpr: false })
+    runGenerate(root, { seed: true })
+    const rel = join(root, 'contracts/common/x.y.json')
+    const afterFirst = readFileSync(rel, 'utf8')
+    expect(runGenerate(root, { seed: true })).toBe(0)
+    expect(readFileSync(rel, 'utf8')).toBe(afterFirst)
+  })
+
+  it('目标列定位不到 ⇒ 抛错（不产半成品）', () => {
+    expect(() => seedContractText('{ "columns": [ { "name": "a", "type": "varchar" } ] }', { missing: 'x' })).toThrow(
+      /找不到列 missing/,
     )
   })
 })

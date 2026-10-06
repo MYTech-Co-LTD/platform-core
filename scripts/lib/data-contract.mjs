@@ -121,10 +121,12 @@ export function collectJson(root, relDir) {
 /**
  * 读一份契约的关键字段。**单形状**（字段恒在）——缺字段时由调用方报违规。
  * `columns[].expr` 缺失时回落空串（生成器据此判「未回填」）。
+ * `precision` / `scale` 只在 `decimal` 列上有值 —— 生成器用它产出 `numeric(p,s)` 的**精确**
+ * cast 目标（裸 `numeric` 在 DuckDB 会塌成 DECIMAL(18,3)，见 gen-data-projection 的 sqlType）。
  *
  * @param {string} root
  * @param {string} rel
- * @returns {{ rel: string, domain: string, table: string, prefix: string, schemaVersion: unknown, consumerVersion: unknown, columns: { name: string, type: string, nullable: boolean, expr: string }[] } | null}
+ * @returns {{ rel: string, domain: string, table: string, prefix: string, schemaVersion: unknown, consumerVersion: unknown, columns: { name: string, type: string, nullable: boolean, expr: string, precision?: number, scale?: number }[] } | null}
  */
 export function readContractDoc(root, rel) {
   /** @type {any} */
@@ -148,6 +150,8 @@ export function readContractDoc(root, rel) {
       type: String(c?.type ?? ''),
       nullable: Boolean(c?.nullable),
       expr: String(c?.expr ?? ''),
+      precision: typeof c?.precision === 'number' ? c.precision : undefined,
+      scale: typeof c?.scale === 'number' ? c.scale : undefined,
     })),
   }
 }

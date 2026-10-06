@@ -15,7 +15,8 @@
 //
 //   · 默认     写文件（生成物 == committed 的**产出**动作）
 //   · `--check` 若任一文件将被改动则 exit 1（CI 用；判据「生成物没被手改」）
-//   · `--seed`  从现存投影反抽 `expr` 回填契约（只填空缺项；见 Phase 3）
+//   · `--seed`  从现存投影反抽 `expr` 回填契约（只填空缺项，已有值不覆盖）。写回用**就地文本插入**
+//               （只在该列对象里插 `"expr"`），**保留契约原有紧凑格式** —— 不重排（见 seedContractText）。
 //
 // ## 未回填 `expr` 的契约一律跳过
 //
@@ -141,21 +142,34 @@ export function extractPipelineExprs(sql) {
 }
 
 /**
- * 契约类型 → staging 的 DuckDB SQL 类型文本（照现有 staging 用法）。
+ * 契约类型 → staging 的 DuckDB SQL 类型文本。
  *
- * @param {{ type: string }} col
+ * ⚠️ **宽度与精度必须逐列照抄契约，不能塌成「通用整数」或裸 `numeric`**：
+ *   · `int` 是 **32 位** —— 把契约的 `bigint` 写成 `::int` 会把 INT64 **窄化**成 INT32
+ *     （实测 `3000000000::BIGINT::int` ⇒ `Conversion Error … out of range for INT32`）。
+ *   · 裸 `::numeric` 在 DuckDB 是 **DECIMAL(18,3)** —— 把 `decimal(18,8)` 写成 `::numeric`
+ *     会**静默**把值截断到 3 位小数（实测 `340.34443333::DECIMAL(18,8)::numeric = 340.344`）。
+ * 契约 `type` 本身就是「DuckDB SQL 类型名」（见 `_schema.schema.json` 的 `columnType` 描述）
+ * ⇒ cast 目标 = 契约类型本身，这正是设计稿 §2.4「每列显式 ::type、类型不变」的落地形态。
+ *
+ * @param {{ type: string, precision?: number, scale?: number }} col
  * @returns {string}
  */
 export function sqlType(col) {
-  if (col.type === 'decimal') return 'numeric'
-  if (col.type === 'integer' || col.type === 'smallint' || col.type === 'bigint') return 'int'
+  if (col.type === 'decimal') {
+    return typeof col.precision === 'number' && typeof col.scale === 'number'
+      ? `numeric(${col.precision},${col.scale})`
+      : 'numeric'
+  }
+  if (col.type === 'integer') return 'int'
+  // bigint / smallint / varchar / date / timestamp / boolean / … 逐字照抄契约类型
   return col.type
 }
 
 /**
  * 契约列 → staging 列区文本（每列显式 cast；`org` 注入在 orgAfter 之后）。
  *
- * @param {{ name: string, type: string }[]} columns
+ * @param {{ name: string, type: string, precision?: number, scale?: number }[]} columns
  * @param {string} orgAfter
  * @returns {string}
  */
@@ -170,8 +184,100 @@ export function buildStagingSelect(columns, orgAfter) {
 }
 
 /**
- * 生成主流程。对每份**已回填 `expr`** 的契约：重写其全部生产者管线的投影节点列区（③），
- * 以及对应 staging 模型的列区（④，`org` 注入在 `system_book` 之后，无则首列之后）。
+ * 每条**生产者管线**里定位到的投影节点（③ 的定位面）——`--seed` 与生成共用同一实现。
+ *
+ * @param {string} rootDir
+ * @param {{ prefix: string, columns: { name: string }[] }} c
+ * @returns {{ abs: string, doc: any, id: string, sql: string }[]}
+ */
+function producerProjections(rootDir, c) {
+  const colNames = c.columns.map((x) => x.name)
+  /** @type {{ abs: string, doc: any, id: string, sql: string }[]} */
+  const out = []
+  for (const p of findProducerPipelines(rootDir, c.prefix)) {
+    const abs = join(rootDir, p)
+    /** @type {any} */
+    let doc
+    try {
+      doc = JSON.parse(readFileSync(abs, 'utf8'))
+    } catch {
+      continue
+    }
+    const proj = findProjectionNode(doc, colNames)
+    if (!proj) continue
+    out.push({ abs, doc, id: proj.id, sql: proj.sql })
+  }
+  return out
+}
+
+/**
+ * 在一份契约**文本**里给若干列就地插入 `expr`（`--seed` 用；**保持原文件格式**，不重排）。
+ *
+ * 契约 `columns[]` 的元素是列对象（单行、多行两种形态都有）。本函数定位 `"name": "<列名>"`
+ * 所在的那个对象，用括号配对（跳过字符串）找到它的闭合 `}`，把 `"expr"` 插在它前面 ——
+ * **只改这一处，其余字节逐字保留** ⇒ `git diff` 只显示新增的 `expr`，不是整份文件重排
+ * （对比 `JSON.stringify(doc,null,2)`：那会把 3 份契约从 ~220 行膨胀到 ~950 行的纯格式 churn）。
+ * 某个待填列没定位到、或对象括号不配对 ⇒ **抛错**（fail loud，不产半成品）。
+ *
+ * @param {string} text
+ * @param {Record<string, string>} fills 列名 → expr（只含**待填**的列）
+ * @returns {string}
+ */
+export function seedContractText(text, fills) {
+  let out = text
+  for (const [name, expr] of Object.entries(fills)) {
+    // 列名是 `[a-z_][a-z0-9_]*`；转义以防将来出现正则元字符（如列名 `type`）
+    const key = JSON.stringify(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const m = new RegExp(`"name"\\s*:\\s*${key}`).exec(out)
+    if (!m) throw new Error(`--seed: 契约文本里找不到列 ${name} 的对象`)
+    const open = out.lastIndexOf('{', m.index)
+    if (open < 0) throw new Error(`--seed: 列 ${name} 的对象起点异常`)
+    // 括号配对，找该对象的闭合 `}`（跳过双引号字符串，含转义）
+    let depth = 0
+    let i = open
+    let inStr = false
+    for (; i < out.length; i++) {
+      const ch = out[i]
+      if (inStr) {
+        if (ch === '\\') i++
+        else if (ch === '"') inStr = false
+        continue
+      }
+      if (ch === '"') inStr = true
+      else if (ch === '{') depth++
+      else if (ch === '}') {
+        depth--
+        if (depth === 0) break
+      }
+    }
+    if (depth !== 0) throw new Error(`--seed: 列 ${name} 的对象括号不配对`)
+    const before = out.slice(0, i)
+    const body = before.replace(/\s+$/, '')
+    const ws = before.slice(body.length)
+    if (ws.includes('\n')) {
+      // 多行对象：`"expr"` 另起一行，缩进沿用最后一个字段行（与 JSON.stringify(…, 2) 同形）
+      const fieldIndent = /(?:^|\n)([ \t]*)\S[^\n]*$/.exec(body)?.[1] ?? ''
+      out =
+        body +
+        ',\n' +
+        fieldIndent +
+        `"expr": ${JSON.stringify(expr)}\n` +
+        ws.replace(/^.*\n/, '') +
+        out.slice(i)
+    } else {
+      // 单行对象：`… "desc" }` ⇒ `… "desc", "expr": … }`
+      out = body + `, "expr": ${JSON.stringify(expr)}` + ws + out.slice(i)
+    }
+  }
+  return out
+}
+
+/**
+ * 生成主流程。
+ *
+ * · 默认 / `--check`：对每份**已回填 `expr`** 的契约，重写其全部生产者管线的投影节点列区（③）
+ *   与对应 staging 模型的列区（④，`org` 注入在 `system_book` 之后，无则首列之后）。
+ * · `--seed`：从现存投影反抽 `expr`，**只回填空缺列**（已有值不覆盖）写回契约；不动 ③/④。
  *
  * @param {string} rootDir 仓根
  * @param {{ seed?: boolean, check?: boolean }} [opts]
@@ -186,31 +292,50 @@ export function runGenerate(rootDir, opts = {}) {
   for (const rel of contracts) {
     const c = readContractDoc(rootDir, rel)
     if (!c) continue
+    const colNames = c.columns.map((x) => x.name)
+    const projections = producerProjections(rootDir, c)
+
+    if (opts.seed) {
+      // 从现存投影反抽 `expr` → 只回填**空缺**列（已有值不覆盖）。
+      /** @type {Record<string, string>} */
+      const fills = {}
+      for (const proj of projections) {
+        const exprs = extractPipelineExprs(proj.sql)
+        for (const col of c.columns) {
+          if (col.expr !== '' || exprs[col.name] === undefined) continue
+          if (fills[col.name] !== undefined && fills[col.name] !== exprs[col.name]) {
+            throw new Error(`--seed: ${rel} 列 ${col.name} 在多条生产者管线里表达式不一致`)
+          }
+          fills[col.name] = exprs[col.name]
+        }
+      }
+      if (Object.keys(fills).length > 0) {
+        const abs = join(rootDir, rel)
+        const raw = readFileSync(abs, 'utf8')
+        const next = seedContractText(raw, fills)
+        if (next !== raw) {
+          changed++
+          if (!opts.check) writeFileSync(abs, next)
+        }
+      }
+      if (c.columns.some((x) => x.expr === '' && fills[x.name] === undefined)) missing++
+      continue
+    }
+
     if (c.columns.some((x) => x.expr === '')) {
       // 未回填 `expr` ⇒ 不动任何产出（否则会拿空表达式覆盖现存投影）。
       missing++
       continue
     }
-    const colNames = c.columns.map((x) => x.name)
 
     // ③ 生产面：该契约的每条生产者管线各重写其投影节点。
-    for (const p of findProducerPipelines(rootDir, c.prefix)) {
-      const abs = join(rootDir, p)
-      /** @type {any} */
-      let doc
-      try {
-        doc = JSON.parse(readFileSync(abs, 'utf8'))
-      } catch {
-        continue
-      }
-      const proj = findProjectionNode(doc, colNames)
-      if (!proj) continue
+    for (const proj of projections) {
       const next = rewriteSelectList(proj.sql, buildPipelineSelect(c.columns))
       if (next === proj.sql) continue
       changed++
       if (!opts.check) {
-        for (const n of doc.nodes) if (n?.id === proj.id) n.data.properties.sql = next
-        writeFileSync(abs, JSON.stringify(doc, null, 2) + '\n')
+        for (const n of proj.doc.nodes) if (n?.id === proj.id) n.data.properties.sql = next
+        writeFileSync(proj.abs, JSON.stringify(proj.doc, null, 2) + '\n')
       }
     }
 
@@ -240,9 +365,6 @@ if (invoked) {
   const args = process.argv.slice(2)
   const root = args.find((a) => !a.startsWith('--')) ?? process.cwd()
   const flag = args.includes('--check') ? 'check' : args.includes('--seed') ? 'seed' : ''
-  if (flag === 'seed') {
-    console.error('gen-data-projection: --seed 在 Phase 3 落地')
-    process.exit(2)
-  }
-  process.exit(runGenerate(root, { check: flag === 'check' }))
+  const code = flag === 'seed' ? runGenerate(root, { seed: true }) : runGenerate(root, { check: flag === 'check' })
+  process.exit(code)
 }

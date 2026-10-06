@@ -16,23 +16,23 @@
 --
 -- 列与空值性以 `contracts/common/lemeng.branch.json` 为准（16 列全带，本层不加语义；**另加 dbt 注入列 `org`**）。
 select
-  r['batch_id']              as batch_id,
-  r['system_book']::varchar  as system_book,
-  {{ subject_org() }}        as org,
-  r['snapshot']::date        as snapshot,
-  r['branch_num']            as branch_num,
-  r['code']                  as code,
-  r['name']                  as name,
-  r['pinyin']                as pinyin,
-  r['type']                  as type,
-  r['enable']                as enable,
-  r['region_id']             as region_id,
-  r['province']              as province,
-  r['city']                  as city,
-  r['district']              as district,
-  r['contact']               as contact,
-  r['phone']                 as phone,
-  r['address']               as address
+  r['batch_id']::varchar as batch_id,
+  r['system_book']::varchar as system_book,
+  {{ subject_org() }}       as org,
+  r['snapshot']::date as snapshot,
+  r['branch_num']::int as branch_num,
+  r['code']::varchar as code,
+  r['name']::varchar as name,
+  r['pinyin']::varchar as pinyin,
+  r['type']::varchar as type,
+  r['enable']::boolean as enable,
+  r['region_id']::int as region_id,
+  r['province']::varchar as province,
+  r['city']::varchar as city,
+  r['district']::varchar as district,
+  r['contact']::varchar as contact,
+  r['phone']::varchar as phone,
+  r['address']::varchar as address
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_prefix") }}/*/snapshot=**/all.parquet'
 ) r
