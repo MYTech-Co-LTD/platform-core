@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.74.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.74.1...v0.74.2) - 2026-10-06
+- 【修复】data: #452 A+E1——问数咽喉 ETag 重试恰一次 + 物化 job 错峰 ([#465](https://github.com/MYTech-Co-LTD/platform-core/pull/465), [6058f1d](https://github.com/MYTech-Co-LTD/platform-core/commit/6058f1d5215b593f687b152eb14468a5abef1958))
+
+
 ## [0.74.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.74.0...v0.74.1) - 2026-10-06
 - 【修复】dbt: 对账四条 audit 只比已闭窗营业日——消读湖撞 tick 的 ETag 竞态（Closes #462） ([#463](https://github.com/MYTech-Co-LTD/platform-core/pull/463), [2fd1f1a](https://github.com/MYTech-Co-LTD/platform-core/commit/2fd1f1ac02208c834e05751e63ed144f800cd6d4))
 
