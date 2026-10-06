@@ -101,7 +101,7 @@
           "body": "{\"bizday_start\":\"${ITER_ITEM_BIZDAY}\",\"bizday_end\":\"${ITER_ITEM_BIZDAY}\",\"summary_types\":[\"branch\"],\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS_JSON}}",
           "responsePath": "/result/rows",
           "paginationType": "none",
-          "rawResponseDestination": "/workspace/reports/recon-preagg/raw-${ENV:SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.json",
+          "rawResponseDestination": "/workspace/reports/recon-preagg/raw-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.json",
           "retryAttempts": 3,
           "retryBackoffMs": 2000
         }
