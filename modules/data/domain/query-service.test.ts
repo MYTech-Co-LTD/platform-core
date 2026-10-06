@@ -13,6 +13,11 @@ const describePg = dbUrl ? describe : describe.skip
  *  测试里让它们相等才不至于验一个现实中不存在的状态。 */
 const ORG = 'org_a'
 
+/** #452 真机形态（2026-10-06 run jrun_dtyVWZnnFaQ_pCCN 实测原文的形状，值部分换短例）。
+ *  判据窄匹配只认「ETag on reading file」——测试钉的是形状，不是整句。 */
+const RACE_MSG =
+  'HTTP Error: ETag on reading file "s3://shanhai-data/lemeng/retail_order_line/system_book=3120/bizday=2026-10-06/hour=10/all.parquet" was initially "a" and now it returned "b", this likely means the remote file has changed.'
+
 const METRIC = {
   id: 'sales_daily', title: '销售日明细', description: '',
   requiredScope: 'data:query', subjectColumn: 'org',
@@ -117,6 +122,58 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     const a = await pool.query(
       `select verdict, reason from data.query_audit where org = $1 order by id desc limit 1`, [ORG])
     expect(a.rows[0]).toMatchObject({ verdict: 'error', reason: 'warehouse_error' })
+  })
+
+  it('race：ETag 竞态错 → 退避重试恰一次成功，审计 verdict=ok + reason=lake_race_retry', async () => {
+    let calls = 0
+    const flaky: QueryDeps = {
+      pool, adoptedSources: new Set(),
+      raceRetryDelayMs: 0,                                   // 测试缝：退避归零，免真等 1s
+      execute: async () => {
+        calls++
+        if (calls === 1) throw new Error(RACE_MSG)
+        return { columns: ['org', 'day'], rows: [['org_a', '2026-08-15']] }
+      },
+    }
+    const out = await runQuery(flaky, ORG, req(), 'sales_daily', {})
+    expect(out.status).toBe('ok')
+    expect(calls).toBe(2)                                    // 恰一次：不是 0 次也不是 ≥3 次
+    // 重试成功也留痕：reason=lake_race_retry 是 spec §3.5 判「重试长期是否够用」的数据源
+    const a = await pool.query(
+      `select verdict, reason, row_count from data.query_audit where org = $1 order by id desc limit 1`, [ORG])
+    expect(a.rows[0]).toMatchObject({ verdict: 'ok', reason: 'lake_race_retry', row_count: 1 })
+  })
+
+  it('race：连撞两次 → status=error reason=warehouse_transient（detail 保留原文），审计照写', async () => {
+    let calls = 0
+    const alwaysRace: QueryDeps = {
+      pool, adoptedSources: new Set(),
+      raceRetryDelayMs: 0,
+      execute: async () => { calls++; throw new Error(RACE_MSG) },
+    }
+    const out = await runQuery(alwaysRace, ORG, req(), 'sales_daily', {})
+    expect(calls).toBe(2)
+    expect(out.status).toBe('error')
+    if (out.status !== 'error') return
+    expect(out.reason).toBe('warehouse_transient')           // 不是裸 warehouse_error
+    expect(out.detail).toBe(RACE_MSG)                        // 原文供排障
+    const a = await pool.query(
+      `select verdict, reason from data.query_audit where org = $1 order by id desc limit 1`, [ORG])
+    expect(a.rows[0]).toMatchObject({ verdict: 'error', reason: 'warehouse_transient' })
+  })
+
+  it('race：非 ETag 错误不重试（calls=1）→ 原样 warehouse_error（窄匹配的回归护栏）', async () => {
+    let calls = 0
+    const bad: QueryDeps = {
+      pool, adoptedSources: new Set(),
+      raceRetryDelayMs: 0,
+      execute: async () => { calls++; throw new Error('boom') },
+    }
+    const out = await runQuery(bad, ORG, req(), 'sales_daily', {})
+    expect(calls).toBe(1)
+    expect(out.status).toBe('error')
+    if (out.status !== 'error') return
+    expect(out.reason).toBe('warehouse_error')
   })
 
   it('error：未配仓库 → reason=warehouse_unconfigured（不是 warehouse_error）', async () => {

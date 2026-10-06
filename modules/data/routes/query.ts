@@ -1,6 +1,7 @@
 // query.ts — POST /query：三条通道共用的问数入口（通道 C 走这里；通道 B 的 MCP 也走这里）。
 // 状态码映射（#30 订正）：ok → 200；denied → 403；error → **502**——
-// warehouse_unconfigured 与 warehouse_error 都是上游数据仓库不可用，不是本服务的 bug ⇒ 不是 500。
+// warehouse_unconfigured / warehouse_transient / warehouse_error 都是上游数据仓库（或其活跃
+// 写入窗）侧的问题，不是本服务的 bug ⇒ 不是 500（warehouse_transient = #452 的湖竞态重试仍撞）。
 import { z } from 'zod'
 import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, RouteCtx } from './context'

@@ -8,6 +8,18 @@ import { loadMergedCatalog } from './metric-store'
 import { writeAudit } from './audit-store'
 import { DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './warehouse'
 
+/** 湖 ETag 竞态的**窄匹配**（#452 定案 spec §3.1：宁可漏判也不误判——只认这一形状，
+ *  不扩大到一般 5xx/超时；那类由 statement_timeout / job retry 语义管）。 */
+const LAKE_RACE_RE = /ETag on reading file/
+/** 退避：写入是原子 PUT，撞上时新文件多半已就绪，~1s 后重试恰一次足够（spec §3.1）。 */
+const LAKE_RACE_RETRY_DELAY_MS = 1_000
+
+function isLakeRaceError(err: unknown): boolean {
+  return LAKE_RACE_RE.test(err instanceof Error ? err.message : String(err))
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
 /** 见 Interfaces 块：命名出来，供 T6 的 RouteCtx 与 T8/T9 的 deps 共同引用。 */
 export type SqlExecutor = (sql: string) => Promise<{ columns: string[]; rows: unknown[][] }>
 
@@ -15,6 +27,8 @@ export interface QueryDeps {
   pool: Pool
   /** 缺省 = 真仓库（惰性连接）。测试注入假执行器。 */
   execute?: SqlExecutor
+  /** 湖 ETag 竞态重试的退避毫秒数（缺省 1000）。测试注入 0 免等待。 */
+  raceRetryDelayMs?: number
   /**
    * 本租户**已接入的源**（宿主投影 `TENANT_SOURCES`；计划 5）。
    *
@@ -36,7 +50,9 @@ export interface QueryDenied {
 }
 export interface QueryError {
   status: 'error'; metricId: string
-  reason: 'warehouse_unconfigured' | 'warehouse_error'; detail: string
+  // warehouse_transient（#452 定案 §3.2）：湖 ETag 竞态重试仍撞——「活跃写入窗内的暂时性
+  // 读冲突，等几秒重试大概率成功」，不是仓库坏了；detail 保留 DuckDB 原文供排障。
+  reason: 'warehouse_unconfigured' | 'warehouse_transient' | 'warehouse_error'; detail: string
 }
 export type QueryOutcome = QueryOk | QueryDenied | QueryError
 
@@ -90,21 +106,35 @@ export async function runQuery(
     return { status: 'denied', metricId, reason: authz.reason, detail: authz.detail }
   }
 
+  // 湖 ETag 竞态（#452 定案 A）：tick 在上海 08:00–24:00 每 5 分钟重写当天 cur/prev 两个分区，
+  // 任意时刻的读可能撞上重写窗 ⇒ 咽喉处退避 ~1s 重试**恰一次**（本通路全为只读 SELECT，天然幂等）。
+  // 重试成功也把 `lake_race_retry` 写进审计 reason——那是 spec §3.5「重试是否长期够用」的数据源。
   let result: { columns: string[]; rows: unknown[][] }
+  let raceRetried = false
   try {
-    if (deps.execute) {
-      result = await deps.execute(authz.plan.sql)
-    } else {
-      result = await runWarehouseSql(warehousePool(), authz.plan.sql)
+    const exec = () =>
+      deps.execute
+        ? deps.execute(authz.plan.sql)
+        : runWarehouseSql(warehousePool(), authz.plan.sql)
+    try {
+      result = await exec()
+    } catch (err) {
+      if (!isLakeRaceError(err)) throw err
+      raceRetried = true
+      await sleep(deps.raceRetryDelayMs ?? LAKE_RACE_RETRY_DELAY_MS)
+      result = await exec()
     }
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
-    const reason = detail === DATA_WAREHOUSE_UNCONFIGURED ? 'warehouse_unconfigured' : 'warehouse_error'
+    const reason =
+      detail === DATA_WAREHOUSE_UNCONFIGURED ? 'warehouse_unconfigured'
+      : isLakeRaceError(err) ? 'warehouse_transient'
+      : 'warehouse_error'
     await audit('error', reason, null)
     return { status: 'error', metricId, reason, detail }
   }
 
-  await audit('ok', null, result.rows.length)
+  await audit('ok', raceRetried ? 'lake_race_retry' : null, result.rows.length)
   return {
     status: 'ok',
     subject: authz.plan.subject,
