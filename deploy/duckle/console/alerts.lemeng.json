@@ -219,6 +219,16 @@
       "headers": {
         "Authorization": "Basic ${ENV:OO_AUTH}"
       }
+    },
+    {
+      "match": "lemeng.recon.*",
+      "on": ["failure", "recovery"],
+      "cooldownMinutes": 15,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
     }
   ]
 }
