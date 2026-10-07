@@ -51,8 +51,12 @@
 #      湖侧停更另有 owners 锚（36h）管，这里管「湖有、下游没跟上」。
 #   ⑤ 词表非空：`data.metrics` 行数 ≥ 1（L1 词表被清空/物化出 0 行 ⇒ GET /metrics 回空、MCP 无工具可给）。
 #      L1 job 的回读行有这信息，但 job 不会为它红——这里补上闸。
+#   ⑥ 发布维表新鲜度（2026-10-07 新增；issue #476）：`data.dim_item` 非空且 max(snapshot)
+#      ≥ 上海今天 − WIRE_DIM_FRESH_DAYS（默认 3，比 ④ 多一天——发布链在物化之后再 T+1 一次）。
+#      抓的形状：publish-dims job 停跑/失败 ⇒ 售后消费的维表越来越旧而无人知晓（ADR 形状②
+#      的容旧语义成立的前提是「旧得有限、停更必响」）。
 #
-#    ④⑤与前几条共用「平台容器 + 平台自己的连接串」的通路 ⇒ **顺带持续 exercising Gate-B 与
+#    ④⑤⑥与前几条共用「平台容器 + 平台自己的连接串」的通路 ⇒ **顺带持续 exercising Gate-B 与
 #    search_path**——这正是「看得见下游」的判据：从**消费方**那条路问，不从旁路问。
 
 set -eu
@@ -64,11 +68,13 @@ SCHEMA=${WIRE_SCHEMA:-staging}
 PROBE_TABLE=${WIRE_PROBE_TABLE:-fct_retail_sale}
 FRESH_DAYS=${WIRE_FRESH_DAYS:-2}
 METRICS_TABLE=${WIRE_METRICS_TABLE:-data.metrics}
+DIM_TABLE=${WIRE_DIM_TABLE:-data.dim_item}
+DIM_FRESH_DAYS=${WIRE_DIM_FRESH_DAYS:-3}
 
 die() { echo "WIRE_FAILED: $*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,58p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # 取容器 env 里某个键的值（供**内部**使用；调用方不得把它回显出去）
@@ -81,7 +87,7 @@ need_container() { # <container>
   [ "$(docker inspect --format '{{.State.Running}}' "$1")" = "true" ] || die "容器没在跑：$1"
 }
 
-# ── 五条断言（每条各自 exit 非零；只读，不写任何东西）────────────────────────────
+# ── 六条断言（每条各自 exit 非零；只读，不写任何东西）────────────────────────────
 
 assert_dns() {
   printf '① DNS：%s 内解析 pg_duckdb —— ' "$PLATFORM_CONTAINER"
@@ -148,6 +154,24 @@ const c=new Client({connectionString:process.env.DATABASE_URL});
 "
 }
 
+# ⑥ 发布维表非空 + 新鲜度：publish-dims 停跑 ⇒ 售后消费的维表越来越旧而无人知晓（#476）。
+assert_dims() {
+  printf '⑥ 发布维表（%s 非空且 max(snapshot) ≥ 上海今天-%s 天）—— ' "$DIM_TABLE" "$DIM_FRESH_DAYS"
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const c=new Client({connectionString:process.env.DATABASE_URL});
+(async()=>{try{
+  await c.connect();
+  const r=await c.query(\"select count(*)::int as n, coalesce(max(snapshot)::text,'') as maxday, ((now() at time zone 'Asia/Shanghai')::date - ${DIM_FRESH_DAYS})::text as cutoff from ${DIM_TABLE}\");
+  const {n,maxday,cutoff}=r.rows[0];
+  if(n<1){console.log('ERR 发布表 0 行（publish-dims 未跑成功？）');process.exit(1)}
+  if(maxday<cutoff){console.log('ERR 停更 max='+maxday+' < 容差线='+cutoff);process.exit(1)}
+  console.log('OK rows='+n+' snapshot='+maxday+'（容差线 '+cutoff+'）');
+  await c.end();
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
 do_check() {
   rc=0
   assert_dns || rc=1
@@ -155,8 +179,9 @@ do_check() {
   assert_query || rc=1
   assert_fresh || rc=1
   assert_metrics || rc=1
+  assert_dims || rc=1
   if [ "$rc" -eq 0 ]; then
-    echo "wire-warehouse: OK（五条断言全过）"
+    echo "wire-warehouse: OK（六条断言全过）"
   else
     echo "wire-warehouse: FAILED（见上）—— 重做：sh $0" >&2
   fi

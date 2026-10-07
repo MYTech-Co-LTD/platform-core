@@ -128,6 +128,43 @@ describe('lint-architecture: B1 跨 schema 引用', () => {
     expect(r.status).toBe(0)
   })
 
+  it('已发布维表（data.dim_*）只读豁免：modules 里 from/join 绿（ADR 2026-10-07 形状②）', () => {
+    const r = run(
+      'lint-architecture.mjs',
+      fixture({
+        'modules/aftersales/index.ts':
+          "pool.query('select code, name from data.dim_branch where org = $1')\n"
+          + "pool.query('select i.name from data.dim_item i join data.dim_branch b on b.code = i.branch_code')\n",
+      }),
+    )
+    expect(r.status).toBe(0)
+  })
+
+  it('已发布维表的**写**不豁免：into/update data.dim_* 仍红（发布表只许 owner 写）', () => {
+    const r = run(
+      'lint-architecture.mjs',
+      fixture({
+        'modules/aftersales/index.ts':
+          "pool.query('insert into data.dim_branch(org, code) values ($1, $2)')\n"
+          + "pool.query('update data.dim_item set name = $1 where item_code = $2')\n",
+      }),
+    )
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('[B1]')
+    expect(out(r)).toContain('data')
+  })
+
+  it('豁免只认 dim_ 前缀：from data.metrics 这类非发布表仍红', () => {
+    const r = run(
+      'lint-architecture.mjs',
+      fixture({
+        'modules/aftersales/index.ts': "pool.query('select * from data.metrics')\n",
+      }),
+    )
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('[B1]')
+  })
+
   it('跳过 *.test.* 与 *.gen.*（测试/生成物不是边界纪律的适用对象）', () => {
     const r = run(
       'lint-architecture.mjs',

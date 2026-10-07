@@ -54,7 +54,9 @@ const CODE_EXT_RE = /\.(ts|tsx)$/
 /** 测试与生成物：文件名（非路径）里出现 .test. / .gen. 即跳过 */
 const SKIP_FILE_RE = /\.(test|gen)\./
 
-const B1_RE = /\b(?:from|join|update|into)\s+([a-z_]+)\./g
+// B1 捕三个组：关键字（1）/ schema（2）/ 表名首段（3）。表名首段用于「已发布维表只读豁免」
+// （只认 data.dim_ 前缀——见 B1 检查处与 ADR 2026-10-07 形状②）。
+const B1_RE = /\b(from|join|update|into)\s+([a-z_]+)\.([a-z_][a-z_0-9]*)/g
 const B2_SPEC_RE = /\b(?:from|import|require)\s*\(?\s*['"]([^'"]+)['"]/g
 const B8_DOMAIN_RE = /hookflow\.cn/gi
 const B8_IPV4_RE = /(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)/g
@@ -297,8 +299,18 @@ export async function findViolations(rootDir) {
     // B1 跨 schema
     const allowed = await allowedSchema(rootDir, rel, idCache)
     for (const m of code.matchAll(B1_RE)) {
-      const schema = m[1]
+      const [, kw, schema, table] = m
       if (schema === allowed) continue
+      // 已发布维表只读豁免（ADR 2026-10-07 形状②）：模块可以 from/join `data.dim_*`
+      // （owner 发布进 data schema 的维表快照，契约与裁剪在发布侧）——但**只读**：
+      // update/into 不豁免 ⇒ 发布表只许 owner（data 模块）写。非 dim_ 前缀的 data. 表
+      // （如 metrics）不豁免——白名单只开「已发布维表」这一族，别家内部表借道不行。
+      if (
+        allowed !== 'data'
+        && (kw === 'from' || kw === 'join')
+        && schema === 'data'
+        && table.startsWith('dim_')
+      ) continue
       report(rel, lineOf(code, m.index), 'B1', `跨 schema 引用 "${schema}."（本文件只许 "${allowed}."）`)
     }
 
