@@ -1,5 +1,6 @@
 // test-util.ts — 模块测试的公共脚手架（不是测试文件：tsconfig 会 typecheck 它）。
 import { readdir, readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import { TENANT_STORAGE } from '@platform/sdk'
@@ -54,9 +55,13 @@ export function buildTestApp(
   return app as unknown as Hono
 }
 
-/** 跑本模块的迁移（读 ./migrations/*.sql）。返回本次新应用的 version 列表。 */
+/** 跑本模块的迁移（读 ./migrations/*.sql）。返回本次新应用的 version 列表。
+ *
+ * ⚠️ 目录必须经 `fileURLToPath` 取（**不是** `url.pathname`）：后者的百分号编码在**非 ASCII
+ * 路径**下（本仓的 Orca 工作树就叫「采集板块」）会让 `readdir` 直接 ENOENT，而 `runMigrations`
+ * 对 ENOENT 是**静默跳过**（#203）⇒ 症状是「零迁移却报成功」，一路红到业务断言上。 */
 export function applyMigrations(pool: Pool): Promise<string[]> {
-  return runMigrations(pool, 'aftersales', new URL('./migrations', import.meta.url).pathname)
+  return runMigrations(pool, 'aftersales', fileURLToPath(new URL('./migrations', import.meta.url)))
 }
 
 /** 迁移目录里全部 *.sql 的正文，按文件名排序（与 runMigrations 同一排序口径）。 */
@@ -71,23 +76,27 @@ export async function rawMigrationSqls(): Promise<string[]> {
 }
 
 /**
- * 确保 `data.dim_branch` / `data.dim_item` 发布表存在（#476：门店/商品清单端点的消费源）。
+ * 确保 `data` 包的 schema 与发布维表就位（#476：门店/商品清单端点的消费源）。
  *
- * 为什么在 aftersales 的测试里做这件事：夹具要种发布表，而 **CI 的包间测试顺序不保证
- * data 包先迁移**（pnpm -r 对无依赖关系的包顺序未定；本机「data 先跑过」的绿是顺序巧合）。
- * 建表 SQL **读 data 模块的 009 迁移文件执行**（单一事实源是那个文件，这里不复制形状——
- * 复制出来的第二份会在发布契约演进时静默漂移）。advisory lock 串行化：vitest 多线程下
- * 多个测试文件并发进 here，`create table if not exists` 在并发首建时会互撞 duplicate。
+ * 为什么在 aftersales 的测试里做这件事：夹具要种 `data.dim_branch` / `data.dim_item`，
+ * 而 **CI 的包间测试顺序不保证 data 包先迁移**（pnpm -r 对无依赖关系的包顺序未定；
+ * 本机「data 先跑过」的绿是顺序巧合）。
+ *
+ * ⚠️ **2026-10-07 订正（#483）**：旧实现**只执行 data 的 009 迁移文件**，而 009 **假定
+ * `data` schema 已存在**——那个 schema 由 data 包**更早的迁移**建立（迁移文件自带
+ * `create schema if not exists <id>`，见 `apps/server/src/migrate.ts` 头部约定）。
+ * ⇒ 自愈依赖了它本想防的那个顺序：空库上直接撞 `schema "data" does not exist`，
+ *   于是 main 的 unit 自 #480 起持续红（两个症状同源：这一条，以及侥幸过顺序时
+ *   `seedStores()` 拿到空表而种出 `store_code = null`）。
+ *
+ * 现在改成**跑 data 包自己的迁移入口**：夹具拿到的是**整个 data schema 的一致状态**，
+ * 而不是「前提侥幸成立」时的补丁。SQL 的单一事实源仍是 data 包的迁移文件（这里不复制形状）。
+ * 幂等与并发都由 `runMigrations` 内部保证（`platform.schema_migrations` 记账 + 全局 advisory
+ * lock）⇒ 本函数**不再自持锁**（自持的那把与迁移锁不同键，本就挡不住「读→建」竞态）。
+ *
+ * 顺序无关性由 `test-util.test.ts` 用**一次性临时库**钉住（共享库上验不了：别的测试文件
+ * 可能已经把它迁移过了）。
  */
-export async function ensureDimTables(pool: Pool): Promise<void> {
-  const sql = await readFile(
-    new URL('../data/migrations/009_dim_tenant_view.sql', import.meta.url),
-    'utf8',
-  )
-  await pool.query('select pg_advisory_lock(hashtext(\'aftersales-dim-fixture\'))')
-  try {
-    await pool.query(sql)
-  } finally {
-    await pool.query('select pg_advisory_unlock(hashtext(\'aftersales-dim-fixture\'))')
-  }
+export function ensureDimTables(pool: Pool): Promise<string[]> {
+  return runMigrations(pool, 'data', fileURLToPath(new URL('../data/migrations', import.meta.url)))
 }
