@@ -673,6 +673,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 观测没数据（OO 流里没有 `_ops` 行） | **按管线查**：**零售三条已自带管线内 `_ops` 投递**（tick/windows/close，`su→op→wh`，#406/#410——tick 与 close 已实测在收行）；**L0 两条决定不做**（上游 duckle 的 sink 取行缺陷：脚本前导的 `CREATE SECRET` 自己返回一行被当成数据，见 #414）——L0 的观测面改用 `owners.json` 湖对象锚 + 运行记录/回执。⚠️ OO 不可达时 tick run 会**红**——error 指 observe.hookflow.cn 即此因，**不是采集失败**（方言见管线 `_note` ⑩）。旧字面量 `OPS_SINK=DISABLED`（薄壳形态、issue **#210**）随 wrapper 退役成为历史 |
 | **下游数据陈旧（采集绿、报表陈）** | **先查物化有没有在跑**——2026-09-26 实测：37 个 job 无一跑 dbt，PG 停在 09-23（详见 §0 与 §1.6）。⚠️ **2026-09-28 起物化 job 已在跑**（见 §3），这个现象不再由「没 job」引起 ⇒ **别照这条判，先看下一行** |
 | **下游看不见（物化在跑、消费端却空）** | 四步查，**四处都是静默失败**（2026-09-28 实测；跟踪 #297 / #298）：① **路由挂没挂**——无身份打 `POST /api/modules/data/{query,mcp}` 应回 **401**（**404 = 没挂载**）；② **三张表的行数**——`data.metrics`（空 = 词表没物化）/ `data.reports`（空 = 报表没登记）/ `data.query_audit`（空 = 从没人问过）；③ **Gate-B**——平台容器内 `dns.lookup('pg_duckdb')` 必须解析（**ENOTFOUND ⇒ 网络掉了**，容器重建即掉，重做步骤见 SOP P7）；④ **仓库连接的 `search_path`**——不设则报 `relation "<模型名>" does not exist`（见 SOP P8b） |
+| **问数偶发 `warehouse_transient`（或审计里冒出 `lake_race_retry`）** | 读湖撞写入的 **ETag 竞态已定案**（#452，§1.6 案例 19）：咽喉自动「识别 ETag 形状 → 退避 1s → **重试恰一次**」——重试成功对消费方**无感**，审计照写 `verdict='ok', reason='lake_race_retry'`（**判「重试长期是否够用」的唯一数据源**，#452 spec §3.5；频率在 `data.query_audit` 按 `reason` 数）；仍撞 ⇒ `reason='warehouse_transient'`（detail 保 DuckDB 原文）＝**活跃写入窗内持续冲突**——**别当服务 bug 排查**：先查触发方（物化 job / tick）是否与查询同窗（物化已错峰 `27 3` 避 tick `*/5`，见 §3） |
 | 改定义后没生效 | 检查**两步**是否都做了：re-seed 进 workspace 卷 + **重启容器**（卷内定义重启即读；改 env 键才需定向重建） |
 
 #### 1.5.1 两个名词：**运行记录**（run record）与**回执**（receipt）—— 🔴 **别互换**（2026-09-29 收口）
@@ -722,6 +723,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 16 | 读 parquet 点名取列必须 **`r['列名']` + 别名 `r`**；`SELECT *` 能过、点名报 `column does not exist` | dbt staging 门禁（`check-data-models` 第 ① 项） |
 | 17 | **物化断链**：采集每天绿、湖已领先两天，而 PG **停在 09-23**；37 个 job 无一跑 dbt；**没有任何东西报错** | §0 完成判据「落湖归我、下游看得见」；§1.5「下游数据陈旧」一条 |
 | 18 | 「一账套一 console」原写成**结构性约束**；实测（本地 + **生产 0.7.4 容器**）证明被强制的只是「**调度条目**带不了 env」——账号维度可走 `${ITER_ITEM_*}` + `connectionRef`（两行驱动两连接，回显实录 `TOKEN-A`/`TOKEN-B` 各一次） | §1.1.4 订正：那是**权衡**（一个 workspace 一把钥匙护所有凭据 + 共享故障域），**不是引擎铁律** |
+| 19 | **读湖三方同撞一个竞态**（tick `*/5` 重写与读并发）：物化 job `20 3` 首跑**天天撞**（03:20 读湖恰逢 tick 重写 hour=10 文件）、问数咽喉对湖的读随时可撞（spec ③ 读「今天」的视图尤甚）、对账 audit 撞未闭窗营业日 ⇒ 三路定案（#452/#462）：读侧咽喉**重试恰一次**（`lake_race_retry` / `warehouse_transient` 归因）+ 物化**错峰 `27 3`** + audit **只比已闭窗营业日** | §1.5「问数偶发 `warehouse_transient`」一条；§3 物化调度行错峰注 |
 
 ### 1.7 逐源决策登记区
 
