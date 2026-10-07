@@ -115,6 +115,12 @@ Casdoor 后台（platform 超管）建：owner=`admin`、organization=`<客户 o
 再部署（MCP `post_deployments_build_access`）：projectId、**serverId**（步骤 1 拿的）、
 deployTarget=server、branch=main、environment=production。
 
+> ⚠️ **部署前查一眼服务行 environment**（`get_projects_by_id_services_by_serviceId` 的
+> `environment` 字段）：它的注入优先级**高于**项目 env 表和 compose `environment:`
+> （2026-10-07 山海实测：服务行 DATABASE_URL 曾是脱敏字面量 `postgres://***@…`，盖住
+> compose 完整值 ⇒ 连续 crash，见 §2.1）。有同键旧值/可疑值 ⇒
+> `patch_projects_by_id_services_by_serviceId` 重写后再部署。
+
 成功判据：`get_deployments_by_id_build` status=ready + 日志 Health check passed。
 （postgres 探活误报忽略，见 adopt §6.3。）
 
@@ -253,14 +259,28 @@ curl -X POST https://deploy.hookflow.cn/api/proxy/api/webhooks/incoming/iwh_l-d5
 
 - **token 在哪取**：deploy.hookflow.cn dashboard → 项目 platform-core-shanhai →
   Webhooks → `manual-deploy-latest` 详情可见（rotate 可重生成）。**不落任何文档/提交**。
-- **部署语义**：重部署该机绑定分支（main）的**最新提交**，不能钉指定 commitSha——
-  打之前想清楚这次给客户的是哪个版本。
-- ⚠️ **首用未验**（无案例不立标准）：①「部署 HEAD」语义 ② token 头形状
-  （上面 `Authorization: Bearer` 是假设）均未实测。首打时当场验：dashboard 该 hook
-  投递记录出现 + 部署发起 + 部署后容器创建时间晚于镜像构建；401/无投递 = 头形状不对，
-  订正本条目。
+- **部署语义**（2026-10-07 首用已验）：重部署该机绑定分支（main）的**最新提交**，不能钉
+  指定 commitSha——打之前想清楚这次给客户的是哪个版本。token 头 `Authorization: Bearer`
+  实测 200；**URL 形状以 `get_projects_by_id_incoming_webhooks` 返回的 `url` 字段为正典**
+  （不带 `/projects/<id>/` 段；手拼带段的形状 401）。
+- ⚠️ **首打事故与三层 env 教训（2026-10-07，四连部署实录，别再踩）**：
+  1. **inline env 是部署级快照，新部署不继承**——只物化项目 env 表 + compose。老实例
+     （dashboard 手建的）env 可能在 inline 里而项目 env 表几乎空 ⇒ 任何新部署（webhook
+     或手动）都会丢键 crash（首打 `TENANT_MODE=null` 即此）。**接手老实例先做 §步骤 3
+     的项目 env 物化再打 webhook**（山海已物化 18 键，陷阱已拆）。
+  2. **服务行 environment 的值可能早已是脱敏占位符 `***` 的字面量**（导入时被脱敏污染）：
+     山海服务行 DATABASE_URL 存的是 `postgres://***@postgres:5432/platform`（37 字符），
+     pg 解析后 password=undefined ⇒ `SASL: client password must be a string` crash。
+  3. **注入优先级：服务行 environment > 部署快照 envVars > compose `environment:`**——
+     服务行的坏值会盖住 compose 与项目 env 的好值（compose 层本身工作正常，PORT 生效
+     可证）。修复 = `patch_projects_by_id_services_by_serviceId` 重写该键（实测 patch
+     写入不被再脱敏）。
+  **新交付/接手实例必查**：`get_projects_by_id_services_by_serviceId` 看 `environment`
+  字段有无带凭据形状的键，值可疑即按 §步骤 3 表重写；部署 ready ≠ 健康，**进容器
+  healthz + 关键键在位**才算数（两次 ready 都在 crash loop）。
 - 其余客户实例仍走 §2 逐家 MCP `post_deployments`；一键化按需逐家复刻，不预铺。
-- 回滚不变：MCP `post_deployments_by_id_rollback`。
+- 回滚不变：MCP `post_deployments_by_id_rollback`（overlay 会从冻结 inline 记录恢复
+  env——2026-10-07 实测有效，是热兜底）。
 
 ## 3. 边界
 
