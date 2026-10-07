@@ -11,7 +11,7 @@
 // 入参会以 400 `TARGET_NOT_SUPPORTED` 被**显式拒绝**（不静默丢弃）。所以这里也不摆一个
 // 按了会报错的输入框——见 README「L2 的已知边界」。
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Input, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
+import { Button, Card, Drawer, Input, Popconfirm, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
 
 interface MetricRow {
@@ -22,6 +22,21 @@ interface MetricRow {
   subjectColumn: string
   groupBy: string
   source: 'l1' | 'l2'
+  /** #489：最后操作人（L1 行走 sync 物化 ⇒ null）；列表两列的数据源。 */
+  updatedBy: string | null
+  version: number
+}
+
+/** 变更史的一行（`GET /metrics/:id/audit` 的形状）。 */
+interface AuditRow {
+  id: number
+  action: 'create' | 'update' | 'delete'
+  userId: string
+  channel: string
+  createdAt: string
+  /** 变更前/后的行快照；create 无 before、delete 无 after。 */
+  before: { title: string; description: string } | null
+  after: { title: string; description: string } | null
 }
 
 /** 表单里的过滤行（values 是逗号分隔的输入框文本，提交时拆成数组）。 */
@@ -48,6 +63,9 @@ const dimsOf = (row: MetricRow | undefined): string[] =>
 export default function MetricsPage() {
   const [rows, setRows] = useState<MetricRow[]>([])
   const [draft, setDraft] = useState<Draft | null>(null)
+  // #489：变更历史抽屉。historyId=null 即关闭（不用额外一个 open 布尔量，避免两处状态打架）
+  const [historyId, setHistoryId] = useState<string | null>(null)
+  const [history, setHistory] = useState<AuditRow[]>([])
   const [messageApi, ctx] = message.useMessage()
 
   const load = () => apiGet('/metrics/all')
@@ -58,6 +76,15 @@ export default function MetricsPage() {
   const l1Rows = useMemo(() => rows.filter((r) => r.source === 'l1'), [rows])
   const base = useMemo(() => rows.find((r) => r.id === draft?.baseMetric), [rows, draft?.baseMetric])
   const baseDims = useMemo(() => dimsOf(base), [base])
+
+  /** 打开某条口径的变更历史（按需拉取；失败只提示，不阻塞页面）。 */
+  const openHistory = (id: string) => {
+    setHistoryId(id)
+    setHistory([])
+    apiGet(`/metrics/${id}/audit`)
+      .then((b) => setHistory((b as { audit: AuditRow[] }).audit))
+      .catch((e) => messageApi.error(messageOf(e)))
+  }
 
   function openCreate() {
     setDraft({ ...emptyDraft(), baseMetric: l1Rows[0]?.id ?? '' })
@@ -194,11 +221,20 @@ export default function MetricsPage() {
         { title: '所需 scope', dataIndex: 'requiredScope', render: (v: string | null) => v ?? '不限' },
         // 主体列**显示出来**（只读）：它是主体钉死的依据，管理员必须能一眼看出这个指标按哪列隔离。
         { title: '主体列', dataIndex: 'subjectColumn' },
+        // #489 两列：谁最后动的、动过几次。L1 行**不显示空白**——空白会被读成「这里缺数据」，
+        // 而真相是「平台口径的变更史在 git 里」（见 README 的边界一节）。
+        { title: '最后操作人', dataIndex: 'updatedBy', render: (v: string | null, r: MetricRow) =>
+            r.source === 'l1'
+              ? <Typography.Text type="secondary">平台物化（追溯走 git）</Typography.Text>
+              : (v ?? '—') },
+        { title: '版本', dataIndex: 'version', render: (v: number, r: MetricRow) =>
+            r.source === 'l1' ? <Typography.Text type="secondary">—</Typography.Text> : `v${v}` },
         { title: '操作', render: (_: unknown, r: MetricRow) => (
             r.source === 'l1'
               ? <Typography.Text type="secondary">平台词表经 API 只读</Typography.Text>
               : (
                 <Space>
+                  <Button size="small" onClick={() => openHistory(r.id)}>变更历史</Button>
                   <Button size="small" onClick={() => openEdit(r)}>编辑</Button>
                   {/* okText 显式写中文：Popconfirm 的默认 okText 取**locale**（未配 zh_CN 时是 "OK"），
                       而删除是不可逆动作——确认按钮上的字应当自己掌握，不随宿主是否配了 locale 漂。 */}
@@ -209,6 +245,29 @@ export default function MetricsPage() {
                 </Space>
                 )) },
       ]} />
+
+      {/* 变更史：#489。倒序（服务端已排好），删除行标红——它是不可逆的那一类。 */}
+      <Drawer title={`变更历史：${historyId ?? ''}`} open={historyId !== null}
+              onClose={() => setHistoryId(null)} width={520}>
+        <Timeline items={history.map((a) => ({
+          color: a.action === 'delete' ? 'red' : a.action === 'create' ? 'green' : 'blue',
+          children: (
+            <>
+              <div>
+                <Tag color={a.action === 'delete' ? 'red' : a.action === 'create' ? 'green' : 'blue'}>
+                  {{ create: '新建', update: '修改', delete: '删除' }[a.action]}
+                </Tag>
+                {a.userId} · {a.channel} · {new Date(a.createdAt).toLocaleString('zh-CN')}
+              </div>
+              <Typography.Text type="secondary">
+                {a.after
+                  ? `→ ${a.after.description}`
+                  : `（被删：${a.before?.description ?? ''}）`}
+              </Typography.Text>
+            </>
+          ),
+        }))} />
+      </Drawer>
     </Space>
   )
 }
