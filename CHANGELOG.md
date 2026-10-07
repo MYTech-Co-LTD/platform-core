@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.79.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.78.1...v0.79.0) - 2026-10-07
+- 【新增】data: MCP 写面——/mcp-manage 三工具，门禁由声明施加 ([#487](https://github.com/MYTech-Co-LTD/platform-core/pull/487), [f60b7cd](https://github.com/MYTech-Co-LTD/platform-core/commit/f60b7cd199324e16d938a3b482afffe3757c449b))
+
+
 ## [0.78.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.78.0...v0.78.1) - 2026-10-07
 - 【修复】aftersales: #483 夹具自愈改跑 data 包迁移——顺序无关（旧实现只执行 009，假定 data schema 已存在） ([#484](https://github.com/MYTech-Co-LTD/platform-core/pull/484), [89a71fe](https://github.com/MYTech-Co-LTD/platform-core/commit/89a71fefc05e360848cbd0c53bfe42f24b1a618e))
 
