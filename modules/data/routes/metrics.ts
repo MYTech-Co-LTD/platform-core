@@ -22,6 +22,7 @@ import { requesterOf } from './context'
 import { visibleMetrics } from '../domain/authz'
 import type { Requester } from '../domain/authz'
 import { loadMergedCatalog } from '../domain/metric-store'
+import { listMetricAudit } from '../domain/metric-audit-store'
 import type { MetricRow } from '../domain/metric-store'
 import { L2DeclarationSchema } from '../domain/semantic-compiler'
 // 写/删的判定链在域层**只有一份**（HTTP 面与 MCP 写面共用）——本文件只做
@@ -57,6 +58,8 @@ const adminView = (m: MetricRow) => ({
   id: m.id, title: m.title, description: m.description,
   requiredScope: m.requiredScope, subjectColumn: m.subjectColumn,
   selectSql: m.selectSql, groupBy: m.groupBy, params: m.params, source: m.source,
+  // #489：列表两列的数据源（页面按 /metrics/all 一次拉齐，不为每行再打一次请求）
+  updatedBy: m.updatedBy, version: m.version,
 })
 
 /**
@@ -127,6 +130,18 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/metrics/all', async (c) => {
     const all = await loadMergedCatalog(ctx.pool, orgOf(c))
     return c.json({ metrics: all.map(adminView) })
+  })
+
+  /**
+   * 某条口径的**变更史**（#489）——谁、何时、从什么到什么。
+   * 门 = `data:manage`（与 `/metrics/all` 同档）：能看到「谁改的」本身是管理信息。
+   * ⚠️ 这是**租户对自己单条口径的历史**，不是平台运营面的全局审计视图——
+   *    后者仍不在本模块（见 domain/audit-store.ts 文件头那条分工）。
+   */
+  r.get('/metrics/:id/audit', async (c) => {
+    const id = metricIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    return c.json({ audit: await listMetricAudit(ctx.pool, orgOf(c), id) })
   })
 
   r.post('/metrics', async (c) => {

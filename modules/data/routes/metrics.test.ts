@@ -411,4 +411,38 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect((await (bare as unknown as Hono).request('/metrics')).status).toBe(200)
     expect(bareSeen).toEqual([undefined])
   })
+
+  // ── #489 语义追溯：无身份拒写 / 两列 / 审计端点 ────────────────────────────────
+  it('★ 写路径无身份（orgId 空串）⇒ 403 UNAUTHENTICATED（不写「无主」审计）', async () => {
+    const res = await app('', ['data:manage', 'data:query']).request('/metrics', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(l2Body({ id: 'ma_noauth' })),
+    })
+    expect(res.status).toBe(403)
+    expect((await res.json()).error).toBe('UNAUTHENTICATED')
+  })
+
+  it('★ 建 → 改 → 删：/metrics/all 带 updatedBy/version（删前回读），audit 回三行倒序', async () => {
+    const id = 'ma_flow'
+    // 夹具自愈：审计行按 id 会**跨次累积**（不清就变成「跑第二次必红」——而这不是被测行为）
+    await pool.query('delete from data.metric_audit where org = $1 and metric_id = $2', [ORG, id])
+    expect((await post(l2Body({ id }))).status).toBe(201)                     // 建（POST）
+    const put = await app(ORG, ['data:manage']).request(`/metrics/${id}`, {    // 改（PUT）
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(l2Body({ id, alias: '改过的' })),
+    })
+    expect(put.status).toBe(200)
+
+    // 删**之前**验证两列（删了就查不到了）
+    const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json() as {
+      metrics: { id: string; updatedBy: string | null; version: number }[] }
+    expect(all.metrics.find((m) => m.id === id)).toMatchObject({ updatedBy: 'u-test', version: 2 })
+
+    expect((await app(ORG, ['data:manage']).request(`/metrics/${id}`, { method: 'DELETE' })).status).toBe(200)
+
+    const audit = await (await app(ORG, ['data:manage']).request(`/metrics/${id}/audit`)).json() as {
+      audit: { action: string; userId: string; channel: string }[] }
+    expect(audit.audit.map((a) => a.action)).toEqual(['delete', 'update', 'create'])
+    expect(audit.audit.every((a) => a.userId === 'u-test')).toBe(true)   // 记的是**人**（夹具默认 userId）
+  })
 })

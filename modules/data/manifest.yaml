@@ -35,6 +35,8 @@ api:
     #     identity 信号（唯一平台内置码 tenant:admin 是**租户级**的，loader.ts:137）⇒ 本轮不开口，
     #     见 README「L2 的已知边界」。**这就是拍板 #5 的平台超管那一半尚未落地的唯一原因。**
     - { method: GET,    path: /metrics/all, scope: data:manage }
+    # 口径变更史（#489）：谁、何时、从什么到什么。门与 /metrics/all 同档（能看到「谁改的」＝管理信息）
+    - { method: GET,    path: /metrics/:id/audit, scope: data:manage }
     - { method: POST,   path: /metrics,     scope: data:manage }
     - { method: PUT,    path: /metrics/:id, scope: data:manage }
     - { method: DELETE, path: /metrics/:id, scope: data:manage }
