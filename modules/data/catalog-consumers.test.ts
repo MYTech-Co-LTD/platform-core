@@ -126,9 +126,11 @@ describe('消费面词表的来源守卫（不需要数据库）', () => {
   /**
    * 上面那条把「读投影」收进壳之后，新的漏法变成「工具集拿到了 deps 却**不用**」——
    * 壳读得再对，工具集把 `adoptedSources` 丢掉，那条工具面照样不裁源（且不可观测）。
-   * 故两面各自持有工具集的文件必须消费它（`visibleMetrics` 的第三参 / 写路径的 deps）。
+   * 故两面各自持有工具集**实现**的文件必须消费它（`visibleMetrics` 的第三参 / 写路径的 deps）。
+   * ⚠️ 写面分片后（2026-10-07），实现从 mcp-manage.ts（只剩合成）搬进口径片 mcp-metric-tools.ts——
+   * 守卫落点跟着实现走；报表片不裁源（报表不直接产数），不在此列。
    */
-  const TOOLSETS = ['routes/mcp.ts', 'routes/mcp-manage.ts'] as const
+  const TOOLSETS = ['routes/mcp.ts', 'routes/mcp-metric-tools.ts'] as const
   const sourceOf = (rel: string) => readFileSync(new URL(`./${rel}`, import.meta.url), 'utf8')
 
   it('四条面的来源都引用**合并**加载器 loadMergedCatalog（= L1 ∪ 本 org 的单一落点）', () => {

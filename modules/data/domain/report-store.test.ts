@@ -107,4 +107,34 @@ describePg('report-store 的 renderer（需要 DATABASE_URL）', () => {
     const ok = await updateSpec(pool, org, id, { panels: [] }, 1)
     expect(ok).toMatchObject({ version: 2 })
   })
+
+  it('★ create-only：撞名即不写、返回 null，且既有行一字未动（页门/规格/版本都不变）', async () => {
+    const org = 'org-create-only-store'
+    await pool.query('delete from data.reports where org = $1', [org])
+    const first = await upsertReport(pool, org, {
+      title: '同名探针', metabaseId: 0, embedParams: {},
+      requiredScope: null, renderer: 'platform', spec: { panels: [] },
+    })
+    const before = await getReport(pool, org, first)
+
+    // 第二次：同 title + create-only ⇒ null（撞名），且**什么都不写**
+    const again = await upsertReport(pool, org, {
+      title: '同名探针', metabaseId: 0, embedParams: {},
+      requiredScope: 'data:manage', renderer: 'platform', spec: { panels: [] },
+    }, 'create-only')
+    expect(again).toBeNull()
+    const after = await getReport(pool, org, first)
+    // ★ 三样都不能变：页门（若被写就成了「静默撤下已发布」）、规格、版本
+    expect(after).toMatchObject({ requiredScope: before!.requiredScope, version: before!.version })
+    expect(after!.id).toBe(first)
+
+    // 对照：默认 upsert 会改写（这正是报表面那条「重登记重置页门」陷阱）
+    await upsertReport(pool, org, {
+      title: '同名探针', metabaseId: 0, embedParams: {}, requiredScope: 'data:manage',
+      renderer: 'platform', spec: { panels: [] },
+    })
+    const overwritten = await getReport(pool, org, first)
+    expect(overwritten!.requiredScope).toBe('data:manage')     // 现象成立 ⇒ 本任务的动机可复现
+    expect(overwritten!.version).toBe(before!.version + 1)
+  })
 })

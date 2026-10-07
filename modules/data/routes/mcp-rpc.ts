@@ -58,6 +58,16 @@ export interface McpToolSet {
   call(deps: McpDeps, name: string, args: Record<string, unknown>): Promise<McpToolResult>
 }
 
+/**
+ * 端点内部的**工具片**：一个端点可以由多片合成（如管理面 = 口径片 + 报表片）。
+ * `call` 返回 `null` 表示「这不是我的工具」——由合成方继续问下一片；
+ * 任一片认领了但业务上拒绝，则返回 `McpToolResult`（带 `isError`），不再往下问。
+ */
+export interface McpToolGroup {
+  list(deps: McpDeps): Promise<Record<string, unknown>[]>
+  call(deps: McpDeps, name: string, args: Record<string, unknown>): Promise<McpToolResult | null>
+}
+
 /** 把一个工具集挂成 `POST <path>` 的 MCP 端点。 */
 export function registerMcpEndpoint(
   r: ModuleHono, path: string, ctx: RouteCtx, toolset: McpToolSet,

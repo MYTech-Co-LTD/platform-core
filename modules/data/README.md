@@ -127,7 +127,7 @@ L1 **不是跨源通用语义**，是**逐源**的标准口径 ⇒ 词表行的�
 |---|---|---|
 | HTTP | `POST/PUT/DELETE /metrics` | `data:manage` |
 | MCP 读面 | `POST /mcp`（工具名 = 指标 id，问数） | `data:query` |
-| MCP 写面 | `POST /mcp-manage`（`list_metrics` / `customize_metric` / `delete_custom_metric`） | `data:manage` |
+| MCP 写面 | `POST /mcp-manage`（口径三工具 `list_metrics` / `customize_metric` / `delete_custom_metric` ＋ 报表三工具，见下节） | `data:manage` |
 
 写面**单独一个端点**而不是把写工具塞进 `/mcp`：让「写所需的能力」继续出现在
 `manifest.yaml` 里——清单是「声明即授权」的单一事实源。设计见
@@ -172,9 +172,31 @@ L1 **不是跨源通用语义**，是**逐源**的标准口径 ⇒ 词表行的�
    （空白会被读成「这里缺数据」）。
 3. **无回滚**：本机制只做**可追溯**，不做撤销/回滚。
 
-### L2 的已知边界（本轮**未**做，别当成漏检）
+### 报表工具面：能提、不能发（#496 已落地）
 
-1. **`target`（目标值）无存储面**：`data.metrics` 没有对应列（003 只加了 `source`），
+写面端点上追加的**报表三工具**（与口径三工具同端点同门，`/mcp-manage`）：
+
+| 工具 | 干什么 | 结构约束 |
+|---|---|---|
+| `list_reports` | 管理清单（标题/渲染器/**页门**/版本/面板数）——提议前查重用 | —— |
+| `propose_report` | 建一张平台自绘报表（`renderer='platform'`） | **不收 `requiredScope` 入参**，平台强制写 `data:manage` ⇒ agent 造不出「已发布」；走**原子 create-only**，撞名即拒 `TITLE_TAKEN`（不会改写既有行） |
+| `revise_report_spec` | 改**未发布**报表的规格，带 `expectedVersion` | **先读页门，已发布 ⇒ 拒 `PUBLISHED_REPORT`**；与 HTTP 面同 key 对象锁 |
+
+「能提、不能发」的三条结构落点（设计稿 `docs/superpowers/specs/2026-10-07-report-agent-toolface-design.md` §3.3）：
+①建报无页门入参 ⇒ 造不出已发布；②已发布报表的规格改动不经 agent；③**发布/回收在工具集里根本不存在**——
+不靠提示词，靠结构。
+
+**为什么 create-only 是必须的**：`POST /reports` 的冲突键是 `(org, title)` do update——同名「新建」会**改写既有行**
+（含页门重置）。若那张已发布，它会静默从员工视野消失。`upsertReport` 的 `'create-only'` 模式就是为堵这个洞。
+代价：agent 不能用同一个 title 迭代同一张报表（改名或走 `revise_report_spec`）——有意取舍。
+
+**边界与约定**：
+
+1. **`data:manage` 作为「未发布」页门值是约定，不是新机制**：借用既有「页门 = 一个 scope」语义
+   （只有持 `data:manage` 的人能在观看面看到）。发布 = 人在 console 清空页门。
+2. **工具面不含发布 / 回收 / 删除**：删除另有缺口（`DELETE /reports` 的 Metabase 配置检查先于 id 解析，
+   自绘行在没配 Metabase 的环境删不掉）——见 issue **#494**，未排期。
+3. **未验**：真实 MCP 客户端在本端点工具数涨到 **6**（口径三 + 报表三）后的表现（分页/工具上限）——没拿真客户端连过。
 
 ### L2 的已知边界（本轮**未**做，别当成漏检）
 
