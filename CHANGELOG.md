@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.76.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.75.0...v0.76.0) - 2026-10-07
+- 【新增】data: #476 维表发布面——data.dim_* 快照 + 发布脚本 + B1 只读豁免 + 探活⑥ ([#477](https://github.com/MYTech-Co-LTD/platform-core/pull/477), [1f9996b](https://github.com/MYTech-Co-LTD/platform-core/commit/1f9996b1281ca4c911c9a17d0d9c6cc02a2da752))
+
+
 ## [0.75.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.74.2...v0.75.0) - 2026-10-06
 - 【新增】docs: #468 采集接源流程固化成 collect-source skill（A→I 判停门 + 公司化触发条件） ([#469](https://github.com/MYTech-Co-LTD/platform-core/pull/469), [95a3c8b](https://github.com/MYTech-Co-LTD/platform-core/commit/95a3c8bab7d4f3b8538f46e2a9102b89234962bd))
 
