@@ -3,7 +3,7 @@
 // ── 为什么必须单开一个文件（这是本文件存在的全部理由）──────────────────────────────
 // C1 的缺陷类是「某个消费通道用了只回本 org 的加载器（`loadOrgCatalog`）」——
 // 它对**行为**测试是**结构性不可见**的：每条通道各自的测试都用
-// `upsertMetric(pool, <本租户 org>, …)` 铺夹具，夹具永远落在租户桶里，
+// `upsertMetric(pool, <本租户 org>, …, <操作人>)` 铺夹具，夹具永远落在租户桶里，
 // 于是「平台 L1 行在这条通道上不可达」没有任何用例会红（团队 #50/#51 的同一原型）。
 // 本文件把**四条面**放在**同一份夹具**上对比，让「同一 id 在任一通道上解析结果一致」
 // 成为一条真断言，而不是一句注释。
@@ -196,7 +196,7 @@ describePg('消费面词表四通道一致（需要 DATABASE_URL）', () => {
     await upsertL1Metric(pool, L1_FOREIGN)
     // 撞 id 的 L2 行直落存储层（等价于「租户先建、平台后物化」那条合法时序；
     // 走管理 API 建不出来——写侧闸门会以 409 ID_RESERVED_BY_L1 拦下）
-    await upsertMetric(pool, ORG, L2_CLASH)
+    await upsertMetric(pool, ORG, L2_CLASH, 'fixture')
   })
 
   beforeEach(() => { executed = []; for (const k of Object.keys(LLM_ENV)) process.env[k] = LLM_ENV[k]! })

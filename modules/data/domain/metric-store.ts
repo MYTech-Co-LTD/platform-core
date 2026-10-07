@@ -3,8 +3,9 @@
 // 隔离键一律是 **org（text，值 = 该租户的 Casdoor org）**，不是 tenant_id：
 // 正典 docs/module-protocol.md「租户数据隔离」，机器判据 scripts/check-tenant-isolation.mjs。
 // 三处读写**全部**带 `where org = $1`——漏一处就是跨租户串数据。
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import type { MetricDef, MetricParamDef } from './authz'
+import type { MetricRowSnapshot } from './metric-audit-store'
 
 /**
  * 指标行的**来源分层**（003_metrics_source.sql）——「这行 select_sql 谁写的、谁可以改」。
@@ -40,6 +41,10 @@ export const L1_ORG = 'platform'
 export interface MetricRow extends MetricDef {
   source: MetricSource
   sourceSystem: string | null
+  /** 最后操作人（Casdoor 用户名）；L1 行走 sync 物化 ⇒ 恒 null。 */
+  updatedBy: string | null
+  /** 单调计数（每次经 API 写 +1）；L1 行恒 1。与报表 005 同形，但此处是为**追溯**不是乐观并发。 */
+  version: number
 }
 
 /**
@@ -67,12 +72,14 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     params: row.params as Record<string, MetricParamDef>,
     source: row.source as MetricSource,
     sourceSystem: row.source_system as string | null,
+    updatedBy: (row.updated_by ?? null) as string | null,
+    version: Number(row.version ?? 1),
   }
 }
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
@@ -165,11 +172,16 @@ export async function loadMergedCatalog(pool: Pool, org: string): Promise<Metric
 //    （插入值显式 `null`），而冲突分支若把它写成 excluded，则「租户写路径撞上同 (org,id) 的
 //    L1 行」这一次写动作就会把**平台行的源维度抹成 null**——而 sync 的 `--check` 拿声明比对
 //    库内 L1 行时会因此**长期报漂移**（一次租户写，永久红）。
-export async function upsertMetric(pool: Pool, org: string, def: MetricDef): Promise<void> {
-  await pool.query(
+export async function upsertMetric(
+  db: Pool | PoolClient, org: string, def: MetricDef, updatedBy: string,
+): Promise<void> {
+  // ★ `updatedBy` 是**必填**（不给默认值）：给了默认值就等于留一条「不写人也能写库」的暗道，
+  //   而 #489 的全部意义就是堵它。⚠️ 调用方若直接传 Pool（如夹具），参数照传即可——
+  //   生产写路径（domain/metric-write）传的是事务里的 client，审计与变更同生共死。
+  await db.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -178,10 +190,12 @@ export async function upsertMetric(pool: Pool, org: string, def: MetricDef): Pro
        select_sql     = excluded.select_sql,
        group_by       = excluded.group_by,
        params         = excluded.params,
+       updated_by     = excluded.updated_by,
+       version        = data.metrics.version + 1,   -- ★ 单调计数（追溯用；本表无并发写案例，不做乐观并发）
        updated_at     = now()`,
     [
       org, def.id, def.title, def.description, def.requiredScope,
-      def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params),
+      def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params), updatedBy,
     ],
   )
 }
@@ -227,12 +241,41 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
  *   自觉；写在 WHERE 里，任何调用点都删不掉 L1 行。L1 行的删除唯一路径是 sync 的差集处置
  *   （仓内声明没了 ⇒ 物化时删），那是另一条显式路径。
  */
-export async function deleteMetric(pool: Pool, org: string, id: string): Promise<boolean> {
-  const r = await pool.query(
+export async function deleteMetric(db: Pool | PoolClient, org: string, id: string): Promise<boolean> {
+  const r = await db.query(
     "delete from data.metrics where org = $1 and id = $2 and source = 'l2'",
     [org, id],
   )
   return (r.rowCount ?? 0) > 0
+}
+
+/**
+ * 点读一行的**语义快照**（#489）：审计的前后态用它，它同时是「这次是建还是改」的判据
+ * （写之前有没有这行）。
+ *
+ * `and source = 'l2'` 与 `deleteMetric` 同一条纪律：平台桶的 L1 行不经本路径，
+ * 也就永远不会有「以它为主题」的审计行。
+ * 返回类型 `MetricRowSnapshot` 定义在 `metric-audit-store.ts`（审计的形状），
+ * 依赖方向是 store → audit-store，单向、无环。
+ */
+export async function selectMetricSnapshot(
+  db: Pool | PoolClient, org: string, id: string,
+): Promise<MetricRowSnapshot | null> {
+  const r = await db.query(
+    `select title, description, subject_column, select_sql, group_by, params
+       from data.metrics where org = $1 and id = $2 and source = 'l2'`,
+    [org, id],
+  )
+  if ((r.rowCount ?? 0) === 0) return null
+  const row = r.rows[0] as Record<string, unknown>
+  return {
+    title: row.title as string,
+    description: row.description as string,
+    subjectColumn: row.subject_column as string,
+    selectSql: row.select_sql as string,
+    groupBy: row.group_by as string,
+    params: row.params as Record<string, unknown>,
+  }
 }
 
 /**

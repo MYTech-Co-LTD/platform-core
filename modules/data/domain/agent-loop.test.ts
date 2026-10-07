@@ -80,8 +80,8 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
 
   async function seed() {
     await applyMigrations(pool)
-    await upsertMetric(pool, ORG, SALES_DAILY)
-    await upsertMetric(pool, ORG, FINANCE_MRR)
+    await upsertMetric(pool, ORG, SALES_DAILY, 'fixture')
+    await upsertMetric(pool, ORG, FINANCE_MRR, 'fixture')
   }
 
   /** 供 query_metric 用的假执行器：只认 sales_daily 的形状，另记下收到的 SQL 供断言。 */

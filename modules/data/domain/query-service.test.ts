@@ -54,7 +54,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
   beforeEach(async () => {
     await applyMigrations(pool)
     await pool.query('delete from data.query_audit where org = $1', [ORG])
-    await upsertMetric(pool, ORG, METRIC)
+    await upsertMetric(pool, ORG, METRIC, 'fixture')
   })
   afterAll(async () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)

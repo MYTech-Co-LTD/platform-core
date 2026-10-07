@@ -26,12 +26,26 @@ const CATALOG = {
       id: 'lemeng:retail:net_sales', title: '净销售额', description: '口径定义', requiredScope: null,
       subjectColumn: 'org', selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale',
       groupBy: 'system_book, bizday', params: {}, source: 'l1',
+      updatedBy: null, version: 1,
     },
     {
       id: 'xiongmao:net_sales', title: '熊喵净销售', description: 'L2 派生自 lemeng:retail:net_sales', requiredScope: null,
       subjectColumn: 'org', selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book from fct_retail_sale',
       groupBy: 'system_book', params: {}, source: 'l2',
+      updatedBy: 'ZhangDuo', version: 3,
     },
+  ],
+}
+
+/** 变更史夹具（#489）：一建一删，删的那行**摘要来自 before**（删除留证在 UI 上要看得见）。 */
+const AUDIT = {
+  audit: [
+    { id: 2, action: 'delete', userId: 'LiLei', channel: 'pat', keyId: 3,
+      createdAt: '2026-10-07T03:00:00.000Z',
+      before: { title: '删前', description: 'L2 派生自 lemeng:retail:net_sales（删前）' }, after: null },
+    { id: 1, action: 'create', userId: 'ZhangDuo', channel: 'session', keyId: null,
+      createdAt: '2026-10-07T01:00:00.000Z',
+      before: null, after: { title: '建时', description: 'L2 派生自 lemeng:retail:net_sales' } },
   ],
 }
 
@@ -45,6 +59,7 @@ beforeEach(() => {
       body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
     })
     if (url.includes('/metrics/all')) return json(CATALOG)
+    if (url.includes('/audit')) return json(AUDIT)
     return json({ ok: true })
   })
 })
@@ -144,5 +159,27 @@ describe('指标管理页', () => {
     await waitFor(() => {
       expect(calls.some((c) => c.method === 'DELETE' && c.url.endsWith('/metrics/xiongmao:net_sales'))).toBe(true)
     })
+  })
+
+  it('★ 两列：L2 显示「最后操作人 + v 版本」，L1 显示「平台物化（追溯走 git）」', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
+    expect(screen.getByText('ZhangDuo')).toBeInTheDocument()                 // L2 的最后操作人
+    expect(screen.getByText('v3')).toBeInTheDocument()                       // L2 的版本
+    expect(screen.getByText('平台物化（追溯走 git）')).toBeInTheDocument()      // L1：不显示空白（否则读成「缺数据」）
+  })
+
+  it('★ 变更历史抽屉：点开 → 拉 /metrics/:id/audit → 渲染动作与口径摘要（删除行的摘要来自 before）', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText('xiongmao:net_sales')).toBeInTheDocument())
+    button('变更历史').click()
+
+    await waitFor(() => expect(screen.getByText(/变更历史：xiongmao:net_sales/)).toBeInTheDocument())
+    expect(screen.getByText('删除')).toBeInTheDocument()
+    expect(screen.getByText(/被删：L2 派生自 lemeng:retail:net_sales（删前）/)).toBeInTheDocument()  // ★ 删除留证
+    expect(screen.getByText('新建')).toBeInTheDocument()
+    expect(screen.getByText(/LiLei/)).toBeInTheDocument()                    // 记的是**人**
+    // 拉的是本条的审计（不是 /metrics/all）
+    expect(calls.some((c) => c.url.includes('/metrics/xiongmao:net_sales/audit'))).toBe(true)
   })
 })

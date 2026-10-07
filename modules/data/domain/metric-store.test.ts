@@ -9,6 +9,7 @@ import {
   loadOrgCatalog,
   loadMergedCatalog,
   loadPlatformCatalog,
+  selectMetricSnapshot,
   upsertL1Metric,
   upsertMetric,
 } from './metric-store'
@@ -51,7 +52,7 @@ function def(over: Partial<MetricDef> = {}): MetricDef {
 describePg('metric-store（需要 DATABASE_URL）', () => {
   const pool = new Pool({ connectionString: dbUrl })
   /** 租户写路径（source='l2'）。平台物化路径是另一个入口 `upsertL1Metric`。 */
-  const put = (org: string, d: MetricDef) => upsertMetric(pool, org, d)
+  const put = (org: string, d: MetricDef) => upsertMetric(pool, org, d, 'fixture')
 
   /**
    * L1 物化路径的入参形状：`MetricDef` + **源系统**（L1 声明里 `source` 必填 ⇒ L1 行恒有源）。
@@ -208,8 +209,10 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
     expect(catalog.map((m) => m.id)).toContain('finance_margin')
     // 反向：别家租户的行一条都不能出现（隔离键 org 的判据）
     expect(catalog.map((m) => m.id)).not.toContain('other_org_only')
-    // 映射保真：逐字段等于写入的那个对象 + source 标注（多出来的列没被塞进来、jsonb 没被序列化成字符串）
-    expect(catalog.find((m) => m.id === 'finance_margin')).toEqual({ ...mine, source: 'l2', sourceSystem: null })
+    // 映射保真：逐字段等于写入的那个对象 + source 标注 + #489 的两列（多出来的列没被塞进来、
+    // jsonb 没被序列化成字符串）。这两列**必须**在映射里 —— /metrics/all 的列表两列靠它。
+    expect(catalog.find((m) => m.id === 'finance_margin'))
+      .toEqual({ ...mine, source: 'l2', sourceSystem: null, updatedBy: 'fixture', version: 1 })
   })
 
   it('deleteMetric 返「是否真删了一行」，且只删本租户的', async () => {
@@ -323,5 +326,62 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
       expect(visible.map((m) => m.id)).toContain(`${L1_ID_PREFIX}public`)
       expect(visible.map((m) => m.id), 'data:finance 的指标对只有 data:query 的人可见了').not.toContain(`${L1_ID_PREFIX}finance`)
     })
+  })
+})
+
+// ── 010 迁移（#489）：语义追溯的地基。单独一个 describe：它验的是 schema，不是 store 行为。──
+describePg('010 迁移：两列 + 审计表（#489）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  afterAll(async () => { await pool.end() })
+
+  it('★ 两列与新表就位，且迁移幂等（连跑两遍零效果）', async () => {
+    await applyMigrations(pool)
+    await applyMigrations(pool) // 第二遍：必须零效果、不报错（部署脚本每次全量重跑）
+    const cols = await pool.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+        where table_schema = 'data' and table_name = 'metrics'
+          and column_name in ('updated_by', 'version')`)
+    expect(cols.rows.map((r) => r.column_name).sort()).toEqual(['updated_by', 'version'])
+
+    const t = await pool.query<{ n: number }>(
+      `select count(*)::int as n from information_schema.tables
+        where table_schema = 'data' and table_name = 'metric_audit'`)
+    expect(t.rows[0]!.n).toBe(1)
+  })
+})
+
+// ── 记人记版本 + 快照点读（#489）：语义追溯的两列与审计的前后态都靠它。──
+describePg('记人 / 版本 / 快照（#489）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  afterAll(async () => {
+    await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
+    await pool.end()
+  })
+
+  const snapDef = (title: string): MetricDef => ({
+    id: 'ma_ver', title, description: 'd', requiredScope: null,
+    subjectColumn: 'org', selectSql: 'select sum(x.y) as value, bizday from x',
+    groupBy: 'bizday', params: {},
+  })
+
+  it('★ upsert 记人并累加版本：首建 version=1、再写 +1，人跟着换', async () => {
+    await applyMigrations(pool)
+    await upsertMetric(pool, ORG, snapDef('t1'), 'ZhangDuo')
+    let row = (await pool.query(`select version, updated_by from data.metrics where org=$1 and id=$2`,
+      [ORG, 'ma_ver'])).rows[0]
+    expect(row).toMatchObject({ version: 1, updated_by: 'ZhangDuo' })
+
+    await upsertMetric(pool, ORG, snapDef('t2'), 'LiLei')
+    row = (await pool.query(`select version, updated_by, title from data.metrics where org=$1 and id=$2`,
+      [ORG, 'ma_ver'])).rows[0]
+    expect(row).toMatchObject({ version: 2, updated_by: 'LiLei', title: 't2' })
+  })
+
+  it('★ 快照点读：本 org 的 l2 行拿得到，不存在 / 别家 org / 平台桶 都是 null', async () => {
+    await upsertMetric(pool, ORG, snapDef('t2'), 'LiLei')
+    const snap = await selectMetricSnapshot(pool, ORG, 'ma_ver')
+    expect(snap).toMatchObject({ title: 't2', subjectColumn: 'org', groupBy: 'bizday' })
+    expect(await selectMetricSnapshot(pool, ORG, 'no_such')).toBeNull()
+    expect(await selectMetricSnapshot(pool, 'platform', 'ma_ver')).toBeNull()
   })
 })
