@@ -124,26 +124,47 @@ export async function listAllReports(pool: Pool): Promise<RegisteredReport[]> {
  * `spec` 同为可选（缺省落 SQL null）：既有 Metabase 调用点（routes/reports.ts 的
  * `POST /reports`）不传也照常编译运行；自绘调用方必须显式带 spec，否则库侧跨列 check
  * `data_reports_spec_by_renderer`（迁移 007）直接拒——「自绘行必须有规格」不靠调用方自觉。
+ *
+ * **两种模式**（2026-10-07 报表工具面引入，spec §3.3④）：
+ *  · `'upsert'`（默认，**既有行为**）：冲突键是 `(org, title)` ⇒ 同名的第二次写会**改写既有行**
+ *    （含 `required_scope`）——报表面那条「重登记重置页门」的陷阱就在这条分支上。
+ *  · `'create-only'`：冲突⇒ **什么都不写**，返回 `null`。调用方据此把「撞名」拒掉。
+ *    ⚠️ agent 的工具面**必须**用它：否则「提议一张新报表」会变成「改写既有报表」，
+ *    而那张若已发布，页门被重置 ⇒ **静默从员工视野消失**（spec §3.3④）。
+ *
+ * 重载是为了让既有调用方**零改动**（它们只传 3 参，拿到 `string`；`null` 在类型上够不着）。
  */
+export interface UpsertReportInput {
+  title: string
+  metabaseId: number
+  embedParams: Record<string, string>
+  requiredScope: string | null
+  renderer?: ReportRenderer
+  spec?: ReportSpec | null
+}
+
+export function upsertReport(pool: Pool, org: string, input: UpsertReportInput): Promise<string>
+export function upsertReport(pool: Pool, org: string, input: UpsertReportInput, mode: 'upsert'): Promise<string>
+export function upsertReport(
+  pool: Pool, org: string, input: UpsertReportInput, mode: 'create-only',
+): Promise<string | null>
 export async function upsertReport(
-  pool: Pool,
-  org: string,
-  input: {
-    title: string; metabaseId: number; embedParams: Record<string, string>
-    requiredScope: string | null; renderer?: ReportRenderer; spec?: ReportSpec | null
-  },
-): Promise<string> {
-  const r = await pool.query(
-    `insert into data.reports (org, id, title, metabase_id, embed_params, required_scope, renderer, spec)
-     values ($1, $2, $3, $4, $5, $6, $7, $8)
-     on conflict (org, title) do update set
+  pool: Pool, org: string, input: UpsertReportInput, mode: 'upsert' | 'create-only' = 'upsert',
+): Promise<string | null> {
+  const conflict = mode === 'create-only'
+    ? 'on conflict (org, title) do nothing'
+    : `on conflict (org, title) do update set
        metabase_id    = excluded.metabase_id,
        embed_params   = excluded.embed_params,
        required_scope = excluded.required_scope,
        renderer       = excluded.renderer,
        spec           = excluded.spec,
        version        = data.reports.version + 1,
-       updated_at     = now()
+       updated_at     = now()`
+  const r = await pool.query(
+    `insert into data.reports (org, id, title, metabase_id, embed_params, required_scope, renderer, spec)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
+     ${conflict}
      returning id`,
     [org, randomUUID(), input.title, input.metabaseId,
       JSON.stringify(input.embedParams), input.requiredScope, input.renderer ?? 'metabase',
@@ -152,7 +173,8 @@ export async function upsertReport(
       // 同款显式 stringify：不依赖驱动对对象的隐式序列化）。
       input.spec == null ? null : JSON.stringify(input.spec)],
   )
-  return r.rows[0].id as string
+  // create-only 撞名时 `returning` 无行 ⇒ rowCount 0 ⇒ null；upsert 恒有一行
+  return (r.rowCount ?? 0) === 0 ? null : (r.rows[0].id as string)
 }
 
 /** 删登记行：返回是否真命中一行（没命中不是错误）。 */
