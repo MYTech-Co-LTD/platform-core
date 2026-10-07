@@ -45,19 +45,18 @@ async function main() {
   await platform.connect()
 
   try {
-    // 每个 (org, system_book) 只发布其**最新 snapshot** 的行集（staging 按日累积多版快照）
-    const scopes = await warehouse.query(
+    // 每个 (org, system_book) 只发布其**最新 snapshot** 的行集（staging 按日累积多版快照）。
+    // ⚠️ branch 与 item 的 snapshot **各自独立**（两个 dim 批次的采集节奏不同）——
+    //    不能 UNION 成一份 scope（首跑实测：branch 的 max 覆盖 item 的 ⇒ item 恒 0 行）。
+    const branchScopes = await warehouse.query(
       `select org, system_book, max(snapshot)::text as snapshot
-         from staging.stg_lemeng_branch
-        group by org, system_book
-        union
-       select org, system_book, max(snapshot)::text
-         from staging.stg_lemeng_item
-        group by org, system_book`,
+         from staging.stg_lemeng_branch group by org, system_book`,
     )
-    const seen = new Map()
-    for (const s of scopes.rows) seen.set(`${s.org}\u0000${s.system_book}`, s.snapshot)
-    if (seen.size === 0) {
+    const itemScopes = await warehouse.query(
+      `select org, system_book, max(snapshot)::text as snapshot
+         from staging.stg_lemeng_item group by org, system_book`,
+    )
+    if (branchScopes.rows.length === 0 && itemScopes.rows.length === 0) {
       // staging 全空 = 上游没物化过 ⇒ 发布 0 行是**如实结果**，但要让 job 响亮可见（探活⑤
       // 会红词表、④红新鲜度）——这里只打印不报错，退出码 0
       console.log(`${SCRIPT_NAME}: staging 无维表行，发布 0 行（上游未物化？看探活 ④⑤）`)
@@ -66,8 +65,11 @@ async function main() {
 
     let totalBranch = 0
     let totalItem = 0
-    for (const [key, snapshot] of seen) {
-      const [org, systemBook] = key.split('\u0000')
+
+    for (const s of branchScopes.rows) {
+      const org = s.org
+      const systemBook = s.system_book
+      const snapshot = s.snapshot
 
       // ── dim_branch：事务内整批替换（delete + insert 当前 snapshot）──
       const branches = await warehouse.query(
@@ -92,8 +94,16 @@ async function main() {
         throw err
       }
       totalBranch += branches.rows.length
+      console.log(`${SCRIPT_NAME}: ${org}/${systemBook} snapshot=${snapshot} —— dim_branch ${branches.rows.length} 行`)
+    }
 
-      // ── dim_item：同款整批替换（46 万行，逐行 insert 太慢 ⇒ 用 unnest 批量绑定）──
+    // ── dim_item：独立 scope（与 branch 的 snapshot 节奏无关）；46 万行逐行 insert 太慢 ⇒
+    //    unnest 批量绑定（5000 行/批）
+    for (const s of itemScopes.rows) {
+      const org = s.org
+      const systemBook = s.system_book
+      const snapshot = s.snapshot
+
       const items = await warehouse.query(
         `select item_code, bar_code, item_name as name, spec, unit_name,
                 item_sale_cease_flag as sale_cease, eliminate_flag as eliminate
@@ -105,8 +115,8 @@ async function main() {
       try {
         await platform.query('delete from data.dim_item where org = $1 and system_book = $2', [org, systemBook])
         /** @type {{ item_code: string, bar_code: string | null, name: string, spec: string | null, unit_name: string | null, sale_cease: boolean | null, eliminate: boolean | null }[]} */
-      const rows = items.rows
-      for (let i = 0; i < rows.length; i += 5000) {
+        const rows = items.rows
+        for (let i = 0; i < rows.length; i += 5000) {
           const chunk = rows.slice(i, i + 5000)
           await platform.query(
             `insert into data.dim_item (org, system_book, item_code, bar_code, name, spec, unit_name, sale_cease, eliminate, snapshot)
@@ -131,8 +141,7 @@ async function main() {
         throw err
       }
       totalItem += items.rows.length
-
-      console.log(`${SCRIPT_NAME}: ${org}/${systemBook} snapshot=${snapshot} —— dim_branch ${branches.rows.length} 行 / dim_item ${items.rows.length} 行`)
+      console.log(`${SCRIPT_NAME}: ${org}/${systemBook} snapshot=${snapshot} —— dim_item ${items.rows.length} 行`)
     }
 
     // 回读验收面（不拿「没抛错」当成功）
