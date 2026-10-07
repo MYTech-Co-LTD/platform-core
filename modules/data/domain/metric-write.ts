@@ -6,8 +6,10 @@
 //
 // 交付关系：`writeL2Declaration` / `deleteMetricDeclaration` 的 `http` 字段由调用方决定怎么用
 // （HTTP 面直出状态码；MCP 写面翻成工具级错误 `{status:'refused', error}`）。
-import type { Pool } from 'pg'
-import { deleteMetric, loadPlatformCatalog, upsertMetric } from './metric-store'
+import type { Pool, PoolClient } from 'pg'
+import type { Requester } from './authz'
+import { deleteMetric, loadPlatformCatalog, selectMetricSnapshot, upsertMetric } from './metric-store'
+import { writeMetricAudit } from './metric-audit-store'
 import type { MetricRow } from './metric-store'
 import { SemanticCompileError, compileL2, resolveL1Base } from './semantic-compiler'
 import type { L2Declaration } from './semantic-compiler'
@@ -16,6 +18,28 @@ export interface MetricWriteDeps {
   pool: Pool
   /** 本租户已接入的源（宿主投影）。空集 = 一个源都没接 ⇒ 未接入源的基底一律拒（fail-closed）。 */
   adoptedSources: ReadonlySet<string>
+  /** 谁在写（#489）。**必填**——审计要记人；无身份必须在入口被拒（见 routes/metrics.ts 的守卫），
+   *  不能流到这里来（留，等于允许写一条「无主」审计）。 */
+  requester: Requester
+}
+
+/**
+ * 事务包裹：**审计与变更同生共死**（spec §4①）——「改了没记」与「记了没改」在取证上都是致命伤。
+ * 失败一律回滚，绝不半提交。只包**写入**：判定链里的闸门是只读校验，留在事务外（少占连接、早拒）。
+ */
+async function withTx<T>(pool: Pool, fn: (c: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+    const out = await fn(client)
+    await client.query('commit')
+    return out
+  } catch (e) {
+    await client.query('rollback').catch(() => {})
+    throw e
+  } finally {
+    client.release()
+  }
 }
 
 /** 判别式结果：`http` 由调用方决定怎么用（HTTP 面直出；MCP 面翻成工具级错误）。
@@ -97,13 +121,11 @@ export async function writeL2Declaration(
     throw e
   }
 
-  // ⚠️ T3 临时值：Task 4 改为 deps.requester.userId（那时 deps 才有 requester）。
-  //    本提交的意义只是让「updatedBy 必填」这一条先把全部调用点扫过一遍。不发布。
-  await upsertMetric(deps.pool, org, {
+  // 闸门全过（都是只读校验）⇒ 开事务：读前态 → 落库 → 写审计
+  const row = {
     id,
     title: compiled.title,
     // 派生关系写进 description：管理面要能看出「这条 L2 是从哪个平台指标裁出来的」
-    // （纯 L2 行没有 lineage 面，description 是当前唯一的可见去处）
     description: `L2 派生自 ${base.id}`,
     requiredScope: null,
     // 主体列**继承** L1：它是主体钉死的依据，租户改不了（改了就是跨租户读别人的数据）
@@ -111,24 +133,56 @@ export async function writeL2Declaration(
     selectSql: compiled.selectSql,
     groupBy: compiled.groupBy,
     params: {},
-  }, '(t4)')
+  }
+  const actor = deps.requester
+  await withTx(deps.pool, async (c) => {
+    // 「建」还是「改」的判据就是**写之前有没有这行**（HTTP 的 POST/PUT 与 MCP 的 customize 都走这里，
+    // 不为「建/改」各留一条分支）。同一读也给出审计要的**前态**。
+    const before = await selectMetricSnapshot(c, org, id)
+    await upsertMetric(c, org, row, actor.userId)
+    await writeMetricAudit(c, {
+      org,
+      metricId: id,
+      action: before === null ? 'create' : 'update',
+      userId: actor.userId,
+      channel: actor.channel,
+      keyId: actor.keyId,
+      before,
+      after: {
+        title: row.title, description: row.description, subjectColumn: row.subjectColumn,
+        selectSql: row.selectSql, groupBy: row.groupBy, params: row.params,
+      },
+    })
+  })
   return { ok: true }
 }
 
 export async function deleteMetricDeclaration(
   deps: MetricWriteDeps, org: string, id: string,
 ): Promise<MetricWriteOutcome> {
-  // ★ 顺序：**先删本租户自己的 L2 行，再判 L1**（T8 评审 M-①，勿回退）。不能反——
-  //   「租户先建 L2、平台事后同 id 物化」是**合法时序**（写侧闸门只拦相反方向），
-  //   撞 id 之后那行 L2 在合并词表里被 L1 顶掉（消费面看不见它），若 DELETE 先判 L1
-  //   就恒 409 ⇒ **永久孤儿**：租户再也清不掉自己声明过的那行，而存储层的
-  //   `deleteMetric` 本来完全能删它（`org = 本 org` 与 `source = 'l2'` 都钉在 WHERE 里，
-  //   碰不到平台桶那行）。删自己的行不影响任何人：「L1 赢」是**解析**规则，
-  //   不是「租户的行归平台所有」。
-  const gone = await deleteMetric(deps.pool, org, id)
-  if (gone) return { ok: true }
-  // 没删到：若这个 id 是平台词表里的 ⇒ **显式** 409（不是含混的 404）：404 会让管理员
-  // 以为「这行不存在」，真相是「它在，但只能改 dbt 声明再物化」。故先认出来再拒。
-  if (await isL1Id(deps, id)) return { ok: false, http: 409, error: 'READONLY_L1' }
-  return { ok: false, http: 404, error: 'NOT_FOUND' }
+  const actor = deps.requester
+  return withTx(deps.pool, async (c) => {
+    // ★ 先读快照（只读，**不改顺序语义**）：它同时充当「这行在不在」与「删的是什么」。
+    //   顺序纪律不变：**先看本租户自己的 L2 行，删不到才判 L1**（T8 评审 M-①）——
+    //   「租户先建 L2、平台事后同 id 物化」是合法时序，若先判 L1 就恒 409 ⇒ 永久孤儿。
+    const before = await selectMetricSnapshot(c, org, id)
+    if (before === null) {
+      // 没删到本租户的 L2 行：若这个 id 是平台词表里的 ⇒ **显式** 409（不是含混的 404）：
+      // 404 会让管理员以为「这行不存在」，真相是「它在，但只能改 dbt 声明再物化」。
+      if (await isL1Id(deps, id)) return { ok: false, http: 409, error: 'READONLY_L1' }
+      return { ok: false, http: 404, error: 'NOT_FOUND' }
+    }
+    await deleteMetric(c, org, id)
+    await writeMetricAudit(c, {
+      org,
+      metricId: id,
+      action: 'delete',
+      userId: actor.userId,
+      channel: actor.channel,
+      keyId: actor.keyId,
+      before,          // ★ 删除留证：被删的内容在 before 里（after 为 null）
+      after: null,
+    })
+    return { ok: true }
+  })
 }

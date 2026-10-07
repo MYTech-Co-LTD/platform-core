@@ -20,6 +20,7 @@ import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf } from './context'
 import { visibleMetrics } from '../domain/authz'
+import type { Requester } from '../domain/authz'
 import { loadMergedCatalog } from '../domain/metric-store'
 import type { MetricRow } from '../domain/metric-store'
 import { L2DeclarationSchema } from '../domain/semantic-compiler'
@@ -87,8 +88,8 @@ const adoptedSourcesOf = (c: Context<ModuleVars>): ReadonlySet<string> =>
  * 域层 deps 的**唯一**组装点：org 与已接入源都从宿主投影读，写/删两条路径共用。
  * （org 取 `casdoor_org` 而不是数字 id —— 见文件头那条注记。）
  */
-function writeDeps(ctx: RouteCtx, c: Context<ModuleVars>): MetricWriteDeps {
-  return { pool: ctx.pool, adoptedSources: adoptedSourcesOf(c) }
+function writeDeps(ctx: RouteCtx, c: Context<ModuleVars>, requester: Requester): MetricWriteDeps {
+  return { pool: ctx.pool, adoptedSources: adoptedSourcesOf(c), requester }
 }
 
 /**
@@ -129,13 +130,18 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   })
 
   r.post('/metrics', async (c) => {
+    const requester = requesterOf(c)
+    // 写入必须能归属到人（审计要记人）——无身份 ⇒ 拒，**不写一条「无主」审计**（#489）
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const parsed = L2Body.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const { id, ...decl } = parsed.data
-    return writeOutcome(c, await writeL2Declaration(writeDeps(ctx, c), orgOf(c), id, decl), 201)
+    return writeOutcome(c, await writeL2Declaration(writeDeps(ctx, c, requester), orgOf(c), id, decl), 201)
   })
 
   r.put('/metrics/:id', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const id = metricIdOf(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const parsed = L2Body.safeParse(await c.req.json().catch(() => null))
@@ -143,13 +149,15 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     // 路径 id 与 body id 必须同值：否则「改 A 结果写了 B」是静默的数据事故。
     if (parsed.data.id !== id) return c.json({ error: 'ID_MISMATCH' }, 400)
     const { id: _bodyId, ...decl } = parsed.data
-    return writeOutcome(c, await writeL2Declaration(writeDeps(ctx, c), orgOf(c), id, decl), 200)
+    return writeOutcome(c, await writeL2Declaration(writeDeps(ctx, c, requester), orgOf(c), id, decl), 200)
   })
 
   r.delete('/metrics/:id', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const id = metricIdOf(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     // 判定链（含「先删本租户自己的 L2 行、再判 L1」那条顺序及其理由）在 domain/metric-write.ts。
-    return writeOutcome(c, await deleteMetricDeclaration(writeDeps(ctx, c), orgOf(c), id), 200)
+    return writeOutcome(c, await deleteMetricDeclaration(writeDeps(ctx, c, requester), orgOf(c), id), 200)
   })
 }

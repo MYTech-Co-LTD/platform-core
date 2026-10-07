@@ -98,7 +98,9 @@ const manageToolset: McpToolSet = {
     if (deps.requester === null) {
       return { text: JSON.stringify({ status: 'error', reason: 'unauthenticated' }), isError: true }
     }
-    const writeDeps = { pool: deps.pool, adoptedSources: deps.adoptedSources }
+    // 守卫已在上方拒掉空身份 ⇒ 这里 requester 必非空（写路径的 deps 要求非空，见 metric-write）
+    const requester = deps.requester
+    const writeDeps = { pool: deps.pool, adoptedSources: deps.adoptedSources, requester }
 
     if (name === 'list_metrics') {
       const all = await loadMergedCatalog(deps.pool, deps.org)
