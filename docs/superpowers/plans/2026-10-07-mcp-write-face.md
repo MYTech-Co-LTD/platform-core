@@ -548,10 +548,16 @@ import { Pool } from 'pg'
 import type { Hono } from 'hono'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
+import { upsertMetric } from '../domain/metric-store'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
+/** 隔离键（text，值 = 该租户的 Casdoor org）——与其它测试文件互不相同，避免互相擦数据。 */
 const ORG = 'org-mcp-manage'
+/** 种进 platform 桶的平台 L1（基底 + 「撞 L1 保留 id」用例的被撞者）。 */
+const L1_ID = 'mw_l1_sales_daily'
+/** 本租户自建的 L2（happy path 用）。 */
+const L2_ID = 'mw_l2_mine'
 
 /** ① 承重断言：写面的门禁来自**声明**，所以清单里那一行是本设计安全属性的唯一落点。 */
 describe('写面的声明（不需要数据库）', () => {
@@ -587,38 +593,98 @@ function toolText(body: { result: { content: { text: string }[] } }): Record<str
 
 describePg('写面（需要 DATABASE_URL）', () => {
   const pool = new Pool({ connectionString: dbUrl })
-  afterAll(async () => { await pool.end() })
+  afterAll(async () => {
+    // 本文件只种 platform 桶的 L1 与 ORG 桶的 L2，按 org 清干净
+    await pool.query(`delete from data.metrics where org = $1`, [ORG]).catch(() => {})
+    await pool.query(`delete from data.metrics where org = 'platform' and id = $1`, [L1_ID]).catch(() => {})
+    await pool.end()
+  })
 
   function app(): Hono {
     return buildTestApp(mod, makeIdentity({ orgId: ORG }), { pool })
   }
 
-  it('tools/list → 恰好三件，且 customize 的描述写明「不能凭空造新指标」', async () => {
+  /** 种一条平台 L1（`customize_metric` 的基底；也是「撞 L1 保留 id」用例的被撞者）。 */
+  async function seedL1(): Promise<void> {
     await applyMigrations(pool)
+    await upsertMetric(pool, 'platform', {
+      id: L1_ID, title: '销售日明细', description: '按日汇总的销售明细',
+      requiredScope: null, subjectColumn: 'org',
+      selectSql: 'SELECT org, bizday, revenue FROM marts.mart_sales_daily',
+      groupBy: 'bizday', params: {},
+    })
+  }
+
+  it('tools/list → 恰好三件，且 customize 的描述写明「不能凭空造新指标」', async () => {
+    await seedL1()
     const body = await (await rpc(app(), { jsonrpc: '2.0', id: 1, method: 'tools/list' })).json()
-    const names = (body as { result: { tools: { name: string; description: string }[] } })
-      .result.tools.map((t) => t.name).sort()
-    expect(names).toEqual(['customize_metric', 'delete_custom_metric', 'list_metrics'])
-    const c = (body as { result: { tools: { name: string; description: string }[] } })
-      .result.tools.find((t) => t.name === 'customize_metric')!
-    expect(c.description).toContain('不能凭空造新指标')
+    const tools = (body as { result: { tools: { name: string; description: string }[] } }).result.tools
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      ['customize_metric', 'delete_custom_metric', 'list_metrics'])
+    expect(tools.find((t) => t.name === 'customize_metric')!.description)
+      .toContain('不能凭空造新指标')
   })
 
-  it('list_metrics → 回本租户基底与自定义（空库时基底为空、自定义为空）', async () => {
+  it('list_metrics → 基底含刚种的 L1（带可用维度）；自定义面初始为空', async () => {
+    await seedL1()
     const body = await (await rpc(app(), {
       jsonrpc: '2.0', id: 2, method: 'tools/call',
       params: { name: 'list_metrics', arguments: {} },
     })).json()
     const out = toolText(body as never)
     expect(out.status).toBe('ok')
-    expect(Array.isArray(out.bases)).toBe(true)
-    expect(Array.isArray(out.custom)).toBe(true)
+    const bases = out.bases as { id: string; dimensions: string[] }[]
+    expect(bases.map((b) => b.id)).toContain(L1_ID)
+    // 「可用维度」必须显式列出来 —— 否则 agent 只能靠试错撞「未知维度」
+    expect(bases.find((b) => b.id === L1_ID)!.dimensions).toEqual(['bizday'])
+    expect(out.custom).toEqual([])
+  })
+
+  it('★ happy path：customize 成功 → 落库可读回（且 list 里出现在"自定义"面）', async () => {
+    await seedL1()
+    const created = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 3, method: 'tools/call',
+      params: {
+        name: 'customize_metric',
+        arguments: { id: L2_ID, baseMetric: L1_ID, alias: '本租户口径', visibility: { dims: ['bizday'] } },
+      },
+    })).json()
+    expect(toolText(created as never).status).toBe('ok')
+
+    const listed = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 4, method: 'tools/call',
+      params: { name: 'list_metrics', arguments: {} },
+    })).json()
+    const custom = toolText(listed as never).custom as { id: string }[]
+    expect(custom.map((c) => c.id)).toContain(L2_ID)
+
+    // 独立回读存储层：不采信工具自述
+    const row = await pool.query(
+      `select source, subject_column, group_by from data.metrics where org = $1 and id = $2`, [ORG, L2_ID])
+    expect(row.rowCount).toBe(1)
+    expect(row.rows[0]).toMatchObject({ source: 'l2', subject_column: 'org', group_by: 'bizday' })
+  })
+
+  it('★ happy path：delete_custom_metric 删自己的 → 成功；再 list 已不在', async () => {
+    await seedL1()
+    const del = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 5, method: 'tools/call',
+      params: { name: 'delete_custom_metric', arguments: { id: L2_ID } },
+    })).json()
+    expect(toolText(del as never).status).toBe('ok')
+
+    const listed = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 6, method: 'tools/call',
+      params: { name: 'list_metrics', arguments: {} },
+    })).json()
+    expect((toolText(listed as never).custom as { id: string }[]).map((c) => c.id)).not.toContain(L2_ID)
   })
 
   it('customize_metric 撞 L1 保留 id → 工具级错误 ID_RESERVED_BY_L1，isError:true', async () => {
+    await seedL1()
     const body = await (await rpc(app(), {
-      jsonrpc: '2.0', id: 3, method: 'tools/call',
-      params: { name: 'customize_metric', arguments: { id: 'sales_daily', baseMetric: 'sales_daily' } },
+      jsonrpc: '2.0', id: 7, method: 'tools/call',
+      params: { name: 'customize_metric', arguments: { id: L1_ID, baseMetric: L1_ID } },
     })).json()
     const out = toolText(body as never)
     expect(out.status).toBe('refused')
@@ -627,17 +693,28 @@ describePg('写面（需要 DATABASE_URL）', () => {
   })
 
   it('customize_metric 基底不存在 → L1_BASE_NOT_FOUND；未知维度 → 具体维度码', async () => {
+    await seedL1()
     const bad = await (await rpc(app(), {
-      jsonrpc: '2.0', id: 4, method: 'tools/call',
+      jsonrpc: '2.0', id: 8, method: 'tools/call',
       params: { name: 'customize_metric', arguments: { id: 'x1', baseMetric: 'nope' } },
     })).json()
     expect(toolText(bad as never).error).toBe('L1_BASE_NOT_FOUND')
+
+    const dim = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 9, method: 'tools/call',
+      params: {
+        name: 'customize_metric',
+        arguments: { id: 'x2', baseMetric: L1_ID, visibility: { dims: ['no_such_dim'] } },
+      },
+    })).json()
+    expect(toolText(dim as never).error).toBe('UNKNOWN_DIM')
   })
 
   it('delete_custom_metric 打 L1 id → READONLY_L1（复用同一条判定）', async () => {
+    await seedL1()
     const body = await (await rpc(app(), {
-      jsonrpc: '2.0', id: 5, method: 'tools/call',
-      params: { name: 'delete_custom_metric', arguments: { id: 'sales_daily' } },
+      jsonrpc: '2.0', id: 10, method: 'tools/call',
+      params: { name: 'delete_custom_metric', arguments: { id: L1_ID } },
     })).json()
     expect(toolText(body as never).error).toBe('READONLY_L1')
   })
@@ -651,6 +728,10 @@ describePg('写面（需要 DATABASE_URL）', () => {
   })
 })
 ````
+
+（上面用到的常量：`const L1_ID = 'mw_l1_sales_daily'`、`const L2_ID = 'mw_l2_mine'`、
+`const ORG = 'org-mcp-manage'`；`upsertMetric` 从 `../domain/metric-store` 导入，
+与 `mcp.test.ts` 的种法同源。）
 
 - [ ] **Step 2: 跑测试，确认失败**
 
