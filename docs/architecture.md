@@ -360,6 +360,7 @@
 | **`enabledFor` 只能请求期门控** | `enabledFor(tenantId)` 是**按租户**的（`apps/server/src/loader.ts:52`），而 `mount()` 全仓只调一次（`apps/server/src/app.ts:231`）⇒ 停用模块只能在**请求期**过滤；闸门每请求查一次库、**刻意不做缓存**（`apps/server/src/loader.ts:350,369`）。装成「装载期过滤」会连带把启用租户也挡掉 | `apps/server/src/loader.ts:45,350,369` |
 | **I-1 挂载顺序** | 租户→会话必须先于 `runtime.mount`（见 §3） | `apps/server/src/app.ts:3-9` |
 | **JIT 建号三条件** | 企微自动建号（issue #32）必须同时满足：① **企微直连 code**（qr-corp/silent；Casdoor OIDC code 路**永不** JIT——那条路的账号来源是 Casdoor 自己的注册/管理面）② 租户旗标 `wecom_auto_signup`（**默认 false**，seed 收敛关；放宽 = 企微成员自动获得平台账号，必须租户级显式决定）③ 建号 + 挂全量码后重读成功。任一不满足 ⇒ fail-closed（NO_ACCOUNT / CASDOOR_UNAVAILABLE）。建号失败**绝不静默放行**（audit `login.fail reason=jit-create-failed`） | `apps/server/src/routes/auth-wecom.ts:324`、`packages/auth-core/src/casdoor-client.ts:236,268`、`apps/server/src/migrations/004_tenant_wecom_auto_signup.sql` |
+| **跨模块数据消费走契约** | 业务模块消费其他域的数据（如采集产出的维表）**只许两种形状**：① owner 的同步查询 API（交互类，执法在读时）或 ② owner 发布的带版本快照（批量类，执法在发布时）；**禁止直连**他模块的生产表/生产库（staging/湖不对业务模块暴露；不给业务模块发 `DATA_WAREHOUSE_URL`）。违反 = 跨 schema/租户耦合藏进存储层（lint 看不见），schema 一变运行时静默炸。判定三问与形状选择见决策正典 | `docs/superpowers/specs/2026-10-07-cross-module-data-consumption.md`（人裁 2026-10-07） |
 
 > **「仅文档」不等于「不重要」**，而是「目前没有自动化的守门人」。把某一条升级成门禁是**另一个决定**，
 > 需要单独的真实案例支撑（本仓规矩：无案例不立标准）。
