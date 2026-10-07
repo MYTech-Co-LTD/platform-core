@@ -259,7 +259,7 @@ curl -X POST https://deploy.hookflow.cn/api/proxy/api/webhooks/incoming/iwh_l-d5
 
 - **token 在哪取**：deploy.hookflow.cn dashboard → 项目 platform-core-shanhai →
   Webhooks → `manual-deploy-latest` 详情可见（rotate 可重生成）。**不落任何文档/提交**。
-- **部署语义**（2026-10-07 首用已验）：重部署该机绑定分支（main）的**最新提交**，不能钉
+- **部署语义**（2026-10-07 首用已验；**同日二用亦验、零事故**，实录见 §4 二次更版那条）：重部署该机绑定分支（main）的**最新提交**，不能钉
   指定 commitSha——打之前想清楚这次给客户的是哪个版本。token 头 `Authorization: Bearer`
   实测 200；**URL 形状以 `get_projects_by_id_incoming_webhooks` 返回的 `url` 字段为正典**
   （不带 `/projects/<id>/` 段；手拼带段的形状 401）。
@@ -327,3 +327,34 @@ env 三键改指该 application → 第三轮 CLI 全绿（permissions ×5 + sub
 （待客户公众号侧可信域名 + 真机验证，见步骤 6）。
 
 **销账**：本单即 M1c「single 试点端到端验收」的实录（AGENTS.md 债账对应项）。
+
+### 2026-10-07 山海二次更版：MCP 写面（一键更版 webhook **二用**，零事故）
+
+**形态**：同一台客户实例（`platform-core-shanhai`）第 14 次部署，走 §2.1 的一键更版 webhook。
+
+**增量**：上一版停在 `c53adf2`（v0.78.0）；本次推到 main HEAD `01155e0`（v0.79.0）。
+差额里**只有一件动运行时代码**（MCP 写面 `/mcp-manage`；其余是纯测试夹具与文档）。
+
+**做法（四段，可按序照抄）**：
+
+1. **更版前先记基线**：`POST /api/modules/data/mcp-manage` → **404**。没有基线就没有「新行为」可比。
+2. 触发 webhook → 部署 `ready`、`portCheck` 在听。
+3. **按行为验证，不按流水线验证**：
+   - *新行为*：`/mcp-manage` 从 404 → **200**，`serverInfo.name = platform-data-mcp-manage`，
+     `tools/list` 恰好三件；
+   - *回归*：读面 `/mcp` 的 `tools/call` 仍 `ok`（同一张 PAT、28 行、主体钉死）；
+   - *零副作用的真行为*：拿一个不存在的基底 / 删平台口径 ⇒ 两条**拒绝码正确**（`L1_BASE_NOT_FOUND`
+     / `READONLY_L1`）且**不写任何数据** —— 这一步把「路由→门禁→域层→错误映射」全链走通而不动数据；
+   - *产物取证*：进容器 `ls -l modules/data/routes/mcp-manage.ts`，时间戳 **11:03**（本次构建）
+     < 容器创建 **11:14** ⇒ 不是「跑着旧代码」。
+4. **再补一次真写往返**（唯一能证「写路径真的通」的）：经 MCP 建一条本租户 L2 → 读面查它
+   （15 行，与早先经 **HTTP 面**建的同口径那条**逐值一致**）→ 存储层独立回读（`l2 / org / bizday`）
+   → 经 MCP 删 → 终态核对（**非平台桶 0 行、平台桶 2 行**）。
+
+**本次没咬到的坑（首用记的那三个）**：项目 env 表已物化（18 键）⇒ 新部署**没有丢 inline env**；
+服务行 `DATABASE_URL` 已被重写过，不再是被脱敏污染的 `***` 字面量。⇒ §2.1 的「首打事故」
+在**二用**时**全部不复现**，这正印证了那条结论：**接手老实例先把项目 env 物化，之后都能一键**。
+
+**新踩的一个（非本仓口径，已进 agent 长期记忆）**：容器里是 **BusyBox**，`grep` 不支持 GNU 长选项
+（`--include` / `--exclude-dir`），且失败形态是**静默返回空** ⇒ 看着像「新代码不在容器里」，
+极易误判成部署没生效。判据：**先点名一个已知文件自证 grep 有效，再做递归搜索**。
