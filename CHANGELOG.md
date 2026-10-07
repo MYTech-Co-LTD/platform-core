@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.78.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.78.0...v0.78.1) - 2026-10-07
+- 【修复】aftersales: #483 夹具自愈改跑 data 包迁移——顺序无关（旧实现只执行 009，假定 data schema 已存在） ([#484](https://github.com/MYTech-Co-LTD/platform-core/pull/484), [89a71fe](https://github.com/MYTech-Co-LTD/platform-core/commit/89a71fefc05e360848cbd0c53bfe42f24b1a618e))
+
+
 ## [0.78.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.77.0...v0.78.0) - 2026-10-07
 - 【新增】aftersales: #476 售后维表消费面换源——清单端点切 data.dim_* 发布快照 ([#480](https://github.com/MYTech-Co-LTD/platform-core/pull/480), [53c5131](https://github.com/MYTech-Co-LTD/platform-core/commit/53c513125a13dc56de820202dfbfd4f1a5c62f4e))
 
