@@ -240,6 +240,28 @@ SMOKE_BASE=https://<客户域名> SMOKE_USER=<冒烟账号> SMOKE_PASS=<密码�
 - **回滚**：MCP `post_deployments_by_id_rollback`（每 project 独立回滚窗，互不牵连）。
 - 批量脚本：3 家以上再立项（spec-3 §0 方案 B）。
 
+### 2.1 一键更版山海（incoming webhook，#470）
+
+山海主实例（`platform-core-shanhai`，platform.shanhaiyiguo.com）已挂 deploy 型
+incoming webhook「manual-deploy-latest」（2026-10-07 建，issue #470）——维护窗口内
+一条命令触发重部署，不必进 dashboard 点按钮：
+
+```sh
+curl -X POST https://deploy.hookflow.cn/api/proxy/api/webhooks/incoming/iwh_l-d5Mmvbl1bBL3-- \
+  -H "Authorization: Bearer <token>"
+```
+
+- **token 在哪取**：deploy.hookflow.cn dashboard → 项目 platform-core-shanhai →
+  Webhooks → `manual-deploy-latest` 详情可见（rotate 可重生成）。**不落任何文档/提交**。
+- **部署语义**：重部署该机绑定分支（main）的**最新提交**，不能钉指定 commitSha——
+  打之前想清楚这次给客户的是哪个版本。
+- ⚠️ **首用未验**（无案例不立标准）：①「部署 HEAD」语义 ② token 头形状
+  （上面 `Authorization: Bearer` 是假设）均未实测。首打时当场验：dashboard 该 hook
+  投递记录出现 + 部署发起 + 部署后容器创建时间晚于镜像构建；401/无投递 = 头形状不对，
+  订正本条目。
+- 其余客户实例仍走 §2 逐家 MCP `post_deployments`；一键化按需逐家复刻，不预铺。
+- 回滚不变：MCP `post_deployments_by_id_rollback`。
+
 ## 3. 边界
 
 - **租户级外部接入参数的运营面写入入口仍无（已知边界）**：公众号两参（#88）与企微三参（#115）
