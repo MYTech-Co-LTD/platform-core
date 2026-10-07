@@ -46,7 +46,7 @@
 |---|---|---|
 | `list_metrics` | **复用现有的**（基底 L1 + 本租户口径，各带 `dimensions`）⇒ 「选指标 / 选维度」一步到位 | 只把描述放宽到「定义口径 / **制作报表前**先调它」——**不新增读工具**（同一份事实不立第二个工具面） |
 | `list_reports`（新） | 管理清单：title / renderer / **页门** / 版本 / 规格摘要 —— **查重**用 | 对应 §4.3「提议会**先让它看到候选**」 |
-| `propose_report`（新） | 建一张 `renderer='platform'` 的报表；spec 走**既有** `parseReportSpec` 白名单 | ⚠️ **不收 `requiredScope` 入参**；平台**强制**写 `data:manage`（见 §3.3①） |
+| `propose_report`（新） | 建一张 `renderer='platform'` 的报表；spec 走**既有** `parseReportSpec` 白名单 | ⚠️ **不收 `requiredScope` 入参**；平台**强制**写 `data:manage`（§3.3①）。⚠️ **走 create-only，撞名即拒**（§3.3④） |
 | `revise_report_spec`（新） | 改报表规格（映射既有 `PUT /reports/:id/spec`），带 `expectedVersion`（沿用写保护） | ⚠️ **先读页门，非空才动**；已发布 ⇒ 拒（见 §3.3②） |
 
 **不给的**：改页门 / 发布、回收 —— 工具集里**根本不存在**这两个工具。
@@ -57,7 +57,16 @@
    平台强制写入的页门值取 **`data:manage`**——语义是「**只有管得住的人能看到**」，与现状「未发布 = 页门挂一个
    scope」的模型一致（**零新状态**），人之后在 console 把它改成真实页门、或清空即发布。
 ② **`revise_report_spec` 先读页门，非空才动** ⇒ agent 碰不到员工看得到的东西（已发布报表的规格改动一律回 console）。
-③ **发布 / 回收工具不存在** ⇒ 想发也发不了。三条合起来 = §4.3 的「提议 ≠ 新建」**落在结构上**，不靠提示词。
+③ **发布 / 回收工具不存在** ⇒ 想发也发不了。
+④ **撞名即拒（create-only）** ⇒ agent **改不了任何既有报表**。理由是本稿验证时挖出来的：
+   `POST /reports` 的冲突键是 **`(org, title)`**，`on conflict … do update set … required_scope = excluded.required_scope`
+   —— 同名的「新建」实际是**改写既有行**（换规格 + **重置页门**）：若那张报表**已发布**，它会**静默从员工视野消失**，
+   且**绕过 §3.3②**（那条只护 `revise_report_spec`）。⇒ `propose_report` 必须走**原子 create-only**
+   （`insert … on conflict do nothing`，无行返回即「撞名」⇒ 拒 `TITLE_TAKEN`），而**不是**「先查再写」
+   （后者在并发下仍会把既有行改掉）。实现：给 `upsertReport` 加显式模式参数（`'upsert'` 默认 / `'create-only'`），
+   一处 SQL 两个分支，不复制列清单。
+
+四条合起来 = §4.3 的「提议 ≠ 新建」**落在结构上**，不靠提示词。
 
 ### 3.4 复用与单一事实源
 
@@ -82,6 +91,7 @@
 ① **建出来的报表页门必然非空**（agent 无法产出「已发布」的报表）。
 ② **已发布报表的规格改动不经 agent**（`revise_report_spec` 先查页门）。
 ③ **发布 / 回收不是工具**（工具集里没有这条路）。
+③′ **agent 改不了既有报表**：`propose_report` 走 create-only（撞名即拒），`revise_report_spec` 只碰未发布行。
 ④ **规格白名单只有一份**（`parseReportSpec`）；**写保护与锁只有一份**（`report-store` + 对象锁）。
 ⑤ **门档不变**：仍由宿主按 `/mcp-manage` 的 `data:manage` 声明施加；工具面不写授权代码。
 
@@ -100,6 +110,7 @@
 | 1 | `list_reports` 回管理清单（含页门与版本），且**含未发布行**（管理面不裁） | 查重的前提 |
 | 2 | `propose_report` 成功 ⇒ 行落库，`renderer='platform'`，**`requiredScope` 非空** | ★ 承重断言① |
 | 3 | ★ **承重断言②**：对**已发布**（页门为 null）的报表调 `revise_report_spec` ⇒ **拒**，且行未变 | 「能提不能发」的正面落点 |
+| 3′ | ★ **承重断言③**：与**既有报表同 title**（尤其已发布那张）调 `propose_report` ⇒ **拒 `TITLE_TAKEN`**，且既有行的**规格与页门一字未动** | 本稿验证时挖出的改写漏洞的正面落点 |
 | 4 | 对**未发布**的报表 `revise_report_spec` ⇒ 成功、版本 +1；陈旧 `expectedVersion` ⇒ 拒 | 复用写保护的证据 |
 | 5 | 规格白名单：白名单外的图型 / 多塞一个字段 ⇒ 拒（沿用既有码） | 与 HTTP 面同判据 |
 | 6 | ★ **变异确认**：把「强制页门」改成 `null` ⇒ 断言 2 **必须变红** | 判据只有变异确认（本仓口径） |
@@ -122,9 +133,10 @@
    含义是「只有持 `data:manage` 的人能在观看面看到」。若将来出现「某租户没有这个码」的形态，要回来重估。
 2. **未验**：真实 MCP 客户端在本端点工具数从 3 涨到 **6**（口径三 + 报表三；`list_metrics` 两片共用）后的表现
    （分页 / 工具上限）——**没拿真客户端连过**。
-3. **未验**：`POST /reports` 的「重登记重置页门」那条陷阱与本稿无关（本稿建的是**新** id），但
-   `propose_report` 若被重复调用（同 title 不同 id）会产出**多张同名报表**——本稿不做去重（查重靠
-   `list_reports` + 提示词），**这是有意留的边界**：结构上只保证「不能发布」，不保证「不重复」。
+3. **`POST /reports` 的冲突键是 `(org, title)`**（`on conflict … do update`）—— 这正是 README 记的
+   「重登记重置页门」的机制。本稿**不**依赖它：`propose_report` 走 create-only（§3.3④），
+   所以「同一个 title 不能建第二张」是**结构**结果（撞名即拒），不是靠 `list_reports` + 提示词。
+   ⚠️ 代价：agent **无法**用同一个 title 迭代同一张报表（改名或走 `revise_report_spec`）——这是有意的取舍。
 
 ---
 
