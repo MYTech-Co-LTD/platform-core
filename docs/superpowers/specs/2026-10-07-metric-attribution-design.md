@@ -64,9 +64,23 @@ alter table data.metrics add column if not exists version    integer not null de
 | `metric_id` | 目标行（**删除后仍可查**——这正是本表存在的理由） |
 | `action` | `create` / `update` / `delete` |
 | `user_id` / `channel` / `key_id` | 身份三件套，口径与 `query_audit` **逐字一致**（channel ∈ session/pat/wecom） |
-| `declaration` jsonb | **口径快照**（结构化声明；给人看的就是它） |
-| `select_sql` text | 该次变更后的**编译产物**（取证：当时到底跑了什么） |
+| `row_before` jsonb **NULL** | 变更**前**的行快照（建时为 NULL） |
+| `row_after` jsonb **NULL** | 变更**后**的行快照（删时为 NULL） |
 | `created_at` | 时间 |
+
+**为什么是「前后两列」而不是「一个口径快照」**：§0 承诺的是「谁、何时、**从什么到什么**」——
+只存一份后态就答不了「从什么」。两列的填充规则是完备且互斥的：
+
+| action | row_before | row_after |
+|---|---|---|
+| `create` | NULL | 新行 |
+| `update` | 旧行 | 新行 |
+| `delete` | **被删的行** | NULL |
+
+**快照内容** = 行的语义列（`title` / `description` / `subject_column` / `select_sql` / `group_by` / `params`），
+即「口径 + 编译产物」都在里面（§4⑤）。⚠️ **注意**：L2 的**结构化声明**（base/alias/visibility/filters）
+**本来就不落库**（库里存的是编译产物 + `description` 里的派生关系）⇒ 删除时能留的证就是**行快照**。
+这是现状的边界，不是本设计的取舍；若要连声明一起留，得先让声明本身落库（另一件事）。
 
 索引：`(org, metric_id, created_at desc)` —— 页面抽屉的查询形状。
 
@@ -88,10 +102,17 @@ COMMIT
 ```
 
 ⚠️ **删除必须先读再删**——否则审计里没有「删了什么」，那正是当前最贵的缺口。
+⚠️ **域层要拿到「人」**：`MetricWriteDeps` 现在只有 `{pool, adoptedSources}` ⇒ 必须加
+**`requester: Requester`**（`userId` / `channel` / `keyId` 就是审计的身份三件套）。
+**无身份（`requesterOf(c) === null`）⇒ 拒绝写入**，不写一条「无主」审计——这与 MCP 写面既有行为
+（空身份返回 `unauthenticated`）统一，也把「写入必须能归属到人」变成结构约束而不是提醒。
 ⚠️ 事务化意味着 `metric-store` 的两个写入口不能再只收 `Pool`：把它们的连接参数类型放宽成
-**`Pool | PoolClient`**（两者都有 `.query`，改的是类型不是实现），由 `metric-write` 在事务里传入 client、
-在事务外（若有别的调用方）传 pool。**这一步是本设计里唯一有技术风险的地方**
-（现有实现是 `pool.query` 裸调，非事务）。
+**`Pool | PoolClient`**（两者都有 `.query`，改的是类型不是实现），由 `metric-write` 在事务里传入 client。
+**这一步是本设计里唯一有技术风险的地方**（现有实现是 `pool.query` 裸调，非事务）。
+⚠️ `upsertMetric` 还要多收一个 **`updatedBy: string`**（落到 `updated_by`，并把 `version` 在冲突分支 +1）。
+它是**必填**（不给默认值）：给了默认值就等于留了一条「不写人也能写库」的暗道，
+而本设计全部意义就是堵它。**代价**：现有 **17 个调用点**（`grep -rn "upsertMetric("` 实测，
+其中绝大多数是测试夹具）要一起改，夹具传一个字面量（如 `'fixture'`）即可——机械改动，编译器会逐个点名。
 
 ### 3.3 读：新端点（门 = `data:manage`）
 
@@ -118,8 +139,15 @@ COMMIT
 若硬塞进 `query_audit`，其 `row_count/verdict/reason` 必须全部变 nullable —— 「没有 row_count」
 将同时表示「这是写行」与「这次查询没出数」，语义立刻模糊。**「同一张审计面」的精神是一个查询入口**，
 不是物理同表；本条在 README 记明。
-⑤ **给人看的是口径，留下的证是 SQL**：`declaration` 服务界面与对账，`select_sql` 服务取证，
-两者都存、各有各的读者（与 `2026-09-28` 稿 §4.4 不冲突）。
+⑤ **给人看的是口径，留下的证是 SQL**：行快照里两者都在——给人看的是 `title` / `description`，
+取证用的是 `select_sql` / `group_by` / `params`；它们同存于 `row_before` / `row_after`，各有各的读者
+（与 `2026-09-28` 稿 §4.4「确认时给人看的是口径」不冲突）。
+⑥ **读侧的范围必须说清**（否则会与既有约定打架）：`domain/audit-store.ts` 的文件头写着
+「**只写不读**：审计的读侧（平台运营面）不在本模块，故这里没有 query 函数——**别顺手加**」。
+本设计新增的读侧**不是**那条被推迟的东西：它是**租户对自己单条口径的历史**
+（门 = `data:manage`、按 `(org, metric_id)` 限定），不是平台运营面的全局审计视图。
+⇒ 落实方式：`query_audit` **保持只写、一行不改**；新表的写**与**读都放进**新文件**
+`domain/metric-audit-store.ts`，并在该文件头把这条区分写明白。**不许**把读函数加进 `audit-store.ts`。
 
 ## 5 测试与验收
 
@@ -142,12 +170,13 @@ COMMIT
 | 序 | 落点 | 内容 |
 |---|---|---|
 | 1 | `modules/data/migrations/010_metric_attribution.sql` | 两列 + 新表 + 索引（幂等） |
-| 2 | `modules/data/domain/metric-write.ts` | 事务包裹 + 读旧行 + 写审计（唯一写入点） |
-| 3 | `modules/data/domain/metric-store.ts` | 两个写入口接受 client（或加薄封装） |
-| 4 | `modules/data/routes/metrics.ts` | `GET /metrics/:id/audit`（新）+ `/metrics/all` 补两列 |
-| 5 | `modules/data/manifest.yaml` | 声明新端点（装载期双向核对会盯） |
-| 6 | `modules/data/console/metrics/index.tsx` | 两列 + 历史抽屉 |
-| 7 | `modules/data/README.md` | 审计分表的口径 + 三条边界（表增长 / L1 不参与 / 无回滚） |
+| 2 | `modules/data/domain/metric-audit-store.ts`（新） | 写审计 + 读历史（照 `audit-store.ts` 的风格，**但**写清与它的分工，见 §4⑥） |
+| 3 | `modules/data/domain/metric-store.ts` | 两个写入口连接参数放宽成 `Pool \| PoolClient`；`upsertMetric` 加必填 `updatedBy`（并 +1 `version`）；**连 17 个调用点一起改** |
+| 4 | `modules/data/domain/metric-write.ts` | deps 加 `requester`；事务包裹；改/删前先读旧行；写审计（唯一写入点） |
+| 5 | `modules/data/routes/metrics.ts` | `GET /metrics/:id/audit`（新）+ `/metrics/all` 补两列 + 无身份拒写 |
+| 6 | `modules/data/manifest.yaml` | 声明新端点（装载期双向核对会盯） |
+| 7 | `modules/data/console/metrics/index.tsx` | 两列 + 历史抽屉 |
+| 8 | `modules/data/README.md` | 审计分表的口径 + 三条边界（表增长 / L1 不参与 / 无回滚） |
 
 ## 7 已知边界与未验
 
