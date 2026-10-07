@@ -11,7 +11,8 @@ import { currentClientRequestId } from './client-request-id'
 
 // ── 源侧行形状：camelCase 的域响应 → snake_case 的源侧字段，页面/组件因此一行不改 ──
 export interface StoreRow {
-  id: number
+  /** #476：dim_branch.code 自然键（字符串）——不再是本地数字 id */
+  id: string
   store_name: string
   store_number: string
   is_enabled: string
@@ -32,16 +33,21 @@ export interface ApprovalRow {
   status: string
 }
 export interface ProductRow {
-  id: number
+  /** #476：维表消费源切 `data.dim_item` 发布快照 ⇒ 自然键 code 字符串（不再是本地数字 id） */
+  id: string
   product_name: string
+  /** ⚠️ 乐檬商品维**没有**无忌的「基本数量/基本单位价」（#476 口径②A：先不显示价格）——
+   *  填 0 是「无价可依」的诚实值：工单金额依据的来源等价格数据接通后另切（issue #476）。 */
   basic_quantity: number
   basic_unit_price_minor: number
 }
 
-interface StoreItem { id: number; name: string; regionId: number | null; address: string; phone: string }
-interface ProductItem { id: number; name: string; spec: string | null; basicQuantity: number; basicUnitPriceMinor: number }
+// 与模块根 api-types.ts 的 StoreItem/ProductItem **形状对齐**（#476：id → code 自然键、
+// 价格/数量字段退役）。刻意不跨包 import——mobile 的构建隔离是「整包搬」纪律的一部分。
+interface StoreItem { code: string; name: string; enable: boolean | null; address: string | null; phone: string | null }
+interface ProductItem { code: string; barCode: string | null; name: string; spec: string | null; unitName: string | null; saleCease: boolean | null; eliminate: boolean | null }
 interface MyRegistration {
-  registration: { name: string; phone: string; storeIds: number[] } | null
+  registration: { name: string; phone: string; storeCodes: string[] } | null
   hasPendingApproval: boolean
 }
 
@@ -56,13 +62,13 @@ const MAX_PRODUCT_PAGES = 50
  * 为什么抛而不是回落：静默回落成「不过滤」= 把**全量门店**回给访客（本仓反复批的静默降级）。
  * 调用点只有两个、都有测试，抛出去的是一条开发期就能撞见的错。
  */
-function parseStoreFilter(filter: unknown): { kind: 'ids'; ids: number[] } | { kind: 'search'; text: string } {
+function parseStoreFilter(filter: unknown): { kind: 'ids'; ids: string[] } | { kind: 'search'; text: string } {
   const or = (filter as { OR?: unknown } | null)?.OR
   if (Array.isArray(or)) {
     // 空 OR 数组 = **空 id 集**（真实调用点 `OR: storeIds.map(...)` 在集合为空时的形态）。
     // 显式走 `ids=`（服务端按空集处理），**不是**回落成「不带参数的不过滤」。
     if (or.length === 0) return { kind: 'ids', ids: [] }
-    const ids: number[] = []
+    const ids: string[] = []
     let sawId = false
     let sawName = false
     let text = ''
@@ -72,11 +78,10 @@ function parseStoreFilter(filter: unknown): { kind: 'ids'; ids: number[] } | { k
       // 但它不是有限数 ⇒ 下面抛，绝不当成「没给 id」而回落到名字搜索/全量。
       if (c && 'id__eq' in c) {
         sawId = true
-        const n = Number(c.id__eq)
-        if (!Number.isFinite(n)) {
-          throw new Error(`store_info.query: OR 里的 id__eq 不是有限数：${JSON.stringify(c.id__eq)}`)
+        if (typeof c.id__eq !== 'string' || c.id__eq === '') {
+          throw new Error(`store_info.query: OR 里的 id__eq 不是非空字符串（#476 起为 dim_branch.code 自然键）：${JSON.stringify(c.id__eq)}`)
         }
-        ids.push(n)
+        ids.push(c.id__eq)
       }
       if (typeof c?.store_name__eq === 'string') {
         sawName = true
@@ -115,12 +120,12 @@ export const store_info = {
     const qs = params.toString()
     const body = await apiGet<{ items: StoreItem[] }>(`/guest/stores${qs ? `?${qs}` : ''}`)
     return body.items.map((s) => ({
-      id: s.id,
+      // #476：`StoreItem.code` = `data.dim_branch.code` 自然键（= 源侧门店编号语义）——
+      // 旧实现「编号退化成 id 字符串」的那条**已知落差**随发布快照接入自然修复。
+      id: s.code,
       store_name: s.name,
-      // 域侧门店**没有「编号」列**（spec §3.2）：退化成 id 的字符串，让源侧按编号搜那条路
-      // 仍有确定行为（服务端只按名字搜）。这是**已知落差**，不是本 shim 的 bug。
-      store_number: String(s.id),
-      is_enabled: '1',
+      store_number: s.code,
+      is_enabled: s.enable === false ? '0' : '1',
     }))
   },
 }
@@ -139,7 +144,7 @@ export const employee_info = {
         id: 0,
         employee_name: body.registration.name,
         employee_phonenumber: body.registration.phone,
-        store_info: body.registration.storeIds.join(','),
+        store_info: body.registration.storeCodes.join(','),
         // 能读到快照 ⇒ 档案已是 approved（服务端只回 approved 的）。状态词表按源侧
         // `employee_info` 那一套（中文；spec §5 #9 记的三套并存），展示层保持原样。
         status: '通过',
@@ -217,10 +222,10 @@ export const product_archive = {
       if (q !== '') params.set('q', q)
       const body = await apiGet<{ items: ProductItem[]; total: number }>(`/guest/products?${params}`)
       out.push(...body.items.map((p) => ({
-        id: p.id,
+        id: p.code,
         product_name: p.name,
-        basic_quantity: p.basicQuantity,
-        basic_unit_price_minor: p.basicUnitPriceMinor,
+        basic_quantity: 0,
+        basic_unit_price_minor: 0,
       })))
       if (out.length >= body.total || body.items.length === 0) break
     }

@@ -6,7 +6,7 @@
 // 与 M3a 的 `POST /employees/:id/approve` **语义不同**（那个直接改 employee 的 approve_status）：
 // 本文的端点决的是**申请**，通过后按申请内容写回档案。**加而不改**。
 import { z } from 'zod'
-import { pickPrimaryStoreId } from '../domain/registration'
+import { pickPrimaryStoreCode } from '../domain/registration'
 import { parseIdParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
@@ -16,7 +16,7 @@ const DecideBody = z.object({ decision: z.enum(['approve', 'reject']) })
 interface NewInfo {
   name?: string
   phone?: string
-  storeIds?: number[]
+  storeCodes?: string[]
 }
 
 export function registerRegistrationManage(r: ModuleHono, ctx: RouteCtx): void {
@@ -87,7 +87,9 @@ export function registerRegistrationManage(r: ModuleHono, ctx: RouteCtx): void {
       if (decision === 'approve') {
         const ap = lock.rows[0]!
         const ni = ap.new_info ?? {}
-        const primary = pickPrimaryStoreId({ name: ni.name ?? '', phone: ni.phone ?? '', storeIds: ni.storeIds ?? [] })
+        // 无主门店（申请没提门店）⇒ 落列缺省 ''（store_code not null default ''，005）——
+        // 源语义「可空」由空串承载，与 employee 其余 text 列（phone/open_id）同口径。
+        const primary = pickPrimaryStoreCode({ name: ni.name ?? '', phone: ni.phone ?? '', storeCodes: ni.storeCodes ?? [] }) ?? ''
 
         // 写回档案：**先 select 再 insert/update**，不要写 `on conflict (org, open_id)`。
         // ⚠️ 实测：`employee` 在 `(org, open_id)` 上**只有普通索引、没有唯一约束**
@@ -107,13 +109,13 @@ export function registerRegistrationManage(r: ModuleHono, ctx: RouteCtx): void {
           employeeId = Number(existing.rows[0].id)
           await client.query(
             `update aftersales.employee
-                set name = $3, phone = $4, store_id = $5, approve_status = 'approved'
+                set name = $3, phone = $4, store_code = $5, approve_status = 'approved'
               where org = $1 and id = $2`,
             [org, employeeId, ni.name ?? '', ni.phone ?? '', primary],
           )
         } else {
           const ins = await client.query<{ id: string }>(
-            `insert into aftersales.employee(org, open_id, name, phone, store_id, approve_status)
+            `insert into aftersales.employee(org, open_id, name, phone, store_code, approve_status)
              values ($1, $2, $3, $4, $5, 'approved') returning id`,
             [org, ap.open_id, ni.name ?? '', ni.phone ?? '', primary],
           )
@@ -121,15 +123,15 @@ export function registerRegistrationManage(r: ModuleHono, ctx: RouteCtx): void {
         }
 
         // employee_store 只在申请**确实动了门店**时重建（重建 = 删旧 + 插新，同一事务）
-        if (ni.storeIds !== undefined) {
+        if (ni.storeCodes !== undefined) {
           await client.query(`delete from aftersales.employee_store where org = $1 and employee_id = $2`, [
             org,
             employeeId,
           ])
-          for (const sid of ni.storeIds) {
+          for (const sc of ni.storeCodes) {
             await client.query(
-              `insert into aftersales.employee_store(org, employee_id, store_id) values ($1, $2, $3)`,
-              [org, employeeId, sid],
+              `insert into aftersales.employee_store(org, employee_id, store_code) values ($1, $2, $3)`,
+              [org, employeeId, sc],
             )
           }
         }

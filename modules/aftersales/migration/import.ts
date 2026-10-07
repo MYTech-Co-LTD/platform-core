@@ -93,31 +93,35 @@ export async function importEmployee(pool: Pool, org: string, rows: CleanEmploye
   for (const r of rows) {
     if (!r.sourceId) { skip(stat, 'no_source_id'); continue }
     if (r.approveStatus === null) { skip(stat, 'unknown_status'); continue }
-    // 主门店 = 串里第一个能解析到档案的（§2.5：employee.store_id 保留「主门店」语义，可空）
+    // 主门店 = 串里第一个能解析到档案的（§2.5：employee.store_code 保留「主门店」语义，可空）
     const resolved = r.storeSourceIds.map((sid) => stores.get(sid) ?? null)
     const primaryStore = resolved.find((id): id is number => id !== null) ?? null
     // 不可解析段：计入 reasons（信息面，**不增 skipped**——行本身已导入，丢的是「链」不是「行」）。
     // 静默丢段 = 对账黑洞：链表没有源侧计数可对，唯一可见性就是这里的计数。
     const unresolved = resolved.filter((id) => id === null).length
     if (unresolved > 0) stat.reasons['unresolved_store_ref'] = (stat.reasons['unresolved_store_ref'] ?? 0) + unresolved
+    // ⚠️ #476：员工域的门店引用已切 `data.dim_branch.code` 自然键（005）。**无忌 id ≠ dim code**
+    //    （不同系统、无映射表）⇒ 导入器只能把无忌 id 的**字符串形**落进 store_code 并标注——
+    //    存量迁移（含 id 映射）在真要跑导入器的实例上是那次部署的前置步骤；山海无存量、未受影响。
+    const primaryStoreCode = primaryStore === null ? '' : String(primaryStore)
     const ins = await pool.query<{ id: string }>(
-      `insert into aftersales.employee (org, source_id, name, phone, open_id, approve_status, store_id)
+      `insert into aftersales.employee (org, source_id, name, phone, open_id, approve_status, store_code)
        values ($1, $2, $3, $4, $5, $6, $7)
        on conflict (org, source_id) where source_id <> ''
        do update set name = excluded.name, phone = excluded.phone, open_id = excluded.open_id,
-                     approve_status = excluded.approve_status, store_id = excluded.store_id
+                     approve_status = excluded.approve_status, store_code = excluded.store_code
        returning id`,
-      [org, r.sourceId, r.name, r.phone, r.openId, r.approveStatus, primaryStore],
+      [org, r.sourceId, r.name, r.phone, r.openId, r.approveStatus, primaryStoreCode],
     )
     const employeeId = Number(ins.rows[0].id)
-    // 多门店拆行（§2.5 规范化）：先清后插——重跑收敛（快照式导入，源是全量）
+    // 多门店拆行（§2.5 规范化）：先清后插——重跑收敛（快照式导入，源是全量）。同上：code 为无忌 id 字符串形。
     await pool.query(`delete from aftersales.employee_store where org = $1 and employee_id = $2`, [org, employeeId])
     for (const storeId of resolved) {
       if (storeId === null) continue
       await pool.query(
-        `insert into aftersales.employee_store (org, employee_id, store_id) values ($1, $2, $3)
-         on conflict (org, employee_id, store_id) do nothing`,
-        [org, employeeId, storeId],
+        `insert into aftersales.employee_store (org, employee_id, store_code) values ($1, $2, $3)
+         on conflict (org, employee_id, store_code) do nothing`,
+        [org, employeeId, String(storeId)],
       )
     }
     stat.imported += 1

@@ -23,9 +23,9 @@ import StoreEmployeeApproval from './storeEmployeeApproval.vue'
 import { employee_info, employee_info_approve, store_info } from '@/shims/wuji-data'
 
 const STORES = [
-  { id: 3, store_name: '城东店', store_number: '3', is_enabled: '1' },
-  { id: 5, store_name: '城西店', store_number: '5', is_enabled: '1' },
-  { id: 7, store_name: '城南店', store_number: '7', is_enabled: '1' },
+  { id: '103', store_name: '城东店', store_number: '103', is_enabled: '1' },
+  { id: '105', store_name: '城西店', store_number: '105', is_enabled: '1' },
+  { id: '107', store_name: '城南店', store_number: '107', is_enabled: '1' },
 ]
 
 const REGISTERED = {
