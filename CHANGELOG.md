@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.81.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.80.0...v0.81.0) - 2026-10-07
+- 【新增】data: 报表 agent 制作通路——MCP 工具面（能提、不能发） ([#497](https://github.com/MYTech-Co-LTD/platform-core/pull/497), [9a4d2fc](https://github.com/MYTech-Co-LTD/platform-core/commit/9a4d2fcfe0dbe3dc07194e7d644aed579786bb5e))
+
+
 ## [0.80.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.79.0...v0.80.0) - 2026-10-07
 - 【新增】data: 语义追溯——操作人 + 版本 + 变更审计（含指标页两列与历史抽屉） ([#491](https://github.com/MYTech-Co-LTD/platform-core/pull/491), [865ba9c](https://github.com/MYTech-Co-LTD/platform-core/commit/865ba9ccbdf36af78cbdd46299ba8af45307b5a0))
 
