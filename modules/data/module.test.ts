@@ -64,7 +64,9 @@ describePg('迁移（需要 DATABASE_URL）', () => {
     )
     // 清单是**穷举**（不是「包含」）：新增迁移必须在这里显式表态，
     // 免得删掉一张表时这道断言还绿（002_reports 就是这么加进来的）。
-    expect(t.rows.map((r) => r.table_name)).toEqual(['metrics', 'query_audit', 'query_keys', 'reports'])
+    expect(t.rows.map((r) => r.table_name)).toEqual([
+      'dim_branch', 'dim_item', 'metrics', 'query_audit', 'query_keys', 'reports',
+    ])
 
     // 口径两条（都是开工实测订正，别按口味改回去）：
     //  ① `lower(indexdef) like '%unique%'`：pg_indexes.indexdef 里是 **大写** `CREATE UNIQUE INDEX`
@@ -76,6 +78,33 @@ describePg('迁移（需要 DATABASE_URL）', () => {
         where schemaname = 'data' and tablename = 'query_keys' and lower(indexdef) like '%unique%'`,
     )
     expect(u.rows.map((r) => r.indexdef).some((d) => /[(]token_hash[)]/.test(d))).toBe(true)
+  })
+
+  it('008：发布维表（dim_branch/dim_item）键列与版本列在位（ADR 形状②，#476）', async () => {
+    await applyMigrations(pool)
+    // 判据面：两张发布表的自然键（org+system_book+code/item_code）、版本列 snapshot（not null）、
+    // 名称列（not null——发布契约里 name 必填）。消费方（售后）与 lint 白名单都押在这张形状上；
+    // publish-dims 写失败时这里给的是「表形状变了」的最早信号。
+    const cols = await pool.query(
+      `select table_name, column_name, is_nullable from information_schema.columns
+        where table_schema = 'data' and table_name in ('dim_branch', 'dim_item')
+          and column_name in ('org', 'system_book', 'code', 'item_code', 'name', 'snapshot')
+        order by table_name, column_name`,
+    )
+    const got = cols.rows.map((r) => `${r.table_name}.${r.column_name}:${r.is_nullable}`)
+    // 实测：PG 对主键列的 is_nullable 报 NO（主键隐式 NOT NULL）——别按「PK 可空」猜
+    expect(got).toEqual([
+      'dim_branch.code:NO',
+      'dim_branch.name:NO',
+      'dim_branch.org:NO',
+      'dim_branch.snapshot:NO',
+      'dim_branch.system_book:NO',
+      'dim_item.item_code:NO',
+      'dim_item.name:NO',
+      'dim_item.org:NO',
+      'dim_item.snapshot:NO',
+      'dim_item.system_book:NO',
+    ])
   })
 
   it('004：data.reports.renderer 列存在、非空、且取值域含 metabase/platform', async () => {
