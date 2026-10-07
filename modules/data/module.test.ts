@@ -80,15 +80,15 @@ describePg('迁移（需要 DATABASE_URL）', () => {
     expect(u.rows.map((r) => r.indexdef).some((d) => /[(]token_hash[)]/.test(d))).toBe(true)
   })
 
-  it('008：发布维表（dim_branch/dim_item）键列与版本列在位（ADR 形状②，#476）', async () => {
+  it('009：发布维表（dim_branch/dim_item）= 跨账套去重租户视图，键列/版本列/来源列在位（#476）', async () => {
     await applyMigrations(pool)
-    // 判据面：两张发布表的自然键（org+system_book+code/item_code）、版本列 snapshot（not null）、
-    // 名称列（not null——发布契约里 name 必填）。消费方（售后）与 lint 白名单都押在这张形状上；
-    // publish-dims 写失败时这里给的是「表形状变了」的最早信号。
+    // 判据面：两张发布表的自然键（org+code/item_code）、版本列 snapshot、来源列 source_book
+    // （各 not null）与名称列。009 起**不再有 system_book**（口径①方案 C：跨账套去重收进
+    // owner，账套粒度留在数据面 staging）。消费方（售后）与 lint 白名单都押在这张形状上。
     const cols = await pool.query(
       `select table_name, column_name, is_nullable from information_schema.columns
         where table_schema = 'data' and table_name in ('dim_branch', 'dim_item')
-          and column_name in ('org', 'system_book', 'code', 'item_code', 'name', 'snapshot')
+          and column_name in ('org', 'code', 'item_code', 'name', 'snapshot', 'source_book')
         order by table_name, column_name`,
     )
     const got = cols.rows.map((r) => `${r.table_name}.${r.column_name}:${r.is_nullable}`)
@@ -98,12 +98,12 @@ describePg('迁移（需要 DATABASE_URL）', () => {
       'dim_branch.name:NO',
       'dim_branch.org:NO',
       'dim_branch.snapshot:NO',
-      'dim_branch.system_book:NO',
+      'dim_branch.source_book:NO',
       'dim_item.item_code:NO',
       'dim_item.name:NO',
       'dim_item.org:NO',
       'dim_item.snapshot:NO',
-      'dim_item.system_book:NO',
+      'dim_item.source_book:NO',
     ])
   })
 
