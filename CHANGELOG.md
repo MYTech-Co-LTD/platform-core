@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.80.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.79.0...v0.80.0) - 2026-10-07
+- 【新增】data: 语义追溯——操作人 + 版本 + 变更审计（含指标页两列与历史抽屉） ([#491](https://github.com/MYTech-Co-LTD/platform-core/pull/491), [865ba9c](https://github.com/MYTech-Co-LTD/platform-core/commit/865ba9ccbdf36af78cbdd46299ba8af45307b5a0))
+
+
 ## [0.79.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.78.1...v0.79.0) - 2026-10-07
 - 【新增】data: MCP 写面——/mcp-manage 三工具，门禁由声明施加 ([#487](https://github.com/MYTech-Co-LTD/platform-core/pull/487), [f60b7cd](https://github.com/MYTech-Co-LTD/platform-core/commit/f60b7cd199324e16d938a3b482afffe3757c449b))
 
