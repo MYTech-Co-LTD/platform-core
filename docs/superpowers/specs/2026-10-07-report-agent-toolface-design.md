@@ -20,6 +20,24 @@
 
 **报表面现有 10 个端点**（建/改/删/清单/管理清单/spec 读写/edit-url/embed-url/reconcile）；**manifest 里没有 `tools`** ⇒ 唯一缺口就是本稿。
 
+### 1.1 自绘通路在生产上**真能跑**（2026-10-07 探针实测，非只核代码）
+
+工具面建的正是**自绘**（`renderer='platform'`）报表，所以先验了这条链路本身。shanhai 生产实测（**该通路此前从未在生产上被用过**——探针前库里只有 1 张 metabase 报表）：
+
+| 步 | 结果 |
+|---|---|
+| 建（`POST /reports`，自绘 + 页门 `data:manage`） | **201** |
+| 落库 | `renderer=platform` / `required_scope=data:manage` / `panels=3` |
+| 规格回读（`GET /reports/:id/spec`） | 三 panel 的 chart / metricId / dims 全对 |
+| **渲染**（浏览器实开 console 报表页 → 点「打开」） | 三 panel 标题都在；**`canvas:2`**（折线 + 柱状真画出来）+ 第三个 panel 渲染成**真表格**，行数据与 API 层查到的**逐字一致** |
+| 清场（`DELETE /reports/:id?expectedVersion=1`） | **204**，清单回到 1 行 |
+
+⚠️ **顺带两条实测记录**（与工具面无关，但别踩）：
+① `DELETE /reports/:id` 的版本走**查询串** `?expectedVersion=N`（**无 body**），缺/非法 ⇒ 400（fail-closed）；
+② `DELETE` 在解析 id **之前**就先查 Metabase 配置（`if (!cfg) → 503`），而 `POST` 是**故意把自绘分支放在那次检查之前**的
+（注释：「自绘报表不碰 Metabase，不该因为 Metabase 没配而建不出来」）⇒ **在「有自绘报表但没配 Metabase」的环境里自绘行删不掉**。
+本稿的**工具面不含删除工具**（§3.2），故不受影响；但人走的「回收」会踩它——**已单记**（见 §8.4）。
+
 ## 2 报表模型里没有 `published` 状态：「页门」就是审批面（本稿的结构基础）
 
 | 概念 | 实际是（`modules/data/README.md`「管理面」一节） |
@@ -133,6 +151,10 @@
    含义是「只有持 `data:manage` 的人能在观看面看到」。若将来出现「某租户没有这个码」的形态，要回来重估。
 2. **未验**：真实 MCP 客户端在本端点工具数从 3 涨到 **6**（口径三 + 报表三；`list_metrics` 两片共用）后的表现
    （分页 / 工具上限）——**没拿真客户端连过**。
+4. **`DELETE /reports/:id` 的分流顺序与 `POST` 不一致**（2026-10-07 探针实测）：DELETE 先查 Metabase 配置、
+   后解析 id ⇒ 自绘行在「没配 Metabase」的环境里恒 503 删不掉。**与工具面无关**（本稿不给删除工具），
+   但它是报表面自身的缺口，另记。
+
 3. **`POST /reports` 的冲突键是 `(org, title)`**（`on conflict … do update`）—— 这正是 README 记的
    「重登记重置页门」的机制。本稿**不**依赖它：`propose_report` 走 create-only（§3.3④），
    所以「同一个 title 不能建第二张」是**结构**结果（撞名即拒），不是靠 `list_reports` + 提示词。
