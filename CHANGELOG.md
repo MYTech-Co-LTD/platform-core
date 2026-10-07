@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.78.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.77.0...v0.78.0) - 2026-10-07
+- 【新增】aftersales: #476 售后维表消费面换源——清单端点切 data.dim_* 发布快照 ([#480](https://github.com/MYTech-Co-LTD/platform-core/pull/480), [53c5131](https://github.com/MYTech-Co-LTD/platform-core/commit/53c513125a13dc56de820202dfbfd4f1a5c62f4e))
+
+
 ## [0.77.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.76.1...v0.77.0) - 2026-10-07
 - 【新增】data: #476 发布维表改跨账套去重租户视图（口径①方案 C）+ 消费面实施计划 ([#479](https://github.com/MYTech-Co-LTD/platform-core/pull/479), [be3e8f0](https://github.com/MYTech-Co-LTD/platform-core/commit/be3e8f05ee5dee217ccc25290ba2f0a6cc66d801))
 
