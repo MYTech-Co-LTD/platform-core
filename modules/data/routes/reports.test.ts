@@ -190,13 +190,13 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('十个报表端点都声明了（api.internal 全模块共 21 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('十个报表端点都声明了（api.internal 全模块共 22 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
-    // 总数钉 21（原 19 + 本任务两条 /spec 端点）：穷举口径（同 module.test.ts 的表清单）——
-    // 别处加端点而漏改这里会红，逼着声明与测试一起动。
-    expect(declared).toHaveLength(21)
+    // 总数钉 22（原 19 + 报表两条 /spec 端点 + MCP 写面 /mcp-manage）：穷举口径
+    // （同 module.test.ts 的表清单）——别处加端点而漏改这里会红，逼着声明与测试一起动。
+    expect(declared).toHaveLength(22)
     expect(declared.get('POST /reports')).toBe('data:manage')
     expect(declared.get('GET /reports')).toBe('data:query')
     expect(declared.get('GET /reports/:id/embed-url')).toBe('data:query')

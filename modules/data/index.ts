@@ -5,6 +5,7 @@ import { ManifestSchema, defineModule } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './routes/context'
 import { registerKeys } from './routes/keys'
 import { registerMcp } from './routes/mcp'
+import { registerMcpManage } from './routes/mcp-manage'
 import { registerMetrics } from './routes/metrics'
 import { registerQuery } from './routes/query'
 import { registerChat } from './routes/chat'
@@ -34,7 +35,8 @@ export default defineModule({
     // 这个**唯一编译点**生成）；`source='l1'` 的行经 API 只读。端点集合未变 ⇒ 本清单无新声明。
     registerMetrics(r, _ctx)
     registerQuery(r, _ctx) // T6
-    registerMcp(r, _ctx) // T8
+    registerMcp(r, _ctx) // T8：MCP 读面（问数）
+    registerMcpManage(r, _ctx) // MCP 写面（本租户口径的定义；#486）
     registerChat(r, _ctx) // T9
     registerReports(r, _ctx) // #150 T7：Metabase 报表 facade
     return r

@@ -116,10 +116,19 @@ describe('消费面词表的来源守卫（不需要数据库）', () => {
    */
   const WIRING = [
     'routes/metrics.ts', // ④ GET /metrics
-    'routes/mcp.ts', // ② MCP tools/list + tools/call
+    // ② MCP 两个面（读数 / 写定口径）：源集合的读取点在**共享协议壳**里，一次组装、两面共用
+    //   （#486 起；此前读在 routes/mcp.ts。收成一处是更少出错的地方，不是更少的地方）
+    'routes/mcp-rpc.ts',
     'routes/query.ts', // ① POST /query 的接线（域层的 runQuery 经 deps 收）
     'routes/chat.ts', // ③ chat 的接线（域层的 runAgentLoop 经 deps 收）
   ] as const
+
+  /**
+   * 上面那条把「读投影」收进壳之后，新的漏法变成「工具集拿到了 deps 却**不用**」——
+   * 壳读得再对，工具集把 `adoptedSources` 丢掉，那条工具面照样不裁源（且不可观测）。
+   * 故两面各自持有工具集的文件必须消费它（`visibleMetrics` 的第三参 / 写路径的 deps）。
+   */
+  const TOOLSETS = ['routes/mcp.ts', 'routes/mcp-manage.ts'] as const
   const sourceOf = (rel: string) => readFileSync(new URL(`./${rel}`, import.meta.url), 'utf8')
 
   it('四条面的来源都引用**合并**加载器 loadMergedCatalog（= L1 ∪ 本 org 的单一落点）', () => {
@@ -156,6 +165,13 @@ describe('消费面词表的来源守卫（不需要数据库）', () => {
     for (const rel of WIRING) {
       expect(sourceOf(rel), `${rel} 没读宿主投影 TENANT_SOURCES ⇒ 这条通道拿不到已接入源`)
         .toMatch(/\bTENANT_SOURCES\b/)
+    }
+  })
+
+  it('MCP 两个面的工具集都**消费** deps.adoptedSources（读了不用 = 那条工具面不裁源）', () => {
+    for (const rel of TOOLSETS) {
+      expect(sourceOf(rel), `${rel} 拿到 deps 却没用 adoptedSources ⇒ 该工具面不裁源维度`)
+        .toMatch(/\badoptedSources\b/)
     }
   })
 })
