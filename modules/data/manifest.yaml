@@ -19,6 +19,11 @@ api:
     - { method: POST, path: /chat,    scope: data:query }
     # MCP 端点（通道 B 的 JSON-RPC 单入口；协议错误自兜，授权仍走同一核心）
     - { method: POST, path: /mcp,     scope: data:query }
+    # ── 写面（MCP；本租户口径的定义；#486）──
+    # 与 /mcp 分成两个端点，是为了让**门禁仍由声明施加**（本模块不写 requireScope）：
+    # 把写工具塞进 /mcp 会让「写所需的能力」不再出现在清单里，清单作为「声明即授权」的
+    # 单一事实源就被削弱了。设计见 docs/superpowers/specs/2026-10-07-mcp-write-face-design.md。
+    - { method: POST, path: /mcp-manage, scope: data:manage }
     # ── 指标管理面（data:manage）──
     # T8：定义面已从「自由 SQL」收成**结构化声明**（L2Declaration，禁任意 SQL 不变，全局约束 12）：
     #   · POST/PUT 只收 `{ id, baseMetric, op:{kind:'refine'}, alias?, visibility?, filters?, target? }`；
@@ -33,11 +38,14 @@ api:
     - { method: POST,   path: /metrics,     scope: data:manage }
     - { method: PUT,    path: /metrics/:id, scope: data:manage }
     - { method: DELETE, path: /metrics/:id, scope: data:manage }
-    # ── agent 接入面（**预留，本轮不实现**）─────────────────────────────────────────
-    # 拍板 #5：「预留 agent 接入面（接入本身另题不在本轮）」。已具备的条件：PAT 通道 + data:manage
-    # 即可调上面的定义面（管理 API 对 agent 与人**同形**——都是 HTTP + 同一个 scope）。
-    # **未做**：MCP 工具面（把 L2 定义暴露成 tools/*）另题，不在本模块本轮范围；
-    # 届时**不要**新开绕过本清单的入口（那样会绕开宿主门卫，MCP 端点评审 §11.3.1 的教训）。
+    # ── agent 接入面（**已落地**；#486）──────────────────────────────────────────────
+    # 两条通道，对 agent 与人**同形**（都是 HTTP/MCP + 同一个 scope，管理面不自建第二份判定）：
+    #   · HTTP：上面那四条 /metrics 写/读端点（PAT 通道即可调）；
+    #   · MCP：读面 `/mcp`（问数，data:query）与**写面 `/mcp-manage`**（本租户口径的定义，data:manage）。
+    # ⚠️ 仍然成立的那条告诫：**不要**新开绕过本清单的入口——绕开清单就绕开了宿主门卫
+    #    （MCP 端点评审 §11.3.1 的教训）。写面之所以单独一个端点而不是把写工具塞进 `/mcp`，
+    #    正是为了「写所需的能力」继续出现在清单里。设计见
+    #    docs/superpowers/specs/2026-10-07-mcp-write-face-design.md。
     # ── 个人 Key 管理（data:query；只能操作自己的——不是管理员给别人发，用 data:manage
     #    会让只能问数的人生成不了 Key，与 spec §3 冲突）──
     - { method: GET,    path: /keys,     scope: data:query }

@@ -20,20 +20,13 @@ import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf } from './context'
 import { visibleMetrics } from '../domain/authz'
-import {
-  deleteMetric,
-  loadMergedCatalog,
-  loadPlatformCatalog,
-  upsertMetric,
-} from '../domain/metric-store'
+import { loadMergedCatalog } from '../domain/metric-store'
 import type { MetricRow } from '../domain/metric-store'
-import {
-  L2DeclarationSchema,
-  SemanticCompileError,
-  compileL2,
-  resolveL1Base,
-} from '../domain/semantic-compiler'
-import type { L2Declaration } from '../domain/semantic-compiler'
+import { L2DeclarationSchema } from '../domain/semantic-compiler'
+// 写/删的判定链在域层**只有一份**（HTTP 面与 MCP 写面共用）——本文件只做
+// 「参数形状校验 + 域层结果 → HTTP」，不再内联任何闸门。
+import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
+import type { MetricWriteDeps, MetricWriteOutcome } from '../domain/metric-write'
 
 /**
  * 写路径的 body = L2 声明的**外层信封**（id 是行的稳定句柄，不属于「声明」本身）。
@@ -91,100 +84,25 @@ const adoptedSourcesOf = (c: Context<ModuleVars>): ReadonlySet<string> =>
   new Set(c.get(TENANT_SOURCES) ?? [])
 
 /**
- * 编译失败 → HTTP。分两类是**有意的**：
- *   · 调用方的问题（引用不存在的 base、维度越界、过滤子句错）⇒ 400，且回**具体 code**，
- *     让调用方能自助改（而不是猜「400 到底哪里不对」）。
- *   · 平台自己的问题（L1 行的 select_sql 不合形状契约）⇒ 500：那不是调用方能修的，
- *     而且它意味着 sync 物化出来的东西坏了——必须响亮（500 会被监控看见，400 不会）。
+ * 域层 deps 的**唯一**组装点：org 与已接入源都从宿主投影读，写/删两条路径共用。
+ * （org 取 `casdoor_org` 而不是数字 id —— 见文件头那条注记。）
  */
-function compileFailure(e: SemanticCompileError): { status: 400 | 500; error: string } {
-  return e.code === 'BAD_BASE_SQL'
-    ? { status: 500, error: 'L1_BASE_SQL_INVALID' }
-    : { status: 400, error: e.code }
-}
-
-/** 该 id 是否是平台词表（L1）里的行（L1 行对所有租户可见，故「只读」对所有租户成立）。 */
-async function isL1Id(ctx: RouteCtx, id: string): Promise<boolean> {
-  return (await loadPlatformCatalog(ctx.pool)).some((m) => m.id === id)
+function writeDeps(ctx: RouteCtx, c: Context<ModuleVars>): MetricWriteDeps {
+  return { pool: ctx.pool, adoptedSources: adoptedSourcesOf(c) }
 }
 
 /**
- * POST / PUT 的公共写路径 —— 两条路由对 L2 的处置必须逐字同形，
- * 否则「改」与「建」会分叉出两条安全语义（而分叉的其中一条通常是漏判的那条）。
+ * 域层判别式结果 → HTTP（**唯一**映射点）。`okStatus` 区分建 201 / 改 200——
+ * 那是路由层才知道的事（HTTP 语义不属于判定链）。
+ *
+ * 判定链本体（禁 target / 撞 L1 保留 id / 基底必须是 L1 / 源接入闸 / 编译 / 落库；
+ * 以及「先删自己的 L2 再判 L1」那条顺序）已搬到 `domain/metric-write.ts`——
+ * 那里同时服务 MCP 写面，两边必须是**同一份**判定，否则分叉的那条通常是漏判的那条。
  */
-async function writeL2(
-  c: Context<ModuleVars>,
-  ctx: RouteCtx,
-  status: 200 | 201,
-  id: string,
-  decl: Omit<L2BodyType, 'id'>,
-) {
-  // `target` 在 data.metrics 里**没有存储列**（003 只加了 source）。显式拒绝而不是静默丢弃：
-  // 静默丢弃会让调用方以为目标值生效了。见 README「L2 的已知边界」与任务报告。
-  if (decl.target !== undefined) return c.json({ error: 'TARGET_NOT_SUPPORTED' }, 400)
-
-  // ★ L2 不能占 L1 的 id：占下之后**加载侧会丢 L2 行**（L1 赢）⇒ 这次写会**静默无效**
-  //   （返回 200 而线上口径没变）。故在这里响亮拒绝，而不是让它变成一次「成功的空操作」。
-  if (await isL1Id(ctx, id)) return c.json({ error: 'ID_RESERVED_BY_L1' }, 409)
-
-  let base: MetricRow
-  try {
-    base = resolveL1Base(await loadPlatformCatalog(ctx.pool), decl.baseMetric)
-  } catch (e) {
-    if (e instanceof SemanticCompileError) {
-      const f = compileFailure(e)
-      return c.json({ error: f.error }, f.status)
-    }
-    throw e
-  }
-
-  // ★ 源维度的**写入闸**（spec §3⑧ 的第二道，计划 5 Task 5）：L1 是**逐源**的标准口径，
-  //   租户只能在自己的源上裁 L2。基底属于「本租户未接入的源」⇒ **拒绝**（不是静默忽略）。
-  //
-  //   为什么闸在**这里**（resolveL1Base 之后）：那是本函数第一次拿到 base 行、也就第一次
-  //   看得到 `base.sourceSystem` 的地方；在它之前只有 id 字符串，判不了源。
-  //   为什么用 `loadPlatformCatalog`（**不裁源**）解析基底：若先把未接入源的 L1 从基底面裁掉，
-  //   调用方只会拿到含混的 `L1_BASE_NOT_FOUND`（400）——而真相是「这条口径在，但它在别的源上」，
-  //   那是**403 + 可解释体**该说的话（`its_source` / `your_sources` 让调用方能自助判断）。
-  //   顺序上它还必须**先于** compileL2：拒绝要拒绝得早，不留半成品。
-  //
-  //   与裁剪的关系（spec：「只装一道都不够」）：裁剪让**读**看不见未接入源的指标（歧义消失），
-  //   本闸让**写**造不出基于未接入源的 L2（否则那条 L2 会在写入时看着成功、随后在读取侧
-  //   被裁掉——一次「成功的空操作」，最难查的那种）。
-  const adoptedSources = adoptedSourcesOf(c)
-  if (base.sourceSystem !== null && !adoptedSources.has(base.sourceSystem)) {
-    return c.json({
-      error: 'METRIC_SOURCE_NOT_ADOPTED',
-      its_source: base.sourceSystem,       // 这条 L1 的源
-      your_sources: [...adoptedSources],   // 本租户已接入的源
-    }, 403)
-  }
-
-  let compiled: { selectSql: string; title: string; groupBy: string }
-  try {
-    compiled = compileL2(base, decl as L2Declaration)
-  } catch (e) {
-    if (e instanceof SemanticCompileError) {
-      const f = compileFailure(e)
-      return c.json({ error: f.error }, f.status)
-    }
-    throw e
-  }
-
-  await upsertMetric(ctx.pool, orgOf(c), {
-    id,
-    title: compiled.title,
-    // 派生关系写进 description：管理面要能看出「这条 L2 是从哪个平台指标裁出来的」
-    // （纯 L2 行没有 lineage 面，description 是当前唯一的可见去处）
-    description: `L2 派生自 ${base.id}`,
-    requiredScope: null,
-    // 主体列**继承** L1：它是主体钉死的依据，租户改不了（改了就是跨租户读别人的数据）
-    subjectColumn: base.subjectColumn,
-    selectSql: compiled.selectSql,
-    groupBy: compiled.groupBy,
-    params: {},
-  })
-  return c.json({ ok: true }, status)
+function writeOutcome(c: Context<ModuleVars>, r: MetricWriteOutcome, okStatus: 200 | 201) {
+  return r.ok
+    ? c.json({ ok: true }, okStatus)
+    : c.json({ error: r.error, ...(r.extra ?? {}) }, r.http)
 }
 
 export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
@@ -214,7 +132,7 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     const parsed = L2Body.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const { id, ...decl } = parsed.data
-    return writeL2(c, ctx, 201, id, decl)
+    return writeOutcome(c, await writeL2Declaration(writeDeps(ctx, c), orgOf(c), id, decl), 201)
   })
 
   r.put('/metrics/:id', async (c) => {
@@ -225,24 +143,13 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     // 路径 id 与 body id 必须同值：否则「改 A 结果写了 B」是静默的数据事故。
     if (parsed.data.id !== id) return c.json({ error: 'ID_MISMATCH' }, 400)
     const { id: _bodyId, ...decl } = parsed.data
-    return writeL2(c, ctx, 200, id, decl)
+    return writeOutcome(c, await writeL2Declaration(writeDeps(ctx, c), orgOf(c), id, decl), 200)
   })
 
   r.delete('/metrics/:id', async (c) => {
     const id = metricIdOf(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    // ★ 顺序：**先删本租户自己的 L2 行，再判 L1**（T8 评审 M-①）。不能反——
-    //   「租户先建 L2、平台事后同 id 物化」是**合法时序**（写侧闸门只拦相反方向），
-    //   撞 id 之后那行 L2 在合并词表里被 L1 顶掉（消费面看不见它），若 DELETE 先判 L1
-    //   就恒 409 ⇒ **永久孤儿**：租户再也清不掉自己声明过的那行，而存储层的
-    //   `deleteMetric` 本来完全能删它（`org = 本 org` 与 `source = 'l2'` 都钉在 WHERE 里，
-    //   碰不到平台桶那行）。删自己的行不影响任何人：「L1 赢」是**解析**规则，
-    //   不是「租户的行归平台所有」。
-    const gone = await deleteMetric(ctx.pool, orgOf(c), id)
-    if (gone) return c.json({ ok: true })
-    // 没删到：若这个 id 是平台词表里的 ⇒ **显式** 409（不是含混的 404）：404 会让管理员
-    // 以为「这行不存在」，真相是「它在，但只能改 dbt 声明再物化」。故先认出来再拒。
-    if (await isL1Id(ctx, id)) return c.json({ error: 'READONLY_L1' }, 409)
-    return c.json({ error: 'NOT_FOUND' }, 404)
+    // 判定链（含「先删本租户自己的 L2 行、再判 L1」那条顺序及其理由）在 domain/metric-write.ts。
+    return writeOutcome(c, await deleteMetricDeclaration(writeDeps(ctx, c), orgOf(c), id), 200)
   })
 }
