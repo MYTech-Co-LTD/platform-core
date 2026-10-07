@@ -1,5 +1,6 @@
 // test-util.ts — 模块测试的公共脚手架（不是测试文件：tsconfig 会 typecheck 它）。
 import { readdir, readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import { TENANT_SOURCES } from '@platform/sdk'
@@ -56,9 +57,14 @@ export function buildTestApp(
   return app as unknown as Hono
 }
 
-/** 跑本模块的迁移（读 ./migrations/*.sql）。返回本次新应用的 version 列表。 */
+/** 跑本模块的迁移（读 ./migrations/*.sql）。返回本次新应用的 version 列表。
+ *
+ * ⚠️ 目录必须经 `fileURLToPath` 取（**不是** `url.pathname`）：后者的百分号编码在**非 ASCII
+ * 路径**下（本仓的 Orca 工作树就叫「采集板块」）会让 `readdir` 直接 ENOENT，而 `runMigrations`
+ * 对 ENOENT 是**静默跳过**（#203）⇒ 症状是「零迁移却报成功」，一路红到业务断言上
+ * （形如 `relation "data.metrics" does not exist`）。CI 是 ASCII 路径，故这条只在本地咬人。 */
 export function applyMigrations(pool: Pool): Promise<string[]> {
-  return runMigrations(pool, 'data', new URL('./migrations', import.meta.url).pathname)
+  return runMigrations(pool, 'data', fileURLToPath(new URL('./migrations', import.meta.url)))
 }
 
 /** 迁移目录里全部 *.sql 的正文，按文件名排序（与 runMigrations 同一排序口径）。 */
