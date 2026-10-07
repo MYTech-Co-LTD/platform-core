@@ -69,3 +69,25 @@ export async function rawMigrationSqls(): Promise<string[]> {
   // 路径不做相对解析，故只有这一处需要补。
   return Promise.all(files.map((f) => readFile(new URL(f, dir.href + '/'), 'utf8')))
 }
+
+/**
+ * 确保 `data.dim_branch` / `data.dim_item` 发布表存在（#476：门店/商品清单端点的消费源）。
+ *
+ * 为什么在 aftersales 的测试里做这件事：夹具要种发布表，而 **CI 的包间测试顺序不保证
+ * data 包先迁移**（pnpm -r 对无依赖关系的包顺序未定；本机「data 先跑过」的绿是顺序巧合）。
+ * 建表 SQL **读 data 模块的 009 迁移文件执行**（单一事实源是那个文件，这里不复制形状——
+ * 复制出来的第二份会在发布契约演进时静默漂移）。advisory lock 串行化：vitest 多线程下
+ * 多个测试文件并发进 here，`create table if not exists` 在并发首建时会互撞 duplicate。
+ */
+export async function ensureDimTables(pool: Pool): Promise<void> {
+  const sql = await readFile(
+    new URL('../data/migrations/009_dim_tenant_view.sql', import.meta.url),
+    'utf8',
+  )
+  await pool.query('select pg_advisory_lock(hashtext(\'aftersales-dim-fixture\'))')
+  try {
+    await pool.query(sql)
+  } finally {
+    await pool.query('select pg_advisory_unlock(hashtext(\'aftersales-dim-fixture\'))')
+  }
+}

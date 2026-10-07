@@ -4,7 +4,7 @@ import { Hono } from 'hono'
 import { Pool } from 'pg'
 import type { Identity } from '@platform/sdk'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { applyMigrations } from '../test-util'
+import { applyMigrations, ensureDimTables } from '../test-util'
 import { registerRegistrationManage } from './registration-manage'
 
 const ORG = 'test-m3b1-manage'
@@ -33,6 +33,7 @@ async function cleanup() {
 // 放在 cleanup **之前**：cleanup 自己就查 aftersales.* 的表，表还不存在它先挂。
 beforeAll(async () => {
   await applyMigrations(pool)
+  await ensureDimTables(pool)
   await cleanup()
 })
 beforeEach(cleanup)

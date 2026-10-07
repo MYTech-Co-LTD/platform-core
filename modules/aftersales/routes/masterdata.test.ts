@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import mod from '../index'
-import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
+import { applyMigrations, buildTestApp, ensureDimTables, makeIdentity } from '../test-util'
 import { DEFAULT_PAGE_SIZE } from './context'
 
 const dbUrl = process.env.DATABASE_URL
@@ -20,6 +20,7 @@ describePg('主数据域', () => {
 
   beforeAll(async () => {
     await applyMigrations(pool)
+    await ensureDimTables(pool)
     // #476：门店/商品的消费源 = `data.dim_branch` / `data.dim_item`（发布快照）。
     // 测试种它 = 模拟「发布完成」；org 键隔离（用例只查本 org），afterAll 清理。
     await pool.query('delete from data.dim_branch where org = $1', [ORG])
