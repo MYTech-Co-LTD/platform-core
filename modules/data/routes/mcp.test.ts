@@ -137,8 +137,8 @@ describePg('POST /mcp 的方法面（需要 DATABASE_URL）', () => {
   /** 种词表 + 建 app（默认身份 scopes = ['data:query']）。 */
   async function seededApp(ctxExtra: { execute?: SqlExecutor } = {}) {
     await applyMigrations(pool)
-    await upsertMetric(pool, ORG, SALES_DAILY)
-    await upsertMetric(pool, ORG, FINANCE_MRR)
+    await upsertMetric(pool, ORG, SALES_DAILY, 'fixture')
+    await upsertMetric(pool, ORG, FINANCE_MRR, 'fixture')
     // execute 用**变量**携带进 ctx：绕开 ModuleContext 字面量的多余属性检查（协议上只有 pool）
     const ctx = { pool, ...ctxExtra }
     return buildTestApp(mod, makeIdentity({ orgId: ORG }), ctx, { id: 1, casdoor_org: ORG })

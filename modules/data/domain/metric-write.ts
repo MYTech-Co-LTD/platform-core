@@ -97,6 +97,8 @@ export async function writeL2Declaration(
     throw e
   }
 
+  // ⚠️ T3 临时值：Task 4 改为 deps.requester.userId（那时 deps 才有 requester）。
+  //    本提交的意义只是让「updatedBy 必填」这一条先把全部调用点扫过一遍。不发布。
   await upsertMetric(deps.pool, org, {
     id,
     title: compiled.title,
@@ -109,7 +111,7 @@ export async function writeL2Declaration(
     selectSql: compiled.selectSql,
     groupBy: compiled.groupBy,
     params: {},
-  })
+  }, '(t4)')
   return { ok: true }
 }
 

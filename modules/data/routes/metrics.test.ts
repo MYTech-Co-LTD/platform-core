@@ -134,7 +134,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   })
 
   it('GET /metrics 不掺别家 L2 行（跨租户串词表是禁止的）', async () => {
-    await upsertMetric(pool, OTHER_ORG, def({ id: 'other_org_l2', title: '别家的' }))
+    await upsertMetric(pool, OTHER_ORG, def({ id: 'other_org_l2', title: '别家的' }), 'fixture')
     const body = await (await app(ORG, ['data:query']).request('/metrics')).json()
     expect(body.metrics.map((m: { id: string }) => m.id)).not.toContain('other_org_l2')
   })

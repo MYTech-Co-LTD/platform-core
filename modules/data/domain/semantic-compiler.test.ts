@@ -51,6 +51,9 @@ function l1(over: Partial<MetricRow> = {}): MetricRow {
     source: 'l1',
     // 源系统（源维度）：L1 声明里 `source` 必填 ⇒ sync 物化出的 L1 行恒有源。
     sourceSystem: 'lemeng',
+    // L1 行由 sync 物化（不经 API）⇒ 无操作人、版本恒 1（#489 的追溯只覆盖 L2）
+    updatedBy: null,
+    version: 1,
     ...over,
   }
 }

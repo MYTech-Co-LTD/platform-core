@@ -139,7 +139,7 @@ describePg('POST /query（需要 DATABASE_URL）', () => {
     // 这条**需要真库**：`runQuery` 是先 loadOrgCatalog 再判声明，没有 pool 会先炸在加载词表上
     // （错误信号会变成「500 而不是 403」，看着像授权坏了）。种一条真指标，再问一个没声明的。
     await applyMigrations(pool)
-    await upsertMetric(pool, ORG, SALES_DAILY)
+    await upsertMetric(pool, ORG, SALES_DAILY, 'fixture')
     const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), { pool }, { id: 1, casdoor_org: ORG })
     const res = await app.request('/query', {
       method: 'POST',
@@ -152,7 +152,7 @@ describePg('POST /query（需要 DATABASE_URL）', () => {
 
   it('身份 orgId 为空串 → 403 unauthenticated（M3 守卫在 requesterOf 收口，空 org 不流进 SQL）', async () => {
     await applyMigrations(pool)
-    await upsertMetric(pool, ORG, SALES_DAILY)
+    await upsertMetric(pool, ORG, SALES_DAILY, 'fixture')
     const app = buildTestApp(mod, makeIdentity({ orgId: '' }), { pool }, { id: 1, casdoor_org: ORG })
     const res = await app.request('/query', {
       method: 'POST',
@@ -171,7 +171,7 @@ describePg('POST /query（需要 DATABASE_URL）', () => {
 
   it('已声明且授权 → 200；execute 注入经 RouteCtx 透传到 runQuery（不碰真仓库）', async () => {
     await applyMigrations(pool)
-    await upsertMetric(pool, ORG, SALES_DAILY)
+    await upsertMetric(pool, ORG, SALES_DAILY, 'fixture')
     const calls: string[] = []
     const execute: SqlExecutor = async (sql) => {
       calls.push(sql)
@@ -196,7 +196,7 @@ describePg('POST /query（需要 DATABASE_URL）', () => {
 
   it('仓库执行出错 → 502 error/warehouse_error（上游仓库不可用不是本服务的 500）', async () => {
     await applyMigrations(pool)
-    await upsertMetric(pool, ORG, SALES_DAILY)
+    await upsertMetric(pool, ORG, SALES_DAILY, 'fixture')
     const execute: SqlExecutor = async () => {
       throw new Error('boom')
     }

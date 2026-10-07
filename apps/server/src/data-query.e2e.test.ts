@@ -208,12 +208,12 @@ beforeAll(async () => {
     id: 'sales_daily', title: '销售日报', description: '按主体分组的日销售额',
     requiredScope: 'data:query', subjectColumn: 'org',
     selectSql: 'SELECT org, day, revenue FROM marts.sales_daily', groupBy: '', params: {},
-  })
+  }, 'fixture')
   await upsertMetric(pool, acmeOrg, {
     id: 'finance_summary', title: '财务汇总（alice 无权）', description: '给裁剪断言用的对照项',
     requiredScope: 'data:finance', subjectColumn: 'org',
     selectSql: 'SELECT org, day, revenue FROM marts.sales_daily', groupBy: '', params: {},
-  })
+  }, 'fixture')
 })
 
 afterAll(async () => {
