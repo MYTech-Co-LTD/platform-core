@@ -87,12 +87,14 @@ describePg('写面（需要 DATABASE_URL）', () => {
     })
   }
 
-  it('tools/list → 恰好三件，且 customize 的描述写明「不能凭空造新指标」', async () => {
+  it('tools/list → 恰好六件（口径三 + 报表三，#496），且 customize 的描述写明「不能凭空造新指标」', async () => {
     await seedL1()
     const body = await (await rpc(app(), { jsonrpc: '2.0', id: 1, method: 'tools/list' })).json()
     const tools = (body as { result: { tools: { name: string; description: string }[] } }).result.tools
+    // 「恰为那六个」是设计稿 §6#7 的结构约束机检落点：多出发布/回收类 = 能提不能发被破坏
     expect(tools.map((t) => t.name).sort())
-      .toEqual(['customize_metric', 'delete_custom_metric', 'list_metrics'])
+      .toEqual(['customize_metric', 'delete_custom_metric', 'list_metrics',
+        'list_reports', 'propose_report', 'revise_report_spec'])
     expect(tools.find((t) => t.name === 'customize_metric')!.description)
       .toContain('不能凭空造新指标')
   })
