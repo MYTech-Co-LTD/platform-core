@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.77.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.76.1...v0.77.0) - 2026-10-07
+- 【新增】data: #476 发布维表改跨账套去重租户视图（口径①方案 C）+ 消费面实施计划 ([#479](https://github.com/MYTech-Co-LTD/platform-core/pull/479), [be3e8f0](https://github.com/MYTech-Co-LTD/platform-core/commit/be3e8f05ee5dee217ccc25290ba2f0a6cc66d801))
+
+
 ## [0.76.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.76.0...v0.76.1) - 2026-10-07
 - 【修复】data: #476 发布脚本拆分 branch/item scope——UNION 合并会让 item 恒 0 行 ([#478](https://github.com/MYTech-Co-LTD/platform-core/pull/478), [4d7e2bf](https://github.com/MYTech-Co-LTD/platform-core/commit/4d7e2bfd7fbd5ee4732792e9b41df7595be016a6))
 
