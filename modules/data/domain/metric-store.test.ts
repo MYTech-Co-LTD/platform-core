@@ -325,3 +325,24 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
     })
   })
 })
+
+// ── 010 迁移（#489）：语义追溯的地基。单独一个 describe：它验的是 schema，不是 store 行为。──
+describePg('010 迁移：两列 + 审计表（#489）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  afterAll(async () => { await pool.end() })
+
+  it('★ 两列与新表就位，且迁移幂等（连跑两遍零效果）', async () => {
+    await applyMigrations(pool)
+    await applyMigrations(pool) // 第二遍：必须零效果、不报错（部署脚本每次全量重跑）
+    const cols = await pool.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+        where table_schema = 'data' and table_name = 'metrics'
+          and column_name in ('updated_by', 'version')`)
+    expect(cols.rows.map((r) => r.column_name).sort()).toEqual(['updated_by', 'version'])
+
+    const t = await pool.query<{ n: number }>(
+      `select count(*)::int as n from information_schema.tables
+        where table_schema = 'data' and table_name = 'metric_audit'`)
+    expect(t.rows[0]!.n).toBe(1)
+  })
+})
