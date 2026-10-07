@@ -100,25 +100,36 @@ export interface EmployeeItem {
   id: number
   name: string
   phone: string
-  storeId: number | null
+  /** 主门店 = `data.dim_branch.code` 自然键（#476：门店消费源已切发布快照，不再是本地 id） */
+  storeCode: string | null
   openId: string
   approveStatus: ApproveStatus
 }
 
+/**
+ * `GET /stores` / `/guest/stores` 的一行——数据源 = `data.dim_branch` 发布快照
+ * （#476 ADR 形状②：维表消费走 owner 发布的契约，不再自持副本）。
+ * `code` 是自然键（ dim_branch.code，即源侧门店编号），提交侧（员工登记/工单）引用它。
+ */
 export interface StoreItem {
-  id: number
+  code: string
   name: string
-  regionId: number | null
-  address: string
-  phone: string
+  /** 启用与否（任一账套启用即启用）——发布契约见 data.dim_branch */
+  enable: boolean | null
+  address: string | null
+  phone: string | null
 }
 
+/** `GET /products` / `/guest/products` 的一行——数据源 = `data.dim_item`（同上）。 */
 export interface ProductItem {
-  id: number
+  code: string
+  barCode: string | null
   name: string
   spec: string | null
-  basicQuantity: number
-  basicUnitPriceMinor: number
+  unitName: string | null
+  /** 停售/淘汰标记（任一账套）： true ⇒ 建单选它可能无价可依 */
+  saleCease: boolean | null
+  eliminate: boolean | null
 }
 
 /** `POST /tickets/:id/process` 的请求体（与路由的 `ProcessBody` 判别联合同形） */
@@ -149,7 +160,7 @@ import type { RegistrationTarget } from './domain/registration'
 
 /** `GET /guest/me/registration` 的响应（M3b-2 的移动端据此判断「有没有登记 / 我的门店」） */
 export interface MyRegistration {
-  registration: { name: string; phone: string; storeIds: number[] } | null
+  registration: { name: string; phone: string; storeCodes: string[] } | null
   hasPendingApproval: boolean
 }
 

@@ -14,17 +14,17 @@ import type { ModuleHono, RouteCtx } from './context'
 const TargetBody = z.object({
   name: z.string().min(1).max(200),
   phone: z.string().max(50),
-  // 门店 id 落 bigint 列 ⇒ `.safe()`（M2a I-1 的教训：`z.number().int()` 的 int 就是
-  // `Number.isInteger`，而 `Number.isInteger(1e30) === true` ⇒ 放行后落进 pg 参数位 ⇒ 22P02
-  // ⇒ Hono 兜成 500）。全模块 bigint 列只用这一种写法。
-  storeIds: z.array(z.number().int().positive().safe()).max(50),
+  // 门店引用 = `data.dim_branch.code` 自然键（#476：消费源已切发布快照）。长度/字符集与
+  // dim_branch.code 的发布契约对齐（源侧门店编号，十进制数字串为主）——宽松校验留给
+  // 提交时的存在性校验（STORE_NOT_FOUND），这里只挡明显乱形。
+  storeCodes: z.array(z.string().min(1).max(64)).max(50),
 })
 
 interface MySnapshot {
   id: number
   name: string
   phone: string
-  storeIds: number[]
+  storeCodes: string[]
 }
 
 /** 读「我的档案」快照：employee 行 + employee_store 展开。**org + open_id 双向收窄**。 */
@@ -36,11 +36,11 @@ async function readMySnapshot(ctx: RouteCtx, org: string, openid: string): Promi
   )
   const row = emp.rows[0]
   if (!row) return null
-  const stores = await ctx.pool.query<{ store_id: string }>(
-    `select store_id from aftersales.employee_store where org = $1 and employee_id = $2 order by store_id`,
+  const stores = await ctx.pool.query<{ store_code: string }>(
+    `select store_code from aftersales.employee_store where org = $1 and employee_id = $2 order by store_code`,
     [org, Number(row.id)],
   )
-  return { id: Number(row.id), name: row.name, phone: row.phone, storeIds: stores.rows.map((s) => Number(s.store_id)) }
+  return { id: Number(row.id), name: row.name, phone: row.phone, storeCodes: stores.rows.map((s) => s.store_code) }
 }
 
 /** ILIKE 的 `%` `_` 在搜索词里是通配符——转义掉，否则用户输入 `%` 等于全表匹配（同 masterdata.ts） */
@@ -56,7 +56,7 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
       [org, openid],
     )
     return c.json({
-      registration: snap ? { name: snap.name, phone: snap.phone, storeIds: snap.storeIds } : null,
+      registration: snap ? { name: snap.name, phone: snap.phone, storeCodes: snap.storeCodes } : null,
       hasPendingApproval: pending.rowCount! > 0,
     })
   })
@@ -71,7 +71,7 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
     const snap = await readMySnapshot(ctx, org, openid)
     let diff: ReturnType<typeof computeRegistration>
     try {
-      diff = computeRegistration(snap ? { name: snap.name, phone: snap.phone, storeIds: snap.storeIds } : null, target)
+      diff = computeRegistration(snap ? { name: snap.name, phone: snap.phone, storeCodes: snap.storeCodes } : null, target)
     } catch (e) {
       // 「您没有修改任何信息」——源侧同样是拒绝提交（不是静默成功）
       if (e instanceof RegistrationError) return c.json({ error: 'INVALID_BODY', message: e.message }, 400)
@@ -109,21 +109,23 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
       where += ` and name ilike $${params.length}`
     }
     const totalRes = await ctx.pool.query<{ n: number }>(
-      `select count(*)::int as n from aftersales.product where ${where}`,
+      `select count(*)::int as n from data.dim_item where ${where}`,
       params,
     )
     const listRes = await ctx.pool.query(
-      `select id, name, spec, basic_quantity, basic_unit_price_minor from aftersales.product
-        where ${where} order by id limit $${params.length + 1} offset $${params.length + 2}`,
+      `select item_code, bar_code, name, spec, unit_name, sale_cease, eliminate from data.dim_item
+        where ${where} order by item_code limit $${params.length + 1} offset $${params.length + 2}`,
       [...params, size, (page - 1) * size],
     )
     return c.json({
       items: listRes.rows.map((p) => ({
-        id: Number(p.id),
+        code: String(p.item_code),
+        barCode: p.bar_code === null ? null : String(p.bar_code),
         name: p.name,
         spec: p.spec,
-        basicQuantity: Number(p.basic_quantity),
-        basicUnitPriceMinor: Number(p.basic_unit_price_minor),
+        unitName: p.unit_name,
+        saleCease: p.sale_cease,
+        eliminate: p.eliminate,
       })),
       total: totalRes.rows[0]!.n,
       page,
@@ -135,13 +137,13 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
   // 与 `GET /stores` 分面是**协议硬约束**：同一条 (method,path) 只能声明一次、一条声明只带
   // 一个 scope（spec §2.2 的同一条理由，与 /guest/products 同构）。
   //
-  // 两个调用方（实读源侧）：登记页按**名称**搜（`q`）；提交页按**我的登记 id** 取明细（`ids`）。
-  // `ids` 不是可有可无——提交页的口径是「选我登记的门店」，id 来自 /guest/me/registration，
-  // 而**名字**只能从这里取（源侧那半边靠拼 OR filter，是因为源数据源没有 id__in）。
+  // 两个调用方（实读源侧）：登记页按**名称**搜（`q`）；提交页按**我的登记 code** 取明细（`codes`）。
+  // `codes` 不是可有可无——提交页的口径是「选我登记的门店」，code 来自 /guest/me/registration，
+  // 而**名字**只能从这里取。
   r.get('/guest/stores', async (c) => {
     const org = c.get('identity').orgId
     const q = c.req.query('q')
-    const idsRaw = c.req.query('ids')
+    const codesRaw = c.req.query('codes')
     const page = parsePageParam(c.req.query('page'), 1, Number.MAX_SAFE_INTEGER)
     const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
@@ -151,36 +153,36 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
       params.push(`%${escapeLike(q)}%`)
       where += ` and name ilike $${params.length}`
     }
-    if (idsRaw !== undefined) {
+    if (codesRaw !== undefined) {
       // 约定：空串 = **空集**（调用方说「我没有任何门店」），不是「不过滤」——
       // 不过滤会把全量门店回给访客，是这批端点里最不该发生的一种静默降级。
-      const parts = idsRaw === '' ? [] : idsRaw.split(',')
-      // 只认十进制正整数字面量（与 parseIdParam 同一口径）：非规范写法（`1e3` / `-2` / `1.5`）
-      // 一律 400，**不静默丢弃坏值**——少几个门店比报错难查得多。
-      const nums = parts.map((t) => (/^\d+$/.test(t) ? Number(t) : NaN))
-      if (nums.some((n) => !Number.isSafeInteger(n) || n <= 0)) {
-        return c.json({ error: 'INVALID_IDS' }, 400)
+      const parts = codesRaw === '' ? [] : codesRaw.split(',')
+      // 只认 dim_branch.code 的发布契约形状（非空、限长、无通配/注入面字符）：坏值一律 400，
+      // **不静默丢弃**——少几个门店比报错难查得多。
+      const codes = parts.map((t) => (/^[A-Za-z0-9_-]{1,64}$/.test(t) ? t : null))
+      if (codes.some((v) => v === null)) {
+        return c.json({ error: 'INVALID_CODES' }, 400)
       }
-      if (nums.length === 0) return c.json({ items: [], total: 0, page, size })
-      params.push(nums)
-      where += ` and id = any($${params.length}::bigint[])`
+      if (codes.length === 0) return c.json({ items: [], total: 0, page, size })
+      params.push(codes)
+      where += ` and code = any($${params.length}::text[])`
     }
 
-    // 与 /guest/products 同构：回 total ⇒ 可真分页（对照 /stores 只回 {items}）
+    // #476：数据源 = `data.dim_branch`（发布快照）。与 /guest/products 同构：回 total ⇒ 可真分页
     const totalRes = await ctx.pool.query<{ n: number }>(
-      `select count(*)::int as n from aftersales.store where ${where}`,
+      `select count(*)::int as n from data.dim_branch where ${where}`,
       params,
     )
     const listRes = await ctx.pool.query(
-      `select id, name, region_id, address, phone from aftersales.store
-        where ${where} order by id limit $${params.length + 1} offset $${params.length + 2}`,
+      `select code, name, enable, address, phone from data.dim_branch
+        where ${where} order by code limit $${params.length + 1} offset $${params.length + 2}`,
       [...params, size, (page - 1) * size],
     )
     return c.json({
       items: listRes.rows.map((s) => ({
-        id: Number(s.id),
+        code: String(s.code),
         name: s.name,
-        regionId: s.region_id === null ? null : Number(s.region_id),
+        enable: s.enable,
         address: s.address,
         phone: s.phone,
       })),

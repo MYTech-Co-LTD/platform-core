@@ -50,7 +50,7 @@ export function useAfterSalesData() {
       }
       // shim 只回窄行（id/name/number/is_enabled），原型是 IStoreInfo ⇒ 收口处 cast
       storeList.value = (await store_info.query({
-        filter: { OR: allowedIds.map((id) => ({ id__eq: Number(id) })) },
+        filter: { OR: allowedIds.map((id) => ({ id__eq: id })) },
       })) as unknown as IStoreInfo[]
     } catch (error: any) {
       console.error('加载员工门店列表失败:', error)

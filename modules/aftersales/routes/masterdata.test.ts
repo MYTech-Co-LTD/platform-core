@@ -1,13 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import mod from '../index'
-import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
+import { applyMigrations, buildTestApp, ensureDimTables, makeIdentity } from '../test-util'
 import { DEFAULT_PAGE_SIZE } from './context'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
 
 const ORG = 'test-aftersales-md'
+const OTHER_ORG = 'test-aftersales-md-other'
 
 describePg('主数据域', () => {
   const pool = new Pool({ connectionString: dbUrl })
@@ -19,24 +20,30 @@ describePg('主数据域', () => {
 
   beforeAll(async () => {
     await applyMigrations(pool)
-    await pool.query('delete from aftersales.product where org = $1', [ORG])
+    await ensureDimTables(pool)
+    // #476：门店/商品的消费源 = `data.dim_branch` / `data.dim_item`（发布快照）。
+    // 测试种它 = 模拟「发布完成」；org 键隔离（用例只查本 org），afterAll 清理。
+    await pool.query('delete from data.dim_branch where org = $1', [ORG])
+    await pool.query('delete from data.dim_item where org = $1', [ORG])
     await pool.query('delete from aftersales.employee where org = $1', [ORG])
-    await pool.query('delete from aftersales.store where org = $1', [ORG])
     await pool.query(
-      `insert into aftersales.store(org, name, address, phone) values ($1,'上海门店','', ''), ($1,'北京门店','','')`,
+      `insert into data.dim_branch(org, code, name, enable, address, phone, source_book, snapshot)
+       values ($1,'101','上海门店',true,'', '', '3120', current_date),
+              ($1,'102','北京门店',null,'', '', '3120', current_date)`,
       [ORG],
     )
     await pool.query(
-      `insert into aftersales.product(org, name, spec, basic_quantity, basic_unit_price_minor)
-       values ($1,'苹果','规格A',100,500), ($1,'梨','规格B',50,300)`,
+      `insert into data.dim_item(org, item_code, bar_code, name, spec, unit_name, sale_cease, eliminate, source_book, snapshot)
+       values ($1,'3001','6900000001','苹果','规格A','箱',false,false,'3120',current_date),
+              ($1,'3002','6900000002','梨','规格B','kg',false,false,'3120',current_date)`,
       [ORG],
     )
   })
 
   afterAll(async () => {
     await pool.query('delete from aftersales.employee where org = $1', [ORG])
-    await pool.query('delete from aftersales.product where org = $1', [ORG])
-    await pool.query('delete from aftersales.store where org = $1', [ORG])
+    await pool.query('delete from data.dim_item where org = $1', [ORG])
+    await pool.query('delete from data.dim_branch where org = $1', [ORG])
     expect(pool.ended, '池在本 afterAll 之前已被 end——有别的钩子提前收摊').toBe(false)
     await pool.end().catch(() => {})
   })
@@ -81,12 +88,12 @@ describePg('主数据域', () => {
     expect(((await miss.json()) as { items: unknown[] }).items).toEqual([])
   })
 
-  it('商品分页：size 被夹到 100，单价以整数分回（bigint 已转 number）', async () => {
+  it('商品分页：size 被夹到 100，行形状是发布契约（code/barCode/unitName，#476 后无价格字段）', async () => {
     const res = await app.request('/products?size=99999')
-    const body = (await res.json()) as { size: number; items: { basicUnitPriceMinor: number }[] }
+    const body = (await res.json()) as { size: number; items: { code: string; unitName: string | null }[] }
     expect(body.size).toBe(100)
-    const apple = body.items.find((p) => p.basicUnitPriceMinor === 500)
-    expect(apple).toBeDefined()
+    const apple = body.items.find((p) => p.code === '3001')
+    expect(apple).toMatchObject({ code: '3001', unitName: '箱' })
   })
 
   // 分页口径与管理端/访客端**同一份** parsePageParam（context.ts）。两条边界必须钉住：
@@ -165,7 +172,7 @@ describePg('主数据域', () => {
   it('跨 org 审批别人的员工 ⇒ 404（rowCount 0 与不存在同形）', async () => {
     const created = await app.request('/employees', json({ name: '王五', phone: '13700000000' }))
     const { id } = (await created.json()) as { id: number }
-    const other = makeIdentity({ orgId: 'test-aftersales-md-other', scopes: ['aftersales:manage'] })
+    const other = makeIdentity({ orgId: OTHER_ORG, scopes: ['aftersales:manage'] })
     const cross = await buildTestApp(mod, other, { pool }).request(
       `/employees/${id}/approve`,
       json({ approveStatus: 'approved' }),
@@ -175,35 +182,34 @@ describePg('主数据域', () => {
     expect(row.rows[0].approve_status).toBe('pending')
   })
 
-  it('员工注册带门店时，门店必须属于本 org（跨租户门店 id ⇒ 400，不是静默落 null）', async () => {
-    const other = makeIdentity({ orgId: 'test-aftersales-md-other', scopes: ['aftersales:manage'] })
-    const otherStore = await pool.query<{ id: string }>(
-      `insert into aftersales.store(org, name, address, phone) values ($1,'别人的门店','','') returning id`,
-      ['test-aftersales-md-other'],
+  it('员工注册带门店时，门店必须属于本 org（跨租户门店 code ⇒ 400，不是静默落 null）', async () => {
+    await pool.query(
+      `insert into data.dim_branch(org, code, name, source_book, snapshot)
+       values ($1,'999','别人的门店','3120',current_date)`,
+      [OTHER_ORG],
     )
     const res = await app.request(
       '/employees',
-      json({ name: '赵六', phone: '13600000000', storeId: Number(otherStore.rows[0].id) }),
+      json({ name: '赵六', phone: '13600000000', storeCode: '999' }),
     )
     expect(res.status).toBe(400)
     expect((await res.json()) as { error: string }).toMatchObject({ error: 'STORE_NOT_FOUND' })
-    await pool.query('delete from aftersales.store where org = $1', ['test-aftersales-md-other'])
+    await pool.query('delete from data.dim_branch where org = $1', [OTHER_ORG])
   })
 
-  // ── 终审修复轮 1（I-1）：body 参数面的整数上界，**按目标列的列型分档** ──
-  // `employee.store_id` 是 **bigint** ⇒ 上界 = Number.MAX_SAFE_INTEGER（`.safe()`）。
-  // 修前 `z.number().int()` 放行 `1e30` ⇒ 落 pg 参数位抛 22P02 ⇒ **Hono 兜成 500**（终审实测）。
-  it('【回归 I-1】员工注册 storeId 越界 ⇒ 400（不是 500）', async () => {
-    for (const storeId of [1e30, Number.MAX_SAFE_INTEGER + 1]) {
-      const res = await app.request('/employees', json({ name: '越界', storeId }))
-      expect(res.status, `storeId=${storeId} 应为 400，实为 ${res.status}`).toBe(400)
+  // ── #476：引用键从 bigint 切自然键后的参数面变化 ──
+  // `employee.store_code` 是 **text**（≤64，dim_branch.code 的发布契约）。
+  // 修前 bigint 时代的「越界数字」用例随之退役；改为钉「超长/坏形 code ⇒ INVALID_BODY」。
+  it('【回归 #476】员工注册 storeCode 超长/空串 ⇒ 400（不是 500）', async () => {
+    for (const storeCode of ['x'.repeat(65), '']) {
+      const res = await app.request('/employees', json({ name: '坏形', storeCode }))
+      expect(res.status, `storeCode 长度=${storeCode.length} 应为 400`).toBe(400)
       expect((await res.json()) as { error: string }).toMatchObject({ error: 'INVALID_BODY' })
     }
-    // 边界对照：MAX_SAFE_INTEGER 本身是合法 bigint ⇒ zod 放行、走到门店校验 ⇒ 本 org 没有这个门店
-    // ⇒ 400 **STORE_NOT_FOUND**。这条把「上界恰好在 bigint 列型上」钉住：再紧一点就会变 INVALID_BODY。
-    const boundary = await app.request('/employees', json({ name: '边界', storeId: Number.MAX_SAFE_INTEGER }))
-    expect(boundary.status).toBe(400)
-    expect((await boundary.json()) as { error: string }).toMatchObject({ error: 'STORE_NOT_FOUND' })
+    // 边界对照：形状合法但不存在的 code ⇒ zod 放行、走到门店校验 ⇒ 400 **STORE_NOT_FOUND**。
+    const missing = await app.request('/employees', json({ name: '边界', storeCode: 'no-such-code' }))
+    expect(missing.status).toBe(400)
+    expect((await missing.json()) as { error: string }).toMatchObject({ error: 'STORE_NOT_FOUND' })
   })
 
   // ── 终审修复轮 1（I-2）：path-param id 守卫收成 routes/context.ts 的 parseIdParam ──
@@ -227,11 +233,14 @@ describePg('主数据域', () => {
   it('【回归 M-T8-1】搜索词里的 % / _ / 反斜杠按【字面量】处理，不当通配符', async () => {
     // `a\%b` 是【含转义字符本身】的输入（JS 字面量 'a\\%b' ⇒ 4 个字符 a \ % b）
     const names = ['A%B', 'A_B', 'AXB', '纯%号', '纯_号', 'a\\%b']
-    await pool.query(
-      `insert into aftersales.product(org, name, spec, basic_quantity, basic_unit_price_minor)
-       select $1, unnest($2::text[]), '', 1, 1`,
-      [ORG, names],
-    )
+    await pool.query('delete from data.dim_item where org = $1 and item_code like \'900%\'', [ORG])
+    for (let i = 0; i < names.length; i++) {
+      await pool.query(
+        `insert into data.dim_item(org, item_code, name, spec, unit_name, source_book, snapshot)
+         values ($1, $2, $3, '', '', '3120', current_date)`,
+        [ORG, `900${i + 1}`, names[i]],
+      )
+    }
     try {
       const search = async (q: string) => {
         const res = await app.request(`/products?q=${encodeURIComponent(q)}`)
@@ -251,7 +260,7 @@ describePg('主数据域', () => {
       //    当成「字面 %」⇒ 变成匹配 `a%b` 类名字。正确行为是整体按字面量匹配 ⇒ 只有 `a\%b` 命中。
       expect(await search('a\\%b')).toEqual(['a\\%b'])
     } finally {
-      await pool.query('delete from aftersales.product where org = $1 and name = any($2::text[])', [ORG, names])
+      await pool.query('delete from data.dim_item where org = $1 and item_code like \'900%\'', [ORG])
     }
   })
 })

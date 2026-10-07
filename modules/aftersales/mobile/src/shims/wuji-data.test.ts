@@ -22,16 +22,16 @@ beforeEach(() => {
 
 describe('store_info.query', () => {
   it('登记页形状（OR 里是名字）⇒ 转成 q 搜索，行翻成源侧 snake_case', async () => {
-    get.mockResolvedValue({ items: [{ id: 7, name: '城东店', regionId: null, address: 'a', phone: 'p' }], total: 1, page: 1, size: 20 })
+    get.mockResolvedValue({ items: [{ code: '107', name: '城东店', enable: true, address: 'a', phone: 'p' }], total: 1, page: 1, size: 20 })
     const rows = await store_info.query({ filter: { OR: [{ store_name__eq: '城东' }, { store_number__eq: '城东' }] }, sort: 'store_name' })
     expect(get).toHaveBeenCalledWith('/guest/stores?q=%E5%9F%8E%E4%B8%9C')
-    expect(rows[0]).toMatchObject({ id: 7, store_name: '城东店', is_enabled: '1' })
+    expect(rows[0]).toMatchObject({ id: '107', store_number: '107', store_name: '城东店', is_enabled: '1' })
   })
 
   it('提交页形状（OR 里是 id）⇒ 转成 ids（不是「不过滤」）', async () => {
     get.mockResolvedValue({ items: [], total: 0, page: 1, size: 20 })
-    await store_info.query({ filter: { is_enabled__eq: '1', OR: [{ id__eq: 3 }, { id__eq: 5 }] } })
-    expect(get).toHaveBeenCalledWith('/guest/stores?ids=3%2C5')
+    await store_info.query({ filter: { is_enabled__eq: '1', OR: [{ id__eq: '103' }, { id__eq: '105' }] } })
+    expect(get).toHaveBeenCalledWith('/guest/stores?ids=103%2C105')
   })
 
   it('OR 为空数组（集合为空的真实形态）⇒ 仍然走 ids=，绝不回落成「查全部」', async () => {
@@ -41,8 +41,9 @@ describe('store_info.query', () => {
     expect(get).toHaveBeenCalledWith('/guest/stores?ids=')
   })
 
-  it('OR 里的 id__eq 不是有限数 ⇒ 抛（坏值不被静默吞掉）', async () => {
-    await expect(store_info.query({ filter: { OR: [{ id__eq: 'abc' }] } })).rejects.toThrow(/不是有限数/)
+  it('OR 里的 id__eq 是空串/非字符串 ⇒ 抛（坏值不被静默吞掉；#476 起为 code 自然键）', async () => {
+    await expect(store_info.query({ filter: { OR: [{ id__eq: '' }] } })).rejects.toThrow(/不是非空字符串/)
+    await expect(store_info.query({ filter: { OR: [{ id__eq: 3 }] } })).rejects.toThrow(/不是非空字符串/)
   })
 
   it('OR 里的 store_name__eq 是空串 ⇒ 抛（空搜索词会退化成「查全部」，不猜、不静默降级）', async () => {
@@ -63,9 +64,9 @@ describe('employee_info.query', () => {
   })
 
   it('已登记 ⇒ 一行，门店 id 用逗号串（源侧就是这个形状）', async () => {
-    get.mockResolvedValue({ registration: { name: '张三', phone: '138', storeIds: [3, 5] }, hasPendingApproval: false })
+    get.mockResolvedValue({ registration: { name: '张三', phone: '138', storeCodes: ['103', '105'] }, hasPendingApproval: false })
     const rows = await employee_info.query({ filter: { openId__eq: 'o1' } })
-    expect(rows[0]).toMatchObject({ employee_name: '张三', employee_phonenumber: '138', store_info: '3,5', status: '通过' })
+    expect(rows[0]).toMatchObject({ employee_name: '张三', employee_phonenumber: '138', store_info: '103,105', status: '通过' })
   })
 
   it('filter 里的 openid 被忽略——身份只由 session 给', async () => {

@@ -7,7 +7,7 @@ import { Hono } from 'hono'
 import { Pool } from 'pg'
 import type { Identity } from '@platform/sdk'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { applyMigrations } from '../test-util'
+import { applyMigrations, ensureDimTables } from '../test-util'
 import { registerRegistrationGuest } from './registration-guest'
 import { registerRegistrationManage } from './registration-manage'
 
@@ -35,7 +35,7 @@ async function cleanup() {
   await pool.query(`delete from aftersales.employee_approval where org = $1`, [ORG])
   await pool.query(`delete from aftersales.employee_store where org = $1`, [ORG])
   await pool.query(`delete from aftersales.employee where org = $1`, [ORG])
-  await pool.query(`delete from aftersales.store where org = $1`, [ORG])
+  await pool.query(`delete from data.dim_branch where org = $1`, [ORG])
 }
 // 自带迁移（评审 N3）：本文件必须**自足**，不能依赖别的包先迁完 aftersales schema。
 // `pnpm -r` 的包间执行顺序不保证 —— 靠 apps/server「顺带」迁移就是「本地红、CI 绿」的时序红
@@ -43,12 +43,14 @@ async function cleanup() {
 // 放在 cleanup **之前**：cleanup 自己就查 aftersales.* 的表，表还不存在它先挂。
 beforeAll(async () => {
   await applyMigrations(pool)
+  await ensureDimTables(pool)
   await cleanup()
 })
 beforeEach(async () => {
   await cleanup()
   await pool.query(
-    `insert into aftersales.store(org, name, address, phone) values ($1,'店A','',''), ($1,'店B','','')`,
+    `insert into data.dim_branch(org, code, name, enable, source_book, snapshot)
+       values ($1,'101','店A',true,'3120',current_date), ($1,'102','店B',true,'3120',current_date)`,
     [ORG],
   )
 })
@@ -57,20 +59,20 @@ afterAll(async () => {
   await pool.end()
 })
 
-const storeIds = async (): Promise<number[]> =>
-  (await pool.query<{ id: string }>(`select id from aftersales.store where org=$1 order by id`, [ORG])).rows.map((r) =>
-    Number(r.id),
+const storeCodes = async (): Promise<string[]> =>
+  (await pool.query<{ code: string }>(`select code from data.dim_branch where org=$1 order by code`, [ORG])).rows.map(
+    (r) => r.code,
   )
 
 describe('M3b-1 端到端：登记 → 审批 → 写回', () => {
   it('★ 完整链路', async () => {
-    const [s1, s2] = await storeIds()
+    const [s1, s2] = await storeCodes()
 
     // ① 访客：提交登记
     const submitted = await guest().request('/guest/employee-approvals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: '加盟商甲', phone: '13800000000', storeIds: [s1, s2] }),
+      body: JSON.stringify({ name: '加盟商甲', phone: '13800000000', storeCodes: [s1, s2] }),
     })
     expect(submitted.status).toBe(201)
 
@@ -86,7 +88,7 @@ describe('M3b-1 端到端：登记 → 审批 → 写回', () => {
     const dup = await guest().request('/guest/employee-approvals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: '加盟商甲', phone: '13900000000', storeIds: [s1] }),
+      body: JSON.stringify({ name: '加盟商甲', phone: '13900000000', storeCodes: [s1] }),
     })
     expect(dup.status).toBe(409)
 
@@ -109,10 +111,10 @@ describe('M3b-1 端到端：登记 → 审批 → 写回', () => {
 
     // ⑥ 访客：**读回写回后的档案**（这正是 M3b-2 移动端的闸门判据）
     const after = (await (await guest().request('/guest/me/registration')).json()) as {
-      registration: { name: string; phone: string; storeIds: number[] }
+      registration: { name: string; phone: string; storeCodes: string[] }
       hasPendingApproval: boolean
     }
-    expect(after.registration).toEqual({ name: '加盟商甲', phone: '13800000000', storeIds: [s1, s2] })
+    expect(after.registration).toEqual({ name: '加盟商甲', phone: '13800000000', storeCodes: [s1, s2] })
     expect(after.hasPendingApproval).toBe(false)
 
     // ⑦ 管理端：再决一次 ⇒ 409
@@ -128,12 +130,12 @@ describe('M3b-1 端到端：登记 → 审批 → 写回', () => {
   })
 
   it('★ 驳回后可以重新提交（pending 释放 ⇒ 唯一索引不再挡）', async () => {
-    const [s1] = await storeIds()
+    const [s1] = await storeCodes()
     const submit = () =>
       guest().request('/guest/employee-approvals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: '加盟商甲', phone: '138', storeIds: [s1] }),
+        body: JSON.stringify({ name: '加盟商甲', phone: '138', storeCodes: [s1] }),
       })
     await submit()
     const list = (await (await admin().request('/employee-approvals')).json()) as { items: Array<{ id: number }> }
@@ -147,12 +149,12 @@ describe('M3b-1 端到端：登记 → 审批 → 写回', () => {
   })
 
   it('★ 变更链路：已登记的人提交变更 → 审批 → 门店被重建', async () => {
-    const [s1, s2] = await storeIds()
+    const [s1, s2] = await storeCodes()
     // 先走一遍注册并审批
     await guest().request('/guest/employee-approvals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: '加盟商甲', phone: '138', storeIds: [s1] }),
+      body: JSON.stringify({ name: '加盟商甲', phone: '138', storeCodes: [s1] }),
     })
     const l1 = (await (await admin().request('/employee-approvals')).json()) as { items: Array<{ id: number }> }
     await admin().request(`/employee-approvals/${l1.items[0]!.id}/decide`, {
@@ -165,7 +167,7 @@ describe('M3b-1 端到端：登记 → 审批 → 写回', () => {
     const changed = await guest().request('/guest/employee-approvals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: '加盟商甲', phone: '138', storeIds: [s2] }),
+      body: JSON.stringify({ name: '加盟商甲', phone: '138', storeCodes: [s2] }),
     })
     expect(changed.status).toBe(201)
     expect(((await changed.json()) as { approveType: string }).approveType).toBe('change')
@@ -180,17 +182,17 @@ describe('M3b-1 端到端：登记 → 审批 → 写回', () => {
     })
 
     const after = (await (await guest().request('/guest/me/registration')).json()) as {
-      registration: { storeIds: number[] }
+      registration: { storeCodes: string[] }
     }
-    expect(after.registration.storeIds).toEqual([s2]) // 重建：s1 的关联已被删
+    expect(after.registration.storeCodes).toEqual([s2]) // 重建：s1 的关联已被删
   })
 
   it('★ 什么都没改的变更 ⇒ 400（源侧「您没有修改任何信息」）', async () => {
-    const [s1] = await storeIds()
+    const [s1] = await storeCodes()
     await guest().request('/guest/employee-approvals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: '加盟商甲', phone: '138', storeIds: [s1] }),
+      body: JSON.stringify({ name: '加盟商甲', phone: '138', storeCodes: [s1] }),
     })
     const l = (await (await admin().request('/employee-approvals')).json()) as { items: Array<{ id: number }> }
     await admin().request(`/employee-approvals/${l.items[0]!.id}/decide`, {
@@ -201,7 +203,7 @@ describe('M3b-1 端到端：登记 → 审批 → 写回', () => {
     const same = await guest().request('/guest/employee-approvals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: '加盟商甲', phone: '138', storeIds: [s1] }),
+      body: JSON.stringify({ name: '加盟商甲', phone: '138', storeCodes: [s1] }),
     })
     expect(same.status).toBe(400)
     expect(((await same.json()) as { message?: string }).message).toContain('没有修改')

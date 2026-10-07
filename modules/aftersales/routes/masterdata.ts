@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import type { ApproveStatus, EmployeeItem, Paged, ProductItem, StoreItem } from '../api-types'
-import { toMinor } from '../domain/ticket'
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
@@ -10,10 +9,8 @@ const escapeLike = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`)
 const EmployeeBody = z.object({
   name: z.string().min(1).max(200),
   phone: z.string().max(50).optional(),
-  // `.safe()`：目标列 employee.store_id 是 bigint。`Number.isInteger(1e30) === true` ⇒ 旧写法放行
-  // 越界值，落进 pg 参数位抛 22P02 ⇒ Hono 兜成 500（实测 `storeId: 1e30` ⇒ 500）。
-  // 全模块 bigint 列一律用 `.safe()`，别混其他写法。
-  storeId: z.number().int().positive().safe().optional(),
+  /** 主门店 = `data.dim_branch.code` 自然键（#476：门店消费源已切发布快照）。 */
+  storeCode: z.string().min(1).max(64).optional(),
   /** 微信 openid，移动端身份锚（spec §1.2）。console 侧注册时可留空，随迁时由 M2b 补。 */
   openId: z.string().max(200).optional(),
 })
@@ -35,21 +32,23 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
       params.push(`%${escapeLike(q)}%`)
       where += ` and name ilike $${params.length}`
     }
+    // #476：数据源 = `data.dim_branch`（发布快照，跨账套去重租户视图）——不再自持门店副本。
+    // 只读引用已被 lint B1 白名单放行（`from data.dim_`）；**写仍然不许**（发布表只许 owner 写）。
     const totalRes = await ctx.pool.query<{ n: number }>(
-      `select count(*)::int as n from aftersales.store where ${where}`,
+      `select count(*)::int as n from data.dim_branch where ${where}`,
       params,
     )
     const res = await ctx.pool.query(
-      `select id, name, region_id, address, phone from aftersales.store
-        where ${where} order by id limit $${params.length + 1} offset $${params.length + 2}`,
+      `select code, name, enable, address, phone from data.dim_branch
+        where ${where} order by code limit $${params.length + 1} offset $${params.length + 2}`,
       [...params, size, (page - 1) * size],
     )
     // 响应形状与 console 共用同一份类型（api-types.ts）
     const body: Paged<StoreItem> = {
       items: res.rows.map((s) => ({
-        id: Number(s.id),
+        code: String(s.code),
         name: s.name,
-        regionId: s.region_id === null ? null : Number(s.region_id),
+        enable: s.enable,
         address: s.address,
         phone: s.phone,
       })),
@@ -77,13 +76,16 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
       where += ` and name ilike $${params.length}`
     }
 
+    // #476：数据源 = `data.dim_item`（发布快照）。⚠️ 无忌语义的 basic_quantity /
+    // basic_unit_price_minor 在乐檬维表**没有对应列**（人裁 2026-10-07：先不显示价格；
+    // 工单金额依据的来源另题——issue #476 价格阻塞项）。
     const totalRes = await ctx.pool.query<{ n: number }>(
-      `select count(*)::int as n from aftersales.product where ${where}`,
+      `select count(*)::int as n from data.dim_item where ${where}`,
       params,
     )
     const listRes = await ctx.pool.query(
-      `select id, name, spec, basic_quantity, basic_unit_price_minor from aftersales.product
-        where ${where} order by id
+      `select item_code, bar_code, name, spec, unit_name, sale_cease, eliminate from data.dim_item
+        where ${where} order by item_code
         limit $${params.length + 1} offset $${params.length + 2}`,
       [...params, size, (page - 1) * size],
     )
@@ -91,12 +93,13 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
     // #155 起 /rules /employees /stores 与本端点逐字对齐
     const body: Paged<ProductItem> = {
       items: listRes.rows.map((p) => ({
-        id: Number(p.id),
+        code: String(p.item_code),
+        barCode: p.bar_code === null ? null : String(p.bar_code),
         name: p.name,
         spec: p.spec,
-        basicQuantity: Number(p.basic_quantity),
-        // bigint 是字符串——不转就会把 "500" 漏给前端（见 domain/ticket.ts 的说明）
-        basicUnitPriceMinor: toMinor(p.basic_unit_price_minor),
+        unitName: p.unit_name,
+        saleCease: p.sale_cease,
+        eliminate: p.eliminate,
       })),
       total: totalRes.rows[0].n,
       page,
@@ -124,7 +127,7 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
       params,
     )
     const res = await ctx.pool.query(
-      `select id, name, phone, store_id, open_id, approve_status from aftersales.employee
+      `select id, name, phone, store_code, open_id, approve_status from aftersales.employee
         where ${where} order by id desc limit $${params.length + 1} offset $${params.length + 2}`,
       [...params, size, (page - 1) * size],
     )
@@ -134,7 +137,7 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
         id: Number(e.id),
         name: e.name,
         phone: e.phone,
-        storeId: e.store_id === null ? null : Number(e.store_id),
+        storeCode: e.store_code === null ? null : String(e.store_code),
         openId: e.open_id,
         approveStatus: e.approve_status as ApproveStatus,
       })),
@@ -149,24 +152,24 @@ export function registerMasterData(r: ModuleHono, ctx: RouteCtx): void {
     const org = c.get('identity').orgId
     const parsed = EmployeeBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
-    const { name, phone, storeId, openId } = parsed.data
+    const { name, phone, storeCode, openId } = parsed.data
 
-    // 门店必须属于本 org——跨租户的 store_id 落进去 = 一个跨租户外键，后面每个 join 都是洞。
-    // 校验与写入同事务，避免"校验通过后被并发删掉"的窗口。
+    // 门店必须属于本 org——跨租户的 store_code 落进去 = 一个跨租户外键，后面每个 join 都是洞。
+    // 引用目标 = `data.dim_branch`（#476）；校验与写入同事务，避免"校验通过后被并发删掉"的窗口。
     const client = await ctx.pool.connect()
     try {
       await client.query('begin')
-      if (storeId !== undefined) {
-        const st = await client.query('select id from aftersales.store where org = $1 and id = $2', [org, storeId])
+      if (storeCode !== undefined) {
+        const st = await client.query('select code from data.dim_branch where org = $1 and code = $2', [org, storeCode])
         if (st.rowCount === 0) {
           await client.query('rollback')
           return c.json({ error: 'STORE_NOT_FOUND' }, 400)
         }
       }
       const res = await client.query<{ id: string }>(
-        `insert into aftersales.employee(org, name, phone, store_id, open_id, approve_status)
+        `insert into aftersales.employee(org, name, phone, store_code, open_id, approve_status)
          values ($1, $2, $3, $4, $5, 'pending') returning id`,
-        [org, name, phone ?? '', storeId ?? null, openId ?? ''],
+        [org, name, phone ?? '', storeCode ?? '', openId ?? ''],
       )
       await client.query('commit')
       return c.json({ id: Number(res.rows[0].id) }, 201)

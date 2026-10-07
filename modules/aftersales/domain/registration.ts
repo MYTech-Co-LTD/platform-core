@@ -12,14 +12,15 @@
 export interface RegistrationTarget {
   name: string
   phone: string
-  storeIds: number[]
+  /** 门店引用 = `data.dim_branch.code` 自然键（#476：维表消费源已切发布快照，不再是本地 id） */
+  storeCodes: string[]
 }
 
 /** 当前档案的快照（路由从 employee + employee_store 读出后传进来） */
 export interface EmployeeSnapshot {
   name: string
   phone: string
-  storeIds: number[]
+  storeCodes: string[]
 }
 
 /** 登记/变更域的错误——路由把它翻成 400 + message（与 domain/ticket.ts 的 AmountValidationError 同构） */
@@ -30,12 +31,12 @@ export class RegistrationError extends Error {
   }
 }
 
-/** 归一门店集合：去重 + 升序。集合语义下顺序无意义，不归一会造出假变更。 */
-function normalizeStoreIds(ids: number[]): number[] {
-  return [...new Set(ids)].sort((a, b) => a - b)
+/** 归一门店集合：去重 + 字典序。集合语义下顺序无意义，不归一会造出假变更。 */
+function normalizeStoreCodes(codes: string[]): string[] {
+  return [...new Set(codes)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 }
 
-function sameIds(a: number[], b: number[]): boolean {
+function sameCodes(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i])
 }
 
@@ -56,7 +57,7 @@ export function computeRegistration(
   const next = {
     name: target.name,
     phone: target.phone,
-    storeIds: normalizeStoreIds(target.storeIds),
+    storeCodes: normalizeStoreCodes(target.storeCodes),
   }
 
   // 无档案 ⇒ 注册：old 空、new 是全部目标字段
@@ -67,7 +68,7 @@ export function computeRegistration(
   const prev = {
     name: current.name,
     phone: current.phone,
-    storeIds: normalizeStoreIds(current.storeIds),
+    storeCodes: normalizeStoreCodes(current.storeCodes),
   }
 
   const oldInfo: Partial<RegistrationTarget> = {}
@@ -80,9 +81,9 @@ export function computeRegistration(
     oldInfo.phone = prev.phone
     newInfo.phone = next.phone
   }
-  if (!sameIds(prev.storeIds, next.storeIds)) {
-    oldInfo.storeIds = prev.storeIds
-    newInfo.storeIds = next.storeIds
+  if (!sameCodes(prev.storeCodes, next.storeCodes)) {
+    oldInfo.storeCodes = prev.storeCodes
+    newInfo.storeCodes = next.storeCodes
   }
 
   if (Object.keys(newInfo).length === 0) {
@@ -92,10 +93,10 @@ export function computeRegistration(
 }
 
 /**
- * 审批通过时写回 `employee.store_id`（「主门店」遗留列）用哪个门店。
+ * 审批通过时写回 `employee.store_code`（「主门店」遗留列）用哪个门店。
  * 取归一后的第一个。**注意这只是遗留列**——「我的门店」以 `employee_store` 为准。
  */
-export function pickPrimaryStoreId(target: RegistrationTarget): number | null {
-  const ids = normalizeStoreIds(target.storeIds)
-  return ids.length > 0 ? ids[0]! : null
+export function pickPrimaryStoreCode(target: RegistrationTarget): string | null {
+  const codes = normalizeStoreCodes(target.storeCodes)
+  return codes.length > 0 ? codes[0]! : null
 }

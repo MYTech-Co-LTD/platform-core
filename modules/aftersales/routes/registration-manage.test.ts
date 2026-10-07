@@ -4,7 +4,7 @@ import { Hono } from 'hono'
 import { Pool } from 'pg'
 import type { Identity } from '@platform/sdk'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { applyMigrations } from '../test-util'
+import { applyMigrations, ensureDimTables } from '../test-util'
 import { registerRegistrationManage } from './registration-manage'
 
 const ORG = 'test-m3b1-manage'
@@ -25,7 +25,7 @@ async function cleanup() {
   await pool.query(`delete from aftersales.employee_approval where org = any($1::text[])`, [[ORG, OTHER_ORG]])
   await pool.query(`delete from aftersales.employee_store where org = $1`, [ORG])
   await pool.query(`delete from aftersales.employee where org = $1`, [ORG])
-  await pool.query(`delete from aftersales.store where org = $1`, [ORG])
+  await pool.query(`delete from data.dim_branch where org = $1`, [ORG])
 }
 // 自带迁移（评审 N3）：本文件必须**自足**，不能依赖别的包先迁完 aftersales schema。
 // `pnpm -r` 的包间执行顺序不保证 —— 靠 apps/server「顺带」迁移就是「本地红、CI 绿」的时序红
@@ -33,6 +33,7 @@ async function cleanup() {
 // 放在 cleanup **之前**：cleanup 自己就查 aftersales.* 的表，表还不存在它先挂。
 beforeAll(async () => {
   await applyMigrations(pool)
+  await ensureDimTables(pool)
   await cleanup()
 })
 beforeEach(cleanup)
@@ -41,14 +42,15 @@ afterAll(async () => {
   await pool.end()
 })
 
-/** 建两张门店并返回 id（**在 cleanup 之后**调，别放 beforeAll） */
-async function seedStores(): Promise<number[]> {
+/** 建两张门店并返回 code（**在 cleanup 之后**调，别放 beforeAll） */
+async function seedStores(): Promise<string[]> {
   await pool.query(
-    `insert into aftersales.store(org, name, address, phone) values ($1,'店A','',''), ($1,'店B','','')`,
+    `insert into data.dim_branch(org, code, name, enable, source_book, snapshot)
+       values ($1,'101','店A',true,'3120',current_date), ($1,'102','店B',true,'3120',current_date)`,
     [ORG],
   )
-  return (await pool.query<{ id: string }>(`select id from aftersales.store where org=$1 order by id`, [ORG])).rows.map(
-    (r) => Number(r.id),
+  return (await pool.query<{ code: string }>(`select code from data.dim_branch where org=$1 order by code`, [ORG])).rows.map(
+    (r) => r.code,
   )
 }
 
@@ -92,21 +94,21 @@ describe('GET /employee-approvals', () => {
 describe('POST /employee-approvals/:id/decide', () => {
   it('★ 通过 register ⇒ 建 employee 行（approved）+ 写 employee_store 关联 + 记 decided_by', async () => {
     const [s1] = await seedStores()
-    const id = await seedApproval('o1', 'register', { name: '张三', phone: '138', storeIds: [s1] })
+    const id = await seedApproval('o1', 'register', { name: '张三', phone: '138', storeCodes: [s1] })
 
     expect((await decide(id, 'approve')).status).toBe(200)
 
     const emp = (
-      await pool.query(`select name, phone, store_id, approve_status from aftersales.employee where org=$1 and open_id='o1'`, [ORG])
-    ).rows[0] as { name: string; phone: string; store_id: string; approve_status: string }
+      await pool.query(`select name, phone, store_code, approve_status from aftersales.employee where org=$1 and open_id='o1'`, [ORG])
+    ).rows[0] as { name: string; phone: string; store_code: string; approve_status: string }
     expect(emp.name).toBe('张三')
     expect(emp.phone).toBe('138')
     expect(emp.approve_status).toBe('approved')
-    expect(Number(emp.store_id)).toBe(s1) // 主门店 = 归一后第一个
+    expect(emp.store_code).toBe(s1) // 主门店 = 归一后第一个
 
     const links = (
-      await pool.query<{ store_id: string }>(`select store_id from aftersales.employee_store where org=$1 order by store_id`, [ORG])
-    ).rows.map((r) => Number(r.store_id))
+      await pool.query<{ store_code: string }>(`select store_code from aftersales.employee_store where org=$1 order by store_code`, [ORG])
+    ).rows.map((r) => r.store_code)
     expect(links).toEqual([s1])
 
     const ap = (await pool.query(`select status, decided_by, decided_at from aftersales.employee_approval where id=$1`, [id])).rows[0] as {
@@ -126,31 +128,31 @@ describe('POST /employee-approvals/:id/decide', () => {
        values ($1,'张三','138','o1','approved') returning id`,
       [ORG],
     )
-    await pool.query(`insert into aftersales.employee_store(org, employee_id, store_id) values ($1,$2,$3)`, [
+    await pool.query(`insert into aftersales.employee_store(org, employee_id, store_code) values ($1,$2,$3)`, [
       ORG,
       Number(emp.rows[0]!.id),
       s1,
     ])
-    const id = await seedApproval('o1', 'change', { storeIds: [s2] })
+    const id = await seedApproval('o1', 'change', { storeCodes: [s2] })
 
     expect((await decide(id, 'approve')).status).toBe(200)
 
     const links = (
-      await pool.query<{ store_id: string }>(`select store_id from aftersales.employee_store where org=$1 order by store_id`, [ORG])
-    ).rows.map((r) => Number(r.store_id))
+      await pool.query<{ store_code: string }>(`select store_code from aftersales.employee_store where org=$1 order by store_code`, [ORG])
+    ).rows.map((r) => r.store_code)
     expect(links).toEqual([s2]) // s1 的关联被删掉（重建而不是追加）
     // 且没有多建一行 employee
     expect(Number((await pool.query(`select count(*)::int n from aftersales.employee where org=$1`, [ORG])).rows[0]!.n)).toBe(1)
   })
 
-  it('★ 变更只换了手机号（new_info 无 storeIds）⇒ **不碰** employee_store', async () => {
+  it('★ 变更只换了手机号（new_info 无 storeCodes）⇒ **不碰** employee_store', async () => {
     const [s1] = await seedStores()
     const emp = await pool.query<{ id: string }>(
       `insert into aftersales.employee(org, name, phone, open_id, approve_status)
        values ($1,'张三','138','o1','approved') returning id`,
       [ORG],
     )
-    await pool.query(`insert into aftersales.employee_store(org, employee_id, store_id) values ($1,$2,$3)`, [
+    await pool.query(`insert into aftersales.employee_store(org, employee_id, store_code) values ($1,$2,$3)`, [
       ORG,
       Number(emp.rows[0]!.id),
       s1,
@@ -174,7 +176,7 @@ describe('POST /employee-approvals/:id/decide', () => {
 
   it('★ 已决的申请再决 ⇒ 409 ALREADY_DECIDED（状态机条件更新，不是先查后改）', async () => {
     const [s1] = await seedStores()
-    const id = await seedApproval('o1', 'register', { name: '张三', storeIds: [s1] })
+    const id = await seedApproval('o1', 'register', { name: '张三', storeCodes: [s1] })
     expect((await decide(id, 'approve')).status).toBe(200)
     const again = await decide(id, 'approve')
     expect(again.status).toBe(409)

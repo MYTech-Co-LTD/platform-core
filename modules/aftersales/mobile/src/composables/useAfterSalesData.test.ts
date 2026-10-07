@@ -14,18 +14,18 @@ const empQuery = vi.mocked(employee_info.query)
 const productQuery = vi.mocked(product_archive.query)
 
 beforeEach(() => {
-  storeQuery.mockReset().mockResolvedValue([{ id: 3, store_name: '城东店', store_number: '3', is_enabled: '1' }])
+  storeQuery.mockReset().mockResolvedValue([{ id: '103', store_name: '城东店', store_number: '103', is_enabled: '1' }])
   empQuery.mockReset().mockResolvedValue([
     { id: 1, employee_name: '张三', employee_phonenumber: '138', store_info: '3', status: '通过', _ctime: '', _mtime: '' },
   ])
-  productQuery.mockReset().mockResolvedValue([{ id: 4, product_name: '螺栓', basic_quantity: 10, basic_unit_price_minor: 500 }])
+  productQuery.mockReset().mockResolvedValue([{ id: '4001', product_name: '螺栓', basic_quantity: 0, basic_unit_price_minor: 0 }])
 })
 
 describe('useAfterSalesData（M3b-2 裁剪后）', () => {
   it('loadEmployeeStores：按**我的登记**取门店（不是全量）', async () => {
     const d = useAfterSalesData()
     await d.loadEmployeeStores()
-    expect(storeQuery).toHaveBeenCalledWith({ filter: { OR: [{ id__eq: 3 }] } })
+    expect(storeQuery).toHaveBeenCalledWith({ filter: { OR: [{ id__eq: '3' }] } })
     expect(d.storeList.value.map((s: { store_name: string }) => s.store_name)).toEqual(['城东店'])
   })
 

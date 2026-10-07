@@ -64,16 +64,17 @@ describePg('导入层（需要 DATABASE_URL）', () => {
     expect(t.rows[0].basic_unit_price_minor).toBe('1250')
     expect(t.rows[0].amount_minor).toBe('20000')
     expect(t.rows[0].client_request_id).toBe('')                // 迁移行不占幂等键位
-    // employee_store 拆行 + 主门店 = 串里第一个可解析的
-    const links = await pool.query<{ store_id: string }>(
-      `select es.store_id from aftersales.employee_store es
+    // employee_store 拆行 + 主门店 = 串里第一个可解析的（#476：引用列已切 store_code 自然键——
+    // 值为无忌 id 的字符串形，见 importEmployee 的头注；存量迁移需另配 id 映射，山海无存量）
+    const links = await pool.query<{ store_code: string }>(
+      `select es.store_code from aftersales.employee_store es
         join aftersales.employee e on e.id = es.employee_id
        where es.org = $1 order by es.id`, [ORG])
     expect(links.rows).toHaveLength(2)
     // 「不可解析段跳过」的行为此处不锁（S001/S002 都有档案）——由下一条「解析不到档案」用例专门锁
-    const emp = await pool.query<{ store_id: string | null }>(
-      `select store_id from aftersales.employee where org = $1`, [ORG])
-    expect(Number(emp.rows[0].store_id)).toBe(Number(links.rows[0].store_id))
+    const emp = await pool.query<{ store_code: string | null }>(
+      `select store_code from aftersales.employee where org = $1`, [ORG])
+    expect(emp.rows[0].store_code).toBe(links.rows[0].store_code)
   })
 
   it('store_info 段解析不到档案 ⇒ 只该段跳过：落链 1 行、行照常导入、reasons 记 unresolved_store_ref', async () => {
