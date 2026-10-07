@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.76.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.76.0...v0.76.1) - 2026-10-07
+- 【修复】data: #476 发布脚本拆分 branch/item scope——UNION 合并会让 item 恒 0 行 ([#478](https://github.com/MYTech-Co-LTD/platform-core/pull/478), [4d7e2bf](https://github.com/MYTech-Co-LTD/platform-core/commit/4d7e2bfd7fbd5ee4732792e9b41df7595be016a6))
+
+
 ## [0.76.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.75.0...v0.76.0) - 2026-10-07
 - 【新增】data: #476 维表发布面——data.dim_* 快照 + 发布脚本 + B1 只读豁免 + 探活⑥ ([#477](https://github.com/MYTech-Co-LTD/platform-core/pull/477), [1f9996b](https://github.com/MYTech-Co-LTD/platform-core/commit/1f9996b1281ca4c911c9a17d0d9c6cc02a2da752))
 
