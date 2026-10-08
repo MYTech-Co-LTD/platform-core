@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.85.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.85.1...v0.85.2) - 2026-10-08
+- 【修复】data: 批发管线 date_type 改回 制单时间——组合反转实测（#511 修正） ([#513](https://github.com/MYTech-Co-LTD/platform-core/pull/513), [88bea26](https://github.com/MYTech-Co-LTD/platform-core/commit/88bea26cf516efc57ccb03d684447f56ed8f745a))
+
+
 ## [0.85.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.85.0...v0.85.1) - 2026-10-08
 - 【修复】data: 批发管线补哨兵 die + 扩容 19 页——首跑实测单量打穿 9 页上限（#511 收尾） ([#512](https://github.com/MYTech-Co-LTD/platform-core/pull/512), [e127997](https://github.com/MYTech-Co-LTD/platform-core/commit/e12799721ce7b7d02a2c1207dc1daaa9b9f95321))
 
