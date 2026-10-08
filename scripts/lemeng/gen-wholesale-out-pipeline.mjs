@@ -32,7 +32,7 @@ if (!/^[0-9]{1,32}$/.test(book)) {
   process.exit(2)
 }
 const out = argOf('--out')
-const PAGES = 9          // p1..p8 数据页 + p9 哨兵页
+const PAGES = 19         // p1..p18 数据页 + p19 哨兵页（首跑实测批发单 >900 单/日，9 页被打穿）
 const PAGE_SIZE = 100
 
 // shape SQL 引用的源字段全部申报（check-data-contract 硬门；漏报 = 空响应 Binder Error，#432 族）
@@ -138,6 +138,7 @@ for (let i = 1; i <= PAGES; i++) {
   pNodes.push(pageNode(id, i))
 }
 
+const lastId = pIds[pIds.length - 1]
 /** @type {any} */
 const pipeline = {
   name: `lemeng.wholesale.out.l0.${book}`,
@@ -171,6 +172,8 @@ const pipeline = {
     node('gv', 'code.sql', codeSql(`SELECT 'BRANCH_NUMS' AS violation, '\${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('\${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '\${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('\${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '\${date-1d}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('\${date-1d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', ${batchIdExpr} AS v, 'wo-<book>-wholesale_out-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match(${batchIdExpr}, 'wo-[0-9]+-wholesale_out-[0-9]{8}T[0-9]{6}Z')`)),
     die('dv', 'has-rows', 'EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入'),
     ...pNodes,
+    // 哨兵 die：p19（末页）非空 = 批发单量击穿 1,800 单/日容量 ⇒ 大声红（口径同 dim.item 第 150 页）
+    die('sentinel', 'has-rows', "lemeng wholesale_out 容量截断：第 19 页（哨兵页）仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK}）⇒ 单量已击穿真阈值 1,800 条/日（算式：数据页 18 × page_size 100，哨兵页不计容量）。处置：加数据页节点 → 同步改本算式与哨兵页的页号 → 重生成 → 走 PR"),
     node('merge', 'ctl.merge', {}),
     node('shape', 'code.sql', codeSql(SHAPE_SQL)),
     node('gate', 'qa.contract', { rules: {
@@ -199,7 +202,11 @@ const pipeline = {
     { id: 'e-d1-gv', source: 'd1', target: 'gv', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
     { id: 'e-gv-dv', source: 'gv', target: 'dv', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
     ...pIds.map((id) => ({ id: `e-dv-${id}`, source: 'dv', target: id, sourceHandle: null, targetHandle: null, data: { connectionType: 'on-subjob-ok' } })),
-    ...pIds.map((id, i) => ({ id: `e-${id}-merge`, source: id, target: 'merge', sourceHandle: 'main', targetHandle: `main_${i + 1}`, data: { connectionType: 'main' } })),
+    // 末页（哨兵）单独过 die(has-rows) 再进 merge——非空即整条红（容量击穿大声红）；
+    // 其余页直连 merge。dim.item 的 p150→guard 同款。
+    ...pIds.slice(0, -1).map((id, i) => ({ id: `e-${id}-merge`, source: id, target: 'merge', sourceHandle: 'main', targetHandle: `main_${i + 1}`, data: { connectionType: 'main' } })),
+    { id: `e-${lastId}-sentinel`, source: lastId, target: 'sentinel', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
+    { id: 'e-sentinel-merge', source: 'sentinel', target: 'merge', sourceHandle: 'main', targetHandle: `main_${pIds.length}`, data: { connectionType: 'main' } },
     { id: 'e-merge-shape', source: 'merge', target: 'shape', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
     { id: 'e-shape-gate', source: 'shape', target: 'gate', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
     { id: 'e-gate-sink', source: 'gate', target: 'sink', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },

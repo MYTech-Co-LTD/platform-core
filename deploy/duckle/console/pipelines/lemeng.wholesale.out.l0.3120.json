@@ -734,6 +734,662 @@
       }
     },
     {
+      "id": "p10",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p10",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "wholesale_order_fid",
+            "type": "string"
+          },
+          {
+            "name": "client_fid",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "json"
+          },
+          {
+            "name": "wholesale_order_date",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_create_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "wholesale_order_details",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.wholesaleorder.find",
+          "method": "POST",
+          "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"制单\",\"limit\":100,\"offset\":900}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p11",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p11",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "wholesale_order_fid",
+            "type": "string"
+          },
+          {
+            "name": "client_fid",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "json"
+          },
+          {
+            "name": "wholesale_order_date",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_create_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "wholesale_order_details",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.wholesaleorder.find",
+          "method": "POST",
+          "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"制单\",\"limit\":100,\"offset\":1000}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p12",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p12",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "wholesale_order_fid",
+            "type": "string"
+          },
+          {
+            "name": "client_fid",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "json"
+          },
+          {
+            "name": "wholesale_order_date",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_create_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "wholesale_order_details",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.wholesaleorder.find",
+          "method": "POST",
+          "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"制单\",\"limit\":100,\"offset\":1100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p13",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p13",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "wholesale_order_fid",
+            "type": "string"
+          },
+          {
+            "name": "client_fid",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "json"
+          },
+          {
+            "name": "wholesale_order_date",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_create_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "wholesale_order_details",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.wholesaleorder.find",
+          "method": "POST",
+          "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"制单\",\"limit\":100,\"offset\":1200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p14",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p14",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "wholesale_order_fid",
+            "type": "string"
+          },
+          {
+            "name": "client_fid",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "json"
+          },
+          {
+            "name": "wholesale_order_date",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_create_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "wholesale_order_details",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.wholesaleorder.find",
+          "method": "POST",
+          "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"制单\",\"limit\":100,\"offset\":1300}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p15",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p15",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "wholesale_order_fid",
+            "type": "string"
+          },
+          {
+            "name": "client_fid",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "json"
+          },
+          {
+            "name": "wholesale_order_date",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_create_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "wholesale_order_details",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.wholesaleorder.find",
+          "method": "POST",
+          "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"制单\",\"limit\":100,\"offset\":1400}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p16",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p16",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "wholesale_order_fid",
+            "type": "string"
+          },
+          {
+            "name": "client_fid",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "json"
+          },
+          {
+            "name": "wholesale_order_date",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_create_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "wholesale_order_details",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.wholesaleorder.find",
+          "method": "POST",
+          "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"制单\",\"limit\":100,\"offset\":1500}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p17",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p17",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "wholesale_order_fid",
+            "type": "string"
+          },
+          {
+            "name": "client_fid",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "json"
+          },
+          {
+            "name": "wholesale_order_date",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_create_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "wholesale_order_details",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.wholesaleorder.find",
+          "method": "POST",
+          "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"制单\",\"limit\":100,\"offset\":1600}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p18",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p18",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "wholesale_order_fid",
+            "type": "string"
+          },
+          {
+            "name": "client_fid",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "json"
+          },
+          {
+            "name": "wholesale_order_date",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_create_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "wholesale_order_details",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.wholesaleorder.find",
+          "method": "POST",
+          "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"制单\",\"limit\":100,\"offset\":1700}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p19",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p19",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "wholesale_order_fid",
+            "type": "string"
+          },
+          {
+            "name": "client_fid",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "json"
+          },
+          {
+            "name": "wholesale_order_date",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_create_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_order_last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "wholesale_order_details",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.wholesaleorder.find",
+          "method": "POST",
+          "body": "{\"date_start\":\"${date-1d} 00:00:00\",\"date_end\":\"${date-1d} 23:59:59\",\"date_type\":\"制单\",\"limit\":100,\"offset\":1800}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "sentinel",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sentinel",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "lemeng wholesale_out 容量截断：第 19 页（哨兵页）仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK}）⇒ 单量已击穿真阈值 1,800 条/日（算式：数据页 18 × page_size 100，哨兵页不计容量）。处置：加数据页节点 → 同步改本算式与哨兵页的页号 → 重生成 → 走 PR"
+        }
+      }
+    },
+    {
       "id": "merge",
       "type": "transform",
       "position": {
@@ -980,6 +1636,106 @@
       }
     },
     {
+      "id": "e-dv-p10",
+      "source": "dv",
+      "target": "p10",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p11",
+      "source": "dv",
+      "target": "p11",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p12",
+      "source": "dv",
+      "target": "p12",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p13",
+      "source": "dv",
+      "target": "p13",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p14",
+      "source": "dv",
+      "target": "p14",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p15",
+      "source": "dv",
+      "target": "p15",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p16",
+      "source": "dv",
+      "target": "p16",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p17",
+      "source": "dv",
+      "target": "p17",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p18",
+      "source": "dv",
+      "target": "p18",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p19",
+      "source": "dv",
+      "target": "p19",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
       "id": "e-p1-merge",
       "source": "p1",
       "target": "merge",
@@ -1065,6 +1821,116 @@
       "target": "merge",
       "sourceHandle": "main",
       "targetHandle": "main_9",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p10-merge",
+      "source": "p10",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_10",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p11-merge",
+      "source": "p11",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_11",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p12-merge",
+      "source": "p12",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_12",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p13-merge",
+      "source": "p13",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_13",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p14-merge",
+      "source": "p14",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_14",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p15-merge",
+      "source": "p15",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_15",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p16-merge",
+      "source": "p16",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_16",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p17-merge",
+      "source": "p17",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_17",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p18-merge",
+      "source": "p18",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_18",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p19-sentinel",
+      "source": "p19",
+      "target": "sentinel",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-sentinel-merge",
+      "source": "sentinel",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_19",
       "data": {
         "connectionType": "main"
       }
