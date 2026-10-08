@@ -428,8 +428,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   r.delete('/reports/:id', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
-    const cfg = metabaseFromEnv()
-    if (!cfg) return c.json({ error: 'METABASE_UNCONFIGURED' }, 503)
+    // ⚠️ 这里**不查** `metabaseFromEnv()`（#494）：自绘行根本不碰 Metabase，cfg 检查下沉到
+    //    renderer 分支内（惰性取，真要归档才要它）——与 POST 的「先判分支、再查环境」同序。
+    //    修前顺序反了：cfg 检查在 id 解析之前，「自绘可用 + Metabase 未配」的私有化形态里
+    //    自绘报表建得出来、一按回收就 503（回收功能整体不可用）。由 routes 测试
+    //    「不设 DATA_METABASE_* 时自绘行仍可删」钉住。
     const id = reportIdOf(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     // 登记侧版本（写保护，spec §3③）：DELETE 走**查询串**（无 body）——`?expectedVersion=N`。
@@ -455,10 +458,14 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         return c.json({ error: 'STALE_WRITE', currentVersion: row.version }, 409)
       }
 
-      const deps = metabaseDeps(cfg)
       // renderer=platform（终审修复 3）：没有 Metabase dashboard 可归档（metabaseId=0 是哨兵，
       // 拿它发 PUT 只会 404 ⇒ 删除恒 502）——跳过归档，登记行删除照旧。
+      // cfg 检查在 renderer 判定**之后**（#494）：metabase 行没配 Metabase 才 503（配置状态
+      // 排在 404/400/409 这些「调用方缺陷/行状态」之后，与 POST/PUT 的先验参再查环境同序）。
       if (row.renderer !== 'platform') {
+        const cfg = metabaseFromEnv()
+        if (!cfg) return c.json({ error: 'METABASE_UNCONFIGURED' }, 503)
+        const deps = metabaseDeps(cfg)
         try {
           // 先归档、再删行。顺序不能倒：只删登记行而把 dashboard 留在可嵌入集里 ⇒ 它恒出现在
           // 对账的 unregistered 差集里（一条永远消不掉的噪声）。反过来先归档、删行失败 ⇒
