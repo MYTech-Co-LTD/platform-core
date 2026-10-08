@@ -12,7 +12,7 @@
 
 | 形态 | 文件 | 份数 |
 |---|---|---|
-| **L0 直连**（单窗/日频，无跨窗编排） | `lemeng.dim.branch.l0.json` · `lemeng.dim.item.l0.json` | 各 1（双账套） |
+| **L0 直连**（单窗/日频，无跨窗编排） | `lemeng.dim.branch.l0.json` · `lemeng.dim.item.l0.json` · `lemeng.dim.item_price.l0.json`(64188) · `lemeng.dim.item_price.l0.3120.json` | 维度面各 1（双账套）；价格批**每账套一份**（#481——批内门店号是生成时字面量，两账套清单不同 ⇒ 不共用文件） |
 | **L1 编排**（跨窗循环） | `lemeng.retail.windows.l1.json` · `lemeng.retail.tick.l1.json` · `lemeng.retail.close.l1.json` | 3 |
 | **业务子管线**（单窗怎么采，被 L1 复用） | `lemeng.retail_order_line.window.json` · `lemeng.retail_order_line.tick.json` | 2 |
 | **回填变体**（只差窗口来源，不进调度） | `lemeng.retail.windows.backfill.json` | 1 |
@@ -21,6 +21,15 @@
 ---
 
 ## 图 1 · L0 直连（维度面：全量快照）
+
+> **价格批（#481，`lemeng.dim.item_price.l0*.json`）与下图同构，两处结构差**（生成器
+> `scripts/lemeng/gen-item-price-pipeline.mjs` 产出，**不手编**）：
+> ① 扇出基准 = **门店批**（15 店/批；realprice 无分页，item.find 按页）——批内门店号是
+> **生成时字面量**，`last_edit_time` 也是（生成日的滚动 2 年窗起点，网关上限 10310217
+> 随「今天」滚）⇒ **门店增减或字面量临期 ⇒ 重跑生成器**（约 2 年一次）；
+> ② `guard` 换成 `coverage→cg`：merged 门店集合对 `${ENV:BRANCH_NUMS}` **点名**，
+> 多/少一家都 die（批字面量过期的 fail-loud 防线，角色同下图哨兵页）。
+
 
 > 档：**①** 纯 duckle · **②** duckle 组件 + 我们的规则/配置 · **③** 纯手写代码（`code.sql`）
 > 每个节点标注 = **档 + 节点 + 组件 + 这个节点干什么**。

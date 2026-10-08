@@ -1,0 +1,2595 @@
+{
+  "name": "lemeng.dim.item_price.l0.3120",
+  "nodes": [
+    {
+      "id": "w0",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "w0",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/mcp",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"
+          },
+          "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"whoami\", \"arguments\": {}}}",
+          "paginationType": "none",
+          "responseFormat": "xml",
+          "rawResponseDestination": "/workspace/.duckle-raw/whoami-${datetime}.sse",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "g0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g0",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/whoami-${datetime}.sse')"
+        }
+      }
+    },
+    {
+      "id": "g1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g1",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()"
+        }
+      }
+    },
+    {
+      "id": "g2",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g2",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input"
+        }
+      }
+    },
+    {
+      "id": "d0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d0",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "g3",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g3",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}' UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) WHERE w.branch_num IS NULL"
+        }
+      }
+    },
+    {
+      "id": "d1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d1",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "gv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gv",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'SNAPSHOT', '${date+8h}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${date+8h}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'dim-' || '${ENV:SYSTEM_BOOK}' || '-item_price-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'dim-<book>-item_price-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('dim-' || '${ENV:SYSTEM_BOOK}' || '-item_price-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'dim-[0-9]+-item_price-[0-9]{8}T[0-9]{6}Z')"
+        }
+      }
+    },
+    {
+      "id": "dv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dv",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入"
+        }
+      }
+    },
+    {
+      "id": "p1",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[99,1,2,3,4,5,6,7,8,9,10,11,12,13,14],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p2",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p2",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[15,16,17,18,19,20,21,22,23,24,25,26,27,28,29],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p3",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p3",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[30,31,32,33,34,35,36,37,38,39,40,41,42,43,44],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p4",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p4",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[45,46,47,48,49,50,51,52,53,54,55,56,57,58,59],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p5",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p5",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[60,61,62,63,64,65,66,67,68,69,70,71,72,73,74],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p6",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p6",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[75,76,77,78,79,80,81,82,83,84,85,86,87,88,89],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p7",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p7",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[90,91,92,93,94,95,96,97,98,100,101,102,103,104,105],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p8",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p8",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[106,107,108,109,110,111,112,113,114,115,116,117,118,119,120],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p9",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p9",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[121,122,123,124,125,126,127,128,129,130,131,132,133,134,135],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p10",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p10",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[136,137,138,139,140,888,141,142,143,144,145,146,147,148,149],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p11",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p11",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[150,151,152,153,154,155,156,157,158,159,160,161,163,164,165],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p12",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p12",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[166,167,168,169,170,171,172,173,174,175,176,177,178,179,180],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p13",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p13",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[181,182,183,184,185,186,187,188,189,190,191,192,193,194,195],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p14",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p14",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[196,197,198,199,200,201,202,203,204,205,206,207,208,210,209],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p15",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p15",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[211,212,213,214,215,216,217,218,219,220,221,222,223,224,225],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p16",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p16",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[226,227,228,229,230,231,232,233,234,235,236,237,238,239,240],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p17",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p17",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[241,242,243,244,245,246,247,248,249,250,251,252,253,254,255],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p18",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p18",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[256,257,258,259,260,261,262,263,264,265,266,267,268,269,270],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p19",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p19",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch",
+            "type": "json"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_grade_num",
+            "type": "int64"
+          },
+          {
+            "name": "pos_variant",
+            "type": "json"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_item_regular_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_regular_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level2_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level3_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_level4_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_max_real_price",
+            "type": "float64"
+          },
+          {
+            "name": "branch_item_min_real_price",
+            "type": "float64"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
+          "method": "POST",
+          "body": "{\"branch_nums\":[271],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "merge",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "merge",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "coverage",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "coverage",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'store_coverage' AS violation,\n  (SELECT count(DISTINCT branch_num) FROM input) AS merged_stores,\n  (SELECT count(*) FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS b) t) AS env_stores\nFROM (SELECT count(DISTINCT branch_num) AS n FROM input) m\nWHERE m.n <> (SELECT count(*) FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS b) t)"
+        }
+      }
+    },
+    {
+      "id": "cg",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "cg",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "价格批门店覆盖失配：merged 门店集合 ≠ BRANCH_NUMS 清单（{rows} 行）⇒ 快照相对声明的门店全集是部分的 ⇒ 拒绝写湖。处置：门店增减 ⇒ 重跑 gen-item-price-pipeline.mjs 重生成；某店确无价格数据 ⇒ 把它从该账套 BRANCH_NUMS 摘除（那是采集清单，不是门店全集）"
+        }
+      }
+    },
+    {
+      "id": "shape",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "shape",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  'dim-' || '${ENV:SYSTEM_BOOK}' || '-item_price-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date+8h}' AS DATE) AS snapshot,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  json_extract_string(CAST(o.branch AS JSON), '$.branch_code') AS branch_code,\n  json_extract_string(CAST(o.branch AS JSON), '$.branch_name') AS branch_name,\n  CAST(json_extract_string(CAST(o.branch AS JSON), '$.branch_matrix_price_actived') AS BOOLEAN) AS branch_matrix_price_actived,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_grade_num AS BIGINT) AS item_grade_num,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_code') AS item_code,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_barcode') AS bar_code,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_name') AS item_name,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_num') AS spec_num,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_unit') AS spec_unit,\n  CAST(json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_rate') AS DECIMAL(18,8)) AS spec_rate,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_unit') AS item_unit,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_category') AS item_category,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_department') AS item_department,\n  CAST(o.last_edit_time AS VARCHAR) AS last_edit_time,\n  CAST(o.branch_item_regular_price AS DECIMAL(18,8)) AS regular_price,\n  CAST(o.branch_item_level2_price AS DECIMAL(18,8)) AS level2_price,\n  CAST(o.branch_item_level3_price AS DECIMAL(18,8)) AS level3_price,\n  CAST(o.branch_item_level4_price AS DECIMAL(18,8)) AS level4_price,\n  CAST(o.branch_item_max_price AS DECIMAL(18,8)) AS max_price,\n  CAST(o.branch_item_min_price AS DECIMAL(18,8)) AS min_price,\n  CAST(o.branch_item_regular_real_price AS DECIMAL(18,8)) AS regular_real_price,\n  CAST(o.branch_item_level2_real_price AS DECIMAL(18,8)) AS level2_real_price,\n  CAST(o.branch_item_level3_real_price AS DECIMAL(18,8)) AS level3_real_price,\n  CAST(o.branch_item_level4_real_price AS DECIMAL(18,8)) AS level4_real_price,\n  CAST(o.branch_item_max_real_price AS DECIMAL(18,8)) AS max_real_price,\n  CAST(o.branch_item_min_real_price AS DECIMAL(18,8)) AS min_real_price\nFROM input o"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "snapshot": "not_null",
+            "branch_num": "not_null",
+            "item_num": "not_null",
+            "item_code": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/item_price/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/all.parquet",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd",
+          "connectionRef": "zos"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-w0-g0",
+      "source": "w0",
+      "target": "g0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g0-g1",
+      "source": "g0",
+      "target": "g1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g1-g2",
+      "source": "g1",
+      "target": "g2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g2-d0",
+      "source": "g2",
+      "target": "d0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d0-g3",
+      "source": "d0",
+      "target": "g3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g3-d1",
+      "source": "g3",
+      "target": "d1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d1-gv",
+      "source": "d1",
+      "target": "gv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gv-dv",
+      "source": "gv",
+      "target": "dv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p1",
+      "source": "dv",
+      "target": "p1",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p2",
+      "source": "dv",
+      "target": "p2",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p3",
+      "source": "dv",
+      "target": "p3",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p4",
+      "source": "dv",
+      "target": "p4",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p5",
+      "source": "dv",
+      "target": "p5",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p6",
+      "source": "dv",
+      "target": "p6",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p7",
+      "source": "dv",
+      "target": "p7",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p8",
+      "source": "dv",
+      "target": "p8",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p9",
+      "source": "dv",
+      "target": "p9",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p10",
+      "source": "dv",
+      "target": "p10",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p11",
+      "source": "dv",
+      "target": "p11",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p12",
+      "source": "dv",
+      "target": "p12",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p13",
+      "source": "dv",
+      "target": "p13",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p14",
+      "source": "dv",
+      "target": "p14",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p15",
+      "source": "dv",
+      "target": "p15",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p16",
+      "source": "dv",
+      "target": "p16",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p17",
+      "source": "dv",
+      "target": "p17",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p18",
+      "source": "dv",
+      "target": "p18",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p19",
+      "source": "dv",
+      "target": "p19",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p1-merge",
+      "source": "p1",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p2-merge",
+      "source": "p2",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_2",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p3-merge",
+      "source": "p3",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_3",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p4-merge",
+      "source": "p4",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_4",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p5-merge",
+      "source": "p5",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_5",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p6-merge",
+      "source": "p6",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_6",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p7-merge",
+      "source": "p7",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_7",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p8-merge",
+      "source": "p8",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_8",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p9-merge",
+      "source": "p9",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_9",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p10-merge",
+      "source": "p10",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_10",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p11-merge",
+      "source": "p11",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_11",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p12-merge",
+      "source": "p12",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_12",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p13-merge",
+      "source": "p13",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_13",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p14-merge",
+      "source": "p14",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_14",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p15-merge",
+      "source": "p15",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_15",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p16-merge",
+      "source": "p16",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_16",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p17-merge",
+      "source": "p17",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_17",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p18-merge",
+      "source": "p18",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_18",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p19-merge",
+      "source": "p19",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_19",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-merge-coverage",
+      "source": "merge",
+      "target": "coverage",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-coverage-cg",
+      "source": "coverage",
+      "target": "cg",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-cg-shape",
+      "source": "cg",
+      "target": "shape",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-shape-gate",
+      "source": "shape",
+      "target": "gate",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gate-sink",
+      "source": "gate",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}

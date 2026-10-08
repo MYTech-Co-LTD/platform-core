@@ -282,10 +282,47 @@ models:
       - name: item_brand_pinyin
       - name: item_brand_id
 
-# 两张维度的**行粒度自然键**唯一性由 singular test 手写（单列 `unique` 判不了复合键；
+  - name: stg_lemeng_item_price
+    description: >-
+      乐檬**门店商品应用价** staging（新湖；#481 价格批）。**一对一、只规范化不改义**：取列 / 命名 /
+      透传 / 分区键定型，不做聚合、不做 join、不定义口径（价格→发布表的换算口径在 publish-dims，
+      不在 staging）。源 = 湖表 `lemeng.item_price`（hive 两级分区 system_book/snapshot，
+      **全量快照**——`last_edit_time` 传滚动 2 年窗起点，网关上限 10310217 实测），声明见
+      `staging/sources.yml`；列全集与空值性以 `contracts/common/lemeng.item_price.json`（31 列）为准。
+      ⚠️ 结构差异同 stg_lemeng_branch：一个模型读两个账套，`system_book` 是列。
+    columns:
+      - name: batch_id
+        description: '批次标记（采集 run id）。**载荷列**（契约 `batch.unique=false`）：同快照重跑会换值，幂等靠对象覆盖写。'
+      - name: system_book
+        description: '账套（3120 熊喵 / 64188 品品甜）。**hive 分区键**：路径推断，本层 `::varchar` 定型。'
+      - name: org
+        description: '主体列（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。**不是契约列**。'
+        tests:
+          - not_null
+      - name: snapshot
+        description: '快照日。**hive 分区键**：路径推断，本层 `::date` 定型。'
+      - name: branch_num
+        description: '门店号。**自然键之一 + 发布 join 键**（→ stg_lemeng_branch.branch_num 解析 code）。'
+        tests:
+          - not_null
+      - name: item_num
+        description: '主商品号。**自然键之一**。'
+        tests:
+          - not_null
+      - name: item_code
+        description: '商品业务码（源自 pos_variant 摊平；= dim_item.item_code 同源，发布 join 键）。'
+        tests:
+          - not_null
+      - name: item_grade_num
+        description: '分级商品号；主商品行为 null（自然键含它：null 参与分组不误报）。'
+      - name: regular_real_price
+        description: '最终应用标准售价（ticket 金额依据的源列）。可空/0 = 源侧未单独设置（全量实测 1.07%），发布面过滤。'
+
+# 三张维度/价格表的**行粒度自然键**唯一性由 singular test 手写（单列 `unique` 判不了复合键；
 # 引 dbt_utils 要加 packages.yml —— 多一层依赖、解析期还要联网）：
-#   dbt/tests/assert_stg_lemeng_branch_key_unique.sql  —— (system_book, snapshot, branch_num)
-#   dbt/tests/assert_stg_lemeng_item_key_unique.sql    —— (system_book, snapshot, item_num)
+#   dbt/tests/assert_stg_lemeng_branch_key_unique.sql     —— (system_book, snapshot, branch_num)
+#   dbt/tests/assert_stg_lemeng_item_key_unique.sql       —— (system_book, snapshot, item_num)
+#   dbt/tests/assert_stg_lemeng_item_price_key_unique.sql —— (system_book, snapshot, branch_num, item_num, item_grade_num)
 #
 # 列级测试的**范围**（有意为之，不是漏做）：只给**自然键列**挂 `not_null`（与
 # stg_lemeng_retail_order_line 的形状一致 —— 它也只给同名的两个自然键列挂）。

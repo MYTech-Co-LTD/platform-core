@@ -18,9 +18,9 @@
 //   UNION 合并 scope 会让 item 恒 0 行）——两表各自取各自的 max(snapshot)。
 //
 // 事实源与流向：
-//   `DATA_WAREHOUSE_URL`（pg_duckdb staging，stg_lemeng_branch / stg_lemeng_item）
-//     → 裁剪（列集 = data 模块定的发布契约，见 009_dim_tenant_view.sql）+ 跨账套去重
-//     → `DATABASE_URL`（平台 PG data.dim_branch / data.dim_item，事务内整批替换）。
+//   `DATA_WAREHOUSE_URL`（pg_duckdb staging，stg_lemeng_branch / stg_lemeng_item / stg_lemeng_item_price）
+//     → 裁剪（列集 = data 模块定的发布契约，见 009/011 迁移）+ 跨账套去重
+//     → `DATABASE_URL`（平台 PG data.dim_branch / data.dim_item / data.dim_item_price，事务内整批替换）。
 //
 // 幂等（job 每天重跑）：每张表按 org **delete 后整批 insert**——重跑同一份 staging ⇒
 //   行集不变（验收判据：行数不变，不是「没报错」）。
@@ -140,12 +140,78 @@ async function main() {
       console.log(`${SCRIPT_NAME}: staging 无商品维行，dim_item 发布 0 行（上游未物化？看探活 ④）`)
     }
 
+    // ── dim_item_price（#481 价格批）：门店×商品粒度的应用价 ──────────────────────
+    // 换算 price_minor = round(regular_real_price * 100 / coalesce(nullif(spec_rate,0),1))
+    //（口径单点在publish 侧，迁移 011 只存结果；spec_rate 真机验证 = #481 计划 Task 7 未验环节①）。
+    // 过滤：regular_real_price 0/空行不发（源侧未单独设置，无诚实价；全量实测 1.07%）。
+    // store_code 解析：branch_num → stg_lemeng_branch（branch_num 账套内唯一；join 取
+    // 门店 staging 的最新快照——门店清单变更由它自愈）。
+    // 去重（同 009 口径①）：两账套交集门店 distinct on 取 system_book 字典序小者（3120 优先）。
+    const priceMax = await warehouse.query(
+      `select coalesce(max(snapshot)::text,'') as s from staging.stg_lemeng_item_price`,
+    )
+    const priceSnapshot = priceMax.rows[0].s
+    if (priceSnapshot !== '') {
+      const prices = await warehouse.query(
+        `select distinct on (p.org, b.code, p.item_code, coalesce(p.item_grade_num, 0))
+                p.org,
+                b.code as store_code,
+                p.item_code,
+                coalesce(p.item_grade_num, 0) as grade_item_num,
+                round(p.regular_real_price * 100 / coalesce(nullif(p.spec_rate, 0), 1))::bigint as price_minor,
+                p.regular_real_price as price_raw,
+                p.system_book
+           from staging.stg_lemeng_item_price p
+           join staging.stg_lemeng_branch b
+             on b.system_book = p.system_book and b.branch_num = p.branch_num
+            and b.snapshot = (select max(snapshot) from staging.stg_lemeng_branch)
+          where p.snapshot = $1::date
+            and p.regular_real_price is not null and p.regular_real_price > 0
+          order by p.org, b.code, p.item_code, coalesce(p.item_grade_num, 0), p.system_book asc`,
+        [priceSnapshot],
+      )
+      await platform.query('begin')
+      try {
+        await platform.query('delete from data.dim_item_price')
+        /** @type {{ org: string, store_code: string, item_code: string, grade_item_num: number, price_minor: string | number, price_raw: string | null, system_book: string }[]} */
+        const priceRows = prices.rows
+        for (let i = 0; i < priceRows.length; i += 5000) {
+          const chunk = priceRows.slice(i, i + 5000)
+          await platform.query(
+            `insert into data.dim_item_price (org, store_code, item_code, grade_item_num, price_minor, price_raw, source_book, snapshot)
+             select t.org, t.store_code, t.item_code, t.grade_item_num, t.price_minor, t.price_raw, t.source_book, $1::date
+               from unnest($2::text[], $3::text[], $4::text[], $5::bigint[], $6::bigint[], $7::decimal[], $8::text[]) as
+                    t(org, store_code, item_code, grade_item_num, price_minor, price_raw, source_book)`,
+            [
+              priceSnapshot,
+              chunk.map((r) => r.org),
+              chunk.map((r) => String(r.store_code)),
+              chunk.map((r) => String(r.item_code)),
+              chunk.map((r) => Number(r.grade_item_num)),
+              chunk.map((r) => Number(r.price_minor)),
+              chunk.map((r) => (r.price_raw === null ? null : Number(r.price_raw))),
+              chunk.map((r) => r.system_book),
+            ],
+          )
+        }
+        await platform.query('commit')
+      } catch (err) {
+        await platform.query('rollback')
+        throw err
+      }
+      console.log(`${SCRIPT_NAME}: dim_item_price snapshot=${priceSnapshot} —— ${prices.rows.length} 行（0/空价已滤、跨账套去重后）`)
+    } else {
+      console.log(`${SCRIPT_NAME}: staging 无价格行，dim_item_price 发布 0 行（上游未物化？看探活 ④）`)
+    }
+
     // 回读验收面（不拿「没抛错」当成功）
     const check = await platform.query(
-      `select (select count(*)::int from data.dim_branch) as branch, (select count(*)::int from data.dim_item) as item`,
+      `select (select count(*)::int from data.dim_branch) as branch,
+              (select count(*)::int from data.dim_item) as item,
+              (select count(*)::int from data.dim_item_price) as item_price`,
     )
     console.log(
-      `${SCRIPT_NAME}: 发布完成 —— 回读 dim_branch ${check.rows[0].branch} / dim_item ${check.rows[0].item}`,
+      `${SCRIPT_NAME}: 发布完成 —— 回读 dim_branch ${check.rows[0].branch} / dim_item ${check.rows[0].item} / dim_item_price ${check.rows[0].item_price}`,
     )
   } finally {
     await warehouse.end()
