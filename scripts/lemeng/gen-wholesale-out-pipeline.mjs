@@ -70,7 +70,7 @@ function pageNode(id, pageNo) {
         body: JSON.stringify({
           date_start: '${date-1d} 00:00:00',
           date_end: '${date-1d} 23:59:59',
-          date_type: '制单',
+          date_type: '制单时间',
           limit: PAGE_SIZE,
           offset,
         }),
