@@ -144,7 +144,9 @@ create unique index if not exists data_dim_item_price_key_idx
 - [ ] **Step 2: publish-dims 第三段**。staging 读 `stg_lemeng_item_price`（snapshot 独立取 max，别并 scope——dim_branch/item 首跑踩过）；行筛选：`regular_real_price is not null and > 0`（0/空 = 源侧未单独设置，无诚实价可发；过滤行数打日志）；换算 `price_minor = round(regular_real_price * 100 / nullif(spec_rate, 0))`（**spec_rate 口径验证见 Task 7 Step 2，若证伪在此改**）；跨账套去重 `distinct on (org, store_code, item_code, coalesce(grade_item_num,0))`，排序 `grade is null 行优先 → source_book 字典序`（3120 优先，与 dim_branch/item 同规）；写入走 dim_item 同款分批（65 万行级逐行 insert 太慢）。
 - [ ] **Step 3: 门禁 + 提交**：`check-data-models` / `check-env-example` / data 模块 typecheck 过；提交 `feat(data): #481 dim_item_price 发布表 + 发布 job 扩展`。
 
-### Task 5: ticket 建单接价格源
+### Task 5: ticket 建单接价格源【🔴 已拆出 → issue #500（拍板 2026-10-08）】
+
+> 执行时实查发现：价格 join 必须先切 ticket 自然键（SubmitBody 数字合约 → string、ticket 表加 code 列、mobile 提交链、api-types、读侧投影，约 10+ 文件）——即 005 预告的「随价格项一起」批次。拍板拆两段 PR：本 PR 只交数据面（→ #499），工单侧 = #500。以下原步骤保留作 #500 的底稿。
 
 **Files:**
 - Modify: `modules/aftersales/routes/ticket-guest.ts`（访客建单）
