@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.85.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.85.0...v0.85.1) - 2026-10-08
+- 【修复】data: 批发管线补哨兵 die + 扩容 19 页——首跑实测单量打穿 9 页上限（#511 收尾） ([#512](https://github.com/MYTech-Co-LTD/platform-core/pull/512), [e127997](https://github.com/MYTech-Co-LTD/platform-core/commit/e12799721ce7b7d02a2c1207dc1daaa9b9f95321))
+
+
 ## [0.85.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.84.4...v0.85.0) - 2026-10-08
 - 【新增】data: #499 R3 批发销售单采集——契约 + L0 管线 + staging + dim_wholesale_out 发布（3120） ([#510](https://github.com/MYTech-Co-LTD/platform-core/pull/510), [dd599a9](https://github.com/MYTech-Co-LTD/platform-core/commit/dd599a9c9a9783e56c7a77883ebdcca54cf82492))
 
