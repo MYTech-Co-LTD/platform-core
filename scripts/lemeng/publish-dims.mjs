@@ -18,9 +18,9 @@
 //   UNION 合并 scope 会让 item 恒 0 行）——两表各自取各自的 max(snapshot)。
 //
 // 事实源与流向：
-//   `DATA_WAREHOUSE_URL`（pg_duckdb staging，stg_lemeng_branch / stg_lemeng_item / stg_lemeng_item_price / stg_lemeng_transfer_out）
+//   `DATA_WAREHOUSE_URL`（pg_duckdb staging，stg_lemeng_branch / stg_lemeng_item / stg_lemeng_item_price / stg_lemeng_transfer_out / stg_lemeng_wholesale_out）
 //     → 裁剪（列集 = data 模块定的发布契约，见 009/011 迁移）+ 跨账套去重
-//     → `DATABASE_URL`（平台 PG data.dim_branch / data.dim_item / data.dim_item_price / data.dim_transfer_out，事务内整批替换）。
+//     → `DATABASE_URL`（平台 PG data.dim_branch / data.dim_item / data.dim_item_price / data.dim_transfer_out / data.dim_wholesale_out，事务内整批替换）。
 //
 // 幂等（job 每天重跑）：每张表按 org **delete 后整批 insert**——重跑同一份 staging ⇒
 //   行集不变（验收判据：行数不变，不是「没报错」）。
@@ -282,15 +282,72 @@ async function main() {
     }
     console.log(`${SCRIPT_NAME}: dim_transfer_out —— ${toRows.rows.length} 行（仅审核单；price_minor=按单结算基本单位分价）`)
 
+    // ── dim_wholesale_out（#499/R3 批发销售单）：外部批发客户的取价面 ────────────────
+    // 行粒度直通（order_detail_num 同单内唯一，无需聚合）；仅 state_code=3；
+    // price_minor = round(money ÷ nullif(quantity,0) × 100)——基本单位分价（口径单点在此）。
+    // money ≤ 0/空（纯赠品行）不发。
+    const woRows = await warehouse.query(
+      `select t.org,
+              t.order_no,
+              t.client_fid,
+              t.state_code,
+              t.branch_num,
+              t.item_code,
+              t.order_detail_num,
+              t.item_name,
+              t.quantity,
+              t.money,
+              round(t.money / nullif(t.quantity, 0) * 100)::bigint as price_minor,
+              t.bizday
+         from staging.stg_lemeng_wholesale_out t
+        where t.state_code = 3 and t.money is not null and t.money > 0
+          and t.quantity is not null and t.quantity > 0`,
+    )
+    await platform.query('begin')
+    try {
+      await platform.query('delete from data.dim_wholesale_out')
+      /** @type {{ org: string, order_no: string, client_fid: string | null, state_code: number | null, branch_num: number | null, item_code: string, order_detail_num: number, item_name: string | null, quantity: string | number | null, money: string | number | null, price_minor: string | number, bizday: string }[]} */
+      const woRowsAll = woRows.rows
+      for (let i = 0; i < woRowsAll.length; i += 5000) {
+        const chunk = woRowsAll.slice(i, i + 5000)
+        await platform.query(
+          `insert into data.dim_wholesale_out (org, order_no, client_fid, state_code, branch_num, item_code, item_name, order_detail_num, quantity, money, price_minor, bizday)
+           select t.org, t.order_no, t.client_fid, t.state_code, t.branch_num, t.item_code, t.item_name, t.order_detail_num, t.quantity, t.money, t.price_minor, t.bizday
+             from unnest($1::text[], $2::text[], $3::text[], $4::int[], $5::int[], $6::text[], $7::text[], $8::int[], $9::decimal(14,6)[], $10::decimal(14,2)[], $11::bigint[], $12::date[]) as
+                  t(org, order_no, client_fid, state_code, branch_num, item_code, item_name, order_detail_num, quantity, money, price_minor, bizday)`,
+          [
+            chunk.map((r) => r.org),
+            chunk.map((r) => String(r.order_no)),
+            chunk.map((r) => (r.client_fid === null ? null : String(r.client_fid))),
+            chunk.map((r) => (r.state_code === null ? null : Number(r.state_code))),
+            chunk.map((r) => (r.branch_num === null ? null : Number(r.branch_num))),
+            chunk.map((r) => String(r.item_code)),
+            chunk.map((r) => (r.item_name === null ? null : String(r.item_name))),
+            chunk.map((r) => Number(r.order_detail_num)),
+            chunk.map((r) => (r.quantity === null ? null : Number(r.quantity))),
+            chunk.map((r) => (r.money === null ? null : Number(r.money))),
+            chunk.map((r) => Number(r.price_minor)),
+            chunk.map((r) => String(r.bizday)),
+          ],
+        )
+      }
+      await platform.query('commit')
+    } catch (err) {
+      await platform.query('rollback')
+      throw err
+    }
+    console.log(`${SCRIPT_NAME}: dim_wholesale_out —— ${woRows.rows.length} 行（仅审核单；price_minor=基本单位分价）`)
+
     // 回读验收面（不拿「没抛错」当成功）
     const check = await platform.query(
       `select (select count(*)::int from data.dim_branch) as branch,
               (select count(*)::int from data.dim_item) as item,
               (select count(*)::int from data.dim_item_price) as item_price,
-              (select count(*)::int from data.dim_transfer_out) as transfer_out`,
+              (select count(*)::int from data.dim_transfer_out) as transfer_out,
+              (select count(*)::int from data.dim_wholesale_out) as wholesale_out`,
     )
     console.log(
-      `${SCRIPT_NAME}: 发布完成 —— 回读 dim_branch ${check.rows[0].branch} / dim_item ${check.rows[0].item} / dim_item_price ${check.rows[0].item_price} / dim_transfer_out ${check.rows[0].transfer_out}`,
+      `${SCRIPT_NAME}: 发布完成 —— 回读 dim_branch ${check.rows[0].branch} / dim_item ${check.rows[0].item} / dim_item_price ${check.rows[0].item_price} / dim_transfer_out ${check.rows[0].transfer_out} / dim_wholesale_out ${check.rows[0].wholesale_out}`,
     )
   } finally {
     await warehouse.end()

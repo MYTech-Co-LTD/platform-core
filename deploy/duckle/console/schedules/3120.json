@@ -60,6 +60,26 @@
     "next_run_at": null
   },
   {
+    "id": "panel-lemeng.wholesale.out.l0.3120",
+    "pipeline_id": "lemeng.wholesale.out.l0.3120",
+    "name": "lemeng.wholesale.out.l0.3120",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "45 15 * * *"
+    },
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
     "id": "panel-lemeng.dim.item_price.l0.3120",
     "pipeline_id": "lemeng.dim.item_price.l0.3120",
     "name": "lemeng.dim.item_price.l0.3120",

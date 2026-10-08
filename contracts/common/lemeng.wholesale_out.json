@@ -1,0 +1,53 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "wholesale_out",
+  "owner": "data-platform",
+  "description": "乐檬批发销售单（nhsoft.whs.ai.wholesaleorder.find；R3 拍板 2026-10-08）。【行粒度】一行 = 账套×采集bizday×批发单×商品行（单头列随行冗余）；自然键 `(system_book, bizday, order_no, item_num, order_detail_num)`（同单同商品多行由 order_detail_num 区分——与调出单按 lot 拆行不同，批发单行号天然唯一）。【窗口】查询窗 = `${date-1d}` 单日 + `date_type=制单`；⚠️ date_type 枚举坑：文档描述「制单时间」实际值是「制单」，错误值静默 0 行（fail-open）。【接口约束】查询窗 ≤7 天（严于调出单的 3 个月，回填按 7 天分批）；limit/offset 分页（offset 稳定制单时间不漂移）。【采集范围】仅 3120 主账套（WO 单发货方=3120 管理中心/仓库，收货方=品品甜等外部批发客户——R2 拍板品品甜是 3120 的外部客户）。【与调出单关系】MO（配送给自有门店）与 WO（批发给外部客户）是 3120 出库的两族单据；无极副本两者混装（前缀 MO/WO 可辨）。【价格语义】order_detail_price = 基本单位批发价（工单若涉批发客户按此口径）；与档案批发价可不同（按单结算，同配送单实测）。",
+  "layout": {
+    "prefix": "lemeng/wholesale_out",
+    "partitionStyle": "hive",
+    "partitionBy": ["system_book", "bizday"],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id。每 bizday 分区只写一次（当日单当日采），重跑覆盖同 key。"
+  },
+  "columns": [
+    { "name": "batch_id", "type": "varchar", "nullable": false, "description": "批次标记（采集 run id）", "expr": "'wo-' || '${ENV:SYSTEM_BOOK}' || '-wholesale_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'" },
+    { "name": "system_book", "type": "varchar", "nullable": false, "description": "账套（采集范围=3120）；分区键，来源=采集侧常量注入", "expr": "'${ENV:SYSTEM_BOOK}'" },
+    { "name": "bizday", "type": "date", "nullable": false, "description": "单据制单日（=查询窗口日）；分区键。⚠️ 用 `${date-1d}` 单段负偏移——组合段替换层不生效（0.7.4 实测）", "expr": "CAST('${date-1d}' AS DATE)" },
+    { "name": "order_no", "type": "varchar", "nullable": false, "description": "批发销售单号（WO…；工单/售后关联键）", "expr": "CAST(o.wholesale_order_fid AS VARCHAR)" },
+    { "name": "client_fid", "type": "varchar", "nullable": true, "description": "批发客户 ID（品品甜等外部客户在此可辨；客户维表另建时做 join 键）", "expr": "CAST(o.client_fid AS VARCHAR)" },
+    { "name": "state_code", "type": "int", "nullable": true, "description": "单据状态码（state.state_code；3=制单|审核）", "expr": "CAST(json_extract_string(CAST(o.state AS JSON), '$.state_code') AS INTEGER)" },
+    { "name": "state_name", "type": "varchar", "nullable": true, "description": "单据状态名（state.state_name，实测如「制单|审核」）", "expr": "json_extract_string(CAST(o.state AS JSON), '$.state_name')" },
+    { "name": "wholesale_order_date", "type": "varchar", "nullable": true, "description": "单据日期", "expr": "CAST(o.wholesale_order_date AS VARCHAR)" },
+    { "name": "create_time", "type": "varchar", "nullable": true, "description": "制单时间", "expr": "CAST(o.wholesale_order_create_time AS VARCHAR)" },
+    { "name": "audit_time", "type": "varchar", "nullable": true, "description": "审核时间", "expr": "CAST(o.wholesale_order_audit_time AS VARCHAR)" },
+    { "name": "last_edit_time", "type": "varchar", "nullable": true, "description": "最后修改时间（单头级；请求侧增量候选字段）", "expr": "CAST(o.wholesale_order_last_edit_time AS VARCHAR)" },
+    { "name": "branch_num", "type": "int", "nullable": true, "description": "发货方编号（99=管理中心/批发仓）", "expr": "CAST(o.branch_num AS INTEGER)" },
+    { "name": "storehouse_num", "type": "bigint", "nullable": true, "description": "仓库编号", "expr": "CAST(o.storehouse_num AS BIGINT)" },
+    { "name": "order_detail_num", "type": "int", "nullable": false, "description": "行号（同单内唯一；自然键之一）", "expr": "CAST(json_extract_string(u.d, '$.order_detail_num') AS INTEGER)" },
+    { "name": "item_num", "type": "bigint", "nullable": false, "description": "商品内部编号", "expr": "CAST(json_extract_string(u.d, '$.item_num') AS BIGINT)" },
+    { "name": "item_code", "type": "varchar", "nullable": false, "description": "商品编码（= dim_item.item_code 同源）", "expr": "json_extract_string(u.d, '$.order_detail_item_code')" },
+    { "name": "item_name", "type": "varchar", "nullable": true, "description": "商品名称", "expr": "json_extract_string(u.d, '$.order_detail_item_name')" },
+    { "name": "item_spec", "type": "varchar", "nullable": true, "description": "商品规格", "expr": "json_extract_string(u.d, '$.order_detail_item_spec')" },
+    { "name": "item_unit", "type": "varchar", "nullable": true, "description": "商品基本单位", "expr": "json_extract_string(u.d, '$.order_detail_item_unit')" },
+    { "name": "quantity", "type": "decimal(14,6)", "nullable": true, "description": "基本单位数量（order_detail_qty）", "expr": "CAST(json_extract_string(u.d, '$.order_detail_qty') AS DECIMAL(14,6))" },
+    { "name": "price", "type": "decimal(18,8)", "nullable": true, "description": "基本单位批发单价（order_detail_price；工单金额依据候选源）", "expr": "CAST(json_extract_string(u.d, '$.order_detail_price') AS DECIMAL(18,8))" },
+    { "name": "money", "type": "decimal(14,2)", "nullable": true, "description": "行金额 = price × quantity", "expr": "CAST(json_extract_string(u.d, '$.order_detail_money') AS DECIMAL(14,2))" },
+    { "name": "cost", "type": "decimal(18,8)", "nullable": true, "description": "行成本单价（毛利推演用）", "expr": "CAST(json_extract_string(u.d, '$.order_detail_cost') AS DECIMAL(18,8))" },
+    { "name": "lot_number", "type": "varchar", "nullable": true, "description": "批次号", "expr": "json_extract_string(u.d, '$.order_detail_lot_number')" },
+    { "name": "present_qty", "type": "decimal(14,6)", "nullable": true, "description": "基本单位赠送数量", "expr": "CAST(json_extract_string(u.d, '$.order_detail_present_qty') AS DECIMAL(14,6))" },
+    { "name": "use_unit", "type": "varchar", "nullable": true, "description": "使用（常用）单位", "expr": "json_extract_string(u.d, '$.order_detail_use_unit')" },
+    { "name": "use_qty", "type": "decimal(14,6)", "nullable": true, "description": "使用单位数量", "expr": "CAST(json_extract_string(u.d, '$.order_detail_use_qty') AS DECIMAL(14,6))" },
+    { "name": "use_price", "type": "decimal(18,8)", "nullable": true, "description": "使用单位单价", "expr": "CAST(json_extract_string(u.d, '$.order_detail_use_price') AS DECIMAL(18,8))" },
+    { "name": "use_rate", "type": "decimal(18,8)", "nullable": true, "description": "使用单位换算率（基本数量 = 使用数量 × 换算率）", "expr": "CAST(json_extract_string(u.d, '$.order_detail_use_rate') AS DECIMAL(18,8))" }
+  ]
+}

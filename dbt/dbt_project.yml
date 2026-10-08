@@ -71,6 +71,11 @@ vars:
   # 出处：contracts/common/lemeng.transfer_out.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
   # 消费者 = `stg_lemeng_transfer_out`（唯一）；采集范围仅 3120 主账套（64188=外部批发客户，R2 拍板）。
   lemeng_transfer_out_prefix: 'lemeng/transfer_out'
+  # 乐檬**批发销售单**前缀（#499/R3；行=批发单商品行；不含 bucket / 协议）：
+  # s3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet
+  # 出处：contracts/common/lemeng.wholesale_out.json 的 `layout.prefix` / `partitionBy`。
+  # 消费者 = `stg_lemeng_wholesale_out`（唯一）；采集范围仅 3120 主账套（WO 发货方=3120）。
+  lemeng_wholesale_out_prefix: 'lemeng/wholesale_out'
   #
   # ── 敏感：只留「非密」三项作 var（bucket / endpoint / region）────────────────
   # ⚠️ AK/SK **刻意不做 dbt var**：vars 会落进 target/manifest.json、编译产物与 `dbt run` 日志。
