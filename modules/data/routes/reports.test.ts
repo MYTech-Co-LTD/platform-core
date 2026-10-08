@@ -963,6 +963,31 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(mb.state.calls.filter((c) => (c.init?.method ?? 'GET') === 'PUT')).toEqual([])
   })
 
+  it('★ 分支位置钉住：不设 DATA_METABASE_* 时自绘行仍可删（#494：与创建同序，cfg 检查在 renderer 判定之后）', async () => {
+    delete process.env.DATA_METABASE_URL
+    delete process.env.DATA_METABASE_API_KEY
+    delete process.env.DATA_METABASE_SECRET_KEY
+    const id = await upsertReport(pool, ORG, {
+      title: '无 Metabase 也能删的自绘', metabaseId: 0, embedParams: {}, requiredScope: null,
+      renderer: 'platform', spec: { panels: [] }, // 迁移 007 起库侧强制：自绘行必须带规格（跨列 check）
+    })
+    const { app } = manage()
+    const res = await app.request(`/reports/${id}?expectedVersion=${await versionOf(app, id)}`, { method: 'DELETE' })
+    // 修前恒 503（cfg 检查在 id 解析之前）——自绘行不碰 Metabase，不该因「没配」删不掉
+    expect(res.status).toBe(204)
+    expect((await pool.query('select 1 from data.reports where org = $1', [ORG])).rowCount).toBe(0)
+    expect(mb.state.calls.filter((c) => (c.init?.method ?? 'GET') === 'PUT')).toEqual([])
+
+    // 反证：同一环境下 metabase 行的删除照旧 503（不是「整个端点把 cfg 检查删了」），且行未删
+    const mbId = await upsertReport(pool, ORG, {
+      title: '未配置环境的 metabase 行', metabaseId: 11, embedParams: {}, requiredScope: null,
+    })
+    const mbRes = await app.request(`/reports/${mbId}?expectedVersion=${await versionOf(app, mbId)}`, { method: 'DELETE' })
+    expect(mbRes.status).toBe(503)
+    expect(await mbRes.json()).toEqual({ error: 'METABASE_UNCONFIGURED' })
+    expect((await pool.query('select 1 from data.reports where org = $1 and id = $2', [ORG, mbId])).rowCount).toBe(1)
+  })
+
   it('★ renderer=platform ⇒ embed-url 409 RENDERER_NOT_EMBEDDABLE（不签死链 token）', async () => {
     const { app, identity } = manage()
     const id = await upsertReport(pool, identity.orgId, {
