@@ -220,3 +220,28 @@ create unique index if not exists data_dim_item_price_key_idx
 - **staging**（原 Task 3 改）：读 `*/bizday=**/branch=**/all.parquet`，drop 分区列 branch，
   全史合并取最新现价（`qualify row_number() over (partition by key order by last_edit_time desc) = 1`）。
 - **调度**：日批不变（15 11 错峰）；`/api/watermarks` 指针式回填不在本任务（首载走 backfill 管线）。
+
+---
+
+## 修订 R2（2026-10-08，业务拍板：售后=总部↔门店 B2B，金额依据改配送单行价）
+
+> 业务澄清（用户）：售后是**总部给门店配送、门店对货物异议**的 B2B 流程；64188（品品甜）是 3120（主账号）的
+> **外部批发客户**。实测三连：① WO（批发单）收货方全是品品甜门店（64188=批发客户实锤）；
+> ② 同单双侧对照（MO3120992607050085）：无极副本与乐檬 API **逐分对平**（27=172.8÷6.4）；
+> ③ **配送单实际价 27 ≠ 档案批发价 25**（差 8%）⇒ 结算按单，不按档案价。零售价管线（R1）与工单用途
+> 无关 ⇒ 挂起（成本 KB/天，去留后议）。**采集范围改为 3120 单账套的调出单**（64188 的 MO 是其内部业务，
+> 不在售后范围；无极副本只有 3120 也与此吻合）。
+
+- **新源**：`nhsoft.ama.ai.transfer.out.order.find`（配送-调出单查询；行粒度 = 单 × 商品行）。
+  接口约束：查询窗 ≤3 个自然月；`page_size` ≤100、`page_number` ≤10000；无 total ⇒ 空页耗尽；
+  `start_date=end_date=${date-1d+8h}`（昨日制单窗，日期算术引擎原生 `date-1d` 有源码测试覆盖）。
+- **湖**：`lemeng/transfer_out/system_book=3120/bizday=<制单日>/all.parquet`（行 = 配送单商品行；
+  每分区写一次不重写，晚审边缘 ~秒级自愈）。**单账套**（3120 console），品品甜不采。
+- **管线**（L0）：身份门 + gv/dv + **静态页扇出 p1..p8 + p9 哨兵**（>800 单/日即大声红——实测 472 单/3 天，
+  15 倍余量）+ merge + flatten（`UNNEST(from_json(o.items))` 行展开，销售明细子管线同款）+ gate + sink。
+- **staging**：`stg_lemeng_transfer_out`（1:1 行透传，glob `*/bizday=**/all.parquet`）。
+- **发布**：迁移 012 `data.dim_transfer_out`（order_no 行粒度，含 `price_minor = round(out_money/quantity×100)`）
+  → 工单 #500 按 order_no 关联取价。
+- **批发（WO）外部前置**：`wholesaleorder` 门对 PAT 静默空（缺「批发销售单-查询」权限 + 门店绑定；
+  64188 视角 WHS 整体未开 = 上游已给 3120 开了应用、只差用户级权限）。已给精确开通清单，授权后补采。
+- **调度**：3120 console 日批（与既有槽位错峰）。

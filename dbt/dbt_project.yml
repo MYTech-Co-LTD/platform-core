@@ -66,6 +66,11 @@ vars:
   # ⚠️ 刻意叫 `item_price` 而不是 `dim_item_price`：生产者判定按「sink 文本含契约 prefix」的
   #    子串匹配，`dim_item_price` 会以子串撞上 `dim_item` 的契约（多配出一个 108 列生产者 ⇒ 门红）。
   lemeng_item_price_prefix: 'lemeng/item_price'
+  # 乐檬**配送调出单**前缀（#499/R2；行=配送单商品行；不含 bucket / 协议）：
+  # s3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet
+  # 出处：contracts/common/lemeng.transfer_out.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
+  # 消费者 = `stg_lemeng_transfer_out`（唯一）；采集范围仅 3120 主账套（64188=外部批发客户，R2 拍板）。
+  lemeng_transfer_out_prefix: 'lemeng/transfer_out'
   #
   # ── 敏感：只留「非密」三项作 var（bucket / endpoint / region）────────────────
   # ⚠️ AK/SK **刻意不做 dbt var**：vars 会落进 target/manifest.json、编译产物与 `dbt run` 日志。

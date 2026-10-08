@@ -79,6 +79,15 @@ sources:
           # ⚠️ 前缀刻意叫 item_price 不叫 dim_item_price：生产者判定按子串匹配，dim_item_price
           #    会撞 dim_item 契约（见 dbt_project.yml 同名 var 的注）。
           access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_item_price_prefix\") }}/*/bizday=**/*.parquet') r"
-          partition_keys: ['system_book', 'snapshot']
-          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / snapshot::date）'
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / bizday::date）'
           pagination: '新湖由 duckle 管线写入（#481 R1 增量模型）：**逐店一节点 + 请求侧增量水位**（last_edit_time；响应 KB 级/天）→ ctl.merge → 单文件覆盖写；backfill 管线另有打包/大店段扇出（bf 同层文件）；生成器 scripts/lemeng/gen-item-price-pipeline.mjs，不手编'
+
+      - name: transfer_out
+        description: '乐檬**配送调出单**（新湖，2026-10-08 契约，#499/R2）：行 = 配送单商品行；查询窗=制单日单日、每分区写一次不重写；接口 nhsoft.ama.ai.transfer.out.order.find 静态页扇出（p9 哨兵）。采集范围仅 3120 主账套。'
+        meta:
+          path_convention: 'lemeng/transfer_out/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_transfer_out_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / bizday::date）'
+          pagination: '新湖由 duckle 管线写入（#499/R2）：静态页扇出 p1..p8 + p9 哨兵（>800 单/日大声红）+ ctl.merge + flatten（UNNEST items 成行粒度，销售明细子管线同款）；生成器 scripts/lemeng/gen-transfer-out-pipeline.mjs，不手编'
