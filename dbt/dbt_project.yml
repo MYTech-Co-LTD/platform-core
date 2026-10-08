@@ -59,6 +59,13 @@ vars:
   # 出处：contracts/common/lemeng.item.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
   # 消费者 = `stg_lemeng_item`（唯一）；分域单点：每个域一个 var，谁读哪个见对应 staging 的头注。
   lemeng_item_prefix: 'lemeng/dim_item'
+  # 乐檬**门店商品应用价**前缀（#481 价格批；全量快照；不含 bucket / 协议）：
+  # s3://<bucket>/lemeng/item_price/system_book=<账套>/snapshot=<YYYY-MM-DD>/all.parquet
+  # 出处：contracts/common/lemeng.item_price.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
+  # 消费者 = `stg_lemeng_item_price`（唯一）；分域单点：每个域一个 var，谁读哪个见对应 staging 的头注。
+  # ⚠️ 刻意叫 `item_price` 而不是 `dim_item_price`：生产者判定按「sink 文本含契约 prefix」的
+  #    子串匹配，`dim_item_price` 会以子串撞上 `dim_item` 的契约（多配出一个 108 列生产者 ⇒ 门红）。
+  lemeng_item_price_prefix: 'lemeng/item_price'
   #
   # ── 敏感：只留「非密」三项作 var（bucket / endpoint / region）────────────────
   # ⚠️ AK/SK **刻意不做 dbt var**：vars 会落进 target/manifest.json、编译产物与 `dbt run` 日志。
