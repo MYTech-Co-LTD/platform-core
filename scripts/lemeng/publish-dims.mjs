@@ -253,7 +253,7 @@ async function main() {
            select t.org, t.order_no, t.order_type, t.state_code, t.business_date, t.create_time, t.audit_time, t.branch_code, t.branch_name, t.out_branch_name, t.item_code, t.grade_item_num, t.item_name, t.quantity, t.out_money,
                   round(t.out_money / nullif(t.quantity, 0) * 100)::bigint as price_minor,
                   t.bizday
-             from unnest($2::text[], $3::text[], $4::text[], $5::int[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::text[], $13::bigint[], $14::text[], $15::decimal(14,6)[], $16::decimal(14,2)[], $17::date[]) as
+             from unnest($1::text[], $2::text[], $3::text[], $4::int[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::bigint[], $13::text[], $14::decimal(14,6)[], $15::decimal(14,2)[], $16::date[]) as
                   t(org, order_no, order_type, state_code, business_date, create_time, audit_time, branch_code, branch_name, out_branch_name, item_code, grade_item_num, item_name, quantity, out_money, bizday)`,
           [
             chunk.map((r) => r.org),
