@@ -734,6 +734,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 乐檬零售明细（3120） | duckle | — | `lemeng/retail_order_line` | `system_book=` + `hour=` | **日批在跑** + 5min tick 已定义（**试点待投递**，Task 6 未投——别读成「现行 5min」） | **duckle console**（调度 enabled，cron 不变；openship job 已先禁、观察期 ≥3 运行日后退役——#265） | 自证 ✓ / 幂等 ✓ / 独立通道 **口径已对齐**（2026-10-05；旧数 +1.15% 系**旧口径**、已废）——⚠️ 但 **3120 侧通道被乐檬改坏（恒 `10006`），无法复验**（§1.4） / 跨系统 待回填 |
 | 乐檬零售明细（64188） | duckle | — | 同上 | 同上 | 同 3120 | **未落**（调度；**数据已落盘**——见 §2） | 自证 / 幂等 同 3120 / 独立通道 **✓ 逐分归零**（2026-10-05 真机 5 天 × 63 店；执行面 `scripts/lemeng/recon-preagg.sh`） / 跨系统 待回填 |
 | 乐檬门店维 / 商品维（双账套） | duckle | — | `lemeng/dim_branch`、`lemeng/dim_item` | `system_book=` + `snapshot=` | 日更（全量快照） | **duckle console** ×2（UTC `0 2 * * *` / `0 11 * * *`） | 首次真跑销账（**拒写湖**路径已验证；门店维见 `deploy/duckle/README.md` §9，商品维 2026-09-26 两账套 cron 真跑）——**不是「四层全过」** |
+| 乐檬价格批 / 门店商品应用价（双账套，#481） | duckle | — | `lemeng/item_price` | `system_book=` + `snapshot=` | 日更（全量快照；`last_edit_time` 传滚动 2 年窗起点 = 全量当前价——网关上限 `10310217` 为滚动 2 年，2026-10-08 实测） | 计划中（`docs/superpowers/plans/2026-10-08-481-lemeng-price-batch.md` Task 6） | — |
 | 乐檬调拨 / 批发 / 退货 / 要货（5 源） | duckle（设计定稿） | — | `lemeng/transfer_out` 等 | `system_book=` + `bizday=` | 5min 增量 + 每小时全量（设计） | 未落 | — |
 | 抖音 `sku_daily` | 未定 | — | `douyin/sku_daily` | 月（**键名未定**） | 未定 | 未落 | 待接入 |
 | 抖音接收器（`dy-upload`，生产在跑） | **E1**（长驻接收，**未销账**） | 长驻接收器**在跑**（生产 project `dy-upload` 以 `bare` runtime 跑 `/opt/douyin-life/capture/dy_receiver_run.py`）⇒ 命中 E1；**落盘形态等细节待核实**（§7 #3） | 待核实 | 待核实 | 常驻 | 待核实 | — |
@@ -754,6 +755,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 |---|---|---|---|---|
 | 乐檬 | `lemeng/retail_order_line/<主体>/<日>/<时>/all.parquet` | 账套（3120 熊喵 / 64188 品品甜） | **已落盘**（**双账套**——2026-09-28 订正：64188 已落；物化侧 64188 有 09-25～09-27 三天的 `fct_retail_sale` 行） | 新湖口径见 §1.7；旧前缀 `lemeng/retail_detail/…`：**所在桶已核实 = `lemeng-datasource`**（**不是**租户桶 `shanhai-data` —— 2026-09-26 在租户桶里逐对象 / 前缀都 404 是**对的**，旧文「所在桶待核实」到此销账），且**至今仍在被写**（2026-10-06 实测：生产方 `data-analysis`，跑在 `data.shanhaiyiguo.com`，每 **5 min** 一轮，**不在 openship 管辖内**，本仓与 openship 都停不掉它）⇒ **§1.3 阶段 I 的第 ③ 项（观察期）不满足 ⇒ 前缀不能下线**。本仓侧已于 2026-10-06 完成**仓内退役**（读它的 staging / `sources.yml` 声明 / `dbt_project.yml` 两个 var / 投递 lock 条目全删），见 §1.3 阶段 I 的订正块。**别默认它在租户桶里找。** |
 | 乐檬 | `lemeng/dim_branch`、`lemeng/dim_item`（`system_book=` + `snapshot=`） | 同上 | **已落盘**（双账套） | 全量快照日更；行粒度键含 `snapshot`（§1.1.2） |
+| 乐檬 | `lemeng/item_price`（`system_book=` + `snapshot=`） | 账套 × 门店 × 商品（#481 价格批） | **摸清源**（契约已立，管线/调度计划中） | `nhsoft.retail.ai.branchitem.realprice.find` 全量快照日更；行粒度键 = 账套×快照日×门店×商品(×分级)；探针报告 `.superpowers/sdd/2026-10-08-481-lemeng-price-batch/probe-report.md` |
 | 乐檬 | 调拨 / 批发 / 退货 / 要货（`transfer_out` / `wholesale_order` / `wholesale_return` / `request_order`） | 3120（要货双账套） | **摸清源**（设计定稿，未落） | 见 `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` |
 | 抖音 | `douyin/sku_daily/<月>/all.parquet` | — | **摸清源**（待接入） | 分区键名未定；见 `contracts/README.md` §7 |
 
