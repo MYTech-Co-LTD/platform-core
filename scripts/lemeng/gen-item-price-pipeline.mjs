@@ -82,7 +82,10 @@ const PRICE_SCHEMA = [
   { name: 'branch_item_max_real_price', type: 'float64' },
   { name: 'branch_item_min_real_price', type: 'float64' },
 ]
-/** 批量数据节点：realprice REST 门，单发全量（无分页） */
+/** 批量数据节点：realprice REST 门，单发全量（无分页）
+ * @param {string} id
+ * @param {number[]} chunk
+ */
 function priceNode(id, chunk) {
   return {
     id,
@@ -151,10 +154,12 @@ const coverageSql = `SELECT 'store_coverage' AS violation,
 FROM (SELECT count(DISTINCT branch_num) AS n FROM input) m
 WHERE m.n <> (SELECT count(*) FROM (SELECT unnest('${envBranches}'::BIGINT[]) AS b) t)`
 
+/** @param {string} id @param {string} componentId @param {Record<string, unknown>} properties @param {string} [type] */
 const node = (id, componentId, properties, type = 'transform') => ({
   id, type, position: { x: 0, y: 0 },
   data: { label: id, componentId, properties },
 })
+/** @param {string} id @param {string} condition @param {string} message */
 const die = (id, condition, message) => node(id, 'ctl.die', { condition, message })
 
 const pIds = []
@@ -163,7 +168,6 @@ const pNodes = []
 for (let i = 0; i * CHUNK < branches.length; i++) {
   const id = `p${i + 1}`
   pIds.push(id)
-  // @ts-expect-error 推入的是同构节点
   pNodes.push(priceNode(id, branches.slice(i * CHUNK, (i + 1) * CHUNK)))
 }
 
