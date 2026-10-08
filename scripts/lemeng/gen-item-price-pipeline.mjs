@@ -159,6 +159,13 @@ const node = (id, componentId, properties, type = 'transform') => ({
   id, type, position: { x: 0, y: 0 },
   data: { label: id, componentId, properties },
 })
+// w0 的 SSE 探针带**单列申报**（dim.item 同款 `[{name:'x',type:'string'}]`）——漏申报时
+// 空解析 ⇒ 「returned 0 records and no schema is declared」直接红（首跑实测）。
+/** @param {Record<string, unknown>} properties */
+const whoamiNode = (properties) => ({
+  id: 'w0', type: 'source', position: { x: 0, y: 0 },
+  data: { label: 'w0', componentId: 'src.rest', schema: [{ name: 'x', type: 'string' }], properties },
+})
 /** @param {string} id @param {string} condition @param {string} message */
 const die = (id, condition, message) => node(id, 'ctl.die', { condition, message })
 
@@ -176,7 +183,7 @@ const pipeline = {
   name: book === '64188' ? 'lemeng.dim.item_price.l0' : `lemeng.dim.item_price.l0.${book}`,
   nodes: [
     // ── 身份门（逐字镜像 dim.item w0..d1：whoami SSE → 抠 data: → company/book + 门店清单自证）──
-    node('w0', 'src.rest', {
+    whoamiNode({
       connectionRef: 'lemeng',
       url: 'https://cloud.nhsoft.cn/agi/mcp',
       method: 'POST',
@@ -187,7 +194,7 @@ const pipeline = {
       rawResponseDestination: '/workspace/.duckle-raw/whoami-${datetime}.sse',
       retryAttempts: 3,
       retryBackoffMs: 2000,
-    }, 'source'),
+    }),
     node('g0', 'code.sql', codeSql("SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/whoami-${datetime}.sse')")),
     node('g1', 'code.sql', codeSql("SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()")),
     node('g2', 'code.sql', codeSql("SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input")),
