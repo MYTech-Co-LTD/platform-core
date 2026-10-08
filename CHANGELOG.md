@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.82.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.82.0...v0.82.1) - 2026-10-08
+- 【修复】data: 价格批管线 w0 补 SSE 单列申报——首跑实测拦下（#499 收尾） ([#502](https://github.com/MYTech-Co-LTD/platform-core/pull/502), [d280354](https://github.com/MYTech-Co-LTD/platform-core/commit/d2803547384a0fc34676791a57119ad22f487dea))
+
+
 ## [0.82.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.81.1...v0.82.0) - 2026-10-08
 - 【新增】data-stack: 价格批数据面——契约 + L0 管线（双账套）+ staging + dim_item_price 发布（#481 拆段 Part 1） ([#501](https://github.com/MYTech-Co-LTD/platform-core/pull/501), [8fef7d5](https://github.com/MYTech-Co-LTD/platform-core/commit/8fef7d5a04661420a713d541abf992f2c98bf0c2))
 
