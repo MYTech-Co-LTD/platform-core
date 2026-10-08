@@ -50,7 +50,18 @@ if (!Array.isArray(branches) || branches.length === 0 || branches.some((b) => !N
   process.exit(2)
 }
 const out = argOf('--out')
-const CHUNK = 1   // 逐店一节点：引擎 src.rest 的 into_string 有响应体上限（15 店/批 ≈40MB 首跑实测爆；单店 ~2.6-4MB 安全）
+const BACKFILL = process.argv.includes('--backfill')
+const initIdx = process.argv.indexOf('--initial')
+// 日常增量水位初值 = 首载日（backfill 写 bizday=首载日 分区后，日常从它续起，无缝衔接）
+const initial = (initIdx !== -1 && initIdx + 1 < process.argv.length)
+  ? process.argv[initIdx + 1]
+  : new Date(Date.now() - 2 * 365 * 24 * 3600 * 1000).toISOString().slice(0, 10) + ' 00:00:00'
+// backfill 扇出计划：{nodes:[{kind:'batch'|'solo'|'chunk', stores:[..], items:[..]}]}（打包在仓外按实测大小算，见探针报告 §6）
+let planNodes = null
+const planIdx = process.argv.indexOf('--plan-file')
+if (planIdx !== -1 && planIdx + 1 < process.argv.length) {
+  planNodes = JSON.parse(readFileSync(process.argv[planIdx + 1], 'utf8')).nodes
+}
 // 生成日的滚动 2 年窗起点（留 0 天余量——网关按"今天"滚，字面量寿命就是 2 年，过期 fail-loud）
 const sinceIdx = process.argv.indexOf('--since')
 const since = (sinceIdx !== -1 && sinceIdx + 1 < process.argv.length)
@@ -82,11 +93,41 @@ const PRICE_SCHEMA = [
   { name: 'branch_item_max_real_price', type: 'float64' },
   { name: 'branch_item_min_real_price', type: 'float64' },
 ]
-/** 批量数据节点：realprice REST 门，单发全量（无分页）
+/**
+ * 批量数据节点：realprice REST 门，单发全量（无分页）。
+ * 日常模式 = 请求侧增量（last_edit_time 下限走引擎水位；{incremental} 由引擎替换，整 run 成功才推进）；
+ * backfill 模式 = 字面量 2 年窗下限（一次性首载，R1）。
  * @param {string} id
- * @param {number[]} chunk
+ * @param {number[]} stores 门店号（一个节点的 branch_nums）
+ * @param {number[] | null} itemItems 大店段分片的 item_nums（null = 不分段）
+ * @param {[number, number] | null} itemRange 稠密段区间 [lo, hi]（与 itemItems 二选一）
  */
-function priceNode(id, chunk) {
+function priceNode(id, stores, itemItems, itemRange) {
+  /** @type {{branch_nums: number[], last_edit_time: string, item_nums?: number[]}} */
+  const filter = BACKFILL
+    ? { branch_nums: stores, last_edit_time: since }
+    : { branch_nums: stores, last_edit_time: '{incremental}' }
+  if (itemItems !== null) filter.item_nums = itemItems
+  if (itemRange !== null) {
+    // 稠密段：区间本地展开成显式 item_nums（未知 id 网关静默忽略已证 2026-10-08）
+    const [lo, hi] = itemRange
+    filter.item_nums = Array.from({ length: hi - lo + 1 }, (_, k) => lo + k)
+  }
+  /** @type {Record<string, unknown>} */
+  const props = {
+    connectionRef: 'lemeng',
+    url: 'https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find',
+    method: 'POST',
+    body: JSON.stringify(filter),
+    responsePath: '/result',
+    paginationType: 'none',
+    retryAttempts: 3,
+    retryBackoffMs: 2000,
+  }
+  if (!BACKFILL) {
+    props.incrementalField = 'last_edit_time'
+    props.incrementalInitial = initial
+  }
   return {
     id,
     type: 'source',
@@ -95,16 +136,7 @@ function priceNode(id, chunk) {
       label: id,
       componentId: 'src.rest',
       schema: PRICE_SCHEMA,
-      properties: {
-        connectionRef: 'lemeng',
-        url: 'https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find',
-        method: 'POST',
-        body: JSON.stringify({ branch_nums: chunk, last_edit_time: since }),
-        responsePath: '/result',
-        paginationType: 'none',
-        retryAttempts: 3,
-        retryBackoffMs: 2000,
-      },
+      properties: props,
     },
   }
 }
@@ -115,7 +147,7 @@ const envBranches = '${ENV:BRANCH_NUMS}'
 const shapeSql = `SELECT
   ${batchIdExpr} AS batch_id,
   '\${ENV:SYSTEM_BOOK}' AS system_book,
-  CAST('\${date+8h}' AS DATE) AS snapshot,
+  CAST('\${date+8h}' AS DATE) AS bizday,
   CAST(o.branch_num AS INTEGER) AS branch_num,
   json_extract_string(CAST(o.branch AS JSON), '$.branch_code') AS branch_code,
   json_extract_string(CAST(o.branch AS JSON), '$.branch_name') AS branch_name,
@@ -172,10 +204,23 @@ const die = (id, condition, message) => node(id, 'ctl.die', { condition, message
 const pIds = []
 /** @type {unknown[]} */
 const pNodes = []
-for (let i = 0; i * CHUNK < branches.length; i++) {
-  const id = `p${i + 1}`
-  pIds.push(id)
-  pNodes.push(priceNode(id, branches.slice(i * CHUNK, (i + 1) * CHUNK)))
+if (BACKFILL) {
+  if (planNodes === null) {
+    console.error('--backfill 需要 --plan-file（扇出计划：batch/solo/chunk 三种节点）')
+    process.exit(2)
+  }
+  planNodes.forEach((/** @type {{kind: string, stores: number[], items?: number[], range?: [number, number]}} */ n, /** @type {number} */ i) => {
+    const id = `p${i + 1}`
+    pIds.push(id)
+    const isChunk = n.kind === 'chunk'
+    pNodes.push(priceNode(id, n.stores, isChunk ? (n.items ?? null) : null, isChunk ? (n.range ?? null) : null))
+  })
+} else {
+  for (let i = 0; i < branches.length; i++) {
+    const id = `p${i + 1}`
+    pIds.push(id)
+    pNodes.push(priceNode(id, [branches[i]], null, null))
+  }
 }
 
 /** @type {any} */
@@ -206,16 +251,20 @@ const pipeline = {
     die('dv', 'has-rows', 'EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入'),
     ...pNodes,
     node('merge', 'ctl.merge', {}),
-    node('coverage', 'code.sql', codeSql(coverageSql)),
-    die('cg', 'has-rows', '价格批门店覆盖失配：merged 门店集合 ≠ BRANCH_NUMS 清单（{rows} 行）⇒ 快照相对声明的门店全集是部分的 ⇒ 拒绝写湖。处置：门店增减 ⇒ 重跑 gen-item-price-pipeline.mjs 重生成；某店确无价格数据 ⇒ 把它从该账套 BRANCH_NUMS 摘除（那是采集清单，不是门店全集）'),
+    // coverage 守卫只属 backfill（全窗下每店必有价格行，覆盖断言成立）；日常增量下
+    // 「安静店无变更 = 合法 0 行」⇒ 覆盖断言会误判红（R1 修订）。
+    ...(BACKFILL ? [
+      node('coverage', 'code.sql', codeSql(coverageSql)),
+      die('cg', 'has-rows', '价格批门店覆盖失配：merged 门店集合 ≠ BRANCH_NUMS 清单（{rows} 行）⇒ 首载相对声明的门店全集是部分的 ⇒ 拒绝写湖。处置：门店增减 ⇒ 重跑 gen-item-price-pipeline.mjs 重生成；某店确无价格数据 ⇒ 把它从该账套 BRANCH_NUMS 摘除（那是采集清单，不是门店全集）'),
+    ] : []),
     node('shape', 'code.sql', codeSql(shapeSql)),
     node('gate', 'qa.contract', { rules: {
-      batch_id: 'not_null', system_book: 'not_null', snapshot: 'not_null',
+      batch_id: 'not_null', system_book: 'not_null', bizday: 'not_null',
       branch_num: 'not_null', item_num: 'not_null', item_code: 'not_null',
     } }),
     node('sink', 'snk.minio', {
       bucket: '${ENV:ZOS_BUCKET}',
-      key: 'lemeng/item_price/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/all.parquet',
+      key: 'lemeng/item_price/system_book=${ENV:SYSTEM_BOOK}/bizday=${date+8h}/all.parquet',
       region: '${ENV:ZOS_REGION}',
       urlStyle: 'path',
       useSsl: 'true',
@@ -238,16 +287,20 @@ const pipeline = {
     ...pIds.map((id) => ({ id: `e-dv-${id}`, source: 'dv', target: id, sourceHandle: null, targetHandle: null, data: { connectionType: 'on-subjob-ok' } })),
     // 扇入 merge 的边要**编号 handle**（main_1..main_N）——全写 'main' 会被引擎判「多入单读」拒
     ...pIds.map((id, i) => ({ id: `e-${id}-merge`, source: id, target: 'merge', sourceHandle: 'main', targetHandle: `main_${i + 1}`, data: { connectionType: 'main' } })),
-    { id: 'e-merge-coverage', source: 'merge', target: 'coverage', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
-    { id: 'e-coverage-cg', source: 'coverage', target: 'cg', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
-    { id: 'e-cg-shape', source: 'cg', target: 'shape', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
+    ...(BACKFILL ? [
+      { id: 'e-merge-coverage', source: 'merge', target: 'coverage', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
+      { id: 'e-coverage-cg', source: 'coverage', target: 'cg', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
+      { id: 'e-cg-shape', source: 'cg', target: 'shape', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
+    ] : [
+      { id: 'e-merge-shape', source: 'merge', target: 'shape', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
+    ]),
     { id: 'e-shape-gate', source: 'shape', target: 'gate', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
     { id: 'e-gate-sink', source: 'gate', target: 'sink', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
   ],
 }
 
 writeFileSync(out, JSON.stringify(pipeline, null, 2) + '\n')
-console.log(`written: ${out} (book=${book} stores=${branches.length} batches=${pIds.length} since="${since}")`)
+console.log(`written: ${out} (book=${book} mode=${BACKFILL ? 'backfill' : 'daily'} stores=${branches.length} nodes=${pIds.length} since="${since}" initial="${initial}")`)
 
 // 自证：读回做一次形状 sanity（节点数 / 扇出数），不造第二个事实源
 const check = JSON.parse(readFileSync(out, 'utf8'))

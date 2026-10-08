@@ -4,21 +4,23 @@
 -- assert_stg_lemeng_branch_key_unique.sql（复合键、单列 unique 判不了、不引 dbt_utils、
 -- 覆盖写幂等的护栏、与 audit_* 的分工、空表边界——五条逐字适用，不复制正文）。
 --
--- 键 = (system_book, snapshot, branch_num, item_num, item_grade_num)：
---   分区键两列 + 门店号 + 商品号 + 分级号（主商品行 grade 为 null —— group by 对 null
---   的分组语义恰好把主商品行归成一组，不误报）。
+-- 键 = 事件键 (system_book, bizday, branch_num, item_num, item_grade_num, last_edit_time)：
+--   R1 增量模型下行 = 变更事件，同 key 不同 last_edit_time 跨天多行是**合法**的
+--   ⇒ 唯一性必须含事件时间；少它则「同一天同一价格改两次」误红，多 bizday 维则跨天重改误红。
 select
     system_book,
-    snapshot,
+    bizday,
     branch_num,
     item_num,
     item_grade_num,
+    last_edit_time,
     count(*) as rows_in_key
 from {{ ref('stg_lemeng_item_price') }}
 group by
     system_book,
-    snapshot,
+    bizday,
     branch_num,
     item_num,
-    item_grade_num
+    item_grade_num,
+    last_edit_time
 having count(*) > 1

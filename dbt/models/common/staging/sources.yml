@@ -74,11 +74,11 @@ sources:
       - name: item_price
         description: '乐檬**门店商品应用价**（新湖，2026-10-08 契约，#481 价格批）：**全量快照**（last_edit_time 传滚动 2 年窗起点——网关上限 10310217 随「今天」滚），hive 两级分区 system_book/snapshot，落盘即定型。行粒度 = 账套 × 快照日 × 门店 × 商品(×分级)；接口 nhsoft.retail.ai.branchitem.realprice.find 单发无分页。'
         meta:
-          path_convention: 'lemeng/item_price/system_book=<账套>/snapshot=<YYYY-MM-DD>/all.parquet'
+          path_convention: 'lemeng/item_price/system_book=<账套>/bizday=<YYYY-MM-DD>/{all,bf-*}.parquet'
           # 读路径不是 source()（见文件头 1）；`*/snapshot=**/` 一个模型读两个账套（同 branch/item）。
           # ⚠️ 前缀刻意叫 item_price 不叫 dim_item_price：生产者判定按子串匹配，dim_item_price
           #    会撞 dim_item 契约（见 dbt_project.yml 同名 var 的注）。
-          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_item_price_prefix\") }}/*/snapshot=**/all.parquet') r"
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_item_price_prefix\") }}/*/bizday=**/*.parquet') r"
           partition_keys: ['system_book', 'snapshot']
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / snapshot::date）'
-          pagination: '新湖由 duckle 管线写入（#481）：**门店批扇出**（15 店/批，realprice 无分页无 total）+ ctl.merge + 门店覆盖守卫（coverage→cg 对 BRANCH_NUMS 点名）；生成器 scripts/lemeng/gen-item-price-pipeline.mjs，不手编'
+          pagination: '新湖由 duckle 管线写入（#481 R1 增量模型）：**逐店一节点 + 请求侧增量水位**（last_edit_time；响应 KB 级/天）→ ctl.merge → 单文件覆盖写；backfill 管线另有打包/大店段扇出（bf 同层文件）；生成器 scripts/lemeng/gen-item-price-pipeline.mjs，不手编'

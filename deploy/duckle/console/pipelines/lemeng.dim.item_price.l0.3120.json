@@ -245,11 +245,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[99],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[99],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -341,11 +343,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[1],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[1],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -437,11 +441,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[2],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[2],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -533,11 +539,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[3],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[3],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -629,11 +637,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[4],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[4],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -725,11 +735,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[5],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[5],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -821,11 +833,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[6],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[6],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -917,11 +931,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[7],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[7],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -1013,11 +1029,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[8],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[8],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -1109,11 +1127,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[9],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[9],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -1205,11 +1225,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[10],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[10],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -1301,11 +1323,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[11],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[11],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -1397,11 +1421,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[12],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[12],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -1493,11 +1519,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[13],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[13],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -1589,11 +1617,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[14],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[14],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -1685,11 +1715,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[15],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[15],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -1781,11 +1813,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[16],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[16],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -1877,11 +1911,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[17],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[17],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -1973,11 +2009,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[18],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[18],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -2069,11 +2107,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[19],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[19],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -2165,11 +2205,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[20],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[20],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -2261,11 +2303,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[21],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[21],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -2357,11 +2401,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[22],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[22],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -2453,11 +2499,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[23],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[23],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -2549,11 +2597,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[24],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[24],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -2645,11 +2695,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[25],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[25],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -2741,11 +2793,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[26],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[26],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -2837,11 +2891,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[27],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[27],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -2933,11 +2989,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[28],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[28],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -3029,11 +3087,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[29],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[29],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -3125,11 +3185,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[30],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[30],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -3221,11 +3283,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[31],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[31],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -3317,11 +3381,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[32],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[32],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -3413,11 +3479,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[33],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[33],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -3509,11 +3577,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[34],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[34],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -3605,11 +3675,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[35],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[35],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -3701,11 +3773,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[36],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[36],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -3797,11 +3871,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[37],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[37],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -3893,11 +3969,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[38],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[38],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -3989,11 +4067,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[39],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[39],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -4085,11 +4165,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[40],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[40],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -4181,11 +4263,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[41],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[41],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -4277,11 +4361,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[42],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[42],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -4373,11 +4459,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[43],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[43],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -4469,11 +4557,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[44],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[44],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -4565,11 +4655,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[45],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[45],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -4661,11 +4753,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[46],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[46],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -4757,11 +4851,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[47],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[47],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -4853,11 +4949,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[48],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[48],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -4949,11 +5047,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[49],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[49],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -5045,11 +5145,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[50],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[50],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -5141,11 +5243,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[51],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[51],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -5237,11 +5341,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[52],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[52],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -5333,11 +5439,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[53],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[53],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -5429,11 +5537,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[54],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[54],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -5525,11 +5635,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[55],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[55],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -5621,11 +5733,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[56],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[56],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -5717,11 +5831,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[57],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[57],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -5813,11 +5929,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[58],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[58],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -5909,11 +6027,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[59],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[59],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -6005,11 +6125,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[60],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[60],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -6101,11 +6223,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[61],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[61],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -6197,11 +6321,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[62],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[62],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -6293,11 +6419,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[63],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[63],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -6389,11 +6517,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[64],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[64],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -6485,11 +6615,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[65],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[65],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -6581,11 +6713,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[66],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[66],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -6677,11 +6811,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[67],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[67],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -6773,11 +6909,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[68],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[68],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -6869,11 +7007,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[69],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[69],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -6965,11 +7105,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[70],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[70],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -7061,11 +7203,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[71],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[71],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -7157,11 +7301,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[72],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[72],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -7253,11 +7399,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[73],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[73],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -7349,11 +7497,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[74],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[74],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -7445,11 +7595,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[75],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[75],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -7541,11 +7693,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[76],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[76],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -7637,11 +7791,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[77],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[77],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -7733,11 +7889,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[78],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[78],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -7829,11 +7987,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[79],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[79],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -7925,11 +8085,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[80],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[80],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -8021,11 +8183,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[81],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[81],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -8117,11 +8281,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[82],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[82],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -8213,11 +8379,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[83],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[83],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -8309,11 +8477,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[84],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[84],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -8405,11 +8575,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[85],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[85],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -8501,11 +8673,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[86],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[86],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -8597,11 +8771,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[87],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[87],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -8693,11 +8869,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[88],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[88],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -8789,11 +8967,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[89],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[89],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -8885,11 +9065,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[90],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[90],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -8981,11 +9163,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[91],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[91],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -9077,11 +9261,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[92],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[92],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -9173,11 +9359,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[93],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[93],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -9269,11 +9457,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[94],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[94],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -9365,11 +9555,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[95],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[95],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -9461,11 +9653,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[96],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[96],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -9557,11 +9751,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[97],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[97],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -9653,11 +9849,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[98],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[98],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -9749,11 +9947,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[100],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[100],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -9845,11 +10045,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[101],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[101],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -9941,11 +10143,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[102],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[102],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -10037,11 +10241,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[103],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[103],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -10133,11 +10339,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[104],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[104],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -10229,11 +10437,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[105],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[105],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -10325,11 +10535,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[106],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[106],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -10421,11 +10633,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[107],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[107],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -10517,11 +10731,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[108],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[108],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -10613,11 +10829,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[109],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[109],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -10709,11 +10927,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[110],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[110],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -10805,11 +11025,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[111],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[111],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -10901,11 +11123,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[112],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[112],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -10997,11 +11221,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[113],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[113],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -11093,11 +11319,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[114],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[114],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -11189,11 +11417,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[115],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[115],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -11285,11 +11515,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[116],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[116],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -11381,11 +11613,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[117],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[117],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -11477,11 +11711,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[118],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[118],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -11573,11 +11809,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[119],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[119],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -11669,11 +11907,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[120],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[120],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -11765,11 +12005,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[121],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[121],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -11861,11 +12103,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[122],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[122],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -11957,11 +12201,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[123],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[123],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -12053,11 +12299,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[124],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[124],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -12149,11 +12397,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[125],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[125],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -12245,11 +12495,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[126],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[126],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -12341,11 +12593,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[127],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[127],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -12437,11 +12691,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[128],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[128],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -12533,11 +12789,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[129],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[129],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -12629,11 +12887,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[130],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[130],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -12725,11 +12985,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[131],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[131],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -12821,11 +13083,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[132],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[132],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -12917,11 +13181,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[133],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[133],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -13013,11 +13279,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[134],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[134],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -13109,11 +13377,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[135],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[135],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -13205,11 +13475,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[136],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[136],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -13301,11 +13573,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[137],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[137],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -13397,11 +13671,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[138],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[138],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -13493,11 +13769,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[139],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[139],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -13589,11 +13867,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[140],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[140],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -13685,11 +13965,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[888],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[888],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -13781,11 +14063,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[141],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[141],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -13877,11 +14161,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[142],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[142],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -13973,11 +14259,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[143],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[143],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -14069,11 +14357,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[144],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[144],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -14165,11 +14455,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[145],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[145],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -14261,11 +14553,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[146],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[146],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -14357,11 +14651,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[147],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[147],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -14453,11 +14749,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[148],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[148],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -14549,11 +14847,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[149],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[149],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -14645,11 +14945,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[150],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[150],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -14741,11 +15043,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[151],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[151],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -14837,11 +15141,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[152],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[152],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -14933,11 +15239,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[153],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[153],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -15029,11 +15337,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[154],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[154],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -15125,11 +15435,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[155],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[155],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -15221,11 +15533,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[156],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[156],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -15317,11 +15631,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[157],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[157],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -15413,11 +15729,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[158],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[158],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -15509,11 +15827,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[159],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[159],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -15605,11 +15925,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[160],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[160],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -15701,11 +16023,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[161],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[161],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -15797,11 +16121,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[163],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[163],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -15893,11 +16219,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[164],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[164],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -15989,11 +16317,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[165],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[165],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -16085,11 +16415,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[166],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[166],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -16181,11 +16513,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[167],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[167],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -16277,11 +16611,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[168],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[168],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -16373,11 +16709,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[169],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[169],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -16469,11 +16807,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[170],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[170],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -16565,11 +16905,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[171],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[171],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -16661,11 +17003,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[172],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[172],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -16757,11 +17101,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[173],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[173],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -16853,11 +17199,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[174],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[174],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -16949,11 +17297,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[175],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[175],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -17045,11 +17395,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[176],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[176],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -17141,11 +17493,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[177],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[177],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -17237,11 +17591,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[178],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[178],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -17333,11 +17689,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[179],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[179],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -17429,11 +17787,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[180],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[180],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -17525,11 +17885,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[181],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[181],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -17621,11 +17983,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[182],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[182],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -17717,11 +18081,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[183],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[183],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -17813,11 +18179,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[184],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[184],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -17909,11 +18277,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[185],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[185],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -18005,11 +18375,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[186],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[186],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -18101,11 +18473,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[187],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[187],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -18197,11 +18571,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[188],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[188],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -18293,11 +18669,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[189],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[189],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -18389,11 +18767,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[190],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[190],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -18485,11 +18865,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[191],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[191],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -18581,11 +18963,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[192],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[192],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -18677,11 +19061,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[193],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[193],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -18773,11 +19159,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[194],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[194],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -18869,11 +19257,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[195],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[195],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -18965,11 +19355,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[196],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[196],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -19061,11 +19453,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[197],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[197],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -19157,11 +19551,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[198],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[198],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -19253,11 +19649,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[199],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[199],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -19349,11 +19747,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[200],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[200],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -19445,11 +19845,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[201],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[201],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -19541,11 +19943,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[202],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[202],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -19637,11 +20041,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[203],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[203],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -19733,11 +20139,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[204],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[204],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -19829,11 +20237,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[205],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[205],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -19925,11 +20335,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[206],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[206],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -20021,11 +20433,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[207],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[207],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -20117,11 +20531,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[208],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[208],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -20213,11 +20629,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[210],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[210],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -20309,11 +20727,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[209],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[209],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -20405,11 +20825,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[211],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[211],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -20501,11 +20923,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[212],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[212],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -20597,11 +21021,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[213],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[213],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -20693,11 +21119,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[214],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[214],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -20789,11 +21217,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[215],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[215],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -20885,11 +21315,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[216],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[216],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -20981,11 +21413,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[217],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[217],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -21077,11 +21511,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[218],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[218],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -21173,11 +21609,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[219],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[219],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -21269,11 +21707,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[220],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[220],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -21365,11 +21805,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[221],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[221],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -21461,11 +21903,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[222],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[222],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -21557,11 +22001,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[223],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[223],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -21653,11 +22099,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[224],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[224],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -21749,11 +22197,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[225],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[225],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -21845,11 +22295,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[226],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[226],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -21941,11 +22393,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[227],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[227],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -22037,11 +22491,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[228],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[228],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -22133,11 +22589,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[229],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[229],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -22229,11 +22687,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[230],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[230],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -22325,11 +22785,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[231],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[231],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -22421,11 +22883,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[232],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[232],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -22517,11 +22981,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[233],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[233],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -22613,11 +23079,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[234],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[234],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -22709,11 +23177,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[235],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[235],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -22805,11 +23275,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[236],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[236],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -22901,11 +23373,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[237],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[237],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -22997,11 +23471,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[238],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[238],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -23093,11 +23569,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[239],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[239],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -23189,11 +23667,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[240],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[240],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -23285,11 +23765,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[241],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[241],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -23381,11 +23863,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[242],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[242],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -23477,11 +23961,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[243],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[243],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -23573,11 +24059,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[244],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[244],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -23669,11 +24157,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[245],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[245],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -23765,11 +24255,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[246],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[246],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -23861,11 +24353,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[247],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[247],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -23957,11 +24451,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[248],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[248],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -24053,11 +24549,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[249],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[249],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -24149,11 +24647,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[250],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[250],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -24245,11 +24745,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[251],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[251],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -24341,11 +24843,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[252],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[252],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -24437,11 +24941,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[253],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[253],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -24533,11 +25039,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[254],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[254],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -24629,11 +25137,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[255],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[255],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -24725,11 +25235,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[256],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[256],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -24821,11 +25333,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[257],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[257],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -24917,11 +25431,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[258],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[258],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -25013,11 +25529,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[259],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[259],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -25109,11 +25627,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[260],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[260],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -25205,11 +25725,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[261],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[261],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -25301,11 +25823,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[262],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[262],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -25397,11 +25921,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[263],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[263],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -25493,11 +26019,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[264],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[264],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -25589,11 +26117,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[265],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[265],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -25685,11 +26215,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[266],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[266],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -25781,11 +26313,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[267],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[267],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -25877,11 +26411,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[268],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[268],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -25973,11 +26509,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[269],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[269],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -26069,11 +26607,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[270],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[270],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -26165,11 +26705,13 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
           "method": "POST",
-          "body": "{\"branch_nums\":[271],\"last_edit_time\":\"2024-10-08 00:00:00\"}",
+          "body": "{\"branch_nums\":[271],\"last_edit_time\":\"{incremental}\"}",
           "responsePath": "/result",
           "paginationType": "none",
           "retryAttempts": 3,
-          "retryBackoffMs": 2000
+          "retryBackoffMs": 2000,
+          "incrementalField": "last_edit_time",
+          "incrementalInitial": "2026-10-08 00:00:00"
         }
       }
     },
@@ -26187,37 +26729,6 @@
       }
     },
     {
-      "id": "coverage",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "coverage",
-        "componentId": "code.sql",
-        "properties": {
-          "sql": "SELECT 'store_coverage' AS violation,\n  (SELECT count(DISTINCT branch_num) FROM input) AS merged_stores,\n  (SELECT count(*) FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS b) t) AS env_stores\nFROM (SELECT count(DISTINCT branch_num) AS n FROM input) m\nWHERE m.n <> (SELECT count(*) FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS b) t)"
-        }
-      }
-    },
-    {
-      "id": "cg",
-      "type": "transform",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "cg",
-        "componentId": "ctl.die",
-        "properties": {
-          "condition": "has-rows",
-          "message": "价格批门店覆盖失配：merged 门店集合 ≠ BRANCH_NUMS 清单（{rows} 行）⇒ 快照相对声明的门店全集是部分的 ⇒ 拒绝写湖。处置：门店增减 ⇒ 重跑 gen-item-price-pipeline.mjs 重生成；某店确无价格数据 ⇒ 把它从该账套 BRANCH_NUMS 摘除（那是采集清单，不是门店全集）"
-        }
-      }
-    },
-    {
       "id": "shape",
       "type": "transform",
       "position": {
@@ -26228,7 +26739,7 @@
         "label": "shape",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT\n  'dim-' || '${ENV:SYSTEM_BOOK}' || '-item_price-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date+8h}' AS DATE) AS snapshot,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  json_extract_string(CAST(o.branch AS JSON), '$.branch_code') AS branch_code,\n  json_extract_string(CAST(o.branch AS JSON), '$.branch_name') AS branch_name,\n  CAST(json_extract_string(CAST(o.branch AS JSON), '$.branch_matrix_price_actived') AS BOOLEAN) AS branch_matrix_price_actived,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_grade_num AS BIGINT) AS item_grade_num,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_code') AS item_code,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_barcode') AS bar_code,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_name') AS item_name,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_num') AS spec_num,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_unit') AS spec_unit,\n  CAST(json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_rate') AS DECIMAL(18,8)) AS spec_rate,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_unit') AS item_unit,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_category') AS item_category,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_department') AS item_department,\n  CAST(o.last_edit_time AS VARCHAR) AS last_edit_time,\n  CAST(o.branch_item_regular_price AS DECIMAL(18,8)) AS regular_price,\n  CAST(o.branch_item_level2_price AS DECIMAL(18,8)) AS level2_price,\n  CAST(o.branch_item_level3_price AS DECIMAL(18,8)) AS level3_price,\n  CAST(o.branch_item_level4_price AS DECIMAL(18,8)) AS level4_price,\n  CAST(o.branch_item_max_price AS DECIMAL(18,8)) AS max_price,\n  CAST(o.branch_item_min_price AS DECIMAL(18,8)) AS min_price,\n  CAST(o.branch_item_regular_real_price AS DECIMAL(18,8)) AS regular_real_price,\n  CAST(o.branch_item_level2_real_price AS DECIMAL(18,8)) AS level2_real_price,\n  CAST(o.branch_item_level3_real_price AS DECIMAL(18,8)) AS level3_real_price,\n  CAST(o.branch_item_level4_real_price AS DECIMAL(18,8)) AS level4_real_price,\n  CAST(o.branch_item_max_real_price AS DECIMAL(18,8)) AS max_real_price,\n  CAST(o.branch_item_min_real_price AS DECIMAL(18,8)) AS min_real_price\nFROM input o"
+          "sql": "SELECT\n  'dim-' || '${ENV:SYSTEM_BOOK}' || '-item_price-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date+8h}' AS DATE) AS bizday,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  json_extract_string(CAST(o.branch AS JSON), '$.branch_code') AS branch_code,\n  json_extract_string(CAST(o.branch AS JSON), '$.branch_name') AS branch_name,\n  CAST(json_extract_string(CAST(o.branch AS JSON), '$.branch_matrix_price_actived') AS BOOLEAN) AS branch_matrix_price_actived,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_grade_num AS BIGINT) AS item_grade_num,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_code') AS item_code,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_barcode') AS bar_code,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_name') AS item_name,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_num') AS spec_num,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_unit') AS spec_unit,\n  CAST(json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_rate') AS DECIMAL(18,8)) AS spec_rate,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_unit') AS item_unit,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_category') AS item_category,\n  json_extract_string(CAST(o.pos_variant AS JSON), '$.item_department') AS item_department,\n  CAST(o.last_edit_time AS VARCHAR) AS last_edit_time,\n  CAST(o.branch_item_regular_price AS DECIMAL(18,8)) AS regular_price,\n  CAST(o.branch_item_level2_price AS DECIMAL(18,8)) AS level2_price,\n  CAST(o.branch_item_level3_price AS DECIMAL(18,8)) AS level3_price,\n  CAST(o.branch_item_level4_price AS DECIMAL(18,8)) AS level4_price,\n  CAST(o.branch_item_max_price AS DECIMAL(18,8)) AS max_price,\n  CAST(o.branch_item_min_price AS DECIMAL(18,8)) AS min_price,\n  CAST(o.branch_item_regular_real_price AS DECIMAL(18,8)) AS regular_real_price,\n  CAST(o.branch_item_level2_real_price AS DECIMAL(18,8)) AS level2_real_price,\n  CAST(o.branch_item_level3_real_price AS DECIMAL(18,8)) AS level3_real_price,\n  CAST(o.branch_item_level4_real_price AS DECIMAL(18,8)) AS level4_real_price,\n  CAST(o.branch_item_max_real_price AS DECIMAL(18,8)) AS max_real_price,\n  CAST(o.branch_item_min_real_price AS DECIMAL(18,8)) AS min_real_price\nFROM input o"
         }
       }
     },
@@ -26246,7 +26757,7 @@
           "rules": {
             "batch_id": "not_null",
             "system_book": "not_null",
-            "snapshot": "not_null",
+            "bizday": "not_null",
             "branch_num": "not_null",
             "item_num": "not_null",
             "item_code": "not_null"
@@ -26266,7 +26777,7 @@
         "componentId": "snk.minio",
         "properties": {
           "bucket": "${ENV:ZOS_BUCKET}",
-          "key": "lemeng/item_price/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/all.parquet",
+          "key": "lemeng/item_price/system_book=${ENV:SYSTEM_BOOK}/bizday=${date+8h}/all.parquet",
           "region": "${ENV:ZOS_REGION}",
           "urlStyle": "path",
           "useSsl": "true",
@@ -31780,28 +32291,8 @@
       }
     },
     {
-      "id": "e-merge-coverage",
+      "id": "e-merge-shape",
       "source": "merge",
-      "target": "coverage",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-coverage-cg",
-      "source": "coverage",
-      "target": "cg",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e-cg-shape",
-      "source": "cg",
       "target": "shape",
       "sourceHandle": "main",
       "targetHandle": "main",
