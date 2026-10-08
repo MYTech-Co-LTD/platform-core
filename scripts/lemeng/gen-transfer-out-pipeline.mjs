@@ -6,7 +6,9 @@
 //   ① 扇出 = **静态页**（page_number 1..9：p1..p8 数据页 + p9 **哨兵页**——哨兵非空 = 容量击穿
 //      大声红；口径同 dim.item 第 150 页。接口无 total，只能页空即止）。页容量 100，
 //      数据页 8 页 = 800 单/日上限，实测 472 单/3 天（≈15 倍余量）。
-//   ② 查询窗 = **昨日单日**（`${date-1d+8h}`，日期算术引擎原生 date-1d 组合段，源码测试覆盖）
+//   ② 查询窗 = **昨日单日**（`${date-1d}`。⚠️ 组合段 `${date-1d+8h}` 在替换层不生效（0.7.4 本地实测
+//      原样保留）——尽管引擎 parse_offset 源码支持组合；替换 regex 只认单段。语义：UTC-1d，
+//      调度钉在 15:35 UTC（北京 23:35）⇒ UTC 昨日 == 北京昨日；别把调度挪过 16:00 UTC。）
 //      ⇒ 窗口日字面量**不过期**（每天由引擎现算，无价格批 last_edit_time 的 2 年过期问题）。
 //      分区 bizday = 同一窗口日：每分区写一次不重写。
 //   ③ merge 后**无 coverage 守卫**：窗口单日内「某店 0 单」合法（不是全量快照，无覆盖断言可言）；
@@ -73,8 +75,8 @@ function pageNode(id, pageNo) {
         url: 'https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.transfer.out.order.find',
         method: 'POST',
         body: JSON.stringify({
-          start_date: '${date-1d+8h}',
-          end_date: '${date-1d+8h}',
+          start_date: '${date-1d}',
+          end_date: '${date-1d}',
           page_number: pageNo,
           page_size: 100,
         }),
@@ -93,7 +95,7 @@ const envBranches = '${ENV:BRANCH_NUMS}'
 const SHAPE_SQL = `SELECT
   ${batchIdExpr} AS batch_id,
   '\${ENV:SYSTEM_BOOK}' AS system_book,
-  CAST('\${date-1d+8h}' AS DATE) AS bizday,
+  CAST('\${date-1d}' AS DATE) AS bizday,
   CAST(o.order_no AS VARCHAR) AS order_no,
   CAST(o.order_type AS VARCHAR) AS order_type,
   CAST(o.state_code AS INTEGER) AS state_code,
@@ -182,7 +184,7 @@ const pipeline = {
     die('d0', 'no-rows', 'identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖'),
     node('g3', 'code.sql', codeSql(`SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '\${ENV:SYSTEM_BOOK}' UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail FROM (SELECT unnest('\${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) WHERE w.branch_num IS NULL`)),
     die('d1', 'has-rows', 'identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖'),
-    node('gv', 'code.sql', codeSql(`SELECT 'BRANCH_NUMS' AS violation, '\${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('\${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '\${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('\${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '\${date-1d+8h}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('\${date-1d+8h}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', ${batchIdExpr} AS v, 'to-<book>-transfer_out-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match(${batchIdExpr}, 'to-[0-9]+-transfer_out-[0-9]{8}T[0-9]{6}Z')`)),
+    node('gv', 'code.sql', codeSql(`SELECT 'BRANCH_NUMS' AS violation, '\${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('\${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '\${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('\${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '\${date-1d}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('\${date-1d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', ${batchIdExpr} AS v, 'to-<book>-transfer_out-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match(${batchIdExpr}, 'to-[0-9]+-transfer_out-[0-9]{8}T[0-9]{6}Z')`)),
     die('dv', 'has-rows', 'EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入'),
     ...pNodes,
     node('merge', 'ctl.merge', {}),
@@ -193,7 +195,7 @@ const pipeline = {
     } }),
     node('sink', 'snk.minio', {
       bucket: '${ENV:ZOS_BUCKET}',
-      key: 'lemeng/transfer_out/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d+8h}/all.parquet',
+      key: 'lemeng/transfer_out/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/all.parquet',
       region: '${ENV:ZOS_REGION}',
       urlStyle: 'path',
       useSsl: 'true',
