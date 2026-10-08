@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.85.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.84.4...v0.85.0) - 2026-10-08
+- 【新增】data: #499 R3 批发销售单采集——契约 + L0 管线 + staging + dim_wholesale_out 发布（3120） ([#510](https://github.com/MYTech-Co-LTD/platform-core/pull/510), [dd599a9](https://github.com/MYTech-Co-LTD/platform-core/commit/dd599a9c9a9783e56c7a77883ebdcca54cf82492))
+
+
 ## [0.84.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.84.3...v0.84.4) - 2026-10-08
 - 【修复】data: transfer_out 发布两连修——insert 参数对齐 + bizday ::text（#499 收尾） ([#509](https://github.com/MYTech-Co-LTD/platform-core/pull/509), [c10591b](https://github.com/MYTech-Co-LTD/platform-core/commit/c10591ba22dee8b0b4b852ab27f6af47a2bae6d6))
 
