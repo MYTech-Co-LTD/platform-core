@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.83.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.82.2...v0.83.0) - 2026-10-08
+- 【新增】data: 价格批改增量模型——bizday 事件分区 + 请求侧水位（#499 R1） ([#504](https://github.com/MYTech-Co-LTD/platform-core/pull/504), [9066c23](https://github.com/MYTech-Co-LTD/platform-core/commit/9066c23b83f212d55c8aaa04b2d488fe581bf8a6))
+
+
 ## [0.82.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.82.1...v0.82.2) - 2026-10-08
 - 【修复】data: 价格批扇出改逐店一节点——批载荷爆引擎 into_string 上限（#499 首跑实测二） ([#503](https://github.com/MYTech-Co-LTD/platform-core/pull/503), [269fafe](https://github.com/MYTech-Co-LTD/platform-core/commit/269fafe7c4cf8a9e3f14cf4841371e892764bd2e))
 

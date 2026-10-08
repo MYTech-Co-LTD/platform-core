@@ -79,8 +79,8 @@ sources:
           # ⚠️ 前缀刻意叫 item_price 不叫 dim_item_price：生产者判定按子串匹配，dim_item_price
           #    会撞 dim_item 契约（见 dbt_project.yml 同名 var 的注）。
           access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_item_price_prefix\") }}/*/bizday=**/*.parquet') r"
-          partition_keys: ['system_book', 'snapshot']
-          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / snapshot::date）'
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / bizday::date）'
           pagination: '新湖由 duckle 管线写入（#481 R1 增量模型）：**逐店一节点 + 请求侧增量水位**（last_edit_time；响应 KB 级/天）→ ctl.merge → 单文件覆盖写；backfill 管线另有打包/大店段扇出（bf 同层文件）；生成器 scripts/lemeng/gen-item-price-pipeline.mjs，不手编'
 
       - name: transfer_out
