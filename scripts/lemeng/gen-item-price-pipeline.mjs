@@ -161,6 +161,7 @@ const node = (id, componentId, properties, type = 'transform') => ({
 })
 // w0 的 SSE 探针带**单列申报**（dim.item 同款 `[{name:'x',type:'string'}]`）——漏申报时
 // 空解析 ⇒ 「returned 0 records and no schema is declared」直接红（首跑实测）。
+/** @param {Record<string, unknown>} properties */
 const whoamiNode = (properties) => ({
   id: 'w0', type: 'source', position: { x: 0, y: 0 },
   data: { label: 'w0', componentId: 'src.rest', schema: [{ name: 'x', type: 'string' }], properties },
