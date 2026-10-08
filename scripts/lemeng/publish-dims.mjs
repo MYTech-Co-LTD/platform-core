@@ -232,7 +232,7 @@ async function main() {
          max(t.item_name)       as item_name,
          sum(t.quantity)        as quantity,
          sum(t.out_money)       as out_money,
-         min(t.bizday)          as bizday
+         min(t.bizday)::text    as bizday
        from staging.stg_lemeng_transfer_out t
        left join staging.stg_lemeng_branch b
          on b.system_book = t.system_book and b.branch_num = t.branch_num
