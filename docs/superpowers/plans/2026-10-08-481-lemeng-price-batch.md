@@ -245,3 +245,23 @@ create unique index if not exists data_dim_item_price_key_idx
 - **批发（WO）外部前置**：`wholesaleorder` 门对 PAT 静默空（缺「批发销售单-查询」权限 + 门店绑定；
   64188 视角 WHS 整体未开 = 上游已给 3120 开了应用、只差用户级权限）。已给精确开通清单，授权后补采。
 - **调度**：3120 console 日批（与既有槽位错峰）。
+
+---
+
+## 修订 R3（2026-10-08，用户点破 date_type 枚举坑后：批发（WO）采集可行，立即建）
+
+> 用户实测 3120 可访问批发数据 ⇒ 重验发现根因：`wholesaleorder.find` 的 `date_type` 枚举值文档写
+> 「制单时间/审核时间」，**实际接受 `制单`/`审核`**（不带"时间"）；错误值静默 0 行（fail-open 家族）。
+> `date_type=制单` + fid=WO3120992609180055 → 命中，与无极副本逐分对平（price 99/qty 30/money 2970/
+> lot 同）。批发采集**可行**，立即建。
+
+- **新源**：`nhsoft.whs.ai.wholesaleorder.find`（批发销售单；行粒度 = 单 × 商品行）。
+  接口约束：查询窗 ≤7 天（比调出单严）；`limit`/`offset` 分页（无 page_number）；`date_type=制单`；
+  响应行嵌套 `wholesale_order_details[]`（json 列 + UNNEST 展开，同款）。
+- **湖**：`lemeng/wholesale_out/system_book=3120/bizday=<制单日>/all.parquet`；窗口 = 昨日单日
+  （`${date-1d}` 单段，组合段不生效教训在案）。
+- **管线**：L0 同款（身份门 + gv/dv + 页扇出 p1..p8 + p9 哨兵 + merge + flatten + gate + sink），
+  body 日期带时间分量（纯日期报 parse error 实测）；offset 分页（接口是 limit/offset 型）。
+- **发布**：迁移 013 `data.dim_wholesale_out`（单×商品聚合，price_minor 同口径）——
+  **client_fid 列保留**（批发客户维度，品品甜等外部客户在此可辨）。
+- **调度**：3120 console `45 15 * * *`（错峰）。
