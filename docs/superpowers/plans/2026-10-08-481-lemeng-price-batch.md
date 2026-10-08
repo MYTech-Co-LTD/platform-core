@@ -197,3 +197,26 @@ create unique index if not exists data_dim_item_price_key_idx
 - 覆盖：issue 三条验收——①发布契约含价格（Task 1/4，走「工单侧等价来源」= dim_item_price，粒度依据在探针报告 §0）；②建单恢复有源 + 退款端到端（Task 5/8）；③为自然键化+退役清障（建单已读 dim 自然键，旧表零新写入）。✔
 - 占位符：Task 1 列集/Task 2 节点结构/Task 4 SQL 均给了实文；「编号以仓内现状顺延」是事实引用非占位。✔
 - 类型一致性：`store_code`（Task 4/5）、`item_code`、`grade_item_num` 跨任务同名；`price_minor bigint` 与 ticket `basic_unit_price_minor bigint` 对齐。✔
+
+---
+
+## 修订 R1（2026-10-08，拍板：写模型改增量——首跑实测三堵墙后的架构裁决）
+
+> 首跑实测（探针报告 §5）：引擎 src.rest 响应体上限 **12.3MB 过 / 32.9MB 炸、不可配**；**单店即可越限**
+> （64188 branch 13 = 20,213 行 / 32.9MB）⇒ 全量快照直采不可行。拍板改**增量化**（方案①）：
+
+- **湖布局**：`lemeng/item_price/system_book=<book>/bizday=<采集日>/branch=<branch_num>/all.parquet`
+  （每店每日一文件；覆盖写 = 天然幂等；大店小店互不拖累；单店重采不碰别店）。
+- **行语义**：行 = **价格变更事件**（`last_edit_time` 是事件时间）；staging 按
+  `(system_book, branch_num, item_num, item_grade_num)` 取 `last_edit_time` 最新物化「现价」
+  （全史合并，年 ~15 万行量级，pg_duckdb 无压力）。**发布表 `data.dim_item_price` 与 ticket 侧不变**。
+- **日常管线**（原 Task 2 形状改）：逐店扇出保留；src.rest 加 `incrementalField=last_edit_time` +
+  body `{incremental}` + `incrementalInitial`（首跑水位）——响应 KB 级，上限墙消失。
+- **首载（backfill）**：单独一条 backfill 管线（生成器产）：正常店逐店直采（2 年窗，<12MB）+
+  **大店（实测 >12MB 者）item_nums 段节点**（段清单由生成器当场从 item dim 取，一次性产物）；
+  写 `bizday=<首载日>` 分区。水位首跑值设为「首载日」⇒ 日常增量从首载日续起，无缝衔接。
+- **契约**（schemaVersion 2）：分区键 `[system_book, bizday, branch]`；列 `snapshot` 改名 `bizday`；
+  行粒度 = `(system_book, bizday, branch_num, item_num, item_grade_num, last_edit_time)`。
+- **staging**（原 Task 3 改）：读 `*/bizday=**/branch=**/all.parquet`，drop 分区列 branch，
+  全史合并取最新现价（`qualify row_number() over (partition by key order by last_edit_time desc) = 1`）。
+- **调度**：日批不变（15 11 错峰）；`/api/watermarks` 指针式回填不在本任务（首载走 backfill 管线）。
