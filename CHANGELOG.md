@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.84.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.84.0...v0.84.1) - 2026-10-08
+- 【修复】data: merge 后漏重算 data-plane.lock——sources.yml 哈希过期致 check-data-plane-lock 红 ([#506](https://github.com/MYTech-Co-LTD/platform-core/pull/506), [4cb135e](https://github.com/MYTech-Co-LTD/platform-core/commit/4cb135eb8cc96368c2d8dcd3f6bf76e1eda1e4ba))
+
+
 ## [0.84.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.83.0...v0.84.0) - 2026-10-08
 - 【新增】data: #499 R2 配送调出单采集——契约 + L0 管线 + staging + dim_transfer_out 发布（3120 单账套） ([#505](https://github.com/MYTech-Co-LTD/platform-core/pull/505), [3c7527e](https://github.com/MYTech-Co-LTD/platform-core/commit/3c7527e71b2f7668b95e76ad578aace03095dd50))
 
