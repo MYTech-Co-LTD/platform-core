@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.85.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.85.2...v0.85.3) - 2026-10-08
+- 【修复】data: wholesale 发布仓库查询 bizday::text——node-pg DATE→JS Date 长串进 date[] 解析炸（#511 收尾） ([#514](https://github.com/MYTech-Co-LTD/platform-core/pull/514), [347f8af](https://github.com/MYTech-Co-LTD/platform-core/commit/347f8afe6fe1e5aec43e1df8d886a89128891255))
+
+
 ## [0.85.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.85.1...v0.85.2) - 2026-10-08
 - 【修复】data: 批发管线 date_type 改回 制单时间——组合反转实测（#511 修正） ([#513](https://github.com/MYTech-Co-LTD/platform-core/pull/513), [88bea26](https://github.com/MYTech-Co-LTD/platform-core/commit/88bea26cf516efc57ccb03d684447f56ed8f745a))
 
