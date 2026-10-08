@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.84.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.84.1...v0.84.2) - 2026-10-08
+- 【修复】data: 调出单窗口改单段 date-1d——组合段替换层不生效（#499 R2 修正） ([#507](https://github.com/MYTech-Co-LTD/platform-core/pull/507), [dd73355](https://github.com/MYTech-Co-LTD/platform-core/commit/dd73355cb041067992a1fd1967024eda2b1f7f25))
+
+
 ## [0.84.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.84.0...v0.84.1) - 2026-10-08
 - 【修复】data: merge 后漏重算 data-plane.lock——sources.yml 哈希过期致 check-data-plane-lock 红 ([#506](https://github.com/MYTech-Co-LTD/platform-core/pull/506), [4cb135e](https://github.com/MYTech-Co-LTD/platform-core/commit/4cb135eb8cc96368c2d8dcd3f6bf76e1eda1e4ba))
 
