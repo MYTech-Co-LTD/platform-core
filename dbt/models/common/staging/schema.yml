@@ -357,12 +357,49 @@ models:
       - name: lot_number
         description: '批次号；同单同商品分批次多行 ⇒ 入自然键。'
 
+  - name: stg_lemeng_wholesale_out
+    description: >-
+      乐檬**批发销售单** staging（新湖；#499/R3）。行 = 批发单商品行（单头列随行冗余透传）。
+      源 = 湖表 `lemeng.wholesale_out`（hive 两级分区 system_book/bizday，bizday=制单日、
+      每分区写一次不重写）。列全集以 `contracts/common/lemeng.wholesale_out.json` 为准。
+      ⚠️ 采集范围仅 3120 主账套。取价口径（money÷quantity）在 publish-dims 单点。
+    columns:
+      - name: batch_id
+        description: '批次标记（采集 run id）。载荷列。'
+      - name: system_book
+        description: '账套（采集范围=3120）。hive 分区键。'
+      - name: org
+        description: '主体列（env `LEMENG_SUBJECT_ORG` 注入）。不是契约列。'
+        tests:
+          - not_null
+      - name: bizday
+        description: '单据制单日。hive 分区键。'
+      - name: order_no
+        description: '批发销售单号（WO…）。自然键之一。'
+        tests:
+          - not_null
+      - name: order_detail_num
+        description: '行号（同单内唯一）。自然键之一。'
+        tests:
+          - not_null
+      - name: item_num
+        description: '商品内部编号。自然键之一。'
+        tests:
+          - not_null
+      - name: item_code
+        description: '商品编码（发布 join 键）。'
+        tests:
+          - not_null
+      - name: client_fid
+        description: '批发客户 ID（品品甜等外部客户在此可辨）。'
+
 # 三张维度/价格表的**行粒度自然键**唯一性由 singular test 手写（单列 `unique` 判不了复合键；
 # 引 dbt_utils 要加 packages.yml —— 多一层依赖、解析期还要联网）：
 #   dbt/tests/assert_stg_lemeng_branch_key_unique.sql     —— (system_book, snapshot, branch_num)
 #   dbt/tests/assert_stg_lemeng_item_key_unique.sql       —— (system_book, snapshot, item_num)
 #   dbt/tests/assert_stg_lemeng_item_price_key_unique.sql —— (system_book, snapshot, branch_num, item_num, item_grade_num)
 #   dbt/tests/assert_stg_lemeng_transfer_out_key_unique.sql —— (system_book, bizday, order_no, item_num, item_grade_num, lot_number)
+#   dbt/tests/assert_stg_lemeng_wholesale_out_key_unique.sql —— (system_book, bizday, order_no, order_detail_num)
 #
 # 列级测试的**范围**（有意为之，不是漏做）：只给**自然键列**挂 `not_null`（与
 # stg_lemeng_retail_order_line 的形状一致 —— 它也只给同名的两个自然键列挂）。
