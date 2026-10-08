@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.84.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.83.0...v0.84.0) - 2026-10-08
+- 【新增】data: #499 R2 配送调出单采集——契约 + L0 管线 + staging + dim_transfer_out 发布（3120 单账套） ([#505](https://github.com/MYTech-Co-LTD/platform-core/pull/505), [3c7527e](https://github.com/MYTech-Co-LTD/platform-core/commit/3c7527e71b2f7668b95e76ad578aace03095dd50))
+
+
 ## [0.83.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.82.2...v0.83.0) - 2026-10-08
 - 【新增】data: 价格批改增量模型——bizday 事件分区 + 请求侧水位（#499 R1） ([#504](https://github.com/MYTech-Co-LTD/platform-core/pull/504), [9066c23](https://github.com/MYTech-Co-LTD/platform-core/commit/9066c23b83f212d55c8aaa04b2d488fe581bf8a6))
 
