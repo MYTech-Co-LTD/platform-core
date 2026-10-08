@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.84.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.84.3...v0.84.4) - 2026-10-08
+- 【修复】data: transfer_out 发布两连修——insert 参数对齐 + bizday ::text（#499 收尾） ([#509](https://github.com/MYTech-Co-LTD/platform-core/pull/509), [c10591b](https://github.com/MYTech-Co-LTD/platform-core/commit/c10591ba22dee8b0b4b852ab27f6af47a2bae6d6))
+
+
 ## [0.84.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.84.2...v0.84.3) - 2026-10-08
 - 【修复】data: dim_transfer_out 发布 insert 两处参数错位修正—— 空悬 + bizday 整列数组误入标量位 ([#508](https://github.com/MYTech-Co-LTD/platform-core/pull/508), [e17d288](https://github.com/MYTech-Co-LTD/platform-core/commit/e17d28898e10e0fe7fa3ae9ddb106b040b157130))
 
