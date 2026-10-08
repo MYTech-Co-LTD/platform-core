@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.82.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.82.1...v0.82.2) - 2026-10-08
+- 【修复】data: 价格批扇出改逐店一节点——批载荷爆引擎 into_string 上限（#499 首跑实测二） ([#503](https://github.com/MYTech-Co-LTD/platform-core/pull/503), [269fafe](https://github.com/MYTech-Co-LTD/platform-core/commit/269fafe7c4cf8a9e3f14cf4841371e892764bd2e))
+
+
 ## [0.82.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.82.0...v0.82.1) - 2026-10-08
 - 【修复】data: 价格批管线 w0 补 SSE 单列申报——首跑实测拦下（#499 收尾） ([#502](https://github.com/MYTech-Co-LTD/platform-core/pull/502), [d280354](https://github.com/MYTech-Co-LTD/platform-core/commit/d2803547384a0fc34676791a57119ad22f487dea))
 
