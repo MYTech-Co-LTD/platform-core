@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.82.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.81.1...v0.82.0) - 2026-10-08
+- 【新增】data-stack: 价格批数据面——契约 + L0 管线（双账套）+ staging + dim_item_price 发布（#481 拆段 Part 1） ([#501](https://github.com/MYTech-Co-LTD/platform-core/pull/501), [8fef7d5](https://github.com/MYTech-Co-LTD/platform-core/commit/8fef7d5a04661420a713d541abf992f2c98bf0c2))
+
+
 ## [0.81.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.81.0...v0.81.1) - 2026-10-08
 - 【修复】data: DELETE /reports/:id 分流顺序与 POST 不一致——自绘行在没配 Metabase 的环境删不掉（恒 503） ([#498](https://github.com/MYTech-Co-LTD/platform-core/pull/498), [cb88d6e](https://github.com/MYTech-Co-LTD/platform-core/commit/cb88d6eac196f6ea15d1d60a02412be9a133a569))
 
