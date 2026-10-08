@@ -1,0 +1,265 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "transfer_out",
+  "owner": "data-platform",
+  "description": "乐檬配送调出单（nhsoft.ama.ai.transfer.out.order.find；R2 拍板 2026-10-08，售后=总部↔门店 B2B）。【行粒度】一行 = 账套×采集bizday×配送单×商品行（单头列随行冗余）；自然键 `(system_book, bizday, order_no, item_num, item_grade_num, lot_number)`。【窗口】查询窗 = `${date-1d+8h}` 单日（制单日期，日期算术引擎原生 date-1d 组合段）；每分区写一次不重写；审核实测与制单同刻（±1s）⇒ 状态稳定。【采集范围】仅 3120 主账套（64188=外部批发客户，其 MO 为其内部业务，不在售后范围）。【接口约束】查询窗 ≤3 个自然月；page_size ≤100、page_number ≤10000；无 total ⇒ 空页耗尽 + 末哨兵页容量守卫（>800 单/日大声红）。【单据面上游口径】调出金额=总部结算给门店的口径，实测配送单实际价≠档案批发价（山竹 27 vs 25，差 8%）⇒ 工单金额依据取本表行级 out_money÷quantity。【权限】含价格字段需「配送价格查询」类 authorities（当前 PAT 已具备，实测拿到真价）。【范围裁剪】未采 purchase_*/supplier_*（直配/供应商直送数量）与仓库、操作人字段——需要时 schemaVersion 升档追加。",
+  "layout": {
+    "prefix": "lemeng/transfer_out",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "system_book",
+      "bizday"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id。每 bizday 分区只写一次（当日单当日采），重跑覆盖同 key。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "批次标记（采集 run id）",
+      "expr": "'to-' || '${ENV:SYSTEM_BOOK}' || '-transfer_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'"
+    },
+    {
+      "name": "system_book",
+      "type": "varchar",
+      "nullable": false,
+      "description": "账套（采集范围=3120）；分区键，来源=采集侧常量注入（`ENV:SYSTEM_BOOK`）",
+      "expr": "'${ENV:SYSTEM_BOOK}'"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "单据制单日（=查询窗口日， Asia/Shanghai）；分区键。与窗口逐行一致（窗口=单日）",
+      "expr": "CAST('${date-1d+8h}' AS DATE)"
+    },
+    {
+      "name": "order_no",
+      "type": "varchar",
+      "nullable": false,
+      "description": "配送业务单号（MO…；工单关联键）",
+      "expr": "CAST(o.order_no AS VARCHAR)"
+    },
+    {
+      "name": "order_type",
+      "type": "varchar",
+      "nullable": true,
+      "description": "单据类型名称（实测=调出单）",
+      "expr": "CAST(o.order_type AS VARCHAR)"
+    },
+    {
+      "name": "state_code",
+      "type": "int",
+      "nullable": true,
+      "description": "单据状态码（1=制单 3=审核；实测审核与制单同刻）",
+      "expr": "CAST(o.state_code AS INTEGER)"
+    },
+    {
+      "name": "business_date",
+      "type": "varchar",
+      "nullable": true,
+      "description": "业务日期",
+      "expr": "CAST(o.business_date AS VARCHAR)"
+    },
+    {
+      "name": "create_time",
+      "type": "varchar",
+      "nullable": true,
+      "description": "制单时间",
+      "expr": "CAST(o.create_time AS VARCHAR)"
+    },
+    {
+      "name": "audit_time",
+      "type": "varchar",
+      "nullable": true,
+      "description": "审核时间",
+      "expr": "CAST(o.audit_time AS VARCHAR)"
+    },
+    {
+      "name": "branch_num",
+      "type": "int",
+      "nullable": false,
+      "description": "调入门店编号（收货门店；发布 join 键 → stg_lemeng_branch.branch_num 解析 code）",
+      "expr": "CAST(o.branch_num AS INTEGER)"
+    },
+    {
+      "name": "branch_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "调入门店展示编码",
+      "expr": "CAST(o.branch_code AS VARCHAR)"
+    },
+    {
+      "name": "branch_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "调入门店名称",
+      "expr": "CAST(o.branch_name AS VARCHAR)"
+    },
+    {
+      "name": "out_branch_num",
+      "type": "int",
+      "nullable": true,
+      "description": "调出方编号（99=管理中心/配送中心；其余=店间直调）",
+      "expr": "CAST(o.out_branch_num AS INTEGER)"
+    },
+    {
+      "name": "out_branch_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "调出方名称",
+      "expr": "CAST(o.out_branch_name AS VARCHAR)"
+    },
+    {
+      "name": "total_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "单据含税总金额（单头，随行冗余）",
+      "expr": "CAST(o.total_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "item_num",
+      "type": "bigint",
+      "nullable": false,
+      "description": "商品内部编号（行自然键之一）",
+      "expr": "CAST(json_extract_string(u.d, '$.item_num') AS BIGINT)"
+    },
+    {
+      "name": "item_grade_num",
+      "type": "bigint",
+      "nullable": true,
+      "description": "商品分级编号；主商品行为 null（自然键含它）",
+      "expr": "CAST(json_extract_string(u.d, '$.item_grade_num') AS BIGINT)"
+    },
+    {
+      "name": "item_code",
+      "type": "varchar",
+      "nullable": false,
+      "description": "商品编码（= dim_item.item_code 同源，发布 join 键）",
+      "expr": "json_extract_string(u.d, '$.item_code')"
+    },
+    {
+      "name": "bar_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品条码（与价格批契约同名列）",
+      "expr": "json_extract_string(u.d, '$.item_barcode')"
+    },
+    {
+      "name": "item_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品名称",
+      "expr": "json_extract_string(u.d, '$.item_name')"
+    },
+    {
+      "name": "item_spec",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品规格（约Xkg/件等）",
+      "expr": "json_extract_string(u.d, '$.item_spec')"
+    },
+    {
+      "name": "item_unit",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品基本单位",
+      "expr": "json_extract_string(u.d, '$.item_unit')"
+    },
+    {
+      "name": "lot_number",
+      "type": "varchar",
+      "nullable": true,
+      "description": "批次号（行自然键之一：同单同商品可分批次多行）",
+      "expr": "json_extract_string(u.d, '$.lot_number')"
+    },
+    {
+      "name": "quantity",
+      "type": "decimal(14,6)",
+      "nullable": true,
+      "description": "基本单位数量（基本单位价 = out_money ÷ quantity）",
+      "expr": "CAST(json_extract_string(u.d, '$.quantity') AS DECIMAL(14,6))"
+    },
+    {
+      "name": "use_quantity",
+      "type": "decimal(14,6)",
+      "nullable": true,
+      "description": "使用（常用）单位数量",
+      "expr": "CAST(json_extract_string(u.d, '$.use_quantity') AS DECIMAL(14,6))"
+    },
+    {
+      "name": "use_unit",
+      "type": "varchar",
+      "nullable": true,
+      "description": "使用（常用）单位（unit_price 挂在它上）",
+      "expr": "json_extract_string(u.d, '$.use_unit')"
+    },
+    {
+      "name": "use_rate",
+      "type": "decimal(18,8)",
+      "nullable": true,
+      "description": "使用单位换算率（基本数量 = 使用数量 × 换算率）",
+      "expr": "CAST(json_extract_string(u.d, '$.use_rate') AS DECIMAL(18,8))"
+    },
+    {
+      "name": "present_quantity",
+      "type": "decimal(14,6)",
+      "nullable": true,
+      "description": "基本单位赠送数量（配送赠品；售后计价边界）",
+      "expr": "CAST(json_extract_string(u.d, '$.present_quantity') AS DECIMAL(14,6))"
+    },
+    {
+      "name": "production_date",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品生产日期",
+      "expr": "json_extract_string(u.d, '$.production_date')"
+    },
+    {
+      "name": "unit_price",
+      "type": "decimal(18,8)",
+      "nullable": true,
+      "description": "常用单位业务单价（无价格权限返回 null——当前 PAT 已实证拿到真价）",
+      "expr": "CAST(json_extract_string(u.d, '$.unit_price') AS DECIMAL(18,8))"
+    },
+    {
+      "name": "subtotal",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "商品明细小计（按基本单位×成本口径，实测=cost_subtotal）",
+      "expr": "CAST(json_extract_string(u.d, '$.subtotal') AS DECIMAL(14,2))"
+    },
+    {
+      "name": "out_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "实际调出金额（总部结算口径；工单金额依据的源）",
+      "expr": "CAST(json_extract_string(u.d, '$.out_money') AS DECIMAL(14,2))"
+    },
+    {
+      "name": "in_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "实际调入金额（=调出金额，收货侧对照）",
+      "expr": "CAST(json_extract_string(u.d, '$.in_money') AS DECIMAL(14,2))"
+    },
+    {
+      "name": "cost",
+      "type": "decimal(18,8)",
+      "nullable": true,
+      "description": "明细成本单价（毛利推演用；实测样例 24 = 27售价−3毛利/公斤）",
+      "expr": "CAST(json_extract_string(u.d, '$.cost') AS DECIMAL(18,8))"
+    }
+  ]
+}

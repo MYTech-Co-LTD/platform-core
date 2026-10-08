@@ -56,7 +56,7 @@ describePg('迁移（需要 DATABASE_URL）', () => {
     }
   })
 
-  it('八张表建成（001 三张 + 002 报表登记 + 009 两张发布维 + 010 口径审计 + 011 价格批），且 data.query_keys.token_hash 唯一', async () => {
+  it('九张表建成（001 三张 + 002 报表登记 + 009 两张发布维 + 010 口径审计 + 011 价格批 + 012 调出单），且 data.query_keys.token_hash 唯一', async () => {
     await applyMigrations(pool)
     const t = await pool.query(
       `select table_name from information_schema.tables
@@ -65,7 +65,7 @@ describePg('迁移（需要 DATABASE_URL）', () => {
     // 清单是**穷举**（不是「包含」）：新增迁移必须在这里显式表态，
     // 免得删掉一张表时这道断言还绿（002_reports 就是这么加进来的）。
     expect(t.rows.map((r) => r.table_name)).toEqual([
-      'dim_branch', 'dim_item', 'dim_item_price', 'metric_audit', 'metrics', 'query_audit', 'query_keys', 'reports',
+      'dim_branch', 'dim_item', 'dim_item_price', 'dim_transfer_out', 'metric_audit', 'metrics', 'query_audit', 'query_keys', 'reports',
     ])
 
     // 口径两条（都是开工实测订正，别按口味改回去）：

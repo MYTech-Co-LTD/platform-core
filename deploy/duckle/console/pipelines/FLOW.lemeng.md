@@ -13,6 +13,7 @@
 | 形态 | 文件 | 份数 |
 |---|---|---|
 | **L0 直连**（单窗/日频，无跨窗编排） | `lemeng.dim.branch.l0.json` · `lemeng.dim.item.l0.json` · `lemeng.dim.item_price.l0.json`(64188) · `lemeng.dim.item_price.l0.3120.json` | 维度面各 1（双账套）；价格批**每账套一份**（#481——批内门店号是生成时字面量，两账套清单不同 ⇒ 不共用文件） |
+| **L0 直连**（配送调出单，#499/R2） | `lemeng.transfer.out.l0.3120.json` | 仅 3120（64188=外部批发客户不采）。窗口=昨日单日（`${date-1d+8h}` 引擎现算不过期）；扇出 p1..p8 数据页 + p9 哨兵（>800 单/日大声红）；flatten 用销售明细子管线同款 UNNEST。生成器 `scripts/lemeng/gen-transfer-out-pipeline.mjs`，不手编 |
 | **L1 编排**（跨窗循环） | `lemeng.retail.windows.l1.json` · `lemeng.retail.tick.l1.json` · `lemeng.retail.close.l1.json` | 3 |
 | **业务子管线**（单窗怎么采，被 L1 复用） | `lemeng.retail_order_line.window.json` · `lemeng.retail_order_line.tick.json` | 2 |
 | **回填变体**（只差窗口来源，不进调度） | `lemeng.retail.windows.backfill.json` | 1 |

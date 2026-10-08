@@ -1,0 +1,1211 @@
+{
+  "name": "lemeng.transfer.out.l0.3120",
+  "nodes": [
+    {
+      "id": "w0",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "w0",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/mcp",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"
+          },
+          "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"whoami\", \"arguments\": {}}}",
+          "paginationType": "none",
+          "responseFormat": "xml",
+          "rawResponseDestination": "/workspace/.duckle-raw/whoami-${datetime}.sse",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "g0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g0",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/whoami-${datetime}.sse')"
+        }
+      }
+    },
+    {
+      "id": "g1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g1",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()"
+        }
+      }
+    },
+    {
+      "id": "g2",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g2",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input"
+        }
+      }
+    },
+    {
+      "id": "d0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d0",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "g3",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g3",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}' UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) WHERE w.branch_num IS NULL"
+        }
+      }
+    },
+    {
+      "id": "d1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d1",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "gv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gv",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${date-1d+8h}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${date-1d+8h}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'to-' || '${ENV:SYSTEM_BOOK}' || '-transfer_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'to-<book>-transfer_out-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('to-' || '${ENV:SYSTEM_BOOK}' || '-transfer_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'to-[0-9]+-transfer_out-[0-9]{8}T[0-9]{6}Z')"
+        }
+      }
+    },
+    {
+      "id": "dv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dv",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入"
+        }
+      }
+    },
+    {
+      "id": "p1",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_type",
+            "type": "string"
+          },
+          {
+            "name": "state_code",
+            "type": "int64"
+          },
+          {
+            "name": "business_date",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "out_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "total_money",
+            "type": "float64"
+          },
+          {
+            "name": "items",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.transfer.out.order.find",
+          "method": "POST",
+          "body": "{\"start_date\":\"${date-1d+8h}\",\"end_date\":\"${date-1d+8h}\",\"page_number\":1,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p2",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p2",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_type",
+            "type": "string"
+          },
+          {
+            "name": "state_code",
+            "type": "int64"
+          },
+          {
+            "name": "business_date",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "out_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "total_money",
+            "type": "float64"
+          },
+          {
+            "name": "items",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.transfer.out.order.find",
+          "method": "POST",
+          "body": "{\"start_date\":\"${date-1d+8h}\",\"end_date\":\"${date-1d+8h}\",\"page_number\":2,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p3",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p3",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_type",
+            "type": "string"
+          },
+          {
+            "name": "state_code",
+            "type": "int64"
+          },
+          {
+            "name": "business_date",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "out_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "total_money",
+            "type": "float64"
+          },
+          {
+            "name": "items",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.transfer.out.order.find",
+          "method": "POST",
+          "body": "{\"start_date\":\"${date-1d+8h}\",\"end_date\":\"${date-1d+8h}\",\"page_number\":3,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p4",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p4",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_type",
+            "type": "string"
+          },
+          {
+            "name": "state_code",
+            "type": "int64"
+          },
+          {
+            "name": "business_date",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "out_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "total_money",
+            "type": "float64"
+          },
+          {
+            "name": "items",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.transfer.out.order.find",
+          "method": "POST",
+          "body": "{\"start_date\":\"${date-1d+8h}\",\"end_date\":\"${date-1d+8h}\",\"page_number\":4,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p5",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p5",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_type",
+            "type": "string"
+          },
+          {
+            "name": "state_code",
+            "type": "int64"
+          },
+          {
+            "name": "business_date",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "out_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "total_money",
+            "type": "float64"
+          },
+          {
+            "name": "items",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.transfer.out.order.find",
+          "method": "POST",
+          "body": "{\"start_date\":\"${date-1d+8h}\",\"end_date\":\"${date-1d+8h}\",\"page_number\":5,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p6",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p6",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_type",
+            "type": "string"
+          },
+          {
+            "name": "state_code",
+            "type": "int64"
+          },
+          {
+            "name": "business_date",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "out_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "total_money",
+            "type": "float64"
+          },
+          {
+            "name": "items",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.transfer.out.order.find",
+          "method": "POST",
+          "body": "{\"start_date\":\"${date-1d+8h}\",\"end_date\":\"${date-1d+8h}\",\"page_number\":6,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p7",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p7",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_type",
+            "type": "string"
+          },
+          {
+            "name": "state_code",
+            "type": "int64"
+          },
+          {
+            "name": "business_date",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "out_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "total_money",
+            "type": "float64"
+          },
+          {
+            "name": "items",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.transfer.out.order.find",
+          "method": "POST",
+          "body": "{\"start_date\":\"${date-1d+8h}\",\"end_date\":\"${date-1d+8h}\",\"page_number\":7,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p8",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p8",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_type",
+            "type": "string"
+          },
+          {
+            "name": "state_code",
+            "type": "int64"
+          },
+          {
+            "name": "business_date",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "out_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "total_money",
+            "type": "float64"
+          },
+          {
+            "name": "items",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.transfer.out.order.find",
+          "method": "POST",
+          "body": "{\"start_date\":\"${date-1d+8h}\",\"end_date\":\"${date-1d+8h}\",\"page_number\":8,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p9",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p9",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_type",
+            "type": "string"
+          },
+          {
+            "name": "state_code",
+            "type": "int64"
+          },
+          {
+            "name": "business_date",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "out_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "total_money",
+            "type": "float64"
+          },
+          {
+            "name": "items",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.transfer.out.order.find",
+          "method": "POST",
+          "body": "{\"start_date\":\"${date-1d+8h}\",\"end_date\":\"${date-1d+8h}\",\"page_number\":9,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "merge",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "merge",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "shape",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "shape",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  'to-' || '${ENV:SYSTEM_BOOK}' || '-transfer_out-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d+8h}' AS DATE) AS bizday,\n  CAST(o.order_no AS VARCHAR) AS order_no,\n  CAST(o.order_type AS VARCHAR) AS order_type,\n  CAST(o.state_code AS INTEGER) AS state_code,\n  CAST(o.business_date AS VARCHAR) AS business_date,\n  CAST(o.create_time AS VARCHAR) AS create_time,\n  CAST(o.audit_time AS VARCHAR) AS audit_time,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.out_branch_num AS INTEGER) AS out_branch_num,\n  CAST(o.out_branch_name AS VARCHAR) AS out_branch_name,\n  CAST(o.total_money AS DECIMAL(14,2)) AS total_money,\n  CAST(json_extract_string(u.d, '$.item_num') AS BIGINT) AS item_num,\n  CAST(json_extract_string(u.d, '$.item_grade_num') AS BIGINT) AS item_grade_num,\n  json_extract_string(u.d, '$.item_code') AS item_code,\n  json_extract_string(u.d, '$.item_barcode') AS bar_code,\n  json_extract_string(u.d, '$.item_name') AS item_name,\n  json_extract_string(u.d, '$.item_spec') AS item_spec,\n  json_extract_string(u.d, '$.item_unit') AS item_unit,\n  json_extract_string(u.d, '$.lot_number') AS lot_number,\n  CAST(json_extract_string(u.d, '$.quantity') AS DECIMAL(14,6)) AS quantity,\n  CAST(json_extract_string(u.d, '$.use_quantity') AS DECIMAL(14,6)) AS use_quantity,\n  json_extract_string(u.d, '$.use_unit') AS use_unit,\n  CAST(json_extract_string(u.d, '$.use_rate') AS DECIMAL(18,8)) AS use_rate,\n  CAST(json_extract_string(u.d, '$.present_quantity') AS DECIMAL(14,6)) AS present_quantity,\n  json_extract_string(u.d, '$.production_date') AS production_date,\n  CAST(json_extract_string(u.d, '$.unit_price') AS DECIMAL(18,8)) AS unit_price,\n  CAST(json_extract_string(u.d, '$.subtotal') AS DECIMAL(14,2)) AS subtotal,\n  CAST(json_extract_string(u.d, '$.out_money') AS DECIMAL(14,2)) AS out_money,\n  CAST(json_extract_string(u.d, '$.in_money') AS DECIMAL(14,2)) AS in_money,\n  CAST(json_extract_string(u.d, '$.cost') AS DECIMAL(18,8)) AS cost\nFROM input o\nCROSS JOIN UNNEST(from_json(CAST(o.items AS JSON), '[\"JSON\"]')) AS u(d)"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "bizday": "not_null",
+            "order_no": "not_null",
+            "branch_num": "not_null",
+            "item_num": "not_null",
+            "item_code": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/transfer_out/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d+8h}/all.parquet",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd",
+          "connectionRef": "zos"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-w0-g0",
+      "source": "w0",
+      "target": "g0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g0-g1",
+      "source": "g0",
+      "target": "g1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g1-g2",
+      "source": "g1",
+      "target": "g2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g2-d0",
+      "source": "g2",
+      "target": "d0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d0-g3",
+      "source": "d0",
+      "target": "g3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g3-d1",
+      "source": "g3",
+      "target": "d1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d1-gv",
+      "source": "d1",
+      "target": "gv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gv-dv",
+      "source": "gv",
+      "target": "dv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p1",
+      "source": "dv",
+      "target": "p1",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p2",
+      "source": "dv",
+      "target": "p2",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p3",
+      "source": "dv",
+      "target": "p3",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p4",
+      "source": "dv",
+      "target": "p4",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p5",
+      "source": "dv",
+      "target": "p5",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p6",
+      "source": "dv",
+      "target": "p6",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p7",
+      "source": "dv",
+      "target": "p7",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p8",
+      "source": "dv",
+      "target": "p8",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p9",
+      "source": "dv",
+      "target": "p9",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p1-merge",
+      "source": "p1",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p2-merge",
+      "source": "p2",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_2",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p3-merge",
+      "source": "p3",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_3",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p4-merge",
+      "source": "p4",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_4",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p5-merge",
+      "source": "p5",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_5",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p6-merge",
+      "source": "p6",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_6",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p7-merge",
+      "source": "p7",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_7",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p8-merge",
+      "source": "p8",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_8",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p9-merge",
+      "source": "p9",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_9",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-merge-shape",
+      "source": "merge",
+      "target": "shape",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-shape-gate",
+      "source": "shape",
+      "target": "gate",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gate-sink",
+      "source": "gate",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}
