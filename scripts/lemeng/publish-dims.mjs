@@ -298,7 +298,7 @@ async function main() {
               t.quantity,
               t.money,
               round(t.money / nullif(t.quantity, 0) * 100)::bigint as price_minor,
-              t.bizday
+              t.bizday::text as bizday
          from staging.stg_lemeng_wholesale_out t
         where t.state_code = 3 and t.money is not null and t.money > 0
           and t.quantity is not null and t.quantity > 0`,
