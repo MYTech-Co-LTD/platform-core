@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.81.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.81.0...v0.81.1) - 2026-10-08
+- 【修复】data: DELETE /reports/:id 分流顺序与 POST 不一致——自绘行在没配 Metabase 的环境删不掉（恒 503） ([#498](https://github.com/MYTech-Co-LTD/platform-core/pull/498), [cb88d6e](https://github.com/MYTech-Co-LTD/platform-core/commit/cb88d6eac196f6ea15d1d60a02412be9a133a569))
+
+
 ## [0.81.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.80.0...v0.81.0) - 2026-10-07
 - 【新增】data: 报表 agent 制作通路——MCP 工具面（能提、不能发） ([#497](https://github.com/MYTech-Co-LTD/platform-core/pull/497), [9a4d2fc](https://github.com/MYTech-Co-LTD/platform-core/commit/9a4d2fcfe0dbe3dc07194e7d644aed579786bb5e))
 
