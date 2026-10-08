@@ -2,27 +2,29 @@
     config(materialized='table')
 }}
 -- stg_lemeng_item_price.sql — 乐檬**门店商品应用价** staging（新湖；#481 价格批；一对一、只规范化不改义）
--- 分区键推断类型不合约 ⇒ 两列显式 cast（system_book::varchar / snapshot::date）；取列必须 `from read_parquet(...) r`
+-- 【R1 增量模型】行 = 价格**变更事件**（bizday=采集日分区，last_edit_time=事件时间）；「现价」= 每 key
+-- 取 last_edit_time 最新——那是口径，落在 publish-dims 的窗口函数里（单一来源），本层只规范化。
+-- 分区键推断类型不合约 ⇒ 两列显式 cast（system_book::varchar / bizday::date）；取列必须 `from read_parquet(...) r`
 -- 函数别名形态（CTE 形态在 pg_duckdb 上取列即报错，同 stg_lemeng_branch.sql 头注）。
 --
 -- 【前缀单点】`lemeng/item_price` 段不写死字面量 —— 用 `dbt_project.yml` 的同源 var
 --   `lemeng_item_price_prefix`（出处：contracts/common/lemeng.item_price.json 的 `layout.prefix`；
 --   ⚠️ 刻意不叫 `dim_item_price`——生产者判定按子串匹配，会撞 `dim_item` 契约，见 var 注）。
---   分区键顺序 `["system_book","snapshot"]` 与管线的 sink `key` 逐段一致（见
+--   分区键顺序 `["system_book","bizday"]` 与管线的 sink `key` 逐段一致（backfill 另有 bf-*.parquet 同层文件，glob 一并吃）；见
 --   `deploy/duckle/console/pipelines/lemeng.dim.item_price.l0*.json` 的 sink 节点）。
 --
--- 【覆盖双账套】路径段写 `*/snapshot=**/` 而不是钉单账套 —— 与 branch/item 同款：一个模型读两个
+-- 【覆盖双账套】路径段写 `*/bizday=**/` 而不是钉单账套 —— 与 branch/item 同款：一个模型读两个
 --   账套分区（`system_book` 是**列**、不是 var）。
 --
 -- 列与空值性以 `contracts/common/lemeng.item_price.json` 为准（31 列全带，本层不加语义；
--- **另加 dbt 注入列 `org`**）。行粒度 = 账套 × 快照日 × 门店 × 商品(×分级)；
+-- **另加 dbt 注入列 `org`**）。行粒度 = 账套 × 采集日 × 门店 × 商品(×分级) × last_edit_time（事件键）；
 -- `item_grade_num is null` = 主商品行。`regular_real_price` 可空（0/空 = 源侧未单独设置，
 -- 发布面 Task 4 过滤，本层照透传）。
 select
   r['batch_id']::varchar as batch_id,
   r['system_book']::varchar as system_book,
   {{ subject_org() }}       as org,
-  r['snapshot']::date as snapshot,
+  r['bizday']::date as bizday,
   r['branch_num']::int as branch_num,
   r['branch_code']::varchar as branch_code,
   r['branch_name']::varchar as branch_name,
@@ -52,5 +54,5 @@ select
   r['max_real_price']::decimal(18,8) as max_real_price,
   r['min_real_price']::decimal(18,8) as min_real_price
 from read_parquet(
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_price_prefix") }}/*/snapshot=**/all.parquet'
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_price_prefix") }}/*/bizday=**/*.parquet'
 ) r

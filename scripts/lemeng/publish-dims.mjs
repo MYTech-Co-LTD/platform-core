@@ -148,10 +148,12 @@ async function main() {
     // 门店 staging 的最新快照——门店清单变更由它自愈）。
     // 去重（同 009 口径①）：两账套交集门店 distinct on 取 system_book 字典序小者（3120 优先）。
     const priceMax = await warehouse.query(
-      `select coalesce(max(snapshot)::text,'') as s from staging.stg_lemeng_item_price`,
+      `select coalesce(max(bizday)::text,'') as s from staging.stg_lemeng_item_price`,
     )
     const priceSnapshot = priceMax.rows[0].s
     if (priceSnapshot !== '') {
+      // R1 增量模型：staging = 变更事件流 ⇒ 现价 = 每 key 取 last_edit_time 最新（口径单一来源；
+      // 并列时取 bizday 新者）。之后再走 0/空价过滤与跨账套去重（口径同 009：3120 优先）。
       const prices = await warehouse.query(
         `select distinct on (p.org, b.code, p.item_code, coalesce(p.item_grade_num, 0))
                 p.org,
@@ -161,14 +163,18 @@ async function main() {
                 round(p.regular_real_price * 100 / coalesce(nullif(p.spec_rate, 0), 1))::bigint as price_minor,
                 p.regular_real_price as price_raw,
                 p.system_book
-           from staging.stg_lemeng_item_price p
+           from (
+             select *, row_number() over (
+                    partition by system_book, branch_num, item_num, item_grade_num
+                    order by last_edit_time desc, bizday desc) as rn
+               from staging.stg_lemeng_item_price
+           ) p
            join staging.stg_lemeng_branch b
              on b.system_book = p.system_book and b.branch_num = p.branch_num
             and b.snapshot = (select max(snapshot) from staging.stg_lemeng_branch)
-          where p.snapshot = $1::date
+          where p.rn = 1
             and p.regular_real_price is not null and p.regular_real_price > 0
           order by p.org, b.code, p.item_code, coalesce(p.item_grade_num, 0), p.system_book asc`,
-        [priceSnapshot],
       )
       await platform.query('begin')
       try {
