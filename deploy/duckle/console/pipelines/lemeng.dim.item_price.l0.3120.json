@@ -11,6 +11,12 @@
       "data": {
         "label": "w0",
         "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ],
         "properties": {
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/mcp",
