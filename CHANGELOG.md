@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.84.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.84.2...v0.84.3) - 2026-10-08
+- 【修复】data: dim_transfer_out 发布 insert 两处参数错位修正—— 空悬 + bizday 整列数组误入标量位 ([#508](https://github.com/MYTech-Co-LTD/platform-core/pull/508), [e17d288](https://github.com/MYTech-Co-LTD/platform-core/commit/e17d28898e10e0fe7fa3ae9ddb106b040b157130))
+
+
 ## [0.84.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.84.1...v0.84.2) - 2026-10-08
 - 【修复】data: 调出单窗口改单段 date-1d——组合段替换层不生效（#499 R2 修正） ([#507](https://github.com/MYTech-Co-LTD/platform-core/pull/507), [dd73355](https://github.com/MYTech-Co-LTD/platform-core/commit/dd73355cb041067992a1fd1967024eda2b1f7f25))
 
