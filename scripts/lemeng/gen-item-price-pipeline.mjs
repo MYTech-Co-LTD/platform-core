@@ -50,7 +50,7 @@ if (!Array.isArray(branches) || branches.length === 0 || branches.some((b) => !N
   process.exit(2)
 }
 const out = argOf('--out')
-const CHUNK = 15
+const CHUNK = 1   // 逐店一节点：引擎 src.rest 的 into_string 有响应体上限（15 店/批 ≈40MB 首跑实测爆；单店 ~2.6-4MB 安全）
 // 生成日的滚动 2 年窗起点（留 0 天余量——网关按"今天"滚，字面量寿命就是 2 年，过期 fail-loud）
 const sinceIdx = process.argv.indexOf('--since')
 const since = (sinceIdx !== -1 && sinceIdx + 1 < process.argv.length)

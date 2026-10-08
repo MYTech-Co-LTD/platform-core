@@ -24,7 +24,7 @@
 
 > **价格批（#481，`lemeng.dim.item_price.l0*.json`）与下图同构，两处结构差**（生成器
 > `scripts/lemeng/gen-item-price-pipeline.mjs` 产出，**不手编**）：
-> ① 扇出基准 = **门店批**（15 店/批；realprice 无分页，item.find 按页）——批内门店号是
+> ① 扇出基准 = **逐店一节点**（realprice 无分页、单店 ~2.6-4MB；15 店/批 ≈40MB 曾爆引擎 src.rest 的 into_string 上限，首跑实测退到逐店）——批内门店号是
 > **生成时字面量**，`last_edit_time` 也是（生成日的滚动 2 年窗起点，网关上限 10310217
 > 随「今天」滚）⇒ **门店增减或字面量临期 ⇒ 重跑生成器**（约 2 年一次）；
 > ② `guard` 换成 `coverage→cg`：merged 门店集合对 `${ENV:BRANCH_NUMS}` **点名**，
