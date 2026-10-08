@@ -723,6 +723,9 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 16 | 读 parquet 点名取列必须 **`r['列名']` + 别名 `r`**；`SELECT *` 能过、点名报 `column does not exist` | dbt staging 门禁（`check-data-models` 第 ① 项） |
 | 17 | **物化断链**：采集每天绿、湖已领先两天，而 PG **停在 09-23**；37 个 job 无一跑 dbt；**没有任何东西报错** | §0 完成判据「落湖归我、下游看得见」；§1.5「下游数据陈旧」一条 |
 | 18 | 「一账套一 console」原写成**结构性约束**；实测（本地 + **生产 0.7.4 容器**）证明被强制的只是「**调度条目**带不了 env」——账号维度可走 `${ITER_ITEM_*}` + `connectionRef`（两行驱动两连接，回显实录 `TOKEN-A`/`TOKEN-B` 各一次） | §1.1.4 订正：那是**权衡**（一个 workspace 一把钥匙护所有凭据 + 共享故障域），**不是引擎铁律** |
+| 19 | **引擎 src.rest 响应体上限**：`REST response read: response too big for into_string`（HTTP 客户端 into_string 编译期默认，DUCKLE_* 配置面**无旋钮**——runner 二进制 strings 全查）。实测 **12.3MB 过（7,688 行）/ 32.9MB 炸（20,213 行）**，且**单店即可越限** ⇒ 逐店扇出救不了大店；全量快照直采对本源不可行（#499 首跑实测三墙之一） | 大响应源设计前先测「单请求响应上限」；超限源改**请求侧增量**（变更窗响应 KB 级）——正典 §1.1 已有同族先例 |
+| 20 | **首跑同日覆盖首载**：backfill 写 `bizday=今日` 后当天手动触发日常增量（同 bizday 同 key）⇒ 覆盖写把 20.4 万行首载文件换成 66 行增量——**无报错、行数腰斩只能靠 staging 对数发现** | 首载日 ≠ 首个日常 run 日（调度错开一天）；或首载写独立 bizday。靠「写后回读对数」抓的，不是靠跑绿 |
+| 21 | **手抄门店清单两次引入重复元素**（`37,37`），且第二次是在修正第一次时再犯——管道下游（键唯一断言/门店覆盖守卫）会抓，但生成时就该防 | 门店/ID 清单一律**从源头管线逐字提取 + 唯一性断言**（`gen-item-price-pipeline.mjs` 的提取器即为此改），绝不手抄 |
 | 19 | **读湖三方同撞一个竞态**（tick `*/5` 重写与读并发）：物化 job `20 3` 首跑**天天撞**（03:20 读湖恰逢 tick 重写 hour=10 文件）、问数咽喉对湖的读随时可撞（spec ③ 读「今天」的视图尤甚）、对账 audit 撞未闭窗营业日 ⇒ 三路定案（#452/#462）：读侧咽喉**重试恰一次**（`lake_race_retry` / `warehouse_transient` 归因）+ 物化**错峰 `27 3`** + audit **只比已闭窗营业日** | §1.5「问数偶发 `warehouse_transient`」一条；§3 物化调度行错峰注 |
 
 ### 1.7 逐源决策登记区
@@ -734,7 +737,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 乐檬零售明细（3120） | duckle | — | `lemeng/retail_order_line` | `system_book=` + `hour=` | **日批在跑** + 5min tick 已定义（**试点待投递**，Task 6 未投——别读成「现行 5min」） | **duckle console**（调度 enabled，cron 不变；openship job 已先禁、观察期 ≥3 运行日后退役——#265） | 自证 ✓ / 幂等 ✓ / 独立通道 **口径已对齐**（2026-10-05；旧数 +1.15% 系**旧口径**、已废）——⚠️ 但 **3120 侧通道被乐檬改坏（恒 `10006`），无法复验**（§1.4） / 跨系统 待回填 |
 | 乐檬零售明细（64188） | duckle | — | 同上 | 同上 | 同 3120 | **未落**（调度；**数据已落盘**——见 §2） | 自证 / 幂等 同 3120 / 独立通道 **✓ 逐分归零**（2026-10-05 真机 5 天 × 63 店；执行面 `scripts/lemeng/recon-preagg.sh`） / 跨系统 待回填 |
 | 乐檬门店维 / 商品维（双账套） | duckle | — | `lemeng/dim_branch`、`lemeng/dim_item` | `system_book=` + `snapshot=` | 日更（全量快照） | **duckle console** ×2（UTC `0 2 * * *` / `0 11 * * *`） | 首次真跑销账（**拒写湖**路径已验证；门店维见 `deploy/duckle/README.md` §9，商品维 2026-09-26 两账套 cron 真跑）——**不是「四层全过」** |
-| 乐檬价格批 / 门店商品应用价（双账套，#481） | duckle | — | `lemeng/item_price` | `system_book=` + `snapshot=` | 日更（全量快照；`last_edit_time` 传滚动 2 年窗起点 = 全量当前价——网关上限 `10310217` 为滚动 2 年，2026-10-08 实测） | 计划中（`docs/superpowers/plans/2026-10-08-481-lemeng-price-batch.md` Task 6） | — |
+| 乐檬价格批 / 门店商品应用价（双账套，#499/#481） | duckle | **首载走一次性脚本（H 例外）**：引擎 src.rest 响应体上限（into_string 编译期默认 **12.3MB 过 / 32.9MB 炸、不可配**）使单店即越限 ⇒ 管线无法承载 2 年窗全量；首载 = 探针测量产物直写湖（`scripts/lemeng/backfill-item-price-once.py`，已留档），日常增量走管线 | `lemeng/item_price` | `system_book=` + `bizday=`（**R1 增量模型**：行 = 价格变更事件，`last_edit_time` = 事件时间；staging 取每 key 最新物化现价） | 日更（请求侧增量水位 `incrementalField=last_edit_time`；响应 KB 级/天） | **duckle console** ×2（UTC `15 11 * * *`，与 dim.item 错峰） | 首载 ✓（64188 = 204,474 / 3120 = 734,682，写读对平）/ 日常增量首跑 ✓（64188 ok；**3120 因 PAT 失效待恢复**，见 #499 评论）/ 幂等 ✓（同 key 覆盖写两次实证）/ 独立通道 ✓（发布表 vs 网关定点逐分平：蒙自01×22441 = 9.96/996）/ spec_rate 换算方向 ✓ 真机样本实证（礼盒 ÷3 公斤价、份装 ÷2 盒价；「鲜切」类 unit 同 rate=2 的 ~20 行语义留业务确认）/ 跨系统 待回填 |
 | 乐檬调拨 / 批发 / 退货 / 要货（5 源） | duckle（设计定稿） | — | `lemeng/transfer_out` 等 | `system_book=` + `bizday=` | 5min 增量 + 每小时全量（设计） | 未落 | — |
 | 抖音 `sku_daily` | 未定 | — | `douyin/sku_daily` | 月（**键名未定**） | 未定 | 未落 | 待接入 |
 | 抖音接收器（`dy-upload`，生产在跑） | **E1**（长驻接收，**未销账**） | 长驻接收器**在跑**（生产 project `dy-upload` 以 `bare` runtime 跑 `/opt/douyin-life/capture/dy_receiver_run.py`）⇒ 命中 E1；**落盘形态等细节待核实**（§7 #3） | 待核实 | 待核实 | 常驻 | 待核实 | — |
@@ -755,7 +758,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 |---|---|---|---|---|
 | 乐檬 | `lemeng/retail_order_line/<主体>/<日>/<时>/all.parquet` | 账套（3120 熊喵 / 64188 品品甜） | **已落盘**（**双账套**——2026-09-28 订正：64188 已落；物化侧 64188 有 09-25～09-27 三天的 `fct_retail_sale` 行） | 新湖口径见 §1.7；旧前缀 `lemeng/retail_detail/…`：**所在桶已核实 = `lemeng-datasource`**（**不是**租户桶 `shanhai-data` —— 2026-09-26 在租户桶里逐对象 / 前缀都 404 是**对的**，旧文「所在桶待核实」到此销账），且**至今仍在被写**（2026-10-06 实测：生产方 `data-analysis`，跑在 `data.shanhaiyiguo.com`，每 **5 min** 一轮，**不在 openship 管辖内**，本仓与 openship 都停不掉它）⇒ **§1.3 阶段 I 的第 ③ 项（观察期）不满足 ⇒ 前缀不能下线**。本仓侧已于 2026-10-06 完成**仓内退役**（读它的 staging / `sources.yml` 声明 / `dbt_project.yml` 两个 var / 投递 lock 条目全删），见 §1.3 阶段 I 的订正块。**别默认它在租户桶里找。** |
 | 乐檬 | `lemeng/dim_branch`、`lemeng/dim_item`（`system_book=` + `snapshot=`） | 同上 | **已落盘**（双账套） | 全量快照日更；行粒度键含 `snapshot`（§1.1.2） |
-| 乐檬 | `lemeng/item_price`（`system_book=` + `snapshot=`） | 账套 × 门店 × 商品（#481 价格批） | **摸清源**（契约已立，管线/调度计划中） | `nhsoft.retail.ai.branchitem.realprice.find` 全量快照日更；行粒度键 = 账套×快照日×门店×商品(×分级)；探针报告 `.superpowers/sdd/2026-10-08-481-lemeng-price-batch/probe-report.md` |
+| 乐檬 | `lemeng/item_price`（`system_book=` + `bizday=`） | 账套 × 门店 × 商品（#499 价格批） | **已落盘**（双账套；64188 日常增量在跑，3120 待 PAT 恢复——见 #499） | R1 增量模型：行 = 变更事件；发布面 `data.dim_item_price`（#500 工单侧消费）；探针报告 `.superpowers/sdd/2026-10-08-481-lemeng-price-batch/probe-report.md` |
 | 乐檬 | 调拨 / 批发 / 退货 / 要货（`transfer_out` / `wholesale_order` / `wholesale_return` / `request_order`） | 3120（要货双账套） | **摸清源**（设计定稿，未落） | 见 `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` |
 | 抖音 | `douyin/sku_daily/<月>/all.parquet` | — | **摸清源**（待接入） | 分区键名未定；见 `contracts/README.md` §7 |
 
@@ -800,7 +803,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 | 日期 | 数据源 | 验收范围 | 结论 | 卡点 → 案例号 |
 |---|---|---|---|---|
-| 2026-09-21 | 乐檬 retail_detail（只读压测） | 非完整 SOP，仅验证链路与资源 | 链路通（1.09M 行） | #1 #2 #3 #4 #5 #6（**公司标准 §6 的编号；该标准尚未合入**）——本正典的案例库见 §1.6。⚠️ **本行是史实、不改**：压测读的是 `lemeng-datasource` 桶里的**旧湖数据**（湖上仍在、仍被写）；仓内那份同名 staging 已于 **2026-10-06 退役**（§1.3 阶段 I），**与本次验收结论无关** |
+| 2026-10-08 | 乐檬 item_price（价格批首载+增量，#499） | A→I 完整走（A 探针→B 契约→C/D 管线→E 调度→F 验收；H 首载例外登记） | 双账套首载 939,156 行落湖→staging→发布 `data.dim_item_price` 906,362 行；64188 日常增量首跑 ok；三墙实录见 §1.6 案例 19–21 | #1 #2 #3 #4 #5 #6（**公司标准 §6 的编号；该标准尚未合入**）——本正典的案例库见 §1.6。⚠️ **本行是史实、不改**：压测读的是 `lemeng-datasource` 桶里的**旧湖数据**（湖上仍在、仍被写）；仓内那份同名 staging 已于 **2026-10-06 退役**（§1.3 阶段 I），**与本次验收结论无关** |
 
 ---
 
