@@ -1,12 +1,13 @@
 #!/bin/sh
-# recon-day-heal.sh — 「定稿线对账 → 不平即回填 → 复验」的**闭环驱动**（§1.4.1 定稿线的失败动作）
+# recon-day-heal.sh — 「定稿线对账 → 判别 → 旁路失效 → 回填 → 复验」的**闭环驱动**（§1.4.1 定稿线的失败动作）
 #
 # ── 它补的是哪一环 ────────────────────────────────────────────────────────────
 # `diagnose.sh recon-day <D>`（**只读**）发现某定稿日对不平；本脚本负责**下一步**：
 #   ① 判别「真缺口」vs「通道/身份类故障」（**后者不回填**，见下）
-#   ② 触发该营业日的整日回填（参数化 run，**一次**，不循环）
-#   ③ 等回填跑完 → **复验** recon-day
-#   ④ 如实结论：HEAL_OK / HEAL_RECOVERED / HEAL_FAILED / HEAL_REFUSED:* / HEAL_SKIP:*
+#   ② **旁路失效**：删掉目标营业日被 checkpoint 冻结的条目（备份先行；HEAL_BYPASS=0 可关）
+#   ③ 触发该营业日的整日回填（参数化 run，**一次**，不循环）
+#   ④ 等回填跑完 → **复验** recon-day
+#   ⑤ 如实结论：HEAL_OK / HEAL_RECOVERED / HEAL_FAILED / HEAL_REFUSED:* / HEAL_SKIP:*
 #
 # ── 为什么判别是**必须**的（别把它当优化去掉）────────────────────────────────
 # 回填是**生产写**（覆盖该营业日分区）。而 recon 失败有两种完全不同的来头：
@@ -14,6 +15,15 @@
 #   · **通道/身份类**：`cross_unavailable` / `lake` / `gateway` / `assert` ⇒ 是**我们的通道**坏了，
 #     **与被采集的数据无关**。此时回填要么白跑、要么在错误状态下写生产 ⇒ **必须拒回填**。
 # ⇒ 判据只认「行/批次与网关不符」为缺口；其余一律 `HEAL_REFUSED:`。
+#
+# ── 为什么回填前必须**旁路失效**（#528，2026-10-09 定案）──────────────────────
+# window 子管线的 12 个 page 节点全 `checkpoint: true`，而 checkpoint 的 key = 节点配置指纹 + 父行，
+# **不含 run_token** ⇒ 回填命中旧条目只会**重放**（不重抓）——「不平 ⇒ 回填 ⇒ 复验」对冻结缺口
+# 结构性无效，这正是 10-01/04/05 四天五轮回填逐行不变的机制。⇒ 触发前先把目标营业日的冻结条目
+# 删掉（备份到 `state/.backup-heal-*`），回填才会真正重抓。删除判据用**内容标记**
+# `"shift_table_bizday":"<紧凑 YYYYMMDD>"`（修数实测 0 跨日误伤），不用 `at` 推断。
+# `HEAL_FORCE=1`：跳过 recon 复核直入修数（**无条件**口子）；定稿线闸门**仍生效**——
+# 未定稿日的源还在变，重抓抓到的仍是半截快照。
 #
 # ── 为什么**只回填定稿线以外的日子**（settle line）────────────────────────────
 # 未定稿的日子源还在变，回填是白填（正典 §1.4.1）。默认只接 **T-3 及更早**；更新的直接拒。
@@ -28,6 +38,10 @@
 #     拒绝：`HEAL_REFUSED:<reason>`（not_settled | infra_failure | bad_args）
 #     跳过：`HEAL_SKIP:<reason>`（no_gap）
 #     失败：`HEAL_FAILED:<reason>`（trigger_failed | wait_timeout | still_a_gap）
+#     旁路：`HEAL_BYPASS_DELETED deleted=N files=N backup=<dir>`（删了几条、备份在哪）
+#           `HEAL_BYPASS_FAILED:<reason>`（exec | unexpected）⇒ exit 3，**不触发回填**
+#     强制：`HEAL_FORCED bizday=`（跳过复核直入修数）
+#     关闭：`HEAL_BYPASS_OFF bizday=`（HEAL_BYPASS=0；此态回填只会重放）
 #
 # 依赖 env：LEMENG_TOKEN / BRANCH_NUMS / SYSTEM_BOOK / ZOS_*（透传给 diagnose.sh；本脚本不自己读凭据）
 # 可选 env：DIAGNOSE_BIN（默认 /opt/lemeng-diagnose.sh）
@@ -36,6 +50,8 @@
 #           BACKFILL_PIPELINE（默认 pipelines/lemeng.retail.windows.backfill.json）
 #           SETTLE_DAYS（默认 3）/ HEAL_WAIT_SECONDS（默认 900）/ HEAL_POLL_SECONDS（默认 20）
 #           HEAL_DRY_RUN=1（**只判别与打印，不触发**——演练用）
+#           HEAL_BYPASS=0（**关旁路**：不删冻结条目直接回填——只会重放，仅确知无冻结条目时用）
+#           HEAL_FORCE=1（**跳过 recon 复核**直入修数——无条件口子；定稿线闸门仍生效）
 #
 # ⚠️ 相邻中文一律 `${VAR}`：本机 /bin/sh（bash 3.2）会把全角字符吃进变量名（全仓纪律，issue #212）。
 set -u
@@ -47,13 +63,17 @@ BACKFILL_PIPELINE=${BACKFILL_PIPELINE:-pipelines/lemeng.retail.windows.backfill.
 SETTLE_DAYS=${SETTLE_DAYS:-3}
 HEAL_WAIT_SECONDS=${HEAL_WAIT_SECONDS:-900}
 HEAL_POLL_SECONDS=${HEAL_POLL_SECONDS:-20}
+HEAL_BYPASS=${HEAL_BYPASS:-1}
+HEAL_FORCE=${HEAL_FORCE:-0}
 
 usage() {
   cat >&2 <<'USAGE'
 用法：sh recon-day-heal.sh [<YYYY-MM-DD>]
   不给营业日 ⇒ 取 **T-3**（正典 §1.4.1 定稿线）。
-  流程：recon-day（只读）→ 不平则判别 → 真缺口才回填（一次）→ 复验 → 结论。
+  流程：recon-day（只读）→ 不平则判别 → **旁路失效冻结条目**（备份先行）→ 回填（一次）→ 复验 → 结论。
   演练：HEAL_DRY_RUN=1（只判别与打印，不触发回填）。
+  强制：HEAL_FORCE=1（跳过判别直入修数；定稿线闸门仍生效）。
+  关闭：HEAL_BYPASS=0（不删冻结条目——回填只会重放，仅确知无冻结条目时用）。
 退出码：0=已对平或自愈成功；1=不平且未自愈；2=用法/拒回填；3=依赖不可用。
 USAGE
 }
@@ -89,6 +109,41 @@ heal_settled() {
   [ "$_hs_day" \< "$_hs_cut" ] || [ "$_hs_day" = "$_hs_cut" ]
 }
 
+# ── 旁路失效（#528）───────────────────────────────────────────────────────────
+# 删除判据 = 行内内容标记 `"shift_table_bizday":"<紧凑 YYYYMMDD>"`（flatten 产物自带，
+# 修数实测 0 跨日误伤；对任意 `at` 形状稳健）。备份先行（原文件 cp 进 backup 目录）；
+# 全删光时残留**空 ndjson** 是合法态（引擎视为无缓存条目 ⇒ 全量重抓）。
+heal_marker() {
+  printf '%s' "$1" | tr -d '-'
+}
+
+# 在容器内执行的删除片段（单引号变量，**内部禁用单引号**）。
+# 调用形：docker exec … sh -c "$PRUNE_SNIPPET" sh <state根目录> <紧凑标记> <备份目录>
+# 本机测试不经 docker，直接 `sh -c "$PRUNE_SNIPPET" sh <tmp夹具> …`——同一段实现两边跑，不复制。
+PRUNE_SNIPPET='
+root=$1; marker=$2; bdir=$3
+mkdir -p "$bdir"
+deleted=0; files=0
+for f in "$root"/lemeng_retail_order_line_window_*/checkpoints/*.ndjson; do
+  [ -f "$f" ] || continue
+  files=$((files+1))
+  n=$(grep -cF "\"shift_table_bizday\":\"$marker\"" "$f" 2>/dev/null) || :
+  [ "${n:-0}" -gt 0 ] || continue
+  cp "$f" "$bdir/$(basename "$f").$files.bak"
+  grep -vF "\"shift_table_bizday\":\"$marker\"" "$f" > "$f.tmp" || :
+  mv "$f.tmp" "$f"
+  deleted=$((deleted+n))
+done
+echo "HEAL_BYPASS_DELETED deleted=$deleted files=$files backup=$bdir"
+'
+
+heal_bypass() {
+  _hb_day=$1
+  _hb_marker=$(heal_marker "$_hb_day")
+  _hb_bdir="/workspace/state/.backup-heal-$(date -u +%Y%m%dT%H%M%SZ)"
+  docker exec "$CONSOLE_CT" sh -c "$PRUNE_SNIPPET" sh /workspace/state "$_hb_marker" "$_hb_bdir"
+}
+
 # ── 触发整日回填（参数化 run，异步）────────────────────────────────────────────
 # 凭据**运行时**从容器 env 现取（不落本脚本、不落 argv、不落 job 配置）
 _console_token() {
@@ -122,25 +177,45 @@ fi
 
 [ -f "$DIAGNOSE_BIN" ] || { echo "HEAL_REFUSED:bad_args 对账工具不在：${DIAGNOSE_BIN}" >&2; exit 3; }
 
-echo "heal bizday=${DAY} settle_days=${SETTLE_DAYS}"
-_OUT=$(BIZDAY="$DAY" sh "$DIAGNOSE_BIN" recon-day "$DAY" 2>&1); _RC=$?
-printf '%s\n' "$_OUT"
-V=$(heal_verdict "$_OUT" "$_RC")
-echo "HEAL_VERDICT=${V} (recon exit=${_RC})"
+if [ "${HEAL_FORCE}" = "1" ]; then
+  echo "HEAL_FORCED bizday=${DAY}——跳过 recon 复核直入修数（无条件口子）；定稿线闸门仍生效"
+else
+  echo "heal bizday=${DAY} settle_days=${SETTLE_DAYS}"
+  _OUT=$(BIZDAY="$DAY" sh "$DIAGNOSE_BIN" recon-day "$DAY" 2>&1); _RC=$?
+  printf '%s\n' "$_OUT"
+  V=$(heal_verdict "$_OUT" "$_RC")
+  echo "HEAL_VERDICT=${V} (recon exit=${_RC})"
 
-case "$V" in
-  OK)
-    echo "HEAL_OK bizday=${DAY}"
-    exit 0 ;;
-  INFRA)
-    echo "HEAL_REFUSED:infra_failure bizday=${DAY}——失败面属**我们的通道/身份**（湖回读 / 免凭据通道 / 网关 / 身份），与被采数据无关 ⇒ 不回填（回填会在错误状态下写生产）" >&2
-    exit 2 ;;
-esac
+  case "$V" in
+    OK)
+      echo "HEAL_OK bizday=${DAY}"
+      exit 0 ;;
+    INFRA)
+      echo "HEAL_REFUSED:infra_failure bizday=${DAY}——失败面属**我们的通道/身份**（湖回读 / 免凭据通道 / 网关 / 身份），与被采数据无关 ⇒ 不回填（回填会在错误状态下写生产）" >&2
+      exit 2 ;;
+  esac
+fi
 
-# 到这里 = 真缺口
+# 到这里 = 真缺口（或 HEAL_FORCE）
 if [ "${HEAL_DRY_RUN:-0}" = "1" ]; then
   echo "HEAL_SKIP:no_gap(dry_run) bizday=${DAY}——判别为真缺口；HEAL_DRY_RUN=1 故**不触发**回填"
   exit 0
+fi
+
+# ── 旁路失效（#528）：不删冻结条目，回填只会重放 ⇒ 删失败就**不触发**回填 ──────
+if [ "${HEAL_BYPASS}" = "1" ]; then
+  echo "HEAL_BYPASS bizday=${DAY}（先失效冻结 checkpoint 条目再回填，备份到 state/.backup-heal-*）"
+  if ! _BY=$(heal_bypass "$DAY"); then
+    echo "HEAL_BYPASS_FAILED:exec bizday=${DAY}（容器 ${CONSOLE_CT} 内旁路删除失败）⇒ 不触发回填（否则=白跑重放）" >&2
+    exit 3
+  fi
+  echo "  ${_BY}"
+  case "$_BY" in
+    *HEAL_BYPASS_DELETED*) ;;
+    *) echo "HEAL_BYPASS_FAILED:unexpected bizday=${DAY}（旁路输出缺 HEAL_BYPASS_DELETED，见上）" >&2; exit 3 ;;
+  esac
+else
+  echo "HEAL_BYPASS_OFF bizday=${DAY}（HEAL_BYPASS=0：不删冻结条目，回填只会重放——仅确知无冻结条目时才这么用）"
 fi
 
 _TOK=$(_console_token)
