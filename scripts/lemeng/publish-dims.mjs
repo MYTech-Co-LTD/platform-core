@@ -18,9 +18,9 @@
 //   UNION 合并 scope 会让 item 恒 0 行）——两表各自取各自的 max(snapshot)。
 //
 // 事实源与流向：
-//   `DATA_WAREHOUSE_URL`（pg_duckdb staging，stg_lemeng_branch / stg_lemeng_item / stg_lemeng_item_price / stg_lemeng_transfer_out / stg_lemeng_wholesale_out）
+//   `DATA_WAREHOUSE_URL`（pg_duckdb staging，stg_lemeng_branch / stg_lemeng_item / stg_lemeng_item_price / stg_lemeng_transfer_out / stg_lemeng_wholesale_out / stg_lemeng_client）
 //     → 裁剪（列集 = data 模块定的发布契约，见 009/011 迁移）+ 跨账套去重
-//     → `DATABASE_URL`（平台 PG data.dim_branch / data.dim_item / data.dim_item_price / data.dim_transfer_out / data.dim_wholesale_out，事务内整批替换）。
+//     → `DATABASE_URL`（平台 PG data.dim_branch / data.dim_item / data.dim_item_price / data.dim_transfer_out / data.dim_wholesale_out / data.dim_settlement_order_line，事务内整批替换）。
 //
 // 幂等（job 每天重跑）：每张表按 org **delete 后整批 insert**——重跑同一份 staging ⇒
 //   行集不变（验收判据：行数不变，不是「没报错」）。
@@ -338,16 +338,136 @@ async function main() {
     }
     console.log(`${SCRIPT_NAME}: dim_wholesale_out —— ${woRows.rows.length} 行（仅审核单；price_minor=基本单位分价）`)
 
+    // ── dim_settlement_order_line（#517 段②）：工单挂原单取价面 ────────────────────
+    // 行粒度 = 原单行（MO=grade 行、WO=明细行）；只收已审且金额为正（口径同 012/013）。
+    // MO 分支逐字镜像 dim_transfer_out 的查询（对平验收要求两处行集一致，别各写各的）。
+    // WO 的 store_code 解析序（spec §5）：override（平台库人工对照）→ 客户档案名 ↔ dim_branch
+    //   名精确同名（多命中 order by system_book，同 009 口径①）。
+    // ⚠️ override 表在平台库、staging 在 warehouse 库——跨库 join 不存在 ⇒ override 对从平台库
+    //    读出后以 unnest 数组注入 warehouse 查询（空数组天然无行）。
+    // ⚠️ **未映射的 WO 行不进面**，distinct client_fid 清单大声红（console.error）但**不 exit
+    //    非零**——发布不阻断，消费端建单 PRICE_NOT_FOUND fail-closed 兜底（spec §5）。
+    // ⚠️ 数据主路/守卫旁支的教训同 gen-client（#516）：本查询一次取全（含未映射行），拆分在
+    //    JS 侧做——别用 SQL 过滤后再查一遍未映射清单（两次查询间无一致性保证）。
+    const overrideRows = await platform.query(
+      'select client_fid, store_code from data.client_store_override',
+    )
+    const ovFids = overrideRows.rows.map((/** @type {{ client_fid: string }} */ r) => String(r.client_fid))
+    const ovCodes = overrideRows.rows.map((/** @type {{ store_code: string }} */ r) => String(r.store_code))
+    const faceRows = await warehouse.query(
+      `with wo_mapped as (
+         select w.org,
+                w.client_fid,
+                coalesce(ov.store_code,
+                  (select b.code from staging.stg_lemeng_client c
+                     join staging.stg_lemeng_branch b
+                       on b.name = c.client_name
+                      and b.snapshot = (select max(snapshot) from staging.stg_lemeng_branch)
+                    where c.client_fid = w.client_fid
+                      and c.snapshot = (select max(snapshot) from staging.stg_lemeng_client)
+                    order by b.system_book asc limit 1)) as store_code,
+                (select b.name from staging.stg_lemeng_client c
+                     join staging.stg_lemeng_branch b
+                       on b.name = c.client_name
+                      and b.snapshot = (select max(snapshot) from staging.stg_lemeng_branch)
+                    where c.client_fid = w.client_fid
+                      and c.snapshot = (select max(snapshot) from staging.stg_lemeng_client)
+                    order by b.system_book asc limit 1) as store_name,
+                w.order_no, w.item_code, w.item_name, w.order_detail_num,
+                w.quantity, w.money,
+                round(w.money / nullif(w.quantity, 0) * 100)::bigint as price_minor,
+                w.bizday::text as bizday, w.create_time
+           from staging.stg_lemeng_wholesale_out w
+           left join (select unnest($1::text[]) as client_fid, unnest($2::text[]) as store_code) ov
+             on ov.client_fid = w.client_fid
+          where w.state_code = 3 and w.money is not null and w.money > 0
+            and w.quantity is not null and w.quantity > 0
+       )
+       select 'transfer' as source,
+              max(b.code) as store_code,
+              max(t.branch_name) as store_name,
+              t.order_no,
+              min(t.bizday)::text as order_bizday,
+              max(t.create_time) as order_time,
+              t.item_code,
+              max(t.item_name) as item_name,
+              coalesce(t.item_grade_num, 0)::text as line_key,
+              sum(t.quantity) as quantity,
+              sum(t.out_money) as money,
+              round(sum(t.out_money) / nullif(sum(t.quantity), 0) * 100)::bigint as price_minor,
+              null::text as client_fid
+         from staging.stg_lemeng_transfer_out t
+         left join staging.stg_lemeng_branch b
+           on b.system_book = t.system_book and b.branch_num = t.branch_num
+          and b.snapshot = (select max(snapshot) from staging.stg_lemeng_branch)
+        where t.state_code = 3 and t.out_money is not null and t.out_money > 0
+        group by t.org, t.order_no, t.item_code, coalesce(t.item_grade_num, 0)
+       having sum(t.quantity) > 0
+       union all
+       select 'wholesale' as source,
+              m.store_code, m.store_name, m.order_no, m.bizday, m.create_time,
+              m.item_code, m.item_name, m.order_detail_num::text as line_key,
+              m.quantity, m.money, m.price_minor, m.client_fid
+         from wo_mapped m`,
+    )
+    /** @type {{ source: string, store_code: string | null, store_name: string | null, order_no: string, order_bizday: string, order_time: string | null, item_code: string, item_name: string | null, line_key: string, quantity: string | number | null, money: string | number | null, price_minor: string | number, client_fid: string | null }[]} */
+    const faceRowsAll = faceRows.rows
+    const unmappedFids = [...new Set(faceRowsAll
+      .filter((/** @type {any} */ r) => r.source === 'wholesale' && r.store_code === null && r.client_fid !== null)
+      .map((/** @type {any} */ r) => String(r.client_fid)))]
+    if (unmappedFids.length > 0) {
+      const unmappedRowCount = faceRowsAll.filter((/** @type {any} */ r) => r.source === 'wholesale' && r.store_code === null).length
+      console.error(`${SCRIPT_NAME}: 🔴 未映射批发客户 ${unmappedFids.length} 个（涉及 ${unmappedRowCount} 行不进取价面）：${unmappedFids.join(', ')} —— 处置：data.client_store_override 补一行（client_fid→store_code），或核客户档案名与门店维名是否漂移（spec §5；消费端 PRICE_NOT_FOUND 兜底，发布不阻断）`)
+    }
+    const faceInsertable = faceRowsAll.filter((/** @type {any} */ r) => r.store_code !== null)
+    await platform.query('begin')
+    try {
+      await platform.query('delete from data.dim_settlement_order_line')
+      for (let i = 0; i < faceInsertable.length; i += 5000) {
+        const chunk = faceInsertable.slice(i, i + 5000)
+        await platform.query(
+          `insert into data.dim_settlement_order_line (org, source, store_code, store_name, order_no, order_bizday, order_time, item_code, item_name, line_key, quantity, money, price_minor)
+           select t.org, t.source, t.store_code, t.store_name, t.order_no, t.order_bizday, t.order_time, t.item_code, t.item_name, t.line_key, t.quantity, t.money, t.price_minor
+             from unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::date[], $7::text[], $8::text[], $9::text[], $10::text[], $11::decimal(14,6)[], $12::decimal(14,2)[], $13::bigint[]) as
+                  t(org, source, store_code, store_name, order_no, order_bizday, order_time, item_code, item_name, line_key, quantity, money, price_minor)`,
+          [
+            chunk.map((/** @type {any} */ r) => r.org),
+            chunk.map((/** @type {any} */ r) => String(r.source)),
+            chunk.map((/** @type {any} */ r) => String(r.store_code)),
+            chunk.map((/** @type {any} */ r) => (r.store_name === null ? null : String(r.store_name))),
+            chunk.map((/** @type {any} */ r) => String(r.order_no)),
+            chunk.map((/** @type {any} */ r) => String(r.order_bizday)),
+            chunk.map((/** @type {any} */ r) => (r.order_time === null ? null : String(r.order_time))),
+            chunk.map((/** @type {any} */ r) => String(r.item_code)),
+            chunk.map((/** @type {any} */ r) => (r.item_name === null ? null : String(r.item_name))),
+            chunk.map((/** @type {any} */ r) => String(r.line_key)),
+            chunk.map((/** @type {any} */ r) => (r.quantity === null ? null : Number(r.quantity))),
+            chunk.map((/** @type {any} */ r) => (r.money === null ? null : Number(r.money))),
+            chunk.map((/** @type {any} */ r) => Number(r.price_minor)),
+          ],
+        )
+      }
+      await platform.query('commit')
+    } catch (err) {
+      await platform.query('rollback')
+      throw err
+    }
+    const faceMo = faceInsertable.filter((/** @type {any} */ r) => r.source === 'transfer').length
+    const faceWo = faceInsertable.filter((/** @type {any} */ r) => r.source === 'wholesale').length
+    console.log(`${SCRIPT_NAME}: dim_settlement_order_line —— ${faceInsertable.length} 行（MO ${faceMo} + WO ${faceWo}；未映射 ${unmappedFids.length} 客户不进面）`)
+
+
     // 回读验收面（不拿「没抛错」当成功）
     const check = await platform.query(
       `select (select count(*)::int from data.dim_branch) as branch,
               (select count(*)::int from data.dim_item) as item,
               (select count(*)::int from data.dim_item_price) as item_price,
               (select count(*)::int from data.dim_transfer_out) as transfer_out,
-              (select count(*)::int from data.dim_wholesale_out) as wholesale_out`,
+              (select count(*)::int from data.dim_wholesale_out) as wholesale_out,
+              (select count(*)::int from data.dim_settlement_order_line) as settlement_line`,
     )
     console.log(
-      `${SCRIPT_NAME}: 发布完成 —— 回读 dim_branch ${check.rows[0].branch} / dim_item ${check.rows[0].item} / dim_item_price ${check.rows[0].item_price} / dim_transfer_out ${check.rows[0].transfer_out} / dim_wholesale_out ${check.rows[0].wholesale_out}`,
+      `${SCRIPT_NAME}: 发布完成 —— 回读 dim_branch ${check.rows[0].branch} / dim_item ${check.rows[0].item} / dim_item_price ${check.rows[0].item_price} / dim_transfer_out ${check.rows[0].transfer_out} / dim_wholesale_out ${check.rows[0].wholesale_out} / dim_settlement_order_line ${check.rows[0].settlement_line}`,
     )
   } finally {
     await warehouse.end()

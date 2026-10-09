@@ -172,6 +172,25 @@ const c=new Client({connectionString:process.env.DATABASE_URL});
 "
 }
 
+# ⑦ 工单取价面非空 + 新鲜度（#517 段②）：面停更 ⇒ 建单全 PRICE_NOT_FOUND 而无人知晓。
+#    新鲜度锚 = order_bizday（MO/WO 均为日批制单日分区）；容差 2 天（同 ⑥ 的口径，够跨一个周末）。
+assert_settlement_face() {
+  printf '⑦ 工单取价面（dim_settlement_order_line 非空且 max(order_bizday) ≥ 上海今天-2 天）—— '
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const c=new Client({connectionString:process.env.DATABASE_URL});
+(async()=>{try{
+  await c.connect();
+  const r=await c.query(\"select count(*)::int as n, coalesce(max(order_bizday)::text,'') as maxday, ((now() at time zone 'Asia/Shanghai')::date - 2)::text as cutoff from data.dim_settlement_order_line\");
+  const {n,maxday,cutoff}=r.rows[0];
+  if(n<1){console.log('ERR 取价面 0 行（publish-dims 未跑或未映射全红？）');process.exit(1)}
+  if(maxday<cutoff){console.log('ERR 停更 max='+maxday+' < 容差线='+cutoff);process.exit(1)}
+  console.log('OK rows='+n+' order_bizday='+maxday+'（容差线 '+cutoff+'）');
+  await c.end();
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
 do_check() {
   rc=0
   assert_dns || rc=1
@@ -180,8 +199,9 @@ do_check() {
   assert_fresh || rc=1
   assert_metrics || rc=1
   assert_dims || rc=1
+  assert_settlement_face || rc=1
   if [ "$rc" -eq 0 ]; then
-    echo "wire-warehouse: OK（六条断言全过）"
+    echo "wire-warehouse: OK（七条断言全过）"
   else
     echo "wire-warehouse: FAILED（见上）—— 重做：sh $0" >&2
   fi
