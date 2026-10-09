@@ -143,21 +143,22 @@ describe('after_sales_work_order.create', () => {
     // 而源侧 payload 的形状本就不受本仓控制 ⇒ 先落成一个「源侧 payload 对象」再传，
     // 正是这条路径的真实形态。
     const sourceSidePayload: Record<string, unknown> = {
-      product_id: 4, store_selection: 7, damage_quantity: 2, damage_reason: '破损',
+      store_code: 'S01', item_code: 'I001', order_no: 'MO3120992607050085', line_key: '0',
+      damage_quantity: 2, damage_reason: '破损',
       damage_images: [{ attachmentId: 11 }, { attachmentId: 12 }],
       // 下面这些源侧字段域端点**不收**，必须被丢掉（不是拼进 body）
       order_number: 'YYMMDD00001', related_order: 3, damage_amount: 1000,
     }
     await after_sales_work_order.create(sourceSidePayload)
     const body = send.mock.calls[0]![2] as Record<string, unknown>
-    expect(Object.keys(body).sort()).toEqual(['attachmentIds', 'clientRequestId', 'damageQuantity', 'productId', 'remark', 'storeId'])
-    expect(body).toMatchObject({ productId: 4, storeId: 7, damageQuantity: 2, remark: '破损', attachmentIds: [11, 12] })
+    expect(Object.keys(body).sort()).toEqual(['attachmentIds', 'clientRequestId', 'damageQuantity', 'itemCode', 'lineKey', 'orderNo', 'remark', 'storeCode'])
+    expect(body).toMatchObject({ storeCode: 'S01', itemCode: 'I001', orderNo: 'MO3120992607050085', lineKey: '0', damageQuantity: 2, remark: '破损', attachmentIds: [11, 12] })
     expect(typeof body.clientRequestId).toBe('string')
   })
 
   it('server 回 duplicated:true ⇒ 视为「已落库」（调用方据此也轮换幂等键）', async () => {
     sessionStorage.clear()
     send.mockResolvedValue({ id: 9, duplicated: true })
-    await expect(after_sales_work_order.create({ product_id: 4, damage_quantity: 1 })).resolves.toMatchObject({ duplicated: true })
+    await expect(after_sales_work_order.create({ store_code: 'S01', item_code: 'I001', order_no: 'MO1', line_key: '0', damage_quantity: 1 })).resolves.toMatchObject({ duplicated: true })
   })
 })

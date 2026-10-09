@@ -7,15 +7,18 @@ import { after_sales_work_order } from '@/shims/wuji-data'
 import { currentClientRequestId } from '@/shims/client-request-id'
 import { useWorkOrderSubmit } from './useWorkOrderSubmit'
 
-vi.mock('@/shims/wuji-data', () => ({ after_sales_work_order: { create: vi.fn() } }))
+vi.mock('@/shims/wuji-data', () => ({ after_sales_work_order: { create: vi.fn(), settlementOrders: vi.fn() } }))
 vi.mock('@wujibase/wuji', () => ({ Message: { success: vi.fn(), warning: vi.fn(), error: vi.fn(), info: vi.fn() } }))
 
 const create = vi.mocked(after_sales_work_order.create)
 
 const ctx = (attachments: { value: unknown[] } = { value: [] }) =>
   useWorkOrderSubmit({
-    selectedProduct: { value: { id: 4 } },
-    selectedStore: { value: null },
+    // #500 段③：建单挂原单——提交侧读「选中门店 + 选中结算单行（含所属单号）」
+    selectedStore: { value: 'S01' },
+    selectedLine: {
+      value: { itemCode: 'I001', itemName: '测试商品', lineKey: '0', quantity: 30, priceMinor: 500, orderNo: 'MO3120992607050085' },
+    },
     attachments,
   } as never)
 
@@ -45,16 +48,22 @@ describe('clientRequestId 语义③（提交页）', () => {
     const c = ctx()
     await c.submitWorkOrder()
     const payload = create.mock.calls[0][0] as unknown as Record<string, unknown>
-    // 工单号与金额由**服务端**出（spec §2.2 ③ / §0.3）：前端算的会成为第二份公式
+    // 工单号与金额由**服务端**出（spec §2.2 ③ / §0.3）：前端算的会成为第二份公式。
+    // #500 段③：挂原单四键（store_code/item_code/order_no/line_key）锁行，价由服务端冻结。
     expect(Object.keys(payload).sort()).toEqual([
       'damage_images',
       'damage_quantity',
       'damage_reason',
-      'product_id',
-      'store_selection',
+      'item_code',
+      'line_key',
+      'order_no',
+      'store_code',
     ])
+    expect(payload.order_no).toBe('MO3120992607050085')
+    expect(payload.line_key).toBe('0')
     expect(payload).not.toHaveProperty('order_number')
     expect(payload).not.toHaveProperty('damage_amount')
+    expect(payload).not.toHaveProperty('product_id')
   })
 
   it('只带**已完成**的附件（上传中的带上会被按 id 认领，而对象可能还没落）', async () => {
@@ -69,5 +78,17 @@ describe('clientRequestId 语义③（提交页）', () => {
     await c.submitWorkOrder()
     const payload = create.mock.calls[0][0] as unknown as Record<string, unknown>
     expect(payload.damage_images).toEqual([{ uploadStatus: 'completed', attachmentId: 11 }])
+  })
+
+  it('未选结算单行 ⇒ 不发请求、不轮换幂等键（fail 前置在客户端）', async () => {
+    const c = useWorkOrderSubmit({
+      selectedStore: { value: 'S01' },
+      selectedLine: { value: null },
+      attachments: { value: [] },
+    } as never)
+    await c.submitWorkOrder()
+    expect(create).toHaveBeenCalledTimes(0)
+    expect(sessionStorage.getItem('aftersales.clientRequestId')).toBeNull()
+    expect(currentClientRequestId()).not.toBe('')
   })
 })

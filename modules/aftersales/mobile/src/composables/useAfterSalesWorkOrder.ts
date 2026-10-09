@@ -1,13 +1,15 @@
 /**
  * 售后工单主 composable（M3b-2：聚合数据/上传/提交三个子 composable）
  *
- * 聚合面**裁掉了订单那一行**（`orderList` / `selectedOrder` / `loadOrders` / `clearOrders`
- * 与 `currentOrder`）：订单选择本期不做（spec §3.2：域侧 `SubmitBody` 不收 `relatedOrder`）。
- * `loadUserStores` 同样不在面上——它是死码（见 `useAfterSalesData.ts` 头注）。
+ * 聚合面**裁掉了订单那一行**（`orderList` / `loadOrders` / `clearOrders` 与 `currentOrder`）：
+ * 旧「订单选择」不做（spec §3.2：域侧 `SubmitBody` 不收 `relatedOrder`）。`loadUserStores`
+ * 同样不在面上——它是死码（见 `useAfterSalesData.ts` 头注）。
  *
- * 三个子 composable 之间只有**一条**接线：`useWorkOrderSubmit` 读数据面的选中项与上传面的
- * 附件列表（`selectedProduct.next` 只此一处），因此这里把这两个 ref 传进去，而不是让提交侧
- * 自己再建一份。
+ * #500 段③（2026-10-10）：选单选行回归，但**换了数据面**——不是旧的 `outbound_detail`
+ * 出库明细，而是结算单取价面（`/guest/settlement-orders`，按单实际结算价）。
+ *
+ * 三个子 composable 之间只有**一条**接线：`useWorkOrderSubmit` 读数据面的选中门店/选中行与
+ * 上传面的附件列表，因此这里把这三个 ref 传进去，而不是让提交侧自己再建一份。
  */
 
 import { useAfterSalesData } from './useAfterSalesData'
@@ -21,20 +23,21 @@ export function useAfterSalesWorkOrder() {
   const uploadComposable = useFileUpload()
   const submitComposable = useWorkOrderSubmit({
     selectedStore: dataComposable.selectedStore,
-    selectedProduct: dataComposable.selectedProduct,
+    selectedLine: dataComposable.selectedLine,
     attachments: uploadComposable.attachments,
   })
 
   // 从数据模块导出
   const {
     loading,
-    productLoading,
     storeList,
-    productList,
+    settlementLoading,
+    settlementOrders,
     selectedStore,
-    selectedProduct,
+    selectedOrder,
+    selectedLine,
     loadEmployeeStores,
-    loadProducts,
+    loadSettlementOrders,
   } = dataComposable
 
   // 从上传模块导出
@@ -72,8 +75,10 @@ export function useAfterSalesWorkOrder() {
    * 完整重置表单
    */
   const resetForm = () => {
-    selectedProduct.value = null
     selectedStore.value = null
+    selectedOrder.value = null
+    selectedLine.value = null
+    settlementOrders.value = []
     clearAttachments()
     resetSubmitForm()
   }
@@ -81,17 +86,18 @@ export function useAfterSalesWorkOrder() {
   return {
     // 加载状态
     loading,
-    productLoading,
+    settlementLoading,
     isUploading,
     submitting,
 
     // 数据列表
     storeList,
-    productList,
+    settlementOrders,
 
     // 选中的值
     selectedStore,
-    selectedProduct,
+    selectedOrder,
+    selectedLine,
 
     // 附件
     attachments,
@@ -101,7 +107,7 @@ export function useAfterSalesWorkOrder() {
 
     // 方法
     loadEmployeeStores,
-    loadProducts,
+    loadSettlementOrders,
     addAttachment,
     removeAttachment,
     submitWorkOrder: handleSubmitWorkOrder,

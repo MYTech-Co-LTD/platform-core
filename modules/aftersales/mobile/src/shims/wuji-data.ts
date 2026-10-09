@@ -233,16 +233,46 @@ export const product_archive = {
   },
 }
 
+/** 选单页行形状（#500 段③）：与模块根 api-types.ts 的 SettlementOrder **形状对齐**
+ *  （刻意不跨包 import——mobile 的构建隔离是「整包搬」纪律的一部分）。 */
+export interface SettlementLineRow {
+  itemCode: string
+  itemName: string | null
+  lineKey: string
+  quantity: number | null
+  priceMinor: number
+}
+export interface SettlementOrderRow {
+  orderNo: string
+  source: 'transfer' | 'wholesale'
+  bizday: string
+  createTime: string | null
+  lines: SettlementLineRow[]
+}
+
 export const after_sales_work_order = {
   /**
+   * 选单页数据源（#500 段③，spec §6.1）：`GET /guest/settlement-orders?storeCode=`。
+   * 返回该店近 30 天的结算单（MO/WO 两族已由发布面归一，本 shim 不感知源数）。
+   */
+  async settlementOrders(storeCode: string): Promise<SettlementOrderRow[]> {
+    const body = await apiGet<{ orders: SettlementOrderRow[] }>(
+      `/guest/settlement-orders?storeCode=${encodeURIComponent(storeCode)}`,
+    )
+    return body.orders
+  },
+
+  /**
    * 源侧 payload 有 23 个键（含 `order_number` / `related_order` / `damage_amount` /
-   * `damage_images` / `damage_video` …），而域端点 `POST /guest/tickets` 只收 6 个
-   * （spec §2.2）。**只映射这 6 个，其余丢掉**——不是"以后再补"：
-   * 工单号服务端生成、金额由服务端按规则快照算（§0.3 把「前端算金额」列为要消灭的模式）。
+   * `damage_images` / `damage_video` …），而域端点 `POST /guest/tickets` 收自然键 + 挂原单
+   * 行级三元组（#500 段③，spec §6.2）。**只映射这几个，其余丢掉**——不是"以后再补"：
+   * 工单号服务端生成、金额按所选结算单行由服务端冻结（§0.3 把「前端算金额」列为要消灭的模式）。
    */
   async create(payload: {
-    product_id?: unknown
-    store_selection?: unknown
+    store_code?: unknown
+    item_code?: unknown
+    order_no?: unknown
+    line_key?: unknown
     damage_quantity?: unknown
     damage_reason?: unknown
     damage_images?: unknown
@@ -253,10 +283,10 @@ export const after_sales_work_order = {
       .filter((n) => Number.isSafeInteger(n) && n > 0)
     return apiSend('/guest/tickets', 'POST', {
       clientRequestId: currentClientRequestId(),
-      productId: Number(payload.product_id),
-      ...(payload.store_selection === undefined || payload.store_selection === null
-        ? {}
-        : { storeId: Number(payload.store_selection) }),
+      storeCode: String(payload.store_code ?? ''),
+      itemCode: String(payload.item_code ?? ''),
+      orderNo: String(payload.order_no ?? ''),
+      lineKey: String(payload.line_key ?? ''),
       damageQuantity: Number(payload.damage_quantity),
       remark: String(payload.damage_reason ?? ''),
       ...(attachmentIds.length > 0 ? { attachmentIds } : {}),

@@ -10,11 +10,17 @@
  * 保留面里的两处改动：
  *   · `loadEmployeeStores` 收成**我的登记门店**（ids 形状，提交页口径，见函数注）；
  *   · `loadProducts` 的「名字 + 编码」双分支合并成一路（域侧没有编码那一路）——**有意的行为收窄**。
+ *
+ * #500 段③（2026-10-10）：**商品选择整块换成「选单选行」**——金额依据 = 所选结算单行
+ * （data.dim_settlement_order_line，按单实际结算价）。原 `loadProducts`/`productList`/
+ * `selectedProduct` 随商品下拉一并退役：商品身份由所选行携带（行里就有 item_code），
+ * 再留一份商品列表就是第二份选择事实。
  */
 
 import { ref } from 'vue'
 import { Message } from '@wujibase/wuji'
-import { employee_info, product_archive, store_info } from '@wujibase/wuji-data'
+import { after_sales_work_order, employee_info, store_info } from '@wujibase/wuji-data'
+import type { SettlementLineRow, SettlementOrderRow } from '@wujibase/wuji-data'
 import type { IStoreInfo } from '@/types/store'
 
 /**
@@ -22,13 +28,15 @@ import type { IStoreInfo } from '@/types/store'
  */
 export function useAfterSalesData() {
   const loading = ref(false)
-  const productLoading = ref(false)
   const storeList = ref<IStoreInfo[]>([])
-  const productList = ref<any[]>([])
-  /** 门店：页面 `:value="store.id"` 绑的是主键；提交侧两种形状都收（见 `useWorkOrderSubmit`） */
+  /** 门店：页面绑的是**行对象**（`id` = dim_branch.code 自然键，提交侧取它当 storeCode） */
   const selectedStore = ref<any>(null)
-  /** 商品：同上。Task 8 的页面要读 `selectedProduct.value?.basic_quantity` ⇒ 终态是行对象 */
-  const selectedProduct = ref<any>(null)
+  /** 选单选行（#500 段③）：选单 → 单内行两级；行里带 itemCode/orderNo/lineKey/priceMinor */
+  const settlementLoading = ref(false)
+  const settlementOrders = ref<SettlementOrderRow[]>([])
+  const selectedOrder = ref<SettlementOrderRow | null>(null)
+  /** 选中行 = 结算单行 + 所属单号（页面选行时摊上来；提交侧四键之一） */
+  const selectedLine = ref<(SettlementLineRow & { orderNo: string }) | null>(null)
 
   /**
    * 加载「我的登记门店」（**不是全量门店**——那是登记页的口径，spec §3.2）。
@@ -61,36 +69,34 @@ export function useAfterSalesData() {
   }
 
   /**
-   * 商品搜索。源侧发**两次** query（`product_name__contains` + `id__startswith`）再按 id 去重合并
-   * ——域侧 `/guest/products` **没有「商品编码」这一路**（spec §3.2），故收成一次按名字搜。
-   * **这是有意的行为收窄**，不是漏搬。
-   *
-   * `status__eq: 1`（上下架）域侧无对应列 ⇒ shim 忽略它，但调用点保留——将来域侧加了上下架
-   * 再加映射，比现在删掉更好找。
+   * 拉选中门店的近期结算单（#500 段③：建单挂原单的选单数据面）。
+   * 门店变化必须**清空已选单/行**——跨店残留的选中行是串店引用（服务端 400 ORDER_STORE_MISMATCH）。
    */
-  const loadProducts = async (searchText = '') => {
-    productLoading.value = true
+  const loadSettlementOrders = async (storeCode: string) => {
+    settlementLoading.value = true
+    settlementOrders.value = []
+    selectedOrder.value = null
+    selectedLine.value = null
+    if (!storeCode) return
     try {
-      productList.value = await product_archive.query({
-        filter: { status__eq: 1, ...(searchText ? { product_name__contains: searchText } : {}) },
-        sort: 'product_name',
-        pageSize: 1000,
-      })
+      settlementOrders.value = await after_sales_work_order.settlementOrders(storeCode)
     } catch (error: any) {
-      Message.error(error?.message || '加载商品列表失败')
+      console.error('加载结算单列表失败:', error)
+      Message.error(error?.message || '加载结算单列表失败')
     } finally {
-      productLoading.value = false
+      settlementLoading.value = false
     }
   }
 
   return {
     loading,
-    productLoading,
     storeList,
-    productList,
     selectedStore,
-    selectedProduct,
+    settlementLoading,
+    settlementOrders,
+    selectedOrder,
+    selectedLine,
     loadEmployeeStores,
-    loadProducts,
+    loadSettlementOrders,
   }
 }
