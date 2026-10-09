@@ -120,13 +120,15 @@ SQL_LAKE="WITH per_order AS (SELECT r['branch_num']::int AS b, r['order_no'] AS 
 LAKE_ROWS=$(_lake_q "${SQL_LAKE}")
 [ -n "${LAKE_ROWS}" ] || { echo "PREAGG_FAILED:lake_unavailable 湖侧取数为空（该账套该营业日没有分区？）" >&2; exit 3; }
 
-BRANCHES=$(printf '%s\n' "${LAKE_ROWS}" | cut -d, -f1 | tr '\n' ' ' | sed 's/ *$//')
-NC=$(printf '%s\n' "${BRANCHES}" | tr ' ' '\n' | grep -c .)
+BRANCHES=$(printf '%s\n' "${LAKE_ROWS}" | cut -d, -f1)
+NC=$(printf '%s\n' "${BRANCHES}" | grep -c .)
 
 # ── 分批调用（#525 前车：3120 有 147 家湖侧门店，报表端点单次 branch_nums ≤100 家
 #    （超限报 code=10001；64188 的 63 家从没触过这条）⇒ 按批切门店、逐批 curl，
 #    各批响应落 /tmp/_preagg_resp_<批号>.json，比较块（python）合并 rows 后照旧比对。
 #    PREAGG_MAX_BRANCHES 在这里就是**批大小**（默认 100 = 端点上限，别改大）。
+#    ⚠️ BRANCHES 保持**换行分隔**：分批切片用 sed 按行取——拼成单行空格分隔会让
+#    「批 1」取到全部、「批 2」取到空（2026-10-10 首跑实测，真机红过一次才改对）。
 BATCHES=$(( (NC + PREAGG_MAX_BRANCHES - 1) / PREAGG_MAX_BRANCHES ))
 [ "${BATCHES}" -ge 1 ] || BATCHES=1
 rm -f /tmp/_preagg_resp_*.json
