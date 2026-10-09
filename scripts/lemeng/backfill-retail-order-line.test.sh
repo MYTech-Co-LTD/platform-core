@@ -164,5 +164,43 @@ ok "$(first_pending_batch)" "2"
 batch_state() { echo done; }
 ok "$(first_pending_batch)" "0"
 
+# ── ⑩ 回填管线的 bizday 闭窗守卫（#528）───────────────────────────────────────
+# 守卫是数据面**管线 JSON**（wc/dw 节点 + 三段边），shell 工具链看不见它 ⇒ 在这里结构钉住：
+# 有人删守卫节点/改直连边，回填就回到「能窗内点火」的旧世界（10-05 事故面），而这个回退
+# 没有任何运行时信号。SQL 谓词语义由 validate_pipeline 编译 + 真机验收兜底，这里只钉锚点。
+PJ=$(dirname "$0")/../../deploy/duckle/console/pipelines
+_guard_check() { python3 - "$PJ" <<'PY'
+import json, os, sys
+base = sys.argv[1]
+p = json.load(open(os.path.join(base, 'lemeng.retail.windows.backfill.json')))
+nodes = {n['id']: n for n in p['nodes']}
+edges = {(e['source'], e['target']) for e in p['edges']}
+def die(msg):
+    print(msg); sys.exit(1)
+wc = nodes.get('wc')
+if wc is None: die('wc 节点缺席（#528 闭窗守卫被删？）')
+sql = wc.get('data', {}).get('properties', {}).get('sql', '')
+for anchor in ('WINDOW_OPEN', '${BIZDAY}', 'Asia/Shanghai', 'INTERVAL 1 DAY'):
+    if anchor not in sql:
+        die('wc 的 SQL 缺锚点 ' + anchor + '（守卫谓词漂移）')
+dw = nodes.get('dw')
+if dw is None: die('dw 节点缺席（#528 闭窗守卫被删？）')
+dwp = dw.get('data', {}).get('properties', {})
+if dwp.get('condition') != 'has-rows': die('dw 必须 condition=has-rows')
+if 'WINDOW_OPEN' not in dwp.get('message', ''): die('dw message 缺 WINDOW_OPEN（真机验收靠它 grep）')
+for pair in (('dv', 'wc'), ('wc', 'dw'), ('dw', 'w0')):
+    if pair not in edges: die('边 %s→%s 缺席（守卫链断了）' % pair)
+if ('dv', 'w0') in edges: die('旧直连边 dv→w0 还在（守卫被旁路 = 没修）')
+for f in ('lemeng.retail.windows.l1.json', 'lemeng.retail.close.l1.json'):
+    q = json.load(open(os.path.join(base, f)))
+    if 'WINDOW_OPEN' in json.dumps(q, ensure_ascii=False):
+        die(f + ' 不该有 WINDOW_OPEN 守卫（排班形 bizday 由 now 推导，恒真 = 死代码）')
+sys.exit(0)
+PY
+}
+_gout=$(_guard_check); _grc=$?
+ok "$_grc" "0"
+[ "$_grc" -eq 0 ] || echo "  FAIL: 回填管线守卫结构：${_gout}"
+
 echo "── backfill-retail-order-line.test.sh: PASS=${pass} FAIL=${fail} ──"
 [ "${fail}" -eq 0 ] || exit 1

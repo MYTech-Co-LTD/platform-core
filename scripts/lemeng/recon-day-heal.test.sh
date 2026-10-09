@@ -19,11 +19,11 @@ DIAGNOSE_BIN=/bin/true; CONSOLE_CT=ct; CONSOLE_URL=http://127.0.0.1:0
 BACKFILL_PIPELINE=p.json; SETTLE_DAYS=3; HEAL_WAIT_SECONDS=1; HEAL_POLL_SECONDS=1
 export DIAGNOSE_BIN CONSOLE_CT CONSOLE_URL BACKFILL_PIPELINE SETTLE_DAYS
 _rn=0
-for _fn in heal_verdict heal_settled; do
+for _fn in heal_verdict heal_settled heal_marker; do
   _fb=$(awk -v fn="$_fn" '$0 ~ "^"fn"\\(\\) \\{" {f=1} f{print} f&&/^}$/{exit}' "$SRC")
   if [ -n "$_fb" ]; then eval "$_fb"; _rn=$((_rn+1)); else fail=$((fail+1)); echo "  FAIL: 抽不到 ${_fn}（脚本结构变了？）"; fi
 done
-ok "$_rn" "2"
+ok "$_rn" "3"
 
 # ── heal_verdict：真缺口 vs 通道/身份故障（**穷举判别面**）──
 gap_rows='RECON bizday=2026-10-02 hour=20 lake_rows=600 lake_batches=1 gateway_rows=1353（闭窗小时，容差 0）
@@ -68,6 +68,72 @@ if date -d "2026-01-11 - 3 days" +%F >/dev/null 2>&1; then
 else
   skip=$((skip+3)); echo "  SKIP: 本机 date -d 不可用（GNU only），跳过 heal_settled 三例"
 fi
+
+# ── PRUNE_SNIPPET（#528 旁路失效）：抽真变量，对**本机 tmp 夹具**直接跑（不经 docker）──
+# 调用形与生产侧一致：sh -c "$PRUNE_SNIPPET" sh <state根目录> <紧凑标记> <备份目录>
+_q=$(printf '\047')
+PS=$(awk -v q="$_q" '$0 == "PRUNE_SNIPPET=" q {f=1;next} f && $0 == q {exit} f{print}' "$SRC")
+[ -n "$PS" ] || { echo "  FAIL: 抽不到 PRUNE_SNIPPET（脚本结构变了？）"; echo "recon-day-heal: pass=$pass fail=$((fail+1)) skip=$skip"; exit 1; }
+
+_l() { printf '%s\n' "$1"; }   # ndjson 行构造（紧凑 JSON，标记在 output 行内）
+_l_del_a=$(_l '{"key":"k2","at":"2026-10-02T02:11:01.000Z","output":[{"shift_table_bizday":"20261002","order_no":"B"}]}')
+_l_del_b=$(_l '{"key":"k3","at":"2026-10-02T02:11:02.000Z","output":[{"shift_table_bizday":"20261002","order_no":"C"}]}')
+_l_keep=$(_l '{"key":"k1","at":"2026-10-03T02:11:03.000Z","output":[{"shift_table_bizday":"20261003","order_no":"A"}]}')
+
+_run_prune() { # $1=root $2=marker → 打印 stdout，rc 透传
+  sh -c "$PS" sh "$1" "$2" "$1/.backup"
+}
+
+# 场景①：三条目删二留一 + 备份内容 == 原文件内容
+_R=$(mktemp -d)
+mkdir -p "$_R/lemeng_retail_order_line_window_00/checkpoints"
+_F="$_R/lemeng_retail_order_line_window_00/checkpoints/p1.ndjson"
+{ _l "$_l_del_a"; _l "$_l_del_b"; _l "$_l_keep"; } > "$_F"
+cp "$_F" "$_R/orig.ndjson"
+_out=$(_run_prune "$_R" 20261002); rc=$?
+ok "$rc" "0"
+ok "$(grep -c . "$_F" | tr -d ' ')" "1"
+ok "$(cat "$_F")" "$_l_keep"
+_bf=$(printf '%s' "$_out" | sed -n 's/.*backup=//p')
+[ -n "$_bf" ] && cmp -s "$_R/orig.ndjson" "$_bf/$(basename "$_F").1.bak"
+ok "$?" "0"                                       # 备份 == 原文件（可回滚的凭据）
+ok "$(printf '%s' "$_out" | sed -n 's/.*deleted=\([0-9]*\).*/\1/p')" "2"
+ok "$(find "$_R" -name '*.tmp' 2>/dev/null | wc -l | tr -d ' ')" "0"   # 不留 .tmp 残骸（find 计数断言：ls 退出码 BSD=1/GNU=2，平台敏感）
+rm -rf "$_R"
+
+# 场景②：全部命中 ⇒ **空 ndjson 留存**（引擎视为无缓存 ⇒ 全量重抓，合法态）、rc 0
+_R=$(mktemp -d)
+mkdir -p "$_R/lemeng_retail_order_line_window_23/checkpoints"
+_F="$_R/lemeng_retail_order_line_window_23/checkpoints/p2.ndjson"
+{ _l "$_l_del_a"; _l "$_l_del_b"; } > "$_F"
+_out=$(_run_prune "$_R" 20261002); rc=$?
+ok "$rc" "0"
+[ -f "$_F" ]; ok "$?" "0"
+ok "$(wc -c < "$_F" | tr -d ' ')" "0"
+ok "$(printf '%s' "$_out" | sed -n 's/.*deleted=\([0-9]*\).*/\1/p')" "2"
+rm -rf "$_R"
+
+# 场景③：无命中 ⇒ 文件**字节不变**、deleted=0
+_R=$(mktemp -d)
+mkdir -p "$_R/lemeng_retail_order_line_window_07/checkpoints"
+_F="$_R/lemeng_retail_order_line_window_07/checkpoints/p3.ndjson"
+{ _l "$_l_keep"; _l "$_l_del_a"; } > "$_F"
+cp "$_F" "$_R/orig.ndjson"
+_out=$(_run_prune "$_R" 20261001)
+cmp -s "$_F" "$_R/orig.ndjson"; ok "$?" "0"
+ok "$(printf '%s' "$_out" | sed -n 's/.*deleted=\([0-9]*\).*/\1/p')" "0"
+ok "$(find "$_R"/.backup -name '*.bak' 2>/dev/null | wc -l | tr -d ' ')" "0"   # 无命中 ⇒ **不产生备份**（误备份=噪音；变异哨兵；find 计数规避 ls 退出码平台差）
+rm -rf "$_R"
+
+# 场景④：无窗口目录 ⇒ deleted=0 files=0、rc 0（不是错误）
+_R=$(mktemp -d)
+_out=$(_run_prune "$_R" 20261002); rc=$?
+ok "$rc" "0"
+ok "$(printf '%s' "$_out" | sed -n 's/.*deleted=\([0-9]*\) files=\([0-9]*\).*/\2/p')" "0"
+rm -rf "$_R"
+
+# 场景⑤：标记构造（YYYY-MM-DD → 紧凑 YYYYMMDD）
+ok "$(heal_marker 2026-10-02)" "20261002"
 
 echo "recon-day-heal: pass=$pass fail=$fail skip=$skip"
 [ "$fail" -eq 0 ] || exit 1

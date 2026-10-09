@@ -6,14 +6,22 @@
     "   它由 `scripts/lemeng/backfill-retail-order-line.sh` 经 `POST /api/run/async` 逐日驱动：",
     "   `{\"file\":\"pipelines/lemeng.retail.windows.backfill.json\",\"params\":{\"BIZDAY\":\"2026-09-27\"}}`。",
     "",
-    "🔴 **与现 L1 父管线（`lemeng.retail.windows.l1.json`）的差异只有一处：窗口来源。**",
+    "🔴 **与现 L1 父管线（`lemeng.retail.windows.l1.json`）的差异共两处：窗口来源（W1–W3）+ bizday 闭窗守卫（W4，#528）。**",
     "   逐字三处（都在「窗口来源」这一处之下，逐条列清而不是笼统说「一处」）：",
     "     W1 `w0` 的 bizday 列：`strftime((now() AT TIME ZONE 'Asia/Shanghai') - INTERVAL 1 DAY,'%Y-%m-%d')`",
     "        ⇒ `'${BIZDAY}'`（**参数**，由驱动脚本按「bizday 降序、3120/2026-09-23 最后」逐日传入）。",
     "     W2 `gv` 的 BIZDAY 形状闸：断言对象从上面那条 SQL 现算值 ⇒ 同一个 `${BIZDAY}` 参数。",
     "     W3 `dz` 的判红文案：原句「windows 形只采上海昨天、无回溯重放」对回填形**不成立**",
     "        （回填正是参数驱动的回溯重放）⇒ 改写成回填形的处置（可整批重跑；失败即停不许跳批）。",
-    "   **除法条外，v0..dv 身份门 / fe foreach（含 retryAttempts=4 / retryBackoffMs=60000）/",
+    "     W4 **bizday 闭窗守卫（#528，L1 形没有）**：`wc`（code.sql）产 WINDOW_OPEN 违规行 +",
+    "        `dw`（ctl.die has-rows）收行，插在 `dv` 与 `w0` 之间（边 dv→wc→dw→w0）。判据：上海时间",
+    "        未到 `'${BIZDAY}'::date + INTERVAL 1 DAY` 即拒 ⇒ 回填**不可能窗内抓拍**（10-05 事故的",
+    "        触发面根因）。严格 `<` ⇒ 边界含入：恰 D+1 00:00:00 上海时放行。为什么是 bizday 级、",
+    "        为什么守在 backfill：窗级守卫挡不住 23:06 点火（h00–h22 相对各自 hour 已「闭窗」），",
+    "        真正要守的闭窗单位是营业日；排班父管线（windows.l1 / close.l1）的 bizday 由 now 推导，",
+    "        恒有 now ≥ bizday+1d，守卫恒真 ⇒ 不加（加了是死代码）。边界残留：白昼手动触发 close",
+    "        会把「今日已闭小时」冻进 checkpoint（同族风险，记 issue #528 边界，不在本管线堵）。",
+    "   **除法条与 W4 守卫外，v0..dv 身份门 / fe foreach（含 retryAttempts=4 / retryBackoffMs=60000）/",
     "   wm·wsink 收据锚 / a1·a2 定序 / su·rep·sr / dz 的 condition=has-rows 全部逐字照抄。**",
     "",
     "══ 以下 ①..⑧ 逐字照抄自 lemeng.retail.windows.l1.json（只把「windows 形」读成「本形」）══",
@@ -245,6 +253,37 @@
         "properties": {
           "condition": "has-rows",
           "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖（等价于 wrapper 在 run-retail-day.sh:383/397 的 ASSERT_FAIL 硬失败）。处置：检查该管线调度/触发面的 env 注入"
+        }
+      }
+    },
+    {
+      "id": "wc",
+      "type": "control",
+      "position": {
+        "x": 2420,
+        "y": -600
+      },
+      "data": {
+        "label": "Assert bizday window closed (fail-closed, #528)",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'WINDOW_OPEN' AS violation,\n       '${BIZDAY}' AS detail,\n       '上海时间未到次日 00:00：回填将窗内抓拍并被 checkpoint 永久冻结（#528），拒绝' AS rule\nWHERE (now() AT TIME ZONE 'Asia/Shanghai') < ('${BIZDAY}'::date + INTERVAL 1 DAY)"
+        }
+      }
+    },
+    {
+      "id": "dw",
+      "type": "control",
+      "position": {
+        "x": 2660,
+        "y": -600
+      },
+      "data": {
+        "label": "Die if bizday not closed",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "WINDOW_OPEN: bizday=${BIZDAY} 尚未闭窗（上海时间未到次日 00:00），回填会抓到截断快照并被 checkpoint 永久冻结（#528）⇒ fail-closed 拒绝。处置：等上海时间过了该 bizday 次日 00:00 再回填；当日确需修数走 heal 旁路（HEAL_FORCE），不要点回填"
         }
       }
     },
@@ -485,8 +524,26 @@
       }
     },
     {
-      "id": "t9",
+      "id": "t9a",
       "source": "dv",
+      "target": "wc",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "t9b",
+      "source": "wc",
+      "target": "dw",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "t9c",
+      "source": "dw",
       "target": "w0",
       "data": {
         "connectionType": "on-subjob-ok"
