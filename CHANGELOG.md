@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.88.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.88.0...v0.88.1) - 2026-10-09
+- 【修复】data: #525 recon-preagg 分批调用——报表端点单次 branch_nums ≤100 家，3120（147 家）必分批（真机实测） ([#526](https://github.com/MYTech-Co-LTD/platform-core/pull/526), [841db96](https://github.com/MYTech-Co-LTD/platform-core/commit/841db962e069e047225ce76fcb102bdce9b1b045))
+
+
 ## [0.88.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.87.3...v0.88.0) - 2026-10-09
 - 【新增】aftersales: #500 ticket 自然键化 + 建单挂原单冻结 + 选单端点（含 mobile 选单链） ([#524](https://github.com/MYTech-Co-LTD/platform-core/pull/524), [9696b73](https://github.com/MYTech-Co-LTD/platform-core/commit/9696b737c2e259f398123ffad06745a1ba1ab237))
 
