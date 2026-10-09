@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.87.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.87.1...v0.87.2) - 2026-10-09
+- 【修复】data: #517 取价面 transfer 分支补选 org（#521 follow-up，真机首跑实测） ([#522](https://github.com/MYTech-Co-LTD/platform-core/pull/522), [e334bc2](https://github.com/MYTech-Co-LTD/platform-core/commit/e334bc201ca7869fe057d36dccf2e9ca7189377b))
+
+
 ## [0.87.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.87.0...v0.87.1) - 2026-10-09
 - 【修复】data: #517 override 空表 ⇒ node-pg 退简单协议 $1 无绑定——条件拼装 ov join（#520 首跑 follow-up） ([#521](https://github.com/MYTech-Co-LTD/platform-core/pull/521), [5fa4fd7](https://github.com/MYTech-Co-LTD/platform-core/commit/5fa4fd7eb4e0640a9cd5e55485c2951004ccbe1d))
 
