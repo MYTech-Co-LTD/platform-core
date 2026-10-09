@@ -106,6 +106,9 @@ const pipeline = {
     node('gv', 'code.sql', codeSql(`SELECT 'SYSTEM_BOOK' AS violation, '\${ENV:SYSTEM_BOOK}' AS detail, 'digits only' AS rule WHERE NOT regexp_full_match('\${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'SNAPSHOT', '\${date}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('\${date}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', ${batchIdExpr} AS v, 'cl-<book>-client-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match(${batchIdExpr}, 'cl-[0-9]+-client-[0-9]{8}T[0-9]{6}Z')`)),
     die('dv', 'has-rows', 'EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入'),
     // ── 单页固定窗（GET 零参数；见文件头注 ①）────────────────────────────────────
+    // ⚠️ 拓扑纪律（2026-10-10 首跑实测）：**数据主路 p1 → merge 直连**；行数带守卫（d2→b1→dw）
+    //    是**旁支**（像批发单的哨兵页一样汇回 merge 的另一个 handle）。若把数据串过守卫链，
+    //    健康时 merge 收到的是「违规清单（0 行）」形状，shape 全列 Binder 报错。
     {
       id: 'p1', type: 'source', position: { x: 0, y: 0 },
       data: {
@@ -154,10 +157,13 @@ const pipeline = {
     { id: 'e-d1-gv', source: 'd1', target: 'gv', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
     { id: 'e-gv-dv', source: 'gv', target: 'dv', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
     { id: 'e-dv-p1', source: 'dv', target: 'p1', sourceHandle: null, targetHandle: null, data: { connectionType: 'on-subjob-ok' } },
+    // 数据主路：p1 直连 merge（main_1）
+    { id: 'e-p1-merge', source: 'p1', target: 'merge', sourceHandle: 'main', targetHandle: 'main_1', data: { connectionType: 'main' } },
+    // 守卫旁支：p1 → d2(no-rows) → b1(行数带) → dw(has-rows) → merge(main_2，健康时 0 行)
     { id: 'e-p1-d2', source: 'p1', target: 'd2', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
     { id: 'e-d2-b1', source: 'd2', target: 'b1', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
     { id: 'e-b1-dw', source: 'b1', target: 'dw', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
-    { id: 'e-dw-merge', source: 'dw', target: 'merge', sourceHandle: 'main', targetHandle: 'main_1', data: { connectionType: 'main' } },
+    { id: 'e-dw-merge', source: 'dw', target: 'merge', sourceHandle: 'main', targetHandle: 'main_2', data: { connectionType: 'main' } },
     { id: 'e-merge-shape', source: 'merge', target: 'shape', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
     { id: 'e-shape-gate', source: 'shape', target: 'gate', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
     { id: 'e-gate-sink', source: 'gate', target: 'sink', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },

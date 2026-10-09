@@ -423,6 +423,16 @@
       }
     },
     {
+      "id": "e-p1-merge",
+      "source": "p1",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
       "id": "e-p1-d2",
       "source": "p1",
       "target": "d2",
@@ -457,7 +467,7 @@
       "source": "dw",
       "target": "merge",
       "sourceHandle": "main",
-      "targetHandle": "main_1",
+      "targetHandle": "main_2",
       "data": {
         "connectionType": "main"
       }
