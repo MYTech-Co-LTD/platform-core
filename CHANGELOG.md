@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.87.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.87.0...v0.87.1) - 2026-10-09
+- 【修复】data: #517 override 空表 ⇒ node-pg 退简单协议 $1 无绑定——条件拼装 ov join（#520 首跑 follow-up） ([#521](https://github.com/MYTech-Co-LTD/platform-core/pull/521), [5fa4fd7](https://github.com/MYTech-Co-LTD/platform-core/commit/5fa4fd7eb4e0640a9cd5e55485c2951004ccbe1d))
+
+
 ## [0.87.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.86.0...v0.87.0) - 2026-10-09
 - 【新增】data: #517 dim_settlement_order_line 归一取价面——transfer∪wholesale 经门店映射 ([#520](https://github.com/MYTech-Co-LTD/platform-core/pull/520), [9c9735b](https://github.com/MYTech-Co-LTD/platform-core/commit/9c9735b99f45acd0bb4759e601217463b61d41a8))
 
