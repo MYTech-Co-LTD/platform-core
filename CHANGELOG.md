@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.88.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.88.3...v0.88.4) - 2026-10-09
+- 【修复】data: seed 期望集按账套后缀过滤 + console 排班完整性门禁（#531） ([#532](https://github.com/MYTech-Co-LTD/platform-core/pull/532), [d7a9e44](https://github.com/MYTech-Co-LTD/platform-core/commit/d7a9e44af053fb3f3c4c780dc8f495a4a94b6d39))
+
+
 ## [0.88.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.88.2...v0.88.3) - 2026-10-09
 - 【修复】data: 回填管线加 bizday 闭窗守卫 + heal 常设旁路失效冻结 checkpoint（#528） ([#529](https://github.com/MYTech-Co-LTD/platform-core/pull/529), [1ee3ff4](https://github.com/MYTech-Co-LTD/platform-core/commit/1ee3ff40af41c1cc243311055187721da52d72e2))
 
