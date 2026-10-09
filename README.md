@@ -56,6 +56,12 @@ gh pr create --fill          # 等 CI 绿，由服务端合并
 确有理由直推（bootstrap / 紧急热修）：`PLATFORM_ALLOW_DIRECT_PUSH=1 git push origin main`，
 并在 issue 或 PR 里补一条说明。
 
+**squash 合并的 subject 结尾必须带半角 ` (#PR号)`**：`release.mjs` 用 `/\(#(\d+)\)\s*$/`
+认 PR 引用，**全角 `（#N）` 不算** ⇒ main 的 release job 拒发（#529 案例，2026-10-09 实测）。
+另：用同树重造提交修 subject 时，重造出的 sha 与原 PR 失去 GitHub 关联，`main-guard` 会判直推
+（解释补在 PR 评论区即可，绊线要的是「可见」不是「禁止」）——改写式抢救是一次的，后续正常
+PR 推送自愈（gates 的 `BEFORE..HEAD` 区间同理）。
+
 ## 部署
 
 ```bash
