@@ -1,0 +1,104 @@
+{
+ "$schema": "./_schema.schema.json",
+ "contractVersion": 2,
+ "schemaVersion": 1,
+ "consumerVersion": 1,
+ "domain": "lemeng",
+ "table": "client",
+ "owner": "data-platform",
+ "description": "乐檬进销存批发客户档案（nhsoft.whs.ai.client.find；#516 段① 2026-10-10 拍板，售后工单取价对照表）。【行粒度】一行 = 账套×快照日×客户。【采集形态】⚠️ 固定窗快照（单页）——GET 裸能力码路径是零参数路由（openapi paths 无 parameters，limit/offset/keyword 全无效），POST 通路三形态全断，无翻页可配（例外路线证据见正典 §1.7 与探针报告 .superpowers/sdd/2026-10-10-500-lemeng-client/probe-report.md）。窗口跟随活档案（2026-10-10 实测：最晚建档 09-23、最晚编辑 10-09 均在窗内），已知 41 个 WO 客户 41/41 在窗内；服务端若超单窗上限，接口侧无感，由发布侧未映射大声红兜底。vendor 修复 POST 路由后升级全量翻页 = 本契约 schemaVersion 升档 + 生成器加页节点，列集不变。【接口约束】GET https://cloud.nhsoft.cn/agi/api/nhsoft.whs.ai.client.find，Bearer PAT；responsePath=/result，数组元素即客户对象。【用途边界】工单取价对照表——发布侧只消费 client_fid+client_name 两列（精确键→精确同名→dim_branch.code）；本档案 13 种 client_type 大杂烩，不是门店维，行不进 dim_branch（spec §5 单源分工铁律）。【范围裁剪】未采 client_addr01/02、联系人、授信、拓展属性等档案明细列——对照表用不到，需要时 schemaVersion 升档追加。",
+ "layout": {
+  "prefix": "lemeng/client",
+  "partitionStyle": "hive",
+  "partitionBy": [
+   "system_book",
+   "snapshot"
+  ],
+  "fileName": "all.parquet"
+ },
+ "batch": {
+  "markerColumn": "batch_id",
+  "type": "varchar",
+  "unique": false,
+  "note": "= 采集 run id。每日快照整分区覆盖写（overwrite，非追加）。"
+ },
+ "columns": [
+  {
+   "name": "batch_id",
+   "type": "varchar",
+   "nullable": false,
+   "description": "批次标记（采集 run id）",
+   "expr": "'cl-${ENV:SYSTEM_BOOK}-client-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'"
+  },
+  {
+   "name": "system_book",
+   "type": "varchar",
+   "nullable": false,
+   "description": "账套（采集范围=3120）；分区键，来源=采集侧常量注入（`ENV:SYSTEM_BOOK`）",
+   "expr": "'${ENV:SYSTEM_BOOK}'"
+  },
+  {
+   "name": "snapshot",
+   "type": "date",
+   "nullable": false,
+   "description": "快照日（采集当日）；分区键。⚠️ 用 `${date}` 单段——组合段替换层不生效（0.7.4 实测，同 dim_branch 先例）",
+   "expr": "CAST('${date}' AS DATE)"
+  },
+  {
+   "name": "client_fid",
+   "type": "varchar",
+   "nullable": false,
+   "description": "客户主键（00+账套+机构+序号定长串），与 WO 批发单上 client_fid 精确同形——映射键一",
+   "expr": "CAST(c.client_fid AS VARCHAR)"
+  },
+  {
+   "name": "client_name",
+   "type": "varchar",
+   "nullable": true,
+   "description": "客户名称——映射键二（与 dim_branch.name 精确同名，抽样 5/5 唯一命中）",
+   "expr": "CAST(c.client_name AS VARCHAR)"
+  },
+  {
+   "name": "client_code",
+   "type": "varchar",
+   "nullable": true,
+   "description": "客户代码（排查用）",
+   "expr": "CAST(c.client_code AS VARCHAR)"
+  },
+  {
+   "name": "client_type",
+   "type": "varchar",
+   "nullable": true,
+   "description": "客户类型（13 种大杂烩：个体订购/甜选/合作商家/友商…；仅排查用，不做过滤依据）",
+   "expr": "CAST(c.client_type AS VARCHAR)"
+  },
+  {
+   "name": "branch_num",
+   "type": "bigint",
+   "nullable": true,
+   "description": "所属门店编号（实测恒=99 管理中心，无 64188 指针；留档证伪用——别拿它做映射）",
+   "expr": "CAST(c.branch_num AS BIGINT)"
+  },
+  {
+   "name": "client_actived",
+   "type": "boolean",
+   "nullable": true,
+   "description": "是否启用",
+   "expr": "CAST(c.client_actived AS BOOLEAN)"
+  },
+  {
+   "name": "client_del_tag",
+   "type": "boolean",
+   "nullable": true,
+   "description": "是否删除（发布侧未消费；留作将来过滤）",
+   "expr": "CAST(c.client_del_tag AS BOOLEAN)"
+  },
+  {
+   "name": "client_last_edit_time",
+   "type": "varchar",
+   "nullable": true,
+   "description": "最后修改时间（请求侧增量候选——vendor 修路由后可转水位增量）",
+   "expr": "CAST(c.client_last_edit_time AS VARCHAR)"
+  }
+ ]
+}
