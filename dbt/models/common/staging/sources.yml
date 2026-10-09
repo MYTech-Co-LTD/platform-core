@@ -93,10 +93,20 @@ sources:
           pagination: '新湖由 duckle 管线写入（#499/R2）：静态页扇出 p1..p8 + p9 哨兵（>800 单/日大声红）+ ctl.merge + flatten（UNNEST items 成行粒度，销售明细子管线同款）；生成器 scripts/lemeng/gen-transfer-out-pipeline.mjs，不手编'
 
       - name: wholesale_out
-        description: '乐檬**批发销售单**（新湖，2026-10-08 契约，#499/R3）：行 = 批发单商品行；查询窗=制单日单日（date_type=制单——⚠️ 枚举值是「制单」不是「制单时间」，错误值静默 0 行）、每分区写一次不重写；接口 nhsoft.whs.ai.wholesaleorder.find limit/offset 分页。发货方=3120，收货方=品品甜等外部批发客户。'
+        description: '乐檬**批发销售单**（新湖，2026-10-08 契约，#499/R3）：行 = 批发单商品行；查询窗=制单日单日（date_type=制单时间——⚠️ 2026-10-08 组合反转实测订正（#513）：短词「制单/审核」被静默忽略返回全史，正确值恰是「制单时间」）、每分区写一次不重写；接口 nhsoft.whs.ai.wholesaleorder.find limit/offset 分页。发货方=3120，收货方=品品甜等外部批发客户。'
         meta:
           path_convention: 'lemeng/wholesale_out/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet'
           access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_wholesale_out_prefix\") }}/*/bizday=**/*.parquet') r"
           partition_keys: ['system_book', 'bizday']
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / bizday::date）'
-          pagination: '新湖由 duckle 管线写入（#499/R3）：静态页扇出（limit/offset，p9 哨兵 >800 单/日大声红）+ ctl.merge + flatten（UNNEST wholesale_order_details）；生成器 scripts/lemeng/gen-wholesale-out-pipeline.mjs，不手编'
+          pagination: '新湖由 duckle 管线写入（#499/R3）：静态页扇出（limit/offset，p19 哨兵 >1800 单/日大声红）+ ctl.merge + flatten（UNNEST wholesale_order_details）；生成器 scripts/lemeng/gen-wholesale-out-pipeline.mjs，不手编'
+
+      - name: client
+        description: '乐檬**批发客户档案**（新湖，2026-10-10 契约，#516 段①）：全量快照（GET 零参数固定窗——例外路线证据见正典 §1.7；窗口跟随活档案，2026-10-10 实测 707 条且已知 41 个 WO 客户 41/41 在窗内），hive 两级分区 system_book/snapshot。行粒度 = 账套 × 快照日 × 客户。接口 nhsoft.whs.ai.client.find GET 裸码路径单页（limit/offset/keyword 全无效）。'
+        meta:
+          path_convention: 'lemeng/client/system_book=<账套>/snapshot=<YYYY-MM-DD>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_client_prefix\") }}/*/snapshot=**/all.parquet') r"
+          partition_keys: ['system_book', 'snapshot']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / snapshot::date）'
+          pagination: '新湖由 duckle 管线写入（#516 段①）：**单页固定窗**（GET 零参数路由无翻页；行数带守卫 die：0 行或 <500 拒写湖）+ ctl.merge；生成器 scripts/lemeng/gen-client-pipeline.mjs，不手编'
+
