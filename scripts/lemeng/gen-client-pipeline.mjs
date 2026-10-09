@@ -123,7 +123,9 @@ const pipeline = {
       },
     },
     die('d2', 'no-rows', 'client: 固定窗返回 0 行（路由挂了或档案被清空）⇒ 拒绝采集与写湖'),
-    node('b1', 'code.sql', codeSql(`WITH n AS (SELECT count(*) AS c FROM input) SELECT 'window_shrunk' AS violation, n.c AS detail FROM n WHERE n.c < ${WINDOW_FLOOR}`)),
+    // ⚠️ 引擎在外层自动包 `WITH input AS (SELECT * FROM 上游)` ⇒ 本 SQL 不能再写顶层 WITH（Parser
+    //    Error，2026-10-10 首跑实测）；行数聚合用子查询形态。
+    node('b1', 'code.sql', codeSql(`SELECT 'window_shrunk' AS violation, n.c AS detail FROM (SELECT count(*) AS c FROM input) n WHERE n.c < ${WINDOW_FLOOR}`)),
     die('dw', 'has-rows', `lemeng client 窗口骤缩：固定窗实测 707 条（2026-10-10），本窗 < ${WINDOW_FLOOR}（{rows} 行违规）⇒ 接口行为变化，拒绝采集与写湖。处置：复核探针（GET 路由是否改版）→ 走 PR`),
     node('merge', 'ctl.merge', {}),
     node('shape', 'code.sql', codeSql(SHAPE_SQL)),

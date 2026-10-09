@@ -239,7 +239,7 @@
         "label": "b1",
         "componentId": "code.sql",
         "properties": {
-          "sql": "WITH n AS (SELECT count(*) AS c FROM input) SELECT 'window_shrunk' AS violation, n.c AS detail FROM n WHERE n.c < 500"
+          "sql": "SELECT 'window_shrunk' AS violation, n.c AS detail FROM (SELECT count(*) AS c FROM input) n WHERE n.c < 500"
         }
       }
     },
