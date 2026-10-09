@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.88.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.88.1...v0.88.2) - 2026-10-09
+- 【修复】data: #525 分批切片保持换行分隔（#526 follow-up，真机首跑实测） ([#527](https://github.com/MYTech-Co-LTD/platform-core/pull/527), [4a05438](https://github.com/MYTech-Co-LTD/platform-core/commit/4a05438f0aa168c589b748ca6b4a71e716e2bb76))
+
+
 ## [0.88.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.88.0...v0.88.1) - 2026-10-09
 - 【修复】data: #525 recon-preagg 分批调用——报表端点单次 branch_nums ≤100 家，3120（147 家）必分批（真机实测） ([#526](https://github.com/MYTech-Co-LTD/platform-core/pull/526), [841db96](https://github.com/MYTech-Co-LTD/platform-core/commit/841db962e069e047225ce76fcb102bdce9b1b045))
 
