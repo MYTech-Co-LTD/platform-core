@@ -17,11 +17,18 @@ ok() { if [ "$1" = "$2" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo " 
 awk '/^python3 - /{f=1;next} /^PY$/{f=0} f' "$SRC" > /tmp/_rp_blk.py
 [ -s /tmp/_rp_blk.py ] || { echo "  FAIL: 抽不到比较块（脚本结构变了？）"; echo "recon-preagg: pass=0 fail=1"; exit 1; }
 
-# —— 夹具：湖侧 CSV（b,net）+ 端点响应 JSON ——
+# —— 夹具：湖侧 CSV（b,net）+ 端点响应 JSON（分批响应文件，比较块按 glob 合并）——
 _w() { printf '%s' "$1" > "$2"; }
 run() { # $1=湖CSV $2=响应JSON $3=是否定稿(1/0) -> 打印"输出|rc"
-  _w "$1" /tmp/_preagg_lake.csv; _w "$2" /tmp/_preagg_resp.json
+  rm -f /tmp/_preagg_resp_*.json
+  _w "$1" /tmp/_preagg_lake.csv; _w "$2" /tmp/_preagg_resp_1.json
   out=$(python3 /tmp/_rp_blk.py t 2026-10-02 1.00 0.01 "$3" 2>&1); rc=$?
+  printf '%s|%s' "$(printf '%s' "$out" | tail -1)" "$rc"
+}
+run2() { # 分批形态：$1=湖CSV $2=批1响应 $3=批2响应 $4=定稿 -> 打印"输出|rc"
+  rm -f /tmp/_preagg_resp_*.json
+  _w "$1" /tmp/_preagg_lake.csv; _w "$2" /tmp/_preagg_resp_1.json; _w "$3" /tmp/_preagg_resp_2.json
+  out=$(python3 /tmp/_rp_blk.py t 2026-10-02 1.00 0.01 "$4" 2>&1); rc=$?
   printf '%s|%s' "$(printf '%s' "$out" | tail -1)" "$rc"
 }
 _resp() { printf '{"code":0,"result":{"rows":[%s]}}' "$1"; }
@@ -53,7 +60,19 @@ r=$(run '12,100.00
 ' '{"code":10006,"msg":"用户上下文或权限读取失败"}' 1)
 case "$r" in PREAGG_FAILED:pre_call*"|3") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 端点失败未按依赖处理：$r";; esac
 
-rm -f /tmp/_rp_blk.py /tmp/_preagg_lake.csv /tmp/_preagg_resp.json
+# 6) 分批合并（#525：3120 147 家 > 端点单次 100 上限）：两批 rows 合并后逐分平 ⇒ OK / rc 0
+r=$(run2 '12,100.00
+21,50.00
+' "$(_resp '{"branch_num":12,"sale_money":100.00}')" "$(_resp '{"branch_num":21,"sale_money":50.00}')" 1)
+ok "$r" "PREAGG_OK book=t bizday=2026-10-02 branches=2|0"
+
+# 7) 分批且其中一批端点坏 ⇒ pre_call / rc 3（批级失败不能被合并吞掉）
+r=$(run2 '12,100.00
+21,50.00
+' "$(_resp '{"branch_num":12,"sale_money":100.00}')" '{"code":10001,"msg":"branch_nums 最多支持 100 家门店"}' 1)
+case "$r" in PREAGG_FAILED:pre_call*"|3") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 批级端点失败未判：$r";; esac
+
+rm -f /tmp/_rp_blk.py /tmp/_preagg_lake.csv /tmp/_preagg_resp_*.json
 echo "recon-preagg: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ] || exit 1
 echo "recon-preagg: OK"
