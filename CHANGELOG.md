@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.86.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.85.3...v0.86.0) - 2026-10-09
+- 【新增】data: #516 lemeng.client 客户档案采集源——工单取价对照表（#500 段①） ([#519](https://github.com/MYTech-Co-LTD/platform-core/pull/519), [f6fd1f7](https://github.com/MYTech-Co-LTD/platform-core/commit/f6fd1f732ac455973d419c290f1f252a69973307))
+
+
 ## [0.85.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.85.2...v0.85.3) - 2026-10-08
 - 【修复】data: wholesale 发布仓库查询 bizday::text——node-pg DATE→JS Date 长串进 date[] 解析炸（#511 收尾） ([#514](https://github.com/MYTech-Co-LTD/platform-core/pull/514), [347f8af](https://github.com/MYTech-Co-LTD/platform-core/commit/347f8afe6fe1e5aec43e1df8d886a89128891255))
 
