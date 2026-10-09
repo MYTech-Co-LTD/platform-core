@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.87.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.86.0...v0.87.0) - 2026-10-09
+- 【新增】data: #517 dim_settlement_order_line 归一取价面——transfer∪wholesale 经门店映射 ([#520](https://github.com/MYTech-Co-LTD/platform-core/pull/520), [9c9735b](https://github.com/MYTech-Co-LTD/platform-core/commit/9c9735b99f45acd0bb4759e601217463b61d41a8))
+
+
 ## [0.86.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.85.3...v0.86.0) - 2026-10-09
 - 【新增】data: #516 lemeng.client 客户档案采集源——工单取价对照表（#500 段①） ([#519](https://github.com/MYTech-Co-LTD/platform-core/pull/519), [f6fd1f7](https://github.com/MYTech-Co-LTD/platform-core/commit/f6fd1f732ac455973d419c290f1f252a69973307))
 
