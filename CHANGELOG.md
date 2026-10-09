@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.88.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.88.2...v0.88.3) - 2026-10-09
+- 【修复】data: 回填管线加 bizday 闭窗守卫 + heal 常设旁路失效冻结 checkpoint（#528） ([#529](https://github.com/MYTech-Co-LTD/platform-core/pull/529), [1ee3ff4](https://github.com/MYTech-Co-LTD/platform-core/commit/1ee3ff40af41c1cc243311055187721da52d72e2))
+
+
 ## [0.88.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.88.1...v0.88.2) - 2026-10-09
 - 【修复】data: #525 分批切片保持换行分隔（#526 follow-up，真机首跑实测） ([#527](https://github.com/MYTech-Co-LTD/platform-core/pull/527), [4a05438](https://github.com/MYTech-Co-LTD/platform-core/commit/4a05438f0aa168c589b748ca6b4a71e716e2bb76))
 
