@@ -27,21 +27,21 @@
 **Files:** 无（gh 操作）。
 
 **Interfaces:**
-- Produces: issue 号 `#<COLLECT>`（Wave①）、`#<FACE>`（Wave②），后续所有任务标题/PR 引用。
+- Produces: issue 号 `#516`（Wave①）、`#517`（Wave②），后续所有任务标题/PR 引用。
 
-- [ ] **Step 1: 建采集源 issue**
+- [x] **Step 1: 建采集源 issue**（→ #516）
 
 ```bash
 gh issue create --title "feat(data): lemeng.client 客户档案采集源——工单取价对照表（#500 段①）" --body "上游 spec：docs/superpowers/specs/2026-10-09-500-ticket-settlement-price-design.md §5。走 collect-source A→I。范围：探针定案、契约+L0 管线（3120，GET 裸码全量翻页+哨兵）、stg_lemeng_client、lock 刷新、首跑验收（41/41 fid 覆盖）、探活与台账回填。"
 ```
 
-- [ ] **Step 2: 建发布面 issue**
+- [x] **Step 2: 建发布面 issue**（→ #517）
 
 ```bash
 gh issue create --title "feat(data): dim_settlement_order_line 归一取价面——transfer∪wholesale 经门店映射（#500 段②）" --body "上游 spec §4/§5。范围：migration 014/015、publish-dims 归一段（override→同名→大声红）、wire-warehouse 探活判据、映射率验收与无极对平抽样。"
 ```
 
-- [ ] **Step 3: 回填计划文件**——把两个 issue 号写进本文件 Wave①/② 标题处，commit：
+- [x] **Step 3: 回填计划文件**——把两个 issue 号写进本文件 Wave①/② 标题处，commit：
 
 ```bash
 git add docs/superpowers/plans/2026-10-10-500-ticket-settlement-price.md
@@ -50,7 +50,7 @@ git commit -m "docs(data): 工单取价实施计划回填段 issue 号（#500）
 
 ---
 
-## Wave ① 采集源 lemeng.client（issue #<COLLECT>；collect-source A→I 执法）
+## Wave ① 采集源 lemeng.client（issue #516；collect-source A→I 执法）
 
 > 段门：A→I 逐段判停，不过不进下段（`.claude/skills/collect-source`）。开工三查已由 spec §2 完成（台账无本源行→从 A 起；WeKnora `cb31a2fb` 已读；正典 §1.3 对应小节动手前重读）。
 
@@ -78,7 +78,7 @@ grep -o '"[a-zA-Z_]*":' /tmp/client_probe.txt | sort -u
 
 - [ ] **Step 2: 写探针报告**——四条结论 + `PAGE_TOTAL/ROW_TOTAL/PAGE_SIZE_REAL` + 哨兵阈值建议（数据页数 × 绑定值，哨兵页不计容量，照批发单 19 页算式注释形态）。不跑探针直接写码 = 最贵跳步（collect-source A 判停）。
 
-- [ ] **Step 3: Commit** `docs(data): #<COLLECT> 客档源 A 段探针报告——总量/翻页绑定/哨兵阈值`
+- [ ] **Step 3: Commit** `docs(data): #516 客档源 A 段探针报告——总量/翻页绑定/哨兵阈值`
 
 ### Task 2: B+C 段——正典登记 + 契约
 
@@ -139,7 +139,7 @@ grep -o '"[a-zA-Z_]*":' /tmp/client_probe.txt | sort -u
 
   ⚠️ 写前先读 `contracts/common/lemeng.wholesale_out.json` 全文与 `lemeng.dim.branch.l0.json`（基础资料快照先例）：若分支快照的分区风格与 `[system_book, snapshot]` 不同，**以仓内先例为准**订正本契约，别发明第二风格。投影源别名（`c.`）以 Task 3 生成器的实际 SQL 为准，两处必须一致（C 段双轨同改判停）。
 - [ ] **Step 3: 台账 §2 清单行**——照 transfer_out 行格式：状态「B/C 已定，待首跑」。
-- [ ] **Step 4: Commit** `feat(data): #<COLLECT> 客档源契约+正典登记（B/C 段）`
+- [ ] **Step 4: Commit** `feat(data): #516 客档源契约+正典登记（B/C 段）`
 
 ### Task 3: D 段——生成器脚本 + 管线 JSON
 
@@ -169,7 +169,7 @@ grep -o '"[a-zA-Z_]*":' /tmp/client_probe.txt | sort -u
 ```
 
 - [ ] **Step 2: 生成并校验**：`node scripts/lemeng/gen-client-pipeline.mjs --book 3120 --out deploy/duckle/console/pipelines/lemeng.client.l0.3120.json`，然后 duckle MCP `validate_pipeline`（编译过）+ 抽查投影列集 == 契约 columns（C 段双轨判停）。
-- [ ] **Step 3: Commit** `feat(data): #<COLLECT> 客档源 L0 管线生成器+管线 JSON（3120）`（含 lock 刷新，见 Task 4 Step 3——同 PR 内一起刷）。
+- [ ] **Step 3: Commit** `feat(data): #516 客档源 L0 管线生成器+管线 JSON（3120）`（含 lock 刷新，见 Task 4 Step 3——同 PR 内一起刷）。
 
 ### Task 4: staging + lock + 断言
 
@@ -214,7 +214,7 @@ from read_parquet(
   （`lemeng_lake_root`/`subject_org()` 的真实名字以 `stg_lemeng_wholesale_out.sql` 现文为准——照抄它的写法，上面是形状示意，**执行时逐行对齐现文件**。）
 - [ ] **Step 2: 唯一键断言**（照 `assert_stg_lemeng_wholesale_key_unique.sql` 改表名列集）：键 = `(snapshot, client_fid)`。
 - [ ] **Step 3: 刷 lock**：`pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`，确认 `deploy/data-plane.lock` 含新文件哈希；本地 `pnpm test:guard`（含 check-data-plane-lock）绿。
-- [ ] **Step 4: Commit** `feat(data): #<COLLECT> stg_lemeng_client staging+断言+lock`
+- [ ] **Step 4: Commit** `feat(data): #516 stg_lemeng_client staging+断言+lock`
 
 ### Task 5: E/F/G 段——真机首跑 + 验收 + 探活 + 台账回填
 
@@ -226,11 +226,11 @@ from read_parquet(
 - [ ] **Step 3: F 四层验收**：①湖行数 = ROW_TOTAL ± 翻页漂移；②staging 物化后 `staging.stg_lemeng_client` 同数；③**41/41 判据**——staging 里能查到 10-08 全部 41 个 WO client_fid（openship exec 进 pg_duckdb 查，命令形态同本会话）；④qa.contract/drift 绿。
 - [ ] **Step 4: E/G 排班+探活**：调度挂 console schedules（照 dim 系基础资料的节奏）；台账 §2 行更新排班实况；新鲜度锚验「匹配到」（catalog lint）。
 - [ ] **Step 5: 台账+WeKnora 回填**：正典两行推进；WeKnora `cb31a2fb` 更新首跑实况（分页标定值）。
-- [ ] **Step 6: 波末验证 + PR**：`pnpm test && pnpm typecheck`（改动面的全部守卫）→ PR `Closes #<COLLECT>`。
+- [ ] **Step 6: 波末验证 + PR**：`pnpm test && pnpm typecheck`（改动面的全部守卫）→ PR `Closes #516`。
 
 ---
 
-## Wave ② 发布面归一（issue #<FACE>）
+## Wave ② 发布面归一（issue #517）
 
 ### Task 6: migration 014/015
 
@@ -281,7 +281,7 @@ create table data.client_store_override (
 ```
 
 - [ ] **Step 3: 空库迁移自检**：`dropdb` + `createdb` 后挂 `DATABASE_URL` 跑 `pnpm test`（迁移幂等：重复跑不报错）。
-- [ ] **Step 4: Commit** `feat(data): #<FACE> 归一取价面+对照表迁移（014/015）`
+- [ ] **Step 4: Commit** `feat(data): #517 归一取价面+对照表迁移（014/015）`
 
 ### Task 7: publish-dims 归一段
 
@@ -339,7 +339,7 @@ create table data.client_store_override (
   ⚠️ 执行时三处订正为真形状：① `stg_lemeng_transfer_out_published` 不存在——MO 侧直接复用本文件里已有的 dim_transfer_out 查询结果行（同事务内已算好，别查两遍；把该查询改造为同时喂两张表）；② override 是**平台库**表（`data.client_store_override`），warehouse SQL 够不着——实现改为：先从平台库读 override 行集，以**参数数组**注入 warehouse 查询（`unnest($n::text[],$m::text[])` 构造 inline map），或先在平台库建临时映射再搬运——**照 publish-dims 现有「warehouse 查、平台写」的方向，别跨库 join**；③ 列名以 stg 真实列集为准（Task 4 产物）。其余模式（5000 行分块、unnest 数组参数、事务 delete+insert、行数日志）逐行照 dim_transfer_out 段。
 - [ ] **Step 2: 红清单**：插入前对 `wo_map` 里 `store_code is null` 的 distinct client_fid 打 `console.error(SCRIPT_NAME + ': 未映射批发客户 N 个（行 M 条不进面）：…')`；**不 exit 非零**（发布继续，消费端 fail-closed 兜底——spec §5「大声红」的落地形态）。注释里写明这个取舍。
 - [ ] **Step 3: 真机验收**：按跑法注记 `docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx scripts/lemeng/publish-dims.mjs`（openship MCP service exec 走）；判据：10-08 MO+WO 行数与 dim_transfer_out/dim_wholesale_out 对平、映射率与未命中清单人工过目、抽样单 price 与无极副本逐分对平。
-- [ ] **Step 4: Commit** `feat(data): #<FACE> publish-dims 归一段——映射解析+大声红`
+- [ ] **Step 4: Commit** `feat(data): #517 publish-dims 归一段——映射解析+大声红`
 
 ### Task 8: 探活 + 波末
 
@@ -347,7 +347,7 @@ create table data.client_store_override (
 - Modify: `scripts/lemeng/wire-warehouse.sh`（判据 ⑥ 之后追加）
 
 - [ ] **Step 1: 探活判据**（照 ⑥ 的形状）：`dim_settlement_order_line` 非空 + `max(order_bizday)` 距今 ≤2 天，否则 `ERR` 文案（「归一面 0 行/过期 ⇒ 工单取价不可用」）+ exit 1。
-- [ ] **Step 2: 波末验证 + PR**：全量门禁（`pnpm test`、`pnpm typecheck`、`pnpm smoke`、守卫）→ PR `Closes #<FACE>`；merge 等 CI CLEAN → main 自动部署后，山海侧手工触发发布 job 重跑一次（数据面不随 app 部署自动跑）。
+- [ ] **Step 2: 波末验证 + PR**：全量门禁（`pnpm test`、`pnpm typecheck`、`pnpm smoke`、守卫）→ PR `Closes #517`；merge 等 CI CLEAN → main 自动部署后，山海侧手工触发发布 job 重跑一次（数据面不随 app 部署自动跑）。
 
 ---
 
