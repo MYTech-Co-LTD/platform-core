@@ -411,7 +411,8 @@ async function main() {
         group by t.org, t.order_no, t.item_code, coalesce(t.item_grade_num, 0)
        having sum(t.quantity) > 0
        union all
-       select 'wholesale' as source,
+       select m.org,
+              'wholesale' as source,
               m.store_code, m.store_name, m.order_no, m.bizday, m.create_time,
               m.item_code, m.item_name, m.order_detail_num::text as line_key,
               m.quantity, m.money, m.price_minor, m.client_fid
