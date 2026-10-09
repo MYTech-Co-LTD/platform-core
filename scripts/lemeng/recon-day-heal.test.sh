@@ -98,8 +98,7 @@ _bf=$(printf '%s' "$_out" | sed -n 's/.*backup=//p')
 [ -n "$_bf" ] && cmp -s "$_R/orig.ndjson" "$_bf/$(basename "$_F").1.bak"
 ok "$?" "0"                                       # 备份 == 原文件（可回滚的凭据）
 ok "$(printf '%s' "$_out" | sed -n 's/.*deleted=\([0-9]*\).*/\1/p')" "2"
-ls "$_R/lemeng_retail_order_line_window_00/checkpoints/"*.tmp >/dev/null 2>&1
-ok "$?" "1"                                       # 不留 .tmp 残骸
+ok "$(find "$_R" -name '*.tmp' 2>/dev/null | wc -l | tr -d ' ')" "0"   # 不留 .tmp 残骸（find 计数断言：ls 退出码 BSD=1/GNU=2，平台敏感）
 rm -rf "$_R"
 
 # 场景②：全部命中 ⇒ **空 ndjson 留存**（引擎视为无缓存 ⇒ 全量重抓，合法态）、rc 0
@@ -123,8 +122,7 @@ cp "$_F" "$_R/orig.ndjson"
 _out=$(_run_prune "$_R" 20261001)
 cmp -s "$_F" "$_R/orig.ndjson"; ok "$?" "0"
 ok "$(printf '%s' "$_out" | sed -n 's/.*deleted=\([0-9]*\).*/\1/p')" "0"
-ls "$_R"/.backup/*.bak >/dev/null 2>&1
-ok "$?" "1"                                       # 无命中 ⇒ **不产生备份**（误备份=噪音；变异哨兵）
+ok "$(find "$_R"/.backup -name '*.bak' 2>/dev/null | wc -l | tr -d ' ')" "0"   # 无命中 ⇒ **不产生备份**（误备份=噪音；变异哨兵；find 计数规避 ls 退出码平台差）
 rm -rf "$_R"
 
 # 场景④：无窗口目录 ⇒ deleted=0 files=0、rc 0（不是错误）
