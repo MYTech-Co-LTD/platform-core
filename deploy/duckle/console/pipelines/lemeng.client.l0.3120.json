@@ -283,7 +283,7 @@
         "label": "shape",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT\n  'cl-' || '${ENV:SYSTEM_BOOK}' || '-client-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date}' AS DATE) AS snapshot,\n  CAST(c.client_fid AS VARCHAR) AS client_fid,\n  CAST(c.client_name AS VARCHAR) AS client_name,\n  CAST(c.client_code AS VARCHAR) AS client_code,\n  CAST(c.client_type AS VARCHAR) AS client_type,\n  CAST(c.branch_num AS BIGINT) AS branch_num,\n  CAST(c.client_actived AS BOOLEAN) AS client_actived,\n  CAST(c.client_del_tag AS BOOLEAN) AS client_del_tag,\n  CAST(c.client_last_edit_time AS VARCHAR) AS client_last_edit_time\nFROM input c"
+          "sql": "SELECT\n  'cl-${ENV:SYSTEM_BOOK}-client-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date}' AS DATE) AS snapshot,\n  CAST(c.client_fid AS VARCHAR) AS client_fid,\n  CAST(c.client_name AS VARCHAR) AS client_name,\n  CAST(c.client_code AS VARCHAR) AS client_code,\n  CAST(c.client_type AS VARCHAR) AS client_type,\n  CAST(c.branch_num AS BIGINT) AS branch_num,\n  CAST(c.client_actived AS BOOLEAN) AS client_actived,\n  CAST(c.client_del_tag AS BOOLEAN) AS client_del_tag,\n  CAST(c.client_last_edit_time AS VARCHAR) AS client_last_edit_time\nFROM input c"
         }
       }
     },
