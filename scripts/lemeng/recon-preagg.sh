@@ -40,7 +40,11 @@
 # 依赖 env：LEMENG_TOKEN_<账套>（本脚本按账套取；缺失时从 console 容器 env **运行时**现取，不落盘）
 # 可选 env：BOOK（默认 64188）/ SETTLE_DAYS（默认 3）/ PGDUCK_CONTAINER / PGDUCK_USER / PGDUCK_DB
 #           PREAGG_ABILITY / PREAGG_URL_BASE / PREAGG_ABS_TOL（默认 1.00）/ PREAGG_MAX_PCT（默认 0.01）
-#           PREAGG_MAX_BRANCHES（默认 100）/ LAKE_PREFIX / CONSOLE_CT
+#           PREAGG_MAX_BRANCHES（默认 100 = **批大小**，即端点单次上限，别改大）/ LAKE_PREFIX / CONSOLE_CT
+#
+# ── 分批（2026-10-10，#525 前车）──────────────────────────────────────────────
+# 报表端点单次 branch_nums ≤100 家（超限 code=10001）。3120 湖侧 147 家 ⇒ 必分批；
+# 64188 的 63 家从未触线。批循环见比较块前的那段——各批响应落独立文件、python 合并 rows。
 #
 # ⚠️ 相邻中文一律 `${VAR}`：本机 /bin/sh（bash 3.2）会把全角字符吃进变量名（全仓纪律，issue #212）。
 set -u
@@ -118,18 +122,35 @@ LAKE_ROWS=$(_lake_q "${SQL_LAKE}")
 
 BRANCHES=$(printf '%s\n' "${LAKE_ROWS}" | cut -d, -f1 | tr '\n' ' ' | sed 's/ *$//')
 NC=$(printf '%s\n' "${BRANCHES}" | tr ' ' '\n' | grep -c .)
-[ "${NC}" -le "${PREAGG_MAX_BRANCHES}" ] || { echo "PREAGG_FAILED:usage 湖侧门店数 ${NC} > 单次上限 ${PREAGG_MAX_BRANCHES}（需分批）" >&2; exit 2; }
-JSON_BRANCHES=$(printf '%s' "${BRANCHES}" | sed 's/ /,/g')
 
-BODY=$(printf '{"bizday_start":"%s","bizday_end":"%s","summary_types":["branch"],"branch_nums":[%s]}' "${BIZDAY}" "${BIZDAY}" "${JSON_BRANCHES}")
-PRE_JSON=$(curl -s --max-time 90 -X POST "${PREAGG_URL_BASE}/${PREAGG_ABILITY}" \
-  -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -d "${BODY}" 2>/dev/null)
-[ -n "${PRE_JSON}" ] || { echo "PREAGG_FAILED:pre_call 预聚合端点无响应" >&2; exit 3; }
+# ── 分批调用（#525 前车：3120 有 147 家湖侧门店，报表端点单次 branch_nums ≤100 家
+#    （超限报 code=10001；64188 的 63 家从没触过这条）⇒ 按批切门店、逐批 curl，
+#    各批响应落 /tmp/_preagg_resp_<批号>.json，比较块（python）合并 rows 后照旧比对。
+#    PREAGG_MAX_BRANCHES 在这里就是**批大小**（默认 100 = 端点上限，别改大）。
+BATCHES=$(( (NC + PREAGG_MAX_BRANCHES - 1) / PREAGG_MAX_BRANCHES ))
+[ "${BATCHES}" -ge 1 ] || BATCHES=1
+rm -f /tmp/_preagg_resp_*.json
+b=1
+while [ "${b}" -le "${BATCHES}" ]; do
+  START=$(( (b - 1) * PREAGG_MAX_BRANCHES + 1 ))
+  END=$(( b * PREAGG_MAX_BRANCHES ))
+  BATCH_BRANCHES=$(printf '%s\n' "${BRANCHES}" | sed -n "${START},${END}p" | tr '\n' ' ' | sed 's/ *$//')
+  JSON_BATCH=$(printf '%s' "${BATCH_BRANCHES}" | sed 's/ /,/g')
+  BODY=$(printf '{"bizday_start":"%s","bizday_end":"%s","summary_types":["branch"],"branch_nums":[%s]}' "${BIZDAY}" "${BIZDAY}" "${JSON_BATCH}")
+  PRE_JSON=$(curl -s --max-time 90 -X POST "${PREAGG_URL_BASE}/${PREAGG_ABILITY}" \
+    -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -d "${BODY}" 2>/dev/null)
+  [ -n "${PRE_JSON}" ] || { echo "PREAGG_FAILED:pre_call 预聚合端点无响应（批 ${b}/${BATCHES}）" >&2; exit 3; }
+  printf '%s' "${PRE_JSON}" > "/tmp/_preagg_resp_${b}.json"
+  b=$(( b + 1 ))
+done
 
 printf '%s\n' "${LAKE_ROWS}" > /tmp/_preagg_lake.csv
 printf '%s' "${PRE_JSON}" > /tmp/_preagg_resp.json
 python3 - "${BOOK}" "${BIZDAY}" "${PREAGG_ABS_TOL}" "${PREAGG_MAX_PCT}" "${SETTLED}" <<'PY'
-import json, sys
+import glob
+import json
+import sys
+
 book, day = sys.argv[1], sys.argv[2]
 abs_tol, max_pct = float(sys.argv[3]), float(sys.argv[4])
 settled = sys.argv[5] == '1'
@@ -148,12 +169,16 @@ def rd(path):
     return d
 
 net = rd('/tmp/_preagg_lake.csv')
-resp = json.load(open('/tmp/_preagg_resp.json'))
-if resp.get('code') != 0:
-    print('PREAGG_FAILED:pre_call 预聚合端点返回 code=%s msg=%s' % (resp.get('code'), str(resp.get('msg'))[:80]))
-    sys.exit(3)
-pre = {int(x['branch_num']): float(x.get('sale_money') or 0)
-       for x in ((resp.get('result') or {}).get('rows') or [])}
+# 分批响应合并（#525：报表端点单次 ≤100 家门店；各批响应文件按批号合并 rows）
+chunks = sorted(glob.glob('/tmp/_preagg_resp_*.json'))
+rows = []
+for path in chunks:
+    resp = json.load(open(path))
+    if resp.get('code') != 0:
+        print('PREAGG_FAILED:pre_call 预聚合端点返回 code=%s msg=%s' % (resp.get('code'), str(resp.get('msg'))[:80]))
+        sys.exit(3)
+    rows += (resp.get('result') or {}).get('rows') or []
+pre = {int(x['branch_num']): float(x.get('sale_money') or 0) for x in rows}
 
 miss = [b for b in net if b not in pre]
 extra = [b for b in pre if b not in net]
