@@ -389,7 +389,8 @@ async function main() {
           where w.state_code = 3 and w.money is not null and w.money > 0
             and w.quantity is not null and w.quantity > 0
        )
-       select 'transfer' as source,
+       select t.org,
+              'transfer' as source,
               max(b.code) as store_code,
               max(t.branch_name) as store_name,
               t.order_no,
