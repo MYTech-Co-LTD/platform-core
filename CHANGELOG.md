@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.87.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.87.2...v0.87.3) - 2026-10-09
+- 【修复】data: #517 wholesale 分支补选 m.org——union 列数对齐（#522 follow-up） ([#523](https://github.com/MYTech-Co-LTD/platform-core/pull/523), [23d23e7](https://github.com/MYTech-Co-LTD/platform-core/commit/23d23e7e1ae375667870b7ef0e41df6f8837e88b))
+
+
 ## [0.87.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.87.1...v0.87.2) - 2026-10-09
 - 【修复】data: #517 取价面 transfer 分支补选 org（#521 follow-up，真机首跑实测） ([#522](https://github.com/MYTech-Co-LTD/platform-core/pull/522), [e334bc2](https://github.com/MYTech-Co-LTD/platform-core/commit/e334bc201ca7869fe057d36dccf2e9ca7189377b))
 
