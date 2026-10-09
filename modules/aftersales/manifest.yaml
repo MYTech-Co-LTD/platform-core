@@ -24,6 +24,8 @@ api:
     - { method: GET,  path: /guest/tickets,       scope: aftersales:guest }
     - { method: GET,  path: /guest/tickets/:id,   scope: aftersales:guest }
     - { method: POST, path: /guest/tickets,       scope: aftersales:guest }
+    # 选单页数据源（#500 段③）：按店列近期结算单（数据源 = data.dim_settlement_order_line）。
+    - { method: GET,  path: /guest/settlement-orders, scope: aftersales:guest }
     # ── 规则·管理端（aftersales:manage）──
     - { method: GET,    path: /rules,     scope: aftersales:manage }
     - { method: POST,   path: /rules,     scope: aftersales:manage }

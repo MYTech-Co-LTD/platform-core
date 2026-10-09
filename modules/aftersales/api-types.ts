@@ -34,10 +34,13 @@ export type ApproveStatus = 'pending' | 'approved' | 'rejected'
 export interface TicketListItem {
   id: number
   code: string
-  product_id: number
+  // 自然键（#500）：product_id/store_id 是死列（存量行可能有值，新单恒 null）——别再消费。
+  product_id: number | null
   product_name: string
-  store_id: number
+  store_id: number | null
   store_name: string
+  product_code: string
+  store_code: string
   damage_quantity: number
   status: TicketStatus
   amount_type: AmountType | null
@@ -49,18 +52,43 @@ export interface TicketListItem {
   created_at: string
   processed_at: string | null
   // —— `normalizeTicketRow` 额外挂的 camelCase 别名（同值）——
-  productId?: number
-  storeId?: number
+  productId?: number | null
+  storeId?: number | null
   amountMinor?: number
   refundRatio?: number | null
 }
 
+/** 挂原单冻结依据（#500 段③，spec §6.2）：建单时定死，票面可追溯到具体那张 MO/WO 的那一行。 */
+export interface TicketSettlement {
+  settlement_source: 'transfer' | 'wholesale' | ''
+  settlement_order_no: string
+  settlement_item_code: string
+  settlement_line_key: string
+  settlement_price_minor: number | null
+  settlement_bizday: string | null
+}
+
 /** `GET /tickets/:id`：列表行 + 详情独有的字段 + 附件（附件 URL 由服务端预签名，未配 ZOS 时为 null） */
-export interface TicketDetail extends TicketListItem {
+export interface TicketDetail extends TicketListItem, TicketSettlement {
   submitter_openid: string
   basic_quantity: number
   basic_unit_price_minor: number
   attachments: TicketAttachment[]
+}
+
+/** `GET /guest/settlement-orders` 的一行：选单页的两级选择面（单 → 行）。 */
+export interface SettlementOrder {
+  orderNo: string
+  source: 'transfer' | 'wholesale'
+  bizday: string
+  createTime: string | null
+  lines: {
+    itemCode: string
+    itemName: string | null
+    lineKey: string
+    quantity: number | null
+    priceMinor: number
+  }[]
 }
 
 export interface TicketAttachment {

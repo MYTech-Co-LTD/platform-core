@@ -31,6 +31,7 @@ interface TicketRow {
   damage_quantity: number
   basic_quantity: number
   basic_unit_price_minor: string
+  settlement_price_minor: string | null
 }
 
 export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
@@ -54,6 +55,7 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
     )
     const listRes = await ctx.pool.query(
       `select id, code, product_id, product_name, store_id, store_name,
+              product_code, store_code,
               damage_quantity, status, amount_type, amount_minor, refund_ratio,
               operator, remark, related_order, created_at, processed_at
          from aftersales.ticket
@@ -79,7 +81,10 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
 
     const res = await ctx.pool.query(
       `select id, code, submitter_openid, product_id, product_name, store_id, store_name,
+              product_code, store_code,
               damage_quantity, basic_quantity, basic_unit_price_minor,
+              settlement_source, settlement_order_no, settlement_item_code, settlement_line_key,
+              settlement_price_minor, settlement_bizday,
               status, amount_type, amount_minor, refund_ratio,
               operator, remark, related_order, created_at, processed_at
          from aftersales.ticket where org = $1 and id = $2`,
@@ -113,7 +118,7 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
       // 这里【不加 for update】：真正的并发守卫是下面 update 的 where status='pending'——
       // 两个并发处理请求都会读到 pending、都算出一份金额，但只有一个 update 能落，另一份影响行数 0 ⇒ 409。
       const cur = await client.query<TicketRow>(
-        `select id, status, damage_quantity, basic_quantity, basic_unit_price_minor
+        `select id, status, damage_quantity, basic_quantity, basic_unit_price_minor, settlement_price_minor
            from aftersales.ticket where org = $1 and id = $2`,
         [org, id],
       )
@@ -133,8 +138,11 @@ export function registerTicketManage(r: ModuleHono, ctx: RouteCtx): void {
           {
             damageQuantity: Number(row.damage_quantity),
             basicQuantity: Number(row.basic_quantity),
+            // 单价来源（#500 段③）：挂原单的新单读 settlement_price_minor（按单结算价冻结值）；
+            // 存量 pending 的老单没有该列值，回落 basic_unit_price_minor（旧档案价）——这是
+            // **存量兼容桥**，不是取价 fallback：新单永远有 settlement_price_minor（建单 fail-closed）。
             // pg 把 bigint 与 numeric 都返回成字符串——不转就是字符串算术（见 domain/ticket.ts）
-            basicUnitPriceMinor: toMinor(row.basic_unit_price_minor),
+            basicUnitPriceMinor: toMinor(row.settlement_price_minor ?? row.basic_unit_price_minor),
           },
           body,
         )
@@ -213,6 +221,10 @@ export function normalizeTicketRow(row: Record<string, unknown>): Record<string,
     productId: row.product_id === undefined ? undefined : toNullableInt(row.product_id),
     storeId: row.store_id === undefined ? undefined : toNullableInt(row.store_id),
     basicUnitPriceMinor: row.basic_unit_price_minor === undefined ? undefined : toMinor(row.basic_unit_price_minor as string),
+    // 挂原单冻结价（#500 段③）：bigint→string，别名出 camelCase 供 console/mobile 直读
+    settlementPriceMinor: row.settlement_price_minor === undefined || row.settlement_price_minor === null
+      ? undefined
+      : toMinor(row.settlement_price_minor as string),
     amountMinor: toMinor(row.amount_minor as string),
     refundRatio: row.refund_ratio === undefined ? undefined : toRatioOrNull(row.refund_ratio as string | null),
   }

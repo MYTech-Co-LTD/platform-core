@@ -16,12 +16,14 @@ const MAX_INT4 = 2_147_483_647
 const SubmitBody = z.object({
   // 客户端幂等键（spec §2.2）；同时是附件 object key 里的 {ticket_ref}（spec §2.3）
   clientRequestId: z.string().min(1).max(128),
-  // 下面三个 id 落 **bigint** 列 ⇒ 一律 `.safe()`（= Number.isSafeInteger）。
-  // `z.number().int()` 的 `int` 就是 `Number.isInteger`，而 `Number.isInteger(1e30) === true`
-  // ⇒ 放行后值直接进 pg 参数位：`|v| ≥ 1e21` 被 JS 序列化成指数记法 ⇒ 22P02，低于 1e21 但超列型
-  // ⇒ 22003 ⇒ **Hono 兜成 500**（终审实测 8 条路径全 500）。全模块 bigint 列只用这一种写法。
-  productId: z.number().int().positive().safe(),
-  storeId: z.number().int().positive().safe().optional(),
+  // 自然键（#500/#476）：门店 = data.dim_branch.code；商品 = data.dim_item.item_code（在售）。
+  // 发布契约形状（非空、限长、无通配/注入面字符）；坏值一律 400 INVALID_BODY。
+  storeCode: z.string().regex(/^[0-9A-Za-z_-]{1,64}$/),
+  itemCode: z.string().regex(/^[0-9A-Za-z_-]{1,64}$/),
+  // 挂原单取价（spec §6.2）：MO…/WO… 单号 + 单内商品行键（MO=item_grade_num / WO=order_detail_num）。
+  // 行级三元组一起精确锁价——价随单走，票面可追溯到具体那张 MO/WO 的那一行。
+  orderNo: z.string().regex(/^(MO|WO)[0-9]{6,}$/),
+  lineKey: z.string().regex(/^[0-9A-Za-z_-]{1,32}$/),
   // 这一档走 int4 上界，见 MAX_INT4。
   damageQuantity: z.number().int().nonnegative().max(MAX_INT4),
   remark: z.string().max(2000).optional(),
@@ -66,7 +68,10 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
 
     const res = await ctx.pool.query(
       `select id, code, product_id, product_name, store_id, store_name,
+              product_code, store_code,
               damage_quantity, status, amount_type, amount_minor, refund_ratio,
+              settlement_source, settlement_order_no, settlement_item_code, settlement_line_key,
+              settlement_price_minor, settlement_bizday,
               remark, related_order, created_at, processed_at
          from aftersales.ticket
         where org = $1 and id = $2 and submitter_openid = $3`,
@@ -81,6 +86,51 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
         ctx, identity.orgId, id, storageResolverFor(storageCandidatesFor(c.get(TENANT_STORAGE))),
       ),
     })
+  })
+
+  // GET /guest/settlement-orders?storeCode=&days= —— 选单页数据源（#500 段③，spec §6.1）。
+  // 按店列近期结算单（bizday 倒序），按单分组；days 默认 30、夹到 [1,90]。
+  // 消费面 = data.dim_settlement_order_line 单表查询——售后不感知 MO/WO 两源（spec §0 通用性）。
+  r.get('/guest/settlement-orders', async (c) => {
+    const org = c.get('identity').orgId
+    const storeCode = c.req.query('storeCode') ?? ''
+    if (!storeCode) return c.json({ error: 'STORE_CODE_REQUIRED' }, 400)
+    const daysRaw = Number(c.req.query('days') ?? 30)
+    const days = Number.isFinite(daysRaw) ? Math.min(Math.max(Math.trunc(daysRaw), 1), 90) : 30
+
+    const res = await ctx.pool.query<{
+      source: string; order_no: string; order_bizday: string; order_time: string | null
+      item_code: string; item_name: string | null; line_key: string
+      quantity: string | null; price_minor: string
+    }>(
+      `select source, order_no, order_bizday::text as order_bizday, order_time,
+              item_code, item_name, line_key, quantity, price_minor
+         from data.dim_settlement_order_line
+        where org = $1 and store_code = $2
+          and order_bizday >= current_date - $3::int
+        order by order_bizday desc, order_no, item_code, line_key`,
+      [org, storeCode, days],
+    )
+    /** 按单分组：一单 = {orderNo, source, bizday, createTime, lines[]}——选单页的两级选择面。 */
+    const orders = new Map<string, {
+      orderNo: string; source: string; bizday: string; createTime: string | null
+      lines: { itemCode: string; itemName: string | null; lineKey: string; quantity: number | null; priceMinor: number }[]
+    }>()
+    for (const r of res.rows) {
+      let o = orders.get(r.order_no)
+      if (!o) {
+        o = { orderNo: r.order_no, source: r.source, bizday: r.order_bizday, createTime: r.order_time, lines: [] }
+        orders.set(r.order_no, o)
+      }
+      o.lines.push({
+        itemCode: r.item_code,
+        itemName: r.item_name,
+        lineKey: r.line_key,
+        quantity: r.quantity === null ? null : Number(r.quantity),
+        priceMinor: Number(r.price_minor),
+      })
+    }
+    return c.json({ orders: [...orders.values()] })
   })
 
   // POST /guest/tickets —— 提交工单：单端点单事务（spec §0.3、§2.2）
@@ -106,44 +156,65 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
         return c.json({ id: Number(dup.rows[0].id), duplicated: true }, 200)
       }
 
-      // ② 快照商品与门店：基本数量/单价随工单冻住——规则或商品改价不得改写历史工单的金额依据
-      const prod = await client.query<{
-        id: string; name: string; basic_quantity: number; basic_unit_price_minor: string
-      }>(
-        'select id, name, basic_quantity, basic_unit_price_minor from aftersales.product where org = $1 and id = $2',
-        [org, body.productId],
+      // ② 引用校验（自然键，#476 同源）：门店 = dim_branch.code；商品 = dim_item.item_code（在售）。
+      //    消费源 = 发布快照——不再是本地 product/store 副本（#500：那两份副本已断写）。
+      const st = await client.query<{ code: string; name: string }>(
+        'select code, name from data.dim_branch where org = $1 and code = $2',
+        [org, body.storeCode],
       )
-      if (!prod.rows[0]) {
+      if (!st.rows[0]) {
+        await client.query('rollback')
+        return c.json({ error: 'STORE_NOT_FOUND' }, 400)
+      }
+      const store = st.rows[0]
+
+      const it = await client.query<{ item_code: string; name: string }>(
+        'select item_code, name from data.dim_item where org = $1 and item_code = $2 and coalesce(sale_cease, false) = false',
+        [org, body.itemCode],
+      )
+      if (!it.rows[0]) {
         await client.query('rollback')
         return c.json({ error: 'PRODUCT_NOT_FOUND' }, 400)
       }
-      const product = prod.rows[0]
+      const item = it.rows[0]
 
-      let storeName = ''
-      if (body.storeId !== undefined) {
-        const st = await client.query<{ name: string }>(
-          'select name from aftersales.store where org = $1 and id = $2',
-          [org, body.storeId],
-        )
-        if (!st.rows[0]) {
-          await client.query('rollback')
-          return c.json({ error: 'STORE_NOT_FOUND' }, 400)
-        }
-        storeName = st.rows[0].name
+      // ③ 挂原单取价（spec §6.2）：按 (org, order_no, item_code, line_key) 精确取行冻结。
+      //    行不存在 ⇒ PRICE_NOT_FOUND（fail-closed，不 fallback 档案价不取 0）；
+      //    行在但 store_code ≠ 提交门店 ⇒ ORDER_STORE_MISMATCH（防串店引用别家的单）。
+      //    六列随工单定死：后续调价/促销不得改写历史工单的金额依据（与 ② 的快照纪律同一原则）。
+      const line = await client.query<{
+        source: string; store_code: string; store_name: string | null; bizday: string; price_minor: string
+      }>(
+        `select source, store_code, store_name, order_bizday::text as bizday, price_minor
+           from data.dim_settlement_order_line
+          where org = $1 and order_no = $2 and item_code = $3 and line_key = $4`,
+        [org, body.orderNo, body.itemCode, body.lineKey],
+      )
+      if (!line.rows[0]) {
+        await client.query('rollback')
+        return c.json({ error: 'PRICE_NOT_FOUND' }, 400)
+      }
+      const settlement = line.rows[0]
+      if (settlement.store_code !== body.storeCode) {
+        await client.query('rollback')
+        return c.json({ error: 'ORDER_STORE_MISMATCH' }, 400)
       }
 
       const ins = await client.query<{ id: string }>(
         `insert into aftersales.ticket(
            org, client_request_id, submitter_openid,
-           product_id, product_name, store_id, store_name,
-           damage_quantity, basic_quantity, basic_unit_price_minor, remark)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           product_code, product_name, store_code, store_name,
+           damage_quantity, remark,
+           settlement_source, settlement_order_no, settlement_item_code, settlement_line_key,
+           settlement_price_minor, settlement_bizday)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
          returning id`,
         [
           org, body.clientRequestId, identity.userId,
-          body.productId, product.name, body.storeId ?? null, storeName,
-          body.damageQuantity, Number(product.basic_quantity), product.basic_unit_price_minor,
-          body.remark ?? '',
+          body.itemCode, item.name, body.storeCode, store.name,
+          body.damageQuantity, body.remark ?? '',
+          settlement.source, body.orderNo, body.itemCode, body.lineKey,
+          Number(settlement.price_minor), settlement.bizday,
         ],
       )
       const ticketId = Number(ins.rows[0].id)

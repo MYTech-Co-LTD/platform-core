@@ -3,7 +3,7 @@ import { Pool } from 'pg'
 import { storageRefOf } from '@platform/sdk'
 import type { TenantStorageConfig } from '@platform/sdk'
 import mod from '../index'
-import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
+import { applyMigrations, buildTestApp, ensureDimTables, makeIdentity } from '../test-util'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -43,33 +43,43 @@ describePg('工单域', () => {
   const appGuest = buildTestApp(mod, guest, ctx, TENANT_CFG)
   const appGuestBob = buildTestApp(mod, guestBob, ctx, TENANT_CFG)
 
-  let productId = 0
-  let storeId = 0
-
   beforeAll(async () => {
     await applyMigrations(pool)
+    await ensureDimTables(pool)
     await pool.query('delete from aftersales.ticket where org = $1', [ORG])
-    await pool.query('delete from aftersales.product where org = $1', [ORG])
-    await pool.query('delete from aftersales.store where org = $1', [ORG])
-    // 商品快照：基本数量 100 件、单价 500 分（=5 元/件）⇒ 与 domain 测试同一组数
-    const p = await pool.query<{ id: string }>(
-      `insert into aftersales.product(org, name, spec, basic_quantity, basic_unit_price_minor)
-       values ($1, '测试商品', '规格A', 100, 500) returning id`,
+    await pool.query('delete from data.dim_settlement_order_line where org = $1', [ORG])
+    await pool.query('delete from data.dim_item where org = $1', [ORG])
+    await pool.query('delete from data.dim_branch where org = $1', [ORG])
+    // #500 段③：消费源 = 发布面（模拟「发布完成」）。取价行：单价 500 分/件（=5 元，与
+    // domain 测试同一组数）；MO 行挂门店 S01（串店用例用另一行验证 ORDER_STORE_MISMATCH）。
+    await pool.query(
+      `insert into data.dim_branch(org, code, name, enable, source_book, snapshot)
+       values ($1,'S01','测试门店',true,'3120',current_date)`,
       [ORG],
     )
-    productId = Number(p.rows[0].id)
-    const s = await pool.query<{ id: string }>(
-      `insert into aftersales.store(org, name, address, phone) values ($1, '测试门店', '', '') returning id`,
+    await pool.query(
+      `insert into data.dim_item(org, item_code, name, sale_cease, source_book, snapshot)
+       values ($1,'I001','测试商品',false,'3120',current_date)`,
       [ORG],
     )
-    storeId = Number(s.rows[0].id)
+    await pool.query(
+      `insert into data.dim_settlement_order_line(
+         org, source, store_code, store_name, order_no, order_bizday, order_time,
+         item_code, item_name, line_key, quantity, money, price_minor)
+       values ($1,'transfer','S01','测试门店','MO3120992607050085',current_date - 1,'2026-10-07 11:07:31',
+               'I001','测试商品','0',30,1500,500),
+              ($1,'wholesale','S99','品品甜外地仓','WO3120992609180055',current_date - 1,'2026-10-07 11:07:31',
+               'I001','测试商品','0',10,990,99)`,
+      [ORG],
+    )
   })
 
   afterAll(async () => {
     await pool.query('delete from aftersales.ticket_attachment where org = $1', [ORG])
     await pool.query('delete from aftersales.ticket where org = $1', [ORG])
-    await pool.query('delete from aftersales.product where org = $1', [ORG])
-    await pool.query('delete from aftersales.store where org = $1', [ORG])
+    await pool.query('delete from data.dim_settlement_order_line where org = $1', [ORG])
+    await pool.query('delete from data.dim_item where org = $1', [ORG])
+    await pool.query('delete from data.dim_branch where org = $1', [ORG])
     expect(pool.ended, '池在本 afterAll 之前已被 end——有别的钩子提前收摊').toBe(false)
     await pool.end().catch(() => {})
   })
@@ -83,13 +93,15 @@ describePg('工单域', () => {
 
   const validBody = (clientRequestId: string) => ({
     clientRequestId,
-    productId,
-    storeId,
+    storeCode: 'S01',
+    itemCode: 'I001',
+    orderNo: 'MO3120992607050085',
+    lineKey: '0',
     damageQuantity: 30,
     remark: '摔坏了',
   })
 
-  it('访客提交工单 ⇒ 201，商品字段被【快照】下来，状态 pending、金额类型暂空', async () => {
+  it('访客提交工单 ⇒ 201，引用与冻结价被【快照】下来，状态 pending、金额类型暂空', async () => {
     const res = await submit(appGuest, validBody('req-snap'))
     expect(res.status).toBe(201)
     const body = (await res.json()) as { id: number; code: string; status: string }
@@ -97,7 +109,9 @@ describePg('工单域', () => {
     expect(body.code).toMatch(/^AS-\d{8}$/)
 
     const row = await pool.query(
-      `select product_name, store_name, basic_quantity, basic_unit_price_minor,
+      `select product_name, store_name, product_code, store_code,
+              settlement_source, settlement_order_no, settlement_item_code, settlement_line_key,
+              settlement_price_minor, settlement_bizday::text as settlement_bizday,
               amount_type, amount_minor, submitter_openid
          from aftersales.ticket where org = $1 and id = $2`,
       [ORG, body.id],
@@ -105,12 +119,45 @@ describePg('工单域', () => {
     expect(row.rows[0]).toMatchObject({
       product_name: '测试商品',
       store_name: '测试门店',
-      basic_quantity: 100,
-      basic_unit_price_minor: '500', // ← pg 把 bigint 返回成字符串，别按 number 断言
+      product_code: 'I001',
+      store_code: 'S01',
+      settlement_source: 'transfer',
+      settlement_order_no: 'MO3120992607050085',
+      settlement_item_code: 'I001',
+      settlement_line_key: '0',
+      settlement_price_minor: '500', // ← pg 把 bigint 返回成字符串，别按 number 断言
       amount_type: null,
       amount_minor: '0',
       submitter_openid: 'openid-alice',
     })
+    expect(row.rows[0].settlement_bizday).not.toBeNull()
+  })
+
+  it('挂原单取价 fail-closed：行不存在 ⇒ 400 PRICE_NOT_FOUND；串店引用 ⇒ 400 ORDER_STORE_MISMATCH', async () => {
+    // ① 该店该商品没有这张单 ⇒ 400（不 fallback 档案价、不取 0）
+    const missing = await submit(appGuest, { ...validBody('req-missing'), orderNo: 'MO0000000000000001' })
+    expect(missing.status).toBe(400)
+    expect(((await missing.json()) as { error: string }).error).toBe('PRICE_NOT_FOUND')
+
+    // ② 单行存在但 store_code ≠ 提交门店（WO 行挂 S99，提交 S01）⇒ 防串店引用
+    const cross = await submit(appGuest, { ...validBody('req-cross'), orderNo: 'WO3120992609180055' })
+    expect(cross.status).toBe(400)
+    expect(((await cross.json()) as { error: string }).error).toBe('ORDER_STORE_MISMATCH')
+  })
+
+  it('GET /guest/settlement-orders：按店列近期结算单、按单分组；缺 storeCode ⇒ 400', async () => {
+    const res = await appGuest.request('/guest/settlement-orders?storeCode=S01')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      orders: { orderNo: string; source: string; bizday: string; lines: { itemCode: string; lineKey: string; priceMinor: number }[] }[]
+    }
+    const mo = body.orders.find((o) => o.orderNo === 'MO3120992607050085')
+    expect(mo, 'S01 应看到 MO 行').toBeDefined()
+    expect(mo!.source).toBe('transfer')
+    expect(mo!.lines[0]).toMatchObject({ itemCode: 'I001', lineKey: '0', priceMinor: 500 })
+
+    const noStore = await appGuest.request('/guest/settlement-orders')
+    expect(noStore.status).toBe(400)
   })
 
   it('幂等：同 clientRequestId 二次提交 ⇒ 返回【同一张】工单，且不新增行', async () => {
@@ -167,11 +214,13 @@ describePg('工单域', () => {
       'select status, amount_type, amount_minor, refund_ratio, processed_at from aftersales.ticket where org = $1 and id = $2',
       [ORG, id],
     )
-    // (30 − 100×0.1) × 500 分 = 10000 分
+    // (30 − 0×0.1) × 500 分 = 15000 分——单价来源 = settlement_price_minor（500）；
+    // basic_quantity 新单冻结 0 ⇒ **比例项退化为 no-op**（dim_item 无免赔基数位，
+    // 业务语义变化已在 PR 显式声明：金额 = 报损 × 结算价，免赔门槛暂消失）
     expect(row.rows[0]).toMatchObject({
       status: 'completed',
       amount_type: 'ratio',
-      amount_minor: '10000',
+      amount_minor: '15000',
       refund_ratio: '0.1000',
     })
     expect(row.rows[0].processed_at).not.toBeNull()
@@ -326,15 +375,16 @@ describePg('工单域', () => {
     //    注意键名：本接口的金额类型就是 snake_case 的 `amount_type`（normalizeTicketRow 只给
     //    amount_minor 起了 camelCase 别名，没给 amount_type 起），故按【实际契约】断言。
     expect(li!.amount_type).toBe('ratio')
-    expect(li!.amountMinor).toBe(8825)
+    expect(li!.amountMinor).toBe(15000)
 
     // ③ 对照：访客详情是宽 SELECT，必须给出真值（修前就正确，别弱化）。
     expect(detail.refundRatio).toBe(0.1235)
-    expect(detail.productId).toBe(productId)
+    expect(detail.product_code).toBe('I001')
+    expect(detail.store_code).toBe('S01')
 
     // ④ 管理端列表也是宽 SELECT ⇒ 必须仍是真值（钉住「没把管理端一起弄成缺席」）。
     expect(mi!.refundRatio).toBe(0.1235)
-    expect(mi!.productId).toBe(productId)
+    expect(mi!.product_code).toBe('I001')
   })
 
   it('【回归】reject 工单：null 的语义必须保住（详情 + 管理端列表），访客列表该键必然缺席', async () => {
@@ -485,17 +535,21 @@ describePg('工单域', () => {
   // 修前 `z.number().int()` 的 `int` 就是 `Number.isInteger`，而 `Number.isInteger(1e30) === true`
   // ⇒ 越界值直接进 pg 参数位：`|v| ≥ 1e21` 被序列化成指数记法 ⇒ 22P02；低于 1e21 但超列型 ⇒ 22003
   // ⇒ **Hono 兜成 500**。终审实测 8 条路径全 500（含对外访客面）。
-  it('【回归 I-1】访客提交 body 的越界整数 ⇒ 400（不是 500），且不落库', async () => {
-    // bigint 列（product_id / store_id / ticket_attachment.id）：上界 = Number.MAX_SAFE_INTEGER
-    // integer 列（damage_quantity）：上界 = int4 ⇒ 2147483647
+  it('【回归 I-1】访客提交 body 的越界/坏形状 ⇒ 400（不是 500），且不落库', async () => {
+    // 自然键面（#500）：product_id/store_id 死列化后不再收数字键；新增的 code/单号字段走
+    // 发布契约形状（非空、限长、无通配/注入面字符）。integer 列（damage_quantity）上界 = int4。
     const cases: Record<string, unknown>[] = [
-      { productId: 1e30 },
-      { storeId: 1e30 },
       { damageQuantity: 1e30 },
       { damageQuantity: 2147483648 }, // int4 越界 1
       { damageQuantity: Number.MAX_SAFE_INTEGER }, // 是安全整数，却仍超 int4（实测 22003）
       { attachmentIds: [1e30] },
-      { productId: Number.MAX_SAFE_INTEGER + 1 }, // 超出安全整数
+      // 自然键形状：坏码/坏单号/缺键 ⇒ 400（zod 剥未知键，所以旧 productId 键现在是【无害忽略】）
+      { storeCode: 'S*01' },
+      { itemCode: 'a'.repeat(65) },
+      { orderNo: 'XX312099' },
+      { orderNo: 'DROP TABLE tickets' },
+      { lineKey: 'a'.repeat(33) },
+      { storeCode: undefined },
     ]
     for (const [i, patch] of cases.entries()) {
       const req = `req-i1-bad-${i}`
