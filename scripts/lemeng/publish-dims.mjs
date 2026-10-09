@@ -354,6 +354,13 @@ async function main() {
     )
     const ovFids = overrideRows.rows.map((/** @type {{ client_fid: string }} */ r) => String(r.client_fid))
     const ovCodes = overrideRows.rows.map((/** @type {{ store_code: string }} */ r) => String(r.store_code))
+    // ⚠️ node-pg 对**空 values 数组**退回简单查询协议 ⇒ SQL 里的 $1 会报「there is no parameter $1」
+    //    （2026-10-10 真机首跑实测——override 表空时必踩）。空表时改用恒假的内联子查询，不带参数。
+    const ovJoin = ovFids.length > 0
+      ? `left join (select unnest($1::text[]) as client_fid, unnest($2::text[]) as store_code) ov
+             on ov.client_fid = w.client_fid`
+      : `left join (select ''::text as client_fid, ''::text as store_code where false) ov
+             on ov.client_fid = w.client_fid`
     const faceRows = await warehouse.query(
       `with wo_mapped as (
          select w.org,
@@ -378,8 +385,7 @@ async function main() {
                 round(w.money / nullif(w.quantity, 0) * 100)::bigint as price_minor,
                 w.bizday::text as bizday, w.create_time
            from staging.stg_lemeng_wholesale_out w
-           left join (select unnest($1::text[]) as client_fid, unnest($2::text[]) as store_code) ov
-             on ov.client_fid = w.client_fid
+           ${ovJoin}
           where w.state_code = 3 and w.money is not null and w.money > 0
             and w.quantity is not null and w.quantity > 0
        )
@@ -409,6 +415,7 @@ async function main() {
               m.item_code, m.item_name, m.order_detail_num::text as line_key,
               m.quantity, m.money, m.price_minor, m.client_fid
          from wo_mapped m`,
+      ovFids.length > 0 ? [ovFids, ovCodes] : undefined,
     )
     /** @type {{ source: string, store_code: string | null, store_name: string | null, order_no: string, order_bizday: string, order_time: string | null, item_code: string, item_name: string | null, line_key: string, quantity: string | number | null, money: string | number | null, price_minor: string | number, client_fid: string | null }[]} */
     const faceRowsAll = faceRows.rows
