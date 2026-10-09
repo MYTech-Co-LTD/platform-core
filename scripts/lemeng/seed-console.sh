@@ -44,6 +44,7 @@ usage() {
   --seed   写进 console 卷
   第三位  默认 pipelines（**天天变的那个**）；all 连 schedules/alerts/owners 一起（会重置 schedules.json
            的 last_run_* —— 引擎回写，不静默）。
+期望集（#531）：共享族（无账套数字后缀）+ 本账套后缀族（`.<本账套>.json`）——他账套的管线不期望、不 seed。
 自证（重启容器之后）：curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/schedules
 退出码：0=一致/已同步；1=DRIFT 或写失败；2=用法错；3=依赖不可用。
 USAGE
@@ -108,7 +109,16 @@ _pairs() {
     NF >= 4 && index($2, pre) == 1 {
       rel = substr($2, length(pre) + 1)
       np = split(rel, p, "/")
-      if (np == 2 && p[1] == "pipelines" && p[2] ~ /\.json$/)      print $2 "\t/workspace/" rel
+      if (np == 2 && p[1] == "pipelines" && p[2] ~ /\.json$/) {
+        # #531 账套后缀过滤：`.<纯数字>.json` 结尾的管线只属于那个账套的卷；无数字后缀 = 共享族。
+        #（l0/l1 是字母开头不误伤；管线体本身账套无关、凭据/sink 全走所在 console 的 env——
+        #  过滤的理由是「不该跑的不必在」+ --check 信号归零，不是数据隔离。）
+        if (match(p[2], /\.[0-9]+\.json$/)) {
+          suf = substr(p[2], RSTART + 1, RLENGTH - 6)
+          if (suf != book) next
+        }
+        print $2 "\t/workspace/" rel
+      }
       else if (only == "all" && rel == "schedules/" book ".json")  print $2 "\t/workspace/schedules.json"
       else if (only == "all" && rel == "alerts.lemeng.json")       print $2 "\t/workspace/alerts.json"
       else if (only == "all" && rel == "owners.lemeng.json")       print $2 "\t/workspace/owners.json"

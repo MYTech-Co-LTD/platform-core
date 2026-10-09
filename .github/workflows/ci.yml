@@ -119,6 +119,11 @@ jobs:
       # 纯静态：不连库、不取网络。**怎么修**：跑 `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`
       # 重新生成 deploy/data-plane.lock（失败信息里会复述这条命令）。
       - run: pnpm exec tsx scripts/check-data-plane-lock.mjs
+      # console 排班↔能力完整性（issue #531）。盯的是**今天没有任何门禁盯的那条耦合**：
+      # `schedules/<账套>.json` 的 `pipeline_id` 与管线文件集的事实源关系——① 引用了不存在的管线
+      # （拼写错/漏生成）② enabled 引用**他账套**后缀管线 = SOP §F.1 的危害形态（一账套一 console
+      # 的本体是凭据/env 隔离，错账套排班会**静默采错数据**）。纯静态：只读仓内 JSON，秒级。
+      - run: pnpm exec tsx scripts/check-console-schedules.mjs
       # 只读诊断工具静态门禁（P7；正典 `docs/superpowers/specs/2026-09-29-diagnostic-tool-replacement.md`
       # §5.1 P7）。它盯的是**今天没有任何门禁盯的那条耦合**：`recon` 的容量闸 `RECON_PAGES` /
       # `RECON_PAGE_SIZE` 与网关调用形状的事实源（🔴 2026-09-29 改向：**在用的** L1 子管线
