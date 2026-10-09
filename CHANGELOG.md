@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.88.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.87.3...v0.88.0) - 2026-10-09
+- 【新增】aftersales: #500 ticket 自然键化 + 建单挂原单冻结 + 选单端点（含 mobile 选单链） ([#524](https://github.com/MYTech-Co-LTD/platform-core/pull/524), [9696b73](https://github.com/MYTech-Co-LTD/platform-core/commit/9696b737c2e259f398123ffad06745a1ba1ab237))
+
+
 ## [0.87.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.87.2...v0.87.3) - 2026-10-09
 - 【修复】data: #517 wholesale 分支补选 m.org——union 列数对齐（#522 follow-up） ([#523](https://github.com/MYTech-Co-LTD/platform-core/pull/523), [23d23e7](https://github.com/MYTech-Co-LTD/platform-core/commit/23d23e7e1ae375667870b7ef0e41df6f8837e88b))
 
