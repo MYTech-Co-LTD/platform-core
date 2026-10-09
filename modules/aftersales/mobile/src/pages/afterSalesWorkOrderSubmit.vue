@@ -8,62 +8,89 @@
 
     <!-- 主表单 -->
     <div v-else class="p-4 pb-24">
-      <!-- 商品名称选择 -->
+      <!-- 选店选单（#500 段③）：选店拉结算单 → 选单选行锁价（价随单冻结） -->
       <t-card class="mb-4 rounded-xl shadow-sm" hover-shadow>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">
-            <span class="text-red-500">*</span>商品名称
-          </label>
-          <t-select
-            v-model="selectedProduct"
-            placeholder="请输入商品名称或代码搜索"
-            :loading="productLoading"
-            filterable
-            clearable
-            class="w-full"
-            @search="handleProductSearch"
-          >
-            <t-option
-              v-for="product in productList"
-              :key="product.id"
-              :value="product"
-              :label="product.product_name"
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              <span class="text-red-500">*</span>选择门店
+            </label>
+            <t-select
+              v-model="selectedStore"
+              placeholder="请选择门店"
+              :loading="loading"
+              filterable
+              clearable
+              class="w-full"
+              @change="handleStoreChange"
             >
-              <div class="flex items-center justify-between min-w-0 gap-2">
-                <span class="font-medium truncate">{{ product.product_name }}</span>
-                <span class="text-xs text-gray-400 shrink-0">{{ product.id }}</span>
-              </div>
-            </t-option>
-          </t-select>
-        </div>
-      </t-card>
-
-      <!-- 门店选择 -->
-      <t-card class="mb-4 rounded-xl shadow-sm" hover-shadow>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">
-            <span class="text-red-500">*</span>选择门店
-          </label>
-          <t-select
-            v-model="selectedStore"
-            placeholder="请选择门店"
-            :loading="loading"
-            filterable
-            clearable
-            class="w-full"
-          >
-            <t-option
-              v-for="store in storeList"
-              :key="store.id"
-              :value="store.id"
-              :label="store.store_name"
+              <t-option
+                v-for="store in storeList"
+                :key="store.id"
+                :value="store.id"
+                :label="store.store_name"
+              >
+                <div class="flex items-center justify-between min-w-0 gap-2">
+                  <span class="font-medium truncate">{{ store.store_name }}</span>
+                  <span class="text-xs text-gray-400 shrink-0">{{ store.store_number }}</span>
+                </div>
+              </t-option>
+            </t-select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              <span class="text-red-500">*</span>选择结算单
+            </label>
+            <t-select
+              v-model="selectedOrder"
+              placeholder="请选择进货结算单"
+              :loading="settlementLoading"
+              :disabled="!selectedStore"
+              filterable
+              clearable
+              class="w-full"
+              @change="handleOrderChange"
             >
-              <div class="flex items-center justify-between min-w-0 gap-2">
-                <span class="font-medium truncate">{{ store.store_name }}</span>
-                <span class="text-xs text-gray-400 shrink-0">{{ store.store_number }}</span>
-              </div>
-            </t-option>
-          </t-select>
+              <t-option
+                v-for="order in settlementOrders"
+                :key="order.orderNo"
+                :value="order"
+                :label="`${order.orderNo}（${order.bizday}）`"
+              >
+                <div class="flex items-center justify-between min-w-0 gap-2">
+                  <span class="font-medium truncate">{{ order.orderNo }}</span>
+                  <span class="text-xs text-gray-400 shrink-0">{{ order.bizday }}{{ order.source === 'wholesale' ? ' · 批发' : '' }}</span>
+                </div>
+              </t-option>
+            </t-select>
+          </div>
+          <div v-if="selectedOrder">
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              <span class="text-red-500">*</span>选择商品行
+            </label>
+            <t-select
+              v-model="selectedLine"
+              placeholder="请选择商品行（金额按该行结算价冻结）"
+              filterable
+              clearable
+              class="w-full"
+            >
+              <t-option
+                v-for="line in selectedOrder.lines"
+                :key="line.lineKey"
+                :value="{ ...line, orderNo: selectedOrder.orderNo }"
+                :label="`${line.itemName ?? line.itemCode}（¥${(line.priceMinor / 100).toFixed(2)}）`"
+              >
+                <div class="flex items-center justify-between min-w-0 gap-2">
+                  <span class="font-medium truncate">{{ line.itemName ?? line.itemCode }}</span>
+                  <span class="text-xs text-gray-400 shrink-0">¥{{ (line.priceMinor / 100).toFixed(2) }}</span>
+                </div>
+              </t-option>
+            </t-select>
+            <p v-if="selectedLine" class="mt-2 text-xs text-gray-500">
+              <i class="fa fa-lock mr-1"></i>结算单价 ¥{{ (selectedLine.priceMinor / 100).toFixed(2) }}（随单冻结，来源 {{ selectedLine.orderNo }}）
+            </p>
+          </div>
         </div>
       </t-card>
 
@@ -79,7 +106,7 @@
               <t-input
                 v-model="damageQuantityDisplay"
                 type="number"
-                :placeholder="`请输入报损数量（最大${selectedProduct?.basic_quantity || 0}）`"
+                :placeholder="selectedLine?.quantity ? `请输入报损数量（该行数量 ${selectedLine.quantity}）` : '请输入报损数量'"
                 size="small"
                 class="damage-number-input"
                 @blur="handleDamageQuantityBlur"
@@ -258,8 +285,9 @@ import { employee_info } from '@wujibase/wuji-data'
  * 相对源侧的六处改动：
  *   ① **登记闸门**：`onMounted` 先读「我的登记快照」，未登记 ⇒ 提示 + 跳 `register`，
  *      并**直接 return**（未登记的人不该看到可选门店，故后续门店/商品请求一个都不发）；
- *   ② **订单选择整块换成商品选择**：商品下拉扛起全部选择职责，报损数量的上界改取
- *      **选中商品**的基本数量（源侧取的是选中订单的）；
+ *   ② **商品/订单两块换成「选店 → 选结算单 → 选商品行」三级**（#500 段③，2026-10-10）：
+ *      金额依据 = 所选行的结算价（服务端按行冻结，页面上锁形提示）；报损数量上界改取
+ *      **选中行**的数量（源侧取的是选中订单的）；
  *   ③ 删掉订单那一行与其派生的展示/写入（订单信息卡、前端算金额卡、到货日期/时间两个控件）
  *      ——域侧 `SubmitBody` 不收 `relatedOrder`，也不收到货时间；金额由服务端按规则快照算
  *      （spec §0.3 把「前端算金额」列为要消灭的模式）；
@@ -271,7 +299,8 @@ import { employee_info } from '@wujibase/wuji-data'
  *      spec §2.3），源侧那两处渲染已完成附件的写法会渲染成空白。
  *
  * `TDesign` 的下拉**认对象值**（`t-option :value` 直接绑行对象，实测标签正常回显），
- * 这是 ② 的前提：`selectedProduct` 的终态是**商品行**，页面才能读它的 `basic_quantity`。
+ * 这是 ② 的前提：`selectedLine` 的终态是**结算单行 + 所属单号**，页面才能展示冻结价并把
+ * 提交四键（store_code/item_code/order_no/line_key）凑齐。
  */
 
 defineWujiPageMeta({
@@ -298,15 +327,16 @@ const isUploading = ref(false)
 const composable = useAfterSalesWorkOrder() as any
 
 const loading = composable.loading
-const productLoading = composable.productLoading
+const settlementLoading = composable.settlementLoading
 const storeList = composable.storeList
-const productList = composable.productList
+const settlementOrders = composable.settlementOrders
 const selectedStore = composable.selectedStore
-const selectedProduct = composable.selectedProduct
+const selectedOrder = composable.selectedOrder
+const selectedLine = composable.selectedLine
 const attachments = composable.attachments
 const formData = composable.formData
 const loadEmployeeStores = composable.loadEmployeeStores
-const loadProducts = composable.loadProducts
+const loadSettlementOrders = composable.loadSettlementOrders
 const addAttachment = composable.addAttachment
 const removeAttachment = composable.removeAttachment
 const submitWorkOrder = composable.submitWorkOrder
@@ -315,8 +345,14 @@ const resetForm = composable.resetForm
 // 提交中状态，防止重复提交
 const isSubmitting = ref(false)
 
-// 防抖定时器
-let productSearchTimer: any = null
+// 选店变化 ⇒ 拉该店的结算单（loadSettlementOrders 内部会清空已选单/行，防串店残留）
+const handleStoreChange = (storeCode: unknown) => {
+  loadSettlementOrders(typeof storeCode === 'string' ? storeCode : '')
+}
+// 选单变化 ⇒ 清空已选行（跨单残留的行键是错的）
+const handleOrderChange = () => {
+  selectedLine.value = null
+}
 
 // 报损数量显示值（支持两位小数）
 const damageQuantityDisplay = computed({
@@ -346,27 +382,14 @@ const handleDamageQuantityBlur = () => {
   // 格式化为两位小数
   const formatted = Math.round(val * 100) / 100
 
-  // 验证不超过最大数量（上界取自**选中的商品**）
-  const max = selectedProduct.value?.basic_quantity || 0
-  if (formatted > max) {
-    Message.warning(`报损数量不能超过基本数量 ${max}`)
+  // 验证不超过该行数量（上界取自**选中的结算单行**——报损不得大于进货；行数量为空则不设上限）
+  const max = selectedLine.value?.quantity
+  if (max !== null && max !== undefined && formatted > max) {
+    Message.warning(`报损数量不能超过该行数量 ${max}`)
     formData.value.damage_quantity = max
   } else {
     formData.value.damage_quantity = formatted
   }
-}
-
-// 商品搜索（防抖处理）
-const handleProductSearch = (searchText: string) => {
-  // 清除之前的定时器
-  if (productSearchTimer) {
-    clearTimeout(productSearchTimer)
-  }
-
-  // 防抖300ms后执行搜索
-  productSearchTimer = setTimeout(() => {
-    loadProducts(searchText)
-  }, 300)
 }
 
 // 删除附件
@@ -432,14 +455,14 @@ const handleSubmit = async () => {
     return
   }
 
-  // 验证必填项
-  if (!selectedProduct.value) {
-    Message.warning('请选择商品')
+  // 验证必填项（#500 段③：挂原单——选店 + 选单选行是取价前提，缺一不给提交）
+  if (!selectedStore.value) {
+    Message.warning('请选择门店')
     return
   }
 
-  if (!selectedStore.value) {
-    Message.warning('请选择门店')
+  if (!selectedLine.value) {
+    Message.warning('请先选择结算单与商品行（金额按该行结算价冻结）')
     return
   }
 
@@ -448,10 +471,10 @@ const handleSubmit = async () => {
     return
   }
 
-  // 验证报损数量不超过基本数量（上界取自**选中的商品**）
-  const maxQuantity = selectedProduct.value?.basic_quantity || 0
-  if (data.damage_quantity > maxQuantity) {
-    Message.warning(`报损数量不能超过基本数量 ${maxQuantity}`)
+  // 验证报损数量不超过该行数量（上界取自**选中的结算单行**；行数量为空则不设上限）
+  const maxQuantity = selectedLine.value?.quantity
+  if (maxQuantity !== null && maxQuantity !== undefined && data.damage_quantity > maxQuantity) {
+    Message.warning(`报损数量不能超过该行数量 ${maxQuantity}`)
     return
   }
 
@@ -511,12 +534,8 @@ onMounted(async () => {
 
     employeeVerified.value = true
 
-    // 加载页面数据
+    // 加载页面数据（结算单在选店后按店拉取——handleStoreChange）
     await loadEmployeeStores() // 根据登记档里的门店 id 串加载「我的门店」
-    // 加载初始商品列表（放在最后，避免报错）
-    loadProducts('').catch((err: any) => {
-      console.error('加载商品列表失败:', err)
-    })
   } catch (error: any) {
     console.error('初始化失败:', error)
     Message.error(error?.message || '初始化失败，请稍后重试')
