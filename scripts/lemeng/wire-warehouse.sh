@@ -173,15 +173,19 @@ const c=new Client({connectionString:process.env.DATABASE_URL});
 }
 
 # ⑦ 工单取价面非空 + 新鲜度（#517 段②）：面停更 ⇒ 建单全 PRICE_NOT_FOUND 而无人知晓。
-#    新鲜度锚 = order_bizday（MO/WO 均为日批制单日分区）；容差 2 天（同 ⑥ 的口径，够跨一个周末）。
+#    新鲜度锚 = order_bizday（MO/WO 均为日批制单日分区）。
+#    ⚠️ 容差必须**时段感知**（#534）：面由维表发布 job（上海 11:43）整批替换、读的是 L0
+#    昨晚 23:35 采的 T-1 ⇒ 每天零点时面必然停在 T-3；固定容差 -2 会让探活每晚
+#    00:00–发布完成结构性红（2026-10-10 首夜实测 ~200 条企微误报）。取：上海 13 点前 -3、
+#    之后 -2（正常日发布上海 12 点前完成；真发布故障 13:00 起即红，不丢报警能力）。
 assert_settlement_face() {
-  printf '⑦ 工单取价面（dim_settlement_order_line 非空且 max(order_bizday) ≥ 上海今天-2 天）—— '
+  printf '⑦ 工单取价面（dim_settlement_order_line 非空且 max(order_bizday) ≥ 上海今天-3/-2 天（13点前/后））—— '
   docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
 const {Client}=require('pg');
 const c=new Client({connectionString:process.env.DATABASE_URL});
 (async()=>{try{
   await c.connect();
-  const r=await c.query(\"select count(*)::int as n, coalesce(max(order_bizday)::text,'') as maxday, ((now() at time zone 'Asia/Shanghai')::date - 2)::text as cutoff from data.dim_settlement_order_line\");
+  const r=await c.query(\"select count(*)::int as n, coalesce(max(order_bizday)::text,'') as maxday, ((now() at time zone 'Asia/Shanghai')::date - (case when extract(hour from (now() at time zone 'Asia/Shanghai'))::int < 13 then 3 else 2 end))::text as cutoff from data.dim_settlement_order_line\");
   const {n,maxday,cutoff}=r.rows[0];
   if(n<1){console.log('ERR 取价面 0 行（publish-dims 未跑或未映射全红？）');process.exit(1)}
   if(maxday<cutoff){console.log('ERR 停更 max='+maxday+' < 容差线='+cutoff);process.exit(1)}
