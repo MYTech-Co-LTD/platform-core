@@ -289,6 +289,19 @@ export interface IdentityLinkView {
   createdAt: string
 }
 
+/**
+ * IdentityLinks 各方法的**契约错误**（账户统一 Task 6/8）。与 IdentityLinks 接口同居 SDK：
+ * 抛错方（宿主服务实现）与接错方（模块管理面 handler 按码映射 HTTP）隔着包边界，错误类型
+ * 只有放在契约层两边才见得到——各自在本地再写一份就是两份事实源，码一改必漂。
+ * handler 的映射口径：LINK_TARGET_MISSING ⇒ 400（客户端给的目标账户不存在，可改可重试）、
+ * LINK_NOT_FOUND ⇒ 404（本 org 无此 id；跨 org 同路，不泄露存在性）。
+ */
+export class LinkError extends Error {
+  constructor(readonly code: 'LINK_TARGET_MISSING' | 'LINK_NOT_FOUND') {
+    super(code)
+  }
+}
+
 /** 宿主注入模块的绑定能力（ctx.identityLinks；未注入 = 旧宿主，模块须容忍 undefined） */
 export interface IdentityLinks {
   /** 申请提交时的自动匹配（设计稿 §2）：返回终态供模块透出 */
@@ -296,8 +309,14 @@ export interface IdentityLinks {
     Promise<{ state: 'active' | 'multi' | 'draft'; candidates?: string[] }>
   describeOwn(org: string, externalId: string): Promise<IdentityLinkView | null>
   listForOrg(org: string, status?: IdentityLinkView['status']): Promise<IdentityLinkView[]>
-  confirm(org: string, id: number, casdoorName?: string): Promise<void>
-  rebind(org: string, id: number, casdoorName: string): Promise<void>
+  /**
+   * 人工确认（管理面 Task 8）：pending/disputed ⇒ active。`casdoorName` 缺省 = 确认行上建议。
+   * `opts.actor` 是 audit 执行人（管理面会话的 identity.userId；缺省 = 无执行人，落 null）——
+   * audit 行由**服务实现**与状态变更同事务落（Task 6 既有纪律），调用方**不得**另写 audit。
+   */
+  confirm(org: string, id: number, casdoorName?: string, opts?: { actor?: string }): Promise<void>
+  /** 人工改绑（管理面 Task 8）：换目标账户并生效 active；`opts.actor` 语义同 confirm */
+  rebind(org: string, id: number, casdoorName: string, opts?: { actor?: string }): Promise<void>
   revoke(org: string, id: number, by: string): Promise<void>
   dispute(org: string, externalId: string): Promise<boolean>
 }
