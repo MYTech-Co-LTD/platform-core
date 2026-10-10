@@ -17,6 +17,8 @@
 //  ⑦ 账户统一 Task 4 两态分流：active link + Casdoor 有户 ⇒ 正式态（acct/ext、scopes=Casdoor
 //     有效码）；悬空（getUser=null）/Casdoor 抛错 ⇒ 降级中间态（audit degraded=dangling|
 //     casdoor-down）；无 link ⇒ 与现状完全同形；findActiveLink DB 故障 ⇒ 500 裸露未发 cookie
+//  ⑧ 会话短路（issue #560，入口即授权）：有有效会话 + next ⇒ 302 next、不种 state；无 next ⇒
+//     回 "/"；与 UA 无关；短路路同样过 safeNextPath；会话过期 ⇒ 不算有会话，回落授权路。
 //
 // 租户 fixture：**复用 seedDemo 的 acme**（beforeAll 幂等补上 wechat_oa_* 两列——branding
 // 输出不含 OA 字段、auth-wecom 断言不碰这两列，互不干扰），beta 天然就是①的未配置租户。
@@ -28,7 +30,13 @@ import { Pool } from 'pg'
 import { Hono } from 'hono'
 import { testClient } from 'hono/testing'
 import { fileURLToPath } from 'node:url'
-import { SCOPES_TTL_SEC, signSession, verifySession, type CasdoorClient } from '@platform/auth-core'
+import {
+  SCOPES_TTL_SEC,
+  SESSION_TTL_SEC,
+  signSession,
+  verifySession,
+  type CasdoorClient,
+} from '@platform/auth-core'
 import { runMigrations } from '../migrate'
 import { seedDemo } from '../seed'
 import { resolveTenantMiddleware, type TenantEnv } from '../tenant'
@@ -222,6 +230,89 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
     expect(setCookies(desktop)).toEqual([])
   })
 
+  // ②b 会话短路（入口即授权，issue #560）：`/silent` 的语义是「**确保有会话**」而非「跳微信」。
+  // 入口（公众号菜单）因此可直指 `/silent?next=<页面>` ⇒ SPA 只载一次（此前要白载一遍去撞 401）。
+  it('★ #560：有有效会话 + next ⇒ 302 到 next，不种 state、不构造微信 URL（省一次微信往返）', async () => {
+    const client = testClient(makeApp(pool))
+    const res = await client.api.platform.auth['wechat-oa'].silent.$get(
+      { query: { next: '/app/aftersales/' } },
+      {
+        headers: {
+          host: 'acme.test',
+          'user-agent': WECHAT_UA,
+          cookie: `platform_session=${await freshGuestSession()}`,
+        },
+      },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/app/aftersales/')
+    // 短路路不去微信 ⇒ 不种 state cookie（种了就是「拿回来没人用」的死 cookie）
+    expect(setCookies(res).join('\n')).not.toContain('wechat_oa_state=')
+  })
+
+  it('★ #560：有有效会话但无 next ⇒ 302 "/"（与 callback 缺 next 的回落同形）', async () => {
+    const client = testClient(makeApp(pool))
+    const res = await client.api.platform.auth['wechat-oa'].silent.$get(undefined, {
+      headers: {
+        host: 'acme.test',
+        'user-agent': WECHAT_UA,
+        cookie: `platform_session=${await freshGuestSession()}`,
+      },
+    })
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/')
+  })
+
+  it('★ #560：短路与 UA 无关——桌面上带着会话进来也放行（UA/配置只挡「需要去微信」的情形）', async () => {
+    const client = testClient(makeApp(pool))
+    const res = await client.api.platform.auth['wechat-oa'].silent.$get(
+      { query: { next: '/app/aftersales/' } },
+      {
+        headers: {
+          host: 'acme.test',
+          'user-agent': DESKTOP_UA,
+          cookie: `platform_session=${await freshGuestSession()}`,
+        },
+      },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/app/aftersales/')
+  })
+
+  it('★ #560：短路路也过 safeNextPath——有会话 + 外部 next ⇒ 回 "/"，不开开放重定向', async () => {
+    const client = testClient(makeApp(pool))
+    const res = await client.api.platform.auth['wechat-oa'].silent.$get(
+      { query: { next: '//evil.test' } },
+      {
+        headers: {
+          host: 'acme.test',
+          'user-agent': WECHAT_UA,
+          cookie: `platform_session=${await freshGuestSession()}`,
+        },
+      },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/')
+  })
+
+  it('★ #560：会话已过期 ⇒ 不算「有会话」，回落正常授权路（302 微信 + state cookie）', async () => {
+    const client = testClient(makeApp(pool))
+    const res = await client.api.platform.auth['wechat-oa'].silent.$get(
+      { query: { next: '/app/aftersales/' } },
+      {
+        headers: {
+          host: 'acme.test',
+          'user-agent': WECHAT_UA,
+          cookie: `platform_session=${await expiredGuestSession()}`,
+        },
+      },
+    )
+    expect(res.status).toBe(302)
+    const loc = res.headers.get('location') ?? ''
+    expect(loc.startsWith('https://open.weixin.qq.com/connect/oauth2/authorize?')).toBe(true)
+    expect(setCookies(res).join('\n')).toContain('wechat_oa_state=') // 过期 ⇒ 走授权路，照常种 state
+  })
+
   // ③ 错 state（cookie 与 query 不一致）→ 302 /login?error=BAD_STATE；该路自计数 ⇒ 推满后拦
   it('callback：state 与 cookie 不一致 → 302 /login?error=BAD_STATE 且 limiter 计数 ⇒ 第 N+1 次 TOO_MANY_REQUESTS', async () => {
     const limiter = createLoginLimiter()
@@ -368,6 +459,24 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
       { sub: 'o_visitor_1', org: 'acme', name: 'o_visitor_1', scopes, authVia: 'wechat-oa' },
       SECRET,
       Math.floor(Date.now() / 1000) - SCOPES_TTL_SEC - 60,
+    )
+  }
+
+  /** 有效访客 cookie（issue #560 会话短路用例）：iat/sfa=now，exp 剩满 7 天——既不触发 scopes
+   *  刷新也不触发续期 ⇒ 中间件不重签、不碰 Casdoor（neverCasdoor 绊线保持沉默） */
+  async function freshGuestSession(): Promise<string> {
+    return signSession(
+      { sub: 'o_visitor_1', org: 'acme', name: 'o_visitor_1', scopes: GUEST_SCOPES, authVia: 'wechat-oa' },
+      SECRET,
+    )
+  }
+
+  /** 过期访客 cookie：exp 已过 ⇒ 中间件不注 identity ⇒ 短路不生效（回到正常授权路） */
+  async function expiredGuestSession(): Promise<string> {
+    return signSession(
+      { sub: 'o_visitor_1', org: 'acme', name: 'o_visitor_1', scopes: GUEST_SCOPES, authVia: 'wechat-oa' },
+      SECRET,
+      Math.floor(Date.now() / 1000) - SESSION_TTL_SEC - 60,
     )
   }
 

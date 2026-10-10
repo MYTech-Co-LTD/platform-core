@@ -17,6 +17,13 @@
 // 302 /login?error=<CODE>。错误码集合：WECHAT_OA_NOT_CONFIGURED / BAD_STATE / BAD_CODE /
 // WECHAT_UNAVAILABLE / TOO_MANY_REQUESTS。
 //
+// **入口即授权（issue #560，真机试点后裁定）**：/silent 的语义是「**确保有会话**」而非「跳微信」
+// ——**已有有效会话即 302 `next`**（不碰微信、不看 UA、不种 state），无会话才走上面那条静默授权路。
+// 于是公众号菜单可直接指向 `/silent?next=<页面>`：SPA **只载一次**（此前要先载一遍去撞 401，
+// 那条路的整包 JS 白下载）。SPA 内的 401 → `/silent?next=` 因此退化为**兜底**（cookie 丢失 /
+// 会话过期时链路仍闭环）。凭据仍是 HttpOnly 的 platform_session，**不进 localStorage/sessionStorage**
+// ——snsapi_base 本就没有用户可见的授权步骤，把凭据搬去前端只是白送一个 XSS 面。
+//
 // state 责任同企微路（Task 7 契约）：/silent 发随机 state（randomUUID）+ HttpOnly cookie
 // wechat_oa_state（Max-Age=300, SameSite=Lax）绑定，回调校验一致（CSRF/混流）。静默流是
 // 顶层导航，Lax 天然携带。
@@ -172,6 +179,16 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
   // GET /silent — 微信内浏览器整页静默授权（snsapi_base：用户无感，只拿 openid 不拿资料）
   return new Hono<TenantEnv & SessionEnv>()
     .get('/silent', (c) => {
+      const next = safeNextPath(c.req.query('next'))
+
+      // 会话短路（入口即授权，issue #560）：本端点的语义是「**确保有会话**」，不是「跳微信」。
+      // 已有有效会话 ⇒ 直接去 next——不碰微信、不看 UA、不种 state cookie，省掉一次微信往返。
+      // 有效性（验签 / 过期 / 租户 org 相符）已由 sessionMiddleware 判完，这里只读它的结果；
+      // 过期或缺 cookie 时中间件不注 identity ⇒ 照常落到下面去拿会话（静默授权可自愈）。
+      // 因此下面两道门（UA、公众号配置）退化为**授权路的前置条件**：它们只挡「需要去微信」的情形，
+      // 不该再挡「已经有会话、只想进页面」的人（桌面 UA 带着会话进来也应放行）。
+      if (c.get('identity')) return c.redirect(next)
+
       // 消费者公众号 H5 的 UA 标记是 MicroMessenger（带 wxwork 的是企微内部浏览器，归企微路）
       const ua = c.req.header('user-agent') ?? ''
       if (!ua.toLowerCase().includes('micromessenger')) return c.redirect('/login')
@@ -182,7 +199,6 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
         return c.json({ error: 'WECHAT_OA_NOT_CONFIGURED' }, 404)
       }
       const state = randomUUID()
-      const next = safeNextPath(c.req.query('next'))
       const url = buildWechatOaSilentUrl(t.wechat_oa_app_id, callbackUri, state)
       c.res.headers.append('Set-Cookie', stateCookie(state, next))
       return c.redirect(url)
