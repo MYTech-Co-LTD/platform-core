@@ -1,0 +1,10 @@
+{
+  "id": "data-query",
+  "name": "Data Query",
+  "description": "问数通道 C：可信企微 userid + 渠道凭证 → 平台问数 API；权限由平台授权核心按人裁决。",
+  "version": "0.1.0",
+  "configSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+  "activation": { "onStartup": true },
+  "contracts": { "tools": ["list_metrics", "query_data"] },
+  "skills": ["./skills"]
+}
