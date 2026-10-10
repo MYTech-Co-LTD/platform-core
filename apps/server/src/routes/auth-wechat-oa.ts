@@ -1,8 +1,12 @@
 // routes/auth-wechat-oa.ts — 公众号访客登录路（售后 spec §1.3）：外部客户，openid 即身份。
 //
-// 与企微路（auth-wecom.ts）的本质差异：**不落 Casdoor 账号**——openid 直接签访客 session
-// （sub=openid、scopes=已启用模块的 guest 码，runtime.enabledGuestScopes 按回调租户收集），
-// 业务资格由模块按绑定/审批状态判定（fail-closed 在模块侧，访客码只开「访客可进的门」）。
+// 两态分流（账户统一 Task 4）：openid 查 platform.identity_link 的 active 绑定后分两态——
+//  · 中间态（无 active 绑定，或绑定悬空/Casdoor 读故障降级）：openid 直接签访客 session
+//    （sub=name=openid、scopes=已启用模块的 guest 码，runtime.enabledGuestScopes 按回调租户
+//    收集），业务资格由模块按绑定/审批状态判定（fail-closed 在模块侧，访客码只开「访客可进
+//    的门」）；降级路径的 audit 带 degraded 标记（悬空/Casdoor 故障的可观测点）。
+//  · 正式态（active 绑定且 Casdoor 有户）：签正式 session（sub 仍=openid、name=acct、
+//    scopes=Casdoor effectiveScopes、带 acct/ext 绑定集合）。
 // 启用判定 = 租户行公众号配置存在（wechat_oa_app_id/secret，005 迁移；**非** login_methods，
 // **非** console 登录 tab——公众号是面向外部客户的独立入口，不与内部登录方式混列）。
 //
@@ -36,9 +40,16 @@
 import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
-import { buildWechatOaSilentUrl, signSession, wechatOaOpenidForCode } from '@platform/auth-core'
+import {
+  buildWechatOaSilentUrl,
+  effectiveScopes,
+  signSession,
+  wechatOaOpenidForCode,
+  type CasdoorPermission,
+  type CasdoorUser,
+} from '@platform/auth-core'
 import type { TenantEnv } from '../tenant'
-import { serializeSessionCookie, type SessionEnv } from '../session-middleware'
+import { serializeSessionCookie, type CasdoorFactory, type SessionEnv } from '../session-middleware'
 import { warnRateLimitDeny, type LoginLimiter } from '../rate-limit'
 
 const CALLBACK_PATH = '/api/platform/auth/wechat-oa/callback'
@@ -67,6 +78,18 @@ export interface WechatOaRoutesDeps {
   enabledGuestScopes: (tenantId: number) => Promise<string[]>
   /** 微信 snsapi_base 端点 fetch 注入口（默认 globalThis.fetch；测试注入假微信 API） */
   wechatFetch?: typeof globalThis.fetch
+  /**
+   * Casdoor 工厂（与 session-middleware 同形状，app.ts 传同一实例）：两态分流按租户 org 取
+   * client 查正式态账户/权限。中间态（无 link）不构造实例——构造即意味着要发 getUser。
+   */
+  casdoor: CasdoorFactory
+  /**
+   * active 绑定查询（identity-links 读写层，app.ts 绑 pool 注入）：openid → 该外部身份在
+   * 本 org 的 active 绑定（任一渠道）。抛错 = DB 故障，与 scopes 取数同姿态 fail-loudly。
+   */
+  findActiveLink: (org: string, externalId: string) => Promise<{ casdoorName: string } | null>
+  /** 某账户在本 org 下全部 active 外部 id（正式态 ext 绑定集合的来源；openid 需调用方去重） */
+  listActiveExternalIds: (org: string, casdoorName: string) => Promise<string[]>
 }
 
 /** 登录审计一行（与 auth.ts / auth-wecom.ts writeAudit 同款 SQL；失败也 await——审计写不进去就不该继续发会话） */
@@ -226,6 +249,86 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
         })
         deps.limiter.record(t.id, 'wechat-oa', null, false)
         return fail('BAD_CODE')
+      }
+
+      // ── 两态分流（账户统一 Task 4；四处语义即实现处）────────────────────────────
+      // ① findActiveLink 抛错（DB 故障）⇒ 500 裸露、未发任何 cookie（与下方 scopes 取数
+      //    同姿态 fail-loudly）——刻意不 try/catch；
+      // ② active link 且 getUser 正常 ⇒ 正式态：sub 仍 = openid（设计稿 §3.1 修订：sub 不
+      //    迁移、账户身份走 acct 字段），name=acct、scopes=Casdoor effectiveScopes（与 session
+      //    中间件重签同源的 auth-core 唯一权威实现）、ext=本 openid + 其余 active 绑定；
+      // ③ link 存在但 getUser 返 null（悬空）或抛错（Casdoor 不可达）⇒ 降级中间态照常发
+      //    会话 + audit degraded 标记——登录路不因上游读故障阻塞（设计稿 §3.3：写操作才
+      //    fail-loudly）；悬空标记让「link 指向已删账户」的数据漂移有观测点；
+      // ④ 无 active link ⇒ 中间态，下方现状代码一字不改（本任务红线）。
+      //
+      // try 边界只圈 **Casdoor 读**（getUser/getPermissions）：这两者抛错 = 上游读故障，降级
+      // 不阻塞登录。DB 读写（listActiveExternalIds / writeAudit）与签发全部在 try **外**——
+      // 它们若被吞进降级，①的 fail-loudly 姿态与「审计先行：审计写不进去就不该发会话」
+      //（M-4）都会被静默破坏。
+      const active = await deps.findActiveLink(t.casdoor_org, openid)
+      if (active !== null) {
+        const casdoor = deps.casdoor(t.casdoor_org)
+        // getUser=null 是「明确说没这个人」（真机 200+ok+data:null）→ 悬空；抛错 → 不可达。
+        // 两分判据与 casdoor-client 的 ok/error 契约同源；perms 只在正式态取（降级路不发
+        // 无谓出站调用）
+        let degraded: 'dangling' | 'casdoor-down' | null = null
+        let user: CasdoorUser | null = null
+        let perms: CasdoorPermission[] = []
+        try {
+          user = await casdoor.getUser(active.casdoorName)
+          if (user !== null) perms = await casdoor.getPermissions()
+        } catch {
+          degraded = 'casdoor-down'
+        }
+        if (user !== null && degraded === null) {
+          // ② 正式态：ext = 本 openid + 账户其余 active 绑定（wecom 等）。openid 本身也在
+          //    link 表里，listActiveExternalIds 会把它再吐一遍——拼接时去重，恰好一次
+          const acct = active.casdoorName
+          const others = await deps.listActiveExternalIds(t.casdoor_org, acct)
+          const ext = [openid, ...others.filter((id) => id !== openid)]
+          const now = Math.floor(Date.now() / 1000)
+          const token = await signSession(
+            {
+              sub: openid,
+              org: t.casdoor_org,
+              name: acct,
+              scopes: effectiveScopes(acct, user.roles ?? [], perms),
+              authVia: 'wechat-oa',
+              acct,
+              ext,
+            },
+            deps.sessionSecret,
+            now,
+          )
+          // 审计先行（M-4 同序）：actor 仍 openid——升级前后同一个审计键可检索；detail 带
+          // acct 标明本次签的是正式态
+          await writeAudit(deps.pool, t.id, openid, 'login.ok', {
+            via: 'wechat-oa',
+            acct,
+          })
+          deps.limiter.record(t.id, 'wechat-oa', null, true)
+          c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
+          return c.redirect(baked.next)
+        }
+        // ③ 降级（悬空 / Casdoor 不可达）：audit 留 degraded 标记后照常发中间态会话。下方
+        //    的签发序列与本文件末段的中间态块同形——**刻意不复用/不抽取**：抽出来就得改
+        //    现状块（红线：中间态代码一字不改），两处需同改是有意的代价
+        await writeAudit(deps.pool, t.id, openid, 'login.ok', {
+          via: 'wechat-oa',
+          degraded: degraded === 'casdoor-down' ? 'casdoor-down' : 'dangling',
+          acct: active.casdoorName,
+        })
+        const scopes = await deps.enabledGuestScopes(t.id)
+        const now = Math.floor(Date.now() / 1000)
+        const token = await signSession(
+          { sub: openid, org: t.casdoor_org, name: openid, scopes, authVia: 'wechat-oa' },
+          deps.sessionSecret,
+          now,
+        )
+        deps.limiter.record(t.id, 'wechat-oa', null, true)
+        c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
+        return c.redirect(baked.next)
       }
 
       // 访客 session：scopes = 该租户已启用模块的 guest 码（manifest guest.scope，经

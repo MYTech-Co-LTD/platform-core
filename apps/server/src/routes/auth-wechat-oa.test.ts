@@ -14,6 +14,9 @@
 //     authVia='wechat-oa'、scopes=enabledGuestScopes 的返回（按回调租户取，非全局并集）
 //  ⑥ 传输层（假微信 5xx）→ 302 /login?error=WECHAT_UNAVAILABLE（不吞成 BAD_CODE，
 //     不写 login.fail——非用户过错）
+//  ⑦ 账户统一 Task 4 两态分流：active link + Casdoor 有户 ⇒ 正式态（acct/ext、scopes=Casdoor
+//     有效码）；悬空（getUser=null）/Casdoor 抛错 ⇒ 降级中间态（audit degraded=dangling|
+//     casdoor-down）；无 link ⇒ 与现状完全同形；findActiveLink DB 故障 ⇒ 500 裸露未发 cookie
 //
 // 租户 fixture：**复用 seedDemo 的 acme**（beforeAll 幂等补上 wechat_oa_* 两列——branding
 // 输出不含 OA 字段、auth-wecom 断言不碰这两列，互不干扰），beta 天然就是①的未配置租户。
@@ -31,6 +34,11 @@ import { seedDemo } from '../seed'
 import { resolveTenantMiddleware, type TenantEnv } from '../tenant'
 import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from '../session-middleware'
 import { wechatOaRoutes, OA_ANON_ACTOR, safeNextPath } from './auth-wechat-oa'
+import {
+  findActiveLink as findActiveLinkStore,
+  listActiveExternalIds as listActiveExternalIdsStore,
+  upsertLink,
+} from '../identity-links'
 import { TENANT_FAIL_LIMIT, createLoginLimiter, type LoginLimiter } from '../rate-limit'
 
 const dbUrl = process.env.DATABASE_URL
@@ -46,8 +54,10 @@ const WECHAT_UA =
 const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/128.0 Safari/605.1.15'
 
-// 本路由**不落 Casdoor**：sessionMiddleware 只在带有效 platform_session 的请求里才会调
-// 工厂（scopes 刷新分支），本文件任何用例都不发该 cookie ⇒ 恒不应触达；真触达即用例写错
+// 恒抛工厂（双用途绊线）：① sessionMiddleware 只在带有效 platform_session 的请求里才会调
+// 工厂（scopes 刷新分支），本文件访客/老化用例全走 guestScopes 路 ⇒ 恒不应触达；② 路由
+// 两态分流的 casdoor 成员缺省也用它——无 link（中间态）的用例根本不该构造 Casdoor client，
+// 真触达即用例写错（⑦ 正式态/降级用例显式注入假工厂）
 const neverCasdoor: CasdoorFactory = () => {
   throw new Error('wechat-oa 路不应触达 Casdoor')
 }
@@ -71,6 +81,12 @@ interface MakeAppOpts {
   sessionCasdoor?: CasdoorFactory
   /** 会话中间件的访客码解析器（app.ts 从 loader runtime.enabledGuestScopes 注入的同位物） */
   guestScopes?: (tenantId: number) => Promise<string[]>
+  /** 路由两态分流的 Casdoor 工厂（⑦ 正式态/降级用例注入假 Casdoor）；缺省恒抛绊线（见 neverCasdoor） */
+  routeCasdoor?: CasdoorFactory
+  /** 路由的 active 绑定查询（缺省绑真 store，identity-links 同源）；⑦ DB 故障用例注入恒抛桩 */
+  findActiveLink?: (org: string, externalId: string) => Promise<{ casdoorName: string } | null>
+  /** 路由的绑定集合查询（缺省绑真 store） */
+  listActiveExternalIds?: (org: string, casdoorName: string) => Promise<string[]>
 }
 
 /** 宿主形态缩样（app.ts 装配链的对应段）：租户 → 会话 → wechat-oa 路由 */
@@ -91,6 +107,12 @@ function makeApp(pool: Pool, opts: MakeAppOpts = {}) {
         publicOrigin: PUBLIC_ORIGIN,
         enabledGuestScopes: opts.enabledGuestScopes ?? (async () => GUEST_SCOPES),
         wechatFetch: opts.wechatFetch,
+        casdoor: opts.routeCasdoor ?? neverCasdoor,
+        findActiveLink:
+          opts.findActiveLink ?? ((org, externalId) => findActiveLinkStore(pool, org, externalId)),
+        listActiveExternalIds:
+          opts.listActiveExternalIds
+          ?? ((org, casdoorName) => listActiveExternalIdsStore(pool, org, casdoorName)),
       }),
     )
 }
@@ -133,6 +155,17 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
   })
 
   afterAll(async () => {
+    // 本组（⑦ 两态分流）link 行走前清扫：upsert 幂等、重跑不炸，但共享库不该攒下本组
+    // 专属前缀的行——后续会话若对 acme 的 identity_link 有假设，别让本组的残留背锅
+    await pool.query(
+      'delete from platform.identity_link where org = $1'
+        + ' and (external_id = any($2::text[]) or casdoor_name = any($3::text[]))',
+      [
+        'acme',
+        ['o_t4_linked', 'o_t4_dangling', 'o_t4_down', 'o_t4_plain', 'o_t4_dbfail'],
+        ['t4_acct', 't4_gone'],
+      ],
+    )
     await pool.end()
   })
 
@@ -465,6 +498,206 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
     // 用**别的** state 打，cookie 原封带上 ⇒ 必须仍是 BAD_STATE
     const cb = await callbackWith(client, 'good-code', '00000000-0000-0000-0000-000000000000', cookie)
     expect(cb.headers.get('location')).toBe('/login?error=BAD_STATE')
+  })
+
+  // ---------------------------------------------------------------------------------------
+  // 账户统一 Task 4：callback 两态分流。openid 查 platform.identity_link 的 active 绑定——
+  //  · 正式态（active link 且 Casdoor 有户）：签正式 session（sub 仍=openid、name=acct、
+  //    scopes=Casdoor effectiveScopes、带 acct/ext）；audit login.ok detail 带 acct（actor 仍
+  //    openid，审计键连续）；
+  //  · 降级（link 悬空 getUser=null / Casdoor 抛错）：照常发中间态会话，audit 带 degraded 标记
+  //    ——登录路不因上游读故障阻塞（设计稿 §3.3：写操作才 fail-loudly）；
+  //  · 无 link ⇒ 与现状完全同形（既有 ⑤ 即回归，这里再钉一条显式口径 + 绊线桩）。
+  // link 行用 Task 2 的 upsertLink 直塞（store 契约归 identity-links.test.ts 管，这里钉路由侧
+  // 消费语义）。external_id 一律 'o_t4_*' 专属前缀——**绝不碰既有用例的 'o_visitor_1'**（否则
+  // 插入的 active 行会在共享库的下一次运行里把 ⑤ 打红：残留数据是共享库测试的头号坑）；
+  // afterAll 走前清扫本组行。
+  // ---------------------------------------------------------------------------------------
+
+  /** 假微信按指定 openid 应答（既有 okWechat 钉死 o_visitor_1；本组用专属 openid 隔离残留数据） */
+  const wechatOpenid = (openid: string) => wechatJson({ errcode: 0, openid })
+
+  /** 假 Casdoor 工厂（形状照 casdoor-client 真机实测：getUser 返 {name,roles}|null 或抛——
+   *  「明确说没这个人」=null、不可达=throw 的两分与 CasdoorClient.getUser 契约同源；
+   *  getPermissions 返 [{users,roles,resources}] 记录数组）。记录 getUser 收到的名字供断言。 */
+  function fakeCasdoor(
+    user: { name: string; roles?: string[] } | null | 'throw',
+    perms: Array<{ users?: string[]; roles?: string[]; resources?: string[] }> = [],
+  ): { factory: CasdoorFactory; getUserNames: () => string[] } {
+    const names: string[] = []
+    const client = {
+      getUser: async (name: string) => {
+        names.push(name)
+        if (user === 'throw') throw new Error('casdoor unreachable')
+        return user
+      },
+      getPermissions: async () => perms,
+    } as unknown as CasdoorClient
+    return { factory: () => client, getUserNames: () => names }
+  }
+
+  /** 给 acme 插一条 active 绑定（Task 2 upsertLink 直塞，幂等可重跑） */
+  const seedLink = (provider: 'wechat-oa' | 'wecom', externalId: string, casdoorName: string) =>
+    upsertLink(pool, {
+      org: 'acme',
+      provider,
+      externalId,
+      casdoorName,
+      phone: null,
+      boundVia: 'manual',
+      status: 'active',
+      sourceApprovalId: null,
+    })
+
+  /** 本租户某 actor 最近一条 login.ok 的 audit detail（audit 断言一律 actor 过滤——同文件头注） */
+  const latestLoginOkDetail = async (actor: string): Promise<Record<string, unknown> | undefined> => {
+    const { rows } = await pool.query<{ detail: Record<string, unknown> }>(
+      'select detail from platform.audit'
+        + " where tenant_id = $1 and actor = $2 and action = 'login.ok' order by id desc limit 1",
+      [acmeId, actor],
+    )
+    return rows[0]?.detail
+  }
+
+  it('⑦ 正式态：active link + Casdoor 有户 ⇒ token 带 acct/ext，scopes=Casdoor 有效码（非 guest 码）', async () => {
+    await seedLink('wechat-oa', 'o_t4_linked', 't4_acct')
+    // users 直挂 + 角色关联两路各给一路码（effectiveScopes 的两条匹配路都吃到）
+    const fake = fakeCasdoor(
+      { name: 't4_acct', roles: ['t4_role'] },
+      [
+        { users: ['acme/t4_acct'], roles: [], resources: ['moda:view', 'modb:edit'] },
+        { users: [], roles: ['acme/t4_role'], resources: ['modc:admin'] },
+      ],
+    )
+    const client = testClient(
+      makeApp(pool, { wechatFetch: wechatOpenid('o_t4_linked'), routeCasdoor: fake.factory }),
+    )
+    const state = await silentState(client)
+    const res = await client.api.platform.auth['wechat-oa'].callback.$get(
+      { query: { code: 'good-code', state } },
+      { headers: { host: 'acme.test', cookie: `wechat_oa_state=${state}` } },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/')
+    const p = await verifySession(sessionToken(res), SECRET)
+    // sub 仍 = openid（设计稿 §3.1 修订：sub 不迁移），但 name/acct 已升为 Casdoor 账户
+    expect(p?.sub).toBe('o_t4_linked')
+    expect(p?.name).toBe('t4_acct')
+    expect(p?.acct).toBe('t4_acct')
+    expect(p?.org).toBe('acme')
+    expect(p?.authVia).toBe('wechat-oa')
+    // scopes = Casdoor 有效码（users 直挂 ∪ 角色关联，normalizeScopes 去重排序）——不是 guest 码
+    expect(p?.scopes).toEqual(['moda:view', 'modb:edit', 'modc:admin'])
+    // 绑定集合含本 openid（其余渠道绑定归下一条用例）
+    expect(p?.ext).toContain('o_t4_linked')
+    // 查询打在 acct 上而不是 openid（openid 在 Casdoor 没有账户，查它必 null）
+    expect(fake.getUserNames()).toEqual(['t4_acct'])
+    // audit：actor 仍 openid（审计键连续），detail 带 acct
+    expect(await latestLoginOkDetail('o_t4_linked')).toEqual({ via: 'wechat-oa', acct: 't4_acct' })
+  })
+
+  it('⑦ 正式态：绑定集合含本 openid 之外的其他渠道绑定（wecom 行）', async () => {
+    await seedLink('wechat-oa', 'o_t4_linked', 't4_acct')
+    await seedLink('wecom', 'wecom_t4_x', 't4_acct')
+    const fake = fakeCasdoor(
+      { name: 't4_acct', roles: [] },
+      [{ users: ['acme/t4_acct'], resources: ['moda:view'] }],
+    )
+    const client = testClient(
+      makeApp(pool, { wechatFetch: wechatOpenid('o_t4_linked'), routeCasdoor: fake.factory }),
+    )
+    const state = await silentState(client)
+    const res = await client.api.platform.auth['wechat-oa'].callback.$get(
+      { query: { code: 'good-code', state } },
+      { headers: { host: 'acme.test', cookie: `wechat_oa_state=${state}` } },
+    )
+    const p = await verifySession(sessionToken(res), SECRET)
+    // ext = 本 openid + 其他 active 渠道绑定；store 无 order by（Task 2 已登记项）⇒
+    // 集合断言，不赌 DB 返回序
+    expect([...new Set(p?.ext ?? [])].sort()).toEqual(['o_t4_linked', 'wecom_t4_x'])
+    // 本 openid 恰好出现一次（它也在 link 表里，拼接时必须去重）
+    expect(p?.ext?.filter((x) => x === 'o_t4_linked')).toHaveLength(1)
+  })
+
+  it('⑦ 降级：link 悬空（getUser=null）⇒ 中间态 token（无 acct/ext）+ audit degraded=dangling', async () => {
+    await seedLink('wechat-oa', 'o_t4_dangling', 't4_gone')
+    const fake = fakeCasdoor(null) // Casdoor 明确说没这个人（真机 200+ok+data:null 形状）
+    const client = testClient(
+      makeApp(pool, { wechatFetch: wechatOpenid('o_t4_dangling'), routeCasdoor: fake.factory }),
+    )
+    const state = await silentState(client)
+    const res = await client.api.platform.auth['wechat-oa'].callback.$get(
+      { query: { code: 'good-code', state } },
+      { headers: { host: 'acme.test', cookie: `wechat_oa_state=${state}` } },
+    )
+    // 登录路不因悬空阻塞：照常 302 + 中间态会话（与 ⑤ 同形）
+    expect(res.status).toBe(302)
+    const p = await verifySession(sessionToken(res), SECRET)
+    expect(p?.sub).toBe('o_t4_dangling')
+    expect(p?.name).toBe('o_t4_dangling')
+    expect(p?.scopes).toEqual(GUEST_SCOPES)
+    expect(p?.acct).toBeUndefined()
+    expect(p?.ext).toBeUndefined()
+    // audit 留降级标记：数据漂移（link 指向已删账户）从此有观测点
+    expect(await latestLoginOkDetail('o_t4_dangling'))
+      .toEqual({ via: 'wechat-oa', degraded: 'dangling', acct: 't4_gone' })
+  })
+
+  it('⑦ 降级：Casdoor 抛错 ⇒ 中间态 token + audit degraded=casdoor-down（登录不被上游故障阻塞）', async () => {
+    await seedLink('wechat-oa', 'o_t4_down', 't4_acct')
+    const fake = fakeCasdoor('throw')
+    const client = testClient(
+      makeApp(pool, { wechatFetch: wechatOpenid('o_t4_down'), routeCasdoor: fake.factory }),
+    )
+    const state = await silentState(client)
+    const res = await client.api.platform.auth['wechat-oa'].callback.$get(
+      { query: { code: 'good-code', state } },
+      { headers: { host: 'acme.test', cookie: `wechat_oa_state=${state}` } },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/')
+    const p = await verifySession(sessionToken(res), SECRET)
+    expect(p?.sub).toBe('o_t4_down')
+    expect(p?.acct).toBeUndefined()
+    expect(p?.scopes).toEqual(GUEST_SCOPES)
+    expect(await latestLoginOkDetail('o_t4_down'))
+      .toEqual({ via: 'wechat-oa', degraded: 'casdoor-down', acct: 't4_acct' })
+  })
+
+  it('⑦ 中间态：无 link ⇒ 与现状完全同形（路由 Casdoor 工厂恒抛桩全程不被触达）', async () => {
+    // 'o_t4_plain' 从未插过 link 行；routeCasdoor 走 makeApp 缺省恒抛桩——分流若错误地拿
+    // openid 去 Casdoor，这里会 500 裸露而不是发会话（绊线即断言）
+    const client = testClient(makeApp(pool, { wechatFetch: wechatOpenid('o_t4_plain') }))
+    const state = await silentState(client)
+    const res = await client.api.platform.auth['wechat-oa'].callback.$get(
+      { query: { code: 'good-code', state } },
+      { headers: { host: 'acme.test', cookie: `wechat_oa_state=${state}` } },
+    )
+    expect(res.status).toBe(302)
+    const p = await verifySession(sessionToken(res), SECRET)
+    expect(p?.sub).toBe('o_t4_plain')
+    expect(p?.name).toBe('o_t4_plain')
+    expect(p?.scopes).toEqual(GUEST_SCOPES)
+    expect(p?.acct).toBeUndefined()
+    expect(p?.ext).toBeUndefined()
+    // audit 与改动前逐键一致（toEqual 全等：不得混入 degraded 等新键）
+    expect(await latestLoginOkDetail('o_t4_plain')).toEqual({ via: 'wechat-oa' })
+  })
+
+  it('⑦ findActiveLink DB 故障 ⇒ 500 裸露、未发任何 cookie（与 scopes 取数同姿态，fail-loudly）', async () => {
+    const client = testClient(makeApp(pool, {
+      wechatFetch: wechatOpenid('o_t4_dbfail'),
+      findActiveLink: async () => {
+        throw new Error('identity_link db down')
+      },
+    }))
+    const state = await silentState(client)
+    const res = await client.api.platform.auth['wechat-oa'].callback.$get(
+      { query: { code: 'good-code', state } },
+      { headers: { host: 'acme.test', cookie: `wechat_oa_state=${state}` } },
+    )
+    expect(res.status).toBe(500)
+    expect(setCookies(res)).toEqual([]) // 未发会话——绝不静默降级成访客会话
   })
 })
 
