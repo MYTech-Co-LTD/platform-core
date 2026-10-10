@@ -91,6 +91,14 @@ export interface BuildAppOverrides {
    * 缺省 = apps/web/dist，生产与冒烟路径一字未变。
    */
   webDistDir?: string
+  /**
+   * 注入 fixture modules/ 目录（issue #564）：模块 userApp 静态面（loader 挂的 serveStatic）
+   * 的缓存头行为**必须经真 `loadModules` + 真 `runtime.mount` 端到端验**——用一个手写的
+   * 假 runtime.mount 替身验「宿主缓存策略覆盖 mount 挂的静态面」，替身形状一旦比 loader 宽松，
+   * 缺陷就结构性不可见（#50/#51 教训）。故给的是**目录注入**（装载链一字不改），
+   * 不是 runtime 替身。缺省 = 仓根 modules/，生产一字未变。
+   */
+  modulesDir?: string
 }
 
 export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
@@ -138,7 +146,7 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   if (overrides.modules) {
     runtime = overrides.modules
   } else {
-    runtime = await loadModules(modulesDir, {
+    runtime = await loadModules(overrides.modulesDir ?? modulesDir, {
       pool,
       casdoorFor: casdoorFactory,
       // spec D6 灰度开关：默认 platform（旧表）；显式 casdoor 才切订阅源
@@ -302,6 +310,57 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     modules: () => runtime.modules.map((m) => ({ id: m.manifest.id, name: m.manifest.name })),
   }))
 
+  // ⑧.5 静态产物的缓存档（M1 闭债 R5；issue #564 把覆盖面从 console 扩到模块 userApp 面）。
+  // **单中间件**，覆盖本进程吐出的**全部静态产物**：宿主 console（§⑩ 的 apps/web/dist）与
+  // 各模块 userApp 的 dist（§⑨ runtime.mount 里挂的 serveStatic 与 SPA 兜底）。
+  //
+  // **注册点为何在 §⑨ 之前**（#564 主缺口）：@hono/node-server 的 serveStatic 一旦命中就
+  // `return result`、**不再 next()**，而 Hono 的中间件只对**其后注册**的路由生效。userApp 的
+  // serveStatic 由 loader 挂在 `runtime.mount` 内（§⑨）——宿主这条若留在 §⑩（web 静态块里，
+  // #564 之前的写法），对 userApp 产物**永不执行**：1.2 MiB 的 H5 整包每次白重下载（浏览器
+  // 只能吃启发式缓存）。提到 §⑨ 之前，console 与 userApp 两个静态面同吃这一档。
+  //
+  // **为什么把 /api/modules/ 挡在外面**：注册点一上移，§⑨ 里的**模块 API**（/api/modules/<id>/*）
+  // 也落进了这条链——那不归本中间件管。API 响应的缓存语义由各自路由与 HTTP 语义决定，本中间件
+  // **只签静态产物**：将来某认证类端点自设 `no-store`，绝不能被这里改写成 `no-cache`（那正是
+  // app.test.ts「/healthz 与 /api/* 不被打上 Cache-Control」用例钉的契约，覆盖面随本次上移从
+  // 宿主 API 扩到了模块 API）。宿主自己的 /healthz（§⑤）与 /api/platform/*（§⑦⑧）本就在链外
+  // （注册更早），无需在此挡。前缀取**模块 API 基**（loader 的 moduleApiBasePath），不写宽成
+  // `/api/`：链内确有一条挂 `/api/*`、却要静态档的工具性路由（app.test.ts 的 304 探测路由，
+  // 它挂 /api/* 是为穿过 §⑩ 的 SPA 兜底），宽挡会把它一并误伤。
+  //
+  // 判定只看**实际吐出的产物类型**，不看"路径里有没有点"那类会随 vite 配置漂移的启发式：
+  //   · text/html（index.html）——无论来自 `/`、`/console` 深链、模块 userApp 的入口，还是
+  //     **/assets/ 下未命中而落 SPA 兜底**的那份——一律可重验；
+  //   · 其余只认「路径中**含 `/assets/` 段**」（= vite 带内容哈希的产物）为 immutable，别的一律
+  //     可重验。取**路径段**而非 `/assets/` 前缀（#564 次要缺口）：console 深链产物在
+  //     `/console/assets/<hash>.*`、模块 userApp 产物在 `/app/aftersales/assets/<hash>.*`，都
+  //     **不以** `/assets/` 开头——前缀写法会把同一份哈希产物误退成 no-cache（每次白重传）。
+  //
+  // **已知边界（R5 三路评审建议 1，有意不改行为）**：分档键取的是**请求路径**而非**实际命中的
+  // 产物**，真实影响 ≈ 0（都是"少优化"或"dev 专属"），只记不修：
+  //   ① `/ASSETS/<hash>.js`：**大小写不敏感的 FS（macOS 开发机）**上命中该产物，而匹配区分
+  //      大小写 ⇒ 拿 `no-cache`。生产是 Linux（FS 区分大小写），该路径不命中产物、落 SPA
+  //      兜底 ⇒ 本就该 no-cache，无障碍。
+  //   ② `**/assets/` 下**无内容哈希**的文件（若将来往 dist/assets/ 放静态资源）会被按段钉成
+  //      一年 immutable，发版不失效——往 assets/ 放东西时要记得这点。
+  app.use('*', async (c, next) => {
+    await next()
+    const res = c.res
+    // `res.status >= 400` 而非 `!res?.ok`（R5 三路评审建议 4）：`Response.ok` 是 **2xx 才为真**，
+    // 304 会被挡在门外 ⇒ 将来补上 ETag/条件请求（或升级 serveStatic）后，304 反而漏设
+    // Cache-Control（RFC 9111 §4.3.4 要求 304 携带与 200 一致的 Cache-Control）。今天无 304
+    // 故非缺陷，但这条耦合太隐蔽，顺手按"只跳过错误响应"写。
+    if (!res || res.status >= 400) return
+    // 模块 API 不签（见上）；宿主 API 已在注册序上落在链外
+    if (c.req.path.startsWith('/api/modules/')) return
+    const isHtml = (res.headers.get('content-type') ?? '').includes('text/html')
+    res.headers.set(
+      'Cache-Control',
+      !isHtml && /(?:^|\/)assets\//.test(c.req.path) ? CACHE_ASSET : CACHE_REVALIDATE,
+    )
+  })
+
   // ⑨ 模块 API（/api/modules/<id>/*）+ 模块 userApp 静态（mount 内部处理）。
   // 无需 cast：mount 收 `Hono<MountEnv>`，只声明闸门真正读的 `tenant` / `identity`
   // 两个变量——本 app 的 `TenantEnv & SessionEnv` 结构上覆盖它。旧文在此处写过
@@ -316,38 +375,8 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   if (existsSync(distDir)) {
     const stripConsole = (p: string) => p.slice('/console'.length) || '/'
 
-    // 缓存头中间件：**必须注册在 serveStatic 之前**。@hono/node-server 的 serveStatic 一旦命中
-    // 就 `return result`、**不再 next()**，注册在它之后的中间件对"命中的产物"根本不执行
-    // （与 ④ 安全头同一手法：`await next()` 之后再改 c.res，才覆盖得到直出的裸 Response）。
-    // 判定只看**实际吐出的产物类型**，不看"路径里有没有点"那类会随 vite 配置漂移的启发式：
-    //   · text/html（index.html）——无论来自 `/`、`/login`、`/console` 深链，还是 **/assets/ 下
-    //     未命中而落 SPA 兜底**的那份——一律可重验；
-    //   · 其余只认 /assets/ 前缀（= vite 带内容哈希的产物）为 immutable，别的一律可重验。
-    //
-    // **已知边界（R5 三路评审建议 1，有意不改行为）**：分档键取的是**请求路径**而非**实际
-    // 命中的产物**，三格会分错档；真实影响 ≈ 0（都是"少优化"或"dev 专属"），故只记不修：
-    //   ① `/console/assets/<hash>.js`：stripConsole 剥掉 `/console` 后命中的是**同一份哈希
-    //      产物**，但 c.req.path 不以 `/assets/` 开头 ⇒ 拿到 `no-cache`（同产物两个档）。
-    //   ② `/ASSETS/<hash>.js`：**大小写不敏感的 FS（macOS 开发机）**上同样命中该产物，
-    //      而 startsWith 区分大小写 ⇒ 也拿 `no-cache`。生产是 Linux（FS 区分大小写），
-    //      该路径不命中产物、落 SPA 兜底 ⇒ 本就该 no-cache，无障碍。
-    //   ③ 反向：`/assets/` 下**无内容哈希**的文件（若将来往 dist/assets/ 放静态资源）会被
-    //      按前缀钉成一年 immutable，发版不会失效——往 assets/ 放东西时要记得这点。
-    app.use('*', async (c, next) => {
-      await next()
-      const res = c.res
-      // `res.status >= 400` 而非 `!res?.ok`（R5 三路评审建议 4）：`Response.ok` 是
-      // **2xx 才为真**，304 会被挡在门外 ⇒ 将来补上 ETag/条件请求（或升级 serveStatic）
-      // 后，304 反而漏设 Cache-Control（RFC 9111 §4.3.4 要求 304 携带与 200 一致的
-      // Cache-Control）。今天无 304 故非缺陷，但这条耦合太隐蔽，顺手按"只跳过错误响应"写。
-      if (!res || res.status >= 400) return
-      const isHtml = (res.headers.get('content-type') ?? '').includes('text/html')
-      res.headers.set(
-        'Cache-Control',
-        !isHtml && c.req.path.startsWith('/assets/') ? CACHE_ASSET : CACHE_REVALIDATE,
-      )
-    })
-
+    // 缓存档由 §⑧.5 那条**单中间件**统一施加（它注册在本节之前 ⇒ 对这里的 serveStatic 直出
+    // 同样生效）——本节不再自带缓存逻辑。
     const spaIndex = serveStatic({ root: distDir, path: 'index.html' })
     // dist 根路径静态文件（/assets/*.js|css、/favicon.svg）：vite 构建的 index.html 以
     // 站点绝对路径引用这些产物，缺这道中间件时它们会落进 SPA 兜底拿到 index.html，
