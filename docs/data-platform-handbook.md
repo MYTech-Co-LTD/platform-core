@@ -748,6 +748,9 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 > 本节是**终局分工**，配 skill `.claude/skills/data-monitor/`（执法器）强制后续执行；执行状态表与
 > #538 同步，翻绿/翻红都要改这里。
 >
+> **通用接入手册（公司级）**：任何新项目把日志/遥测/事件行接入 OO 并形成预警的标准操作 =
+> team-harness `docs/standards/observability.md`（2026-10-10 起，本节为其在采集板块的专用特化）。
+>
 > ⚠️ **OO API 认 identifier 不认显示名**（miyuan 的 identifier 是长随机串，`default`/`woke` 例外恰好可读）——
 > 2026-10-10 审计错按显示名查 org 得出「0 规则」假阴性。多 org 审计先 `GetUserOrganizations` 列全再查。
 
