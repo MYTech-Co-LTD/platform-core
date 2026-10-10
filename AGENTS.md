@@ -18,6 +18,7 @@ Casdoor 后台运营，租户管理员在 console 自建页管理——spec D4 �
 | 新接一个业务模块 | `docs/module-onboarding.md`（接入步骤/全字段参考/验收清单/故障速查）；协议语义正典仍是 `docs/module-protocol.md` |
 | 接采集任务 / 改采集链路 / 改调度 / 源退役（**流程执法**） | `.claude/skills/collect-source`（A→I 逐段判停门 + 开工三查；判据数值与台账的唯一事实源仍是下行正典） |
 | 接采集任务 / 改采集链路 / 改调度（判据与台账） | `docs/data-platform-handbook.md`（**采集正典**：决策 / 生命周期 SOP / 四层验收 / 运维速查 / 逐源决策登记 + 数据源台账） |
+| 配告警 / 接探活 / 新增发布面 / 涉 OO 告警规则或 openship 通知（**监控执法**） | `.claude/skills/data-monitor`（三层职责判停 + 四条红线；分工定案与执行状态在正典 §1.5.3，追踪 issue #538） |
 | 设计稿与实施计划 | `docs/superpowers/specs/`、`docs/superpowers/plans/`（按日期命名；SaaS 管理域 spec 是现行主线的正典） |
 | 部署 / 接入 / 回滚 | `deploy/openship-adopt.md`（含自动部署与控制面 API 前缀坑）、`deploy/branch-protection-runbook.md` |
 | 冒烟验收 | `docs/m0-smoke-checklist.md` |
