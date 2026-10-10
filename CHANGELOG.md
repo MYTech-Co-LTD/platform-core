@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.91.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.90.1...v0.91.0) - 2026-10-10
+- 【新增】data: 探活逐断言判红行入 OO + 桥接 v1.2 双通道 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [a7b184c](https://github.com/MYTech-Co-LTD/platform-core/commit/a7b184cd0a2cb14cfaa025fe50763b55485dbe5d))
+
+
 ## [0.90.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.90.0...v0.90.1) - 2026-10-10
 - 【修复】data: 桥接 v1.1——信号源改轮询 data_alerts 流新行 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [4bb2f8a](https://github.com/MYTech-Co-LTD/platform-core/commit/4bb2f8a6a612f5a81b1cfa48f4a1a5531addc5d6))
 
