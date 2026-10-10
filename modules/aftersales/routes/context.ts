@@ -76,7 +76,13 @@ export function parseIdParam(raw: string | undefined): number | null {
  * guest 面身份集合：正式态=全部 active 绑定；中间态/旧会话=登录 openid 本身。
  * 读侧过滤一律 `= ANY(本函数结果)`（账户统一设计 §4.1）——写侧落值**不**用它，
  * 仍写 `identity.userId`（openid 是渠道事实，业务表身份锚不随绑定关系变）。
+ *
+ * 空绑定集合=回退登录 openid（I-1，终审修复）：最后一条 active link 被撤销/争议后，
+ * 正式态 session 重签出 `boundExternalIds=[]`（ext 刷新如实反映零绑定）——空数组不是
+ * nullish，`??` 兜不住 ⇒ 读谓词 ANY('{}') 全空、写侧仍按登录 openid，用户既看不见自己
+ * 也重复申请。本函数把空集合接回登录 openid，作为「撤销后 ≤5 分钟窗口」（下一次
+ * scopes/ext 刷新前）的自见基准：看得到自己的历史单据与档案，写侧语义不变。
  */
 export function guestIdentityIds(identity: Identity): string[] {
-  return identity.boundExternalIds ?? [identity.userId]
+  return identity.boundExternalIds?.length ? identity.boundExternalIds : [identity.userId]
 }

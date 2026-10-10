@@ -151,6 +151,18 @@ platform.identity_link
 - 业务表 openid 锚**不回填**（openid 继续是渠道事实），存量查询靠 §4.2 回填的
   link 表展开集合。
 
+> **订正（2026-10-10，终审批次）**：上句「含 `/guest/settlement-orders`」的**前提错误**——
+> 该端点（ticket-guest.ts）只按 `org + store_code` 过滤 `data.dim_settlement_order_line`，
+> **没有 openid 谓词**，与登录者账户无归属关系，T10 实施时经路由注册表全量复核后**排除**；
+> 实际收窄面就是 ticket-guest / registration-guest / attachment 三文件已收窄的读点。实施计划
+> `2026-10-10-aftersales-account-unification-phase1.md` Task 10 Step 2 的同款表述一并作废。
+>
+> **补充（2026-10-10，终审批次，C-1 语义）**：「多绑的我的工单」只认 **active**——已
+> revoked/disputed 的绑定在重提申请时**不复活**：`matchOnApplication` 在这两态上把自动绑定
+> 路径（唯一手机号命中）降级为 pending、重新进人工队列，绝不从 revoked/disputed 直达
+> active（管理员撤销/争议是显式状态决定，零人工交互的自动绑定无权翻案）。绑定集合为空的
+> 正式态 session（撤销后 ext 刷新窗口）读侧回退登录 openid——看得到自己，不重复申请。
+
 ### 4.2 存量迁移（一次性）
 
 1. 存量 approved 员工（aftersales.employee）→ 批量建 Casdoor user（租户 org）；

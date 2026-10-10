@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { planBackfill, shouldBackfillWrite } from './backfill-identity-links.mjs'
+import { buildBackfillAuditRow, planBackfill, shouldBackfillWrite } from './backfill-identity-links.mjs'
 
 // Task 11（账户统一 Phase 1）：存量员工身份绑定回填——纯核用例。
 // 语义（task-11-brief Step 2）：approved 且手机号有效才进 binds；approved 无有效手机号 →
@@ -98,5 +98,30 @@ describe('shouldBackfillWrite（写前裁决：批量回填绝不覆盖人工状
     expect(shouldBackfillWrite('active')).toBe(false)
     expect(shouldBackfillWrite('revoked')).toBe(false)
     expect(shouldBackfillWrite('disputed')).toBe(false)
+  })
+})
+
+// I-2（终审修复）：--apply 真写后落一行 run 级 audit（identity-links.ts writeAudit 同款纪律：
+// 「改了状态没留痕」比「改失败」更不可接受）——行级 bound_via 保持 'manual' 不动，批次与
+// 人工确认的区分靠本 audit 行（action='identity.link.backfill'）。构造纯核可测；dry-run 不落。
+describe('buildBackfillAuditRow（--apply 的 run 级 audit 行构造）', () => {
+  it('actor/mode 固定常量；detail 带计数；org 去重排序（跨 org run 可复核）', () => {
+    const row = buildBackfillAuditRow({ orgs: ['org-b', 'org-a', 'org-b'], written: 3, skipped: 2, failed: 1 })
+    expect(row.actor).toBe('backfill-script')
+    expect(row.action).toBe('identity.link.backfill')
+    expect(row.detail).toEqual({
+      org: ['org-a', 'org-b'], written: 3, skipped: 2, failed: 1, mode: 'backfill-script',
+    })
+  })
+
+  it('tenantId 缺省 null（跨 org run 无法映射单一租户，writeAudit「查无则 null」同位）；单 org 由调用方按 casdoor_org 反查传入', () => {
+    expect(buildBackfillAuditRow({ orgs: ['a'], written: 1, skipped: 0, failed: 0 }).tenantId).toBeNull()
+    expect(buildBackfillAuditRow({ orgs: ['a'], written: 1, skipped: 0, failed: 0 }, 42).tenantId).toBe(42)
+  })
+
+  it('零写入的 apply run 也成行（skipped/failed 计数进 detail——留痕不以 written>0 为前提）', () => {
+    const row = buildBackfillAuditRow({ orgs: [], written: 0, skipped: 5, failed: 0 })
+    expect(row.detail).toMatchObject({ written: 0, skipped: 5, failed: 0, mode: 'backfill-script' })
+    expect(row.tenantId).toBeNull()
   })
 })

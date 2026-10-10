@@ -124,6 +124,43 @@ describe.skipIf(!dbUrl)('identity_link 读写层（真 PG）', () => {
     expect(await findActiveLink(pool, 'o2', 'no-such')).toBeNull()
   })
 
+  // I-3（终审修复回归）：双渠道同时 active 时 findActiveLink 必须确定——
+  // 「wechat-oa 优先、其后最新优先」（与 pickOwnRow 同优先级）。修前无 order by，
+  // limit 1 拿哪行由计划器/堆物理序决定 ⇒ 正式态判定在两账户间漂移。
+  it('I-3：findActiveLink 双 active 确定命中 wechat-oa（provider 优先级压过插入顺序）', async () => {
+    // 每 run 唯一 org（同文件 m6 先例）：夹具要靠「wecom 先插 ⇒ id 更小」自证区分力，
+    // 固定 org 在持久库上会被 upsert 幂等保住旧 id、插入顺序自证失效
+    const org = `ff4-${randomUUID().slice(0, 8)}`
+    // wecom 行**先**插（id 更小）：修前无排序、小表走顺序扫时命中 wecom——钉死
+    // 「wechat-oa 压过 wecom 且不看插入顺序」，与「仅 id desc」也区分得开
+    const wecom = await upsertLink(pool, {
+      org, provider: 'wecom', externalId: 'ff4-dual', casdoorName: 'ff4-zeta',
+      phone: null, boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    const oa = await upsertLink(pool, {
+      org, provider: 'wechat-oa', externalId: 'ff4-dual', casdoorName: 'ff4-wendy',
+      phone: null, boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    expect(await findActiveLink(pool, org, 'ff4-dual')).toEqual({ casdoorName: 'ff4-wendy' })
+    expect(oa.id).toBeGreaterThan(wecom.id)
+    // 夹具自证：wechat-oa 行确实是更大的 id——「仅按 id desc」会命中 wecom，本断言真钉住了 provider 优先级
+  })
+
+  it('I-3：listActiveExternalIds 同号双渠道只列一次（distinct）', async () => {
+    // 同一 external_id 经两渠道各绑一行（同 org 同账户）⇒ 消费方按集合语义用，
+    // 重复元素会让 ANY(…) 谓词加倍命中、集合去重假设破产——修前无 distinct
+    await upsertLink(pool, {
+      org: 'ff4', provider: 'wechat-oa', externalId: 'ff4-same', casdoorName: 'ff4-wendy',
+      phone: null, boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    await upsertLink(pool, {
+      org: 'ff4', provider: 'wecom', externalId: 'ff4-same', casdoorName: 'ff4-wendy',
+      phone: null, boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    const ids = await listActiveExternalIds(pool, 'ff4', 'ff4-wendy')
+    expect(ids.filter((id) => id === 'ff4-same')).toHaveLength(1)
+  })
+
   it('listActiveExternalIds 只列该账户的 active 外部 id', async () => {
     await upsertLink(pool, {
       org: 'o5', provider: 'wechat-oa', externalId: 'oF', casdoorName: 'u5',
@@ -188,6 +225,27 @@ describe.skipIf(!dbUrl)('identity_link 读写层（真 PG）', () => {
     const rebound = await mutateLink(pool, 'o4', link.id, { casdoorName: 'u6-new' })
     expect(rebound?.casdoorName).toBe('u6-new')
     expect(rebound?.status).toBe('revoked')
+  })
+
+  // M-5（终审修复回归，ff5 专键）：mutateLink 落 active 时盖 bound_at——与 revoked_at/
+  // disputed_at 对称。bound_at 的语义是「最近一次 active 生效的时点」，人工 confirm 走
+  // mutateLink(active) 这条路，漏盖会让 confirm 路径的 bound_at 停留在首绑（甚至 NULL）。
+  it('M-5：mutateLink 落 active ⇒ bound_at 盖 now()（confirm 路径对称 revoked_at/disputed_at）', async () => {
+    const link = await upsertLink(pool, {
+      org: 'ff5', provider: 'wechat-oa', externalId: 'ff5-m', casdoorName: 'ff5-nina',
+      phone: null, boundVia: null, status: 'pending', sourceApprovalId: null,
+    })
+    // 归一起点（持久库可重跑）：本行可能带着上一次 run 落下的 bound_at，先钉到一个遥远
+    // 旧时点——修前 mutateLink 不盖 bound_at，它就停在旧值；修后必是 now()
+    await pool.query("update platform.identity_link set bound_at = timestamp '2000-01-01' where id = $1", [link.id])
+    // 人工确认（confirm 内部正是这条 mutateLink(active)）
+    const confirmed = await mutateLink(pool, 'ff5', link.id, { status: 'active', boundVia: 'manual' })
+    expect(confirmed?.status).toBe('active')
+    const { rows } = await pool.query<{ bound_at: Date | null }>(
+      'select bound_at from platform.identity_link where id=$1', [link.id],
+    )
+    expect(rows[0]!.bound_at).not.toBeNull()
+    expect(rows[0]!.bound_at!.getTime()).toBeGreaterThan(Date.parse('2001-01-01')) // 盖了 now()，不是旧值
   })
 })
 
@@ -428,5 +486,70 @@ describe.skipIf(!dbUrl)('IdentityLinks 服务（真 PG）', () => {
     expect(rows[1]!.detail).toMatchObject({ from: 'kate', to: 'lily', actor: 'admin9' })
     expect(rows[2]!.actor).toBeNull()
     expect(rows[2]!.detail).toMatchObject({ actor: null })
+  })
+
+  // ── C-1（终审修复回归，ff1* 专键）：撤销/争议绑定不得被重新申请复活 ──────────────
+  // revoked/disputed 是管理员/本人的显式状态决定；existing 只拦了 active ⇒ 重新申请走候选
+  // 计算，唯一手机号命中即 upsert active+auto，零人工交互覆盖管理员撤销。修后：这两态上
+  // 自动绑定路径降级 pending（镜像多命中路径），绝不从 revoked/disputed 直接到 active。
+  it('C-1：revoked/disputed 行上重新申请 ⇒ 唯一命中降级 pending，绝不直升 active', async () => {
+    // 置信池：ff1 里 alice 的 active 行占住手机号（对下方的撤销行构成「唯一命中」）
+    await upsertLink(pool, {
+      org: 'ff1', provider: 'wechat-oa', externalId: 'ff1-alice', casdoorName: 'alice',
+      phone: '13200001111', boundVia: 'manual', status: 'active', sourceApprovalId: null,
+    })
+    // 被管理员撤销过的绑定行：曾绑 alice（同号），后 revoke
+    await upsertLink(pool, {
+      org: 'ff1', provider: 'wechat-oa', externalId: 'ff1-revoked', casdoorName: 'alice',
+      phone: '13200001111', boundVia: 'auto', status: 'revoked', sourceApprovalId: 1,
+    })
+    const ensured: string[] = []
+    const svc = createIdentityLinks(pool, fakeCasdoorFor(ensured))
+    const r = await svc.matchOnApplication({
+      org: 'ff1', provider: 'wechat-oa', externalId: 'ff1-revoked', phone: '13200001111', approvalId: 21,
+    })
+    expect(r.state).not.toBe('active') // 返回值不得宣称已绑
+    const row = await findLinkByExternal(pool, 'ff1', 'wechat-oa', 'ff1-revoked')
+    expect(row?.status).toBe('pending') // 降级转人工（重新进人工队列），不是 revoked 直升 active
+    expect(row?.boundVia).toBeNull() // 自动绑定不生效 ⇒ bound_via 不落 auto
+    expect(row?.casdoorName).toBe('alice') // 行上保留候选作机器建议（供审核面比对）
+    expect(ensured).toEqual([]) // 候选账户已存在，不走建草稿
+
+    // disputed 同口径：异议未裁决前，重新申请同样不得自动复活
+    await upsertLink(pool, {
+      org: 'ff2', provider: 'wechat-oa', externalId: 'ff2-disputed', casdoorName: 'bob',
+      phone: '13200002222', boundVia: 'auto', status: 'disputed', sourceApprovalId: 2,
+    })
+    await upsertLink(pool, {
+      org: 'ff2', provider: 'wechat-oa', externalId: 'ff2-bob', casdoorName: 'bob',
+      phone: '13200002222', boundVia: 'manual', status: 'active', sourceApprovalId: null,
+    })
+    const r2 = await svc.matchOnApplication({
+      org: 'ff2', provider: 'wechat-oa', externalId: 'ff2-disputed', phone: '13200002222', approvalId: 22,
+    })
+    expect(r2.state).not.toBe('active')
+    expect((await findLinkByExternal(pool, 'ff2', 'wechat-oa', 'ff2-disputed'))?.status).toBe('pending')
+  })
+
+  it('C-1：revoked 行 + 手机号多命中 ⇒ 照旧 pending+candidates，phone 命中也不复活', async () => {
+    await upsertLink(pool, {
+      org: 'ff3', provider: 'wechat-oa', externalId: 'ff3-carol', casdoorName: 'carol',
+      phone: '13200003333', boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    await upsertLink(pool, {
+      org: 'ff3', provider: 'wecom', externalId: 'ff3-charlie', casdoorName: 'charlie',
+      phone: '13200003333', boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    await upsertLink(pool, {
+      org: 'ff3', provider: 'wechat-oa', externalId: 'ff3-multi', casdoorName: 'carol',
+      phone: '13200003333', boundVia: 'auto', status: 'revoked', sourceApprovalId: 3,
+    })
+    const svc = createIdentityLinks(pool, fakeCasdoorFor([]))
+    const r = await svc.matchOnApplication({
+      org: 'ff3', provider: 'wechat-oa', externalId: 'ff3-multi', phone: '13200003333', approvalId: 23,
+    })
+    expect(r.state).toBe('multi')
+    expect(r.candidates).toHaveLength(2)
+    expect((await findLinkByExternal(pool, 'ff3', 'wechat-oa', 'ff3-multi'))?.status).toBe('pending')
   })
 })

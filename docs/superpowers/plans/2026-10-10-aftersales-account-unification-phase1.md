@@ -528,6 +528,10 @@ export function guestIdentityIds(identity: Identity): string[] {
 
 - [ ] **Step 1: 失败用例**——伪造 `identity.boundExternalIds = ['oA','oB']`：`GET /guest/tickets` 返回两个 openid 的单；`GET /guest/tickets/:id`（oB 的单）放行；他人单 404；`POST /guest/attachments` 预签名认领校验按集合；**写路径断言不变**（`submitter_openid` 仍落 `identity.userId`=登录 openid——本任务红线：只动读侧）。
 - [ ] **Step 2: 跑失败** → **Step 3: 实现**——读侧谓词 `open_id = $n` 改 `open_id = ANY($n)`（数组参数）；`readMySnapshot`（registration-guest.ts:31-44）同理 `open_id = ANY($1)`；settlement-orders（ticket-guest.ts:94）同款。逐文件扫 `/guest/` 全部读点（上方 3 文件 9 端点即全集，grep 复核）。
+  > **订正（2026-10-10，终审批次）**：本行「settlement-orders（ticket-guest.ts:94）同款」
+  > **前提错误**——该端点只按 `org + store_code` 过滤（无 openid 谓词），与登录者账户无
+  > 归属关系，T10 实施时经路由注册表全量复核后**排除**，不在收窄面内（实测已按 3 文件
+  > 既有读点收窄）。设计稿 §4.1 的同款表述已同步订正，原文保留。
 - [ ] **Step 4: 跑通过**（模块全量） → **Step 5: 提交**
 
 ```bash

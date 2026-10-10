@@ -69,7 +69,9 @@ export async function findLinkByExternal(
   return rows[0] ?? null
 }
 
-/** 任一渠道 active 即正式态：provider 不限，只认 status='active'；没有则 null。 */
+/** 任一渠道 active 即正式态：provider 不限，只认 status='active'；没有则 null。
+ *  I-3（终审修复）：双渠道同时 active 时必须确定——「wechat-oa 优先、其后最新优先」
+ *  （与 pickOwnRow 同优先级）。修前无 order by，limit 1 拿哪行由计划器/堆物理序决定。 */
 export async function findActiveLink(
   pool: Pool,
   org: string,
@@ -77,20 +79,23 @@ export async function findActiveLink(
 ): Promise<{ casdoorName: string } | null> {
   const { rows } = await pool.query<{ casdoorName: string }>(
     'select casdoor_name AS "casdoorName" from platform.identity_link'
-    + " where org = $1 and external_id = $2 and status = 'active' limit 1",
+    + " where org = $1 and external_id = $2 and status = 'active'"
+    + " order by (provider = 'wechat-oa') desc, id desc limit 1",
     [org, externalId],
   )
   return rows[0] ?? null
 }
 
-/** 某账户在某 org 下全部 active 的外部 id（pending/revoked 不列）。 */
+/** 某账户在某 org 下全部 active 的外部 id（pending/revoked 不列）。
+ *  I-3（终审修复）：同一 external_id 可经两渠道各绑一行（(provider,org,external_id) 唯一
+ *  不含 provider 维度的去重），消费方按集合语义用 ⇒ distinct 去掉跨渠道重复。 */
 export async function listActiveExternalIds(
   pool: Pool,
   org: string,
   casdoorName: string,
 ): Promise<string[]> {
   const { rows } = await pool.query<{ external_id: string }>(
-    "select external_id from platform.identity_link"
+    "select distinct external_id from platform.identity_link"
     + " where org = $1 and casdoor_name = $2 and status = 'active'",
     [org, casdoorName],
   )
@@ -149,6 +154,9 @@ export async function upsertLink(
  *  revoked 视为误用，不生效（行上留的是「最近一次吊销」的执行人与时点）。
  *  disputed_at 对称：只在 status 落 'disputed' 的那次变更盖 now()（列此前无写通路——评审
  *  裁决补上；同样只进不出，行上留「最近一次争议」的时点）。
+ *  bound_at 对称（M-5，终审修复）：status 落 'active' 的每次变更盖 now()——bound_at 的语义是
+ *  「最近一次 active 生效的时点」，人工 confirm/rebind 走本函数落 active，漏盖会停留在首绑
+ *  （甚至 NULL，upsertLink 只在 insert/conflict 两分支盖）。
  *  patch 只收白名单列、全参数化——调用方传不进任意 SET 片段（注入面 = 这四个键）。 */
 export async function mutateLink(
   exec: SqlExecutor,
@@ -179,6 +187,9 @@ export async function mutateLink(
   }
   if (patch.status === 'disputed') {
     sets.push('disputed_at = now()')
+  }
+  if (patch.status === 'active') {
+    sets.push('bound_at = now()') // M-5：与 revoked_at/disputed_at 对称（见函数头注）
   }
   if (sets.length === 0) {
     // 空 patch 不构成 update：退化为按 org+id 读取（org 不对照样 null，与 update 路径同语义）
@@ -316,10 +327,15 @@ export function createIdentityLinks(
       // 后续申请的新 phone/approvalId 不能改写已生效的绑定
       const existing = await findLinkByExternal(pool, input.org, input.provider, input.externalId)
       if (existing?.status === 'active') return { state: 'active' }
+      // C-1（终审修复）：revoked/disputed 是管理员/本人的显式状态决定——重新申请在这两态上
+      // **绝不**直升 active（修前只拦了 active，唯一手机号命中会零人工交互覆盖管理员撤销/
+      // 争议）。自动绑定路径降级 pending，镜像多命中路径（行上 casdoor_name 保留候选作机器
+      // 建议）；pending/无行路径不受影响。
+      const suppressed = existing?.status === 'revoked' || existing?.status === 'disputed'
       const phone = normalizePhone(input.phone)
       // 置信池 = identity_link.phone 的 active 行（本地，含回填存量）；Casdoor 侧按手机号查户归 Phase 2
       const candidates = phone === null ? [] : await listCandidatesByPhone(pool, input.org, phone)
-      if (candidates.length === 1) {
+      if (candidates.length === 1 && !suppressed) {
         // 唯一命中 ⇒ 自动绑定即时生效（bound_via=auto）
         await upsertLink(pool, {
           org: input.org,
@@ -338,8 +354,9 @@ export function createIdentityLinks(
         // 的 getUser 回读兜底——真机语义）+ pending，转人工
         await casdoorFor(input.org).ensureUser(input.externalId)
       }
-      // 多命中 ⇒ 不绑，pending + 候选清单转人工；行上 casdoor_name 落首个候选作机器建议
-      //（完整候选清单经返回值进审批面，行上只留建议位——casdoor_name 列 NOT NULL 必须有值）
+      // 多命中、以及 C-1 的 revoked/disputed 抑制（唯一命中也不绑）⇒ pending + 转人工；
+      // 行上 casdoor_name 落首个候选作机器建议（完整候选清单经返回值进审批面，行上只留
+      // 建议位——casdoor_name 列 NOT NULL 必须有值）
       await upsertLink(pool, {
         org: input.org,
         provider: input.provider,

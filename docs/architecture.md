@@ -410,7 +410,12 @@ env，多租户同进程部署就只能共用一份 ⇒ 无 BYO、单密钥爆�
 8. 有**外部访客面**（移动端/公众号客户）的模块：manifest 增声明 `guest: { scope }`
    （`scope` 必须 ∈ 本模块 `permissions[].code`，schema 拒绝越界），宿主 `wechat-oa` 访客登录路
    按**该租户已启用模块**发放这些码；访客面的端点照常在 `api.internal[]` 里**逐条声明**（scope
-   用那个 guest 码），**不另开一套门禁**。访客身份不落 Casdoor（外部用户不进内部 IdP）。
+   用那个 guest 码），**不另开一套门禁**。访客身份是**两态**（2026-10-10 订正，依据
+   `docs/superpowers/specs/2026-10-10-aftersales-account-unification-design.md` §0.2/§3——
+   原表述「访客身份不落 Casdoor（外部用户不进内部 IdP）」只对**中间态**成立）：**中间态**
+   （openid 未绑/绑定 pending）不落 Casdoor（保留，访客 session 语义不变）；**正式态**
+   （openid 有 active 绑定）落 Casdoor——门店员工建 Casdoor user（租户 org 下），绑定关系
+   落本地 `platform.identity_link`，session 换发内部同构的正式态载荷（两态发放同一批码）。
    路径必须与管理端**分面**（如 `/guest/*`）——同 `(method, path)` 只能声明一次。
    → 例：`modules/aftersales`（首个使用者）；协议细节读 `docs/module-protocol.md`
 9. 需要**本租户的**存储配置（BYO 桶 / 按租户归集成本）的模块：manifest 增声明

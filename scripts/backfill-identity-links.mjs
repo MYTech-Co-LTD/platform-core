@@ -12,6 +12,9 @@
 //   写：platform.identity_link —— provider='wechat-oa'、status='active'、bound_via='manual'、
 //   casdoor_name=open_id（与 matchOnApplication 草稿路径同口径：Casdoor user 名 = external_id）；
 //   写前逐条 ensureUser(openId)（getUser 已存在则跳过——ensureUser 的幂等由调用方保证）。
+//   留痕（I-2 终审修复）：--apply 完成后落一行 run 级 platform.audit（action=
+//   'identity.link.backfill'、actor='backfill-script'、detail 带 org/计数；dry-run 不写）——
+//   批次与人工确认的区分靠这行 audit，行级 bound_via 保持 'manual' 语义不动。
 //
 // 安全语义（比 brief 多出的两道闸，均在纯核可测）：
 //   · 已 active 的绑定一律跳过——绝不覆盖已生效绑定；revoked/disputed 同样不碰——那是人工
@@ -97,6 +100,37 @@ export function planBackfill(rows) {
  */
 export function shouldBackfillWrite(existingStatus) {
   return existingStatus === null || existingStatus === undefined || existingStatus === 'pending'
+}
+
+/**
+ * run 级 audit 行构造（纯核，I-2 终审修复）：--apply 真写完成后落一行 platform.audit——
+ * 批量回填不留痕 = 「改了状态没留痕」（identity-links.ts writeAudit 同款纪律：比改失败更
+ * 不可接受）。行级 bound_via 保持 'manual' 不动，**批次与人工确认的区分靠本 audit 行**
+ * （action='identity.link.backfill'），不改写 bound_via 语义。
+ *
+ * 列形状照 identity-links.ts 的 writeAudit（platform.audit 四列：tenant_id/actor/action/detail）：
+ *   tenantId  跨 org 批处理无法映射单一租户 ⇒ 缺省 null（writeAudit 的「查无则 null」同位）；
+ *             恰好一个 org 时由调用方按 casdoor_org 反查传入。
+ *   actor     固定 'backfill-script'（机器执行人，非真人会话）。
+ *   detail    { org:[去重升序], written, skipped, failed, mode:'backfill-script' }——零写入的
+ *             apply run 也成行（留痕不以 written>0 为前提）。detail 不带手机号。
+ * @param {{orgs: string[], written: number, skipped: number, failed: number}} run
+ * @param {number | null} [tenantId]
+ * @returns {{tenantId: number|null, actor: string, action: string, detail: Record<string, unknown>}}
+ */
+export function buildBackfillAuditRow(run, tenantId = null) {
+  return {
+    tenantId,
+    actor: 'backfill-script',
+    action: 'identity.link.backfill',
+    detail: {
+      org: [...new Set(run.orgs)].sort(),
+      written: run.written,
+      skipped: run.skipped,
+      failed: run.failed,
+      mode: 'backfill-script',
+    },
+  }
 }
 
 // upsert 与 identity-links.ts 的 upsertLink「active 分支」同口径（bound_at 恒 now()：回填只写
@@ -215,6 +249,26 @@ async function main() {
       }
     }
     console.log(`[backfill] 完成：成功 ${written} / 跳过 ${skips.length} / 失败 ${failures.length}（${apply ? '--apply' : 'dry-run'}）`)
+    // I-2（终审修复）：--apply 真写后落一行 run 级 audit（构造见 buildBackfillAuditRow；
+    // dry-run 在上方 return，不写）。audit 插入失败随 main 的 catch 响亮退出——留痕缺失
+    // 不能静默。org 恰好一个时按 casdoor_org 反查 tenant_id，跨 org run 留 null。
+    const auditOrgs = [...new Set(plan.binds.map((b) => b.org))]
+    let tenantId = null
+    if (auditOrgs.length === 1) {
+      const { rows: t } = await pool.query(
+        'select id::int as id from platform.tenant where casdoor_org = $1', [auditOrgs[0]],
+      )
+      tenantId = t[0]?.id ?? null
+    }
+    const auditRow = buildBackfillAuditRow(
+      { orgs: auditOrgs, written, skipped: skips.length, failed: failures.length }, tenantId,
+    )
+    await pool.query(
+      'insert into platform.audit(tenant_id, actor, action, detail) values ($1, $2, $3, $4)',
+      [auditRow.tenantId, auditRow.actor, auditRow.action, auditRow.detail],
+    )
+    console.log(`[backfill] audit 已落：action=${auditRow.action} orgs=[${auditRow.detail.org.join(',')}] `
+      + `written=${auditRow.detail.written} skipped=${auditRow.detail.skipped} failed=${auditRow.detail.failed}`)
     for (const f of failures) console.log(`  failed org=${f.org} openId=${f.openId} phone=${f.phoneMasked} —— ${f.message}`)
     if (failures.length > 0) {
       console.log('[backfill] 失败清单如上（掩码）；修复后重跑本脚本即可续跑（已成功者走 skip/幂等分支）。')
