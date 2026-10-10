@@ -509,7 +509,28 @@ id 来自 `GET /guest/me/registration`，而**名字**只能从这里取，所�
 
 ⇒ 实现：`crypto.randomUUID()` + 存 **sessionStorage**（满足 2）+ **提交成功后清除**（满足 3）。
 
-#### 未登录（含回跳，2026-09-16 用户裁定）
+#### 未登录（入口即授权 + 回跳兜底，2026-09-16 / 2026-10-10 用户裁定）
+
+**入口即授权（2026-10-10 裁定，真机试点后）**：公众号**菜单 URL 直接指向**
+`/api/platform/auth/wechat-oa/silent?next=/app/aftersales/` —— **进来先有 session**，SPA 只载一次。
+
+首访链路因此从「SPA 载入 → 业务打回来 401 → 前端跳 `/silent?next=` → 微信 → 回 next →
+**SPA 第二次载入**」变成「`/silent` → 微信 → 回 next → SPA **唯一一次**载入」：原来那第一遍整包
+JS（约 1.26 MB）下载 + 解析**白跑**，这是「太慢」的**主项**（秒级）。
+
+⇒ 宿主侧配套（issue #560）：`GET /silent` 的语义由「跳微信」扩为「**确保有会话**」——
+
+- **已有有效会话 ⇒ 直接 302 `next`**：不碰微信、不看 UA、不种 `wechat_oa_state`（省掉一次微信往返）；
+- **无会话 ⇒ 现行行为一字不变**（微信内 UA + 已配公众号 → 静默授权；否则 → `/login`）。
+
+HttpOnly 的 `platform_session` **就是**那份「本地缓存」——**不把凭据搬进 `localStorage` /
+`sessionStorage`**（那是白送的 XSS 面）。注意 `snsapi_base` 本就**没有用户可见的授权步骤**，
+短路省下的只是微信往返。
+
+⚠️ **量级别倒过来看**：慢的主项是**首屏白跑一遍**（入口序，秒级），会话短路是次项（百毫秒级）。
+两者都要，但别拿短路去解释「太慢」。
+
+**兜底：SPA 内 401 仍补回跳（2026-09-16 裁定）**——cookie 丢失 / 会话过期时链路仍要闭环：
 
 访客 session 缺失（401）⇒ 跳宿主的 `/api/platform/auth/wechat-oa/silent?next=<当前路径>`。
 
@@ -693,6 +714,19 @@ GET https://data.wujisite.com/api/private/object
 - module-protocol.md（userApp 闸门缺口、租户数据隔离约定）。
 
 ## 7. 修订记录
+
+- 2026-10-10（**入口即授权：`/silent` 语义扩为「确保有会话」**，issue #560，真机试点后用户裁定）：
+  首访移动端的「慢」拆开后主项是**首屏白跑一遍**——现行链路要 SPA 载两次（第一次纯为撞 401）。
+  裁定：① **公众号菜单 URL 直指 `/silent?next=/app/aftersales/`**（配置面，零代码），进来先有
+  session；② **宿主 `GET /silent` 补会话短路**——已有有效会话即 302 `next`，不碰微信/不看 UA/
+  不种 state；无会话则与改动前逐字同形；③ SPA 内 401 → `/silent?next=` **降级为兜底**（不再是
+  唯一入口）。**明确不做**：把凭据搬进 `localStorage`（`snsapi_base` 无用户可见授权步骤可省，
+  搬了只是白送 XSS 面）。§3.2「未登录」节整节重写为「入口即授权 + 回跳兜底」。
+  另**记一条边界**（不属本 issue）：慢的**次项**是传输面——`/app/aftersales/assets/*` 实测
+  **无 `Cache-Control`**（宿主缓存策略只覆盖 console 面）、且**本站全站无压缩**（`platform.shanhaiyiguo.com`
+  带 `Accept-Encoding: gzip` 仍裸传 1.26 MB / console 1.41 MB）；压缩归 openship edge
+  （`routingConfig.proxy`，同 host 的 `huopan` 已有 gzip 实测先例），缓存策略归宿主那一份既有策略
+  盖全静态面，**两者另案**。
 
 - 2026-09-22（**M2b 启动前裁决落档**，与数据栈分层 spec 同日拍板。**本轮只改文档，只加注记、
   原文不删改**；数据栈侧六项见 `2026-09-21-data-platform-layered-design.md` §10 拍板记录）：
