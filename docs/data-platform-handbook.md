@@ -765,9 +765,9 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 | Phase | 内容 | 状态 |
 |---|---|---|
-| 0 | **开环确认**：机器侧 ✅（2026-10-10 摄取测试行 3 条全 `successful:1`，规则在位且历史在点火——10-08 tick 401→恢复即实发）；🟡 差企微群侧目视确认（#210 遗留）。**流布局定案 ✅**：`data_alerts`（管线 run 事件，现状不动，Phase 1 的 L0/transfer/wholesale 事件行同流）、`oo_watchdog_heartbeat`（看门狗心跳，v1 新增）、`data_plane_probes`（探活逐断言行，Phase 1 建）——全在 org=miyuan。**看门狗 ✅ 设计+v1 落地**：`scripts/lemeng/oo-watchdog.sh`（healthz + 心跳摄取回读 `successful:1`；openship job `*/15` notify@failed）——console OO_AUTH 是摄取专用（search 401），「OO 活但规则/目的地腿断」的盲区留给 Phase 2 换 search 凭据补 | 🟡 **进行中（差群侧目视）** |
+| 0 | **开环确认 ✅（结论出乎意料）**：摄取/评估/点火全通（transitions 与测试行秒级吻合），**但「点火→目的地发送」在本 OO 构建内静默死**（零发送日志、`last_notified` 恒空；手动直发同 URL `errcode:0` 隔离出群与机器人无恙）——即 09-27 的「端到端实测」实际止步于 OO firing，投递腿先天未通。**过渡架构（用户裁决）**：`scripts/lemeng/oo-notify-bridge.sh` 桥接通知——直读本机 OO 元库 `alert_state_transitions` 新点火 → 直发企微（at-least-once，状态水位 `oo-notify-bridge` job 驱动）；治本 = 钉版升级 OO（另案 #53x）。**流布局定案 ✅**：`data_alerts` 不动 / `oo_watchdog_heartbeat` / `data_plane_probes`（Phase 1）。**看门狗 v1 ✅**：`oo-watchdog.sh`（healthz+心跳摄取）+ openship job `*/15` | ✅（治本转 #53x） |
 | 1 | 覆盖面补齐：管线 run 事件行（L0 绕 #414；transfer/wholesale/client 无事件行）；**64188 卷 seed `alerts.json`/`owners.json`**（现未 seed，DELIVERY §判据5 注明）；在位 14 条规则逐条过分工与 §1.5.2 对齐（能复用不新建）；探活逐断言吐判红行进 `data_plane_probes`；**openship 通知不拆**双通道并行 1-2 周 | **未开工** |
-| 2 | 通知切换（数据面告警归 OO，openship 收敛 job 崩溃级）；看门狗升级（search 凭据 → 证据年龄检查，补规则/目的地腿盲区）；悬空 duckle→openship webhook 处置（凭 Phase 1 证据删或修）；本表翻绿 + 基建速查订正 | **未开工** |
+| 2 | 通知切换（数据面告警归 OO，openship 收敛 job 崩溃级）；**拆桥**（OO 升级修好投递腿后，桥接退役）；看门狗升级（search 凭据 → 证据年龄检查）；悬空 duckle→openship webhook 处置；本表翻绿 + 基建速查订正 | **未开工** |
 
 **红线（执法器 skill 同款）**：① OO 不写对账/新鲜度语义；② 新管线/新发布面必带事件行 + 对齐表行 + OO 规则（或登记豁免+兜底路径），缺一不验收；③ 告警单出口（企微经 OO；openship 只出基础设施与 job 崩溃级）；④ 任何告警组件不许静默失效——看门狗盯 OO，OO 规则缺席/到期不发 = 配置漂移，按故障算。
 

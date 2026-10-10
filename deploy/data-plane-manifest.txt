@@ -35,3 +35,4 @@ scripts/duckle/connection-setup.py       /opt/connection-setup.py               
 deploy/duckle/console/                    ${REPO}/deploy/duckle/console/             0644
 deploy/duckle/Dockerfile                    ${REPO}/deploy/duckle/Dockerfile             0644
 scripts/lemeng/oo-watchdog.sh /opt/lemeng-oo-watchdog.sh 0755
+scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
