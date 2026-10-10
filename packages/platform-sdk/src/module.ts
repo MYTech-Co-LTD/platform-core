@@ -23,6 +23,12 @@ export interface Identity {
    * 绑定集合（账户统一设计 §4.3）：该账户全部 active 绑定的 external_id（openid/企微号）。
    * 模块据此做「我的工单」等多绑收窄（`submitter_openid ∈ 集合`）；随 scopes 刷新机制同步刷新。
    * 中间态/内部会话不设（undefined）。顺序不作承诺——消费方按集合语义用，不按下标。
+   *
+   * ⚠️ 空集合语义（终审订正，**不是恒非空**）：最后一条 active 绑定被撤销/争议后，正式态
+   * session 重签出 `[]`——这是如实状态，不是缺省。消费方**不得**把空数组直接当读谓词
+   * （`= ANY('{}')` 恒空 ⇒ 用户看不见自己、还会重复申请），须按「**空 = 回退
+   * `identity.userId`（登录 openid）**」消费——参照 `modules/aftersales/routes/context.ts`
+   * 的 `guestIdentityIds`（撤销后 ≤5 分钟窗口的自见基准）。
    */
   boundExternalIds?: string[]
 }

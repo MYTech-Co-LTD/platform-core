@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { parseIdParam } from './context'
+import type { Identity } from '@platform/sdk'
+import { guestIdentityIds, parseIdParam } from './context'
 
 // 本模块【唯一】的路径 id 守卫（终审修复轮 1 起，7 处调用点共用一份）。
 // 这条单测钉的是「什么形状算合法 id」这一层，各站点保留什么状态码由各自的端到端用例钉
@@ -41,5 +42,27 @@ describe('parseIdParam（路径参数 :id 的共享守卫）', () => {
     expect(parseIdParam('NaN')).toBeNull()
     expect(parseIdParam('Infinity')).toBeNull()
     expect(parseIdParam('1/2')).toBeNull()
+  })
+})
+
+// guestIdentityIds（I-1，终审修复）：空绑定集合悬崖——最后一条 active link 被撤销/争议后，
+// 正式态 session 重签出 boundExternalIds=[]，直接当读谓词是 ANY('{}') 全空（看不见自己、
+// 还会重复申请）；写侧仍按登录 openid ⇒ 读写两歧。修后：空数组与 undefined 同口径回落登录 openid。
+describe('guestIdentityIds（guest 面身份集合；空绑定集合=回退登录 openid）', () => {
+  const identity = (boundExternalIds?: string[]): Identity => ({
+    userId: 'openid-me', orgId: 'ff-org', displayName: 'me', scopes: [], hasScope: () => true,
+    boundExternalIds,
+  })
+
+  it('undefined（中间态/旧会话）⇒ [登录 openid]', () => {
+    expect(guestIdentityIds(identity(undefined))).toEqual(['openid-me'])
+  })
+
+  it('[]（撤销全部绑定后正式态 session 重签出空集合）⇒ 回落 [登录 openid]', () => {
+    expect(guestIdentityIds(identity([]))).toEqual(['openid-me'])
+  })
+
+  it('非空集合原样返回（正式态按绑定集合收窄，顺序不作承诺）', () => {
+    expect(guestIdentityIds(identity(['oa-1', 'wecom-2']))).toEqual(['oa-1', 'wecom-2'])
   })
 })

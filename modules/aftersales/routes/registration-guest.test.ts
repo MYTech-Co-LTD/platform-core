@@ -392,6 +392,22 @@ describe('账户统一 Task 10：多绑读侧收窄', () => {
     expect(rows.rows).toHaveLength(1)
     expect(rows.rows[0].open_id).toBe(OPENID)
   })
+
+  // I-1（终审修复回归）：最后一条 active link 被撤销后，正式态 session 重签出
+  // boundExternalIds=[]（session-middleware ext 刷新不兜底）。空集合直接当读谓词是
+  // ANY('{}') 全空 ⇒ 档案快照/pending 检查全空，用户既看不见自己也重复申请。
+  // guestIdentityIds 的空集合回退把读谓词接回登录 openid（撤销后 ≤5 分钟窗口的自见基准）。
+  it('【空绑定集合】boundExternalIds=[] ⇒ 读谓词回落登录 openid（自己的档案仍可见）', async () => {
+    await seedMe() // 档案就挂在登录 openid 上
+    const emptyApp = () => app(OPENID, undefined, [])
+    const body = (await (await emptyApp().request('/guest/me/registration')).json()) as {
+      registration: { name: string } | null
+      hasPendingApproval: boolean
+    }
+    expect(body.registration).not.toBeNull()
+    expect(body.registration!.name).toBe('张三')
+    expect(body.hasPendingApproval).toBe(false)
+  })
 })
 
 // ── 账户统一 Task 9：绑定身份可见与异议（设计稿 §2「userApp 内展示当前绑定身份 + 异议入口」）──
