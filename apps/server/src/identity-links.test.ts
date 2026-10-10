@@ -429,4 +429,69 @@ describe.skipIf(!dbUrl)('IdentityLinks 服务（真 PG）', () => {
     expect(rows[2]!.actor).toBeNull()
     expect(rows[2]!.detail).toMatchObject({ actor: null })
   })
+
+  // ── C-1（终审修复回归，ff1* 专键）：撤销/争议绑定不得被重新申请复活 ──────────────
+  // revoked/disputed 是管理员/本人的显式状态决定；existing 只拦了 active ⇒ 重新申请走候选
+  // 计算，唯一手机号命中即 upsert active+auto，零人工交互覆盖管理员撤销。修后：这两态上
+  // 自动绑定路径降级 pending（镜像多命中路径），绝不从 revoked/disputed 直接到 active。
+  it('C-1：revoked/disputed 行上重新申请 ⇒ 唯一命中降级 pending，绝不直升 active', async () => {
+    // 置信池：ff1 里 alice 的 active 行占住手机号（对下方的撤销行构成「唯一命中」）
+    await upsertLink(pool, {
+      org: 'ff1', provider: 'wechat-oa', externalId: 'ff1-alice', casdoorName: 'alice',
+      phone: '13200001111', boundVia: 'manual', status: 'active', sourceApprovalId: null,
+    })
+    // 被管理员撤销过的绑定行：曾绑 alice（同号），后 revoke
+    await upsertLink(pool, {
+      org: 'ff1', provider: 'wechat-oa', externalId: 'ff1-revoked', casdoorName: 'alice',
+      phone: '13200001111', boundVia: 'auto', status: 'revoked', sourceApprovalId: 1,
+    })
+    const ensured: string[] = []
+    const svc = createIdentityLinks(pool, fakeCasdoorFor(ensured))
+    const r = await svc.matchOnApplication({
+      org: 'ff1', provider: 'wechat-oa', externalId: 'ff1-revoked', phone: '13200001111', approvalId: 21,
+    })
+    expect(r.state).not.toBe('active') // 返回值不得宣称已绑
+    const row = await findLinkByExternal(pool, 'ff1', 'wechat-oa', 'ff1-revoked')
+    expect(row?.status).toBe('pending') // 降级转人工（重新进人工队列），不是 revoked 直升 active
+    expect(row?.boundVia).toBeNull() // 自动绑定不生效 ⇒ bound_via 不落 auto
+    expect(row?.casdoorName).toBe('alice') // 行上保留候选作机器建议（供审核面比对）
+    expect(ensured).toEqual([]) // 候选账户已存在，不走建草稿
+
+    // disputed 同口径：异议未裁决前，重新申请同样不得自动复活
+    await upsertLink(pool, {
+      org: 'ff2', provider: 'wechat-oa', externalId: 'ff2-disputed', casdoorName: 'bob',
+      phone: '13200002222', boundVia: 'auto', status: 'disputed', sourceApprovalId: 2,
+    })
+    await upsertLink(pool, {
+      org: 'ff2', provider: 'wechat-oa', externalId: 'ff2-bob', casdoorName: 'bob',
+      phone: '13200002222', boundVia: 'manual', status: 'active', sourceApprovalId: null,
+    })
+    const r2 = await svc.matchOnApplication({
+      org: 'ff2', provider: 'wechat-oa', externalId: 'ff2-disputed', phone: '13200002222', approvalId: 22,
+    })
+    expect(r2.state).not.toBe('active')
+    expect((await findLinkByExternal(pool, 'ff2', 'wechat-oa', 'ff2-disputed'))?.status).toBe('pending')
+  })
+
+  it('C-1：revoked 行 + 手机号多命中 ⇒ 照旧 pending+candidates，phone 命中也不复活', async () => {
+    await upsertLink(pool, {
+      org: 'ff3', provider: 'wechat-oa', externalId: 'ff3-carol', casdoorName: 'carol',
+      phone: '13200003333', boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    await upsertLink(pool, {
+      org: 'ff3', provider: 'wecom', externalId: 'ff3-charlie', casdoorName: 'charlie',
+      phone: '13200003333', boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    await upsertLink(pool, {
+      org: 'ff3', provider: 'wechat-oa', externalId: 'ff3-multi', casdoorName: 'carol',
+      phone: '13200003333', boundVia: 'auto', status: 'revoked', sourceApprovalId: 3,
+    })
+    const svc = createIdentityLinks(pool, fakeCasdoorFor([]))
+    const r = await svc.matchOnApplication({
+      org: 'ff3', provider: 'wechat-oa', externalId: 'ff3-multi', phone: '13200003333', approvalId: 23,
+    })
+    expect(r.state).toBe('multi')
+    expect(r.candidates).toHaveLength(2)
+    expect((await findLinkByExternal(pool, 'ff3', 'wechat-oa', 'ff3-multi'))?.status).toBe('pending')
+  })
 })

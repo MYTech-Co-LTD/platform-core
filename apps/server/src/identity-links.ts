@@ -316,10 +316,15 @@ export function createIdentityLinks(
       // 后续申请的新 phone/approvalId 不能改写已生效的绑定
       const existing = await findLinkByExternal(pool, input.org, input.provider, input.externalId)
       if (existing?.status === 'active') return { state: 'active' }
+      // C-1（终审修复）：revoked/disputed 是管理员/本人的显式状态决定——重新申请在这两态上
+      // **绝不**直升 active（修前只拦了 active，唯一手机号命中会零人工交互覆盖管理员撤销/
+      // 争议）。自动绑定路径降级 pending，镜像多命中路径（行上 casdoor_name 保留候选作机器
+      // 建议）；pending/无行路径不受影响。
+      const suppressed = existing?.status === 'revoked' || existing?.status === 'disputed'
       const phone = normalizePhone(input.phone)
       // 置信池 = identity_link.phone 的 active 行（本地，含回填存量）；Casdoor 侧按手机号查户归 Phase 2
       const candidates = phone === null ? [] : await listCandidatesByPhone(pool, input.org, phone)
-      if (candidates.length === 1) {
+      if (candidates.length === 1 && !suppressed) {
         // 唯一命中 ⇒ 自动绑定即时生效（bound_via=auto）
         await upsertLink(pool, {
           org: input.org,
@@ -338,8 +343,9 @@ export function createIdentityLinks(
         // 的 getUser 回读兜底——真机语义）+ pending，转人工
         await casdoorFor(input.org).ensureUser(input.externalId)
       }
-      // 多命中 ⇒ 不绑，pending + 候选清单转人工；行上 casdoor_name 落首个候选作机器建议
-      //（完整候选清单经返回值进审批面，行上只留建议位——casdoor_name 列 NOT NULL 必须有值）
+      // 多命中、以及 C-1 的 revoked/disputed 抑制（唯一命中也不绑）⇒ pending + 转人工；
+      // 行上 casdoor_name 落首个候选作机器建议（完整候选清单经返回值进审批面，行上只留
+      // 建议位——casdoor_name 列 NOT NULL 必须有值）
       await upsertLink(pool, {
         org: input.org,
         provider: input.provider,
