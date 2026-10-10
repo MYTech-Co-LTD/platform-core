@@ -18,8 +18,11 @@
 #   更优：仓是唯一事实源、不引入宿主检出同步/drift 面、部署自带插件版本。
 #   同仓成例：`server` / `mb-proxy` 也是 `build:` 服务，在 openship 下部署正常。
 #
-# 官方镜像只作基底，**digest 钉死**（spec §3 的版本钉法从这里生效）：
-FROM ghcr.io/openclaw/openclaw@sha256:7f10d5cc975a90b65192eaa099454fe33ce8ce2390806c61c65cd868e9ef730d # v2026.9.9
+# 官方镜像只作基底，**digest 钉死**（spec §3 的版本钉法从这里生效）；版本 tag = v2026.9.9。
+# ⚠️ 版本注释**必须单独成行**（#570）：Dockerfile 的 `#` **只在行首**才是注释，
+#    写在 `FROM <image>` 行尾会被当成额外 token ⇒ `FROM requires either one or three arguments`，
+#    建容器前即 build 失败（部署恒 partial_failure）。**别再把注释挪回行尾。**
+FROM ghcr.io/openclaw/openclaw@sha256:7f10d5cc975a90b65192eaa099454fe33ce8ce2390806c61c65cd868e9ef730d
 
 # 只加一层：插件源码只读落到容器内**固定路径**。
 # ⚠️ 该路径是**运维契约**——Task 4 的注册命令（`openclaw plugins install -l /opt/plugins/data-query-plugin`）、
