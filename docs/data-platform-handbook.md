@@ -765,9 +765,9 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 | Phase | 内容 | 状态 |
 |---|---|---|
-| 0 | **开环确认**：企微群侧收到一条真实测试告警（README 链路的遗留待确认项，#210）；流布局定案（**从既有 `data_alerts` 出发演进，不另起炉灶**）；看门狗设计定案（openship 反向 job 盯 OO 证据年龄——OO 2026-10-09 实测闪断） | **未开工** |
-| 1 | 覆盖面补齐：管线 run 事件行（L0 绕 #414；transfer/wholesale/client 无事件行）；**64188 卷 seed `alerts.json`/`owners.json`**（现未 seed，DELIVERY §判据5 注明）；在位 14 条规则逐条过分工与 §1.5.2 对齐（能复用不新建）；探活逐断言吐判红行；**openship 通知不拆**双通道并行 1-2 周 | **未开工** |
-| 2 | 通知切换（数据面告警归 OO，openship 收敛 job 崩溃级）；看门狗上线；悬空 duckle→openship webhook 处置（凭 Phase 1 证据删或修）；本表翻绿 + 基建速查订正 | **未开工** |
+| 0 | **开环确认**：机器侧 ✅（2026-10-10 摄取测试行 3 条全 `successful:1`，规则在位且历史在点火——10-08 tick 401→恢复即实发）；🟡 差企微群侧目视确认（#210 遗留）。**流布局定案 ✅**：`data_alerts`（管线 run 事件，现状不动，Phase 1 的 L0/transfer/wholesale 事件行同流）、`oo_watchdog_heartbeat`（看门狗心跳，v1 新增）、`data_plane_probes`（探活逐断言行，Phase 1 建）——全在 org=miyuan。**看门狗 ✅ 设计+v1 落地**：`scripts/lemeng/oo-watchdog.sh`（healthz + 心跳摄取回读 `successful:1`；openship job `*/15` notify@failed）——console OO_AUTH 是摄取专用（search 401），「OO 活但规则/目的地腿断」的盲区留给 Phase 2 换 search 凭据补 | 🟡 **进行中（差群侧目视）** |
+| 1 | 覆盖面补齐：管线 run 事件行（L0 绕 #414；transfer/wholesale/client 无事件行）；**64188 卷 seed `alerts.json`/`owners.json`**（现未 seed，DELIVERY §判据5 注明）；在位 14 条规则逐条过分工与 §1.5.2 对齐（能复用不新建）；探活逐断言吐判红行进 `data_plane_probes`；**openship 通知不拆**双通道并行 1-2 周 | **未开工** |
+| 2 | 通知切换（数据面告警归 OO，openship 收敛 job 崩溃级）；看门狗升级（search 凭据 → 证据年龄检查，补规则/目的地腿盲区）；悬空 duckle→openship webhook 处置（凭 Phase 1 证据删或修）；本表翻绿 + 基建速查订正 | **未开工** |
 
 **红线（执法器 skill 同款）**：① OO 不写对账/新鲜度语义；② 新管线/新发布面必带事件行 + 对齐表行 + OO 规则（或登记豁免+兜底路径），缺一不验收；③ 告警单出口（企微经 OO；openship 只出基础设施与 job 崩溃级）；④ 任何告警组件不许静默失效——看门狗盯 OO，OO 规则缺席/到期不发 = 配置漂移，按故障算。
 

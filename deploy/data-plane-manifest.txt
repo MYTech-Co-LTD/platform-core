@@ -34,3 +34,4 @@ scripts/lemeng/seed-console.sh            /opt/lemeng-seed-console.sh           
 scripts/duckle/connection-setup.py       /opt/connection-setup.py                  0755
 deploy/duckle/console/                    ${REPO}/deploy/duckle/console/             0644
 deploy/duckle/Dockerfile                    ${REPO}/deploy/duckle/Dockerfile             0644
+scripts/lemeng/oo-watchdog.sh /opt/lemeng-oo-watchdog.sh 0755
