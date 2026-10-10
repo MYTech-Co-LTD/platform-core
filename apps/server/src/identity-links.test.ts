@@ -22,8 +22,12 @@
 //
 // org 一例一号（存储层 o1/o2/o3/o4/o5、服务层 m1…）：identity_link 无 FK、org 是纯 text，
 // 用例间互不踩；upsert 幂等 ⇒ 重复跑同一库结果不变。
+// 例外一格：audit 断言例用**每 run 唯一 org**（m6-<8 位随机>）——platform.audit 是 append-only，
+// 固定 org 会让持久库上每跑一次精确多四行、断言「恰好四行」第二次起必红；唯一 org 让断言
+// 天然只圈住本 run 的行，持久库与 CI 新库行为一致，也不需要任何清行（本文件零 DELETE）。
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { runMigrations } from './migrate'
 import {
@@ -303,38 +307,41 @@ describe.skipIf(!dbUrl)('IdentityLinks 服务（真 PG）', () => {
   })
 
   it('confirm/rebind/revoke/dispute 的状态机与 audit 落行（action=identity.link.*）', async () => {
+    // 每 run 唯一 org（见文件头「例外一格」）：audit 是 append-only，断言「恰好四行」必须
+    // 只圈住本 run 的行——固定 org 在持久库上第二次起必红（CI 全新库恒绿故漏网）。
+    const org = `m6-${randomUUID().slice(0, 8)}`
     const seeded = await upsertLink(pool, {
-      org: 'm6', provider: 'wechat-oa', externalId: 'w-g', casdoorName: 'grace',
+      org, provider: 'wechat-oa', externalId: 'w-g', casdoorName: 'grace',
       phone: null, boundVia: null, status: 'pending', sourceApprovalId: 15,
     })
     const svc = createIdentityLinks(pool, fakeCasdoorFor([], ['ghost']))
 
     // confirm/rebind 先验户：目标账户在 Casdoor 不存在 ⇒ LINK_TARGET_MISSING，行不动
-    await expect(svc.confirm('m6', seeded.id, 'ghost')).rejects.toThrow('LINK_TARGET_MISSING')
-    await expect(svc.rebind('m6', seeded.id, 'ghost')).rejects.toThrow('LINK_TARGET_MISSING')
-    expect((await findLinkByExternal(pool, 'm6', 'wechat-oa', 'w-g'))?.status).toBe('pending')
+    await expect(svc.confirm(org, seeded.id, 'ghost')).rejects.toThrow('LINK_TARGET_MISSING')
+    await expect(svc.rebind(org, seeded.id, 'ghost')).rejects.toThrow('LINK_TARGET_MISSING')
+    expect((await findLinkByExternal(pool, org, 'wechat-oa', 'w-g'))?.status).toBe('pending')
     // 本 org 但 id 不存在 ⇒ LINK_NOT_FOUND
-    await expect(svc.confirm('m6', 999999999)).rejects.toThrow('LINK_NOT_FOUND')
+    await expect(svc.confirm(org, 999999999)).rejects.toThrow('LINK_NOT_FOUND')
 
     // confirm（缺省目标 = 行上账户）⇒ active + manual
-    await svc.confirm('m6', seeded.id)
-    expect((await findLinkByExternal(pool, 'm6', 'wechat-oa', 'w-g'))?.status).toBe('active')
-    expect((await findLinkByExternal(pool, 'm6', 'wechat-oa', 'w-g'))?.boundVia).toBe('manual')
+    await svc.confirm(org, seeded.id)
+    expect((await findLinkByExternal(pool, org, 'wechat-oa', 'w-g'))?.status).toBe('active')
+    expect((await findLinkByExternal(pool, org, 'wechat-oa', 'w-g'))?.boundVia).toBe('manual')
 
     // rebind 换绑 ⇒ casdoorName 换人、仍 active
-    await svc.rebind('m6', seeded.id, 'heidi')
-    const rebound = await findLinkByExternal(pool, 'm6', 'wechat-oa', 'w-g')
+    await svc.rebind(org, seeded.id, 'heidi')
+    const rebound = await findLinkByExternal(pool, org, 'wechat-oa', 'w-g')
     expect(rebound?.casdoorName).toBe('heidi')
     expect(rebound?.status).toBe('active')
 
     // revoke ⇒ revoked + revoked_by/revoked_at
-    await svc.revoke('m6', seeded.id, 'boss1')
-    const revoked = await findLinkByExternal(pool, 'm6', 'wechat-oa', 'w-g')
+    await svc.revoke(org, seeded.id, 'boss1')
+    const revoked = await findLinkByExternal(pool, org, 'wechat-oa', 'w-g')
     expect(revoked?.status).toBe('revoked')
 
     // dispute ⇒ disputed + **disputed_at 落值**（DDL 列此前无写通路——评审裁决项）
-    expect(await svc.dispute('m6', 'w-g')).toBe(true)
-    const disputed = await findLinkByExternal(pool, 'm6', 'wechat-oa', 'w-g')
+    expect(await svc.dispute(org, 'w-g')).toBe(true)
+    const disputed = await findLinkByExternal(pool, org, 'wechat-oa', 'w-g')
     expect(disputed?.status).toBe('disputed')
     const { rows: disputedAt } = await pool.query<{ disputed_at: Date | null }>(
       'select disputed_at from platform.identity_link where id = $1',
@@ -343,7 +350,7 @@ describe.skipIf(!dbUrl)('IdentityLinks 服务（真 PG）', () => {
     expect(disputedAt[0]!.disputed_at).not.toBeNull()
 
     // 未绑定的 externalId ⇒ false，且不落 audit
-    expect(await svc.dispute('m6', 'no-such-openid')).toBe(false)
+    expect(await svc.dispute(org, 'no-such-openid')).toBe(false)
 
     // audit 四行齐全且同事务语义可见：detail 带 id/from/to/actor；org 无 tenant 行 ⇒ tenant_id 为 null
     const { rows: audits } = await pool.query<{
@@ -353,7 +360,8 @@ describe.skipIf(!dbUrl)('IdentityLinks 服务（真 PG）', () => {
       tenant_id: number | null
     }>(
       "select action, actor, detail, tenant_id from platform.audit"
-      + " where action like 'identity.link.%' and detail->>'org' = 'm6' order by id",
+      + " where action like 'identity.link.%' and detail->>'org' = $1 order by id",
+      [org],
     )
     expect(audits.map((a) => a.action)).toEqual([
       'identity.link.confirm', 'identity.link.rebind', 'identity.link.revoke', 'identity.link.dispute',
