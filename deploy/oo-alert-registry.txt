@@ -1,0 +1,40 @@
+# OO 预警配置登记清单——对账脚本 oo-config-audit.sh 的期望集（#531 哲学平移）。
+#
+# ⚠️ 任何预警组件变更（增/删/改/停用）必须在同一 PR 内更新本清单，否则对账 job 红：
+#    在位配置 vs 本清单逐条对账，漂移即发群点名（自作主张活不过一个对账周期）。
+# 变更流程：issue（data-monitor 判停）→ 本清单 + 变更同 PR → 合并 → 机器侧生效。
+#
+# 格式（TAB 或空格分隔；# 注释行忽略）：
+#   ALERT <name> <dest_substring> <enabled t|f>   —— OO 告警规则（name 精确匹配）
+#   DEST  <name>                                   —— OO 通知目的地
+#   SCRIPT <绝对路径>                              —— OO 机上应在位的桥/看门狗脚本
+#
+# 审计范围：org=miyuan 全部规则（含他群 wecom_bot/infra——只记账不转发，见 #538）。
+# 对账 job：openship `OO 预警配置对账（#538）`，30 分钟周期。
+
+ALERT data_alerts_failure                       data_alerts_wecom    t
+ALERT data_alerts_recovery                      data_alerts_wecom    t
+ALERT retail_tick_absent_business_hours         data_alerts_wecom    t
+ALERT casdoor_down                              wecom-robot-p1       t
+ALERT douyin_collect_stall                      wecom-robot-p1       t
+ALERT douyin_data_stale                         wecom-robot-p1       t
+ALERT douyin_phone_down                         wecom-robot-p1       t
+ALERT dy_receiver_down                          wecom-robot-p1       t
+ALERT dy_upload_unreachable                     wecom-robot-p1       t
+ALERT host_cpu_high                             wecom-robot-p1       t
+ALERT host_disk_high                            wecom-robot-p1       t
+ALERT host_mem_high                             wecom-robot-p1       t
+ALERT novu_down                                 wecom-robot-p1       t
+ALERT wecom_down                                wecom-robot-p1       t
+ALERT ndevice采集失败                            wecom_bot            t
+ALERT ndevice采集成功缺失                        wecom_bot            t
+ALERT disk_usage_over_80                        wecom_infra_alerts   f
+
+DEST data_alerts_wecom
+DEST wecom-robot-p1
+DEST wecom_bot
+DEST wecom_infra_alerts
+DEST wecom_lemon_alerts
+
+SCRIPT /opt/lemeng-oo-notify-bridge.sh
+SCRIPT /opt/lemeng-oo-watchdog.sh
