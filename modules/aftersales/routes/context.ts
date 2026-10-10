@@ -16,7 +16,13 @@ import type { Identity, IdentityLinks, TenantStorageConfig } from '@platform/sdk
  * ⚠️ 用**计算键名**而非字面量 'platform.tenantStorage'——后者是第二份事实源，改名时它不会
  * 跟着改，症状是**静默拿不到配置**。
  */
-export type ModuleHono = Hono<{ Variables: { identity: Identity; [TENANT_STORAGE]?: TenantStorageConfig } }>
+/**
+ * Variables 内层（照 modules/data/routes/context.ts 的 ModuleVars 习语）：路由文件里给
+ * `Context<{ Variables: ModuleVars }>` 写共享助手时用整个 Env，别再各自内联一份形状。
+ */
+export type ModuleVars = { identity: Identity; [TENANT_STORAGE]?: TenantStorageConfig }
+
+export type ModuleHono = Hono<{ Variables: ModuleVars }>
 
 /**
  * 每个域注册时拿到的依赖。pool 之外再带宿主注入的 `identityLinks`（账户统一 Task 7）——

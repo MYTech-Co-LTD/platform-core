@@ -57,6 +57,13 @@ api:
     - { method: GET,  path: /attachments/:id,   scope: aftersales:manage }
     # ── 孤儿附件 GC（spec §5 #12；openship job 定时打，body 缺省 dry-run）──
     - { method: POST, path: /attachments/gc, scope: aftersales:manage }
+    # ── 身份绑定·管理面（aftersales:manage，账户统一 Task 8）──
+    # 与路由注册**同一提交**（AGENTS 硬约束 #2 双向核对：差集非空 = 装载失败）。
+    # 数据面在宿主 identityLinks（platform.identity_link 唯一读写层），本模块侧零 SQL。
+    - { method: GET,  path: /identity-links,             scope: aftersales:manage }
+    - { method: POST, path: /identity-links/:id/confirm, scope: aftersales:manage }
+    - { method: POST, path: /identity-links/:id/rebind,  scope: aftersales:manage }
+    - { method: POST, path: /identity-links/:id/revoke,  scope: aftersales:manage }
 # 管理端 console（M3a）。**只声明一条**：manifest 的前端条目在 console 菜单里是**平铺**的
 # （apps/web/src/pages/console-menu.ts 只给平台「管理」组做了 children），而 frontend.console
 # 是扁平数组、协议不支持嵌套 ⇒ 五个页面收进一个条目，页内用真子路由分区（spec §3.1）。
