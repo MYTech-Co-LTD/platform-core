@@ -65,7 +65,7 @@ native plugin 把可信企微 userid 送到平台问数 API，走既有授权核
 | `deploy/docker-compose.yml` | 单元 A 新增 `openclaw` 服务：image 钉 digest；state 卷持久（`openclaw/state`）；gateway 端口只回环 `127.0.0.1:18789`（B7 守卫）；`restart: unless-stopped`；healthcheck 按镜像能力实施时定 |
 | `deploy/openclaw/data-query-plugin/` | **问数插件源码随仓分发**（compose 挂载进容器，部署即插件更新，一次性 `plugins install -l` 注册）。零依赖（不用 typebox，纯 JSON schema，循 data-analysis 先例）。两个工具：<br>• `list_metrics` → `GET /api/modules/data/metrics`（同头）——回当前用户可见词表<br>• `query_data` → `POST /api/modules/data/query`（同头）——`{metricId, args}`；错误映射：401 `WECOM_USER_NOT_LINKED`→回扫码登录指引文案；403→「无权限或词表外」；502→「数据仓库暂不可用」<br>+ `openclaw.plugin.json`（manifest：factory tool 全局激活）+ `SKILL.md` + `README.md` |
 | `docs/architecture.md` | 架构先行：部署单元 A 组件清单补 OpenClaw 条目（语义：**仅 platform-core-shanhai 项目启用，mytech 平台核项目显式 disabled**） |
-| `.env.example` | B9：`DATA_WECOM_CHANNEL_KEY`（若未声明）/ `DATA_QUERY_URL` / `WISHUB_API_KEY` 补占位声明 |
+| `.env.example` | B9：`DATA_WECOM_CHANNEL_KEY`（若未声明）/ `WECOM_BOT_SECRET` / `OPENCLAW_GATEWAY_TOKEN` 补占位声明。**LLM key 不新增**——复用已在声明的 `DATA_LLM_API_KEY`（见 §11 #6 实施订正） |
 
 **SKILL.md 编排要点**：先 `list_metrics` 看可见词表再 `query_data`；工具调用前先回一句
 「我查一下 XX」（首块文本立即可见）；不写死指标清单（词表随人变，写死必漂移）。
@@ -89,7 +89,11 @@ native plugin 把可信企微 userid 送到平台问数 API，走既有授权核
     blockStreamingCoalesce: { minChars: 200, idleMs: 800 },  // 更新节奏，防中间帧排队积压
     humanDelay: { mode: "off" }         // ★ 显式钉死：拟人化 800-2500ms/块停顿，问数 bot 绝不能开
   }}
-  // LLM：wishub 自定义 provider（OpenAI 兼容，DeepSeek-V4-Flash）——key 走 env，配置形状循 data-analysis 先例
+  // LLM：复用山海现网 DeepSeek（OpenAI 兼容）——key 走 env，配置形状循 data-analysis 先例
+  // 【实施订正 2026-10-10】原钉 wishub 自定义 provider，但组织内 12 个项目的 env 面均无
+  // wishub 凭据可读；山海平台实际在用的是 DATA_LLM_BASE_URL=https://api.deepseek.com /
+  // DATA_LLM_MODEL=deepseek-flash / DATA_LLM_API_KEY（isSecret，项目级）⇒ 改用同源 DeepSeek，
+  // key 复用同一 env 条目（服务级 sourceId 引用，值不回显）。见 §11 待核实 #2 / #6。
 }
 ```
 
@@ -109,8 +113,13 @@ native plugin 把可信企微 userid 送到平台问数 API，走既有授权核
 **修复**：§5 的配置组合。效果链：消息秒回「思考中」占位 → 模型首句（如「我查一下销售额」）
 即成首块原位发出 → 工具调用期间占位持续 → 数据回来后表格/结论文本流式补全。
 
-**前提（硬验收）**：wishub 端点必须实测支持 `stream:true`——官方文档明言非流式模型
+**前提（硬验收）**：所用 LLM 端点必须实测支持 `stream:true`——官方文档明言非流式模型
 delta 稀疏，块流式形同虚设；不支持则换端点/模型。
+
+**实施订正（2026-10-10）**：端点由 wishub 改为**山海现网同源的 DeepSeek**（`api.deepseek.com`，
+项目级 `DATA_LLM_*` 三键已在用）。原定 wishub 的理由只是「配置形状循 data-analysis 先例」，
+不是客户硬要求；而实施期实测确认**组织内没有任何可取到的 wishub 凭据**（12 个项目 env 面逐项查过），
+硬前提因此转移到 DeepSeek 端点上（其流式支持属公开能力，仍按 §10 验收 4 实测销账）。
 
 **顺带发现（不阻塞本期，记录在案）**：
 - 插件中间帧用阻塞版发送（await ack，15s 超时），非阻塞跳帧版已实现但全仓无调用方——
@@ -121,8 +130,10 @@ delta 稀疏，块流式形同虚设；不支持则换端点/模型。
 ## 7 openship 侧操作（实施时 MCP 完成）
 
 1. platform-core-shanhai 项目：服务清单出现 openclaw → 启用 + 注入 env（isSecret）：
-   `WISHUB_API_KEY`、`DATA_WECOM_CHANNEL_KEY`（**server 与 openclaw 两服务同值**，前者消费后者发送）、
-   `DATA_QUERY_URL`（默认 `http://server:13000/api/modules/data/query`）
+   `DATA_WECOM_CHANNEL_KEY`（**server 与 openclaw 两服务同值**，前者消费后者发送）。
+   LLM key **不新增凭据**：openclaw 服务级以 `sourceId` 引用项目级 `DATA_LLM_API_KEY`
+   同一条 env 条目（值不回显、不复制）。`DATA_QUERY_URL` **不设**——插件读的是 compose 给的
+   `DATA_API_BASE`（`http://server:13000/api/modules/data`），原列的 `DATA_QUERY_URL` 是过时项
 2. `DATA_WECOM_CHANNEL_KEY` 开闸后 server 服务 env-only refresh 重启
 3. **mytech `platform-core` 项目：openclaw 服务行显式 `enabled=false`**——compose 新增服务
    在下次部署会被 openship 启动（2026-09-29 crash loop 教训），合入后立即设置并验证
@@ -154,7 +165,7 @@ delta 稀疏，块流式形同虚设；不支持则换端点/模型。
 2. **端到端（真机）**：私聊问数全链路（流式观察）；未关联账号被拒且回指引；群聊按 sender
    逐条鉴权（requesterSenderId 每次工具调用注入）；`data.query_audit` 落 `channel=wecom` 审计行
 3. **流式体验硬指标**：占位 ≤2s；首块文本 = 模型首响 + ~1s；生成期间消息持续原位更新
-4. **wishub 流式实测**：`stream:true` 出 delta
+4. **LLM 流式实测**：所用端点（山海 DeepSeek，`api.deepseek.com/v1`）`stream:true` 出 delta
 5. **部署面**：shanhai 项目 openclaw 服务 healthy；mytech 项目 openclaw 行 disabled 实证
 6. 首条真机消息核对 `requesterSenderId` 形状 == Casdoor name（待核实项销账）
 
@@ -163,11 +174,11 @@ delta 稀疏，块流式形同虚设；不支持则换端点/模型。
 | # | 项 | 处置 |
 |---|---|---|
 | 1 | `requesterSenderId` 注入跨版本稳定性 | 首条真机消息实测销账；绑进升级回归项 |
-| 2 | wishub 流式支持 | 实施期实测，硬前提，不支持即换 |
+| 2 | LLM 端点流式支持（**实施期已换端点：wishub → 山海 DeepSeek**，理由见 §6 实施订正） | 实施期实测 `stream:true` 出 delta；硬前提，不支持即换端点/模型 |
 | 3 | 智能机器人企业与租户 provider 同 corp | 实施时核对 corpId |
 | 4 | mytech 项目新服务行未 disable ⇒ 下次部署 crash loop | 合入后立即设置（openship §7.3），验收实证 |
 | 5 | 中间帧阻塞发送可能卡顿 | 实测；必要时上游 PR/局部 fork |
-| 6 | LLM key / secret 取值 | 「在哪、怎么取」：wishub key 从客户/现网同源取，企微 secret 从客户后台取；一律进 openship env isSecret 或 state 卷 config，不进仓不进日志 |
+| 6 | LLM key / secret 取值 | 「在哪、怎么取」：**LLM key 复用 shanhai 项目级 `DATA_LLM_API_KEY`（2026-10-10 实测：组织内无 wishub 凭据可取；山海现网 LLM 实为 `api.deepseek.com` + `deepseek-flash`）**；企微 secret 从客户后台取；一律进 openship env isSecret 或 state 卷 config，不进仓不进日志 |
 
 ## 12 明确不做
 

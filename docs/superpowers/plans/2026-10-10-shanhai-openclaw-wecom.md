@@ -22,10 +22,32 @@
 4. **B9**：扫描面是 `apps/ packages/ modules/` 的 TS——插件（deploy/ 下 JS）不在扫描面，但 env 键仍须在根 `.env.example` 声明（`# KEY=` 注释行也算声明）。
 5. **插件零 npm 依赖**：只用 `openclaw/plugin-sdk/plugin-entry` + 全局 `fetch`；工具注册必须是 **factory 形式** `api.registerTool((ctx) => toolDef, { name })`（`requesterSenderId` 只在 factory 的 `ctx` 上）；`execute` 签名是 `(toolCallId, params, signal, onUpdate)`——第一个参数是 toolCallId，**不是**模型参数（生产先例实测踩坑）。
 6. **插件零权限逻辑**：词表裁剪/主体钉死/fail-closed 全在平台授权核心；插件只做「可信 userid + 渠道凭证 → 平台 API」的转发与错误文案映射。
-7. **密钥不落仓**：`WISHUB_API_KEY` / `WECOM_BOT_SECRET` / `DATA_WECOM_CHANNEL_KEY` 一律走 openship env(isSecret)（生产）或本地 `.env`（gitignore）；openclaw.json 里用 `${ENV}` 插值引用；任何命令输出/日志不得回显值。
+7. **密钥不落仓**：`DATA_LLM_API_KEY`（**复用项目级，不新增**）/ `WECOM_BOT_SECRET` / `DATA_WECOM_CHANNEL_KEY` 一律走 openship env(isSecret)（生产）或本地 `.env`（gitignore）；openclaw.json 里用 `${ENV}` 插值引用；任何命令输出/日志不得回显值。
 8. **提纪律**：feat 必须先有 issue（开工前置建）；PR body 带 `Closes #N`；只等 CI **CLEAN** 才合；CHANGELOG 由 release.mjs 生成（禁手写）。
 9. **shell 里 `$VAR` 紧跟中文必须写 `${VAR}`**（bash 3.2 吃进变量名，本仓中文文案多）。
 10. **山海部署是手工面**：platform-core（mytech）merge main 即自动部署；**platform-core-shanhai 只走 openship 手工触发**，且对新服务先备 env 再启用（2026-09-29 crash loop 教训：compose 声明 ≠ 不起，openship 按服务清单显式启停，`profiles` 对它无效）。
+
+---
+
+## 实施订正（2026-10-10，T3 开工时，人已裁决）
+
+**① LLM 端点：wishub → 山海现网同源的 DeepSeek。** 本计划**全文**的 `WISHUB_API_KEY`
+一律按 `DATA_LLM_API_KEY` 读，且**不新增凭据**——openclaw 服务级以 openship `sourceId`
+引用 shanhai 项目级已有的同一条 env 条目（`env_Hhk3U8qYOqUaCJIA`，isSecret），值不回显、不复制。
+端点 `https://api.deepseek.com/v1`、模型 `deepseek-flash`（与山海现网 `DATA_LLM_BASE_URL`/
+`DATA_LLM_MODEL` 同源）。**理由**：组织内 12 个项目的 env 面逐项查过，**均无 wishub 凭据可取**；
+原定 wishub 只是「配置形状循 data-analysis 先例」，非客户硬要求。spec 已同步订正
+（§5 配置块 / §6 前提 / §7 openship / §10 验收 4 / §11 #2、#6）。
+
+**② `DATA_API_BASE` 是本项目唯一 URL 键。** 本计划早期版本的 `DATA_QUERY_URL` 是**过时项**，
+已删除：插件读的是 compose 给的 `DATA_API_BASE`（`http://server:13000/api/modules/data`）。
+
+**③ 服务级 env 写入是整表替换。** `put_projects_by_id_services_by_serviceId_env` 语义是
+**替换**该服务的整份 vars（不是 upsert）——写入前必须先 `get_..._env` 读回现有键再合并，
+否则会清掉同服务上别的键。
+
+**④ `WECOM_BOT_SECRET` 推迟到 T6 注入。** 客户交付前无值，写空值等同「清空」且会让
+openclaw.json 的 `${WECOM_BOT_SECRET}` 插值解析成空串；T6 Step 1 拿到后一次性注入。
 
 ---
 
@@ -55,7 +77,7 @@ plan: docs/superpowers/plans/2026-10-10-shanhai-openclaw-wecom.md
 | `deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md` | 教模型：先 list_metrics 再 query_data + 汇报纪律 | T1 |
 | `deploy/openclaw/data-query-plugin/README.md` | 插件说明 + 运维指针 | T1 |
 | `deploy/docker-compose.yml` | 新增 `openclaw` 服务（profiles 关闭）+ `openclaw_state` 卷 | T2 |
-| `.env.example` | 补 `DATA_API_BASE` / `WISHUB_API_KEY` / `WECOM_BOT_SECRET` 声明 | T2 |
+| `.env.example` | 补 `DATA_API_BASE` / `WECOM_BOT_SECRET` / `OPENCLAW_GATEWAY_TOKEN` 声明（`WISHUB_API_KEY` 已并入 `DATA_LLM_API_KEY`，见实施订正①） | T2 |
 | `docs/architecture.md` | §1.2 单元 A 服务表加 `openclaw` 行 | T2 |
 
 ---
@@ -449,16 +471,17 @@ git commit -m "feat(openclaw): data-query 插件——通道 C 薄转发（可�
 
 **Files:**
 - Modify: `deploy/docker-compose.yml`（`services:` 末尾加 `openclaw`；`volumes:` 加 `openclaw_state`）
-- Modify: `.env.example`（数据面声明区追加「问数 bot」块：`DATA_API_BASE`/`WISHUB_API_KEY`/`WECOM_BOT_SECRET`/
-  `OPENCLAW_GATEWAY_TOKEN` 四键；均注释态，仅声明键名——B9 门禁只扫 `.ts/.tsx`，这几键不由 TS 代码读取，
-  故**可以**注释掉，但仍要声明，理由见该块注释）
+- Modify: `.env.example`（数据面声明区追加「问数 bot」块：`DATA_API_BASE`/`WECOM_BOT_SECRET`/
+  `OPENCLAW_GATEWAY_TOKEN` 三键；均注释态，仅声明键名——B9 门禁只扫 `.ts/.tsx`，这几键不由 TS 代码读取，
+  故**可以**注释掉，但仍要声明，理由见该块注释。**LLM key 不新增**：复用上方已声明的
+  `DATA_LLM_API_KEY`，见实施订正①）
 - Modify: `docs/architecture.md:20`（§1.2 服务表）
 
 **Interfaces:**
 - Consumes: Task 1 的插件目录（只读挂载 `./openclaw/data-query-plugin`——**相对 compose 文件所在的 `deploy/` 解析**，
   即 `deploy/openclaw/data-query-plugin/`。写成 `../openclaw/…` 会解析到仓根 `openclaw/`（不存在），
   且首段不以 `.` / `/` 开头会被 compose 当成**命名卷** ⇒ `refers to undefined volume` 直接起不来）。
-- Produces: compose 服务名 `openclaw`（Task 3/4 的 openship 操作对象）；容器 env `DATA_API_BASE`（默认 `http://server:13000/api/modules/data`）、`DATA_WECOM_CHANNEL_KEY`、`WISHUB_API_KEY`、`WECOM_BOT_SECRET`（后三者来自 env_file/openship 注入）。
+- Produces: compose 服务名 `openclaw`（Task 3/4 的 openship 操作对象）；容器 env `DATA_API_BASE`（默认 `http://server:13000/api/modules/data`）、`DATA_WECOM_CHANNEL_KEY`、`DATA_LLM_API_KEY`、`WECOM_BOT_SECRET`（后三者来自 env_file/openship 注入）。
 
 - [ ] **Step 1: `deploy/docker-compose.yml` 加服务（放在 `mb-proxy` 之后、顶层 `volumes:` 之前）**
 
@@ -520,8 +543,8 @@ volumes:
 # ── 问数 bot（通道 C，openclaw 服务；仅 platform-core-shanhai 项目启用）──
 # 平台问数 API 基址：compose 已定 http://server:13000/api/modules/data，一般无需设。
 # DATA_API_BASE=
-# LLM 提供商（wishub，OpenAI 兼容）key。取法：山海客户/现网同源取，openship env(isSecret)。
-# WISHUB_API_KEY=
+# LLM 提供商 key 不新增：openclaw 复用上方已声明的 DATA_LLM_API_KEY（服务级 sourceId 引用）。
+# 端点/模型同样与山海现网同源（api.deepseek.com/v1 + deepseek-flash），见实施订正①。
 # 企微智能机器人 secret。取法：客户企微后台「管理工具→智能机器人→API模式创建→通过长连接配置」交付。
 # WECOM_BOT_SECRET=
 # Gateway Control UI token（非必设，不设则回环口无鉴权）。取法：openship env(isSecret) 生成。
@@ -612,8 +635,11 @@ openssl rand -hex 32
 ```
 
 openship MCP：platform-core-shanhai（proj_GLXUtN2bJ92DpPrS）→
-- `server` 服务（svc_zdxMxawfymf9u5ST）env upsert：`DATA_WECOM_CHANNEL_KEY=<值>`（isSecret）
-- `openclaw` 服务 env upsert：`DATA_WECOM_CHANNEL_KEY=<同值>`（isSecret）、`WISHUB_API_KEY=<取自山海客户/现网同源>`（isSecret）、`WECOM_BOT_SECRET=<客户交付后补>`（isSecret，可先空着，Task 6 前必须到位）
+两服务的 env 写入均为**整表替换**语义（先 `get_..._env` 读回现有键再合并，见实施订正③）：
+- `server` 服务（svc_zdxMxawfymf9u5ST）：`DATA_WECOM_CHANNEL_KEY=<值>`（isSecret）
+- `openclaw` 服务（svc_3R9wVrQSz__9nwgc）：`DATA_WECOM_CHANNEL_KEY=<同值>`（isSecret）+
+  `DATA_LLM_API_KEY`（**`sourceId: env_Hhk3U8qYOqUaCJIA` 引用项目级同一条，不带值**）
+- `WECOM_BOT_SECRET` **此处不写**（实施订正④：空值等同清空 ⇒ 推迟到 T6 Step 1 客户交付后注入）
 
 - [ ] **Step 3: shanhai 项目启用 openclaw 并 env-only refresh**
 
@@ -662,16 +688,16 @@ cat > /home/node/.openclaw/openclaw.json <<'EOF'
   },
   models: {
     providers: {
-      wishub: {
-        baseUrl: "https://wishub-x6.ctyun.cn/v1",
-        apiKey: "${WISHUB_API_KEY}",
-        models: [{ id: "DeepSeek-V4-Flash", name: "DeepSeek-V4-Flash", contextWindow: 128000, maxTokens: 8192 }],
+      deepseek: {
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "${DATA_LLM_API_KEY}",
+        models: [{ id: "deepseek-flash", name: "deepseek-flash", contextWindow: 128000, maxTokens: 8192 }],
       },
     },
   },
   agents: {
     defaults: {
-      model: { primary: "wishub/DeepSeek-V4-Flash" },
+      model: { primary: "deepseek/deepseek-flash" },
       // 流式三件套（spec §6）：核心默认 off＝全量憋话，显式开块流式 + 节奏 + 禁拟人停顿
       blockStreamingDefault: "on",
       blockStreamingBreak: "text_end",
@@ -691,7 +717,9 @@ EOF
 ```sh
 openclaw gateway restart && sleep 5 && openclaw doctor
 ```
-Expected: doctor 无 config 报错；`${WISHUB_API_KEY}`/`${WECOM_BOT_SECRET}` 插值被识别（doctor 或 Control UI 显示 key 来自环境变量）。
+Expected: doctor 无 config 报错；`${DATA_LLM_API_KEY}` 插值被识别（doctor 或 Control UI 显示 key 来自环境变量）。
+`${WECOM_BOT_SECRET}` 此时**尚未注入**（实施订正④）⇒ wecom 通道段会报缺值、WS 连接重连失败刷日志——
+**属预期**，T6 建好 bot 并注入 secret 即消。
 **若插值不被识别**（doctor 报 key 缺失/字面量原样出现）：fallback——经 exec 用 `sed -i` 把字面量替换为真实值（值从 openship env 读，操作时确保命令不回显），并在本计划与 spec 的待核实表记录「env 插值不可用，已用字面量 + 卷权限收口」。
 企微 WS 连接在 botId/secret 齐备前会重连失败刷日志——属预期，Task 6 建好 bot 即消。
 
@@ -769,7 +797,7 @@ Expected: WS 已连接、无重连风暴。企微后台机器人状态「在线�
 |---|---|---|
 | 占位首响 | ≤2s | 发消息到「思考中」出现的体感 + 日志 onReplyStart 时间戳 |
 | 首块文本 | 模型首响 + ~1s | 日志首个 `finish=false` 行时间戳 |
-| wishub 流式 | `stream:true` 出 delta | 若生成期间消息**无**中间更新 → 先验 wishub 流式（客户端直连测），不支持即换端点，**不是**调参能救的 |
+| LLM（DeepSeek）流式 | `stream:true` 出 delta | 若生成期间消息**无**中间更新 → 先验端点流式（`api.deepseek.com/v1` 客户端直连测 `stream:true`），不支持即换端点，**不是**调参能救的 |
 
 - [ ] **Step 5: 审计落库验证**
 
@@ -782,7 +810,7 @@ Expected: 本轮问数各有一行，channel=wecom（或等价通道标识）、
 - [ ] **Step 6: 收尾**
 
 - 验收结论 + 探针输出 + 流式取证回帖 issue `<N>`；全部通过后随 merge 自动关单。
-- spec §11 风险表逐项销账（requesterSenderId 已实测、wishub 流式已实测、corpId 已核对）。
+- spec §11 风险表逐项销账（requesterSenderId 已实测、LLM 流式已实测、corpId 已核对）。
 - 遗留（不阻塞）：mytech 项目 openclaw 行长期 disabled 的巡检口径 → 记入 deploy runbook；插件上游改进（非阻塞中间帧）→ 视 Step 4 实测卡顿与否决定是否提 PR。
 
 ---
@@ -791,4 +819,4 @@ Expected: 本轮问数各有一行，channel=wecom（或等价通道标识）、
 
 - **Spec 覆盖**：§1 拓扑→T2；§2 链路→T1/T4/T5；§3 版本→T2 镜像行+T4 插件版本；§4 仓内改动→T1/T2；§5 配置→T4 Step 2；§6 流式→T4+T6 Step 4；§7 openship→T3；§8 企微→T6 Step 1；§9 词表→T5 Step 2；§10 验收→T5/T6；§11 风险→各任务处置内联；§12 不做→Global 1/6。无缺口。
 - **占位符**：`<N>`/`<BOT_ID>`/`<已关联userid>` 是运行时注入值，均有「从哪取」的说明——非计划空洞。
-- **类型一致性**：env 键名（`DATA_API_BASE`/`DATA_WECOM_CHANNEL_KEY`/`WISHUB_API_KEY`/`WECOM_BOT_SECRET`）与工具名（`list_metrics`/`query_data`）在 T1/T2/T3/T4 间逐字一致；API 形状与 `modules/data/routes/{query,metrics}.ts` 实文核对过。
+- **类型一致性**：env 键名（`DATA_API_BASE`/`DATA_WECOM_CHANNEL_KEY`/`DATA_LLM_API_KEY`/`WECOM_BOT_SECRET`）与工具名（`list_metrics`/`query_data`）在 T1/T2/T3/T4 间逐字一致；API 形状与 `modules/data/routes/{query,metrics}.ts` 实文核对过。
