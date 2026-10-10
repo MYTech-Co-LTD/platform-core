@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.98.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.97.1...v0.98.0) - 2026-10-10
+- 【新增】data: 告警覆盖门禁——被调度管线必须有含 failure 的规则覆盖（#565） ([#566](https://github.com/MYTech-Co-LTD/platform-core/pull/566), [2963777](https://github.com/MYTech-Co-LTD/platform-core/commit/29637776aba3c4078f859409c461b45647c681af))
+
+
 ## [0.97.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.97.0...v0.97.1) - 2026-10-10
 - 【修复】data: 补 3120 账套专属 L0 管线失败告警规则（#538） ([#562](https://github.com/MYTech-Co-LTD/platform-core/pull/562), [cd9a9c4](https://github.com/MYTech-Co-LTD/platform-core/commit/cd9a9c4e0868796f94fe24e567a7e1c8e65328fd))
 
