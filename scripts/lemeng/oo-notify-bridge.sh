@@ -104,4 +104,36 @@ while [ "$i" -lt "$PN" ]; do
   i=$((i + 1))
 done
 
-echo "BR_OK:sent=$SENT probes=$PSENT wm=$NEWLAST/$PNEW"
+# ── 通道③：alert_state_transitions（基建探活家族点火，#538 Phase 1）──────────
+# 覆盖 = destinations 含 wecom-robot-p1 的规则（casdoor/novu/wecom/douyin/dy/host_*——
+# openship 看不见的外部探活，OO 合法 lane）。数据面家族走①②，此处排除防双响；
+# ndevice*（wecom_bot 群）不在本桥范围。调度器偶发 skip ⇒ 检测可能延迟数分钟，可接受。
+TR_FILE=$STATE_DIR/last_tr_id
+if [ ! -f "$TR_FILE" ]; then
+  MT=$(printf 'select coalesce(max(t.id), 0) from alert_state_transitions t join alerts a on a.id = t.alert_id where a.destinations::text like %s;\n' "'%wecom-robot-p1%'" | docker exec -i openship-openobserve-postgres psql -U openobserve -d openobserve -tA) || { echo 'BR_FAIL:pg_query 首查失败(tr)'; exit 1; }
+  case "$MT" in ''|*[!0-9]*) MT=0 ;; esac
+  echo "$MT" > "$TR_FILE"
+fi
+TRLAST=$(cat "$TR_FILE"); case "$TRLAST" in ''|*[!0-9]*) TRLAST=0 ;; esac
+TROWS=$(printf 'select t.id, a.name from alert_state_transitions t join alerts a on a.id = t.alert_id where t.to_outcome = 1 and t.id > %s and a.destinations::text like %s order by t.id asc limit 20;\n' "$TRLAST" "'%wecom-robot-p1%'" | docker exec -i openship-openobserve-postgres psql -U openobserve -d openobserve -tA -F "$(printf '\t')") || { echo 'BR_FAIL:pg_query 失败(tr)'; exit 1; }
+TNEW=$TRLAST
+TSENT=0
+if [ -n "$TROWS" ]; then
+  TTF=$STATE_DIR/pending.tr
+  printf '%s\n' "$TROWS" > "$TTF"
+  while IFS="$(printf '\t')" read -r TID TNAME; do
+    [ -n "${TID:-}" ] || continue
+    # shellcheck disable=SC2016
+    TBODY=$(printf '{"msgtype":"markdown","markdown":{"content":"🔴 **[OO 基建] 探活告警：%s**\\n> 明细: observe.hookflow.cn → Alerts"}}' "$TNAME")
+    TRESP=$(curl -sS -m 15 "$WECOM_WEBHOOK_URL" -H 'Content-Type: application/json' -d "$TBODY") || {
+      echo "BR_FAIL:send unreachable（tr $TNAME）"; exit 1
+    }
+    echo "$TRESP" | grep -q '"errcode":0' || { echo "BR_FAIL:send rejected（tr $TNAME）：$TRESP"; exit 1; }
+    TNEW=$TID
+    echo "$TNEW" > "$TR_FILE"
+    TSENT=$((TSENT + 1))
+  done < "$TTF"
+  rm -f "$TTF"
+fi
+
+echo "BR_OK:sent=$SENT probes=$PSENT infra=$TSENT wm=$NEWLAST/$PNEW/$TNEW"
