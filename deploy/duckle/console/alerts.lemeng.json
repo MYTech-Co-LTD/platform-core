@@ -167,7 +167,33 @@
     "      逐窗配规则会让一次 192 次/天的高频面刷出最多 2 条/轮的告警（同 ⑩ 的理由）。",
     "   📌 生效前提同 ⑨⑩：seed 进卷；且**调度仍 enabled:false**（声明就绪、不激活，激活是投递批次的独立决定）",
     "      ⇒ 现在不会产出任何 run 事件。",
-    "⑫【2026-09-29 Wave D 薄壳退役（#361 之后两账套都切完 L0/L1）】按 ⑧ ⑩ 记下的先例，本批把 4 条薄壳规则（`lemeng.dim.*.run` / `lemeng.retail.windows.run` / `lemeng.retail.tick.run` / `lemeng.retail.close.run`）**连同 3120 侧残留一起删除**——判据正是先例那句：**规则的生死由两个账套的并集决定**；两侧都切完后并集为空。保留 5 条：`*`（SLA）+ `lemeng.dim.*.l0` + 三条 retail `.l1`。⚠️ 与「删薄管线文件」**同批**做（仓内文件 + 卷内文件 + 调度条目 + 本规则）——只删一半的话，残留物会**不再被任何规则覆盖**，正是 ⑧ 要避免的那类静默。"
+    "⑫【2026-09-29 Wave D 薄壳退役（#361 之后两账套都切完 L0/L1）】按 ⑧ ⑩ 记下的先例，本批把 4 条薄壳规则（`lemeng.dim.*.run` / `lemeng.retail.windows.run` / `lemeng.retail.tick.run` / `lemeng.retail.close.run`）**连同 3120 侧残留一起删除**——判据正是先例那句：**规则的生死由两个账套的并集决定**；两侧都切完后并集为空。保留 5 条：`*`（SLA）+ `lemeng.dim.*.l0` + 三条 retail `.l1`。⚠️ 与「删薄管线文件」**同批**做（仓内文件 + 卷内文件 + 调度条目 + 本规则）——只删一半的话，残留物会**不再被任何规则覆盖**，正是 ⑧ 要避免的那类静默。",
+    "⑬【2026-10-10 账套专属 L0 管线（`.l0.<账套号>`）的 failure/recovery 规则（#538）】",
+    "   触发案例：2026-10-10T11:15Z `lemeng.dim.item_price.l0.3120` 增量 run 撞 AGI 网关 429 失败，",
+    "   **引擎未发任何告警**（价目面新鲜度另有探活兜，但那要等窗口）。",
+    "   · 根因 = **规则漏配，不是引擎缺陷**（⑧⑨ 记的「漏规则即静默」第三次应验）：本文件按 ⑨ 的",
+    "     判据把 L0 形态统一写作 `.l0` 收尾，而 3120 账套的专属管线 id 带**账套号后缀**",
+    "     ——`lemeng.dim.item_price.l0.3120` 以 `.3120` 收尾 ⇒ `lemeng.dim.*.l0` **匹配不到** ⇒ 无命中 ⇒ 静默。",
+    "   · **证据订正**：此前记为「10-08 同管线有发，个案」的说法**作废**——引擎自写的",
+    "     /workspace/.duckle/alert-state.json 的 lastSent 台账里**没有任何含 item_price 的键**，",
+    "     四条 `.3120` 管线**零发送记录**；10-08 那条 failure 发送实为 `lemeng.retail.tick.l1|failure|",
+    "     lemeng.retail.tick.l1`（2026-10-08T06:00:07Z，**另一条管线**）。⇒「引擎对个别失败不尝试",
+    "     发告警」的遗留观察**撤销**：它自始就是覆盖问题，engine 侧无缺陷。",
+    "   · 新增规则 match = `lemeng.*.l0.3120`，on failure/recovery，冷却 **15**。一次覆盖四条同形态同节奏的",
+    "     3120 专属 L0 管线：dim.item_price / transfer.out / wholesale.out / client（schedules/3120.json：",
+    "     11:15 / 15:35 / 15:45 / 15:55 UTC，均日批一次）。",
+    "     ⚠️ **为何用 `*` 而不逐条列**：判据同 ⑨——**形态段即节奏档**。四条形态段都是 `l0.3120`、节奏都是",
+    "     日批，同档即可合一条（条数不随管线线性增长）；⑩⑪ 的「按 face 精确列」是在**节奏不同档**时的要求。",
+    "     ⚠️ **为何 `*` 在这里不会重现 ⑧ 的风暴**：⑨ 否掉宽 glob 的理由是「它会吞掉将来的高频 `.tick` 形态」；",
+    "     本 pattern **要求以字面 `.l0.3120` 收尾** ⇒ 结构上匹配不到任何 `.tick.3120` 一类高频形态，",
+    "     即「宽 glob 表达不了节奏」的顾虑在此不成立（节奏被尾部钉死）。`*` 能跨段匹配点号，由既有规则",
+    "     `lemeng.recon.*`（命中 `lemeng.recon.preagg.item`）与 `lemeng.dim.*.l0`（命中 `lemeng.dim.alerttest.l0`，",
+    "     见 lastSent 09-29 发送记录）两处实证。本新规则**未在真引擎上端到端复现**——告警只在 `duckle serve` 里求值，一次性的 `duckle --pipeline` CLI 路径**根本不评估告警**（2026-10-10 沙箱实测：匹配中的管线也**不生成 alert-state.json**、无任何投递尝试）。采用它的依据是①上述两条**同形 glob**（都是「字面段 + 中间 `*` + 字面尾」）的台账实证 + ②尾部字面 `.l0.3120` 使「结构上超配」不可能；且即便语义判断有误，失败模式**只会是漏报**（与今日同），不会新增风暴。",
+    "     ⚠️ **残余边界**：本 pattern 只认账套号 `3120`。将来若出现**别的账套号**的专属 L0 管线（如 `.64188`），",
+    "     须**另加同形规则**——引擎不会替你发现漏配（⑧⑨）。",
+    "   · 有意**不**覆盖（同 ⑩⑪）：子管线 `lemeng.retail_order_line.tick` / `.window`（窗级失败汇成父 run 红）；",
+    "     `lemeng.retail.windows.backfill`（未排期，手动/一次性）。",
+    "   📌 生效前提同 ⑨：seed 进卷（/workspace/alerts.json）才生效。"
   ],
   "rules": [
     {
@@ -182,6 +208,16 @@
     },
     {
       "match": "lemeng.dim.*.l0",
+      "on": ["failure", "recovery"],
+      "cooldownMinutes": 15,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
+    },
+    {
+      "match": "lemeng.*.l0.3120",
       "on": ["failure", "recovery"],
       "cooldownMinutes": 15,
       "channel": "webhook",
