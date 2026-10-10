@@ -603,4 +603,86 @@ describePg('工单域', () => {
     const g = await appGuest.request('/guest/tickets/999999999')
     expect(g.status).toBe(404)
   })
+
+  // ── 账户统一 Task 10：guest 面读侧按【绑定集合】收窄 ──
+  // 正式态会话带 boundExternalIds（SDK Identity §4.3，同一账户全部 active 绑定的 external_id）：
+  // guest 读过滤从「submitter_openid = 登录 openid」放宽为「∈ 绑定集合」；写路径
+  // （submitter_openid / uploader_openid 的落值）仍 = identity.userId——红线：只动读侧。
+  const openidA = 'openid-mba'
+  const openidB = 'openid-mbb'
+  const guestA = makeIdentity({ orgId: ORG, userId: openidA, scopes: ['aftersales:guest'] })
+  const guestB = makeIdentity({ orgId: ORG, userId: openidB, scopes: ['aftersales:guest'] })
+  const appA = buildTestApp(mod, guestA, ctx, TENANT_CFG)
+  const appB = buildTestApp(mod, guestB, ctx, TENANT_CFG)
+  const appMulti = buildTestApp(
+    mod,
+    makeIdentity({ orgId: ORG, userId: openidA, boundExternalIds: [openidA, openidB], scopes: ['aftersales:guest'] }),
+    ctx,
+    TENANT_CFG,
+  )
+
+  it('【多绑】GET /guest/tickets：绑定集合内两个 openid 的单都可见（total 与 items 一致）', async () => {
+    const a = await submit(appA, validBody('req-mb-list-a'))
+    const b = await submit(appB, validBody('req-mb-list-b'))
+    expect(a.status).toBe(201)
+    expect(b.status).toBe(201)
+    const idA = ((await a.json()) as { id: number }).id
+    const idB = ((await b.json()) as { id: number }).id
+
+    const res = await appMulti.request('/guest/tickets')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { total: number; items: { id: number }[] }
+    const ids = body.items.map((t) => t.id)
+    expect(ids).toContain(idA)
+    expect(ids).toContain(idB)
+    expect(body.total).toBeGreaterThanOrEqual(2)
+  })
+
+  it('【多绑】GET /guest/tickets/:id：集合内（oB 的单）放行；集合外（bob 的单）仍 404 与不存在同形', async () => {
+    const b = await submit(appB, validBody('req-mb-detail-b'))
+    expect(b.status).toBe(201)
+    const idB = ((await b.json()) as { id: number }).id
+
+    const own = await appMulti.request(`/guest/tickets/${idB}`)
+    expect(own.status).toBe(200)
+    expect(((await own.json()) as { id: number }).id).toBe(idB)
+
+    // 集合外：openid-bob ∉ [openid-mba, openid-mbb]——多绑不得放宽成「全租户可见」
+    const bobTicket = await submit(appGuestBob, validBody('req-mb-detail-bob'))
+    const idBob = ((await bobTicket.json()) as { id: number }).id
+    const foreign = await appMulti.request(`/guest/tickets/${idBob}`)
+    expect(foreign.status).toBe(404)
+    expect((await foreign.json()) as { error: string }).toMatchObject({ error: 'NOT_FOUND' })
+  })
+
+  it('【多绑·红线】写路径不变：多绑身份提交 ⇒ submitter_openid 仍落 identity.userId（登录 openid）', async () => {
+    const res = await submit(appMulti, validBody('req-mb-write'))
+    expect(res.status).toBe(201)
+    const id = ((await res.json()) as { id: number }).id
+    const row = await pool.query<{ submitter_openid: string }>(
+      'select submitter_openid from aftersales.ticket where org = $1 and id = $2',
+      [ORG, id],
+    )
+    expect(row.rows[0].submitter_openid).toBe(openidA)
+  })
+
+  it('【多绑】认领校验按集合：集合内 openid（oB）上传的附件认领得到；集合外（bob）的仍抢不走', async () => {
+    const REQ = 'req-mb-claim'
+    // 「先传图后提交」的跨渠道时序：图是在 oB 渠道传的，工单在多绑会话（登录 oA）提交
+    const theirs = await seedAttachment(REQ, openidB, 'm1')
+    const foreign = await seedAttachment(REQ, 'openid-bob', 'm2')
+
+    const res = await submit(appMulti, { ...validBody(REQ), attachmentIds: [theirs.id, foreign.id] })
+    expect(res.status).toBe(201)
+    const ticketId = ((await res.json()) as { id: number }).id
+
+    // 集合内 ⇒ 认领（ticket_id 落上）；集合外 ⇒ C-1 多绑版：抢不走（ticket_id 保持 null）
+    const rows = await pool.query<{ id: string; ticket_id: string | null }>(
+      'select id, ticket_id from aftersales.ticket_attachment where org = $1 and id = any($2::bigint[]) order by id',
+      [ORG, [theirs.id, foreign.id]],
+    )
+    const byId = new Map(rows.rows.map((r) => [Number(r.id), r.ticket_id]))
+    expect(Number(byId.get(theirs.id))).toBe(ticketId)
+    expect(byId.get(foreign.id)).toBeNull()
+  })
 })

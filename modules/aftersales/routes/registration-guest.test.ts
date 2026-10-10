@@ -11,10 +11,12 @@ const OTHER_ORG = 'test-m3b1-other'
 const OPENID = 'openid-guest-1'
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 
-function app(openid = OPENID, identityLinks?: IdentityLinks) {
+function app(openid = OPENID, identityLinks?: IdentityLinks, boundExternalIds?: string[]) {
   const r = new Hono<{ Variables: { identity: Identity } }>()
   r.use('*', async (c, next) => {
-    c.set('identity', { userId: openid, orgId: ORG, displayName: openid, scopes: [], hasScope: () => true })
+    c.set('identity', {
+      userId: openid, orgId: ORG, displayName: openid, scopes: [], hasScope: () => true, boundExternalIds,
+    })
     await next()
   })
   registerRegistrationGuest(r, { pool, identityLinks })
@@ -323,5 +325,66 @@ describe('GET /guest/stores', () => {
   it('分页：非法 size 回落默认值、超上界夹住（与 /guest/products 同一口径）', async () => {
     const body = await (await app().request('/guest/stores?page=1&size=99999')).json()
     expect(body.size).toBe(100) // MAX_PAGE_SIZE，不是 99999
+  })
+})
+
+// ── 账户统一 Task 10：多绑读侧收窄（registration 面） ──
+// 正式态会话带 boundExternalIds（SDK Identity §4.3）：读侧（档案快照 / pending 检查）
+// 按「∈ 绑定集合」收窄；写侧（employee_approval.open_id 落值）仍 = identity.userId——红线。
+describe('账户统一 Task 10：多绑读侧收窄', () => {
+  const OTHER_OPENID = 'openid-guest-2' // 集合内的另一个渠道 openid
+  const STRANGER = 'openid-guest-stranger' // 集合外
+  /** 多绑会话：登录 openid-guest-1，绑定集合 = [guest-1, guest-2] */
+  const multiApp = () => app(OPENID, undefined, [OPENID, OTHER_OPENID])
+
+  it('【多绑】GET /guest/me/registration：集合内 openid 的已审批档案可见', async () => {
+    // 档案挂在集合内的另一个渠道 openid 上（在 guest-2 渠道登记过）
+    await pool.query(
+      `insert into aftersales.employee(org, name, phone, open_id, approve_status)
+       values ($1, '李四', '139', $2, 'approved')`,
+      [ORG, OTHER_OPENID],
+    )
+    const body = (await (await multiApp().request('/guest/me/registration')).json()) as {
+      registration: { name: string } | null
+    }
+    expect(body.registration).not.toBeNull()
+    expect(body.registration!.name).toBe('李四')
+  })
+
+  it('【多绑·对照】集合外 openid 的档案仍不可见（多绑 ≠ 全租户可见）', async () => {
+    await pool.query(
+      `insert into aftersales.employee(org, name, phone, open_id, approve_status)
+       values ($1, '路人', '140', $2, 'approved')`,
+      [ORG, STRANGER],
+    )
+    const body = (await (await multiApp().request('/guest/me/registration')).json()) as {
+      registration: unknown
+    }
+    expect(body.registration).toBeNull()
+  })
+
+  it('【多绑】hasPendingApproval：集合内 openid 的待审申请可见（防同一人从别的渠道重复申请）', async () => {
+    // 待审申请挂在 guest-2 渠道（中间态时提交的），现在以多绑会话查得到
+    await pool.query(
+      `insert into aftersales.employee_approval(org, open_id, approve_type, new_info)
+       values ($1, $2, 'register', $3::jsonb)`,
+      [ORG, OTHER_OPENID, JSON.stringify({ name: '李四', phone: '139', storeCodes: [] })],
+    )
+    const body = (await (await multiApp().request('/guest/me/registration')).json()) as {
+      hasPendingApproval: boolean
+    }
+    expect(body.hasPendingApproval).toBe(true)
+  })
+
+  it('【多绑·红线】写路径不变：提交申请 ⇒ employee_approval.open_id 仍落 identity.userId（登录 openid）', async () => {
+    const [c1] = await storeCodes()
+    const res = await submit(multiApp(), { name: '张三', phone: '138', storeCodes: [c1] })
+    expect(res.status).toBe(201)
+    const rows = await pool.query<{ open_id: string }>(
+      `select open_id from aftersales.employee_approval where org = $1`,
+      [ORG],
+    )
+    expect(rows.rows).toHaveLength(1)
+    expect(rows.rows[0].open_id).toBe(OPENID)
   })
 })

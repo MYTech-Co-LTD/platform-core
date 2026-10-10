@@ -71,3 +71,12 @@ export function parseIdParam(raw: string | undefined): number | null {
   const n = Number(raw)
   return Number.isSafeInteger(n) && n > 0 ? n : null
 }
+
+/**
+ * guest 面身份集合：正式态=全部 active 绑定；中间态/旧会话=登录 openid 本身。
+ * 读侧过滤一律 `= ANY(本函数结果)`（账户统一设计 §4.1）——写侧落值**不**用它，
+ * 仍写 `identity.userId`（openid 是渠道事实，业务表身份锚不随绑定关系变）。
+ */
+export function guestIdentityIds(identity: Identity): string[] {
+  return identity.boundExternalIds ?? [identity.userId]
+}
