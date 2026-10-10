@@ -196,19 +196,36 @@ const c=new Client({connectionString:process.env.DATABASE_URL});
 }
 
 do_check() {
+  # #538 Phase 1：逐断言产出判红行（probe 观测面）——执行与观测同行，判定逻辑不变。
   rc=0
-  assert_dns || rc=1
-  assert_tcp || rc=1
-  assert_query || rc=1
-  assert_fresh || rc=1
-  assert_metrics || rc=1
-  assert_dims || rc=1
-  assert_settlement_face || rc=1
+  _vf=$(mktemp ${TMPDIR:-/tmp}/ww-verdicts.XXXXXX)
+  for _step in dns tcp query fresh metrics dims settlement_face; do
+    if _out=$(eval "assert_${_step}" 2>&1); then
+      _verdict=OK
+    else
+      _verdict=ERR
+      rc=1
+    fi
+    printf '%s\n' "$_out"
+    _detail=$(printf '%s' "$_out" | grep -m1 -E 'OK|ERR|FAIL' | tr -d '"\\' | tr '\n' ' ' | cut -c1-200)
+    printf '{"probe":"wire-warehouse","check":"%s","verdict":"%s","detail":"%s"}\n' \
+      "$_step" "$_verdict" "$_detail" >> "$_vf"
+  done
   if [ "$rc" -eq 0 ]; then
     echo "wire-warehouse: OK（七条断言全过）"
   else
     echo "wire-warehouse: FAILED（见上）—— 重做：sh $0" >&2
   fi
+  # 判红行投递（best-effort：观测面降级绝不改探活判定；OO 挂时由看门狗叫，不在这里重复报警）
+  if [ -s "$_vf" ] && [ -r /etc/openobserve-ingest.env ]; then
+    . /etc/openobserve-ingest.env
+    _pr=$(curl -sS -m 10 -X POST "${OO_BASE}/api/${OO_ORG}/data_plane_probes/_json" \
+      -H "Authorization: Basic ${OO_AUTH}" -H 'Content-Type: application/json' \
+      --data-binary @"$_vf" 2>&1) \
+      && echo "$_pr" | grep -q '"successful"' \
+      || echo 'WW_NOTE: 判红行投递失败（观测面降级，不影响探活判定）' >&2
+  fi
+  rm -f "$_vf"
   return "$rc"
 }
 

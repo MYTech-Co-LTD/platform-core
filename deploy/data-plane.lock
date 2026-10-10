@@ -1,4 +1,4 @@
-sha256-of-rest d10b830870808153cd13fca2e7d8b8cdb9697d84e5ff5291385fa9d1f5f1a76b
+sha256-of-rest 5394015c01f8fa45f2fa27fe5abc360c515974c3ac23c81a2363d71db283284d
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 5f2b5a68028671166b3a0cd62d62a08a12f8a10af5034a2b5e4cadb50c1fb264 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -74,11 +74,11 @@ e5692c786e70ea50917462573d035bc4cc4c9e25c81f9489fc5b3bb8070e6f64 duckle/README.m
 a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814 scripts/duckle/connection-setup.py /opt/connection-setup.py 0755
 bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/backfill-retail-order-line.sh /opt/lemeng-backfill.sh 0755
 c39a443f475d4f37374c1f68554b24de3a833e6f0b691d3a32416d4690ebe0ce scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755
-c57f5a7abfeff363e0252f2d12c4ba676b9a2927ceb3ac6469535789c5d8e593 scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
+a4765395d6f2f40915ef3e535e08c6989c1ccbe615507ce2df2752befb8a5ff7 scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
 bc36151a11daaf0d74da820e02ecda1c5a147f246e8b02b735420e02e2ddeed7 scripts/lemeng/oo-watchdog.sh /opt/lemeng-oo-watchdog.sh 0755
 d3c7fb72c9a2c243b6973177432294b446a10770b3bbad4da731fd306cad2e97 scripts/lemeng/readback-helper.sh ${REPO}/lemeng-readback.sh 0755
 b22ee1315f9b2c3e5a7e041e4d3b6a99b0c4aa9e022934d5e64e1409b5164d21 scripts/lemeng/recon-day-heal.sh /opt/lemeng-recon-day-heal.sh 0755
 732afd7aa6ccfc9bcba36adbd968cc5819bef78974b57e92bfb81f67fc64e9ae scripts/lemeng/recon-preagg.sh /opt/lemeng-recon-preagg.sh 0755
 185b13c328e83a04651799684a38be905e9cc217d78ed9079fdf3aa2918299e3 scripts/lemeng/seal-lake.sh /opt/lemeng-seal.sh 0755
 7d3b0f7dfe17e485a8de97f4c2ac0ac4f32025deaa2ceeed59bb4970c290ceb0 scripts/lemeng/seed-console.sh /opt/lemeng-seed-console.sh 0755
-c17a27b9180bec8e0972162f14e294e68ffe676ccf9de391f6cb3f95e8f9a016 scripts/lemeng/wire-warehouse.sh /opt/lemeng-wire-warehouse.sh 0755
+7e87ab32476362efed013099fa69d46e76543b5112082adfde0f65c189f812cc scripts/lemeng/wire-warehouse.sh /opt/lemeng-wire-warehouse.sh 0755
