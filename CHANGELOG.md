@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.92.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.91.1...v0.92.0) - 2026-10-10
+- 【新增】data: 桥接 v1.3 通道③——基建探活家族点火转发 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [dbb907e](https://github.com/MYTech-Co-LTD/platform-core/commit/dbb907ea89e1dadb945a2f3f84ef7ceb3fdf8cc2))
+
+
 ## [0.91.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.91.0...v0.91.1) - 2026-10-10
 - 【修复】data: 探活判红行改逐行 POST——本 OO 构建 _json 端点拒多行 NDJSON 批 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [68fac21](https://github.com/MYTech-Co-LTD/platform-core/commit/68fac2178f301c378f0a8fc027ec9cad8317527e))
 
