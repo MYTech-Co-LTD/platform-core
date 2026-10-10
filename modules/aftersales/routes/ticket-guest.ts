@@ -4,7 +4,7 @@ import { storageCandidatesFor, storageResolverFor } from '../storage'
 import { loadAttachments, normalizeTicketRow } from './ticket-manage'
 // 分页常量与解析器在 routes/context.ts：与管理端【同一份】实现、【同一套】语义
 // （此前本文件内联算 page/size 且无整数守卫 ⇒ 非法值 500；?size=-5 也与端点间漂移）。
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parseIdParam, parsePageParam } from './context'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parseIdParam, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
 /**
@@ -32,7 +32,8 @@ const SubmitBody = z.object({
 })
 
 export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
-  // GET /guest/tickets —— 只回自己的（按 submitter_openid 收窄，spec §2.2）
+  // GET /guest/tickets —— 只回自己的（按绑定集合收窄：读侧 ∈ guestIdentityIds，spec §2.2 +
+  // 账户统一设计 §4.1；写侧 submitter_openid 落值仍见 POST 处的 identity.userId）
   r.get('/guest/tickets', async (c) => {
     const identity = c.get('identity')
     // 与管理端同一口径（parsePageParam）：非法值回落默认值，超出上界夹住。
@@ -40,17 +41,17 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
     const size = parsePageParam(c.req.query('size'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
     const totalRes = await ctx.pool.query<{ n: number }>(
-      'select count(*)::int as n from aftersales.ticket where org = $1 and submitter_openid = $2',
-      [identity.orgId, identity.userId],
+      'select count(*)::int as n from aftersales.ticket where org = $1 and submitter_openid = any($2::text[])',
+      [identity.orgId, guestIdentityIds(identity)],
     )
     const listRes = await ctx.pool.query(
       `select id, code, product_name, store_name, damage_quantity, status,
               amount_type, amount_minor, remark, created_at, processed_at
          from aftersales.ticket
-        where org = $1 and submitter_openid = $2
+        where org = $1 and submitter_openid = any($2::text[])
         order by id desc
         limit $3 offset $4`,
-      [identity.orgId, identity.userId, size, (page - 1) * size],
+      [identity.orgId, guestIdentityIds(identity), size, (page - 1) * size],
     )
     return c.json({
       items: listRes.rows.map(normalizeTicketRow),
@@ -60,7 +61,8 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
     })
   })
 
-  // GET /guest/tickets/:id —— 不是自己的 ⇒ 404（与不存在同形，不泄露"存在但不属于你"）
+  // GET /guest/tickets/:id —— 不是自己的 ⇒ 404（与不存在同形，不泄露"存在但不属于你"）；
+  // 「自己的」= 绑定集合（同上，读侧 ∈ guestIdentityIds）
   r.get('/guest/tickets/:id', async (c) => {
     const identity = c.get('identity')
     const id = parseIdParam(c.req.param('id'))
@@ -74,8 +76,8 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
               settlement_price_minor, settlement_bizday,
               remark, related_order, created_at, processed_at
          from aftersales.ticket
-        where org = $1 and id = $2 and submitter_openid = $3`,
-      [identity.orgId, id, identity.userId],
+        where org = $1 and id = $2 and submitter_openid = any($3::text[])`,
+      [identity.orgId, id, guestIdentityIds(identity)],
     )
     const row = res.rows[0]
     if (!row) return c.json({ error: 'NOT_FOUND' }, 404)
@@ -228,22 +230,25 @@ export function registerTicketGuest(r: ModuleHono, ctx: RouteCtx): void {
         [org, ticketId],
       )
 
-      // ④ 认领附件：把本次幂等键下、**属于本上传者**、尚未归属的附件挂到这张工单上。
+      // ④ 认领附件：把本次幂等键下、**属于本上传者（绑定集合）**、尚未归属的附件挂到这张工单上。
       //
-      // ⚠️ `and uploader_openid = $5` 是【所有权谓词，不是可选项】。`identity.userId` 在本路由
-      //    就是访客 openid（见上面 ② 的 `submitter_openid`，用的是同一个值）。
+      // ⚠️ `and uploader_openid = any($5::text[])` 是【所有权谓词，不是可选项】。集合 =
+      //    guestIdentityIds（账户统一设计 §4.1）：「本上传者」按多绑集合判——图在别的渠道
+      //    （集合内另一 openid）传的，本会话照样认领；中间态/旧会话集合 = 登录 openid 单元素，
+      //    行为与旧的 `= identity.userId` 逐字等价。
       //    少了它：同租户内任一访客只要把 clientRequestId 猜/撞成同一个值，就能认领【别人】尚未
       //    提交的附件，再经 GET /guest/tickets/:id 拿到该附件**完整的预签名 GET URL**
       //    （受害者侧 total=0，零可观测迹象）。终审已端到端实测（那条 UPDATE rowCount=1）。
-      //    三个谓词合起来的语义 =「确实属于本次请求、且属于本上传者」——不必再额外查询。
+      //    三个谓词合起来的语义 =「确实属于本次请求、且属于本上传者（的绑定集合）」——不必再额外查询。
+      //    （写入值不在此处：submitter_openid 落 identity.userId，见上方 insert 的第三列。）
       if (body.attachmentIds?.length) {
         await client.query(
           `update aftersales.ticket_attachment
               set ticket_id = $3
             where org = $1 and id = any($4::bigint[])
               and client_request_id = $2 and ticket_id is null
-              and uploader_openid = $5`,
-          [org, body.clientRequestId, ticketId, body.attachmentIds, identity.userId],
+              and uploader_openid = any($5::text[])`,
+          [org, body.clientRequestId, ticketId, body.attachmentIds, guestIdentityIds(identity)],
         )
       }
 

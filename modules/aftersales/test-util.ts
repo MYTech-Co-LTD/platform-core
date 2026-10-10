@@ -18,6 +18,10 @@ export function makeIdentity(partial: Partial<Identity> & { orgId: string }): Id
     orgId: partial.orgId,
     displayName: partial.displayName ?? '测试用户',
     scopes,
+    // 逐字段搬运是刻意的（不 spread partial，防止测试替身混进未来才有的字段）；
+    // 但每个**已存在**的字段都必须显式接上——漏一个就是静默丢参（Task 10 实测：
+    // boundExternalIds 漏接 ⇒ 多绑用例全绿不了，症状酷似实现没生效）。
+    boundExternalIds: partial.boundExternalIds,
     hasScope: (code: string) => scopes.includes(code),
   }
 }
