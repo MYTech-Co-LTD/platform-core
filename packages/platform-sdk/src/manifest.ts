@@ -196,3 +196,9 @@ type _AssertManifestBidirectional = _AssertTrue<
     ? ([ModuleManifestInferred] extends [ModuleManifest] ? true : false)
     : false
 >
+
+// TS6196 防线（Task 8 实测）：SDK 以**源码**形态被消费（package.json main = src/index.ts），
+// 任何包对 `@platform/sdk` 的 root import 都会把本文件拉进对方的 tsc 程序；apps/web 开着
+// noUnusedLocals ⇒ 未消费的 `_AssertManifestBidirectional` 即红。让断言在**值空间**被消费一次：
+// 防漂移失效（求值 ≠ true）时 `true` 不可赋值，编译照样报错——断言从「写了没人看」变成真闸。
+export const MANIFEST_BIDIRECTIONAL_OK: _AssertManifestBidirectional = true
