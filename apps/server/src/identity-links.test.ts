@@ -393,4 +393,32 @@ describe.skipIf(!dbUrl)('IdentityLinks 服务（真 PG）', () => {
     expect(pendingOnly.map((v) => v.externalId)).toEqual(['w-i'])
     expect(await svc.listForOrg('m7', 'disputed')).toEqual([])
   })
+
+  it('confirm/rebind 带 opts.actor ⇒ audit actor 列与 detail.actor 都落执行人（Task 8 管理面）', async () => {
+    // m8 是本文件专键；先清本 org 的 audit 残留，让「恰好 3 行」的断言对重复跑库幂等
+    //（m6 那条的累积红是已知账，T6-fix 收敛——本条不再添同类账）
+    await pool.query("delete from platform.audit where detail->>'org' = 'm8'")
+    const seeded = await upsertLink(pool, {
+      org: 'm8', provider: 'wechat-oa', externalId: 'w-j', casdoorName: 'kate',
+      phone: null, boundVia: null, status: 'pending', sourceApprovalId: null,
+    })
+    const svc = createIdentityLinks(pool, fakeCasdoorFor([]))
+    await svc.confirm('m8', seeded.id, undefined, { actor: 'admin8' })
+    await svc.rebind('m8', seeded.id, 'lily', { actor: 'admin9' })
+    await svc.confirm('m8', seeded.id) // 缺省 opts ⇒ actor 回落 null（Task 6 既有形状不回归）
+
+    const { rows } = await pool.query<{ action: string; actor: string | null; detail: Record<string, unknown> }>(
+      "select action, actor, detail from platform.audit"
+      + " where action in ('identity.link.confirm','identity.link.rebind') and detail->>'org' = 'm8' order by id",
+    )
+    expect(rows.map((r) => r.action)).toEqual([
+      'identity.link.confirm', 'identity.link.rebind', 'identity.link.confirm',
+    ])
+    expect(rows[0]!.actor).toBe('admin8')
+    expect(rows[0]!.detail).toMatchObject({ target: 'kate', actor: 'admin8' })
+    expect(rows[1]!.actor).toBe('admin9')
+    expect(rows[1]!.detail).toMatchObject({ from: 'kate', to: 'lily', actor: 'admin9' })
+    expect(rows[2]!.actor).toBeNull()
+    expect(rows[2]!.detail).toMatchObject({ actor: null })
+  })
 })

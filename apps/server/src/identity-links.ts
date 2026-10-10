@@ -7,7 +7,12 @@
 //     历史留痕（platform.audit action='identity.link.*'）在这里与状态变更**同一事务**落行。
 import type { Pool, PoolClient } from 'pg'
 import type { CasdoorClient } from '@platform/auth-core'
+import { LinkError } from '@platform/sdk'
 import type { IdentityLinkView, IdentityLinks } from '@platform/sdk'
+
+// LinkError 的**唯一事实源已上移 SDK**（账户统一 Task 8：模块管理面 handler 要按码映射 HTTP，
+// 错误类型必须两边同见）。此处原样再出口，保持本模块既有导入面不变。
+export { LinkError }
 
 /** 能执行查询的最小面（`Pool` 与事务用的 `PoolClient` 都满足；同 tenant-source.ts 的 SqlExecutor 习语）。 */
 export type SqlExecutor = Pick<Pool | PoolClient, 'query'>
@@ -201,13 +206,6 @@ export async function mutateLink(
 /** 服务需要的 Casdoor 最小面（app.ts 传整只 CasdoorClient，结构上满足本 Pick）。 */
 type CasdoorLinkAdmin = Pick<CasdoorClient, 'getUser' | 'ensureUser'>
 
-/** 带 code 的业务错误：handler 层（Task 8）按 code 映 HTTP 状态（LINK_TARGET_MISSING ⇒ 400）。 */
-export class LinkError extends Error {
-  constructor(readonly code: 'LINK_TARGET_MISSING' | 'LINK_NOT_FOUND') {
-    super(code)
-  }
-}
-
 /** 服务侧视图查询：与 store 的 ROW 是两个投影——视图带 created_at、不外泄完整 phone
  *  （出函数前过 maskPhone），故不复用 ROW（改它会动 store 七导出的返回形状）。 */
 type LinkViewRow = {
@@ -373,7 +371,11 @@ export function createIdentityLinks(
       return rows.map(toView)
     },
 
-    confirm: async (org, id, casdoorName) => {
+    // confirm/rebind 的 opts.actor（Task 8）：管理面传会话执行人（identity.userId），落
+    // audit 的 actor 列与 detail.actor；缺省（无执行人）保持 Task 6 既有形状——落 null。
+    // audit 行仍只在服务层与状态变更同事务落，调用方不得另写。
+    confirm: async (org, id, casdoorName, opts) => {
+      const actor = opts?.actor ?? null
       await withTx(pool, async (exec) => {
         const row = await readLinkById(exec, org, id)
         if (row === null) throw new LinkError('LINK_NOT_FOUND')
@@ -381,21 +383,22 @@ export function createIdentityLinks(
         await assertUserExists(casdoorFor, org, target)
         // 人工确认 ⇒ active + bound_via=manual（bound_via 记「这份 active 绑定怎么来的」）
         await mutateLink(exec, org, id, { status: 'active', casdoorName: target, boundVia: 'manual' })
-        await writeAudit(exec, org, null, 'identity.link.confirm', {
-          org, id, from: row.status, to: 'active', target, actor: null,
+        await writeAudit(exec, org, actor, 'identity.link.confirm', {
+          org, id, from: row.status, to: 'active', target, actor,
         })
       })
     },
 
-    rebind: async (org, id, casdoorName) => {
+    rebind: async (org, id, casdoorName, opts) => {
+      const actor = opts?.actor ?? null
       await withTx(pool, async (exec) => {
         const row = await readLinkById(exec, org, id)
         if (row === null) throw new LinkError('LINK_NOT_FOUND')
         await assertUserExists(casdoorFor, org, casdoorName)
         // 改绑即生效：换目标账户 + active（人工动作）
         await mutateLink(exec, org, id, { status: 'active', casdoorName, boundVia: 'manual' })
-        await writeAudit(exec, org, null, 'identity.link.rebind', {
-          org, id, from: row.casdoorName, to: casdoorName, actor: null,
+        await writeAudit(exec, org, actor, 'identity.link.rebind', {
+          org, id, from: row.casdoorName, to: casdoorName, actor,
         })
       })
     },

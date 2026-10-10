@@ -2,7 +2,7 @@ export { ManifestSchema } from './manifest'
 export type { ModuleManifest, ModuleManifestInferred } from './manifest'
 export { BINDING_KEYS, runChecks } from './checks'
 export type { CheckResult } from './checks'
-export { DECLARED_GATE_APPROVED, defineModule, requireScope, declaredScopeGate } from './module'
+export { DECLARED_GATE_APPROVED, defineModule, requireScope, declaredScopeGate, LinkError } from './module'
 export type {
   DeclaredEndpoint, Identity, IdentityLinkView, IdentityLinks, LinkProvider,
   ModuleContext, ModuleDefinition, ModulePorts, ResolvedPatKey,
