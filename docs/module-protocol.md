@@ -177,6 +177,10 @@ scope 的绝对断言，改掉）。`GET /api/platform/config` 是**有意的披
   签 session 时按**该租户已启用模块**发放这些码——停用模块的移动端 API 由闸门 404 +
   门卫 403 自然闭合。访客身份不落 Casdoor（外部用户不进内部 IdP）。
 
+> **2026-10-10 修订**：`guest:{scope}` 发放的是**中间态**访客 session（绑定生效前）；绑定
+> active 后签**正式态** session（scopes 走 Casdoor 角色）。两态发放同一批码，模块端点与
+> 门卫对身份形态无感。详见 `2026-10-10-aftersales-account-unification-design.md` §3。
+
 ## 模块管理页：`frontend.admin`（2026-09-20）
 
 > 适用：`modules/<id>/manifest.yaml` 的**可选** `frontend.admin`。契约源

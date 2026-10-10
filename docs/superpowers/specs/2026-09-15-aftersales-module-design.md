@@ -71,6 +71,9 @@ modules/aftersales            ← 售后域模块（通用产品模块，不带�
 
 ### 1.3 身份（两类用户，2026-09-15 用户订正：移动端是外部客户，非内部员工）
 
+> ⚠️ **本节身份模型已被 2026-10-10 账户统一设计取代**（门店员工建 Casdoor 账户 + 本地绑定表），
+> 访客 session 降级为中间态：见 `2026-10-10-aftersales-account-unification-design.md`。下文保留原文存档。
+
 - **内部员工**（PC console / 企微内）= Casdoor 现成路（password / wecom），不动。
 - **外部客户**（移动 H5，面向公众）= **新增 `wechat-oa` 访客登录路**：公众号静默授权
   （snsapi_base）→ code 换 openid → 签**访客 session**（sub = openid、org = 租户、

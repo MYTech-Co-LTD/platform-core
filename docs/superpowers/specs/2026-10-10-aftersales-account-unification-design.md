@@ -103,6 +103,10 @@ platform.identity_link
   姓名/手机号预填申请（可选，自动数据需标识来源）→ 同一套自动匹配。
 - 手机号是唯一自动匹配强键（姓名重名不匹配）；匹配前先做存量摸底（§5）。
 
+> **分期注记（2026-10-10，计划期）**：Phase 1 自动匹配置信池 = `identity_link.phone`
+> （**本地**，含回填的存量）；Casdoor 侧按手机号查户（覆盖总部员工兼门店场景）归 Phase 2
+> ——真机 API 形状未钉（AGENTS #11），不进 P1。
+
 ## 3. session 与权限
 
 ### 3.1 两态 session（访客 session 语义保留为中间态）
@@ -110,12 +114,19 @@ platform.identity_link
 | 态 | 触发 | sub | scopes | 校验路径 |
 |---|---|---|---|---|
 | 中间态 | openid 未绑/绑定 pending | openid（现状不变） | guest 声明机制（现状不变，仅申请相关端点） | 现状 guest 旁路（不查 Casdoor）不变 |
-| 正式态 | openid 有 active link | **casdoor_name**（与内部 session 同构） | Casdoor effectiveScopes（门店角色） | 内部 session 同构 + §3.3 降级 |
+| 正式态 | openid 有 active link | openid（不变） | Casdoor effectiveScopes（门店角色） | 内部 session 同构 + §3.3 降级 |
 
 - 正式态签发时把该账户**全部 active 绑定的 external_id 集合**注入 identity
   （模块据此做「我的工单」等多绑收窄，§4.3）；集合随 scopes 刷新机制同步刷新。
 - 隐含结论（写进正典防回潮）：**「统一账户」≠「消灭访客 session」**——异步审批
   必然产生 openid 先于账户的中间态，双态并存是设计，不是没改干净。
+
+> **修订（2026-10-10，计划期）：正式态 sub 仍 = openid**，账户身份经**新增载荷字段
+> `acct`**（= casdoor_name）承载，`name` = casdoor_name。原「sub = casdoor_name 与内部
+> session 同构」作废。理由：业务表身份锚是 openid（渠道事实），sub 若换成 casdoor_name，
+> 全部 guest 写路径（submitter_openid = identity.userId 共 9 端点）都要改从新字段取登录
+> openid，还要为「哪个 openid 登录的」再引入一个字段——同构收益只惠及展示，代价横贯写面。
+> 中间态/正式态判定键 = `authVia==='wechat-oa' && acct 存在`。
 
 ### 3.2 scopes 双轨的边界
 
