@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.88.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.88.4...v0.88.5) - 2026-10-10
+- 【修复】data: 探活⑦取价面容差改时段感知——上海13点前-3后-2，对齐发布节奏 ([#534](https://github.com/MYTech-Co-LTD/platform-core/pull/534), [2e2b33a](https://github.com/MYTech-Co-LTD/platform-core/commit/2e2b33a97b9b0087393e44a6c0785835dc8ba252))
+
+
 ## [0.88.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.88.3...v0.88.4) - 2026-10-09
 - 【修复】data: seed 期望集按账套后缀过滤 + console 排班完整性门禁（#531） ([#532](https://github.com/MYTech-Co-LTD/platform-core/pull/532), [d7a9e44](https://github.com/MYTech-Co-LTD/platform-core/commit/d7a9e44af053fb3f3c4c780dc8f495a4a94b6d39))
 
