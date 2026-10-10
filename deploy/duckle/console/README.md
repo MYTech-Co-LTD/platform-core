@@ -48,6 +48,11 @@
 
 ## 引擎原生告警 `alerts.json`（2026-09-27；链路经 OpenObserve，端到端实测通过——末跳群侧两条消息为目视确认开环）
 
+> **本节是本链路的机制细节唯一正文**（三跳链路/凭据/模板/排障口径）；监控**职责分工终局**与执行状态
+> 在正典 `docs/data-platform-handbook.md` §1.5.3（执法器 skill `data-monitor`），两处冲突以正典为准。
+> ⚠️ 排障/审计口径：OO **API 认 org identifier 不认显示名**（miyuan 的 identifier 是长随机串）——
+> 先列全 org 再查，别按显示名猜（2026-10-10 错查 `default` 得「0 规则」假阴性的教训）。
+
 **与上面那条并存，不替换** —— 两条覆盖不同的面：
 
 | | wrapper 的 `EXIT` trap（上一节） | 引擎原生 `alerts.json`（本节） |

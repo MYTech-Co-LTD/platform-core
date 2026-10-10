@@ -716,7 +716,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 | 面 | 覆盖 | 门槛 |
 |---|---|---|
-| **引擎原生 `alerts.json`** —— **L0/L1 的告警面**（🔴 转投规则**未配置**：行落 OO `service_health` 供检索，实时告警腿未通——现状兜底 = T-3 定稿线 + 探活④⑦；分工与切换计划见 §1.5.3 / #538） | 打进本 console 的**任何非 ok run**（含 wrapper 之前就失败的路径：源不存在、DuckDB 起不来、判据失败…） | **无门槛** |
+| **引擎原生 `alerts.json`** —— **L0/L1 的告警面**（✅ 转投链路 2026-09-27 拍板并配置在位：引擎 → OO org=miyuan `data_alerts` 流 → OO 规则 → 企微；机制正文唯一出处 = `deploy/duckle/console/README.md` §引擎原生告警。⚠️ 覆盖面：仅已 seed `alerts.json` 的 console（3120 ✓，64188 未 seed）；企微侧端到端开环确认遗留（#210）。分工终局见 §1.5.3 / #538） | 打进本 console 的**任何非 ok run**（含 wrapper 之前就失败的路径：源不存在、DuckDB 起不来、判据失败…） | **无门槛** |
 | wrapper 的 `EXIT` trap —— **仅薄壳形态适用**（已退役） | 只有 wrapper **自己判红**的路径 | 仅 `LEMENG_NOTIFY=1`（薄管线会设 ⇒ 人工/诊断跑不刷群） |
 
 **wrapper 侧细节**（供历史形态排障）：接在 wrapper 的 `EXIT` trap（覆盖**所有**失败路径，且只有一份代码），
@@ -742,15 +742,20 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 #### 1.5.3 监控职责分工（🔴 决策定案 2026-10-10，用户裁决；执行计划 #538）
 
-> 背景：监控职责讨论过多轮均未执行到底（「经 OO 转投」停在 0 规则、duckle→openship webhook 悬空）。
+> 背景：监控职责讨论过多轮，执行物散落未收口——**2026-09-27 用户已拍板「引擎原生告警经 OO 转投企微」并端到端配置在位**
+> （OO org=miyuan：`data_alerts_failure`/`data_alerts_recovery` 等 14 条 enabled 规则，机制正文唯一出处 =
+> `deploy/duckle/console/README.md` §引擎原生告警）；未完成的是**开环确认（企微侧）、看门狗、覆盖面（L0 事件行 / 64188 未 seed alerts）**。
 > 本节是**终局分工**，配 skill `.claude/skills/data-monitor/`（执法器）强制后续执行；执行状态表与
 > #538 同步，翻绿/翻红都要改这里。
+>
+> ⚠️ **OO API 认 identifier 不认显示名**（miyuan 的 identifier 是长随机串，`default`/`woke` 例外恰好可读）——
+> 2026-10-10 审计错按显示名查 org 得出「0 规则」假阴性。多 org 审计先 `GetUserOrganizations` 列全再查。
 
 **三层职责（谁拥有语义，谁写判据；告警必须从一条通道出）**：
 
 | 层 | 职责 | 明确不做 |
 |---|---|---|
-| **OpenObserve** | 数据面**预警面**：对 `data_plane_runs` / `data_plane_probes` 流配规则（status≠ok / 该来的没来），通知企微；全量观测检索（run 史/判红史/基建日志一处 SQL） | **不是探测器**：不 docker exec、不持库凭据、**不在 OO SQL 里写对账/新鲜度语义**（阈值与缺席规则只消费数据面吐出的判红结论） |
+| **OpenObserve** | 数据面**预警面**：对管线 run 事件（现网 `data_alerts` 流，org=miyuan）配规则（status≠ok / 该来的没来），通知企微；全量观测检索（run 史/判红史/基建日志一处 SQL）。**已在位**：管线失败/恢复、tick 缺席、基建探活（casdoor/novu/wecom/douyin）、宿主资源共 14 条 enabled 规则 | **不是探测器**：不 docker exec、不持库凭据、**不在 OO SQL 里写对账/新鲜度语义**（阈值与缺席规则只消费数据面吐出的判红结论） |
 | **openship** | 机器/进程/任务层：容器 crash_loop、服务器不可达、部署结果、job 崩溃；**告警兜底看门狗**（盯 OO 内最后证据年龄，OO 闪断即红——OO 2026-10-09 实测有 unreachable→0s 闪断，看门狗是切换前置） | 不承载语义判据脚本（历史遗留的探活/物化 job 保留，Phase 2 起通知收敛为 job 崩溃级） |
 | **数据面** | **判据本体**：对账、新鲜度容差（§1.5.2 对齐表）、契约 gate——脚本/qa gate 实现，判红结论**逐行吐进 OO 流**（带 org/账套标签） | — |
 
@@ -760,9 +765,9 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 | Phase | 内容 | 状态 |
 |---|---|---|
-| 0 | OO alert→企微投递实测（不兼容则中继落 openship 管）；流布局定案；看门狗设计定案 | **未开工** |
-| 1 | 管线统一 run 事件行（L0 绕 #414）；探活逐断言吐判红行；OO 试点规则 2 条；**openship 通知不拆**双通道并行 1-2 周 | **未开工** |
-| 2 | 通知切换（数据面告警归 OO，openship 收敛 job 崩溃级）；看门狗上线；悬空 webhook 处置；本表翻绿 + 基建速查订正 | **未开工** |
+| 0 | **开环确认**：企微群侧收到一条真实测试告警（README 链路的遗留待确认项，#210）；流布局定案（**从既有 `data_alerts` 出发演进，不另起炉灶**）；看门狗设计定案（openship 反向 job 盯 OO 证据年龄——OO 2026-10-09 实测闪断） | **未开工** |
+| 1 | 覆盖面补齐：管线 run 事件行（L0 绕 #414；transfer/wholesale/client 无事件行）；**64188 卷 seed `alerts.json`/`owners.json`**（现未 seed，DELIVERY §判据5 注明）；在位 14 条规则逐条过分工与 §1.5.2 对齐（能复用不新建）；探活逐断言吐判红行；**openship 通知不拆**双通道并行 1-2 周 | **未开工** |
+| 2 | 通知切换（数据面告警归 OO，openship 收敛 job 崩溃级）；看门狗上线；悬空 duckle→openship webhook 处置（凭 Phase 1 证据删或修）；本表翻绿 + 基建速查订正 | **未开工** |
 
 **红线（执法器 skill 同款）**：① OO 不写对账/新鲜度语义；② 新管线/新发布面必带事件行 + 对齐表行 + OO 规则（或登记豁免+兜底路径），缺一不验收；③ 告警单出口（企微经 OO；openship 只出基础设施与 job 崩溃级）；④ 任何告警组件不许静默失效——看门狗盯 OO，OO 规则缺席/到期不发 = 配置漂移，按故障算。
 
