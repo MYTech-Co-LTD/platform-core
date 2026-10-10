@@ -321,7 +321,9 @@ print(r['status'], r.get('at'), 'assets=', [a['id'] for a in r.get('assets',[])]
 - 引擎原生规则经 OpenObserve 转投：引擎 POST → OO 流 `data_alerts`（org `miyuan`）→ OO 告警 → 企微群。
 - 判据：观察窗口内，`data_alerts` 流里本批三条管线 id 的 **`event='failure'` 行数为 0**，且企微群无失败消息。
 - 覆盖边界：**只有打进这个 console 的 run**（`/workspace/pipelines/` 下的管线）。
-  **别把它读成「采集全链路的告警」**；64188 的卷未 seed 这版 alerts（§6）。
+  **别把它读成「采集全链路的告警」**；~~64188 的卷未 seed 这版 alerts~~（**订正 2026-10-10**：64188 卷已 seed 同版 `alerts.json`/`owners.json`（2026-10-06 落盘，容器 `OO_*` 三键齐备），本行旧文作废）。
+- ⚠️ `refreshed`/`recovery` 是 all-clear，**跳过冷却**、永远发出——见 `alerts.json` `_note`。
+- ⚠️ **投递腿现状（2026-10-10）**：OO「点火→发送」环节静默死（#542），本链的群侧送达由桥接 `oo-notify-bridge.sh` 承接（#538）；OO 升级修好后归还。
 - ⚠️ `refreshed`/`recovery` 是 all-clear，**跳过冷却**、永远发出——见 `alerts.json` `_note`。
 
 ---
@@ -396,7 +398,7 @@ print(r['status'], r.get('at'), 'assets=', [a['id'] for a in r.get('assets',[])]
 
 | 不覆盖 | 归谁 |
 |---|---|
-| **账套 64188** 的 L1 切换 | 独立决定（其卷未 seed 本版 `owners.json` / `alerts.json`；要不要切另议） |
+| **账套 64188** 的 L1 切换 | ~~独立决定（其卷未 seed 本版 `owners.json` / `alerts.json`；要不要切另议）~~ **已 seed（2026-10-06 落盘，实查 2026-10-10）**；L1 是否全面切换仍随各管线逐案 |
 | **Wave D 收口** | ✅ **已收口（2026-09-29）**：薄壳退役（仓内删 + **卷内删** + 调度条目删 + `alerts.json` 死规则删，见 #364）；**正典统一**（§1.1.7 波次表 + 首个生产案例、§1.5/§F.4 排障口径按形态分、§1.3.2 按类分，见 #363/#373）。⚠️ 仍**未做**：`run-retail-day.sh` 与 `duckle/common/*.json` 的**物理删除**——替代工具（`scripts/lemeng/diagnose.sh`，落 `/opt/lemeng-diagnose.sh`）已落地，删除批按 P6 的批序排在**指针改向**之后（本文件即指针改向的一处）。 |
 | **历史回填** | **#328**（`retail_order_line` 回填；硬前置是先迁读侧） |
 | **投递程序本体** | SOP §E（本文件只引用命令，不复述机制） |
