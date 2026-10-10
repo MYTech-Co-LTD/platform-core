@@ -699,6 +699,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | **问数偶发 `warehouse_transient`（或审计里冒出 `lake_race_retry`）** | 读湖撞写入的 **ETag 竞态已定案**（#452，§1.6 案例 19）：咽喉自动「识别 ETag 形状 → 退避 1s → **重试恰一次**」——重试成功对消费方**无感**，审计照写 `verdict='ok', reason='lake_race_retry'`（**判「重试长期是否够用」的唯一数据源**，#452 spec §3.5；频率在 `data.query_audit` 按 `reason` 数）；仍撞 ⇒ `reason='warehouse_transient'`（detail 保 DuckDB 原文）＝**活跃写入窗内持续冲突**——**别当服务 bug 排查**：先查触发方（物化 job / tick）是否与查询同窗（物化已错峰 `27 3` 避 tick `*/5`，见 §3） |
 | 改定义后没生效 | 检查**两步**是否都做了：re-seed 进 workspace 卷 + **重启容器**（卷内定义重启即读；改 env 键才需定向重建） |
 | **对账缺口「回填了还在」** | 回填 = checkpoint **重放**，修不了冻结缺口（§1.3.4）——走 heal 闭环：`recon-day-heal.sh`（旁路失效冻结条目 → 重抓 → 复验；§1.4.1，#528） |
+| 🔴 **close 管线白天别手动触发** | 引擎残留边界（#528 记录未修）：checkpoint 键不含 run 标识 ⇒ 白天手动跑 close 会把**当日已闭小时**的抓拍冻结、次日重放旧内容。close 只让**调度**跑（UTC `0 16`）；确需诊断用 `diagnose.sh`（只读），修数走 heal 旁路。引擎修了再解除本条 |
 
 #### 1.5.1 两个名词：**运行记录**（run record）与**回执**（receipt）—— 🔴 **别互换**（2026-09-29 收口）
 
@@ -721,6 +722,23 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 **wrapper 侧细节**（供历史形态排障）：接在 wrapper 的 `EXIT` trap（覆盖**所有**失败路径，且只有一份代码），
 **不接在管线的 `ctl.try`**（其配置未建模，靠猜属性名配它 = **静默不生效**）；缺 `WECOM_WEBHOOK_URL` 时打
 `NOTIFY_SKIPPED`（**不静默**）；**告警绝不改退出码**——别把判红变成绿。
+
+#### 1.5.2 发布面判据-节奏对齐表（#536，2026-10-10 实测定稿）
+
+> **给发布面/物化面写新鲜度容差前，先照此表核「采集滞后 + 发布周期」**——容差拍天数必踩
+> 「零点起结构性红到中午发布完成」（#534 首夜 ~200 条企微误报的根因）。「停更」≠「断流」，
+> 判红先核发布节奏再定级。
+
+| 发布面（平台 PG） | 数据来源 | 采集滞后 | 物化（dbt） | 发布（整批替换） | 探活项/容差 | 零点时面内最新 |
+|---|---|---|---|---|---|---|
+| `fct_retail_sale`（湖经语义层） | 零售 windows/tick/close（双账套） | 当日盘中即到（tick `*/5`） | UTC `27 3`（上海 11:27） | 语义物化同左 | ④ 上海今天−2 | T-1（close 上海 0 点收日） |
+| `data.dim_branch` / `data.dim_item` | dim l0 日更快照（UTC `0 2` / `0 11`） | T-0（当天快照） | 同左 | 维表发布 UTC `43 3`（上海 11:43） | ⑥ snapshot ≥ 上海今天−3 | T-2 |
+| `data.dim_item_price` | item_price l0（UTC `15 11`，R1 增量） | T-1 | 同左 | 维表发布同上 | （随 ⑥ 面，无独立项） | T-2 |
+| `data.dim_transfer_out` / `data.dim_wholesale_out` | transfer/wholesale l0（UTC `35 15` / `45 15`，采**昨日制单日**） | **T-1** | UTC `27 3` | 维表发布 UTC `43 3` | （随 ⑦ 面） | **T-3** |
+| `data.dim_settlement_order_line`（取价面） | 上两行的 staging 归一 | 同上 | 同上 | 同上 | **⑦ 时段感知：上海 13 点前 −3、后 −2** | **T-3**（结构下限） |
+
+> 要点：调出/批发链「23:35 采 T-1 → 次日 11:43 发布」意味着**取价面每天零点必然停在 T-3**——
+> 这不是故障，是节奏；判据必须容得下它。新增发布面时：先在本表加行，再定探活容差。
 
 ### 1.6 案例库（只增不改；**勘正错指针/错出处不算改**）
 
@@ -764,7 +782,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 乐檬零售明细（64188） | duckle | — | 同上 | 同上 | 同 3120 | **未落**（调度；**数据已落盘**——见 §2） | 自证 / 幂等 同 3120 / 独立通道 **✓ 逐分归零**（2026-10-05 真机 5 天 × 63 店；执行面 `scripts/lemeng/recon-preagg.sh`） / 跨系统 待回填 |
 | 乐檬门店维 / 商品维（双账套） | duckle | — | `lemeng/dim_branch`、`lemeng/dim_item` | `system_book=` + `snapshot=` | 日更（全量快照） | **duckle console** ×2（UTC `0 2 * * *` / `0 11 * * *`） | 首次真跑销账（**拒写湖**路径已验证；门店维见 `deploy/duckle/README.md` §9，商品维 2026-09-26 两账套 cron 真跑）——**不是「四层全过」** |
 | 乐檬价格批 / 门店商品应用价（双账套，#499/#481） | duckle | **首载走一次性脚本（H 例外）**：引擎 src.rest 响应体上限（into_string 编译期默认 **12.3MB 过 / 32.9MB 炸、不可配**）使单店即越限 ⇒ 管线无法承载 2 年窗全量；首载 = 探针测量产物直写湖（`scripts/lemeng/backfill-item-price-once.py`，已留档），日常增量走管线 | `lemeng/item_price` | `system_book=` + `bizday=`（**R1 增量模型**：行 = 价格变更事件，`last_edit_time` = 事件时间；staging 取每 key 最新物化现价） | 日更（请求侧增量水位 `incrementalField=last_edit_time`；响应 KB 级/天） | **duckle console** ×2（UTC `15 11 * * *`，与 dim.item 错峰） | 首载 ✓（64188 = 204,474 / 3120 = 734,682，写读对平）/ 日常增量首跑 ✓（**双账套均 ok**——3120 PAT 2026-10-08 晚已换发恢复，见 #499/#511）/ 幂等 ✓（同 key 覆盖写两次实证）/ 独立通道 ✓（发布表 vs 网关定点逐分平：蒙自01×22441 = 9.96/996）/ spec_rate 换算方向 ✓ 真机样本实证（礼盒 ÷3 公斤价、份装 ÷2 盒价；「鲜切」类 unit 同 rate=2 的 ~20 行语义留业务确认）/ 跨系统 待回填 |
-| 乐檬批发销售单（3120 单账套，#499/R3） | duckle | — | `lemeng/wholesale_out` | `system_book=` + `bizday=`（行=批发单商品行，`order_detail_price`=基本单位批发价——**按单结算，≠档案批发价**） | 日更（窗口=昨日制单日；`date_type=制单时间`——⚠️ 2026-10-08 组合反转实测订正（#513）：短词「制单/审核」被**静默忽略**返回全史，正确值恰是文档描述的「制单时间」；变更过滤参数后必须实证日期形状） | **duckle console**（UTC `45 15 * * *`，与调出单错峰） | 首跑 ✓（222 行落湖/staging 键唯一 PASS/发布 `data.dim_wholesale_out` 218 行，仅审核单）；历史批发单未回填（需要与否待业务确认） |
+| 乐檬批发销售单（3120 单账套，#499/R3） | duckle | — | `lemeng/wholesale_out` | `system_book=` + `bizday=`（行=批发单商品行，`order_detail_price`=基本单位批发价——**按单结算，≠档案批发价**） | 日更（窗口=昨日制单日；`date_type=制单时间`——⚠️ 2026-10-08 组合反转实测订正（#513）：短词「制单/审核」被**静默忽略**返回全史，正确值恰是文档描述的「制单时间」；变更过滤参数后必须实证日期形状） | **duckle console**（UTC `45 15 * * *`，与调出单错峰） | 首跑 ✓（222 行落湖/staging 键唯一 PASS/发布 `data.dim_wholesale_out` 218 行，仅审核单）；历史批发单未回填——**2026-10-10 裁决：待数据稳定后发起全管线补采（覆盖时间范围更广），不单点补**（届时按 §1.3 阶段 H 参数化 run 实测后沉淀；本行与 §2 对应行同步此裁决） |
 | 乐檬批发客户档案（3120，#516 段①） | duckle | **固定窗例外（不用标准翻页形态，2026-10-10）**：GET 裸码路径是零参数路由（openapi paths 无 parameters；`limit=3/200/1000` 恒返 707、`offset/page/pageSize/rows/start/keyword` 全无效），POST 三形态全断（文档前缀→`PAT接口路由未配置`/裸码→method not supported/MCP 代理→AGI HTTP 500）⇒ 无翻页可配。窗口跟随活档案（最晚建档 09-23、最晚编辑 10-09 均在窗内，非静态切片），已知 41 个 WO 客户 41/41 在窗内；落窗外风险由发布侧未映射大声红兜底（探针报告 `.superpowers/sdd/2026-10-10-500-lemeng-client/probe-report.md`） | `lemeng/client` | `system_book=` + `snapshot=` | 日更（全量快照，单页固定窗；UTC `55 15 * * *`，wholesale 后 / 03:27 dbt 前） | **duckle console** | 首跑 ✓（707 行落湖/staging 写读对平 707/已知 41 WO 客户 41/41 命中/同名抽样 5/5 命中 dim_branch；行数带守卫 <500 die 在位）；跨系统 待回填 |
 | 乐檬调拨 / 批发 / 退货 / 要货（5 源） | duckle（设计定稿） | — | `lemeng/transfer_out` 等 | `system_book=` + `bizday=` | 5min 增量 + 每小时全量（设计） | 未落 | — |
 | 抖音 `sku_daily` | 未定 | — | `douyin/sku_daily` | 月（**键名未定**） | 未定 | 未落 | 待接入 |
@@ -787,12 +805,16 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 乐檬 | `lemeng/retail_order_line/<主体>/<日>/<时>/all.parquet` | 账套（3120 熊喵 / 64188 品品甜） | **已落盘**（**双账套**——2026-09-28 订正：64188 已落；物化侧 64188 有 09-25～09-27 三天的 `fct_retail_sale` 行） | 新湖口径见 §1.7；旧前缀 `lemeng/retail_detail/…`：**所在桶已核实 = `lemeng-datasource`**（**不是**租户桶 `shanhai-data` —— 2026-09-26 在租户桶里逐对象 / 前缀都 404 是**对的**，旧文「所在桶待核实」到此销账），且**至今仍在被写**（2026-10-06 实测：生产方 `data-analysis`，跑在 `data.shanhaiyiguo.com`，每 **5 min** 一轮，**不在 openship 管辖内**，本仓与 openship 都停不掉它）⇒ **§1.3 阶段 I 的第 ③ 项（观察期）不满足 ⇒ 前缀不能下线**。本仓侧已于 2026-10-06 完成**仓内退役**（读它的 staging / `sources.yml` 声明 / `dbt_project.yml` 两个 var / 投递 lock 条目全删），见 §1.3 阶段 I 的订正块。**别默认它在租户桶里找。** |
 | 乐檬 | `lemeng/dim_branch`、`lemeng/dim_item`（`system_book=` + `snapshot=`） | 同上 | **已落盘**（双账套） | 全量快照日更；行粒度键含 `snapshot`（§1.1.2） |
 | 乐檬 | `lemeng/item_price`（`system_book=` + `bizday=`） | 账套 × 门店 × 商品（#499 价格批） | **已落盘**（双账套；64188 日常增量在跑，3120 待 PAT 恢复——见 #499） | R1 增量模型：行 = 变更事件；发布面 `data.dim_item_price`（#500 工单侧消费）；探针报告 `.superpowers/sdd/2026-10-08-481-lemeng-price-batch/probe-report.md` |
-| 乐檬 | `lemeng/wholesale_out`（`system_book=` + `bizday=`） | 账套 × 批发单 × 商品行（#499/R3） | **已落盘**（3120；64188 不在范围） | 行=批发单商品行；`order_detail_price`=基本单位批发价（按单结算，≠档案批发价）；发布 `data.dim_wholesale_out`（client_fid=批发客户键） |
+| 乐檬 | `lemeng/wholesale_out`（`system_book=` + `bizday=`） | 账套 × 批发单 × 商品行（#499/R3） | **已落盘**（3120；64188 不在范围） | 行=批发单商品行；`order_detail_price`=基本单位批发价（按单结算，≠档案批发价）；发布 `data.dim_wholesale_out`（client_fid=批发客户键）；历史未回填——**2026-10-10 裁决：待数据稳定后随全管线补采统一覆盖**（§1.7 同行） |
 | 乐檬 | `lemeng/client`（`system_book=` + `snapshot=`） | 账套 × 客户（#516 工单取价对照表） | **已落盘**（3120，2026-10-10 首跑） | 进销存批发客户档案（GET 零参数固定窗，例外见 §1.7）；**不是门店维**——发布侧只消费 client_fid+client_name 做对照，行不进 dim_branch（spec §5 单源分工）；探针报告 `.superpowers/sdd/2026-10-10-500-lemeng-client/probe-report.md` |
 | 乐檬 | 调拨 / 批发 / 退货 / 要货（`transfer_out` / `wholesale_order` / `wholesale_return` / `request_order`） | 3120（要货双账套） | **摸清源**（设计定稿，未落） | 见 `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` |
 | 抖音 | `douyin/sku_daily/<月>/all.parquet` | — | **摸清源**（待接入） | 分区键名未定；见 `contracts/README.md` §7 |
 
 > 「`_ops`」不是本仓目录约定（实测订正见 duckle/README.md §5）——桶内路径猜想，别再照抄。
+>
+> ⚠️ **数据集根部的 `_SCHEMA/v<N>.parquet` 是 schema 版本标记**（约定产物，非数据）——朴素 glob
+> 统计会把它计入文件数、且它的路径不带 `system_book=` 分区段（2026-10-10 审计实测，差点误报孤儿
+> 文件）。扫湖统计一律按分区段过滤或剔除 `_SCHEMA/`。
 
 ---
 
