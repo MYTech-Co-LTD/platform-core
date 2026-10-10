@@ -1,7 +1,7 @@
 // routes/registration-guest.test.ts — 访客面登记端点（真 PG，与既有 routes/*.test.ts 同栈）
 import { Hono } from 'hono'
 import { Pool } from 'pg'
-import type { Identity } from '@platform/sdk'
+import type { Identity, IdentityLinks } from '@platform/sdk'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { applyMigrations, ensureDimTables } from '../test-util'
 import { registerRegistrationGuest } from './registration-guest'
@@ -11,14 +11,27 @@ const OTHER_ORG = 'test-m3b1-other'
 const OPENID = 'openid-guest-1'
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 
-function app(openid = OPENID) {
+function app(openid = OPENID, identityLinks?: IdentityLinks) {
   const r = new Hono<{ Variables: { identity: Identity } }>()
   r.use('*', async (c, next) => {
     c.set('identity', { userId: openid, orgId: ORG, displayName: openid, scopes: [], hasScope: () => true })
     await next()
   })
-  registerRegistrationGuest(r, { pool })
+  registerRegistrationGuest(r, { pool, identityLinks })
   return r
+}
+
+/** IdentityLinks 全方法替身（#11：替身形状收严到 SDK 接口本身）；本文件只用到 matchOnApplication。 */
+function identityLinksStub(match: IdentityLinks['matchOnApplication']): IdentityLinks {
+  return {
+    matchOnApplication: match,
+    describeOwn: async () => null,
+    listForOrg: async () => [],
+    confirm: async () => {},
+    rebind: async () => {},
+    revoke: async () => {},
+    dispute: async () => false,
+  }
 }
 
 /** 两个 org 都要清：租户隔离用例会往 OTHER_ORG 插行，只清 ORG 会让残留跨轮累积。 */
@@ -191,6 +204,52 @@ describe('POST /guest/employee-approvals', () => {
       [OTHER_ORG, OPENID],
     )
     expect((await submit(app(), { name: '张三', phone: '138', storeCodes: [c1] })).status).toBe(201)
+  })
+
+  // ── Task 7：申请提交即触发 identityLinks.matchOnApplication（账户统一 §2）──────
+  it('★ 提交申请后调 matchOnApplication：org/provider/externalId/phone 原样透传、approvalId 带回插入的 id', async () => {
+    const [c1] = await storeCodes()
+    const calls: Parameters<IdentityLinks['matchOnApplication']>[0][] = []
+    const links = identityLinksStub(async (input) => {
+      calls.push(input)
+      return { state: 'draft' }
+    })
+    const res = await submit(app(OPENID, links), { name: '张三', phone: '13800138000', storeCodes: [c1] })
+    expect(res.status).toBe(201)
+    const { id } = (await res.json()) as { id: number }
+    expect(calls).toHaveLength(1) // 钩子真的被调了，不是 201 蒙混
+    expect(calls[0]).toEqual({
+      org: ORG,
+      provider: 'wechat-oa',
+      externalId: OPENID,
+      phone: '13800138000',
+      approvalId: id,
+    })
+    // approvalId 指向**库里刚插入的那条**申请，不只是响应自说自话
+    const row = (
+      await pool.query(`select id::int as id from aftersales.employee_approval where org=$1`, [ORG])
+    ).rows[0] as { id: number }
+    expect(row.id).toBe(id)
+  })
+
+  it('identityLinks 缺省（undefined）⇒ 照旧 201，不抛（向后兼容旧宿主/单测）', async () => {
+    const [c1] = await storeCodes()
+    const res = await submit(app(), { name: '张三', phone: '138', storeCodes: [c1] })
+    expect(res.status).toBe(201)
+  })
+
+  it('★ matchOnApplication 抛错 ⇒ 500 且申请已落库（匹配失败不回滚申请）', async () => {
+    const [c1] = await storeCodes()
+    const links = identityLinksStub(async () => {
+      throw new Error('match exploded')
+    })
+    const res = await submit(app(OPENID, links), { name: '张三', phone: '138', storeCodes: [c1] })
+    expect(res.status).toBe(500)
+    // 申请仍在：管理员可从 pending 队列补绑——这是「500 裸露」取舍的立论（不回滚）
+    const n = Number(
+      (await pool.query(`select count(*)::int n from aftersales.employee_approval where org=$1`, [ORG])).rows[0]!.n,
+    )
+    expect(n).toBe(1)
   })
 })
 

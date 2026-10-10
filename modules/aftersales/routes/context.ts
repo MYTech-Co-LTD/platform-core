@@ -6,7 +6,7 @@
 import type { Hono } from 'hono'
 import type { Pool } from 'pg'
 import { TENANT_STORAGE } from '@platform/sdk'
-import type { Identity, TenantStorageConfig } from '@platform/sdk'
+import type { Identity, IdentityLinks, TenantStorageConfig } from '@platform/sdk'
 
 /**
  * 模块路由的统一类型：identity 由宿主注入（模块自己【不写】门禁，spec/协议见 module-protocol）。
@@ -19,12 +19,12 @@ import type { Identity, TenantStorageConfig } from '@platform/sdk'
 export type ModuleHono = Hono<{ Variables: { identity: Identity; [TENANT_STORAGE]?: TenantStorageConfig } }>
 
 /**
- * 每个域注册时拿到的依赖。**只有 pool**：存储配置从装载期常量改成了**按请求**解析
- * （`c.get(TENANT_STORAGE)` ⇒ `storageCandidatesFor` / `storageResolverFor`），
- * 故 `ZosStorage | null` 这个装载期形状已经不存在了 —— 这正是步 4 要消灭的形态。
+ * 每个域注册时拿到的依赖。pool 之外再带宿主注入的 `identityLinks`（账户统一 Task 7）——
+ * **可缺省**：旧宿主/单测不注入，消费点必须显式判空（缺省 ≠ 半残对象，是明确跳过）。
  */
 export interface RouteCtx {
   pool: Pool
+  identityLinks?: IdentityLinks
 }
 
 /** 列表分页上界：模块自己的护栏，防止 size=99999 一次拉全表。 */

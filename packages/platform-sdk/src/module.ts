@@ -30,6 +30,12 @@ export interface Identity {
 /** 宿主递给 createRouter 的运行时上下文：绑定资源在此，模块不自己建连接。 */
 export interface ModuleContext {
   pool: Pool
+  /**
+   * 绑定服务（账户统一设计 §2，loader 装载期构造一次注入；Task 7）。
+   * 未注入 = 旧宿主/单测环境——模块必须容忍 undefined（用到它的调用点显式判空跳过），
+   * 这是「缺省不炸」的向后兼容契约，不是可选风格。
+   */
+  identityLinks?: IdentityLinks
 }
 
 /**
