@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.90.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.90.0...v0.90.1) - 2026-10-10
+- 【修复】data: 桥接 v1.1——信号源改轮询 data_alerts 流新行 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [4bb2f8a](https://github.com/MYTech-Co-LTD/platform-core/commit/4bb2f8a6a612f5a81b1cfa48f4a1a5531addc5d6))
+
+
 ## [0.90.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.89.0...v0.90.0) - 2026-10-10
 - 【新增】data: OO 告警桥接通知——元库新点火直发企微，过渡架构 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [9da39bc](https://github.com/MYTech-Co-LTD/platform-core/commit/9da39bcf8d976ce51934b44b6d084f8582b47aae))
 
