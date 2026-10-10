@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.97.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.96.0...v0.97.0) - 2026-10-10
+- 【新增】server: wechat-oa /silent 会话短路——入口即授权，SPA 只载一次 ([#561](https://github.com/MYTech-Co-LTD/platform-core/pull/561), [601f2a8](https://github.com/MYTech-Co-LTD/platform-core/commit/601f2a805e89a46d266ab47035a87bf6057523e0))
+
+
 ## [0.96.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.95.0...v0.96.0) - 2026-10-10
 - 【新增】openclaw: shanhai 企微问数 bot——compose 单元 A + data-query 插件（通道 C 部署面） ([#559](https://github.com/MYTech-Co-LTD/platform-core/pull/559), [249dba5](https://github.com/MYTech-Co-LTD/platform-core/commit/249dba5bb9e41d42493dd2e7c01c134afaa51c51))
 
