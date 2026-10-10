@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.90.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.89.0...v0.90.0) - 2026-10-10
+- 【新增】data: OO 告警桥接通知——元库新点火直发企微，过渡架构 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [9da39bc](https://github.com/MYTech-Co-LTD/platform-core/commit/9da39bcf8d976ce51934b44b6d084f8582b47aae))
+
+
 ## [0.89.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.88.5...v0.89.0) - 2026-10-10
 - 【新增】data: OO 存活看门狗 v1 + Phase 0 流布局定案与状态回写 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [fc90a39](https://github.com/MYTech-Co-LTD/platform-core/commit/fc90a39604097e2553c6ba9cf6eb70d906901023))
 
