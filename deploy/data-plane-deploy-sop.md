@@ -117,7 +117,7 @@ docker exec "$S" node -e "const n=require('net'),s=n.connect(5432,'pg_duckdb');s
 
 ```sh
 sh /opt/lemeng-wire-warehouse.sh            # 重做两条接线（幂等），末尾自动复查
-sh /opt/lemeng-wire-warehouse.sh --check    # **只读**复查：七条断言全过 exit 0，任一不过 exit 1
+sh /opt/lemeng-wire-warehouse.sh --check    # **只读**复查：八条断言全过 exit 0，任一不过 exit 1
 ```
 
 它把 P7 与 P8b **一起**做掉（两条都是「掉了不报错」，分开治理只会漏一条），

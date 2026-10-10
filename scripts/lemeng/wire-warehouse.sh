@@ -195,11 +195,30 @@ const c=new Client({connectionString:process.env.DATABASE_URL});
 "
 }
 
+# ⑧ 价目发布面非空 + 新鲜度（#538 Phase 1）：dim_item_price 面停更 ⇒ 价格批增量失败
+#    （如 2026-10-10 429 限流）无任何告警——独立于 ⑥（⑥ 只盯 dim_item，价目管线失败它看不见）。
+assert_item_price() {
+  printf '⑧ 价目发布面（data.dim_item_price 非空且 max(snapshot) ≥ 上海今天-3 天）—— '
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const c=new Client({connectionString:process.env.DATABASE_URL});
+(async()=>{try{
+  await c.connect();
+  const r=await c.query(\"select count(*)::int as n, coalesce(max(snapshot)::text,'') as maxday, ((now() at time zone 'Asia/Shanghai')::date - 3)::text as cutoff from data.dim_item_price\");
+  const {n,maxday,cutoff}=r.rows[0];
+  if(n<1){console.log('ERR 价目面 0 行（publish-dims 未跑或 item_price 增量连续失败？）');process.exit(1)}
+  if(maxday<cutoff){console.log('ERR 停更 max='+maxday+' < 容差线='+cutoff+'（item_price 增量或发布链失败？）');process.exit(1)}
+  console.log('OK rows='+n+' snapshot='+maxday+'（容差线 '+cutoff+'）');
+  await c.end();
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
 do_check() {
   # #538 Phase 1：逐断言产出判红行（probe 观测面）——执行与观测同行，判定逻辑不变。
   rc=0
   _vf=$(mktemp ${TMPDIR:-/tmp}/ww-verdicts.XXXXXX)
-  for _step in dns tcp query fresh metrics dims settlement_face; do
+  for _step in dns tcp query fresh metrics dims item_price settlement_face; do
     if _out=$(eval "assert_${_step}" 2>&1); then
       _verdict=OK
     else
@@ -212,7 +231,7 @@ do_check() {
       "$_step" "$_verdict" "$_detail" >> "$_vf"
   done
   if [ "$rc" -eq 0 ]; then
-    echo "wire-warehouse: OK（七条断言全过）"
+    echo "wire-warehouse: OK（八条断言全过）"
   else
     echo "wire-warehouse: FAILED（见上）—— 重做：sh $0" >&2
   fi
