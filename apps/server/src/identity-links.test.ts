@@ -1,4 +1,4 @@
-// identity-links.test.ts — platform.identity_link 宿主侧读写层（账户统一设计 §1.2）（TDD）
+// identity-links.test.ts — platform.identity_link 宿主侧读写层 + IdentityLinks 服务（账户统一设计 §1.2/§2）（TDD）
 //
 // 真 PG（同 auth-wechat-oa.test.ts 约定）+ runMigrations 全量迁移；未提供 DATABASE_URL 时
 // DB 用例整体跳过。覆盖存储契约六件：
@@ -11,17 +11,28 @@
 //  ⑥ mutateLink：revoke 记 revoked_by/revoked_at；**org 不对取不到**（null）；
 //     patch 只动带来的字段（换绑 casdoor_name 不碰 status）
 //
-// org 一例一号（o1/o2/o3/o4/o5）：identity_link 无 FK、org 是纯 text，用例间互不踩；
-// upsert 幂等 ⇒ 重复跑同一库结果不变。
+// IdentityLinks 服务（Task 6，设计稿 §2 三层供给的自动匹配 + 人工修正）：
+//  ⑦ maskPhone 纯函数：前 3 后 2 中间 ****；短串全遮；null 透传
+//  ⑧ matchOnApplication：唯一命中即绑（active+auto）/ 多命中 pending+candidates /
+//    未命中 ensureUser 建草稿+pending / 已 active 幂等不改行 / 手机号无效同未命中族
+//  ⑨ confirm/rebind/revoke/dispute：confirm/rebind 先 casdoor 验户（null ⇒ LINK_TARGET_MISSING）、
+//    状态机与 audit 同事务落行（action=identity.link.*，detail 带 id/from/to/actor）、
+//    **disputed 落 disputed_at**（DDL 该列此前无写通路——评审裁决必验）
+//  ⑩ describeOwn/listForOrg 视图：phone 只出掩码、createdAt ISO、status 过滤
+//
+// org 一例一号（存储层 o1/o2/o3/o4/o5、服务层 m1…）：identity_link 无 FK、org 是纯 text，
+// 用例间互不踩；upsert 幂等 ⇒ 重复跑同一库结果不变。
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { fileURLToPath } from 'node:url'
 import { runMigrations } from './migrate'
 import {
+  createIdentityLinks,
   findActiveLink,
   findLinkByExternal,
   listActiveExternalIds,
   listCandidatesByPhone,
+  maskPhone,
   mutateLink,
   normalizePhone,
   upsertLink,
@@ -37,6 +48,11 @@ describe('normalizePhone（纯函数）', () => {
     expect(normalizePhone('8613800001111')).toBe('13800001111') // 无分隔符的 86+11 位
     expect(normalizePhone('010-1234')).toBeNull() // 座机：去完非 11 位
     expect(normalizePhone('abc')).toBeNull() // 乱码：去完 0 位
+  })
+  it('maskPhone：前 3 后 2 中间 ****；短串全遮（规则会露光）；null 透传', () => {
+    expect(maskPhone('13800001111')).toBe('138****11')
+    expect(maskPhone(null)).toBeNull()
+    expect(maskPhone('abc')).toBe('****') // 长度 <6 时「前3后2」会把整串露出来 ⇒ 全遮
   })
 })
 
@@ -168,5 +184,213 @@ describe.skipIf(!dbUrl)('identity_link 读写层（真 PG）', () => {
     const rebound = await mutateLink(pool, 'o4', link.id, { casdoorName: 'u6-new' })
     expect(rebound?.casdoorName).toBe('u6-new')
     expect(rebound?.status).toBe('revoked')
+  })
+})
+
+// Casdoor 替身：形状照 casdoor-client.ts 实测（getUser 回 {name,roles,isAdmin}、不存在返 null；
+// ensureUser 只传 5 字段、建号副作用由替身记录）。服务只依赖这两个方法。
+function fakeCasdoorFor(ensured: string[], missingUsers: string[] = []) {
+  return (org: string) => ({
+    getUser: async (name: string) =>
+      missingUsers.includes(name) ? null : { name, roles: [] as string[], isAdmin: false },
+    ensureUser: async (name: string) => {
+      ensured.push(`${org}/${name}`)
+    },
+  })
+}
+
+describe.skipIf(!dbUrl)('IdentityLinks 服务（真 PG）', () => {
+  let pool: Pool
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: dbUrl })
+    await runMigrations(pool, 'platform', fileURLToPath(new URL('./migrations', import.meta.url)))
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  it('唯一命中 ⇒ active+bound_via=auto，返回 {state:"active"}', async () => {
+    // 置信池：m1 里 alice 的 active 行占住手机号
+    await upsertLink(pool, {
+      org: 'm1', provider: 'wechat-oa', externalId: 'w-a', casdoorName: 'alice',
+      phone: '13700001111', boundVia: 'manual', status: 'active', sourceApprovalId: null,
+    })
+    const ensured: string[] = []
+    const svc = createIdentityLinks(pool, fakeCasdoorFor(ensured))
+    const r = await svc.matchOnApplication({
+      org: 'm1', provider: 'wechat-oa', externalId: 'w-b', phone: '137 0000 1111', approvalId: 11,
+    })
+    expect(r).toEqual({ state: 'active' })
+    const row = await findLinkByExternal(pool, 'm1', 'wechat-oa', 'w-b')
+    expect(row?.status).toBe('active')
+    expect(row?.boundVia).toBe('auto')
+    expect(row?.casdoorName).toBe('alice')
+    expect(row?.phone).toBe('13700001111') // 归一后的强键落行
+    expect(row?.sourceApprovalId).toBe(11)
+    expect(ensured).toEqual([]) // 命中即绑，不建草稿
+  })
+
+  it('多命中 ⇒ pending + 返回 candidates（不绑）', async () => {
+    await upsertLink(pool, {
+      org: 'm2', provider: 'wechat-oa', externalId: 'w-c1', casdoorName: 'carol',
+      phone: '13600002222', boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    await upsertLink(pool, {
+      org: 'm2', provider: 'wecom', externalId: 'w-c2', casdoorName: 'cathy',
+      phone: '13600002222', boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    const svc = createIdentityLinks(pool, fakeCasdoorFor([]))
+    const r = await svc.matchOnApplication({
+      org: 'm2', provider: 'wechat-oa', externalId: 'w-n', phone: '13600002222', approvalId: 12,
+    })
+    expect(r.state).toBe('multi')
+    expect([...r.candidates!].sort()).toEqual(['carol', 'cathy'])
+    const row = await findLinkByExternal(pool, 'm2', 'wechat-oa', 'w-n')
+    expect(row?.status).toBe('pending')
+    expect(row?.boundVia).toBeNull() // 不自动绑
+    expect(row?.phone).toBe('13600002222')
+    expect(['carol', 'cathy']).toContain(row?.casdoorName) // 行上先落首个候选作机器建议
+  })
+
+  it('未命中 ⇒ ensureUser(externalId) 建草稿 + pending，返回 {state:"draft"}', async () => {
+    const ensured: string[] = []
+    const svc = createIdentityLinks(pool, fakeCasdoorFor(ensured))
+    const r = await svc.matchOnApplication({
+      org: 'm3', provider: 'wechat-oa', externalId: 'w-d', phone: '13500003333', approvalId: 13,
+    })
+    expect(r).toEqual({ state: 'draft' })
+    expect(ensured).toEqual(['m3/w-d']) // 草稿 Casdoor user 名 = externalId，建在**本 org**
+    const row = await findLinkByExternal(pool, 'm3', 'wechat-oa', 'w-d')
+    expect(row?.status).toBe('pending')
+    expect(row?.casdoorName).toBe('w-d')
+    expect(row?.boundVia).toBeNull()
+    expect(row?.sourceApprovalId).toBe(13)
+  })
+
+  it('已 active 的 openid 重复提交申请 ⇒ 幂等返回 {state:"active"}，不改行', async () => {
+    await upsertLink(pool, {
+      org: 'm4', provider: 'wechat-oa', externalId: 'w-e', casdoorName: 'eve',
+      phone: '13400004444', boundVia: 'auto', status: 'active', sourceApprovalId: 1,
+    })
+    const ensured: string[] = []
+    const svc = createIdentityLinks(pool, fakeCasdoorFor(ensured))
+    // 带不同的 phone/approvalId 再申请：active 是终态，不该被后续申请改写
+    const r = await svc.matchOnApplication({
+      org: 'm4', provider: 'wechat-oa', externalId: 'w-e', phone: '13300005555', approvalId: 99,
+    })
+    expect(r).toEqual({ state: 'active' })
+    const row = await findLinkByExternal(pool, 'm4', 'wechat-oa', 'w-e')
+    expect(row?.phone).toBe('13400004444')
+    expect(row?.sourceApprovalId).toBe(1)
+    expect(row?.casdoorName).toBe('eve')
+    expect(row?.boundVia).toBe('auto')
+    expect(ensured).toEqual([])
+  })
+
+  it('手机号无效 ⇒ 与未命中同族（draft+pending），phone 落 null', async () => {
+    const ensured: string[] = []
+    const svc = createIdentityLinks(pool, fakeCasdoorFor(ensured))
+    const r = await svc.matchOnApplication({
+      org: 'm5', provider: 'wechat-oa', externalId: 'w-f', phone: '010-1234', approvalId: 14,
+    })
+    expect(r).toEqual({ state: 'draft' })
+    expect(ensured).toEqual(['m5/w-f'])
+    const row = await findLinkByExternal(pool, 'm5', 'wechat-oa', 'w-f')
+    expect(row?.status).toBe('pending')
+    expect(row?.phone).toBeNull() // 无效手机号不落行（不能当强键用）
+  })
+
+  it('confirm/rebind/revoke/dispute 的状态机与 audit 落行（action=identity.link.*）', async () => {
+    const seeded = await upsertLink(pool, {
+      org: 'm6', provider: 'wechat-oa', externalId: 'w-g', casdoorName: 'grace',
+      phone: null, boundVia: null, status: 'pending', sourceApprovalId: 15,
+    })
+    const svc = createIdentityLinks(pool, fakeCasdoorFor([], ['ghost']))
+
+    // confirm/rebind 先验户：目标账户在 Casdoor 不存在 ⇒ LINK_TARGET_MISSING，行不动
+    await expect(svc.confirm('m6', seeded.id, 'ghost')).rejects.toThrow('LINK_TARGET_MISSING')
+    await expect(svc.rebind('m6', seeded.id, 'ghost')).rejects.toThrow('LINK_TARGET_MISSING')
+    expect((await findLinkByExternal(pool, 'm6', 'wechat-oa', 'w-g'))?.status).toBe('pending')
+    // 本 org 但 id 不存在 ⇒ LINK_NOT_FOUND
+    await expect(svc.confirm('m6', 999999999)).rejects.toThrow('LINK_NOT_FOUND')
+
+    // confirm（缺省目标 = 行上账户）⇒ active + manual
+    await svc.confirm('m6', seeded.id)
+    expect((await findLinkByExternal(pool, 'm6', 'wechat-oa', 'w-g'))?.status).toBe('active')
+    expect((await findLinkByExternal(pool, 'm6', 'wechat-oa', 'w-g'))?.boundVia).toBe('manual')
+
+    // rebind 换绑 ⇒ casdoorName 换人、仍 active
+    await svc.rebind('m6', seeded.id, 'heidi')
+    const rebound = await findLinkByExternal(pool, 'm6', 'wechat-oa', 'w-g')
+    expect(rebound?.casdoorName).toBe('heidi')
+    expect(rebound?.status).toBe('active')
+
+    // revoke ⇒ revoked + revoked_by/revoked_at
+    await svc.revoke('m6', seeded.id, 'boss1')
+    const revoked = await findLinkByExternal(pool, 'm6', 'wechat-oa', 'w-g')
+    expect(revoked?.status).toBe('revoked')
+
+    // dispute ⇒ disputed + **disputed_at 落值**（DDL 列此前无写通路——评审裁决项）
+    expect(await svc.dispute('m6', 'w-g')).toBe(true)
+    const disputed = await findLinkByExternal(pool, 'm6', 'wechat-oa', 'w-g')
+    expect(disputed?.status).toBe('disputed')
+    const { rows: disputedAt } = await pool.query<{ disputed_at: Date | null }>(
+      'select disputed_at from platform.identity_link where id = $1',
+      [seeded.id],
+    )
+    expect(disputedAt[0]!.disputed_at).not.toBeNull()
+
+    // 未绑定的 externalId ⇒ false，且不落 audit
+    expect(await svc.dispute('m6', 'no-such-openid')).toBe(false)
+
+    // audit 四行齐全且同事务语义可见：detail 带 id/from/to/actor；org 无 tenant 行 ⇒ tenant_id 为 null
+    const { rows: audits } = await pool.query<{
+      action: string
+      actor: string | null
+      detail: Record<string, unknown>
+      tenant_id: number | null
+    }>(
+      "select action, actor, detail, tenant_id from platform.audit"
+      + " where action like 'identity.link.%' and detail->>'org' = 'm6' order by id",
+    )
+    expect(audits.map((a) => a.action)).toEqual([
+      'identity.link.confirm', 'identity.link.rebind', 'identity.link.revoke', 'identity.link.dispute',
+    ])
+    expect(audits[0]!.detail).toMatchObject({ id: seeded.id, from: 'pending', to: 'active' })
+    expect(audits[1]!.detail).toMatchObject({ id: seeded.id, from: 'grace', to: 'heidi' })
+    expect(audits[2]!.detail).toMatchObject({ id: seeded.id, to: 'revoked' })
+    expect(audits[2]!.actor).toBe('boss1')
+    expect(audits[3]!.detail).toMatchObject({ id: seeded.id, from: 'revoked', to: 'disputed' })
+    expect(audits[3]!.actor).toBe('w-g') // 异议是本人提起：actor = 外部身份
+  })
+
+  it('describeOwn/listForOrg 出视图：phone 只出掩码、createdAt ISO、status 过滤', async () => {
+    await upsertLink(pool, {
+      org: 'm7', provider: 'wechat-oa', externalId: 'w-h', casdoorName: 'ivy',
+      phone: '13800001111', boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    await upsertLink(pool, {
+      org: 'm7', provider: 'wecom', externalId: 'w-i', casdoorName: 'jack',
+      phone: null, boundVia: null, status: 'pending', sourceApprovalId: null,
+    })
+    const svc = createIdentityLinks(pool, fakeCasdoorFor([]))
+    const own = await svc.describeOwn('m7', 'w-h')
+    expect(own).toMatchObject({
+      provider: 'wechat-oa', externalId: 'w-h', casdoorName: 'ivy',
+      status: 'active', phoneMasked: '138****11', boundVia: 'auto',
+    })
+    expect(typeof own!.createdAt).toBe('string')
+    expect(new Date(own!.createdAt).toString()).not.toBe('Invalid Date')
+    expect(own).not.toHaveProperty('phone') // 视图绝不外泄完整手机号
+    expect(await svc.describeOwn('m7', 'no-such')).toBeNull()
+
+    const all = await svc.listForOrg('m7')
+    expect(all.map((v) => v.externalId).sort()).toEqual(['w-h', 'w-i'])
+    expect(all.every((v) => typeof v.createdAt === 'string')).toBe(true)
+    const pendingOnly = await svc.listForOrg('m7', 'pending')
+    expect(pendingOnly.map((v) => v.externalId)).toEqual(['w-i'])
+    expect(await svc.listForOrg('m7', 'disputed')).toEqual([])
   })
 })
