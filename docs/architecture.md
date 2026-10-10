@@ -18,12 +18,13 @@
 
 ### 1.2 单机拓扑
 
-部署单元 A（`deploy/docker-compose.yml`）的两个服务：
+部署单元 A（`deploy/docker-compose.yml`）的服务：
 
 | 服务 | 说明 |
 |---|---|
 | `postgres` | `postgres:16-alpine`，卷 `pgdata` |
 | `server` | 由 `deploy/Dockerfile.server` 构建，**build context 必须是仓根**（Dockerfile 要 COPY `packages/` `apps/` `modules/` `scripts/`） |
+| `openclaw` | **问数 bot（通道 C）**：`ghcr.io/openclaw/openclaw`（digest 钉 v2026.9.9，spec §3），`profiles: ['openclaw']` 本机默认不起；**仅 platform-core-shanhai 项目在 openship 服务级启用**（mytech 项目保持 disabled）。企微智能机器人 WebSocket 长连接接入；插件 `deploy/openclaw/data-query-plugin/` 随仓只读挂载。设计 `docs/superpowers/specs/2026-10-10-shanhai-openclaw-wecom-design.md` |
 
 `server` 以 `service_healthy` 依赖 `postgres`——迁移在**启动期**跑，PG 未就绪即失败。
 

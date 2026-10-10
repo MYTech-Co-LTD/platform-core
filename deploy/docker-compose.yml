@@ -121,5 +121,48 @@ services:
       - '127.0.0.1:13010:13010'
     restart: unless-stopped
 
+  # 问数 bot（通道 C，spec 2026-10-10）：企微智能机器人 WebSocket 长连接 → 平台问数 API。
+  # **profiles 只是本机 docker compose 的默认启停语义，不是部署闸门**（同 mb-proxy 的教训）：
+  # openship 按自己的服务清单逐服务显式启停 ⇒「仅 shanhai 启用」的闸门 = openship 服务级
+  # enabled：platform-core-shanhai 项目置 true（先备 env），mytech platform-core 项目保持 false。
+  # 插件源码随仓只读挂载（部署即更新）；state（openclaw.json/workspace）走命名卷跨部署持久。
+  # 版本钉死见 spec §3（GitHub releases 为事实源；digest 绝不手改）。
+  openclaw:
+    image: ghcr.io/openclaw/openclaw@sha256:7f10d5cc975a90b65192eaa099454fe33ce8ce2390806c61c65cd868e9ef730d # v2026.9.9
+    profiles: ['openclaw']
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # 平台问数 API 基址：同 compose 网络走服务名（本地与生产一致，不出公网）。
+      DATA_API_BASE: http://server:13000/api/modules/data
+      # ── 状态/工作目录与网关：照 data-analysis 生产先例显式钉死，不依赖镜像默认值 ──
+      # 镜像 Env 里既无 HOME 也无 OPENCLAW_*，状态目录只靠 os.homedir() 兜底（未验证）；
+      # 而 Task 4 要按 OPENCLAW_CONFIG_PATH 去 seed openclaw.json，是压秤的假设 ⇒ 显式写死。
+      # ⚠️ 不在此列 OPENCLAW_GATEWAY_TOKEN：`${VAR:-}` 取的是 shell/项目 .env，取不到会**以空值
+      # 覆盖 env_file** 注入；token 一律由 env_file(../.env) 或 openship env 注入，不经这里。
+      HOME: /home/node
+      OPENCLAW_HOME: /home/node
+      OPENCLAW_STATE_DIR: /home/node/.openclaw
+      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+      OPENCLAW_GATEWAY_PORT: '18789'
+      OPENCLAW_GATEWAY_BIND: lan
+      OPENCLAW_GATEWAY_MODE: local
+    volumes:
+      - openclaw_state:/home/node/.openclaw
+      - ./openclaw/data-query-plugin:/opt/plugins/data-query-plugin:ro
+    ports:
+      # Gateway Control UI（运维用），只回环（B7 规则二）。
+      - '127.0.0.1:18789:18789'
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  openclaw_state:

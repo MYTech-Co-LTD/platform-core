@@ -449,11 +449,15 @@ git commit -m "feat(openclaw): data-query 插件——通道 C 薄转发（可�
 
 **Files:**
 - Modify: `deploy/docker-compose.yml`（`services:` 末尾加 `openclaw`；`volumes:` 加 `openclaw_state`）
-- Modify: `.env.example`（数据面声明区追加三行）
+- Modify: `.env.example`（数据面声明区追加「问数 bot」块：`DATA_API_BASE`/`WISHUB_API_KEY`/`WECOM_BOT_SECRET`/
+  `OPENCLAW_GATEWAY_TOKEN` 四键；均注释态，仅声明键名——B9 门禁只扫 `.ts/.tsx`，这几键不由 TS 代码读取，
+  故**可以**注释掉，但仍要声明，理由见该块注释）
 - Modify: `docs/architecture.md:20`（§1.2 服务表）
 
 **Interfaces:**
-- Consumes: Task 1 的插件目录（只读挂载 `../openclaw/data-query-plugin`）。
+- Consumes: Task 1 的插件目录（只读挂载 `./openclaw/data-query-plugin`——**相对 compose 文件所在的 `deploy/` 解析**，
+  即 `deploy/openclaw/data-query-plugin/`。写成 `../openclaw/…` 会解析到仓根 `openclaw/`（不存在），
+  且首段不以 `.` / `/` 开头会被 compose 当成**命名卷** ⇒ `refers to undefined volume` 直接起不来）。
 - Produces: compose 服务名 `openclaw`（Task 3/4 的 openship 操作对象）；容器 env `DATA_API_BASE`（默认 `http://server:13000/api/modules/data`）、`DATA_WECOM_CHANNEL_KEY`、`WISHUB_API_KEY`、`WECOM_BOT_SECRET`（后三者来自 env_file/openship 注入）。
 
 - [ ] **Step 1: `deploy/docker-compose.yml` 加服务（放在 `mb-proxy` 之后、顶层 `volumes:` 之前）**
@@ -474,9 +478,22 @@ git commit -m "feat(openclaw): data-query 插件——通道 C 薄转发（可�
     environment:
       # 平台问数 API 基址：同 compose 网络走服务名（本地与生产一致，不出公网）。
       DATA_API_BASE: http://server:13000/api/modules/data
+      # ── 状态/工作目录与网关：照 data-analysis 生产先例显式钉死，不依赖镜像默认值 ──
+      # 镜像 Env 里既无 HOME 也无 OPENCLAW_*，状态目录只靠 os.homedir() 兜底（未验证）；
+      # 而 Task 4 要按 OPENCLAW_CONFIG_PATH 去 seed openclaw.json，是压秤的假设 ⇒ 显式写死。
+      # ⚠️ 不在此列 OPENCLAW_GATEWAY_TOKEN：`${VAR:-}` 取的是 shell/项目 .env，取不到会**以空值
+      # 覆盖 env_file** 注入；token 一律由 env_file(../.env) 或 openship env 注入，不经这里。
+      HOME: /home/node
+      OPENCLAW_HOME: /home/node
+      OPENCLAW_STATE_DIR: /home/node/.openclaw
+      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+      OPENCLAW_GATEWAY_PORT: '18789'
+      OPENCLAW_GATEWAY_BIND: lan
+      OPENCLAW_GATEWAY_MODE: local
     volumes:
       - openclaw_state:/home/node/.openclaw
-      - ../openclaw/data-query-plugin:/opt/plugins/data-query-plugin:ro
+      - ./openclaw/data-query-plugin:/opt/plugins/data-query-plugin:ro
     ports:
       # Gateway Control UI（运维用），只回环（B7 规则二）。
       - '127.0.0.1:18789:18789'
@@ -507,6 +524,10 @@ volumes:
 # WISHUB_API_KEY=
 # 企微智能机器人 secret。取法：客户企微后台「管理工具→智能机器人→API模式创建→通过长连接配置」交付。
 # WECOM_BOT_SECRET=
+# Gateway Control UI token（非必设，不设则回环口无鉴权）。取法：openship env(isSecret) 生成。
+# ⚠️ 只走 env_file/openship 注入；不要在 compose 的 environment 里写 ${OPENCLAW_GATEWAY_TOKEN:-}
+# （取不到会以空值覆盖 env_file 注入）。
+# OPENCLAW_GATEWAY_TOKEN=
 ```
 
 （`DATA_WECOM_CHANNEL_KEY=` 已在 L50 声明，**不重复加**；openclaw 服务与 server 服务共用同值。）
@@ -527,16 +548,23 @@ docker compose -f deploy/docker-compose.yml config --quiet && echo COMPOSE-OK
 ```
 Expected: `check-compose: OK`、`check-env-example: OK`、`COMPOSE-OK`。
 
-- [ ] **Step 5: 本地起服务冒烟（镜像直拉；profiles 需显式启用）**
+- [x] **Step 5: 本地起服务冒烟 —— 本机跳过，改服务器侧验（编排者裁定，2026-10-10）**
 
+**跳过原因（实测）**：本机到 ghcr CDN 的**直连吞吐 31 KB/s** ⇒ 1261.8 MB 的 arm64 镜像约需 **11 小时**
+（本机 Docker Desktop 未配代理，守护进程直拉）；经本机代理 `127.0.0.1:7897` 为 2.39 MB/s（约 9 分钟），
+但为一次性冒烟改本机 Docker 守护进程代理配置不值得、也不该碰。**Step 5 不是代码正确性证据**——
+它只是「镜像能起 + healthz 200」的运行时确认，而这在 Task 3 的服务器侧 refresh 部署里会以**更硬的方式**
+验到（openship 部署产物 + 容器创建时间 > 镜像构建时间 + healthz 探活）。
+
+本地能做的替代验证（**已做**）：
 ```bash
-docker compose -f deploy/docker-compose.yml --profile openclaw up -d openclaw
-sleep 25 && docker compose -f deploy/docker-compose.yml ps openclaw
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18789/healthz
-docker compose -f deploy/docker-compose.yml --profile openclaw down
+npx tsx scripts/check-compose.mjs && npx tsx scripts/check-env-example.mjs   # 守卫
+docker compose -f deploy/docker-compose.yml --profile openclaw config --quiet  # 解析
+docker compose -f deploy/docker-compose.yml --profile openclaw config --format json  # 抽验解析结果
 ```
-Expected: 容器 `healthy`（空 state 冷启动，无 channel 配置属正常——只要 gateway 起来、healthz 200）。
-镜像拉取失败 → 检查本机网络/代理，**不要**改 digest。
+`config` 已确认：openclaw 的 `environment` 九个键齐全、`ports` 为 `127.0.0.1:18789`、
+挂载解析为绝对路径 `…/deploy/openclaw/data-query-plugin`（**证明短语法被当作 bind 而非命名卷**——
+即本 Step 修复的那个坑）。
 
 - [ ] **Step 6: 跑仓库级门禁面（本地近似）**
 
@@ -548,7 +576,8 @@ Expected: 全绿（本任务不触碰 TS 代码，这是防误伤的回归确认
 - [ ] **Step 7: 提交 + PR**
 
 ```bash
-git add deploy/docker-compose.yml .env.example docs/architecture.md
+git add deploy/docker-compose.yml .env.example docs/architecture.md \
+        docs/superpowers/plans/2026-10-10-shanhai-openclaw-wecom.md
 git commit -m "feat(openclaw): 单元 A 加 openclaw 服务（profiles 关闭，仅 shanhai 项目启用）"
 git push -u origin ylwzzs/openclaw-接入
 gh pr create --fill --body "Closes #<N>
