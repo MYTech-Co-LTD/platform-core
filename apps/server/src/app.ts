@@ -218,6 +218,9 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     casdoor: casdoorFactory,
     sessionSecret: config.sessionSecret,
     guestScopes: runtime.enabledGuestScopes,
+    // 正式态（wechat-oa 带 acct）的 ext 绑定集合重算（账户统一 Task 5）：与 wechat-oa 路由
+    // 同源 identity-links；解析器抛错只降 ext（scopes 照刷、ext 沿用旧值），见中间件实现处
+    boundExternalIds: (org, casdoorName) => listActiveExternalIds(pool, org, casdoorName),
   }))
 
   // ⑥.5 数据问数两通道的鉴权（**必须在 sessionMiddleware 之后、runtime.mount 之前**）：

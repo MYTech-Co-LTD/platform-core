@@ -14,6 +14,17 @@ export interface Identity {
   displayName: string
   scopes: string[]
   hasScope(code: string): boolean
+  /**
+   * 正式态账户身份（账户统一设计 §3.1）：Casdoor name（会话载荷 `acct` 字段）。
+   * 中间态/内部会话不设（undefined）——旧形状会话的 Identity 线上形状不变。
+   */
+  accountName?: string
+  /**
+   * 绑定集合（账户统一设计 §4.3）：该账户全部 active 绑定的 external_id（openid/企微号）。
+   * 模块据此做「我的工单」等多绑收窄（`submitter_openid ∈ 集合`）；随 scopes 刷新机制同步刷新。
+   * 中间态/内部会话不设（undefined）。顺序不作承诺——消费方按集合语义用，不按下标。
+   */
+  boundExternalIds?: string[]
 }
 
 /** 宿主递给 createRouter 的运行时上下文：绑定资源在此，模块不自己建连接。 */
