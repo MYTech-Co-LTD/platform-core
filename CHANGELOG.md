@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.93.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.93.0...v0.93.1) - 2026-10-10
+- 【修复】data: 对账脚本字段偏移与 DEST 比对修正 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [780340d](https://github.com/MYTech-Co-LTD/platform-core/commit/780340d7ba16768e61059ac13120e65e41cc1de4))
+
+
 ## [0.93.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.92.0...v0.93.0) - 2026-10-10
 - 【新增】data: OO 预警配置漂移对账——登记清单 + 审计脚本 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [a52580b](https://github.com/MYTech-Co-LTD/platform-core/commit/a52580ba531c494d69d0949f594fc1ea542f9887))
 
