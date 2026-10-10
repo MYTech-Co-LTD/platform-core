@@ -125,10 +125,19 @@ services:
   # **profiles 只是本机 docker compose 的默认启停语义，不是部署闸门**（同 mb-proxy 的教训）：
   # openship 按自己的服务清单逐服务显式启停 ⇒「仅 shanhai 启用」的闸门 = openship 服务级
   # enabled：platform-core-shanhai 项目置 true（先备 env），mytech platform-core 项目保持 false。
-  # 插件源码随仓只读挂载（部署即更新）；state（openclaw.json/workspace）走命名卷跨部署持久。
-  # 版本钉死见 spec §3（GitHub releases 为事实源；digest 绝不手改）。
+  # 插件源码**构建期 COPY 进自建镜像**（部署即插件更新）；state（openclaw.json/workspace）走命名卷跨部署持久。
+  # 版本钉死见 spec §3（GitHub releases 为事实源；digest 绝不手改——现在钉在 Dockerfile.openclaw 的 FROM 上）。
+  #
+  # ⚠️ **不能用相对 bind 挂载把插件送进来**（2026-10-11 实测，从 `image:` 改回 `build:`）：
+  #    openship services 模式按 **Docker API 逐服务建容器、不解析相对路径** ⇒
+  #    `./openclaw/data-query-plugin:/opt/plugins/data-query-plugin:ro` 被当**命名卷名**，
+  #    建容器即 400 `includes invalid characters for a local volume name … use absolute path`。
+  #    同一根因的成例与替代解法见 `deploy/data-plane-deploy-sop.md` 坑 9。**别再把这条改回 bind。**
   openclaw:
-    image: ghcr.io/openclaw/openclaw@sha256:7f10d5cc975a90b65192eaa099454fe33ce8ce2390806c61c65cd868e9ef730d # v2026.9.9
+    build:
+      # context 与 server 同：仓根（openship 相对 `rootDirectory=deploy` 解析 `..`，见 openship-adopt.md §2）
+      context: ..
+      dockerfile: deploy/Dockerfile.openclaw
     profiles: ['openclaw']
     env_file:
       - path: ../.env
@@ -150,8 +159,8 @@ services:
       OPENCLAW_GATEWAY_BIND: lan
       OPENCLAW_GATEWAY_MODE: local
     volumes:
+      # 只有 state 卷（命名卷，openship 认）。插件源码不走挂载——已 COPY 进镜像（见文件头与该服务注释）。
       - openclaw_state:/home/node/.openclaw
-      - ./openclaw/data-query-plugin:/opt/plugins/data-query-plugin:ro
     ports:
       # Gateway Control UI（运维用），只回环（B7 规则二）。
       - '127.0.0.1:18789:18789'

@@ -49,6 +49,27 @@
 **④ `WECOM_BOT_SECRET` 推迟到 T6 注入。** 客户交付前无值，写空值等同「清空」且会让
 openclaw.json 的 `${WECOM_BOT_SECRET}` 插值解析成空串；T6 Step 1 拿到后一次性注入。
 
+**⑤ 插件投递：compose 相对 bind 挂载 → `build:` 自建镜像（2026-10-11 实测订正）。**
+原设计（本计划 Task 2 Step 1 的 YAML 与 spec §4）让插件走
+`./openclaw/data-query-plugin:/opt/plugins/data-query-plugin:ro`。**实测部署失败**：
+```
+Deploy failed: (HTTP code 400) bad parameter - create ./openclaw/data-query-plugin:
+"." includes invalid characters for a local volume name, only "[a-zA-Z0-9][a-zA-Z0-9_.-]" are
+allowed. If you intended to pass a host directory, use absolute path
+```
+根因：**openship services 模式按 Docker API 逐服务建容器、不解析相对路径**（build 日志里是
+`Creating service container openship-platform-core-shanhai-openclaw from <image>` 这类逐服务
+Docker API 调用，不是 `docker compose up`）⇒ 相对源串原样传给 Docker，被当**命名卷名**。
+同一根因的**成例**：`deploy/data-plane-deploy-sop.md` 坑 9（`../duckle`/`../dbt` 同样被判卷名），
+那里的解法是「服务器放绝对路径持久检出 + 服务级挂载写绝对路径」。
+**本仓取 `build:` 而非那条解法**：数据面必须维护宿主持久同步面（pipelines/dbt 要在宿主就地编辑、
+写盘），而本插件是**纯仓内只读源码**（不写盘、无用户数据）⇒ 构建期 COPY 进自建镜像让**仓保持唯一
+事实源**、不引入 drift 面；且同仓 `server`/`mb-proxy` 已是 build 服务，在 openship 下部署正常
+（`build.context: ..` 相对 `rootDirectory=deploy` 解析，见 `deploy/openship-adopt.md` §2）。
+**容器内路径 `/opt/plugins/data-query-plugin` 逐字不变** ⇒ Task 4 的注册命令不受影响。
+**连带影响**：openclaw 不再是 `image:` 服务 ⇒ 插件改动要靠**真部署（构建）**生效，
+`refresh`/env-only 重建**不重建镜像**；Task 3 Step 3 的措辞已按此订正。
+
 ---
 
 ## 开工前置（编排者做）
@@ -76,7 +97,8 @@ plan: docs/superpowers/plans/2026-10-10-shanhai-openclaw-wecom.md
 | `deploy/openclaw/data-query-plugin/package.json` | 包声明（`openclaw.extensions: ["./index.js"]`） | T1 |
 | `deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md` | 教模型：先 list_metrics 再 query_data + 汇报纪律 | T1 |
 | `deploy/openclaw/data-query-plugin/README.md` | 插件说明 + 运维指针 | T1 |
-| `deploy/docker-compose.yml` | 新增 `openclaw` 服务（profiles 关闭）+ `openclaw_state` 卷 | T2 |
+| `deploy/docker-compose.yml` | 新增 `openclaw` 服务（**`build:` 自建镜像** + profiles 关闭）+ `openclaw_state` 卷 | T2 |
+| `deploy/Dockerfile.openclaw` | **插件投递面（实施订正⑤）**：`FROM` 官方镜像钉 digest + 构建期 `COPY` 插件到 `/opt/plugins/data-query-plugin` | T2 |
 | `.env.example` | 补 `DATA_API_BASE` / `WECOM_BOT_SECRET` / `OPENCLAW_GATEWAY_TOKEN` 声明（`WISHUB_API_KEY` 已并入 `DATA_LLM_API_KEY`，见实施订正①） | T2 |
 | `docs/architecture.md` | §1.2 单元 A 服务表加 `openclaw` 行 | T2 |
 
@@ -447,9 +469,9 @@ node --test lib.test.js
 
 ## 部署
 
-插件源码随仓分发：compose 把本目录只读挂载到容器 `/opt/plugins/data-query-plugin`，
-容器内 `openclaw plugins install -l /opt/plugins/data-query-plugin` 一次性注册（写进 state 卷的
-openclaw.json，跨部署持久）；部署更新代码后重启容器即生效。
+插件源码随仓分发：**构建期 COPY 进自建镜像**（`deploy/Dockerfile.openclaw`，见实施订正⑤），
+容器内落到 `/opt/plugins/data-query-plugin`，由 `openclaw plugins install -l /opt/plugins/data-query-plugin`
+一次性注册（写进 state 卷的 openclaw.json，跨部署持久）；插件改动随**部署（构建新镜像）**生效。
 初始化步骤见计划 Task 4（openship exec 操作）。
 ```
 
@@ -470,7 +492,8 @@ git commit -m "feat(openclaw): data-query 插件——通道 C 薄转发（可�
 ### Task 2: compose 服务 + env 模板 + 架构文档（同 PR）
 
 **Files:**
-- Modify: `deploy/docker-compose.yml`（`services:` 末尾加 `openclaw`；`volumes:` 加 `openclaw_state`）
+- Modify: `deploy/docker-compose.yml`（`services:` 末尾加 `openclaw`——**`build:` 自建镜像**；`volumes:` 加 `openclaw_state`）
+- Create: `deploy/Dockerfile.openclaw`（`FROM` 官方镜像钉 digest + 构建期 `COPY` 插件；见实施订正⑤）
 - Modify: `.env.example`（数据面声明区追加「问数 bot」块：`DATA_API_BASE`/`WECOM_BOT_SECRET`/
   `OPENCLAW_GATEWAY_TOKEN` 三键；均注释态，仅声明键名——B9 门禁只扫 `.ts/.tsx`，这几键不由 TS 代码读取，
   故**可以**注释掉，但仍要声明，理由见该块注释。**LLM key 不新增**：复用上方已声明的
@@ -478,9 +501,8 @@ git commit -m "feat(openclaw): data-query 插件——通道 C 薄转发（可�
 - Modify: `docs/architecture.md:20`（§1.2 服务表）
 
 **Interfaces:**
-- Consumes: Task 1 的插件目录（只读挂载 `./openclaw/data-query-plugin`——**相对 compose 文件所在的 `deploy/` 解析**，
-  即 `deploy/openclaw/data-query-plugin/`。写成 `../openclaw/…` 会解析到仓根 `openclaw/`（不存在），
-  且首段不以 `.` / `/` 开头会被 compose 当成**命名卷** ⇒ `refers to undefined volume` 直接起不来）。
+- Consumes: Task 1 的插件目录 `deploy/openclaw/data-query-plugin/`——**构建期 `COPY` 进镜像**（`build.context: ..`
+  即仓根，与 `server` 服务同；**不是** bind 挂载，见实施订正⑤：openship services 模式把相对路径当卷名）。
 - Produces: compose 服务名 `openclaw`（Task 3/4 的 openship 操作对象）；容器 env `DATA_API_BASE`（默认 `http://server:13000/api/modules/data`）、`DATA_WECOM_CHANNEL_KEY`、`DATA_LLM_API_KEY`、`WECOM_BOT_SECRET`（后三者来自 env_file/openship 注入）。
 
 - [ ] **Step 1: `deploy/docker-compose.yml` 加服务（放在 `mb-proxy` 之后、顶层 `volumes:` 之前）**
@@ -490,10 +512,13 @@ git commit -m "feat(openclaw): data-query 插件——通道 C 薄转发（可�
   # **profiles 只是本机 docker compose 的默认启停语义，不是部署闸门**（同 mb-proxy 的教训）：
   # openship 按自己的服务清单逐服务显式启停 ⇒「仅 shanhai 启用」的闸门 = openship 服务级
   # enabled：platform-core-shanhai 项目置 true（先备 env），mytech platform-core 项目保持 false。
-  # 插件源码随仓只读挂载（部署即更新）；state（openclaw.json/workspace）走命名卷跨部署持久。
-  # 版本钉死见 spec §3（GitHub releases 为事实源；digest 绝不手改）。
+  # 插件源码**构建期 COPY 进自建镜像**（部署即插件更新）；state（openclaw.json/workspace）走命名卷跨部署持久。
+  # 版本钉死见 spec §3（GitHub releases 为事实源；digest 绝不手改——现钉在 Dockerfile.openclaw 的 FROM 上）。
+  # ⚠️ 不能用相对 bind 送插件：openship services 模式不解析相对路径（当卷名 ⇒ 建容器 400），见实施订正⑤。
   openclaw:
-    image: ghcr.io/openclaw/openclaw@sha256:7f10d5cc975a90b65192eaa099454fe33ce8ce2390806c61c65cd868e9ef730d # v2026.9.9
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.openclaw
     profiles: ['openclaw']
     env_file:
       - path: ../.env
@@ -515,8 +540,8 @@ git commit -m "feat(openclaw): data-query 插件——通道 C 薄转发（可�
       OPENCLAW_GATEWAY_BIND: lan
       OPENCLAW_GATEWAY_MODE: local
     volumes:
+      # 只有 state 卷（插件源码已 COPY 进镜像，不走挂载——见实施订正⑤）。
       - openclaw_state:/home/node/.openclaw
-      - ./openclaw/data-query-plugin:/opt/plugins/data-query-plugin:ro
     ports:
       # Gateway Control UI（运维用），只回环（B7 规则二）。
       - '127.0.0.1:18789:18789'
@@ -560,7 +585,7 @@ volumes:
 `部署单元 A（deploy/docker-compose.yml）的两个服务：` 改为 `部署单元 A（deploy/docker-compose.yml）的服务：`，表格追加一行：
 
 ```markdown
-| `openclaw` | **问数 bot（通道 C）**：`ghcr.io/openclaw/openclaw`（digest 钉 v2026.9.9，spec §3），`profiles: ['openclaw']` 本机默认不起；**仅 platform-core-shanhai 项目在 openship 服务级启用**（mytech 项目保持 disabled）。企微智能机器人 WebSocket 长连接接入；插件 `deploy/openclaw/data-query-plugin/` 随仓只读挂载。设计 `docs/superpowers/specs/2026-10-10-shanhai-openclaw-wecom-design.md` |
+| `openclaw` | **问数 bot（通道 C）**：由 `deploy/Dockerfile.openclaw` 构建（**基底** `ghcr.io/openclaw/openclaw` digest 钉 v2026.9.9，spec §3；**构建期 COPY** 插件 `deploy/openclaw/data-query-plugin/`），`profiles: ['openclaw']` 本机默认不起；**仅 platform-core-shanhai 项目在 openship 服务级启用**（mytech 项目保持 disabled）。企微智能机器人 WebSocket 长连接接入。⚠️ 插件**不能**用相对 bind 挂载送进来——openship services 模式按 Docker API 建容器、不解析相对路径（`./openclaw/…` 被当卷名，400），成例与替代解法见 `deploy/data-plane-deploy-sop.md` 坑 9。设计 `docs/superpowers/specs/2026-10-10-shanhai-openclaw-wecom-design.md` |
 ```
 
 - [ ] **Step 4: 跑守卫 + compose 校验**
@@ -586,8 +611,10 @@ docker compose -f deploy/docker-compose.yml --profile openclaw config --quiet  #
 docker compose -f deploy/docker-compose.yml --profile openclaw config --format json  # 抽验解析结果
 ```
 `config` 已确认：openclaw 的 `environment` 九个键齐全、`ports` 为 `127.0.0.1:18789`、
-挂载解析为绝对路径 `…/deploy/openclaw/data-query-plugin`（**证明短语法被当作 bind 而非命名卷**——
-即本 Step 修复的那个坑）。
+插件投递走 **`build.context: ..`+`Dockerfile.openclaw`**（本机 `docker compose config` 会把相对 context
+解析成绝对路径 `…/`——注意这只证明**本地 compose CLI 的解析**，**不能**证明 openship 侧可行：
+openship services 模式按 Docker API 逐服务建容器、**不解析相对路径**，正是相对 bind 在服务器上 400 的根因；
+故本任务的真证据是 Task 3 的服务器侧部署产物，不是这条本地 `config`）。
 
 - [ ] **Step 6: 跑仓库级门禁面（本地近似）**
 
@@ -599,7 +626,8 @@ Expected: 全绿（本任务不触碰 TS 代码，这是防误伤的回归确认
 - [ ] **Step 7: 提交 + PR**
 
 ```bash
-git add deploy/docker-compose.yml .env.example docs/architecture.md \
+git add deploy/docker-compose.yml deploy/Dockerfile.openclaw deploy/openclaw/data-query-plugin \
+        .env.example docs/architecture.md \
         docs/superpowers/plans/2026-10-10-shanhai-openclaw-wecom.md
 git commit -m "feat(openclaw): 单元 A 加 openclaw 服务（profiles 关闭，仅 shanhai 项目启用）"
 git push -u origin ylwzzs/openclaw-接入
@@ -641,9 +669,14 @@ openship MCP：platform-core-shanhai（proj_GLXUtN2bJ92DpPrS）→
   `DATA_LLM_API_KEY`（**`sourceId: env_Hhk3U8qYOqUaCJIA` 引用项目级同一条，不带值**）
 - `WECOM_BOT_SECRET` **此处不写**（实施订正④：空值等同清空 ⇒ 推迟到 T6 Step 1 客户交付后注入）
 
-- [ ] **Step 3: shanhai 项目启用 openclaw 并 env-only refresh**
+- [ ] **Step 3: shanhai 项目启用 openclaw 并真正构建部署**
 
-`patch_projects_by_id_services_by_serviceId`（openclaw 行，enabled: true）→ 触发 refresh 部署（`post_deployments_build_access` 带 `refresh: true` + `serviceIds: [server, openclaw]`，env-only 重建秒级）。
+`patch_projects_by_id_services_by_serviceId`（openclaw 行，enabled: true）→ 触发一次**带构建的部署**。
+
+⚠️ **实施订正⑤ 的连带后果**：openclaw 已是 **`build:` 服务**（不再 `image:`），插件源码靠构建期 COPY 进镜像
+⇒ **`refresh: true`（env-only 重建）不重建镜像**，它**不会**把插件送进去；必须走**普通部署**（`post_deployments_build_access`，不带 `refresh`）让 openship 跑 docker build。server 侧 `DATA_WECOM_CHANNEL_KEY` 的消费只是一条 env，同一次构建部署里一并生效（server 镜像内容未变，重建无害）。
+
+首次带新 build 服务的部署循 `deploy/data-plane-deploy-sop.md` 坑 7：**可能先报 partial failure**（openship 首部署忽略 services_sync、按 compose 原始读），处置 = **keep → sync 服务清单 → redeploy**，**不是回滚**。坑 10：**每次部署后回读 openclaw 服务行的 env 形状**（部署可能重写 service env，丢 secret ⇒ crash loop）。
 
 - [ ] **Step 4: 部署后验证（deploy-verify 规则：进容器验，不信探活）**
 

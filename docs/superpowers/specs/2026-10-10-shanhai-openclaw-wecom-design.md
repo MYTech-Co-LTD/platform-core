@@ -62,8 +62,9 @@ native plugin 把可信企微 userid 送到平台问数 API，走既有授权核
 
 | 改动 | 说明 |
 |---|---|
-| `deploy/docker-compose.yml` | 单元 A 新增 `openclaw` 服务：image 钉 digest；state 卷持久（`openclaw/state`）；gateway 端口只回环 `127.0.0.1:18789`（B7 守卫）；`restart: unless-stopped`；healthcheck 按镜像能力实施时定 |
-| `deploy/openclaw/data-query-plugin/` | **问数插件源码随仓分发**（compose 挂载进容器，部署即插件更新，一次性 `plugins install -l` 注册）。零依赖（不用 typebox，纯 JSON schema，循 data-analysis 先例）。两个工具：<br>• `list_metrics` → `GET /api/modules/data/metrics`（同头）——回当前用户可见词表<br>• `query_data` → `POST /api/modules/data/query`（同头）——`{metricId, args}`；错误映射：401 `WECOM_USER_NOT_LINKED`→回扫码登录指引文案；403→「无权限或词表外」；502→「数据仓库暂不可用」<br>+ `openclaw.plugin.json`（manifest：factory tool 全局激活）+ `SKILL.md` + `README.md` |
+| `deploy/docker-compose.yml` | 单元 A 新增 `openclaw` 服务：**`build:` 自建镜像**（见下行）；state 卷持久（`openclaw_state`）；gateway 端口只回环 `127.0.0.1:18789`（B7 守卫）；`restart: unless-stopped`；healthcheck 按镜像能力实施时定 |
+| `deploy/Dockerfile.openclaw` | **插件投递面（实施订正 2026-10-11）**：`FROM ghcr.io/openclaw/openclaw@sha256:7f10d5cc…`（digest 钉 v2026.9.9）+ 构建期 `COPY deploy/openclaw/data-query-plugin /opt/plugins/data-query-plugin`。**原设计写的是「compose 相对 bind 只读挂载」，实测不可行**：openship services 模式按 Docker API 逐服务建容器、**不解析相对路径** ⇒ `./openclaw/…` 被当命名卷名，建容器即 400 `includes invalid characters for a local volume name`（同根因成例：`deploy/data-plane-deploy-sop.md` 坑 9）。容器内路径逐字不变 ⇒ Task 4 的注册命令不受影响。<br>**取 build 而非「宿主持久检出 + 服务级绝对路径挂载」**：后者要维护宿主侧同步面（数据面必须，因为 pipelines/dbt 要在宿主就地编辑），而本插件是**纯仓内只读源码**，构建期 COPY 让仓保持唯一事实源、且无 drift 面；同仓 `server`/`mb-proxy` 已是 build 服务，openship 下部署正常。 |
+| `deploy/openclaw/data-query-plugin/` | **问数插件源码随仓分发**（**构建期 COPY 进自建镜像**，部署即插件更新，一次性 `plugins install -l` 注册）。零依赖（不用 typebox，纯 JSON schema，循 data-analysis 先例）。两个工具：<br>• `list_metrics` → `GET /api/modules/data/metrics`（同头）——回当前用户可见词表<br>• `query_data` → `POST /api/modules/data/query`（同头）——`{metricId, args}`；错误映射：401 `WECOM_USER_NOT_LINKED`→回扫码登录指引文案；403→「无权限或词表外」；502→「数据仓库暂不可用」<br>+ `openclaw.plugin.json`（manifest：factory tool 全局激活）+ `SKILL.md` + `README.md` |
 | `docs/architecture.md` | 架构先行：部署单元 A 组件清单补 OpenClaw 条目（语义：**仅 platform-core-shanhai 项目启用，mytech 平台核项目显式 disabled**） |
 | `.env.example` | B9：`DATA_WECOM_CHANNEL_KEY`（若未声明）/ `WECOM_BOT_SECRET` / `OPENCLAW_GATEWAY_TOKEN` 补占位声明。**LLM key 不新增**——复用已在声明的 `DATA_LLM_API_KEY`（见 §11 #6 实施订正） |
 
