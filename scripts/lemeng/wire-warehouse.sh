@@ -217,13 +217,17 @@ do_check() {
     echo "wire-warehouse: FAILED（见上）—— 重做：sh $0" >&2
   fi
   # 判红行投递（best-effort：观测面降级绝不改探活判定；OO 挂时由看门狗叫，不在这里重复报警）
+  # ⚠️ 逐行 POST：本 OO 构建的 _json 端点拒绝多行 NDJSON 批（trailing characters at line 2，#538 实测）
   if [ -s "$_vf" ] && [ -r /etc/openobserve-ingest.env ]; then
     . /etc/openobserve-ingest.env
-    _pr=$(curl -sS -m 10 -X POST "${OO_BASE}/api/${OO_ORG}/data_plane_probes/_json" \
-      -H "Authorization: Basic ${OO_AUTH}" -H 'Content-Type: application/json' \
-      --data-binary @"$_vf" 2>&1) \
-      && echo "$_pr" | grep -q '"successful"' \
-      || echo 'WW_NOTE: 判红行投递失败（观测面降级，不影响探活判定）' >&2
+    while IFS= read -r _row; do
+      [ -n "$_row" ] || continue
+      _pr=$(curl -sS -m 10 -X POST "${OO_BASE}/api/${OO_ORG}/data_plane_probes/_json" \
+        -H "Authorization: Basic ${OO_AUTH}" -H 'Content-Type: application/json' \
+        -d "$_row" 2>&1) \
+        && printf '%s' "$_pr" | grep -q '"successful":1' \
+        || echo 'WW_NOTE: 判红行投递失败（观测面降级，不影响探活判定）' >&2
+    done < "$_vf"
   fi
   rm -f "$_vf"
   return "$rc"
