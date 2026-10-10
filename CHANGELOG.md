@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.95.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.94.0...v0.95.0) - 2026-10-10
+- 【新增】data: 探活⑧——dim_item_price 面新鲜度断言，补价目管线失败告警盲区 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [f8413c2](https://github.com/MYTech-Co-LTD/platform-core/commit/f8413c25d596252345295fefc0d3ab56c63c8b3f))
+
+
 ## [0.94.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.93.1...v0.94.0) - 2026-10-10
 - 【新增】aftersales: 账户统一 Phase 1——绑定表+两态 session+自动匹配 (#555) ([#556](https://github.com/MYTech-Co-LTD/platform-core/pull/556), [bc39ceb](https://github.com/MYTech-Co-LTD/platform-core/commit/bc39cebe152efea25c677af004f97d6ae3e3764b))
 
