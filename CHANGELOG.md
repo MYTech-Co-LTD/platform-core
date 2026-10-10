@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.98.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.98.2...v0.98.3) - 2026-10-10
+- 【修复】openclaw: Dockerfile.openclaw 的 FROM 行尾注释致 dockerfile 解析失败 ([#571](https://github.com/MYTech-Co-LTD/platform-core/pull/571), [9383f82](https://github.com/MYTech-Co-LTD/platform-core/commit/9383f82fbe3438793fc7c9c3bb5a200617907186))
+
+
 ## [0.98.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.98.1...v0.98.2) - 2026-10-10
 - 【修复】openclaw: 插件改走构建期 COPY——相对 bind 被 openship 当卷名致容器建不起来 ([#569](https://github.com/MYTech-Co-LTD/platform-core/pull/569), [2ecb839](https://github.com/MYTech-Co-LTD/platform-core/commit/2ecb83971d3e15865e90720f53d9b9046724ed90))
 
