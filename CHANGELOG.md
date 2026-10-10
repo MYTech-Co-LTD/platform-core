@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.98.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.98.0...v0.98.1) - 2026-10-10
+- 【优化】server: 模块 userApp 静态面纳入缓存档（#564） ([#567](https://github.com/MYTech-Co-LTD/platform-core/pull/567), [a24e601](https://github.com/MYTech-Co-LTD/platform-core/commit/a24e601ad52e50d2dd778b33e61ea2af827039c4))
+
+
 ## [0.98.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.97.1...v0.98.0) - 2026-10-10
 - 【新增】data: 告警覆盖门禁——被调度管线必须有含 failure 的规则覆盖（#565） ([#566](https://github.com/MYTech-Co-LTD/platform-core/pull/566), [2963777](https://github.com/MYTech-Co-LTD/platform-core/commit/29637776aba3c4078f859409c461b45647c681af))
 
