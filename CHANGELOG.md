@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.97.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.97.0...v0.97.1) - 2026-10-10
+- 【修复】data: 补 3120 账套专属 L0 管线失败告警规则（#538） ([#562](https://github.com/MYTech-Co-LTD/platform-core/pull/562), [cd9a9c4](https://github.com/MYTech-Co-LTD/platform-core/commit/cd9a9c4e0868796f94fe24e567a7e1c8e65328fd))
+
+
 ## [0.97.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.96.0...v0.97.0) - 2026-10-10
 - 【新增】server: wechat-oa /silent 会话短路——入口即授权，SPA 只载一次 ([#561](https://github.com/MYTech-Co-LTD/platform-core/pull/561), [601f2a8](https://github.com/MYTech-Co-LTD/platform-core/commit/601f2a805e89a46d266ab47035a87bf6057523e0))
 
