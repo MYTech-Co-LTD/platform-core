@@ -36,3 +36,5 @@ deploy/duckle/console/                    ${REPO}/deploy/duckle/console/        
 deploy/duckle/Dockerfile                    ${REPO}/deploy/duckle/Dockerfile             0644
 scripts/lemeng/oo-watchdog.sh /opt/lemeng-oo-watchdog.sh 0755
 scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
+scripts/lemeng/oo-config-audit.sh /opt/lemeng-oo-config-audit.sh 0755
+deploy/oo-alert-registry.txt ${REPO}/deploy/oo-alert-registry.txt 0644
