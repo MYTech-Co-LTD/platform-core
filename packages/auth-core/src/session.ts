@@ -19,6 +19,10 @@ export interface SessionPayload {
   name: string
   scopes: string[]
   authVia: 'password' | 'wecom-qr' | 'wecom-silent' | 'wechat-oa'
+  // 正式态账户身份（可选）：wechat-oa 访客升级为正式账户后写入；不设 = 旧形状会话
+  acct?: string
+  // 绑定集合（可选）：该账户已绑定的身份（openid 等）；不设 = 旧形状会话
+  ext?: string[]
   iat: number // 签发时刻（Unix 秒）
   exp: number // 过期时刻（Unix 秒）
   sfa: number // scopes fetched at —— scopes 上次刷新时刻，needsScopeRefresh 的基准
@@ -34,18 +38,22 @@ function key(secret: string): Uint8Array {
 
 // 签发：iat = exp - SESSION_TTL_SEC，sfa 同 iat（签发即一次 scopes 刷新）。
 // now 缺省取当前时间（测试/回放可注入固定时刻）。
+// acct/ext 条件写入：不设字段的会话，签出的 JWT 载荷与改动前逐字节一致（旧 token 兼容红线）。
 export async function signSession(
   p: Omit<SessionPayload, 'iat' | 'exp' | 'sfa'>,
   secret: string,
   now: number = nowSec(),
 ): Promise<string> {
-  return await new SignJWT({
+  const claims: Record<string, unknown> = {
     org: p.org,
     name: p.name,
     scopes: p.scopes,
     authVia: p.authVia,
     sfa: now,
-  })
+  }
+  if (p.acct !== undefined) claims.acct = p.acct
+  if (p.ext !== undefined) claims.ext = p.ext
+  return await new SignJWT(claims)
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(p.sub)
     .setIssuedAt(now)
@@ -68,6 +76,8 @@ export async function verifySession(token: string, secret: string): Promise<Sess
       name: String(claims.name),
       scopes: (claims.scopes as string[]) ?? [],
       authVia: claims.authVia as SessionPayload['authVia'], // 载荷已过签名验证，cast 合理
+      acct: claims.acct === undefined ? undefined : String(claims.acct),
+      ext: Array.isArray(claims.ext) ? claims.ext.map(String) : undefined,
       iat: claims.iat as number,
       exp: claims.exp as number,
       sfa: claims.sfa as number,
