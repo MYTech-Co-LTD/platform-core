@@ -124,6 +124,16 @@ jobs:
       # （拼写错/漏生成）② enabled 引用**他账套**后缀管线 = SOP §F.1 的危害形态（一账套一 console
       # 的本体是凭据/env 隔离，错账套排班会**静默采错数据**）。纯静态：只读仓内 JSON，秒级。
       - run: pnpm exec tsx scripts/check-console-schedules.mjs
+      # console 告警覆盖门禁（issue #565）。盯的是**今天没有任何门禁盯的那条耦合**：
+      # `schedules/<账套>.json` 里**被调度**的管线 ↔ `alerts.<源>.json` 里**含 failure 的规则集**。
+      # 案例（2026-10-10；PR #562 实证）：`lemeng.dim.item_price.l0.3120` 定时 429 失败、群里一声不响——
+      # 引擎侧完全正常（**没有规则命中就不发**），缝在规则集与排班之间：规则只按**形态末段**分组
+      # （`lemeng.dim.*.l0`），覆盖不到带**账套号后缀**的 id。判据：① 规则完整性（缺 `channel` 会让
+      # **整个文件作废**、所有告警一起死）② 被调度管线必须有同源且含 `failure` 的规则覆盖
+      # ③ 死规则（`match` 拼错/写窄 ⇒ 等于没写）。glob `*` **跨 `.`** 按引擎台账实测钉住。
+      # 纯静态：只读仓内 JSON，不连库、不取网络，秒级。**怎么修**：补 `alerts.<源>.json` 的规则
+      # （失败信息会点名缺覆盖的管线 id）；确需豁免的写进脚本 `EXEMPT` 并附理由。
+      - run: pnpm exec tsx scripts/check-console-alerts.mjs
       # 只读诊断工具静态门禁（P7；正典 `docs/superpowers/specs/2026-09-29-diagnostic-tool-replacement.md`
       # §5.1 P7）。它盯的是**今天没有任何门禁盯的那条耦合**：`recon` 的容量闸 `RECON_PAGES` /
       # `RECON_PAGE_SIZE` 与网关调用形状的事实源（🔴 2026-09-29 改向：**在用的** L1 子管线
