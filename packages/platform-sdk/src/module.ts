@@ -250,3 +250,37 @@ export function declaredScopeGate(
     await next()
   }
 }
+
+/**
+ * 外部身份渠道（账户统一设计 §1.2）。与宿主 `platform.identity_link.provider` 的 CHECK
+ * 约束同字面量——两边各写一份，改任何一边都要同时改 CHECK。
+ */
+export type LinkProvider = 'wechat-oa' | 'wecom'
+
+/**
+ * 绑定关系的模块侧视图（宿主 `platform.identity_link` 行的投影）。
+ * **只出掩码手机号**（前 3 后 2 中间 `****`）——完整手机号不出宿主边界（敏感值规矩）。
+ */
+export interface IdentityLinkView {
+  id: number
+  provider: LinkProvider
+  externalId: string
+  casdoorName: string
+  status: 'pending' | 'active' | 'revoked' | 'disputed'
+  phoneMasked: string | null
+  boundVia: 'auto' | 'manual' | null
+  createdAt: string
+}
+
+/** 宿主注入模块的绑定能力（ctx.identityLinks；未注入 = 旧宿主，模块须容忍 undefined） */
+export interface IdentityLinks {
+  /** 申请提交时的自动匹配（设计稿 §2）：返回终态供模块透出 */
+  matchOnApplication(input: { org: string; provider: LinkProvider; externalId: string; phone: string; approvalId: number | null }):
+    Promise<{ state: 'active' | 'multi' | 'draft'; candidates?: string[] }>
+  describeOwn(org: string, externalId: string): Promise<IdentityLinkView | null>
+  listForOrg(org: string, status?: IdentityLinkView['status']): Promise<IdentityLinkView[]>
+  confirm(org: string, id: number, casdoorName?: string): Promise<void>
+  rebind(org: string, id: number, casdoorName: string): Promise<void>
+  revoke(org: string, id: number, by: string): Promise<void>
+  dispute(org: string, externalId: string): Promise<boolean>
+}
