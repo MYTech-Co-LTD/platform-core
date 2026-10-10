@@ -1,0 +1,17 @@
+{
+  "name": "openclaw-plugin-data-query",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "问数通道 C 插件——可信企微 userid 转发平台问数 API（platform-core 授权核心按人裁决）。",
+  "scripts": {
+    "test": "node --test lib.test.js"
+  },
+  "files": ["index.js", "lib.js", "skills", "openclaw.plugin.json", "README.md"],
+  "peerDependencies": {
+    "openclaw": ">=2026.3.28"
+  },
+  "openclaw": {
+    "extensions": ["./index.js"]
+  }
+}
