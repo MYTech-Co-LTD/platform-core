@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.98.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.98.1...v0.98.2) - 2026-10-10
+- 【修复】openclaw: 插件改走构建期 COPY——相对 bind 被 openship 当卷名致容器建不起来 ([#569](https://github.com/MYTech-Co-LTD/platform-core/pull/569), [2ecb839](https://github.com/MYTech-Co-LTD/platform-core/commit/2ecb83971d3e15865e90720f53d9b9046724ed90))
+
+
 ## [0.98.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.98.0...v0.98.1) - 2026-10-10
 - 【优化】server: 模块 userApp 静态面纳入缓存档（#564） ([#567](https://github.com/MYTech-Co-LTD/platform-core/pull/567), [a24e601](https://github.com/MYTech-Co-LTD/platform-core/commit/a24e601ad52e50d2dd778b33e61ea2af827039c4))
 
