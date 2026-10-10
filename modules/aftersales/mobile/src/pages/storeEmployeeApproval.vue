@@ -49,6 +49,25 @@
               <span class="text-gray-500 w-24 shrink-0">修改时间</span>
               <span class="text-gray-800 text-sm">{{ formatTime(employeeInfo._mtime) }}</span>
             </div>
+            <!-- 账户绑定行（账户统一 Task 9，设计稿 §2）：展示当前绑定 + 异议入口。
+                 accountMasked 是服务端掩码，前端不再自行掩码；bound 只在 active 时为 true。 -->
+            <div
+              v-if="identity && identity.bound"
+              class="flex items-center justify-between gap-2 py-2"
+            >
+              <span class="text-gray-800 font-medium truncate">
+                已绑定账户：{{ identity.accountMasked }}（{{ identity.boundVia === 'manual' ? '人工' : '自动' }}）
+              </span>
+              <t-button
+                theme="danger"
+                variant="text"
+                size="small"
+                class="shrink-0"
+                @click="handleDispute"
+              >
+                这不是我
+              </t-button>
+            </div>
           </div>
         </t-card>
 
@@ -239,12 +258,14 @@ const composable = useStoreEmployeeApproval()
 const pageLoading = composable.pageLoading
 const loading = composable.loading
 const employeeInfo = composable.employeeInfo
+const identity = composable.identity
 const storeList = composable.storeList
 const formData = composable.formData
 const loadStores = composable.loadStores
 const loadSelectedStores = composable.loadSelectedStores
 const loadEmployeeInfo = composable.loadEmployeeInfo
 const submitApproval = composable.submitApproval
+const disputeMyIdentity = composable.disputeMyIdentity
 
 const isEditing = ref(false)
 const submitting = ref(false)
@@ -402,6 +423,17 @@ const handleSubmit = async (): Promise<void> => {
     Message.error(error?.message || '提交失败，请稍后重试')
   } finally {
     submitting.value = false
+  }
+}
+
+/**
+ * 「这不是我」（账户统一 Task 9）：提交绑定异议，成功后刷新页面状态——
+ * identity 重载后 bound 变 false，绑定行随之消失（异议结果由管理员在后台核实处理）。
+ */
+const handleDispute = async (): Promise<void> => {
+  if (await disputeMyIdentity()) {
+    Message.success('已提交异议，管理员将尽快核实')
+    await loadEmployeeInfo()
   }
 }
 

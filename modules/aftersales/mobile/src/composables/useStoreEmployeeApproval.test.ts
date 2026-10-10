@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { employee_info, employee_info_approve, store_info } from '@/shims/wuji-data'
+import { employee_info, employee_info_approve, identity_link, store_info } from '@/shims/wuji-data'
 import { useStoreEmployeeApproval } from './useStoreEmployeeApproval'
 
 vi.mock('@/shims/wuji-data', () => ({
   store_info: { query: vi.fn() },
   employee_info: { query: vi.fn() },
   employee_info_approve: { query: vi.fn(), create: vi.fn() },
+  identity_link: { query: vi.fn(), dispute: vi.fn() },
 }))
 vi.mock('@wujibase/wuji', () => ({
   Message: { success: vi.fn(), warning: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -16,6 +17,8 @@ const storeQuery = vi.mocked(store_info.query)
 const empQuery = vi.mocked(employee_info.query)
 const approvalQuery = vi.mocked(employee_info_approve.query)
 const approvalCreate = vi.mocked(employee_info_approve.create)
+const linkQuery = vi.mocked(identity_link.query)
+const linkDispute = vi.mocked(identity_link.dispute)
 
 const STORES = [
   { id: '103', store_name: '城东店', store_number: '103', is_enabled: '1' },
@@ -28,6 +31,8 @@ beforeEach(() => {
   empQuery.mockReset().mockResolvedValue([])
   approvalQuery.mockReset().mockResolvedValue([])
   approvalCreate.mockReset().mockResolvedValue({ id: 1 })
+  linkQuery.mockReset().mockResolvedValue(null)
+  linkDispute.mockReset().mockResolvedValue(false)
 })
 
 describe('useStoreEmployeeApproval', () => {
@@ -101,5 +106,34 @@ describe('useStoreEmployeeApproval', () => {
     c.formData.value.employee_phonenumber = ''
     await expect(c.submitApproval('注册')).resolves.toBe(false)
     expect(approvalCreate).not.toHaveBeenCalled()
+  })
+
+  // ── 账户统一 Task 9：绑定身份可见与异议 ────────────────────────────────────
+  it('loadEmployeeInfo：绑定身份同源同刷——identity_link.query 并行发出，值落 identity ref', async () => {
+    const view = { bound: true, status: 'active', boundVia: 'auto', accountMasked: '138****00' } as const
+    linkQuery.mockResolvedValue(view)
+    const c = useStoreEmployeeApproval()
+    await c.loadEmployeeInfo()
+    expect(linkQuery).toHaveBeenCalledTimes(1)
+    expect(c.identity.value).toEqual(view)
+  })
+
+  it('loadEmployeeInfo：无绑定 ⇒ identity 为 null（shim 透传，不造默认值）', async () => {
+    const c = useStoreEmployeeApproval()
+    await c.loadEmployeeInfo()
+    expect(c.identity.value).toBeNull()
+  })
+
+  it('disputeMyIdentity：生效 ⇒ true 透传（刷新页面状态由页面负责）', async () => {
+    linkDispute.mockResolvedValue(true)
+    const c = useStoreEmployeeApproval()
+    await expect(c.disputeMyIdentity()).resolves.toBe(true)
+    expect(linkDispute).toHaveBeenCalledTimes(1)
+  })
+
+  it('disputeMyIdentity：失败 ⇒ false 且就地提示（不抛给页面）', async () => {
+    linkDispute.mockRejectedValue(new Error('网络错误'))
+    const c = useStoreEmployeeApproval()
+    await expect(c.disputeMyIdentity()).resolves.toBe(false)
   })
 })
