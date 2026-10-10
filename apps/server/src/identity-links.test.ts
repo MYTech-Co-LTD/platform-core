@@ -124,6 +124,43 @@ describe.skipIf(!dbUrl)('identity_link 读写层（真 PG）', () => {
     expect(await findActiveLink(pool, 'o2', 'no-such')).toBeNull()
   })
 
+  // I-3（终审修复回归）：双渠道同时 active 时 findActiveLink 必须确定——
+  // 「wechat-oa 优先、其后最新优先」（与 pickOwnRow 同优先级）。修前无 order by，
+  // limit 1 拿哪行由计划器/堆物理序决定 ⇒ 正式态判定在两账户间漂移。
+  it('I-3：findActiveLink 双 active 确定命中 wechat-oa（provider 优先级压过插入顺序）', async () => {
+    // 每 run 唯一 org（同文件 m6 先例）：夹具要靠「wecom 先插 ⇒ id 更小」自证区分力，
+    // 固定 org 在持久库上会被 upsert 幂等保住旧 id、插入顺序自证失效
+    const org = `ff4-${randomUUID().slice(0, 8)}`
+    // wecom 行**先**插（id 更小）：修前无排序、小表走顺序扫时命中 wecom——钉死
+    // 「wechat-oa 压过 wecom 且不看插入顺序」，与「仅 id desc」也区分得开
+    const wecom = await upsertLink(pool, {
+      org, provider: 'wecom', externalId: 'ff4-dual', casdoorName: 'ff4-zeta',
+      phone: null, boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    const oa = await upsertLink(pool, {
+      org, provider: 'wechat-oa', externalId: 'ff4-dual', casdoorName: 'ff4-wendy',
+      phone: null, boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    expect(await findActiveLink(pool, org, 'ff4-dual')).toEqual({ casdoorName: 'ff4-wendy' })
+    expect(oa.id).toBeGreaterThan(wecom.id)
+    // 夹具自证：wechat-oa 行确实是更大的 id——「仅按 id desc」会命中 wecom，本断言真钉住了 provider 优先级
+  })
+
+  it('I-3：listActiveExternalIds 同号双渠道只列一次（distinct）', async () => {
+    // 同一 external_id 经两渠道各绑一行（同 org 同账户）⇒ 消费方按集合语义用，
+    // 重复元素会让 ANY(…) 谓词加倍命中、集合去重假设破产——修前无 distinct
+    await upsertLink(pool, {
+      org: 'ff4', provider: 'wechat-oa', externalId: 'ff4-same', casdoorName: 'ff4-wendy',
+      phone: null, boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    await upsertLink(pool, {
+      org: 'ff4', provider: 'wecom', externalId: 'ff4-same', casdoorName: 'ff4-wendy',
+      phone: null, boundVia: 'auto', status: 'active', sourceApprovalId: null,
+    })
+    const ids = await listActiveExternalIds(pool, 'ff4', 'ff4-wendy')
+    expect(ids.filter((id) => id === 'ff4-same')).toHaveLength(1)
+  })
+
   it('listActiveExternalIds 只列该账户的 active 外部 id', async () => {
     await upsertLink(pool, {
       org: 'o5', provider: 'wechat-oa', externalId: 'oF', casdoorName: 'u5',
@@ -188,6 +225,27 @@ describe.skipIf(!dbUrl)('identity_link 读写层（真 PG）', () => {
     const rebound = await mutateLink(pool, 'o4', link.id, { casdoorName: 'u6-new' })
     expect(rebound?.casdoorName).toBe('u6-new')
     expect(rebound?.status).toBe('revoked')
+  })
+
+  // M-5（终审修复回归，ff5 专键）：mutateLink 落 active 时盖 bound_at——与 revoked_at/
+  // disputed_at 对称。bound_at 的语义是「最近一次 active 生效的时点」，人工 confirm 走
+  // mutateLink(active) 这条路，漏盖会让 confirm 路径的 bound_at 停留在首绑（甚至 NULL）。
+  it('M-5：mutateLink 落 active ⇒ bound_at 盖 now()（confirm 路径对称 revoked_at/disputed_at）', async () => {
+    const link = await upsertLink(pool, {
+      org: 'ff5', provider: 'wechat-oa', externalId: 'ff5-m', casdoorName: 'ff5-nina',
+      phone: null, boundVia: null, status: 'pending', sourceApprovalId: null,
+    })
+    // 归一起点（持久库可重跑）：本行可能带着上一次 run 落下的 bound_at，先钉到一个遥远
+    // 旧时点——修前 mutateLink 不盖 bound_at，它就停在旧值；修后必是 now()
+    await pool.query("update platform.identity_link set bound_at = timestamp '2000-01-01' where id = $1", [link.id])
+    // 人工确认（confirm 内部正是这条 mutateLink(active)）
+    const confirmed = await mutateLink(pool, 'ff5', link.id, { status: 'active', boundVia: 'manual' })
+    expect(confirmed?.status).toBe('active')
+    const { rows } = await pool.query<{ bound_at: Date | null }>(
+      'select bound_at from platform.identity_link where id=$1', [link.id],
+    )
+    expect(rows[0]!.bound_at).not.toBeNull()
+    expect(rows[0]!.bound_at!.getTime()).toBeGreaterThan(Date.parse('2001-01-01')) // 盖了 now()，不是旧值
   })
 })
 

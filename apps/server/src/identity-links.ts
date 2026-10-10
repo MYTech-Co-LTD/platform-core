@@ -69,7 +69,9 @@ export async function findLinkByExternal(
   return rows[0] ?? null
 }
 
-/** 任一渠道 active 即正式态：provider 不限，只认 status='active'；没有则 null。 */
+/** 任一渠道 active 即正式态：provider 不限，只认 status='active'；没有则 null。
+ *  I-3（终审修复）：双渠道同时 active 时必须确定——「wechat-oa 优先、其后最新优先」
+ *  （与 pickOwnRow 同优先级）。修前无 order by，limit 1 拿哪行由计划器/堆物理序决定。 */
 export async function findActiveLink(
   pool: Pool,
   org: string,
@@ -77,20 +79,23 @@ export async function findActiveLink(
 ): Promise<{ casdoorName: string } | null> {
   const { rows } = await pool.query<{ casdoorName: string }>(
     'select casdoor_name AS "casdoorName" from platform.identity_link'
-    + " where org = $1 and external_id = $2 and status = 'active' limit 1",
+    + " where org = $1 and external_id = $2 and status = 'active'"
+    + " order by (provider = 'wechat-oa') desc, id desc limit 1",
     [org, externalId],
   )
   return rows[0] ?? null
 }
 
-/** 某账户在某 org 下全部 active 的外部 id（pending/revoked 不列）。 */
+/** 某账户在某 org 下全部 active 的外部 id（pending/revoked 不列）。
+ *  I-3（终审修复）：同一 external_id 可经两渠道各绑一行（(provider,org,external_id) 唯一
+ *  不含 provider 维度的去重），消费方按集合语义用 ⇒ distinct 去掉跨渠道重复。 */
 export async function listActiveExternalIds(
   pool: Pool,
   org: string,
   casdoorName: string,
 ): Promise<string[]> {
   const { rows } = await pool.query<{ external_id: string }>(
-    "select external_id from platform.identity_link"
+    "select distinct external_id from platform.identity_link"
     + " where org = $1 and casdoor_name = $2 and status = 'active'",
     [org, casdoorName],
   )
@@ -149,6 +154,9 @@ export async function upsertLink(
  *  revoked 视为误用，不生效（行上留的是「最近一次吊销」的执行人与时点）。
  *  disputed_at 对称：只在 status 落 'disputed' 的那次变更盖 now()（列此前无写通路——评审
  *  裁决补上；同样只进不出，行上留「最近一次争议」的时点）。
+ *  bound_at 对称（M-5，终审修复）：status 落 'active' 的每次变更盖 now()——bound_at 的语义是
+ *  「最近一次 active 生效的时点」，人工 confirm/rebind 走本函数落 active，漏盖会停留在首绑
+ *  （甚至 NULL，upsertLink 只在 insert/conflict 两分支盖）。
  *  patch 只收白名单列、全参数化——调用方传不进任意 SET 片段（注入面 = 这四个键）。 */
 export async function mutateLink(
   exec: SqlExecutor,
@@ -179,6 +187,9 @@ export async function mutateLink(
   }
   if (patch.status === 'disputed') {
     sets.push('disputed_at = now()')
+  }
+  if (patch.status === 'active') {
+    sets.push('bound_at = now()') // M-5：与 revoked_at/disputed_at 对称（见函数头注）
   }
   if (sets.length === 0) {
     // 空 patch 不构成 update：退化为按 org+id 读取（org 不对照样 null，与 update 路径同语义）
