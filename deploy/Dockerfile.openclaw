@@ -1,0 +1,29 @@
+# deploy/Dockerfile.openclaw — 问数 bot 运行镜像（spec docs/superpowers/specs/2026-10-10-shanhai-openclaw-wecom-design.md §4）
+#
+# 构建（**context 必须是仓根**，与 Dockerfile.server 同）：
+#   docker build -f deploy/Dockerfile.openclaw -t platform-core-openclaw .
+#   # 或经唯一的 compose 入口：docker compose -f deploy/docker-compose.yml build openclaw
+#
+# 为什么是「自建镜像叠一层」而不是「官方镜像 + 只读 bind 挂载」（2026-10-11 实测订正）：
+#   openship services 模式**按 Docker API 逐服务建容器，不解析相对路径** ⇒ compose 里的
+#   `./openclaw/data-query-plugin:/opt/plugins/data-query-plugin:ro` 被**当成命名卷名**，
+#   建容器即失败（HTTP 400）：
+#     create ./openclaw/data-query-plugin: "…" includes invalid characters for a local volume
+#     name, only "[a-zA-Z0-9][a-zA-Z0-9_.-]" are allowed. If you intended to pass a host
+#     directory, use absolute path
+#   同一根因的**成例**：`deploy/data-plane-deploy-sop.md` 坑 9（`../duckle` / `../dbt` 同病），
+#   那里的解法是「服务器放**绝对路径持久检出** + 服务级挂载写绝对路径」——代价是维护一份
+#   宿主侧持久同步面（那是数据面的必需：pipelines/dbt 要在宿主上就地编辑与写盘）。
+#   本插件不同：**纯仓内只读源码**（不写盘、无用户数据、只随版本前进）⇒ 构建期 COPY 进镜像
+#   更优：仓是唯一事实源、不引入宿主检出同步/drift 面、部署自带插件版本。
+#   同仓成例：`server` / `mb-proxy` 也是 `build:` 服务，在 openship 下部署正常。
+#
+# 官方镜像只作基底，**digest 钉死**（spec §3 的版本钉法从这里生效）：
+FROM ghcr.io/openclaw/openclaw@sha256:7f10d5cc975a90b65192eaa099454fe33ce8ce2390806c61c65cd868e9ef730d # v2026.9.9
+
+# 只加一层：插件源码只读落到容器内**固定路径**。
+# ⚠️ 该路径是**运维契约**——Task 4 的注册命令（`openclaw plugins install -l /opt/plugins/data-query-plugin`）、
+#    插件 README、spec §4 都写死它，改路径要三处同步改。
+#   （目标路径原本是 bind 的挂载点，改构建期 COPY 后**逐字不变**，Task 4 命令无需改。）
+# 官方镜像的 USER（node）/ ENTRYPOINT / CMD / 健康检查语义一律不动。
+COPY deploy/openclaw/data-query-plugin /opt/plugins/data-query-plugin
