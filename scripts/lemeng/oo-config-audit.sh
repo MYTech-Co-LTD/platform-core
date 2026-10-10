@@ -32,7 +32,7 @@ docker exec -i "$PG_CT" psql -U openobserve -d openobserve -tA \
   echo 'AUD_FAIL:pg 目的地查询失败'; exit 1
 }
 grep -E '^ALERT[[:space:]]' "$REG" > "$TMPD/reg_alerts"
-grep -E '^DEST[[:space:]]' "$REG" > "$TMPD/reg_dests"
+grep -E '^DEST[[:space:]]' "$REG" | awk '{print $2}' > "$TMPD/reg_dests"
 grep -E '^SCRIPT[[:space:]]' "$REG" > "$TMPD/reg_scripts"
 
 # ── ① 在位告警 → 清单核对（未登记 / 目的地漂移 / 启用态漂移）─────────────────
@@ -55,7 +55,7 @@ while IFS="$(printf '\t')" read -r NAME DESTS EN; do
 done < "$TMPD/db_alerts"
 
 # ── ② 清单 → 在位核对（误删）─────────────────────────────────────────────────
-while read -r _ KW NAME R_DEST R_EN; do
+while read -r _ NAME R_DEST R_EN; do
   [ -n "${NAME:-}" ] || continue
   grep -q "^${NAME}$(printf '\t')" "$TMPD/db_alerts" || note "已登记告警在元库缺失：${NAME}（误删？）"
 done < "$TMPD/reg_alerts"
