@@ -117,7 +117,7 @@ docker exec "$S" node -e "const n=require('net'),s=n.connect(5432,'pg_duckdb');s
 
 ```sh
 sh /opt/lemeng-wire-warehouse.sh            # 重做两条接线（幂等），末尾自动复查
-sh /opt/lemeng-wire-warehouse.sh --check    # **只读**复查：三条断言全过 exit 0，任一不过 exit 1
+sh /opt/lemeng-wire-warehouse.sh --check    # **只读**复查：七条断言全过 exit 0，任一不过 exit 1
 ```
 
 它把 P7 与 P8b **一起**做掉（两条都是「掉了不报错」，分开治理只会漏一条），
@@ -154,14 +154,22 @@ ALTER ROLE <DATA_WAREHOUSE_URL 的 user> IN DATABASE <DATA_WAREHOUSE_URL 的 db>
 - 验收（用**真连接**、且**不带 schema**）：`select count(*) from fct_retail_sale` 应出数。
 
 **本条与 P7 合在一起已固化成脚本**：`sh /opt/lemeng-wire-warehouse.sh`（重做，幂等）/
-`sh /opt/lemeng-wire-warehouse.sh --check`（只读复查**五条**断言：DNS / TCP / 真查询 /
+`sh /opt/lemeng-wire-warehouse.sh --check`（只读复查**七条**断言：DNS / TCP / 真查询 /
 **④ PG 新鲜度**（fct 的 max(bizday) ≥ 上海今天−2，抓「dbt 绿但读湖读短了」的静默变短）/
-**⑤ 词表非空**（`data.metrics` ≥ 1 行，抓「词表被清空」）——④⑤ 是「下游看得见」探测的落地
+**⑤ 词表非空**（`data.metrics` ≥ 1 行，抓「词表被清空」）/
+**⑥ 发布维表**（`data.dim_item` 非空且 max(snapshot) ≥ 上海今天−3，#476）/
+**⑦ 工单取价面**（`dim_settlement_order_line` 非空且 max(order_bizday) ≥ 上海今天**−3/−2（上海 13 点前/后）**，#520/#534）——④⑤ 是「下游看得见」探测的落地
 （2026-10-06，#297 最后一格 + handbook §7 #4 转正），且与前三条共用「平台容器 + 平台自己的
 连接串」通路 ⇒ 顺带持续 exercising Gate-B 与 search_path）。
 
 **配套探活 job**：openship job 定时跑 `--check`，**失败即告警**（不许 `continue-on-error`——
 静默漂移 = 回到「没有复查」的状态）。
+
+> ⚠️ **⑦ 的容差是时段感知的（#534 教训）**：取价面由维表发布 job（上海 11:43）整批替换、
+> 读的是 L0 昨晚 23:35 采的 T-1 单据 ⇒ **每天零点时面必然停在 T-3**。给发布面/物化面写
+> 新鲜度判据，容差必须 ≥「采集滞后 + 发布周期」，或按当前时刻分段（⑦：上海 13 点前 −3、
+> 之后 −2）——固定拍天数必踩「零点起结构性红到中午发布完成」（2026-10-10 首夜实测 ~200 条
+> 企微误报；采集/湖全程健康，纯判据 vs 节奏错位）。
 
 **反向测试已做（别把「探针绿」读成「探针有用」）**：两种形态都**确实 exit 1**，不是恒绿——
 ① 探针表名指错（`WIRE_PROBE_TABLE=no_such_table_zzz`）⇒ 断言③红；
