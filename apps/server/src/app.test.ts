@@ -21,6 +21,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { Agent, request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MockCasdoor } from '@platform/auth-core/src/test-util/mock-casdoor'
@@ -317,6 +318,11 @@ describe.skipIf(!dbUrl)('buildApp：静态响应 Cache-Control', () => {
     // 路径取 `/api/…` 是因为 SPA 兜底 `app.get('*')` 只对 `/api/*` 调 next() 放行，
     // 其余路径会被它先吞掉（本轮实测踩到）。
     app.get('/api/__probe-304', () => new Response(null, { status: 304 }))
+    // 模块 API 面的同侧探测路由（#564 把缓存中间件上移到 §⑨ 之前后新增的那条缝）：注册点一上移，
+    // 模块 API（/api/modules/<id>/*）也落进了缓存链 ⇒ 中间件须显式挡掉该前缀。真模块 API 要带
+    // scope 才是 2xx（匿名是 401，走不到"会被签"的那格）⇒ 用同前缀的 2xx 探测路由把分档逻辑
+    // 直接暴露出来（与上面 304 探测同一手法）。
+    app.get('/api/modules/__probe-json', (c) => c.json({ ok: true }))
   })
   afterAll(async () => {
     await mockStatic.stop()
@@ -350,8 +356,8 @@ describe.skipIf(!dbUrl)('buildApp：静态响应 Cache-Control', () => {
     }
   })
 
-  it('★ 边界：/assets/ 前缀下**未命中**的路径落 SPA 兜底 ⇒ 仍须可重验（不得按前缀误标 immutable）', async () => {
-    // 分档若写成"看路径前缀"就会在这一格把 index.html 标成 immutable —— 发版后用户拿到旧壳
+  it('★ 边界：/assets/ 段下**未命中**的路径落 SPA 兜底 ⇒ 仍须可重验（不得只看路径误标 immutable）', async () => {
+    // 分档若只看路径（不先看实际吐出的产物类型）就会在这一格把 index.html 标成 immutable —— 发版后用户拿到旧壳
     const res = await app.request('/assets/gone-1a2b3c.js', { headers: { host: 'acme.test' } })
     expect(res.headers.get('content-type')).toContain('text/html') // 确系 SPA 兜底
     const cc = res.headers.get('cache-control') ?? ''
@@ -359,7 +365,7 @@ describe.skipIf(!dbUrl)('buildApp：静态响应 Cache-Control', () => {
     expect(cc).not.toContain('immutable')
   })
 
-  it('对照：非哈希产物（/favicon.svg）也走可重验档——规则是「/assets 前缀 immutable + 其余一律可重验」', async () => {
+  it('对照：非哈希产物（/favicon.svg）也走可重验档——规则是「含 /assets/ 段的非 HTML 产物 immutable + 其余一律可重验」', async () => {
     const res = await app.request('/favicon.svg', { headers: { host: 'acme.test' } })
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('svg')
@@ -368,13 +374,16 @@ describe.skipIf(!dbUrl)('buildApp：静态响应 Cache-Control', () => {
 
   // ---- R5 三路评审建议 3 / 4：两条改动的护栏（负例 + 边界） ----
 
-  it('★ 负例：/healthz 与 /api/* **不**被打上 Cache-Control（R5 评审建议 3）', async () => {
-    // 今天靠一个**隐式事实**成立：缓存中间件用 `app.use('*')` 注册在静态托管之前，而 Hono
-    // 的中间件只对**其后注册**的路由生效 —— 所有 /api/* 与 /healthz 都在它之前注册完。
-    // 一旦有人把这层中间件上移成"全局"（这念头很自然：它看起来就是个全局中间件），就会
-    // 覆盖路由自己设的头 —— 认证类端点将来若设 `no-store` 被它改写成 `no-cache`，就是
-    // 静默的安全弱化。这条断言把那个隐式事实钉成显式契约。
-    for (const p of ['/healthz', '/api/platform/config']) {
+  it('★ 负例：/healthz、宿主 API 与模块 API **不**被打上 Cache-Control（R5 评审建议 3）', async () => {
+    // 宿主这一档靠**注册序**成立：缓存中间件（§⑧.5）注册在 §⑤ /healthz 与 §⑦⑧ 宿主
+    // /api/platform/* **之后**，而 Hono 的中间件只对**其后注册**的路由生效 ⇒ 它们在链外。
+    // 模块这一档靠**显式前缀挡**成立（issue #564）：缓存中间件注册点上移到 §⑨ runtime.mount
+    // **之前**后，§⑨ 里的模块 API（/api/modules/<id>/*）也进了链 ⇒ 中间件里显式 `return` 掉。
+    // 两档都不能丢：这层中间件会**覆盖路由自己设的头** —— 认证类端点将来若设 `no-store` 被它
+    // 改写成 `no-cache`，就是静默的安全弱化。这条断言把两档都钉成显式契约。
+    // （模块那档用 beforeAll 里同前缀的 2xx 探测路由：真模块 API 匿名是 401，落进 `status >= 400`
+    //  的跳过分支，断言会变空转。）
+    for (const p of ['/healthz', '/api/platform/config', '/api/modules/__probe-json']) {
       const res = await app.request(p, { headers: { host: 'acme.test' } })
       expect(res.status, `${p} 应可达`).toBe(200)
       expect(res.headers.get('cache-control'), `${p} 不该有 Cache-Control`).toBeNull()
@@ -389,6 +398,118 @@ describe.skipIf(!dbUrl)('buildApp：静态响应 Cache-Control', () => {
     const res = await app.request('/api/__probe-304', { headers: { host: 'acme.test' } })
     expect(res.status).toBe(304)
     expect(res.headers.get('cache-control')).toBe('no-cache')
+  })
+})
+
+describe.skipIf(!dbUrl)('buildApp：模块 userApp 静态面的 Cache-Control（issue #564）', () => {
+  // 真链路：真 `loadModules`（fixture modules/ 目录）+ 真 `runtime.mount`，只在宿主装配层注入
+  // 目录与 web dist，**装配顺序一字不改**。锁的是宿主缓存策略**覆盖 `runtime.mount` 挂上的
+  // 静态面**这条集成属性——用一个手写的假 `runtime.mount` 替身验不出来：替身形状一旦比 loader
+  // 宽松，缺陷就结构性不可见（#50/#51 教训）。上面那组静态用例只到宿主自己的 apps/web/dist，
+  // 到不了模块 userApp 面——这正是 #564 的缺口（缓存中间件曾注册在 §⑨ `runtime.mount` 之后，
+  // 而 userApp 的 serveStatic 命中即 return、不 next() ⇒ 对它永不执行）。
+  const mockUa = new MockCasdoor()
+  let fixtureRoot = ''
+  let app: Awaited<ReturnType<typeof buildApp>>['app']
+
+  beforeAll(async () => {
+    await mockUa.start()
+    // fixture 模块目录必须落在 apps/server/ 下：fixture index.ts 裸导入 '@platform/sdk'，靠
+    // apps/server/node_modules 的 walk-up 解析（/tmp 下解析不到）——同 loader.test.ts 约定。
+    fixtureRoot = await mkdtemp(join(fileURLToPath(new URL('..', import.meta.url)), '.tmp-app-userapp-'))
+    const modulesDir = join(fixtureRoot, 'modules')
+    const modDir = join(modulesDir, 'uamod')
+    await mkdir(join(modDir, 'web', 'dist', 'assets'), { recursive: true })
+    await writeFile(
+      join(modDir, 'manifest.yaml'),
+      [
+        'id: uamod',
+        'name: uamod 模块',
+        'version: 1.0.0',
+        'platform: ">=0.1.0"',
+        'permissions:',
+        '  - code: uamod:view',
+        '    name: uamod 查看',
+        'api:',
+        '  internal:',
+        '    - { method: GET, path: /ping, scope: uamod:view }',
+        'frontend:',
+        '  userApp:',
+        // 借用真模块（aftersales）的挂载点，与 issue #564 验收条目逐字一致
+        '    mount: /app/aftersales',
+        '    dist: web/dist',
+        '',
+      ].join('\n'),
+    )
+    await writeFile(
+      join(modDir, 'index.ts'),
+      [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        '',
+        'export default defineModule({',
+        '  manifest: {',
+        "    id: 'uamod', name: 'uamod', version: '1.0.0', platform: '>=0.1.0',",
+        "    permissions: [{ code: 'uamod:view', name: '查看' }],",
+        "    api: { internal: [{ method: 'GET', path: '/ping', scope: 'uamod:view' }] },",
+        '  },',
+        '  createRouter: () => {',
+        '    const app = new Hono()',
+        "    app.get('/ping', (c) => c.json({ ok: true }))",
+        '    return app',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    )
+    await writeFile(
+      join(modDir, 'web', 'dist', 'index.html'),
+      '<!doctype html><html><body><div id="root"></div></body></html>\n',
+    )
+    await writeFile(join(modDir, 'web', 'dist', 'assets', 'index-CIQEGtjA.js'), 'console.log("ua")\n')
+
+    // web dist 也走 fixture：静态行为测试不依赖 apps/web/dist 构建产物（同上一组的缘由）
+    const webDist = join(fixtureRoot, 'web-dist')
+    await mkdir(join(webDist, 'assets'), { recursive: true })
+    await writeFile(
+      join(webDist, 'index.html'),
+      '<!doctype html><html><body><div id="root"></div></body></html>\n',
+    )
+
+    app = (
+      await buildApp({
+        config: configWith(mockUa.origin, 'pw'),
+        modulesDir,
+        webDistDir: webDist,
+      })
+    ).app
+  })
+  afterAll(async () => {
+    await rm(fixtureRoot, { recursive: true, force: true })
+    await mockUa.stop()
+  })
+
+  it('★ 负例：模块 userApp 的 /assets/<hash>.js 须 immutable 长缓存（#564 主缺口）', async () => {
+    const res = await app.request('/app/aftersales/assets/index-CIQEGtjA.js', {
+      headers: { host: 'acme.test' },
+    })
+    // 先钉命中产物本体而非 SPA 壳——否则下面两条会在「immutable 标到了壳上」时假绿
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('javascript')
+    const cc = res.headers.get('cache-control') ?? ''
+    expect(cc).toContain('immutable')
+    expect(cc).toContain('max-age=31536000')
+  })
+
+  it('★ 负例：模块 userApp 的 SPA 壳（入口与深链）须可重验，不得长缓存', async () => {
+    for (const p of ['/app/aftersales/', '/app/aftersales/register']) {
+      const res = await app.request(p, { headers: { host: 'acme.test' } })
+      expect(res.status, `${p} 应回本模块 SPA 壳`).toBe(200)
+      expect(res.headers.get('content-type'), `${p} 应吐 index.html`).toContain('text/html')
+      const cc = res.headers.get('cache-control') ?? ''
+      expect(cc, `${p} 的 Cache-Control`).toContain('no-cache')
+      expect(cc, `${p} 的 Cache-Control`).not.toContain('immutable')
+    }
   })
 })
 
