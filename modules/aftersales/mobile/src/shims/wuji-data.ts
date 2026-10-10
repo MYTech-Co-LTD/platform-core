@@ -1,5 +1,6 @@
 // src/shims/wuji-data.ts —— `@wujibase/wuji-data` 的收窄替身（spec §3.2 三 shim 表）：
-// **5 个表对象**，每个只实现保留页真正调到的方法，映射到具体域端点。
+// **6 个表对象**，每个只实现保留页真正调到的方法，映射到具体域端点
+// （`identity_link` 是账户统一 Task 9 的域侧新增，源侧没有这张表）。
 //
 // 收窄的边界（写在这里免得后来者以为漏了）：
 //   · `wechat_openid` —— 前端微信 OAuth 的 token 缓存，已由 M1 宿主路取代 ⇒ 不提供；
@@ -49,6 +50,17 @@ interface ProductItem { code: string; barCode: string | null; name: string; spec
 interface MyRegistration {
   registration: { name: string; phone: string; storeCodes: string[] } | null
   hasPendingApproval: boolean
+  /** 账户统一 Task 9：绑定身份视图（形状 = 路由侧 GuestIdentity，刻意不跨包 import——mobile 构建隔离） */
+  identity: GuestIdentity | null
+}
+
+/** 绑定身份视图（账户统一 Task 9）：`status` 只有两态——pending/revoked 在服务端就收敛成了
+ *  null；`accountMasked` 是**服务端掩码**（同 console 侧 phoneMasked 的纪律：前端不再自行掩码）。 */
+export interface GuestIdentity {
+  bound: boolean
+  status: 'active' | 'disputed'
+  boundVia: 'auto' | 'manual' | null
+  accountMasked: string
 }
 
 /** 域侧分页上界（`routes/context.ts` 的 `MAX_PAGE_SIZE`）——写在这里是这个数字的第二份来源，
@@ -202,6 +214,27 @@ export const employee_info_approve = {
       if (e instanceof ApiError && e.message !== '') throw new Error(e.message)
       throw e
     }
+  },
+}
+
+export const identity_link = {
+  /**
+   * 当前绑定身份（账户统一 Task 9，设计稿 §2「userApp 内展示当前绑定身份 + 异议入口」）。
+   * 源侧没有这张表——纯域侧能力，无源侧行为可移植。挂在 `/guest/me/registration` 的
+   * identity 字段上（与登记档案同一响应），调用方无须为此多发第二种请求。
+   */
+  async query(): Promise<GuestIdentity | null> {
+    const body = await apiGet<MyRegistration>('/guest/me/registration')
+    return body.identity
+  },
+
+  /**
+   * 提交身份异议（「这不是我」）：`POST /guest/me/identity/dispute` → `{disputed}`。
+   * 无绑定/服务缺省都是 200 + false——「不向外泄露绑定存在性」是服务端契约，shim 原样透传。
+   */
+  async dispute(): Promise<boolean> {
+    const body = await apiSend<{ disputed: boolean }>('/guest/me/identity/dispute', 'POST', {})
+    return body.disputed
   },
 }
 

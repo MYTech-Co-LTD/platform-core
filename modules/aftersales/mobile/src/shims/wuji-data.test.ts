@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // ApiError 也从被 mock 的模块里取（下面的工厂把它换成了一个最小实现）——测试断言的是
 // 「409 APPROVAL_PENDING 被翻成中文文案」这个行为，不是 ApiError 的实现。
 import { ApiError, apiGet, apiSend } from './http'
-import { after_sales_work_order, employee_info, employee_info_approve, product_archive, store_info } from './wuji-data'
+import { after_sales_work_order, employee_info, employee_info_approve, identity_link, product_archive, store_info } from './wuji-data'
 
 vi.mock('./http', () => ({
   apiGet: vi.fn(),
@@ -127,6 +127,26 @@ describe('product_archive.query', () => {
     expect(url.startsWith('/guest/products?')).toBe(true)
     expect(url).toContain('q=%E8%9E%BA%E6%A0%93')
     expect(url).toContain('size=100')
+  })
+})
+
+describe('identity_link（账户统一 Task 9）', () => {
+  it('query：挂 /guest/me/registration 的 identity 字段上，视图原样透传', async () => {
+    const view = { bound: true, status: 'active', boundVia: 'auto', accountMasked: '138****00' }
+    get.mockResolvedValue({ registration: null, hasPendingApproval: false, identity: view })
+    expect(await identity_link.query()).toEqual(view)
+    expect(get).toHaveBeenCalledWith('/guest/me/registration')
+  })
+
+  it('query：identity 为 null（无绑定/非两态）⇒ null 透传（不造默认值）', async () => {
+    get.mockResolvedValue({ registration: null, hasPendingApproval: false, identity: null })
+    expect(await identity_link.query()).toBeNull()
+  })
+
+  it('dispute：POST /guest/me/identity/dispute，透传 {disputed} 的布尔', async () => {
+    send.mockResolvedValue({ disputed: true })
+    expect(await identity_link.dispute()).toBe(true)
+    expect(send).toHaveBeenCalledWith('/guest/me/identity/dispute', 'POST', {})
   })
 })
 

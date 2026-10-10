@@ -186,10 +186,23 @@ export interface ProcessResult {
 export type { RegistrationTarget } from './domain/registration'
 import type { RegistrationTarget } from './domain/registration'
 
+/**
+ * 绑定身份视图（账户统一 Task 9）：`status` 只声明 active|disputed——pending/revoked 对访客
+ * 没有可展示的绑定语义，路由侧已收敛成 null。`accountMasked` 是服务端掩码，消费方不再自行掩码。
+ */
+export interface GuestIdentity {
+  bound: boolean
+  status: 'active' | 'disputed'
+  boundVia: 'auto' | 'manual' | null
+  accountMasked: string
+}
+
 /** `GET /guest/me/registration` 的响应（M3b-2 的移动端据此判断「有没有登记 / 我的门店」） */
 export interface MyRegistration {
   registration: { name: string; phone: string; storeCodes: string[] } | null
   hasPendingApproval: boolean
+  /** 绑定身份（账户统一 Task 9）：无服务/无行/非两态 ⇒ null */
+  identity: GuestIdentity | null
 }
 
 /** `GET /employee-approvals` 的一行。`oldInfo`/`newInfo` **只含实际变了的字段** */

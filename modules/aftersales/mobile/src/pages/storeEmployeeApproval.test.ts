@@ -9,6 +9,7 @@ vi.mock('@/shims/wuji-data', () => ({
   store_info: { query: vi.fn() },
   employee_info: { query: vi.fn() },
   employee_info_approve: { query: vi.fn(), create: vi.fn() },
+  identity_link: { query: vi.fn(), dispute: vi.fn() },
 }))
 // ⚠️ `vi.mock` 的工厂会被提升到文件顶部 ⇒ 工厂里引用的外部变量必须也用 `vi.hoisted` 提升，
 // 否则报 `Cannot access 'success' before initialization`（计划里的写法缺这一步）。
@@ -20,7 +21,7 @@ vi.mock('@wujibase/wuji', () => ({
 
 import TDesign, { Select } from 'tdesign-vue-next'
 import StoreEmployeeApproval from './storeEmployeeApproval.vue'
-import { employee_info, employee_info_approve, store_info } from '@/shims/wuji-data'
+import { employee_info, employee_info_approve, identity_link, store_info } from '@/shims/wuji-data'
 
 const STORES = [
   { id: '103', store_name: '城东店', store_number: '103', is_enabled: '1' },
@@ -44,6 +45,8 @@ beforeEach(() => {
   vi.mocked(employee_info.query).mockReset().mockResolvedValue([])
   vi.mocked(employee_info_approve.query).mockReset().mockResolvedValue([])
   vi.mocked(employee_info_approve.create).mockReset().mockResolvedValue({ id: 1 })
+  vi.mocked(identity_link.query).mockReset().mockResolvedValue(null)
+  vi.mocked(identity_link.dispute).mockReset().mockResolvedValue(false)
   ;(globalThis as unknown as { defineWujiPageMeta?: unknown }).defineWujiPageMeta = vi.fn()
   // Node 22 自带一个实验性的 `localStorage` 全局（未开 `--localstorage-file` 时是 undefined），
   // 会把 happy-dom 的实现遮住 ⇒ 显式换回一个真的 Storage，让下面那条断言真的成立。
@@ -111,5 +114,49 @@ describe('storeEmployeeApproval 页面', () => {
 
     expect(employee_info_approve.create).toHaveBeenCalledTimes(1)
     expect(success).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('注册已提交') }))
+  })
+
+  // ── 账户统一 Task 9：绑定身份可见与异议 ────────────────────────────────────
+  const BOUND = { bound: true, status: 'active', boundVia: 'manual', accountMasked: '138****00' } as const
+
+  it('绑定行（Task 9）：identity.bound ⇒ 显示「已绑定账户：掩码（人工/自动）」+「这不是我」', async () => {
+    vi.mocked(employee_info.query).mockResolvedValue([REGISTERED])
+    vi.mocked(identity_link.query).mockResolvedValue(BOUND)
+    const w = mount(StoreEmployeeApproval, { global })
+    await flushPromises()
+    expect(w.text()).toContain('已绑定账户：138****00（人工）')
+    expect(w.text()).toContain('这不是我')
+    // 掩码是服务端给的，前端只透显——页面源码里不得再出现自行掩码的逻辑
+    const src = (await import('./storeEmployeeApproval.vue?raw')).default as string
+    expect(src).not.toMatch(/slice\(\s*0\s*,\s*3\)/)
+  })
+
+  it('绑定行（Task 9）：identity 为 null（未绑定）⇒ 不渲染', async () => {
+    vi.mocked(employee_info.query).mockResolvedValue([REGISTERED])
+    const w = mount(StoreEmployeeApproval, { global })
+    await flushPromises()
+    expect(w.text()).not.toContain('这不是我')
+  })
+
+  it('点「这不是我」⇒ dispute 被调 + success 提示 + 重载（绑定行随 identity 刷新消失）', async () => {
+    vi.mocked(employee_info.query).mockResolvedValue([REGISTERED])
+    // 首载时在绑；异议成功后重载，服务端已把它收敛成 null（disputed 不再 bound）
+    vi.mocked(identity_link.query)
+      .mockResolvedValueOnce(BOUND)
+      .mockResolvedValue(null)
+    vi.mocked(identity_link.dispute).mockResolvedValue(true)
+    const w = mount(StoreEmployeeApproval, { global })
+    await flushPromises()
+
+    const disputeBtn = w.findAll('button').find((b) => b.text() === '这不是我')
+    expect(disputeBtn, '绑定行没渲染出来').toBeDefined()
+    await disputeBtn!.trigger('click')
+    await flushPromises()
+
+    expect(identity_link.dispute).toHaveBeenCalledTimes(1)
+    expect(success).toHaveBeenCalledWith('已提交异议，管理员将尽快核实')
+    // 「刷新页面状态」的真凭据：identity_link.query 被再拉一次，且绑定行消失
+    expect(identity_link.query).toHaveBeenCalledTimes(2)
+    expect(w.text()).not.toContain('这不是我')
   })
 })

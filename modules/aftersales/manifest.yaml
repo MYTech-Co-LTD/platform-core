@@ -48,6 +48,9 @@ api:
     # ── 登记/变更·访客面（aftersales:guest，M3b-1 / spec §2.5）──
     - { method: GET,  path: /guest/me/registration,     scope: aftersales:guest }
     - { method: POST, path: /guest/employee-approvals,  scope: aftersales:guest }
+    # 身份绑定·访客面（账户统一 Task 9）：对本人绑定提异议（「这不是我」）。与路由注册
+    # **同一提交**（AGENTS 硬约束 #2 双向核对）；数据面在宿主 identityLinks，本模块侧零 SQL。
+    - { method: POST, path: /guest/me/identity/dispute, scope: aftersales:guest }
     # GET /guest/products 与管理面 GET /products 分面：协议里同一条 (method,path) 只能声明一次、
     # 一条声明只带一个 scope（spec §2.2 的同一条理由）。
     - { method: GET,  path: /guest/products,            scope: aftersales:guest }
