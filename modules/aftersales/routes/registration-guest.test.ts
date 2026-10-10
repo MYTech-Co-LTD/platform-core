@@ -1,7 +1,7 @@
 // routes/registration-guest.test.ts — 访客面登记端点（真 PG，与既有 routes/*.test.ts 同栈）
 import { Hono } from 'hono'
 import { Pool } from 'pg'
-import type { Identity } from '@platform/sdk'
+import type { Identity, IdentityLinkView, IdentityLinks } from '@platform/sdk'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { applyMigrations, ensureDimTables } from '../test-util'
 import { registerRegistrationGuest } from './registration-guest'
@@ -11,14 +11,34 @@ const OTHER_ORG = 'test-m3b1-other'
 const OPENID = 'openid-guest-1'
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 
-function app(openid = OPENID) {
+function app(openid = OPENID, identityLinks?: IdentityLinks, boundExternalIds?: string[]) {
   const r = new Hono<{ Variables: { identity: Identity } }>()
   r.use('*', async (c, next) => {
-    c.set('identity', { userId: openid, orgId: ORG, displayName: openid, scopes: [], hasScope: () => true })
+    c.set('identity', {
+      userId: openid, orgId: ORG, displayName: openid, scopes: [], hasScope: () => true, boundExternalIds,
+    })
     await next()
   })
-  registerRegistrationGuest(r, { pool })
+  registerRegistrationGuest(r, { pool, identityLinks })
   return r
+}
+
+/** IdentityLinks 全方法替身（#11：替身形状收严到 SDK 接口本身）；Task 9 起也用到
+ *  describeOwn / dispute，按用例经 `over` 覆写对应方法。 */
+function identityLinksStub(
+  match: IdentityLinks['matchOnApplication'],
+  over: Partial<IdentityLinks> = {},
+): IdentityLinks {
+  return {
+    matchOnApplication: match,
+    describeOwn: async () => null,
+    listForOrg: async () => [],
+    confirm: async () => {},
+    rebind: async () => {},
+    revoke: async () => {},
+    dispute: async () => false,
+    ...over,
+  }
 }
 
 /** 两个 org 都要清：租户隔离用例会往 OTHER_ORG 插行，只清 ORG 会让残留跨轮累积。 */
@@ -90,10 +110,10 @@ const submit = (a: ReturnType<typeof app>, body: unknown) =>
   })
 
 describe('GET /guest/me/registration', () => {
-  it('未登记 ⇒ registration 为 null、hasPendingApproval 为 false', async () => {
+  it('未登记 ⇒ registration 为 null、hasPendingApproval 为 false、identity 为 null', async () => {
     const res = await app().request('/guest/me/registration')
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ registration: null, hasPendingApproval: false })
+    expect(await res.json()).toEqual({ registration: null, hasPendingApproval: false, identity: null })
   })
 
   it('已登记 ⇒ 回档案 + 我的门店（多门店）', async () => {
@@ -192,6 +212,52 @@ describe('POST /guest/employee-approvals', () => {
     )
     expect((await submit(app(), { name: '张三', phone: '138', storeCodes: [c1] })).status).toBe(201)
   })
+
+  // ── Task 7：申请提交即触发 identityLinks.matchOnApplication（账户统一 §2）──────
+  it('★ 提交申请后调 matchOnApplication：org/provider/externalId/phone 原样透传、approvalId 带回插入的 id', async () => {
+    const [c1] = await storeCodes()
+    const calls: Parameters<IdentityLinks['matchOnApplication']>[0][] = []
+    const links = identityLinksStub(async (input) => {
+      calls.push(input)
+      return { state: 'draft' }
+    })
+    const res = await submit(app(OPENID, links), { name: '张三', phone: '13800138000', storeCodes: [c1] })
+    expect(res.status).toBe(201)
+    const { id } = (await res.json()) as { id: number }
+    expect(calls).toHaveLength(1) // 钩子真的被调了，不是 201 蒙混
+    expect(calls[0]).toEqual({
+      org: ORG,
+      provider: 'wechat-oa',
+      externalId: OPENID,
+      phone: '13800138000',
+      approvalId: id,
+    })
+    // approvalId 指向**库里刚插入的那条**申请，不只是响应自说自话
+    const row = (
+      await pool.query(`select id::int as id from aftersales.employee_approval where org=$1`, [ORG])
+    ).rows[0] as { id: number }
+    expect(row.id).toBe(id)
+  })
+
+  it('identityLinks 缺省（undefined）⇒ 照旧 201，不抛（向后兼容旧宿主/单测）', async () => {
+    const [c1] = await storeCodes()
+    const res = await submit(app(), { name: '张三', phone: '138', storeCodes: [c1] })
+    expect(res.status).toBe(201)
+  })
+
+  it('★ matchOnApplication 抛错 ⇒ 500 且申请已落库（匹配失败不回滚申请）', async () => {
+    const [c1] = await storeCodes()
+    const links = identityLinksStub(async () => {
+      throw new Error('match exploded')
+    })
+    const res = await submit(app(OPENID, links), { name: '张三', phone: '138', storeCodes: [c1] })
+    expect(res.status).toBe(500)
+    // 申请仍在：管理员可从 pending 队列补绑——这是「500 裸露」取舍的立论（不回滚）
+    const n = Number(
+      (await pool.query(`select count(*)::int n from aftersales.employee_approval where org=$1`, [ORG])).rows[0]!.n,
+    )
+    expect(n).toBe(1)
+  })
 })
 
 describe('GET /guest/products', () => {
@@ -264,5 +330,174 @@ describe('GET /guest/stores', () => {
   it('分页：非法 size 回落默认值、超上界夹住（与 /guest/products 同一口径）', async () => {
     const body = await (await app().request('/guest/stores?page=1&size=99999')).json()
     expect(body.size).toBe(100) // MAX_PAGE_SIZE，不是 99999
+  })
+})
+
+// ── 账户统一 Task 10：多绑读侧收窄（registration 面） ──
+// 正式态会话带 boundExternalIds（SDK Identity §4.3）：读侧（档案快照 / pending 检查）
+// 按「∈ 绑定集合」收窄；写侧（employee_approval.open_id 落值）仍 = identity.userId——红线。
+describe('账户统一 Task 10：多绑读侧收窄', () => {
+  const OTHER_OPENID = 'openid-guest-2' // 集合内的另一个渠道 openid
+  const STRANGER = 'openid-guest-stranger' // 集合外
+  /** 多绑会话：登录 openid-guest-1，绑定集合 = [guest-1, guest-2] */
+  const multiApp = () => app(OPENID, undefined, [OPENID, OTHER_OPENID])
+
+  it('【多绑】GET /guest/me/registration：集合内 openid 的已审批档案可见', async () => {
+    // 档案挂在集合内的另一个渠道 openid 上（在 guest-2 渠道登记过）
+    await pool.query(
+      `insert into aftersales.employee(org, name, phone, open_id, approve_status)
+       values ($1, '李四', '139', $2, 'approved')`,
+      [ORG, OTHER_OPENID],
+    )
+    const body = (await (await multiApp().request('/guest/me/registration')).json()) as {
+      registration: { name: string } | null
+    }
+    expect(body.registration).not.toBeNull()
+    expect(body.registration!.name).toBe('李四')
+  })
+
+  it('【多绑·对照】集合外 openid 的档案仍不可见（多绑 ≠ 全租户可见）', async () => {
+    await pool.query(
+      `insert into aftersales.employee(org, name, phone, open_id, approve_status)
+       values ($1, '路人', '140', $2, 'approved')`,
+      [ORG, STRANGER],
+    )
+    const body = (await (await multiApp().request('/guest/me/registration')).json()) as {
+      registration: unknown
+    }
+    expect(body.registration).toBeNull()
+  })
+
+  it('【多绑】hasPendingApproval：集合内 openid 的待审申请可见（防同一人从别的渠道重复申请）', async () => {
+    // 待审申请挂在 guest-2 渠道（中间态时提交的），现在以多绑会话查得到
+    await pool.query(
+      `insert into aftersales.employee_approval(org, open_id, approve_type, new_info)
+       values ($1, $2, 'register', $3::jsonb)`,
+      [ORG, OTHER_OPENID, JSON.stringify({ name: '李四', phone: '139', storeCodes: [] })],
+    )
+    const body = (await (await multiApp().request('/guest/me/registration')).json()) as {
+      hasPendingApproval: boolean
+    }
+    expect(body.hasPendingApproval).toBe(true)
+  })
+
+  it('【多绑·红线】写路径不变：提交申请 ⇒ employee_approval.open_id 仍落 identity.userId（登录 openid）', async () => {
+    const [c1] = await storeCodes()
+    const res = await submit(multiApp(), { name: '张三', phone: '138', storeCodes: [c1] })
+    expect(res.status).toBe(201)
+    const rows = await pool.query<{ open_id: string }>(
+      `select open_id from aftersales.employee_approval where org = $1`,
+      [ORG],
+    )
+    expect(rows.rows).toHaveLength(1)
+    expect(rows.rows[0].open_id).toBe(OPENID)
+  })
+
+  // I-1（终审修复回归）：最后一条 active link 被撤销后，正式态 session 重签出
+  // boundExternalIds=[]（session-middleware ext 刷新不兜底）。空集合直接当读谓词是
+  // ANY('{}') 全空 ⇒ 档案快照/pending 检查全空，用户既看不见自己也重复申请。
+  // guestIdentityIds 的空集合回退把读谓词接回登录 openid（撤销后 ≤5 分钟窗口的自见基准）。
+  it('【空绑定集合】boundExternalIds=[] ⇒ 读谓词回落登录 openid（自己的档案仍可见）', async () => {
+    await seedMe() // 档案就挂在登录 openid 上
+    const emptyApp = () => app(OPENID, undefined, [])
+    const body = (await (await emptyApp().request('/guest/me/registration')).json()) as {
+      registration: { name: string } | null
+      hasPendingApproval: boolean
+    }
+    expect(body.registration).not.toBeNull()
+    expect(body.registration!.name).toBe('张三')
+    expect(body.hasPendingApproval).toBe(false)
+  })
+})
+
+// ── 账户统一 Task 9：绑定身份可见与异议（设计稿 §2「userApp 内展示当前绑定身份 + 异议入口」）──
+describe('账户统一 Task 9：绑定身份可见与异议', () => {
+  /** IdentityLinkView 夹具：phoneMasked 用真掩码形状（前3后2，全局约束「不打印完整手机号」） */
+  const linkView = (over: Partial<IdentityLinkView> = {}): IdentityLinkView => ({
+    id: 1,
+    provider: 'wechat-oa',
+    externalId: OPENID,
+    casdoorName: 'casdoor-acct-1',
+    status: 'active',
+    phoneMasked: '138****00',
+    boundVia: 'auto',
+    createdAt: '2026-10-10T00:00:00.000Z',
+    ...over,
+  })
+
+  const getRegistration = async (a: ReturnType<typeof app>) =>
+    (await (await a.request('/guest/me/registration')).json()) as { identity: unknown }
+
+  it('★ active 绑定 ⇒ identity.bound=true、status/boundVia 透传、accountMasked=服务端掩码', async () => {
+    const links = identityLinksStub(async () => ({ state: 'draft' }), {
+      describeOwn: async () => linkView({ boundVia: 'auto' }),
+    })
+    const body = await getRegistration(app(OPENID, links))
+    expect(body.identity).toEqual({
+      bound: true,
+      status: 'active',
+      boundVia: 'auto',
+      accountMasked: '138****00',
+    })
+  })
+
+  it('★ disputed 行 ⇒ bound=false、boundVia 收 null（绑定已不在效，「怎么绑的」不再有意义）', async () => {
+    const links = identityLinksStub(async () => ({ state: 'draft' }), {
+      describeOwn: async () => linkView({ status: 'disputed', boundVia: 'manual' }),
+    })
+    const body = await getRegistration(app(OPENID, links))
+    expect(body.identity).toEqual({
+      bound: false,
+      status: 'disputed',
+      boundVia: null,
+      accountMasked: '138****00',
+    })
+  })
+
+  it('pending/revoked 行不外露 ⇒ identity 为 null（响应声明的 status 只有 active|disputed 两态）', async () => {
+    for (const status of ['pending', 'revoked'] as const) {
+      const links = identityLinksStub(async () => ({ state: 'draft' }), {
+        describeOwn: async () => linkView({ status }),
+      })
+      const body = await getRegistration(app(OPENID, links))
+      expect(body.identity, `status=${status}`).toBeNull()
+    }
+  })
+
+  it('服务在但查无绑定 ⇒ identity 为 null', async () => {
+    const body = await getRegistration(app(OPENID, identityLinksStub(async () => ({ state: 'draft' }))))
+    expect(body.identity).toBeNull()
+  })
+
+  it('★ 服务缺省（undefined）⇒ identity 为 null（旧宿主/单测兼容，同 matchOnApplication 容缺省口径）', async () => {
+    const body = await getRegistration(app())
+    expect(body.identity).toBeNull()
+  })
+
+  it('★ POST /guest/me/identity/dispute 生效 ⇒ 200 {disputed:true}，org/登录 openid 透传给服务', async () => {
+    const calls: Array<Parameters<IdentityLinks['dispute']>> = []
+    const links = identityLinksStub(async () => ({ state: 'draft' }), {
+      dispute: async (org, externalId) => {
+        calls.push([org, externalId])
+        return true
+      },
+    })
+    const res = await app(OPENID, links).request('/guest/me/identity/dispute', { method: 'POST' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ disputed: true })
+    expect(calls).toEqual([[ORG, OPENID]])
+  })
+
+  it('无绑定（服务回 false）⇒ 200 {disputed:false}，不是 404——不向外泄露绑定存在性', async () => {
+    const links = identityLinksStub(async () => ({ state: 'draft' }), { dispute: async () => false })
+    const res = await app(OPENID, links).request('/guest/me/identity/dispute', { method: 'POST' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ disputed: false })
+  })
+
+  it('服务缺省 ⇒ 200 {disputed:false}（与 GET 侧 identity:null 同一条容缺省口径）', async () => {
+    const res = await app().request('/guest/me/identity/dispute', { method: 'POST' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ disputed: false })
   })
 })

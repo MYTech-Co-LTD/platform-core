@@ -14,11 +14,34 @@ export interface Identity {
   displayName: string
   scopes: string[]
   hasScope(code: string): boolean
+  /**
+   * 正式态账户身份（账户统一设计 §3.1）：Casdoor name（会话载荷 `acct` 字段）。
+   * 中间态/内部会话不设（undefined）——旧形状会话的 Identity 线上形状不变。
+   */
+  accountName?: string
+  /**
+   * 绑定集合（账户统一设计 §4.3）：该账户全部 active 绑定的 external_id（openid/企微号）。
+   * 模块据此做「我的工单」等多绑收窄（`submitter_openid ∈ 集合`）；随 scopes 刷新机制同步刷新。
+   * 中间态/内部会话不设（undefined）。顺序不作承诺——消费方按集合语义用，不按下标。
+   *
+   * ⚠️ 空集合语义（终审订正，**不是恒非空**）：最后一条 active 绑定被撤销/争议后，正式态
+   * session 重签出 `[]`——这是如实状态，不是缺省。消费方**不得**把空数组直接当读谓词
+   * （`= ANY('{}')` 恒空 ⇒ 用户看不见自己、还会重复申请），须按「**空 = 回退
+   * `identity.userId`（登录 openid）**」消费——参照 `modules/aftersales/routes/context.ts`
+   * 的 `guestIdentityIds`（撤销后 ≤5 分钟窗口的自见基准）。
+   */
+  boundExternalIds?: string[]
 }
 
 /** 宿主递给 createRouter 的运行时上下文：绑定资源在此，模块不自己建连接。 */
 export interface ModuleContext {
   pool: Pool
+  /**
+   * 绑定服务（账户统一设计 §2，loader 装载期构造一次注入；Task 7）。
+   * 未注入 = 旧宿主/单测环境——模块必须容忍 undefined（用到它的调用点显式判空跳过），
+   * 这是「缺省不炸」的向后兼容契约，不是可选风格。
+   */
+  identityLinks?: IdentityLinks
 }
 
 /**
@@ -249,4 +272,57 @@ export function declaredScopeGate(
     c.set(DECLARED_GATE_APPROVED, true)
     await next()
   }
+}
+
+/**
+ * 外部身份渠道（账户统一设计 §1.2）。与宿主 `platform.identity_link.provider` 的 CHECK
+ * 约束同字面量——两边各写一份，改任何一边都要同时改 CHECK。
+ */
+export type LinkProvider = 'wechat-oa' | 'wecom'
+
+/**
+ * 绑定关系的模块侧视图（宿主 `platform.identity_link` 行的投影）。
+ * **只出掩码手机号**（前 3 后 2 中间 `****`）——完整手机号不出宿主边界（敏感值规矩）。
+ */
+export interface IdentityLinkView {
+  id: number
+  provider: LinkProvider
+  externalId: string
+  casdoorName: string
+  status: 'pending' | 'active' | 'revoked' | 'disputed'
+  phoneMasked: string | null
+  boundVia: 'auto' | 'manual' | null
+  createdAt: string
+}
+
+/**
+ * IdentityLinks 各方法的**契约错误**（账户统一 Task 6/8）。与 IdentityLinks 接口同居 SDK：
+ * 抛错方（宿主服务实现）与接错方（模块管理面 handler 按码映射 HTTP）隔着包边界，错误类型
+ * 只有放在契约层两边才见得到——各自在本地再写一份就是两份事实源，码一改必漂。
+ * handler 的映射口径：LINK_TARGET_MISSING ⇒ 400（客户端给的目标账户不存在，可改可重试）、
+ * LINK_NOT_FOUND ⇒ 404（本 org 无此 id；跨 org 同路，不泄露存在性）。
+ */
+export class LinkError extends Error {
+  constructor(readonly code: 'LINK_TARGET_MISSING' | 'LINK_NOT_FOUND') {
+    super(code)
+  }
+}
+
+/** 宿主注入模块的绑定能力（ctx.identityLinks；未注入 = 旧宿主，模块须容忍 undefined） */
+export interface IdentityLinks {
+  /** 申请提交时的自动匹配（设计稿 §2）：返回终态供模块透出 */
+  matchOnApplication(input: { org: string; provider: LinkProvider; externalId: string; phone: string; approvalId: number | null }):
+    Promise<{ state: 'active' | 'multi' | 'draft'; candidates?: string[] }>
+  describeOwn(org: string, externalId: string): Promise<IdentityLinkView | null>
+  listForOrg(org: string, status?: IdentityLinkView['status']): Promise<IdentityLinkView[]>
+  /**
+   * 人工确认（管理面 Task 8）：pending/disputed ⇒ active。`casdoorName` 缺省 = 确认行上建议。
+   * `opts.actor` 是 audit 执行人（管理面会话的 identity.userId；缺省 = 无执行人，落 null）——
+   * audit 行由**服务实现**与状态变更同事务落（Task 6 既有纪律），调用方**不得**另写 audit。
+   */
+  confirm(org: string, id: number, casdoorName?: string, opts?: { actor?: string }): Promise<void>
+  /** 人工改绑（管理面 Task 8）：换目标账户并生效 active；`opts.actor` 语义同 confirm */
+  rebind(org: string, id: number, casdoorName: string, opts?: { actor?: string }): Promise<void>
+  revoke(org: string, id: number, by: string): Promise<void>
+  dispute(org: string, externalId: string): Promise<boolean>
 }

@@ -7,7 +7,7 @@
 // `GET /guest/me/registration` 的结果；**本文件不替它决定 UI 怎么呈现**。
 import { z } from 'zod'
 import { RegistrationError, computeRegistration } from '../domain/registration'
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageParam } from './context'
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, guestIdentityIds, parsePageParam } from './context'
 import type { ModuleHono, RouteCtx } from './context'
 
 /** 目标值：客户端只表达「我要变成什么」（spec §2.5 纪律②），差异由服务端算 */
@@ -27,12 +27,44 @@ interface MySnapshot {
   storeCodes: string[]
 }
 
-/** 读「我的档案」快照：employee 行 + employee_store 展开。**org + open_id 双向收窄**。 */
-async function readMySnapshot(ctx: RouteCtx, org: string, openid: string): Promise<MySnapshot | null> {
+/**
+ * 绑定身份视图（账户统一 Task 9，设计稿 §2「userApp 内展示当前绑定身份 + 异议入口」）。
+ * `status` 只声明 active|disputed 两态：pending 是「申请在途」（hasPendingApproval 已表达）、
+ * revoked 是管理员侧动作——两者对访客都没有可展示的绑定语义，路由侧一律收敛成 `null`，
+ * 不把 SDK 视图的四态原样透出去。
+ */
+interface GuestIdentity {
+  bound: boolean
+  status: 'active' | 'disputed'
+  boundVia: 'auto' | 'manual' | null
+  /** 服务端掩码后的账户锚（identity_link.phone 掩码形）；前端不再自行掩码 */
+  accountMasked: string
+}
+
+/** describeOwn 视图 → 访客可见的 identity 字段；无服务/无行/非两态 ⇒ null（不泄露绑定存在性） */
+async function readGuestIdentity(ctx: RouteCtx, org: string, openid: string): Promise<GuestIdentity | null> {
+  if (!ctx.identityLinks) return null
+  const link = await ctx.identityLinks.describeOwn(org, openid)
+  if (link === null || (link.status !== 'active' && link.status !== 'disputed')) return null
+  return {
+    bound: link.status === 'active',
+    status: link.status,
+    // boundVia 只对「在效的绑定」有意义：disputed 行收 null（「怎么绑的」已随绑定失效）
+    boundVia: link.status === 'active' ? link.boundVia : null,
+    accountMasked: link.phoneMasked ?? '',
+  }
+}
+
+/**
+ * 读「我的档案」快照：employee 行 + employee_store 展开。**org + open_id 双向收窄**；
+ * open_id 按【绑定集合】判（账户统一设计 §4.1）——多绑身份在任一渠道登记的档案都算「我的」；
+ * 中间态/旧会话集合 = 登录 openid 单元素，行为与旧的单 openid 逐字等价。
+ */
+async function readMySnapshot(ctx: RouteCtx, org: string, openids: string[]): Promise<MySnapshot | null> {
   const emp = await ctx.pool.query<{ id: string; name: string; phone: string }>(
     `select id, name, phone from aftersales.employee
-      where org = $1 and open_id = $2 and approve_status = 'approved'`,
-    [org, openid],
+      where org = $1 and open_id = any($2::text[]) and approve_status = 'approved'`,
+    [org, openids],
   )
   const row = emp.rows[0]
   if (!row) return null
@@ -49,16 +81,35 @@ const escapeLike = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`)
 export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
   // ── 我的登记 ──────────────────────────────────────────────────────────────
   r.get('/guest/me/registration', async (c) => {
-    const { orgId: org, userId: openid } = c.get('identity')
-    const snap = await readMySnapshot(ctx, org, openid)
+    const identity = c.get('identity')
+    const org = identity.orgId
+    const openids = guestIdentityIds(identity)
+    const snap = await readMySnapshot(ctx, org, openids)
+    // pending 检查同按集合：申请在别的渠道（中间态）提交的，这里也报「有 待审」——
+    // 否则多绑用户会从另一渠道再提一份申请（部分唯一索引按 open_id 分桶，拦不住跨渠道重复）。
     const pending = await ctx.pool.query(
-      `select 1 from aftersales.employee_approval where org = $1 and open_id = $2 and status = 'pending'`,
-      [org, openid],
+      `select 1 from aftersales.employee_approval where org = $1 and open_id = any($2::text[]) and status = 'pending'`,
+      [org, openids],
     )
     return c.json({
       registration: snap ? { name: snap.name, phone: snap.phone, storeCodes: snap.storeCodes } : null,
       hasPendingApproval: pending.rowCount! > 0,
+      // 账户统一 Task 9：identityLinks 缺省（旧宿主/单测）⇒ identity:null，与 matchOnApplication
+      // 的容缺省口径同一条——不因可选能力缺位把整个响应打挂。
+      identity: await readGuestIdentity(ctx, org, identity.userId),
     })
+  })
+
+  // ── 绑定身份异议（账户统一 Task 9；设计稿 §2 的「异议入口」）────────────────────────
+  // 无 active 绑定（含服务缺省）⇒ 200 {disputed:false}，**不 404**——404/4xx 差异本身就是
+  // 「你有没有绑定」的侧信道，这恰好是访客面最不该泄露的东西。真正的状态判定在宿主
+  // identityLinks.dispute（与 describeOwn 同一挑选：active 优先、否则最新），本模块零 SQL。
+  r.post('/guest/me/identity/dispute', async (c) => {
+    const identity = c.get('identity')
+    const disputed = ctx.identityLinks
+      ? await ctx.identityLinks.dispute(identity.orgId, identity.userId)
+      : false
+    return c.json({ disputed })
   })
 
   // ── 提交登记/变更 ────────────────────────────────────────────────────────
@@ -68,7 +119,8 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const target = parsed.data
 
-    const snap = await readMySnapshot(ctx, org, openid)
+    // 读旧档案按绑定集合（同 GET 侧）；下面的写入 open_id 仍 = 登录 openid（红线：只动读侧）
+    const snap = await readMySnapshot(ctx, org, guestIdentityIds(c.get('identity')))
     let diff: ReturnType<typeof computeRegistration>
     try {
       diff = computeRegistration(snap ? { name: snap.name, phone: snap.phone, storeCodes: snap.storeCodes } : null, target)
@@ -78,19 +130,35 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
       throw e
     }
 
+    let approvalId: number
     try {
       const ins = await ctx.pool.query<{ id: string }>(
         `insert into aftersales.employee_approval(org, open_id, approve_type, old_info, new_info)
          values ($1, $2, $3, $4::jsonb, $5::jsonb) returning id`,
         [org, openid, diff.approveType, JSON.stringify(diff.oldInfo), JSON.stringify(diff.newInfo)],
       )
-      return c.json({ id: Number(ins.rows[0]!.id), approveType: diff.approveType }, 201)
+      approvalId = Number(ins.rows[0]!.id)
     } catch (e) {
       // ★ 防重**由库保证**（spec §2.5 纪律①）：部分唯一索引在并发下也拦得住。
       //   不先查后插——那正是源侧前端判定的做法，两个并发请求都能查到 0 条 ⇒ 都插入。
       if ((e as { code?: string }).code === '23505') return c.json({ error: 'APPROVAL_PENDING' }, 409)
       throw e
     }
+
+    // 账户统一（Task 7）：申请已落库、201 应答前触发自动匹配。identityLinks 缺省
+    // （旧宿主/单测）⇒ 跳过照旧 201。匹配失败抛错 ⇒ 500 裸露（在 try 外，不会被 409 防重
+    // 分支吞掉）——**不回滚申请**：申请是业务事实且 409 防重意味着重试进不来，绑定可由
+    // 管理员从 pending 队列人工补绑。
+    if (ctx.identityLinks) {
+      await ctx.identityLinks.matchOnApplication({
+        org,
+        provider: 'wechat-oa',
+        externalId: openid,
+        phone: target.phone,
+        approvalId,
+      })
+    }
+    return c.json({ id: approvalId, approveType: diff.approveType }, 201)
   })
 
   // ── 选商品（M3b-2 的移动端要用）──────────────────────────────────────────

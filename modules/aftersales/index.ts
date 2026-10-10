@@ -10,6 +10,7 @@ import { registerMasterData } from './routes/masterdata'
 import { registerAttachmentGuest, registerAttachmentGc, registerAttachmentManage } from './routes/attachment'
 import { registerRegistrationGuest } from './routes/registration-guest'
 import { registerRegistrationManage } from './routes/registration-manage'
+import { registerLinksManage } from './routes/links-manage'
 import type { RouteCtx } from './routes/context'
 
 // 装配形状照 modules/demo/index.ts（本仓模块的唯一范式）。
@@ -20,12 +21,13 @@ const manifest = ManifestSchema.parse(
 
 export default defineModule({
   manifest,
-  createRouter: ({ pool }) => {
+  createRouter: ({ pool, identityLinks }) => {
     // ⚠️ 装载期**不读任何配置**（M3c 步 4）：存储配置由宿主按请求投影进 `TENANT_STORAGE`，
     // 各 handler 自己 `c.get`。这里读 env 是步 4 之前的形态，已消灭——它带来的正是
     // 「多租户同进程必然共用一份配置」。
     const r = new Hono<{ Variables: { identity: Identity; [TENANT_STORAGE]?: TenantStorageConfig } }>()
-    const ctx: RouteCtx = { pool } // storage 已从 RouteCtx 消失，配置改为按请求取
+    // storage 已从 RouteCtx 消失，配置改为按请求取；identityLinks 可缺省（旧宿主不注入）
+    const ctx: RouteCtx = { pool, identityLinks }
 
     registerTicketManage(r, ctx)
     registerTicketGuest(r, ctx)
@@ -36,6 +38,7 @@ export default defineModule({
     registerAttachmentGc(r, ctx)
     registerRegistrationGuest(r, ctx)
     registerRegistrationManage(r, ctx)
+    registerLinksManage(r, ctx)
     return r
   },
 })

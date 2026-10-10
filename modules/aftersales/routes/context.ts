@@ -6,7 +6,7 @@
 import type { Hono } from 'hono'
 import type { Pool } from 'pg'
 import { TENANT_STORAGE } from '@platform/sdk'
-import type { Identity, TenantStorageConfig } from '@platform/sdk'
+import type { Identity, IdentityLinks, TenantStorageConfig } from '@platform/sdk'
 
 /**
  * 模块路由的统一类型：identity 由宿主注入（模块自己【不写】门禁，spec/协议见 module-protocol）。
@@ -16,15 +16,21 @@ import type { Identity, TenantStorageConfig } from '@platform/sdk'
  * ⚠️ 用**计算键名**而非字面量 'platform.tenantStorage'——后者是第二份事实源，改名时它不会
  * 跟着改，症状是**静默拿不到配置**。
  */
-export type ModuleHono = Hono<{ Variables: { identity: Identity; [TENANT_STORAGE]?: TenantStorageConfig } }>
+/**
+ * Variables 内层（照 modules/data/routes/context.ts 的 ModuleVars 习语）：路由文件里给
+ * `Context<{ Variables: ModuleVars }>` 写共享助手时用整个 Env，别再各自内联一份形状。
+ */
+export type ModuleVars = { identity: Identity; [TENANT_STORAGE]?: TenantStorageConfig }
+
+export type ModuleHono = Hono<{ Variables: ModuleVars }>
 
 /**
- * 每个域注册时拿到的依赖。**只有 pool**：存储配置从装载期常量改成了**按请求**解析
- * （`c.get(TENANT_STORAGE)` ⇒ `storageCandidatesFor` / `storageResolverFor`），
- * 故 `ZosStorage | null` 这个装载期形状已经不存在了 —— 这正是步 4 要消灭的形态。
+ * 每个域注册时拿到的依赖。pool 之外再带宿主注入的 `identityLinks`（账户统一 Task 7）——
+ * **可缺省**：旧宿主/单测不注入，消费点必须显式判空（缺省 ≠ 半残对象，是明确跳过）。
  */
 export interface RouteCtx {
   pool: Pool
+  identityLinks?: IdentityLinks
 }
 
 /** 列表分页上界：模块自己的护栏，防止 size=99999 一次拉全表。 */
@@ -64,4 +70,19 @@ export function parseIdParam(raw: string | undefined): number | null {
   if (raw === undefined || !/^\d+$/.test(raw)) return null
   const n = Number(raw)
   return Number.isSafeInteger(n) && n > 0 ? n : null
+}
+
+/**
+ * guest 面身份集合：正式态=全部 active 绑定；中间态/旧会话=登录 openid 本身。
+ * 读侧过滤一律 `= ANY(本函数结果)`（账户统一设计 §4.1）——写侧落值**不**用它，
+ * 仍写 `identity.userId`（openid 是渠道事实，业务表身份锚不随绑定关系变）。
+ *
+ * 空绑定集合=回退登录 openid（I-1，终审修复）：最后一条 active link 被撤销/争议后，
+ * 正式态 session 重签出 `boundExternalIds=[]`（ext 刷新如实反映零绑定）——空数组不是
+ * nullish，`??` 兜不住 ⇒ 读谓词 ANY('{}') 全空、写侧仍按登录 openid，用户既看不见自己
+ * 也重复申请。本函数把空集合接回登录 openid，作为「撤销后 ≤5 分钟窗口」（下一次
+ * scopes/ext 刷新前）的自见基准：看得到自己的历史单据与档案，写侧语义不变。
+ */
+export function guestIdentityIds(identity: Identity): string[] {
+  return identity.boundExternalIds?.length ? identity.boundExternalIds : [identity.userId]
 }

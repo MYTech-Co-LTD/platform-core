@@ -32,6 +32,7 @@ import { adminRoutes } from './routes/admin'
 import { PLATFORM_BUILTIN_PERMISSIONS } from './loader'
 import { wecomRoutes } from './routes/auth-wecom'
 import { wechatOaRoutes } from './routes/auth-wechat-oa'
+import { findActiveLink, listActiveExternalIds } from './identity-links'
 import { createLoginLimiter } from './rate-limit'
 
 /** platform schema 迁移（Task 11 产物目录）——按本文件位置解析，与 cwd 无关 */
@@ -217,6 +218,9 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     casdoor: casdoorFactory,
     sessionSecret: config.sessionSecret,
     guestScopes: runtime.enabledGuestScopes,
+    // 正式态（wechat-oa 带 acct）的 ext 绑定集合重算（账户统一 Task 5）：与 wechat-oa 路由
+    // 同源 identity-links；解析器抛错只降 ext（scopes 照刷、ext 沿用旧值），见中间件实现处
+    boundExternalIds: (org, casdoorName) => listActiveExternalIds(pool, org, casdoorName),
   }))
 
   // ⑥.5 数据问数两通道的鉴权（**必须在 sessionMiddleware 之后、runtime.mount 之前**）：
@@ -267,17 +271,21 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     casdoorClientSecret: config.casdoor.clientSecret,
     publicOrigin: config.publicOrigin,
   }))
-  // ⑧c 公众号访客登录路（售后 spec §1.3）：外部客户 openid 直接签访客 session（不落
-  // Casdoor），租户行公众号配置存在即启用。依赖 runtime.enabledGuestScopes——runtime 在
-  // ③（装载段）产出、先于整条 Hono 装配链，故此处可直接引用（顺序约束：若日后重构使
-  // 装载晚于路由挂载，本块必须随之下移到 runtime 产出之后——Hono 路径不重叠时注册序
-  // 不影响分发）。同一 limiter 实例第三处传入，门键 'wechat-oa' 在路由内部独立分桶。
+  // ⑧c 公众号访客登录路（售后 spec §1.3）：外部客户 openid 即身份——无绑定为访客中间态，
+  // active 绑定 + Casdoor 有户为正式态（账户统一 Task 4）。租户行公众号配置存在即启用。
+  // 依赖 runtime.enabledGuestScopes——runtime 在 ③（装载段）产出、先于整条 Hono 装配链，
+  // 故此处可直接引用（顺序约束：若日后重构使装载晚于路由挂载，本块必须随之下移到
+  // runtime 产出之后——Hono 路径不重叠时注册序不影响分发）。同一 limiter 实例第三处传入，
+  // 门键 'wechat-oa' 在路由内部独立分桶。
   app.route('/api/platform/auth/wechat-oa', wechatOaRoutes({
     sessionSecret: config.sessionSecret,
     pool,
     limiter,
     publicOrigin: config.publicOrigin,
     enabledGuestScopes: runtime.enabledGuestScopes,
+    casdoor: casdoorFactory,
+    findActiveLink: (org, externalId) => findActiveLink(pool, org, externalId),
+    listActiveExternalIds: (org, casdoorName) => listActiveExternalIds(pool, org, casdoorName),
   }))
 
   // ⑧b 租户管理域（spec D4/D9，M3，issue #46）：/api/platform/admin/*——

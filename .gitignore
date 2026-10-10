@@ -48,3 +48,4 @@ duckle/**/secrets.enc
 #    issue #169）⇒ 会以未跟踪文件残留，`git add -A` 就会把它带进仓。理由同上面 `.tmp/` 那条。
 #    一条模式覆盖两者及将来同前缀的变体（`*` 不跨 `/` ⇒ 只影响 apps/server/ 下这一族）。
 apps/server/.tmp-loader-fixtures*/
+.superpowers/

@@ -36,6 +36,7 @@ import { Hono } from 'hono'
 import type { Env, MiddlewareHandler } from 'hono'
 import type { Pool } from 'pg'
 import { runMigrations } from './migrate'
+import { createIdentityLinks } from './identity-links'
 import { listEnabledSources } from './tenant-source'
 import { resolveTenantStorage } from './tenant-storage'
 import type { TenantRow } from './tenant'
@@ -301,6 +302,12 @@ export async function loadModules(
   /** id → 该模块声明的端口（`createPorts` 产物）。没声明的模块不入表 ⇒ `port()` 返 undefined */
   const portsByModule = new Map<string, ModulePorts>()
 
+  // 绑定服务（账户统一 Task 7）：装载期构造**一次**，注入各模块 ctx.identityLinks。
+  // casdoor 工厂同源复用权限码供给的那把（deps.casdoorFor）——别造第二把（第二把 = 第二份
+  // admin 会话/缓存语义，行为必漂移）。未提供工厂（loader 测试/注入式用法）⇒ 不注入，
+  // 模块侧按契约容忍 undefined；生产 app.ts 无条件传工厂，不存在缺省路径。
+  const identityLinks = deps.casdoorFor ? createIdentityLinks(deps.pool, deps.casdoorFor) : undefined
+
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
     const dir = path.resolve(modulesDir, entry.name)
@@ -366,7 +373,7 @@ export async function loadModules(
 
     loaded.push({
       manifest,
-      router: applyDeclaredApiGate(def.createRouter({ pool: deps.pool }), manifest),
+      router: applyDeclaredApiGate(def.createRouter({ pool: deps.pool, identityLinks }), manifest),
       dir,
     })
   }

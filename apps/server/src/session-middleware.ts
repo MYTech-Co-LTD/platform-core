@@ -7,9 +7,13 @@
 //
 // 重签策略：needsScopeRefresh（now-sfa>=300）或 needsRenew（exp-now<6天）任一命中即重签一次
 // （signSession 以注入的同一 now 签发，iat/exp/sfa 三值与本地构造的载荷严格一致，csrf 可复算）；
-// scopes 值只在 scope 刷新命中时重算：普通会话向 Casdoor（getUser+getPermissions+
-// effectiveScopes）；访客会话（authVia='wechat-oa'，审查 I1）不查 Casdoor（openid 在那没有
-// 账户，查了必清会话），改用注入的 guestScopes 按当前租户已启用模块重算——见实现处注释。
+// scopes 值只在 scope 刷新命中时重算，按载荷形状三路（账户统一 Task 5）：
+//   · 正式态（authVia='wechat-oa' 且带 acct）→ 账户分支：向 Casdoor（getUser(acct)+
+//     getPermissions+effectiveScopes(acct)），ext 绑定集合独立重算（解析器抛错只降 ext，
+//     不牵连 scopes 刷新）；
+//   · 中间态（authVia='wechat-oa' 无 acct，审查 I1）→ 访客分支：不查 Casdoor（openid 在那
+//     没有账户，查了必清会话），改用注入的 guestScopes 按当前租户已启用模块重算；
+//   · 其余 → 内部分支：向 Casdoor（getUser(name)+getPermissions+effectiveScopes(name)）。
 //
 // 可用性优先：Casdoor 拉取失败（网络/5xx → CasdoorClient 抛错）→ 降级用旧 scopes 继续本次
 // 请求且【不重签】（重签会把 sfa 抹成 now，遮蔽故障 5 分钟）；仅 Casdoor 明确返回"用户不存在"
@@ -61,6 +65,14 @@ export interface SessionMiddlewareDeps {
    */
   guestScopes?: (tenantId: number) => Promise<string[]>
   /**
+   * 正式态账户会话（wechat-oa 且带 acct）的 ext 绑定集合解析器（identity-links 的
+   * listActiveExternalIds，由 app.ts 注入）。设计 §3.1「集合随 scopes 刷新机制同步刷新」：
+   * 重算走**独立 try/catch**——解析器抛错只降 ext（scopes 照刷、ext 沿用旧值），与 Casdoor
+   * 刷新路互不牵连；未注入时（旧宿主/部分测试）沿用旧值。签发侧见 Task 4 路由（同源
+   * store、形状一致：ext = 账户全部 active 绑定的 external_id 集合，顺序不作承诺）。
+   */
+  boundExternalIds?: (org: string, casdoorName: string) => Promise<string[]>
+  /**
    * 降级 warn 的去重窗口（ms）：同一 org 在该窗口内最多留一条 warn。默认
    * DEGRADE_WARN_INTERVAL_MS。闸的是**窗口**、不是"只报一次"的闩——两条断言分工钉死：
    * interval=0 证"不是闩"（每次降级各一条），小正数窗口 + 真的等过窗口证"窗口会随时间
@@ -110,7 +122,7 @@ function nowSec(): number {
   return Math.floor(Date.now() / 1000)
 }
 
-/** SessionPayload → Identity（Task 9 契约：hasScope ≡ scopes.includes） */
+/** SessionPayload → Identity（Task 9 契约：hasScope ≡ scopes.includes；账户统一扩 acct/ext 投影） */
 function toIdentity(p: SessionPayload): Identity {
   return {
     userId: p.sub,
@@ -118,6 +130,9 @@ function toIdentity(p: SessionPayload): Identity {
     displayName: p.name,
     scopes: p.scopes,
     hasScope: (code: string) => p.scopes.includes(code),
+    // 账户统一（Task 5）：正式态才带；不设即 undefined，内部/中间态会话的 Identity 形状不变
+    accountName: p.acct,
+    boundExternalIds: p.ext,
   }
 }
 
@@ -161,8 +176,37 @@ export const sessionMiddleware = (
       let scopes = p.scopes
       let refreshOk = false
       let userGone = false
+      let ext = p.ext // 绑定集合：重算成功才换新，失败/未注入沿用旧值（undefined = 旧形状会话）
       if (wantRefresh) {
-        if (p.authVia === 'wechat-oa') {
+        if (p.authVia === 'wechat-oa' && p.acct !== undefined) {
+          // 正式态账户分支（账户统一 Task 5）：校验键是 acct（Casdoor name），不是 openid——
+          // openid 在 Casdoor 没有账户。结构照抄内部分支：getUser=null ⇒ userGone（唯一清
+          // 会话分支）；抛错 ⇒ 降级不重签（可用性优先）。effectiveScopes 以 acct 为准，
+          // 与 Task 4 签发同源同语义（内部路则以 name 为准——两键在各自形状下等价）。
+          try {
+            const casdoor = deps.casdoor(p.org)
+            const user = await casdoor.getUser(p.acct)
+            if (user === null) {
+              userGone = true
+            } else {
+              const perms = await casdoor.getPermissions()
+              scopes = effectiveScopes(p.acct, user.roles ?? [], perms)
+              refreshOk = true
+            }
+          } catch (err) {
+            warnDegrade(p.org, err)
+          }
+          // ext 绑定集合独立 try/catch（设计 §3.1「集合随 scopes 刷新机制同步刷新」）：
+          // 解析器抛错只降 ext——scopes 照刷、ext 沿用旧值，两条失败互不牵连；userGone 的
+          // 会话即将被清，不必再算。未注入（旧宿主/部分测试）沿用旧值。
+          if (!userGone && deps.boundExternalIds) {
+            try {
+              ext = await deps.boundExternalIds(p.org, p.acct)
+            } catch (err) {
+              warnDegrade(p.org, err, '绑定集合解析器（boundExternalIds）')
+            }
+          }
+        } else if (p.authVia === 'wechat-oa') {
           // 访客 session（售后 spec §1.3，审查 I1）：openid 在 Casdoor **没有账户**——走下方
           // 通用分支必命中「getUser=null → userGone 清会话」，7 天 TTL 的访客 session 实际
           // 活不过一个 SCOPES_TTL_SEC（5 分钟）。访客路的 scopes 真源是「当前租户已启用
@@ -207,6 +251,7 @@ export const sessionMiddleware = (
         const fresh: SessionPayload = {
           ...p,
           scopes,
+          ext, // 重算成功才换新（失败沿用 p.ext）；旧形状会话 undefined ⇒ 签发不带该字段（逐字节兼容）
           iat: now,
           exp: now + SESSION_TTL_SEC,
           sfa: now,

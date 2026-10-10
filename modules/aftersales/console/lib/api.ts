@@ -56,6 +56,9 @@ const MESSAGES: Record<string, string> = {
   INVALID_ID: 'ID 不合法',
   FORBIDDEN: '没有权限执行该操作',
   UNAUTHENTICATED: '登录已失效，请重新登录',
+  // 身份绑定管理面（账户统一 Task 8）
+  LINK_TARGET_MISSING: '目标账户不存在，请核对账户名后重试',
+  IDENTITY_LINKS_UNAVAILABLE: '身份绑定服务未就绪，请联系管理员',
 }
 
 export function messageOf(e: unknown): string {

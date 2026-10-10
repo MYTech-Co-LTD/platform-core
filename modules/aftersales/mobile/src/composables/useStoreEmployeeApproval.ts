@@ -3,6 +3,8 @@ import { Message } from '@wujibase/wuji'
 import { store_info } from '@wujibase/wuji-data'
 import { employee_info } from '@wujibase/wuji-data'
 import { employee_info_approve } from '@wujibase/wuji-data'
+import { identity_link } from '@wujibase/wuji-data'
+import type { GuestIdentity } from '@wujibase/wuji-data'
 
 export interface IEmployeeFormData {
   employee_name: string
@@ -19,6 +21,8 @@ export function useStoreEmployeeApproval() {
   const loading = ref(false)
   // 员工信息
   const employeeInfo = ref<any>(null)
+  // 绑定身份（账户统一 Task 9）：null = 无在效/异议中的绑定（服务端已收敛 pending/revoked）
+  const identity = ref<GuestIdentity | null>(null)
   // 门店列表
   const storeList = ref<any[]>([])
   // 表单数据
@@ -89,7 +93,13 @@ export function useStoreEmployeeApproval() {
   const loadEmployeeInfo = async () => {
     try {
       loading.value = true
-      const employees = await employee_info.query({})
+      // 绑定身份与登记档案同源同刷（账户统一 Task 9）：异议提交后的「刷新页面状态」走的就是
+      // 这一次重载——两个请求都落在 /guest/me/registration，并行发不掉一个往返。
+      const [employees, link] = await Promise.all([
+        employee_info.query({}),
+        identity_link.query(),
+      ])
+      identity.value = link
 
       if (employees && employees.length > 0) {
         employeeInfo.value = employees[0]
@@ -158,15 +168,34 @@ export function useStoreEmployeeApproval() {
     }
   }
 
+  /**
+   * 提交身份异议（「这不是我」，账户统一 Task 9）。返回是否生效；失败已就地提示。
+   * 成功后由调用方刷新页面状态（重载 loadEmployeeInfo，绑定行随之消失）。
+   */
+  const disputeMyIdentity = async (): Promise<boolean> => {
+    try {
+      loading.value = true
+      return await identity_link.dispute()
+    } catch (error: any) {
+      console.error('提交身份异议失败:', error)
+      Message.error(error?.message || '提交失败，请稍后重试')
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
+
   return {
     pageLoading,
     loading,
     employeeInfo,
+    identity,
     storeList,
     formData,
     loadStores: loadStores as LoadStoresFunction,
     loadSelectedStores,
     loadEmployeeInfo,
     submitApproval,
+    disputeMyIdentity,
   }
 }
