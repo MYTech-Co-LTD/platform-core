@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.93.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.92.0...v0.93.0) - 2026-10-10
+- 【新增】data: OO 预警配置漂移对账——登记清单 + 审计脚本 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [a52580b](https://github.com/MYTech-Co-LTD/platform-core/commit/a52580ba531c494d69d0949f594fc1ea542f9887))
+
+
 ## [0.92.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.91.1...v0.92.0) - 2026-10-10
 - 【新增】data: 桥接 v1.3 通道③——基建探活家族点火转发 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [dbb907e](https://github.com/MYTech-Co-LTD/platform-core/commit/dbb907ea89e1dadb945a2f3f84ef7ceb3fdf8cc2))
 
