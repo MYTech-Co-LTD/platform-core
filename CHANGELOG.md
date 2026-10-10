@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.91.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.91.0...v0.91.1) - 2026-10-10
+- 【修复】data: 探活判红行改逐行 POST——本 OO 构建 _json 端点拒多行 NDJSON 批 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [68fac21](https://github.com/MYTech-Co-LTD/platform-core/commit/68fac2178f301c378f0a8fc027ec9cad8317527e))
+
+
 ## [0.91.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.90.1...v0.91.0) - 2026-10-10
 - 【新增】data: 探活逐断言判红行入 OO + 桥接 v1.2 双通道 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [a7b184c](https://github.com/MYTech-Co-LTD/platform-core/commit/a7b184cd0a2cb14cfaa025fe50763b55485dbe5d))
 
