@@ -78,19 +78,35 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
       throw e
     }
 
+    let approvalId: number
     try {
       const ins = await ctx.pool.query<{ id: string }>(
         `insert into aftersales.employee_approval(org, open_id, approve_type, old_info, new_info)
          values ($1, $2, $3, $4::jsonb, $5::jsonb) returning id`,
         [org, openid, diff.approveType, JSON.stringify(diff.oldInfo), JSON.stringify(diff.newInfo)],
       )
-      return c.json({ id: Number(ins.rows[0]!.id), approveType: diff.approveType }, 201)
+      approvalId = Number(ins.rows[0]!.id)
     } catch (e) {
       // ★ 防重**由库保证**（spec §2.5 纪律①）：部分唯一索引在并发下也拦得住。
       //   不先查后插——那正是源侧前端判定的做法，两个并发请求都能查到 0 条 ⇒ 都插入。
       if ((e as { code?: string }).code === '23505') return c.json({ error: 'APPROVAL_PENDING' }, 409)
       throw e
     }
+
+    // 账户统一（Task 7）：申请已落库、201 应答前触发自动匹配。identityLinks 缺省
+    // （旧宿主/单测）⇒ 跳过照旧 201。匹配失败抛错 ⇒ 500 裸露（在 try 外，不会被 409 防重
+    // 分支吞掉）——**不回滚申请**：申请是业务事实且 409 防重意味着重试进不来，绑定可由
+    // 管理员从 pending 队列人工补绑。
+    if (ctx.identityLinks) {
+      await ctx.identityLinks.matchOnApplication({
+        org,
+        provider: 'wechat-oa',
+        externalId: openid,
+        phone: target.phone,
+        approvalId,
+      })
+    }
+    return c.json({ id: approvalId, approveType: diff.approveType }, 201)
   })
 
   // ── 选商品（M3b-2 的移动端要用）──────────────────────────────────────────
