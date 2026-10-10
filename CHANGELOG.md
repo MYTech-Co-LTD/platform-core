@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.94.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.93.1...v0.94.0) - 2026-10-10
+- 【新增】aftersales: 账户统一 Phase 1——绑定表+两态 session+自动匹配 (#555) ([#556](https://github.com/MYTech-Co-LTD/platform-core/pull/556), [bc39ceb](https://github.com/MYTech-Co-LTD/platform-core/commit/bc39cebe152efea25c677af004f97d6ae3e3764b))
+
+
 ## [0.93.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.93.0...v0.93.1) - 2026-10-10
 - 【修复】data: 对账脚本字段偏移与 DEST 比对修正 ([#538](https://github.com/MYTech-Co-LTD/platform-core/pull/538), [780340d](https://github.com/MYTech-Co-LTD/platform-core/commit/780340d7ba16768e61059ac13120e65e41cc1de4))
 
