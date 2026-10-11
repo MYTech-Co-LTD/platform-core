@@ -70,6 +70,25 @@ Docker API 调用，不是 `docker compose up`）⇒ 相对源串原样传给 Do
 **连带影响**：openclaw 不再是 `image:` 服务 ⇒ 插件改动要靠**真部署（构建）**生效，
 `refresh`/env-only 重建**不重建镜像**；Task 3 Step 3 的措辞已按此订正。
 
+**⑥ gateway 鉴权 token 在非回环绑定下是必设项（2026-10-11 实测订正）。** 原 Task 2 Step 2 的注释写
+「Gateway Control UI token（非必设，不设则回环口无鉴权）」——**该前提只对回环绑定成立**。本项目
+`gateway.bind=lan`，不设 token 时 gateway **拒绝启动**，原文：`Refusing to bind gateway to lan without auth.`
+（并提示设 `OPENCLAW_GATEWAY_TOKEN` 或 `OPENCLAW_GATEWAY_PASSWORD`）。**危险的是它的失败形态**：
+退出码 0 + `restart: unless-stopped` ⇒ 容器表现为**静默重启循环**——`docker ps` 一直显示「在跑」，
+不是显式红，healthcheck 永远不 healthy 但也不报错。
+**注入口径 = 项目级**（`patch_projects_by_id_env` upserts + `isSecret`）：项目级 env 会物化进检出的 `.env`，
+再由 compose `env_file: ../.env` 送进容器——这正是 compose 注释里设计的那条通路；
+**不要**走服务级 `put_..._services_..._env`（整表替换语义，见 ③）。
+**修后判据**（实测通过）：容器日志出现 `[gateway] resolving authentication…` → `[gateway] ready`，
+且**不再出现**上面那条 refusal；`docker ps` 转 `Up (healthy)`。值不回显，只用长度/哈希比对。
+
+**⑦ compose 的 `OPENCLAW_GATEWAY_MODE` / `OPENCLAW_GATEWAY_BIND` 本服务不消费（2026-10-11 实测订正）。**
+`openclaw doctor` 当场给出两条**独立**反证：`gateway.mode` 报 **unset**（而 compose env 写了 `local`）、
+`gateway.bind` 报**仅 loopback**（而 compose env 写了 `lan`）⇒ 这两个 env 未被 gateway 采纳。
+**权威源是 `OPENCLAW_CONFIG_PATH` 指向的 `openclaw.json` 的 `gateway` 段** ⇒ Task 4 Step 2 的 seed
+**必须写入 `gateway: { mode: "local", bind: "lan" }`**（该步已订正）。Task 2 Step 1 那几行 pin **保留**
+（保留即声明意图、且与 config 同值不致漂移），但**不要再假设它们能生效**。
+
 ---
 
 ## 开工前置（编排者做）
@@ -531,6 +550,8 @@ git commit -m "feat(openclaw): data-query 插件——通道 C 薄转发（可�
       # 而 Task 4 要按 OPENCLAW_CONFIG_PATH 去 seed openclaw.json，是压秤的假设 ⇒ 显式写死。
       # ⚠️ 不在此列 OPENCLAW_GATEWAY_TOKEN：`${VAR:-}` 取的是 shell/项目 .env，取不到会**以空值
       # 覆盖 env_file** 注入；token 一律由 env_file(../.env) 或 openship env 注入，不经这里。
+      # ⚠️ 上面 OPENCLAW_GATEWAY_MODE/BIND 实测**未被 gateway 采纳**（doctor 输出与这两行 pin 相反，
+      # 见实施订正⑦）——gateway 的 mode/bind 以 openclaw.json 的 gateway 段为准（Task 4 Step 2 写入）。
       HOME: /home/node
       OPENCLAW_HOME: /home/node
       OPENCLAW_STATE_DIR: /home/node/.openclaw
@@ -572,7 +593,11 @@ volumes:
 # 端点/模型同样与山海现网同源（api.deepseek.com/v1 + deepseek-flash），见实施订正①。
 # 企微智能机器人 secret。取法：客户企微后台「管理工具→智能机器人→API模式创建→通过长连接配置」交付。
 # WECOM_BOT_SECRET=
-# Gateway Control UI token（非必设，不设则回环口无鉴权）。取法：openship env(isSecret) 生成。
+# Gateway Control UI token。⚠️ **只要 gateway.bind 非回环（本项目钉 lan）就是必设项**——不设 gateway
+# 拒绝启动（Refusing to bind gateway to lan without auth.），且退出码 0 + restart: unless-stopped
+# ⇒ 表现为**静默重启循环**、healthcheck 永不 healthy（2026-10-11 实测，见实施订正⑥）。
+# 取法：openship **项目级** env upserts + isSecret（物化进 .env → compose env_file → 容器）；
+# 不要走服务级 env（整表替换语义）。
 # ⚠️ 只走 env_file/openship 注入；不要在 compose 的 environment 里写 ${OPENCLAW_GATEWAY_TOKEN:-}
 # （取不到会以空值覆盖 env_file 注入）。
 # OPENCLAW_GATEWAY_TOKEN=
@@ -656,22 +681,30 @@ openship MCP：`get_projects`（platform-core）→ `get_projects_by_id_services
 
 - [ ] **Step 2: 生成渠道凭证并注入 shanhai 两服务**
 
-本机生成（值只进 openship，不进任何文件/聊天）：
+本机生成**两条**（值只进 openship，不进任何文件/聊天）：
 
 ```bash
-openssl rand -hex 32
+openssl rand -hex 32   # ① DATA_WECOM_CHANNEL_KEY（两服务同值）
+openssl rand -hex 32   # ② OPENCLAW_GATEWAY_TOKEN（项目级，实施订正⑥）
 ```
 
 openship MCP：platform-core-shanhai（proj_GLXUtN2bJ92DpPrS）→
 两服务的 env 写入均为**整表替换**语义（先 `get_..._env` 读回现有键再合并，见实施订正③）：
-- `server` 服务（svc_zdxMxawfymf9u5ST）：`DATA_WECOM_CHANNEL_KEY=<值>`（isSecret）
-- `openclaw` 服务（svc_3R9wVrQSz__9nwgc）：`DATA_WECOM_CHANNEL_KEY=<同值>`（isSecret）+
+- `server` 服务（svc_zdxMxawfymf9u5ST）：`DATA_WECOM_CHANNEL_KEY=<值①>`（isSecret）
+- `openclaw` 服务（svc_3R9wVrQSz__9nwgc）：`DATA_WECOM_CHANNEL_KEY=<同值①>`（isSecret）+
   `DATA_LLM_API_KEY`（**`sourceId: env_Hhk3U8qYOqUaCJIA` 引用项目级同一条，不带值**）
+- **项目级**（`patch_projects_by_id_env` upserts，**不是**服务级）：`OPENCLAW_GATEWAY_TOKEN=<值②>`（isSecret）
+  —— 实施订正⑥：非回环绑定下**必设**，漏了就进静默重启循环；项目级 env 会物化进检出的 `.env`，
+  再经 compose `env_file: ../.env` 进容器（这是设计通路，别改走服务级）。
 - `WECOM_BOT_SECRET` **此处不写**（实施订正④：空值等同清空 ⇒ 推迟到 T6 Step 1 客户交付后注入）
 
 - [ ] **Step 3: shanhai 项目启用 openclaw 并真正构建部署**
 
 `patch_projects_by_id_services_by_serviceId`（openclaw 行，enabled: true）→ 触发一次**带构建的部署**。
+
+⚠️ **启用前先确认 Step 2 的 `OPENCLAW_GATEWAY_TOKEN` 已落在项目级 env**（实施订正⑥）：漏了的话容器
+起来即进**静默重启循环**——`enabled: true` 却永远 healthy 不起来的服务会把**此后每次部署**拖成
+`partial_failure`，每次都要人工 keep/reject 才收敛（同根因成例：`deploy/data-plane-deploy-sop.md` 坑 7）。
 
 ⚠️ **实施订正⑤ 的连带后果**：openclaw 已是 **`build:` 服务**（不再 `image:`），插件源码靠构建期 COPY 进镜像
 ⇒ **`refresh: true`（env-only 重建）不重建镜像**，它**不会**把插件送进去；必须走**普通部署**（`post_deployments_build_access`，不带 `refresh`）让 openship 跑 docker build。server 侧 `DATA_WECOM_CHANNEL_KEY` 的消费只是一条 env，同一次构建部署里一并生效（server 镜像内容未变，重建无害）。
@@ -684,8 +717,14 @@ server exec（shanhai server）：
 ```sh
 docker ps --format '{{.Names}} {{.Image}} {{.Status}}' | grep openclaw
 docker ps --format '{{.Names}} {{.Status}}' | grep -E 'server|openclaw'
+# 容器内自证（别信宿主侧 HTTP 探活：鉴权在路由匹配前就 401，新旧端点同形，探活恒不区分）
+docker exec <openclaw 容器> node -e "fetch('http://127.0.0.1:18789/healthz').then(async r => console.log(r.status, await r.text()))"
+# 鉴权闸门自证（实施订正⑥）：期望输出 0
+docker logs <openclaw 容器> 2>&1 | grep -c 'Refusing to bind gateway to lan without auth'
 ```
-Expected: openclaw 容器存在且 `Up (healthy)`；server 容器创建时间新于 refresh 时刻。
+Expected: openclaw 容器存在且 `Up (healthy)`；容器内 18789/healthz 返回 `200 {"ok":true,...}`；
+refusal 计数 **0**。server/openclaw 容器创建时间新于**本次部署的镜像构建时刻**
+（本步是**普通构建部署**，不是 refresh——实施订正⑤ 的连带后果）。
 镜像拉取失败 → 上服务器跑 `docker info --format '{{range .RegistryConfig.Mirrors}}{{println .}}{{end}}'` 应无输出（mirror 残留会压过 proxy，team-harness `check-docker-mirror.sh` 巡检清理）。
 
 ---
@@ -694,27 +733,47 @@ Expected: openclaw 容器存在且 `Up (healthy)`；server 容器创建时间新
 
 **Interfaces:**
 - Consumes: Task 3 的健康容器；客户交付的 `botId`（secret 走 env `${WECOM_BOT_SECRET}` 插值）。
-- Produces: state 卷内 openclaw.json（channel/模型/流式配置齐备）；插件已注册。
+- Produces: state 卷内 openclaw.json（**gateway**/channel/模型/流式配置齐备，且 `skills`/`wizard`/`plugins`/`meta` 原键无损）；插件已注册。
 
 - [ ] **Step 1: 容器内注册插件（一次性，写 state 卷持久）**
 
 ```sh
-openclaw plugins install -l /opt/plugins/data-query-plugin && openclaw plugins list && openclaw skills list
+openclaw plugins install -l /opt/plugins/data-query-plugin --force --accept-capabilities
+openclaw plugins list && openclaw skills list
 ```
 Expected: `data-query` 出现在 plugins list；`data-query` skill 出现在 skills list。
+**两旗的由来（2026-10-11 实测）**：裸 `install -l` 会被拦——本地路径**不在 ClawHub 的审核与信任元数据内**，
+installer 弹出 `Installing plugin from local path: /opt/plugins/data-query-plugin` /
+`This source is outside ClawHub review and trust metadata. Only continue if you trust the publisher…`
+⇒ `--force` 越过该信任提示；插件另声明了 capabilities，还须 `--accept-capabilities`。**两旗一起给。**
 ⚠️ 卸载注意（生产先例教训）：`plugins uninstall --force` 会残留 `plugins.load.paths` 导致 gateway 起不来——卸载必须 `openclaw doctor --fix` 或手清 openclaw.json。
 
-- [ ] **Step 2: seed openclaw.json（botId 值从客户拿到后填入 `<BOT_ID>`；secret 用 `${WECOM_BOT_SECRET}` 插值引用容器 env）**
+- [ ] **Step 2: seed openclaw.json（深合并写入——不是覆盖；botId 从客户拿到后填入 `<BOT_ID>`；secret 用 `${WECOM_BOT_SECRET}` 插值引用容器 env）**
+
+⚠️ **禁止整表覆盖**（本步已订正；原稿是 `cat > /home/node/.openclaw/openclaw.json <<'EOF'` 直接冲掉整份文件）。
+state 卷里这个文件**不是空白起点**：2026-10-11 实测，容器首启后它已承载 wizard / 迁移 / 插件状态——
+顶层 **7 键** `skills, wizard, plugins, meta, agents, gateway, models`，其中 `skills.entries` **31 条**、
+`plugins.load.paths=["/opt/plugins/data-query-plugin"]`（**Step 1 的注册成果就落在这一条里**）、
+`meta.migrations.*`、`wizard.*`。整表覆盖 ⇒ 插件注册被清空、wizard 状态丢失、`gateway` 段消失
+（= 订正⑦ 的 bind 回落到 loopback、并重新触发 ⑥ 的鉴权闸门）。
+⇒ **按路径深合并**：只写我们关心的四段（`gateway`/`channels`/`models`/`agents`），其余键原样保留。
 
 ```sh
-cat > /home/node/.openclaw/openclaw.json <<'EOF'
-{
+# 先备份（可回滚），再深合并写入——node 在镜像内必然可用
+cp /home/node/.openclaw/openclaw.json /home/node/.openclaw/openclaw.json.bak
+node - <<'JS'
+const fs = require('node:fs');
+const p = process.env.OPENCLAW_CONFIG_PATH || '/home/node/.openclaw/openclaw.json';
+const cur = JSON.parse(fs.readFileSync(p, 'utf8'));   // 先读现状，保住 skills/wizard/plugins/meta
+const patch = {
+  // 订正⑦：gateway 段是 mode/bind 的唯一权威源（compose 的 OPENCLAW_GATEWAY_* pin 不生效）
+  gateway: { mode: 'local', bind: 'lan' },
   channels: {
     wecom: {
       enabled: true,
-      connectionMode: "websocket",
-      botId: "<BOT_ID>",
-      secret: "${WECOM_BOT_SECRET}",
+      connectionMode: 'websocket',
+      botId: '<BOT_ID>',
+      secret: '${WECOM_BOT_SECRET}',
       sendThinkingMessage: true,
       streaming: { block: { enabled: true } },
     },
@@ -722,28 +781,48 @@ cat > /home/node/.openclaw/openclaw.json <<'EOF'
   models: {
     providers: {
       deepseek: {
-        baseUrl: "https://api.deepseek.com/v1",
-        apiKey: "${DATA_LLM_API_KEY}",
-        models: [{ id: "deepseek-flash", name: "deepseek-flash", contextWindow: 128000, maxTokens: 8192 }],
+        baseUrl: 'https://api.deepseek.com/v1',
+        apiKey: '${DATA_LLM_API_KEY}',
+        models: [{ id: 'deepseek-flash', name: 'deepseek-flash', contextWindow: 128000, maxTokens: 8192 }],
       },
     },
   },
   agents: {
     defaults: {
-      model: { primary: "deepseek/deepseek-flash" },
+      model: { primary: 'deepseek/deepseek-flash' },
       // 流式三件套（spec §6）：核心默认 off＝全量憋话，显式开块流式 + 节奏 + 禁拟人停顿
-      blockStreamingDefault: "on",
-      blockStreamingBreak: "text_end",
-      blockStreamingChunk: { minChars: 120, maxChars: 800, breakPreference: "paragraph" },
+      blockStreamingDefault: 'on',
+      blockStreamingBreak: 'text_end',
+      blockStreamingChunk: { minChars: 120, maxChars: 800, breakPreference: 'paragraph' },
       blockStreamingCoalesce: { minChars: 200, idleMs: 800 },
-      humanDelay: { mode: "off" },
+      humanDelay: { mode: 'off' },
     },
   },
-}
-EOF
+};
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const merge = (base, over) => {
+  for (const [k, v] of Object.entries(over)) {
+    base[k] = isObj(v) && isObj(base[k]) ? merge(base[k], v) : v;
+  }
+  return base;
+};
+merge(cur, patch);
+fs.writeFileSync(p, JSON.stringify(cur, null, 2) + '\n');
+// 取证：只报键面与计数，不打印任何值
+console.log('topKeys=' + Object.keys(cur).join(','));
+console.log('skillsEntries=' + Object.keys(cur.skills?.entries ?? {}).length);
+console.log('pluginPaths=' + JSON.stringify(cur.plugins?.load?.paths ?? []));
+console.log('gateway=' + JSON.stringify(cur.gateway));
+JS
 ```
 
-（此步骤经 openship exec 在 openclaw 容器内执行；json5 带注释需在 heredoc 里去掉注释——**执行时删除上面中文注释行**，json5 支持注释但稳妥起见不留。）
+Expected（**这是合并是否真的生效的判据**）：`topKeys` 里 **7 键一个不少**、
+`skillsEntries=31`（**不得变 0**）、`pluginPaths=["/opt/plugins/data-query-plugin"]`、
+`gateway={"mode":"local","bind":"lan"}`。
+
+（此步骤经 openship exec 在 openclaw 容器内执行。`<<'JS'` 是**带引号的 heredoc** ⇒ shell 不展开 `${...}`，
+`${WECOM_BOT_SECRET}` / `${DATA_LLM_API_KEY}` 两处**原样写盘**、留给运行时插值——这正是要的效果。
+脚本本身是 JS（不是 json5），`//` 注释合法，落盘经 `JSON.stringify` 出来自然是纯 JSON。）
 
 - [ ] **Step 3: 重启 gateway 并验证配置生效**
 
@@ -751,6 +830,9 @@ EOF
 openclaw gateway restart && sleep 5 && openclaw doctor
 ```
 Expected: doctor 无 config 报错；`${DATA_LLM_API_KEY}` 插值被识别（doctor 或 Control UI 显示 key 来自环境变量）。
+**另比 doctor 的 gateway 两行**（订正⑦ 的现场判据）：`gateway.mode` 应为 **local**、`gateway.bind` 应为 **lan**。
+若 doctor 仍报 `mode` unset / `bind` 仅 loopback ⇒ **Step 2 的 `gateway` 段没写进去**（合并脚本没跑成或跑错文件），
+别去调 compose 的 `OPENCLAW_GATEWAY_*` pin——它们不生效。
 `${WECOM_BOT_SECRET}` 此时**尚未注入**（实施订正④）⇒ wecom 通道段会报缺值、WS 连接重连失败刷日志——
 **属预期**，T6 建好 bot 并注入 secret 即消。
 **若插值不被识别**（doctor 报 key 缺失/字面量原样出现）：fallback——经 exec 用 `sed -i` 把字面量替换为真实值（值从 openship env 读，操作时确保命令不回显），并在本计划与 spec 的待核实表记录「env 插值不可用，已用字面量 + 卷权限收口」。
