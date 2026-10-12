@@ -88,7 +88,9 @@ recheck as (
         (u.c_cost - coalesce(d.c_return, 0))::numeric(20,2) as c_cost,
         (u.r_net - coalesce(d.r_return, 0) - u.c_cost + coalesce(d.c_return, 0))::numeric(20,2) as g_gross,
         u.order_count,
-        u.line_count
+        u.line_count,
+        (u.r_net - coalesce(d.r_return, 0) - u.c_cost + coalesce(d.c_return, 0))::numeric(20,2)
+            / nullif((u.r_net - coalesce(d.r_return, 0))::numeric(20,2), 0) as g_rate
     from (
         select system_book, bizday, branch_num, 'transfer' as domain, r_net, c_cost, order_count, line_count from transfer_dom
         union all
@@ -125,6 +127,6 @@ where a.g_rate is distinct from b.g_rate
 union all
 
 select
-    null, null, null, null, null, null, null,
+    null, null, null, null, null, null, null, null,
     '物化侧一行都没有：对账在空集上「通过」是空转绿（不是对上了）'
 where not exists (select 1 from materialized)

@@ -33,7 +33,9 @@ recheck as (
         count(*) filter (where b.lot_number is not null and trim(b.lot_number) <> '') as lot_filled_lines,
         sum(case when coalesce(b.out_money, 0) <> 0 and coalesce(b.subtotal, 0) = 0
                  then b.out_money else 0 end)::numeric(20,2)                   as zero_cost_amount,
-        count(distinct case when p.order_money < 0 then b.order_no end)        as negative_order_count
+        count(distinct case when p.order_money < 0 then b.order_no end)        as negative_order_count,
+        count(*) filter (where b.lot_number is not null and trim(b.lot_number) <> '')::numeric
+            / nullif(count(*), 0)                                              as fill_rate
     from base b
     join per_order p using (system_book, bizday, branch_num, order_no)
     group by 1, 2, 3
@@ -58,6 +60,6 @@ where a.fill_rate is distinct from b.fill_rate
 union all
 
 select
-    null, null, null, null,
+    null, null, null, null, null, null,
     '物化侧一行都没有：对账在空集上「通过」是空转绿（不是对上了）'
 where not exists (select 1 from materialized)
