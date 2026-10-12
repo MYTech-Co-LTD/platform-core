@@ -12,7 +12,7 @@ with base as (
         r['subtotal']::numeric    as subtotal,
         r['lot_number']::varchar  as lot_number
     from read_parquet(
-        's3://{ var("zos_bucket") }/{ var("lemeng_transfer_out_prefix") }/*/bizday=**/*.parquet'
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_transfer_out_prefix") }}/*/bizday=**/*.parquet'
     ) r
     where r['state_code']::int = 3
       and r['out_branch_num']::int = 99

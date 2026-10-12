@@ -190,11 +190,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -246,11 +246,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -302,11 +302,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -358,11 +358,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -414,11 +414,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -470,11 +470,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -526,11 +526,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -582,11 +582,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -638,11 +638,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -694,11 +694,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -750,11 +750,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -806,11 +806,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -862,11 +862,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -918,11 +918,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -974,11 +974,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -1030,11 +1030,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -1086,11 +1086,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -1142,11 +1142,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
@@ -1198,11 +1198,11 @@
           },
           {
             "name": "wholesale_return_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_cost_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_return_details",
