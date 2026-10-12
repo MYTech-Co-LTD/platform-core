@@ -10,9 +10,8 @@ import type { Pool, PoolClient } from 'pg'
 import type { Requester } from './authz'
 import { deleteMetric, loadPlatformCatalog, selectMetricSnapshot, upsertMetric } from './metric-store'
 import { writeMetricAudit } from './metric-audit-store'
-import type { MetricRow } from './metric-store'
-import { SemanticCompileError, compileL2, resolveL1Base } from './semantic-compiler'
-import type { L2Declaration } from './semantic-compiler'
+import { SemanticCompileError, collectRefIds, compileL2, resolveL1Base } from './semantic-compiler'
+import type { CompiledL2, L2Declaration } from './semantic-compiler'
 
 export interface MetricWriteDeps {
   pool: Pool
@@ -79,26 +78,24 @@ export async function writeL2Declaration(
 ): Promise<MetricWriteOutcome> {
   // `target` 在 data.metrics 里**没有存储列**（003 只加了 source）。显式拒绝而不是静默丢弃：
   // 静默丢弃会让调用方以为目标值生效了。见 README「L2 的已知边界」。
-  if (decl.target !== undefined) return { ok: false, http: 400, error: 'TARGET_NOT_SUPPORTED' }
+  if ('target' in decl && decl.target !== undefined) return { ok: false, http: 400, error: 'TARGET_NOT_SUPPORTED' }
 
   // ★ L2 不能占 L1 的 id：占下之后**加载侧会丢 L2 行**（L1 赢）⇒ 这次写会**静默无效**
   //   （返回 200 而线上口径没变）。故在这里响亮拒绝，而不是让它变成一次「成功的空操作」。
   if (await isL1Id(deps, id)) return { ok: false, http: 409, error: 'ID_RESERVED_BY_L1' }
 
-  let base: MetricRow
-  try {
-    base = resolveL1Base(await loadPlatformCatalog(deps.pool), decl.baseMetric)
-  } catch (e) {
-    if (e instanceof SemanticCompileError) return { ok: false, ...compileFailure(e) }
-    throw e
-  }
-
-  // ★ 源维度的**写入闸**（spec §3⑧ 的第二道，计划 5 Task 5）：L1 是**逐源**的标准口径，
-  //   租户只能在自己的源上裁 L2。基底属于「本租户未接入的源」⇒ **拒绝**（不是静默忽略）。
+  // 词表只取一次（expr 有 N 个 ref，别在循环里反复 load）
+  const catalog = await loadPlatformCatalog(deps.pool)
+  // ref 是**唯一**要过 adopted 闸的东西：读侧不做二次校验（增补 §4.2）。
+  // 用 collectRefIds 而不是按档位分支：它在形状不对时返回 []（不抛），
+  // 形状错留给 compileL2 响亮地拒 —— 别把 zod 该报的错伪装成编译错。
   //
-  //   为什么闸在**这里**（resolveL1Base 之后）：那是本函数第一次拿到 base 行、也就第一次
-  //   看得到 `base.sourceSystem` 的地方；在它之前只有 id 字符串，判不了源。
-  //   为什么用 `loadPlatformCatalog`（**不裁源**）解析基底：若先把未接入源的 L1 从基底面
+  // ★ 源维度的**写入闸**（spec §3⑧ 的第二道，计划 5 Task 5）：L1 是**逐源**的标准口径，
+  //   租户只能在自己的源上裁 L2。任一 ref 属于「本租户未接入的源」⇒ **拒绝**（不是静默忽略）。
+  //
+  //   为什么闸在**这里**（resolveL1Base 之后）：那是本函数第一次拿到 ref 行、也就第一次
+  //   看得到 `refBase.sourceSystem` 的地方；在它之前只有 id 字符串，判不了源。
+  //   为什么用 `loadPlatformCatalog`（**不裁源**）解析 ref：若先把未接入源的 L1 从基底面
   //   裁掉，调用方只会拿到含混的 `L1_BASE_NOT_FOUND`（400）——而真相是「这条口径在，但它在
   //   别的源上」，那是**403 + 可解释体**该说的话（`its_source` / `your_sources` 让调用方自助判断）。
   //   顺序上它还必须**先于** compileL2：拒绝要拒绝得早，不留半成品。
@@ -106,16 +103,24 @@ export async function writeL2Declaration(
   //   与裁剪的关系（spec：「只装一道都不够」）：裁剪让**读**看不见未接入源的指标（歧义消失），
   //   本闸让**写**造不出基于未接入源的 L2（否则那条 L2 会在写入时看着成功、随后在读取侧
   //   被裁掉——一次「成功的空操作」，最难查的那种）。
-  if (base.sourceSystem !== null && !deps.adoptedSources.has(base.sourceSystem)) {
-    return {
-      ok: false, http: 403, error: 'METRIC_SOURCE_NOT_ADOPTED',
-      extra: { its_source: base.sourceSystem, your_sources: [...deps.adoptedSources] },
+  try {
+    for (const refId of collectRefIds(decl)) {
+      const refBase = resolveL1Base(catalog, refId)
+      if (refBase.sourceSystem !== null && !deps.adoptedSources.has(refBase.sourceSystem)) {
+        return {
+          ok: false, http: 403, error: 'METRIC_SOURCE_NOT_ADOPTED',
+          extra: { its_source: refBase.sourceSystem, your_sources: [...deps.adoptedSources] },
+        }
+      }
     }
+  } catch (e) {
+    if (e instanceof SemanticCompileError) return { ok: false, ...compileFailure(e) }
+    throw e
   }
 
-  let compiled: { selectSql: string; title: string; groupBy: string }
+  let compiled: CompiledL2
   try {
-    compiled = compileL2(base, decl)
+    compiled = compileL2(catalog, decl)
   } catch (e) {
     if (e instanceof SemanticCompileError) return { ok: false, ...compileFailure(e) }
     throw e
@@ -126,10 +131,10 @@ export async function writeL2Declaration(
     id,
     title: compiled.title,
     // 派生关系写进 description：管理面要能看出「这条 L2 是从哪个平台指标裁出来的」
-    description: `L2 派生自 ${base.id}`,
+    description: compiled.description,
     requiredScope: null,
-    // 主体列**继承** L1：它是主体钉死的依据，租户改不了（改了就是跨租户读别人的数据）
-    subjectColumn: base.subjectColumn,
+    // 主体列**继承** L1（编译产物给出）：它是主体钉死的依据，租户改不了（改了就是跨租户读别人的数据）
+    subjectColumn: compiled.subjectColumn,
     selectSql: compiled.selectSql,
     groupBy: compiled.groupBy,
     params: {},

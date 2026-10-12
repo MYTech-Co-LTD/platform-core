@@ -10,7 +10,9 @@ import { TENANT_SOURCES, declaredScopeGate } from '@platform/sdk'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import { L1_ORG, upsertL1Metric, upsertMetric } from '../domain/metric-store'
-import type { L1MetricDef } from '../domain/metric-store'
+import type { L1MetricDef, MetricRow } from '../domain/metric-store'
+import { L2ExprDeclarationSchema, L2RefineDeclarationSchema, compileL2 } from '../domain/semantic-compiler'
+import type { L2Declaration } from '../domain/semantic-compiler'
 import type { MetricDef } from '../domain/authz'
 import type { ModuleVars } from './context'
 
@@ -80,6 +82,20 @@ const l2Body = (over: Record<string, unknown> = {}) => ({
   id: 'l2_net_sales_xiongmao',
   baseMetric: L1_SALES.id,
   op: { kind: 'refine' },
+  ...over,
+})
+
+/**
+ * B 中档（expr）的合法声明。**另写一个字面量**而不是复用 `l2Body`：后者恒塞一个真值
+ * `baseMetric`，而 expr 支是 `.strict()` ⇒ 带着它进 expr 支会被判 `BAD_DECL`（不是 201）。
+ * 「不许 `baseMetric` 与 `op.kind:'expr'` 同现」这条形状约束，由这个构造器本身守住。
+ */
+const exprBody = (over: Record<string, unknown> = {}) => ({
+  id: 'l2_avg_price',
+  op: {
+    kind: 'expr',
+    expr: { kind: 'div', left: { kind: 'ref', id: L1_SALES.id }, right: { kind: 'num', value: 2 } },
+  },
   ...over,
 })
 
@@ -161,6 +177,21 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect(row.subjectColumn).toBe('org')
   })
 
+  it('POST expr 声明 ⇒ 201，selectSql 是内联表达式且带编译器注入的除零守卫', async () => {
+    const res = await post(exprBody())
+    expect(res.status).toBe(201)
+
+    const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
+    const row = all.metrics.find((m: { id: string }) => m.id === 'l2_avg_price')
+    // 除零守卫由编译器注入（租户看不到也控制不了）
+    expect(row.selectSql).toContain('NULLIF((2), 0)')
+    // 产物形状与 refine 同形：`select <表达式> as value[, <可见维度>] from <关系>`
+    expect(row.selectSql).toContain(' as value')
+    // 可见维度与主体列都继承**共享基**（expr 支没有单条 base，故由编译产物给出）
+    expect(row.groupBy).toBe('system_book, bizday')
+    expect(row.subjectColumn).toBe('org')
+  })
+
   it('★ POST body 里带 selectSql / subjectColumn / groupBy / source ⇒ 400 INVALID_BODY（不是静默忽略）', async () => {
     for (const bad of [
       { selectSql: 'select 1 as value from t' },
@@ -193,7 +224,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect((await res.json()).error).toBe('UNKNOWN_DIM')
   })
 
-  it('POST op.kind 不是 refine ⇒ 400 INVALID_BODY（zod 层拦下，表达力档位不私自放行）', async () => {
+  it('POST op.kind 既不是 refine 也不是 expr ⇒ 400 INVALID_BODY（union 两支都不匹配）', async () => {
     const res = await post(l2Body({ op: { kind: 'expression' } }))
     expect(res.status).toBe(400)
     expect((await res.json()).error).toBe('INVALID_BODY')
@@ -311,6 +342,27 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     // 拒绝不是「先写后拒」：本租户桶里不留任何痕迹
     const raw = await pool.query(
       'select count(*)::int as n from data.metrics where org = $1 and id = $2', [ORG, 'l2_from_foreign'])
+    expect(raw.rows[0].n).toBe(0)
+  })
+
+  it('★ POST expr 的第二个 ref 指向未接入源的 L1 ⇒ 403 METRIC_SOURCE_NOT_ADOPTED（闸从 1 个 base 扩到 N 个 ref）', async () => {
+    const res = await post(exprBody({
+      id: 'l2_from_foreign_expr',
+      op: {
+        kind: 'expr',
+        expr: { kind: 'div', left: { kind: 'ref', id: L1_SALES.id }, right: { kind: 'ref', id: L1_FOREIGN.id } },
+      },
+    }))
+    expect(res.status, '第二个 ref 在未接入源上却被放行（闸只看第一个 ref？）').toBe(403)
+    // extra 的形状**逐字沿用** refine 那条用例：成功/拒绝的可解释体不许因档位而异
+    expect(await res.json()).toEqual({
+      error: 'METRIC_SOURCE_NOT_ADOPTED',
+      its_source: 'shanhai',        // 未接入那条 ref 的源
+      your_sources: ['lemeng'],     // 本租户已接入的源
+    })
+    // 拒绝不是「先写后拒」：本租户桶里不留任何痕迹
+    const raw = await pool.query(
+      'select count(*)::int as n from data.metrics where org = $1 and id = $2', [ORG, 'l2_from_foreign_expr'])
     expect(raw.rows[0].n).toBe(0)
   })
 
@@ -444,5 +496,143 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
       audit: { action: string; userId: string; channel: string }[] }
     expect(audit.audit.map((a) => a.action)).toEqual(['delete', 'update', 'create'])
     expect(audit.audit.every((a) => a.userId === 'u-test')).toBe(true)   // 记的是**人**（夹具默认 userId）
+  })
+
+  // ── B 中档：schema ↔ compiler 对偶（增补 §6.2 的**行为侧**）────────────────────────
+  // 见文件末尾的顶层 describe《纯逻辑 · 无需库》——那一组（schema 直调 / 域层编译器 /
+  // refine 缺 base）只碰纯逻辑、不触库，故**不能**挂在本 describePg（`dbUrl ? describe : describe.skip`）
+  // 的门下：挂进库门会让无 DATABASE_URL 的环境把它们整个 skip ⇒ 本 Task 的交付物本身休眠
+  // （本仓 CI 头注把这种绿称作假绿）。这里只留**走后端**的那一条（发 HTTP ⇒ 需要真库）。
+  it('面级 HTTP：同一批形状 ⇒ 400 INVALID_BODY（不是静默 strip —— strip 是最坏的失败形态）', async () => {
+    const bodies: Array<[string, Record<string, unknown>]> = [
+      ['expr 多带 baseMetric', exprBody({ id: 'l2_duplex_x1', baseMetric: L1_SALES.id })],
+      ['expr 多带 target', exprBody({ id: 'l2_duplex_x2', target: 1 })],
+      ['expr 节点多带 fn', {
+        id: 'l2_duplex_x3',
+        op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id, fn: 'sum' } },
+      }],
+      ['refine 缺 baseMetric', { id: 'l2_duplex_x4', op: { kind: 'refine' } }],
+      // ⚠️ HTTP 面走 JSON，而 JSON **表达不了** NaN（`JSON.stringify(NaN) === 'null'`）⇒
+      //    这一条面级收到的其实是 null（同样落在 INVALID_BODY）。
+      //    `.finite()` 拒 NaN 的**真正**证据在**纯逻辑块**那条 schema 直调用例里（绕开 JSON）。
+      ['expr 的 num 是 NaN（过 JSON 后退化成 null）', {
+        id: 'l2_duplex_x5',
+        op: { kind: 'expr', expr: { kind: 'num', value: Number.NaN } },
+      }],
+    ]
+    for (const [name, body] of bodies) {
+      const res = await post(body)
+      expect(res.status, `${name}：面级竟接受（400 才对）`).toBe(400)
+      expect((await res.json()).error, name).toBe('INVALID_BODY')
+    }
+    // 正例对照：去掉多余键就 201（对偶不是「一律拒」；否则上面那批 400 一文不值）
+    expect((await post(exprBody({ id: 'l2_duplex_ok' }))).status).toBe(201)
+  })
+
+  // ── 病态深度：深到量纲闸**之前**的解析/校验栈 ───────────────────────────────────
+  // 已知边界（见 `modules/data/README.md`「L2 的已知边界」）：`EXPR_MAX_DEPTH` / `EXPR_MAX_REFS`
+  // 在 zod 解析**之后**才生效 ⇒ 超深输入的拒绝路径**不保证**是 400。这条用例只钉住那唯一一条保证：
+  // **绝不能被建成合法声明**。
+  // 实测的失败点：zod 的 `z.lazy` 递归校验先爆栈（`RangeError: Maximum call stack size exceeded`），
+  // 早于 `scanExpr` 的迭代走法 —— 这正是「先解析、后量纲」的实证。⚠️ 实跑状态码**不写进断言**
+  // （把实际输出抄成期望值 = 恒真断言），只记进 README 的实测值。
+  it('★ 病态深度的裸 JSON 体：不会被接受为合法声明（深度闸之前还有一层解析/校验栈）', async () => {
+    // 手工拼串：`JSON.stringify` 自己会先爆栈，故逐层拼字符串
+    let node = '{"kind":"num","value":1}'
+    for (let i = 0; i < 5000; i++) node = `{"kind":"add","left":${node},"right":{"kind":"num","value":1}}`
+    const raw = `{"id":"deep:probe","op":{"kind":"expr","expr":${node}}}`
+    const res = await app(ORG, ['data:manage', 'data:query']).request('/metrics', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: raw,
+    })
+    // 判据只有一条：**绝不能被当成合法声明建出来**（具体状态码是实测值，不在此写死）
+    expect(res.status, '超深输入竟被建成合法声明').not.toBe(201)
+    // 也**不该**留在词表里（防「主路径拒了、却留了半条行」）
+    const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json() as {
+      metrics: { id: string }[] }
+    expect(all.metrics.map((m) => m.id)).not.toContain('deep:probe')
+  })
+})
+
+// ── B 中档 · schema ↔ compiler 对偶（增补 §6.2 的**行为侧**）· 纯逻辑三条 ──────────
+// 门禁⑧ 保的是**形状面**（字段名/字面量集在静态上一致）；这一组保的是**行为面**：
+// 真正把同一批输入喂进去时，两边各自放不放行。两处漂移的典型症状是「面级放行、编译器拒」
+// （用户拿到 500）或反过来（静默 strip ⇒ 写进去的东西与用户以为的不同）。
+// ⚠️ 刻意**放在 describePg 之外**（顶层）：这三条只碰纯逻辑（zod schema / compileL2 / 内存
+//    catalog），不触库；挂进 describePg 则无 DATABASE_URL 时全 skip ⇒ 交付物在无库环境下休眠。
+//    同组第 4 条（面级 HTTP）确实要走真库，留在上面那个 describePg 内。
+describe('L2 · B 中档 · schema ↔ compiler 对偶（纯逻辑 · 无需库）', () => {
+  /** 域层基底：必须是 `source:'l1'` 的行（resolveL1Base 只认 L1 词表）。 */
+  const l1Row = (over: Partial<MetricRow> = {}): MetricRow =>
+    ({ ...L1_SALES, source: 'l1', updatedBy: null, version: 1, ...over })
+  const catalog: MetricRow[] = [l1Row()]
+
+  /** 域层编译结果：抛错 ⇒ 回它的 code；不抛 ⇒ null（期望抛时它会让断言自然红）。 */
+  const codeOf = (decl: unknown): string | null => {
+    try {
+      compileL2(catalog, decl as L2Declaration)
+      return null
+    } catch (e) {
+      return (e as { code?: string }).code ?? `非 SemanticCompileError：${String(e)}`
+    }
+  }
+
+  it('节点形状坏 ⇒ **两侧都拒**：面级 schema 拒 且 域层 compileL2 抛 BAD_DECL', () => {
+    const bad: Array<[string, Record<string, unknown>]> = [
+      // ★ NaN 这条必须**两侧都出现**：面级靠 `z.number().finite()`，域层靠 scanExpr 的
+      //   `!Number.isFinite` —— 只钉一侧的话，「.finite() 是装饰」这种漂移看不出来。
+      ['num 是 NaN', { op: { kind: 'expr', expr: { kind: 'num', value: Number.NaN } } }],
+      ['num 是 Infinity', { op: { kind: 'expr', expr: { kind: 'num', value: Number.POSITIVE_INFINITY } } }],
+      ['ref 的 id 是空串', { op: { kind: 'expr', expr: { kind: 'ref', id: '' } } }],
+      ['节点 kind 不在闭集', {
+        op: {
+          kind: 'expr',
+          expr: { kind: 'pow', left: { kind: 'ref', id: L1_SALES.id }, right: { kind: 'num', value: 2 } },
+        },
+      }],
+    ]
+    for (const [name, decl] of bad) {
+      expect(L2ExprDeclarationSchema.safeParse(decl).success, `${name}：面级 schema 竟放行`).toBe(false)
+      expect(codeOf(decl), `${name}：域层编译器竟放行`).toBe('BAD_DECL')
+    }
+    // 正例对照：把 NaN 换成有限数就两侧都过 —— 证明上面拒的是「有限性」，不是「数字一概拒」
+    const ok = { op: { kind: 'expr', expr: { kind: 'num', value: 3 } } }
+    expect(L2ExprDeclarationSchema.safeParse(ok).success).toBe(true)
+  })
+
+  /**
+   * 信封/节点上多带**未知键**：**面级拒，域层不读**。
+   *
+   * ⚠️ 这里刻意**不**断言「域层也拒」——实测（本用例同时把它钉住）：`compileL2` 对
+   *    `baseMetric` / `target` / 节点上的 `fn` 既不读也不拒（`scanExpr` 只看 kind 与其必填字段，
+   *    `compileExpr` 只看 `filters`）。把它们写成「两侧都拒」只会让用例因为**别的原因**
+   *    变绿（把 ref 指到词表外 ⇒ 拿到的其实是 L1_BASE_NOT_FOUND）——那正是假绿。
+   * 真正成立、且更该钉的对偶是：**这些键改不了产物**。面级把它们拦在门外，域层无视它们，
+   * 两条路都不会让它们进 SQL ⇒ 判据是「带键与不带键的编译产物**逐字**相等」。
+   */
+  it('信封/节点多带未知键：面级 schema 拒（.strict()）；域层不读 ⇒ 产物逐字不变', () => {
+    const clean = compileL2(catalog, {
+      op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id } },
+    } as unknown as L2Declaration)
+    const extras: Array<[string, Record<string, unknown>]> = [
+      ['多带 baseMetric', { op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id } }, baseMetric: 'y' }],
+      ['多带 target', { op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id } }, target: 1 }],
+      ['节点多带 fn', { op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id, fn: 'sum' } } }],
+    ]
+    for (const [name, decl] of extras) {
+      expect(L2ExprDeclarationSchema.safeParse(decl).success, `${name}：面级 schema 竟放行`).toBe(false)
+      expect(codeOf(decl), `${name}：域层拒了它 —— 说明它读了不该读的键`).toBeNull()
+      expect(compileL2(catalog, decl as unknown as L2Declaration).selectSql, `${name}：未知键改动了产物`)
+        .toBe(clean.selectSql)
+    }
+  })
+
+  it('refine 缺 baseMetric：面级 schema 拒（必填）且域层也拒（空 base ⇒ L1 词表里找不到）', () => {
+    const decl = { op: { kind: 'refine' } }
+    expect(L2RefineDeclarationSchema.safeParse(decl).success).toBe(false)
+    // 码是 L1_BASE_NOT_FOUND 而不是 BAD_DECL：域层不单独校验「baseMetric 在不在」，
+    // 它直接拿这个空值去 L1 词表里找 ⇒ 找不到就抛「该 id 不在词表」。拒是真的，只是码不同。
+    expect(codeOf(decl)).toBe('L1_BASE_NOT_FOUND')
   })
 })

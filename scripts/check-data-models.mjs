@@ -19,7 +19,8 @@
 //   ⑦ 每个声明指标有对应 `dbt/tests/audit_<指标>.sql` + 该文件名映射无碰撞
 //   ⑧ **L2 声明静态面**（T9 / 拍板 #5 的「门禁③机检范围覆盖用户产生的声明」）：
 //      `modules/data/domain/semantic-compiler.ts` 里**写时校验**（zod schema）与**唯一编译点**
-//      必须同源 —— 词表（op.kind / 过滤算子）两侧逐字一致、字段面两侧集合相等。
+//      必须同源 —— 词表（op.kind / 过滤算子）两侧逐字一致、字段面两侧集合相等；
+//      B 中档起还比对 **expr 节点集**（schema 的 kind 闭集 = `renderExprNode` 的 case 集）
 //      ⚠️ **强度如实披露**：这是**标记级文本比对，不是行为断言**（假绿面与兜底防线见下面
 //      「⑧ 的**强度**」一节）——别把它读成「同源即行为等价」。
 //   ⑨ **`sync-data-semantics.mjs --check` 契约**（T9 / 对账机制④ 的 L1 侧）：把 dry-run 的
@@ -33,11 +34,12 @@
 //
 //   **⑧ 的强度（如实披露，别高估 —— T9 评审 I-1）**：⑧ 是**标记级 / 结构级**的相等断言，
 //   **不是行为断言**。它读的是源码文本里的**字面量集合、键名集合与正则存在性**（见
-//   `checkL2DeclarationSameSource` 的三条子判定），断言的是「两处**说的词表与字段名**一致」，
+//   `checkL2DeclarationSameSource` 的**四条**子判定），断言的是「两处**说的词表与字段名**一致」，
 //   **不**断言「编译器真的执行了那套话」。⇒ 它有一个**已实测的假绿面**：
 //   **构造「编译器行为变了、而比对标记没变」的改动 ⇒ 本门禁仍绿（exit 0）**。实测两例：
-//     · 守卫体掏空（`if (decl.op?.kind !== 'refine') { /* 空 */ }`）⇒ 编译器实际**接受任意**
-//       `op.kind`，而标记 `!== 'refine'` 原样还在 ⇒ 读成「两处一致」；
+//     · 守卫体掏空（把 `if (opKind === 'refine') return …` 的兜底 `throw` 删掉）⇒ 编译器实际**接受任意**
+//       `op.kind`，而 schema 侧只列了两支 —— 本检查必须在**不改真文件**的前提下抓到这种漂移
+//       （见本文件的合成源用例）；
 //     · `const filters = decl.filters ?? []` 改成 `const filters = []` ⇒ 租户的 `filters` 被
 //       **静默丢弃**（编译出的 `select_sql` 不再带切片 = 静默错数），而 schema / 接口 / 死代码里的
 //       算子标记都还在 ⇒ 同样读成「两处一致」。
@@ -277,7 +279,7 @@ export function metricToAuditFileName(metricName) {
 // **假绿**：schema 放行的声明落库，直到某个租户查它时才以 500 / SQL 错的面目暴露。
 //
 // ⚠️ **强度如实披露（T9 评审 I-1）：本规则是「标记级文本比对」，不是行为断言。**
-//    下面的三条子判定读的全是**源码文本**（字面量集合 / 键名集合 / 正则存在性）⇒ 它守的是
+//    下面的**四条**子判定读的全是**源码文本**（字面量集合 / 键名集合 / 正则存在性）⇒ 它守的是
 //    「两处**说的词**一致」，**不守**「编译器真的**照做**」。构造「编译器行为变了而标记没变」
 //    的改动时它会**假绿**（实测两例与兜底防线详见头注「⑧ 的**强度**」一节）。
 //    **不许**把这条注释或它的对外表述写成「同源 ⇒ 行为等价」——那是本轮评审点名要披露的偏差。
@@ -289,18 +291,26 @@ export const L2_DECLARATION_REL = 'modules/data/domain/semantic-compiler.ts'
 /** 规则 ⑨ 的扫描面（相对 rootDir，只用于违规行的 file 字段）：sync 脚本本体。 */
 export const SYNC_SCRIPT_REL = 'scripts/sync-data-semantics.mjs'
 
-/** L2 写时校验的 zod schema 的块开头（**不要求 export** —— 缺 export 由 ⑧-a 单独判，见下）。 */
-const L2_SCHEMA_MARKER_RE = /const\s+L2DeclarationSchema\s*=\s*z\.object\(/
-/** L2 声明接口的块开头。 */
-const L2_IFACE_MARKER_RE = /export\s+interface\s+L2Declaration\s*\{/
-/** 编译器比较 `op.kind` 的**接受集**推导：`decl.op?.kind !== '<字面量>'` ⇒ 接受集就是它。 */
-const L2_KIND_COMPILER_RE = /\.kind\s*!==\s*'([^']+)'/g
-/** 编译器比较过滤算子的接受集推导：`f.op !== '<字面量>'`。 */
-const L2_FILTER_OP_COMPILER_RE = /\bf\.op\s*!==\s*'([^']+)'/g
-/** schema 侧 `kind: z.literal('<字面量>')`。 */
+// ⑧ L2 声明的「形状面 ↔ 编译面」对偶（T9）。B 中档起按 op.kind 分两支比对，并加节点集对偶。
+// ── 声明侧：两支各自的具名 schema / interface ──
+const L2_REFINE_SCHEMA_MARKER_RE = /const\s+L2RefineDeclarationSchema\s*=\s*z\.object\(/
+const L2_EXPR_SCHEMA_MARKER_RE = /const\s+L2ExprDeclarationSchema\s*=\s*z\.object\(/
+const L2_REFINE_IFACE_MARKER_RE = /export\s+interface\s+L2RefineDeclaration\s*\{/
+const L2_EXPR_IFACE_MARKER_RE = /export\s+interface\s+L2ExprDeclaration\s*\{/
+// union 的成员从**捕获组**读（这行没有 `{`，sliceBalancedBlock 取不到它）
+const L2_UNION_MARKER_RE = /const\s+L2DeclarationSchema\s*=\s*z\.union\(\s*\[([\s\S]*?)\]\s*\)/
+const L2_MEMBER_NAME_RE = /\b(L2[A-Za-z]*DeclarationSchema)\b/g
+// ── 判别键接受集（逐支窗口）──
 const L2_KIND_SCHEMA_RE = /kind\s*:\s*z\.literal\(\s*'([^']+)'\s*\)/g
-/** schema 侧 `op: z.enum([ … ])`（**只在 filters 那个键之后**取第一个，见 checkL2DeclarationSameSource）。 */
+const L2_KIND_ENUM_SCHEMA_RE = /kind\s*:\s*z\.enum\(\s*\[([^\]]*)\]\s*\)/g
+const L2_KIND_COMPILER_RE = /\bopKind\s*===\s*'([^']+)'/g
 const L2_FILTER_OP_SCHEMA_RE = /op\s*:\s*z\.enum\(\s*\[([^\]]*)\]\s*\)/g
+const L2_FILTER_OP_COMPILER_RE = /\bf\.op\s*!==\s*'([^']+)'/g
+// ── 节点集（expr 闭集）：schema 侧窗口 vs renderExprNode 的 case ──
+const L2_EXPR_NODE_SCHEMA_START_RE = /\bexport\s+const\s+ExprNodeSchema\b/
+const L2_EXPR_NODE_SCHEMA_END = 'const L2ExprDeclarationSchema'
+const L2_RENDER_MARKER_RE = /function\s+renderExprNode\s*\(/
+const L2_CASE_KIND_RE = /\bcase\s+'([^']+)'\s*:/g
 
 /**
  * 掩掉 TS/JS 注释（`//` 行注释与 `/* *​/` 块注释），**保持长度与行号一一对应**。
@@ -423,15 +433,21 @@ const sameSet = (/** @type {string[]} */ a, /** @type {string[]} */ b) =>
  * 规则 ⑧ 的**纯核**：给定 `semantic-compiler.ts` 的源码文本，返回违规（不碰文件系统 ⇒
  * fixtures 可直接喂合成源做反面对照）。file 由调用方补。
  *
- * 三条子判定（都指向「两处漂移」的一种具体形态）：
- *  - ⑧-a **单点**：`L2DeclarationSchema` 与 `compileL2` 必须同在**这一份文件**里且都 export。
- *    写时校验一旦搬到别处，就出现了第二个「L2 声明是什么」的事实源。
- *  - ⑧-b **词表同源**：`op.kind` 与过滤算子的**接受集**两侧必须逐字相等 —— schema 放行而
- *    编译器拒绝（或反之）就是最有代表性的漂移：声明在 API 上「写成功了」，查询时才炸。
- *  - ⑧-c **字段面同源**：schema 顶层键集合与接口字段集合必须相等 —— schema 多收一个字段
- *    = 编译器永不读它（静默丢弃）；接口多一个字段 = 这个声明永远写不进来。
+ * 这条检查**不是**「同名 ⇒ 行为等价」—— 它只保证**同一份声明，schema 放行的形状集合与编译器
+ * 认识的形状集合逐字相等**。两侧是两处独立维护的清单（schema 是运行时门禁、编译器是 SQL 生产者），
+ * 任一处改了另一处没跟上，就会出现「写进去了但编译不出」/「编译认识但写不进去」。
+ * **不许**把这条注释或它的对外表述写成「同源 ⇒ 行为等价」—— 它只比对形状面，比对不了行为。
  *
- * ⚠️ **它是「标记级」的**：三条子判定读的都是**文本**（`literalValueSet` 的字面量、
+ * **四条**子判定（都指向「两处漂移」的一种具体形态）：
+ *  - ⑧-a **存在性**：`L2DeclarationSchema` 是 union 且成员恰为两支；两支的 schema/interface 都可取；
+ *    `compileL2` 仍是导出函数声明 —— 写时校验一旦搬走/分家，就出现了第二个「L2 声明是什么」的事实源。
+ *  - ⑧-b **判别键接受集**：逐支的 `op.kind` 字面量与 `filters` 算子，与编译面逐字相等（外加 union 级合计）
+ *    —— schema 放行而编译器拒绝（或反之）就是最有代表性的漂移：声明在 API 上「写成功了」，查询时才炸。
+ *  - ⑧-c **字段面**：逐支 schema 块的 depth-1 键集 = 该支 interface 的键集 —— schema 多收一个字段
+ *    = 编译器永不读它（静默丢弃）；接口多一个字段 = 这个声明永远写不进来。
+ *  - ⑧-d **节点集对偶**：expr 闭集的 node kind（schema 侧 literal ∪ enum） = `renderExprNode` 的 `case` 集
+ *
+ * ⚠️ **它是「标记级」的**：**四条**子判定读的都是**文本**（`literalValueSet` 的字面量、
  * `topLevelKeys` 的键名、正则的命中与否）⇒ 它能抓「两处**写的词**不一致」，
  * **抓不到**「词的约束没了 / 词还在但没被用」（守卫体掏空、`filters` 被静默丢弃）。
  * 假绿面与兜底防线见头注「⑧ 的**强度**」。**不要**据此把它当行为等价断言用。
@@ -444,65 +460,163 @@ export function checkL2DeclarationSameSource(src) {
   const push = (/** @type {number} */ line, /** @type {string} */ message) => violations.push({ line, message })
 
   const masked = maskJsComments(src)
-  const schemaBlock = sliceBalancedBlock(masked, L2_SCHEMA_MARKER_RE)
-  const ifaceBlock = sliceBalancedBlock(masked, L2_IFACE_MARKER_RE)
-  const schemaFound = /\bL2DeclarationSchema\b/.test(masked)
 
-  // ── ⑧-a 单点 ────────────────────────────────────────────────────────────────
-  if (!schemaFound) {
-    push(0, 'L2 的**写时校验**（`L2DeclarationSchema`）在这份文件里找不到 —— 它是唯一编译点的组成'
-      + '部分，必须与 `compileL2` 同址（搬家 = 第二处「L2 声明是什么」的事实源 ⇒ 两处漂移面）')
-  } else if (schemaBlock === '' || !/export\s+const\s+L2DeclarationSchema\b/.test(masked)) {
-    push(0, '`L2DeclarationSchema` 没有从 `modules/data/domain/semantic-compiler.ts` **导出**'
-      + '（或它的 `z.object({` 块不配平）—— 写时校验必须与编译点同址同源、可被门禁与 fixtures 取到')
+  const refineSchemaBlock = sliceBalancedBlock(masked, L2_REFINE_SCHEMA_MARKER_RE)
+  const exprSchemaBlock = sliceBalancedBlock(masked, L2_EXPR_SCHEMA_MARKER_RE)
+  const refineIfaceBlock = sliceBalancedBlock(masked, L2_REFINE_IFACE_MARKER_RE)
+  const exprIfaceBlock = sliceBalancedBlock(masked, L2_EXPR_IFACE_MARKER_RE)
+
+  // ── ⑧-a 存在性 ──
+  if (!/\bL2DeclarationSchema\b/.test(masked) || !/export\s+const\s+L2DeclarationSchema\b/.test(masked)) {
+    push(0, '找不到 `export const L2DeclarationSchema`——L2 声明的写时校验必须与编译器同文件导出'
+      + '（HTTP 面与 MCP 面都靠它）')
+  }
+  const unionMatch = L2_UNION_MARKER_RE.exec(masked)
+  if (unionMatch === null) {
+    push(0, '`L2DeclarationSchema` 必须是 `z.union([...])`（B 中档起按 `op.kind` 判别；'
+      + '单一 object schema 表达不了两支不同的宽容度）')
+  } else {
+    const members = new Set()
+    for (const m of unionMatch[1].matchAll(L2_MEMBER_NAME_RE)) members.add(m[1])
+    const want = ['L2ExprDeclarationSchema', 'L2RefineDeclarationSchema']
+    const got = [...members].sort()
+    if (!sameSet(got, want)) {
+      push(0, '`L2DeclarationSchema` 的成员应为 ' + want.join(' / ')
+        + `，实际 ${got.join(' / ') || '（空）'}——两支必须各有一个具名 schema，本检查才逐得起支`)
+    }
   }
   if (!/export\s+function\s+compileL2\b/.test(masked)) {
-    push(0, '`compileL2` 没有从 `modules/data/domain/semantic-compiler.ts` 导出 —— 它是**唯一编译点**'
-      + '（L2 的入参是租户数据，任何第二处拼 SQL 都是注入面且审计只能靠人记全位置）')
-  }
-  // 块切不出来 ⇒ 词表/字段面无可判，只留上面 ⑧-a 的违规（避免噪声）
-  if (schemaBlock === '' || ifaceBlock === '') return violations
-
-  const schemaLine = lineAt(masked, L2_SCHEMA_MARKER_RE.exec(masked)?.index ?? 0)
-  const ifaceLine = lineAt(masked, L2_IFACE_MARKER_RE.exec(masked)?.index ?? 0)
-
-  // ── ⑧-b 词表同源（op.kind）─────────────────────────────────────────────────
-  const kindSchema = literalValueSet(schemaBlock, L2_KIND_SCHEMA_RE)
-  const kindCompiler = literalValueSet(masked, L2_KIND_COMPILER_RE)
-  if (!sameSet(kindSchema, kindCompiler)) {
-    push(schemaLine, `op.kind 的接受集**两侧不一致** —— schema ${JSON.stringify(kindSchema)}`
-      + ` vs 编译器 ${JSON.stringify(kindCompiler)}：schema 放行的声明会在编译时被拒（或反之），`
-      + '而失败面要到「某个租户查这个指标」时才暴露（拍板 #5：门禁③要覆盖用户产生的声明）')
+    push(0, '`compileL2` 必须仍是 `export function` 声明（本检查靠它在同文件定位编译面；'
+      + '改成箭头函数/重导出会同时让这条检查与调用方一起失效）')
   }
 
-  // ── ⑧-b 词表同源（过滤算子）────────────────────────────────────────────────
-  // ★ 只在 `filters` 那个键**之后**取第一个 `z.enum([…])`：schema 块里 `op: z.object({…})`
-  //   也是 `op:`，从头扫会抓错条目。
-  const filtersAt = schemaBlock.indexOf('filters')
-  L2_FILTER_OP_SCHEMA_RE.lastIndex = filtersAt < 0 ? 0 : filtersAt
-  const opEnumMatch = L2_FILTER_OP_SCHEMA_RE.exec(schemaBlock)
-  const opSchema = opEnumMatch === null
-    ? []
-    : literalValueSet(opEnumMatch[1] ?? '', /'([^']*)'/g)
-  const opCompiler = literalValueSet(masked, L2_FILTER_OP_COMPILER_RE)
-  if (opSchema.length === 0) {
-    push(schemaLine, '过滤算子在 schema 里取不到（`filters[].op` 应为 `z.enum([…])`）—— 取不到就无法'
-      + '断言与编译器同源，而它正是「L2 能产生什么 SQL」的词表之一')
-  } else if (!sameSet(opSchema, opCompiler)) {
-    push(schemaLine, `过滤算子的接受集**两侧不一致** —— schema ${JSON.stringify(opSchema)}`
-      + ` vs 编译器 ${JSON.stringify(opCompiler)}：多收/少收的算子会让声明「写得进、跑不动」`)
+  // 四个块缺任一 ⇒ 后面所有逐支比对都无意义，显式报错后结束（比"静默通过"安全）
+  if (refineSchemaBlock === '' || exprSchemaBlock === '' || refineIfaceBlock === '' || exprIfaceBlock === '') {
+    const miss = [
+      `refine schema=${refineSchemaBlock === '' ? '缺' : '有'}`,
+      `expr schema=${exprSchemaBlock === '' ? '缺' : '有'}`,
+      `refine interface=${refineIfaceBlock === '' ? '缺' : '有'}`,
+      `expr interface=${exprIfaceBlock === '' ? '缺' : '有'}`,
+    ].join(' / ')
+    push(0, `取不到两支的 schema/interface 块（${miss}）——① 具名 schema 须写成 `
+      + '`const L2XxxDeclarationSchema = z.object({` 单头形式；② interface 须显式写在本文件顶层'
+      + '（不得用 extends z.infer<…> 之类的推导形式，那样取不到键）')
+    return violations
   }
 
-  // ── ⑧-c 字段面同源 ─────────────────────────────────────────────────────────
-  const schemaKeys = topLevelKeys(schemaBlock).sort()
-  const ifaceKeys = topLevelKeys(ifaceBlock).sort()
-  if (!sameSet(schemaKeys, ifaceKeys)) {
-    const onlySchema = schemaKeys.filter((k) => !ifaceKeys.includes(k))
-    const onlyIface = ifaceKeys.filter((k) => !schemaKeys.includes(k))
-    push(ifaceLine, 'L2 声明的**字段面两侧不一致** —— '
-      + (onlySchema.length > 0 ? `schema 多收 ${JSON.stringify(onlySchema)}（编译器永不读 ⇒ 静默丢弃）；` : '')
-      + (onlyIface.length > 0 ? `接口多出 ${JSON.stringify(onlyIface)}（该字段永远写不进来）；` : '')
-      + `schema ${JSON.stringify(schemaKeys)} vs 接口 ${JSON.stringify(ifaceKeys)}`)
+  const members = [
+    {
+      name: 'refine',
+      schemaAt: masked.indexOf('const L2RefineDeclarationSchema'),
+      ifaceAt: masked.indexOf('export interface L2RefineDeclaration'),
+      schemaBlock: refineSchemaBlock,
+      ifaceBlock: refineIfaceBlock,
+    },
+    {
+      name: 'expr',
+      schemaAt: masked.indexOf('const L2ExprDeclarationSchema'),
+      ifaceAt: masked.indexOf('export interface L2ExprDeclaration'),
+      schemaBlock: exprSchemaBlock,
+      ifaceBlock: exprIfaceBlock,
+    },
+  ]
+
+  /** @type {Set<string>} */
+  const schemaKindsAll = new Set()
+
+  for (const mb of members) {
+    const schemaLine = mb.schemaAt < 0 ? 0 : lineAt(masked, mb.schemaAt)
+    const ifaceLine = mb.ifaceAt < 0 ? 0 : lineAt(masked, mb.ifaceAt)
+
+    // ── ⑧-b-1 该支的 op.kind 字面量 ──
+    const opAt = mb.schemaBlock.indexOf('op:')
+    if (opAt === -1) {
+      push(schemaLine, `${mb.name} 支的 schema 里找不到 \`op:\`——判别键必须显式写在该支的 schema 块里`
+        + '（编译器按它分派）')
+    } else {
+      L2_KIND_SCHEMA_RE.lastIndex = opAt
+      const kinds = new Set()
+      for (let m = L2_KIND_SCHEMA_RE.exec(mb.schemaBlock); m !== null; m = L2_KIND_SCHEMA_RE.exec(mb.schemaBlock)) {
+        if (m[1] !== undefined) kinds.add(m[1])
+      }
+      const got = [...kinds].sort()
+      for (const k of got) schemaKindsAll.add(k)
+      if (!sameSet(got, [mb.name])) {
+        push(schemaLine, `${mb.name} 支 schema 的 \`op.kind\` 字面量应为 \`'${mb.name}'\`，`
+          + `实际 ${got.map((k) => `'${k}'`).join(' / ') || '（取不到）'}`)
+      }
+    }
+
+    // ── ⑧-b-2 该支的 filters 算子 ──
+    const filtersAt = mb.schemaBlock.indexOf('filters')
+    if (filtersAt === -1) {
+      push(schemaLine, `${mb.name} 支 schema 里找不到 \`filters\`——两支都必须**显式声明**它`
+        + '（expr 支声明了再由编译器以 OP_UNSUPPORTED 拒），否则 ⑧-c 的字段面比对会静默少一个键')
+    } else {
+      L2_FILTER_OP_SCHEMA_RE.lastIndex = filtersAt
+      const opEnumMatch = L2_FILTER_OP_SCHEMA_RE.exec(mb.schemaBlock)
+      const schemaOps = opEnumMatch === null ? [] : literalValueSet(opEnumMatch[1] ?? '', /'([^']*)'/g)
+      const compilerOps = literalValueSet(masked, L2_FILTER_OP_COMPILER_RE)
+      if (schemaOps.length === 0) {
+        push(schemaLine, `${mb.name} 支 schema 的 \`filters[].op\` **过滤算子**取不到`
+          + "（写成 `op: z.enum(['=', 'in'])` 才认得）")
+      } else if (!sameSet(schemaOps, compilerOps)) {
+        push(schemaLine, `${mb.name} 支 schema 的**过滤算子**集 ${schemaOps.join(' / ')}`
+          + ` 与编译面 ${compilerOps.join(' / ') || '（取不到）'} 不等`)
+      }
+    }
+
+    // ── ⑧-c 字段面：该支 schema 块 vs 该支 interface ──
+    const schemaKeys = topLevelKeys(mb.schemaBlock).sort()
+    const ifaceKeys = topLevelKeys(mb.ifaceBlock).sort()
+    if (!sameSet(schemaKeys, ifaceKeys)) {
+      const onlySchema = schemaKeys.filter((k) => !ifaceKeys.includes(k))
+      const onlyIface = ifaceKeys.filter((k) => !schemaKeys.includes(k))
+      const detail = [
+        onlySchema.length > 0 ? `仅 schema：${onlySchema.join(', ')}` : '',
+        onlyIface.length > 0 ? `仅 interface：${onlyIface.join(', ')}` : '',
+      ].filter((s) => s !== '').join('；')
+      push(ifaceLine, `${mb.name} 支的字段面两侧不等（${detail || '键集不一致'}）——`
+        + 'schema 与 interface 必须逐键对齐')
+    }
+  }
+
+  // ── ⑧-b（union 级）：两支 schema 的接受集合计 = 编译器 opKind 分派集 ──
+  const compilerKinds = literalValueSet(masked, L2_KIND_COMPILER_RE)
+  const schemaKinds = [...schemaKindsAll].sort()
+  if (!sameSet(schemaKinds, compilerKinds)) {
+    push(0, '`op.kind` 的接受集两侧不等——schema 面 '
+      + `${schemaKinds.map((k) => `'${k}'`).join(' / ')} vs 编译面 opKind 分派 `
+      + `${compilerKinds.map((k) => `'${k}'`).join(' / ') || '（取不到）'}。`
+      + '任一侧加/减档位必须另一侧同步：只改一边就是"写得进但编译不出"或反之')
+  }
+
+  // ── ⑧-d 节点集对偶 ──
+  const nodeStart = L2_EXPR_NODE_SCHEMA_START_RE.exec(masked)
+  const nodeEndAt = masked.indexOf(L2_EXPR_NODE_SCHEMA_END)
+  if (nodeStart === null || nodeEndAt === -1 || nodeEndAt < nodeStart.index) {
+    push(0, '取不到 expr 节点集的两侧窗口——schema 侧要有 `export const ExprNodeSchema`，'
+      + '且它必须写在 `const L2ExprDeclarationSchema` 之前（窗口 = 两者之间）')
+  } else {
+    const nodeWindow = masked.slice(nodeStart.index, nodeEndAt)
+    const schemaNodeKinds = new Set(literalValueSet(nodeWindow, L2_KIND_SCHEMA_RE))
+    for (const m of nodeWindow.matchAll(L2_KIND_ENUM_SCHEMA_RE)) {
+      for (const k of literalValueSet(m[1] ?? '', /'([^']*)'/g)) schemaNodeKinds.add(k)
+    }
+    const renderBlock = sliceBalancedBlock(masked, L2_RENDER_MARKER_RE)
+    if (renderBlock === '') {
+      push(0, '取不到 `renderExprNode` 的函数体——expr 档的唯一渲染点必须是一个具名函数'
+        + '（本检查靠它的 `case` 集取节点集）')
+    } else {
+      const compilerNodeKinds = literalValueSet(renderBlock, L2_CASE_KIND_RE)
+      const got = [...schemaNodeKinds].sort()
+      if (!sameSet(got, compilerNodeKinds)) {
+        push(0, 'expr **节点集**两侧不等——schema 面 '
+          + `${got.map((k) => `'${k}'`).join(' / ')} vs \`renderExprNode\` 的 case `
+          + `${compilerNodeKinds.map((k) => `'${k}'`).join(' / ') || '（取不到）'}。`
+          + '节点集就是"能产生什么 SQL"的词表，任一侧加/减必须另一侧同步')
+      }
+    }
   }
 
   return violations

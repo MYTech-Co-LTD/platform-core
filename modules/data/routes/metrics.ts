@@ -24,7 +24,7 @@ import type { Requester } from '../domain/authz'
 import { loadMergedCatalog } from '../domain/metric-store'
 import { listMetricAudit } from '../domain/metric-audit-store'
 import type { MetricRow } from '../domain/metric-store'
-import { L2DeclarationSchema } from '../domain/semantic-compiler'
+import { L2RefineDeclarationSchema, L2ExprDeclarationSchema } from '../domain/semantic-compiler'
 // 写/删的判定链在域层**只有一份**（HTTP 面与 MCP 写面共用）——本文件只做
 // 「参数形状校验 + 域层结果 → HTTP」，不再内联任何闸门。
 import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
@@ -37,8 +37,12 @@ import type { MetricWriteDeps, MetricWriteOutcome } from '../domain/metric-write
  *   （含 `selectSql` / `subjectColumn` / `groupBy` / `params` / `source`）直接 400。
  *   若用 zod 默认的 strip 行为，调用方传 `selectSql` 会**静默无效**——最坏的失败形态：
  *   他以为定义了自己的 SQL，而线上跑的是编译产物。
+ *   B 中档起 body 是**两层 union**（refine 支 / expr 支），各自 `.extend()` 后再 union ——
+ *   ZodUnion 本身没有 `.extend()`，而两支的宽容度不同，本来也必须分开校验。
  */
-const L2Body = L2DeclarationSchema.extend({ id: z.string().min(1).max(64) }).strict()
+const L2RefineBody = L2RefineDeclarationSchema.extend({ id: z.string().min(1).max(64) }).strict()
+const L2ExprBody = L2ExprDeclarationSchema.extend({ id: z.string().min(1).max(64) }).strict()
+const L2Body = z.union([L2RefineBody, L2ExprBody])
 
 type L2BodyType = z.infer<typeof L2Body>
 
