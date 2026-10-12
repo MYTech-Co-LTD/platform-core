@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.106.10](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.9...v0.106.10) - 2026-10-12
+- 【修复】data: wholesale_lines CTE 顺序修正 ([#617](https://github.com/MYTech-Co-LTD/platform-core/pull/617), [3a11305](https://github.com/MYTech-Co-LTD/platform-core/commit/3a11305207189c8907cc336dcbfb5fe4520c3622))
+
+
 ## [0.106.9](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.8...v0.106.9) - 2026-10-12
 - 【修复】data: transfer_lines 补 line_count 列 ([#616](https://github.com/MYTech-Co-LTD/platform-core/pull/616), [f7469df](https://github.com/MYTech-Co-LTD/platform-core/commit/f7469df9088414fecaf8575ee90e3fea4a852935))
 
