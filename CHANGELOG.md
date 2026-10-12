@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.106.7](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.6...v0.106.7) - 2026-10-12
+- 【修复】data: 空转自检 null 行归一（冲突叠层残留终局清理） ([#614](https://github.com/MYTech-Co-LTD/platform-core/pull/614), [54f83d4](https://github.com/MYTech-Co-LTD/platform-core/commit/54f83d4152f5226b9aaadc871f3873a8d38a9264))
+
+
 ## [0.106.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.5...v0.106.6) - 2026-10-12
 - 【修复】data: 清除对账文件冲突标记 + 空转 null 数全量对齐 ([#613](https://github.com/MYTech-Co-LTD/platform-core/pull/613), [537eb62](https://github.com/MYTech-Co-LTD/platform-core/commit/537eb629b3247a640a905ccb06ecd7b1ce3f484b))
 
