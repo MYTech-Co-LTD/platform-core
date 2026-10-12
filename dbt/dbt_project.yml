@@ -76,6 +76,11 @@ vars:
   # 出处：contracts/common/lemeng.wholesale_out.json 的 `layout.prefix` / `partitionBy`。
   # 消费者 = `stg_lemeng_wholesale_out`（唯一）；采集范围仅 3120 主账套（WO 发货方=3120）。
   lemeng_wholesale_out_prefix: 'lemeng/wholesale_out'
+  # 乐檬**批发退货单**前缀（W1 2026-10-12；行=退货单商品行；不含 bucket / 协议）：
+  # s3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet
+  # 出处：contracts/common/lemeng.wholesale_return.json 的 `layout.prefix` / `partitionBy`。
+  # 消费者 = `stg_lemeng_wholesale_return`（唯一）；采集范围仅 3120 主账套；A 阶段恒空集（契约 description 详）。
+  lemeng_wholesale_return_prefix: 'lemeng/wholesale_return'
   # 乐檬**批发客户档案**前缀（#516 段①；全量快照；不含 bucket / 协议）：
   # s3://<bucket>/lemeng/client/system_book=<账套>/snapshot=<YYYY-MM-DD>/all.parquet
   # 出处：contracts/common/lemeng.client.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。

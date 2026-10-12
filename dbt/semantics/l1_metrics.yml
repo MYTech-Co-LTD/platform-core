@@ -71,3 +71,140 @@ metrics:
     source: lemeng
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
+
+  # ── W1（2026-10-12）：transfer/wholesale 出域骨架 9 条 ──────────────────────────────
+  # 构件落点：fct_hq_outbound（R/C/G 长表）/ fct_transfer_line_quality（行质量面）/
+  #   fct_transfer_item（商品粒度）。口径与基面的「为什么」在各 fct 头注。
+  # ⚠️ 全部 experimental：裁8（transfer R 用行级 out_money）与裁1 未回客户签；
+  #   region_id 是 X01 未就位的回落（dim_branch 当前档案），战区下钻语义受「历史战区不可套
+  #   当前档案」约束（客户文档 D12 边界）。
+
+  - name: 'lemeng:outbound:net_amount'
+    label: 总仓出库净额
+    definition: >-
+      出库净额 R 构件（客户公共定义 R 的平台实现，分域不混加）：transfer 域 = Σ行级 out_money
+      （总部结算口径，裁8）；wholesale 域 = Σ 单头 total_money（per_order 去冗余）− Σ 退货单头
+      total_money（店日级相减，防一单多次退货的 join 放大；D03 A 阶段恒空集时为 0，与 D02 负金额
+      红字不得重复扣）。基面：transfer = 审核且总仓发货且排除店间直调；wholesale = 审核批发单。
+      粒度 = 账套 × 业务日 × 域 × 门店 × 战区（region_id 为 X01 回落）。
+      不可加边界：跨 domain 相加 = 客户 01-01 的 R 全量，但客户文档明令展示时配送与批发分别列。
+    expression: 'sum(fct_hq_outbound.r_net)'
+    grain: [system_book, bizday, domain, branch_num, region_id]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:outbound:gross_profit'
+    label: 总仓出库毛利
+    definition: >-
+      出库毛利 G 构件 = R − C：transfer 域 C = Σ行级 subtotal（成本小计，契约实测=cost_subtotal）；
+      wholesale 域 C = Σ 单头 cost_money − Σ 退货单头 cost_money（同 net_amount 的去冗余与相减形态）。
+      粒度与不可加边界同 lemeng:outbound:net_amount。
+      ⚠️ D10 系统指标对照（客户 01-02/08-01 的「系统差异」面）待 D10 接入（W3）后另补，本定义不含。
+      成本缺失/税基未核时只能试算（客户文档数据条件原话）；experimental 事由同裁8。
+    expression: 'sum(fct_hq_outbound.g_gross)'
+    grain: [system_book, bizday, domain, branch_num, region_id]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:outbound:gross_margin_rate'
+    label: 总仓出库毛利率
+    definition: >-
+      出库毛利率 = G/R（不可加；上滚=重算/另声明）。分子分母同域同店日（domain 在 grain，
+      域间不混算分母）。零分母 → 不适用（sync 自动包 nullif）。
+      experimental 事由同裁8/裁1；D10 对照面 W3 后补。
+    ratio:
+      numerator: 'sum(fct_hq_outbound.g_gross)'
+      denominator: 'sum(fct_hq_outbound.r_net)'
+    grain: [system_book, bizday, domain, branch_num, region_id]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:outbound:order_count'
+    label: 出库单数
+    definition: >-
+      审核出库单数（域内去重；04-01 的单数面）。transfer 域 = COUNT DISTINCT 配送单号；
+      wholesale 域 = COUNT DISTINCT 批发单号（domain 在 grain，客户文档「配送批发分别列」由
+      下钻实现，不许跨域相加后当总量）。⚠️ 按 audit_time/采集分区日截日是**代理指标**——
+      不代表实际拣货日（客户文档 04-01 数据条件原话）。粒度 = 账套 × 业务日 × 域 × 门店 × 战区。
+    expression: 'sum(fct_hq_outbound.order_count)'
+    grain: [system_book, bizday, domain, branch_num, region_id]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:outbound:line_count'
+    label: 出库明细行数
+    definition: >-
+      审核出库明细行数（04-01 的行数面；transfer 域 = 配送单商品行计数，wholesale 域 = 批发单
+      商品行计数；domain 在 grain 分别列）。上滚 = 各粒度行数之和（行数可加）。
+      同 order_count 的「审核日代理指标」边界。粒度同上。
+    expression: 'sum(fct_hq_outbound.line_count)'
+    grain: [system_book, bizday, domain, branch_num, region_id]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:transfer:batch_fill_rate'
+    label: 配送批号填写率
+    definition: >-
+      出库明细批号填写率（04-05，**全量版**：分母 = 全部审核出库明细行，非「需批号管理」清单——
+      X08 需批号清单未批准，考核版待 X08 就位另声明）。分子 = 批号非空且非空白串的行数
+      （客户文档「空白和占位字符视为无效」）。不可加；上滚=重算/另声明。
+      ⚠️ 字段完整率不证明实物批次正确（客户文档数据条件原话）。粒度 = 账套 × 业务日 × 门店。
+      只 transfer 域；wholesale 侧随 D02 v2 勾稽批次。
+    ratio:
+      numerator: 'sum(fct_transfer_line_quality.lot_filled_lines)'
+      denominator: 'sum(fct_transfer_line_quality.line_count)'
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:transfer:zero_cost_exposure_amount'
+    label: 配送零成本出库暴露金额
+    definition: >-
+      零成本出库暴露金额（04-06 金额面）= Σ（金额≠0 且已知成本=0 的行的金额）；
+      成本 **null 的缺成本金额是另一类暴露**（fct_transfer_line_quality.missing_cost_amount，
+      不在本口径、两者不相加——客户文档「null 不当 0」与 01-08「各类暴露可能重叠，不相加为总损失」）。
+      免费商品/暂估问题需业务确认（客户文档原话）；零成本不等于全部利润可实现。
+      只 transfer 域。粒度 = 账套 × 业务日 × 门店。
+    expression: 'sum(fct_transfer_line_quality.zero_cost_amount)'
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:transfer:negative_order_count'
+    label: 配送负金额单数
+    definition: >-
+      负金额出库单数（04-07 单数面）= 单头金额 < 0 的去重单数（合计面见
+      fct_transfer_line_quality.negative_amount，未声明为指标）。负数可能是退补/冲红/调整——
+      「不按绝对值变正收入，也不一律称退货」（客户文档 04-07 原话）；本口径只计数不定性。
+      只 transfer 域；wholesale 侧随 D02 v2 勾稽批次。粒度 = 账套 × 业务日 × 门店。
+    expression: 'sum(fct_transfer_line_quality.negative_order_count)'
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:transfer:item_gross_margin_rate'
+    label: 商品出库毛利率
+    definition: >-
+      商品粒度出库毛利率（06-03；不可加；上滚=重算/另声明）。只 transfer 域——客户文档 06-03
+      数据条件「批发明细先与单头成本勾稽，差额单列或经批准分配；不能将整张单头成本分配给每个
+      商品」⇒ wholesale 侧不出商品粒度毛利。基面同 fct_hq_outbound transfer 域（排除店间直调）。
+      experimental 事由同裁8。粒度 = 账套 × 业务日 × 商品。
+    ratio:
+      numerator: 'sum(fct_transfer_item.g_gross)'
+      denominator: 'sum(fct_transfer_item.r_net)'
+    grain: [system_book, bizday, item_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng

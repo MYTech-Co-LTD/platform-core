@@ -40,7 +40,9 @@ select
   r['use_unit']::varchar as use_unit,
   r['use_qty']::decimal(14,6) as use_qty,
   r['use_price']::decimal(18,8) as use_price,
-  r['use_rate']::decimal(18,8) as use_rate
+  r['use_rate']::decimal(18,8) as use_rate,
+  r['total_money']::decimal(14,2) as total_money,
+  r['cost_money']::decimal(14,2) as cost_money
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_out_prefix") }}/*/bizday=**/*.parquet'
 ) r

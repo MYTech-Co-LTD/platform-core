@@ -56,6 +56,148 @@ models:
         description: 有效订单数 = 同基面（FINISHED+SALE_ORDER）count(distinct 单号)。**与 l1_metrics.yml 的 `lemeng:retail:order_count` 同源**。
         tests:
           - not_null
+
+
+  - name: fct_hq_outbound
+    description: >-
+      总仓出库构件长表（W1 2026-10-12）：transfer/wholesale 双域的 R/C/G 构件唯一落点
+      （跨 D01+D02−D03 三份湖表，L1 单 FROM 约束的 marts 解）。粒度 (system_book, bizday,
+      domain, branch_num, region_id)；口径见模型头注（transfer 基面排除店间直调；wholesale 侧
+      退货店日级相减防 per_order join 放大；R 用行级 out_money=裁8 experimental）。
+      region_id = X01 未就位的回落（dim_branch 最新快照，未映射=0，种子语义）。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests:
+          - not_null
+      - name: org
+        description: 主体列（subject_org 宏注入；relation 内恒单值）。
+        tests:
+          - not_null
+      - name: bizday
+        description: 业务日（=制单/采集分区日）。粒度键。
+        tests:
+          - not_null
+      - name: domain
+        description: 域（transfer=配送出库 / wholesale=批发）；客户文档 01-01 禁混加，比例类按域分母。
+        tests:
+          - not_null
+      - name: branch_num
+        description: 收货门店号（transfer=调入店；wholesale=单头门店）。粒度键。
+        tests:
+          - not_null
+      - name: region_id
+        description: 战区（X01 回落 dim_branch 最新快照；0=未映射单列）。粒度键。
+        tests:
+          - not_null
+      - name: r_net
+        description: R 出库净额构件（transfer=Σ行 out_money；wholesale=单头 total 和−退货单头 total 和）。**与 lemeng:outbound:net_amount 同源**。
+        tests:
+          - not_null
+      - name: c_cost
+        description: C 成本构件（transfer=Σ subtotal=成本小计；wholesale=单头 cost 和−退货 cost 和）。**与 lemeng:outbound:gross_profit 的减数同源**。
+        tests:
+          - not_null
+      - name: g_gross
+        description: G 毛利构件 = r_net − c_cost。**与 lemeng:outbound:gross_profit / gross_margin_rate 分子同源**。
+        tests:
+          - not_null
+      - name: order_count
+        description: 域内去重单数（04-01 面之一；transfer 侧与 lemeng:transfer:order_count 同源）。
+        tests:
+          - not_null
+      - name: line_count
+        description: 预留行数列（transfer 行数面 W1 以独立指标承载，本列恒 0 占位——2026-10-12 W1 裁：行数从 staging 直出，勿读本列）。
+
+  - name: fct_transfer_item
+    description: >-
+      总仓配送出库商品粒度构件（W1 2026-10-12；服务 06-03 商品出库毛利率）。粒度
+      (system_book, bizday, item_num)；基面与构件口径同 fct_hq_outbound 的 transfer 域（行级
+      out_money/subtotal）。只 transfer 域——批发侧商品毛利受「明细成本须与单头勾稽」约束
+      （客户文档 06-03 数据条件），随 D02 v2 勾稽另批。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests:
+          - not_null
+      - name: org
+        description: 主体列（宏注入）。
+        tests:
+          - not_null
+      - name: bizday
+        description: 业务日。粒度键。
+        tests:
+          - not_null
+      - name: item_num
+        description: 商品内部编号。粒度键。
+        tests:
+          - not_null
+      - name: r_net
+        description: R 构件（商品日）。
+        tests:
+          - not_null
+      - name: c_cost
+        description: C 构件（商品日）。
+        tests:
+          - not_null
+      - name: g_gross
+        description: G 构件 = r_net − c_cost。**与 lemeng:transfer:item_gross_margin_rate 同源**。
+        tests:
+          - not_null
+
+  - name: fct_transfer_line_quality
+    description: >-
+      总仓配送出库行质量构件（W1 2026-10-12；服务 04-05/04-06/04-07 的 L1 落点）。粒度
+      (system_book, bizday, branch_num)；基面同 fct_hq_outbound 的 transfer 域。口径逐列见模型头注
+      （批号率全量版待 X08；零成本与缺成本不相加；负金额不按绝对值变正收入）。
+      wholesale 侧行质量面随 D02 v2 勾稽批次另出。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests:
+          - not_null
+      - name: org
+        description: 主体列（宏注入）。
+        tests:
+          - not_null
+      - name: bizday
+        description: 业务日。粒度键。
+        tests:
+          - not_null
+      - name: branch_num
+        description: 调入门店号。粒度键。
+        tests:
+          - not_null
+      - name: line_count
+        description: 审核出库明细行数（04-05 分母构件）。
+        tests:
+          - not_null
+      - name: lot_filled_lines
+        description: 批号非空行数（04-05 分子构件；空白串视为未填）。
+        tests:
+          - not_null
+      - name: zero_cost_amount
+        description: 零成本暴露金额（金额≠0 且成本=0）。**与 lemeng:transfer:zero_cost_exposure_amount 同源**。
+        tests:
+          - not_null
+      - name: zero_cost_rows
+        description: 零成本暴露行数（行数面 L2/消费层用）。
+        tests:
+          - not_null
+      - name: missing_cost_amount
+        description: 缺成本金额（成本 null 且金额≠0；与零成本**不相加**——客户文档「null 不当 0」）。
+        tests:
+          - not_null
+      - name: negative_order_count
+        description: 负金额单数（单头口径）。**与 lemeng:transfer:negative_order_count 同源**。
+        tests:
+          - not_null
+      - name: negative_amount
+        description: 负金额合计（保留负号；不按绝对值变正收入）。
+        tests:
+          - not_null
+
+
 # 复合粒度 **(system_book, bizday, branch_num)** 的唯一性由 singular test 手写（单列的 unique 判不了：
 # 各列各自都不唯一；引 dbt_utils.unique_combination_of_columns 要加 packages.yml —— 多一层依赖、
 # 解析期还要联网，本任务不引入）：

@@ -101,6 +101,15 @@ sources:
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / bizday::date）'
           pagination: '新湖由 duckle 管线写入（#499/R3）：静态页扇出（limit/offset，p19 哨兵 >1800 单/日大声红）+ ctl.merge + flatten（UNNEST wholesale_order_details）；生成器 scripts/lemeng/gen-wholesale-out-pipeline.mjs，不手编'
 
+      - name: wholesale_return
+        description: '乐檬**批发退货单**（新湖，2026-10-12 契约，W1）：行 = 退货单商品行；查询窗=制单日单日（date_type=制单时间，#513 同族坑）、区间 ≤7 天接口硬限（2026-10-12 实测）、每分区写一次不重写；接口 nhsoft.whs.ai.wholesalereturn.find limit/offset 分页（p19 哨兵同构）。⚠️ A 阶段探针恒空集（接口可达无业务样本）——明细键名未获真样本实证（契约 description 详）；单头列随行冗余，聚合前 per_order 取 max。'
+        meta:
+          path_convention: 'lemeng/wholesale_return/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_wholesale_return_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / bizday::date）'
+          pagination: '新湖由 duckle 管线写入（W1）：静态页扇出 p1..p18 + p19 哨兵（wholesale_out 同构派生）+ ctl.merge + flatten（UNNEST wholesale_return_details）'
+
       - name: client
         description: '乐檬**批发客户档案**（新湖，2026-10-10 契约，#516 段①）：全量快照（GET 零参数固定窗——例外路线证据见正典 §1.7；窗口跟随活档案，2026-10-10 实测 707 条且已知 41 个 WO 客户 41/41 在窗内），hive 两级分区 system_book/snapshot。行粒度 = 账套 × 快照日 × 客户。接口 nhsoft.whs.ai.client.find GET 裸码路径单页（limit/offset/keyword 全无效）。'
         meta:

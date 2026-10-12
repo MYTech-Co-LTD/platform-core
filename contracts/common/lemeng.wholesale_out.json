@@ -1,12 +1,12 @@
 {
   "$schema": "./_schema.schema.json",
   "contractVersion": 2,
-  "schemaVersion": 1,
-  "consumerVersion": 1,
+  "schemaVersion": 2,
+  "consumerVersion": 2,
   "domain": "lemeng",
   "table": "wholesale_out",
   "owner": "data-platform",
-  "description": "乐檬批发销售单（nhsoft.whs.ai.wholesaleorder.find；R3 拍板 2026-10-08）。【行粒度】一行 = 账套×采集bizday×批发单×商品行（单头列随行冗余）；自然键 `(system_book, bizday, order_no, item_num, order_detail_num)`（同单同商品多行由 order_detail_num 区分——与调出单按 lot 拆行不同，批发单行号天然唯一）。【窗口】查询窗 = `${date-1d}` 单日 + `date_type=制单时间`。⚠️ **date_type 枚举双向坑**（2026-10-08 实测）：传「制单」/「审核」→ **日期过滤被静默忽略**（返回 2019 起全史）；传「制单时间」→ 过滤正确生效。文档描述恰是正确值，但早前 7 天窗实测曾静默 0 行——同一参数两种病灶，变更后必须实证数据形状。【接口约束】查询窗 ≤7 天（严于调出单的 3 个月，回填按 7 天分批）；limit/offset 分页（offset 稳定制单时间不漂移）。【采集范围】仅 3120 主账套（WO 单发货方=3120 管理中心/仓库，收货方=品品甜等外部批发客户——R2 拍板品品甜是 3120 的外部客户）。【与调出单关系】MO（配送给自有门店）与 WO（批发给外部客户）是 3120 出库的两族单据；无极副本两者混装（前缀 MO/WO 可辨）。【价格语义】order_detail_price = 基本单位批发价（工单若涉批发客户按此口径）；与档案批发价可不同（按单结算，同配送单实测）。",
+  "description": "乐檬批发销售单（nhsoft.whs.ai.wholesaleorder.find；R3 拍板 2026-10-08）。【行粒度】一行 = 账套×采集bizday×批发单×商品行（单头列随行冗余）；自然键 `(system_book, bizday, order_no, item_num, order_detail_num)`（同单同商品多行由 order_detail_num 区分——与调出单按 lot 拆行不同，批发单行号天然唯一）。【窗口】查询窗 = `${date-1d}` 单日 + `date_type=制单时间`。⚠️ **date_type 枚举双向坑**（2026-10-08 实测）：传「制单」/「审核」→ **日期过滤被静默忽略**（返回 2019 起全史）；传「制单时间」→ 过滤正确生效。文档描述恰是正确值，但早前 7 天窗实测曾静默 0 行——同一参数两种病灶，变更后必须实证数据形状。【接口约束】查询窗 ≤7 天（严于调出单的 3 个月，回填按 7 天分批）；limit/offset 分页（offset 稳定制单时间不漂移）。【采集范围】仅 3120 主账套（WO 单发货方=3120 管理中心/仓库，收货方=品品甜等外部批发客户——R2 拍板品品甜是 3120 的外部客户）。【与调出单关系】MO（配送给自有门店）与 WO（批发给外部客户）是 3120 出库的两族单据；无极副本两者混装（前缀 MO/WO 可辨）。【价格语义】order_detail_price = 基本单位批发价（工单若涉批发客户按此口径）；与档案批发价可不同（按单结算，同配送单实测）。【v2 2026-10-12 W1】补采单头两列 `wholesale_order_total_money` / `wholesale_order_cost_money`（客户公式 R/C 的 wholesale 侧构件；接口本就返回、R3 当时未采）。⚠️ 湖上旧分区（2026-10-10 起的少量 bizday）须以新 schema 重采覆盖（当日窗管线按 bizday 逐日重跑），否则新旧分区列集漂移炸 staging 的 glob 读——重采范围 = 已存在分区，不属「历史回填」批次。",
   "layout": {
     "prefix": "lemeng/wholesale_out",
     "partitionStyle": "hive",
@@ -225,6 +225,20 @@
       "nullable": true,
       "description": "使用单位换算率（基本数量 = 使用数量 × 换算率）",
       "expr": "CAST(json_extract_string(u.d, '$.order_detail_use_rate') AS DECIMAL(18,8))"
+    },
+    {
+      "name": "total_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "单头含税总金额（=接口 wholesale_order_total_money；⚠️ 单头列随行冗余——行级 sum 会重复计，聚合前 per_order 取 max。客户公式 R 的 wholesale 侧构件）。v2 补采",
+      "expr": "CAST(o.wholesale_order_total_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "cost_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "单头成本金额（=接口 wholesale_order_cost_money；单头随行冗余，同上 per_order 取 max。客户公式 C 的 wholesale 侧构件；含赠品成本与否随系统口径，勾稽在 fct/audit）。v2 补采",
+      "expr": "CAST(o.wholesale_order_cost_money AS DECIMAL(14,2))"
     }
   ]
 }

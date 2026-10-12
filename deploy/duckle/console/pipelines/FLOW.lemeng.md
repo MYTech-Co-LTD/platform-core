@@ -15,6 +15,7 @@
 | **L0 直连**（单窗/日频，无跨窗编排） | `lemeng.dim.branch.l0.json` · `lemeng.dim.item.l0.json` · `lemeng.dim.item_price.l0.json`(64188) · `lemeng.dim.item_price.l0.3120.json` | 维度面各 1（双账套）；价格批**每账套一份**（#481——批内门店号是生成时字面量，两账套清单不同 ⇒ 不共用文件） |
 | **L0 直连**（配送调出单，#499/R2） |
 | **L0 直连**（批发销售单，#499/R3） | `lemeng.wholesale.out.l0.3120.json` | 仅 3120。窗口=昨日单日（`${date-1d}`，date_type=制单——⚠️ 枚举值是「制单」非「制单时间」，错误值静默 0 行）；扇出 p1..p8 数据页 + p9 哨兵（limit/offset 分页）；flatten 同款。生成器 `scripts/lemeng/gen-wholesale-out-pipeline.mjs` |
+| **L0 直连**（批发退货，W1 2026-10-12） | `lemeng.wholesale.return.l0.3120.json` | 仅 3120。窗口=昨日单日 + date_type=制单时间；扇出 p1..p18 数据页 + p19 哨兵（同构派生自 wholesale.out）；**A 阶段恒空集**（业务或走 D02 红字）——空转合法，明细键名未获真样本实证（见契约 description） |
  `lemeng.transfer.out.l0.3120.json` | 仅 3120（64188=外部批发客户不采）。窗口=昨日单日（`${date-1d+8h}` 引擎现算不过期）；扇出 p1..p8 数据页 + p9 哨兵（>800 单/日大声红）；flatten 用销售明细子管线同款 UNNEST。生成器 `scripts/lemeng/gen-transfer-out-pipeline.mjs`，不手编 |
 | **L1 编排**（跨窗循环） | `lemeng.retail.windows.l1.json` · `lemeng.retail.tick.l1.json` · `lemeng.retail.close.l1.json` | 3 |
 | **业务子管线**（单窗怎么采，被 L1 复用） | `lemeng.retail_order_line.window.json` · `lemeng.retail_order_line.tick.json` | 2 |

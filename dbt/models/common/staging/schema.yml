@@ -393,6 +393,54 @@ models:
       - name: client_fid
         description: '批发客户 ID（品品甜等外部客户在此可辨）。'
 
+  - name: stg_lemeng_wholesale_return
+    description: >-
+      乐檬**批发退货单** staging（新湖；W1 2026-10-12）。行 = 退货单商品行（单头列随行冗余透传）。
+      源 = 湖表 `lemeng.wholesale_return`（hive 两级分区 system_book/bizday，bizday=制单日、
+      每分区写一次不重写）。列全集以 `contracts/common/lemeng.wholesale_return.json` 为准。
+      ⚠️ 采集范围仅 3120 主账套。⚠️ **A 阶段恒空集**（探针可达无业务样本）：明细键名未获真样本
+      实证；单头 total_money/cost_money 随行冗余 ⇒ 聚合前 per_order 取 max（fct_hq_outbound 的
+      wholesale 侧是唯一聚合实现）；return_detail_* 符号未实证，不得与 D02 红字重复扣。
+    columns:
+      - name: batch_id
+        description: '批次标记（采集 run id）。载荷列。'
+      - name: system_book
+        description: '账套（采集范围=3120）。hive 分区键。'
+      - name: org
+        description: '主体列（env `LEMENG_SUBJECT_ORG` 注入）。不是契约列。'
+        tests:
+          - not_null
+      - name: bizday
+        description: '单据制单日。hive 分区键。'
+      - name: wholesale_return_fid
+        description: '退货单号。自然键之一。'
+        tests:
+          - not_null
+      - name: order_no
+        description: '关联批发销售单号（接口 wholesale_order_fid；fct 退货扣减 join 键）。可空性未获真样本实证。'
+      - name: branch_num
+        description: '门店/发货主体编号。自然键之一。'
+        tests:
+          - not_null
+      - name: client_fid
+        description: '批发客户 ID（前导零按字符串保留）。'
+      - name: audit_time
+        description: '审核时间（接口 wholesale_return_audit_time；报告期过滤用）。'
+      - name: total_money
+        description: '单头退货总金额（随行冗余，聚合前 per_order 取 max；符号未实证）。'
+      - name: cost_money
+        description: '单头退货成本（随行冗余，同上）。'
+      - name: order_detail_num
+        description: '明细行号（⚠️ 官方文档未列此键，按 D02 族惯例推断、真样本缺失——恒 null 则行键退化为 (fid, item_num)）。'
+      - name: item_num
+        description: '商品内部编号。自然键之一。'
+        tests:
+          - not_null
+      - name: return_detail_money
+        description: '明细退货金额（符号未实证；不得与 D02 红字重复扣）。'
+      - name: return_detail_cost_money
+        description: '明细退货成本（符号边界同上）。'
+
 # 三张维度/价格表的**行粒度自然键**唯一性由 singular test 手写（单列 `unique` 判不了复合键；
 # 引 dbt_utils 要加 packages.yml —— 多一层依赖、解析期还要联网）：
 #   dbt/tests/assert_stg_lemeng_branch_key_unique.sql     —— (system_book, snapshot, branch_num)
@@ -400,6 +448,7 @@ models:
 #   dbt/tests/assert_stg_lemeng_item_price_key_unique.sql —— (system_book, snapshot, branch_num, item_num, item_grade_num)
 #   dbt/tests/assert_stg_lemeng_transfer_out_key_unique.sql —— (system_book, bizday, order_no, item_num, item_grade_num, lot_number)
 #   dbt/tests/assert_stg_lemeng_wholesale_out_key_unique.sql —— (system_book, bizday, order_no, order_detail_num)
+#   dbt/tests/assert_stg_lemeng_wholesale_return_key_unique.sql —— (system_book, bizday, wholesale_return_fid, item_num, order_detail_num)
 #
 # 列级测试的**范围**（有意为之，不是漏做）：只给**自然键列**挂 `not_null`（与
 # stg_lemeng_retail_order_line 的形状一致 —— 它也只给同名的两个自然键列挂）。
