@@ -57,14 +57,6 @@ where a.zero_cost_amount is distinct from b.zero_cost_amount
 union all
 
 select
-<<<<<<< HEAD
     null, null, null, null, null,
-=======
-<<<<<<< HEAD
-    null, null, null, null, null,
-=======
-    null, null, null, null, null, null,
->>>>>>> origin/main
->>>>>>> origin/main
     '物化侧一行都没有：对账在空集上「通过」是空转绿（不是对上了）'
 where not exists (select 1 from materialized)
