@@ -11,6 +11,18 @@
 
 ## [Unreleased]
 
+## [0.106.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.105.0...v0.106.0) - 2026-10-12
+- 【新增】data: 批发销售回填变体管线（BIZDAY 参数化） ([#605](https://github.com/MYTech-Co-LTD/platform-core/pull/605), [129d847](https://github.com/MYTech-Co-LTD/platform-core/commit/129d8470caa993e271ae0e0a0da9c57c77016b7b))
+
+
+## [0.105.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.104.1...v0.105.0) - 2026-10-12
+- 【新增】data: 乐檬指标 W1 transfer/wholesale 骨架（D03 接源 + 出域构件 + 首批 ratio） ([#604](https://github.com/MYTech-Co-LTD/platform-core/pull/604), [4491cdf](https://github.com/MYTech-Co-LTD/platform-core/commit/4491cdfd66f32ec03e7f14bf8eac6751cb2e9700))
+
+
+## [0.104.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.104.0...v0.104.1) - 2026-10-12
+- 【修复】openclaw: zh-thinking 换格式契约措辞，山海生产实证中文思考可控 ([#602](https://github.com/MYTech-Co-LTD/platform-core/pull/602), [282ac22](https://github.com/MYTech-Co-LTD/platform-core/commit/282ac22bb1c08e40e8aed65e47e9a63b217e1caf))
+
+
 ## [0.104.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.103.0...v0.104.0) - 2026-10-12
 - 【新增】data: 乐檬指标 W0 语义基建（净额口径落地 + L1 ratio 支持） ([#599](https://github.com/MYTech-Co-LTD/platform-core/pull/599), [b7d11f0](https://github.com/MYTech-Co-LTD/platform-core/commit/b7d11f0a000d8b75fdf99456b570e042b9760dd4))
 
