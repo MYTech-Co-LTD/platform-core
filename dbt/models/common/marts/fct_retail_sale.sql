@@ -12,9 +12,11 @@
 --   `dbt/semantics/l1_metrics.yml` 里的 `expression` 指向本模型的列，别处不许再写一份等价的聚合
 --   （同名唯一的静态门禁在 scripts/check-data-models.mjs 的规则 ⑥）。
 --
--- 粒度（grain）：**(system_book, bizday)** —— 账套 × 业务日。粒度是显式的、被断言钉住的
+-- 粒度（grain）：**(system_book, bizday, branch_num)** —— 账套 × 业务日 × 门店（2026-10-12 W0
+--   由两键扩到三键：65 项指标体系的零售侧要下钻到店，见 spec
+--   `2026-10-12-lemeng-metrics-sources-semantics-design.md`）。粒度是显式的、被断言钉住的
 --   （`dbt/tests/assert_fct_retail_sale_grain_unique.sql`）：粒度漂移（多出来一行）会让所有
---   按它聚合的指标静默偏大，而**没有任何单列约束抓得住**（system_book 与 bizday 各自都不唯一）。
+--   按它聚合的指标静默偏大，而**没有任何单列约束抓得住**（各单键都不唯一）。
 --
 -- ⚠️ `org` 是**主体列**（行级授权谓词 `WHERE org = …` 的着力点，见 dbt/macros/subject_org.sql）：
 --   本模型用 `{{ subject_org() }}` **直接注入常量**（**不从 staging 透传**）—— 两个理由：
@@ -22,35 +24,32 @@
 --   ② 模型自足：新加 marts 模型时不必先确认上游 staging 有没有那一列。
 --   同一轮运行里 macro 取的是同一个 env ⇒ 与 staging 的 org **恒等**，不存在两份值。
 --   它是常量、**不参与口径**，故不进 GROUP BY；每个租户物化进自己的 schema
---   （macros/generate_schema_name.sql）⇒ **单个 relation 内 org 恒为单值**，粒度仍写作 (system_book, bizday)。
+--   （macros/generate_schema_name.sql）⇒ **单个 relation 内 org 恒为单值**，粒度仍写作上三键。
 --
--- 指标口径（逐字，与 l1_metrics.yml 的 `definition` 同源）：
---   · 净销售额 = 有效零售订单的成交金额合计（当前实现 = `sum(sale_money)`）
---   · 订单数   = 按单号去重的订单笔数（当前实现 = `count(distinct order_no)`）
---   ⚠️ 「有效」的判定条件（退货/赠品/作废是否剔除）**未在本模型实现** —— 这是**暂定**：
---      真实口径需要业务确认 + 样本核对。当前实现是「全部行的金额合计」，
---      **不许**把 l1_metrics.yml 里的 definition 改写成「全部行」来迁就实现（那是口径追着实现跑）。
+-- ── 指标口径（逐字，与 l1_metrics.yml 的 `definition` 同源；2026-10-12 W0 落地）────────────
+--   · 净销售额 = state=FINISHED 且 order_transaction_type=SALE_ORDER 的订单（**退货单不进
+--     gross**——平台 sale_money 不冲退货单），逐订单取「(Σ非赠品行额 + order_total_money)/2」，
+--     按门店日合计 − Σ分摊折扣；赠品行按判别式排除（正典
+--     docs/superpowers/specs/2026-09-30-recon-zeroing-self-attribution.md §0）。
+--   · 订单数   = 同基面的 count(distinct order_no)。
+--   公式出处：issue #430 定案，2026-10-05 双账套真机 5 天 × 63 店与乐檬预聚合端点**逐分归零**
+--   （对拍实现 = console 管线 `deploy/duckle/console/pipelines/lemeng.recon.preagg.item.json`）。
+--   本文件的除法形态**逐字同构照抄它**：per_order 出 ng/tot/sd 三列，最终
+--   `sum((ng + tot) / 2 - sd)`——除法在**逐单层**（sum 的参数表达式里），不是先和后除；
+--   别引入第三种除法形态（逐分归零是按这个形状验证的）。
+--
+-- ════════════════════════════════════════════════════════════════════════════════════════
+-- 🔒【口径变更记录】本文件曾按「全部明细行 sum(sale_money)」实现（暂定口径，FINISHED/CANCELED/
+--    REPAID 一视同仁，2026-09-23 真机实测三态都有行）。2026-10-12 起按 #430 定案公式实现——
+--    那是**口径定案的落地**（声明先行：l1_metrics.yml 的 definition 同 PR 先改），不是漏写 where；
+--    旧头注「不许加 where state=…」随暂定口径一并退役。**再改口径仍必须先改 definition**。
+--    ⚠️ 基面行的 `order_total_money` / `order_detail_share_discount` 若为 null，sum 会把该单
+--    **静默丢掉**——输入形状守卫在 `audit_lemeng__retail__recon_exchange_shape.sql`
+--    （非空/非负违规它会红），本模型不重复设闸（口径模型保持纯口径）。
+-- ════════════════════════════════════════════════════════════════════════════════════════
 --
 -- ── 换源（2026-09-24 / issue #150 的 S1 Task 9）：旧湖 → 新湖 ─────────────────────────────
 --   输入从 `ref('stg_lemeng_retail_detail')`（旧湖 staging，该文件已于 2026-10-06 仓内退役）换成 `ref('stg_lemeng_retail_order_line')`。
---   **列名与语义零改动**（`net_amount` / `order_count` / `system_book` / `bizday`）⇒ 本模型对外的
---   列契约不变：`dbt/models/common/marts/schema.yml` 的 `fct_retail_sale` 段、L1 声明的
---   `expression`（`sum(fct_retail_sale.net_amount)` 等）、两个 audit 的口径面**都不需要动**。
---   旧湖那两处手写 cast（VARCHAR → numeric / try_strptime）已删：新湖**落盘即定型**。
---
--- ════════════════════════════════════════════════════════════════════════════════════════
--- 🔒【明确不过滤 state —— 这是口径决定，不是漏写 where】
--- ════════════════════════════════════════════════════════════════════════════════════════
--- `net_amount` = **全部明细行**的 `sale_money` 合计：FINISHED / CANCELED / REPAID **一视同仁**，
--- 与旧湖实现（全行 `sum(amount)`）**逐字同口径**。新湖里这三类**确实都有行**
--- （2026-09-23 真机实测：FINISHED 18566 行 / CANCELED 1002 行 / REPAID 110 行）。故：
---   · **不许**加 `where state = 'FINISHED'`（或任何 state 过滤）——一加 `net_amount` 就掉数
---     （掉到 1,522,801.61 而不是 1,622,276.08），两个 audit 立刻红；而且那是**改口径**，不是修 bug。
---   · 这是**下一个人最容易「顺手优化」的地方**：剔掉作废/退货看起来天经地义、而且会让某些
---     人工报表更「好看」，但它是**口径变更**，必须走声明（spec §11 的 S5），必须先改
---     `l1_metrics.yml` 的 `definition` 并让人看见。故本条写在头注最前面。
---   · 澄清一条边界：**不过滤 state 不等于不用 state** —— 将来「有效订单」口径落地时，state 的
---     处理就在这里写一次（本模型是它的唯一落点），而不是在下游各拼一遍。
 --
 -- ════════════════════════════════════════════════════════════════════════════════════════
 -- 【为什么聚合结果要显式定精度 `::numeric(20,2)`】—— 不是风格偏好，是 pg_duckdb 的硬约束
@@ -64,17 +63,45 @@
 --    'SET duckdb.convert_unsupported_numeric_to_double = true'`
 -- 而**两个 audit 恰恰是跨引擎查询**（复算侧 = DuckDB 直接打 parquet，物化侧 = PG 读本表）⇒
 -- 不 cast 的后果不是「数不对」，是**对账根本执行不了**（实测：加 cast 前该查询报上面这条错）。
--- 为什么不用提示里那条 `convert_unsupported_numeric_to_double`：金额对账要**精确十进制**，
--- 把两侧都转成 DOUBLE 等于把「对账」降级成「差不多对账」——那正是这两个 audit 文件存在的理由
--- （cast 错要能被抓）。精度取 20 位足够（当日合计 1,622,276.08；真要溢出会**响亮报错**，
--- 不会静默截断）。
+-- 精度取 20 位足够（真要溢出会**响亮报错**，不会静默截断）。
+with base as (
+    select
+        system_book,
+        bizday,
+        branch_num,
+        order_no,
+        sale_money,
+        order_total_money,
+        order_detail_share_discount,
+        -- 赠品判别式（**逐字照抄正典**，与 audit_lemeng__retail__recon_gift_hit.sql 同一句）：
+        -- 折让 = 标准价全额 × 数量 ⇒ 该行分文未收（白送）；护栏三条件排除退化命中。
+        (order_detail_std_price > 0 and sale_money > 0 and quantity > 0
+         and abs(discount_money - order_detail_std_price * quantity) <= 0.02) as is_gift
+    from {{ ref('stg_lemeng_retail_order_line') }}
+    where state = 'FINISHED'
+      and order_transaction_type = 'SALE_ORDER'
+),
+per_order as (
+    select
+        system_book,
+        bizday,
+        branch_num,
+        order_no,
+        sum(case when is_gift then 0 else sale_money end) as non_gift_amount,
+        max(order_total_money)                            as order_total_money,
+        sum(order_detail_share_discount)                  as share_discount
+    from base
+    group by 1, 2, 3, 4
+)
 select
-    system_book,
+    per_order.system_book,
     {{ subject_org() }} as org,
-    bizday,
-    sum(sale_money)::numeric(20,2) as net_amount,
-    count(distinct order_no)       as order_count
-from {{ ref('stg_lemeng_retail_order_line') }}
-group by
-    system_book,
-    bizday
+    per_order.bizday,
+    per_order.branch_num,
+    -- 除法形态逐字同构 recon-preagg（见头注）：sum 的参数表达式里**逐单**除 2、逐单减 sd，
+    -- 不是先和后除（decimal 除法的舍入位置是口径的一部分）
+    (sum((per_order.non_gift_amount + per_order.order_total_money) / 2
+         - per_order.share_discount))::numeric(20,2) as net_amount,
+    count(distinct per_order.order_no)               as order_count
+from per_order
+group by 1, 3, 4

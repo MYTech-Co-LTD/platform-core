@@ -54,7 +54,8 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
       title: '净销售额',
       subjectColumn: 'org',
       requiredScope: null,
-      groupBy: 'system_book, bizday',
+      // 2026-10-12 W0：粒度随 #430 口径定案扩到门店（账套 × 业务日 × 门店）
+      groupBy: 'system_book, bizday, branch_num',
     })
   })
 

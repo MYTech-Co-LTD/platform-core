@@ -11,44 +11,73 @@
 -- ★ 本文件**刻意重复**一次读路径与 cast（不 ref staging、也不 ref marts）。这不是冗余，是方法：
 --    若复算走 staging，staging 的 cast 错会**同时**污染两边 ⇒ 对账恒等、永远绿（这正是
 --    「对账看着有、其实没用」的形态）。故复算直接打 parquet，与 staging 的 cast 各自独立写。
---    ⚠️ **换源（2026-09-24，S1 Task 9）时依然照此原则**：读路径随 fct 一起换到新湖，但**不**改成
---    `ref('stg_lemeng_retail_order_line')` —— 那样 staging 的错会同时污染两侧、对账恒绿。
 --
--- ⚠️ 空集也是坑：两边都为空时本查询返回 0 行 = 通过，而那个「通过」毫无信息量。故末尾有
---    **空转自检**（物化侧一行都没有 ⇒ 出行）。同族先例：check-tenant-isolation 的空转自检。
+-- ── 口径（2026-10-12 W0 随 #430 定案更新）───────────────────────────────────────────────
+--    净销售额 = FINISHED+SALE_ORDER 基面 + 换货「送出半边」公式（逐单 (Σ非赠品+total)/2 − sd）
+--    + 赠品判别式排除。**除法形态与 fct_retail_sale.sql 及正典对拍实现
+--    （console 管线 lemeng.recon.preagg.item.json）逐字同构**：per_order 出 ng/tot/sd，
+--    sum 的参数表达式里逐单除——除法的舍入位置是口径的一部分，别改成先和后除。
 --
 -- ── 形态：与 staging **同一套实测形态**（2026-09-24 数据面真机）──────────────────────────
 -- ① 取列：`from read_parquet('…') r` + `r['列名']` —— 别名必须挂在**函数调用**上；
---    `with r as (select * from read_parquet('…'))` 那种 CTE 形态在本栈上取列即报
---    `ERROR: cannot subscript type record because it does not support subscripting`（见 staging 头注）。
--- ② `hive_partitioning=1`（或 `hive_types`）**不能写成 read_parquet 的形参**：pg_duckdb 的
---    read_parquet 是 PG 函数、只认位置参数（实测 `ERROR: column "hive_partitioning" does not exist`）。
---    分区推断本身默认生效（`hive_partitioning=auto`，路径 `key=value` 段自动成列），故无需开关；
---    推断类型不合约（system_book→bigint）⇒ 本文件显式 cast，与 staging 各自写一次。
--- ③ 两侧口径必须**同量**：都按 (system_book, bizday) 聚合，与 l1_metrics.yml 的 `grain` 一致。
-with recheck as (
-    -- 复算：绕开 staging 与 marts，直接打 parquet，按 marts 的粒度 (system_book, bizday) 聚合。
-    -- system_book / bizday / sale_money 都是**湖里的真列**（不再有 var 注入账套、也不再有
-    -- try_strptime 解析业务日字符串 —— 那是旧湖的形态）。
+--    CTE 形态在本栈上取列即报 `cannot subscript type record`。
+-- ② `hive_partitioning=1` **不能写成 read_parquet 的形参**（pg_duckdb 的 read_parquet 是 PG
+--    函数、只认位置参数）；分区推断默认生效，推断类型不合约 ⇒ 本文件显式 cast。
+-- ③ `r['列']` 之间的**算术必须先 `::numeric`**；FULL JOIN 的键两侧逐个显式 cast。
+with base as (
     select
-        r['system_book']::varchar as system_book,
-        r['bizday']::date         as bizday,
-        sum(r['sale_money'])      as net_sales
+        r['system_book']::varchar  as system_book,
+        r['bizday']::date          as bizday,
+        r['branch_num']::int       as branch_num,
+        r['order_no']::varchar     as order_no,
+        r['sale_money']::numeric   as sale_money,
+        r['order_total_money']::numeric     as order_total_money,
+        r['order_detail_share_discount']::numeric as share_discount,
+        -- 赠品判别式（**逐字照抄正典**）：护栏三条件排除退化命中，容差 ±0.02 标定见正典
+        (r['order_detail_std_price']::numeric > 0
+         and r['sale_money']::numeric > 0
+         and r['quantity']::numeric > 0
+         and abs(r['discount_money']::numeric - r['order_detail_std_price']::numeric * r['quantity']::numeric) <= 0.02
+        ) as is_gift
     from read_parquet(
         -- ⚠️ 与 staging **同路径**（通配两账套）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/**/*.parquet'
     ) r
-    -- ⚠️ 只比**已闭窗营业日**（bizday < 上海今天）：今天的文件正被 5 分钟一班的 tick 重写，
-    --    与「物化建表 → 本测试读湖」之间构成 ETag 竞态 ⇒ 读到中途被改的文件直接 **ERROR**
-    --    （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1 就红在这，报 ETag 变化）。
-    --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
-    group by 1, 2
+    where r['state'] = 'FINISHED'
+      and r['order_transaction_type'] = 'SALE_ORDER'
+      -- ⚠️ 只比**已闭窗营业日**（bizday < 上海今天）：今天的文件正被 5 分钟一班的 tick 重写，
+      --    与「物化建表 → 本测试读湖」之间构成 ETag 竞态 ⇒ 读到中途被改的文件直接 **ERROR**
+      --    （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1 就红在这，报 ETag 变化）。
+      --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+),
+per_order as (
+    select
+        system_book,
+        bizday,
+        branch_num,
+        order_no,
+        sum(case when is_gift then 0 else sale_money end) as non_gift_amount,
+        max(order_total_money)                            as order_total_money,
+        sum(share_discount)                               as share_discount
+    from base
+    group by 1, 2, 3, 4
+),
+recheck as (
+    select
+        system_book,
+        bizday,
+        branch_num,
+        -- 除法形态与 fct 逐字同构（逐单除、逐单减，见头注）
+        (sum((non_gift_amount + order_total_money) / 2 - share_discount))::numeric(20,2) as net_sales
+    from per_order
+    group by 1, 2, 3
 ),
 materialized as (
     select
         system_book,
         bizday,
+        branch_num,
         net_amount as net_sales
     from {{ ref('fct_retail_sale') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
@@ -56,16 +85,17 @@ materialized as (
 select
     coalesce(a.system_book, b.system_book) as system_book,
     coalesce(a.bizday, b.bizday)           as bizday,
+    coalesce(a.branch_num, b.branch_num)   as branch_num,
     a.net_sales                            as recheck_value,
     b.net_sales                            as materialized_value,
-    '复算与物化结果不一致'                  as note
+    '复算与物化结果不一致（净销售额，#430 换货半边口径）' as note
 from recheck a
-full join materialized b using (system_book, bizday)
+full join materialized b using (system_book, bizday, branch_num)
 where a.net_sales is distinct from b.net_sales
 
 union all
 
 select
-    null, null, null, null,
+    null, null, null, null, null,
     '物化侧一行都没有：对账在空集上「通过」是空转绿（不是对上了）'
 where not exists (select 1 from materialized)

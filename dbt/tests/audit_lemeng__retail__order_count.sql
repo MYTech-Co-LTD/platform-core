@@ -9,13 +9,15 @@
 --    `l1_metrics.yml` 的 `lemeng:retail:order_count` / `dbt/README.md` §8 的 `order_no` 行）：
 --    **已证**的只是 `order_no` 列**存在且非空**（新湖契约列 `nullable=false` + 管线 `qa.contract`
 --    非空闸 + 2026-09-24 真机 `not_null_stg_lemeng_retail_order_line_order_no` 过，列名与类型合契约）；
---    **未证**的是「该列**就是业务意义上的单号**」与 `count(distinct order_no)` 的**去重语义**
---    —— 两者都属**口径转正**（S5）。本对账能保证的只是「marts 与 parquet 两边算的是同一件事」，
---    **保证不了**「order_no 就是业务意义上的单号」。这条边界写在这里，免得将来把「对账绿」读成
---    「口径已确认」。
---    ⚠️ **换源（2026-09-24，S1 Task 9）未动这条**：`order_no` 的「暂定」性质属**口径转正**（S5），
---    不在换源任务的范围里 —— **别顺手把它改写成「已确认」**（同理：别写成「取值已实证」，
---    「列存在且非空」不等于「这一列就是业务单号」）。
+--    **未证**的是「该列**就是业务意义上的单号**」与 `count(distinct order_no)` 的**去重语义**，
+--    以及 **order_no 的跨门店唯一性**（2026-10-12 W0 粒度扩到门店后，上滚 = 各门店日去重之和，
+--    跨门店重号会被重复计入——声明侧已写为已知边界）——这些都属**口径转正**（S5）。本对账能
+--    保证的只是「marts 与 parquet 两边算的是同一件事」，**保证不了**「order_no 就是业务意义上
+--    的单号」。这条边界写在这里，免得将来把「对账绿」读成「口径已确认」。
+--
+-- ── 口径（2026-10-12 W0 随 #430 定案更新）───────────────────────────────────────────────
+--    有效订单 = state=FINISHED 且 order_transaction_type=SALE_ORDER 的去重订单笔数
+--    （与净销售额同基面，换货单算一单）。粒度 = 账套 × 业务日 × 门店。
 --
 -- ── 形态：与 staging / 另一条 audit **同一套实测形态**（2026-09-24 数据面真机）────────────
 -- 取列用 `from read_parquet('…') r` + `r['列名']`（别名挂函数调用上，不是 CTE：CTE 形态取列报
@@ -26,21 +28,26 @@ with recheck as (
     select
         r['system_book']::varchar as system_book,
         r['bizday']::date         as bizday,
+        r['branch_num']::int      as branch_num,
         count(distinct r['order_no']) as order_count
     from read_parquet(
         -- ⚠️ 与 staging **同路径**（通配两账套）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/**/*.parquet'
     ) r
-    -- ⚠️ 只比**已闭窗营业日**（bizday < 上海今天）：今天的文件被 tick 重写 ⇒ 与物化建表互撞
-    --    ETag 竞态、报 ERROR（实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。
-    --    今天未定稿不判；两侧都滤，才是同量对比。
-    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
-    group by 1, 2
+    -- 基面与净销售额同口径（FINISHED+SALE_ORDER，2026-10-12 W0）
+    where r['state'] = 'FINISHED'
+      and r['order_transaction_type'] = 'SALE_ORDER'
+      -- ⚠️ 只比**已闭窗营业日**（bizday < 上海今天）：今天的文件被 tick 重写 ⇒ 与物化建表互撞
+      --    ETag 竞态、报 ERROR（实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。
+      --    今天未定稿不判；两侧都滤，才是同量对比。
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    group by 1, 2, 3
 ),
 materialized as (
     select
         system_book,
         bizday,
+        branch_num,
         order_count
     from {{ ref('fct_retail_sale') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
@@ -48,16 +55,17 @@ materialized as (
 select
     coalesce(a.system_book, b.system_book) as system_book,
     coalesce(a.bizday, b.bizday)           as bizday,
+    coalesce(a.branch_num, b.branch_num)   as branch_num,
     a.order_count                          as recheck_value,
     b.order_count                          as materialized_value,
-    '复算与物化结果不一致'                  as note
+    '复算与物化结果不一致（有效订单数，#430 同基面）' as note
 from recheck a
-full join materialized b using (system_book, bizday)
+full join materialized b using (system_book, bizday, branch_num)
 where a.order_count is distinct from b.order_count
 
 union all
 
 select
-    null, null, null, null,
+    null, null, null, null, null,
     '物化侧一行都没有：对账在空集上「通过」是空转绿（不是对上了）'
 where not exists (select 1 from materialized)
