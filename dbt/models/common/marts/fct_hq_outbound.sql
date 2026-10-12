@@ -40,7 +40,8 @@ with transfer_lines as (
         branch_num,
         order_no,
         sum(out_money)::numeric(20,2) as r_money,
-        sum(subtotal)::numeric(20,2)  as c_money
+        sum(subtotal)::numeric(20,2)  as c_money,
+        count(*)                      as line_count
     from {{ ref('stg_lemeng_transfer_out') }}
     where state_code = 3
       and out_branch_num = 99
