@@ -1,0 +1,14 @@
+{
+  "name": "openclaw-plugin-zh-thinking",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "中文思考插件——以 before_prompt_build 钩子前置注入语言要求（issue #587）。",
+  "files": ["index.js", "openclaw.plugin.json"],
+  "peerDependencies": {
+    "openclaw": ">=2026.3.28"
+  },
+  "openclaw": {
+    "extensions": ["./index.js"]
+  }
+}
