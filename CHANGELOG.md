@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.106.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.5...v0.106.6) - 2026-10-12
+- 【修复】data: 清除对账文件冲突标记 + 空转 null 数全量对齐 ([#613](https://github.com/MYTech-Co-LTD/platform-core/pull/613), [537eb62](https://github.com/MYTech-Co-LTD/platform-core/commit/537eb629b3247a640a905ccb06ecd7b1ce3f484b))
+
+
 ## [0.106.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.4...v0.106.5) - 2026-10-12
 - 【修复】data: 对账空转自检 null 数对齐（=主 select 列数−note） ([#612](https://github.com/MYTech-Co-LTD/platform-core/pull/612), [7793fc1](https://github.com/MYTech-Co-LTD/platform-core/commit/7793fc1fcd3e31048ee962c70c38e2a6790f382e))
 
