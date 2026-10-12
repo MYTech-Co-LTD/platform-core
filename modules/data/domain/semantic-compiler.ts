@@ -33,7 +33,7 @@ import type { MetricRow } from './metric-store'
  */
 export type CompileErrorCode =
   | 'BAD_DECL'        // 声明本身形状不对（缺字段/类型错）
-  | 'OP_UNSUPPORTED'  // op.kind 不是 refine（B/C 档未开放）
+  | 'OP_UNSUPPORTED'  // 档位不支持：op.kind 不在闭集（refine/expr）内，或 expr 声明了 filters（v1 边界）
   | 'L1_BASE_NOT_FOUND' // baseMetric 不在 L1 词表里（只有 L1 能当 base）
   | 'UNKNOWN_DIM'     // 引用了 L1 没声明的维度（机检：维度只能来自 L1 的 grain）
   | 'BAD_FILTER'      // 过滤子句形状不对（'=' 多值 / 'in' 空值 / op 越界）
