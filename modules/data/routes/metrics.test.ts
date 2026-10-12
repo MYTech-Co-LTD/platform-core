@@ -83,6 +83,20 @@ const l2Body = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
+/**
+ * B 中档（expr）的合法声明。**另写一个字面量**而不是复用 `l2Body`：后者恒塞一个真值
+ * `baseMetric`，而 expr 支是 `.strict()` ⇒ 带着它进 expr 支会被判 `BAD_DECL`（不是 201）。
+ * 「不许 `baseMetric` 与 `op.kind:'expr'` 同现」这条形状约束，由这个构造器本身守住。
+ */
+const exprBody = (over: Record<string, unknown> = {}) => ({
+  id: 'l2_avg_price',
+  op: {
+    kind: 'expr',
+    expr: { kind: 'div', left: { kind: 'ref', id: L1_SALES.id }, right: { kind: 'num', value: 2 } },
+  },
+  ...over,
+})
+
 function app(org: string, scopes: string[], sources: string[] | undefined = ADOPTED) {
   return buildTestApp(mod, makeIdentity({ orgId: org, scopes }), { pool },
     { id: 1, casdoor_org: org }, sources)
@@ -161,6 +175,21 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect(row.subjectColumn).toBe('org')
   })
 
+  it('POST expr 声明 ⇒ 201，selectSql 是内联表达式且带编译器注入的除零守卫', async () => {
+    const res = await post(exprBody())
+    expect(res.status).toBe(201)
+
+    const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
+    const row = all.metrics.find((m: { id: string }) => m.id === 'l2_avg_price')
+    // 除零守卫由编译器注入（租户看不到也控制不了）
+    expect(row.selectSql).toContain('NULLIF((2), 0)')
+    // 产物形状与 refine 同形：`select <表达式> as value[, <可见维度>] from <关系>`
+    expect(row.selectSql).toContain(' as value')
+    // 可见维度与主体列都继承**共享基**（expr 支没有单条 base，故由编译产物给出）
+    expect(row.groupBy).toBe('system_book, bizday')
+    expect(row.subjectColumn).toBe('org')
+  })
+
   it('★ POST body 里带 selectSql / subjectColumn / groupBy / source ⇒ 400 INVALID_BODY（不是静默忽略）', async () => {
     for (const bad of [
       { selectSql: 'select 1 as value from t' },
@@ -193,7 +222,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect((await res.json()).error).toBe('UNKNOWN_DIM')
   })
 
-  it('POST op.kind 不是 refine ⇒ 400 INVALID_BODY（zod 层拦下，表达力档位不私自放行）', async () => {
+  it('POST op.kind 既不是 refine 也不是 expr ⇒ 400 INVALID_BODY（union 两支都不匹配）', async () => {
     const res = await post(l2Body({ op: { kind: 'expression' } }))
     expect(res.status).toBe(400)
     expect((await res.json()).error).toBe('INVALID_BODY')
@@ -311,6 +340,27 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     // 拒绝不是「先写后拒」：本租户桶里不留任何痕迹
     const raw = await pool.query(
       'select count(*)::int as n from data.metrics where org = $1 and id = $2', [ORG, 'l2_from_foreign'])
+    expect(raw.rows[0].n).toBe(0)
+  })
+
+  it('★ POST expr 的第二个 ref 指向未接入源的 L1 ⇒ 403 METRIC_SOURCE_NOT_ADOPTED（闸从 1 个 base 扩到 N 个 ref）', async () => {
+    const res = await post(exprBody({
+      id: 'l2_from_foreign_expr',
+      op: {
+        kind: 'expr',
+        expr: { kind: 'div', left: { kind: 'ref', id: L1_SALES.id }, right: { kind: 'ref', id: L1_FOREIGN.id } },
+      },
+    }))
+    expect(res.status, '第二个 ref 在未接入源上却被放行（闸只看第一个 ref？）').toBe(403)
+    // extra 的形状**逐字沿用** refine 那条用例：成功/拒绝的可解释体不许因档位而异
+    expect(await res.json()).toEqual({
+      error: 'METRIC_SOURCE_NOT_ADOPTED',
+      its_source: 'shanhai',        // 未接入那条 ref 的源
+      your_sources: ['lemeng'],     // 本租户已接入的源
+    })
+    // 拒绝不是「先写后拒」：本租户桶里不留任何痕迹
+    const raw = await pool.query(
+      'select count(*)::int as n from data.metrics where org = $1 and id = $2', [ORG, 'l2_from_foreign_expr'])
     expect(raw.rows[0].n).toBe(0)
   })
 

@@ -138,6 +138,33 @@ describePg('写面（需要 DATABASE_URL）', () => {
     expect(row.rows[0]).toMatchObject({ source: 'l2', subject_column: 'org', group_by: 'bizday' })
   })
 
+  it('★ happy path：customize 用 expr（受限算术组合多条口径）→ 工具返回非错误，且写入成功', async () => {
+    await seedL1()
+    const l2ExprId = 'mw_l2_half_revenue'
+    const body = await (await rpc(app(), {
+      jsonrpc: '2.0', id: 12, method: 'tools/call',
+      params: {
+        name: 'customize_metric',
+        arguments: {
+          id: l2ExprId,
+          // 工具面只暴露顶层的 `expr`（`op.kind` 由面归一）—— 取证点之一
+          expr: { kind: 'div', left: { kind: 'ref', id: L1_ID }, right: { kind: 'num', value: 2 } },
+        },
+      },
+    })).json()
+    const out = toolText(body as never)
+    expect(out.status).toBe('ok')
+    expect((body as { result: { isError: boolean } }).result.isError).toBe(false)
+
+    // 独立回读存储层：不采信工具自述（口径确实落库了，且带编译器注入的除零守卫）
+    const row = await pool.query(
+      'select source, subject_column, group_by, select_sql from data.metrics where org = $1 and id = $2',
+      [ORG, l2ExprId])
+    expect(row.rowCount).toBe(1)
+    expect(row.rows[0]).toMatchObject({ source: 'l2', subject_column: 'org', group_by: 'bizday' })
+    expect(row.rows[0].select_sql).toContain('NULLIF((2), 0)')
+  })
+
   it('★ happy path：delete_custom_metric 删自己的 → 成功；再 list 已不在', async () => {
     await seedL1()
     const del = await (await rpc(app(), {

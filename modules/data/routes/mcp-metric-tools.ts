@@ -14,22 +14,29 @@
 import { z } from 'zod'
 import { visibleMetrics } from '../domain/authz'
 import { loadMergedCatalog } from '../domain/metric-store'
-import { L2DeclarationSchema, dimensionNamesOf } from '../domain/semantic-compiler'
+import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, ExprNodeSchema, dimensionNamesOf } from '../domain/semantic-compiler'
 import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
 import type { L2DeclarationBody, MetricWriteOutcome } from '../domain/metric-write'
 import type { McpDeps, McpToolGroup, McpToolResult } from './mcp-rpc'
 
 /**
- * 工具入参 = L2 声明的**去掉 op 与 target**：
- *   · `op` 由工具面固定为 refine（v1 只有一个算子）——让 agent 去写它只会多一个
- *     「可能写错、而错法是 zod 先拦成 400」的噪音；
+ * 工具入参 = L2 声明的**去掉 op**（`target` 也不收）：
+ *   · `op` **不**出现在工具面：判别键由面**按入参归一**（给了 `expr` 就是 expr 支，否则 refine 支）
+ *     ——让 agent 去写它只会多一个「可能写错、而错法是 zod 先拦成 400」的噪音；
  *   · `target` 本就不受支持（域层会拒），干脆不出现在工具面。
  * `.strict()` 与 HTTP 面的 L2Body 同规：多写 sql 类字段一律拒，**不是**静默忽略。
  */
-const CustomizeArgs = L2DeclarationSchema
+const CustomizeRefineArgs = L2RefineDeclarationSchema
   .omit({ op: true, target: true })
   .extend({ id: z.string().min(1).max(64) })
   .strict()
+const CustomizeExprArgs = L2ExprDeclarationSchema
+  .omit({ op: true })
+  // 域层把表达式树收在 `op.expr` 里，而工具面对 agent 只暴露顶层的 `expr`（省掉那一层，
+  // 判别键由面归一）⇒ 这里把 `expr` **加**回工具面，处理时再收进 `op`（见 call 里的归一）。
+  .extend({ id: z.string().min(1).max(64), expr: ExprNodeSchema })
+  .strict()
+const CustomizeArgs = z.union([CustomizeRefineArgs, CustomizeExprArgs])
 
 const DeleteArgs = z.object({ id: z.string().min(1).max(64) }).strict()
 
@@ -66,20 +73,23 @@ export const metricTools: McpToolGroup = {
       {
         name: 'customize_metric',
         description: [
-          '基于一条已有平台口径，裁剪出本租户的口径（改名 / 收窄可见维度 / 加过滤）。',
+          '基于已有平台口径定义本租户口径：裁剪 / 改名 / 收窄可见维度 / 加过滤（refine），',
+          '或用**受限算术**把多条口径组合成新测度（expr，例如两条口径相除得客单价）。',
           '**只能基于已有口径裁剪，不能凭空造新指标**：baseMetric 必须是 list_metrics 里出现的',
-          '平台口径 id；可用维度也以它为准（维度越界会被拒）。',
+          '平台口径 id，expr 里的 ref 也只能指向它们；可用维度以基底为准（越界会被拒）。',
         ].join(''),
         inputSchema: {
           type: 'object',
           properties: {
             id: { type: 'string', description: '本租户口径的 id（≤64 字，不能与平台口径重名）' },
             baseMetric: { type: 'string', description: '基底平台口径 id（取自 list_metrics）' },
+            expr: { type: 'object', description: '受限算术表达式树（与 baseMetric 二选一）；节点 kind ∈ ref/num/add/sub/mul/div' },
             alias: { type: 'string', description: '展示名' },
             visibility: { type: 'object', description: '可见维度（决定外层聚合口径）' },
             filters: { type: 'array', description: '等值过滤' },
           },
-          required: ['id', 'baseMetric'],
+          required: ['id'],
+          anyOf: [{ required: ['baseMetric'] }, { required: ['expr'] }],
         },
       },
       {
@@ -115,8 +125,17 @@ export const metricTools: McpToolGroup = {
       const parsed = CustomizeArgs.safeParse(args)
       if (!parsed.success) return refused({ ok: false, http: 400, error: 'INVALID_BODY' })
       const { id, ...decl } = parsed.data
-      const r = await writeL2Declaration(
-        writeDeps, deps.org, id, { ...decl, op: { kind: 'refine' } } as L2DeclarationBody)
+      // 工具面**不暴露 `op`**（判别键由面按入参归一，见 CustomizeArgs 的注释）：给了 `expr` 就是
+      // expr 支、否则 refine 支。expr 支把顶层 `expr` 收回声明里的 `op` 那一层 —— 工具面为 agent
+      // 省掉的正是这一层。面级只做形状校验；「能不能写」的语义闸在域层，与 HTTP 面同一份。
+      let body: L2DeclarationBody
+      if ('expr' in decl) {
+        const { expr, ...rest } = decl
+        body = { ...rest, op: { kind: 'expr', expr } }
+      } else {
+        body = { ...decl, op: { kind: 'refine' } }
+      }
+      const r = await writeL2Declaration(writeDeps, deps.org, id, body)
       return r.ok ? ok({ id }) : refused(r)
     }
 
