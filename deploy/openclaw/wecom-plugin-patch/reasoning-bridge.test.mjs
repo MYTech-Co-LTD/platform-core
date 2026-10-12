@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import {
   THROTTLE_MS,
   STREAM_MAX_BYTES,
+  PLACEHOLDER_TEXT,
   normalizeReasoningText,
   clampReasoning,
   buildStreamContent,
@@ -75,6 +76,19 @@ test("clampReasoning：预算 0/负 ⇒ 空串", () => {
 
 test("clampReasoning：预算足够时原样返回", () => {
   assert.equal(clampReasoning("abc", 100), "abc");
+});
+
+// ---- issue #594：首帧占位从「空 think（原生动画）」改为「带文字的 think」 ----
+
+test("判据9（#594）：占位是**闭合且非空**的 think 块 ⇒ 渲染文字而非原生动画", () => {
+  assert.ok(PLACEHOLDER_TEXT.startsWith("<think>"), "须以 <think> 开头");
+  assert.ok(PLACEHOLDER_TEXT.endsWith("</think>"), "须闭合：未闭合企微不渲染内容（#585）");
+  const inner = PLACEHOLDER_TEXT.slice("<think>".length, -"</think>".length);
+  assert.ok(inner.trim().length > 0, "须非空：空块会转回原生「思考中」动画 —— 本 issue 就是要去掉它");
+});
+
+test("判据9（#594）：占位远小于流上限（不挤占后续思考/正文额度）", () => {
+  assert.ok(bytes(PLACEHOLDER_TEXT) < STREAM_MAX_BYTES, "占位必须远小于 20480");
 });
 
 test("shouldPush：去重 + 节流", () => {

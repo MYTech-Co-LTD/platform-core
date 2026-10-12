@@ -7,7 +7,7 @@
 //   ① 自跳过：目标源码已含 onReasoningStream ⇒ 上游已支持 ⇒ **不打补丁、不改一字**
 //              （「官方做了能低成本切回官方」的落点：上游一发布，本步骤自动失效）
 //   ② 幂等：重复执行结果一致（以 MARKER 识别「已打」）
-//   ③ 最小：**两个注入点**（顶层 import + replyOptions 内一个回调），实现体在独立文件
+//   ③ 最小：**三个注入点**（顶层 import / replyOptions 内一个回调 / **占位文字常量**），实现体在独立文件
 //            reasoning-bridge.mjs；整体回退 = 删掉构建期这一步
 //   ④ 失败要响：找不到锚点 / 打完语法不过 ⇒ **非零退出**（宁可构建失败，不可静默降级）
 //
@@ -19,6 +19,8 @@
 //   · `state.streamId` 在 dispatch **之前**就已创建（`const state = { accumulatedText: "", streamId }`）
 //     ⇒ 回调可安全复用同一 stream（原位更新）
 //   · 回调体用到的 `state / wsClient / frame / runtime / sendWeComReply` 均在同一函数作用域内
+//   · 占位锚点 `text: THINKING_MESSAGE,` 在 dist/src/monitor.js 内**唯一**（sendThinkingReply 内，
+//     触发时机 dispatcherOptions.onReplyStart，热态实测 ~0.1s 即发出）——issue #594
 
 import fs from "node:fs";
 import path from "node:path";
@@ -30,6 +32,8 @@ const MARKER = "/* __WECOM_REASONING_BRIDGE__ */";
 const UPSTREAM_SIGNAL = "onReasoningStream";
 /** 注入锚点：WS 路径 replyOptions 对象起始处 */
 const ANCHOR = "replyOptions: {";
+/** 注入点 3 锚点：官方占位文本的使用处（须**全文件唯一**）——issue #594 */
+const PLACEHOLDER_ANCHOR = "text: THINKING_MESSAGE,";
 /** WS 路径实现文件的候选位置（不同打包形态） */
 const WS_CANDIDATES = ["dist/src/monitor.js", "dist/src/monitor.mjs"];
 /** 默认 bridge 实现路径（构建期 COPY 进镜像的固定位置） */
@@ -80,7 +84,7 @@ if (at < 0) die(`未找到注入锚点 ${JSON.stringify(ANCHOR)} —— 上游�
 const importLine =
   `${MARKER}\n` +
   `import { buildStreamContent as __wrbBuild, normalizeReasoningText as __wrbNormalize, ` +
-  `shouldPush as __wrbShouldPush } from ${JSON.stringify(bridgePath)};`;
+  `shouldPush as __wrbShouldPush, PLACEHOLDER_TEXT as __wrbPlaceholder } from ${JSON.stringify(bridgePath)};`;
 const hasShebang = src.startsWith("#!");
 const shebangEnd = hasShebang ? src.indexOf("\n") + 1 : 0;
 let out = src.slice(0, shebangEnd) + importLine + "\n" + src.slice(shebangEnd);
@@ -123,7 +127,19 @@ const callback = `
                 },`;
 out = out.slice(0, insertAt) + callback + out.slice(insertAt);
 
-log(`注入完成：import ✓ / onReasoningStream ✓（bridge=${bridgePath}）`);
+// 注入点 3：占位文字（issue #594）——官方占位是硬编码空 `<think></think>`（⇒ 企微转原生「思考中」动画）。
+// 换成桥导出的**带文字**占位 ⇒ 用户从文字起步，思考到达后原位顶替，消除「动画→文字」跳变。
+// 锚点必须**全文件唯一**：0 次（上游结构变了）或 >1 次（会改错地方）都宁可失败退出。
+const placeholderHits = out.split(PLACEHOLDER_ANCHOR).length - 1;
+if (placeholderHits !== 1) {
+  die(
+    `占位锚点 ${JSON.stringify(PLACEHOLDER_ANCHOR)} 出现 ${placeholderHits} 次（要求恰好 1 次）` +
+      ` —— 上游结构可能已变，请人工核对后再升版本号。`,
+  );
+}
+out = out.replace(PLACEHOLDER_ANCHOR, "text: __wrbPlaceholder,");
+
+log(`注入完成：import ✓ / onReasoningStream ✓ / 占位文字 ✓（bridge=${bridgePath}）`);
 
 if (checkOnly) {
   log("--check：检查通过（不写盘）。");
