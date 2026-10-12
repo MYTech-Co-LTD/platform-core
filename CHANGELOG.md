@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.99.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.98.4...v0.99.0) - 2026-10-12
+- 【新增】openclaw: 思考过程流式桥——WS 路径注入 onReasoningStream + <think> 渲染（含 20480 字节正文优先） ([#584](https://github.com/MYTech-Co-LTD/platform-core/pull/584), [fc6d9ed](https://github.com/MYTech-Co-LTD/platform-core/commit/fc6d9ed789a1fcb40ef75c68e804e542e533fb1a))
+
+
 ## [0.98.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.98.3...v0.98.4) - 2026-10-12
 - 【修复】openclaw: data-query 插件工具返回形状对齐 OpenClaw 契约（补 content[]） ([#578](https://github.com/MYTech-Co-LTD/platform-core/pull/578), [c01e843](https://github.com/MYTech-Co-LTD/platform-core/commit/c01e843e2610775018a1eb656ca1c48ad27c427e))
 
