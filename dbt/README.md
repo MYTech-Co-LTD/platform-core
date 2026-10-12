@@ -166,7 +166,7 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
 | **跨列集分组的读法**（§6 的目标形态） | **暂定 → T6 实测** | 分组形参是否透传未知 |
 | **S3 凭据注入形态**（§4 的候选 ①②） | **暂定 → T6 实测** | 只能在真 pg_duckdb 上验；⚠️ 真机 `dbt run` 能读 S3 靠的是「会话里已有的 secret」（非本次接线），**pg_duckdb 一重启即失效** |
 | **物化落点形态**（table / view / `USING duckdb` 外表） | **已定：`table`** | 「必须是 PG 可见关系」实证；「用哪一种」T6 已选定 `table`（真机 PASS=2，两个模型都落成 PG 表）；`USING duckdb` 外表仍未实测 |
-| **「有效订单」的判定条件**（退货/赠品/作废是否剔除） | **暂定 → 业务确认** | 当前实现 = 全部明细行合计，与该缺口同址的注记在 `fct_retail_sale.sql` 与 `l1_metrics.yml` |
+| **「有效订单」的判定条件**（退货/赠品/作废是否剔除） | **已定案（#430）→ 实现随 W0 落地（2026-10-12）** | 平台口径 = FINISHED+SALE_ORDER 基面 + 换货「送出半边」公式 + 赠品判别式（真机 2026-10-05 逐分归零）；客户回签裁1（spec `2026-10-12-lemeng-metrics-sources-semantics-design.md` §6）前指标保持 experimental。声明见 `l1_metrics.yml`，实现见 `fct_retail_sale.sql` |
 | `try_strptime` / `::timestamptz` / `::date` 在 pg_duckdb 会话内可用 | **部分实证** | 新湖链实证的是 `::varchar` / `::int` / `::date`（真机 PASS=2）；`try_strptime` 与 `::timestamptz` **至今未验**——它们只出现在**旧湖**模型里，而那份模型已于 2026-10-06 仓内退役 ⇒ 这个「未验」不再是仓内待办，而是**已消失的形态**（新湖落盘即定型，本就不需要它们） |
 
 ## 9 未验清单（诚实边界，一条都不含糊）

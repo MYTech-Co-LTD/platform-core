@@ -33,12 +33,18 @@ metrics:
   - name: 'lemeng:retail:net_sales'
     label: 净销售额
     definition: >-
-      有效零售订单的成交金额合计（口径模型 fct_retail_sale，粒度 = 账套 × 业务日）。
-      「有效」的判定条件（退货 / 赠品 / 作废是否剔除）**尚未落进实现**：当前实现为全部明细行的
-      金额合计 ⇒ 本声明与实现之间**有一处已知缺口**，见 fct_retail_sale.sql 头注与 README 的
-      「实证 vs 暂定」表。**不得**为了对齐实现而改写本定义（那是口径追着实现跑）。
+      零售净销售额，平台口径（issue #430 定案，2026-10-05 双账套真机 5 天逐分归零）：
+      取 state=FINISHED 且 order_transaction_type=SALE_ORDER 的订单（退货单不进 gross——
+      平台 sale_money 不冲退货单），逐订单取「(Σ非赠品行额 + order_total_money) / 2」，
+      按门店×日合计后再减 Σ分摊折扣（order_detail_share_discount）；
+      赠品行按判别式排除（std_price>0 且 sale_money>0 且 quantity>0 且
+      |discount_money − std_price×quantity| ≤ 0.02，容差标定见判别式正典
+      docs/superpowers/specs/2026-09-30-recon-zeroing-self-attribution.md）。
+      粒度 = 账套 × 业务日 × 门店（口径模型 fct_retail_sale）。
+      ⚠️ tier=experimental：公式已真机验证；等客户回签裁1（换货「送出半边」叠加进净额 L，
+      spec 2026-10-12-lemeng-metrics-sources-semantics-design.md §6）后再转 certified。
     expression: 'sum(fct_retail_sale.net_amount)'
-    grain: [system_book, bizday]
+    grain: [system_book, bizday, branch_num]
     owner: data-platform
     tier: experimental
     source: lemeng
@@ -51,18 +57,15 @@ metrics:
   - name: 'lemeng:retail:order_count'
     label: 订单数
     definition: >-
-      零售明细里按单号去重的订单笔数（口径模型 fct_retail_sale，粒度 = 账套 × 业务日）。
-      **上滚语义**：更粗粒度上对 expression 求和 = 各业务日去重笔数之和（跨日重号的订单会被重复计入）
-      —— 这是本口径的**已知边界**，要「跨日唯一订单数」得单独声明一个新指标，不许改本定义。
-      **暂定（收窄到语义面）**：**已证**的只是 `order_no` 列**存在且非空**（新湖契约列
-      `nullable=false` + 管线 `qa.contract` 非空闸 + 2026-09-24 真机
-      `not_null_stg_lemeng_retail_order_line_order_no` 过；列名与类型合契约）；
-      **未证**的是「该列**就是业务意义上的单号**」与 `count(distinct order_no)` 的**去重语义**
-      —— 两者都属**口径转正**（S5，边界同 `dbt/tests/audit_lemeng__retail__order_count.sql` 头注）。
-      ⚠️ **别把「列存在且非空」读成「口径已确认」**。
-      若业务侧核不出稳定的单号语义，本声明应**删除**而不是替换成近似口径（口径不能猜）。
+      有效零售订单数：state=FINISHED 且 order_transaction_type=SALE_ORDER 的去重订单笔数
+      （与净销售额同基面，换货单算一单；口径模型 fct_retail_sale）。
+      粒度 = 账套 × 业务日 × 门店。
+      **上滚语义**：更粗粒度上对 expression 求和 = 各门店日去重笔数之和；跨门店重号的订单会被
+      重复计入——`order_no` 的**跨门店唯一性未证**（单号语义的已证/未证边界见
+      `dbt/tests/audit_lemeng__retail__order_count.sql` 头注），这是本口径的**已知边界**，
+      要「全账套唯一订单数」得单独声明一个新指标，不许改本定义。
     expression: 'sum(fct_retail_sale.order_count)'
-    grain: [system_book, bizday]
+    grain: [system_book, bizday, branch_num]
     owner: data-platform
     tier: experimental
     source: lemeng
