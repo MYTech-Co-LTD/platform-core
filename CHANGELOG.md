@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.103.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.102.0...v0.103.0) - 2026-10-12
+- 【新增】openclaw: 企微思考折叠定型——终帧思考正文同帧闭合、占位回归空块 (#596) ([#597](https://github.com/MYTech-Co-LTD/platform-core/pull/597), [81e2dc3](https://github.com/MYTech-Co-LTD/platform-core/commit/81e2dc3c4239bb8733fe32112becd22fb883c674))
+
+
 ## [0.102.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.101.0...v0.102.0) - 2026-10-12
 - 【新增】openclaw: 企微占位改文字「思考中…」——去掉原生动画与「动画→文字」跳变 ([#595](https://github.com/MYTech-Co-LTD/platform-core/pull/595), [7b28ea2](https://github.com/MYTech-Co-LTD/platform-core/commit/7b28ea24d1c696733eadb23c1856038a895df73f))
 
