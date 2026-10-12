@@ -57,6 +57,10 @@ where a.negative_order_count is distinct from b.negative_order_count
 union all
 
 select
+<<<<<<< HEAD
+    null, null, null, null, null,
+=======
     null, null, null, null, null, null,
+>>>>>>> origin/main
     '物化侧一行都没有：对账在空集上「通过」是空转绿（不是对上了）'
 where not exists (select 1 from materialized)
