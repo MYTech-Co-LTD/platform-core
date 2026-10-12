@@ -132,9 +132,9 @@ from (
     from transfer_dom
     union all
     select system_book, bizday, branch_num, 'wholesale' as domain,
-           coalesce(w.r_net, 0), coalesce(w.c_cost, 0), coalesce(w.order_count, 0), 0
+           coalesce(w.r_net, 0), coalesce(w.c_cost, 0), coalesce(w.order_count, 0), coalesce(w.line_count, 0)
     from (
-        select system_book, bizday, branch_num, r_net, c_cost, order_count
+        select system_book, bizday, branch_num, r_net, c_cost, order_count, line_count
         from wholesale_dom
     ) w
 ) u
