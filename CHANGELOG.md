@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.106.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.3...v0.106.4) - 2026-10-12
+- 【修复】data: rate 对账 recheck 派生列 + 空转自检列数对齐 ([#611](https://github.com/MYTech-Co-LTD/platform-core/pull/611), [1d02d72](https://github.com/MYTech-Co-LTD/platform-core/commit/1d02d72925134a715364920b09f28d263c1c6e3c))
+
+
 ## [0.106.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.2...v0.106.3) - 2026-10-12
 - 【修复】data: W1 真机暴露两处（quality 模型 group by + rate 对账比较式） ([#610](https://github.com/MYTech-Co-LTD/platform-core/pull/610), [786ae8b](https://github.com/MYTech-Co-LTD/platform-core/commit/786ae8b2ccaf683b2ec11df758f0267272547488))
 
