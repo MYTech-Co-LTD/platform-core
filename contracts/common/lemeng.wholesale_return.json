@@ -1,0 +1,122 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "wholesale_return",
+  "owner": "data-platform",
+  "description": "乐檬批发退货单（nhsoft.whs.ai.wholesalereturn.find；W1 接源，2026-10-12）。【行粒度】一行 = 账套×采集bizday×退货单×商品行（单头列随行冗余）；自然键 `(system_book, bizday, wholesale_return_fid, item_num, order_detail_num)`。【窗口】查询窗 = `${date-1d}` 单日 + `date_type=制单时间`（whs 族字面值坑同 D02/#513：传「制单」/「审核」短词被静默忽略返回全史；日期必须完整 `yyyy-MM-dd HH:mm:ss`，2026-10-12 实测）；查询区间 ≤7 天（接口硬限，2026-10-12 实测报错原文「查询时间区间不允许超过7天」）；每分区写一次不重写。【采集范围】仅 3120。【A 阶段样本边界】2026-10-12 探针（近窗/历史窗/不筛状态）**恒空集**——接口可达（code:0）但无业务样本，明细 json 键名按官方能力文档字段名（`return_detail_money` 等）落契约，**未获真样本实证**：若上线后行落盘但明细列恒 null，先抓真单核键名再改 expr（schemaVersion 升档）。业务上批发退货可能走 D02 负金额红字（04-07 指标观测面）而非本接口——fct 侧 D02 红字与 D03 退货**不得重复扣减**（勾稽守卫在 fct/audit）。【请求侧过滤】state_codes=[3]（审核单）在管线请求体里筛，返回 state 字段名未采列。",
+  "layout": {
+    "prefix": "lemeng/wholesale_return",
+    "partitionStyle": "hive",
+    "partitionBy": ["system_book", "bizday"],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id。每 bizday 分区只写一次（当日单当日采），重跑覆盖同 key。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "批次标记（采集 run id）",
+      "expr": "'wr-' || '${ENV:SYSTEM_BOOK}' || '-wholesale_return-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'"
+    },
+    {
+      "name": "system_book",
+      "type": "varchar",
+      "nullable": false,
+      "description": "账套（采集范围=3120）；分区键，来源=采集侧常量注入（`ENV:SYSTEM_BOOK`）",
+      "expr": "'${ENV:SYSTEM_BOOK}'"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "单据制单日（=查询窗口日）；分区键。`${date-1d}` 单段负偏移（组合段在替换层不生效，同 wholesale_out 契约注）；调度钉 15:55 UTC ⇒ UTC 昨日==北京昨日",
+      "expr": "CAST('${date-1d}' AS DATE)"
+    },
+    {
+      "name": "wholesale_return_fid",
+      "type": "varchar",
+      "nullable": false,
+      "description": "退货单号（本表自然键；文档已核字段）",
+      "expr": "CAST(o.wholesale_return_fid AS VARCHAR)"
+    },
+    {
+      "name": "order_no",
+      "type": "varchar",
+      "nullable": true,
+      "description": "关联批发销售单号（=接口 wholesale_order_fid；fct 退货扣减按它 join 回 wholesale_out 的单。可空性未获真样本实证，按文档语义设 nullable=true）",
+      "expr": "CAST(o.wholesale_order_fid AS VARCHAR)"
+    },
+    {
+      "name": "branch_num",
+      "type": "int",
+      "nullable": false,
+      "description": "门店/发货主体编号（文档已核字段；与 wholesale_out 同名列，fct join 键）",
+      "expr": "CAST(o.branch_num AS INTEGER)"
+    },
+    {
+      "name": "client_fid",
+      "type": "varchar",
+      "nullable": true,
+      "description": "批发客户编号（文档已核字段；前导零按字符串保留）",
+      "expr": "CAST(o.client_fid AS VARCHAR)"
+    },
+    {
+      "name": "audit_time",
+      "type": "varchar",
+      "nullable": true,
+      "description": "审核时间（=接口 wholesale_return_audit_time；报告期过滤用，制单窗 ≠ 审核窗的跨期漏单靠 D-7 补查模式兜）",
+      "expr": "CAST(o.wholesale_return_audit_time AS VARCHAR)"
+    },
+    {
+      "name": "total_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "单头退货总金额（=接口 wholesale_return_total_money；⚠️ 单头列随行冗余——行级 sum 会重复计，聚合前 per_order 取 max；列名去前缀与 wholesale_out.total_money 对齐，fct 两侧同构）",
+      "expr": "CAST(o.wholesale_return_total_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "cost_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "单头退货成本（=接口 wholesale_return_cost_money；单头随行冗余，同上 per_order 取 max）",
+      "expr": "CAST(o.wholesale_return_cost_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "order_detail_num",
+      "type": "varchar",
+      "nullable": true,
+      "description": "明细行号（⚠️ 官方文档 D03 已核字段**未列**此键，键名按 D02 族惯例 `order_detail_num` 推断、真样本缺失——若上线后恒 null，行键退化为 (wholesale_return_fid, item_num)，schemaVersion 升档时定夺）",
+      "expr": "CAST(json_extract_string(u.d, '$.order_detail_num') AS VARCHAR)"
+    },
+    {
+      "name": "item_num",
+      "type": "bigint",
+      "nullable": false,
+      "description": "商品内部编号（明细；文档已核字段）",
+      "expr": "CAST(json_extract_string(u.d, '$.item_num') AS BIGINT)"
+    },
+    {
+      "name": "return_detail_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "明细退货金额（文档已核字段；**符号未实证**——退货金额按该接口实际符号确认后统一为扣减口径，不得与 D02 红字重复扣（客户文档 D03 使用边界原文）；真样本到来时先核符号）",
+      "expr": "CAST(json_extract_string(u.d, '$.return_detail_money') AS DECIMAL(14,2))"
+    },
+    {
+      "name": "return_detail_cost_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "明细退货成本（文档已核字段；符号边界同上）",
+      "expr": "CAST(json_extract_string(u.d, '$.return_detail_cost_money') AS DECIMAL(14,2))"
+    }
+  ]
+}
