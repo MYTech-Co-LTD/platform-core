@@ -55,20 +55,21 @@ transfer_dom as (
         sum(r_money)            as r_net,
         sum(c_money)            as c_cost,
         count(distinct order_no) as order_count,
-        count(*)                as line_count
+        sum(line_count)         as line_count
     from transfer_lines
     group by 1, 2, 3
 ),
 wholesale_dom as (
-    -- per_order 去单头冗余（v2 两列为随行冗余）；先聚店日，退货侧另聚后相减（防 per_order join 放大）
+    -- per_order 去单头冗余（v2 两列为随行冗余）；先聚店日，退货侧另聚后相减（防 per_order join 放大）。
+    -- line_count = **明细行数**（行级直数，不来自 per_order——per_order 后数的是单数）
     select
-        system_book,
-        bizday,
-        branch_num,
-        sum(total_money)::numeric(20,2) as r_net,
-        sum(cost_money)::numeric(20,2)  as c_cost,
-        count(distinct order_no)        as order_count,
-        count(*)                        as line_count
+        o.system_book,
+        o.bizday,
+        o.branch_num,
+        sum(o.total_money)::numeric(20,2) as r_net,
+        sum(o.cost_money)::numeric(20,2)  as c_cost,
+        count(distinct o.order_no)        as order_count,
+        max(l.line_count)                 as line_count
     from (
         select system_book, bizday, branch_num, order_no,
                max(total_money) as total_money,
@@ -76,6 +77,15 @@ wholesale_dom as (
         from {{ ref('stg_lemeng_wholesale_out') }}
         group by 1, 2, 3, 4
     ) o
+    join wholesale_lines l
+      on o.system_book = l.system_book
+     and o.bizday = l.bizday
+     and o.branch_num = l.branch_num
+    group by 1, 2, 3
+),
+wholesale_lines as (
+    select system_book, bizday, branch_num, count(*) as line_count
+    from {{ ref('stg_lemeng_wholesale_out') }}
     group by 1, 2, 3
 ),
 return_dom as (
