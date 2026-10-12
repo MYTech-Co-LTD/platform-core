@@ -166,6 +166,11 @@ export function readContractDoc(root, rel) {
  */
 export function findProducerPipelines(root, prefix) {
   return PIPELINE_DIRS.flatMap((d) => collectJson(root, d)).filter((p) => {
+    // 回填变体（文件名含 `.backfill.`）**不是生产者**：它的窗参（如 `${BIZDAY}`）就在选列区里，
+    // 与契约 expr（`${date-1d}` 族）恒不一致 ⇒ 生成器按契约归一会把参数化打回常量窗
+    // （2026-10-12 实测：wholesale backfill 的 bizday 行被重写、CI gates 的 gen --check 红）。
+    // 变体由 API params 驱动（POST /api/run 的 params），不进调度、不属「列集唯一事实源」的归一面。
+    if (p.includes('.backfill.')) return false
     try {
       /** @type {any} */
       const doc = JSON.parse(readFileSync(join(root, p), 'utf8'))
