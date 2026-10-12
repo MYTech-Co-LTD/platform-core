@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.106.8](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.7...v0.106.8) - 2026-10-12
+- 【修复】data: 出库行数语义修正（行级行数，两域对账同构） ([#615](https://github.com/MYTech-Co-LTD/platform-core/pull/615), [375db85](https://github.com/MYTech-Co-LTD/platform-core/commit/375db85ac0dee0fc4c0ce852bc3392b3feb3b638))
+
+
 ## [0.106.7](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.6...v0.106.7) - 2026-10-12
 - 【修复】data: 空转自检 null 行归一（冲突叠层残留终局清理） ([#614](https://github.com/MYTech-Co-LTD/platform-core/pull/614), [54f83d4](https://github.com/MYTech-Co-LTD/platform-core/commit/54f83d4152f5226b9aaadc871f3873a8d38a9264))
 
