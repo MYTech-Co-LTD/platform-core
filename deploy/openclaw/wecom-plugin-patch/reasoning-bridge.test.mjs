@@ -1,6 +1,7 @@
 // reasoning-bridge.test.mjs —— 桥的纯逻辑单测（`node --test` 直跑，不依赖 openclaw）
 //
-// 对应设计稿 §3 的判据：2（闭合）/ 5（字节上限正文优先，**加严点**）/ 7（有正文后不再掺思考）
+// 对应设计稿 §3 的判据：2（闭合）/ 5（字节上限正文优先，**加严点**）/ 7（有正文后不再掺思考）；
+// 以及 issue #596 帧契约（中间帧未闭合 / 终帧闭合+思考正文同帧 ⇒ 折叠条）
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -22,18 +23,20 @@ test("normalizeReasoningText：去 Reasoning: 前缀、统一换行、去首尾�
   assert.equal(normalizeReasoningText(123), "");
 });
 
-test("bridge 保留未闭合形态（调用方现按 issue #585 传 finish:true 闭合发送）", () => {
+test("#596 帧契约：中间帧（注入点2 调用形态：finish:false + 仅思考）⇒ **未闭合**（维持思考通道态）", () => {
   const out = buildStreamContent({ reasoningText: "正在想", visibleText: "", finish: false });
   assert.equal(out, "<think>正在想");
-  assert.ok(!out.includes("</think>"));
+  assert.ok(!out.includes("</think>"), "中间帧绝不能闭合：闭合文字块 = 文本态 = 终帧不再折叠（V1 实测）");
 });
 
-// 调用方（onReasoningStream 注入点）现按 issue #585 一律这样调：finish:true、只给思考 ⇒ 闭合帧。
-// 这条锁住「注入点用的那个调用形态」，防止有人顺手改回未闭合（那样内容就不渲染了）。
-test("注入点调用形态（finish:true + 仅思考）⇒ 必为闭合帧", () => {
-  const out = buildStreamContent({ reasoningText: "正在查数", visibleText: "", finish: true });
-  assert.equal(out, "<think>正在查数</think>");
-  assert.ok(out.includes("</think>"), "必须闭合，否则企微不渲染内容");
+test("#596 帧契约：终帧（注入点4/5 调用形态：finish:true + 思考+正文同帧）⇒ 闭合 ⇒ 折叠条", () => {
+  const out = buildStreamContent({
+    reasoningText: "正在查数",
+    visibleText: "查到了，合计 100",
+    finish: true,
+  });
+  assert.equal(out, "<think>正在查数</think>\n查到了，合计 100");
+  assert.ok(out.includes("</think>"), "终帧必须闭合（折叠条件之一）");
 });
 
 test("判据2/7：正文出现 ⇒ 闭合 + 换行分隔，思考在前正文在后", () => {
@@ -78,16 +81,14 @@ test("clampReasoning：预算足够时原样返回", () => {
   assert.equal(clampReasoning("abc", 100), "abc");
 });
 
-// ---- issue #594：首帧占位从「空 think（原生动画）」改为「带文字的 think」 ----
+// ---- issue #596：首帧占位**改判回**「闭合空块」⇒ 原生「思考中」动画（#594 的文字占位被推翻）----
+// 折叠要求终帧落地时客户端处于**思考通道态**；文字占位把客户端拉进文本态 ⇒ 终帧不再折叠（V1 实测）。
 
-test("判据9（#594）：占位是**闭合且非空**的 think 块 ⇒ 渲染文字而非原生动画", () => {
-  assert.ok(PLACEHOLDER_TEXT.startsWith("<think>"), "须以 <think> 开头");
-  assert.ok(PLACEHOLDER_TEXT.endsWith("</think>"), "须闭合：未闭合企微不渲染内容（#585）");
-  const inner = PLACEHOLDER_TEXT.slice("<think>".length, -"</think>".length);
-  assert.ok(inner.trim().length > 0, "须非空：空块会转回原生「思考中」动画 —— 本 issue 就是要去掉它");
+test("判据9（#596 改判）：占位恰为**闭合空块** ⇒ 原生动画，逐字锁定", () => {
+  assert.equal(PLACEHOLDER_TEXT, "<think></think>");
 });
 
-test("判据9（#594）：占位远小于流上限（不挤占后续思考/正文额度）", () => {
+test("判据9：占位远小于流上限（不挤占后续思考/正文额度）", () => {
   assert.ok(bytes(PLACEHOLDER_TEXT) < STREAM_MAX_BYTES, "占位必须远小于 20480");
 });
 
