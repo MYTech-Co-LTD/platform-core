@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.106.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.1...v0.106.2) - 2026-10-12
+- 【修复】data: audit var 渲染修复 + D03 schema decimal（W1 验收发现两处） ([#609](https://github.com/MYTech-Co-LTD/platform-core/pull/609), [14539ff](https://github.com/MYTech-Co-LTD/platform-core/commit/14539fff4f3c5bb39789a92f9baa9a7117426a41))
+
+
 ## [0.106.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.0...v0.106.1) - 2026-10-12
 - 【修复】data: 管线 schema 申报 object→decimal（duckle 枚举） ([#607](https://github.com/MYTech-Co-LTD/platform-core/pull/607), [7820812](https://github.com/MYTech-Co-LTD/platform-core/commit/7820812b5872824dbdb9804d1f7b605a3ba61637))
 
