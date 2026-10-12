@@ -956,23 +956,99 @@ describe('T9 格⑧：L2 声明的 zod schema 与编译点校验**同源**（纯
   it('反面对照：合成源里「两侧逐字一致」必须**不**红（否则上面几条只是恒红，等于没在守）', () => {
     // 用**真名字**：判据是按 `L2Declaration*` / `compileL2` 定位的（把名字参数化会凭空多一层
     // 没有生产用的 API 面）。契约面则按同一套词表写全 —— schema 与编译器说同一套话。
+    //
+    // 合成源必须长这样（改任何一个字符前先读这四条）：
+    //  ① refine 的 schema 块必须在 `ExprNodeSchema` **之前** —— 否则 `z.literal('refine')`
+    //     会混进 ⑧-d 的节点集窗口；
+    //  ② `filterSql` 的参数**必须**叫 `f`：编译面正则 `\bf\.op` 不匹配 `f2.op`（`2` 与 `f`
+    //     之间没有词边界）⇒ 取不到算子集 ⇒ 红（真文件里用的就是 `f`）；
+    //  ③ `opKind` 这个名字不能换：⑧-b 的编译面正则就是 `\bopKind\s*===`；
+    //  ④ `renderExprNode` 的 6 个 `case` **一个都不能少**；`case 'add': case 'sub': case 'mul':`
+    //     写成三个标签是**对的**（每个标签各算一个）。
     const synthetic = [
-      'export interface L2Declaration {',
+      'export interface L2RefineDeclaration {',
+      '  baseMetric: string',
       "  op: { kind: 'refine' }",
       "  filters?: { dim: string; op: '=' | 'in'; values: string[] }[]",
       '}',
-      'export const L2DeclarationSchema = z.object({',
+      'export interface L2ExprDeclaration {',
+      "  op: { kind: 'expr'; expr: ExprNode }",
+      "  filters?: { dim: string; op: '=' | 'in'; values: string[] }[]",
+      '}',
+      'export const L2RefineDeclarationSchema = z.object({',
+      '  baseMetric: z.string().min(1).max(128),',
       "  op: z.object({ kind: z.literal('refine') }),",
       '  filters: z.array(z.object({',
       "    op: z.enum(['=', 'in']),",
       '  })),',
       '})',
-      'export function compileL2(d: L2Declaration) {',
-      "  if (d.op?.kind !== 'refine') throw new Error('x')",
+      'export const ExprNodeSchema = z.lazy(() => z.union([',
+      "  z.object({ kind: z.literal('ref'), id: z.string() }),",
+      "  z.object({ kind: z.literal('num'), value: z.number() }),",
+      "  z.object({ kind: z.enum(['add', 'sub', 'mul', 'div']), left: ExprNodeSchema, right: ExprNodeSchema }),",
+      ']))',
+      'export const L2ExprDeclarationSchema = z.object({',
+      "  op: z.object({ kind: z.literal('expr'), expr: ExprNodeSchema }).strict(),",
+      '  filters: z.array(z.object({',
+      "    op: z.enum(['=', 'in']),",
+      '  })),',
+      '}).strict()',
+      'export const L2DeclarationSchema = z.union([L2RefineDeclarationSchema, L2ExprDeclarationSchema])',
+      'export function compileL2(d: L2Declaration, l1: readonly MetricRow[]) {',
+      "  const opKind = (d as { op?: { kind?: unknown } }).op?.kind",
+      "  if (opKind === 'refine') return compileRefine(l1, d)",
+      "  if (opKind === 'expr') return compileExpr(l1, d)",
+      "  throw new Error('x')",
+      '}',
+      'function renderExprNode(node: ExprNode, refExpr: ReadonlyMap<string, string>): string {',
+      '  switch (node.kind) {',
+      '    case \'num\': return String(node.value)',
+      '    case \'ref\': return refExpr.get(node.id) ?? \'\'',
+      '    case \'add\':',
+      '    case \'sub\':',
+      '    case \'mul\':',
+      '      return \'x\'',
+      '    case \'div\':',
+      '      return \'y\'',
+      '    default: throw new Error(\'z\')',
+      '  }',
+      '}',
+      'function filterSql(f) {',
       "  if (f.op !== '=' && f.op !== 'in') throw new Error('y')",
       '}',
     ].join('\n')
+
     expect(checkL2DeclarationSameSource(synthetic)).toEqual([])
+  })
+
+  it('⑧-a union 少一支 ⇒ 报成员集不符（消息含 L2DeclarationSchema）', () => {
+    const src = l2RealSource()
+    const broken = src.replace(
+      'z.union([L2RefineDeclarationSchema, L2ExprDeclarationSchema])',
+      'z.union([L2RefineDeclarationSchema])',
+    )
+    const v = checkL2DeclarationSameSource(broken)
+    expect(v.length).toBeGreaterThan(0)
+    expect(v.some((x) => x.message.includes('L2DeclarationSchema'))).toBe(true)
+  })
+
+  it('⑧-c expr 支多一个 schema 键 ⇒ 报字段面不等（消息含该键名）', () => {
+    const src = l2RealSource()
+    const broken = src.replace(
+      "  op: z.object({ kind: z.literal('expr'), expr: ExprNodeSchema }).strict(),",
+      "  op: z.object({ kind: z.literal('expr'), expr: ExprNodeSchema }).strict(),\n  remark: z.string().optional(),",
+    )
+    const v = checkL2DeclarationSameSource(broken)
+    expect(v.length).toBeGreaterThan(0)
+    expect(v.some((x) => x.message.includes('remark'))).toBe(true)
+  })
+
+  it('⑧-d 节点集漂移（renderExprNode 少认一个 kind）⇒ 报节点集（消息含 节点集）', () => {
+    const src = l2RealSource()
+    const broken = src.replace("case 'div':", "case 'divide':")
+    const v = checkL2DeclarationSameSource(broken)
+    expect(v.length).toBeGreaterThan(0)
+    expect(v.some((x) => x.message.includes('节点集'))).toBe(true)
   })
 })
 
