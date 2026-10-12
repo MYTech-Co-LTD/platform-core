@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.104.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.103.0...v0.104.0) - 2026-10-12
+- 【新增】data: 乐檬指标 W0 语义基建（净额口径落地 + L1 ratio 支持） ([#599](https://github.com/MYTech-Co-LTD/platform-core/pull/599), [b7d11f0](https://github.com/MYTech-Co-LTD/platform-core/commit/b7d11f0a000d8b75fdf99456b570e042b9760dd4))
+
+
 ## [0.103.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.102.0...v0.103.0) - 2026-10-12
 - 【新增】openclaw: 企微思考折叠定型——终帧思考正文同帧闭合、占位回归空块 (#596) ([#597](https://github.com/MYTech-Co-LTD/platform-core/pull/597), [81e2dc3](https://github.com/MYTech-Co-LTD/platform-core/commit/81e2dc3c4239bb8733fe32112becd22fb883c674))
 
