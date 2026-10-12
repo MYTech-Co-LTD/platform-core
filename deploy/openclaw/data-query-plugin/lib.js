@@ -31,7 +31,22 @@ export function normalizeParams(raw) {
   return obj;
 }
 
-// 平台调用 + 错误映射。返回值直接作为工具结果交给模型（纯对象，OpenClaw 工具契约）。
+// 工具结果契约（api.registerTool 的 execute **必须**返回的形状）：
+//   { content: [{ type: "text", text }], details }
+// 依据 https://docs.openclaw.ai/plugins/building-plugins 原文示例。返回**纯对象**会因缺 content[]
+// 被校验判无效 —— 2026-10-12 真机实测逐字报错：
+//   [tools] tool_call failed: path ["details","result","content"] expected "array", received undefined
+// 后果是 list_metrics 每轮连败数秒、模型拿不到词表只能硬猜 metricId。**所有工具返回值走这里，勿绕过。**
+export function toToolResult(payload) {
+  return {
+    content: [
+      { type: "text", text: typeof payload === "string" ? payload : JSON.stringify(payload) },
+    ],
+    details: payload,
+  };
+}
+
+// 平台调用 + 错误映射。返回值是**业务载荷**（纯对象）；交给模型前必须经 toToolResult 包裹。
 // fetchImpl 参数注入便于单测；生产用全局 fetch。
 export async function callPlatform(opts) {
   const { fetchImpl = fetch, apiBase = DEFAULT_API_BASE, channelKey, userId, path, method = "GET", body } = opts;
