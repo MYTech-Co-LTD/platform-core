@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.105.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.104.1...v0.105.0) - 2026-10-12
+- 【新增】data: 乐檬指标 W1 transfer/wholesale 骨架（D03 接源 + 出域构件 + 首批 ratio） ([#604](https://github.com/MYTech-Co-LTD/platform-core/pull/604), [4491cdf](https://github.com/MYTech-Co-LTD/platform-core/commit/4491cdfd66f32ec03e7f14bf8eac6751cb2e9700))
+
+
 ## [0.104.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.104.0...v0.104.1) - 2026-10-12
 - 【修复】openclaw: zh-thinking 换格式契约措辞，山海生产实证中文思考可控 ([#602](https://github.com/MYTech-Co-LTD/platform-core/pull/602), [282ac22](https://github.com/MYTech-Co-LTD/platform-core/commit/282ac22bb1c08e40e8aed65e47e9a63b217e1caf))
 
