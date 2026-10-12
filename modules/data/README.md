@@ -134,7 +134,8 @@ L1 **不是跨源通用语义**，是**逐源**的标准口径 ⇒ 词表行的�
 `docs/superpowers/specs/2026-10-07-mcp-write-face-design.md`。
 
 「agent 只需产出可机检的声明、不必也不该生成 SQL」这条不变：`customize_metric` 的入参
-与 HTTP 面同源（结构化声明），**`op` 由工具面固定为 `refine`**（工具面比 HTTP 面窄，是有意的）。
+与 HTTP 面同源（结构化声明），**`op` 由工具面按入参归一**（给了 `expr` 就是 `expr` 支，否则 `refine` 支）；
+工具面的表达面仍比 HTTP 面窄（HTTP 面还接受 `target`，工具面不收）。
 
 **两条已知边界**（别当漏检）：
 
