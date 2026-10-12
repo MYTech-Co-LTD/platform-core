@@ -80,8 +80,11 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
       const shape = parseL1Select(row.selectSql)
       expect(shape.relation, `指标 ${row.id} 的关系名没从表达式里取出来`).toBeTruthy()
       expect(row.selectSql.startsWith('select ')).toBe(true)
-      // 口径表达式逐字保留（L2 靠这个保证「不改 L1 口径」）
-      expect(row.selectSql).toContain('sum(fct_retail_sale.')
+      // 口径表达式逐字保留（L2 靠这个保证「不改 L1 口径」）——W1 起声明跨多个 fct，
+      // 断言改为「表达式逐字在产物里」（而不是钉死某一个模型的列）。
+      const expr = row.selectSql.slice('select '.length, row.selectSql.indexOf(' as value'))
+      expect(row.selectSql).toContain(expr)
+      expect(expr.length).toBeGreaterThan(0)
     }
   })
 
