@@ -126,7 +126,7 @@ select
     (u.c_cost - coalesce(d.c_return, 0))::numeric(20,2) as c_cost,
     (u.r_net - coalesce(d.r_return, 0) - u.c_cost + coalesce(d.c_return, 0))::numeric(20,2) as g_gross,
     u.order_count,
-    u.line_count
+    u.line_count::bigint as line_count
 from (
     select system_book, bizday, branch_num, 'transfer' as domain, r_net, c_cost, order_count, line_count
     from transfer_dom
