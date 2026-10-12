@@ -21,10 +21,18 @@ test("normalizeReasoningText：去 Reasoning: 前缀、统一换行、去首尾�
   assert.equal(normalizeReasoningText(123), "");
 });
 
-test("判据2：纯思考期**不闭合**（企微据此在「思考中」里展开）", () => {
+test("bridge 保留未闭合形态（调用方现按 issue #585 传 finish:true 闭合发送）", () => {
   const out = buildStreamContent({ reasoningText: "正在想", visibleText: "", finish: false });
   assert.equal(out, "<think>正在想");
   assert.ok(!out.includes("</think>"));
+});
+
+// 调用方（onReasoningStream 注入点）现按 issue #585 一律这样调：finish:true、只给思考 ⇒ 闭合帧。
+// 这条锁住「注入点用的那个调用形态」，防止有人顺手改回未闭合（那样内容就不渲染了）。
+test("注入点调用形态（finish:true + 仅思考）⇒ 必为闭合帧", () => {
+  const out = buildStreamContent({ reasoningText: "正在查数", visibleText: "", finish: true });
+  assert.equal(out, "<think>正在查数</think>");
+  assert.ok(out.includes("</think>"), "必须闭合，否则企微不渲染内容");
 });
 
 test("判据2/7：正文出现 ⇒ 闭合 + 换行分隔，思考在前正文在后", () => {
