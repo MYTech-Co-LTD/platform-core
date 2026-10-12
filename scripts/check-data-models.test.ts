@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
-import { RESERVED_METRIC_ID_PREFIXES, checkDataModels, metricToAuditFileName } from './check-data-models.mjs'
+import { RESERVED_METRIC_ID_PREFIXES, checkDataModels, metricToAuditFileName, ratioShapeError } from './check-data-models.mjs'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const scriptsDir = join(repoRoot, 'scripts')
@@ -1115,5 +1115,57 @@ describe('T9 端到端：门禁在**含真模块文件**的 rootDir 上跑（规
     expect(v.length).toBeGreaterThan(0)
     expect(v.every((x) => x.file === L2_COMPILER_REL)).toBe(true)
     expect(v.map((x) => x.message).join('\n')).toContain('op.kind')
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// 规则 ⑤ 的 ratio 形状核（spec 2026-10-12 §5.3，W0 Task 2 追加）——纯函数直测，
+// 不进上面的 fixture 体系：它判的是**单条声明**的形状，不需要临时 dbt 目录。
+// 契约：率类声明走 `ratio: {numerator, denominator}`，与 expression 互斥；分子分母各含
+// ≥1 个「关系.列」引用且必须同关系（单 FROM 约束的声明面）；不许带分号。
+// ════════════════════════════════════════════════════════════════════════════════════════
+describe('规则 ⑤ ratio 形状（ratioShapeError 纯核，spec 2026-10-12 §5.3）', () => {
+  const base = {
+    name: 'lemeng:retail:test_rate',
+    definition: 'x',
+    grain: ['a'],
+    owner: 'o',
+    tier: 'experimental',
+    source: 'lemeng',
+  }
+
+  it('ratio 与 expression 互斥（两处各写一份口径 = 口径分叉）', () => {
+    expect(ratioShapeError({
+      ...base, expression: 'sum(f.x)',
+      ratio: { numerator: 'sum(f.x)', denominator: 'sum(f.y)' },
+    })).toMatch(/互斥/)
+  })
+
+  it('缺分子或分母 → 报缺的那一项', () => {
+    expect(ratioShapeError({ ...base, ratio: { numerator: 'sum(f.x)' } })).toMatch(/denominator|分母/)
+    expect(ratioShapeError({ ...base, ratio: { denominator: 'sum(f.y)' } })).toMatch(/numerator|分子/)
+  })
+
+  it('分子分母必须各含「关系.列」且同关系（单 FROM）', () => {
+    expect(ratioShapeError({ ...base, ratio: { numerator: 'sum(x)', denominator: 'sum(f.y)' } }))
+      .toMatch(/关系/)
+    expect(ratioShapeError({
+      ...base, ratio: { numerator: 'sum(a.x)', denominator: 'sum(b.y)' },
+    })).toMatch(/多个关系|同关系/)
+  })
+
+  it('含分号 → 报错（声明只写聚合表达式）', () => {
+    expect(ratioShapeError({
+      ...base, ratio: { numerator: 'sum(f.x);', denominator: 'sum(f.y)' },
+    })).toMatch(/分号/)
+  })
+
+  it('合法 ratio → null；纯 expression 声明 → null', () => {
+    expect(ratioShapeError({ ...base, ratio: { numerator: 'sum(f.x)', denominator: 'sum(f.y)' } })).toBeNull()
+    expect(ratioShapeError({ ...base, expression: 'sum(f.x)' })).toBeNull()
+  })
+
+  it('两者都不给 → 报错（必填缺口在 ratio 路径下的兜底）', () => {
+    expect(ratioShapeError({ ...base })).toMatch(/expression|ratio/)
   })
 })

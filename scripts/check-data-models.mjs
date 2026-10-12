@@ -171,6 +171,47 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  * ⚠️ 与选填的 `sources`（对象存储路径，人读）**不是一回事**，别把两者合并。
  */
 const REQUIRED_METRIC_FIELDS = ['expression', 'grain', 'owner', 'tier', 'definition', 'source']
+
+/**
+ * 规则 ⑤ 的 ratio 形状核（纯函数，供单测与主扫描共用；spec 2026-10-12 §5.3）。
+ * 率类声明走 `ratio: { numerator, denominator }`，与 expression 互斥；物化侧
+ * （sync-data-semantics.mjs）把分母包成 `nullif(…, 0)` —— 这里钉声明侧的形状：
+ * 分子分母各含 ≥1 个「关系.列」引用、且必须同一个关系（单 FROM 约束的声明面，
+ * 与 sync 的 deriveRelation 同一句话，两层各拦一次）。
+ *
+ * @param {{ name: string, expression?: unknown, ratio?: unknown }} decl
+ * @returns {string | null} 违规文案；合法返回 null
+ */
+export function ratioShapeError(decl) {
+  const hasRatio = decl.ratio !== undefined && decl.ratio !== null
+  const hasExpr = typeof decl.expression === 'string' && decl.expression !== ''
+  if (hasRatio && hasExpr) {
+    return `指标 \`${decl.name}\` 的 ratio 与 expression 互斥（率类用 ratio——分母自动包 nullif；可加指标用 expression），两处都给 = 两处事实源`
+  }
+  if (!hasRatio && !hasExpr) {
+    return `指标 \`${decl.name}\` 缺 expression（率类请改用 ratio: {numerator, denominator}）`
+  }
+  if (!hasRatio) return null
+  const r = /** @type {{ numerator?: unknown, denominator?: unknown }} */ (decl.ratio)
+  const num = String(r.numerator ?? '')
+  const den = String(r.denominator ?? '')
+  if (num === '') return `指标 \`${decl.name}\` 的 ratio 缺 numerator（分子）`
+  if (den === '') return `指标 \`${decl.name}\` 的 ratio 缺 denominator（分母）`
+  if (num.includes(';') || den.includes(';')) {
+    return `指标 \`${decl.name}\` 的 ratio 含分号（声明只写聚合表达式）`
+  }
+  const rel = /([A-Za-z_][A-Za-z0-9_]*)\.[A-Za-z_][A-Za-z0-9_]*/g
+  const numRels = new Set([...num.matchAll(rel)].map((/** @type {RegExpMatchArray} */ m) => m[1]))
+  const denRels = new Set([...den.matchAll(rel)].map((/** @type {RegExpMatchArray} */ m) => m[1]))
+  if (numRels.size === 0 || denRels.size === 0) {
+    return `指标 \`${decl.name}\` 的 ratio 分子/分母必须含「关系.列」形态的引用（FROM 关系名由它反推）`
+  }
+  const all = new Set([...numRels, ...denRels])
+  if (all.size > 1) {
+    return `指标 \`${decl.name}\` 的 ratio 分子分母引用了多个关系（${[...all].join(', ')}）：单条声明只有一个 FROM，跨模型聚合属 marts 层`
+  }
+  return null
+}
 /**
  * 规则 ⑤ 的形状：`source` 的形态（与指标名每一段同一形态：小写蛇形、首字符是字母）。
  * 为什么值得一条形状规则而不是「非空即可」：`source` 会被拿去与「已接入源」的登记值**比对**
@@ -937,8 +978,12 @@ export function checkDataModels(rootDir, opts = {}) {
     }
     nameToFile.set(metric.name, metric.file)
 
-    // ⑤ 必填字段齐全
+    // ⑤ 必填字段齐全（expression 可由 ratio 替代 —— 率类声明走 ratio，见 ratioShapeError）
     const missing = REQUIRED_METRIC_FIELDS.filter((f) => {
+      if (f === 'expression') {
+        const ratioGiven = metric.fields?.ratio !== undefined && metric.fields?.ratio !== null
+        if (ratioGiven) return false
+      }
       const v = metric.fields?.[f]
       if (Array.isArray(v)) return v.length === 0
       return asText(v) === ''
@@ -947,8 +992,18 @@ export function checkDataModels(rootDir, opts = {}) {
       push(
         metric.file,
         0,
-        `指标 \`${metric.name}\` 的语义声明缺必填字段：${missing.join(' / ')} —— owner/tier/grain/definition 是治理门禁的必填面（spec §10 机制① 的 dbt 原生对应物），expression 是口径本体，source（**源系统**，如 \`lemeng\`）是源维度的事实源（消费侧的裁剪按它判「这个源接没接入」）；缺了它，指标就无法登记、无法溯源、无法按 tier 收敛、无法按源裁剪`,
+        `指标 \`${metric.name}\` 的语义声明缺必填字段：${missing.join(' / ')} —— owner/tier/grain/definition 是治理门禁的必填面（spec §10 机制① 的 dbt 原生对应物），expression 是口径本体（率类可用 ratio: {numerator, denominator} 替代），source（**源系统**，如 \`lemeng\`）是源维度的事实源（消费侧的裁剪按它判「这个源接没接入」）；缺了它，指标就无法登记、无法溯源、无法按 tier 收敛、无法按源裁剪`,
       )
+    }
+
+    // ⑤-a ratio 形状（率类声明面：互斥 / 同关系 / 无分号；纯核导出见 ratioShapeError）
+    const ratioErr = ratioShapeError({
+      name: metric.name,
+      expression: metric.fields?.expression,
+      ratio: metric.fields?.ratio,
+    })
+    if (ratioErr !== null) {
+      push(metric.file, 0, ratioErr)
     }
 
     // ⑤-b `source` 的形状（**源系统**：小写蛇形）
