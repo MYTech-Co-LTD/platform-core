@@ -39,7 +39,8 @@ recheck as (
     group by 1, 2, 3
 ),
 materialized as (
-    select system_book, bizday, branch_num, line_count, lot_filled_lines, zero_cost_amount, negative_order_count
+    select system_book, bizday, branch_num, line_count, lot_filled_lines, zero_cost_amount, negative_order_count,
+           lot_filled_lines::numeric / nullif(line_count, 0) as fill_rate
     from {{ ref('fct_transfer_line_quality') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 )
@@ -47,12 +48,12 @@ select
     coalesce(a.system_book, b.system_book) as system_book,
     coalesce(a.bizday, b.bizday) as bizday,
     coalesce(a.branch_num, b.branch_num) as branch_num,
-    a.(lot_filled_lines::numeric / nullif(line_count, 0)) as recheck_value,
-    b.(lot_filled_lines::numeric / nullif(line_count, 0)) as materialized_value,
+    a.fill_rate as recheck_value,
+    b.fill_rate as materialized_value,
     '批号填写率（全量版）：复算与物化结果不一致（两侧各自算商）' as note
 from recheck a
 full join materialized b using (system_book, bizday, branch_num)
-where a.(lot_filled_lines::numeric / nullif(line_count, 0)) is distinct from b.(lot_filled_lines::numeric / nullif(line_count, 0))
+where a.fill_rate is distinct from b.fill_rate
 
 union all
 
