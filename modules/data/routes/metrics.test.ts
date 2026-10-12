@@ -499,107 +499,115 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   })
 
   // ── B 中档：schema ↔ compiler 对偶（增补 §6.2 的**行为侧**）────────────────────────
-  // 门禁⑧ 保的是**形状面**（字段名/字面量集在静态上一致）；这一组保的是**行为面**：
-  // 真正把同一批输入喂进去时，两边各自放不放行。两处漂移的典型症状是「面级放行、编译器拒」
-  // （用户拿到 500）或反过来（静默 strip ⇒ 写进去的东西与用户以为的不同）。
-  describe('L2 · B 中档 · schema ↔ compiler 对偶（运行时）', () => {
-    /** 域层基底：必须是 `source:'l1'` 的行（resolveL1Base 只认 L1 词表）。 */
-    const l1Row = (over: Partial<MetricRow> = {}): MetricRow =>
-      ({ ...L1_SALES, source: 'l1', updatedBy: null, version: 1, ...over })
-    const catalog: MetricRow[] = [l1Row()]
-
-    /** 域层编译结果：抛错 ⇒ 回它的 code；不抛 ⇒ null（期望抛时它会让断言自然红）。 */
-    const codeOf = (decl: unknown): string | null => {
-      try {
-        compileL2(catalog, decl as L2Declaration)
-        return null
-      } catch (e) {
-        return (e as { code?: string }).code ?? `非 SemanticCompileError：${String(e)}`
-      }
+  // 见文件末尾的顶层 describe《纯逻辑 · 无需库》——那一组（schema 直调 / 域层编译器 /
+  // refine 缺 base）只碰纯逻辑、不触库，故**不能**挂在本 describePg（`dbUrl ? describe : describe.skip`）
+  // 的门下：挂进库门会让无 DATABASE_URL 的环境把它们整个 skip ⇒ 本 Task 的交付物本身休眠
+  // （本仓 CI 头注把这种绿称作假绿）。这里只留**走后端**的那一条（发 HTTP ⇒ 需要真库）。
+  it('面级 HTTP：同一批形状 ⇒ 400 INVALID_BODY（不是静默 strip —— strip 是最坏的失败形态）', async () => {
+    const bodies: Array<[string, Record<string, unknown>]> = [
+      ['expr 多带 baseMetric', exprBody({ id: 'l2_duplex_x1', baseMetric: L1_SALES.id })],
+      ['expr 多带 target', exprBody({ id: 'l2_duplex_x2', target: 1 })],
+      ['expr 节点多带 fn', {
+        id: 'l2_duplex_x3',
+        op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id, fn: 'sum' } },
+      }],
+      ['refine 缺 baseMetric', { id: 'l2_duplex_x4', op: { kind: 'refine' } }],
+      // ⚠️ HTTP 面走 JSON，而 JSON **表达不了** NaN（`JSON.stringify(NaN) === 'null'`）⇒
+      //    这一条面级收到的其实是 null（同样落在 INVALID_BODY）。
+      //    `.finite()` 拒 NaN 的**真正**证据在**纯逻辑块**那条 schema 直调用例里（绕开 JSON）。
+      ['expr 的 num 是 NaN（过 JSON 后退化成 null）', {
+        id: 'l2_duplex_x5',
+        op: { kind: 'expr', expr: { kind: 'num', value: Number.NaN } },
+      }],
+    ]
+    for (const [name, body] of bodies) {
+      const res = await post(body)
+      expect(res.status, `${name}：面级竟接受（400 才对）`).toBe(400)
+      expect((await res.json()).error, name).toBe('INVALID_BODY')
     }
+    // 正例对照：去掉多余键就 201（对偶不是「一律拒」；否则上面那批 400 一文不值）
+    expect((await post(exprBody({ id: 'l2_duplex_ok' }))).status).toBe(201)
+  })
+})
 
-    it('节点形状坏 ⇒ **两侧都拒**：面级 schema 拒 且 域层 compileL2 抛 BAD_DECL', () => {
-      const bad: Array<[string, Record<string, unknown>]> = [
-        // ★ NaN 这条必须**两侧都出现**：面级靠 `z.number().finite()`，域层靠 scanExpr 的
-        //   `!Number.isFinite` —— 只钉一侧的话，「.finite() 是装饰」这种漂移看不出来。
-        ['num 是 NaN', { op: { kind: 'expr', expr: { kind: 'num', value: Number.NaN } } }],
-        ['num 是 Infinity', { op: { kind: 'expr', expr: { kind: 'num', value: Number.POSITIVE_INFINITY } } }],
-        ['ref 的 id 是空串', { op: { kind: 'expr', expr: { kind: 'ref', id: '' } } }],
-        ['节点 kind 不在闭集', {
-          op: {
-            kind: 'expr',
-            expr: { kind: 'pow', left: { kind: 'ref', id: L1_SALES.id }, right: { kind: 'num', value: 2 } },
-          },
-        }],
-      ]
-      for (const [name, decl] of bad) {
-        expect(L2ExprDeclarationSchema.safeParse(decl).success, `${name}：面级 schema 竟放行`).toBe(false)
-        expect(codeOf(decl), `${name}：域层编译器竟放行`).toBe('BAD_DECL')
-      }
-      // 正例对照：把 NaN 换成有限数就两侧都过 —— 证明上面拒的是「有限性」，不是「数字一概拒」
-      const ok = { op: { kind: 'expr', expr: { kind: 'num', value: 3 } } }
-      expect(L2ExprDeclarationSchema.safeParse(ok).success).toBe(true)
-    })
+// ── B 中档 · schema ↔ compiler 对偶（增补 §6.2 的**行为侧**）· 纯逻辑三条 ──────────
+// 门禁⑧ 保的是**形状面**（字段名/字面量集在静态上一致）；这一组保的是**行为面**：
+// 真正把同一批输入喂进去时，两边各自放不放行。两处漂移的典型症状是「面级放行、编译器拒」
+// （用户拿到 500）或反过来（静默 strip ⇒ 写进去的东西与用户以为的不同）。
+// ⚠️ 刻意**放在 describePg 之外**（顶层）：这三条只碰纯逻辑（zod schema / compileL2 / 内存
+//    catalog），不触库；挂进 describePg 则无 DATABASE_URL 时全 skip ⇒ 交付物在无库环境下休眠。
+//    同组第 4 条（面级 HTTP）确实要走真库，留在上面那个 describePg 内。
+describe('L2 · B 中档 · schema ↔ compiler 对偶（纯逻辑 · 无需库）', () => {
+  /** 域层基底：必须是 `source:'l1'` 的行（resolveL1Base 只认 L1 词表）。 */
+  const l1Row = (over: Partial<MetricRow> = {}): MetricRow =>
+    ({ ...L1_SALES, source: 'l1', updatedBy: null, version: 1, ...over })
+  const catalog: MetricRow[] = [l1Row()]
 
-    /**
-     * 信封/节点上多带**未知键**：**面级拒，域层不读**。
-     *
-     * ⚠️ 这里刻意**不**断言「域层也拒」——实测（本用例同时把它钉住）：`compileL2` 对
-     *    `baseMetric` / `target` / 节点上的 `fn` 既不读也不拒（`scanExpr` 只看 kind 与其必填字段，
-     *    `compileExpr` 只看 `filters`）。把它们写成「两侧都拒」只会让用例因为**别的原因**
-     *    变绿（把 ref 指到词表外 ⇒ 拿到的其实是 L1_BASE_NOT_FOUND）——那正是假绿。
-     * 真正成立、且更该钉的对偶是：**这些键改不了产物**。面级把它们拦在门外，域层无视它们，
-     * 两条路都不会让它们进 SQL ⇒ 判据是「带键与不带键的编译产物**逐字**相等」。
-     */
-    it('信封/节点多带未知键：面级 schema 拒（.strict()）；域层不读 ⇒ 产物逐字不变', () => {
-      const clean = compileL2(catalog, {
-        op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id } },
-      } as unknown as L2Declaration)
-      const extras: Array<[string, Record<string, unknown>]> = [
-        ['多带 baseMetric', { op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id } }, baseMetric: 'y' }],
-        ['多带 target', { op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id } }, target: 1 }],
-        ['节点多带 fn', { op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id, fn: 'sum' } } }],
-      ]
-      for (const [name, decl] of extras) {
-        expect(L2ExprDeclarationSchema.safeParse(decl).success, `${name}：面级 schema 竟放行`).toBe(false)
-        expect(codeOf(decl), `${name}：域层拒了它 —— 说明它读了不该读的键`).toBeNull()
-        expect(compileL2(catalog, decl as unknown as L2Declaration).selectSql, `${name}：未知键改动了产物`)
-          .toBe(clean.selectSql)
-      }
-    })
+  /** 域层编译结果：抛错 ⇒ 回它的 code；不抛 ⇒ null（期望抛时它会让断言自然红）。 */
+  const codeOf = (decl: unknown): string | null => {
+    try {
+      compileL2(catalog, decl as L2Declaration)
+      return null
+    } catch (e) {
+      return (e as { code?: string }).code ?? `非 SemanticCompileError：${String(e)}`
+    }
+  }
 
-    it('refine 缺 baseMetric：面级 schema 拒（必填）且域层也拒（空 base ⇒ L1 词表里找不到）', () => {
-      const decl = { op: { kind: 'refine' } }
-      expect(L2RefineDeclarationSchema.safeParse(decl).success).toBe(false)
-      // 码是 L1_BASE_NOT_FOUND 而不是 BAD_DECL：域层不单独校验「baseMetric 在不在」，
-      // 它直接拿这个空值去 L1 词表里找 ⇒ 找不到就抛「该 id 不在词表」。拒是真的，只是码不同。
-      expect(codeOf(decl)).toBe('L1_BASE_NOT_FOUND')
-    })
+  it('节点形状坏 ⇒ **两侧都拒**：面级 schema 拒 且 域层 compileL2 抛 BAD_DECL', () => {
+    const bad: Array<[string, Record<string, unknown>]> = [
+      // ★ NaN 这条必须**两侧都出现**：面级靠 `z.number().finite()`，域层靠 scanExpr 的
+      //   `!Number.isFinite` —— 只钉一侧的话，「.finite() 是装饰」这种漂移看不出来。
+      ['num 是 NaN', { op: { kind: 'expr', expr: { kind: 'num', value: Number.NaN } } }],
+      ['num 是 Infinity', { op: { kind: 'expr', expr: { kind: 'num', value: Number.POSITIVE_INFINITY } } }],
+      ['ref 的 id 是空串', { op: { kind: 'expr', expr: { kind: 'ref', id: '' } } }],
+      ['节点 kind 不在闭集', {
+        op: {
+          kind: 'expr',
+          expr: { kind: 'pow', left: { kind: 'ref', id: L1_SALES.id }, right: { kind: 'num', value: 2 } },
+        },
+      }],
+    ]
+    for (const [name, decl] of bad) {
+      expect(L2ExprDeclarationSchema.safeParse(decl).success, `${name}：面级 schema 竟放行`).toBe(false)
+      expect(codeOf(decl), `${name}：域层编译器竟放行`).toBe('BAD_DECL')
+    }
+    // 正例对照：把 NaN 换成有限数就两侧都过 —— 证明上面拒的是「有限性」，不是「数字一概拒」
+    const ok = { op: { kind: 'expr', expr: { kind: 'num', value: 3 } } }
+    expect(L2ExprDeclarationSchema.safeParse(ok).success).toBe(true)
+  })
 
-    it('面级 HTTP：同一批形状 ⇒ 400 INVALID_BODY（不是静默 strip —— strip 是最坏的失败形态）', async () => {
-      const bodies: Array<[string, Record<string, unknown>]> = [
-        ['expr 多带 baseMetric', exprBody({ id: 'l2_duplex_x1', baseMetric: L1_SALES.id })],
-        ['expr 多带 target', exprBody({ id: 'l2_duplex_x2', target: 1 })],
-        ['expr 节点多带 fn', {
-          id: 'l2_duplex_x3',
-          op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id, fn: 'sum' } },
-        }],
-        ['refine 缺 baseMetric', { id: 'l2_duplex_x4', op: { kind: 'refine' } }],
-        // ⚠️ HTTP 面走 JSON，而 JSON **表达不了** NaN（`JSON.stringify(NaN) === 'null'`）⇒
-        //    这一条面级收到的其实是 null（同样落在 INVALID_BODY）。
-        //    `.finite()` 拒 NaN 的**真正**证据在上面那条 schema 直调用例里（绕开 JSON）。
-        ['expr 的 num 是 NaN（过 JSON 后退化成 null）', {
-          id: 'l2_duplex_x5',
-          op: { kind: 'expr', expr: { kind: 'num', value: Number.NaN } },
-        }],
-      ]
-      for (const [name, body] of bodies) {
-        const res = await post(body)
-        expect(res.status, `${name}：面级竟接受（400 才对）`).toBe(400)
-        expect((await res.json()).error, name).toBe('INVALID_BODY')
-      }
-      // 正例对照：去掉多余键就 201（对偶不是「一律拒」；否则上面那批 400 一文不值）
-      expect((await post(exprBody({ id: 'l2_duplex_ok' }))).status).toBe(201)
-    })
+  /**
+   * 信封/节点上多带**未知键**：**面级拒，域层不读**。
+   *
+   * ⚠️ 这里刻意**不**断言「域层也拒」——实测（本用例同时把它钉住）：`compileL2` 对
+   *    `baseMetric` / `target` / 节点上的 `fn` 既不读也不拒（`scanExpr` 只看 kind 与其必填字段，
+   *    `compileExpr` 只看 `filters`）。把它们写成「两侧都拒」只会让用例因为**别的原因**
+   *    变绿（把 ref 指到词表外 ⇒ 拿到的其实是 L1_BASE_NOT_FOUND）——那正是假绿。
+   * 真正成立、且更该钉的对偶是：**这些键改不了产物**。面级把它们拦在门外，域层无视它们，
+   * 两条路都不会让它们进 SQL ⇒ 判据是「带键与不带键的编译产物**逐字**相等」。
+   */
+  it('信封/节点多带未知键：面级 schema 拒（.strict()）；域层不读 ⇒ 产物逐字不变', () => {
+    const clean = compileL2(catalog, {
+      op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id } },
+    } as unknown as L2Declaration)
+    const extras: Array<[string, Record<string, unknown>]> = [
+      ['多带 baseMetric', { op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id } }, baseMetric: 'y' }],
+      ['多带 target', { op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id } }, target: 1 }],
+      ['节点多带 fn', { op: { kind: 'expr', expr: { kind: 'ref', id: L1_SALES.id, fn: 'sum' } } }],
+    ]
+    for (const [name, decl] of extras) {
+      expect(L2ExprDeclarationSchema.safeParse(decl).success, `${name}：面级 schema 竟放行`).toBe(false)
+      expect(codeOf(decl), `${name}：域层拒了它 —— 说明它读了不该读的键`).toBeNull()
+      expect(compileL2(catalog, decl as unknown as L2Declaration).selectSql, `${name}：未知键改动了产物`)
+        .toBe(clean.selectSql)
+    }
+  })
+
+  it('refine 缺 baseMetric：面级 schema 拒（必填）且域层也拒（空 base ⇒ L1 词表里找不到）', () => {
+    const decl = { op: { kind: 'refine' } }
+    expect(L2RefineDeclarationSchema.safeParse(decl).success).toBe(false)
+    // 码是 L1_BASE_NOT_FOUND 而不是 BAD_DECL：域层不单独校验「baseMetric 在不在」，
+    // 它直接拿这个空值去 L1 词表里找 ⇒ 找不到就抛「该 id 不在词表」。拒是真的，只是码不同。
+    expect(codeOf(decl)).toBe('L1_BASE_NOT_FOUND')
   })
 })
