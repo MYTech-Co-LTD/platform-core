@@ -12,6 +12,11 @@
 ## [Unreleased]
 
 ## [0.106.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.105.0...v0.106.0) - 2026-10-12
+- 【修复】data: 生成器豁免回填变体管线（.backfill. 文件名） ([#606](https://github.com/MYTech-Co-LTD/platform-core/pull/606), [ae9a6c6](https://github.com/MYTech-Co-LTD/platform-core/commit/ae9a6c6096c163b0d13b4375d8d9b73494d9c539))
+- 【新增】data: 批发销售回填变体管线（BIZDAY 参数化） ([#605](https://github.com/MYTech-Co-LTD/platform-core/pull/605), [129d847](https://github.com/MYTech-Co-LTD/platform-core/commit/129d8470caa993e271ae0e0a0da9c57c77016b7b))
+
+
+## [0.106.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.105.0...v0.106.0) - 2026-10-12
 - 【新增】data: 批发销售回填变体管线（BIZDAY 参数化） ([#605](https://github.com/MYTech-Co-LTD/platform-core/pull/605), [129d847](https://github.com/MYTech-Co-LTD/platform-core/commit/129d8470caa993e271ae0e0a0da9c57c77016b7b))
 
 
