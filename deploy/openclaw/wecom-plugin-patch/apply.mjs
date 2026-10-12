@@ -113,7 +113,9 @@ const callback = `
                             runtime,
                             finish: false,
                             streamId: state.streamId,
-                            text: __wrbBuild({ reasoningText: text, visibleText: "", finish: false }),
+                            // ⚠️ 必须**闭合发送**：企微只在 <think>…</think> **闭合后**才渲染思考内容，
+                            //    未闭合只驱动「思考中」动画（内容永不显示）——2026-10-12 真机实测，issue #585。
+                            text: __wrbBuild({ reasoningText: text, visibleText: "", finish: true }),
                         });
                     } catch (e) {
                         runtime.log?.(\`[wecom][reasoning-bridge] \${String(e)}\`);
