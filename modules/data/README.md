@@ -38,7 +38,7 @@
 | 事实源 | `dbt/semantics/l1_metrics.yml`（进仓库，走 PR） | `data.metrics` 里的 `source='l2'` 行（**永不进 git**） |
 | 落库 org | `platform`（固定桶名，不是 env 的 `PLATFORM_ORG`） | 该租户的 `identity.orgId` |
 | 改它的唯一途径 | 改 dbt 声明 → 重跑 `scripts/sync-data-semantics.mjs` | 管理 API（`POST`/`PUT /metrics`） |
-| 表达力 | 口径本体（expression / grain / tier / owner / definition） | **只能**裁剪/别名/过滤（不能改口径、不能写 SQL） |
+| 表达力 | 口径本体（expression / grain / tier / owner / definition） | **A 薄档**：**只能**裁剪/别名/过滤 + **B 中档**：**受限算术表达式**；C 厚档排除（不能改口径、不能写 SQL） |
 
 - **写入口是分开的两个函数**（不是一个带 `source` 形参的函数）：`upsertMetric`（租户路径，写死
   `l2`）与 `upsertL1Metric`（物化路径专用，写死 `l1`）。⇒ `grep upsertL1Metric` 就能穷举
@@ -225,6 +225,15 @@ L1 **不是跨源通用语义**，是**逐源**的标准口径 ⇒ 词表行的�
    `lemeng:retail:order_count` 200 / 8 行，数值与直连仓库逐字一致，回包带 `subject`）。
    ⚠️ **但它依赖两条部署侧接线，两者失败都静默**：Gate-B 网络（SOP P7）与仓库连接的
    `search_path`（SOP P8b）——少了任一条都会以「仓库错误」收场。见 **#297**。
+5. **expr 声明上的 `filters` 不支持**（v1，`OP_UNSUPPORTED`）：比例/比率不可加，对派生表重聚合 `sum` 是错的。
+   要支持得改成「**每个 ref 一列**的派生表、重聚合落在组件上」（`sum(a)/NULLIF(sum(b),0)`），是后一增量。
+6. **病态深度的表达式树是「先解析、后量纲」**：`EXPR_MAX_DEPTH` / `EXPR_MAX_REFS` 在 zod 解析之后才生效。
+   实测（2026-10-12，本机原生 postgres `127.0.0.1:5432` 库 `platform`）：一条深约 5000 层的裸 JSON 体返回
+   **500**（zod 的 `z.lazy` 递归校验先爆栈，早于 `scanExpr` 的迭代走法）。
+   也就是说超深输入的拒绝路径**不保证**是 400；它的保证只有一条 —— **不会被建成合法声明**。
+   要把它变成干净的 400，需要在解析之前加一层线性深度预检（本增量未做）。
+7. **原子测度仍只能走 L1**：`expr` 只放开**组合**。要新原子测度（如「退货额」）仍须先进
+   `dbt/semantics/l1_metrics.yml` 走 L1（纪律：L2 只能 refine 已声明的平台指标，不能引入新口径）。
 
 ## 报表面（Metabase 嵌入；issue #150 / T7）：`tenant` 参数约定
 

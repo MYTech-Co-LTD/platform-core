@@ -1,6 +1,7 @@
 # L2 表达力放开到 B 中档（受限表达式）实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> ⚠️ 本计划有几处文字与实现事实不符，已逐条订正 —— 见文末「实施期勘误（2026-10-12，实测订正）」。
 
 **Goal:** 把 L2 声明从「只 `refine` 单条 L1」（A 薄档）放开到「用受限算术把多条 L1 组合成新测度」（B 中档），表达面是**可机检的算术树**而不是表达式字符串，并让门禁⑧同步覆盖这一档。
 
@@ -1888,3 +1889,57 @@ git commit -m "docs(data): 回填 L2 表达力档位的正典指向注记与已�
   仍**刻意**留给实施者现场读的只剩一处：Task 1 **Step 13** 的 adopted 用例播种方式（同文件既有 `METRIC_SOURCE_NOT_ADOPTED` 用例 `:301-324` 已给出行号，照它的 `post()` 与清理方式写）—— 凭猜写 fixture 会把错误虚构进计划，故只给「必须断言什么」与「不许怎么写」。
   Task 3 Step 3 的 `<实测值>` 是**要求实测**，且明写「跑不出来就别写这一条」。
 - **类型一致性**：`compileL2(l1Catalog, decl)` 的两参顺序在 Task 1/2 的所有用例、`metric-write.ts`、门禁正则里一致；`CompiledL2` 的 5 个字段名在 3l/3m/3n/Step 7/Step 12 一致；错误码字面量 `'MIXED_BASE'` / `'EXPR_DEPTH_EXCEEDED'` / `'OP_UNSUPPORTED'` / `'BAD_DECL'` / `'L1_BASE_NOT_FOUND'` 全程一致；门禁里 `opKind` 这个名字在 3o 与 15a/15c 一致。
+
+---
+
+## 实施期勘误（2026-10-12，实测订正）
+
+（本节为实施期回填；上方正文一律不删改，冲突处以本节为准。每条：**位置** + **原文口径** + **实测/裁定口径** + **依据**。）
+
+**① Task 2 Step 1 的逐字期望串少两层括号**（计划 `:1586`）
+
+- 原文口径：`(sum(t.x) + (3)) / NULLIF(((sum(t.y) * (2))), 0)`
+- 订正口径（= 手推值 = 实跑值）：`((sum(t.x)) + (3)) / NULLIF(((sum(t.y)) * (2)), 0)`
+- 依据：同一文档内三处一致反对原字面 —— `:682-683` 的 `renderExprNode` 实现（`add`/`sub`/`mul`/`div` 各支都把**每个操作数**各包一层括号）、`:335-342` 已钉断言（`add(num1,num2) → '(1) + (2)'`）、`:1709` Step 4 期望串。
+- 性质：计划笔误（同一文档自相矛盾）。**人已裁 A**（以规则+实现为准，断言保留「与手推值逐字比对」）。
+
+**② Task 2 Step 3 的 fuzz 生成器未约束 ⇒ 会产零 ref 纯字面量树**（计划 Step 3）
+
+- 原文口径：生成器无 ref 约束，`catch` 只放行 `EXPR_DEPTH_EXCEEDED`。
+- 订正口径：生成器改为**保证整棵树至少含一个 ref**（首次收叶子强制 ref）；`catch` 维持逐字只放行
+  `EXPR_DEPTH_EXCEEDED` 一行不改；`compiled > 900` 的反空转下界不动。
+- 依据：零 ref 纯字面量树撞 `BAD_DECL`（`compileExpr`），会让该分支必红；而它已由既有用例单独覆盖，不丢覆盖面。
+  **人已裁 A**。（否掉「放行 `BAD_DECL`」：那是多种非法形状的兜底码，放行会弱化本轮要加固的判据。）
+
+**③ Task 2 Step 2 的 `bothReject`（「域层也拒」）与实现事实冲突**（计划 Step 2）
+
+- 原文口径：域名 `bothReject`、注释「面级拒 **且** 域层拒」，域层码写 `BAD_DECL`。
+- 订正口径：**域层编译器不读多余键** ⇒ 落地为「**面级拒 + 域层不读 ⇒ 产物与不带键逐字相等**」，配 4 条真对偶
+  （NaN / Infinity / 空 id / 闭集外 kind）；域层对 `{op:{kind:'refine'}}` 的实测码是 **`L1_BASE_NOT_FOUND`**
+  （不是 `BAD_DECL`）；NaN 的 `.finite()` 证据走 `L2ExprDeclarationSchema.safeParse` **直调**（绕开 JSON，
+  因为 NaN 过不了 JSON，HTTP 面实际收到的是 `null`）。
+- 依据：`compileL2` 的唯一非测试调用方是 `modules/data/domain/metric-write.ts:123`，其前两个写面
+  （`modules/data/routes/metrics.ts:43-44`、`mcp-metric-tools.ts:29-37`）均已 `.strict()`。
+  **人已裁 A（接受已落地版本，零生产代码改动）**。
+
+**④ Task 2 Step 1 的白名单正则 `FRAGMENT_RE` 漏逗号**（计划 `:1557`）
+
+- 原文口径：`/^[A-Za-z0-9_.()+\-*/\s]+$/`
+- 订正口径：`/^[A-Za-z0-9_.()+\-*,\/\s]+$/`（**只多一个逗号**）
+- 依据：同一 Step 的循环（`:1568-1569`）把 `div` 节点也扫进来，而 `div` 的渲染产物含编译器注入的
+  `NULLIF((b), 0)` ⇒ 原正则该条恒红（Step 内自相矛盾）。逗号**只可能**来自该注入守卫、不是输入，
+  故白名单本意（不许引号/分号/DDL 关键字）不受损。**人已裁 A。**
+
+**⑤ Task 3 Step 3「既有两条」与 README 实况不符**（计划 Task 3 Step 3）
+
+- 原文口径：「在既有**两条**之后追加」，新条目编号 3/4/5。
+- 订正口径：`### L2 的已知边界` 一节**实有 4 条** ⇒ 追加在全部既有条目之后，编号 **5/6/7**；既有四条不改。
+- 性质：计划前提笔误（控制方认定，非语义决定）。
+
+**⑥ 复跑命令带包名前缀跑不通**（计划 Task 2 的复跑命令 / Task 2 简报）
+
+- 原文口径：`pnpm --filter data exec vitest run modules/data/…`
+- 订正口径：`--filter … exec` 的 cwd 是 `modules/data` ⇒ 带包名前缀的路径报
+  `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL`；**正解 = 包内相对路径**
+  （如 `routes/metrics.test.ts`、`domain/semantic-compiler.test.ts`，前面加 `pnpm --filter data exec vitest run`）。
+- 性质：命令笔误（实测）。
