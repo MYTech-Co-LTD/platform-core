@@ -9,7 +9,7 @@ with item_lines as (
         sum(r['out_money']::numeric)::numeric(20,2) as r_net,
         sum(r['subtotal']::numeric)::numeric(20,2)  as c_cost
     from read_parquet(
-        's3://{ var("zos_bucket") }/{ var("lemeng_transfer_out_prefix") }/*/bizday=**/*.parquet'
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_transfer_out_prefix") }}/*/bizday=**/*.parquet'
     ) r
     where r['state_code']::int = 3
       and r['out_branch_num']::int = 99
