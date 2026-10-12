@@ -48,7 +48,7 @@ wholesale_lines as (
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_out_prefix") }}/*/bizday=**/*.parquet'
     ) r
-    where r['bizday']::date < {now}
+    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
     group by 1, 2, 3
 ),
 wholesale_dom as (
