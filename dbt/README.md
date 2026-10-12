@@ -105,8 +105,10 @@ dbt/
 **T6 的核对步**：真机 `dbt parse` 若证实 dbt 接受带冒号的指标名（`metrics:` 块），可把本文件并入
 `marts/schema.yml`；核不过就维持现状（本文件的形状不依赖 dbt）。
 
-**字段**：`name` / `label` / `definition` / `expression` / `grain` / `owner` / `tier` / `source`（必填七项：
-除 `label`、`sources` 外全必填；`sources` 选填人读）。取舍与「为什么」在文件头注里。
+**字段**：`name` / `label` / `definition` / `expression` **或 `ratio`** / `grain` / `owner` / `tier` / `source`
+（必填面：除 `label`、`sources` 外全必填；`expression` 与 `ratio` **二选一**——率类不可加指标用
+`ratio: {numerator, denominator}`，分母由 sync 自动包 `nullif(…, 0)`（零分母 → 不适用），见 §5.2；
+`sources` 选填人读）。取舍与「为什么」在文件头注里。
 ⚠️ **`source` 与 `sources` 不是一回事**（同名不同义，最容易混的一对）：`source` = **源系统**
 （小写蛇形，如 `lemeng`，必填、**落库** `data.metrics.source_system`，消费侧按它判「这个源接没接入」）；
 `sources` = 背后**实际读的对象存储路径**（选填、人读、不落库）。
@@ -121,6 +123,32 @@ metricToAuditFileName(metricName: string): string   // 例：'lemeng:retail:net_
 语义三条：入参 = 声明的 `name` 原值；**每一个** `:` 替换成 `__`（其余下划线不动）；返回值是
 **文件名**（落点 `dbt/tests/`）。**T9 必须 import 这个函数，不许照文档再实现一份**（计划 L645 的原话：
 两个 worker 不得各造一套）。门禁的规则 ⑦ 另外保证**映射无碰撞**（两个不同的指标名映到同一文件时报警）。
+
+### 5.1 口径构件列约定（spec 2026-10-12 §5.2，W0 落）
+
+客户指标总册的公共定义 R/C/G/E/N/P/A/L/Q/T **不做新机制**，落为**各域 marts 模型的标准列约定**：
+构件列只在 fct 定义一次，指标 `expression` 只引用不改算——「口径只定义一次」由这条保证。
+**新域/新列先改本表再写模型（本表是约定的事实源）**：
+
+| 域 | fct 模型（W 后缀 = 落地波） | 构件列 |
+|---|---|---|
+| retail | `fct_retail_sale`（**W0 ✓**） | `net_amount`(L 净额)、`order_count` |
+| transfer | `fct_transfer_out`（W1） | `r_net`(R 出库净额)、`c_cost`(C 成本)、`g_gross`(G=R−C) |
+| wholesale | fct_wholesale（W1，随历史回填） | `r_net`、`c_cost`、`g_gross` |
+| expense | fct_expense（W2） | `ep_payable`(EP 门店/客户应付)、`er_receivable`(ER 应收)、`e_net`(E=应付−应收)、`q_compensation`(Q 补损净额) |
+| procure | fct_purchase（W3） | `p_net`(P 采购净额)、`a_weighted_price`(A 加权价) |
+| inventory | fct_inventory（W3） | `cover_days`(覆盖天数)、`near_expiry_money`(临期金额) |
+| finance | fct_finance（W4） | 期初/发生/核销分层列，落点随 W4 设计定 |
+
+### 5.2 率类（不可加指标）的 L1/L2 边界（spec 2026-10-12 裁7 结论，W0 落）
+
+率类指标（毛利率/贡献率/占比/退货率/覆盖率…）用 L1 的 `ratio: {numerator, denominator}` 声明
+（门禁规则 ⑤-a 钉形状：互斥/同关系/无分号；sync 把分母包成 `nullif(…, 0)`——**零分母 → 不适用**）。
+**可驻 L1 的依据**（2026-10-12 对 `modules/data/domain/semantic-compiler.ts` 的读码结论）：
+L2 编译点只在 L1 声明的 grain 上追加 WHERE/GROUP BY（`GROUP BY ${metric.groupBy}`），**从不重聚合
+value 列**——率在声明粒度上就地计算，不存在「引擎把日率平均成月率」的静默错误；要更粗粒度的率，
+**另声明一条 L1**（grain 写粗），不许在 L2 里滚。`definition` 必须写「不可加；上滚=重算/另声明」。
+⚠️ 率类若要下沉 L2（消费面自算），那是消费面 spec 的事——本节只钉 L1 侧的纪律。
 
 ## 6 漂移策略（列集 46 vs 43，坑 #2）
 
