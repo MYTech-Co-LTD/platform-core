@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.106.12](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.11...v0.106.12) - 2026-10-12
+- 【修复】data: fct_hq_outbound.line_count 显式 ::bigint ([#619](https://github.com/MYTech-Co-LTD/platform-core/pull/619), [dec5fa0](https://github.com/MYTech-Co-LTD/platform-core/commit/dec5fa0bf0f48b22879350aaffabc76bd9c3c73a))
+
+
 ## [0.106.11](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.10...v0.106.11) - 2026-10-12
 - 【修复】data: outbound 对账块字面 {now} 修正（#615 patch 残留） ([#618](https://github.com/MYTech-Co-LTD/platform-core/pull/618), [34a7154](https://github.com/MYTech-Co-LTD/platform-core/commit/34a71546be790920f61e493c703d78996e965c4a))
 
