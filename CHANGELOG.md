@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.106.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.4...v0.106.5) - 2026-10-12
+- 【修复】data: 对账空转自检 null 数对齐（=主 select 列数−note） ([#612](https://github.com/MYTech-Co-LTD/platform-core/pull/612), [7793fc1](https://github.com/MYTech-Co-LTD/platform-core/commit/7793fc1fcd3e31048ee962c70c38e2a6790f382e))
+
+
 ## [0.106.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.3...v0.106.4) - 2026-10-12
 - 【修复】data: rate 对账 recheck 派生列 + 空转自检列数对齐 ([#611](https://github.com/MYTech-Co-LTD/platform-core/pull/611), [1d02d72](https://github.com/MYTech-Co-LTD/platform-core/commit/1d02d72925134a715364920b09f28d263c1c6e3c))
 
