@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.106.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.2...v0.106.3) - 2026-10-12
+- 【修复】data: W1 真机暴露两处（quality 模型 group by + rate 对账比较式） ([#610](https://github.com/MYTech-Co-LTD/platform-core/pull/610), [786ae8b](https://github.com/MYTech-Co-LTD/platform-core/commit/786ae8b2ccaf683b2ec11df758f0267272547488))
+
+
 ## [0.106.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.1...v0.106.2) - 2026-10-12
 - 【修复】data: audit var 渲染修复 + D03 schema decimal（W1 验收发现两处） ([#609](https://github.com/MYTech-Co-LTD/platform-core/pull/609), [14539ff](https://github.com/MYTech-Co-LTD/platform-core/commit/14539fff4f3c5bb39789a92f9baa9a7117426a41))
 
