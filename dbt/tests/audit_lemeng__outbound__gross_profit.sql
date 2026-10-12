@@ -40,13 +40,29 @@ wholesale_orders as (
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
     group by 1, 2, 3, 4
 ),
+wholesale_lines as (
+    select r['system_book']::varchar as system_book,
+           r['bizday']::date         as bizday,
+           r['branch_num']::int      as branch_num,
+           count(*)                  as line_count
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_wholesale_out_prefix") }}/*/bizday=**/*.parquet'
+    ) r
+    where r['bizday']::date < {now}
+    group by 1, 2, 3
+),
 wholesale_dom as (
-    select system_book, bizday, branch_num,
-           sum(total_money)::numeric(20,2) as r_net,
-           sum(cost_money)::numeric(20,2)  as c_cost,
-           count(distinct order_no)        as order_count,
-           count(*)                        as line_count
-    from wholesale_orders group by 1, 2, 3
+    select w.system_book, w.bizday, w.branch_num,
+           sum(w.total_money)::numeric(20,2) as r_net,
+           sum(w.cost_money)::numeric(20,2)  as c_cost,
+           count(distinct w.order_no)        as order_count,
+           max(l.line_count)                 as line_count
+    from wholesale_orders w
+    join wholesale_lines l
+      on w.system_book = l.system_book
+     and w.bizday = l.bizday
+     and w.branch_num = l.branch_num
+    group by 1, 2, 3
 ),
 return_orders as (
     select r['system_book']::varchar as system_book,
