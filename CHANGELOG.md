@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.101.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.100.1...v0.101.0) - 2026-10-12
+- 【新增】data: L2 表达力放开到 B 中档（受限表达式）(#576) ([#591](https://github.com/MYTech-Co-LTD/platform-core/pull/591), [752ba53](https://github.com/MYTech-Co-LTD/platform-core/commit/752ba53db9ba7122087eb368aea3f30dd35eec6f))
+
+
 ## [0.100.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.100.0...v0.100.1) - 2026-10-12
 - 【修复】openclaw: zh-thinking 钩子注册 API 用错——公开 API 是 api.on，加兼容垫片 ([#590](https://github.com/MYTech-Co-LTD/platform-core/pull/590), [6e91572](https://github.com/MYTech-Co-LTD/platform-core/commit/6e915721688409999921757bcae2c104f5ffe5be))
 
