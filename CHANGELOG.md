@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.100.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.99.1...v0.100.0) - 2026-10-12
+- 【新增】openclaw: 中文思考插件——before_prompt_build 钩子前置注入语言要求 ([#588](https://github.com/MYTech-Co-LTD/platform-core/pull/588), [f8ca44b](https://github.com/MYTech-Co-LTD/platform-core/commit/f8ca44b54cd29e9368fca2df937550a7401d612f))
+
+
 ## [0.99.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.99.0...v0.99.1) - 2026-10-12
 - 【修复】openclaw: 思考内容不渲染——推理帧改闭合发送 + 节流 800→300ms ([#586](https://github.com/MYTech-Co-LTD/platform-core/pull/586), [02aed85](https://github.com/MYTech-Co-LTD/platform-core/commit/02aed859628956930e6674c09332aee66a36ade6))
 
