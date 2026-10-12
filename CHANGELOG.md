@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.106.9](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.8...v0.106.9) - 2026-10-12
+- 【修复】data: transfer_lines 补 line_count 列 ([#616](https://github.com/MYTech-Co-LTD/platform-core/pull/616), [f7469df](https://github.com/MYTech-Co-LTD/platform-core/commit/f7469df9088414fecaf8575ee90e3fea4a852935))
+
+
 ## [0.106.8](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.7...v0.106.8) - 2026-10-12
 - 【修复】data: 出库行数语义修正（行级行数，两域对账同构） ([#615](https://github.com/MYTech-Co-LTD/platform-core/pull/615), [375db85](https://github.com/MYTech-Co-LTD/platform-core/commit/375db85ac0dee0fc4c0ce852bc3392b3feb3b638))
 
