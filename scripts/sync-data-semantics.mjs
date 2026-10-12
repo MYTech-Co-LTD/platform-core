@@ -187,8 +187,29 @@ export function declarationsFromYaml(parsed) {
     if (!METRIC_NAME_RE.test(name)) {
       throw new Error(`指标名 \`${name}\` 不合命名空间形态 \`<源>:<业务域>:<指标>\`（小写蛇形，三段）`)
     }
-    const expression = String(m.expression ?? '')
-    if (expression === '') throw new Error(`指标 \`${name}\` 缺 expression`)
+    // ── expression 与 ratio 二选一（spec 2026-10-12 §5.3 率类声明）────────────────────
+    // 率类（毛利率/占比/退货率…）不可加：声明侧用 `ratio: {numerator, denominator}`，
+    // 分母在这里统一包 `nullif(…, 0)`（零分母 → 不适用，不产 0）——「零分母怎么算」是口径的
+    // 一部分，由声明通道一次定死，不许各指标自己发挥。两处都给 = 两处事实源，拒绝。
+    const expressionField = String(m.expression ?? '')
+    const hasRatio = m.ratio !== undefined && m.ratio !== null
+    if (hasRatio && expressionField !== '') {
+      throw new Error(`指标 \`${name}\` 的 ratio 与 expression 互斥：率类声明用 ratio（分母自动包 nullif），可加指标用 expression，不许两处各写一份`)
+    }
+    let expression = expressionField
+    if (hasRatio) {
+      const r = /** @type {Record<string, unknown>} */ (m.ratio)
+      const numerator = String(r.numerator ?? '')
+      const denominator = String(r.denominator ?? '')
+      if (numerator === '') throw new Error(`指标 \`${name}\` 的 ratio 缺 numerator（分子）`)
+      if (denominator === '') throw new Error(`指标 \`${name}\` 的 ratio 缺 denominator（分母）`)
+      // 写侧先拦注入；读侧 parseL1Select 的形状契约仍在（两层防线，同文件头注的两侧同源约定）
+      if (numerator.includes(';') || denominator.includes(';')) {
+        throw new Error(`指标 \`${name}\` 的 ratio 含分号：声明里只写聚合表达式，不许拼语句`)
+      }
+      expression = `${numerator} / nullif(${denominator}, 0)`
+    }
+    if (expression === '') throw new Error(`指标 \`${name}\` 缺 expression（率类请改用 ratio: {numerator, denominator}）`)
     if (!Array.isArray(m.grain) || m.grain.length === 0) {
       throw new Error(`指标 \`${name}\` 的 grain 必须是非空数组（grain 同时是 L2 的维度白名单来源）`)
     }

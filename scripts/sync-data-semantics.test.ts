@@ -273,3 +273,78 @@ describe('命令行面：出口码与 diff 打印器（T8 评审 I1 / T9 消费�
     expect(formatDiff(noDrift)).toEqual(['新增 0 / 更新 0 / 删除 0 / 未变 2'])
   })
 })
+
+describe('ratio 声明（与 expression 互斥，spec 2026-10-12 §5.3）', () => {
+  const base = {
+    name: 'lemeng:retail:test_rate',
+    label: '率夹具',
+    definition: '测试夹具：不可加，上滚=重算。',
+    grain: ['system_book', 'bizday'],
+    owner: 'data-platform',
+    tier: 'experimental',
+    source: 'lemeng',
+  }
+
+  it('ratio 只给分子分母时，物化出 nullif 除法表达式（零分母 → 不适用）', () => {
+    const rows = declarationsFromYaml(
+      yaml([{ ...base, ratio: {
+        numerator: 'sum(fct_retail_sale.net_amount)',
+        denominator: 'sum(fct_retail_sale.order_count)',
+      } }]),
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0].selectSql).toBe(
+      'select sum(fct_retail_sale.net_amount) / nullif(sum(fct_retail_sale.order_count), 0) as value, system_book, bizday from fct_retail_sale',
+    )
+  })
+
+  it('ratio 与 expression 同时给 → 响亮拒绝（两处各写一份口径 = 两处事实源）', () => {
+    expect(() =>
+      declarationsFromYaml(
+        yaml([{ ...base, expression: 'sum(fct_retail_sale.net_amount)', ratio: {
+          numerator: 'sum(fct_retail_sale.net_amount)', denominator: 'sum(fct_retail_sale.order_count)',
+        } }]),
+      ),
+    ).toThrow(/互斥/)
+  })
+
+  it('ratio 缺分子或缺分母 → 响亮拒绝', () => {
+    expect(() =>
+      declarationsFromYaml(yaml([{ ...base, ratio: { numerator: 'sum(fct_retail_sale.net_amount)' } }])),
+    ).toThrow(/denominator|分母/)
+    expect(() =>
+      declarationsFromYaml(yaml([{ ...base, ratio: { denominator: 'sum(fct_retail_sale.order_count)' } }])),
+    ).toThrow(/numerator|分子/)
+  })
+
+  it('ratio 分子分母引用不同关系 → 响亮拒绝（复用 deriveRelation 的单一关系约束）', () => {
+    expect(() =>
+      declarationsFromYaml(
+        yaml([{ ...base, ratio: {
+          numerator: 'sum(fct_retail_sale.net_amount)', denominator: 'sum(fct_wholesale_out.r_net)',
+        } }]),
+      ),
+    ).toThrow(/多个关系/)
+  })
+
+  it('ratio 里带分号 → 响亮拒绝（写侧先拦，不等读侧 parseL1Select）', () => {
+    expect(() =>
+      declarationsFromYaml(
+        yaml([{ ...base, ratio: {
+          numerator: 'sum(fct_retail_sale.net_amount); drop table x',
+          denominator: 'sum(fct_retail_sale.order_count)',
+        } }]),
+      ),
+    ).toThrow(/分号/)
+  })
+
+  it('ratio 物化出的 select_sql 仍过读侧形状契约（parseL1Select，同源性既有约定）', () => {
+    const rows = declarationsFromYaml(
+      yaml([{ ...base, ratio: {
+        numerator: 'sum(fct_retail_sale.net_amount)',
+        denominator: 'sum(fct_retail_sale.order_count)',
+      } }]),
+    )
+    expect(() => parseL1Select(rows[0].selectSql)).not.toThrow()
+  })
+})
