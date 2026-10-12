@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.102.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.101.0...v0.102.0) - 2026-10-12
+- 【新增】openclaw: 企微占位改文字「思考中…」——去掉原生动画与「动画→文字」跳变 ([#595](https://github.com/MYTech-Co-LTD/platform-core/pull/595), [7b28ea2](https://github.com/MYTech-Co-LTD/platform-core/commit/7b28ea24d1c696733eadb23c1856038a895df73f))
+
+
 ## [0.101.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.100.1...v0.101.0) - 2026-10-12
 - 【新增】data: L2 表达力放开到 B 中档（受限表达式）(#576) ([#591](https://github.com/MYTech-Co-LTD/platform-core/pull/591), [752ba53](https://github.com/MYTech-Co-LTD/platform-core/commit/752ba53db9ba7122087eb368aea3f30dd35eec6f))
 
