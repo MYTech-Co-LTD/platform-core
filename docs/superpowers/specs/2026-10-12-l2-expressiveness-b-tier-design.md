@@ -153,8 +153,12 @@ expr 有 N 个 ref ⇒ 须**逐个**校验，任一未采用即拒，并在 `ext
 | `MIXED_BASE` | refs 非同关系/同 grain/同主体列 | **新增** |
 | `EXPR_DEPTH_EXCEEDED` | 树超深或 ref 超量 | **新增** |
 | `OP_UNSUPPORTED` | expr 带 `filters`；未知 `op.kind` | 复用 |
-| `BAD_DECL` | schema 层就不过（expr 支多带 `baseMetric`/`filters`/`target`；`num` 非有限数） | 复用 |
+| `BAD_DECL` | schema 层就不过（expr 支多带 `baseMetric`/`target`；`num` 非有限数） | 复用 |
 | `UNKNOWN_DIM` | `visibility.dims` 越出共享 grain | 复用 |
+
+> **`filters` 不属 `BAD_DECL`**：expr 支在 schema 里**声明**它为 optional（§2.5），由**编译器**以
+> `OP_UNSUPPORTED` 拒 —— 即 §2.5/§3.1 的「唯一例外」，不走 schema 层。
+> （订正：本行原据 §5 表误列为 `BAD_DECL`，与 §2.5/§3.1 互斥；实现按 §2.5 落地。）
 
 新增码须同时补进 `metric-write.ts` 的 `compileFailure` 映射（`MIXED_BASE`/`EXPR_DEPTH_EXCEEDED` → 400）。
 
