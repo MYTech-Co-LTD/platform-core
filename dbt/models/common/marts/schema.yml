@@ -145,6 +145,59 @@ models:
         tests:
           - not_null
 
+  - name: fct_transfer_line_quality
+    description: >-
+      总仓配送出库行质量构件（W1 2026-10-12；服务 04-05/04-06/04-07 的 L1 落点）。粒度
+      (system_book, bizday, branch_num)；基面同 fct_hq_outbound 的 transfer 域。口径逐列见模型头注
+      （批号率全量版待 X08；零成本与缺成本不相加；负金额不按绝对值变正收入）。
+      wholesale 侧行质量面随 D02 v2 勾稽批次另出。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests:
+          - not_null
+      - name: org
+        description: 主体列（宏注入）。
+        tests:
+          - not_null
+      - name: bizday
+        description: 业务日。粒度键。
+        tests:
+          - not_null
+      - name: branch_num
+        description: 调入门店号。粒度键。
+        tests:
+          - not_null
+      - name: line_count
+        description: 审核出库明细行数（04-05 分母构件）。
+        tests:
+          - not_null
+      - name: lot_filled_lines
+        description: 批号非空行数（04-05 分子构件；空白串视为未填）。
+        tests:
+          - not_null
+      - name: zero_cost_amount
+        description: 零成本暴露金额（金额≠0 且成本=0）。**与 lemeng:transfer:zero_cost_exposure_amount 同源**。
+        tests:
+          - not_null
+      - name: zero_cost_rows
+        description: 零成本暴露行数（行数面 L2/消费层用）。
+        tests:
+          - not_null
+      - name: missing_cost_amount
+        description: 缺成本金额（成本 null 且金额≠0；与零成本**不相加**——客户文档「null 不当 0」）。
+        tests:
+          - not_null
+      - name: negative_order_count
+        description: 负金额单数（单头口径）。**与 lemeng:transfer:negative_order_count 同源**。
+        tests:
+          - not_null
+      - name: negative_amount
+        description: 负金额合计（保留负号；不按绝对值变正收入）。
+        tests:
+          - not_null
+
+
 # 复合粒度 **(system_book, bizday, branch_num)** 的唯一性由 singular test 手写（单列的 unique 判不了：
 # 各列各自都不唯一；引 dbt_utils.unique_combination_of_columns 要加 packages.yml —— 多一层依赖、
 # 解析期还要联网，本任务不引入）：

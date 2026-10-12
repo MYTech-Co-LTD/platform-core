@@ -55,7 +55,7 @@ transfer_dom as (
         sum(r_money)            as r_net,
         sum(c_money)            as c_cost,
         count(distinct order_no) as order_count,
-        0::bigint               as line_count
+        count(*)                as line_count
     from transfer_lines
     group by 1, 2, 3
 ),
@@ -68,14 +68,14 @@ wholesale_dom as (
         sum(total_money)::numeric(20,2) as r_net,
         sum(cost_money)::numeric(20,2)  as c_cost,
         count(distinct order_no)        as order_count,
-        0::bigint                       as line_count
+        count(*)                        as line_count
     from (
         select system_book, bizday, branch_num, order_no,
                max(total_money) as total_money,
                max(cost_money)  as cost_money
         from {{ ref('stg_lemeng_wholesale_out') }}
         group by 1, 2, 3, 4
-    )
+    ) o
     group by 1, 2, 3
 ),
 return_dom as (
