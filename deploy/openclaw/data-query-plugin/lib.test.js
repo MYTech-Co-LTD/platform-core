@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { callPlatform, normalizeParams } from "./lib.js";
+import { callPlatform, normalizeParams, toToolResult } from "./lib.js";
 
 test("normalizeParams：对象直传", () => {
   assert.deepEqual(normalizeParams({ metricId: "m1" }), { metricId: "m1" });
@@ -70,4 +70,26 @@ test("200 → ok 回包原样透传（含 subject）", async () => {
   const r = await callPlatform({ ...BASE, fetchImpl: f });
   assert.equal(r.status, "ok");
   assert.equal(r.subject, "shanhaiyiguo-org");
+});
+
+// OpenClaw 工具结果契约（api.registerTool）：execute 必须返回 { content:[{type:"text",text}], details }。
+// 2026-10-12 真机事故：返回纯对象被判 invalid（path ["details","result","content"] expected "array"），
+// list_metrics 每轮连败、模型拿不到词表。这几条锁住该形状 —— 形状就是判据。
+test("toToolResult：对象 → content[]（type=text, text=JSON）+ details 保留原载荷", () => {
+  const r = toToolResult({ status: "ok", subject: "org1" });
+  assert.deepEqual(r.content, [{ type: "text", text: '{"status":"ok","subject":"org1"}' }]);
+  assert.deepEqual(r.details, { status: "ok", subject: "org1" });
+});
+test("toToolResult：字符串直接作为 text", () => {
+  const r = toToolResult("hi");
+  assert.deepEqual(r.content, [{ type: "text", text: "hi" }]);
+  assert.equal(r.details, "hi");
+});
+test("toToolResult：content 恒为数组（回归锁，防再退回纯对象）", () => {
+  for (const p of [{ a: 1 }, { code: "DENIED", error: "x" }, null, "s"]) {
+    const r = toToolResult(p);
+    assert.ok(Array.isArray(r.content), "content 必须是数组");
+    assert.equal(r.content[0].type, "text");
+    assert.equal(typeof r.content[0].text, "string");
+  }
 });

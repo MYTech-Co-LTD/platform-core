@@ -5,7 +5,7 @@
 // 从 ctx.requesterSenderId 取当轮可信 userid，execute 闭包捕获。
 // ⚠️ execute 签名 (toolCallId, params, signal, onUpdate)：第一参是 toolCallId 不是模型参数。
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-import { callPlatform, normalizeParams, DEFAULT_API_BASE } from "./lib.js";
+import { callPlatform, normalizeParams, toToolResult, DEFAULT_API_BASE } from "./lib.js";
 
 const CHANNEL_KEY = process.env.DATA_WECOM_CHANNEL_KEY || "";
 // 同一轮后续工具调用 ctx.requesterSenderId 偶发为空的兜底（对齐生产先例实测行为）。
@@ -48,7 +48,9 @@ export default definePluginEntry({
       if (userId) lastUserId = userId;
       return {
         ...def,
-        execute: (_toolCallId, params) => run(normalizeParams(params), userId),
+        // 必须返回 OpenClaw 工具结果契约形状（含 content[]）——见 lib.js toToolResult。
+        execute: async (_toolCallId, params) =>
+          toToolResult(await run(normalizeParams(params), userId)),
       };
     };
     api.registerTool(
