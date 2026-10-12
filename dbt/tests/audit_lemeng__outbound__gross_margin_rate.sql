@@ -104,7 +104,8 @@ recheck as (
           and u.branch_num = b.branch_num
 ),
 materialized as (
-    select system_book, bizday, domain, branch_num, region_id, r_net, c_cost, g_gross, order_count, line_count
+    select system_book, bizday, domain, branch_num, region_id, r_net, c_cost, g_gross, order_count, line_count,
+           g_gross / nullif(r_net, 0) as g_rate
     from {{ ref('fct_hq_outbound') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 )
@@ -114,12 +115,12 @@ select
     coalesce(a.domain, b.domain) as domain,
     coalesce(a.branch_num, b.branch_num) as branch_num,
     coalesce(a.region_id, b.region_id) as region_id,
-    a.(g_gross / nullif(r_net, 0)) as recheck_value,
-    b.(g_gross / nullif(r_net, 0))     as materialized_value,
+    a.g_rate as recheck_value,
+    b.g_rate as materialized_value,
     '出库毛利率 G/R：复算与物化结果不一致（两侧各自算商，分母 0 行两侧同为 null 不误报）' as note
 from recheck a
 full join materialized b using (system_book, bizday, domain, branch_num, region_id)
-where a.(g_gross / nullif(r_net, 0)) is distinct from b.(g_gross / nullif(r_net, 0))
+where a.g_rate is distinct from b.g_rate
 
 union all
 

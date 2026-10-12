@@ -37,23 +37,26 @@ per_order as (
     group by 1, 2, 3, 4
 )
 select
-    system_book,
+    b.system_book,
     {{ subject_org() }} as org,
-    bizday,
-    branch_num,
+    b.bizday,
+    b.branch_num,
     count(*)                                                          as line_count,
     count(*) filter (
-        where lot_number is not null and trim(lot_number) <> ''
+        where b.lot_number is not null and trim(b.lot_number) <> ''
     )                                                                 as lot_filled_lines,
-    sum(case when coalesce(out_money, 0) <> 0 and coalesce(subtotal, 0) = 0
-             then out_money else 0 end)::numeric(20,2)                as zero_cost_amount,
+    sum(case when coalesce(b.out_money, 0) <> 0 and coalesce(b.subtotal, 0) = 0
+             then b.out_money else 0 end)::numeric(20,2)              as zero_cost_amount,
     count(*) filter (
-        where coalesce(out_money, 0) <> 0 and coalesce(subtotal, 0) = 0
+        where coalesce(b.out_money, 0) <> 0 and coalesce(b.subtotal, 0) = 0
     )                                                                 as zero_cost_rows,
-    sum(case when subtotal is null and coalesce(out_money, 0) <> 0
-             then out_money else 0 end)::numeric(20,2)                as missing_cost_amount,
-    count(distinct case when order_money < 0 then order_no end)       as negative_order_count,
-    sum(case when order_money < 0 then order_money else 0 end)::numeric(20,2) as negative_amount
+    sum(case when b.subtotal is null and coalesce(b.out_money, 0) <> 0
+             then b.out_money else 0 end)::numeric(20,2)              as missing_cost_amount,
+    count(distinct case when p.order_money < 0 then b.order_no end)   as negative_order_count,
+    sum(case when p.order_money < 0 then p.order_money else 0 end)::numeric(20,2) as negative_amount
 from base b
-join per_order p using (system_book, bizday, branch_num, order_no)
-group by 1, 2, 3
+join per_order p on b.system_book = p.system_book
+                and b.bizday = p.bizday
+                and b.branch_num = p.branch_num
+                and b.order_no = p.order_no
+group by 1, 3, 4
