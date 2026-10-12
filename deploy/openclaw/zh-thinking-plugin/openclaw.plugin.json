@@ -1,0 +1,9 @@
+{
+  "id": "zh-thinking",
+  "name": "Chinese Thinking",
+  "description": "把「内部思考与回答一律用简体中文」前置注入系统上下文（before_prompt_build 钩子，issue #587）。",
+  "version": "0.1.0",
+  "configSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+  "activation": { "onStartup": true },
+  "contracts": { "hooks": ["before_prompt_build"] }
+}

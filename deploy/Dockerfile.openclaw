@@ -30,6 +30,11 @@ FROM ghcr.io/openclaw/openclaw@sha256:7f10d5cc975a90b65192eaa099454fe33ce8ce2390
 #   （目标路径原本是 bind 的挂载点，改构建期 COPY 后**逐字不变**，Task 4 命令无需改。）
 # 官方镜像的 USER（node）/ ENTRYPOINT / CMD / 健康检查语义一律不动。
 COPY deploy/openclaw/data-query-plugin /opt/plugins/data-query-plugin
+# 中文思考插件（issue #587）：只注册一个 before_prompt_build 钩子把语言要求前置注入系统上下文。
+# 运行时另需两步（见 deploy/openship-adopt.md 或 #587 验收记录）：
+#   ① openclaw plugins install -l /opt/plugins/zh-thinking-plugin --force
+#   ② 配置 plugins.entries.zh-thinking.hooks.allowConversationAccess=true（不然钩子被静默挡住）
+COPY deploy/openclaw/zh-thinking-plugin /opt/plugins/zh-thinking-plugin
 
 # ── 官方企微插件 vendor 进镜像（构建期固定路径）──────────────────────────────
 # 目的：让「思考过程流式展示」补丁**可复现、可退场**（spec 2026-10-12-…-reasoning-stream-design.md §2.1）。
