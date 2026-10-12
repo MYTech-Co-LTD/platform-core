@@ -210,11 +210,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -282,11 +282,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -354,11 +354,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -426,11 +426,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -498,11 +498,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -570,11 +570,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -642,11 +642,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -714,11 +714,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -786,11 +786,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -858,11 +858,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -930,11 +930,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -1002,11 +1002,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -1074,11 +1074,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -1146,11 +1146,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -1218,11 +1218,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -1290,11 +1290,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -1362,11 +1362,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -1434,11 +1434,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
@@ -1506,11 +1506,11 @@
           },
           {
             "name": "wholesale_order_total_money",
-            "type": "object"
+            "type": "decimal"
           },
           {
             "name": "wholesale_order_cost_money",
-            "type": "object"
+            "type": "decimal"
           }
         ],
         "properties": {
