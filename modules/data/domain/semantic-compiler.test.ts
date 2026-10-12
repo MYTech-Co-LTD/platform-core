@@ -387,6 +387,116 @@ describePg('compileL2 产物在真库上可执行（需要 DATABASE_URL）', () 
     expect(r.rowCount).toBe(1)
     expect(Number(r.rows[0].value)).toBe(157)
   })
+
+  // ── B 中档（expr）在真库上：比例类测度的端到端（增补 §6.5 的「产物真的能跑」那一半）──────
+  // 为什么必须有这一段：expr 的产物形状与 refine 同形，但**语义不同**——refine 是上滚，
+  // expr 是**比值**。比值有两点只能靠执行验：① 每主体一行（不是按日展开）；② 0 分母得 NULL。
+  // 字符串断言对这两点一字不判（`NULLIF` 在不在串里 ≠ 它真把 0 变成了 NULL）。
+  it('★ expr：div(净销售额 / 订单数) —— 每主体一行的比值正确，且 0 分母 ⇒ NULL（不是 0）', async () => {
+    await seedStandin()
+    // 两条 L1 必须同关系 / 同 grain / 同主体列（否则 MIXED_BASE）—— l1() 的默认值已保证后两者
+    const netSales = l1({
+      selectSql: `select sum(${SCHEMA}.fct_retail_sale.net_amount) as value, system_book, bizday from ${SCHEMA}.fct_retail_sale`,
+    })
+    const orderCount = l1({
+      id: 'lemeng:retail:order_count',
+      title: '订单数',
+      selectSql: `select sum(${SCHEMA}.fct_retail_sale.order_count) as value, system_book, bizday from ${SCHEMA}.fct_retail_sale`,
+    })
+    const { selectSql, groupBy } = compileL2([netSales, orderCount], {
+      visibility: { dims: ['system_book'] },
+      op: {
+        kind: 'expr',
+        expr: {
+          kind: 'div',
+          left: { kind: 'ref', id: netSales.id },
+          right: { kind: 'ref', id: orderCount.id },
+        },
+      },
+    })
+    const sql = authorizeLike({ ...netSales, selectSql }, 'acme', groupBy)
+
+    // 种子数据自身成对：3120 → net=150,cnt=3；64188 → net=7,cnt=1（不是另造一份数）
+    const r = await pool.query(sql)
+    expect(r.rowCount, '按 system_book 聚合应当每主体一行（跟着 bizday 展开就说明可见维度没生效）').toBe(2)
+    expect(Number(r.rows.find((x) => x.system_book === '3120')?.value)).toBe(50)
+    expect(Number(r.rows.find((x) => x.system_book === '64188')?.value)).toBe(7)
+
+    // 0 分母：net=12 / cnt=0 ⇒ **NULL**（NULLIF 守卫的端到端证据；0 会污染下游均值/累计）
+    const zeroBook = '90000'
+    await pool.query(
+      `insert into ${SCHEMA}.fct_retail_sale (org, system_book, bizday, net_amount, order_count)
+       values ($1, $2, $3, $4, $5)`,
+      ['acme', zeroBook, '2026-01-01', 12, 0],
+    )
+    try {
+      const r2 = await pool.query(sql)
+      expect(r2.rowCount).toBe(3)
+      const zero = r2.rows.find((x) => x.system_book === zeroBook)
+      expect(zero, '刚插进去的 0 分母行没出现在结果里').toBeDefined()
+      expect(zero?.value, '0 分母算出了值（NULLIF 守卫没生效？）').toBeNull()
+    } finally {
+      // **只删本用例插的那一行**：替身 schema 是兄弟用例共用的（全局清理会砍掉它们的夹具）
+      await pool.query(
+        `delete from ${SCHEMA}.fct_retail_sale where org = $1 and system_book = $2 and bizday = $3`,
+        ['acme', zeroBook, '2026-01-01'],
+      )
+    }
+  })
+})
+
+// ── 客单价：与**手写**期望 SQL 逐字相等（增补 §6.5）──────────────────────────────
+// 期望串是**手推**出来的，不是把编译产物粘回来（粘回来 = 恒真断言，一文不值）。推法：
+//   ① ref → `parseL1Select(selectSql).expression` **逐字**（不重写口径）
+//        ⇒ `sum(fct_retail_sale.net_amount)` / `sum(fct_retail_sale.order_count)`
+//   ② div → `(左) / NULLIF((右), 0)`（renderExprNode 的 div 支；守卫由编译器注入）
+//   ③ 产物 = `select <表达式> as value[, <可见维度>] from <关系>`（增补 §4.1）
+//        可见维度省略 = 继承共享 grain（= 两条 L1 的 groupBy 全部）
+// 两条 L1 的 select_sql 里**不写维度列**（维度由 groupBy 决定，唯一来源就是它）——
+// 这正是 parseL1Select 契约允许的形态：`select <表达式> as value from <关系>`。
+describe('L2 · B 中档 · 客单价逐字（增补 §6.5）', () => {
+  const netSales: MetricRow = {
+    ...l1(),
+    id: 'lemeng:retail:net_sales',
+    title: '净销售额',
+    selectSql: 'select sum(fct_retail_sale.net_amount) as value from fct_retail_sale',
+    groupBy: 'system_book, bizday',
+    subjectColumn: 'system_book',
+  }
+  const orderCount: MetricRow = {
+    ...netSales,
+    id: 'lemeng:retail:order_count',
+    title: '订单数',
+    selectSql: 'select sum(fct_retail_sale.order_count) as value from fct_retail_sale',
+  }
+
+  it('div(ref:net_sales, ref:order_count) 的 selectSql 逐字相等', () => {
+    const out = compileL2([netSales, orderCount], {
+      op: {
+        kind: 'expr',
+        expr: { kind: 'div', left: { kind: 'ref', id: netSales.id }, right: { kind: 'ref', id: orderCount.id } },
+      },
+    })
+    expect(out.selectSql).toBe(
+      'select (sum(fct_retail_sale.net_amount)) / NULLIF((sum(fct_retail_sale.order_count)), 0) as value, system_book, bizday from fct_retail_sale',
+    )
+    expect(out.groupBy).toBe('system_book, bizday')
+    expect(out.subjectColumn).toBe('system_book')
+  })
+
+  it('可见维度收窄后，表达式部分逐字不变（只有维度列表变）', () => {
+    const out = compileL2([netSales, orderCount], {
+      visibility: { dims: ['system_book'] },
+      op: {
+        kind: 'expr',
+        expr: { kind: 'div', left: { kind: 'ref', id: netSales.id }, right: { kind: 'ref', id: orderCount.id } },
+      },
+    })
+    expect(out.selectSql).toBe(
+      'select (sum(fct_retail_sale.net_amount)) / NULLIF((sum(fct_retail_sale.order_count)), 0) as value, system_book from fct_retail_sale',
+    )
+    expect(out.groupBy).toBe('system_book')
+  })
 })
 
 describe('L2 · B 中档（受限表达式）', () => {
