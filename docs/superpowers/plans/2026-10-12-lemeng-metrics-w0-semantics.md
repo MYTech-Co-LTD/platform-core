@@ -19,7 +19,7 @@
 - tier 保持 `experimental`（裁1 客户回签前不转 certified）。
 - 提交纪律：一个 issue（执行前建）+ 一个 PR（`Closes #N`）；commit 用 `type(scope): subject`；CHANGELOG 不手写。
 - 真机操作（部署/触发 job/查日志）一律走 **openship MCP**，不裸 SSH。
-- 本机验证面 = `pnpm typecheck:scripts` + `pnpm test:guard` + `node scripts/check-data-models.mjs`；dbt 模型正确性在**数据面真机**验收（Task 6），本机绿 ≠ 真机绿。
+- 本机验证面 = `pnpm typecheck:scripts` + `pnpm test:guard` + `pnpm exec tsx scripts/check-data-models.mjs`；dbt 模型正确性在**数据面真机**验收（Task 6），本机绿 ≠ 真机绿。
 
 ---
 
@@ -242,7 +242,7 @@ export function ratioShapeError(decl) {
 
 ```bash
 pnpm exec vitest run scripts/check-data-models.test.ts
-node scripts/check-data-models.mjs   # 现仓（两条 expression 声明）必须仍全绿
+pnpm exec tsx scripts/check-data-models.mjs   # 现仓（两条 expression 声明）必须仍全绿
 ```
 Expected: 单测全 PASS；门禁 exit 0。
 
@@ -307,7 +307,7 @@ git commit -m "feat(data): 门禁规则 ⑤ 支持 ratio 声明形状（互斥/�
 
 - [ ] **Step 3: 门禁自证**
 
-Run: `node scripts/check-data-models.mjs && pnpm exec vitest run scripts/sync-data-semantics.test.ts`
+Run: `pnpm exec tsx scripts/check-data-models.mjs && pnpm exec vitest run scripts/sync-data-semantics.test.ts`
 Expected: 全绿（grain 三列、definition 更新都在声明契约内）。此刻 fct 还没实现新口径——**声明与实现的窗口期只活在本 PR 内**（同 PR 的 Task 4 关掉它），这是「口径先行」的既定形态（fct 头注原话：不许实现倒逼定义）。
 
 - [ ] **Step 4: 提交**
@@ -476,7 +476,7 @@ where not exists (select 1 from materialized)
 - [ ] **Step 5: 本机验证面**
 
 ```bash
-node scripts/check-data-models.mjs && pnpm typecheck:scripts && pnpm test:guard
+pnpm exec tsx scripts/check-data-models.mjs && pnpm typecheck:scripts && pnpm test:guard
 ```
 Expected: 全绿。SQL 本身本机跑不了（无 dbt/pg_duckdb）——真机验收在 Task 6。
 
