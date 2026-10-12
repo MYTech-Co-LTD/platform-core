@@ -528,6 +528,31 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     // 正例对照：去掉多余键就 201（对偶不是「一律拒」；否则上面那批 400 一文不值）
     expect((await post(exprBody({ id: 'l2_duplex_ok' }))).status).toBe(201)
   })
+
+  // ── 病态深度：深到量纲闸**之前**的解析/校验栈 ───────────────────────────────────
+  // 已知边界（见 `modules/data/README.md`「L2 的已知边界」）：`EXPR_MAX_DEPTH` / `EXPR_MAX_REFS`
+  // 在 zod 解析**之后**才生效 ⇒ 超深输入的拒绝路径**不保证**是 400。这条用例只钉住那唯一一条保证：
+  // **绝不能被建成合法声明**。
+  // 实测的失败点：zod 的 `z.lazy` 递归校验先爆栈（`RangeError: Maximum call stack size exceeded`），
+  // 早于 `scanExpr` 的迭代走法 —— 这正是「先解析、后量纲」的实证。⚠️ 实跑状态码**不写进断言**
+  // （把实际输出抄成期望值 = 恒真断言），只记进 README 的实测值。
+  it('★ 病态深度的裸 JSON 体：不会被接受为合法声明（深度闸之前还有一层解析/校验栈）', async () => {
+    // 手工拼串：`JSON.stringify` 自己会先爆栈，故逐层拼字符串
+    let node = '{"kind":"num","value":1}'
+    for (let i = 0; i < 5000; i++) node = `{"kind":"add","left":${node},"right":{"kind":"num","value":1}}`
+    const raw = `{"id":"deep:probe","op":{"kind":"expr","expr":${node}}}`
+    const res = await app(ORG, ['data:manage', 'data:query']).request('/metrics', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: raw,
+    })
+    // 判据只有一条：**绝不能被当成合法声明建出来**（具体状态码是实测值，不在此写死）
+    expect(res.status, '超深输入竟被建成合法声明').not.toBe(201)
+    // 也**不该**留在词表里（防「主路径拒了、却留了半条行」）
+    const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json() as {
+      metrics: { id: string }[] }
+    expect(all.metrics.map((m) => m.id)).not.toContain('deep:probe')
+  })
 })
 
 // ── B 中档 · schema ↔ compiler 对偶（增补 §6.2 的**行为侧**）· 纯逻辑三条 ──────────
