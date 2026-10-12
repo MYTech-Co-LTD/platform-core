@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.106.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.0...v0.106.1) - 2026-10-12
+- 【修复】data: 管线 schema 申报 object→decimal（duckle 枚举） ([#607](https://github.com/MYTech-Co-LTD/platform-core/pull/607), [7820812](https://github.com/MYTech-Co-LTD/platform-core/commit/7820812b5872824dbdb9804d1f7b605a3ba61637))
+
+
 ## [0.106.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.105.0...v0.106.0) - 2026-10-12
 - 【修复】data: 生成器豁免回填变体管线（.backfill. 文件名） ([#606](https://github.com/MYTech-Co-LTD/platform-core/pull/606), [ae9a6c6](https://github.com/MYTech-Co-LTD/platform-core/commit/ae9a6c6096c163b0d13b4375d8d9b73494d9c539))
 - 【新增】data: 批发销售回填变体管线（BIZDAY 参数化） ([#605](https://github.com/MYTech-Co-LTD/platform-core/pull/605), [129d847](https://github.com/MYTech-Co-LTD/platform-core/commit/129d8470caa993e271ae0e0a0da9c57c77016b7b))
