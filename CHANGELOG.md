@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.98.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.98.3...v0.98.4) - 2026-10-12
+- 【修复】openclaw: data-query 插件工具返回形状对齐 OpenClaw 契约（补 content[]） ([#578](https://github.com/MYTech-Co-LTD/platform-core/pull/578), [c01e843](https://github.com/MYTech-Co-LTD/platform-core/commit/c01e843e2610775018a1eb656ca1c48ad27c427e))
+
+
 ## [0.98.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.98.2...v0.98.3) - 2026-10-10
 - 【修复】openclaw: Dockerfile.openclaw 的 FROM 行尾注释致 dockerfile 解析失败 ([#571](https://github.com/MYTech-Co-LTD/platform-core/pull/571), [9383f82](https://github.com/MYTech-Co-LTD/platform-core/commit/9383f82fbe3438793fc7c9c3bb5a200617907186))
 
