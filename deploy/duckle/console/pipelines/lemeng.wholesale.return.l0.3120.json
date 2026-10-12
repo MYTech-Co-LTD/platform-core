@@ -169,31 +169,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -201,11 +181,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -233,31 +225,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -265,11 +237,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -297,31 +281,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -329,11 +293,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -361,31 +337,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -393,11 +349,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -425,31 +393,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -457,11 +405,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -489,31 +449,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -521,11 +461,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -553,31 +505,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -585,11 +517,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -617,31 +561,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -649,11 +573,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -681,31 +617,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -713,11 +629,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -745,31 +673,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -777,11 +685,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -809,31 +729,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -841,11 +741,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -873,31 +785,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -905,11 +797,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -937,31 +841,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -969,11 +853,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -1001,31 +897,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -1033,11 +909,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -1065,31 +953,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -1097,11 +965,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -1129,31 +1009,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -1161,11 +1021,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -1193,31 +1065,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -1225,11 +1077,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -1257,31 +1121,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -1289,11 +1133,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
@@ -1321,31 +1177,11 @@
         "componentId": "src.rest",
         "schema": [
           {
+            "name": "wholesale_return_fid",
+            "type": "string"
+          },
+          {
             "name": "wholesale_order_fid",
-            "type": "string"
-          },
-          {
-            "name": "client_fid",
-            "type": "string"
-          },
-          {
-            "name": "state",
-            "type": "json"
-          },
-          {
-            "name": "wholesale_order_date",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_create_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_audit_time",
-            "type": "string"
-          },
-          {
-            "name": "wholesale_order_last_edit_time",
             "type": "string"
           },
           {
@@ -1353,11 +1189,23 @@
             "type": "int64"
           },
           {
-            "name": "storehouse_num",
-            "type": "int64"
+            "name": "client_fid",
+            "type": "string"
           },
           {
-            "name": "wholesale_order_details",
+            "name": "wholesale_return_audit_time",
+            "type": "string"
+          },
+          {
+            "name": "wholesale_return_total_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_cost_money",
+            "type": "object"
+          },
+          {
+            "name": "wholesale_return_details",
             "type": "json"
           }
         ],
