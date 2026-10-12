@@ -7,7 +7,8 @@
 //   ① 自跳过：目标源码已含 onReasoningStream ⇒ 上游已支持 ⇒ **不打补丁、不改一字**
 //              （「官方做了能低成本切回官方」的落点：上游一发布，本步骤自动失效）
 //   ② 幂等：重复执行结果一致（以 MARKER 识别「已打」）
-//   ③ 最小：**三个注入点**（顶层 import / replyOptions 内一个回调 / **占位文字常量**），实现体在独立文件
+//   ③ 最小：**五个注入点**（顶层 import / replyOptions 内一个回调 / 占位文字常量 /
+//            终帧投递行 `text: displayText,` / finish 帧行 `text: finishText,`），实现体在独立文件
 //            reasoning-bridge.mjs；整体回退 = 删掉构建期这一步
 //   ④ 失败要响：找不到锚点 / 打完语法不过 ⇒ **非零退出**（宁可构建失败，不可静默降级）
 //
@@ -21,6 +22,9 @@
 //   · 回调体用到的 `state / wsClient / frame / runtime / sendWeComReply` 均在同一函数作用域内
 //   · 占位锚点 `text: THINKING_MESSAGE,` 在 dist/src/monitor.js 内**唯一**（sendThinkingReply 内，
 //     触发时机 dispatcherOptions.onReplyStart，热态实测 ~0.1s 即发出）——issue #594
+//   · 终帧锚点 `text: displayText,`（流式投递的最后一帧）与 `text: finishText,`
+//     （finishThinkingStream 的 finish 帧）在 dist/src/monitor.js 内各**唯一**——issue #596
+//     （2026-10-12 实测：count 均 =1；真机四轮实验定型折叠帧契约，见 reasoning-bridge.mjs 头注）
 
 import fs from "node:fs";
 import path from "node:path";
@@ -34,6 +38,10 @@ const UPSTREAM_SIGNAL = "onReasoningStream";
 const ANCHOR = "replyOptions: {";
 /** 注入点 3 锚点：官方占位文本的使用处（须**全文件唯一**）——issue #594 */
 const PLACEHOLDER_ANCHOR = "text: THINKING_MESSAGE,";
+/** 注入点 4 锚点：流式投递最后一帧的正文行（须**全文件唯一**）——issue #596 */
+const DELIVER_ANCHOR = "text: displayText,";
+/** 注入点 5 锚点：finishThinkingStream finish 帧的正文行（须**全文件唯一**）——issue #596 */
+const FINISH_ANCHOR = "text: finishText,";
 /** WS 路径实现文件的候选位置（不同打包形态） */
 const WS_CANDIDATES = ["dist/src/monitor.js", "dist/src/monitor.mjs"];
 /** 默认 bridge 实现路径（构建期 COPY 进镜像的固定位置） */
@@ -94,8 +102,10 @@ const anchorAt = out.indexOf(ANCHOR);
 if (anchorAt < 0) die("内部错误：插入 import 后锚点丢失。");
 const insertAt = anchorAt + ANCHOR.length;
 const callback = `
-                // 「思考过程流式展示」桥（issue #580）：思考流式进 <think>，正文一到即让位。
-                // 用户口径：有正式内容后只展示正式内容；未闭合态让企微在「思考中」里展开。
+                // 「思考过程流式展示」桥（issue #580；#596 折叠定型）：思考流式进**未闭合** <think>，
+                //   维持企微「思考通道态」（内容不显示、思考中状态持续）；终帧（下方注入点 4/5）才闭合
+                //   且思考+正文同帧 ⇒ 客户端把思考**折叠成条**、点击展开。折叠要求终帧落地时处于通道态，
+                //   故中间帧**绝不能闭合**（闭合文字块 = 文本态 = 终帧不折叠，V1 实测）。
                 onReasoningStream: async (payload) => {
                     try {
                         if (!state.streamId || state.streamExpired) return;
@@ -117,9 +127,8 @@ const callback = `
                             runtime,
                             finish: false,
                             streamId: state.streamId,
-                            // ⚠️ 必须**闭合发送**：企微只在 <think>…</think> **闭合后**才渲染思考内容，
-                            //    未闭合只驱动「思考中」动画（内容永不显示）——2026-10-12 真机实测，issue #585。
-                            text: __wrbBuild({ reasoningText: text, visibleText: "", finish: true }),
+                            // ⚠️ **未闭合发送**：维持思考通道态（#596 帧契约，见 reasoning-bridge.mjs 头注）。
+                            text: __wrbBuild({ reasoningText: text, visibleText: "", finish: false }),
                         });
                     } catch (e) {
                         runtime.log?.(\`[wecom][reasoning-bridge] \${String(e)}\`);
@@ -127,8 +136,9 @@ const callback = `
                 },`;
 out = out.slice(0, insertAt) + callback + out.slice(insertAt);
 
-// 注入点 3：占位文字（issue #594）——官方占位是硬编码空 `<think></think>`（⇒ 企微转原生「思考中」动画）。
-// 换成桥导出的**带文字**占位 ⇒ 用户从文字起步，思考到达后原位顶替，消除「动画→文字」跳变。
+// 注入点 3：占位文字（issue #594 引入；#596 起与官方常量**同值**仍保留）——把占位收编到桥的单一事实源：
+// 官方硬编码 `THINKING_MESSAGE` 换成桥导出的 PLACEHOLDER_TEXT（现为闭合空块 ⇒ 原生动画，见桥头注）。
+// 值虽同形，占位的形态演进（如改未闭合）只动桥一处、不动本文件。
 // 锚点必须**全文件唯一**：0 次（上游结构变了）或 >1 次（会改错地方）都宁可失败退出。
 const placeholderHits = out.split(PLACEHOLDER_ANCHOR).length - 1;
 if (placeholderHits !== 1) {
@@ -139,7 +149,32 @@ if (placeholderHits !== 1) {
 }
 out = out.replace(PLACEHOLDER_ANCHOR, "text: __wrbPlaceholder,");
 
-log(`注入完成：import ✓ / onReasoningStream ✓ / 占位文字 ✓（bridge=${bridgePath}）`);
+// 注入点 4/5（issue #596 折叠定型）：两个终帧正文行换成「思考+正文」同帧**闭合**形态
+// ⇒ 终帧落地时客户端处于通道态（注入点 2 的未闭合帧维持）⇒ 思考折叠成条、点击展开。
+// 无思考时 __wrbBuild 原样返回正文 —— 退场一致性不变（判据：与未打补丁逐字一致）。
+for (const [anchor, replacement, label] of [
+  [
+    DELIVER_ANCHOR,
+    "text: __wrbBuild({ reasoningText: state.reasoningText, visibleText: displayText, finish: true }),",
+    "终帧投递",
+  ],
+  [
+    FINISH_ANCHOR,
+    "text: __wrbBuild({ reasoningText: state.reasoningText, visibleText: finishText, finish: true }),",
+    "finish 帧",
+  ],
+]) {
+  const hits = out.split(anchor).length - 1;
+  if (hits !== 1) {
+    die(
+      `${label}锚点 ${JSON.stringify(anchor)} 出现 ${hits} 次（要求恰好 1 次）` +
+        ` —— 上游结构可能已变，请人工核对后再升版本号。`,
+    );
+  }
+  out = out.replace(anchor, replacement);
+}
+
+log(`注入完成：import ✓ / onReasoningStream ✓ / 占位文字 ✓ / 终帧投递 ✓ / finish 帧 ✓（bridge=${bridgePath}）`);
 
 if (checkOnly) {
   log("--check：检查通过（不写盘）。");
