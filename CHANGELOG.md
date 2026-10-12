@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.100.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.100.0...v0.100.1) - 2026-10-12
+- 【修复】openclaw: zh-thinking 钩子注册 API 用错——公开 API 是 api.on，加兼容垫片 ([#590](https://github.com/MYTech-Co-LTD/platform-core/pull/590), [6e91572](https://github.com/MYTech-Co-LTD/platform-core/commit/6e915721688409999921757bcae2c104f5ffe5be))
+
+
 ## [0.100.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.99.1...v0.100.0) - 2026-10-12
 - 【新增】openclaw: 中文思考插件——before_prompt_build 钩子前置注入语言要求 ([#588](https://github.com/MYTech-Co-LTD/platform-core/pull/588), [f8ca44b](https://github.com/MYTech-Co-LTD/platform-core/commit/f8ca44b54cd29e9368fca2df937550a7401d612f))
 
