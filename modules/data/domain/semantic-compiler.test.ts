@@ -661,3 +661,121 @@ describe('L2 · B 中档（受限表达式）', () => {
     expect(out.selectSql).not.toMatch(FORBIDDEN_SQL_RE)
   })
 })
+
+// ── 逐节点可达集：穷举单节点 + 组合片段的白名单（增补 §6.1）──────────────────────
+// 「可达集」能逐节点枚举，是因为渲染**只有一点**（renderExprNode 的穷尽 switch，default 把
+// node 赋给 never）。这里钉两件事：
+//   ① 片段字符集（白名单正则）—— 任何节点都不许渲染出引号 / 分号 / DDL 关键字；
+//   ② 括号结构可复现 —— 同一棵树两次渲染逐字相同（渲染必须是纯函数）。
+// 组合片段的期望串是**按渲染规则手推**的（见下方用例内注释），不是把产物粘回来 —— 粘回来 =
+// 恒真断言，一文不值（Step 4「客单价逐字」同理）。
+describe('L2 · B 中档 · 逐节点可达集（增补 §6.1）', () => {
+  const REF_EXPR = new Map([['a', 'sum(t.x)'], ['b', 'sum(t.y)']])
+  const num = (v: number): ExprNode => ({ kind: 'num', value: v })
+  const ref = (id: string): ExprNode => ({ kind: 'ref', id })
+
+  // 片段白名单：只许标识符、点、括号、四则、空白、数字、**逗号**。
+  // 逗号只可能来自编译器注入的 `NULLIF((分母), 0)` 守卫（div 支），不是输入 ⇒ 白名单的本意
+  // 「不许出现引号 / 分号 / DDL 关键字」不受损；也正因如此 div **不必**从扫描里摘出去。
+  const FRAGMENT_RE = /^[A-Za-z0-9_.()+\-*,\/\s]+$/
+
+  it('每个 node kind 渲染出的片段只含白名单字符', () => {
+    const nodes: ExprNode[] = [
+      num(3), ref('a'),
+      { kind: 'add', left: num(1), right: num(2) },
+      { kind: 'sub', left: num(1), right: num(2) },
+      { kind: 'mul', left: num(1), right: num(2) },
+      { kind: 'div', left: num(1), right: num(2) },
+    ]
+    for (const n of nodes) {
+      const sql = renderExprNode(n, REF_EXPR)
+      expect(sql).toMatch(FRAGMENT_RE)
+    }
+  })
+
+  it('NULLIF 只可能出现在 div 上（其它 kind 不注入守卫）', () => {
+    expect(renderExprNode({ kind: 'add', left: num(1), right: num(2) }, REF_EXPR)).not.toContain('NULLIF')
+    expect(renderExprNode({ kind: 'sub', left: num(1), right: num(2) }, REF_EXPR)).not.toContain('NULLIF')
+    expect(renderExprNode({ kind: 'mul', left: num(1), right: num(2) }, REF_EXPR)).not.toContain('NULLIF')
+    expect(renderExprNode({ kind: 'div', left: num(1), right: num(2) }, REF_EXPR)).toContain('NULLIF')
+  })
+
+  // 手推（不是粘贴产物）：`add/sub/mul → (左) op (右)`；`num 3 → 3`；`div → (左) / NULLIF((右), 0)`。
+  // 于是这棵树 = `((sum(t.x)) + (3)) / NULLIF(((sum(t.y)) * (2)), 0)`。
+  // ⚠️ 注意每层括号都算：ref 那支**不再**额外加括号，是它外面的算符支加的（故 `(sum(t.x))` 双层）。
+  it('嵌套渲染的括号结构可复现（同一棵树两次渲染逐字相同）', () => {
+    const tree: ExprNode = {
+      kind: 'div',
+      left: { kind: 'add', left: ref('a'), right: num(3) },
+      right: { kind: 'mul', left: ref('b'), right: num(2) },
+    }
+    expect(renderExprNode(tree, REF_EXPR)).toBe('((sum(t.x)) + (3)) / NULLIF(((sum(t.y)) * (2)), 0)')
+    expect(renderExprNode(tree, REF_EXPR)).toBe(renderExprNode(tree, REF_EXPR))
+  })
+})
+
+// ── 随机树 fuzz：1200 棵随机树 = 可达集的**上界**抽样（增广补 §6.3）────────────────
+// 穷举（上一个块）证明「每个节点单独安全」；这里证明「**组合起来**也安全」——
+// 随机长树，但产物恒是纯 SELECT、恒能被 parseL1Select 认回、恒带 ` as value`。
+// 确定性 PRNG（LCG，同一个种子长同一棵树）⇒ fuzz 一旦失败可逐字复现，不是「偶发」。
+describe('L2 · B 中档 · 随机树 fuzz（增广补 §6.3）', () => {
+  const base = l1()
+  const catalog = [base, { ...base, id: 'standin:clone' }]
+  const ids = catalog.map((m) => m.id)
+
+  /** 确定性 PRNG（LCG）：同一个种子永远长同一棵树 —— fuzz 失败必须可复现。 */
+  const makeRng = (seed: number) => {
+    let s = seed >>> 0
+    return () => {
+      s = (s * 1664525 + 1013904223) >>> 0
+      return s / 0x100000000
+    }
+  }
+
+  /**
+   * 随机树：叶子按 rng 交替 ref/num；到 level≥5 就强制收成叶子（避免把树长到量纲闸上）。
+   * `st.refSeen` 保证**整棵树至少含一个 ref**：首片叶子强制收成 ref。
+   * 为什么必须：零 ref 的纯字面量树按设计会被 compileExpr 判 `BAD_DECL`（"拼不出 from 子句"，
+   * 上面 :572 已有用例单独钉住这一条）—— 混进 fuzz 只会让 catch 分支因为**别的理由**炸，
+   * 既遮蔽真实覆盖、又不增加任何新信息。所以 fuzz 的输入域是「至少一个 ref 的树」。
+   */
+  const randomExpr = (rng: () => number, level: number, st: { refSeen: boolean }): ExprNode => {
+    if (level >= 5 || rng() < 0.25) {
+      if (!st.refSeen) {
+        st.refSeen = true
+        return { kind: 'ref', id: ids[Math.floor(rng() * ids.length)]! }
+      }
+      return rng() < 0.6
+        ? { kind: 'ref', id: ids[Math.floor(rng() * ids.length)]! }
+        : { kind: 'num', value: Math.floor(rng() * 100) + 1 }
+    }
+    const ops = ['add', 'sub', 'mul', 'div'] as const
+    return {
+      kind: ops[Math.floor(rng() * ops.length)]!,
+      left: randomExpr(rng, level + 1, st),
+      right: randomExpr(rng, level + 1, st),
+    }
+  }
+
+  it('≥1000 棵随机树：编译产物恒是纯 SELECT 且不含任何 DDL/DML 关键字', () => {
+    let compiled = 0
+    for (let i = 0; i < 1200; i++) {
+      const rng = makeRng(0x5eed + i)
+      const decl = { op: { kind: 'expr', expr: randomExpr(rng, 1, { refSeen: false }) } } as L2Declaration
+      let out
+      try {
+        out = compileL2(catalog, decl)
+      } catch (e) {
+        // 只允许量纲闸把它拦下（深度/引用条数）；其它错误码是真缺陷
+        expect((e as { code?: string }).code).toBe('EXPR_DEPTH_EXCEEDED')
+        continue
+      }
+      compiled += 1
+      expect(() => parseL1Select(out.selectSql)).not.toThrow()
+      expect(out.selectSql).not.toMatch(FORBIDDEN_SQL_RE)
+      expect(out.selectSql).toContain(' as value')
+    }
+    // 别让"全都被拦下"伪装成通过
+    expect(compiled).toBeGreaterThan(900)
+  })
+})
