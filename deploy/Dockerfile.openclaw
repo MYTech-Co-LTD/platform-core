@@ -30,3 +30,21 @@ FROM ghcr.io/openclaw/openclaw@sha256:7f10d5cc975a90b65192eaa099454fe33ce8ce2390
 #   （目标路径原本是 bind 的挂载点，改构建期 COPY 后**逐字不变**，Task 4 命令无需改。）
 # 官方镜像的 USER（node）/ ENTRYPOINT / CMD / 健康检查语义一律不动。
 COPY deploy/openclaw/data-query-plugin /opt/plugins/data-query-plugin
+
+# ── 官方企微插件 vendor 进镜像（构建期固定路径）──────────────────────────────
+# 目的：让「思考过程流式展示」补丁**可复现、可退场**（spec 2026-10-12-…-reasoning-stream-design.md §2.1）。
+# ⚠️ 期 1（issue #580）**只 vendor + 跑补丁骨架自检**（探测 / 自跳过 / 锚点定位），
+#    **不改变运行时加载**（仍在用 state 卷里那份手装副本）；期 2 才切到本路径并注入 bridge。
+# 补丁脚本自带「上游已实现 onReasoningStream 即跳过」判据 ⇒ **官方做了自动让路，删本步骤即可**。
+#
+# /opt 属 root，而本镜像 `Config.User=node`（实测）⇒ 必须显式切 root 安装、装完切回 node，
+# 否则 RUN 以 node 身份写 /opt 会 EACCES，构建直接失败。（切回 node 与镜像原语义一致。）
+USER root
+COPY deploy/openclaw/wecom-plugin-patch /opt/plugins/wecom-plugin-patch
+RUN mkdir -p /opt/plugins/wecom-openclaw-plugin \
+ && npm install --prefix /opt/plugins/wecom-openclaw-plugin --no-audit --no-fund \
+      @wecom/wecom-openclaw-plugin@2026.9.15 \
+ && node /opt/plugins/wecom-plugin-patch/apply.mjs \
+      /opt/plugins/wecom-openclaw-plugin/node_modules/@wecom/wecom-openclaw-plugin \
+ && chown -R node:node /opt/plugins/wecom-openclaw-plugin /opt/plugins/wecom-plugin-patch
+USER node
