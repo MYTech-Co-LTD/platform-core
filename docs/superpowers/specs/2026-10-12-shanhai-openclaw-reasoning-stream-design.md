@@ -37,6 +37,8 @@
 
 > **不得**把补丁做成「散落多处的源码改动」——必须是**固定、可枚举的少量注入点**（当前 **5 个**：顶层 import / `replyOptions` 内 `onReasoningStream` / 占位文字 `text: THINKING_MESSAGE` / 终帧投递行 `text: displayText` / finish 帧行 `text: finishText`——后两处为 #596 折叠定型新增，锚点同样**验唯一**，不唯一即失败退出）+ **独立实现文件**（`reasoning-bridge.mjs`），保证可读、可撤、可 rebase。
 
+> 升级企微插件版本时的**三态动作清单**（含「自跳过只认回调存在、不验帧形态」的盲区与真机复验要求）见 `deploy/openclaw/wecom-plugin-patch/README.md`（2026-10-12 定案）。
+
 ### 2.2 补丁内容（四块，参考实现已读全）
 
 1. **桥接**：在插件 WS 路径的 `replyOptions` 注入 `onReasoningStream(payload) → state.reasoningText`。
