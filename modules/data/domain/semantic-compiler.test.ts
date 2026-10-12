@@ -14,10 +14,14 @@ import type { MetricRow } from './metric-store'
 import {
   SemanticCompileError,
   compileL2,
+  collectRefIds,
   dimensionNamesOf,
   parseL1Select,
+  renderExprNode,
   resolveL1Base,
+  FORBIDDEN_SQL_RE,
 } from './semantic-compiler'
+import type { ExprNode, L2Declaration, L2RefineDeclaration } from './semantic-compiler'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -69,7 +73,7 @@ const L1_CATALOG: MetricRow[] = [
 ]
 
 /** 最小合法声明；各用例只覆盖自己关心的字段。 */
-const decl = (over: Partial<Parameters<typeof compileL2>[1]> = {}) => ({
+const decl = (over: Partial<L2RefineDeclaration> = {}) => ({
   baseMetric: 'lemeng:retail:net_sales',
   op: { kind: 'refine' as const },
   ...over,
@@ -137,7 +141,7 @@ describe('compileL2：写时校验（机检，不是运行时才发现）', () =
   it('op.kind 只支持 refine（B 中档的受限表达式不私自放行）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     expectThrow(
-      () => compileL2(base, decl({ op: { kind: 'expression' } as unknown as { kind: 'refine' } })),
+      () => compileL2([base], decl({ op: { kind: 'expression' } as unknown as { kind: 'refine' } })),
       'OP_UNSUPPORTED',
     )
   })
@@ -145,7 +149,7 @@ describe('compileL2：写时校验（机检，不是运行时才发现）', () =
   it('filters 的维度名不在 L1 声明 ⇒ 抛 UNKNOWN_DIM（并点名是哪个维度）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     expectThrow(
-      () => compileL2(base, decl({ filters: [{ dim: 'store_id', op: '=', values: ['S1'] }] })),
+      () => compileL2([base], decl({ filters: [{ dim: 'store_id', op: '=', values: ['S1'] }] })),
       'UNKNOWN_DIM',
     )
   })
@@ -153,7 +157,7 @@ describe('compileL2：写时校验（机检，不是运行时才发现）', () =
   it('visibility 的维度名不在 L1 声明 ⇒ 抛 UNKNOWN_DIM', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     expectThrow(
-      () => compileL2(base, decl({ visibility: { dims: ['system_book', 'store_id'] } })),
+      () => compileL2([base], decl({ visibility: { dims: ['system_book', 'store_id'] } })),
       'UNKNOWN_DIM',
     )
   })
@@ -161,26 +165,26 @@ describe('compileL2：写时校验（机检，不是运行时才发现）', () =
   it('维度名不是标识符（想借维度名注入）⇒ 抛 UNKNOWN_DIM', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     expectThrow(
-      () => compileL2(base, decl({ visibility: { dims: ['system_book) or 1=1 --'] } })),
+      () => compileL2([base], decl({ visibility: { dims: ['system_book) or 1=1 --'] } })),
       'UNKNOWN_DIM',
     )
   })
 
   it('= 只许一个值、in 至少要一个值 ⇒ 否则抛 BAD_FILTER', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
-    expectThrow(() => compileL2(base, decl({ filters: [{ dim: 'bizday', op: '=', values: [] }] })), 'BAD_FILTER')
+    expectThrow(() => compileL2([base], decl({ filters: [{ dim: 'bizday', op: '=', values: [] }] })), 'BAD_FILTER')
     expectThrow(
-      () => compileL2(base, decl({ filters: [{ dim: 'bizday', op: '=', values: ['a', 'b'] }] })),
+      () => compileL2([base], decl({ filters: [{ dim: 'bizday', op: '=', values: ['a', 'b'] }] })),
       'BAD_FILTER',
     )
-    expectThrow(() => compileL2(base, decl({ filters: [{ dim: 'bizday', op: 'in', values: [] }] })), 'BAD_FILTER')
+    expectThrow(() => compileL2([base], decl({ filters: [{ dim: 'bizday', op: 'in', values: [] }] })), 'BAD_FILTER')
   })
 })
 
 describe('compileL2：产物形状', () => {
   it('不声明 visibility ⇒ 维度继承 L1 的 grain，标题仍是 L1 标题', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
-    const { selectSql, title, groupBy } = compileL2(base, decl())
+    const { selectSql, title, groupBy } = compileL2([base], decl())
     expect(title).toBe('净销售额')
     expect(selectSql).toBe('select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale')
     // groupBy 一并回：落库要它（data.metrics.group_by 必填），且必须与 SELECT 的维度同源
@@ -189,7 +193,7 @@ describe('compileL2：产物形状', () => {
 
   it('groupBy 与 SELECT 的可见维度**同源**（裁剪后两边一起变，不会各说各话）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
-    const { selectSql, groupBy } = compileL2(base, decl({ visibility: { dims: ['bizday'] } }))
+    const { selectSql, groupBy } = compileL2([base], decl({ visibility: { dims: ['bizday'] } }))
     expect(groupBy).toBe('bizday')
     expect(selectSql).toContain(', bizday')
     expect(selectSql).not.toContain('system_book')
@@ -197,14 +201,14 @@ describe('compileL2：产物形状', () => {
 
   it('visibility 重复维度去重（同一个维度写两遍不该让 SELECT 出现重复列）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
-    const { selectSql, groupBy } = compileL2(base, decl({ visibility: { dims: ['bizday', 'bizday'] } }))
+    const { selectSql, groupBy } = compileL2([base], decl({ visibility: { dims: ['bizday', 'bizday'] } }))
     expect(groupBy).toBe('bizday')
     expect(selectSql).toBe('select sum(fct_retail_sale.net_amount) as value, bizday from fct_retail_sale')
   })
 
   it('filters 形态下 groupBy 也回可见维度（派生表那支同样不能漏）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
-    const { groupBy } = compileL2(base, decl({
+    const { groupBy } = compileL2([base], decl({
       visibility: { dims: ['system_book'] },
       filters: [{ dim: 'bizday', op: '=', values: ['2026-01-01'] }],
     }))
@@ -213,31 +217,31 @@ describe('compileL2：产物形状', () => {
 
   it('alias ⇒ 标题换成别名（口径不变，只是换个叫法）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
-    expect(compileL2(base, decl({ alias: '熊喵净销售' })).title).toBe('熊喵净销售')
+    expect(compileL2([base], decl({ alias: '熊喵净销售' })).title).toBe('熊喵净销售')
   })
 
   it('visibility.dims 裁掉维度（裁剪只少不多）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
-    const { selectSql } = compileL2(base, decl({ visibility: { dims: ['system_book'] } }))
+    const { selectSql } = compileL2([base], decl({ visibility: { dims: ['system_book'] } }))
     expect(selectSql).toContain('system_book')
     expect(selectSql).not.toContain('bizday')
   })
 
   it('visibility.dims 空数组 ⇒ 只出汇总值（不带任何维度）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
-    const { selectSql } = compileL2(base, decl({ visibility: { dims: [] } }))
+    const { selectSql } = compileL2([base], decl({ visibility: { dims: [] } }))
     expect(selectSql).toBe('select sum(fct_retail_sale.net_amount) as value from fct_retail_sale')
   })
 
   it('L2 不改 L1 口径：值表达式逐字来自 base（不是 L2 自己写的）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
-    const { selectSql } = compileL2(base, decl({ alias: 'x', visibility: { dims: ['bizday'] } }))
+    const { selectSql } = compileL2([base], decl({ alias: 'x', visibility: { dims: ['bizday'] } }))
     expect(selectSql).toContain('sum(fct_retail_sale.net_amount) as value')
   })
 
   it('filters 走 FROM 派生表：值表达式与关系名原样保留（schema 限定形态也不破）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
-    const { selectSql } = compileL2(base, decl({ filters: [{ dim: 'system_book', op: '=', values: ['3120'] }] }))
+    const { selectSql } = compileL2([base], decl({ filters: [{ dim: 'system_book', op: '=', values: ['3120'] }] }))
     // 派生表里带过滤，外层再聚合 ⇒ 值表达式的限定名仍然可解析（派生表没改关系名）
     expect(selectSql).toContain('from (select sum(fct_retail_sale.net_amount) as value, system_book, bizday, org')
     expect(selectSql).toContain("where system_book = '3120'")
@@ -246,16 +250,16 @@ describe('compileL2：产物形状', () => {
 
   it('filter 值单引号双写（走 authz 的 sqlQuote 单一实现，不另写转义）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
-    const { selectSql } = compileL2(base, decl({ filters: [{ dim: 'system_book', op: '=', values: ["a'b"] }] }))
+    const { selectSql } = compileL2([base], decl({ filters: [{ dim: 'system_book', op: '=', values: ["a'b"] }] }))
     expect(selectSql).toContain(`= ${sqlQuote("a'b")}`)
   })
 
   it('★ 产物是纯 SELECT：无分号、无 DDL/DML 关键字（禁任意 SQL 的可机检落点）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
     const outputs = [
-      compileL2(base, decl()).selectSql,
-      compileL2(base, decl({ visibility: { dims: [] } })).selectSql,
-      compileL2(base, decl({ filters: [{ dim: 'bizday', op: 'in', values: ['2026-01-01', '2026-01-02'] }] })).selectSql,
+      compileL2([base], decl()).selectSql,
+      compileL2([base], decl({ visibility: { dims: [] } })).selectSql,
+      compileL2([base], decl({ filters: [{ dim: 'bizday', op: 'in', values: ['2026-01-01', '2026-01-02'] }] })).selectSql,
     ]
     for (const sql of outputs) {
       expect(sql).not.toContain(';')
@@ -304,7 +308,7 @@ describePg('compileL2 产物在真库上可执行（需要 DATABASE_URL）', () 
   }
 
   /** 替身基底：与 l1() 同形，只把关系名指向替身 schema。 */
-  const standinBase = (): MetricDef =>
+  const standinBase = (): MetricRow =>
     resolveL1Base(
       [l1({
         selectSql: `select sum(${SCHEMA}.fct_retail_sale.net_amount) as value, system_book, bizday from ${SCHEMA}.fct_retail_sale`,
@@ -320,7 +324,7 @@ describePg('compileL2 产物在真库上可执行（需要 DATABASE_URL）', () 
   it('无 filters/无 visibility：按 L1 grain 出数，且只出本租户（主体钉死）', async () => {
     await seedStandin()
     const base = standinBase()
-    const { selectSql } = compileL2(base, decl())
+    const { selectSql } = compileL2([base], decl())
     const sql = authorizeLike({ ...base, selectSql }, 'acme', base.groupBy)
 
     const r = await pool.query(sql)
@@ -335,7 +339,7 @@ describePg('compileL2 产物在真库上可执行（需要 DATABASE_URL）', () 
   it('visibility 裁到单维度：roll-up 正确（同一账套跨日求和）', async () => {
     await seedStandin()
     const base = standinBase()
-    const { selectSql } = compileL2(base, decl({ visibility: { dims: ['system_book'] } }))
+    const { selectSql } = compileL2([base], decl({ visibility: { dims: ['system_book'] } }))
     const sql = authorizeLike({ ...base, selectSql }, 'acme', 'system_book')
 
     const r = await pool.query(sql)
@@ -347,7 +351,7 @@ describePg('compileL2 产物在真库上可执行（需要 DATABASE_URL）', () 
   it('filters 走派生表：过滤生效、且仍然只出本租户', async () => {
     await seedStandin()
     const base = standinBase()
-    const { selectSql } = compileL2(base, decl({
+    const { selectSql } = compileL2([base], decl({
       visibility: { dims: ['system_book'] },
       filters: [{ dim: 'system_book', op: '=', values: ['3120'] }],
     }))
@@ -361,7 +365,7 @@ describePg('compileL2 产物在真库上可执行（需要 DATABASE_URL）', () 
   it('filters 用 in：多值过滤生效', async () => {
     await seedStandin()
     const base = standinBase()
-    const { selectSql } = compileL2(base, decl({
+    const { selectSql } = compileL2([base], decl({
       visibility: { dims: ['bizday'] },
       filters: [{ dim: 'system_book', op: 'in', values: ['3120', '64188'] }],
     }))
@@ -376,11 +380,174 @@ describePg('compileL2 产物在真库上可执行（需要 DATABASE_URL）', () 
   it('★ 汇总形态（visibility 空）：不带维度也真跑得通（GROUP BY 空 ⇒ authz 不拼 GROUP BY）', async () => {
     await seedStandin()
     const base = standinBase()
-    const { selectSql } = compileL2(base, decl({ visibility: { dims: [] } }))
+    const { selectSql } = compileL2([base], decl({ visibility: { dims: [] } }))
     const sql = authorizeLike({ ...base, selectSql }, 'acme', '')
 
     const r = await pool.query(sql)
     expect(r.rowCount).toBe(1)
     expect(Number(r.rows[0].value)).toBe(157)
+  })
+})
+
+describe('L2 · B 中档（受限表达式）', () => {
+  const base = l1()
+  // 第二条 L1 必须是「同关系 / 同 grain / 同主体列」的克隆 —— 只换 id。
+  const catalog = [base, { ...base, id: 'standin:clone' }]
+
+  /** 取抛出的错误码与消息；不抛返回 {}（期望抛时它会自然让断言失败）。 */
+  const errorOf = (fn: () => unknown): { code?: string; message?: string } => {
+    try {
+      fn()
+    } catch (e) {
+      const err = e as { code?: string; message?: string }
+      return { code: err.code, message: err.message }
+    }
+    return {}
+  }
+
+  const ref = (id: string): ExprNode => ({ kind: 'ref', id })
+
+  it('div(ref, ref) ⇒ 除法守卫由编译器注入（NULLIF，0 分母得 NULL）；title/description/subjectColumn 来自编译产物', () => {
+    const out = compileL2(catalog, {
+      op: { kind: 'expr', expr: { kind: 'div', left: ref(base.id), right: ref('standin:clone') } },
+    })
+    expect(out.selectSql).toContain('NULLIF(')
+    expect(out.selectSql).toContain(' as value')
+    expect(out.selectSql).toContain(' from ')
+    expect(out.title).toBe(`派生(${base.id} / standin:clone)`)
+    expect(out.description).toBe(`L2 派生自 (${base.id}, standin:clone)`)
+    expect(out.subjectColumn).toBe(base.subjectColumn)
+  })
+
+  it('alias 优先于派生名', () => {
+    const out = compileL2(catalog, {
+      alias: '客单价',
+      op: { kind: 'expr', expr: ref(base.id) },
+    })
+    expect(out.title).toBe('客单价')
+  })
+
+  it('同一 ref 出现两次 ⇒ 只解析一次、渲染成同一段 expression（title 里也只出现一次）', () => {
+    const out = compileL2(catalog, {
+      op: { kind: 'expr', expr: { kind: 'add', left: ref(base.id), right: ref(base.id) } },
+    })
+    expect(out.title).toBe(`派生(${base.id})`)
+    expect(out.description).toBe(`L2 派生自 (${base.id})`)
+  })
+
+  it('ref 未命中 L1 词表 ⇒ L1_BASE_NOT_FOUND（message 点名该 ref）', () => {
+    const got = errorOf(() => compileL2(catalog, { op: { kind: 'expr', expr: ref('no:such:l1') } }))
+    expect(got.code).toBe('L1_BASE_NOT_FOUND')
+    expect(got.message).toContain('no:such:l1')
+  })
+
+  it('refs 跨主体列 ⇒ MIXED_BASE（点出两侧的主体列）', () => {
+    const other = { ...base, id: 'standin:other-subject', subjectColumn: `${base.subjectColumn}_x` }
+    const got = errorOf(() => compileL2([...catalog, other], {
+      op: { kind: 'expr', expr: { kind: 'add', left: ref(base.id), right: ref(other.id) } },
+    }))
+    expect(got.code).toBe('MIXED_BASE')
+    expect(got.message).toContain(other.id)
+  })
+
+  it('refs 跨 grain（同关系、同主体列）⇒ MIXED_BASE', () => {
+    const other = { ...base, id: 'standin:other-grain', groupBy: `${base.groupBy}, extra_dim` }
+    const got = errorOf(() => compileL2([...catalog, other], {
+      op: { kind: 'expr', expr: { kind: 'add', left: ref(base.id), right: ref(other.id) } },
+    }))
+    expect(got.code).toBe('MIXED_BASE')
+    expect(got.message).toContain('grain')
+  })
+
+  it('纯字面量 expr ⇒ BAD_DECL（拼不出 from 子句）', () => {
+    const got = errorOf(() => compileL2(catalog, { op: { kind: 'expr', expr: { kind: 'num', value: 1 } } }))
+    expect(got.code).toBe('BAD_DECL')
+  })
+
+  it('表达式树深 9（上限 8 层）⇒ EXPR_DEPTH_EXCEEDED', () => {
+    let deep: ExprNode = ref(base.id)
+    for (let i = 0; i < 8; i++) deep = { kind: 'add', left: deep, right: { kind: 'num', value: 1 } }
+    const got = errorOf(() => compileL2(catalog, { op: { kind: 'expr', expr: deep } }))
+    expect(got.code).toBe('EXPR_DEPTH_EXCEEDED')
+    expect(got.message).toMatch(/表达式树深 9/)
+  })
+
+  it('ref 出现 17 次（上限 16）⇒ EXPR_DEPTH_EXCEEDED；树很浅 ⇒ 证明计数的是"出现次数"而不是深度', () => {
+    const balanced = (leaves: number): ExprNode => leaves === 1
+      ? ref(base.id)
+      : {
+        kind: 'add',
+        left: balanced(Math.floor(leaves / 2)),
+        right: balanced(leaves - Math.floor(leaves / 2)),
+      }
+    const got = errorOf(() => compileL2(catalog, { op: { kind: 'expr', expr: balanced(17) } }))
+    expect(got.code).toBe('EXPR_DEPTH_EXCEEDED')
+    expect(got.message).toMatch(/ref 出现 17 次/)
+  })
+
+  it('expr 声明带 filters ⇒ OP_UNSUPPORTED —— 空数组也算"声明了"', () => {
+    const got = errorOf(() => compileL2(catalog, {
+      op: { kind: 'expr', expr: ref(base.id) },
+      filters: [],
+    }))
+    expect(got.code).toBe('OP_UNSUPPORTED')
+  })
+
+  it('num 非有限数 ⇒ BAD_DECL（面级 schema 也拒，见 Task 2 的对偶用例）', () => {
+    const got = errorOf(() => compileL2(catalog, {
+      op: { kind: 'expr', expr: { kind: 'num', value: Number.NaN } },
+    }))
+    expect(got.code).toBe('BAD_DECL')
+  })
+
+  it('未知节点 kind ⇒ BAD_DECL（fail-closed，不许静默跳过）', () => {
+    const pow = { kind: 'pow', left: ref(base.id), right: { kind: 'num', value: 2 } } as unknown as ExprNode
+    expect(errorOf(() => compileL2(catalog, { op: { kind: 'expr', expr: pow } })).code).toBe('BAD_DECL')
+  })
+
+  it('未知 op.kind ⇒ OP_UNSUPPORTED（分派器兜底；面级会先以 INVALID_BODY 拦下，这是绕过面级的防线）', () => {
+    const bogus = { op: { kind: 'aggregate' } } as unknown as L2Declaration
+    expect(errorOf(() => compileL2(catalog, bogus)).code).toBe('OP_UNSUPPORTED')
+  })
+
+  it('非对象声明 ⇒ BAD_DECL', () => {
+    expect(errorOf(() => compileL2(catalog, null as unknown as L2Declaration)).code).toBe('BAD_DECL')
+  })
+
+  it('collectRefIds：refine 取 baseMetric；expr 去重保序；形状不对返回 []（不抛）', () => {
+    expect(collectRefIds({ baseMetric: base.id, op: { kind: 'refine' } })).toEqual([base.id])
+    expect(collectRefIds({
+      op: {
+        kind: 'expr',
+        expr: { kind: 'add', left: ref('a'), right: { kind: 'div', left: ref('b'), right: ref('a') } },
+      },
+    })).toEqual(['a', 'b'])
+    expect(collectRefIds({} as unknown as L2Declaration)).toEqual([])
+  })
+
+  it('renderExprNode 逐节点：只有字面量渲染该点的片段，除零守卫在 div 上', () => {
+    const refs = new Map([['a', 'sum(t.x)'], ['b', 'sum(t.y)']])
+    expect(renderExprNode({ kind: 'num', value: 3 }, refs)).toBe('3')
+    expect(renderExprNode(ref('a'), refs)).toBe('sum(t.x)')
+    expect(renderExprNode({ kind: 'add', left: { kind: 'num', value: 1 }, right: { kind: 'num', value: 2 } }, refs))
+      .toBe('(1) + (2)')
+    expect(renderExprNode({ kind: 'sub', left: { kind: 'num', value: 1 }, right: { kind: 'num', value: 2 } }, refs))
+      .toBe('(1) - (2)')
+    expect(renderExprNode({ kind: 'mul', left: { kind: 'num', value: 1 }, right: { kind: 'num', value: 2 } }, refs))
+      .toBe('(1) * (2)')
+    expect(renderExprNode({ kind: 'div', left: { kind: 'num', value: 1 }, right: { kind: 'num', value: 2 } }, refs))
+      .toBe('(1) / NULLIF((2), 0)')
+    // ref 解析表缺项 ⇒ fail-closed（不是静默出空串）
+    expect(errorOf(() => renderExprNode(ref('missing'), refs)).code).toBe('BAD_DECL')
+  })
+
+  it('expr 产物不含任何 DDL/DML 关键字（B 中档的安全属性，见 FORBIDDEN_SQL_RE）', () => {
+    const out = compileL2(catalog, {
+      op: {
+        kind: 'expr',
+        expr: { kind: 'div', left: ref(base.id), right: { kind: 'mul', left: ref('standin:clone'), right: { kind: 'num', value: 2 } } },
+      },
+    })
+    expect(out.selectSql).not.toMatch(FORBIDDEN_SQL_RE)
   })
 })
