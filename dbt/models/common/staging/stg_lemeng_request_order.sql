@@ -30,5 +30,5 @@ select
   r['present_quantity']::decimal(14,6) as present_quantity,
   r['present_use_quantity']::decimal(14,6) as present_use_quantity
 from read_parquet(
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_request_order_prefix") }}//*/bizday=**/*.parquet'
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_request_order_prefix") }}/*/bizday=**/*.parquet'
 ) r

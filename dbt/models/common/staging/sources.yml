@@ -138,7 +138,7 @@ sources:
           pagination: '新湖由 duckle 管线写入（W3）：ama 族 page_number/page_size 静态页扇出 + 哨兵 + ctl.merge'
 
       - name: inventory_snapshot
-        description: '乐檬**inventory_snapshot**（新湖，2026-10-13 契约，W3）：行=仓库×商品库存快照；查询窗=bizday 单日（**T-1 日结不可回溯——错过即丢，采集必须日更不可断**）；接口 nhsoft.ama.ai.inventory.snapshot.find。快照无批号/到期日。'
+        description: '乐檬**inventory_snapshot**（新湖，2026-10-13 契约，W3，#632 订正）：行=仓库×商品库存快照；查询窗=bizday 单日（**T-2 可得**——源端发布滞后 16~40h，T-1 通常未发布；**历史深可回溯，漏夜可补**；初版「T-1/不可回溯」描述被实测证伪）；接口 nhsoft.ama.ai.inventory.snapshot.find。快照无批号/到期日。'
         meta:
           path_convention: 'lemeng/inventory_snapshot/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet'
           access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_inventory_snapshot_prefix\") }}/*/bizday=**/*.parquet') r"

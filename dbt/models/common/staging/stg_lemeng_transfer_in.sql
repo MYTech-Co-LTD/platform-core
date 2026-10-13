@@ -30,5 +30,5 @@ select
   r['subtotal']::decimal(14,2) as subtotal,
   r['use_rate']::decimal(18,8) as use_rate
 from read_parquet(
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_transfer_in_prefix") }}//*/bizday=**/*.parquet'
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_transfer_in_prefix") }}/*/bizday=**/*.parquet'
 ) r

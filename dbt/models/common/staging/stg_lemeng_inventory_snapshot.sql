@@ -29,5 +29,5 @@ select
   r['difference_quantity']::decimal(14,6) as difference_quantity,
   r['difference_money']::decimal(14,2) as difference_money
 from read_parquet(
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_inventory_snapshot_prefix") }}//*/bizday=**/*.parquet'
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_inventory_snapshot_prefix") }}/*/bizday=**/*.parquet'
 ) r
