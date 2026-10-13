@@ -1,4 +1,4 @@
-sha256-of-rest 8e41219d7b8ec924b4b84af2efa02cb56e445810a552193bce1f890521f880de
+sha256-of-rest e85671b7e348b937e02a98b3ee5155c692595ea13912f16db421ebd0c4e57729
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 5f2b5a68028671166b3a0cd62d62a08a12f8a10af5034a2b5e4cadb50c1fb264 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -23,11 +23,12 @@ d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subj
 025674c7ee7f5d4ee4fb5b14974492e2ef9b27dfee94621b2557c52a2451c403 dbt/models/common/marts/fct_branch_expense.sql ${REPO}/dbt/models/common/marts/fct_branch_expense.sql 0644
 02b7df20a1b9aa98b042b5d914787b22268df963be46836703d54c4c340c776f dbt/models/common/marts/fct_client_expense.sql ${REPO}/dbt/models/common/marts/fct_client_expense.sql 0644
 268d7f5db44a35e1a981b298ada2d4856d0f2431553e09094d095e6b6741faa9 dbt/models/common/marts/fct_hq_outbound.sql ${REPO}/dbt/models/common/marts/fct_hq_outbound.sql 0644
+d7cf42e3e5f6b34309a93a0f58dabbc36e9abe79eeacd03bba8bca0f8e3aeba4 dbt/models/common/marts/fct_inventory_snapshot.sql ${REPO}/dbt/models/common/marts/fct_inventory_snapshot.sql 0644
 9d1d180191e7ea5a093d9dcf32c1cb3c2014ea5c244bf1da97c6c79dbe256480 dbt/models/common/marts/fct_retail_sale.sql ${REPO}/dbt/models/common/marts/fct_retail_sale.sql 0644
 70a7f1cd649d4176a9866c67ecdf05361b2a957cc9e324d937e43f2310e22067 dbt/models/common/marts/fct_transfer_item.sql ${REPO}/dbt/models/common/marts/fct_transfer_item.sql 0644
 244ea63d8adda6f5bf383445972810111a3ddca4a9cd893fec6bfddd8170dc51 dbt/models/common/marts/fct_transfer_line_quality.sql ${REPO}/dbt/models/common/marts/fct_transfer_line_quality.sql 0644
 a450a5eb382b0f673eca949ce362a65b25306ef1a6cd26de2dc9e76155f08b45 dbt/models/common/marts/schema.yml ${REPO}/dbt/models/common/marts/schema.yml 0644
-f93e6ddd2aa7706069470c15a6641ed1c4a70d95248eaf64c67974e188156a77 dbt/models/common/staging/schema.yml ${REPO}/dbt/models/common/staging/schema.yml 0644
+4b944f44bc2da2716888c4fe83d1eeafc246786fdea93e876810b207e6eb83b2 dbt/models/common/staging/schema.yml ${REPO}/dbt/models/common/staging/schema.yml 0644
 a444faf6329d0aeed8337c98fe8d63711c6e8c7e5af1ab96c95baaca5cf73e8c dbt/models/common/staging/sources.yml ${REPO}/dbt/models/common/staging/sources.yml 0644
 8026db5c26b6e82cdfa4459858b8c67af4b1e957602e70ff6092634ac9fbe2dd dbt/models/common/staging/stg_lemeng_branch.sql ${REPO}/dbt/models/common/staging/stg_lemeng_branch.sql 0644
 7fd1419741b7dbcb554d3b30fa3d9778b11df3e0afd4174aaa9633dad8840775 dbt/models/common/staging/stg_lemeng_branch_expense.sql ${REPO}/dbt/models/common/staging/stg_lemeng_branch_expense.sql 0644
@@ -52,6 +53,7 @@ d97d54e949117437636327003d1326ad79ba2488367e6dd5d7a74ee43aa49dca dbt/seeds/x01_b
 77380a4a6e4fb3278dc47ac1e62fbf381a66e44a71cbc61244c73baf78e524fb dbt/tests/assert_fct_branch_expense_grain_unique.sql ${REPO}/dbt/tests/assert_fct_branch_expense_grain_unique.sql 0644
 202d479bc6e672de3768e2d1ba6489817c6d5cc55d6f284e1d04155c6a34a95c dbt/tests/assert_fct_client_expense_grain_unique.sql ${REPO}/dbt/tests/assert_fct_client_expense_grain_unique.sql 0644
 68bfb2cc7cf8004547af6f95a79644bba8abae271706b1707f1f4e689ba4be9c dbt/tests/assert_fct_hq_outbound_grain_unique.sql ${REPO}/dbt/tests/assert_fct_hq_outbound_grain_unique.sql 0644
+01b1d9a108d5d5a1aa6178e48a9b911a35db6ad49a898db1956161e97390ebba dbt/tests/assert_fct_inventory_snapshot_grain_unique.sql ${REPO}/dbt/tests/assert_fct_inventory_snapshot_grain_unique.sql 0644
 25025965c507a4d08c1ee2a56c1a4177a78eb37705da74ef67f1c6f2cf122082 dbt/tests/assert_fct_retail_sale_grain_unique.sql ${REPO}/dbt/tests/assert_fct_retail_sale_grain_unique.sql 0644
 b435244109cd98dec80a5b605a7559c9cd0f2923d34b6488fea63ada19033f76 dbt/tests/assert_fct_retail_sale_net_amount_nonnegative.sql ${REPO}/dbt/tests/assert_fct_retail_sale_net_amount_nonnegative.sql 0644
 787f26f57381d67ae4058b2f096347e4fa175137eb1722e8fe8e621ad4c174e5 dbt/tests/assert_fct_transfer_item_grain_unique.sql ${REPO}/dbt/tests/assert_fct_transfer_item_grain_unique.sql 0644
