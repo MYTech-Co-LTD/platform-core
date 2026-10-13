@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.107.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.13...v0.107.0) - 2026-10-13
+- 【新增】data: 裁1/裁8 回签落地——10 条指标转 certified ([#621](https://github.com/MYTech-Co-LTD/platform-core/pull/621), [c9180b4](https://github.com/MYTech-Co-LTD/platform-core/commit/c9180b43244032642314fcbed6b96af5128aff7d))
+
+
 ## [0.106.13](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.12...v0.106.13) - 2026-10-12
 - 【修复】data: union wholesale 臂 line_count 字面 0 改真值 ([#620](https://github.com/MYTech-Co-LTD/platform-core/pull/620), [16fc966](https://github.com/MYTech-Co-LTD/platform-core/commit/16fc966e867c485f819d1e413c43aedc45078678))
 
