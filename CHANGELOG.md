@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.115.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.115.3...v0.115.4) - 2026-10-13
+- 【修复】data: inventory 对账 cast 带显式刻度（裸 ::numeric 默认 3 位小数） ([#662](https://github.com/MYTech-Co-LTD/platform-core/pull/662), [be4d13d](https://github.com/MYTech-Co-LTD/platform-core/commit/be4d13d1b4be5ca230e5ddf0ea16930bdc4d8bbe))
+
+
 ## [0.115.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.115.2...v0.115.3) - 2026-10-13
 - 【修复】data: inventory 对账防 DOUBLE 求和尾差假差异 ([#661](https://github.com/MYTech-Co-LTD/platform-core/pull/661), [2982dff](https://github.com/MYTech-Co-LTD/platform-core/commit/2982dff0e7b52f1e8b9b0c97a1b0061f75f6635f))
 
