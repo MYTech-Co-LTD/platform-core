@@ -8,7 +8,7 @@ with recheck as (
         r['branch_num']::int      as branch_num,
         r['storehouse_num']::bigint as storehouse_num,
         r['item_num']::bigint     as item_num,
-        round(sum(r['inventory_quantity']::numeric), 6) as qty  -- 湖列是 DOUBLE，sum 带浮点尾差，按合同刻度取整再比
+        sum(r['inventory_quantity']::numeric(20,6)) as qty  -- 裸 ::numeric 默认只有 3 位小数（cast 即舍入）⇒ 必须带显式刻度
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_inventory_snapshot_prefix") }}/*/bizday=**/*.parquet'
     ) r
