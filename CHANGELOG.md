@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.114.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.113.1...v0.114.0) - 2026-10-13
+- 【新增】data: 战区名称对照 seed（27 行，branchindicator 年频枚举自力获取） ([#653](https://github.com/MYTech-Co-LTD/platform-core/pull/653), [1412b40](https://github.com/MYTech-Co-LTD/platform-core/commit/1412b405eb88fd270c5027c00da3e7c2b93c16d1))
+
+
 ## [0.113.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.113.0...v0.113.1) - 2026-10-13
 - 【优化】data: 门店→战区改以湖上 dim_branch 每日快照为准（裁4 收窄） ([#651](https://github.com/MYTech-Co-LTD/platform-core/pull/651), [4c72c14](https://github.com/MYTech-Co-LTD/platform-core/commit/4c72c14d398214127e51b44f20d887e73b80b0d6))
 
