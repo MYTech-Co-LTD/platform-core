@@ -1,0 +1,49 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "branch_expense",
+  "owner": "data-platform",
+  "description": "乐檬门店费用单（nhsoft.ama.ai.branch.expense.find；W2 2026-10-13 接源）。【行粒度】一行 = 账套×采集bizday×费用单（无明细子结构，单即行）。【窗口】查询窗 = `${date-1d}` 单日（date_from/date_to 完整 `yyyy-MM-dd HH:mm:ss`——whs/ama 族裸日期报 Cannot deserialize，2026-10-12 实测）+ `state_code=3`（审核单，客户文档采集参数）；每分区写一次不重写。【采集范围】仅 3120。【归属边界（客户文档 08-02 原话+真样本实证）】`branch_num` 是**归属门店**（费用计入哪家店），`operate_branch_num` 是**操作结算方**（真样本 99=管理中心）——聚合归归属、结算方仅落列不参与构件。【方向语义】`direction` 是**中文名**（真样本「应付」；枚举 应付/应收）；`due_amount` 为**红字**（真样本 amount=6.36 / due_amount=-6.36 同单反向）——金额保留红字，不取绝对值。【真样本锚】2026-10-12 limit=1 实证 bill_no=OP3120992610060001 / expense_type=产品售后补损 / settlement_state_name=已核销。【分页】ama 族 page_number/page_size≤200（客户文档参数）。",
+  "layout": {
+    "prefix": "lemeng/branch_expense",
+    "partitionStyle": "hive",
+    "partitionBy": ["system_book", "bizday"],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id。每 bizday 分区只写一次（当日单当日采），重跑覆盖同 key。"
+  },
+  "columns": [
+    { "name": "batch_id", "type": "varchar", "nullable": false, "description": "批次标记（采集 run id）", "expr": "'be-' || '${ENV:SYSTEM_BOOK}' || '-branch_expense-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'" },
+    { "name": "system_book", "type": "varchar", "nullable": false, "description": "账套（采集范围=3120）；分区键，采集侧常量注入", "expr": "'${ENV:SYSTEM_BOOK}'" },
+    { "name": "bizday", "type": "date", "nullable": false, "description": "费用审核日（=查询窗口日）；分区键。`${date-1d}` 单段负偏移（同 wholesale_out 契约注）", "expr": "CAST('${date-1d}' AS DATE)" },
+    { "name": "bill_no", "type": "varchar", "nullable": false, "description": "费用单号（OP…；自然键）", "expr": "CAST(o.bill_no AS VARCHAR)" },
+    { "name": "branch_num", "type": "int", "nullable": false, "description": "归属门店编号（费用计入哪家店；**非** operate_branch_num——08-02 边界真样本实证）", "expr": "CAST(o.branch_num AS INTEGER)" },
+    { "name": "branch_name", "type": "varchar", "nullable": true, "description": "归属门店名", "expr": "CAST(o.branch_name AS VARCHAR)" },
+    { "name": "branch_code", "type": "varchar", "nullable": true, "description": "归属门店编码", "expr": "CAST(o.branch_code AS VARCHAR)" },
+    { "name": "store_name", "type": "varchar", "nullable": true, "description": "门店展示名（真样本「98|熊喵曲靖万和国际店」形态）", "expr": "CAST(o.store_name AS VARCHAR)" },
+    { "name": "operate_branch_num", "type": "int", "nullable": true, "description": "操作结算方编号（真样本 99=管理中心；仅落列不作归属）", "expr": "CAST(o.operate_branch_num AS INTEGER)" },
+    { "name": "operate_branch_name", "type": "varchar", "nullable": true, "description": "操作结算方名", "expr": "CAST(o.operate_branch_name AS VARCHAR)" },
+    { "name": "expense_type", "type": "varchar", "nullable": false, "description": "费用项目名（真样本「产品售后补损」；补损/补贴类指标的筛选项，Q 构件按批准映射筛）", "expr": "CAST(o.expense_type AS VARCHAR)" },
+    { "name": "direction", "type": "varchar", "nullable": false, "description": "方向中文名（枚举 应付/应收；**不是**编码——构件按中文字面筛）", "expr": "CAST(o.direction AS VARCHAR)" },
+    { "name": "amount", "type": "decimal(14,2)", "nullable": true, "description": "费用金额（正数原值）", "expr": "CAST(o.amount AS DECIMAL(14,2))" },
+    { "name": "due_amount", "type": "decimal(14,2)", "nullable": true, "description": "到期应付额（真样本与 amount 同单反向 =-6.36——**红字保留**，不取绝对值）", "expr": "CAST(o.due_amount AS DECIMAL(14,2))" },
+    { "name": "paid_amount", "type": "decimal(14,2)", "nullable": true, "description": "已付额（真样本 0.00；客户文档边界：不可直接当作真实现金）", "expr": "CAST(o.paid_amount AS DECIMAL(14,2))" },
+    { "name": "payment_date", "type": "varchar", "nullable": true, "description": "付款日期", "expr": "CAST(o.payment_date AS VARCHAR)" },
+    { "name": "tax_rate", "type": "decimal(18,8)", "nullable": true, "description": "税率", "expr": "CAST(o.tax_rate AS DECIMAL(18,8))" },
+    { "name": "tax_amount", "type": "decimal(14,2)", "nullable": true, "description": "税额", "expr": "CAST(o.tax_amount AS DECIMAL(14,2))" },
+    { "name": "audit_time", "type": "varchar", "nullable": true, "description": "审核时间（报告期过滤备用）", "expr": "CAST(o.audit_time AS VARCHAR)" },
+    { "name": "create_time", "type": "varchar", "nullable": true, "description": "制单时间", "expr": "CAST(o.create_time AS VARCHAR)" },
+    { "name": "reference_bill", "type": "varchar", "nullable": true, "description": "关联原单号（费用异常候选的比对键；真样本空串）", "expr": "CAST(o.reference_bill AS VARCHAR)" },
+    { "name": "memo", "type": "varchar", "nullable": true, "description": "备注（真样本「到店佳沛少一个」）", "expr": "CAST(o.memo AS VARCHAR)" },
+    { "name": "settlement_state", "type": "int", "nullable": true, "description": "结算状态码（真样本 5=已核销）", "expr": "CAST(o.settlement_state AS INTEGER)" },
+    { "name": "settlement_state_name", "type": "varchar", "nullable": true, "description": "结算状态名（真样本「已核销」）", "expr": "CAST(o.settlement_state_name AS VARCHAR)" },
+    { "name": "last_edit_time", "type": "varchar", "nullable": true, "description": "最后编辑时间", "expr": "CAST(o.last_edit_time AS VARCHAR)" }
+  ]
+}
