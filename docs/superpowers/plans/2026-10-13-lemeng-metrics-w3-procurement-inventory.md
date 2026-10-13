@@ -80,6 +80,10 @@
 - [ ] 真机：sync → materialize → 主项目部署 → 词表「新增 N」→ 抽查
 - [ ] issue 收尾 + 台账验收行
 
-## 探针补记（Task 1 执行后追加）
+## 探针补记（2026-10-13 Task 1 已执行完毕）
 
-（待 Task 1 填写：D11 空集根因、D17 可回溯深度）
+**D11 空集根因 = 采购全在总仓**：`branch_nums=[99]`（管理中心）返回 **280 行真数据**（purchase_item_amount/money/present_*/return_* 全字段），门店 [1] 为空——3120 账套门店不采购（配送制），采购全发生在管理中心。之前用「前 100 家门店」查当然空集。**接源时 branch_nums 固定传 [99]**。字段还发现 `amount_total/money_total` 汇总列与 `base_unit`。
+**D17 回溯无限制**：10-05/10-09/10-10 全部有数据（真样本：陆川01/仓库 312000161/车厘子等），**不限当天**——可按 bizday 逐日全量回溯补数。
+**D11 实测字段**：branch_num/branch_code/branch_name/item_num/item_code/item_barcode/item_name/item_spec/base_unit/purchase_item_amount/purchase_item_money/purchase_present_amount/purchase_present_money/purchase_item_return_amount/purchase_item_return_money/amount_total/money_total（17 列）。
+**D17 实测字段**：bizday/branch_num/branch_code/branch_name/storehouse_num/storehouse_code/storehouse_name/item_num/item_code/item_barcode/item_name/item_spec/item_unit/inventory_quantity/inventory_assist_quantity/inventory_use_quantity/inventory_m...（截断，接源时补全）。
+**教训**：手拼嵌套引号的远程命令三次翻车——一律本地生成脚本→base64→单行推送。
