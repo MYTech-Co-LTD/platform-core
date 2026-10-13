@@ -137,6 +137,35 @@ const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
 "
 }
 
+# ⑨ 新构件新鲜度（G 段，#637）：D01–D05/D15–D17 的日粒度 mart 各自 max(bizday) 不得落后。
+#    与 ④ 同通路（消费方的连接串）；容差**分档**——inventory_snapshot 的 bizday = T-2 快照
+#    （源端发布滞后 16~40h），比日更件宽 1 天，否则天然误报。
+#    抓的形状：任一源管线静默停更 ⇒ 对应构件越来越旧而无人知晓（湖侧 owners 锚抓「没写」，
+#    本条抓「写了但下游没跟上 / 物化断链」——两面互补）。
+MARTS_FRESH_SPEC=${WIRE_MARTS_FRESH_SPEC:-"fct_hq_outbound:3 fct_branch_expense:3 fct_client_expense:3 fct_inventory_snapshot:4"}
+assert_marts_fresh() {
+  printf '⑨ 新构件新鲜度（%s）—— ' "$MARTS_FRESH_SPEC"
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const SCHEMA='${SCHEMA}';
+const spec='${MARTS_FRESH_SPEC}'.trim().split(/\\s+/).map(function(s){var a=s.split(':');return {t:a[0],d:parseInt(a[1],10)}});
+const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
+(async()=>{try{
+  await c.connect();
+  const bad=[];
+  for(const sp of spec){
+    const sql='select coalesce(max(bizday)::text,\'\') as maxday, ((now() at time zone \'Asia/Shanghai\')::date - '+sp.d+')::text as cutoff from '+SCHEMA+'.'+sp.t;
+    const r=await c.query(sql);
+    const maxday=r.rows[0].maxday, cutoff=r.rows[0].cutoff;
+    if(!maxday||maxday<cutoff){bad.push(sp.t+' max='+(maxday||'(empty)')+'<'+cutoff)}
+  }
+  await c.end();
+  if(bad.length){console.log('ERR '+bad.join('; '));process.exit(1)}
+  console.log('OK 全部构件在容差内');
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
 # ⑤ 词表非空：平台主库的 data.metrics 至少 1 行（清空 = GET /metrics 空、MCP 无工具可给）。
 assert_metrics() {
   printf '⑤ 词表非空（%s ≥ 1 行）—— ' "$METRICS_TABLE"
@@ -218,7 +247,7 @@ do_check() {
   # #538 Phase 1：逐断言产出判红行（probe 观测面）——执行与观测同行，判定逻辑不变。
   rc=0
   _vf=$(mktemp ${TMPDIR:-/tmp}/ww-verdicts.XXXXXX)
-  for _step in dns tcp query fresh metrics dims item_price settlement_face; do
+  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face; do
     if _out=$(eval "assert_${_step}" 2>&1); then
       _verdict=OK
     else
