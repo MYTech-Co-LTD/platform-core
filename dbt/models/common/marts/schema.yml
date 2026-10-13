@@ -197,6 +197,73 @@ models:
         tests:
           - not_null
 
+  - name: fct_branch_expense
+    description: >-
+      门店费用构件（W2 2026-10-13）。粒度 (system_book, bizday, branch_num, expense_type)；
+      基面 = 全部审核费用单（管线请求侧筛 state_code=3）。构件列 ep/er/e_net 语义见模型头注
+      （e_net 符号语义待裁9 客户回签 ⇒ 全表指标 experimental）。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（宏注入）。
+        tests: [{not_null: {}}]
+      - name: bizday
+        description: 费用审核日。粒度键。
+        tests: [{not_null: {}}]
+      - name: branch_num
+        description: 归属门店号。粒度键。
+        tests: [{not_null: {}}]
+      - name: expense_type
+        description: 费用项目名（补损/补贴类筛选键）。粒度键。
+        tests: [{not_null: {}}]
+      - name: ep_payable
+        description: 应付合计构件（EP）。
+        tests: [{not_null: {}}]
+      - name: er_receivable
+        description: 应收合计构件（ER）。
+        tests: [{not_null: {}}]
+      - name: e_net
+        description: 净费用构件 = ep − er。**与 lemeng:expense:branch_net 同源**。
+        tests: [{not_null: {}}]
+      - name: bill_count
+        description: 去重费用单数（单数面，未声明指标）。
+        tests: [{not_null: {}}]
+
+  - name: fct_client_expense
+    description: >-
+      客户费用构件（W2 2026-10-13）。粒度 (system_book, bizday, client_fid, other_inout_kind)；
+      基面同上。flag: false=应付/true=应收（真样本实证）。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（宏注入）。
+        tests: [{not_null: {}}]
+      - name: bizday
+        description: 费用审核日。粒度键。
+        tests: [{not_null: {}}]
+      - name: client_fid
+        description: 客户编号（前导零字符串）。粒度键。
+        tests: [{not_null: {}}]
+      - name: other_inout_kind
+        description: 费用项目名。粒度键。
+        tests: [{not_null: {}}]
+      - name: ep_payable
+        description: 应付合计构件（EP）。
+        tests: [{not_null: {}}]
+      - name: er_receivable
+        description: 应收合计构件（ER）。
+        tests: [{not_null: {}}]
+      - name: e_net
+        description: 净费用构件 = ep − er。**与 lemeng:expense:client_net 同源**。
+        tests: [{not_null: {}}]
+      - name: bill_count
+        description: 去重费用单数。
+        tests: [{not_null: {}}]
+
 
 # 复合粒度 **(system_book, bizday, branch_num)** 的唯一性由 singular test 手写（单列的 unique 判不了：
 # 各列各自都不唯一；引 dbt_utils.unique_combination_of_columns 要加 packages.yml —— 多一层依赖、

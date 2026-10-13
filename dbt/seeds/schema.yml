@@ -75,3 +75,30 @@ seeds:
         description: 当日是否营业（客户文档 X01 建议 is_open；enable≠营业状态的边界在 D12）。
         tests:
           - not_null
+
+  - name: x08_thresholds
+    description: >-
+      X08 口径阈值与商品范围（客户批）：批号管理清单/临期天数/低动销阈值/重复费用窗口/考核目标值
+      按 threshold_key + domain + 对象行存。当前 0 行（等裁5 客户批准）。未批准前相关指标不设门槛
+      （spec 原则：不自设统一门槛）。
+    config:
+      column_types:
+        threshold_key: varchar
+        domain: varchar
+        branch_num: bigint
+        item_num: bigint
+        value: varchar
+        effective_from: date
+        effective_to: date
+        source_note: varchar
+    columns:
+      - name: threshold_key
+        description: 阈值键（如 lot_required_items / near_expiry_days / low_sell_threshold / dup_expense_window）。
+        tests:
+          - not_null
+      - name: domain
+        description: 适用域（transfer/wholesale/retail/…或 all）。
+      - name: value
+        description: 阈值取值（统一 varchar，消费侧按 key 解读）。
+        tests:
+          - not_null
