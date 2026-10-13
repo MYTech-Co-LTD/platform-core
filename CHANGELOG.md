@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.109.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.108.2...v0.109.0) - 2026-10-13
+- 【新增】data: W3 要货/调入/库存快照接源与构件（D15/D16/D17 + fct_inventory_snapshot + X08） ([#627](https://github.com/MYTech-Co-LTD/platform-core/pull/627), [11fecc0](https://github.com/MYTech-Co-LTD/platform-core/commit/11fecc0e439d0fc648b5185e27af4cb4a6a36b1d))
+
+
 ## [0.108.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.108.1...v0.108.2) - 2026-10-13
 - 【修复】data: branch 对账删除 where state_code 残留行（终局） ([#625](https://github.com/MYTech-Co-LTD/platform-core/pull/625), [e6cbd31](https://github.com/MYTech-Co-LTD/platform-core/commit/e6cbd318a50024aef87fcd5c00ad6819e3cd1df8))
 
