@@ -16,6 +16,32 @@
 version: 2
 
 seeds:
+  - name: x01_region_names
+    description: >-
+      X01 战区名称对照（region_id → 名称，**账套内 id 空间不相交**，跨品牌合并按 region_name
+      分组即「同名合并同类项」——2026-10-13 用户裁决）。数据来源：branchindicator（D10）年频枚举
+      （report 体系的 branch_region_num 与门店档案 region_id 同空间），非客户手填；6294 一行系
+      对称推断（report 无销售行带不出）。战区改名时重跑枚举更新本表（慢变维，无需日更）。
+    config:
+      column_types:
+        system_book: varchar
+        region_id: bigint
+        region_name: varchar
+        source_note: varchar
+    columns:
+      - name: system_book
+        description: 账套。
+        tests:
+          - not_null
+      - name: region_id
+        description: 战区编号（乐檬 region_id 原值，与 dim_branch.region_id 同空间）。
+        tests:
+          - not_null
+      - name: region_name
+        description: 战区名称（跨账套同名即同一战区）。
+        tests:
+          - not_null
+
   - name: x01_branch_calendar
     description: >-
       X01 营业日历（客户填）：branch_num × bizday 的营业标记（is_open），供可比门店/连续无业绩
