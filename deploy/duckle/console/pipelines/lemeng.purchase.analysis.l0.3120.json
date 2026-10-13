@@ -25,7 +25,13 @@
           "rawResponseDestination": "/workspace/.duckle-raw/whoami-${datetime}.sse",
           "retryAttempts": 3,
           "retryBackoffMs": 2000
-        }
+        },
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ]
       }
     },
     {
