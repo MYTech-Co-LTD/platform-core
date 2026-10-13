@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.111.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.110.4...v0.111.0) - 2026-10-13
+- 【新增】data: D11 采购分析接源（itempurchase + fct_purchase + 采购族 6 条 L1） ([#641](https://github.com/MYTech-Co-LTD/platform-core/pull/641), [295234d](https://github.com/MYTech-Co-LTD/platform-core/commit/295234d48fde99843aacc8ddbcd12388355e5e8c))
+
+
 ## [0.110.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.110.3...v0.110.4) - 2026-10-13
 - 【修复】data: 补新八源新鲜度锚（湖侧 owners） ([#638](https://github.com/MYTech-Co-LTD/platform-core/pull/638), [b00e16f](https://github.com/MYTech-Co-LTD/platform-core/commit/b00e16f4657edf6dcaa83f6c6e07e92005ce291e))
 
