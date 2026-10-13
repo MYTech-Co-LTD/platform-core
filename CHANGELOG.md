@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.106.13](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.12...v0.106.13) - 2026-10-12
+- 【修复】data: union wholesale 臂 line_count 字面 0 改真值 ([#620](https://github.com/MYTech-Co-LTD/platform-core/pull/620), [16fc966](https://github.com/MYTech-Co-LTD/platform-core/commit/16fc966e867c485f819d1e413c43aedc45078678))
+
+
 ## [0.106.12](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.11...v0.106.12) - 2026-10-12
 - 【修复】data: fct_hq_outbound.line_count 显式 ::bigint ([#619](https://github.com/MYTech-Co-LTD/platform-core/pull/619), [dec5fa0](https://github.com/MYTech-Co-LTD/platform-core/commit/dec5fa0bf0f48b22879350aaffabc76bd9c3c73a))
 
