@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.108.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.107.0...v0.108.0) - 2026-10-13
+- 【新增】data: 乐檬指标 W2 费用两件套（D04/D05 接源 + 费用构件 + L1 六条） ([#623](https://github.com/MYTech-Co-LTD/platform-core/pull/623), [9fa91c0](https://github.com/MYTech-Co-LTD/platform-core/commit/9fa91c0e418aac858c7b360fa6639f177a27671a))
+
+
 ## [0.107.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.106.13...v0.107.0) - 2026-10-13
 - 【新增】data: 裁1/裁8 回签落地——10 条指标转 certified ([#621](https://github.com/MYTech-Co-LTD/platform-core/pull/621), [c9180b4](https://github.com/MYTech-Co-LTD/platform-core/commit/c9180b43244032642314fcbed6b96af5128aff7d))
 
