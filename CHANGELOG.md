@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.115.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.115.1...v0.115.2) - 2026-10-13
+- 【修复】data: purchase daycount 自检行 6 null（修正 #657 的过头修） ([#658](https://github.com/MYTech-Co-LTD/platform-core/pull/658), [75d8e63](https://github.com/MYTech-Co-LTD/platform-core/commit/75d8e63b19cfe50873b6784c0cf2f8ed265e8517))
+
+
 ## [0.115.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.115.0...v0.115.1) - 2026-10-13
 - 【修复】data: 4 条对账自检行 UNION 列数对齐 ([#657](https://github.com/MYTech-Co-LTD/platform-core/pull/657), [3a004ea](https://github.com/MYTech-Co-LTD/platform-core/commit/3a004ea54b596a4a643d309ffb65ac9209285710))
 
