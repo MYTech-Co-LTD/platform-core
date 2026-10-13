@@ -1,4 +1,4 @@
-sha256-of-rest e7234487c85c7229d5e8a18b4c3c26f4e52f4f870d59041e02f91dc20bd12bf5
+sha256-of-rest d0b7da31a9ab7742ffaa4570686a1eaa26764ec31e897d498bd425451d05ab76
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 5f2b5a68028671166b3a0cd62d62a08a12f8a10af5034a2b5e4cadb50c1fb264 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -119,7 +119,7 @@ f27414725b75d8f8764645e7366c45ad8da85a836106656f7490c45370b0d968 deploy/duckle/c
 6a558e66c877672ccb03ab6601e7f1fd37dc9563f323f2f07f5a3eca2efe378c deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.3120.json 0644
 db746151831a664b64463d6c42553254c20710eba7e9d5535d583abdf9083b0e deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.json 0644
 91d40f0d15837e2446162fcb7177cb5c52ce1bca78b2569f8be05a47ee14089d deploy/duckle/console/pipelines/lemeng.inventory.snapshot.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.snapshot.l0.3120.json 0644
-7383dad4d03a578b4c43b77dee72b1a8e0c1506f4351b3acead34df6c291e0fd deploy/duckle/console/pipelines/lemeng.purchase.analysis.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.purchase.analysis.l0.3120.json 0644
+707cf4129d424b90a13c51c836f2a3f9bded8c691322d106fff27f529cd2d1df deploy/duckle/console/pipelines/lemeng.purchase.analysis.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.purchase.analysis.l0.3120.json 0644
 356cf75a93e79a4096a77ef4aea04073aff85672e0864c8e8f32c31df03c0cd8 deploy/duckle/console/pipelines/lemeng.recon.preagg.item.json ${REPO}/deploy/duckle/console/pipelines/lemeng.recon.preagg.item.json 0644
 b7e0b0712cf36f752c35aba512174689f545932e1d18eac5388f1318d7e7d878 deploy/duckle/console/pipelines/lemeng.recon.preagg.json ${REPO}/deploy/duckle/console/pipelines/lemeng.recon.preagg.json 0644
 b0af7fc790caa37b0147cc8e7f9d00ae49520a44a91068146fda4667ccbeb706 deploy/duckle/console/pipelines/lemeng.request.order.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.request.order.l0.3120.json 0644
