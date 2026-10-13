@@ -7,7 +7,7 @@ with recheck as (
         r['branch_num']::int      as branch_num,
         r['storehouse_num']::bigint as storehouse_num,
         r['item_num']::bigint     as item_num,
-        round(sum(r['inventory_money']::numeric), 2)::numeric(20,2) as inv_money  -- 同上：防 DOUBLE 求和尾差假差异
+        sum(r['inventory_money']::numeric(20,2))::numeric(20,2) as inv_money  -- 裸 ::numeric 默认 3 位小数 ⇒ cast 带显式刻度
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_inventory_snapshot_prefix") }}/*/bizday=**/*.parquet'
     ) r
