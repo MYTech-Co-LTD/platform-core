@@ -142,7 +142,7 @@ const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
 #    （源端发布滞后 16~40h），比日更件宽 1 天，否则天然误报。
 #    抓的形状：任一源管线静默停更 ⇒ 对应构件越来越旧而无人知晓（湖侧 owners 锚抓「没写」，
 #    本条抓「写了但下游没跟上 / 物化断链」——两面互补）。
-MARTS_FRESH_SPEC=${WIRE_MARTS_FRESH_SPEC:-"fct_hq_outbound:3 fct_branch_expense:3 fct_client_expense:3 fct_inventory_snapshot:4"}
+MARTS_FRESH_SPEC=${WIRE_MARTS_FRESH_SPEC:-"fct_hq_outbound:3 fct_branch_expense:3 fct_client_expense:3 fct_inventory_snapshot:4 fct_purchase:3"}
 assert_marts_fresh() {
   printf '⑨ 新构件新鲜度（%s）—— ' "$MARTS_FRESH_SPEC"
   docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "

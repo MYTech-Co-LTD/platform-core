@@ -238,6 +238,15 @@
         "lemeng"
       ],
       "maximumAge": "36h"
+    },
+    {
+      "match": "minio://*/lemeng/item_purchase/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "采购分析每日采集的成功凭证（L0 lemeng.purchase.analysis.l0.3120；#641）",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
     }
   ]
 }
