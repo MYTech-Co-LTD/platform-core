@@ -1,0 +1,451 @@
+{
+  "name": "lemeng.purchase.analysis.l0.3120",
+  "nodes": [
+    {
+      "id": "w0",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "w0",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/mcp",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"
+          },
+          "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"whoami\", \"arguments\": {}}}",
+          "paginationType": "none",
+          "responseFormat": "xml",
+          "rawResponseDestination": "/workspace/.duckle-raw/whoami-${datetime}.sse",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "g0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g0",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/whoami-${datetime}.sse')"
+        }
+      }
+    },
+    {
+      "id": "g1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g1",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()"
+        }
+      }
+    },
+    {
+      "id": "g2",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g2",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input"
+        }
+      }
+    },
+    {
+      "id": "d0",
+      "type": "control",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d0",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "g3",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g3",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}' UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) WHERE w.branch_num IS NULL"
+        }
+      }
+    },
+    {
+      "id": "d1",
+      "type": "control",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d1",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "gv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gv",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${date-1d}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${date-1d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'pu-' || '${ENV:SYSTEM_BOOK}' || '-item_purchase-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'pu-<book>-item_purchase-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('pu-' || '${ENV:SYSTEM_BOOK}' || '-item_purchase-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'pu-[0-9]+-item_purchase-[0-9]{8}T[0-9]{6}Z')"
+        }
+      }
+    },
+    {
+      "id": "dv",
+      "type": "control",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dv",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "p1",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.itempurchase.find",
+          "method": "POST",
+          "body": "{\"audit_date_start\":\"${date-1d}\",\"audit_date_end\":\"${date-1d}\",\"branch_nums\":[99],\"summary_types\":[\"supplier\",\"item\"]}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        },
+        "schema": [
+          {
+            "name": "supplier_num",
+            "type": "int64"
+          },
+          {
+            "name": "supplier_code",
+            "type": "string"
+          },
+          {
+            "name": "supplier_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "base_unit",
+            "type": "string"
+          },
+          {
+            "name": "purchase_item_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "purchase_item_money",
+            "type": "decimal"
+          },
+          {
+            "name": "purchase_present_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "purchase_present_money",
+            "type": "decimal"
+          },
+          {
+            "name": "purchase_item_return_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "purchase_item_return_money",
+            "type": "decimal"
+          },
+          {
+            "name": "amount_total",
+            "type": "decimal"
+          },
+          {
+            "name": "money_total",
+            "type": "decimal"
+          }
+        ]
+      }
+    },
+    {
+      "id": "merge",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "merge",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "shape",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "shape",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  'pu-' || '${ENV:SYSTEM_BOOK}' || '-item_purchase-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.supplier_num AS BIGINT) AS supplier_num,\n  CAST(o.supplier_code AS VARCHAR) AS supplier_code,\n  CAST(o.supplier_name AS VARCHAR) AS supplier_name,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.item_barcode AS VARCHAR) AS item_barcode,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.item_spec AS VARCHAR) AS item_spec,\n  CAST(o.base_unit AS VARCHAR) AS base_unit,\n  CAST(o.purchase_item_amount AS DECIMAL(14,6)) AS purchase_item_amount,\n  CAST(o.purchase_item_money AS DECIMAL(14,2)) AS purchase_item_money,\n  CAST(o.purchase_present_amount AS DECIMAL(14,6)) AS purchase_present_amount,\n  CAST(o.purchase_present_money AS DECIMAL(14,2)) AS purchase_present_money,\n  CAST(o.purchase_item_return_amount AS DECIMAL(14,6)) AS purchase_item_return_amount,\n  CAST(o.purchase_item_return_money AS DECIMAL(14,2)) AS purchase_item_return_money,\n  CAST(o.amount_total AS DECIMAL(14,6)) AS amount_total,\n  CAST(o.money_total AS DECIMAL(14,2)) AS money_total\nFROM input, UNNEST(input.\"rows\") AS t(o)\nWHERE (SELECT CASE WHEN (SELECT count(*) FROM (SELECT UNNEST(input.\"rows\") FROM input))\n                          <> (SELECT any_value(total_count) FROM input)\n                    THEN error('ITEM_PURCHASE_ROWS_MISMATCH: len(rows) <> total_count（截断守卫，#640）')\n                    ELSE 0 END) IS NOT NULL"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "quality",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "bizday": "not_null",
+            "supplier_num": "not_null",
+            "item_num": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/item_purchase/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/all.parquet",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd",
+          "connectionRef": "zos"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-w0-g0",
+      "source": "w0",
+      "target": "g0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g0-g1",
+      "source": "g0",
+      "target": "g1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g1-g2",
+      "source": "g1",
+      "target": "g2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g2-d0",
+      "source": "g2",
+      "target": "d0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d0-g3",
+      "source": "d0",
+      "target": "g3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g3-d1",
+      "source": "g3",
+      "target": "d1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d1-gv",
+      "source": "d1",
+      "target": "gv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gv-dv",
+      "source": "gv",
+      "target": "dv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p1",
+      "source": "dv",
+      "target": "p1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p1-merge",
+      "source": "p1",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-merge-shape",
+      "source": "merge",
+      "target": "shape",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-shape-gate",
+      "source": "shape",
+      "target": "gate",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gate-sink",
+      "source": "gate",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}

@@ -493,7 +493,7 @@ models:
 
   - name: stg_lemeng_inventory_snapshot
     description: >-
-      乐檬**库存快照** staging（新湖；W3）。行=仓库×商品。**T-1 日结不可回溯**——错过即丢。 列全集以 `contracts/common/lemeng.inventory_snapshot.json` 为准。⚠️ 采集范围仅 3120。
+      乐檬**库存快照** staging（新湖；W3，#632 订正）。行=仓库×商品。窗口 T-2（源端发布滞后 16~40h，T-1 通常未发布；**历史深可回溯**）。 列全集以 `contracts/common/lemeng.inventory_snapshot.json` 为准。⚠️ 采集范围仅 3120。
     columns:
       - name: system_book
         description: 账套。hive 分区键。
@@ -516,6 +516,28 @@ models:
         tests:
           - not_null
 
+  - name: stg_lemeng_item_purchase
+    description: >-
+      乐檬**采购分析** staging（新湖；W3 余项 #640）。行=账套×bizday×供应商×商品（summary 型；无 branch/audit_date 列）。
+      ⚠️ branch_nums=[99] 固定（门店配送制不采购）；窗口 T-1 单日。列全集以 `contracts/common/lemeng.item_purchase.json` 为准。
+    columns:
+      - name: system_book
+        description: 账套。hive 分区键。
+      - name: org
+        description: 主体列。
+        tests:
+          - not_null
+      - name: bizday
+        description: 采购审核日（取请求参数）。hive 分区键。
+      - name: supplier_num
+        description: 自然键之一（供应商）。
+        tests:
+          - not_null
+      - name: item_num
+        description: 自然键之一（商品）。
+        tests:
+          - not_null
+
 
 # 三张维度/价格表的**行粒度自然键**唯一性由 singular test 手写（单列 `unique` 判不了复合键；
 # 引 dbt_utils 要加 packages.yml —— 多一层依赖、解析期还要联网）：
@@ -525,6 +547,7 @@ models:
 #   dbt/tests/assert_stg_lemeng_transfer_out_key_unique.sql —— (system_book, bizday, order_no, item_num, item_grade_num, lot_number)
 #   dbt/tests/assert_stg_lemeng_wholesale_out_key_unique.sql —— (system_book, bizday, order_no, order_detail_num)
 #   dbt/tests/assert_stg_lemeng_wholesale_return_key_unique.sql —— (system_book, bizday, wholesale_return_fid, item_num, order_detail_num)
+#   dbt/tests/assert_stg_lemeng_item_purchase_key_unique.sql    —— (system_book, bizday, supplier_num, item_num)
 #
 # 列级测试的**范围**（有意为之，不是漏做）：只给**自然键列**挂 `not_null`（与
 # stg_lemeng_retail_order_line 的形状一致 —— 它也只给同名的两个自然键列挂）。

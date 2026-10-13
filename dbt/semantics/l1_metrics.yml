@@ -315,3 +315,75 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+
+  # ── 采购族（W3 余项 2026-10-13，D11 itempurchase / fct_purchase / #640）──────────────
+  # ⚠️ 全 experimental：① 采购**收货**口径（≠采购订单，客户文档边界）；② 采集范围 = 管理中心
+  #  （branch_nums=[99] 固定，3120 门店配送制不采购）⇒ 指标是**采购侧口径，不代表门店**；
+  #  ③ 不同 summary 维度查询结果不可重复相加（客户文档边界）。
+
+  - name: 'lemeng:purchase:amount'
+    label: 采购金额
+    definition: >-
+      采购收货金额合计（元，`purchase_item_money` 行级求和）。粒度 = 账套 × 采购审核日 × 供应商 × 商品。
+      ⚠️ 仅管理中心采购（见族头注）；不含赠品、不含退货（那两项另有指标）。
+    expression: 'sum(fct_purchase.purchase_item_money)'
+    grain: [system_book, bizday, supplier_num, item_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    sources:
+      - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:purchase:present_amount'
+    label: 采购赠品金额
+    definition: >-
+      采购赠品金额合计（元，`purchase_present_money`）。采购随货赠品，独立于购入金额。
+    expression: 'sum(fct_purchase.purchase_present_money)'
+    grain: [system_book, bizday, supplier_num, item_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:purchase:return_amount'
+    label: 采购退货金额
+    definition: >-
+      采购退货金额合计（元，`purchase_item_return_money`）。**不从采购金额里自动扣**——
+      净额见 `net_amount`。
+    expression: 'sum(fct_purchase.purchase_item_return_money)'
+    grain: [system_book, bizday, supplier_num, item_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:purchase:net_amount'
+    label: 净采购额
+    definition: >-
+      采购金额 − 采购退货金额（元）。**赠品不计入**（赠品金额独立，见 present_amount）。
+      ⚠️ 与 `money_total` 的勾稽关系待客户确认（客户文档边界：money_total 与购入/赠品/退货分量先勾稽）。
+    expression: 'sum(fct_purchase.purchase_item_money) - sum(fct_purchase.purchase_item_return_money)'
+    grain: [system_book, bizday, supplier_num, item_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:purchase:supplier_count'
+    label: 采购供应商数
+    definition: >-
+      该窗口内有采购收货的供应商**去重数**（01-07 供应商集中度 的分子侧基础）。
+      ⚠️ 非可加：跨日/跨商品行不可直接相加，须按窗口重算 distinct。
+    expression: 'count(distinct fct_purchase.supplier_num)'
+    grain: [system_book, bizday]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:purchase:item_count'
+    label: 采购商品数
+    definition: >-
+      该窗口内有采购收货的商品**去重数**。⚠️ 非可加：同 supplier_count。
+    expression: 'count(distinct fct_purchase.item_num)'
+    grain: [system_book, bizday]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+

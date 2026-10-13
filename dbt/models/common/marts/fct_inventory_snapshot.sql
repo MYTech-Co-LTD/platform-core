@@ -3,7 +3,7 @@
 }}
 -- fct_inventory_snapshot.sql — 库存快照构件（W3 2026-10-13）。
 -- 【粒度】(system_book, bizday, branch_num, storehouse_num, item_num)。
--- 【语义】T-1 日结快照（不可回溯——错过即丢）。inventory_money 保留红字。
+-- 【语义】T-2 快照（#632 订正：源端发布滞后 16~40h，T-1 通常未发布；历史深可回溯）。inventory_money 保留红字。
 select
     system_book,
     {{ subject_org() }} as org,

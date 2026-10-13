@@ -92,6 +92,7 @@ vars:
   lemeng_request_order_prefix: 'lemeng/request_order'
   lemeng_transfer_in_prefix: 'lemeng/transfer_in'
   lemeng_inventory_snapshot_prefix: 'lemeng/inventory_snapshot'
+  lemeng_item_purchase_prefix: 'lemeng/item_purchase'
   # 乐檬**批发客户档案**前缀（#516 段①；全量快照；不含 bucket / 协议）：
   # s3://<bucket>/lemeng/client/system_book=<账套>/snapshot=<YYYY-MM-DD>/all.parquet
   # 出处：contracts/common/lemeng.client.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
