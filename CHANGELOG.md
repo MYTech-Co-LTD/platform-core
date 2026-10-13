@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.113.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.112.0...v0.113.0) - 2026-10-13
+- 【新增】data: 裁9 回签（净费用=应付−应收）⇒ 6 条费用指标转 certified ([#648](https://github.com/MYTech-Co-LTD/platform-core/pull/648), [c7721a0](https://github.com/MYTech-Co-LTD/platform-core/commit/c7721a0ff430d6c98458c062e3d6b99611927e5a))
+
+
 ## [0.112.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.111.1...v0.112.0) - 2026-10-13
 - 【新增】data: D11 采购源补新鲜度锚（湖侧 owners + 下游侧判据 ⑨） ([#645](https://github.com/MYTech-Co-LTD/platform-core/pull/645), [6ab0a9b](https://github.com/MYTech-Co-LTD/platform-core/commit/6ab0a9bc918f2d8588901028ee33e7e28212ddb0))
 
