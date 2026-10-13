@@ -119,6 +119,34 @@ sources:
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
           pagination: '新湖由 duckle 管线写入（W2）：静态页扇出（offset/limit，哨兵同构）+ ctl.merge'
 
+      - name: request_order
+        description: '乐檬**request_order**（新湖，2026-10-13 契约，W3）：行=要货单商品行；窗口=制单日单日（start_date/end_date 裸日期、ama 族 page_number 分页）；接口 nhsoft.ama.ai.request.order.find。要货满足率的需求面（D16 调入=供给面）。'
+        meta:
+          path_convention: 'lemeng/request_order/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_request_order_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '新湖由 duckle 管线写入（W3）：ama 族 page_number/page_size 静态页扇出 + 哨兵 + ctl.merge'
+
+      - name: transfer_in
+        description: '乐檬**transfer_in**（新湖，2026-10-13 契约，W3）：行=调入单商品行；窗口=制单日单日（start_date/end_date 裸日期、ama 族 page_number 分页）；接口 nhsoft.ama.ai.transfer.in.order.find。related_order_no 关联调出单 MO…（要货满足率供给面 join 键）。'
+        meta:
+          path_convention: 'lemeng/transfer_in/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_transfer_in_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '新湖由 duckle 管线写入（W3）：ama 族 page_number/page_size 静态页扇出 + 哨兵 + ctl.merge'
+
+      - name: inventory_snapshot
+        description: '乐檬**inventory_snapshot**（新湖，2026-10-13 契约，W3）：行=仓库×商品库存快照；查询窗=bizday 单日（**T-1 日结不可回溯——错过即丢，采集必须日更不可断**）；接口 nhsoft.ama.ai.inventory.snapshot.find。快照无批号/到期日。'
+        meta:
+          path_convention: 'lemeng/inventory_snapshot/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_inventory_snapshot_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '新湖由 duckle 管线写入（W3）：ama 族 page_number/page_size 静态页扇出 + 哨兵 + ctl.merge'
+
+
       - name: wholesale_return
         description: '乐檬**批发退货单**（新湖，2026-10-12 契约，W1）：行 = 退货单商品行；查询窗=制单日单日（date_type=制单时间，#513 同族坑）、区间 ≤7 天接口硬限（2026-10-12 实测）、每分区写一次不重写；接口 nhsoft.whs.ai.wholesalereturn.find limit/offset 分页（p19 哨兵同构）。⚠️ A 阶段探针恒空集（接口可达无业务样本）——明细键名未获真样本实证（契约 description 详）；单头列随行冗余，聚合前 per_order 取 max。'
         meta:

@@ -1,0 +1,48 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "request_order",
+  "owner": "data-platform",
+  "description": "乐檬要货单（nhsoft.ama.ai.request.order.find；W3 2026-10-13 接源）。【行粒度】一行 = 账套×采集bizday×要货单×商品行。【窗口】查询窗 = `${date-1d}` 单日（制单日，start_date/end_date 裸日期 YYYY-MM-DD——ama 族与 transfer_out 同款）+ `state_codes=[3]`；每分区写一次不重写；**制单窗 D-7 补跨期**（同 D01 族）。【采集范围】仅 3120。【真样本锚】2026-10-13 limit=1 实证 order_no=YH3120012610060001 / transfer_state=部分发货 / purchase_date=2026-10-07 / items[] 含 item_num/code/name/spec/unit/quantity/use_quantity/use_unit/subtotal/use_rate/present_quantity。【分页】ama 族 page_number/page_size≤100。【用途】03-06 要货满足率的需求面（D16 调入单为供给面）。",
+  "layout": {
+    "prefix": "lemeng/request_order",
+    "partitionStyle": "hive",
+    "partitionBy": ["system_book", "bizday"],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id。每 bizday 分区只写一次，重跑覆盖同 key。"
+  },
+  "columns": [
+    { "name": "batch_id", "type": "varchar", "nullable": false, "description": "批次标记（采集 run id）", "expr": "'rq-' || '${ENV:SYSTEM_BOOK}' || '-request_order-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'" },
+    { "name": "system_book", "type": "varchar", "nullable": false, "description": "账套（采集范围=3120）；分区键", "expr": "'${ENV:SYSTEM_BOOK}'" },
+    { "name": "bizday", "type": "date", "nullable": false, "description": "制单日（=查询窗口日）；分区键", "expr": "CAST('${date-1d}' AS DATE)" },
+    { "name": "order_no", "type": "varchar", "nullable": false, "description": "要货单号（YH…；自然键）", "expr": "CAST(o.order_no AS VARCHAR)" },
+    { "name": "order_type", "type": "varchar", "nullable": true, "description": "单据类型名（真样本=要货单）", "expr": "CAST(o.order_type AS VARCHAR)" },
+    { "name": "transfer_state", "type": "varchar", "nullable": true, "description": "配送状态（真样本「部分发货」；要货满足率的分组依据）", "expr": "CAST(o.transfer_state AS VARCHAR)" },
+    { "name": "purchase_date", "type": "varchar", "nullable": true, "description": "采购/要货日期", "expr": "CAST(o.purchase_date AS VARCHAR)" },
+    { "name": "branch_num", "type": "int", "nullable": false, "description": "要货门店编号", "expr": "CAST(o.branch_num AS INTEGER)" },
+    { "name": "branch_code", "type": "varchar", "nullable": true, "description": "要货门店编码", "expr": "CAST(o.branch_code AS VARCHAR)" },
+    { "name": "branch_name", "type": "varchar", "nullable": true, "description": "要货门店名", "expr": "CAST(o.branch_name AS VARCHAR)" },
+    { "name": "out_branch_num", "type": "int", "nullable": true, "description": "发货方编号（99=管理中心）", "expr": "CAST(o.out_branch_num AS INTEGER)" },
+    { "name": "out_branch_name", "type": "varchar", "nullable": true, "description": "发货方名", "expr": "CAST(o.out_branch_name AS VARCHAR)" },
+    { "name": "item_num", "type": "bigint", "nullable": false, "description": "商品内部编号（明细展开）", "expr": "CAST(json_extract_string(u.d, '$.item_num') AS BIGINT)" },
+    { "name": "item_code", "type": "varchar", "nullable": true, "description": "商品编码", "expr": "json_extract_string(u.d, '$.item_code')" },
+    { "name": "item_name", "type": "varchar", "nullable": true, "description": "商品名", "expr": "json_extract_string(u.d, '$.item_name')" },
+    { "name": "item_spec", "type": "varchar", "nullable": true, "description": "商品规格", "expr": "json_extract_string(u.d, '$.item_spec')" },
+    { "name": "item_unit", "type": "varchar", "nullable": true, "description": "基本单位", "expr": "json_extract_string(u.d, '$.item_unit')" },
+    { "name": "quantity", "type": "decimal(14,6)", "nullable": true, "description": "基本单位要货数量", "expr": "CAST(json_extract_string(u.d, '$.quantity') AS DECIMAL(14,6))" },
+    { "name": "use_quantity", "type": "decimal(14,6)", "nullable": true, "description": "使用单位数量", "expr": "CAST(json_extract_string(u.d, '$.use_quantity') AS DECIMAL(14,6))" },
+    { "name": "use_unit", "type": "varchar", "nullable": true, "description": "使用单位", "expr": "json_extract_string(u.d, '$.use_unit')" },
+    { "name": "subtotal", "type": "decimal(14,2)", "nullable": true, "description": "要货金额小计", "expr": "CAST(json_extract_string(u.d, '$.subtotal') AS DECIMAL(14,2))" },
+    { "name": "use_rate", "type": "decimal(18,8)", "nullable": true, "description": "使用单位换算率", "expr": "CAST(json_extract_string(u.d, '$.use_rate') AS DECIMAL(18,8))" },
+    { "name": "present_quantity", "type": "decimal(14,6)", "nullable": true, "description": "赠送数量", "expr": "CAST(json_extract_string(u.d, '$.present_quantity') AS DECIMAL(14,6))" },
+    { "name": "present_use_quantity", "type": "decimal(14,6)", "nullable": true, "description": "使用单位赠送数量", "expr": "CAST(json_extract_string(u.d, '$.present_use_quantity') AS DECIMAL(14,6))" }
+  ]
+}
