@@ -222,7 +222,7 @@ metrics:
     expression: 'sum(fct_branch_expense.ep_payable)'
     grain: [system_book, bizday, branch_num, expense_type]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
     sources:
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -235,19 +235,19 @@ metrics:
     expression: 'sum(fct_branch_expense.er_receivable)'
     grain: [system_book, bizday, branch_num, expense_type]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
 
   - name: 'lemeng:expense:branch_net'
     label: 门店净费用
     definition: >-
       门店净费用（E 构件）= 应付合计 − 应收合计。**不可加边界**：更粗粒度求和即净费用之和
-      （E 可加）。⚠️ 符号语义（应付为正方向）待裁9 客户回签 → experimental。
+      （E 可加）。（符号语义 = 应付 − 应收；**裁9 客户已回签 2026-10-13**。）
       粒度 = 账套 × 审核日 × 门店 × 项目。
     expression: 'sum(fct_branch_expense.e_net)'
     grain: [system_book, bizday, branch_num, expense_type]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
 
   - name: 'lemeng:expense:client_payable'
@@ -259,7 +259,7 @@ metrics:
     expression: 'sum(fct_client_expense.ep_payable)'
     grain: [system_book, bizday, client_fid, other_inout_kind]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
     sources:
       - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -272,7 +272,7 @@ metrics:
     expression: 'sum(fct_client_expense.er_receivable)'
     grain: [system_book, bizday, client_fid, other_inout_kind]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
 
   - name: 'lemeng:expense:client_net'
@@ -283,7 +283,7 @@ metrics:
     expression: 'sum(fct_client_expense.e_net)'
     grain: [system_book, bizday, client_fid, other_inout_kind]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
 
   # ── W3（2026-10-13）：库存快照 2 条 ─────────────────────────────────────────────────
