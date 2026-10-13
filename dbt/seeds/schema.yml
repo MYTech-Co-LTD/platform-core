@@ -41,6 +41,12 @@ seeds:
         description: 战区名称（跨账套同名即同一战区）。
         tests:
           - not_null
+      - name: region_l1
+        description: >-
+          一级战区（东部/西部/中部/南部）＝二级名称去序号推导；**空 = 不归属四向的杂项组**
+          （其余门店1/其他门店/贵州宣威大区/广西大区/所有区域）——客户文档战区角色明写
+          「管理范围：东部、西部、中部、南部独立归属；排除其他门店、贵州宣威大区和广西大区」。
+          层级佐证：报表中心三级 war_zone → region_l2 → store（WeKnora region_l2 目标排查条）。
 
   - name: x01_branch_calendar
     description: >-
