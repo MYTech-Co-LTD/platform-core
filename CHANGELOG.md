@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.108.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.108.1...v0.108.2) - 2026-10-13
+- 【修复】data: branch 对账删除 where state_code 残留行（终局） ([#625](https://github.com/MYTech-Co-LTD/platform-core/pull/625), [e6cbd31](https://github.com/MYTech-Co-LTD/platform-core/commit/e6cbd318a50024aef87fcd5c00ad6819e3cd1df8))
+
+
 ## [0.108.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.108.0...v0.108.1) - 2026-10-13
 - 【修复】data: branch 费用对账去掉湖上不存在的 state_code 过滤 ([#624](https://github.com/MYTech-Co-LTD/platform-core/pull/624), [792eb70](https://github.com/MYTech-Co-LTD/platform-core/commit/792eb70970018659f81e206a9d11c535651b56db))
 
