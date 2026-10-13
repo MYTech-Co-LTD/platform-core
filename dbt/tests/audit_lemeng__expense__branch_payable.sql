@@ -12,12 +12,8 @@ with recheck as (
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_branch_expense_prefix") }}/*/bizday=**/*.parquet'
     ) r
-      -- 湖上只存在审核单（管线请求侧 state_code=3 筛过、契约不落 state 列）——
+      -- 湖上只存在审核单（管线请求侧已筛审核态、契约不落状态列）——
       -- 此处无需重复筛 state；bizday 闭窗过滤照旧。
-<<<<<<< HEAD
-=======
-    where r['state_code']::int = 3
->>>>>>> origin/main
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
     group by 1, 2, 3, 4
 ),
