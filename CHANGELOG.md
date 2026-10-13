@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.111.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.111.0...v0.111.1) - 2026-10-13
+- 【修复】data: D11 管线 w0 补 schema 申报（空结果 Binder 报错） ([#643](https://github.com/MYTech-Co-LTD/platform-core/pull/643), [27efe43](https://github.com/MYTech-Co-LTD/platform-core/commit/27efe433bbefa33484c7eb0807dedb93151b8398))
+
+
 ## [0.111.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.110.4...v0.111.0) - 2026-10-13
 - 【新增】data: D11 采购分析接源（itempurchase + fct_purchase + 采购族 6 条 L1） ([#641](https://github.com/MYTech-Co-LTD/platform-core/pull/641), [295234d](https://github.com/MYTech-Co-LTD/platform-core/commit/295234d48fde99843aacc8ddbcd12388355e5e8c))
 
