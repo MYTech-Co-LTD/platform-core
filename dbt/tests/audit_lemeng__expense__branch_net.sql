@@ -14,6 +14,10 @@ with recheck as (
     ) r
       -- 湖上只存在审核单（管线请求侧 state_code=3 筛过、契约不落 state 列）——
       -- 此处无需重复筛 state；bizday 闭窗过滤照旧。
+<<<<<<< HEAD
+=======
+    where r['state_code']::int = 3
+>>>>>>> origin/main
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
     group by 1, 2, 3, 4
 ),
