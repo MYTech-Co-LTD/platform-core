@@ -441,6 +441,82 @@ models:
       - name: return_detail_cost_money
         description: '明细退货成本（符号边界同上）。'
 
+  - name: stg_lemeng_request_order
+    description: >-
+      乐檬**要货单** staging（新湖；W3）。行=要货单商品行。 列全集以 `contracts/common/lemeng.request_order.json` 为准。⚠️ 采集范围仅 3120。
+    columns:
+      - name: system_book
+        description: 账套。hive 分区键。
+      - name: org
+        description: 主体列。
+        tests:
+          - not_null
+      - name: bizday
+        description: 制单/快照日。hive 分区键。
+      - name: order_no
+        description: 自然键之一。
+        tests:
+          - not_null
+      - name: branch_num
+        description: 自然键之一。
+        tests:
+          - not_null
+      - name: item_num
+        description: 自然键之一。
+        tests:
+          - not_null
+
+  - name: stg_lemeng_transfer_in
+    description: >-
+      乐檬**调入单** staging（新湖；W3）。行=调入单商品行。related_order_no 关联调出单 MO…。 列全集以 `contracts/common/lemeng.transfer_in.json` 为准。⚠️ 采集范围仅 3120。
+    columns:
+      - name: system_book
+        description: 账套。hive 分区键。
+      - name: org
+        description: 主体列。
+        tests:
+          - not_null
+      - name: bizday
+        description: 制单/快照日。hive 分区键。
+      - name: order_no
+        description: 自然键之一。
+        tests:
+          - not_null
+      - name: branch_num
+        description: 自然键之一。
+        tests:
+          - not_null
+      - name: item_num
+        description: 自然键之一。
+        tests:
+          - not_null
+
+  - name: stg_lemeng_inventory_snapshot
+    description: >-
+      乐檬**库存快照** staging（新湖；W3）。行=仓库×商品。**T-1 日结不可回溯**——错过即丢。 列全集以 `contracts/common/lemeng.inventory_snapshot.json` 为准。⚠️ 采集范围仅 3120。
+    columns:
+      - name: system_book
+        description: 账套。hive 分区键。
+      - name: org
+        description: 主体列。
+        tests:
+          - not_null
+      - name: bizday
+        description: 制单/快照日。hive 分区键。
+      - name: branch_num
+        description: 自然键之一。
+        tests:
+          - not_null
+      - name: storehouse_num
+        description: 自然键之一。
+        tests:
+          - not_null
+      - name: item_num
+        description: 自然键之一。
+        tests:
+          - not_null
+
+
 # 三张维度/价格表的**行粒度自然键**唯一性由 singular test 手写（单列 `unique` 判不了复合键；
 # 引 dbt_utils 要加 packages.yml —— 多一层依赖、解析期还要联网）：
 #   dbt/tests/assert_stg_lemeng_branch_key_unique.sql     —— (system_book, snapshot, branch_num)
