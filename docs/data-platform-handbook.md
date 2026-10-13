@@ -805,6 +805,10 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 22 | **读湖三方同撞一个竞态**（tick `*/5` 重写与读并发）：物化 job `20 3` 首跑**天天撞**（03:20 读湖恰逢 tick 重写 hour=10 文件）、问数咽喉对湖的读随时可撞（spec ③ 读「今天」的视图尤甚）、对账 audit 撞未闭窗营业日 ⇒ 三路定案（#452/#462）：读侧咽喉**重试恰一次**（`lake_race_retry` / `warehouse_transient` 归因）+ 物化**错峰 `27 3`** + audit **只比已闭窗营业日** | §1.5「问数偶发 `warehouse_transient`」一条；§3 物化调度行错峰注 |
 | 23 | **checkpoint 首抓永久化**：10-05 手动回填在上海 23:06 点火，把尚未结束的营业日整日截断快照冻结；10-01/04 闭窗后源侧补录进不来 ⇒ 三天对账红。**裸回填后逐格「正常」实为重放假象**——条目 key 不含 run 标识，回填根本没碰源（#528） | §1.3.4 全节（缓存三姿态 / 守卫判定单元 = 闭窗单元 / 回填≠修数）；§1.4.1 失败动作 = heal 闭环；§1.5「回填了还在」速查条 |
 | 24 | **seed 全量期望集双害**：64188 卷恒报 3 条他账套管线 DRIFT（真漂移信号被淹）；全量 seed 会把他账套管线灌进卷。裁决后首日执行，误删一件**无后缀共享件**被 `--check` 当轮抓出（#531/#532） | 期望集 = 共享族 + 本账套后缀族；**孤儿判定机械化**（卷内只有「他账套后缀」可删，无后缀共享件属于每卷）；排班↔能力源头闸 `check-console-schedules.mjs`（SOP §F.1） |
+| 25 | **排班↔能力闸只有一个方向**：`check-console-schedules` 只查「排班引用的管线存在」，**不查「管线必须有排班」** ⇒ W1/W2/W3 六条新管线只进 `pipelines/` 没进 `schedules/`，卷里**永不自动采集**，闸照样绿（#630）。活着的 9 条排班全是指标项目之前配的 | 源头闸要**双向**（① 引用完整性 + ② 期望采集集完整性）；豁免须**显式列名带理由**，不许用前缀猜 |
+| 26 | **分页扇出的静默截断**：D17 库存快照 9 页×100 = 900 行上限、**无哨兵** ⇒ 实测单日 4,192 行，**静默丢 78%**，构件金额系统性偏低且无任何告警（#632）。且 `page_size` 有**服务端上限**：**200 可用 / 300 起静默返回空集**（`{"code":0,"result":[]}`，不报错） | 容量哨兵页是**必需**不是可选（阈值 = (页数−1)×页容量，案例 3 同源）；调大 `page_size` 前**先实测服务端上限**（超限静默空集，validate/run 都报 ok） |
+| 27 | **窗口语义不能照信首次探针**：D17 契约写「T-1 有数据 / T 空集 / 不可回溯，错过即丢」，实测恰好**相反**（T-1 未发布 / T-2 及更早全可得 / 历史深可回溯）——发布滞后 16~40h（#632）。首探针的两种结果可能被记反 | 窗口语义用**两个相邻 bizday 交叉验证**，别用单点；「不可回溯/错过即丢」这类**驱动设计**的论断必须实测坐实才写进契约 |
+| 28 | **staging 路径模板手写双斜杠**：三个 W3 model 的 `read_parquet` 路径写成 `prefix//*/bizday=`（多一个 `/`），**本地全绿**、**真机物化才炸**（`No files found that match ...//*/bizday=**`）——因为本地门禁只校「契约 expr ↔ 管线投影」，**不校 model SQL 的路径模板**（#634） | 路径模板与 `sources.yml` 的 `access_path` **同源**；了解本地门禁的覆盖边界（model SQL 路径是盲区）——新源首次物化是真机验收的必需一步 |
 
 ### 1.7 逐源决策登记区
 
@@ -820,8 +824,11 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 乐檬批发退货单（3120 单账套，W1 2026-10-12） | duckle | — | `lemeng/wholesale_return` | `system_book=` + `bizday=`（行=退货单商品行；单头 `wholesale_return_total_money/cost_money` 随行冗余——**聚合前 per_order 取 max，行级 sum 重复计**） | 日更（窗口=昨日制单日单日；`date_type=制单时间`；**区间 ≤7 天接口硬限**（2026-10-12 实测）） | **duckle console**（UTC `55 15 * * *`，批序列尾） | **A 阶段恒空集**（接口可达 code:0 但近窗/历史窗/不筛状态全空——业务或走 D02 负金额红字；管线空转合法）；明细键名未获真样本实证（契约 description 载边界）；首跑随 W1 验收 |
 | 乐檬门店费用单（3120 单账套，W2 2026-10-13） | duckle | — | `lemeng/branch_expense` | `system_book=` + `bizday=`（行=费用单；归属店=branch_num，operate=结算方；direction 中文名 应付/应收；due_amount 红字保留） | 日更（窗口=审核日单日，date_from/date_to 完整时分秒；ama 族 page_number/page_size） | **duckle console**（UTC `05 16 * * *`，费用序列头） | 首跑随 W2 验收（A 阶段真样本已锚：expense_type=产品售后补损/settlement_state=已核销） |
 | 乐檬客户费用单（3120 单账套，W2 2026-10-13） | duckle | — | `lemeng/client_expense` | `system_book=` + `bizday=`（行=客户费用单；归属客户=client_fid 前导零字符串；other_inout_flag: false=应付/true=应收 真样本实证） | 日更（窗口=审核日单日，date_type=审核时间；whs 族 offset/limit、区间 ≤7 天硬限） | **duckle console**（UTC `15 16 * * *`，费用序列尾） | 首跑随 W2 验收（A 阶段真样本已锚：kind=抖音直播补贴/kind_code=043/memo=3A级大吉大梨礼盒抖音补贴） |
+| 乐檬要货单（3120，W3 2026-10-13） | duckle | — | `lemeng/request_order` | `system_book=` + `bizday=`（行=要货单 × items[] 展开；自然键含 item_num） | 日更（窗口=`${date-1d}` 单日；ama 族 page_number/page_size，9 页×100 上限） | **duckle console**（UTC `20 16 * * *`，费用序列后） | 首跑 ✓ / **独立通道 ✓**（2026-10-12：接口 88 单 × items 展开 = **342 行** = staging 342 逐行平）/ 跨系统 待回填 |
+| 乐檬调入单（3120，W3 2026-10-13） | duckle | — | `lemeng/transfer_in` | `system_book=` + `bizday=`（行=调入单 × items[] 展开） | 日更（窗口=`${date-1d}` 单日；ama 族 page_number/page_size，9 页×100 上限） | **duckle console**（UTC `25 16 * * *`，要货后） | 首跑 ✓ / **独立通道 ✓**（2026-10-12：接口 149 单 × items 展开 = **701 行** = staging 701 逐行平）/ 跨系统 待回填 |
+| 乐檬库存快照（3120，W3 2026-10-13 / #632 订正） | duckle | — | `lemeng/inventory_snapshot` | `system_book=` + `bizday=`（行=账套×bizday×仓库×商品） | 日更（窗口=**`${date-2d}`** 单日——源端发布滞后 16~40h，T-1 未发布；**page_size 上限 200**，300 起静默返回空集；数据页 30×200=6,000/日容量 + 哨兵页 p31） | **duckle console**（UTC `35 16 * * *`，费用序列后） | 首跑 ✓ **4,208 行落湖**（旧 9 页×100 静默截断 78%——#632 修复）/ **独立通道 ✓**（10-11：接口翻页 4,208 = staging 4,208 逐行平）/ **空集哨兵 ✓**（T-1 空集大声红、拒写湖）/ **容量哨兵 ✓**（p31 has-rows 硬失败）；跨系统 待回填 |
 | 乐檬批发客户档案（3120，#516 段①） | duckle | **固定窗例外（不用标准翻页形态，2026-10-10）**：GET 裸码路径是零参数路由（openapi paths 无 parameters；`limit=3/200/1000` 恒返 707、`offset/page/pageSize/rows/start/keyword` 全无效），POST 三形态全断（文档前缀→`PAT接口路由未配置`/裸码→method not supported/MCP 代理→AGI HTTP 500）⇒ 无翻页可配。窗口跟随活档案（最晚建档 09-23、最晚编辑 10-09 均在窗内，非静态切片），已知 41 个 WO 客户 41/41 在窗内；落窗外风险由发布侧未映射大声红兜底（探针报告 `.superpowers/sdd/2026-10-10-500-lemeng-client/probe-report.md`） | `lemeng/client` | `system_book=` + `snapshot=` | 日更（全量快照，单页固定窗；UTC `55 15 * * *`，wholesale 后 / 03:27 dbt 前） | **duckle console** | 首跑 ✓（707 行落湖/staging 写读对平 707/已知 41 WO 客户 41/41 命中/同名抽样 5/5 命中 dim_branch；行数带守卫 <500 die 在位）；跨系统 待回填 |
-| 乐檬调拨 / 批发 / 退货 / 要货（5 源） | duckle（设计定稿） | — | `lemeng/transfer_out` 等 | `system_book=` + `bizday=` | 5min 增量 + 每小时全量（设计） | 未落 | — |
+| 乐檬调拨 / 批发 / 退货 / 要货（5 源） | duckle | — | `lemeng/transfer_out` 等 | `system_book=` + `bizday=` | 日更（见各源行） | **duckle console** | **已落**（W1/W3 分批：D01/D02 R2/R3 先行、D03 W1、D15/D16 W3；见上各源行） |
 | 抖音 `sku_daily` | 未定 | — | `douyin/sku_daily` | 月（**键名未定**） | 未定 | 未落 | 待接入 |
 | 抖音接收器（`dy-upload`，生产在跑） | **E1**（长驻接收，**未销账**） | 长驻接收器**在跑**（生产 project `dy-upload` 以 `bare` runtime 跑 `/opt/douyin-life/capture/dy_receiver_run.py`）⇒ 命中 E1；**落盘形态等细节待核实**（§7 #3） | 待核实 | 待核实 | 常驻 | 待核实 | — |
 
@@ -845,8 +852,11 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 乐檬 | `lemeng/wholesale_out`（`system_book=` + `bizday=`） | 账套 × 批发单 × 商品行（#499/R3；**v2 2026-10-12** 补采单头 total/cost 两列） | **已落盘**（3120；64188 不在范围） | 行=批发单商品行；`order_detail_price`=基本单位批发价（按单结算，≠档案批发价）；发布 `data.dim_wholesale_out`（client_fid=批发客户键）；历史未回填——**2026-10-10 裁决：待数据稳定后随全管线补采统一覆盖**（§1.7 同行）；v2 两列的已存在分区重采随 W1 验收做 |
 | 乐檬 | `lemeng/wholesale_return`（`system_book=` + `bizday=`） | 账套 × 退货单 × 商品行（W1 2026-10-12） | **已落盘**（管线/契约/staging 就绪；**A 阶段恒空集**——首跑随 W1 验收） | 单头两列随行冗余（per_order 取 max）；明细键名未获真样本实证（契约 description）；与 D02 负金额红字**不得重复扣**（fct/audit 守卫） |
 | 乐檬 | `lemeng/branch_expense` / `lemeng/client_expense`（`system_book=` + `bizday=`） | 账套 × 费用单（W2 2026-10-13） | **已落盘**（管线/契约/staging 就绪；首跑随 W2 验收） | 归属：店=branch_num / 客户=client_fid（operate_branch_num=结算方仅落列）；direction/flag 方向语义见契约；费用率类指标为跨模型比率 → L2（消费面） |
+| 乐檬 | `lemeng/request_order`（`system_book=` + `bizday=`） | 3120（要货单 × items 展开） | **已落盘**（W3 2026-10-13；首跑 + 独立通道逐行平，见 §1.7） | 行=要货单商品行（自然键含 item_num）；窗口 `${date-1d}` 单日 |
+| 乐檬 | `lemeng/transfer_in`（`system_book=` + `bizday=`） | 3120（调入单 × items 展开） | **已落盘**（W3 2026-10-13；首跑 + 独立通道逐行平，见 §1.7） | 行=调入单商品行；窗口 `${date-1d}` 单日 |
+| 乐檬 | `lemeng/inventory_snapshot`（`system_book=` + `bizday=`） | 3120（仓库 × 商品库存快照） | **已落盘**（W3 2026-10-13；#632 订正窗口语义） | 窗口 `${date-2d}`（源端发布滞后 16~40h，T-1 未发布；历史深可回溯）；page_size 上限 200；粒度键 (bizday, branch_num, storehouse_num, item_num) |
 | 乐檬 | `lemeng/client`（`system_book=` + `snapshot=`） | 账套 × 客户（#516 工单取价对照表） | **已落盘**（3120，2026-10-10 首跑） | 进销存批发客户档案（GET 零参数固定窗，例外见 §1.7）；**不是门店维**——发布侧只消费 client_fid+client_name 做对照，行不进 dim_branch（spec §5 单源分工）；探针报告 `.superpowers/sdd/2026-10-10-500-lemeng-client/probe-report.md` |
-| 乐檬 | 调拨 / 批发 / 退货 / 要货（`transfer_out` / `wholesale_order` / `wholesale_return` / `request_order`） | 3120（要货双账套） | **摸清源**（设计定稿，未落） | 见 `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` |
+| 乐檬 | 调拨 / 批发 / 退货 / 要货 / 调入 / 库存快照 | 3120 | **已落盘**（W1/W3 分批全部落地，见上各行） | 设计源 `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` |
 | 抖音 | `douyin/sku_daily/<月>/all.parquet` | — | **摸清源**（待接入） | 分区键名未定；见 `contracts/README.md` §7 |
 
 > 「`_ops`」不是本仓目录约定（实测订正见 duckle/README.md §5）——桶内路径猜想，别再照抄。
@@ -895,6 +905,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 日期 | 数据源 | 验收范围 | 结论 | 卡点 → 案例号 |
 |---|---|---|---|---|
 | 2026-10-08 | 乐檬 item_price（价格批首载+增量，#499） | A→I 完整走（A 探针→B 契约→C/D 管线→E 调度→F 验收；H 首载例外登记） | 双账套首载 939,156 行落湖→staging→发布 `data.dim_item_price` 906,362 行；64188 日常增量首跑 ok；三墙实录见 §1.6 案例 19–21 | #1 #2 #3 #4 #5 #6（**公司标准 §6 的编号；该标准尚未合入**）——本正典的案例库见 §1.6。⚠️ **本行是史实、不改**：压测读的是 `lemeng-datasource` 桶里的**旧湖数据**（湖上仍在、仍被写）；仓内那份同名 staging 已于 **2026-10-06 退役**（§1.3 阶段 I），**与本次验收结论无关** |
+| 2026-10-13 | 乐檬 W1/W2/W3 六源（D03 批发退货 / D04 门店费用 / D05 客户费用 / D15 要货 / D16 调入 / D17 库存快照） | A→I 复核补课：**E 调度补齐**（6 条排班进种子 + 源头闸补完整性方向）+ **D17 窗口/分页修复** + **三 staging 路径修复** + 四层验收 | 排班 15 条 enabled 真机生效；D17 首跑 **4,208 行**（旧 9 页×100 静默截断 78% 已修）；三源独立通道**逐行平**（要货 342/342、调入 701/701、库存 4208/4208）；空集/容量双哨兵实证；词表 **19 条 L1** 入 `data.metrics` | #630（排班缺口+闸）/#632（D17 窗口分页）/#634（staging 双斜杠）；坑见 §1.6 |
 
 ---
 
