@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.112.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.111.1...v0.112.0) - 2026-10-13
+- 【新增】data: D11 采购源补新鲜度锚（湖侧 owners + 下游侧判据 ⑨） ([#645](https://github.com/MYTech-Co-LTD/platform-core/pull/645), [6ab0a9b](https://github.com/MYTech-Co-LTD/platform-core/commit/6ab0a9bc918f2d8588901028ee33e7e28212ddb0))
+
+
 ## [0.111.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.111.0...v0.111.1) - 2026-10-13
 - 【修复】data: D11 管线 w0 补 schema 申报（空结果 Binder 报错） ([#643](https://github.com/MYTech-Co-LTD/platform-core/pull/643), [27efe43](https://github.com/MYTech-Co-LTD/platform-core/commit/27efe433bbefa33484c7eb0807dedb93151b8398))
 
