@@ -166,6 +166,78 @@
       ],
       "maximumAge": "36h",
       "description": "独立通道对账的成功凭证（子管线 lemeng.recon.preagg.item 的 snk.csv 逐店明细；父管线 lemeng.recon.preagg 每日 16:30 UTC 派发 T-3 一跑）。2026-10-06 随首个判据类管线迁入 console 新增（spec: 2026-10-06-console-vs-job-for-judgements）——写发生 = 判据跑过且未红（红走 alerts.json 的 failure 规则）。⚠️ 时钟只在**重建 catalog 之后**的首个成功 run 起算（见 _note ⑧ 硬前置）。"
+    },
+    {
+      "match": "minio://*/lemeng/transfer_out/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "调出单每日采集的成功凭证（L0 lemeng.transfer.out.l0.3120 的 snk.minio 目标；写入=当天采集成功）",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
+    },
+    {
+      "match": "minio://*/lemeng/wholesale_out/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "批发销售单每日采集的成功凭证（L0 lemeng.wholesale.out.l0.3120）",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
+    },
+    {
+      "match": "minio://*/lemeng/wholesale_return/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "批发退货单每日采集的成功凭证（L0 lemeng.wholesale.return.l0.3120；⚠️ A 阶段恒空集——写 0 行文件仍算成功凭证）",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
+    },
+    {
+      "match": "minio://*/lemeng/branch_expense/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "门店费用单每日采集的成功凭证（L0 lemeng.branch.expense.l0.3120）",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
+    },
+    {
+      "match": "minio://*/lemeng/client_expense/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "客户费用单每日采集的成功凭证（L0 lemeng.client.expense.l0.3120）",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
+    },
+    {
+      "match": "minio://*/lemeng/request_order/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "要货单每日采集的成功凭证（L0 lemeng.request.order.l0.3120）",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
+    },
+    {
+      "match": "minio://*/lemeng/transfer_in/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "调入单每日采集的成功凭证（L0 lemeng.transfer.in.l0.3120）",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
+    },
+    {
+      "match": "minio://*/lemeng/inventory_snapshot/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "库存快照每日采集的成功凭证（L0 lemeng.inventory.snapshot.l0.3120；窗口=date-2d）",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
     }
   ]
 }
