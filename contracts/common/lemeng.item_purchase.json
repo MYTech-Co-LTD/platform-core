@@ -1,0 +1,167 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 1,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "item_purchase",
+  "owner": "data-platform",
+  "description": "乐檬采购分析（nhsoft.report.ai.itempurchase.find；W3 余项 2026-10-13 接源，见 #640）。【行粒度】一行 = 账套×采集bizday×供应商×商品（summary_types=[supplier,item]）——**响应无 branch_num / audit_date 列**，bizday 取请求参数值。【⚠️ 采集边界（2026-10-13 真机实证）】① **branch_nums=[99] 固定**：3120 门店配送制不采购，采购全在管理中心（门店查询恒空集）；② 窗口 `audit_date_start/end` **≤31 天硬限**（32 天报 code:10002）；③ **无翻页**（page_number/offset/limit 均不支持）⇒ 单次全量；④ 但响应带 **total_count**（三次实测 len(rows)==total_count）⇒ 管线以「行数==total_count」作**截断守卫**；⑤ **无数据滞后**（10-12 单日 59 行可得）⇒ 窗口 `${date-1d}` 单日。【响应形状】{code,msg,result:{total_count,rows[]}} ⇒ responsePath=/result/rows。【字段 17 列】见 columns。【用途】01-07 供应商集中度 / 05-01 采购净额与结构 / 05-02 同品加权采购价 / 05-05 采购退货率 / 05-06 供应商集中度。⚠️ 采购收货不是采购订单（客户文档边界）；不同维度查询结果不可重复相加。",
+  "layout": {
+    "prefix": "lemeng/item_purchase",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "system_book",
+      "bizday"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id。每 bizday 分区只写一次，重跑覆盖同 key。窗口 ≤31 天可回溯 ⇒ 漏夜可补采（按 audit_date 区间重跑）。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "批次标记（采集 run id）",
+      "expr": "'pu-' || '${ENV:SYSTEM_BOOK}' || '-item_purchase-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'"
+    },
+    {
+      "name": "system_book",
+      "type": "varchar",
+      "nullable": false,
+      "description": "账套（采集范围=3120）；分区键",
+      "expr": "'${ENV:SYSTEM_BOOK}'"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "采购审核日（=请求参数 audit_date_start/end；窗口 T-1 单日）；分区键",
+      "expr": "CAST('${date-1d}' AS DATE)"
+    },
+    {
+      "name": "supplier_num",
+      "type": "bigint",
+      "nullable": false,
+      "description": "供应商编号（summary_types 含 supplier）",
+      "expr": "CAST(o.supplier_num AS BIGINT)"
+    },
+    {
+      "name": "supplier_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "供应商编码",
+      "expr": "CAST(o.supplier_code AS VARCHAR)"
+    },
+    {
+      "name": "supplier_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "供应商名称（真样本：采购刘正国）",
+      "expr": "CAST(o.supplier_name AS VARCHAR)"
+    },
+    {
+      "name": "item_num",
+      "type": "bigint",
+      "nullable": false,
+      "description": "商品编号（summary_types 含 item）",
+      "expr": "CAST(o.item_num AS BIGINT)"
+    },
+    {
+      "name": "item_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品编码",
+      "expr": "CAST(o.item_code AS VARCHAR)"
+    },
+    {
+      "name": "item_barcode",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品条码",
+      "expr": "CAST(o.item_barcode AS VARCHAR)"
+    },
+    {
+      "name": "item_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品名",
+      "expr": "CAST(o.item_name AS VARCHAR)"
+    },
+    {
+      "name": "item_spec",
+      "type": "varchar",
+      "nullable": true,
+      "description": "规格",
+      "expr": "CAST(o.item_spec AS VARCHAR)"
+    },
+    {
+      "name": "base_unit",
+      "type": "varchar",
+      "nullable": true,
+      "description": "基本单位（同品比较须用 base_unit，客户文档边界）",
+      "expr": "CAST(o.base_unit AS VARCHAR)"
+    },
+    {
+      "name": "purchase_item_amount",
+      "type": "decimal(14,6)",
+      "nullable": true,
+      "description": "采购数量（基本单位）",
+      "expr": "CAST(o.purchase_item_amount AS DECIMAL(14,6))"
+    },
+    {
+      "name": "purchase_item_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "采购金额",
+      "expr": "CAST(o.purchase_item_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "purchase_present_amount",
+      "type": "decimal(14,6)",
+      "nullable": true,
+      "description": "赠品数量",
+      "expr": "CAST(o.purchase_present_amount AS DECIMAL(14,6))"
+    },
+    {
+      "name": "purchase_present_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "赠品金额",
+      "expr": "CAST(o.purchase_present_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "purchase_item_return_amount",
+      "type": "decimal(14,6)",
+      "nullable": true,
+      "description": "采购退货数量",
+      "expr": "CAST(o.purchase_item_return_amount AS DECIMAL(14,6))"
+    },
+    {
+      "name": "purchase_item_return_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "采购退货金额",
+      "expr": "CAST(o.purchase_item_return_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "amount_total",
+      "type": "decimal(14,6)",
+      "nullable": true,
+      "description": "数量合计列（与购入/赠品/退货分量勾稽，客户文档边界）",
+      "expr": "CAST(o.amount_total AS DECIMAL(14,6))"
+    },
+    {
+      "name": "money_total",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "金额合计列（同上）",
+      "expr": "CAST(o.money_total AS DECIMAL(14,2))"
+    }
+  ]
+}

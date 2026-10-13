@@ -41,107 +41,6 @@
     "next_run_at": null
   },
   {
-    "id": "panel-lemeng.dim.item_price.l0.3120",
-    "pipeline_id": "lemeng.dim.item_price.l0.3120",
-    "name": "lemeng.dim.item_price.l0.3120",
-    "enabled": true,
-    "kind": {
-      "type": "cron",
-      "expr": "15 11 * * *"
-    },
-    "misfire": "skip",
-    "catchup": {
-      "maxCatchupRuns": 31,
-      "maxCatchupAgeDays": 45
-    },
-    "last_run_at": null,
-    "last_run_status": null,
-    "last_run_duration_ms": null,
-    "last_run_error": null,
-    "next_run_at": null
-  },
-  {
-    "id": "panel-lemeng.transfer.out.l0.3120",
-    "pipeline_id": "lemeng.transfer.out.l0.3120",
-    "name": "lemeng.transfer.out.l0.3120",
-    "enabled": true,
-    "kind": {
-      "type": "cron",
-      "expr": "35 15 * * *"
-    },
-    "misfire": "skip",
-    "catchup": {
-      "maxCatchupRuns": 31,
-      "maxCatchupAgeDays": 45
-    },
-    "last_run_at": null,
-    "last_run_status": null,
-    "last_run_duration_ms": null,
-    "last_run_error": null,
-    "next_run_at": null
-  },
-  {
-    "id": "panel-lemeng.wholesale.out.l0.3120",
-    "pipeline_id": "lemeng.wholesale.out.l0.3120",
-    "name": "lemeng.wholesale.out.l0.3120",
-    "enabled": true,
-    "kind": {
-      "type": "cron",
-      "expr": "45 15 * * *"
-    },
-    "misfire": "skip",
-    "catchup": {
-      "maxCatchupRuns": 31,
-      "maxCatchupAgeDays": 45
-    },
-    "last_run_at": null,
-    "last_run_status": null,
-    "last_run_duration_ms": null,
-    "last_run_error": null,
-    "next_run_at": null
-  },
-  {
-    "id": "panel-lemeng.client.l0.3120",
-    "pipeline_id": "lemeng.client.l0.3120",
-    "name": "lemeng.client.l0.3120",
-    "enabled": true,
-    "kind": {
-      "type": "cron",
-      "expr": "55 15 * * *"
-    },
-    "misfire": "skip",
-    "catchup": {
-      "maxCatchupRuns": 31,
-      "maxCatchupAgeDays": 45
-    },
-    "last_run_at": null,
-    "last_run_status": null,
-    "last_run_duration_ms": null,
-    "last_run_error": null,
-    "next_run_at": null
-  },
-  {
-    "id": "panel-lemeng.wholesale.return.l0.3120",
-    "pipeline_id": "lemeng.wholesale.return.l0.3120",
-    "name": "lemeng.wholesale.return.l0.3120",
-    "enabled": true,
-    "kind": {
-      "type": "cron",
-      "expr": "55 15 * * *"
-    },
-    "timezone": "UTC",
-    "misfire": "all",
-    "catchup": {
-      "maxCatchupRuns": 31,
-      "maxCatchupAgeDays": 45
-    },
-    "last_run_at": null,
-    "last_run_status": null,
-    "last_run_duration_ms": null,
-    "last_run_error": null,
-    "next_run_at": null
-  },
-  {
     "id": "panel-lemeng.retail.close.l1",
     "pipeline_id": "lemeng.retail.close.l1",
     "name": "lemeng.retail.close.l1",
@@ -163,6 +62,26 @@
     "next_run_at": null
   },
   {
+    "id": "panel-lemeng.dim.branch.l0",
+    "pipeline_id": "lemeng.dim.branch.l0",
+    "name": "lemeng.dim.branch.l0",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "0 2 * * *"
+    },
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
     "id": "panel-lemeng.branch.expense.l0.3120",
     "pipeline_id": "lemeng.branch.expense.l0.3120",
     "name": "lemeng.branch.expense.l0.3120",
@@ -173,6 +92,26 @@
     },
     "timezone": "UTC",
     "misfire": "all",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.dim.item_price.l0.3120",
+    "pipeline_id": "lemeng.dim.item_price.l0.3120",
+    "name": "lemeng.dim.item_price.l0.3120",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "15 11 * * *"
+    },
+    "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
       "maxCatchupAgeDays": 45
@@ -247,6 +186,47 @@
     "next_run_at": null
   },
   {
+    "id": "panel-lemeng.retail.windows.l1",
+    "pipeline_id": "lemeng.retail.windows.l1",
+    "name": "lemeng.retail.windows.l1",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "30 2,10 * * *"
+    },
+    "timezone": "UTC",
+    "misfire": "all",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.transfer.out.l0.3120",
+    "pipeline_id": "lemeng.transfer.out.l0.3120",
+    "name": "lemeng.transfer.out.l0.3120",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "35 15 * * *"
+    },
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
     "id": "panel-lemeng.inventory.snapshot.l0.3120",
     "pipeline_id": "lemeng.inventory.snapshot.l0.3120",
     "name": "lemeng.inventory.snapshot.l0.3120",
@@ -268,13 +248,34 @@
     "next_run_at": null
   },
   {
-    "id": "panel-lemeng.dim.branch.l0",
-    "pipeline_id": "lemeng.dim.branch.l0",
-    "name": "lemeng.dim.branch.l0",
+    "id": "panel-lemeng.purchase.analysis.l0.3120",
+    "pipeline_id": "lemeng.purchase.analysis.l0.3120",
+    "name": "lemeng.purchase.analysis.l0.3120",
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "0 2 * * *"
+      "expr": "40 16 * * *"
+    },
+    "timezone": "UTC",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.wholesale.out.l0.3120",
+    "pipeline_id": "lemeng.wholesale.out.l0.3120",
+    "name": "lemeng.wholesale.out.l0.3120",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "45 15 * * *"
     },
     "misfire": "skip",
     "catchup": {
@@ -288,13 +289,33 @@
     "next_run_at": null
   },
   {
-    "id": "panel-lemeng.retail.windows.l1",
-    "pipeline_id": "lemeng.retail.windows.l1",
-    "name": "lemeng.retail.windows.l1",
+    "id": "panel-lemeng.client.l0.3120",
+    "pipeline_id": "lemeng.client.l0.3120",
+    "name": "lemeng.client.l0.3120",
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "30 2,10 * * *"
+      "expr": "55 15 * * *"
+    },
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.wholesale.return.l0.3120",
+    "pipeline_id": "lemeng.wholesale.return.l0.3120",
+    "name": "lemeng.wholesale.return.l0.3120",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "55 15 * * *"
     },
     "timezone": "UTC",
     "misfire": "all",

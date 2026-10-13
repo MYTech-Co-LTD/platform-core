@@ -147,6 +147,15 @@ sources:
           pagination: '新湖由 duckle 管线写入（W3）：ama 族 page_number/page_size 静态页扇出 + 哨兵 + ctl.merge'
 
 
+      - name: item_purchase
+        description: '乐檬**采购分析**（新湖，W3 余项 2026-10-13 契约，#640）：行=账套×bizday×供应商×商品（summary 型，无 branch/audit_date 列）；接口 nhsoft.report.ai.itempurchase.find。⚠️ branch_nums=[99] 固定（门店配送制不采购）；窗口 ≤31 天硬限；无翻页但响应带 total_count（管线作截断守卫）；无滞后 ⇒ 窗口 T-1 单日。'
+        meta:
+          path_convention: 'lemeng/item_purchase/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_item_purchase_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '无翻页（report 族 page_number 不支持）⇒ 单次全量；响应 {result:{total_count,rows[]}}，管线断言 len(rows)==total_count'
+
       - name: wholesale_return
         description: '乐檬**批发退货单**（新湖，2026-10-12 契约，W1）：行 = 退货单商品行；查询窗=制单日单日（date_type=制单时间，#513 同族坑）、区间 ≤7 天接口硬限（2026-10-12 实测）、每分区写一次不重写；接口 nhsoft.whs.ai.wholesalereturn.find limit/offset 分页（p19 哨兵同构）。⚠️ A 阶段探针恒空集（接口可达无业务样本）——明细键名未获真样本实证（契约 description 详）；单头列随行冗余，聚合前 per_order 取 max。'
         meta:
