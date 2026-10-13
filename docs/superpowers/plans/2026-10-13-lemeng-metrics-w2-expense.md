@@ -60,7 +60,7 @@
 - Create: `dbt/models/common/marts/fct_branch_expense.sql`（粒度 (system_book, bizday, branch_num, expense_type)；`ep_payable`=Σ amount where direction='应付'、`er_receivable`=Σ where direction='应收'、`e_net`=ep−er；::numeric(20,2)；line 级 bill 去重 count(distinct bill_no)）
 - Create: `dbt/models/common/marts/fct_client_expense.sql`（粒度 (system_book, bizday, client_fid, other_inout_kind)；同构）
 - Create: 2 个 grain 断言
-- Modify: `dbt/semantics/l1_metrics.yml`（6 条，**全部 experimental**——费用口径的客户回签（裁9 提案）未做：e_net=应付−应收的「净费用」语义需客户确认方向符号）
+- Modify: `dbt/semantics/l1_metrics.yml`（6 条——**裁9 已回签（2026-10-13）：净费用 = 应付 − 应收**，故已转 certified）
 - Create: 6 个对账（骨架照 outbound 系；recheck 直接打两份费用湖表 parquet）
 
 **L1 清单**：`lemeng:expense:branch_payable` / `branch_receivable` / `branch_net` / `client_payable` / `client_receivable` / `client_net`。grain 前三者 [system_book, bizday, branch_num, expense_type]、后三者 [system_book, bizday, client_fid, other_inout_kind]。**费用率类全部 L2**（跨模型比率，消费面 spec 承接——客户 W2 的 16 项里率类在消费面出）。
@@ -75,7 +75,7 @@
 - [ ] **Step 1:** X08 seed 结构（header-only，数据待裁5 客户批）。
 - [ ] **Step 2:** issue（`feat(data): 乐檬指标 W2 费用两件套`）→ push → PR（skip-issue）→ CI 全绿 → merge。
 - [ ] **Step 3:** 真机四步链：sync → materialize（PASS=TOTAL+新增）→ 主项目部署 → 词表「新增 6」→ 抽查（branch_expense 与接口定点单据比对：挑 memo='到店佳沛少一个' 的真实单核对 amount/due_amount/direction）。
-- [ ] **Step 4:** 台账验收行 + issue 收尾评论（**新裁9 提案**：e_net=应付−应收的净费用符号语义，待客户回签）。
+- [x] **Step 4:** 台账验收行 + issue 收尾评论（**裁9 提案** e_net=应付−应收 的符号语义；**2026-10-13 客户回签：保持 应付 − 应收**）。
 
 ## Self-Review 备忘
 
