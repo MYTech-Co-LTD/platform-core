@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.110.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.110.3...v0.110.4) - 2026-10-13
+- 【修复】data: 补新八源新鲜度锚（湖侧 owners） ([#638](https://github.com/MYTech-Co-LTD/platform-core/pull/638), [b00e16f](https://github.com/MYTech-Co-LTD/platform-core/commit/b00e16f4657edf6dcaa83f6c6e07e92005ce291e))
+
+
 ## [0.110.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.110.2...v0.110.3) - 2026-10-13
 - 【修复】data: 三个 W3 staging 模型路径模板去多余斜杠 ([#635](https://github.com/MYTech-Co-LTD/platform-core/pull/635), [ebe46f4](https://github.com/MYTech-Co-LTD/platform-core/commit/ebe46f436129fcb5b33177e9dbedc9ac36719ac2))
 
