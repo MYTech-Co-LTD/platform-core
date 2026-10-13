@@ -1,4 +1,4 @@
-// check-console-schedules.mjs — console 排班↔能力完整性门禁（#531）。
+// check-console-schedules.mjs — console 排班↔能力完整性门禁（#531、#630）。
 //
 // 判据（对 deploy/duckle/console/ 下每本 schedules/<book>.json 的每条目）：
 //   ① pipeline_id 必须等于某管线文件的顶层 `name` —— 抓拼写错/引用了不存在的管线；
@@ -6,6 +6,10 @@
 //      name stem 无账套数字后缀（共享族），或后缀 == <book>（本账套族）。
 //      —— 这是 SOP §F.1「一账套一 console」危害形态（错账套排班 ⇒ 静默采错数据）在
 //      **仓内源头**的闸：64188 的排班里出现 `*.l0.3120` 一类引用，合入前就红。
+//   ③（#630）**完整性方向**：每本 book 的期望采集集 =（共享族 + 本账套后缀族）
+//      − 全局豁免 − 本账套豁免；排班里缺一条 = 红。
+//      —— 反向缺口实证（#630）：W1/W2/W3 六条新管线只进 pipelines/ 没进 schedules/，
+//      卷里永不自动采集，本闸当年照样绿。豁免必须显式列名 + 写理由，不许用前缀猜。
 //
 // 不变量顺带钉住：管线顶层 name == 文件名 stem（生成器保证；suffix 判定依赖它）。
 // books 由 schedules/*.json 文件集推导（不写死账套清单）。
@@ -88,6 +92,39 @@ for (const f of scheduleFiles) {
     const suf = capability.get(pid)
     if (entry.enabled === true && suf !== '' && suf !== book) {
       violations.push(`book=${book} entry=${String(entry.id)} enabled 引用他账套管线 ${pid}（后缀 ${suf}≠${book}）——错账套排班，§F.1 危害形态`)
+    }
+  }
+}
+
+// ── ③ 完整性方向（#630）：期望采集集 ⊆ 排班条目集 ────────────────────────────
+// 豁免名单：管线名 → 理由（为什么不该有日更排班）。新增豁免必须在这里显式登记。
+/** @type {Map<string, string>} */
+const EXEMPT_GLOBAL = new Map([
+  ['lemeng.retail.windows.backfill', '回填专用（换时间窗手动触发，handbook §1.3 阶段 H）'],
+  ['lemeng.wholesale.out.backfill.3120', '回填专用（2026-10-10 裁决：待全管线补采统一覆盖，§1.7）'],
+  ['lemeng.retail_order_line.tick', '旧零售族残留——已被 retail.tick.l1 取代，待退役（§2 台账）'],
+  ['lemeng.retail_order_line.window', '旧零售族残留——已被 retail.windows.l1 取代，待退役（§2 台账）'],
+  ['lemeng.recon.preagg.item', '按需手动（逐分归零对账执行面，无日更节奏）'],
+])
+/** @type {Map<string, Map<string, string>>} book →（管线名 → 理由） */
+const EXEMPT_BY_BOOK = new Map([
+  ['3120', new Map([
+    ['lemeng.recon.preagg', '3120 不排：逐分归零通道被乐檬改坏（恒 10006，§1.4）——旁路 recon-preagg.sh 手动'],
+    ['lemeng.dim.item_price.l0', '3120 排 .3120 后缀版（R1 增量模型）；无后缀共享版只归 64188'],
+  ])],
+])
+
+for (const f of scheduleFiles) {
+  const book = stemOf(f)
+  if (!/^[0-9]+$/.test(book)) continue // 结构问题已在上半段报过，不重复计
+  const exemptBook = EXEMPT_BY_BOOK.get(book) ?? new Map()
+  /** @type {Set<string>} 本 book 的排班覆盖集 */
+  const covered = new Set(readJson(join(ROOT, 'schedules', f)).map((/** @type {{pipeline_id?: unknown}} */ e) => String(e.pipeline_id)))
+  for (const [name, suffix] of capability) {
+    if (suffix !== '' && suffix !== book) continue // 非本账套族，本 book 不期望
+    if (EXEMPT_GLOBAL.has(name) || exemptBook.has(name)) continue
+    if (!covered.has(name)) {
+      violations.push(`book=${book} 管线 ${name} 无排班条目（期望采集集缺员，#630 完整性方向；豁免须登记进 EXEMPT_*）`)
     }
   }
 }
