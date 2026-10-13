@@ -1,0 +1,47 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "inventory_snapshot",
+  "owner": "data-platform",
+  "description": "乐檬库存快照（nhsoft.ama.ai.inventory.snapshot.find；W3 2026-10-13 接源）。【行粒度】一行 = 账套×采集bizday×仓库×商品。【⚠️ T-1 日结语义（2026-10-13 实测）】快照 = 每天凌晨生成前一日（T-1）的日结库存——bizday=T-1 有数据、T 及更早**空集**；且历史不可回溯（T-1 窗口错过即丢）⇒ **采集必须日更不可断**，错过当天即永久缺失该日快照。【窗口】查询窗 = `${date-1d}` 单日（bizday=昨日）；无翻页实测单次返回全量（但行数巨大——须设哨兵；响应体可能触上限 12.3/32.9MB 需实测）。【采集范围】仅 3120。【字段清单（2026-10-13 全键实证 18 列）】见 columns。【用途】03-07 库存覆盖天数 / 04-08 库存周转 / 06-05 低动销 / 06-08 缺货。⚠️ 快照无批号/到期日（客户文档已警示）——批次级临期不可算。",
+  "layout": {
+    "prefix": "lemeng/inventory_snapshot",
+    "partitionStyle": "hive",
+    "partitionBy": ["system_book", "bizday"],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id。每 bizday 分区只写一次，重跑覆盖同 key。⚠️ T-1 日结：错过窗口不可补——调度与告警必须确保日更不断。"
+  },
+  "columns": [
+    { "name": "batch_id", "type": "varchar", "nullable": false, "description": "批次标记（采集 run id）", "expr": "'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'" },
+    { "name": "system_book", "type": "varchar", "nullable": false, "description": "账套（采集范围=3120）；分区键", "expr": "'${ENV:SYSTEM_BOOK}'" },
+    { "name": "bizday", "type": "date", "nullable": false, "description": "快照日（=T-1 日结）；分区键", "expr": "CAST('${date-1d}' AS DATE)" },
+    { "name": "branch_num", "type": "int", "nullable": false, "description": "门店编号", "expr": "CAST(o.branch_num AS INTEGER)" },
+    { "name": "branch_code", "type": "varchar", "nullable": true, "description": "门店编码", "expr": "CAST(o.branch_code AS VARCHAR)" },
+    { "name": "branch_name", "type": "varchar", "nullable": true, "description": "门店名", "expr": "CAST(o.branch_name AS VARCHAR)" },
+    { "name": "storehouse_num", "type": "bigint", "nullable": false, "description": "仓库编号（粒度键之一；真样本 312000161）", "expr": "CAST(o.storehouse_num AS BIGINT)" },
+    { "name": "storehouse_code", "type": "varchar", "nullable": true, "description": "仓库编码", "expr": "CAST(o.storehouse_code AS VARCHAR)" },
+    { "name": "storehouse_name", "type": "varchar", "nullable": true, "description": "仓库名", "expr": "CAST(o.storehouse_name AS VARCHAR)" },
+    { "name": "item_num", "type": "bigint", "nullable": false, "description": "商品内部编号", "expr": "CAST(o.item_num AS BIGINT)" },
+    { "name": "item_code", "type": "varchar", "nullable": true, "description": "商品编码（真样本 24773）", "expr": "CAST(o.item_code AS VARCHAR)" },
+    { "name": "item_barcode", "type": "varchar", "nullable": true, "description": "商品条码", "expr": "CAST(o.item_barcode AS VARCHAR)" },
+    { "name": "item_name", "type": "varchar", "nullable": true, "description": "商品名", "expr": "CAST(o.item_name AS VARCHAR)" },
+    { "name": "item_spec", "type": "varchar", "nullable": true, "description": "商品规格", "expr": "CAST(o.item_spec AS VARCHAR)" },
+    { "name": "item_unit", "type": "varchar", "nullable": true, "description": "基本单位", "expr": "CAST(o.item_unit AS VARCHAR)" },
+    { "name": "inventory_quantity", "type": "decimal(14,6)", "nullable": true, "description": "库存数量（基本单位；真样本含 0 库存行）", "expr": "CAST(o.inventory_quantity AS DECIMAL(14,6))" },
+    { "name": "inventory_assist_quantity", "type": "decimal(14,6)", "nullable": true, "description": "库存辅助数量", "expr": "CAST(o.inventory_assist_quantity AS DECIMAL(14,6))" },
+    { "name": "inventory_use_quantity", "type": "decimal(14,6)", "nullable": true, "description": "库存使用单位数量", "expr": "CAST(o.inventory_use_quantity AS DECIMAL(14,6))" },
+    { "name": "inventory_money", "type": "decimal(14,2)", "nullable": true, "description": "库存金额", "expr": "CAST(o.inventory_money AS DECIMAL(14,2))" },
+    { "name": "carry_cost_price", "type": "decimal(18,8)", "nullable": true, "description": "滚动成本价", "expr": "CAST(o.carry_cost_price AS DECIMAL(18,8))" },
+    { "name": "sale_price", "type": "decimal(18,8)", "nullable": true, "description": "销售价", "expr": "CAST(o.sale_price AS DECIMAL(18,8))" },
+    { "name": "difference_quantity", "type": "decimal(14,6)", "nullable": true, "description": "差异数量", "expr": "CAST(o.difference_quantity AS DECIMAL(14,6))" },
+    { "name": "difference_money", "type": "decimal(14,2)", "nullable": true, "description": "差异金额", "expr": "CAST(o.difference_money AS DECIMAL(14,2))" }
+  ]
+}
