@@ -101,6 +101,24 @@ sources:
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / bizday::date）'
           pagination: '新湖由 duckle 管线写入（#499/R3）：静态页扇出（limit/offset，p19 哨兵 >1800 单/日大声红）+ ctl.merge + flatten（UNNEST wholesale_order_details）；生成器 scripts/lemeng/gen-wholesale-out-pipeline.mjs，不手编'
 
+      - name: branch_expense
+        description: '乐檬**门店费用单**（新湖，2026-10-13 契约，W2）：行 = 费用单；查询窗=审核日单日（date_from/date_to 完整时分秒）、ama 族 page_number/page_size 分页；接口 nhsoft.ama.ai.branch.expense.find。归属店=branch_num（operate_branch_num=结算方）；direction 中文名（应付/应收）；due_amount 红字保留。'
+        meta:
+          path_convention: 'lemeng/branch_expense/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_branch_expense_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '新湖由 duckle 管线写入（W2）：静态页扇出（page_number/page_size，哨兵同构）+ ctl.merge'
+
+      - name: client_expense
+        description: '乐檬**客户费用单**（新湖，2026-10-13 契约，W2）：行 = 客户费用单；查询窗=审核日单日（date_type=审核时间、区间 ≤7 天硬限）、whs 族 offset/limit 分页（返回 {count,content}）；接口 nhsoft.whs.ai.otherinout.find。other_inout_flag: false=应付/true=应收（真样本实证）；归属客户=client_fid（前导零字符串）。'
+        meta:
+          path_convention: 'lemeng/client_expense/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_client_expense_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '新湖由 duckle 管线写入（W2）：静态页扇出（offset/limit，哨兵同构）+ ctl.merge'
+
       - name: wholesale_return
         description: '乐檬**批发退货单**（新湖，2026-10-12 契约，W1）：行 = 退货单商品行；查询窗=制单日单日（date_type=制单时间，#513 同族坑）、区间 ≤7 天接口硬限（2026-10-12 实测）、每分区写一次不重写；接口 nhsoft.whs.ai.wholesalereturn.find limit/offset 分页（p19 哨兵同构）。⚠️ A 阶段探针恒空集（接口可达无业务样本）——明细键名未获真样本实证（契约 description 详）；单头列随行冗余，聚合前 per_order 取 max。'
         meta:

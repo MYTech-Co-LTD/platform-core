@@ -1,0 +1,44 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "client_expense",
+  "owner": "data-platform",
+  "description": "乐檬客户费用单（nhsoft.whs.ai.otherinout.find；W2 2026-10-13 接源）。【行粒度】一行 = 账套×采集bizday×客户费用单（无明细子结构）。【窗口】查询窗 = `${date-1d}` 单日 + `date_type=审核时间` + 完整 `yyyy-MM-dd HH:mm:ss`（whs 族三坑同 D03 契约注）；区间 ≤7 天硬限；每分区写一次不重写。【采集范围】仅 3120。【方向语义（真样本实证 2026-10-12）】`other_inout_flag`: **false=应付 / true=应收**，且接口直接回 `other_inout_flag_name` 中文名——构件按 flag 布尔筛、名做展示。【红字】`other_inout_due_money` 真样本 -10.0 与 money=10.0 反向——保留红字。【费用项目】`other_inout_kind`（名「抖音直播补贴」）+ `other_inout_kind_code`（码 043）双列——码做稳定聚合校验。【真样本锚】2026-10-12 limit=1 实证 other_inout_bill_no=OP3120992610080157 / client_name=腾冲1店 / memo=3A级大吉大梨礼盒抖音补贴。【分页】whs 族 offset/limit（返回 {count, content} 结构——responsePath 指 /result/content）。",
+  "layout": {
+    "prefix": "lemeng/client_expense",
+    "partitionStyle": "hive",
+    "partitionBy": ["system_book", "bizday"],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id。每 bizday 分区只写一次，重跑覆盖同 key。"
+  },
+  "columns": [
+    { "name": "batch_id", "type": "varchar", "nullable": false, "description": "批次标记（采集 run id）", "expr": "'ce-' || '${ENV:SYSTEM_BOOK}' || '-client_expense-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'" },
+    { "name": "system_book", "type": "varchar", "nullable": false, "description": "账套（采集范围=3120）；分区键", "expr": "'${ENV:SYSTEM_BOOK}'" },
+    { "name": "bizday", "type": "date", "nullable": false, "description": "费用审核日（=查询窗口日）；分区键", "expr": "CAST('${date-1d}' AS DATE)" },
+    { "name": "other_inout_bill_no", "type": "varchar", "nullable": false, "description": "客户费用单号（OP…；自然键；真样本 OP3120992610080157）", "expr": "CAST(o.other_inout_bill_no AS VARCHAR)" },
+    { "name": "branch_num", "type": "int", "nullable": true, "description": "业务机构编号（真样本 99=管理中心；**客户归属以 client_fid 为准**，此列仅落列）", "expr": "CAST(o.branch_num AS INTEGER)" },
+    { "name": "branch_name", "type": "varchar", "nullable": true, "description": "业务机构名", "expr": "CAST(o.branch_name AS VARCHAR)" },
+    { "name": "client_fid", "type": "varchar", "nullable": false, "description": "客户编号（前导零按字符串保留，真样本 003120990000250；聚合归属键）", "expr": "CAST(o.client_fid AS VARCHAR)" },
+    { "name": "client_code", "type": "varchar", "nullable": true, "description": "客户编码（真样本 00004）", "expr": "CAST(o.client_code AS VARCHAR)" },
+    { "name": "client_name", "type": "varchar", "nullable": true, "description": "客户名（真样本 腾冲1店）", "expr": "CAST(o.client_name AS VARCHAR)" },
+    { "name": "other_inout_flag", "type": "bool", "nullable": false, "description": "方向布尔：**false=应付 / true=应收**（真样本 flag=false 配 flag_name=应付 实证）", "expr": "CAST(o.other_inout_flag AS BOOLEAN)" },
+    { "name": "other_inout_flag_name", "type": "varchar", "nullable": true, "description": "方向中文名（接口直接回「应付/应收」，与 flag 冗余、供展示）", "expr": "CAST(o.other_inout_flag_name AS VARCHAR)" },
+    { "name": "other_inout_kind", "type": "varchar", "nullable": false, "description": "费用项目名（真样本「抖音直播补贴」）", "expr": "CAST(o.other_inout_kind AS VARCHAR)" },
+    { "name": "other_inout_kind_code", "type": "varchar", "nullable": true, "description": "费用项目码（真样本 043；稳定聚合校验键）", "expr": "CAST(o.other_inout_kind_code AS VARCHAR)" },
+    { "name": "other_inout_date", "type": "varchar", "nullable": true, "description": "费用日期", "expr": "CAST(o.other_inout_date AS VARCHAR)" },
+    { "name": "other_inout_money", "type": "decimal(14,2)", "nullable": true, "description": "费用金额（真样本 10.0）", "expr": "CAST(o.other_inout_money AS DECIMAL(14,2))" },
+    { "name": "other_inout_due_money", "type": "decimal(14,2)", "nullable": true, "description": "到期额（真样本 -10.0 与 money 反向——**红字保留**）", "expr": "CAST(o.other_inout_due_money AS DECIMAL(14,2))" },
+    { "name": "other_inout_ref_bill", "type": "varchar", "nullable": true, "description": "关联原单号（真样本空串）", "expr": "CAST(o.other_inout_ref_bill AS VARCHAR)" },
+    { "name": "other_inout_audit_time", "type": "varchar", "nullable": true, "description": "审核时间（真样本 2026-10-08 18:05:28）", "expr": "CAST(o.other_inout_audit_time AS VARCHAR)" },
+    { "name": "state_code", "type": "int", "nullable": true, "description": "单据状态码（从 state JSON 抽 $.state_code；真样本 3，state_name「制单|审核」）", "expr": "CAST(json_extract_string(CAST(o.state AS JSON), '$.state_code') AS INTEGER)" },
+    { "name": "other_inout_memo", "type": "varchar", "nullable": true, "description": "备注（真样本「3A级大吉大梨礼盒抖音补贴」）", "expr": "CAST(o.other_inout_memo AS VARCHAR)" }
+  ]
+}

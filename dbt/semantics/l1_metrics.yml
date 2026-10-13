@@ -208,3 +208,80 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+
+
+  # ── W2（2026-10-13）：费用两件套 6 条 ────────────────────────────────────────────────
+  # 构件落点：fct_branch_expense / fct_client_expense。全部 experimental——
+  # 裁9（净费用 e = 应付 − 应收 的符号语义）未回签；费用率类为跨模型比率 → L2（消费面）。
+
+  - name: 'lemeng:expense:branch_payable'
+    label: 门店应付费用
+    definition: >-
+      门店费用应付合计（EP）：审核费用单（state_code=3）按 direction='应付' 的 amount 合计，
+      按费用项目（expense_type）与门店、日分列。金额保留红字。粒度 = 账套 × 审核日 × 门店 × 项目。
+    expression: 'sum(fct_branch_expense.ep_payable)'
+    grain: [system_book, bizday, branch_num, expense_type]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    sources:
+      - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:expense:branch_receivable'
+    label: 门店应收费用
+    definition: >-
+      门店费用应收合计（ER）：同上基面按 direction='应收' 的 amount 合计。
+      粒度 = 账套 × 审核日 × 门店 × 项目。
+    expression: 'sum(fct_branch_expense.er_receivable)'
+    grain: [system_book, bizday, branch_num, expense_type]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:expense:branch_net'
+    label: 门店净费用
+    definition: >-
+      门店净费用（E 构件）= 应付合计 − 应收合计。**不可加边界**：更粗粒度求和即净费用之和
+      （E 可加）。⚠️ 符号语义（应付为正方向）待裁9 客户回签 → experimental。
+      粒度 = 账套 × 审核日 × 门店 × 项目。
+    expression: 'sum(fct_branch_expense.e_net)'
+    grain: [system_book, bizday, branch_num, expense_type]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:expense:client_payable'
+    label: 客户应付费用
+    definition: >-
+      客户费用应付合计（EP）：审核客户费用单（state_code=3）按 other_inout_flag=false（应付，
+      真样本实证）的 other_inout_money 合计，按费用项目（other_inout_kind）与客户、日分列。
+      client_fid 前导零按字符串保留。粒度 = 账套 × 审核日 × 客户 × 项目。
+    expression: 'sum(fct_client_expense.ep_payable)'
+    grain: [system_book, bizday, client_fid, other_inout_kind]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    sources:
+      - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:expense:client_receivable'
+    label: 客户应收费用
+    definition: >-
+      客户费用应收合计（ER）：同上基面按 other_inout_flag=true（应收）合计。
+      粒度 = 账套 × 审核日 × 客户 × 项目。
+    expression: 'sum(fct_client_expense.er_receivable)'
+    grain: [system_book, bizday, client_fid, other_inout_kind]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:expense:client_net'
+    label: 客户净费用
+    definition: >-
+      客户净费用（E 构件）= 应付合计 − 应收合计。可加。符号语义待裁9 → experimental。
+      粒度 = 账套 × 审核日 × 客户 × 项目。
+    expression: 'sum(fct_client_expense.e_net)'
+    grain: [system_book, bizday, client_fid, other_inout_kind]
+    owner: data-platform
+    tier: experimental
+    source: lemeng

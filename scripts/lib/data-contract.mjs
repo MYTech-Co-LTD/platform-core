@@ -171,6 +171,9 @@ export function findProducerPipelines(root, prefix) {
     // （2026-10-12 实测：wholesale backfill 的 bizday 行被重写、CI gates 的 gen --check 红）。
     // 变体由 API params 驱动（POST /api/run 的 params），不进调度、不属「列集唯一事实源」的归一面。
     if (p.includes('.backfill.')) return false
+    // 前缀匹配带 `/` 边界（2026-10-13 W2 实测）：`lemeng/client` 不得命中 `lemeng/client_expense`
+    // 的 sink key——子串匹配把费用管线误当 client 契约的生产者，gen 按错契约重写其投影。
+    const bounded = prefix.endsWith('/') ? prefix : prefix + '/'
     try {
       /** @type {any} */
       const doc = JSON.parse(readFileSync(join(root, p), 'utf8'))
@@ -179,7 +182,7 @@ export function findProducerPipelines(root, prefix) {
         (/** @type {any} */ n) =>
           typeof n?.data?.componentId === 'string' &&
           n.data.componentId.startsWith('snk.') &&
-          JSON.stringify(n?.data?.properties ?? {}).includes(prefix),
+          JSON.stringify(n?.data?.properties ?? {}).includes(bounded),
       )
     } catch {
       return false
