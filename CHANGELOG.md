@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.115.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.115.2...v0.115.3) - 2026-10-13
+- 【修复】data: inventory 对账防 DOUBLE 求和尾差假差异 ([#661](https://github.com/MYTech-Co-LTD/platform-core/pull/661), [2982dff](https://github.com/MYTech-Co-LTD/platform-core/commit/2982dff0e7b52f1e8b9b0c97a1b0061f75f6635f))
+
+
 ## [0.115.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.115.1...v0.115.2) - 2026-10-13
 - 【修复】data: purchase daycount 自检行 6 null（修正 #657 的过头修） ([#658](https://github.com/MYTech-Co-LTD/platform-core/pull/658), [75d8e63](https://github.com/MYTech-Co-LTD/platform-core/commit/75d8e63b19cfe50873b6784c0cf2f8ed265e8517))
 
