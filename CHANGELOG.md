@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.110.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.110.2...v0.110.3) - 2026-10-13
+- 【修复】data: 三个 W3 staging 模型路径模板去多余斜杠 ([#635](https://github.com/MYTech-Co-LTD/platform-core/pull/635), [ebe46f4](https://github.com/MYTech-Co-LTD/platform-core/commit/ebe46f436129fcb5b33177e9dbedc9ac36719ac2))
+
+
 ## [0.110.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.110.1...v0.110.2) - 2026-10-13
 - 【修复】data: D17 库存快照窗口改 ${date-2d} + 分页扩容防静默截断 ([#633](https://github.com/MYTech-Co-LTD/platform-core/pull/633), [49fdac0](https://github.com/MYTech-Co-LTD/platform-core/commit/49fdac0933223197aab6433e82792de2288c7e53))
 
