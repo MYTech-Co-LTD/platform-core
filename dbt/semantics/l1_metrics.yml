@@ -285,3 +285,33 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+
+  # ── W3（2026-10-13）：库存快照 2 条 ─────────────────────────────────────────────────
+  # 构件落点：fct_inventory_snapshot。全 experimental——D17 T-1 日结不可回溯（漏采即丢）；
+  # coverage_days 需销售分母（D07 上卷）→ W4 另声明。
+
+  - name: 'lemeng:inventory:quantity'
+    label: 库存数量
+    definition: >-
+      库存快照数量合计（基本单位）。T-1 日结（每天凌晨生成前一日快照，不可回溯——
+      错过采集窗口即永久缺失该日快照）。含 0 库存行（接口返回有 0 行）。
+      粒度 = 账套 × 快照日 × 门店 × 仓库 × 商品。
+      ⚠️ 上滚语义：跨日不可比（快照是时点数不是流量数）——同日多仓可加，跨日只取最新。
+    expression: 'sum(fct_inventory_snapshot.inventory_quantity)'
+    grain: [system_book, bizday, branch_num, storehouse_num, item_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    sources:
+      - 's3://<bucket>/lemeng/inventory_snapshot/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:inventory:money'
+    label: 库存金额
+    definition: >-
+      库存快照金额合计（元）。**不可加边界**：同上（时点数）。粒度 = 账套 × 快照日 × 门店 × 仓库 × 商品。
+      ⚠️ experimental：裁4/裁5 未回签 + D17 可回溯深度待长期观察。
+    expression: 'sum(fct_inventory_snapshot.inventory_money)'
+    grain: [system_book, bizday, branch_num, storehouse_num, item_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
