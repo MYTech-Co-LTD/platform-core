@@ -14,7 +14,7 @@ with recheck as (
     ) r
       -- 湖上只存在审核单（管线请求侧已筛审核态、契约不落状态列）——
       -- 此处无需重复筛 state；bizday 闭窗过滤照旧。
-      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
     group by 1, 2, 3, 4
 ),
 materialized as (
