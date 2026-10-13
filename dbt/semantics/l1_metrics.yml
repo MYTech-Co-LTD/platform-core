@@ -41,8 +41,8 @@ metrics:
       |discount_money − std_price×quantity| ≤ 0.02，容差标定见判别式正典
       docs/superpowers/specs/2026-09-30-recon-zeroing-self-attribution.md）。
       粒度 = 账套 × 业务日 × 门店（口径模型 fct_retail_sale）。
-      ⚠️ tier=experimental：公式已真机验证；等客户回签裁1（换货「送出半边」叠加进净额 L，
-      spec 2026-10-12-lemeng-metrics-sources-semantics-design.md §6）后再转 certified。
+      ✅ tier=certified（2026-10-13 客户裁决：裁1 保持折半口径——换货即商品替换、退旧换新只计差价，
+      与乐檬报表口径一致；spec §6 裁1 已回签）。
     expression: 'sum(fct_retail_sale.net_amount)'
     grain: [system_book, bizday, branch_num]
     owner: data-platform
@@ -63,11 +63,11 @@ metrics:
       **上滚语义**：更粗粒度上对 expression 求和 = 各门店日去重笔数之和；跨门店重号的订单会被
       重复计入——`order_no` 的**跨门店唯一性未证**（单号语义的已证/未证边界见
       `dbt/tests/audit_lemeng__retail__order_count.sql` 头注），这是本口径的**已知边界**，
-      要「全账套唯一订单数」得单独声明一个新指标，不许改本定义。
+      要「全账套唯一订单数」得单独声明一个新指标，不许改本定义。✅ certified（2026-10-13 裁1 回签：与净销售额同基面转正）。
     expression: 'sum(fct_retail_sale.order_count)'
     grain: [system_book, bizday, branch_num]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
@@ -91,7 +91,7 @@ metrics:
     expression: 'sum(fct_hq_outbound.r_net)'
     grain: [system_book, bizday, domain, branch_num, region_id]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -109,7 +109,7 @@ metrics:
     expression: 'sum(fct_hq_outbound.g_gross)'
     grain: [system_book, bizday, domain, branch_num, region_id]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
 
   - name: 'lemeng:outbound:gross_margin_rate'
@@ -123,7 +123,7 @@ metrics:
       denominator: 'sum(fct_hq_outbound.r_net)'
     grain: [system_book, bizday, domain, branch_num, region_id]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
 
   - name: 'lemeng:outbound:order_count'
@@ -136,7 +136,7 @@ metrics:
     expression: 'sum(fct_hq_outbound.order_count)'
     grain: [system_book, bizday, domain, branch_num, region_id]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
 
   - name: 'lemeng:outbound:line_count'
@@ -148,7 +148,7 @@ metrics:
     expression: 'sum(fct_hq_outbound.line_count)'
     grain: [system_book, bizday, domain, branch_num, region_id]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
 
   - name: 'lemeng:transfer:batch_fill_rate'
@@ -178,7 +178,7 @@ metrics:
     expression: 'sum(fct_transfer_line_quality.zero_cost_amount)'
     grain: [system_book, bizday, branch_num]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
 
   - name: 'lemeng:transfer:negative_order_count'
@@ -191,7 +191,7 @@ metrics:
     expression: 'sum(fct_transfer_line_quality.negative_order_count)'
     grain: [system_book, bizday, branch_num]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
 
   - name: 'lemeng:transfer:item_gross_margin_rate'
@@ -206,5 +206,5 @@ metrics:
       denominator: 'sum(fct_transfer_item.r_net)'
     grain: [system_book, bizday, item_num]
     owner: data-platform
-    tier: experimental
+    tier: certified
     source: lemeng
