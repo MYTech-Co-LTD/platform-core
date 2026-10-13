@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.113.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.113.0...v0.113.1) - 2026-10-13
+- 【优化】data: 门店→战区改以湖上 dim_branch 每日快照为准（裁4 收窄） ([#651](https://github.com/MYTech-Co-LTD/platform-core/pull/651), [4c72c14](https://github.com/MYTech-Co-LTD/platform-core/commit/4c72c14d398214127e51b44f20d887e73b80b0d6))
+
+
 ## [0.113.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.112.0...v0.113.0) - 2026-10-13
 - 【新增】data: 裁9 回签（净费用=应付−应收）⇒ 6 条费用指标转 certified ([#648](https://github.com/MYTech-Co-LTD/platform-core/pull/648), [c7721a0](https://github.com/MYTech-Co-LTD/platform-core/commit/c7721a0ff430d6c98458c062e3d6b99611927e5a))
 
