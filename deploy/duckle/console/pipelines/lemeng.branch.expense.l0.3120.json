@@ -169,27 +169,7 @@
         "componentId": "src.rest",
         "schema": [
           {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "order_type",
-            "type": "string"
-          },
-          {
-            "name": "state_code",
-            "type": "int64"
-          },
-          {
-            "name": "business_date",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "audit_time",
+            "name": "bill_no",
             "type": "string"
           },
           {
@@ -197,28 +177,84 @@
             "type": "int64"
           },
           {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
             "name": "branch_name",
             "type": "string"
           },
           {
-            "name": "out_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "out_branch_name",
+            "name": "branch_code",
             "type": "string"
           },
           {
-            "name": "total_money",
-            "type": "float64"
+            "name": "store_name",
+            "type": "string"
           },
           {
-            "name": "items",
-            "type": "json"
+            "name": "operate_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "operate_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "expense_type",
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "type": "string"
+          },
+          {
+            "name": "amount",
+            "type": "decimal"
+          },
+          {
+            "name": "due_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "paid_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "payment_date",
+            "type": "string"
+          },
+          {
+            "name": "tax_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "tax_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "reference_bill",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "settlement_state",
+            "type": "int64"
+          },
+          {
+            "name": "settlement_state_name",
+            "type": "string"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
           }
         ],
         "properties": {
@@ -245,27 +281,7 @@
         "componentId": "src.rest",
         "schema": [
           {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "order_type",
-            "type": "string"
-          },
-          {
-            "name": "state_code",
-            "type": "int64"
-          },
-          {
-            "name": "business_date",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "audit_time",
+            "name": "bill_no",
             "type": "string"
           },
           {
@@ -273,28 +289,84 @@
             "type": "int64"
           },
           {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
             "name": "branch_name",
             "type": "string"
           },
           {
-            "name": "out_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "out_branch_name",
+            "name": "branch_code",
             "type": "string"
           },
           {
-            "name": "total_money",
-            "type": "float64"
+            "name": "store_name",
+            "type": "string"
           },
           {
-            "name": "items",
-            "type": "json"
+            "name": "operate_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "operate_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "expense_type",
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "type": "string"
+          },
+          {
+            "name": "amount",
+            "type": "decimal"
+          },
+          {
+            "name": "due_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "paid_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "payment_date",
+            "type": "string"
+          },
+          {
+            "name": "tax_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "tax_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "reference_bill",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "settlement_state",
+            "type": "int64"
+          },
+          {
+            "name": "settlement_state_name",
+            "type": "string"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
           }
         ],
         "properties": {
@@ -321,27 +393,7 @@
         "componentId": "src.rest",
         "schema": [
           {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "order_type",
-            "type": "string"
-          },
-          {
-            "name": "state_code",
-            "type": "int64"
-          },
-          {
-            "name": "business_date",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "audit_time",
+            "name": "bill_no",
             "type": "string"
           },
           {
@@ -349,28 +401,84 @@
             "type": "int64"
           },
           {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
             "name": "branch_name",
             "type": "string"
           },
           {
-            "name": "out_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "out_branch_name",
+            "name": "branch_code",
             "type": "string"
           },
           {
-            "name": "total_money",
-            "type": "float64"
+            "name": "store_name",
+            "type": "string"
           },
           {
-            "name": "items",
-            "type": "json"
+            "name": "operate_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "operate_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "expense_type",
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "type": "string"
+          },
+          {
+            "name": "amount",
+            "type": "decimal"
+          },
+          {
+            "name": "due_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "paid_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "payment_date",
+            "type": "string"
+          },
+          {
+            "name": "tax_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "tax_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "reference_bill",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "settlement_state",
+            "type": "int64"
+          },
+          {
+            "name": "settlement_state_name",
+            "type": "string"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
           }
         ],
         "properties": {
@@ -397,27 +505,7 @@
         "componentId": "src.rest",
         "schema": [
           {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "order_type",
-            "type": "string"
-          },
-          {
-            "name": "state_code",
-            "type": "int64"
-          },
-          {
-            "name": "business_date",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "audit_time",
+            "name": "bill_no",
             "type": "string"
           },
           {
@@ -425,28 +513,84 @@
             "type": "int64"
           },
           {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
             "name": "branch_name",
             "type": "string"
           },
           {
-            "name": "out_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "out_branch_name",
+            "name": "branch_code",
             "type": "string"
           },
           {
-            "name": "total_money",
-            "type": "float64"
+            "name": "store_name",
+            "type": "string"
           },
           {
-            "name": "items",
-            "type": "json"
+            "name": "operate_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "operate_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "expense_type",
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "type": "string"
+          },
+          {
+            "name": "amount",
+            "type": "decimal"
+          },
+          {
+            "name": "due_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "paid_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "payment_date",
+            "type": "string"
+          },
+          {
+            "name": "tax_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "tax_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "reference_bill",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "settlement_state",
+            "type": "int64"
+          },
+          {
+            "name": "settlement_state_name",
+            "type": "string"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
           }
         ],
         "properties": {
@@ -473,27 +617,7 @@
         "componentId": "src.rest",
         "schema": [
           {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "order_type",
-            "type": "string"
-          },
-          {
-            "name": "state_code",
-            "type": "int64"
-          },
-          {
-            "name": "business_date",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "audit_time",
+            "name": "bill_no",
             "type": "string"
           },
           {
@@ -501,28 +625,84 @@
             "type": "int64"
           },
           {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
             "name": "branch_name",
             "type": "string"
           },
           {
-            "name": "out_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "out_branch_name",
+            "name": "branch_code",
             "type": "string"
           },
           {
-            "name": "total_money",
-            "type": "float64"
+            "name": "store_name",
+            "type": "string"
           },
           {
-            "name": "items",
-            "type": "json"
+            "name": "operate_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "operate_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "expense_type",
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "type": "string"
+          },
+          {
+            "name": "amount",
+            "type": "decimal"
+          },
+          {
+            "name": "due_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "paid_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "payment_date",
+            "type": "string"
+          },
+          {
+            "name": "tax_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "tax_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "reference_bill",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "settlement_state",
+            "type": "int64"
+          },
+          {
+            "name": "settlement_state_name",
+            "type": "string"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
           }
         ],
         "properties": {
@@ -549,27 +729,7 @@
         "componentId": "src.rest",
         "schema": [
           {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "order_type",
-            "type": "string"
-          },
-          {
-            "name": "state_code",
-            "type": "int64"
-          },
-          {
-            "name": "business_date",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "audit_time",
+            "name": "bill_no",
             "type": "string"
           },
           {
@@ -577,28 +737,84 @@
             "type": "int64"
           },
           {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
             "name": "branch_name",
             "type": "string"
           },
           {
-            "name": "out_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "out_branch_name",
+            "name": "branch_code",
             "type": "string"
           },
           {
-            "name": "total_money",
-            "type": "float64"
+            "name": "store_name",
+            "type": "string"
           },
           {
-            "name": "items",
-            "type": "json"
+            "name": "operate_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "operate_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "expense_type",
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "type": "string"
+          },
+          {
+            "name": "amount",
+            "type": "decimal"
+          },
+          {
+            "name": "due_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "paid_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "payment_date",
+            "type": "string"
+          },
+          {
+            "name": "tax_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "tax_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "reference_bill",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "settlement_state",
+            "type": "int64"
+          },
+          {
+            "name": "settlement_state_name",
+            "type": "string"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
           }
         ],
         "properties": {
@@ -625,27 +841,7 @@
         "componentId": "src.rest",
         "schema": [
           {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "order_type",
-            "type": "string"
-          },
-          {
-            "name": "state_code",
-            "type": "int64"
-          },
-          {
-            "name": "business_date",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "audit_time",
+            "name": "bill_no",
             "type": "string"
           },
           {
@@ -653,28 +849,84 @@
             "type": "int64"
           },
           {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
             "name": "branch_name",
             "type": "string"
           },
           {
-            "name": "out_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "out_branch_name",
+            "name": "branch_code",
             "type": "string"
           },
           {
-            "name": "total_money",
-            "type": "float64"
+            "name": "store_name",
+            "type": "string"
           },
           {
-            "name": "items",
-            "type": "json"
+            "name": "operate_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "operate_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "expense_type",
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "type": "string"
+          },
+          {
+            "name": "amount",
+            "type": "decimal"
+          },
+          {
+            "name": "due_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "paid_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "payment_date",
+            "type": "string"
+          },
+          {
+            "name": "tax_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "tax_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "reference_bill",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "settlement_state",
+            "type": "int64"
+          },
+          {
+            "name": "settlement_state_name",
+            "type": "string"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
           }
         ],
         "properties": {
@@ -701,27 +953,7 @@
         "componentId": "src.rest",
         "schema": [
           {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "order_type",
-            "type": "string"
-          },
-          {
-            "name": "state_code",
-            "type": "int64"
-          },
-          {
-            "name": "business_date",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "audit_time",
+            "name": "bill_no",
             "type": "string"
           },
           {
@@ -729,28 +961,84 @@
             "type": "int64"
           },
           {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
             "name": "branch_name",
             "type": "string"
           },
           {
-            "name": "out_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "out_branch_name",
+            "name": "branch_code",
             "type": "string"
           },
           {
-            "name": "total_money",
-            "type": "float64"
+            "name": "store_name",
+            "type": "string"
           },
           {
-            "name": "items",
-            "type": "json"
+            "name": "operate_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "operate_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "expense_type",
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "type": "string"
+          },
+          {
+            "name": "amount",
+            "type": "decimal"
+          },
+          {
+            "name": "due_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "paid_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "payment_date",
+            "type": "string"
+          },
+          {
+            "name": "tax_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "tax_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "reference_bill",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "settlement_state",
+            "type": "int64"
+          },
+          {
+            "name": "settlement_state_name",
+            "type": "string"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
           }
         ],
         "properties": {
@@ -777,27 +1065,7 @@
         "componentId": "src.rest",
         "schema": [
           {
-            "name": "order_no",
-            "type": "string"
-          },
-          {
-            "name": "order_type",
-            "type": "string"
-          },
-          {
-            "name": "state_code",
-            "type": "int64"
-          },
-          {
-            "name": "business_date",
-            "type": "string"
-          },
-          {
-            "name": "create_time",
-            "type": "string"
-          },
-          {
-            "name": "audit_time",
+            "name": "bill_no",
             "type": "string"
           },
           {
@@ -805,28 +1073,84 @@
             "type": "int64"
           },
           {
-            "name": "branch_code",
-            "type": "string"
-          },
-          {
             "name": "branch_name",
             "type": "string"
           },
           {
-            "name": "out_branch_num",
-            "type": "int64"
-          },
-          {
-            "name": "out_branch_name",
+            "name": "branch_code",
             "type": "string"
           },
           {
-            "name": "total_money",
-            "type": "float64"
+            "name": "store_name",
+            "type": "string"
           },
           {
-            "name": "items",
-            "type": "json"
+            "name": "operate_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "operate_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "expense_type",
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "type": "string"
+          },
+          {
+            "name": "amount",
+            "type": "decimal"
+          },
+          {
+            "name": "due_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "paid_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "payment_date",
+            "type": "string"
+          },
+          {
+            "name": "tax_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "tax_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "reference_bill",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "settlement_state",
+            "type": "int64"
+          },
+          {
+            "name": "settlement_state_name",
+            "type": "string"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
           }
         ],
         "properties": {
