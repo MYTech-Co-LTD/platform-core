@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.110.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.110.0...v0.110.1) - 2026-10-13
+- 【修复】data: 6 条指标波管线补排班 + 源头闸补完整性方向 ([#631](https://github.com/MYTech-Co-LTD/platform-core/pull/631), [e91f12c](https://github.com/MYTech-Co-LTD/platform-core/commit/e91f12cbf6a8a9cf36bdb59499ba4bbf5c29ac94))
+
+
 ## [0.110.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.109.0...v0.110.0) - 2026-10-13
 - 【新增】data: 库存 L1 两条（quantity/money）+ 对账（W3 inventory 面） ([#629](https://github.com/MYTech-Co-LTD/platform-core/pull/629), [9f6f714](https://github.com/MYTech-Co-LTD/platform-core/commit/9f6f7142f19303b3f6ccb3a48401a25c5aae7ea9))
 
