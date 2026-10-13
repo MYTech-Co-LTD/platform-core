@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.115.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.114.0...v0.115.0) - 2026-10-13
+- 【新增】data: 战区对照加一级（region_l1＝四向推导，杂项组不归属） ([#654](https://github.com/MYTech-Co-LTD/platform-core/pull/654), [dcdbc89](https://github.com/MYTech-Co-LTD/platform-core/commit/dcdbc89837cdd2fe942d3d2985ae18460fa1c20e))
+
+
 ## [0.114.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.113.1...v0.114.0) - 2026-10-13
 - 【新增】data: 战区名称对照 seed（27 行，branchindicator 年频枚举自力获取） ([#653](https://github.com/MYTech-Co-LTD/platform-core/pull/653), [1412b40](https://github.com/MYTech-Co-LTD/platform-core/commit/1412b405eb88fd270c5027c00da3e7c2b93c16d1))
 
