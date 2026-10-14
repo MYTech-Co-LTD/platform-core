@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.119.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.118.0...v0.119.0) - 2026-10-14
+- 【新增】data: 乐檬要货满足率构件（D15×D16 店×商品×日对照 + 截止日满足率 L1） ([#678](https://github.com/MYTech-Co-LTD/platform-core/pull/678), [8debf57](https://github.com/MYTech-Co-LTD/platform-core/commit/8debf5782b6187c1f0f7121b0fa348f77a7a146a))
+
+
 ## [0.118.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.117.0...v0.118.0) - 2026-10-14
 - 【新增】data: transfer_out/request_order/branch_expense 补容量哨兵页（9页×100=900，照 #674 先例） ([#676](https://github.com/MYTech-Co-LTD/platform-core/pull/676), [9ff7cd1](https://github.com/MYTech-Co-LTD/platform-core/commit/9ff7cd10a2a5a4f152eb32b859f6563821625275))
 
