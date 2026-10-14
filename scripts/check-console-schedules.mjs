@@ -102,6 +102,7 @@ for (const f of scheduleFiles) {
 const EXEMPT_GLOBAL = new Map([
   ['lemeng.retail.windows.backfill', '回填专用（换时间窗手动触发，handbook §1.3 阶段 H）'],
   ['lemeng.wholesale.out.backfill.3120', '回填专用（2026-10-10 裁决：待全管线补采统一覆盖，§1.7）'],
+  ['lemeng.transfer.in.backfill.3120', '回填专用（#665 契约 v2 重采 10-12 用；同族 wholesale 先例）'],
   ['lemeng.retail_order_line.tick', '旧零售族残留——已被 retail.tick.l1 取代，待退役（§2 台账）'],
   ['lemeng.retail_order_line.window', '旧零售族残留——已被 retail.windows.l1 取代，待退役（§2 台账）'],
   ['lemeng.recon.preagg.item', '按需手动（逐分归零对账执行面，无日更节奏）'],
