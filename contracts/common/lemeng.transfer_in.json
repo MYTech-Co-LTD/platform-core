@@ -10,7 +10,10 @@
   "layout": {
     "prefix": "lemeng/transfer_in",
     "partitionStyle": "hive",
-    "partitionBy": ["system_book", "bizday"],
+    "partitionBy": [
+      "system_book",
+      "bizday"
+    ],
     "fileName": "all.parquet"
   },
   "batch": {
@@ -20,29 +23,187 @@
     "note": "= 采集 run id。每 bizday 分区只写一次，重跑覆盖同 key。"
   },
   "columns": [
-    { "name": "batch_id", "type": "varchar", "nullable": false, "description": "批次标记（采集 run id）", "expr": "'ti-' || '${ENV:SYSTEM_BOOK}' || '-transfer_in-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'" },
-    { "name": "system_book", "type": "varchar", "nullable": false, "description": "账套（采集范围=3120）；分区键", "expr": "'${ENV:SYSTEM_BOOK}'" },
-    { "name": "bizday", "type": "date", "nullable": false, "description": "制单日（=查询窗口日）；分区键", "expr": "CAST('${date-1d}' AS DATE)" },
-    { "name": "order_no", "type": "varchar", "nullable": false, "description": "调入单号（MI…；自然键）", "expr": "CAST(o.order_no AS VARCHAR)" },
-    { "name": "order_type", "type": "varchar", "nullable": true, "description": "单据类型名（真样本=调入单）", "expr": "CAST(o.order_type AS VARCHAR)" },
-    { "name": "branch_num", "type": "int", "nullable": false, "description": "调入门店编号（收货方）", "expr": "CAST(o.branch_num AS INTEGER)" },
-    { "name": "branch_code", "type": "varchar", "nullable": true, "description": "调入门店编码", "expr": "CAST(o.branch_code AS VARCHAR)" },
-    { "name": "branch_name", "type": "varchar", "nullable": true, "description": "调入门店名", "expr": "CAST(o.branch_name AS VARCHAR)" },
-    { "name": "out_branch_num", "type": "int", "nullable": true, "description": "调出方编号（99=管理中心）", "expr": "CAST(o.out_branch_num AS INTEGER)" },
-    { "name": "out_branch_code", "type": "varchar", "nullable": true, "description": "调出方编码", "expr": "CAST(o.out_branch_code AS VARCHAR)" },
-    { "name": "out_branch_name", "type": "varchar", "nullable": true, "description": "调出方名", "expr": "CAST(o.out_branch_name AS VARCHAR)" },
-    { "name": "storehouse_num", "type": "bigint", "nullable": true, "description": "收货仓库编号", "expr": "CAST(o.storehouse_num AS BIGINT)" },
-    { "name": "storehouse_name", "type": "varchar", "nullable": true, "description": "收货仓库名", "expr": "CAST(o.storehouse_name AS VARCHAR)" },
-    { "name": "related_order_no", "type": "varchar", "nullable": true, "description": "关联调出单号（MO…；**要货满足率供给面 join 键**）", "expr": "CAST(o.related_order_no AS VARCHAR)" },
-    { "name": "item_num", "type": "bigint", "nullable": false, "description": "商品内部编号（明细展开）", "expr": "CAST(json_extract_string(u.d, '$.item_num') AS BIGINT)" },
-    { "name": "item_code", "type": "varchar", "nullable": true, "description": "商品编码", "expr": "json_extract_string(u.d, '$.item_code')" },
-    { "name": "item_name", "type": "varchar", "nullable": true, "description": "商品名", "expr": "json_extract_string(u.d, '$.item_name')" },
-    { "name": "item_spec", "type": "varchar", "nullable": true, "description": "商品规格", "expr": "json_extract_string(u.d, '$.item_spec')" },
-    { "name": "item_unit", "type": "varchar", "nullable": true, "description": "基本单位", "expr": "json_extract_string(u.d, '$.item_unit')" },
-    { "name": "quantity", "type": "decimal(14,6)", "nullable": true, "description": "基本单位调入数量", "expr": "CAST(json_extract_string(u.d, '$.quantity') AS DECIMAL(14,6))" },
-    { "name": "use_quantity", "type": "decimal(14,6)", "nullable": true, "description": "使用单位数量", "expr": "CAST(json_extract_string(u.d, '$.use_quantity') AS DECIMAL(14,6))" },
-    { "name": "use_unit", "type": "varchar", "nullable": true, "description": "使用单位", "expr": "json_extract_string(u.d, '$.use_unit')" },
-    { "name": "subtotal", "type": "decimal(14,2)", "nullable": true, "description": "调入金额小计", "expr": "CAST(json_extract_string(u.d, '$.subtotal') AS DECIMAL(14,2))" },
-    { "name": "use_rate", "type": "decimal(18,8)", "nullable": true, "description": "使用单位换算率", "expr": "CAST(json_extract_string(u.d, '$.use_rate') AS DECIMAL(18,8))" }
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "批次标记（采集 run id）",
+      "expr": "'ti-' || '${ENV:SYSTEM_BOOK}' || '-transfer_in-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'"
+    },
+    {
+      "name": "system_book",
+      "type": "varchar",
+      "nullable": false,
+      "description": "账套（采集范围=3120）；分区键",
+      "expr": "'${ENV:SYSTEM_BOOK}'"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "制单日（=查询窗口日）；分区键",
+      "expr": "CAST('${date-1d}' AS DATE)"
+    },
+    {
+      "name": "order_no",
+      "type": "varchar",
+      "nullable": false,
+      "description": "调入单号（MI…；自然键）",
+      "expr": "CAST(o.order_no AS VARCHAR)"
+    },
+    {
+      "name": "order_type",
+      "type": "varchar",
+      "nullable": true,
+      "description": "单据类型名（真样本=调入单）",
+      "expr": "CAST(o.order_type AS VARCHAR)"
+    },
+    {
+      "name": "branch_num",
+      "type": "int",
+      "nullable": false,
+      "description": "调入门店编号（收货方）",
+      "expr": "CAST(o.branch_num AS INTEGER)"
+    },
+    {
+      "name": "branch_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "调入门店编码",
+      "expr": "CAST(o.branch_code AS VARCHAR)"
+    },
+    {
+      "name": "branch_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "调入门店名",
+      "expr": "CAST(o.branch_name AS VARCHAR)"
+    },
+    {
+      "name": "out_branch_num",
+      "type": "int",
+      "nullable": true,
+      "description": "调出方编号（99=管理中心）",
+      "expr": "CAST(o.out_branch_num AS INTEGER)"
+    },
+    {
+      "name": "out_branch_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "调出方编码",
+      "expr": "CAST(o.out_branch_code AS VARCHAR)"
+    },
+    {
+      "name": "out_branch_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "调出方名",
+      "expr": "CAST(o.out_branch_name AS VARCHAR)"
+    },
+    {
+      "name": "storehouse_num",
+      "type": "bigint",
+      "nullable": true,
+      "description": "收货仓库编号",
+      "expr": "CAST(o.storehouse_num AS BIGINT)"
+    },
+    {
+      "name": "storehouse_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "收货仓库名",
+      "expr": "CAST(o.storehouse_name AS VARCHAR)"
+    },
+    {
+      "name": "related_order_no",
+      "type": "varchar",
+      "nullable": true,
+      "description": "关联调出单号（MO…；**要货满足率供给面 join 键**）",
+      "expr": "CAST(o.related_order_no AS VARCHAR)"
+    },
+    {
+      "name": "item_num",
+      "type": "bigint",
+      "nullable": false,
+      "description": "商品内部编号（明细展开）",
+      "expr": "CAST(json_extract_string(u.d, '$.item_num') AS BIGINT)"
+    },
+    {
+      "name": "item_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品编码",
+      "expr": "json_extract_string(u.d, '$.item_code')"
+    },
+    {
+      "name": "item_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品名",
+      "expr": "json_extract_string(u.d, '$.item_name')"
+    },
+    {
+      "name": "item_spec",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品规格",
+      "expr": "json_extract_string(u.d, '$.item_spec')"
+    },
+    {
+      "name": "item_unit",
+      "type": "varchar",
+      "nullable": true,
+      "description": "基本单位",
+      "expr": "json_extract_string(u.d, '$.item_unit')"
+    },
+    {
+      "name": "quantity",
+      "type": "decimal(14,6)",
+      "nullable": true,
+      "description": "基本单位调入数量",
+      "expr": "CAST(json_extract_string(u.d, '$.quantity') AS DECIMAL(14,6))"
+    },
+    {
+      "name": "use_quantity",
+      "type": "decimal(14,6)",
+      "nullable": true,
+      "description": "使用单位数量",
+      "expr": "CAST(json_extract_string(u.d, '$.use_quantity') AS DECIMAL(14,6))"
+    },
+    {
+      "name": "use_unit",
+      "type": "varchar",
+      "nullable": true,
+      "description": "使用单位",
+      "expr": "json_extract_string(u.d, '$.use_unit')"
+    },
+    {
+      "name": "subtotal",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "调入金额小计",
+      "expr": "CAST(json_extract_string(u.d, '$.subtotal') AS DECIMAL(14,2))"
+    },
+    {
+      "name": "use_rate",
+      "type": "decimal(18,8)",
+      "nullable": true,
+      "description": "使用单位换算率",
+      "expr": "CAST(json_extract_string(u.d, '$.use_rate') AS DECIMAL(18,8))"
+    },
+    {
+      "name": "lot_number",
+      "type": "varchar",
+      "nullable": true,
+      "description": "批号（真样本 20261012161609）——**同单同商品多批次的分行依据，自然键之一**（对照 D01 transfer_out 同列；D16 首版漏采，#665）",
+      "expr": "CAST(o.lot_number AS VARCHAR)"
+    },
+    {
+      "name": "production_date",
+      "type": "date",
+      "nullable": true,
+      "description": "生产日期（真样本 2026-10-12）",
+      "expr": "CAST(o.production_date AS DATE)"
+    }
   ]
 }

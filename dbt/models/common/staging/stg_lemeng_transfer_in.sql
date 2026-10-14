@@ -28,7 +28,9 @@ select
   r['use_quantity']::decimal(14,6) as use_quantity,
   r['use_unit']::varchar as use_unit,
   r['subtotal']::decimal(14,2) as subtotal,
-  r['use_rate']::decimal(18,8) as use_rate
+  r['use_rate']::decimal(18,8) as use_rate,
+  r['lot_number']::varchar as lot_number,
+  r['production_date']::date as production_date
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_transfer_in_prefix") }}/*/bizday=**/*.parquet'
 ) r
