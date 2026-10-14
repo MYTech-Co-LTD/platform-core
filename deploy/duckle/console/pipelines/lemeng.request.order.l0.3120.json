@@ -805,6 +805,86 @@
           "connectionRef": "zos"
         }
       }
+    },
+    {
+      "id": "p10",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p10",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_no",
+            "type": "string"
+          },
+          {
+            "name": "order_type",
+            "type": "string"
+          },
+          {
+            "name": "transfer_state",
+            "type": "string"
+          },
+          {
+            "name": "purchase_date",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "out_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "out_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "items",
+            "type": "json"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.request.order.find",
+          "method": "POST",
+          "body": "{\"start_date\":\"${date-1d}\",\"end_date\":\"${date-1d}\",\"page_number\":10,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "sentinel",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sentinel",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "lemeng request_order 容量截断：第 10 页（哨兵页）仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK}）⇒ 单量已击穿真阈值 900 条/日（算式：数据页 9 × page_size 100，哨兵页不计容量）。处置：加数据页节点 → 同步改本算式与哨兵页的页号 → 重生成 → 走 PR"
+        }
+      }
     }
   ],
   "edges": [
@@ -1094,6 +1174,36 @@
       "target": "sink",
       "sourceHandle": "main",
       "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p10",
+      "source": "dv",
+      "target": "p10",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p10-sentinel",
+      "source": "p10",
+      "target": "sentinel",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-sentinel-merge",
+      "source": "sentinel",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_10",
       "data": {
         "connectionType": "main"
       }

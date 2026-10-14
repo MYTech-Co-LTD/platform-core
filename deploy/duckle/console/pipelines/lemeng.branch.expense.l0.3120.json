@@ -1238,6 +1238,134 @@
           "connectionRef": "zos"
         }
       }
+    },
+    {
+      "id": "p10",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p10",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "bill_no",
+            "type": "string"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "store_name",
+            "type": "string"
+          },
+          {
+            "name": "operate_branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "operate_branch_name",
+            "type": "string"
+          },
+          {
+            "name": "expense_type",
+            "type": "string"
+          },
+          {
+            "name": "direction",
+            "type": "string"
+          },
+          {
+            "name": "amount",
+            "type": "decimal"
+          },
+          {
+            "name": "due_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "paid_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "payment_date",
+            "type": "string"
+          },
+          {
+            "name": "tax_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "tax_amount",
+            "type": "decimal"
+          },
+          {
+            "name": "audit_time",
+            "type": "string"
+          },
+          {
+            "name": "create_time",
+            "type": "string"
+          },
+          {
+            "name": "reference_bill",
+            "type": "string"
+          },
+          {
+            "name": "memo",
+            "type": "string"
+          },
+          {
+            "name": "settlement_state",
+            "type": "int64"
+          },
+          {
+            "name": "settlement_state_name",
+            "type": "string"
+          },
+          {
+            "name": "last_edit_time",
+            "type": "string"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.branch.expense.find",
+          "method": "POST",
+          "body": "{\"date_from\":\"${date-1d} 00:00:00\",\"date_to\":\"${date-1d} 23:59:59\",\"page_number\":10,\"page_size\":100,\"state_code\":3}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "sentinel",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sentinel",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "lemeng branch_expense 容量截断：第 10 页（哨兵页）仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK}）⇒ 单量已击穿真阈值 900 条/日（算式：数据页 9 × page_size 100，哨兵页不计容量）。处置：加数据页节点 → 同步改本算式与哨兵页的页号 → 重生成 → 走 PR"
+        }
+      }
     }
   ],
   "edges": [
@@ -1527,6 +1655,36 @@
       "target": "sink",
       "sourceHandle": "main",
       "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p10",
+      "source": "dv",
+      "target": "p10",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p10-sentinel",
+      "source": "p10",
+      "target": "sentinel",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-sentinel-merge",
+      "source": "sentinel",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_10",
       "data": {
         "connectionType": "main"
       }
