@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.116.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.116.0...v0.116.1) - 2026-10-14
+- 【修复】data: transfer_in 明细 expr 改 u.d 展开级（首修用了订单级 o.） ([#670](https://github.com/MYTech-Co-LTD/platform-core/pull/670), [6e9b87b](https://github.com/MYTech-Co-LTD/platform-core/commit/6e9b87bf94b1a04cf3beff848a9fbe01323f4928))
+
+
 ## [0.116.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.115.5...v0.116.0) - 2026-10-14
 - 【新增】data: transfer_in 回填变体（照 D02 先例）+ 修 gv 模板残留 ([#668](https://github.com/MYTech-Co-LTD/platform-core/pull/668), [85b92c7](https://github.com/MYTech-Co-LTD/platform-core/commit/85b92c7519369fc8ac2da1358ebd4931c350a9c4))
 
