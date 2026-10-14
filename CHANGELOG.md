@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.117.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.116.1...v0.117.0) - 2026-10-14
+- 【新增】data: transfer_in 补容量哨兵页（9页×100=900 行/日，照 wholesale 先例） ([#674](https://github.com/MYTech-Co-LTD/platform-core/pull/674), [85f2c94](https://github.com/MYTech-Co-LTD/platform-core/commit/85f2c94efce7c912108ed430b2f6649491d16609))
+
+
 ## [0.116.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.116.0...v0.116.1) - 2026-10-14
 - 【修复】data: transfer_in 明细 expr 改 u.d 展开级（首修用了订单级 o.） ([#670](https://github.com/MYTech-Co-LTD/platform-core/pull/670), [6e9b87b](https://github.com/MYTech-Co-LTD/platform-core/commit/6e9b87bf94b1a04cf3beff848a9fbe01323f4928))
 
