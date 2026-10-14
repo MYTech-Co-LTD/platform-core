@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.118.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.117.0...v0.118.0) - 2026-10-14
+- 【新增】data: transfer_out/request_order/branch_expense 补容量哨兵页（9页×100=900，照 #674 先例） ([#676](https://github.com/MYTech-Co-LTD/platform-core/pull/676), [9ff7cd1](https://github.com/MYTech-Co-LTD/platform-core/commit/9ff7cd10a2a5a4f152eb32b859f6563821625275))
+
+
 ## [0.117.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.116.1...v0.117.0) - 2026-10-14
 - 【新增】data: transfer_in 补容量哨兵页（9页×100=900 行/日，照 wholesale 先例） ([#674](https://github.com/MYTech-Co-LTD/platform-core/pull/674), [85f2c94](https://github.com/MYTech-Co-LTD/platform-core/commit/85f2c94efce7c912108ed430b2f6649491d16609))
 
