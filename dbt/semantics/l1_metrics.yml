@@ -387,3 +387,36 @@ metrics:
     tier: experimental
     source: lemeng
 
+  # ── W3 余项（2026-10-15，要货满足率 / D15×D16，#677）────────────────────────────────
+  # 构件落点：fct_request_fulfillment（店×商品×日总量对照）。⚠️ 全 experimental——行级履约
+  # 关联在当前湖面不可构造（D16.related_order_no 指 MO 非 YH，D01 契约无 related_order_no，
+  # 无稳定行号）；X06 无承诺时间 ⇒ 只出「截止日」口径不标按期；分子两向偏差并存
+  # （跨日履约不计=下界 / 主动配送计入=上界）。边界全文见构件头注。
+
+  - name: 'lemeng:request:quantity'
+    label: 要货数量
+    definition: >-
+      有效要货数量合计（基本单位；「有效要货行」= 要货数量 > 0）。粒度 = 账套 × 制单日 ×
+      要货门店 × 商品。源端 transfer_state（配送状态）与数量口径未勾稽，不参与本口径。
+    expression: 'sum(fct_request_fulfillment.requested_quantity)'
+    grain: [system_book, bizday, branch_num, item_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
+  - name: 'lemeng:request:day_fulfillment_rate'
+    label: 截止日满足率
+    definition: >-
+      要货满足率（截止日口径，客户正典 03-06 的聚合近似）：同日同店同品的调入数量 ≥ 要货
+      数量的组，其要货行计满足。Σ满足行 / Σ有效要货行（行加权）。⚠️ 不可加（率）；⚠️ 分子
+      两向偏差并存（跨日履约不计=下界 / 调入含非要货驱动=上界），行级归因待 D01 回指环
+      补采 + 抽单验证后另批；⚠️ 无承诺时间（X06）⇒ 不标按期。shipped 侧为 D16 调入
+      （到店口径）。
+    ratio:
+      numerator: 'sum(fct_request_fulfillment.fulfilled_line_count)'
+      denominator: 'sum(fct_request_fulfillment.requested_line_count)'
+    grain: [system_book, bizday, branch_num, item_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+
