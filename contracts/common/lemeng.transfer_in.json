@@ -196,14 +196,14 @@
       "type": "varchar",
       "nullable": true,
       "description": "批号（真样本 20261012161609）——**同单同商品多批次的分行依据，自然键之一**（对照 D01 transfer_out 同列；D16 首版漏采，#665）",
-      "expr": "CAST(o.lot_number AS VARCHAR)"
+      "expr": "json_extract_string(u.d, '$.lot_number')"
     },
     {
       "name": "production_date",
       "type": "date",
       "nullable": true,
       "description": "生产日期（真样本 2026-10-12）",
-      "expr": "CAST(o.production_date AS DATE)"
+      "expr": "json_extract_string(u.d, '$.production_date')"
     }
   ]
 }
