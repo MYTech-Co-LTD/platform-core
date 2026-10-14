@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.115.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.115.4...v0.115.5) - 2026-10-14
+- 【修复】data: transfer_in 补采 lot_number/production_date（契约 v2） ([#666](https://github.com/MYTech-Co-LTD/platform-core/pull/666), [703f32b](https://github.com/MYTech-Co-LTD/platform-core/commit/703f32bfff7c59fe0e0f70830adc06303fd010f0))
+
+
 ## [0.115.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.115.3...v0.115.4) - 2026-10-13
 - 【修复】data: inventory 对账 cast 带显式刻度（裸 ::numeric 默认 3 位小数） ([#662](https://github.com/MYTech-Co-LTD/platform-core/pull/662), [be4d13d](https://github.com/MYTech-Co-LTD/platform-core/commit/be4d13d1b4be5ca230e5ddf0ea16930bdc4d8bbe))
 
