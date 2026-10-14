@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.116.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.115.5...v0.116.0) - 2026-10-14
+- 【新增】data: transfer_in 回填变体（照 D02 先例）+ 修 gv 模板残留 ([#668](https://github.com/MYTech-Co-LTD/platform-core/pull/668), [85b92c7](https://github.com/MYTech-Co-LTD/platform-core/commit/85b92c7519369fc8ac2da1358ebd4931c350a9c4))
+
+
 ## [0.115.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.115.4...v0.115.5) - 2026-10-14
 - 【修复】data: transfer_in 补采 lot_number/production_date（契约 v2） ([#666](https://github.com/MYTech-Co-LTD/platform-core/pull/666), [703f32b](https://github.com/MYTech-Co-LTD/platform-core/commit/703f32bfff7c59fe0e0f70830adc06303fd010f0))
 
