@@ -635,9 +635,18 @@ curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/sch
 - 凭据**不落 job 配置、不落 argv**：job 命令在运行时从运行中的容器 `docker inspect` 取进变量，
   再用 `docker run -e VAR`（**透传形态**）传给容器 ⇒ 值不进 `ps`。
 
-**`--select` 是硬编码的**：当前 = `stg_lemeng_retail_order_line stg_lemeng_branch stg_lemeng_item fct_retail_sale`
-（「被消费的组合」，**按需物化、不全量**）。⚠️ **将来加模型必须同步改这里**——
-**忘了不会报错，只会那个模型永远不物化**。（原文在此处写「旧湖模型 `stg_lemeng_retail_detail` 不在内，
+**`--select` 是硬编码的**（「被消费的组合」，**按需物化、不全量**）：**名单的事实源 = job 命令本身**
+（openship MCP `get_jobs_by_key` 取 `actionConfig.command`；本节手抄名单已经漂移过——
+下行旧快照 4 节点停在 2026-09-26，2026-10-15 实际已是 26 节点：
+`stg_*`×14 + `fct_*`×9 + 种子×3，全名单见 job 命令）。⚠️ **将来加模型必须同步 patch job 命令**——
+**忘了不会报错**：dbt 解析头仍计入新模型（`Found N models` 变大），但**执行集不变** ⇒
+**run 全绿也可能是假绿**。**#677 实证（2026-10-15）**：`fct_request_fulfillment` 漏加名单，
+run 报 PASS=178 ERROR=0，执行集却与加模型前逐项相同（22 models / 153 tests）；
+patch 名单重跑后 PASS=182（3 seeds / 23 models / 156 tests，fct 597 行、3 条新测试全 PASS）。
+**判别法**：解析行 vs 执行行一致性（`Found 23 models, 157 data tests` vs
+`Finished running 3 seeds, 23 table models, 156 data tests`），且新测试逐条在执行序列里点名。
+（命令抽成 `scripts/lemeng/materialize.sh` 进仓的欠账见 issue **#679**。）
+（原文在此处写「旧湖模型 `stg_lemeng_retail_detail` 不在内，
 它读的前缀不存在」——**后半句是错的、已订正**：那个前缀在 `lemeng-datasource` 桶里、且**一直有生产方在写**
 （2026-10-06 实测：`data-analysis` 每 5 min 一轮），并不是「不存在」，只是**本仓没有读它的模型**）。
 该模型同批已 **仓内退役**（`git rm`，2026-10-06）⇒ 投递清单里自然不再有它；湖上前缀**未下线**，
@@ -649,6 +658,7 @@ curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/sch
 
 > **遗留（已知，不阻塞）**：job 的命令目前只活在 openship 里（无版本、无 diff 可评审）。
 > 按本仓惯例应抽成 `scripts/lemeng/materialize.sh` 进仓 + 进投递清单，job 只调 `sh /opt/lemeng-materialize.sh`。
+> 跟踪 issue **#679**。
 
 ⚠️ **2026-09-28 订正 —— 这个 job 只做 dbt 模型物化；L1 语义词表是另一件事。**
 `scripts/sync-data-semantics.mjs`（`dbt/semantics/l1_metrics.yml` → PG 表 `data.metrics`）是 L1 词表的**唯一**通道。
