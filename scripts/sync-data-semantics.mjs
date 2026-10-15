@@ -155,6 +155,34 @@ export function buildSelectSql(expression, grain, relation) {
 }
 
 /**
+ * 问数参数白名单（spec 2026-10-15 §2.2）：grain ∩ 白名单 = 该指标的问数参数面。
+ * 判定原则：值域「模型或用户说得出」的维度才可作参数（bizday 日期人会说、system_book=3120/64188
+ * 记得住、domain∈{transfer,wholesale} 记得住）；业务编码维度（branch_num/item_num/…）说了不出合法值，
+ * 暴露即死参数——回流条件：设计「维度值解析」工具后再扩集。
+ * 参数名 = 列名（与 group_by 同名，模型看到什么就能填什么）；required 恒缺省（空参=全量）。
+ *
+ * @type {Record<string, MetricParamDef>}
+ */
+const ASK_PARAM_WHITELIST = {
+  bizday: { column: 'bizday', type: 'date_range' },
+  system_book: { column: 'system_book', type: 'string' },
+  domain: { column: 'domain', type: 'string' },
+}
+
+/**
+ * grain ∩ 白名单 → 该指标的问数参数（参数名 = 列名；required 恒缺省）。
+ *
+ * @param {readonly string[]} grain 可聚合维度
+ * @returns {Record<string, MetricParamDef>}
+ */
+export function deriveParams(/** @type {readonly string[]} */ grain) {
+  return Object.fromEntries(
+    grain.filter((/** @type {string} */ c) => c in ASK_PARAM_WHITELIST)
+      .map((/** @type {string} */ c) => /** @type {[string, MetricParamDef]} */ ([c, ASK_PARAM_WHITELIST[c]])),
+  )
+}
+
+/**
  * 语义事实源 YAML → L1 行（`MetricDef` 形状；org / source 由写入口钉死，不在这里）。
  *
  * 字段映射（为什么这么映，逐条）：
@@ -251,8 +279,8 @@ export function declarationsFromYaml(parsed) {
       subjectColumn: L1_SUBJECT_COLUMN,
       selectSql: buildSelectSql(expression, grain, relation),
       groupBy: grain.join(', '),
-      // L1 声明没有查询参数（params 是问数参数面的东西，L2 也暂不开放）
-      params: /** @type {Record<string, MetricParamDef>} */ ({}),
+      // 问数参数面：grain ∩ 白名单（spec 2026-10-15 §2.2）。L2 仍不开放参数面（维持下行旧注释的边界）。
+      params: deriveParams(grain),
       // 源系统（源维度）：上面已拦掉缺字段的情形，故这里的取值恒是非空串。
       sourceSystem,
     }

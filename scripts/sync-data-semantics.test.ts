@@ -29,6 +29,7 @@ import {
   MODE_WRITE,
   buildSelectSql,
   declarationsFromYaml,
+  deriveParams,
   deriveRelation,
   diffDeclarations,
   exitCodeFor,
@@ -350,5 +351,28 @@ describe('ratio 声明（与 expression 互斥，spec 2026-10-12 §5.3）', () =
       } }]),
     )
     expect(() => parseL1Select(rows[0].selectSql)).not.toThrow()
+  })
+})
+
+describe('deriveParams —— 问数参数面白名单推导（spec 2026-10-15 §2.2）', () => {
+  it('D1 全维 grain → 只剩白名单三件，参数名=列名', () => {
+    expect(deriveParams(['system_book', 'bizday', 'domain', 'branch_num', 'region_id'])).toEqual({
+      bizday: { column: 'bizday', type: 'date_range' },
+      system_book: { column: 'system_book', type: 'string' },
+      domain: { column: 'domain', type: 'string' },
+    })
+  })
+  it('D2 无 domain 的 grain → 两件（bizday + system_book）', () => {
+    expect(deriveParams(['system_book', 'bizday', 'branch_num'])).toEqual({
+      bizday: { column: 'bizday', type: 'date_range' },
+      system_book: { column: 'system_book', type: 'string' },
+    })
+  })
+  it('D3 编码维度一个不进（branch_num/item_num/supplier_num/storehouse_num/client_fid/region_id/expense_type/other_inout_kind）', () => {
+    const p = deriveParams(['system_book', 'bizday', 'branch_num', 'storehouse_num', 'item_num', 'client_fid', 'supplier_num', 'region_id', 'expense_type', 'other_inout_kind'])
+    expect(Object.keys(p).sort()).toEqual(['bizday', 'system_book'])
+  })
+  it('D4 required 恒缺省（空参=全量，历史调用形态不破坏）', () => {
+    expect(Object.values(deriveParams(['system_book', 'bizday', 'domain'])).every((p) => p.required === undefined)).toBe(true)
   })
 })
