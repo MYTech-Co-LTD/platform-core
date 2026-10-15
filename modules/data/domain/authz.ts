@@ -85,7 +85,19 @@ export type DenyReason =
   | 'bad_param'
 
 export type AuthzResult =
-  | { ok: true; plan: { sql: string; metricId: string; subject: string; total: boolean } }
+  | {
+      ok: true
+      plan: {
+        sql: string; metricId: string; subject: string; total: boolean
+        /**
+         * 自动合计计划（spec §8.4）：`metric.totalable === true` 且**非**显式合计模式时在场，
+         * 形状与显式合计同一句（`SELECT sum(value) AS total FROM ( <whereAndGroup> ) t`，无
+         * LIMIT——截断求和 = 错数）。执行归 query-service；值附到响应 `total` 字段。
+         * 显式合计模式（`args.total === true`）不附：plan.sql 本身就是合计，再附 = 重复执行。
+         */
+        totalSql?: string
+      }
+    }
   | { ok: false; reason: DenyReason; metricId: string; detail?: string }
 
 /**
@@ -253,5 +265,16 @@ export function authorize(
       `SELECT sum(value) AS total FROM ( ${whereAndGroup} ) t`
     : `${whereAndGroup} LIMIT ${MAX_QUERY_ROWS}`
 
-  return { ok: true, plan: { sql, metricId, subject, total: wantTotal } }
+  // 自动伴随（spec §8.4）：totalable 指标的**非显式**查询在计划上附合计 SQL——与显式合计
+  // 共用同一形状（无 LIMIT）。subject/filters 与主 sql 同源（同一 whereAndGroup），自动合计
+  // 因此同样钉死主体；不改变主 sql 一个字节（明细路径照旧）。显式合计模式不附（plan.sql
+  // 本身就是合计，再执行一遍 = 白跑）。
+  const totalSql = !wantTotal && metric.totalable === true
+    ? `SELECT sum(value) AS total FROM ( ${whereAndGroup} ) t`
+    : undefined
+
+  return {
+    ok: true,
+    plan: { sql, metricId, subject, total: wantTotal, ...(totalSql !== undefined ? { totalSql } : {}) },
+  }
 }

@@ -1,9 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { runQuery, type QueryDeps } from './query-service'
-import { upsertMetric } from './metric-store'
+import { L1_ORG, upsertL1Metric, upsertMetric } from './metric-store'
 import { applyMigrations } from '../test-util'
-import type { Requester } from './authz'
+import { MAX_QUERY_ROWS, type Requester } from './authz'
 import { DATA_WAREHOUSE_UNCONFIGURED } from './warehouse'
 
 const dbUrl = process.env.DATABASE_URL
@@ -12,6 +12,8 @@ const describePg = dbUrl ? describe : describe.skip
  *  （隔离键取宿主注入的 `identity.orgId`，主体值取 `Requester.orgId`，同一租户同一 org），
  *  测试里让它们相等才不至于验一个现实中不存在的状态。 */
 const ORG = 'org_a'
+/** 本文件的 L1 夹具 id 前缀（L1 行落平台桶 org='platform'，清理按前缀——别全清平台桶）。 */
+const L1_TOTAL_PREFIX = 't9q_total:'
 
 /** #452 真机形态（2026-10-06 run jrun_dtyVWZnnFaQ_pCCN 实测原文的形状，值部分换短例）。
  *  判据窄匹配只认「ETag on reading file」——测试钉的是形状，不是整句。 */
@@ -60,6 +62,9 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
     await pool.query('delete from data.query_audit where org = $1', [ORG]).catch(() => {})
     await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
+    // L1 夹具落在平台桶（org='platform'）——只按本文件前缀清，别碰别人的行
+    await pool.query('delete from data.metrics where org = $1 and id like $2',
+      [L1_ORG, `${L1_TOTAL_PREFIX}%`]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
@@ -233,8 +238,8 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     expect(out.status === 'ok' && out.truncated).toBe(true)
   })
 
-  // ── 合计形态（spec §8）──────────────────────────────────────────────────────────
-  it('total：args.total=true → 单行聚合回包（total:true 在场、truncated 恒 false），审计记 ok', async () => {
+  // ── 合计形态（spec §8）＋ 自动伴随（spec §8.4）────────────────────────────────
+  it('total：args.total=true → 单行聚合回包（total 字段=合计值，不再是布尔标记）、truncated 恒 false，审计记 ok', async () => {
     let totalSql = ''
     const totalDeps: QueryDeps = {
       pool, adoptedSources: new Set(),
@@ -251,7 +256,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     expect(out.columns).toEqual(['total'])
     expect(out.rows).toEqual([[1470.5]])
     expect(out.truncated).toBe(false)                    // 合计无截断面（恒单行）
-    expect(out.total).toBe(true)
+    expect(out.total, '#699 的 total:true 布尔已废（spec §8.4）：total=合计值').toBe(1470.5)
     const a = await pool.query(
       `select verdict, row_count from data.query_audit where org = $1 order by id desc limit 1`, [ORG])
     expect(a.rows[0]).toMatchObject({ verdict: 'ok', row_count: 1 })
@@ -287,5 +292,53 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     } finally {
       client.release()
     }
+  })
+
+  // ── 自动伴随（spec §8.4）：totalable 指标的任何查询响应自动附 total=合计值 ──────
+  it('自动伴随：totalable 指标普通查询 → 执行 totalSql 并把合计值附到响应 total；明细 rows/truncated 不变', async () => {
+    // L1 夹具（totalable 只有 L1 物化路径带值）；id 带本文件专用前缀，afterAll 按前缀清理
+    // 平台桶（理由同 metric-store.test.ts 的 L1_ID_PREFIX：不带前缀会被 sync --check 读成删除漂移）。
+    await upsertL1Metric(pool, {
+      ...METRIC, id: L1_TOTAL_PREFIX + 'auto',
+      selectSql: 'SELECT sum(v) AS value, org, bizday FROM qp3_total_auto',
+      groupBy: 'org, bizday',
+      sourceSystem: 'lemeng', totalable: true,
+    })
+    const sqls: string[] = []
+    const autoDeps: QueryDeps = {
+      pool,
+      adoptedSources: new Set(['lemeng']),   // L1 行带源维度 ⇒ 必须已接入才可见
+      execute: async (sql) => {
+        sqls.push(sql)
+        return /SELECT sum\(value\) AS total/.test(sql)
+          ? { columns: ['total'], rows: [['1470.5']] }
+          : { columns: ['org', 'bizday', 'value'], rows: [['org_a', '2026-10-08', '1000'], ['org_a', '2026-10-09', '470.5']] }
+      },
+    }
+    const out = await runQuery(autoDeps, ORG, req(), L1_TOTAL_PREFIX + 'auto', {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    // 两条 SQL：先明细（带 LIMIT），再自动合计（sum、无 LIMIT——与显式合计同一形状）
+    expect(sqls.length).toBe(2)
+    expect(sqls[0]).toContain(`LIMIT ${MAX_QUERY_ROWS}`)
+    expect(sqls[1]).toMatch(/^SELECT sum\(value\) AS total FROM \( .*\) t$/)
+    expect(sqls[1]).not.toContain('LIMIT')
+    expect(sqls[1]).toContain("WHERE org = 'org_a'")
+    // 明细语义原样；total = 合计值（数值/numeric 字符串与 rows 同源）
+    expect(out.rows).toEqual([['org_a', '2026-10-08', '1000'], ['org_a', '2026-10-09', '470.5']])
+    expect(out.truncated).toBe(false)
+    expect(out.total).toBe('1470.5')
+    const a = await pool.query(
+      `select verdict, row_count from data.query_audit where org = $1 order by id desc limit 1`, [ORG])
+    // 审计的 row_count 仍是**明细**行数（合计不是行，不该顶掉行数语义）
+    expect(a.rows[0]).toMatchObject({ verdict: 'ok', row_count: 2 })
+  })
+
+  it('自动伴随：非 totalable 指标 → 响应**无** total 字段（比率/去重计数不给合计，模型也不得跨行求和）', async () => {
+    // METRIC 经 upsertMetric 落库 = L2 行 ⇒ totalable 恒 false（缺省即不可加）
+    const out = await runQuery(deps, ORG, req(), 'sales_daily', {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect('total' in out, '不可加指标不得凭空带 total 字段').toBe(false)
   })
 })
