@@ -165,6 +165,12 @@ jobs:
       # 独立通道对账（`recon-preagg.sh`）比较块的测试：平 / 漏店 / 超阈值 / **未定稿只报数** / 端点坏。
       # 「未定稿不判红」那条尤其要钉住——退货可能晚于定稿日到，判早了就是噪声。
       - run: sh scripts/lemeng/recon-preagg.test.sh
+      # 物化命令真身（`materialize.sh`，issue #679）的判别面测试。三条判据都在防**静默错**：
+      # ① `--select` 名单悄悄长回命令里 ⇒ #677 假绿结构性复发（解析数涨、执行集不变、run 照绿）；
+      # ② env 从「-e VAR 只透传键名」退化成「-e VAR=value」⇒ 密码进 ps（静默，被 ps 的那一刻才泄漏）；
+      # ③ 缺值 fail-fast 守卫被拆 ⇒ 跑到 dbt 连库才炸，晚失败难定位。
+      # 纯 sh（从脚本里抽真函数测，不复制实现）：不连库、不取网络、不起容器，秒级。
+      - run: sh scripts/lemeng/materialize.test.sh
       # 租户隔离门禁（issue #77；正典 docs/module-protocol.md「租户数据隔离」）：真库对账——
       # 真跑各模块的 migrations（跑进脚本自建的**一次性库** platform_tenant_isolation_check），
       # 再查 information_schema 要 org 列。判据按「全部 migrations 的累积终态」，不按文件判

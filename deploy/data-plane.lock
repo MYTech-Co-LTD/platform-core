@@ -1,4 +1,4 @@
-sha256-of-rest 715fc929bafe1f33ee4a2cb5db5583f091dfebcc5dfe05218ed9a5f7ed44ebd6
+sha256-of-rest 5ba9b27d954a268e35cdb184a325563d5b09209eaa982724dda15156472dfa24
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 5f2b5a68028671166b3a0cd62d62a08a12f8a10af5034a2b5e4cadb50c1fb264 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -17,8 +17,8 @@ a2c36ee626a700680e36bf3106abf74a4569c5461f4ba33d1ad148afd6690045 contracts/commo
 5a7a645f23cfdc35e966da665d627d438b8befb6effee70e525e76221367e5d7 contracts/common/lemeng.wholesale_out.json ${REPO}/contracts/common/lemeng.wholesale_out.json 0644
 81895b6736040f34f479157faaa94b7d8be89b0049dde0c75b14ddb4decb8229 contracts/common/lemeng.wholesale_return.json ${REPO}/contracts/common/lemeng.wholesale_return.json 0644
 a9209aad12e3020eefc11f94f51d935c49d1bff9eabf94fb0262d182a6a37c7a contracts/customers/README.md ${REPO}/contracts/customers/README.md 0644
-9556fac3cab00a4392f0a671b95695162efa9b70739ee6fa9caad28e52b3505b dbt/README.md ${REPO}/dbt/README.md 0644
-389df81d5bd62840c07910bbfc2e613dd072262612dc3f5fb40652b99364513e dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
+652e34457cb5ac278dd25653af4b0cca743793f6097aba623c9f6cd4a08c47f9 dbt/README.md ${REPO}/dbt/README.md 0644
+23598102c4d7f1a631bc91138b9d92d3fe27dbe5c8a151ab969ac344b1db726f dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
 d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subject_org.sql ${REPO}/dbt/macros/subject_org.sql 0644
 025674c7ee7f5d4ee4fb5b14974492e2ef9b27dfee94621b2557c52a2451c403 dbt/models/common/marts/fct_branch_expense.sql ${REPO}/dbt/models/common/marts/fct_branch_expense.sql 0644
@@ -149,6 +149,7 @@ e5692c786e70ea50917462573d035bc4cc4c9e25c81f9489fc5b3bb8070e6f64 duckle/README.m
 a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814 scripts/duckle/connection-setup.py /opt/connection-setup.py 0755
 bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/backfill-retail-order-line.sh /opt/lemeng-backfill.sh 0755
 c39a443f475d4f37374c1f68554b24de3a833e6f0b691d3a32416d4690ebe0ce scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755
+e82f379d1a25391a70268848123384a887f9f89d193db04979589bf209734a51 scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
 98074d99903bd7092dc8e8179ebec4a968e123e72884502a2a2664e08607eeb9 scripts/lemeng/oo-config-audit.sh /opt/lemeng-oo-config-audit.sh 0755
 5cd2eefa76e86c2a8e49ccaeb2e67c5993873288c1772e5208bbf1158576ceb0 scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
 bc36151a11daaf0d74da820e02ecda1c5a147f246e8b02b735420e02e2ddeed7 scripts/lemeng/oo-watchdog.sh /opt/lemeng-oo-watchdog.sh 0755
