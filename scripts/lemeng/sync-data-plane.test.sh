@@ -249,6 +249,7 @@ assert_eq '0' "$st" 'C: 干净时 --check 退出码 0'
 assert_contains "$(out_of c)" "SYNC_OK $N_ENTRIES/$N_ENTRIES" 'C: 干净时 --check 报 SYNC_OK 4/4'
 assert_eq "$h_before" "$(tree_hash "$ROOT/c/checkout")" 'C: --check 不改检出任何一个字节'
 assert_eq '1' "$((after - before))" 'C: --check 只取 lock（不取件）'
+assert_contains "$(out_of c)" '# extra 0' 'C: 干净检出时清点残余 0（摘要行恒打）'
 
 # D --check 有漂移：报 DRIFT + 非零，且**不修**
 printf '{"a":2}\n' > "$ROOT/c/checkout/duckle/a.json"
@@ -337,6 +338,104 @@ assert_eq '0' "$(calls_of j)" 'J: 参数不合法时一次 curl 都没发'
 st=$(REPO="$ROOT/does-not-exist" PATH="$STUB_BIN:$PATH" sh "$SCRIPT" "$FIXTURE_SHA" > "$ROOT/k-out" 2> "$ROOT/k-err"; printf '%s' "$?")
 assert_eq '2' "$st" 'K: 检出根不存在时退出码 2'
 assert_contains "$(cat "$ROOT/k-err")" '检出根不存在' 'K: 报检出根不存在'
+
+# L 孤儿默认报不删：EXTRA 行 + 摘要行，孤儿一个字节不动（#683 治本的前一半：先看得见）
+setup l
+run_sync l > /dev/null
+mkdir -p "$ROOT/l/checkout/dbt/seeds"
+printf 'ghost\n' > "$ROOT/l/checkout/dbt/seeds/x01_branch_region.csv"
+st=$(run_sync l)
+assert_eq '0' "$st" 'L: 默认同步退出码 0（孤儿不是错误）'
+assert_contains "$(out_of l)" \
+  "EXTRA $ROOT/l/checkout/dbt/seeds/x01_branch_region.csv" 'L: EXTRA 行点名孤儿（绝对路径）'
+assert_contains "$(out_of l)" '# extra 1' 'L: 摘要行 # extra 1'
+assert_contains "$(out_of l)" "SYNC_OK $N_ENTRIES/$N_ENTRIES" 'L: SYNC_OK 4/4 不受孤儿影响'
+assert_file "$ROOT/l/checkout/dbt/seeds/x01_branch_region.csv" 'L: 孤儿没被删'
+assert_eq 'ghost' "$(cat "$ROOT/l/checkout/dbt/seeds/x01_branch_region.csv" 2>/dev/null)" \
+  'L: 孤儿内容逐字节原样'
+
+# M --prune：孤儿与两类崩溃残留删（PRUNED 行），机器本地物与 lock 件全存活，残余 0
+# （崩溃残留用真机实际形态：`_rev_tmp="$REPO/.$REVISION_REL.tmp.$$"` 双首点——spec ② 的
+# `.data-plane-revision.tmp.*` 单点 glob 是死配置，已订正为「残留即孤儿、照清」）
+setup m
+run_sync m > /dev/null
+printf 'MACHINE_LOCAL=1\n' > "$ROOT/m/checkout/deploy/.env"
+printf 'config\n' > "$ROOT/m/checkout/dbt/profiles.yml"
+printf 'user\n' > "$ROOT/m/checkout/dbt/.user.yml"
+mkdir -p "$ROOT/m/checkout/dbt/target" "$ROOT/m/checkout/dbt/logs"
+printf 'compiled\n' > "$ROOT/m/checkout/dbt/target/run_results.json"
+printf 'log\n' > "$ROOT/m/checkout/dbt/logs/dbt.log"
+mkdir -p "$ROOT/m/checkout/dbt/seeds"
+printf 'ghost\n' > "$ROOT/m/checkout/dbt/seeds/x01_branch_region.csv"
+printf 'half\n' > "$ROOT/m/checkout/..data-plane-revision.tmp.424242"
+printf 'half\n' > "$ROOT/m/checkout/duckle/.a.json.sync-tmp.424242"
+st=$(run_sync m --prune)
+assert_eq '0' "$st" 'M: --prune 退出码 0'
+assert_contains "$(out_of m)" \
+  "PRUNED $ROOT/m/checkout/dbt/seeds/x01_branch_region.csv" 'M: 僵尸 seed 打 PRUNED 行'
+assert_contains "$(out_of m)" \
+  "PRUNED $ROOT/m/checkout/..data-plane-revision.tmp.424242" 'M: 双首点崩溃残留照清（不在 allowlist）'
+assert_contains "$(out_of m)" \
+  "PRUNED $ROOT/m/checkout/duckle/.a.json.sync-tmp.424242" 'M: .sync-tmp 崩溃残留照清'
+assert_no_file "$ROOT/m/checkout/dbt/seeds/x01_branch_region.csv" 'M: 孤儿真没了'
+assert_eq '0' "$(out_of m | grep -c '^EXTRA ' || true)" 'M: prune 态不打 EXTRA 行（只打 PRUNED）'
+assert_file "$ROOT/m/checkout/deploy/.env" 'M: 机器本地 deploy/.env 存活'
+assert_file "$ROOT/m/checkout/dbt/profiles.yml" 'M: 机器本地 dbt/profiles.yml 存活'
+assert_file "$ROOT/m/checkout/dbt/.user.yml" 'M: 机器本地 dbt/.user.yml 存活'
+assert_file "$ROOT/m/checkout/dbt/target/run_results.json" 'M: dbt 编译产物存活（dbt/target/*）'
+assert_file "$ROOT/m/checkout/dbt/logs/dbt.log" 'M: dbt 日志存活（dbt/logs/*）'
+assert_file "$ROOT/m/checkout/.data-plane-revision" 'M: 同步标记存活（allowlist 本体）'
+assert_contains "$(out_of m)" "SYNC_OK $N_ENTRIES/$N_ENTRIES" 'M: lock 四件全存活（SYNC_OK 4/4）'
+assert_contains "$(out_of m)" '# extra 0' 'M: 清理后残余 0'
+
+# N --check 只读：有孤儿也只报不删、不碰树；退出码仍只看 DRIFT（spec ③ 定案，别改语义）
+setup n
+run_sync n > /dev/null
+mkdir -p "$ROOT/n/checkout/dbt/seeds"
+printf 'ghost\n' > "$ROOT/n/checkout/dbt/seeds/x01_branch_region.csv"
+h_before=$(tree_hash "$ROOT/n/checkout")
+before=$(calls_of n)
+st=$(run_sync n --check)
+after=$(calls_of n)
+assert_eq '0' "$st" 'N: 有孤儿时 --check 退出码仍 0'
+assert_contains "$(out_of n)" 'EXTRA ' 'N: 报 EXTRA 行'
+assert_contains "$(out_of n)" '# extra 1' 'N: 摘要行 # extra 1'
+assert_eq "$h_before" "$(tree_hash "$ROOT/n/checkout")" 'N: --check 不碰检出（孤儿原样）'
+assert_eq '1' "$((after - before))" 'N: 只取 lock 这一次'
+
+# O 参数互斥：--check --prune 同传 = 3 个位置参数，被现有 arity 检查拒（exit 2 零 curl）
+setup o
+st=$(run_sync o --check --prune)
+assert_eq '2' "$st" 'O: --check --prune 同传退出码 2'
+assert_eq '0' "$(calls_of o)" 'O: 一次 curl 都没发'
+
+# P 作用域：${REPO} 外（/opt 旁）的多余件不进清点、不被点名、不被删
+setup p
+run_sync p > /dev/null
+printf 'stray\n' > "$ROOT/p/opt/lemeng-stray.sh"
+st=$(run_sync p)
+assert_eq '0' "$st" 'P: 退出码 0'
+assert_file "$ROOT/p/opt/lemeng-stray.sh" 'P: ${REPO} 外的文件没被动'
+case "$(out_of p)" in
+  *lemeng-stray*) bad 'P: 输出不点名 ${REPO} 外的文件' ;;
+  *) ok 'P: 输出不点名 ${REPO} 外的文件' ;;
+esac
+
+# Q 子目录孤儿：嵌套孤儿可清；空父目录有意不删（spec 非目标：不删空目录）
+setup q
+run_sync q > /dev/null
+mkdir -p "$ROOT/q/checkout/deploy/duckle/nested/deeper"
+printf 'ghost\n' > "$ROOT/q/checkout/deploy/duckle/nested/deeper/ghost.txt"
+st=$(run_sync q --prune)
+assert_eq '0' "$st" 'Q: --prune 退出码 0'
+assert_contains "$(out_of q)" \
+  "PRUNED $ROOT/q/checkout/deploy/duckle/nested/deeper/ghost.txt" 'Q: 嵌套孤儿被清'
+assert_contains "$(out_of q)" '# extra 0' 'Q: 清理后残余 0'
+if [ -d "$ROOT/q/checkout/deploy/duckle/nested/deeper" ]; then
+  ok 'Q: 空父目录有意保留'
+else
+  bad 'Q: 空父目录有意保留（却没了）'
+fi
 
 # ---- 汇总 ----
 
