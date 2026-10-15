@@ -120,7 +120,43 @@ params = grain ∩ 白名单，白名单与类型固定：
 - `modules/data/domain/agent-loop.ts`（工具描述）
 - 测试：上述各文件的 `*.test.ts` + sync 产物断言
 
-## 8. 已否决候选（留档）
+## 8. 修订：合计形态（2026-10-15 真机验收 Q2 卡死后增补）
+
+> 真机五问 Q2（近7天净销售额）实测：区间查询参数形状逐字正确、`verdict=ok`，但「区间 × 细 grain」返回
+> **1000+506 行工具结果**灌进模型上下文 → 生成极慢、企微流 2 分钟+ 不闭合（用户观感 = 卡死）。
+> `truncated` 信号存在（`query-service.ts:144`）且模型确实自纠改发单日查询，但 SKILL 指引的
+> 「改用聚合口径」**在平台上不存在可改的形态**——区间合计这一问法没有合法答法。本节补上它。
+
+### 8.1 形状
+
+- `args` 增加保留键 **`total`**：**仅当 `args.total === true`（布尔真）**时进入合计模式；
+  其余任何值（含字符串 `"true"`）不消费、走既有参数校验（`unknown_param:total`，fail-closed）。
+- 合计模式响应：`{ subject, columns: ['total'], rows: [[<合计值>]], truncated: false, total: true }`
+  ——恒单行，**不返回明细**（明细与合计互斥；`truncated` 恒 false：合计无截断面）。
+- SQL 形状：`SELECT sum(value) AS total FROM ( <selectSql> WHERE <subject> … <filters> GROUP BY <grain> ) t`
+  ——**去掉外层 LIMIT**（合计必须作用于全量匹配行；截断求和 = 错数）。
+
+### 8.2 纪律
+
+- `total` 是**查询面保留键**：指标参数不得命名 `total`（L1 白名单天然不含；L2 参数面本就未开放）；
+- 模型不可借 total 伪造主体——subject 钉死逻辑不变，total 只是聚合形态开关；
+- 合计语义 = 对该指标 `expression` 在过滤后全量匹配行上再聚合（数学上 = 明细 `value` 列之和）。
+
+### 8.3 问数 SKILL v2（方法论层，`deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md` 重写）
+
+| 问法 | 策略 |
+|---|---|
+| 单点（某天/某店某天） | 直接查明细（行数 ~74–220/天/账套，安全） |
+| 区间合计（近N天/本月共多少） | **先 `total:true` 拿总数**；需要分布再按天拆单日查 |
+| 区间分布（按天/按店走势） | 说清分组；**先窄后宽**（先单账套、先 2~3 天探行量） |
+| 行数预算 | net_sales ≈147 行/天（3120）/74 行/天（64188）；区间×双账套 ≈ 天数×220，**>4 天必 total** |
+| `truncated:true` | 只能答「数据不全」，不得当全量下结论；收窄重查 |
+| `bad_param` + detail | 读 detail 自纠，同一错误调用不重试 |
+
+（平台侧工作：authz 合计分支 + query-service 执行 + 响应字段 + agent-loop/插件工具描述同步 + SKILL v2 + 测试。）
+
+## 9. 已否决候选（留档）
+
 
 - **L2/refine 做问数切片**：L2 是治理面（metric-write 落库 + 生命周期 + 「base 必须是已存在 L1、L2 不能以 L2 为 base」闸门），
   为持久切片设计；问数是会话内临时过滤，重量错配。两层面分工：L2=治理性持久切片，params=问数会话内过滤。
