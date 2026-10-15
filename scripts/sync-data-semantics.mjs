@@ -177,7 +177,9 @@ const ASK_PARAM_WHITELIST = {
  */
 export function deriveParams(/** @type {readonly string[]} */ grain) {
   return Object.fromEntries(
-    grain.filter((/** @type {string} */ c) => c in ASK_PARAM_WHITELIST)
+    // Object.hasOwn 而不是 `in`：`in` 会把原型链上的键也算命中（如 `toString`），
+    // grain 若将来混入这类名字会物化出白名单外的参数——白名单就该只认自有键。
+    grain.filter((/** @type {string} */ c) => Object.hasOwn(ASK_PARAM_WHITELIST, c))
       .map((/** @type {string} */ c) => /** @type {[string, MetricParamDef]} */ ([c, ASK_PARAM_WHITELIST[c]])),
   )
 }
@@ -279,7 +281,8 @@ export function declarationsFromYaml(parsed) {
       subjectColumn: L1_SUBJECT_COLUMN,
       selectSql: buildSelectSql(expression, grain, relation),
       groupBy: grain.join(', '),
-      // 问数参数面：grain ∩ 白名单（spec 2026-10-15 §2.2）。L2 仍不开放参数面（维持下行旧注释的边界）。
+      // 问数参数面：grain ∩ 白名单（spec 2026-10-15 §2.2）。L2 仍不开放参数面——
+      // L2 是治理性持久切片，问数是会话内过滤，重量错配（spec §5 的边界声明，改前先回 spec）。
       params: deriveParams(grain),
       // 源系统（源维度）：上面已拦掉缺字段的情形，故这里的取值恒是非空串。
       sourceSystem,

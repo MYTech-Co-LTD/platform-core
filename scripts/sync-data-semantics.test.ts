@@ -89,6 +89,35 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
     }
   })
 
+  it('★ 问数参数面逐条断言（spec 2026-10-15 §4.1，真实事实源）：bizday/system_book 必在；grain 含 domain 的恰含 domain；白名单外一个不进', () => {
+    // 为什么钉真实 YAML：D1–D4 钉的是推导函数（合成 grain），钉不住「声明本身改了 grain
+    // 把参数面静默改丢」——参数面是物化产物，漏推导不报错，只表现为线上问不出区间。
+    // 这条对**仓内每一条**声明逐行核对（期望集从声明自己的 grain 推，不硬编码条数——
+    // 加指标/改 grain 本测试自动跟着改，删列才红）。
+    const rows = readDeclarations(ROOT)
+    expect(rows.length).toBeGreaterThan(0)
+    let withDomain = 0
+    for (const row of rows) {
+      // groupBy = grain.join(', ')（见 declarationsFromYaml），反推即得 grain
+      const grain = row.groupBy === '' ? [] : row.groupBy.split(', ')
+      expect(row.params.bizday, `${row.id} 缺 bizday 参数`).toEqual({ column: 'bizday', type: 'date_range' })
+      expect(row.params.system_book, `${row.id} 缺 system_book 参数`).toEqual({ column: 'system_book', type: 'string' })
+      if (grain.includes('domain')) {
+        withDomain++
+        expect(row.params.domain, `${row.id} grain 含 domain 却没出参数`).toEqual({ column: 'domain', type: 'string' })
+      } else {
+        expect(row.params.domain, `${row.id} grain 不含 domain 却出了参数`).toBeUndefined()
+      }
+      for (const name of Object.keys(row.params)) {
+        expect(['bizday', 'system_book', 'domain'], `${row.id} 出现白名单外参数 ${name}`).toContain(name)
+      }
+    }
+    // domain 不是全量维度（2026-10-15 清点：出库/批发族才有）——「恰好」的口径要有实证数：
+    // 至少一条有、且不是全部都有，否则上面那个分支就退化成恒真式。
+    expect(withDomain).toBeGreaterThan(0)
+    expect(withDomain).toBeLessThan(rows.length)
+  })
+
   it('label 缺省回落到 name（title 不许是空串：管理面靠它认指标）', () => {
     const rows = declarationsFromYaml(yaml([
       { name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
