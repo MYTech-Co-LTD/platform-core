@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.121.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.120.1...v0.121.0) - 2026-10-15
+- 【新增】data: sync-data-plane 加清点与 --prune，治检出孤儿永生（#683） ([#686](https://github.com/MYTech-Co-LTD/platform-core/pull/686), [8da6771](https://github.com/MYTech-Co-LTD/platform-core/commit/8da67715bca864be084a5b58b50f1aebe2cf4187))
+
+
 ## [0.120.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.120.0...v0.120.1) - 2026-10-15
 - 【修复】data: 量级对账中位数改 percentile_cont（pg_duckdb 无 median，#682） ([#684](https://github.com/MYTech-Co-LTD/platform-core/pull/684), [f933de7](https://github.com/MYTech-Co-LTD/platform-core/commit/f933de710623a50cfa08f19b3eab8de91c38678d))
 
