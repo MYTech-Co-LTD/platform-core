@@ -101,6 +101,7 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  * @property {string} groupBy
  * @property {Record<string, MetricParamDef>} params
  * @property {string | null} sourceSystem
+ * @property {boolean} totalable 可加标记（spec §8.4，deriveTotalable 从 expression 推导）
  */
 
 /**
@@ -182,6 +183,27 @@ export function deriveParams(/** @type {readonly string[]} */ grain) {
     grain.filter((/** @type {string} */ c) => Object.hasOwn(ASK_PARAM_WHITELIST, c))
       .map((/** @type {string} */ c) => /** @type {[string, MetricParamDef]} */ ([c, ASK_PARAM_WHITELIST[c]])),
   )
+}
+
+/**
+ * 可加判定（spec §8.4：total 自动伴随的物化依据）——**表达式形状的保守机械规则**。
+ *
+ * 两条判定，都取**保守**方向（漏给一个自动合计是小事；给比率编一个合计是错数）：
+ *   ① `expression` 以 `sum(` 开头 ⇒ 可加 ⇒ true。可加指标的两种实文形态都覆盖：
+ *      单聚合（`sum(fct_retail_sale.net_amount)`）与聚合之差（`sum(a) - sum(b)`，
+ *      purchase:net_amount）。
+ *   ② **含除法形状 ⇒ false**。sync 的 ratio 声明物化成 `sum(…) / nullif(sum(…), 0)`——
+ *      ⚠️ 它**也以 `sum(` 开头**，只认前缀会把毛利率/填写率/满足率全判成可加（自动合计
+ *      直接给出错数）。比率不可加（上滚 = 重算），一律不给自动合计。
+ *      认「空格夹除号」而不是裸 `/`：`sum(a/b)`（行内比值再求和）是可加的，不该被误杀。
+ *   ③ 去重计数（`count(distinct …)`）不以 `sum(` 开头，天然落 false——跨行求和
+ *      = 供应商·天数，错（spec §8.4 明文）。
+ *
+ * @param {string} expression 物化后的口径表达式（ratio 声明已在此前包好 nullif）
+ * @returns {boolean}
+ */
+export function deriveTotalable(expression) {
+  return /^\s*sum\s*\(/i.test(expression) && !/\s\/\s/.test(expression)
 }
 
 /**
@@ -286,6 +308,9 @@ export function declarationsFromYaml(parsed) {
       params: deriveParams(grain),
       // 源系统（源维度）：上面已拦掉缺字段的情形，故这里的取值恒是非空串。
       sourceSystem,
+      // 可加标记（spec §8.4）：从**物化后的**表达式推导——ratio 在上面已包成
+      // `… / nullif(…, 0)`，deriveTotalable 的除法排除正好接住它。
+      totalable: deriveTotalable(expression),
     }
   })
 }
@@ -295,10 +320,13 @@ export function declarationsFromYaml(parsed) {
  *
  * `sourceSystem` 必须在场：否则「改了声明的 source、库里没跟上」会被判成「未变」——
  * 而 `--check` 只认这个判据，于是门禁假绿（见上面 ComparableMetric 的说明）。
+ * `totalable` 同理（spec §8.4）：加列后的首次比对 = 可加指标全部判「更新」（预期漂移）；
+ * 不进比对的话，声明推导变了而库里没刷的情况会被永久判「未变」。
  */
 const comparableOf = (/** @type {ComparableMetric} */ row) => JSON.stringify([
   row.title, row.description, row.requiredScope, row.subjectColumn, row.selectSql, row.groupBy, row.params,
   row.sourceSystem,
+  row.totalable,
 ])
 
 /**
