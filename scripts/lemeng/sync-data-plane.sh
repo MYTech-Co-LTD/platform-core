@@ -9,9 +9,23 @@
 #
 # 四步：**取 lock**（按全 SHA）→ **验 lock 自校验** → **逐文件取件**（同目录临时文件 → sha256 断言
 # → 补模式 → 原子 `mv -f`）→ **最后**写 `<检出>/.data-plane-revision`；随后**清点/清理**（#683）：
-# 枚举检出树 vs lock 落地路径集，孤儿默认报 `EXTRA`、`--prune` 删。清点在标记**之后**——「标记
-# 在 = 这套文件是全的」不变式不被 prune 干扰（prune 失败只是没清干净，下次跑收敛）。单文件
-# `mv` 原子但**整套不原子**，中途失败停在半应用状态，靠「标记没写上」显性化。
+# 枚举检出树 vs lock 落地路径集，孤儿默认报 `EXTRA`、`--prune` 删（**作用域见下节**）。清点在标记
+# **之后**——「标记在 = 这套文件是全的」不变式不被 prune 干扰（prune 失败只是没清干净，下次跑收敛）。
+# 单文件 `mv` 原子但**整套不原子**，中途失败停在半应用状态，靠「标记没写上」显性化。
+#
+# ## 清点/清理的作用域（#683，真机实证后**收窄**）
+#
+# 只在 **manifest 目录型条目**（源路径以 `/` 结尾）的落地前缀下清点，即下面的 `PRUNE_ROOTS`。
+# **不收窄不行**：真机 `--check` 实测，全 `${REPO}` 作用域报 **394** 个多余件，其中**只有 10 个**
+# 是本设计要治的孤儿（旧名退役后在检出里永生），另 **384 个是「整仓 tarball 引导残留」**——
+# 数据面机的检出由 openship job 用整仓 tarball 解包、再由本 sync 覆盖数据面子集而成，
+# 「检出不等于 lock 集」是**设计常态**、不是漂移；整仓判死 = 拿 384 个设计外文件赌命。
+#
+# 作用域外的件（含 `${REPO}` 根文件、`modules/`/`apps/` 等）**只计数不删**，打一行
+# `# outside-scope M`——它是体检指标（这个数突然跳说明有人往检出里塞了新东西），但不进
+# `# extra N`、不影响退出码。`PRUNE_ROOTS` 与 manifest 的一致性由
+# `scripts/check-prune-roots.mjs` 在 CI **机械比对**：两处漂移（manifest 加了新目录条目、
+# 表没跟）会让新树里的孤儿静默漏清，正是 #683 要治的病，所以不靠人记。
 #
 # ## 为什么每件都要 sha256 断言（不是「保险起见」）
 #
@@ -38,9 +52,11 @@
 # （不以 OK/DRIFT 开头，不参与契约）。失败字面量：`LOCK_FETCH_FAILED:` / `LOCK_SELFTEST_FAILED:` /
 # `FETCH_FAILED: <仓内路径>` / `REVISION_WRITE_FAILED:`——**都是 fail loud + 非零退出**，不静默。
 #
-# 清点输出（#683，三态都有）：孤儿逐行 `EXTRA <绝对路径>`（报告态）；`--prune` 态删掉的打
+# 清点输出（#683，三态都有）：**作用域内**孤儿逐行 `EXTRA <绝对路径>`（报告态）；`--prune` 态删掉的打
 # `PRUNED <绝对路径>`、删失败打 `PRUNE_FAILED: <路径>`（fail loud + 非零退出）；摘要行
-# `# extra N`（N = 清点/清理**后**残余孤儿数）打在结论行之前。`--check` 退出码仍只看 DRIFT。
+# `# extra N`（N = 清点/清理**后**作用域内残余孤儿数）打在结论行之前，紧邻一行
+# `# outside-scope M`（M = 作用域外多余件数，纯信息行、不进 N、不影响退出码）。
+# `--check` 退出码仍只看 DRIFT。
 
 set -efu
 
@@ -99,12 +115,30 @@ fetch_verified() {
   return 1
 }
 
-# ---- #683 清点/清理：机器本地物 allowlist + 孤儿审计 ----
+# ---- #683 清点/清理：作用域 + 机器本地物 allowlist + 孤儿审计 ----
+
+# 清点/清理的作用域根（相对 `${REPO}`）= `deploy/data-plane-manifest.txt` 里**源路径以 `/` 结尾**
+# 的目录型条目的落地前缀。收窄的理由见头注「作用域」节（真机 394 → 10 + 384）。
+# ⚠️ 这行与 manifest 的一致性由 `scripts/check-prune-roots.mjs` 在 CI 机械比对——**别只改一处**。
+PRUNE_ROOTS='duckle/ dbt/ contracts/ deploy/duckle/console/'
+
+# 是否落在作用域内（相对 `${REPO}` 的路径）。`set -f` 在跑 ⇒ `$PRUNE_ROOTS` 按空白拆成四个词、
+# 不做通配展开（与主循环 `set -- $line` 同一个依赖）。
+is_in_prune_scope() {
+  for _r in $PRUNE_ROOTS; do
+    case "$1" in
+      "$_r"*) return 0 ;;
+    esac
+  done
+  return 1
+}
 
 # 机器本地物 allowlist（相对 `${REPO}`）：这些件不在仓里（与 `deploy/data-plane-manifest.txt`
 # 头注的「机器本地物」清单同源），清点不得判成孤儿。改这张表与改 manifest 头注同 PR 走。
 # 注：崩溃残留（`..data-plane-revision.tmp.*` / `.sync-tmp.*`）**不在**表里——它们不该活着，
-# 视作孤儿被报告/清理是更优行为，不是误伤。
+# 进了表才是误伤。但**清不清得掉看落点**：目标件在作用域内 ⇒ 残留也在作用域内、照清；
+# 标记本体的临时件落在 `${REPO}` **根** ⇒ 根文件不在任何目录条目子树里 ⇒ 作用域外，
+# 只进 `# outside-scope` 计数（有意，见头注「作用域」节与设计文档「风险」节）。
 is_allowlisted() {
   case "$1" in
     .data-plane-revision) return 0 ;;
@@ -114,19 +148,25 @@ is_allowlisted() {
   esac
 }
 
-# 审计孤儿：stdin 逐行喂 `${REPO}` 内绝对路径。$1 = 'report'（只报）| 'prune'（删）。
-# 计数走全局 `_extra`；调用方必须用**重定向**喂（`audit_extras x < file`），不能接在
-# `find | audit_extras` 管道里——管道会把函数放进子 shell，计数器出不来（与主循环
-# `done < file` 同一个坑、同一个解法）。
+# 审计多余件：stdin 逐行喂 `${REPO}` 内绝对路径。$1 = 'report'（只报）| 'prune'（删）。
+# 计数走全局 `_extra`（作用域内孤儿）与 `_outside`（作用域外多余件，只数不删）；调用方必须用
+# **重定向**喂（`audit_extras x < file`），不能接在 `find | audit_extras` 管道里——管道会把函数
+# 放进子 shell，计数器出不来（与主循环 `done < file` 同一个坑、同一个解法）。
 audit_extras() {
   _mode="$1"
   _extra=0
+  _outside=0
   while IFS= read -r _abs; do
     _rel=${_abs#"$REPO"/}
     if grep -Fqx -- "$_rel" "$_tmpdir/expected"; then
       continue
     fi
     if is_allowlisted "$_rel"; then
+      continue
+    fi
+    # 作用域外的件**只计数**：真机 384 个引导残留属此类，删了才是事故（见头注）。
+    if ! is_in_prune_scope "$_rel"; then
+      _outside=$((_outside + 1))
       continue
     fi
     _extra=$((_extra + 1))
@@ -353,6 +393,7 @@ if [ "$CHECK_MODE" = '1' ]; then
   # 是否装齐」，EXTRA 不影响装齐；改了会打断现有探活/审计调用方的退出码约定。
   audit_checkout report
   echo "# extra $_extra"
+  echo "# outside-scope $_outside"
   if [ "$_drift" -eq 0 ]; then
     echo "SYNC_OK $_ok/$_total"
     exit 0
@@ -386,6 +427,7 @@ else
   audit_checkout report
 fi
 echo "# extra $_extra"
+echo "# outside-scope $_outside"
 
 echo "SYNC_OK $_ok/$_total"
 echo "# revision $SHA → $REVISION_REL"
