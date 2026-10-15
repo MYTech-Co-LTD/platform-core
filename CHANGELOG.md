@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.122.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.121.2...v0.122.0) - 2026-10-15
+- 【新增】data: L1 问数参数面——等值/日期区间参数（openclaw 问数前置） ([#697](https://github.com/MYTech-Co-LTD/platform-core/pull/697), [05dafac](https://github.com/MYTech-Co-LTD/platform-core/commit/05dafaca84ad76349bf1394ca674ba2112b952a1))
+
+
 ## [0.121.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.121.1...v0.121.2) - 2026-10-15
 - 【修复】data: #688 deploy/dbt/Dockerfile 补进数据面清单 + 定案「机器本机构建」 ([#692](https://github.com/MYTech-Co-LTD/platform-core/pull/692), [6746c15](https://github.com/MYTech-Co-LTD/platform-core/commit/6746c151b4ba19661e2eb2438ef208021833e9b3))
 
