@@ -7,7 +7,7 @@
 # 落地路径 = ② 作前缀 + 目录内相对路径。⇒ 仓里新增 dbt/tests/*.sql 自动被覆盖，**本文件不必跟着改**。
 #
 # 谁该进这张表（**四条**判据，缺一会漏，见 SOP §E.2）：① 脚本里 `$REPO/<路径>` 的引用点；
-# ② `deploy/data-compose.yml` 的 bind 源；③ Dockerfile 的 COPY 源；
+# ② `deploy/data-compose.yml` 的 bind 源**与 `build.dockerfile` 引用**；③ Dockerfile 的 COPY 源；
 # ④ **机器上被 job/exec 直接执行**的脚本（job 命令里点到它）——它同样必须与仓内那份逐字节一致，
 #    否则「job 跑的是哪个版本」无据可查。
 # 机器本地物（`deploy/.env`、`dbt/profiles.yml`、`dbt/target/`、`dbt/logs/`、`dbt/.user.yml`）
