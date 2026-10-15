@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.123.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.122.0...v0.123.0) - 2026-10-15
+- 【新增】data: 问数合计形态（args.total 单行聚合）+ 问数 SKILL v2（真机区间卡死治本） ([#699](https://github.com/MYTech-Co-LTD/platform-core/pull/699), [d3701e7](https://github.com/MYTech-Co-LTD/platform-core/commit/d3701e7e9df54b7ee4f0a014f97908860e3c6d56))
+
+
 ## [0.122.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.121.2...v0.122.0) - 2026-10-15
 - 【新增】data: L1 问数参数面——等值/日期区间参数（openclaw 问数前置） ([#697](https://github.com/MYTech-Co-LTD/platform-core/pull/697), [05dafac](https://github.com/MYTech-Co-LTD/platform-core/commit/05dafaca84ad76349bf1394ca674ba2112b952a1))
 
