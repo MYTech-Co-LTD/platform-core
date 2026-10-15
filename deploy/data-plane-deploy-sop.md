@@ -448,6 +448,54 @@ sh /opt/lemeng-sync.sh <全SHA> --prune     # 同步 + 清点删除检出孤儿�
 `# outside-scope M`（M = 作用域外多余件数，**纯信息行**、不进 N、不影响退出码）。
 `--check` 的退出码仍只看 DRIFT。
 
+**#683 首跑实录（2026-10-15，真机两步门）**——治本上线的验收序列与判据，照此复核：
+
+1. **更新 `/opt/lemeng-sync.sh`**：该件**不在清单里**（自举依赖，清单不能含同步器自己）⇒ 它的更新是
+   **手工**的（E.5 ①：取件 → sha256 断言 → **同目录**临时文件 → 原子 `mv -f` → 补模式）。**三连
+   sha256 逐字节相等**（仓内 = 取件 = 落地 = `933d7764a3decf339d3a2b665fb6ae5ecd59932b9a108378a82c8648386e1189`），
+   大小 19626、模式 0755。
+2. **`--check` 核对门**（**过了才许 prune**）：`# extra 10`（= 本节要治的孤儿：`deploy/duckle/console/`
+   7 件 + `duckle/common/` 3 件）+ `# outside-scope 384`（引导残留，只计数）+ `SYNC_DRIFT 2 mismatched`
+   （两件内容漂移，与孤儿无关；下条 `--prune` 的**完整同步**把它们一并重取回来）。
+   ⚠️ **设计稿与评审预览写的「预期 `# extra 0`」是笔误**：394 = **10**（作用域内孤儿）+ **384**（作用域外
+   引导残留），`# extra 0` 是 **prune 之后**的判据（下条），**不是** prune 之前。收窄**只**把 384 挡在
+   门外，10 个孤儿仍在——它们正是 prune 要删的东西。全检出作用域那版实测是 `# extra 394`（无
+   `# outside-scope` 行），可见「收窄」这一步的效果就是把 394 拆成 10 + 384。
+3. **`--prune` 首跑**：rc 0，恰好 **10** 行 `PRUNED`（清单见下），复核 `# extra 0` +
+   `# outside-scope 384`（作用域外计数**不因 prune 而变**）+ `SYNC_OK 160/160`。
+4. **收敛复核**：再跑一次 `--check` = rc 0 / 160 `OK` / **0 DRIFT** / **0 EXTRA** / `# extra 0` /
+   `# outside-scope 384` / `SYNC_OK 160/160`。落在检出**根**的 `..data-plane-revision.tmp.*` 残留
+   glob 实测为空（已知边界，本就没残留）。
+5. **dbt 判据（僵尸 seed 真的退场）**：materialize 全量 `dbt build` 报 `Found 23 models, 157 data tests,
+   3 seeds, 14 sources, 436 macros`，末尾 `PASS=183 WARN=0 ERROR=0 SKIP=0 TOTAL=183` + `MATERIALIZE_OK`；
+   三个 seed = `x01_branch_calendar`(0 行) / `x01_region_names`(27 行) / `x08_thresholds`(0 行)——
+   **`x01_branch_region` 不在其中**（它正是被 prune 掉的退役 seed，此前被当僵尸 seed 天天加载）。
+
+首跑删掉的 10 个孤儿（`PRUNED` 逐行，2026-10-15，target `5ee6d5535c6be70ef2c405a6baf88a511af075ab`；
+路径相对检出根 `/opt/platform-core-data/platform-core`）：
+
+```
+deploy/duckle/console/alerts.json
+deploy/duckle/console/owners.json
+deploy/duckle/console/pipelines/lemeng.dim.branch.run.json
+deploy/duckle/console/pipelines/lemeng.dim.item.run.json
+deploy/duckle/console/pipelines/lemeng.retail.close.run.json
+deploy/duckle/console/pipelines/lemeng.retail.tick.run.json
+deploy/duckle/console/pipelines/lemeng.retail.windows.run.json
+duckle/common/lemeng.branch.json
+duckle/common/lemeng.item.json
+duckle/common/lemeng.retail_order_line.json
+```
+
+> ⚠️ **同名不同物，别把 prune 读成没退干净**：上面退场的 `deploy/duckle/console/alerts.json` /
+> `owners.json` 是**检出里**的**声明文件**（仓内已改名成 `alerts.lemeng.json` / `owners.lemeng.json`，
+> 旧名的副本由此被 prune 清掉）。console **卷**（`...-lemeng-console-<账套>-ws`，落在 `/workspace`）
+> 里另有一份**同名**的 `alerts.json` / `owners.json`，是**卷自己那份**、不来自检出——两者同名、不同物、
+> 不同落点。卷内件由 `seed-console.sh` 按检出副本播种（#531），**与本节 prune 无关**；判「检出退干净没」
+> 只看检出树（`--check` 的 `# extra`）。
+> 【待核实】卷内 `alerts.json` 的 mtime 早于本次改名（2026-10-12），**是否**仍被引擎读取、还是改名后
+> 遗留的旧名件——本步未验，未据以动作。
+
 **全 SHA 从命令输出逐字复制，绝不手工补**（分支名会漂移，投递物必须与 commit 逐字节对应）。
 
 ### E.4 为什么 sha256 断言是必须的（不是「保险起见」）
