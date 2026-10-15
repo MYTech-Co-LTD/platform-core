@@ -579,8 +579,9 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 ① **卷内定义**（`schedules/` / `pipelines/` / `alerts.json` / `owners.json`——落在**命名卷** `/workspace`）⇒
    **seed + 重启容器**：卷内容·**重启即重新读取**（SOP §F.2 第 1 类；2026-09-26 实测，**2026-09-29 两账套投递再次实测**：只用服务级 `…/restart`，新调度立刻生效）。
-② **bind-mount 进来的文件**（仓内 `duckle/` → `/pipelines:ro`、`/opt/lemeng-run.sh`）⇒
+② **bind-mount 进来的文件**（仓内 `duckle/` → `/pipelines:ro`）⇒
    **同步 + 用 `serviceIds` 定向重建**——**「bind-mount 钉 inode、原子替换后运行中的容器仍看到旧文件」这条理由只对这一类成立**。
+   （原例中的 `/opt/lemeng-run.sh` 已于 2026-09-29 随 #382 退役删除，今此类只剩 `duckle/`。）
 （**别全量部署**——会重启 `pg_duckdb`。）
 
 #### 1.3.3 薄 wrapper 的职责边界（🔴 **已退役**，2026-09-29；本节**保留在册以便查历史**——目标形态见 §1.1.7）

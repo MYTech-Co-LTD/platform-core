@@ -114,8 +114,7 @@ services:
   # · 为什么**不挂 profiles**：它要常驻 —— 这是对拍板 #4「零常驻」的**局部有意偏离**（ADR-0014 留档）。
   #   代价：它会出现在**每个**用本 compose 的项目的下次部署 ⇒ 不需要它的项目必须 patch
   #   `enabled: false`（实测语义：**不部署 + 拆旧容器**）。**别忘这一步**。
-  # · 为什么挂 `/opt/lemeng-run.sh`：薄管线用 `code.shell` 调它；脚本内含 `LEMENG_IN_CONTAINER`
-  #   调用模式（PR #224），在容器内直接调引擎、不经 compose。宿主绝对路径（compose 在宿主执行）。
+  # （旧 wrapper `/opt/lemeng-run.sh` 的挂载与本说明已随 #382 退役删除——勿照历史文档加回。）
   lemeng-console-3120:
     image: platform-core-duckle:local
     restart: unless-stopped

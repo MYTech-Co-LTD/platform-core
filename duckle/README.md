@@ -311,7 +311,8 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
 9. **生产采集 run 的引擎原生观测面「在哪个 workspace」** —— **已验：job 侧与 console 侧是
    两个卷、互不可见**（2026-09-27，**真机 · 数据面机 3120 账套**；证据
    `.superpowers/sdd/2026-09-27-duckle-first-collection-flow-p1/task-6-report.md` 与 issue #210）：
-   ① **openship job 侧**（`lemeng-retail-3120-runner`，`sh /opt/lemeng-run.sh windows`）的 run 落在
+   ① **openship job 侧**（`lemeng-retail-3120-runner`，`sh /opt/lemeng-run.sh windows`——该 job 与
+   wrapper 均已退役：job `enabled:false`，wrapper 删于 #382）的 run 落在
    **`platform-core-data_duckle-workspace`** 卷——实测 09-27T02:30Z 那轮 **24 窗的 `run_id` / `rows` /
    `duration_ms` 全在该卷 `runs/lemeng.retail_order_line.json` 里**；② **console 侧**（容器
    `openship-platform-core-shanhai-data-lemeng-console-3120` 常驻 `serve`）落在
