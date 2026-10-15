@@ -424,6 +424,16 @@ sh /opt/lemeng-sync.sh <全SHA> --prune     # 同步 + 清点删除检出孤儿�
 `<checkout>/.data-plane-revision` → **清点/清理**（#683：枚举检出树 vs lock 落地路径集，机器本地
 物 allowlist 豁免。默认报 `EXTRA`；`--prune` 删孤儿——**仓内删除的文件由此自动从检出退场**）。
 
+**清点作用域 = 清单里「目录型条目」的落地子树**（`duckle/`、`dbt/`、`contracts/`、
+`deploy/duckle/console/`；写死脚本内那行 `PRUNE_ROOTS`）。**不收窄不行**：数据面机的检出按设计就是
+「整仓 tarball 引导 + 清单覆盖」⇒ 真机 `--check` 实测全检出作用域报 **394** 个多余件，其中只有
+**10 个**是本节要治的孤儿（旧名退役后永生、被 dbt 当僵尸 seed 加载），另 **384 个是引导残留**
+（`modules/`170 `apps/`75 `docs/`45 …）——全树判死就是拿 384 个设计外文件赌命。作用域外的件
+（含检出根文件）**只计数不删**，打 `# outside-scope M` 信息行；它与 `PRUNE_ROOTS` 的一致性由
+`scripts/check-prune-roots.mjs` 在 CI 机械比对（**别只改一处**）。已知边界：作用域外的孤儿不被清
+（有意）——某个**文件型**条目退役时其旧件不在任何子树里；落在检出**根**的崩溃残留
+`..data-plane-revision.tmp.*`（标记本体的临时件）同理，`# outside-scope` 跳变即是可见信号。
+
 **版本标记语义**：**标记在 = 这套文件是全的**。单文件 `mv` 是原子的，但**整套不是**——中途失败会停在
 半应用状态，靠「标记缺失 / 与 `--check` 不符」把它显性化，而不是静默。
 
@@ -434,7 +444,9 @@ sh /opt/lemeng-sync.sh <全SHA> --prune     # 同步 + 清点删除检出孤儿�
 
 清点输出（#683，三态都有）：孤儿逐行 `EXTRA <绝对路径>`（报告态）；`--prune` 态删掉的打
 `PRUNED <绝对路径>`、删失败打 `PRUNE_FAILED: <路径>`（非零退出）；摘要行 `# extra N`（N =
-清点/清理**后**残余孤儿数）打在 `SYNC_OK`/`SYNC_DRIFT` 之前。`--check` 的退出码仍只看 DRIFT。
+**作用域内**清点/清理**后**残余孤儿数）打在 `SYNC_OK`/`SYNC_DRIFT` 之前，紧邻一行
+`# outside-scope M`（M = 作用域外多余件数，**纯信息行**、不进 N、不影响退出码）。
+`--check` 的退出码仍只看 DRIFT。
 
 **全 SHA 从命令输出逐字复制，绝不手工补**（分支名会漂移，投递物必须与 commit 逐字节对应）。
 

@@ -349,14 +349,17 @@ assert_eq '0' "$st" 'L: 默认同步退出码 0（孤儿不是错误）'
 assert_contains "$(out_of l)" \
   "EXTRA $ROOT/l/checkout/dbt/seeds/x01_branch_region.csv" 'L: EXTRA 行点名孤儿（绝对路径）'
 assert_contains "$(out_of l)" '# extra 1' 'L: 摘要行 # extra 1'
+assert_contains "$(out_of l)" '# outside-scope 0' 'L: 作用域外计数行恒打（本例 0）'
 assert_contains "$(out_of l)" "SYNC_OK $N_ENTRIES/$N_ENTRIES" 'L: SYNC_OK 4/4 不受孤儿影响'
 assert_file "$ROOT/l/checkout/dbt/seeds/x01_branch_region.csv" 'L: 孤儿没被删'
 assert_eq 'ghost' "$(cat "$ROOT/l/checkout/dbt/seeds/x01_branch_region.csv" 2>/dev/null)" \
   'L: 孤儿内容逐字节原样'
 
-# M --prune：孤儿与两类崩溃残留删（PRUNED 行），机器本地物与 lock 件全存活，残余 0
+# M --prune：作用域内的孤儿与崩溃残留删（PRUNED 行），机器本地物与 lock 件全存活，残余 0；
+# **落在检出根的**崩溃残留是已知边界——作用域收窄到目录型条目 ⇒ 根文件不在任何子树里 ⇒ 只进
+# `# outside-scope` 计数、不删（spec ②/「风险」节；两类残留的落点差异见脚本头注）。
 # （崩溃残留用真机实际形态：`_rev_tmp="$REPO/.$REVISION_REL.tmp.$$"` 双首点——spec ② 的
-# `.data-plane-revision.tmp.*` 单点 glob 是死配置，已订正为「残留即孤儿、照清」）
+# `.data-plane-revision.tmp.*` 单点 glob 是死配置，已订正为「残留即孤儿」）
 setup m
 run_sync m > /dev/null
 printf 'MACHINE_LOCAL=1\n' > "$ROOT/m/checkout/deploy/.env"
@@ -374,9 +377,10 @@ assert_eq '0' "$st" 'M: --prune 退出码 0'
 assert_contains "$(out_of m)" \
   "PRUNED $ROOT/m/checkout/dbt/seeds/x01_branch_region.csv" 'M: 僵尸 seed 打 PRUNED 行'
 assert_contains "$(out_of m)" \
-  "PRUNED $ROOT/m/checkout/..data-plane-revision.tmp.424242" 'M: 双首点崩溃残留照清（不在 allowlist）'
-assert_contains "$(out_of m)" \
-  "PRUNED $ROOT/m/checkout/duckle/.a.json.sync-tmp.424242" 'M: .sync-tmp 崩溃残留照清'
+  "PRUNED $ROOT/m/checkout/duckle/.a.json.sync-tmp.424242" 'M: 作用域内的 .sync-tmp 崩溃残留照清'
+assert_file "$ROOT/m/checkout/..data-plane-revision.tmp.424242" \
+  'M: 根上的双首点崩溃残留**存活**（作用域外，有意不删）'
+assert_contains "$(out_of m)" '# outside-scope 1' 'M: 根残留进作用域外计数（1）'
 assert_no_file "$ROOT/m/checkout/dbt/seeds/x01_branch_region.csv" 'M: 孤儿真没了'
 assert_eq '0' "$(out_of m | grep -c '^EXTRA ' || true)" 'M: prune 态不打 EXTRA 行（只打 PRUNED）'
 assert_file "$ROOT/m/checkout/deploy/.env" 'M: 机器本地 deploy/.env 存活'
@@ -400,6 +404,7 @@ after=$(calls_of n)
 assert_eq '0' "$st" 'N: 有孤儿时 --check 退出码仍 0'
 assert_contains "$(out_of n)" 'EXTRA ' 'N: 报 EXTRA 行'
 assert_contains "$(out_of n)" '# extra 1' 'N: 摘要行 # extra 1'
+assert_contains "$(out_of n)" '# outside-scope 0' 'N: 作用域外计数行恒打（本例 0）'
 assert_eq "$h_before" "$(tree_hash "$ROOT/n/checkout")" 'N: --check 不碰检出（孤儿原样）'
 assert_eq '1' "$((after - before))" 'N: 只取 lock 这一次'
 
@@ -421,21 +426,55 @@ case "$(out_of p)" in
   *) ok 'P: 输出不点名 ${REPO} 外的文件' ;;
 esac
 
-# Q 子目录孤儿：嵌套孤儿可清；空父目录有意不删（spec 非目标：不删空目录）
+# Q 子目录孤儿：作用域内的**嵌套**孤儿可清；空父目录有意不删（spec 非目标：不删空目录）
+# 夹具落在 `deploy/duckle/console/` 下（**不是** `deploy/duckle/`）——作用域只认 manifest 的
+# **目录型条目**（`deploy/duckle/` 只是 `entrypoint.sh` 那条**文件**条目的父目录，不在作用域内）。
 setup q
 run_sync q > /dev/null
-mkdir -p "$ROOT/q/checkout/deploy/duckle/nested/deeper"
-printf 'ghost\n' > "$ROOT/q/checkout/deploy/duckle/nested/deeper/ghost.txt"
+mkdir -p "$ROOT/q/checkout/deploy/duckle/console/nested/deeper"
+printf 'ghost\n' > "$ROOT/q/checkout/deploy/duckle/console/nested/deeper/ghost.txt"
 st=$(run_sync q --prune)
 assert_eq '0' "$st" 'Q: --prune 退出码 0'
 assert_contains "$(out_of q)" \
-  "PRUNED $ROOT/q/checkout/deploy/duckle/nested/deeper/ghost.txt" 'Q: 嵌套孤儿被清'
+  "PRUNED $ROOT/q/checkout/deploy/duckle/console/nested/deeper/ghost.txt" 'Q: 嵌套孤儿被清'
 assert_contains "$(out_of q)" '# extra 0' 'Q: 清理后残余 0'
-if [ -d "$ROOT/q/checkout/deploy/duckle/nested/deeper" ]; then
+if [ -d "$ROOT/q/checkout/deploy/duckle/console/nested/deeper" ]; then
   ok 'Q: 空父目录有意保留'
 else
   bad 'Q: 空父目录有意保留（却没了）'
 fi
+
+# R 作用域外多余件：只计数、不点名 EXTRA、不删、不影响退出码（真机 384 个引导残留就是这个形态）
+setup r
+run_sync r > /dev/null
+mkdir -p "$ROOT/r/checkout/modules/x"
+printf 'export const x = 1\n' > "$ROOT/r/checkout/modules/x/y.js"
+st=$(run_sync r)
+assert_eq '0' "$st" 'R: 退出码 0（作用域外多余件不是错误）'
+assert_eq '0' "$(out_of r | grep -c '^EXTRA ' || true)" 'R: 作用域外件**不**打 EXTRA 行'
+assert_contains "$(out_of r)" '# extra 0' 'R: 作用域内残余 0'
+assert_contains "$(out_of r)" '# outside-scope 1' 'R: 作用域外计数 1'
+assert_file "$ROOT/r/checkout/modules/x/y.js" 'R: 作用域外件没被删'
+case "$(out_of r)" in
+  *modules/x/y.js*) bad 'R: 输出不点名作用域外的件' ;;
+  *) ok 'R: 输出不点名作用域外的件' ;;
+esac
+
+# S --prune 不碰作用域外：作用域内孤儿被删、作用域外件存活且只进计数（收窄的**核心**判据——
+# 初版全检出作用域就是在这里出错的：它会连 384 个设计外文件一起删）
+setup s
+run_sync s > /dev/null
+mkdir -p "$ROOT/s/checkout/dbt/seeds" "$ROOT/s/checkout/modules/x"
+printf 'ghost\n' > "$ROOT/s/checkout/dbt/seeds/x01_branch_region.csv"
+printf 'export const x = 1\n' > "$ROOT/s/checkout/modules/x/y.js"
+st=$(run_sync s --prune)
+assert_eq '0' "$st" 'S: --prune 退出码 0'
+assert_contains "$(out_of s)" \
+  "PRUNED $ROOT/s/checkout/dbt/seeds/x01_branch_region.csv" 'S: 作用域内孤儿被删（PRUNED 行）'
+assert_no_file "$ROOT/s/checkout/dbt/seeds/x01_branch_region.csv" 'S: 作用域内孤儿真没了'
+assert_file "$ROOT/s/checkout/modules/x/y.js" 'S: 作用域外件存活'
+assert_contains "$(out_of s)" '# extra 0' 'S: 清理后作用域内残余 0'
+assert_contains "$(out_of s)" '# outside-scope 1' 'S: 作用域外计数 1（不因 prune 而变）'
 
 # ---- 汇总 ----
 

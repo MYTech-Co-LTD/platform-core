@@ -13,6 +13,11 @@
 # 机器本地物（`deploy/.env`、`dbt/profiles.yml`、`dbt/target/`、`dbt/logs/`、`dbt/.user.yml`）
 # **不在仓里 ⇒ 不进表、永不被投递触及**（这是「就地同步」相对「整目录换版」的关键优势）。
 #
+# #683 清点/清理的**作用域** = 本表里**目录型条目**（源路径以 / 结尾）的落地子树（脚本内
+# `PRUNE_ROOTS`，一致性由 scripts/check-prune-roots.mjs 机械比对）。**已知边界**：落在检出
+# **根**的崩溃残留（同步器的标记临时件 `..data-plane-revision.tmp.*`——注意是**双**首点）不在任何
+# 目录条目子树里 ⇒ 属作用域外、**只计数不删**（`# outside-scope` 跳变即信号，需要时手工删）。
+#
 # ⚠️ 改动本表覆盖的**任一文件**后，必须重跑下面这条重新生成 lock，否则 CI 的 gates 会红
 #    （守卫：scripts/check-data-plane-lock.mjs，失败信息里会复述这条命令）：
 #      pnpm exec tsx scripts/lemeng/data-plane-lock.mjs

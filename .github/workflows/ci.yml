@@ -172,12 +172,21 @@ jobs:
       # 纯 sh（从脚本里抽真函数测，不复制实现）：不连库、不取网络、不起容器，秒级。
       - run: sh scripts/lemeng/materialize.test.sh
       # 检出清点/清理（`sync-data-plane.sh`，issue #683）的「**该不该删**」判别面测试。四条都在防静默错：
-      # ① 清点基准 = lock 落地路径列（不是「磁盘上有即有罪」）⇒ 退化成全树判死会把整检出错杀；
+      # ① 清点基准 = lock 落地路径列（不是「磁盘上有即有罪」）+ **作用域只到 manifest 目录型条目的
+      #    子树**（用例 R/S）⇒ 退化成全树判死会把整检出连 384 个引导残留一起错杀；
       # ② 机器本地物 allowlist 存活 ⇒ 漏一项就把 deploy/.env 这类真机配置 prune 掉（数据面当场断）；
       # ③ 两类崩溃残留（`..data-plane-revision.tmp.*` / `.sync-tmp.*`）必须清 ⇒ 漏了孤儿继续积；
       # ④ `--check` 只读且退出码只看 DRIFT ⇒ 变了就把现有探活/审计调用方原地翻红。
       # 纯 sh（假 curl + 真 sha256）：不连库、不取网络、不起容器，秒级。
       - run: sh scripts/lemeng/sync-data-plane.test.sh
+      # 清点/清理**作用域**与清单的一致性门禁（issue #683）。上面那条钉的是「该不该删」的**判别面**，
+      # 这条钉的是**作用域本身的事实源**：`PRUNE_ROOTS`（写死脚本内）= 清单里目录型条目的落地前缀，
+      # 两处漂移都不自己叫 —— ① 清单新增目录条目而脚本那行没跟 ⇒ 新树里的孤儿**静默漏清**（正是
+      # #683 实证的形态：`x01_branch_region.csv` 退役后在检出里永生、被 dbt 每天当僵尸 seed 加载）；
+      # ② 脚本多写一个清单不覆盖的根 ⇒ 作用域超出授权、prune 会删清单没登记的件。
+      # 第三条判据防作用域**退化**：某条目录条目的落地路径写成检出根本身 ⇒ 作用域变回「整个检出」。
+      # 纯静态：只读清单文本 + 脚本文本，不连库、不取网络，秒级。
+      - run: pnpm exec tsx scripts/check-prune-roots.mjs
       # 租户隔离门禁（issue #77；正典 docs/module-protocol.md「租户数据隔离」）：真库对账——
       # 真跑各模块的 migrations（跑进脚本自建的**一次性库** platform_tenant_isolation_check），
       # 再查 information_schema 要 org 列。判据按「全部 migrations 的累积终态」，不按文件判
