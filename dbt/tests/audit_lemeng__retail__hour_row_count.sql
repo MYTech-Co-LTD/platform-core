@@ -36,6 +36,14 @@
 --      只认位置参数）；分区推断默认生效，`system_book` 推断成 bigint ⇒ 本文件显式 cast；
 --   ③ **通配两账套**（与 staging 同路径），否则只看了 3120（issue #250）。
 --
+-- ── 方言约束（2026-10-15 真机定案，issue #682）────────────────────────────────────────
+--   ④ 聚合函数用 **Postgres 方言**：dbt→pg_duckdb 的测试查询由 Postgres 规划器执行
+--     （真机探针：`values (3),(1),(2)` 上 `median()` 同报 function … does not exist），
+--     中位数必须写 `percentile_cont(0.5) WITHIN GROUP (ORDER BY …)`，**不能写 DuckDB 的
+--     `median()`**。首版就是 median() 且**从未在 dbt 通道真跑过**（#679 前它在 --select
+--     名单外，上面 2026-10-05 的容差标定也没走 dbt→pg_duckdb 通道）——#679 全量转正首跑
+--     当场炸出（PASS=183/ERROR=1）。修后真机验证：编译产物替换重放 failures=0（8.4s）。
+--
 -- ── 容差为什么这么宽（**别收紧**，2026-10-05 实跑标定）────────────────────────────────
 -- 本条只抓**断崖**：低于同小时历史中位数的一半（factor 0.5）。实跑证据（当日真库）：
 --   · factor 0.5 → **0 行**（不误报）；factor 0.95 → 出行（证明它**能**开火，不是恒绿）。
@@ -91,7 +99,7 @@ history as (
     select
         l.system_book,
         l.hour,
-        median(l.rows_landed) as median_rows,
+        percentile_cont(0.5) within group (order by l.rows_landed) as median_rows,
         count(*)              as history_days
     from landed l
     join latest u
