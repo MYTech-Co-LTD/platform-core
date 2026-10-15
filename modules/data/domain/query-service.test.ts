@@ -341,4 +341,43 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     if (out.status !== 'ok') return
     expect('total' in out, '不可加指标不得凭空带 total 字段').toBe(false)
   })
+
+  it('自动伴随：合计语义真库验证——totalSql 在夹具表上执行 = 明细 value 之和（明细照常返回）', async () => {
+    // 与显式合计的真库验证同一条纪律：验的不只是「SQL 长得像」，而是合计语义真成立。
+    const client = await pool.connect()
+    try {
+      await client.query('create temp table qp3_total_auto (org text, bizday date, v numeric)')
+      await client.query(
+        `insert into qp3_total_auto values
+           ('org_a','2026-10-08',100),('org_a','2026-10-09',47.5),('org_b','2026-10-08',999)`)
+      await upsertL1Metric(pool, {
+        ...METRIC, id: L1_TOTAL_PREFIX + 'sem',
+        selectSql: 'SELECT sum(v) AS value, org, bizday FROM qp3_total_auto',
+        groupBy: 'org, bizday',
+        sourceSystem: 'lemeng', totalable: true,
+      })
+      let captured: string[] = []
+      const rec: QueryDeps = {
+        pool, adoptedSources: new Set(['lemeng']),
+        execute: async (sql) => { captured.push(sql); return { columns: ['x'], rows: [[0]] } },
+      }
+      const out = await runQuery(rec, ORG, req(), L1_TOTAL_PREFIX + 'sem', {})
+      expect(out.status).toBe('ok')
+      if (out.status !== 'ok') return
+      expect(captured.length).toBe(2)
+      const [detailSql, totalSql] = captured
+      expect(detailSql).toContain(`LIMIT ${MAX_QUERY_ROWS}`)
+      expect(totalSql).not.toContain('LIMIT')
+      // 真库上把两条计划都跑一遍：明细 2 行（org_b 被主体钉死挡掉），合计 = 100 + 47.5 = 147.5
+      // （date 列经 node-pg 回 Date 对象，断言只认 value/org + 行集形状）
+      const detail = await client.query(detailSql)
+      const total = await client.query(totalSql)
+      expect(detail.rows.map((r: { value: string; org: string }) => ({ value: r.value, org: r.org })))
+        .toEqual([{ value: '100', org: 'org_a' }, { value: '47.5', org: 'org_a' }])
+      expect(detail.rows.reduce((s: number, r: { value: string }) => s + Number(r.value), 0)).toBe(147.5)
+      expect(total.rows).toEqual([{ total: '147.5' }])
+    } finally {
+      client.release()
+    }
+  })
 })
