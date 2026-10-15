@@ -596,7 +596,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
 describe('L2 · B 中档 · schema ↔ compiler 对偶（纯逻辑 · 无需库）', () => {
   /** 域层基底：必须是 `source:'l1'` 的行（resolveL1Base 只认 L1 词表）。 */
   const l1Row = (over: Partial<MetricRow> = {}): MetricRow =>
-    ({ ...L1_SALES, source: 'l1', updatedBy: null, version: 1, ...over })
+    ({ ...L1_SALES, source: 'l1', updatedBy: null, version: 1, totalable: false, ...over })
   const catalog: MetricRow[] = [l1Row()]
 
   /** 域层编译结果：抛错 ⇒ 回它的 code；不抛 ⇒ null（期望抛时它会让断言自然红）。 */

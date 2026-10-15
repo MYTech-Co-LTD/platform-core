@@ -227,7 +227,7 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
 })
 
 // 纯断言（无 DATABASE_URL）：锁 `query_metric` 工具描述的参数契约文案本身。
-describe('TOOLS —— query_metric 参数契约（spec 2026-10-15 §2.5）', () => {
+describe('TOOLS —— query_metric 参数契约（spec 2026-10-15 §2.5 + §8.4）', () => {
   it('T1 描述锁定：参数键只能取 list_metrics 返回值；date_range 传 {from,to}；未声明参数只能空参全量', () => {
     const q = TOOLS.find((t) => t.name === 'query_metric')
     expect(q).toBeDefined()
@@ -235,8 +235,18 @@ describe('TOOLS —— query_metric 参数契约（spec 2026-10-15 §2.5）', ()
     expect(d).toContain('list_metrics 返回的该指标 params 键名')
     expect(d).toContain('{"from"')
     expect(d).toContain('空参查全量')
-    // 合计形态（spec §8.1）：区间合计先传 total:true——服务端求和恒返回单行，明细与合计互斥
-    expect(d).toContain('total:true')
-    expect(d).toContain('明细与合计互斥')
+  })
+
+  it('T2 自动合计规则下沉（spec §8.4：flash 级模型的弱引导要靠工具文案兜底）', () => {
+    const d = TOOLS.find((t) => t.name === 'query_metric')!.description
+    // 可加指标的响应自动带 total 合计值 ⇒ 直接引用，不要自己求和
+    expect(d).toContain('total 字段')
+    expect(d).toContain('不要自己把行加总')
+    // 非可加（比率/去重计数）勿跨行求和
+    expect(d).toContain('不要跨行求和')
+    // 显式 args.total:true 单行形态保留（#699 的布尔开关语义收窄为「只要总数」）
+    expect(d).toContain('args.total:true')
+    // 旧布尔标记文案不再出现（spec §8.4：total 字段语义已改为值）
+    expect(d).not.toContain('明细与合计互斥')
   })
 })

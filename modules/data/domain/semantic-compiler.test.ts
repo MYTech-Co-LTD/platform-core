@@ -58,6 +58,8 @@ function l1(over: Partial<MetricRow> = {}): MetricRow {
     // L1 行由 sync 物化（不经 API）⇒ 无操作人、版本恒 1（#489 的追溯只覆盖 L2）
     updatedBy: null,
     version: 1,
+    // 存储行恒带规范化布尔（spec §8.4；缺省 false = 本夹具不涉自动合计）
+    totalable: false,
     ...over,
   }
 }

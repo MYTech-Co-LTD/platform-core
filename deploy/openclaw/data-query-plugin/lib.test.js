@@ -89,11 +89,12 @@ test("200 → ok 回包原样透传（含 subject）", async () => {
   assert.equal(r.status, "ok");
   assert.equal(r.subject, "shanhaiyiguo-org");
 });
-test("200 total 合计回包原样透传（total:true 单行聚合，spec §8.1）", async () => {
-  // lib.js 对 2xx 不做形状改写 ⇒ 服务端新增的 total 字段自然带出——这里锁住该事实。
-  const f = stubFetch(200, { status: "ok", subject: "o", columns: ["total"], rows: [[1470.5]], truncated: false, total: true });
+test("200 total 合计回包原样透传（total 字段=合计值，spec §8.4）", async () => {
+  // lib.js 对 2xx 不做形状改写 ⇒ 服务端的 total 值字段自然带出——这里锁住该事实。
+  // total 已不是 #699 的布尔标记（同日契约变更）：值与 rows 同源（numeric 经 node-pg 常为字符串）。
+  const f = stubFetch(200, { status: "ok", subject: "o", columns: ["total"], rows: [[1470.5]], truncated: false, total: "1470.5" });
   const r = await callPlatform({ ...BASE, fetchImpl: f });
-  assert.equal(r.total, true);
+  assert.equal(r.total, "1470.5");
   assert.deepEqual(r.rows, [[1470.5]]);
   assert.equal(r.truncated, false);
 });
@@ -122,9 +123,14 @@ test("toToolResult：content 恒为数组（回归锁，防再退回纯对象）
 
 // query_data 工具描述 = 模型可见的调用契约（与 agent-loop T1 同一性质：文案就是契约）。
 // index.js import openclaw SDK（peer dep，本机未装）⇒ 只能以源文本断言锁文案。
-test("query_data 工具描述含 total 合计指引（spec §8.3：区间合计先 total:true，明细与合计互斥）", () => {
+test("query_data 工具描述含 total 自动合计规则（spec §8.4：直接引用 total，勿自己加总）", () => {
   const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
-  assert.match(src, /total/);
-  assert.match(src, /明细与合计互斥/);
-  assert.match(src, /args\.total/);
+  // 关键规则下沉（spec §8.4：SKILL 正文对 flash 级模型是弱引导，规则必须在工具描述里）
+  assert.match(src, /total 字段/);
+  assert.match(src, /不要自己把明细行加总/);
+  assert.match(src, /不要跨行求和/);
+  // 显式「只要总数」形态保留
+  assert.match(src, /args\.total=true/);
+  // 旧布尔标记契约文案不再出现（total 字段语义已改为值）
+  assert.doesNotMatch(src, /明细与合计互斥/);
 });

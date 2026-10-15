@@ -21,7 +21,7 @@ const LIST_DEF = {
 const QUERY_DEF = {
   name: "query_data",
   description:
-    "按指标查数：metricId 来自 list_metrics；args 按该指标 params 的 type 给值——type=date_range 的参数传对象 {\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}（闭区间，查单日则 from=to）；type=string/number/date 的参数传单值（日期单值一律 YYYY-MM-DD）。区间合计（近N天/本月共多少）传 args.total=true（必须布尔）——服务端求和恒返回单行 {columns:[\"total\"],rows:[[合计]]}，明细与合计互斥；区间超过 4 天必用 total，不要裸拉明细。参数键与形状以 list_metrics 返回的 params 为准，不要臆造。回包带 subject（本次钉死的数据主体）与 columns/rows；truncated=true 表示截断——收窄范围或改传 args.total=true 重查，不要把截断结果当全量。",
+    "按指标查数：metricId 来自 list_metrics；args 按该指标 params 的 type 给值——type=date_range 的参数传对象 {\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}（闭区间，查单日则 from=to）；type=string/number/date 的参数传单值（日期单值一律 YYYY-MM-DD）。求和类（可加）指标的回包自带 total 字段=该过滤范围的合计——直接引用该值，不要自己把明细行加总；没有 total 字段（比率/去重计数类指标）就不要跨行求和（跨行求和是错数）。「只要总数」可传 args.total=true（必须布尔）——服务端求和恒返回单行合计；区间超过 4 天优先拆单日或用 total，不要裸拉明细。参数键与形状以 list_metrics 返回的 params 为准，不要臆造。回包带 subject（本次钉死的数据主体）与 columns/rows；truncated=true 表示截断——只能答「数据不全」，收窄范围或改传 args.total=true 重查，不要把截断结果当全量。",
   parameters: {
     type: "object",
     properties: {
@@ -29,7 +29,7 @@ const QUERY_DEF = {
       args: {
         type: "object",
         description:
-          "指标参数键值对；键与形状以 list_metrics 返回的 params 为准（type=date_range 传 {from,to} 对象，其余传单值）；区间合计加 total:true（布尔，非真值一律被拒）",
+          "指标参数键值对；键与形状以 list_metrics 返回的 params 为准（type=date_range 传 {from,to} 对象，其余传单值）；「只要总数」加 total:true（布尔，非真值一律被拒）",
         additionalProperties: true,
       },
     },
