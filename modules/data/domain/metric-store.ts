@@ -45,6 +45,12 @@ export interface MetricRow extends MetricDef {
   updatedBy: string | null
   /** 单调计数（每次经 API 写 +1）；L1 行恒 1。与报表 005 同形，但此处是为**追溯**不是乐观并发。 */
   version: number
+  /**
+   * 可加标记（016 迁移，spec §8.4）：存储行恒携带**规范化后的布尔**（`MetricDef` 上的可选
+   * 字段在这里收窄成必有——「行里没有这个字段」不是合法态，缺省就是 false）。
+   * 真值只来自 L1 物化路径；L2 行恒 false。
+   */
+  totalable: boolean
 }
 
 /**
@@ -74,12 +80,14 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     sourceSystem: row.source_system as string | null,
     updatedBy: (row.updated_by ?? null) as string | null,
     version: Number(row.version ?? 1),
+    // 可加标记（spec §8.4）：`=== true` 归一——列缺省/未来形状变化都不会让 undefined 冒充真值
+    totalable: row.totalable === true,
   }
 }
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
@@ -172,6 +180,9 @@ export async function loadMergedCatalog(pool: Pool, org: string): Promise<Metric
 //    （插入值显式 `null`），而冲突分支若把它写成 excluded，则「租户写路径撞上同 (org,id) 的
 //    L1 行」这一次写动作就会把**平台行的源维度抹成 null**——而 sync 的 `--check` 拿声明比对
 //    库内 L1 行时会因此**长期报漂移**（一次租户写，永久红）。
+// ⚠️ 可加标记（totalable，spec §8.4）不是 L2 写入面的概念：租户声明是结构化编译的产物，
+//    没有「表达式形状」这个输入 ⇒ 插入值写死 `false`，冲突分支**也不碰**（首次插入已是终值；
+//    若写 excluded，一次租户写会把同 id 平台行的可加标记抹掉，自动合计静默消失）。
 export async function upsertMetric(
   db: Pool | PoolClient, org: string, def: MetricDef, updatedBy: string,
 ): Promise<void> {
@@ -180,8 +191,8 @@ export async function upsertMetric(
   //   生产写路径（domain/metric-write）传的是事务里的 client，审计与变更同生共死。
   await db.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1, false)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -210,12 +221,16 @@ export async function upsertMetric(
  * 源系统（`source_system`）与其它语义字段**同进退**：声明是 L1 行的真值，故冲突分支也刷它
  * （改了声明的 `source` ⇒ 重新物化就跟上）。若只写首次插入，声明的源改了而库里不动，
  * `sync --check` 会永远报同一条漂移——而漂移报告是那套对账机制的全部产出。
+ *
+ * 可加标记（`totalable`，spec §8.4）同理同进退：sync 从声明 expression 推导（`deriveTotalable`），
+ * 缺省 false（合成契约/夹具不带就是不可加——保守缺省不会给不明口径的指标编一个合计）；
+ * 冲突分支也刷它（声明改成不可加 ⇒ 重新物化必须跟上，否则该指标永远多带一个错误的合计）。
  */
 export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void> {
   await pool.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -225,10 +240,12 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
        group_by       = excluded.group_by,
        params         = excluded.params,
        source_system  = excluded.source_system,
+       totalable      = excluded.totalable,
        updated_at     = now()`,
     [
       L1_ORG, def.id, def.title, def.description, def.requiredScope,
-      def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params), def.sourceSystem,
+      def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params),
+      def.sourceSystem, def.totalable === true,
     ],
   )
 }

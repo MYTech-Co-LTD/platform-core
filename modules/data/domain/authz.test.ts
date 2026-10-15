@@ -301,6 +301,64 @@ describe('authorize —— 合计形态（spec §8：args.total 服务端单行�
   })
 })
 
+describe('authorize —— total 自动伴随（spec §8.4：totalable 指标 plan 附 totalSql）', () => {
+  // 夹具照 §8 块的 totalCat（真实 L1 形态：buildSelectSql 的 `select <expr> as value, <grain>`），
+  // 加 totalable: true —— sync 从 sum( 开头的 expression 推导出的就是它。
+  const addable: MetricDef[] = [{
+    ...CATALOG[1],
+    totalable: true,
+    selectSql: 'SELECT org, bizday, revenue AS value FROM marts.mart_sales_daily',
+    groupBy: 'org, bizday',
+    params: { bizday: { column: 'bizday', type: 'date_range' as const } },
+  }]
+
+  it('T1 totalable 指标：等值/区间查询附 totalSql（sum(value)、无 LIMIT、filters 在内层），主 sql 字节行为不变', () => {
+    const r = authorize(addable, req(), 'metrics_revenue_mom', {
+      bizday: { from: '2026-10-08', to: '2026-10-14' },
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    // 明细路径不变：主 sql 仍是 LIMIT 形态、total 仍是 false
+    expect(r.plan.total).toBe(false)
+    expect(r.plan.sql).toContain(`LIMIT ${MAX_QUERY_ROWS}`)
+    // 自动伴随：totalSql 与显式合计同一形状（spec §8.4），无外层 LIMIT（截断求和 = 错数）
+    expect(r.plan.totalSql).toMatch(/^SELECT sum\(value\) AS total FROM \( .*\) t$/)
+    expect(r.plan.totalSql).not.toContain('LIMIT')
+    expect(r.plan.totalSql).toContain(`bizday BETWEEN '2026-10-08'::date AND '2026-10-14'::date`)
+  })
+
+  it('T2 subject 钉死同样约束 totalSql（自动合计不能变成跨主体合计）', () => {
+    const r = authorize(addable, req({ orgId: 'org_other' }), 'metrics_revenue_mom', {})
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.totalSql).toContain("WHERE org = 'org_other'")
+    expect(r.plan.totalSql, '别人的主体值不得出现').not.toContain('org_a_lemeng')
+  })
+
+  it('T3 非 totalable（显式 false 或缺省）⇒ 无 totalSql（比率/去重计数不给自动合计）', () => {
+    for (const [label, cat] of [
+      ['缺省（合成契约不带 totalable）', CATALOG],
+      ['显式 false', [{ ...CATALOG[1], totalable: false }]],
+    ] as const) {
+      // CATALOG[1] 未声明参数 ⇒ 空参（带区间参数会落 bad_param，与本判定无关）
+      const r = authorize([...cat], req(), 'metrics_revenue_mom', {})
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      expect(r.plan.totalSql, `${label} 不得附合计计划`).toBeUndefined()
+    }
+  })
+
+  it('T4 显式 args.total=true ⇒ 仍是合计单行计划（plan.total=true），且**不**再附 totalSql（plan.sql 本身就是合计，避免重复执行）', () => {
+    const r = authorize(addable, req(), 'metrics_revenue_mom', { total: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.total).toBe(true)
+    expect(r.plan.sql).toMatch(/^SELECT sum\(value\) AS total FROM \( .*\) t$/)
+    expect(r.plan.sql).not.toContain('LIMIT')
+    expect(r.plan.totalSql).toBeUndefined()
+  })
+})
+
 describe('maxTurns/上限类不变量', () => {
   it('未知参数类型也走 bad_param 而不是静默忽略', () => {
     const cat: MetricDef[] = [{

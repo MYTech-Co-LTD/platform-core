@@ -45,6 +45,9 @@ const SYSTEM_PROMPT = [
  * 在区间形态上已被结构化修复）。等值参数的「同列两个同传会拼出恒空集且不报错」告诫
  * **只保留给等值参数**（区间单参数无此问题）；合法参数键名以 list_metrics 返回的
  * 该指标 params 为准（list_metrics 与 HTTP 词表共用同一投影，spec §2.4）。
+ * 合计规则（spec §8.4）**必须写在描述里**（不是 SKILL 方法论层）：可加指标的响应自动带
+ * total 值字段——「直接引用、勿自己加总」这条对 flash 级模型是弱引导兜底，规则下沉到
+ * 模型上下文必在的工具文案。
  */
 export const TOOLS: ToolSpec[] = [
   {
@@ -58,7 +61,9 @@ export const TOOLS: ToolSpec[] = [
       '按指标 id 查询数据。参数键**只能**取 list_metrics 返回的该指标 params 键名（未列出的键会被拒绝）。',
       'type=date_range 的参数传 {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"} 闭区间（查某天则 from=to）；',
       'type=string/number 的参数只做**等值**匹配，且同列不要同时传（会拼出恒空条件且不报错）。',
-      '区间合计传 args.total:true——服务端求和恒返回单行（明细与合计互斥）；未声明 params 的指标只能空参查全量（可能返回大量行）——能用参数就用参数。',
+      '求和类（可加）指标的回包自动带 total 字段 = 该过滤范围的合计——直接引用该值，不要自己把行加总；',
+      '没有 total 字段（比率/去重计数类指标）就不要跨行求和（跨行求和是错数）。',
+      '只要总数可传 args.total:true（布尔）——服务端求和恒返回单行合计；未声明 params 的指标只能空参查全量（可能返回大量行）——能用参数就用参数。',
     ].join(''),
     inputSchema: {
       type: 'object',

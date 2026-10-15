@@ -43,8 +43,14 @@ export interface QueryDeps {
 export interface QueryOk {
   status: 'ok'; subject: string; metricId: string
   columns: string[]; rows: unknown[][]; truncated: boolean
-  /** 合计模式（spec §8）：恒单行、明细与合计互斥；`truncated` 恒 false（合计无截断面）。 */
-  total?: true
+  /**
+   * 合计值（spec §8.4 修订二：`total` 字段 = 合计值，#699 的布尔标记已废——同日契约变更）。
+   * 两种在场方式：**自动伴随**（totalable 指标的任何查询，plan.totalSql 执行结果）与
+   * **显式合计**（`args.total === true`，恒单行 `columns:['total']`，`truncated` 恒 false）。
+   * 数值经 node-pg 常以 numeric 字符串回（与 rows 同源）；空集合计为 null。缺省 = 不可加
+   * 指标（比率/去重计数）不出该字段——「没有合计」必须可辨，模型不得跨行求和。
+   */
+  total?: string | number | null
 }
 export interface QueryDenied {
   status: 'denied'; metricId: string
@@ -111,22 +117,22 @@ export async function runQuery(
   // 湖 ETag 竞态（#452 定案 A）：tick 在上海 08:00–24:00 每 5 分钟重写当天 cur/prev 两个分区，
   // 任意时刻的读可能撞上重写窗 ⇒ 咽喉处退避 ~1s 重试**恰一次**（本通路全为只读 SELECT，天然幂等）。
   // 重试成功也把 `lake_race_retry` 写进审计 reason——那是 spec §3.5「重试是否长期够用」的数据源。
+  // 自动伴随（spec §8.4）的 totalSql 是同一条通道上的第二只读查询 ⇒ 共用同一套竞态处置。
   let result: { columns: string[]; rows: unknown[][] }
   let raceRetried = false
-  try {
+  const execWithRaceRetry = async (sql: string) => {
     const exec = () =>
-      deps.execute
-        ? deps.execute(authz.plan.sql)
-        : runWarehouseSql(warehousePool(), authz.plan.sql)
+      deps.execute ? deps.execute(sql) : runWarehouseSql(warehousePool(), sql)
     try {
-      result = await exec()
+      return await exec()
     } catch (err) {
       if (!isLakeRaceError(err)) throw err
       raceRetried = true
       await sleep(deps.raceRetryDelayMs ?? LAKE_RACE_RETRY_DELAY_MS)
-      result = await exec()
+      return await exec()
     }
-  } catch (err) {
+  }
+  const toError = async (err: unknown): Promise<QueryError> => {
     const detail = err instanceof Error ? err.message : String(err)
     const reason =
       detail === DATA_WAREHOUSE_UNCONFIGURED ? 'warehouse_unconfigured'
@@ -136,10 +142,29 @@ export async function runQuery(
     return { status: 'error', metricId, reason, detail }
   }
 
+  try {
+    result = await execWithRaceRetry(authz.plan.sql)
+  } catch (err) {
+    return await toError(err)
+  }
+
+  // 自动伴随（spec §8.4）：plan.totalSql 在场 ⇒ 再执行合计计划，把值附到响应 total 字段。
+  // sum() 对空集也回一行（NULL）⇒ rows[0][0] 即值；合计失败与主查询同一错误面（warehouse_*）。
+  let totalValue: string | number | null | undefined
+  if (authz.plan.totalSql !== undefined) {
+    try {
+      const t = await execWithRaceRetry(authz.plan.totalSql)
+      totalValue = (t.rows[0]?.[0] as string | number | null | undefined) ?? null
+    } catch (err) {
+      return await toError(err)
+    }
+  }
+
   await audit('ok', raceRetried ? 'lake_race_retry' : null, result.rows.length)
-  // 合计模式（spec §8）：plan.sql 已是 `SELECT sum(value) …`（无外层 LIMIT）⇒ 恒单行；
-  // 响应加 `total:true` 供调用方辨认形态，`truncated` 恒 false（合计无截断面）。
-  // 非合计路径逐字段不变。
+  // 显式合计模式（spec §8）：plan.sql 已是 `SELECT sum(value) …`（无外层 LIMIT）⇒ 恒单行，
+  // total 字段 = 该行的合计值；`truncated` 恒 false（合计无截断面）。
+  // 自动伴随：明细 rows/truncated 语义不变，只多附一个 total 值。
+  // 非合计且不可加的路径逐字段不变（无 total 字段）。
   return {
     status: 'ok',
     subject: authz.plan.subject,
@@ -147,6 +172,8 @@ export async function runQuery(
     columns: result.columns,
     rows: result.rows,
     truncated: authz.plan.total ? false : result.rows.length >= MAX_QUERY_ROWS,
-    ...(authz.plan.total ? { total: true as const } : {}),
+    ...(authz.plan.total
+      ? { total: (result.rows[0]?.[0] as string | number | null | undefined) ?? null }
+      : totalValue !== undefined ? { total: totalValue } : {}),
   }
 }

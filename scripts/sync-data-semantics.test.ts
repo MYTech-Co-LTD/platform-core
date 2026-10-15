@@ -31,6 +31,7 @@ import {
   declarationsFromYaml,
   deriveParams,
   deriveRelation,
+  deriveTotalable,
   diffDeclarations,
   exitCodeFor,
   formatDiff,
@@ -187,10 +188,50 @@ describe('deriveRelation：从 expression 反推 FROM 关系名', () => {
   })
 })
 
+describe('deriveTotalable —— 可加判定（spec §8.4：表达式形状的保守机械规则）', () => {
+  it('三态：sum( 开头 ⇒ true；count(distinct …) ⇒ false；比率形状（… / nullif(…, 0)）⇒ false', () => {
+    expect(deriveTotalable('sum(fct_retail_sale.net_amount)')).toBe(true)
+    expect(deriveTotalable('  sum( fct_x.amount )')).toBe(true)       // 前导空白 / 括号前空格都算
+    expect(deriveTotalable('SUM(fct_x.amount)')).toBe(true)           // 大小写不敏感
+    expect(deriveTotalable('sum(fct_a.x) - sum(fct_a.y)')).toBe(true) // 可加指标的差（purchase:net_amount 实文形态）
+    expect(deriveTotalable('count(distinct fct_purchase.supplier_num)')).toBe(false)
+    expect(deriveTotalable('count(*)')).toBe(false)
+    // ⚠️ 关键负样本：ratio 物化形状是 `sum(…) / nullif(sum(…), 0)`——**它也以 `sum(` 开头**。
+    // 只认前缀会把四条比率指标全判成可加（自动合计直接给出错数）。除法形状必须排除。
+    expect(deriveTotalable('sum(fct_a.g_gross) / nullif(sum(fct_a.r_net), 0)')).toBe(false)
+    expect(deriveTotalable('')).toBe(false)
+  })
+
+  it('★ 真 YAML 逐条断言（spec §8.4，真实事实源）：恰 21 条可加；六条比率/去重计数不给合计', () => {
+    // 为什么钉真实 YAML：totalable 是物化产物，漏推导/推错不报错，只表现为线上多带或
+    // 少带一个合计。期望集按各指标 expression 实文核对（比率用 ratio: 声明、去重计数用
+    // count(distinct …)）——加指标时改这里的集合，两条计数会替你兜住条数漂移。
+    const rows = readDeclarations(ROOT)
+    const NOT_TOTALABLE = new Set([
+      'lemeng:outbound:gross_margin_rate',       // ratio（毛利率）
+      'lemeng:transfer:batch_fill_rate',         // ratio（填写率）
+      'lemeng:transfer:item_gross_margin_rate',  // ratio（商品毛利率）
+      'lemeng:purchase:supplier_count',          // count(distinct)——跨行求和 = 供应商·天数，错
+      'lemeng:purchase:item_count',              // count(distinct)
+      'lemeng:request:day_fulfillment_rate',     // ratio（满足率）
+    ])
+    for (const row of rows) {
+      expect(row.totalable, `${row.id} 的 totalable 与 expression 形状不符`).toBe(!NOT_TOTALABLE.has(row.id))
+    }
+    // 「恰好」要有实证数：不是全体都可加、也不是全体都不可加
+    expect(rows.filter((r) => r.totalable === true).length, '可加条数（加/改指标时重核）').toBe(21)
+    expect(rows.filter((r) => r.totalable === false).length).toBe(6)
+    // 抽样钉两条形态极值（brief 点名）
+    expect(rows.find((r) => r.id === 'lemeng:retail:net_sales')?.totalable).toBe(true)
+    expect(rows.find((r) => r.id === 'lemeng:transfer:batch_fill_rate')?.totalable).toBe(false)
+  })
+})
+
 describe('diffDeclarations：双向差集的四态分类', () => {
   const row = (id: string, title: string, sourceSystem: string | null = 'lemeng') => ({
     id, title, description: '', requiredScope: null,
     subjectColumn: 'org', selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {}, sourceSystem,
+    totalable: false,
   })
   const declared = [row('a', 'A'), row('b', 'B2'), row('c', 'C')]
   const current = [row('a', 'A'), row('b', 'B1'), row('d', 'D')]
@@ -229,6 +270,15 @@ describe('diffDeclarations：双向差集的四态分类', () => {
     })
     // 反向对照：source 一致 ⇒ 仍然判「未变」（否则「可比」会退化成「恒判更新」）
     expect(diffDeclarations(declaredSrc, [row('a', 'A', 'lemeng')]).unchanged).toEqual(['a'])
+  })
+
+  it('★ totalable 进 comparableOf：声明与库内不一致 ⇒ 判「更新」（缺这条 --check 假绿）', () => {
+    // spec §8.4：totalable 是物化面的一部分——声明推导出了 true 而库里还是 false（首次
+    // 加列后的常态）必须被 --check 检出，否则可加指标永远拿不到自动合计且无任何信号。
+    const declaredT = [{ ...row('a', 'A'), totalable: true }]
+    expect(diffDeclarations(declaredT, [row('a', 'A')]).updated).toEqual(['a'])
+    // 反向对照：两侧一致（含同为 true）⇒ 判「未变」
+    expect(diffDeclarations(declaredT, [{ ...row('a', 'A'), totalable: true }]).unchanged).toEqual(['a'])
   })
 })
 
