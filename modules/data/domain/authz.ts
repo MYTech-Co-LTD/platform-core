@@ -29,6 +29,12 @@ export interface MetricDef {
   /** 不含前导空格；空串 = 不分组 */
   groupBy: string
   params: Record<string, MetricParamDef>
+  /**
+   * 可加指标（spec §8.4）：`expression` 以 `sum(` 开头 ⇒ 任何查询的响应自动附 `total` 合计值。
+   * **可选**（缺省 = false = 无自动合计）：合成契约（L2 编译、测试夹具）可以不带——
+   * 只有 sync 从声明推导出的 L1 行才带真值；保守缺省不会给不明口径的指标编一个合计。
+   */
+  totalable?: boolean
 }
 
 /**

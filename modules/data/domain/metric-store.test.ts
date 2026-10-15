@@ -159,6 +159,22 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
     expect((await loadOrgCatalog(pool, ORG)).find((m) => m.id === l2Id)?.sourceSystem).toBeNull()
   })
 
+  it('★ totalable（spec §8.4）：L1 带值写入并随声明刷新；L2 恒 false（def 误带也不写）', async () => {
+    // 可加标记是 L1 声明（expression 形状）的推导产物：物化路径带值、冲突分支与
+    // source_system 同一条「声明是真值」纪律一起刷；L2 写路径没有这个概念，恒 false。
+    const id = `${L1_ID_PREFIX}totalable`
+    await upsertL1Metric(pool, l1({ id, totalable: true }))
+    expect((await loadPlatformCatalog(pool)).find((m) => m.id === id)?.totalable, 'L1 带值要落库')
+      .toBe(true)
+    await upsertL1Metric(pool, l1({ id }))   // 声明改成不可加 ⇒ 重新物化必须跟上
+    expect((await loadPlatformCatalog(pool)).find((m) => m.id === id)?.totalable).toBe(false)
+
+    await put(ORG, def({ id: 'l2_totalable_guard', totalable: true }))
+    const r = await pool.query('select totalable from data.metrics where org = $1 and id = $2',
+      [ORG, 'l2_totalable_guard'])
+    expect(r.rows[0].totalable, 'L2 行不受 def 上的 totalable 影响（恒 false）').toBe(false)
+  })
+
   it('★ 声明的 source 改了 ⇒ 重新物化把 source_system 一起刷（否则 sync --check 永远检出漂移）', async () => {
     const id = `${L1_ID_PREFIX}src_flip`
     await upsertL1Metric(pool, l1({ id }, 'lemeng'))
@@ -209,10 +225,10 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
     expect(catalog.map((m) => m.id)).toContain('finance_margin')
     // 反向：别家租户的行一条都不能出现（隔离键 org 的判据）
     expect(catalog.map((m) => m.id)).not.toContain('other_org_only')
-    // 映射保真：逐字段等于写入的那个对象 + source 标注 + #489 的两列（多出来的列没被塞进来、
-    // jsonb 没被序列化成字符串）。这两列**必须**在映射里 —— /metrics/all 的列表两列靠它。
+    // 映射保真：逐字段等于写入的那个对象 + source 标注 + #489 的两列 + totalable 缺省
+    // （多出来的列没被塞进来、jsonb 没被序列化成字符串）。这两列**必须**在映射里 —— /metrics/all 的列表两列靠它。
     expect(catalog.find((m) => m.id === 'finance_margin'))
-      .toEqual({ ...mine, source: 'l2', sourceSystem: null, updatedBy: 'fixture', version: 1 })
+      .toEqual({ ...mine, source: 'l2', sourceSystem: null, updatedBy: 'fixture', version: 1, totalable: false })
   })
 
   it('deleteMetric 返「是否真删了一行」，且只删本租户的', async () => {
@@ -347,6 +363,32 @@ describePg('010 迁移：两列 + 审计表（#489）', () => {
       `select count(*)::int as n from information_schema.tables
         where table_schema = 'data' and table_name = 'metric_audit'`)
     expect(t.rows[0]!.n).toBe(1)
+  })
+})
+
+// ── 016 迁移（spec §8.4）：totalable 列。验的是 schema，不是 store 行为。──────────────
+describePg('016 迁移：totalable 列（spec §8.4）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  afterAll(async () => { await pool.end() })
+
+  it('★ 列就位（not null default false）、存量行缺省 false，且迁移幂等（连跑两遍零效果）', async () => {
+    await applyMigrations(pool)
+    await applyMigrations(pool) // 第二遍：必须零效果、不报错（部署脚本每次全量重跑）
+
+    const cols = await pool.query<{ is_nullable: string; column_default: string }>(
+      `select is_nullable, column_default from information_schema.columns
+        where table_schema = 'data' and table_name = 'metrics' and column_name = 'totalable'`)
+    expect(cols.rows, 'totalable 必须 not null default false').toEqual([
+      { is_nullable: 'NO', column_default: 'false' },
+    ])
+
+    // 不写 totalable 的普通行（L2 路径）落缺省 false —— 自动合计只给推导出 true 的 L1 行
+    await upsertMetric(pool, ORG, def({ id: 'totalable_default_probe' }), 'fixture')
+    const r = await pool.query('select totalable from data.metrics where org = $1 and id = $2',
+      [ORG, 'totalable_default_probe'])
+    expect(r.rows[0].totalable).toBe(false)
+    await pool.query('delete from data.metrics where org = $1 and id = $2',
+      [ORG, 'totalable_default_probe']).catch(() => {})
   })
 })
 
