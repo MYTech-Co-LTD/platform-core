@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.121.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.121.1...v0.121.2) - 2026-10-15
+- 【修复】data: #688 deploy/dbt/Dockerfile 补进数据面清单 + 定案「机器本机构建」 ([#692](https://github.com/MYTech-Co-LTD/platform-core/pull/692), [6746c15](https://github.com/MYTech-Co-LTD/platform-core/commit/6746c151b4ba19661e2eb2438ef208021833e9b3))
+
+
 ## [0.121.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.121.0...v0.121.1) - 2026-10-15
 - 【修复】data: #683 清点作用域收窄到 manifest 目录型条目 + CI 漂移门禁 ([#687](https://github.com/MYTech-Co-LTD/platform-core/pull/687), [17876ed](https://github.com/MYTech-Co-LTD/platform-core/commit/17876ed821f32fcc9a2a10cc6343d5c8729063db))
 
