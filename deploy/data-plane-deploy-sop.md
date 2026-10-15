@@ -337,28 +337,53 @@ dbt-postgres 1.9 线只到 `1.9.1`。
 
 | 仓内路径 | 机器落地 | 谁读 |
 |---|---|---|
-| `deploy/data-compose.yml` | 同名 | `run-retail-day.sh` 的 `docker compose -f` |
+| `deploy/data-compose.yml` | 同名 | openship 部署数据面项目（`proj_AFbJvyb0onaX7LVr`）按它起服务（**构建被跳过**，见下方定案）；etl 两个 runner 由 job 用 `docker run` 按需跑 |
 | `duckle/**` | 同名 | compose bind `../duckle:/pipelines:ro`；宿主侧另有直读（drift 前置断言） |
 | `dbt/**` | 同名 | compose bind `../dbt:/usr/app` |
 | `deploy/duckle/entrypoint.sh` | 同名 | 仅作构建上下文（`deploy/duckle/Dockerfile` 的 COPY） |
-| `scripts/lemeng/run-retail-day.sh` | `/opt/lemeng-run.sh`（**改名**） | job / `exec` 直调 |
 | `scripts/lemeng/wire-warehouse.sh` | `/opt/lemeng-wire-warehouse.sh`（**改名**） | 探活 job 直调（`--check`）；接线重做时手调 |
 | `scripts/lemeng/readback-helper.sh` | `<checkout>/lemeng-readback.sh`（**改名**） | 挂进容器跑回读 |
 | `deploy/duckle/console/**` | 同名 | seed 进各账套 workspace 卷（`schedules/` / `pipelines/`） |
-| `deploy/duckle/Dockerfile` | 同名 | 镜像构建（见下面那段的**待核实**） |
+| `deploy/duckle/Dockerfile` | 同名 | **镜像构建**（机器本机建，读的就是检出这份——见下方**定案**） |
+| `deploy/dbt/Dockerfile` | 同名 | 同上（建 `platform-core-dbt:local`；**#688 补登** 2026-10-15） |
 
-**消费面怎么定的**（**四条**，缺一会漏）：① `run-retail-day.sh` 里对 `$REPO/<路径>` 的**每一处引用**；
+> ℹ️ **已退役、故不在本表**：`scripts/lemeng/run-retail-day.sh`（落地名 `/opt/lemeng-run.sh`）——
+> 2026-09-29 换工具后退役（`console/DELIVERY.md` §换工具），仓内已无此文件、清单里也没有它，
+> 无 job、无现役管线引用（2026-10-15 核实）。E.5 那句「只投了 `run-retail-day.sh`」是**历史引语**，
+> 说的是当年的漏法，别当成现役文件找。
+
+**消费面怎么定的**（**四条**，缺一会漏）：① 机器侧脚本里对 `$REPO/<路径>` 的**每一处引用**
+（原例 `run-retail-day.sh` 已退役；现役如 `materialize.sh` / `seed-console.sh` / `oo-*.sh`）；
 ② `data-compose.yml` 里的**每一处 bind**（源路径即仓内路径）；③ 各 Dockerfile 的 **COPY 来源**；
 ④ **机器上被 job/`exec` 直接执行**的脚本（job 命令里点到它）——判据 ①②③ 都是「谁读这个文件」，
 漏掉了「谁**执行**这个文件」：`/opt/lemeng-*.sh` 那一类。它同样必须与仓内那份逐字节一致，
 否则「job 跑的是哪个版本」无据可查。
 ⇒ **改了其中任一目录/文件，都要重投**——「只投了 `run-retail-day.sh`」正是本节要根治的漏法。
 
-**⚠️ 订正（2026-09-28）：下面这段「明写不做」与清单现状**矛盾**，别照它推断。**
-本节原判 = Dockerfile 本体不进清单（判据 ③ 只取 COPY 来源）。**但 `deploy/data-plane-manifest.txt`
-现在列着 `deploy/duckle/Dockerfile`**。两种可能（**未核实，别猜**）：冗余投递，
-或者有人在部署通路之外用那个文件跑构建。⇒ 读者按**清单**判「哪些文件会被投递」（清单是机器实际消费的那份，
-且被 `check-data-plane-lock` 守着），本节这段只当**历史决策**读。
+**✅ 定案（2026-10-15）：Dockerfile **必须**进清单——数据面机的镜像就是拿**检出里那份**构建的。**
+
+原「待核实」问的是「`deploy/duckle/Dockerfile` 在清单里是冗余投递，还是有人在部署通路之外跑构建」。
+答案是**后者**，三条实证：
+
+1. **部署通路不构建**：openship 部署数据面项目（`proj_AFbJvyb0onaX7LVr`）的构建步骤日志原文 =
+   `Compose services use pre-built images - skipping build phase` ⇒ 它只 pull/run 现成镜像，
+   `platform-core-*-:local` 得**先在机器上建好**（层 C 第 13 条「镜像预拉先于部署」正是这个）；
+2. **构建读的是检出**：`platform-core-duckle:local` 创建于 `2026-09-28 00:42:31`，而检出里
+   `deploy/duckle/Dockerfile` 的 mtime 是 `2026-09-28 00:41`——**相差 1 分钟**（本机手工构建）；
+3. **对照自证**：`deploy/duckle/Dockerfile` 在清单里 ⇒ 检出那份与仓内**逐字节一致**（`8679ed09…`）。
+
+**分水岭：单元 A 与单元 B 的构建路径不同**——
+
+| 部署单元 | 谁构建 | Dockerfile 要不要进本清单 |
+|---|---|---|
+| **A**（`deploy/docker-compose.yml`，山海平台） | **openship 部署时构建**（日志：`Building compose service "server" from build context . using deploy/Dockerfile.server`）⇒ 上下文由部署送上去 | **不要** |
+| **B**（`deploy/data-compose.yml`，数据面） | **机器本机手工构建**（见上三条）⇒ 读的就是检出那份 | **要，一个都不能漏** |
+
+⇒ 所以 `deploy/Dockerfile.server` / `deploy/Dockerfile.openclaw`（单元 A）不进表是**对的**；
+而单元 B 用到的 Dockerfile 漏一个就是「机器拿冻结的旧版构建」。**实例（#688）**：
+`deploy/dbt/Dockerfile` 曾漏——机器那份冻结在 `#166`（2026-09-22 初版），
+**缺 #187 的 dbt 版本钉与 #194 的 pip 国内镜像**，而 `platform-core-dbt:local` 就是拿它建的；
+2026-10-15 已补登（`a3fc0976…`）。
 
 <details><summary>原文（保留以留可追溯性）</summary>
 
@@ -515,6 +540,9 @@ duckle/common/lemeng.retail_order_line.json
 | `duckle/common/lemeng.item.json` | 1,436,947 | **22,733** | **22,733** |
 | `pnpm-lock.yaml` | 190,672 | **57,258** | **57,258** |
 | `CHANGELOG.md` | 80,046 | **34,354** | **34,354** |
+
+> 注：`duckle/common/lemeng.item.json` 已于 **#683 退役**（**不在当前检出里**）。复算要用它
+> **当时的 commit SHA**（`git cat-file blob <SHA>:<path>`），仓史里那份仍在——别去当前检出里找它。
 
 三个对象**逐字节完全吻合** ⇒ 那串「自称总长」**就是该对象在该 commit 上的 gzip 长度**。
 复算方法：`git cat-file blob <SHA>:<path> | gzip -6 -c | wc -c`。
