@@ -141,10 +141,12 @@ metricToAuditFileName(metricName: string): string   // 例：'lemeng:retail:net_
 | finance | fct_finance（W4） | 期初/发生/核销分层列，落点随 W4 设计定 |
 | 行质量 | fct_transfer_line_quality（**W1 ✓**） | `lot_filled_lines`/`line_count`(04-05)、`zero_cost_amount`(04-06)、`negative_order_count`(04-07)；wholesale 侧随 D02 v2 勾稽批次 |
 
-**X01（组织生效期/营业日历）的落点**（2026-10-12 裁决）：`dbt/seeds/x01_branch_region.csv` +
-`x01_branch_calendar.csv`——**git 受控 CSV（dbt seed）**，结构我建、数据客户填（裁4）、进 PR 可审。
-当前两份都只有 header（0 行，有意的：没有客户数据不造数据）。fct 侧回落语义（dim_branch 最新快照
-region_id，未映射=0）在 `fct_hq_outbound` 头注；X01 有数后的生效期匹配改造是后续任务。
+**X01（营业日历）的落点**（裁4 收窄后）：`dbt/seeds/x01_branch_calendar.csv`——**git 受控 CSV
+（dbt seed）**，结构我建、数据客户填、进 PR 可审；当前仅 header（0 行，有意的：没有客户数据不造
+数据）。门店→战区以湖上 dim_branch 每日快照为准（最新为准，fct 回落语义升正），原
+`x01_branch_region.csv` 生效期映射 seed 已随裁4 退役删除（#651；#683 实测 sync 只取件不删件、
+真机残留已一次性清理）。fct 侧回落语义（dim_branch 最新快照 region_id，未映射=0）在
+`fct_hq_outbound` 头注。
 
 ### 5.2 率类（不可加指标）的 L1/L2 边界（spec 2026-10-12 裁7 结论，W0 落）
 
