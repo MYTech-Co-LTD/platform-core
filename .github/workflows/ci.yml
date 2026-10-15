@@ -171,6 +171,13 @@ jobs:
       # ③ 缺值 fail-fast 守卫被拆 ⇒ 跑到 dbt 连库才炸，晚失败难定位。
       # 纯 sh（从脚本里抽真函数测，不复制实现）：不连库、不取网络、不起容器，秒级。
       - run: sh scripts/lemeng/materialize.test.sh
+      # 检出清点/清理（`sync-data-plane.sh`，issue #683）的「**该不该删**」判别面测试。四条都在防静默错：
+      # ① 清点基准 = lock 落地路径列（不是「磁盘上有即有罪」）⇒ 退化成全树判死会把整检出错杀；
+      # ② 机器本地物 allowlist 存活 ⇒ 漏一项就把 deploy/.env 这类真机配置 prune 掉（数据面当场断）；
+      # ③ 两类崩溃残留（`..data-plane-revision.tmp.*` / `.sync-tmp.*`）必须清 ⇒ 漏了孤儿继续积；
+      # ④ `--check` 只读且退出码只看 DRIFT ⇒ 变了就把现有探活/审计调用方原地翻红。
+      # 纯 sh（假 curl + 真 sha256）：不连库、不取网络、不起容器，秒级。
+      - run: sh scripts/lemeng/sync-data-plane.test.sh
       # 租户隔离门禁（issue #77；正典 docs/module-protocol.md「租户数据隔离」）：真库对账——
       # 真跑各模块的 migrations（跑进脚本自建的**一次性库** platform_tenant_isolation_check），
       # 再查 information_schema 要 org 列。判据按「全部 migrations 的累积终态」，不按文件判
