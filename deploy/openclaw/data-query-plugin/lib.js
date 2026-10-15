@@ -86,7 +86,16 @@ export async function callPlatform(opts) {
     return { code: data.error || "CHANNEL_KEY_INVALID", error: "渠道认证失败（" + (data.error || "HTTP 401") + "），请联系管理员检查渠道凭证。" };
   }
   // 403 对「未授权」与「词表外」同文案（平台刻意不区分，避免存在性探针——三通道设计 §5 约束 3）。
+  // ⚠️ 但 `bad_param` 是「参数写错了」，不是「没权限」：/query 对一切 denied 都回 403（#30 订正），
+  // body 里带 reason/detail。把 bad_param 也照搬权限文案，模型会读成「指标没权限」然后换指标重试，
+  // 实际它只差把参数改成合法形状——必须如实回参数错误，并带上服务端的 detail（哪个键、什么毛病）。
   if (resp.status === 403) {
+    if (data.reason === "bad_param") {
+      return {
+        code: "BAD_PARAM",
+        error: "参数不合法：" + (data.detail || "服务端未给原因") + "（键与形状以 list_metrics 返回的 params 为准）",
+      };
+    }
     return { code: "DENIED", error: "该查询不在你的可见范围内。可用指标先调 list_metrics 看（词表按人裁剪）。" };
   }
   if (resp.status === 502) {

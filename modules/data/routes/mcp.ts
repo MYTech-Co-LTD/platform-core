@@ -5,13 +5,34 @@
 //
 // 授权不自建：词表裁剪只调 visibleMetrics、执行只调 runQuery（保留键拒 / 未声明拒 /
 // 未授权拒全部出自那条链——本文件不做第二份判定）。
-import type { MetricDef } from '../domain/authz'
+import type { MetricDef, MetricParamDef } from '../domain/authz'
 import { visibleMetrics } from '../domain/authz'
 import { loadMergedCatalog } from '../domain/metric-store'
 import { runQuery } from '../domain/query-service'
 import type { ModuleHono, RouteCtx } from './context'
 import { registerMcpEndpoint } from './mcp-rpc'
 import type { McpToolSet } from './mcp-rpc'
+
+/**
+ * 单个参数声明 → JSON-Schema 属性。**type 不透传**：`date` / `date_range` 都不是合法的
+ * JSON-Schema type，原样给出会被 schema 校验的客户端整份拒收——而 tools/list 一旦物化，
+ * 27 个工具全带坏 schema（通道 B 的 PAT 调用方一个都调不了）。
+ * 运行时校验仍**只在**授权核心（DATE_RE / 区间形状与顺序），这里的 schema 只是告知面。
+ */
+function paramSchema(p: MetricParamDef): Record<string, unknown> {
+  // JSON Schema 没有 date 类型：date 参数声明为 string（运行时校验在授权核心的 DATE_RE）
+  if (p.type === 'date') return { type: 'string', description: '' }
+  // date_range 落成 {from,to} 对象（值形状见 spec 2026-10-15 §2.3；单日 from=to）
+  if (p.type === 'date_range') {
+    return {
+      type: 'object',
+      properties: { from: { type: 'string' }, to: { type: 'string' } },
+      required: ['from', 'to'],
+      description: '闭区间 YYYY-MM-DD',
+    }
+  }
+  return { type: p.type, description: '' }
+}
 
 /**
  * 指标 → MCP tool。inputSchema 的 properties 只含声明的业务参数——
@@ -21,8 +42,7 @@ function toTool(m: MetricDef) {
   const properties: Record<string, unknown> = {}
   const required: string[] = []
   for (const [name, p] of Object.entries(m.params)) {
-    // JSON Schema 没有 date 类型：date 参数声明为 string（运行时校验在授权核心的 DATE_RE）
-    properties[name] = { type: p.type === 'date' ? 'string' : p.type, description: '' }
+    properties[name] = paramSchema(p)
     if (p.required) required.push(name)
   }
   return { name: m.id, description: m.description || m.title, inputSchema: { type: 'object', properties, required } }

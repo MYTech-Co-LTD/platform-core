@@ -21,14 +21,15 @@ const LIST_DEF = {
 const QUERY_DEF = {
   name: "query_data",
   description:
-    "按指标查数：metricId 来自 list_metrics；args 按该指标的参数说明给（日期一律 YYYY-MM-DD）。回包带 subject（本次钉死的数据主体）与 columns/rows；truncated=true 表示截断，改用聚合口径。",
+    "按指标查数：metricId 来自 list_metrics；args 按该指标 params 的 type 给值——type=date_range 的参数传对象 {\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}（闭区间，查单日则 from=to）；type=string/number/date 的参数传单值（日期单值一律 YYYY-MM-DD）。参数键与形状以 list_metrics 返回的 params 为准，不要臆造。回包带 subject（本次钉死的数据主体）与 columns/rows；truncated=true 表示截断，改用聚合口径。",
   parameters: {
     type: "object",
     properties: {
       metricId: { type: "string", description: "指标 id（来自 list_metrics）" },
       args: {
         type: "object",
-        description: "指标参数键值对（如日期范围），以 list_metrics 返回的参数说明为准",
+        description:
+          "指标参数键值对；键与形状以 list_metrics 返回的 params 为准（type=date_range 传 {from,to} 对象，其余传单值）",
         additionalProperties: true,
       },
     },
