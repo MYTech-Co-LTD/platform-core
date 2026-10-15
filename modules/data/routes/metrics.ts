@@ -19,8 +19,8 @@ import type { Context } from 'hono'
 import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf } from './context'
-import { visibleMetrics } from '../domain/authz'
-import type { Requester } from '../domain/authz'
+import { paramFaceOf, visibleMetrics } from '../domain/authz'
+import type { MetricParamDef, Requester } from '../domain/authz'
 import { loadMergedCatalog } from '../domain/metric-store'
 import { listMetricAudit } from '../domain/metric-audit-store'
 import type { MetricRow } from '../domain/metric-store'
@@ -47,12 +47,17 @@ const L2Body = z.union([L2RefineBody, L2ExprBody])
 type L2BodyType = z.infer<typeof L2Body>
 
 /**
- * 只投影消费面要的字段：`selectSql` / `subjectColumn` 属实现细节，不外泄。
- * 参数按**结构**收窄（只要三字段），不写 `MetricRow`：`visibleMetrics` 的契约是
- * `MetricDef`（授权核心不认来源）⇒ 写死 MetricRow 会让「裁剪后的词表」传不进来。
+ * 词表投影：id/标题/说明 + **参数面形状**（type/required）——模型据此才知道能填什么键。
+ * `column` 是 SQL 内部面，不出词表响应（与头注「selectSql/subjectColumn 不外泄」同口径）。
+ * 投影本体在 `paramFaceOf`（authz.ts，纯函数）：spec 2026-10-15 §2.4「`list_metrics`
+ * （agent 工具）与 HTTP 词表共用该投影」——两处各写一份必漂开，见该函数头注。
+ * 入参按**结构**收窄，不写 `MetricRow`：`visibleMetrics` 的契约是 `MetricDef`
+ * （授权核心不认来源）⇒ 写死 MetricRow 会让「裁剪后的词表」传不进来。
  */
-const publicView = (m: { id: string; title: string; description: string }) =>
-  ({ id: m.id, title: m.title, description: m.description })
+const publicView = (m: { id: string; title: string; description: string; params?: Record<string, MetricParamDef> }) => ({
+  id: m.id, title: m.title, description: m.description,
+  params: paramFaceOf(m.params),
+})
 
 /**
  * 管理面投影：带上 `source`——它是「这行能不能经 API 改」的**唯一**判据面，

@@ -9,7 +9,7 @@ import { applyMigrations } from '../test-util'
 import { upsertMetric } from './metric-store'
 import type { MetricDef, Requester } from './authz'
 import type { ChatMessage, ChatModel, ChatTurn, ToolSpec } from './llm'
-import { MAX_AGENT_TURNS, runAgentLoop } from './agent-loop'
+import { MAX_AGENT_TURNS, runAgentLoop, TOOLS } from './agent-loop'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -123,11 +123,19 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
     // 第二轮：应看到 c1 的 tool 消息，content 是带 status:'metrics' 的 JSON
     const round2Tool = model.calls[1]!.messages.find((m) => m.role === 'tool')
     expect(round2Tool?.toolCallId).toBe('c1')
-    const listed = JSON.parse(round2Tool!.content) as { status: string; metrics: { id: string }[] }
+    const listed = JSON.parse(round2Tool!.content) as {
+      status: string; metrics: { id: string; params?: Record<string, unknown> }[]
+    }
     expect(listed.status).toBe('metrics')
     expect(listed.metrics.map((m) => m.id)).toContain('sales_daily')
     // 词表裁剪：data:finance 的 finance_mrr 不在给模型的列表里
     expect(listed.metrics.map((m) => m.id)).not.toContain('finance_mrr')
+    // 参数面与 HTTP 词表共用投影（spec 2026-10-15 §2.4）：query_metric 让模型「参数键只能取
+    // list_metrics 返回的 params 键名」——不给 params 这句话就是空头支票。只投 {type, required}，
+    // `column` 是 SQL 内部面不外泄（与 /metrics 响应同口径）。
+    const sales = listed.metrics.find((m) => m.id === 'sales_daily')
+    expect(sales?.params).toEqual({ day_from: { type: 'date', required: true } })
+    expect(JSON.stringify(sales)).not.toContain('"column"')
     // 第三轮：应看到 c2 的 tool 消息，status:'ok' 且主体回包是钉死的 org
     const round3Tool = model.calls[2]!.messages.find((m) => m.role === 'tool' && m.toolCallId === 'c2')
     const queried = JSON.parse(round3Tool!.content) as { status: string; subject: string }
@@ -215,5 +223,17 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
     expect(spec.description).toContain('同列')
     // 主体不在客户端可指定面：inputSchema 的键里没有 org/subject
     expect(JSON.stringify(spec.inputSchema)).not.toMatch(/"org"|subject/)
+  })
+})
+
+// 纯断言（无 DATABASE_URL）：锁 `query_metric` 工具描述的参数契约文案本身。
+describe('TOOLS —— query_metric 参数契约（spec 2026-10-15 §2.5）', () => {
+  it('T1 描述锁定：参数键只能取 list_metrics 返回值；date_range 传 {from,to}；未声明参数只能空参全量', () => {
+    const q = TOOLS.find((t) => t.name === 'query_metric')
+    expect(q).toBeDefined()
+    const d = q!.description
+    expect(d).toContain('list_metrics 返回的该指标 params 键名')
+    expect(d).toContain('{"from"')
+    expect(d).toContain('空参查全量')
   })
 })

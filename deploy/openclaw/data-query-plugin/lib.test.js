@@ -60,6 +60,23 @@ test("403 → 文案指回 list_metrics", async () => {
   const r = await callPlatform({ ...BASE, fetchImpl: f });
   assert.match(r.error, /list_metrics/);
 });
+test("403 bad_param → 参数文案原样带 detail，不是权限文案（形状错不该被读成没权限）", async () => {
+  // /query 对一切 denied 回 403（#30 订正），body 带 reason/detail——bad_param 必须如实回参数错。
+  const f = stubFetch(403, { status: "denied", metricId: "m1", reason: "bad_param", detail: "invalid_value:bizday" });
+  const r = await callPlatform({ ...BASE, fetchImpl: f });
+  assert.equal(r.code, "BAD_PARAM");
+  assert.match(r.error, /参数不合法/);
+  assert.match(r.error, /invalid_value:bizday/);
+  assert.match(r.error, /params 为准/);
+  assert.doesNotMatch(r.error, /可见范围/);
+});
+test("403 bad_param 缺 detail → 仍回参数文案（带兜底说明，不吞成权限错）", async () => {
+  const f = stubFetch(403, { status: "denied", reason: "bad_param" });
+  const r = await callPlatform({ ...BASE, fetchImpl: f });
+  assert.equal(r.code, "BAD_PARAM");
+  assert.match(r.error, /参数不合法/);
+  assert.match(r.error, /params 为准/);
+});
 test("502 → 仓库侧文案", async () => {
   const f = stubFetch(502, { error: "warehouse_transient" });
   const r = await callPlatform({ ...BASE, fetchImpl: f });

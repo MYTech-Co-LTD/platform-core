@@ -29,6 +29,7 @@ import {
   MODE_WRITE,
   buildSelectSql,
   declarationsFromYaml,
+  deriveParams,
   deriveRelation,
   diffDeclarations,
   exitCodeFor,
@@ -86,6 +87,35 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
       expect(row.selectSql).toContain(expr)
       expect(expr.length).toBeGreaterThan(0)
     }
+  })
+
+  it('★ 问数参数面逐条断言（spec 2026-10-15 §4.1，真实事实源）：bizday/system_book 必在；grain 含 domain 的恰含 domain；白名单外一个不进', () => {
+    // 为什么钉真实 YAML：D1–D4 钉的是推导函数（合成 grain），钉不住「声明本身改了 grain
+    // 把参数面静默改丢」——参数面是物化产物，漏推导不报错，只表现为线上问不出区间。
+    // 这条对**仓内每一条**声明逐行核对（期望集从声明自己的 grain 推，不硬编码条数——
+    // 加指标/改 grain 本测试自动跟着改，删列才红）。
+    const rows = readDeclarations(ROOT)
+    expect(rows.length).toBeGreaterThan(0)
+    let withDomain = 0
+    for (const row of rows) {
+      // groupBy = grain.join(', ')（见 declarationsFromYaml），反推即得 grain
+      const grain = row.groupBy === '' ? [] : row.groupBy.split(', ')
+      expect(row.params.bizday, `${row.id} 缺 bizday 参数`).toEqual({ column: 'bizday', type: 'date_range' })
+      expect(row.params.system_book, `${row.id} 缺 system_book 参数`).toEqual({ column: 'system_book', type: 'string' })
+      if (grain.includes('domain')) {
+        withDomain++
+        expect(row.params.domain, `${row.id} grain 含 domain 却没出参数`).toEqual({ column: 'domain', type: 'string' })
+      } else {
+        expect(row.params.domain, `${row.id} grain 不含 domain 却出了参数`).toBeUndefined()
+      }
+      for (const name of Object.keys(row.params)) {
+        expect(['bizday', 'system_book', 'domain'], `${row.id} 出现白名单外参数 ${name}`).toContain(name)
+      }
+    }
+    // domain 不是全量维度（2026-10-15 清点：出库/批发族才有）——「恰好」的口径要有实证数：
+    // 至少一条有、且不是全部都有，否则上面那个分支就退化成恒真式。
+    expect(withDomain).toBeGreaterThan(0)
+    expect(withDomain).toBeLessThan(rows.length)
   })
 
   it('label 缺省回落到 name（title 不许是空串：管理面靠它认指标）', () => {
@@ -350,5 +380,28 @@ describe('ratio 声明（与 expression 互斥，spec 2026-10-12 §5.3）', () =
       } }]),
     )
     expect(() => parseL1Select(rows[0].selectSql)).not.toThrow()
+  })
+})
+
+describe('deriveParams —— 问数参数面白名单推导（spec 2026-10-15 §2.2）', () => {
+  it('D1 全维 grain → 只剩白名单三件，参数名=列名', () => {
+    expect(deriveParams(['system_book', 'bizday', 'domain', 'branch_num', 'region_id'])).toEqual({
+      bizday: { column: 'bizday', type: 'date_range' },
+      system_book: { column: 'system_book', type: 'string' },
+      domain: { column: 'domain', type: 'string' },
+    })
+  })
+  it('D2 无 domain 的 grain → 两件（bizday + system_book）', () => {
+    expect(deriveParams(['system_book', 'bizday', 'branch_num'])).toEqual({
+      bizday: { column: 'bizday', type: 'date_range' },
+      system_book: { column: 'system_book', type: 'string' },
+    })
+  })
+  it('D3 编码维度一个不进（branch_num/item_num/supplier_num/storehouse_num/client_fid/region_id/expense_type/other_inout_kind）', () => {
+    const p = deriveParams(['system_book', 'bizday', 'branch_num', 'storehouse_num', 'item_num', 'client_fid', 'supplier_num', 'region_id', 'expense_type', 'other_inout_kind'])
+    expect(Object.keys(p).sort()).toEqual(['bizday', 'system_book'])
+  })
+  it('D4 required 恒缺省（空参=全量，历史调用形态不破坏）', () => {
+    expect(Object.values(deriveParams(['system_book', 'bizday', 'domain'])).every((p) => p.required === undefined)).toBe(true)
   })
 })

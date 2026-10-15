@@ -34,6 +34,14 @@ const FINANCE_MRR: MetricDef = {
   selectSql: 'SELECT org, mrr FROM marts.mart_finance_mrr',
   groupBy: '', params: {},
 }
+/** date_range 参数的 schema 映射面（I2 回归锁：type 不透传，落成 {from,to} 对象）。 */
+const RANGE_DAILY: MetricDef = {
+  id: 'sales_range', title: '区间销售', description: '按日区间汇总的销售明细',
+  requiredScope: null, subjectColumn: 'org',
+  selectSql: 'SELECT org, day, revenue FROM marts.mart_sales_daily',
+  groupBy: '',
+  params: { bizday: { column: 'bizday', type: 'date_range' } },
+}
 
 /** 一次 JSON-RPC POST。raw 直接给字符串可测「不可解析 body」。 */
 async function rpc(app: Hono, payload: unknown): Promise<Response> {
@@ -166,6 +174,28 @@ describePg('POST /mcp 的方法面（需要 DATABASE_URL）', () => {
     expect(tool!.inputSchema.properties.org).toBeUndefined()
     expect(tool!.inputSchema.properties.subject).toBeUndefined()
     expect(tool!.inputSchema.required).toEqual(['day_from'])
+  })
+
+  it('tools/list 的 date_range 参数 → 合法对象 schema（{from,to} 必填），绝不透传非法 type:"date_range"（spec 2026-10-15 §2.3）', async () => {
+    await applyMigrations(pool)
+    await upsertMetric(pool, ORG, RANGE_DAILY, 'fixture')
+    const ctx = { pool }
+    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), ctx, { id: 1, casdoor_org: ORG })
+    const res = await rpc(app, { jsonrpc: '2.0', id: 12, method: 'tools/list' })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    const tool = (body.result.tools as { name: string; inputSchema: {
+      properties: Record<string, unknown>
+    } }[]).find((t) => t.name === 'sales_range')
+    expect(tool).toBeDefined()
+    expect(tool!.inputSchema.properties.bizday).toEqual({
+      type: 'object',
+      properties: { from: { type: 'string' }, to: { type: 'string' } },
+      required: ['from', 'to'],
+      description: '闭区间 YYYY-MM-DD',
+    })
+    // 回归锁本体：'date_range' 不是合法 JSON-Schema type，出现在 schema 里即坏
+    expect(JSON.stringify(tool!.inputSchema)).not.toContain('date_range')
   })
 
   it('tools/call 未声明指标 → denied/metric_not_declared + isError:true', async () => {
