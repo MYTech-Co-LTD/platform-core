@@ -344,8 +344,8 @@ dbt-postgres 1.9 线只到 `1.9.1`。
 | `scripts/lemeng/wire-warehouse.sh` | `/opt/lemeng-wire-warehouse.sh`（**改名**） | 探活 job 直调（`--check`）；接线重做时手调 |
 | `scripts/lemeng/readback-helper.sh` | `<checkout>/lemeng-readback.sh`（**改名**） | 挂进容器跑回读 |
 | `deploy/duckle/console/**` | 同名 | seed 进各账套 workspace 卷（`schedules/` / `pipelines/`） |
-| `deploy/duckle/Dockerfile` | 同名 | **镜像构建**（机器本机建，读的就是检出这份——见下方**定案**） |
-| `deploy/dbt/Dockerfile` | 同名 | 同上（建 `platform-core-dbt:local`；**#688 补登** 2026-10-15） |
+| `deploy/duckle/Dockerfile` | 同名 | **被投递的 `data-compose.yml` 引用它**（`build.dockerfile`）——见下方**定案**（**不是**「机器本机构建」） |
+| `deploy/dbt/Dockerfile` | 同名 | 同上（`data-compose.yml:93` 引用；**#688 补登** 2026-10-15） |
 
 > ℹ️ **已退役、故不在本表**：`scripts/lemeng/run-retail-day.sh`（落地名 `/opt/lemeng-run.sh`）——
 > 2026-09-29 换工具后退役（`console/DELIVERY.md` §换工具），仓内已无此文件、清单里也没有它，
@@ -360,6 +360,45 @@ dbt-postgres 1.9 线只到 `1.9.1`。
 否则「job 跑的是哪个版本」无据可查。
 ⇒ **改了其中任一目录/文件，都要重投**——「只投了 `run-retail-day.sh`」正是本节要根治的漏法。
 
+**✅ 定案（2026-10-15，同日**二次订正**）：Dockerfile 该留在清单里——但理由**不是**「机器本机构建」。
+第一版定案（`#692`）断言「数据面机的镜像就是拿检出里那份构建的」，**当日晚些时候被自己的实测推翻**，
+此处按实况重写。原文留在下面 `<details>` 里以留可追溯性。**
+
+**实测四条（2026-10-15）**：
+
+1. **openship 部署数据面项目从不构建**：`proj_AFbJvyb0onaX7LVr` 的部署 build 步骤恒打
+   `Compose services use pre-built images - skipping build phase`——**连最早那次**（09-26 07:10）也是，
+   23 次全无例外；
+2. **镜像也不是拿机器上那份 Dockerfile 构建的**：`platform-core-dbt:local` 的构建命令原文（`docker history`）
+   是 `DBT_VERSION=1.9.1` + `-i https://mirrors.aliyun.com/pypi/simple/`，而机器检出里那份是 **`#166` 版**
+   （`DBT_VERSION=1.9.8`、**无**镜像源、`54e8ad65…`）——**对不上**；
+3. **时间也排除了部署构建**：该镜像建于 **09-23 22:26**，**早于第一次数据面部署**（09-26 07:10）；
+4. 层 C 第 13/21 条本来就写「**镜像预拉**先于部署」「**预构建**镜像（P2 拉好 `platform-core-dbt:local` 等）」
+   ——但 P2 那张表的 `docker pull` 清单里**只有上游镜像**（pgduckdb/metabase/postgres/python:3.12-slim），
+   `platform-core-*-:local` 不在其中。
+
+⇒ **`platform-core-*-:local` 是「别处建好、再送到机器」的**（镜像名无 registry 前缀 ⇒ 只能
+`docker save`/`load` 或本机构建）。
+
+**那 Dockerfile 为什么仍该在清单里？**——改归**判据 ②/③「被投递文件引用的路径」**：
+**`deploy/data-compose.yml` 本身在清单里、会被投递**，而它拿 `deploy/dbt/Dockerfile`（与 duckle 那份）
+当 `build.dockerfile` ⇒ 只要有人在机器上跑 `docker compose --profile etl build`，读的就是检出那份。
+**留表 = 让那条万一的路径读到当前版**（代价一个文件、无副作用），也让 `#688` 查出的**真实漂移**
+（机器那份冻结在 `#166`）被 sync 抹平。
+
+**单元 A 与单元 B 仍是两种路径**（这条没被推翻，是上面推翻的**只是**「B = 本机构建」的归因）：
+
+| 部署单元 | openship 部署时 | Dockerfile 要不要进**本**清单 |
+|---|---|---|
+| **A**（`deploy/docker-compose.yml`，山海平台） | **会构建**（日志：`Building compose service "server" from build context . using deploy/Dockerfile.server`）⇒ 上下文由部署送上去，读的是**部署传的那份** | **不要** |
+| **B**（`deploy/data-compose.yml`，数据面） | **跳过构建** ⇒ 镜像来自别处；但 compose 文件本身**被投递**且**引用** Dockerfile | **要**（归判据 ②/③，见上） |
+
+**⚠️ 未确认（留档，别当已验）**：`platform-core-*-:local` 的**实际构建与送机路径**（在哪建、怎么送）
+本轮未找到成文步骤，也不在任何 openship job 里。要钉死它得另开一查——**在那之前，别把
+「机器上那份 Dockerfile 会被消费」当既成事实**（`#688` 的漂移是真的，但**是否被读**未证）。
+
+<details><summary>第一版定案（`#692`，已被推翻，留可追溯性）</summary>
+
 **✅ 定案（2026-10-15）：Dockerfile **必须**进清单——数据面机的镜像就是拿**检出里那份**构建的。**
 
 原「待核实」问的是「`deploy/duckle/Dockerfile` 在清单里是冗余投递，还是有人在部署通路之外跑构建」。
@@ -371,6 +410,10 @@ dbt-postgres 1.9 线只到 `1.9.1`。
 2. **构建读的是检出**：`platform-core-duckle:local` 创建于 `2026-09-28 00:42:31`，而检出里
    `deploy/duckle/Dockerfile` 的 mtime 是 `2026-09-28 00:41`——**相差 1 分钟**（本机手工构建）；
 3. **对照自证**：`deploy/duckle/Dockerfile` 在清单里 ⇒ 检出那份与仓内**逐字节一致**（`8679ed09…`）。
+
+> ⚠️ 第 2 条是**相关性当因果**的典型误读：duckle 那份在清单里 ⇒ 它与仓内恒等，**镜像与它一致
+> 是必然的**（与「在哪构建」无关），根本不构成证据。真正的反证在第 2 条 dbt：**不在清单**的那份
+> 对不上镜像 ⇒ 镜像不来自检出。
 
 **分水岭：单元 A 与单元 B 的构建路径不同**——
 
@@ -384,6 +427,8 @@ dbt-postgres 1.9 线只到 `1.9.1`。
 `deploy/dbt/Dockerfile` 曾漏——机器那份冻结在 `#166`（2026-09-22 初版），
 **缺 #187 的 dbt 版本钉与 #194 的 pip 国内镜像**，而 `platform-core-dbt:local` 就是拿它建的；
 2026-10-15 已补登（`a3fc0976…`）。
+
+</details>
 
 <details><summary>原文（保留以留可追溯性）</summary>
 
