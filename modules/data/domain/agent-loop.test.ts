@@ -123,11 +123,19 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
     // 第二轮：应看到 c1 的 tool 消息，content 是带 status:'metrics' 的 JSON
     const round2Tool = model.calls[1]!.messages.find((m) => m.role === 'tool')
     expect(round2Tool?.toolCallId).toBe('c1')
-    const listed = JSON.parse(round2Tool!.content) as { status: string; metrics: { id: string }[] }
+    const listed = JSON.parse(round2Tool!.content) as {
+      status: string; metrics: { id: string; params?: Record<string, unknown> }[]
+    }
     expect(listed.status).toBe('metrics')
     expect(listed.metrics.map((m) => m.id)).toContain('sales_daily')
     // 词表裁剪：data:finance 的 finance_mrr 不在给模型的列表里
     expect(listed.metrics.map((m) => m.id)).not.toContain('finance_mrr')
+    // 参数面与 HTTP 词表共用投影（spec 2026-10-15 §2.4）：query_metric 让模型「参数键只能取
+    // list_metrics 返回的 params 键名」——不给 params 这句话就是空头支票。只投 {type, required}，
+    // `column` 是 SQL 内部面不外泄（与 /metrics 响应同口径）。
+    const sales = listed.metrics.find((m) => m.id === 'sales_daily')
+    expect(sales?.params).toEqual({ day_from: { type: 'date', required: true } })
+    expect(JSON.stringify(sales)).not.toContain('"column"')
     // 第三轮：应看到 c2 的 tool 消息，status:'ok' 且主体回包是钉死的 org
     const round3Tool = model.calls[2]!.messages.find((m) => m.role === 'tool' && m.toolCallId === 'c2')
     const queried = JSON.parse(round3Tool!.content) as { status: string; subject: string }

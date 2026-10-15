@@ -1,8 +1,8 @@
 // domain/agent-loop.ts —— 通道 A 的 LLM 编排。工具**只有两个**，且**都走同一个授权核心**
 // （spec §5 约束 1：任何通道不得自建权限判定）。
 import type { Pool } from 'pg'
-import type { MetricDef, Requester } from './authz'
-import { visibleMetrics } from './authz'
+import type { MetricDef, MetricParamFace, Requester } from './authz'
+import { paramFaceOf, visibleMetrics } from './authz'
 import { loadMergedCatalog } from './metric-store'
 import { runQuery } from './query-service'
 import type { SqlExecutor } from './query-service'
@@ -40,8 +40,11 @@ const SYSTEM_PROMPT = [
  * 工具面：**两个**。
  * `query_metric` 的 inputSchema **刻意不暴露 org/subject**（spec §5 约束 2）——
  * 主体不属于客户端可指定面，模型连"能不能填"都不该知道。
- * 描述里的等值语义是 T2 记录在案的取舍**原样告知**（硬口径②）：参数只支持等值比较，
- * 同列两个等值参数同传会拼出恒空集且不报错——必须写清，别让模型自己组合出恒空条件。
+ * 参数契约（spec 2026-10-15 §2.5）：type=string/number/date 只做**等值**比较；
+ * type=date_range 传 {from,to} 闭区间（from>to 服务端显式报错——T2 防的「恒空集且不报错」
+ * 在区间形态上已被结构化修复）。等值参数的「同列两个同传会拼出恒空集且不报错」告诫
+ * **只保留给等值参数**（区间单参数无此问题）；合法参数键名以 list_metrics 返回的
+ * 该指标 params 为准（list_metrics 与 HTTP 词表共用同一投影，spec §2.4）。
  */
 export const TOOLS: ToolSpec[] = [
   {
@@ -124,9 +127,17 @@ async function runTool(
 ): Promise<{ status: 'ok'; columns: string[]; rows: unknown[][] }
         | { status: 'denied'; metricId: string; reason: string; detail?: string }
         | { status: 'error'; reason: string; detail: string }
-        | { status: 'metrics'; metrics: { id: string; title: string; description: string }[] }> {
+        | { status: 'metrics'; metrics: { id: string; title: string; description: string; params: MetricParamFace }[] }> {
   if (call.name === 'list_metrics') {
-    return { status: 'metrics', metrics: catalog.map((m) => ({ id: m.id, title: m.title, description: m.description })) }
+    // 参数面与 HTTP 词表**同一份投影**（paramFaceOf，spec 2026-10-15 §2.4）：query_metric
+    // 的描述让模型「参数键只能取 list_metrics 返回的 params 键名」——这里不给 params，
+    // 那句话就是空头支票，模型只能臆造键（spec §1 实测的 biz_date 拒因链）。
+    return {
+      status: 'metrics',
+      metrics: catalog.map((m) => ({
+        id: m.id, title: m.title, description: m.description, params: paramFaceOf(m.params),
+      })),
+    }
   }
   if (call.name !== 'query_metric') {
     return { status: 'error', reason: 'unknown_tool', detail: call.name }

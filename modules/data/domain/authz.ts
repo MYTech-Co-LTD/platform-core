@@ -109,6 +109,28 @@ export function visibleMetrics<T extends SourceTaggedMetric>(
     (m.sourceSystem === null || adoptedSources.has(m.sourceSystem)))
 }
 
+/**
+ * 词表参数面投影（spec 2026-10-15 §2.4）：`{<参数名>: { type, required }}`。
+ *
+ * **两个消费方共用这一份实现**：HTTP 词表（`routes/metrics.ts` 的 `publicView`）与 agent
+ * 工具 `list_metrics`（`domain/agent-loop.ts`）——spec §2.4「list_metrics 与 HTTP 词表共用
+ * 该投影」的落点。各写一份的后果可预见：将来给参数面加字段/加类型时漂开一边，模型从
+ * 工具面拿到的参数说明与词表接口不一致，臆造键名（spec §1 实测的 `biz_date` 就是这么来的）。
+ * `column` 是 SQL 内部面（参数名 ≠ 列名是常态），**不**进投影；`required` 缺省投成显式
+ * `false`（声明侧恒缺省 = 空参全量），客户端不用处理「字段缺失」这一态。
+ */
+export type MetricParamFace = Record<string, { type: MetricParamType; required: boolean }>
+
+export function paramFaceOf(
+  params: Record<string, MetricParamDef> | undefined | null,
+): MetricParamFace {
+  const face: MetricParamFace = {}
+  for (const [name, p] of Object.entries(params ?? {})) {
+    face[name] = { type: p.type, required: p.required ?? false }
+  }
+  return face
+}
+
 /** 单引号双写（SQL 标准转义）。**只**用于已通过类型校验的值。 */
 export function sqlQuote(value: string): string {
   return `'${value.replace(/'/g, "''")}'`
