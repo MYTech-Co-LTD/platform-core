@@ -195,10 +195,10 @@ curl -s -X POST http://127.0.0.1:18080/api/catalog \
 - 经 openship MCP `post_projects_by_id_services_by_serviceId_restart`（服务级重启）。
 - **为什么是「重启」而不是「定向重建」**：本批 seed 的全是**命名卷 `/workspace` 内**的定义
   （`schedules/`、`pipelines/`、`alerts.json`、`owners.json`）——卷内容**重启即重新读取**（SOP §F.2 第 1 类，
-  2026-09-26 实测：seed + 只重启，`/api/schedules` 即列出新条目）。**bind-mount 类**（`duckle/`、`/opt/lemeng-run.sh`）
+  2026-09-26 实测：seed + 只重启，`/api/schedules` 即列出新条目）。**bind-mount 类**（仓内 `duckle/`）
   才需要按 `serviceIds` **定向重建**；本批不碰它们。
   > ⚠️ **措辞差异（如实标注）**：handbook §1.3.2 把这个动作写成「重新 seed + **重建容器**」。
-  > 本文件取 SOP §F.2 第 1 类（卷内定义 ⇒ 重启足够，且有实测背书）。**✅ 已统一（2026-09-29，Wave D 收口）**：handbook §1.3.2 已按类分订正——卷内定义 = **seed + 重启**；bind-mount（仓内 `duckle/`、`/opt/lemeng-run.sh`）= **同步 + 定向重建**。
+  > 本文件取 SOP §F.2 第 1 类（卷内定义 ⇒ 重启足够，且有实测背书）。**✅ 已统一（2026-09-29，Wave D 收口）**：handbook §1.3.2 已按类分订正——卷内定义 = **seed + 重启**；bind-mount（仓内 `duckle/`）= **同步 + 定向重建**。（下文当时写作含 `/opt/lemeng-run.sh`，该 wrapper 已于 #382 退役删除，今 bind-mount 类只剩 `duckle/`。）
 - 判据：「定义加载了没」——带凭据打 console 自己的调度 API，**条目数必须等于 `schedules/3120.json` 里的条目数**
   （本批投递时仓内 = 10 条；**判据是「相等」，不是写死某个数字**）：
 

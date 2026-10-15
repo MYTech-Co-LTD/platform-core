@@ -177,7 +177,7 @@ setup() {
     printf '%s %s %s %s\n' \
       "$(sha256_of "$_src/dbt/tests/new.sql")" 'dbt/tests/new.sql' \
       '${REPO}/dbt/tests/new.sql' '0644'
-    # 真绝对路径 + 改名 + 执行位（与生产那条 /opt/lemeng-run.sh 同形）
+    # 真绝对路径 + 改名 + 执行位（与生产那条 /opt/lemeng-wire-warehouse.sh 同形）
     printf '%s %s %s %s\n' \
       "$(sha256_of "$_src/scripts/lemeng/run.sh")" 'scripts/lemeng/run.sh' \
       "$_opt/lemeng-run.sh" '0755'

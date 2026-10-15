@@ -12,7 +12,7 @@
 #
 # ── 为什么 seed 之后要**重启容器**（而不是定向部署）────────────────────────────
 # §F.2 实测定分：`/workspace` 是**命名卷** ⇒ seed 完**重启**即重新读取，**不必定向部署**。
-# （与之相对：`duckle/` 与 `/opt/lemeng-run.sh` 是 **bind-mount**，钉的是 inode ⇒ 必须重建容器。）
+# （与之相对：`duckle/` 是 **bind-mount**，钉的是 inode ⇒ 必须重建容器。）
 # ⚠️ 本脚本**不**重启容器：重启走 openship MCP（控制面），符合「运维操作经唯一通道」。
 #    脚本跑完会打印下一步；自证靠 §F.2 给的那条：
 #      curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/schedules

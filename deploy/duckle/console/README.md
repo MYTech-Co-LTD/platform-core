@@ -3,6 +3,12 @@
 > 上位决策：`openship-platform` 仓 **ADR-0014**（业务调度改用 duckle 自带调度器）。
 > 实施步骤与全部实测证据：`docs/superpowers/plans/2026-09-26-lemeng-scheduling-via-duckle.md`。
 
+> 🔴 **本文件往下到「告警 alerts.json」一节为止的「薄管线 / wrapper」内容是历史形态，已于
+> 2026-09-29 退役**：薄管线 `.run.json` 删于 #364（切 L0/L1），wrapper `/opt/lemeng-run.sh`
+> 及其 compose 挂载删于 #382。下文保留是因为那三条 `code.shell` 实测依据与告警接线结论
+> 仍被现行 L0/L1 形态引用；**表里的 `pipelines/*.run.json` 已不存在，别照着建**。
+> 现行目录内容见 `pipelines/` 实际文件（L0/L1）与下方「L0 形态管线」一节。
+
 本目录放**每个账套的 console 需要的东西**，由部署步骤 **seed 进该账套的 workspace 卷**
 （console 只认自己 workspace 里的 `schedules.json` 与 `pipelines/`）：
 

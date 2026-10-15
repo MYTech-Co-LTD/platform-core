@@ -1,4 +1,4 @@
-sha256-of-rest 1a25facc781827029844758b4d33626e0220eb143c0cdc5b568dd454b50d47db
+sha256-of-rest bb7ddc7cad0d823420fa3b217e52dd72ac7245000c12237eabfe9e259873e93b
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 5f2b5a68028671166b3a0cd62d62a08a12f8a10af5034a2b5e4cadb50c1fb264 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -107,11 +107,11 @@ f0110d29f00b44d74da6038f1a2badf7e16a6b60a78e11b80c18565714b3ac72 dbt/tests/audit
 73c288ae9fdd22cf2767bcadcd512f36814a8c6a33c023eea15755e4aeb872be dbt/tests/audit_lemeng__transfer__item_gross_margin_rate.sql ${REPO}/dbt/tests/audit_lemeng__transfer__item_gross_margin_rate.sql 0644
 36b0c7adb27506ef250a15edf0b902b9e7b1c670017432cc69ea5ff3bceba8ff dbt/tests/audit_lemeng__transfer__negative_order_count.sql ${REPO}/dbt/tests/audit_lemeng__transfer__negative_order_count.sql 0644
 f3521ce0223776b5460ff659e057bb256bdcd221943532074d70b037aec0bebe dbt/tests/audit_lemeng__transfer__zero_cost_exposure_amount.sql ${REPO}/dbt/tests/audit_lemeng__transfer__zero_cost_exposure_amount.sql 0644
-2f8f1d2a0b26ff430cd0bf65e51bddae522ac3ecc66cd9c326b322250871438b deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
+2c1fe8959ca707d70c94685709851fa3f943b6a08b20ae57a891af3359da7bbf deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
 a3fc0976e30b18c2e4d4358128e02e02388668007eeff5fa0f4dc6db48be47c0 deploy/dbt/Dockerfile ${REPO}/deploy/dbt/Dockerfile 0644
 8679ed09c1ac5c65194c59fb2044e9edb2b7e5266ce08af4e08bd90bd4c70f6d deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
-4c753fe12c8dc9c8153106e0a3904223c500e0ba86bb5c580cbaf80641f9629b deploy/duckle/console/DELIVERY.md ${REPO}/deploy/duckle/console/DELIVERY.md 0644
-c4722d3ce6b0d1d8ab375d5142e713994e797e0653ebea35093510d74e3afc6c deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
+0c3622c27da2a3a990d2ba9729a91ce7c2058d4c143e957afbf5425aa3ea011d deploy/duckle/console/DELIVERY.md ${REPO}/deploy/duckle/console/DELIVERY.md 0644
+eccc675e271e958ccc7812e7dcf239cf5828ccd8b4e93dbd3aaddabd59b8d8ed deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
 309ebdb459fccbec79342171ac50c9e6c6bc43700ac5c003271359289e19c850 deploy/duckle/console/alerts.lemeng.json ${REPO}/deploy/duckle/console/alerts.lemeng.json 0644
 592dd7f782ee7861f70f4f512535a6404016e92112686d868a9837df475be6ac deploy/duckle/console/owners.lemeng.json ${REPO}/deploy/duckle/console/owners.lemeng.json 0644
 ee25488a3bd1859f14e3a3eafa3c6b2c76a91768bd97d833d33a465c3a6b1e71 deploy/duckle/console/pipelines/FLOW.lemeng.md ${REPO}/deploy/duckle/console/pipelines/FLOW.lemeng.md 0644
@@ -144,7 +144,7 @@ a60c9ed432da4d9b06cc41a5cb1a63c49bebfd124bb9e4670b856b814c297b0d deploy/duckle/c
 6fc01f966c5c40fa2d7311aac5fa5f2d534eb08ecbf791f69bac3e77ee76086b deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
 a6d73597b4cb6dad45f30b9201acf8af48ec42672c79a43989b6d7e71099dd92 deploy/duckle/entrypoint.sh ${REPO}/deploy/duckle/entrypoint.sh 0644
 05b1e1de925f3711b77db60182d762b951fce07d268dfa1bc370aa6003cdeb1c deploy/oo-alert-registry.txt ${REPO}/deploy/oo-alert-registry.txt 0644
-e5692c786e70ea50917462573d035bc4cc4c9e25c81f9489fc5b3bb8070e6f64 duckle/README.md ${REPO}/duckle/README.md 0644
+62928b5107397bbabdbeba8baf6a3f25d2b00c5e1694527d51cc1282247995b5 duckle/README.md ${REPO}/duckle/README.md 0644
 9c48a28d51a5c5d4f2232609c4312ea82fe4040edbd768b5966b49182ad6eef8 duckle/common/README.md ${REPO}/duckle/common/README.md 0644
 691d2f8416d4588f656c174cc00528e4bfa65b85ceb84758900086ca756b2e26 duckle/customers/README.md ${REPO}/duckle/customers/README.md 0644
 a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814 scripts/duckle/connection-setup.py /opt/connection-setup.py 0755
@@ -158,5 +158,5 @@ d3c7fb72c9a2c243b6973177432294b446a10770b3bbad4da731fd306cad2e97 scripts/lemeng/
 b22ee1315f9b2c3e5a7e041e4d3b6a99b0c4aa9e022934d5e64e1409b5164d21 scripts/lemeng/recon-day-heal.sh /opt/lemeng-recon-day-heal.sh 0755
 732afd7aa6ccfc9bcba36adbd968cc5819bef78974b57e92bfb81f67fc64e9ae scripts/lemeng/recon-preagg.sh /opt/lemeng-recon-preagg.sh 0755
 185b13c328e83a04651799684a38be905e9cc217d78ed9079fdf3aa2918299e3 scripts/lemeng/seal-lake.sh /opt/lemeng-seal.sh 0755
-7d3b0f7dfe17e485a8de97f4c2ac0ac4f32025deaa2ceeed59bb4970c290ceb0 scripts/lemeng/seed-console.sh /opt/lemeng-seed-console.sh 0755
+e030b1ea2ce35efc8fcf60322938e0b8a8af1258ec08a7434fa255e49d7cd21e scripts/lemeng/seed-console.sh /opt/lemeng-seed-console.sh 0755
 08dc0d708bdeba7308beb4f215b22fe1b7d0cffaaaa8f3bcd88451f52304b17b scripts/lemeng/wire-warehouse.sh /opt/lemeng-wire-warehouse.sh 0755
