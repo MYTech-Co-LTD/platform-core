@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.124.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.123.0...v0.124.0) - 2026-10-15
+- 【新增】data: 问数 total 自动伴随——可加指标响应自带合计（真机模型不走开关的治本） ([#701](https://github.com/MYTech-Co-LTD/platform-core/pull/701), [6ba7a08](https://github.com/MYTech-Co-LTD/platform-core/commit/6ba7a08969c66e16d8074c8bd987dc435147127b))
+
+
 ## [0.123.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.122.0...v0.123.0) - 2026-10-15
 - 【新增】data: 问数合计形态（args.total 单行聚合）+ 问数 SKILL v2（真机区间卡死治本） ([#699](https://github.com/MYTech-Co-LTD/platform-core/pull/699), [d3701e7](https://github.com/MYTech-Co-LTD/platform-core/commit/d3701e7e9df54b7ee4f0a014f97908860e3c6d56))
 
