@@ -489,12 +489,13 @@ duckle/common/lemeng.retail_order_line.json
 
 > ⚠️ **同名不同物，别把 prune 读成没退干净**：上面退场的 `deploy/duckle/console/alerts.json` /
 > `owners.json` 是**检出里**的**声明文件**（仓内已改名成 `alerts.lemeng.json` / `owners.lemeng.json`，
-> 旧名的副本由此被 prune 清掉）。console **卷**（`...-lemeng-console-<账套>-ws`，落在 `/workspace`）
-> 里另有一份**同名**的 `alerts.json` / `owners.json`，是**卷自己那份**、不来自检出——两者同名、不同物、
-> 不同落点。卷内件由 `seed-console.sh` 按检出副本播种（#531），**与本节 prune 无关**；判「检出退干净没」
-> 只看检出树（`--check` 的 `# extra`）。
-> 【待核实】卷内 `alerts.json` 的 mtime 早于本次改名（2026-10-12），**是否**仍被引擎读取、还是改名后
-> 遗留的旧名件——本步未验，未据以动作。
+> 旧名的副本由此被 prune 清掉）。console **卷**（`...-lemeng-console-<账套>-ws`）里的
+> `/workspace/alerts.json` 与 `/workspace/owners.json` 是**另一侧的名字**——`seed-console.sh` 明写
+> 「检出 `alerts.lemeng.json` → 卷 `/workspace/alerts.json`」（`owners` 同理，均在 `only=all` 分支）
+> ⇒ **改名只发生在检出侧**，卷侧一直用短名，那份同名件正是**当前期望的落地名**、不是旧名遗留。
+> 两者同名、不同物、不同落点。卷内件由 `seed-console.sh` 播种（#531），**与本节 prune 无关**；
+> 判「检出退干净没」只看检出树（`--check` 的 `# extra`）。卷内件的 mtime 只是**上次播种**的时刻，
+> 不表示陈旧（`schedules.json` 另会被引擎回写，见 `seed-console.sh` 头注）。
 
 **全 SHA 从命令输出逐字复制，绝不手工补**（分支名会漂移，投递物必须与 commit 逐字节对应）。
 
