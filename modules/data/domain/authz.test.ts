@@ -195,6 +195,52 @@ describe('authorize —— 主体钉死', () => {
   })
 })
 
+describe('authorize —— date_range 区间参数（spec 2026-10-15 §2.3）', () => {
+  // 夹具构造照上方「越界 type」用例的现成形状（CATALOG[1] + params 覆写），仅 params 不同：
+  const rangeMetric = { params: { bizday: { column: 'bizday', type: 'date_range' as const } } }
+  const cat: MetricDef[] = [{ ...CATALOG[1], ...rangeMetric }]
+
+  it('R1 合法区间 → BETWEEN 闭区间 SQL', () => {
+    const r = authorize(cat, req(), 'metrics_revenue_mom', {
+      bizday: { from: '2026-10-08', to: '2026-10-14' },
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.sql).toContain(`bizday BETWEEN '2026-10-08'::date AND '2026-10-14'::date`)
+  })
+
+  it('R2 from>to → bad_param + range_invalid（T2 恒空集坑的结构化报错）', () => {
+    const r = authorize(cat, req(), 'metrics_revenue_mom', {
+      bizday: { from: '2026-10-14', to: '2026-10-08' },
+    })
+    expect(r).toMatchObject({ ok: false, reason: 'bad_param', detail: 'range_invalid:bizday' })
+  })
+
+  it('R3 缺键/非对象/非日期串 → bad_param + invalid_value', () => {
+    for (const v of [{ from: '2026-10-08' }, '2026-10-08', { from: '20261008', to: '2026-10-09' }]) {
+      const r = authorize(cat, req(), 'metrics_revenue_mom', { bizday: v })
+      expect(r).toMatchObject({ ok: false, reason: 'bad_param', detail: 'invalid_value:bizday' })
+    }
+  })
+
+  it('R4 空串值仍视为「不传」（与既有空参语义一致）', () => {
+    const r = authorize(cat, req(), 'metrics_revenue_mom', { bizday: '' })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.sql).not.toContain('BETWEEN')
+  })
+
+  it('R5 既有 date 等值路径回归不变（A3 原断言原样通过）', () => {
+    const eqCat: MetricDef[] = [{
+      ...CATALOG[1], params: { day: { column: 'day', type: 'date' as const } },
+    }]
+    const r = authorize(eqCat, req(), 'metrics_revenue_mom', { day: '2026-10-08' })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.sql).toContain(`day = '2026-10-08'::date`)
+  })
+})
+
 describe('maxTurns/上限类不变量', () => {
   it('未知参数类型也走 bad_param 而不是静默忽略', () => {
     const cat: MetricDef[] = [{

@@ -9,7 +9,7 @@
 // 原型实测 11/11：/tmp/iam-lab/mcp_authz_server.py + run_matrix.py（同序拒绝链）。
 // 本文件**不得** import 任何 pool / env / Hono —— 它是纯的，才能被三通道共用且可单测。
 
-export type MetricParamType = 'date' | 'string' | 'number'
+export type MetricParamType = 'date' | 'date_range' | 'string' | 'number'
 export interface MetricParamDef {
   /** 参数落到 SQL 里的列名（参数名 ≠ 列名是常态，如 day_from → day） */
   column: string
@@ -140,6 +140,22 @@ function literal(param: MetricParamDef, value: unknown): string | null {
 }
 
 /**
+ * date_range 参数值校验：{from,to} 闭区间。形状坏与顺序错**分开报**——
+ * from>to 是 T2「恒空集且不报错」老坑的结构化修复，必须给可解释 detail（range_invalid）。
+ */
+function rangeLiteral(
+  value: unknown,
+): { ok: true; from: string; to: string } | { ok: false; detail: 'shape' | 'order' } {
+  if (typeof value !== 'object' || value === null) return { ok: false, detail: 'shape' }
+  const { from, to } = value as { from?: unknown; to?: unknown }
+  if (typeof from !== 'string' || typeof to !== 'string' || !DATE_RE.test(from) || !DATE_RE.test(to)) {
+    return { ok: false, detail: 'shape' }
+  }
+  if (from > to) return { ok: false, detail: 'order' }   // YYYY-MM-DD 字典序即日历序
+  return { ok: true, from, to }
+}
+
+/**
  * 授权 + 出计划。拒绝链顺序**照原型**（未声明 → 未授权 → 主体钉死 → 参数），
  * 顺序是有意义的：未授权者拿到的 reason 不泄露「这个指标存在哪些参数」。
  */
@@ -166,6 +182,17 @@ export function authorize(
     const param = metric.params[name]
     if (!param) return { ok: false, reason: 'bad_param', metricId, detail: `unknown_param:${name}` }
     if (value === undefined || value === null || value === '') continue
+    if (param.type === 'date_range') {
+      const r = rangeLiteral(value)
+      if (!r.ok) {
+        return {
+          ok: false, reason: 'bad_param', metricId,
+          detail: (r.detail === 'order' ? 'range_invalid:' : 'invalid_value:') + name,
+        }
+      }
+      filters.push(` AND ${param.column} BETWEEN ${sqlQuote(r.from)}::date AND ${sqlQuote(r.to)}::date`)
+      continue
+    }
     const lit = literal(param, value)
     if (lit === null) return { ok: false, reason: 'bad_param', metricId, detail: `invalid_value:${name}` }
     filters.push(` AND ${param.column} = ${lit}`)
