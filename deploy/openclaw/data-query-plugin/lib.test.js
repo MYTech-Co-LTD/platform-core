@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { callPlatform, normalizeParams, toToolResult } from "./lib.js";
 
 test("normalizeParams：对象直传", () => {
@@ -88,6 +89,14 @@ test("200 → ok 回包原样透传（含 subject）", async () => {
   assert.equal(r.status, "ok");
   assert.equal(r.subject, "shanhaiyiguo-org");
 });
+test("200 total 合计回包原样透传（total:true 单行聚合，spec §8.1）", async () => {
+  // lib.js 对 2xx 不做形状改写 ⇒ 服务端新增的 total 字段自然带出——这里锁住该事实。
+  const f = stubFetch(200, { status: "ok", subject: "o", columns: ["total"], rows: [[1470.5]], truncated: false, total: true });
+  const r = await callPlatform({ ...BASE, fetchImpl: f });
+  assert.equal(r.total, true);
+  assert.deepEqual(r.rows, [[1470.5]]);
+  assert.equal(r.truncated, false);
+});
 
 // OpenClaw 工具结果契约（api.registerTool）：execute 必须返回 { content:[{type:"text",text}], details }。
 // 2026-10-12 真机事故：返回纯对象被判 invalid（path ["details","result","content"] expected "array"），
@@ -109,4 +118,13 @@ test("toToolResult：content 恒为数组（回归锁，防再退回纯对象）
     assert.equal(r.content[0].type, "text");
     assert.equal(typeof r.content[0].text, "string");
   }
+});
+
+// query_data 工具描述 = 模型可见的调用契约（与 agent-loop T1 同一性质：文案就是契约）。
+// index.js import openclaw SDK（peer dep，本机未装）⇒ 只能以源文本断言锁文案。
+test("query_data 工具描述含 total 合计指引（spec §8.3：区间合计先 total:true，明细与合计互斥）", () => {
+  const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  assert.match(src, /total/);
+  assert.match(src, /明细与合计互斥/);
+  assert.match(src, /args\.total/);
 });

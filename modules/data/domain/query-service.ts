@@ -43,6 +43,8 @@ export interface QueryDeps {
 export interface QueryOk {
   status: 'ok'; subject: string; metricId: string
   columns: string[]; rows: unknown[][]; truncated: boolean
+  /** 合计模式（spec §8）：恒单行、明细与合计互斥；`truncated` 恒 false（合计无截断面）。 */
+  total?: true
 }
 export interface QueryDenied {
   status: 'denied'; metricId: string
@@ -135,12 +137,16 @@ export async function runQuery(
   }
 
   await audit('ok', raceRetried ? 'lake_race_retry' : null, result.rows.length)
+  // 合计模式（spec §8）：plan.sql 已是 `SELECT sum(value) …`（无外层 LIMIT）⇒ 恒单行；
+  // 响应加 `total:true` 供调用方辨认形态，`truncated` 恒 false（合计无截断面）。
+  // 非合计路径逐字段不变。
   return {
     status: 'ok',
     subject: authz.plan.subject,
     metricId,
     columns: result.columns,
     rows: result.rows,
-    truncated: result.rows.length >= MAX_QUERY_ROWS,
+    truncated: authz.plan.total ? false : result.rows.length >= MAX_QUERY_ROWS,
+    ...(authz.plan.total ? { total: true as const } : {}),
   }
 }

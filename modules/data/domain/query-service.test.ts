@@ -232,4 +232,60 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     const out = await runQuery(many, ORG, req(), 'sales_daily', {})
     expect(out.status === 'ok' && out.truncated).toBe(true)
   })
+
+  // ── 合计形态（spec §8）──────────────────────────────────────────────────────────
+  it('total：args.total=true → 单行聚合回包（total:true 在场、truncated 恒 false），审计记 ok', async () => {
+    let totalSql = ''
+    const totalDeps: QueryDeps = {
+      pool, adoptedSources: new Set(),
+      execute: async (sql) => {
+        totalSql = sql
+        return { columns: ['total'], rows: [[1470.5]] }
+      },
+    }
+    const out = await runQuery(totalDeps, ORG, req(), 'sales_daily', { total: true })
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(totalSql).toContain('sum(value)')
+    expect(totalSql).not.toContain('LIMIT')              // 执行的就是 authz 出的合计计划（无外层帽）
+    expect(out.columns).toEqual(['total'])
+    expect(out.rows).toEqual([[1470.5]])
+    expect(out.truncated).toBe(false)                    // 合计无截断面（恒单行）
+    expect(out.total).toBe(true)
+    const a = await pool.query(
+      `select verdict, row_count from data.query_audit where org = $1 order by id desc limit 1`, [ORG])
+    expect(a.rows[0]).toMatchObject({ verdict: 'ok', row_count: 1 })
+  })
+
+  it('total：合计语义真库验证——计划 SQL 在夹具表上执行 = 明细 value 之和，恒单行', async () => {
+    // 真库（临时表 + 专用连接）上跑 authz 出的合计计划 SQL 本身——验证的不只是
+    // 「SQL 长得像」，而是合计语义（spec §8.2：数学上 = 明细 value 列之和）真成立。
+    const client = await pool.connect()
+    try {
+      await client.query('create temp table qp3_total_face (org text, bizday date, v numeric)')
+      await client.query(
+        `insert into qp3_total_face values
+           ('org_a','2026-10-08',100),('org_a','2026-10-09',47.5),('org_b','2026-10-08',999)`)
+      await upsertMetric(pool, ORG, {
+        ...METRIC, id: 'sales_total_fixture',
+        // 照真实 L1 形态（buildSelectSql：`select <聚合 expr> as value, <grain> from <rel>`）：
+        // 内层 GROUP BY 要求 value 是聚合列——裸列会被 Postgres 拒（上面实测过）。
+        selectSql: 'SELECT sum(v) AS value, org, bizday FROM qp3_total_face',
+        groupBy: 'org, bizday',
+      }, 'fixture')
+      let captured = ''
+      const rec: QueryDeps = {
+        pool, adoptedSources: new Set(),
+        execute: async (sql) => { captured = sql; return { columns: ['total'], rows: [[0]] } },
+      }
+      const out = await runQuery(rec, ORG, req(), 'sales_total_fixture', { total: true })
+      expect(out.status).toBe('ok')
+      expect(captured).not.toContain('LIMIT')
+      // 100 + 47.5 = 147.5；org_b 的 999 必须被主体钉死挡在内层 WHERE 外
+      const got = await client.query(captured)
+      expect(got.rows).toEqual([{ total: '147.5' }])     // numeric 经 node-pg 回字符串
+    } finally {
+      client.release()
+    }
+  })
 })

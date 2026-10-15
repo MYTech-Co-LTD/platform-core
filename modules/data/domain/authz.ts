@@ -79,7 +79,7 @@ export type DenyReason =
   | 'bad_param'
 
 export type AuthzResult =
-  | { ok: true; plan: { sql: string; metricId: string; subject: string } }
+  | { ok: true; plan: { sql: string; metricId: string; subject: string; total: boolean } }
   | { ok: false; reason: DenyReason; metricId: string; detail?: string }
 
 /**
@@ -199,8 +199,14 @@ export function authorize(
     }
   }
 
+  // 合计形态（spec §8.1）：`total` 是查询面**保留键**，**仅**布尔 true 被消费；
+  // 其余任何值（含字符串 "true"）不消费 → 落进下方参数循环 → `unknown_param:total`（fail-closed）。
+  // 它只是聚合形态开关：subject 钉死逻辑不受影响（下方 subject 仍只来自 requester.orgId）。
+  const wantTotal = args.total === true
+
   const filters: string[] = []
   for (const [name, value] of Object.entries(args)) {
+    if (wantTotal && name === 'total') continue   // 已消费的保留键不再进参数校验
     const param = metric.params[name]
     if (!param) return { ok: false, reason: 'bad_param', metricId, detail: `unknown_param:${name}` }
     if (value === undefined || value === null || value === '') continue
@@ -228,11 +234,18 @@ export function authorize(
 
   // 主体值只来自 requester.orgId —— 本行是本文件存在的理由
   const subject = requester.orgId
-  const sql =
+  const whereAndGroup =
     `${metric.selectSql} WHERE ${metric.subjectColumn} = ${sqlQuote(subject)}` +
     filters.join('') +
-    (metric.groupBy ? ` GROUP BY ${metric.groupBy}` : '') +
-    ` LIMIT ${MAX_QUERY_ROWS}`
+    (metric.groupBy ? ` GROUP BY ${metric.groupBy}` : '')
+  // 非合计路径（等值/区间/LIMIT/GROUP BY）与既有行为逐字节一致。
+  const sql = wantTotal
+    ? // 合计形态（spec §8.1）：内层（subject + filters + grain 分组）上再 sum——
+      // **无外层 LIMIT**：合计必须作用于全量匹配行，截断求和 = 错数。
+      // `value` 是 sync 编译器给指标 expression 的固定别名（buildSelectSql：
+      // `select <expr> as value, …`），故 sum(value) = 对该指标口径在全量匹配行上再聚合。
+      `SELECT sum(value) AS total FROM ( ${whereAndGroup} ) t`
+    : `${whereAndGroup} LIMIT ${MAX_QUERY_ROWS}`
 
-  return { ok: true, plan: { sql, metricId, subject } }
+  return { ok: true, plan: { sql, metricId, subject, total: wantTotal } }
 }

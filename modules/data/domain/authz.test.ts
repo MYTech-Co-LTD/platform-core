@@ -241,6 +241,66 @@ describe('authorize —— date_range 区间参数（spec 2026-10-15 §2.3）', 
   })
 })
 
+describe('authorize —— 合计形态（spec §8：args.total 服务端单行聚合）', () => {
+  // 夹具照 date_range 块的现成形状（CATALOG[1] + 覆写），selectSql/groupBy 照真实 L1 形态
+  // （sync-data-semantics.buildSelectSql：`select <expr> as value, <grain> from <rel>`）——
+  // `sum(value)` 依赖这一别名契约。
+  const totalCat: MetricDef[] = [{
+    ...CATALOG[1],
+    selectSql: 'SELECT org, bizday, revenue AS value FROM marts.mart_sales_daily',
+    groupBy: 'org, bizday',
+    params: { bizday: { column: 'bizday', type: 'date_range' as const } },
+  }]
+
+  it('T1 total:true → 计划 SQL 内层 sum(value) 聚合，且**不含**外层 LIMIT；plan.total 在场', () => {
+    const r = authorize(totalCat, req(), 'metrics_revenue_mom', { total: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.total).toBe(true)
+    expect(r.plan.sql).toMatch(/^SELECT sum\(value\) AS total FROM \( .*\) t$/)
+    // 合计必须作用于**全量匹配行**——截断求和 = 错数（spec §8.1），外层 LIMIT 不得在场
+    expect(r.plan.sql).not.toContain('LIMIT')
+  })
+
+  it('T2 subject 钉死不变：主体谓词仍来自身份（total 不能伪造主体）', () => {
+    const r = authorize(totalCat, req(), 'metrics_revenue_mom', { total: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.subject).toBe('org_a_lemeng')
+    expect(r.plan.sql).toContain("WHERE org = 'org_a_lemeng'")
+  })
+
+  it('T3 filters 参与内层：区间条件进子查询，合计仍无外层 LIMIT', () => {
+    const r = authorize(totalCat, req(), 'metrics_revenue_mom', {
+      total: true, bizday: { from: '2026-10-08', to: '2026-10-14' },
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.sql).toContain(`bizday BETWEEN '2026-10-08'::date AND '2026-10-14'::date`)
+    expect(r.plan.sql).not.toContain('LIMIT')
+  })
+
+  it('T4 保留键 fail-closed：total 非布尔 true 一律不消费 → unknown_param:total', () => {
+    for (const v of ['true', 1, 'yes', null, [true]]) {
+      const r = authorize(totalCat, req(), 'metrics_revenue_mom', { total: v })
+      expect(r, `total=${JSON.stringify(v)} 必须被拒`).toMatchObject({
+        ok: false, reason: 'bad_param', detail: 'unknown_param:total',
+      })
+    }
+  })
+
+  it('T5 非合计路径回归：plan.total=false、SQL 照旧带 LIMIT 且无 sum()（等值/区间一字不动）', () => {
+    const r = authorize(totalCat, req(), 'metrics_revenue_mom', {
+      bizday: { from: '2026-10-08', to: '2026-10-14' },
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.total).toBe(false)
+    expect(r.plan.sql).toContain(`LIMIT ${MAX_QUERY_ROWS}`)
+    expect(r.plan.sql).not.toContain('sum(value)')
+  })
+})
+
 describe('maxTurns/上限类不变量', () => {
   it('未知参数类型也走 bad_param 而不是静默忽略', () => {
     const cat: MetricDef[] = [{
