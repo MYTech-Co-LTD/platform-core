@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.120.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.119.0...v0.120.0) - 2026-10-15
+- 【新增】data: materialize job 命令抽成 scripts/lemeng/materialize.sh，全量执行去按需名单 ([#681](https://github.com/MYTech-Co-LTD/platform-core/pull/681), [2cca58a](https://github.com/MYTech-Co-LTD/platform-core/commit/2cca58ac6b2c0dbab0287b838801de43aaf5a025))
+
+
 ## [0.119.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.118.0...v0.119.0) - 2026-10-14
 - 【新增】data: 乐檬要货满足率构件（D15×D16 店×商品×日对照 + 截止日满足率 L1） ([#678](https://github.com/MYTech-Co-LTD/platform-core/pull/678), [8debf57](https://github.com/MYTech-Co-LTD/platform-core/commit/8debf5782b6187c1f0f7121b0fa348f77a7a146a))
 
