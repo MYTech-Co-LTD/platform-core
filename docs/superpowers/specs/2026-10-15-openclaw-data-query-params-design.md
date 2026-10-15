@@ -155,6 +155,24 @@ params = grain ∩ 白名单，白名单与类型固定：
 
 （平台侧工作：authz 合计分支 + query-service 执行 + 响应字段 + agent-loop/插件工具描述同步 + SKILL v2 + 测试。）
 
+### 8.4 修订二：total 自动伴随（2026-10-16 部署后复测：模型不走 total 开关）
+
+> SKILL v2 部署后复测同一问法：**模型没有用 `total:true`**——退回「逐日 × 分账套」10 查 ~1100 行，
+> 上下文再次爆、企微流再次长时间不闭合。教训：**SKILL 正文对 flash 级模型是弱引导**；方法论可以教，
+> 但「对的路」必须由平台自动发生。且旧 `total:true` 布尔标记与新语义冲突，本节统一。
+
+- **`total` 字段 = 合计值**（数值/numeric 字符串），不再是布尔标记：
+  - **自动伴随**：`totalable` 指标（见下）的任何查询，响应自动附 `total: <该过滤范围合计>`——模型无论如何问，答案里都有那个数；
+  - **显式 `args.total === true`** 保留：只返回合计单行（`columns:['total']`），不返回明细——「只要总数」的快捷形态；响应同样带 `total` 值字段。
+- **`totalable` 判定 = 表达式形状**：`expression` 以 `sum(` 开头 ⇒ 可加 ⇒ true；比率（毛利率/达成率）、
+  去重计数（supplier_count——跨天求和 = 供应商·天数，错）一律 false，**不给自动合计**（模型也不得跨行求和，工具文案明示）。
+- **物化**：`data.metrics` 加列 `totalable boolean NOT NULL DEFAULT false`（幂等迁移）；sync 从 expression 推导写入；
+  `MetricDef`/`MetricRow` 贯穿到 query-service。`comparableOf` 纳入 ⇒ 词表 job 首跑 diff = **更新 27**（预期）。
+- **SQL**：authz 对 totalable 指标在 plan 上附 `totalSql = SELECT sum(value) AS total FROM ( <whereAndGroup> ) t`
+  （无 LIMIT，与显式合计共用同一形状）；query-service 执行后把值放响应 `total` 字段。
+- **指引层级调整**：关键规则（「响应 total 字段直接引用，不要自己求和」「非可加指标勿跨行求和」）下沉到
+  **工具描述**（保证在模型上下文），SKILL v2 方法论保留为策略层。
+
 ## 9. 已否决候选（留档）
 
 
