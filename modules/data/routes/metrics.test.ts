@@ -144,9 +144,9 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     const ids = body.metrics.map((m: { id: string }) => m.id)
     expect(ids).toContain(L1_SALES.id)
     expect(ids, 'data:finance 的 L1 指标对只有 data:query 的人可见了').not.toContain(L1_FINANCE.id)
-    // 消费面投影：严格三字段——selectSql/subjectColumn 属实现细节，不外泄
+    // 消费面投影：三字段 + 参数面形状——selectSql/subjectColumn/column 属实现细节，不外泄
     expect(body.metrics.find((m: { id: string }) => m.id === L1_SALES.id))
-      .toEqual({ id: L1_SALES.id, title: '净销售额', description: def().description })
+      .toEqual({ id: L1_SALES.id, title: '净销售额', description: def().description, params: {} })
   })
 
   it('GET /metrics 不掺别家 L2 行（跨租户串词表是禁止的）', async () => {
@@ -552,6 +552,37 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json() as {
       metrics: { id: string }[] }
     expect(all.metrics.map((m) => m.id)).not.toContain('deep:probe')
+  })
+
+  // ── 词表参数面投影（spec 2026-10-15 §2.4）─────────────────────────────────────
+  // 模型要靠词表才知道「这条指标能填什么参数键」——响应必须带 `{<名>: {type, required}}`。
+  // `column` 是 SQL 内部面（参数名 ≠ 列名是常态），与 selectSql/subjectColumn 同口径不外泄。
+  describePg('GET /metrics —— 参数面投影（spec 2026-10-15 §2.4）', () => {
+    it('P1 params 只含 {type, required}；column 与 SQL 形状不出词表响应', async () => {
+      // 夹具：L1 行带两个参数（date_range + string）；L1 只能经物化路径落库 ⇒
+      // upsertL1Metric 直落（与 beforeAll 同源）。id 带 L1_ID_PREFIX ⇒
+      // 清理由主 afterAll 的前缀删除收口。
+      await upsertL1Metric(pool, l1Def({
+        id: `${L1_ID_PREFIX}params_face`,
+        params: {
+          bizday: { column: 'bizday', type: 'date_range' },
+          system_book: { column: 'system_book', type: 'string' },
+        },
+      }))
+      // request 写法照本文件上一个 GET /metrics 用例（data:query 身份 + 模块相对路径）
+      const res = await app(ORG, ['data:query']).request('/metrics')
+      expect(res.status).toBe(200)
+      const { metrics } = await res.json()
+      const row = metrics.find((m: { id: string }) => m.id === `${L1_ID_PREFIX}params_face`)
+      expect(row.params).toEqual({
+        bizday: { type: 'date_range', required: false },
+        system_book: { type: 'string', required: false },
+      })
+      // 口径不外泄：`column` / SQL 形状都不出词表响应
+      expect(JSON.stringify(row)).not.toContain('"column"')
+      expect(JSON.stringify(row)).not.toContain('select_sql')
+      expect(JSON.stringify(row)).not.toContain('group_by')
+    })
   })
 })
 
