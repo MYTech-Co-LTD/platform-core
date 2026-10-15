@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.120.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.120.0...v0.120.1) - 2026-10-15
+- 【修复】data: 量级对账中位数改 percentile_cont（pg_duckdb 无 median，#682） ([#684](https://github.com/MYTech-Co-LTD/platform-core/pull/684), [f933de7](https://github.com/MYTech-Co-LTD/platform-core/commit/f933de710623a50cfa08f19b3eab8de91c38678d))
+
+
 ## [0.120.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.119.0...v0.120.0) - 2026-10-15
 - 【新增】data: materialize job 命令抽成 scripts/lemeng/materialize.sh，全量执行去按需名单 ([#681](https://github.com/MYTech-Co-LTD/platform-core/pull/681), [2cca58a](https://github.com/MYTech-Co-LTD/platform-core/commit/2cca58ac6b2c0dbab0287b838801de43aaf5a025))
 
