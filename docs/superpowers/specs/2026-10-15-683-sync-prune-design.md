@@ -44,12 +44,17 @@ vs revision 应有集」，多出的即报/删。
 | 相对 `${REPO}` 路径 | 为什么 |
 |---|---|
 | `.data-plane-revision` | 同步标记本体 |
-| `.data-plane-revision.tmp.*` | 崩溃残留（glob） |
 | `deploy/.env` | 机器本地配置（manifest 注释列明） |
 | `dbt/profiles.yml` | 机器本地（同上） |
 | `dbt/.user.yml` | 机器本地（同上） |
 | `dbt/target/*` | dbt 编译产物（每次运行重写） |
 | `dbt/logs/*` | dbt 日志（每次运行重写） |
+
+> **订正（2026-10-15，写计划时发现）**：本表曾有 `.data-plane-revision.tmp.*` 一行——错了。
+> 脚本临时文件实际形态是 `..data-plane-revision.tmp.<pid>`（**双**首点：`_rev_tmp="$REPO/.$REVISION_REL.tmp.$$"`，
+> 而 `REVISION_REL='.data-plane-revision'` 自带首点），单点 glob 永匹配不上，是一行死配置。
+> 定案：allowlist 只留标记本体；两类崩溃残留（`..data-plane-revision.tmp.*`、`*.sync-tmp.*`）
+> 本来就**不该**在检出里活着 ⇒ 视作孤儿，报告/清理它们是更优行为，不是误伤。
 
 匹配用 POSIX sh `case` 前缀模式（脚本无数组依赖，与现有风格一致）。注释指回
 `deploy/data-plane-manifest.txt` 头部的「机器本地物」清单——两处都在仓里，同 PR 可改。

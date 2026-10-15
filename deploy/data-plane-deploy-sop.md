@@ -413,14 +413,16 @@ sha256-of-rest <全表 sha256>
 **③ 同步**（在**机器上**跑，POSIX sh —— 该机无 node）：
 
 ```
-sh /opt/lemeng-sync.sh <全SHA>            # 同步
-sh /opt/lemeng-sync.sh <全SHA> --check    # 只比不写
+sh /opt/lemeng-sync.sh <全SHA>             # 同步
+sh /opt/lemeng-sync.sh <全SHA> --check     # 只比不写
+sh /opt/lemeng-sync.sh <全SHA> --prune     # 同步 + 清点删除检出孤儿（**常规链路用这条**）
 ```
 
-四步：**取 lock**（按全 SHA 经 smart-proxy **公网 EIP** `113.250.177.229:4878`；控制面内网
+五步：**取 lock**（按全 SHA 经 smart-proxy **公网 EIP** `113.250.177.229:4878`；控制面内网
 `10.0.0.8:4878` 被云安全组拦、**直连不通**，实测 code=000）→ **验 lock 自校验** → **逐条取件**
 （同目录临时文件 → sha256 断言 → 补模式 → 原子 `mv -f`；跨目录 rename 不原子）→ **最后**写
-`<checkout>/.data-plane-revision`。
+`<checkout>/.data-plane-revision` → **清点/清理**（#683：枚举检出树 vs lock 落地路径集，机器本地
+物 allowlist 豁免。默认报 `EXTRA`；`--prune` 删孤儿——**仓内删除的文件由此自动从检出退场**）。
 
 **版本标记语义**：**标记在 = 这套文件是全的**。单文件 `mv` 是原子的，但**整套不是**——中途失败会停在
 半应用状态，靠「标记缺失 / 与 `--check` 不符」把它显性化，而不是静默。
@@ -429,6 +431,10 @@ sh /opt/lemeng-sync.sh <全SHA> --check    # 只比不写
 末尾 `SYNC_OK <n>/<n>` 或 `SYNC_DRIFT <n> mismatched`。失败字面量：`LOCK_FETCH_FAILED:` /
 `LOCK_SELFTEST_FAILED:` / `FETCH_FAILED: <path>` / `REVISION_WRITE_FAILED:`。取件失败**重试至多
 10 次**（E.4 ② 的跨境断流是间歇的 ⇒ 重试有意义；E.4 ① 的元数据说谎是确定性的 ⇒ 重试无用）。
+
+清点输出（#683，三态都有）：孤儿逐行 `EXTRA <绝对路径>`（报告态）；`--prune` 态删掉的打
+`PRUNED <绝对路径>`、删失败打 `PRUNE_FAILED: <路径>`（非零退出）；摘要行 `# extra N`（N =
+清点/清理**后**残余孤儿数）打在 `SYNC_OK`/`SYNC_DRIFT` 之前。`--check` 的退出码仍只看 DRIFT。
 
 **全 SHA 从命令输出逐字复制，绝不手工补**（分支名会漂移，投递物必须与 commit 逐字节对应）。
 
@@ -500,6 +506,9 @@ sh /opt/lemeng-sync.sh <全SHA> --check    # 只比不写
 
 ⇒ 结论：**它是这套机制里唯一需要手工的环节**，所以它的逻辑改动要**尽量少**——能靠清单/lock 表达
 的差异，都不要写进脚本。
+
+（#683 注：此原则约束的是**每投递差异**——会变的内容归清单/lock，不写进脚本；清点/`--prune`
+与其 allowlist 是**架构事实**（机器本地物清单，见 manifest 头注），不在约束范围。）
 
 ### E.6 为什么不是 `releases/<全SHA>/` + `current` 软链（本次裁决留档）
 
