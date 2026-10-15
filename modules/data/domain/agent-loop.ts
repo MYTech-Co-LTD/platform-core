@@ -58,7 +58,7 @@ export const TOOLS: ToolSpec[] = [
       '按指标 id 查询数据。参数键**只能**取 list_metrics 返回的该指标 params 键名（未列出的键会被拒绝）。',
       'type=date_range 的参数传 {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"} 闭区间（查某天则 from=to）；',
       'type=string/number 的参数只做**等值**匹配，且同列不要同时传（会拼出恒空条件且不报错）。',
-      '未声明 params 的指标只能空参查全量（可能返回大量行）——能用参数就用参数。',
+      '区间合计传 args.total:true——服务端求和恒返回单行（明细与合计互斥）；未声明 params 的指标只能空参查全量（可能返回大量行）——能用参数就用参数。',
     ].join(''),
     inputSchema: {
       type: 'object',

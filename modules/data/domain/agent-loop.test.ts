@@ -235,5 +235,8 @@ describe('TOOLS —— query_metric 参数契约（spec 2026-10-15 §2.5）', ()
     expect(d).toContain('list_metrics 返回的该指标 params 键名')
     expect(d).toContain('{"from"')
     expect(d).toContain('空参查全量')
+    // 合计形态（spec §8.1）：区间合计先传 total:true——服务端求和恒返回单行，明细与合计互斥
+    expect(d).toContain('total:true')
+    expect(d).toContain('明细与合计互斥')
   })
 })
