@@ -632,33 +632,42 @@ curl -s -H "Authorization: Bearer $DUCKLE_TOKEN" http://127.0.0.1:<port>/api/sch
   —— 由 `dbt_project.yml` 的 `vars.zos_*` 经 `env_var()` 取。**缺了会拼成 `s3:///…`**；
   项目里**刻意给空串默认** ⇒ **运行期响亮失败**（`IO Error: URL needs to contain a bucket name`），
   **不会静默读到别的东西**——这是设计对的地方，别把空串默认「修」成别的值。
-- 凭据**不落 job 配置、不落 argv**：job 命令在运行时从运行中的容器 `docker inspect` 取进变量，
-  再用 `docker run -e VAR`（**透传形态**）传给容器 ⇒ 值不进 `ps`。
+- 凭据**不落 job 配置、不落 argv**：`materialize.sh` 在运行时从运行中的容器 `docker inspect` 取进变量，
+  再用 `docker run -e VAR`（**透传形态**，只带键名）传给容器 ⇒ 值不进 `ps`。
+  **键集由脚本的 `mat_env_args()` 唯一定义**，CI（`materialize.test.sh`）钉住「8 键、只透传键名」
+  ——改键 = 改脚本走 PR。守卫比旧 job 命令多 UN/DB/ZR/ZE 四项（缺了要等 dbt 连库才炸，晚失败难定位）。
+  **AK/SK 不注入**：模型不建 S3 secret，pg_duckdb 的持久 secret 直读湖——多注入反而可能覆盖持久 secret。
 
-**`--select` 是硬编码的**（「被消费的组合」，**按需物化、不全量**）：**名单的事实源 = job 命令本身**
-（openship MCP `get_jobs_by_key` 取 `actionConfig.command`；本节手抄名单已经漂移过——
-下行旧快照 4 节点停在 2026-09-26，2026-10-15 实际已是 26 节点：
-`stg_*`×14 + `fct_*`×9 + 种子×3，全名单见 job 命令）。⚠️ **将来加模型必须同步 patch job 命令**——
-**忘了不会报错**：dbt 解析头仍计入新模型（`Found N models` 变大），但**执行集不变** ⇒
-**run 全绿也可能是假绿**。**#677 实证（2026-10-15）**：`fct_request_fulfillment` 漏加名单，
-run 报 PASS=178 ERROR=0，执行集却与加模型前逐项相同（22 models / 153 tests）；
-patch 名单重跑后 PASS=182（3 seeds / 23 models / 156 tests，fct 597 行、3 条新测试全 PASS）。
-**判别法**：解析行 vs 执行行一致性（`Found 23 models, 157 data tests` vs
-`Finished running 3 seeds, 23 table models, 156 data tests`），且新测试逐条在执行序列里点名。
-（命令抽成 `scripts/lemeng/materialize.sh` 进仓的欠账见 issue **#679**。）
-（原文在此处写「旧湖模型 `stg_lemeng_retail_detail` 不在内，
-它读的前缀不存在」——**后半句是错的、已订正**：那个前缀在 `lemeng-datasource` 桶里、且**一直有生产方在写**
-（2026-10-06 实测：`data-analysis` 每 5 min 一轮），并不是「不存在」，只是**本仓没有读它的模型**）。
-该模型同批已 **仓内退役**（`git rm`，2026-10-06）⇒ 投递清单里自然不再有它；湖上前缀**未下线**，
-状态与出处见正典 §2 的旧前缀行。）
+**执行集 = 全量 `dbt build`（#679 定案，2026-10-15 用户裁决）**：命令真身已抽成
+`scripts/lemeng/materialize.sh` 进仓 + 进投递清单（落地 `/opt/lemeng-materialize.sh`，
+job 只调 `sh /opt/lemeng-materialize.sh`），dbt 命令**不带 `--select`**。
+依据：仓内 23 模型（`stg_*`×14 + `fct_*`×9）+ 种子×3 = **26 节点，与去名单前的白名单逐一对上**
+⇒ 全量执行与旧名单行为逐节点等价，但**新模型自动纳入**——「漏加名单 ⇒ 解析数涨、执行集不变、
+run 照绿」的假绿在结构上不可能再发生。（#677 案例 2026-10-15 留档防复发：
+`fct_request_fulfillment` 漏加名单，run 报 PASS=178 ERROR=0、执行集与加模型前逐项相同
+（22 models / 153 tests）；patch 名单后 PASS=182 = 3 seeds / 23 models / 156 tests。）
 
-**怎么自证**（跑完别只看 job 绿）：在 `pg_duckdb` 里查物化表的行数与**最新日期**，
-跟湖里的**逐域对**——2026-09-26 实测：零售 73,622 行 / max `09-25`（湖同）、门店维 399、
-商品维 41,870 / 快照 `09-26`，**逐一对上**才算过。
+**全量态的附产收益**：孤儿 singular 测试 `audit_lemeng__retail__hour_row_count`（无 `ref()`，
+旧名单态**被解析但从未执行**——这就是解析 157 / 执行 156 之差的唯一来源）全量态起**每天真跑**。
+它红是**真断崖信号**（同小时行数低于 14 天中位数 ×0.5 的量级早警；2026-10-05 真机标定 0 误报；
+03:27 UTC 跑 = 昨日最后小时后 ~8.5h，边界风险低），**不是 job 故障**。
+将来若真出现「不该日物化」的模型：用该模型的 config 或 `--exclude` 表达，**不要恢复 job 级名单**
+——改命令 = 改 `scripts/lemeng/materialize.sh` 走 PR，`materialize.test.sh` 会拦 `--select` 回归。
+（旧注「`stg_lemeng_retail_detail` 不在名单」随名单退役一并作废：该模型已仓内退役（2026-10-06），
+湖上前缀未下线，状态见正典 §2 旧前缀行。）
 
-> **遗留（已知，不阻塞）**：job 的命令目前只活在 openship 里（无版本、无 diff 可评审）。
-> 按本仓惯例应抽成 `scripts/lemeng/materialize.sh` 进仓 + 进投递清单，job 只调 `sh /opt/lemeng-materialize.sh`。
-> 跟踪 issue **#679**。
+**怎么自证**（跑完别只看 job 绿）：
+- **全量态不变式**：解析行 == 执行行（`Found 23 models, 157 data tests` vs
+  `Finished running 3 seeds, 23 table models, 156 data tests`——157 vs 156 的差 = 上面那条孤儿测试，
+  属预期）。
+- 在 `pg_duckdb` 里查物化表的行数与**最新日期**，跟湖里的**逐域对**——2026-09-26 实测：
+  零售 73,622 行 / max `09-25`（湖同）、门店维 399、商品维 41,870 / 快照 `09-26`，**逐一对上**才算过。
+- **物化行数/列形状与本次改动对不上 = 检出台没同步**（§E 的 sync 没跑）——2026-10-12 实测坑。
+
+**投递与首验程序**（#679 落地走了一遍）：merge → §E sync（清单含 materialize.sh，逐件 sha256 断言）
+→ **手动先跑一次** `sh /opt/lemeng-materialize.sh`（openship exec），验全量绿 + 不变式 + 行数对上
+→ 才把 job `custom:yNWqnvY65iWz1unf` 的命令 patch 成 `sh /opt/lemeng-materialize.sh`
+→ 触发 job 验 PASS=TOTAL。此后**换命令 = 改仓走 PR**，openship 侧不再持有任何逻辑。
 
 ⚠️ **2026-09-28 订正 —— 这个 job 只做 dbt 模型物化；L1 语义词表是另一件事。**
 `scripts/sync-data-semantics.mjs`（`dbt/semantics/l1_metrics.yml` → PG 表 `data.metrics`）是 L1 词表的**唯一**通道。
@@ -680,7 +689,7 @@ docker exec openship-platform-core-shanhai-server pnpm exec tsx scripts/sync-dat
 ### F.6b L1 词表物化 job（2026-10-03 注册，销 #297 的「最大缺口」）
 
 **job**：`L1 词表物化（sync-data-semantics，#297）`（`custom:tuQ06mlxBe_2TlTo`），cron **`33 4 * * *` UTC**
-（排在 `20 3` 的 dbt 物化之后、避开整点与其他 job），`retry 2×/300s`、`timeoutMs 5min`，**仅 shanhai 机**（`8281d598`——
+（排在 `27 3` 的 dbt 物化之后、避开整点与其他 job），`retry 2×/300s`、`timeoutMs 5min`，**仅 shanhai 机**（`8281d598`——
 命令里钉了 shanhai 的容器名，**不许**扩到别的机器，否则会打到错误实例的库）。
 
 **命令形态**（与 §F.6 的 dbt job 同款「容器内直跑」）：

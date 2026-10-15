@@ -235,7 +235,8 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
    「裸 `dbt run` 全绿」本身**仍未实测**。验证过的形态仍是带 `--select`：真机
    `dbt run --select stg_lemeng_retail_order_line fct_retail_sale` = `PASS=2`，`dbt test`（全量 14 条）
    = `PASS=14`（2026-09-24 数据面，证据见 `.superpowers/…/task-9-report.md` §5）。
-   ⇒ 下次真机跑 dbt 时**顺手验一次裸跑**，绿了再把本条收成「已验」。
+   ⇒ 下次真机跑 dbt 时**顺手验一次裸跑**，绿了再把本条收成「已验」。#679 已把这次验证排进
+   投递程序：`scripts/lemeng/materialize.sh` 真机首跑 = merge 后手动先跑一次验全量绿，才 patch job。
 7. **两张维度 staging 与两条维度唯一性断言从未执行过**：`stg_lemeng_branch` / `stg_lemeng_item` 与
    `dbt/tests/assert_stg_lemeng_branch_key_unique.sql` / `assert_stg_lemeng_item_key_unique.sql`
    都是 S2-a 新加的，**没在真库上跑过**（本机无 dbt / pg_duckdb），当前只有「契约钉死 + 静态门禁绿」
@@ -452,7 +453,7 @@ cast 错了、源列漂移了，下一次物化就会红。
 
 | job | 建议 cron（**非整点**，避开业务高峰与其他 job 撞车） | 命令要点 |
 |---|---|---|
-| 物化（带 tests） | `17 2 * * *` | `dbt run --select <按需> && dbt test --select <同一批>`——**test 必须跟在同一 job 里**，否则「跑过 tests」不成立 |
+| 物化（带 tests） | `17 2 * * *` | `dbt build`——**全量一把跑**（seed+model+test 按 DAG 序；#679 定案去名单，新模型自动纳入）。命令真身 `scripts/lemeng/materialize.sh`；**别回到 run+test 分条**，否则「跑过 tests」不成立 |
 | L1 对账（`--check`） | `43 2 * * *` | `tsx scripts/sync-data-semantics.mjs --check`——**漂移 ⇒ exit 1**（规则 ⑨ 守的契约）；⚠️ **先核这一条是 dry-run**：跑前后查 `data.metrics` 行数，**必须不变** |
 | 租户对账 | `7 3 * * *` | `tsx scripts/reconcile-data-tenants.mjs`（§10 那条双向差集；**撞名必报、exit 1**） |
 | 血缘产物（可选） | `23 4 * * 1`（每周） | `dbt docs generate`（§11.2；若已挂在物化 job 上，**本行删掉**） |
@@ -461,8 +462,8 @@ cast 错了、源列漂移了，下一次物化就会红。
 
 | 行 | 现场 |
 |---|---|
-| 物化（带 tests） | **已注册**：`lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`），实际 cron **`20 3 * * *` UTC**（**不是**本表的 `17 2`），`retry 2×/300s`、`timeoutMs 30min`、仅 `failed` 告警；命令形态见 `deploy/data-plane-deploy-sop.md` §F.6 |
-| **L1 物化**（`sync-data-semantics.mjs` **不带 flag**） | ✅ **已注册（2026-10-03，销 #297 的最大缺口）**：`L1 词表物化`（`custom:tuQ06mlxBe_2TlTo`），cron **`33 4 * * *` UTC**（排在 `20 3` 的 dbt 物化之后、避开整点），`retry 2×/300s`、`timeoutMs 5min`，仅 shanhai 机；命令形态与首跑验证见 `deploy/data-plane-deploy-sop.md` §F.6b。⚠️ **它物化的是平台镜像里那份 `dbt/` 快照**（#300 的分叉仍在：镜像更新前，新声明进不了词表——这是已知边界，不是本 job 的缺陷） |
+| 物化（带 tests） | **已注册**：`lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`），实际 cron **`27 3 * * *` UTC**（**不是**本表的 `17 2`；2026-10-06 由 `20 3` 错峰，#452 E1），`retry 2×/300s`、`timeoutMs 30min`、仅 `failed` 告警；命令真身 `scripts/lemeng/materialize.sh`（#679 进仓，job 只调 `sh /opt/lemeng-materialize.sh`），形态与投递程序见 `deploy/data-plane-deploy-sop.md` §F.6 |
+| **L1 物化**（`sync-data-semantics.mjs` **不带 flag**） | ✅ **已注册（2026-10-03，销 #297 的最大缺口）**：`L1 词表物化`（`custom:tuQ06mlxBe_2TlTo`），cron **`33 4 * * *` UTC**（排在 `27 3` 的 dbt 物化之后、避开整点），`retry 2×/300s`、`timeoutMs 5min`，仅 shanhai 机；命令形态与首跑验证见 `deploy/data-plane-deploy-sop.md` §F.6b。⚠️ **它物化的是平台镜像里那份 `dbt/` 快照**（#300 的分叉仍在：镜像更新前，新声明进不了词表——这是已知边界，不是本 job 的缺陷） |
 | L1 对账（`--check`） | ❌ **暂不注册（2026-10-03 拍板）**：#300 分叉解决前它近乎恒绿——库内行与镜像快照同源（都出自同一个 sync），对账只能抓「手改库」抓不到「声明取错副本」⇒ 注册一个恒绿探针 = 假保险。#300 落地（两份 `dbt/` 有比对机制）后再回来注册 |
 | 租户对账 | ❌ 未注册 |
 | 血缘产物 | ❌ 未注册 |
