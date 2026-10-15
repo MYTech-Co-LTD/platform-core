@@ -9,7 +9,7 @@ import { applyMigrations } from '../test-util'
 import { upsertMetric } from './metric-store'
 import type { MetricDef, Requester } from './authz'
 import type { ChatMessage, ChatModel, ChatTurn, ToolSpec } from './llm'
-import { MAX_AGENT_TURNS, runAgentLoop } from './agent-loop'
+import { MAX_AGENT_TURNS, runAgentLoop, TOOLS } from './agent-loop'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -215,5 +215,17 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
     expect(spec.description).toContain('同列')
     // 主体不在客户端可指定面：inputSchema 的键里没有 org/subject
     expect(JSON.stringify(spec.inputSchema)).not.toMatch(/"org"|subject/)
+  })
+})
+
+// 纯断言（无 DATABASE_URL）：锁 `query_metric` 工具描述的参数契约文案本身。
+describe('TOOLS —— query_metric 参数契约（spec 2026-10-15 §2.5）', () => {
+  it('T1 描述锁定：参数键只能取 list_metrics 返回值；date_range 传 {from,to}；未声明参数只能空参全量', () => {
+    const q = TOOLS.find((t) => t.name === 'query_metric')
+    expect(q).toBeDefined()
+    const d = q!.description
+    expect(d).toContain('list_metrics 返回的该指标 params 键名')
+    expect(d).toContain('{"from"')
+    expect(d).toContain('空参查全量')
   })
 })

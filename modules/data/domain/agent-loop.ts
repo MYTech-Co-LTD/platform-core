@@ -43,7 +43,7 @@ const SYSTEM_PROMPT = [
  * 描述里的等值语义是 T2 记录在案的取舍**原样告知**（硬口径②）：参数只支持等值比较，
  * 同列两个等值参数同传会拼出恒空集且不报错——必须写清，别让模型自己组合出恒空条件。
  */
-const TOOLS: ToolSpec[] = [
+export const TOOLS: ToolSpec[] = [
   {
     name: 'list_metrics',
     description: '列出当前用户有权访问的指标（id / 标题 / 说明）。问数前若不确定指标 id，先调它。',
@@ -52,10 +52,10 @@ const TOOLS: ToolSpec[] = [
   {
     name: 'query_metric',
     description: [
-      '按指标 id 查询数据。参数只能来自该指标声明的维度。',
-      '参数只做**等值**匹配（不支持区间、大小于、模糊）：需要区间就得让用户改问某一天。',
-      '**同列的参数不要同时传**（如 day_from 与 day_to 都对应 day 列时）：',
-      '同时传会拼出恒为空的条件——返回空结果且不报错，你会误以为当天没有数据。',
+      '按指标 id 查询数据。参数键**只能**取 list_metrics 返回的该指标 params 键名（未列出的键会被拒绝）。',
+      'type=date_range 的参数传 {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"} 闭区间（查某天则 from=to）；',
+      'type=string/number 的参数只做**等值**匹配，且同列不要同时传（会拼出恒空条件且不报错）。',
+      '未声明 params 的指标只能空参查全量（可能返回大量行）——能用参数就用参数。',
     ].join(''),
     inputSchema: {
       type: 'object',
