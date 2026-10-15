@@ -7,12 +7,14 @@
 #   战区跨账套「同名合并」缺名称（接口只回 region_id、两账套 id 空间不相交、region 管理接口
 #   403）——需要跨品牌战区视图时再补一张 27 行 id→名称对照，不阻塞账套内指标。
 #
-# 【当前两份 CSV 都只有 header（0 行）】——这是**有意的**：没有客户数据就不造数据（无案例不立标准）。
+# 【当前三份 CSV 的行数】x01_branch_calendar / x08_thresholds 只有 header（0 行，**有意的**：
+#   没有客户数据就不造数据，无案例不立标准）；x01_region_names 已有 27 行真实对照。
 #   dbt seed 对 header-only CSV 建 0 行关系；真机首跑若对空 CSV 报错（版本行为差异），回这里改成
 #   放占位行并在 description 记录，不许静默删 seed。
 #
-# 【生效期语义】region 映射按 effective_from/effective_to 匹配业务日（客户文档 D12 边界：
-#   「历史战区要带生效日期，不能套用当前档案」）——匹配逻辑在消费侧（fct/查询），本 seed 只存事实。
+# 【生效期语义已随 x01_branch_region 退役而作废】原「region 映射按 effective_from/effective_to
+#   匹配业务日」只对已删的那颗 seed 有意义；客户文档 D12 的「历史战区带生效日期」边界改由
+#   dim_branch 每日快照 + fct 回落语义承接（2026-10-13 裁决）。
 version: 2
 
 seeds:
