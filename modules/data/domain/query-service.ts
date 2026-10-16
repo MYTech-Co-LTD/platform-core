@@ -17,6 +17,22 @@ const LAKE_RACE_RE = /ETag on reading file/
  * 物化侧只写 status='ok' 行（materialize.sh，spec §10.1），这里也只认 ok。
  */
 const DATA_AS_OF_SQL = "select max(materialized_at) as data_as_of from data.load_log where status='ok'"
+/**
+ * data_as_of 呈现（spec §10.6）：不回裸 Date（JSON 序列化成 UTC ISO 串，模型/人都要自己换算），
+ * 服务端格式化成**北京时间**确定性字符串 `YYYY-MM-DD HH:mm:ss +08:00`。Intl（Node 22+ full-ICU）
+ * 按 IANA Asia/Shanghai 取钟点；en-CA 恰好给 YYYY-MM-DD 日期序；时:分:秒 hour12:false（午夜=00）。
+ * +08:00 后缀硬编码：Asia/Shanghai 恒定正八区（无夏令时），偏移不会漂。
+ */
+const DATA_AS_OF_DATE_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+})
+const DATA_AS_OF_TIME_FMT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+})
+/** timestamptz（node-pg 回 Date）→ `YYYY-MM-DD HH:mm:ss +08:00`（spec §10.6 呈现定案）。 */
+function formatDataAsOf(v: Date): string {
+  return `${DATA_AS_OF_DATE_FMT.format(v)} ${DATA_AS_OF_TIME_FMT.format(v)} +08:00`
+}
 /** 退避：写入是原子 PUT，撞上时新文件多半已就绪，~1s 后重试恰一次足够（spec §3.1）。 */
 const LAKE_RACE_RETRY_DELAY_MS = 1_000
 
@@ -58,8 +74,9 @@ export interface QueryOk {
    */
   total?: string | number | null
   /**
-   * 新鲜度面（spec §10.2）：仓库 load_log 最新一次成功物化的 materialized_at（timestamptz，
-   * 经 node-pg 回 Date、JSON 序列化在出口面）。load_log 缺席/空 ⇒ **字段缺席**——「新鲜度
+   * 新鲜度面（spec §10.2）：仓库 load_log 最新一次成功物化的 materialized_at。
+   * 呈现为**北京时间确定性字符串** `YYYY-MM-DD HH:mm:ss +08:00`（spec §10.6：服务端
+   * Intl 格式化，不教模型换算）。load_log 缺席/空 ⇒ **字段缺席**——「新鲜度
    * 未知 ≠ 捏造」，消费方（汇报纪律，spec §10.4）必须把缺席如实转述为「数据截止未知」。
    */
   data_as_of?: unknown
@@ -180,7 +197,9 @@ export async function runQuery(
   try {
     const fresh = await runWarehouseSql(warehousePool(), DATA_AS_OF_SQL)
     const v = fresh.rows[0]?.[0]
-    if (v !== null && v !== undefined) dataAsOf = v
+    // timestamptz 经 node-pg 回 Date——在此处换成北京时间字符串（spec §10.6）；
+    // 非预期形状（不该发生）宁可缺席也不把坏值递出去。
+    if (v instanceof Date) dataAsOf = formatDataAsOf(v)
   } catch {
     // load_log 缺席 / 仓库未配 ⇒ data_as_of 缺席（新鲜度未知，主查询结果照常交付）
   }

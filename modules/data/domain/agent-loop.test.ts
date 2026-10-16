@@ -257,6 +257,9 @@ describe('TOOLS —— query_metric 参数契约（spec 2026-10-15 §2.5 + §8.4
     expect(d).toContain('数据截止')
     // 无该字段 = 新鲜度未知，如实说明（不许编）
     expect(d).toContain('新鲜度未知')
+    // data_as_of 已是北京时间（UTC+8，spec §10.6）——模型直接引用，不要再自行换算
+    expect(d).toContain('北京时间')
+    expect(d).toContain('UTC+8')
     // rows 首行（bizday DESC）即最新分区
     expect(d).toContain('最新')
     // 当日数据为部分天，须标注

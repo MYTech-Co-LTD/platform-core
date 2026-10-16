@@ -143,6 +143,9 @@ test("query_data 工具描述含新鲜度汇报纪律（spec §10.4）", () => {
   assert.match(src, /数据截止/);
   assert.match(src, /新鲜度未知/);
   assert.match(src, /部分天/);
+  // data_as_of 已是北京时间（UTC+8，spec §10.6）——模型直接引用，不要再自行换算
+  assert.match(src, /北京时间/);
+  assert.match(src, /UTC\+8/);
 });
 
 // SKILL 正文句级微调（不重写）：方法论 v2 的行数预算/total 规则原样，仅补新鲜度汇报纪律一条。
@@ -151,6 +154,9 @@ test("data-query SKILL.md 含新鲜度汇报纪律且既有判据句原样（spe
   assert.match(skill, /data_as_of/);
   assert.match(skill, /新鲜度未知/);
   assert.match(skill, /部分天/);
+  // data_as_of 已是北京时间（UTC+8，spec §10.6）
+  assert.match(skill, /北京时间/);
+  assert.match(skill, /UTC\+8/);
   // 既有判据句不许丢（句级微调，不是重写）
   assert.match(skill, /truncated:true/);
   assert.match(skill, /BAD_PARAM/);
