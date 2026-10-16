@@ -54,6 +54,10 @@ function ctx(c: any): Ctx {
 /** AI 起草的描述上限（与 demo 的便签上限同一纪律：有界写入）。 */
 const MAX_DESCRIPTION_LEN = 2000
 
+/** 导出面的分页上限（服务端定，调用方不能越过——防一次拉全库）。 */
+const EXPORT_DEFAULT_LIMIT = 500
+const EXPORT_MAX_LIMIT = 2000
+
 export function createFormsRouter({ pool, chatModel = null }: { pool: Pool; chatModel?: ChatModel | null }) {
   const r = new Hono<{ Variables: { identity: Identity } }>()
 
@@ -209,6 +213,29 @@ export function createFormsRouter({ pool, chatModel = null }: { pool: Pool; chat
       // 回执带钉住版本的契约：历史按当时版本渲染（§14.1）；org 在载荷外由会话钉死
       const contract = await store.bodyAt(pool, identity.orgId, sub.assetId, sub.version)
       return c.json({ submission: sub, contract })
+    }),
+  )
+
+  // ── 导出面（出湖管线的「源」，M1.4 / #729） ──
+  // 按键集游标拉提交：`after_id` 起步、`limit` 有服务端上限。**org 由身份取**（PAT 跨租户已被宿主拒）。
+  r.get('/export/submissions', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      const rawAfter = c.req.query('after_id') ?? '0'
+      if (!/^\d+$/.test(rawAfter)) return fail(c, 400, 'BAD_AFTER_ID', 'after_id 必须是非负整数')
+      const rawLimit = c.req.query('limit')
+      const limit = rawLimit === undefined ? EXPORT_DEFAULT_LIMIT : Number(rawLimit)
+      if (!Number.isInteger(limit) || limit < 1 || limit > EXPORT_MAX_LIMIT) {
+        return fail(c, 400, 'BAD_LIMIT', `limit 必须是 1..${EXPORT_MAX_LIMIT} 的整数`)
+      }
+      const rows = await store.exportSubmissions(pool, identity.orgId, Number(rawAfter), limit)
+      const last = rows.at(-1)
+      return c.json({
+        rows,
+        // 游标推进：有行就推到最后一行；无行保持原值（调用方据此判「追平了」）
+        next_after_id: last === undefined ? rawAfter : last.submission_id,
+        has_more: rows.length === limit,
+      })
     }),
   )
 

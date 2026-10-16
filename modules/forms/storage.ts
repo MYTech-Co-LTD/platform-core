@@ -193,6 +193,42 @@ export async function listSubmissions(pool: Pool, org: string, assetId: string, 
   return rows.map((r) => ({ id: String(r.id), assetId: r.asset_id, version: r.version, payload: r.payload, submittedBy: r.submitted_by, submittedAt: r.submitted_at }))
 }
 
+// ── 导出面（出湖管线的「源」，M1.4 / #729） ──
+
+export interface ExportRow {
+  submission_id: string
+  org: string
+  form_def_id: string
+  submitted_at: Date
+  payload: unknown
+}
+
+/**
+ * 按键集游标导出提交（`submission_id > afterId`，按 id 升序，最多 limit 行）。
+ * - **水位用 id 不用 submitted_at**：id 单调无歧义，同秒并发提交不会撞出漏窗（人已裁定 #729）
+ * - **org 由调用方从身份取**（PAT 跨租户已被宿主拒）⇒ 本函数只服务单租户
+ * - 用 id 游标而非 offset：offset 在持续写入下会漂（漏行/重复行）
+ */
+export async function exportSubmissions(
+  pool: Pool, org: string, afterId: number, limit: number,
+): Promise<ExportRow[]> {
+  const { rows } = await pool.query(
+    `select id, org, asset_id, submitted_at, payload
+       from forms.submission
+      where org = $1 and id > $2
+      order by id asc
+      limit $3`,
+    [org, afterId, limit],
+  )
+  return rows.map((r) => ({
+    submission_id: String(r.id),
+    org: r.org,
+    form_def_id: r.asset_id,
+    submitted_at: r.submitted_at,
+    payload: r.payload,
+  }))
+}
+
 // ── 字典（同名不同表：tenant → dict_item / global → dict_global_item，P4 分档） ──
 
 export type DictScope = 'tenant' | 'global'

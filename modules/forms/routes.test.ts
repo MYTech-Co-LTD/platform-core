@@ -214,6 +214,61 @@ describePg('forms API（routes）', () => {
     expect(((await res.json()) as { error: { code: number } }).error.code).toBe(-32601)
   })
 
+  it('导出面（M1.4 #729）：键集游标不重不漏；org 隔离；参数越界 400', async () => {
+    const expAsset = `exp-${SUF}`
+    await reqA(appA, 'POST', '/defs', { assetId: expAsset, body: { schema } })
+    await reqA(await appAs(publishA), 'POST', `/defs/${expAsset}/versions/1/publish`)
+    // 造 3 笔提交
+    for (const n of ['甲', '乙', '丙']) {
+      const r = await reqA(await appAs(fillA), 'POST', `/defs/${expAsset}/submissions`, { payload: { name: n } })
+      expect(r.status).toBe(201)
+    }
+    const all = await (await reqA(await appAs(viewA), 'GET', `/defs/${expAsset}/submissions`)).json() as { submissions: { id: string; version: number; assetId: string }[] }
+    expect(all.submissions.length).toBeGreaterThanOrEqual(3)
+
+    // 全量拉（after_id=0）→ 含本租户全部资产的行；形状齐
+    const page1 = await (await reqA(await appAs(viewA), 'GET', '/export/submissions?after_id=0&limit=1000')).json() as
+      { rows: { submission_id: string; org: string; form_def_id: string; submitted_at: string; payload: { name: string } }[]; next_after_id: string; has_more: boolean }
+    expect(page1.rows.length).toBeGreaterThanOrEqual(3)
+    expect(page1.rows.every((r) => r.org === ORG_A)).toBe(true) // 只本租户
+    const mine = page1.rows.filter((r) => r.form_def_id === expAsset)
+    expect(mine.map((r) => r.payload.name).sort()).toEqual(['丙', '乙', '甲'].sort())
+    // 键集序：id 升序
+    const ids = page1.rows.map((r) => Number(r.submission_id))
+    expect(ids).toEqual([...ids].sort((a, b) => a - b))
+
+    // 游标：逐条翻页 ⇒ 并集 == 全量、且无重复（不重不漏）
+    const seen: string[] = []
+    let cursor = '0'
+    for (let i = 0; i < 20; i++) {
+      const p = await (await reqA(await appAs(viewA), 'GET', `/export/submissions?after_id=${cursor}&limit=1`)).json() as
+        { rows: { submission_id: string }[]; next_after_id: string; has_more: boolean }
+      if (p.rows.length === 0) break
+      seen.push(p.rows[0].submission_id)
+      cursor = p.next_after_id
+      if (!p.has_more) break
+    }
+    expect(new Set(seen).size).toBe(seen.length) // 无重复
+    expect(seen).toEqual(page1.rows.map((r) => r.submission_id)) // 与全量逐条相同（无漏）
+
+    // 追平后：无行、游标不动
+    const drained = await (await reqA(await appAs(viewA), 'GET', `/export/submissions?after_id=${cursor}&limit=10`)).json() as
+      { rows: unknown[]; next_after_id: string; has_more: boolean }
+    expect(drained.rows).toEqual([])
+    expect(drained.next_after_id).toBe(cursor)
+    expect(drained.has_more).toBe(false)
+
+    // org 隔离：B 租户拉不到 A 的行
+    const bRows = await (await reqA(await appAs(makeIdentity({ orgId: ORG_B, scopes: ['forms:view'] })), 'GET', '/export/submissions?after_id=0&limit=1000')).json() as { rows: unknown[] }
+    expect(bRows.rows).toEqual([])
+
+    // 参数越界
+    for (const q of ['after_id=x', 'after_id=-1', 'limit=0', `limit=${2001}`, 'limit=abc']) {
+      const r = await reqA(await appAs(viewA), 'GET', `/export/submissions?${q}`)
+      expect(r.status, q).toBe(400)
+    }
+  })
+
   it('readOnly 服务端复验（#722）：契约声明 readOnly 的字段→400 READONLY_FIELD；不带→放行', async () => {
     const roAsset = `ro-${SUF}`
     const roSchema = {
