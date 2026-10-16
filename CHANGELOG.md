@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.133.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.133.1...v0.133.2) - 2026-10-16
+- 【修复】deploy: 自证层挪进装依赖 RUN——不再白下最新版 pnpm（58MB 死重） ([#736](https://github.com/MYTech-Co-LTD/platform-core/pull/736), [edba34e](https://github.com/MYTech-Co-LTD/platform-core/commit/edba34e97dde74f2e792b0d338108cad28758e58))
+
+
 ## [0.133.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.133.0...v0.133.1) - 2026-10-16
 - 【修复】deploy: 构建期镜像源真正落到 pnpm——补 .npmrc + 构建内自证断言 ([#735](https://github.com/MYTech-Co-LTD/platform-core/pull/735), [e7ac336](https://github.com/MYTech-Co-LTD/platform-core/commit/e7ac336edc9153b23f2f23facb67ab9ed06926d8))
 
