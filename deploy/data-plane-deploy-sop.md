@@ -377,8 +377,8 @@ dbt-postgres 1.9 线只到 `1.9.1`。
    ——但 P2 那张表的 `docker pull` 清单里**只有上游镜像**（pgduckdb/metabase/postgres/python:3.12-slim），
    `platform-core-*-:local` 不在其中。
 
-⇒ **`platform-core-*-:local` 是「别处建好、再送到机器」的**（镜像名无 registry 前缀 ⇒ 只能
-`docker save`/`load` 或本机构建）。
+⇒ **`platform-core-*-:local` 不是部署通路产出的**（镜像名无 registry 前缀 ⇒ 只有两条可能：
+本机手工构建，或 `docker save`/`load` 送入；**下节取证把答案定为前者**）。
 
 **那 Dockerfile 为什么仍该在清单里？**——改归**判据 ②/③「被投递文件引用的路径」**：
 **`deploy/data-compose.yml` 本身在清单里、会被投递**，而它拿 `deploy/dbt/Dockerfile`（与 duckle 那份）
@@ -393,9 +393,26 @@ dbt-postgres 1.9 线只到 `1.9.1`。
 | **A**（`deploy/docker-compose.yml`，山海平台） | **会构建**（日志：`Building compose service "server" from build context . using deploy/Dockerfile.server`）⇒ 上下文由部署送上去，读的是**部署传的那份** | **不要** |
 | **B**（`deploy/data-compose.yml`，数据面） | **跳过构建** ⇒ 镜像来自别处；但 compose 文件本身**被投递**且**引用** Dockerfile | **要**（归判据 ②/③，见上） |
 
-**⚠️ 未确认（留档，别当已验）**：`platform-core-*-:local` 的**实际构建与送机路径**（在哪建、怎么送）
-本轮未找到成文步骤，也不在任何 openship job 里。要钉死它得另开一查——**在那之前，别把
-「机器上那份 Dockerfile 会被消费」当既成事实**（`#688` 的漂移是真的，但**是否被读**未证）。
+**✅ 已查明（2026-10-16，`#694` 取证；全部一手）**：两个 `:local` 镜像**都是在数据面机上手工构建的**，
+不经 registry、也没有任何自动化承载。
+
+1. **无 registry**：数据面机**没有任何 registry 容器**；镜像名又不带 registry 前缀 ⇒ 排除 push/pull 送件；
+2. **duckle 那次 = `docker compose build`**：镜像带 compose 章（`com.docker.compose.project=platform-core-data`、
+   `service=duckle`、compose `5.5.0`）；且 `docker history` 与检出里 `deploy/duckle/Dockerfile` **逐步吻合**
+   （pip 源 tsinghua、`COPY deploy/duckle/entrypoint.sh`、`chmod 0755`、`WORKDIR /workspace`）——
+   构建上下文 = **仓根** ⇒ 那次就是拿**检出那份**建的；
+3. **dbt 那次 = 裸 `docker build`**：镜像**无任何标签**（compose 建的会盖章；没有 ⇒ 不是 compose）；
+4. **两次都不在任何 job 里**：该机 job 无一涉及；openship 部署 23/23 恒 `skipping build phase`。
+
+**⚠️ 但那次构建不可复现**（这才是本节的实质缺口）：`platform-core-dbt:local` 建于 **09-23 22:26**，
+而它 history 里的 `DBT_VERSION=1.9.1` + aliyun pip 源是 **09-24 才进仓**（`#187`/`#194`）⇒ 当时是拿
+**工作副本**（当天 PyPI 实测后未提交的编辑）建的，**git 里没有与之对应的版本**。想复现同一镜像 ⇒ 无据可依。
+
+**重建口径（候选做法，⚠️ 尚未实操验证——按「无案例不立标准」只登记不标定）**：在数据面机、检出根下
+`docker compose -f deploy/data-compose.yml build duckle dbt`（compose 会打上项目名标签，属装饰性，不影响
+`image:` 名）；随后**必须重建用到它们的容器**（`duckle` / `lemeng-console-3120|64188` / `dbt`）——镜像是
+容器**创建时**钉死的，不重建则仍跑旧镜像。**重建前先核消费方**：`deploy/dbt/Dockerfile` 的
+`ARG DBT_VERSION` 要与 `dbt/profiles.yml` 等使用方一致。
 
 <details><summary>第一版定案（`#692`，已被推翻，留可追溯性）</summary>
 
