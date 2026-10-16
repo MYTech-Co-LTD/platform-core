@@ -1,0 +1,69 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "forms",
+  "table": "submission",
+  "owner": "data-platform",
+  "description": "表单提交（受管数据集内核的提交事件；M1.4 / issue #729，接源 2026-10-16）。【行粒度】一行 = 一笔提交（append-only，无业务唯一键——`submission_id` 是平台侧自增主键，仅作键集游标与对账的自然键）。【通用域设计（ADR-0005 §13.1，关键压缩）】出湖 schema **与业务无关**：任何表单的提交都进这一张表，**新表单只是新的 `form_def_id` 值** ⇒ dbt staging 一次 PR 后，新表单数据 T+1 **零改动自动可见**（这是 M1.4 的主验收）。表单的**字段级语义不进 dbt**（动态 payload 不自动认证）——逐字段口径留在消费面的运行时提取。【源与通路】源 = forms 模块自建的导出 API（`GET /export/submissions`，键集游标 `after_id` + `id` 水位；`forms:view`），通路 = duckle `src.rest`（与乐檬模式同构：API 即「源」，三件套纪律直接适用）。⚠️ **本契约的源是我方自建**，故 A 段「摸清源」与「建源」合并——探针四条对真实端点跑过（见计划稿 `docs/superpowers/plans/2026-10-16-forms-out-lake-m1.4.md`）。【payload 列型定案（ADR-0005 §13.1 ①，实测）】**整列 VARCHAR（JSON 文本，schema-on-read）**——⚠️ 引擎默认行为**是反的**：不显式定型时 payload 落湖为「全字段并集 STRUCT」（schema 冻结到历史字段并集 + 运行时按并集补 null），后续表单新字段下轮写入即冲突；**必须显式 `CAST(to_json(payload) AS VARCHAR)`** 才拿到本契约声明的列型。【追加语义（ADR-0005 §13.1 ②，实测）】`snk.parquet` 的 `mode: append` + 分区**实测是覆盖不是追加**（分区固定文件名，二轮抹一轮）⇒ 追加靠**批次目录**：`batch_id`（= 采集 run id）**列进 partitionBy**，每轮新目录，读端 glob 全量，同批重跑幂等。⚠️ ADR 原文写分区键名 `_batch`，但本仓契约的键/列名 pattern 是 `^[a-z][a-z0-9_]*$`（**不许前导下划线**）⇒ 落地为既有 `batch_id` 列承担同一语义（同一个东西，两个名字里取合规的那个）。【可见性 + 一处**显式偏离 ADR**】导出面按身份隔离（PAT 跨租户已被宿主拒）⇒ **单租户一个 console workspace**（与乐檬多账套同构：「调度条目带不了自己的 env」这条引擎约束决定了不能混装）。⚠️ **ADR-0005 §13.1 的通用域写成 `(org, form_def_id, submitted_at, payload)` 四元组，本契约落地为三列**——**org 不进湖**。理由：本仓 `dbt/macros/subject_org.sql` 是**行内主体列的唯一（fail-closed）定义点**（值取部署租户的 env，空串响亮失败；因为 `authz.ts` 恒拼 `where org = <orgId>`，主体列必须存在且正确），**现有 14 份契约无一把 org 存进湖**。在「一 console 一租户」下 org 是**部署常量**，落进湖只会多一个可能与部署主体不一致的副本。ADR 那句的要点是「schema 与业务无关」这个压缩，本契约按其**实质**（任何表单共表、新表单只是新 `form_def_id` 值）落地，未按字面保留 org 列。",
+  "layout": {
+    "prefix": "forms/submission",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "bizday",
+      "batch_id"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id（`${datetime}` 派生，逐 run 唯一）。**本表与其它契约的一处结构性差异**：`batch_id` 同时是**第三分区键**（批次目录防覆写，见 description）。故它**不是**「同分区内多批次共存」的标记，而是**目录层级本身**——`unique:false` 保留是因为同一 batch_id 在**不同分区**（不同 org/bizday）下重复出现是正常的。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "批次标记（= 采集 run id，用引擎内建运行变量 `${datetime}`，形如 `2026-09-27_030850`）；**同时是第三分区键**（批次目录，防 append 实为覆写）。⚠️ 本列的 expr 必须与 sink key 里的路径段**逐字同源**（都写 `${datetime}`）——两处格式不一致 = 分区列与目录对不上。⚠️ 与既有乐檬契约的语义差异见 batch.note。",
+      "expr": "'${datetime}'"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "**采集日**（分区键②）= 本次 run 的日期，**不是**提交时刻。与 `submitted_at` 的分工：bizday 是分区与新鲜度锚的粒度，submitted_at 是行内精确时间。⚠️ 跨日回填时同一笔提交可能落在「采集日」分区而非「提交日」分区——按 id 水位拉取必然如此（数据目录口径：分区 = 采集批次，不是业务日）。",
+      "expr": "CAST('${date}' AS DATE)"
+    },
+    {
+      "name": "submission_id",
+      "type": "bigint",
+      "nullable": false,
+      "description": "提交主键（平台侧 bigserial）。**唯一用途**：导出面的键集游标字段（`after_id` 水位）+ 独立通道对账的自然键。⚠️ 它**不是**业务唯一键（提交本身 append-only 无业务键）。",
+      "expr": "CAST(o.submission_id AS BIGINT)"
+    },
+    {
+      "name": "form_def_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "表单标识（= assetId，如 `site-inspection`）。**通用域的支点**：新表单 = 新值，无需改 schema/管线/契约（ADR-0005 §13.1）。type=varchar 而非定长：外部可命名标识，长度不受我们控制。",
+      "expr": "CAST(o.form_def_id AS VARCHAR)"
+    },
+    {
+      "name": "submitted_at",
+      "type": "timestamptz",
+      "nullable": false,
+      "description": "提交时刻（行内精确时间；与分区键 `bizday` 分工见该列说明）。落盘即定型成 timestamptz（**不留字符串**——存量乐檬 parquet「时间全是字符串」的坑不再欠一次）。",
+      "expr": "CAST(o.submitted_at AS TIMESTAMPTZ)"
+    },
+    {
+      "name": "payload",
+      "type": "varchar",
+      "nullable": false,
+      "description": "提交正文（**整列 JSON 文本，schema-on-read**；ADR-0005 §13.1 ① 定案）。⚠️ **必须是 varchar 且必须显式定型**——引擎默认会落成「全字段并集 STRUCT」并在新字段出现时冲突；不显式 `to_json` 就拿不到本列型。下游用 `json_extract` / `(payload::json)->>'key'` 消费；**字段级语义不进 dbt**（动态 payload 不自动认证）。",
+      "expr": "CAST(to_json(o.payload) AS VARCHAR)"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+# sources.forms.yml — **forms 域**的落地声明（对象存储上的 parquet 湖）。M1.4 / issue #729，2026-10-16。
+#
+# 为什么单独一份文件而不是并进 `sources.yml`：那份的文件头写着「乐檬域的落地声明」，域不同就分文件。
+# 门禁的发现逻辑是「`dbt/models/**` 下任何含 `sources:` 数组的 yml」（scripts/check-data-models.mjs
+# 规则 ④ 的文件扫描），故分文件不影响 ④ 的配对校验。
+#
+# ⚠️ 两个口径与 `sources.yml` 完全一致，这里只指路不复述（复述就是第二事实源）：
+#   1. **`source()` 不是读路径** —— 本仓读路径是 pg_duckdb 的 `read_parquet()`；
+#      `source` 声明是**声明与血缘的落点**，消费者是静态门禁 + 人。详见 sources.yml 文件头 1。
+#   2. **命名是硬约束** —— staging 模型名 = `stg_<source.name>_<table.name>`，④ 双向往返机检。
+version: 2
+
+sources:
+  - name: forms
+    description: >-
+      表单提交域（受管数据集内核的提交事件；对象存储 parquet 湖）。**与乐檬各表的一处结构性差异**：
+      租户维度**不进湖**——本仓 `dbt/macros/subject_org.sql` 是行内主体列的唯一（fail-closed）定义点，
+      在「一 console 一租户」下 org 是部署常量（现有 14 份契约无一把 org 存进湖）。
+      出处：contracts/common/forms.submission.json / docs/data-platform-handbook.md §2。
+    tables:
+      - name: submission
+        description: '表单提交（append-only；`payload` 为整列 JSON 文本 schema-on-read）。hive 两级分区 bizday/batch_id，batch_id 是**批次目录**（防 append 实为覆写，ADR-0005 §13.1 ②）。'
+        meta:
+          path_convention: 'forms/submission/bizday=<采集日>/batch_id=<run id>/all.parquet'
+          # 读路径不是 source()（见文件头 1），这里是**人读的**说明，写的是本仓 staging 的实测生效形态。
+          # ⚠️ pg_duckdb 把 read_parquet 暴露成 PG 函数，只认**位置参数**（命名形参递不进去，
+          #    2026-09-24 真机实测原文见 sources.yml 对应段）——别把 `hive_partitioning=1` 写回来。
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/forms/submission/bizday=*/batch_id=*/all.parquet') r"

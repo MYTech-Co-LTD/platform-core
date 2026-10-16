@@ -106,6 +106,13 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.retail_order_line.tick', '旧零售族残留——已被 retail.tick.l1 取代，待退役（§2 台账）'],
   ['lemeng.retail_order_line.window', '旧零售族残留——已被 retail.windows.l1 取代，待退役（§2 台账）'],
   ['lemeng.recon.preagg.item', '按需手动（逐分归零对账执行面，无日更节奏）'],
+  // ⚠️ 这一条**不是**「乐檬族」——是本门禁的**假设**在 forms 域上不成立的登记：
+  // 本门禁把**无后缀**管线当「共享族」⇒ 期望每本乐檬账套都排它。但 forms（表单提交域，#729）
+  // **不属于任何乐檬账套**，它的 console/workspace 是另一套（「一账套一 console」那条引擎约束
+  // 决定了不能塞进 3120/64188：调度条目带不了自己的 env ⇒ 混装会静默采错源）。
+  // ⟹ 待 forms 自己的 console 建立后（M1.4 阶段 E），本条豁免应**删除**并把排班登记进那本账套；
+  // 届时 check-console-alerts 也会开始要求它（当前它只查**已排班**管线，故现在不报）。
+  ['forms.submission.l0', 'forms 独立域（非乐檬账套族）——待其 console/workspace 建立后排班；当前无 console（#729 阶段 E 未开工）'],
 ])
 /** @type {Map<string, Map<string, string>>} book →（管线名 → 理由） */
 const EXEMPT_BY_BOOK = new Map([
