@@ -12,6 +12,8 @@ import type { MetricDef } from './authz'
 import { sqlQuote } from './authz'
 import type { MetricRow } from './metric-store'
 import {
+  MAX_BODY_NESTING,
+  exceedsNesting,
   SemanticCompileError,
   compileL2,
   collectRefIds,
@@ -674,6 +676,33 @@ describe('L2 · B 中档（受限表达式）', () => {
 //   ② 括号结构可复现 —— 同一棵树两次渲染逐字相同（渲染必须是纯函数）。
 // 组合片段的期望串是**按渲染规则手推**的（见下方用例内注释），不是把产物粘回来 —— 粘回来 =
 // 恒真断言，一文不值（Step 4「客单价逐字」同理）。
+describe('exceedsNesting：入口结构预检（#593）', () => {
+  const nest = (n: number) => { let v: unknown = 1; for (let i = 0; i < n; i++) v = { k: v }; return v }
+  const nestArr = (n: number) => { let v: unknown = 1; for (let i = 0; i < n; i++) v = [v]; return v }
+
+  it('恰好等于上限 ⇒ 放行；超一层 ⇒ 拦下', () => {
+    expect(exceedsNesting(nest(MAX_BODY_NESTING))).toBe(false)
+    expect(exceedsNesting(nest(MAX_BODY_NESTING + 1))).toBe(true)
+  })
+  it('数组与对象同权计深', () => {
+    expect(exceedsNesting(nestArr(MAX_BODY_NESTING + 1))).toBe(true)
+  })
+  it('宽而浅不误伤（上限判的是深度，不是规模）', () => {
+    const wide: Record<string, number> = {}
+    for (let i = 0; i < 5000; i++) wide[`k${i}`] = i
+    expect(exceedsNesting(wide)).toBe(false)
+  })
+  it('标量/空/null 边界', () => {
+    expect(exceedsNesting(null)).toBe(false)
+    expect(exceedsNesting(1)).toBe(false)
+    expect(exceedsNesting({})).toBe(false)
+    expect(exceedsNesting([])).toBe(false)
+  })
+  it('病态深（实测爆点量级）⇒ 拦下且不抛（迭代实现自己不会爆栈）', () => {
+    expect(exceedsNesting(nest(3200))).toBe(true)
+  })
+})
+
 describe('L2 · B 中档 · 逐节点可达集（增补 §6.1）', () => {
   const REF_EXPR = new Map([['a', 'sum(t.x)'], ['b', 'sum(t.y)']])
   const num = (v: number): ExprNode => ({ kind: 'num', value: v })

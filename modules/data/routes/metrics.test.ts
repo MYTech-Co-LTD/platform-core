@@ -164,6 +164,16 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
   })
 
   // ── 写路径：只收结构化声明 ───────────────────────────────────────────────────
+  it('★ 病态超深 expr ⇒ 干净 400（不是 500）：线性预检须先于递归 schema（#593）', async () => {
+    // 递归 z.lazy 的校验**先于**迭代深度闸执行 ⇒ 超深输入在 zod 里爆栈（实测 1600 层过、3200 层
+    // RangeError）冒成 500。判据：与其它非法形状同一契约 ⇒ 400。
+    let deep: unknown = { kind: 'num', value: 1 }
+    for (let i = 0; i < 3200; i++) deep = { kind: 'div', left: { kind: 'num', value: 1 }, right: deep }
+    const res = await post({ id: 'l2_too_deep', op: { kind: 'expr', expr: deep } })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toBe('INVALID_BODY')
+  })
+
   it('POST /metrics 合法 L2 声明 → 201，且立刻在词表里可见（source=l2）', async () => {
     const res = await post(l2Body())
     expect(res.status).toBe(201)

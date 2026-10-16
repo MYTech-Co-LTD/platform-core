@@ -291,6 +291,40 @@ const EXPR_MAX_DEPTH = 8
 const EXPR_MAX_REFS = 16
 
 /**
+ * 入口**结构嵌套**预检上限（#593）。口径：信封 3 层 + expr 上限 8 层的二叉展开 ⇒ 合法声明 ≤ ~20 层；
+ * 而递归 schema 的爆点实测在 1600~3200 层之间。取 **64**：对合法面 3 倍余量、对爆点 25 倍以上余量。
+ */
+export const MAX_BODY_NESTING = 64
+
+/**
+ * 线性（**迭代**）判「结构嵌套是否超过 `limit` 层」——数组与对象的每一层都算一层。
+ *
+ * 为什么必须有它：`ExprNodeSchema` 是 `z.lazy` **递归** schema，其校验**先于** `scanExpr` 的迭代
+ * 深度闸执行 ⇒ 病态深输入在 zod 里**爆栈**（`RangeError`）冒成 500（实测 1600 层过、3200 层爆）。
+ * 本函数用**显式栈**，自己不会爆；把它插在 schema 之前，zod 就永远拿不到能爆栈的形状。
+ *
+ * @param {unknown} root
+ * @param {number} [limit]
+ * @returns {boolean} true = 过深（调用方转干净 400）
+ */
+export function exceedsNesting(root: unknown, limit: number = MAX_BODY_NESTING): boolean {
+  /** @type {{ v: unknown; d: number }[]} */
+  const stack = [{ v: root, d: 0 }]
+  while (stack.length > 0) {
+    const top = stack.pop()
+    if (top === undefined) break
+    const { v, d } = top
+    if (d > limit) return true
+    if (Array.isArray(v)) {
+      for (const x of v) stack.push({ v: x, d: d + 1 })
+    } else if (v !== null && typeof v === 'object') {
+      for (const x of Object.values(v)) stack.push({ v: x, d: d + 1 })
+    }
+  }
+  return false
+}
+
+/**
  * 走一遍表达式树：形状校验 + 深度 + ref 去重/计数。**一遍做完**，且用显式栈 ——
  * 深树不会打爆调用栈（zod 那关可能先爆，那是另一条边界，见 README 已知边界）。
  *
