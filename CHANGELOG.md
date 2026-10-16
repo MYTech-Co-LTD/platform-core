@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.129.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.128.0...v0.129.0) - 2026-10-16
+- 【新增】data: 新鲜度 SLA + 水位木桶 + freshness_line 固定展示行（业务大白话，spec §10.7） ([#712](https://github.com/MYTech-Co-LTD/platform-core/pull/712), [0084774](https://github.com/MYTech-Co-LTD/platform-core/commit/0084774ab2b1bd46d3f2131829c4b68ed0753b51))
+
+
 ## [0.128.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.127.0...v0.128.0) - 2026-10-16
 - 【新增】forms: M1.2 受管数据集内核——生命周期 + 字典双档（P4）+ 绑定强度 ([#713](https://github.com/MYTech-Co-LTD/platform-core/pull/713), [1e47bfe](https://github.com/MYTech-Co-LTD/platform-core/commit/1e47bfe34f712339b6dfe4b59182404a3b9032e6))
 
