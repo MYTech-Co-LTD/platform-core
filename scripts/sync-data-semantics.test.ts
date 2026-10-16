@@ -253,6 +253,34 @@ describe('diffDeclarations：双向差集的四态分类', () => {
     expect(diff.unchanged.length).toBe(3)
   })
 
+  it('★ 参数键序不影响判等（#700）：jsonb 读回键序被 PG 重排 ⇒ 不回一会恒判「更新」', () => {
+    // 现场：写完再 --check 也回不到无漂移（对已物化库恒报「更新 27」）。根因=PG 的 jsonb 按
+    // （长度, 字节序）存键，读回来的 params 键序与声明侧的对象字面量不同；comparableOf 直接
+    // stringify ⇒ 恒不等 ⇒ 漂移信号退化成「狼来了」，真漂移来了也没人信。
+    const P_STR = {
+      bizday: { column: 'bizday', type: 'date_range' },
+      system_book: { column: 'system_book', type: 'string' },
+    } as const
+    const declaredP = [{ ...row('a', 'A'), params: P_STR }]
+    // 库侧读回：外层与内层键序都被重排（内容一字未改）
+    const fromDb = [{
+      ...row('a', 'A'),
+      params: {
+        system_book: { type: 'string', column: 'system_book' },
+        bizday: { type: 'date_range', column: 'bizday' },
+      },
+    } as const]
+    const diff = diffDeclarations(declaredP, fromDb)
+    expect(diff.updated).toEqual([])
+    expect(diff.unchanged).toEqual(['a'])
+    // 反向对照：参数**内容**变了仍须判「更新」——规范化不许把真漂移吃掉
+    const P_NUM = {
+      bizday: { column: 'bizday', type: 'date_range' },
+      system_book: { column: 'system_book', type: 'number' },
+    } as const
+    expect(diffDeclarations(declaredP, [{ ...row('a', 'A'), params: P_NUM }]).updated).toEqual(['a'])
+  })
+
   it('内容比对不含时间戳类字段（sync 每次都刷 updated_at，拿它比会把「未变」全判成「更新」）', () => {
     const withTs = declared.map((r) => ({ ...r, created_at: new Date(0), updated_at: new Date(1) }))
     const newer = declared.map((r) => ({ ...r, created_at: new Date(0), updated_at: new Date(9) }))
