@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.132.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.132.0...v0.132.1) - 2026-10-16
+- 【修复】guard: 加 shell-CJK 邻接守卫 + 修 7 处未收口变量（失败路径的 echo 会崩，#212） ([#727](https://github.com/MYTech-Co-LTD/platform-core/pull/727), [8bc9e4f](https://github.com/MYTech-Co-LTD/platform-core/commit/8bc9e4fac3c7cf6e62a39422d9aea37205e8ef76))
+
+
 ## [0.132.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.131.1...v0.132.0) - 2026-10-16
 - 【新增】forms: AI 起草闭环——契约形状 {schema,uiSchema} + 生成器 + REST/MCP 面（Closes #724） ([#726](https://github.com/MYTech-Co-LTD/platform-core/pull/726), [3b3288d](https://github.com/MYTech-Co-LTD/platform-core/commit/3b3288de0d6374a6f8c97bebbec2b9d31fb6bbfd))
 
