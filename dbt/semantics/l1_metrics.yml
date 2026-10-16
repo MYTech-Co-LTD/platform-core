@@ -422,6 +422,46 @@ metrics:
     source: lemeng
     freshness_sla_days: 1
 
+  # ── 组合族 W1（2026-10-16，#744）：采购退货率 / 零金额采购行 ────────────────────────
+  # 两项都是「判据过、源已齐、当时被推给消费面」的悬空指标。均落 fct_purchase 现成列，无新构件。
+
+  - name: 'lemeng:purchase:return_rate'
+    label: 采购退货率
+    definition: >-
+      金额退货率 = 采购退货金额 / 采购收货金额（不可加；上滚=重算/另声明）。零分母 → 不适用
+      （sync 自动包 nullif）。服务客户项 05-05「水果采购退货率」与 06-06「采购退货率」——
+      客户附录两处公式**逐字相同**（金额退货率＝Σ采购退货金额/Σ采购收货金额），差异只在
+      「水果/标品」的**角色部门范围**。⚠️ **部门维度待 W3 随 CR5 一并补**（需 join dim_item 最新
+      快照），届时本指标**加 grain 维度**，不另声明第二条——故现阶段本条是**全品类**退货率，
+      不能直接当 05-05 或 06-06 的角色口径引用。数量退货率不在本条：客户文档要求「同商品同单位」
+      内计算，属消费面。experimental 事由：分母 money_total 与购入/退货分量的勾稽待客户确认
+      （同 net_amount 的边界）。
+    ratio:
+      numerator: 'sum(fct_purchase.purchase_item_return_money)'
+      denominator: 'sum(fct_purchase.money_total)'
+    grain: [system_book, bizday]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:purchase:zero_amount_rows'
+    label: 零金额采购行数
+    definition: >-
+      购入数量 > 0 且购入金额 = 0 的采购行数（客户项 05-08）。赠品**不在此列**（赠品是独立分量，
+      见 present_amount）。⚠️ 计数类不可加语义同 supplier_count：跨窗口直接相加即错，须按窗口重算。
+      experimental 事由：该形态是「数据质量暴露」而非业务量，客户文档未给阈值口径。
+    expression: 'sum(case when fct_purchase.purchase_item_amount > 0 and fct_purchase.purchase_item_money = 0 then 1 else 0 end)'
+    grain: [system_book, bizday]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
+
   # ── W3 余项（2026-10-15，要货满足率 / D15×D16，#677）────────────────────────────────
   # 构件落点：fct_request_fulfillment（店×商品×日总量对照）。⚠️ 全 experimental——行级履约
   # 关联在当前湖面不可构造（D16.related_order_no 指 MO 非 YH，D01 契约无 related_order_no，
