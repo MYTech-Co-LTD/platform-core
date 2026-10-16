@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.132.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.131.1...v0.132.0) - 2026-10-16
+- 【新增】forms: AI 起草闭环——契约形状 {schema,uiSchema} + 生成器 + REST/MCP 面（Closes #724） ([#726](https://github.com/MYTech-Co-LTD/platform-core/pull/726), [3b3288d](https://github.com/MYTech-Co-LTD/platform-core/commit/3b3288de0d6374a6f8c97bebbec2b9d31fb6bbfd))
+
+
 ## [0.131.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.131.0...v0.131.1) - 2026-10-16
 - 【修复】data: comparableOf 递归规范化键序——jsonb 读回键序被 PG 重排致 --check 恒判更新（Closes #700） ([#725](https://github.com/MYTech-Co-LTD/platform-core/pull/725), [5f5ebce](https://github.com/MYTech-Co-LTD/platform-core/commit/5f5ebce623d4acf9e5840c8de17220e5868d0716))
 
