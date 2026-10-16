@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.126.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.125.0...v0.126.0) - 2026-10-16
+- 【新增】data: 时区统一——业务调度 Asia/Shanghai（23 条排班）+ data_as_of 北京时间（spec §10.6） ([#707](https://github.com/MYTech-Co-LTD/platform-core/pull/707), [b96e745](https://github.com/MYTech-Co-LTD/platform-core/commit/b96e7451aa864e2dc3afb70846746f6bec8243f0))
+
+
 ## [0.125.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.124.0...v0.125.0) - 2026-10-16
 - 【新增】data: 问数新鲜度面——答案自带可信边界（物化落账/data_as_of/确定性截断，spec §10） ([#705](https://github.com/MYTech-Co-LTD/platform-core/pull/705), [f36f84d](https://github.com/MYTech-Co-LTD/platform-core/commit/f36f84d30aeff9da914635286eeab867ab508a54))
 
