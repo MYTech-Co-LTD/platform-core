@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.128.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.127.0...v0.128.0) - 2026-10-16
+- 【新增】forms: M1.2 受管数据集内核——生命周期 + 字典双档（P4）+ 绑定强度 ([#713](https://github.com/MYTech-Co-LTD/platform-core/pull/713), [1e47bfe](https://github.com/MYTech-Co-LTD/platform-core/commit/1e47bfe34f712339b6dfe4b59182404a3b9032e6))
+
+
 ## [0.127.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.126.0...v0.127.0) - 2026-10-16
 - 【新增】forms: M1.1 模块骨架 + ManifestSchema 收 dataDependencies 与 .strict() ([#709](https://github.com/MYTech-Co-LTD/platform-core/pull/709), [82c047b](https://github.com/MYTech-Co-LTD/platform-core/commit/82c047b3ab6dbead9e2eee9d3d6a91454f0c54f7))
 
