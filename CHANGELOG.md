@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.125.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.124.0...v0.125.0) - 2026-10-16
+- 【新增】data: 问数新鲜度面——答案自带可信边界（物化落账/data_as_of/确定性截断，spec §10） ([#705](https://github.com/MYTech-Co-LTD/platform-core/pull/705), [f36f84d](https://github.com/MYTech-Co-LTD/platform-core/commit/f36f84d30aeff9da914635286eeab867ab508a54))
+
+
 ## [0.124.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.123.0...v0.124.0) - 2026-10-15
 - 【新增】data: 问数 total 自动伴随——可加指标响应自带合计（真机模型不走开关的治本） ([#701](https://github.com/MYTech-Co-LTD/platform-core/pull/701), [6ba7a08](https://github.com/MYTech-Co-LTD/platform-core/commit/6ba7a08969c66e16d8074c8bd987dc435147127b))
 
