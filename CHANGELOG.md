@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.127.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.126.0...v0.127.0) - 2026-10-16
+- 【新增】forms: M1.1 模块骨架 + ManifestSchema 收 dataDependencies 与 .strict() ([#709](https://github.com/MYTech-Co-LTD/platform-core/pull/709), [82c047b](https://github.com/MYTech-Co-LTD/platform-core/commit/82c047b3ab6dbead9e2eee9d3d6a91454f0c54f7))
+
+
 ## [0.126.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.125.0...v0.126.0) - 2026-10-16
 - 【新增】data: 时区统一——业务调度 Asia/Shanghai（23 条排班）+ data_as_of 北京时间（spec §10.6） ([#707](https://github.com/MYTech-Co-LTD/platform-core/pull/707), [b96e745](https://github.com/MYTech-Co-LTD/platform-core/commit/b96e7451aa864e2dc3afb70846746f6bec8243f0))
 
