@@ -13,6 +13,20 @@ OpenClaw native tool-plugin：把可信企微 userid（`toolContext.requesterSen
 | `list_metrics` | `GET {DATA_API_BASE}/metrics`——当前用户可见词表（按人裁剪） |
 | `query_data` | `POST {DATA_API_BASE}/query` `{metricId,args}`——查数，回包带 subject |
 
+## message_sending 钩子：新鲜度行确定性附加（2026-10-16）
+
+`query_data` 成功回包带 `freshness_line` 时按会话（`sessionKey`，拿不到落全局槽）捕获，
+外发消息经 `message_sending` 钩子**先剥掉模型自己写的 📅 行、再把服务端正典行钉在末尾**
+（strip-then-append 天然去重；TTL 10 分钟，过期/无捕获原样放行；钩子任何分支不 throw，fail-open）。
+模型侧指令同步改为「系统自动附加，不要自己写 📅 行」（工具描述 + SKILL.md）。
+
+纯逻辑在 `lib.js`（`createFreshnessStore` / `stripFreshnessLines` / `appendFreshnessLine` /
+`makeFreshnessSendingHook`），`node --test lib.test.js` 直跑。
+
+⚠️ 部署前置（同 zh-thinking 插件先例）：**会话类钩子可能被运行时门禁静默挡住**——
+若真机发现行没附上（且日志无 `已注册 message_sending 钩子` 之外的报错），补
+`plugins.entries.data-query.hooks.allowConversationAccess=true` 后重启容器再验。
+
 ## env 契约（容器注入）
 
 | 键 | 说明 |

@@ -1,6 +1,7 @@
 // lib.js — 问数插件纯逻辑（不 import openclaw SDK；node --test 可直跑）。
 // 权限判定零逻辑：词表裁剪/主体钉死/fail-closed 全在平台授权核心（约束 6）。
-// 这里只做三件事：参数归一（宿主 execute 的 params 形状有历史差异）、平台调用、错误文案映射。
+// 这里做四件事：参数归一（宿主 execute 的 params 形状有历史差异）、平台调用、错误文案映射、
+// 新鲜度行的捕获与确定性附加（message_sending 钩子的纯逻辑，2026-10-16）。
 
 export const DEFAULT_API_BASE = "http://server:13000/api/modules/data";
 // 未关联指引指向的山海平台入口（只写文案，不含任何凭证）。
@@ -105,4 +106,99 @@ export async function callPlatform(opts) {
     return { code: data.error, error: "平台返回 HTTP " + resp.status + (data.error ? "：" + data.error : "") };
   }
   return data;
+}
+
+// ── 新鲜度行：确定性附加（message_sending 钩子的纯逻辑，2026-10-16）──────────────
+// 背景：曾让模型「答案末尾原样附 freshness_line」，flash 级合规不稳（时有时无、混进正文）。
+// 改为传输层确定性保证：query_data 成功回包带 freshness_line 时捕获（按会话），外发消息
+// 经过 message_sending 钩子时先剥掉模型自己写的 📅 行、再把服务端正典行钉在末尾。
+//   · 剥离在先 ⇒ 模型附了也不会出现两行（strip-then-append 天然去重）；
+//   · 没有捕获（未查数 / TTL 过期）⇒ 原样放行（钩子契约：返回 undefined = 不改）；
+//   · 钩子故障在宿主侧是「记日志并跳过」（fail-open）⇒ 本逻辑**任何分支都不许 throw**。
+
+/** 捕获条目 TTL：10 分钟——比一轮对话长得多，又不至于把隔夜的旧行附到新问题末尾。 */
+export const FRESHNESS_TTL_MS = 10 * 60 * 1000;
+
+/** 无会话键时的兜底槽位（工具上下文拿不到 sessionKey 就全局共用一份，取最新）。 */
+export const FRESHNESS_GLOBAL_SLOT = "__global__";
+
+/** 服务端 freshness_line 的判别前缀——三个变体都以「📅 数据」开头
+ * （query-service.ts freshnessLineOf：已更新至 / 更新停在 / 更新情况未知），勿窄化成单一变体。 */
+const FRESHNESS_PREFIX = "📅 数据";
+
+/**
+ * 捕获存储：sessionKey → { line, at, sessionKey }，同会话后查覆盖前查（取最新）。
+ * TTL 在**读取时**判定（过期即丢弃）；now 可注入便于单测推演时间。
+ */
+export function createFreshnessStore({ ttlMs = FRESHNESS_TTL_MS, now = () => Date.now() } = {}) {
+  const map = new Map();
+  return {
+    /** query_data 成功回包带 freshness_line 时调用；sessionKey 缺失落全局槽。
+     * line 存原值不做强转（非串在读取侧判掉——强转会把 undefined 变成字符串 "undefined"）。 */
+    capture(sessionKey, line) {
+      map.set(sessionKey || FRESHNESS_GLOBAL_SLOT, {
+        line,
+        at: now(),
+        sessionKey: sessionKey || "",
+      });
+    },
+    /** 取该会话当前可用的正典行；无 / 过期 ⇒ undefined（过期顺手清槽防积压）。 */
+    take(sessionKey) {
+      const key = sessionKey || FRESHNESS_GLOBAL_SLOT;
+      const entry = map.get(key);
+      if (!entry) return undefined;
+      if (now() - entry.at > ttlMs) {
+        map.delete(key);
+        return undefined;
+      }
+      return entry;
+    },
+    size: () => map.size,
+  };
+}
+
+/** 生产单例：工具路径写入、钩子读取共用同一份。 */
+export const freshnessStore = createFreshnessStore();
+
+/**
+ * 剥掉内容里**所有** 📅 新鲜度行——独立成行的整行删除（容忍行首空白/列表符），
+ * 混在句中的（非独立行）按前缀截掉其后到行尾。服务端三变体全覆盖。
+ */
+export function stripFreshnessLines(content) {
+  if (typeof content !== "string") return content;
+  const withoutStandalone = content
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .filter((l) => !/^\s*(?:[-*]\s*)?📅\s*数据/.test(l))
+    .join("\n");
+  return withoutStandalone.replace(/📅\s*数据[^\n]*/g, "");
+}
+
+/** 剥旧 + 钉新：先剥离全部 📅 行、收掉尾部空行，再把正典行作为最后一个独立行附上。 */
+export function appendFreshnessLine(content, line) {
+  if (typeof content !== "string") return content;
+  if (typeof line !== "string" || !line) return content;
+  const stripped = stripFreshnessLines(content).replace(/\s+$/, "");
+  return stripped ? stripped + "\n\n" + line : line;
+}
+
+/**
+ * 造 message_sending 钩子处理器（index.js 用生产单例注册；单测用独立 store 注入）。
+ * 契约：返回改写后的 content；无可附加/出错 ⇒ 返回 undefined（= 不改，宿主 fail-open）。
+ * **任何分支不得 throw**——钩子故障宿主只记日志跳过，throw 等于把传输层搞挂。
+ */
+export function makeFreshnessSendingHook(store) {
+  return async function messageSendingHook(event, ctx) {
+    try {
+      const content = event && event.content;
+      if (typeof content !== "string") return undefined;
+      const entry = store.take(ctx && ctx.sessionKey);
+      if (!entry) return undefined;
+      if (typeof entry.line !== "string" || !entry.line) return undefined;
+      return appendFreshnessLine(content, entry.line);
+    } catch {
+      // fail-open：宁缺勿错——新鲜度行缺失可接受，外发通道被搞挂不可接受。
+      return undefined;
+    }
+  };
 }
