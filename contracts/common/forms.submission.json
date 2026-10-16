@@ -34,8 +34,8 @@
       "name": "bizday",
       "type": "date",
       "nullable": false,
-      "description": "**采集日**（分区键②）= 本次 run 的日期，**不是**提交时刻。与 `submitted_at` 的分工：bizday 是分区与新鲜度锚的粒度，submitted_at 是行内精确时间。⚠️ 跨日回填时同一笔提交可能落在「采集日」分区而非「提交日」分区——按 id 水位拉取必然如此（数据目录口径：分区 = 采集批次，不是业务日）。",
-      "expr": "CAST('${date}' AS DATE)"
+      "description": "**采集日**（分区键②）= 本次 run 的 **Asia/Shanghai 日历日**（`${date+8h}`——引擎内建 `date` 是 UTC 日，排班已统一为上海本地时（spec §10.6），故必须 +8h 才是业务日；本仓同族先例：`lemeng.item_price.bizday`、`lemeng.branch/item.snapshot` 三处均写 `${date+8h}` 且描述逐字为「Asia/Shanghai 日历日」）。**不是**提交时刻。与 `submitted_at` 的分工：bizday 是分区与新鲜度锚的粒度，submitted_at 是行内精确时间。⚠️ 跨日回填时同一笔提交可能落在「采集日」分区而非「提交日」分区——按 id 水位拉取必然如此（分区 = 采集批次，不是业务日）。",
+      "expr": "CAST('${date+8h}' AS DATE)"
     },
     {
       "name": "submission_id",
