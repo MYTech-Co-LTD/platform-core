@@ -49,11 +49,12 @@
 
 **openclaw 侧**（源码 + 生产容器核实）：`diagnostics.otel.*` 全套（`enabled` / `endpoint`·`tracesEndpoint` /
 `protocol` / `headers` / `serviceName` / `traces` / `sampleRate` / `flushIntervalMs`），以及
-**`captureContent`（默认 off）** + 逐字段策略（`inputMessages` / **`outputMessages`** / `toolInputs` /
-`toolOutputs` / `systemPrompt` / `toolDefinitions`）。`outputMessages` 捕获点已确认实现
-（`attempt.model-diagnostic-events.ts`）——抓的是**模型响应消息**；而 §2.1 已证该消息的 `content[]` 含 `thinking` 块
-⇒ **推断**思考会跟着进 span——**这是推断不是实测，真机待验（§2.3 U1）**。
-⚠️ `protocol` **只接受 `http/protobuf`**。生产当前**一个都没配**。
+**`captureContent`（默认 off）**。⚠️ **订正（2026-10-16 写计划时查源码）**：它**不是逐字段可配**——
+`resolveDiagnosticModelContentCapturePolicy` 只认布尔，`true` 命中即套**一组固定预设**：
+`inputMessages` / `outputMessages` / `toolInputs` / `toolOutputs` / `toolDefinitions` 全开、
+**`systemPrompt` 关**（源码 2026.8.1 读出的形状）。部署版字节码是 `captureContent !== void 0` 形态
+（与 8.1 的 `=== true` 不同）⇒ **是否也接受对象形（逐字段）待 T0 核**；T0 一律先用布尔 `true`。
+`protocol` **只接受 `http/protobuf`**。生产当前**一个都没配**。
 
 **部署产物 span 属性词表**（`/app` 实测）：`gen_ai.input.messages` · **`gen_ai.output.messages`** ·
 `gen_ai.tool.call.arguments|result|id` · `gen_ai.conversation.id` · `gen_ai.agent.name|id` ·
@@ -107,7 +108,7 @@ traces 落 stream **`default`**（type=traces）；**OO 原生认 GenAI 语义�
 
 ### T0 开箱验证（前置，动生产）
 
-按 §2.3 U1：低峰期开最小子集（`traces` + `captureContent` 的 `outputMessages` + `toolInputs`/`toolOutputs`），
+按 §2.3 U1：低峰期开最小子集（`traces: true` + `captureContent: true`——**它是布尔预设，没有更细的子集可分**，见 §2.2 订正），
 发一条真机问数消息，**看 span 里到底有什么**。
 
 - 验到 ⇒ 走 §4 T1 的 OO 主通道；
