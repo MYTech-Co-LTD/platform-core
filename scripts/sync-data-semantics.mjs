@@ -410,13 +410,33 @@ export function declarationsFromYaml(parsed) {
  * `slaDays` / `freshnessRelations` 第三组同理（spec §10.7）：SLA 登记与关系集推导变了
  * 而库内没刷，水位/固定行会永远按旧链路算——必须被 --check 检出。
  */
-const comparableOf = (/** @type {ComparableMetric} */ row) => JSON.stringify([
+/**
+ * 递归规范化：对象**键按字典序排序**，数组保序（顺序是语义的一部分）。
+ *
+ * 为什么要：`params` 这类 jsonb 字段经 PG 读回时**键序会被重排**（PG 的 jsonb 按
+ * （长度, 字节序）存键），而声明侧是对象字面量的书写序 ⇒ 直接 `JSON.stringify` 两边恒不等，
+ * `--check` 对已物化库**恒判「更新」**（#700 现场：写完再 check 也回不到无漂移，恒报「更新 27」）。
+ * 后果不是多写几次，而是**漂移信号退化成狼来了**——真漂移来了也没人信。
+ *
+ * @param {unknown} v
+ * @returns {unknown}
+ */
+const canonical = (v) => {
+  if (Array.isArray(v)) return v.map(canonical)
+  if (v !== null && typeof v === 'object') {
+    const o = /** @type {Record<string, unknown>} */ (v)
+    return Object.fromEntries(Object.keys(o).sort().map((k) => [k, canonical(o[k])]))
+  }
+  return v
+}
+
+const comparableOf = (/** @type {ComparableMetric} */ row) => JSON.stringify(canonical([
   row.title, row.description, row.requiredScope, row.subjectColumn, row.selectSql, row.groupBy, row.params,
   row.sourceSystem,
   row.totalable,
   row.slaDays,
   row.freshnessRelations,
-])
+]))
 
 /**
  * 计算「声明集 ↔ 已物化集」的差集（新增 / 更新 / 删除 / 未变）。
