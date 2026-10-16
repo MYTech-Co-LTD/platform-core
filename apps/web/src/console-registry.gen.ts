@@ -47,6 +47,15 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     scope: "demo:view",
     load: () => import("../../../modules/demo/console/index.tsx"),
   },
+  {
+    path: "/console/forms",
+    title: "表单",
+    group: "main",
+    moduleId: "forms",
+    icon: "FileTextOutlined",
+    scope: "forms:view",
+    load: () => import("../../../modules/forms/console/index.tsx"),
+  },
 ]
 
 export const storageDeclarers: string[] = ["aftersales"]

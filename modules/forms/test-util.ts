@@ -1,4 +1,5 @@
 // test-util.ts — 模块测试公共脚手架（照 modules/aftersales/test-util.ts 先例）。
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
@@ -33,7 +34,8 @@ export function buildTestApp(mod: ModuleDefinition, identity: Identity, ctx: Mod
   return app as unknown as Hono
 }
 
-/** 跑本模块迁移（读 ./migrations/*.sql）。路径必须 fileURLToPath（#203：url.pathname 非 ASCII 静默空转）。 */
+/** 跑本模块迁移（读 ./migrations/*.sql）。路径用 node:path 取——本包 vitest 开 happy-dom
+ *  后全局 URL 被换掉，new URL(rel, import.meta.url) 分辨不出 file: 方案（#718 实测）。 */
 export function applyMigrations(pool: Pool): Promise<string[]> {
-  return runMigrations(pool, 'forms', fileURLToPath(new URL('./migrations', import.meta.url)))
+  return runMigrations(pool, 'forms', join(dirname(fileURLToPath(import.meta.url)), 'migrations'))
 }
