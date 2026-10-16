@@ -306,3 +306,52 @@ T0 那条现成的撞墙轨迹（CLI 轮里模型对同一 `query_data` 试了�
   （同名流删不掉——见 §4.3 的删除墓碑）。⇒ 消费方必须 `where rule_ver=2`；**P2 应加 run_id 并做幂等**。
 - **判据只覆盖结构型三条**：需要阈值的（行数超预算、触顶 `MAX_AGENT_TURNS`）**未实现**，等真实分布出来再定。
 - `same_tool_retry` 会把**内层调度工具**（`tool_name='tool_call'`）的重复也计入——它是不是「撞墙」待定，先如实留着。
+
+---
+
+## 6. 阶段二 T3/T4：归因、统计面与定时化
+
+### 6.1 归因到层（T3）
+
+规则表落成脚本常量 `layer_of()`；**落不下层就返回 `unknown` 并如实记录**（本轮实测 `unknown` = **0**）：
+
+| layer | n |
+|---|---|
+| 指令面 | 33 |
+| 指令面/回包面 | 5 |
+| 数据面（身份链路） | 1 |
+| **合计** | **39** |
+
+### 6.2 统计面（T3）
+
+投到 OO 流 `askdata_stats`（每轮一组行，供后面直接建看板）：
+
+| 维度 | 值 |
+|---|---|
+‖ `rows_scanned` | 575 |
+‖ `sessions`（**出现撞墙的会话数**） | **1** |
+‖ `total`（撞墙事件） | 39 |
+‖ `by_rule` | `same_tool_retry` 21 · `same_error_twice` 18 |
+‖ `by_layer` | 指令面 33 · 指令面/回包面 5 · 数据面（身份链路）1 |
+
+⚠️ **一个要正视的读数**：575 行里 39 条撞墙**全部落在同一个会话**（`07b4450f…`，即 T0 那条 CLI 轮所属的会话）。
+**这既可能是真的（其余会话确实没重试），也可能是判据太窄**——**P1 的判据面仍需在更多真实流量上标定**，别把这一次的分布当常态。
+
+### 6.3 定时化（T4）
+
+- **宿主入口**：`scripts/askdata/sync-and-run.sh`（自包含度取舍见下）——`source` 凭据 → 校三个前置
+  （两个 py + 会话库 + 凭据文件）→ 依次跑导出与归因；**任一步失败即整体退出 1（fail-fast）**。
+- **openship job**：`custom:chw9WVKDdITzgGya`（label `askdata-loop-p1`），
+  `cron 23 * * * *`（**非整点、非 `*/5` 分钟**，避开 tick 与其它 job 同分钟点火），
+  `serverId=8281d598-…`（**显式钉在 openclaw 宿主**），`timeoutMs=300000`，
+  `notifyConfig={states:["failed"], channels:["nch_XBUs425hd_KsA_lt"]}`（照抄既有 job 的失败告警面）。
+- **手动触发验证**：`jrun_yyDLn74pm2c1zScW` → `status=success` · `exitCode=0` · `attempt=1` · 182ms；
+  输出与本地跑逐字一致。**两处判据都对**：job 记录绿 **且** OO 三个流有新行。
+- **幂等性**：job 每轮重投归因结果 ⇒ `askdata_stuck`/`askdata_stuck_attr` **会累积**（消费方按 `rule_ver` + `_timestamp` 取最新）。
+  **P2 应加 run_id 并去重。**
+
+### 6.4 已知交付缺口（如实带走）
+
+`sync-and-run.sh` **故意不内嵌**那两个 py（内嵌会把脚本撑到 18.6KB，且**跨 exec 推送时易被粘贴弄坏**——本轮实撞过一次）。
+⇒ **宿主重建后需重新推送两个 py**（方式：与 T1/T2 相同的 base64 推送；脚本自身会把「缺文件」判成 `SYNC_FAIL` 并退出 1，**响亮而非静默**）。
+**P2 应做正式的仓库→宿主交付通路。**

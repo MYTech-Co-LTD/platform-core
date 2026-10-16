@@ -80,6 +80,39 @@ def detect(rows):
     return hits
 
 
+def layer_of(rule, evidence_text):
+    """归因到层（规则表落成常量，别散在 if 里）。**落不下层就返回 unknown 并如实记录**。"""
+    t = evidence_text or ""
+    if "requesterSenderId" in t or "无法识别请求者身份" in t:
+        return "数据面（身份链路）"
+    if "BAD_PARAM" in t or "参数" in t or "invalid" in t.lower():
+        return "指令面/回包面"
+    if "truncated" in t:
+        return "指令面"
+    if "warehouse_transient" in t or "502" in t:
+        return "数据面（基础设施）"
+    if rule == "same_tool_retry" or rule == "same_error_twice":
+        return "指令面"
+    return "unknown"
+
+
+def post(stream, batch):
+    req = urllib.request.Request(
+        "%s/api/%s/%s/_json" % (BASE, ORG, stream),
+        data=json.dumps(batch, ensure_ascii=False).encode(),
+        headers={"Authorization": "Basic " + AUTH, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return resp.read().decode()
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode()[:500]
+        except Exception:
+            detail = "<no body>"
+        print("POST_FAIL stream=%s n=%d http=%s body=%s" % (stream, len(batch), exc.code, detail))
+        sys.exit(1)
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit("usage: attribute.py <openclaw-agent.sqlite>")
@@ -88,29 +121,29 @@ def main():
     if not hits:
         print("ATTRIBUTE_OK stuck=0 (rows=%d)" % len(rows))
         return
-    batch = [{"session_id": r.get("session_id"), "seq": r.get("seq"), "ts": r.get("ts"),
-              "rule_ver": 2, "rule": rule, "layer_hint": layer,
-              "evidence": json.dumps(ev, ensure_ascii=False)}
-             for rule, layer, r, ev in hits]
-    req = urllib.request.Request(
-        "%s/api/%s/%s/_json" % (BASE, ORG, DST),
-        data=json.dumps(batch, ensure_ascii=False).encode(),
-        headers={"Authorization": "Basic " + AUTH, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            out = resp.read().decode()
-    except urllib.error.HTTPError as exc:
-        try:
-            detail = exc.read().decode()[:500]
-        except Exception:
-            detail = "<no body>"
-        print("ATTRIBUTE_FAIL stuck=%d http=%s body=%s" % (len(batch), exc.code, detail))
-        sys.exit(1)
-    by_rule = {}
-    for rule, _, _, _ in hits:
+
+    stuck, attributed, by_rule, by_layer = [], [], {}, {}
+    for rule, hint, r, ev in hits:
+        evs = json.dumps(ev, ensure_ascii=False)
+        layer = layer_of(rule, evs)
+        base = {"session_id": r.get("session_id"), "seq": r.get("seq"), "ts": r.get("ts"),
+                "rule_ver": 2, "rule": rule, "evidence": evs}
+        stuck.append(dict(base, layer_hint=hint))
+        attributed.append(dict(base, layer=layer))
         by_rule[rule] = by_rule.get(rule, 0) + 1
-    print("ATTRIBUTE_OK stuck=%d rows=%d by_rule=%s resp=%s"
-          % (len(batch), len(rows), json.dumps(by_rule, ensure_ascii=False), out[:160]))
+        by_layer[layer] = by_layer.get(layer, 0) + 1
+
+    r1 = post(DST, stuck)
+    r2 = post(os.environ.get("ASK_ATTR_STREAM", "askdata_stuck_attr"), attributed)
+    stats = [{"rule": k, "n": v} for k, v in by_rule.items()] + \
+            [{"layer": k, "n": v} for k, v in by_layer.items()] + \
+            [{"metric": "total", "n": len(hits)}, {"metric": "sessions", "n": len(set(
+                h[2].get("session_id") for h in hits))}, {"metric": "rows_scanned", "n": len(rows)}]
+    r3 = post(os.environ.get("ASK_STATS_STREAM", "askdata_stats"), stats)
+    print("ATTRIBUTE_OK stuck=%d rows=%d by_rule=%s by_layer=%s"
+          % (len(hits), len(rows), json.dumps(by_rule, ensure_ascii=False),
+             json.dumps(by_layer, ensure_ascii=False)))
+    print("  resp: stuck=%s attr=%s stats=%s" % (r1[:80], r2[:80], r3[:80]))
 
 
 if __name__ == "__main__":
