@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.131.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.130.1...v0.131.0) - 2026-10-16
+- 【新增】forms: readOnly 服务端复验（Closes #722） ([#723](https://github.com/MYTech-Co-LTD/platform-core/pull/723), [6fef05c](https://github.com/MYTech-Co-LTD/platform-core/commit/6fef05ceb1c858f549a864e33718f5074cd5ccd1))
+
+
 ## [0.130.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.130.0...v0.130.1) - 2026-10-16
 - 【修复】openclaw: 新鲜度固定行确定性附加（message_sending strip+append + 入站清账） ([#721](https://github.com/MYTech-Co-LTD/platform-core/pull/721), [e75ee64](https://github.com/MYTech-Co-LTD/platform-core/commit/e75ee64e608c4f83667868038fbb349073687dc1))
 
