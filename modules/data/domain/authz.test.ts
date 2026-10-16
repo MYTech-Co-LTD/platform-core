@@ -368,3 +368,64 @@ describe('maxTurns/上限类不变量', () => {
     expect(authorize(cat, req(), 'metrics_revenue_mom', { n: 3 }).ok).toBe(true)
   })
 })
+
+describe('authorize —— 确定性截断（spec §10.3：明细 GROUP BY 与 LIMIT 之间补 ORDER BY bizday DESC）', () => {
+  // 夹具照 §8 块的形状（真实 L1 形态：groupBy 含 bizday——现行 27 条全部命中）
+  const bizdayCat: MetricDef[] = [{
+    ...CATALOG[1],
+    selectSql: 'SELECT org, bizday, revenue AS value FROM marts.mart_sales_daily',
+    groupBy: 'org, bizday',
+    params: {},
+  }]
+
+  it('O1 groupBy 含 bizday → 明细 SQL 在 GROUP BY 与 LIMIT 之间补 ORDER BY bizday DESC', () => {
+    const r = authorize(bizdayCat, req(), 'metrics_revenue_mom', {})
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    // 位置判据用**连续片段**钉死：GROUP BY → ORDER BY → LIMIT 三者紧邻有序，
+    // 不是三个 toContain（那验不出顺序——ORDER BY 跑到 LIMIT 后面是语法错，必须在这里红）
+    expect(r.plan.sql).toContain('GROUP BY org, bizday ORDER BY bizday DESC LIMIT')
+    expect(r.plan.sql).toContain(`LIMIT ${MAX_QUERY_ROWS}`)
+  })
+
+  it('O2 groupBy 恰为 bizday → 同样补（现行 27 条里有按 bizday 单列分组的形态）', () => {
+    const r = authorize([{ ...bizdayCat[0], groupBy: 'bizday' }], req(), 'metrics_revenue_mom', {})
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.sql).toContain('GROUP BY bizday ORDER BY bizday DESC LIMIT')
+  })
+
+  it('O3 groupBy 不含 bizday → 不补（A2 的 GROUP BY org 形态逐字节不变）', () => {
+    // CATALOG[1] 的 groupBy='org'：词根同形（bizday 是 bizday_utc 的前缀）也不许误伤
+    const r = authorize(CATALOG, req(), 'metrics_revenue_mom', {})
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.sql).not.toContain('ORDER BY')
+    expect(r.plan.sql).toContain('GROUP BY org LIMIT')
+  })
+
+  it('O4 groupBy=bizday_utc（前缀同形不同词）→ 不补（\\b 词边界，不认子串）', () => {
+    const r = authorize([{ ...bizdayCat[0], groupBy: 'org, bizday_utc' }], req(), 'metrics_revenue_mom', {})
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.sql).not.toContain('ORDER BY')
+  })
+
+  it('O5 显式合计（args.total=true）→ 不补：plan.sql 是聚合，排序无意义', () => {
+    const r = authorize(bizdayCat, req(), 'metrics_revenue_mom', { total: true })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.total).toBe(true)
+    expect(r.plan.sql).not.toContain('ORDER BY')
+    expect(r.plan.sql).toMatch(/^SELECT sum\(value\) AS total FROM \( .*\) t$/)
+  })
+
+  it('O6 自动伴随（totalable）→ totalSql 不补、主 sql 照补（截断集最新优先只属明细）', () => {
+    const r = authorize([{ ...bizdayCat[0], totalable: true }], req(), 'metrics_revenue_mom', {})
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.sql).toContain('ORDER BY bizday DESC')
+    expect(r.plan.totalSql).toBeDefined()
+    expect(r.plan.totalSql).not.toContain('ORDER BY')
+  })
+})

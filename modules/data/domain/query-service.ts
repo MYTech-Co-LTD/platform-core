@@ -11,6 +11,12 @@ import { DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './w
 /** 湖 ETag 竞态的**窄匹配**（#452 定案 spec §3.1：宁可漏判也不误判——只认这一形状，
  *  不扩大到一般 5xx/超时；那类由 statement_timeout / job retry 语义管）。 */
 const LAKE_RACE_RE = /ETag on reading file/
+/**
+ * 新鲜度查询（spec §10.2）：load_log 最新一次**成功**物化的 materialized_at。
+ * 同仓池上的一条主键级聚合——问数执行池就是仓（DATA_WAREHOUSE_URL），单跳；
+ * 物化侧只写 status='ok' 行（materialize.sh，spec §10.1），这里也只认 ok。
+ */
+const DATA_AS_OF_SQL = "select max(materialized_at) as data_as_of from data.load_log where status='ok'"
 /** 退避：写入是原子 PUT，撞上时新文件多半已就绪，~1s 后重试恰一次足够（spec §3.1）。 */
 const LAKE_RACE_RETRY_DELAY_MS = 1_000
 
@@ -51,6 +57,12 @@ export interface QueryOk {
    * 指标（比率/去重计数）不出该字段——「没有合计」必须可辨，模型不得跨行求和。
    */
   total?: string | number | null
+  /**
+   * 新鲜度面（spec §10.2）：仓库 load_log 最新一次成功物化的 materialized_at（timestamptz，
+   * 经 node-pg 回 Date、JSON 序列化在出口面）。load_log 缺席/空 ⇒ **字段缺席**——「新鲜度
+   * 未知 ≠ 捏造」，消费方（汇报纪律，spec §10.4）必须把缺席如实转述为「数据截止未知」。
+   */
+  data_as_of?: unknown
 }
 export interface QueryDenied {
   status: 'denied'; metricId: string
@@ -160,11 +172,25 @@ export async function runQuery(
     }
   }
 
+  // 新鲜度面（spec §10.2）：主计划（与自动合计）执行成功后，同仓池补一条主键级查询。
+  // 表缺席/空表/仓库未配/任何失败 ⇒ **字段缺席**——「新鲜度未知 ≠ 捏造」，且缺账绝不
+  // 反噬主查询（try/catch 包死，不是 error 出口）。直接走真仓库池：deps.execute 是主计划
+  // SQL 的测试缝，假执行器认不得这条 SQL；生产路径（不注入 execute）本来就是这条池。
+  let dataAsOf: unknown
+  try {
+    const fresh = await runWarehouseSql(warehousePool(), DATA_AS_OF_SQL)
+    const v = fresh.rows[0]?.[0]
+    if (v !== null && v !== undefined) dataAsOf = v
+  } catch {
+    // load_log 缺席 / 仓库未配 ⇒ data_as_of 缺席（新鲜度未知，主查询结果照常交付）
+  }
+
   await audit('ok', raceRetried ? 'lake_race_retry' : null, result.rows.length)
   // 显式合计模式（spec §8）：plan.sql 已是 `SELECT sum(value) …`（无外层 LIMIT）⇒ 恒单行，
   // total 字段 = 该行的合计值；`truncated` 恒 false（合计无截断面）。
   // 自动伴随：明细 rows/truncated 语义不变，只多附一个 total 值。
-  // 非合计且不可加的路径逐字段不变（无 total 字段）。
+  // 非合计且不可加的路径逐字段不变（无 total 字段）。data_as_of（spec §10.2）任何 ok 形态
+  // 都附（合计/明细与新鲜度正交），唯独 load_log 缺账时缺席。
   return {
     status: 'ok',
     subject: authz.plan.subject,
@@ -175,5 +201,6 @@ export async function runQuery(
     ...(authz.plan.total
       ? { total: (result.rows[0]?.[0] as string | number | null | undefined) ?? null }
       : totalValue !== undefined ? { total: totalValue } : {}),
+    ...(dataAsOf !== undefined ? { data_as_of: dataAsOf } : {}),
   }
 }

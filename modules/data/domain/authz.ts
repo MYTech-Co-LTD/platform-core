@@ -256,14 +256,19 @@ export function authorize(
     `${metric.selectSql} WHERE ${metric.subjectColumn} = ${sqlQuote(subject)}` +
     filters.join('') +
     (metric.groupBy ? ` GROUP BY ${metric.groupBy}` : '')
-  // 非合计路径（等值/区间/LIMIT/GROUP BY）与既有行为逐字节一致。
+  // 确定性截断（spec §10.3）：明细 SQL 在 GROUP BY 与 LIMIT 之间补 `ORDER BY bizday DESC`——
+  // 截断集从「任意子集」变「最新优先」，最新分区不再被 cap 藏掉（与响应 truncated 信号配套）。
+  // 仅当分组粒度含 bizday（现行 27 条 L1 全命中）；\b 词边界——`bizday_utc` 这类前缀同形词不误伤。
+  // **只**加在明细路径：whereAndGroup 本身一字不动，故 totalSql / 显式合计（都包着 whereAndGroup）
+  // 不受影响——聚合无行序语义，排序无意义。
+  const detailOrder = /\bbizday\b/.test(metric.groupBy) ? ' ORDER BY bizday DESC' : ''
   const sql = wantTotal
     ? // 合计形态（spec §8.1）：内层（subject + filters + grain 分组）上再 sum——
       // **无外层 LIMIT**：合计必须作用于全量匹配行，截断求和 = 错数。
       // `value` 是 sync 编译器给指标 expression 的固定别名（buildSelectSql：
       // `select <expr> as value, …`），故 sum(value) = 对该指标口径在全量匹配行上再聚合。
       `SELECT sum(value) AS total FROM ( ${whereAndGroup} ) t`
-    : `${whereAndGroup} LIMIT ${MAX_QUERY_ROWS}`
+    : `${whereAndGroup}${detailOrder} LIMIT ${MAX_QUERY_ROWS}`
 
   // 自动伴随（spec §8.4）：totalable 指标的**非显式**查询在计划上附合计 SQL——与显式合计
   // 共用同一形状（无 LIMIT）。subject/filters 与主 sql 同源（同一 whereAndGroup），自动合计
