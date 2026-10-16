@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.130.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.130.0...v0.130.1) - 2026-10-16
+- 【修复】openclaw: 新鲜度固定行确定性附加（message_sending strip+append + 入站清账） ([#721](https://github.com/MYTech-Co-LTD/platform-core/pull/721), [e75ee64](https://github.com/MYTech-Co-LTD/platform-core/commit/e75ee64e608c4f83667868038fbb349073687dc1))
+
+
 ## [0.130.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.129.2...v0.130.0) - 2026-10-16
 - 【新增】forms: 填报与渲染面——console 页 + RJSF 渲染 + 条件字段护栏（Closes #718） ([#719](https://github.com/MYTech-Co-LTD/platform-core/pull/719), [d55a602](https://github.com/MYTech-Co-LTD/platform-core/commit/d55a6024d31497a451b11d49598f89d025acace6))
 
