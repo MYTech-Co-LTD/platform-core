@@ -104,7 +104,7 @@ describe('DICT_REF_RE / BINDINGS / RESERVED_KEYS（契约约定常量）', () =>
 })
 
 describe('validateSubmission（五道闸，按提交钉住的版本契约）', () => {
-  const dictLookup = (ref: string) => (ref === 'dict:level' ? new Set(['p1', 'p2', 'p3']) : new Set())
+  const dictLookup = (ref: string): Set<string> => (ref === 'dict:level' ? new Set(['p1', 'p2', 'p3']) : new Set())
 
   it('合法 payload → ok', () => {
     const r = validateSubmission({ schema: okSchema, payload: { name: '张三', level: 'p1' }, dictLookup })
@@ -164,7 +164,7 @@ describe('validateSubmission（五道闸，按提交钉住的版本契约）', (
       type: 'object',
       properties: { region: { type: 'string', 'x-dict': 'gdict:china-region', 'x-binding': 'required' } },
     }
-    const lookup = (ref: string) => (ref === 'gdict:china-region' ? new Set(['cn-11']) : new Set())
+    const lookup = (ref: string): Set<string> => (ref === 'gdict:china-region' ? new Set(['cn-11']) : new Set())
     expect(validateSubmission({ schema, payload: { region: 'cn-11' }, dictLookup: lookup }).ok).toBe(true)
     const bad = validateSubmission({ schema, payload: { region: 'xx' }, dictLookup: lookup })
     expect(bad.ok).toBe(false)

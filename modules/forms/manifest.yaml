@@ -1,10 +1,44 @@
-# forms 模块（架构正典 docs/architecture.md §2.4「采集底座：受管数据集（表单+字典）」，issue #708）。
+# forms 模块（架构正典 docs/architecture.md §2.4「采集底座：受管数据集（表单+字典）」）。
 # 三同纪律：id = DB schema 名 = API 前缀——改 id = 三处同改，选错比放错难改。
-# 骨架口径（M1.1）：零权限码、零路由；表单/字典业务面随 M1.2+ 落地（表建 forms schema、
-# 带 org 列，迁移纪律见 docs/module-onboarding.md §4）。
+# M1.2（issue #710）：受管数据集内核——生命周期 + 字典双档（P4）+ 绑定强度两档（P7）。
+# scope 矩阵即 P4 分档：forms:global-manage 默认无任何租户角色持有（授予=平台运营显式动作）。
 id: forms
 name: 表单模块
-version: 0.1.0
+version: 0.2.0
 platform: '>=0.1'
-permissions: []
+permissions:
+  - { code: forms:view,           name: 表单查看与解析 }
+  - { code: forms:fill,           name: 表单填报 }
+  - { code: forms:manage,         name: 表单与租户字典管理 }
+  - { code: forms:publish,        name: 表单发布（人 gate） }
+  - { code: forms:global-manage,  name: 平台全局字典管理 }
+# ⚠️ api.internal 的 path 是模块相对路径；声明集合必须与 createRouter 注册集合逐条一致
+#（装载期双向核对，任一方向差集 ⇒ 装载失败）。改路由或改本清单必须同一提交对齐。
+api:
+  internal:
+    # ── 表单定义（生命周期：draft→publish 人 gate→retired）──
+    - { method: GET,    path: /defs,                                scope: forms:view }
+    - { method: GET,    path: /defs/:assetId,                       scope: forms:view }
+    - { method: POST,   path: /defs,                                scope: forms:manage }
+    - { method: PUT,    path: /defs/:assetId/versions/:v,           scope: forms:manage }
+    - { method: DELETE, path: /defs/:assetId/versions/:v,           scope: forms:manage }
+    - { method: POST,   path: /defs/:assetId/versions/:v/publish,   scope: forms:publish }
+    - { method: POST,   path: /defs/:assetId/rollback,              scope: forms:publish }
+    - { method: POST,   path: /defs/:assetId/versions/:v/retire,    scope: forms:publish }
+    # ── 提交（org 钉死 + 按提交钉住版本契约校验）──
+    - { method: POST,   path: /defs/:assetId/submissions,           scope: forms:fill }
+    - { method: GET,    path: /defs/:assetId/submissions,           scope: forms:view }
+    - { method: GET,    path: /submissions/:id,                     scope: forms:view }
+    # ── 字典（租户私有：forms:manage；读与解析 forms:view）──
+    - { method: GET,    path: /dicts,                               scope: forms:view }
+    - { method: GET,    path: /dicts/:dictId/options,               scope: forms:view }
+    - { method: GET,    path: /dicts/:dictId/resolve,               scope: forms:view }
+    - { method: POST,   path: /dicts,                               scope: forms:manage }
+    - { method: PUT,    path: /dicts/:dictId/keys/:key,             scope: forms:manage }
+    # ── 全局字典（P4：编辑权收平台超管——forms:global-manage 默认无租户角色持有）──
+    - { method: GET,    path: /global-dicts,                        scope: forms:view }
+    - { method: GET,    path: /global-dicts/:dictId/options,        scope: forms:view }
+    - { method: GET,    path: /global-dicts/:dictId/resolve,        scope: forms:view }
+    - { method: POST,   path: /global-dicts,                        scope: forms:global-manage }
+    - { method: PUT,    path: /global-dicts/:dictId/keys/:key,      scope: forms:global-manage }
 migrations: { dir: ./migrations }
