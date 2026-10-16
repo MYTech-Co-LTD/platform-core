@@ -31,17 +31,34 @@ FROM node:22-alpine AS build
 # `npm i -g pnpm@^11.x` 那条路正是这种漂移面）。
 # COREPACK_HOME 固定到 /opt：默认位置在 $HOME/.cache 下，而运行阶段切了 USER（HOME 变化）
 # ——固定后 shim 在运行期不会因为找不到缓存而重新联网下载。
-# COREPACK_NPM_REGISTRY / npm_config_registry 走国内镜像（corepack 下载 pnpm 与 pnpm 拉
-# 包共用）：构建机（境内）直连 registry.npmjs.org 抖动大——corepack 短超时 3s 量级即断
+#
+# 镜像源：**corepack 与 pnpm 是两条腿，配置方式不一样**（2026-10-16 真机实测，见 #492）。
+#   · corepack 读 env `COREPACK_NPM_REGISTRY` —— 它负责下载 pnpm 本体；
+#   · pnpm **不读 env**：`npm_config_registry` 与 `NPM_CONFIG_REGISTRY`（大小写两式）
+#     写成无效主机仍能装成功、`pnpm config get registry` 也不变；**只认 `.npmrc`**
+#     （写成无效主机 ⇒ 立刻 DNS 报错失败）。
+#     故 pnpm 那条腿由下面 WORKDIR 后落盘的 /app/.npmrc 承担，并**就地自证**。
+#     #192 那次「双键换源」正是只覆盖了 corepack —— 注释说「与 pnpm 拉包共用」，实际没有，
+#     且**静默**（构建照绿、只是慢）。这次的断言就是为了不让它再静默退化。
+#
+# 为什么要镜像源：构建机（境内）直连 registry.npmjs.org 抖动大——corepack 短超时 3s 量级即断
 # （2026-09-24 mytech 真机实测：主机 curl npmjs 2.35s 勉强通、构建容器内 corepack 3.3s
 # 失败；npmmirror 0.3s）。RUN 步骤不继承 dockerd 代理 ⇒ 依赖下载没有代理可倚；而下面的
 # COPY 是目录级、任一源文件变更即整层缓存失效 ⇒ pnpm/corepack 重新联网是常态而非偶发。
 # 不配镜像源 = 构建定时炸弹。
+# 换源**不改变装到什么**（所以不构成「依赖从哪来」的口径变化）：tarball 由 lockfile 的
+# integrity（sha512，574/574 条 resolution 全覆盖）校验，且实测同包两源 sha256 逐字节
+# 相同——registry 只是**传输通道**。收益实测（4.37MB tarball ×3）：npmmirror 5.7–8.0 MB/s
+# vs npmjs 0.6–1.9 MB/s。
 ENV COREPACK_HOME=/opt/corepack \
     COREPACK_NPM_REGISTRY=https://registry.npmmirror.com \
-    npm_config_registry=https://registry.npmmirror.com
+    NPM_REGISTRY=https://registry.npmmirror.com
 RUN corepack enable
 WORKDIR /app
+# pnpm 的镜像源腿（理由见上）：落盘 + 自证。断言不过即此层构建失败——把「配了却没生效」
+# 那类静默退化挡在门口（`pnpm config get registry` 返回值带尾斜杠，故用子串匹配）。
+RUN printf 'registry=%s\n' "$NPM_REGISTRY" > .npmrc \
+    && pnpm config get registry | grep -qF "$NPM_REGISTRY"
 
 # ---- 逐目录 COPY（理由见各条）----
 # ① 工作区根清单：pnpm-workspace.yaml 定义 apps/* + packages/* + modules/* 三个 glob，

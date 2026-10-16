@@ -270,7 +270,7 @@ DATABASE_URL=<平台库连接串> \
 |---|---|---|
 | 1 | dbt-postgres 1.9.8 配对不存在（1.9 线只到 1.9.1） | #187 钉 `1.9.1`（`deploy/dbt/Dockerfile`） |
 | 2 | dbt Jinja 块内 SQL 注释编译错 | #187（模型改写规避） |
-| 3 | 构建容器内 corepack/pnpm 直连 npmjs 超时 | #192 `Dockerfile.server` 双键 npmmirror |
+| 3 | 构建容器内 corepack/pnpm 直连 npmjs 超时 | #192 corepack 腿（env `COREPACK_NPM_REGISTRY`）+ #492 pnpm 腿（`/app/.npmrc` + 构建内自证断言）。**两腿配置方式不同**：pnpm 实测**不读 env**（大小写两式皆无效），只认 `.npmrc` |
 | 4 | 真库测试锁竞态族（超时抖动） | #190 `fileParallelism` 根级串行 |
 | 5 | 智能代理大镜像分块拉取缺陷 | 控制面代码+配置双修（首块 4MB / 块超时 600s / 并行 6——细节见 WeKnora《智能代理大镜像拉取根治》） |
 | 6 | openship services 模式三坑（相对 bind / PG18 数据目录 / env 终值） | #187 入档 + 本 SOP P5 固化 |
