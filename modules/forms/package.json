@@ -9,10 +9,13 @@
   },
   "dependencies": {
     "@platform/sdk": "workspace:*",
+    "ajv": "^8.20.0",
     "hono": "^4.13.0",
+    "pg": "^8.23.0",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@types/pg": "^8.23.1",
     "vitest": "^3.2.7"
   }
 }
