@@ -1,4 +1,6 @@
 import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { ManifestSchema } from '@platform/sdk'
 import mod from './index'
@@ -58,7 +60,8 @@ describe('forms 模块声明（#708/#710）', () => {
     }
   })
 
-  it('migrations 目录在位（git 不跟踪空目录，.gitkeep 占位）', () => {
-    expect(existsSync(new URL('./migrations', import.meta.url))).toBe(true)
+  it('migrations 目录在位（内核迁移 001_kernel.sql 已落）', () => {
+    // node:path 取法（happy-dom 的全局 URL 分辨不出 file: 方案——与 index.ts 同款订正）
+    expect(existsSync(join(dirname(fileURLToPath(import.meta.url)), 'migrations', '001_kernel.sql'))).toBe(true)
   })
 })

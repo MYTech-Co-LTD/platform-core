@@ -40,6 +40,8 @@ export type GateErrorCode =
   | 'BINDING_REQUIRED'
   | 'BAD_BINDING'
   | 'BAD_DICT_REF'
+  | 'CONDITIONAL_EMPTY'
+  | 'CONDITIONAL_TOPLEVEL'
 
 /** 收集契约中全部字典引用（去重）——storage 据此预载各 ref 的生效 key 集。 */
 export function dictRefs(schema: unknown): string[] {
@@ -50,6 +52,64 @@ export function dictRefs(schema: unknown): string[] {
     if (typeof n['x-dict'] === 'string' && DICT_REF_RE.test(n['x-dict'])) refs.add(n['x-dict'])
   }
   return [...refs]
+}
+
+/**
+ * 条件字段两查（ADR-0005 §12.7，issue #718）：PoC 首轮 5 用例 100% 踩中的坑——
+ * 条件目标字段声明在外层 properties ⇒ **常显**（if/then 只对校验生效，不管显隐）；
+ * 必须只声明在 then/else 的 properties 里才正确显隐。发布门拦下这两态：
+ * - CONDITIONAL_TOPLEVEL：then/else 的目标字段同时出现在外层 properties（常显 bug）
+ * - CONDITIONAL_EMPTY：有 if/then 但 then/else 没声明任何目标字段（八成字段被放顶层了）
+ */
+function conditionalChecks(node: unknown, parentProps: ReadonlySet<string>): GateResult | null {
+  if (node === null || typeof node !== 'object') return null
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const r = conditionalChecks(item, parentProps)
+      if (r) return r
+    }
+    return null
+  }
+  const rec = node as Record<string, unknown>
+  const ownProps = new Set<string>()
+  const props = rec['properties']
+  if (props !== null && typeof props === 'object' && !Array.isArray(props)) {
+    for (const k of Object.keys(props)) ownProps.add(k)
+  }
+  const here = ownProps.size > 0 ? ownProps : parentProps
+
+  if ('if' in rec) {
+    const declared = new Set<string>()
+    for (const branch of ['then', 'else']) {
+      const b = rec[branch]
+      if (b === null || typeof b !== 'object') continue
+      const bp = (b as Record<string, unknown>)['properties']
+      if (bp !== null && typeof bp === 'object' && !Array.isArray(bp)) {
+        for (const k of Object.keys(bp)) declared.add(k)
+      }
+    }
+    if ('then' in rec && declared.size === 0) {
+      return {
+        ok: false,
+        code: 'CONDITIONAL_EMPTY',
+        detail: 'if/then 的 then/else 未声明任何目标字段——条件字段必须只声明在 then.properties 内（放外层会常显，§12.7）',
+      }
+    }
+    for (const k of declared) {
+      if (here.has(k)) {
+        return {
+          ok: false,
+          code: 'CONDITIONAL_TOPLEVEL',
+          detail: `条件目标字段 "${k}" 同时声明在外层 properties——会常显；只能声明在 then.properties 内（§12.7）`,
+        }
+      }
+    }
+  }
+  for (const value of Object.values(rec)) {
+    const r = conditionalChecks(value, here)
+    if (r) return r
+  }
+  return null
 }
 
 /** 深度收集契约里所有出现 `x-dict` / `x-binding` 的节点（顶层 properties 与
@@ -89,6 +149,8 @@ export function compileGate(body: unknown): GateResult {
   } catch (e) {
     return { ok: false, code: 'SCHEMA_COMPILE', detail: (e as Error).message }
   }
+  const cond = conditionalChecks(schema, new Set())
+  if (cond) return cond
   const nodes: Record<string, unknown>[] = []
   collectDictNodes(schema, nodes)
   for (const n of nodes) {

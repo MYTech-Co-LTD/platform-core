@@ -9,13 +9,24 @@
   },
   "dependencies": {
     "@platform/sdk": "workspace:*",
+    "@rjsf/antd": "^6.11.0",
+    "@rjsf/core": "^6.11.0",
+    "@rjsf/validator-ajv8": "^6.11.0",
     "ajv": "^8.20.0",
+    "antd": "^6.6.3",
     "hono": "^4.13.0",
     "pg": "^8.23.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^6.30.6",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.10.0",
+    "@testing-library/react": "^16.3.3",
     "@types/pg": "^8.23.1",
+    "@types/react": "^19.2.18",
+    "happy-dom": "^20.14.0",
     "vitest": "^3.2.7"
   }
 }

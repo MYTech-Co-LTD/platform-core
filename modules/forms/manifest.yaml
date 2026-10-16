@@ -41,4 +41,8 @@ api:
     - { method: GET,    path: /global-dicts/:dictId/resolve,        scope: forms:view }
     - { method: POST,   path: /global-dicts,                        scope: forms:global-manage }
     - { method: PUT,    path: /global-dicts/:dictId/keys/:key,      scope: forms:global-manage }
+frontend:
+  console:
+    # 一个条目 + 页内三页签（表单/填报/提交记录，照 aftersales 姿势）；scope=forms:view
+    - { path: /console/forms, title: 表单, icon: FileTextOutlined, scope: forms:view, entry: ./console/index.tsx }
 migrations: { dir: ./migrations }

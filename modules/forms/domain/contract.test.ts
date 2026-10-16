@@ -85,6 +85,41 @@ describe('compileGate（发布门 = 编译闸；draft 期自由）', () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.code).toBe('BAD_DICT_REF')
   })
+
+  it('条件字段：then 里没有目标字段 → CONDITIONAL_EMPTY（§12.7：八成字段被放顶层）', () => {
+    const r = compileGate({
+      type: 'object',
+      properties: { t: { type: 'string', enum: ['a', 'b'] } },
+      if: { properties: { t: { const: 'a' } }, required: ['t'] },
+      then: {},
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.code).toBe('CONDITIONAL_EMPTY')
+  })
+
+  it('条件字段：目标字段同时声明在顶层 properties → CONDITIONAL_TOPLEVEL（会常显）', () => {
+    const r = compileGate({
+      type: 'object',
+      properties: {
+        t: { type: 'string', enum: ['a', 'b'] },
+        otherText: { type: 'string' }, // 放顶层 ⇒ 常显（PoC 首轮 100% 踩中的坑）
+      },
+      if: { properties: { t: { const: 'a' } }, required: ['t'] },
+      then: { properties: { otherText: { type: 'string' } } },
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.code).toBe('CONDITIONAL_TOPLEVEL')
+  })
+
+  it('条件字段：目标字段只声明在 then.properties → ok（正确显隐形态）', () => {
+    const r = compileGate({
+      type: 'object',
+      properties: { t: { type: 'string', enum: ['a', 'b'] } },
+      if: { properties: { t: { const: 'a' } }, required: ['t'] },
+      then: { properties: { otherText: { type: 'string', minLength: 1 } }, required: ['otherText'] },
+    })
+    expect(r.ok).toBe(true)
+  })
 })
 
 describe('DICT_REF_RE / BINDINGS / RESERVED_KEYS（契约约定常量）', () => {
