@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.129.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.129.0...v0.129.1) - 2026-10-16
+- 【修复】forms: G0 量具去掉裸 SQL 全文件重放——并行 worker 下 DDL 重放 deadlock（Closes #714） ([#715](https://github.com/MYTech-Co-LTD/platform-core/pull/715), [adb94b7](https://github.com/MYTech-Co-LTD/platform-core/commit/adb94b7ef80b7665166968c2c4ea7336c1293810))
+
+
 ## [0.129.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.128.0...v0.129.0) - 2026-10-16
 - 【新增】data: 新鲜度 SLA + 水位木桶 + freshness_line 固定展示行（业务大白话，spec §10.7） ([#712](https://github.com/MYTech-Co-LTD/platform-core/pull/712), [0084774](https://github.com/MYTech-Co-LTD/platform-core/commit/0084774ab2b1bd46d3f2131829c4b68ed0753b51))
 
