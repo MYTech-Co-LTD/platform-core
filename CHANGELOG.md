@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.134.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.133.2...v0.134.0) - 2026-10-16
+- 【新增】forms: M1.4b 出湖管线三件——契约 + duckle 管线 + dbt 通用 staging（Closes #737） ([#738](https://github.com/MYTech-Co-LTD/platform-core/pull/738), [66586ec](https://github.com/MYTech-Co-LTD/platform-core/commit/66586ec7b31dd7a5fa25040515599afe4134d732))
+
+
 ## [0.133.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.133.1...v0.133.2) - 2026-10-16
 - 【修复】deploy: 自证层挪进装依赖 RUN——不再白下最新版 pnpm（58MB 死重） ([#736](https://github.com/MYTech-Co-LTD/platform-core/pull/736), [edba34e](https://github.com/MYTech-Co-LTD/platform-core/commit/edba34e97dde74f2e792b0d338108cad28758e58))
 
