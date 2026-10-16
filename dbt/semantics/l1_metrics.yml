@@ -22,7 +22,17 @@
 #               ⚠️ 与下面的 `sources` **不是一回事**（一个是源系统、一个是存储路径），别合并：
 #               它会**落库**（`data.metrics.source_system`，sync 物化）并被消费侧拿去与
 #               「已接入源」比对（未接入该源的租户看不到这条指标）⇒ 写法必须与登记值逐字一致。
+#   freshness_sla_days 必填。**新鲜度 SLA 承诺天数**（spec §10.7.1）：物化水位距今天 ≤N 个
+#               业务日即「正常」。值 = 采集正典实测窗口的登记，不是拍脑袋：inventory 两指标 = 2
+#               （源端发布滞后 16~40h 实测），其余 = 1（D+1 采集/日结）。sync 物化进
+#               `data.metrics.sla_days`，服务端按它把水位转译成 freshness_status
+#               （normal/late/alert）与 freshness_line 固定展示行；**缺声明 sync 响亮失败**
+#               （新指标忘登记不许静默默认——那会让它永远「未知」且没人发现）。
 #   sources     选填（人读）。指标背后**实际读的对象存储路径**（不落库、无门禁）。
+#               ⚠️ 但它**参与新鲜度链路推导**（spec §10.7.3）：sync 取路径段 `lemeng/<资产>`
+#               推导 `stg_lemeng_<资产>` 关系集物化进 `data.metrics.freshness_relations`，
+#               水位 = 这些关系在 load_log 上的 min(max_bizday)。不声明 = 该指标无自动水位
+#               （freshness_line 等字段缺席，如实「未知」）。
 #
 # ⚠️ 「声明 ↔ 实现一致」（expression 指向的模型/列真的存在且口径一致）这条**当前没有机检**
 #    —— 它需要真库（spec §10 门禁③ 的形态）。当前只有：本文件的**存在性/字段/命名/对账文件**机检
@@ -48,6 +58,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+    freshness_sla_days: 1
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
     # 对账（每个声明指标一条独立复算，layered §7 硬约束 7）：对应的 singular test 文件名**不在这里写**
@@ -69,6 +80,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
 
@@ -93,6 +105,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -111,6 +124,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:outbound:gross_margin_rate'
     label: 总仓出库毛利率
@@ -125,6 +139,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:outbound:order_count'
     label: 出库单数
@@ -138,6 +153,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:outbound:line_count'
     label: 出库明细行数
@@ -150,6 +166,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:transfer:batch_fill_rate'
     label: 配送批号填写率
@@ -166,6 +183,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:transfer:zero_cost_exposure_amount'
     label: 配送零成本出库暴露金额
@@ -180,6 +198,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:transfer:negative_order_count'
     label: 配送负金额单数
@@ -193,6 +212,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:transfer:item_gross_margin_rate'
     label: 商品出库毛利率
@@ -208,6 +228,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
 
 
   # ── W2（2026-10-13）：费用两件套 6 条 ────────────────────────────────────────────────
@@ -224,6 +245,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
     sources:
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -237,6 +259,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:expense:branch_net'
     label: 门店净费用
@@ -249,6 +272,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:expense:client_payable'
     label: 客户应付费用
@@ -261,6 +285,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
     sources:
       - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -274,6 +299,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:expense:client_net'
     label: 客户净费用
@@ -285,6 +311,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
+    freshness_sla_days: 1
 
   # ── W3（2026-10-13）：库存快照 2 条 ─────────────────────────────────────────────────
   # 构件落点：fct_inventory_snapshot。全 experimental——D17 T-1 日结不可回溯（漏采即丢）；
@@ -302,6 +329,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/inventory_snapshot/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -315,6 +343,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+    freshness_sla_days: 2
 
   # ── 采购族（W3 余项 2026-10-13，D11 itempurchase / fct_purchase / #640）──────────────
   # ⚠️ 全 experimental：① 采购**收货**口径（≠采购订单，客户文档边界）；② 采集范围 = 管理中心
@@ -331,6 +360,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+    freshness_sla_days: 1
     sources:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -343,6 +373,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:purchase:return_amount'
     label: 采购退货金额
@@ -354,6 +385,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:purchase:net_amount'
     label: 净采购额
@@ -365,6 +397,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:purchase:supplier_count'
     label: 采购供应商数
@@ -376,6 +409,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:purchase:item_count'
     label: 采购商品数
@@ -386,6 +420,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+    freshness_sla_days: 1
 
   # ── W3 余项（2026-10-15，要货满足率 / D15×D16，#677）────────────────────────────────
   # 构件落点：fct_request_fulfillment（店×商品×日总量对照）。⚠️ 全 experimental——行级履约
@@ -403,6 +438,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+    freshness_sla_days: 1
 
   - name: 'lemeng:request:day_fulfillment_rate'
     label: 截止日满足率
@@ -419,4 +455,5 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
+    freshness_sla_days: 1
 

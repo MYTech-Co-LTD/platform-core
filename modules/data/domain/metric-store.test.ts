@@ -13,7 +13,7 @@ import {
   upsertL1Metric,
   upsertMetric,
 } from './metric-store'
-import { applyMigrations, makeIdentity } from '../test-util'
+import { applyMigrations, makeIdentity, rawMigrationSqls } from '../test-util'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -59,7 +59,10 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
    * sync 脚本传进来的正是它的 ComparableMetric（同形）。默认 `lemeng`（当前唯一已接入源）。
    */
   const l1 = (over: Partial<MetricDef> = {}, sourceSystem: string | null = 'lemeng') =>
-    ({ ...def(over), sourceSystem })
+    ({ ...def(over), sourceSystem,
+      // 新鲜度链路（spec §10.7）缺省形态：承诺 1 天 + 空关系集（= 无自动水位，字段缺席）。
+      // 夹具默认不接链路；要验链路的用例显式传 slaDays/freshnessRelations。
+      slaDays: 1, freshnessRelations: [] as string[] })
 
   afterAll(async () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
@@ -175,6 +178,43 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
     expect(r.rows[0].totalable, 'L2 行不受 def 上的 totalable 影响（恒 false）').toBe(false)
   })
 
+  it('★ sla_days / freshness_relations（spec §10.7）：L1 带值写入并随声明刷新；L2 写不碰它们', async () => {
+    // 新鲜度链路（spec §10.7.3）：sync 从声明推导slaDays + freshnessRelations，物化路径带值、
+    // 冲突分支与 source_system/totalable 同一条「声明是真值」纪律一起刷；L2 写路径没有这个概念。
+    const id = `${L1_ID_PREFIX}sla_fresh`
+    await upsertL1Metric(pool, {
+      ...l1({ id }), slaDays: 1,
+      freshnessRelations: ['stg_lemeng_retail_order_line'],
+    })
+    const got = (await loadPlatformCatalog(pool)).find((m) => m.id === id)
+    expect(got?.slaDays, 'L1 带值要落库').toBe(1)
+    expect(got?.freshnessRelations).toEqual(['stg_lemeng_retail_order_line'])
+
+    // 声明改了 ⇒ 重新物化必须跟上（否则 sync --check 永远检出漂移）
+    await upsertL1Metric(pool, { ...l1({ id }), slaDays: 2, freshnessRelations: [] })
+    const flipped = (await loadPlatformCatalog(pool)).find((m) => m.id === id)
+    expect(flipped?.slaDays).toBe(2)
+    expect(flipped?.freshnessRelations).toEqual([])
+
+    // 租户写路径撞上同 (org, id) 的 L1 行：内容被覆盖，但 sla_days / freshness_relations
+    // **不**被抹成 null（与 source/totalable 同一条纪律——一次租户写不能把平台行的新鲜度链路清掉）
+    await put(L1_ORG, def({ id, title: '租户路径覆盖同 id 行' }))
+    const after = (await pool.query(
+      'select sla_days, freshness_relations from data.metrics where org = $1 and id = $2', [L1_ORG, id],
+    )).rows[0]
+    expect(after.sla_days, '租户写不得抹掉平台行的 sla_days').toBe(2)
+    expect(after.freshness_relations, '租户写不得抹掉平台行的 freshness_relations').toEqual([])
+
+    // L2 行（写路径直落）恒 null——「没接链路」必须可辨
+    await put(ORG, def({ id: 'l2_sla_guard' }))
+    const l2 = (await pool.query(
+      'select sla_days, freshness_relations from data.metrics where org = $1 and id = $2',
+      [ORG, 'l2_sla_guard'],
+    )).rows[0]
+    expect(l2.sla_days).toBeNull()
+    expect(l2.freshness_relations).toBeNull()
+  })
+
   it('★ 声明的 source 改了 ⇒ 重新物化把 source_system 一起刷（否则 sync --check 永远检出漂移）', async () => {
     const id = `${L1_ID_PREFIX}src_flip`
     await upsertL1Metric(pool, l1({ id }, 'lemeng'))
@@ -228,7 +268,9 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
     // 映射保真：逐字段等于写入的那个对象 + source 标注 + #489 的两列 + totalable 缺省
     // （多出来的列没被塞进来、jsonb 没被序列化成字符串）。这两列**必须**在映射里 —— /metrics/all 的列表两列靠它。
     expect(catalog.find((m) => m.id === 'finance_margin'))
-      .toEqual({ ...mine, source: 'l2', sourceSystem: null, updatedBy: 'fixture', version: 1, totalable: false })
+      .toEqual({ ...mine, source: 'l2', sourceSystem: null, updatedBy: 'fixture', version: 1, totalable: false,
+        // 新鲜度链路（spec §10.7）：L2 行没有这个概念，恒 null（不是 []——「没声明」与「声明为空」可辨）
+        slaDays: null, freshnessRelations: null })
   })
 
   it('deleteMetric 返「是否真删了一行」，且只删本租户的', async () => {
@@ -389,6 +431,56 @@ describePg('016 迁移：totalable 列（spec §8.4）', () => {
     expect(r.rows[0].totalable).toBe(false)
     await pool.query('delete from data.metrics where org = $1 and id = $2',
       [ORG, 'totalable_default_probe']).catch(() => {})
+  })
+})
+
+// ── 017 迁移（spec §10.7）：新鲜度 SLA 两列 + load_log 逐关系水位两列。验的是 schema。──
+describePg('017 迁移：sla_days / freshness_relations + load_log 水位列（spec §10.7）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  afterAll(async () => { await pool.end() })
+
+  /** 017 的正文（唯一事实源 = 迁移文件；这里读原文执行，不复制 SQL）。 */
+  const sql017 = async () => {
+    const all = await rawMigrationSqls()
+    const text = all.find((s) => s.includes('017_metric_freshness') || s.includes('sla_days'))
+    expect(text, '017 迁移文件必须在 migrations/ 目录里').toBeTruthy()
+    return text as string
+  }
+
+  it('★ data.metrics 两列就位（可空）、迁移幂等（连跑两遍零效果）', async () => {
+    await applyMigrations(pool)
+    await applyMigrations(pool) // 第二遍：必须零效果、不报错（部署脚本每次全量重跑）
+
+    const cols = await pool.query<{ column_name: string; data_type: string; is_nullable: string }>(
+      `select column_name, data_type, is_nullable from information_schema.columns
+        where table_schema = 'data' and table_name = 'metrics'
+          and column_name in ('sla_days', 'freshness_relations') order by column_name`)
+    expect(cols.rows).toEqual([
+      { column_name: 'freshness_relations', data_type: 'jsonb', is_nullable: 'YES' },
+      { column_name: 'sla_days', data_type: 'integer', is_nullable: 'YES' },
+    ])
+  })
+
+  it('★ load_log 半句：表在 ⇒ 两列补上；表缺 ⇒ 整句 no-op 不报错（平台库没有这张表是常态）', async () => {
+    // data.load_log 物化在**仓库库**（pg_duckdb，materialize.sh 建）；平台库（本测试库的常态）没有它。
+    // 迁移用 `alter table if exists` 兜这两种世界：表在就补列，表缺席就安静跳过——不许因「表不在这」翻车。
+    const text = await sql017()
+
+    // 形态 ①：旧形状的 load_log 在场 ⇒ 补出 relation / max_bizday（幂等：先建旧形状再跑）
+    await pool.query('create table if not exists data.load_log(materialized_at timestamptz default now(), tests_pass int, tests_error int, status text)')
+    await pool.query(text)
+    const cols = await pool.query<{ column_name: string; data_type: string }>(
+      `select column_name, data_type from information_schema.columns
+        where table_schema = 'data' and table_name = 'load_log'
+          and column_name in ('relation', 'max_bizday') order by column_name`)
+    expect(cols.rows).toEqual([
+      { column_name: 'max_bizday', data_type: 'date' },
+      { column_name: 'relation', data_type: 'text' },
+    ])
+
+    // 形态 ②：表摘掉再跑 ⇒ 不报错（no-op）；旧行兼容性：relation NULL 的仓级历史行还在
+    await pool.query('drop table if exists data.load_log')
+    await expect(pool.query(text)).resolves.toBeTruthy()
   })
 })
 

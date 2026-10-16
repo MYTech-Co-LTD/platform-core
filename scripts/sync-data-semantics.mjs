@@ -102,7 +102,82 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  * @property {Record<string, MetricParamDef>} params
  * @property {string | null} sourceSystem
  * @property {boolean} totalable 可加标记（spec §8.4，deriveTotalable 从 expression 推导）
+ * @property {number | null} slaDays 新鲜度 SLA 承诺天数（spec §10.7.1，声明 freshness_sla_days 的物化值；
+ *                  允许 null 是为了接住**库内旧行**——sync 未刷过 sla_days 的存量 L1 行；
+ *                  声明侧推导出的行恒为非负整数，库侧读取不信任存储形状）
+ * @property {string[] | null} freshnessRelations 新鲜度关系集（spec §10.7.3，deriveFreshnessRelations
+ *                  从 sources 推导；null 同上——接住库内旧行）
  */
+
+/**
+ * 对象存储路径里认得的**资产段**形态（要拼进 `stg_lemeng_<资产>` 这个 SQL 标识符，
+ * 必须是安全形状：小写字母/数字/下划线、非空）。
+ */
+const FRESHNESS_ASSET_RE = /^[a-z0-9_]+$/
+
+/**
+ * 新鲜度关系集推导（spec §10.7.3）：声明 `sources` 的存储路径段 `lemeng/<资产>` ⇒ 关系名
+ * `stg_lemeng_<资产>`。
+ *
+ * ── 为什么是「命名约定即事实」而不是再要一个显式声明字段 ─────────────────────────────
+ * staging 模型名在仓内是 `stg_<源>_<资产>`（`dbt/models/common/staging/stg_lemeng_*.sql`，
+ * 14 个全部同构，check-data-models 规则 ④ 的双向配对盯着的正是这个形状）；水位要查的表就是
+ * 这些 staging 模型落的表。让声明再写一遍关系名 = 两处事实源（sources 已写了路径段）。
+ * 故这里**机械推导**：推导不出来（路径里没有 `lemeng/` 段、资产段形状不安全）就**响亮失败**
+ * ——瞎猜一个关系名，水位查询会静默查空（freshness 永远「未知」），坏在数据里不报错。
+ *
+ * @param {readonly string[] | undefined} sources 声明的对象存储路径（选填；undefined/空 = 无链路）
+ * @returns {string[]} 关系名数组（保序去重；无 sources = 空数组 = 无自动水位）
+ */
+export function deriveFreshnessRelations(sources) {
+  if (!Array.isArray(sources) || sources.length === 0) return []
+  /** @type {string[]} */
+  const relations = []
+  for (const raw of sources) {
+    const p = String(raw)
+    const idx = p.indexOf('lemeng/')
+    if (idx === -1) {
+      throw new Error(
+        `指标声明 sources 路径 \`${p}\` 里没有 \`lemeng/<资产>\` 段，推不出新鲜度关系名 `
+        + '（spec §10.7.3 的推导依赖路径段与 staging 模型名 `stg_lemeng_<资产>` 同构）。'
+        + '请把 sources 写成实际读的湖路径（如 `s3://<bucket>/lemeng/<资产>/…`），'
+        + '或显式不写 sources（= 该指标无自动水位，响应不带 freshness 字段）。',
+      )
+    }
+    const rest = p.slice(idx + 'lemeng/'.length)
+    const asset = rest.split('/')[0] ?? ''
+    if (!FRESHNESS_ASSET_RE.test(asset)) {
+      throw new Error(
+        `指标声明 sources 路径 \`${p}\` 的资产段 \`${asset}\` 形态不合规 —— 它要拼成 SQL 标识符 `
+        + `\`stg_lemeng_${asset}\`，只允许小写字母/数字/下划线（staging 模型名同构）。`,
+      )
+    }
+    const relation = `stg_lemeng_${asset}`
+    if (!relations.includes(relation)) relations.push(relation)
+  }
+  return relations
+}
+
+/**
+ * 声明的 `freshness_sla_days` → 数值。**缺声明/坏形状一律响亮失败**（spec §10.7.1）。
+ *
+ * 为什么不许静默默认：SLA 是**人工登记值**（采集正典实测窗口的登记，不是推导产物），
+ * 默认值会让「忘登记的新指标」永远拿一个看似合法的承诺、状态转译照常出数——错得悄无声息。
+ * 响亮失败把「登记动作」变成新指标上线清单里绕不过去的一步。
+ *
+ * @param {unknown} v 声明字段的原始值
+ * @param {string} metricName 指标名（只用于错误信息）
+ * @returns {number}
+ */
+function slaDaysOf(v, metricName) {
+  if (typeof v === 'number' && Number.isInteger(v) && v >= 0) return v
+  throw new Error(
+    `指标 \`${metricName}\` 的 \`freshness_sla_days\` ${JSON.stringify(v ?? null)} 缺失或不是**非负整数** `
+    + '（spec §10.7.1：新鲜度 SLA 承诺天数——物化水位距今天 ≤N 个业务日即「正常」；'
+    + '现行登记 inventory 两指标 = 2、其余 = 1）。它是服务端 freshness_status 转译的算术判据，'
+    + '缺了/错了不许静默默认——请在声明里显式登记。',
+  )
+}
 
 /**
  * 从 L1 声明的 `expression` 反推 FROM 的关系名。
@@ -226,7 +301,10 @@ export function deriveTotalable(expression) {
  *                     ⚠️ 这是本任务的一处**已知边界**，见 README「L2 的已知边界」。
  *
  * @param {unknown} parsed YAML 解析结果
- * @returns {ComparableMetric[]}
+ * @returns {(ComparableMetric & { slaDays: number, freshnessRelations: string[] })[]}
+ *          声明侧推导出的行**保证**两个新鲜度字段非 null（slaDaysOf/deriveFreshnessRelations
+ *          已响亮拦掉缺/坏形状）——写库入口（L1MetricDef）要的非空类型由这里兑现；
+ *          可空的 ComparableMetric 形状留给 --check 的库侧比对（存量旧行）。
  */
 export function declarationsFromYaml(parsed) {
   if (parsed === null || typeof parsed !== 'object') throw new Error(`${L1_DECLARATIONS_REL} 的顶层不是对象`)
@@ -295,6 +373,11 @@ export function declarationsFromYaml(parsed) {
     }
     const grain = m.grain.map((/** @type {unknown} */ g) => String(g))
     const relation = deriveRelation(expression, name)
+    // 新鲜度链路（spec §10.7）：sla_days 必填显式登记（缺/坏形状响亮失败，见 slaDaysOf）；
+    // 关系集从 sources 路径段机械推导（未声明 sources = 空数组 = 无自动水位，字段缺席）。
+    const slaDays = slaDaysOf(m.freshness_sla_days, name)
+    const freshnessRelations = deriveFreshnessRelations(
+      Array.isArray(m.sources) ? m.sources.map((/** @type {unknown} */ s) => String(s)) : undefined)
     return {
       id: name,
       title: String(m.label ?? name),
@@ -311,6 +394,8 @@ export function declarationsFromYaml(parsed) {
       // 可加标记（spec §8.4）：从**物化后的**表达式推导——ratio 在上面已包成
       // `… / nullif(…, 0)`，deriveTotalable 的除法排除正好接住它。
       totalable: deriveTotalable(expression),
+      slaDays,
+      freshnessRelations,
     }
   })
 }
@@ -322,11 +407,15 @@ export function declarationsFromYaml(parsed) {
  * 而 `--check` 只认这个判据，于是门禁假绿（见上面 ComparableMetric 的说明）。
  * `totalable` 同理（spec §8.4）：加列后的首次比对 = 可加指标全部判「更新」（预期漂移）；
  * 不进比对的话，声明推导变了而库里没刷的情况会被永久判「未变」。
+ * `slaDays` / `freshnessRelations` 第三组同理（spec §10.7）：SLA 登记与关系集推导变了
+ * 而库内没刷，水位/固定行会永远按旧链路算——必须被 --check 检出。
  */
 const comparableOf = (/** @type {ComparableMetric} */ row) => JSON.stringify([
   row.title, row.description, row.requiredScope, row.subjectColumn, row.selectSql, row.groupBy, row.params,
   row.sourceSystem,
   row.totalable,
+  row.slaDays,
+  row.freshnessRelations,
 ])
 
 /**

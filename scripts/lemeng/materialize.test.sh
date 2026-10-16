@@ -60,22 +60,72 @@ SRC_CONTENT=$(cat "$SRC")
 if printf '%s\n' "$SRC_CONTENT" | grep -Fq -- '$(mat_env_args)'; then ok "docker run 行引用 \$(mat_env_args)（字面量在场）"; else bad "docker run 行引用 \$(mat_env_args)（字面量在场）"; fi
 if printf '%s\n' "$SRC_CONTENT" | grep -Fq -- '$(mat_dbt_args)'; then ok "docker run 行引用 \$(mat_dbt_args)（字面量在场）"; else bad "docker run 行引用 \$(mat_dbt_args)（字面量在场）"; fi
 
-# ── ⑤ 物化落账（spec §10.1）：load_log SQL 构造的判别面 ────────────────────────
+# ── ⑤ 物化落账（spec §10.1 + §10.7.2）：load_log DDL 与水位 SQL 的判别面 ──────────
 LOG_SQL_FN=$(extract mat_load_log_sql)
 [ -n "$LOG_SQL_FN" ] || bad "mat_load_log_sql 抽取失败（函数不存在或格式变了）"
 eval "$LOG_SQL_FN"
-LOG_SQL_NUM=$(mat_load_log_sql 26 0)
+LOG_SQL=$(mat_load_log_sql)
 check "load_log SQL 幂等建表（CREATE TABLE IF NOT EXISTS，列形照 spec §10.1）" \
-  sh -c 'echo "$1" | grep -Fq "CREATE TABLE IF NOT EXISTS data.load_log(materialized_at timestamptz default now(), tests_pass int, tests_error int, status text);"' _ "$LOG_SQL_NUM"
-INS_NUM="VALUES ('ok', 26, 0);"
-check "load_log SQL 追加一行 status=ok 且 PASS/ERROR 数字落位" \
-  sh -c 'echo "$1" | grep -Fq "$2"' _ "$LOG_SQL_NUM" "$INS_NUM"
-LOG_SQL_NULL=$(mat_load_log_sql '' '')
+  sh -c 'echo "$1" | grep -Fq "CREATE TABLE IF NOT EXISTS data.load_log(materialized_at timestamptz default now(), tests_pass int, tests_error int, status text);"' _ "$LOG_SQL"
+check "load_log SQL 幂等补水位列 relation（spec §10.7.2；旧表加列，新表 CREATE 后跟上）" \
+  sh -c 'echo "$1" | grep -Fq "ALTER TABLE data.load_log ADD COLUMN IF NOT EXISTS relation text;"' _ "$LOG_SQL"
+check "load_log SQL 幂等补水位列 max_bizday（spec §10.7.2）" \
+  sh -c 'echo "$1" | grep -Fq "ALTER TABLE data.load_log ADD COLUMN IF NOT EXISTS max_bizday date;"' _ "$LOG_SQL"
+
+# ── ⑤-b 逐表水位（spec §10.7.2）：INSERT 形状判别面 ─────────────────────────────
+WM_FN=$(extract mat_watermark_sql)
+[ -n "$WM_FN" ] || bad "mat_watermark_sql 抽取失败（函数不存在或格式变了）"
+eval "$WM_FN"
+WM_SQL=$(mat_watermark_sql 26 0 stg_lemeng_a stg_lemeng_b)
+check "水位 SQL 事务包裹（BEGIN..COMMIT ⇒ now() 是事务起点，同次物化各行同一 materialized_at）" \
+  sh -c 'echo "$1" | head -n 1 | grep -qx "BEGIN;" && echo "$1" | tail -n 1 | grep -qx "COMMIT;"' _ "$WM_SQL"
+INS_SHAPE="INSERT INTO data.load_log (relation, max_bizday, materialized_at, tests_pass, tests_error, status) SELECT 'stg_lemeng_a', max(bizday), now(), 26, 0, 'ok' FROM staging.stg_lemeng_a;"
+check "逐表 INSERT 形状逐字（relation 非空点名到表、max(bizday)、PASS/ERROR 落位）" \
+  sh -c 'echo "$1" | grep -Fq "$2"' _ "$WM_SQL" "$INS_SHAPE"
+check "多表逐表一行（第二张表也在场）" \
+  sh -c 'echo "$1" | grep -Fq "SELECT '"'"'stg_lemeng_b'"'"', max(bizday), now(), 26, 0, '"'"'ok'"'"' FROM staging.stg_lemeng_b;"' _ "$WM_SQL"
+WM_NULL=$(mat_watermark_sql '' '' stg_lemeng_a)
 check "解析不到 PASS/ERROR ⇒ 插 NULL（落账不因解析失败缺账/失败）" \
-  sh -c 'echo "$1" | grep -Fq "$2"' _ "$LOG_SQL_NULL" "VALUES ('ok', NULL, NULL);"
-LOG_SQL_JUNK=$(mat_load_log_sql '2x' '-1')
+  sh -c 'echo "$1" | grep -Fq "max(bizday), now(), NULL, NULL, '"'"'ok'"'"'"' _ "$WM_NULL"
+WM_JUNK=$(mat_watermark_sql '2x' '-1' stg_lemeng_a)
 check "非数字 PASS/ERROR ⇒ 同样 NULL（fail-soft，不把垃圾拼进 SQL）" \
-  sh -c 'echo "$1" | grep -Fq "$2"' _ "$LOG_SQL_JUNK" "VALUES ('ok', NULL, NULL);"
+  sh -c 'echo "$1" | grep -Fq "max(bizday), now(), NULL, NULL, '"'"'ok'"'"'"' _ "$WM_JUNK"
+
+# ── ⑤-c 表名形状判定跨 locale 确定（CI fix round 1）──────────────────────────────
+# 现象：`case "$_wt" in *[!a-z0-9_]*)` 的括号区间按**运行时 collation** 解释——glibc 的
+# UTF-8 locale 里 a-z 的排序跨度罩住大写字母（A 排在 a 与 b 之间），与 macOS 的 ASCII
+# 语义相反 ⇒ 同一个名字两平台判定相反（stg_OK1 本地判「安全」、CI 判「异常」⇒ INSERT
+# 缺失、断言红）。实现钉 LC_ALL=C 后，这里钉「**两个 locale 同一个答案**」。
+# 语义同时钉死：标识符只认小写蛇形——PG 未加引号的标识符折叠成小写，`staging.stg_OK1`
+# 本来就指不到那张表 ⇒ 「含大写 = 异常跳过」是正确语义，不是误伤。
+WM_LOC_OK='stg_ok1'                    # 安全形状（全小写）⇒ 必须拼进 INSERT
+WM_LOC_BAD1='stg_OK1'                  # 含大写 ⇒ 异常（折叠后指不到表）
+WM_LOC_BAD2='stg_x; drop table y'      # 注入形状 ⇒ 异常
+wm_check_at() { # wm_check_at <locale 标签>：当前 locale 环境下调**真函数**断言三态
+  _wm_sql=$(mat_watermark_sql 26 0 "$WM_LOC_OK" "$WM_LOC_BAD1" "$WM_LOC_BAD2" 2>/dev/null)
+  _wm_err=$( (mat_watermark_sql 26 0 "$WM_LOC_OK" "$WM_LOC_BAD1" "$WM_LOC_BAD2") 2>&1 >/dev/null)
+  check "表名形状判定@$1：安全名 stg_ok1 拼 INSERT" \
+    sh -c 'echo "$1" | grep -Fq "FROM staging.stg_ok1;"' _ "$_wm_sql"
+  check "表名形状判定@$1：大写名 stg_OK1 判异常跳过（不拼进 SQL）" \
+    sh -c '! echo "$1" | grep -Fq "stg_OK1"' _ "$_wm_sql"
+  check "表名形状判定@$1：注入形状不拼进 SQL" \
+    sh -c '! echo "$1" | grep -Fq "drop table"' _ "$_wm_sql"
+  check "表名形状判定@$1：两个异常名都有告警点名（fail-soft 可见）" \
+    sh -c '[ "$(echo "$1" | grep -c "异常表名")" = 2 ]' _ "$_wm_err"
+}
+WM_SAVED_LC=${LC_ALL-}; WM_SAVED_LANG=${LANG-}
+# a) LC_ALL=C 下必过（形状判定的锚定 locale）
+LC_ALL=C; LANG=C; export LC_ALL LANG
+wm_check_at 'LC_ALL=C'
+# b) runner 有 en_US.UTF-8 ⇒ 同断言重跑（没有则跳过——钉的是「两 locale 同答案」；
+#    CI 的 glibc 常有它，本机 macOS 也常驻，故这条在两平台通常都真跑）
+if locale -a 2>/dev/null | grep -qiE 'en_US\.utf-?8'; then
+  LC_ALL=en_US.UTF-8; LANG=en_US.UTF-8; export LC_ALL LANG
+  wm_check_at 'en_US.UTF-8'
+else
+  ok "本机 locale -a 无 en_US.UTF-8 ⇒ 跨 locale 重跑跳过（CI/Linux 常有，钉子不空转）"
+fi
+LC_ALL=$WM_SAVED_LC; LANG=$WM_SAVED_LANG; export LC_ALL LANG
 
 # ── ⑥ 全流程（假 docker，手法照 sync-data-plane.test.sh）：成功写账 / 失败不写 ──
 STUB_E2E=$(mktemp -d)
@@ -89,7 +139,14 @@ printf '%s\n' "docker $*" >> "$STUB_STATE/calls.log"
 if [ "$1" = inspect ]; then
   cat "$STUB_ENV_DIR/env.$2" 2>/dev/null
 elif [ "$1" = exec ]; then
-  echo stub-org
+  # $4 = 容器名（docker exec -e K=V <容器> psql …）。按容器分角色回话：
+  #   plat → 主体 org 查询的应答；pg → 水位表清单查询的应答（spec §10.7.2 的
+  #   information_schema 点名——两条 psql 调用在 calls.log 里各留原样取证）。
+  if [ "$4" = plat ]; then
+    echo stub-org
+  elif [ "$4" = pg ]; then
+    printf 'stg_lemeng_a\nstg_lemeng_b\n'
+  fi
   [ "${STUB_EXEC_FAIL:-0}" = 1 ] && exit 1
 elif [ "$1" = run ]; then
   if [ "${STUB_DBT_FAIL:-0}" = 1 ]; then
@@ -128,12 +185,19 @@ LOG_GREP() { # LOG_GREP <用例名> <字面量>：该跑的 calls.log 里找得�
   grep -Fq "$2" "$STUB_E2E/$1/state/calls.log" 2>/dev/null
 }
 
-# 成功路径：dbt 绿 ⇒ 退出 0、末行 MATERIALIZE_OK、向仓写 load_log 一行（PASS/ERROR 从 dbt 输出解析）
+# 成功路径：dbt 绿 ⇒ 退出 0、末行 MATERIALIZE_OK、向仓写逐表水位行（PASS/ERROR 从 dbt 输出解析）
 st=$(run_mat ok)
 check "落账：dbt 成功 ⇒ 退出码 0" sh -c '[ "$1" = 0 ]' _ "$st"
 check "落账：dbt 成功 ⇒ 末行 MATERIALIZE_OK" sh -c 'tail -n 1 "$1" | grep -qx "MATERIALIZE_OK"' _ "$STUB_E2E/ok/out"
 check "落账：向仓 exec psql 写 load_log（幂等建表在场）" LOG_GREP ok "CREATE TABLE IF NOT EXISTS data.load_log("
-check "落账：INSERT 一行 ok，PASS/ERROR=26/0 来自 dbt 汇总行（不是硬编码）" LOG_GREP ok "VALUES ('ok', 26, 0);"
+check "水位：先向仓查水位表清单（information_schema 点名 staging 内含 bizday 列的表，spec §10.7.2）" \
+  LOG_GREP ok "SELECT table_name FROM information_schema.columns WHERE table_schema='staging' AND column_name='bizday'"
+check "水位：清单里的每张表各一行（relation 非空点名到表，PASS/ERROR=26/0 来自 dbt 汇总行）" \
+  LOG_GREP ok "SELECT 'stg_lemeng_a', max(bizday), now(), 26, 0, 'ok' FROM staging.stg_lemeng_a;"
+check "水位：第二张表同样落位（逐表，不是一行汇总）" \
+  LOG_GREP ok "SELECT 'stg_lemeng_b', max(bizday), now(), 26, 0, 'ok' FROM staging.stg_lemeng_b;"
+check "水位：旧「仓级」行（relation NULL）不再新写（VALUES 形态的仓级 INSERT 不在场）" \
+  sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/ok/state/calls.log" "INSERT INTO data.load_log (status, tests_pass, tests_error) VALUES"
 
 # 失败路径：dbt 非零 ⇒ 仍 MATERIALIZE_FAILED:dbt_build，且**零落账**（status 只有 'ok'，失败不写行）
 STUB_DBT_FAIL=1
@@ -144,12 +208,12 @@ check "落账：dbt 非零 ⇒ MATERIALIZE_FAILED:dbt_build 契约字面量不�
 check "落账：dbt 非零 ⇒ 不向仓写任何 load_log（INSERT 不在场）" sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/fail/state/calls.log" "INSERT INTO data.load_log"
 check "落账：dbt 非零 ⇒ 连建表也不做（一行都不写）" sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/fail/state/calls.log" "CREATE TABLE IF NOT EXISTS data.load_log"
 
-# 解析不到汇总行：物化照常成功，落账插 NULL（新鲜度缺数 ≠ 整个 job 翻车）
+# 解析不到汇总行：物化照常成功，水位行插 NULL（新鲜度缺数 ≠ 整个 job 翻车）
 STUB_DBT_NO_SUMMARY=1
 st=$(run_mat nosum)
 STUB_DBT_NO_SUMMARY=0
 check "落账：dbt 无汇总行 ⇒ 仍退出 0" sh -c '[ "$1" = 0 ]' _ "$st"
-check "落账：dbt 无汇总行 ⇒ 插 NULL 不失败" LOG_GREP nosum "VALUES ('ok', NULL, NULL);"
+check "落账：dbt 无汇总行 ⇒ 水位行插 NULL 不失败" LOG_GREP nosum "max(bizday), now(), NULL, NULL, 'ok' FROM staging.stg_lemeng_a;"
 
 # 落账本身失败（psql 非零）：告警不翻车——退出码契约维持三态（0/missing_env/dbt_build）
 STUB_EXEC_FAIL=1

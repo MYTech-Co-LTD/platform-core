@@ -166,11 +166,14 @@ const UNION_BY_NAME_RE = /union_by_name/gi
 /** 规则 ⑥：指标名的命名空间形态 `<源>:<业务域>:<指标>`（三段都小写蛇形） */
 const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
 /**
- * 规则 ⑤：语义声明必填字段（owner/tier/grain/definition/source + name/expression；见计划 Step 4 的字段清单）。
+ * 规则 ⑤：语义声明必填字段（owner/tier/grain/definition/source/freshness_sla_days + name/expression；
+ * 见计划 Step 4 的字段清单）。
  * `source` = **源系统**（如 `lemeng`）——spec §3⑧ 的源维度，Task 5 的裁剪按它判「这个源接没接入」。
+ * `freshness_sla_days` = **新鲜度 SLA 承诺天数**（spec §10.7.1）——水位转译的判据，缺了它
+ * sync 响亮失败（三层各拦一次：这里、sync、物化侧的契约）。
  * ⚠️ 与选填的 `sources`（对象存储路径，人读）**不是一回事**，别把两者合并。
  */
-const REQUIRED_METRIC_FIELDS = ['expression', 'grain', 'owner', 'tier', 'definition', 'source']
+const REQUIRED_METRIC_FIELDS = ['expression', 'grain', 'owner', 'tier', 'definition', 'source', 'freshness_sla_days']
 
 /**
  * 规则 ⑤ 的 ratio 形状核（纯函数，供单测与主扫描共用；spec 2026-10-12 §5.3）。
@@ -211,6 +214,23 @@ export function ratioShapeError(decl) {
     return `指标 \`${decl.name}\` 的 ratio 分子分母引用了多个关系（${[...all].join(', ')}）：单条声明只有一个 FROM，跨模型聚合属 marts 层`
   }
   return null
+}
+
+/**
+ * 规则 ⑤ 的形状核：`freshness_sla_days`（新鲜度 SLA 承诺天数，spec §10.7.1）必须是**非负整数**。
+ *
+ * 为什么值得一条形状规则而不是「必填即可」：它是 freshness_status 转译（normal/late/alert）
+ * 的**算术判据**——小数/字符串/负数落库后，sync 会把它原样物化进 `data.metrics.sla_days`，
+ * 查询侧拿它做 `距今天 ≤ sla` 的比较，垃圾值 = 状态判错且不报错（「水位距今天 -0.5 天」这类
+ * 结论没人看得懂）。缺字段的情形已由 ⑤ 报过 ⇒ 这里只判「给了值但形态不对」，同一处不报两条。
+ *
+ * @param {{ name: string, freshness_sla_days?: unknown }} decl
+ * @returns {string | null} 违规文案；合法返回 null
+ */
+export function freshnessSlaError(decl) {
+  const v = decl.freshness_sla_days
+  if (typeof v === 'number' && Number.isInteger(v) && v >= 0) return null
+  return `指标 \`${decl.name}\` 的 \`freshness_sla_days\` ${JSON.stringify(v ?? null)} 形态不合规 —— 必须是**非负整数**（承诺：物化水位距今天 ≤N 个业务日即「正常」，spec §10.7.1；现行登记 inventory 两指标 = 2、其余 = 1）。它是服务端 freshness_status 转译的算术判据，小数/负数/字符串落库 = 状态判错且不报错`
 }
 /**
  * 规则 ⑤ 的形状：`source` 的形态（与指标名每一段同一形态：小写蛇形、首字符是字母）。
@@ -985,6 +1005,9 @@ export function checkDataModels(rootDir, opts = {}) {
         if (ratioGiven) return false
       }
       const v = metric.fields?.[f]
+      // freshness_sla_days 是**数值字段**（spec §10.7.1），不吃 asText 的「非字符串即缺」口径
+      // （asText(1) = ''，会把合法的 1/2 判成缺失）；「给了但不是非负整数」由 ⑤-c 单独判。
+      if (f === 'freshness_sla_days') return typeof v !== 'number'
       if (Array.isArray(v)) return v.length === 0
       return asText(v) === ''
     })
@@ -992,7 +1015,7 @@ export function checkDataModels(rootDir, opts = {}) {
       push(
         metric.file,
         0,
-        `指标 \`${metric.name}\` 的语义声明缺必填字段：${missing.join(' / ')} —— owner/tier/grain/definition 是治理门禁的必填面（spec §10 机制① 的 dbt 原生对应物），expression 是口径本体（率类可用 ratio: {numerator, denominator} 替代），source（**源系统**，如 \`lemeng\`）是源维度的事实源（消费侧的裁剪按它判「这个源接没接入」）；缺了它，指标就无法登记、无法溯源、无法按 tier 收敛、无法按源裁剪`,
+        `指标 \`${metric.name}\` 的语义声明缺必填字段：${missing.join(' / ')} —— owner/tier/grain/definition 是治理门禁的必填面（spec §10 机制① 的 dbt 原生对应物），expression 是口径本体（率类可用 ratio: {numerator, denominator} 替代），source（**源系统**，如 \`lemeng\`）是源维度的事实源（消费侧的裁剪按它判「这个源接没接入」），freshness_sla_days（**新鲜度 SLA 承诺天数**，spec §10.7.1）是水位转译的判据；缺了它，指标就无法登记、无法溯源、无法按 tier 收敛、无法按源裁剪、新鲜度只能永远「未知」`,
       )
     }
 
@@ -1016,6 +1039,16 @@ export function checkDataModels(rootDir, opts = {}) {
         0,
         `指标 \`${metric.name}\` 的 \`source\`（源系统）\`${source}\` 形态不合规 —— 必须是小写蛇形（\`^[a-z][a-z0-9_]*$\`，如 \`lemeng\`）。它要与「已接入源」的登记值**逐字比对**（消费侧裁剪、对账），大写/连字符/前导数字这类写法会比对不上，症状是「指标谁都看不见」而不是报错`,
       )
+    }
+
+    // ⑤-c `freshness_sla_days` 的形状（**非负整数**；纯核导出见 freshnessSlaError）
+    // 缺字段的情形已由上面 ⑤ 报过（同 ⑤-b 的「只判给了值」纪律）⇒ undefined/null 不在这里重复报。
+    const slaDeclared = metric.fields?.freshness_sla_days !== undefined && metric.fields?.freshness_sla_days !== null
+    if (slaDeclared) {
+      const slaErr = freshnessSlaError({ name: metric.name, freshness_sla_days: metric.fields?.freshness_sla_days })
+      if (slaErr !== null) {
+        push(metric.file, 0, slaErr)
+      }
     }
 
     // ⑦ 对账 test 存在性（文件名由导出的唯一映射函数算出）

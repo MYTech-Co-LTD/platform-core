@@ -137,8 +137,13 @@ test("query_data 工具描述含 total 自动合计规则（spec §8.4：直接�
 
 // 汇报纪律（spec §10.4）：data_as_of 必带 / 缺席=未知如实说 / 首行即最新 / 当日部分天。
 // 同一性质：文案就是契约，源文本断言。
-test("query_data 工具描述含新鲜度汇报纪律（spec §10.4）", () => {
+test("query_data 工具描述含新鲜度汇报纪律（spec §10.7.4：freshness_line 原样单独一行 + data_as_of 句并入）", () => {
   const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  // 固定展示行（spec §10.7.4）：答案末尾必须**原样**附，单独一行，不混入正文；没有该字段不许自己编
+  assert.match(src, /freshness_line/);
+  assert.match(src, /原样/);
+  assert.match(src, /单独一行/);
+  // data_as_of 句并为固定行句的一部分（spec §10.7.4）
   assert.match(src, /data_as_of/);
   assert.match(src, /数据截止/);
   assert.match(src, /新鲜度未知/);
@@ -149,8 +154,12 @@ test("query_data 工具描述含新鲜度汇报纪律（spec §10.4）", () => {
 });
 
 // SKILL 正文句级微调（不重写）：方法论 v2 的行数预算/total 规则原样，仅补新鲜度汇报纪律一条。
-test("data-query SKILL.md 含新鲜度汇报纪律且既有判据句原样（spec §10.4）", () => {
+test("data-query SKILL.md 含新鲜度汇报纪律且既有判据句原样（spec §10.7.4：freshness_line 原样附加）", () => {
   const skill = readFileSync(new URL("./skills/data-query/SKILL.md", import.meta.url), "utf8");
+  // 固定展示行（spec §10.7.4）：原样附加、单独一行、不混入正文；没有该字段不许自己编
+  assert.match(skill, /freshness_line/);
+  assert.match(skill, /原样/);
+  assert.match(skill, /单独一行/);
   assert.match(skill, /data_as_of/);
   assert.match(skill, /新鲜度未知/);
   assert.match(skill, /部分天/);

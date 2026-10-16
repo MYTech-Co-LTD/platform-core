@@ -51,6 +51,18 @@ export interface MetricRow extends MetricDef {
    * 真值只来自 L1 物化路径；L2 行恒 false。
    */
   totalable: boolean
+  /**
+   * 新鲜度 SLA 承诺天数（017 迁移，spec §10.7.1）：水位距今天 ≤N 个业务日即「正常」。
+   * 真值只来自 L1 物化路径（sync 从声明 `freshness_sla_days` 物化，缺声明 sync 响亮失败）；
+   * L2 行恒 null——「没接新鲜度链路」与「承诺 0 天」必须可辨，所以是 null 不是 0。
+   */
+  slaDays: number | null
+  /**
+   * 新鲜度关系集（017 迁移，spec §10.7.3）：sync 从声明 sources 的存储路径段推导的
+   * staging 关系名数组；水位 = 这些关系在 load_log 上 min(max_bizday)。
+   * L2 行恒 null；L1 未声明 sources 时为空数组（两者都 = 无自动水位，响应字段缺席）。
+   */
+  freshnessRelations: string[] | null
 }
 
 /**
@@ -62,6 +74,10 @@ export interface MetricRow extends MetricDef {
  */
 export interface L1MetricDef extends MetricDef {
   sourceSystem: string | null
+  /** 新鲜度 SLA 承诺天数（spec §10.7.1，声明 `freshness_sla_days` 的物化值）。 */
+  slaDays: number
+  /** 新鲜度关系集（spec §10.7.3，声明 sources 路径段的推导值；未声明 sources = 空数组）。 */
+  freshnessRelations: string[]
 }
 
 /** 行 → MetricRow：只映射契约里的字段（created_at/updated_at 不外泄给授权核心）。 */
@@ -82,12 +98,18 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     version: Number(row.version ?? 1),
     // 可加标记（spec §8.4）：`=== true` 归一——列缺省/未来形状变化都不会让 undefined 冒充真值
     totalable: row.totalable === true,
+    // 新鲜度链路（spec §10.7）：sla_days 归一成 number|null；freshness_relations 是 jsonb 数组
+    // （pg 已反序列化），只认真数组——列缺省/坏形状宁可落 null（= 无链路），不让 undefined 冒充。
+    slaDays: row.sla_days === null || row.sla_days === undefined ? null : Number(row.sla_days),
+    freshnessRelations: Array.isArray(row.freshness_relations)
+      ? (row.freshness_relations as string[]).map(String)
+      : null,
   }
 }
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
@@ -183,6 +205,9 @@ export async function loadMergedCatalog(pool: Pool, org: string): Promise<Metric
 // ⚠️ 可加标记（totalable，spec §8.4）不是 L2 写入面的概念：租户声明是结构化编译的产物，
 //    没有「表达式形状」这个输入 ⇒ 插入值写死 `false`，冲突分支**也不碰**（首次插入已是终值；
 //    若写 excluded，一次租户写会把同 id 平台行的可加标记抹掉，自动合计静默消失）。
+// ⚠️ 新鲜度链路两列（sla_days / freshness_relations，spec §10.7）同理不是 L2 写入面的概念：
+//    插入值写死 `null`，冲突分支**也不碰**——租户写撞上同 id 平台行时，不得把平台行的新鲜度
+//    链路抹掉（抹了 = 水位/固定行静默消失，且 sync --check 会长期报漂移）。
 export async function upsertMetric(
   db: Pool | PoolClient, org: string, def: MetricDef, updatedBy: string,
 ): Promise<void> {
@@ -191,8 +216,8 @@ export async function upsertMetric(
   //   生产写路径（domain/metric-write）传的是事务里的 client，审计与变更同生共死。
   await db.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1, false)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1, false, null, null)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -225,12 +250,16 @@ export async function upsertMetric(
  * 可加标记（`totalable`，spec §8.4）同理同进退：sync 从声明 expression 推导（`deriveTotalable`），
  * 缺省 false（合成契约/夹具不带就是不可加——保守缺省不会给不明口径的指标编一个合计）；
  * 冲突分支也刷它（声明改成不可加 ⇒ 重新物化必须跟上，否则该指标永远多带一个错误的合计）。
+ *
+ * 新鲜度链路两列（`sla_days` / `freshness_relations`，spec §10.7）第三组同进退：
+ * sync 从声明 `freshness_sla_days` / `sources` 路径段物化（缺声明 sync 响亮失败，无静默默认）；
+ * 冲突分支也刷（声明改了 ⇒ 重新物化必须跟上，否则水位/固定行永远按旧链路算）。
  */
 export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void> {
   await pool.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, sla_days, freshness_relations)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13::jsonb)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -241,11 +270,14 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
        params         = excluded.params,
        source_system  = excluded.source_system,
        totalable      = excluded.totalable,
+       sla_days           = excluded.sla_days,
+       freshness_relations = excluded.freshness_relations,
        updated_at     = now()`,
     [
       L1_ORG, def.id, def.title, def.description, def.requiredScope,
       def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params),
       def.sourceSystem, def.totalable === true,
+      def.slaDays, JSON.stringify(def.freshnessRelations),
     ],
   )
 }

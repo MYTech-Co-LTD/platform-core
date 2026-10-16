@@ -250,9 +250,14 @@ describe('TOOLS —— query_metric 参数契约（spec 2026-10-15 §2.5 + §8.4
     expect(d).not.toContain('明细与合计互斥')
   })
 
-  it('T3 汇报纪律下沉（spec §10.4）：data_as_of 必带 / 缺席=未知如实说 / 首行即最新 / 当日部分天', () => {
+  it('T3 汇报纪律下沉（spec §10.7.4）：freshness_line 原样单独一行附加 / data_as_of 句并入 / 缺席=未知如实说', () => {
     const d = TOOLS.find((t) => t.name === 'query_metric')!.description
-    // 答案必带数据截止：data_as_of = 仓库物化时间
+    // 固定展示行（spec §10.7.4）：答案末尾必须**原样**附，单独一行，不混入正文——
+    // 服务端预拼的业务大白话，模型不改写不翻译，没有该字段也不许自己编一行。
+    expect(d).toContain('freshness_line')
+    expect(d).toContain('原样')
+    expect(d).toContain('单独一行')
+    // data_as_of 句并为该句的一部分（旧「必带数据截止」降为次要说明）
     expect(d).toContain('data_as_of')
     expect(d).toContain('数据截止')
     // 无该字段 = 新鲜度未知，如实说明（不许编）

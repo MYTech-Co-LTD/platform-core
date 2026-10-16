@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
-import { RESERVED_METRIC_ID_PREFIXES, checkDataModels, metricToAuditFileName, ratioShapeError } from './check-data-models.mjs'
+import { RESERVED_METRIC_ID_PREFIXES, checkDataModels, freshnessSlaError, metricToAuditFileName, ratioShapeError } from './check-data-models.mjs'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const scriptsDir = join(repoRoot, 'scripts')
@@ -102,6 +102,7 @@ function compliant(): Record<string, string> {
       '    owner: data-platform',
       '    tier: certified',
       '    source: lemeng',
+      '    freshness_sla_days: 1',
       '    definition: 净销售额 = 有效零售订单成交金额合计',
       '',
     ].join('\n'),
@@ -331,6 +332,7 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
         '    owner: tenant-admin',
         '    tier: experimental',
         '    source: lemeng',
+      '    freshness_sla_days: 1',
         '    definition: 同名但另一处定义（口径分叉）',
         '',
       ].join('\n')
@@ -371,6 +373,7 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
         '    owner: data-platform',
         '    tier: certified',
         '    source: lemeng',
+      '    freshness_sla_days: 1',
         '    definition: 甲',
         '  - name: "lemeng:retail__a:b"',
         '    expression: "sum(fct_retail_sale.net_amount)"',
@@ -378,6 +381,7 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
         '    owner: data-platform',
         '    tier: certified',
         '    source: lemeng',
+      '    freshness_sla_days: 1',
         '    definition: 乙',
         '',
       ].join('\n')
@@ -1167,5 +1171,46 @@ describe('规则 ⑤ ratio 形状（ratioShapeError 纯核，spec 2026-10-12 §5
 
   it('两者都不给 → 报错（必填缺口在 ratio 路径下的兜底）', () => {
     expect(ratioShapeError({ ...base })).toMatch(/expression|ratio/)
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// 规则 ⑤ 的 freshness_sla_days 形状核（spec §10.7.1，新鲜度 SLA 登记）——纯函数直测，
+// 同 ratioShapeError 的姿势：判的是**单条声明**的形状，不需要临时 dbt 目录。
+// 契约：必填（缺 = ⑤ 报）+ 非负整数（它是服务端 freshness_status 转译的算术判据，
+// 小数/负数/字符串落库 = 状态判错且不报错）。
+// ════════════════════════════════════════════════════════════════════════════════════════
+describe('规则 ⑤ freshness_sla_days 形状（freshnessSlaError 纯核，spec §10.7.1）', () => {
+  const base = { name: 'lemeng:retail:net_sales' }
+
+  it('非负整数 ⇒ null（0 是合法的「当日」承诺；2 = inventory 的实测登记）', () => {
+    expect(freshnessSlaError({ ...base, freshness_sla_days: 1 })).toBeNull()
+    expect(freshnessSlaError({ ...base, freshness_sla_days: 2 })).toBeNull()
+    expect(freshnessSlaError({ ...base, freshness_sla_days: 0 })).toBeNull()
+  })
+
+  it('小数 / 负数 / 字符串 ⇒ 报错（算术判据不吃垃圾值）', () => {
+    for (const bad of [1.5, -1, '2', true, null]) {
+      expect(freshnessSlaError({ ...base, freshness_sla_days: bad }), `${JSON.stringify(bad)} 没被拦`)
+        .toMatch(/freshness_sla_days/)
+    }
+  })
+
+  it('格⑤附带（门禁面）：缺 freshness_sla_days ⇒ 违规点名该字段；坏形状 ⇒ ⑤-c 单独报', () => {
+    // 缺字段：⑤ 必填面报（不与 ⑤-c 重复——「没给值」不进形状核）
+    const missing = variant((f) => {
+      f[METRICS] = f[METRICS].replace('    freshness_sla_days: 1\n', '')
+    })
+    const mv = checkDataModels(missing)
+    expect(mv).toHaveLength(1)
+    expect(mv[0]?.message).toContain('freshness_sla_days')
+
+    // 给了但形态不对：⑤-c 报（⑤ 不再重复）
+    const badShape = variant((f) => {
+      f[METRICS] = f[METRICS].replace('    freshness_sla_days: 1', '    freshness_sla_days: 1.5')
+    })
+    const bv = checkDataModels(badShape)
+    expect(bv).toHaveLength(1)
+    expect(bv[0]?.message).toContain('非负整数')
   })
 })
