@@ -37,7 +37,7 @@ FROM node:22-alpine AS build
 #   · pnpm **不读 env**：`npm_config_registry` 与 `NPM_CONFIG_REGISTRY`（大小写两式）
 #     写成无效主机仍能装成功、`pnpm config get registry` 也不变；**只认 `.npmrc`**
 #     （写成无效主机 ⇒ 立刻 DNS 报错失败）。
-#     故 pnpm 那条腿由下面 WORKDIR 后落盘的 /app/.npmrc 承担，并**就地自证**。
+#     故 pnpm 那条腿由下面 WORKDIR 后落盘的 /app/.npmrc 承担，并在装依赖那条 RUN 里自证。
 #     #192 那次「双键换源」正是只覆盖了 corepack —— 注释说「与 pnpm 拉包共用」，实际没有，
 #     且**静默**（构建照绿、只是慢）。这次的断言就是为了不让它再静默退化。
 #
@@ -55,10 +55,11 @@ ENV COREPACK_HOME=/opt/corepack \
     NPM_REGISTRY=https://registry.npmmirror.com
 RUN corepack enable
 WORKDIR /app
-# pnpm 的镜像源腿（理由见上）：落盘 + 自证。断言不过即此层构建失败——把「配了却没生效」
-# 那类静默退化挡在门口（`pnpm config get registry` 返回值带尾斜杠，故用子串匹配）。
-RUN printf 'registry=%s\n' "$NPM_REGISTRY" > .npmrc \
-    && pnpm config get registry | grep -qF "$NPM_REGISTRY"
+# pnpm 的镜像源腿（理由见上）：只落盘，**这一层不调 pnpm**。此刻 /app 还没有 package.json，
+# corepack 会按「无 packageManager」去下**最新版 pnpm**（2026-10-16 实测：下了 12.11.2、
+# 58.1MB，而运行期用的是根 package.json pin 的 11.22.0）——白塞进镜像。自证放到下面
+# 装依赖那条 RUN 的第一句（那时已按根 package.json 解析出 11.22.0）。
+RUN printf 'registry=%s\n' "$NPM_REGISTRY" > .npmrc
 
 # ---- 逐目录 COPY（理由见各条）----
 # ① 工作区根清单：pnpm-workspace.yaml 定义 apps/* + packages/* + modules/* 三个 glob，
@@ -96,7 +97,12 @@ COPY dbt ./dbt
 # RUN 并不能省下依赖下载（要真省得用 BuildKit cache mount——那会把「构建必须走 BuildKit」
 # 变成镜像的隐式前提，本镜像不引入该前提）。--frozen-lockfile：lockfile 与 manifest 不一致
 # 时直接失败，绝不在构建期静默改动依赖树。
-RUN pnpm install --frozen-lockfile && pnpm -r --if-present build
+# 第一句是**镜像源自证**（#192 那类「配了却没生效」的静默退化在此响亮失败）：此刻
+# package.json 已 COPY 进来，corepack 按它的 packageManager 解析出 11.22.0，读回必须命中
+# 镜像源。放这里而不是上一层的理由见那边注释（避免多下一份最新版 pnpm）。返回值带尾斜杠，
+# 故用子串匹配。
+RUN pnpm config get registry | grep -qF "$NPM_REGISTRY" \
+    && pnpm install --frozen-lockfile && pnpm -r --if-present build
 
 # ---- 运行阶段 ----
 FROM node:22-alpine AS runtime
