@@ -214,3 +214,47 @@ openclaw.harness.run (10.78s)
 
 ⇒ **结论建议**：P1 的通道形态改为 **「会话库出思考与对话序列（主）+ OO 出运行面指标（辅）」**，
 而不是二选一。**这条要用户裁决后才能改写 T1–T4。**
+
+---
+
+## 4. 阶段二 T1：轨迹导出（会话库 → OO）
+
+### 4.1 轨迹字典（**实测，后续判据一律引用本表，不许再猜**）
+
+库：`<卷根>/agents/<agent>/agent/openclaw-agent.sqlite` → 表 `transcript_events(session_id, seq, created_at, event_json)`
+
+- `created_at` = **epoch 毫秒**
+- `event_json.type` ∈ `session` / `message` / `model_change` / `thinking_level_change` / `custom` / `custom_message` / `reset`
+- `message` 事件里：
+  | role | part type | 形状 |
+  |---|---|---|
+  | assistant | `thinking` | `{type, thinking, thinkingSignature}` ← **思考正文在 `thinking`** |
+  | assistant | `text` | `{type, text}` |
+  | assistant | `toolCall` | `{type, id, name, arguments(dict)}` |
+  | **toolResult** | **`text`** | `{type, text}`；**消息层**带 `toolCallId` / `toolName` / `details` / **`isError`** |
+  | user | — | `content` **可能是字符串**，也可能是 `[{type:"text",...}]` |
+
+### 4.2 两个实测坑（都是「回读 OO」才发现的，改前代码 13673 行→改后 566 行）
+
+| # | 坑 | 后果 |
+|---|---|---|
+| 1 | **`content` 是字符串时按 list 迭代** | **逐字符**摊行：`"一"`/`"查"`/`"下"` 各占一行，668 个事件摊出 **13,244 条垃圾行** |
+| 2 | **按 part type 判 toolResult** | toolResult 的 part type 是 `text`、**角色**才是 `toolResult` ⇒ **`tool_result` 一条都没有**，全落进 `text` |
+
+⇒ 判据：**字符串整体一行；角色优先于 part type**。
+
+### 4.3 另两个实测事实
+
+- **OO 的 `_json` 批量端点遇到「流正在删除」会回 400**（`Error# stream [...] is being deleted`），且**墓碑会持续一段时间不让重建同名流**（实测 >2 分钟仍未释放）⇒ **删流后要换名重投**，别以为是自己 payload 的错。
+  （我第一次 400 曾误归因给「字段值为 null」，**那是错的**；真实原因是删流竞态。丢 None 的改动本身无害，保留。）
+- **流名最终定为 `askdata_conv`**（原计划写 `askdata_trace`——该名被删除墓碑占用，改用语义更准的 `askdata_conv`）。**计划文档中的 `askdata_trace` 一律按 `askdata_conv` 读。**
+
+### 4.4 首投判据（T1 验收）
+
+| 判据 | 实测 |
+|---|---|
+| 首投行数 | **566**（668 事件 × 多 part） |
+| OO 回执 | `{"code":200,"status":[{"name":"askdata_conv","successful":566,"failed":0}]}` |
+| **回读 OO 计数**（按 kind） | `thinking` **137** · `text` 113 · `tool_call` 91 · `custom` 69 · `user` 67 · `tool_result` 59 · `other` 30 |
+| **幂等复跑** | `rows=0 watermark=668` ⇒ **不翻倍** ✅ |
+| 思考正文可查 | ✅ 逐字（含 T0 那条 CLI 轮的真实轨迹） |
