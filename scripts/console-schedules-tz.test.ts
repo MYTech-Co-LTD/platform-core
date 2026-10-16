@@ -1,0 +1,75 @@
+// console-schedules-tz.test.ts — 业务排班时区统一门禁（spec 2026-10-15 §10.6，2026-10-16 用户拍板）。
+//
+// 钉什么：deploy/duckle/console/schedules/ 下两本种子（3120×16 + 64188×7，共 23 条）必须
+//   ① 全部显式 `timezone: 'Asia/Shanghai'`（含原先缺省无字段的 9 条）；
+//   ② `kind.expr` 与 §10.6 转换表**逐字**一致（旧 UTC expr +8h，触发瞬间不变）。
+// 为什么钉真实 JSON（与 sync-data-semantics.test.ts 读真 YAML 同一理由）：排班是物化定义，
+// 谁回退一条 timezone / 抄错一个钟点都不报错，只表现为线上采集整体漂 8h——门禁必须红在仓内。
+// 期望表就是 §10.6 的表（逐条转抄，不自创）：改排班先改表，改表先改 spec。
+import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+/** 期望：book →（排班 id → §10.6 转换表逐字的 expr）。行序即文件内条目序。 */
+const EXPECTED: Record<string, Record<string, string>> = {
+  '3120': {
+    'panel-lemeng.retail.tick.l1': '*/5 8-23 * * *',
+    'panel-lemeng.dim.item.l0': '0 19 * * *',
+    'panel-lemeng.retail.close.l1': '0 0 * * *',
+    'panel-lemeng.dim.branch.l0': '0 10 * * *',
+    'panel-lemeng.branch.expense.l0.3120': '5 0 * * *',
+    'panel-lemeng.dim.item_price.l0.3120': '15 19 * * *',
+    'panel-lemeng.client.expense.l0.3120': '15 0 * * *',
+    'panel-lemeng.request.order.l0.3120': '20 0 * * *',
+    'panel-lemeng.transfer.in.l0.3120': '25 0 * * *',
+    'panel-lemeng.retail.windows.l1': '30 10,18 * * *',
+    'panel-lemeng.transfer.out.l0.3120': '35 23 * * *',
+    'panel-lemeng.inventory.snapshot.l0.3120': '35 0 * * *',
+    'panel-lemeng.purchase.analysis.l0.3120': '40 0 * * *',
+    'panel-lemeng.wholesale.out.l0.3120': '45 23 * * *',
+    'panel-lemeng.client.l0.3120': '55 23 * * *',
+    'panel-lemeng.wholesale.return.l0.3120': '55 23 * * *',
+  },
+  '64188': {
+    'panel-lemeng.dim.branch.l0': '0 10 * * *',
+    'panel-lemeng.dim.item.l0': '0 19 * * *',
+    'panel-lemeng.dim.item_price.l0': '15 19 * * *',
+    'panel-lemeng.retail.windows.l1': '30 10,18 * * *',
+    'panel-lemeng.retail.tick.l1': '*/5 8-23 * * *',
+    'panel-lemeng.retail.close.l1': '0 0 * * *',
+    'panel-lemeng.recon.preagg': '30 0 * * *',
+  },
+}
+
+/** 单形状读取（scripts/ 纪律：字段恒在，缺了当结构漂移大声红）。 */
+function readBook(book: string): Array<{ id?: unknown; kind?: { type?: unknown; expr?: unknown }; timezone?: unknown }> {
+  return JSON.parse(readFileSync(path.join(ROOT, 'deploy', 'duckle', 'console', 'schedules', `${book}.json`), 'utf8'))
+}
+
+describe('console 排班时区统一（spec §10.6）：23 条全显式 Asia/Shanghai + expr 逐字合表', () => {
+  for (const [book, expected] of Object.entries(EXPECTED)) {
+    it(`book=${book}：条目集与期望表恰同集，timezone 全显式 Asia/Shanghai，expr 逐字一致`, () => {
+      const entries = readBook(book)
+      expect(entries.length, `book=${book} 条目数`).toBe(Object.keys(expected).length)
+
+      const seen = new Set<string>()
+      for (const e of entries) {
+        const id = String(e.id)
+        seen.add(id)
+        expect(expected[id], `book=${book} 出现期望表外的排班 ${id}（改排班先改 §10.6 表与本测试）`).toBeDefined()
+        expect(e.kind?.type, `${id} kind.type`).toBe('cron')
+        expect(e.timezone, `${id} timezone 缺失/非显式（§10.6：一律显式 Asia/Shanghai）`).toBe('Asia/Shanghai')
+        expect(e.kind?.expr, `${id} expr 与 §10.6 转换表不符`).toBe(expected[id])
+      }
+      expect([...seen].sort(), `book=${book} 期望表里的排班在文件里缺席`).toEqual(Object.keys(expected).sort())
+    })
+  }
+
+  it('两本合计恰 23 条（3120×16 + 64188×7）——条数漂移必须显式改 spec §10.6 与本测试', () => {
+    const total = Object.values(EXPECTED).reduce((n, m) => n + Object.keys(m).length, 0)
+    expect(total).toBe(23)
+  })
+})

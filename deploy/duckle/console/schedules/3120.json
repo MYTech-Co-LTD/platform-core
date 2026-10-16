@@ -6,9 +6,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "*/5 0-15 * * *"
+      "expr": "*/5 8-23 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -27,8 +27,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "0 11 * * *"
+      "expr": "0 19 * * *"
     },
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -47,9 +48,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "0 16 * * *"
+      "expr": "0 0 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "all",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -68,8 +69,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "0 2 * * *"
+      "expr": "0 10 * * *"
     },
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -88,9 +90,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "05 16 * * *"
+      "expr": "5 0 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "all",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -109,8 +111,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "15 11 * * *"
+      "expr": "15 19 * * *"
     },
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -129,9 +132,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "15 16 * * *"
+      "expr": "15 0 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "all",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -150,9 +153,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "20 16 * * *"
+      "expr": "20 0 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "all",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -171,9 +174,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "25 16 * * *"
+      "expr": "25 0 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "all",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -192,9 +195,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "30 2,10 * * *"
+      "expr": "30 10,18 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "all",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -213,8 +216,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "35 15 * * *"
+      "expr": "35 23 * * *"
     },
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -233,9 +237,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "35 16 * * *"
+      "expr": "35 0 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "all",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -254,9 +258,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "40 16 * * *"
+      "expr": "40 0 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -275,8 +279,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "45 15 * * *"
+      "expr": "45 23 * * *"
     },
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -295,8 +300,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "55 15 * * *"
+      "expr": "55 23 * * *"
     },
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -315,9 +321,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "55 15 * * *"
+      "expr": "55 23 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "all",
     "catchup": {
       "maxCatchupRuns": 31,

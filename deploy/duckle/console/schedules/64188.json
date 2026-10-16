@@ -6,8 +6,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "0 2 * * *"
+      "expr": "0 10 * * *"
     },
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -26,8 +27,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "0 11 * * *"
+      "expr": "0 19 * * *"
     },
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -46,8 +48,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "15 11 * * *"
+      "expr": "15 19 * * *"
     },
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -66,9 +69,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "30 2,10 * * *"
+      "expr": "30 10,18 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "all",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -87,9 +90,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "*/5 0-15 * * *"
+      "expr": "*/5 8-23 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -108,9 +111,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "0 16 * * *"
+      "expr": "0 0 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "all",
     "catchup": {
       "maxCatchupRuns": 31,
@@ -129,9 +132,9 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "30 16 * * *"
+      "expr": "30 0 * * *"
     },
-    "timezone": "UTC",
+    "timezone": "Asia/Shanghai",
     "misfire": "skip",
     "catchup": {
       "maxCatchupRuns": 31,
