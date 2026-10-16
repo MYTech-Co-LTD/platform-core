@@ -187,6 +187,7 @@ jobs:
       # 第三条判据防作用域**退化**：某条目录条目的落地路径写成检出根本身 ⇒ 作用域变回「整个检出」。
       # 纯静态：只读清单文本 + 脚本文本，不连库、不取网络，秒级。
       - run: pnpm exec tsx scripts/check-prune-roots.mjs
+      - run: pnpm exec tsx scripts/check-shell-cjk-vars.mjs
       # 租户隔离门禁（issue #77；正典 docs/module-protocol.md「租户数据隔离」）：真库对账——
       # 真跑各模块的 migrations（跑进脚本自建的**一次性库** platform_tenant_isolation_check），
       # 再查 information_schema 要 org 列。判据按「全部 migrations 的累积终态」，不按文件判

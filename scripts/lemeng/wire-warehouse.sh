@@ -287,7 +287,7 @@ do_wire() {
   need_container "$PG_CONTAINER"
   need_container "$PLATFORM_CONTAINER"
 
-  echo "→ Gate-B：把 $PG_CONTAINER 接进 $PLATFORM_NET（alias pg_duckdb）"
+  echo "→ Gate-B：把 $PG_CONTAINER 接进 ${PLATFORM_NET}（alias pg_duckdb）"
   out=$(docker network connect --alias pg_duckdb "$PLATFORM_NET" "$PG_CONTAINER" 2>&1) && {
     echo "  接上（新建连接）"
   } || {
