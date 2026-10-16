@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.132.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.132.1...v0.132.2) - 2026-10-16
+- 【修复】data: L2 写面加迭代结构预检——超深 expr 返回干净 400 而非 500（Closes #593） ([#728](https://github.com/MYTech-Co-LTD/platform-core/pull/728), [e6e61f2](https://github.com/MYTech-Co-LTD/platform-core/commit/e6e61f257b51602d8aff35c2f9e3a3c934005ce0))
+
+
 ## [0.132.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.132.0...v0.132.1) - 2026-10-16
 - 【修复】guard: 加 shell-CJK 邻接守卫 + 修 7 处未收口变量（失败路径的 echo 会崩，#212） ([#727](https://github.com/MYTech-Co-LTD/platform-core/pull/727), [8bc9e4f](https://github.com/MYTech-Co-LTD/platform-core/commit/8bc9e4fac3c7cf6e62a39422d9aea37205e8ef76))
 
