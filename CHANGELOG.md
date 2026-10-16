@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.136.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.135.0...v0.136.0) - 2026-10-16
+- 【新增】askdata: #741 P1 阶段二——轨迹导出 / 撞墙判据 / 归因 / 统计面 / 定时化 ([#748](https://github.com/MYTech-Co-LTD/platform-core/pull/748), [19ecce3](https://github.com/MYTech-Co-LTD/platform-core/commit/19ecce36369daa7a54748ab6fe90efb392bb3ef2))
+
+
 ## [0.135.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.134.1...v0.135.0) - 2026-10-16
 - 【新增】data: 乐檬采购退货率与零金额采购行 L1 两条 + 对账（#744 W1） ([#745](https://github.com/MYTech-Co-LTD/platform-core/pull/745), [acb4346](https://github.com/MYTech-Co-LTD/platform-core/commit/acb4346efecaa849c12416f9b2d928766f585ff5))
 
