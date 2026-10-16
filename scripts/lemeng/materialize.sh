@@ -72,10 +72,17 @@ mat_watermark_sql() {
   for _wt in "$@"; do
     # 表名拼进 SQL 前按标识符安全形状收口：异常名 fail-soft 跳过 + 告警点名（缺一张表的水位
     # 可由下次物化补上，不该让一个异常名炸掉整批，更不能把垃圾拼进 SQL）。
-    case "$_wt" in ''|*[!a-z0-9_]*)
+    # ⚠️ 形状判定**必须钉死 locale**（CI fix round 1）：`case "$_wt" in *[!a-z0-9_]*)` 的
+    # 括号区间按**运行时 collation** 解释——glibc 的 UTF-8 locale 里 a-z 的排序跨度罩住
+    # 大写字母（A 排在 a 与 b 之间），与 macOS 的 ASCII 语义相反 ⇒ 同一个名字两平台判定
+    # 相反（实测：stg_OK1 本地判「安全」、CI 判「异常跳过」⇒ INSERT 缺失、门禁红）。
+    # 故改用 `LC_ALL=C grep` 逐字节判「含 a-z0-9_ 之外的字符」——C locale 无 collation
+    # 概念，跨平台确定。大写名判异常也是**正确语义**：PG 未加引号的标识符折叠成小写，
+    # `staging.stg_OK1` 本来就指不到那张表。
+    if [ -z "$_wt" ] || printf '%s' "$_wt" | LC_ALL=C grep -q '[^a-z0-9_]'; then
       echo "materialize warn: 水位跳过异常表名 ${_wt}" >&2
-      continue ;;
-    esac
+      continue
+    fi
     printf "INSERT INTO data.load_log (relation, max_bizday, materialized_at, tests_pass, tests_error, status) SELECT '%s', max(bizday), now(), %s, %s, 'ok' FROM staging.%s;\n" \
       "$_wt" "$_wp" "$_we" "$_wt"
   done

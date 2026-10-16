@@ -90,10 +90,42 @@ check "解析不到 PASS/ERROR ⇒ 插 NULL（落账不因解析失败缺账/失
 WM_JUNK=$(mat_watermark_sql '2x' '-1' stg_lemeng_a)
 check "非数字 PASS/ERROR ⇒ 同样 NULL（fail-soft，不把垃圾拼进 SQL）" \
   sh -c 'echo "$1" | grep -Fq "max(bizday), now(), NULL, NULL, '"'"'ok'"'"'"' _ "$WM_JUNK"
-WM_BAD=$(mat_watermark_sql 26 0 'stg_x; drop table y' 'stg_OK1')
-WM_BAD_OUT=$(mat_watermark_sql 26 0 'stg_x; drop table y' 'stg_OK1' 2>&1 >/dev/null)
-check "异常表名不拼进 SQL（fail-soft 跳过 + 告警点名；安全形状的表照常）" \
-  sh -c '! echo "$1" | grep -Fq "drop table" && echo "$1" | grep -Fq "FROM staging.stg_OK1;" && echo "$2" | grep -q "异常表名"' _ "$WM_BAD" "$WM_BAD_OUT"
+
+# ── ⑤-c 表名形状判定跨 locale 确定（CI fix round 1）──────────────────────────────
+# 现象：`case "$_wt" in *[!a-z0-9_]*)` 的括号区间按**运行时 collation** 解释——glibc 的
+# UTF-8 locale 里 a-z 的排序跨度罩住大写字母（A 排在 a 与 b 之间），与 macOS 的 ASCII
+# 语义相反 ⇒ 同一个名字两平台判定相反（stg_OK1 本地判「安全」、CI 判「异常」⇒ INSERT
+# 缺失、断言红）。实现钉 LC_ALL=C 后，这里钉「**两个 locale 同一个答案**」。
+# 语义同时钉死：标识符只认小写蛇形——PG 未加引号的标识符折叠成小写，`staging.stg_OK1`
+# 本来就指不到那张表 ⇒ 「含大写 = 异常跳过」是正确语义，不是误伤。
+WM_LOC_OK='stg_ok1'                    # 安全形状（全小写）⇒ 必须拼进 INSERT
+WM_LOC_BAD1='stg_OK1'                  # 含大写 ⇒ 异常（折叠后指不到表）
+WM_LOC_BAD2='stg_x; drop table y'      # 注入形状 ⇒ 异常
+wm_check_at() { # wm_check_at <locale 标签>：当前 locale 环境下调**真函数**断言三态
+  _wm_sql=$(mat_watermark_sql 26 0 "$WM_LOC_OK" "$WM_LOC_BAD1" "$WM_LOC_BAD2" 2>/dev/null)
+  _wm_err=$( (mat_watermark_sql 26 0 "$WM_LOC_OK" "$WM_LOC_BAD1" "$WM_LOC_BAD2") 2>&1 >/dev/null)
+  check "表名形状判定@$1：安全名 stg_ok1 拼 INSERT" \
+    sh -c 'echo "$1" | grep -Fq "FROM staging.stg_ok1;"' _ "$_wm_sql"
+  check "表名形状判定@$1：大写名 stg_OK1 判异常跳过（不拼进 SQL）" \
+    sh -c '! echo "$1" | grep -Fq "stg_OK1"' _ "$_wm_sql"
+  check "表名形状判定@$1：注入形状不拼进 SQL" \
+    sh -c '! echo "$1" | grep -Fq "drop table"' _ "$_wm_sql"
+  check "表名形状判定@$1：两个异常名都有告警点名（fail-soft 可见）" \
+    sh -c '[ "$(echo "$1" | grep -c "异常表名")" = 2 ]' _ "$_wm_err"
+}
+WM_SAVED_LC=${LC_ALL-}; WM_SAVED_LANG=${LANG-}
+# a) LC_ALL=C 下必过（形状判定的锚定 locale）
+LC_ALL=C; LANG=C; export LC_ALL LANG
+wm_check_at 'LC_ALL=C'
+# b) runner 有 en_US.UTF-8 ⇒ 同断言重跑（没有则跳过——钉的是「两 locale 同答案」；
+#    CI 的 glibc 常有它，本机 macOS 也常驻，故这条在两平台通常都真跑）
+if locale -a 2>/dev/null | grep -qiE 'en_US\.utf-?8'; then
+  LC_ALL=en_US.UTF-8; LANG=en_US.UTF-8; export LC_ALL LANG
+  wm_check_at 'en_US.UTF-8'
+else
+  ok "本机 locale -a 无 en_US.UTF-8 ⇒ 跨 locale 重跑跳过（CI/Linux 常有，钉子不空转）"
+fi
+LC_ALL=$WM_SAVED_LC; LANG=$WM_SAVED_LANG; export LC_ALL LANG
 
 # ── ⑥ 全流程（假 docker，手法照 sync-data-plane.test.sh）：成功写账 / 失败不写 ──
 STUB_E2E=$(mktemp -d)
