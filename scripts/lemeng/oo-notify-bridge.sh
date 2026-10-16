@@ -64,9 +64,9 @@ while [ "$i" -lt "$N" ]; do
   # shellcheck disable=SC2016
   BODY=$(printf '{"msgtype":"markdown","markdown":{"content":"%s **[OO 数据面] %s：%s**\\n> %s\\n> 明细: observe.hookflow.cn → Logs → data_alerts"}}' "$E" "$L" "$PL" "$TX")
   RESP=$(curl -sS -m 15 "$WECOM_WEBHOOK_URL" -H 'Content-Type: application/json' -d "$BODY") || {
-    echo "BR_FAIL:send unreachable（$PL）"; exit 1
+    echo "BR_FAIL:send unreachable（${PL}）"; exit 1
   }
-  echo "$RESP" | grep -q '"errcode":0' || { echo "BR_FAIL:send rejected（$PL）：$RESP"; exit 1; }
+  echo "$RESP" | grep -q '"errcode":0' || { echo "BR_FAIL:send rejected（${PL}）：$RESP"; exit 1; }
   NEWLAST=$TS
   echo "$NEWLAST" > "$DA_FILE"
   SENT=$((SENT + 1))
@@ -95,9 +95,9 @@ while [ "$i" -lt "$PN" ]; do
   # shellcheck disable=SC2016
   BODY=$(printf '{"msgtype":"markdown","markdown":{"content":"🔴 **[OO 探活] 断言 %s 判红**\\n> %s\\n> 明细: observe.hookflow.cn → Logs → data_plane_probes"}}' "$CK" "$DT")
   RESP=$(curl -sS -m 15 "$WECOM_WEBHOOK_URL" -H 'Content-Type: application/json' -d "$BODY") || {
-    echo "BR_FAIL:send unreachable（probe $CK）"; exit 1
+    echo "BR_FAIL:send unreachable（probe ${CK}）"; exit 1
   }
-  echo "$RESP" | grep -q '"errcode":0' || { echo "BR_FAIL:send rejected（probe $CK）：$RESP"; exit 1; }
+  echo "$RESP" | grep -q '"errcode":0' || { echo "BR_FAIL:send rejected（probe ${CK}）：$RESP"; exit 1; }
   PNEW=$TS
   echo "$PNEW" > "$PB_FILE"
   PSENT=$((PSENT + 1))
@@ -126,9 +126,9 @@ if [ -n "$TROWS" ]; then
     # shellcheck disable=SC2016
     TBODY=$(printf '{"msgtype":"markdown","markdown":{"content":"🔴 **[OO 基建] 探活告警：%s**\\n> 明细: observe.hookflow.cn → Alerts"}}' "$TNAME")
     TRESP=$(curl -sS -m 15 "$WECOM_WEBHOOK_URL" -H 'Content-Type: application/json' -d "$TBODY") || {
-      echo "BR_FAIL:send unreachable（tr $TNAME）"; exit 1
+      echo "BR_FAIL:send unreachable（tr ${TNAME}）"; exit 1
     }
-    echo "$TRESP" | grep -q '"errcode":0' || { echo "BR_FAIL:send rejected（tr $TNAME）：$TRESP"; exit 1; }
+    echo "$TRESP" | grep -q '"errcode":0' || { echo "BR_FAIL:send rejected（tr ${TNAME}）：$TRESP"; exit 1; }
     TNEW=$TID
     echo "$TNEW" > "$TR_FILE"
     TSENT=$((TSENT + 1))

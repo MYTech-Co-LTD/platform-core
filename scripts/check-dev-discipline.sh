@@ -67,7 +67,7 @@ done < "$DISCIPLINE_COMMITS_FILE"
 echo ""
 echo "── ② CHANGELOG（禁止手写；由 release.mjs 生成）──"
 # 变更集必须用**三点** diff（$BASE...$HEAD = merge-base..HEAD）：那才是「**这个分支**改了什么」。
-# 两点（$BASE..$HEAD）比的是「两棵树」：分支只要落后于 main，main 上的改动就会显示成
+# 两点（${BASE}..${HEAD}）比的是「两棵树」：分支只要落后于 main，main 上的改动就会显示成
 # 「这个分支改了它」—— 而 main 每次发版都有 chore(release) 改 CHANGELOG.md ⇒ 落后即误报（#99）。
 #
 # ⚠️ 别把这里的「三点」类推到下面的 `git log`：`diff A...B` 与 `log A...B` **名字像、语义不同**——
