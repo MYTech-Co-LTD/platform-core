@@ -226,3 +226,38 @@ params = grain ∩ 白名单，白名单与类型固定：
 - **data_as_of 呈现**：query-service 将其格式化为 Asia/Shanghai 字符串（`YYYY-MM-DD HH:mm:ss +08:00`，
   `Intl` 确定性格式化——不教模型换算）；
 - **生效链**：改种子 → seed + 重启两 console（§F.2 第 1 类）→ `/api/schedules` 验 timezone 字段与 expr。
+
+## 10.7 修订五：新鲜度 SLA + 固定展示行（2026-10-16 用户拍板）
+
+> 复查发现裸水位会误导业务（源端滞后/采集故障/合法零 三因同形，业务默认往坏处想）。
+> 业界定解 = **新鲜度 SLA + 状态转译 + 业务日语义**（dbt/Monte Carlo 类观测标准形态），
+> 且展示走**服务端预拼的固定一行**（模型原样附加），消灭 flash 模型的格式遵从风险。
+
+### 10.7.1 SLA 登记（声明侧）
+
+`l1_metrics.yml` 每条指标新增 **`freshness_sla_days: N`**（承诺：水位距今天 ≤N 个业务日即「正常」）。
+值 = 采集正典实测窗口的登记（非拍脑袋）：**inventory 两指标 = 2**（源端发布滞后 16~40h 实测）；**其余 25 条 = 1**（D+1 采集/日结）。
+
+### 10.7.2 物化水位（load_log 升级）
+
+- 物化收尾对 staging schema 内**所有含 `bizday` 列的表**逐表记 `(relation, max_bizday)`（动态 SQL 经 information_schema 生成；无 bizday 表自然跳过）；旧行（relation NULL）保留为仓级历史，水位查询只取 relation 非空。
+- load_log 加列幂等：`relation text, max_bizday date`。
+
+### 10.7.3 指标→关系映射与响应（query-service）
+
+- sync 从声明 `sources[0]` 路径段机械推导关系集 `stg_lemeng_<资产>`，存 `data.metrics.freshness_relations`（jsonb；L2 恒空 = 无自动水位）；`data.metrics.sla_days` 同步物化。
+- 响应新增：`watermark`（freshness_relations 上 min(max_bizday)，`YYYY-MM-DD`）、`freshness_status`（服务端按 sla_days 判：水位 ≥ 今天-sla ⇒ `normal`；< 且 ≥ 今天-sla-2 ⇒ `late`；更早 ⇒ `alert`；水位缺失 ⇒ `unknown` 不捏造）、**`freshness_line`**（服务端预拼的固定一行，格式见下）。
+
+### 10.7.4 固定展示行（SKILL 强约定）
+
+格式（服务端拼好，模型**原样**附在答案末尾，单独一行、不混入正文）：
+
+```
+📅 数据截至 <watermark>（业务日）｜仓库物化 <MM-DD HH:mm> 北京时间｜新鲜度：✓ 正常 / ⚠ 偏晚 / ✗ 异常 / · 未知（承诺 T+<sla_days>）
+```
+
+话术主轴：业务日完整性；当日部分天标注；合法零转译「其后暂无新交易（采集运行正常）」——以 freshness_status 与明细 rows 判，不臆测。
+
+### 10.7.5 投递链
+
+同 §10.5：主项目部署 → 数据面 sync（yml+materialize.sh 均在清单，lock 重生成）→ 词表 job（新列物化，更新 27 预期）→ 手动 materialize（水位首批）→ 探针 → 真机验固定行展示。
