@@ -60,6 +60,8 @@ export default definePluginEntry({
       if (userId) lastUserId = userId;
       // 会话键：钩子按同一把键取捕获（拿不到 ⇒ 全局槽，见 lib.js FRESHNESS_GLOBAL_SLOT）。
       const sessionKey = (ctx && ctx.sessionKey) || "";
+      // runId：本轮 turn 的关联键（前向兼容——当前宿主工具 ctx 无 runId，恒空串）。
+      const runId = (ctx && ctx.runId) || "";
       return {
         ...def,
         // 必须返回 OpenClaw 工具结果契约形状（含 content[]）——见 lib.js toToolResult。
@@ -67,7 +69,7 @@ export default definePluginEntry({
           const result = await run(normalizeParams(params), userId);
           if (onResult) {
             try {
-              onResult(result, sessionKey);
+              onResult(result, sessionKey, runId);
             } catch {
               // 旁路观察失败不影响工具返回。
             }
@@ -95,9 +97,9 @@ export default definePluginEntry({
             body: { metricId: params.metricId, args: params.args ?? {} },
           }),
         // 捕获服务端正典新鲜度行（回包没有该字段 = 未接新鲜度链路，不捕获 ⇒ 钩子原样放行）。
-        (result, sessionKey) => {
+        (result, sessionKey, runId) => {
           if (result && typeof result.freshness_line === "string" && result.freshness_line) {
-            freshnessStore.capture(sessionKey, result.freshness_line);
+            freshnessStore.capture(sessionKey, result.freshness_line, runId);
           }
         },
       ),

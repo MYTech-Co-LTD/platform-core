@@ -262,7 +262,14 @@ test("store：捕获后可取，同会话后查覆盖前查（取最新）", () 
   store.capture("s1", LINE_A);
   nowRef.t = 2_000;
   store.capture("s1", LINE_B);
-  assert.deepEqual(store.take("s1"), { line: LINE_B, at: 2_000, sessionKey: "s1" });
+  assert.deepEqual(store.take("s1"), { line: LINE_B, runId: "", at: 2_000, sessionKey: "s1" });
+});
+test("store：捕获带 runId（第三参），缺省存空串", () => {
+  const store = makeStore({ t: 0 });
+  store.capture("s1", LINE_A, "run-1");
+  store.capture("s2", LINE_B);
+  assert.equal(store.take("s1").runId, "run-1");
+  assert.equal(store.take("s2").runId, "");
 });
 test("store：TTL 内可取，超时读时丢弃（不再返回）", () => {
   const nowRef = { t: 1_000 };
@@ -290,7 +297,9 @@ test("生产单例存在（工具路径与钩子共用同一份）", () => {
   assert.equal(typeof freshnessStore.take, "function");
 });
 
-test("钩子：有捕获 → 外发内容剥旧钉新（恰一行、在末尾、等于正典行）", async () => {
+// ★ 返回形状硬契约（一手来源 deliver-hooks.ts applyMessageSendingHook 读 `sendingResult.content`）：
+//   改写 ⇒ 对象 `{ content }`；不改写 ⇒ undefined。裸字符串会被读成「未改写」⇒ 行永不附上。
+test("钩子：有捕获 → 返回对象 { content }（剥旧钉新、恰一行、在末尾、等于正典行）", async () => {
   const store = makeStore({ t: 0 });
   store.capture("s1", LINE_B);
   const hook = makeFreshnessSendingHook(store);
@@ -298,13 +307,20 @@ test("钩子：有捕获 → 外发内容剥旧钉新（恰一行、在末尾、
     { content: `结论如下\n\n${LINE_A}（模型自附）` },
     { sessionKey: "s1" },
   );
-  assert.equal(typeof out, "string");
-  assert.equal(out, `结论如下\n\n${LINE_B}`);
-  assert.equal(out.split("📅").length - 1, 1);
+  assert.equal(typeof out, "object");
+  assert.ok(out !== null && !Array.isArray(out), "必须是对象，不是字符串/数组");
+  assert.equal(typeof out.content, "string");
+  assert.equal(out.content, `结论如下\n\n${LINE_B}`);
+  assert.equal(out.content.split("📅").length - 1, 1);
+  // 不是裸字符串（回归锁：裸串会被主机读成 undefined.content ⇒ 判未改写）
+  assert.notEqual(typeof out, "string");
 });
-test("钩子：无捕获 → 返回 undefined（= 不改，外发原文放行）", async () => {
+test("钩子：无捕获 → 返回 undefined（= 不改，外发原文放行；不是对象也不是字符串）", async () => {
   const hook = makeFreshnessSendingHook(makeStore({ t: 0 }));
-  assert.equal(await hook({ content: "普通回复" }, { sessionKey: "s9" }), undefined);
+  const out = await hook({ content: "普通回复" }, { sessionKey: "s9" });
+  assert.equal(out, undefined);
+  assert.notEqual(typeof out, "object");
+  assert.notEqual(typeof out, "string");
 });
 test("钩子：捕获已过 TTL → undefined（不附旧行）", async () => {
   const nowRef = { t: 0 };
@@ -319,7 +335,41 @@ test("钩子：会话隔离——s1 的捕获不污染 s2 的外发", async () =
   store.capture("s1", LINE_A);
   const hook = makeFreshnessSendingHook(store);
   assert.equal(await hook({ content: "s2 的回复" }, { sessionKey: "s2" }), undefined);
-  assert.equal(await hook({ content: "s1 的回复" }, { sessionKey: "s1" }), "s1 的回复\n\n" + LINE_A);
+  assert.deepEqual(await hook({ content: "s1 的回复" }, { sessionKey: "s1" }), {
+    content: "s1 的回复\n\n" + LINE_A,
+  });
+});
+
+// runId 收紧（前向兼容）：两侧都有且不一致 ⇒ 判陈旧、不附加；任一侧缺失 ⇒ 回退 sessionKey+TTL。
+test("钩子：两侧 runId 一致 → 附加", async () => {
+  const store = makeStore({ t: 0 });
+  store.capture("s1", LINE_A, "run-1");
+  const hook = makeFreshnessSendingHook(store);
+  assert.deepEqual(await hook({ content: "正文" }, { sessionKey: "s1", runId: "run-1" }), {
+    content: "正文\n\n" + LINE_A,
+  });
+});
+test("钩子：两侧 runId 不一致 → undefined（同会话的陈旧行不附加）", async () => {
+  const store = makeStore({ t: 0 });
+  store.capture("s1", LINE_A, "run-1");
+  const hook = makeFreshnessSendingHook(store);
+  assert.equal(await hook({ content: "正文" }, { sessionKey: "s1", runId: "run-2" }), undefined);
+});
+test("钩子：任一侧缺 runId → 回退 sessionKey+TTL（现状：宿主恒不给 runId）", async () => {
+  // 捕获侧缺
+  const storeA = makeStore({ t: 0 });
+  storeA.capture("s1", LINE_A);
+  assert.deepEqual(
+    await makeFreshnessSendingHook(storeA)({ content: "正文" }, { sessionKey: "s1", runId: "run-9" }),
+    { content: "正文\n\n" + LINE_A },
+  );
+  // 钩子 ctx 侧缺（当前 openclaw 的实际情形）
+  const storeB = makeStore({ t: 0 });
+  storeB.capture("s1", LINE_A, "run-1");
+  assert.deepEqual(
+    await makeFreshnessSendingHook(storeB)({ content: "正文" }, { sessionKey: "s1" }),
+    { content: "正文\n\n" + LINE_A },
+  );
 });
 test("钩子：content 非字符串（number/object/缺）→ undefined，不 throw", async () => {
   const store = makeStore({ t: 0 });

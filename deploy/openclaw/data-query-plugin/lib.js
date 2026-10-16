@@ -134,10 +134,12 @@ export function createFreshnessStore({ ttlMs = FRESHNESS_TTL_MS, now = () => Dat
   const map = new Map();
   return {
     /** query_data 成功回包带 freshness_line 时调用；sessionKey 缺失落全局槽。
-     * line 存原值不做强转（非串在读取侧判掉——强转会把 undefined 变成字符串 "undefined"）。 */
-    capture(sessionKey, line) {
+     * line 存原值不做强转（非串在读取侧判掉——强转会把 undefined 变成字符串 "undefined"）。
+     * runId 存空串表示「本侧没有」——钩子侧据此决定是否收紧（见 makeFreshnessSendingHook）。 */
+    capture(sessionKey, line, runId) {
       map.set(sessionKey || FRESHNESS_GLOBAL_SLOT, {
         line,
+        runId: runId || "",
         at: now(),
         sessionKey: sessionKey || "",
       });
@@ -184,8 +186,23 @@ export function appendFreshnessLine(content, line) {
 
 /**
  * 造 message_sending 钩子处理器（index.js 用生产单例注册；单测用独立 store 注入）。
- * 契约：返回改写后的 content；无可附加/出错 ⇒ 返回 undefined（= 不改，宿主 fail-open）。
- * **任何分支不得 throw**——钩子故障宿主只记日志跳过，throw 等于把传输层搞挂。
+ *
+ * ★ 返回形状是**硬契约**（一手来源：openclaw `src/infra/outbound/deliver-hooks.ts`
+ *   `applyMessageSendingHook`——主机读的是 `sendingResult?.content`；`== null` 即判「未改写」
+ *   原样投递）：
+ *     · 要改写 ⇒ 返回对象 `{ content: <新文本> }`（**不是裸字符串**——裸串会被读成
+ *       `undefined.content` ⇒ 主机判未改写 ⇒ 行永不附上，恰是本任务要消灭的缺陷下移一层）；
+ *     · 不改写（无捕获 / 过期 / 内容非串 / 出错）⇒ 返回 `undefined`（契约里 = 无决定）。
+ *   合并语义（hooks.ts runMessageSending）：`content: lastDefined(acc?.content, next.content)`。
+ *
+ * ★ runId 收紧：两侧都有 runId 且不一致 ⇒ 判为陈旧（同会话的上一轮），不附加。
+ *   ⚠️ 现状：openclaw **不给 message_sending 传 runId**（`hook-message.types.ts` 明写
+ *   "not yet plumbed through the outbound delivery path"），工具 ctx 也无 runId
+ *   ⇒ 生产上恒走「任一侧缺失 ⇒ sessionKey+TTL」的回退分支；本收紧是**前向兼容**，
+ *   待上游接通 runId 后自动生效（残余泄漏见 README 已知边界）。
+ *
+ * **任何分支不得 throw**——宿主对钩子故障 fail-open（deliver-hooks.ts catch 后原样投递），
+ * 外抛只会白搭一次调用。
  */
 export function makeFreshnessSendingHook(store) {
   return async function messageSendingHook(event, ctx) {
@@ -195,7 +212,10 @@ export function makeFreshnessSendingHook(store) {
       const entry = store.take(ctx && ctx.sessionKey);
       if (!entry) return undefined;
       if (typeof entry.line !== "string" || !entry.line) return undefined;
-      return appendFreshnessLine(content, entry.line);
+      const entryRunId = entry.runId || "";
+      const ctxRunId = (ctx && ctx.runId) || "";
+      if (entryRunId && ctxRunId && entryRunId !== ctxRunId) return undefined;
+      return { content: appendFreshnessLine(content, entry.line) };
     } catch {
       // fail-open：宁缺勿错——新鲜度行缺失可接受，外发通道被搞挂不可接受。
       return undefined;

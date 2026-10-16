@@ -20,12 +20,32 @@ OpenClaw native tool-plugin：把可信企微 userid（`toolContext.requesterSen
 （strip-then-append 天然去重；TTL 10 分钟，过期/无捕获原样放行；钩子任何分支不 throw，fail-open）。
 模型侧指令同步改为「系统自动附加，不要自己写 📅 行」（工具描述 + SKILL.md）。
 
+**返回形状是硬契约**：要改写必须返回对象 `{ content: <新文本> }`——openclaw 主机读的是
+`sendingResult.content`（`src/infra/outbound/deliver-hooks.ts` `applyMessageSendingHook`），
+**裸字符串会被读成「未改写」**，行不会附上；不改写才返回 `undefined`。
+
 纯逻辑在 `lib.js`（`createFreshnessStore` / `stripFreshnessLines` / `appendFreshnessLine` /
 `makeFreshnessSendingHook`），`node --test lib.test.js` 直跑。
 
-⚠️ 部署前置（同 zh-thinking 插件先例）：**会话类钩子可能被运行时门禁静默挡住**——
-若真机发现行没附上（且日志无 `已注册 message_sending 钩子` 之外的报错），补
-`plugins.entries.data-query.hooks.allowConversationAccess=true` 后重启容器再验。
+**真机首验判据 = 行确实出现在企微消息里**（不是「日志打了注册成功」就算过）：
+发一条问数真机消息，看末尾是否恰有一行 📅 且等于服务端 `freshness_line`。
+
+### 运行时门禁（订正 2026-10-16）
+
+`message_sending` 是**消息/通道类**钩子，**不适用** `hooks.allowConversationAccess`
+（该闸只对 conversation 类钩子生效——`src/plugins/hook-types.ts` 的 `CONVERSATION_HOOK_NAMES`
+清单里没有 `message_sending`；zh-thinking 用 `before_prompt_build` 才需要它）。
+**不要为本插件去开 `allowConversationAccess`**（那会多授一份更宽的权限）。行若没附上，
+真因看返回形状（上）与捕获（TTL/会话键），不是这个闸。
+
+### 已知边界：陈旧行窗口（≤ TTL）
+
+捕获**不消费**（消费会被同轮先前的外发——如「先说一句要查什么」的进度消息——吃掉行），
+代价是同会话内 ≤10 分钟内的**任意**后续外发都可能附上上一次查询的行（跨指标连问时该行属上一
+指标；数据未变的同一指标观感无害）。收紧手段是 `runId`（两侧一致才附加），但**当前 openclaw
+不给 `message_sending` 传 `runId`**（`hook-message.types.ts`："not yet plumbed through the
+outbound delivery path"），工具 ctx 亦无 `runId` ⇒ 收紧**当前不生效**，恒走 sessionKey+TTL
+回退。该窗口因此是**现状**而非边角，待上游接通 runId 后自动收窄。
 
 ## env 契约（容器注入）
 
