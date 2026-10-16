@@ -447,7 +447,7 @@ describePg('runQuery —— data_as_of（spec §10.2，需要 DATABASE_URL）', 
     expect('data_as_of' in out).toBe(false)
   })
 
-  it('F3 有 ok 行 ⇒ data_as_of = 最新 ok 的 materialized_at（非 ok 行不计，哪怕更新）', async () => {
+  it('F3 有 ok 行 ⇒ data_as_of = 最新 ok 的 materialized_at（非 ok 行不计，哪怕更新），且是 Asia/Shanghai 确定性字符串（spec §10.6）', async () => {
     await dropLog()
     await createLog()
     await wh.query(
@@ -458,9 +458,21 @@ describePg('runQuery —— data_as_of（spec §10.2，需要 DATABASE_URL）', 
     const out = await runQuery(depsOf(), ORG, req(), 'sales_daily', {})
     expect(out.status).toBe('ok')
     if (out.status !== 'ok') return
-    expect(out.data_as_of, '取 status=ok 的 max（failed 行更新也不算）').toBeInstanceOf(Date)
-    if (out.status !== 'ok' || !(out.data_as_of instanceof Date)) return
-    expect(out.data_as_of.toISOString()).toBe('2026-10-16T03:27:00.000Z')
+    expect(out.data_as_of, '取 status=ok 的 max（failed 行更新也不算）').toBe('2026-10-16 11:27:00 +08:00')
+  })
+
+  it('F5 data_as_of 形状钉死：YYYY-MM-DD HH:mm:ss +08:00，UTC 午夜换算跨日不漂（spec §10.6，不教模型换算）', async () => {
+    await dropLog()
+    await createLog()
+    // 16:00Z = 上海次日 00:00:00——同一锚点同时钉「+8 跨日」与「午夜渲染为 00 不是 24」
+    await wh.query(
+      `insert into data.load_log (materialized_at, tests_pass, tests_error, status)
+       values ('2026-10-16 16:00:00+00', 26, 0, 'ok')`)
+    const out = await runQuery(depsOf(), ORG, req(), 'sales_daily', {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(out.data_as_of).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \+08:00$/)
+    expect(out.data_as_of).toBe('2026-10-17 00:00:00 +08:00')
   })
 
   it('F4 显式合计模式同样附带 data_as_of（新鲜度与查询形态正交）', async () => {
@@ -480,6 +492,6 @@ describePg('runQuery —— data_as_of（spec §10.2，需要 DATABASE_URL）', 
     expect(out.status).toBe('ok')
     if (out.status !== 'ok') return
     expect(out.total).toBe(1470.5)
-    expect(out.data_as_of).toBeInstanceOf(Date)
+    expect(out.data_as_of, '合计形态同样带北京时间字符串').toBe('2026-10-16 11:27:00 +08:00')
   })
 })

@@ -208,3 +208,21 @@ params = grain ∩ 白名单，白名单与类型固定：
 ### 10.5 投递链（本任务特有）
 
 - `materialize.sh` 在数据面清单 ⇒ 改后必跑 `data-plane-lock.mjs`；merge 后：主项目部署（server/openclaw 镜像）→ **数据面机 sync**（materialize.sh 到 /opt）→ **手动触发一次 materialize job**（load_log 首批落账）→ 探针验 `data_as_of` → 真机问数验新鲜度背书。
+
+## 10.6 修订四：时区定案——业务调度一律 Asia/Shanghai（2026-10-16 用户拍板）
+
+> 用户裁决：趁调度少、未正式上线，把业务调度统一到中国时区（越晚改越贵）。三条纪律一次定清：
+> ① **存储不动**（timestamptz/UTC 是正确姿势）；② **业务排班（duckle console schedules）一律
+> `timezone: 'Asia/Shanghai'` + cron 写北京时间**（调度器原生支持 IANA 时区，正典 §1.5 E 行）；
+> ③ **容器 TZ 红线不变**——console 容器 TZ 保持 UTC（cron 按 TZ 解释，改 env = 全体漂移 8h），
+> 时区走排班定义而非环境变量。控制面（openship job）cron 保持 UTC 并在名称中标注（无 per-job 时区字段）。
+
+- **转换规则**：旧 UTC expr → 新 CST expr = **+8h（mod 24），触发瞬间逐一不变** ⇒ 管线窗口语义
+  （按触发时刻的上海日）零变化。23 条（3120×16 + 64188×7）全部显式 `timezone: 'Asia/Shanghai'`
+  （含原缺省无字段的 9 条）。转换表（逐条）：`*/5 0-15`→`*/5 8-23`；`0 11`→`0 19`；`0 16`→`0 0`；
+  `0 2`→`0 10`；`05 16`→`5 0`；`15 11`→`15 19`；`15 16`→`15 0`；`20 16`→`20 0`；`25 16`→`25 0`；
+  `30 2,10`→`30 10,18`；`35 15`→`35 23`；`35 16`→`35 0`；`40 16`→`40 0`；`45 15`→`45 23`；
+  `55 15`→`55 23`；`30 16`→`30 0`。
+- **data_as_of 呈现**：query-service 将其格式化为 Asia/Shanghai 字符串（`YYYY-MM-DD HH:mm:ss +08:00`，
+  `Intl` 确定性格式化——不教模型换算）；
+- **生效链**：改种子 → seed + 重启两 console（§F.2 第 1 类）→ `/api/schedules` 验 timezone 字段与 expr。
