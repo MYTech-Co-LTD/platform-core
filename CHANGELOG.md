@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.129.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.129.1...v0.129.2) - 2026-10-16
+- 【修复】data: freshness_line 当日部分天变体——水位=今天改口「今日数据仍在累计中」（freshness fix round 2） ([#717](https://github.com/MYTech-Co-LTD/platform-core/pull/717), [79e50eb](https://github.com/MYTech-Co-LTD/platform-core/commit/79e50eb400e51946688a1a8b89cf563f7e199315))
+
+
 ## [0.129.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.129.0...v0.129.1) - 2026-10-16
 - 【修复】forms: G0 量具去掉裸 SQL 全文件重放——并行 worker 下 DDL 重放 deadlock（Closes #714） ([#715](https://github.com/MYTech-Co-LTD/platform-core/pull/715), [adb94b7](https://github.com/MYTech-Co-LTD/platform-core/commit/adb94b7ef80b7665166968c2c4ea7336c1293810))
 
