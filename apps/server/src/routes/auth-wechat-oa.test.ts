@@ -453,13 +453,17 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
   }
 
   /** 老化访客 token：sfa 距今 > SCOPES_TTL_SEC（触发刷新）、exp 剩 > 6 天（不触发续期）——
-   *  与 auth.test.ts ⑥ 的 stale 造法同款 */
-  async function agedGuestSession(scopes: string[]): Promise<string> {
-    return signSession(
+   *  与 auth.test.ts ⑥ 的 stale 造法同款。
+   *  **连同旧 sfa 一起返回**：让「已刷新」可以**精确**断言（新 sfa > 旧 sfa），不依赖
+   *  `Date.now()` 的秒边界 —— 那正是 #459 的假红根因（刷新落在第 N 秒、断言取到第 N+1 秒）。 */
+  async function agedGuestSession(scopes: string[]): Promise<{ cookie: string; oldSfa: number }> {
+    const oldSfa = Math.floor(Date.now() / 1000) - SCOPES_TTL_SEC - 60
+    const cookie = await signSession(
       { sub: 'o_visitor_1', org: 'acme', name: 'o_visitor_1', scopes, authVia: 'wechat-oa' },
       SECRET,
-      Math.floor(Date.now() / 1000) - SCOPES_TTL_SEC - 60,
+      oldSfa,
     )
+    return { cookie, oldSfa }
   }
 
   /** 有效访客 cookie（issue #560 会话短路用例）：iat/sfa=now，exp 剩满 7 天——既不触发 scopes
@@ -490,8 +494,9 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
         return GUEST_SCOPES
       },
     }))
-    const stale = await agedGuestSession(['stale:guest'])
+    const { cookie: stale, oldSfa } = await agedGuestSession(['stale:guest'])
     // 任意过中间件链的请求即可（/silent 桌面 UA → 302 /login；刷新发生在中间件层，与路由无关）
+    const before = Math.floor(Date.now() / 1000) // 刷新必然发生在此刻之后 ⇒ 下界恒成立、不引入 flake
     const res = await client.api.platform.auth['wechat-oa'].silent.$get(undefined, {
       headers: { host: 'acme.test', 'user-agent': DESKTOP_UA, cookie: `platform_session=${stale}` },
     })
@@ -501,7 +506,10 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
     expect(p?.sub).toBe('o_visitor_1')
     expect(p?.authVia).toBe('wechat-oa')
     expect(p?.scopes).toEqual(GUEST_SCOPES) // stale 被替换为解析器真值
-    expect(p!.sfa).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000)) // sfa 已刷新
+    // sfa 已刷新：精确判据 = **严格大于旧值**（#459：原先拿 Date.now() 比，跨秒即假红）；
+    // 下界 `before` 再兜一次「确实变新了」，两条都不含秒边界。
+    expect(p!.sfa).toBeGreaterThan(oldSfa)
+    expect(p!.sfa).toBeGreaterThanOrEqual(before)
     expect(gone.getUserCalls()).toBe(0) // 访客路的刷新不碰 Casdoor（openid 在那没有账户）
     expect(seenTenantIds).toEqual([acmeId]) // 按当前租户重算，非全局并集
   })
@@ -512,7 +520,7 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
       sessionCasdoor: gone.factory,
       guestScopes: async () => [], // 模块被停用后 enabledGuestScopes 的真值
     }))
-    const stale = await agedGuestSession(['guestmod:guest', 'othermod:guest'])
+    const { cookie: stale } = await agedGuestSession(['guestmod:guest', 'othermod:guest'])
     const res = await client.api.platform.auth['wechat-oa'].silent.$get(undefined, {
       headers: { host: 'acme.test', 'user-agent': DESKTOP_UA, cookie: `platform_session=${stale}` },
     })
@@ -532,7 +540,7 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
           throw new Error('guest scopes db down')
         },
       }))
-      const stale = await agedGuestSession(['guestmod:guest'])
+      const { cookie: stale } = await agedGuestSession(['guestmod:guest'])
       const res = await client.api.platform.auth['wechat-oa'].silent.$get(undefined, {
         headers: { host: 'acme.test', 'user-agent': DESKTOP_UA, cookie: `platform_session=${stale}` },
       })
