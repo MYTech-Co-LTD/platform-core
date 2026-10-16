@@ -261,3 +261,44 @@ describe('frontend.admin（模块管理页协议）', () => {
     expect(parsed.error?.issues.some((i) => i.message.includes('不得以 /console/admin/ 开头'))).toBe(true)
   })
 })
+
+// dataDependencies（跨模块只读数据依赖，issue #708）。正典：docs/module-protocol.md 同名节
+// —— schema 收字段 = 声明面落地的一半；B1 读侧豁免扩面随采集首管线（本文件不涉及守卫）。
+describe('dataDependencies 字段（跨模块只读数据依赖）', () => {
+  it('合法声明（<schema>.<view> string[]）parse 通过且逐字保留', () => {
+    const parsed = ManifestSchema.safeParse({
+      ...validManifest,
+      dataDependencies: ['data.v_order_snapshot'],
+    })
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+    expect(parsed.data.dataDependencies).toEqual(['data.v_order_snapshot'])
+  })
+
+  it('可选：不声明时为 undefined（行为与未收字段前逐字相同）', () => {
+    const parsed = ManifestSchema.safeParse(validManifest)
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+    expect(parsed.data.dataDependencies).toBeUndefined()
+  })
+})
+
+// .strict()（issue #708 fix 分项）。未加 strict 时未知键被 Zod **静默剥离**——「写了等于没写、
+// 且不报错」，声明面形同虚设（正典实施状态警告的病根）。加 strict 后未知键 ⇒ schema 拒
+// ⇒ 装载失败 / check-manifests 红（fail-fast 口径，与 storage.kind 越界同风格）。
+describe('未知键拒绝（ManifestObject.strict）', () => {
+  it('manifest 带未知键 ⇒ 校验失败，issue 指到该键', () => {
+    const parsed = ManifestSchema.safeParse({
+      ...validManifest,
+      dataDependency: ['data.v_order_snapshot'], // 拼写错误的 dataDependencies：曾静默剥离
+    })
+    expect(parsed.success).toBe(false)
+    if (parsed.success) return
+    expect(parsed.error.issues.some((i) => i.code === 'unrecognized_keys')).toBe(true)
+  })
+
+  it('全量合法样例（含所有已收字段）不受 strict 影响', () => {
+    const r = ManifestSchema.safeParse(validManifest)
+    expect(r.success).toBe(true)
+  })
+})

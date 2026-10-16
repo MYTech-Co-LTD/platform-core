@@ -31,6 +31,14 @@ export interface ModuleManifest {
    *     要防的那种「两个维度共用一个词」。
    *  ⚠️ 声明的是**能力**不是**租户**：这里写不出任何租户/源标识，只写得出「我要这份投影」。 */
   tenantSources?: boolean
+  /** 跨模块只读数据依赖（issue #708 落地）：声明本模块只读**别的模块拥有的稳定视图**，
+   *  条目形状 `<提供方 schema>.<稳定视图名>`（如 `data.v_order_snapshot`）。声明 = 可读授权、
+   *  **只读**；与 `api.internal` 的「声明即授权」同哲学但**降一档强度**——门禁层契约 +
+   *  评审，宿主不做 SQL 面的运行时拦截（模块与宿主共用同一个 pool）。声明稳定视图，
+   *  不声明物理表。正典：`docs/module-protocol.md`「跨模块只读数据依赖」节。
+   *  ⚠️ B1 读侧豁免以声明集为准（守卫扩面随采集首管线落地）；落地前 manifest 里写了本字段
+   *  会被 schema **静默剥离**——禁止使用，直到门禁可对账。 */
+  dataDependencies?: string[]
   frontend?: { userApp?: { mount: string; dist: string };
     console?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }>;
     /** 模块管理页协议（2026-09-20 spec）：模块自有的「管理」组子页。门禁 = tenant:admin（组门，
@@ -81,6 +89,10 @@ const ManifestObject = z.object({
   // 计划 5：声明需要「本租户已接入的源」投影（键名刻意不叫 `sources`——见 ModuleManifest 的注记）。
   // 只认 boolean：写别的值 ⇒ schema 拒绝 ⇒ 装载失败（与 storage.kind 的 fail-fast 同风格）。
   tenantSources: z.boolean().optional(),
+  // 跨模块只读数据依赖（issue #708）：先按 string[] 最小收字段——条目形状校验（<schema>.<view>
+  // 两段式 / 视图命名）随门禁第 1、2 条（声明↔代码一致、列集变更登记）实施时一起定，
+  // 本处不预设（正典只锁判据，守卫实现留待实现期）。
+  dataDependencies: z.array(z.string()).optional(),
   frontend: z.object({
     userApp: z.object({ mount: z.string(), dist: z.string() }).optional(),
     console: z.array(z.object({
@@ -102,7 +114,12 @@ const ManifestObject = z.object({
   bindings: z.record(z.string(), z.enum(['required', 'optional'])).optional(),
   notifications: z.object({ dir: z.string() }).optional(),
   config: z.object({ schema: z.string() }).optional(),
-})
+// .strict()（issue #708，fix 分项）：未知键 ⇒ schema 拒 ⇒ 装载失败 / check-manifests 红。
+// 没 strict 时 Zod **静默剥离**未知键——「写了等于没写、且不报错」（曾让 dataDependencies
+// 在落地前被写成静默消失的声明面，见 module-protocol.md 同名节实施状态警告）。fail-fast
+// 口径：拼错的字段名必须响，不能吞。新收字段一律改这里（接口 + zod 成对改，编译期
+// 双向断言在下面把关），别在 manifest.yaml 里先写未收字段。
+}).strict()
 
 export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
   // B4：permissions[].code 必须落在模块自己的命名空间里（id + ':' 前缀）。
