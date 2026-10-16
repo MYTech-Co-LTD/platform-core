@@ -41,6 +41,17 @@ export type GateErrorCode =
   | 'BAD_BINDING'
   | 'BAD_DICT_REF'
 
+/** 收集契约中全部字典引用（去重）——storage 据此预载各 ref 的生效 key 集。 */
+export function dictRefs(schema: unknown): string[] {
+  const nodes: Record<string, unknown>[] = []
+  collectDictNodes(schema, nodes)
+  const refs = new Set<string>()
+  for (const n of nodes) {
+    if (typeof n['x-dict'] === 'string' && DICT_REF_RE.test(n['x-dict'])) refs.add(n['x-dict'])
+  }
+  return [...refs]
+}
+
 /** 深度收集契约里所有出现 `x-dict` / `x-binding` 的节点（顶层 properties 与
  *  条件分支 then.properties 等——ADR-0005 §12.7：条件字段必须声明在 then.properties 内，
  *  它们同样要带引用与强度，不能只查顶层）。 */
