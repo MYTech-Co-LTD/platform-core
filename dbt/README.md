@@ -105,13 +105,16 @@ dbt/
 **T6 的核对步**：真机 `dbt parse` 若证实 dbt 接受带冒号的指标名（`metrics:` 块），可把本文件并入
 `marts/schema.yml`；核不过就维持现状（本文件的形状不依赖 dbt）。
 
-**字段**：`name` / `label` / `definition` / `expression` **或 `ratio`** / `grain` / `owner` / `tier` / `source`
+**字段**：`name` / `label` / `definition` / `expression` **或 `ratio`** / `grain` / `owner` / `tier` / `source` / `freshness_sla_days`
 （必填面：除 `label`、`sources` 外全必填；`expression` 与 `ratio` **二选一**——率类不可加指标用
 `ratio: {numerator, denominator}`，分母由 sync 自动包 `nullif(…, 0)`（零分母 → 不适用），见 §5.2；
+`freshness_sla_days` = **非负整数**（新鲜度 SLA 承诺天数，spec §10.7.1；缺声明 sync 响亮失败）；
 `sources` 选填人读）。取舍与「为什么」在文件头注里。
 ⚠️ **`source` 与 `sources` 不是一回事**（同名不同义，最容易混的一对）：`source` = **源系统**
 （小写蛇形，如 `lemeng`，必填、**落库** `data.metrics.source_system`，消费侧按它判「这个源接没接入」）；
-`sources` = 背后**实际读的对象存储路径**（选填、人读、不落库）。
+`sources` = 背后**实际读的对象存储路径**（选填、人读、不落库；但**参与新鲜度链路推导**——
+sync 取路径段 `lemeng/<资产>` 推导 `stg_lemeng_<资产>` 关系集物化进
+`data.metrics.freshness_relations`，spec §10.7.3；不声明 = 该指标无自动水位）。
 
 **T9 消费的那条规则（唯一事实源）**：指标名 → 对账文件名，由
 `scripts/check-data-models.mjs` **导出的函数**给出，**文档不复述规则**：
@@ -306,7 +309,7 @@ dbt / pg_duckdb）；「不给 var 时回内置行为」依赖 dbt-core 的 `gen
 
 | 机制（spec §10） | 仓内落点 | 谁守着它 |
 |---|---|---|
-| ① 记录 | `dbt/semantics/l1_metrics.yml` 的必填七项（`name`/`definition`/`expression`/`grain`/`owner`/`tier`/`source`） | 门禁规则 ⑤（静态必填 + `source` 形状）；`sync-data-semantics.mjs` 物化进 `data.metrics`（`source` → `source_system`） |
+| ① 记录 | `dbt/semantics/l1_metrics.yml` 的必填八项（`name`/`definition`/`expression`/`grain`/`owner`/`tier`/`source`/`freshness_sla_days`） | 门禁规则 ⑤（静态必填 + `source` 形状 + `freshness_sla_days` 非负整数形状）；`sync-data-semantics.mjs` 物化进 `data.metrics`（`source` → `source_system`；`freshness_sla_days`/`sources` → `sla_days`/`freshness_relations`，spec §10.7） |
 | ② 血缘 | `dbt docs generate` 产物（见 §11.2） | 本节 runbook；**无静态门禁**（产物要 dbt 环境） |
 | ③ 测试 | `dbt/tests/audit_<指标>.sql`（singular test，**独立复算**） | 门禁规则 ⑦（存在性 + 文件名映射无碰撞，事实源 = `metricToAuditFileName()`） |
 | ④ 状态选择 | `dbt run --select …` 的按需物化 + `sync-data-semantics.mjs --check` 对账 | 本节 §11.4（job）；`--check` 的**契约**由门禁规则 ⑨ 守着 |

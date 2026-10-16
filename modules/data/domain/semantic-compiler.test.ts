@@ -60,6 +60,9 @@ function l1(over: Partial<MetricRow> = {}): MetricRow {
     version: 1,
     // 存储行恒带规范化布尔（spec §8.4；缺省 false = 本夹具不涉自动合计）
     totalable: false,
+    // 新鲜度链路（spec §10.7；缺省 = 无链路形态，本夹具不涉水位）
+    slaDays: 1,
+    freshnessRelations: [],
     ...over,
   }
 }

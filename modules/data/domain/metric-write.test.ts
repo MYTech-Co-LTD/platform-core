@@ -36,6 +36,7 @@ describePg('写路径的审计（#489）', () => {
       // 合 L1 的形状契约：`select <表达式> as value [, <维度>…] from <关系>`
       selectSql: 'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
       groupBy: 'bizday', params: {}, sourceSystem: null,
+      slaDays: 1, freshnessRelations: [],
     })
   })
   afterAll(async () => {
