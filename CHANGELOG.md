@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.134.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.134.0...v0.134.1) - 2026-10-16
+- 【修复】forms: bizday 取 Asia/Shanghai 日历日（${date+8h}）（Closes #739） ([#740](https://github.com/MYTech-Co-LTD/platform-core/pull/740), [1c43191](https://github.com/MYTech-Co-LTD/platform-core/commit/1c4319150cfaefbf615583600a8402051274124b))
+
+
 ## [0.134.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.133.2...v0.134.0) - 2026-10-16
 - 【新增】forms: M1.4b 出湖管线三件——契约 + duckle 管线 + dbt 通用 staging（Closes #737） ([#738](https://github.com/MYTech-Co-LTD/platform-core/pull/738), [66586ec](https://github.com/MYTech-Co-LTD/platform-core/commit/66586ec7b31dd7a5fa25040515599afe4134d732))
 
