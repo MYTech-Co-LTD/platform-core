@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.133.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.132.3...v0.133.0) - 2026-10-16
+- 【新增】forms: M1.4a 导出面 GET /export/submissions——出湖管线的源 ([#731](https://github.com/MYTech-Co-LTD/platform-core/pull/731), [59b0896](https://github.com/MYTech-Co-LTD/platform-core/commit/59b0896c6bce7fa1fa50651979bec7d0b8ef65f4))
+
+
 ## [0.132.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.132.2...v0.132.3) - 2026-10-16
 - 【修复】server: wechat-oa 访客刷新断言去秒边界——改「新 sfa > 旧 sfa + 请求前下界」（Closes #459） ([#730](https://github.com/MYTech-Co-LTD/platform-core/pull/730), [5c2d9c6](https://github.com/MYTech-Co-LTD/platform-core/commit/5c2d9c62f7d5669dcb91a0ed54cf3968c43bc24f))
 
