@@ -21,7 +21,7 @@ sources:
       - name: submission
         description: '表单提交（append-only；`payload` 为整列 JSON 文本 schema-on-read）。hive 两级分区 bizday/batch_id，batch_id 是**批次目录**（防 append 实为覆写，ADR-0005 §13.1 ②）。'
         meta:
-          path_convention: 'forms/submission/bizday=<采集日>/batch_id=<run id>/all.parquet'
+          path_convention: 'forms/submission/bizday=<采集日，Asia/Shanghai 日历日>/batch_id=<run id>/all.parquet'
           # 读路径不是 source()（见文件头 1），这里是**人读的**说明，写的是本仓 staging 的实测生效形态。
           # ⚠️ pg_duckdb 把 read_parquet 暴露成 PG 函数，只认**位置参数**（命名形参递不进去，
           #    2026-09-24 真机实测原文见 sources.yml 对应段）——别把 `hive_partitioning=1` 写回来。

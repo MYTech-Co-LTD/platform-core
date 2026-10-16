@@ -126,7 +126,7 @@
         "componentId": "code.sql",
         "label": "投影到契约列（逐列同序）",
         "properties": {
-          "sql": "SELECT\n  '${datetime}' AS batch_id,\n  CAST('${date}' AS DATE) AS bizday,\n  CAST(o.submission_id AS BIGINT) AS submission_id,\n  CAST(o.form_def_id AS VARCHAR) AS form_def_id,\n  CAST(o.submitted_at AS TIMESTAMPTZ) AS submitted_at,\n  CAST(to_json(o.payload) AS VARCHAR) AS payload\nFROM input o"
+          "sql": "SELECT\n  '${datetime}' AS batch_id,\n  CAST('${date+8h}' AS DATE) AS bizday,\n  CAST(o.submission_id AS BIGINT) AS submission_id,\n  CAST(o.form_def_id AS VARCHAR) AS form_def_id,\n  CAST(o.submitted_at AS TIMESTAMPTZ) AS submitted_at,\n  CAST(to_json(o.payload) AS VARCHAR) AS payload\nFROM input o"
         }
       },
       "id": "shape",
@@ -165,7 +165,7 @@
         "properties": {
           "bucket": "${ENV:ZOS_BUCKET}",
           "format": "parquet",
-          "key": "forms/submission/bizday=${date}/batch_id=${datetime}/all.parquet",
+          "key": "forms/submission/bizday=${date+8h}/batch_id=${datetime}/all.parquet",
           "mode": "overwrite",
           "region": "${ENV:ZOS_REGION}",
           "urlStyle": "path",
