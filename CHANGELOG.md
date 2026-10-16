@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.130.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.129.2...v0.130.0) - 2026-10-16
+- 【新增】forms: 填报与渲染面——console 页 + RJSF 渲染 + 条件字段护栏（Closes #718） ([#719](https://github.com/MYTech-Co-LTD/platform-core/pull/719), [d55a602](https://github.com/MYTech-Co-LTD/platform-core/commit/d55a6024d31497a451b11d49598f89d025acace6))
+
+
 ## [0.129.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.129.1...v0.129.2) - 2026-10-16
 - 【修复】data: freshness_line 当日部分天变体——水位=今天改口「今日数据仍在累计中」（freshness fix round 2） ([#717](https://github.com/MYTech-Co-LTD/platform-core/pull/717), [79e50eb](https://github.com/MYTech-Co-LTD/platform-core/commit/79e50eb400e51946688a1a8b89cf563f7e199315))
 
