@@ -1,0 +1,10 @@
+# forms 模块（架构正典 docs/architecture.md §2.4「采集底座：受管数据集（表单+字典）」，issue #708）。
+# 三同纪律：id = DB schema 名 = API 前缀——改 id = 三处同改，选错比放错难改。
+# 骨架口径（M1.1）：零权限码、零路由；表单/字典业务面随 M1.2+ 落地（表建 forms schema、
+# 带 org 列，迁移纪律见 docs/module-onboarding.md §4）。
+id: forms
+name: 表单模块
+version: 0.1.0
+platform: '>=0.1'
+permissions: []
+migrations: { dir: ./migrations }
