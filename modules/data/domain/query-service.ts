@@ -88,13 +88,21 @@ function formatMatClock(v: Date): string {
  * 固定展示行（spec §10.7.4，ec16eeb 订正版）：服务端按状态拼**业务大白话**，模型原样附在答案
  * 末尾。硬约束：行内不出现任何工程术语（承诺/水位/物化/业务日/T+N 一律不许出现）——
  * sla_days 只驱动 normal/late 的判定，不出现在任何用户可见文案里。
+ *
+ * `today`（Asia/Shanghai 的今天，`YYYY-MM-DD`，与 freshnessStatusOf 同一注入法）只服务
+ * normal 分支的**当日部分天**变体（fix round 2）：水位恰为今天 ⇒ 该日还没过完（零售 tick
+ * 的当日分区是部分天），「该日数据完整」是错误陈述 ⇒ 改口「今日数据仍在累计中」。
+ * 状态判定不受影响（d=0 ≤ sla 恒 normal）；过去日期维持「该日数据完整」逐字不变。
+ * late/alert 不会撞上水位=今天（d=0 对任何 sla ≥ 0 都判 normal），无需变体。
  */
 export function freshnessLineOf(
-  status: FreshnessStatus, watermark: string, materializedAt: Date | null,
+  status: FreshnessStatus, watermark: string, materializedAt: Date | null, today: string,
 ): string {
   switch (status) {
-    case 'normal':
-      return `📅 数据已更新至 ${formatHumanDay(watermark)}（该日数据完整）｜更新于 ${materializedAt === null ? '' : formatMatClock(materializedAt)}`
+    case 'normal': {
+      const dayNote = watermark === today ? '今日数据仍在累计中' : '该日数据完整'
+      return `📅 数据已更新至 ${formatHumanDay(watermark)}（${dayNote}）｜更新于 ${materializedAt === null ? '' : formatMatClock(materializedAt)}`
+    }
     case 'late':
       return `📅 数据已更新至 ${formatHumanDay(watermark)}，比平时慢了，还在处理中`
     case 'alert':
@@ -319,11 +327,13 @@ export async function runQuery(
       const matAt = wm.rows[0]?.[1]
       if (typeof w === 'string' && WATERMARK_RE.test(w) && matAt instanceof Date) {
         // 无 sla 可判（sla_days 为 null 的理论态：库内旧行 sync 未刷）⇒ unknown，不捏造状态；
-        // 「今天」与 data_as_of 同一格式化通道（Asia/Shanghai 的日历日，spec §10.6）。
+        // 「今天」与 data_as_of 同一格式化通道（Asia/Shanghai 的日历日，spec §10.6），
+        // 状态判定与固定行的当日变体（fix round 2）共用同一份，不各算各的钟。
+        const today = DATA_AS_OF_DATE_FMT.format(new Date())
         const status = typeof metricRow?.slaDays === 'number'
-          ? freshnessStatusOf(w, metricRow.slaDays, DATA_AS_OF_DATE_FMT.format(new Date()))
+          ? freshnessStatusOf(w, metricRow.slaDays, today)
           : 'unknown'
-        freshnessFace = { watermark: w, freshness_status: status, freshness_line: freshnessLineOf(status, w, matAt) }
+        freshnessFace = { watermark: w, freshness_status: status, freshness_line: freshnessLineOf(status, w, matAt, today) }
       }
     } catch {
       // load_log 缺表/缺列 / 仓库未配 ⇒ 链路三字段缺席（新鲜度未知，主查询结果照常交付）

@@ -525,23 +525,34 @@ describe('freshnessStatusOf —— 水位 → 状态（spec §10.7.3：≤sla no
 })
 
 describe('freshness_line 模板（spec §10.7.4 ec16eeb 订正版：业务大白话，行内零工程术语）', () => {
-  it('四状态模板逐字；{d}=人话日期（M月D日），{t}=MM-DD HH:mm（北京）', () => {
-    expect(freshnessLineOf('normal', '2026-10-15', new Date('2026-10-15T03:27:00Z')))
+  it('四状态模板逐字；{d}=人话日期（M月D日），{t}=MM-DD HH:mm（北京）；today 注入（第 4 参）', () => {
+    expect(freshnessLineOf('normal', '2026-10-15', new Date('2026-10-15T03:27:00Z'), '2026-10-16'))
       .toBe('📅 数据已更新至 10月15日（该日数据完整）｜更新于 10-15 11:27')
-    expect(freshnessLineOf('late', '2026-10-14', new Date('2026-10-15T03:27:00Z')))
+    expect(freshnessLineOf('late', '2026-10-14', new Date('2026-10-15T03:27:00Z'), '2026-10-16'))
       .toBe('📅 数据已更新至 10月14日，比平时慢了，还在处理中')
-    expect(freshnessLineOf('alert', '2026-10-12', new Date('2026-10-15T03:27:00Z')))
+    expect(freshnessLineOf('alert', '2026-10-12', new Date('2026-10-15T03:27:00Z'), '2026-10-16'))
       .toBe('📅 数据更新停在 10月12日，可能有问题，我们正在检查')
-    expect(freshnessLineOf('unknown', '2026-10-15', new Date('2026-10-15T03:27:00Z')))
+    expect(freshnessLineOf('unknown', '2026-10-15', new Date('2026-10-15T03:27:00Z'), '2026-10-16'))
       .toBe('📅 数据更新情况未知')
+  })
+
+  it('★ 当日部分天变体（fix round 2）：watermark = 今天 ⇒ 「今日数据仍在累计中」；过去日 ⇒ 「该日数据完整」不变', () => {
+    // 今天没过完（零售 tick 的当日分区是部分天），「该日数据完整」是错误陈述——
+  // spec §10.4/§10.7.4 话术纪律：当日=部分天必须标注。状态判定不变（d=0 ≤ sla 恒 normal）。
+    expect(freshnessLineOf('normal', '2026-10-16', new Date('2026-10-16T03:27:00Z'), '2026-10-16'))
+      .toBe('📅 数据已更新至 10月16日（今日数据仍在累计中）｜更新于 10-16 11:27')
+    // 过去日期逐字不变（回归面）
+    expect(freshnessLineOf('normal', '2026-10-15', new Date('2026-10-16T03:27:00Z'), '2026-10-16'))
+      .toBe('📅 数据已更新至 10月15日（该日数据完整）｜更新于 10-16 11:27')
   })
 
   it('行内禁工程术语（承诺/水位/物化/业务日/T+N 一律不许出现——ec16eeb 的硬约束）', () => {
     for (const line of [
-      freshnessLineOf('normal', '2026-10-15', new Date('2026-10-15T03:27:00Z')),
-      freshnessLineOf('late', '2026-10-14', new Date('2026-10-15T03:27:00Z')),
-      freshnessLineOf('alert', '2026-10-12', new Date('2026-10-15T03:27:00Z')),
-      freshnessLineOf('unknown', '2026-10-15', new Date('2026-10-15T03:27:00Z')),
+      freshnessLineOf('normal', '2026-10-15', new Date('2026-10-15T03:27:00Z'), '2026-10-16'),
+      freshnessLineOf('normal', '2026-10-16', new Date('2026-10-16T03:27:00Z'), '2026-10-16'),
+      freshnessLineOf('late', '2026-10-14', new Date('2026-10-15T03:27:00Z'), '2026-10-16'),
+      freshnessLineOf('alert', '2026-10-12', new Date('2026-10-15T03:27:00Z'), '2026-10-16'),
+      freshnessLineOf('unknown', '2026-10-15', new Date('2026-10-15T03:27:00Z'), '2026-10-16'),
     ]) {
       for (const term of ['承诺', '水位', '物化', '业务日', 'T+', 'sla', 'SLA']) {
         expect(line.includes(term), `模板行出现了工程术语 ${term}：${line}`).toBe(false)
@@ -684,6 +695,18 @@ describePg('runQuery —— freshness_line（spec §10.7，需要 DATABASE_URL�
     const out = await runQuery(depsOf(), ORG, req(), `${L1_TOTAL_PREFIX}fresh`, {})
     if (out.status !== 'ok') throw new Error('normal 边界用例失败')
     expect(out.freshness_status).toBe('normal')
+  })
+
+  it('W9 水位 = 今天（fix round 2）：normal 状态不变，固定行改口「今日数据仍在累计中」（当日=部分天）', async () => {
+    // sla=2、水位=今天（d=0 ≤ sla）⇒ status normal；但今天没过完 ⇒ 括号内必须改口
+    await seedFreshMetric({ slaDays: 2 })
+    await seedWatermarks([{ relation: 'stg_fw_retail', maxBizday: daysAgo(0) }])
+    const out = await runQuery(depsOf(), ORG, req(), `${L1_TOTAL_PREFIX}fresh`, {})
+    if (out.status !== 'ok') throw new Error('当日变体用例失败')
+    expect(out.watermark).toBe(daysAgo(0))
+    expect(out.freshness_status).toBe('normal')
+    expect(out.freshness_line).toBe(`📅 数据已更新至 ${formatHumanDay(daysAgo(0))}（今日数据仍在累计中）｜更新于 10-15 11:27`)
+    expect(out.freshness_line, '变体只换括号内短语').not.toContain('该日数据完整')
   })
 
   it('W6 有链路但水位缺失（load_log 无对应 relation 行）⇒ 三字段全缺席（未知 ≠ 捏造）', async () => {
