@@ -24,7 +24,7 @@ import type { MetricParamDef, Requester } from '../domain/authz'
 import { loadMergedCatalog } from '../domain/metric-store'
 import { listMetricAudit } from '../domain/metric-audit-store'
 import type { MetricRow } from '../domain/metric-store'
-import { L2RefineDeclarationSchema, L2ExprDeclarationSchema } from '../domain/semantic-compiler'
+import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, exceedsNesting } from '../domain/semantic-compiler'
 // 写/删的判定链在域层**只有一份**（HTTP 面与 MCP 写面共用）——本文件只做
 // 「参数形状校验 + 域层结果 → HTTP」，不再内联任何闸门。
 import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
@@ -157,7 +157,11 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     const requester = requesterOf(c)
     // 写入必须能归属到人（审计要记人）——无身份 ⇒ 拒，**不写一条「无主」审计**（#489）
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
-    const parsed = L2Body.safeParse(await c.req.json().catch(() => null))
+    const body = await c.req.json().catch(() => null)
+    // 结构预检必须**先于** L2Body.safeParse：ExprNodeSchema 是递归 schema，撞上超深输入会爆栈
+    // 冒成 500（#593 实测 1600 层过、3200 层 RangeError）。预检是迭代的，自己不会爆。
+    if (exceedsNesting(body)) return c.json({ error: 'INVALID_BODY' }, 400)
+    const parsed = L2Body.safeParse(body)
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const { id, ...decl } = parsed.data
     return writeOutcome(c, await writeL2Declaration(writeDeps(ctx, c, requester), orgOf(c), id, decl), 201)
@@ -168,7 +172,11 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const id = metricIdOf(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    const parsed = L2Body.safeParse(await c.req.json().catch(() => null))
+    const body = await c.req.json().catch(() => null)
+    // 结构预检必须**先于** L2Body.safeParse：ExprNodeSchema 是递归 schema，撞上超深输入会爆栈
+    // 冒成 500（#593 实测 1600 层过、3200 层 RangeError）。预检是迭代的，自己不会爆。
+    if (exceedsNesting(body)) return c.json({ error: 'INVALID_BODY' }, 400)
+    const parsed = L2Body.safeParse(body)
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     // 路径 id 与 body id 必须同值：否则「改 A 结果写了 B」是静默的数据事故。
     if (parsed.data.id !== id) return c.json({ error: 'ID_MISMATCH' }, 400)
