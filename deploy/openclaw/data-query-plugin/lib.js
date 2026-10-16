@@ -155,6 +155,10 @@ export function createFreshnessStore({ ttlMs = FRESHNESS_TTL_MS, now = () => Dat
       }
       return entry;
     },
+    /** 入站清账：清该会话（缺键清全局槽）。捕获只服务「本轮答案的外发」，新用户消息一进来即失效。 */
+    clear(sessionKey) {
+      map.delete(sessionKey || FRESHNESS_GLOBAL_SLOT);
+    },
     size: () => map.size,
   };
 }
@@ -219,6 +223,31 @@ export function makeFreshnessSendingHook(store) {
     } catch {
       // fail-open：宁缺勿错——新鲜度行缺失可接受，外发通道被搞挂不可接受。
       return undefined;
+    }
+  };
+}
+
+/**
+ * 造 message_received（入站观察）钩子处理器：收到新用户消息即清该会话的捕获。
+ *
+ * 语义：捕获只服务「**本轮**答案的外发」；下一轮用户消息一进来，本轮口径即失效 ⇒
+ * 陈旧行不可能跨轮泄漏（否则问完数据后发「你好」「谢谢」也会被附上 📅 时间戳）。
+ * 时序（openclaw `emitMessageReceivedHooks` 在 reply dispatch 之前发）保证「清账」先于
+ * 同轮工具的「捕获」。TTL（10min）保留为兜底：入站钩子若某通道不触发，行为退化为
+ * 无清账的旧状（只是没变好，不会变差）。
+ *
+ * 契约（一手来源 `src/plugins/hooks.ts` `runVoidHook`）：handler 签名 `(event, ctx)`，
+ * **返回 void**（返回值被忽略），异常由宿主 `handleHookError` 吞掉（fail-open）。
+ * ctx 带 `sessionKey`（`toPluginMessageContext` 透传 canonical.sessionKey）；缺失时清全局槽。
+ * 注册须走 `api.on`（typed hook runner）——`message_received` 不在 conversation / prompt
+ * injection 门禁清单内，非内置插件无需额外开闸。
+ */
+export function makeFreshnessInboundHook(store) {
+  return async function messageReceivedHook(_event, ctx) {
+    try {
+      store.clear(ctx && ctx.sessionKey);
+    } catch {
+      // fail-open：清账失败只是让陈旧行多活一会儿，绝不能把入站链路搞挂。
     }
   };
 }

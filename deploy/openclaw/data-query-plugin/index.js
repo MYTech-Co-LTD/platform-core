@@ -14,6 +14,7 @@ import {
   DEFAULT_API_BASE,
   freshnessStore,
   makeFreshnessSendingHook,
+  makeFreshnessInboundHook,
 } from "./lib.js";
 
 const CHANNEL_KEY = process.env.DATA_WECOM_CHANNEL_KEY || "";
@@ -110,10 +111,14 @@ export default definePluginEntry({
     // 只退回「模型自附」的旧行为，绝不让插件装载失败。
     if (typeof api.on === "function") {
       api.on("message_sending", makeFreshnessSendingHook(freshnessStore));
-      console.log("[data-query] 已注册 message_sending 钩子（新鲜度行 strip+append，TTL 10min）");
+      // 入站清账：新用户消息一进来即清本会话捕获 ⇒ 陈旧行不跨轮泄漏（TTL 保留作兜底）。
+      api.on("message_received", makeFreshnessInboundHook(freshnessStore));
+      console.log(
+        "[data-query] 已注册 message_sending（新鲜度行 strip+append）+ message_received（入站清账）钩子",
+      );
     } else {
       console.log(
-        "[data-query] api.on 不可用，message_sending 钩子未注册；新鲜度行退回模型自附（不稳定）",
+        "[data-query] api.on 不可用，钩子未注册；新鲜度行退回模型自附（不稳定）",
       );
     }
   },

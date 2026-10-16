@@ -12,6 +12,7 @@ import {
   stripFreshnessLines,
   appendFreshnessLine,
   makeFreshnessSendingHook,
+  makeFreshnessInboundHook,
 } from "./lib.js";
 
 test("normalizeParams：对象直传", () => {
@@ -394,4 +395,75 @@ test("钩子：store 本身坏掉（take 抛异常）→ undefined，绝不外�
   const badStore = { take: () => { throw new Error("corrupted"); } };
   const hook = makeFreshnessSendingHook(badStore);
   assert.equal(await hook({ content: "正文" }, { sessionKey: "s1" }), undefined);
+});
+
+// ── 入站清账（message_received 钩子，2026-10-16 fix round 2）─────────────────────
+// 捕获只服务「本轮答案的外发」；新用户消息一进来即清 ⇒ 陈旧行不跨轮泄漏
+// （否则问完数据后发「你好」「谢谢」也会看到 📅 时间戳——比「有时没有」更糟）。
+test("store.clear：清指定会话；缺键清全局槽；未捕获的会话无副作用", () => {
+  const store = makeStore({ t: 0 });
+  store.capture("s1", LINE_A);
+  store.capture("s2", LINE_B);
+  store.capture("", LINE_C);
+  store.clear("s1");
+  assert.equal(store.take("s1"), undefined, "s1 已清");
+  assert.equal(store.take("s2").line, LINE_B, "s2 不受影响");
+  store.clear(undefined);
+  assert.equal(store.take(FRESHNESS_GLOBAL_SLOT), undefined, "缺键清全局槽");
+  store.clear("never-captured"); // 无副作用、不抛
+  assert.equal(store.take("s2").line, LINE_B);
+});
+
+test("入站清账：捕获 → 入站消息 → 随后外发 ⇒ 不附行（核心新用例）", async () => {
+  const store = makeStore({ t: 0 });
+  const inbound = makeFreshnessInboundHook(store);
+  const sending = makeFreshnessSendingHook(store);
+  store.capture("s1", LINE_A);
+  // 入站前：外发会附行
+  assert.deepEqual(await sending({ content: "本轮答案" }, { sessionKey: "s1" }), {
+    content: "本轮答案\n\n" + LINE_A,
+  });
+  await inbound({ content: "你好" }, { sessionKey: "s1" });
+  // 入站后：同样的外发不再附行
+  assert.equal(await sending({ content: "你好呀" }, { sessionKey: "s1" }), undefined);
+});
+
+test("同轮多次外发：捕获 → 外发A(附) → 外发B(仍附) → 入站 → 外发C(无)", async () => {
+  const store = makeStore({ t: 0 });
+  const inbound = makeFreshnessInboundHook(store);
+  const sending = makeFreshnessSendingHook(store);
+  store.capture("s1", LINE_A);
+  const a = await sending({ content: "进度：我查一下" }, { sessionKey: "s1" });
+  const b = await sending({ content: "答案：1470" }, { sessionKey: "s1" });
+  assert.deepEqual(a, { content: "进度：我查一下\n\n" + LINE_A }, "同轮首次外发附行");
+  assert.deepEqual(b, { content: "答案：1470\n\n" + LINE_A }, "同轮再次外发仍附（同轮应有）");
+  await inbound({ content: "谢谢" }, { sessionKey: "s1" });
+  assert.equal(await sending({ content: "不客气" }, { sessionKey: "s1" }), undefined, "入站后无行");
+});
+
+test("入站清账：仅清本会话，不误伤他会话", async () => {
+  const store = makeStore({ t: 0 });
+  const inbound = makeFreshnessInboundHook(store);
+  const sending = makeFreshnessSendingHook(store);
+  store.capture("s1", LINE_A);
+  store.capture("s2", LINE_B);
+  await inbound({ content: "新问题" }, { sessionKey: "s1" });
+  assert.equal(await sending({ content: "s1 答" }, { sessionKey: "s1" }), undefined);
+  assert.deepEqual(await sending({ content: "s2 答" }, { sessionKey: "s2" }), {
+    content: "s2 答\n\n" + LINE_B,
+  });
+});
+
+test("入站清账：无捕获时无副作用、不抛（ctx 缺 sessionKey 走全局槽）", async () => {
+  const store = makeStore({ t: 0 });
+  const inbound = makeFreshnessInboundHook(store);
+  store.capture("s2", LINE_B);
+  await inbound({ content: "首条消息" }, { sessionKey: "s1" }); // s1 无捕获
+  await inbound({ content: "无会话键" }, {});                    // 缺 sessionKey
+  assert.equal(store.take("s2").line, LINE_B, "他会话不受影响");
+});
+test("入站清账：store 坏掉 / ctx 为 null → 不抛（宿主 fail-open）", async () => {
+  const badStore = { clear: () => { throw new Error("corrupted"); } };
+  assert.equal(await makeFreshnessInboundHook(badStore)({ content: "x" }, { sessionKey: "s1" }), undefined);
+  assert.equal(await makeFreshnessInboundHook(makeStore({ t: 0 }))(null, null), undefined);
 });
