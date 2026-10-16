@@ -37,13 +37,3 @@ export function buildTestApp(mod: ModuleDefinition, identity: Identity, ctx: Mod
 export function applyMigrations(pool: Pool): Promise<string[]> {
   return runMigrations(pool, 'forms', fileURLToPath(new URL('./migrations', import.meta.url)))
 }
-
-/** 迁移目录全部 *.sql 正文（按文件名排序）——幂等重放测试用。 */
-export async function rawMigrationSqls(): Promise<string[]> {
-  const { readdir, readFile } = await import('node:fs/promises')
-  const dir = new URL('./migrations', import.meta.url)
-  const entries = await readdir(dir)
-  const files = entries.filter((f) => f.endsWith('.sql')).sort()
-  // 基 URL 补尾斜杠（把最后一段当目录而非文件名——aftersales 同款实测坑）
-  return Promise.all(files.map((f) => readFile(new URL(f, dir.href + '/'), 'utf8')))
-}

@@ -69,14 +69,14 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
     return rows[0]?.status ?? null
   }
 
-  it('G0：迁移幂等（账本第二遍跳过 + 裸 SQL 重放全文件不抛）', async () => {
-    const { rawMigrationSqls } = await import('./test-util')
-    // beforeAll 已应用过 ⇒ 此处返回空列表即「账本第二遍跳过」的证据（不抛）
+  it('G0：迁移幂等（账本第二遍跳过；六表在位）', async () => {
+    // ⚠️ 首版量具在这里做「裸 SQL 全文件重放」验真幂等——main CI 实测 deadlock（issue #714）：
+    // 并行 worker 下 DDL 重放（drop/create trigger 的 ACCESS EXCLUSIVE）与 routes/dict 等
+    // 兄弟文件在 forms 表上的行锁互撞。量具错，不是内核错 ⇒ 收敛为账本路径 + 表在位断言；
+    // SQL 本体幂等由 create/drop if exists + on conflict 静态保证，重跑语义的权威测试
+    // 在宿主 apps/server/src/migrate.test.ts（不在模块里复制第二份 DDL 重放）。
     const r1 = await applyMigrations(pool)
-    expect(Array.isArray(r1)).toBe(true)
-    // 真幂等：SQL 本体（if not exists / drop if exists / on conflict）在已迁移库上重放
-    const sqls = await rawMigrationSqls()
-    for (const sql of sqls) await pool.query(sql)
+    expect(Array.isArray(r1)).toBe(true) // beforeAll 已应用 ⇒ 空列表即「第二遍跳过」的证据（不抛）
     const { rows } = await pool.query(
       "select table_name from information_schema.tables where table_schema='forms'",
     )
