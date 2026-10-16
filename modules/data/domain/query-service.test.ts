@@ -4,7 +4,7 @@ import { runQuery, type QueryDeps } from './query-service'
 import { L1_ORG, upsertL1Metric, upsertMetric } from './metric-store'
 import { applyMigrations } from '../test-util'
 import { MAX_QUERY_ROWS, type Requester } from './authz'
-import { DATA_WAREHOUSE_UNCONFIGURED } from './warehouse'
+import { DATA_WAREHOUSE_UNCONFIGURED, resetWarehousePool, runWarehouseSql, warehousePool } from './warehouse'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
@@ -370,14 +370,116 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
       expect(totalSql).not.toContain('LIMIT')
       // 真库上把两条计划都跑一遍：明细 2 行（org_b 被主体钉死挡掉），合计 = 100 + 47.5 = 147.5
       // （date 列经 node-pg 回 Date 对象，断言只认 value/org + 行集形状）
+      // 行序：spec §10.3 起明细 SQL 带 ORDER BY bizday DESC——最新分区在前（10-09 的 47.5 先回）。
       const detail = await client.query(detailSql)
       const total = await client.query(totalSql)
       expect(detail.rows.map((r: { value: string; org: string }) => ({ value: r.value, org: r.org })))
-        .toEqual([{ value: '100', org: 'org_a' }, { value: '47.5', org: 'org_a' }])
+        .toEqual([{ value: '47.5', org: 'org_a' }, { value: '100', org: 'org_a' }])
       expect(detail.rows.reduce((s: number, r: { value: string }) => s + Number(r.value), 0)).toBe(147.5)
       expect(total.rows).toEqual([{ total: '147.5' }])
     } finally {
       client.release()
     }
+  })
+})
+
+// ── 新鲜度面（spec §10.2）：ok 响应附 data_as_of = load_log 最新 ok 的 materialized_at ──
+// 仓库 = 同一份测试库（DATA_WAREHOUSE_URL 指它）：主查询走注入的假执行器（不验 SQL 真跑，
+// 与上方用例同一口径），data_as_of 走**真仓库池**——生产里两者同池（pg_duckdb），测试里
+// 各走各的通道，正好把「新鲜度查询不经 deps.execute 主计划缝」这条契约一并钉住。
+describePg('runQuery —— data_as_of（spec §10.2，需要 DATABASE_URL）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  let planSqls: string[] = []
+  const depsOf = (): QueryDeps => ({
+    pool,
+    adoptedSources: new Set<string>(),
+    execute: async (sql) => {
+      planSqls.push(sql)
+      return { columns: ['org', 'day'], rows: [['org_a', '2026-08-15']] }
+    },
+  })
+  /** 仓库池（指向本测试库）+ load_log 生命周期。 */
+  let wh: Pool
+
+  beforeEach(async () => {
+    await applyMigrations(pool)
+    await pool.query('delete from data.query_audit where org = $1', [ORG])
+    await upsertMetric(pool, ORG, METRIC, 'fixture')
+    // 仓库环境：env 先设、单例先清（惰性单例按 env 建）——本文件此前从未触发过 warehousePool()
+    process.env.DATA_WAREHOUSE_URL = dbUrl
+    resetWarehousePool()
+    wh = warehousePool()
+    planSqls = []
+  })
+  afterAll(async () => {
+    // 还原世界：load_log 摘掉（同库还有别的测试文件——别留一张半满的账给别人）、
+    // 仓库单例清掉、两条池都关（防 vitest 挂在 open handle 上）
+    await wh.query('drop table if exists data.load_log').catch(() => {})
+    resetWarehousePool()
+    delete process.env.DATA_WAREHOUSE_URL
+    await wh.end().catch(() => {})
+    await pool.query('delete from data.query_audit where org = $1', [ORG]).catch(() => {})
+    await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
+    await pool.end().catch(() => {})
+  })
+
+  const dropLog = () => wh.query('drop table if exists data.load_log')
+  const createLog = () => wh.query(
+    'create table data.load_log(materialized_at timestamptz default now(), tests_pass int, tests_error int, status text)')
+
+  it('F1 表不存在 ⇒ ok 照常返回、data_as_of 字段缺席（缺账不反噬主查询）', async () => {
+    await dropLog()
+    const out = await runQuery(depsOf(), ORG, req(), 'sales_daily', {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(out.rows).toEqual([['org_a', '2026-08-15']])
+    expect('data_as_of' in out, '新鲜度未知 ≠ 捏造：表缺席就别带这个字段').toBe(false)
+    // 新鲜度查询走真仓库池，**不**走主计划缝（假执行器只该见到计划 SQL 一条）
+    expect(planSqls.length).toBe(1)
+  })
+
+  it('F2 表在但空 ⇒ data_as_of 缺席（max=NULL 不许捏成时间戳）', async () => {
+    await dropLog()
+    await createLog()
+    const out = await runQuery(depsOf(), ORG, req(), 'sales_daily', {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect('data_as_of' in out).toBe(false)
+  })
+
+  it('F3 有 ok 行 ⇒ data_as_of = 最新 ok 的 materialized_at（非 ok 行不计，哪怕更新）', async () => {
+    await dropLog()
+    await createLog()
+    await wh.query(
+      `insert into data.load_log (materialized_at, tests_pass, tests_error, status) values
+         ('2026-10-15 03:27:00+00', 26, 0, 'ok'),
+         ('2026-10-16 03:27:00+00', 26, 0, 'ok'),
+         ('2026-10-16 09:00:00+00', 0,  6,  'failed')`)
+    const out = await runQuery(depsOf(), ORG, req(), 'sales_daily', {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(out.data_as_of, '取 status=ok 的 max（failed 行更新也不算）').toBeInstanceOf(Date)
+    if (out.status !== 'ok' || !(out.data_as_of instanceof Date)) return
+    expect(out.data_as_of.toISOString()).toBe('2026-10-16T03:27:00.000Z')
+  })
+
+  it('F4 显式合计模式同样附带 data_as_of（新鲜度与查询形态正交）', async () => {
+    await dropLog()
+    await createLog()
+    await wh.query(
+      `insert into data.load_log (materialized_at, tests_pass, tests_error, status)
+       values ('2026-10-16 03:27:00+00', 26, 0, 'ok')`)
+    const totalDeps: QueryDeps = {
+      pool, adoptedSources: new Set(),
+      execute: async (sql) => {
+        planSqls.push(sql)
+        return { columns: ['total'], rows: [[1470.5]] }
+      },
+    }
+    const out = await runQuery(totalDeps, ORG, req(), 'sales_daily', { total: true })
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(out.total).toBe(1470.5)
+    expect(out.data_as_of).toBeInstanceOf(Date)
   })
 })
