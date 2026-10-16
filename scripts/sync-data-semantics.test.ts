@@ -30,6 +30,7 @@ import {
   buildSelectSql,
   declarationsFromYaml,
   deriveParams,
+  deriveFreshnessRelations,
   deriveRelation,
   deriveTotalable,
   diffDeclarations,
@@ -66,7 +67,7 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
     const rows = declarationsFromYaml(yaml([
       {
         name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(t.c)',
-        grain: ['g'], owner: 'o', tier: 'certified',
+        grain: ['g'], owner: 'o', tier: 'certified', freshness_sla_days: 1,
       },
     ]))
     expect(rows[0].sourceSystem).toBe('lemeng')
@@ -121,7 +122,7 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
 
   it('label 缺省回落到 name（title 不许是空串：管理面靠它认指标）', () => {
     const rows = declarationsFromYaml(yaml([
-      { name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified' },
+      { name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(t.c)', grain: ['g'], owner: 'o', tier: 'certified', freshness_sla_days: 1 },
     ]))
     expect(rows[0].title).toBe('x:y:z')
   })
@@ -231,7 +232,7 @@ describe('diffDeclarations：双向差集的四态分类', () => {
   const row = (id: string, title: string, sourceSystem: string | null = 'lemeng') => ({
     id, title, description: '', requiredScope: null,
     subjectColumn: 'org', selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {}, sourceSystem,
-    totalable: false,
+    totalable: false, slaDays: 1, freshnessRelations: [] as string[],
   })
   const declared = [row('a', 'A'), row('b', 'B2'), row('c', 'C')]
   const current = [row('a', 'A'), row('b', 'B1'), row('d', 'D')]
@@ -279,6 +280,19 @@ describe('diffDeclarations：双向差集的四态分类', () => {
     expect(diffDeclarations(declaredT, [row('a', 'A')]).updated).toEqual(['a'])
     // 反向对照：两侧一致（含同为 true）⇒ 判「未变」
     expect(diffDeclarations(declaredT, [{ ...row('a', 'A'), totalable: true }]).unchanged).toEqual(['a'])
+  })
+
+  it('★ slaDays / freshnessRelations 进 comparableOf：新鲜度链路变了 ⇒ 判「更新」（spec §10.7）', () => {
+    // spec §10.7：SLA/关系集是物化面的一部分——声明改了而库内还是旧值必须被 --check 检出，
+    // 否则水位/固定行永远按旧链路算且门禁假绿。
+    const declaredSla = [{ ...row('a', 'A'), slaDays: 2 }]
+    expect(diffDeclarations(declaredSla, [row('a', 'A')]).updated).toEqual(['a'])
+    const declaredRels = [{ ...row('a', 'A'), freshnessRelations: ['stg_lemeng_retail_order_line'] }]
+    expect(diffDeclarations(declaredRels, [row('a', 'A')]).updated).toEqual(['a'])
+    // 反向对照：两侧一致 ⇒ 判「未变」（可比不退化成恒更新）
+    expect(diffDeclarations(declaredSla, [{ ...row('a', 'A'), slaDays: 2 }]).unchanged).toEqual(['a'])
+    expect(diffDeclarations(declaredRels, [{ ...row('a', 'A'), freshnessRelations: ['stg_lemeng_retail_order_line'] }]).unchanged)
+      .toEqual(['a'])
   })
 })
 
@@ -367,6 +381,7 @@ describe('ratio 声明（与 expression 互斥，spec 2026-10-12 §5.3）', () =
     owner: 'data-platform',
     tier: 'experimental',
     source: 'lemeng',
+    freshness_sla_days: 1,
   }
 
   it('ratio 只给分子分母时，物化出 nullif 除法表达式（零分母 → 不适用）', () => {
@@ -430,6 +445,105 @@ describe('ratio 声明（与 expression 互斥，spec 2026-10-12 §5.3）', () =
       } }]),
     )
     expect(() => parseL1Select(rows[0].selectSql)).not.toThrow()
+  })
+})
+
+describe('deriveFreshnessRelations —— 新鲜度关系集推导（spec §10.7.3）', () => {
+  it('单源：取路径段 lemeng/<资产> ⇒ stg_lemeng_<资产>（命名约定即仓内事实）', () => {
+    expect(deriveFreshnessRelations([
+      's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet',
+    ])).toEqual(['stg_lemeng_retail_order_line'])
+  })
+
+  it('多源取全部（保序去重）：outbound 的三段路径 ⇒ 三个关系', () => {
+    expect(deriveFreshnessRelations([
+      's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet',
+      's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet',
+      's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet',
+    ])).toEqual(['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out', 'stg_lemeng_wholesale_return'])
+    // 同资产重复声明 ⇒ 去重（木桶短板只算一次）
+    expect(deriveFreshnessRelations([
+      's3://b/lemeng/inventory_snapshot/x/all.parquet',
+      's3://b/lemeng/inventory_snapshot/y/all.parquet',
+    ])).toEqual(['stg_lemeng_inventory_snapshot'])
+  })
+
+  it('无 sources（undefined / 空数组）⇒ 空数组（= 无自动水位，响应字段缺席，不猜）', () => {
+    expect(deriveFreshnessRelations(undefined)).toEqual([])
+    expect(deriveFreshnessRelations([])).toEqual([])
+  })
+
+  it('路径里没有 lemeng/ 段 ⇒ 抛（命名约定推导不出来的，宁可响亮失败也不瞎猜关系名）', () => {
+    expect(() => deriveFreshnessRelations(['s3://bucket/other_source/t/all.parquet'])).toThrow(/lemeng/)
+  })
+
+  it('资产段形态不合规（空 / 大写 / 带点）⇒ 抛（要拼进 SQL 标识符的名字必须是安全形状）', () => {
+    expect(() => deriveFreshnessRelations(['s3://b/lemeng//all.parquet'])).toThrow(/资产/)
+    expect(() => deriveFreshnessRelations(['s3://b/lemeng/Retail/all.parquet'])).toThrow(/资产/)
+    expect(() => deriveFreshnessRelations(['s3://b/lemeng/a.b/all.parquet'])).toThrow(/资产/)
+  })
+})
+
+describe('declarationsFromYaml：freshness_sla_days（spec §10.7.1，缺声明响亮失败）', () => {
+  const base = {
+    name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(t.c)',
+    grain: ['g'], owner: 'o', tier: 'certified',
+  }
+
+  it('合法值 → slaDays 物化；sources → freshnessRelations 推导', () => {
+    const rows = declarationsFromYaml(yaml([
+      { ...base, freshness_sla_days: 2, sources: ['s3://b/lemeng/inventory_snapshot/x/all.parquet'] },
+    ]))
+    expect(rows[0].slaDays).toBe(2)
+    expect(rows[0].freshnessRelations).toEqual(['stg_lemeng_inventory_snapshot'])
+  })
+
+  it('缺 freshness_sla_days ⇒ 抛（27 条必须全部显式声明，不许静默默认——默认值会让新指标永远「未知」且无人发现）', () => {
+    expect(() => declarationsFromYaml(yaml([base]))).toThrow(/freshness_sla_days/)
+  })
+
+  it('非非负整数（小数/负数/字符串）⇒ 抛（它是状态转译的算术判据，垃圾值 = 判错且不报错）', () => {
+    for (const bad of [1.5, -1, '2', true, null]) {
+      expect(
+        () => declarationsFromYaml(yaml([{ ...base, freshness_sla_days: bad }])),
+        `freshness_sla_days: ${JSON.stringify(bad)} 没被拦`,
+      ).toThrow(/freshness_sla_days/)
+    }
+  })
+})
+
+describe('真 YAML：27 条 sla_days / freshnessRelations 逐条断言（spec §10.7.1/10.7.3，真实事实源）', () => {
+  // 为什么钉真实 YAML：sla_days 是人工登记值（不是推导产物），漏登记/登错不报错，只表现为
+  // 线上状态转译错。逐字断言 + 计数兜底（加指标时这两条会替你守住「新指标必须显式登记」）。
+  const rows = readDeclarations(ROOT)
+  const SLA2 = new Set(['lemeng:inventory:quantity', 'lemeng:inventory:money'])
+
+  it('恰 27 条；inventory 两指标 sla_days=2，其余 25 条=1（采集正典实测窗口的登记）', () => {
+    expect(rows.length).toBe(27)
+    for (const row of rows) {
+      expect(row.slaDays, `${row.id} 的 sla_days 与登记不符`).toBe(SLA2.has(row.id) ? 2 : 1)
+    }
+    expect(rows.filter((r) => r.slaDays === 2).length).toBe(2)
+    expect(rows.filter((r) => r.slaDays === 1).length).toBe(25)
+  })
+
+  it('freshnessRelations 与声明 sources 推导逐字一致；没声明 sources 的 = 空（无自动水位）', () => {
+    const DECLARED_SOURCES = {
+      'lemeng:retail:net_sales': ['stg_lemeng_retail_order_line'],
+      'lemeng:retail:order_count': ['stg_lemeng_retail_order_line'],
+      'lemeng:outbound:net_amount': ['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out', 'stg_lemeng_wholesale_return'],
+      'lemeng:expense:branch_payable': ['stg_lemeng_branch_expense'],
+      'lemeng:expense:client_payable': ['stg_lemeng_client_expense'],
+      'lemeng:inventory:quantity': ['stg_lemeng_inventory_snapshot'],
+      'lemeng:purchase:amount': ['stg_lemeng_item_purchase'],
+    }
+    for (const row of rows) {
+      const expected = DECLARED_SOURCES[row.id as keyof typeof DECLARED_SOURCES] ?? []
+      expect(row.freshnessRelations, `${row.id} 的 freshness_relations 与 sources 推导不一致`).toEqual(expected)
+    }
+    // 推导一致性：有 sources 的恰 7 条，其余 20 条为空——「恰好」要有实证数
+    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length).toBe(7)
+    expect(rows.filter((r) => (r.freshnessRelations ?? []).length === 0).length).toBe(20)
   })
 })
 
