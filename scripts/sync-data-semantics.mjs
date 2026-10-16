@@ -102,8 +102,11 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  * @property {Record<string, MetricParamDef>} params
  * @property {string | null} sourceSystem
  * @property {boolean} totalable 可加标记（spec §8.4，deriveTotalable 从 expression 推导）
- * @property {number} slaDays 新鲜度 SLA 承诺天数（spec §10.7.1，声明 freshness_sla_days 的物化值）
- * @property {string[]} freshnessRelations 新鲜度关系集（spec §10.7.3，deriveFreshnessRelations 从 sources 推导）
+ * @property {number | null} slaDays 新鲜度 SLA 承诺天数（spec §10.7.1，声明 freshness_sla_days 的物化值；
+ *                  允许 null 是为了接住**库内旧行**——sync 未刷过 sla_days 的存量 L1 行；
+ *                  声明侧推导出的行恒为非负整数，库侧读取不信任存储形状）
+ * @property {string[] | null} freshnessRelations 新鲜度关系集（spec §10.7.3，deriveFreshnessRelations
+ *                  从 sources 推导；null 同上——接住库内旧行）
  */
 
 /**
@@ -298,7 +301,10 @@ export function deriveTotalable(expression) {
  *                     ⚠️ 这是本任务的一处**已知边界**，见 README「L2 的已知边界」。
  *
  * @param {unknown} parsed YAML 解析结果
- * @returns {ComparableMetric[]}
+ * @returns {(ComparableMetric & { slaDays: number, freshnessRelations: string[] })[]}
+ *          声明侧推导出的行**保证**两个新鲜度字段非 null（slaDaysOf/deriveFreshnessRelations
+ *          已响亮拦掉缺/坏形状）——写库入口（L1MetricDef）要的非空类型由这里兑现；
+ *          可空的 ComparableMetric 形状留给 --check 的库侧比对（存量旧行）。
  */
 export function declarationsFromYaml(parsed) {
   if (parsed === null || typeof parsed !== 'object') throw new Error(`${L1_DECLARATIONS_REL} 的顶层不是对象`)
