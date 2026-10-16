@@ -33,6 +33,8 @@ api:
     - { method: POST,   path: /defs/:assetId/submissions,           scope: forms:fill }
     - { method: GET,    path: /defs/:assetId/submissions,           scope: forms:view }
     - { method: GET,    path: /submissions/:id,                     scope: forms:view }
+    # ── 导出面（出湖管线的「源」，M1.4 / #729）──
+    - { method: GET,    path: /export/submissions,                  scope: forms:view }
     # ── 字典（租户私有：forms:manage；读与解析 forms:view）──
     - { method: GET,    path: /dicts,                               scope: forms:view }
     - { method: GET,    path: /dicts/:dictId/options,               scope: forms:view }
