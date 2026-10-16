@@ -133,3 +133,84 @@ cp -p /var/lib/docker/volumes/openship-platform-core-shanhai-openclaw_state/_dat
 **日志里没有任何 `otel`/`telemetry` 行**——既无报错也无确认。⇒ 本步只能排除「文件没写对」；
 **真正的判据是 Task 3 有没有 span 落到 OO**（计划 Step 4 的原话）。
 
+
+## 3. 清单与判定（Task 3）
+
+### 3.1 第一次取证：**零 span** —— 根因是插件没装
+
+按计划开完 telemetry 后，真机发消息（bot 确实跑了：会话库 717 → **722** 事件），但 OO 里
+**traces 流数为 0**。逐层排查后定位根因：
+
+| 排查 | 结论 |
+|---|---|
+| bot 有没有跑？ | ✅ 会话库新增 5 事件 |
+| 日志有没有报错？ | ❌ 无，连 otel 相关行都没有（只有 `config change detected` / `requires gateway restart`） |
+| **OTel SDK 在哪？** | `/app/extensions/diagnostics-otel/`（**是 openclaw 的扩展，不在核心**；`@openclaw/diagnostics-otel` v2026.9.9） |
+| **插件启用了吗？** | ❌ **`openclaw plugins list` 显示 `diagnostics-otel` 状态 = disabled**；启动日志的插件表（17 个）里没有它 |
+
+⇒ **根因：`diagnostics.otel` 的配置项写了也没人读——导出器插件未安装/未启用。**
+其 README 原文：「Enable the plugin, set `diagnostics.otel.enabled` to `true`…」。
+（spec §2.2 漏了这层，本段即订正。）
+
+**处置**：`openclaw plugins enable diagnostics-otel`（写进 `plugins.entries.diagnostics-otel = {enabled:true}`）→ 重启。
+重启后插件表 **18 个**，`diagnostics-otel` 在列 ✅。
+
+### 3.2 第二次取证：**span 全通**（CLI 轮触发）
+
+用 `openclaw agent --agent main -m "查一下昨天的净销售额"` 触发一轮（**CLI 轮不走渠道**，但足够产出 span）。
+
+**span 树**（`service_name = openclaw-askdata`，主 trace 8 个 span，总时长 10.78 s）：
+
+```
+openclaw.harness.run (10.78s)
+└─ openclaw.run (10.77s)
+   ├─ openclaw.context.assembled
+   ├─ openclaw.model.call (2.78s)  →  openclaw.tool.execution (6ms)
+   ├─ openclaw.model.call (3.08s)  →  openclaw.tool.execution (1ms)
+   └─ openclaw.model.call (2.64s)
+```
+
+⇒ **工具调用序列与回包逐次可辨、按序、带耗时**。
+
+**属性词表**（实测出现）：
+
+| 组 | 键 |
+|---|---|
+| GenAI 语义约定 | `gen_ai_input_messages` · **`gen_ai_output_messages`** · `gen_ai_tool_call_arguments` · `gen_ai_tool_call_result` · `gen_ai_tool_call_id` · `gen_ai_tool_name` · `gen_ai_tool_definitions` · `gen_ai_usage_*` · `gen_ai_provider_name` · `gen_ai_request_model` · `gen_ai_response_model` |
+| openclaw 内容面 | `openclaw_content_input_messages` · **`openclaw_content_output_messages`** · `openclaw_content_tool_input` · `openclaw_content_tool_output` · `openclaw_content_tool_definitions` |
+| openclaw 运行面 | `openclaw_outcome` · **`openclaw_errorcategory`** · `openclaw_channel` · `openclaw_trigger` · `openclaw_agent` · `openclaw_model_call_usage_reasoning_output_tokens` · `openclaw_model_call_time_to_first_byte_ms` · `openclaw_context_*` |
+
+### 3.3 四个必答问题（spec §2.3 U1）
+
+| # | 问题 | **答案** | 逐字证据 |
+|---|---|---|---|
+| **Q1** | `gen_ai.output.messages` 在不在？ | ✅ **在，且有内容** | 每个 `openclaw.model.call` 上都有；例：`[{"role":"assistant","parts":[{"type":"tool_call","name":"query_data","id":"call_00_FKXNS…","arguments":{"args":{"bizday":{"from":"2026-10-15","to":"2026-10-15"},"total":true},"metricId":"lemeng:retail:net_sales"}}],"finish_reason":"toolUse"}]` |
+| **Q2** | 里面有没有**思考正文**？ | ❌ **没有——思考块在，但正文被抹掉** | `openclaw_content_output_messages` = `[{"role":"assistant","content":[{"type":"reasoning",`**`"redacted":true`**`},{"type":"toolCall",…}]}]`——**有 `reasoning` 块、无文本字段**。对照：`gen_ai_input_messages` 里 `thinking`/`reasoning` 关键词计数均为 **0**（parts 只有 `text`/`tool_call`/`tool_call_response`）。 |
+| **Q3** | 有没有截断？ | ⚠️ **无法判**（无正文可截）；其余字段未见截断 | 输出消息 261–276 字符；`gen_ai_input_messages` 约 8 万字符、**完整**（`openclaw_context_*_chars` 与之一致） |
+| **Q4** | 工具调用序列在不在？ | ✅ **在，且完整** | `openclaw.tool.execution` span ×2 + `gen_ai_tool_call_arguments/result/name/id` 均有值；两次调用**都失败**于同一原因，回包 `{"error":"无法识别请求者身份（requesterSenderId 缺失）…"}`——**这就是一条现成的「撞墙轨迹」** |
+
+**旁证**：`openclaw_model_call_usage_reasoning_output_tokens` = **70 / 211 / 81** ⇒ 思考**确实产生了、也被计数**，
+即**不是模型没输出思考**，而是 openclaw 的诊断序列化**主动把它标成 `redacted`**。
+（对照：同一轮的**会话 transcript 里那句中文思考是有正文的**，见 spec §2.1。）
+
+**redaction 有没有开关？** 已查：`diagnostics.otel` 配置面只有 `endpoint` / `logs.*` 等，
+**没有** `redact*` 配置键；`redactSensitiveText` / `redactPatterns` 等 260+ 处全是内部函数。
+且 redaction 针对的是 **reasoning part**，而 `captureContent` 的字段（`inputMessages`/`outputMessages`/
+`toolInputs`/`toolOutputs`/`systemPrompt`/`toolDefinitions`）**没有任何一个控制 reasoning** ⇒ 换对象形也解不开。
+
+### 3.4 判定（计划 Step 4 的二选一）
+
+**Q2 不绿 ⇒ 判定：采集主通道回退「会话库」**（spec §2.1 那条，已实证可行、思考逐字、按 `seq` 有序）。
+
+**但本次并非白开箱**——OO 侧仍然拿到了会话库**没有**的东西：
+
+| OO 能给、会话库不能给 | 说明 |
+|---|---|
+| 工具调用的**耗时**与 **span 树** | `openclaw.model.call` 2.6–3.1 s × 3、`tool.execution` 毫秒级 |
+| **token 用量**（含 cache 读写、reasoning tokens） | `gen_ai_usage_*` / `openclaw_model_call_usage_*` |
+| **错误分类** | `openclaw_errorcategory`、`openclaw_outcome` |
+| 首字节延迟、请求/响应字节数 | `openclaw_model_call_time_to_first_byte_ms` 等 |
+| 与公司观测面天然同栈 | 告警/看板可直接建在 OO 上 |
+
+⇒ **结论建议**：P1 的通道形态改为 **「会话库出思考与对话序列（主）+ OO 出运行面指标（辅）」**，
+而不是二选一。**这条要用户裁决后才能改写 T1–T4。**
