@@ -49,24 +49,48 @@ mat_require() {
   echo "MATERIALIZE_FAILED:missing_env 取不到 ${1}（容器不在，或该容器没注入这个 env？）" >&2
   return 1
 }
-# 物化落账 SQL（spec §10.1）：幂等建表 + 追加一行 status='ok'。抽成纯函数是判别面——
-# materialize.test.sh 从本脚本抽真函数断言形状，不复制实现。$1=tests_pass $2=tests_error
-# （dbt 汇总行的两个数；空/非数字一律落 NULL——落账不因解析失败而缺账，更不把垃圾拼进 SQL）。
+# 物化落账 DDL（spec §10.1 + §10.7.2）：幂等建表 + 幂等补逐关系水位两列（relation/max_bizday，
+# 可空、兼容旧行）。抽成纯函数是判别面——materialize.test.sh 从本脚本抽真函数断言形状，不复制实现。
+# （PASS/ERROR 的落位归水位语句 mat_watermark_sql 管，这里只管 schema。）
 mat_load_log_sql() {
-  _p=$1; _e=$2
-  case "$_p" in ''|*[!0-9]*) _p=NULL ;; esac
-  case "$_e" in ''|*[!0-9]*) _e=NULL ;; esac
-  printf '%s %s\n' \
-    'CREATE SCHEMA IF NOT EXISTS data; CREATE TABLE IF NOT EXISTS data.load_log(materialized_at timestamptz default now(), tests_pass int, tests_error int, status text);' \
-    "INSERT INTO data.load_log (status, tests_pass, tests_error) VALUES ('ok', ${_p}, ${_e});"
+  printf '%s\n' \
+    'CREATE SCHEMA IF NOT EXISTS data;' \
+    'CREATE TABLE IF NOT EXISTS data.load_log(materialized_at timestamptz default now(), tests_pass int, tests_error int, status text);' \
+    'ALTER TABLE data.load_log ADD COLUMN IF NOT EXISTS relation text;' \
+    'ALTER TABLE data.load_log ADD COLUMN IF NOT EXISTS max_bizday date;'
 }
-# 落账执行（复用 :69 先例的 docker exec psql 通路；凭据取 pg_duckdb 容器自注入的 env——:57 已取）。
+# 逐表水位 INSERT（spec §10.7.2）：$1=tests_pass $2=tests_error，$3..=staging schema 内含 bizday
+# 列的表名（清单由主流程经 information_schema 动态点名，无 bizday 的维度表自然不在列）。
+# 全部语句包在一个 BEGIN..COMMIT 里：now() 取**事务起点** ⇒ 同一次物化的全部行共享同一
+# materialized_at（data_as_of = max(materialized_at) 与逐行语义都靠这个一致）。
+# 旧「仓级」行（relation NULL）自本版起不再新写——历史行保留，水位查询只认 relation 非空。
+mat_watermark_sql() {
+  _wp=$1; _we=$2; shift 2
+  case "$_wp" in ''|*[!0-9]*) _wp=NULL ;; esac
+  case "$_we" in ''|*[!0-9]*) _we=NULL ;; esac
+  printf 'BEGIN;\n'
+  for _wt in "$@"; do
+    # 表名拼进 SQL 前按标识符安全形状收口：异常名 fail-soft 跳过 + 告警点名（缺一张表的水位
+    # 可由下次物化补上，不该让一个异常名炸掉整批，更不能把垃圾拼进 SQL）。
+    case "$_wt" in ''|*[!a-z0-9_]*)
+      echo "materialize warn: 水位跳过异常表名 ${_wt}" >&2
+      continue ;;
+    esac
+    printf "INSERT INTO data.load_log (relation, max_bizday, materialized_at, tests_pass, tests_error, status) SELECT '%s', max(bizday), now(), %s, %s, 'ok' FROM staging.%s;\n" \
+      "$_wt" "$_wp" "$_we" "$_wt"
+  done
+  printf 'COMMIT;\n'
+}
+# 落账执行（复用先例的 docker exec psql 通路；凭据取 pg_duckdb 容器自注入的 env）。
 # 问数执行池就是仓 ⇒ data_as_of 与数据查询同池单跳（spec §10.1 为什么写在仓内）。
 # psql 失败**只告警不翻车**：退出码契约维持三态（0 / missing_env / dbt_build），成功的物化
 # 不因记账失败 retry 整个 build；缺账由 data_as_of 停留旧值暴露（新鲜度未知 ≠ 捏造）。
-mat_write_load_log() { # $1=tests_pass $2=tests_error
+mat_write_load_log() { # $1=tests_pass $2=tests_error $3..=水位表名
+  _wp=$1; _we=$2; shift 2
+  _wsql="$(mat_load_log_sql)
+$(mat_watermark_sql "$_wp" "$_we" "$@")"
   docker exec -e PGPASSWORD="$PW" "$PG_CT" \
-    psql -U "$UN" -d "$DB" -v ON_ERROR_STOP=1 -q -c "$(mat_load_log_sql "$1" "$2")" \
+    psql -U "$UN" -d "$DB" -v ON_ERROR_STOP=1 -q -c "$_wsql" \
     || echo "materialize warn: load_log 落账失败（物化本身已成功；data_as_of 将停留旧值，新鲜度面降级）" >&2
 }
 
@@ -117,9 +141,19 @@ if [ "$(cat "$DBT_RC")" != 0 ]; then
   echo "MATERIALIZE_FAILED:dbt_build（dbt 非零退出，原因见上方日志；retry 由 openship job 配置承担）" >&2
   exit 1
 fi
-# 物化落账（spec §10.1）：PASS/ERROR 取 dbt 汇总行（sed 贪婪匹配取该行最后一个 PASS=/ERROR=，
-# 行级结果 `[PASS in 0.1s]` 无等号不会误中）；解析不到 ⇒ INSERT 带 NULL，照常落账。
+# 物化落账（spec §10.1 + §10.7.2）：先动态点名水位表——staging schema 内含 bizday 列的表
+# （information_schema 每表恰一行；无 bizday 的维度表自然不在列，即「无 bizday 表自然跳过」）。
+# 点名失败/为空 ⇒ 零水位行 + 告警（新鲜度缺账 ≠ 翻车，data_as_of 停留旧值暴露）。
+# PASS/ERROR 取 dbt 汇总行（sed 贪婪匹配取该行最后一个 PASS=/ERROR=，行级结果
+# `[PASS in 0.1s]` 无等号不会误中）；解析不到 ⇒ 水位行带 NULL，照常落账。
+MAT_TABLES=$(docker exec -e PGPASSWORD="$PW" "$PG_CT" psql -U "$UN" -d "$DB" -tAc \
+  "SELECT table_name FROM information_schema.columns WHERE table_schema='staging' AND column_name='bizday' GROUP BY table_name ORDER BY table_name" 2>/dev/null \
+  | tr -d '\r' | sed '/^[[:space:]]*$/d' | tr '\n' ' ' || true)
+if [ -z "$MAT_TABLES" ]; then
+  echo "materialize warn: 水位表清单为空（staging 无含 bizday 列的表，或点名查询失败）——本次不写逐表水位，data_as_of 将停留旧值" >&2
+fi
 mat_write_load_log \
   "$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$DBT_LOG" | tail -n 1)" \
-  "$(sed -n 's/.*ERROR=\([0-9]*\).*/\1/p' "$DBT_LOG" | tail -n 1)"
+  "$(sed -n 's/.*ERROR=\([0-9]*\).*/\1/p' "$DBT_LOG" | tail -n 1)" \
+  $MAT_TABLES
 echo "MATERIALIZE_OK"
