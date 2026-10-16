@@ -134,3 +134,25 @@ test("query_data 工具描述含 total 自动合计规则（spec §8.4：直接�
   // 旧布尔标记契约文案不再出现（total 字段语义已改为值）
   assert.doesNotMatch(src, /明细与合计互斥/);
 });
+
+// 汇报纪律（spec §10.4）：data_as_of 必带 / 缺席=未知如实说 / 首行即最新 / 当日部分天。
+// 同一性质：文案就是契约，源文本断言。
+test("query_data 工具描述含新鲜度汇报纪律（spec §10.4）", () => {
+  const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  assert.match(src, /data_as_of/);
+  assert.match(src, /数据截止/);
+  assert.match(src, /新鲜度未知/);
+  assert.match(src, /部分天/);
+});
+
+// SKILL 正文句级微调（不重写）：方法论 v2 的行数预算/total 规则原样，仅补新鲜度汇报纪律一条。
+test("data-query SKILL.md 含新鲜度汇报纪律且既有判据句原样（spec §10.4）", () => {
+  const skill = readFileSync(new URL("./skills/data-query/SKILL.md", import.meta.url), "utf8");
+  assert.match(skill, /data_as_of/);
+  assert.match(skill, /新鲜度未知/);
+  assert.match(skill, /部分天/);
+  // 既有判据句不许丢（句级微调，不是重写）
+  assert.match(skill, /truncated:true/);
+  assert.match(skill, /BAD_PARAM/);
+  assert.match(skill, /区间超过 4 天必用/);
+});

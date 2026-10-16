@@ -249,4 +249,17 @@ describe('TOOLS —— query_metric 参数契约（spec 2026-10-15 §2.5 + §8.4
     // 旧布尔标记文案不再出现（spec §8.4：total 字段语义已改为值）
     expect(d).not.toContain('明细与合计互斥')
   })
+
+  it('T3 汇报纪律下沉（spec §10.4）：data_as_of 必带 / 缺席=未知如实说 / 首行即最新 / 当日部分天', () => {
+    const d = TOOLS.find((t) => t.name === 'query_metric')!.description
+    // 答案必带数据截止：data_as_of = 仓库物化时间
+    expect(d).toContain('data_as_of')
+    expect(d).toContain('数据截止')
+    // 无该字段 = 新鲜度未知，如实说明（不许编）
+    expect(d).toContain('新鲜度未知')
+    // rows 首行（bizday DESC）即最新分区
+    expect(d).toContain('最新')
+    // 当日数据为部分天，须标注
+    expect(d).toContain('部分天')
+  })
 })
