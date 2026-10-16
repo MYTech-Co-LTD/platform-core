@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
-import { runQuery, type QueryDeps } from './query-service'
+import { runQuery, freshnessLineOf, freshnessRelationsOf, freshnessStatusOf, formatHumanDay, type QueryDeps } from './query-service'
 import { L1_ORG, upsertL1Metric, upsertMetric } from './metric-store'
 import { applyMigrations } from '../test-util'
 import { MAX_QUERY_ROWS, type Requester } from './authz'
@@ -493,5 +493,234 @@ describePg('runQuery —— data_as_of（spec §10.2，需要 DATABASE_URL）', 
     if (out.status !== 'ok') return
     expect(out.total).toBe(1470.5)
     expect(out.data_as_of, '合计形态同样带北京时间字符串').toBe('2026-10-16 11:27:00 +08:00')
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// 新鲜度链路面（spec §10.7.3/§10.7.4）：watermark / freshness_status / freshness_line。
+// 先钉**纯函数**（状态转译的算术判据 + 固定行模板——模板逐字是消费契约，模型原样附加），
+// 再在真库上钉**编排**（min(max_bizday) 木桶短板、缺失链路字段缺席、old-shape 降级）。
+// ════════════════════════════════════════════════════════════════════════════════════════
+describe('freshnessStatusOf —— 水位 → 状态（spec §10.7.3：≤sla normal / ≤sla+2 late / 更早 alert）', () => {
+  it('三态与边界恰判：d=sla normal；d=sla+1 与 d=sla+2 late；d=sla+3 alert；水位在未来 ⇒ normal', () => {
+    // 今天 2026-10-16、sla=1：水位 10-15（d=1）normal；10-14（d=2）late；10-13（d=3）late；
+    // 10-12（d=4）alert；水位 10-17（d=-1，未来/当天）normal。
+    expect(freshnessStatusOf('2026-10-15', 1, '2026-10-16')).toBe('normal')
+    expect(freshnessStatusOf('2026-10-14', 1, '2026-10-16')).toBe('late')
+    expect(freshnessStatusOf('2026-10-13', 1, '2026-10-16')).toBe('late')
+    expect(freshnessStatusOf('2026-10-12', 1, '2026-10-16')).toBe('alert')
+    expect(freshnessStatusOf('2026-10-17', 1, '2026-10-16')).toBe('normal')
+    // sla=2（inventory 的实测登记）：窗口整体右移两天
+    expect(freshnessStatusOf('2026-10-14', 2, '2026-10-16')).toBe('normal')
+    expect(freshnessStatusOf('2026-10-12', 2, '2026-10-16')).toBe('late')
+    expect(freshnessStatusOf('2026-10-11', 2, '2026-10-16')).toBe('alert')
+  })
+
+  it('跨月/跨年不漂（日历差按日期算，不吃时区钟点）', () => {
+    expect(freshnessStatusOf('2026-09-30', 1, '2026-10-01')).toBe('normal')
+    expect(freshnessStatusOf('2026-09-28', 1, '2026-10-01')).toBe('late')
+    expect(freshnessStatusOf('2025-12-31', 1, '2026-01-01')).toBe('normal')
+    expect(freshnessStatusOf('2026-01-01', 1, '2026-01-05')).toBe('alert')
+  })
+})
+
+describe('freshness_line 模板（spec §10.7.4 ec16eeb 订正版：业务大白话，行内零工程术语）', () => {
+  it('四状态模板逐字；{d}=人话日期（M月D日），{t}=MM-DD HH:mm（北京）', () => {
+    expect(freshnessLineOf('normal', '2026-10-15', new Date('2026-10-15T03:27:00Z')))
+      .toBe('📅 数据已更新至 10月15日（该日数据完整）｜更新于 10-15 11:27')
+    expect(freshnessLineOf('late', '2026-10-14', new Date('2026-10-15T03:27:00Z')))
+      .toBe('📅 数据已更新至 10月14日，比平时慢了，还在处理中')
+    expect(freshnessLineOf('alert', '2026-10-12', new Date('2026-10-15T03:27:00Z')))
+      .toBe('📅 数据更新停在 10月12日，可能有问题，我们正在检查')
+    expect(freshnessLineOf('unknown', '2026-10-15', new Date('2026-10-15T03:27:00Z')))
+      .toBe('📅 数据更新情况未知')
+  })
+
+  it('行内禁工程术语（承诺/水位/物化/业务日/T+N 一律不许出现——ec16eeb 的硬约束）', () => {
+    for (const line of [
+      freshnessLineOf('normal', '2026-10-15', new Date('2026-10-15T03:27:00Z')),
+      freshnessLineOf('late', '2026-10-14', new Date('2026-10-15T03:27:00Z')),
+      freshnessLineOf('alert', '2026-10-12', new Date('2026-10-15T03:27:00Z')),
+      freshnessLineOf('unknown', '2026-10-15', new Date('2026-10-15T03:27:00Z')),
+    ]) {
+      for (const term of ['承诺', '水位', '物化', '业务日', 'T+', 'sla', 'SLA']) {
+        expect(line.includes(term), `模板行出现了工程术语 ${term}：${line}`).toBe(false)
+      }
+    }
+  })
+
+  it('formatHumanDay：YYYY-MM-DD → M月D日（人话，不给 ISO；前导零按数字读法收敛）', () => {
+    expect(formatHumanDay('2026-10-15')).toBe('10月15日')
+    expect(formatHumanDay('2026-01-05')).toBe('1月5日')
+  })
+
+  it('freshnessRelationsOf：坏形状归一成安全关系集（非数组/混入非字符串 ⇒ 剔除；空 ⇒ 无自动水位）', () => {
+    expect(freshnessRelationsOf({ freshnessRelations: ['stg_a', 'stg_b', 'stg_a'] })).toEqual(['stg_a', 'stg_b'])
+    expect(freshnessRelationsOf({ freshnessRelations: null })).toEqual([])
+    expect(freshnessRelationsOf({ freshnessRelations: undefined })).toEqual([])
+    expect(freshnessRelationsOf({ freshnessRelations: ['stg_a', 42, '', 'stg_a'] as unknown as string[] }))
+      .toEqual(['stg_a'])
+  })
+})
+
+describePg('runQuery —— freshness_line（spec §10.7，需要 DATABASE_URL）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+  /** 夹具关系集（staging 表名的同构形状；水位行按它落）。 */
+  const RELS = ['stg_fw_retail', 'stg_fw_expense']
+  const planSqls: string[] = []
+  const depsOf = (): QueryDeps => ({
+    pool,
+    // L1 夹具带源维度（lemeng）⇒ 必须「已接入」才可见（裁剪判据，与上游 describe 同理）
+    adoptedSources: new Set<string>(['lemeng']),
+    execute: async (sql) => {
+      planSqls.push(sql)
+      return { columns: ['org', 'day'], rows: [['org_a', '2026-08-15']] }
+    },
+  })
+  /** 测试基准「今天」（Asia/Shanghai）：与实现同一格式化通道，跨日不靠猜。 */
+  const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  /** today - n 天的 YYYY-MM-DD（日历差，UTC 算术避免跨月/夏令时漂移）。 */
+  const daysAgo = (n: number): string => {
+    const [y, m, d] = today().split('-').map(Number)
+    return new Date(Date.UTC(y!, (m ?? 1) - 1, (d ?? 1) - n)).toISOString().slice(0, 10)
+  }
+  let wh: Pool
+  /** L1 夹具（带新鲜度链路；id 走本文件既有平台桶前缀，afterAll 按前缀清）。 */
+  const seedFreshMetric = async (over: { slaDays?: number | null; relations?: string[] } = {}) => {
+    await upsertL1Metric(pool, {
+      ...METRIC, id: `${L1_TOTAL_PREFIX}fresh`, groupBy: 'bizday',
+      selectSql: 'SELECT sum(v) AS value, bizday FROM qp3_fresh_face',
+      sourceSystem: 'lemeng', totalable: false,
+      slaDays: over.slaDays ?? 1,
+      freshnessRelations: over.relations ?? RELS,
+    })
+    if (over.slaDays === null) {
+      await pool.query('update data.metrics set sla_days = null where org = $1 and id = $2',
+        [L1_ORG, `${L1_TOTAL_PREFIX}fresh`])
+    }
+  }
+  /** 新形状 load_log + 一组水位行（relation 行；materialized_at 固定锚 → 北京 10-15 11:27）。 */
+  const seedWatermarks = async (rows: Array<{ relation: string; maxBizday: string; status?: string }>) => {
+    await wh.query('drop table if exists data.load_log')
+    await wh.query(`create table data.load_log(
+      materialized_at timestamptz default now(), tests_pass int, tests_error int, status text,
+      relation text, max_bizday date)`)
+    for (const r of rows) {
+      await wh.query(
+        `insert into data.load_log (materialized_at, tests_pass, tests_error, status, relation, max_bizday)
+         values ('2026-10-15 03:27:00+00', 26, 0, $1, $2, $3)`,
+        [r.status ?? 'ok', r.relation, r.maxBizday],
+      )
+    }
+  }
+
+  beforeEach(async () => {
+    await applyMigrations(pool)
+    await pool.query('delete from data.query_audit where org = $1', [ORG])
+    await upsertMetric(pool, ORG, METRIC, 'fixture')
+    process.env.DATA_WAREHOUSE_URL = dbUrl
+    resetWarehousePool()
+    wh = warehousePool()
+    planSqls.length = 0
+  })
+  afterAll(async () => {
+    await wh.query('drop table if exists data.load_log').catch(() => {})
+    resetWarehousePool()
+    delete process.env.DATA_WAREHOUSE_URL
+    await wh.end().catch(() => {})
+    await pool.query('delete from data.query_audit where org = $1', [ORG]).catch(() => {})
+    await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
+    await pool.query('delete from data.metrics where org = $1 and id like $2',
+      [L1_ORG, `${L1_TOTAL_PREFIX}%`]).catch(() => {})
+    await pool.end().catch(() => {})
+  })
+
+  it('W1 无链路（L2 行）⇒ watermark/freshness_status/freshness_line 三字段全缺席，data_as_of 照常', async () => {
+    await seedWatermarks([{ relation: 'stg_fw_retail', maxBizday: daysAgo(1) }])
+    const out = await runQuery(depsOf(), ORG, req(), 'sales_daily', {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect('watermark' in out).toBe(false)
+    expect('freshness_status' in out).toBe(false)
+    expect('freshness_line' in out).toBe(false)
+    expect('data_as_of' in out, 'data_as_of 与链路面正交，照常在').toBe(true)
+  })
+
+  it('W2 两关系取 min(max_bizday)（木桶短板），normal 模板逐字（{d} 人话、{t} 北京钟点）', async () => {
+    await seedFreshMetric()
+    await seedWatermarks([
+      { relation: 'stg_fw_retail', maxBizday: daysAgo(1) },
+      { relation: 'stg_fw_expense', maxBizday: daysAgo(0) },
+    ])
+    const out = await runQuery(depsOf(), ORG, req(), `${L1_TOTAL_PREFIX}fresh`, {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(out.watermark, '短板 = 两关系里更旧的那个').toBe(daysAgo(1))
+    expect(out.freshness_status, 'd=1 ≤ sla=1 ⇒ normal').toBe('normal')
+    expect(out.freshness_line).toBe(`📅 数据已更新至 ${formatHumanDay(daysAgo(1))}（该日数据完整）｜更新于 10-15 11:27`)
+  })
+
+  it('W3 late（d=sla+2 仍 late）与 W4 alert（d=sla+3）模板逐字', async () => {
+    await seedFreshMetric()
+    await seedWatermarks([{ relation: 'stg_fw_retail', maxBizday: daysAgo(3) }])
+    const late = await runQuery(depsOf(), ORG, req(), `${L1_TOTAL_PREFIX}fresh`, {})
+    if (late.status !== 'ok') throw new Error('late 用例失败')
+    expect(late.freshness_status).toBe('late')
+    expect(late.freshness_line).toBe(`📅 数据已更新至 ${formatHumanDay(daysAgo(3))}，比平时慢了，还在处理中`)
+
+    await seedWatermarks([{ relation: 'stg_fw_retail', maxBizday: daysAgo(4) }])
+    const alert = await runQuery(depsOf(), ORG, req(), `${L1_TOTAL_PREFIX}fresh`, {})
+    if (alert.status !== 'ok') throw new Error('alert 用例失败')
+    expect(alert.freshness_status).toBe('alert')
+    expect(alert.freshness_line).toBe(`📅 数据更新停在 ${formatHumanDay(daysAgo(4))}，可能有问题，我们正在检查`)
+  })
+
+  it('W5 normal 边界（水位恰 = 今天-sla）；failed 行不计入水位', async () => {
+    await seedFreshMetric()
+    await seedWatermarks([
+      { relation: 'stg_fw_retail', maxBizday: daysAgo(1) },
+      { relation: 'stg_fw_expense', maxBizday: daysAgo(1), status: 'failed' },
+    ])
+    const out = await runQuery(depsOf(), ORG, req(), `${L1_TOTAL_PREFIX}fresh`, {})
+    if (out.status !== 'ok') throw new Error('normal 边界用例失败')
+    expect(out.freshness_status).toBe('normal')
+  })
+
+  it('W6 有链路但水位缺失（load_log 无对应 relation 行）⇒ 三字段全缺席（未知 ≠ 捏造）', async () => {
+    await seedFreshMetric()
+    await wh.query('drop table if exists data.load_log')
+    await wh.query(`create table data.load_log(
+      materialized_at timestamptz default now(), tests_pass int, tests_error int, status text,
+      relation text, max_bizday date)`)
+    const out = await runQuery(depsOf(), ORG, req(), `${L1_TOTAL_PREFIX}fresh`, {})
+    if (out.status !== 'ok') throw new Error('缺失链路用例失败')
+    expect('watermark' in out).toBe(false)
+    expect('freshness_status' in out).toBe(false)
+    expect('freshness_line' in out).toBe(false)
+  })
+
+  it('W7 旧形状 load_log（无 max_bizday 列，materialize 未升级）⇒ 查询失败被咽下，字段缺席且不反噬主查询', async () => {
+    await seedFreshMetric()
+    await wh.query('drop table if exists data.load_log')
+    await wh.query('create table data.load_log(materialized_at timestamptz default now(), tests_pass int, tests_error int, status text)')
+    await wh.query(`insert into data.load_log (materialized_at, tests_pass, tests_error, status)
+      values ('2026-10-15 03:27:00+00', 26, 0, 'ok')`)
+    const out = await runQuery(depsOf(), ORG, req(), `${L1_TOTAL_PREFIX}fresh`, {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect('watermark' in out).toBe(false)
+    expect('freshness_line' in out).toBe(false)
+    // 主计划照常（新鲜度查询绝不反噬），data_as_of 照常在
+    expect(planSqls.length).toBe(1)
+    expect('data_as_of' in out).toBe(true)
+  })
+
+  it('W8 有水位但 sla_days 缺（库内旧行 sync 未刷的理论态）⇒ unknown 模板（不捏造状态）', async () => {
+    await seedFreshMetric({ slaDays: null })
+    await seedWatermarks([{ relation: 'stg_fw_retail', maxBizday: daysAgo(1) }])
+    const out = await runQuery(depsOf(), ORG, req(), `${L1_TOTAL_PREFIX}fresh`, {})
+    if (out.status !== 'ok') throw new Error('unknown 用例失败')
+    expect(out.freshness_status).toBe('unknown')
+    expect(out.freshness_line).toBe('📅 数据更新情况未知')
   })
 })

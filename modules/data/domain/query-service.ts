@@ -3,7 +3,7 @@
 // 通道差别到 Requester 为止：拿到 Requester 之后，会话/PAT/企微走的是同一条路径。
 // 审计在**所有**结局都写（spec §5 约束 7）——包括被拒与出错，否则「为什么被拒」查不出来。
 import type { Pool } from 'pg'
-import { MAX_QUERY_ROWS, authorize, visibleMetrics, type DenyReason, type Requester } from './authz'
+import { MAX_QUERY_ROWS, authorize, sqlQuote, visibleMetrics, type DenyReason, type Requester } from './authz'
 import { loadMergedCatalog } from './metric-store'
 import { writeAudit } from './audit-store'
 import { DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './warehouse'
@@ -32,6 +32,89 @@ const DATA_AS_OF_TIME_FMT = new Intl.DateTimeFormat('en-GB', {
 /** timestamptz（node-pg 回 Date）→ `YYYY-MM-DD HH:mm:ss +08:00`（spec §10.6 呈现定案）。 */
 function formatDataAsOf(v: Date): string {
   return `${DATA_AS_OF_DATE_FMT.format(v)} ${DATA_AS_OF_TIME_FMT.format(v)} +08:00`
+}
+
+// ── 新鲜度链路面（spec §10.7.3/§10.7.4）：watermark → 状态转译 → 固定展示行 ──────────────
+
+/** 新鲜度状态（spec §10.7.3）：水位距今天的业务转译；unknown = 没有 sla 可判（不捏造）。 */
+export type FreshnessStatus = 'normal' | 'late' | 'alert' | 'unknown'
+
+/** 水位查询（spec §10.7.3）：freshness_relations 各关系在 load_log 上 min(max_bizday)（木桶
+ *  短板）+ 同一批 ok 行的最新物化时刻（固定行的 {t} 用）。status='ok' 且 relation 非空——
+ *  旧「仓级」行（relation NULL）是历史，不进水位（spec §10.7.2）。关系字面量经 sqlQuote
+ *  内联（值是服务端 sync 物化的关系名， quoting 与授权核心同一把尺）。 */
+const WATERMARK_SQL_HEAD =
+  "select min(max_bizday)::text as watermark, max(materialized_at) as materialized_at"
+  + " from data.load_log where status = 'ok' and relation in ("
+
+/** 水位的日历形状（watermark 列经 ::text 出来必须是 `YYYY-MM-DD`；坏形状宁可缺席不外递）。 */
+const WATERMARK_RE = /^\d{4}-\d{2}-\d{2}$/
+
+const DAY_MS = 86_400_000
+
+/** `YYYY-MM-DD` → 该日历日（UTC 零点）的 ms——水位差是**日历量**，不吃时区钟点。 */
+const dayMsOf = (iso: string): number => {
+  const [y, m, d] = iso.split('-').map(Number)
+  return Date.UTC(y, (m ?? 1) - 1, d ?? 1)
+}
+
+/**
+ * 水位 → 状态（spec §10.7.3：水位 ≥ 今天-sla ⇒ normal；< 且 ≥ 今天-sla-2 ⇒ late；更早 ⇒ alert）。
+ * 纯函数：today 由调用方注入（Asia/Shanghai 的今天，`YYYY-MM-DD`）——测试不必改时钟。
+ * 水位在未来/当天（差值 ≤ 0）按 normal：源端「今天已有部分天」是合法形态，不是迟到。
+ */
+export function freshnessStatusOf(watermark: string, slaDays: number, today: string): FreshnessStatus {
+  const lateBy = (dayMsOf(today) - dayMsOf(watermark)) / DAY_MS - slaDays
+  if (lateBy <= 0) return 'normal'
+  if (lateBy <= 2) return 'late'
+  return 'alert'
+}
+
+/**
+ * 人话日期（spec §10.7.4 固定行的 {d}）：`YYYY-MM-DD` → `M月D日`。不给 ISO——固定行的
+ * 硬约束是行内零工程术语、零换算负担，日期按人读的说法给。
+ */
+export function formatHumanDay(iso: string): string {
+  const [, m, d] = iso.split('-')
+  return `${Number(m)}月${Number(d)}日`
+}
+
+/** 更新钟点（固定行的 {t}）：timestamptz → `MM-DD HH:mm`（北京时间，复用 §10.6 的格式化器）。 */
+function formatMatClock(v: Date): string {
+  return `${DATA_AS_OF_DATE_FMT.format(v).slice(5)} ${DATA_AS_OF_TIME_FMT.format(v).slice(0, 5)}`
+}
+
+/**
+ * 固定展示行（spec §10.7.4，ec16eeb 订正版）：服务端按状态拼**业务大白话**，模型原样附在答案
+ * 末尾。硬约束：行内不出现任何工程术语（承诺/水位/物化/业务日/T+N 一律不许出现）——
+ * sla_days 只驱动 normal/late 的判定，不出现在任何用户可见文案里。
+ */
+export function freshnessLineOf(
+  status: FreshnessStatus, watermark: string, materializedAt: Date | null,
+): string {
+  switch (status) {
+    case 'normal':
+      return `📅 数据已更新至 ${formatHumanDay(watermark)}（该日数据完整）｜更新于 ${materializedAt === null ? '' : formatMatClock(materializedAt)}`
+    case 'late':
+      return `📅 数据已更新至 ${formatHumanDay(watermark)}，比平时慢了，还在处理中`
+    case 'alert':
+      return `📅 数据更新停在 ${formatHumanDay(watermark)}，可能有问题，我们正在检查`
+    case 'unknown':
+      return '📅 数据更新情况未知'
+  }
+}
+
+/**
+ * 词表行的新鲜度关系集（**防坏形状归一**：只认非空字符串、保序去重；jsonb 落库值理论上恒是
+ * sync 物化的字符串数组，但读侧不信任存储形状——坏值宁可判成「无链路」（字段缺席），
+ * 不让垃圾进 SQL。空集 = 无自动水位，三字段全缺席。
+ */
+export function freshnessRelationsOf(row: { freshnessRelations?: string[] | null }): string[] {
+  const out: string[] = []
+  for (const r of Array.isArray(row.freshnessRelations) ? row.freshnessRelations : []) {
+    if (typeof r === 'string' && r !== '' && !out.includes(r)) out.push(r)
+  }
+  return out
 }
 /** 退避：写入是原子 PUT，撞上时新文件多半已就绪，~1s 后重试恰一次足够（spec §3.1）。 */
 const LAKE_RACE_RETRY_DELAY_MS = 1_000
@@ -80,6 +163,19 @@ export interface QueryOk {
    * 未知 ≠ 捏造」，消费方（汇报纪律，spec §10.4）必须把缺席如实转述为「数据截止未知」。
    */
   data_as_of?: unknown
+  /**
+   * 新鲜度水位（spec §10.7.3）：freshness_relations 各关系在 load_log 上 min(max_bizday)
+   * （木桶短板），`YYYY-MM-DD`。链路未声明（L2 行 / L1 未声明 sources）或水位缺失 ⇒
+   * **三字段全缺席**——「未知 ≠ 捏造」，不凭空造一个日期。
+   */
+  watermark?: string
+  /** 水位的业务转译（spec §10.7.3）：≤sla normal / ≤sla+2 late / 更早 alert / 无 sla 可判 unknown。 */
+  freshness_status?: FreshnessStatus
+  /**
+   * 服务端预拼的**固定展示行**（spec §10.7.4 业务大白话模板）：模型**原样**附在答案末尾、
+   * 单独一行、不混入正文、不改写。预拼 = 消灭 flash 级模型的格式遵从风险。
+   */
+  freshness_line?: string
 }
 export interface QueryDenied {
   status: 'denied'; metricId: string
@@ -204,6 +300,36 @@ export async function runQuery(
     // load_log 缺席 / 仓库未配 ⇒ data_as_of 缺席（新鲜度未知，主查询结果照常交付）
   }
 
+  // 新鲜度链路面（spec §10.7.3/§10.7.4）：指标声明了 freshness_relations 才查——关系集上的
+  // min(max_bizday)（木桶短板）+ 服务端按 sla_days 状态转译 + 预拼固定展示行。缺链路
+  // （L2 行 / 未声明 sources）、水位缺失（无对应 relation 行）、load_log 还是旧形状
+  // （materialize 未升级，列不在 ⇒ 查询报错）⇒ 三字段**全缺席**——未知 ≠ 捏造，且缺账
+  // 绝不反噬主查询（try/catch 包死，同 data_as_of）。metric 从已加载的合并词表取（同一行
+  // 已过授权与裁剪，这里只是把它的链路声明读出来）。
+  let freshnessFace:
+    | { watermark: string; freshness_status: FreshnessStatus; freshness_line: string }
+    | undefined
+  const metricRow = catalog.find((m) => m.id === metricId)
+  const relations = metricRow === undefined ? [] : freshnessRelationsOf(metricRow)
+  if (relations.length > 0) {
+    try {
+      const wm = await runWarehouseSql(
+        warehousePool(), `${WATERMARK_SQL_HEAD}${relations.map((r) => sqlQuote(r)).join(', ')})`)
+      const w = wm.rows[0]?.[0]
+      const matAt = wm.rows[0]?.[1]
+      if (typeof w === 'string' && WATERMARK_RE.test(w) && matAt instanceof Date) {
+        // 无 sla 可判（sla_days 为 null 的理论态：库内旧行 sync 未刷）⇒ unknown，不捏造状态；
+        // 「今天」与 data_as_of 同一格式化通道（Asia/Shanghai 的日历日，spec §10.6）。
+        const status = typeof metricRow?.slaDays === 'number'
+          ? freshnessStatusOf(w, metricRow.slaDays, DATA_AS_OF_DATE_FMT.format(new Date()))
+          : 'unknown'
+        freshnessFace = { watermark: w, freshness_status: status, freshness_line: freshnessLineOf(status, w, matAt) }
+      }
+    } catch {
+      // load_log 缺表/缺列 / 仓库未配 ⇒ 链路三字段缺席（新鲜度未知，主查询结果照常交付）
+    }
+  }
+
   await audit('ok', raceRetried ? 'lake_race_retry' : null, result.rows.length)
   // 显式合计模式（spec §8）：plan.sql 已是 `SELECT sum(value) …`（无外层 LIMIT）⇒ 恒单行，
   // total 字段 = 该行的合计值；`truncated` 恒 false（合计无截断面）。
@@ -221,5 +347,12 @@ export async function runQuery(
       ? { total: (result.rows[0]?.[0] as string | number | null | undefined) ?? null }
       : totalValue !== undefined ? { total: totalValue } : {}),
     ...(dataAsOf !== undefined ? { data_as_of: dataAsOf } : {}),
+    ...(freshnessFace !== undefined
+      ? {
+          watermark: freshnessFace.watermark,
+          freshness_status: freshnessFace.freshness_status,
+          freshness_line: freshnessFace.freshness_line,
+        }
+      : {}),
   }
 }
