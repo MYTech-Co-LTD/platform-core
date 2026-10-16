@@ -81,9 +81,10 @@ export async function loadOptions(refs: string[]): Promise<Map<string, OptionIte
   return out
 }
 
-/** 契约里出现过的字典引用（顶层属性；与服务端 dictRefs 同一判定语义的渲染侧版）。 */
-export function schemaDictRefs(schema: unknown): string[] {
-  const props = (schema as { properties?: unknown } | null)?.properties
+/** 契约里出现过的字典引用（顶层属性；与服务端 dictRefs 同一判定语义的渲染侧版）。
+ *  入参是**契约 body**（`{schema, uiSchema?}`，与 renderModelOf 同口径）。 */
+export function schemaDictRefs(body: unknown): string[] {
+  const props = ((body as { schema?: { properties?: unknown } } | null)?.schema)?.properties
   if (props === null || typeof props !== 'object') return []
   const refs: string[] = []
   for (const prop of Object.values(props as Record<string, unknown>)) {
@@ -94,20 +95,25 @@ export function schemaDictRefs(schema: unknown): string[] {
 }
 
 /**
- * 渲染视图模型：顶层 required 绑定的字典字段注入候选（副本，不改原契约）。
- * open 绑定不注入——自由文本。候选顺序 = options 的 (sort_no, key)（服务端已排序）。
+ * 渲染视图模型：把契约 body（`{schema, uiSchema?}`，#724 定案）变成 RJSF 直接可吃的一对，
+ * 并**注入字典候选**——顶层 `required` 绑定的字段：值进 schema.enum、标签进 uiSchema
+ * 的 `ui:options.enumNames`（副本，不改原契约）。open 绑定不注入（自由文本）。
+ * 候选顺序 = options 的 (sort_no, key)（服务端已排序）。
  * ⚠️ RJSF v6 的标签来源是 **uiSchema 的 ui:options.enumNames**（@rjsf/utils optionsList
- * 走 getUiOptions，schema.enumNames 已不再消费——#718 真机截图实测：只给 schema.enumNames
- * 下拉显示成 key）。故 schema.enum（值）与 uiSchema.ui:options.enumNames（标签）成对注入。
+ * 走 getUiOptions，schema.enumNames 已不再消费——#718 真机截图实测）。
  */
-export function injectDictEnums(
-  schema: object,
+export function renderModelOf(
+  body: unknown,
   options: Map<string, OptionItem[]>,
-): { schema: object; uiSchema: Record<string, { 'ui:options': { enumNames: string[] } }> } {
-  const copy = structuredClone(schema) as {
+): { schema: object; uiSchema: Record<string, unknown> } {
+  const raw = (body ?? {}) as { schema?: unknown; uiSchema?: unknown }
+  const copy = structuredClone(raw.schema ?? {}) as {
     properties?: Record<string, Record<string, unknown>>
   }
-  const uiSchema: Record<string, { 'ui:options': { enumNames: string[] } }> = {}
+  // 契约自带的 uiSchema 是底，字典候选覆盖其上（同键合并，不丢契约里的其他 ui:* 设置）
+  const uiSchema: Record<string, unknown> = structuredClone(
+    (raw.uiSchema ?? {}) as Record<string, unknown>,
+  )
   const props = copy.properties
   if (props !== undefined) {
     for (const [field, prop] of Object.entries(props)) {
@@ -116,7 +122,11 @@ export function injectDictEnums(
       const items = options.get(ref)
       if (items === undefined) continue
       prop['enum'] = items.map((o) => o.key)
-      uiSchema[field] = { 'ui:options': { enumNames: items.map((o) => o.label) } }
+      const prev = uiSchema[field]
+      const base = prev !== null && typeof prev === 'object' && !Array.isArray(prev)
+        ? (prev as Record<string, unknown>)
+        : {}
+      uiSchema[field] = { ...base, 'ui:options': { ...((base['ui:options'] as object) ?? {}), enumNames: items.map((o) => o.label) } }
     }
   }
   return { schema: copy, uiSchema }

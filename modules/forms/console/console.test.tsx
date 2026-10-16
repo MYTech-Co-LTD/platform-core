@@ -10,7 +10,7 @@ vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 
 import { platformFetch } from '@platform/sdk/web'
 import FormsConsolePage from './index'
-import { injectDictEnums } from './api'
+import { renderModelOf } from './api'
 
 const platformFetchMock = vi.mocked(platformFetch)
 
@@ -73,7 +73,7 @@ describe('表单列表页', () => {
   })
 })
 
-describe('injectDictEnums（纯函数：渲染副本注入，不碰原契约）', () => {
+describe('renderModelOf（纯函数：契约 body → RJSF 一对，注入字典候选，不碰原契约）', () => {
   const schema = {
     type: 'object',
     properties: {
@@ -86,7 +86,7 @@ describe('injectDictEnums（纯函数：渲染副本注入，不碰原契约）'
   const options = new Map([['dict:level', [{ key: 'p1', label: '一线', sortNo: 1 }, { key: 'p2', label: '二线', sortNo: 2 }]]])
 
   it('required 绑定注入 enum（值）+ uiSchema enumNames（标签，v6 口径）；open 不注入', () => {
-    const { schema: copy, uiSchema } = injectDictEnums(schema, options)
+    const { schema: copy, uiSchema } = renderModelOf({ schema }, options)
     const props = (copy as { properties: Record<string, Record<string, unknown>> }).properties
     const level = props['level']
     const note = props['note']
@@ -97,7 +97,7 @@ describe('injectDictEnums（纯函数：渲染副本注入，不碰原契约）'
   })
 
   it('原契约不被碰（铁律：存储契约永不含值）', () => {
-    injectDictEnums(schema, options)
+    renderModelOf({ schema }, options)
     const level = (schema.properties as Record<string, Record<string, unknown>>)['level']
     expect(level['enum']).toBeUndefined()
   })
@@ -117,7 +117,7 @@ describe('填报页', () => {
   it('取 head 契约渲染：required 绑定渲染为下拉（combobox）、open 渲染为自由文本框', async () => {
     mockApi({
       '/api/modules/forms/defs/fill-target': () =>
-        jsonResponse({ assetId: 'fill-target', head: 1, versions: [{ version: 1, status: 'published', createdBy: 'u', publishedBy: 'h', body: headSchema }] }),
+        jsonResponse({ assetId: 'fill-target', head: 1, versions: [{ version: 1, status: 'published', createdBy: 'u', publishedBy: 'h', body: { schema: headSchema } }] }),
       '/api/modules/forms/dicts/level/options': () =>
         jsonResponse({ options: [{ key: 'p1', label: '一线', sortNo: 1 }, { key: 'p2', label: '二线', sortNo: 2 }] }),
     })
@@ -133,7 +133,7 @@ describe('填报页', () => {
     const posts: Array<{ url: string; init?: RequestInit }> = []
     platformFetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
       if (input === '/api/modules/forms/defs/quick') {
-        return jsonResponse({ assetId: 'quick', head: 1, versions: [{ version: 1, status: 'published', createdBy: 'u', publishedBy: 'h', body: { type: 'object', properties: { name: { type: 'string', title: '姓名' } }, required: ['name'] } }] })
+        return jsonResponse({ assetId: 'quick', head: 1, versions: [{ version: 1, status: 'published', createdBy: 'u', publishedBy: 'h', body: { schema: { type: 'object', properties: { name: { type: 'string', title: '姓名' } }, required: ['name'] } } }] })
       }
       if (input === '/api/modules/forms/defs/quick/submissions' && init?.method === 'POST') {
         posts.push({ url: input, init })
@@ -155,7 +155,7 @@ describe('填报页', () => {
   it('服务端拒绝（机检错误码）原样呈现——客户端不是权威', async () => {
     platformFetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
       if (input === '/api/modules/forms/defs/deny') {
-        return jsonResponse({ assetId: 'deny', head: 1, versions: [{ version: 1, status: 'published', createdBy: 'u', publishedBy: 'h', body: { type: 'object', properties: { name: { type: 'string', title: '姓名' } }, required: ['name'] } }] })
+        return jsonResponse({ assetId: 'deny', head: 1, versions: [{ version: 1, status: 'published', createdBy: 'u', publishedBy: 'h', body: { schema: { type: 'object', properties: { name: { type: 'string', title: '姓名' } }, required: ['name'] } } }] })
       }
       if (input === '/api/modules/forms/defs/deny/submissions' && init?.method === 'POST') {
         return jsonResponse({ error: 'UNKNOWN_FIELD', detail: '字段 "hacker" 不在契约内（顶层）' }, 400)
@@ -173,7 +173,7 @@ describe('填报页', () => {
 
   it('无发布版本 → 提示不可填报', async () => {
     mockApi({
-      '/api/modules/forms/defs/nohead': () => jsonResponse({ assetId: 'nohead', head: null, versions: [{ version: 1, status: 'draft', createdBy: 'u', publishedBy: null, body: {} }] }),
+      '/api/modules/forms/defs/nohead': () => jsonResponse({ assetId: 'nohead', head: null, versions: [{ version: 1, status: 'draft', createdBy: 'u', publishedBy: null, body: { schema: {} } }] }),
     })
     renderAt('/console/forms/fill/nohead', ['forms:fill'])
     await waitFor(() => expect(screen.getByText('该表单还没有发布版本，暂不能填报')).toBeInTheDocument())
@@ -191,7 +191,7 @@ describe('填报页', () => {
     }
     mockApi({
       '/api/modules/forms/defs/ro': () =>
-        jsonResponse({ assetId: 'ro', head: 1, versions: [{ version: 1, status: 'published', createdBy: 'u', publishedBy: 'h', body: roSchema }] }),
+        jsonResponse({ assetId: 'ro', head: 1, versions: [{ version: 1, status: 'published', createdBy: 'u', publishedBy: 'h', body: { schema: roSchema } }] }),
       '/api/modules/forms/dicts/level/options': () => jsonResponse({ options: [{ key: 'p1', label: '一线', sortNo: 1 }] }),
     })
     renderAt('/console/forms/fill/ro', ['forms:fill'])
@@ -221,9 +221,9 @@ describe('提交记录页', () => {
           ],
         }),
       '/api/modules/forms/submissions/7': () =>
-        jsonResponse({ submission: {}, contract: { properties: { level: { type: 'string', 'x-dict': 'dict:level', 'x-binding': 'required' } } } }),
+        jsonResponse({ submission: {}, contract: { schema: { properties: { level: { type: 'string', 'x-dict': 'dict:level', 'x-binding': 'required' } } } } }),
       '/api/modules/forms/submissions/8': () =>
-        jsonResponse({ submission: {}, contract: { properties: { level: { type: 'string', 'x-dict': 'dict:level', 'x-binding': 'required' } } } }),
+        jsonResponse({ submission: {}, contract: { schema: { properties: { level: { type: 'string', 'x-dict': 'dict:level', 'x-binding': 'required' } } } } }),
       '/api/modules/forms/dicts/level/resolve?keys=p1': () =>
         jsonResponse({ resolved: { p1: { label: '一线', enabled: true } } }),
       '/api/modules/forms/dicts/level/resolve?keys=p9': () =>
@@ -253,5 +253,90 @@ describe('提交记录页', () => {
     // antd Select 的 placeholder 是文本节点不是 input[placeholder] 属性
     await waitFor(() => expect(screen.getByText('选择表单')).toBeInTheDocument())
     await waitFor(() => expect(calls).toEqual(['/api/modules/forms/defs'])) // 未选资产不拉列表
+  })
+})
+
+// AI 起草入口与发布门（#724）：控制台只「生成草稿」+「发布」，发布是人唯一的 gate。
+describe('表单列表页：AI 起草与发布门', () => {
+  it('forms:manage 才出现「AI 起草」卡片；只有 view 时不出现', async () => {
+    mockApi({ '/api/modules/forms/defs': () => jsonResponse(defsBody) })
+    renderAt('/console/forms/forms', ['forms:view', 'forms:manage'])
+    await waitFor(() => expect(screen.getByText('AI 起草')).toBeInTheDocument())
+
+    cleanup()
+    mockApi({ '/api/modules/forms/defs': () => jsonResponse(defsBody) })
+    renderAt('/console/forms/forms', ['forms:view'])
+    await waitFor(() => expect(screen.getByText('check-in')).toBeInTheDocument())
+    expect(screen.queryByText('AI 起草')).not.toBeInTheDocument()
+  })
+
+  it('起草：POST /generate 带 {description} → 成功提示 + 重新拉列表', async () => {
+    const posts: Array<{ url: string; body: unknown }> = []
+    let listCalls = 0
+    platformFetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input === '/api/modules/forms/defs') {
+        listCalls += 1
+        return jsonResponse(defsBody)
+      }
+      if (input === '/api/modules/forms/generate' && init?.method === 'POST') {
+        posts.push({ url: input, body: JSON.parse(String(init.body)) })
+        return jsonResponse({ assetId: 'ai-made', version: 1, repairUsed: false }, 201)
+      }
+      throw new Error('unexpected platformFetch: ' + input)
+    })
+    renderAt('/console/forms/forms', ['forms:view', 'forms:manage'])
+    await waitFor(() => expect(screen.getByText('check-in')).toBeInTheDocument())
+
+    fireEvent.change(screen.getByPlaceholderText(/用一句话描述/), { target: { value: '门店巡检登记' } })
+    fireEvent.click(screen.getByRole('button', { name: /生成草稿/ }))
+    await waitFor(() => expect(posts.length).toBe(1))
+    expect(posts[0].body).toEqual({ description: '门店巡检登记' })
+    await waitFor(() => expect(screen.getByText(/已生成草稿：ai-made（v1）/)).toBeInTheDocument())
+    expect(listCalls).toBeGreaterThanOrEqual(2) // 生成后刷新了列表
+  })
+
+  it('起草失败：422 详情原样呈现（服务端权威）', async () => {
+    platformFetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input === '/api/modules/forms/defs') return jsonResponse(defsBody)
+      if (input === '/api/modules/forms/generate' && init?.method === 'POST') {
+        return jsonResponse({ error: 'CONTRACT_REJECTED', detail: '[UNSUPPORTED_WIDGET] ui:widget "cascader" 渲染层不认识' }, 422)
+      }
+      throw new Error('unexpected platformFetch: ' + input)
+    })
+    renderAt('/console/forms/forms', ['forms:view', 'forms:manage'])
+    await waitFor(() => expect(screen.getByText('check-in')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText(/用一句话描述/), { target: { value: '省市区联动' } })
+    fireEvent.click(screen.getByRole('button', { name: /生成草稿/ }))
+    await waitFor(() => expect(screen.getByText(/UNSUPPORTED_WIDGET/)).toBeInTheDocument())
+  })
+
+  it('发布门：仅 forms:publish 且**未发布有草稿**的行出现「发布」，点了发布最新 draft', async () => {
+    const published: string[] = []
+    platformFetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if (input === '/api/modules/forms/defs') return jsonResponse(defsBody)
+      if (input === '/api/modules/forms/defs/draft-only') {
+        return jsonResponse({ assetId: 'draft-only', head: null, versions: [{ version: 1, status: 'draft' }] })
+      }
+      if (input === '/api/modules/forms/defs/draft-only/versions/1/publish' && init?.method === 'POST') {
+        published.push('draft-only@1')
+        return jsonResponse({ ok: true })
+      }
+      throw new Error('unexpected platformFetch: ' + input)
+    })
+    renderAt('/console/forms/forms', ['forms:view', 'forms:publish'])
+    await waitFor(() => expect(screen.getByText('draft-only')).toBeInTheDocument())
+
+    // check-in 已发布 ⇒ 无发布按钮（只有 draft-only 有）
+    const btns = screen.getAllByRole('button', { name: '发布' })
+    expect(btns.length).toBe(1)
+    fireEvent.click(btns[0])
+    await waitFor(() => expect(published).toEqual(['draft-only@1']))
+  })
+
+  it('无 forms:publish 时不出现「发布」（门在服务端也在 UI）', async () => {
+    mockApi({ '/api/modules/forms/defs': () => jsonResponse(defsBody) })
+    renderAt('/console/forms/forms', ['forms:view', 'forms:manage'])
+    await waitFor(() => expect(screen.getByText('draft-only')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: '发布' })).not.toBeInTheDocument()
   })
 })

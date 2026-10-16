@@ -101,8 +101,8 @@ function PayloadView({ id, payload }: { id: string; payload: unknown }) {
           `/api/modules/forms/submissions/${encodeURIComponent(id)}`,
         )
         if (cancelled) return
-        const propsObj = (detail.contract as { properties?: Record<string, Record<string, unknown>> } | null)
-          ?.properties
+        const propsObj = (detail.contract as { schema?: { properties?: Record<string, Record<string, unknown>> } } | null)
+          ?.schema?.properties
         const fields = propsObj !== undefined ? Object.keys(propsObj) : []
         const refsByField = new Map<string, string>()
         for (const [field, prop] of Object.entries(propsObj ?? {})) {

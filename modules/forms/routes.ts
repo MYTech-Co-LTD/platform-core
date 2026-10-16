@@ -7,6 +7,10 @@ import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type { Identity } from '@platform/sdk'
 import { compileGate } from './domain/contract'
+import { generateDraft } from './domain/generator'
+import { LlmError } from './domain/llm'
+import type { ChatModel } from './domain/llm'
+import { registerFormsMcpManage } from './mcp'
 import * as store from './storage'
 import { FormsError } from './storage'
 
@@ -47,7 +51,10 @@ function ctx(c: any): Ctx {
   return { identity: c.get('identity') as Identity }
 }
 
-export function createFormsRouter({ pool }: { pool: Pool }) {
+/** AI 起草的描述上限（与 demo 的便签上限同一纪律：有界写入）。 */
+const MAX_DESCRIPTION_LEN = 2000
+
+export function createFormsRouter({ pool, chatModel = null }: { pool: Pool; chatModel?: ChatModel | null }) {
   const r = new Hono<{ Variables: { identity: Identity } }>()
 
   // ── 表单定义（生命周期） ──
@@ -78,6 +85,40 @@ export function createFormsRouter({ pool }: { pool: Pool }) {
       if (!ASSET_ID_RE.test(assetId)) return fail(c, 400, 'ASSET_ID_INVALID', 'assetId 必须匹配 ^[a-z][a-z0-9-]{0,63}$')
       const version = await store.newDraft(pool, identity.orgId, assetId, body?.body, identity.userId)
       return c.json({ assetId, version }, 201)
+    }),
+  )
+
+  // AI 起草（#724）：描述 → 契约草案 → 落 **draft**（**永不自动发布**；人过 forms:publish 门）。
+  // 端点顺序无关，放在 /defs/:assetId 之前只为可读性（'/generate' 与 ':assetId' 不会互相吞）。
+  r.post('/generate', (c) =>
+    handle(c, async () => {
+      const { identity } = ctx(c)
+      if (chatModel === null) {
+        return fail(c, 503, 'LLM_NOT_CONFIGURED', '未配置 FORMS_LLM_* 或 DATA_LLM_*（三键全在才算配好），AI 起草不可用')
+      }
+      const b = (await c.req.json().catch(() => null)) as { description?: unknown } | null
+      const description = typeof b?.description === 'string' ? b.description.trim() : ''
+      if (description.length === 0) return fail(c, 400, 'DESCRIPTION_REQUIRED', '需要 { description: string }')
+      if (description.length > MAX_DESCRIPTION_LEN) {
+        return fail(c, 400, 'DESCRIPTION_TOO_LONG', `描述上限 ${MAX_DESCRIPTION_LEN} 字`)
+      }
+      let result: Awaited<ReturnType<typeof generateDraft>>
+      try {
+        result = await generateDraft({ model: chatModel, description })
+      } catch (e) {
+        if (e instanceof LlmError) return fail(c, 502, 'LLM_UPSTREAM_FAILED', e.message)
+        throw e
+      }
+      if (!result.ok) return fail(c, 422, result.code, result.detail)
+      // 重名**报错不覆盖**（AI 可能把不同表单起同一个名；静默新建版本 = 悄悄改掉别人在用的表单）
+      if (await store.assetExists(pool, identity.orgId, result.assetId)) {
+        return fail(c, 409, 'ASSET_ID_TAKEN', `表单 ${result.assetId} 已存在——请换个名字后重试`)
+      }
+      const version = await store.newDraft(pool, identity.orgId, result.assetId, result.body, identity.userId)
+      return c.json(
+        { assetId: result.assetId, version, body: result.body, repairUsed: result.repairUsed },
+        201,
+      )
     }),
   )
 
@@ -237,6 +278,9 @@ export function createFormsRouter({ pool }: { pool: Pool }) {
 
   dictRoutes('/dicts', 'tenant')
   dictRoutes('/global-dicts', 'global')
+
+  // 管理面 MCP 端点（#724）：外部 agent 可起草表单；**不暴露任何发布类工具**（AI 永不发布）
+  registerFormsMcpManage(r, { pool, chatModel })
 
   return r
 }
