@@ -49,6 +49,26 @@ mat_require() {
   echo "MATERIALIZE_FAILED:missing_env 取不到 ${1}（容器不在，或该容器没注入这个 env？）" >&2
   return 1
 }
+# 物化落账 SQL（spec §10.1）：幂等建表 + 追加一行 status='ok'。抽成纯函数是判别面——
+# materialize.test.sh 从本脚本抽真函数断言形状，不复制实现。$1=tests_pass $2=tests_error
+# （dbt 汇总行的两个数；空/非数字一律落 NULL——落账不因解析失败而缺账，更不把垃圾拼进 SQL）。
+mat_load_log_sql() {
+  _p=$1; _e=$2
+  case "$_p" in ''|*[!0-9]*) _p=NULL ;; esac
+  case "$_e" in ''|*[!0-9]*) _e=NULL ;; esac
+  printf '%s %s\n' \
+    'CREATE SCHEMA IF NOT EXISTS data; CREATE TABLE IF NOT EXISTS data.load_log(materialized_at timestamptz default now(), tests_pass int, tests_error int, status text);' \
+    "INSERT INTO data.load_log (status, tests_pass, tests_error) VALUES ('ok', ${_p}, ${_e});"
+}
+# 落账执行（复用 :69 先例的 docker exec psql 通路；凭据取 pg_duckdb 容器自注入的 env——:57 已取）。
+# 问数执行池就是仓 ⇒ data_as_of 与数据查询同池单跳（spec §10.1 为什么写在仓内）。
+# psql 失败**只告警不翻车**：退出码契约维持三态（0 / missing_env / dbt_build），成功的物化
+# 不因记账失败 retry 整个 build；缺账由 data_as_of 停留旧值暴露（新鲜度未知 ≠ 捏造）。
+mat_write_load_log() { # $1=tests_pass $2=tests_error
+  docker exec -e PGPASSWORD="$PW" "$PG_CT" \
+    psql -U "$UN" -d "$DB" -v ON_ERROR_STOP=1 -q -c "$(mat_load_log_sql "$1" "$2")" \
+    || echo "materialize warn: load_log 落账失败（物化本身已成功；data_as_of 将停留旧值，新鲜度面降级）" >&2
+}
 
 # ── 运行时取值（不落盘、不落 argv；stderr 静默 ⇒ 容器不在时值取空、由 mat_require 兜）──
 ct_env() {
@@ -82,9 +102,24 @@ export LEMENG_ZOS_BUCKET="$ZB" LEMENG_ZOS_REGION="$ZR" LEMENG_ZOS_ENDPOINT="$ZE"
 export LEMENG_SUBJECT_ORG="$SO"
 
 echo "materialize start repo=${R} network=${NETWORK} image=${IMAGE} mode=full_build（无按需名单，#679）"
-docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-  $(mat_env_args) "$IMAGE" $(mat_dbt_args) || {
+# dbt 输出 tee 进临时日志：job 的实时流保持不变，同时留一份可解析的汇总行（Done. PASS=n … ERROR=m）。
+# 退出码用 rc 文件带出（POSIX sh 无 pipefail/PIPESTATUS；管道末位是 tee，不能直接判 dbt）。
+DBT_LOG="${TMPDIR:-/tmp}/materialize-dbt.$$.log"
+DBT_RC="${TMPDIR:-/tmp}/materialize-dbt.$$.rc"
+trap 'rm -f "$DBT_LOG" "$DBT_RC"' EXIT
+( if docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
+    $(mat_env_args) "$IMAGE" $(mat_dbt_args) 2>&1; then
+  echo 0 >"$DBT_RC"
+else
+  echo $? >"$DBT_RC"
+fi ) | tee "$DBT_LOG"
+if [ "$(cat "$DBT_RC")" != 0 ]; then
   echo "MATERIALIZE_FAILED:dbt_build（dbt 非零退出，原因见上方日志；retry 由 openship job 配置承担）" >&2
   exit 1
-}
+fi
+# 物化落账（spec §10.1）：PASS/ERROR 取 dbt 汇总行（sed 贪婪匹配取该行最后一个 PASS=/ERROR=，
+# 行级结果 `[PASS in 0.1s]` 无等号不会误中）；解析不到 ⇒ INSERT 带 NULL，照常落账。
+mat_write_load_log \
+  "$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$DBT_LOG" | tail -n 1)" \
+  "$(sed -n 's/.*ERROR=\([0-9]*\).*/\1/p' "$DBT_LOG" | tail -n 1)"
 echo "MATERIALIZE_OK"
