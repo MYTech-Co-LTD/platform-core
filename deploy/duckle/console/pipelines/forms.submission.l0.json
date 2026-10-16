@@ -1,0 +1,185 @@
+{
+  "edges": [
+    {
+      "id": "e1",
+      "source": "src",
+      "sourceHandle": "main",
+      "target": "unionall",
+      "targetHandle": "main_1"
+    },
+    {
+      "id": "e2",
+      "source": "src",
+      "sourceHandle": "main",
+      "target": "cap",
+      "targetHandle": "main"
+    },
+    {
+      "id": "e3",
+      "source": "cap",
+      "sourceHandle": "main",
+      "target": "dcap",
+      "targetHandle": "main"
+    },
+    {
+      "id": "e4",
+      "source": "dcap",
+      "sourceHandle": "main",
+      "target": "unionall",
+      "targetHandle": "main_2"
+    },
+    {
+      "id": "e5",
+      "source": "unionall",
+      "sourceHandle": "main",
+      "target": "shape",
+      "targetHandle": "main"
+    },
+    {
+      "id": "e6",
+      "source": "shape",
+      "sourceHandle": "main",
+      "target": "gate",
+      "targetHandle": "main"
+    },
+    {
+      "id": "e7",
+      "source": "gate",
+      "sourceHandle": "main",
+      "target": "sink",
+      "targetHandle": "main"
+    }
+  ],
+  "name": "forms.submission.l0",
+  "nodes": [
+    {
+      "data": {
+        "componentId": "src.rest",
+        "label": "提交导出（键集游标 + id 增量水位）",
+        "properties": {
+          "connectionRef": "forms",
+          "incrementalField": "submission_id",
+          "incrementalInitial": "0",
+          "method": "GET",
+          "paginationType": "none",
+          "responsePath": "/rows",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000,
+          "url": "${ENV:FORMS_API_BASE}/api/modules/forms/export/submissions?after_id={incremental}&limit=2000"
+        }
+      },
+      "id": "src",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "type": "source"
+    },
+    {
+      "data": {
+        "componentId": "code.sql",
+        "label": "容量哨兵：本窗是否顶到 limit",
+        "properties": {
+          "sql": "SELECT 'truncation_risk' AS violation, CAST(n.c AS VARCHAR) AS detail FROM (SELECT count(*) AS c FROM input) n WHERE n.c >= 2000"
+        }
+      },
+      "id": "cap",
+      "position": {
+        "x": 280,
+        "y": 200
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "ctl.die",
+        "label": "顶到 limit 即拒写湖（防静默截断）",
+        "properties": {
+          "condition": "has-rows",
+          "message": "forms 提交本窗顶到服务端 limit(2000)（{rows} 行违规）⇒ **可能静默截断**，拒绝采集与写湖。处置：缩短调度间隔（窗口变小）或走 PR 提服务端上限——别让「少采」看起来像「采完了」"
+        }
+      },
+      "id": "dcap",
+      "position": {
+        "x": 560,
+        "y": 200
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "xf.unionall",
+        "label": "合流：数据路径 + 哨兵路径（哨兵 0 行时不贡献）",
+        "properties": {
+          "matchBy": "name"
+        }
+      },
+      "id": "unionall",
+      "position": {
+        "x": 840,
+        "y": 0
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "code.sql",
+        "label": "投影到契约列（逐列同序）",
+        "properties": {
+          "sql": "SELECT\n  '${datetime}' AS batch_id,\n  CAST('${date}' AS DATE) AS bizday,\n  CAST(o.submission_id AS BIGINT) AS submission_id,\n  CAST(o.form_def_id AS VARCHAR) AS form_def_id,\n  CAST(o.submitted_at AS TIMESTAMPTZ) AS submitted_at,\n  CAST(to_json(o.payload) AS VARCHAR) AS payload\nFROM input o"
+        }
+      },
+      "id": "shape",
+      "position": {
+        "x": 1120,
+        "y": 0
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "qa.contract",
+        "label": "契约断言",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "bizday": "not_null",
+            "form_def_id": "not_null",
+            "payload": "not_null",
+            "submission_id": "not_null",
+            "submitted_at": "not_null"
+          }
+        }
+      },
+      "id": "gate",
+      "position": {
+        "x": 1400,
+        "y": 0
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "snk.minio",
+        "label": "写湖（批次目录防覆写）",
+        "properties": {
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "format": "parquet",
+          "key": "forms/submission/bizday=${date}/batch_id=${datetime}/all.parquet",
+          "mode": "overwrite",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true"
+        }
+      },
+      "id": "sink",
+      "position": {
+        "x": 1680,
+        "y": 0
+      },
+      "type": "sink"
+    }
+  ],
+  "version": 1,
+  "id": "forms.submission.l0"
+}

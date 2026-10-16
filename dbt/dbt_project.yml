@@ -56,6 +56,16 @@ vars:
   # 出处：contracts/common/lemeng.branch.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
   # 消费者 = `stg_lemeng_branch`（唯一）；分域单点：每个域一个 var，谁读哪个见对应 staging 的头注。
   lemeng_branch_prefix: 'lemeng/dim_branch'
+  #
+  # ── **forms 域**前缀（新湖；M1.4 / issue #729）─────────────────────────────────
+  # 表单提交（通用域：任何表单同表，新表单只是新的 form_def_id 值）：
+  # s3://<bucket>/forms/submission/bizday=<采集日>/batch_id=<run id>/all.parquet
+  # 出处：contracts/common/forms.submission.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
+  # 消费者 = `stg_forms_submission`（唯一）。
+  # ⚠️ `batch_id` 作分区键是**刻意的**：ADR-0005 §13.1 ② 实测 snk.parquet 的 append+分区
+  #    实际是**覆写**（分区固定文件名，二轮抹一轮）⇒ 追加语义靠「批次目录」实现。
+  # ⚠️ 租户维度**不在路径里**（org 由 subject_org() 注入，见该 macro 与契约 description）。
+  forms_submission_prefix: 'forms/submission'
   # 乐檬**商品维**前缀（全量快照；不含 bucket / 协议）：
   # s3://<bucket>/lemeng/dim_item/system_book=<账套>/snapshot=<YYYY-MM-DD>/all.parquet
   # 出处：contracts/common/lemeng.item.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
