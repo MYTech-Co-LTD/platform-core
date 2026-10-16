@@ -56,6 +56,10 @@
 （与 8.1 的 `=== true` 不同）⇒ **是否也接受对象形（逐字段）待 T0 核**；T0 一律先用布尔 `true`。
 `protocol` **只接受 `http/protobuf`**。生产当前**一个都没配**。
 
+⚠️ **订正 2（T0 实测追加）**：导出器是**独立插件** `@openclaw/diagnostics-otel`（镜像是自带，
+但实例里状态 **disabled**）——**必须先 `openclaw plugins enable diagnostics-otel`**，
+否则 `diagnostics.otel` 配置写了也**没人读、静默零导出**（T0 第一次取证就栽在这，见 §2.3 U4）。
+
 **部署产物 span 属性词表**（`/app` 实测）：`gen_ai.input.messages` · **`gen_ai.output.messages`** ·
 `gen_ai.tool.call.arguments|result|id` · `gen_ai.conversation.id` · `gen_ai.agent.name|id` ·
 `openclaw.outcome|reason|errorCategory`。
@@ -78,9 +82,10 @@ traces 落 stream **`default`**（type=traces）；**OO 原生认 GenAI 语义�
 
 | # | 待验 | 为什么必须验 | 代价 |
 |---|---|---|---|
-| U1 | 开 `captureContent` 后**思考是否原样落进 `gen_ai.output.messages`**、有无截断 | 静态推断「会」（策略抓响应消息 + 该消息含 thinking），但**无真机证据** | 改 `openclaw.json` + 重启容器，实测一次切换约 **18 分钟通道中断** |
+| U1 | ~~开 `captureContent` 后思考是否原样落进 `gen_ai.output.messages`~~ | **已实测（2026-10-16 T0）：不落。** 思考块**在** span 里，但 `{"type":"reasoning","redacted":true}`——**正文被抹掉**；同轮 `reasoning_output_tokens` = 70/211/81（确实产生并计数）。⇒ **主通道回退会话库**。取证见 `docs/superpowers/notes/2026-10-16-t0-span-inventory.md` §3.3 | 已完成 |
 | U2 | traces 流的**保留期**（现读得 `data_retention: 0`，实际天数未定） | 循环要「持续演进」，保留不够就白搭 | 读/改流设置 |
 | U3 | 生产 org / stream 的**权限面与投放目标** | 开 `captureContent` = 业务正文 + 思考全文进 OO | 裁决（见 §6） |
+| U4 | **`diagnostics-otel` 插件必须单独启用**（T0 实测追加） | 镜像是自带该扩展，但实例里状态 **disabled** ⇒ 只写 `diagnostics.otel` 配置**无人读**，静默零导出。其 README 原文：「Enable the plugin, set `diagnostics.otel.enabled`…」 | 已完成（`openclaw plugins enable diagnostics-otel`） |
 
 ## §3 架构
 
