@@ -561,9 +561,15 @@ app.use('/api/modules/*', patIdentityMiddleware({
 > 新鲜度分档、不做清单）读 `docs/architecture.md` §2.3；接入视角读 `docs/module-onboarding.md` §5。
 >
 > ⚠️ **本节是文档先行的契约**：manifest schema（`packages/platform-sdk/src/manifest.ts`）尚未收
-> 该字段，B1 守卫也未扩——落地随采集首管线（架构 §2.3 实施注记的「四件套」）。落地前在
-> manifest 里写它会被 `ManifestSchema.parse` 拒绝，这不是本节自相矛盾，是「先改文档、再写码」
-> 的既定顺序。
+> 该字段，B1 守卫也未扩——落地随采集首管线（架构 §2.3 实施注记的「四件套」）。
+>
+> ⚠️⚠️ **实施状态警告（2026-10-16 订正）**：落地前在 manifest 里写 `dataDependencies`
+> **不会报错**——`ManifestSchema` 是 `z.object({…})` 且**未加 `.strict()`**，未知字段被
+> Zod **静默剥离**（`scripts/check-manifests.mjs` 经 `checks.ts` 只做 `safeParse`，不枚举未知键；
+> 运行时消费方 `apps/server/src/loader.ts` 走 `ManifestSchema.parse`，同样剥离）。
+> ⇒ 现状是「**写了等于没写、且不报错**」——比"被拒绝"更危险（该能力**静默消失**，
+> 声明面形同虚设）。schema 收 `.strict()` 随采集首管线落地（fail-fast 口径）；在此之前
+> **禁止在 manifest 里写本字段**，跨 schema 读等实现落地后按本节声明。
 
 **它解决的是什么**：本仓**第一个跨模块数据依赖**（`modules/aftersales` 消费数据栈操作面产出的
 档案/订单数据）出现之前，先立规矩——不立，跨模块数据流会以「模块 A 直接 join 模块 B 的表」的
