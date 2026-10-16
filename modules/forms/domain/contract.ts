@@ -176,13 +176,19 @@ export type SubmitResult =
   | { ok: true }
   | {
       ok: false
-      code: 'RESERVED_KEY' | 'NOT_JSON' | 'UNKNOWN_FIELD' | 'SCHEMA_INVALID' | 'DICT_REQUIRED_VIOLATION'
+      code:
+        | 'RESERVED_KEY'
+        | 'NOT_JSON'
+        | 'UNKNOWN_FIELD'
+        | 'READONLY_FIELD'
+        | 'SCHEMA_INVALID'
+        | 'DICT_REQUIRED_VIOLATION'
       detail?: string
     }
 
 /**
- * 提交五道闸。schema 一律是**提交钉住版本**的契约（历史提交按当时版本校验，§14.1）——
- * 调用方用 body_at(pinned version) 取，不认 head。
+ * 提交六道闸（§12.14 闸序 + 本仓的字典绑定闸）。schema 一律是**提交钉住版本**的契约
+ * （历史提交按当时版本校验，§14.1）——调用方用 body_at(pinned version) 取，不认 head。
  * dictLookup 由 storage 注入（ref → 生效 key 集），本函数保持纯度。
  */
 export function validateSubmission(args: {
@@ -216,19 +222,30 @@ export function validateSubmission(args: {
     }
   }
 
-  // 闸 4：ajv 真校验（必填/类型/格式……服务端独立复核，readOnly/前端表现不是边界）
+  // 闸 4：readOnly 服务端复验（issue #722；ADR-0005 §12.11）——契约声明 `readOnly: true` 的
+  // 字段**出现在提交体里即拒**。「存在即写入尝试」：客户端表现（ui:readonly）不是边界，
+  // 连原样回传/带 null 也拒，避免「服务端该不该代填」的歧义。排在 ajv 之前——它是更具体的
+  // 病因（本就不该写这个字段），不该被随后的类型错盖掉。
+  for (const key of Object.keys(obj)) {
+    const prop = (props as Record<string, unknown> | undefined)?.[key]
+    if (prop !== null && typeof prop === 'object' && (prop as Record<string, unknown>)['readOnly'] === true) {
+      return { ok: false, code: 'READONLY_FIELD', detail: `字段 "${key}" 在契约中声明为 readOnly，不接受提交值` }
+    }
+  }
+
+  // 闸 5：ajv 真校验（必填/类型/格式……服务端独立复核，readOnly/前端表现不是边界）
   const validate = ajv.compile(schema)
   if (!validate(payload)) {
     return { ok: false, code: 'SCHEMA_INVALID', detail: ajv.errorsText(validate.errors) }
   }
 
-  // 闸 5：required 绑定字典的字段，值必须 ∈ 生效 key 集（退役值在此拒绝；open 放行）。
+  // 闸 6：required 绑定字典的字段，值必须 ∈ 生效 key 集（退役值在此拒绝；open 放行）。
   // v1 字典绑定只认顶层属性（嵌套/条件分支的绑定随 M1.3 真实表单形状复评——#710 实施期定）。
   for (const [name, prop] of Object.entries((props ?? {}) as Record<string, unknown>)) {
     const rec = prop !== null && typeof prop === 'object' ? (prop as Record<string, unknown>) : undefined
     if (!rec || rec['x-binding'] !== 'required' || typeof rec['x-dict'] !== 'string') continue
     const value = obj[name]
-    if (value === undefined || value === null) continue // 缺省交闸 4（required 由契约决定）
+    if (value === undefined || value === null) continue // 缺省交闸 5（required 由契约决定）
     const active = dictLookup(rec['x-dict'])
     if (typeof value !== 'string' || !active.has(value)) {
       return {
