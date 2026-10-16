@@ -42,6 +42,8 @@ export type GateErrorCode =
   | 'BAD_DICT_REF'
   | 'CONDITIONAL_EMPTY'
   | 'CONDITIONAL_TOPLEVEL'
+  | 'UI_SCHEMA_DRIFT'
+  | 'UNSUPPORTED_WIDGET'
 
 /** 收集契约中全部字典引用（去重）——storage 据此预载各 ref 的生效 key 集。 */
 export function dictRefs(schema: unknown): string[] {
@@ -127,15 +129,104 @@ function collectDictNodes(node: unknown, out: Record<string, unknown>[]): void {
 }
 
 /**
+ * 契约 body 形状（issue #724 定案，2026-10-16）：
+ * **数据事实在 `schema`、UI 事实在 `uiSchema`**——
+ * `x-dict`/`x-binding`/`x-pii`（数据绑定）留 schema；`ui:widget`/`ui:placeholder`/`ui:options`
+ * （表现）进 uiSchema。ADR §12.14/§16 两处均如此描述表单契约。
+ * 两半同在一个 body 内**随版本原子发布**（published 被 DB 触发器锁不可变）⇒ 跨版本无从漂移；
+ * 版本内的一致性由下方 `UI_SCHEMA_DRIFT` / `UNSUPPORTED_WIDGET` 两闸闭合。
+ */
+export interface FormContractBody {
+  schema: Record<string, unknown>
+  /** 可选：没有 UI 意图就不写（RJSF 用默认渲染）。 */
+  uiSchema?: Record<string, unknown>
+}
+
+/**
+ * 渲染层**真实认识**的 `ui:widget` 值（2026-10-16 实测枚举 @rjsf/antd 6.11 注册集 +
+ * core 默认）。⚠️ `cascader` / `signature` **不在内**——ADR §9 明说这两个控件需自研、
+ * 尚未实现；写 `file` 也会渲染失败（PoC 实测，材料清单 #11 因此要求附件不写 widget）。
+ * 物料清单教的 widget 集必须 ⊆ 本集合（单测钉住，防「教 AI 用渲染不出的控件」）。
+ */
+export const SUPPORTED_WIDGETS: ReadonlySet<string> = new Set([
+  'text', 'textarea', 'password', 'radio', 'select', 'checkboxes', 'checkbox',
+  'updown', 'range', 'date', 'datetime', 'alt-date', 'alt-datetime', 'hidden',
+])
+
+/** 从 body 取 schema（提交校验与渲染共用一处，避免各处各写一遍拆包）。 */
+export function schemaOf(body: unknown): Record<string, unknown> | null {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null
+  const s = (body as Record<string, unknown>)['schema']
+  return s !== null && typeof s === 'object' && !Array.isArray(s) ? (s as Record<string, unknown>) : null
+}
+
+/** 收集 uiSchema 里出现的全部 `ui:widget` 名（递归，含 items/嵌套对象）。 */
+function collectWidgets(node: unknown, out: Set<string>): void {
+  if (node === null || typeof node !== 'object') return
+  if (Array.isArray(node)) {
+    for (const it of node) collectWidgets(it, out)
+    return
+  }
+  const rec = node as Record<string, unknown>
+  const w = rec['ui:widget']
+  if (typeof w === 'string') out.add(w)
+  for (const v of Object.values(rec)) collectWidgets(v, out)
+}
+
+/** uiSchema 的顶层键必须都存在于 schema 里**可寻址的顶层字段**（防两半漂移；嵌套 v1 不深查）。 */
+function uiSchemaKeys(uiSchema: Record<string, unknown>): string[] {
+  return Object.keys(uiSchema).filter((k) => k !== 'ui:globalOptions' && !k.startsWith('ui:'))
+}
+
+/**
+ * schema 里**顶层可寻址**的字段 → 定义 映射：根 `properties` ∪ `then`/`else.properties`
+ * ∪ 组合子（allOf/anyOf/oneOf）里的 properties。
+ *
+ * ⚠️ **必须含 `then.properties`**——条件字段按 §12.7 **只**声明在 `then` 里。只查根 properties
+ * 会让两类闸一起出错，2026-10-16 dev-stack 真机链路先后抓到两处：
+ *   ① 漂移闸把合法条件字段误判为「不在 schema 内」（AI 产出的 deadline 被拒）；
+ *   ② **提交闸把条件字段当契约外字段拒掉** ⇒ **任何带条件字段的表单永远提交不了**。
+ * 所以这张表是**两处共用**的唯一事实源（单独一份就会再漂一次）。
+ */
+function declaredFieldDefs(schema: Record<string, unknown>): Map<string, Record<string, unknown>> {
+  const out = new Map<string, Record<string, unknown>>()
+  const addProps = (node: unknown): void => {
+    if (node === null || typeof node !== 'object' || Array.isArray(node)) return
+    const p = (node as Record<string, unknown>)['properties']
+    if (p === null || typeof p !== 'object' || Array.isArray(p)) return
+    for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) out.set(k, v as Record<string, unknown>)
+    }
+  }
+  addProps(schema)
+  for (const branch of ['then', 'else']) addProps(schema[branch])
+  for (const comb of ['allOf', 'anyOf', 'oneOf']) {
+    const arr = schema[comb]
+    if (Array.isArray(arr)) for (const sub of arr) addProps(sub)
+  }
+  return out
+}
+
+/**
  * 发布门 = 编译闸（draft 期自由，publish 前必须过）：
- * ① body 是对象；② 方言 draft-07（2020-12 显式拒）；③ ajv 编译通过；
- * ④ 每个 x-dict 引用格式合法、与 x-binding 成对且 ∈ v1 两档。
+ * ① body 是对象且含 `schema`（对象）、`uiSchema` 若在必须是对象；
+ * ② schema 方言 draft-07（2020-12 显式拒）；③ ajv 编译通过；④ 条件字段两查；
+ * ⑤ 每个 x-dict 引用格式合法、与 x-binding 成对且 ∈ v1 两档；
+ * ⑥ **新增**：uiSchema 键 ⊆ schema.properties（防 scope 漂移）；
+ * ⑦ **新增**：uiSchema 用的 ui:widget ∈ SUPPORTED_WIDGETS（渲染层不认识的一律拒）。
  */
 export function compileGate(body: unknown): GateResult {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
     return { ok: false, code: 'SCHEMA_COMPILE', detail: '契约 body 必须是 JSON 对象' }
   }
-  const schema = body as Record<string, unknown>
+  const schema = schemaOf(body)
+  if (schema === null) {
+    return { ok: false, code: 'SCHEMA_COMPILE', detail: '契约 body 必须含 schema（{schema, uiSchema?} 形状，见 #724）' }
+  }
+  const rawUi = (body as Record<string, unknown>)['uiSchema']
+  if (rawUi !== undefined && (rawUi === null || typeof rawUi !== 'object' || Array.isArray(rawUi))) {
+    return { ok: false, code: 'SCHEMA_COMPILE', detail: 'uiSchema 必须是 JSON 对象（缺省则不写）' }
+  }
   const meta = schema['$schema']
   if (meta !== undefined && (typeof meta !== 'string' || !DRAFT07_METASCHEMA.has(meta))) {
     return {
@@ -166,6 +257,26 @@ export function compileGate(body: unknown): GateResult {
       if (ref === undefined) return { ok: false, code: 'BAD_DICT_REF', detail: 'x-binding 必须与 x-dict 成对出现' }
       if (typeof binding !== 'string' || !(BINDINGS as readonly string[]).includes(binding)) {
         return { ok: false, code: 'BAD_BINDING', detail: `x-binding "${String(binding)}" 不在 v1 两档（required|open，P7）` }
+      }
+    }
+  }
+  if (rawUi !== undefined) {
+    const uiSchema = rawUi as Record<string, unknown>
+    const declared = declaredFieldDefs(schema)
+    for (const key of uiSchemaKeys(uiSchema)) {
+      if (!declared.has(key)) {
+        return { ok: false, code: 'UI_SCHEMA_DRIFT', detail: `uiSchema 的键 "${key}" 不在 schema 的顶层字段内（两半漂移）` }
+      }
+    }
+    const widgets = new Set<string>()
+    collectWidgets(uiSchema, widgets)
+    for (const w of widgets) {
+      if (!SUPPORTED_WIDGETS.has(w)) {
+        return {
+          ok: false,
+          code: 'UNSUPPORTED_WIDGET',
+          detail: `ui:widget "${w}" 渲染层不认识（可用：${[...SUPPORTED_WIDGETS].join('/')}）`,
+        }
       }
     }
   }
@@ -213,12 +324,13 @@ export function validateSubmission(args: {
   }
   const obj = payload as Record<string, unknown>
 
-  // 闸 3：顶层契约外字段 → 显式拒（不静默丢弃；v1 只查顶层，嵌套为不透明值——实施期定已录 #710）
-  const props = (schema as Record<string, unknown>)['properties']
-  const declared = new Set(props !== null && typeof props === 'object' ? Object.keys(props) : [])
+  // 闸 3：契约外字段 → 显式拒（不静默丢弃）。可寻址集含 `then/else.properties` 与组合子——
+  // 条件字段按 §12.7 只声明在 then 里，只查根 properties 会把它们当契约外字段拒掉
+  // ⇒ 带条件字段的表单永远提交不了（2026-10-16 真机实测抓到）。
+  const declared = declaredFieldDefs(schema as Record<string, unknown>)
   for (const key of Object.keys(obj)) {
     if (!declared.has(key)) {
-      return { ok: false, code: 'UNKNOWN_FIELD', detail: `字段 "${key}" 不在契约内（顶层）` }
+      return { ok: false, code: 'UNKNOWN_FIELD', detail: `字段 "${key}" 不在契约内（顶层字段）` }
     }
   }
 
@@ -227,8 +339,7 @@ export function validateSubmission(args: {
   // 连原样回传/带 null 也拒，避免「服务端该不该代填」的歧义。排在 ajv 之前——它是更具体的
   // 病因（本就不该写这个字段），不该被随后的类型错盖掉。
   for (const key of Object.keys(obj)) {
-    const prop = (props as Record<string, unknown> | undefined)?.[key]
-    if (prop !== null && typeof prop === 'object' && (prop as Record<string, unknown>)['readOnly'] === true) {
+    if (declared.get(key)?.['readOnly'] === true) {
       return { ok: false, code: 'READONLY_FIELD', detail: `字段 "${key}" 在契约中声明为 readOnly，不接受提交值` }
     }
   }
@@ -240,10 +351,9 @@ export function validateSubmission(args: {
   }
 
   // 闸 6：required 绑定字典的字段，值必须 ∈ 生效 key 集（退役值在此拒绝；open 放行）。
-  // v1 字典绑定只认顶层属性（嵌套/条件分支的绑定随 M1.3 真实表单形状复评——#710 实施期定）。
-  for (const [name, prop] of Object.entries((props ?? {}) as Record<string, unknown>)) {
-    const rec = prop !== null && typeof prop === 'object' ? (prop as Record<string, unknown>) : undefined
-    if (!rec || rec['x-binding'] !== 'required' || typeof rec['x-dict'] !== 'string') continue
+  // 走同一张可寻址表（含 then/else）——条件分支里的字典字段同样受管。
+  for (const [name, rec] of declared) {
+    if (rec['x-binding'] !== 'required' || typeof rec['x-dict'] !== 'string') continue
     const value = obj[name]
     if (value === undefined || value === null) continue // 缺省交闸 5（required 由契约决定）
     const active = dictLookup(rec['x-dict'])

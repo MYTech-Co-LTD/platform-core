@@ -11,7 +11,7 @@ import { Alert, Card, Descriptions, Spin, Typography } from 'antd'
 // 两个形态在此归一为本形态）。validator-ajv8 = draft-07 原生，与服务端 ajv 同源（§12.1）。
 import AntdForm from '@rjsf/antd'
 import validator from '@rjsf/validator-ajv8'
-import { apiGet, apiSend, injectDictEnums, loadOptions, schemaDictRefs } from './api'
+import { apiGet, apiSend, loadOptions, renderModelOf, schemaDictRefs } from './api'
 import type { OptionItem, VersionInfo } from './api'
 
 interface HeadInfo {
@@ -69,7 +69,7 @@ export default function FillForm({ assetId }: { assetId: string | undefined }) {
   }, [assetId])
 
   const rendered = useMemo(
-    () => (head === null ? null : injectDictEnums(head.body as object, options)),
+    () => (head === null ? null : renderModelOf(head.body, options)),
     [head, options],
   )
 

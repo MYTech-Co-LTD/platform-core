@@ -49,7 +49,7 @@ describe('forms 模块声明（#708/#710）', () => {
   })
 
   it('声明面断言：发布/回滚/退役端点必须是 forms:publish（人 gate 的 scope 落点）；写面不出现 guest', () => {
-    expect(mod.manifest.api?.internal?.length).toBe(21)
+    expect(mod.manifest.api?.internal?.length).toBe(23)  // 21 + AI 起草 /generate + 管理面 /mcp-manage（#724）
     expect(mod.manifest.guest).toBeUndefined() // M1.2 无 guest 面（§14.4 防滥用随 M1.3 填报通道）
     for (const e of mod.manifest.api?.internal ?? []) {
       const key = `${e.method} ${e.path}`

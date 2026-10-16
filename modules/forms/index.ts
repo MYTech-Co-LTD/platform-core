@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse as parseYaml } from 'yaml'
 import { ManifestSchema, defineModule } from '@platform/sdk'
+import { llmFromEnv, openAiCompatModel } from './domain/llm'
 import { createFormsRouter } from './routes'
 
 // ⚠️ manifest 路径用 node:path 取（不 new URL(rel, import.meta.url)）：happy-dom 环境下
@@ -18,7 +19,14 @@ const manifest = ManifestSchema.parse(
   parseYaml(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'manifest.yaml'), 'utf8')),
 )
 
+// AI 起草的模型（#724）：`FORMS_LLM_*` 优先、缺省回落 `DATA_LLM_*`；都没配 ⇒ null
+// ⇒ /generate 回可解释的 503（不是 500，也不是启动失败）。在模块加载期解析一次。
+const chatModel = (() => {
+  const cfg = llmFromEnv()
+  return cfg === null ? null : openAiCompatModel(cfg)
+})()
+
 export default defineModule({
   manifest,
-  createRouter: ({ pool }) => createFormsRouter({ pool }),
+  createRouter: ({ pool }) => createFormsRouter({ pool, chatModel }),
 })

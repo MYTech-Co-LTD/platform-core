@@ -3,7 +3,7 @@
 // 排障口径）；应用层只补两处——契约校验（domain/contract）与 FormsError 机检错误码。
 // 主体（org）一律来自调用方传入的 identity.orgId，本层绝不读请求。
 import type { Pool } from 'pg'
-import { dictRefs, validateSubmission } from './domain/contract'
+import { dictRefs, schemaOf, validateSubmission } from './domain/contract'
 
 /** 机检错误码载体：routes 按 code 映射 HTTP 状态与文案，不解析 message。 */
 export class FormsError extends Error {
@@ -61,6 +61,15 @@ export async function headVersion(pool: Pool, org: string, assetId: string): Pro
 export async function bodyAt(pool: Pool, org: string, assetId: string, version: number): Promise<object | null> {
   const { rows } = await pool.query('select forms.body_at($1,$2,$3,$4) body', [org, KIND, assetId, version])
   return rows[0]?.body ?? null
+}
+
+/** 该资产在本租户下是否已有任何版本（AI 起草重名时据此拒，**不覆盖**）。 */
+export async function assetExists(pool: Pool, org: string, assetId: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    'select 1 from forms.asset_version where org=$1 and kind=$2 and asset_id=$3 limit 1',
+    [org, KIND, assetId],
+  )
+  return rows.length > 0
 }
 
 export interface VersionRow {
@@ -138,8 +147,11 @@ export async function submit(
 ): Promise<{ id: string; version: number }> {
   const version = await headVersion(pool, org, assetId)
   if (version === null) throw new FormsError('NO_PUBLISHED_HEAD', '表单尚无发布版本，不能提交')
-  const schema = await bodyAt(pool, org, assetId, version)
-  if (schema === null) throw new FormsError('NO_PUBLISHED_HEAD', '表单尚无发布版本，不能提交')
+  const body = await bodyAt(pool, org, assetId, version)
+  if (body === null) throw new FormsError('NO_PUBLISHED_HEAD', '表单尚无发布版本，不能提交')
+  // 契约 body = {schema, uiSchema?}（#724 定案）；校验只吃 schema 那一半
+  const schema = schemaOf(body)
+  if (schema === null) throw new FormsError('CONTRACT_MALFORMED', '发布版本的契约缺 schema')
 
   // 预载契约引用的生效 key 集（validateSubmission 的 dictLookup 是同步接口 ⇒ 先 await 预载）
   const cache = await activeKeysByRef(pool, org, schema)

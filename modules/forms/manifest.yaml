@@ -20,6 +20,10 @@ api:
     - { method: GET,    path: /defs,                                scope: forms:view }
     - { method: GET,    path: /defs/:assetId,                       scope: forms:view }
     - { method: POST,   path: /defs,                                scope: forms:manage }
+    # AI 起草（#724）：自然语言 → 契约草案 → 落 draft（永不自动发布）。scope 与起草同档
+    - { method: POST,   path: /generate,                            scope: forms:manage }
+    # 管理面 MCP 端点（#724）：工具 list_forms / generate_form_draft；**不含任何发布类工具**
+    - { method: POST,   path: /mcp-manage,                          scope: forms:manage }
     - { method: PUT,    path: /defs/:assetId/versions/:v,           scope: forms:manage }
     - { method: DELETE, path: /defs/:assetId/versions/:v,           scope: forms:manage }
     - { method: POST,   path: /defs/:assetId/versions/:v/publish,   scope: forms:publish }

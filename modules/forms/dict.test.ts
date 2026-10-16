@@ -119,7 +119,7 @@ describePg('forms 字典（P4 双档 + 四纪律）', () => {
       },
       required: ['level'],
     }
-    await store.newDraft(pool, ORG_A, `flow-${SUF}`, schema, 'u1')
+    await store.newDraft(pool, ORG_A, `flow-${SUF}`, { schema }, 'u1')
     await store.publish(pool, ORG_A, `flow-${SUF}`, 1, 'human-1')
 
     const ok = await store.submit(pool, ORG_A, `flow-${SUF}`, { level: 'p1', note: '自由文本' }, 's1')
@@ -138,7 +138,7 @@ describePg('forms 字典（P4 双档 + 四纪律）', () => {
       properties: { region: { type: 'string', 'x-dict': `gdict:${GDICT}`, 'x-binding': 'required' } },
       required: ['region'],
     }
-    await store.newDraft(pool, ORG_B, `gflow-${SUF}`, schema, 'u1')
+    await store.newDraft(pool, ORG_B, `gflow-${SUF}`, { schema }, 'u1')
     await store.publish(pool, ORG_B, `gflow-${SUF}`, 1, 'human-1')
     await expect(
       store.submit(pool, ORG_B, `gflow-${SUF}`, { region: 'nope' }, 's1'),

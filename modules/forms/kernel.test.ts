@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from './test-util'
-import { validateSubmission } from './domain/contract'
+import { schemaOf, validateSubmission } from './domain/contract'
 
 // 内核断言套件（issue #710）：explore/poc/lifecycle-unified 28 断言的多租户工程化对账。
 // 口径（RESULTS.md §1/§2）：不经应用层，**直接 pool.query 调 SQL 函数与裸 SQL**——
@@ -24,11 +24,14 @@ const A_PUB = 'k-pub'
 const A_FLOW = 'k-flow'
 const A_NOHEAD = 'k-nohead'
 
-const bodyV1 = { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }
+// 契约 body 形状 = {schema, uiSchema?}（#724 定案）——夹具随之包一层
+const bodyV1 = { schema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } }
 const bodyV2 = {
-  type: 'object',
-  properties: { name: { type: 'string' }, region: { type: 'string' } },
-  required: ['name', 'region'],
+  schema: {
+    type: 'object',
+    properties: { name: { type: 'string' }, region: { type: 'string' } },
+    required: ['name', 'region'],
+  },
 }
 
 describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
@@ -106,13 +109,13 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
     expect(row1.rows[0].status).toBe('draft')
     expect(row1.rows[0].created_by).toBe('drafter-1')
     await pool.query('select forms.update_draft($1,$2,$3,$4,$5)', [
-      ORG, KIND, A_DRAFT, 1, JSON.stringify({ revised: true }),
+      ORG, KIND, A_DRAFT, 1, JSON.stringify({ schema: { revised: true } }),
     ]) // D2
     const row2 = await pool.query(
       'select body from forms.asset_version where org=$1 and asset_id=$2 and version=1',
       [ORG, A_DRAFT],
     )
-    expect(row2.rows[0].body).toEqual({ revised: true }) // D4 回读改后 body
+    expect(row2.rows[0].body).toEqual({ schema: { revised: true } }) // D4 回读改后 body
     await pool.query('select forms.drop_draft($1,$2,$3,$4)', [ORG, KIND, A_DRAFT, 1]) // D3
     const gone = await pool.query(
       'select count(*)::int n from forms.asset_version where org=$1 and asset_id=$2',
@@ -226,7 +229,7 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
     expect(await head(A_FLOW)).toBe(2)
     const { rows } = await pool.query('select forms.body_at($1,$2,$3,$4) body', [ORG, KIND, A_FLOW, 2])
     const r = validateSubmission({
-      schema: rows[0].body,
+      schema: schemaOf(rows[0].body) as object,
       payload: { name: '张三' }, // 旧形状：缺 v2 新必填 region
       dictLookup: () => new Set(),
     })
@@ -277,7 +280,7 @@ describePg('forms 生命周期内核（PoC 28 断言对账）', () => {
   it('T2：退役后，v1 期间的历史提交仍按钉住版本契约校验通过', async () => {
     const { rows } = await pool.query('select forms.body_at($1,$2,$3,$4) body', [ORG, KIND, A_FLOW, 1])
     const r = validateSubmission({
-      schema: rows[0].body,
+      schema: schemaOf(rows[0].body) as object,
       payload: { name: '张三' },
       dictLookup: () => new Set(),
     })
