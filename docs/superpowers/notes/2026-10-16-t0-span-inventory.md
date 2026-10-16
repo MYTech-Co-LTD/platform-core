@@ -258,3 +258,51 @@ openclaw.harness.run (10.78s)
 | **回读 OO 计数**（按 kind） | `thinking` **137** · `text` 113 · `tool_call` 91 · `custom` 69 · `user` 67 · `tool_result` 59 · `other` 30 |
 | **幂等复跑** | `rows=0 watermark=668` ⇒ **不翻倍** ✅ |
 | 思考正文可查 | ✅ 逐字（含 T0 那条 CLI 轮的真实轨迹） |
+
+---
+
+## 5. 阶段二 T2：撞墙判据（三条结构型）
+
+### 5.1 设计订正：判据**读本机会话库**，不读 OO
+
+计划原文说「从 OO 读 `askdata_trace` 再判」。**实测行不通**：宿主那份凭据是 **ingestion token（只写）**——
+打 `_search` 直接 **401**（文件头注原话就写着「只写、可按机器单独停用」）。
+
+⇒ 改为**读本机 sqlite**（思考的事实源本来就在那），只**写** OO。好处：宿主凭据保持只写（合最小权限），
+且判据与导出共用**同一套 normalizer**（`attribute.py` 用 importlib 加载 `export-transcript.py`，避免两处口径漂移）。
+
+### 5.2 三条规则与首轮命中
+
+| rule | 判据（纯结构） | layer_hint | 首轮(ver1) | **修后(ver2)** |
+|---|---|---|---|---|
+| `same_tool_retry` | 同 session 内相邻两条 `tool_call` 的 `tool_name` 与 `tool_args` **全同** | 指令面 | 21 | **21** |
+| `same_error_twice` | 相邻两条 `tool_result` 文本全同 **且 `is_error`** | 指令面/回包面 | 19 | **18** |
+| `truncated_then_recall` | `tool_result` 含**真** `"truncated":true`，其后又有同名工具调用 | 指令面 | 8 | **0** |
+| | | **合计** | 48 | **39** |
+
+### 5.3 人工核对抓到的两类**误判**（计划的 Step 2 就要求记这个）
+
+| # | 误判形态 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | **两条相同的「成功」回包**被当成「同错两次」（实例：`{"status":"ok",…,"total":"3018431.77"}` 两条全同） | 规则只比文本，**没强制 `is_error`** | 加 `and cur[1]`（即 is_error 必须为真） |
+| 2 | **成功回包里那句 `"truncated":false`** 被裸词 `truncated` 命中（8 条**全是**假阳性） | 裸子串匹配 | 只认 `"truncated":true` |
+
+修后复核：被判中的 39 条逐条查过 `is_error`，**全部为 `true`** ⇒ 无残留假阳性；
+`truncated_then_recall` 在本次窗口内**真命中为 0**（不是判据没跑，是这个数据里确实没有真截断）。
+
+### 5.4 计划的硬性自检：**通过**
+
+T0 那条现成的撞墙轨迹（CLI 轮里模型对同一 `query_data` 试了两次、两次同样失败于 `requesterSenderId 缺失`）
+被**同时**两条规则命中：
+
+| seq | rule | evidence |
+|---|---|---|
+| 665 | `same_tool_retry` | `a_seq=662, tool=query_data, args={"args":{"bizday":{"from":"2026-10-15","to":"2026-10-15"},"total":true},"metricId":"lemeng:retail:net_sales"}` |
+| 666 | `same_error_twice` | `a_seq=663, text={"error":"无法识别请求者身份（requesterSenderId 缺失）…"}` |
+
+### 5.5 已知边界（如实带走）
+
+- **`askdata_stuck` 流会跨轮累积**：本轮先投了 ver1 的 48 条、再投 ver2 的 39 条，**没有去重或清理**
+  （同名流删不掉——见 §4.3 的删除墓碑）。⇒ 消费方必须 `where rule_ver=2`；**P2 应加 run_id 并做幂等**。
+- **判据只覆盖结构型三条**：需要阈值的（行数超预算、触顶 `MAX_AGENT_TURNS`）**未实现**，等真实分布出来再定。
+- `same_tool_retry` 会把**内层调度工具**（`tool_name='tool_call'`）的重复也计入——它是不是「撞墙」待定，先如实留着。
