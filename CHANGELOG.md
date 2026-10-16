@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.132.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.132.2...v0.132.3) - 2026-10-16
+- 【修复】server: wechat-oa 访客刷新断言去秒边界——改「新 sfa > 旧 sfa + 请求前下界」（Closes #459） ([#730](https://github.com/MYTech-Co-LTD/platform-core/pull/730), [5c2d9c6](https://github.com/MYTech-Co-LTD/platform-core/commit/5c2d9c62f7d5669dcb91a0ed54cf3968c43bc24f))
+
+
 ## [0.132.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.132.1...v0.132.2) - 2026-10-16
 - 【修复】data: L2 写面加迭代结构预检——超深 expr 返回干净 400 而非 500（Closes #593） ([#728](https://github.com/MYTech-Co-LTD/platform-core/pull/728), [e6e61f2](https://github.com/MYTech-Co-LTD/platform-core/commit/e6e61f257b51602d8aff35c2f9e3a3c934005ce0))
 
