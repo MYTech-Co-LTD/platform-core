@@ -69,20 +69,16 @@ select sum(g_gross) / nullif(sum(r_net), 0) as value, ... from fct_hq_outbound
 
 ---
 
-## Task 0: 开工前四项核对（不核完不动手）
+## Task 0: 开工前核对 —— ✅ 已执行完毕（2026-10-16）
 
-前四项都是**会改变设计**的未知，逐项探明再进波次。
+五项全部核完，**两项改变了原设计**（②与新增的 ⑥）。结论见文末「核对补记」。
 
-- [ ] **① 费用项目取值清单**：真机看 `fct_branch_expense.expense_type` 的**实际取值分布**——「补损类」与「补贴类」（直播补贴/小程序/线下补贴）各有哪些字面值。**没有这份清单，4/5 两条率类的分子筛不出来。** 探法：数据面机 exec 进仓查该列 distinct + 计数。
-- [ ] **② 批发出库有无 `client_fid`**：`fct_hq_outbound` 现行列**没有 `client_fid`** ⇒ **客户级**费用后贡献做不了。核实 `stg_lemeng_wholesale_out` / `stg_lemeng_wholesale_return` 里有没有客户号列：
-  - 有 ⇒ W2 顺带给 `fct_hq_outbound` 补列（并评估对既有 grain/断言/对账的连带影响）；
-  - 无 ⇒ **本批只做门店级/战区级/总仓级**，客户级单独立项（写进 issue 评论）。
-- [ ] **③ 采购部门维度**：`fct_purchase` 现行列**无部门**（水果/标品靠部门筛）。核实 `stg_lemeng_item` / dim 侧有无部门列可 join ⇒ 决定 6/7 两条是「一条带部门维度」还是「各声明一条」。
-- [ ] **④ `region_share` 的窗口形态**：占比分母是「同完整范围 Nw 之和」。核实 `select sum(sum(x)) over () as value, … from rel group by …` 这一形态能否通过现有编译/执行链（`parseL1Select` 的形状契约、外层 `GROUP BY <grain>` 拼法、`authz.literal`）。
-  - 能 ⇒ 按 ratio 声明（分母写窗口形式）；
-  - 不能 ⇒ `01-04` 的「占比」部分**降级为不做**（Nw 本身仍可出），并在 issue 里记明原因。
-- [ ] **⑤ `05-08` 列语义**：确认 `fct_purchase.purchase_item_amount` 是**数量**（6 位小数）而非金额，`purchase_item_money` 是金额（2 位）。
-- [ ] 五项结论追加到本文件末尾「核对补记」节。
+- [x] **① 费用项目取值** ⇒ 补损类 = `产品售后补损`；补贴类 = `抖音直播补贴`。**客户文档提到的「小程序或线下补贴」在数据里不存在** ⇒ `03-04` 实际只有一类补贴。
+- [x] **② 批发出库 `client_fid`** ⇒ **staging 层有、mart 层没有**。客户级**可做**，但需设计（见补记②）。
+- [x] **③ 采购部门维度** ⇒ `stg_lemeng_item` 有 `item_department_code/id/name`，可 join。
+- [x] **④ 窗口形态** ⇒ **可过**。`L1_SELECT_RE` 只判「`<表达式> as value … from <单关系>`」形状，窗口函数在表达式位合法；PG 支持 window-over-aggregate。
+- [x] **⑤ `05-08` 列语义** ⇒ `purchase_item_amount` = **采购数量**（14,6），`purchase_item_money` = **采购金额**（14,2）。
+- [x] **⑥（新增）`wholesale_out.branch_num` 是发货方，不是门店** ⇒ **动摇 W2 的 join 键假设**，见补记⑥。
 
 ## Task 1: W1 —— A 组 3 项（零新构件）
 
@@ -106,7 +102,8 @@ select sum(g_gross) / nullif(sum(r_net), 0) as value, ... from fct_hq_outbound
 
 - **粒度** `(system_book, bizday, branch_num, region_id)` —— 出库侧 `fct_hq_outbound` 折叠掉 `domain`（客户 01-01「先分别汇总配送和批发后合并」），费用侧 `fct_branch_expense` 按 (账套,业务日,门店) 汇总。
 - **列**：`r_net` / `c_cost` / `g_gross`（出库构件）/ `e_net`（门店费用净额）/ `q_loss`（补损类净额，取值待 Task 0 ①）/ `q_subsidy`（补贴类净额）/ `n_net = r_net − c_cost − e_net`。
-- **join 键**：`(system_book, bizday, branch_num)` —— 两侧语义已核对（出库 branch_num = 收货门店；费用 branch_num = 归属门店，客户文档 01-03 明确「按对象ID和期间连接」）。
+- **join 键（⚠️ 已按 Task 0 ⑥ 修正）**：**门店面**用 `(system_book, bizday, branch_num)` 且**只取 transfer 域**（`transfer_out.branch_num` = 调入门店 = 收货门店 ✓）；**客户面**用 `(system_book, bizday, client_fid)` 走 wholesale 域。
+  **不可按 branch_num join wholesale**——`wholesale_out.branch_num` 是**发货方编号（99=管理中心）**，与「归属门店」不是一回事（见补记⑥）。
 - ⚠️ **总仓级/战区级 vs 门店级的 E 口径差异**：总仓级可把**客户费用**一并加总；门店级加不进（客户费用按 client 归集）。**这一差异必须写进 `definition`**，否则上卷会算错。
 
 - [ ] **Step 1:** 构件 + 断言；真机 `dbt run` 通过（PASS 计数 = TOTAL + 新增）。
@@ -143,3 +140,40 @@ select sum(g_gross) / nullif(sum(r_net), 0) as value, ... from fct_hq_outbound
 - **逐字期望值**：Task 0 的五项结论要写进本文件，**不要只留在会话里**——否则后文（声明形状、grain）与结论会自相矛盾。
 - **门禁面**：`check-data-models` 规则 ① 只认 staging 的 `r['列']` 取列模式——新 mart 读 `ref(...)` 不受它管，但**新对账脚本**若直读 parquet 必须用该形态。
 - **本计划的可行性判断未经运行**：全部依据客户附录公式 + 设计稿波次矩阵 + 真机 `select_sql` 抽样 + mart schema 阅读；实施逐条以真机为准。
+
+---
+
+## 核对补记（2026-10-16 Task 0 已执行完毕）
+
+**① 费用项目实际取值**（真机 `staging.fct_branch_expense` / `fct_client_expense` 全量分组）：
+
+```
+门店侧  产品售后补损 167 行 +13473.86 ｜ 抖音直播补贴 103 行 +5174.47
+        保温箱使用费（含干冰） 7 行 −50.00 ｜ 费用收款 1 行 −1182.50
+客户侧  产品售后补损 3 行 +13.21 ｜ 抖音直播补贴 2 行 +38.00
+```
+
+- 补损类 = `产品售后补损`；补贴类 = `抖音直播补贴`。
+- ⚠️ 客户文档 `03-04` 写「分别筛补损、直播补贴、**小程序或线下补贴**项目」——**后两类在数据里不存在**（采集窗口短，或该账套确无）。`definition` 按**实际取值**写，并注明客户文档所列项暂无数据。
+- ⚠️ 样本量小（门店侧合计 278 行，费用采集 10-13 才上线）⇒ **率类的分子分母都还在长**，对账阈值按当前量级设，别写成固定值。
+
+**② 批发出库的 `client_fid`**：`stg_lemeng_wholesale_out` / `wholesale_return` **都有 `client_fid`**（契约已声明），但 `fct_hq_outbound` **没带上来**。⇒ 客户级费用后贡献**可做**，两条路各有代价：
+
+- **(a) 给 `fct_hq_outbound` 补 `client_fid`** ⇒ **必须同时扩 grain**（否则批发侧一个 (账套,业务日,domain,门店,区域) 下有多个客户）⇒ 现有 grain 断言与 `outbound:net_amount` 的对账**会一起红**。连带面大。
+- **(b) 单建客户面构件** ⇒ 批发域的 R/C 口径**在第二处重算**，违反「口径只定义一次」。
+
+⇒ **本批只做门店面与总仓/战区级**（`01-03`/`02-04`/`08-05`/`02-07`/`03-04`/`07-05` 都够用）；**客户面单独立项**，把 (a)/(b) 取舍留给那次。
+
+**③ 采购部门维度**：`stg_lemeng_item` 有 `item_department_code` / `item_department_id` / `item_department_name` ⇒ `05-06`（水果）/`06-04`（标品）可经 `dim_item` join 筛部门，与 `01-07` **共用一条 `purchase:cr5`**，部门作 grain 维度。
+⚠️ `fct_purchase` 现行列**无部门**，且 dim_item 是**快照表**——join 必须取最新快照，否则按 snapshot 放大（`fct_hq_outbound` 的 `branch_latest` 是现成范式）。
+
+**④ `region_share` 窗口形态**：**可做**。`L1_SELECT_RE` 只要求 `select <表达式> as value[, 维度…] from <单关系>`，表达式位允许窗口函数；`authz` 拼的是 `<selectSql> WHERE … GROUP BY <grain> [ORDER BY bizday DESC] LIMIT n`，`sum(sum(x)) over ()` 在 PG 里是合法的 window-over-aggregate。
+⚠️ 两点须写进 `definition`：① 明细查询带 LIMIT 而窗口在 LIMIT **前**求值 ⇒ 被截断行里的 `value` 仍是**全局占比**（不是子集占比）；② 合计 SQL 对占比列求和会得 100%（全范围）——语义合理但须注明。
+
+**⑤ `05-08` 列语义**：`purchase_item_amount` = 采购数量（14,6）；`purchase_item_money` = 采购金额（14,2）。`zero_amount_rows` 写 `sum(case when purchase_item_amount > 0 and purchase_item_money = 0 then 1 else 0 end)`。
+
+**⑥（新增，不在原清单）`wholesale_out.branch_num` 是发货方，不是门店**：
+
+- 契约逐字：`branch_num int 发货方编号（99=管理中心/批发仓）`；而 `transfer_out.branch_num` 是「调入门店编号（收货门店）」。
+- 但 `fct_hq_outbound` 的 `schema.yml` 把 wholesale 的 branch_num 描述成「单头门店」——**描述与契约不符**。实施时须先核实 fct 里 wholesale 行 branch_num 的真实取值分布；若恒为 99，**该描述要改**（属顺手修，走同一 PR）。
+- **对 W2 的影响**：不能按 branch_num 把 wholesale 域 join 到门店费用。门店面**只走 transfer 域**；客户面走 `client_fid`。
