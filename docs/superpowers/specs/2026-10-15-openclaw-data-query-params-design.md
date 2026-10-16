@@ -180,3 +180,31 @@ params = grain ∩ 白名单，白名单与类型固定：
   为持久切片设计；问数是会话内临时过滤，重量错配。两层面分工：L2=治理性持久切片，params=问数会话内过滤。
 - **grain 全维推导**（重审前的 B 方案）：对编码维度暴露死参数，参数面噪声化——收窄为白名单后保留推导机制。
 - **逐日等值查询顶区间**：O(N) 查询 + 上下文膨胀 + 「近30天」不可行；T2 顾虑反被区间形态修复（§2.1）。
+
+## 10. 修订三：新鲜度面（2026-10-16，真机验收后的架构复查定案）
+
+> 架构复查结论：准确性与速度两轴已达标（口径正典+对账+主体钉死+auto-total 全量口径；服务端 100–350ms，
+> 端到端慢在 LLM token 而结果已小）。**缺失的是答案的可信边界声明**——平台每段都有新鲜度数据
+> （owners.json 湖锚、物化 receipt、rows 的 bizday 列），但没有一段流进答案；且各源差异巨大
+> （零售 tick 5 分钟准实时 vs 批采集 D+1 16:00 落湖、D+2 03:27 进仓 ≈ 滞后 37h；当日=部分天）。
+
+### 10.1 物化落账（`scripts/lemeng/materialize.sh`）
+
+- dbt 成功后向**仓（pg_duckdb）**写 `CREATE TABLE IF NOT EXISTS data.load_log(materialized_at timestamptz default now(), tests_pass int, tests_error int, status text);` + 一行 `('ok', PASS, ERROR)`（幂等建表；无行则不插）。
+- 为什么在仓内：问数执行池就是仓（DATA_WAREHOUSE_URL）⇒ 新鲜度查询与数据查询同池、单跳；本脚本已具备双容器 exec 基建（:69 取凭据先例），无新增凭据面。
+
+### 10.2 响应带 `data_as_of`（query-service）
+
+- 每次问数响应附 `data_as_of: <load_log 最新 ok 的 materialized_at>`（一次主键级查询，同池）；load_log 空缺 ⇒ **字段缺席**（新鲜度未知 ≠ 捏造）。
+
+### 10.3 确定性截断（authz）
+
+- 明细 SQL 在 `GROUP BY` 与 `LIMIT` 之间补 `ORDER BY bizday DESC`（当 `groupBy` 含 `bizday`；现行 27 条全部命中）——截断集从「任意子集」变「最新优先」，最新分区不再被 cap 藏掉；与 `truncated` 信号配套。totalSql（聚合）不受影响。
+
+### 10.4 汇报纪律（工具描述 + SKILL）
+
+- 「答案必带数据截止：`data_as_of` = 仓库物化时间；无该字段 = 新鲜度未知，如实说明；rows 首行（bizday DESC）即最新分区；当日数据为部分天，须标注。」
+
+### 10.5 投递链（本任务特有）
+
+- `materialize.sh` 在数据面清单 ⇒ 改后必跑 `data-plane-lock.mjs`；merge 后：主项目部署（server/openclaw 镜像）→ **数据面机 sync**（materialize.sh 到 /opt）→ **手动触发一次 materialize job**（load_log 首批落账）→ 探针验 `data_as_of` → 真机问数验新鲜度背书。
