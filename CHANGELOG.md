@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.131.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.131.0...v0.131.1) - 2026-10-16
+- 【修复】data: comparableOf 递归规范化键序——jsonb 读回键序被 PG 重排致 --check 恒判更新（Closes #700） ([#725](https://github.com/MYTech-Co-LTD/platform-core/pull/725), [5f5ebce](https://github.com/MYTech-Co-LTD/platform-core/commit/5f5ebce623d4acf9e5840c8de17220e5868d0716))
+
+
 ## [0.131.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.130.1...v0.131.0) - 2026-10-16
 - 【新增】forms: readOnly 服务端复验（Closes #722） ([#723](https://github.com/MYTech-Co-LTD/platform-core/pull/723), [6fef05c](https://github.com/MYTech-Co-LTD/platform-core/commit/6fef05ceb1c858f549a864e33718f5074cd5ccd1))
 
