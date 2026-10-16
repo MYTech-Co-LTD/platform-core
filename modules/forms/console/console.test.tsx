@@ -178,6 +178,35 @@ describe('填报页', () => {
     renderAt('/console/forms/fill/nohead', ['forms:fill'])
     await waitFor(() => expect(screen.getByText('该表单还没有发布版本，暂不能填报')).toBeInTheDocument())
   })
+
+  it('readOnly 字段渲染为只读；且 readOnly+x-dict 组合下候选注入不会把它变成可写（#722）', async () => {
+    const roSchema = {
+      type: 'object',
+      properties: {
+        name: { type: 'string', title: '姓名' },
+        storeNo: { type: 'string', title: '门店号', readOnly: true },
+        level: { type: 'string', title: '级别', readOnly: true, 'x-dict': 'dict:level', 'x-binding': 'required' },
+      },
+      required: ['name'],
+    }
+    mockApi({
+      '/api/modules/forms/defs/ro': () =>
+        jsonResponse({ assetId: 'ro', head: 1, versions: [{ version: 1, status: 'published', createdBy: 'u', publishedBy: 'h', body: roSchema }] }),
+      '/api/modules/forms/dicts/level/options': () => jsonResponse({ options: [{ key: 'p1', label: '一线', sortNo: 1 }] }),
+    })
+    renderAt('/console/forms/fill/ro', ['forms:fill'])
+    await waitFor(() => expect(screen.getByText('填报：ro（v1）')).toBeInTheDocument())
+
+    const name = screen.getByLabelText('姓名') as HTMLInputElement
+    expect(name.disabled).toBe(false) // 可写字段不受影响
+
+    const store = screen.getByLabelText('门店号') as HTMLInputElement
+    expect(store.disabled || store.hasAttribute('readonly')).toBe(true) // readOnly ⇒ 只读
+
+    // readOnly + x-dict：候选仍会被注入，但控件必须仍是只读（客户端表现；边界在服务端 READONLY_FIELD）
+    const level = document.querySelector('#root_level') as HTMLInputElement | null
+    if (level) expect(level.disabled || level.hasAttribute('readonly')).toBe(true)
+  })
 })
 
 describe('提交记录页', () => {

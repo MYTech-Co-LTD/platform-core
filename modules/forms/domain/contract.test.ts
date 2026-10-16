@@ -195,6 +195,7 @@ describe('validateSubmission（五道闸，按提交钉住的版本契约）', (
   })
 
   it('gdict 引用走同一 dictLookup（前缀透传）', () => {
+
     const schema = {
       type: 'object',
       properties: { region: { type: 'string', 'x-dict': 'gdict:china-region', 'x-binding': 'required' } },
@@ -204,5 +205,80 @@ describe('validateSubmission（五道闸，按提交钉住的版本契约）', (
     const bad = validateSubmission({ schema, payload: { region: 'xx' }, dictLookup: lookup })
     expect(bad.ok).toBe(false)
     if (!bad.ok) expect(bad.code).toBe('DICT_REQUIRED_VIOLATION')
+  })
+})
+
+// readOnly 服务端复验（issue #722；ADR-0005 §12.11）：
+// ui:readonly / ui:disabled 只是客户端表现（前者提交时**仍带值**），JSON Schema 的 readOnly
+// 本身也只是**注解** ⇒ 服务端必须独立复验。契约声明 readOnly 的字段出现在提交体里即拒。
+describe('readOnly 服务端复验（READONLY_FIELD）', () => {
+  const schemaRO = {
+    type: 'object',
+    properties: {
+      name: { type: 'string', title: '姓名' },
+      submittedAt: { type: 'string', title: '提交时间', readOnly: true },
+      storeNo: { type: 'string', title: '门店号', readOnly: true },
+    },
+    required: ['name'],
+  }
+
+  it('提交体带 readOnly 字段 ⇒ READONLY_FIELD（注解不是边界，服务端独立拒）', () => {
+    const r = validateSubmission({
+      schema: schemaRO,
+      payload: { name: '张三', storeNo: 'S001' },
+      dictLookup: () => new Set(),
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.code).toBe('READONLY_FIELD')
+  })
+
+  it('即便值与原值相同（原样回传）也拒——存在即写入尝试', () => {
+    const r = validateSubmission({
+      schema: schemaRO,
+      payload: { name: '张三', storeNo: 'S001' },
+      dictLookup: () => new Set(),
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.code).toBe('READONLY_FIELD')
+  })
+
+  it('同时是保留键时，闸 1 先拦（RESERVED_KEY 优先于 READONLY_FIELD）', () => {
+    const r = validateSubmission({
+      schema: schemaRO,
+      payload: { name: '张三', submittedAt: '2026-10-16T00:00:00Z' },
+      dictLookup: () => new Set(),
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.code).toBe('RESERVED_KEY')
+  })
+
+  it('带 null 值同样拒（不靠「值是否为空」判，避免服务端代填的歧义）', () => {
+    const r = validateSubmission({
+      schema: schemaRO,
+      payload: { name: '张三', storeNo: null },
+      dictLookup: () => new Set(),
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.code).toBe('READONLY_FIELD')
+  })
+
+  it('不带 readOnly 字段 ⇒ 通过（正常填报不受影响）', () => {
+    const r = validateSubmission({ schema: schemaRO, payload: { name: '张三' }, dictLookup: () => new Set() })
+    expect(r.ok).toBe(true)
+  })
+
+  it('非 readOnly 字段照常（不误伤）', () => {
+    const r = validateSubmission({ schema: schemaRO, payload: { name: '李四' }, dictLookup: () => new Set() })
+    expect(r.ok).toBe(true)
+  })
+
+  it('闸序：契约外字段先报 UNKNOWN_FIELD（顶层白名单优先于 readOnly）', () => {
+    const r = validateSubmission({
+      schema: schemaRO,
+      payload: { name: '张三', notInContract: 1 },
+      dictLookup: () => new Set(),
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.code).toBe('UNKNOWN_FIELD')
   })
 })

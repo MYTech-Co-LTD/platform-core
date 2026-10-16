@@ -103,6 +103,29 @@ describePg('forms API（routes）', () => {
     }
   })
 
+  it('readOnly 服务端复验（#722）：契约声明 readOnly 的字段→400 READONLY_FIELD；不带→放行', async () => {
+    const roAsset = `ro-${SUF}`
+    const roSchema = {
+      type: 'object',
+      properties: {
+        name: { type: 'string', title: '姓名' },
+        storeNo: { type: 'string', title: '门店号', readOnly: true },
+      },
+      required: ['name'],
+    }
+    await reqA(appA, 'POST', '/defs', { assetId: roAsset, body: roSchema })
+    await reqA(await appAs(publishA), 'POST', `/defs/${roAsset}/versions/1/publish`)
+
+    const denied = await reqA(await appAs(fillA), 'POST', `/defs/${roAsset}/submissions`, {
+      payload: { name: '张三', storeNo: 'S001' },
+    })
+    expect(denied.status).toBe(400)
+    expect(((await denied.json()) as { error: string }).error).toBe('READONLY_FIELD')
+
+    const ok = await reqA(await appAs(fillA), 'POST', `/defs/${roAsset}/submissions`, { payload: { name: '张三' } })
+    expect(ok.status).toBe(201)
+  })
+
   it('发布门编译闸：draft 期自由，publish 时坏契约 → 400 指到方言/编译', async () => {
     await reqA(appA, 'POST', '/defs', { assetId: `bad-${SUF}`, body: { type: 'object', properties: { a: { type: 'stringo' } } } })
     let res = await reqA(await appAs(publishA), 'POST', `/defs/bad-${SUF}/versions/1/publish`)
