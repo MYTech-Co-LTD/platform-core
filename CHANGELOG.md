@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.133.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.133.0...v0.133.1) - 2026-10-16
+- 【修复】deploy: 构建期镜像源真正落到 pnpm——补 .npmrc + 构建内自证断言 ([#735](https://github.com/MYTech-Co-LTD/platform-core/pull/735), [e7ac336](https://github.com/MYTech-Co-LTD/platform-core/commit/e7ac336edc9153b23f2f23facb67ab9ed06926d8))
+
+
 ## [0.133.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.132.3...v0.133.0) - 2026-10-16
 - 【新增】forms: M1.4a 导出面 GET /export/submissions——出湖管线的源 ([#731](https://github.com/MYTech-Co-LTD/platform-core/pull/731), [59b0896](https://github.com/MYTech-Co-LTD/platform-core/commit/59b0896c6bce7fa1fa50651979bec7d0b8ef65f4))
 
