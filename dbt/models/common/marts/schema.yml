@@ -45,15 +45,24 @@ models:
         description: 门店号（账套内编号；粒度第三键，2026-10-12 W0 加入——65 项指标体系的零售侧要下钻到店）。取自 staging 同名列透传（int 已定型）。
         tests:
           - not_null
+      - name: sale_amount
+        description: 销售侧金额（**不冲退货**；= 2026-10-17 之前 `net_amount` 的原值）。#430 口径：FINISHED+SALE_ORDER 基面 + 换货「送出半边」公式 + 赠品判别式排除，详见模型头注。**与 l1_metrics.yml 的 `lemeng:retail:sales` 同源**。
+        tests:
+          - not_null
+      - name: return_amount
+        description: 退货侧金额（**正数量级**）= Σ(sale_money + order_detail_share_discount)，条件 `order_transaction_type like '%RETURN%' AND state='FINISHED'`（REPAID_RETURN 不计）。**全额冲减，不套折半**。见 spec 2026-10-17 §4。
+        tests:
+          - not_null
       - name: net_amount
-        description: 净销售额（#430 平台口径：FINISHED+SALE_ORDER 基面 + 换货「送出半边」公式 + 赠品判别式排除，详见模型头注）。**与 l1_metrics.yml 的 `lemeng:retail:net_sales` 同源**。
+        description: 净销售额 = `sale_amount − return_amount`。**与 l1_metrics.yml 的 `lemeng:retail:net_sales` 同源**。
         tests:
           # 金额范围是结构断言（singular test）而不是列级 test：dbt 原生的 accepted_values 只判等值
           # 集合，判不了「≥ 0」这种区间；引 dbt_utils 又要加 packages.yml（多一层依赖 + 解析期要联网）。
-          # 见 dbt/tests/assert_fct_retail_sale_net_amount_nonnegative.sql
+          # ⚠️ net_amount **可负**（退货 > 销售的店日），故断言挂在 sale_amount 上：
+          # 见 dbt/tests/assert_fct_retail_sale_sale_amount_nonnegative.sql
           - not_null
       - name: order_count
-        description: 有效订单数 = 同基面（FINISHED+SALE_ORDER）count(distinct 单号)。**与 l1_metrics.yml 的 `lemeng:retail:order_count` 同源**。
+        description: 有效订单数 = 销售侧基面（FINISHED+SALE_ORDER）count(distinct 单号)。**与 l1_metrics.yml 的 `lemeng:retail:order_count` 同源**；基面 = 销售单，**不含退货单**（退货不是「订单」）。
         tests:
           - not_null
 
@@ -412,7 +421,10 @@ models:
       零售净销量构件（#769 2026-10-17）。客户项 03-07 库存覆盖天数的**分母**。
       粒度 (system_book, bizday, branch_num, item_num) —— 2026-10-17 由门店级**扩到商品级**（覆盖天数的
       客户粒度是「门店×商品×单位」，分母必须同粒度；门店级汇总照常可求和对表达式）。
-      ⚠️ 与本族净**额**指标**不同基面**：净额按裁1 不冲退货单；本构件按客户原文 `sale_num − return_num`
+      ⚠️ 与本族净**额**指标**基面不同**：净额自 2026-10-17 起**已减退货**（#813，按退货单自身 bizday，
+      且只收 state='FINISHED' ⇒ REPAID_RETURN 不计）；本构件按客户原文 `sale_num − return_num`，
+      退货谓词是 `like '%RETURN%' AND state in ('FINISHED','REPAID')` ⇒ **含 REPAID_RETURN**。
+      两个谓词**刻意不同**，别合并（净额复现乐檬 return_money，净销量复现乐檬 return_num）。
       **必须减退货**——故单开一张 mart，见模型头注。⚠️ `quantity` 对退货行也是正数，分类靠单据类型不靠符号。
     columns:
       - name: system_book

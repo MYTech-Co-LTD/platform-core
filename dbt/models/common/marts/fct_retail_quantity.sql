@@ -12,7 +12,9 @@
 --   覆盖天数的客户粒度是「门店×商品×单位」，分母必须同粒度。门店级汇总照常可用（对表达式求和）。
 --
 -- 【为什么单开一张 mart，而不并进 fct_retail_sale】两者的**基面不同**：
---   · `fct_retail_sale` 的净额口径是「FINISHED + SALE_ORDER」，且按裁1 **不冲退货单**（平台 sale_money 语义）；
+--   · `fct_retail_sale` 的**销售侧**是「FINISHED + SALE_ORDER」，**不冲退货单**（平台 sale_money 语义）；
+--     其**净额**自 2026-10-17 起已减退货侧（#813），退货谓词 = `like '%RETURN%' AND state='FINISHED'`
+--     （**不含** REPAID_RETURN）——与本构件的 `state in ('FINISHED','REPAID')` **刻意不同**；
 --   · 本构件的净销量按客户原文 `sale_num − return_num`，**必须把退货行减掉**。
 --   同一个模型里塞两种基面，会让「口径只定义一次」变成「一个模型两套口径」——那是歧义温床。
 --

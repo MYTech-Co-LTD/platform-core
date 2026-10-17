@@ -27,10 +27,15 @@
 --   （macros/generate_schema_name.sql）⇒ **单个 relation 内 org 恒为单值**，粒度仍写作上三键。
 --
 -- ── 指标口径（逐字，与 l1_metrics.yml 的 `definition` 同源；2026-10-12 W0 落地）────────────
---   · 净销售额 = state=FINISHED 且 order_transaction_type=SALE_ORDER 的订单（**退货单不进
---     gross**——平台 sale_money 不冲退货单），逐订单取「(Σ非赠品行额 + order_total_money)/2」，
+--   · 净销售额 = **销售侧 − 退货侧**（2026-10-17 起，issue #813；口径依据 = 客户裁1 的净额
+--     L = Σsale − Σreturn 叠加「换货扣送出半边」）。销售侧 = state=FINISHED 且
+--     order_transaction_type=SALE_ORDER 的订单（**退货单不进销售侧**），逐订单取
+--     「(Σ非赠品行额 + order_total_money)/2」；退货侧 = **全额冲减**（不套折半）
+--     Σ(sale_money + order_detail_share_discount)，条件 order_transaction_type like '%RETURN%'
+--     AND state='FINISHED'（REPAID_RETURN 不计）。
 --     按门店日合计 − Σ分摊折扣；赠品行按判别式排除（正典
 --     docs/superpowers/specs/2026-09-30-recon-zeroing-self-attribution.md §0）。
+--   · 口径 spec：docs/superpowers/specs/2026-10-17-retail-net-sales-return-offset-design.md
 --   · 订单数   = 同基面的 count(distinct order_no)。
 --   公式出处：issue #430 定案，2026-10-05 双账套真机 5 天 × 63 店与乐檬预聚合端点**逐分归零**
 --   （对拍实现 = console 管线 `deploy/duckle/console/pipelines/lemeng.recon.preagg.item.json`）。
@@ -64,7 +69,7 @@
 -- 而**两个 audit 恰恰是跨引擎查询**（复算侧 = DuckDB 直接打 parquet，物化侧 = PG 读本表）⇒
 -- 不 cast 的后果不是「数不对」，是**对账根本执行不了**（实测：加 cast 前该查询报上面这条错）。
 -- 精度取 20 位足够（真要溢出会**响亮报错**，不会静默截断）。
-with base as (
+with sale_base as (
     select
         system_book,
         bizday,
@@ -90,18 +95,46 @@ per_order as (
         sum(case when is_gift then 0 else sale_money end) as non_gift_amount,
         max(order_total_money)                            as order_total_money,
         sum(order_detail_share_discount)                  as share_discount
-    from base
+    from sale_base
     group by 1, 2, 3, 4
+),
+sale_side as (
+    select
+        system_book,
+        bizday,
+        branch_num,
+        -- 除法形态逐字同构 recon-preagg（见头注）：sum 的参数表达式里**逐单**除 2、逐单减 sd，
+        -- 不是先和后除（decimal 除法的舍入位置是口径的一部分）
+        (sum((non_gift_amount + order_total_money) / 2 - share_discount))::numeric(20,2) as sale_amount,
+        count(distinct order_no)                                                          as order_count
+    from per_order
+    group by 1, 2, 3
+),
+return_side as (
+    -- 退货侧：**全额冲减，不套折半**（整单退货 order_total_money = −Σsale_money，套折半恒得 0）。
+    -- 只收 state='FINISHED' ⇒ 排除 REPAID_RETURN（state=REPAID）——2026-10-17 四个 book-day 真机逐分验证。
+    select
+        system_book,
+        bizday,
+        branch_num,
+        (sum(sale_money + order_detail_share_discount))::numeric(20,2) as return_amount
+    from {{ ref('stg_lemeng_retail_order_line') }}
+    where order_transaction_type like '%RETURN%'
+      and state = 'FINISHED'
+    group by 1, 2, 3
 )
 select
-    per_order.system_book,
-    {{ subject_org() }} as org,
-    per_order.bizday,
-    per_order.branch_num,
-    -- 除法形态逐字同构 recon-preagg（见头注）：sum 的参数表达式里**逐单**除 2、逐单减 sd，
-    -- 不是先和后除（decimal 除法的舍入位置是口径的一部分）
-    (sum((per_order.non_gift_amount + per_order.order_total_money) / 2
-         - per_order.share_discount))::numeric(20,2) as net_amount,
-    count(distinct per_order.order_no)               as order_count
-from per_order
-group by 1, 3, 4
+    coalesce(sale_side.system_book, return_side.system_book) as system_book,
+    {{ subject_org() }}                                      as org,
+    coalesce(sale_side.bizday, return_side.bizday)           as bizday,
+    coalesce(sale_side.branch_num, return_side.branch_num)   as branch_num,
+    coalesce(sale_side.sale_amount, 0)::numeric(20,2)        as sale_amount,
+    coalesce(return_side.return_amount, 0)::numeric(20,2)    as return_amount,
+    (coalesce(sale_side.sale_amount, 0)
+     - coalesce(return_side.return_amount, 0))::numeric(20,2) as net_amount,
+    coalesce(sale_side.order_count, 0)                       as order_count
+from sale_side
+full join return_side
+    on  sale_side.system_book = return_side.system_book
+    and sale_side.bizday      = return_side.bizday
+    and sale_side.branch_num  = return_side.branch_num
