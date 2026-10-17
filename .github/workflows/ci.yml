@@ -107,6 +107,14 @@ jobs:
       # 它防的是「加一列要改 5 处、漏改一处没人拦」——在它之前 `contracts/` 与 `duckle/` 无任何机检。
       # 纯静态：不连库、不读 parquet。
       - run: pnpm exec tsx scripts/check-data-contract.mjs
+      # 血缘单调门（issue #780；spec 2026-10-17 §4.3；正典 docs/architecture.md §4.2）。判据：源列
+      # `sensitivity != none` 且被某指标的 `reads` 申报 ⇒ 该指标必须有 `required_scope`；另，`reads`
+      # 指向契约里不存在的列也报（打错的名字会让门**以为**没读它而放行）。
+      # ⚠️ **只查「申报的单调性」，查不到「漏申报」**——完整性要 contract→staging→marts 的列级血缘，
+      #    仓内**不存在**（无 dbt manifest / 无 parser）。少写一条 reads 就绕过本门，**这是已知弱点**。
+      #    别为此加「按名字在 expression 里模糊匹配」的启发式：假阳性会淹掉真违规。
+      # 纯静态：只读 contracts/** 与 dbt/semantics/l1_metrics.yml，不连库、不取网络，秒级。
+      - run: pnpm exec tsx scripts/check-column-scope-monotonicity.mjs
       # 生成物 == committed：契约一处改，投影由 scripts/gen-data-projection.mjs 生成。
       # 手改投影/漏跑生成器 ⇒ 这里红（B10 已降级为保险丝）。
       # ⚠️ 契约未回填 `expr` 时生成器**跳过**该契约（打印一行提示，不是红）——存量回填后此闸才覆盖其产出。
