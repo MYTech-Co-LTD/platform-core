@@ -837,6 +837,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 乐檬调拨 / 批发 / 退货 / 要货（5 源） | duckle | — | `lemeng/transfer_out` 等 | `system_book=` + `bizday=` | 日更（见各源行） | **duckle console** | **已落**（W1/W3 分批：D01/D02 R2/R3 先行、D03 W1、D15/D16 W3；见上各源行） |
 | 抖音 `sku_daily` | 未定 | — | `douyin/sku_daily` | 月（**键名未定**） | 未定 | 未落 | 待接入 |
 | 抖音接收器（`dy-upload`，生产在跑） | **E1**（长驻接收，**未销账**） | 长驻接收器**在跑**（生产 project `dy-upload` 以 `bare` runtime 跑 `/opt/douyin-life/capture/dy_receiver_run.py`）⇒ 命中 E1；**落盘形态等细节待核实**（§7 #3） | 待核实 | 待核实 | 常驻 | 待核实 | — |
+| 表单提交（forms，**platform-core 自身域**，#729 M1.4） | duckle | — | `forms/submission` | `org=` + `bizday=` + `_batch=`（批次目录防覆盖；行 = 提交 × 表单定义） | 日批（低频事件；L0 直连默认形态） | **duckle console（forms 专属——待建，阶段 E 未开工）**：ADR-0014「一账套一 console」⇒ 不能塞进 3120/64188（调度条目带不了自己的 env，混装会静默采错源） | **（空——未验）**：管线/契约/staging 已就绪（#738），排班 / 重建 catalog / 首跑均未做 |
 
 > ⚠️ **上表的「验收结论」列**才是这个登记区的价值所在：**空着 = 没验过**，别用「跑起来了」当验收。
 >
@@ -865,6 +866,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 乐檬 | `lemeng/client`（`system_book=` + `snapshot=`） | 账套 × 客户（#516 工单取价对照表） | **已落盘**（3120，2026-10-10 首跑） | 进销存批发客户档案（GET 零参数固定窗，例外见 §1.7）；**不是门店维**——发布侧只消费 client_fid+client_name 做对照，行不进 dim_branch（spec §5 单源分工）；探针报告 `.superpowers/sdd/2026-10-10-500-lemeng-client/probe-report.md` |
 | 乐檬 | 调拨 / 批发 / 退货 / 要货 / 调入 / 库存快照 | 3120 | **已落盘**（W1/W3 分批全部落地，见上各行） | 设计源 `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` |
 | 抖音 | `douyin/sku_daily/<月>/all.parquet` | — | **摸清源**（待接入） | 分区键名未定；见 `contracts/README.md` §7 |
+| 平台（forms） | `forms/submission/<org>/<bizday>/_batch=<ts>/all.parquet` | 租户 org（一 PAT 一租户 ⇒ 一租户一管线；导出按 `identity.orgId` 隔离，PAT 跨租户被宿主拒） | **摸清源**（管线 / 契约 / staging 已就绪——#738；**未排班、未首跑**：阶段 E 未开工） | 设计源 ADR-0005 §13.1（人审）+ `docs/superpowers/plans/2026-10-16-forms-out-lake-m1.4.md`；三个实施面选择已人确认（#729 评论 2026-10-16）：**水位=`id`(bigserial) / 日批 / 前缀如上**；分页 = id 键集游标；⚠️ **源首个文件出现前 `stg_forms_submission` 会打挂 materialize** ⇒ 已按 #752 暂时摘除，首跑后恢复 |
 
 > 「`_ops`」不是本仓目录约定（实测订正见 duckle/README.md §5）——桶内路径猜想，别再照抄。
 >
