@@ -57,7 +57,11 @@ supplier_period as (
     from {{ ref('fct_purchase') }} p
     left join item_latest i
            on i.system_book = p.system_book
-          and i.item_num = p.item_num
+          -- ⚠️ 类型必须显式 cast：`stg_lemeng_item.item_num` 是 **text**（商品编码形态），
+          -- 而 `fct_purchase.item_num` 是 **bigint**（D11 契约）。不 cast 会报
+          -- `operator does not exist: text = bigint`（2026-10-17 真机首跑就撞上）。
+          -- 真机实测 40,371 个商品号全部可无损转 bigint，故往 bigint 靠。
+          and i.item_num::bigint = p.item_num
     group by 1, 2, 3, 4
 ),
 totals as (

@@ -1,4 +1,4 @@
-sha256-of-rest 7185a19868e6ebc9c2ae84040314166cb4de97ee3b3331f10609f01ec830e940
+sha256-of-rest e07dea8471053697e644c2688e66390a44a244f50fef6138f844ed4255b1374c
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 5f2b5a68028671166b3a0cd62d62a08a12f8a10af5034a2b5e4cadb50c1fb264 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -28,7 +28,7 @@ d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subj
 268d7f5db44a35e1a981b298ada2d4856d0f2431553e09094d095e6b6741faa9 dbt/models/common/marts/fct_hq_outbound.sql ${REPO}/dbt/models/common/marts/fct_hq_outbound.sql 0644
 4b35875787623730543f99e4fb6399c6e8e3c28a5c915e9a69ce94f21aabb784 dbt/models/common/marts/fct_inventory_snapshot.sql ${REPO}/dbt/models/common/marts/fct_inventory_snapshot.sql 0644
 ce52fc2b56392714a76174a1cb952b2a26c0fac4a758a7c5133c6c68412ba4a5 dbt/models/common/marts/fct_purchase.sql ${REPO}/dbt/models/common/marts/fct_purchase.sql 0644
-7091d976e0bf874d54321532845ef43bdc9a9cf6a5f18a5bfcf14031be95fd48 dbt/models/common/marts/fct_purchase_concentration.sql ${REPO}/dbt/models/common/marts/fct_purchase_concentration.sql 0644
+ca91f07f48dc8d26a7dcd84959f0aa6a20ff7dc21ede5b29a012242bf68edcac dbt/models/common/marts/fct_purchase_concentration.sql ${REPO}/dbt/models/common/marts/fct_purchase_concentration.sql 0644
 62c07279fd092e81de58ab3caa7e7b885d8d9dcf0aaa882c5791d36326fa2972 dbt/models/common/marts/fct_request_fulfillment.sql ${REPO}/dbt/models/common/marts/fct_request_fulfillment.sql 0644
 9d1d180191e7ea5a093d9dcf32c1cb3c2014ea5c244bf1da97c6c79dbe256480 dbt/models/common/marts/fct_retail_sale.sql ${REPO}/dbt/models/common/marts/fct_retail_sale.sql 0644
 70a7f1cd649d4176a9866c67ecdf05361b2a957cc9e324d937e43f2310e22067 dbt/models/common/marts/fct_transfer_item.sql ${REPO}/dbt/models/common/marts/fct_transfer_item.sql 0644
