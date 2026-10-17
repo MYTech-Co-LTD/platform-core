@@ -14,7 +14,13 @@ import type { MaskSpec } from './authz'
  */
 export const WHOLE_VALUE_KEY = '<value>'
 
-/** applied 记号值：`round:<step>` / `nullify`（越界 kind 如实回显，见 maskExpr 的兜底注）。 */
+/**
+ * applied 记号值：`round:<step>` / `nullify`。
+ *
+ * ⚠️ 词表外的 kind（只能来自手改的库/历史行，声明门禁拦得住写侧）在 maskExpr 里落 typed NULL
+ * （语义等同 nullify），这里仍**如实回显声明的 kind**——对账面要能一眼看出「声明与词表不符」，
+ * 而不是把它伪装成 nullify（T2-m1，issue #824）。
+ */
 function notationOf(spec: MaskSpec): string {
   return spec.kind === 'round' ? `round:${spec.step}` : spec.kind
 }
@@ -22,19 +28,37 @@ function notationOf(spec: MaskSpec): string {
 /**
  * 掩码表达式。返回值只经 replace 的**回调**注入（见 maskedSelectSql）——掩码表达式里将来
  * 若出现 `$`（如 bucket 的标签），字符串形态会被 replace 当替换模式解释，静默产生垃圾 SQL。
+ *
+ * ★ **穷尽性锚**（T2-m1，issue #824）：`spec.kind` 的类型 `MaskKind` 由 ./authz 的 `MASK_KINDS`
+ *   派生 ⇒ 词表新增一个 kind 而这里漏加分支时，`default` 里的 `never` 断言**编译期报错**，
+ *   而不是运行期静默把新 kind 当 nullify 掩掉（静默换语义 = 本设计最怕的形态）。
+ *   运行期兜底仍保留：库里的 jsonb 可能带词表外的 kind（门禁拦得住写侧，拦不住手改的库），
+ *   那时落 typed NULL 是 fail-closed 的正确方向（绝不回原值）。
  */
 function maskExpr(spec: MaskSpec): string {
-  if (spec.kind === 'round') {
-    // step 由声明侧校验（正整数）且只来自 sync 物化的 jsonb——与 select_sql 同一行、同一写方、
-    // 同一信任层级（select_sql 本身就是逐字内联的 SQL 文本）。形状被篡改时（step 缺失/非数字）
-    // 展开成必然报错的 SQL（warehouse_error）——仍是 fail-closed：宁可查询失败，不回原值。
-    return `round(${spec.column}, -${spec.step})`
+  switch (spec.kind) {
+    case 'round':
+      // step 由声明侧校验（正整数）且只来自 sync 物化的 jsonb——与 select_sql 同一行、同一写方、
+      // 同一信任层级（select_sql 本身就是逐字内联的 SQL 文本）。形状被篡改时（step 缺失/非数字）
+      // 展开成必然报错的 SQL（warehouse_error）——仍是 fail-closed：宁可查询失败，不回原值。
+      return `round(${spec.column}, -${spec.step})`
+    case 'nullify':
+      // typed NULL——`sum(NULL)` 无类型会报错，必须带类型。
+      return 'cast(null as numeric)'
+    default: {
+      // 穷尽性锚：MASK_KINDS 加成员而漏分支 ⇒ `spec.kind` 在此**不是 never** ⇒ 本行编译期报错。
+      const outOfVocabulary: never = spec.kind
+      void outOfVocabulary
+      // 词表外的 kind（手改的库/历史行）：整列/整值换 NULL，fail-closed，绝不回原值；
+      // applied 如实回显原始 kind 供响应 masking 面对账（见 notationOf）。
+      return 'cast(null as numeric)'
+    }
   }
-  // nullify（含词表外越界 kind 的兜底）：typed NULL——`sum(NULL)` 无类型会报错，必须带类型。
-  // 越界 kind 落这里 = 整列/整值换 NULL，是 fail-closed 的正确方向（绝不回原值）；
-  // applied 如实回显原始 kind 供响应 masking 面对账。
-  return 'cast(null as numeric)'
 }
+
+/** 形状契约里的**固定别名**（`select <表达式> as value`，见 semantic-compiler.ts 的 L1_SELECT_RE）——
+ *  它是记号不是列引用，按列掩码必须跳过它（见 maskedSelectSql 的 T2-m3② 注）。 */
+const VALUE_ALIAS = 'value'
 
 /** 正则元字符转义：限定列引用里的 `.` 必须按字面匹配（裸 `.` 会命中任意字符）。 */
 function escapeRe(s: string): string {
@@ -45,8 +69,13 @@ function escapeRe(s: string): string {
  * 整值掩码（`column === null`）的改写：把 `select <表达式> as value` 的表达式整段换掉，
  * **保留 `as value` 之后的维度列**。形状与 `L1_SELECT_RE`（semantic-compiler.ts）同源
  * ——照它抄，不自创；非全局正则（只有一个 value 头，也不存在 lastIndex 问题）。
+ *
+ * ★ **尾锚**（T2-m3①，issue #824）：`as value` 之后**必须**是形状契约的续接（`,` 起维度表，
+ *   或直接 `from`）——初版只写到 `as\s+value`，`select x as value_added …` 这类**别名不是
+ *   `value`** 的串也会命中，替换后产出垃圾 SQL。`(?=…)` 只断言不消费，故 `head[0]` 仍精确
+ *   止于 `value`（按列分支靠这个末端反推别名位，见 maskedSelectSql）。
  */
-const WHOLE_VALUE_HEAD_RE = /^select\s+([\s\S]+?)\s+as\s+value/i
+const WHOLE_VALUE_HEAD_RE = /^select\s+([\s\S]+?)\s+as\s+value(?=\s*(?:,|from\b))/i
 
 /**
  * 值级掩码展开（spec §5.3）：按声明逐条消费，返回改写后的 SQL 与「生效记录」。
@@ -81,9 +110,17 @@ export function maskedSelectSql(
       applied[WHOLE_VALUE_KEY] = notationOf(spec)
       continue
     }
-    // 按列掩码：词边界防子串误伤；g 正则替换全部出现处（同一列被引用多次都要掩）
+    // 按列掩码：词边界防子串误伤；g 正则替换全部出现处（同一列被引用多次都要掩）。
+    // ★ 别名位跳过（T2-m3②，issue #824）：`… as value` 的 `value` 是**固定记号**、不是列引用。
+    //   声明里若有个恰好叫 `value` 的列（`\bvalue\b` 会命中别名本身），替换它 = 把别名换成
+    //   掩码表达式 ⇒ 坏 SQL。别名区间按头部正则的命中**末端**反推（`head[0]` 止于 `value`）。
+    //   ⚠️ 跳过带来的后果是「只命中别名的声明会静默不掩码」（fail-open）——那由声明门禁拦掉
+    //     （masksOf 的 presence 检查已把别名位剔出比对基准），运行期不在这里兜。
+    const head = WHOLE_VALUE_HEAD_RE.exec(sql)
+    const aliasStart = head === null ? -1 : head[0].length - VALUE_ALIAS.length
     const colRe = new RegExp(`\\b${escapeRe(spec.column)}\\b`, 'g')
-    const next = sql.replace(colRe, () => maskExpr(spec))
+    const next = sql.replace(colRe, (match, offset: number) =>
+      offset === aliasStart ? match : maskExpr(spec))
     if (next === sql) continue   // 列引用不在 selectSql 里 ⇒ 不改、不记
     sql = next
     applied[spec.column] = notationOf(spec)

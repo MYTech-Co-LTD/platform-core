@@ -380,6 +380,9 @@ export async function runQuery(
       : {}),
     // 值级脱敏面（spec §5.3）：授权层展开记录非空才回包——空对象不出现该键（缺席 = 原值）。
     // total（显式/自动合计）读的是同一个被掩的内层 select，天然与明细行同一套掩码值。
-    ...(Object.keys(authz.plan.applied).length > 0 ? { masking: authz.plan.applied } : {}),
+    // ★ 复用上面审计那一份 `appliedMasking`（T3-②，issue #824）：两处各写一遍
+    //   `Object.keys(...).length > 0 ? applied : null` 是同一个判据的第二份实现——
+    //   将来只改一处，审计与回包就会**不同尺**（一个说掩了、一个说没掩）。
+    ...(appliedMasking !== null ? { masking: appliedMasking } : {}),
   }
 }

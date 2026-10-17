@@ -54,4 +54,35 @@ describe('maskedSelectSql（spec §5.3）', () => {
     expect(r.sql).toBe('select sum(round(a.cost, -100)) as value, sum(round(a.price, -5000)) as extra, bizday from a')
     expect(r.applied).toEqual({ 'a.cost': 'round:100', 'a.price': 'round:5000' })
   })
+
+  // ── #824 补的钉（T2-m2 / T2-m3①②）──────────────────────────────────────────────
+
+  it('★ 掩码表达式经 replace 的**回调**注入：列名里的 `$&` 不被当替换模式解释（T2-m2）', () => {
+    // 若替换值走**字符串**形态，`$&` 会被展开成整个命中（`f.x$&y`）⇒ 静默产出垃圾 SQL。
+    // 本用例钉住「走回调」这条实现选择：`$&` 必须逐字进产物。
+    const sql = 'select sum(f.x$&y) as value from f'
+    const r = maskedSelectSql(sql, [{ column: 'f.x$&y', kind: 'round', step: 1000, grantedBy: 'p' }], () => false)
+    expect(r.sql).toBe('select sum(round(f.x$&y, -1000)) as value from f')
+    expect(r.applied).toEqual({ 'f.x$&y': 'round:1000' })
+  })
+
+  it('★ 整值头必须止于 `as value`：别名不是 `value` 的串不许命中（T2-m3①）', () => {
+    // 无尾锚时 `^select … as\s+value` 会命中 `as value_added`（`value` 是它的前缀）⇒ 改写后
+    // 产出的列别名不是 `value`，下游按 `value` 取列的地方全错。
+    const sql = 'select sum(f.x) as value_added, bizday from f'
+    const r = maskedSelectSql(sql, [{ column: null, kind: 'nullify', grantedBy: 'p' }], () => false)
+    expect(r.sql).toBe(sql)
+    expect(r.applied).toEqual({})
+  })
+
+  it('★ 别名位 `value` 不是列引用：只命中别名的声明不改、不记（T2-m3②）', () => {
+    // `… as value` 是形状契约的固定记号。若不跳过它，「声明了一个恰好叫 value 的列」会被
+    // 当成命中并把**别名**换成掩码表达式（坏 SQL）。⚠️ 运行期的「只命中别名 ⇒ 静默不改」是
+    // fail-open 方向，故声明门禁（masksOf）已把别名位剔出「column 逐字出现」的比对基准，
+    // 这类声明在物化前就被拒——本用例只钉运行期的边界行为。
+    const sql = 'select sum(f.x) as value from f'
+    const r = maskedSelectSql(sql, [{ column: 'value', kind: 'nullify', grantedBy: 'p' }], () => false)
+    expect(r.sql).toBe(sql)
+    expect(r.applied).toEqual({})
+  })
 })
