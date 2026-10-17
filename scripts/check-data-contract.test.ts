@@ -30,7 +30,8 @@ const COLS = ['batch_id', 'system_book', 'bizday', 'amount']
  * @param {{ contractCols?: string[], pipelineCols?: string[], stagingCols?: string[],
  *           schemaVersion?: number | null, consumerVersion?: number | null,
  *           pipelineText?: string, sinkKey?: string,
- *           srcSchema?: Array<{name: string, type: string}> }} [over]
+ *           srcSchema?: Array<{name: string, type: string}>,
+ *           sensitivity?: Record<string, string> }} [over]
  * @returns {string} 临时仓根
  */
 function fixture(over: {
@@ -42,6 +43,7 @@ function fixture(over: {
   pipelineText?: string
   sinkKey?: string
   srcSchema?: Array<{ name: string, type: string }>
+  sensitivity?: Record<string, string>
 } = {}): string {
   const cc = over.contractCols ?? COLS
   const pc = over.pipelineCols ?? cc
@@ -53,7 +55,10 @@ function fixture(over: {
     owner: 't',
     layout: { prefix: 'x/y', partitionStyle: 'hive', partitionBy: ['bizday'], fileName: 'all.parquet' },
     batch: { markerColumn: 'batch_id', type: 'varchar' },
-    columns: cc.map((name) => ({ name, type: 'varchar', nullable: true })),
+    columns: cc.map((name) => ({
+      name, type: 'varchar', nullable: true,
+      ...(over.sensitivity?.[name] ? { sensitivity: over.sensitivity[name] } : {}),
+    })),
   }
   const sv = over.schemaVersion === undefined ? 1 : over.schemaVersion
   if (sv !== null) contract.schemaVersion = sv
@@ -244,5 +249,23 @@ describe('check-data-contract', () => {
     const v = checkDataContract(root)
     expect(v).toHaveLength(1)
     expect(v[0]!.file).toContain('x.y.q.json')
+  })
+})
+
+describe('sensitivity 闭集（元 schema 无校验器 ⇒ 这里才是真闸）', () => {
+  it('打错的值必须报违规——否则血缘门会把它当「不敏感」静默放行', () => {
+    const root = fixture({ sensitivity: { amount: 'coast' } }) // 注意是 coast 不是 cost
+    const v = checkDataContract(root)
+    expect(v).toHaveLength(1)
+    expect(v[0]!.message).toContain('sensitivity')
+    expect(v[0]!.message).toContain('coast')
+  })
+
+  it('合法值（cost）不报违规', () => {
+    expect(checkDataContract(fixture({ sensitivity: { amount: 'cost' } }))).toHaveLength(0)
+  })
+
+  it('不声明 sensitivity 不报违规（缺省 = none）', () => {
+    expect(checkDataContract(fixture())).toHaveLength(0)
   })
 })

@@ -70,6 +70,16 @@ import {
 /** 脚本名（输出前缀）。 */
 export const SCRIPT_NAME = 'check-data-contract'
 
+/**
+ * `sensitivity` 的闭集。**这是唯一进 CI 的那道闸**——`contracts/common/_schema.schema.json`
+ * 里那份 `enum` 是给人和生成器看的，仓内**没有任何东西拿它校验契约**
+ * （`contracts/README.md` §4.3 自陈欠账）。只改 schema 不改这里 = 打错的标记被血缘门
+ * 当成「不敏感」而**静默放行**。
+ *
+ * 加值 = 改这个常量 + 改元 schema + 改 `check-column-scope-monotonicity.mjs` + 走 PR。
+ */
+export const SENSITIVITY_KINDS = ['cost', 'pii', 'none']
+
 // 旧公开名原样 re-export —— `scripts/check-data-contract.test.ts` 直接 import 这三个，不许改它。
 export { extractPipelineAliases, extractStagingAliases, INJECTED_STAGING_COLUMNS, maskSqlComments }
 
@@ -99,6 +109,21 @@ export function checkDataContract(rootDir) {
     const where = `${c.domain}/${c.table}`
     /** 契约列名序列——本门禁通篇按「名」比对（`readContractDoc` 的列是单形状对象，故取 `.name`）。 */
     const colNames = c.columns.map((x) => x.name)
+
+    // ⑤ sensitivity 闭集（元 schema 无校验器 ⇒ 这里才是真闸）
+    for (const col of c.columns) {
+      if (col.sensitivity === undefined) continue
+      if (!SENSITIVITY_KINDS.includes(col.sensitivity)) {
+        violations.push({
+          file: rel,
+          message:
+            `列 \`${col.name}\` 的 sensitivity 取值非法（收到 ${JSON.stringify(col.sensitivity)}）` +
+            `—— 闭集是 ${SENSITIVITY_KINDS.join(' / ')}。` +
+            '⚠️ 打错的值会被血缘门（scripts/check-column-scope-monotonicity.mjs）' +
+            '当成「不敏感」而静默放行，所以这里必须响亮。',
+        })
+      }
+    }
 
     // ① schemaVersion 必须登记
     const sv = c.schemaVersion

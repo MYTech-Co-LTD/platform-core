@@ -126,7 +126,7 @@ export function collectJson(root, relDir) {
  *
  * @param {string} root
  * @param {string} rel
- * @returns {{ rel: string, domain: string, table: string, prefix: string, schemaVersion: unknown, consumerVersion: unknown, columns: { name: string, type: string, nullable: boolean, expr: string, precision?: number, scale?: number }[] } | null}
+ * @returns {{ rel: string, domain: string, table: string, prefix: string, schemaVersion: unknown, consumerVersion: unknown, columns: { name: string, type: string, nullable: boolean, expr: string, precision?: number, scale?: number, sensitivity?: string }[] } | null}
  */
 export function readContractDoc(root, rel) {
   /** @type {any} */
@@ -152,6 +152,10 @@ export function readContractDoc(root, rel) {
       expr: String(c?.expr ?? ''),
       precision: typeof c?.precision === 'number' ? c.precision : undefined,
       scale: typeof c?.scale === 'number' ? c.scale : undefined,
+      // `sensitivity` **原样**透传（不 coerce）：缺省必须保持 `undefined`（= 未声明），
+      // 非字符串的坏值也要原样留给门禁去报——在这里静默归一成 undefined 就等于
+      // 「打错的标记被当成不敏感放行」，正是 sensitivity 闭集要防的那一类。
+      sensitivity: c?.sensitivity,
     })),
   }
 }

@@ -193,6 +193,10 @@
           "description": "**该列从投影节点的输入关系到该列的完整 SQL 表达式**（逐字，含 cast；如 `CAST(json_extract_string(u.d, '$.order_detail_money') AS DECIMAL(14,2))`）。由 `scripts/gen-data-projection.mjs` 用来产出管线投影。可选：缺省表示该契约尚未回填 `expr`，生成器会跳过它。",
           "type": "string",
           "minLength": 1
+        },
+        "sensitivity": {
+          "description": "敏感标记。只作血缘门（scripts/check-column-scope-monotonicity.mjs）的输入；不改变本列的落盘与投影。⚠️ 闭集的**真闸**在 scripts/check-data-contract.mjs 的 SENSITIVITY_KINDS——本文件没有校验器，改一处必须改两处。",
+          "enum": ["cost", "pii", "none"]
         }
       },
       "allOf": [
