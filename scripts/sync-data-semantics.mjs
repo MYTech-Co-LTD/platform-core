@@ -318,12 +318,21 @@ export function maskItemError(item, metricName) {
  * 词边界 `\b` + 转义后的逐字匹配（`.` 已转义——列引用是 `表.列` 形态，`.` 是正则通配符）。
  * `column === null`（整值掩码）跳过这条——它本来就不按列命中。
  *
+ * ⚠️ 两处**更细的**拦点（issue #824 的 T2-m3② / C-m3）：
+ *   · 比对基准里**剔掉固定别名位** `value`（`… as value` 是形状契约的记号，不是列引用）：
+ *     运行期的按列展开跳过别名位（mask.ts），若这里仍把别名算作命中，「只命中别名的声明」
+ *     会过闸而运行期静默不掩码 = **fail-open**。
+ *   · **维度 / grain 列不许按列掩码**：运行期展开换掉的是该列在 selectSql 里的**全部**出现处
+ *     （含 select 表里那一处维度列），而 GROUP BY 仍是原列名 ⇒ SQL 报「must appear in GROUP BY」。
+ *     那是运行期才炸、离声明很远的一类，提前响亮拒绝。
+ *
  * @param {unknown} v 声明里的 `mask` 原始值
  * @param {string} metricName 指标名（只用于错误信息）
  * @param {string} selectSql 该指标物化后的 select_sql（column 出现性的比对基准）
+ * @param {readonly string[]} grain 该指标的可聚合维度（= group_by，维度列不许按列掩码）
  * @returns {MaskSpec[] | null} null = 未声明
  */
-function masksOf(v, metricName, selectSql) {
+function masksOf(v, metricName, selectSql, grain) {
   if (v === undefined || v === null) return null
   if (!Array.isArray(v)) {
     throw new Error(
@@ -340,14 +349,31 @@ function masksOf(v, metricName, selectSql) {
     const m = /** @type {Record<string, unknown>} */ (raw)
     const column = m.column ?? null
     if (column !== null) {
-      const hit = new RegExp(`\\b${escapeRegExp(String(column))}\\b`).test(selectSql)
+      const bare = String(column).split('.').pop() ?? ''
+      // ★ 维度 / grain 列不许按列掩码（C-m3，issue #824）：见函数头注——运行期会把它在
+      //   selectSql 里的全部出现处（含维度表那一处）换掉，GROUP BY 却仍是原列名 ⇒ 运行期 SQL 报错。
+      if (grain.includes(bare)) {
+        throw new Error(
+          `指标 \`${metricName}\` 的 \`mask\` column \`${String(column)}\` 是该指标的维度/grain 列 —— `
+          + '维度列不能按列掩码：运行期展开会把 selectSql 里该列的**全部**出现处（含 select 表里'
+          + '那一处维度列）换成掩码表达式，而 GROUP BY 仍是原列名 ⇒ SQL 报「must appear in '
+          + 'GROUP BY」（运行期才炸，离声明很远）。要掩整个值请声明 `column: null` 的整值掩码'
+          + '（kind 只许 nullify）；要按列掩码请挑一个只出现在口径表达式里的列',
+        )
+      }
+      // 比对基准里剔掉固定别名位 `value`（`… as value` 是形状契约的记号，不是列引用）：
+      // 运行期的按列展开跳过别名位（mask.ts 的 T2-m3②），这里若仍把别名算作命中，
+      // 「只命中别名的声明」会过闸而运行期静默不掩码 = fail-open。
+      const probe = selectSql.replace(/\bas\s+value\b/i, 'as __alias__')
+      const hit = new RegExp(`\\b${escapeRegExp(String(column))}\\b`).test(probe)
       if (!hit) {
         throw new Error(
           `指标 \`${metricName}\` 的 \`mask\` column \`${String(column)}\` 没有逐字出现在该指标的 `
           + `selectSql 里 —— 运行期掩码是对 select_sql 做**列引用定点替换**，列不在里面 ⇒ 替换命中不了 `
           + '⇒ 掩码静默不生效（本设计最怕的形态）。请写指标口径真正引用的限定列'
           + `（本条 selectSql：\`${selectSql}\`）；若要掩的是敏感**源列**而非口径列，请声明 `
-          + '`column: null` 的整值掩码（kind 只许 nullify）',
+          + '`column: null` 的整值掩码（kind 只许 nullify）。'
+          + '⚠️ 固定别名位 `… as value` 不算命中——它是形状契约的记号，不是列引用',
         )
       }
     }
@@ -612,7 +638,7 @@ export function declarationsFromYaml(parsed) {
       freshnessRelations,
       // 值级掩码声明（spec 2026-10-17 §5.2）：缺省 null（未声明）；给了就逐项校验
       // （含「column 须逐字在 selectSql 里」——静默不生效形态的唯一拦点，见 masksOf）。
-      masks: masksOf(m.mask, name, selectSql),
+      masks: masksOf(m.mask, name, selectSql, grain),
     }
   })
 }

@@ -808,6 +808,24 @@ describe('declarationsFromYaml：mask（值级脱敏声明面，spec 2026-10-17 
     ]))).toThrow(/nullify|整值/)
   })
 
+  it('★ 维度/grain 列不许按列掩码 ⇒ 抛（运行期会撞 must appear in GROUP BY；C-m3，#824）', () => {
+    // grain 含 net_amount ⇒ 口径表达式与维度表引用的是**同一列**：运行期展开会把维度表那一处
+    // 也换成掩码表达式，而 GROUP BY 仍是原列名 ⇒ SQL 报「must appear in GROUP BY」（运行期才炸）。
+    const g = { ...base, grain: ['net_amount'] }
+    expect(declarationsFromYaml(yaml([g]))[0].masks).toBeNull()   // 不声明掩码 ⇒ 照常（只拦掩码声明）
+    expect(() => declarationsFromYaml(yaml([
+      { ...g, mask: [{ column: 'fct_x.net_amount', kind: 'round', step: 1000, grantedBy: 'p' }] },
+    ]))).toThrow(/维度\/grain/)
+  })
+
+  it('★ column 只命中固定别名位 `value` ⇒ 抛（运行期跳过别名 ⇒ 静默不掩码 = fail-open；T2-m3②）', () => {
+    // `… as value` 是形状契约的记号、不是列引用：运行期的按列展开跳过它（mask.ts），
+    // 若这里仍把别名算作「逐字出现在 selectSql 里」，这类声明会过闸而运行期一个都不掩。
+    expect(() => declarationsFromYaml(yaml([
+      { ...base, mask: [{ column: 'value', kind: 'nullify', grantedBy: 'p' }] },
+    ]))).toThrow(/selectSql|逐字/)
+  })
+
   it('★ masks 进 comparableOf：声明带了掩码而库内没跟上 ⇒ 判「更新」（缺这条 --check 假绿）', () => {
     // 掩码声明变了而库内没刷 = 掩码静默按旧声明生效（安全面）——必须被 --check 检出。
     const row = (masks: Array<{ column: string | null; kind: 'round' | 'nullify'; step?: number; grantedBy: string }> | null) => ({

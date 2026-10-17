@@ -312,6 +312,19 @@ L2 指标同理，声明在 L2 定义里，经 `compileL2`（`semantic-compiler.
 指标未声明，且不读敏感列       → 无掩码
 ```
 
+**`mask` 元素的解析规则**（唯一实现 = `scripts/sync-data-semantics.mjs` 的 `masksOf`。下面两条是
+2026-10-17 T1 的**计划外语义**，在此**回签**——此前只落在实现里，spec 不写就会长期各说各话）：
+
+- **`column` 缺省（字段缺席）≡ `column: null`**（`masksOf` 的 `m.column ?? null`）——即**整值掩码**
+  （把 `… as value` 的表达式整个换成 typed NULL，§4.1.1 默认档的形态）。两者是**同一个语义**，
+  不是「未声明掩码」；「未声明掩码」只由**整个 `mask` 字段**缺席 / 为 `null` 表达（`masksOf` 回 `null`）。
+- **`kind: 'nullify'` 会剥掉 `step`**：`step` 只在 `round` 下有语义，物化时不写进 `mask_spec`
+  ——免得库里的声明带着一个没人读的键，让对账者误以为它在生效。
+
+其余校验（`kind ∈ MASK_KINDS`；`round` ⇒ `step` 是正整数；`column === null` ⇒ `kind` 只许 `nullify`；
+`column` 非 null ⇒ 必须逐字出现在该指标的 `selectSql` 里，且**不是**维度/grain 列、**不是**固定别名位
+`value`）见 `masksOf` 与 `maskItemError` 的实现与头注。
+
 ### 5.3 运行期展开：**编译期占位符，运行期零解析**
 
 > 🔴 **订正（2026-10-17 写 P2 计划前实测）**：本节初稿的方案（**编译期占位符骨架存库**）**被推翻**。
@@ -366,9 +379,11 @@ L2 指标由 `compileL2` 从 L1 编译而来（`semantic-compiler.ts:641`）。�
 > 判定「敏感」需要再引一层语义，而 fail-closed 的代价只是一次 400）。
 > 收口在 `resolveL1Base`（refine / expr 两支与写路径的源闸预检都经它）：
 > base 命中带非空 `masks` 的 L1 ⇒ 抛 `L2_BASE_MASKED`，HTTP/MCP 面 400 + `base`/`masks` 点名。
-> 现状（本地 `platform` 库）：`source='l2'` 2 行（org `acme`，开发夹具），无带掩码的 L1 行
-> ⇒ 该守卫**今天是空转**，但已落并有测试钉住（将来第一条踩线的 L2 会被拒）。
-> **不做**掩码传播进 L2。
+> 现状：**无带掩码的 L1 行**（本地 `platform` 库里的 `source='l2'` 行都是开发夹具，生产
+> `data.metrics` 整表 0 行）⇒ 该守卫**今天是空转**，但已落并有测试钉住（将来第一条踩线的
+> L2 会被拒）。**不做**掩码传播进 L2。
+> ⚠️ 这里刻意不写夹具的实时计数（「2 行 / org `acme`」）：数字会随夹具演进而腐坏，且极易被
+> 后来的读者误读成**生产现状**。夹具形状看测试文件，本文只给定性结论。
 
 ### 5.4 回包与指令面（**不做这条 = 另一种泄漏**）
 

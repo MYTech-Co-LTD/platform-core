@@ -109,11 +109,19 @@ describePg('写路径的审计（#489）', () => {
 
   it('★ 改：既有 L2 改指向带 mask 的 base ⇒ 同样 400，旧行原样不动', async () => {
     expect((await writeL2Declaration(deps(pool), ORG, 'ma_masked_update', decl)).ok).toBe(true)
+    // ★ 判「旧行原样不动」的判据必须是**这次写会改掉的**字段（T4-①，issue #824）：
+    //   两条基底（L1 / MASKED_L1）的 select_sql **逐字相同** ⇒ 比 select_sql 是恒真的空断言。
+    //   `version` 是 upsert 的 `version = version + 1`（metric-store.ts），失败的事务连它一起
+    //   回滚 ⇒ 未变 = 确实一个字节都没写进去。
+    const before = await pool.query(
+      `select version, title from data.metrics where org = $1 and id = 'ma_masked_update'`, [ORG])
     const r = await writeL2Declaration(deps(pool), ORG, 'ma_masked_update', { ...decl, baseMetric: MASKED_L1 })
     expect(r).toMatchObject({ ok: false, http: 400, error: 'L2_BASE_MASKED' })
-    const row = await pool.query(
-      `select select_sql from data.metrics where org = $1 and id = 'ma_masked_update'`, [ORG])
-    expect(row.rows[0].select_sql).toContain('mart_sales_daily')    // 仍编译自未掩码的 L1
+    const after = await pool.query(
+      `select version, title, select_sql from data.metrics where org = $1 and id = 'ma_masked_update'`, [ORG])
+    expect(after.rows[0].version).toBe(before.rows[0].version)     // ★ 旧行没被改写
+    expect(after.rows[0].title).toBe(before.rows[0].title)
+    expect(after.rows[0].select_sql).toContain('mart_sales_daily')  // 仍编译自未掩码的 L1
     expect((await listMetricAudit(pool, ORG, 'ma_masked_update')).length).toBe(1)  // 只有最初的 create
     await deleteMetricDeclaration(deps(pool), ORG, 'ma_masked_update')
   })
