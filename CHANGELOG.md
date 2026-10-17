@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.140.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.140.0...v0.140.1) - 2026-10-17
+- 【修复】data: 净销量对账的 UNION 两臂少一列（9 vs 10） ([#772](https://github.com/MYTech-Co-LTD/platform-core/pull/772), [c6a5d1c](https://github.com/MYTech-Co-LTD/platform-core/commit/c6a5d1c005f5b078c66fe95e40232d19a898498f))
+
+
 ## [0.140.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.139.0...v0.140.0) - 2026-10-17
 - 【新增】guard: 文档引用门禁——变更中的文档里 file:line 不得越界 ([#773](https://github.com/MYTech-Co-LTD/platform-core/pull/773), [5a994af](https://github.com/MYTech-Co-LTD/platform-core/commit/5a994aff0d66a81e78f42e34e3a16945d05641b3))
 
