@@ -357,8 +357,9 @@ models:
 
   - name: fct_retail_quantity
     description: >-
-      零售净销量构件（#769 2026-10-17）。客户项 03-07 库存覆盖天数的**分母**（覆盖天数本身不出——
-      「批准窗口 N」是 X08 待批阈值，裁5 只许出分子/分母）。粒度 (system_book, bizday, branch_num)。
+      零售净销量构件（#769 2026-10-17）。客户项 03-07 库存覆盖天数的**分母**。
+      粒度 (system_book, bizday, branch_num, item_num) —— 2026-10-17 由门店级**扩到商品级**（覆盖天数的
+      客户粒度是「门店×商品×单位」，分母必须同粒度；门店级汇总照常可求和对表达式）。
       ⚠️ 与本族净**额**指标**不同基面**：净额按裁1 不冲退货单；本构件按客户原文 `sale_num − return_num`
       **必须减退货**——故单开一张 mart，见模型头注。⚠️ `quantity` 对退货行也是正数，分类靠单据类型不靠符号。
     columns:
@@ -374,6 +375,9 @@ models:
       - name: branch_num
         description: 门店号。粒度键。
         tests: [{not_null: {}}]
+      - name: item_num
+        description: 商品号（**text 形态**——本职与 `fct_purchase.item_num`(bigint) 类型不同，跨表 join 要显式 cast）。粒度键。
+        tests: [{not_null: {}}]
       - name: sale_quantity
         description: 销售数量（state=FINISHED 且 SALE_ORDER）。
         tests: [{not_null: {}}]
@@ -383,6 +387,43 @@ models:
       - name: net_quantity
         description: 净销量 = sale − return。**与 lemeng:retail:net_quantity 同源**。
         tests: [{not_null: {}}]
+
+
+  - name: fct_inventory_coverage
+    description: >-
+      库存覆盖天数构件（#771 2026-10-17）。客户项 03-07：覆盖天数＝可售库存 / **月日均**净销量
+      （N 由用户 2026-10-17 拍板为月日均）。粒度 (system_book, bizday, branch_num, item_num)。
+      ⚠️ 分母的「天数」用**自然日**（X01 营业日历 seed 为空，拿不到营业日集合）——已知可改进点。
+      ⚠️ **净销量 ≤ 0 的日均为 NULL**（不适用），防负数算出负覆盖天数。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（subject_org 宏注入）。
+        tests: [{not_null: {}}]
+      - name: bizday
+        description: 报告日（= 库存快照日）。粒度键。
+        tests: [{not_null: {}}]
+      - name: branch_num
+        description: 门店号。粒度键。
+        tests: [{not_null: {}}]
+      - name: item_num
+        description: 商品号。粒度键。
+        tests: [{not_null: {}}]
+      - name: inventory_quantity
+        description: 可售库存数量（按门店×商品汇总各仓）。**与 lemeng:inventory:coverage_days 的分子同源**。
+        tests: [{not_null: {}}]
+      - name: mtd_net_quantity
+        description: 当月 1 日 ~ 报告日的净销量累计。
+        tests: [{not_null: {}}]
+      - name: days_elapsed
+        description: 当月已过天数（自然日，= day-of-month）。
+        tests: [{not_null: {}}]
+      - name: avg_daily_net_quantity
+        description: 月日均净销量 = mtd ÷ 当月已过天数。**净销量≤0 时置 NULL（不适用）**。与 L1 的分母同源。
+        # 允许 null（不适用），故只挂 not_null 会误伤——这里刻意不挂列级 test，
+        # 由 assert_fct_inventory_coverage_grain_unique 里的「非空时必须为正」守卫兜。
 
 
 # 复合粒度 **(system_book, bizday, branch_num)** 的唯一性由 singular test 手写（单列的 unique 判不了：

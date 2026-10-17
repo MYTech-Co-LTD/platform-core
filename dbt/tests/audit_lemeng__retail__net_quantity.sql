@@ -9,6 +9,7 @@ with base as (
         r['system_book']::varchar as system_book,
         r['bizday']::date         as bizday,
         r['branch_num']::int      as branch_num,
+        r['item_num']::varchar    as item_num,
         case when r['order_transaction_type']::varchar = 'SALE_ORDER' and r['state']::varchar = 'FINISHED'
              then r['quantity']::numeric else 0 end as sale_quantity,
         case when r['order_transaction_type']::varchar like '%RETURN%'
@@ -22,44 +23,45 @@ with base as (
 ),
 recheck as (
     select
-        system_book, bizday, branch_num,
+        system_book, bizday, branch_num, item_num,
         sum(sale_quantity)::numeric(20, 3)                          as sale_quantity,
         sum(return_quantity)::numeric(20, 3)                        as return_quantity,
         (sum(sale_quantity) - sum(return_quantity))::numeric(20, 3) as net_quantity
     from base
-    group by 1, 2, 3
+    group by 1, 2, 3, 4
 ),
 materialized as (
-    select system_book, bizday, branch_num,
+    select system_book, bizday, branch_num, item_num,
            sum(sale_quantity)::numeric(20, 3)  as sale_quantity,
            sum(return_quantity)::numeric(20, 3) as return_quantity,
            sum(net_quantity)::numeric(20, 3)   as net_quantity
     from {{ ref('fct_retail_quantity') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
-    group by 1, 2, 3
+    group by 1, 2, 3, 4
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,
     coalesce(a.bizday, b.bizday)           as bizday,
     coalesce(a.branch_num, b.branch_num)   as branch_num,
+    coalesce(a.item_num, b.item_num)       as item_num,
     a.sale_quantity as recheck_sale, b.sale_quantity as materialized_sale,
     a.return_quantity as recheck_return, b.return_quantity as materialized_return,
     a.net_quantity as recheck_net, b.net_quantity as materialized_net,
     '零售净销量：复算与物化不一致（销售/退货/净销量三列各自比对）' as note
 from recheck a
-full join materialized b using (system_book, bizday, branch_num)
+full join materialized b using (system_book, bizday, branch_num, item_num)
 where a.sale_quantity is distinct from b.sale_quantity
    or a.return_quantity is distinct from b.return_quantity
    or a.net_quantity is distinct from b.net_quantity
 
 union all
 
-select null, null, null, null, null, null, null, null, null,
+select null, null, null, null, null, null, null, null, null, null,
     '物化侧一行都没有：对账在空集上「通过」是空转绿（不是对上了）'
 where not exists (select 1 from materialized)
 
 union all
 
-select null, null, null, null, null, null, null, null, null,
+select null, null, null, null, null, null, null, null, null, null,
     '物化侧销售与退货全为 0：比对已失去区分度（不是对上了）'
 where not exists (select 1 from materialized where sale_quantity <> 0 or return_quantity <> 0)

@@ -5,8 +5,11 @@
 --
 -- 【它为谁服务】客户项 `03-07` 库存覆盖天数的**分母**：
 --   日均净销量＝ΣN日(sale_num−return_num)/可比营业日数；覆盖天数＝可售库存/日均净销量。
---   ⚠️ 公式里的「N」是 **X08 口径阈值（客户待批）**，裁5 的处置是「未批准前不设门槛，只出分子/分母」。
---   故本仓**只出净销量**，不自设 N、不出覆盖天数。分子（库存）见 `inventory:quantity`。
+--   ⚠️ 「N」先按裁5 **只出分子/分母**（2026-10-17 首次交付）；此后用户裁决 **N = 月日均**
+--   （当月至今的日均），覆盖天数由 `fct_inventory_coverage` + `inventory:coverage_days` 交付。
+--
+-- 【粒度 (system_book, bizday, branch_num, item_num)】—— 2026-10-17 由门店级**扩到商品级**：
+--   覆盖天数的客户粒度是「门店×商品×单位」，分母必须同粒度。门店级汇总照常可用（对表达式求和）。
 --
 -- 【为什么单开一张 mart，而不并进 fct_retail_sale】两者的**基面不同**：
 --   · `fct_retail_sale` 的净额口径是「FINISHED + SALE_ORDER」，且按裁1 **不冲退货单**（平台 sale_money 语义）；
@@ -35,6 +38,7 @@ with base as (
         system_book,
         bizday,
         branch_num,
+        item_num,
         case when order_transaction_type = 'SALE_ORDER' and state = 'FINISHED'
              then quantity else 0 end as sale_quantity,
         case when order_transaction_type like '%RETURN%' and state in ('FINISHED', 'REPAID')
@@ -46,8 +50,9 @@ select
     {{ subject_org() }} as org,
     bizday,
     branch_num,
+    item_num,
     sum(sale_quantity)::numeric(20, 3)                          as sale_quantity,
     sum(return_quantity)::numeric(20, 3)                        as return_quantity,
     (sum(sale_quantity) - sum(return_quantity))::numeric(20, 3) as net_quantity
 from base
-group by system_book, bizday, branch_num
+group by system_book, bizday, branch_num, item_num
