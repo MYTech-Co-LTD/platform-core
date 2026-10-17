@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.136.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.136.1...v0.136.2) - 2026-10-17
+- 【修复】data: 停用 stg_forms_submission——源首个文件出现前它打挂 materialize（连带新鲜度水位冻结） ([#752](https://github.com/MYTech-Co-LTD/platform-core/pull/752), [158a301](https://github.com/MYTech-Co-LTD/platform-core/commit/158a30146e94183fa99085b6d51e230d8b20b23d))
+
+
 ## [0.136.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.136.0...v0.136.1) - 2026-10-17
 - 【修复】askdata: #749 归因面订正——内层调度与指令面分离，兜底改 unknown ([#750](https://github.com/MYTech-Co-LTD/platform-core/pull/750), [28b8fef](https://github.com/MYTech-Co-LTD/platform-core/commit/28b8fef65cbfeeffa567feb999257849165cedc3))
 
