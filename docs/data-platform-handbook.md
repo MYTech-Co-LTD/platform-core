@@ -886,7 +886,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | duckle 管线 | `duckle/common/<源>.<表>.json`（客户级覆盖 `duckle/customers/`）；约定见 `duckle/README.md` §2 |
 | duckle console 定义 | `deploy/duckle/console/{pipelines,schedules}/`（seed 进各账套 workspace 卷） |
 | dbt 项目 | `dbt/`（按域分目录；staging / marts / semantics / tests） |
-| 语义声明 | `dbt/semantics/l1_metrics.yml`（L1 唯一事实源）+ `dbt/models/common/marts/schema.yml` |
+| 语义声明 | `dbt/semantics/l1_metrics.yml`（L1 唯一事实源）+ `dbt/models/<域>/marts/schema.yml` |
 | 采集契约（落盘 schema 声明的**意图源**） | `contracts/<域>/<源>.<表>.json`（机器面在管线：`node.data.schema` + `qa.contract` + `drift`） |
 | 数据面编排 | `deploy/data-compose.yml`（部署单元 B；全仓只两份 compose，B7 守） |
 | **物化调度** | **openship job**（归口）：`lemeng-dbt-materialize`（`custom:yNWqnvY65iWz1unf`，UTC `27 3 * * *`（2026-10-06 由 `20 3` 错峰，#452 E1：避开 tick `*/5` 同分钟点火），重试 2×/300s，仅 `failed` 告警）——2026-09-28 订正：**已在跑**，命令形态见 `deploy/data-plane-deploy-sop.md` §F.6 |

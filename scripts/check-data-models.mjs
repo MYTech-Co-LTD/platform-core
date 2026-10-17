@@ -6,7 +6,7 @@
 //       有违规 → exit 1，stderr 每条一行 `相对路径:行号: [data-models] 说明`（无行号则为 `相对路径: …`）。
 //
 // ── 本门禁的**范围**（多一句都不做，别在这里扩面） ───────────────────────────────
-// 只做 **静态** 门禁，九项：七项 dbt 工件（计划 L649–650 逐条）+ T9 追加的两项：
+// 只做 **静态** 门禁，十项：七项 dbt 工件（计划 L649–650 逐条）+ T9 追加的两项 + 域覆盖一项：
 //   ① staging 模型必含 `r['列名']` 取列模式（坑 #5 的结构性防御）
 //   ② 禁 `::double` 与 `CAST(... AS double)`（同一坑 #4：裸 `double` 去查类型名 ⇒ shell 类型，
 //      报 `type "double" is only a shell`；两种写法同一条路，故同拦）
@@ -25,6 +25,12 @@
 //      「⑧ 的**强度**」一节）——别把它读成「同源即行为等价」。
 //   ⑨ **`sync-data-semantics.mjs --check` 契约**（T9 / 对账机制④ 的 L1 侧）：把 dry-run 的
 //      四条性质（--check 存在 / 用法错响亮 / 漂移非 0 / 无漂移 0）与出口码三分法接进机检面。
+//   ⑩ **主体列 `org`**：每个 staging / marts 模型须含 `{{ subject_org() }} as org`（见该规则处）。
+//   ⑪ **域覆盖（fail-closed）**：`dbt/models/*` 目录集 ↔ `dbt_project.yml` 的
+//      `models.platform_data` 域条目**双向**比对，且每条 `+enabled` 须引用
+//      `env_var('DATA_PLANE_DOMAINS')` 并含本域名字面量。为什么必须有：域开关的两个方向
+//      （目录未登记 ⇒ 每个面都 build 它；表达式写错 ⇒ 该域永不 build）**都只有静默这一种症状**，
+//      与 #677/#679「解析数涨、执行集不变、run 照绿」同形。⚠️ 同规则 ⑧：**标记级**比对，不跑 dbt。
 //
 // ── ⑧⑨ 为什么值得占用「静态」门禁的位置（两条边界，别当扩面看） ─────────────────────
 // ⑧ **只读** `modules/**`（`existsSync` + `readFileSync`，一个字都不写）：拍板 #5 明确要求门禁
@@ -778,6 +784,90 @@ export function checkSyncCheckContract(c) {
   return violations
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════
+// 规则 ⑪：域覆盖（一个数据面只物化自己的域；docs/architecture.md §2.5）
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+/** 域开关的登记面（规则 ⑪ 的事实源） */
+export const DBT_PROJECT_REL = 'dbt/dbt_project.yml'
+/** 域身份的唯一 env 键（`+enabled` 表达式只许引用它；换键 = 域身份与部署身份脱钩） */
+export const DOMAIN_ENV_KEY = 'DATA_PLANE_DOMAINS'
+
+/**
+ * 规则 ⑪ 的**纯核**：`dbt/models/*` 目录集 ↔ `dbt_project.yml` 的 `models.platform_data` 域条目集，
+ * **双向**比对，并逐条检查 `+enabled` 的形态。file 由调用方补。
+ *
+ * 强度如实披露（同规则 ⑧）：**标记级**文本比对——它读的是目录名、YAML 键名与 `+enabled` 字符串里的
+ * **字面量**，**不跑 dbt**。它能抓「两处写的名字不一致 / 条目缺失」，抓不到「表达式写对了但 dbt
+ * 行为变了」（那要真跑 `dbt parse` 读 manifest，属部署期）。
+ *
+ * @param {string} rootDir @returns {L2Violation[]}
+ */
+export function checkDomainCoverage(rootDir) {
+  /** @type {L2Violation[]} */
+  const violations = []
+  const push = (/** @type {number} */ line, /** @type {string} */ message) => violations.push({ line, message })
+
+  /** @type {string[]} */
+  let dirs = []
+  try {
+    dirs = readdirSync(join(rootDir, `${DBT_DIR}/models`), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name))
+      .map((e) => e.name)
+      .sort()
+  } catch {
+    return violations // 无 models/ ⇒ 适用面为空（同本门禁其余规则对「fixture 里没有 dbt/」的处置）
+  }
+  // 适用面为空则**跳过**（同规则 ⑧ 对 `modules/**` 的处置）：本门禁的 fixtures 都是临时 root，
+  // 造的是 `dbt/models/**` 而**不带** `dbt_project.yml` ⇒ 对它们本规则无话可说。
+  // ⚠️ 这不是漏洞：真仓有该文件 ⇒ CI 上恒定执行；OK 行里另打「域开关」计数防空转
+  //   （否则「⑪ 跑过了」与「⑪ 被谁摘掉了」同色）。
+  const projAbs = join(rootDir, DBT_PROJECT_REL)
+  if (!existsSync(projAbs)) return violations
+  /** @type {any} */
+  let doc
+  try {
+    doc = readYaml(projAbs)
+  } catch (e) {
+    push(0, `\`${DBT_PROJECT_REL}\` YAML 解析失败：${/** @type {Error} */ (e).message}`)
+    return violations
+  }
+  const declared = doc?.models?.platform_data
+  if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) {
+    push(0, `\`${DBT_PROJECT_REL}\` 里找不到 \`models.platform_data\` 映射 —— 域开关（按路径 \`+enabled\`）就写在这里：模型目录与它键名的相对关系是本规则的判据面`)
+    return violations
+  }
+  /** @type {Record<string, any>} */
+  const table = declared
+  const declaredDomains = Object.keys(table).filter((k) => !k.startsWith('+')).sort()
+
+  for (const d of dirs) {
+    const entry = table[d]
+    if (entry === undefined) {
+      push(0, `域目录 \`${DBT_DIR}/models/${d}/\` **没有**在 \`${DBT_PROJECT_REL}\` 的 \`models.platform_data\` 下登记 —— dbt 对未登记的目录默认 \`enabled: true\` ⇒ **每个数据面都会 build 它**（2026-10-17 实测）：本方侧会把对方租户的数据物化进本方仓库并标成本方 \`org\`（反向泄漏）。请加 \`${d}: { +enabled: "{{ '${d}' in env_var('${DOMAIN_ENV_KEY}').split(',') }}" }\`（形态见 dbt/dbt_project.yml 注释）`)
+      continue
+    }
+    const enabled = entry !== null && typeof entry === 'object' ? entry['+enabled'] : undefined
+    if (typeof enabled !== 'string' || enabled.trim() === '') {
+      push(0, `域 \`${d}\` 登记了但**没有 \`+enabled\`** —— 效果同「未登记」：默认启用 ⇒ 每个面都 build 它。写法见 dbt/dbt_project.yml 的注释`)
+      continue
+    }
+    if (!enabled.includes(`env_var('${DOMAIN_ENV_KEY}')`)) {
+      push(0, `域 \`${d}\` 的 \`+enabled\` 没有引用 \`env_var('${DOMAIN_ENV_KEY}')\`（现值 \`${enabled}\`）—— 域身份只许来自这一个 env 键；指向别处 ⇒ 该域在两侧的行为与部署身份脱钩（而这个域**永不 build** 时 dbt 一声不响）`)
+      continue
+    }
+    if (!enabled.includes(`'${d}'`)) {
+      push(0, `域 \`${d}\` 的 \`+enabled\` 里没有本域名的字面量 \`'${d}'\`（现值 \`${enabled}\`）—— 复制粘贴别域的那一行会让**这个域永不 build**，而 dbt 一声不响`)
+    }
+  }
+  for (const d of declaredDomains) {
+    if (!dirs.includes(d)) {
+      push(0, `\`${DBT_PROJECT_REL}\` 登记了域 \`${d}\`，但 \`${DBT_DIR}/models/${d}/\` 目录不存在 —— 死配置：它什么都不会 build，还会掩盖「这个域其实没有模型」这件事`)
+    }
+  }
+  return violations
+}
+
 /**
  * 递归列出 rootDir 下的**文件**（相对 rootDir 的 posix 路径）。
  * @param {string} rootDir @param {string} startRel @returns {string[]}
@@ -908,7 +998,8 @@ export function checkDataModels(rootDir, opts = {}) {
   }
   const stagingModels = stagingFiles.map((f) => basename(f, '.sql'))
   for (const [composite, pair] of declaredPairs) {
-    const expected = `${DBT_DIR}/models/common/staging/stg_${composite}.sql`
+    // 落点由**域**决定（目录即域，规则 ⑪）：这里只给形态，不假定某个域
+    const expected = `${DBT_DIR}/models/<域>/staging/stg_${composite}.sql`
     const hits = stagingFiles.filter((f) => basename(f, '.sql') === `stg_${composite}`)
     if (hits.length === 0) {
       push(
@@ -927,7 +1018,7 @@ export function checkDataModels(rootDir, opts = {}) {
       push(
         rel,
         0,
-        `staging 模型 \`${model}\` 在 sources.yml 里找不到对应的源 —— 要么补 \`${DBT_DIR}/models/common/staging/sources.yml\` 的声明，要么这个模型读的不是 declared 源（一对一要求双向都对上）`,
+        `staging 模型 \`${model}\` 在 sources.yml 里找不到对应的源 —— 要么补**本域** \`${DBT_DIR}/models/<域>/staging/sources.yml\` 的声明，要么这个模型读的不是 declared 源（一对一要求双向都对上）`,
       )
     }
   }
@@ -967,6 +1058,17 @@ export function checkDataModels(rootDir, opts = {}) {
       '主体列门禁没有扫到任何模型（或全部落在豁免名单里）—— 规则空转 = 门禁不存在，判违规：改扫描面或收窄豁免名单',
     )
   }
+
+  // ── 规则 ⑪：域覆盖（fail-closed）───────────────────────────────────────────────
+  // 为什么必须有这条：域开关（`dbt_project.yml` 按路径 `+enabled` + env `DATA_PLANE_DOMAINS`）
+  // 的**两个方向都是静默的**（2026-10-17 实测；实测四条见 dbt/dbt_project.yml 的注释与
+  // docs/architecture.md §2.5）：
+  //   · 域目录存在但没登记 ⇒ dbt 默认 `enabled: true` ⇒ **每个数据面都会 build 它** ⇒ 本方侧把
+  //     对方租户的数据物化进本方仓库、标成本方 org（反向泄漏，方向与 #729 相反）；
+  //   · 登记了但 `+enabled` 写错（漏域名 / 指向别的 env 键）⇒ 该域**永不 build**，dbt 不响。
+  // 两个方向都只有**静默**这一种症状 ⇒ 与 #677/#679「解析数涨、执行集不变、run 照绿」同形。
+  // ⚠️ 与规则 ⑧ 同一档强度：**标记级**文本比对（域名 / env 键名 / 字面量在场），不跑 dbt。
+  for (const v of checkDomainCoverage(rootDir)) push(DBT_PROJECT_REL, v.line, v.message)
 
   // ── 规则 ⑤⑥⑦：语义声明 ───────────────────────────────────────────────────────
   /** @type {Array<{ name: string, fields: any, file: string }>} */
@@ -1212,18 +1314,29 @@ export function checkDataModels(rootDir, opts = {}) {
  * T9 追加两个计数：`l2` = L2 声明面（0/1，该文件在否）与 `syncContract` = ⑨ 的契约面（恒 1）。
  * 为什么 ⑨ 也要计数：它是**与 rootDir 无关**的检查 ⇒ 若不计数，读者无法从 OK 行区分
  * 「⑨ 跑过了」与「⑨ 被谁悄悄摘掉了」。
+ * ⑪ 追加 `domains` = `dbt/models/*` 域目录数：域开关是**按域**生效的，域数恒为 0/1 都不正常
+ * （0 = 树没了；1 = 还没分域，说明 ⑪ 判的是空气）。
  *
  * @param {string} rootDir
- * @returns {{ staging: number, sources: number, metrics: number, audits: number, l2: number, syncContract: number }}
+ * @returns {{ staging: number, sources: number, metrics: number, audits: number, domains: number, l2: number, syncContract: number }}
  */
 function countSurfaces(rootDir) {
   const files = listFiles(rootDir, DBT_DIR)
-  /** @type {{ staging: number, sources: number, metrics: number, audits: number, l2: number, syncContract: number }} */
+  /** @type {number} */
+  let domains = 0
+  try {
+    domains = readdirSync(join(rootDir, `${DBT_DIR}/models`), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name)).length
+  } catch {
+    domains = 0
+  }
+  /** @type {{ staging: number, sources: number, metrics: number, audits: number, domains: number, l2: number, syncContract: number }} */
   const counts = {
     staging: 0,
     sources: 0,
     metrics: 0,
     audits: 0,
+    domains,
     l2: existsSync(join(rootDir, L2_DECLARATION_REL)) ? 1 : 0,
     syncContract: 1,
   }
@@ -1258,7 +1371,7 @@ async function main() {
   const c = countSurfaces(rootDir)
   console.log(
     `${SCRIPT_NAME}: OK（staging 模型 ${c.staging} / sources 表 ${c.sources} / 声明指标 ${c.metrics}`
-    + ` / 对账测试 ${c.audits} / L2 声明面 ${c.l2} / sync 契约 ${c.syncContract}）`,
+    + ` / 对账测试 ${c.audits} / 域 ${c.domains} / L2 声明面 ${c.l2} / sync 契约 ${c.syncContract}）`,
   )
 }
 

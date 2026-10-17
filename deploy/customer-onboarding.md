@@ -77,7 +77,9 @@ platform-core/
 | **开关** | 客户不用某块服务（如不做数据分析） | **服务级 `enabled`**（控制面配置） | ❌ |
 
 **判据一句话**：
-> SQL/管线 ⇒ `common/` 或 `customers/<客户>/`；配置 ⇒ L2；「整个服务要不要起」⇒ enabled。
+> SQL/管线 ⇒ 本**域**目录（`models/<域>/`）或域内的客户分叉（`models/<域>/customers/<客户>/`）；
+> 配置 ⇒ L2；「整个服务要不要起」⇒ enabled。
+> （2026-10-17 起模型树按**域**分顶层目录，见 `docs/architecture.md` §2.5 与 `dbt/models/README.md`。）
 
 `enabled` 语义（实测 Test 2）：置 false 后**该服务不部署，且已跑的容器会被拆除**——
 是「个性化裁剪」，不只是「下次不起」。
@@ -85,9 +87,14 @@ platform-core/
 数据初始化按目录选，不靠分支：
 
 ```sh
+DOMAIN=<域>            # lemeng / forms …
 CUSTOMER=<客户>
-dbt run --select "path:models/common,path:models/customers/$CUSTOMER"
+dbt run --select "path:models/$DOMAIN,path:models/$DOMAIN/customers/$CUSTOMER"
 ```
+
+⚠️ 这是**一次性数据初始化**的选法（按目录挑）。**日常物化不走 `--select`**：它由
+`scripts/lemeng/materialize.sh` 全量 build、由 env `DATA_PLANE_DOMAINS` 按**部署的域身份**裁剪
+（#679；机制与实测见 `dbt/README.md` §1.1）—— 别把这里的 `--select` 抄进 job。
 
 > `dbt/` 模型目录已落仓（2026-09-22）；首次物化的完整核对步（含 `dbt parse` 真机验证、Jinja 坑、可写挂载）见 `deploy/data-plane-deploy-sop.md` 附录。
 

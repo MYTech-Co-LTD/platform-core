@@ -128,7 +128,7 @@ const FRESHNESS_ASSET_RE = /^[a-z0-9_]+$/
  * `stg_lemeng_<资产>`。
  *
  * ── 为什么是「命名约定即事实」而不是再要一个显式声明字段 ─────────────────────────────
- * staging 模型名在仓内是 `stg_<源>_<资产>`（`dbt/models/common/staging/stg_lemeng_*.sql`，
+ * staging 模型名在仓内是 `stg_<源>_<资产>`（`dbt/models/<域>/staging/stg_lemeng_*.sql`，
  * 14 个全部同构，check-data-models 规则 ④ 的双向配对盯着的正是这个形状）；水位要查的表就是
  * 这些 staging 模型落的表。让声明再写一遍关系名 = 两处事实源（sources 已写了路径段）。
  * 故这里**机械推导**：推导不出来（路径里没有 `lemeng/` 段、资产段形状不安全）就**响亮失败**

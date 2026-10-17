@@ -33,6 +33,7 @@ import {
   collectJson,
   findProducerPipelines,
   findProjectionNode,
+  findStagingModelRel,
   maskSqlComments,
   readContractDoc,
 } from './lib/data-contract.mjs'
@@ -340,9 +341,10 @@ export function runGenerate(rootDir, opts = {}) {
     }
 
     // ④ 消费面：staging 模型列区归一（每列显式 ::type）+ org 注入。
-    const stgRel = `dbt/models/common/staging/stg_${c.domain}_${c.table}.sql`
-    const stgAbs = join(rootDir, stgRel)
-    if (existsSync(stgAbs)) {
+    // 域目录自 2026-10-17 起是顶层轴（`dbt/models/<域>/staging/`）⇒ **找**而不是拼死路径。
+    const { rel: stgRelFound } = findStagingModelRel(rootDir, c.domain, c.table)
+    const stgAbs = stgRelFound === null ? '' : join(rootDir, stgRelFound)
+    if (stgAbs !== '' && existsSync(stgAbs)) {
       const stgSql = readFileSync(stgAbs, 'utf8')
       const orgAfter = colNames.includes('system_book') ? 'system_book' : (colNames[0] ?? '')
       const nextStg = rewriteSelectList(stgSql, buildStagingSelect(c.columns, orgAfter))
