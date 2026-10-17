@@ -575,6 +575,38 @@ metrics:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
+  # ── 组合族 W3（2026-10-17，#744）：供应商集中度 ──────────────────────────────────
+  # 落点 = fct_purchase_concentration（**月度**预聚合构件——CR5 含排序取前 5，是子查询语义）。
+
+  - name: 'lemeng:purchase:cr5'
+    label: 供应商集中度 CR5
+    definition: >-
+      CR5 = 前 5 供应商净采购额 / 全部净采购额（不可加；上滚=重算/另声明）。零分母 → 不适用。
+      服务客户项 01-07「供应商集中度」、05-06「水果供应商集中度」、06-04「供应商集中度」——
+      客户附录三处公式**逐字相同**（CR5＝前5净采购额/全部净采购额），差异只在「水果/标品」的
+      **部门筛选** ⇒ **一条口径 + 部门维度**，不各声明一条。
+      ⚠️ **两条解释性落地**（客户文档未逐字规定，按业务可解释性取）：
+      ① 分子只取**净额 > 0** 的供应商（客户原文「净采购为负的供应商及非正总额单列」）；
+      ② 分母含**全部**供应商（含负数）——否则负数会把比率推过 100%。
+      ⚠️ **粒度是「月」不是「日」**（客户频率栏「月」；CR5 是排序比率，日粒度不可累加）。
+      ⚠️ **`bizday` 的值是月 1 号**（不是业务日）：问数参数面的契约要求每条 L1 的 grain 必须含
+      bizday，而参数白名单只认 bizday→date_range，故本期键沿用该列名。用户可用日期区间按月筛
+      （from=to=某月 1 号即单月）。**与日粒度指标不可混算/join。**
+    ratio:
+      numerator: 'sum(fct_purchase_concentration.top5_p)'
+      denominator: 'sum(fct_purchase_concentration.total_p)'
+    grain: [system_book, bizday, item_department]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    # ⚠️ **刻意不声明 dim_item**：新鲜度关系由 `sources` 的路径段**机械推导**成 `stg_lemeng_<资产>`，
+    #   而 `lemeng/dim_item` 会推成 `stg_lemeng_dim_item`——实际 staging 叫 `stg_lemeng_item`，
+    #   两者对不上 ⇒ 水位查询永远落空 ⇒ 新鲜度恒「未知」（静默降级，2026-10-17 被门禁抓到）。
+    #   部门只是慢变维度、不是本指标的新鲜度驱动，故只声明采购源。
+    sources:
+      - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
+
   # ── W3 余项（2026-10-15，要货满足率 / D15×D16，#677）────────────────────────────────
   # 构件落点：fct_request_fulfillment（店×商品×日总量对照）。⚠️ 全 experimental——行级履约
   # 关联在当前湖面不可构造（D16.related_order_no 指 MO 非 YH，D01 契约无 related_order_no，

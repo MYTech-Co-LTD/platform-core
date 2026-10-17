@@ -1,4 +1,4 @@
-sha256-of-rest f53639585398c391cc2455f0593d3e66580bffa868b1e16e746601265e055c3e
+sha256-of-rest 7185a19868e6ebc9c2ae84040314166cb4de97ee3b3331f10609f01ec830e940
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 5f2b5a68028671166b3a0cd62d62a08a12f8a10af5034a2b5e4cadb50c1fb264 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -28,11 +28,12 @@ d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subj
 268d7f5db44a35e1a981b298ada2d4856d0f2431553e09094d095e6b6741faa9 dbt/models/common/marts/fct_hq_outbound.sql ${REPO}/dbt/models/common/marts/fct_hq_outbound.sql 0644
 4b35875787623730543f99e4fb6399c6e8e3c28a5c915e9a69ce94f21aabb784 dbt/models/common/marts/fct_inventory_snapshot.sql ${REPO}/dbt/models/common/marts/fct_inventory_snapshot.sql 0644
 ce52fc2b56392714a76174a1cb952b2a26c0fac4a758a7c5133c6c68412ba4a5 dbt/models/common/marts/fct_purchase.sql ${REPO}/dbt/models/common/marts/fct_purchase.sql 0644
+7091d976e0bf874d54321532845ef43bdc9a9cf6a5f18a5bfcf14031be95fd48 dbt/models/common/marts/fct_purchase_concentration.sql ${REPO}/dbt/models/common/marts/fct_purchase_concentration.sql 0644
 62c07279fd092e81de58ab3caa7e7b885d8d9dcf0aaa882c5791d36326fa2972 dbt/models/common/marts/fct_request_fulfillment.sql ${REPO}/dbt/models/common/marts/fct_request_fulfillment.sql 0644
 9d1d180191e7ea5a093d9dcf32c1cb3c2014ea5c244bf1da97c6c79dbe256480 dbt/models/common/marts/fct_retail_sale.sql ${REPO}/dbt/models/common/marts/fct_retail_sale.sql 0644
 70a7f1cd649d4176a9866c67ecdf05361b2a957cc9e324d937e43f2310e22067 dbt/models/common/marts/fct_transfer_item.sql ${REPO}/dbt/models/common/marts/fct_transfer_item.sql 0644
 244ea63d8adda6f5bf383445972810111a3ddca4a9cd893fec6bfddd8170dc51 dbt/models/common/marts/fct_transfer_line_quality.sql ${REPO}/dbt/models/common/marts/fct_transfer_line_quality.sql 0644
-efa150039e6f12d66d0a67f0556737c4aebbe6bcb28426690d4c04d155b8f85f dbt/models/common/marts/schema.yml ${REPO}/dbt/models/common/marts/schema.yml 0644
+2b214b453f59a22e8939674c7f0cebf543894ddb79cc00cb6b25796803cf2841 dbt/models/common/marts/schema.yml ${REPO}/dbt/models/common/marts/schema.yml 0644
 25e9620f2cfcca963950d2a15f2aba347e968a13932759fd175f623e642a375d dbt/models/common/staging/schema.yml ${REPO}/dbt/models/common/staging/schema.yml 0644
 f835c647338bedab4855c99e71694b8fae501be35b940ae8779735f4dbf8dbbd dbt/models/common/staging/sources.forms.yml ${REPO}/dbt/models/common/staging/sources.forms.yml 0644
 854b7895bd2afe9b1151944829608615c39ca7f537a73bf251ba6b89914e1678 dbt/models/common/staging/sources.yml ${REPO}/dbt/models/common/staging/sources.yml 0644
@@ -57,12 +58,13 @@ ee0bcd007c23c4d7dbe136b6178427904a14daa1945274b95ef65d57cd53c1c8 dbt/seeds/schem
 d97d54e949117437636327003d1326ad79ba2488367e6dd5d7a74ee43aa49dca dbt/seeds/x01_branch_calendar.csv ${REPO}/dbt/seeds/x01_branch_calendar.csv 0644
 0ca2476fdb12c463459a4d81215623f7876e8b2d3ac1e14ed3cc095d2e9fa078 dbt/seeds/x01_region_names.csv ${REPO}/dbt/seeds/x01_region_names.csv 0644
 8d039ed687c993221698878e646b6425b064157761da717e7bc84d2c39c463a3 dbt/seeds/x08_thresholds.csv ${REPO}/dbt/seeds/x08_thresholds.csv 0644
-51267a705fbb7f589da77a4ec279d603ec6942c2c9e2068d1ef48343fa78a88c dbt/semantics/l1_metrics.yml ${REPO}/dbt/semantics/l1_metrics.yml 0644
+991eb1a811c38e1873473317f8b6726c94e12a99621d45c08629e90b168c4ee6 dbt/semantics/l1_metrics.yml ${REPO}/dbt/semantics/l1_metrics.yml 0644
 77380a4a6e4fb3278dc47ac1e62fbf381a66e44a71cbc61244c73baf78e524fb dbt/tests/assert_fct_branch_expense_grain_unique.sql ${REPO}/dbt/tests/assert_fct_branch_expense_grain_unique.sql 0644
 202d479bc6e672de3768e2d1ba6489817c6d5cc55d6f284e1d04155c6a34a95c dbt/tests/assert_fct_client_expense_grain_unique.sql ${REPO}/dbt/tests/assert_fct_client_expense_grain_unique.sql 0644
 34565e2d74c641fde050010af991c812ba67ba3b1fbc7e311d8d0d8fbebbfedf dbt/tests/assert_fct_contribution_grain_unique.sql ${REPO}/dbt/tests/assert_fct_contribution_grain_unique.sql 0644
 68bfb2cc7cf8004547af6f95a79644bba8abae271706b1707f1f4e689ba4be9c dbt/tests/assert_fct_hq_outbound_grain_unique.sql ${REPO}/dbt/tests/assert_fct_hq_outbound_grain_unique.sql 0644
 01b1d9a108d5d5a1aa6178e48a9b911a35db6ad49a898db1956161e97390ebba dbt/tests/assert_fct_inventory_snapshot_grain_unique.sql ${REPO}/dbt/tests/assert_fct_inventory_snapshot_grain_unique.sql 0644
+3d6b4c241caac69a16dfb7b615712563c1d2d96b33945f1237c03ec34ee2e654 dbt/tests/assert_fct_purchase_concentration_grain_unique.sql ${REPO}/dbt/tests/assert_fct_purchase_concentration_grain_unique.sql 0644
 22a24f58acdedc92d90b77b9fa5ad18a43980bddaa62b9e3fb13db9e1b24fc45 dbt/tests/assert_fct_request_fulfillment_grain_unique.sql ${REPO}/dbt/tests/assert_fct_request_fulfillment_grain_unique.sql 0644
 25025965c507a4d08c1ee2a56c1a4177a78eb37705da74ef67f1c6f2cf122082 dbt/tests/assert_fct_retail_sale_grain_unique.sql ${REPO}/dbt/tests/assert_fct_retail_sale_grain_unique.sql 0644
 b435244109cd98dec80a5b605a7559c9cd0f2923d34b6488fea63ada19033f76 dbt/tests/assert_fct_retail_sale_net_amount_nonnegative.sql ${REPO}/dbt/tests/assert_fct_retail_sale_net_amount_nonnegative.sql 0644
@@ -101,6 +103,7 @@ ccb41bb838595320f1a2ae5b1d2bb8e6a7061aaae0179d71af08892570f5195b dbt/tests/audit
 93fb6cb89409ddbd2938f7874eff0dab803b744bd40a75606425229cee19fd9e dbt/tests/audit_lemeng__outbound__net_amount.sql ${REPO}/dbt/tests/audit_lemeng__outbound__net_amount.sql 0644
 83b948f6abb382e24856c27ebb41925371a497f2162d3dc7e673cde4864e6ef1 dbt/tests/audit_lemeng__outbound__order_count.sql ${REPO}/dbt/tests/audit_lemeng__outbound__order_count.sql 0644
 67e115a92a0d006924b06bf13155ee878c33452a78221b5a68f4b8c0a38cb01c dbt/tests/audit_lemeng__purchase__amount.sql ${REPO}/dbt/tests/audit_lemeng__purchase__amount.sql 0644
+a00786138e545d05e7e20f49dd68a077b7a13de335af2d7e08029bb42117653b dbt/tests/audit_lemeng__purchase__cr5.sql ${REPO}/dbt/tests/audit_lemeng__purchase__cr5.sql 0644
 aef3d4ca35c0900919de4c3f0bcf7ee09a456f895c8e9b6c1247aa2dc177a38c dbt/tests/audit_lemeng__purchase__item_count.sql ${REPO}/dbt/tests/audit_lemeng__purchase__item_count.sql 0644
 af823a532b9571f57de1d6948272a185de88fabd38cfbafcf3a7956376dbfe1c dbt/tests/audit_lemeng__purchase__net_amount.sql ${REPO}/dbt/tests/audit_lemeng__purchase__net_amount.sql 0644
 776c094b554446876196e0643cbe612619724ce9b8ec61f19597d4e779cca23e dbt/tests/audit_lemeng__purchase__present_amount.sql ${REPO}/dbt/tests/audit_lemeng__purchase__present_amount.sql 0644
