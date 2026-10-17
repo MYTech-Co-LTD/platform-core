@@ -180,6 +180,53 @@ function slaDaysOf(v, metricName) {
 }
 
 /**
+ * `required_scope`：**缺省 = `null`**（所有拿到本模块的人可见，与今天一致）；给了就必须是
+ * **非空、无首尾空白**的字符串。
+ *
+ * ── 为什么不 trim 而是拒绝（与 `source` 那条同款坑）──────────────────────────────
+ * 本脚本的脾气是「取不到 / 说不准就**响亮失败**」，静默 trim 等于替作者改他的声明。
+ * 而这个值要与 `modules/data/manifest.yaml` 的 `permissions[].code` **逐字**比对才生效
+ * （`requester.hasScope()` 是集合成员判断，不认近似值）⇒ 带空白的码 = 谁也匹配不上
+ * = 该指标对**所有人**静默不可见。坏在数据里，不报错。
+ *
+ * ── 本函数**不**校验码是否存在 ─────────────────────────────────────────────────
+ * 那需要读另一个文件（manifest），属静态门禁的活（`scripts/check-data-models.mjs`）。
+ * 本函数只保证**形状**。
+ *
+ * @param {unknown} v 声明里的 `required_scope`
+ * @param {string} metricName 指标名（只用于错误信息）
+ * @returns {string | null}
+ */
+function requiredScopeOf(v, metricName) {
+  if (v === undefined || v === null) return null
+  // ⚠️ 必须是字符串本身，**不做 `String(v)` 强转**：YAML 里写 `required_scope: 123` 会解析成
+  // number，强转成 `"123"` 就悄悄造出一个不存在的权限码（症状同样是「该指标对所有人不可见」）。
+  if (typeof v !== 'string') {
+    throw new Error(
+      `指标 \`${metricName}\` 的 \`required_scope\` ${JSON.stringify(v)} 不是字符串 —— `
+      + '权限码必须写成字符串（如 `data:cost`）。YAML 会把裸数字/布尔解析成别的类型，'
+      + '强转出来的是**不存在的码**，该指标将对所有人静默不可见。',
+    )
+  }
+  const s = v
+  if (s.trim() === '') {
+    throw new Error(
+      `指标 \`${metricName}\` 的 \`required_scope\` 是空白 —— 空白码谁也匹配不上`
+      + '（症状：该指标对**所有人**静默不可见，且不报错）。要么删掉这个键，要么写一个'
+      + '真实存在于 `modules/data/manifest.yaml` 的 `permissions[].code`。',
+    )
+  }
+  if (s !== s.trim()) {
+    throw new Error(
+      `指标 \`${metricName}\` 的 \`required_scope\` ${JSON.stringify(s)} 首尾带空白 —— `
+      + '权限码是**逐字**比对的集合成员判断，带空白匹配不上（症状同样是「该指标对所有人'
+      + `查不出来」且不报错）。请写成 \`${s.trim()}\`（本脚本不替声明做 trim）。`,
+    )
+  }
+  return s
+}
+
+/**
  * 从 L1 声明的 `expression` 反推 FROM 的关系名。
  *
  * ── 为什么要求表达式**带关系限定**（`fct_x.col`），而不是自己去猜表名 ──────────────────
@@ -290,9 +337,12 @@ export function deriveTotalable(expression) {
  *   `definition`  → `description`（口径的逐字定义，进词表给人与 agent 看）
  *   `expression`  → 值表达式（进 select_sql）
  *   `grain`       → GROUP BY 维度（**同时**是 L2 的可见维度白名单与过滤维度全集）
- *   `requiredScope` → **恒 null**：L1 指标对所有拿到本模块的人可见。`tier` **不**映射成
- *                     requiredScope——spec §10 明写 tier 是**标记不是强制**（「本仓不靠它挡谁，
- *                     靠它让人一眼看见成熟度」），拿它当权限会凭空造出一条谁也说不清的授权规则。
+ *   `required_scope` → `requiredScope`：**缺省 = null**（所有拿到本模块的人可见，与 2026-10-17
+ *                     之前的恒 null 行为一致）；声明了就要非空、无空白（见 `requiredScopeOf`）。
+ *                     列级/值级授权的声明面，spec `2026-10-17-column-and-value-level-security-design.md` §4.2。
+ *                     `tier` **不**映射成 requiredScope——spec §10 明写 tier 是**标记不是强制**
+ *                     （「本仓不靠它挡谁，靠它让人一眼看见成熟度」），拿它当权限会凭空造出一条
+ *                     谁也说不清的授权规则。
  *   `source`      → `sourceSystem`（库列 `source_system`）：**源系统**（如 `lemeng`），
  *                     spec §3⑧ 的源维度。⚠️ 与同一份声明里的 `sources`（对象存储路径，人读）
  *                     **不是一回事**；也与库里的 `source`（取值 l1/l2 = 谁写的）不是一回事。
@@ -382,7 +432,7 @@ export function declarationsFromYaml(parsed) {
       id: name,
       title: String(m.label ?? name),
       description: String(m.definition ?? ''),
-      requiredScope: /** @type {string|null} */ (null),
+      requiredScope: requiredScopeOf(m.required_scope, name),
       subjectColumn: L1_SUBJECT_COLUMN,
       selectSql: buildSelectSql(expression, grain, relation),
       groupBy: grain.join(', '),

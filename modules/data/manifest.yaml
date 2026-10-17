@@ -5,6 +5,12 @@ platform: '>=0.1'
 permissions:
   - { code: data:query,  name: 数据问数 }
   - { code: data:manage, name: 数据指标管理 }
+  # 列级授权（spec 2026-10-17 §4.2）：看得到成本价 / 毛利额一类敏感指标。
+  # 由租户管理员发放（`POST /api/platform/admin/permissions/:code/users`，需 tenant:admin）。
+  # ⚠️ 装载器按各租户 org 逐个 upsert ⇒ **声明了才发得出去**（admin 端点会校验码∈本清单，
+  #    否则 404 NO_SUCH_CODE）。漏声明 = 指标声明了 required_scope: data:cost 也永远匹配不上
+  #    ⇒ 该指标对所有人静默不可见。
+  - { code: data:cost,   name: 成本与毛利数据 }
 # ⚠️ api.internal 的 path 是**模块相对路径**（不带 /api/modules/<id> 前缀）——
 # loader 的 applyDeclaredApiGate 会用 moduleApiBasePath(id) 加前缀后再做门卫比对。
 # 声明集合必须与 createRouter 注册的集合逐条一致（装载期双向核对，任一方向差集 ⇒ 装载失败）。

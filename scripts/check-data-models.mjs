@@ -176,6 +176,25 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
 const REQUIRED_METRIC_FIELDS = ['expression', 'grain', 'owner', 'tier', 'definition', 'source', 'freshness_sla_days']
 
 /**
+ * 规则 ⑤ 的**允许键闭集**（含选填的）。
+ *
+ * ── 为什么必须是闭集（2026-10-17，issue #779）──────────────────────────────────
+ * 规则 ⑤ 的其余部分只认**已知**字段：必填的查齐没齐、已知的查形态。⇒ 一个拼错的键名
+ * （`required_scpoe`）**不会报任何错**——声明「写了但没生效」，症状是**那个指标永远不受限制**。
+ * 静默，不报错。这正是列级授权要防的那一类，所以这里必须把未知键挡下来。
+ *
+ * ⚠️ **加字段 = 改这个常量 + 改 README + 走 PR**（同 `CHART_TYPES` 纪律：能选不能扩）。
+ * 本清单是**从 `dbt/semantics/l1_metrics.yml` 实际用到的键 grep 出来的**（2026-10-17），
+ * 不是凭记忆列的：`name` + 下列 10 个 + 本次新增的 `reads` / `required_scope`。
+ */
+const METRIC_KEYS = new Set([
+  'name', 'label', 'definition', 'expression', 'ratio', 'grain',
+  'source', 'sources', 'freshness_sla_days', 'owner', 'tier',
+  // 列级/值级授权（spec 2026-10-17 §4.2/§4.3）
+  'reads', 'required_scope',
+])
+
+/**
  * 规则 ⑤ 的 ratio 形状核（纯函数，供单测与主扫描共用；spec 2026-10-12 §5.3）。
  * 率类声明走 `ratio: { numerator, denominator }`，与 expression 互斥；物化侧
  * （sync-data-semantics.mjs）把分母包成 `nullif(…, 0)` —— 这里钉声明侧的形状：
@@ -965,6 +984,54 @@ export function checkDataModels(rootDir, opts = {}) {
   /** @type {Map<string, string>} */
   const nameToFile = new Map()
   for (const metric of metrics) {
+    // ⑤-a 未知键拒绝（issue #779）。放在最前：这条与名字合规性无关，且**拼错的键名**是本规则
+    // 唯一能抓到它的地方——规则 ⑤ 的其余部分只认已知字段。
+    for (const k of Object.keys(metric.fields ?? {})) {
+      if (METRIC_KEYS.has(k)) continue
+      push(
+        metric.file,
+        0,
+        `指标 \`${metric.name || '(空)'}\` 有未知字段 \`${k}\` —— 拼错的键名会被**静默忽略**`
+        + '（声明写了但没生效，症状是该指标永远不受限制）。'
+        + `允许的键：${[...METRIC_KEYS].join(' / ')}。`,
+      )
+    }
+
+    // ⑤-b `required_scope` 形态（spec 2026-10-17 §4.2）：给了就必须是非空、无首尾空白的字符串。
+    // 缺省不报（= null = 不限制，合法）。**这里不判码是否存在**（要读 manifest，属另一条门禁）。
+    const rs = metric.fields?.required_scope
+    if (rs !== undefined && rs !== null) {
+      const s = typeof rs === 'string' ? rs : ''
+      if (s === '' || s.trim() === '' || s !== s.trim()) {
+        push(
+          metric.file,
+          0,
+          `指标 \`${metric.name || '(空)'}\` 的 \`required_scope\` ${JSON.stringify(rs)} 形态不合规 ——`
+          + '必须是非空、无首尾空白的字符串。权限码是**逐字**比对的集合成员判断，'
+          + '带空白/空串的码谁也匹配不上（症状：该指标对所有人静默不可见，且不报错）。',
+        )
+      }
+    }
+
+    // ⑤-c `reads` 形态（spec 2026-10-17 §4.3）：给了就必须是**非空字符串数组**。
+    // 元素指向的源列存不存在、单调性够不够，由 scripts/check-column-scope-monotonicity.mjs 判（T3）。
+    const reads = metric.fields?.reads
+    if (reads !== undefined && reads !== null) {
+      const bad =
+        !Array.isArray(reads)
+        || reads.length === 0
+        || reads.some((r) => typeof r !== 'string' || r.trim() === '' || r !== r.trim())
+      if (bad) {
+        push(
+          metric.file,
+          0,
+          `指标 \`${metric.name || '(空)'}\` 的 \`reads\` 形态不合规 —— 必须是非空、`
+          + '元素为非空无空白字符串的数组（如 ["lemeng.item.item_cost_price"]）。'
+          + '它是血缘门的输入，写错会让门误判「没读这一列」。',
+        )
+      }
+    }
+
     // ⑥-a 命名空间前缀（名字不合法 ⇒ 以名派生文件名的 ⑦ 对它不适用，只报这一条，免得报出一串噪声）
     if (!METRIC_NAME_RE.test(metric.name)) {
       push(

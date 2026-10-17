@@ -546,6 +546,53 @@ describe('declarationsFromYaml：freshness_sla_days（spec §10.7.1，缺声明�
   })
 })
 
+describe('declarationsFromYaml：required_scope（列级授权声明面，spec 2026-10-17 §4.2）', () => {
+  const base = {
+    name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(t.c)',
+    grain: ['g'], owner: 'o', tier: 'certified', freshness_sla_days: 1,
+  }
+
+  it('缺声明 ⇒ null（与 2026-10-17 之前的恒 null 行为一致，不改变任何既有指标的可见性）', () => {
+    expect(declarationsFromYaml(yaml([base]))[0].requiredScope).toBeNull()
+  })
+
+  it('显式 null ⇒ null', () => {
+    expect(declarationsFromYaml(yaml([{ ...base, required_scope: null }]))[0].requiredScope).toBeNull()
+  })
+
+  it('合法码 ⇒ 原样物化（不做任何归一，权限码是逐字比对）', () => {
+    expect(declarationsFromYaml(yaml([{ ...base, required_scope: 'data:cost' }]))[0].requiredScope)
+      .toBe('data:cost')
+  })
+
+  it('空串 / 纯空白 ⇒ 抛（空白码谁也匹配不上 ⇒ 该指标对所有人静默不可见）', () => {
+    for (const bad of ['', '   ', '\t']) {
+      expect(
+        () => declarationsFromYaml(yaml([{ ...base, required_scope: bad }])),
+        `required_scope: ${JSON.stringify(bad)} 没被拦`,
+      ).toThrow(/required_scope/)
+    }
+  })
+
+  it('首尾带空白 ⇒ 抛（**不 trim**：trim 等于替作者改声明，而库里存的值必须与声明逐字相同）', () => {
+    for (const bad of [' data:cost', 'data:cost ', ' data:cost ']) {
+      expect(
+        () => declarationsFromYaml(yaml([{ ...base, required_scope: bad }])),
+        `required_scope: ${JSON.stringify(bad)} 没被拦`,
+      ).toThrow(/required_scope/)
+    }
+  })
+
+  it('非字符串（YAML 裸数字/布尔）⇒ 抛（强转会造出一个不存在的码）', () => {
+    for (const bad of [123, true]) {
+      expect(
+        () => declarationsFromYaml(yaml([{ ...base, required_scope: bad }])),
+        `required_scope: ${JSON.stringify(bad)} 没被拦`,
+      ).toThrow(/required_scope/)
+    }
+  })
+})
+
 describe('真 YAML：37 条 sla_days / freshnessRelations 逐条断言（spec §10.7.1/10.7.3，真实事实源）', () => {
   // 为什么钉真实 YAML：sla_days 是人工登记值（不是推导产物），漏登记/登错不报错，只表现为
   // 线上状态转译错。逐字断言 + 计数兜底（加指标时这两条会替你守住「新指标必须显式登记」）。
