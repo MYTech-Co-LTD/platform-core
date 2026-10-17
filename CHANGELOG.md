@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.146.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.146.0...v0.146.1) - 2026-10-17
+- 【修复】data: 零售明细门店清单改 whoami 现算，新店自动纳入（#793） ([#801](https://github.com/MYTech-Co-LTD/platform-core/pull/801), [1e489b5](https://github.com/MYTech-Co-LTD/platform-core/commit/1e489b520f0a10005bd2699ff1929b55e9ffc173))
+
+
 ## [0.146.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.145.1...v0.146.0) - 2026-10-17
 - 【新增】data: fct_client_contribution 客户级费用后贡献构件 + 两条 L1（#744） ([#800](https://github.com/MYTech-Co-LTD/platform-core/pull/800), [5ba233c](https://github.com/MYTech-Co-LTD/platform-core/commit/5ba233cbc11ce39835b1602d4dcf13abfa716dc2))
 
