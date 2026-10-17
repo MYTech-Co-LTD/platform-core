@@ -20,11 +20,19 @@
 --    若复算走 staging，staging 的 cast 错会**同时**污染两边 ⇒ 对账恒等、永远绿（这正是
 --    「对账看着有、其实没用」的形态）。故复算直接打 parquet，与 staging 的 cast 各自独立写。
 --
--- ── 口径（2026-10-12 W0 随 #430 定案更新）───────────────────────────────────────────────
---    净销售额 = FINISHED+SALE_ORDER 基面 + 换货「送出半边」公式（逐单 (Σ非赠品+total)/2 − sd）
---    + 赠品判别式排除。**除法形态与 fct_retail_sale.sql 及正典对拍实现
+-- ── 口径（2026-10-17 随 #813 定案更新；上一版 2026-10-12 W0 随 #430）──────────────────────
+--    净销售额 = **销售侧 − 退货侧**。
+--    销售侧 = FINISHED+SALE_ORDER 基面 + 换货「送出半边」公式（逐单 (Σ非赠品+total)/2 − sd）
+--      + 赠品判别式排除（本文件 `base`/`per_order` 两条 CTE 实现）。
+--    退货侧 = 退货单**全额冲减、不套折半**：Σ(sale_money + order_detail_share_discount)，
+--      谓词 `order_transaction_type like '%RETURN%' AND state='FINISHED'`（**REPAID_RETURN 不计**
+--      —— 它们 state=REPAID）；按**退货单自身 bizday** 归属（本文件 `ret_base`/`ret_side` 两条
+--      CTE 实现，**独立打 parquet、不 ref staging**，与销售侧各自读，见上「刻意重复」段）。
+--    两侧各自 group by (账套, 业务日, 门店) 后 full join 相减 —— 缺一侧按 0 计（`recheck`）。
+--    **销售侧的除法形态与 fct_retail_sale.sql 及正典对拍实现
 --    （console 管线 lemeng.recon.preagg.item.json）逐字同构**：per_order 出 ng/tot/sd，
 --    sum 的参数表达式里逐单除——除法的舍入位置是口径的一部分，别改成先和后除。
+--    spec：docs/superpowers/specs/2026-10-17-retail-net-sales-return-offset-design.md
 --
 -- ── 形态：与 staging **同一套实测形态**（2026-09-24 数据面真机）──────────────────────────
 -- ① 取列：`from read_parquet('…') r` + `r['列名']` —— 别名必须挂在**函数调用**上；

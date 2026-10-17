@@ -99,7 +99,11 @@ select
     '复算与物化结果不一致（销售额·销售侧，#430 换货半边口径）' as note
 from recheck a
 full join materialized b using (system_book, bizday, branch_num)
-where a.sale_amount is distinct from b.sale_amount
+-- ⚠️ 2026-10-17（issue #813）：物化侧（fct_retail_sale）自 T1 起是 `sale_side full join
+--    return_side`，含「只有退货、没有销售」的店日（sale_amount=0），而本复算侧只有销售基面
+--    ⇒ 那些行 a.sale_amount 为 NULL。coalesce 到 0 再比，既放过这些**结构上正确**的空缺，
+--    又不放松销售店日的逐分判据（复算=5/物化=0 与 复算=NULL/物化=5 仍判红）。
+where coalesce(a.sale_amount, 0) is distinct from coalesce(b.sale_amount, 0)
 
 union all
 
