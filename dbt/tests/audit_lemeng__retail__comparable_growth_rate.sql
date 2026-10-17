@@ -11,14 +11,28 @@
 --      不收缩会把批发客户/仓库混进分母）。
 
 -- ① 率自洽
+-- ⚠️ **用容差、不用 `is distinct from`**（2026-10-17 首跑实录）：构件列是 `numeric(12,6)`（已四舍五入），
+--    重算走全精度 ⇒ 逐行天然不等（16 行全红）。容差 1e-6 恰好覆盖 6 位小数的舍入误差，
+--    仍然能抓住**任何真实公式错**（分子分母错、少减 1、写成 pri/cur 等，偏差量级都 ≥1e-3）。
 select
     system_book,
     bizday,
     period_days,
-    'growth_rate 与 cur/pri−1 不一致（分子分母或公式错）' as note
+    'growth_rate 与 cur/pri−1 不一致（超出 6 位小数容差 ⇒ 分子分母或公式错）' as note
 from {{ ref('fct_retail_comparable_growth') }}
-where growth_rate is distinct from
-      (cur_amount / nullif(pri_amount, 0) - 1)
+where growth_rate is not null
+  and abs(growth_rate - (cur_amount / nullif(pri_amount, 0) - 1)) > 0.000001
+
+union all
+
+-- ①-b 反向：分母非 0 时必须算得出率（不能静默为 NULL）
+select
+    system_book,
+    bizday,
+    period_days,
+    'pri_amount<>0 但 growth_rate 为 NULL（率该算得出却没算）' as note
+from {{ ref('fct_retail_comparable_growth') }}
+where pri_amount <> 0 and growth_rate is null
 
 union all
 
