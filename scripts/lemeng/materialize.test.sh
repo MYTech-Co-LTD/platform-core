@@ -33,15 +33,15 @@ check "带 --profiles-dir /usr/app" sh -c 'echo "$1" | grep -F -- "--profiles-di
 check "不含 --select（名单回来 = #677 假绿复发）" sh -c '! echo "$1" | grep -q -- "--select"' _ "$DBT_ARGS"
 check "不含任何 stg_/fct_ 模型名（按需名单的另一种长法）" sh -c '! echo "$1" | grep -Eq "stg_|fct_"' _ "$DBT_ARGS"
 
-# ── ② mat_env_args：8 键、只透传键名、值不落 argv ─────────────────────────────
+# ── ② mat_env_args：9 键、只透传键名、值不落 argv ─────────────────────────────
 ENV_ARGS=$(extract mat_env_args)
 [ -n "$ENV_ARGS" ] || bad "mat_env_args 抽取失败（函数不存在或格式变了）"
 E_TOKENS=$(echo "$ENV_ARGS" | tr -s ' ' '\n' | sed '/^$/d' | grep -c '^-e$')
-check "-e token 恰 8 个（键集由本函数唯一定义）" sh -c '[ "$1" = 8 ]' _ "$E_TOKENS"
+check "-e token 恰 9 个（键集由本函数唯一定义）" sh -c '[ "$1" = 9 ]' _ "$E_TOKENS"
 E_EQ=$(echo "$ENV_ARGS" | tr -s ' ' '\n' | sed '/^$/d' | grep -c '=' || true)
 check "带 = 的 token 恰 1 个（仅 DBT_HOST=pg_duckdb；值进 argv 就进 ps）" sh -c '[ "$1" = 1 ]' _ "$E_EQ"
 check "带 = 的那个正是 DBT_HOST=pg_duckdb" sh -c 'echo "$1" | grep -qx "DBT_HOST=pg_duckdb"' _ "$(echo "$ENV_ARGS" | tr -s ' ' '\n' | grep '=')"
-for k in DBT_USER DBT_PASSWORD DBT_DBNAME LEMENG_ZOS_BUCKET LEMENG_ZOS_REGION LEMENG_ZOS_ENDPOINT LEMENG_SUBJECT_ORG; do
+for k in DBT_USER DBT_PASSWORD DBT_DBNAME LEMENG_ZOS_BUCKET LEMENG_ZOS_REGION LEMENG_ZOS_ENDPOINT LEMENG_SUBJECT_ORG DATA_PLANE_DOMAINS; do
   check "透传键在场：-e ${k}" sh -c 'echo "$1" | grep -F -- "-e $2" >/dev/null' _ "$ENV_ARGS" "$k"
 done
 
@@ -174,6 +174,7 @@ run_mat() { # $1=用例名 → 假 docker 跑 materialize.sh，stdout/stderr 落
   MATERIALIZE_REPO_DIR="$STUB_E2E/repo" \
   MATERIALIZE_PG_CT=pg MATERIALIZE_CONSOLE_CT=console MATERIALIZE_PLAT_CT=plat \
   MATERIALIZE_NETWORK=stub-net MATERIALIZE_DBT_IMAGE=stub-dbt:stub \
+  DATA_PLANE_DOMAINS="${DOMAINS_FIXTURE-lemeng}" \
   STUB_STATE="$_w/state" STUB_ENV_DIR="$STUB_E2E/envdir" \
   STUB_DBT_FAIL="${STUB_DBT_FAIL:-0}" STUB_DBT_NO_SUMMARY="${STUB_DBT_NO_SUMMARY:-0}" \
   STUB_EXEC_FAIL="${STUB_EXEC_FAIL:-0}" \
@@ -222,6 +223,19 @@ STUB_EXEC_FAIL=0
 check "落账：psql 失败 ⇒ 物化仍退出 0（记账失败不 retry 整个 build）" sh -c '[ "$1" = 0 ]' _ "$st"
 check "落账：psql 失败 ⇒ stderr 有告警（降级可见，不是静默）" sh -c 'grep -q "load_log 落账失败" "$1"' _ "$STUB_E2E/warn/err"
 check "落账：psql 失败 ⇒ 末行仍 MATERIALIZE_OK" sh -c 'tail -n 1 "$1" | grep -qx "MATERIALIZE_OK"' _ "$STUB_E2E/warn/out"
+
+# 域身份（DATA_PLANE_DOMAINS）缺配 ⇒ **响亮失败**，不许猜一个默认域：
+# 猜 `lemeng` 会让漏配的新面静默 build 乐檬模型（反向泄漏）；空串则 dbt 侧解析出 0 个模型、
+# 退出 0、照打 MATERIALIZE_OK（2026-10-17 实测的假绿）⇒ 空即停（docs/architecture.md §2.5）。
+DOMAINS_FIXTURE=''
+st=$(run_mat nodom)
+check "域身份：DATA_PLANE_DOMAINS 缺配 ⇒ 退出码 1（fail-closed，不猜默认域）" sh -c '[ "$1" = 1 ]' _ "$st"
+check "域身份：缺配 ⇒ MATERIALIZE_FAILED:missing_env 且点名该键" \
+  sh -c 'grep -q "MATERIALIZE_FAILED:missing_env" "$1" && grep -q "DATA_PLANE_DOMAINS" "$1"' _ "$STUB_E2E/nodom/err"
+check "域身份：缺配 ⇒ 不起 dbt 容器（守卫在 docker run 之前）" \
+  sh -c '! grep -Fq "run --rm" "$1"' _ "$STUB_E2E/nodom/state/calls.log"
+check "域身份：值经 -e 透传进 dbt 容器（键名形态，值不进 argv）" LOG_GREP ok "-e DATA_PLANE_DOMAINS"
+unset DOMAINS_FIXTURE
 
 rm -rf "$STUB_E2E"
 

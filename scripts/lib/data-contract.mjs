@@ -119,6 +119,44 @@ export function collectJson(root, relDir) {
 }
 
 /**
+ * 找 staging 模型的**仓内相对路径**。
+ *
+ * 为什么要「找」而不是拼死路径：模型树自 2026-10-17 起按**域**分顶层目录
+ * （`dbt/models/<域>/{staging,marts}/`，客户分叉嵌在域里），见 `docs/architecture.md` §2.5
+ * 与 `dbt/models/README.md`。拼 `models/common/staging/…` 会在分域后**静默找不到**——
+ * 于是断言变成「没接 staging」的误报，而不是「路径该更新了」。
+ *
+ * 判据：在 `dbt/models/` 下的任意 `staging/` 目录里找**同名**文件，命中**恰好一个**才算找到。
+ * 0 个 = 真没接；>1 个 = 同名两处（那属 `check-data-models` 规则 ④ 的红，这里只如实报出 hits）。
+ *
+ * @param {string} root @param {string} domain @param {string} table
+ * @returns {{ rel: string | null, hits: string[] }}
+ */
+export function findStagingModelRel(root, domain, table) {
+  const base = `stg_${domain}_${table}.sql`
+  /** @type {string[]} */
+  const hits = []
+  /** @param {string} relDir */
+  const walk = (relDir) => {
+    let entries
+    try {
+      entries = readdirSync(join(root, relDir), { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const ent of entries) {
+      if (ent.name === 'node_modules' || ent.name === 'target' || ent.name === 'logs') continue
+      const rel = `${relDir}/${ent.name}`
+      if (ent.isDirectory()) walk(rel)
+      else if (ent.name === base && rel.includes('/staging/')) hits.push(rel)
+    }
+  }
+  walk('dbt/models')
+  hits.sort()
+  return { rel: hits.length === 1 ? hits[0] : null, hits }
+}
+
+/**
  * 读一份契约的关键字段。**单形状**（字段恒在）——缺字段时由调用方报违规。
  * `columns[].expr` 缺失时回落空串（生成器据此判「未回填」）。
  * `precision` / `scale` 只在 `decimal` 列上有值 —— 生成器用它产出 `numeric(p,s)` 的**精确**

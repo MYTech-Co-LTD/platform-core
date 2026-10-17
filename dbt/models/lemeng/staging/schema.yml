@@ -1,7 +1,7 @@
 # schema.yml — staging 层的模型描述 + 列级 dbt tests（新湖三模型：retail_order_line / branch / item）。
 #
 # ⚠️ 落点纪律：**本文件只描述 staging 模型**；`fct_retail_sale` 的描述与测试仍在
-#   `dbt/models/common/marts/schema.yml`（口径模型与清洗模型各自归各自，别互相塞）。
+#   `dbt/models/lemeng/marts/schema.yml`（口径模型与清洗模型各自归各自，别互相塞）。
 # ⚠️ L1 语义声明也不在这里，在 `dbt/semantics/l1_metrics.yml`（理由见 marts/schema.yml 头注）。
 #
 # 本文件的两类断言（都不替代对账 —— 对账是 `dbt/tests/audit_*.sql` 的独立复算）：

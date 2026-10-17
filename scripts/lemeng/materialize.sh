@@ -11,6 +11,10 @@
 #    `audit_lemeng__retail__hour_row_count`（无 ref()，白名单态被解析但从未执行）从今天起每天真跑——
 #    它红是**真断崖信号**（同小时行数低于 14 天中位数的 0.5 倍），不是 job 故障。
 #    将来若真出现「不该日物化」的模型，用该模型的 config 或 `--exclude` 表达，**不要恢复 job 级名单**。
+#    ⚠️ 2026-10-17 起「全量」的含义收窄为**本数据面拥有的域内全量**（`DATA_PLANE_DOMAINS`）：
+#    多个数据面共用一棵 dbt/ 树，不裁剪时**两侧互 build 对方模型**（本方侧反向泄漏／对方侧 dbt 红）。
+#    裁剪落在 `dbt_project.yml` 的**按路径 `+enabled`**（即 ② 说的「用模型 config 表达」），
+#    不是本脚本里的名单 —— 本脚本只负责把**域身份**（一个部署属性）透传进去。
 #
 # ③ env 舞步：值一律运行时从运行中的容器 `docker inspect` 取（不落盘、不落 job 配置），
 #    再以 `docker run -e VAR`（**透传形态**，只带键名）传给 dbt 容器 ⇒ 值不进 ps。
@@ -31,13 +35,14 @@ IMAGE=${MATERIALIZE_DBT_IMAGE:-platform-core-dbt:local}
 
 # ── 判别面（materialize.test.sh 从这里抽函数测；这些函数不许碰 docker）──────────
 # 透传键清单：只透传**键名**（`-e VAR` 形态）——值写进 argv 就进 ps。
-# 键集 8 个：DBT_HOST 是字面量（服务名，非敏感），其余 7 个由下方 export 供值。
+# 键集 9 个：DBT_HOST 是字面量（服务名，非敏感），其余 8 个由下方 export 供值。
 mat_env_args() {
   printf '%s ' \
     -e DBT_HOST=pg_duckdb \
     -e DBT_USER -e DBT_PASSWORD -e DBT_DBNAME \
     -e LEMENG_ZOS_BUCKET -e LEMENG_ZOS_REGION -e LEMENG_ZOS_ENDPOINT \
-    -e LEMENG_SUBJECT_ORG
+    -e LEMENG_SUBJECT_ORG \
+    -e DATA_PLANE_DOMAINS
 }
 # dbt 命令：全量 build（seed+model+test 一把跑，按 DAG 依赖序）。没有 --select（#679 定案，见头注②）。
 mat_dbt_args() {
@@ -120,6 +125,13 @@ mat_require 'ZOS_ENDPOINT(console)' "$ZE" || exit 1
 SO=$(docker exec -e PGPASSWORD="$PPW" "$PLAT_CT" psql -U "$PUN" -d "$PDB" -tAc \
   'select casdoor_org from platform.tenant order by id limit 1' 2>/dev/null | tr -d ' \r\n')
 mat_require 'LEMENG_SUBJECT_ORG(platform.tenant 首行)' "$SO" || exit 1
+# 域身份：本数据面**拥有哪些域**（逗号分隔），dbt 侧按它裁剪物化集（docs/architecture.md §2.5）。
+# 值是**部署属性**，不是从容器里取的 ⇒ 由 openship job 的 env 给（job 侧键名同名 DATA_PLANE_DOMAINS）。
+# ⚠️ **刻意不给默认值**：给个 `lemeng` 默认会让任何漏配的新面**静默 build 乐檬模型**
+#    （反向泄漏，方向与 #729 相反）；给空串则 dbt 侧解析出 0 个模型、退出 0、照打 MATERIALIZE_OK
+#    （2026-10-17 实测的假绿）。故这里**空即响亮失败**，宁可停也不猜。
+DOMAINS=${DATA_PLANE_DOMAINS:-}
+mat_require 'DATA_PLANE_DOMAINS(本数据面拥有的域，逗号分隔；job env 注入)' "$DOMAINS" || exit 1
 
 # profiles.yml 机器本地（不进仓；模板 = 仓内 dbt/profiles.example.yml，纯 env_var() 引用无真值）。
 # 缺失时自愈一份（首次部署/检出重建的兜底）；已人工调过的不会被覆盖。
@@ -131,8 +143,9 @@ mat_require 'LEMENG_SUBJECT_ORG(platform.tenant 首行)' "$SO" || exit 1
 export DBT_HOST=pg_duckdb DBT_USER="$UN" DBT_PASSWORD="$PW" DBT_DBNAME="$DB"
 export LEMENG_ZOS_BUCKET="$ZB" LEMENG_ZOS_REGION="$ZR" LEMENG_ZOS_ENDPOINT="$ZE"
 export LEMENG_SUBJECT_ORG="$SO"
+export DATA_PLANE_DOMAINS="$DOMAINS"
 
-echo "materialize start repo=${R} network=${NETWORK} image=${IMAGE} mode=full_build（无按需名单，#679）"
+echo "materialize start repo=${R} network=${NETWORK} image=${IMAGE} domains=${DOMAINS} mode=full_build（本面域内全量，无按需名单，#679）"
 # dbt 输出 tee 进临时日志：job 的实时流保持不变，同时留一份可解析的汇总行（Done. PASS=n … ERROR=m）。
 # 退出码用 rc 文件带出（POSIX sh 无 pipefail/PIPESTATUS；管道末位是 tee，不能直接判 dbt）。
 DBT_LOG="${TMPDIR:-/tmp}/materialize-dbt.$$.log"

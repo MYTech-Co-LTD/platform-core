@@ -304,7 +304,9 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
     expect(violations).toHaveLength(1)
     // 「声明了但工件缺席」类违规的 `file` 约定 = **该缺席工件的应有路径**（可据此直接建文件），
     // 声明侧的位置写进 message —— 本文件与 ⑦（缺 audit_*.sql）用同一条约定，两者形状一致。
-    expect(violations[0]?.file).toBe('dbt/models/common/staging/stg_lemeng_retail_refund.sql')
+    // ⚠️ 落点自 2026-10-17 起带**域**占位符（目录即域，规则 ⑪）：声明面不指定域 ⇒ 这里只能给形态
+    //    `models/<域>/staging/…`，由人来把它落到本域的目录（fixture 里那条声明是 `lemeng` 域的）。
+    expect(violations[0]?.file).toBe('dbt/models/<域>/staging/stg_lemeng_retail_refund.sql')
     expect(violations[0]?.message).toContain('retail_refund')
     expect(violations[0]?.message).toContain(SOURCES)
   })
@@ -1307,5 +1309,78 @@ describe('规则 ⑤-d：mask 形状（值级脱敏声明面，spec 2026-10-17 �
     ))
     expect(v).toHaveLength(1)
     expect(v[0]?.message).toContain('kind')
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// 规则 ⑪：域覆盖（fail-closed）—— docs/architecture.md §2.5 / dbt/dbt_project.yml 注释
+//
+// 为什么每一格都要断言「红了」且「点到名」：这条规则要防的两个方向**都只有静默这一种症状**——
+//   · 域目录在、登记缺 ⇒ dbt 默认 `enabled: true` ⇒ 该域**每个数据面都会 build 它**（本方侧把
+//     对方租户的数据物化进本方仓库并标成本方 org = 反向泄漏）；
+//   · 登记在、表达式错（漏域名 / 指向别的 env 键）⇒ 该域**永不 build**，dbt 一声不响。
+// 与 #677/#679「解析数涨、执行集不变、run 照绿」同形，故它值得一格一条。
+// ⚠️ 强度同规则 ⑧：**标记级**文本比对（目录名 / YAML 键名 / `+enabled` 字符串里的字面量），不跑 dbt。
+// ════════════════════════════════════════════════════════════════════════════════════════
+describe('规则 ⑪：域覆盖（models/<域>/ ↔ dbt_project.yml 的 +enabled）', () => {
+  const PROJECT = 'dbt/dbt_project.yml'
+  /** 基线 fixture 里的域目录名（`compliant()` 用的是 `common/`） */
+  const DOMAIN = 'common'
+  const enabled = (d: string, key = 'DATA_PLANE_DOMAINS') =>
+    `      +enabled: "{{ '${d}' in env_var('${key}').split(',') }}"`
+  const project = (...entries: string[]) => [
+    "name: 'platform_data'",
+    'version: 1.0.0',
+    'profile: platform_data',
+    'models:',
+    '  platform_data:',
+    '    +materialized: table',
+    ...entries,
+    '',
+  ].join('\n')
+
+  it('格⑪-1 基线：域目录已登记且 +enabled 形态正确 ⇒ 不误伤（违规数 0）', () => {
+    const root = variant((f) => { f[PROJECT] = project(`    ${DOMAIN}:`, enabled(DOMAIN)) })
+    expect(checkDataModels(root)).toHaveLength(0)
+  })
+
+  it('格⑪-2 域目录**未登记** ⇒ 违规（点名该域；未登记 = dbt 默认启用 = 每个面都 build）', () => {
+    const root = variant((f) => { f[PROJECT] = project() })
+    const v = checkDataModels(root)
+    expect(v).toHaveLength(1)
+    expect(v[0]?.file).toBe(PROJECT)
+    expect(v[0]?.message).toContain(`models/${DOMAIN}/`)
+    expect(v[0]?.message).toContain('每个数据面都会 build')
+  })
+
+  it('格⑪-3 登记了但**没有 +enabled** ⇒ 违规（效果同未登记）', () => {
+    const root = variant((f) => { f[PROJECT] = project(`    ${DOMAIN}:`) })
+    const v = checkDataModels(root)
+    expect(v).toHaveLength(1)
+    expect(v[0]?.message).toContain('+enabled')
+  })
+
+  it('格⑪-4 +enabled 指向**别的 env 键** ⇒ 违规（域身份与部署身份脱钩）', () => {
+    const root = variant((f) => { f[PROJECT] = project(`    ${DOMAIN}:`, enabled(DOMAIN, 'SOME_OTHER_KEY')) })
+    const v = checkDataModels(root)
+    expect(v).toHaveLength(1)
+    expect(v[0]?.message).toContain('DATA_PLANE_DOMAINS')
+  })
+
+  it('格⑪-5 +enabled 里**域名写错**（复制粘贴别域的那一行）⇒ 违规（该域永不 build）', () => {
+    const root = variant((f) => { f[PROJECT] = project(`    ${DOMAIN}:`, enabled('lemeng')) })
+    const v = checkDataModels(root)
+    expect(v).toHaveLength(1)
+    expect(v[0]?.message).toContain(`'${DOMAIN}'`)
+  })
+
+  it('格⑪-6 登记了域但**目录不存在** ⇒ 违规（死配置）', () => {
+    const root = variant((f) => {
+      f[PROJECT] = project(`    ${DOMAIN}:`, enabled(DOMAIN), '    ghost:', enabled('ghost'))
+    })
+    const v = checkDataModels(root)
+    expect(v).toHaveLength(1)
+    expect(v[0]?.message).toContain('ghost')
+    expect(v[0]?.message).toContain('死配置')
   })
 })
