@@ -240,8 +240,21 @@ scope 是**不透明字符串**，这套模型里**没有 scope 层级**（`hasS
 
 ⚠️ **订正（2026-10-17 写计划时验算）**：本节初稿把审计列放在 P1。**验算后归 P2**——
 
-`data.query_audit` 的既有四列（`verdict` / `reason`）**已经覆盖 P1 的全部形态**：
-P1 的列级 = **整个指标不可见** ⇒ 走 `metric_not_authorized` 拒绝，`verdict='denied'` 已留痕。
+`data.query_audit` 的既有两列（`verdict` / `reason`）**已经覆盖 P1 的全部形态**：
+P1 的列级 = **整个指标不可见** ⇒ `verdict='denied'` 已留痕。
+
+⚠️ **订正（2026-10-17 逐条验证时查实）**：初稿在这里写的是「走 `metric_not_authorized` 拒绝」——
+**reason 说错了**。`runQuery` 传给 `authorize` 的目录**已经过 `visibleMetrics` 过滤**
+（`query-service.ts:242-244`）⇒ 无权限的指标在目录里**根本不存在**，走的是 `metric_not_declared`。
+`authorize` 自己的 `metric_not_authorized` 分支在这条路径上**不可达**（它被 `authz.test.ts` C2 单独钉着，
+是本核心的契约，只是消费面在它之前已把词表收窄）。
+
+**这个订正带来一条对本设计有利的性质**（`query-service.ts:236-241` 的注释自陈）：
+收窄词表**顺带**避免了「存在性探针」——「存在但你没权限」会泄漏这个指标存在。
+⇒ **列级隐藏天然不泄漏存在性**，与另外三条消费面（`GET /metrics`、MCP `tools/list`、chat 的
+`list_metrics`）自洽。P2 的值级掩码必须保住这条：**掩码是「看得到但看不清」，不是「看不见」**，
+两者对存在性的语义不同，别混。
+
 **P1 没有「部分返回」的形态**，所以新列在 P1 写了也是恒 `NULL`——**没有信息量的迁移不做**。
 
 新增 `masking jsonb` 随 **P2** 落（那时才有「同一查询对 A 给原值、对 B 给掩码」这种**必须留痕**的形态）。
