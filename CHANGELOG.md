@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.153.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.152.2...v0.153.0) - 2026-10-17
+- 【新增】data: 01-05 可比门店增长率——验证「问 0」不是只对一个指标成立 ([#833](https://github.com/MYTech-Co-LTD/platform-core/pull/833), [6b2c068](https://github.com/MYTech-Co-LTD/platform-core/commit/6b2c0684cf1ed83b96d3f79a12801f52630469fb))
+
+
 ## [0.152.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.152.1...v0.152.2) - 2026-10-17
 - 【修复】data: P2 掩码 Minor 挂账清理（#824） ([#827](https://github.com/MYTech-Co-LTD/platform-core/pull/827), [d1c68ed](https://github.com/MYTech-Co-LTD/platform-core/commit/d1c68ed18c9cc700b8f2a8aa2848f9733368cb76))
 
