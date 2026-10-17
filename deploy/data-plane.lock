@@ -1,4 +1,4 @@
-sha256-of-rest c7a3e46b0bc1176aef673396a071f4dd91507546dd3497c3ab917b428a0fa2ec
+sha256-of-rest cb215292885834c41478fd24f7a938c9d2807784ec4d44ba16be1d891195f144
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -136,6 +136,7 @@ a3fc0976e30b18c2e4d4358128e02e02388668007eeff5fa0f4dc6db48be47c0 deploy/dbt/Dock
 537562cc9a1298a44e719a2f8a3aaad592690bcec74edd28fc4601a01d551369 deploy/duckle/console/README.md ${REPO}/deploy/duckle/console/README.md 0644
 e3446c35618363d0381598e9e1382c3efcee9dad5d9bad29928c34ea96e09183 deploy/duckle/console/alerts.forms.json ${REPO}/deploy/duckle/console/alerts.forms.json 0644
 309ebdb459fccbec79342171ac50c9e6c6bc43700ac5c003271359289e19c850 deploy/duckle/console/alerts.lemeng.json ${REPO}/deploy/duckle/console/alerts.lemeng.json 0644
+c3a97defaf11dd1e7c3d613ca3dbb9e868a7ab19ab2adfb93743209f15da9992 deploy/duckle/console/owners.forms.json ${REPO}/deploy/duckle/console/owners.forms.json 0644
 592dd7f782ee7861f70f4f512535a6404016e92112686d868a9837df475be6ac deploy/duckle/console/owners.lemeng.json ${REPO}/deploy/duckle/console/owners.lemeng.json 0644
 ee25488a3bd1859f14e3a3eafa3c6b2c76a91768bd97d833d33a465c3a6b1e71 deploy/duckle/console/pipelines/FLOW.lemeng.md ${REPO}/deploy/duckle/console/pipelines/FLOW.lemeng.md 0644
 7039c29c4d8c215c780e4ec987789c184844d375d4ce84968f837d0f0bfa7ccd deploy/duckle/console/pipelines/README.md ${REPO}/deploy/duckle/console/pipelines/README.md 0644
