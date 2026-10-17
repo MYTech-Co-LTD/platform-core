@@ -1,6 +1,6 @@
-sha256-of-rest 68ebe752e3132b48ddc60d350507b91d5ea2f26b325cb3f7e62ba57ea93debfb
+sha256-of-rest 663ad1688c62e8cc54c38c27336e1adbf7f3a5ce7d3c364269b9288dab96e685
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
-5f2b5a68028671166b3a0cd62d62a08a12f8a10af5034a2b5e4cadb50c1fb264 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
+fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
 45eaa521a8eaf1d43f2cf73115c7e3abfcabffbf6ef98adb487c3302bcfd2a0b contracts/common/forms.submission.json ${REPO}/contracts/common/forms.submission.json 0644
 fd2a18bb7db1b17b97583b1c15ada2e1f409afb5f4a194d0c04e9f0ce8f721de contracts/common/lemeng.branch.json ${REPO}/contracts/common/lemeng.branch.json 0644
