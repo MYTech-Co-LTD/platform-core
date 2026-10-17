@@ -364,10 +364,19 @@ null 一旦出现即生效。**数值零影响**（`zero_cost_amount` 修前修�
 **⚠️ 2026-10-18 订正：源锚点不是「没有」，是「已建但只覆盖零售净额、且证据不落仓」。**
 （本节初稿写「certified 指标没有源锚点」，经查证**不成立**。）
 
-**已建的（不要重复造）**：`deploy/duckle/console/pipelines/lemeng.recon.preagg.item.json` ——
-逐日拿湖侧自算与**乐檬自家报表** `nhsoft.report.ai.itemsales.find`（`summary_types:["branch"]`）
-按门店做 diff，产物 = console 卷里的 CSV；由 job `lemeng-recon-day-heal`（`17 4 * * *`，
-T-3 定稿线）每天跑「对账 → 不平自动回填 → 复验」。2026-10-05 真机 **5 天逐分归零**。
+**已建的（不要重复造）**：`scripts/lemeng/recon-preagg.sh` —— 拿湖侧自算与**乐檬自家报表**
+`nhsoft.report.ai.itemsales.find`（`summary_types:["branch"]`）按门店做 diff（**已分批**，
+端点单次 ≤100 家否则 `10001`），产物 = console 卷 CSV。2026-10-05 真机 **5 天逐分归零**。
+
+**⚠️ 2026-10-18 二次订正——必须区分两个控制，且口径那条没在跑**：
+
+| 控制 | 比什么 | 抓什么 | 在跑吗 |
+|---|---|---|---|
+| **completeness** | 湖 vs 网关翻页累计（同问句换通道） | 执行偏差（漏页/漏店） | ✅ `recon-day-heal` 每天调 `diagnose.sh recon` |
+| **caliber** | 湖 vs **乐檬报表引擎**（按门店） | **口径 / 引擎错** | ❌ **无排班**（脚本手动跑；`.item` 管线无处排班；`lemeng.recon.preagg` 64188 有 `30 0` 排班但**无 sink、`last_run_at=null`**） |
+
+⇒ 本节的缺口**不是「跑了但没落仓」，是「口径对账既没落仓、也没按日跑」**。
+两者混为一谈的代价：一条红了你分不清该修管线还是修口径。
 
 **更关键的一条实测（2026-10-18）**：recon 的**湖侧公式就是 certified 口径**——
 2026-10-16 / 3120：recon 湖侧净额 **323,430.10** vs `fct_retail_sale.net_amount` **323,430.10**，
