@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.146.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.145.1...v0.146.0) - 2026-10-17
+- 【新增】data: fct_client_contribution 客户级费用后贡献构件 + 两条 L1（#744） ([#800](https://github.com/MYTech-Co-LTD/platform-core/pull/800), [5ba233c](https://github.com/MYTech-Co-LTD/platform-core/commit/5ba233cbc11ce39835b1602d4dcf13abfa716dc2))
+
+
 ## [0.145.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.145.0...v0.145.1) - 2026-10-17
 - 【修复】data: 复 enable stg_forms_submission——湖首文件已落（Closes #751） ([#799](https://github.com/MYTech-Co-LTD/platform-core/pull/799), [64f76fa](https://github.com/MYTech-Co-LTD/platform-core/commit/64f76fa0a57160099a350a8dbdf228b58791cc97))
 
