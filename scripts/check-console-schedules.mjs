@@ -6,8 +6,10 @@
 //      name stem 无账套数字后缀（共享族），或后缀 == <book>（本账套族）。
 //      —— 这是 SOP §F.1「一账套一 console」危害形态（错账套排班 ⇒ 静默采错数据）在
 //      **仓内源头**的闸：64188 的排班里出现 `*.l0.3120` 一类引用，合入前就红。
-//   ③（#630）**完整性方向**：每本 book 的期望采集集 =（共享族 + 本账套后缀族）
+//   ③（#630）**完整性方向**：每本 book 的期望采集集 =（**同域**共享族 + 本账套后缀族）
 //      − 全局豁免 − 本账套豁免；排班里缺一条 = 红。
+//      域 = 管线名首段（`lemeng` / `forms` / …）；账套书 → 域：纯数字 = `lemeng`，
+//      非数字书名 = 其字面量域（#729：forms 这类非乐檬域有自己的 console，不能塞进乐檬账套书）。
 //      —— 反向缺口实证（#630）：W1/W2/W3 六条新管线只进 pipelines/ 没进 schedules/，
 //      卷里永不自动采集，本闸当年照样绿。豁免必须显式列名 + 写理由，不许用前缀猜。
 //
@@ -41,6 +43,14 @@ function accountSuffix(stem) {
   return m === null ? '' : m[1]
 }
 
+/** @param {string} stem @returns {string} 管线名首段 = 域（`lemeng` / `forms` / …） */
+const domainOf = (stem) => stem.split('.')[0]
+/**
+ * 账套书 → 域。纯数字 = 乐檬账套号（历史约定）；否则书名字面量即域名（非乐檬域，如 `forms`）。
+ * @param {string} book @returns {string}
+ */
+const bookDomain = (book) => (/^[0-9]+$/.test(book) ? 'lemeng' : book)
+
 /** @type {Map<string, string>} name → suffix */
 const capability = new Map()
 for (const f of readdirSync(join(ROOT, 'pipelines'))) {
@@ -69,8 +79,11 @@ if (scheduleFiles.length === 0) {
 }
 for (const f of scheduleFiles) {
   const book = stemOf(f)
-  if (!/^[0-9]+$/.test(book)) {
-    violations.push(`book=<${book}> 排班文件名不是纯数字账套号（schedules/<账套>.json 约定）`)
+  // 账套书名：纯数字（乐檬账套号）或一个**有管线的域名**（非乐檬域，如 `forms`）。
+  if (!/^[0-9]+$/.test(book) && ![...capability.keys()].some((n) => domainOf(n) === book)) {
+    violations.push(
+      `book=<${book}> 排班书名既不是纯数字账套号，也不是任何管线的域名（schedules/<账套|域>.json 约定）`,
+    )
     continue
   }
   const entries = readJson(join(ROOT, 'schedules', f))
@@ -90,6 +103,11 @@ for (const f of scheduleFiles) {
       continue
     }
     const suf = capability.get(pid)
+    if (entry.enabled === true && domainOf(pid) !== bookDomain(book)) {
+      violations.push(
+        `book=${book} entry=${String(entry.id)} enabled 引用**他域**管线 ${pid}（域 ${domainOf(pid)}≠${bookDomain(book)}）——错域排班，§F.1 危害形态`,
+      )
+    }
     if (entry.enabled === true && suf !== '' && suf !== book) {
       violations.push(`book=${book} entry=${String(entry.id)} enabled 引用他账套管线 ${pid}（后缀 ${suf}≠${book}）——错账套排班，§F.1 危害形态`)
     }
@@ -106,13 +124,9 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.retail_order_line.tick', '旧零售族残留——已被 retail.tick.l1 取代，待退役（§2 台账）'],
   ['lemeng.retail_order_line.window', '旧零售族残留——已被 retail.windows.l1 取代，待退役（§2 台账）'],
   ['lemeng.recon.preagg.item', '按需手动（逐分归零对账执行面，无日更节奏）'],
-  // ⚠️ 这一条**不是**「乐檬族」——是本门禁的**假设**在 forms 域上不成立的登记：
-  // 本门禁把**无后缀**管线当「共享族」⇒ 期望每本乐檬账套都排它。但 forms（表单提交域，#729）
-  // **不属于任何乐檬账套**，它的 console/workspace 是另一套（「一账套一 console」那条引擎约束
-  // 决定了不能塞进 3120/64188：调度条目带不了自己的 env ⇒ 混装会静默采错源）。
-  // ⟹ 待 forms 自己的 console 建立后（M1.4 阶段 E），本条豁免应**删除**并把排班登记进那本账套；
-  // 届时 check-console-alerts 也会开始要求它（当前它只查**已排班**管线，故现在不报）。
-  ['forms.submission.l0', 'forms 独立域（非乐檬账套族）——待其 console/workspace 建立后排班；当前无 console（#729 阶段 E 未开工）'],
+  // （#729）forms 的那条旧豁免已**删除**：期望集改成「按**域**判」后，无后缀的
+  // `forms.submission.l0` 不再被当乐檬共享族塞给 3120/64188，豁免失去存在理由。
+  // forms 的排班随它自己的 console/workspace 落地登记进 `schedules/forms.json`（M1.4 阶段 E）。
 ])
 /** @type {Map<string, Map<string, string>>} book →（管线名 → 理由） */
 const EXEMPT_BY_BOOK = new Map([
@@ -129,6 +143,7 @@ for (const f of scheduleFiles) {
   /** @type {Set<string>} 本 book 的排班覆盖集 */
   const covered = new Set(readJson(join(ROOT, 'schedules', f)).map((/** @type {{pipeline_id?: unknown}} */ e) => String(e.pipeline_id)))
   for (const [name, suffix] of capability) {
+    if (domainOf(name) !== bookDomain(book)) continue // 非本域，本 book 不期望（#729）
     if (suffix !== '' && suffix !== book) continue // 非本账套族，本 book 不期望
     if (EXEMPT_GLOBAL.has(name) || exemptBook.has(name)) continue
     if (!covered.has(name)) {
