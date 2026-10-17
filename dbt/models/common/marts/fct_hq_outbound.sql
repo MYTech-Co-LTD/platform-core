@@ -8,7 +8,15 @@
 --   跨模型聚合必须落成**一张 marts 长表**（sync 错误文案原话：跨模型聚合属 marts 层的活）。
 --   本表即 R/C/G 构件的唯一落点（dbt/README.md §5.1 构件列约定表 transfer/wholesale 行）。
 --
--- 【粒度】(system_book, bizday, domain, branch_num, region_id)——被 assert_fct_hq_outbound_grain_unique 钉住。
+-- 【粒度】(system_book, bizday, domain, branch_num, region_id, **client_fid**)——被
+--   assert_fct_hq_outbound_grain_unique 钉住。
+--   ⚠️ **client_fid 是 2026-10-17 加的第 6 键**（#744「客户级费用后贡献」的前置）：
+--     · `wholesale` 行的对象是**批发客户**，客户号来自 `stg_lemeng_wholesale_out.client_fid`
+--       （真机实测 2140/2140 非空、105 个客户，形如 `003120990000212`）；
+--     · `transfer` 行的对象是**门店**（收货店），没有客户 ⇒ `client_fid` **恒 NULL**；
+--     · NULL 在 GROUP BY 里归为一组，所以 transfer 行的粒度不受影响。
+--   ⚠️ 扩键的直接后果：**批发侧的每一行不再按 (账套,日,门店) 合并，而是按客户拆开**。
+--     需要旧口径的消费方（如 fct_contribution）必须自己把 client_fid 聚合掉。
 --   domain ∈ {'transfer','wholesale'}：客户文档 01-01 明令「不将内部配送与（批发）相加为同一口径再下钻」
 --   之前先分域；branch_num=收货门店（transfer=调入店，wholesale=单头门店）；region_id=战区（X01）。
 --
@@ -61,9 +69,10 @@ transfer_dom as (
     group by 1, 2, 3
 ),
 wholesale_lines as (
-    select system_book, bizday, branch_num, count(*) as line_count
+    -- 明细行数按客户分组：行级行数在 (账套,日,门店,客户) 上才是可加的（见头注「client_fid」）。
+    select system_book, bizday, branch_num, client_fid, count(*) as line_count
     from {{ ref('stg_lemeng_wholesale_out') }}
-    group by 1, 2, 3
+    group by 1, 2, 3, 4
 ),
 wholesale_dom as (
     -- per_order 去单头冗余（v2 两列为随行冗余）；先聚店日，退货侧另聚后相减（防 per_order join 放大）。
@@ -72,38 +81,41 @@ wholesale_dom as (
         o.system_book,
         o.bizday,
         o.branch_num,
+        o.client_fid,
         sum(o.total_money)::numeric(20,2) as r_net,
         sum(o.cost_money)::numeric(20,2)  as c_cost,
         count(distinct o.order_no)        as order_count,
         max(l.line_count)                 as line_count
     from (
-        select system_book, bizday, branch_num, order_no,
+        select system_book, bizday, branch_num, client_fid, order_no,
                max(total_money) as total_money,
                max(cost_money)  as cost_money
         from {{ ref('stg_lemeng_wholesale_out') }}
-        group by 1, 2, 3, 4
+        group by 1, 2, 3, 4, 5
     ) o
     join wholesale_lines l
       on o.system_book = l.system_book
      and o.bizday = l.bizday
      and o.branch_num = l.branch_num
-    group by 1, 2, 3
+     and o.client_fid = l.client_fid
+    group by 1, 2, 3, 4
 ),
 return_dom as (
     select
         system_book,
         bizday,
         branch_num,
+        client_fid,
         sum(total_money)::numeric(20,2) as r_return,
         sum(cost_money)::numeric(20,2)  as c_return
     from (
-        select system_book, bizday, branch_num, order_no,
+        select system_book, bizday, branch_num, client_fid, order_no,
                max(total_money) as total_money,
                max(cost_money)  as cost_money
         from {{ ref('stg_lemeng_wholesale_return') }}
-        group by 1, 2, 3, 4
+        group by 1, 2, 3, 4, 5
     )
-    group by 1, 2, 3
+    group by 1, 2, 3, 4
 ),
 -- dim_branch 是日更快照（每 snapshot 一份全量）——join 最新快照取 region_id，否则按 snapshot 放大
 branch_latest as (
@@ -121,6 +133,7 @@ select
     u.bizday,
     u.domain,
     u.branch_num,
+    u.client_fid,
     coalesce(b.region_id, 0) as region_id,
     (u.r_net - coalesce(d.r_return, 0))::numeric(20,2)  as r_net,
     (u.c_cost - coalesce(d.c_return, 0))::numeric(20,2) as c_cost,
@@ -128,13 +141,15 @@ select
     u.order_count,
     u.line_count::bigint as line_count
 from (
-    select system_book, bizday, branch_num, 'transfer' as domain, r_net, c_cost, order_count, line_count
+    -- transfer 域没有客户对象（它的对象是门店）⇒ client_fid 恒 NULL。
+    select system_book, bizday, branch_num, cast(null as varchar) as client_fid,
+           'transfer' as domain, r_net, c_cost, order_count, line_count
     from transfer_dom
     union all
-    select system_book, bizday, branch_num, 'wholesale' as domain,
+    select system_book, bizday, branch_num, client_fid, 'wholesale' as domain,
            coalesce(w.r_net, 0), coalesce(w.c_cost, 0), coalesce(w.order_count, 0), coalesce(w.line_count, 0)
     from (
-        select system_book, bizday, branch_num, r_net, c_cost, order_count, line_count
+        select system_book, bizday, branch_num, client_fid, r_net, c_cost, order_count, line_count
         from wholesale_dom
     ) w
 ) u

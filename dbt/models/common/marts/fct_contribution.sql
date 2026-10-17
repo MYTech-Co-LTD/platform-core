@@ -50,8 +50,20 @@ with branch_expense as (
     group by 1, 2, 3
 ),
 outbound as (
-    select system_book, bizday, domain, branch_num, region_id, r_net, c_cost, g_gross
+    -- ⚠️ 2026-10-17：`fct_hq_outbound` 多了第 6 键 `client_fid`（批发按客户拆行）。本构件面向
+    --   **门店/战区/总仓**，客户维度在这里**主动聚合掉**——否则批发会在 (账套,日,门店,战区) 上
+    --   出现多行，粒度断言立刻红。客户级口经由专门的 client 构件/指标承接。
+    select
+        system_book,
+        bizday,
+        domain,
+        branch_num,
+        region_id,
+        sum(r_net)::numeric(20, 2)   as r_net,
+        sum(c_cost)::numeric(20, 2)  as c_cost,
+        sum(g_gross)::numeric(20, 2) as g_gross
     from {{ ref('fct_hq_outbound') }}
+    group by 1, 2, 3, 4, 5
 ),
 orphan_expense as (
     -- 当天有费用、却没有任何 transfer 出库行可挂的门店日（见头注：53 个组合，丢了就是 E 少算）。

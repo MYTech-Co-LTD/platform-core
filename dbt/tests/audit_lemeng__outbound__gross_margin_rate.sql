@@ -122,10 +122,17 @@ recheck as (
           and u.branch_num = b.branch_num
 ),
 materialized as (
-    select system_book, bizday, domain, branch_num, region_id, r_net, c_cost, g_gross, order_count, line_count,
-           g_gross / nullif(r_net, 0) as g_rate
+    -- ⚠️ 2026-10-17：fct_hq_outbound 多了第 6 键 client_fid ⇒ 物化侧聚合回 5 键（同族其余对账）。
+    select system_book, bizday, domain, branch_num, region_id,
+           sum(r_net)::numeric(20,2)   as r_net,
+           sum(c_cost)::numeric(20,2)  as c_cost,
+           sum(g_gross)::numeric(20,2) as g_gross,
+           sum(order_count)::bigint    as order_count,
+           sum(line_count)::bigint     as line_count,
+           sum(g_gross)::numeric(20,2) / nullif(sum(r_net)::numeric(20,2), 0) as g_rate
     from {{ ref('fct_hq_outbound') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+    group by 1, 2, 3, 4, 5
 )
 select
     coalesce(a.system_book, b.system_book) as system_book,
