@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   MAX_QUERY_ROWS, authorize, sqlQuote, visibleMetrics,
-  type MetricDef, type MetricParamType, type Requester, type SourceTaggedMetric,
+  type MaskSpec, type MetricDef, type MetricParamType, type Requester, type SourceTaggedMetric,
 } from './authz'
 
 /** 本文件默认租户**已接入的源**（当前唯一已接入源 = lemeng；`lemeng` 之外的源都没接）。 */
@@ -427,5 +427,52 @@ describe('authorize —— 确定性截断（spec §10.3：明细 GROUP BY 与 L
     expect(r.plan.sql).toContain('ORDER BY bizday DESC')
     expect(r.plan.totalSql).toBeDefined()
     expect(r.plan.totalSql).not.toContain('ORDER BY')
+  })
+})
+
+describe('authorize —— 值级掩码定点展开（spec §5.3，P2 T2）', () => {
+  // L1 形状夹具：列引用带关系限定（掩码目标须**逐字**出现在 selectSql 里）
+  const maskedCat: MetricDef[] = [{
+    ...CATALOG[1],
+    selectSql: 'select sum(mart_sales_daily.revenue) as value, day from mart_sales_daily',
+    totalable: true,
+    masks: [{ column: 'mart_sales_daily.revenue', kind: 'round', step: 1000, grantedBy: 'data:precise' }],
+  }]
+
+  it('无豁免码 ⇒ 掩码包在聚合内部（sum(round(列，-step))），plan.applied 记录生效项', () => {
+    const r = authorize(maskedCat, req(), 'metrics_revenue_mom', {})
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.sql).toContain('sum(round(mart_sales_daily.revenue, -1000)) as value')
+    expect(r.plan.applied).toEqual({ 'mart_sales_daily.revenue': 'round:1000' })
+  })
+
+  it('自动合计与明细同源（同一 whereAndGroup）⇒ totalSql 用同一套掩码值（spec §3.2 不变量 2）', () => {
+    const r = authorize(maskedCat, req(), 'metrics_revenue_mom', {})
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.totalSql).toContain('sum(round(mart_sales_daily.revenue, -1000))')
+  })
+
+  it('持有豁免码（grantedBy）⇒ sql 原样、applied 为空', () => {
+    const r = authorize(maskedCat, req({ scopes: ['data:query', 'data:precise'] }), 'metrics_revenue_mom', {})
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.plan.sql).toContain('sum(mart_sales_daily.revenue) as value')
+    expect(r.plan.sql).not.toContain('round(mart_sales_daily.revenue')
+    expect(r.plan.applied).toEqual({})
+  })
+
+  it('masks 缺省/null/空 ⇒ applied 空、sql 一字不变（既有指标零影响）', () => {
+    const baseline = authorize([{ ...CATALOG[1] }], req(), 'metrics_revenue_mom', {})
+    expect(baseline.ok).toBe(true)
+    if (!baseline.ok) return
+    for (const masks of [undefined, null, []] as (MaskSpec[] | null | undefined)[]) {
+      const r = authorize([{ ...CATALOG[1], masks }], req(), 'metrics_revenue_mom', {})
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      expect(r.plan.applied).toEqual({})
+      expect(r.plan.sql).toBe(baseline.plan.sql)
+    }
   })
 })

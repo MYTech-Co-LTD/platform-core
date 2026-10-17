@@ -8,6 +8,7 @@
 //
 // 原型实测 11/11：/tmp/iam-lab/mcp_authz_server.py + run_matrix.py（同序拒绝链）。
 // 本文件**不得** import 任何 pool / env / Hono —— 它是纯的，才能被三通道共用且可单测。
+import { maskedSelectSql } from './mask'
 
 export type MetricParamType = 'date' | 'date_range' | 'string' | 'number'
 export interface MetricParamDef {
@@ -140,6 +141,12 @@ export type AuthzResult =
          * 显式合计模式（`args.total === true`）不附：plan.sql 本身就是合计，再附 = 重复执行。
          */
         totalSql?: string
+        /**
+         * 值级掩码展开记录（spec §5.3，P2 T2）：`列 → 记号`（`round:1000` / `nullify`；
+         * 整值掩码键为 `<value>`）。**恒在场**（可能为空对象）——空 = 无掩码生效（未声明 /
+         * 全部豁免 / 目标未命中）。执行层（query-service）只透传：非空才回包 `masking`。
+         */
+        applied: Record<string, string>
       }
     }
   | { ok: false; reason: DenyReason; metricId: string; detail?: string }
@@ -296,8 +303,13 @@ export function authorize(
 
   // 主体值只来自 requester.orgId —— 本行是本文件存在的理由
   const subject = requester.orgId
+  // 值级掩码定点展开（spec §5.3，P2 T2）：授权时刻对内层 select 的**副本**做列引用替换——
+  // 掩码包在聚合内部（sum(round(x,-n))，不是 round(sum(x))）。放在 whereAndGroup 拼装之前，
+  // 故明细、显式合计、自动合计**读的是同一个内层 select** ⇒ total 与明细行用同一套掩码值
+  // （spec §3.2 不变量 2：合计与明细不得一个掩一个不掩）。
+  const masked = maskedSelectSql(metric.selectSql, metric.masks, requester.hasScope)
   const whereAndGroup =
-    `${metric.selectSql} WHERE ${metric.subjectColumn} = ${sqlQuote(subject)}` +
+    `${masked.sql} WHERE ${metric.subjectColumn} = ${sqlQuote(subject)}` +
     filters.join('') +
     (metric.groupBy ? ` GROUP BY ${metric.groupBy}` : '')
   // 确定性截断（spec §10.3）：明细 SQL 在 GROUP BY 与 LIMIT 之间补 `ORDER BY bizday DESC`——
@@ -324,6 +336,10 @@ export function authorize(
 
   return {
     ok: true,
-    plan: { sql, metricId, subject, total: wantTotal, ...(totalSql !== undefined ? { totalSql } : {}) },
+    plan: {
+      sql, metricId, subject, total: wantTotal,
+      ...(totalSql !== undefined ? { totalSql } : {}),
+      applied: masked.applied,
+    },
   }
 }
