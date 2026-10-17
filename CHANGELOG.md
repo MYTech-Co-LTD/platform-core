@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.148.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.147.0...v0.148.0) - 2026-10-17
+- 【新增】data: 指标声明面开放 mask（值级脱敏） ([#798](https://github.com/MYTech-Co-LTD/platform-core/pull/798), [81da291](https://github.com/MYTech-Co-LTD/platform-core/commit/81da291ff72c5a116d76af9eefcd418667196bdf))
+
+
 ## [0.147.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.146.2...v0.147.0) - 2026-10-17
 - 【新增】data: forms 域新鲜度锚 owners.forms.json——抓「没有失败的停更」（Refs #729） ([#803](https://github.com/MYTech-Co-LTD/platform-core/pull/803), [0a64d56](https://github.com/MYTech-Co-LTD/platform-core/commit/0a64d564ae900d5a95eaa90f649da00572daa0f4))
 
