@@ -237,9 +237,12 @@ metrics:
   - name: 'lemeng:transfer:zero_cost_exposure_amount'
     label: 配送零成本出库暴露金额
     definition: >-
-      零成本出库暴露金额（04-06 金额面）= Σ（金额≠0 且已知成本=0 的行的金额）；
-      成本 **null 的缺成本金额是另一类暴露**（fct_transfer_line_quality.missing_cost_amount，
-      不在本口径、两者不相加——客户文档「null 不当 0」与 01-08「各类暴露可能重叠，不相加为总损失」）。
+      零成本出库暴露金额（04-06 金额面）= Σ（金额≠0 且**已知**成本=0 的行的金额）；
+      成本 **null 的缺成本金额是另一类暴露**（fct_transfer_line_quality.missing_cost_amount），
+      **不在本口径**——判据是客户文档 04-06「**已知**成本=0」+「成本 null **另列**」与
+      01-08「零成本金额**另算**」；两者**互斥**、不相加（01-08「各类暴露可能重叠，不相加为总损失」
+      指暴露面整体，非指这两面之间）。⚠️ 2026-10-17 订正：原物化用 `coalesce(subtotal,0)=0`
+      把 null 并了进来，与缺成本面重叠——已改为 `subtotal = 0`（数值零影响，见消费面 spec §5.2）。
       免费商品/暂估问题需业务确认（客户文档原话）；零成本不等于全部利润可实现。
       只 transfer 域。粒度 = 账套 × 业务日 × 门店。
     expression: 'sum(fct_transfer_line_quality.zero_cost_amount)'

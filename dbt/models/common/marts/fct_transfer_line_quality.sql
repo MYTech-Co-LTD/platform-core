@@ -10,8 +10,11 @@
 -- 【口径逐列（客户文档数据条件逐条落位）】
 --   · line_count / lot_filled_lines：04-05 全量版（X08 需批号清单未批 ⇒ 考核版待 X08；空白串视为
 --     未填——客户文档「空白和占位字符视为无效」）。
---   · zero_cost_amount / zero_cost_rows：04-06「金额≠0 且已知成本=0」；成本 **null 另列**
---     （missing_cost_amount——客户文档「null 不当 0」，两类暴露不相加）。
+--   · zero_cost_amount / zero_cost_rows：04-06「金额≠0 且**已知**成本=0」；成本 **null 另列**
+--     （missing_cost_amount——客户文档「null 不当 0」，两类暴露**互斥、不相加**）。
+--     ⚠️ 两面对**必须互斥**：`subtotal = 0`（已知为 0）与 `subtotal is null`（未知）不相交。
+--     2026-10-17 订正：原写法 `coalesce(b.subtotal, 0) = 0` 把 null 并进零成本面 ⇒ 两面重叠。
+--     对账互斥断言见 tests/audit_lemeng__transfer__zero_cost_exposure_amount.sql。
 --   · negative_order_count / negative_amount：04-07「单头金额<0 的单数与合计」；负数可能是退补/
 --     冲红/调整，「不按绝对值变正收入，也不一律称退货」（客户文档原话）。
 -- 【wholesale 侧边界】D02 的行级质量面随 v2 补列的勾稽批次另出（本表只 transfer 域）。
@@ -45,10 +48,13 @@ select
     count(*) filter (
         where b.lot_number is not null and trim(b.lot_number) <> ''
     )                                                                 as lot_filled_lines,
-    sum(case when coalesce(b.out_money, 0) <> 0 and coalesce(b.subtotal, 0) = 0
+    -- ⚠️ 是 `b.subtotal = 0` 而**不是** `coalesce(b.subtotal, 0) = 0`：后者把 **null 也算成 0**
+    --    ⇒ 缺成本行会被并进零成本面，与 missing_cost_amount 重叠（违反 04-06「**已知**成本=0」
+    --    与「成本 null **另列**」）。SQL 里 `null = 0` 求值为 NULL ⇒ 不成立 ⇒ 天然排除 null。
+    sum(case when coalesce(b.out_money, 0) <> 0 and b.subtotal = 0
              then b.out_money else 0 end)::numeric(20,2)              as zero_cost_amount,
     count(*) filter (
-        where coalesce(b.out_money, 0) <> 0 and coalesce(b.subtotal, 0) = 0
+        where coalesce(b.out_money, 0) <> 0 and b.subtotal = 0
     )                                                                 as zero_cost_rows,
     sum(case when b.subtotal is null and coalesce(b.out_money, 0) <> 0
              then b.out_money else 0 end)::numeric(20,2)              as missing_cost_amount,
