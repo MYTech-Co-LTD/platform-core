@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.143.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.142.1...v0.143.0) - 2026-10-17
+- 【新增】data: L1 声明面开放 required_scope 与 reads，加 data:cost 权限码 ([#785](https://github.com/MYTech-Co-LTD/platform-core/pull/785), [abcbe9f](https://github.com/MYTech-Co-LTD/platform-core/commit/abcbe9f029d4e7506062185fbd3a1ba6936fc121))
+
+
 ## [0.142.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.142.0...v0.142.1) - 2026-10-17
 - 【修复】data: console 排班闸期望集按「域」判——forms 不再污染乐檬账套书（Closes #782） ([#783](https://github.com/MYTech-Co-LTD/platform-core/pull/783), [05ea70b](https://github.com/MYTech-Co-LTD/platform-core/commit/05ea70b92d6d968be74994373afcb7d9e02e9f21))
 
