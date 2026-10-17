@@ -215,7 +215,10 @@ git commit -m "feat(data): 契约列加 sensitivity 标记与闭集门禁"
 - Modify: `scripts/sync-data-semantics.mjs`（`toMetricRow` 的 `requiredScope` 一行 + 新助手）
 - Modify: `scripts/check-data-models.mjs`（规则 ⑤ 加两个新字段的形状核 + **未知键拒绝**）
 - Modify: `modules/data/manifest.yaml`（`permissions[]`）
-- Regenerate: `deploy/data-plane.lock`
+- Modify: `modules/data/module.test.ts`（⚠️ **执行时补的**：它把权限码集合**逐字钉死**为
+  `['data:manage','data:query']`，新增码必须同步改这一行，否则 `unit` job 红）
+- Regenerate: `deploy/data-plane.lock`（⚠️ 只有**改到 `contracts/` 或 `dbt/` 内容**时才需要；
+  本任务若只改脚本与 manifest，`check-data-plane-lock` 自会确认无需重生成）
 
 **Interfaces:**
 - Consumes: 无（与 T1 并行）
@@ -985,6 +988,7 @@ git commit -m "feat(data): 首批列级收紧——成本源列打标并与读�
 |---|---|---|---|
 | T1 | **#777** | 已合，v0.141.0 | 🔴 **计划 T1 Step 3 有实质错误**：`readContractDoc` 是白名单构造，`sensitivity` 会被丢掉 ⇒ 那条规则**永不触发**。已改为先透传（见该 Step 的订正块）。 |
 | T4 | **#774** | 已合，v0.141.0 | ① 新增 `report-store.updateSpecAndScope`：写规格与写页门**必须同一条 UPDATE**，否则留「新面板 + 旧页门」窗口，且一请求推两次 `version` 会打红既有版本断言；② `PUT /reports/:id/spec` 派生失败时**保持页门原值、规格照存**（拒绝权留在发布门）；代价：已发布行补多码面板后仍为 `null`，要等下一次发布动作才被拒。 |
+| T2 | **#785** | 已交付 | ① `modules/data/module.test.ts` 把权限码集合**逐字钉死** ⇒ 新增 `data:cost` 必须同步改它（**本地只跑 `test:guard` 抓不到，要跑全量 `pnpm test`**）；② `requiredScopeOf` 额外拒绝**非字符串**（YAML 裸数字会被 `String()` 强转成一个不存在的码）。 |
 | — | — | — | 由 T4 暴露出的 `POST /reports` 旁路已单列为 **Task 6 / #778**。 |
 
 ## 计划完成后的下一步
