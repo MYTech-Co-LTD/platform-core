@@ -75,8 +75,14 @@ const sql = wantTotal
 
 1. **契约列没有授权位。** 全仓 grep `masking|列级权限|sensitivity` **零命中**（只在无关的
    「secret 脱敏」语境出现过）。契约列的 schema 是 `contracts/common/_schema.schema.json` 的
-   `$defs.column`（`:157-217`），字段只有 `name/type/nullable/precision/scale/description/expr`，
-   且 **`additionalProperties: false`** ⇒ **加一个字段必须先改 schema**（这本身就是一道真闸）。
+   `$defs.column`（`:157-217`），字段只有 `name/type/nullable/precision/scale/description/expr`。
+
+   ⚠️ **订正（2026-10-17 写计划时查证）**：初稿在此写「`additionalProperties: false` ⇒ 加字段必须先改
+   schema（这本身就是一道真闸）」——**那是错的**。`contracts/README.md` §4.3 自陈：
+   **「校验器：当前不存在（这是本任务最大的一条欠账）」**，并明确「§4.2 那六条跨字段规则**仍不在任何
+   CI 里**」。⇒ **元 schema 是纯文档，没有任何东西拿它校验契约。**
+   ⇒ 直接后果：**闭集必须在 `scripts/check-data-contract.mjs` 里实现**（那是唯一进 CI 的契约检查），
+   否则打错的 `sensitivity: "coast"` 会被血缘门当成「**不敏感**」而**静默放行**——正是本设计最怕的漏。
 2. **报表面有一条已确认的旁路。** `modules/data/routes/reports.ts:350-352` 的注释自陈：
 
    > 「规格里的 metricId 可见性**另由 /query 的语义裁剪兜底**」
@@ -153,9 +159,13 @@ const sql = wantTotal
 ```jsonc
 "sensitivity": {
   "description": "敏感标记。只作血缘门（§4.3）的输入；不改变本列的落盘与投影。",
-  "enum": ["cost", "pii", "none"]      // 封闭词表，加值 = 改常量 + 改 schema + 走 PR
+  "enum": ["cost", "pii", "none"]      // 封闭词表，加值 = 改常量 + 改 schema + 改门禁 + 走 PR
 }
 ```
+
+⚠️ **光改 schema 不生效**（元 schema 无校验器，见 §2.2 订正）——闭集必须**同时**写进
+`scripts/check-data-contract.mjs` 的校验规则，那里才是进 CI 的那道闸。**两处一起改，缺一处 = 打错的
+标记被当「不敏感」静默放行。**
 
 **为什么是标记而不是策略**：源列不直接执法（§3.1），所以这一层只需要回答「敏感吗、哪一类」。
 真正的策略（谁能看、看多精确）在**指标层**——那里才有 requester。
@@ -215,12 +225,17 @@ scope 是**不透明字符串**，这套模型里**没有 scope 层级**（`hasS
 ⚠️ **诚实标注这道门的弱点**：它**只**拦「加了限制却忘了同步指标」，**拦不住**「故意/无意漏申报」。
 完整性要机械化，得先有 dbt 模型级血缘（U2）——**那需要真实案例驱动，本 spec 不预先建**。
 
-### 4.4 审计
+### 4.4 审计（**订正：这一列归 P2，不在 P1**）
 
-`data.query_audit`（`modules/data/migrations/001_init.sql:50-62`）增**可空** `masking jsonb`，
-记录本次实际生效的裁剪/掩码（P1 写被隐藏的指标/列；P2 写 `{"net_sales":"round:1000"}`；都没有则 `NULL`）。
-迁移**必须幂等**：`ALTER TABLE … ADD COLUMN IF NOT EXISTS`。
-写入点：`query-service.ts:207-222` 的 `audit()` 闭包（已有，四个出口都过它）。
+⚠️ **订正（2026-10-17 写计划时验算）**：本节初稿把审计列放在 P1。**验算后归 P2**——
+
+`data.query_audit` 的既有四列（`verdict` / `reason`）**已经覆盖 P1 的全部形态**：
+P1 的列级 = **整个指标不可见** ⇒ 走 `metric_not_authorized` 拒绝，`verdict='denied'` 已留痕。
+**P1 没有「部分返回」的形态**，所以新列在 P1 写了也是恒 `NULL`——**没有信息量的迁移不做**。
+
+新增 `masking jsonb` 随 **P2** 落（那时才有「同一查询对 A 给原值、对 B 给掩码」这种**必须留痕**的形态）。
+届时：迁移**必须幂等**（`ALTER TABLE … ADD COLUMN IF NOT EXISTS`），
+写入点是 `query-service.ts:207-222` 的 `audit()` 闭包（已有，四个出口都过它）。
 
 > 这一列是「谁看过精确值」的**唯一凭据**。没有它，事后无法回答「那次泄漏是谁的权限」。
 
@@ -379,9 +394,9 @@ L2 指标同理，声明在 L2 定义里，经 `compileL2`（`semantic-compiler.
 ## §8 拆解与顺序
 
 ```
-P1 列级（契约 sensitivity + 血缘单调门 + 报表发布门 + 审计）   ← 本 spec 主体
+P1 列级（契约 sensitivity + 指标 requiredScope 声明面 + 血缘单调门 + 报表发布门）   ← 本 spec 主体
         │
-P2 值级（mask 词表 + 占位符骨架 + 运行期展开 + masking 回包 + SKILL）   ← 本 spec 主体
+P2 值级（mask 词表 + 占位符骨架 + 运行期展开 + masking 回包 + 审计 masking 列 + SKILL）   ← 本 spec 主体
         │
 P3（只登记，不设计）维度级隐藏（dims 白名单，同一投影点）；标签批量（sensitivity → 策略映射）
 ```
