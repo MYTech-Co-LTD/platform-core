@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.137.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.136.3...v0.137.0) - 2026-10-17
+- 【新增】data: 费用后贡献/补损率/补贴率 L1 五条 + 对账（#744 W2） ([#755](https://github.com/MYTech-Co-LTD/platform-core/pull/755), [53d42ac](https://github.com/MYTech-Co-LTD/platform-core/commit/53d42ac9aa777c3ec3240b5959e0d7a49d3464cc))
+
+
 ## [0.136.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.136.2...v0.136.3) - 2026-10-17
 - 【修复】openclaw: 问数不得用 exec/curl 探索——规则进 SKILL（防卷重建回退） ([#754](https://github.com/MYTech-Co-LTD/platform-core/pull/754), [9a3f52a](https://github.com/MYTech-Co-LTD/platform-core/commit/9a3f52ab3bcd0bebf96e0d215c34d1802ab7c273))
 
