@@ -1099,16 +1099,31 @@ EOSQL
 Expected: `220217.50|222021.00|1803.50`（**纯 PG 查询，不要包 `duckdb.query`** ——
 `staging.fct_retail_sale` 是 PG 表，包进去会被 DuckDB 解析）。
 
-- [ ] **Step 3: 跑对账脚本，核两条判据**
+- [ ] **Step 3: 跑对账脚本，核两条判据（**两个账套都要跑**）**
 
 ```bash
-for D in 2026-10-12 2026-10-13 2026-10-14 2026-10-15 2026-10-16; do
-  BOOK=64188 sh /opt/lemeng-recon-preagg.sh "$D" | grep -E '^PREAGG'
+for B in 64188 3120; do
+  for D in 2026-10-12 2026-10-13 2026-10-14 2026-10-15 2026-10-16; do
+    echo "--- $B $D ---"
+    BOOK=$B sh /opt/lemeng-recon-preagg.sh "$D" | grep -E '^PREAGG'
+  done
 done
 ```
 
-Expected: 每天 `PREAGG` 行 `diff=+0.00`（销售侧恒逐分）；`PREAGG_NET` 行在 10-12/10-14/10-15
-显示登记缺口、10-13/10-16 为 `diff=+0.00`，且**全部在 `NET_ABS_TOL` 内**（无 `net_threshold`）。
+Expected: 每天 `PREAGG` 行 `diff=+0.00`（销售侧恒逐分）；`PREAGG_NET` 行在 64188 的
+10-12/10-14/10-15 显示登记缺口、10-13/10-16 为 `diff=+0.00`，且**全部在 `NET_ABS_TOL` 内**
+（无 `net_threshold`）。
+
+> ⚠️ **必须专门看一眼 `branch_missing`（T5 review 点名的风险，理由见下）**：T5 把湖侧键集从
+> 「有销售的店」扩成「有销售 ∪ 有退货的店」，于是「只有退货、没有销售」的门店会以
+> `sale_net=0` 进湖侧 map。若预聚合端点**不返回**这类门店，销售侧 `compare()` 会报
+> `PREAGG_FAILED:branch_missing`（改前这种情形最多落一条 `extra` 注释）。
+> **3120 是 147 店、且 Task 3 已证明这类店日真实存在**，所以必须跑它 —— 只验 64188 会把这条
+> 通路整个漏掉。
+>
+> 判定：出现 `branch_missing` **不必然是回归**，但它是**新开的硬红通路**，必须当场定性 ——
+> 是端点不返回零销售门店（⇒ 记入 issue #813，另议 `miss` 是否该区分维度），还是真的湖源不一致
+> （⇒ 交 `recon-day-heal.sh`）。**不许只贴一个红就过。**
 
 - [ ] **Step 4: 业务验收 —— 问数 bot**
 
