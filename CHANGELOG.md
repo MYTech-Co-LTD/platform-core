@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.151.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.151.0...v0.151.1) - 2026-10-17
+- 【修复】data: 零成本暴露面把「成本 null」并进零成本——与自身文档及客户 04-06 口径矛盾 ([#817](https://github.com/MYTech-Co-LTD/platform-core/pull/817), [2912030](https://github.com/MYTech-Co-LTD/platform-core/commit/29120300f3ecd11d54af15f12f56088d0fcde898))
+
+
 ## [0.151.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.150.0...v0.151.0) - 2026-10-17
 - 【新增】data: L2 不得基于被掩码的 L1 构建（fail-closed） ([#811](https://github.com/MYTech-Co-LTD/platform-core/pull/811), [ae377aa](https://github.com/MYTech-Co-LTD/platform-core/commit/ae377aa7e203b24e8e47503a6b0c15089ec8f393))
 
