@@ -154,7 +154,7 @@ models:
     description: >-
       总仓配送出库行质量构件（W1 2026-10-12；服务 04-05/04-06/04-07 的 L1 落点）。粒度
       (system_book, bizday, branch_num)；基面同 fct_hq_outbound 的 transfer 域。口径逐列见模型头注
-      （批号率全量版待 X08；零成本与缺成本不相加；负金额不按绝对值变正收入）。
+      （批号率全量版待 X08；零成本与缺成本**互斥**不相加；负金额不按绝对值变正收入）。
       wholesale 侧行质量面随 D02 v2 勾稽批次另出。
     columns:
       - name: system_book
@@ -182,15 +182,20 @@ models:
         tests:
           - not_null
       - name: zero_cost_amount
-        description: 零成本暴露金额（金额≠0 且成本=0）。**与 lemeng:transfer:zero_cost_exposure_amount 同源**。
+        description: >-
+          零成本暴露金额（金额≠0 且**已知**成本=0）。**与 lemeng:transfer:zero_cost_exposure_amount 同源**。
+          ⚠️ 是 `subtotal = 0`（非 `coalesce(subtotal,0)=0`）——后者会把 null 并进来、与 missing_cost_amount
+          重叠（2026-10-17 订正）。
         tests:
           - not_null
       - name: zero_cost_rows
-        description: 零成本暴露行数（行数面 L2/消费层用）。
+        description: 零成本暴露行数（行数面 L2/消费层用）。口径同 zero_cost_amount（**已知**成本=0）。
         tests:
           - not_null
       - name: missing_cost_amount
-        description: 缺成本金额（成本 null 且金额≠0；与零成本**不相加**——客户文档「null 不当 0」）。
+        description: >-
+          缺成本金额（成本 null 且金额≠0；与零成本**互斥、不相加**——客户文档「null 不当 0」）。
+          ⚠️ 2026-10-17 实测**本源无数据**（全湖 0 行 null）⇒ 本列恒 0，**未声明为指标**（见消费面 spec §5.1）。
         tests:
           - not_null
       - name: negative_order_count
