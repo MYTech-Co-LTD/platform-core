@@ -813,6 +813,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 29 | **新管线的「登记面」漏配 = 静默空转**（两处实证，#630/#637）：① 只进 `pipelines/` 不进 `schedules/` ⇒ 卷里**永不自动采集**（源头闸原只查单方向）；② 进了管线但**没重建 catalog** ⇒ run record **整条不带 `assets`** ⇒ freshness 锚**静默失效**（写 `owners` 锚也匹配不到；「恒 unknown = 规则没挂」）；③ 下游侧 `wire-warehouse` 判据只查零售构件 ⇒ 新构件物化断链无人知 | §1.3 阶段 E「**新管线三个登记面必须同步**」（排班种子 / 重建 catalog / 跑一次起算）；锚须**湖侧+下游侧成对配**、容差按窗口语义**分档**（T-2 快照类比日更件宽一天）；**未验点当场验证**：glob `*` 能匹配含 `${...}` 占位符的资产 id |
 | 30 | **照抄骨架必逐项核对**（#641 真机迭代两例）：① \`w0\`（whoami）**漏 \`data.schema\`** ⇒ 空结果 Binder 报错「no schema is declared to type an empty result」（D17 的 w0 有占位 \`[{\"name\":\"x\",\"type\":\"string\"}]\`）；② 断言 \`error()\` 编在 \`batch_id\` 的 CASE 里 ⇒ 被 \`gen-data-projection\` 用契约 expr **覆盖掉**（生成器只重写「SELECT…顶层 FROM」列区）⇒ 正解是移到 \`FROM\` **之后**的 \`WHERE\`（保留区） | 照抄同族管线模板后**逐节点核对**（尤其 \`schema\` 申报）；**断言语义不能编在契约列里**——契约 expr 归生成器管，断言放 FROM 之后；\`gen-data-projection --check\` 是「生成物没被手改」的闸，手改列区必红 |
 | 31 | **新列「落湖成功 ≠ 列有意义」**（#665/#669）：transfer_in 补采 `lot_number`，先漏采（同单同商品多批号行失去区分键，唯一键 FAIL 3）⇒ 补列；**再补错别名**（契约 expr 写 `o.lot_number` 订单级，而 items 展开列须 `json_extract_string(u.d, '$.lot_number')`）⇒ 回填 701 行落湖**成功**但**新列全 NULL**——两侧只验行数都会放过；**闭环实证（2026-10-15 排班首跑）**：v2 主管线排班准点 ok、10-13 窗 675 行写读对平、`lot_number` 非空 100%（3120），同夜 materialize 全量 183 全绿（#679）——修复在产线站住 | 契约 expr 的**别名必须照抄同族源形态**（D16 items 展开用 `u.d`，不是订单级 `o.`）；**新列验收必看非空率**，不只行数；**回填变体是独立文件**，生成器只管契约主生产者 ⇒ 改契约后要手工同步变体 |
+| 32 | **新 console 的 workspace 引导三坑**（#729 forms console，2026-10-17）：① **`.duckle/keys/secret.key` 缺失 ⇒ sink 对正确凭据仍报 `NoSuchBucket`**——该 key 是连接解密的配对密钥，console **首启时 connections/ 为空则不生成**，事后补文件不会自动补 key（bisect 实证：整包拷 `.duckle/` 即愈，其余要素全同）；② **`snk.minio` 漏 `connectionRef`** ⇒ 凭据/端点不生效，同报 NoSuchBucket（与 ① 症状相同，先查谁）；③ 排班/告警文件进仓会牵动 **tz 期望表 + spec 转换表 + alerts 判据 B** 三处联动，漏一处 CI 红 | 建 forms 专属 console（ADR-0014 新域）时：**首启前** connections/ 必须在位；起动后跑一次最小探针（pureSql→sink 1 行）验写湖；`secret.key` 缺失的判据 = 「凭据/网络/env 全同却只有本容器写不进」；bisect 手法 = 同镜像一次性容器分别挂两个卷跑同一探针文件 |
 
 ### 1.7 逐源决策登记区
 
@@ -837,7 +838,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 乐檬调拨 / 批发 / 退货 / 要货（5 源） | duckle | — | `lemeng/transfer_out` 等 | `system_book=` + `bizday=` | 日更（见各源行） | **duckle console** | **已落**（W1/W3 分批：D01/D02 R2/R3 先行、D03 W1、D15/D16 W3；见上各源行） |
 | 抖音 `sku_daily` | 未定 | — | `douyin/sku_daily` | 月（**键名未定**） | 未定 | 未落 | 待接入 |
 | 抖音接收器（`dy-upload`，生产在跑） | **E1**（长驻接收，**未销账**） | 长驻接收器**在跑**（生产 project `dy-upload` 以 `bare` runtime 跑 `/opt/douyin-life/capture/dy_receiver_run.py`）⇒ 命中 E1；**落盘形态等细节待核实**（§7 #3） | 待核实 | 待核实 | 常驻 | 待核实 | — |
-| 表单提交（forms，**platform-core 自身域**，#729 M1.4） | duckle | — | `forms/submission` | `org=` + `bizday=` + `_batch=`（批次目录防覆盖；行 = 提交 × 表单定义） | 日批（低频事件；L0 直连默认形态） | **duckle console（forms 专属——待建，阶段 E 未开工）**：ADR-0014「一账套一 console」⇒ 不能塞进 3120/64188（调度条目带不了自己的 env，混装会静默采错源） | **（空——未验）**：管线/契约/staging 已就绪（#738），排班 / 重建 catalog / 首跑均未做 |
+| 表单提交（forms，**platform-core 自身域**，#729 M1.4） | duckle | — | `forms/submission` | `org=` + `bizday=` + `_batch=`（批次目录防覆盖；行 = 提交 × 表单定义） | 日批（CST `20 0 * * *`；L0 直连默认形态） | **duckle console（forms 专属，山海数据机 18082，2026-10-17 起运行）**：ADR-0014「一账套一 console」⇒ 不与 3120/64188 混装（调度条目带不了自己的 env，混装会静默采错源） | 自证 ✓（qa.contract）/ 幂等 ✓（批次目录）/ 独立通道 ✓（pg_duckdb 直读 1 行 5 列逐字段对）/ 跨系统 ✓（staging 1 行；#799 复 enable 后 materialize 内 `stg_forms_submission` PASS）/ **主验收 ✓ 新表单零改动自动可见**（form-m14-accept 全链路）；新鲜度锚 fresh（owners.forms.json）。⚠️ staging 的 org 列 = 数据面部署常量（`subject_org()`），与源租户 mytech 的关系待 #729 裁决 |
 
 > ⚠️ **上表的「验收结论」列**才是这个登记区的价值所在：**空着 = 没验过**，别用「跑起来了」当验收。
 >
@@ -866,7 +867,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 乐檬 | `lemeng/client`（`system_book=` + `snapshot=`） | 账套 × 客户（#516 工单取价对照表） | **已落盘**（3120，2026-10-10 首跑） | 进销存批发客户档案（GET 零参数固定窗，例外见 §1.7）；**不是门店维**——发布侧只消费 client_fid+client_name 做对照，行不进 dim_branch（spec §5 单源分工）；探针报告 `.superpowers/sdd/2026-10-10-500-lemeng-client/probe-report.md` |
 | 乐檬 | 调拨 / 批发 / 退货 / 要货 / 调入 / 库存快照 | 3120 | **已落盘**（W1/W3 分批全部落地，见上各行） | 设计源 `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` |
 | 抖音 | `douyin/sku_daily/<月>/all.parquet` | — | **摸清源**（待接入） | 分区键名未定；见 `contracts/README.md` §7 |
-| 平台（forms） | `forms/submission/<org>/<bizday>/_batch=<ts>/all.parquet` | 租户 org（一 PAT 一租户 ⇒ 一租户一管线；导出按 `identity.orgId` 隔离，PAT 跨租户被宿主拒） | **摸清源**（管线 / 契约 / staging 已就绪——#738；**未排班、未首跑**：阶段 E 未开工） | 设计源 ADR-0005 §13.1（人审）+ `docs/superpowers/plans/2026-10-16-forms-out-lake-m1.4.md`；三个实施面选择已人确认（#729 评论 2026-10-16）：**水位=`id`(bigserial) / 日批 / 前缀如上**；分页 = id 键集游标；⚠️ **源首个文件出现前 `stg_forms_submission` 会打挂 materialize** ⇒ 已按 #752 暂时摘除，首跑后恢复 |
+| 平台（forms） | `forms/submission/<org>/<bizday>/_batch=<ts>/all.parquet` | 租户 org（一 PAT 一租户 ⇒ 一租户一管线；导出按 `identity.orgId` 隔离，PAT 跨租户被宿主拒） | **已落盘**（2026-10-17：forms 专属 console 上线、排班/锚/告警齐，**主验收「新表单零改动自动可见」通过**——见 §5） | 设计源 ADR-0005 §13.1（人审）+ `docs/superpowers/plans/2026-10-16-forms-out-lake-m1.4.md`；三个实施面选择已人确认（#729 评论 2026-10-16）：**水位=`id`(bigserial) / 日批 / 前缀如上**；分页 = id 键集游标；staging 已复 enable（#799，湖首文件已落） |
 
 > 「`_ops`」不是本仓目录约定（实测订正见 duckle/README.md §5）——桶内路径猜想，别再照抄。
 >
@@ -916,6 +917,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 2026-10-08 | 乐檬 item_price（价格批首载+增量，#499） | A→I 完整走（A 探针→B 契约→C/D 管线→E 调度→F 验收；H 首载例外登记） | 双账套首载 939,156 行落湖→staging→发布 `data.dim_item_price` 906,362 行；64188 日常增量首跑 ok；三墙实录见 §1.6 案例 19–21 | #1 #2 #3 #4 #5 #6（**公司标准 §6 的编号；该标准尚未合入**）——本正典的案例库见 §1.6。⚠️ **本行是史实、不改**：压测读的是 `lemeng-datasource` 桶里的**旧湖数据**（湖上仍在、仍被写）；仓内那份同名 staging 已于 **2026-10-06 退役**（§1.3 阶段 I），**与本次验收结论无关** |
 | 2026-10-13 | 乐檬 W1/W2/W3 六源（D03 批发退货 / D04 门店费用 / D05 客户费用 / D15 要货 / D16 调入 / D17 库存快照） | A→I 复核补课：**E 调度补齐**（6 条排班进种子 + 源头闸补完整性方向）+ **D17 窗口/分页修复** + **三 staging 路径修复** + 四层验收 | 排班 15 条 enabled 真机生效；D17 首跑 **4,208 行**（旧 9 页×100 静默截断 78% 已修）；三源独立通道**逐行平**（要货 342/342、调入 701/701、库存 4208/4208）；空集/容量双哨兵实证；词表 **19 条 L1** 入 `data.metrics` | #630（排班缺口+闸）/#632（D17 窗口分页）/#634（staging 双斜杠）；坑见 §1.6 |
 | 2026-10-13 | 乐檬 D11 采购分析（W3 余项，#641/#642/#644） | A→I 完整走（A 探针→B 契约→C/D 管线→E 调度→F 验收→G 锚） | 59 行落湖；独立通道逐分平（rows/amount）；词表 **25 条**（+采购族 6）；三登记面齐（排班/重建 catalog/重跑起算）+ 锚成对配（11 条 minio 全 fresh）；真机迭代修 w0 漏 schema | #642（w0 schema 漏申报）；坑见 §1.6 案例 #29/#30 |
+| 2026-10-17 | 平台 forms 表单提交（#729 M1.4，首个**非乐檬域**：专属 console） | A→I 完整走（A 建源+探针→B 契约→C/D 管线→**E 建 forms 专属 console + 三登记面**→F 四层验收→G 锚+告警） | 主验收 ✓ **新表单零改动自动可见**：新建 form-m14-accept（全新形状）→提交→**管线零改动**采集 1 行落湖（submission_id=1，payload 整列 JSON 文本）→pg_duckdb 独立读回 5 列逐字段对→staging 1 行；新鲜度锚 fresh；失败/恢复事件实入 OO `data_alerts` | 3120 的 zos.json 凭据同日 403（**另案**，需换发）；console 引导坑见 §1.6 案例 #32；坑见 §1.6 |
 
 ---
 
