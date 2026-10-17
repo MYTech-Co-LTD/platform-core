@@ -3,7 +3,7 @@ import { Pool } from 'pg'
 import { runQuery, freshnessLineOf, freshnessRelationsOf, freshnessStatusOf, formatHumanDay, type QueryDeps } from './query-service'
 import { L1_ORG, upsertL1Metric, upsertMetric } from './metric-store'
 import { applyMigrations } from '../test-util'
-import { MAX_QUERY_ROWS, type Requester } from './authz'
+import { MAX_QUERY_ROWS, type MaskSpec, type Requester } from './authz'
 import { DATA_WAREHOUSE_UNCONFIGURED, resetWarehousePool, runWarehouseSql, warehousePool } from './warehouse'
 
 const dbUrl = process.env.DATABASE_URL
@@ -746,5 +746,68 @@ describePg('runQuery —— freshness_line（spec §10.7，需要 DATABASE_URL�
     if (out.status !== 'ok') throw new Error('unknown 用例失败')
     expect(out.freshness_status).toBe('unknown')
     expect(out.freshness_line).toBe('📅 数据更新情况未知')
+  })
+})
+
+describe('runQuery —— 值级脱敏回包 masking（spec §5.3，P2 T2）', () => {
+  const MASK_PREFIX = 't9q_mask:'
+  /** 本块自己的捕获变量与连接（文件首块的 `pool`/`lastSql` 是它 describe 内的局部量，这里够不着）。 */
+  let lastSql = ''
+  const pool = new Pool({ connectionString: dbUrl })
+  const MASK_ID = `${MASK_PREFIX}m`
+  /** L1 夹具带掩码声明（真值只能走 upsertL1Metric；L2 写入面没有掩码概念）。 */
+  const seedMasked = async (masks: MaskSpec[] | null) => {
+    await upsertL1Metric(pool, {
+      ...METRIC, id: MASK_ID, groupBy: 'bizday',
+      selectSql: 'SELECT sum(qp3_mask_f.revenue) AS value, bizday FROM qp3_mask_f',
+      sourceSystem: 'lemeng', totalable: true, slaDays: 1, freshnessRelations: [],
+      masks,
+    })
+  }
+  const depsOf = (): QueryDeps => ({
+    pool,
+    // L1 夹具带源维度（lemeng）⇒ 必须「已接入」才可见（与上游 W 块同理）
+    adoptedSources: new Set<string>(['lemeng']),
+    execute: async (sql) => {
+      lastSql = sql
+      return { columns: ['value', 'bizday'], rows: [[1234, '2026-08-15']] }
+    },
+  })
+
+  beforeEach(async () => {
+    await applyMigrations(pool)
+    await pool.query('delete from data.query_audit where org = $1', [ORG])
+    await pool.query('delete from data.metrics where org = $1 and id like $2', [L1_ORG, `${MASK_PREFIX}%`])
+    lastSql = ''
+  })
+  afterAll(async () => {
+    await pool.query('delete from data.metrics where org = $1 and id like $2', [L1_ORG, `${MASK_PREFIX}%`]).catch(() => {})
+    await pool.query('delete from data.query_audit where org = $1', [ORG]).catch(() => {})
+    await pool.end().catch(() => {})
+  })
+
+  it('无豁免码 ⇒ 回包带 masking（列 → 记号），且执行层拿到的 SQL 真被掩了', async () => {
+    await seedMasked([{ column: 'qp3_mask_f.revenue', kind: 'round', step: 1000, grantedBy: 'data:precise' }])
+    const out = await runQuery(depsOf(), ORG, req(), MASK_ID, {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(out.masking).toEqual({ 'qp3_mask_f.revenue': 'round:1000' })
+    expect(lastSql, '掩码在授权层展开，执行层拿到的是已掩 SQL').toContain('sum(round(qp3_mask_f.revenue, -1000))')
+  })
+
+  it('持有豁免码 ⇒ masking 键不出现（缺席 = 原值，与 total?/freshness_*? 同风格）', async () => {
+    await seedMasked([{ column: 'qp3_mask_f.revenue', kind: 'round', step: 1000, grantedBy: 'data:precise' }])
+    const out = await runQuery(depsOf(), ORG, req({ scopes: ['data:query', 'data:precise'] }), MASK_ID, {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect('masking' in out).toBe(false)
+  })
+
+  it('未声明掩码 ⇒ masking 键不出现', async () => {
+    await seedMasked(null)
+    const out = await runQuery(depsOf(), ORG, req(), MASK_ID, {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect('masking' in out).toBe(false)
   })
 })

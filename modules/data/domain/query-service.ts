@@ -184,6 +184,13 @@ export interface QueryOk {
    * 单独一行、不混入正文、不改写。预拼 = 消灭 flash 级模型的格式遵从风险。
    */
   freshness_line?: string
+  /**
+   * 值级脱敏面（spec §5.3，P2 T2）：本响应中生效的「列 → 记号」（`round:1000` / `nullify`；
+   * 整值掩码键为 `<value>`）。**仅当有掩码实际生效才在场**（空则不出现该键，与
+   * `total?` / `freshness_*?` 同风格——缺席 = 原值）。消费方据此如实说明「这个数是脱敏后的」，
+   * 不得当精确值转述；记号与 SQL 里实际展开的掩码一一对应（授权层同一份 applied 透传）。
+   */
+  masking?: Record<string, string>
 }
 export interface QueryDenied {
   status: 'denied'; metricId: string
@@ -364,5 +371,8 @@ export async function runQuery(
           freshness_line: freshnessFace.freshness_line,
         }
       : {}),
+    // 值级脱敏面（spec §5.3）：授权层展开记录非空才回包——空对象不出现该键（缺席 = 原值）。
+    // total（显式/自动合计）读的是同一个被掩的内层 select，天然与明细行同一套掩码值。
+    ...(Object.keys(authz.plan.applied).length > 0 ? { masking: authz.plan.applied } : {}),
   }
 }
