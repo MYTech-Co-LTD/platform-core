@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.138.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.138.0...v0.138.1) - 2026-10-17
+- 【修复】data: fct_purchase_concentration 的 item_num join 类型不匹配（text vs bigint） ([#760](https://github.com/MYTech-Co-LTD/platform-core/pull/760), [1c44219](https://github.com/MYTech-Co-LTD/platform-core/commit/1c44219648d6b6e0cdf495e4e5d5fd6fcc7e7d30))
+
+
 ## [0.138.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.137.1...v0.138.0) - 2026-10-17
 - 【新增】data: 供应商集中度 CR5 L1 + 月度预聚合构件与对账（#744 W3） ([#759](https://github.com/MYTech-Co-LTD/platform-core/pull/759), [5c6e47c](https://github.com/MYTech-Co-LTD/platform-core/commit/5c6e47ca00de0d5ad11d827c9254dd8641b71dba))
 
