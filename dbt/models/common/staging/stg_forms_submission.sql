@@ -1,7 +1,23 @@
 {{
-    config(materialized='table')
+    config(materialized='table', enabled=false)
 }}
 -- stg_forms_submission.sql — **表单提交** staging（M1.4 / issue #729，2026-10-16）。
+--
+-- ── ⚠️ 本模型当前**停用**（issue #751，2026-10-17）──────────────────────────────────────
+-- **为什么**：读的是通配路径 `bizday=*/batch_id=*/all.parquet`——只要有**第一个**文件落下来，
+--   glob 就永远匹配得上；但在那之前**每次 dbt build 必红**：
+--     `IO Error: No files found that match the pattern ".../forms/submission/bizday=*/batch_id=*/all.parquet"`
+--   这是 **bootstrap 缺陷**，不是「某天缺数据」。
+-- **为什么现在必然红**（2026-10-17 山海生产实测）：平台 `forms.submission` 表存在但 **0 行**
+--   ⇒ 导出 API 导不出东西；且 **forms 出湖管线没进任何排班**（`schedules/{3120,64188}.json`
+--   里都 grep 不到 forms）⇒ 湖里不会有文件，**补排班也解决不了**（没数据可采）。
+-- **为什么不能放着**：`scripts/lemeng/materialize.sh` 的契约是「dbt 非零 ⇒ MATERIALIZE_FAILED
+--   + exit 1」，而 exit **发生在写 `load_log` 之前** ⇒ 物化其实成功了（PASS=185）却**不落水位**，
+--   `data_as_of` 停在旧值 ⇒ **所有指标的新鲜度固定行一起退化**（数据是新的，报的却是旧的）。
+-- **✅ 复 enable 的唯一条件**：湖里出现第一个 `forms/submission/bizday=*/batch_id=*/all.parquet`。
+--   验证一条命令即可（数据面机）：列出该前缀，非空 ⇒ 删掉上面的 `enabled=false` 并跑一次 materialize。
+-- **更正的形态**（留给 #729，不在本 PR）：采集在**空批次也落一个带申报 schema 的空 parquet**，
+--   这样模型从第一刻起就能跑、排班后每天都有文件——那是治本，但要先验 duckle sink 在 0 行时的行为。
 --
 -- 【用途边界｜这是本模型的**全部价值主张**】通用域：出湖 schema **与业务无关**——任何表单的提交都进
 --   这一张表，**新表单只是新的 `form_def_id` 值**（ADR-0005 §13.1）。故本模型**一次 PR 后不再改**：
