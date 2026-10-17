@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.153.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.153.0...v0.153.1) - 2026-10-17
+- 【修复】data: 零售净销售额口径改冲退货——构件拆三列 + 对账锚切换 ([#834](https://github.com/MYTech-Co-LTD/platform-core/pull/834), [72cf57a](https://github.com/MYTech-Co-LTD/platform-core/commit/72cf57a1d2b127bfdfcdfbc8216524ae4518c797))
+
+
 ## [0.153.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.152.2...v0.153.0) - 2026-10-17
 - 【新增】data: 01-05 可比门店增长率——验证「问 0」不是只对一个指标成立 ([#833](https://github.com/MYTech-Co-LTD/platform-core/pull/833), [6b2c068](https://github.com/MYTech-Co-LTD/platform-core/commit/6b2c0684cf1ed83b96d3f79a12801f52630469fb))
 
