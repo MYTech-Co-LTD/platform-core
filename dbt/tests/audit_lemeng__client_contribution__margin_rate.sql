@@ -108,12 +108,12 @@ where a.r_net is distinct from b.r_net
 
 union all
 
-select null, null, null, null, null, null, null, null, null, null,
+select null, null, null, null, null, null, null, null, null,
     '物化侧一行都没有：对账在空集上「通过」是空转绿（不是对上了）'
 where not exists (select 1 from materialized)
 
 union all
 
-select null, null, null, null, null, null, null, null, null, null,
+select null, null, null, null, null, null, null, null, null,
     '物化侧分子分母全为 0：比对已失去区分度（不是对上了）'
 where not exists (select 1 from materialized where r_net <> 0 or n_net <> 0)
