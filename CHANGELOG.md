@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.138.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.138.2...v0.138.3) - 2026-10-17
+- 【修复】data-stack: pg_duckdb 卷改挂父目录——PG18 的 PGDATA 在版本子目录（Closes #765） ([#768](https://github.com/MYTech-Co-LTD/platform-core/pull/768), [4d6ff90](https://github.com/MYTech-Co-LTD/platform-core/commit/4d6ff906246b5f180a4a9d54726397d6aaf0e086))
+
+
 ## [0.138.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.138.1...v0.138.2) - 2026-10-17
 - 【修复】data: 补齐 20 条 L1 的 sources——新鲜度固定行不再恒「未知」 ([#763](https://github.com/MYTech-Co-LTD/platform-core/pull/763), [76ad5a9](https://github.com/MYTech-Co-LTD/platform-core/commit/76ad5a96e79700219470139d2da7661d292e4909))
 
