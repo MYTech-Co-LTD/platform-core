@@ -1,4 +1,4 @@
-sha256-of-rest a839eb7900855f7900ee1887f861df76d60dcc876e293882d980001a141cc690
+sha256-of-rest 892d9035126394950128ab444d6cc75064863e09aeeb83005e0240f55de50f7c
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -18,7 +18,7 @@ f6dee2b918468bf68593262363b7a51ea9987f1fd4a67866fd8681f1fd9ed626 contracts/commo
 5a7a645f23cfdc35e966da665d627d438b8befb6effee70e525e76221367e5d7 contracts/common/lemeng.wholesale_out.json ${REPO}/contracts/common/lemeng.wholesale_out.json 0644
 81895b6736040f34f479157faaa94b7d8be89b0049dde0c75b14ddb4decb8229 contracts/common/lemeng.wholesale_return.json ${REPO}/contracts/common/lemeng.wholesale_return.json 0644
 a9209aad12e3020eefc11f94f51d935c49d1bff9eabf94fb0262d182a6a37c7a contracts/customers/README.md ${REPO}/contracts/customers/README.md 0644
-07557473643e0a0c1a867d6e706b66eaf2690b8747f86b849fd63b2012411db6 dbt/README.md ${REPO}/dbt/README.md 0644
+908de7a4e86ed8419f6a7bf62d43dcf29ff0cee89a36ce499bd22fd3e2ec5d60 dbt/README.md ${REPO}/dbt/README.md 0644
 dbf9cfb4cd57a774fa8d35db5d8ac2bbc6f7f10299c09478e6edc50fb57aebc6 dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
 d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subject_org.sql ${REPO}/dbt/macros/subject_org.sql 0644
@@ -183,7 +183,7 @@ a6d73597b4cb6dad45f30b9201acf8af48ec42672c79a43989b6d7e71099dd92 deploy/duckle/e
 a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814 scripts/duckle/connection-setup.py /opt/connection-setup.py 0755
 bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/backfill-retail-order-line.sh /opt/lemeng-backfill.sh 0755
 c39a443f475d4f37374c1f68554b24de3a833e6f0b691d3a32416d4690ebe0ce scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755
-fbffd8d3f6668630c366530f4e66e91407228db28a5aa468f4f14c6c5a530f42 scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
+4a71c8481dc53e6d6867a5c0f0e2d8d5fbf369a275674b0ae3d75304f6be6496 scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
 98074d99903bd7092dc8e8179ebec4a968e123e72884502a2a2664e08607eeb9 scripts/lemeng/oo-config-audit.sh /opt/lemeng-oo-config-audit.sh 0755
 5c38126f75ac15dcbb720659e689e2489a36fef814c04c3add7b150694e51846 scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
 bc36151a11daaf0d74da820e02ecda1c5a147f246e8b02b735420e02e2ddeed7 scripts/lemeng/oo-watchdog.sh /opt/lemeng-oo-watchdog.sh 0755
