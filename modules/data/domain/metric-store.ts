@@ -52,6 +52,13 @@ export interface MetricRow extends MetricDef {
    */
   totalable: boolean
   /**
+   * 口径射程与排除项（020 迁移，消费面 spec 2026-10-17 §12.6）。**运行期恒为字符串**
+   * （`toMetricRow` 归一：空串 = 未声明）；类型上刻意保持可选——`MetricRow extends MetricDef`
+   * 而要兼容按 `MetricDef` 形状写的夹具（否则每处夹具都得补一个与语义无关的空串）。
+   * 真值只来自 L1 物化路径；L2 行恒 ''。
+   */
+  scopeNote?: string
+  /**
    * 新鲜度 SLA 承诺天数（017 迁移，spec §10.7.1）：水位距今天 ≤N 个业务日即「正常」。
    * 真值只来自 L1 物化路径（sync 从声明 `freshness_sla_days` 物化，缺声明 sync 响亮失败）；
    * L2 行恒 null——「没接新鲜度链路」与「承诺 0 天」必须可辨，所以是 null 不是 0。
@@ -87,6 +94,12 @@ export interface L1MetricDef extends MetricDef {
   freshnessRelations: string[]
   /** 值级掩码声明（spec 2026-10-17 §5.2，声明 `mask` 的物化值；未声明 = null）。 */
   masks: MaskSpec[] | null
+  /**
+   * 口径射程与排除项（消费面 spec 2026-10-17 §12.6，声明 `scope_note` 的物化值；未声明 = ''）。
+   * **可选**（与 `MetricDef.scopeNote?` 同形）：合成契约与测试夹具可以不带——缺省即「未声明射程」，
+   * 与显式 '' 同义（写库侧统一 `?? ''` 收口）。
+   */
+  scopeNote?: string
 }
 
 /** 行 → MetricRow：只映射契约里的字段（created_at/updated_at 不外泄给授权核心）。 */
@@ -107,6 +120,8 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     version: Number(row.version ?? 1),
     // 可加标记（spec §8.4）：`=== true` 归一——列缺省/未来形状变化都不会让 undefined 冒充真值
     totalable: row.totalable === true,
+    // 口径射程（spec §12.6）：字符串列，缺省/坏形状归 ''（= 未声明），不让 undefined 冒充
+    scopeNote: typeof row.scope_note === 'string' ? row.scope_note : '',
     // 新鲜度链路（spec §10.7）：sla_days 归一成 number|null；freshness_relations 是 jsonb 数组
     // （pg 已反序列化），只认真数组——列缺省/坏形状宁可落 null（= 无链路），不让 undefined 冒充。
     slaDays: row.sla_days === null || row.sla_days === undefined ? null : Number(row.sla_days),
@@ -121,7 +136,7 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations, mask_spec'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
@@ -277,8 +292,8 @@ export async function upsertMetric(
 export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void> {
   await pool.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, sla_days, freshness_relations, mask_spec)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13::jsonb, $14::jsonb)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, scope_note, sla_days, freshness_relations, mask_spec)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13, $14::jsonb, $15::jsonb)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -289,6 +304,7 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
        params         = excluded.params,
        source_system  = excluded.source_system,
        totalable      = excluded.totalable,
+       scope_note          = excluded.scope_note,
        sla_days            = excluded.sla_days,
        freshness_relations = excluded.freshness_relations,
        mask_spec           = excluded.mask_spec,
@@ -296,7 +312,7 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
     [
       L1_ORG, def.id, def.title, def.description, def.requiredScope,
       def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params),
-      def.sourceSystem, def.totalable === true,
+      def.sourceSystem, def.totalable === true, def.scopeNote ?? '',
       def.slaDays, JSON.stringify(def.freshnessRelations),
       def.masks === null ? null : JSON.stringify(def.masks),
     ],

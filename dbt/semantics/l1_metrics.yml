@@ -159,6 +159,9 @@ metrics:
       待客户营业日历（`x01_branch_calendar`）或更长窗口；「断数 vs 零销售」的最终判定仍需 X09。
       ⚠️ 与 01-06「规则闭店候选」的区别：本指标只出**天数**，**15 日门槛属 01-06/X08，不在本口径**。
       粒度 = 账套 × 业务日 × 门店。
+    scope_note: >-
+      仅零售门店口径：批发客户/仓库/配送节点（观察窗内无零售销售）与停用门店已排除；
+      断数与零销售的最终区分仍待采集日志。
     expression: >-
       max(case when fct_branch_day_activity.retail_active
                then fct_branch_day_activity.consecutive_no_sales_days end)
@@ -190,6 +193,9 @@ metrics:
       （刻意保留，客户文档明确要求）。无可比门店或上期合计 ≤ 0 ⇒ 率不适用（分母 nullif）。
       粒度 = 账套 × 周期长度 × 报告期末日（列名 `bizday` = **本期报告期末那一天**，
       保留 bizday 这个名字是为了沿用问数参数白名单——它是业务日，`date_range` 过滤的是「期末日落在区间内的周期」）。
+    scope_note: >-
+      仅可比门店口径：新开店、闭店、两期内停用、以及无零售业务的节点（批发客户/仓库/配送节点）已排除；
+      周期为 7 天（不是客户要求的月——历史不足）。
     expression: >-
       sum(fct_retail_comparable_growth.cur_amount)
       / nullif(sum(fct_retail_comparable_growth.pri_amount), 0) - 1

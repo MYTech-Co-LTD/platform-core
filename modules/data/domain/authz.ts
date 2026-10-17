@@ -80,6 +80,12 @@ export interface MetricDef {
    * 只有 sync 从声明推导出的 L1 行才带真值；保守缺省不会给不明口径的指标编一个合计。
    */
   totalable?: boolean
+  /**
+   * 口径射程与排除项（消费面 spec 2026-10-17 §12.6，迁移 020）：空串/缺省 = 未声明射程
+   * ⇒ 响应**不带** `scope_line`（未知 ≠ 编一句）。真值只来自 L1 物化路径（sync 从声明
+   * `scope_note` 物化）；L2 行恒 ''。
+   */
+  scopeNote?: string
 }
 
 /**

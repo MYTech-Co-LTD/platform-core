@@ -202,6 +202,9 @@ const METRIC_KEYS = new Set([
   // **不再是**「expression 以 sum( 开头 ⇒ 可加」的形状推导——库存这类**存量**跨时间求和
   // 无业务含义，形状推导会把它们误标成可加（线上实证，见该节）。
   'additivity',
+  // 口径射程与排除项（消费面 spec 2026-10-17 §12.6）：声明后由**平台自动附进答案**，
+  // 不靠模型复述（参数面 spec §8.4 已证 SKILL 对 flash 级模型是弱引导）。
+  'scope_note',
 ])
 
 /**
@@ -1228,6 +1231,20 @@ export function checkDataModels(rootDir, opts = {}) {
           metric.file,
           0,
           `指标 \`${metric.name}\` 的 \`additivity\` ${JSON.stringify(additivity)} 不在 flow|stock|non_additive —— 它决定**能不能跨时间求合计**（spec 2026-10-17 §12.3）；拼错会让存量指标静默按可加处理`,
+        )
+      }
+    }
+
+    // ⑤-e `scope_note` 的形状（消费面 spec 2026-10-17 §12.6）
+    // 为什么校验：它会被**原样**钉进对外答案的末尾。空串/纯空白 = 「声明了但没内容」，
+    // 平台会照附一条空行（噪音），或按未声明处理（静默不生效）——两种都是坏的，故不允许。
+    const scopeNote = metric.fields?.scope_note
+    if (scopeNote !== undefined && scopeNote !== null) {
+      if (asText(scopeNote).trim() === '') {
+        push(
+          metric.file,
+          0,
+          `指标 \`${metric.name}\` 的 \`scope_note\` 为空/纯空白 —— 它会被原样钉进对外答案的末尾（spec 2026-10-17 §12.6）；没内容就别声明（省略 = 未声明射程，答案不附该行）`,
         )
       }
     }

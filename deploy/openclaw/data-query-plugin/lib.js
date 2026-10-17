@@ -133,16 +133,31 @@ const FRESHNESS_PREFIX = "📅 数据";
 export function createFreshnessStore({ ttlMs = FRESHNESS_TTL_MS, now = () => Date.now() } = {}) {
   const map = new Map();
   return {
-    /** query_data 成功回包带 freshness_line 时调用；sessionKey 缺失落全局槽。
+    /** query_data 成功回包带固定行时调用；sessionKey 缺失落全局槽。
+     *
+     * 两种形态（**整条替换**，不做字段级合并——否则上一次查询的 📐 行会漏到这一次）：
+     *   · 字符串     ⇒ 只捕获新鲜度行（📅），scopeLine 置空。旧签名，单测仍用它。
+     *   · `{freshness?, scope?}` ⇒ 两条一起捕获（插件生产路径用这个）。
+     *
      * line 存原值不做强转（非串在读取侧判掉——强转会把 undefined 变成字符串 "undefined"）。
      * runId 存空串表示「本侧没有」——钩子侧据此决定是否收紧（见 makeFreshnessSendingHook）。 */
     capture(sessionKey, line, runId) {
-      map.set(sessionKey || FRESHNESS_GLOBAL_SLOT, {
-        line,
+      const isObj = line !== null && typeof line === "object";
+      /** @type {unknown} */
+      const freshness = isObj ? line.freshness : line;
+      /** @type {unknown} */
+      const scope = isObj ? line.scope : undefined;
+      /** @type {Record<string, unknown>} */
+      const entry = {
+        line: freshness,
         runId: runId || "",
         at: now(),
         sessionKey: sessionKey || "",
-      });
+      };
+      // 只在真有值时加键：字符串捕获保持**原条目形状**（既有断言 deepEqual 整条，多一个
+      // `scopeLine: undefined` 会被判不等——那是形状噪音，不是行为差异）。
+      if (scope !== undefined) entry.scopeLine = scope;
+      map.set(sessionKey || FRESHNESS_GLOBAL_SLOT, entry);
     },
     /** 取该会话当前可用的正典行；无 / 过期 ⇒ undefined（过期顺手清槽防积压）。 */
     take(sessionKey) {
@@ -188,6 +203,40 @@ export function appendFreshnessLine(content, line) {
   return stripped ? stripped + "\n\n" + line : line;
 }
 
+// ── 口径射程行（📐，消费面 spec 2026-10-17 §12.6）────────────────────────────────
+// 与 📅 同一套传输层确定性机制：服务端回包带 scope_line ⇒ 捕获 ⇒ 发送前剥模型自写 ⇒ 钉末尾。
+// 为什么不能只靠提示词：只报「5 家」会被读成「全部门店都没问题」，而「对的路必须由平台自动
+// 发生」在参数面 spec §8.4 已被实证（SKILL 对 flash 级模型是弱引导）。
+
+/** 服务端 scope_line 的判别前缀（query-service.ts 拼 `📐 口径：…`）。 */
+const SCOPE_PREFIX = "📐 口径";
+
+/** 剥掉内容里所有 📐 口径行（规则同 📅：独立成行整行删；混在句中按前缀截到行尾）。 */
+export function stripScopeLines(content) {
+  if (typeof content !== "string") return content;
+  const withoutStandalone = content
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .filter((l) => !/^\s*(?:[-*]\s*)?📐\s*口径/.test(l))
+    .join("\n");
+  return withoutStandalone.replace(/📐\s*口径[^\n]*/g, "");
+}
+
+/**
+ * 剥旧 + 钉新（**多行版**）：先剥离 📅/📐 两族行、收掉尾部空行，再按传入顺序把正典行
+ * 各作为独立行附上（顺序 = 新鲜度在前、口径在后）。
+ *
+ * 两族**总是**一起剥：本次只捕获到其中一行时，模型自写的另一行仍是陈旧/臆造的，留着就是噪音。
+ */
+export function appendFixedLines(content, lines) {
+  if (typeof content !== "string") return content;
+  const keep = (Array.isArray(lines) ? lines : []).filter((l) => typeof l === "string" && l);
+  if (keep.length === 0) return content;
+  const stripped = stripScopeLines(stripFreshnessLines(content)).replace(/\s+$/, "");
+  const tail = keep.join("\n");
+  return stripped ? stripped + "\n\n" + tail : tail;
+}
+
 /**
  * 造 message_sending 钩子处理器（index.js 用生产单例注册；单测用独立 store 注入）。
  *
@@ -215,11 +264,13 @@ export function makeFreshnessSendingHook(store) {
       if (typeof content !== "string") return undefined;
       const entry = store.take(ctx && ctx.sessionKey);
       if (!entry) return undefined;
-      if (typeof entry.line !== "string" || !entry.line) return undefined;
+      // 固定行（顺序：📅 新鲜度在前、📐 口径在后）。全都没有 ⇒ 不改写。
+      const lines = [entry.line, entry.scopeLine].filter((l) => typeof l === "string" && l);
+      if (lines.length === 0) return undefined;
       const entryRunId = entry.runId || "";
       const ctxRunId = (ctx && ctx.runId) || "";
       if (entryRunId && ctxRunId && entryRunId !== ctxRunId) return undefined;
-      return { content: appendFreshnessLine(content, entry.line) };
+      return { content: appendFixedLines(content, lines) };
     } catch {
       // fail-open：宁缺勿错——新鲜度行缺失可接受，外发通道被搞挂不可接受。
       return undefined;
