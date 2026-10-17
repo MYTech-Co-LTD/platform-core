@@ -265,6 +265,63 @@ models:
         tests: [{not_null: {}}]
 
 
+  - name: fct_contribution
+    description: >-
+      费用后贡献组合构件（#744 W2 2026-10-17）。**它存在的唯一理由**：L1 的 `select_sql` 形状契约
+      是「`select <聚合表达式> as value, <维度…> from <单一关系>`」——**`from` 只能一个关系**，
+      跨域口径必须先落成 mart 才写得出声明。粒度 (system_book, bizday, domain, branch_num, region_id)
+      与 fct_hq_outbound **逐字同粒度**；口径与边界（门店费用只挂 transfer 域、战区维度的既存边界、
+      补损/补贴取值按真机实测字面量）见模型头注。
+      ⚠️ **门店级与总仓级的 E 口径不同**（门店级只有门店费用；总仓级才是客户文档的 N=R−C−E 全量口径）
+      ——引用前先读头注，别把两者混用。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（subject_org 宏注入；relation 内恒单值）。
+        tests: [{not_null: {}}]
+      - name: bizday
+        description: 业务日。粒度键（出库侧制单日）。
+        tests: [{not_null: {}}]
+      - name: domain
+        description: 域（transfer=配送出库 / wholesale=批发）。粒度键。**保留不折叠**——两域 branch_num 语义不同（见头注）。
+        tests: [{not_null: {}}]
+      - name: branch_num
+        description: 门店号。粒度键。**语义随域变**：transfer=调入门店（可与 fct_branch_expense 对齐）；wholesale=发货方编号（99=管理中心）。
+        tests: [{not_null: {}}]
+      - name: region_id
+        description: 战区。粒度键。wholesale 行由 branch_num=99 回落 dim_branch ⇒ **批发归属战区的语义可疑**（既存边界，头注有记）。
+        tests: [{not_null: {}}]
+      - name: r_net
+        description: R 出库净额构件（出库侧原样透传）。**与 lemeng:outbound:net_amount 同源**。
+        tests: [{not_null: {}}]
+      - name: c_cost
+        description: C 成本构件（原样透传）。
+        tests: [{not_null: {}}]
+      - name: g_gross
+        description: G 毛利构件 = r_net − c_cost（原样透传）。
+        tests: [{not_null: {}}]
+      - name: e_net
+        description: E 门店费用净额构件（= fct_branch_expense.e_net 按 账套×业务日×门店 汇总）。**wholesale 行恒 0**（门店费用只挂 transfer 域，见头注）。
+        tests: [{not_null: {}}]
+      - name: q_loss
+        description: 补损分量（expense_type = `产品售后补损` 的 e_net）。wholesale 行恒 0。服务 02-07/07-05 的分子。
+        tests: [{not_null: {}}]
+      - name: q_subsidy
+        description: 补贴分量（expense_type = `抖音直播补贴` 的 e_net）。wholesale 行恒 0。服务 03-04 的分子。
+        tests: [{not_null: {}}]
+      - name: n_net
+        description: N 费用后贡献构件 = r_net − c_cost − e_net。**与 lemeng:contribution:net_amount 同源**。⚠️ 单行值在 wholesale 行上 e_net=0 ⇒ 该行的 N 只是 R−C；「总仓级 N」是**全表求和**的结果。
+        tests: [{not_null: {}}]
+      - name: r_net_store
+        description: 门店域 R（**transfer-only**；wholesale 行恒 0）。战区级/门店级口径的分母。⚠️ 为什么必须单列：批发的 region_id 是幻影战区（真机实测全部落进 region_id=9046），且批发无法按 client_fid 归战区（出库侧无该列）——见模型头注。
+        tests: [{not_null: {}}]
+      - name: n_net_store
+        description: 门店域 N（**transfer-only**；wholesale 行恒 0）。**与 lemeng:contribution:region_net 同源**。战区级/门店级口径的分子。
+        tests: [{not_null: {}}]
+
+
 # 复合粒度 **(system_book, bizday, branch_num)** 的唯一性由 singular test 手写（单列的 unique 判不了：
 # 各列各自都不唯一；引 dbt_utils.unique_combination_of_columns 要加 packages.yml —— 多一层依赖、
 # 解析期还要联网，本任务不引入）：
