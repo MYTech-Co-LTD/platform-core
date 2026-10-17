@@ -231,6 +231,34 @@ export async function updateSpec(
   return r.rowCount === 0 ? null : toReportRow(r.rows[0])
 }
 
+/**
+ * 规格改写 **+ 页门同步**（`PUT /reports/:id/spec` 专用，#764 P1 Task 4）：与 `updateSpec`
+ * 同款条件更新，但把 `required_scope` 也放进**同一条** UPDATE。
+ *
+ * 为什么必须一次写入（而不是 `updateSpec` 后再来一发 `updateRequiredScope`）：
+ *  ① 改面板 ⇒ 页门跟着改（spec §4.2）必须是**原子的**——两次 UPDATE 之间存在
+ *     「新面板 + 旧页门」的可见窗口（读侧 GET /reports、GET /reports/:id/spec 都不持这把锁）；
+ *  ② 一次请求只推进一次 `version`——`version` 是写保护的读侧契约（成功响应回带推进后的值），
+ *     一次动作推两次会让「一个动作 = 一个版本」这条不变量消失。
+ *
+ * 为什么**单独一个函数**而不是给 `updateSpec` 加个 `requiredScope` 形参：MCP 的
+ * `revise_report_spec` 走的是 `updateSpec`，它只改规格、页门恒不变（且先拒已发布行）。
+ * 两条通路的语义不同，做成两个各自命名的入口后，`grep` 就能穷举「谁会让页门跟着面板动」；
+ * 形参版则要靠逐个调用点读实参才知道。
+ */
+export async function updateSpecAndScope(
+  pool: Pool, org: string, id: string, spec: ReportSpec, requiredScope: string | null, expectedVersion: number,
+): Promise<ReportRow | null> {
+  const r = await pool.query(
+    `update data.reports
+        set spec = $3, required_scope = $5, version = version + 1, updated_at = now()
+      where org = $1 and id = $2 and version = $4
+      returning ${REPORT_COLS}`,
+    [org, id, JSON.stringify(spec), expectedVersion, requiredScope],
+  )
+  return r.rowCount === 0 ? null : toReportRow(r.rows[0])
+}
+
 /** 轻量只读：只为 409 的 currentVersion（给客户端重试用）。 */
 export async function getReportVersion(pool: Pool, org: string, id: string): Promise<number | null> {
   const r = await pool.query('select version from data.reports where org = $1 and id = $2', [org, id])

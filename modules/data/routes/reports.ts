@@ -46,10 +46,14 @@ import {
   listAllReports,
   listReports,
   updateRequiredScope,
-  updateSpec,
+  updateSpecAndScope,
   upsertReport,
 } from '../domain/report-store'
 import { parseReportSpec } from '../domain/report-spec'
+import { deriveRequiredScope } from '../domain/report-scope'
+// ⚠️ `loadMergedCatalog` 的**家在 `domain/metric-store.ts`**，不在 query-service（后者只是它的
+//    调用方之一）。写计划时第一版写成了 `'../domain/query-service'`——那是错的，已订正。
+import { loadMergedCatalog } from '../domain/metric-store'
 import {
   TENANT_PARAM_ID, TENANT_SLUG, publishWithTenantBinding, readDashboardContent,
 } from '../domain/report-content'
@@ -276,10 +280,35 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const parsed = GateBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const org = c.get('tenant').casdoor_org
+    // ── 发布门（spec §4.2 / #764 P1 Task 4）：platform 报表的 `requiredScope` **不从调用方取**，
+    //    改为**从面板指标派生**——保证「报表可见 ⇒ 每个面板的指标都可见」。调用方给的值只对
+    //    metabase 行有效（那种行没有面板可推）。
+    // ⚠️ 读 `current` 在**锁外**：派生只需一次读，而陈旧由 `expectedVersion` 兜（并发改了 spec ⇒
+    //    版本变 ⇒ 条件 UPDATE 落空 ⇒ 409），不会写错。锁内那段仍只管写。
+    const current = await getReport(ctx.pool, org, id)
+    if (current === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    let effectiveScope = parsed.data.requiredScope
+    if (current.renderer === 'platform') {
+      // 库侧跨列 check（迁移 007）保证 platform 行 spec 非空 ⇒ 这个分支不可达，只做类型收窄。
+      if (current.spec === null) return c.json({ error: 'NO_SPEC' }, 400)
+      const catalog = await loadMergedCatalog(ctx.pool, org)
+      const d = deriveRequiredScope(current.spec, catalog)
+      if (!d.ok) {
+        // 派生不了 ⇒ **拒绝发布**并点名（多码 = 单值列表达不了「这些码都要有」；未知指标 = 规格
+        // 指向了不存在的词表条目）。挑一个码放行会让「只有 C1 没有 C2」的人看到报表而 C2 面板 403。
+        return c.json(
+          d.reason === 'UNKNOWN_PANEL_METRIC'
+            ? { error: d.reason, metricId: d.metricId }
+            : { error: d.reason, scopes: d.scopes },
+          400,
+        )
+      }
+      effectiveScope = d.requiredScope
+    }
     // ── 每对象一把锁（spec §3③）：条件 UPDATE + 「陈旧时分清 404/409」的二次读**同锁**，
     //    否则两次读之间夹一次并发写会拿到互相矛盾的版本。键用行 id（写对象已在，id 才是身份）。
     return await withObjectLock(`${org}/row:${id}`, async () => {
-      const row = await updateRequiredScope(ctx.pool, org, id, parsed.data.requiredScope, parsed.data.expectedVersion)
+      const row = await updateRequiredScope(ctx.pool, org, id, effectiveScope, parsed.data.expectedVersion)
       if (row === null) {
         // 存储层把「不存在 / 跨租户 / 版本陈旧」合流成 null（不给存在性探针）⇒ 这里再查一次分清楚。
         // 带 org 查（跨租户在这里同样得 null ⇒ 404，不泄漏别的租户有没有这一行）。
@@ -329,7 +358,17 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       const row = await getReport(ctx.pool, org, id)
       if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
       if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
-      const updated = await updateSpec(ctx.pool, org, id, spec.spec, parsed.data.expectedVersion)
+      // ── 写规格**同时**同步页门（spec §4.2 / #764 P1 Task 4）：面板变了，`requiredScope` 必须
+      //    跟着重派生——否则「先发空报表再补面板」会把门绕过去（报表仍是 null 而面板有码 ⇒
+      //    低权限者点进去炸）。规格与页门**同一条 UPDATE** 落库，不留「新面板 + 旧页门」的窗口。
+      // ⚠️ 派生不了时（多码 / 未知指标）**保持页门原值、规格照存**——拒绝权在**发布门**
+      //    （PUT /reports/:id），本端点是「改规格」不是「发布」；把拒绝搬到这里会让「存一份待修的
+      //    多码草稿」变成不可能。代价：已发布行（页门 null）补上多码面板后仍是 null，下一次
+      //    发布/回收动作会被发布门拒——这是已知的窄缝，见 PR 说明。
+      const catalog = await loadMergedCatalog(ctx.pool, org)
+      const d = deriveRequiredScope(spec.spec, catalog)
+      const effectiveScope = d.ok ? d.requiredScope : row.requiredScope
+      const updated = await updateSpecAndScope(ctx.pool, org, id, spec.spec, effectiveScope, parsed.data.expectedVersion)
       if (updated === null) {
         const cur = await getReportVersion(ctx.pool, org, id)
         if (cur === null) return c.json({ error: 'NOT_FOUND' }, 404)

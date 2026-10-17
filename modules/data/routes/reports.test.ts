@@ -17,6 +17,7 @@ import { Pool } from 'pg'
 import { declaredScopeGate } from '@platform/sdk'
 import mod from '../index'
 import { upsertReport } from '../domain/report-store'
+import { upsertMetric } from '../domain/metric-store'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import type { ModuleVars } from './context'
 
@@ -27,6 +28,17 @@ const ORG = 'org-t7-reports'
 const OTHER_ORG = 'org-t7-reports-other'
 const TENANT = 9107
 const SECRET = 'aaaa1111-bbbb-2222-cccc-333344445555'
+
+/**
+ * 发布门夹具（#764 P1 Task 4）：两张 `requiredScope` **不同**的指标，喂给派生
+ * （`loadMergedCatalog(org)` → `deriveRequiredScope`）。
+ *
+ * ⚠️ 用 **L2**（`upsertMetric(pool, ORG, …)`）而不是 L1：L1 落在**全租户共享**的 `platform` 桶
+ *    （跨测试文件可见，`catalog-consumers.test.ts` 靠 id 前缀才敢往里写）。本用例只需「本 org
+ *    的词表里有两张不同码的指标」，L2 就够——而它**零跨文件污染**（别的文件读不到本 org 的 L2）。
+ */
+const COST_METRIC = 't4rg:cost'
+const MARGIN_METRIC = 't4rg:margin'
 
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
@@ -273,7 +285,18 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   // `applyMigrations` 放 beforeAll（**只在文件开头跑一次**）：迁移本身是幂等的，但每个用例都
   // 跑一次会让本文件成为 advisory lock 争用的主要来源（issue #169 的既知抖动：迁移持锁 2s 重试
   // vs vitest 5s 超时，表现为「每次命中的用例不同」）。用例间只需要清数据，不需要重跑迁移。
-  beforeAll(async () => { await applyMigrations(pool) })
+  beforeAll(async () => {
+    await applyMigrations(pool)
+    // 发布门夹具（#764 P1 Task 4）：两条本 org 的 L2 指标，`requiredScope` 故意不同。
+    // `upsertMetric` 幂等（冲突分支 do update）⇒ 重复跑不会累积；清理在 afterAll 按 org 删。
+    const def = (id: string, title: string, requiredScope: string) => ({
+      id, title, description: `${title}（发布门夹具）`, requiredScope,
+      subjectColumn: 'org', selectSql: `select 1 as value from ${id.replace(':', '_')}`,
+      groupBy: '', params: {},
+    })
+    await upsertMetric(pool, ORG, def(COST_METRIC, '成本', 'data:cost'), 'fixture')
+    await upsertMetric(pool, ORG, def(MARGIN_METRIC, '毛利', 'data:margin'), 'fixture')
+  })
 
   beforeEach(async () => {
     await pool.query('delete from data.reports where org = any($1)', [[ORG, OTHER_ORG]])
@@ -300,6 +323,8 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   afterAll(async () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
     await pool.query('delete from data.reports where org = any($1)', [[ORG, OTHER_ORG]]).catch(() => {})
+    // 发布门夹具（L2，本 org 独占）——按 org 删，不碰共享的 platform 桶。
+    await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
@@ -1521,5 +1546,83 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(body).toHaveProperty('embedding_params')                // 键**恒在**
     expect(body.embedding_params).toEqual({ tenant: 'locked' })    // 值 = 刚读到的当前值
     expect(dash.embedding_params).toEqual({ tenant: 'locked' })    // 锁参仍在（没被抹）
+  })
+
+  // ── 发布门：requiredScope 从面板派生（spec §4.2 / #764 P1 Task 4）──────────────────────
+  // ⚠️ 断言一律认**具体字段**（`error` 名、`scopes` 内容、`requiredScope` 的值）——「200 即通过」
+  //    在本仓被反复证明拦不住错东西（同 `catalog-consumers.test.ts` 的「认这个串，而不是认 200」）。
+  describe('发布门：requiredScope 从面板派生（spec §4.2）', () => {
+    const putSpec = (app: Hono, id: string, spec: unknown, expectedVersion: number) =>
+      app.request(`/reports/${id}/spec`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ spec, expectedVersion }),
+      })
+    const putGate = (app: Hono, id: string, body: unknown) =>
+      app.request(`/reports/${id}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      })
+    const panel = (metricId: string, title: string, chart = 'table') => ({ chart, title, metricId })
+    /** 自绘报表（页门 = data:manage ⇒ **未发布**，符合「先建后发」的正常流程）。 */
+    const createPlatform = async (app: Hono, title: string): Promise<string> =>
+      (await (await post(app, {
+        title, renderer: 'platform', spec: { panels: [] }, requiredScope: 'data:manage',
+      })).json()).id
+
+    it('★ 面板指标两个不同码 ⇒ 发布被拒并点名两个码', async () => {
+      const { app } = manage()
+      const id = await createPlatform(app, '多码面板')
+      // ② 面板经 PUT /reports/:id/spec 补上（两个不同码的指标）
+      const specRes = await putSpec(app, id, {
+        panels: [panel(COST_METRIC, '成本'), panel(MARGIN_METRIC, '毛利')],
+      }, await versionOf(app, id))
+      expect(specRes.status).toBe(200)
+      // 派生不了 ⇒ 页门**保持原值**（拒绝权在发布门，不在「改规格」这个动作上）
+      expect((await pool.query('select required_scope from data.reports where id = $1', [id]))
+        .rows[0].required_scope).toBe('data:manage')
+
+      // ③ 发布（requiredScope: null + expectedVersion）⇒ 被门拒、点名两个码
+      const res = await putGate(app, id, { requiredScope: null, expectedVersion: await versionOf(app, id) })
+      expect(res.status).toBe(400)
+      const body = await res.json() as { error: string; scopes: string[] }
+      expect(body.error).toBe('CONFLICTING_PANEL_SCOPES')
+      expect([...body.scopes].sort()).toEqual(['data:cost', 'data:margin'])
+      // 「拒」= 不写：页门没被改成 null（挑一个码放行会让「只有 C1 没有 C2」的人看到报表而 C2 面板 403）
+      expect((await pool.query('select required_scope from data.reports where id = $1', [id]))
+        .rows[0].required_scope).toBe('data:manage')
+    })
+
+    it('★ 面板指标同一个码 ⇒ 发布成功且回包 requiredScope = 该码（不是调用方传的 null）', async () => {
+      const { app } = manage()
+      const id = await createPlatform(app, '单码面板')
+      const specRes = await putSpec(app, id, {
+        panels: [panel(COST_METRIC, '成本 A'), panel(COST_METRIC, '成本 B', 'bar')],
+      }, await versionOf(app, id))
+      expect(specRes.status).toBe(200)
+      // 写规格**同时**同步页门：「先发空报表再补面板」不再绕过门
+      expect((await pool.query('select required_scope from data.reports where id = $1', [id]))
+        .rows[0].required_scope).toBe('data:cost')
+
+      const res = await putGate(app, id, { requiredScope: null, expectedVersion: await versionOf(app, id) })
+      expect(res.status).toBe(200)
+      // 调用方给的是 null，落库/回包的都是**派生值**
+      expect((await res.json()).requiredScope).toBe('data:cost')
+    })
+
+    it('★ 面板指向词表外的指标 ⇒ 发布被拒并点名 metricId', async () => {
+      const { app } = manage()
+      const id = await createPlatform(app, '幽灵面板')
+      await putSpec(app, id, { panels: [panel('t4rg:ghost', '幽灵')] }, await versionOf(app, id))
+      const res = await putGate(app, id, { requiredScope: null, expectedVersion: await versionOf(app, id) })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'UNKNOWN_PANEL_METRIC', metricId: 't4rg:ghost' })
+    })
+
+    it('★ renderer=metabase ⇒ 不派生（无面板可推），仍用调用方给的值', async () => {
+      const { app } = manage()
+      const { id } = await (await post(app, { title: 'Metabase 报表' })).json()
+      const res = await putGate(app, id, { requiredScope: 'data:manage', expectedVersion: await versionOf(app, id) })
+      expect(res.status).toBe(200)
+      expect((await res.json()).requiredScope).toBe('data:manage')
+    })
   })
 })
