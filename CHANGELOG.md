@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.138.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.138.1...v0.138.2) - 2026-10-17
+- 【修复】data: 补齐 20 条 L1 的 sources——新鲜度固定行不再恒「未知」 ([#763](https://github.com/MYTech-Co-LTD/platform-core/pull/763), [76ad5a9](https://github.com/MYTech-Co-LTD/platform-core/commit/76ad5a96e79700219470139d2da7661d292e4909))
+
+
 ## [0.138.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.138.0...v0.138.1) - 2026-10-17
 - 【修复】data: fct_purchase_concentration 的 item_num join 类型不匹配（text vs bigint） ([#760](https://github.com/MYTech-Co-LTD/platform-core/pull/760), [1c44219](https://github.com/MYTech-Co-LTD/platform-core/commit/1c44219648d6b6e0cdf495e4e5d5fd6fcc7e7d30))
 
