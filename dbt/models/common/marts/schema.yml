@@ -270,6 +270,53 @@ models:
         tests: [{not_null: {}}]
 
 
+  - name: fct_client_contribution
+    description: >-
+      **客户级**费用后贡献组合构件（#744 甲方案兑现 2026-10-17）。与 fct_contribution 的分缝是
+      **对象维度**：那边答「门店/战区/总仓」（对象=门店），本构件答「客户」（对象=批发客户）。
+      粒度 (system_book, bizday, client_fid)；R/C/G 只含批发域（客户对象的出库只有批发；
+      branch_num=发货方 99 与幻影战区对客户口径无意义，已聚合掉）；
+      E 为客户费用净额（聚合掉费用项目），**含当天只有费用、没有出库的客户**（FULL JOIN 保留，
+      照 fct_contribution 53 孤儿组合的教训）。口径与「客户级完整 N 无挂载依据」的边界见模型头注。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（subject_org 宏注入；relation 内恒单值）。
+        tests: [{not_null: {}}]
+      - name: bizday
+        description: 业务日。粒度键（出库侧制单日/费用审核日）。
+        tests: [{not_null: {}}]
+      - name: client_fid
+        description: 批发客户号。粒度键。两侧键都非空（wholesale 真机 2140/2140 非空 + fct_client_expense 侧 not_null）⇒ FULL JOIN 不产生 NULL 键行。
+        tests: [{not_null: {}}]
+      - name: r_net
+        description: R 批发出库净额构件（退货冲减已在上游完成）。**与 lemeng:outbound:net_amount 同源**（域=wholesale 部分）。
+        tests: [{not_null: {}}]
+      - name: c_cost
+        description: C 批发成本构件（退货冲减同上）。
+        tests: [{not_null: {}}]
+      - name: g_gross
+        description: G 批发毛利构件 = r_net − c_cost（原样透传聚合）。
+        tests: [{not_null: {}}]
+      - name: order_count
+        description: 批发订单数（per_order 去重后计数）。**只有出库侧有**；只有费用的行恒 0。
+        tests: [{not_null: {}}]
+      - name: line_count
+        description: 批发明细行数（行级计数）。只有费用的行恒 0。
+        tests: [{not_null: {}}]
+      - name: e_net
+        description: E 客户费用净额构件 = Σ(应付−应收) 按客户日汇总。**只有费用、没有出库的行**上 R/C 恒 0。
+        tests: [{not_null: {}}]
+      - name: bill_count
+        description: 去重客户费用单数。只有费用的行上也如实计数（不受出库侧影响）。
+        tests: [{not_null: {}}]
+      - name: n_net
+        description: N 客户级费用后贡献构件 = r_net − c_cost − e_net。**与 lemeng:client_contribution:net_amount 同源**。⚠️ 只扣客户费用——门店费用挂不到客户（branch_num 语义不同，见头注），客户级「完整 N」在数据上无挂载依据。符号语义随裁9，未回签前 L1 experimental。
+        tests: [{not_null: {}}]
+
+
   - name: fct_contribution
     description: >-
       费用后贡献组合构件（#744 W2 2026-10-17）。**它存在的唯一理由**：L1 的 `select_sql` 形状契约

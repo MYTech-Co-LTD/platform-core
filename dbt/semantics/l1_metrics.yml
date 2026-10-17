@@ -539,7 +539,10 @@ metrics:
       服务客户项 01-03「费用后贡献与贡献率」与 08-05「费用后贡献率」的分子侧。
       ⚠️ **与战区级/门店级不是同一口径**：本条的 E 只含**门店费用**，**不含客户费用**——
       客户费用按 client 归集，而出库侧没有 client_fid（#744 Task 0 补记②），两者对不上；
-      客户文档 01-03 的完整 E = 门店费用 + 客户费用，**客户费用部分待出库侧带 client_fid 后另补**。
+      客户文档 01-03 的完整 E = 门店费用 + 客户费用，**客户费用部分已另补**
+      （`client_contribution:net_amount`，2026-10-17，客户级口径）——但那是客户对象的 N，
+      与本条总仓级 N 仍是两个口径，**不可相加成一条声明**；两边费用合并的「总仓级完整 N」
+      未声明（属消费面 spec 范畴）。
       故本条是「门店费用后」的贡献额，**不是**客户文档定义的完整 N——引用前须知道这条边界。
       粒度 = 账套 × 业务日。
     expression: 'sum(fct_contribution.n_net)'
@@ -584,7 +587,9 @@ metrics:
       client_fid→X01 映射归战区，而本仓出库侧**没有 client_fid**，批发行的 region_id 是
       branch_num=99 回落 dim_branch 的**幻影战区**（真机实测：全部批发落进单个 region_id=9046，
       与 12 个真战区不重叠）⇒ 把批发算进来会把 84 万批发额记到一个不存在的战区上。
-      **本指标覆盖配送出库到门店的部分；批发侧待 client_fid 到位后另声明。**
+      **本指标覆盖配送出库到门店的部分**；批发侧 2026-10-17 已按**客户级**另声明
+      （`client_contribution:net_amount`，对象=批发客户）——按**战区**归批发仍需 X01
+      client→region 映射（未就位），本条射程不变。
       粒度 = 账套 × 业务日 × 战区。
     expression: 'sum(fct_contribution.n_net_store)'
     grain: [system_book, bizday, region_id]
@@ -595,6 +600,53 @@ metrics:
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  # ── 客户级组合族（2026-10-17，#744 甲方案）：fct_hq_outbound 补 client_fid 第 6 键后的兑现 ──
+  # 落点 = fct_client_contribution（批发出库 × 客户费用的组合构件）。与上方门店族（fct_contribution
+  # 五条）的分缝是**对象维度**：那边对象=门店，这边对象=批发客户。实验性同裁9（费用应付/应收的
+  # 方向语义客户未回签）。
+
+  - name: 'lemeng:client_contribution:net_amount'
+    label: 客户费用后贡献额
+    definition: >-
+      N = R − C − E（元），**客户级口径**：R/C 为该客户的批发出库净额/成本（退货冲减已含，
+      同 `outbound:net_amount` 的批发域），E 为该客户费用净额（应付−应收）。
+      服务客户项 01-03「费用后贡献」的客户下钻与 08-05「费用后贡献率」的分子侧。
+      ⚠️ **E 只含客户费用，不含门店费用**——客户文档 01-03 的完整 E = 门店费用 + 客户费用，
+      但门店费用挂不到客户（fct_branch_expense.branch_num 是归属门店，与批发客户行的发货方
+      branch_num=99 不同义）⇒ **客户级「完整 N」在数据上不存在挂载依据**，本条只扣客户费用。
+      与 `contribution:net_amount`（总仓级，E 只含门店费用）是**两个口径，不可相加**。
+      粒度 = 账套 × 业务日 × 客户。
+    expression: 'sum(fct_client_contribution.n_net)'
+    grain: [system_book, bizday, client_fid]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:client_contribution:margin_rate'
+    label: 客户费用后贡献率
+    definition: >-
+      贡献率 = N / R（不可加；上滚=重算/另声明）。零分母 → 不适用（sync 自动包 nullif）。
+      分子分母同口径同粒度（都是客户级；E 只含客户费用的边界同
+      `client_contribution:net_amount`）。服务客户项 08-05「费用后贡献率」的客户下钻。
+      粒度 = 账套 × 业务日 × 客户。
+    ratio:
+      numerator: 'sum(fct_client_contribution.n_net)'
+      denominator: 'sum(fct_client_contribution.r_net)'
+    grain: [system_book, bizday, client_fid]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:expense:loss_rate'
     label: 门店补损率
