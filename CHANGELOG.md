@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.151.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.150.0...v0.151.0) - 2026-10-17
+- 【新增】data: L2 不得基于被掩码的 L1 构建（fail-closed） ([#811](https://github.com/MYTech-Co-LTD/platform-core/pull/811), [ae377aa](https://github.com/MYTech-Co-LTD/platform-core/commit/ae377aa7e203b24e8e47503a6b0c15089ec8f393))
+
+
 ## [0.150.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.149.0...v0.150.0) - 2026-10-17
 - 【新增】data: 审计记录掩码 + 指令面同步 ([#810](https://github.com/MYTech-Co-LTD/platform-core/pull/810), [13a75cd](https://github.com/MYTech-Co-LTD/platform-core/commit/13a75cd0b62f345518bcd0b97602726be64caea0))
 
