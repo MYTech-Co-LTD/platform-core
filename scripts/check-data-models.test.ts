@@ -1214,3 +1214,44 @@ describe('规则 ⑤ freshness_sla_days 形状（freshnessSlaError 纯核，spec
     expect(bv[0]?.message).toContain('非负整数')
   })
 })
+
+describe('格⑪：列级授权声明面（required_scope / reads，spec 2026-10-17 §4.2/§4.3）', () => {
+  /** 在 freshness_sla_days 之后插一行（基线指标其余字段不动）。 */
+  const withLine = (line: string) =>
+    variant((f) => {
+      f[METRICS] = f[METRICS].replace('    freshness_sla_days: 1\n', `    freshness_sla_days: 1\n${line}\n`)
+    })
+
+  it('未声明 ⇒ 干净（缺省 = 不限制，与 2026-10-17 之前的行为一致）', () => {
+    expect(checkDataModels(variant(() => {}))).toEqual([])
+  })
+
+  it('合法的 required_scope / reads ⇒ 干净', () => {
+    expect(
+      checkDataModels(withLine('    required_scope: data:cost\n    reads: ["lemeng.item.item_cost_price"]')),
+    ).toEqual([])
+  })
+
+  it('拼错的键名 ⇒ 违规并点名允许的键（拼错会被静默忽略 = 该指标永远不受限制）', () => {
+    const v = checkDataModels(withLine('    required_scpoe: data:cost'))
+    expect(v).toHaveLength(1)
+    expect(v[0]?.message).toContain('未知字段')
+    expect(v[0]?.message).toContain('required_scpoe')
+  })
+
+  it('required_scope 空串 / 首尾带空白 ⇒ 违规（权限码是逐字比对，带空白谁也匹配不上）', () => {
+    for (const bad of ['""', '" data:cost"', '"data:cost "', '"   "']) {
+      const v = checkDataModels(withLine(`    required_scope: ${bad}`))
+      expect(v, `required_scope: ${bad} 没被拦`).toHaveLength(1)
+      expect(v[0]?.message).toContain('required_scope')
+    }
+  })
+
+  it('reads 写成字符串 / 空数组 ⇒ 违规（它是血缘门的输入，写错会让门误判「没读这一列」）', () => {
+    for (const bad of ['lemeng.item.item_cost_price', '[]']) {
+      const v = checkDataModels(withLine(`    reads: ${bad}`))
+      expect(v, `reads: ${bad} 没被拦`).toHaveLength(1)
+      expect(v[0]?.message).toContain('reads')
+    }
+  })
+})
