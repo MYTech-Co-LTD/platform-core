@@ -611,8 +611,11 @@ describePg('runQuery —— freshness_line（spec §10.7，需要 DATABASE_URL�
         [L1_ORG, `${L1_TOTAL_PREFIX}fresh`])
     }
   }
-  /** 新形状 load_log + 一组水位行（relation 行；materialized_at 固定锚 → 北京 10-15 11:27）。 */
-  const seedWatermarks = async (rows: Array<{ relation: string; maxBizday: string; status?: string }>) => {
+  /** 新形状 load_log + 一组水位行（relation 行；materialized_at 默认固定锚 → 北京 10-15 11:27，
+   *  `at` 可覆盖——只有「同一关系多行历史」的用例需要不同的物化时刻）。 */
+  const seedWatermarks = async (
+    rows: Array<{ relation: string; maxBizday: string; status?: string; at?: string }>,
+  ) => {
     await wh.query('drop table if exists data.load_log')
     await wh.query(`create table data.load_log(
       materialized_at timestamptz default now(), tests_pass int, tests_error int, status text,
@@ -620,8 +623,8 @@ describePg('runQuery —— freshness_line（spec §10.7，需要 DATABASE_URL�
     for (const r of rows) {
       await wh.query(
         `insert into data.load_log (materialized_at, tests_pass, tests_error, status, relation, max_bizday)
-         values ('2026-10-15 03:27:00+00', 26, 0, $1, $2, $3)`,
-        [r.status ?? 'ok', r.relation, r.maxBizday],
+         values ($1, 26, 0, $2, $3, $4)`,
+        [r.at ?? '2026-10-15 03:27:00+00', r.status ?? 'ok', r.relation, r.maxBizday],
       )
     }
   }
@@ -670,6 +673,23 @@ describePg('runQuery —— freshness_line（spec §10.7，需要 DATABASE_URL�
     expect(out.watermark, '短板 = 两关系里更旧的那个').toBe(daysAgo(1))
     expect(out.freshness_status, 'd=1 ≤ sla=1 ⇒ normal').toBe('normal')
     expect(out.freshness_line).toBe(`📅 数据已更新至 ${formatHumanDay(daysAgo(1))}（该日数据完整）｜更新于 10-15 11:27`)
+  })
+
+  it('W10 同一关系多行历史 ⇒ 取**最新那一行**的水位（issue #844：追加式日志不是状态表）', async () => {
+    await seedFreshMetric()
+    await seedWatermarks([
+      // 早先几次物化时水位还很旧——旧实现的全历史 min(max_bizday) 会永远卡在这几行上
+      { relation: 'stg_fw_retail', maxBizday: daysAgo(6), at: '2026-10-12 03:27:00+00' },
+      { relation: 'stg_fw_retail', maxBizday: daysAgo(5), at: '2026-10-13 03:27:00+00' },
+      { relation: 'stg_fw_retail', maxBizday: daysAgo(4), at: '2026-10-14 03:27:00+00' },
+      // 最新一次物化：当前水位
+      { relation: 'stg_fw_retail', maxBizday: daysAgo(1), at: '2026-10-15 03:27:00+00' },
+    ])
+    const out = await runQuery(depsOf(), ORG, req(), `${L1_TOTAL_PREFIX}fresh`, {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(out.watermark, '先按关系取最新一行，再跨关系取木桶 —— 不是全历史 min').toBe(daysAgo(1))
+    expect(out.freshness_status, 'd=1 ≤ sla=1 ⇒ normal（旧实现会因历史行判成 alert）').toBe('normal')
   })
 
   it('W3 late（d=sla+2 仍 late）与 W4 alert（d=sla+3）模板逐字', async () => {
