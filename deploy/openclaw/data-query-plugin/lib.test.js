@@ -153,9 +153,9 @@ test("query_data 工具描述含 total 自动合计规则（spec §8.4：直接�
 test("query_data 工具描述改为系统自动附加口径（模型不写 📅 行；data_as_of 句保留）", () => {
   const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
   // 新契约：系统自动附加，模型无需复述/不需要自己拼新鲜度行
-  assert.match(src, /新鲜度声明由系统自动附加/);
-  assert.match(src, /不要自己写任何 📅 行/);
-  assert.match(src, /不要复述或拼接 freshness_line/);
+  assert.match(src, /新鲜度与口径射程由系统自动附加/);
+  assert.match(src, /不要自己写任何 📅 \/ 📐 行/);
+  assert.match(src, /不要复述或拼接 freshness_line \/ scope_line/);
   // 旧「模型自附」契约文案不许残留（两套口径并存会让 flash 级模型无所适从）
   assert.doesNotMatch(src, /答案末尾必须原样单独一行附/);
   // data_as_of 句保留（spec §10.7.4）

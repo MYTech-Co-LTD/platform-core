@@ -351,6 +351,13 @@ export async function runQuery(
     }
   }
 
+  // 口径射程与排除项（消费面 spec 2026-10-17 §12.6）：声明了 `scope_note` 才回包。
+  // 为什么必须由平台给：只报「5 家」会被读成「全部门店都没问题」，而「靠模型自觉复述」
+  // 已被参数面 spec §8.4 证伪（SKILL 对 flash 级模型是弱引导）⇒ 平台自动附、插件钉在末尾。
+  // 未声明（''）= 响应不带该字段——未知 ≠ 编一句。
+  const scopeNote = typeof metricRow?.scopeNote === 'string' ? metricRow.scopeNote.trim() : ''
+  const scopeLine = scopeNote === '' ? undefined : `📐 口径：${scopeNote}`
+
   // 审计掩码（spec §4.4）：与回包 `masking` 同一份 applied（授权层展开记录）——空则 **null**，
   // 不写 {}（null = 本次无掩码生效，'{}' 是审计里不该出现的第三种态）。
   const appliedMasking = Object.keys(authz.plan.applied).length > 0 ? authz.plan.applied : null
@@ -378,6 +385,9 @@ export async function runQuery(
           freshness_line: freshnessFace.freshness_line,
         }
       : {}),
+    // 口径射程（spec §12.6）：声明了才带。插件据此把该行钉在答案末尾（与 freshness_line 同一套
+    // 传输层确定性机制——剥模型自写、再附正典行）。
+    ...(scopeLine !== undefined ? { scope_line: scopeLine } : {}),
     // 值级脱敏面（spec §5.3）：授权层展开记录非空才回包——空对象不出现该键（缺席 = 原值）。
     // total（显式/自动合计）读的是同一个被掩的内层 select，天然与明细行同一套掩码值。
     // ★ 复用上面审计那一份 `appliedMasking`（T3-②，issue #824）：两处各写一遍
