@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.138.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.137.1...v0.138.0) - 2026-10-17
+- 【新增】data: 供应商集中度 CR5 L1 + 月度预聚合构件与对账（#744 W3） ([#759](https://github.com/MYTech-Co-LTD/platform-core/pull/759), [5c6e47c](https://github.com/MYTech-Co-LTD/platform-core/commit/5c6e47ca00de0d5ad11d827c9254dd8641b71dba))
+
+
 ## [0.137.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.137.0...v0.137.1) - 2026-10-17
 - 【修复】data: 三条组合族对账把「缺行」误判为不一致（物化侧零值行 vs 复算侧缺行） ([#756](https://github.com/MYTech-Co-LTD/platform-core/pull/756), [66e20da](https://github.com/MYTech-Co-LTD/platform-core/commit/66e20da81e89e594f7bf0135100f544904cb53c3))
 
