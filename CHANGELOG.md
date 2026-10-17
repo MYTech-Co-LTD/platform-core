@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.152.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.151.1...v0.152.0) - 2026-10-17
+- 【新增】data: 门店×日骨架事实 + 03-05 连续无业绩天数——验证「日历可推导、不必等客户」 ([#826](https://github.com/MYTech-Co-LTD/platform-core/pull/826), [be69bf7](https://github.com/MYTech-Co-LTD/platform-core/commit/be69bf74f7f34cf020f697ffec5025efe35a0010))
+
+
 ## [0.151.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.151.0...v0.151.1) - 2026-10-17
 - 【修复】data: 零成本暴露面把「成本 null」并进零成本——与自身文档及客户 04-06 口径矛盾 ([#817](https://github.com/MYTech-Co-LTD/platform-core/pull/817), [2912030](https://github.com/MYTech-Co-LTD/platform-core/commit/29120300f3ecd11d54af15f12f56088d0fcde898))
 
