@@ -322,6 +322,39 @@ models:
         tests: [{not_null: {}}]
 
 
+  - name: fct_purchase_concentration
+    description: >-
+      供应商集中度预聚合构件（#744 W3 2026-10-17）。**为什么必须预聚合**：CR5 含「排序取前 5」，
+      是子查询语义，塞不进 L1 的单关系聚合形状。粒度 **(system_book, bizday, item_department)**
+      —— **月度**（客户文档频率栏「月」；CR5 不可按日累加）。净采购额与 `purchase:net_amount` 同源。
+      ⚠️ 与仓里其他日粒度指标**不同粒度**；`bizday` 是月 1 号，不是业务日。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（subject_org 宏注入）。
+        tests: [{not_null: {}}]
+      - name: bizday
+        description: 报告月（业务日所在月的 1 号，date 型）。粒度键。**不是业务日**——本指标按月算，日粒度不可累加。
+        tests: [{not_null: {}}]
+      - name: item_department
+        description: 商品部门（经 dim_item **最新快照**取；取不到记 `(未映射)`，不丢弃）。粒度键。水果/标品筛选即按此列。
+        tests: [{not_null: {}}]
+      - name: total_p
+        description: 该 (账套,月,部门) 全部供应商的净采购额合计（**含负数供应商**）。
+        tests: [{not_null: {}}]
+      - name: supplier_count
+        description: 参与排名的供应商数（全部，含负数）。供消费面判断样本量。
+        tests: [{not_null: {}}]
+      - name: top5_p
+        description: 净额 **> 0** 的供应商按净额降序取前 5 的合计。**与 lemeng:purchase:cr5 的分子同源**。客户文档「净采购为负的供应商单列」⇒ 不进分子。
+        tests: [{not_null: {}}]
+      - name: top10_p
+        description: 前 10 的合计（同 top5 的口径）。CR10 备用，未声明指标。
+        tests: [{not_null: {}}]
+
+
 # 复合粒度 **(system_book, bizday, branch_num)** 的唯一性由 singular test 手写（单列的 unique 判不了：
 # 各列各自都不唯一；引 dbt_utils.unique_combination_of_columns 要加 packages.yml —— 多一层依赖、
 # 解析期还要联网，本任务不引入）：
