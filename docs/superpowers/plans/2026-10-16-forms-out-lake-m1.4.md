@@ -30,6 +30,102 @@
 **本计划即该 spec 的落盘**；设计本身已由 ADR §13.1（人审）与路线图 M1.4 定，故此处不再重开设计讨论，
 只把「实施面选择」与「冲突登记」写明待确认。
 
+## 裁决：回迁 forms 到 mytech 数据面（2026-10-17，人已定）
+
+> **本节的地位**：它**推翻**下文 E·console 的原落点。E·console 原文写「在 mytech 数据面项目
+> （`proj_SU8cmQ8OLVfM971X`）新增 forms console 服务行」，**实施时偏离到了山海数据面**
+> （`proj_AFbJvyb0onaX7LVr` / server `8281d598`），由此产生正典 §2 台账行尾那条「org 列 = 数据面
+> 部署常量，与源租户 mytech 的关系待裁决」。人于 2026-10-17 裁决**回迁**。
+> 按 `architecture-first`：**人已同意 → 先改架构文档 → 再写码**。本节先落事实、牵扯面与待人决策；
+> 架构文档更新（R1）完成并过审后，才动 R2 及之后的代码/基建。
+
+### 1 缺陷的机制（不是「console 放错机器」这么轻）
+
+`org` 是**行级授权主体列**（`modules/data/domain/authz.ts` 恒拼 `WHERE org = '<orgId>'`）⇒ 标错租户
+不是标签问题，是**可见性反转**：标 `shanhaiyiguo-org` 的 mytech 表单，山海用户看得到、mytech 用户看不到。
+
+值**不是 console 盖的**，是物化 job 盖的（2026-10-17 取证，全部经 openship MCP exec，无裸 SSH）：
+
+| 环节 | 事实 | 取证 |
+|---|---|---|
+| org 值来源 | `materialize.sh`：`SO=$(docker exec "$PLAT_CT" psql … 'select casdoor_org from platform.tenant order by id limit 1')` → `export LEMENG_SUBJECT_ORG="$SO"` | `scripts/lemeng/materialize.sh` |
+| 即 | org = **数据面部署租户的常量**，与「这批数据是谁的」**无关** | `dbt/macros/subject_org.sql`（空串 fail-closed） |
+| 该 job 的 `PLAT_CT` | `openship-platform-core-shanhai-postgres`（**山海**平台） | `materialize.sh` 硬编码缺省 |
+| 湖里 | `staging.stg_forms_submission` **1 行**，`org = shanhaiyiguo-org` | 山海 pg_duckdb 直读 |
+| 源侧 | mytech 平台 `forms.submission` **1 行**（`org = mytech`）；山海平台 **0 行** | 两平台 DB 直读 |
+| 落点 | forms console `ZOS_BUCKET=shanhai-data`（**山海桶**） | forms-console 容器 `printenv` |
+| 消费面 | 两侧 `data.metrics` 均 **0 条**触及 forms | 两平台 DB 直读 |
+
+**契约其实写对了前提**：`contracts/common/forms.submission.json` 的 `layout.partitionBy` 只有
+`["bizday","batch_id"]`——**org 刻意不进湖**，理由逐字是「在『一 console 一租户』下 org 是**部署常量**」。
+⇒ 设计没错，**实施违反了它的前提**：console 落在了「部署租户 ≠ 源租户」的那台数据面。
+⇒ 当前是**潜伏**缺陷（0 指标）；但 M1.4 的**全部意义**就是让它可查 ⇒ **第一个指标即泄漏**。
+
+### 2 回迁的真正牵扯面（比「搬一个服务行」大一个量级）
+
+两个数据面实测对照（2026-10-17，openship MCP）：
+
+| | mytech 数据面 | 山海数据面 |
+|---|---|---|
+| project / server | `proj_SU8cmQ8OLVfM971X` / `23a1091e` | `proj_AFbJvyb0onaX7LVr` / `8281d598` |
+| 平台→仓库（Gate-B） | **不通**：`getent hosts pg_duckdb` 无记录、`TCP FAIL ENOTFOUND` | 通：`172.18.0.4:5432` |
+| warehouse 库 | 空（只有 `duckdb` schema 2 表，**无 `staging`/`data`**） | `staging` 有数（含 `stg_forms_submission`）、`data` |
+| pg_duckdb 的湖凭据 | **无**（读 `s3://*` → `region ''` 默认端点 404） | 已配（读得了湖） |
+| `dbt` / `duckle` 服务行 | 均 disabled；卷是 `../dbt`、`../duckle`（**相对 bind = 被当卷名**，已知坑） | 均 disabled；卷是 `/opt/...` 绝对路径 |
+| console 行 | `lemeng-console-3120/64188` 是**空壳**（无 env、无卷） | 3120 / 64188 / **forms** 三行在跑 |
+| 物化 job | **无**（`23a1091e` 上无 `/opt/*.sh`） | `lemeng-dbt-materialize`（`sh /opt/lemeng-materialize.sh`，`27 3 * * *`） |
+
+⇒ **mytech 数据面是 2026-09-24 建了却从未启用的桩**；forms 之所以「跑得起来」，是因为它借了唯一
+在跑的那台。⇒ 本裁决的实施面 = **把 mytech 数据面从零启用**（SOP `deploy/data-plane-deploy-sop.md`
+P1–P8），不是搬一行服务。
+
+### 3 绕不开的架构缺口：共享 dbt 树没有「域」这一维
+
+`materialize.sh` 的 `mat_dbt_args()` = `build --profiles-dir /usr/app`——**全量 build、无 `--select`**
+（#679 刻意：名单曾是事实全量，按需会漏）。而两个域**共用一棵树**：
+
+```
+dbt/models/common/staging/   ← stg_forms_submission.sql 与 stg_lemeng_*.sql 同目录
+dbt/models/common/marts/     ← 全是乐檬 fct_*
+```
+
+⇒ 两侧都会 build 对方的模型，且**两种失败都很响**：
+
+- **mytech 侧**全量 build 乐檬模型：读的是同一个 `shanhai-data` 桶 ⇒ **会成功**，把山海的乐檬业务
+  数据物化进 mytech 仓库、**标成 `org=mytech`**（**反向泄漏**，方向与本次缺陷相反）；
+- **山海侧**继续 build forms：桶里 forms 目录一空 ⇒ dbt 红 ⇒ `exit 1` 发生在写 `load_log` **之前**
+  ⇒ 水位冻结、**所有指标的新鲜度固定行连带退化**（正是 #752 那个 bootstrap 缺陷的复发形态）。
+
+**所以「按部署隔离域」是本裁决的硬前提，不是优化。**
+
+### 4 建议（待确认）
+
+| # | 动作 | 机制 / 注意 |
+|---|---|---|
+| 1 | 目录按域分：`models/lemeng/` + `models/forms/`（现 `common/` 拆开；`customers/` 不动） | 现有 `STAGING_RE`/`MARTS_RE` 已是 `models/(?:.+\/)?staging/` ⇒ **门禁判据不用改**，只需改错误文案里写死的 `models/common/staging/` 路径 |
+| 2 | 域开关进 `dbt_project.yml` 的**按路径 `+enabled`**，值由 var 给 | 合 `materialize.sh` 头注的**成文处方**：「将来若真出现『不该日物化』的模型，用该模型的 config 表达，**不要恢复 job 级名单**」——var 是**部署的域身份**，不是模型名单。⚠️ `+enabled` 收 Jinja 字符串的确切写法**待实测**（未验不写死） |
+| 3 | 两侧 materialize job 各传自己的域；mytech 侧 job 的 `PLAT_CT`/`PG_CT`/`CONSOLE_CT`/`NETWORK` 全指 mytech 资源 ⇒ `SO=mytech` | `materialize.sh` 已全部支持 env 覆盖，无需改脚本 |
+| 4 | env 键 `LEMENG_SUBJECT_ORG` → 域中性名（如 `SUBJECT_ORG`） | 回迁后它是 forms 部署的主体来源，`LEMENG_` 前缀会误导。改净面：`dbt/macros/subject_org.sql`、`profiles.example.yml`、`materialize.sh`、`dbt/README.md` §（同名小节）、`schema.yml` 描述若干 |
+
+### 5 待人决策
+
+| # | 问题 | 我的建议 |
+|---|---|---|
+| 1 | **桶**：mytech 数据面复用 `shanhai-data`，还是新开 `mytech-data`？ | **新开 `mytech-data`**——复用 = 把 mytech 自身域的表单数据写进**客户（山海）的桶**，与交付边界相悖；同桶还会把 §3 的反向泄漏从「配错才发生」变成「隔离一失效就发生」。⚠️ `mytech-data` 桶**是否已存在未核实**，需先查 |
+| 2 | 山海侧 forms 残留（console `svc_nQaReL0EvSBqK9gW` + `staging.stg_forms_submission`）何时退 | 回迁验收通过后**同批退**，避免双写窗口 |
+
+### 6 修订后的步骤（替代下文 E·console）
+
+- [ ] R1 **架构文档更新**（新增「域」维度 + 数据面归属口径）→ 人审
+- [ ] R2 dbt 树按域分目录 + `+enabled` 域开关 + 门禁文案（纯仓内，可 CI 验）
+- [ ] R3 mytech 数据面启用：S3 凭据 → Gate-B 接线 + `search_path`（`wire-warehouse.sh --check` 七断言全绿）→ `dbt`/`duckle` 服务行改绝对路径卷 → 数据面工件 sync（lock）
+- [ ] R4 mytech 侧 materialize job（照 `lemeng-dbt-materialize` 形态，容器名/网络全换 mytech）
+- [ ] R5 forms console 落到 `proj_SU8cmQ8OLVfM971X`（新桶）→ seed workspace（含 `.duckle/keys/secret.key`）→ 重建 catalog → 首跑成功
+- [ ] R6 验收：staging `org = mytech` + mytech 平台侧可查（四层验收）
+- [ ] R7 山海侧残留退役 + 正典三处登记更新 + WeKnora 沉淀
+
+> 数据**不需迁移**：mytech console 按 `id` 水位从源 API 重拉（增量语义天然覆盖）。
+
 ## 文件结构
 
 | 路径 | 职责 |
@@ -51,9 +147,13 @@
 
 - [x] A1 建 `GET /export/submissions`：参数 `since`（增量水位，ISO8601）/ `limit`（服务端上限）/ `cursor`（游标分页）
 - [x] A2 响应形状：`{ rows: [{ org, form_def_id, submitted_at, payload }], next_cursor }`
-- [ ] A3 **探针四条**（对真实端点，不引 PoC 结论）：真实值 / 能力反问 / 跨度上限 / whoami 级主体
-- [ ] A4 探针结论落任务目录；页参数与增量字段写进结论（C/D 段引用）
-- [ ] **判停**：探针没跑完不写湖
+- [x] A3 **探针四条**（对真实端点，不引 PoC 结论）：真实值 / 能力反问 / 跨度上限 / whoami 级主体
+- [x] A4 探针结论落任务目录；页参数与增量字段写进结论（C/D 段引用）
+- [x] **判停**：探针没跑完不写湖
+
+> 📌 **2026-10-17 勾选订正**：A3/A4/判停 原为未勾的**陈旧状态**——四条探针实际已跑（结论落
+> `.superpowers/sdd/` 任务目录，被 C/D 段引用；`stg_forms_submission.sql` 头注亦记「探针四条对真实
+> 端点跑过」），且 F1–F3 验收与主验收均已通过。此处只补齐勾选，不改判据。
 
 ### B 选型定案（§1.1 / §1.7）
 
@@ -99,8 +199,10 @@
   `on: ["failure"]`、`channel` 走既有 OO 转投，与 `alerts.lemeng.json` 同源同路）。🚦 **硬判停（skill 场景 C）**：
   合并前必须做**反向测试**（人为触发一次真红 → OO 规则/企微真收到）并留证；该测试依赖 console 已存在 ⇒
   **仓内文件（E·种子/E·告警）与基建（E·console）同批做、反向测试后再合入**。
-- **E·console**（生产机动作）：在 mytech 数据面项目（`proj_SU8cmQ8OLVfM971X` / server `23a1091e`）新增
-  **forms console 服务行**——照 `lemeng-console-<账套>` 形态（image `platform-core-duckle:local`、**独立
+- 🚨 **E·console — 本节已被上文「裁决：回迁 forms 到 mytech 数据面」取代。** 实施时**偏离到了山海数据面**，
+  由此产生 org 主体列错标（详见裁决节 §1–§3）。**回迁步骤见裁决节 §6（R1–R7），照本节原文做会复发同一缺陷。**
+  原文保留仅作沿革记录。
+- **E·console（原稿）**（生产机动作）：在 mytech 数据面项目（`proj_SU8cmQ8OLVfM971X` / server `23a1091e`）新增  **forms console 服务行**——照 `lemeng-console-<账套>` 形态（image `platform-core-duckle:local`、**独立
   workspace 卷**、不与既有 `duckle`/etl 服务行共用）。凭据面：workspace 内 `connections/<id>.json`（密文）+
   平台侧**一 PAT 一租户**（导出按 `identity.orgId` 隔离）。seed：`schedules.json` + `pipelines/`（含管线依赖的
   子管线/连接）+ `alerts.json` / `owners.json`。两个已实测的坑：① **相对 bind 会被当卷名**（挂载一律绝对路径）；
