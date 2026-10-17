@@ -146,6 +146,48 @@ describe('resolveL1Base：base 必须命中 L1 词表', () => {
   })
 })
 
+describe('compileL2：L2 不得基于被掩码的 L1 构建（fail-closed，spec 2026-10-17 §5.3.1）', () => {
+  // 为什么必须在**编译时**拒：L2 的 selectSql 由 L1 展开而来，编译后**已经没有那个列引用**
+  // （已展开成 `sum/base`）⇒ 运行期 authorize 的定点替换命中不了它。放行 = 一条把原值
+  // 透出来的旁路。宁可拒绝，也不要「静默放行 + 记日志」——那正是本设计要防的形态。
+  const masked = l1({
+    masks: [{ column: 'fct_retail_sale.net_amount', kind: 'round', step: 1000, grantedBy: 'data:cost' }],
+  })
+
+  it('refine：base 带 mask ⇒ 抛 L2_BASE_MASKED，且点名是哪个 L1、哪条掩码', () => {
+    try {
+      compileL2([masked], decl())
+    } catch (e) {
+      expect(e, `期望抛 SemanticCompileError(L2_BASE_MASKED)，实抛 ${String(e)}`).toBeInstanceOf(SemanticCompileError)
+      const err = e as SemanticCompileError
+      expect(err.code).toBe('L2_BASE_MASKED')
+      expect(err.message).toContain('lemeng:retail:net_sales')        // 哪个 L1
+      expect(err.message).toContain('fct_retail_sale.net_amount')     // 哪条掩码（列）
+      expect(err.message).toContain('round')
+      expect(err.extra).toMatchObject({ base: 'lemeng:retail:net_sales' })
+      return
+    }
+    throw new Error('期望抛 SemanticCompileError(L2_BASE_MASKED)，但没有抛')
+  })
+
+  it('expr：参与运算的任一 ref 带 mask ⇒ 同样拒绝（B 中档不是旁路）', () => {
+    const clean = L1_CATALOG.find((m) => m.id === 'lemeng:retail:order_count')!
+    const expr: L2Declaration = {
+      op: {
+        kind: 'expr',
+        expr: { kind: 'add', left: { kind: 'ref', id: masked.id }, right: { kind: 'ref', id: clean.id } },
+      },
+    }
+    expectThrow(() => compileL2([masked, clean], expr), 'L2_BASE_MASKED')
+  })
+
+  it('masks 三态同义（null / 空数组 / 缺省）= 未声明 ⇒ 不拦', () => {
+    expect(compileL2([l1({ masks: null })], decl()).selectSql).toContain('sum(fct_retail_sale.net_amount)')
+    expect(compileL2([l1({ masks: [] })], decl()).selectSql).toContain('sum(fct_retail_sale.net_amount)')
+    expect(compileL2([l1()], decl()).selectSql).toContain('sum(fct_retail_sale.net_amount)')
+  })
+})
+
 describe('compileL2：写时校验（机检，不是运行时才发现）', () => {
   it('op.kind 只支持 refine（B 中档的受限表达式不私自放行）', () => {
     const base = resolveL1Base(L1_CATALOG, 'lemeng:retail:net_sales')
