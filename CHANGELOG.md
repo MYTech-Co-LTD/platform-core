@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.154.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.0...v0.154.1) - 2026-10-17
+- 【优化】data: materialize 逐域跑 + 逐域落账（拆爆炸半径）（Refs #729） ([#841](https://github.com/MYTech-Co-LTD/platform-core/pull/841), [06b4a1f](https://github.com/MYTech-Co-LTD/platform-core/commit/06b4a1f3fc37704cc179683074be37e92ea91e76))
+
+
 ## [0.154.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.153.2...v0.154.0) - 2026-10-17
 - 【新增】data: 答案自带射程与排除——scope_note 由平台自动附加（spec §12.6） ([#838](https://github.com/MYTech-Co-LTD/platform-core/pull/838), [7e3c60a](https://github.com/MYTech-Co-LTD/platform-core/commit/7e3c60a0ea2923158ef39177ed862c0aa38e438a))
 
