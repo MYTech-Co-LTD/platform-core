@@ -242,7 +242,7 @@
         "label": "窗口表（24 窗：bizday + hour + run_token + batch_id）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT\n  t.run_token AS run_token,\n  strftime((now() AT TIME ZONE 'Asia/Shanghai') - INTERVAL 1 DAY, '%Y-%m-%d') AS bizday,\n  s.hour AS hour,\n  s.hour || ':00:00' AS hour_from,\n  s.hour || ':59:59' AS hour_to,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  '${ENV:BRANCH_NUMS}' AS branch_nums,\n  'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || replace(replace('${datetime}','-',''),'_','T') || 'Z-' || s.hour AS batch_id\nFROM (SELECT replace(replace('${datetime}','-',''),'_','T') AS run_token) t,\n     (SELECT lpad(CAST(h AS VARCHAR), 2, '0') AS hour FROM generate_series(0, 23) g(h)) s"
+          "sql": "SELECT\n  t.run_token AS run_token,\n  strftime((now() AT TIME ZONE 'Asia/Shanghai') - INTERVAL 1 DAY, '%Y-%m-%d') AS bizday,\n  s.hour AS hour,\n  s.hour || ':00:00' AS hour_from,\n  s.hour || ':59:59' AS hour_to,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  (SELECT branch_nums FROM input) AS branch_nums,\n  'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || replace(replace('${datetime}','-',''),'_','T') || 'Z-' || s.hour AS batch_id\nFROM (SELECT replace(replace('${datetime}','-',''),'_','T') AS run_token) t,\n     (SELECT lpad(CAST(h AS VARCHAR), 2, '0') AS hour FROM generate_series(0, 23) g(h)) s"
         }
       }
     },
@@ -423,6 +423,113 @@
           "message": "WINDOWS_FAILED {rows} 窗未采到（system_book=${ENV:SYSTEM_BOOK}）⇒ 整批判红。⚠️ windows 形只采「上海昨天」、无回溯重放 ⇒ 被截掉的尾窗**必须当日补跑**（本 run 的 checkpoint 会让补跑只发缺页数个请求）；缺口明细见 /workspace/logs/retail-windows-summary.csv"
         }
       }
+    },
+    {
+      "data": {
+        "componentId": "code.sql",
+        "label": "现算门店清单 = whoami可见 − BRANCH_EXCLUDE（#793 新店自动纳入）",
+        "properties": {
+          "sql": "SELECT company_id,\n       to_json(list_filter(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[]),\n              x -> NOT list_contains(CAST('${ENV:BRANCH_EXCLUDE}' AS BIGINT[]), x))) AS branch_nums\nFROM input"
+        }
+      },
+      "id": "wc2",
+      "position": {
+        "x": 2420,
+        "y": -320
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "code.sql",
+        "label": "现算清单为空守卫（foreach 零 item = 静默空转）",
+        "properties": {
+          "sql": "SELECT 'computed_branch_list_empty' AS violation, company_id AS detail\nFROM input WHERE json_array_length(branch_nums) = 0"
+        }
+      },
+      "id": "wf",
+      "position": {
+        "x": 2660,
+        "y": -320
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "ctl.die",
+        "label": "现算清单空 ⇒ 判红",
+        "properties": {
+          "condition": "has-rows",
+          "message": "computed: whoami 现算门店清单为空（visible − BRANCH_EXCLUDE）⇒ foreach 零 item = 静默空转（#793）⇒ 拒绝采集与写湖"
+        }
+      },
+      "id": "dwf",
+      "position": {
+        "x": 2900,
+        "y": -320
+      },
+      "type": "control"
+    },
+    {
+      "data": {
+        "componentId": "code.sql",
+        "label": "BRANCH_EXCLUDE 形状闸",
+        "properties": {
+          "sql": "SELECT 'BRANCH_EXCLUDE' AS violation, '${ENV:BRANCH_EXCLUDE}' AS detail, 'JSON integer array, [] or [99,100]' AS rule\nWHERE NOT regexp_full_match('${ENV:BRANCH_EXCLUDE}', '\\[\\s*\\]|\\[\\s*[0-9]+(\\s*,\\s*[0-9]+)*\\s*\\]')"
+        }
+      },
+      "id": "gv2",
+      "position": {
+        "x": 2420,
+        "y": -600
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "ctl.die",
+        "label": "BRANCH_EXCLUDE 非法 ⇒ 判红",
+        "properties": {
+          "condition": "has-rows",
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: BRANCH_EXCLUDE 缺席或形状非法（#793）⇒ 现算清单无法计算 ⇒ 拒绝采集与写湖。处置：console 服务 env 补 BRANCH_EXCLUDE（[] 或 [99] 形）"
+        }
+      },
+      "id": "dv2",
+      "position": {
+        "x": 2660,
+        "y": -600
+      },
+      "type": "control"
+    },
+    {
+      "data": {
+        "componentId": "code.sql",
+        "label": "反向漂移：现算 vs 底账（只告警不阻断）",
+        "properties": {
+          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-window' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n       '-' AS bizday, 'drift' AS hour, count(*) AS \"rows\", 'config_drift' AS status,\n       replace('${datetime}', '-', '') AS run_token,\n       string_agg(CASE WHEN w.b IS NULL THEN '底账有现算无(排除或不可见): ' || CAST(c.b AS VARCHAR)\n                       ELSE '现算有底账无(新店): ' || CAST(w.b AS VARCHAR) END, '；' ORDER BY 1) AS detail\nFROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS b) c\nFULL OUTER JOIN (SELECT unnest(CAST(json_extract(i.branch_nums, '$[*]') AS BIGINT[])) AS b FROM input i) w\n  ON c.b = w.b\nWHERE c.b IS NULL OR w.b IS NULL"
+        }
+      },
+      "id": "gd",
+      "position": {
+        "x": 2420,
+        "y": -80
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "xf.unionall",
+        "label": "合流：窗口摘要 + 漂移告警（漂移 0 行时不贡献）",
+        "properties": {
+          "matchBy": "name"
+        }
+      },
+      "id": "un",
+      "position": {
+        "x": 910,
+        "y": 1560
+      },
+      "type": "transform"
     }
   ],
   "edges": [
@@ -610,7 +717,7 @@
     },
     {
       "id": "e24",
-      "source": "op",
+      "source": "un",
       "target": "wh",
       "sourceHandle": "main",
       "targetHandle": "main",
@@ -659,6 +766,112 @@
       "data": {
         "connectionType": "main"
       }
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e100",
+      "source": "d0",
+      "sourceHandle": "main",
+      "target": "wc2",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e101",
+      "source": "wc2",
+      "sourceHandle": "main",
+      "target": "wf",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e102",
+      "source": "wf",
+      "sourceHandle": "main",
+      "target": "dwf",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e103",
+      "source": "wc2",
+      "sourceHandle": "main",
+      "target": "gd",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e104",
+      "source": "wc2",
+      "sourceHandle": "main",
+      "target": "w0",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "on-subjob-ok"
+      },
+      "id": "t30",
+      "source": "dwf",
+      "target": "w0"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e106",
+      "source": "dv",
+      "sourceHandle": "main",
+      "target": "gv2",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e107",
+      "source": "gv2",
+      "sourceHandle": "main",
+      "target": "dv2",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "on-subjob-ok"
+      },
+      "id": "t31",
+      "source": "dv2",
+      "target": "w0"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e109",
+      "source": "op",
+      "sourceHandle": "main",
+      "target": "un",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e110",
+      "source": "gd",
+      "sourceHandle": "main",
+      "target": "un",
+      "targetHandle": "main"
     }
   ]
 }

@@ -154,3 +154,16 @@ python3 -c "import json,glob,os;fs=glob.glob('/workspace/runs/receipts/*branch_l
 - 而 `LEMENG_TOKEN` 是**按账套绑定**的 ⇒ 两账套共用一个 console，必然有一个拿到错 token，
   且会**静默采错数据**（不是报错）。
 ⇒ 两个账套 = 两个 workspace = 两个 console 服务，各自一份 env（见计划 Task 3）。
+
+## 门店清单 env 契约（#793 起）
+
+| 键 | 语义 | 缺席/非法的后果 |
+|---|---|---|
+| `BRANCH_NUMS` | **对账底账**（静态 JSON 整数数组）：不再驱动采集，只用于「现算 vs 底账」反向漂移告警 | 形状闸判红（既有 `gv`） |
+| `BRANCH_EXCLUDE` | 从 whoami 可见清单中**显式排除**的门店（JSON 整数数组，`[]` 或 `[99]` 形；管理中心类假店） | 形状闸判红 ⇒ **拒绝采集与写湖**（fail-closed） |
+
+- **采集清单本体 = 每 run 的 whoami 现算**（可见 − `BRANCH_EXCLUDE`）⇒ 新店开张下一轮自动纳入，
+  不再依赖手工同步静态清单；两键真值在 **openship 服务行 env**（不进 compose / 仓库——
+  `env` 是容器创建时注入，改键必须 refresh 重建容器才生效，2026-09-27 实测）。
+- 现算清单为空 ⇒ 判红（foreach 零 item = 静默空转）；漂移行以 `status='config_drift'` 走
+  OO webhook 告警面（**不阻断**、不进湖）。64188 的排除清单是 `[]`（行为不变），是否排 99 另议。

@@ -234,7 +234,7 @@
         "label": "窗口表（tick：cur+prev，h≥1 两行 / h=0 一行；bizday + hour + run_token + batch_id）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT\n  t.run_token AS run_token,\n  CASE WHEN o.ord = 0 THEN t.today WHEN t.h = 0 THEN t.dy ELSE t.today END AS bizday,\n  CASE WHEN o.ord = 0 THEN t.cur_h ELSE t.prev_h END AS hour,\n  (CASE WHEN o.ord = 0 THEN t.cur_h ELSE t.prev_h END) || ':00:00' AS hour_from,\n  (CASE WHEN o.ord = 0 THEN t.cur_h ELSE t.prev_h END) || ':59:59' AS hour_to,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  '${ENV:BRANCH_NUMS}' AS branch_nums,\n  'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || t.run_token || 'Z-' ||\n    (CASE WHEN o.ord = 0 THEN t.cur_h ELSE t.prev_h END) || '-t' AS batch_id\nFROM (SELECT z.ts AS ts,\n             replace(replace('${datetime}','-',''),'_','T') AS run_token,\n             CAST(EXTRACT(hour FROM z.ts) AS INTEGER) AS h,\n             strftime(z.ts, '%Y-%m-%d') AS today,\n             strftime(z.ts - INTERVAL 1 DAY, '%Y-%m-%d') AS dy,\n             lpad(CAST(EXTRACT(hour FROM z.ts) AS VARCHAR), 2, '0') AS cur_h,\n             CASE WHEN EXTRACT(hour FROM z.ts) = 0 THEN '23'\n                  ELSE lpad(CAST(EXTRACT(hour FROM z.ts) - 1 AS VARCHAR), 2, '0') END AS prev_h\n      FROM (SELECT now() AT TIME ZONE 'Asia/Shanghai' AS ts) z) t,\n     (SELECT 0 AS ord UNION ALL SELECT 1) o\nWHERE (o.ord = 0 AND t.h >= 1) OR o.ord = 1\nORDER BY o.ord"
+          "sql": "SELECT\n  t.run_token AS run_token,\n  CASE WHEN o.ord = 0 THEN t.today WHEN t.h = 0 THEN t.dy ELSE t.today END AS bizday,\n  CASE WHEN o.ord = 0 THEN t.cur_h ELSE t.prev_h END AS hour,\n  (CASE WHEN o.ord = 0 THEN t.cur_h ELSE t.prev_h END) || ':00:00' AS hour_from,\n  (CASE WHEN o.ord = 0 THEN t.cur_h ELSE t.prev_h END) || ':59:59' AS hour_to,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  (SELECT branch_nums FROM input) AS branch_nums,\n  'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || t.run_token || 'Z-' ||\n    (CASE WHEN o.ord = 0 THEN t.cur_h ELSE t.prev_h END) || '-t' AS batch_id\nFROM (SELECT z.ts AS ts,\n             replace(replace('${datetime}','-',''),'_','T') AS run_token,\n             CAST(EXTRACT(hour FROM z.ts) AS INTEGER) AS h,\n             strftime(z.ts, '%Y-%m-%d') AS today,\n             strftime(z.ts - INTERVAL 1 DAY, '%Y-%m-%d') AS dy,\n             lpad(CAST(EXTRACT(hour FROM z.ts) AS VARCHAR), 2, '0') AS cur_h,\n             CASE WHEN EXTRACT(hour FROM z.ts) = 0 THEN '23'\n                  ELSE lpad(CAST(EXTRACT(hour FROM z.ts) - 1 AS VARCHAR), 2, '0') END AS prev_h\n      FROM (SELECT now() AT TIME ZONE 'Asia/Shanghai' AS ts) z) t,\n     (SELECT 0 AS ord UNION ALL SELECT 1) o\nWHERE (o.ord = 0 AND t.h >= 1) OR o.ord = 1\nORDER BY o.ord"
         }
       }
     },
@@ -415,6 +415,113 @@
           "message": "TICK_FAILED {rows} 窗未采到（system_book=${ENV:SYSTEM_BOOK}）⇒ 本轮判红。⚠️ tick 形收「当前小时(cur) + 前一小时(prev)」两个**累积窗**：cur 会被后续 tick 反复重采、prev 由后续 tick / 营业日末 close 覆盖 ⇒ 本轮的缺口通常在 5 分钟~2 小时内被自然补齐；明细见 /workspace/logs/retail-tick-summary.csv"
         }
       }
+    },
+    {
+      "data": {
+        "componentId": "code.sql",
+        "label": "现算门店清单 = whoami可见 − BRANCH_EXCLUDE（#793 新店自动纳入）",
+        "properties": {
+          "sql": "SELECT company_id,\n       to_json(list_filter(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[]),\n              x -> NOT list_contains(CAST('${ENV:BRANCH_EXCLUDE}' AS BIGINT[]), x))) AS branch_nums\nFROM input"
+        }
+      },
+      "id": "wc2",
+      "position": {
+        "x": 2420,
+        "y": -320
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "code.sql",
+        "label": "现算清单为空守卫（foreach 零 item = 静默空转）",
+        "properties": {
+          "sql": "SELECT 'computed_branch_list_empty' AS violation, company_id AS detail\nFROM input WHERE json_array_length(branch_nums) = 0"
+        }
+      },
+      "id": "wf",
+      "position": {
+        "x": 2660,
+        "y": -320
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "ctl.die",
+        "label": "现算清单空 ⇒ 判红",
+        "properties": {
+          "condition": "has-rows",
+          "message": "computed: whoami 现算门店清单为空（visible − BRANCH_EXCLUDE）⇒ foreach 零 item = 静默空转（#793）⇒ 拒绝采集与写湖"
+        }
+      },
+      "id": "dwf",
+      "position": {
+        "x": 2900,
+        "y": -320
+      },
+      "type": "control"
+    },
+    {
+      "data": {
+        "componentId": "code.sql",
+        "label": "BRANCH_EXCLUDE 形状闸",
+        "properties": {
+          "sql": "SELECT 'BRANCH_EXCLUDE' AS violation, '${ENV:BRANCH_EXCLUDE}' AS detail, 'JSON integer array, [] or [99,100]' AS rule\nWHERE NOT regexp_full_match('${ENV:BRANCH_EXCLUDE}', '\\[\\s*\\]|\\[\\s*[0-9]+(\\s*,\\s*[0-9]+)*\\s*\\]')"
+        }
+      },
+      "id": "gv2",
+      "position": {
+        "x": 2420,
+        "y": -600
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "ctl.die",
+        "label": "BRANCH_EXCLUDE 非法 ⇒ 判红",
+        "properties": {
+          "condition": "has-rows",
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: BRANCH_EXCLUDE 缺席或形状非法（#793）⇒ 现算清单无法计算 ⇒ 拒绝采集与写湖。处置：console 服务 env 补 BRANCH_EXCLUDE（[] 或 [99] 形）"
+        }
+      },
+      "id": "dv2",
+      "position": {
+        "x": 2660,
+        "y": -600
+      },
+      "type": "control"
+    },
+    {
+      "data": {
+        "componentId": "code.sql",
+        "label": "反向漂移：现算 vs 底账（只告警不阻断）",
+        "properties": {
+          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-tick' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n       '-' AS bizday, 'drift' AS hour, count(*) AS \"rows\", 'config_drift' AS status,\n       replace('${datetime}', '-', '') AS run_token,\n       string_agg(CASE WHEN w.b IS NULL THEN '底账有现算无(排除或不可见): ' || CAST(c.b AS VARCHAR)\n                       ELSE '现算有底账无(新店): ' || CAST(w.b AS VARCHAR) END, '；' ORDER BY 1) AS detail\nFROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS b) c\nFULL OUTER JOIN (SELECT unnest(CAST(json_extract(i.branch_nums, '$[*]') AS BIGINT[])) AS b FROM input i) w\n  ON c.b = w.b\nWHERE c.b IS NULL OR w.b IS NULL"
+        }
+      },
+      "id": "gd",
+      "position": {
+        "x": 2420,
+        "y": -80
+      },
+      "type": "transform"
+    },
+    {
+      "data": {
+        "componentId": "xf.unionall",
+        "label": "合流：窗口摘要 + 漂移告警（漂移 0 行时不贡献）",
+        "properties": {
+          "matchBy": "name"
+        }
+      },
+      "id": "un",
+      "position": {
+        "x": 910,
+        "y": 1560
+      },
+      "type": "transform"
     }
   ],
   "edges": [
@@ -602,7 +709,7 @@
     },
     {
       "id": "e24",
-      "source": "op",
+      "source": "un",
       "target": "wh",
       "sourceHandle": "main",
       "targetHandle": "main",
@@ -651,6 +758,112 @@
       "data": {
         "connectionType": "main"
       }
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e100",
+      "source": "d0",
+      "sourceHandle": "main",
+      "target": "wc2",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e101",
+      "source": "wc2",
+      "sourceHandle": "main",
+      "target": "wf",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e102",
+      "source": "wf",
+      "sourceHandle": "main",
+      "target": "dwf",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e103",
+      "source": "wc2",
+      "sourceHandle": "main",
+      "target": "gd",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e104",
+      "source": "wc2",
+      "sourceHandle": "main",
+      "target": "w0",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "on-subjob-ok"
+      },
+      "id": "t30",
+      "source": "dwf",
+      "target": "w0"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e106",
+      "source": "dv",
+      "sourceHandle": "main",
+      "target": "gv2",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e107",
+      "source": "gv2",
+      "sourceHandle": "main",
+      "target": "dv2",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "on-subjob-ok"
+      },
+      "id": "t31",
+      "source": "dv2",
+      "target": "w0"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e109",
+      "source": "op",
+      "sourceHandle": "main",
+      "target": "un",
+      "targetHandle": "main"
+    },
+    {
+      "data": {
+        "connectionType": "main"
+      },
+      "id": "e110",
+      "source": "gd",
+      "sourceHandle": "main",
+      "target": "un",
+      "targetHandle": "main"
     }
   ]
 }
