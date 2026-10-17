@@ -66,9 +66,13 @@ select
     '门店补贴率：复算与物化不一致（分子/分母/商各自比对）' as note
 from recheck a
 full join materialized b using (system_book, bizday, branch_num)
-where a.s is distinct from b.s
-   or a.r_store is distinct from b.r_store
-   or a.s / nullif(a.r_store, 0) is distinct from b.s / nullif(b.r_store, 0)
+-- ⚠️ **缺行 = 零贡献**（2026-10-17 真机实测后修正）：物化侧有复算侧不产生的零值行
+--   （批发行 branch_num=99、以及门店域合计为 0 的门店日）。直接 `is distinct from`
+--   会把「缺行 vs 0」判成不一致（首跑因此假红 41 行）。非零差异仍会被抓住。
+where coalesce(a.s, 0) is distinct from coalesce(b.s, 0)
+   or coalesce(a.r_store, 0) is distinct from coalesce(b.r_store, 0)
+   or coalesce(a.s, 0) / nullif(coalesce(a.r_store, 0), 0)
+      is distinct from coalesce(b.s, 0) / nullif(coalesce(b.r_store, 0), 0)
 
 union all
 
