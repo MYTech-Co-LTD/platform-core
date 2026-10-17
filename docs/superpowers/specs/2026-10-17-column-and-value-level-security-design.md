@@ -314,25 +314,53 @@ L2 指标同理，声明在 L2 定义里，经 `compileL2`（`semantic-compiler.
 
 ### 5.3 运行期展开：**编译期占位符，运行期零解析**
 
-**做法**：编译期把表达式里被 `mask.column` 点名的标识符替换成占位符，产出**骨架**存库：
+> 🔴 **订正（2026-10-17 写 P2 计划前实测）**：本节初稿的方案（**编译期占位符骨架存库**）**被推翻**。
+>
+> 实测两条：
+> 1. **`${}` 那套与本设计无关**——数据面代码**不认** `${ENV:…}` / `${datetime}`（grep 零命中），
+>    那是 **duckle 管线属性**与**契约 `expr`** 的层 ⇒ 「占位符语法冲突」这个担心**不成立**。
+> 2. **但占位符绝不能进 `selectSql`**。它有**两个真消费者**会把里面的表达式当 SQL 用：
+>    `authz.ts:256` 直接把它拼进最终 SQL；`semantic-compiler.ts` 的 `parseL1Select`
+>    用 `L1_SELECT_RE`（`:178`）把表达式抽出来喂 **L2 编译**。占位符会**原样进 L2 产物**
+>    ⇒ 一条语法错的 SQL，且要到某个租户查那个 L2 时才炸。
+>
+> ⇒ **改为：`selectSql` 一个字都不动，掩码在运行期做「列引用定点替换」。**
+
+**做法（订正后）**：
 
 ```
-编译期：  sum(fct_retail_sale.net_amount)
-      →   sum({{MASK:fct_retail_sale.net_amount}})
+库里存的 selectSql（原值，不变）：   select sum(fct_retail_sale.net_amount) as value, … from …
+指标声明的 mask：                   { column: "fct_retail_sale.net_amount", kind: "round", step: 1000, grantedBy: "data:precise" }
 
-运行期（authorize）： 有 grantedBy → sum(fct_retail_sale.net_amount)
-                      无 grantedBy → sum(round(fct_retail_sale.net_amount, -1000))
+运行期 authorize()：
+  有 grantedBy → 原样
+  无 grantedBy → selectSql.replace(/\b<转义后的 column>\b/g, maskedExpr(column))
+               → select sum(round(fct_retail_sale.net_amount, -1000)) as value, … from …
 ```
+
+**为什么定点替换天然满足「掩码先于聚合」**：替换的是**列引用本身**，而列引用在表达式里
+必然位于聚合函数**内部**（`sum(<列>)`）⇒ 展开后就是 `sum(round(<列>, -n))`。**顺序不可能写错**，
+因为根本不存在「先聚合再掩码」的表达形式。
+
+⚠️ **必须用词边界**（`\b` + 转义 `column` 里的 `\.`）：`cost` 不能命中 `cost_money`、`total_cost`。
+`_` 是词字符 ⇒ `\bcost\b` 不会命中 `cost_money`（正是想要的）。
 
 **为什么这么做**（三个理由，都是硬的）：
 
-1. **天然满足不变量 2**：占位符在**聚合函数内部**，展开即下推，不可能写错顺序。
-2. **运行期零 SQL 解析**：只做字符串替换，不引 SQL parser、不吃运行期 CPU。
-3. **编译期可机械校验**：`mask.column` 必须**逐字出现在** `expression` 里，否则编译期报错——
+1. **天然满足不变量 2**：替换的是列引用，展开后必然在聚合函数**内部** ⇒ 顺序不可能写错。
+2. **零侵入**：`selectSql` 保持原值 ⇒ `parseL1Select` / L2 编译 / `authz` 拼接**全部不受影响**；
+   也不需要为「骨架」多加一列。
+3. **编译期可机械校验**：`mask.column` 必须**逐字出现在**该指标的 `selectSql` 里，否则编译期报错——
    拼错列名不会变成静默失效。
 
-⚠️ **未验**：占位符与 `{{ }}` 语法是否与既有 SQL/模板层冲突（`${ENV:…}` / `${datetime}` 已占用 `${}` 形态）
-——**实施期第一件事就是实测**，冲突则换分隔符（`§MASK:…§` 之类）。
+#### 5.3.1 已知边界：**P2 v1 只覆盖 L1**
+
+L2 指标由 `compileL2` 从 L1 编译而来（`semantic-compiler.ts:641`）。若一个 L2 基于一个被掩码的 L1，
+它的表达式里已经**没有**那个列引用了（编译期已展开成 `sum/base`）⇒ **定点替换命中不了它**。
+
+⇒ **P2 v1 明确只覆盖 L1**；L2 的掩码传播**不在射程**，写进计划与 issue 的「非目标」。
+⚠️ 这不是可以含糊的事：**L2 可能成为一个绕过口**——所以 P2 落地时必须确认**当前有没有 L2 指标**，
+若有且基于敏感 L1，**要么一并处理，要么在 L2 上直接拒绝 `mask`**（fail-closed，别静默放行）。
 
 ### 5.4 回包与指令面（**不做这条 = 另一种泄漏**）
 
