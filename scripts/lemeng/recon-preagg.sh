@@ -15,8 +15,12 @@
 #     赠品判定：order_detail_std_price>0 AND sale_money>0 AND quantity>0
 #               AND abs(discount_money − order_detail_std_price×quantity) ≤ 0.02
 #
-#   ⚠️ **不扣退货单**：`order_transaction_type <> 'SALE_ORDER'` 的单**本来就不进 gross**，
+#   ⚠️ **销售侧不扣退货单**：`order_transaction_type <> 'SALE_ORDER'` 的单**本来就不进销售侧**，
 #      平台的 sale_money 也**不冲减**它（2026-09-30 的 spec 把这条理解反了 —— 那版规则已撤）。
+#   ⚠️ 2026-10-17（issue #813）起**另比一条净额侧判据**：净额 = 销售侧 − 退货侧，
+#      退货侧 = Σ(sale_money + order_detail_share_discount)，条件
+#      `order_transaction_type like '%RETURN%' AND state='FINISHED'`（**REPAID_RETURN 不计**），
+#      按**退货单自身 bizday** 归属。源侧对应端点字段 `return_money`。
 #   ⚠️ **同一张 SALE_ORDER 里可能装着换货的退回行**（礼盒↔散货）：平台只算「送出半边」，
 #      等价换货（总额 0）⇒ Σ/2；差价换货（总额=净补差）⇒ (Σ+总额)/2。**这就是 order_total_money 的用途**
 #      （2026-10-05 起湖里已有这一列，故本脚本能**完全自算**、不必回网关取总额）。
@@ -30,16 +34,17 @@
 # 过线后仍不平 ⇒ 真缺口 ⇒ 交既有闭环 `recon-day-heal.sh`（不平⇒回填⇒复验）。
 #
 # ── 退出码契约（判红靠它；「打印 FAIL 但仍 exit 0」= 假绿）──────────────────────
-#   0 = 通过（未过定稿线的也算通过）    1 = 判据破（branch_missing / threshold）
+#   0 = 通过（未过定稿线的也算通过）    1 = 判据破（branch_missing / threshold / net_threshold）
 #   2 = 用法错                          3 = 依赖不可用
-#   可 grep 字面量：
+#   可 grep 字面量（**两条判据各打一组**，销售侧 `PREAGG*`、净额侧 `PREAGG_NET*`）：
 #     通过：`PREAGG_OK book=<B> bizday=<D> branches=<N> total_lake=… total_pre=… diff=… pct=…`
 #     未定稿：`PREAGG_UNSETTLED`（同上字段）   有极小差：`PREAGG_DRIFT`（同上字段）
-#     失败：`PREAGG_FAILED:<reason>`（usage | token | lake_unavailable | pre_call | branch_missing | threshold）
+#     失败：`PREAGG_FAILED:<reason>`（usage | token | lake_unavailable | pre_call | branch_missing | threshold | net_threshold）
 #
 # 依赖 env：LEMENG_TOKEN_<账套>（本脚本按账套取；缺失时从 console 容器 env **运行时**现取，不落盘）
 # 可选 env：BOOK（默认 64188）/ SETTLE_DAYS（默认 3）/ PGDUCK_CONTAINER / PGDUCK_USER / PGDUCK_DB
 #           PREAGG_ABILITY / PREAGG_URL_BASE / PREAGG_ABS_TOL（默认 1.00）/ PREAGG_MAX_PCT（默认 0.01）
+#           NET_ABS_TOL（默认 200.00 = 净额侧**过渡**容差，带到期条件，见上）
 #           PREAGG_MAX_BRANCHES（默认 100 = **批大小**，即端点单次上限，别改大）/ LAKE_PREFIX / CONSOLE_CT
 #
 # ── 分批（2026-10-10，#525 前车）──────────────────────────────────────────────
@@ -57,6 +62,9 @@ PGDUCK_DB=${PGDUCK_DB:-warehouse}
 PREAGG_ABILITY=${PREAGG_ABILITY:-nhsoft.report.ai.itemsales.find}
 PREAGG_URL_BASE=${PREAGG_URL_BASE:-https://cloud.nhsoft.cn/agi/api}
 PREAGG_ABS_TOL=${PREAGG_ABS_TOL:-1.00}
+# 净额侧过渡容差（**总量**，元/账套/日）。200.00 ≈ 实测最大退货缺口 123.06（64188/10-14）的 1.6 倍。
+# ⚠️ **过渡值，带到期条件**：issue #814（退货侧缺口治本）修完 ⇒ 本值归 0，与销售侧同款逐分。
+NET_ABS_TOL=${NET_ABS_TOL:-200.00}
 PREAGG_MAX_PCT=${PREAGG_MAX_PCT:-0.01}
 PREAGG_MAX_BRANCHES=${PREAGG_MAX_BRANCHES:-100}
 LAKE_PREFIX=${LAKE_PREFIX:-lemeng/retail_order_line}
@@ -116,7 +124,8 @@ _lake_q() {
 GIFT="r['state']='FINISHED' AND r['order_detail_std_price']>0 AND r['sale_money']>0 AND r['quantity']>0 AND abs(r['discount_money']-r['order_detail_std_price']*r['quantity'])<=0.02"
 
 # 湖侧净额：**先逐订单归并**（不能按行算——那会把「总额 × 行数」加进去），再 (Σ非赠品 + 总额)/2 − 分摊折扣。
-SQL_LAKE="WITH per_order AS (SELECT r['branch_num']::int AS b, r['order_no'] AS o, sum(CASE WHEN ${GIFT} THEN 0 ELSE r['sale_money'] END) AS ng, max(r['order_total_money']) AS tot, sum(r['order_detail_share_discount']) AS sd FROM read_parquet('${LAKE_ROOT}/system_book=${BOOK}/bizday=${BIZDAY}/**/*.parquet') r WHERE r['state']='FINISHED' AND r['order_transaction_type']='SALE_ORDER' GROUP BY 1, 2) SELECT b, round(sum((ng + tot) / 2 - sd), 2) AS net FROM per_order GROUP BY b ORDER BY b"
+# 湖侧两列：销售侧净额 + 退货侧金额（同一 query，避免第二个 python 块 —— 测试只抽一个块）。
+SQL_LAKE="WITH per_order AS (SELECT r['branch_num']::int AS b, r['order_no'] AS o, sum(CASE WHEN ${GIFT} THEN 0 ELSE r['sale_money'] END) AS ng, max(r['order_total_money']) AS tot, sum(r['order_detail_share_discount']) AS sd FROM read_parquet('${LAKE_ROOT}/system_book=${BOOK}/bizday=${BIZDAY}/**/*.parquet') r WHERE r['state']='FINISHED' AND r['order_transaction_type']='SALE_ORDER' GROUP BY 1, 2), sale_side AS (SELECT b, round(sum((ng + tot) / 2 - sd), 2) AS sale_net FROM per_order GROUP BY b), ret_side AS (SELECT r['branch_num']::int AS b, round(sum(r['sale_money'] + r['order_detail_share_discount']), 2) AS ret FROM read_parquet('${LAKE_ROOT}/system_book=${BOOK}/bizday=${BIZDAY}/**/*.parquet') r WHERE r['order_transaction_type'] like '%RETURN%' AND r['state']='FINISHED' GROUP BY 1) SELECT coalesce(s.b, t.b), coalesce(s.sale_net, 0), coalesce(t.ret, 0) FROM sale_side s FULL JOIN ret_side t ON s.b = t.b ORDER BY 1"
 LAKE_ROWS=$(_lake_q "${SQL_LAKE}")
 [ -n "${LAKE_ROWS}" ] || { echo "PREAGG_FAILED:lake_unavailable 湖侧取数为空（该账套该营业日没有分区？）" >&2; exit 3; }
 
@@ -148,7 +157,7 @@ done
 
 printf '%s\n' "${LAKE_ROWS}" > /tmp/_preagg_lake.csv
 printf '%s' "${PRE_JSON}" > /tmp/_preagg_resp.json
-python3 - "${BOOK}" "${BIZDAY}" "${PREAGG_ABS_TOL}" "${PREAGG_MAX_PCT}" "${SETTLED}" <<'PY'
+python3 - "${BOOK}" "${BIZDAY}" "${PREAGG_ABS_TOL}" "${PREAGG_MAX_PCT}" "${SETTLED}" "${NET_ABS_TOL}" <<'PY'
 import glob
 import json
 import sys
@@ -156,8 +165,11 @@ import sys
 book, day = sys.argv[1], sys.argv[2]
 abs_tol, max_pct = float(sys.argv[3]), float(sys.argv[4])
 settled = sys.argv[5] == '1'
+net_abs_tol = float(sys.argv[6])
+
 
 def rd(path):
+    """湖侧 CSV：branch,sale_net,return_amount"""
     d = {}
     try:
         f = open(path)
@@ -165,12 +177,13 @@ def rd(path):
         return d
     for ln in f:
         ps = ln.strip().split(',')
-        if len(ps) != 2 or not ps[0].lstrip('-').isdigit():
+        if len(ps) != 3 or not ps[0].lstrip('-').isdigit():
             continue
-        d[int(ps[0])] = float(ps[1])
+        d[int(ps[0])] = (float(ps[1]), float(ps[2]))
     return d
 
-net = rd('/tmp/_preagg_lake.csv')
+
+lake = rd('/tmp/_preagg_lake.csv')
 # 分批响应合并（#525：报表端点单次 ≤100 家门店；各批响应文件按批号合并 rows）
 chunks = sorted(glob.glob('/tmp/_preagg_resp_*.json'))
 rows = []
@@ -180,36 +193,53 @@ for path in chunks:
         print('PREAGG_FAILED:pre_call 预聚合端点返回 code=%s msg=%s' % (resp.get('code'), str(resp.get('msg'))[:80]))
         sys.exit(3)
     rows += (resp.get('result') or {}).get('rows') or []
-pre = {int(x['branch_num']): float(x.get('sale_money') or 0) for x in rows}
 
-miss = [b for b in net if b not in pre]
-extra = [b for b in pre if b not in net]
-lt = round(sum(net.values()), 2)
-pt = round(sum(pre.values()), 2)
-diff = round(pt - lt, 2)
-pct = (diff / pt * 100.0) if pt else 0.0
-sign = '+' if diff >= 0 else ''
-tol = max(abs_tol, abs(pt) * max_pct / 100.0)
+lake_sale = {b: v[0] for b, v in lake.items()}
+lake_ret = {b: v[1] for b, v in lake.items()}
+pre_sale = {int(x['branch_num']): float(x.get('sale_money') or 0) for x in rows}
+pre_ret = {int(x['branch_num']): float(x.get('return_money') or 0) for x in rows}
 
-print('PREAGG book=%s bizday=%s branches=%d total_lake=%.2f total_pre=%.2f diff=%s%.2f pct=%s%.2f%% tol=%.2f'
-      % (book, day, len(net), lt, pt, sign, diff, sign, pct, tol))
 
-if not settled:
-    print('PREAGG_UNSETTLED book=%s bizday=%s（未过定稿线：源还在变，只报数不判红）' % (book, day))
-    sys.exit(0)
+def compare(tag, fail_tag, lake_map, pre_map, tol_abs, tol_pct):
+    """一条判据：打印 verdict 行，返回 0=通过 / 1=判红。"""
+    miss = [b for b in lake_map if b not in pre_map]
+    extra = [b for b in pre_map if b not in lake_map]
+    lt = round(sum(lake_map.values()), 2)
+    pt = round(sum(pre_map.values()), 2)
+    diff = round(pt - lt, 2)
+    pct = (diff / pt * 100.0) if pt else 0.0
+    sign = '+' if diff >= 0 else ''
+    tol = max(tol_abs, abs(pt) * tol_pct / 100.0)
 
-if miss:
-    print('PREAGG_FAILED:branch_missing 湖有而源无的门店 %d 家：%s' % (len(miss), sorted(miss)[:20]))
-    sys.exit(1)
-if extra:
-    print('  注：源有而湖无的门店 %d 家（当日无销售）：%s' % (len(extra), sorted(extra)[:20]))
-if abs(diff) > tol:
-    print('PREAGG_FAILED:threshold 差 %s%.2f 超容差 %.2f（total_pre=%.2f，%s%.4f%%）'
-          % (sign, diff, tol, pt, sign, pct))
-    sys.exit(1)
-if abs(diff) >= 0.005:
-    print('PREAGG_DRIFT book=%s bizday=%s diff=%s%.2f（在容差内）' % (book, day, sign, diff))
-print('PREAGG_OK book=%s bizday=%s branches=%d' % (book, day, len(net)))
+    print('%s book=%s bizday=%s branches=%d total_lake=%.2f total_pre=%.2f diff=%s%.2f pct=%s%.2f%% tol=%.2f'
+          % (tag, book, day, len(lake_map), lt, pt, sign, diff, sign, pct, tol))
+
+    if not settled:
+        print('%s_UNSETTLED book=%s bizday=%s（未过定稿线：源还在变，只报数不判红）' % (tag, book, day))
+        return 0
+    if miss:
+        print('PREAGG_FAILED:branch_missing 湖有而源无的门店 %d 家：%s' % (len(miss), sorted(miss)[:20]))
+        return 1
+    if extra:
+        print('  注：源有而湖无的门店 %d 家（当日无销售）：%s' % (len(extra), sorted(extra)[:20]))
+    if abs(diff) > tol:
+        print('PREAGG_FAILED:%s 差 %s%.2f 超容差 %.2f（total_pre=%.2f，%s%.4f%%）'
+              % (fail_tag, sign, diff, tol, pt, sign, pct))
+        return 1
+    if abs(diff) >= 0.005:
+        print('%s_DRIFT book=%s bizday=%s diff=%s%.2f（在容差内）' % (tag, book, day, sign, diff))
+    print('%s_OK book=%s bizday=%s branches=%d' % (tag, book, day, len(lake_map)))
+    return 0
+
+
+# 销售侧：口径未变，容差沿用 PREAGG_ABS_TOL / PREAGG_MAX_PCT（恒逐分）。
+rc_sale = compare('PREAGG', 'threshold', lake_sale, pre_sale, abs_tol, max_pct)
+# 净额侧：新增，过渡容差 NET_ABS_TOL（**带到期条件**，见头注 / issue #814）。
+rc_net = compare('PREAGG_NET', 'net_threshold',
+                 {b: lake_sale[b] - lake_ret[b] for b in lake_sale},
+                 {b: pre_sale[b] - pre_ret.get(b, 0.0) for b in pre_sale},
+                 net_abs_tol, max_pct)
+sys.exit(1 if (rc_sale or rc_net) else 0)
 PY
 _rc=$?
 rm -f /tmp/_preagg_lake.csv /tmp/_preagg_resp.json

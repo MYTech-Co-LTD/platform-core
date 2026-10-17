@@ -19,58 +19,68 @@ awk '/^python3 - /{f=1;next} /^PY$/{f=0} f' "$SRC" > /tmp/_rp_blk.py
 
 # —— 夹具：湖侧 CSV（b,net）+ 端点响应 JSON（分批响应文件，比较块按 glob 合并）——
 _w() { printf '%s' "$1" > "$2"; }
-run() { # $1=湖CSV $2=响应JSON $3=是否定稿(1/0) -> 打印"输出|rc"
+run() { # $1=湖CSV $2=响应JSON $3=是否定稿(1/0) -> 打印"全部输出|rc"
   rm -f /tmp/_preagg_resp_*.json
   _w "$1" /tmp/_preagg_lake.csv; _w "$2" /tmp/_preagg_resp_1.json
-  out=$(python3 /tmp/_rp_blk.py t 2026-10-02 1.00 0.01 "$3" 2>&1); rc=$?
-  printf '%s|%s' "$(printf '%s' "$out" | tail -1)" "$rc"
+  out=$(python3 /tmp/_rp_blk.py t 2026-10-02 1.00 0.01 "$3" 200.00 2>&1); rc=$?
+  printf '%s|%s' "$(printf '%s' "$out" | tr '\n' ' ')" "$rc"
 }
-run2() { # 分批形态：$1=湖CSV $2=批1响应 $3=批2响应 $4=定稿 -> 打印"输出|rc"
+run2() { # 分批形态：$1=湖CSV $2=批1响应 $3=批2响应 $4=定稿 -> 打印"全部输出|rc"
   rm -f /tmp/_preagg_resp_*.json
   _w "$1" /tmp/_preagg_lake.csv; _w "$2" /tmp/_preagg_resp_1.json; _w "$3" /tmp/_preagg_resp_2.json
-  out=$(python3 /tmp/_rp_blk.py t 2026-10-02 1.00 0.01 "$4" 2>&1); rc=$?
-  printf '%s|%s' "$(printf '%s' "$out" | tail -1)" "$rc"
+  out=$(python3 /tmp/_rp_blk.py t 2026-10-02 1.00 0.01 "$4" 200.00 2>&1); rc=$?
+  printf '%s|%s' "$(printf '%s' "$out" | tr '\n' ' ')" "$rc"
 }
 _resp() { printf '{"code":0,"result":{"rows":[%s]}}' "$1"; }
 
-# 1) 平 ⇒ PREAGG_OK / rc 0
-r=$(run '12,100.00
-21,50.00
-' "$(_resp '{"branch_num":12,"sale_money":100.00},{"branch_num":21,"sale_money":50.00}')" 1)
-ok "$r" "PREAGG_OK book=t bizday=2026-10-02 branches=2|0"
+# 1) 两侧都平 ⇒ PREAGG_OK + PREAGG_NET_OK / rc 0
+r=$(run '12,100.00,20.00
+21,50.00,0.00
+' "$(_resp '{"branch_num":12,"sale_money":100.00,"return_money":20.00},{"branch_num":21,"sale_money":50.00,"return_money":0.00}')" 1)
+case "$r" in *"PREAGG_OK book=t bizday=2026-10-02 branches=2"*"PREAGG_NET_OK book=t bizday=2026-10-02 branches=2"*"|0") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 两侧应平：$r";; esac
 
 # 2) 湖有源无 ⇒ branch_missing / rc 1
-r=$(run '12,100.00
-21,50.00
-' "$(_resp '{"branch_num":12,"sale_money":100.00}')" 1)
-case "$r" in PREAGG_FAILED:branch_missing*"|1") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 漏店未按 branch_missing 判：$r";; esac
+r=$(run '12,100.00,20.00
+21,50.00,0.00
+' "$(_resp '{"branch_num":12,"sale_money":100.00,"return_money":20.00}')" 1)
+case "$r" in *PREAGG_FAILED:branch_missing*"|1") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 漏店未按 branch_missing 判：$r";; esac
 
-# 3) 超阈值 ⇒ threshold / rc 1
-r=$(run '12,100.00
-' "$(_resp '{"branch_num":12,"sale_money":1.00}')" 1)
-case "$r" in PREAGG_FAILED:threshold*"|1") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 超阈值未判：$r";; esac
+# 3) 销售侧超阈值 ⇒ threshold / rc 1
+r=$(run '12,100.00,20.00
+' "$(_resp '{"branch_num":12,"sale_money":1.00,"return_money":20.00}')" 1)
+case "$r" in *PREAGG_FAILED:threshold*"|1") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 超阈值未判：$r";; esac
 
-# 4) 未定稿（第 5 参=0）⇒ PREAGG_UNSETTLED / rc 0（**即便差得很离谱也不判红**）
-r=$(run '12,100.00
-' "$(_resp '{"branch_num":12,"sale_money":1.00}')" 0)
-case "$r" in PREAGG_UNSETTLED*"|0") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 未定稿应只报数：$r";; esac
+# 3b) 销售侧平、净额侧差 50（< NET_ABS_TOL 200）⇒ 销售侧 OK + 净额侧 DRIFT / rc 0
+r=$(run '12,100.00,20.00
+' "$(_resp '{"branch_num":12,"sale_money":100.00,"return_money":70.00}')" 1)
+case "$r" in *"PREAGG_OK book=t"*"PREAGG_NET_DRIFT"*"|0") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 净额侧过渡容差内应 DRIFT 不判红：$r";; esac
+
+# 3c) 净额侧超过渡容差 ⇒ net_threshold / rc 1
+r=$(run '12,100.00,20.00
+' "$(_resp '{"branch_num":12,"sale_money":100.00,"return_money":500.00}')" 1)
+case "$r" in *PREAGG_FAILED:net_threshold*"|1") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 净额侧超容差未判：$r";; esac
+
+# 4) 未定稿（第 5 参=0）⇒ 两侧都 UNSETTLED / rc 0（**即便差得很离谱也不判红**）
+r=$(run '12,100.00,20.00
+' "$(_resp '{"branch_num":12,"sale_money":1.00,"return_money":0.00}')" 0)
+case "$r" in *"PREAGG_UNSETTLED"*"PREAGG_NET_UNSETTLED"*"|0") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 未定稿应只报数：$r";; esac
 
 # 5) 端点坏（code!=0）⇒ PREAGG_FAILED:pre_call / rc 3
-r=$(run '12,100.00
+r=$(run '12,100.00,20.00
 ' '{"code":10006,"msg":"用户上下文或权限读取失败"}' 1)
-case "$r" in PREAGG_FAILED:pre_call*"|3") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 端点失败未按依赖处理：$r";; esac
+case "$r" in *PREAGG_FAILED:pre_call*"|3") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 端点失败未按依赖处理：$r";; esac
 
 # 6) 分批合并（#525：3120 147 家 > 端点单次 100 上限）：两批 rows 合并后逐分平 ⇒ OK / rc 0
-r=$(run2 '12,100.00
-21,50.00
-' "$(_resp '{"branch_num":12,"sale_money":100.00}')" "$(_resp '{"branch_num":21,"sale_money":50.00}')" 1)
-ok "$r" "PREAGG_OK book=t bizday=2026-10-02 branches=2|0"
+r=$(run2 '12,100.00,20.00
+21,50.00,0.00
+' "$(_resp '{"branch_num":12,"sale_money":100.00,"return_money":20.00}')" "$(_resp '{"branch_num":21,"sale_money":50.00,"return_money":0.00}')" 1)
+case "$r" in *"PREAGG_OK book=t bizday=2026-10-02 branches=2"*"PREAGG_NET_OK"*"|0") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 分批合并应平：$r";; esac
 
 # 7) 分批且其中一批端点坏 ⇒ pre_call / rc 3（批级失败不能被合并吞掉）
-r=$(run2 '12,100.00
-21,50.00
-' "$(_resp '{"branch_num":12,"sale_money":100.00}')" '{"code":10001,"msg":"branch_nums 最多支持 100 家门店"}' 1)
-case "$r" in PREAGG_FAILED:pre_call*"|3") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 批级端点失败未判：$r";; esac
+r=$(run2 '12,100.00,20.00
+21,50.00,0.00
+' "$(_resp '{"branch_num":12,"sale_money":100.00,"return_money":20.00}')" '{"code":10001,"msg":"branch_nums 最多支持 100 家门店"}' 1)
+case "$r" in *PREAGG_FAILED:pre_call*"|3") pass=$((pass+1));; *) fail=$((fail+1)); echo "  FAIL: 批级端点失败未判：$r";; esac
 
 rm -f /tmp/_rp_blk.py /tmp/_preagg_lake.csv /tmp/_preagg_resp_*.json
 echo "recon-preagg: pass=$pass fail=$fail"
