@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.142.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.141.0...v0.142.0) - 2026-10-17
+- 【新增】data: 库存覆盖天数（月日均）+ 净销量扩到商品粒度 ([#776](https://github.com/MYTech-Co-LTD/platform-core/pull/776), [a816a81](https://github.com/MYTech-Co-LTD/platform-core/commit/a816a8169b3e440442c8f012e9efee34c673de29))
+
+
 ## [0.141.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.140.1...v0.141.0) - 2026-10-17
 - 【新增】data: 契约列加 sensitivity 标记与闭集门禁 ([#777](https://github.com/MYTech-Co-LTD/platform-core/pull/777), [f51aa83](https://github.com/MYTech-Co-LTD/platform-core/commit/f51aa83a8c0440cba83c890eb94c49571467008f))
 - 【新增】data: 报表 requiredScope 改为从面板派生，冲突时拒绝发布 ([#774](https://github.com/MYTech-Co-LTD/platform-core/pull/774), [5bcfcc5](https://github.com/MYTech-Co-LTD/platform-core/commit/5bcfcc52dbfed19630e450148a666f777e4df97a))
