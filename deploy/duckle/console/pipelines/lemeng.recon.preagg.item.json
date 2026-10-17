@@ -8,7 +8,10 @@
     "【口径唯一事实源】scripts/lemeng/recon-preagg.sh 头注：",
     "  net(店) = Σ_订单[(Σ非赠品行额 + order_total_money)/2] − Σ分摊折扣，只收 FINISHED + SALE_ORDER；",
     "  赠品判别式 = std_price>0 AND sale_money>0 AND qty>0 AND |折扣 − 标价×数量| ≤ 0.02；",
-    "  逐订单归并**不能省**（按行算会把「总额×行数」加进去）；不扣退货单。本文件 lagg 逐字对应该公式。",
+    "  逐订单归并**不能省**（按行算会把「总额×行数」加进去）；销售侧不扣退货单。",
+    "  ⚠️ 2026-10-17（issue #813）：本管线比的是**净额** = 销售侧 − 退货侧。退货侧 = Σ(sale_money + order_detail_share_discount)，",
+    "     条件 order_transaction_type like '%RETURN%' AND state='FINISHED'（REPAID_RETURN 不计）。源侧对应 return_money。",
+    "  源侧缺值按 0（pnormal 两侧 COALESCE(...,0)），与脚本 `or 0` 同源 —— 否则 NULL 传播会让 vbranch/gbranch 误报「湖有而源无」。",
     "",
     "【gate ↔ 脚本退出码映射】（判红靠它，与 alerts.json 的 failure/recovery 规则接同一张网）",
     "  lguard / gcode  = 脚本 exit 3（依赖不可用）——湖分区空 / 预聚合端点 code≠0",
@@ -20,7 +23,12 @@
     "  「全部门店缺失」（假红，且诊断错方向）。rawResponseDestination 落原始报文，",
     "  envelope 从字节里抠 code——「对源的疑问从字节答，不靠争」（src.rest 该字段的文档语义）。",
     "",
-    "【容差】tol = max(1.00, |源合计|×0.01%)（脚本 PREAGG_ABS_TOL / PREAGG_MAX_PCT 同款）。",
+    "【容差】tol = max(200.00, |源合计|×0.01%)（脚本 NET_ABS_TOL / PREAGG_MAX_PCT 同款；地板 200.00 与脚本 NET_ABS_TOL 同源）。",
+    "  ⚠️ 2026-10-17（issue #813）切锚后地板由销售侧的 1.00 改为 200.00：本管线比的是净额 = sale_money − return_money，",
+    "  200.00 是**退货侧缺口（issue #814 未治本）的过渡带**；pct 项两边完全相同，只差地板 —— 不改就是同一份数据",
+    "  「脚本判 PREAGG_NET_DRIFT(rc 0)、管线判 gthresh 死(exit 1)」，排班面天天假红。",
+    "  来路：200.00 ≈ 实测最大退货缺口 123.06（64188/10-14）的 1.6 倍。**过渡值，带到期条件**：",
+    "  issue #814（退货侧缺口治本）修完 ⇒ 本值归 0，与销售侧同款逐分。",
     "【两档】settled 由父管线按 T-3 定线传入；violation SQL 恒带 settled=1 条件 ⇒ 未定稿日",
     "  两闸恒静默、report 照写 = 「只报数不判红」（脚本 PREAGG_UNSETTLED 同义）。",
     "【产物】/workspace/reports/recon-preagg/recon-<book>-<bizday>.csv（逐店明细，单对象覆盖=幂等）；",
@@ -82,7 +90,7 @@
         "componentId": "code.sql",
         "properties": {
           "rawSql": true,
-          "sql": "WITH per_order AS (\n  SELECT CAST(branch_num AS INTEGER) AS b,\n         CAST(order_no AS VARCHAR) AS o,\n         sum(CASE WHEN CAST(order_detail_std_price AS DOUBLE) > 0\n                    AND CAST(sale_money AS DOUBLE) > 0\n                    AND CAST(quantity AS DOUBLE) > 0\n                    AND abs(CAST(discount_money AS DOUBLE)\n                            - CAST(order_detail_std_price AS DOUBLE) * CAST(quantity AS DOUBLE)) <= 0.02\n                  THEN 0 ELSE CAST(sale_money AS DOUBLE) END) AS ng,\n         max(CAST(order_total_money AS DOUBLE)) AS tot,\n         sum(CAST(order_detail_share_discount AS DOUBLE)) AS sd\n  FROM \"lguard\"\n  WHERE CAST(state AS VARCHAR) = 'FINISHED'\n    AND CAST(order_transaction_type AS VARCHAR) = 'SALE_ORDER'\n  GROUP BY 1, 2)\nSELECT b AS branch_num,\n       round(sum((ng + tot) / 2 - sd), 2) AS net,\n       'lake' AS side\nFROM per_order GROUP BY b ORDER BY b"
+          "sql": "WITH per_order AS (\n  SELECT CAST(branch_num AS INTEGER) AS b,\n         CAST(order_no AS VARCHAR) AS o,\n         sum(CASE WHEN CAST(order_detail_std_price AS DOUBLE) > 0\n                    AND CAST(sale_money AS DOUBLE) > 0\n                    AND CAST(quantity AS DOUBLE) > 0\n                    AND abs(CAST(discount_money AS DOUBLE)\n                            - CAST(order_detail_std_price AS DOUBLE) * CAST(quantity AS DOUBLE)) <= 0.02\n                  THEN 0 ELSE CAST(sale_money AS DOUBLE) END) AS ng,\n         max(CAST(order_total_money AS DOUBLE)) AS tot,\n         sum(CAST(order_detail_share_discount AS DOUBLE)) AS sd\n  FROM \"lguard\"\n  WHERE CAST(state AS VARCHAR) = 'FINISHED'\n    AND CAST(order_transaction_type AS VARCHAR) = 'SALE_ORDER'\n  GROUP BY 1, 2),\nsale_side AS (\n  SELECT b, round(sum((ng + tot) / 2 - sd), 2) AS sale_net FROM per_order GROUP BY b),\nret_side AS (\n  SELECT CAST(branch_num AS INTEGER) AS b,\n         round(sum(CAST(sale_money AS DOUBLE) + CAST(order_detail_share_discount AS DOUBLE)), 2) AS ret\n  FROM \"lguard\"\n  WHERE CAST(order_transaction_type AS VARCHAR) like '%RETURN%'\n    AND CAST(state AS VARCHAR) = 'FINISHED'\n  GROUP BY 1)\nSELECT coalesce(s.b, t.b) AS branch_num,\n       coalesce(s.sale_net, 0) - coalesce(t.ret, 0) AS net,\n       'lake' AS side\nFROM sale_side s FULL JOIN ret_side t ON s.b = t.b ORDER BY 1"
         }
       }
     },
@@ -115,7 +123,7 @@
         "label": "pnormal 源侧行定型（对齐湖侧形状）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(sale_money AS DOUBLE) AS net,\n       'pre' AS side\nFROM input"
+          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(COALESCE(sale_money, 0) AS DOUBLE) - CAST(COALESCE(return_money, 0) AS DOUBLE) AS net,\n       'pre' AS side\nFROM input"
         }
       }
     },
@@ -201,7 +209,7 @@
         "componentId": "code.sql",
         "properties": {
           "rawSql": true,
-          "sql": "WITH t AS (SELECT round(sum(net_lake), 2) AS lt, round(sum(net_pre), 2) AS pt FROM \"diff\"),\nv AS (SELECT lt, pt, round(pt - lt, 2) AS diff,\n      CASE WHEN pt > 0 THEN round((pt - lt) / pt * 100, 4) ELSE 0.0 END AS pct,\n      round(greatest(1.00, abs(COALESCE(pt, 0)) * 0.0001), 2) AS tol\n      FROM t)\nSELECT lt, pt, diff, pct, tol FROM v\nWHERE ${ITER_ITEM_SETTLED} = 1 AND abs(COALESCE(diff, 0)) > tol"
+          "sql": "WITH t AS (SELECT round(sum(net_lake), 2) AS lt, round(sum(net_pre), 2) AS pt FROM \"diff\"),\nv AS (SELECT lt, pt, round(pt - lt, 2) AS diff,\n      CASE WHEN pt > 0 THEN round((pt - lt) / pt * 100, 4) ELSE 0.0 END AS pct,\n      round(greatest(200.00, abs(COALESCE(pt, 0)) * 0.0001), 2) AS tol\n      FROM t)\nSELECT lt, pt, diff, pct, tol FROM v\nWHERE ${ITER_ITEM_SETTLED} = 1 AND abs(COALESCE(diff, 0)) > tol"
         }
       }
     },

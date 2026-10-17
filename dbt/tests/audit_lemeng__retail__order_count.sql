@@ -58,10 +58,13 @@ select
     coalesce(a.branch_num, b.branch_num)   as branch_num,
     a.order_count                          as recheck_value,
     b.order_count                          as materialized_value,
-    '复算与物化结果不一致（有效订单数，#430 同基面）' as note
+    '复算与物化结果不一致（有效订单数，基面=销售单，#430/#813）' as note
 from recheck a
 full join materialized b using (system_book, bizday, branch_num)
-where a.order_count is distinct from b.order_count
+-- ⚠️ 2026-10-17（issue #813）：物化侧自 T1 起含「只有退货、没有销售」的店日（order_count=0），
+--    而本复算侧只有销售基面 ⇒ 那些行 a.order_count 为 NULL。coalesce 到 0 再比，
+--    既放过这些**结构上正确**的空缺，又不放松销售店日的逐分判据。
+where coalesce(a.order_count, 0) is distinct from coalesce(b.order_count, 0)
 
 union all
 

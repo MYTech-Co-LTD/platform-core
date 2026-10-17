@@ -140,7 +140,7 @@ metricToAuditFileName(metricName: string): string   // 例：'lemeng:retail:net_
 
 | 域 | fct 模型（W 后缀 = 落地波） | 构件列 |
 |---|---|---|
-| retail | `fct_retail_sale`（**W0 ✓**） | `net_amount`(L 净额)、`order_count` |
+| retail | `fct_retail_sale`（**W0 ✓**；2026-10-17 #813 拆三列） | `sale_amount`(销售侧，不冲退货)、`return_amount`(退货侧)、`net_amount`(L 净额 = 销售侧 − 退货侧)、`order_count` |
 | transfer | `fct_transfer_out`（W1） | `r_net`(R 出库净额)、`c_cost`(C 成本)、`g_gross`(G=R−C) |
 | wholesale | fct_wholesale（W1，随历史回填） | `r_net`、`c_cost`、`g_gross` |
 | expense | fct_expense（W2） | `ep_payable`(EP 门店/客户应付)、`er_receivable`(ER 应收)、`e_net`(E=应付−应收)、`q_compensation`(Q 补损净额) |
