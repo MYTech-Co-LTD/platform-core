@@ -2,7 +2,8 @@
 --
 -- ★ 承 #444：#398 那条「退货归属完备性」的基准已随 2026-10-05 口径订正**撤下**——
 --   平台的 sale_money **不冲退货单**（`order_transaction_type <> 'SALE_ORDER'` 的单本来就不进 gross），
---   要扣的是**换货单的「送出半边」**：net(店,日) = Σ_订单[(Σ非赠品行额 + order_total_money)/2] − Σ分摊折扣。
+--   要扣的是**换货单的「送出半边」**：sale_amount(店,日) = Σ_订单[(Σ非赠品行额 + order_total_money)/2] − Σ分摊折扣。
+--   ⚠️ 2026-10-17（issue #813）起**净销售额 = 销售侧 − 退货侧**，退货侧另有形状前提（part1b）。
 --   断言对象因此从「退货归属」改成公式的两个输入前提（本文件），判别式本身（赠品侧）在
 --   `audit_lemeng__retail__recon_gift_hit.sql`。
 --
@@ -96,6 +97,37 @@ select
     bad_rows, total_null, pay_null, total_neg, pay_neg,
     '换货半边公式的输入形状违规（staging 投影后仍空/负）——湖有而投丢 = 投影/cast 漂了' as note
 from bad_stg
+
+union all
+
+-- part1b（退货行形状，2026-10-17 issue #813）：退货侧的加数是 `sale_money + order_detail_share_discount`，
+-- 任一为 NULL ⇒ 整行被 sum **静默丢掉**（退货额虚低 ⇒ 净销售额虚高）。
+-- ⚠️ **不判符号**：退货行的 order_total_money 合法地为负（= −Σsale_money），与销售侧不同。
+select
+    system_book,
+    bizday,
+    'parquet'                                                          as side,
+    count(*)                                                           as bad_rows,
+    count(*) filter (where sale_money is null)                         as total_null,
+    count(*) filter (where share_discount is null)                     as pay_null,
+    0::bigint                                                          as total_neg,
+    0::bigint                                                          as pay_neg,
+    '退货侧公式输入形状违规（FINISHED 退货行：sale_money / order_detail_share_discount 为空）——恒空 ⇒ 该行被 sum 静默丢掉，退货额虚低' as note
+from (
+    select
+        r['system_book']::varchar                 as system_book,
+        r['bizday']::date                         as bizday,
+        r['sale_money']::numeric                  as sale_money,
+        r['order_detail_share_discount']::numeric as share_discount
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/**/*.parquet'
+    ) r
+    where r['order_transaction_type'] like '%RETURN%'
+      and r['state'] = 'FINISHED'
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+) ret
+where sale_money is null or share_discount is null
+group by 1, 2
 
 union all
 
