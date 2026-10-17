@@ -62,10 +62,11 @@ export type L2DeclarationBody = L2Declaration
  *   · 平台自己的问题（L1 行的 select_sql 不合形状契约）⇒ 500：那不是调用方能修的，
  *     而且它意味着 sync 物化出来的东西坏了——必须响亮（500 会被监控看见，400 不会）。
  */
-function compileFailure(e: SemanticCompileError): { http: 400 | 500; error: string } {
-  return e.code === 'BAD_BASE_SQL'
-    ? { http: 500, error: 'L1_BASE_SQL_INVALID' }
-    : { http: 400, error: e.code }
+function compileFailure(e: SemanticCompileError): { http: 400 | 500; error: string; extra?: Record<string, unknown> } {
+  if (e.code === 'BAD_BASE_SQL') return { http: 500, error: 'L1_BASE_SQL_INVALID' }
+  // 编译错带的可机检细节（如 L2_BASE_MASKED 的 base / masks）原样透给调用方 ——
+  // 否则调用方只拿到一个码，得靠猜才知道是哪条 L1 的哪条掩码挡住了它。
+  return { http: 400, error: e.code, ...(e.extra === undefined ? {} : { extra: e.extra }) }
 }
 
 /** 该 id 是否是平台词表（L1）里的行（L1 行对所有租户可见，故「只读」对所有租户成立）。 */

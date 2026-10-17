@@ -24,7 +24,7 @@
 //
 // 本文件**不得** import 任何 pool / env / Hono —— 它是纯的，才能被单测穷举（同 authz.ts 的纪律）。
 import { z } from 'zod'
-import type { MetricDef } from './authz'
+import type { MaskSpec, MetricDef } from './authz'
 import { sqlQuote } from './authz'
 import type { MetricRow } from './metric-store'
 
@@ -35,6 +35,8 @@ export type CompileErrorCode =
   | 'BAD_DECL'        // 声明本身形状不对（缺字段/类型错）
   | 'OP_UNSUPPORTED'  // 档位不支持：op.kind 不在闭集（refine/expr）内，或 expr 声明了 filters（v1 边界）
   | 'L1_BASE_NOT_FOUND' // baseMetric 不在 L1 词表里（只有 L1 能当 base）
+  // base 命中的 L1 带值级掩码：L2 编译后已无该列引用 ⇒ 掩码在 L2 上不可能生效 ⇒ 拒绝（fail-closed）
+  | 'L2_BASE_MASKED'
   | 'UNKNOWN_DIM'     // 引用了 L1 没声明的维度（机检：维度只能来自 L1 的 grain）
   | 'BAD_FILTER'      // 过滤子句形状不对（'=' 多值 / 'in' 空值 / op 越界）
   | 'BAD_BASE_SQL'    // L1 行的 select_sql 不合形状契约（见下「形状契约」节）
@@ -45,10 +47,16 @@ export type CompileErrorCode =
 
 export class SemanticCompileError extends Error {
   readonly code: CompileErrorCode
-  constructor(code: CompileErrorCode, message: string) {
+  /**
+   * 可机检的附加细节（HTTP / MCP 面原样回给调用方，让调用方能自助定位，而不是解析 message）。
+   * 可选：只有需要点名具体对象的拒绝才带（如 `L2_BASE_MASKED` 带 `base` / `masks`）。
+   */
+  readonly extra?: Record<string, unknown>
+  constructor(code: CompileErrorCode, message: string, extra?: Record<string, unknown>) {
     super(message)
     this.name = 'SemanticCompileError'
     this.code = code
+    if (extra !== undefined) this.extra = extra
   }
 }
 
@@ -242,6 +250,15 @@ function assertCleanDims(base: MetricDef): string[] {
 }
 
 /**
+ * 掩码的**人可读**单条点名（只用于错误信息）：`mart.revenue round(-1000)` / `（整值） nullify`。
+ * 列名为 null 是**整值掩码**（spec §4.1.1），文案里必须能一眼看出，别渲染成空串。
+ */
+function describeMask(m: MaskSpec): string {
+  const target = m.column === null ? '（整值）' : m.column
+  return m.kind === 'round' ? `${target} round(-${String(m.step ?? '?')})` : `${target} ${m.kind}`
+}
+
+/**
  * 从 L1 词表里取出 base；取不到 ⇒ 抛 L1_BASE_NOT_FOUND。
  *
  * ★ 只认 `source === 'l1'` 的行：`l1` 这个参数名是「L1 词表」，不是「任意词表」。
@@ -253,6 +270,22 @@ export function resolveL1Base(l1Catalog: readonly MetricRow[], baseMetric: strin
     throw new SemanticCompileError(
       'L1_BASE_NOT_FOUND',
       `baseMetric \`${baseMetric}\` 不在 L1 词表里：L2 只能 refine 已声明的平台指标（新指标要进 dbt YAML 走 L1）`,
+    )
+  }
+  // ★ L2 不得基于**被掩码的 L1** 构建（spec 2026-10-17 §5.3.1，fail-closed）：
+  //   L2 的 selectSql 由 L1 展开而来，编译后**已没有那个列引用**（变成 `sum/base`）
+  //   ⇒ 运行期 authorize 的定点替换命中不了它 ⇒ 放行 = 一条把原值透出来的旁路。
+  //   拒绝要拒绝得早、且响亮（400 点名是哪个 L1、哪条掩码），**绝不静默放行再记日志**。
+  //   收口在这里（而不是各档位编译函数里）：refine 与 expr 都经它解析 base ⇒ 一处收口，
+  //   新增档位也不会漏；写路径的「未接入源」预检同样经它 ⇒ 拒绝先于 compileL2。
+  const masks = hit.masks
+  if (Array.isArray(masks) && masks.length > 0) {
+    throw new SemanticCompileError(
+      'L2_BASE_MASKED',
+      `baseMetric \`${hit.id}\` 声明了值级掩码（${masks.map(describeMask).join('；')}）：`
+      + 'L2 由 L1 编译而来，编译产物里已没有该列引用，掩码在 L2 上不可能生效'
+      + ' ⇒ 拒绝基于被掩码的 L1 构建 L2（fail-closed，spec §5.3.1）',
+      { base: hit.id, masks },
     )
   }
   return hit
