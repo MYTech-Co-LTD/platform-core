@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.140.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.139.0...v0.140.0) - 2026-10-17
+- 【新增】guard: 文档引用门禁——变更中的文档里 file:line 不得越界 ([#773](https://github.com/MYTech-Co-LTD/platform-core/pull/773), [5a994af](https://github.com/MYTech-Co-LTD/platform-core/commit/5a994aff0d66a81e78f42e34e3a16945d05641b3))
+
+
 ## [0.139.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.138.3...v0.139.0) - 2026-10-17
 - 【新增】data: 零售净销量 L1（03-07 分母；覆盖天数待 X08 批准窗口 N） ([#770](https://github.com/MYTech-Co-LTD/platform-core/pull/770), [5e785bb](https://github.com/MYTech-Co-LTD/platform-core/commit/5e785bbf59fa6d7c2128181cec51e900b9b12663))
 
