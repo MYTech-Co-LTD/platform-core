@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.136.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.136.0...v0.136.1) - 2026-10-17
+- 【修复】askdata: #749 归因面订正——内层调度与指令面分离，兜底改 unknown ([#750](https://github.com/MYTech-Co-LTD/platform-core/pull/750), [28b8fef](https://github.com/MYTech-Co-LTD/platform-core/commit/28b8fef65cbfeeffa567feb999257849165cedc3))
+
+
 ## [0.136.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.135.0...v0.136.0) - 2026-10-16
 - 【新增】askdata: #741 P1 阶段二——轨迹导出 / 撞墙判据 / 归因 / 统计面 / 定时化 ([#748](https://github.com/MYTech-Co-LTD/platform-core/pull/748), [19ecce3](https://github.com/MYTech-Co-LTD/platform-core/commit/19ecce36369daa7a54748ab6fe90efb392bb3ef2))
 
