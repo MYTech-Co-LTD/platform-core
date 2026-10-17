@@ -102,7 +102,7 @@ union all
 
 -- part1b（退货行形状，2026-10-17 issue #813）：退货侧的加数是 `sale_money + order_detail_share_discount`，
 -- 任一为 NULL ⇒ 整行被 sum **静默丢掉**（退货额虚低 ⇒ 净销售额虚高）。
--- ⚠️ **不判符号**：退货行的 order_total_money 合法地为负（= −Σsale_money），与销售侧不同。
+-- ⚠️ **不判符号**：销售侧「非空且 ≥ 0」的判据不适用于退货侧（退货行金额符号语义不同，判 ≥ 0 会假红）——本分支只查空。
 select
     system_book,
     bizday,
@@ -125,6 +125,36 @@ from (
     where r['order_transaction_type'] like '%RETURN%'
       and r['state'] = 'FINISHED'
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+) ret
+where sale_money is null or share_discount is null
+group by 1, 2
+
+union all
+
+-- part1b（退货行形状，staging 物化侧）：同一形状在投影/cast 之后再验一遍——湖里有、投丢了也能抓。
+-- ⚠️ 模型退货侧读的**正是这一层**（fct_retail_sale 的 return_side → stg_lemeng_retail_order_line），
+-- 故 parquet 侧绿**不代表**模型输入绿：staging 取错源键/改了 cast 仍会产 NULL 而两列名照在
+-- （check-data-contract 只比别名序列的名字、不求值 ⇒ 拦不住这一类），sum 会把那些行静默丢掉。
+select
+    system_book,
+    bizday,
+    'staging'                                                          as side,
+    count(*)                                                           as bad_rows,
+    count(*) filter (where sale_money is null)                         as total_null,
+    count(*) filter (where share_discount is null)                     as pay_null,
+    0::bigint                                                          as total_neg,
+    0::bigint                                                          as pay_neg,
+    '退货侧公式输入形状违规（staging 投影后仍空）——湖有而投丢 = 投影/cast 漂了' as note
+from (
+    select
+        system_book,
+        bizday,
+        sale_money,
+        order_detail_share_discount as share_discount
+    from {{ ref('stg_lemeng_retail_order_line') }}
+    where order_transaction_type like '%RETURN%'
+      and state = 'FINISHED'
+      and bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 ) ret
 where sale_money is null or share_discount is null
 group by 1, 2
