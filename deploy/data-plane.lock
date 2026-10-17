@@ -1,4 +1,4 @@
-sha256-of-rest 9f220567730c356dcaa7efab55b2eaaf40502d48cf86042ebcc1303bd261a9ce
+sha256-of-rest 19af9a1105f14769e82991d32e26012d9de37e7260e4c9f9f0ff18fada68845d
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -18,7 +18,7 @@ f6dee2b918468bf68593262363b7a51ea9987f1fd4a67866fd8681f1fd9ed626 contracts/commo
 5a7a645f23cfdc35e966da665d627d438b8befb6effee70e525e76221367e5d7 contracts/common/lemeng.wholesale_out.json ${REPO}/contracts/common/lemeng.wholesale_out.json 0644
 81895b6736040f34f479157faaa94b7d8be89b0049dde0c75b14ddb4decb8229 contracts/common/lemeng.wholesale_return.json ${REPO}/contracts/common/lemeng.wholesale_return.json 0644
 a9209aad12e3020eefc11f94f51d935c49d1bff9eabf94fb0262d182a6a37c7a contracts/customers/README.md ${REPO}/contracts/customers/README.md 0644
-1377e6cd795ba5fe7cbd638e0d3629290f160f96f2a2004e90b110ee85d0185a dbt/README.md ${REPO}/dbt/README.md 0644
+b11d2cfa92e7b909b4df83b659d82fdf8241f720b1944178c10e5ba0276d6f54 dbt/README.md ${REPO}/dbt/README.md 0644
 08c044b74e274564f44b2c0ce2467d9d81d41b6990c525b17e3afe08d6051c0e dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
 d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subject_org.sql ${REPO}/dbt/macros/subject_org.sql 0644
