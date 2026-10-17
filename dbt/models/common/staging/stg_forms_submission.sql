@@ -1,23 +1,21 @@
 {{
-    config(materialized='table', enabled=false)
+    config(materialized='table')
 }}
 -- stg_forms_submission.sql — **表单提交** staging（M1.4 / issue #729，2026-10-16）。
 --
--- ── ⚠️ 本模型当前**停用**（issue #751，2026-10-17）──────────────────────────────────────
--- **为什么**：读的是通配路径 `bizday=*/batch_id=*/all.parquet`——只要有**第一个**文件落下来，
---   glob 就永远匹配得上；但在那之前**每次 dbt build 必红**：
---     `IO Error: No files found that match the pattern ".../forms/submission/bizday=*/batch_id=*/all.parquet"`
---   这是 **bootstrap 缺陷**，不是「某天缺数据」。
--- **为什么现在必然红**（2026-10-17 山海生产实测）：平台 `forms.submission` 表存在但 **0 行**
---   ⇒ 导出 API 导不出东西；且 **forms 出湖管线没进任何排班**（`schedules/{3120,64188}.json`
---   里都 grep 不到 forms）⇒ 湖里不会有文件，**补排班也解决不了**（没数据可采）。
--- **为什么不能放着**：`scripts/lemeng/materialize.sh` 的契约是「dbt 非零 ⇒ MATERIALIZE_FAILED
---   + exit 1」，而 exit **发生在写 `load_log` 之前** ⇒ 物化其实成功了（PASS=185）却**不落水位**，
---   `data_as_of` 停在旧值 ⇒ **所有指标的新鲜度固定行一起退化**（数据是新的，报的却是旧的）。
--- **✅ 复 enable 的唯一条件**：湖里出现第一个 `forms/submission/bizday=*/batch_id=*/all.parquet`。
---   验证一条命令即可（数据面机）：列出该前缀，非空 ⇒ 删掉上面的 `enabled=false` 并跑一次 materialize。
--- **更正的形态**（留给 #729，不在本 PR）：采集在**空批次也落一个带申报 schema 的空 parquet**，
---   这样模型从第一刻起就能跑、排班后每天都有文件——那是治本，但要先验 duckle sink 在 0 行时的行为。
+-- ── ✅ 已复 enable（issue #751，2026-10-17）──────────────────────────────────────────
+-- 本模型曾因 **bootstrap 缺陷**停用：通配路径在湖里**第一个文件**落下之前，每次 dbt build 必红
+--   （`IO Error: No files found that match the pattern …/forms/submission/bizday=*/batch_id=*`），
+--   而 materialize.sh 的契约「dbt 非零 ⇒ exit 1」发生在写 `load_log` 之前 ⇒ 水位冻结、
+--   **所有指标的新鲜度固定行连带退化**（详见 git 历史里本段的停用记录，#752）。
+-- **复 enable 条件已达成**（2026-10-17）：forms 专属 console 建立并首跑成功，湖里已落第一个文件
+--   （`bizday=2026-10-17/batch_id=2026-10-17_085106`，1 行 = M1.4 主验收提交，独立通道 pg_duckdb
+--   直读核验 5 列齐全）。
+-- **留给后续的两条实测结论**（#729）：
+--   ① **duckle sink 在 0 行时【不写文件】**（实测：0 行 run 报 sink ok 但湖里无对象）⇒
+--      「空批次落带 schema 的空 parquet」的治本形态**不成立**，bootstrap 缺陷的治本
+--      = 首个文件出现前保持停用（本模型的做法）或 staging 读侧容忍缺文件。
+--   ② 新租户/新域部署 forms console 时，**首文件出现前**不要开本模型（同样的 bootstrap 缺陷会复发）。
 --
 -- 【用途边界｜这是本模型的**全部价值主张**】通用域：出湖 schema **与业务无关**——任何表单的提交都进
 --   这一张表，**新表单只是新的 `form_def_id` 值**（ADR-0005 §13.1）。故本模型**一次 PR 后不再改**：
