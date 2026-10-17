@@ -19,7 +19,19 @@
 5. ⚠️ **改 `contracts/**` 或 `dbt/**` ⇒ 必须重跑 `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`**（lock 覆盖 contracts 19 条 + dbt 105 条），否则 `check-data-plane-lock.mjs` 红。
 6. **权限码**：P1 新增 `data:cost`（`modules/data/manifest.yaml` 的 `permissions[]`），由装载器按各租户 org 逐个 upsert——**不新增发码通路**。租户管理员可发：`POST /api/platform/admin/permissions/:code/users`（**挂载点是 `/api/platform/admin`**，`apps/server/src/app.ts:302`；处理器 `apps/server/src/routes/admin.ts:151`；门卫 `requireScope('tenant:admin')` 在 `admin.ts:57`）。该端点会校验码必须 ∈ 模块声明的 `permissions[]`（否则 404 `NO_SUCH_CODE`）⇒ **T2 的 manifest 步骤不是可选项**。
 7. **审计**：P1 **不加** `data.query_audit` 的列（既有 `verdict='denied'` 已覆盖 P1 的全部形态；`masking` 列随 P2）。
-8. **提交纪律**：`<type>(<scope>): <一句话>`；本计划所有 PR 的 body 含 `Closes #764`（或 `Refs #764`，视该 PR 是否收口伞 issue 而定）；CHANGELOG 禁手写。
+8. **提交纪律**：`<type>(<scope>): <一句话>`；CHANGELOG 禁手写。
+   ⚠️ **issue 锚定（2026-10-17 订正）**：`scripts/check-pr-discipline.mjs` 的正则**只认**
+   `Closes|Fixes|Resolves #N`——**`Refs` 过不了**，而伞 issue #764 不会被单个任务收口。
+   ⇒ **每个任务各有自己的子 issue，PR 写 `Closes #<子 issue>`，伞 #764 保持 open**：
+
+   | 任务 | 子 issue |
+   |---|---|
+   | T1 契约 sensitivity | 已由 PR #777 交付（当时无子 issue，走的是「Closes #764 + 合并后秒重开」，已重开） |
+   | T2 声明面 `required_scope`/`reads` + `data:cost` | **#779** |
+   | T3 血缘单调门 | **#780** |
+   | T4 报表发布门 | 已由 PR #774 交付（同上，已重开 #764） |
+   | T5 首个真实配对 | **#781** |
+   | T6 `POST /reports` 旁路（执行中新发现） | **#778** |
 9. **本计划不碰**：`modules/data/domain/query-service.ts` 的查询路径、`authorize()` 本体、任何掩码/值级逻辑（全归 P2）。P1 **只加声明面与门禁**，**不改运行时行为**——这是刻意的：先让「约束」可表达、可检查，再谈执行。
 
 ---
@@ -49,6 +61,7 @@
 | **2** | T2 | 触 `dbt/`+lock ⇒ 与 T1 串行 |
 | **3** | T3 | 依赖 T1（`sensitivity` 数据）+ T2（`reads`/`required_scope` 声明面） |
 | **4** | T5 | 依赖 T1+T2+T3（首个真实配对；触 lock ⇒ 串行） |
+| **5** | T6（执行中追加） | 补 `POST /reports` 旁路；只触 `modules/data/routes/reports.ts`，与 T4 同文件 ⇒ 在 T4 合入后单做 |
 
 ---
 
@@ -108,6 +121,24 @@ Run: `pnpm exec vitest run --dir scripts -t 'sensitivity 闭集'`
 Expected: FAIL —— 第 1 条 `expected [] to have a length of 1`（门禁还不认识这个字段）
 
 - [ ] **Step 3: 在门禁里实现闭集**
+
+> 🔴 **订正（2026-10-17，T1 执行时由 worker 实测抓出——这是本计划的实质错误）**：
+> `checkDataContract` 拿到的列**不是契约里的原始对象**，而是 `readContractDoc`
+> （`scripts/lib/data-contract.mjs:131`）**白名单式重新构造**的——它只挑 `name/type/nullable/expr/precision/scale`
+> 七个字段。⇒ 照本 Step 原来的写法 `for (const col of c.columns) { if (col.sensitivity === undefined) … }`，
+> **`sensitivity` 永远是 `undefined`，这条规则一次都不会触发**——一个**从不红的判据**，正是本仓明令禁止的形态。
+>
+> **必须先改 `readContractDoc`**，把 `sensitivity` 透传出去：
+>
+> ```js
+>       // `sensitivity` **原样**透传（不 coerce）：缺省必须保持 `undefined`（= 未声明），
+>       // 非字符串的坏值也要原样留给门禁去报——在这里静默归一成 undefined 就等于
+>       // 「打错的标记被当成不敏感放行」，正是 sensitivity 闭集要防的那一类。
+>       sensitivity: c?.sensitivity,
+> ```
+>
+> 并把该函数的 JSDoc `@returns` 里的 columns 元素类型补上 `sensitivity?: string`。
+> **教训**：凡是「从解析结果里读一个新字段」的步骤，先确认那个解析器**不是白名单**的。
 
 `scripts/check-data-contract.mjs` 顶部（挨着 `export const SCRIPT_NAME`）加：
 
@@ -925,6 +956,36 @@ git commit -m "feat(data): 首批列级收紧——成本源列打标并与读�
 > 本任务做完的是 ③ 的**声明部分**；`data.metrics.required_scope` 的落库由部署期的 sync 完成。
 
 ---
+
+### Task 6: `POST /reports` 旁路（**执行中新发现，2026-10-17 追加**）
+
+**Files:**
+- Modify: `modules/data/routes/reports.ts`（`POST /reports` 的 platform 分支）
+- Test: `modules/data/routes/reports.test.ts`
+
+**为什么追加**：T4 落地后，`PUT /reports/:id` 的发布门有了，但 **`POST /reports` 的 platform 分支没接线**——
+新建时 `requiredScope` 默认 `null`，而在这套模型里 **`null` 就是「已发布」**（没有独立的 `published` 列）。
+⇒ 带**两个不同 scope 面板**的报表可以绕过发布门直接建成已发布态。
+
+**影响（别夸大）**：**不是数据泄漏**——报表可见但面板的 `/query` 仍 403，看不到任何数据。
+真实影响是**破坏「报表可见 ⇒ 每个面板的指标都可见」这条不变量**，表现是报表看起来正常、
+点进去有一个面板空/报错。
+
+**判据**：`POST /reports` 的 platform 分支必须跑**同一个** `deriveRequiredScope`；多码冲突 ⇒ 400 点名；
+无面板 ⇒ `null`（与今天一致）。⚠️ **不要**顺手改成「新建一律未发布」——那与「没有 `published` 列」的
+既有设计冲突。
+
+追记于 issue **#778**。
+
+---
+
+## 执行记录（2026-10-17，Wave 1）
+
+| 任务 | PR | 结果 | 执行中的偏离 / 发现 |
+|---|---|---|---|
+| T1 | **#777** | 已合，v0.141.0 | 🔴 **计划 T1 Step 3 有实质错误**：`readContractDoc` 是白名单构造，`sensitivity` 会被丢掉 ⇒ 那条规则**永不触发**。已改为先透传（见该 Step 的订正块）。 |
+| T4 | **#774** | 已合，v0.141.0 | ① 新增 `report-store.updateSpecAndScope`：写规格与写页门**必须同一条 UPDATE**，否则留「新面板 + 旧页门」窗口，且一请求推两次 `version` 会打红既有版本断言；② `PUT /reports/:id/spec` 派生失败时**保持页门原值、规格照存**（拒绝权留在发布门）；代价：已发布行补多码面板后仍为 `null`，要等下一次发布动作才被拒。 |
+| — | — | — | 由 T4 暴露出的 `POST /reports` 旁路已单列为 **Task 6 / #778**。 |
 
 ## 计划完成后的下一步
 
