@@ -1,0 +1,31 @@
+{
+  "_note": [
+    "forms 域（表单提交，#729 M1.4）的引擎原生告警规则。seed 进 **forms 自己的 console** workspace 卷的",
+    "`/workspace/alerts.json`（与 pipelines/ schedules/ 同路；不在 pipelines/ 里）。",
+    "",
+    "与 alerts.lemeng.json **同源同路**：channel/url/headers 三处逐字一致（OO 转投；凭据走 ${ENV:OO_*}",
+    "插值 ⇒ 文件里零密钥字符）。该 console 的服务行必须注入 OO_BASE / OO_ORG / OO_AUTH 三键，",
+    "否则 URL 会原样带着占位符发出去（引擎对未解析占位符只警告，见 WeKnora「duckle 四个静默失效面」）。",
+    "",
+    "① 覆盖面：只覆盖**打进 forms console 的 run**（/workspace/pipelines/ 下的管线）——别读成「采集全链路」。",
+    "② match 用**精确 id** 而不是 `forms.*`：本域当前只有一条管线；将来加管线时**逐条**加规则，",
+    "   不要用通配把将来的管线静默纳入（覆盖范围写窄 = 失败静默，check-console-alerts 判据 C 会拦）。",
+    "③ on 同时订阅 recovery：失败后恢复要有一条 all-clear（引擎的 recovery 跳过冷却、永远发出）。",
+    "④ 🚦 合入判停（data-monitor skill 场景 C）：必须先在真 console 上做**反向测试**（人为触发一次真红",
+    "   → OO 规则命中 → 企微真收到）并留证；未见证不合入。",
+    "",
+    "字段语义与冷却计法见 deploy/duckle/console/README.md §引擎原生告警（机制正文唯一出处）。"
+  ],
+  "rules": [
+    {
+      "match": "forms.submission.l0",
+      "on": ["failure", "recovery"],
+      "cooldownMinutes": 15,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
+    }
+  ]
+}

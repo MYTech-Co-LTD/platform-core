@@ -226,6 +226,10 @@ params = grain ∩ 白名单，白名单与类型固定：
 - **data_as_of 呈现**：query-service 将其格式化为 Asia/Shanghai 字符串（`YYYY-MM-DD HH:mm:ss +08:00`，
   `Intl` 确定性格式化——不教模型换算）；
 - **生效链**：改种子 → seed + 重启两 console（§F.2 第 1 类）→ `/api/schedules` 验 timezone 字段与 expr。
+- **追加（2026-10-17，#729 M1.4）**：新增**第三本**排班书 `schedules/forms.json`（forms 域，**非乐檬账套**，
+  有自己的 console）——1 条 `panel-forms.submission.l0`，`20 0 * * *`（日批）、`timezone: 'Asia/Shanghai'`。
+  它是**新写即 CST**，**不产生 UTC→CST 转换行**；本节的「23 条」是当年转换口径的记账，追加后合计 24 条，
+  `scripts/console-schedules-tz.test.ts` 的期望表与条数断言已同步。
 
 ## 10.7 修订五：新鲜度 SLA + 固定展示行（2026-10-16 用户拍板）
 
