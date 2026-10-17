@@ -103,7 +103,7 @@ dbt/models/common/marts/     ← 全是乐檬 fct_*
 | # | 动作 | 机制 / 注意 |
 |---|---|---|
 | 1 | 目录按域分：`models/lemeng/` + `models/forms/`（现 `common/` 拆开）。**二维格子定案：域是顶层轴、客户分叉嵌在域里**（`models/<域>/customers/<客户>/`）——`common/` 溶解成域的默认 | 现有 `STAGING_RE`/`MARTS_RE` 已是 `models/(?:.+\/)?staging/` ⇒ **门禁判据不用改**，只需改错误文案里写死的 `models/common/staging/` 路径。**现在改最便宜**（实测 `customers/` 下只有 README、无真子目录）。⚠️ 代价不是「纯仓内」：`dbt/` 在 `deploy/data-plane-manifest.txt` 是**投递项** ⇒ 重命名改 lock ⇒ **山海侧要重新 sync 数据面工件** |
-| 2 | 域开关：**两案未定**——① `dbt_project.yml` 按路径 `+enabled`，值由 var 给；② **从目录派生**的 `--select path:dbt/models/<域>` | ①合 `materialize.sh` 头注的**成文处方**（「用该模型的 config 表达，**不要恢复 job 级名单**」），但 ⚠️ Jinja 字符串写法**待实测**；②无未验语法、部署身份留在 env，且 #679 反对的是**手抄**名单（派生名单不会漂）。**两案都必须配 fail-closed 域覆盖门禁**：枚举 `dbt/models/*/`，每个域目录必须被显式归属，否则新增域目录而无人登记 ⇒ 两侧都不 build ⇒ **静默不物化**（#677/#679 假绿同形） |
+| 2 | 域开关：**已实测选定** —— `dbt_project.yml` 按路径 `+enabled`，值由 `env_var('DATA_PLANE_DOMAINS')` 给（**不带默认值**） | 合 `materialize.sh` 头注的**成文处方**（「用该模型的 config 表达，**不要恢复 job 级名单**」）。实测（dbt 1.9.1 + dbt-postgres 1.9.1 = `deploy/dbt/Dockerfile` 钉的版本）：设 `forms` ⇒ manifest 只剩 forms 的模型（lemeng **整个不出现**）；**不带默认值**时变量未设 ⇒ **parse 报错（fail-closed）**；**带默认值 `''`** ⇒ 解析成空串 ⇒ **0 个模型、退出 0 ⇒ `MATERIALIZE_OK` 假绿**（默认值绝不可给）；域目录**未登记** ⇒ 默认 `enabled=true` ⇒ **每个面都 build 它**。⚠️ `+enabled` 里**不能引用本文件 `vars:` 块的 var**（`models:` 渲染早于工程 vars）。⇒ **fail-closed 域覆盖门禁是必需**：枚举 `dbt/models/*/`，每个域目录必须有显式 `+enabled` 条目——两个方向都静默（未登记 ⇒ 反向泄漏；漏配变量 ⇒ 零模型假绿），正是 #677/#679 假绿同形 |
 | 3 | 两侧 materialize job 各传自己的域；mytech 侧 job 的 `PLAT_CT`/`PG_CT`/`CONSOLE_CT`/`NETWORK` 全指 mytech 资源 ⇒ `SO=mytech` | ⚠️ **`materialize.sh` 必须改，不是「无需改脚本」**：`mat_env_args()` 是**写死的 8 键清单**，`materialize.test.sh` 还钉了「`-e` token 恰 8 个」并逐键枚举 ⇒ 新 env 不进去 dbt 根本收不到。只有容器/网络/平台库那几个参数是已支持 env 覆盖的 |
 | 4 | env 键 `LEMENG_SUBJECT_ORG` → 域中性名（如 `SUBJECT_ORG`） | 回迁后它是 forms 部署的主体来源，`LEMENG_` 前缀会误导。改净面：`dbt/macros/subject_org.sql`、`profiles.example.yml`、`materialize.sh`、`dbt/README.md` §（同名小节）、`schema.yml` 描述若干 |
 
@@ -136,7 +136,7 @@ dbt/models/common/marts/     ← 全是乐檬 fct_*
 ### 6 修订后的步骤（替代下文 E·console）
 
 - [ ] R1 **架构文档更新**（新增「域」维度 + 数据面归属口径）→ 人审 —— **稿已成：PR #818**（`docs/architecture.md` 新增 §2.5 + §2.2/§4.2/§5.1 三处交叉引用），**待人审**
-- [ ] R2 dbt 树按域分目录 + 域开关（机制待定，见 §4 第 2 行）+ fail-closed 域覆盖门禁 + 门禁文案。⚠️ **不是「纯仓内」**：`materialize.sh`/`materialize.test.sh` 必改（8 键清单），`dbt/` 是投递项 ⇒ lock 变 ⇒ **山海侧要重新 sync**
+- [ ] R2 dbt 树按域分目录 + 域开关（`+enabled` + `env_var('DATA_PLANE_DOMAINS')` 不带默认值，已实测，见 §4 第 2 行）+ **fail-closed 域覆盖门禁** + 门禁文案。⚠️ **不是「纯仓内」**：`materialize.sh`/`materialize.test.sh` 必改（8 键清单 ⇒ 加第 9 键），`dbt/` 是投递项 ⇒ lock 变 ⇒ **山海侧要重新 sync**
 - [ ] R3 mytech 数据面启用：S3 凭据 → Gate-B 接线 + `search_path`（`wire-warehouse.sh --check` 七断言全绿）→ `dbt`/`duckle` 服务行改绝对路径卷 → 数据面工件 sync（lock）
 - [ ] R4 mytech 侧 materialize job（照 `lemeng-dbt-materialize` 形态，容器名/网络全换 mytech）
 - [ ] R5 forms console 落到 `proj_SU8cmQ8OLVfM971X`（**新桶 —— 人工前置：开 `mytech-data`，见 §5.1**）→ seed workspace（含 `.duckle/keys/secret.key`）→ 重建 catalog → 首跑成功
