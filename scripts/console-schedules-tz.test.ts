@@ -42,6 +42,11 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.retail.close.l1': '0 0 * * *',
     'panel-lemeng.recon.preagg': '30 0 * * *',
   },
+  // forms（#729 M1.4，**非乐檬域**，有自己的 console）：新增即按 CST 写，无 UTC→CST 转换行。
+  // 日批 00:20 CST（刚过零点采集，业务日的提交 T+1 可见；水位=id 键集游标 ⇒ 错峰不影响完整性）。
+  forms: {
+    'panel-forms.submission.l0': '20 0 * * *',
+  },
 }
 
 /** 单形状读取（scripts/ 纪律：字段恒在，缺了当结构漂移大声红）。 */
@@ -49,7 +54,7 @@ function readBook(book: string): Array<{ id?: unknown; kind?: { type?: unknown; 
   return JSON.parse(readFileSync(path.join(ROOT, 'deploy', 'duckle', 'console', 'schedules', `${book}.json`), 'utf8'))
 }
 
-describe('console 排班时区统一（spec §10.6）：23 条全显式 Asia/Shanghai + expr 逐字合表', () => {
+describe('console 排班时区统一（spec §10.6）：24 条全显式 Asia/Shanghai + expr 逐字合表', () => {
   for (const [book, expected] of Object.entries(EXPECTED)) {
     it(`book=${book}：条目集与期望表恰同集，timezone 全显式 Asia/Shanghai，expr 逐字一致`, () => {
       const entries = readBook(book)
@@ -68,8 +73,8 @@ describe('console 排班时区统一（spec §10.6）：23 条全显式 Asia/Sha
     })
   }
 
-  it('两本合计恰 23 条（3120×16 + 64188×7）——条数漂移必须显式改 spec §10.6 与本测试', () => {
+  it('合计恰 24 条（3120×16 + 64188×7 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
     const total = Object.values(EXPECTED).reduce((n, m) => n + Object.keys(m).length, 0)
-    expect(total).toBe(23)
+    expect(total).toBe(24)
   })
 })

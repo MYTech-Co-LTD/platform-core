@@ -56,6 +56,13 @@
       "data": {
         "componentId": "src.rest",
         "label": "提交导出（键集游标 + id 增量水位）",
+        "schema": [
+          { "name": "submission_id", "type": "string" },
+          { "name": "org", "type": "string" },
+          { "name": "form_def_id", "type": "string" },
+          { "name": "submitted_at", "type": "string" },
+          { "name": "payload", "type": "json" }
+        ],
         "properties": {
           "connectionRef": "forms",
           "incrementalField": "submission_id",

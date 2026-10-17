@@ -1,0 +1,23 @@
+[
+  {
+    "id": "panel-forms.submission.l0",
+    "pipeline_id": "forms.submission.l0",
+    "name": "forms.submission.l0",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "20 0 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "all",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  }
+]
