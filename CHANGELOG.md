@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.154.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.153.2...v0.154.0) - 2026-10-17
+- 【新增】data: 答案自带射程与排除——scope_note 由平台自动附加（spec §12.6） ([#838](https://github.com/MYTech-Co-LTD/platform-core/pull/838), [7e3c60a](https://github.com/MYTech-Co-LTD/platform-core/commit/7e3c60a0ea2923158ef39177ed862c0aa38e438a))
+
+
 ## [0.153.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.153.1...v0.153.2) - 2026-10-17
 - 【优化】data: dbt 树按域分目录 + 域开关（+enabled/env_var）+ fail-closed 域覆盖门禁（Refs #729） ([#835](https://github.com/MYTech-Co-LTD/platform-core/pull/835), [e937ab3](https://github.com/MYTech-Co-LTD/platform-core/commit/e937ab35d74360fc30ef69b05ff397ae9db80b94))
 
