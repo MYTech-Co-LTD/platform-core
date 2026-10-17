@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.144.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.144.0...v0.144.1) - 2026-10-17
+- 【修复】data: POST /reports 也走发布门派生，堵住建成即已发布的旁路 ([#790](https://github.com/MYTech-Co-LTD/platform-core/pull/790), [9530000](https://github.com/MYTech-Co-LTD/platform-core/commit/9530000c6fca7ef65e48957ec69557f56d725481))
+
+
 ## [0.144.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.143.1...v0.144.0) - 2026-10-17
 - 【新增】data: 血缘单调门——读了敏感源列的指标必须收窄 ([#789](https://github.com/MYTech-Co-LTD/platform-core/pull/789), [eb0c373](https://github.com/MYTech-Co-LTD/platform-core/commit/eb0c37352abd920652b8f57dc36a404e315aa35d))
 
