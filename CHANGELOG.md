@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.145.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.145.0...v0.145.1) - 2026-10-17
+- 【修复】data: 复 enable stg_forms_submission——湖首文件已落（Closes #751） ([#799](https://github.com/MYTech-Co-LTD/platform-core/pull/799), [64f76fa](https://github.com/MYTech-Co-LTD/platform-core/commit/64f76fa0a57160099a350a8dbdf228b58791cc97))
+
+
 ## [0.145.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.144.1...v0.145.0) - 2026-10-17
 - 【新增】data: fct_hq_outbound 扩 client_fid 第 6 粒度键，客户级口径就位（#744） ([#792](https://github.com/MYTech-Co-LTD/platform-core/pull/792), [13e9691](https://github.com/MYTech-Co-LTD/platform-core/commit/13e96914c244793ae9a7b04ebf7031db91340cb0))
 
