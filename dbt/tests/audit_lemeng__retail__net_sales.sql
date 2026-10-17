@@ -59,6 +59,28 @@ with base as (
       --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 ),
+ret_base as (
+    select
+        r['system_book']::varchar as system_book,
+        r['bizday']::date         as bizday,
+        r['branch_num']::int      as branch_num,
+        (r['sale_money']::numeric + r['order_detail_share_discount']::numeric) as return_amount
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/**/*.parquet'
+    ) r
+    where r['order_transaction_type'] like '%RETURN%'
+      and r['state'] = 'FINISHED'
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+),
+ret_side as (
+    select
+        system_book,
+        bizday,
+        branch_num,
+        sum(return_amount)::numeric(20,2) as return_amount
+    from ret_base
+    group by 1, 2, 3
+),
 per_order as (
     select
         system_book,
@@ -73,13 +95,19 @@ per_order as (
 ),
 recheck as (
     select
-        system_book,
-        bizday,
-        branch_num,
-        -- 除法形态与 fct 逐字同构（逐单除、逐单减，见头注）
-        (sum((non_gift_amount + order_total_money) / 2 - share_discount))::numeric(20,2) as net_sales
-    from per_order
-    group by 1, 2, 3
+        coalesce(s.system_book, t.system_book) as system_book,
+        coalesce(s.bizday, t.bizday)           as bizday,
+        coalesce(s.branch_num, t.branch_num)   as branch_num,
+        (coalesce(s.sale_amount, 0) - coalesce(t.return_amount, 0))::numeric(20,2) as net_sales
+    from (
+        select system_book, bizday, branch_num,
+               (sum((non_gift_amount + order_total_money) / 2 - share_discount))::numeric(20,2) as sale_amount
+        from per_order group by 1, 2, 3
+    ) s
+    full join ret_side t
+        on  s.system_book = t.system_book
+        and s.bizday      = t.bizday
+        and s.branch_num  = t.branch_num
 ),
 materialized as (
     select
@@ -96,7 +124,7 @@ select
     coalesce(a.branch_num, b.branch_num)   as branch_num,
     a.net_sales                            as recheck_value,
     b.net_sales                            as materialized_value,
-    '复算与物化结果不一致（净销售额，#430 换货半边口径）' as note
+    '复算与物化结果不一致（净销售额 = 销售侧 − 退货侧，#813）' as note
 from recheck a
 full join materialized b using (system_book, bizday, branch_num)
 where a.net_sales is distinct from b.net_sales
