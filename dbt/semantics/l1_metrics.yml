@@ -124,7 +124,7 @@ metrics:
       粒度 = 账套 × 业务日 × 域 × 门店 × 战区（region_id 为 X01 回落）。
       不可加边界：跨 domain 相加 = 客户 01-01 的 R 全量，但客户文档明令展示时配送与批发分别列。
     expression: 'sum(fct_hq_outbound.r_net)'
-    grain: [system_book, bizday, domain, branch_num, region_id]
+    grain: [system_book, bizday, domain, branch_num, region_id, client_fid]
     owner: data-platform
     tier: certified
     source: lemeng
@@ -143,7 +143,7 @@ metrics:
       ⚠️ D10 系统指标对照（客户 01-02/08-01 的「系统差异」面）待 D10 接入（W3）后另补，本定义不含。
       成本缺失/税基未核时只能试算（客户文档数据条件原话）；experimental 事由同裁8。
     expression: 'sum(fct_hq_outbound.g_gross)'
-    grain: [system_book, bizday, domain, branch_num, region_id]
+    grain: [system_book, bizday, domain, branch_num, region_id, client_fid]
     owner: data-platform
     tier: certified
     source: lemeng
@@ -162,7 +162,7 @@ metrics:
     ratio:
       numerator: 'sum(fct_hq_outbound.g_gross)'
       denominator: 'sum(fct_hq_outbound.r_net)'
-    grain: [system_book, bizday, domain, branch_num, region_id]
+    grain: [system_book, bizday, domain, branch_num, region_id, client_fid]
     owner: data-platform
     tier: certified
     source: lemeng
@@ -180,7 +180,7 @@ metrics:
       下钻实现，不许跨域相加后当总量）。⚠️ 按 audit_time/采集分区日截日是**代理指标**——
       不代表实际拣货日（客户文档 04-01 数据条件原话）。粒度 = 账套 × 业务日 × 域 × 门店 × 战区。
     expression: 'sum(fct_hq_outbound.order_count)'
-    grain: [system_book, bizday, domain, branch_num, region_id]
+    grain: [system_book, bizday, domain, branch_num, region_id, client_fid]
     owner: data-platform
     tier: certified
     source: lemeng
@@ -196,7 +196,7 @@ metrics:
       商品行计数；domain 在 grain 分别列）。上滚 = 各粒度行数之和（行数可加）。
       同 order_count 的「审核日代理指标」边界。粒度同上。
     expression: 'sum(fct_hq_outbound.line_count)'
-    grain: [system_book, bizday, domain, branch_num, region_id]
+    grain: [system_book, bizday, domain, branch_num, region_id, client_fid]
     owner: data-platform
     tier: certified
     source: lemeng
