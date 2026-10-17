@@ -53,10 +53,16 @@ import {
   loadPlatformCatalog,
   upsertL1Metric,
 } from '../modules/data/domain/metric-store.ts'
+// MASK_KINDS 是**值** import（校验要用它的集合成员判断），不是类型引用：kind 词表的唯一定义
+// 在 authz.ts（spec 2026-10-17 §5.1「能选不能扩」），这里与门禁、T2 的 mask.ts 共用一份——
+// 两处各列一份 kind，漂开的那份就是静默绕过口。authz.ts 是纯模块（不 import pool/env/Hono），
+// 拖进来不破坏本脚本的「只连库不连服务」边界。
+import { MASK_KINDS } from '../modules/data/domain/authz.ts'
 
 // 类型引用走 JSDoc 的 `import(...)`（`.mjs` 里不能写 `import type` —— TS8006）。写成类型引用
 // 而不是值 import：只借它的**形状**，不在运行期多 import 一个模块。
 /** @typedef {import('../modules/data/domain/authz.ts').MetricParamDef} MetricParamDef */
+/** @typedef {import('../modules/data/domain/authz.ts').MaskSpec} MaskSpec */
 
 export const SCRIPT_NAME = 'sync-data-semantics'
 
@@ -107,6 +113,8 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  *                  声明侧推导出的行恒为非负整数，库侧读取不信任存储形状）
  * @property {string[] | null} freshnessRelations 新鲜度关系集（spec §10.7.3，deriveFreshnessRelations
  *                  从 sources 推导；null 同上——接住库内旧行）
+ * @property {MaskSpec[] | null} masks 值级掩码声明（spec 2026-10-17 §5.2，声明 `mask` 的物化值；
+ *                  null = 未声明——接住库内旧行与 L2 侧）
  */
 
 /**
@@ -224,6 +232,131 @@ function requiredScopeOf(v, metricName) {
     )
   }
   return s
+}
+
+/**
+ * 正则元字符转义——列引用是 `表.列` 形态，`.` **必须转义**：不转义它就是通配符，
+ * `\bfct_x.a\b` 会命中 `fct_xAa`/`fct_x_a` 一类本不该命中的引用（转义后才是逐字匹配）。
+ *
+ * @param {string} s
+ * @returns {string}
+ */
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** mask 条目的**键闭集**（声明面形状，spec 2026-10-17 §5.2；与 authz.ts 的 MaskSpec 同形）。 */
+const MASK_ITEM_KEYS = new Set(['column', 'kind', 'step', 'grantedBy'])
+
+/**
+ * mask **单条**声明的形状核（纯函数；返回违规文案，合法返回 null）。
+ *
+ * ★ 逐项判据的**唯一实现**：`masksOf`（本文件，物化侧）与 `check-data-models.mjs` 规则 ⑤-d
+ * （静态门禁）都从它取——门禁手里**没有**物化后的 selectSql，故「column 须逐字出现在
+ * selectSql 里」那条不在这里、只归 masksOf（两处各判会各留一个假绿面，见 masksOf 头注）。
+ * 判据（spec §5.2，写死）：
+ *   · 元素是对象、键闭集 {column, kind, step, grantedBy}（拼错的键 = 声明写了但没生效）；
+ *   · `kind ∈ MASK_KINDS`（闭集常量在 authz.ts，能选不能扩）；
+ *   · `kind === 'round'` ⇒ `step` 必须是正整数（运行期展开成 `round(col, -step)`，负数/小数
+ *     会物化出一条运行期才炸的掩码表达式）；
+ *   · `grantedBy` 必须是非空、无任何空白的字符串（它是逐字比对的权限码，带空白谁也匹配不上
+ *     ⇒ 对持码人照掩不误——掩码过度生效，症状静默）；
+ *   · `column` 是 null（整值掩码）或非空字符串；**null 时 kind 只许 `nullify`**（整值做 round
+ *     没有语义；spec §4.1.1 默认档只推 nullify 也是同一句话）。
+ *
+ * @param {unknown} item mask 数组的单个元素
+ * @param {string} metricName 指标名（只用于错误信息）
+ * @returns {string | null} 违规文案；合法返回 null
+ */
+export function maskItemError(item, metricName) {
+  if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+    return `指标 \`${metricName}\` 的 \`mask\` 元素必须是对象（{column, kind, step?, grantedBy}），收到 ${JSON.stringify(item ?? null)}`
+  }
+  for (const k of Object.keys(item)) {
+    if (!MASK_ITEM_KEYS.has(k)) {
+      return `指标 \`${metricName}\` 的 \`mask\` 元素有未知键 \`${k}\` —— 键闭集是 `
+        + `{column, kind, step, grantedBy}，拼错的键会被静默忽略（声明写了但没生效 = 掩码不生效）`
+    }
+  }
+  const m = /** @type {Record<string, unknown>} */ (item)
+  if (typeof m.kind !== 'string' || !(/** @type {readonly string[]} */ (MASK_KINDS)).includes(m.kind)) {
+    return `指标 \`${metricName}\` 的 \`mask\` kind ${JSON.stringify(m.kind ?? null)} 不在词表里 —— `
+      + `只允许 ${MASK_KINDS.join(' / ')}（闭集常量 MASK_KINDS 在 modules/data/domain/authz.ts，`
+      + '能选不能扩；加 kind 走 PR）。写错 kind 的声明不会报错但也不会生效'
+  }
+  if (typeof m.grantedBy !== 'string' || m.grantedBy === '' || /\s/.test(m.grantedBy)) {
+    return `指标 \`${metricName}\` 的 \`mask\` grantedBy ${JSON.stringify(m.grantedBy ?? null)} 形态不合规 —— `
+      + '必须是非空、无空白的字符串。它是**逐字**比对的豁免权限码（持有 ⇒ 看原值），'
+      + '带空白的码谁也匹配不上（症状：该掩码对**所有人**恒生效，且不报错）'
+  }
+  const column = m.column ?? null
+  if (column !== null && (typeof column !== 'string' || column === '')) {
+    return `指标 \`${metricName}\` 的 \`mask\` column ${JSON.stringify(column)} 形态不合规 —— `
+      + '必须是「关系.列」形态的非空字符串，或 null（整值掩码：把 `… as value` 整个换成 typed NULL）'
+  }
+  if (column === null && m.kind !== 'nullify') {
+    return `指标 \`${metricName}\` 的 \`mask\` 是整值掩码（column 为 null）但 kind 是 \`${String(m.kind)}\` —— `
+      + '整值掩码只允许 `nullify`：把整个值换成 typed NULL 有 fail-closed 的语义，'
+      + '对整值做 round 没有语义（想按列 round 请写出具体 column）'
+  }
+  if (m.kind === 'round') {
+    const step = m.step
+    if (typeof step !== 'number' || !Number.isInteger(step) || step <= 0) {
+      return `指标 \`${metricName}\` 的 \`mask\` 声明了 round 但 step ${JSON.stringify(step ?? null)} 不是正整数 —— `
+        + '运行期会展开成 `round(<列>, -step)`，step 缺失/非整数会让掩码表达式到查询时才炸（静默面）'
+    }
+  }
+  return null
+}
+
+/**
+ * 声明的 `mask` → 掩码规格数组。**缺省 → `null`**（= 未声明；运行期由「源列 sensitivity」
+ * 推默认档——那是 authorize() 的运行期职责，本物化层不推）；给了就逐项校验，坏形状**响亮失败**
+ * （与 requiredScopeOf / slaDaysOf 同一脾气）。
+ *
+ * ⚠️ **`column` 非 null 时必须逐字出现在该指标的 `selectSql` 里**——这条只在这里判、门禁判不了
+ * （门禁手里没有物化后的 selectSql）：运行期展开是对 selectSql 做列引用定点替换，列不在里面
+ * ⇒ 替换一个都命中不了 ⇒ **掩码静默不生效**，这正是本设计最怕的失败形态（坏在数据里，不报错）。
+ * 词边界 `\b` + 转义后的逐字匹配（`.` 已转义——列引用是 `表.列` 形态，`.` 是正则通配符）。
+ * `column === null`（整值掩码）跳过这条——它本来就不按列命中。
+ *
+ * @param {unknown} v 声明里的 `mask` 原始值
+ * @param {string} metricName 指标名（只用于错误信息）
+ * @param {string} selectSql 该指标物化后的 select_sql（column 出现性的比对基准）
+ * @returns {MaskSpec[] | null} null = 未声明
+ */
+function masksOf(v, metricName, selectSql) {
+  if (v === undefined || v === null) return null
+  if (!Array.isArray(v)) {
+    throw new Error(
+      `指标 \`${metricName}\` 的 \`mask\` ${JSON.stringify(v)} 不是数组 —— 掩码声明是数组 `
+      + `（每项 {column, kind, step?, grantedBy}，如 [{"column":"fct_x.net_amount","kind":"round",`
+      + `"step":1000,"grantedBy":"data:precise"}]）。写错形状的掩码会静默不生效，宁响亮勿静默`,
+    )
+  }
+  /** @type {MaskSpec[]} */
+  const out = []
+  for (const raw of v) {
+    const err = maskItemError(raw, metricName)
+    if (err !== null) throw new Error(err)
+    const m = /** @type {Record<string, unknown>} */ (raw)
+    const column = m.column ?? null
+    if (column !== null) {
+      const hit = new RegExp(`\\b${escapeRegExp(String(column))}\\b`).test(selectSql)
+      if (!hit) {
+        throw new Error(
+          `指标 \`${metricName}\` 的 \`mask\` column \`${String(column)}\` 没有逐字出现在该指标的 `
+          + `selectSql 里 —— 运行期掩码是对 select_sql 做**列引用定点替换**，列不在里面 ⇒ 替换命中不了 `
+          + '⇒ 掩码静默不生效（本设计最怕的形态）。请写指标口径真正引用的限定列'
+          + `（本条 selectSql：\`${selectSql}\`）；若要掩的是敏感**源列**而非口径列，请声明 `
+          + '`column: null` 的整值掩码（kind 只许 nullify）',
+        )
+      }
+    }
+    // step 只在 round 下有语义：nullify 物化时剥掉它，免得库里的声明带着一个没人读的键
+    out.push(column === null || m.kind === 'nullify'
+      ? { column: /** @type {string | null} */ (column), kind: /** @type {MaskSpec['kind']} */ (m.kind), grantedBy: String(m.grantedBy) }
+      : { column: /** @type {string | null} */ (column), kind: /** @type {MaskSpec['kind']} */ (m.kind), step: /** @type {number} */ (m.step), grantedBy: String(m.grantedBy) })
+  }
+  return out
 }
 
 /**
@@ -423,6 +556,9 @@ export function declarationsFromYaml(parsed) {
     }
     const grain = m.grain.map((/** @type {unknown} */ g) => String(g))
     const relation = deriveRelation(expression, name)
+    // selectSql 先落一个变量：masksOf 的「column 须逐字在 selectSql 里」要拿它做比对基准
+    // （先校验后物化——坏声明的失败发生在**任何写库之前**，--check 模式同样拦）。
+    const selectSql = buildSelectSql(expression, grain, relation)
     // 新鲜度链路（spec §10.7）：sla_days 必填显式登记（缺/坏形状响亮失败，见 slaDaysOf）；
     // 关系集从 sources 路径段机械推导（未声明 sources = 空数组 = 无自动水位，字段缺席）。
     const slaDays = slaDaysOf(m.freshness_sla_days, name)
@@ -434,7 +570,7 @@ export function declarationsFromYaml(parsed) {
       description: String(m.definition ?? ''),
       requiredScope: requiredScopeOf(m.required_scope, name),
       subjectColumn: L1_SUBJECT_COLUMN,
-      selectSql: buildSelectSql(expression, grain, relation),
+      selectSql,
       groupBy: grain.join(', '),
       // 问数参数面：grain ∩ 白名单（spec 2026-10-15 §2.2）。L2 仍不开放参数面——
       // L2 是治理性持久切片，问数是会话内过滤，重量错配（spec §5 的边界声明，改前先回 spec）。
@@ -446,6 +582,9 @@ export function declarationsFromYaml(parsed) {
       totalable: deriveTotalable(expression),
       slaDays,
       freshnessRelations,
+      // 值级掩码声明（spec 2026-10-17 §5.2）：缺省 null（未声明）；给了就逐项校验
+      // （含「column 须逐字在 selectSql 里」——静默不生效形态的唯一拦点，见 masksOf）。
+      masks: masksOf(m.mask, name, selectSql),
     }
   })
 }
@@ -459,6 +598,8 @@ export function declarationsFromYaml(parsed) {
  * 不进比对的话，声明推导变了而库里没刷的情况会被永久判「未变」。
  * `slaDays` / `freshnessRelations` 第三组同理（spec §10.7）：SLA 登记与关系集推导变了
  * 而库内没刷，水位/固定行会永远按旧链路算——必须被 --check 检出。
+ * `masks` 第四组同理（spec 2026-10-17 §5.2）：掩码声明变了而库内没刷 = 掩码静默按旧声明生效
+ * （安全面，宁可不生效也不能背着旧声明生效）——必须被 --check 检出。
  */
 /**
  * 递归规范化：对象**键按字典序排序**，数组保序（顺序是语义的一部分）。
@@ -486,6 +627,7 @@ const comparableOf = (/** @type {ComparableMetric} */ row) => JSON.stringify(can
   row.totalable,
   row.slaDays,
   row.freshnessRelations,
+  row.masks,
 ]))
 
 /**

@@ -37,6 +37,8 @@ const PANEL_METRIC: L1MetricDef = {
   // L1 行恒有源（声明面必填）——本文件用 `['lemeng']` 扮演「宿主投影：本租户已接入该源」。
   sourceSystem: 'lemeng',
   slaDays: 1, freshnessRelations: [],
+  // 值级掩码声明（spec 2026-10-17 §5.2）缺省形态：未声明 = null（本文件不涉掩码）
+  masks: null,
 }
 
 /** 断言 2 的三个「不同面板」：同一声明形状、不同 `metricId`（= 一个报表里三个面板各查各的）。 */

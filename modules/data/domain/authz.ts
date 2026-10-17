@@ -17,6 +17,42 @@ export interface MetricParamDef {
   required?: boolean
 }
 
+/**
+ * 值级脱敏的 kind 词表（spec 2026-10-17 §5.1「能选不能扩」）。P2 v1 只收 round / nullify：
+ * `bucket` 的防护强度 = 桶宽（不是「安全」）且与 `total` 冲突（spec §5.1 附加约束 1），
+ * 真要区间展示时再加（spec「已知边界」2）。**加 kind = 改这个常量 + 加 mask.ts 的展开分支
+ * + 测试，走 PR。**
+ *
+ * ★ **唯一定义**：声明面门禁（scripts/sync-data-semantics.mjs 的 masksOf / check-data-models.mjs
+ *   的形状核）与运行期展开（domain/mask.ts，T2）都从本文件 import，别两处各列一份——
+ *   漂开的那份就是一条静默绕过口。
+ */
+export const MASK_KINDS = ['round', 'nullify'] as const
+export type MaskKind = (typeof MASK_KINDS)[number]
+
+/**
+ * 单条值级掩码声明（spec §5.2 声明链；库里 `data.metrics.mask_spec` jsonb 数组的元素）。
+ *
+ * `column === null` = **整值掩码**：运行期把 `… as value` 的表达式**整个**换成 typed NULL。
+ * 为什么必须允许 null（spec §4.1.1 默认档的构造性缺口）：默认档读的敏感值来自**契约列**
+ * （如 `lemeng.wholesale_out.cost_money`），而指标的 selectSql 引用的是 **marts 列**
+ * （如 `fct_contribution.n_net`）——契约列根本不出现在 selectSql 里，按列替换一个都命中不了
+ * ⇒ 掩码静默不生效。整值不给是 fail-closed 的正确语义：读了敏感列又没声明精细策略 ⇒
+ * 整个值都别给。整值掩码 kind 只许 `nullify`（对一个整值做 round 没有语义）。
+ */
+export interface MaskSpec {
+  /** 掩码目标的限定列引用（`关系.列`，须**逐字**出现在该指标 selectSql 里）；null = 整值掩码 */
+  column: string | null
+  kind: MaskKind
+  /** round 专用：舍入步长（正整数），运行期展开成 `round(<列>, -step)`；nullify 无此概念 */
+  step?: number
+  /**
+   * 豁免码：**持有它 ⇒ 看原值；否则套掩码**。与 requiredScope 的「默认拒绝」方向相反
+   * （masking 与 hiding 的本质区别，spec §5.2）——别把两个字段合成一个。
+   */
+  grantedBy: string
+}
+
 export interface MetricDef {
   id: string
   title: string
@@ -29,6 +65,14 @@ export interface MetricDef {
   /** 不含前导空格；空串 = 不分组 */
   groupBy: string
   params: Record<string, MetricParamDef>
+  /**
+   * 值级脱敏声明（P2，spec §5.2）：**可选可空**（undefined / null / 空数组 = 无掩码，三态同义
+   * ——存储行的 null 就是「未声明」，消费侧统一按 falsy 兜）。真值只来自 L1 物化路径（sync
+   * 从声明 `mask` 物化，声明侧已拦「列不在 selectSql 里」的静默失效形态）；L2 行恒 null。
+   * ⚠️ 它**不进 select_sql**：运行期在 authorize() 里对 select_sql 做列引用定点替换（T2 接线）
+   * ——占位符/掩码进 select_sql 会被 L2 编译（parseL1Select）原样带出去，spec §5.3 订正块。
+   */
+  masks?: MaskSpec[] | null
   /**
    * 可加指标（spec §8.4）：`expression` 以 `sum(` 开头 ⇒ 任何查询的响应自动附 `total` 合计值。
    * **可选**（缺省 = false = 无自动合计）：合成契约（L2 编译、测试夹具）可以不带——

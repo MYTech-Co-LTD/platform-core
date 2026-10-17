@@ -52,7 +52,7 @@ const L1_ID_PREFIX = 't6test:'
  * 不给源的 L1 行在 Task 5 的裁剪里会被判成「未接入源」而**没人看得见**——那是不该出现在夹具里的形状。
  */
 const l1Def = (over: Partial<MetricDef> = {}): L1MetricDef =>
-  ({ ...def(over), sourceSystem: 'lemeng', slaDays: 1, freshnessRelations: [] })
+  ({ ...def(over), sourceSystem: 'lemeng', slaDays: 1, freshnessRelations: [], masks: null })
 const L1_SALES = l1Def({
   id: `${L1_ID_PREFIX}net_sales`, title: '净销售额',
   selectSql: 'select sum(fct_retail_sale.net_amount) as value, system_book, bizday from fct_retail_sale',

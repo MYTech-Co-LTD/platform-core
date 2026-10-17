@@ -65,6 +65,8 @@ function l1(over: Partial<MetricRow> = {}): MetricRow {
     // 新鲜度链路（spec §10.7；缺省 = 无链路形态，本夹具不涉水位）
     slaDays: 1,
     freshnessRelations: [],
+    // 值级掩码声明（spec 2026-10-17 §5.2；缺省 = 未声明形态，本夹具不涉掩码）
+    masks: null,
     ...over,
   }
 }

@@ -302,7 +302,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
       ...METRIC, id: L1_TOTAL_PREFIX + 'auto',
       selectSql: 'SELECT sum(v) AS value, org, bizday FROM qp3_total_auto',
       groupBy: 'org, bizday',
-      sourceSystem: 'lemeng', totalable: true, slaDays: 1, freshnessRelations: [],
+      sourceSystem: 'lemeng', totalable: true, slaDays: 1, freshnessRelations: [], masks: null,
     })
     const sqls: string[] = []
     const autoDeps: QueryDeps = {
@@ -354,7 +354,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
         ...METRIC, id: L1_TOTAL_PREFIX + 'sem',
         selectSql: 'SELECT sum(v) AS value, org, bizday FROM qp3_total_auto',
         groupBy: 'org, bizday',
-        sourceSystem: 'lemeng', totalable: true, slaDays: 1, freshnessRelations: [],
+        sourceSystem: 'lemeng', totalable: true, slaDays: 1, freshnessRelations: [], masks: null,
       })
       let captured: string[] = []
       const rec: QueryDeps = {
@@ -604,6 +604,7 @@ describePg('runQuery —— freshness_line（spec §10.7，需要 DATABASE_URL�
       sourceSystem: 'lemeng', totalable: false,
       slaDays: over.slaDays ?? 1,
       freshnessRelations: over.relations ?? RELS,
+      masks: null,
     })
     if (over.slaDays === null) {
       await pool.query('update data.metrics set sla_days = null where org = $1 and id = $2',

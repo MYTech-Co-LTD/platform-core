@@ -190,8 +190,8 @@ const REQUIRED_METRIC_FIELDS = ['expression', 'grain', 'owner', 'tier', 'definit
 const METRIC_KEYS = new Set([
   'name', 'label', 'definition', 'expression', 'ratio', 'grain',
   'source', 'sources', 'freshness_sla_days', 'owner', 'tier',
-  // 列级/值级授权（spec 2026-10-17 §4.2/§4.3）
-  'reads', 'required_scope',
+  // 列级/值级授权（spec 2026-10-17 §4.2/§4.3/§5.2）
+  'reads', 'required_scope', 'mask',
 ])
 
 /**
@@ -1029,6 +1029,31 @@ export function checkDataModels(rootDir, opts = {}) {
           + '元素为非空无空白字符串的数组（如 ["lemeng.item.item_cost_price"]）。'
           + '它是血缘门的输入，写错会让门误判「没读这一列」。',
         )
+      }
+    }
+
+    // ⑤-d `mask` 形态（值级脱敏声明面，spec 2026-10-17 §5.2）：给了就必须是**逐项合规的数组**。
+    // 逐项判据（键闭集 / kind ∈ MASK_KINDS / round⇒step 正整数 / grantedBy 非空无空白 /
+    // 整值掩码只许 nullify）**唯一实现**在 sync 的 maskItemError（本文件 import 它，别抄第二份
+    // ——两处各判一份，漂开的那份就是静默绕过口）。⚠️ 「column 须逐字出现在 selectSql 里」
+    // 那条**不在这里**：门禁手里没有物化后的 selectSql，判不了；它归 sync 的 masksOf
+    // （物化与 --check 都会过它，单测钉住）。
+    const mask = metric.fields?.mask
+    if (mask !== undefined && mask !== null) {
+      if (!Array.isArray(mask)) {
+        push(
+          metric.file,
+          0,
+          `指标 \`${metric.name || '(空)'}\` 的 \`mask\` 形态不合规 —— 必须是数组（每项 `
+          + `{column, kind, step?, grantedBy}，如 [{column: "fct_x.net_amount", kind: "round", `
+          + 'step: 1000, grantedBy: "data:precise"}]）。写错形状的掩码声明会**静默不生效**'
+          + '（掩码是安全面，宁响亮勿静默）。',
+        )
+      } else {
+        for (const item of mask) {
+          const err = syncContract.maskItemError(item, metric.name || '(空)')
+          if (err !== null) push(metric.file, 0, err)
+        }
       }
     }
 
