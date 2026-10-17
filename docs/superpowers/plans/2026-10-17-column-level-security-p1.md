@@ -33,6 +33,7 @@
 | `scripts/check-data-contract.test.ts` | 上述门禁的夹具测试 | T1 加用例 |
 | `dbt/semantics/l1_metrics.yml` | L1 语义声明（**事实源**，35 条） | T2 加 `required_scope` / `reads` |
 | `scripts/sync-data-semantics.mjs` | YAML → `data.metrics` 物化 | T2 去掉硬编码 `requiredScope: null` |
+| `scripts/check-data-models.mjs` | dbt 工件静态门禁（规则 ⑤ = 语义声明） | T2 加形状核 + **未知键拒绝** |
 | `modules/data/manifest.yaml` | 权限码 + 路由声明 | T2 加 `data:cost` |
 | `scripts/check-column-scope-monotonicity.mjs` | **新建**：血缘单调门 | T3 |
 | `.github/workflows/ci.yml` | CI（`gates` job） | T3 接线 |
@@ -181,6 +182,7 @@ git commit -m "feat(data): 契约列加 sensitivity 标记与闭集门禁"
 **Files:**
 - Modify: `dbt/semantics/l1_metrics.yml`
 - Modify: `scripts/sync-data-semantics.mjs`（`toMetricRow` 的 `requiredScope` 一行 + 新助手）
+- Modify: `scripts/check-data-models.mjs`（规则 ⑤ 加两个新字段的形状核 + **未知键拒绝**）
 - Modify: `modules/data/manifest.yaml`（`permissions[]`）
 - Regenerate: `deploy/data-plane.lock`
 
@@ -264,11 +266,65 @@ function requiredScopeOf(v, name) {
 Run: `pnpm exec tsx scripts/sync-data-semantics.mjs --check`
 Expected: 退出 0（`--check` 检出漂移；本步只确认 YAML 能解析、形状校验全过）
 
-- [ ] **Step 5: 跑 dbt 工件门禁**
+- [ ] **Step 5: 补规则 ⑤ 的形状核 + **未知键拒绝**（**必做**，不是「看情况」）**
+
+> ⚠️ **为什么必做**：`scripts/check-data-models.mjs` 的规则 ⑤ 今天只做两件事——**必填字段齐全**、
+> **已知字段的形态核**（`source` / `freshness_sla_days` 各有自己的形状核，见 L220 / L236）。
+> 它**不拒绝未知键**。⇒ 一个把 `required_scope` 拼成 `required_scpoe` 的声明**不会报任何错**，
+> 于是那个指标**永远不受限制**——**正是本设计最怕的静默漏**（与 T1 那条 `sensitivity` 打错是同一类）。
+> ⇒ 本步**同时**做两件事：① 新字段的形状核；② 指标对象的**未知键拒绝**（闭集 = 今天的键集合）。
+
+- [ ] **Step 5a: 形状核**
+
+照 L236 `source` 那条的写法，给两个新字段各加一条：
+
+```js
+  // 规则 ⑤ 的形状：`required_scope`（列级/值级授权码，spec 2026-10-17 §4.2）——给了就必须是
+  // 非空、无首尾空白的字符串。**这里不判「码是否存在」**（那要读 manifest，属另一条门禁）；
+  // 缺字段的情形不报（缺省 = null = 不限制，是合法声明）。
+  // ⚠️ 为什么必须判形态：权限码是**逐字**比对的集合成员判断，带空白/空串的码谁也匹配不上
+  //    ⇒ 该指标对所有人静默不可见（坏在数据里，不报错）。
+  // 规则 ⑤ 的形状：`reads`（该指标读了哪些源列，spec §4.3）——给了就必须是**非空字符串数组**。
+  // 元素指向不存在的源列由 scripts/check-column-scope-monotonicity.mjs 报（T3），这里只判形状。
+```
+
+- [ ] **Step 5b: 未知键拒绝**
+
+先**从文件里读出**今天的键集合（**不要凭记忆列**）：
+
+```bash
+grep -oE '^    [a-z_]+:' dbt/semantics/l1_metrics.yml | sort -u
+```
+
+把结果作为闭集常量写进 `check-data-models.mjs`，并在规则 ⑤ 里对每个指标对象做差集检查：
+
+```js
+/** 语义声明允许的键（闭集）。**加字段 = 改这里 + 改 README + 走 PR。**
+ *  为什么必须是闭集：规则 ⑤ 的其余部分只认**已知**键 ⇒ 拼错的键名（`required_scpoe`）
+ *  会被完全忽略，声明「写了但没生效」，而症状是**那个指标永远不受限制**——静默，不报错。 */
+const METRIC_KEYS = new Set(['name', 'label', 'definition', 'expression', 'ratio', 'grain',
+  'source', 'freshness_sla_days', 'sources', 'owner', 'tier', 'reads', 'required_scope' /* ← 与上面 grep 结果核对后定稿 */])
+```
+
+```js
+    for (const k of Object.keys(m)) {
+      if (!METRIC_KEYS.has(k)) {
+        push(rel, 0, `指标 \`${name}\` 有未知字段 \`${k}\` —— 拼错的键名会被静默忽略`
+          + '（声明写了但没生效，症状是该指标永远不受限制）。允许的键见 METRIC_KEYS。')
+      }
+    }
+```
+
+- [ ] **Step 5c: 变异确认**
+
+在 `dbt/semantics/l1_metrics.yml` 里**临时**把某条的 `required_scope` 改成 `required_scpoe`，
+跑 `pnpm exec tsx scripts/check-data-models.mjs` ⇒ **必须报未知字段**。确认后改回来。
+（若它不报——说明差集检查没接上，**停下查清**。）
+
+- [ ] **Step 5d: 跑 dbt 工件门禁确认全绿**
 
 Run: `pnpm exec tsx scripts/check-data-models.mjs`
-Expected: 退出 0。⚠️ 若它报「未知字段 `reads`」——说明规则 ⑤ 是**白名单**式的，那就**必须**在同一处把
-`reads` / `required_scope` 登记为已知可选字段（否则以后有人写错键名会被静默忽略，正是本设计最怕的漏）。
+Expected: 退出 0（35 条声明全部通过闭集检查）
 
 - [ ] **Step 6: 重生成 lock + 全量门禁**
 
@@ -705,7 +761,9 @@ Expected: PASS（6 passed）
 
 ```ts
 import { deriveRequiredScope } from '../domain/report-scope'
-import { loadMergedCatalog } from '../domain/query-service'
+// ⚠️ `loadMergedCatalog` 的**家在 `domain/metric-store.ts:162`**，不在 query-service（后者只是它的
+//    调用方之一）。写计划时我第一版写成了 `'../domain/query-service'`——**那是错的**，已订正。
+import { loadMergedCatalog } from '../domain/metric-store'
 ```
 
 **① `PUT /reports/:id`**（L271-296）里，在 `withObjectLock` **之前**算出派生值：
@@ -713,7 +771,7 @@ import { loadMergedCatalog } from '../domain/query-service'
 ```ts
     // 派生 requiredScope（spec §4.2）：renderer='platform' 从面板推；metabase 无面板可推 ⇒ 用调用方给的值。
     const catalog = await loadMergedCatalog(ctx.pool, org)
-    const current = await getReport(ctx.pool, org, id)   // 复用 report-store 既有的读函数（若名为 getReportRow，以实际为准）
+    const current = await getReport(ctx.pool, org, id)   // report-store.ts:77
     if (current === null) return c.json({ error: 'NOT_FOUND' }, 404)
     let effectiveScope = parsed.data.requiredScope
     if (current.renderer === 'platform') {
