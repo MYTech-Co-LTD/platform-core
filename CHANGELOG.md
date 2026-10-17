@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.154.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.1...v0.154.2) - 2026-10-17
+- 【修复】data: 新鲜度水位先按关系取最新行再取木桶 ([#847](https://github.com/MYTech-Co-LTD/platform-core/pull/847), [a6fb584](https://github.com/MYTech-Co-LTD/platform-core/commit/a6fb584e336fd0ebf6aeeba7c599b5ff52e512c9))
+
+
 ## [0.154.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.0...v0.154.1) - 2026-10-17
 - 【优化】data: materialize 逐域跑 + 逐域落账（拆爆炸半径）（Refs #729） ([#841](https://github.com/MYTech-Co-LTD/platform-core/pull/841), [06b4a1f](https://github.com/MYTech-Co-LTD/platform-core/commit/06b4a1f3fc37704cc179683074be37e92ea91e76))
 
