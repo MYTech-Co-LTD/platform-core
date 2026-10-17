@@ -81,6 +81,36 @@
 - [ ] E3 跑一次成功 run 起算新鲜度时钟（**登记面③**）
 - [ ] E4 排班如实入账（§2 台账行 + 调度记录对得上）
 
+#### E 段实施分解（2026-10-17 定案：forms 走**专属 console**）
+
+> 决策（人确认 2026-10-17）：forms 建**自己的 console/workspace**，不与乐檬账套混装——ADR-0014「一账套一
+> console」；混装根因是**调度条目带不了自己的 env**（实测：提交时塞 env/args/params 被静默丢弃）⇒ 静默采错源。
+> 下列各条是上文 E1–E4 的分解，**依赖顺序不许跳**：`E·闸 → E·种子 → E·console → E·告警(反向测试) → E·登记面②③ → E·验收 → E·收尾`。
+
+- **E·闸**（先做，纯静态可当场验）：`check-console-schedules.mjs` 的「共享族」判据从「无数字后缀」
+  升级为「**同域**（管线名首段）+ 本账套后缀」；账套书 → 域：纯数字 = `lemeng`，非数字书名 = 其字面量域
+  （`forms`），且该域必须有管线。随之**删除** `EXEMPT_GLOBAL` 里 `forms.submission.l0` 那条豁免（它存在的
+  唯一理由就是闸把无后缀管线当乐檬共享族——正是那条注释预告的动作）。
+- **E·种子**（登记面①）：新增 `schedules/forms.json`（一条 `forms.submission.l0`，`enabled: true`，
+  `timezone: Asia/Shanghai`，日批）。⚠️ **两处联动**：① `console-schedules-tz.test.ts` 钉的是「两本种子
+  23 条」+ spec §10.6 转换表（其头注：改排班先改表，改表先改 spec）⇒ 加书必须同步改测试与表；
+  ② `check-console-alerts` 判据 B ⇒ 已排班管线必须被**同源** `alerts.forms.json` 的 `on: [failure]` 命中。
+- **E·告警**（G 段的仓内件，`data-monitor` 执法）：新增 `alerts.forms.json`（`match: forms.submission.l0`、
+  `on: ["failure"]`、`channel` 走既有 OO 转投，与 `alerts.lemeng.json` 同源同路）。🚦 **硬判停（skill 场景 C）**：
+  合并前必须做**反向测试**（人为触发一次真红 → OO 规则/企微真收到）并留证；该测试依赖 console 已存在 ⇒
+  **仓内文件（E·种子/E·告警）与基建（E·console）同批做、反向测试后再合入**。
+- **E·console**（生产机动作）：在 mytech 数据面项目（`proj_SU8cmQ8OLVfM971X` / server `23a1091e`）新增
+  **forms console 服务行**——照 `lemeng-console-<账套>` 形态（image `platform-core-duckle:local`、**独立
+  workspace 卷**、不与既有 `duckle`/etl 服务行共用）。凭据面：workspace 内 `connections/<id>.json`（密文）+
+  平台侧**一 PAT 一租户**（导出按 `identity.orgId` 隔离）。seed：`schedules.json` + `pipelines/`（含管线依赖的
+  子管线/连接）+ `alerts.json` / `owners.json`。两个已实测的坑：① **相对 bind 会被当卷名**（挂载一律绝对路径）；
+  ② 卷内定义**重启即生效**，改 **env 键**必须 refresh 重建容器。
+- **E·登记面②③**：② 重建 catalog（`POST /api/catalog` 或容器内 `duckle catalog build --workspace /workspace`）
+  ——漏了 ⇒ run record 整条不带 `assets` ⇒ 新鲜度锚静默失效；③ 跑一次成功 run 让新鲜度时钟起算（历史不追溯补）。
+- **E·验收**（= 下文 F）：首跑成功后再**恢复** `stg_forms_submission`（#752 的暂时摘除）。
+- **E·收尾**：正典 §5 验收行 + §1.6 案例库（只增不改）+ WeKnora（先查重）；并在 §1.7 备注注明 ADR「sync job
+  调度」那句按松写法处理（#729 🔴 区）。
+
 ### F 验收（§1.4 / §1.4.1）
 
 - [ ] F1 四层验收逐层过（自证 / 幂等 / 独立通道 / 跨系统），缺一层不算过
