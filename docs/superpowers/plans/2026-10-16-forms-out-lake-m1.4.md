@@ -111,16 +111,33 @@ dbt/models/common/marts/     ← 全是乐檬 fct_*
 
 | # | 问题 | 我的建议 |
 |---|---|---|
-| 1 | **桶**：mytech 数据面复用 `shanhai-data`，还是新开 `mytech-data`？ | **新开 `mytech-data`**——复用 = 把 mytech 自身域的表单数据写进**客户（山海）的桶**，与交付边界相悖；同桶还会把 §3 的反向泄漏从「配错才发生」变成「隔离一失效就发生」。⚠️ `mytech-data` 桶**是否已存在未核实**，需先查 |
+| 1 | **桶**：mytech 数据面复用 `shanhai-data`，还是新开 `mytech-data`？ | **新开 `mytech-data`**——复用 = 把 mytech 自身域的表单数据写进**客户（山海）的桶**，与交付边界相悖；同桶还会把 §3 的反向泄漏从「配错才发生」变成「隔离一失效就发生」。**✅ 已核实（2026-10-17）：湖侧只有 4 个桶，没有 mytech 自己的湖桶 ⇒ 开桶是人工前置。** 核实方法与证据见下 |
 | 2 | 山海侧 forms 残留（console `svc_nQaReL0EvSBqK9gW` + `staging.stg_forms_submission`）何时退 | 回迁验收通过后**同批退**，避免双写窗口 |
+
+### 5.1 桶核实（2026-10-17，三条独立证据，全部经 openship MCP / 容器内只读）
+
+| # | 证据 | 结果 |
+|---|---|---|
+| 1 | openship `get_projects_by_id_storage`（`proj_SU8cmQ8OLVfM971X`） | `binding: null`、`candidates: []` ⇒ **openship 答不了**（ZOS 是外部存储，openship 只管它自己装的 MinIO app） |
+| 2 | 仓内检索桶名 | 桶名**从不硬编码**，一律经 `LEMENG_ZOS_BUCKET` / `ZOS_BUCKET` env 取 ⇒ **仓也答不了** |
+| 3 | SigV4 `ListBuckets`（stdlib 签名器，跑在 forms-console 容器内，凭据取容器自身 env） | `HTTP OK`；**桶清单 = `after-sales` / `bucket-5b9f` / `lemeng-datasource` / `shanhai-data`**（恰 4 个，**无 mytech 湖桶**） |
+
+> **附带结论**：该 ZOS 凭据**具备账号级 ListBuckets 权限**（能列出全部 4 个桶，不只是自己那一个）。
+>
+> **交叉验证（DuckDB glob 判别）**：山海 pg_duckdb 上 `glob('s3://shanhai-data/*')` → HTTP 200；
+> `glob('s3://mytech-data/*')` → **HTTP 404 `region 'xinan1'`**；阴性对照 `zzz-no-such-bucket-probe-xyz`
+> → **同款 404** ⇒ `mytech-data` 对该凭据不可见。（S3 对不存在的桶返回 **404 NoSuchBucket**，不是 403。）
+>
+> ⚠️ **本次刻意未测 `CreateBucket`**：那是在公司 ZOS 账号里的**真实基建变更**，且超出 openship 管辖面
+> ⇒ 归 R5 的人工前置，**不在此处顺手做**。
 
 ### 6 修订后的步骤（替代下文 E·console）
 
-- [ ] R1 **架构文档更新**（新增「域」维度 + 数据面归属口径）→ 人审
+- [ ] R1 **架构文档更新**（新增「域」维度 + 数据面归属口径）→ 人审 —— **稿已成：PR #818**（`docs/architecture.md` 新增 §2.5 + §2.2/§4.2/§5.1 三处交叉引用），**待人审**
 - [ ] R2 dbt 树按域分目录 + `+enabled` 域开关 + 门禁文案（纯仓内，可 CI 验）
 - [ ] R3 mytech 数据面启用：S3 凭据 → Gate-B 接线 + `search_path`（`wire-warehouse.sh --check` 七断言全绿）→ `dbt`/`duckle` 服务行改绝对路径卷 → 数据面工件 sync（lock）
 - [ ] R4 mytech 侧 materialize job（照 `lemeng-dbt-materialize` 形态，容器名/网络全换 mytech）
-- [ ] R5 forms console 落到 `proj_SU8cmQ8OLVfM971X`（新桶）→ seed workspace（含 `.duckle/keys/secret.key`）→ 重建 catalog → 首跑成功
+- [ ] R5 forms console 落到 `proj_SU8cmQ8OLVfM971X`（**新桶 —— 人工前置：开 `mytech-data`，见 §5.1**）→ seed workspace（含 `.duckle/keys/secret.key`）→ 重建 catalog → 首跑成功
 - [ ] R6 验收：staging `org = mytech` + mytech 平台侧可查（四层验收）
 - [ ] R7 山海侧残留退役 + 正典三处登记更新 + WeKnora 沉淀
 
