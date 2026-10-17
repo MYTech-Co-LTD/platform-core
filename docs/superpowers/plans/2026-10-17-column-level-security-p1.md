@@ -17,7 +17,7 @@
 3. **闭集是代码常量，不是配置**：`sensitivity` / （P2 的）`mask.kind` 只能**选不能扩**；加值 = 改常量 + 改 schema + 改门禁 + 走 PR（同 `CHART_TYPES` 纪律，`modules/data/domain/report-spec.ts:12`）。
 4. ⚠️ **契约元 schema 没有校验器**（`contracts/README.md` §4.3 自陈欠账）⇒ **闭集必须在 `scripts/check-data-contract.mjs` 里实现**，那是唯一进 CI 的契约检查。只改 `_schema.schema.json` = 没改。
 5. ⚠️ **改 `contracts/**` 或 `dbt/**` ⇒ 必须重跑 `pnpm exec tsx scripts/lemeng/data-plane-lock.mjs`**（lock 覆盖 contracts 19 条 + dbt 105 条），否则 `check-data-plane-lock.mjs` 红。
-6. **权限码**：P1 新增 `data:cost`（`modules/data/manifest.yaml` 的 `permissions[]`），由装载器按各租户 org 逐个 upsert——**不新增发码通路**。租户管理员可发（`POST /admin/permissions/:code/users`，`requireScope('tenant:admin')`）。
+6. **权限码**：P1 新增 `data:cost`（`modules/data/manifest.yaml` 的 `permissions[]`），由装载器按各租户 org 逐个 upsert——**不新增发码通路**。租户管理员可发：`POST /api/platform/admin/permissions/:code/users`（**挂载点是 `/api/platform/admin`**，`apps/server/src/app.ts:302`；处理器 `apps/server/src/routes/admin.ts:151`；门卫 `requireScope('tenant:admin')` 在 `admin.ts:57`）。该端点会校验码必须 ∈ 模块声明的 `permissions[]`（否则 404 `NO_SUCH_CODE`）⇒ **T2 的 manifest 步骤不是可选项**。
 7. **审计**：P1 **不加** `data.query_audit` 的列（既有 `verdict='denied'` 已覆盖 P1 的全部形态；`masking` 列随 P2）。
 8. **提交纪律**：`<type>(<scope>): <一句话>`；本计划所有 PR 的 body 含 `Closes #764`（或 `Refs #764`，视该 PR 是否收口伞 issue 而定）；CHANGELOG 禁手写。
 9. **本计划不碰**：`modules/data/domain/query-service.ts` 的查询路径、`authorize()` 本体、任何掩码/值级逻辑（全归 P2）。P1 **只加声明面与门禁**，**不改运行时行为**——这是刻意的：先让「约束」可表达、可检查，再谈执行。
@@ -314,6 +314,11 @@ const METRIC_KEYS = new Set(['name', 'label', 'definition', 'expression', 'ratio
       }
     }
 ```
+
+> ⚠️ **`push` 在这个文件里有两个绑定，签名不同，别抄错**（2026-10-17 核实）：规则⑤ 的语义声明段
+> 用的是 **`push(rel, 0, message)`（三参，`rel` = 当前文件）**，如 L956 那句「YAML 解析失败」；
+> 而文件别处另有一个 **`push(line, message)`（两参）** 的绑定（L521 附近）。
+> ⇒ 在规则⑤ 段里写 `push(rel, 0, …)` 是**对的**；照抄别处的两参形态反而会静默拼错。
 
 - [ ] **Step 5c: 变异确认**
 

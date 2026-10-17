@@ -53,6 +53,17 @@ domain/agent-loop.ts:158  chat  ┘   query-service.ts:200   authz.ts:255-271
 报表渲染 ──(HTTP)──▶ /query ────────┘        ← ⚠️ 报表**不是**直接调 runQuery，是打 HTTP
 ```
 
+**「报表打 HTTP」这条有明文纪律撑腰**（2026-10-17 核实，不是我从调用图猜的）——
+`modules/data/console/reports/SpecView.tsx:200` 逐面板 `apiSend('/query', 'POST', { metricId, args })`，
+其头顶注释（`:10-12`）写着：
+
+> **通路纪律**（spec §5 / 计划 6 裁决 5）：面板数据走既有 `POST /query`，**一个面板一次**——
+> 语义裁剪、授权、按调用者身份注入主体值、逐查询落 `data.query_audit` 全部复用；
+> **不造「整报表数据」端点（那会把 N 次授权/审计合并成一次）**。
+
+⇒ 这条**既支持本设计、也约束本设计**：报表面**天然继承**列级/值级执法（无需另做），
+但也**不许**为了它去造一个合并端点——那会把 N 次授权/审计合并成一次，正是这条纪律禁止的。
+
 - `runQuery` 自己**不拼 SQL**，执行的是 `authz.plan.sql`（`query-service.ts:279`）。
 - SQL 形状（`authz.ts:255-271`）：
 
@@ -65,7 +76,7 @@ const sql = wantTotal
 ```
 
 - `metric.selectSql` 由**编译期**产出：L1 走 `buildSelectSql(expression, grain, relation)`
-  （`scripts/sync-data-semantics.mjs:228-231`），L2 走 `compileL2`（`semantic-compiler.ts:533/579/641`）。
+  （`scripts/sync-data-semantics.mjs:228-231`），L2 走 `compileL2`（`semantic-compiler.ts:641`）。
   形态：`select <expression> as value[, <dims>] from <relation>`。
 - 回包 `QueryOk`（`query-service.ts:156-187`）：`status/subject/metricId/columns/rows/truncated/total?/data_as_of?/watermark?/freshness_status?/freshness_line?`。
 
@@ -338,9 +349,15 @@ L2 指标同理，声明在 L2 定义里，经 `compileL2`（`semantic-compiler.
 
 ### 5.6 误伤怎么修，以及**自助的边界在哪**（R2 已裁决，2026-10-17）
 
-**裁决**：`grantedBy` 特权码**由租户管理员发**——租户管理员在租户内是最高权限，发码走既有机制
-（`POST /admin/permissions/:code/users`，`apps/server/src/routes/admin.ts`，`requireScope('tenant:admin')`），
-**不新增任何发码通路**。
+**裁决**：`grantedBy` 特权码**由租户管理员发**——租户管理员在租户内是最高权限，发码走既有机制，
+**不新增任何发码通路**。确切位置（2026-10-17 核实）：
+
+- 端点 `POST /api/platform/admin/permissions/:code/users`——**挂载点是 `/api/platform/admin`**
+  （`apps/server/src/app.ts:302` 的 `app.route('/api/platform/admin', adminRoutes(...))`），
+  不是裸 `/admin`；处理器在 `apps/server/src/routes/admin.ts:151`。
+- 门卫 `app.use('*', requireScope('tenant:admin'))`（`admin.ts:57`）——整组路由都要 `tenant:admin`。
+- 该端点还校验 `code` 必须 ∈ 模块声明的 `permissions[]`（否则 404 `NO_SUCH_CODE`，`admin.ts:153`）
+  ⇒ **这正是「码必须先写进 manifest」的机械保证**（§8.1 的第 ① 步不是可选项）。
 
 **误伤的两条修法，一条自助一条不自助**（别含糊）：
 
