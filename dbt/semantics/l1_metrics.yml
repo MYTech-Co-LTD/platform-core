@@ -117,6 +117,32 @@ metrics:
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
 
+  - name: 'lemeng:retail:consecutive_no_sales_days'
+    label: 连续无业绩天数
+    definition: >-
+      03-05：从报告日向前**逐日累计**的连续无正向销售天数（正向销售 = `Σsale_money > 0`）。
+      **不可加**（跨日/跨店求和无意义）⇒ 用 `max(…)` 取该粒度上的值，消费侧不要跨行求和。
+      **建立在门店×日骨架 `fct_branch_day_activity` 上**——零售事实只在「有单」的店日有行，
+      「店开着但零销售」没有行 ⇒ 骨架补真零天，否则缺口被当成「不存在」而不是「零」。
+      **射程（必须读）**：只对 `retail_active`（观察窗内有过零售销售）的门店成立；无零售历史的
+      门店（批发客户/仓库/配送节点）恒为连续无业绩，**不构成经营异常信号**。故 expression 内按
+      `retail_active` 收缩。**已知盲区**：整窗零零售的门店与「窗内一直闭店」无法区分（历史仅 25 天），
+      待客户营业日历（`x01_branch_calendar`）或更长窗口；「断数 vs 零销售」的最终判定仍需 X09。
+      ⚠️ 与 01-06「规则闭店候选」的区别：本指标只出**天数**，**15 日门槛属 01-06/X08，不在本口径**。
+      粒度 = 账套 × 业务日 × 门店。
+    expression: >-
+      max(case when fct_branch_day_activity.retail_active
+               then fct_branch_day_activity.consecutive_no_sales_days end)
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      # 只列**度量源**（约定同 contribution:region_net——它用 dim_branch.region_id 但不列该路径）。
+      # 门店快照是维度依赖，已写在 definition 里。
+      - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
+
   # ── W1（2026-10-12）：transfer/wholesale 出域骨架 9 条 ──────────────────────────────
   # 构件落点：fct_hq_outbound（R/C/G 长表）/ fct_transfer_line_quality（行质量面）/
   #   fct_transfer_item（商品粒度）。口径与基面的「为什么」在各 fct 头注。
