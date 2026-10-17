@@ -200,8 +200,12 @@ pre_sale = {int(x['branch_num']): float(x.get('sale_money') or 0) for x in rows}
 pre_ret = {int(x['branch_num']): float(x.get('return_money') or 0) for x in rows}
 
 
-def compare(tag, fail_tag, lake_map, pre_map, tol_abs, tol_pct):
-    """一条判据：打印 verdict 行，返回 0=通过 / 1=判红。"""
+def compare(tag, fail_tag, lake_map, pre_map, tol_abs, tol_pct, report_sets=True):
+    """一条判据：打印 verdict 行，返回 0=通过 / 1=判红。
+
+    report_sets=False ⇒ 不重复打键集判定（miss/extra）。净额侧与销售侧键集恒同，
+    键集告警只在销售侧打一次，免得一次 miss 打两遍 branch_missing。
+    """
     miss = [b for b in lake_map if b not in pre_map]
     extra = [b for b in pre_map if b not in lake_map]
     lt = round(sum(lake_map.values()), 2)
@@ -217,17 +221,19 @@ def compare(tag, fail_tag, lake_map, pre_map, tol_abs, tol_pct):
     if not settled:
         print('%s_UNSETTLED book=%s bizday=%s（未过定稿线：源还在变，只报数不判红）' % (tag, book, day))
         return 0
-    if miss:
-        print('PREAGG_FAILED:branch_missing 湖有而源无的门店 %d 家：%s' % (len(miss), sorted(miss)[:20]))
-        return 1
-    if extra:
-        print('  注：源有而湖无的门店 %d 家（当日无销售）：%s' % (len(extra), sorted(extra)[:20]))
+    if report_sets:
+        if miss:
+            print('PREAGG_FAILED:branch_missing 湖有而源无的门店 %d 家：%s' % (len(miss), sorted(miss)[:20]))
+            return 1
+        if extra:
+            print('  注：源有而湖无的门店 %d 家（当日无销售）：%s' % (len(extra), sorted(extra)[:20]))
     if abs(diff) > tol:
         print('PREAGG_FAILED:%s 差 %s%.2f 超容差 %.2f（total_pre=%.2f，%s%.4f%%）'
               % (fail_tag, sign, diff, tol, pt, sign, pct))
         return 1
     if abs(diff) >= 0.005:
         print('%s_DRIFT book=%s bizday=%s diff=%s%.2f（在容差内）' % (tag, book, day, sign, diff))
+        return 0
     print('%s_OK book=%s bizday=%s branches=%d' % (tag, book, day, len(lake_map)))
     return 0
 
@@ -235,10 +241,11 @@ def compare(tag, fail_tag, lake_map, pre_map, tol_abs, tol_pct):
 # 销售侧：口径未变，容差沿用 PREAGG_ABS_TOL / PREAGG_MAX_PCT（恒逐分）。
 rc_sale = compare('PREAGG', 'threshold', lake_sale, pre_sale, abs_tol, max_pct)
 # 净额侧：新增，过渡容差 NET_ABS_TOL（**带到期条件**，见头注 / issue #814）。
+# report_sets=False：键集与销售侧恒同 ⇒ 漏店/多店只在销售侧打一次，这里不重复。
 rc_net = compare('PREAGG_NET', 'net_threshold',
                  {b: lake_sale[b] - lake_ret[b] for b in lake_sale},
                  {b: pre_sale[b] - pre_ret.get(b, 0.0) for b in pre_sale},
-                 net_abs_tol, max_pct)
+                 net_abs_tol, max_pct, report_sets=False)
 sys.exit(1 if (rc_sale or rc_net) else 0)
 PY
 _rc=$?
