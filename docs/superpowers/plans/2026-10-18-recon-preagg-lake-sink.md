@@ -91,99 +91,81 @@ break.disposition   | disposition_by
 
 不一致时不是"谁错"，而是**桥上有多少、为什么**。⇒ `recon_break` 的 `disposition` 必须写明按哪边修的。
 
-## 3. 契约草案（C 段）
+## 3. 分解（第三版：湖只装事实，台账归 dbt）
 
-两个新湖资产，各自一份 `contracts/common/` 文件 + 管线/脚本侧 `data.schema` 申报（**两处逐字一致**）。
+> 修订理由（2026-10-18 读码）：父管线 `lemeng.recon.preagg` 的 `pday` 把**全部门店拼成一个 JSON 数组**，
+> `pfe`（`ctl.foreach`，`itemKey=bizday`）一天只跑一次子管线 ⇒ 请求必然是「全部门店」。
+> 64188 有 129 家、3120 有 271 家，**都 >100 ⇒ 必 `10001`**（端点硬限，已实测）。
+> 而 `check-data-contract` 要求生产方是**带 `snk.*` 的 duckle 管线** ⇒ 生产方必须沿这条父子链走。
 
-### 3.1 `lemeng/recon_run` — 分区 `system_book=` + `bizday=`，文件 `all.parquet`
+| 层 | 放什么 | 为什么放这 |
+|---|---|---|
+| **湖资产 ×1** | `lemeng/recon_preagg`，粒度 **(system_book, bizday, chunk_no, branch_num)** | 只放**逐店比对事实**。加一级 `chunk=` 分区即解决 >100：父管线按 ≤100 家切块，每块一个子管线 run、写自己那一片 |
+| **dbt 模型 ×2** | `recon_run`（`status` / `break_count` / `max_break` / 容差 / `not_evaluated`）+ `recon_break`（超容差行 + 原因/到期/认领） | **台账是派生分析，不是采集**。放 dbt ⇒ 天然可复算、可测试，且不必为它维护第二份采集 |
+| **seed ×1** | `dbt/seeds/recon_reason_codes.csv`（`reason_code` / `expires_on` / `disposition_by`） | 与 `x08_thresholds` 同形：**配置不是数据** |
+
+## 4. 分段实施
+
+### B 选型定案（已完成并两轮订正）
+§1.7 已登记；本版把落点改为**一个湖资产 + dbt 台账**。
+
+### C 契约（与 D 同批，不能单独落）
+`contracts/common/lemeng.recon_preagg.json`，hive 三级分区 `system_book=` / `bizday=` / `chunk=`，列：
 
 | 列 | 类型 | 说明 |
 |---|---|---|
 | `batch_id` | varchar | 批次标记（既有约定） |
-| `system_book` | varchar | 账套（分区键） |
-| `bizday` | date | 被对账的业务日（分区键） |
-| `control` | varchar | `caliber_sale` / `caliber_net`（**completeness 不在此资产内**，见 0.1） |
-| `status` | varchar | `ok` / `within_tol` / `over_tol` / `not_evaluated` |
-| `reason` | varchar | null；`not_evaluated` 时必填（2.2 的四值） |
-| `rows_source` | int | 源报表行数 |
-| `rows_target` | int | 平台侧行数 |
-| `break_count` | int | 超容差实体数 |
-| `max_break` | decimal(20,2) | 最大单实体差（绝对值） |
-| `tol_abs` | decimal(20,2) | 本次绝对容差 |
-| `tol_pct` | decimal(10,4) | 本次相对容差（%） |
-| `tol_applied` | decimal(20,2) | 实际生效容差 = max(abs, pct×|target|) |
-| `source_called_at` | timestamptz | 源接口调用时刻 |
-| `evaluated_at` | timestamptz | 判定时刻 |
+| `system_book` / `bizday` / `chunk_no` | varchar/date/int | 分区键 |
+| `branch_num` | bigint | 门店 |
+| `platform_sale` / `source_sale` | decimal(20,2) | **销售侧**：平台自算 / 源报表 |
+| `platform_net` / `source_net` | decimal(20,2) | **净额侧**：平台自算 / 源报表 |
+| `computed_at` | timestamptz | 计算时刻 |
 
-### 3.2 `lemeng/recon_break` — 同分区
+> 容差与原因**不进湖**——它们是**判定配置**（seed）与**派生物**（dbt），落湖会把配置冻进事实。
 
-| 列 | 类型 | 说明 |
-|---|---|---|
-| `batch_id` / `system_book` / `bizday` | 同上 | 分区键 |
-| `control` | varchar | 同上 |
-| `entity` | varchar | 门店号（可 1:1 匹配的最细粒度） |
-| `source_value` | decimal(20,2) | 源报表值 |
-| `target_value` | decimal(20,2) | 平台值 |
-| `diff` | decimal(20,2) | `source − target` |
-| `tol_applied` | decimal(20,2) | 该实体生效容差 |
-| `bound_by` | varchar | `abs` / `pct` |
-| `verdict` | varchar | `within_tol` / `over_tol` |
-| `reason_code` | varchar | null = 未认领；具名 = 已知并接受（2.3） |
-| `expires_on` | date | null = 无到期（必须清零）；有值 ⇒ 过期自动转 `over_tol` |
-| `disposition` | varchar | 处置说明（按哪边修） |
-| `disposition_by` | varchar | 认领人 |
+配 `dbt/models/lemeng/staging/stg_lemeng_recon_preagg.sql` + 跑 `gen-data-projection.mjs`。
 
-> ⚠️ **降级路径**（若 duckle/脚本写两个 parquet 成本过高）：合并为单资产 + `record_type` 判别列。
-> **但必须保留 `not_evaluated` 行**——否则 2.1 的核心保障失效。此为备选，默认不用。
+### D 管线（父 + 子）
 
-## 4. 分段实施
+- **父** `lemeng.recon.preagg`：`pday` 由「一行 + 全部门店」改为**「每 ≤100 家一行」**
+  （`chunk_no` + 该块 `branch_nums_json`）；`pfe` 的 `itemKey` 改为 `bizday + chunk_no`。
+- **子** `lemeng.recon.preagg.item`：`report snk.csv` **保留**（heal 与人工排障在用），
+  **新增** `snk.parquet` → `lemeng/recon_preagg/system_book=<账套>/bizday=<日>/chunk=<n>/all.parquet`，
+  写逐店两侧值（不带容差/判定）。
+- `data.schema` 申报与契约列集**逐字一致**。
+- 判停：先单日单块真跑 → 回读校验 → 再全量。
 
-### B 选型定案（已完成）
-§1.7 已登记「派生资产非源」。本版把该行的三条裁决更新为**四态 + 两表 + reason/expires**。
-
-### C 契约（**不能单独落仓**）
-`check-data-contract` 要求「生产者与 staging 均已对齐」⇒ **C 必须与 D 同批**。
-两份契约 + 生成器（`gen-data-projection.mjs`）跑出生成物，**不手改投影**。
-
-### D 生产方（脚本，不是管线）
-- 改 `scripts/lemeng/recon-preagg.sh`：在现有「分批 → 合并 → compare」之后，**多产两段输出**（run 行 + break 行）。
-- 落湖：经 console 容器的 zos 连接写两个前缀（脚本已在 `docker exec` 进 console，不新增凭据面）。
-- **保留原 CSV 输出**（`recon-day-heal` 与人工排障仍在用），切换后再谈退役。
-- 判停：先单日真跑，**回读校验**（行数与 `break_count` 对得上）再谈排班。
-
-### E 排班（**当前没有，这是本任务的核心增量**）
-- 给 caliber 对账**新建**一条日 job（T-3 线，与 `recon-day-heal` 错峰），命令 `sh /opt/lemeng-recon-preagg.sh <bizday>`。
-- **三个登记面**：① 排班种子/openship job；② **重建 catalog**（漏了 ⇒ 新鲜度锚静默失效）；③ 跑一次成功 run 起算。
-- 锚：`owners.lemeng.json` 加两个前缀。
+### E 排班（本任务的核心增量：口径对账现在**没有排班**）
+- 64188 已有 `30 0`（从没跑过）；**3120 未排**——`_note` 里「3120 恒 10006 所以不排」已被今日实测推翻 ⇒ **一并排上**。
+- **三个登记面**：① 排班种子/openship job；② **重建 catalog**；③ 跑一次成功 run 起算。
+- 锚：`owners.lemeng.json` 加 `lemeng/recon_preagg` 前缀。
 
 ### F 验收（四层）
 | 层 | 判据 |
 |---|---|
-| 自证 | 写后回读：`recon_run` 每 (账套,日,control) 恰 1 行；`break_count` == `recon_break` 行数 |
-| 幂等 | 同日重跑覆盖写，行集不变 |
-| 独立通道 | 本资产**就是**独立通道产物 ⇒ 反向验：仓内 `diff` == CSV 同日差 |
+| 自证 | 写后回读：某日各块门店并集 == 湖侧门店集；两侧值与 CSV 同日逐分一致 |
+| 幂等 | 同日同块重跑覆盖写，行集不变 |
+| 独立通道 | 本资产**就是**独立通道产物；反向验：dbt `recon_break` 的差 == CSV 差 |
 | 跨系统 | 待回填 |
 
 ### G 运维
-- 判据用 **`status` + `break_count` 趋势 + 到期 break**，不是「有没有行」。
-- 告警：`status ∈ {over_tol, not_evaluated}`；**`not_evaluated` 单独成一条**（源故障 ≠ 数不平）。
+- 判据用 **`recon_run.status` + `break_count` 趋势 + 到期 break**，不是「有没有行」。
+- 告警：`status ∈ {over_tol, not_evaluated}`，其中 **`not_evaluated` 单独成一条**（源故障 ≠ 数不平）。
 
 ### H 回填
-- 首批近 14 天，走同一脚本换 `bizday`；逐日与 CSV 对平后入库。
+- 首批近 14 天；走同一条管线换 `bizday` 窗，不写一次性脚本。
 
-## 5. 风险与未验（写在最前面）
+## 5. 风险与未验
 
-1. **容差让缺口可见，但不让它消失**：`within_tol` 的 break 必须**有 `expires_on`**，
-   否则这本台账会变成"什么都放过的橡皮图章"。**没有到期日的 reason_code 不允许写库。**
-2. **`not_evaluated` 必须真的出现**：上线首周要**主动**制造一次源不可用（或等自然发生）验证它落成
-   `not_evaluated` 而不是 `ok`——这是本设计最重要的一条，也是最容易在实现里被吞掉的一条。
-3. **3120 有 271 个门店号**：脚本已分批；但**"批间源数据在变"**（回调/退款）未验——批与批之间
-   源可能已重述 ⇒ 全量跑完的 `source_called_at` 要记**起止**（当前列只有单值，D 段决定是否拆两列）。
-4. **未验**：脚本经 console 写 parquet 的具体形态（D 段第一次跑就要验覆盖写语义）。
+1. **`not_evaluated` 最容易被吞掉**：源挂/空/10001 时，代码最容易顺手记成「零不平 = ok」。
+   **上线首周必须主动制造一次源不可用**验证它。
+2. **`ctl.foreach` 的 itemKey 变更未验**：`itemKey` 从 `bizday` 改为 `bizday+chunk_no` 是**引擎行为改动**，
+   必须先跑一次两块的日期确认两个子 run 都执行、且各写各的分区。
+3. **inline foreach 持续失败会截尾**（既有实测）：块间失败不会自动补齐 ⇒ 需要「块级完整性」断言（F 层已列）。
+4. **未验**：`snk.parquet` 在 console 管线里的覆盖写语义。
 
 ## 6. 不做
-
-- 不改口径、不动 `NET_ABS_TOL` 的值（改的是**它的记账方式**）。
-- 不把 completeness 对账塞进本资产（那是另一个控制，见 0.1）。
-- 不为该资产声明 L1 指标（它是**对账事实**，不是业务口径）。
+- 不改口径、不动 `NET_ABS_TOL` 的值（改的是记账方式）。
+- 不把 completeness 对账塞进来（那是 `diagnose.sh recon`，另一个控制）。
+- 不把容差/原因写进湖（配置归 seed，判定归 dbt）。
 - 不停用 CSV 输出。
