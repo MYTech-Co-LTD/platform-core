@@ -4,7 +4,7 @@
 // 正典 docs/module-protocol.md「租户数据隔离」，机器判据 scripts/check-tenant-isolation.mjs。
 // 三处读写**全部**带 `where org = $1`——漏一处就是跨租户串数据。
 import type { Pool, PoolClient } from 'pg'
-import type { MetricDef, MetricParamDef } from './authz'
+import type { MaskSpec, MetricDef, MetricParamDef } from './authz'
 import type { MetricRowSnapshot } from './metric-audit-store'
 
 /**
@@ -63,6 +63,13 @@ export interface MetricRow extends MetricDef {
    * L2 行恒 null；L1 未声明 sources 时为空数组（两者都 = 无自动水位，响应字段缺席）。
    */
   freshnessRelations: string[] | null
+  /**
+   * 值级掩码声明（018 迁移，spec 2026-10-17 §5.2）：`mask_spec` jsonb 的规范化形态。
+   * 存储行恒携带**数组或 null**（「行里没有这个字段」不是合法态，缺省就是 null = 未声明）——
+   * 与 sla_days/freshness_relations 同一条纪律。真值只来自 L1 物化路径（sync 从声明 `mask`
+   * 物化，声明侧已拦「列不在 selectSql 里」的静默失效形态）；L2 行恒 null。
+   */
+  masks: MaskSpec[] | null
 }
 
 /**
@@ -78,6 +85,8 @@ export interface L1MetricDef extends MetricDef {
   slaDays: number
   /** 新鲜度关系集（spec §10.7.3，声明 sources 路径段的推导值；未声明 sources = 空数组）。 */
   freshnessRelations: string[]
+  /** 值级掩码声明（spec 2026-10-17 §5.2，声明 `mask` 的物化值；未声明 = null）。 */
+  masks: MaskSpec[] | null
 }
 
 /** 行 → MetricRow：只映射契约里的字段（created_at/updated_at 不外泄给授权核心）。 */
@@ -104,12 +113,15 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     freshnessRelations: Array.isArray(row.freshness_relations)
       ? (row.freshness_relations as string[]).map(String)
       : null,
+    // 掩码声明（spec §5.2）：mask_spec 是 jsonb 数组（pg 已反序列化），只认真数组——
+    // 列缺省/坏形状宁可落 null（= 未声明），不让 undefined 冒充真值（同 freshness_relations）。
+    masks: Array.isArray(row.mask_spec) ? (row.mask_spec as MaskSpec[]) : null,
   }
 }
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations, mask_spec'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
@@ -208,6 +220,9 @@ export async function loadMergedCatalog(pool: Pool, org: string): Promise<Metric
 // ⚠️ 新鲜度链路两列（sla_days / freshness_relations，spec §10.7）同理不是 L2 写入面的概念：
 //    插入值写死 `null`，冲突分支**也不碰**——租户写撞上同 id 平台行时，不得把平台行的新鲜度
 //    链路抹掉（抹了 = 水位/固定行静默消失，且 sync --check 会长期报漂移）。
+// ⚠️ 值级掩码声明（mask_spec，spec 2026-10-17 §5.2）第三组同理：L2 是结构化编译的产物，
+//    掩码不在其声明面 ⇒ 插入值缺席（列缺省 null），冲突分支也不碰（同上，抹掉平台行的
+//    掩码 = 掩码静默失效——那是安全面，更不能被一次租户写洗掉）。
 export async function upsertMetric(
   db: Pool | PoolClient, org: string, def: MetricDef, updatedBy: string,
 ): Promise<void> {
@@ -254,12 +269,16 @@ export async function upsertMetric(
  * 新鲜度链路两列（`sla_days` / `freshness_relations`，spec §10.7）第三组同进退：
  * sync 从声明 `freshness_sla_days` / `sources` 路径段物化（缺声明 sync 响亮失败，无静默默认）；
  * 冲突分支也刷（声明改了 ⇒ 重新物化必须跟上，否则水位/固定行永远按旧链路算）。
+ *
+ * 值级掩码声明（`mask_spec`，spec 2026-10-17 §5.2）第四组同进退：sync 从声明 `mask` 物化
+ * （声明侧 masksOf 校验含「column 须逐字在 selectSql 里」）；冲突分支也刷——声明撤了掩码
+ * 而库里还留着 = 掩码静默生效（安全面宁可不生效也不能背着旧声明生效）。
  */
 export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void> {
   await pool.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, sla_days, freshness_relations)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13::jsonb)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, sla_days, freshness_relations, mask_spec)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13::jsonb, $14::jsonb)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -270,14 +289,16 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
        params         = excluded.params,
        source_system  = excluded.source_system,
        totalable      = excluded.totalable,
-       sla_days           = excluded.sla_days,
+       sla_days            = excluded.sla_days,
        freshness_relations = excluded.freshness_relations,
+       mask_spec           = excluded.mask_spec,
        updated_at     = now()`,
     [
       L1_ORG, def.id, def.title, def.description, def.requiredScope,
       def.subjectColumn, def.selectSql, def.groupBy, JSON.stringify(def.params),
       def.sourceSystem, def.totalable === true,
       def.slaDays, JSON.stringify(def.freshnessRelations),
+      def.masks === null ? null : JSON.stringify(def.masks),
     ],
   )
 }

@@ -238,7 +238,7 @@ describe('diffDeclarations：双向差集的四态分类', () => {
   const row = (id: string, title: string, sourceSystem: string | null = 'lemeng') => ({
     id, title, description: '', requiredScope: null,
     subjectColumn: 'org', selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {}, sourceSystem,
-    totalable: false, slaDays: 1, freshnessRelations: [] as string[],
+    totalable: false, slaDays: 1, freshnessRelations: [] as string[], masks: null,
   })
   const declared = [row('a', 'A'), row('b', 'B2'), row('c', 'C')]
   const current = [row('a', 'A'), row('b', 'B1'), row('d', 'D')]
@@ -687,5 +687,116 @@ describe('deriveParams —— 问数参数面白名单推导（spec 2026-10-15 �
   })
   it('D4 required 恒缺省（空参=全量，历史调用形态不破坏）', () => {
     expect(Object.values(deriveParams(['system_book', 'bizday', 'domain'])).every((p) => p.required === undefined)).toBe(true)
+  })
+})
+
+describe('declarationsFromYaml：mask（值级脱敏声明面，spec 2026-10-17 §5.2）', () => {
+  // expression 决定 selectSql = `select sum(fct_x.net_amount) as value, g from fct_x`
+  // —— mask 的 column 出现性以它为比对基准。
+  const base = {
+    name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(fct_x.net_amount)',
+    grain: ['g'], owner: 'o', tier: 'certified', freshness_sla_days: 1,
+  }
+
+  it('缺声明 ⇒ masks = null（未声明；运行期由源列 sensitivity 推默认档，物化层不掺和）', () => {
+    expect(declarationsFromYaml(yaml([base]))[0].masks).toBeNull()
+    expect(declarationsFromYaml(yaml([{ ...base, mask: null }]))[0].masks).toBeNull()
+  })
+
+  it('合法 round（column 在 selectSql 里）⇒ 逐字物化（含 step；不做任何归一）', () => {
+    const rows = declarationsFromYaml(yaml([
+      { ...base, mask: [{ column: 'fct_x.net_amount', kind: 'round', step: 1000, grantedBy: 'data:precise' }] },
+    ]))
+    expect(rows[0].masks).toEqual([
+      { column: 'fct_x.net_amount', kind: 'round', step: 1000, grantedBy: 'data:precise' },
+    ])
+  })
+
+  it('合法整值掩码（column: null + nullify；column 键缺省同义）⇒ 物化', () => {
+    for (const mask of [
+      { column: null, kind: 'nullify', grantedBy: 'data:precise' },
+      { kind: 'nullify', grantedBy: 'data:precise' },   // column 缺省 = null（整值）
+    ]) {
+      const rows = declarationsFromYaml(yaml([{ ...base, mask: [mask] }]))
+      expect(rows[0].masks).toEqual([{ column: null, kind: 'nullify', grantedBy: 'data:precise' }])
+    }
+  })
+
+  it('nullify 带多余 step ⇒ step 被剥掉（nullify 无步长概念，不落一个没人读的键进库）', () => {
+    const rows = declarationsFromYaml(yaml([
+      { ...base, mask: [{ column: 'fct_x.net_amount', kind: 'nullify', step: 100, grantedBy: 'p' }] },
+    ]))
+    expect(rows[0].masks).toEqual([{ column: 'fct_x.net_amount', kind: 'nullify', grantedBy: 'p' }])
+  })
+
+  it('mask 写成非数组 ⇒ 抛（写错形状的掩码静默不生效，宁响亮勿静默）', () => {
+    for (const bad of ['round', 42, { kind: 'nullify', grantedBy: 'p' }]) {
+      expect(
+        () => declarationsFromYaml(yaml([{ ...base, mask: bad }])),
+        `mask: ${JSON.stringify(bad)} 没被拦`,
+      ).toThrow(/mask/)
+    }
+  })
+
+  it('未知 kind ⇒ 抛（词表是代码常量 MASK_KINDS，能选不能扩——写错的 kind 不报错也不生效）', () => {
+    for (const kind of ['bucket', 'truncate', 'ROUND', '']) {
+      expect(
+        () => declarationsFromYaml(yaml([{ ...base, mask: [{ column: 'fct_x.net_amount', kind, step: 1000, grantedBy: 'p' }] }])),
+        `kind: ${JSON.stringify(kind)} 没被拦`,
+      ).toThrow(/kind/)
+    }
+  })
+
+  it('round 缺 step / step 非正整数 ⇒ 抛（运行期展开成 round(col, -step)，坏 step 到查询时才炸）', () => {
+    for (const step of [undefined, 0, -1000, 1.5, '1000', null]) {
+      const item: Record<string, unknown> = { column: 'fct_x.net_amount', kind: 'round', grantedBy: 'p' }
+      if (step !== undefined) item.step = step
+      expect(
+        () => declarationsFromYaml(yaml([{ ...base, mask: [item] }])),
+        `step: ${JSON.stringify(step ?? null)} 没被拦`,
+      ).toThrow(/step/)
+    }
+  })
+
+  it('grantedBy 空 / 带空白 ⇒ 抛（逐字比对的豁免码，带空白谁也匹配不上 ⇒ 对持码人照掩不误）', () => {
+    for (const grantedBy of ['', '   ', 'data precise', 'data:precise ']) {
+      expect(
+        () => declarationsFromYaml(yaml([{ ...base, mask: [{ column: 'fct_x.net_amount', kind: 'nullify', grantedBy }] }])),
+        `grantedBy: ${JSON.stringify(grantedBy)} 没被拦`,
+      ).toThrow(/grantedBy/)
+    }
+  })
+
+  it('未知键 ⇒ 抛（键闭集 {column, kind, step, grantedBy}——拼错的键会被静默忽略）', () => {
+    expect(() => declarationsFromYaml(yaml([
+      { ...base, mask: [{ column: 'fct_x.net_amount', kind: 'nullify', grantedBy: 'p', edges: [1, 2] }] },
+    ]))).toThrow(/未知键|edges/)
+  })
+
+  it('★ column 不在 selectSql 里 ⇒ 抛（运行期定点替换命中不了 ⇒ 掩码静默不生效——本设计最怕的形态）', () => {
+    // 变异确认锚点：去掉 masksOf 里的「column 须逐字在 selectSql 里」检查 ⇒ **恰好**本用例红。
+    expect(() => declarationsFromYaml(yaml([
+      { ...base, mask: [{ column: 'fct_y.cost_money', kind: 'nullify', grantedBy: 'p' }] },
+    ]))).toThrow(/selectSql|逐字/)
+  })
+
+  it('整值掩码（column null）配 round ⇒ 抛（整值做 round 没有语义；默认档只推 nullify）', () => {
+    expect(() => declarationsFromYaml(yaml([
+      { ...base, mask: [{ column: null, kind: 'round', step: 1000, grantedBy: 'p' }] },
+    ]))).toThrow(/nullify|整值/)
+  })
+
+  it('★ masks 进 comparableOf：声明带了掩码而库内没跟上 ⇒ 判「更新」（缺这条 --check 假绿）', () => {
+    // 掩码声明变了而库内没刷 = 掩码静默按旧声明生效（安全面）——必须被 --check 检出。
+    const row = (masks: Array<{ column: string | null; kind: 'round' | 'nullify'; step?: number; grantedBy: string }> | null) => ({
+      id: 'a', title: 'A', description: '', requiredScope: null, subjectColumn: 'org',
+      selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {}, sourceSystem: 'lemeng',
+      totalable: false, slaDays: 1, freshnessRelations: [] as string[], masks,
+    })
+    const declared = [row([{ column: 't.c', kind: 'round', step: 1000, grantedBy: 'data:precise' }])]
+    expect(diffDeclarations(declared, [row(null)]).updated).toEqual(['a'])
+    // 反向对照：两侧一致 ⇒ 判「未变」（可比不退化成恒更新；jsonb 键序由 canonical 兜住）
+    const fromDb = [row([{ grantedBy: 'data:precise', step: 1000, kind: 'round', column: 't.c' }])]
+    expect(diffDeclarations(declared, fromDb).unchanged).toEqual(['a'])
   })
 })

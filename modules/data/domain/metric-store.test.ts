@@ -62,7 +62,9 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
     ({ ...def(over), sourceSystem,
       // 新鲜度链路（spec §10.7）缺省形态：承诺 1 天 + 空关系集（= 无自动水位，字段缺席）。
       // 夹具默认不接链路；要验链路的用例显式传 slaDays/freshnessRelations。
-      slaDays: 1, freshnessRelations: [] as string[] })
+      slaDays: 1, freshnessRelations: [] as string[],
+      // 值级掩码声明（spec 2026-10-17 §5.2）缺省形态：未声明 = null。要验掩码物化的用例显式传。
+      masks: null })
 
   afterAll(async () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
@@ -270,7 +272,9 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
     expect(catalog.find((m) => m.id === 'finance_margin'))
       .toEqual({ ...mine, source: 'l2', sourceSystem: null, updatedBy: 'fixture', version: 1, totalable: false,
         // 新鲜度链路（spec §10.7）：L2 行没有这个概念，恒 null（不是 []——「没声明」与「声明为空」可辨）
-        slaDays: null, freshnessRelations: null })
+        slaDays: null, freshnessRelations: null,
+        // 值级掩码（spec 2026-10-17 §5.2）：同理不是 L2 写入面的概念，恒 null
+        masks: null })
   })
 
   it('deleteMetric 返「是否真删了一行」，且只删本租户的', async () => {

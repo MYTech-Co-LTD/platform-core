@@ -56,6 +56,7 @@ const L1_PLATFORM: L1MetricDef = {
   // L1 行恒有源（源维度进声明面 = Task 3）——本夹具是「sync 的产物」，故与声明同形。
   sourceSystem: 'lemeng',
   slaDays: 1, freshnessRelations: [],
+  masks: null,
 }
 
 /** 撞 id 的两个版本：租户**先**建 L2，平台**事后**同 id 物化（写侧闸门只拦「L1 已存在」的时序）。 */
@@ -66,6 +67,7 @@ const L1_CLASH: L1MetricDef = {
   groupBy: '', params: {},
   sourceSystem: 'lemeng',
   slaDays: 1, freshnessRelations: [],
+  masks: null,
 }
 const L2_CLASH: MetricDef = {
   id: CLASH_ID, title: '租户版', description: '租户版说明',
@@ -89,6 +91,7 @@ const L1_FOREIGN: L1MetricDef = {
   groupBy: '', params: {},
   sourceSystem: 'shanhai',
   slaDays: 1, freshnessRelations: [],
+  masks: null,
 }
 
 const post = (app: Hono, path: string, body: unknown) => app.request(path, {

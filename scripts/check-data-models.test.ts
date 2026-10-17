@@ -1255,3 +1255,57 @@ describe('格⑪：列级授权声明面（required_scope / reads，spec 2026-10
     }
   })
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// 规则 ⑤-d：值级脱敏声明面（mask，spec 2026-10-17 §5.2）。fixture 驱动（走完整门禁管线）；
+// 逐项判据的唯一实现在 sync 的 maskItemError（门禁 import 它），这里钉的是「门禁真的报」。
+// ⚠️ 「column 须逐字出现在 selectSql 里」**不**在本门禁的判据面（门禁手里没有物化后的
+//    selectSql）——那半归 sync 的 masksOf，单测与变异确认在 sync-data-semantics.test.ts。
+// ════════════════════════════════════════════════════════════════════════════════════════
+describe('规则 ⑤-d：mask 形状（值级脱敏声明面，spec 2026-10-17 §5.2）', () => {
+  /** 在 freshness_sla_days 之后插一行（基线指标其余字段不动）。 */
+  const withMask = (line: string) =>
+    variant((f) => {
+      f[METRICS] = f[METRICS].replace('    freshness_sla_days: 1\n', `    freshness_sla_days: 1\n${line}\n`)
+    })
+
+  it('未声明 ⇒ 干净（缺省 = 无掩码；当前仓内 36 条声明也都没有 mask）', () => {
+    expect(checkDataModels(variant(() => {}))).toEqual([])
+  })
+
+  it('合法 mask（round 带步长 / 整值 nullify）⇒ 干净', () => {
+    expect(checkDataModels(withMask(
+      '    mask: [{ column: "fct_retail_sale.net_amount", kind: "round", step: 1000, grantedBy: "data:precise" }]',
+    ))).toEqual([])
+    expect(checkDataModels(withMask(
+      '    mask: [{ column: null, kind: "nullify", grantedBy: "data:precise" }]',
+    ))).toEqual([])
+  })
+
+  it('★ mask 写成非数组 ⇒ 违规（变异确认锚点：去掉门禁这条形状核 ⇒ 本用例必须红）', () => {
+    const v = checkDataModels(withMask('    mask: "round"'))
+    expect(v).toHaveLength(1)
+    expect(v[0]?.message).toContain('mask')
+  })
+
+  it('未知 kind / 整值配 round / grantedBy 带空白 ⇒ 违规（逐项判据经 maskItemError 唯一实现）', () => {
+    for (const line of [
+      '    mask: [{ column: "fct_retail_sale.net_amount", kind: "bucket", grantedBy: "data:precise" }]',
+      '    mask: [{ column: null, kind: "round", step: 1000, grantedBy: "data:precise" }]',
+      '    mask: [{ column: "fct_retail_sale.net_amount", kind: "nullify", grantedBy: "data precise" }]',
+      '    mask: [{ column: "fct_retail_sale.net_amount", kind: "round", grantedBy: "data:precise" }]',
+    ]) {
+      const v = checkDataModels(withMask(line))
+      expect(v, `mask 行 ${line} 没被拦`).toHaveLength(1)
+      expect(v[0]?.message).toContain('mask')
+    }
+  })
+
+  it('多条 mask 逐项各报一条（坏项不连累好项的判定）', () => {
+    const v = checkDataModels(withMask(
+      '    mask: [{ column: "fct_retail_sale.net_amount", kind: "nullify", grantedBy: "data:precise" }, { column: "fct_retail_sale.net_amount", kind: "nope", grantedBy: "data:precise" }]',
+    ))
+    expect(v).toHaveLength(1)
+    expect(v[0]?.message).toContain('kind')
+  })
+})
