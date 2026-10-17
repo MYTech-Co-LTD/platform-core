@@ -1,7 +1,7 @@
 {
   "_note": [
     "独立通道对账（正典 §1.4 第三层）· 父管线：定出 T-3 营业日与门店清单，交子管线 lemeng.recon.preagg.item 执行判据。",
-    "判据与口径的**唯一事实源** = scripts/lemeng/recon-preagg.sh 头注（赠品判别式 / 逐订单归并 / 不扣退货 / 容差 / 定稿线）；本管线不复制公式正文。",
+    "判据与口径的**唯一事实源** = scripts/lemeng/recon-preagg.sh 头注（赠品判别式 / 逐订单归并 / 销售侧不扣退货 + 净额侧减退货 / 容差 / 定稿线）；本管线不复制公式正文。",
     "",
     "调度语义：16:30 UTC = 上海 00:30。上海日 = CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + 8h",
     "（引擎 current_date 是 UTC，别直接用——SOP §E.7 同款教训）。bizday = 上海日 - 3 = 定稿线 T-3：",
