@@ -1125,6 +1125,19 @@ Expected: 每天 `PREAGG` 行 `diff=+0.00`（销售侧恒逐分）；`PREAGG_NET
 > 是端点不返回零销售门店（⇒ 记入 issue #813，另议 `miss` 是否该区分维度），还是真的湖源不一致
 > （⇒ 交 `recon-day-heal.sh`）。**不许只贴一个红就过。**
 
+- [ ] **Step 3b: 核 console 管线侧的结果（不能只看脚本）**
+
+脚本与管线的**门店请求集不同**：脚本的 `BRANCHES` 取自湖的并集（会向端点请求「有退货无销售」的店），
+而管线 `pday` 原先只请求销售店 —— 修复后两者才对齐。因此**脚本绿不代表管线绿**。
+
+```bash
+# console 侧：读该账套 workspace 里最近一次 recon 管线的运行记录 / 回执
+# 位置与口径见 deploy/duckle/console/README.md「排障三问」
+```
+
+Expected：`vbranch`/`gbranch` 不出行；`report` 的两个 side 门店数一致。
+若出现 `branch_missing`，按 Step 3 的判定口径当场定性。
+
 - [ ] **Step 4: 业务验收 —— 问数 bot**
 
 在**企微真实渠道**问：`64188 2026-10-16 的净销售额是多少`。
