@@ -1,4 +1,12 @@
+{{ config(store_failures=true) }}
 -- audit_lemeng__retail__net_sales.sql — 指标 `lemeng:retail:net_sales` 的**独立复算**（对账）。
+--
+-- ★ `store_failures=true`（2026-10-17 加，issue #761）：本对账出现过**间歇 FAIL 1、重试自愈**，
+--   而 dbt 的 singular test 只把行数打进 job 日志（`Got 1 result`），**看不到是哪一格**。
+--   开了这个开关后，失败行会落进 `<目标 schema>_dbt_test_failures.audit_lemeng__retail__net_sales`，
+--   可以直接查出 (账套, 业务日, 门店, 复算值, 物化值) 逐列对比。
+--   ⚠️ **取证窗口很短**：materialize job 自带 2 次重试，第 2 次若通过，dbt 会用空结果**覆盖**
+--   那张表。所以看到 FAIL 要**赶在重试之前**查（或临时把该 job 的 retry 关掉再复现）。
 --
 -- 契约：dbt 的 singular test **返回任何行即失败** ⇒ 本查询只在「复算 ≠ 物化结果」时出行。
 -- 文件名由指标名经 `:` → `__` 映射得出（唯一事实源 = scripts/check-data-models.mjs 的
