@@ -84,6 +84,28 @@ metrics:
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
 
+  - name: 'lemeng:retail:net_quantity'
+    label: 零售净销量
+    definition: >-
+      净销量 = 销售数量 − 退货数量（客户项 03-07「库存覆盖天数」的**分母**）。可加（按门店日求和）。
+      **销售** = state=FINISHED 且 order_transaction_type=SALE_ORDER；**退货** = 单据类型含 RETURN
+      且 state ∈ (FINISHED, REPAID)。⚠️ 载体见 `fct_retail_quantity`——它的基面与本族净**额**
+      指标**不同**（净额按裁1 不冲退货单，净销量必须减退货），故单开构件而不是共用 fct_retail_sale。
+      ⚠️ **两处解释性落地**（客户原文未细到这一层，故 experimental）：
+      ① `REPAID_RETURN`（已退款退货）计入退货；② `state=CANCELED` 的销售与退货都不计。
+      ⚠️ **本指标不产出「覆盖天数」**：客户公式里的「批准窗口 N」属 X08 口径阈值（客户待批），
+      按裁5「未批准前不设门槛，只出分子/分母」⇒ 本仓只出净销量，N 由消费方带。
+      分子（可售库存数量）见 `lemeng:inventory:quantity`。
+      粒度 = 账套 × 业务日 × 门店。
+    expression: 'sum(fct_retail_quantity.net_quantity)'
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
+
   # ── W1（2026-10-12）：transfer/wholesale 出域骨架 9 条 ──────────────────────────────
   # 构件落点：fct_hq_outbound（R/C/G 长表）/ fct_transfer_line_quality（行质量面）/
   #   fct_transfer_item（商品粒度）。口径与基面的「为什么」在各 fct 头注。

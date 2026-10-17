@@ -355,6 +355,36 @@ models:
         tests: [{not_null: {}}]
 
 
+  - name: fct_retail_quantity
+    description: >-
+      零售净销量构件（#769 2026-10-17）。客户项 03-07 库存覆盖天数的**分母**（覆盖天数本身不出——
+      「批准窗口 N」是 X08 待批阈值，裁5 只许出分子/分母）。粒度 (system_book, bizday, branch_num)。
+      ⚠️ 与本族净**额**指标**不同基面**：净额按裁1 不冲退货单；本构件按客户原文 `sale_num − return_num`
+      **必须减退货**——故单开一张 mart，见模型头注。⚠️ `quantity` 对退货行也是正数，分类靠单据类型不靠符号。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（subject_org 宏注入）。
+        tests: [{not_null: {}}]
+      - name: bizday
+        description: 业务日。粒度键。
+        tests: [{not_null: {}}]
+      - name: branch_num
+        description: 门店号。粒度键。
+        tests: [{not_null: {}}]
+      - name: sale_quantity
+        description: 销售数量（state=FINISHED 且 SALE_ORDER）。
+        tests: [{not_null: {}}]
+      - name: return_quantity
+        description: 退货数量（单据类型含 RETURN 且 state ∈ FINISHED/REPAID）。
+        tests: [{not_null: {}}]
+      - name: net_quantity
+        description: 净销量 = sale − return。**与 lemeng:retail:net_quantity 同源**。
+        tests: [{not_null: {}}]
+
+
 # 复合粒度 **(system_book, bizday, branch_num)** 的唯一性由 singular test 手写（单列的 unique 判不了：
 # 各列各自都不唯一；引 dbt_utils.unique_combination_of_columns 要加 packages.yml —— 多一层依赖、
 # 解析期还要联网，本任务不引入）：
