@@ -58,6 +58,13 @@ vars，报 `Required var 'x' not found in config`）；`materialize.sh` 侧 `DAT
 `models.platform_data` 的域条目，并逐条查 `+enabled` 形态 —— 因为上面两个方向**都只有静默这一种
 症状**。**新增一个域 = 加目录 + 在 `dbt_project.yml` 登记两处，缺一即红。**
 
+**物化是逐域的**（2026-10-17）：`materialize.sh` **按域各跑一次** `dbt build`（命令仍无 `--select`，
+只是把域身份逐次收成单个值），**每个域成功即落该域的水位**。为什么：`data.load_log` 是全部 relation
+新鲜度的单一水位来源，改动前一红就整体 `exit 1` ⇒ **一个模型红 = 所有 relation 的 `data_as_of` 一起停**
+（同日实测两次）。现在红的域不落账、其余域照常，最后统一 `exit 1`。落账表集 = 「全 bizday 表」∩
+「本域 staging 模型名（**从树派生**，不是手写名单）」—— 所以 `models/<域>/staging/*.sql` 的**文件名**
+就是水位行的键，改名等于换表。
+
 ## 2 两条最容易踩错的口径（先读这个再改模型）
 
 ### 2.1 `source()` 不是读路径

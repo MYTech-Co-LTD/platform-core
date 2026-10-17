@@ -16,6 +16,12 @@
 #    裁剪落在 `dbt_project.yml` 的**按路径 `+enabled`**（即 ② 说的「用模型 config 表达」），
 #    不是本脚本里的名单 —— 本脚本只负责把**域身份**（一个部署属性）透传进去。
 #
+# ⑤ 为什么**逐域**跑（2026-10-17，爆炸半径）：`data.load_log` 是全部 relation 新鲜度的单一水位
+#    来源，而 dbt 一红就整体 exit 1 ⇒ 一个模型红 = **所有** relation 的 data_as_of 一起停
+#    （同日实测两次：#833、#834 各自新增的 audit 各红一次，两次都冻结全量）。逐域跑后，红的域
+#    不落账、其余域照常落账 ⇒ 故障面收窄到该域。**仍不是按需名单**（#679）：命令还是 `build`、
+#    无 `--select`，域裁剪仍由 `+enabled` 表达，本脚本不持模型名单 —— 只是把域身份逐次收成单个值。
+#
 # ③ env 舞步：值一律运行时从运行中的容器 `docker inspect` 取（不落盘、不落 job 配置），
 #    再以 `docker run -e VAR`（**透传形态**，只带键名）传给 dbt 容器 ⇒ 值不进 ps。
 #    AK/SK **不注入**：模型不建 S3 secret，pg_duckdb 的持久 secret 直读湖——
@@ -23,6 +29,8 @@
 #
 # ④ 退出码契约：0 ⇒ 末行 `MATERIALIZE_OK`；1 ⇒ `MATERIALIZE_FAILED:<missing_env|dbt_build>`。
 #    retry 由 openship job 配置承担（现状 retry 2×/300s）。
+#    ⚠️ 2026-10-17 起 `dbt_build` 是**逐域**判的：域是**串行跑、跑完一个域就落一次账**，
+#    红的域不落账、其余域照常落账，最后统一 exit 1（见 ⑤）。⇒ 一次红不再冻结**全部**新鲜度。
 #    ⚠️ 本文件里 `$VAR` 相邻中文一律写 `${VAR}`（issue #212，bash 3.2 会把多字节首字节吃进变量名）。
 set -eu
 
@@ -106,6 +114,18 @@ $(mat_watermark_sql "$_wp" "$_we" "$@")"
     || echo "materialize warn: load_log 落账失败（物化本身已成功；data_as_of 将停留旧值，新鲜度面降级）" >&2
 }
 
+# 本域的 staging 模型名（每行一个）——**从树派生**，不是手写名单。
+# 落点两处都扫：`dbt/models/<域>/staging/*.sql` 与域内的客户分叉
+# `dbt/models/<域>/customers/<客户>/staging/*.sql`（二维格子，见 dbt/models/README.md）。
+# 纯函数（只吃实参、不碰 docker/全局）⇒ materialize.test.sh 抽真函数断言，不复制实现。
+mat_domain_staging_models() { # $1=检出根 $2=域
+  for _f in "$1/dbt/models/$2"/staging/*.sql "$1/dbt/models/$2"/customers/*/staging/*.sql; do
+    [ -f "$_f" ] || continue
+    _b=${_f##*/}
+    printf '%s\n' "${_b%.sql}"
+  done
+}
+
 # ── 运行时取值（不落盘、不落 argv；stderr 静默 ⇒ 容器不在时值取空、由 mat_require 兜）──
 ct_env() {
   docker inspect "$1" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n "s/^$2=//p"
@@ -148,32 +168,67 @@ export DATA_PLANE_DOMAINS="$DOMAINS"
 echo "materialize start repo=${R} network=${NETWORK} image=${IMAGE} domains=${DOMAINS} mode=full_build（本面域内全量，无按需名单，#679）"
 # dbt 输出 tee 进临时日志：job 的实时流保持不变，同时留一份可解析的汇总行（Done. PASS=n … ERROR=m）。
 # 退出码用 rc 文件带出（POSIX sh 无 pipefail/PIPESTATUS；管道末位是 tee，不能直接判 dbt）。
-DBT_LOG="${TMPDIR:-/tmp}/materialize-dbt.$$.log"
-DBT_RC="${TMPDIR:-/tmp}/materialize-dbt.$$.rc"
-trap 'rm -f "$DBT_LOG" "$DBT_RC"' EXIT
-( if docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-    $(mat_env_args) "$IMAGE" $(mat_dbt_args) 2>&1; then
-  echo 0 >"$DBT_RC"
-else
-  echo $? >"$DBT_RC"
-fi ) | tee "$DBT_LOG"
-if [ "$(cat "$DBT_RC")" != 0 ]; then
-  echo "MATERIALIZE_FAILED:dbt_build（dbt 非零退出，原因见上方日志；retry 由 openship job 配置承担）" >&2
-  exit 1
-fi
-# 物化落账（spec §10.1 + §10.7.2）：先动态点名水位表——staging schema 内含 bizday 列的表
-# （information_schema 每表恰一行；无 bizday 的维度表自然不在列，即「无 bizday 表自然跳过」）。
+_WORK=$(mktemp -d "${TMPDIR:-/tmp}/materialize.XXXXXX")
+trap 'rm -rf "$_WORK"' EXIT
+
+# ── 水位表清单（全 staging 内含 bizday 列的表）────────────────────────────────────
+# 与**域无关**，只点名一次；逐域落账时再按「本域的 staging 模型名」取子集（见下）。
 # 点名失败/为空 ⇒ 零水位行 + 告警（新鲜度缺账 ≠ 翻车，data_as_of 停留旧值暴露）。
-# PASS/ERROR 取 dbt 汇总行（sed 贪婪匹配取该行最后一个 PASS=/ERROR=，行级结果
-# `[PASS in 0.1s]` 无等号不会误中）；解析不到 ⇒ 水位行带 NULL，照常落账。
-MAT_TABLES=$(docker exec -e PGPASSWORD="$PW" "$PG_CT" psql -U "$UN" -d "$DB" -tAc \
+MAT_TABLES_ALL=$(docker exec -e PGPASSWORD="$PW" "$PG_CT" psql -U "$UN" -d "$DB" -tAc \
   "SELECT table_name FROM information_schema.columns WHERE table_schema='staging' AND column_name='bizday' GROUP BY table_name ORDER BY table_name" 2>/dev/null \
   | tr -d '\r' | sed '/^[[:space:]]*$/d' | tr '\n' ' ' || true)
-if [ -z "$MAT_TABLES" ]; then
-  echo "materialize warn: 水位表清单为空（staging 无含 bizday 列的表，或点名查询失败）——本次不写逐表水位，data_as_of 将停留旧值" >&2
+if [ -z "$MAT_TABLES_ALL" ]; then
+  echo "materialize warn: 水位表清单为空（staging 无含 bizday 列的表，或点名查询失败）——各域都不写逐表水位，data_as_of 将停留旧值" >&2
 fi
-mat_write_load_log \
-  "$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$DBT_LOG" | tail -n 1)" \
-  "$(sed -n 's/.*ERROR=\([0-9]*\).*/\1/p' "$DBT_LOG" | tail -n 1)" \
-  $MAT_TABLES
+
+# ── 逐域 build + 逐域落账（拆爆炸半径，2026-10-17）────────────────────────────────
+# 为什么逐域：`data.load_log` 是**全部** relation 新鲜度的单一水位来源，而 dbt 一旦红就整体
+# exit 1 ⇒ **一个模型红会让所有 relation 的 data_as_of 一起停**（2026-10-17 一天内实测两次：
+# #833 与 #834 各自新增的 audit 各红一次，每次都冻结全量）。逐域跑之后，红的那个域不落账、
+# 其余域照常落账 ⇒ 故障面收窄到该域。
+# ⚠️ 仍然**不是**按需名单（#679）：命令还是 `build`（无 `--select`），域裁剪仍由
+#    `dbt_project.yml` 的按路径 `+enabled` 表达，本脚本**不持任何模型名单** —— 它只是把域身份
+#    从「一串」收成「一个」逐次喂进去（同一个变量，值域收窄）。
+# PASS/ERROR 取该域日志的汇总行（sed 贪婪匹配取该行最后一个 PASS=/ERROR=，行级结果
+# `[PASS in 0.1s]` 无等号不会误中）；解析不到 ⇒ 水位行带 NULL，照常落账。
+_FAILED_DOMAINS=''
+_OK_DOMAINS=''
+for _d in $(printf '%s' "$DOMAINS" | tr ',' ' '); do
+  [ -n "$_d" ] || continue
+  echo "── domain ${_d} ──"
+  _log="$_WORK/dbt.${_d}.log"
+  _rc="$_WORK/dbt.${_d}.rc"
+  # 逐命令 env 赋值 ⇒ docker CLI 只看到这一个域，`-e DATA_PLANE_DOMAINS` 透传的就是它。
+  ( if DATA_PLANE_DOMAINS="$_d" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
+      $(mat_env_args) "$IMAGE" $(mat_dbt_args) 2>&1; then
+    echo 0 >"$_rc"
+  else
+    echo $? >"$_rc"
+  fi ) | tee "$_log"
+  if [ "$(cat "$_rc")" != 0 ]; then
+    _FAILED_DOMAINS="${_FAILED_DOMAINS} ${_d}"
+    echo "materialize warn: 域 ${_d} 的 dbt 非零退出 ⇒ **本域不落账**（其余域继续，不被拖停）" >&2
+    continue
+  fi
+  # 本域要落账的表 = 「全 bizday 表」∩「本域的 staging 模型名」。
+  # 模型名从**树**派生（`mat_domain_staging_models`）而不是手写：与 `+enabled` 同源同一棵树
+  # ⇒ 新增模型自动纳入，不存在「名单没跟」的静默面（#679 的病）。
+  _tables=''
+  for _m in $(mat_domain_staging_models "$R" "$_d"); do
+    case " ${MAT_TABLES_ALL} " in *" ${_m} "*) _tables="${_tables} ${_m}";; esac
+  done
+  if [ -z "$_tables" ]; then
+    echo "materialize warn: 域 ${_d} 没有可落账的表（本域 staging 无含 bizday 列的表？）——本域零水位行" >&2
+  fi
+  mat_write_load_log \
+    "$(sed -n 's/.*PASS=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
+    "$(sed -n 's/.*ERROR=\([0-9]*\).*/\1/p' "$_log" | tail -n 1)" \
+    $_tables
+  _OK_DOMAINS="${_OK_DOMAINS} ${_d}"
+done
+
+if [ -n "$_FAILED_DOMAINS" ]; then
+  echo "MATERIALIZE_FAILED:dbt_build（域${_FAILED_DOMAINS} 的 dbt 非零退出；已成功域${_OK_DOMAINS:-（无）} 照常落账；retry 由 openship job 配置承担）" >&2
+  exit 1
+fi
 echo "MATERIALIZE_OK"
