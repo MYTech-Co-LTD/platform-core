@@ -131,11 +131,42 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       const spec = parseReportSpec(parsed.data.spec)
       if (!spec.ok) return c.json({ error: spec.code }, 400)
       const org = c.get('tenant').casdoor_org
+      // ── 发布门（spec §4.2；issue #778）──────────────────────────────────────────────
+      // ⚠️ 这里**曾经**直接用 `parsed.data.requiredScope`——而 `required_scope = null` 在这套模型里
+      //    **就是「已发布」**（没有独立的 `published` 列，见 `updateRequiredScope` 头顶注）⇒
+      //    带两个不同 scope 面板的报表可以**绕过发布门直接建成已发布态**：报表可见，但那个面板的
+      //    `/query` 会 403 ⇒ 「报表看着正常、点进去有一个面板空」。
+      //    ⇒ 与 `PUT /reports/:id` 走**同一个派生**：requiredScope 是 spec 的函数，不是调用方的输入。
+      //    ⚠️ 不要改成「新建一律未发布」——那与「没有 published 列」的既有设计冲突。
+      const catalog = await loadMergedCatalog(ctx.pool, org)
+      const derived = deriveRequiredScope(spec.spec, catalog)
+      if (!derived.ok) {
+        return c.json(
+          derived.reason === 'UNKNOWN_PANEL_METRIC'
+            ? { error: derived.reason, metricId: derived.metricId }
+            : { error: derived.reason, scopes: derived.scopes },
+          400,
+        )
+      }
+      // ── 派生值 vs 调用方给的值（**创建** ≠ **发布**，两者规则不同）──────────────────
+      //  · 派生非 null ⇒ 它是**下界**：报表不能比它的面板更宽。调用方给的必须与它一致
+      //    （这套模型**没有 scope 层级**，判不了「谁更严」⇒ 不一致只能拒，不能挑一个放行）。
+      //  · 派生 null ⇒ 面板不需要任何码 ⇒ 调用方给的**草稿页门**是安全的，照用
+      //    （空面板 + `data:manage` = 「先建草稿、之后再补面板并发布」，是既有正常流程）。
+      let effectiveScope = derived.requiredScope
+      if (effectiveScope === null) {
+        effectiveScope = parsed.data.requiredScope
+      } else if (parsed.data.requiredScope !== null && parsed.data.requiredScope !== effectiveScope) {
+        return c.json(
+          { error: 'SCOPE_CONFLICT_WITH_PANELS', derivedScope: effectiveScope, givenScope: parsed.data.requiredScope },
+          400,
+        )
+      }
       const id = await upsertReport(ctx.pool, org, {
         title: parsed.data.title,
         metabaseId: 0,                    // 哨兵：platform 行没有 Metabase dashboard（见 ReportRow）
         embedParams: {},                  // 入参面正交：非空 lockedParams 已在 zod 层被拒
-        requiredScope: parsed.data.requiredScope,
+        requiredScope: effectiveScope,
         renderer: 'platform',
         spec: spec.spec,
       })

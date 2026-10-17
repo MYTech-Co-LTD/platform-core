@@ -39,6 +39,8 @@ const SECRET = 'aaaa1111-bbbb-2222-cccc-333344445555'
  */
 const COST_METRIC = 't4rg:cost'
 const MARGIN_METRIC = 't4rg:margin'
+/** 无码指标（`requiredScope = null`）——用于钉「面板都不需要码 ⇒ 报表也不收严」（#778）。 */
+const OPEN_METRIC = 't4rg:open'
 
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
@@ -289,13 +291,14 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     await applyMigrations(pool)
     // 发布门夹具（#764 P1 Task 4）：两条本 org 的 L2 指标，`requiredScope` 故意不同。
     // `upsertMetric` 幂等（冲突分支 do update）⇒ 重复跑不会累积；清理在 afterAll 按 org 删。
-    const def = (id: string, title: string, requiredScope: string) => ({
+    const def = (id: string, title: string, requiredScope: string | null) => ({
       id, title, description: `${title}（发布门夹具）`, requiredScope,
       subjectColumn: 'org', selectSql: `select 1 as value from ${id.replace(':', '_')}`,
       groupBy: '', params: {},
     })
     await upsertMetric(pool, ORG, def(COST_METRIC, '成本', 'data:cost'), 'fixture')
     await upsertMetric(pool, ORG, def(MARGIN_METRIC, '毛利', 'data:margin'), 'fixture')
+    await upsertMetric(pool, ORG, def(OPEN_METRIC, '公开指标', null), 'fixture')
   })
 
   beforeEach(async () => {
@@ -1623,6 +1626,65 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       const res = await putGate(app, id, { requiredScope: 'data:manage', expectedVersion: await versionOf(app, id) })
       expect(res.status).toBe(200)
       expect((await res.json()).requiredScope).toBe('data:manage')
+    })
+
+    // ── POST /reports 也走同一个派生（issue #778）──────────────────────────────────
+    // ⚠️ 这是**旁路修复**：`required_scope = null` = 已发布，所以「建行时直接用调用方给的值」
+    //    等于让带冲突面板的报表**建成即已发布**（报表可见、面板 /query 403）。
+    describe('POST /reports 的 platform 分支（#778 旁路）', () => {
+      it('★ 两个不同码的面板 ⇒ 创建即被拒并点名（修前会建成已发布态）', async () => {
+        const { app } = manage()
+        const res = await post(app, {
+          title: '建行即冲突', renderer: 'platform',
+          spec: { panels: [panel(COST_METRIC, '成本'), panel(MARGIN_METRIC, '毛利')] },
+        })
+        expect(res.status).toBe(400)
+        const body = await res.json() as { error: string; scopes: string[] }
+        expect(body.error).toBe('CONFLICTING_PANEL_SCOPES')
+        expect([...body.scopes].sort()).toEqual(['data:cost', 'data:margin'])
+        // 「拒」= 一行都没落
+        expect((await pool.query('select count(*)::int as n from data.reports where title = $1', ['建行即冲突']))
+          .rows[0].n).toBe(0)
+      })
+
+      it('★ 面板同一个码 + 调用方不传页门 ⇒ 落库就是该码（不是 null = 不是已发布）', async () => {
+        const { app } = manage()
+        const { id } = await (await post(app, {
+          title: '建行即单码', renderer: 'platform', spec: { panels: [panel(COST_METRIC, '成本')] },
+        })).json()
+        expect((await pool.query('select required_scope from data.reports where id = $1', [id]))
+          .rows[0].required_scope).toBe('data:cost')
+      })
+
+      it('★ 面板都不需要码 ⇒ null（与今天一致，不额外收严）', async () => {
+        const { app } = manage()
+        const { id } = await (await post(app, {
+          title: '建行无码', renderer: 'platform', spec: { panels: [panel(OPEN_METRIC, '公开')] },
+        })).json()
+        expect((await pool.query('select required_scope from data.reports where id = $1', [id]))
+          .rows[0].required_scope).toBeNull()
+      })
+
+      it('★ 空面板 + 调用方给草稿页门 ⇒ 照用（**不破坏**「先建草稿、后补面板」的既有流程）', async () => {
+        const { app } = manage()
+        const { id } = await (await post(app, {
+          title: '草稿', renderer: 'platform', spec: { panels: [] }, requiredScope: 'data:manage',
+        })).json()
+        expect((await pool.query('select required_scope from data.reports where id = $1', [id]))
+          .rows[0].required_scope).toBe('data:manage')
+      })
+
+      it('★ 派生非 null 且调用方给了**不一致**的页门 ⇒ 拒（没有 scope 层级，判不了谁更严）', async () => {
+        const { app } = manage()
+        const res = await post(app, {
+          title: '页门打架', renderer: 'platform',
+          spec: { panels: [panel(COST_METRIC, '成本')] }, requiredScope: 'data:manage',
+        })
+        expect(res.status).toBe(400)
+        expect(await res.json()).toEqual({
+          error: 'SCOPE_CONFLICT_WITH_PANELS', derivedScope: 'data:cost', givenScope: 'data:manage',
+        })
+      })
     })
   })
 })
