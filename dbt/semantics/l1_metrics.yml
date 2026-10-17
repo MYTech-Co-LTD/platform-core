@@ -96,9 +96,10 @@ metrics:
       ⚠️ **本指标不产出「覆盖天数」**：客户公式里的「批准窗口 N」属 X08 口径阈值（客户待批），
       按裁5「未批准前不设门槛，只出分子/分母」⇒ 本仓只出净销量，N 由消费方带。
       分子（可售库存数量）见 `lemeng:inventory:quantity`。
-      粒度 = 账套 × 业务日 × 门店。
+      粒度 = 账套 × 业务日 × 门店 × **商品**（2026-10-17 由门店级扩到商品级，与覆盖天数的客户粒度对齐；
+      门店级视角对 expression 求和即可）。
     expression: 'sum(fct_retail_quantity.net_quantity)'
-    grain: [system_book, bizday, branch_num]
+    grain: [system_book, bizday, branch_num, item_num]
     owner: data-platform
     tier: experimental
     source: lemeng
@@ -398,6 +399,30 @@ metrics:
     freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/inventory_snapshot/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:inventory:coverage_days'
+    label: 库存覆盖天数（月日均）
+    definition: >-
+      覆盖天数 = 报告日可售库存数量 / 月日均净销量（不可加；上滚=重算/另声明）。服务客户项 03-07。
+      **N 的裁决（2026-10-17 用户拍板）= 月日均**：分母 = 当月 1 日 ~ 报告日的净销量合计 ÷ 当月已过天数。
+      ⚠️ **两处解释性落地**（客户原文未定到这一层）：
+      ① 用「当月至今」而不是滚动 30 天——「月日均」的字面读法；
+      ② 分母的「天数」用**自然日**，不是「营业日」——X01 营业日历 seed 为空（客户未填），
+         拿不到真实营业日集合。**X01 有数据后这里应改为「当月已过的营业日数」**（已知可改进点）。
+      ⚠️ **净销量 ≤ 0 ⇒ 分母置 NULL（不适用）**：客户文档要求「净销量≤0 单列，不强算天数」。
+      粒度 = 账套 × 报告日 × 门店 × 商品（客户「门店×商品×单位」；本仓未拆单位维度，属已知边界）。
+      **上滚语义**：对 expression 求和 = 各商品库存之和 ÷ 各商品日均之和（加权覆盖，不是比率的算术平均）。
+    ratio:
+      numerator: 'sum(fct_inventory_coverage.inventory_quantity)'
+      denominator: 'sum(fct_inventory_coverage.avg_daily_net_quantity)'
+    grain: [system_book, bizday, branch_num, item_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+    sources:
+      - 's3://<bucket>/lemeng/inventory_snapshot/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
 
   # ── 采购族（W3 余项 2026-10-13，D11 itempurchase / fct_purchase / #640）──────────────
   # ⚠️ 全 experimental：① 采购**收货**口径（≠采购订单，客户文档边界）；② 采集范围 = 管理中心
