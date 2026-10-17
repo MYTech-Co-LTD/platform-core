@@ -285,13 +285,13 @@ models:
         description: 业务日。粒度键（出库侧制单日）。
         tests: [{not_null: {}}]
       - name: domain
-        description: 域（transfer=配送出库 / wholesale=批发）。粒度键。**保留不折叠**——两域 branch_num 语义不同（见头注）。
+        description: 域。粒度键。**三值**：`transfer`（配送出库）/ `wholesale`（批发）/ `expense`（**只有费用、当天无对应出库**的门店日，R/C/G 恒 0、N=−E）。后一类必须保留，否则总仓级 N 的 E 少算（真机实测 53 个组合）。**保留不折叠**——两域 branch_num 语义不同（见头注）。
         tests: [{not_null: {}}]
       - name: branch_num
-        description: 门店号。粒度键。**语义随域变**：transfer=调入门店（可与 fct_branch_expense 对齐）；wholesale=发货方编号（99=管理中心）。
+        description: 门店号。粒度键。**语义随域变**：transfer=调入门店（可与 fct_branch_expense 对齐）；wholesale=发货方编号（99=管理中心）；expense=费用归属门店。
         tests: [{not_null: {}}]
       - name: region_id
-        description: 战区。粒度键。wholesale 行由 branch_num=99 回落 dim_branch ⇒ **批发归属战区的语义可疑**（既存边界，头注有记）。
+        description: 战区。粒度键。wholesale 行由 branch_num=99 回落 dim_branch ⇒ **幻影战区**（真机实测全部批发落进 9046，与 12 个真战区不重叠）；expense 行恒 **0**（无出库可归属）。⇒ 战区级口径必须走 `*_store` 列（见头注）。
         tests: [{not_null: {}}]
       - name: r_net
         description: R 出库净额构件（出库侧原样透传）。**与 lemeng:outbound:net_amount 同源**。

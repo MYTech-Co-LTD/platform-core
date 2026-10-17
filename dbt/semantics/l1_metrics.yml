@@ -462,6 +462,119 @@ metrics:
     sources:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
+  # ── 组合族 W2（2026-10-17，#744）：费用后贡献 / 补损率 / 补贴率 ──────────────────────
+  # 落点 = fct_contribution（出库 × 费用的组合构件）。**为什么必须建 mart**：L1 的 select_sql
+  # 形状是「select <聚合> as value, <维度…> from <单一关系>」——`from` 只能一个关系，跨域口径
+  # 写不出声明。构件头注记了全部边界（门店费用只挂 transfer 域、批发战区的幻影回落等）。
+
+  - name: 'lemeng:contribution:net_amount'
+    label: 费用后贡献额（总仓级）
+    definition: >-
+      N = R − C − E（元），**总仓级全域口径**：R/C 为配送出库与批发合并后的出库构件，E 为门店费用净额。
+      服务客户项 01-03「费用后贡献与贡献率」与 08-05「费用后贡献率」的分子侧。
+      ⚠️ **与战区级/门店级不是同一口径**：本条的 E 只含**门店费用**，**不含客户费用**——
+      客户费用按 client 归集，而出库侧没有 client_fid（#744 Task 0 补记②），两者对不上；
+      客户文档 01-03 的完整 E = 门店费用 + 客户费用，**客户费用部分待出库侧带 client_fid 后另补**。
+      故本条是「门店费用后」的贡献额，**不是**客户文档定义的完整 N——引用前须知道这条边界。
+      粒度 = 账套 × 业务日。
+    expression: 'sum(fct_contribution.n_net)'
+    grain: [system_book, bizday]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:contribution:margin_rate'
+    label: 费用后贡献率（总仓级）
+    definition: >-
+      贡献率 = N / R（不可加；上滚=重算/另声明）。零分母 → 不适用（sync 自动包 nullif）。
+      分子分母同口径同粒度（都是总仓级全域），**域间不混算分母**。
+      边界与 `contribution:net_amount` 逐字相同（E 只含门店费用，不含客户费用）——服务客户项
+      01-03 与 08-05 的率侧。
+    ratio:
+      numerator: 'sum(fct_contribution.n_net)'
+      denominator: 'sum(fct_contribution.r_net)'
+    grain: [system_book, bizday]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:contribution:region_net'
+    label: 费用后贡献额（战区级）
+    definition: >-
+      N = R − C − E 的**战区级门店域口径**（服务客户项 02-04「战区费用后贡献」）。
+      ⚠️ **本条的射程只有 transfer 域**，理由是两条硬边界：① 门店费用的对象是「归属门店」，
+      只有 transfer 行的 branch_num（调入门店）对得上；② 客户文档 02-04 要求批发按
+      client_fid→X01 映射归战区，而本仓出库侧**没有 client_fid**，批发行的 region_id 是
+      branch_num=99 回落 dim_branch 的**幻影战区**（真机实测：全部批发落进单个 region_id=9046，
+      与 12 个真战区不重叠）⇒ 把批发算进来会把 84 万批发额记到一个不存在的战区上。
+      **本指标覆盖配送出库到门店的部分；批发侧待 client_fid 到位后另声明。**
+      粒度 = 账套 × 业务日 × 战区。
+    expression: 'sum(fct_contribution.n_net_store)'
+    grain: [system_book, bizday, region_id]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:expense:loss_rate'
+    label: 门店补损率
+    definition: >-
+      补损率 = Q / R（不可加；上滚=重算/另声明）。Q = 补损类费用净额（真机实测取值字面量
+      `产品售后补损`），R = 同门店同期间**配送出库净额**（门店域）。零分母 → 不适用。
+      服务客户项 02-07「门店补损率」与 07-05「售后补损率」——客户附录两处公式**逐字相同**
+      （补损率＝Q/同对象同期间R），是同一口径的两个角色视角，故**只声明一条**。
+      ⚠️ 分母用门店域（transfer-only）：门店对象只有配送出库对得上；批发的客户对象需 client_fid，
+      不在本批。客户文档另提「补损侵蚀率＝Q/G（仅 G>0）」，属消费面派生，未声明。
+      粒度 = 账套 × 业务日 × 门店。
+    ratio:
+      numerator: 'sum(fct_contribution.q_loss)'
+      denominator: 'sum(fct_contribution.r_net_store)'
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  - name: 'lemeng:expense:subsidy_rate'
+    label: 门店补贴率
+    definition: >-
+      补贴率 = S / R（不可加；上滚=重算/另声明）。S = 补贴类费用净额，R = 同门店同期间配送出库净额。
+      零分母 → 不适用。服务客户项 03-04「门店补损与补贴率」的补贴侧（补损侧见 `expense:loss_rate`）。
+      ⚠️ **客户文档 03-04 写「分别筛补损、直播补贴、小程序或线下补贴项目」，而真机全量分组实测
+      （2026-10-16）里只有 `抖音直播补贴` 一类**——「小程序或线下补贴」在该账套的数据里不存在
+      （采集窗口短，或确无）。本指标按**实际取值**筛，客户文档所列的另两类暂不计入；
+      若将来出现，需同步扩这里的筛选字面量。
+      粒度 = 账套 × 业务日 × 门店。
+    ratio:
+      numerator: 'sum(fct_contribution.q_subsidy)'
+      denominator: 'sum(fct_contribution.r_net_store)'
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
+
   # ── W3 余项（2026-10-15，要货满足率 / D15×D16，#677）────────────────────────────────
   # 构件落点：fct_request_fulfillment（店×商品×日总量对照）。⚠️ 全 experimental——行级履约
   # 关联在当前湖面不可构造（D16.related_order_no 指 MO 非 YH，D01 契约无 related_order_no，
