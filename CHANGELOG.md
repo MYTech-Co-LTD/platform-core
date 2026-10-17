@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.147.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.146.2...v0.147.0) - 2026-10-17
+- 【新增】data: forms 域新鲜度锚 owners.forms.json——抓「没有失败的停更」（Refs #729） ([#803](https://github.com/MYTech-Co-LTD/platform-core/pull/803), [0a64d56](https://github.com/MYTech-Co-LTD/platform-core/commit/0a64d564ae900d5a95eaa90f649da00572daa0f4))
+
+
 ## [0.146.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.146.1...v0.146.2) - 2026-10-17
 - 【修复】data: 客户级贡献率对账自检段列数对齐主段（10 列） ([#804](https://github.com/MYTech-Co-LTD/platform-core/pull/804), [aecf44b](https://github.com/MYTech-Co-LTD/platform-core/commit/aecf44b94172ba7e4d4d2ddfbe362cc3a4fc9d73))
 
