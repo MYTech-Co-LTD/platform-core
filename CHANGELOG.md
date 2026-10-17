@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.141.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.140.1...v0.141.0) - 2026-10-17
+- 【新增】data: 契约列加 sensitivity 标记与闭集门禁 ([#777](https://github.com/MYTech-Co-LTD/platform-core/pull/777), [f51aa83](https://github.com/MYTech-Co-LTD/platform-core/commit/f51aa83a8c0440cba83c890eb94c49571467008f))
+- 【新增】data: 报表 requiredScope 改为从面板派生，冲突时拒绝发布 ([#774](https://github.com/MYTech-Co-LTD/platform-core/pull/774), [5bcfcc5](https://github.com/MYTech-Co-LTD/platform-core/commit/5bcfcc52dbfed19630e450148a666f777e4df97a))
+
+
 ## [0.140.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.140.0...v0.140.1) - 2026-10-17
 - 【修复】data: 净销量对账的 UNION 两臂少一列（9 vs 10） ([#772](https://github.com/MYTech-Co-LTD/platform-core/pull/772), [c6a5d1c](https://github.com/MYTech-Co-LTD/platform-core/commit/c6a5d1c005f5b078c66fe95e40232d19a898498f))
 
