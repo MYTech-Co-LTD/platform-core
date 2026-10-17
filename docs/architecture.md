@@ -209,7 +209,7 @@
 >
 > | 角色 | 管什么 | **不管**什么 |
 > |---|---|---|
-> | **统一身份认证 + 权限认证**（Casdoor 身份 + `modules/data/domain/authz.ts` 的 org 谓词） | **能看到哪些数据**（租户 / 主体 / 行级）——**这条通路唯一的划线依据** | 不管口径怎么定 |
+> | **统一身份认证 + 权限认证**（Casdoor 身份 + `modules/data/domain/authz.ts` 的 org 谓词） | **能看到哪些数据**（租户 / 主体 / **行级 / 指标级 / 列级 / 值级**）——**这条通路唯一的划线依据** | 不管口径怎么定 |
 > | **dbt 语义层**（`dbt/semantics/l1_metrics.yml` + marts `schema.yml`） | **指标怎么定义**——供 AI **理解**、保**全局口径一致** | **不是查询闸**，**不限定能查什么** |
 > | **AI 洞察** | 在**授权范围内任意探索**（含**明细层**，吃 DuckDB 的性能） | 不越授权、不绕审计 |
 >
@@ -219,6 +219,15 @@
 > allowlist」）**仍然成立**的读法，只是「保护来自什么」的落点从**每租户会话绑定**改为**授权面**。
 > ⇒ **两条不放松**：**读入审计**（落 `data.query_audit`，与问数同一套 `domain/audit-store.ts`）；
 > **超时 / 行数上限是工程保护**（防一次查询拖垮数据面），**不当权限讲**。
+>
+> **列级 / 值级是这条依据上的两个新维度，不是第二条依据**（2026-10-17 拍板；设计
+> `docs/superpowers/specs/2026-10-17-column-and-value-level-security-design.md`，issue #764）。
+> **执法点唯一**：`authorize()` 组装的 SQL 投影（`modules/data/domain/authz.ts`）——`/query`、MCP、
+> chat、报表**四条面**全过它（报表是经 HTTP 打 `/query`，**不是**直接调 `runQuery`）。
+> **前端、词表、报表渲染一律不承担安全职责**——「词表裁剪是一种能力，不是闸」（上第 6 条）在这里
+> 的直接推论就是：**靠从词表里藏指标来保密，架构上不成立**；前端脱敏 = 没脱敏。
+> ⚠️ **射程**：**直读面不在内**——Metabase / AI 直读数据面**不经过 `authorize()`**，故列级/值级在
+> 直读面上**未落地**（且直读通路本身按本注的缺口 A/B **尚未开通**）。别把这条读成「全平台已解决」。
 >
 > ⚠️ **本注是目标形态，不是现状——通路尚未开通（文档先行）**。它成立的前提是「**授权面在数据面上
 > 真的施得上**」，而该前提**还没做实**，两条缺口都开着：
@@ -452,6 +461,8 @@
 | **I-1 挂载顺序** | 租户→会话必须先于 `runtime.mount`（见 §3） | `apps/server/src/app.ts:3-9` |
 | **JIT 建号三条件** | 企微自动建号（issue #32）必须同时满足：① **企微直连 code**（qr-corp/silent；Casdoor OIDC code 路**永不** JIT——那条路的账号来源是 Casdoor 自己的注册/管理面）② 租户旗标 `wecom_auto_signup`（**默认 false**，seed 收敛关；放宽 = 企微成员自动获得平台账号，必须租户级显式决定）③ 建号 + 挂全量码后重读成功。任一不满足 ⇒ fail-closed（NO_ACCOUNT / CASDOOR_UNAVAILABLE）。建号失败**绝不静默放行**（audit `login.fail reason=jit-create-failed`） | `apps/server/src/routes/auth-wecom.ts:324`、`packages/auth-core/src/casdoor-client.ts:236,268`、`apps/server/src/migrations/004_tenant_wecom_auto_signup.sql` |
 | **跨模块数据消费走契约** | 业务模块消费其他域的数据（如采集产出的维表）**只许两种形状**：① owner 的同步查询 API（交互类，执法在读时）或 ② owner 发布的带版本快照（批量类，执法在发布时）；**禁止直连**他模块的生产表/生产库（staging/湖不对业务模块暴露；不给业务模块发 `DATA_WAREHOUSE_URL`）。违反 = 跨 schema/租户耦合藏进存储层（lint 看不见），schema 一变运行时静默炸。判定三问与形状选择见决策正典 | `docs/superpowers/specs/2026-10-07-cross-module-data-consumption.md`（人裁 2026-10-07） |
+| **血缘单调**（列级/值级授权） | `policy(指标) ⊇ ∪ policy(该指标读到的源列)`——给源列加限制而读它的指标**未同步收窄** ⇒ 泄漏：藏了 `item_cost_price`，但「毛利率」照旧算得出。⚠️ **门禁尚未落仓**：随 spec §4.3 的 P1 落 `gates`，**缺席期间不拦**（本档按现状如实登记）。⚠️ 只查**申报**的单调性；完整性需 contract→marts 的列级血缘，**仓内不存在**（无 dbt manifest）⇒ **拦不住漏申报**，如实标注 | spec `2026-10-17-column-and-value-level-security-design.md` §4.3 |
+| **掩码先于聚合**（列级/值级授权） | `sum(round(x,-1000))`，**不是** `round(sum(x),-1000)`——后者可被差分攻击（换过滤/换窗取差）逼近精确值。由**编译期占位符骨架 + 运行期字符串展开**保证（运行期零 SQL 解析，故也不可能把顺序写错）。⚠️ **门禁尚未落仓**：随 P2 落护栏测试，**缺席期间不拦** | 同上 §5.3 |
 
 > **「仅文档」不等于「不重要」**，而是「目前没有自动化的守门人」。把某一条升级成门禁是**另一个决定**，
 > 需要单独的真实案例支撑（本仓规矩：无案例不立标准）。
