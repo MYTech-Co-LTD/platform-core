@@ -54,9 +54,11 @@ def detect(rows):
             if k == "tool_call":
                 cur = (r.get("tool_name") or "", r.get("tool_args") or "")
                 if prev_call is not None and cur == prev_call:
-                    hits.append(("same_tool_retry", "指令面", r,
-                                 {"a_seq": prev_call_seq, "b_seq": r.get("seq"),
-                                  "tool": cur[0], "args": cur[1][:200]}))
+                    ev = {"a_seq": prev_call_seq, "b_seq": r.get("seq"),
+                          "tool": cur[0], "args": cur[1][:200]}
+                    if cur[0] == "tool_call":      # 调度器行：解出内层真工具
+                        ev.update(inner_of(cur[1]))
+                    hits.append(("same_tool_retry", "指令面", r, ev))
                 prev_call, prev_call_seq = cur, r.get("seq")
             elif k == "tool_result":
                 cur = (r.get("tool_result") or "", bool(r.get("is_error")))
@@ -80,19 +82,41 @@ def detect(rows):
     return hits
 
 
+def inner_of(args_json):
+    """openclaw 的**通用调度器**把真工具放在 `args.id` 里；解出来便于分开统计。"""
+    try:
+        j = json.loads(args_json or "{}")
+    except Exception:
+        return {}
+    if not isinstance(j, dict):
+        return {}
+    out = {}
+    if isinstance(j.get("id"), str):
+        out["inner_tool"] = j["id"]
+    if "args" in j:
+        out["inner_args"] = json.dumps(j["args"], ensure_ascii=False)[:200]
+    return out
+
+
 def layer_of(rule, evidence_text):
-    """归因到层（规则表落成常量，别散在 if 里）。**落不下层就返回 unknown 并如实记录**。"""
+    """归因到层。**先判内层调度**（那不是我们指令面能修的）；落不下层返回 `unknown`，
+    **不默认归指令面**——不认识就说不认识，统计里能看见（#749）。"""
     t = evidence_text or ""
+    # openclaw 内层调度：通用调度器本体，与它的内部报错
+    if '"tool": "tool_call"' in t or '"tool":"tool_call"' in t:
+        return "运行面（openclaw 内层调度）"
+    if "Tool " in t and " not found" in t:
+        return "运行面（openclaw 内层调度）"
+    if '"expected"' in t and '"array"' in t:
+        return "运行面（openclaw 内层调度）"
     if "requesterSenderId" in t or "无法识别请求者身份" in t:
         return "数据面（身份链路）"
     if "BAD_PARAM" in t or "参数" in t or "invalid" in t.lower():
         return "指令面/回包面"
-    if "truncated" in t:
+    if '"truncated":true' in t.replace(" ", ""):
         return "指令面"
     if "warehouse_transient" in t or "502" in t:
         return "数据面（基础设施）"
-    if rule == "same_tool_retry" or rule == "same_error_twice":
-        return "指令面"
     return "unknown"
 
 
@@ -127,7 +151,7 @@ def main():
         evs = json.dumps(ev, ensure_ascii=False)
         layer = layer_of(rule, evs)
         base = {"session_id": r.get("session_id"), "seq": r.get("seq"), "ts": r.get("ts"),
-                "rule_ver": 2, "rule": rule, "evidence": evs}
+                "rule_ver": 3, "rule": rule, "evidence": evs}
         stuck.append(dict(base, layer_hint=hint))
         attributed.append(dict(base, layer=layer))
         by_rule[rule] = by_rule.get(rule, 0) + 1
