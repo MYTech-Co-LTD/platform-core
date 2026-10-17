@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.153.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.153.1...v0.153.2) - 2026-10-17
+- 【优化】data: dbt 树按域分目录 + 域开关（+enabled/env_var）+ fail-closed 域覆盖门禁（Refs #729） ([#835](https://github.com/MYTech-Co-LTD/platform-core/pull/835), [e937ab3](https://github.com/MYTech-Co-LTD/platform-core/commit/e937ab35d74360fc30ef69b05ff397ae9db80b94))
+
+
 ## [0.153.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.153.0...v0.153.1) - 2026-10-17
 - 【修复】data: 零售净销售额口径改冲退货——构件拆三列 + 对账锚切换 ([#834](https://github.com/MYTech-Co-LTD/platform-core/pull/834), [72cf57a](https://github.com/MYTech-Co-LTD/platform-core/commit/72cf57a1d2b127bfdfcdfbc8216524ae4518c797))
 
