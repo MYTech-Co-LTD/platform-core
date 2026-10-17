@@ -50,19 +50,45 @@
 version: 1
 
 metrics:
-  - name: 'lemeng:retail:net_sales'
-    label: 净销售额
+  - name: 'lemeng:retail:sales'
+    label: 销售额（不冲退货）
     definition: >-
-      零售净销售额，平台口径（issue #430 定案，2026-10-05 双账套真机 5 天逐分归零）：
-      取 state=FINISHED 且 order_transaction_type=SALE_ORDER 的订单（退货单不进 gross——
-      平台 sale_money 不冲退货单），逐订单取「(Σ非赠品行额 + order_total_money) / 2」，
-      按门店×日合计后再减 Σ分摊折扣（order_detail_share_discount）；
+      零售销售侧金额（**不冲退货**）= 2026-10-17 之前 `lemeng:retail:net_sales` 的原值。
+      取 state=FINISHED 且 order_transaction_type=SALE_ORDER 的订单（**退货单不进本口径**），
+      逐订单取「(Σ非赠品行额 + order_total_money) / 2」，按门店×日合计后再减 Σ分摊折扣；
       赠品行按判别式排除（std_price>0 且 sale_money>0 且 quantity>0 且
       |discount_money − std_price×quantity| ≤ 0.02，容差标定见判别式正典
       docs/superpowers/specs/2026-09-30-recon-zeroing-self-attribution.md）。
+      ⚠️ 会计上这个量叫 **gross sales**，不是 net sales —— 本指标存在的意义正是把「毛」与「净」
+      在语义层**同时可见**，防「净销售额」被当成会计净收入用（2026-10-17 事故根因，issue #813）。
       粒度 = 账套 × 业务日 × 门店（口径模型 fct_retail_sale）。
-      ✅ tier=certified（2026-10-13 客户裁决：裁1 保持折半口径——换货即商品替换、退旧换新只计差价，
-      与乐檬报表口径一致；spec §6 裁1 已回签）。
+      ✅ tier=certified（沿用旧 `net_sales` 的 2026-10-05 双账套 5 天 × 63 店逐分归零验证，公式未变）。
+    expression: 'sum(fct_retail_sale.sale_amount)'
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: certified
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
+
+  - name: 'lemeng:retail:net_sales'
+    label: 净销售额
+    definition: >-
+      零售净销售额 = **销售侧 − 退货侧**（2026-10-17 起，issue #813；口径依据 = 客户裁1 的净额
+      L = Σsale − Σreturn 叠加「换货扣送出半边」）。**销售侧** = state=FINISHED 且
+      order_transaction_type=SALE_ORDER 的订单（退货单不进销售侧），逐订单取
+      「(Σ非赠品行额 + order_total_money) / 2」，按门店×日合计后再减 Σ分摊折扣；赠品行按判别式排除
+      （std_price>0 且 sale_money>0 且 quantity>0 且 |discount_money − std_price×quantity| ≤ 0.02，
+      容差标定见判别式正典 docs/superpowers/specs/2026-09-30-recon-zeroing-self-attribution.md）。
+      **退货侧** = 退货单**全额冲减**（不套折半）：Σ(sale_money + order_detail_share_discount)，
+      条件 order_transaction_type like '%RETURN%' AND state='FINISHED'（**REPAID_RETURN 不计**
+      —— 它们 state=REPAID；2026-10-17 四个 book-day 真机逐分验证）。
+      退货按**退货单自身 bizday** 归属，不是原单销售日。
+      粒度 = 账套 × 业务日 × 门店（口径模型 fct_retail_sale）。
+      ⚠️ 本口径实为**乐檬报表复现口径**（销售侧折半式是反推式），**不是会计口径的净收入**。
+      ⚠️ tier=experimental：退货侧存在逐店缺口（issue #814），缺口清零前不转 certified。
+      spec：docs/superpowers/specs/2026-10-17-retail-net-sales-return-offset-design.md
     expression: 'sum(fct_retail_sale.net_amount)'
     grain: [system_book, bizday, branch_num]
     owner: data-platform
@@ -79,12 +105,13 @@ metrics:
     label: 订单数
     definition: >-
       有效零售订单数：state=FINISHED 且 order_transaction_type=SALE_ORDER 的去重订单笔数
-      （与净销售额同基面，换货单算一单；口径模型 fct_retail_sale）。
+      （基面 = 销售单，与 `lemeng:retail:sales` 同基面，**不含退货单**——退货不是「订单」；
+      换货单算一单；口径模型 fct_retail_sale）。
       粒度 = 账套 × 业务日 × 门店。
       **上滚语义**：更粗粒度上对 expression 求和 = 各门店日去重笔数之和；跨门店重号的订单会被
       重复计入——`order_no` 的**跨门店唯一性未证**（单号语义的已证/未证边界见
       `dbt/tests/audit_lemeng__retail__order_count.sql` 头注），这是本口径的**已知边界**，
-      要「全账套唯一订单数」得单独声明一个新指标，不许改本定义。✅ certified（2026-10-13 裁1 回签：与净销售额同基面转正）。
+      要「全账套唯一订单数」得单独声明一个新指标，不许改本定义。✅ certified（2026-10-13 裁1 回签；基面 = 销售单，未随 #813 的净额口径变更而变）。
     expression: 'sum(fct_retail_sale.order_count)'
     grain: [system_book, bizday, branch_num]
     owner: data-platform
@@ -100,7 +127,9 @@ metrics:
       净销量 = 销售数量 − 退货数量（客户项 03-07「库存覆盖天数」的**分母**）。可加（按门店日求和）。
       **销售** = state=FINISHED 且 order_transaction_type=SALE_ORDER；**退货** = 单据类型含 RETURN
       且 state ∈ (FINISHED, REPAID)。⚠️ 载体见 `fct_retail_quantity`——它的基面与本族净**额**
-      指标**不同**（净额按裁1 不冲退货单，净销量必须减退货），故单开构件而不是共用 fct_retail_sale。
+      指标**不同**（净额自 2026-10-17 起也减退货，但退货谓词是 `like '%RETURN%' AND
+      state='FINISHED'`（**不含** REPAID_RETURN）；本指标是 `state in ('FINISHED','REPAID')`
+      —— 两者**刻意不同**，别合并），故单开构件而不是共用 fct_retail_sale。
       ⚠️ **两处解释性落地**（客户原文未细到这一层，故 experimental）：
       ① `REPAID_RETURN`（已退款退货）计入退货；② `state=CANCELED` 的销售与退货都不计。
       ⚠️ **本指标不产出「覆盖天数」**：客户公式里的「批准窗口 N」属 X08 口径阈值（客户待批），

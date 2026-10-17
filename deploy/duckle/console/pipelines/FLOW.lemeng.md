@@ -188,7 +188,7 @@ flowchart TD
 |---|---|---|---|
 | `pday` | ③ | SQL 执行壳 | T-3 定稿线（上海日-3）· 门店清单 JSON · settled 两档 |
 | `pguard` / `lguard` | ② | 无行即红 | 空分区/零销日 = 依赖不可用（脚本 exit3 同款保守） |
-| `lagg` | ③ | SQL 执行壳 | 净额口径逐字对应 `recon-preagg.sh`（赠品判别式 / 逐订单归并 / 不扣退货） |
+| `lagg` | ③ | SQL 执行壳 | 净额口径逐字对应 `recon-preagg.sh`（赠品判别式 / 逐订单归并 / 销售侧不扣退货 + 净额侧减退货，issue #813） |
 | `pre` | ② | REST · 重试 · 原始报文落盘 | 请求体（bizday / 门店清单来自 ITER）· `responsePath=/result/rows` |
 | `envelope` + `gcode` | ③+② | rawSql 读落盘字节 · 有行即红 | **先看 envelope 再判行**：code≠0 是依赖坏（10006 形状），不判会假红成「门店缺失」 |
 | `diff` | ③ | SQL 执行壳 | 逐店透视（两侧 UNION BY NAME，缺侧=NULL） |

@@ -20,11 +20,19 @@
 --    若复算走 staging，staging 的 cast 错会**同时**污染两边 ⇒ 对账恒等、永远绿（这正是
 --    「对账看着有、其实没用」的形态）。故复算直接打 parquet，与 staging 的 cast 各自独立写。
 --
--- ── 口径（2026-10-12 W0 随 #430 定案更新）───────────────────────────────────────────────
---    净销售额 = FINISHED+SALE_ORDER 基面 + 换货「送出半边」公式（逐单 (Σ非赠品+total)/2 − sd）
---    + 赠品判别式排除。**除法形态与 fct_retail_sale.sql 及正典对拍实现
+-- ── 口径（2026-10-17 随 #813 定案更新；上一版 2026-10-12 W0 随 #430）──────────────────────
+--    净销售额 = **销售侧 − 退货侧**。
+--    销售侧 = FINISHED+SALE_ORDER 基面 + 换货「送出半边」公式（逐单 (Σ非赠品+total)/2 − sd）
+--      + 赠品判别式排除（本文件 `base`/`per_order` 两条 CTE 实现）。
+--    退货侧 = 退货单**全额冲减、不套折半**：Σ(sale_money + order_detail_share_discount)，
+--      谓词 `order_transaction_type like '%RETURN%' AND state='FINISHED'`（**REPAID_RETURN 不计**
+--      —— 它们 state=REPAID）；按**退货单自身 bizday** 归属（本文件 `ret_base`/`ret_side` 两条
+--      CTE 实现，**独立打 parquet、不 ref staging**，与销售侧各自读，见上「刻意重复」段）。
+--    两侧各自 group by (账套, 业务日, 门店) 后 full join 相减 —— 缺一侧按 0 计（`recheck`）。
+--    **销售侧的除法形态与 fct_retail_sale.sql 及正典对拍实现
 --    （console 管线 lemeng.recon.preagg.item.json）逐字同构**：per_order 出 ng/tot/sd，
 --    sum 的参数表达式里逐单除——除法的舍入位置是口径的一部分，别改成先和后除。
+--    spec：docs/superpowers/specs/2026-10-17-retail-net-sales-return-offset-design.md
 --
 -- ── 形态：与 staging **同一套实测形态**（2026-09-24 数据面真机）──────────────────────────
 -- ① 取列：`from read_parquet('…') r` + `r['列名']` —— 别名必须挂在**函数调用**上；
@@ -59,6 +67,28 @@ with base as (
       --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 ),
+ret_base as (
+    select
+        r['system_book']::varchar as system_book,
+        r['bizday']::date         as bizday,
+        r['branch_num']::int      as branch_num,
+        (r['sale_money']::numeric + r['order_detail_share_discount']::numeric) as return_amount
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/**/*.parquet'
+    ) r
+    where r['order_transaction_type'] like '%RETURN%'
+      and r['state'] = 'FINISHED'
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+),
+ret_side as (
+    select
+        system_book,
+        bizday,
+        branch_num,
+        sum(return_amount)::numeric(20,2) as return_amount
+    from ret_base
+    group by 1, 2, 3
+),
 per_order as (
     select
         system_book,
@@ -73,13 +103,19 @@ per_order as (
 ),
 recheck as (
     select
-        system_book,
-        bizday,
-        branch_num,
-        -- 除法形态与 fct 逐字同构（逐单除、逐单减，见头注）
-        (sum((non_gift_amount + order_total_money) / 2 - share_discount))::numeric(20,2) as net_sales
-    from per_order
-    group by 1, 2, 3
+        coalesce(s.system_book, t.system_book) as system_book,
+        coalesce(s.bizday, t.bizday)           as bizday,
+        coalesce(s.branch_num, t.branch_num)   as branch_num,
+        (coalesce(s.sale_amount, 0) - coalesce(t.return_amount, 0))::numeric(20,2) as net_sales
+    from (
+        select system_book, bizday, branch_num,
+               (sum((non_gift_amount + order_total_money) / 2 - share_discount))::numeric(20,2) as sale_amount
+        from per_order group by 1, 2, 3
+    ) s
+    full join ret_side t
+        on  s.system_book = t.system_book
+        and s.bizday      = t.bizday
+        and s.branch_num  = t.branch_num
 ),
 materialized as (
     select
@@ -96,7 +132,7 @@ select
     coalesce(a.branch_num, b.branch_num)   as branch_num,
     a.net_sales                            as recheck_value,
     b.net_sales                            as materialized_value,
-    '复算与物化结果不一致（净销售额，#430 换货半边口径）' as note
+    '复算与物化结果不一致（净销售额 = 销售侧 − 退货侧，#813）' as note
 from recheck a
 full join materialized b using (system_book, bizday, branch_num)
 where a.net_sales is distinct from b.net_sales
