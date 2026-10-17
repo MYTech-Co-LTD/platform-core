@@ -1,0 +1,23 @@
+{
+  "_note": [
+    "forms 域（表单提交，#729 M1.4）的资产新鲜度巡检声明。seed 进 **forms 自己的 console**",
+    "workspace 卷的 `/workspace/owners.json`（与 alerts.json 同级、不在 pipelines/ 里）。",
+    "",
+    "与 owners.lemeng.json 同一文件形状与判定语义（README §引擎原生告警 / owners 文件头①）。",
+    "锚 = L0 管线 forms.submission.l0 的 snk.minio 目标（写入=当天采集成功）；",
+    "**占位符不展开是正常的**（catalog 资产 id 保留 ${ENV:...} 字面量，见 duckle 工程事实）。",
+    "日批 00:20 CST ⇒ maximumAge 36h，与乐檬同族日更件一致（正典 §1.5.2 的容差口径：≥ 采集滞后+发布周期）。",
+    "",
+    "⚠️ 本 console 的 `.duckle/keys/secret.key` 是连接解密的配对密钥（2026-10-17 实测：缺它 ⇒",
+    "sink 报 NoSuchBucket）；换版/重建 workspace 时必须**保留**该文件。"
+  ],
+  "assets": [
+    {
+      "match": "minio://*/forms/submission/bizday=*/batch_id=*/all.parquet",
+      "owner": "data-eng",
+      "description": "表单提交日批采集的成功凭证（L0 管线 forms.submission.l0 的 snk.minio 目标；写入=当天采集成功。一 PAT 一租户 ⇒ 一租户一管线，#729）。占位符不展开是正常的；该资产时钟只在重建 catalog 之后的成功 run 上起算",
+      "tags": ["forms"],
+      "maximumAge": "36h"
+    }
+  ]
+}
