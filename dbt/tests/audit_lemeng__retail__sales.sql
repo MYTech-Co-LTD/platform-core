@@ -21,7 +21,7 @@
 --    「对账看着有、其实没用」的形态）。故复算直接打 parquet，与 staging 的 cast 各自独立写。
 --
 -- ── 口径（2026-10-12 W0 随 #430 定案更新）───────────────────────────────────────────────
---    净销售额 = FINISHED+SALE_ORDER 基面 + 换货「送出半边」公式（逐单 (Σ非赠品+total)/2 − sd）
+--    销售额（销售侧，不冲退货） = FINISHED+SALE_ORDER 基面 + 换货「送出半边」公式（逐单 (Σ非赠品+total)/2 − sd）
 --    + 赠品判别式排除。**除法形态与 fct_retail_sale.sql 及正典对拍实现
 --    （console 管线 lemeng.recon.preagg.item.json）逐字同构**：per_order 出 ng/tot/sd，
 --    sum 的参数表达式里逐单除——除法的舍入位置是口径的一部分，别改成先和后除。
