@@ -249,7 +249,7 @@ describe('deriveTotalable —— 可加判定（spec §8.4：表达式形状的�
       expect(row.totalable, `${row.id} 的 totalable 与 expression 形状不符`).toBe(!NOT_TOTALABLE.has(row.id))
     }
     // 「恰好」要有实证数：不是全体都可加、也不是全体都不可加
-    expect(rows.filter((r) => r.totalable === true).length, '可加条数（加/改指标时重核）').toBe(24)
+    expect(rows.filter((r) => r.totalable === true).length, '可加条数（加/改指标时重核）').toBe(25)
     expect(rows.filter((r) => r.totalable === false).length).toBe(16)
     // 抽样钉两条形态极值（brief 点名）
     expect(rows.find((r) => r.id === 'lemeng:retail:net_sales')?.totalable).toBe(true)
@@ -616,24 +616,25 @@ describe('declarationsFromYaml：required_scope（列级授权声明面，spec 2
   })
 })
 
-describe('真 YAML：40 条 sla_days / freshnessRelations 逐条断言（spec §10.7.1/10.7.3，真实事实源）', () => {
+describe('真 YAML：41 条 sla_days / freshnessRelations 逐条断言（spec §10.7.1/10.7.3，真实事实源）', () => {
   // 为什么钉真实 YAML：sla_days 是人工登记值（不是推导产物），漏登记/登错不报错，只表现为
   // 线上状态转译错。逐字断言 + 计数兜底（加指标时这两条会替你守住「新指标必须显式登记」）。
   const rows = readDeclarations(ROOT)
   const SLA2 = new Set(['lemeng:inventory:quantity', 'lemeng:inventory:money'])
 
-  it('恰 40 条；inventory 两指标 sla_days=2，其余 38 条=1（采集正典实测窗口的登记）', () => {
-    expect(rows.length).toBe(40)
+  it('恰 41 条；inventory 两指标 sla_days=2，其余 39 条=1（采集正典实测窗口的登记）', () => {
+    expect(rows.length).toBe(41)
     for (const row of rows) {
       expect(row.slaDays, `${row.id} 的 sla_days 与登记不符`).toBe(SLA2.has(row.id) ? 2 : 1)
     }
     expect(rows.filter((r) => r.slaDays === 2).length).toBe(2)
-    expect(rows.filter((r) => r.slaDays === 1).length).toBe(38)
+    expect(rows.filter((r) => r.slaDays === 1).length).toBe(39)
   })
 
   it('freshnessRelations 与声明 sources 推导逐字一致；没声明 sources 的 = 空（无自动水位）', () => {
     const DECLARED_SOURCES = {
       'lemeng:retail:net_sales': ['stg_lemeng_retail_order_line'],
+      'lemeng:retail:sales': ['stg_lemeng_retail_order_line'],
       'lemeng:retail:order_count': ['stg_lemeng_retail_order_line'],
       'lemeng:retail:net_quantity': ['stg_lemeng_retail_order_line'],
       'lemeng:retail:consecutive_no_sales_days': ['stg_lemeng_retail_order_line'],
@@ -685,9 +686,9 @@ describe('真 YAML：40 条 sla_days / freshnessRelations 逐条断言（spec §
       const expected = DECLARED_SOURCES[row.id as keyof typeof DECLARED_SOURCES] ?? []
       expect(row.freshnessRelations, `${row.id} 的 freshness_relations 与 sources 推导不一致`).toEqual(expected)
     }
-    // 推导一致性：**40 条全部**声明了 sources（2026-10-17 补齐前是 15 条，另 20 条水位恒未知）。
-    // 计数兜底保留：以后新增指标若忘声明 sources，下面的 40 会立刻红。
-    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length).toBe(40)
+    // 推导一致性：**41 条全部**声明了 sources（2026-10-17 补齐前是 15 条，另 20 条水位恒未知）。
+    // 计数兜底保留：以后新增指标若忘声明 sources，下面的 41 会立刻红。
+    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length).toBe(41)
     expect(rows.filter((r) => (r.freshnessRelations ?? []).length === 0).length).toBe(0)
   })
 })
