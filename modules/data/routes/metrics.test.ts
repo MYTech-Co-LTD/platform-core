@@ -73,6 +73,16 @@ const L1_FOREIGN = { ...l1Def({
   selectSql: 'select sum(fct_retail_sale.foreign) as value, system_book from fct_retail_sale',
   groupBy: 'system_book',
 }), sourceSystem: 'shanhai' }
+/**
+ * 带**值级掩码**的 L1（T4 探针）：L2 不得建立在它之上（spec 2026-10-17 §5.3.1，fail-closed）。
+ * 掩码列**逐字**出现在 selectSql 里 —— 声明面的规则如此，夹具照真机形状。
+ */
+const L1_MASKED: L1MetricDef = { ...l1Def({
+  id: `${L1_ID_PREFIX}cost`,
+  title: '成本（掩码）',
+  selectSql: 'select sum(fct_retail_sale.cost) as value, system_book from fct_retail_sale',
+  groupBy: 'system_book',
+}), masks: [{ column: 'fct_retail_sale.cost', kind: 'round', step: 1000, grantedBy: 'data:cost' }] }
 /** M-① 的撞 id 探针：**先**由租户建 L2、**后**由平台物化同 id（唯一能造出撞 id 的合法时序）。 */
 const L1_CLASH_PROBE = `${L1_ID_PREFIX}clash_probe`
 /** 本租户已接入的源（宿主投影 TENANT_SOURCES 的测试替身）——未接入的源就是 `lemeng` 之外的。 */
@@ -124,6 +134,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     await upsertL1Metric(pool, L1_SALES)
     await upsertL1Metric(pool, L1_FINANCE)
     await upsertL1Metric(pool, L1_FOREIGN)
+    await upsertL1Metric(pool, L1_MASKED)
   })
 
   afterAll(async () => {
@@ -221,6 +232,30 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     const res = await post(l2Body({ baseMetric: `${L1_ID_PREFIX}not_declared` }))
     expect(res.status).toBe(400)
     expect((await res.json()).error).toBe('L1_BASE_NOT_FOUND')
+  })
+
+  it('★ POST baseMetric 指向带掩码的 L1 ⇒ 400 L2_BASE_MASKED（点名 L1 与掩码），且不落行', async () => {
+    const res = await post(l2Body({ id: 'l2_on_masked', baseMetric: L1_MASKED.id }))
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toBe('L2_BASE_MASKED')
+    expect(body.base).toBe(L1_MASKED.id)          // 点名是哪个 L1
+    expect(body.masks).toEqual([                   // 点名是哪条掩码
+      { column: 'fct_retail_sale.cost', kind: 'round', step: 1000, grantedBy: 'data:cost' },
+    ])
+    const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json()
+    expect(all.metrics.some((m: { id: string }) => m.id === 'l2_on_masked')).toBe(false)
+  })
+
+  it('★ PUT 把既有 L2 改指向带掩码的 L1 ⇒ 同样 400（「改」不是旁路）', async () => {
+    expect((await post(l2Body({ id: 'l2_masked_put' }))).status).toBe(201)
+    const res = await app(ORG, ['data:manage']).request('/metrics/l2_masked_put', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(l2Body({ id: 'l2_masked_put', baseMetric: L1_MASKED.id })),
+    })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toBe('L2_BASE_MASKED')
   })
 
   it('POST filters 的维度不在 L1 的 grain ⇒ 400 UNKNOWN_DIM', async () => {

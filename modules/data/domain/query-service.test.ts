@@ -810,4 +810,41 @@ describe('runQuery —— 值级脱敏回包 masking（spec §5.3，P2 T2）', (
     if (out.status !== 'ok') return
     expect('masking' in out).toBe(false)
   })
+
+  // 审计列（P2 T3，spec §4.4）：回包说没说实话是一回事，**留痕**是另一回事——审计必须能
+  // 回答「这个人看到的是原值还是掩码值」。两条用例钉住 null 与对象的**两态**（'{}' 不许出现）。
+  it('掩码生效 ⇒ 审计行 masking 落库（列 → 记号），与回包同一份 applied', async () => {
+    await seedMasked([{ column: 'qp3_mask_f.revenue', kind: 'round', step: 1000, grantedBy: 'data:precise' }])
+    const out = await runQuery(depsOf(), ORG, req(), MASK_ID, {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    // ★ 标题声称「与回包同一份 applied」就必须真比一次回包（T3-①，issue #824）：同源今日成立，
+    //   但将来回包改道（例如另拼一份）不会红——除非这里比的是**回包那个字段**本身。
+    expect(out.masking).toEqual({ 'qp3_mask_f.revenue': 'round:1000' })
+    const r = await pool.query('select masking from data.query_audit where org = $1', [ORG])
+    expect(r.rowCount).toBe(1)
+    expect(r.rows[0].masking).toEqual({ 'qp3_mask_f.revenue': 'round:1000' })
+  })
+
+  // ★ 整值掩码（column=null）的**端到端**用例（T2-m4，issue #824）：此前整值路径只有纯函数级
+  //   覆盖（mask.test.ts），接线层（authorize → runQuery）整体直传、风险低，但整值路径是
+  //   「把 `… as value` 整段换成 typed NULL」——有人改拼接逻辑时，纯函数用例照绿而线上走偏。
+  it('★ 整值掩码端到端：回包 masking 键是 `<value>`，执行层拿到的 SQL 整个值被换掉（T2-m4）', async () => {
+    await seedMasked([{ column: null, kind: 'nullify', grantedBy: 'data:precise' }])
+    const out = await runQuery(depsOf(), ORG, req(), MASK_ID, {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(out.masking).toEqual({ '<value>': 'nullify' })
+    expect(lastSql, '整值掩码把 `… as value` 的表达式整段换掉').toContain('cast(null as numeric) as value')
+    expect(lastSql, '原列引用必须一个都不剩').not.toContain('qp3_mask_f.revenue')
+  })
+
+  it('无掩码生效 ⇒ 审计 masking 是 NULL（不是空对象 {}，与 row_count null≠0 同一把尺）', async () => {
+    await seedMasked(null)
+    const out = await runQuery(depsOf(), ORG, req(), MASK_ID, {})
+    expect(out.status).toBe('ok')
+    const r = await pool.query('select masking from data.query_audit where org = $1', [ORG])
+    expect(r.rowCount).toBe(1)
+    expect(r.rows[0].masking).toBeNull()
+  })
 })

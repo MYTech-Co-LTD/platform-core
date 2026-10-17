@@ -318,12 +318,21 @@ export function maskItemError(item, metricName) {
  * 词边界 `\b` + 转义后的逐字匹配（`.` 已转义——列引用是 `表.列` 形态，`.` 是正则通配符）。
  * `column === null`（整值掩码）跳过这条——它本来就不按列命中。
  *
+ * ⚠️ 两处**更细的**拦点（issue #824 的 T2-m3② / C-m3）：
+ *   · 比对基准里**剔掉固定别名位** `value`（`… as value` 是形状契约的记号，不是列引用）：
+ *     运行期的按列展开跳过别名位（mask.ts），若这里仍把别名算作命中，「只命中别名的声明」
+ *     会过闸而运行期静默不掩码 = **fail-open**。
+ *   · **维度 / grain 列不许按列掩码**：运行期展开换掉的是该列在 selectSql 里的**全部**出现处
+ *     （含 select 表里那一处维度列），而 GROUP BY 仍是原列名 ⇒ SQL 报「must appear in GROUP BY」。
+ *     那是运行期才炸、离声明很远的一类，提前响亮拒绝。
+ *
  * @param {unknown} v 声明里的 `mask` 原始值
  * @param {string} metricName 指标名（只用于错误信息）
  * @param {string} selectSql 该指标物化后的 select_sql（column 出现性的比对基准）
+ * @param {readonly string[]} grain 该指标的可聚合维度（= group_by，维度列不许按列掩码）
  * @returns {MaskSpec[] | null} null = 未声明
  */
-function masksOf(v, metricName, selectSql) {
+function masksOf(v, metricName, selectSql, grain) {
   if (v === undefined || v === null) return null
   if (!Array.isArray(v)) {
     throw new Error(
@@ -340,14 +349,31 @@ function masksOf(v, metricName, selectSql) {
     const m = /** @type {Record<string, unknown>} */ (raw)
     const column = m.column ?? null
     if (column !== null) {
-      const hit = new RegExp(`\\b${escapeRegExp(String(column))}\\b`).test(selectSql)
+      const bare = String(column).split('.').pop() ?? ''
+      // ★ 维度 / grain 列不许按列掩码（C-m3，issue #824）：见函数头注——运行期会把它在
+      //   selectSql 里的全部出现处（含维度表那一处）换掉，GROUP BY 却仍是原列名 ⇒ 运行期 SQL 报错。
+      if (grain.includes(bare)) {
+        throw new Error(
+          `指标 \`${metricName}\` 的 \`mask\` column \`${String(column)}\` 是该指标的维度/grain 列 —— `
+          + '维度列不能按列掩码：运行期展开会把 selectSql 里该列的**全部**出现处（含 select 表里'
+          + '那一处维度列）换成掩码表达式，而 GROUP BY 仍是原列名 ⇒ SQL 报「must appear in '
+          + 'GROUP BY」（运行期才炸，离声明很远）。要掩整个值请声明 `column: null` 的整值掩码'
+          + '（kind 只许 nullify）；要按列掩码请挑一个只出现在口径表达式里的列',
+        )
+      }
+      // 比对基准里剔掉固定别名位 `value`（`… as value` 是形状契约的记号，不是列引用）：
+      // 运行期的按列展开跳过别名位（mask.ts 的 T2-m3②），这里若仍把别名算作命中，
+      // 「只命中别名的声明」会过闸而运行期静默不掩码 = fail-open。
+      const probe = selectSql.replace(/\bas\s+value\b/i, 'as __alias__')
+      const hit = new RegExp(`\\b${escapeRegExp(String(column))}\\b`).test(probe)
       if (!hit) {
         throw new Error(
           `指标 \`${metricName}\` 的 \`mask\` column \`${String(column)}\` 没有逐字出现在该指标的 `
           + `selectSql 里 —— 运行期掩码是对 select_sql 做**列引用定点替换**，列不在里面 ⇒ 替换命中不了 `
           + '⇒ 掩码静默不生效（本设计最怕的形态）。请写指标口径真正引用的限定列'
           + `（本条 selectSql：\`${selectSql}\`）；若要掩的是敏感**源列**而非口径列，请声明 `
-          + '`column: null` 的整值掩码（kind 只许 nullify）',
+          + '`column: null` 的整值掩码（kind 只许 nullify）。'
+          + '⚠️ 固定别名位 `… as value` 不算命中——它是形状契约的记号，不是列引用',
         )
       }
     }
@@ -457,8 +483,36 @@ export function deriveParams(/** @type {readonly string[]} */ grain) {
  * @param {string} expression 物化后的口径表达式（ratio 声明已在此前包好 nullif）
  * @returns {boolean}
  */
-export function deriveTotalable(expression) {
+export function deriveTotalable(expression, additivity = 'flow') {
+  if (additivity !== 'flow') return false
   return /^\s*sum\s*\(/i.test(expression) && !/\s\/\s/.test(expression)
+}
+
+/** 可加性分类的闭集（消费面 spec 2026-10-17 §12.3）。 */
+export const ADDITIVITY_VALUES = ['flow', 'stock', 'non_additive']
+
+/**
+ * 可加性分类（消费面 spec 2026-10-17 §12.3）：缺省 `flow`；未知值**响亮失败**。
+ *
+ * 为什么不能只靠形状推导：`deriveTotalable` 只看「expression 以 sum( 开头」，而**存量**指标
+ * （库存/应收应付/余额）的 expression 也是 `sum(列)`——形状可加、**语义不可加**（跨时间求和无业务含义）。
+ * 线上实证：`lemeng:inventory:quantity` / `:money` 曾被标成可加 ⇒ 问「近 7 天库存合计」= 7 天快照相加。
+ *
+ * @param {unknown} raw 声明里的 `additivity` 原值（缺省 / null ⇒ flow）
+ * @param {string} name 指标名（只用于错误信息）
+ * @returns {string} flow | stock | non_additive
+ */
+export function additivityOf(raw, name) {
+  if (raw === undefined || raw === null) return 'flow'
+  const v = String(raw)
+  if (!ADDITIVITY_VALUES.includes(v)) {
+    throw new Error(
+      `指标 \`${name}\` 的 \`additivity\` ${JSON.stringify(raw)} 不在 ${ADDITIVITY_VALUES.join('|')}`
+      + '（spec 2026-10-17 §12.3）—— 它决定能不能跨时间求合计；拼错会让存量指标静默按可加处理，'
+      + '问数会把日快照相加（线上已实证）。',
+    )
+  }
+  return v
 }
 
 /**
@@ -577,14 +631,14 @@ export function declarationsFromYaml(parsed) {
       params: deriveParams(grain),
       // 源系统（源维度）：上面已拦掉缺字段的情形，故这里的取值恒是非空串。
       sourceSystem,
-      // 可加标记（spec §8.4）：从**物化后的**表达式推导——ratio 在上面已包成
-      // `… / nullif(…, 0)`，deriveTotalable 的除法排除正好接住它。
-      totalable: deriveTotalable(expression),
+      // 可加标记（spec §8.4；2026-10-17 §12.3 起**先看声明的 additivity**）：ratio 在上面已包成
+      // `… / nullif(…, 0)`，deriveTotalable 的除法排除正好接住它；`stock`/`non_additive` 直接 false。
+      totalable: deriveTotalable(expression, additivityOf(m.additivity, name)),
       slaDays,
       freshnessRelations,
       // 值级掩码声明（spec 2026-10-17 §5.2）：缺省 null（未声明）；给了就逐项校验
       // （含「column 须逐字在 selectSql 里」——静默不生效形态的唯一拦点，见 masksOf）。
-      masks: masksOf(m.mask, name, selectSql),
+      masks: masksOf(m.mask, name, selectSql, grain),
     }
   })
 }

@@ -11,6 +11,34 @@
 
 ## [Unreleased]
 
+## [0.153.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.152.2...v0.153.0) - 2026-10-17
+- 【新增】data: 01-05 可比门店增长率——验证「问 0」不是只对一个指标成立 ([#833](https://github.com/MYTech-Co-LTD/platform-core/pull/833), [6b2c068](https://github.com/MYTech-Co-LTD/platform-core/commit/6b2c0684cf1ed83b96d3f79a12801f52630469fb))
+
+
+## [0.152.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.152.1...v0.152.2) - 2026-10-17
+- 【修复】data: P2 掩码 Minor 挂账清理（#824） ([#827](https://github.com/MYTech-Co-LTD/platform-core/pull/827), [d1c68ed](https://github.com/MYTech-Co-LTD/platform-core/commit/d1c68ed18c9cc700b8f2a8aa2848f9733368cb76))
+
+
+## [0.152.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.152.0...v0.152.1) - 2026-10-17
+- 【修复】data: 存量指标不再自动附合计——additivity 显式登记压过表达式形状 ([#829](https://github.com/MYTech-Co-LTD/platform-core/pull/829), [2a0786f](https://github.com/MYTech-Co-LTD/platform-core/commit/2a0786f7db60e349acd4efd1e351a6c24c4df920))
+
+
+## [0.152.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.151.1...v0.152.0) - 2026-10-17
+- 【新增】data: 门店×日骨架事实 + 03-05 连续无业绩天数——验证「日历可推导、不必等客户」 ([#826](https://github.com/MYTech-Co-LTD/platform-core/pull/826), [be69bf7](https://github.com/MYTech-Co-LTD/platform-core/commit/be69bf74f7f34cf020f697ffec5025efe35a0010))
+
+
+## [0.151.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.151.0...v0.151.1) - 2026-10-17
+- 【修复】data: 零成本暴露面把「成本 null」并进零成本——与自身文档及客户 04-06 口径矛盾 ([#817](https://github.com/MYTech-Co-LTD/platform-core/pull/817), [2912030](https://github.com/MYTech-Co-LTD/platform-core/commit/29120300f3ecd11d54af15f12f56088d0fcde898))
+
+
+## [0.151.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.150.0...v0.151.0) - 2026-10-17
+- 【新增】data: L2 不得基于被掩码的 L1 构建（fail-closed） ([#811](https://github.com/MYTech-Co-LTD/platform-core/pull/811), [ae377aa](https://github.com/MYTech-Co-LTD/platform-core/commit/ae377aa7e203b24e8e47503a6b0c15089ec8f393))
+
+
+## [0.150.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.149.0...v0.150.0) - 2026-10-17
+- 【新增】data: 审计记录掩码 + 指令面同步 ([#810](https://github.com/MYTech-Co-LTD/platform-core/pull/810), [13a75cd](https://github.com/MYTech-Co-LTD/platform-core/commit/13a75cd0b62f345518bcd0b97602726be64caea0))
+
+
 ## [0.149.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.148.0...v0.149.0) - 2026-10-17
 - 【新增】data: 值级掩码在 authorize 里定点展开 + 回包 masking ([#807](https://github.com/MYTech-Co-LTD/platform-core/pull/807), [6c72b56](https://github.com/MYTech-Co-LTD/platform-core/commit/6c72b565058aa60befd488ada9d38fa7f29b0e4d))
 

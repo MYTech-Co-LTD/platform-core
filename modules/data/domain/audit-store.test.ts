@@ -28,6 +28,7 @@ describePg('audit-store（需要 DATABASE_URL）', () => {
       rowCount: null,                                   // 被拒时没有行数可记
       verdict: 'denied',
       reason: 'metric_not_authorized',
+      masking: null,                                    // 查询没执行过 ⇒ 没有掩码可记
     })
 
     const r = await pool.query('select * from data.query_audit where org = $1', [ORG])
@@ -42,6 +43,7 @@ describePg('audit-store（需要 DATABASE_URL）', () => {
       row_count: null,                                   // 列可空，必须真落成 NULL（不是 0）
       verdict: 'denied',
       reason: 'metric_not_authorized',
+      masking: null,                                    // 无掩码生效 = NULL（不是 '{}'）
     })
     expect(r.rows[0].created_at).toBeInstanceOf(Date)     // 默认值由库给
   })
@@ -58,6 +60,7 @@ describePg('audit-store（需要 DATABASE_URL）', () => {
       rowCount: 3,
       verdict: 'ok',
       reason: null,
+      masking: { 'mart_sales_daily.net_amount': 'round:1000' }, // 列 → 记号，jsonb 往返成对象
     })
     await writeAudit(pool, {
       org: ORG,
@@ -69,10 +72,11 @@ describePg('audit-store（需要 DATABASE_URL）', () => {
       rowCount: 0,
       verdict: 'error',
       reason: 'warehouse_error',
+      masking: null,                                    // 出错没掩过值 ⇒ NULL
     })
 
     const pat = await pool.query(
-      "select key_id, params, row_count, reason, verdict from data.query_audit where org = $1 and user_id = 'bob'",
+      "select key_id, params, row_count, reason, verdict, masking from data.query_audit where org = $1 and user_id = 'bob'",
       [ORG],
     )
     // ⚠️ bigint 列经 node-pg 回来是 **string** ⇒ 断言前必须归一（这是列类型的事实，不是实现选择）
@@ -81,14 +85,17 @@ describePg('audit-store（需要 DATABASE_URL）', () => {
     expect(pat.rows[0].row_count).toBe(3)
     expect(pat.rows[0].reason).toBeNull()
     expect(pat.rows[0].verdict).toBe('ok')
+    // masking 是 jsonb ⇒ 对象往返（不是字符串）；空/未掩码必须 NULL，不能落成 '{}'
+    expect(pat.rows[0].masking).toEqual({ 'mart_sales_daily.net_amount': 'round:1000' })
 
     const oa = await pool.query(
-      "select params, row_count, key_id from data.query_audit where org = $1 and user_id = 'carol'",
+      "select params, row_count, key_id, masking from data.query_audit where org = $1 and user_id = 'carol'",
       [ORG],
     )
     expect(oa.rows[0].params).toEqual({})
     // row_count = 0 与「没记」在审计里语义不同：这里必须是 0，不能被写库时当真值丢掉
     expect(oa.rows[0].row_count).toBe(0)
     expect(oa.rows[0].key_id).toBeNull()
+    expect(oa.rows[0].masking).toBeNull()
   })
 })

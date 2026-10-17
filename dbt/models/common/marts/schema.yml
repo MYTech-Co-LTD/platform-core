@@ -13,6 +13,138 @@
 version: 2
 
 models:
+  - name: fct_branch_day_activity
+    description: >-
+      门店 × 日 **活动骨架**（03-05 连续无业绩天数的落点；2026-10-17 最小案例）。粒度
+      (system_book, bizday, branch_num)。零售事实只在「有单」的店日有行 ⇒ 本表补**真零天**，
+      使「连续无业绩天数」建立在完整日序列上。门店存在性/是否营业/战区取自 `stg_lemeng_branch`
+      **每日快照的 as-of**（latest snapshot ≤ bizday）——**日历可推导，不等客户交表**
+      （实测店×日空格子 129 个，其中 125/96.9% 门店当日存在）。`retail_active` 标记该门店在观察窗内
+      是否**有过**零售销售：400 个「账套×门店」里 173 个零零售（批发客户/仓库），其 zero_sales 不构成信号，
+      消费侧按它收缩。**已知盲区**：整窗零零售 vs 窗内一直闭店无法区分（历史 25 天），待客户营业日历
+      或更长窗口；「断数 vs 零销售」的最终判定仍需 X09（`collection_covered` 只是账套×日的弱代理）。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests:
+          - not_null
+      - name: org
+        description: 主体列（宏注入）。
+        tests:
+          - not_null
+      - name: bizday
+        description: 业务日（自然日序列，末日在上海昨日——当日为部分天不纳入）。粒度键。
+        tests:
+          - not_null
+      - name: branch_num
+        description: 门店号。粒度键。
+        tests:
+          - not_null
+      - name: region_id
+        description: 战区编号（as-of 快照；门店不存在时为空）。
+      - name: branch_enabled
+        description: 当日该门店在档案中是否启用（as-of）。
+        tests:
+          - not_null
+      - name: retail_active
+        description: 观察窗内是否有过零售销售（false = 批发客户/仓库/配送节点，zero_sales 不构成信号）。
+        tests:
+          - not_null
+      - name: sale_money
+        description: 当日零售销售额合计（无行为 0）。
+        tests:
+          - not_null
+      - name: order_count
+        description: 当日零售去重订单数（无行为 0）。
+        tests:
+          - not_null
+      - name: collection_covered
+        description: 该**账套当日**是否有任意零售行（弱代理：不能证明单店被完整采集；断数判定仍归 X09）。
+        tests:
+          - not_null
+      - name: data_status
+        description: >-
+          店日分类：has_sales / zero_sales / not_collected / branch_absent / branch_disabled。
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['has_sales', 'zero_sales', 'not_collected', 'branch_absent', 'branch_disabled']
+      - name: consecutive_no_sales_days
+        description: >-
+          截至当日的连续无业绩天数（gaps-and-islands；非 zero_sales 的行为 0）。**不可加**。
+        tests:
+          - not_null
+
+  - name: fct_retail_comparable_growth
+    description: >-
+      **可比门店（like-for-like）两期对照构件**（01-05 / 07-06 的落点；2026-10-17「问 0」第二例）。
+      粒度 (system_book, period_days, bizday)。**为什么必须有构件**：客户公式
+      `增长率＝Σ_B本期L/Σ_B上期L−1` 里的 **B 是「这一对期间」的属性**，消费方两次调用各取一期再相除
+      会因行集不同而口径错 ⇒ B 必须在构件里定死，两期金额同表同粒度同集合。
+      **B 全部可从自有数据推出**（不依赖客户营业日历）：不是新开店（`first_seen <= 上期开始`）／
+      不是闭店（`last_seen >= 本期结束`）／两期每日快照均 `enable`／两期中至少一期有零售行
+      （否则批发客户/仓库会混进分母——400 个「账套×门店」里 173 个零零售）。
+      **周期当前只出 7 天**（客户频率是月，但湖只有 25 天历史）。**已知边界**：窗内新开/闭店实测均为 0
+      ⇒ 那两条排除逻辑当前空转，随历史变长生效。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests:
+          - not_null
+      - name: org
+        description: 主体列（宏注入）。
+        tests:
+          - not_null
+      - name: period_days
+        description: 周期长度（自然日）。粒度键。
+        tests:
+          - not_null
+      - name: bizday
+        description: 本期报告期末日（上海日历）。粒度键。
+        tests:
+          - not_null
+      - name: comparable_count
+        description: 可比门店集合 B 的门店数（本期分母样本）。
+        tests:
+          - not_null
+      - name: excluded_new
+        description: 排除——新开店（`first_seen > 上期开始`）。当前实测恒 0（窗内无新开）。
+        tests:
+          - not_null
+      - name: excluded_closed
+        description: 排除——闭店（`last_seen < 本期结束`）。当前实测恒 0（窗内无闭店）。
+        tests:
+          - not_null
+      - name: excluded_disabled
+        description: 排除——两期内快照有 `enable=false`。
+        tests:
+          - not_null
+      - name: excluded_no_retail
+        description: 排除——两期均无零售行（批发客户/仓库/配送节点；射程收缩用）。
+        tests:
+          - not_null
+      - name: cur_amount
+        description: B 的本期销售额合计（Σsale_money 毛额，不冲退货）。
+        tests:
+          - not_null
+      - name: pri_amount
+        description: B 的上期销售额合计（同上）。
+        tests:
+          - not_null
+      - name: cur_store_days
+        description: B 在本期**有销售**的店日数（客户「营业店日归一化」第二式的分母）。
+        tests:
+          - not_null
+      - name: pri_store_days
+        description: B 在上期有销售的店日数（同上）。
+        tests:
+          - not_null
+      - name: growth_rate
+        description: >-
+          增长率 = cur/pri − 1；上期合计为 0 ⇒ NULL（率不适用——**不能落成 0 或 −1**）。
+        tests:
+          - not_null
+
   - name: fct_retail_sale
     description: >-
       零售销售事实（口径模型）。粒度 **(system_book, bizday, branch_num)**（2026-10-12 W0 由两键扩到三键）；
@@ -163,7 +295,7 @@ models:
     description: >-
       总仓配送出库行质量构件（W1 2026-10-12；服务 04-05/04-06/04-07 的 L1 落点）。粒度
       (system_book, bizday, branch_num)；基面同 fct_hq_outbound 的 transfer 域。口径逐列见模型头注
-      （批号率全量版待 X08；零成本与缺成本不相加；负金额不按绝对值变正收入）。
+      （批号率全量版待 X08；零成本与缺成本**互斥**不相加；负金额不按绝对值变正收入）。
       wholesale 侧行质量面随 D02 v2 勾稽批次另出。
     columns:
       - name: system_book
@@ -191,15 +323,20 @@ models:
         tests:
           - not_null
       - name: zero_cost_amount
-        description: 零成本暴露金额（金额≠0 且成本=0）。**与 lemeng:transfer:zero_cost_exposure_amount 同源**。
+        description: >-
+          零成本暴露金额（金额≠0 且**已知**成本=0）。**与 lemeng:transfer:zero_cost_exposure_amount 同源**。
+          ⚠️ 是 `subtotal = 0`（非 `coalesce(subtotal,0)=0`）——后者会把 null 并进来、与 missing_cost_amount
+          重叠（2026-10-17 订正）。
         tests:
           - not_null
       - name: zero_cost_rows
-        description: 零成本暴露行数（行数面 L2/消费层用）。
+        description: 零成本暴露行数（行数面 L2/消费层用）。口径同 zero_cost_amount（**已知**成本=0）。
         tests:
           - not_null
       - name: missing_cost_amount
-        description: 缺成本金额（成本 null 且金额≠0；与零成本**不相加**——客户文档「null 不当 0」）。
+        description: >-
+          缺成本金额（成本 null 且金额≠0；与零成本**互斥、不相加**——客户文档「null 不当 0」）。
+          ⚠️ 2026-10-17 实测**本源无数据**（全湖 0 行 null）⇒ 本列恒 0，**未声明为指标**（见消费面 spec §5.1）。
         tests:
           - not_null
       - name: negative_order_count

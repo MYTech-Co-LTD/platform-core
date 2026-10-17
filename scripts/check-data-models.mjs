@@ -192,6 +192,10 @@ const METRIC_KEYS = new Set([
   'source', 'sources', 'freshness_sla_days', 'owner', 'tier',
   // 列级/值级授权（spec 2026-10-17 §4.2/§4.3/§5.2）
   'reads', 'required_scope', 'mask',
+  // 可加性分类（消费面 spec 2026-10-17 §12.3）：flow | stock | non_additive；缺省 flow。
+  // **不再是**「expression 以 sum( 开头 ⇒ 可加」的形状推导——库存这类**存量**跨时间求和
+  // 无业务含义，形状推导会把它们误标成可加（线上实证，见该节）。
+  'additivity',
 ])
 
 /**
@@ -1109,6 +1113,21 @@ export function checkDataModels(rootDir, opts = {}) {
         0,
         `指标 \`${metric.name}\` 的语义声明缺必填字段：${missing.join(' / ')} —— owner/tier/grain/definition 是治理门禁的必填面（spec §10 机制① 的 dbt 原生对应物），expression 是口径本体（率类可用 ratio: {numerator, denominator} 替代），source（**源系统**，如 \`lemeng\`）是源维度的事实源（消费侧的裁剪按它判「这个源接没接入」），freshness_sla_days（**新鲜度 SLA 承诺天数**，spec §10.7.1）是水位转译的判据；缺了它，指标就无法登记、无法溯源、无法按 tier 收敛、无法按源裁剪、新鲜度只能永远「未知」`,
       )
+    }
+
+    // ⑤-d `additivity` 的形状（消费面 spec 2026-10-17 §12.3）
+    // 为什么必须校验而不是「缺省就 flow」：拼错（`additivity: stocks`）会让存量指标**静默按可加**处理
+    // ⇒ 问数把日快照相加（线上已实证过一次）。fail-closed。
+    const additivity = metric.fields?.additivity
+    if (additivity !== undefined && additivity !== null) {
+      const v = asText(additivity)
+      if (!['flow', 'stock', 'non_additive'].includes(v)) {
+        push(
+          metric.file,
+          0,
+          `指标 \`${metric.name}\` 的 \`additivity\` ${JSON.stringify(additivity)} 不在 flow|stock|non_additive —— 它决定**能不能跨时间求合计**（spec 2026-10-17 §12.3）；拼错会让存量指标静默按可加处理`,
+        )
+      }
     }
 
     // ⑤-a ratio 形状（率类声明面：互斥 / 同关系 / 无分号；纯核导出见 ratioShapeError）

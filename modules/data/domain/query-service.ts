@@ -213,6 +213,9 @@ export async function runQuery(
 ): Promise<QueryOutcome> {
   const audit = (
     verdict: 'ok' | 'denied' | 'error', reason: string | null, rowCount: number | null,
+    // 值级脱敏审计（spec §4.4）：只有真的展开过掩码才带记录；未展开传 **null**（不是 {}）。
+    // 被拒/出错/未认证一律 null——查询没在掩码下执行过，「看过原值还是掩码值」无从谈起。
+    masking: Record<string, string> | null,
   ) => writeAudit(deps.pool, {
     // 隔离键 `org` 就是审计里的主体值——**同一列**（见 T1 的 001_init.sql 注记）。
     // 值取 `org` 形参（= 路由传进来的 `identity.orgId`，宿主注入的权威值），
@@ -226,10 +229,11 @@ export async function runQuery(
     rowCount,
     verdict,
     reason,
+    masking,
   })
 
   if (!requester) {
-    await audit('denied', 'unauthenticated', null)
+    await audit('denied', 'unauthenticated', null, null)
     return { status: 'denied', metricId, reason: 'unauthenticated' }
   }
 
@@ -250,7 +254,7 @@ export async function runQuery(
     await loadMergedCatalog(deps.pool, org), requester, deps.adoptedSources)
   const authz = authorize(catalog, requester, metricId, args)
   if (!authz.ok) {
-    await audit('denied', authz.reason, null)
+    await audit('denied', authz.reason, null, null)
     return { status: 'denied', metricId, reason: authz.reason, detail: authz.detail }
   }
 
@@ -278,7 +282,7 @@ export async function runQuery(
       detail === DATA_WAREHOUSE_UNCONFIGURED ? 'warehouse_unconfigured'
       : isLakeRaceError(err) ? 'warehouse_transient'
       : 'warehouse_error'
-    await audit('error', reason, null)
+    await audit('error', reason, null, null)
     return { status: 'error', metricId, reason, detail }
   }
 
@@ -347,7 +351,10 @@ export async function runQuery(
     }
   }
 
-  await audit('ok', raceRetried ? 'lake_race_retry' : null, result.rows.length)
+  // 审计掩码（spec §4.4）：与回包 `masking` 同一份 applied（授权层展开记录）——空则 **null**，
+  // 不写 {}（null = 本次无掩码生效，'{}' 是审计里不该出现的第三种态）。
+  const appliedMasking = Object.keys(authz.plan.applied).length > 0 ? authz.plan.applied : null
+  await audit('ok', raceRetried ? 'lake_race_retry' : null, result.rows.length, appliedMasking)
   // 显式合计模式（spec §8）：plan.sql 已是 `SELECT sum(value) …`（无外层 LIMIT）⇒ 恒单行，
   // total 字段 = 该行的合计值；`truncated` 恒 false（合计无截断面）。
   // 自动伴随：明细 rows/truncated 语义不变，只多附一个 total 值。
@@ -373,6 +380,9 @@ export async function runQuery(
       : {}),
     // 值级脱敏面（spec §5.3）：授权层展开记录非空才回包——空对象不出现该键（缺席 = 原值）。
     // total（显式/自动合计）读的是同一个被掩的内层 select，天然与明细行同一套掩码值。
-    ...(Object.keys(authz.plan.applied).length > 0 ? { masking: authz.plan.applied } : {}),
+    // ★ 复用上面审计那一份 `appliedMasking`（T3-②，issue #824）：两处各写一遍
+    //   `Object.keys(...).length > 0 ? applied : null` 是同一个判据的第二份实现——
+    //   将来只改一处，审计与回包就会**不同尺**（一个说掩了、一个说没掩）。
+    ...(appliedMasking !== null ? { masking: appliedMasking } : {}),
   }
 }

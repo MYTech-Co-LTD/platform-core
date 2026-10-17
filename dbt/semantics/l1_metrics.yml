@@ -146,6 +146,64 @@ metrics:
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
 
+  - name: 'lemeng:retail:consecutive_no_sales_days'
+    label: 连续无业绩天数
+    definition: >-
+      03-05：从报告日向前**逐日累计**的连续无正向销售天数（正向销售 = `Σsale_money > 0`）。
+      **不可加**（跨日/跨店求和无意义）⇒ 用 `max(…)` 取该粒度上的值，消费侧不要跨行求和。
+      **建立在门店×日骨架 `fct_branch_day_activity` 上**——零售事实只在「有单」的店日有行，
+      「店开着但零销售」没有行 ⇒ 骨架补真零天，否则缺口被当成「不存在」而不是「零」。
+      **射程（必须读）**：只对 `retail_active`（观察窗内有过零售销售）的门店成立；无零售历史的
+      门店（批发客户/仓库/配送节点）恒为连续无业绩，**不构成经营异常信号**。故 expression 内按
+      `retail_active` 收缩。**已知盲区**：整窗零零售的门店与「窗内一直闭店」无法区分（历史仅 25 天），
+      待客户营业日历（`x01_branch_calendar`）或更长窗口；「断数 vs 零销售」的最终判定仍需 X09。
+      ⚠️ 与 01-06「规则闭店候选」的区别：本指标只出**天数**，**15 日门槛属 01-06/X08，不在本口径**。
+      粒度 = 账套 × 业务日 × 门店。
+    expression: >-
+      max(case when fct_branch_day_activity.retail_active
+               then fct_branch_day_activity.consecutive_no_sales_days end)
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      # 只列**度量源**（约定同 contribution:region_net——它用 dim_branch.region_id 但不列该路径）。
+      # 门店快照是维度依赖，已写在 definition 里。
+      - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
+
+  - name: 'lemeng:retail:comparable_growth_rate'
+    label: 可比门店销售增长率
+    definition: >-
+      01-05：两期**可比门店集合 B** 的销售增长率 = `Σ_B本期L / Σ_B上期L − 1`
+      （L = `Σsale_money` **毛额**，不冲退货——与 certified 净额口径 #430 **不同**，按客户 01-05 原式取毛额）。
+      **B 是「这一对期间」的属性，不是单期的属性** ⇒ 消费方「两次调用各取一期再相除」**结构性做不到**
+      （两次调用的行集不同 ⇒ 分母口径错）⇒ B 在构件 `fct_retail_comparable_growth` 里定死。
+      **B 的判据**（客户文档「闭店日和新开店须按规则排除」，**全部可从自有数据推出**，不依赖客户营业日历）：
+      不是新开店（`first_seen <= 上期开始`）／不是闭店（`last_seen >= 本期结束`）／两期每日快照均 `enable`／
+      两期中至少一期有零售行（否则批发客户/仓库/配送节点会混进分母——与 03-05 的 `retail_active` 同一条约束）。
+      **营业店日归一化**（客户第二式 `(本期L/本期营业店日)/(上期L/上期营业店日)−1`）的输入 =
+      构件里的 `cur_store_days` / `pri_store_days`，由消费方另算，**本口径不含**。
+      **周期**：当前只出 **7 天**。客户频率是**月**，但本湖只有 25 天历史 ⇒ 月对月尚无数据；
+      加周期 = 同一代码路径在 `periods` 里多一个值（不是改口径）。
+      **已知边界**：观察窗内新开/闭店实测均为 **0** ⇒ 那两条排除逻辑**当前空转**，随历史变长才生效
+      （刻意保留，客户文档明确要求）。无可比门店或上期合计 ≤ 0 ⇒ 率不适用（分母 nullif）。
+      粒度 = 账套 × 周期长度 × 报告期末日（列名 `bizday` = **本期报告期末那一天**，
+      保留 bizday 这个名字是为了沿用问数参数白名单——它是业务日，`date_range` 过滤的是「期末日落在区间内的周期」）。
+    expression: >-
+      sum(fct_retail_comparable_growth.cur_amount)
+      / nullif(sum(fct_retail_comparable_growth.pri_amount), 0) - 1
+    grain: [system_book, period_days, bizday]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      # 只列**度量源**（约定同 contribution:region_net）。门店快照是 B 的判据来源，
+      # 但其湖前缀 `lemeng/dim_branch` 推不出对应 staging 名（`stg_lemeng_dim_branch` 不存在），
+      # 故不进 freshness_relations——它的依赖写在 definition 里。
+      - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
+
   # ── W1（2026-10-12）：transfer/wholesale 出域骨架 9 条 ──────────────────────────────
   # 构件落点：fct_hq_outbound（R/C/G 长表）/ fct_transfer_line_quality（行质量面）/
   #   fct_transfer_item（商品粒度）。口径与基面的「为什么」在各 fct 头注。
@@ -266,9 +324,12 @@ metrics:
   - name: 'lemeng:transfer:zero_cost_exposure_amount'
     label: 配送零成本出库暴露金额
     definition: >-
-      零成本出库暴露金额（04-06 金额面）= Σ（金额≠0 且已知成本=0 的行的金额）；
-      成本 **null 的缺成本金额是另一类暴露**（fct_transfer_line_quality.missing_cost_amount，
-      不在本口径、两者不相加——客户文档「null 不当 0」与 01-08「各类暴露可能重叠，不相加为总损失」）。
+      零成本出库暴露金额（04-06 金额面）= Σ（金额≠0 且**已知**成本=0 的行的金额）；
+      成本 **null 的缺成本金额是另一类暴露**（fct_transfer_line_quality.missing_cost_amount），
+      **不在本口径**——判据是客户文档 04-06「**已知**成本=0」+「成本 null **另列**」与
+      01-08「零成本金额**另算**」；两者**互斥**、不相加（01-08「各类暴露可能重叠，不相加为总损失」
+      指暴露面整体，非指这两面之间）。⚠️ 2026-10-17 订正：原物化用 `coalesce(subtotal,0)=0`
+      把 null 并了进来，与缺成本面重叠——已改为 `subtotal = 0`（数值零影响，见消费面 spec §5.2）。
       免费商品/暂估问题需业务确认（客户文档原话）；零成本不等于全部利润可实现。
       只 transfer 域。粒度 = 账套 × 业务日 × 门店。
     expression: 'sum(fct_transfer_line_quality.zero_cost_amount)'
@@ -416,6 +477,10 @@ metrics:
       错过采集窗口即永久缺失该日快照）。含 0 库存行（接口返回有 0 行）。
       粒度 = 账套 × 快照日 × 门店 × 仓库 × 商品。
       ⚠️ 上滚语义：跨日不可比（快照是时点数不是流量数）——同日多仓可加，跨日只取最新。
+    # 存量（stock）：形状可加（sum(列)）、**语义不可加**（跨时间无业务含义）⇒ 不自动附合计。
+    # 2026-10-17 §12.3 实证：原先按 expression 形状推导成 totalable=true，问「近 7 天库存合计」
+    # 会把 7 个日快照相加。正确语义（取范围末日）是第二步，等真实问法再加。
+    additivity: stock
     expression: 'sum(fct_inventory_snapshot.inventory_quantity)'
     grain: [system_book, bizday, branch_num, storehouse_num, item_num]
     owner: data-platform
@@ -430,6 +495,8 @@ metrics:
     definition: >-
       库存快照金额合计（元）。**不可加边界**：同上（时点数）。粒度 = 账套 × 快照日 × 门店 × 仓库 × 商品。
       ⚠️ experimental：裁4/裁5 未回签 + D17 可回溯深度待长期观察。
+    # 存量（stock）：同 inventory:quantity——跨时间不可加，见 §12.3。
+    additivity: stock
     expression: 'sum(fct_inventory_snapshot.inventory_money)'
     grain: [system_book, bizday, branch_num, storehouse_num, item_num]
     owner: data-platform
