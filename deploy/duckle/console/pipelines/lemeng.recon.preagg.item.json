@@ -11,6 +11,7 @@
     "  逐订单归并**不能省**（按行算会把「总额×行数」加进去）；销售侧不扣退货单。",
     "  ⚠️ 2026-10-17（issue #813）：本管线比的是**净额** = 销售侧 − 退货侧。退货侧 = Σ(sale_money + order_detail_share_discount)，",
     "     条件 order_transaction_type like '%RETURN%' AND state='FINISHED'（REPAID_RETURN 不计）。源侧对应 return_money。",
+    "  源侧缺值按 0（pnormal 两侧 COALESCE(...,0)），与脚本 `or 0` 同源 —— 否则 NULL 传播会让 vbranch/gbranch 误报「湖有而源无」。",
     "",
     "【gate ↔ 脚本退出码映射】（判红靠它，与 alerts.json 的 failure/recovery 规则接同一张网）",
     "  lguard / gcode  = 脚本 exit 3（依赖不可用）——湖分区空 / 预聚合端点 code≠0",
@@ -122,7 +123,7 @@
         "label": "pnormal 源侧行定型（对齐湖侧形状）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(sale_money AS DOUBLE) - CAST(return_money AS DOUBLE) AS net,\n       'pre' AS side\nFROM input"
+          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(COALESCE(sale_money, 0) AS DOUBLE) - CAST(COALESCE(return_money, 0) AS DOUBLE) AS net,\n       'pre' AS side\nFROM input"
         }
       }
     },
