@@ -125,6 +125,10 @@ metrics:
     tier: certified
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:outbound:gross_margin_rate'
     label: 总仓出库毛利率
@@ -140,6 +144,10 @@ metrics:
     tier: certified
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:outbound:order_count'
     label: 出库单数
@@ -154,6 +162,9 @@ metrics:
     tier: certified
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:outbound:line_count'
     label: 出库明细行数
@@ -167,6 +178,9 @@ metrics:
     tier: certified
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:transfer:batch_fill_rate'
     label: 配送批号填写率
@@ -184,6 +198,8 @@ metrics:
     tier: experimental
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:transfer:zero_cost_exposure_amount'
     label: 配送零成本出库暴露金额
@@ -199,6 +215,8 @@ metrics:
     tier: certified
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:transfer:negative_order_count'
     label: 配送负金额单数
@@ -213,6 +231,8 @@ metrics:
     tier: certified
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:transfer:item_gross_margin_rate'
     label: 商品出库毛利率
@@ -229,6 +249,8 @@ metrics:
     tier: certified
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
 
   # ── W2（2026-10-13）：费用两件套 6 条 ────────────────────────────────────────────────
@@ -260,6 +282,8 @@ metrics:
     tier: certified
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:expense:branch_net'
     label: 门店净费用
@@ -273,6 +297,8 @@ metrics:
     tier: certified
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:expense:client_payable'
     label: 客户应付费用
@@ -300,6 +326,8 @@ metrics:
     tier: certified
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:expense:client_net'
     label: 客户净费用
@@ -312,6 +340,8 @@ metrics:
     tier: certified
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
   # ── W3（2026-10-13）：库存快照 2 条 ─────────────────────────────────────────────────
   # 构件落点：fct_inventory_snapshot。全 experimental——D17 T-1 日结不可回溯（漏采即丢）；
@@ -344,6 +374,8 @@ metrics:
     tier: experimental
     source: lemeng
     freshness_sla_days: 2
+    sources:
+      - 's3://<bucket>/lemeng/inventory_snapshot/system_book=<账套>/bizday=<日期>/all.parquet'
 
   # ── 采购族（W3 余项 2026-10-13，D11 itempurchase / fct_purchase / #640）──────────────
   # ⚠️ 全 experimental：① 采购**收货**口径（≠采购订单，客户文档边界）；② 采集范围 = 管理中心
@@ -374,6 +406,8 @@ metrics:
     tier: experimental
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:purchase:return_amount'
     label: 采购退货金额
@@ -386,6 +420,8 @@ metrics:
     tier: experimental
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:purchase:net_amount'
     label: 净采购额
@@ -398,6 +434,8 @@ metrics:
     tier: experimental
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:purchase:supplier_count'
     label: 采购供应商数
@@ -410,6 +448,8 @@ metrics:
     tier: experimental
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:purchase:item_count'
     label: 采购商品数
@@ -421,6 +461,8 @@ metrics:
     tier: experimental
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
   # ── 组合族 W1（2026-10-16，#744）：采购退货率 / 零金额采购行 ────────────────────────
   # 两项都是「判据过、源已齐、当时被推给消费面」的悬空指标。均落 fct_purchase 现成列，无新构件。
@@ -624,6 +666,9 @@ metrics:
     tier: experimental
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/request_order/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/transfer_in/system_book=<账套>/bizday=<日期>/all.parquet'
 
   - name: 'lemeng:request:day_fulfillment_rate'
     label: 截止日满足率
@@ -641,4 +686,7 @@ metrics:
     tier: experimental
     source: lemeng
     freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/request_order/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/transfer_in/system_book=<账套>/bizday=<日期>/all.parquet'
 

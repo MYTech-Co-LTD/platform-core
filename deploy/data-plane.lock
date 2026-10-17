@@ -1,4 +1,4 @@
-sha256-of-rest e07dea8471053697e644c2688e66390a44a244f50fef6138f844ed4255b1374c
+sha256-of-rest 85544c54b6f7a3c54095bb4dfd073cb9bbfef6895e03f13ab9f9ae64fd1c1ad2
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 5f2b5a68028671166b3a0cd62d62a08a12f8a10af5034a2b5e4cadb50c1fb264 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -58,7 +58,7 @@ ee0bcd007c23c4d7dbe136b6178427904a14daa1945274b95ef65d57cd53c1c8 dbt/seeds/schem
 d97d54e949117437636327003d1326ad79ba2488367e6dd5d7a74ee43aa49dca dbt/seeds/x01_branch_calendar.csv ${REPO}/dbt/seeds/x01_branch_calendar.csv 0644
 0ca2476fdb12c463459a4d81215623f7876e8b2d3ac1e14ed3cc095d2e9fa078 dbt/seeds/x01_region_names.csv ${REPO}/dbt/seeds/x01_region_names.csv 0644
 8d039ed687c993221698878e646b6425b064157761da717e7bc84d2c39c463a3 dbt/seeds/x08_thresholds.csv ${REPO}/dbt/seeds/x08_thresholds.csv 0644
-991eb1a811c38e1873473317f8b6726c94e12a99621d45c08629e90b168c4ee6 dbt/semantics/l1_metrics.yml ${REPO}/dbt/semantics/l1_metrics.yml 0644
+3811c0d2ef5778ef815d37329077cd2c59193178b52980c14900d477d49c8cea dbt/semantics/l1_metrics.yml ${REPO}/dbt/semantics/l1_metrics.yml 0644
 77380a4a6e4fb3278dc47ac1e62fbf381a66e44a71cbc61244c73baf78e524fb dbt/tests/assert_fct_branch_expense_grain_unique.sql ${REPO}/dbt/tests/assert_fct_branch_expense_grain_unique.sql 0644
 202d479bc6e672de3768e2d1ba6489817c6d5cc55d6f284e1d04155c6a34a95c dbt/tests/assert_fct_client_expense_grain_unique.sql ${REPO}/dbt/tests/assert_fct_client_expense_grain_unique.sql 0644
 34565e2d74c641fde050010af991c812ba67ba3b1fbc7e311d8d0d8fbebbfedf dbt/tests/assert_fct_contribution_grain_unique.sql ${REPO}/dbt/tests/assert_fct_contribution_grain_unique.sql 0644

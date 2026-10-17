@@ -581,14 +581,37 @@ describe('真 YAML：35 条 sla_days / freshnessRelations 逐条断言（spec §
       // 组合族 W3：只声明采购源。**刻意不声明 dim_item**——路径段推导出的关系名是
       // `stg_lemeng_dim_item`，而实际 staging 叫 `stg_lemeng_item`（对不上 ⇒ 水位恒未知）。
       'lemeng:purchase:cr5': ['stg_lemeng_item_purchase'],
+      // ── 2026-10-17 补齐：此前 20 条没声明 sources ⇒ 固定新鲜度行只能出「未知」。
+      //    逐条按各指标真实读的湖资产补；**dim_* 一律不列**（推导出的关系名与实际 staging 对不上）。
+      'lemeng:outbound:gross_profit': ['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out', 'stg_lemeng_wholesale_return'],
+      'lemeng:outbound:gross_margin_rate': ['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out', 'stg_lemeng_wholesale_return'],
+      'lemeng:outbound:order_count': ['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out'],
+      'lemeng:outbound:line_count': ['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out'],
+      'lemeng:transfer:batch_fill_rate': ['stg_lemeng_transfer_out'],
+      'lemeng:transfer:item_gross_margin_rate': ['stg_lemeng_transfer_out'],
+      'lemeng:transfer:negative_order_count': ['stg_lemeng_transfer_out'],
+      'lemeng:transfer:zero_cost_exposure_amount': ['stg_lemeng_transfer_out'],
+      'lemeng:expense:branch_net': ['stg_lemeng_branch_expense'],
+      'lemeng:expense:branch_receivable': ['stg_lemeng_branch_expense'],
+      'lemeng:expense:client_net': ['stg_lemeng_client_expense'],
+      'lemeng:expense:client_receivable': ['stg_lemeng_client_expense'],
+      'lemeng:inventory:money': ['stg_lemeng_inventory_snapshot'],
+      'lemeng:purchase:net_amount': ['stg_lemeng_item_purchase'],
+      'lemeng:purchase:present_amount': ['stg_lemeng_item_purchase'],
+      'lemeng:purchase:return_amount': ['stg_lemeng_item_purchase'],
+      'lemeng:purchase:supplier_count': ['stg_lemeng_item_purchase'],
+      'lemeng:purchase:item_count': ['stg_lemeng_item_purchase'],
+      'lemeng:request:quantity': ['stg_lemeng_request_order', 'stg_lemeng_transfer_in'],
+      'lemeng:request:day_fulfillment_rate': ['stg_lemeng_request_order', 'stg_lemeng_transfer_in'],
     }
     for (const row of rows) {
       const expected = DECLARED_SOURCES[row.id as keyof typeof DECLARED_SOURCES] ?? []
       expect(row.freshnessRelations, `${row.id} 的 freshness_relations 与 sources 推导不一致`).toEqual(expected)
     }
-    // 推导一致性：有 sources 的恰 15 条，其余 20 条为空——「恰好」要有实证数
-    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length).toBe(15)
-    expect(rows.filter((r) => (r.freshnessRelations ?? []).length === 0).length).toBe(20)
+    // 推导一致性：**35 条全部**声明了 sources（2026-10-17 补齐前是 15 条，另 20 条水位恒未知）。
+    // 计数兜底保留：以后新增指标若忘声明 sources，下面的 35 会立刻红。
+    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length).toBe(35)
+    expect(rows.filter((r) => (r.freshnessRelations ?? []).length === 0).length).toBe(0)
   })
 })
 
