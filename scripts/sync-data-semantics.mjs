@@ -457,8 +457,36 @@ export function deriveParams(/** @type {readonly string[]} */ grain) {
  * @param {string} expression 物化后的口径表达式（ratio 声明已在此前包好 nullif）
  * @returns {boolean}
  */
-export function deriveTotalable(expression) {
+export function deriveTotalable(expression, additivity = 'flow') {
+  if (additivity !== 'flow') return false
   return /^\s*sum\s*\(/i.test(expression) && !/\s\/\s/.test(expression)
+}
+
+/** 可加性分类的闭集（消费面 spec 2026-10-17 §12.3）。 */
+export const ADDITIVITY_VALUES = ['flow', 'stock', 'non_additive']
+
+/**
+ * 可加性分类（消费面 spec 2026-10-17 §12.3）：缺省 `flow`；未知值**响亮失败**。
+ *
+ * 为什么不能只靠形状推导：`deriveTotalable` 只看「expression 以 sum( 开头」，而**存量**指标
+ * （库存/应收应付/余额）的 expression 也是 `sum(列)`——形状可加、**语义不可加**（跨时间求和无业务含义）。
+ * 线上实证：`lemeng:inventory:quantity` / `:money` 曾被标成可加 ⇒ 问「近 7 天库存合计」= 7 天快照相加。
+ *
+ * @param {unknown} raw 声明里的 `additivity` 原值（缺省 / null ⇒ flow）
+ * @param {string} name 指标名（只用于错误信息）
+ * @returns {string} flow | stock | non_additive
+ */
+export function additivityOf(raw, name) {
+  if (raw === undefined || raw === null) return 'flow'
+  const v = String(raw)
+  if (!ADDITIVITY_VALUES.includes(v)) {
+    throw new Error(
+      `指标 \`${name}\` 的 \`additivity\` ${JSON.stringify(raw)} 不在 ${ADDITIVITY_VALUES.join('|')}`
+      + '（spec 2026-10-17 §12.3）—— 它决定能不能跨时间求合计；拼错会让存量指标静默按可加处理，'
+      + '问数会把日快照相加（线上已实证）。',
+    )
+  }
+  return v
 }
 
 /**
@@ -577,9 +605,9 @@ export function declarationsFromYaml(parsed) {
       params: deriveParams(grain),
       // 源系统（源维度）：上面已拦掉缺字段的情形，故这里的取值恒是非空串。
       sourceSystem,
-      // 可加标记（spec §8.4）：从**物化后的**表达式推导——ratio 在上面已包成
-      // `… / nullif(…, 0)`，deriveTotalable 的除法排除正好接住它。
-      totalable: deriveTotalable(expression),
+      // 可加标记（spec §8.4；2026-10-17 §12.3 起**先看声明的 additivity**）：ratio 在上面已包成
+      // `… / nullif(…, 0)`，deriveTotalable 的除法排除正好接住它；`stock`/`non_additive` 直接 false。
+      totalable: deriveTotalable(expression, additivityOf(m.additivity, name)),
       slaDays,
       freshnessRelations,
       // 值级掩码声明（spec 2026-10-17 §5.2）：缺省 null（未声明）；给了就逐项校验

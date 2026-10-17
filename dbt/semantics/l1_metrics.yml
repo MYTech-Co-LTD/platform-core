@@ -416,6 +416,10 @@ metrics:
       错过采集窗口即永久缺失该日快照）。含 0 库存行（接口返回有 0 行）。
       粒度 = 账套 × 快照日 × 门店 × 仓库 × 商品。
       ⚠️ 上滚语义：跨日不可比（快照是时点数不是流量数）——同日多仓可加，跨日只取最新。
+    # 存量（stock）：形状可加（sum(列)）、**语义不可加**（跨时间无业务含义）⇒ 不自动附合计。
+    # 2026-10-17 §12.3 实证：原先按 expression 形状推导成 totalable=true，问「近 7 天库存合计」
+    # 会把 7 个日快照相加。正确语义（取范围末日）是第二步，等真实问法再加。
+    additivity: stock
     expression: 'sum(fct_inventory_snapshot.inventory_quantity)'
     grain: [system_book, bizday, branch_num, storehouse_num, item_num]
     owner: data-platform
@@ -430,6 +434,8 @@ metrics:
     definition: >-
       库存快照金额合计（元）。**不可加边界**：同上（时点数）。粒度 = 账套 × 快照日 × 门店 × 仓库 × 商品。
       ⚠️ experimental：裁4/裁5 未回签 + D17 可回溯深度待长期观察。
+    # 存量（stock）：同 inventory:quantity——跨时间不可加，见 §12.3。
+    additivity: stock
     expression: 'sum(fct_inventory_snapshot.inventory_money)'
     grain: [system_book, bizday, branch_num, storehouse_num, item_num]
     owner: data-platform
