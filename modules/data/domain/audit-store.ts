@@ -10,6 +10,11 @@ export interface AuditEntry {
   org: string; userId: string; channel: Channel
   keyId: number | null; metricId: string; params: Record<string, unknown>
   rowCount: number | null; verdict: 'ok' | 'denied' | 'error'; reason: string | null
+  /** 本次查询**实际生效**的值级掩码（spec §4.4）：`列 → 记号`，整值掩码键为 `<value>`。
+   *  ⚠️ `null` 与 `{}` 是两回事（同 `rowCount: null ≠ 0`）：null = 本次没有任何掩码生效
+   *  （持有 `grantedBy` 豁免 / 指标未声明掩码 / 查询未执行），`{}` 在本设计里**不该出现**
+   *  ——`applied` 为空时调用方传 null，别传空对象。审计要能回答「看到的是原值还是掩码值」。 */
+  masking: Record<string, string> | null
 }
 
 /**
@@ -22,12 +27,14 @@ export interface AuditEntry {
 export async function writeAudit(pool: Pool, entry: AuditEntry): Promise<void> {
   await pool.query(
     `insert into data.query_audit
-       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       entry.org, entry.userId, entry.channel, entry.keyId, entry.metricId,
-      // jsonb 参数位接受字符串（pg 侧 parse 成 jsonb）；显式 stringify 让线上格式不依赖驱动行为
+      // jsonb 参数位接受字符串（pg 侧 parse 成 jsonb）；显式 stringify 让线上格式不依赖驱动行为。
+      // masking 的 null 必须原样落 NULL（不是 'null'::jsonb、更不能是 '{}'）——见字段注记。
       JSON.stringify(entry.params), entry.rowCount, entry.verdict, entry.reason,
+      entry.masking === null ? null : JSON.stringify(entry.masking),
     ],
   )
 }

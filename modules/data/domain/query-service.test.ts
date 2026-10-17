@@ -810,4 +810,24 @@ describe('runQuery —— 值级脱敏回包 masking（spec §5.3，P2 T2）', (
     if (out.status !== 'ok') return
     expect('masking' in out).toBe(false)
   })
+
+  // 审计列（P2 T3，spec §4.4）：回包说没说实话是一回事，**留痕**是另一回事——审计必须能
+  // 回答「这个人看到的是原值还是掩码值」。两条用例钉住 null 与对象的**两态**（'{}' 不许出现）。
+  it('掩码生效 ⇒ 审计行 masking 落库（列 → 记号），与回包同一份 applied', async () => {
+    await seedMasked([{ column: 'qp3_mask_f.revenue', kind: 'round', step: 1000, grantedBy: 'data:precise' }])
+    const out = await runQuery(depsOf(), ORG, req(), MASK_ID, {})
+    expect(out.status).toBe('ok')
+    const r = await pool.query('select masking from data.query_audit where org = $1', [ORG])
+    expect(r.rowCount).toBe(1)
+    expect(r.rows[0].masking).toEqual({ 'qp3_mask_f.revenue': 'round:1000' })
+  })
+
+  it('无掩码生效 ⇒ 审计 masking 是 NULL（不是空对象 {}，与 row_count null≠0 同一把尺）', async () => {
+    await seedMasked(null)
+    const out = await runQuery(depsOf(), ORG, req(), MASK_ID, {})
+    expect(out.status).toBe('ok')
+    const r = await pool.query('select masking from data.query_audit where org = $1', [ORG])
+    expect(r.rowCount).toBe(1)
+    expect(r.rows[0].masking).toBeNull()
+  })
 })
