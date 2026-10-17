@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.149.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.148.0...v0.149.0) - 2026-10-17
+- 【新增】data: 值级掩码在 authorize 里定点展开 + 回包 masking ([#807](https://github.com/MYTech-Co-LTD/platform-core/pull/807), [6c72b56](https://github.com/MYTech-Co-LTD/platform-core/commit/6c72b565058aa60befd488ada9d38fa7f29b0e4d))
+
+
 ## [0.148.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.147.0...v0.148.0) - 2026-10-17
 - 【新增】data: 指标声明面开放 mask（值级脱敏） ([#798](https://github.com/MYTech-Co-LTD/platform-core/pull/798), [81da291](https://github.com/MYTech-Co-LTD/platform-core/commit/81da291ff72c5a116d76af9eefcd418667196bdf))
 
