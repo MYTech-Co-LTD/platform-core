@@ -75,6 +75,76 @@ models:
         tests:
           - not_null
 
+  - name: fct_retail_comparable_growth
+    description: >-
+      **可比门店（like-for-like）两期对照构件**（01-05 / 07-06 的落点；2026-10-17「问 0」第二例）。
+      粒度 (system_book, period_days, bizday)。**为什么必须有构件**：客户公式
+      `增长率＝Σ_B本期L/Σ_B上期L−1` 里的 **B 是「这一对期间」的属性**，消费方两次调用各取一期再相除
+      会因行集不同而口径错 ⇒ B 必须在构件里定死，两期金额同表同粒度同集合。
+      **B 全部可从自有数据推出**（不依赖客户营业日历）：不是新开店（`first_seen <= 上期开始`）／
+      不是闭店（`last_seen >= 本期结束`）／两期每日快照均 `enable`／两期中至少一期有零售行
+      （否则批发客户/仓库会混进分母——400 个「账套×门店」里 173 个零零售）。
+      **周期当前只出 7 天**（客户频率是月，但湖只有 25 天历史）。**已知边界**：窗内新开/闭店实测均为 0
+      ⇒ 那两条排除逻辑当前空转，随历史变长生效。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests:
+          - not_null
+      - name: org
+        description: 主体列（宏注入）。
+        tests:
+          - not_null
+      - name: period_days
+        description: 周期长度（自然日）。粒度键。
+        tests:
+          - not_null
+      - name: bizday
+        description: 本期报告期末日（上海日历）。粒度键。
+        tests:
+          - not_null
+      - name: comparable_count
+        description: 可比门店集合 B 的门店数（本期分母样本）。
+        tests:
+          - not_null
+      - name: excluded_new
+        description: 排除——新开店（`first_seen > 上期开始`）。当前实测恒 0（窗内无新开）。
+        tests:
+          - not_null
+      - name: excluded_closed
+        description: 排除——闭店（`last_seen < 本期结束`）。当前实测恒 0（窗内无闭店）。
+        tests:
+          - not_null
+      - name: excluded_disabled
+        description: 排除——两期内快照有 `enable=false`。
+        tests:
+          - not_null
+      - name: excluded_no_retail
+        description: 排除——两期均无零售行（批发客户/仓库/配送节点；射程收缩用）。
+        tests:
+          - not_null
+      - name: cur_amount
+        description: B 的本期销售额合计（Σsale_money 毛额，不冲退货）。
+        tests:
+          - not_null
+      - name: pri_amount
+        description: B 的上期销售额合计（同上）。
+        tests:
+          - not_null
+      - name: cur_store_days
+        description: B 在本期**有销售**的店日数（客户「营业店日归一化」第二式的分母）。
+        tests:
+          - not_null
+      - name: pri_store_days
+        description: B 在上期有销售的店日数（同上）。
+        tests:
+          - not_null
+      - name: growth_rate
+        description: >-
+          增长率 = cur/pri − 1；上期合计为 0 ⇒ NULL（率不适用——**不能落成 0 或 −1**）。
+        tests:
+          - not_null
+
   - name: fct_retail_sale
     description: >-
       零售销售事实（口径模型）。粒度 **(system_book, bizday, branch_num)**（2026-10-12 W0 由两键扩到三键）；
