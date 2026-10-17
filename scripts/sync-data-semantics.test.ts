@@ -33,6 +33,7 @@ import {
   deriveFreshnessRelations,
   deriveRelation,
   deriveTotalable,
+  additivityOf,
   diffDeclarations,
   exitCodeFor,
   formatDiff,
@@ -203,7 +204,22 @@ describe('deriveTotalable —— 可加判定（spec §8.4：表达式形状的�
     expect(deriveTotalable('')).toBe(false)
   })
 
-  it('★ 真 YAML 逐条断言（spec §8.4，真实事实源）：恰 26 条可加；十三条比率/去重计数/max 不给合计', () => {
+  it('★ additivity 压过形状：stock / non_additive 一律 false（消费面 spec §12.3）', () => {
+    // 关键负样本：**形状可加、语义不可加**——存量（日快照）的 expression 也是 sum(列)，
+    // 跨时间求和无业务含义。只看形状会把它判成可加，问「近 7 天库存合计」= 7 天快照相加。
+    expect(deriveTotalable('sum(fct_inventory_snapshot.inventory_quantity)')).toBe(true)          // 缺省 flow
+    expect(deriveTotalable('sum(fct_inventory_snapshot.inventory_quantity)', 'stock')).toBe(false)
+    expect(deriveTotalable('sum(fct_x.amount)', 'non_additive')).toBe(false)
+    expect(deriveTotalable('count(*)', 'flow')).toBe(false)                                        // 形状仍然生效
+  })
+
+  it('★ additivity 拼错必须响亮失败（不是静默按 flow）', () => {
+    expect(additivityOf(undefined, 'm')).toBe('flow')
+    expect(additivityOf('stock', 'm')).toBe('stock')
+    expect(() => additivityOf('stocks', 'm')).toThrow(/不在 flow\|stock\|non_additive/)
+  })
+
+  it('★ 真 YAML 逐条断言（spec §8.4，真实事实源）：恰 24 条可加；十五条比率/去重计数/max/存量不给合计', () => {
     // 为什么钉真实 YAML：totalable 是物化产物，漏推导/推错不报错，只表现为线上多带或
     // 少带一个合计。期望集按各指标 expression 实文核对（比率用 ratio: 声明、去重计数用
     // count(distinct …)）——加指标时改这里的集合，两条计数会替你兜住条数漂移。
@@ -223,13 +239,16 @@ describe('deriveTotalable —— 可加判定（spec §8.4：表达式形状的�
       'lemeng:request:day_fulfillment_rate',     // ratio（满足率）
       // max(…)：连续天数是**单店状态值**，跨行求和 = 天数相加，无意义（03-05）
       'lemeng:retail:consecutive_no_sales_days',
+      // 存量（additivity: stock，消费面 spec §12.3）：日快照跨时间求和无业务含义
+      'lemeng:inventory:quantity',
+      'lemeng:inventory:money',
     ])
     for (const row of rows) {
       expect(row.totalable, `${row.id} 的 totalable 与 expression 形状不符`).toBe(!NOT_TOTALABLE.has(row.id))
     }
     // 「恰好」要有实证数：不是全体都可加、也不是全体都不可加
-    expect(rows.filter((r) => r.totalable === true).length, '可加条数（加/改指标时重核）').toBe(26)
-    expect(rows.filter((r) => r.totalable === false).length).toBe(13)
+    expect(rows.filter((r) => r.totalable === true).length, '可加条数（加/改指标时重核）').toBe(24)
+    expect(rows.filter((r) => r.totalable === false).length).toBe(15)
     // 抽样钉两条形态极值（brief 点名）
     expect(rows.find((r) => r.id === 'lemeng:retail:net_sales')?.totalable).toBe(true)
     expect(rows.find((r) => r.id === 'lemeng:transfer:batch_fill_rate')?.totalable).toBe(false)

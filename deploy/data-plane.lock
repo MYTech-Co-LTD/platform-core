@@ -1,4 +1,4 @@
-sha256-of-rest 423c14dae345e91fcd1a6181894a882fecfc883e5959e521e8b0c122453e19f5
+sha256-of-rest 712ad6b0608d06dabf4ef93e19518f3217ce1d7dd971cf33e41631576df867ca
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -18,7 +18,7 @@ a2c36ee626a700680e36bf3106abf74a4569c5461f4ba33d1ad148afd6690045 contracts/commo
 5a7a645f23cfdc35e966da665d627d438b8befb6effee70e525e76221367e5d7 contracts/common/lemeng.wholesale_out.json ${REPO}/contracts/common/lemeng.wholesale_out.json 0644
 81895b6736040f34f479157faaa94b7d8be89b0049dde0c75b14ddb4decb8229 contracts/common/lemeng.wholesale_return.json ${REPO}/contracts/common/lemeng.wholesale_return.json 0644
 a9209aad12e3020eefc11f94f51d935c49d1bff9eabf94fb0262d182a6a37c7a contracts/customers/README.md ${REPO}/contracts/customers/README.md 0644
-1377e6cd795ba5fe7cbd638e0d3629290f160f96f2a2004e90b110ee85d0185a dbt/README.md ${REPO}/dbt/README.md 0644
+bee9acb68db0960be441eb8e2a61d02f8be5350da429e0dab2da4a872b74e39d dbt/README.md ${REPO}/dbt/README.md 0644
 08c044b74e274564f44b2c0ce2467d9d81d41b6990c525b17e3afe08d6051c0e dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
 d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subject_org.sql ${REPO}/dbt/macros/subject_org.sql 0644
@@ -61,7 +61,7 @@ ee0bcd007c23c4d7dbe136b6178427904a14daa1945274b95ef65d57cd53c1c8 dbt/seeds/schem
 d97d54e949117437636327003d1326ad79ba2488367e6dd5d7a74ee43aa49dca dbt/seeds/x01_branch_calendar.csv ${REPO}/dbt/seeds/x01_branch_calendar.csv 0644
 0ca2476fdb12c463459a4d81215623f7876e8b2d3ac1e14ed3cc095d2e9fa078 dbt/seeds/x01_region_names.csv ${REPO}/dbt/seeds/x01_region_names.csv 0644
 8d039ed687c993221698878e646b6425b064157761da717e7bc84d2c39c463a3 dbt/seeds/x08_thresholds.csv ${REPO}/dbt/seeds/x08_thresholds.csv 0644
-309a9c3d0796a155ea21dff24c02fa53c8180cb55a1d59702571919662156cc4 dbt/semantics/l1_metrics.yml ${REPO}/dbt/semantics/l1_metrics.yml 0644
+96346abfcd8842a76e950bf1bf1317c79feee961fe65d269e1d8ebaa7376422b dbt/semantics/l1_metrics.yml ${REPO}/dbt/semantics/l1_metrics.yml 0644
 80e74d2bb62b6ad329047cc26784e3dd305337c6066154abc4f0abe0d08a9799 dbt/tests/assert_fct_branch_day_activity_grain_unique.sql ${REPO}/dbt/tests/assert_fct_branch_day_activity_grain_unique.sql 0644
 77380a4a6e4fb3278dc47ac1e62fbf381a66e44a71cbc61244c73baf78e524fb dbt/tests/assert_fct_branch_expense_grain_unique.sql ${REPO}/dbt/tests/assert_fct_branch_expense_grain_unique.sql 0644
 1e0119ac948f5af643079a505a846b914ba9df131ba92c3d487acede941bf5b5 dbt/tests/assert_fct_client_contribution_grain_unique.sql ${REPO}/dbt/tests/assert_fct_client_contribution_grain_unique.sql 0644

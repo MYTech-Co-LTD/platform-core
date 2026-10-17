@@ -112,6 +112,11 @@ dbt/
 `sources` 选填人读）。取舍与「为什么」在文件头注里。
 ⚠️ **`source` 与 `sources` 不是一回事**（同名不同义，最容易混的一对）：`source` = **源系统**
 （小写蛇形，如 `lemeng`，必填、**落库** `data.metrics.source_system`，消费侧按它判「这个源接没接入」）；
+`additivity`（选填，缺省 `flow`）= **可加性分类**，决定能不能跨时间求合计（消费面 spec 2026-10-17 §12.3）：
+`flow` 流量（销售额/订单数/费用，跨时间可求和）｜`stock` **存量**（库存/应收应付/余额，跨时间**不可**求和）｜
+`non_additive`（率/去重计数/连续天数）。**它压过表达式形状**——库里的 `totalable` 以前只看「是否以 `sum(` 开头」，
+而存量指标的 expression 也是 `sum(列)`，形状可加、**语义不可加**（实证：`inventory:quantity/money` 曾被标成可加，
+问「近 7 天库存合计」= 7 天快照相加）。拼错值 sync 与门禁都**响亮失败**（不静默按 `flow`）。
 `sources` = 背后**实际读的对象存储路径**（选填、人读、不落库；但**参与新鲜度链路推导**——
 sync 取路径段 `lemeng/<资产>` 推导 `stg_lemeng_<资产>` 关系集物化进
 `data.metrics.freshness_relations`，spec §10.7.3；不声明 = 该指标无自动水位）。
