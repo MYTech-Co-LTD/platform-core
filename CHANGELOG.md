@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.139.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.138.3...v0.139.0) - 2026-10-17
+- 【新增】data: 零售净销量 L1（03-07 分母；覆盖天数待 X08 批准窗口 N） ([#770](https://github.com/MYTech-Co-LTD/platform-core/pull/770), [5e785bb](https://github.com/MYTech-Co-LTD/platform-core/commit/5e785bbf59fa6d7c2128181cec51e900b9b12663))
+
+
 ## [0.138.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.138.2...v0.138.3) - 2026-10-17
 - 【修复】data-stack: pg_duckdb 卷改挂父目录——PG18 的 PGDATA 在版本子目录（Closes #765） ([#768](https://github.com/MYTech-Co-LTD/platform-core/pull/768), [4d6ff90](https://github.com/MYTech-Co-LTD/platform-core/commit/4d6ff906246b5f180a4a9d54726397d6aaf0e086))
 
