@@ -20,7 +20,11 @@ services:
     # shared_preload_libraries 是 pg_duckdb 硬要求（spec §9.4 方案 2）
     command: ["postgres", "-c", "shared_preload_libraries=pg_duckdb"]
     volumes:
-      - pgduckdata:/var/lib/postgresql/data
+      # ⚠️ 挂**父目录**，不是 `<父>/data`：PG18 起官方把 PGDATA 挪进版本子目录——目标机实测
+      #    `PGDATA=/var/lib/postgresql/18/docker`，且 `/var/lib/postgresql/` 下只有 `18/`、**没有 `data/`**。
+      #    挂 `.../data` ⇒ 卷是空的、**真集群落在容器可写层** ⇒ 容器一重建（部署/迁移/换机）集群即消失，
+      #    postgres 会重新 initdb 出空库，现象是「数据面空了」而报错面完全不指向真因。issue #765。
+      - pgduckdata:/var/lib/postgresql
     ports:
       # 平台侧的接线点（DATA_WAREHOUSE_URL 指这里）。**别把它读成「谁都能连」**：回环 ⇒ 够得到的
       # 是**宿主进程**（宿主上的 edge、宿主上跑的 `docker compose run` job）。

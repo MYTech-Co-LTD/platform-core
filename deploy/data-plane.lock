@@ -1,4 +1,4 @@
-sha256-of-rest be4b7540027052d5b3eca5c99b13f1e8c2d3e84131065eca814e18b142d79311
+sha256-of-rest 4b35617a10a906810758748017c94f595d013ff65915d9c6ee63ec5fe5313a1e
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 5f2b5a68028671166b3a0cd62d62a08a12f8a10af5034a2b5e4cadb50c1fb264 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -122,7 +122,7 @@ f0110d29f00b44d74da6038f1a2badf7e16a6b60a78e11b80c18565714b3ac72 dbt/tests/audit
 73c288ae9fdd22cf2767bcadcd512f36814a8c6a33c023eea15755e4aeb872be dbt/tests/audit_lemeng__transfer__item_gross_margin_rate.sql ${REPO}/dbt/tests/audit_lemeng__transfer__item_gross_margin_rate.sql 0644
 36b0c7adb27506ef250a15edf0b902b9e7b1c670017432cc69ea5ff3bceba8ff dbt/tests/audit_lemeng__transfer__negative_order_count.sql ${REPO}/dbt/tests/audit_lemeng__transfer__negative_order_count.sql 0644
 f3521ce0223776b5460ff659e057bb256bdcd221943532074d70b037aec0bebe dbt/tests/audit_lemeng__transfer__zero_cost_exposure_amount.sql ${REPO}/dbt/tests/audit_lemeng__transfer__zero_cost_exposure_amount.sql 0644
-2c1fe8959ca707d70c94685709851fa3f943b6a08b20ae57a891af3359da7bbf deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
+d528a9d57727212693484281d82704c074cd99bf47aed371aa6db67e9ddd94ae deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
 a3fc0976e30b18c2e4d4358128e02e02388668007eeff5fa0f4dc6db48be47c0 deploy/dbt/Dockerfile ${REPO}/deploy/dbt/Dockerfile 0644
 8679ed09c1ac5c65194c59fb2044e9edb2b7e5266ce08af4e08bd90bd4c70f6d deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
 0c3622c27da2a3a990d2ba9729a91ce7c2058d4c143e957afbf5425aa3ea011d deploy/duckle/console/DELIVERY.md ${REPO}/deploy/duckle/console/DELIVERY.md 0644
