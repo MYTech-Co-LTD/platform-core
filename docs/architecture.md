@@ -461,14 +461,38 @@
   （格子是空的）；等有了真客户分叉再动，就要搬真模型。
   ⚠️ 代价不是「纯仓内」：`dbt/` 在 `deploy/data-plane-manifest.txt` 是**投递项** ⇒ 重命名会改
   lock ⇒ **合入后山海侧必须重新 sync 数据面工件**，不是零运维动作。
-- **开关机制**：两条候选，**未定**（见本节末「待人拍板」）——① `dbt_project.yml` 按路径
-  `+enabled`，值由 var 给（合 `materialize.sh` 头注的成文处方「用该模型的 config 表达，**不要恢复
-  job 级名单**」；⚠️ Jinja 字符串的确切写法**待实测**）；② **从目录派生**的
-  `--select path:dbt/models/<域>`（无未验语法、部署身份留在 env；#679 反对的是**手抄**名单，
-  派生名单不会漂）。
-  **两案都必须配一条 fail-closed 门禁**：枚举 `dbt/models/*/`，每个域目录**必须**被显式归属
-  （某侧拥有／显式声明休眠）——否则新增域目录而无人登记 ⇒ 两侧都不 build ⇒ **静默不物化**，
-  正是 #677/#679 假绿的同形。
+- **开关机制 = `dbt_project.yml` 按路径 `+enabled`，值由 `env_var()` 给**（2026-10-17 实测，
+  见下）。合 `materialize.sh` 头注的成文处方「用该模型的 config 表达，**不要恢复 job 级名单**」。
+  实测形态（dbt-core 1.9.1 + dbt-postgres 1.9.1，即 `deploy/dbt/Dockerfile` 钉的版本；scratch
+  工程 `dbt parse` 后读 `target/manifest.json` 的 `config.enabled`）：
+
+  ```yaml
+  models:
+    platform_data:
+      lemeng:
+        +enabled: "{{ 'lemeng' in env_var('DATA_PLANE_DOMAINS').split(',') }}"
+      forms:
+        +enabled: "{{ 'forms' in env_var('DATA_PLANE_DOMAINS').split(',') }}"
+  ```
+
+  四条实测结论（**每条都是踩点，不是推论**）：
+
+  | 实测 | 结果 |
+  |---|---|
+  | `DATA_PLANE_DOMAINS=forms` | manifest **只剩 forms 的模型**（`lemeng` 的**整个不出现**，不是 `enabled:false` 挂着） |
+  | `env_var('DATA_PLANE_DOMAINS')` **不带默认值**，变量未设 | **parse 报错**（`Parsing Error`）⇒ **fail-closed** ✅ |
+  | 同上但带默认值 `env_var(..., '')` | 解析成空串 ⇒ **0 个模型、`dbt build` 退出 0** ⇒ **`MATERIALIZE_OK` 假绿** ❌ **默认值绝不可给** |
+  | 域目录存在但 `dbt_project.yml` **没登记** | **默认 `enabled=true`** ⇒ **每个面都会 build 它** ❌ |
+
+  ⚠️ 另：`+enabled` 里**不能引用本文件 `vars:` 块的 var**——`models:` 配置块的渲染早于工程 vars，
+  报 `Required var 'x' not found in config: Vars supplied to <Configuration> = {}`（实测）。
+  `--vars '{"domains":"…"}'` 可以，但那样部署身份就跑到 job 参数里了；**用 `env_var()` 更好**
+  ——身份与 `LEMENG_SUBJECT_ORG` / `LEMENG_ZOS_BUCKET` 同住 env 层。
+
+  ⇒ **必须配一条 fail-closed 门禁**（上表后两条）：枚举 `dbt/models/*/`，每个域目录**必须**在
+  `dbt_project.yml` 里有显式 `+enabled` 条目（某侧拥有／显式声明休眠）。没有它，**新增域目录
+  而无人登记 ⇒ 两侧都 build ⇒ 反向泄漏**；**变量漏配 ⇒ 零模型静默 `MATERIALIZE_OK`**。
+  两个方向都静默，正是 #677/#679 假绿的同形。
 - **两侧 materialize job 各传自己的域**。⚠️ **`materialize.sh` 必须改，不是「无需改脚本」**：
   `mat_env_args()` 是**写死的 8 键清单**（`scripts/lemeng/materialize.test.sh` 还钉了「`-e` token
   恰 8 个」并逐键枚举）⇒ 新 env 不进去，dbt 根本收不到；只有容器/网络/平台库那几个参数是已支持
@@ -488,11 +512,11 @@
 - forms 当前**借跑在山海数据面** ⇒ org 错标为 `shanhaiyiguo-org`。
   🚨 **回迁完成前不得为 forms 声明 L1 指标**——org 是行级授权主体列，**第一个指标即泄漏**。
 
-**待人拍板（本节**只落了事实与候选，机制未定**——三条都不许按「已定」实施）**：
+**待人拍板（机制已实测，范围未定——下列不许按「已定」实施）**：
 
 | # | 待定 | 候选 / 理由 |
 |---|---|---|
-| 1 | **域开关机制** | ① `+enabled`（合头注字面，语法待实测）／② 派生 `--select path:`（无未验语法）。**两案都要配 fail-closed 的域覆盖门禁**（见上） |
+| 1 | **域开关机制** | ✅ **已实测并选定**：`+enabled` + `env_var()`（**不带默认值**），见上表。~~② 派生 `--select path:`~~ 不再需要。**仍待定的是配套的 fail-closed 域覆盖门禁怎么写** |
 | 2 | **是否现在做 `common/` → `models/<域>/` 重命名** | 现在格子是空的（`customers/` 无真子目录）⇒ 最便宜；但要动 lock + 山海重 sync |
 | 3 | **是否把「按域分次 build + 分次落账」纳入域裁剪的范围** | `data.load_log` 只在 dbt **全绿后**写（`materialize.sh` 的 `exit 1` 在落账**之前**）⇒ 现在**任一模型红，全部 relation 的 `data_as_of` 一起停**。域拆分天然给了切分点；不做 ⇒ 爆炸半径问题留到以后 |
 | 4 | **「源 ≠ 部署」这类缺陷怎么发现** | 三条不变量今天**无门禁**（§4.2「仅文档」档）。配置一致性检查**抓不到** #729——那次是**源**（mytech 的导出 API）与**面**（山海）不一致，两侧配置各自自洽。可用的抓手：导出响应**带 `org`**（计划稿 A2）⇒ 管线里断言「本页 `distinct(org)` ⊆ 部署主体 org」，不通过**拒写湖**。**当前不存在这条断言** |
