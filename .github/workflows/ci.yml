@@ -207,6 +207,21 @@ jobs:
       # 权限：CI 的 platform 角色是 POSTGRES_USER（超级用户）⇒ 有 CREATEDB；脚本权限不足时
       # **响亮失败**（不静默跳过）。
       - run: pnpm exec tsx scripts/check-tenant-isolation.mjs
+      # 文档引用门禁（issue #771）。判据**只有一条**：**变更中的**文档里，能唯一解析到仓内文件的
+      # `file:line` 引用，行号必须在范围内。
+      #
+      # ⚠️ **为什么不判「文件不存在」**——2026-10-17 全量实测（135 份文档 / 4658 处引用）：
+      #    行号越界 4 处（**全是真错**，近零噪声）；文件不存在 538 处（收窄到仓内相对路径仍有 114 处
+      #    / 39 份文档），其中绝大多数是**合法**引用（仓外 `explore 仓 docs/adr/…`、数据面
+      #    `owners.json`、已迁移退役的 `duckle/common/*.json`、**计划里待建的文件**）⇒ 判了就是噪声，
+      #    真违规会被淹掉。文件名歧义 337 处同理不判。**别好心把这两条加回来**。
+      #
+      # ⚠️ **为什么只查变更中的文档**：那 4 处越界全在两份**历史快照**里，而本仓纪律是
+      #    「specs/plans 正文一律不改」（docs/architecture.md §6.1）⇒ 全量门会红 4 处而这 4 处不许改。
+      #
+      # ⚠️ base ref 解析不到时脚本**响亮失败**（不是静默 exit 0）——浅克隆会让 `git diff` 失败，
+      #    当成「没有变更」就变成一次都没跑的假绿。本 job 的 checkout 已带 fetch-depth: 0。
+      - run: pnpm exec tsx scripts/check-doc-citations.mjs "origin/${{ github.base_ref || 'main' }}"
       # 提交纪律装置校验（"守卫守卫本身"）：层①的钩子是本地文件、层②的自动安装是 package.json
       # 配置，两者任一被改掉，本地直推防线就静默失效——不会有任何报错，只会"从此刻起拦不住"。
       # 所以在 CI 里把它们钉死。（钩子的**行为**由 scripts/git-hooks.test.ts 覆盖，跑在 unit job）
