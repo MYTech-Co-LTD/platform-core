@@ -989,6 +989,9 @@ git commit -m "feat(data): 首批列级收紧——成本源列打标并与读�
 | T1 | **#777** | 已合，v0.141.0 | 🔴 **计划 T1 Step 3 有实质错误**：`readContractDoc` 是白名单构造，`sensitivity` 会被丢掉 ⇒ 那条规则**永不触发**。已改为先透传（见该 Step 的订正块）。 |
 | T4 | **#774** | 已合，v0.141.0 | ① 新增 `report-store.updateSpecAndScope`：写规格与写页门**必须同一条 UPDATE**，否则留「新面板 + 旧页门」窗口，且一请求推两次 `version` 会打红既有版本断言；② `PUT /reports/:id/spec` 派生失败时**保持页门原值、规格照存**（拒绝权留在发布门）；代价：已发布行补多码面板后仍为 `null`，要等下一次发布动作才被拒。 |
 | T2 | **#785** | 已交付 | ① `modules/data/module.test.ts` 把权限码集合**逐字钉死** ⇒ 新增 `data:cost` 必须同步改它（**本地只跑 `test:guard` 抓不到，要跑全量 `pnpm test`**）；② `requiredScopeOf` 额外拒绝**非字符串**（YAML 裸数字会被 `String()` 强转成一个不存在的码）。 |
+| T3 | **#789** | 已合 | ① 变异确认时发现一条**假强用例**：「`reads` 指向不存在的列」只断言「产出 1 条且提到该列名」，而把「列不存在」分支关掉后代码会 fall through 到「没声明 scope」，**同样**产出提到该列名的违规 ⇒ 用例照样绿。已收紧成「必须认是哪一条」。② 复用 `readContractDoc` 而不自己解析契约——它昨天刚因白名单漏过 `sensitivity`。 |
+| T6 | **#790** | 已合 | `POST` 是**创建**不是**发布** ⇒ 没有照抄 `PUT` 的「一律派生」，而是「派生值当下界」：派生 `null` 时保留调用方给的草稿页门（否则会把「先建草稿、后补面板」的既有流程打红）。③ 首次本地跑 `pnpm --filter data test` 是 **239 skipped**（无 `DATABASE_URL`）⇒ 发布门用例**全没跑**，补真库重跑才是 491 全过。 |
+| T5 | **#781** | **已裁决：先不隐藏**（issue 已关，`not planned`） | 调查完成并逐跳留档：`lemeng.wholesale_out.cost_money` → `stg_lemeng_wholesale_out` → `fct_hq_outbound.c_cost` → `fct_contribution.n_net` → `lemeng:contribution:net_amount` / `region_net`。**裁决不改**：今天无人提出该限制，造一条无需求的限制违反「无案例不立标准」；且 `data:cost` 无人持有 ⇒ 一打标这两条指标对**所有人**消失。⇒ 三道门**保持空转**（无列打标、无指标申报），不改变任何人的可见性。**触发条件**：真有人提出「某类人不应看到利润/成本」时，按留档的三步走（定名单 → 发码 → 打标+声明），无需重新调研。 |
 | — | — | — | 由 T4 暴露出的 `POST /reports` 旁路已单列为 **Task 6 / #778**。 |
 
 ## 计划完成后的下一步
