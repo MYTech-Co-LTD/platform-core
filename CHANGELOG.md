@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.136.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.136.2...v0.136.3) - 2026-10-17
+- 【修复】openclaw: 问数不得用 exec/curl 探索——规则进 SKILL（防卷重建回退） ([#754](https://github.com/MYTech-Co-LTD/platform-core/pull/754), [9a3f52a](https://github.com/MYTech-Co-LTD/platform-core/commit/9a3f52ab3bcd0bebf96e0d215c34d1802ab7c273))
+
+
 ## [0.136.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.136.1...v0.136.2) - 2026-10-17
 - 【修复】data: 停用 stg_forms_submission——源首个文件出现前它打挂 materialize（连带新鲜度水位冻结） ([#752](https://github.com/MYTech-Co-LTD/platform-core/pull/752), [158a301](https://github.com/MYTech-Co-LTD/platform-core/commit/158a30146e94183fa99085b6d51e230d8b20b23d))
 
