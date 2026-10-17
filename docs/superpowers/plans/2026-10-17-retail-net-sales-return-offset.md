@@ -293,6 +293,7 @@ git commit -m "fix(data): fct_retail_sale 拆 sale_amount/return_amount/net_amou
 - Modify: `dbt/semantics/l1_metrics.yml:103`（`net_quantity` 定义里那句「净额按裁1 不冲退货单」）
 - Create: `dbt/tests/audit_lemeng__retail__sales.sql`
 - Modify: `dbt/tests/audit_lemeng__retail__net_sales.sql`
+- Modify: `dbt/tests/audit_lemeng__retail__order_count.sql:64`（**T1 review 补入的真缺口**）
 
 **Interfaces:**
 - Consumes: Task 1 的 `fct_retail_sale.sale_amount` / `.net_amount`。
@@ -487,6 +488,33 @@ recheck as (
 并把 `materialized` CTE 里的 `net_amount as net_sales` 保持不变（列名已对上），
 末尾 note 文案改为 `'复算与物化结果不一致（净销售额 = 销售侧 − 退货侧，#813）'`。
 
+> ⚠️ 该文件里**新增的 `ret_side` CTE 必须只被 `recheck` 用，不要动 `base`/`per_order` 的销售侧**——
+> 它们是复算的**独立**读路径，与 `fct_retail_sale` 各自写（方法论见文件头注）。
+
+- [ ] **Step 4b: 修 `audit_lemeng__retail__order_count.sql`（T1 review 补入的真缺口）**
+
+**为什么必须改**：T1 的 `full join` 让「只有退货、没有销售」的店日在物化侧**新增一行**
+（`order_count = 0`），而本 audit 的复算侧只有销售基面 ⇒ 该行 `a.order_count` 为 NULL、
+`b.order_count` 为 0 ⇒ `NULL is distinct from 0` 为真 ⇒ **出红行**。T8「三条 audit 绿」过不了。
+
+把第 64 行：
+
+```sql
+where a.order_count is distinct from b.order_count
+```
+
+替换为：
+
+```sql
+-- ⚠️ 2026-10-17（issue #813）：物化侧自 T1 起含「只有退货、没有销售」的店日（order_count=0），
+--    而本复算侧只有销售基面 ⇒ 那些行 a.order_count 为 NULL。coalesce 到 0 再比，
+--    既放过这些**结构上正确**的空缺，又不放松销售店日的逐分判据。
+where coalesce(a.order_count, 0) is distinct from coalesce(b.order_count, 0)
+```
+
+并把第 61 行的 note 文案末尾 `（有效订单数，#430 同基面）` 改为
+`（有效订单数，基面=销售单，#430/#813）`。
+
 - [ ] **Step 5: 跑门禁确认绿**
 
 ```bash
@@ -499,7 +527,8 @@ Expected: exit 0，且扫描计数里 `audits` 多 1。
 
 ```bash
 git add dbt/semantics/l1_metrics.yml dbt/tests/audit_lemeng__retail__sales.sql \
-        dbt/tests/audit_lemeng__retail__net_sales.sql
+        dbt/tests/audit_lemeng__retail__net_sales.sql \
+        dbt/tests/audit_lemeng__retail__order_count.sql
 git commit -m "fix(data): net_sales 改冲退货口径 + 新增 lemeng:retail:sales 保留旧数（#813）"
 ```
 
@@ -508,7 +537,7 @@ git commit -m "fix(data): net_sales 改冲退货口径 + 新增 lemeng:retail:sa
 ### Task 3: 输入形状守卫扩到退货行
 
 **Files:**
-- Modify: `dbt/tests/audit_lemeng__retail__recon_exchange_shape.sql:27-112`
+- Modify: `dbt/tests/audit_lemeng__retail__recon_exchange_shape.sql:27-111`
 
 **Interfaces:**
 - Consumes: 无（独立读 parquet）。
@@ -968,6 +997,7 @@ git commit -m "fix(data): 对账管线切净额锚 + FLOW 口径订正（#813）
 **Files:**
 - Modify: `docs/data-platform-handbook.md`（§1.4 独立通道表 ~641 行、§2 台账行 ~826 行、§5 验收记录）
 - Modify: `docs/lemeng-recon-questions.md:5`
+- Modify: `dbt/README.md:138`（构件列约定表 —— **T1 review 补入的真缺口**）
 
 **Interfaces:**
 - Consumes: 无。
@@ -1003,6 +1033,21 @@ git commit -m "fix(data): 对账管线切净额锚 + FLOW 口径订正（#813）
 **2026-10-17 追加（issue #813）**：净销售额已改为「销售侧 − 退货侧」——上文「不冲减退货单」说的是**销售侧**（= 乐檬 `sale_money`），现在净额另减退货侧（= 乐檬 `return_money`）。两者不矛盾。
 ```
 
+- [ ] **Step 3b: 改 `dbt/README.md` 构件列约定表（T1 review 补入的真缺口）**
+
+该表自称「**新域/新列先改本表再写模型（本表是约定的事实源）**」，retail 行仍是旧列。
+把第 138 行：
+
+```
+| retail | `fct_retail_sale`（**W0 ✓**） | `net_amount`(L 净额)、`order_count` |
+```
+
+替换为：
+
+```
+| retail | `fct_retail_sale`（**W0 ✓**；2026-10-17 #813 拆三列） | `sale_amount`(销售侧，不冲退货)、`return_amount`(退货侧)、`net_amount`(L 净额 = 销售侧 − 退货侧)、`order_count` |
+```
+
 - [ ] **Step 4: 跑引用门禁**
 
 ```bash
@@ -1015,8 +1060,8 @@ Expected: exit 0（新增的 spec/issue 引用可解析）。
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/data-platform-handbook.md docs/lemeng-recon-questions.md
-git commit -m "docs(data): 正典登记净销售额冲退货口径（#813）"
+git add docs/data-platform-handbook.md docs/lemeng-recon-questions.md dbt/README.md
+git commit -m "docs(data): 正典与构件列约定登记净销售额冲退货口径（#813）"
 ```
 
 ---
