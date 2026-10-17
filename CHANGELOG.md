@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.142.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.142.0...v0.142.1) - 2026-10-17
+- 【修复】data: console 排班闸期望集按「域」判——forms 不再污染乐檬账套书（Closes #782） ([#783](https://github.com/MYTech-Co-LTD/platform-core/pull/783), [05ea70b](https://github.com/MYTech-Co-LTD/platform-core/commit/05ea70b92d6d968be74994373afcb7d9e02e9f21))
+
+
 ## [0.142.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.141.0...v0.142.0) - 2026-10-17
 - 【新增】data: 库存覆盖天数（月日均）+ 净销量扩到商品粒度 ([#776](https://github.com/MYTech-Co-LTD/platform-core/pull/776), [a816a81](https://github.com/MYTech-Co-LTD/platform-core/commit/a816a8169b3e440442c8f012e9efee34c673de29))
 
