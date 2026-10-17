@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.146.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.146.1...v0.146.2) - 2026-10-17
+- 【修复】data: 客户级贡献率对账自检段列数对齐主段（10 列） ([#804](https://github.com/MYTech-Co-LTD/platform-core/pull/804), [aecf44b](https://github.com/MYTech-Co-LTD/platform-core/commit/aecf44b94172ba7e4d4d2ddfbe362cc3a4fc9d73))
+
+
 ## [0.146.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.146.0...v0.146.1) - 2026-10-17
 - 【修复】data: 零售明细门店清单改 whoami 现算，新店自动纳入（#793） ([#801](https://github.com/MYTech-Co-LTD/platform-core/pull/801), [1e489b5](https://github.com/MYTech-Co-LTD/platform-core/commit/1e489b520f0a10005bd2699ff1929b55e9ffc173))
 
