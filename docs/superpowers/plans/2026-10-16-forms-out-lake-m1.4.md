@@ -102,9 +102,9 @@ dbt/models/common/marts/     ← 全是乐檬 fct_*
 
 | # | 动作 | 机制 / 注意 |
 |---|---|---|
-| 1 | 目录按域分：`models/lemeng/` + `models/forms/`（现 `common/` 拆开；`customers/` 不动） | 现有 `STAGING_RE`/`MARTS_RE` 已是 `models/(?:.+\/)?staging/` ⇒ **门禁判据不用改**，只需改错误文案里写死的 `models/common/staging/` 路径 |
-| 2 | 域开关进 `dbt_project.yml` 的**按路径 `+enabled`**，值由 var 给 | 合 `materialize.sh` 头注的**成文处方**：「将来若真出现『不该日物化』的模型，用该模型的 config 表达，**不要恢复 job 级名单**」——var 是**部署的域身份**，不是模型名单。⚠️ `+enabled` 收 Jinja 字符串的确切写法**待实测**（未验不写死） |
-| 3 | 两侧 materialize job 各传自己的域；mytech 侧 job 的 `PLAT_CT`/`PG_CT`/`CONSOLE_CT`/`NETWORK` 全指 mytech 资源 ⇒ `SO=mytech` | `materialize.sh` 已全部支持 env 覆盖，无需改脚本 |
+| 1 | 目录按域分：`models/lemeng/` + `models/forms/`（现 `common/` 拆开）。**二维格子定案：域是顶层轴、客户分叉嵌在域里**（`models/<域>/customers/<客户>/`）——`common/` 溶解成域的默认 | 现有 `STAGING_RE`/`MARTS_RE` 已是 `models/(?:.+\/)?staging/` ⇒ **门禁判据不用改**，只需改错误文案里写死的 `models/common/staging/` 路径。**现在改最便宜**（实测 `customers/` 下只有 README、无真子目录）。⚠️ 代价不是「纯仓内」：`dbt/` 在 `deploy/data-plane-manifest.txt` 是**投递项** ⇒ 重命名改 lock ⇒ **山海侧要重新 sync 数据面工件** |
+| 2 | 域开关：**两案未定**——① `dbt_project.yml` 按路径 `+enabled`，值由 var 给；② **从目录派生**的 `--select path:dbt/models/<域>` | ①合 `materialize.sh` 头注的**成文处方**（「用该模型的 config 表达，**不要恢复 job 级名单**」），但 ⚠️ Jinja 字符串写法**待实测**；②无未验语法、部署身份留在 env，且 #679 反对的是**手抄**名单（派生名单不会漂）。**两案都必须配 fail-closed 域覆盖门禁**：枚举 `dbt/models/*/`，每个域目录必须被显式归属，否则新增域目录而无人登记 ⇒ 两侧都不 build ⇒ **静默不物化**（#677/#679 假绿同形） |
+| 3 | 两侧 materialize job 各传自己的域；mytech 侧 job 的 `PLAT_CT`/`PG_CT`/`CONSOLE_CT`/`NETWORK` 全指 mytech 资源 ⇒ `SO=mytech` | ⚠️ **`materialize.sh` 必须改，不是「无需改脚本」**：`mat_env_args()` 是**写死的 8 键清单**，`materialize.test.sh` 还钉了「`-e` token 恰 8 个」并逐键枚举 ⇒ 新 env 不进去 dbt 根本收不到。只有容器/网络/平台库那几个参数是已支持 env 覆盖的 |
 | 4 | env 键 `LEMENG_SUBJECT_ORG` → 域中性名（如 `SUBJECT_ORG`） | 回迁后它是 forms 部署的主体来源，`LEMENG_` 前缀会误导。改净面：`dbt/macros/subject_org.sql`、`profiles.example.yml`、`materialize.sh`、`dbt/README.md` §（同名小节）、`schema.yml` 描述若干 |
 
 ### 5 待人决策
@@ -113,6 +113,8 @@ dbt/models/common/marts/     ← 全是乐檬 fct_*
 |---|---|---|
 | 1 | **桶**：mytech 数据面复用 `shanhai-data`，还是新开 `mytech-data`？ | **新开 `mytech-data`**——复用 = 把 mytech 自身域的表单数据写进**客户（山海）的桶**，与交付边界相悖；同桶还会把 §3 的反向泄漏从「配错才发生」变成「隔离一失效就发生」。**✅ 已核实（2026-10-17）：湖侧只有 4 个桶，没有 mytech 自己的湖桶 ⇒ 开桶是人工前置。** 核实方法与证据见下 |
 | 2 | 山海侧 forms 残留（console `svc_nQaReL0EvSBqK9gW` + `staging.stg_forms_submission`）何时退 | 回迁验收通过后**同批退**，避免双写窗口 |
+| 3 | **爆炸半径**：「按域分次 build + 分次落账」是否纳入 R2？ | **建议纳入**。`data.load_log` 只在 dbt **全绿后**写（`materialize.sh` 的 `exit 1` 在落账**之前**）⇒ 现在**任一模型红，全部 relation 的 `data_as_of` 一起停**。域拆分天然给了切分点：按域各跑一次 dbt、各写各的 `load_log`，一个域红不再冻结别的域（退出码契约重设计：跑完所有域各自落账，任一失败仍 `exit 1`）。不纳入 ⇒ 域裁剪只挡了「迁移期这一种红」，将来任何红照旧全冻 |
+| 4 | **「源 ≠ 部署」怎么发现？** | **建议加管线断言**。三条不变量今天**无门禁**；而配置一致性检查**抓不到** #729——那次是**源**（mytech 的导出 API）与**面**（山海）不一致，两侧配置各自自洽。可用抓手：导出响应**带 `org`**（A2）⇒ 断言「本页 `distinct(org)` ⊆ 部署主体 org」，不通过**拒写湖**。**当前不存在这条断言** |
 
 ### 5.1 桶核实（2026-10-17，三条独立证据，全部经 openship MCP / 容器内只读）
 
@@ -134,7 +136,7 @@ dbt/models/common/marts/     ← 全是乐檬 fct_*
 ### 6 修订后的步骤（替代下文 E·console）
 
 - [ ] R1 **架构文档更新**（新增「域」维度 + 数据面归属口径）→ 人审 —— **稿已成：PR #818**（`docs/architecture.md` 新增 §2.5 + §2.2/§4.2/§5.1 三处交叉引用），**待人审**
-- [ ] R2 dbt 树按域分目录 + `+enabled` 域开关 + 门禁文案（纯仓内，可 CI 验）
+- [ ] R2 dbt 树按域分目录 + 域开关（机制待定，见 §4 第 2 行）+ fail-closed 域覆盖门禁 + 门禁文案。⚠️ **不是「纯仓内」**：`materialize.sh`/`materialize.test.sh` 必改（8 键清单），`dbt/` 是投递项 ⇒ lock 变 ⇒ **山海侧要重新 sync**
 - [ ] R3 mytech 数据面启用：S3 凭据 → Gate-B 接线 + `search_path`（`wire-warehouse.sh --check` 七断言全绿）→ `dbt`/`duckle` 服务行改绝对路径卷 → 数据面工件 sync（lock）
 - [ ] R4 mytech 侧 materialize job（照 `lemeng-dbt-materialize` 形态，容器名/网络全换 mytech）
 - [ ] R5 forms console 落到 `proj_SU8cmQ8OLVfM971X`（**新桶 —— 人工前置：开 `mytech-data`，见 §5.1**）→ seed workspace（含 `.duckle/keys/secret.key`）→ 重建 catalog → 首跑成功
