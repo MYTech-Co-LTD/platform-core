@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.143.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.143.0...v0.143.1) - 2026-10-17
+- 【修复】data: 撤掉库存覆盖天数——D17×D07 在门店×商品上零重叠（#787） ([#788](https://github.com/MYTech-Co-LTD/platform-core/pull/788), [30a5ce8](https://github.com/MYTech-Co-LTD/platform-core/commit/30a5ce8bdca67dcd5aaa2b37cfe99a7a2281a39c))
+
+
 ## [0.143.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.142.1...v0.143.0) - 2026-10-17
 - 【新增】data: L1 声明面开放 required_scope 与 reads，加 data:cost 权限码 ([#785](https://github.com/MYTech-Co-LTD/platform-core/pull/785), [abcbe9f](https://github.com/MYTech-Co-LTD/platform-core/commit/abcbe9f029d4e7506062185fbd3a1ba6936fc121))
 
