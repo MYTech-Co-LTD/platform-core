@@ -4,17 +4,38 @@
 import type { Pool } from 'pg'
 import type { Channel } from './authz'
 
+/**
+ * 审计里的掩码形态（spec §4.4.1）：三种**发生的形态** + 它们的**并**。
+ *
+ * - `null` —— 本次无掩码生效（未声明 / 形状没命中 / 查询未执行）
+ * - `{ "net_sales": "round:1000" }` —— 有列被掩
+ * - `{ "__exempted__": ["net_sales"] }` —— 有列被豁免（持码看原值）
+ * - 混合形 `{ "net_sales": "round:1000", "__exempted__": ["cost"] }` —— 同一次查询里
+ *   一列被掩、另一列被豁免（两条声明的 `grantedBy` 不同）⇒ 两个键**同现**。
+ *
+ * ⚠️ **响应面 `masking` 装不下本类型**（契约是 `Record<string,string>`）——两者必须由
+ *    `query-service.ts` 从同一份 `authz.plan` 在一处派生，别各写一遍（会不同尺）。
+ */
+export type MaskingAudit = Record<string, string | string[]>
+
+/** 审计掩码值的**唯一构造点**（纯函数，可脱库单测）。 */
+export function maskingAuditOf(applied: Record<string, string>, exempted: string[]): MaskingAudit | null {
+  if (Object.keys(applied).length === 0 && exempted.length === 0) return null
+  return { ...applied, ...(exempted.length > 0 ? { __exempted__: [...exempted].sort() } : {}) }
+}
+
 export interface AuditEntry {
   /** 隔离键 `org`（text）= 审计里的主体值，**一列两义**（见 T1 的 001_init.sql 注记）。
    *  早期版本的独立 `orgId` 字段已并入本字段——别再加回来。 */
   org: string; userId: string; channel: Channel
   keyId: number | null; metricId: string; params: Record<string, unknown>
   rowCount: number | null; verdict: 'ok' | 'denied' | 'error'; reason: string | null
-  /** 本次查询**实际生效**的值级掩码（spec §4.4）：`列 → 记号`，整值掩码键为 `<value>`。
+  /** 本次查询**实际生效**的值级掩码（spec §4.4 / §4.4.1 三态，T7 #823）：见 `MaskingAudit`。
    *  ⚠️ `null` 与 `{}` 是两回事（同 `rowCount: null ≠ 0`）：null = 本次没有任何掩码生效
-   *  （持有 `grantedBy` 豁免 / 指标未声明掩码 / 查询未执行），`{}` 在本设计里**不该出现**
-   *  ——`applied` 为空时调用方传 null，别传空对象。审计要能回答「看到的是原值还是掩码值」。 */
-  masking: Record<string, string> | null
+   *  （指标未声明掩码 / 形状没命中 / 查询未执行），`{}` 在本设计里**不该出现**
+   *  ——判据空时调用方传 null，别传空对象。审计要能回答「看到的是原值还是掩码值」：
+   *  「有列被豁免」与「压根没声明掩码」都必须可区分（前者记 `__exempted__`）。 */
+  masking: MaskingAudit | null
 }
 
 /**

@@ -445,6 +445,7 @@ describe('authorize —— 值级掩码定点展开（spec §5.3，P2 T2）', ()
     if (!r.ok) return
     expect(r.plan.sql).toContain('sum(round(mart_sales_daily.revenue, -1000)) as value')
     expect(r.plan.applied).toEqual({ 'mart_sales_daily.revenue': 'round:1000' })
+    expect(r.plan.exempted).toEqual([])
   })
 
   it('自动合计与明细同源（同一 whereAndGroup）⇒ totalSql 用同一套掩码值（spec §3.2 不变量 2）', () => {
@@ -461,6 +462,7 @@ describe('authorize —— 值级掩码定点展开（spec §5.3，P2 T2）', ()
     expect(r.plan.sql).toContain('sum(mart_sales_daily.revenue) as value')
     expect(r.plan.sql).not.toContain('round(mart_sales_daily.revenue')
     expect(r.plan.applied).toEqual({})
+    expect(r.plan.exempted).toEqual(['mart_sales_daily.revenue'])
   })
 
   it('masks 缺省/null/空 ⇒ applied 空、sql 一字不变（既有指标零影响）', () => {
