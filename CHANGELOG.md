@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.169.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.168.0...v0.169.0) - 2026-10-18
+- 【新增】platform: token 平台化——PAT 密钥表与解析上移宿主（#894） ([#904](https://github.com/MYTech-Co-LTD/platform-core/pull/904), [de46d79](https://github.com/MYTech-Co-LTD/platform-core/commit/de46d79a9a14743de65d5326129aa38473d581ac))
+
+
 ## [0.168.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.167.0...v0.168.0) - 2026-10-18
 - 【新增】data: 一级战区汇总——fct_contribution 加 region_l1/region_l1_bucket + region_l1_net 指标（#902） ([#903](https://github.com/MYTech-Co-LTD/platform-core/pull/903), [5bc9667](https://github.com/MYTech-Co-LTD/platform-core/commit/5bc96678567bd45ced2baecd305db49e354b2944))
 
