@@ -74,6 +74,23 @@
 #    反向测试：`WIRE_REGION_SELFTEST=<不存在的 id> sh $0 --check` ⇒ 该断言吐 ERR 行 ⇒ 桥送到企微。
 #      **这是本断言的验收判据**（「人为制造一次真红」，见 #898）。
 
+# ── ⑪⑫⑬ 口径对账台账（2026-10-18 新增；#892）──────────────────────────────────────
+#    为什么单列三条：台账的失败有**三种形状**，混成一条就读不出是谁坏了——
+#      ⑪ **缺行** = 对账没跑完（与「跑了但账不平」完全不同的处置）；
+#      ⑫ **源侧一个值都没返回**（`not_evaluated`）= **源故障**，绝不能与「数不平」混（计划稿 §G 已定）；
+#      ⑬ **源只回了一部分**（`source_cover_pct < 1`）= 先怀疑**源**，不要先怀疑账。
+#
+#    ⚠️ ⑬ 的由来是一条**真实误判**（2026-10-18）：64188/10-15 源只返 51/74 家，台账记成 23 笔
+#      `missing_side=source` 的 break，形状与「真不平」一模一样 ⇒ 被读成「23 家结构性缺口」并推到
+#      客户面前；**同一条请求原样重跑即返 74 家全部**。⑫⑬ 分开就是为了不让这件事再发生。
+#
+#    **容差是时段感知的**（对齐 §1.5.2）：台账是 **dbt 物化件**（UTC `27 3` = 上海 11:27），
+#    所以目标营业日 = 上海今天−3，**上海 12 点前按 −4** —— 与 §1.5.2 settlement 行同一手法。
+#    期望的 (账套, control) 组合**取自近 7 天实际出现过的组合**（不硬编码账套）。
+#
+#    反向测试：`WIRE_RECON_SELFTEST=1 sh $0 --check` ⇒ 三条各注入一行假判红 ⇒ 桥送到企微。
+#      **这是本组断言的验收判据**（「人为制造一次真红」，同 ⑩ / #898 的口径）。
+
 set -eu
 
 PLATFORM_NET=${WIRE_PLATFORM_NET:-openship-platform-core-shanhai}
@@ -88,6 +105,9 @@ DIM_FRESH_DAYS=${WIRE_DIM_FRESH_DAYS:-3}
 # 反向测试钩子（#898）：给 ⑩ 塞一个**假的 region_id**，用来确认「判红行 → 桥 → 企微」这条腿真的通。
 # 默认空 ⇒ 生产行为不含它。见 assert_region_registered 的注释。
 REGION_SELFTEST=${WIRE_REGION_SELFTEST:-}
+# 反向测试钩子（#892）：给 ⑪⑫⑬ 各注入一行假判红，确认「判红行 → 桥 → 企微」这条腿通。
+# 默认空 ⇒ 生产行为不含它。见 assert_recon_* 的注释。
+RECON_SELFTEST=${WIRE_RECON_SELFTEST:-}
 
 die() { echo "WIRE_FAILED: $*" >&2; exit 1; }
 
@@ -105,7 +125,7 @@ need_container() { # <container>
   [ "$(docker inspect --format '{{.State.Running}}' "$1")" = "true" ] || die "容器没在跑：$1"
 }
 
-# ── 六条断言（每条各自 exit 非零；只读，不写任何东西）────────────────────────────
+# ── 断言（每条各自 exit 非零；只读，不写任何东西；advisory 的判红不翻 rc）────────────────────────────
 
 assert_dns() {
   printf '① DNS：%s 内解析 pg_duckdb —— ' "$PLATFORM_CONTAINER"
@@ -282,15 +302,76 @@ const SELFTEST='${REGION_SELFTEST}';
 "
 }
 
+# ⑪ 台账覆盖（advisory；见头注）：目标营业日必须在 `recon_run` 里有行，且期望的
+#    (账套, control) 组合一个不缺。期望集取自**近 7 天出现过**的组合——不硬编码账套。
+assert_recon_ledger_cover() {
+  printf '⑪ 口径对账台账覆盖（recon_run 目标日）—— '
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
+const SELFTEST='${RECON_SELFTEST}';
+(async()=>{try{
+  await c.connect();
+  const r=await c.query(\"with t as (select ((now() at time zone 'Asia/Shanghai')::date - case when (now() at time zone 'Asia/Shanghai')::time < time '12:00:00' then 4 else 3 end) as d), b as (select distinct system_book, control from recon_run where bizday > (select d from t) - 7) select b.system_book, b.control, r.status from b left join recon_run r on r.system_book = b.system_book and r.control = b.control and r.bizday = (select d from t) order by 1, 2\");
+  await c.end();
+  const rows=r.rows.slice();
+  if(SELFTEST){rows.push({system_book:'SELFTEST',control:'caliber_net',status:null})}
+  if(!rows.length){console.log('ERR 近 7 天台账没有任何行（物化没跑？判据缺基线，不能当通过）');process.exit(1)}
+  const miss=rows.filter(function(x){return x.status===null||x.status===undefined});
+  if(miss.length){console.log('ERR 目标日缺台账行 '+miss.map(function(x){return x.system_book+'/'+x.control}).join(', ')+'（对账没跑完？）');process.exit(1)}
+  console.log('OK 组合全在 n='+rows.length);
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
+# ⑫ 源侧零返回（advisory；**单独成条**——源故障 ≠ 数不平）
+assert_recon_not_evaluated() {
+  printf '⑫ 口径对账源侧零返回（not_evaluated）—— '
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
+const SELFTEST='${RECON_SELFTEST}';
+(async()=>{try{
+  await c.connect();
+  const r=await c.query(\"select system_book, control from recon_run where status = 'not_evaluated' and bizday = ((now() at time zone 'Asia/Shanghai')::date - case when (now() at time zone 'Asia/Shanghai')::time < time '12:00:00' then 4 else 3 end) order by 1, 2\");
+  await c.end();
+  const rows=r.rows.slice();
+  if(SELFTEST){rows.push({system_book:'SELFTEST',control:'caliber_sale'})}
+  if(rows.length){console.log('ERR 源侧一个值都没返回 '+rows.map(function(x){return x.system_book+'/'+x.control}).join(', ')+'（源挂了 = 源故障，不是账不平）');process.exit(1)}
+  console.log('OK 无零返回');
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
+# ⑬ 源返回率 < 1（advisory）：源侧有的店没回数 ⇒ **先怀疑源，不要先怀疑账**。
+#    与 ⑫ 刻意分开：⑫ 是「源全挂」、⑬ 是「源少回了一半」——混成一条就没法处置。
+assert_recon_source_cover() {
+  printf '⑬ 口径对账源返回率（source_cover_pct）—— '
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
+const SELFTEST='${RECON_SELFTEST}';
+(async()=>{try{
+  await c.connect();
+  const r=await c.query(\"select system_book, control, source_cover_pct from recon_run where source_cover_pct < 1 and status <> 'not_evaluated' and bizday = ((now() at time zone 'Asia/Shanghai')::date - case when (now() at time zone 'Asia/Shanghai')::time < time '12:00:00' then 4 else 3 end) order by 1, 2\");
+  await c.end();
+  const rows=r.rows.slice();
+  if(SELFTEST){rows.push({system_book:'SELFTEST',control:'caliber_net',source_cover_pct:0.5})}
+  if(rows.length){console.log('ERR 源侧有店没回数 '+rows.map(function(x){return x.system_book+'/'+x.control+'='+x.source_cover_pct}).join(', ')+'（先怀疑源：原样重跑一次再下结论）');process.exit(1)}
+  console.log('OK 源侧全返回');
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
 # advisory 断言集（判红**不进 rc**、只吐判红行）：语义判据**不走 openship 通知**（红线③），
 # 通知由桥承担（`oo-notify-bridge.sh` 通道② 读 `verdict <> 'OK'` → 企微）。加新条目**先想清它归谁**。
-ADVISORY_CHECKS=" region_registered "
+ADVISORY_CHECKS=" region_registered recon_ledger_cover recon_not_evaluated recon_source_cover "
 
 do_check() {
   # #538 Phase 1：逐断言产出判红行（probe 观测面）——执行与观测同行，判定逻辑不变。
   rc=0
   _vf=$(mktemp ${TMPDIR:-/tmp}/ww-verdicts.XXXXXX)
-  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face region_registered; do
+  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face region_registered recon_ledger_cover recon_not_evaluated recon_source_cover; do
     _mode=hard
     case "$ADVISORY_CHECKS" in *" ${_step} "*) _mode=advisory ;; esac
     if _out=$(eval "assert_${_step}" 2>&1); then
