@@ -281,6 +281,52 @@ describe('dataDependencies 字段（跨模块只读数据依赖）', () => {
     if (!parsed.success) return
     expect(parsed.data.dataDependencies).toBeUndefined()
   })
+
+  // 条目形状校验（M1.1）：两段式 `<schema>.<view>`，正则
+  // ^[a-z][a-z0-9-]*\.[a-z][a-z0-9_]*$（schema 段沿用模块 id 的 kebab-case 纪律，视图段 snake_case）。
+  // 不合法 ⇒ schema 拒 ⇒ 装载失败 / check-manifests 红（fail-fast，与 .strict() 同口径；
+  // checks.ts 走同一 ManifestSchema.safeParse，门禁侧无需另测）。
+  it('合法条目（data.v_order_snapshot / dim.dim_x_view）通过且逐字保留', () => {
+    const parsed = ManifestSchema.safeParse({
+      ...validManifest,
+      dataDependencies: ['data.v_order_snapshot', 'dim.dim_x_view'],
+    })
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+    expect(parsed.data.dataDependencies).toEqual(['data.v_order_snapshot', 'dim.dim_x_view'])
+  })
+
+  it('三段式拒绝（issue 指到 dataDependencies[i]）', () => {
+    const parsed = ManifestSchema.safeParse({
+      ...validManifest,
+      dataDependencies: ['data.a.b'],
+    })
+    expect(parsed.success).toBe(false)
+    if (parsed.success) return
+    expect(parsed.error.issues.some((i) => i.path.join('.') === 'dataDependencies.0')).toBe(true)
+  })
+
+  it('大写拒绝（schema 段 / 视图段均不允许大写）', () => {
+    for (const bad of ['Data.v_order_snapshot', 'data.V_order_snapshot']) {
+      const parsed = ManifestSchema.safeParse({
+        ...validManifest,
+        dataDependencies: [bad],
+      })
+      expect(parsed.success).toBe(false)
+      if (parsed.success) continue
+      expect(parsed.error.issues.some((i) => i.path.join('.') === 'dataDependencies.0')).toBe(true)
+    }
+  })
+
+  it('无点（裸视图名）拒绝', () => {
+    const parsed = ManifestSchema.safeParse({
+      ...validManifest,
+      dataDependencies: ['v_order_snapshot'],
+    })
+    expect(parsed.success).toBe(false)
+    if (parsed.success) return
+    expect(parsed.error.issues.some((i) => i.path.join('.') === 'dataDependencies.0')).toBe(true)
+  })
 })
 
 // .strict()（issue #708 fix 分项）。未加 strict 时未知键被 Zod **静默剥离**——「写了等于没写、

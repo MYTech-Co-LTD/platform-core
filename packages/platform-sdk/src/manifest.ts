@@ -58,6 +58,9 @@ const ID_REGEX = /^[a-z][a-z0-9-]*$/
 const VERSION_REGEX = /^[0-9]+[.][0-9]+[.][0-9]+$/
 // 平台版本约束：以 >= 或 > 开头指向数字（如 >=0.1.0 / >0.1）；裸版本号（如 0.1.2）不合法。
 const PLATFORM_REGEX = /^>=?[0-9]/
+// dataDependencies 条目（M1.1）：两段式 <schema>.<view>——schema 段沿用模块 id 的 kebab-case
+// 字母表（同 ID_REGEX），视图段小写 snake_case。声明的是**稳定视图**，不声明物理表。
+const DATA_DEP_REGEX = /^[a-z][a-z0-9-]*\.[a-z][a-z0-9_]*$/
 
 const ManifestObject = z.object({
   id: z.string().regex(ID_REGEX, `id 必须匹配 ^[a-z][a-z0-9-]*$`),
@@ -89,9 +92,10 @@ const ManifestObject = z.object({
   // 计划 5：声明需要「本租户已接入的源」投影（键名刻意不叫 `sources`——见 ModuleManifest 的注记）。
   // 只认 boolean：写别的值 ⇒ schema 拒绝 ⇒ 装载失败（与 storage.kind 的 fail-fast 同风格）。
   tenantSources: z.boolean().optional(),
-  // 跨模块只读数据依赖（issue #708）：先按 string[] 最小收字段——条目形状校验（<schema>.<view>
-  // 两段式 / 视图命名）随门禁第 1、2 条（声明↔代码一致、列集变更登记）实施时一起定，
-  // 本处不预设（正典只锁判据，守卫实现留待实现期）。
+  // 跨模块只读数据依赖（issue #708 收字段；M1.1 补条目形状）：两段式 <schema>.<view> 由
+  // superRefine 按 DATA_DEP_REGEX 校验（形状进 schema ⇒ 运行时装载与 check-manifests 同时覆盖，
+  // 与 scope∈permissions 同纪律）。门禁判据 2（列集变更登记）仍待首个真实跨模块依赖出现
+  // 再实施（无案例不立标准）。
   dataDependencies: z.array(z.string()).optional(),
   frontend: z.object({
     userApp: z.object({ mount: z.string(), dist: z.string() }).optional(),
@@ -129,6 +133,19 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
         code: z.ZodIssueCode.custom,
         path: ['permissions', i, 'code'],
         message: `permission.code 必须以 "${m.id}:" 开头（got "${p.code}"）`,
+      })
+    }
+  }
+
+  // M1.1：dataDependencies 条目形状校验（两段式 <schema>.<view>）。形状松了，B1 门禁的声明集
+  // 就会吞进无法对账的条目（如裸表名 / 三段式），所以形状必须在 schema 层就锁死——由 schema
+  // 承载 ⇒ 运行时装载与 check-manifests 同时覆盖。
+  for (const [i, dep] of (m.dataDependencies ?? []).entries()) {
+    if (!DATA_DEP_REGEX.test(dep)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['dataDependencies', i],
+        message: `dataDependencies[${i}] "${dep}" 必须是两段式 <schema>.<view>（正例 data.v_order_snapshot；schema 段小写 kebab-case、视图段小写 snake_case）`,
       })
     }
   }
