@@ -578,6 +578,19 @@ models:
       - name: n_net_store
         description: 门店域 N（**transfer-only**；wholesale 行恒 0）。**与 lemeng:contribution:region_net 同源**。战区级/门店级口径的分子。
         tests: [{not_null: {}}]
+      - name: region_l1
+        description: >-
+          战区**一级**（`dim_region.region_l1` 原值，left join；#883）。**可空**，且空有两类含义：
+          **费用孤儿**（`region_id = 0`，无出库可归属）与**批发幻影战区**（`region_id = 9046` = 根
+          「所有区域」，本身没有一级）。不改粒度（它是 `region_id` 的函数）。
+          服务 `lemeng:contribution:region_l1_net`（按一级战区汇总）。
+      - name: region_l1_bucket
+        description: >-
+          `region_l1` 的**分组桶**：`coalesce(region_l1, '未归属')`。为什么单列：`GROUP BY` 会把空值
+          归成一个 **null 组**，消费方一旦过滤 null，「各一级之和」就会**看着等于总量**而其实少了
+          `未归属` 那部分。恒等式 `Σ(各一级) + Σ(未归属) = Σ(全量)` 由
+          `dbt/tests/lemeng/audit_lemeng__contribution__region_l1_net.sql` 钉住。
+        tests: [{not_null: {}}]
 
 
   - name: fct_purchase_concentration

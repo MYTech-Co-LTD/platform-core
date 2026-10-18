@@ -727,6 +727,27 @@ metrics:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
+  - name: 'lemeng:contribution:region_l1_net'
+    label: 费用后贡献额（一级战区）
+    definition: >-
+      N = R − C − E 的**一级战区口径**：`region_l1`（`dim_region` 的受控一级战区）上的 `n_net_store` 合计。
+      **粒度** = 账套 × 业务日 × **一级战区桶**（`region_l1_bucket`，空值显式落 `未归属`）。
+      ⚠️ **射程同 `contribution:region_net`：只有 transfer 域**（`n_net_store` 的既存边界——
+      门店费用只对得上调入门店；批发按战区归仍需 X01a 的 `client_fid → region_id` 映射，未就位）。
+      ⚠️ **可加性**：`region_l1` 是 `region_id` 的**分区** ⇒ `Σ(各一级) + Σ(未归属) = Σ(全量)`；
+      恒等式由 `dbt/tests/lemeng/audit_lemeng__contribution__region_l1_net.sql` 钉住（逐账套逐日）。
+      `未归属` = **费用孤儿行**（`region_id = 0`，无出库可归属）+ **批发幻影战区**
+      （`region_id = 9046` = 根「所有区域」，本身没有一级）。
+    expression: 'sum(fct_contribution.n_net_store)'
+    grain: [system_book, bizday, region_l1_bucket]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
+
   # ── 客户级组合族（2026-10-17，#744 甲方案）：fct_hq_outbound 补 client_fid 第 6 键后的兑现 ──
   # 落点 = fct_client_contribution（批发出库 × 客户费用的组合构件）。与上方门店族（fct_contribution
   # 五条）的分缝是**对象维度**：那边对象=门店，这边对象=批发客户。实验性同裁9（费用应付/应收的

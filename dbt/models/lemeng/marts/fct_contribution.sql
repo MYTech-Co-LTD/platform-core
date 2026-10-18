@@ -97,7 +97,13 @@ select
     -- 门店域（transfer-only）分量：战区级/门店级口径只走这两列（理由见头注）。
     case when o.domain = 'transfer' then o.r_net else 0 end::numeric(20, 2) as r_net_store,
     case when o.domain = 'transfer'
-         then (o.r_net - o.c_cost - coalesce(e.e_net, 0)) else 0 end::numeric(20, 2) as n_net_store
+         then (o.r_net - o.c_cost - coalesce(e.e_net, 0)) else 0 end::numeric(20, 2) as n_net_store,
+    -- 战区**一级**（#883 = 消费面「按一级战区汇总」的落点）：左连 `dim_region`（权威）。
+    -- ⚠️ 会为空的两类行：**费用孤儿**（`region_id = 0`，无出库可归属）与**批发幻影战区**
+    --    （`region_id = 9046` = 根「所有区域」，本身没有一级）。⇒ 显式落 `未归属` 桶，
+    --    **不许静默丢** —— 否则「各一级之和」看着等于总量，其实只是恰好排除了不该算的。
+    r.region_l1,
+    coalesce(r.region_l1, '未归属')::varchar as region_l1_bucket
 from outbound o
 -- ★ join 必须带 `domain = 'transfer'`（见头注）：wholesale 行挂门店费用 = 把 99 的费用错记给批发。
 left join branch_expense e
@@ -105,6 +111,10 @@ left join branch_expense e
       and o.system_book = e.system_book
       and o.bizday = e.bizday
       and o.branch_num = e.branch_num
+-- 键带 system_book（两账套战区 id 空间不相交）；left 保未登记/幻影行不被丢。
+left join {{ ref('dim_region') }} r
+       on r.system_book = o.system_book
+      and r.region_id = o.region_id
 
 union all
 
@@ -124,5 +134,9 @@ select
     x.q_subsidy,
     (-x.e_net)::numeric(20, 2) as n_net,
     0::numeric(20, 2) as r_net_store,
-    0::numeric(20, 2) as n_net_store
+    0::numeric(20, 2) as n_net_store,
+    -- 费用孤儿行没有出库、`region_id` 恒 0 ⇒ 不属于任何一级战区（与上一支**同一口径**）。
+    -- ⚠️ 这两列必须与上一支**同位置**：`union all` 按位置对齐，错一格就是整列串位。
+    null::varchar as region_l1,
+    '未归属'::varchar as region_l1_bucket
 from orphan_expense x
