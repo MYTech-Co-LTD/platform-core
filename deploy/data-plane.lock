@@ -1,4 +1,4 @@
-sha256-of-rest a10a39796739a74f15b9073ecaa0208abd6248c024248db35a2160227e2c0b5d
+sha256-of-rest 2ccc7927148c657b5e3d04de7ed6efaf82b2e0f97b4a292a95986d00384125b0
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -19,7 +19,7 @@ f6dee2b918468bf68593262363b7a51ea9987f1fd4a67866fd8681f1fd9ed626 contracts/commo
 5a7a645f23cfdc35e966da665d627d438b8befb6effee70e525e76221367e5d7 contracts/common/lemeng.wholesale_out.json ${REPO}/contracts/common/lemeng.wholesale_out.json 0644
 81895b6736040f34f479157faaa94b7d8be89b0049dde0c75b14ddb4decb8229 contracts/common/lemeng.wholesale_return.json ${REPO}/contracts/common/lemeng.wholesale_return.json 0644
 a9209aad12e3020eefc11f94f51d935c49d1bff9eabf94fb0262d182a6a37c7a contracts/customers/README.md ${REPO}/contracts/customers/README.md 0644
-3c8dea6a7a5c738daaeededf37993a94a2fa76b84629b1bcecf5712750c135f4 dbt/README.md ${REPO}/dbt/README.md 0644
+50e618709fe9f212731ff938fba38e407b5acfe2f853dddcfdc19feaa46c6558 dbt/README.md ${REPO}/dbt/README.md 0644
 b1819f9d039557137cc74865fffa045c3ba5e73be1b1f8a9a019a324162ca62d dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
 d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subject_org.sql ${REPO}/dbt/macros/subject_org.sql 0644
@@ -149,7 +149,7 @@ f0110d29f00b44d74da6038f1a2badf7e16a6b60a78e11b80c18565714b3ac72 dbt/tests/lemen
 73c288ae9fdd22cf2767bcadcd512f36814a8c6a33c023eea15755e4aeb872be dbt/tests/lemeng/audit_lemeng__transfer__item_gross_margin_rate.sql ${REPO}/dbt/tests/lemeng/audit_lemeng__transfer__item_gross_margin_rate.sql 0644
 36b0c7adb27506ef250a15edf0b902b9e7b1c670017432cc69ea5ff3bceba8ff dbt/tests/lemeng/audit_lemeng__transfer__negative_order_count.sql ${REPO}/dbt/tests/lemeng/audit_lemeng__transfer__negative_order_count.sql 0644
 1fb86a5c66b77cb5fed286d3a8b0cb65451710f585161d0376c5a3f3bcced0e7 dbt/tests/lemeng/audit_lemeng__transfer__zero_cost_exposure_amount.sql ${REPO}/dbt/tests/lemeng/audit_lemeng__transfer__zero_cost_exposure_amount.sql 0644
-b6a51c2a938e21ce5ec74c5f5c3667ee7f64fac704d4b1cad8e058b2a0aa01c3 dbt/tests/lemeng/warn_region_unregistered.sql ${REPO}/dbt/tests/lemeng/warn_region_unregistered.sql 0644
+07c69dd1c6fa9180254339e2bc3fb22823f6d3200aeadacff885bddaad5e3678 dbt/tests/lemeng/warn_region_unregistered.sql ${REPO}/dbt/tests/lemeng/warn_region_unregistered.sql 0644
 d528a9d57727212693484281d82704c074cd99bf47aed371aa6db67e9ddd94ae deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
 a3fc0976e30b18c2e4d4358128e02e02388668007eeff5fa0f4dc6db48be47c0 deploy/dbt/Dockerfile ${REPO}/deploy/dbt/Dockerfile 0644
 8679ed09c1ac5c65194c59fb2044e9edb2b7e5266ce08af4e08bd90bd4c70f6d deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644

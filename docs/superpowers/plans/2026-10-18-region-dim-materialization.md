@@ -72,11 +72,38 @@
 2. **能汇总**：`region_l1` 可作 group by 键 ⇒ 「按东部战区汇总」成立。
 3. **哨兵活**：人为塞一个假 `region_id` 进去 ⇒ **当日** dbt warn 触发，且**物化照常成功**（warn 不阻断）。
 
-## 5. 待办 / 边界
+## 5. 真机验收结果（2026-10-18，山海四步链）
+
+合并 `c5007686`（PR #886）后按 SOP 四步链执行，**四步全过**：
+
+| 步 | 结果 |
+|---|---|
+| ① 同步检出台 | `SYNC_OK 209/209`、**无 DRIFT**；**带 `--prune`** ⇒ 改名后的旧 `x01_region_names.csv` 已从检出清掉（不带它就是 #683 那种「僵尸 seed 永生」） |
+| ② 物化 | `PASS=303 WARN=0 ERROR=0 SKIP=0 TOTAL=303` → **`MATERIALIZE_OK`**（5 seeds / 33 models / 265 tests） |
+| ③ 主项目部署 | `dep_9HxT5JhVmpT0b7G-` → **ready**（build 254s）；`server`/`postgres`/`openclaw` 全 healthy；**无 open incident** |
+| ④ 产物 | 容器内 `dimension-labels.ts` 的 sha256 **逐字节等于**仓内 `c5007686` 那份（`ad05a1f6…`）——不靠 HTTP 探活 |
+
+**仓库侧判据**：
+
+- 门店维最新快照 400 行：`region_id` / `region_name` **各 400 非空**（100%），`region_l1` 398
+  （缺的 2 行 = 根「所有区域」，`level=0`，**按设计为空**）。
+- 未登记 `region_id`：**空** ⇒ 哨兵**零命中**。
+- 运行时通路：用 app 自己的连接串、**不带 schema** 查 `dim_region` / `dim_lemeng_branch` 均通
+  （`search_path=staging, public`）；`dim_lemeng_branch` 9196 行全部有 `region_name`。
+- 哨兵**变异确认**（真数据、非侵入：把某店 `region_id` 抬成 `921278`）⇒ 查询**立刻吐出该 id**。
+
+> ⚠️ **本条被真机证伪，文档已订正**：立项时按「枚举接口实测有门店无行」外推的
+> 「`dim_region` 覆盖可能不全 ⇒ 首次真机跑大概率报未登记战区」**不成立**——那些无行的门店，
+> 其 `region_id` 仍在已枚举集合里。已同步订正 `dbt/README` §8、`warn_region_unregistered.sql`
+> 头注、`handbook §1.5.3` 三处。
+
+## 6. 待办 / 边界
 
 - **`region_l1` 真值需人眼校**（§3）——业务可见值，错了要改 CSV。
 - **哨兵是 warn 不是 error**：按裁决「新区不影响存量指标的正确性」⇒ 只告警。dbt warn 不进
   `ERROR=` 计数，`materialize.sh` 的域成败判定不受影响（本仓**首次**引入 `severity: warn`）。
+- **哨兵的告警面仍未接线**（登记在 `handbook §1.5.3` Phase 1 + #538）：dbt 的 `WARN=` 在本仓
+  没有任何消费方，现在只进物化 job 日志。
 - **后续（另行立项）**：向乐檬申请 `nhsoft.user.ai.branch.region.find` 加 PAT 白名单 ⇒
-  建 `dim.region.l0` 日更（`parent_id` 给层级、含**空战区**）；一级 rollup 的 mart 列；
-  山海侧同步（数据面清单变更要跑四步链）。
+  建 `dim.region.l0` 日更（`parent_id` 给层级、含**空战区**）；一级 rollup 的 mart 列。
+  ~~山海侧同步~~ **已于 2026-10-18 完成**（见 §5）。
