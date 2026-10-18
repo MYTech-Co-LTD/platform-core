@@ -705,7 +705,7 @@ P3（只登记，不设计）维度级隐藏（dims 白名单，同一投影点�
 ④ 按租户灰度开闸，看一天再下一个租户
 ```
 
-> **③ 的前置**：先盘点存量 L2（`select count(*) from data.metrics where source = 'l2'`），
+> **③ 的前置**：先盘点存量 L2（`select id, source, description from data.metrics where source = 'l2';`），
 > 逐个确认其 base 是否会被默认档覆盖——**不会**（R12）。这些 L2 在打标之前就已存在，
 > `L2_BASE_MASKED` 守卫拦不住它们。
 >
