@@ -154,7 +154,7 @@ dbt/models/common/marts/     ← 全是乐檬 fct_*
 
 - [x] R1 **架构文档更新**（新增「域」维度 + 数据面归属口径）—— #818 已合
 - [x] R2 dbt 树按域分目录 + 域开关（`+enabled` + `env_var('DATA_PLANE_DOMAINS')` **不带默认值**）+ **fail-closed 域覆盖门禁** + 门禁文案 —— #835 已合；**逐域物化 + 逐域落账（拆爆炸半径）** —— #841 已合。两处均已上机
-- [x] R3 mytech 数据面启用：**S3 凭据** ✅（`mytech-data` 桶 + 只对该桶有权限的子账号密钥；pg_duckdb 持久 secret 建好且跨会话可见） → ~~Gate-B 接线 + `search_path`~~ ✅ → ~~数据面工件 sync~~ ✅（已换版） → `dbt`/`duckle` 服务行改**绝对路径**卷 ⏳（openship MCP 的 `patch…services…` 工具缺失，非阻塞——两行本来就 disabled）
+- [x] R3 mytech 数据面启用：**S3 凭据** ✅（`mytech-data` 桶 + 只对该桶有权限的子账号密钥；pg_duckdb 持久 secret 建好且跨会话可见） → ~~Gate-B 接线 + `search_path`~~ ✅ → ~~数据面工件 sync~~ ✅（已换版） → `dbt`/`duckle` 服务行改**绝对路径**卷 ✅（2026-10-18：`duckle` → `/opt/platform-core-data/platform-core/duckle:/pipelines:ro`、`dbt` → `…/dbt:/usr/app`（按 SOP §C #20 **不带 `:ro`**）；两行仍保持 `enabled:false`。当时误判为「MCP 工具族缺失」，实为**注册名 ≠ 派发名且逐次抖动**，用多命名轮询重试直调 MCP 端点完成，见 openship-platform `architecture.md` §8）
 - [x] **R5 forms console 落到 `proj_SU8cmQ8OLVfM971X`** ✅（容器 `openship-platform-core-data-forms-console`，18082）→ seed workspace（两个密文连接 + 32B 钥匙 + 管线/排班/告警/owners）→ 重建 catalog（2 assets）→ 首跑成功（`src 1 rows` → `sink Success`，落湖 1 行/1 批、无 `org`）
 - [x] **R4 mytech 侧 materialize job** ✅ `mytech-dbt-materialize（forms 域）`，日频 `27 3 * * *` + 失败告警；首跑 `Found 1 model`（域裁剪生效）+ `PASS=17 ERROR=0 → MATERIALIZE_OK`
 - [x] R6 验收（数据面侧）：**`staging.stg_forms_submission` → `org = mytech`，1 行**；`data.load_log` 有水位行（新鲜度时钟起算）✅。⚠️ ④–⑨（新鲜度/词表/发布面/价目/取价）属**乐檬域**的断言，在 forms 面上本就不适用；平台侧「可查」要等 forms 声明 L1 指标（M1.4 范围外）
