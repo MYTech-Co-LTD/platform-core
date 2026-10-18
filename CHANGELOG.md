@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.156.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.156.0...v0.156.1) - 2026-10-18
+- 【修复】data: 切块只切了请求没切湖侧——diff 按本块门店集过滤 ([#860](https://github.com/MYTech-Co-LTD/platform-core/pull/860), [8ad3d8c](https://github.com/MYTech-Co-LTD/platform-core/commit/8ad3d8c44660b1458661964d7ea3b462167456c6))
+
+
 ## [0.156.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.155.0...v0.156.0) - 2026-10-18
 - 【新增】data: 问数回包回品牌名与门店名——名称在维度层解析 ([#858](https://github.com/MYTech-Co-LTD/platform-core/pull/858), [e2362af](https://github.com/MYTech-Co-LTD/platform-core/commit/e2362af0061edf1ef72c58e40dcbe72b33517936))
 - 【修复】data: 口径对账退役业务判据闸——采集不该因「数不一样」而死 ([#855](https://github.com/MYTech-Co-LTD/platform-core/pull/855), [3c87fd0](https://github.com/MYTech-Co-LTD/platform-core/commit/3c87fd0d68664296931f55d0ad0e6de3fca04165))
