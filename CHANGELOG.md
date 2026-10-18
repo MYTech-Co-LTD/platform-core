@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.161.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.160.0...v0.161.0) - 2026-10-18
+- 【新增】data: 口径对账排班 + 新鲜度锚——3120 补排班、湖资产进 owners ([#878](https://github.com/MYTech-Co-LTD/platform-core/pull/878), [1ea397a](https://github.com/MYTech-Co-LTD/platform-core/commit/1ea397add13eb364897feda689e1b4f53a7ccd46))
+
+
 ## [0.160.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.159.0...v0.160.0) - 2026-10-18
 - 【新增】data: 掩码按列解析（全量 catalog）——L2 自动覆盖（#820） ([#879](https://github.com/MYTech-Co-LTD/platform-core/pull/879), [af60368](https://github.com/MYTech-Co-LTD/platform-core/commit/af60368eafd44a97600fdf7531445138ad0b43cf))
 
