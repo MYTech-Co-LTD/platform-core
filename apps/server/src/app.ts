@@ -28,6 +28,7 @@ import { sessionMiddleware, type CasdoorFactory, type SessionEnv } from './sessi
 import { patIdentityMiddleware } from './pat-auth'
 import { wecomChannelIdentityMiddleware } from './wecom-channel-auth'
 import { platformRoutes, type ModuleInfo } from './routes/platform'
+import { apiKeyRoutes } from './routes/api-keys'
 import { authRoutes } from './routes/auth'
 import { adminRoutes } from './routes/admin'
 import { PLATFORM_BUILTIN_PERMISSIONS } from './loader'
@@ -259,6 +260,9 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
     modules: () => toModuleInfos(runtime),
     enabledFor: runtime.enabledFor,
   }))
+  // ⑦.5 个人 Key（PAT）管理面（issue #894）：个人档免 scope、管理档 tenant:admin；
+  // 与 platformRoutes 同前缀不同路径（/keys*），注册序不影响。
+  app.route('/api/platform/keys', apiKeyRoutes({ pool, sessionSecret: config.sessionSecret }))
   // ⑧ 登录三路：账密 + 企微 qr/silent（platformRoutes 同前缀，注册序不影响——路径不重叠）
   // 登录限速器（M1 闭债 R2）：**一个实例传两处**（账密 + 企微）——分实例会与分桶一样把额度
   // 按份数放大，却额外放大第 1 层（user 桶），无任何收益（预算口径见 rate-limit.ts 的 Door）

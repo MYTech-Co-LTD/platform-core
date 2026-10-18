@@ -122,3 +122,35 @@ export function resolveKeyWithTouch(pool: Pool): (token: string) => Promise<Reso
     return resolved
   }
 }
+
+// ── 管理档（tenant:admin 视图用）──
+
+export interface OrgPatKeyRow extends PatKeyRow {
+  casdoorUser: string
+}
+
+/** 本租户全部 key（含归属用户）——管理档列表。org 仍钉死（跨租户结构上取不到）。 */
+export async function listPatKeysInOrg(pool: Pool, org: string): Promise<OrgPatKeyRow[]> {
+  const r = await pool.query(
+    `select id, casdoor_user, name, created_at, last_used_at, revoked_at
+       from platform.api_key where org = $1 order by created_at desc`,
+    [org],
+  )
+  return r.rows.map((row) => ({
+    id: Number(row.id),
+    casdoorUser: row.casdoor_user,
+    name: row.name,
+    createdAt: row.created_at.toISOString(),
+    lastUsedAt: row.last_used_at ? row.last_used_at.toISOString() : null,
+    revoked: row.revoked_at !== null,
+  }))
+}
+
+/** 管理档吊销：仍钉 org（跨租户不可能），但**不要求 casdoor_user**——管理档已过 tenant:admin 门。 */
+export async function revokePatKeyInOrg(pool: Pool, org: string, id: number): Promise<boolean> {
+  const r = await pool.query(
+    'update platform.api_key set revoked_at = now() where id = $1 and org = $2 and revoked_at is null',
+    [id, org],
+  )
+  return (r.rowCount ?? 0) > 0
+}
