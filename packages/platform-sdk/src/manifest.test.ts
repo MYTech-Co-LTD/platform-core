@@ -262,8 +262,9 @@ describe('frontend.admin（模块管理页协议）', () => {
   })
 })
 
-// dataDependencies（跨模块只读数据依赖，issue #708）。正典：docs/module-protocol.md 同名节
-// —— schema 收字段 = 声明面落地的一半；B1 读侧豁免扩面随采集首管线（本文件不涉及守卫）。
+// dataDependencies（跨模块只读数据依赖，issue #708 收字段；M1.1 补条目形状校验）。
+// 正典：docs/module-protocol.md 同名节——B1 读侧豁免按声明集判在 scripts/lint-architecture
+// 一侧（本文件不涉及守卫），其对账测试在 scripts/lint-architecture.test.ts。
 describe('dataDependencies 字段（跨模块只读数据依赖）', () => {
   it('合法声明（<schema>.<view> string[]）parse 通过且逐字保留', () => {
     const parsed = ManifestSchema.safeParse({

@@ -36,8 +36,9 @@ export interface ModuleManifest {
    *  **只读**；与 `api.internal` 的「声明即授权」同哲学但**降一档强度**——门禁层契约 +
    *  评审，宿主不做 SQL 面的运行时拦截（模块与宿主共用同一个 pool）。声明稳定视图，
    *  不声明物理表。正典：`docs/module-protocol.md`「跨模块只读数据依赖」节。
-   *  ⚠️ B1 读侧豁免以声明集为准（守卫扩面随采集首管线落地）；落地前 manifest 里写了本字段
-   *  会被 schema **静默剥离**——禁止使用，直到门禁可对账。 */
+   *  ⚠️ B1 读侧豁免以声明集为准（lint-architecture.mjs，已落地）；条目形状由 superRefine
+   *  按 DATA_DEP_REGEX 校验。判据 2（列集变更登记）待首个真实跨模块依赖出现
+   *  （无案例不立标准；正典：docs/module-protocol.md「跨模块只读数据依赖」节门禁小节）。 */
   dataDependencies?: string[]
   frontend?: { userApp?: { mount: string; dist: string };
     console?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }>;
