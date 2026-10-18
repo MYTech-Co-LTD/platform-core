@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.170.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.170.2...v0.170.3) - 2026-10-18
+- 【修复】auth: admin 会话 cookie 取最后一个 casdoor_session_id——新版 Casdoor 登录发两个（#915，承接 #911） ([#914](https://github.com/MYTech-Co-LTD/platform-core/pull/914), [87d0e85](https://github.com/MYTech-Co-LTD/platform-core/commit/87d0e85f92e670e0198363ad9487af2f568a3384))
+
+
 ## [0.170.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.170.1...v0.170.2) - 2026-10-18
 - 【修复】auth: admin 会话登录与业务 application 解耦（#911） ([#913](https://github.com/MYTech-Co-LTD/platform-core/pull/913), [2154ea3](https://github.com/MYTech-Co-LTD/platform-core/commit/2154ea3ea16d41fe15e8f0b7b2351a38f49c53c7))
 
