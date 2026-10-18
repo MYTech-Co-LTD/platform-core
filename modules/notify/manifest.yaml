@@ -1,0 +1,23 @@
+# notify 模块（架构正典 docs/architecture.md §2.6「通知规则层」；issue #889）。
+# 三同纪律：id = DB schema 名 = API 前缀——改 id = 三处同改，选错比放错难改。
+# 绑定层：什么事件 × 通知谁 × 用哪个模板 × 什么通道。投递/模板留 Novu、解析留 case-engine。
+id: notify
+name: 通知规则模块
+version: 0.1.0
+platform: '>=0.1'
+permissions:
+  - { code: notify:view,   name: 通知规则查看 }
+  - { code: notify:manage, name: 通知规则管理（建 / 改 / 删） }
+  - { code: notify:emit,   name: 事件触发通知管道 }
+# ⚠️ api.internal 的 path 是模块相对路径；声明集合必须与 createRouter 注册集合逐条一致
+#（装载期双向核对，任一方向差集 ⇒ 装载失败）。改路由或改本清单必须同一提交对齐。
+api:
+  internal:
+    - { method: GET,    path: /rules,             scope: notify:view }
+    - { method: POST,   path: /rules,             scope: notify:manage }
+    - { method: PUT,    path: /rules/:id/enabled, scope: notify:manage }
+    - { method: DELETE, path: /rules/:id,         scope: notify:manage }
+    - { method: GET,    path: /deliveries,        scope: notify:view }
+    # 入口 A（事件驱动）：触发源携确定性 event_id 调此端点；入口 B（定时驱动）同调 pipeline.emit。
+    - { method: POST,   path: /emit,              scope: notify:emit }
+migrations: { dir: ./migrations }
