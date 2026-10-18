@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.166.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.165.0...v0.166.0) - 2026-10-18
+- 【新增】data: 台账加源返回率列 source_cover_pct（#892 判据本体） ([#899](https://github.com/MYTech-Co-LTD/platform-core/pull/899), [4227ba6](https://github.com/MYTech-Co-LTD/platform-core/commit/4227ba6917c67974f6d0fa3ddabb42ab08909339))
+
+
 ## [0.165.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.164.1...v0.165.0) - 2026-10-18
 - 【新增】data: 战区未登记哨兵接入告警面——探活断言 ⑩（advisory）+ 桥投递（#898） ([#900](https://github.com/MYTech-Co-LTD/platform-core/pull/900), [a7ec5cf](https://github.com/MYTech-Co-LTD/platform-core/commit/a7ec5cf339a4de4d952f1c6050ff467079b30929))
 
