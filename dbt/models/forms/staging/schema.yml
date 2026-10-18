@@ -1,0 +1,58 @@
+# schema.yml — forms 域 staging 的列描述 + dbt tests（与 `lemeng/staging/schema.yml` 同形）。
+#
+# 为什么这份是**2026-10-18 才补的**：`stg_forms_submission` 上线时只有 `sources.yml`，没有
+# schema.yml ⇒ **`org` 这一列在 dbt 里没有任何断言**。而 `org` 正是 #729 的全部要害（它是行级授权
+# 主体列，`modules/data/domain/authz.ts` 恒拼 `WHERE org = '<orgId>'`）—— 乐檬侧每一张 staging
+# 都有 `org` 的 `not_null`，forms 侧漏了。回迁 mytech 数据面时真机实测 `org = mytech` 之后补上。
+#
+# 断言口径（**只加「不可能错」的**，与 §1.4.1 一致）：
+#   · `org` / `bizday` / `batch_id` / `submission_id` / `form_def_id` / `submitted_at` 是**结构性
+#     非空**（主体列由 macro 注入且空串 fail-closed；后五个是契约的非空列 + 管线 `qa.contract` 断言）。
+#   · **刻意不加 `unique`（提交 id）**：`submission_id` 是源侧自增主键，但**回填**会把同一窗口
+#     重新采进新的批次目录（契约：追加语义靠批次目录）⇒ 跨批次出现同 id 是**合法形态**。给
+#     `unique` 就是给本域埋一条会假红的断言 —— 而按退出码契约，本域一红就**不落账**（水位冻结）。
+#     真要查重，用 `.duckle` 侧的对账，别放进门禁。
+version: 2
+
+models:
+  - name: stg_forms_submission
+    description: >-
+      表单提交 staging（forms 域）。**一对一、只规范化不改义**：取列 / 命名 / 分区键定型，
+      不做聚合、不做 join、不定义口径。源 = 湖表 `forms.submission`
+      （hive 两级分区 `bizday` / `batch_id`），声明见 `staging/sources.yml`；
+      列全集与空值性以 `contracts/common/forms.submission.json` 为准；**另加 dbt 注入列 `org`**
+      （主体列，非契约列，见 `dbt/macros/subject_org.sql`）。
+      **通用域**：新表单只是新的 `form_def_id` 值，本模型零改动自动可见（ADR-0005 §13.1）。
+    columns:
+      # ── 批次目录（追加语义的载体，ADR-0005 §13.1 ② 实测）──────────────────────────────
+      - name: batch_id
+        description: '批次目录（= 采集 run id）。**hive 分区键**：路径 `batch_id=<run id>/` 推断为 VARCHAR。⚠️ 它是 `snk.parquet`「append 实为覆写」的解法——每轮新目录，读端 glob 全量，同批重跑幂等。'
+        tests:
+          - not_null
+      # ── dbt 注入的主体列（非契约列；行级授权谓词 WHERE org = … 的着力点）────────────────
+      - name: org
+        description: '主体列 = 该部署租户的 casdoor_org（经 env `LEMENG_SUBJECT_ORG` 注入，值不落仓）。**不是契约列**：契约只有 4 列 + 分区键，本列由 dbt 层加（dbt/macros/subject_org.sql）。⚠️ 这一列的 `not_null` 是 #729 的核心断言——错标/空值 = 可见性反转。'
+        tests:
+          - not_null
+      # ── 分区键（采集日）────────────────────────────────────────────────────────────
+      - name: bizday
+        description: '采集日（**hive 分区键**，路径 `bizday=<采集日>/` 推断；管线侧按 Asia/Shanghai 日历日定型）。'
+        tests:
+          - not_null
+      # ── 契约列（见 contracts/common/forms.submission.json）──────────────────────────
+      - name: submission_id
+        description: '提交 id（源侧 bigserial）。**键集游标与增量水位都用它**（`id` 单调无歧义；`submitted_at` 会被同秒并发撞出漏窗）。⚠️ 刻意**不加 `unique`**：回填会把同一窗口重新采进新批次目录，跨批次同 id 是合法形态。'
+        tests:
+          - not_null
+      - name: form_def_id
+        description: '表单定义 id。**通用域的支点**：任何表单的提交都进这张表，新表单只是新的 `form_def_id` 值。'
+        tests:
+          - not_null
+      - name: submitted_at
+        description: '提交时刻（timestamptz）。'
+        tests:
+          - not_null
+      - name: payload
+        description: '提交内容，**整列 VARCHAR（JSON 文本，schema-on-read）**。⚠️ 引擎默认会把它落成「全字段并集 STRUCT」（ADR-0005 §13.1 ① 实测）⇒ 管线侧显式 `CAST(to_json(payload) AS VARCHAR)`，本层只做 `::varchar` 类型回归、不改义。**字段级语义不进 dbt**。'
+        tests:
+          - not_null
