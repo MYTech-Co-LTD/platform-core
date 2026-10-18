@@ -41,7 +41,7 @@
 
 **Consumes：** 该脚本已有的 `sensitivity`（`loadSensitivity(rootDir)` 的返回值，`Map<列全名, sensitivity>`）与 `violations` 数组。
 
-- [ ] **Step 1: 加常量与检查**
+- [x] **Step 1: 加常量与检查**
 
 在 `L1_DECLARATIONS_REL` 附近加：
 
@@ -100,7 +100,7 @@ export const L2_INVENTORY_REL = 'docs/data/l2-sensitivity-inventory.md'
 
 > ⚠️ **诚实边界**：这条检查**只保证「产物在且点了名」**，**不保证盘点真的做了**——契约 gate 读不到生产 `data.metrics`。这是刻意取舍（能拦「忘了做」，拦不住「写了 0」），后者归运行期判据（T2 登记进 #538 Phase 1）。**把这句话写进代码注释**，别让后来者以为这条闸比实际强。
 
-- [ ] **Step 2: 建盘点产物**
+- [x] **Step 2: 建盘点产物**
 
 新建 `docs/data/l2-sensitivity-inventory.md`：
 
@@ -133,7 +133,7 @@ export const L2_INVENTORY_REL = 'docs/data/l2-sensitivity-inventory.md'
 
 > ⚠️ 上面那段「查询原文」的缩进块**必须原样保留**（它是操作者照抄的对象）。**不要**在本文档里写生产库连接串或凭据——按规矩只写「在哪、怎么取」。
 
-- [ ] **Step 3: 写用例**
+- [x] **Step 3: 写用例**
 
 在 `check-column-scope-monotonicity.test.ts` 追加。⚠️ 先读既有 `fixture()` 的形状——它已经能造契约（含 `sensitivity`）与 L1 YAML；**本步要确认它能不能控制盘点产物是否存在**，不能就扩它（在 temp root 下按需写/不写 `docs/data/l2-sensitivity-inventory.md`）。
 
@@ -154,7 +154,7 @@ export const L2_INVENTORY_REL = 'docs/data/l2-sensitivity-inventory.md'
 > 还要跑一次 **`inventory: null`**（有敏感列才需要产物；无敏感列时缺产物不算违规），
 > 否则「把 `sensitiveCols.length > 0` 守卫删掉」这个变异不会红。
 
-- [ ] **Step 4: 跑门禁 + 变异确认**
+- [x] **Step 4: 跑门禁 + 变异确认**
 
 ```bash
 cd /Users/duo/orca/workspaces/platform-core/p2-leftovers && pnpm exec tsx scripts/check-column-scope-monotonicity.mjs && pnpm exec vitest run --dir scripts check-column-scope-monotonicity
@@ -172,7 +172,7 @@ Expected: 门禁 `OK`（今天零敏感列 ⇒ ②b 是 no-op）；用例全绿�
 
 记录红掉的用例名，然后复原。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add scripts/check-column-scope-monotonicity.mjs scripts/check-column-scope-monotonicity.test.ts docs/data/l2-sensitivity-inventory.md
@@ -186,7 +186,7 @@ git commit -m "feat(data): 打 sensitivity 须有存量 L2 盘点产物（R12 �
 **Files:**
 - Modify: `docs/data-platform-handbook.md`（§1.5.3 执行状态表的 Phase 1 行）
 
-- [ ] **Step 1: 正典 §1.5.3 执行状态表加项**
+- [x] **Step 1: 正典 §1.5.3 执行状态表加项**
 
 在 Phase 1 行（「覆盖面补齐…」）里补一句范围项，措辞与既有风格一致：
 
@@ -196,11 +196,11 @@ git commit -m "feat(data): 打 sensitivity 须有存量 L2 盘点产物（R12 �
 
 ⚠️ **只加这一句**，别改 Phase 状态（Phase 1 仍是「未开工」——它整体没开工，本项只是**登记范围**）。
 
-- [ ] **Step 2: #538 加项**
+- [x] **Step 2: #538 加项**
 
 在 issue #538 的 Phase 1 清单里追加同一条（命令：`gh issue comment 538 --body "…"`，或编辑正文——**用注释**，别改别人写的正文）。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 git add docs/data-platform-handbook.md
@@ -220,9 +220,9 @@ git commit -m "docs(data): §1.5.3 执行状态登记 R12 存量 L2 判据（归
 
 ## 验收
 
-- [ ] `pnpm typecheck` 全绿（含根 `tsconfig.json` 的 `scripts/`）
-- [ ] `pnpm exec vitest run --dir scripts` 全绿
-- [ ] CI 九条门禁脚本全 OK（尤其 `check-column-scope-monotonicity` 与 `check-data-plane-lock`）
-- [ ] **变异确认做过**：②b 退回「只看文件存在」⇒ 恰「产物只点名了一部分」那条红
-- [ ] 今天零行为变更：真仓零敏感列 ⇒ ②b 是 no-op（门禁仍打印 `OK`）
-- [ ] 未碰 `dbt/**`
+- [x] `pnpm typecheck` 全绿（含根 `tsconfig.json` 的 `scripts/`）
+- [x] `pnpm exec vitest run --dir scripts` 全绿
+- [x] CI 九条门禁脚本全 OK（尤其 `check-column-scope-monotonicity` 与 `check-data-plane-lock`）
+- [x] **变异确认做过**：②b 退回「只看文件存在」⇒ **②b 的两条判据用例都红**（「产物只点名了一部分」+「前缀撞车」；两条**共用 `missing` 分支** ⇒ 一起红是**共用分支的必然，不是缺陷**，与 Step 4 变异确认 ① 一致）
+- [x] 今天零行为变更：真仓零敏感列 ⇒ ②b 是 no-op（门禁仍打印 `OK`）
+- [x] 未碰 `dbt/**`

@@ -784,6 +784,8 @@ git commit -m "feat(data): sync 合成默认档整值掩码 + 整值答法入指
 
 **为什么**：这是本轮的架构核心。今天 `authorize` 只读**本行**的 `metric.masks` ⇒ L2 行 `masks` 恒 null ⇒ **L2 恒不掩**（fail-open 洞）。改按列解析后，L2 的 `select_sql` 逐字保留了 L1 的列引用（实测）⇒ L2 自动被覆盖，**#820 结构上消失**（不需要血缘列、不需要反向检查、**无过期状态**）。
 
+> ⚠️ **射程限定（2026-10-18）**：上面「不需要血缘列…**无过期状态**」只对**列键声明**成立——默认档的**整值掩码**是指标级、**不按列传播** ⇒ **L2 不继承**（spec §7 R12 / §5.3.1 补注）。别读成整个掩码设施都无过期状态。
+
 **Files:**
 - Modify: `modules/data/domain/mask.ts`（加 `effectiveMasks`）
 - Modify: `modules/data/domain/mask.test.ts`
@@ -809,6 +811,7 @@ git commit -m "feat(data): sync 合成默认档整值掩码 + 整值答法入指
  *   来掩自己，是 fail-closed 的正确方向；并集 ⊇ 原集合 ⇒ **行为只增不减**。
  * ★ 为什么 L2 自动被覆盖：L2 的 `select_sql` **逐字保留** L1 的列引用（实测见 spec §5.3.1）
  *   ⇒ L2 查的列在 L1 行里声明过 ⇒ 命中。不需要血缘列、不需要反向检查、**无过期状态**。
+ *   ⚠️ 射程限定（2026-10-18）：以上只对**列键声明**成立——默认档的整值掩码不覆盖 L2（spec §7 R12 / §5.3.1 补注）。
  * ★ 整值（`column === null`）**不跨指标按列传播** ⇒ 只取本行的整值声明（默认档合成的那些）。
  *
  * @param catalog 全量 catalog（**未**经 visibleMetrics 裁剪）
