@@ -1,0 +1,3 @@
+control,abs_tol,pct_tol,reason_code,expires_on,disposition,disposition_by
+caliber_sale,1.00,0.01,,,,
+caliber_net,200.00,0.01,late_return_restatement,2026-12-31,过渡容差：退货晚到（issue #814）；到期自动转红,data-platform

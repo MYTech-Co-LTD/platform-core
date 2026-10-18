@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.158.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.157.1...v0.158.0) - 2026-10-18
+- 【新增】data: 口径对账台账 recon_run / recon_break + 容差 seed（消费面 spec §12.4） ([#874](https://github.com/MYTech-Co-LTD/platform-core/pull/874), [2f3d52d](https://github.com/MYTech-Co-LTD/platform-core/commit/2f3d52d64af0911b598cd25084fb9e51c444166b))
+
+
 ## [0.157.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.157.0...v0.157.1) - 2026-10-18
 - 【修复】data: 切块整除改 floor——CAST(rn/100) 在 DuckDB 里是四舍五入 ([#872](https://github.com/MYTech-Co-LTD/platform-core/pull/872), [de930a4](https://github.com/MYTech-Co-LTD/platform-core/commit/de930a470f3719506686d5cb791109dd9ea0a8b0))
 
