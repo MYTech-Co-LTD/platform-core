@@ -36,7 +36,8 @@ export type RequesterEnv = TenantEnv & SessionEnv & { Variables: RequesterVars }
 
 export interface PatAuthDeps {
   casdoor: CasdoorFactory
-  /** 由 modules/data 供给（`runtime.port('data', 'resolvePatKey')`）。**缺失 ⇒ 通道 B fail-closed（503）**。 */
+  /** 密钥解析源。上移后由宿主的 `api-key-store.ts` 供给（`resolveKeyWithTouch(pool)`）；
+   *  **缺失 ⇒ 通道 B fail-closed（503）**——这条兜底保留给「宿主 store 未装配」的异常装配。 */
   resolveKey?: (token: string) => Promise<ResolvedPatKey | null>
   ratePerMin?: number
   /** 注入时钟（ms），仅供限速窗口取值。 */
