@@ -77,6 +77,32 @@ describePg('notify routes', () => {
     expect(body).toMatchObject({ matched: 1 })
   })
 
+  it('POST /derive 派生默认规则（origin=derived）', async () => {
+    const res = await appA.request('/derive', json({ kind: 'approval', mount: 'ctD' }))
+    expect(res.status).toBe(201)
+    const body = await res.json()
+    expect(body).toMatchObject({ eventType: 'case.awaiting_approval', origin: 'derived' })
+    const list = await (await appA.request('/rules')).json()
+    expect(list.rules.find((r: { mount: string }) => r.mount === 'ctD')).toMatchObject({ origin: 'derived' })
+  })
+
+  it('POST /derive 幂等：同声明重算不新增行（确定性 id）', async () => {
+    await appA.request('/derive', json({ kind: 'approval', mount: 'ctD2' }))
+    await appA.request('/derive', json({ kind: 'approval', mount: 'ctD2' }))
+    const list = await (await appA.request('/rules')).json()
+    expect(list.rules.filter((r: { mount: string }) => r.mount === 'ctD2')).toHaveLength(1)
+  })
+
+  it('POST /derive 表单催办 ⇒ form.due_reminder', async () => {
+    const res = await appA.request('/derive', json({ kind: 'reminder', mount: 'fdD' }))
+    expect((await res.json()).eventType).toBe('form.due_reminder')
+  })
+
+  it('POST /derive 缺 mount / kind 非法 ⇒ 400', async () => {
+    expect((await appA.request('/derive', json({ kind: 'approval' }))).status).toBe(400)
+    expect((await appA.request('/derive', json({ kind: 'nope', mount: 'x' }))).status).toBe(400)
+  })
+
   it('GET /deliveries 回本 org 的回执', async () => {
     const res = await appA.request('/deliveries')
     expect(res.status).toBe(200)

@@ -6,6 +6,7 @@ import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type { Identity } from '@platform/sdk'
 import type { NovuConfig } from './domain/novu'
+import { deriveApprovalRule, deriveReminderRule } from './domain/derive'
 import { validateRule, type Channel, type RecipientKind } from './domain/rules'
 import { emit } from './pipeline'
 import { registerNotifyMcpManage } from './mcp'
@@ -86,6 +87,29 @@ export function createNotifyRouter({ pool, novu = null }: { pool: Pool; novu?: N
   })
 
   r.get('/deliveries', async (c) => c.json({ deliveries: await listDeliveries(pool, org(c)) }))
+
+  // ── 声明派生（取舍②「零配置默认就通」的写入面）──
+  // 声明方（forms 发布带催办策略 / case-engine 落 approval: single）在**声明落地时**调此端点，
+  // 由 notify 幂等派生默认规则（确定性 id ⇒ 重算即 no-op，不重复生效）。派生规则标 origin=derived，
+  // 在 console 可见、可覆盖（同 mount+event 的 manual 规则优先）。
+  // 调用方接缝（in-platform 模块 / 跨服务）另定——本端点只负责「给我声明，我派生」这一半。
+  r.post('/derive', async (c) => {
+    const body = (await c.req.json().catch(() => null)) as {
+      kind?: 'approval' | 'reminder'
+      mount?: string
+      templateId?: string
+    } | null
+    if (!body || !body.mount || (body.kind !== 'approval' && body.kind !== 'reminder')) {
+      return c.json({ error: 'DERIVE_INVALID_BODY' }, 400)
+    }
+    const now = new Date().toISOString()
+    const rule =
+      body.kind === 'approval'
+        ? deriveApprovalRule(org(c), { mount: body.mount, approvers: [], templateId: body.templateId }, now)
+        : deriveReminderRule(org(c), { mount: body.mount, templateId: body.templateId }, now)
+    await upsertRule(pool, org(c), rule, 'system')
+    return c.json({ id: rule.id, eventType: rule.eventType, origin: rule.origin }, 201)
+  })
 
   // ── emit（入口 A 事件驱动；入口 B 定时驱动同调 pipeline.emit）──
   // fail-open：**任何**失败不让调用方受阻——边界一律 202，失败落回执（§2.6 取舍④）。
