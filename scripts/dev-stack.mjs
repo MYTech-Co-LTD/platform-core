@@ -217,6 +217,12 @@ async function main() {
       // ⇒ **存储配置页本地不可达、无法验收**（`tenant:admin` 是它的唯一入口码，与上面那条同形）。
       // 载入器会把该码供给到本租户 org；这里种的是**把码发给 admin1** 这一步（两件事）。
       { owner: 'acme', name: 'p-tenant-admin', users: [ADMIN1], resources: ['tenant:admin'] },
+      // 通知规则模块（#889）：不种这三枚码，notify API 全 403、console「通知规则」菜单条目也不出现
+      // ⇒ 新模块在本地无法验收（与上面 aftersales / tenant:admin 同形）。
+      // viewer1 只发 view：留着做「同模块内 scope 粒度」的 403 对照（看得到列表、点不动启停）。
+      { owner: 'acme', name: 'p-notify-view', users: [ADMIN1, VIEWER1], resources: ['notify:view'] },
+      { owner: 'acme', name: 'p-notify-manage', users: [ADMIN1], resources: ['notify:manage'] },
+      { owner: 'acme', name: 'p-notify-emit', users: [ADMIN1], resources: ['notify:emit'] },
     ],
   })
 
