@@ -1,6 +1,6 @@
 // console-schedules-tz.test.ts — 业务排班时区统一门禁（spec 2026-10-15 §10.6，2026-10-16 用户拍板）。
 //
-// 钉什么：deploy/duckle/console/schedules/ 下两本种子（3120×16 + 64188×7，共 23 条）必须
+// 钉什么：deploy/duckle/console/schedules/ 下两本种子（3120×17 + 64188×7，共 24 条）必须
 //   ① 全部显式 `timezone: 'Asia/Shanghai'`（含原先缺省无字段的 9 条）；
 //   ② `kind.expr` 与 §10.6 转换表**逐字**一致（旧 UTC expr +8h，触发瞬间不变）。
 // 为什么钉真实 JSON（与 sync-data-semantics.test.ts 读真 YAML 同一理由）：排班是物化定义，
@@ -32,6 +32,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.wholesale.out.l0.3120': '45 23 * * *',
     'panel-lemeng.client.l0.3120': '55 23 * * *',
     'panel-lemeng.wholesale.return.l0.3120': '55 23 * * *',
+    'panel-lemeng.recon.preagg': '40 0 * * *',
   },
   '64188': {
     'panel-lemeng.dim.branch.l0': '0 10 * * *',
@@ -73,8 +74,8 @@ describe('console 排班时区统一（spec §10.6）：24 条全显式 Asia/Sha
     })
   }
 
-  it('合计恰 24 条（3120×16 + 64188×7 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
+  it('合计恰 25 条（3120×17 + 64188×7 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
     const total = Object.values(EXPECTED).reduce((n, m) => n + Object.keys(m).length, 0)
-    expect(total).toBe(24)
+    expect(total).toBe(25)
   })
 })

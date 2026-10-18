@@ -165,7 +165,7 @@
         "recon"
       ],
       "maximumAge": "36h",
-      "description": "独立通道对账的成功凭证（子管线 lemeng.recon.preagg.item 的 snk.csv 逐店明细；父管线 lemeng.recon.preagg 每日 16:30 UTC 派发 T-3 一跑）。2026-10-06 随首个判据类管线迁入 console 新增（spec: 2026-10-06-console-vs-job-for-judgements）——写发生 = 判据跑过且未红（红走 alerts.json 的 failure 规则）。⚠️ 时钟只在**重建 catalog 之后**的首个成功 run 起算（见 _note ⑧ 硬前置）。"
+      "description": "独立通道对账的逐店明细凭证（子管线 lemeng.recon.preagg.item 的 snk.csv；父管线 lemeng.recon.preagg 每日派发 T-3 一跑）。⚠️ 2026-10-18 起按**块**切文件：`recon-<账套>-<日>-c<块号>.csv`（端点 branch_nums 单次 ≤100 家，超限 code=10001）。写发生 = 判据跑完（判据已退役，不再因业务容差 die；判定归 dbt recon_run/recon_break）。⚠️ 时钟只在**重建 catalog 之后**的首个成功 run 起算（见 _note ⑧ 硬前置）。"
     },
     {
       "match": "minio://*/lemeng/transfer_out/system_book=*/bizday=*/all.parquet",
@@ -247,6 +247,16 @@
         "lemeng"
       ],
       "maximumAge": "36h"
+    },
+    {
+      "match": "minio://*/lemeng/recon_preagg/system_book=*/bizday=*/chunk=*/all.parquet",
+      "owner": "data-eng",
+      "tags": [
+        "lemeng",
+        "recon"
+      ],
+      "maximumAge": "36h",
+      "description": "口径对账**逐店事实**的成功凭证（父管线 lemeng.recon.preagg → 子管线 lemeng.recon.preagg.item 的 snk.minio 目标）。粒度 = 账套 × 对账业务日 × **块** × 门店；chunk 是绕端点「branch_nums 单次 ≤100 家」硬限的切块维度。只装事实（两侧销售/净额金额）；容差、判定、原因**不进湖**——它们分别在 dbt seeds/recon_tolerances.csv 与 marts recon_run / recon_break。⚠️ 时钟只在**重建 catalog 之后**的首个成功 run 起算。"
     }
   ]
 }
