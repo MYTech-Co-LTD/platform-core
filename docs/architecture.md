@@ -66,6 +66,53 @@
 
 > 部署接入：`deploy/openship-adopt.md`；部署后必验：`deploy/README.md`
 
+### 1.5 身份与访问：三通道与平台 token（2026-10-18 拍板）
+
+> **本节管「谁在调平台、凭什么」**。人拍板的终局：**每个账号生成 token，外部 agent 用 token + MCP
+> 操作一切「AI 可自动创建」的内容；openclaw 通过对话获取用户权限走内部接口**——三者映射到平台
+> **既有的三通道模型**，本节只是把它正典化 + 修掉一处错位。
+
+**核心判断**：**token（个人 Key，通道 B）是平台级身份能力，不是任何业务模块的私产。**
+
+**三通道（一张图）**：
+
+| 通道 | 凭据 | 主体来源 | 谁在用 |
+|---|---|---|---|
+| **A 会话** | `platform_session` cookie（HS256 JWT，载荷含 org + scopes） | 登录（账密 / 企微扫码 / 访客） | 浏览器 |
+| **B token** | `Bearer dkq_…`（个人 Key） | token → 账号 → **实时**向 Casdoor 取 scopes | **外部 agent**、服务调用方（如 case-engine 调 `/emit`） |
+| **C 渠道** | 渠道服务凭证（`DATA_WECOM_CHANNEL_KEY`）+ `X-Wecom-Userid` | 渠道凭证 → Casdoor 反查该用户 | **openclaw**（对话取用户身份，再以该用户权限走模块接口） |
+
+三条都只作用于 `/api/modules/*`（模块路由），且 **first-setter-wins**：会话已注入 identity 时后两条直接放行
+——「系统内通道不经这里」。实现：`apps/server/src/session-middleware.ts` / `pat-auth.ts` / `wecom-channel-auth.ts`，
+挂载序见 `apps/server/src/app.ts` 第 ⑥.5 段（**必须在 `runtime.mount` 之前**）。
+
+**四条定案（2026-10-18 人拍板）**：
+
+| # | 定案 | 内容 |
+|---|------|------|
+| ① | **密钥归宿主** | token 的密钥表落 **`platform.*`**（宿主 schema，B1 天然允许），生成/解析/吊销全在宿主侧；**不经模块端口**——`modules/data` 的 `resolvePat` 端口与 key-store 存储职责随之退役（它是「凭据表长在模块 schema 里、宿主绕 B1 去取」的间接层，上移后这个绕法整个消失） |
+| ② | **管理面两档，不新增权限码** | **个人页**（任何已认证账号管自己的 token，免 scope——发 token 不提权，它只承载该账号自己的 scopes）；**管理页**（复用 `tenant:admin`，看/吊销全租户）。照宿主自有页先例（`/console/admin/storage`） |
+| ③ | **生命周期：v1 永久至吊销** | 吊销**即时生效**（中间件每次实时解析 + scopes 实时向 Casdoor 取）；**过期/轮换记为演进项**（加过期要客户端处理续期，v1 规模不值当） |
+| ④ | **通道 C 不并入** | 通道 C 是**部署级渠道凭证**（openship env isSecret，一个部署一把），与「账号的 token」不同表、不同门禁、不同生命周期（随部署走）。**两张面，不混** |
+
+**「AI 可自动创建的内容」怎么界定**：由各模块的 `/mcp-manage` 工具面声明（`modules/forms`、`modules/data`、
+`modules/notify` 各有），门禁沿用 §14.6b 刀法——**高频 × 小（可逆）AI 直写；低频 × 大（外发/不可撤回）人审**。
+token 只决定「这个账号能调哪些面」，不改变分层。
+
+**不做清单（写死）**：
+
+| 反模式 | 为什么不做 |
+|---|---|
+| **造「服务令牌」通道 D** | 服务调用方（case-engine 等）= **一个账号持 token**，与外部 agent **同一条通道、同一套门禁**。另造机制 = 为 v1 规模付新基建 |
+| token 过期 / 轮换（v1） | 客户端要处理续期；真需求出现再加（与 ③ 同一条取舍） |
+| 把通道 C 并入账号 token 管理面 | 部署级密钥不该暴露成租户自助面（env 注入的值 UI 也改不了）——错位 |
+
+**实施注记**：
+
+- 立项 [issue #894](https://github.com/MYTech-Co-LTD/platform-core/issues/894)；**存量迁移**：`data.query_keys`
+  的行按哈希原样搬进 `platform.*` ⇒ **已发出的 token 继续有效、用户无感**（哈希实现只有一份，见 `key-store.ts` 头注）。
+- **架构先行**：本节先于代码；实施走 issue → PR，正典冲突以本节为准。
+
 ## 2. 组件与职责边界
 
 依赖边**读自各 `package.json`**，不是推测。
