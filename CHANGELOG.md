@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.157.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.156.3...v0.157.0) - 2026-10-18
+- 【新增】data: 问数回包回战区名与一级战区 ([#869](https://github.com/MYTech-Co-LTD/platform-core/pull/869), [75bc476](https://github.com/MYTech-Co-LTD/platform-core/commit/75bc476a19e7e4be06951791939f07c075c5eaa0))
+
+
 ## [0.156.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.156.2...v0.156.3) - 2026-10-18
 - 【修复】data: dbt 测试按域分目录 + 逐域 build 用派生选择器（域开关管不到 dbt/tests） ([#864](https://github.com/MYTech-Co-LTD/platform-core/pull/864), [c482956](https://github.com/MYTech-Co-LTD/platform-core/commit/c48295611711ed998e5e4a55f0e653362136d7fb))
 
