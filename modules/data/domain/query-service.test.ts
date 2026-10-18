@@ -911,9 +911,10 @@ describe('runQuery —— 值级脱敏回包 masking（spec §5.3，P2 T2）', (
   // ★★ 掩码只声明在**被裁掉**的 L1 行上（review fix round）：`sourceSystem: 'not_adopted'` 不在
   //    `depsOf()` 的 adoptedSources（`{'lemeng'}`）里 ⇒ visibleMetrics 把它从 `catalog` 裁掉，
   //    它**只**存在于 `allMetrics`。这样本用例才**鉴别** `query-service.ts` 传的是全量——
-  //    若退回 `authorize(catalog, …)`（4 参），掩码集为空 ⇒ masking 键缺席 ⇒ 本用例必红。
+  //    若把第 5 参改回传 `catalog`（裁剪过的），掩码集为空 ⇒ masking 键缺席 ⇒ 本用例必红。
   //    （用 block 里的 `seedMasked`（sourceSystem 'lemeng'、可见）会因「裁剪后也在 catalog 里」
   //     而对这条接线**变异不可见**——正是「断言没走到它声称的那一行」那条教训。）
+  //    ⚠️ 第 5 参现为**必填**（2026-10-18）：「漏传」已是编译错误；这一条防的是**传错那一份**。
   it('★ L2 指标：掩码只在**被裁掉**的 L1 行上 ⇒ 回包 masking 仍非空（证明传的是全量 catalog，#820）', async () => {
     // L1 行：源不在 adoptedSources ⇒ 被 visibleMetrics 裁掉，只留 allMetrics。
     // ⚠️ 不复用 seedMasked（它的 'lemeng' 是可见的，其余用例需要它可见）。

@@ -283,14 +283,23 @@ export function authorize(
   metricId: string,
   args: Record<string, unknown>,
   /**
-   * 掩码解析用的**全量** catalog（spec §5.3.1 R10）。**缺省 = `catalog`** ⇒ 既有调用点
-   * （`authz.test.ts` 约 40 处）一字不改。生产调用点（`query-service.ts`）**显式传未裁剪的那份**。
+   * 掩码解析用的**全量** catalog（spec §5.3.1 R10）。
+   *
+   * ⚠️ **必填、没有默认值**（2026-10-18 有意变更）：默认成 `catalog` 会让「忘了传」变成
+   *    拿**裁剪过的**词表解析掩码 ⇒ L2 洞（#820）**静默重开**，且编译、测试都不报。
+   *    安全参数不该有 fail-open 的默认值。测试里两份词表相同的场景用 `authorizeVisible`
+   *    helper 显式表达，不靠默认值。
+   *
+   * ⚠️ **残余（已知并接受）**：本参数与 `catalog` **同类型** ⇒ 显式传「裁剪过的那份」在类型上
+   *    仍合法。今天只有一个生产调用点（`query-service.ts`）且被**变异确认**的用例钉住 ⇒ 接受。
+   *    真出现**第二条**查询通道时，应把两份词表捆成一个值（`{ all, visible }`）让这个错
+   *    **不可表达**——而不是继续往上叠守卫。
    *
    * ⚠️ **刻意不把裁剪挪进本函数**：那会改变文档化的拒绝原因（`metric_not_declared`
    *    → `metric_not_authorized`），重新引入 spec 刻意避开的**存在性探测**
    *    （见 `query-service.ts` 的 catalog 裁剪注释）。
    */
-  maskCatalog: MetricDef[] = catalog,
+  maskCatalog: MetricDef[],
 ): AuthzResult {
   const metric = catalog.find((m) => m.id === metricId)
   if (!metric) return { ok: false, reason: 'metric_not_declared', metricId }
