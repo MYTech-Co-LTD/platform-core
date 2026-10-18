@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.170.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.169.0...v0.170.0) - 2026-10-18
+- 【新增】data: 口径对账台账接告警面——探活断言 ⑪⑫⑬（advisory，照 ⑩ 同款形态）（#892） ([#905](https://github.com/MYTech-Co-LTD/platform-core/pull/905), [82966c8](https://github.com/MYTech-Co-LTD/platform-core/commit/82966c88bd22ff9a782dba756fc82dac6c316743))
+
+
 ## [0.169.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.168.0...v0.169.0) - 2026-10-18
 - 【新增】platform: token 平台化——PAT 密钥表与解析上移宿主（#894） ([#904](https://github.com/MYTech-Co-LTD/platform-core/pull/904), [de46d79](https://github.com/MYTech-Co-LTD/platform-core/commit/de46d79a9a14743de65d5326129aa38473d581ac))
 
