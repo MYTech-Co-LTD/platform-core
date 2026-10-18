@@ -1,0 +1,118 @@
+{
+  "_note": [
+    "口径对账**回填变体**（消费面 spec §12.4 阶段 H）。与父管线 **同一判据、同一子管线**，只把「定稿日」从 `CURRENT_TIMESTAMP − 3` 换成**显式参数 `${BIZDAY}`**。",
+    "",
+    "为什么是独立文件（照 `lemeng.wholesale.out.backfill.*` 的既有范式）：",
+    "  · 父管线的日子是**算出来的**（T-3），改不了；回填要能指定任意日。",
+    "  · 文件名含 `.backfill.` ⇒ **不是生产者**（`findProducerPipelines` 显式排除）——它的窗参就在",
+    "    选列区里，与契约 expr 恒不一致，进了生产者集合会让 `gen-data-projection` 把参数化打回常量窗。",
+    "",
+    "用法：`POST /api/run/async` body `{\"file\":\"pipelines/lemeng.recon.preagg.backfill.json\",\"params\":{\"BIZDAY\":\"YYYY-MM-DD\"}}`。",
+    "落湖与父管线**同一前缀、同一 chunk 分区**——回填与日常跑写的是同一批事实，不另开资产。"
+  ],
+  "name": "lemeng.recon.preagg.backfill",
+  "version": 1,
+  "id": "lemeng.recon.preagg.backfill",
+  "nodes": [
+    {
+      "id": "plake",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "plake 全书零售明细（只取门店清单）",
+        "componentId": "src.minio",
+        "properties": {
+          "connectionRef": "zos",
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/retail_order_line/system_book=${ENV:SYSTEM_BOOK}/**/*.parquet",
+          "glob": true,
+          "format": "parquet"
+        }
+      }
+    },
+    {
+      "id": "pday",
+      "type": "transform",
+      "position": {
+        "x": 280,
+        "y": 0
+      },
+      "data": {
+        "label": "pday 回填日（${BIZDAY}）+ 门店清单按 ≤100 家切块",
+        "componentId": "code.sql",
+        "properties": {
+          "pureSql": true,
+          "sql": "CREATE OR REPLACE TABLE \"pday\" AS\nWITH d AS (SELECT CAST('${BIZDAY}' AS DATE) AS bd),\nf AS (SELECT * FROM \"plake\" WHERE CAST(bizday AS DATE) = (SELECT bd FROM d)\n  AND CAST(state AS VARCHAR) = 'FINISHED'),\nb AS (SELECT DISTINCT CAST(branch_num AS INTEGER) AS bn FROM f),\nn AS (SELECT bn, CAST(row_number() OVER (ORDER BY bn) - 1 AS INTEGER) AS rn FROM b),\n-- ⚠️ 必须 floor(rn/100.0)：`CAST(rn/100 AS INTEGER)` 在 DuckDB 里是**四舍五入**（见父管线头注）\nc AS (SELECT CAST(floor(rn / 100.0) AS INTEGER) + 1 AS chunk_no, bn FROM n),\nj AS (SELECT chunk_no,\n             '[' || string_agg(CAST(bn AS VARCHAR), ',' ORDER BY bn) || ']' AS branch_nums_json\n      FROM c GROUP BY chunk_no)\nSELECT strftime((SELECT bd FROM d), '%Y-%m-%d') AS bizday,\n       1 AS settled,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       '${ENV:ZOS_BUCKET}' AS bucket,\n       '${ENV:ZOS_REGION}' AS region,\n       'recon-' || strftime((SELECT bd FROM d), '%Y%m%d') || '-c' || CAST(chunk_no AS VARCHAR) AS batch_id,\n       chunk_no,\n       branch_nums_json,\n       strftime((SELECT bd FROM d), '%Y-%m-%d') || '-c' || CAST(chunk_no AS VARCHAR) AS item_key\nFROM j\nORDER BY chunk_no"
+        }
+      }
+    },
+    {
+      "id": "pguard",
+      "type": "transform",
+      "position": {
+        "x": 560,
+        "y": 0
+      },
+      "data": {
+        "label": "pguard 依赖闸：T-3 无行即死",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "recon 依赖不可用（lake_unavailable）：T-3（上海日-3）无 FINISHED SALE_ORDER 行——分区缺失或当日零销，保守判依赖不判账（脚本 exit 3 同款）。book=${ENV:SYSTEM_BOOK}"
+        }
+      }
+    },
+    {
+      "id": "pfe",
+      "type": "transform",
+      "position": {
+        "x": 840,
+        "y": 0
+      },
+      "data": {
+        "label": "pfe 逐 (日, 块) 派发（itemKey=item_key，各块独立水位）",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "pipelineRef": "${workspace}/pipelines/lemeng.recon.preagg.item.json",
+          "itemKey": "item_key",
+          "concurrency": 1
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_plake_pday",
+      "source": "plake",
+      "target": "pday",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_pday_pguard",
+      "source": "pday",
+      "target": "pguard",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_pguard_pfe",
+      "source": "pguard",
+      "target": "pfe",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}

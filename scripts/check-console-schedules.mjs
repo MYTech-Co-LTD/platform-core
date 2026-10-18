@@ -124,6 +124,7 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.retail_order_line.tick', '旧零售族残留——已被 retail.tick.l1 取代，待退役（§2 台账）'],
   ['lemeng.retail_order_line.window', '旧零售族残留——已被 retail.windows.l1 取代，待退役（§2 台账）'],
   ['lemeng.recon.preagg.item', '按需手动（逐分归零对账执行面，无日更节奏）'],
+  ['lemeng.recon.preagg.backfill', '回填专用（换 BIZDAY 参数手动触发，handbook §1.3 阶段 H）'],
   // （#729）forms 的那条旧豁免已**删除**：期望集改成「按**域**判」后，无后缀的
   // `forms.submission.l0` 不再被当乐檬共享族塞给 3120/64188，豁免失去存在理由。
   // forms 的排班随它自己的 console/workspace 落地登记进 `schedules/forms.json`（M1.4 阶段 E）。
@@ -131,7 +132,6 @@ const EXEMPT_GLOBAL = new Map([
 /** @type {Map<string, Map<string, string>>} book →（管线名 → 理由） */
 const EXEMPT_BY_BOOK = new Map([
   ['3120', new Map([
-    ['lemeng.recon.preagg', '3120 不排：逐分归零通道被乐檬改坏（恒 10006，§1.4）——旁路 recon-preagg.sh 手动'],
     ['lemeng.dim.item_price.l0', '3120 排 .3120 后缀版（R1 增量模型）；无后缀共享版只归 64188'],
   ])],
 ])
