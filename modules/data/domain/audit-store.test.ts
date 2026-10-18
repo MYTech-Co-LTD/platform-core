@@ -1,12 +1,38 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
-import { writeAudit } from './audit-store'
+import { maskingAuditOf, writeAudit } from './audit-store'
 import { applyMigrations } from '../test-util'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
 /** 隔离键（text，值 = 该租户的 Casdoor org）——与其它测试文件不同，避免互相擦数据。 */
 const ORG = 'org-t3-audit'
+
+describe('maskingAuditOf（spec §4.4.1 三态）', () => {
+  it('空 applied + 空 exempted ⇒ null（不是 {}）', () => {
+    // null 与 {} 是两回事：{} 在本设计里不该出现——判据空时必须回 null。
+    expect(maskingAuditOf({}, [])).toBeNull()
+  })
+
+  it('只有 applied ⇒ 就是它', () => {
+    expect(maskingAuditOf({ net_sales: 'round:1000' }, [])).toEqual({ net_sales: 'round:1000' })
+  })
+
+  it('只有 exempted ⇒ 只带 __exempted__ 键', () => {
+    expect(maskingAuditOf({}, ['net_sales'])).toEqual({ __exempted__: ['net_sales'] })
+  })
+
+  it('★ 混合形：两个键同现', () => {
+    expect(maskingAuditOf({ net_sales: 'round:1000' }, ['cost'])).toEqual({
+      net_sales: 'round:1000',
+      __exempted__: ['cost'],
+    })
+  })
+
+  it('__exempted__ 排序（稳定输出，避免 jsonb 键序噪声）', () => {
+    expect(maskingAuditOf({}, ['b', 'a'])).toEqual({ __exempted__: ['a', 'b'] })
+  })
+})
 
 describePg('audit-store（需要 DATABASE_URL）', () => {
   const pool = new Pool({ connectionString: dbUrl })

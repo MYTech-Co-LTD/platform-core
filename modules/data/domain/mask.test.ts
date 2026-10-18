@@ -46,6 +46,30 @@ describe('maskedSelectSql（spec §5.3）', () => {
     expect(maskedSelectSql(SEL, [{ column: null, kind: 'nullify', grantedBy: 'p' }], () => true).sql).toBe(SEL)
   })
 
+  // ── T7（#823）：豁免记录（★ 在场先于豁免）─────────────────────────────────────────
+
+  it('豁免（grantedBy 在手）且目标在 SQL 里 ⇒ 不改、记 exempted', () => {
+    const r = maskedSelectSql(SEL, [R('{}')], () => true)
+    expect(r.sql).toBe(SEL)
+    expect(r.applied).toEqual({})
+    expect(r.exempted).toEqual(['fct_x.net_amount'])
+  })
+
+  it('★ 豁免了但目标不在 SQL 里 ⇒ 不记 exempted（在场先于豁免，T7 变异点）', () => {
+    // 若把「在场」检查挪到豁免之后，「豁免了、但目标根本没出现」的声明会被**假记**成 exempted
+    // ——它其实什么都没发生，审计会谎报「这个人这次看的是原值」。在场判据 = `next !== sql`。
+    const r = maskedSelectSql('select sum(a.other) as value from a', [R('{}')], () => true)
+    expect(r.sql).toBe('select sum(a.other) as value from a')
+    expect(r.applied).toEqual({})
+    expect(r.exempted).toEqual([])
+  })
+
+  it('整值掩码被豁免且形状命中 ⇒ 记 <value>（在场先于豁免对整值分支同样成立）', () => {
+    const r = maskedSelectSql(SEL, [{ column: null, kind: 'nullify', grantedBy: 'p' }], () => true)
+    expect(r.sql).toBe(SEL)
+    expect(r.exempted).toEqual(['<value>'])
+  })
+
   it('多条掩码各自独立生效（两个不同列、不同 step）', () => {
     const sql = 'select sum(a.cost) as value, sum(a.price) as extra, bizday from a'
     const r = maskedSelectSql(sql, [

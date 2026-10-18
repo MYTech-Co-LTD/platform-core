@@ -135,12 +135,18 @@ function keywordAt(sql: string, i: number, kw: string): boolean {
 /**
  * 值级掩码展开（spec §5.3）：按声明逐条消费，返回改写后的 SQL 与「生效记录」。
  *
- * - `hasScope(spec.grantedBy)` 为真 ⇒ **看原值**，该条跳过（豁免方向与 requiredScope 相反）。
+ * - `hasScope(spec.grantedBy)` 为真 ⇒ **看原值**（豁免方向与 requiredScope 相反）：该条不掩，
+ *   但**在场时记进 `exempted`**（「这个人这次看的是原值」也是审计要能回答的问题，spec §4.4.1）。
  * - 按列掩码：限定列引用以 `\b` 词边界在 selectSql 里逐字查找（`cost` 不得命中 `cost_money`
  *   ——子串误伤 = 把没声明的列也掩了）；**不在** selectSql 里 ⇒ 不改、不记（L2 编译已把
  *   契约列展开成 marts 列的情形，声明侧拦不到、运行期静默跳过）。
  * - 整值掩码：`… as value` 的表达式整个替换（spec §4.1.1 默认档——契约列根本不出现在
  *   selectSql 里，按列替换一个都命中不了）。
+ *
+ * ★ **在场先于豁免**（T7，#823）：先判「这条声明到底有没有命中（改了没改）」，再决定记
+ *   `applied` 还是 `exempted`——否则「豁免了、但目标根本不在 SQL 里」的声明会被**假记**成
+ *   exempted（它其实什么都没发生）。所有判定读的都是**当前** `sql`（可能已被前一条掩码改过），
+ *   与 `applied` 的记法一致（记的是「这次实际改没改」）。
  *
  * ⚠️ 带 `g` 的正则只走 `replace`、**不**先 `.test()`（`.test()` 会推进 `lastIndex`，同一
  *    正则复用时会跳过命中）；命中与否用「replace 后比较是否变化」判，避开 lastIndex。
@@ -151,19 +157,21 @@ export function maskedSelectSql(
   selectSql: string,
   masks: MaskSpec[] | null | undefined,
   hasScope: (code: string) => boolean,
-): { sql: string; applied: Record<string, string> } {
+): { sql: string; applied: Record<string, string>; exempted: string[] } {
   const applied: Record<string, string> = {}
-  if (!masks || masks.length === 0) return { sql: selectSql, applied }
+  const exempted: string[] = []
+  if (!masks || masks.length === 0) return { sql: selectSql, applied, exempted }
   let sql = selectSql
   for (const spec of masks) {
-    if (hasScope(spec.grantedBy)) continue   // 持有豁免码 ⇒ 看原值
+    const exempt = hasScope(spec.grantedBy)
     if (spec.column === null) {
       // 整值掩码：只动 selectSql 的副本（上面的 `let sql`），绝不回写库。
       // 头区间由 topLevelValueHead 给（深度/引号感知，M6）：`exprStart` 之前是 `select ` 前缀、
       // `aliasEnd` 之后是 `, 维度… from …`，两段都原样保留 ⇒ 只换表达式那一整段。
-      const head = topLevelValueHead(sql)
-      if (head === null) continue   // 形状不合（无顶层 `… as value` 头）⇒ 不改、不记
-      sql = sql.slice(0, head.exprStart) + maskExpr(spec) + ` as ${VALUE_ALIAS}` + sql.slice(head.aliasEnd)
+      const h = topLevelValueHead(sql)
+      if (h === null) continue   // 形状不合（无顶层 `… as value` 头）⇒ 不改、不记（★ 在场先于豁免）
+      if (exempt) { exempted.push(WHOLE_VALUE_KEY); continue }
+      sql = sql.slice(0, h.exprStart) + maskExpr(spec) + ` as ${VALUE_ALIAS}` + sql.slice(h.aliasEnd)
       applied[WHOLE_VALUE_KEY] = notationOf(spec)
       continue
     }
@@ -176,14 +184,18 @@ export function maskedSelectSql(
     //   别名位，内层那个会被放过。
     //   ⚠️ 跳过带来的后果是「只命中别名的声明会静默不掩码」（fail-open）——那由声明门禁拦掉
     //     （masksOf 的 presence 检查改调 sqlMentionsColumn，与这里同一份实现），运行期不在这里兜。
+    // ★ **在场先于豁免**（T7，#823）：**先算「改了没改」，再决定记 applied 还是 exempted**。
+    //   「在场」的判定就是展开本身（`next !== sql`）——**不调 `sqlMentionsColumn`**：
+    //   那个谓词的定义是「跑一遍本函数看 applied」⇒ 在此调用 = **自递归爆栈**。
     const colRe = new RegExp(`\\b${escapeRe(spec.column)}\\b`, 'g')
     const next = sql.replace(colRe, (match, offset: number) =>
       ALIAS_BEFORE_RE.test(sql.slice(0, offset)) ? match : maskExpr(spec))
-    if (next === sql) continue   // 列引用不在 selectSql 里（或只命中别名位）⇒ 不改、不记
+    if (next === sql) continue   // 不在（或只命中别名位）⇒ 不改、不记
+    if (exempt) { exempted.push(spec.column); continue }
     sql = next
     applied[spec.column] = notationOf(spec)
   }
-  return { sql, applied }
+  return { sql, applied, exempted }
 }
 
 /**

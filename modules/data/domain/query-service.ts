@@ -5,7 +5,7 @@
 import type { Pool } from 'pg'
 import { MAX_QUERY_ROWS, authorize, sqlQuote, visibleMetrics, type DenyReason, type Requester } from './authz'
 import { loadMergedCatalog } from './metric-store'
-import { writeAudit } from './audit-store'
+import { maskingAuditOf, writeAudit, type MaskingAudit } from './audit-store'
 import { DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './warehouse'
 import { decorateWithLabels, loadDimensionLookup, type DimensionLookup } from './dimension-labels'
 
@@ -235,9 +235,9 @@ export async function runQuery(
 ): Promise<QueryOutcome> {
   const audit = (
     verdict: 'ok' | 'denied' | 'error', reason: string | null, rowCount: number | null,
-    // 值级脱敏审计（spec §4.4）：只有真的展开过掩码才带记录；未展开传 **null**（不是 {}）。
+    // 值级脱敏审计（spec §4.4 / §4.4.1 三态）：只有真的展开过掩码才带记录；未展开传 **null**（不是 {}）。
     // 被拒/出错/未认证一律 null——查询没在掩码下执行过，「看过原值还是掩码值」无从谈起。
-    masking: Record<string, string> | null,
+    masking: MaskingAudit | null,
   ) => writeAudit(deps.pool, {
     // 隔离键 `org` 就是审计里的主体值——**同一列**（见 T1 的 001_init.sql 注记）。
     // 值取 `org` 形参（= 路由传进来的 `identity.orgId`，宿主注入的权威值），
@@ -392,10 +392,13 @@ export async function runQuery(
   const scopeNote = typeof metricRow?.scopeNote === 'string' ? metricRow.scopeNote.trim() : ''
   const scopeLine = scopeNote === '' ? undefined : `📐 口径：${scopeNote}`
 
-  // 审计掩码（spec §4.4）：与回包 `masking` 同一份 applied（授权层展开记录）——空则 **null**，
-  // 不写 {}（null = 本次无掩码生效，'{}' 是审计里不该出现的第三种态）。
-  const appliedMasking = Object.keys(authz.plan.applied).length > 0 ? authz.plan.applied : null
-  await audit('ok', raceRetried ? 'lake_race_retry' : null, result.rows.length, appliedMasking)
+  // 审计掩码（spec §4.4.1 三态）与回包 masking 同源：都从 authz.plan 派生，一处构造。
+  // ⚠️ 两者**不同尺是刻意的**：回包契约是 `Record<string,string>`，装不下 `__exempted__`
+  //   （那是运营侧信息，不该喂给模型/前端）；反过来审计要记「豁免了谁」。
+  //   ⇒ 判据只有一份 `hasMasking`（回包用）；审计那份的 null 判据在 maskingAuditOf 内部。
+  const hasMasking = Object.keys(authz.plan.applied).length > 0
+  const auditMasking = maskingAuditOf(authz.plan.applied, authz.plan.exempted)
+  await audit('ok', raceRetried ? 'lake_race_retry' : null, result.rows.length, auditMasking)
   // 显式合计模式（spec §8）：plan.sql 已是 `SELECT sum(value) …`（无外层 LIMIT）⇒ 恒单行，
   // total 字段 = 该行的合计值；`truncated` 恒 false（合计无截断面）。
   // 自动伴随：明细 rows/truncated 语义不变，只多附一个 total 值。
@@ -424,9 +427,10 @@ export async function runQuery(
     ...(scopeLine !== undefined ? { scope_line: scopeLine } : {}),
     // 值级脱敏面（spec §5.3）：授权层展开记录非空才回包——空对象不出现该键（缺席 = 原值）。
     // total（显式/自动合计）读的是同一个被掩的内层 select，天然与明细行同一套掩码值。
-    // ★ 复用上面审计那一份 `appliedMasking`（T3-②，issue #824）：两处各写一遍
-    //   `Object.keys(...).length > 0 ? applied : null` 是同一个判据的第二份实现——
-    //   将来只改一处，审计与回包就会**不同尺**（一个说掩了、一个说没掩）。
-    ...(appliedMasking !== null ? { masking: appliedMasking } : {}),
+    // ★ 与上面审计同源（T7，#823）：**判据一份（`hasMasking`）、形状两份、输入同源**。
+    //   回包契约是 `Record<string,string>`，装不下审计的三态（`__exempted__` 是运营侧信息，
+    //   不该喂给模型/前端）⇒ 形状必须分家；但「有没有掩码」这个判据仍只有一份实现
+    //   （`hasMasking`），#824 要防的「同一判据两处各写一遍、将来漂开」仍被防住。
+    ...(hasMasking ? { masking: authz.plan.applied } : {}),
   }
 }
