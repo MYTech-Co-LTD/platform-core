@@ -104,3 +104,29 @@ seeds:
         description: 阈值取值（统一 varchar，消费侧按 key 解读）。
         tests:
           - not_null
+
+  - name: dim_brand
+    description: >-
+      品牌维（`system_book` → 品牌名）。**为什么需要它**：账套号 `3120`/`64188` 是技术键，
+      业务人员认的是品牌名；而乐檬侧没有任何「品牌」接口（`stg_lemeng_branch` 只有门店名，
+      门店名前缀只是佐证、不是权威来源）⇒ 这 2 行是**唯一事实源**，进 git 可审。
+      **慢变维**：账套改名是极低频事件，改了直接改本 CSV 走 PR（无生效期语义，永远取当前值）。
+      **消费方**：查询 API 的回包层（`modules/data/domain/dimension-labels.ts`）——事实表只存键，
+      名称在展示层解析；**不要**把它 join 进指标 `select_sql`（会让可加性与合计失真）。
+    config:
+      column_types:
+        system_book: varchar
+        brand_name: varchar
+        source_note: varchar
+    columns:
+      - name: system_book
+        description: 账套（与各事实表的 system_book 同域）。
+        tests:
+          - not_null
+          - unique
+      - name: brand_name
+        description: 品牌名（业务可见名称，如 熊喵鲜生 / 品品甜）。
+        tests:
+          - not_null
+      - name: source_note
+        description: 来源与佐证（谁给的、拿什么交叉核过）。
