@@ -46,7 +46,8 @@ const SOURCES = 'dbt/models/common/staging/sources.yml'
 const STAGING = 'dbt/models/common/staging/stg_lemeng_retail_detail.sql'
 const MARTS = 'dbt/models/common/marts/fct_retail_sale.sql'
 const METRICS = 'dbt/semantics/l1_metrics.yml'
-const AUDIT = 'dbt/tests/audit_lemeng__retail__net_sales.sql'
+// 对账 test 按域分子目录（`dbt/tests/<源>/`）—— 与物料化侧逐域选取同源，见规则 ⑦
+const AUDIT = 'dbt/tests/lemeng/audit_lemeng__retail__net_sales.sql'
 
 /**
  * 基线：一份**最小但完整**的合规 dbt 目录。
@@ -389,7 +390,7 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
       ].join('\n')
       // 两个名字都映射到 audit_lemeng__retail__a__b.sql ⇒ 只存在一个文件时，⑦ 的存在性检查会对两边都通过
       delete f[AUDIT]
-      f['dbt/tests/audit_lemeng__retail__a__b.sql'] = 'select 1 where false\n'
+      f['dbt/tests/lemeng/audit_lemeng__retail__a__b.sql'] = 'select 1 where false\n'
     })
     const violations = checkDataModels(root)
     expect(violations).toHaveLength(1)
