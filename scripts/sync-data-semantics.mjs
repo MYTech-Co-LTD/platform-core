@@ -58,6 +58,11 @@ import {
 // 两处各列一份 kind，漂开的那份就是静默绕过口。authz.ts 是纯模块（不 import pool/env/Hono），
 // 拖进来不破坏本脚本的「只连库不连服务」边界。
 import { MASK_KINDS } from '../modules/data/domain/authz.ts'
+// 「这一列在不在 selectSql 里」的**唯一实现**（#830）：声明侧与运行期共用一份。本脚本曾自带
+// 一份 `as __alias__` 文本哨兵，与运行期各写一份 ⇒ 同一件事两个尺（PR #827 评审 M1 实测出两个
+// 反例：哨兵名撞车、大小写不匹配）。mask.ts 是纯模块（只 import type），拖进来不破坏本脚本
+// 「只连库不连服务」的边界。
+import { sqlMentionsColumn } from '../modules/data/domain/mask.ts'
 
 // 类型引用走 JSDoc 的 `import(...)`（`.mjs` 里不能写 `import type` —— TS8006）。写成类型引用
 // 而不是值 import：只借它的**形状**，不在运行期多 import 一个模块。
@@ -234,15 +239,6 @@ function requiredScopeOf(v, metricName) {
   return s
 }
 
-/**
- * 正则元字符转义——列引用是 `表.列` 形态，`.` **必须转义**：不转义它就是通配符，
- * `\bfct_x.a\b` 会命中 `fct_xAa`/`fct_x_a` 一类本不该命中的引用（转义后才是逐字匹配）。
- *
- * @param {string} s
- * @returns {string}
- */
-const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
 /** mask 条目的**键闭集**（声明面形状，spec 2026-10-17 §5.2；与 authz.ts 的 MaskSpec 同形）。 */
 const MASK_ITEM_KEYS = new Set(['column', 'kind', 'step', 'grantedBy'])
 
@@ -259,8 +255,9 @@ const MASK_ITEM_KEYS = new Set(['column', 'kind', 'step', 'grantedBy'])
  *     会物化出一条运行期才炸的掩码表达式）；
  *   · `grantedBy` 必须是非空、无任何空白的字符串（它是逐字比对的权限码，带空白谁也匹配不上
  *     ⇒ 对持码人照掩不误——掩码过度生效，症状静默）；
- *   · `column` 是 null（整值掩码）或非空字符串；**null 时 kind 只许 `nullify`**（整值做 round
- *     没有语义；spec §4.1.1 默认档只推 nullify 也是同一句话）。
+ *   · `column` 必须是**非空字符串**——**整值形态（column 缺席或为 null）一律拒**（spec §5.3.1
+ *     R10 配套 2）：想整值隐藏 ⇒ **给源列打 `sensitivity`**（物化层自动合成整值 nullify 默认档，
+ *     见 T5）；YAML 里**写不出**整值形态。
  *
  * @param {unknown} item mask 数组的单个元素
  * @param {string} metricName 指标名（只用于错误信息）
@@ -290,12 +287,15 @@ export function maskItemError(item, metricName) {
   const column = m.column ?? null
   if (column !== null && (typeof column !== 'string' || column === '')) {
     return `指标 \`${metricName}\` 的 \`mask\` column ${JSON.stringify(column)} 形态不合规 —— `
-      + '必须是「关系.列」形态的非空字符串，或 null（整值掩码：把 `… as value` 整个换成 typed NULL）'
+      + '必须是「关系.列」形态的非空字符串。整值隐藏不是写 column: null——**给源列打 `sensitivity`**'
+      + '（物化层自动合成整值 nullify 默认档，见 T5）；YAML 里**写不出**整值形态（`maskItemError` 一律拒）。'
   }
-  if (column === null && m.kind !== 'nullify') {
-    return `指标 \`${metricName}\` 的 \`mask\` 是整值掩码（column 为 null）但 kind 是 \`${String(m.kind)}\` —— `
-      + '整值掩码只允许 `nullify`：把整个值换成 typed NULL 有 fail-closed 的语义，'
-      + '对整值做 round 没有语义（想按列 round 请写出具体 column）'
+  if (column === null) {
+    return `指标 \`${metricName}\` 的 \`mask\` 声明了整值掩码（column 缺席或为 null）—— `
+      + '**手写整值声明一律拒**（spec §5.3.1 R10 配套 2）：整值形态是**指标级**的、'
+      + '**不跨指标按列传播**，手写它等于重开 #820 同型洞。'
+      + '该形态**只由默认档合成**（sync 的 applyDefaultMaskTier，不经本函数）。'
+      + '想按列掩码请写出具体 column；想整值隐藏请给源列打 sensitivity。'
   }
   if (m.kind === 'round') {
     const step = m.step
@@ -312,16 +312,15 @@ export function maskItemError(item, metricName) {
  * 推默认档——那是 authorize() 的运行期职责，本物化层不推）；给了就逐项校验，坏形状**响亮失败**
  * （与 requiredScopeOf / slaDaysOf 同一脾气）。
  *
- * ⚠️ **`column` 非 null 时必须逐字出现在该指标的 `selectSql` 里**——这条只在这里判、门禁判不了
+ * ⚠️ **`column` 必须逐字出现在该指标的 `selectSql` 里**——这条只在这里判、门禁判不了
  * （门禁手里没有物化后的 selectSql）：运行期展开是对 selectSql 做列引用定点替换，列不在里面
  * ⇒ 替换一个都命中不了 ⇒ **掩码静默不生效**，这正是本设计最怕的失败形态（坏在数据里，不报错）。
- * 词边界 `\b` + 转义后的逐字匹配（`.` 已转义——列引用是 `表.列` 形态，`.` 是正则通配符）。
- * `column === null`（整值掩码）跳过这条——它本来就不按列命中。
+ * 判据**就是运行期那一份**（`sqlMentionsColumn`，#830），不再另写正则——同一件事两个尺
+ * 正是本任务要堵的洞（PR #827 评审 M1 的两个反例）。
+ * 新声明写不出整值形态（`maskItemError` 一律拒，spec §5.3.1 R10 配套 2）；整值形态只由
+ * 物化层的默认档合成（见 T5）。
  *
- * ⚠️ 两处**更细的**拦点（issue #824 的 T2-m3② / C-m3）：
- *   · 比对基准里**剔掉固定别名位** `value`（`… as value` 是形状契约的记号，不是列引用）：
- *     运行期的按列展开跳过别名位（mask.ts），若这里仍把别名算作命中，「只命中别名的声明」
- *     会过闸而运行期静默不掩码 = **fail-open**。
+ * ⚠️ 一处**更细的**拦点（issue #824 的 C-m3）：
  *   · **维度 / grain 列不许按列掩码**：运行期展开换掉的是该列在 selectSql 里的**全部**出现处
  *     （含 select 表里那一处维度列），而 GROUP BY 仍是原列名 ⇒ SQL 报「must appear in GROUP BY」。
  *     那是运行期才炸、离声明很远的一类，提前响亮拒绝。
@@ -357,28 +356,23 @@ function masksOf(v, metricName, selectSql, grain) {
           `指标 \`${metricName}\` 的 \`mask\` column \`${String(column)}\` 是该指标的维度/grain 列 —— `
           + '维度列不能按列掩码：运行期展开会把 selectSql 里该列的**全部**出现处（含 select 表里'
           + '那一处维度列）换成掩码表达式，而 GROUP BY 仍是原列名 ⇒ SQL 报「must appear in '
-          + 'GROUP BY」（运行期才炸，离声明很远）。要掩整个值请声明 `column: null` 的整值掩码'
-          + '（kind 只许 nullify）；要按列掩码请挑一个只出现在口径表达式里的列',
+          + 'GROUP BY」（运行期才炸，离声明很远）。要掩整个值 ⇒ **给源列打 `sensitivity`**'
+          + '（物化层自动合成整值 nullify 默认档，见 T5）；要按列掩码请挑一个只出现在口径表达式里的列',
         )
       }
-      // 比对基准里剔掉固定别名位 `value`（`… as value` 是形状契约的记号，不是列引用）：
-      // 运行期的按列展开跳过别名位（mask.ts 的 T2-m3②），这里若仍把别名算作命中，
-      // 「只命中别名的声明」会过闸而运行期静默不掩码 = fail-open。
-      const probe = selectSql.replace(/\bas\s+value\b/i, 'as __alias__')
-      const hit = new RegExp(`\\b${escapeRegExp(String(column))}\\b`).test(probe)
-      if (!hit) {
-        throw new Error(
-          `指标 \`${metricName}\` 的 \`mask\` column \`${String(column)}\` 没有逐字出现在该指标的 `
-          + `selectSql 里 —— 运行期掩码是对 select_sql 做**列引用定点替换**，列不在里面 ⇒ 替换命中不了 `
-          + '⇒ 掩码静默不生效（本设计最怕的形态）。请写指标口径真正引用的限定列'
-          + `（本条 selectSql：\`${selectSql}\`）；若要掩的是敏感**源列**而非口径列，请声明 `
-          + '`column: null` 的整值掩码（kind 只许 nullify）。'
-          + '⚠️ 固定别名位 `… as value` 不算命中——它是形状契约的记号，不是列引用',
-        )
+      // 比对基准由**运行期同一份实现**给（#830）：`sqlMentionsColumn` 的定义就是「跑一遍
+      // maskedSelectSql、看 applied 里有没有这一列」⇒ 别名位跳过、词边界、`$&` 回调等语义
+      // 全部自动继承。这里再写一份正则 = 第二个事实源（PR #827 评审 M1 实测的两个反例：
+      // 哨兵名撞车 `column: '__alias__'`、大小写不匹配 `(select 1 AS VALUE) + sum(t.y)`）。
+      if (!sqlMentionsColumn(selectSql, String(column))) {
+        throw new Error(`指标 \`${metricName}\` 的 \`mask\` column \`${String(column)}\` 没有逐字出现在该指标的 selectSql 里 —— `
+          + '运行期替换会命中不了 ⇒ **静默不生效**（本设计最怕的形态）。'
+          + '判据与运行期同源：mask.ts 的 sqlMentionsColumn（#830）。')
       }
     }
-    // step 只在 round 下有语义：nullify 物化时剥掉它，免得库里的声明带着一个没人读的键
-    out.push(column === null || m.kind === 'nullify'
+    // step 只在 round 下有语义：nullify 物化时剥掉它，免得库里的声明带着一个没人读的键。
+    // `column === null` 那个 disjunct 已删：`maskItemError` 先一步一律拒整值形态 ⇒ 这里不可达。
+    out.push(m.kind === 'nullify'
       ? { column: /** @type {string | null} */ (column), kind: /** @type {MaskSpec['kind']} */ (m.kind), grantedBy: String(m.grantedBy) }
       : { column: /** @type {string | null} */ (column), kind: /** @type {MaskSpec['kind']} */ (m.kind), step: /** @type {number} */ (m.step), grantedBy: String(m.grantedBy) })
   }

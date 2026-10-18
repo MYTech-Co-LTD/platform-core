@@ -1038,10 +1038,10 @@ export function checkDataModels(rootDir, opts = {}) {
 
     // ⑤-d `mask` 形态（值级脱敏声明面，spec 2026-10-17 §5.2）：给了就必须是**逐项合规的数组**。
     // 逐项判据（键闭集 / kind ∈ MASK_KINDS / round⇒step 正整数 / grantedBy 非空无空白 /
-    // 整值掩码只许 nullify）**唯一实现**在 sync 的 maskItemError（本文件 import 它，别抄第二份
-    // ——两处各判一份，漂开的那份就是静默绕过口）。⚠️ 「column 须逐字出现在 selectSql 里」
-    // 那条**不在这里**：门禁手里没有物化后的 selectSql，判不了；它归 sync 的 masksOf
-    // （物化与 --check 都会过它，单测钉住）。
+    // **整值形态（column 缺席或为 null）一律拒**——spec §5.3.1 R10 配套 2）**唯一实现**在
+    // sync 的 maskItemError（本文件 import 它，别抄第二份——两处各判一份，漂开的那份就是静默
+    // 绕过口）。⚠️ 「column 须逐字出现在 selectSql 里」那条**不在这里**：门禁手里没有物化后的
+    // selectSql，判不了；它归 sync 的 masksOf（物化与 --check 都会过它，单测钉住）。
     const mask = metric.fields?.mask
     if (mask !== undefined && mask !== null) {
       if (!Array.isArray(mask)) {

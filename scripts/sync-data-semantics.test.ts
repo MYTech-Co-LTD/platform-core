@@ -737,13 +737,19 @@ describe('declarationsFromYaml：mask（值级脱敏声明面，spec 2026-10-17 
     ])
   })
 
-  it('合法整值掩码（column: null + nullify；column 键缺省同义）⇒ 物化', () => {
+  it('★ 手写整值声明（column: null / column 键缺省 / 整值配 round）⇒ 一律拒（spec §5.3.1 R10 配套 2；#830）', () => {
+    // 变异确认锚点 C：删掉 maskItemError 的整值拒绝 ⇒ **恰好**本用例红（本用例是唯一能红的一条）。
+    // 本任务之前这里断言的是「被接受并物化」——那是旧世界（YAML 写得出手写整值）；
+    // 现在整值形态只由默认档合成，手写它等于重开 #820 同型洞。
     for (const mask of [
       { column: null, kind: 'nullify', grantedBy: 'data:precise' },
       { kind: 'nullify', grantedBy: 'data:precise' },   // column 缺省 = null（整值）
+      { column: null, kind: 'round', step: 1000, grantedBy: 'p' },   // 整值 + round 同样拒
     ]) {
-      const rows = declarationsFromYaml(yaml([{ ...base, mask: [mask] }]))
-      expect(rows[0].masks).toEqual([{ column: null, kind: 'nullify', grantedBy: 'data:precise' }])
+      expect(
+        () => declarationsFromYaml(yaml([{ ...base, mask: [mask] }])),
+        `mask: ${JSON.stringify(mask)} 没被拦`,
+      ).toThrow(/整值/)
     }
   })
 
@@ -803,12 +809,6 @@ describe('declarationsFromYaml：mask（值级脱敏声明面，spec 2026-10-17 
     expect(() => declarationsFromYaml(yaml([
       { ...base, mask: [{ column: 'fct_y.cost_money', kind: 'nullify', grantedBy: 'p' }] },
     ]))).toThrow(/selectSql|逐字/)
-  })
-
-  it('整值掩码（column null）配 round ⇒ 抛（整值做 round 没有语义；默认档只推 nullify）', () => {
-    expect(() => declarationsFromYaml(yaml([
-      { ...base, mask: [{ column: null, kind: 'round', step: 1000, grantedBy: 'p' }] },
-    ]))).toThrow(/nullify|整值/)
   })
 
   it('★ 维度/grain 列不许按列掩码 ⇒ 抛（运行期会撞 must appear in GROUP BY；C-m3，#824）', () => {
