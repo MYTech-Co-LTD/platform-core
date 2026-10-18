@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.162.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.162.0...v0.162.1) - 2026-10-18
+- 【优化】data: authorize 的掩码词表改必填（原默认值 = 静默 fail-open） ([#885](https://github.com/MYTech-Co-LTD/platform-core/pull/885), [8da572c](https://github.com/MYTech-Co-LTD/platform-core/commit/8da572c684b757af19af9fd4ea1056e6106673be))
+
+
 ## [0.162.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.161.0...v0.162.0) - 2026-10-18
 - 【新增】data: 审计掩码三态（含混合形）+ 与回包同源派生（#823） ([#881](https://github.com/MYTech-Co-LTD/platform-core/pull/881), [fbb4cfe](https://github.com/MYTech-Co-LTD/platform-core/commit/fbb4cfe92928e82414c919c9fbfad79e5b7faae1))
 
