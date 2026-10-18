@@ -57,12 +57,19 @@ import {
 // 在 authz.ts（spec 2026-10-17 §5.1「能选不能扩」），这里与门禁、T2 的 mask.ts 共用一份——
 // 两处各列一份 kind，漂开的那份就是静默绕过口。authz.ts 是纯模块（不 import pool/env/Hono），
 // 拖进来不破坏本脚本的「只连库不连服务」边界。
-import { MASK_KINDS } from '../modules/data/domain/authz.ts'
+// 一并取默认档的豁免码 `DEFAULT_TIER_SCOPE`（spec §4.1.1 裁决 A）：**写侧与门禁读同一个值**，
+// 别在这里另写一份字面量——「改了一处、另一处静默漂开」正是本任务要堵的口子。
+import { MASK_KINDS, DEFAULT_TIER_SCOPE } from '../modules/data/domain/authz.ts'
 // 「这一列在不在 selectSql 里」的**唯一实现**（#830）：声明侧与运行期共用一份。本脚本曾自带
 // 一份 `as __alias__` 文本哨兵，与运行期各写一份 ⇒ 同一件事两个尺（PR #827 评审 M1 实测出两个
 // 反例：哨兵名撞车、大小写不匹配）。mask.ts 是纯模块（只 import type），拖进来不破坏本脚本
 // 「只连库不连服务」的边界。
 import { sqlMentionsColumn } from '../modules/data/domain/mask.ts'
+// 契约的 `sensitivity`（默认档的判据来源）：复用血缘门的读取器，别另起一套契约解析——字段口径
+// 只有一处（T1 的 `sensitivity` 曾被白名单式构造静默丢过一次，见该文件头注）。
+// **安全**：该文件的 CLI 守卫比对 `process.argv[1]` ⇒ 被 import 时不跑 main；
+// 且**无环**（门禁不 import 本脚本）。
+import { loadSensitivity } from './check-column-scope-monotonicity.mjs'
 
 // 类型引用走 JSDoc 的 `import(...)`（`.mjs` 里不能写 `import type` —— TS8006）。写成类型引用
 // 而不是值 import：只借它的**形状**，不在运行期多 import 一个模块。
@@ -308,8 +315,9 @@ export function maskItemError(item, metricName) {
 }
 
 /**
- * 声明的 `mask` → 掩码规格数组。**缺省 → `null`**（= 未声明；运行期由「源列 sensitivity」
- * 推默认档——那是 authorize() 的运行期职责，本物化层不推）；给了就逐项校验，坏形状**响亮失败**
+ * 声明的 `mask` → 掩码规格数组。**缺省 → `null`**（= 未声明）。**默认档在本层合成**
+ * （`applyDefaultMaskTier`，读契约的 `sensitivity`）⇒ 运行期只消费物化好的 `masks`，
+ * 不认识 `sensitivity`（运行期保持笨）；给了就逐项校验，坏形状**响亮失败**
  * （与 requiredScopeOf / slaDaysOf 同一脾气）。
  *
  * ⚠️ **`column` 必须逐字出现在该指标的 `selectSql` 里**——这条只在这里判、门禁判不了
@@ -633,6 +641,11 @@ export function declarationsFromYaml(parsed) {
       // 值级掩码声明（spec 2026-10-17 §5.2）：缺省 null（未声明）；给了就逐项校验
       // （含「column 须逐字在 selectSql 里」——静默不生效形态的唯一拦点，见 masksOf）。
       masks: masksOf(m.mask, name, selectSql, grain),
+      // `reads` 上载进行对象：默认档要读它（`applyDefaultMaskTier`）。
+      // ⚠️ 它**不在** `comparableOf` 的 12 元组里 ⇒ 加它**不会**让 `--check` 凭空报漂移；
+      //    但 `reads` 的改动**仍可被 `--check` 检出**——经由它对**合成 masks**（第 12 元）的影响。
+      // ⚠️ 也**不会**影响写库：`upsertL1Metric` 的列清单来自 `ROW_COLUMNS` 白名单，多出的键被忽略。
+      reads: Array.isArray(m.reads) ? m.reads.map(String) : null,
     }
   })
 }
@@ -827,6 +840,42 @@ export function exitCodeFor(mode, diff) {
 }
 
 /**
+ * 默认档（spec §4.1.1 裁决：**严档 `nullify`**）——「本指标一条列键声明都没命中，
+ * 且本指标的 `reads` 申报里含 `sensitivity !== 'none'` 的源列」⇒ 合成一条**整值**掩码。
+ *
+ * ★ 为什么是**整值**（`column: null`）而不是按列：`reads` 是**湖契约列全名**
+ *   （`lemeng.retail_order_line.sale_money`），`selectSql` 引用的是 **mart 列**
+ *   （`fct_retail_sale.net_amount`）——**不同命名空间、无机械映射**。仓规**明文禁止**
+ *   「按名字在 expression 里模糊匹配」的启发式（check-column-scope-monotonicity.mjs:27-28：
+ *   会造假阳性、让真违规淹没）。⇒ 只能整值。
+ *   ⚠️ 后果：整值是**指标级**的 ⇒ **不按列传播 ⇒ L2 不继承**（spec §7 R12）。
+ *
+ * ★ 为什么在这里（`readDeclarations`）而不是 `declarationsFromYaml`：
+ *   `declarationsFromYaml` 是**纯**函数、被约 20 处内联夹具测试调用；
+ *   `readDeclarations` 才持有 `rootDir`（要读 `contracts/**`）。默认档必须**只在真仓路径**生效，
+ *   否则那些夹具测试会全变。
+ *
+ * @param {any[]} rows
+ * @param {Map<string, string>} sensitivity
+ * @returns {any[]}
+ */
+export function applyDefaultMaskTier(rows, sensitivity) {
+  // 「列键声明」= 全仓所有 metric 行里 column 非 null 的声明（按列解析口径，spec §5.3.1 R10）
+  const declared = new Set()
+  for (const r of rows) for (const spec of r.masks ?? []) if (spec.column !== null) declared.add(spec.column)
+
+  return rows.map((r) => {
+    // 显式标类型：本仓 `scripts/` 是 checkJs（noImplicitAny）——`rows` 是 any[]，不标则回调参数
+    // `c` 落成隐式 any（tsc TS7006）。
+    const reads = /** @type {string[]} */ (r.reads ?? [])
+    if (!reads.some((c) => (sensitivity.get(c) ?? 'none') !== 'none')) return r   // 没读敏感列 ⇒ 不套
+    // ① 命中：本次 selectSql 里有任一被声明的列 ⇒ 默认档不叠加（spec §5.2 ① 优先于 ②）
+    if ([...declared].some((col) => sqlMentionsColumn(r.selectSql, col))) return r
+    return { ...r, masks: [...(r.masks ?? []), { column: null, kind: 'nullify', grantedBy: DEFAULT_TIER_SCOPE }] }
+  })
+}
+
+/**
  * 读仓内的 L1 声明（唯一事实源）。
  *
  * @param {string} rootDir 仓库根
@@ -835,7 +884,7 @@ export function exitCodeFor(mode, diff) {
 export function readDeclarations(rootDir) {
   const file = path.join(rootDir, L1_DECLARATIONS_REL)
   const parsed = parseYaml(readFileSync(file, 'utf8'))
-  return declarationsFromYaml(parsed)
+  return applyDefaultMaskTier(declarationsFromYaml(parsed), loadSensitivity(rootDir))
 }
 
 /** 拿一个 pg 客户端：scripts/ 不在 workspace 包里，pg 只装在依赖它的包下（与 reconcile-data-tenants 同法）。 */
