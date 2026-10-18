@@ -69,8 +69,8 @@ function RulesTab() {
   return (
     <>
       <Typography.Paragraph type="secondary">
-        规则 = 事件 × 挂载点 × 模板 × 收件人 × 通道。**常路径零配置默认就通**（声明派生，标「声明派生」）；
-        人工/AI 建的规则（标「人工」）覆盖派生规则。v1 无表单编辑器——新增/修改走 AI 创建。
+        规则 = 事件 × 挂载点 × 模板 × 收件人 × 通道。<Typography.Text strong>常路径零配置默认就通</Typography.Text>
+        （声明派生，标「声明派生」）；人工/AI 建的规则（标「人工」）覆盖派生规则。v1 无表单编辑器——新增/修改走 AI 创建。
       </Typography.Paragraph>
       <Table<RuleView>
         rowKey="id"
@@ -132,7 +132,7 @@ function DeliveriesTab() {
   return (
     <>
       <Typography.Paragraph type="secondary">
-        投递回执（审计面）：每条 = 一次「规则 × 收件人」的投递。`unique(event_id, rule_id)` 保证重复
+        投递回执（审计面）：每条 = 一次「规则 × 收件人」的投递。幂等键 unique(event_id, rule_id) 保证重复
         emit 不双发；失败记错误摘要（fail-open，不阻塞业务）。
       </Typography.Paragraph>
       <Space style={{ marginBottom: 8 }}>
