@@ -18,7 +18,7 @@
 |---|------|------|------|------|
 | D1 | ~~新模块 id 命名~~ **✅ 已定（2026-10-18 人拍板）：`notify`** | schema `notify`；API `/api/modules/notify/*`；表 `notify.rule` / `notify.delivery` | — | **已解除** |
 | D2 | **跨服务 emit 认证机制**（case-engine → platform-core 无平台会话；本仓现只有会话/PAT 两通道，**无服务令牌**） | **沿用 PAT（通道 B）**：case-engine 持一枚专用 PAT，`/emit` 声明独立 scope `notify:emit` | 新造服务令牌机制（宿主层，成本高、须新正典） | M3.4 / Task 10 |
-| D3 | **定时器载体**（`form.due_reminder` / `sla.breach_warning`） | **openship job**（审计口径；本仓无先例，Task 11 须实测沉淀） | duckle console `schedules/*.json`（本仓既有，但那是 duckle 管线专用，拉不动 platform 逻辑） | M3.5 / Task 11 |
+| D3 | ~~定时器载体~~ **✅ 已定（2026-10-18）：openship job + 仓内管理命令** | 本仓两处先例（审计清理 job、dbt runner 零常驻）+ 仓内原则「有副作用的运维动作不该藏在 HTTP 服务里」；决策见 `docs/superpowers/specs/2026-10-18-notify-emit-seam-and-scheduler.md` | — | **已解除** |
 
 > D1 已定 ⇒ **Task 1–9、12 全部解锁**。D2/D3 只卡 M3.4/M3.5（Task 10/11），到达时再定。
 
@@ -293,12 +293,18 @@ describe('validateRule', () => {
 
 ### Task 9：forms 侧 emit 接线（in-platform，填催）
 
-**Files:** Modify `modules/forms/*`（emit 调用点）、`modules/notify/*`（如需要 port）。
+> **⚠️ 前置未就绪（2026-10-18 复核）**：本 Task 原先假设「表单声明了催办策略」——**forms 里没有这个东西**
+> （6 张表全查过，`assign`/`due`/`remind` 零命中；正典也未定义「催办策略」）。
+> 设计稿见 `docs/superpowers/specs/2026-10-18-form-assignment-and-reminder-design.md`（PR #907）：
+> 名单 = 字典引用、截止 = 发布后 N 天；**v1 名单按「人」**（`submitted_by` 直接对账，零新机制）。
+> **该稿人审通过前不动本 Task 的码。**
 
-- [ ] **Step 1:** 定 emit 接缝形态（in-platform）：forms 声明派生 `form.due_reminder` 规则（Task 4 的 derive 落点）——表单声明了催办策略即派生。
-- [ ] **Step 2:** 接线（**形态待定，见 D2 的 in-platform 侧**：模块间不跨 import ⇒ 走 API 或宿主 port）。
-- [ ] **Step 3:** 测试：表单声明催办 → 派生规则可见（console 列表标「声明派生」）。
-- [ ] **Step 4:** Commit：`feat(forms): 填催声明派生接线（notify 绑定层）`。
+**Files:** Modify `modules/forms/*`（契约字段 + 发布路径派生）、`modules/notify/*`。
+
+- [ ] **Step 1:** 正典落档（§2.4 增补「指派与催办」）→ 人审 → 再写码。
+- [ ] **Step 2:** 契约加 `assignees` / `due` 两个可选键；发布（人 gate 后）解析名单 → 逐人 emit `form.assigned` + `POST /derive`（v1 名单 = Casdoor 用户名）。
+- [ ] **Step 3:** 测试：契约含名单的表单发布 → 每人生成一次 `form.assigned`；派生规则在 console 标「声明派生」；**不含名单的存量表单行为不变**（负对照）。
+- [ ] **Step 4:** Commit：`feat(forms): 指派与催办声明（notify 绑定层）`。
 
 ---
 
@@ -314,14 +320,20 @@ describe('validateRule', () => {
 
 ---
 
-### Task 11：定时器（`form.due_reminder` / `sla.breach_warning`，**待定 D3**）
+### Task 11：定时器（`form.due_reminder` / `sla.breach_warning`）
 
-**Files:** 视 D3 定（openship job 定义 / 调度脚本）。
+> **D3 已定（2026-10-18）**：**openship job + 仓内管理命令**——本仓两处先例（审计清理 job、
+> dbt runner 零常驻）+ 仓内原则「有副作用的运维动作不该藏在 HTTP 服务里」。
+> 决策与依据见 `docs/superpowers/specs/2026-10-18-notify-emit-seam-and-scheduler.md`。
+> **「甲」（in-platform）由此零新机制**：job 跑仓内脚本、脚本直连 DB（已核 `scripts/` 不在 B1 扫描根）。
 
-- [ ] **Step 1:** 定 D3（载体）。openship job 无本仓先例 ⇒ 须实测并沉淀。
-- [ ] **Step 2:** 实现定时触发 → 调 `pipeline.emit`（入口 B）。
-- [ ] **Step 3:** 负对照：定时重叠不双发（幂等）、停用规则后不通知。
-- [ ] **Step 4:** Commit。
+**Files:** `scripts/notify-reconcile.mjs`（新）+ openship job 定义（面板）。
+
+- [ ] **Step 1:** 写 `scripts/notify-reconcile.mjs`：查到期未提交 → 逐人 emit（`form.due_reminder`）；`event_id` 含日期 ⇒ 同日重跑不双发。
+- [ ] **Step 2:** openship 面板建 job（照 `deploy/openship-adopt.md` 的 prune job 范式：一次性容器、零常驻、订阅失败通知）。
+- [ ] **Step 3:** 负对照：同日重跑不双发；已提交的人不收；停用规则后不通知。
+- [ ] **Step 4:** **实测沉淀**：N=500 的调度耗时与 Novu 限速（设计稿 §5 的待实测项）。
+- [ ] **Step 5:** Commit + 交付记录。
 
 ---
 
