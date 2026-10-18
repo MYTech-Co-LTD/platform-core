@@ -82,6 +82,11 @@ vars:
   # s3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet
   # 出处：contracts/common/lemeng.transfer_out.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
   # 消费者 = `stg_lemeng_transfer_out`（唯一）；采集范围仅 3120 主账套（64188=外部批发客户，R2 拍板）。
+  # 乐檬**口径对账逐店事实**前缀（2026-10-18，消费面 spec §12.4）：
+  # s3://<bucket>/lemeng/recon_preagg/system_book=<账套>/bizday=<日期>/chunk=<块号>/all.parquet
+  # 出处：contracts/common/lemeng.recon_preagg.json 的 `layout.prefix` / `partitionBy`（hive 三级）。
+  # 消费者 = `stg_lemeng_recon_preagg`（唯一）。**chunk 是绕端点硬限的切块维度**（单次 ≤100 家）。
+  lemeng_recon_preagg_prefix: 'lemeng/recon_preagg'
   lemeng_transfer_out_prefix: 'lemeng/transfer_out'
   # 乐檬**批发销售单**前缀（#499/R3；行=批发单商品行；不含 bucket / 协议）：
   # s3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet
