@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.156.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.156.1...v0.156.2) - 2026-10-18
+- 【修复】data: forms 管线 sink 补 connectionRef:zos（新建 console 写湖必报 NoSuchBucket） ([#862](https://github.com/MYTech-Co-LTD/platform-core/pull/862), [5aa8c3b](https://github.com/MYTech-Co-LTD/platform-core/commit/5aa8c3b3f94ddb6f04269695c9adc576c3821e16))
+
+
 ## [0.156.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.156.0...v0.156.1) - 2026-10-18
 - 【修复】data: 切块只切了请求没切湖侧——diff 按本块门店集过滤 ([#860](https://github.com/MYTech-Co-LTD/platform-core/pull/860), [8ad3d8c](https://github.com/MYTech-Co-LTD/platform-core/commit/8ad3d8c44660b1458661964d7ea3b462167456c6))
 
