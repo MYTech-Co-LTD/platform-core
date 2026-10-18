@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.164.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.164.0...v0.164.1) - 2026-10-18
+- 【修复】data: recon 父管线补收尾汇总 + 新鲜度锚换成父写的字面路径资产（#891） ([#895](https://github.com/MYTech-Co-LTD/platform-core/pull/895), [a099767](https://github.com/MYTech-Co-LTD/platform-core/commit/a0997670a159ad7fc9d34a5a38b38dd5d20ed1d5))
+
+
 ## [0.164.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.163.0...v0.164.0) - 2026-10-18
 - 【新增】data: 战区维物化——dim_region 权威 + 门店维带战区标签（#883） ([#886](https://github.com/MYTech-Co-LTD/platform-core/pull/886), [c500768](https://github.com/MYTech-Co-LTD/platform-core/commit/c5007686430814ad8b5c366d5953c741b34fd2ff))
 
