@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.154.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.2...v0.154.3) - 2026-10-18
+- 【修复】data: 新鲜度 SLA 按实测发布时钟重新标定 ([#851](https://github.com/MYTech-Co-LTD/platform-core/pull/851), [5f83f82](https://github.com/MYTech-Co-LTD/platform-core/commit/5f83f82b78af5f56005c031c2195c1468c679400))
+
+
 ## [0.154.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.1...v0.154.2) - 2026-10-17
 - 【修复】data: 新鲜度水位先按关系取最新行再取木桶 ([#847](https://github.com/MYTech-Co-LTD/platform-core/pull/847), [a6fb584](https://github.com/MYTech-Co-LTD/platform-core/commit/a6fb584e336fd0ebf6aeeba7c599b5ff52e512c9))
 
