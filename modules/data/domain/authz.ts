@@ -50,6 +50,10 @@ export const DEFAULT_TIER_SCOPE = 'data:precise'
  * （如 `fct_contribution.n_net`）——契约列根本不出现在 selectSql 里，按列替换一个都命中不了
  * ⇒ 掩码静默不生效。整值不给是 fail-closed 的正确语义：读了敏感列又没声明精细策略 ⇒
  * 整个值都别给。整值掩码 kind 只许 `nullify`（对一个整值做 round 没有语义）。
+ *
+ * ⚠️ **手写**整值声明（`column: null`）已被声明门禁**一律拒**（`maskItemError`，
+ * scripts/sync-data-semantics.mjs；spec §5.3.1 R10 配套 2）——该形态**只由默认档合成**
+ * （sync 的 applyDefaultMaskTier，不经该函数）。运行期类型仍须允许 null，别据此放宽声明面。
  */
 export interface MaskSpec {
   /** 掩码目标的限定列引用（`关系.列`，须**逐字**出现在该指标 selectSql 里）；null = 整值掩码 */

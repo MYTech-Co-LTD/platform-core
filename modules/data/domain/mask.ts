@@ -1,6 +1,6 @@
 // mask.ts — 值级掩码的运行期展开（spec 2026-10-17 §5.3）：**纯函数**，不认识 pool / env / Hono。
 //
-// 授权时刻（authz.authorize）把声明面（MetricDef.masks）**定点展开**进 selectSql 的列引用上
+// 授权时刻（authz.authorize）把解析出的掩码集（`effectiveMasks(maskCatalog, metric)`）**定点展开**进 selectSql 的列引用上
 // ——掩码必须包在聚合**内部**（`sum(round(x, -n))`，不是 `round(sum(x), -n)`）：掩的是每一行
 // 参与聚合的值，不是聚合结果。展开只作用于本函数返回的 SQL 副本，**绝不回写库**
 // （Global Constraint 6：select_sql 是编译产物，掩码进它会被 L2 编译原样带出去）。
@@ -138,8 +138,7 @@ function keywordAt(sql: string, i: number, kw: string): boolean {
  * - `hasScope(spec.grantedBy)` 为真 ⇒ **看原值**（豁免方向与 requiredScope 相反）：该条不掩，
  *   但**在场时记进 `exempted`**（「这个人这次看的是原值」也是审计要能回答的问题，spec §4.4.1）。
  * - 按列掩码：限定列引用以 `\b` 词边界在 selectSql 里逐字查找（`cost` 不得命中 `cost_money`
- *   ——子串误伤 = 把没声明的列也掩了）；**不在** selectSql 里 ⇒ 不改、不记（L2 编译已把
- *   契约列展开成 marts 列的情形，声明侧拦不到、运行期静默跳过）。
+ *   ——子串误伤 = 把没声明的列也掩了）；**不在** selectSql 里 ⇒ 不改、不记。
  * - 整值掩码：`… as value` 的表达式整个替换（spec §4.1.1 默认档——契约列根本不出现在
  *   selectSql 里，按列替换一个都命中不了）。
  *
