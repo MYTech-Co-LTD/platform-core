@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.170.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.170.0...v0.170.1) - 2026-10-18
+- 【修复】data: 净销售额退货侧补套赠品判别式——0 元单整退被反向加回（#908） ([#909](https://github.com/MYTech-Co-LTD/platform-core/pull/909), [75ac4f5](https://github.com/MYTech-Co-LTD/platform-core/commit/75ac4f510f8d2caa612418cbe1d99b41636d85b0))
+
+
 ## [0.170.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.169.0...v0.170.0) - 2026-10-18
 - 【新增】data: 口径对账台账接告警面——探活断言 ⑪⑫⑬（advisory，照 ⑩ 同款形态）（#892） ([#905](https://github.com/MYTech-Co-LTD/platform-core/pull/905), [82966c8](https://github.com/MYTech-Co-LTD/platform-core/commit/82966c88bd22ff9a782dba756fc82dac6c316743))
 
