@@ -37,6 +37,17 @@ export interface CasdoorClientOptions {
   /** /api/login 的 application 形参：org 用户密码验证必须用其 signupApplication，
    *  否则真实 Casdoor 报 Unauthorized operation（fork 陷阱）——留配置口防真实接入即败 */
   application?: string
+  /**
+   * **admin 会话登录**（`#sessionCookie`）用的 application，缺省 `app-built-in`。
+   *
+   * 为什么要与 `application` 解耦（2026-10-18，issue #911）：共享 Casdoor 升级后开始
+   * **严格执行** application 级登录方式校验——业务 app（如 `shanhaiyiguo-app`）只配了
+   * 企微扫码、密码登录本来就关，而 admin 会话此前与用户密码验证**共用** `application`
+   * ⇒ admin 登录被业务 app 的登录方式配置连坐 ⇒ 两实例启动即 crash loop。
+   * admin 机器账号的登录不该依赖业务 app 的 signinMethods，故单列。
+   * 私有交付若内置应用被禁，用 `CASDOOR_ADMIN_APPLICATION` 显式指定一个密码登录开启的 app。
+   */
+  adminApplication?: string
   adminUser?: string
   adminPwd?: string
   fetchImpl?: typeof globalThis.fetch
@@ -97,7 +108,7 @@ export class CasdoorClient {
 
   /** 验用户名/密码：成功返回 {name}，密码不对返回 null（200+error 是预期分支，不抛错） */
   async verifyPassword(username: string, password: string): Promise<{ name: string } | null> {
-    const { r, j } = await this.#login(username, password)
+    const { r, j } = await this.#login(username, password, this.#o.application)
     if (!r.ok) throw new Error(`casdoor login failed: ${r.status}`) // 传输层故障 → 抛，不吞
     if (j.status !== 'ok') return null
     const data = String(j.data ?? '')
@@ -645,12 +656,12 @@ export class CasdoorClient {
 
   // ---- 内部：登录 / admin 会话 / 请求封装 ----
 
-  async #login(username: string, password: string): Promise<LoginResult> {
+  async #login(username: string, password: string, application?: string): Promise<LoginResult> {
     // 凭据只走 JSON body（sso-shell.js:129-133 生产形状）——query 通道会把密码泄进
-    // 服务端/代理 access log；application 默认 app-built-in，可按 fork 的 signupApplication 配置
+    // 服务端/代理 access log；application 缺省 app-built-in，可按 fork 的 signupApplication 配置
     const body = {
       type: 'login', username, password,
-      application: this.#o.application ?? 'app-built-in',
+      application: application ?? 'app-built-in',
     }
     const r = await this.#fetch(`${this.#o.origin}/api/login`, {
       method: 'POST',
@@ -704,7 +715,7 @@ export class CasdoorClient {
     if (!this.#o.adminUser || !this.#o.adminPwd) {
       throw new Error('CasdoorClient: adminUser/adminPwd not configured')
     }
-    const { r, j } = await this.#login(this.#o.adminUser, this.#o.adminPwd)
+    const { r, j } = await this.#login(this.#o.adminUser, this.#o.adminPwd, this.#o.adminApplication ?? 'app-built-in')
     // 红线（admin-auth.js 生产教训）：登录失败也 200 且照样发匿名 session cookie，
     // 必须校验 body status==ok 才缓存，否则坏 cookie 驻留内存，管理面全线假死
     const m = /casdoor_session_id=([^;]+)/.exec(r.headers.get('set-cookie') ?? '')

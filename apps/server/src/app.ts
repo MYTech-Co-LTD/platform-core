@@ -126,6 +126,7 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
         clientSecret: config.casdoor.clientSecret,
         org,
         application: config.casdoor.application,
+        adminApplication: config.casdoor.adminApplication,
         adminUser: config.casdoor.adminUser,
         adminPwd: config.casdoor.adminPwd,
       })

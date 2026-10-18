@@ -24,6 +24,12 @@ export interface CasdoorConfig {
   adminPwd: string
   /** /api/login 的 application 形参（org 用户密码验证需其 signupApplication），可空走 CasdoorClient 默认 */
   application?: string
+  /**
+   * **admin 会话登录**用的 application，可空走 CasdoorClient 缺省（`app-built-in`）。
+   * 与 `application` 解耦的理由见 CasdoorClientOptions.adminApplication（issue #911：
+   * 业务 app 只配企微扫码时，admin 登录被其登录方式配置连坐 ⇒ 启动即挂）。
+   */
+  adminApplication?: string
 }
 
 export interface AppConfig {
@@ -109,6 +115,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       adminUser: requireValue('CASDOOR_ADMIN_USER'),
       adminPwd: requireValue('CASDOOR_ADMIN_PWD'),
       application: optional('CASDOOR_APPLICATION'),
+      adminApplication: optional('CASDOOR_ADMIN_APPLICATION'),
     },
     publicOrigin: requireValue('PUBLIC_ORIGIN'),
     seedDemo: env.SEED_DEMO === '1',

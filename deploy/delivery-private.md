@@ -83,6 +83,7 @@ Casdoor 后台（platform 超管）建：owner=`admin`、organization=`<客户 o
 | `CASDOOR_APPLICATION` | **上面建的 `<客户slug>-app`（客户 org 自己的 application）** |
 | `CASDOOR_CLIENT_ID` / `CASDOOR_CLIENT_SECRET` | **同一个 application 的三件套之二**（application 页取，secret 走 isSecret） |
 | `CASDOOR_ADMIN_USER` / `CASDOOR_ADMIN_PWD` | Casdoor 管理员（admin API 会话登录用；pwd 走 isSecret） |
+| `CASDOOR_ADMIN_APPLICATION` | **可省**（缺省 `app-built-in`）：admin 会话登录专用的 application（#911）。业务 app 若只配企微扫码（密码登录关），admin 登录**不要**跟着走它——共享 Casdoor 新版严格校验 app 级登录方式，连坐即启动挂 |
 
 > ⚠️ **三键必须指向客户 org 自己的 application**（#117 山海实测）：沿用 `app-built-in` /
 > admin 侧应用 ⇒ 登录链路断（`/api/login` 的 application 形参对不上用户 signupApplication
