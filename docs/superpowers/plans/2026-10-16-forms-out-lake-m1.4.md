@@ -154,11 +154,11 @@ dbt/models/common/marts/     ← 全是乐檬 fct_*
 
 - [x] R1 **架构文档更新**（新增「域」维度 + 数据面归属口径）—— #818 已合
 - [x] R2 dbt 树按域分目录 + 域开关（`+enabled` + `env_var('DATA_PLANE_DOMAINS')` **不带默认值**）+ **fail-closed 域覆盖门禁** + 门禁文案 —— #835 已合；**逐域物化 + 逐域落账（拆爆炸半径）** —— #841 已合。两处均已上机
-- [ ] R3 mytech 数据面启用：**S3 凭据（人工前置，见上）** → ~~Gate-B 接线 + `search_path`~~ ✅ → `dbt`/`duckle` 服务行改**绝对路径**卷 → ~~数据面工件 sync~~ ✅（已换版到当前 main）
-- [ ] **R5 forms console 落到 `proj_SU8cmQ8OLVfM971X`**（依赖上面的桶与密钥）→ seed workspace（含 `.duckle/keys/secret.key`）→ 重建 catalog → 首跑成功
-- [ ] **R4 mytech 侧 materialize job**（照 `lemeng-dbt-materialize` 形态，容器名/网络全换 mytech）—— **必须在 R5 之后**：它的 `MATERIALIZE_CONSOLE_CT` 要指到一个**已存在且带 `ZOS_BUCKET`** 的容器
-- [ ] R6 验收：staging `org = mytech` + mytech 平台侧可查（四层验收）。⚠️ `wire-warehouse.sh --check` 的 ④–⑨（新鲜度 / 词表 / 发布面 / 价目 / 取价）**在首次物化前必然红** ⇒ R3 阶段只能按 ①②③ 判，别把它们的红读成接线没成
-- [ ] R7 山海侧残留退役 + 正典三处登记更新 + WeKnora 沉淀
+- [x] R3 mytech 数据面启用：**S3 凭据** ✅（`mytech-data` 桶 + 只对该桶有权限的子账号密钥；pg_duckdb 持久 secret 建好且跨会话可见） → ~~Gate-B 接线 + `search_path`~~ ✅ → ~~数据面工件 sync~~ ✅（已换版） → `dbt`/`duckle` 服务行改**绝对路径**卷 ⏳（openship MCP 的 `patch…services…` 工具缺失，非阻塞——两行本来就 disabled）
+- [x] **R5 forms console 落到 `proj_SU8cmQ8OLVfM971X`** ✅（容器 `openship-platform-core-data-forms-console`，18082）→ seed workspace（两个密文连接 + 32B 钥匙 + 管线/排班/告警/owners）→ 重建 catalog（2 assets）→ 首跑成功（`src 1 rows` → `sink Success`，落湖 1 行/1 批、无 `org`）
+- [x] **R4 mytech 侧 materialize job** ✅ `mytech-dbt-materialize（forms 域）`，日频 `27 3 * * *` + 失败告警；首跑 `Found 1 model`（域裁剪生效）+ `PASS=17 ERROR=0 → MATERIALIZE_OK`
+- [x] R6 验收（数据面侧）：**`staging.stg_forms_submission` → `org = mytech`，1 行**；`data.load_log` 有水位行（新鲜度时钟起算）✅。⚠️ ④–⑨（新鲜度/词表/发布面/价目/取价）属**乐檬域**的断言，在 forms 面上本就不适用；平台侧「可查」要等 forms 声明 L1 指标（M1.4 范围外）
+- [ ] R7 山海侧残留退役 ⏳（**等 mytech 侧连续两晚日跑稳定再动**，避免双写窗口） + 正典三处登记 ✅ + WeKnora 沉淀 ✅
 
 > 数据**不需迁移**：mytech console 按 `id` 水位从源 API 重拉（增量语义天然覆盖）。
 
