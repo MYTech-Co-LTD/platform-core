@@ -6,6 +6,8 @@ import AdminUsersPage from './pages/admin/Users'
 import AdminPermissionsPage from './pages/admin/Permissions'
 import AdminSubscriptionsPage from './pages/admin/Subscriptions'
 import AdminStoragePage from './pages/admin/Storage'
+import AdminKeysPage from './pages/admin/Keys'
+import MyKeysPage from './pages/me/Keys'
 
 /**
  * 路由表（Task 17 骨架 / Task 18 console 壳 / #36 SaaS 化 / #38 根路径修订 / #46 M3 管理组）：
@@ -29,6 +31,10 @@ export function createAppRouter() {
         { path: 'admin/permissions', element: <AdminGate><AdminPermissionsPage /></AdminGate> },
         { path: 'admin/subscriptions', element: <AdminGate><AdminSubscriptionsPage /></AdminGate> },
         { path: 'admin/storage', element: <AdminGate><StorageGate><AdminStoragePage /></StorageGate></AdminGate> },
+        { path: 'admin/keys', element: <AdminGate><AdminKeysPage /></AdminGate> },
+        // 个人 Key（issue #894）：**不套 AdminGate**——发 token 不提权（它只承载本账号自己的
+        // scopes），故任何已登录账号都该能管自己的。这是本壳**第一个免 scope 的自有页**。
+        { path: 'me/keys', element: <MyKeysPage /> },
         // 模块 admin 页（registry 聚合，路径 /console/admin/<module>/<page>）：#127 起先过
         // AdminGate 组门再进 ConsoleModulePage（config 门 + 页门），与平台内置四项同待遇
         { path: 'admin/*', element: <AdminGate><ConsoleModulePage /></AdminGate> },

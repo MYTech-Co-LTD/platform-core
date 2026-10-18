@@ -11,13 +11,11 @@ import { Layout, Menu } from 'antd'
 import { useLocation, useNavigate } from 'react-router-dom'
 import QueryPage from './query'
 import MetricsPage from './metrics'
-import KeysPage from './keys'
 import ReportsPage from './reports'
 
 const TABS = [
   { key: 'query', label: '问数' },
   { key: 'metrics', label: '指标' },
-  { key: 'keys', label: '我的 Key' },
   { key: 'reports', label: '报表' },
 ] as const
 
@@ -44,7 +42,7 @@ export default function DataConsolePage() {
   }, [last, pathname, navigate])
 
   const PAGES: Record<TabKey, () => React.JSX.Element> = {
-    query: QueryPage, metrics: MetricsPage, keys: KeysPage, reports: ReportsPage,
+    query: QueryPage, metrics: MetricsPage, reports: ReportsPage,
   }
   const Active = PAGES[active]
 

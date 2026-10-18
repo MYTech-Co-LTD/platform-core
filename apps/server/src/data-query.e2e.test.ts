@@ -153,11 +153,22 @@ async function aliceCookie(): Promise<string> {
   return aliceCookieCache
 }
 
-/** 通道 B 的凭证：走**模块的路由**建（于是它同时是宿主/模块端口装配的往返契约）。 */
+/** 通道 B 的凭证：走**宿主的** `/api/platform/keys` 建（issue #894 后 key 归宿主——
+ *  建与认两侧都在宿主，往返契约仍在，只是不再跨模块端口）。 */
 async function alicePat(): Promise<string> {
   if (alicePatCache) return alicePatCache
-  const res = await req('/api/modules/data/keys', 'acme.test', { cookie: await aliceCookie() }, { name: 'e2e' })
-  expect(res.status, 'POST /keys 应 201').toBe(201)
+  const cookie = await aliceCookie()
+  // CSRF 现取：会话重签会轮换，禁止缓存旧值（与前端 admin 写操作同一契约）
+  const s = await req('/api/platform/auth/session', 'acme.test', { cookie })
+  expect(s.status, '取会话自画像应 200').toBe(200)
+  const { csrfToken } = (await s.json()) as { csrfToken: string }
+  const res = await req(
+    '/api/platform/keys',
+    'acme.test',
+    { cookie, 'x-csrf-token': csrfToken },
+    { name: 'e2e' },
+  )
+  expect(res.status, 'POST /api/platform/keys 应 201').toBe(201)
   alicePatCache = ((await res.json()) as { token: string }).token
   return alicePatCache
 }
@@ -227,16 +238,17 @@ afterAll(async () => {
 })
 
 describePg('问数三通道 e2e：同一授权核心的主体一致性', () => {
-  it('用例 1｜PAT 往返契约：模块路由建的 key，宿主中间件（经模块端口）认下来', async () => {
+  it('用例 1｜PAT 往返契约：宿主端点建的 key，宿主中间件认下来', async () => {
     const pat = await alicePat()
     // 别断言 32/64 这类具体长度——编码方式一改就假红。锁的是「可辨识 token 的形状」。
     expect(pat).toMatch(/^[A-Za-z0-9_-]{20,}$/)
-    // 端到端：中间隔着 createPorts 声明 → runtime.port 取用 → resolvePat → 跨租户比对 →
-    // Casdoor 实时 scopes → identity 注入。漏声明 createPorts / 取错端口 / 返回形状漂移，
-    // 三种装配错误都只有这条抓得到（#34 订正后宿主侧无 SQL 无哈希，锁的是端口装配）。
+    // 端到端：建（/api/platform/keys，含 CSRF）→ 存（platform.api_key）→ 认（pat-auth 直查宿主表）
+    // → 跨租户比对 → Casdoor 实时 scopes → identity 注入。
+    // 上移后不再有「端口声明/取用」那类装配错，但**建与认的列语义/哈希一致性**仍只有这条抓得到
+    // （建侧写错列、哈希算法漂移，单侧测试都绿、合起来才 401）。
     const res = await req('/api/modules/data/query', 'acme.test',
       { authorization: `Bearer ${pat}` }, QUERY_BODY)
-    expect(res.status, '宿主中间件应认下模块建的 key 并放行问数').toBe(200)
+    expect(res.status, '宿主中间件应认下宿主建的 key 并放行问数').toBe(200)
     expect(((await res.json()) as QueryOkBody).subject).toBe(acmeOrg)
   })
 
