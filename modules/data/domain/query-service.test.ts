@@ -907,8 +907,23 @@ describe('runQuery —— 值级脱敏回包 masking（spec §5.3，P2 T2）', (
   // ★ 端到端：L2 指标 + L1 带掩码 ⇒ 回包 masking **非空**（#820 路线 C）。改按列解析之前，
   //   L2 行 masks 恒 null ⇒ 只读本行 ⇒ masking 恒空（fail-open 洞）；L2 的 selectSql 逐字保留
   //   L1 的列引用 ⇒ 全量 catalog 按列解析后自动命中。
-  it('★ L2 指标：列在 L1 行声明过掩码 ⇒ 回包 masking 非空、执行层 SQL 真被掩（#820）', async () => {
-    await seedMasked([{ column: 'qp3_mask_f.revenue', kind: 'round', step: 1000, grantedBy: 'data:precise' }])
+  //
+  // ★★ 掩码只声明在**被裁掉**的 L1 行上（review fix round）：`sourceSystem: 'not_adopted'` 不在
+  //    `depsOf()` 的 adoptedSources（`{'lemeng'}`）里 ⇒ visibleMetrics 把它从 `catalog` 裁掉，
+  //    它**只**存在于 `allMetrics`。这样本用例才**鉴别** `query-service.ts` 传的是全量——
+  //    若退回 `authorize(catalog, …)`（4 参），掩码集为空 ⇒ masking 键缺席 ⇒ 本用例必红。
+  //    （用 block 里的 `seedMasked`（sourceSystem 'lemeng'、可见）会因「裁剪后也在 catalog 里」
+  //     而对这条接线**变异不可见**——正是「断言没走到它声称的那一行」那条教训。）
+  it('★ L2 指标：掩码只在**被裁掉**的 L1 行上 ⇒ 回包 masking 仍非空（证明传的是全量 catalog，#820）', async () => {
+    // L1 行：源不在 adoptedSources ⇒ 被 visibleMetrics 裁掉，只留 allMetrics。
+    // ⚠️ 不复用 seedMasked（它的 'lemeng' 是可见的，其余用例需要它可见）。
+    const TRIMMED_L1 = `${MASK_PREFIX}l1_trimmed`
+    await upsertL1Metric(pool, {
+      ...METRIC, id: TRIMMED_L1, groupBy: 'bizday',
+      selectSql: 'SELECT sum(qp3_mask_f.revenue) AS value, bizday FROM qp3_mask_f',
+      sourceSystem: 'not_adopted', totalable: true, slaDays: 1, freshnessRelations: [],
+      masks: [{ column: 'qp3_mask_f.revenue', kind: 'round', step: 1000, grantedBy: 'data:precise' }],
+    })
     // L2 行（本 org）：masks 恒 null；selectSql 逐字复用 L1 的列引用（L2 编译原样保留，实测）
     const L2_ID = `${MASK_PREFIX}l2`
     await upsertMetric(pool, ORG, {
@@ -919,6 +934,7 @@ describe('runQuery —— 值级脱敏回包 masking（spec §5.3，P2 T2）', (
     const out = await runQuery(depsOf(), ORG, req(), L2_ID, {})
     expect(out.status).toBe('ok')
     if (out.status !== 'ok') return
+    // 掩码来源行对调用方**不可见**，但掩码仍生效 —— fail-closed（掩码只减信息）
     expect(out.masking).toEqual({ 'qp3_mask_f.revenue': 'round:1000' })
     expect(lastSql, '按列解析 ⇒ L2 也拿到 L1 的掩码（掩在聚合内部）')
       .toContain('sum(round(qp3_mask_f.revenue, -1000))')
