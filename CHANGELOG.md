@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.159.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.158.0...v0.159.0) - 2026-10-18
+- 【新增】data: 值级脱敏 P2 Phase 0——共享 token 化 + 豁免码可查 + 默认档合成（#822 #821 #830） ([#854](https://github.com/MYTech-Co-LTD/platform-core/pull/854), [e964f9c](https://github.com/MYTech-Co-LTD/platform-core/commit/e964f9ce86b3de8c250ff071a2e5f223074769f2))
+
+
 ## [0.158.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.157.1...v0.158.0) - 2026-10-18
 - 【新增】data: 口径对账台账 recon_run / recon_break + 容差 seed（消费面 spec §12.4） ([#874](https://github.com/MYTech-Co-LTD/platform-core/pull/874), [2f3d52d](https://github.com/MYTech-Co-LTD/platform-core/commit/2f3d52d64af0911b598cd25084fb9e51c444166b))
 
