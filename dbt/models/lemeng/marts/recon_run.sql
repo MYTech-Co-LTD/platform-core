@@ -17,6 +17,8 @@
 --   要看 `break_count`（超容差笔数）与 `max_break`（最大单笔差）的**趋势**。
 --   2026-10-18 实测反例：64188 某日合计差 −48,650.80，但**每一笔有值门店的差都 ≤19.8**，
 --   缺口全在 23 家「源侧未返回」的店上。
+--   ⇒ 再加一条**先看 `source_cover_pct`**：<1 时「不平」的成因可能根本不在账上，
+--     而在源这一次少返回（同日原样重跑即全返，见下方该列的注释）。
 with b as (
     select * from {{ ref('recon_break') }}
 ),
@@ -59,6 +61,13 @@ select
     rows_platform,
     rows_missing_source,
     rows_missing_platform,
+    -- 【源返回率】= rows_source / rows_total：<1 就是「源侧有的店没回数」。
+    -- 为什么要单列出来（2026-10-18 实测教训）：那时 64188/10-15 源只返 51/74 家，
+    -- 台账记成 23 笔 `missing_side=source` 的 break（= `over_tol`）——**形状与「真不平」一模一样**，
+    -- 我据此写成「23 家结构性缺口」并推给客户；**同一条请求原样重跑即返 74 家全部**。
+    -- ⇒ 有了这一列，「源少返回」与「账不平」在看板上可分：`source_cover_pct < 1` 先怀疑源，
+    --   不要先怀疑账。它不是判据（不改变四态），只是把已算出的两个数摆出来。
+    round(rows_source * 1.0 / nullif(rows_total, 0), 4)          as source_cover_pct,
     nonzero_count,
     break_count,
     max_break,
