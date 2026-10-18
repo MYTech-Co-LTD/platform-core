@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.168.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.167.0...v0.168.0) - 2026-10-18
+- 【新增】data: 一级战区汇总——fct_contribution 加 region_l1/region_l1_bucket + region_l1_net 指标（#902） ([#903](https://github.com/MYTech-Co-LTD/platform-core/pull/903), [5bc9667](https://github.com/MYTech-Co-LTD/platform-core/commit/5bc96678567bd45ced2baecd305db49e354b2944))
+
+
 ## [0.167.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.166.0...v0.167.0) - 2026-10-18
 - 【新增】notify: 通知规则层——新模块 notify（两表 + 规则管道 + 声明派生 + AI 工具面 + console） ([#890](https://github.com/MYTech-Co-LTD/platform-core/pull/890), [a9cd217](https://github.com/MYTech-Co-LTD/platform-core/commit/a9cd217c319e3c62cf8d4be841daa89b1f8613b6))
 
