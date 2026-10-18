@@ -35,6 +35,7 @@
 | `modules/data/domain/mask.ts` | 共享 token 化（`topLevelValueHead` / `sqlMentionsColumn`）；`effectiveMasks`；`exempted` | T3 / T6 / T7 |
 | `modules/data/domain/authz.ts` | `DEFAULT_TIER_SCOPE`；`authorize` 第 5 参；`plan.exempted` | T3 / T6 / T7 |
 | `scripts/sync-data-semantics.mjs` | `masksOf`/`maskItemError` 改调共享 token 化；`reads` 上载；默认档合成 | T3 / T5 |
+| `dbt/semantics/l1_metrics.yml` | `mask` 字段参考头：`column: null` 陈旧指引改成指向默认档（Task 3 评审 Important 补入；**动它必重跑 data-plane lock**） | T3 |
 | `scripts/check-column-scope-monotonicity.mjs` | 门禁四项检查 + 读 `manifest.yaml` | T4 |
 | `scripts/check-data-models.mjs` | 订正 `:1005` 陈旧注释 | T4 |
 | `modules/data/domain/query-service.ts` | 传全量 catalog；审计/回包同源派生 | T6 / T7 |
@@ -195,6 +196,8 @@ git commit -m "feat(data): manifest 声明 data:precise（默认档豁免码，�
 - Modify: `modules/data/domain/authz.ts`（加 `DEFAULT_TIER_SCOPE`）
 - Modify: `scripts/sync-data-semantics.mjs`（`masksOf` / `maskItemError`）
 - Modify: `scripts/sync-data-semantics.test.ts`
+- Modify: `dbt/semantics/l1_metrics.yml`（`mask` 字段参考头清陈旧指引；**必重跑 data-plane lock**）— Task 3 评审 Important 发现补入
+- Modify: `scripts/check-data-models.{mjs,test.ts}` + `modules/data/module.test.ts`（实现中发现的必要连带，见任务日志）
 
 **Interfaces:**
 - Produces（`mask.ts`）：
@@ -396,6 +399,31 @@ NULL）」）、`:360` 与 `:375`（列不在 selectSql 里的错误信息里那
 ⚠️ `:296-298`（旧 `kind !== 'nullify'` 分支的报错串）随旧分支一起删，别单独留。
 **判据**：改完 `grep -n '整值' scripts/sync-data-semantics.mjs` 的输出里，**不该再有**任何一处
 建议读者去写 `column: null`。
+
+🔴 **清扫范围必须覆盖 `dbt/semantics/l1_metrics.yml` 的字段参考头**（Task 3 评审 Important 发现补入；
+本步原判据只写了 `scripts/` 一个文件，**漏了最权威的那处**）：
+
+```sh
+cd /Users/duo/orca/workspaces/platform-core/p2-leftovers && grep -n "column: null" dbt/semantics/l1_metrics.yml
+```
+
+`:41-42` 是 `mask` 字段的**字段参考正文**（指标作者照着写 YAML 的地方，比脚本里的报错串更权威）：
+「`column: null` = **整值掩码**（把 `… as value` 整个换成 typed NULL，fail-closed 默认档语义），
+此时 kind 只许 nullify」。本步一落地这句就是**照着做会报错**的错误指引。同处 `:45` 的
+「当前无指标声明」在本轮之后也不再是事实（默认档会合成声明），一并订正。
+
+改成指向默认档的说法（与上面四处同口径）：
+
+> 整值形态**只由默认档合成**（给源列打 `sensitivity`，物化层自动套整值 nullify，见 T5）；
+> YAML 里**写不出**整值形态（`maskItemError` 一律拒）。
+
+⚠️ 该文件在 `dbt/**` 内 ⇒ **同一提交里必须重跑 data-plane lock**（Global Constraint 9）：
+
+```sh
+cd /Users/duo/orca/workspaces/platform-core/p2-leftovers && pnpm exec tsx scripts/lemeng/data-plane-lock.mjs
+```
+
+（lock 连 `dbt/` 纯文档都计哈希 ⇒ 不重跑会让数据面清单校验红。）
 
 - [ ] **Step 7: `authz.ts` 加 `DEFAULT_TIER_SCOPE`**
 
