@@ -718,11 +718,21 @@ export class CasdoorClient {
     const { r, j } = await this.#login(this.#o.adminUser, this.#o.adminPwd, this.#o.adminApplication ?? 'app-built-in')
     // 红线（admin-auth.js 生产教训）：登录失败也 200 且照样发匿名 session cookie，
     // 必须校验 body status==ok 才缓存，否则坏 cookie 驻留内存，管理面全线假死
-    const m = /casdoor_session_id=([^;]+)/.exec(r.headers.get('set-cookie') ?? '')
-    if (!r.ok || !m || j.status !== 'ok') {
+    //
+    // ⚠️ 新版 Casdoor 一次登录会发 **两个** casdoor_session_id：第一个是**占位/匿名**会话，
+    //    第二个才是**已授权**会话（2026-10-18 真机抓包实证：只发第一个 ⇒ Unauthorized
+    //    operation；只发第二个 ⇒ ok）。浏览器语义 = 同名后者**覆盖**前者，故取**最后一个**，
+    //    与浏览器一致。旧版只发一个 ⇒ 取最后一个与旧行为兼容。
+    const setCookies = (r.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.()
+      ?? [r.headers.get('set-cookie') ?? '']
+    const ids = setCookies
+      .map((sc) => /casdoor_session_id=([^;]+)/.exec(sc)?.[1])
+      .filter((v): v is string => Boolean(v))
+    const session = ids[ids.length - 1]
+    if (!r.ok || !session || j.status !== 'ok') {
       throw new Error(`casdoor admin login failed: ${j.msg || 'no session cookie'}`)
     }
-    this.#adminCookie = `casdoor_session_id=${m[1]}`
+    this.#adminCookie = `casdoor_session_id=${session}`
     return this.#adminCookie
   }
 
