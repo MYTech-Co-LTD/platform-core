@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.156.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.155.0...v0.156.0) - 2026-10-18
+- 【新增】data: 问数回包回品牌名与门店名——名称在维度层解析 ([#858](https://github.com/MYTech-Co-LTD/platform-core/pull/858), [e2362af](https://github.com/MYTech-Co-LTD/platform-core/commit/e2362af0061edf1ef72c58e40dcbe72b33517936))
+- 【修复】data: 口径对账退役业务判据闸——采集不该因「数不一样」而死 ([#855](https://github.com/MYTech-Co-LTD/platform-core/pull/855), [3c87fd0](https://github.com/MYTech-Co-LTD/platform-core/commit/3c87fd0d68664296931f55d0ad0e6de3fca04165))
+
+
 ## [0.155.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.3...v0.155.0) - 2026-10-18
 - 【新增】data: 口径对账落湖——父管线切块 + 子管线写 chunk 分区事实 ([#852](https://github.com/MYTech-Co-LTD/platform-core/pull/852), [25afc90](https://github.com/MYTech-Co-LTD/platform-core/commit/25afc90acf649ac67fabde2f9ac533abf7d6fd84))
 
