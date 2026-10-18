@@ -1,0 +1,98 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "recon_preagg",
+  "owner": "data-platform",
+  "description": "乐檬**口径对账逐店事实**（湖侧自算 vs 乐檬报表引擎 `nhsoft.report.ai.itemsales.find`；消费面 spec §12.4 缺口①）。【行粒度】一行 = 账套×对账业务日×**块**×门店。【为什么要 chunk】端点 `branch_nums` **单次 ≤100 家**，超出 `code=10001` fail-loud（2026-10-18 实测 101 家即拒）；父管线原先一次性传全部门店，64188（129 家）/3120（271 家）**都 >100 ⇒ 必炸** ⇒ 父管线按 ≤100 家切块，每块一个子管线 run、写自己那一片。【只有事实】本表只放**两侧金额**（销售侧/净额侧 各「平台自算 / 源报表」）；**容差、判定、原因、到期一律不进湖**——容差与原因是**判定配置**（`dbt/seeds/recon_reason_codes.csv`），四态与 break/max_break 是**派生物**（dbt `recon_run` / `recon_break`）。落湖会把配置冻进事实，改一次要重采一遍。【两侧口径】销售侧 = 湖侧 `sale_side`（换货三半边公式）vs 源 `sale_money`；净额侧 = 销售侧 − 退货侧 vs 源 `sale_money − return_money`。【窗口】T-3 定稿线（上海日 −3），过线源侧不再变。【已知缺口】退货晚到见 issue #814（源侧会重述），dbt 层用 `within_tol` + `reason_code`/`expires_on` 记账，不在采集侧放宽。",
+  "layout": {
+    "prefix": "lemeng/recon_preagg",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "system_book",
+      "bizday",
+      "chunk"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 父管线按 (T-3 日, 块号) 生成的 run 标识 `recon-<yyyymmdd>-c<n>`。同 (日, 块) 重跑覆盖同 key；chunk_no 同时进分区路径，块之间互不覆盖。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "批次标记 = `recon-<yyyymmdd>-c<块号>`（父管线生成，经 ITER 透传）",
+      "expr": "'${ITER_ITEM_BATCH_ID}'"
+    },
+    {
+      "name": "system_book",
+      "type": "varchar",
+      "nullable": false,
+      "description": "账套；分区键，父管线常量注入（子管线读不到 ENV）",
+      "expr": "'${ITER_ITEM_SYSTEM_BOOK}'"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "被对账的业务日（= T-3 定稿日）；分区键",
+      "expr": "CAST('${ITER_ITEM_BIZDAY}' AS DATE)"
+    },
+    {
+      "name": "chunk_no",
+      "type": "integer",
+      "nullable": false,
+      "description": "块号（1 起）；分区键。每块 ≤100 家门店（端点硬限）",
+      "expr": "CAST(${ITER_ITEM_CHUNK_NO} AS INTEGER)"
+    },
+    {
+      "name": "branch_num",
+      "type": "bigint",
+      "nullable": false,
+      "description": "门店号（可 1:1 匹配的最细粒度）",
+      "expr": "CAST(branch_num AS BIGINT)"
+    },
+    {
+      "name": "platform_sale",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "**销售侧**：平台自算（换货三半边公式）。该门店当日无销售侧行为空",
+      "expr": "CAST(platform_sale AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "source_sale",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "**销售侧**：乐檬报表 `sale_money`。源未返回该门店则空",
+      "expr": "CAST(source_sale AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "platform_net",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "**净额侧**：平台自算 = 销售侧 − 退货侧（#813 起冲退货）",
+      "expr": "CAST(platform_net AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "source_net",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "**净额侧**：乐檬报表 `sale_money − return_money`",
+      "expr": "CAST(source_net AS DECIMAL(20, 2))"
+    },
+    {
+      "name": "computed_at",
+      "type": "timestamptz",
+      "nullable": false,
+      "description": "本块计算时刻（UTC 存储）",
+      "expr": "CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ)"
+    }
+  ]
+}

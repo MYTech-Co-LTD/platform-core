@@ -33,7 +33,11 @@
     "  两闸恒静默、report 照写 = 「只报数不判红」（脚本 PREAGG_UNSETTLED 同义）。",
     "【产物】/workspace/reports/recon-preagg/recon-<book>-<bizday>.csv（逐店明细，单对象覆盖=幂等）；",
     "  owners.lemeng.json 以 *.csv maximumAge 36h 作「没有失败的停更」锚（close.l1 同公式：24h+12h）。",
-    "源有而湖无的门店（当日无销售）按脚本同款**只在明细里可见、不判红**。"
+    "源有而湖无的门店（当日无销售）按脚本同款**只在明细里可见、不判红**。",
+    "",
+    "【2026-10-18 落湖】新增 sinkprep + lakeout（snk.minio）：逐店两侧事实落 lemeng/recon_preagg/system_book=/bizday=/chunk=/all.parquet。",
+    "  只落**事实**（两侧 4 个金额）；容差/判定/原因**不进湖**（配置归 seed、判定归 dbt）。",
+    "  父管线已切块（≤100 家/块）⇒ 子管线每块一跑；chunk_no 经 ${ITER_ITEM_CHUNK_NO} 进来。"
   ],
   "name": "lemeng.recon.preagg.item",
   "version": 1,
@@ -42,7 +46,10 @@
     {
       "id": "lake",
       "type": "source",
-      "position": { "x": 0, "y": 0 },
+      "position": {
+        "x": 0,
+        "y": 0
+      },
       "data": {
         "label": "lake T-3 单日零售明细（精确分区）",
         "componentId": "src.minio",
@@ -58,7 +65,10 @@
     {
       "id": "lmat",
       "type": "transform",
-      "position": { "x": 130, "y": 0 },
+      "position": {
+        "x": 130,
+        "y": 0
+      },
       "data": {
         "label": "lmat 物化湖行（控制节点上下文丢 S3 连接配置，先落 TABLE）",
         "componentId": "code.sql",
@@ -71,7 +81,10 @@
     {
       "id": "lguard",
       "type": "transform",
-      "position": { "x": 260, "y": 0 },
+      "position": {
+        "x": 260,
+        "y": 0
+      },
       "data": {
         "label": "lguard 湖空即死（exit3 语义）",
         "componentId": "ctl.die",
@@ -84,20 +97,26 @@
     {
       "id": "lagg",
       "type": "transform",
-      "position": { "x": 520, "y": 0 },
+      "position": {
+        "x": 520,
+        "y": 0
+      },
       "data": {
         "label": "lagg 湖侧净化净额（逐订单归并，口径=recon-preagg.sh）",
         "componentId": "code.sql",
         "properties": {
           "rawSql": true,
-          "sql": "WITH per_order AS (\n  SELECT CAST(branch_num AS INTEGER) AS b,\n         CAST(order_no AS VARCHAR) AS o,\n         sum(CASE WHEN CAST(order_detail_std_price AS DOUBLE) > 0\n                    AND CAST(sale_money AS DOUBLE) > 0\n                    AND CAST(quantity AS DOUBLE) > 0\n                    AND abs(CAST(discount_money AS DOUBLE)\n                            - CAST(order_detail_std_price AS DOUBLE) * CAST(quantity AS DOUBLE)) <= 0.02\n                  THEN 0 ELSE CAST(sale_money AS DOUBLE) END) AS ng,\n         max(CAST(order_total_money AS DOUBLE)) AS tot,\n         sum(CAST(order_detail_share_discount AS DOUBLE)) AS sd\n  FROM \"lguard\"\n  WHERE CAST(state AS VARCHAR) = 'FINISHED'\n    AND CAST(order_transaction_type AS VARCHAR) = 'SALE_ORDER'\n  GROUP BY 1, 2),\nsale_side AS (\n  SELECT b, round(sum((ng + tot) / 2 - sd), 2) AS sale_net FROM per_order GROUP BY b),\nret_side AS (\n  SELECT CAST(branch_num AS INTEGER) AS b,\n         round(sum(CAST(sale_money AS DOUBLE) + CAST(order_detail_share_discount AS DOUBLE)), 2) AS ret\n  FROM \"lguard\"\n  WHERE CAST(order_transaction_type AS VARCHAR) like '%RETURN%'\n    AND CAST(state AS VARCHAR) = 'FINISHED'\n  GROUP BY 1)\nSELECT coalesce(s.b, t.b) AS branch_num,\n       coalesce(s.sale_net, 0) - coalesce(t.ret, 0) AS net,\n       'lake' AS side\nFROM sale_side s FULL JOIN ret_side t ON s.b = t.b ORDER BY 1"
+          "sql": "WITH per_order AS (\n  SELECT CAST(branch_num AS INTEGER) AS b,\n         CAST(order_no AS VARCHAR) AS o,\n         sum(CASE WHEN CAST(order_detail_std_price AS DOUBLE) > 0\n                    AND CAST(sale_money AS DOUBLE) > 0\n                    AND CAST(quantity AS DOUBLE) > 0\n                    AND abs(CAST(discount_money AS DOUBLE)\n                            - CAST(order_detail_std_price AS DOUBLE) * CAST(quantity AS DOUBLE)) <= 0.02\n                  THEN 0 ELSE CAST(sale_money AS DOUBLE) END) AS ng,\n         max(CAST(order_total_money AS DOUBLE)) AS tot,\n         sum(CAST(order_detail_share_discount AS DOUBLE)) AS sd\n  FROM \"lguard\"\n  WHERE CAST(state AS VARCHAR) = 'FINISHED'\n    AND CAST(order_transaction_type AS VARCHAR) = 'SALE_ORDER'\n  GROUP BY 1, 2),\nsale_side AS (\n  SELECT b, round(sum((ng + tot) / 2 - sd), 2) AS sale_net FROM per_order GROUP BY b),\nret_side AS (\n  SELECT CAST(branch_num AS INTEGER) AS b,\n         round(sum(CAST(sale_money AS DOUBLE) + CAST(order_detail_share_discount AS DOUBLE)), 2) AS ret\n  FROM \"lguard\"\n  WHERE CAST(order_transaction_type AS VARCHAR) like '%RETURN%'\n    AND CAST(state AS VARCHAR) = 'FINISHED'\n  GROUP BY 1)\nSELECT coalesce(s.b, t.b) AS branch_num,\n       coalesce(s.sale_net, 0) AS sale,\n       coalesce(s.sale_net, 0) - coalesce(t.ret, 0) AS net,\n       'lake' AS side\nFROM sale_side s FULL JOIN ret_side t ON s.b = t.b ORDER BY 1"
         }
       }
     },
     {
       "id": "pre",
       "type": "source",
-      "position": { "x": 0, "y": 260 },
+      "position": {
+        "x": 0,
+        "y": 260
+      },
       "data": {
         "label": "pre 预聚合端点（branch 汇总）+ 原始报文落盘",
         "componentId": "src.rest",
@@ -105,7 +124,9 @@
           "connectionRef": "lemeng",
           "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.itemsales.find",
           "method": "POST",
-          "headers": { "Content-Type": "application/json" },
+          "headers": {
+            "Content-Type": "application/json"
+          },
           "body": "{\"bizday_start\":\"${ITER_ITEM_BIZDAY}\",\"bizday_end\":\"${ITER_ITEM_BIZDAY}\",\"summary_types\":[\"branch\"],\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS_JSON}}",
           "responsePath": "/result/rows",
           "paginationType": "none",
@@ -118,19 +139,25 @@
     {
       "id": "pnormal",
       "type": "transform",
-      "position": { "x": 260, "y": 260 },
+      "position": {
+        "x": 260,
+        "y": 260
+      },
       "data": {
         "label": "pnormal 源侧行定型（对齐湖侧形状）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(COALESCE(sale_money, 0) AS DOUBLE) - CAST(COALESCE(return_money, 0) AS DOUBLE) AS net,\n       'pre' AS side\nFROM input"
+          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(COALESCE(sale_money, 0) AS DOUBLE) AS sale,\n       CAST(COALESCE(sale_money, 0) AS DOUBLE) - CAST(COALESCE(return_money, 0) AS DOUBLE) AS net,\n       'pre' AS side\nFROM input"
         }
       }
     },
     {
       "id": "envelope",
       "type": "transform",
-      "position": { "x": 260, "y": 420 },
+      "position": {
+        "x": 260,
+        "y": 420
+      },
       "data": {
         "label": "envelope 从原始报文抠网关 code（≠0 的行）",
         "componentId": "code.sql",
@@ -143,7 +170,10 @@
     {
       "id": "gcode",
       "type": "transform",
-      "position": { "x": 520, "y": 420 },
+      "position": {
+        "x": 520,
+        "y": 420
+      },
       "data": {
         "label": "gcode 依赖闸：code≠0 即死（exit3 语义）",
         "componentId": "ctl.die",
@@ -156,7 +186,10 @@
     {
       "id": "merge",
       "type": "transform",
-      "position": { "x": 780, "y": 120 },
+      "position": {
+        "x": 780,
+        "y": 120
+      },
       "data": {
         "label": "merge 两侧并流（UNION ALL）",
         "componentId": "ctl.merge",
@@ -166,31 +199,40 @@
     {
       "id": "diff",
       "type": "transform",
-      "position": { "x": 1040, "y": 120 },
+      "position": {
+        "x": 1040,
+        "y": 120
+      },
       "data": {
-        "label": "diff 逐店透视（任一侧缺=NULL）",
+        "label": "diff 逐店透视（两侧销售/净额；任一侧缺=NULL）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       max(CASE WHEN side = 'lake' THEN net END) AS net_lake,\n       max(CASE WHEN side = 'pre' THEN net END) AS net_pre,\n       round(max(CASE WHEN side = 'pre' THEN net END)\n           - max(CASE WHEN side = 'lake' THEN net END), 2) AS diff\nFROM input GROUP BY 1 ORDER BY 1"
+          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       max(CASE WHEN side = 'lake' THEN sale END) AS platform_sale,\n       max(CASE WHEN side = 'pre'  THEN sale END) AS source_sale,\n       max(CASE WHEN side = 'lake' THEN net  END) AS platform_net,\n       max(CASE WHEN side = 'pre'  THEN net  END) AS source_net,\n       round(max(CASE WHEN side = 'pre' THEN net END)\n           - max(CASE WHEN side = 'lake' THEN net END), 2) AS diff\nFROM input GROUP BY 1 ORDER BY 1"
         }
       }
     },
     {
       "id": "vbranch",
       "type": "transform",
-      "position": { "x": 1300, "y": 0 },
+      "position": {
+        "x": 1300,
+        "y": 0
+      },
       "data": {
         "label": "vbranch 门店缺失违规行（未定稿恒空）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT branch_num, net_lake FROM input\nWHERE net_pre IS NULL AND ${ITER_ITEM_SETTLED} = 1"
+          "sql": "SELECT branch_num, platform_net FROM input\nWHERE source_net IS NULL AND ${ITER_ITEM_SETTLED} = 1"
         }
       }
     },
     {
       "id": "gbranch",
       "type": "transform",
-      "position": { "x": 1560, "y": 0 },
+      "position": {
+        "x": 1560,
+        "y": 0
+      },
       "data": {
         "label": "gbranch 判据闸：湖有源无即死（exit1 语义）",
         "componentId": "ctl.die",
@@ -203,20 +245,26 @@
     {
       "id": "vthresh",
       "type": "transform",
-      "position": { "x": 1300, "y": 220 },
+      "position": {
+        "x": 1300,
+        "y": 220
+      },
       "data": {
         "label": "vthresh 容差违规（单行，未定稿恒空）",
         "componentId": "code.sql",
         "properties": {
           "rawSql": true,
-          "sql": "WITH t AS (SELECT round(sum(net_lake), 2) AS lt, round(sum(net_pre), 2) AS pt FROM \"diff\"),\nv AS (SELECT lt, pt, round(pt - lt, 2) AS diff,\n      CASE WHEN pt > 0 THEN round((pt - lt) / pt * 100, 4) ELSE 0.0 END AS pct,\n      round(greatest(200.00, abs(COALESCE(pt, 0)) * 0.0001), 2) AS tol\n      FROM t)\nSELECT lt, pt, diff, pct, tol FROM v\nWHERE ${ITER_ITEM_SETTLED} = 1 AND abs(COALESCE(diff, 0)) > tol"
+          "sql": "WITH t AS (SELECT round(sum(platform_net), 2) AS lt, round(sum(source_net), 2) AS pt FROM \"diff\"),\nv AS (SELECT lt, pt, round(pt - lt, 2) AS diff,\n      CASE WHEN pt > 0 THEN round((pt - lt) / pt * 100, 4) ELSE 0.0 END AS pct,\n      round(greatest(200.00, abs(COALESCE(pt, 0)) * 0.0001), 2) AS tol\n      FROM t)\nSELECT lt, pt, diff, pct, tol FROM v\nWHERE ${ITER_ITEM_SETTLED} = 1 AND abs(COALESCE(diff, 0)) > tol"
         }
       }
     },
     {
       "id": "gthresh",
       "type": "transform",
-      "position": { "x": 1560, "y": 220 },
+      "position": {
+        "x": 1560,
+        "y": 220
+      },
       "data": {
         "label": "gthresh 判据闸：差超容差即死（exit1 语义）",
         "componentId": "ctl.die",
@@ -229,7 +277,10 @@
     {
       "id": "report",
       "type": "sink",
-      "position": { "x": 1300, "y": 400 },
+      "position": {
+        "x": 1300,
+        "y": 400
+      },
       "data": {
         "label": "report 逐店明细落盘（覆盖写=幂等）",
         "componentId": "snk.csv",
@@ -238,22 +289,207 @@
           "mode": "overwrite"
         }
       }
+    },
+    {
+      "id": "sinkprep",
+      "type": "transform",
+      "position": {
+        "x": 1400,
+        "y": 260
+      },
+      "data": {
+        "label": "sinkprep 落湖行定型（补 batch_id/分区列/时点）",
+        "componentId": "code.sql",
+        "properties": {
+          "rawSql": true,
+          "sql": "SELECT\n  '${ITER_ITEM_BATCH_ID}' AS batch_id,\n  '${ITER_ITEM_SYSTEM_BOOK}' AS system_book,\n  CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday,\n  CAST(${ITER_ITEM_CHUNK_NO} AS INTEGER) AS chunk_no,\n  CAST(branch_num AS BIGINT) AS branch_num,\n  CAST(platform_sale AS DECIMAL(20, 2)) AS platform_sale,\n  CAST(source_sale AS DECIMAL(20, 2)) AS source_sale,\n  CAST(platform_net AS DECIMAL(20, 2)) AS platform_net,\n  CAST(source_net AS DECIMAL(20, 2)) AS source_net,\n  CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at\nFROM \"diff\""
+        }
+      }
+    },
+    {
+      "id": "lakeout",
+      "type": "sink",
+      "position": {
+        "x": 1640,
+        "y": 260
+      },
+      "data": {
+        "label": "lakeout 逐店比对事实落湖（chunk 分区）",
+        "componentId": "snk.minio",
+        "properties": {
+          "bucket": "${ITER_ITEM_BUCKET}",
+          "key": "lemeng/recon_preagg/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/chunk=${ITER_ITEM_CHUNK_NO}/all.parquet",
+          "region": "${ITER_ITEM_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd",
+          "connectionRef": "zos"
+        }
+      }
     }
   ],
   "edges": [
-    { "id": "e_lake_lmat", "source": "lake", "target": "lmat", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_lmat_lguard", "source": "lmat", "target": "lguard", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_lguard_lagg", "source": "lguard", "target": "lagg", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_lagg_merge", "source": "lagg", "target": "merge", "sourceHandle": "main", "targetHandle": "main_1", "data": { "connectionType": "main" } },
-    { "id": "e_pre_pnormal", "source": "pre", "target": "pnormal", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_pnormal_merge", "source": "pnormal", "target": "merge", "sourceHandle": "main", "targetHandle": "main_2", "data": { "connectionType": "main" } },
-    { "id": "e_pre_envelope", "source": "pre", "target": "envelope", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_envelope_gcode", "source": "envelope", "target": "gcode", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_merge_diff", "source": "merge", "target": "diff", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_diff_report", "source": "diff", "target": "report", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_diff_vbranch", "source": "diff", "target": "vbranch", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_vbranch_gbranch", "source": "vbranch", "target": "gbranch", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_diff_vthresh", "source": "diff", "target": "vthresh", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_vthresh_gthresh", "source": "vthresh", "target": "gthresh", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } }
+    {
+      "id": "e_lake_lmat",
+      "source": "lake",
+      "target": "lmat",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_lmat_lguard",
+      "source": "lmat",
+      "target": "lguard",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_lguard_lagg",
+      "source": "lguard",
+      "target": "lagg",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_lagg_merge",
+      "source": "lagg",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_pre_pnormal",
+      "source": "pre",
+      "target": "pnormal",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_pnormal_merge",
+      "source": "pnormal",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_2",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_pre_envelope",
+      "source": "pre",
+      "target": "envelope",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_envelope_gcode",
+      "source": "envelope",
+      "target": "gcode",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_merge_diff",
+      "source": "merge",
+      "target": "diff",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_diff_report",
+      "source": "diff",
+      "target": "report",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_diff_vbranch",
+      "source": "diff",
+      "target": "vbranch",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_vbranch_gbranch",
+      "source": "vbranch",
+      "target": "gbranch",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_diff_vthresh",
+      "source": "diff",
+      "target": "vthresh",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_vthresh_gthresh",
+      "source": "vthresh",
+      "target": "gthresh",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_diff_sinkprep",
+      "source": "diff",
+      "target": "sinkprep",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_sinkprep_lakeout",
+      "source": "sinkprep",
+      "target": "lakeout",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
   ]
 }
