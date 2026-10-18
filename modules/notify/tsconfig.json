@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    // `vitest` 必须显式映射（issue #68）——成因与写法同 modules/forms/tsconfig.json：
+    // 本包 vitest 3.2.7、仓库根 2.1.9，jest-dom 的 `declare module 'vitest'` 会解到根上，
+    // 增强合错声明。本地 `paths` 整体覆盖 base 的 paths。
+    "paths": {
+      "vitest": ["./node_modules/vitest/dist/index.d.ts"]
+    }
+  }
+  // 测试文件**纳入** typecheck（issue #68）：不写 exclude。
+}
