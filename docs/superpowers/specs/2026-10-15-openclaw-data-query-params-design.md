@@ -230,6 +230,11 @@ params = grain ∩ 白名单，白名单与类型固定：
   有自己的 console）——1 条 `panel-forms.submission.l0`，`20 0 * * *`（日批）、`timezone: 'Asia/Shanghai'`。
   它是**新写即 CST**，**不产生 UTC→CST 转换行**；本节的「23 条」是当年转换口径的记账，追加后合计 24 条，
   `scripts/console-schedules-tz.test.ts` 的期望表与条数断言已同步。
+- **追加（2026-10-18，口径对账落仓）**：`schedules/3120.json` 新增 1 条
+  `panel-lemeng.recon.preagg`，`40 0 * * *`、`timezone: 'Asia/Shanghai'`
+  （64188 的同名条目 `30 0` 早就在，只是该管线此前因业务判据闸天天死）。
+  同为**新写即 CST**，不产生 UTC→CST 转换行；追加后合计 **25 条**，
+  `scripts/console-schedules-tz.test.ts` 的期望表与条数断言已同步。
 
 ## 10.7 修订五：新鲜度 SLA + 固定展示行（2026-10-16 用户拍板）
 
