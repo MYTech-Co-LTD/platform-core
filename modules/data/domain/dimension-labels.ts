@@ -16,18 +16,21 @@
 // 维度表缺席 / 查询失败 ⇒ **名称列缺席**，主查询结果照常交付（与新鲜度面同一姿态：
 // 「名称未知 ≠ 捏造名称」，且缺账绝不反噬主查询）。
 
-/** 一次查询内可用的维度快照（两张小表，量级几百行，随查随取）。 */
+/** 一次查询内可用的维度快照（三张小表，量级几百行，随查随取）。 */
 export interface DimensionLookup {
   /** 账套 → 品牌名（`dim_brand` seed）。 */
   brandByBook: Map<string, string>
   /** `` `${账套}|${门店号}` `` → 门店名（`stg_lemeng_branch` 最新快照）。 */
   branchNameByKey: Map<string, string>
+  /** `` `${账套}|${战区号}` `` → 战区名称 + 一级战区（`x01_region_names` seed）。 */
+  regionByKey: Map<string, { name: string; l1: string | null }>
 }
 
 /** 键列 → 紧跟其后插入的标签列。顺序即插入顺序。 */
 const LABELS_OF_KEY: Readonly<Record<string, readonly string[]>> = {
   system_book: ['brand_name'],
   branch_num: ['branch_name'],
+  region_id: ['region_name', 'region_l1'],
 }
 
 /** 维度侧用于查门店名的 SQL：**按门店取最新快照**（今天改名/新开店都跟着走），只取需要的三列。 */
@@ -42,6 +45,15 @@ const BRANCH_NAME_SQL = `
 
 const BRAND_NAME_SQL = 'select system_book::varchar as b, brand_name from dim_brand'
 
+/**
+ * 战区名称（`x01_region_names` seed，git 受控）。
+ * ⚠️ 键必须带 `system_book`：两个账套**都有**「中部一区」这类同名战区，id 空间不相交，
+ * 只按 region_id 关联会串账套。`region_l1` 为空 = 不归属四向的杂项组（schema.yml 有依据），
+ * 原样给 `null`，**不拿二级名字截字符串去编**。
+ */
+const REGION_NAME_SQL =
+  'select system_book::varchar as b, region_id::int as r, region_name, region_l1 from x01_region_names'
+
 /** 执行器形状（与 `runWarehouseSql` 一致；测试可注入）。 */
 type Exec = (sql: string) => Promise<{ columns: string[]; rows: unknown[][] }>
 
@@ -53,7 +65,11 @@ type Exec = (sql: string) => Promise<{ columns: string[]; rows: unknown[][] }>
  */
 export async function loadDimensionLookup(exec: Exec): Promise<DimensionLookup | null> {
   try {
-    const [brand, branch] = await Promise.all([exec(BRAND_NAME_SQL), exec(BRANCH_NAME_SQL)])
+    const [brand, branch, region] = await Promise.all([
+      exec(BRAND_NAME_SQL),
+      exec(BRANCH_NAME_SQL),
+      exec(REGION_NAME_SQL),
+    ])
     const brandByBook = new Map<string, string>()
     for (const row of brand.rows) {
       const book = row[0]
@@ -69,7 +85,20 @@ export async function loadDimensionLookup(exec: Exec): Promise<DimensionLookup |
         branchNameByKey.set(`${book}|${String(branchNum)}`, name)
       }
     }
-    return { brandByBook, branchNameByKey }
+    const regionByKey = new Map<string, { name: string; l1: string | null }>()
+    for (const row of region.rows) {
+      const book = row[0]
+      const regionId = row[1]
+      const name = row[2]
+      const l1 = row[3]
+      if (typeof book === 'string' && regionId != null && typeof name === 'string') {
+        regionByKey.set(`${book}|${String(regionId)}`, {
+          name,
+          l1: typeof l1 === 'string' && l1 !== '' ? l1 : null,
+        })
+      }
+    }
+    return { brandByBook, branchNameByKey, regionByKey }
   } catch {
     return null
   }
@@ -96,16 +125,24 @@ export function decorateWithLabels(
 
   const bookIdx = result.columns.indexOf('system_book')
   const branchIdx = result.columns.indexOf('branch_num')
+  const regionIdx = result.columns.indexOf('region_id')
 
   const rows = result.rows.map((row) => {
     const book = bookIdx >= 0 && row[bookIdx] != null ? String(row[bookIdx]) : ''
     const branchKey = branchIdx >= 0 && row[branchIdx] != null ? `${book}|${String(row[branchIdx])}` : null
+    const region = regionIdx >= 0 && row[regionIdx] != null
+      ? lookup.regionByKey.get(`${book}|${String(row[regionIdx])}`)
+      : undefined
     const out: unknown[] = []
     for (let i = 0; i < result.columns.length; i++) {
       out.push(row[i])
       const col = result.columns[i]
       if (col === 'system_book') out.push(lookup.brandByBook.get(book) ?? null)
       else if (col === 'branch_num') out.push(branchKey === null ? null : (lookup.branchNameByKey.get(branchKey) ?? null))
+      else if (col === 'region_id') {
+        out.push(region?.name ?? null)
+        out.push(region?.l1 ?? null)
+      }
     }
     return out
   })

@@ -247,6 +247,7 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
       dimensionLookup: async () => ({
         brandByBook: new Map([['3120', '熊喵鲜生']]),
         branchNameByKey: new Map([['3120|142', '品品甜折扣昆明壹号广场店']]),
+        regionByKey: new Map(),
       }),
     }
     const out = await runQuery(withDim, ORG, req(), 'sales_daily', {})

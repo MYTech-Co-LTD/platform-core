@@ -14,6 +14,10 @@ const LOOKUP: DimensionLookup = {
     ['3120|142', '品品甜折扣昆明壹号广场店'],
     ['64188|1', '甜选蒙自1店'],
   ]),
+  regionByKey: new Map([
+    ['3120|25422', { name: '东部一区', l1: '东部' }],
+    ['3120|21278', { name: '其余门店1', l1: null }],
+  ]),
 }
 
 describe('decorateWithLabels —— 键之后插标签，原 key 保留', () => {
@@ -57,17 +61,37 @@ describe('decorateWithLabels —— 键之后插标签，原 key 保留', () => 
     expect(out.columns).toEqual(['system_book', 'brand_name', 'branch_num', 'branch_name', 'value'])
     expect(out.rows).toEqual([])
   })
+
+  it('D6 region_id ⇒ 紧跟 region_name + region_l1（一级为空给 null，不拿二级名去截）', () => {
+    const out = decorateWithLabels(
+      { columns: ['system_book', 'region_id', 'value'], rows: [['3120', 25422, 1], ['3120', 21278, 2]] },
+      LOOKUP,
+    )
+    expect(out.columns).toEqual(['system_book', 'brand_name', 'region_id', 'region_name', 'region_l1', 'value'])
+    expect(out.rows).toEqual([
+      ['3120', '熊喵鲜生', 25422, '东部一区', '东部', 1],
+      ['3120', '熊喵鲜生', 21278, '其余门店1', null, 2],
+    ])
+  })
 })
 
 describe('loadDimensionLookup —— 取不到就返回 null（缺账不反噬主查询）', () => {
-  it('L1 两条小查询都成功 ⇒ 建出两张映射', async () => {
-    const exec = async (sql: string) =>
-      sql.includes('dim_brand')
-        ? { columns: ['b', 'brand_name'], rows: [['3120', '熊喵鲜生']] }
-        : { columns: ['b', 'n', 'name'], rows: [['3120', 142, '某店']] }
+  it('L1 三条小查询都成功 ⇒ 建出三张映射（战区含 region_l1 的空值语义）', async () => {
+    const exec = async (sql: string) => {
+      if (sql.includes('dim_brand')) return { columns: ['b', 'brand_name'], rows: [['3120', '熊喵鲜生']] }
+      if (sql.includes('x01_region_names')) {
+        return {
+          columns: ['b', 'r', 'region_name', 'region_l1'],
+          rows: [['3120', 25422, '东部一区', '东部'], ['3120', 21278, '其余门店1', null]],
+        }
+      }
+      return { columns: ['b', 'n', 'name'], rows: [['3120', 142, '某店']] }
+    }
     const lk = await loadDimensionLookup(exec)
     expect(lk?.brandByBook.get('3120')).toBe('熊喵鲜生')
     expect(lk?.branchNameByKey.get('3120|142')).toBe('某店')
+    expect(lk?.regionByKey.get('3120|25422')).toEqual({ name: '东部一区', l1: '东部' })
+    expect(lk?.regionByKey.get('3120|21278')).toEqual({ name: '其余门店1', l1: null })
   })
 
   it('L2 维表缺席（抛错）⇒ null，调用方据此不加名称列', async () => {
