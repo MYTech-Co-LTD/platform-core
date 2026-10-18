@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.167.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.166.0...v0.167.0) - 2026-10-18
+- 【新增】notify: 通知规则层——新模块 notify（两表 + 规则管道 + 声明派生 + AI 工具面 + console） ([#890](https://github.com/MYTech-Co-LTD/platform-core/pull/890), [a9cd217](https://github.com/MYTech-Co-LTD/platform-core/commit/a9cd217c319e3c62cf8d4be841daa89b1f8613b6))
+
+
 ## [0.166.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.165.0...v0.166.0) - 2026-10-18
 - 【新增】data: 台账加源返回率列 source_cover_pct（#892 判据本体） ([#899](https://github.com/MYTech-Co-LTD/platform-core/pull/899), [4227ba6](https://github.com/MYTech-Co-LTD/platform-core/commit/4227ba6917c67974f6d0fa3ddabb42ab08909339))
 
