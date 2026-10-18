@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.157.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.157.0...v0.157.1) - 2026-10-18
+- 【修复】data: 切块整除改 floor——CAST(rn/100) 在 DuckDB 里是四舍五入 ([#872](https://github.com/MYTech-Co-LTD/platform-core/pull/872), [de930a4](https://github.com/MYTech-Co-LTD/platform-core/commit/de930a470f3719506686d5cb791109dd9ea0a8b0))
+
+
 ## [0.157.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.156.3...v0.157.0) - 2026-10-18
 - 【新增】data: 问数回包回战区名与一级战区 ([#869](https://github.com/MYTech-Co-LTD/platform-core/pull/869), [75bc476](https://github.com/MYTech-Co-LTD/platform-core/commit/75bc476a19e7e4be06951791939f07c075c5eaa0))
 
