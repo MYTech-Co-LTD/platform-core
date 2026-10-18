@@ -165,6 +165,76 @@ describe('lint-architecture: B1 跨 schema 引用', () => {
     expect(out(r)).toContain('[B1]')
   })
 
+  // M1.1：dataDependencies 声明集豁免（module-protocol「跨模块只读数据依赖」判据 1）。
+  // 声明 = 可读授权：manifest.yaml 里声明了 `<schema>.<view>` ⇒ 该条目可 from/join；
+  // 未声明仍红；写（update/into）不豁免；声明只认 manifest.yaml（平台代码无声明面，永不豁免）。
+  describe('B1 dataDependencies 声明集豁免（M1.1）', () => {
+    const manifest = 'id: aftersales\nname: x\nversion: 0.1.0\nplatform: ">=0.1.0"\n'
+      + 'permissions:\n  - { code: "aftersales:view", name: view }\n'
+      + 'dataDependencies:\n  - data.v_order_snapshot\n'
+
+    it('声明了的条目：from/join 放行（声明集加载自 manifest.yaml）', () => {
+      const r = run(
+        'lint-architecture.mjs',
+        fixture({
+          'modules/aftersales/manifest.yaml': manifest,
+          'modules/aftersales/index.ts':
+            "pool.query('select * from data.v_order_snapshot where org = $1')\n"
+            + "pool.query('select o.id from data.v_order_snapshot o join data.v_order_snapshot s on s.id = o.id')\n",
+        }),
+      )
+      expect(r.status).toBe(0)
+    })
+
+    it('未声明的条目：仍红（豁免只开声明集，不是「有声明就全绿」）', () => {
+      const r = run(
+        'lint-architecture.mjs',
+        fixture({
+          'modules/aftersales/manifest.yaml': manifest,
+          'modules/aftersales/index.ts': "pool.query('select * from data.v_other_view')\n",
+        }),
+      )
+      expect(r.status).toBe(1)
+      expect(out(r)).toContain('[B1]')
+    })
+
+    it('声明了的条目**写**不豁免：update 仍红（只读授权）', () => {
+      const r = run(
+        'lint-architecture.mjs',
+        fixture({
+          'modules/aftersales/manifest.yaml': manifest,
+          'modules/aftersales/index.ts':
+            "pool.query('update data.v_order_snapshot set status = $1 where id = $2')\n",
+        }),
+      )
+      expect(r.status).toBe(1)
+      expect(out(r)).toContain('[B1]')
+    })
+
+    it('无 manifest.yaml ⇒ 无声明面：同一 from 仍红', () => {
+      const r = run(
+        'lint-architecture.mjs',
+        fixture({
+          'modules/aftersales/index.ts': "pool.query('select * from data.v_order_snapshot')\n",
+        }),
+      )
+      expect(r.status).toBe(1)
+      expect(out(r)).toContain('[B1]')
+    })
+
+    it('平台代码（apps/）不豁免：即使某模块声明了，apps 里引用仍红', () => {
+      const r = run(
+        'lint-architecture.mjs',
+        fixture({
+          'modules/aftersales/manifest.yaml': manifest,
+          'apps/server/src/bad.ts': "pool.query('select * from data.v_order_snapshot')\n",
+        }),
+      )
+      expect(r.status).toBe(1)
+      expect(out(r)).toContain('[B1]')
+    })
+  })
+
   it('跳过 *.test.* 与 *.gen.*（测试/生成物不是边界纪律的适用对象）', () => {
     const r = run(
       'lint-architecture.mjs',
