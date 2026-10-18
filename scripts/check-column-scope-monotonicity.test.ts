@@ -20,11 +20,15 @@ afterAll(() => {
 
 /**
  * 造一棵最小假仓：一份契约（可选打标）+ 一份 L1 声明（可选 required_scope / reads / 追加行）
- * + 一份 manifest（权限码清单）。
+ * + 一份 manifest（权限码清单）+ 可选 R12 盘点产物。
  *
  * ⚠️ **必须**给 manifest：T4 的 ②/④ 检查读 `modules/data/manifest.yaml` 的 `permissions[].code`，
  *    缺了它 `loadManifestCodes` 会**抛**（设计如此，不静默返回空集）。既有「`required_scope: data:cost`
  *    合法」用例也依赖 manifest 里有 `data:cost`——所以缺省给全四个码。
+ *
+ * ②b（R12 盘点门）**控制盘点产物是否存在**：缺省写一份**点名全部敏感列**的产物
+ * （夹具默认「干净」——既有用例才不用为 ②b 补额外期望）；`inventory: null` = **不写**（缺产物）；
+ * 给了字符串 = 按该内容写 `docs/data/l2-sensitivity-inventory.md`（用来验证「点名 / 漏点名」）。
  *
  * @param {{
  *   sensitivity?: string,
@@ -32,6 +36,8 @@ afterAll(() => {
  *   requiredScope?: string,
  *   codes?: string[],
  *   metricLines?: string[],
+ *   inventory?: string | null,
+ *   extraColumns?: Array<{ name: string, sensitivity?: string }>,
  * }} [opts]
  * @returns {string} 临时仓根
  */
@@ -41,6 +47,8 @@ function fixture(opts: {
   requiredScope?: string
   codes?: string[]
   metricLines?: string[]
+  inventory?: string | null
+  extraColumns?: Array<{ name: string, sensitivity?: string }>
 } = {}): string {
   const root = mkdtempSync(join(tmpdir(), 'colscope-'))
   roots.push(root)
@@ -48,6 +56,25 @@ function fixture(opts: {
   mkdirSync(join(root, 'dbt', 'semantics'), { recursive: true })
   mkdirSync(join(root, 'modules', 'data'), { recursive: true })
 
+  /** @type {Array<{ name: string, type: string, precision: number, scale: number, nullable: boolean, sensitivity?: string }>} */
+  const columns = [{
+    name: 'item_cost_price',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+    ...(opts.sensitivity === undefined ? {} : { sensitivity: opts.sensitivity }),
+  }]
+  for (const c of opts.extraColumns ?? []) {
+    columns.push({
+      name: c.name,
+      type: 'decimal',
+      precision: 14,
+      scale: 2,
+      nullable: true,
+      ...(c.sensitivity === undefined ? {} : { sensitivity: c.sensitivity }),
+    })
+  }
   writeFileSync(join(root, 'contracts', 'common', 'lemeng.item.json'), JSON.stringify({
     contractVersion: 2,
     domain: 'lemeng',
@@ -57,14 +84,7 @@ function fixture(opts: {
     batch: { markerColumn: 'batch_id', type: 'varchar' },
     schemaVersion: 1,
     consumerVersion: 1,
-    columns: [{
-      name: 'item_cost_price',
-      type: 'decimal',
-      precision: 14,
-      scale: 2,
-      nullable: true,
-      ...(opts.sensitivity === undefined ? {} : { sensitivity: opts.sensitivity }),
-    }],
+    columns,
   }, null, 2))
 
   const codes = opts.codes ?? ['data:query', 'data:manage', 'data:cost', 'data:precise']
@@ -98,6 +118,20 @@ function fixture(opts: {
     lines.push(...opts.metricLines)
   }
   writeFileSync(join(root, 'dbt', 'semantics', 'l1_metrics.yml'), `${lines.join('\n')}\n`)
+
+  // ②b 的盘点产物：缺省写一份「点名全部敏感列」的产物（夹具默认干净）；
+  // `null` = 不写（验证「缺产物 ⇒ 违规」）；字符串 = 按该内容写（验证漏点名）。
+  if (opts.inventory !== null) {
+    mkdirSync(join(root, 'docs', 'data'), { recursive: true })
+    const autoNames = columns
+      .filter((c) => c.sensitivity !== undefined && c.sensitivity !== 'none')
+      .map((c) => `| lemeng.item.${c.name} |`)
+      .join('\n')
+    writeFileSync(
+      join(root, 'docs', 'data', 'l2-sensitivity-inventory.md'),
+      opts.inventory ?? `# R12 盘点\n\n${autoNames}\n`,
+    )
+  }
   return root
 }
 
@@ -277,5 +311,44 @@ describe('P2 值级脱敏四项检查（T4：①#822 / ②#821 / ③同列单声
     const v = checkColumnScopeMonotonicity(fixture({ requiredScope: 'data:nope' }))
     expect(v).toHaveLength(1)
     expect(v[0]?.message).toContain('required_scope')
+  })
+})
+
+describe('②b R12 存量 L2 盘点门（spec §8.1 ③ 发布门硬化）', () => {
+  it('②b 有敏感列但盘点产物缺失 ⇒ 违规（spec §8.1 ③ 的发布门）', () => {
+    // 只打标、不写盘点产物（`inventory: null`）⇒ ②b 必须红
+    // （默认 codes 含 data:precise ⇒ ② 不参与）。
+    const v = checkColumnScopeMonotonicity(fixture({ sensitivity: 'cost', inventory: null }))
+    expect(v).toHaveLength(1)
+    expect(v[0]?.file).toBe('docs/data/l2-sensitivity-inventory.md')
+    expect(v[0]?.message).toContain(COL)
+  })
+
+  it('②b 有敏感列且产物逐列点名 ⇒ 不违规', () => {
+    const v = checkColumnScopeMonotonicity(fixture({
+      sensitivity: 'cost',
+      inventory: `| 契约列全名 | 盘点日期 |\n|---|---|\n| ${COL} | 2026-10-18 |\n`,
+    }))
+    expect(v).toEqual([])
+  })
+
+  it('②b 产物只点名了一部分 ⇒ 违规，且报出缺的那一列', () => {
+    // 两个敏感列，产物只点了 item_cost_price ⇒ 必须报出漏点的 net_amount。
+    const MISSING = 'lemeng.item.net_amount'
+    const v = checkColumnScopeMonotonicity(fixture({
+      sensitivity: 'cost',
+      extraColumns: [{ name: 'net_amount', sensitivity: 'cost' }],
+      inventory: `| 契约列全名 |\n|---|\n| ${COL} |\n`,
+    }))
+    expect(v).toHaveLength(1)
+    expect(v[0]?.file).toBe('docs/data/l2-sensitivity-inventory.md')
+    expect(v[0]?.message).toContain(MISSING)
+    // 只报「漏点的」，已点名的列不该出现在违规里（变异确认：判据退回「只看文件存在」⇒ 恰这条红）。
+    expect(v[0]?.message).not.toContain(COL)
+  })
+
+  it('②b 无敏感列 ⇒ 不违规（今天的状态；产物可有可无）', () => {
+    expect(checkColumnScopeMonotonicity(fixture())).toEqual([])
+    expect(checkColumnScopeMonotonicity(fixture({ inventory: '# 任意内容\n' }))).toEqual([])
   })
 })

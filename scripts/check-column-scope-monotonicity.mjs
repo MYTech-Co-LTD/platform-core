@@ -49,6 +49,9 @@ export const L1_DECLARATIONS_REL = 'dbt/semantics/l1_metrics.yml'
 /** 本模块的权限清单（`permissions[].code`）——码的**唯一可发放来源**。 */
 export const DATA_MANIFEST_REL = 'modules/data/manifest.yaml'
 
+/** R12 存量 L2 盘点产物（spec §8.1 ③ 硬化后的发布门凭据）。 */
+export const L2_INVENTORY_REL = 'docs/data/l2-sensitivity-inventory.md'
+
 /**
  * manifest 里声明过的权限码集合。
  *
@@ -117,6 +120,46 @@ export function checkColumnScopeMonotonicity(rootDir) {
         + '默认档一开，**谁都豁免不了**，全租户静默拿 NULL。'
         + `请先声明 \`${DEFAULT_TIER_SCOPE}\`（spec §8.1 的 ② 是人工步骤，闸只拦顺序颠倒）。`,
     })
+  }
+
+  // ②b 打 sensitivity ⇒ 必须先有 R12 存量 L2 盘点产物，且该产物覆盖当前**每一个**敏感列（spec §8.1 ③）。
+  //     为什么是发布门而不是提示：打标那一刻**已经存在**的 L2 不会继承默认档整值掩码（spec §7 R12），
+  //     而 L2_BASE_MASKED 写侧守卫**只拦新建** ⇒ 敞口恰好落在「打标前已存在」的那批上。
+  //     ⚠️ 每次新增打标都会**重新打开**窗口（后打的标，其「打标前已存在」的 L2 是新的一批）
+  //        ⇒ 所以判据是「逐列点名」而不是「文件存在」。
+  //     ⚠️ 诚实边界：这条检查**只保证「产物在且点了名」**，**不保证盘点真的做了**——契约 gate
+  //        读不到生产 `data.metrics`。这是刻意取舍（能拦「忘了做」，拦不住「写了 0」），
+  //        后者归运行期判据（T2 登记进 #538 Phase 1）。别让后来者以为这条闸比实际强。
+  const sensitiveCols = [...sensitivity.entries()]
+    .filter(([, s]) => s !== 'none')
+    .map(([c]) => c)
+    .sort()
+  if (sensitiveCols.length > 0) {
+    let inventory = null
+    try {
+      inventory = readFileSync(join(rootDir, L2_INVENTORY_REL), 'utf8')
+    } catch {
+      inventory = null
+    }
+    if (inventory === null) {
+      violations.push({
+        file: L2_INVENTORY_REL,
+        message: `契约里已有 ${sensitiveCols.length} 个列声明了 \`sensitivity !== 'none'\`（${sensitiveCols.join('、')}），`
+          + `但 \`${L2_INVENTORY_REL}\` 不存在 —— 打标前必须先盘点存量 L2（spec §8.1 ③ 的发布门）。`
+          + '打标时**已存在**的 L2 不会继承默认档整值掩码（spec §7 R12），'
+          + '而 `L2_BASE_MASKED` 只拦新建 ⇒ 那批必须先确认、留痕。',
+      })
+    } else {
+      const missing = sensitiveCols.filter((c) => !inventory.includes(c))
+      if (missing.length > 0) {
+        violations.push({
+          file: L2_INVENTORY_REL,
+          message: '契约里这些列声明了 `sensitivity !== \'none\'` 但盘点产物里**没有点名**：'
+            + `${missing.join('、')} —— 每次新增打标都会重新打开窗口（spec §8.1 ③），`
+            + '盘点必须**逐列留痕**（点出列全名 + 查询原文 + 原始输出 + 日期）。',
+        })
+      }
+    }
   }
 
   /** @type {any} */
