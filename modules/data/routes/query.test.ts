@@ -7,7 +7,6 @@ import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import { upsertL1Metric, upsertMetric } from '../domain/metric-store'
 import type { L1MetricDef } from '../domain/metric-store'
-import { createPatKey } from '../domain/key-store'
 import type { SqlExecutor } from '../domain/query-service'
 
 const dbUrl = process.env.DATABASE_URL
@@ -111,32 +110,11 @@ describePg('POST /query（需要 DATABASE_URL）', () => {
     return r.rows[0].n as number
   }
 
-  it('createPorts.resolvePatKey：命中原样转交 + fire-and-forget 触碰 last_used_at（#142 唯一写入点）', async () => {
-    await applyMigrations(pool)
-    const { id, token } = await createPatKey(pool, ORG, 'alice', 't6-port-probe')
-    // 端口存在性本身就是断言：不声明 createPorts ⇒ 宿主取到 undefined ⇒ 通道 B 全线 503
-    const ports = mod.createPorts?.({ pool })
-    expect(ports, '模块未声明 createPorts（通道 B fail-closed 空窗未闭合）').toBeDefined()
-    expect(ports!.resolvePatKey).toBeTypeOf('function')
-
-    const resolved = await ports!.resolvePatKey!(token)
-    // 原样转交：形状 = SDK ResolvedPatKey（keyId/org/casdoorUser），一个字段不多不少
-    expect(resolved).toEqual({ keyId: id, org: ORG, casdoorUser: 'alice' })
-    // 未命中 ⇒ null（fail-closed）
-    expect(await ports!.resolvePatKey!('dkq_nope')).toBeNull()
-
-    // fire-and-forget 不阻断返回，但必须落库：短暂轮询等触碰出现（上限 2s）
-    const deadline = Date.now() + 2000
-    let touched = false
-    while (Date.now() < deadline) {
-      const r = await pool.query(
-        'select last_used_at from data.query_keys where org = $1 and id = $2', [ORG, id],
-      )
-      if (r.rows[0].last_used_at !== null) { touched = true; break }
-      await new Promise((ok) => setTimeout(ok, 25))
-    }
-    expect(touched, 'last_used_at 没被端口触碰（#142：端口化后宿主不再写，这里是唯一写入点）').toBe(true)
-  })
+  // 【已移除】`createPorts.resolvePatKey` 的端口往返测试：PAT 密钥表与端口已上移宿主
+  // （issue #894，正典 §1.5）。该测试的**语义**（建 key → 解析原样转交 → fire-and-forget 触碰
+  // last_used_at）现由宿主侧覆盖：`apps/server/src/api-key-store.test.ts`（解析/触碰）
+  // + `apps/server/src/routes/api-keys.test.ts`（端点）+ `apps/server/src/data-query.e2e.test.ts`
+  // （端到端往返，已改为「宿主建 → 宿主认」）。
 
   it('未声明的指标 → 403 + 可解释 reason（不是 500）', async () => {
     // 这条**需要真库**：`runQuery` 是先 loadOrgCatalog 再判声明，没有 pool 会先炸在加载词表上

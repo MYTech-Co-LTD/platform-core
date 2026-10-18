@@ -64,11 +64,10 @@ api:
     #    （MCP 端点评审 §11.3.1 的教训）。写面之所以单独一个端点而不是把写工具塞进 `/mcp`，
     #    正是为了「写所需的能力」继续出现在清单里。设计见
     #    docs/superpowers/specs/2026-10-07-mcp-write-face-design.md。
-    # ── 个人 Key 管理（data:query；只能操作自己的——不是管理员给别人发，用 data:manage
-    #    会让只能问数的人生成不了 Key，与 spec §3 冲突）──
-    - { method: GET,    path: /keys,     scope: data:query }
-    - { method: POST,   path: /keys,     scope: data:query }
-    - { method: DELETE, path: /keys/:id, scope: data:query }
+    # ── 个人 Key 管理：**已上移宿主**（issue #894，正典 §1.5）──
+    # 原 /keys 三条（GET/POST/DELETE，scope data:query）连同 routes/keys.ts 一并删除：
+    # token 是平台级身份能力，现由 /api/platform/keys 承载（个人档免 scope + 管理档 tenant:admin）。
+    # 删声明必须与本模块的注册集合同提交（装载期双向核对，差一侧即装载失败）。
     # ── 报表（Metabase 报表 facade；#150 T7）──
     # 页门分档（spec §4「权限双门必须分开表态」）：制作/登记/对账 = data:manage（跨租户能力，
     # 必须经平台）；观看面（清单 + 拿嵌入 URL）= data:query。

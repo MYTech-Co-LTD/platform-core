@@ -1,4 +1,5 @@
-// index.test.tsx — 数据模块 console 入口：四页签的路由壳（问数/指标/我的 Key/报表）。
+// index.test.tsx — 数据模块 console 入口：三页签的路由壳（问数/指标/报表）。
+// 【变更】原第四页「我的 Key」已上移宿主（issue #894，正典 §1.5）⇒ 页签与断言同删。
 // 挂载形态照宿主壳的真实结构（同 aftersales/console/index.test.tsx）：
 // `{ path: '*', element: <ConsoleModulePage/> }` 挂在 `/console` 下。
 // 只测「URL 驱动哪一页」：裸路径规范化、页签点击走绝对路径、深链真的渲染出那页的内容。
@@ -46,10 +47,10 @@ function renderAt(path: string) {
   return router
 }
 
-describe('数据模块 console 入口（四页签）', () => {
-  it('四个页签都在菜单里', () => {
+describe('数据模块 console 入口（三页签）', () => {
+  it('三个页签都在菜单里', () => {
     renderAt('/console/data/query')
-    for (const label of ['问数', '指标', '我的 Key', '报表']) {
+    for (const label of ['问数', '指标', '报表']) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0)
     }
   })
@@ -71,11 +72,8 @@ describe('数据模块 console 入口（四页签）', () => {
     await waitFor(() => expect(urls.some((u) => u.includes('/metrics/all'))).toBe(true))
   })
 
-  it('深链到 /keys 渲染 Key 页（「创建于」是 Key 页独有表头）并请求 /keys', async () => {
-    renderAt('/console/data/keys')
-    await waitFor(() => expect(screen.getByText('创建于')).toBeInTheDocument())
-    await waitFor(() => expect(urls.some((u) => u.includes('/keys'))).toBe(true))
-  })
+  // 【已移除】「深链到 /keys 渲染 Key 页」：个人 Key 管理已上移宿主（issue #894，正典 §1.5），
+  // 本模块不再有 Key 页与 /keys 端点。新页在宿主壳（/console/me/keys + /console/admin/keys）。
 
   it('深链到 /reports 渲染报表页（「报表标题」是报表页独有表头）并请求 /reports', async () => {
     renderAt('/console/data/reports')
