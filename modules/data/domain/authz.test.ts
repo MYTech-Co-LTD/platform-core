@@ -4,6 +4,20 @@ import {
   type MaskSpec, type MetricDef, type MetricParamType, type Requester, type SourceTaggedMetric,
 } from './authz'
 
+/**
+ * 本文件里**没有可见性裁剪**的用例：掩码词表 = 可见词表。
+ *
+ * ⚠️ 显式表达，**不靠默认值**——`authorize` 的第 5 参已改为**必填**（默认成 `catalog` 会让
+ *    「忘了传」= 拿裁剪过的词表解析掩码 ⇒ L2 洞静默重开，且编译与测试都不报）。
+ *    真要造「两份词表不同」的场景，**直接调 `authorize`**，别用这个 helper。
+ */
+const authorizeVisible = (
+  catalog: MetricDef[],
+  requester: Requester,
+  metricId: string,
+  args: Record<string, unknown>,
+) => authorize(catalog, requester, metricId, args, catalog)
+
 /** 本文件默认租户**已接入的源**（当前唯一已接入源 = lemeng；`lemeng` 之外的源都没接）。 */
 const LEMENG = new Set(['lemeng'])
 
@@ -115,7 +129,7 @@ describe('visibleMetrics —— 源维度裁剪（spec §3⑧：未接入源的�
 
 describe('authorize —— 主体钉死', () => {
   it('A2 正常查：SQL 只含本主体，且带 LIMIT', () => {
-    const r = authorize(CATALOG, req(), 'metrics_revenue_mom', {})
+    const r = authorizeVisible(CATALOG, req(), 'metrics_revenue_mom', {})
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.subject).toBe('org_a_lemeng')
@@ -125,7 +139,7 @@ describe('authorize —— 主体钉死', () => {
   })
 
   it('A3 带日期参数：拼成参数化过滤，且值被引号包裹', () => {
-    const r = authorize(CATALOG, req(), 'mart_sales_daily', {
+    const r = authorizeVisible(CATALOG, req(), 'mart_sales_daily', {
       day_from: '2026-08-15', day_to: '2026-08-20',
     })
     expect(r.ok).toBe(true)
@@ -139,36 +153,36 @@ describe('authorize —— 主体钉死', () => {
   })
 
   it('A4 注入他人主体参数 → subject_pinned_by_platform（值只来自身份）', () => {
-    const r = authorize(CATALOG, req(), 'metrics_revenue_mom', { org: 'org_b_demo' })
+    const r = authorizeVisible(CATALOG, req(), 'metrics_revenue_mom', { org: 'org_b_demo' })
     expect(r).toEqual({ ok: false, reason: 'subject_pinned_by_platform', metricId: 'metrics_revenue_mom' })
   })
 
   it('A5 六个保留键逐个都拒（不是只挡 org 一个）', () => {
     for (const k of ['org', 'subject', 'tenant', 'tenant_id', 'org_id', 'casdoor_org']) {
-      const r = authorize(CATALOG, req(), 'metrics_revenue_mom', { [k]: 'org_b_demo' })
+      const r = authorizeVisible(CATALOG, req(), 'metrics_revenue_mom', { [k]: 'org_b_demo' })
       expect(r.ok, `保留键 ${k} 必须被拒`).toBe(false)
       if (!r.ok) expect(r.reason).toBe('subject_pinned_by_platform')
     }
   })
 
   it('B3 未声明指标 → metric_not_declared（先于授权判定）', () => {
-    const r = authorize(CATALOG, req(), 'nope', {})
+    const r = authorizeVisible(CATALOG, req(), 'nope', {})
     expect(r).toEqual({ ok: false, reason: 'metric_not_declared', metricId: 'nope' })
   })
 
   it('C2 scope 不足 → metric_not_authorized', () => {
-    const r = authorize(CATALOG, req({ scopes: [] }), 'metrics_revenue_mom', {})
+    const r = authorizeVisible(CATALOG, req({ scopes: [] }), 'metrics_revenue_mom', {})
     expect(r).toEqual({ ok: false, reason: 'metric_not_authorized', metricId: 'metrics_revenue_mom' })
   })
 
   it('未声明的参数键 → bad_param（客户端不能塞任意列名进 SQL）', () => {
-    const r = authorize(CATALOG, req(), 'metrics_revenue_mom', { evil: '1' })
+    const r = authorizeVisible(CATALOG, req(), 'metrics_revenue_mom', { evil: '1' })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.reason).toBe('bad_param')
   })
 
   it('非法日期字面量 → bad_param（引号是拼的，格式必须先验）', () => {
-    const r = authorize(CATALOG, req(), 'mart_sales_daily', { day_from: "2026-08-15' OR 1=1 --" })
+    const r = authorizeVisible(CATALOG, req(), 'mart_sales_daily', { day_from: "2026-08-15' OR 1=1 --" })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.reason).toBe('bad_param')
   })
@@ -185,7 +199,7 @@ describe('authorize —— 主体钉死', () => {
       ...CATALOG[1],
       params: { day: { column: 'day', type: 'DATE' as unknown as MetricParamType } },
     }]
-    const r = authorize(cat, req(), 'metrics_revenue_mom', { day: '2026-08-15' })
+    const r = authorizeVisible(cat, req(), 'metrics_revenue_mom', { day: '2026-08-15' })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.reason).toBe('bad_param')
   })
@@ -201,7 +215,7 @@ describe('authorize —— date_range 区间参数（spec 2026-10-15 §2.3）', 
   const cat: MetricDef[] = [{ ...CATALOG[1], ...rangeMetric }]
 
   it('R1 合法区间 → BETWEEN 闭区间 SQL', () => {
-    const r = authorize(cat, req(), 'metrics_revenue_mom', {
+    const r = authorizeVisible(cat, req(), 'metrics_revenue_mom', {
       bizday: { from: '2026-10-08', to: '2026-10-14' },
     })
     expect(r.ok).toBe(true)
@@ -210,7 +224,7 @@ describe('authorize —— date_range 区间参数（spec 2026-10-15 §2.3）', 
   })
 
   it('R2 from>to → bad_param + range_invalid（T2 恒空集坑的结构化报错）', () => {
-    const r = authorize(cat, req(), 'metrics_revenue_mom', {
+    const r = authorizeVisible(cat, req(), 'metrics_revenue_mom', {
       bizday: { from: '2026-10-14', to: '2026-10-08' },
     })
     expect(r).toMatchObject({ ok: false, reason: 'bad_param', detail: 'range_invalid:bizday' })
@@ -218,13 +232,13 @@ describe('authorize —— date_range 区间参数（spec 2026-10-15 §2.3）', 
 
   it('R3 缺键/非对象/非日期串 → bad_param + invalid_value', () => {
     for (const v of [{ from: '2026-10-08' }, '2026-10-08', { from: '20261008', to: '2026-10-09' }]) {
-      const r = authorize(cat, req(), 'metrics_revenue_mom', { bizday: v })
+      const r = authorizeVisible(cat, req(), 'metrics_revenue_mom', { bizday: v })
       expect(r).toMatchObject({ ok: false, reason: 'bad_param', detail: 'invalid_value:bizday' })
     }
   })
 
   it('R4 空串值仍视为「不传」（与既有空参语义一致）', () => {
-    const r = authorize(cat, req(), 'metrics_revenue_mom', { bizday: '' })
+    const r = authorizeVisible(cat, req(), 'metrics_revenue_mom', { bizday: '' })
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.sql).not.toContain('BETWEEN')
@@ -234,7 +248,7 @@ describe('authorize —— date_range 区间参数（spec 2026-10-15 §2.3）', 
     const eqCat: MetricDef[] = [{
       ...CATALOG[1], params: { day: { column: 'day', type: 'date' as const } },
     }]
-    const r = authorize(eqCat, req(), 'metrics_revenue_mom', { day: '2026-10-08' })
+    const r = authorizeVisible(eqCat, req(), 'metrics_revenue_mom', { day: '2026-10-08' })
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.sql).toContain(`day = '2026-10-08'::date`)
@@ -253,7 +267,7 @@ describe('authorize —— 合计形态（spec §8：args.total 服务端单行�
   }]
 
   it('T1 total:true → 计划 SQL 内层 sum(value) 聚合，且**不含**外层 LIMIT；plan.total 在场', () => {
-    const r = authorize(totalCat, req(), 'metrics_revenue_mom', { total: true })
+    const r = authorizeVisible(totalCat, req(), 'metrics_revenue_mom', { total: true })
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.total).toBe(true)
@@ -263,7 +277,7 @@ describe('authorize —— 合计形态（spec §8：args.total 服务端单行�
   })
 
   it('T2 subject 钉死不变：主体谓词仍来自身份（total 不能伪造主体）', () => {
-    const r = authorize(totalCat, req(), 'metrics_revenue_mom', { total: true })
+    const r = authorizeVisible(totalCat, req(), 'metrics_revenue_mom', { total: true })
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.subject).toBe('org_a_lemeng')
@@ -271,7 +285,7 @@ describe('authorize —— 合计形态（spec §8：args.total 服务端单行�
   })
 
   it('T3 filters 参与内层：区间条件进子查询，合计仍无外层 LIMIT', () => {
-    const r = authorize(totalCat, req(), 'metrics_revenue_mom', {
+    const r = authorizeVisible(totalCat, req(), 'metrics_revenue_mom', {
       total: true, bizday: { from: '2026-10-08', to: '2026-10-14' },
     })
     expect(r.ok).toBe(true)
@@ -282,7 +296,7 @@ describe('authorize —— 合计形态（spec §8：args.total 服务端单行�
 
   it('T4 保留键 fail-closed：total 非布尔 true 一律不消费 → unknown_param:total', () => {
     for (const v of ['true', 1, 'yes', null, [true]]) {
-      const r = authorize(totalCat, req(), 'metrics_revenue_mom', { total: v })
+      const r = authorizeVisible(totalCat, req(), 'metrics_revenue_mom', { total: v })
       expect(r, `total=${JSON.stringify(v)} 必须被拒`).toMatchObject({
         ok: false, reason: 'bad_param', detail: 'unknown_param:total',
       })
@@ -290,7 +304,7 @@ describe('authorize —— 合计形态（spec §8：args.total 服务端单行�
   })
 
   it('T5 非合计路径回归：plan.total=false、SQL 照旧带 LIMIT 且无 sum()（等值/区间一字不动）', () => {
-    const r = authorize(totalCat, req(), 'metrics_revenue_mom', {
+    const r = authorizeVisible(totalCat, req(), 'metrics_revenue_mom', {
       bizday: { from: '2026-10-08', to: '2026-10-14' },
     })
     expect(r.ok).toBe(true)
@@ -313,7 +327,7 @@ describe('authorize —— total 自动伴随（spec §8.4：totalable 指标 pl
   }]
 
   it('T1 totalable 指标：等值/区间查询附 totalSql（sum(value)、无 LIMIT、filters 在内层），主 sql 字节行为不变', () => {
-    const r = authorize(addable, req(), 'metrics_revenue_mom', {
+    const r = authorizeVisible(addable, req(), 'metrics_revenue_mom', {
       bizday: { from: '2026-10-08', to: '2026-10-14' },
     })
     expect(r.ok).toBe(true)
@@ -328,7 +342,7 @@ describe('authorize —— total 自动伴随（spec §8.4：totalable 指标 pl
   })
 
   it('T2 subject 钉死同样约束 totalSql（自动合计不能变成跨主体合计）', () => {
-    const r = authorize(addable, req({ orgId: 'org_other' }), 'metrics_revenue_mom', {})
+    const r = authorizeVisible(addable, req({ orgId: 'org_other' }), 'metrics_revenue_mom', {})
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.totalSql).toContain("WHERE org = 'org_other'")
@@ -341,7 +355,7 @@ describe('authorize —— total 自动伴随（spec §8.4：totalable 指标 pl
       ['显式 false', [{ ...CATALOG[1], totalable: false }]],
     ] as const) {
       // CATALOG[1] 未声明参数 ⇒ 空参（带区间参数会落 bad_param，与本判定无关）
-      const r = authorize([...cat], req(), 'metrics_revenue_mom', {})
+      const r = authorizeVisible([...cat], req(), 'metrics_revenue_mom', {})
       expect(r.ok).toBe(true)
       if (!r.ok) return
       expect(r.plan.totalSql, `${label} 不得附合计计划`).toBeUndefined()
@@ -349,7 +363,7 @@ describe('authorize —— total 自动伴随（spec §8.4：totalable 指标 pl
   })
 
   it('T4 显式 args.total=true ⇒ 仍是合计单行计划（plan.total=true），且**不**再附 totalSql（plan.sql 本身就是合计，避免重复执行）', () => {
-    const r = authorize(addable, req(), 'metrics_revenue_mom', { total: true })
+    const r = authorizeVisible(addable, req(), 'metrics_revenue_mom', { total: true })
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.total).toBe(true)
@@ -364,8 +378,8 @@ describe('maxTurns/上限类不变量', () => {
     const cat: MetricDef[] = [{
       ...CATALOG[1], params: { n: { column: 'n', type: 'number' } },
     }]
-    expect(authorize(cat, req(), 'metrics_revenue_mom', { n: 'abc' }).ok).toBe(false)
-    expect(authorize(cat, req(), 'metrics_revenue_mom', { n: 3 }).ok).toBe(true)
+    expect(authorizeVisible(cat, req(), 'metrics_revenue_mom', { n: 'abc' }).ok).toBe(false)
+    expect(authorizeVisible(cat, req(), 'metrics_revenue_mom', { n: 3 }).ok).toBe(true)
   })
 })
 
@@ -379,7 +393,7 @@ describe('authorize —— 确定性截断（spec §10.3：明细 GROUP BY 与 L
   }]
 
   it('O1 groupBy 含 bizday → 明细 SQL 在 GROUP BY 与 LIMIT 之间补 ORDER BY bizday DESC', () => {
-    const r = authorize(bizdayCat, req(), 'metrics_revenue_mom', {})
+    const r = authorizeVisible(bizdayCat, req(), 'metrics_revenue_mom', {})
     expect(r.ok).toBe(true)
     if (!r.ok) return
     // 位置判据用**连续片段**钉死：GROUP BY → ORDER BY → LIMIT 三者紧邻有序，
@@ -389,7 +403,7 @@ describe('authorize —— 确定性截断（spec §10.3：明细 GROUP BY 与 L
   })
 
   it('O2 groupBy 恰为 bizday → 同样补（现行 27 条里有按 bizday 单列分组的形态）', () => {
-    const r = authorize([{ ...bizdayCat[0], groupBy: 'bizday' }], req(), 'metrics_revenue_mom', {})
+    const r = authorizeVisible([{ ...bizdayCat[0], groupBy: 'bizday' }], req(), 'metrics_revenue_mom', {})
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.sql).toContain('GROUP BY bizday ORDER BY bizday DESC LIMIT')
@@ -397,7 +411,7 @@ describe('authorize —— 确定性截断（spec §10.3：明细 GROUP BY 与 L
 
   it('O3 groupBy 不含 bizday → 不补（A2 的 GROUP BY org 形态逐字节不变）', () => {
     // CATALOG[1] 的 groupBy='org'：词根同形（bizday 是 bizday_utc 的前缀）也不许误伤
-    const r = authorize(CATALOG, req(), 'metrics_revenue_mom', {})
+    const r = authorizeVisible(CATALOG, req(), 'metrics_revenue_mom', {})
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.sql).not.toContain('ORDER BY')
@@ -405,14 +419,14 @@ describe('authorize —— 确定性截断（spec §10.3：明细 GROUP BY 与 L
   })
 
   it('O4 groupBy=bizday_utc（前缀同形不同词）→ 不补（\\b 词边界，不认子串）', () => {
-    const r = authorize([{ ...bizdayCat[0], groupBy: 'org, bizday_utc' }], req(), 'metrics_revenue_mom', {})
+    const r = authorizeVisible([{ ...bizdayCat[0], groupBy: 'org, bizday_utc' }], req(), 'metrics_revenue_mom', {})
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.sql).not.toContain('ORDER BY')
   })
 
   it('O5 显式合计（args.total=true）→ 不补：plan.sql 是聚合，排序无意义', () => {
-    const r = authorize(bizdayCat, req(), 'metrics_revenue_mom', { total: true })
+    const r = authorizeVisible(bizdayCat, req(), 'metrics_revenue_mom', { total: true })
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.total).toBe(true)
@@ -421,7 +435,7 @@ describe('authorize —— 确定性截断（spec §10.3：明细 GROUP BY 与 L
   })
 
   it('O6 自动伴随（totalable）→ totalSql 不补、主 sql 照补（截断集最新优先只属明细）', () => {
-    const r = authorize([{ ...bizdayCat[0], totalable: true }], req(), 'metrics_revenue_mom', {})
+    const r = authorizeVisible([{ ...bizdayCat[0], totalable: true }], req(), 'metrics_revenue_mom', {})
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.sql).toContain('ORDER BY bizday DESC')
@@ -440,7 +454,7 @@ describe('authorize —— 值级掩码定点展开（spec §5.3，P2 T2）', ()
   }]
 
   it('无豁免码 ⇒ 掩码包在聚合内部（sum(round(列，-step))），plan.applied 记录生效项', () => {
-    const r = authorize(maskedCat, req(), 'metrics_revenue_mom', {})
+    const r = authorizeVisible(maskedCat, req(), 'metrics_revenue_mom', {})
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.sql).toContain('sum(round(mart_sales_daily.revenue, -1000)) as value')
@@ -449,14 +463,14 @@ describe('authorize —— 值级掩码定点展开（spec §5.3，P2 T2）', ()
   })
 
   it('自动合计与明细同源（同一 whereAndGroup）⇒ totalSql 用同一套掩码值（spec §3.2 不变量 2）', () => {
-    const r = authorize(maskedCat, req(), 'metrics_revenue_mom', {})
+    const r = authorizeVisible(maskedCat, req(), 'metrics_revenue_mom', {})
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.totalSql).toContain('sum(round(mart_sales_daily.revenue, -1000))')
   })
 
   it('持有豁免码（grantedBy）⇒ sql 原样、applied 为空', () => {
-    const r = authorize(maskedCat, req({ scopes: ['data:query', 'data:precise'] }), 'metrics_revenue_mom', {})
+    const r = authorizeVisible(maskedCat, req({ scopes: ['data:query', 'data:precise'] }), 'metrics_revenue_mom', {})
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.plan.sql).toContain('sum(mart_sales_daily.revenue) as value')
@@ -466,11 +480,11 @@ describe('authorize —— 值级掩码定点展开（spec §5.3，P2 T2）', ()
   })
 
   it('masks 缺省/null/空 ⇒ applied 空、sql 一字不变（既有指标零影响）', () => {
-    const baseline = authorize([{ ...CATALOG[1] }], req(), 'metrics_revenue_mom', {})
+    const baseline = authorizeVisible([{ ...CATALOG[1] }], req(), 'metrics_revenue_mom', {})
     expect(baseline.ok).toBe(true)
     if (!baseline.ok) return
     for (const masks of [undefined, null, []] as (MaskSpec[] | null | undefined)[]) {
-      const r = authorize([{ ...CATALOG[1], masks }], req(), 'metrics_revenue_mom', {})
+      const r = authorizeVisible([{ ...CATALOG[1], masks }], req(), 'metrics_revenue_mom', {})
       expect(r.ok).toBe(true)
       if (!r.ok) return
       expect(r.plan.applied).toEqual({})
@@ -484,8 +498,9 @@ describe('authorize —— 值级掩码定点展开（spec §5.3，P2 T2）', ()
     const l1: MetricDef = { ...maskedCat[0] }                        // L1 行：带掩码（被裁掉，不在可见集）
     const l2: MetricDef = { ...maskedCat[0], id: 'l2_metric', masks: null }  // L2 行：masks 恒 null
 
-    // 反证：只传可见集（= 第 5 参缺省的旧行为）⇒ L2 行 masks 恒 null ⇒ 掩码不生效（正是 #820 的洞）
-    const before = authorize([l2], req(), 'l2_metric', {})
+    // 反证：把可见集当掩码词表（= 已移除的那个 fail-open 默认值的行为）
+    //       ⇒ L2 行 masks 恒 null ⇒ 掩码不生效（正是 #820 的洞）
+    const before = authorize([l2], req(), 'l2_metric', {}, [l2])
     expect(before.ok).toBe(true)
     if (!before.ok) return
     expect(before.plan.applied).toEqual({})

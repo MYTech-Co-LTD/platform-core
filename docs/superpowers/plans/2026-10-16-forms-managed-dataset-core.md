@@ -183,42 +183,49 @@ export function validateSubmission(args: {
 
 ## 任务分解
 
+> 📌 **勾选状态于 2026-10-18 回溯补记（执行时未逐项勾）**：M1.2 实际以**一次 PR（#713，`Closes #710`）**
+> 合并，计划里的「分任务 commit」没有逐个落地 —— 各 `commit：…` 步骤按「**已随 #713 合入**」记 ✅。
+> 逐项核对过的证据：`001_kernel.sql`（**6 表 / 5 触发器 / 12 函数 / 2 处 `global-table` 豁免**）、
+> `test-util.ts` + `kernel/contract/dict/routes/module` 五个测试文件、`manifest.yaml`（**5 个权限码** +
+> **24 条 `api.internal`**）、`domain/contract.ts` 走 **ajv draft-07**、`#710 CLOSED`。
+> （数值比计划里的 4+2/3+1/8、21 条更大 —— 实现期增补，不是缺项。）
+
 ### Task 1：文档先行（架构订正 + 本计划）
 
-- [ ] `docs/architecture.md` §2.4：P4 分档落档 + 两处「§2.2 三角色」悬空指针订正（**已完成于开工时**）
-- [ ] 本计划落 `docs/superpowers/plans/2026-10-16-forms-managed-dataset-core.md`
-- [ ] commit：`docs(forms): M1.2 P4 分档落正典 + 实施计划（issue #710）`
+- [x] `docs/architecture.md` §2.4：P4 分档落档 + 两处「§2.2 三角色」悬空指针订正（**已完成于开工时**）
+- [x] 本计划落 `docs/superpowers/plans/2026-10-16-forms-managed-dataset-core.md`
+- [x] commit：`docs(forms): M1.2 P4 分档落正典 + 实施计划（issue #710）`
 
 ### Task 2：迁移 001_kernel.sql + 幂等测试（TDD：先 G0 红）
 
-- [ ] test-util.ts（makeIdentity + 测试壳 + applyMigrations，照 aftersales；本模块无 storage 投影）
-- [ ] kernel.test.ts 先写 G0（applyMigrations 连跑两遍不抛）→ 跑红（迁移文件不存在）
-- [ ] 写 001_kernel.sql（上面 Schema 全文 + 触发器 + 函数 + 种子）
-- [ ] G0 绿 + `check-tenant-isolation` 真库绿（global-table 首用路径）
-- [ ] commit：`feat(forms): 生命周期内核迁移（4+2 表/3+1 触发器/8 函数，issue #710）`
+- [x] test-util.ts（makeIdentity + 测试壳 + applyMigrations，照 aftersales；本模块无 storage 投影）
+- [x] kernel.test.ts 先写 G0（applyMigrations 连跑两遍不抛）→ 跑红（迁移文件不存在）
+- [x] 写 001_kernel.sql（上面 Schema 全文 + 触发器 + 函数 + 种子）
+- [x] G0 绿 + `check-tenant-isolation` 真库绿（global-table 首用路径）
+- [x] commit：`feat(forms): 生命周期内核迁移（4+2 表/3+1 触发器/8 函数，issue #710）`
 
 ### Task 3：domain/contract.ts（纯函数，TDD）
 
-- [ ] contract.test.ts 先红：方言拒（2020-12）→ SCHEMA_DIALECT；编译败 → SCHEMA_COMPILE；x-dict 无 binding → BINDING_REQUIRED；binding=extensible → BAD_BINDING；坏 ref → BAD_DICT_REF；RESERVED_KEY；UNKNOWN_FIELD（不静默丢弃）；DICT_REQUIRED_VIOLATION；open 放行
-- [ ] 实现 compileGate + validateSubmission（ajv draft-07；形状照上面接口）
-- [ ] 绿 + commit：`feat(forms): 契约编译闸与提交五道闸（issue #710）`
+- [x] contract.test.ts 先红：方言拒（2020-12）→ SCHEMA_DIALECT；编译败 → SCHEMA_COMPILE；x-dict 无 binding → BINDING_REQUIRED；binding=extensible → BAD_BINDING；坏 ref → BAD_DICT_REF；RESERVED_KEY；UNKNOWN_FIELD（不静默丢弃）；DICT_REQUIRED_VIOLATION；open 放行
+- [x] 实现 compileGate + validateSubmission（ajv draft-07；形状照上面接口）
+- [x] 绿 + commit：`feat(forms): 契约编译闸与提交五道闸（issue #710）`
 
 ### Task 4：storage.ts（SQL 封装）
 
-- [ ] 生命周期七操作 + body_at + 字典 CRUD（put/upsert key、update（禁 key 变）、softDelete/restore、options、resolve、global 同构）+ 提交（先 contract 校验后 `forms.submit`）
-- [ ] kernel.test.ts 补满 D/P/I/V/S/T/R 组（裸 SQL 绕过 + md5 对账，对账表逐行）
-- [ ] dict.test.ts 补满四纪律 + 双档 + 跨 org
-- [ ] 绿（DATABASE_URL 指一次性空库）+ commit：`feat(forms): 内核与字典存储层（issue #710）`
+- [x] 生命周期七操作 + body_at + 字典 CRUD（put/upsert key、update（禁 key 变）、softDelete/restore、options、resolve、global 同构）+ 提交（先 contract 校验后 `forms.submit`）
+- [x] kernel.test.ts 补满 D/P/I/V/S/T/R 组（裸 SQL 绕过 + md5 对账，对账表逐行）
+- [x] dict.test.ts 补满四纪律 + 双档 + 跨 org
+- [x] 绿（DATABASE_URL 指一次性空库）+ commit：`feat(forms): 内核与字典存储层（issue #710）`
 
 ### Task 5：routes.ts + manifest + index.ts（TDD）
 
-- [ ] routes.test.ts 先红：scope 矩阵（view 读 / fill 提交 / manage 起草 / publish 发布；**manage 发 publish → 403**；global-manage 才能写全局）+ org 钉死（B org 读不到 A 的资产）+ 错误码映射 + probeAnonymous 全 401
-- [ ] manifest.yaml 权限码 5 + api.internal 21 条；routes.ts 端点；index.ts 装配（api.internal ↔ 注册双向核对本地版测试照 aftersales）
-- [ ] module.test.ts 扩展：权限码前缀三同、双向核对、21 条声明
-- [ ] 绿 + commit：`feat(forms): API 面 21 端点与声明即授权（issue #710）`
+- [x] routes.test.ts 先红：scope 矩阵（view 读 / fill 提交 / manage 起草 / publish 发布；**manage 发 publish → 403**；global-manage 才能写全局）+ org 钉死（B org 读不到 A 的资产）+ 错误码映射 + probeAnonymous 全 401
+- [x] manifest.yaml 权限码 5 + api.internal 21 条；routes.ts 端点；index.ts 装配（api.internal ↔ 注册双向核对本地版测试照 aftersales）
+- [x] module.test.ts 扩展：权限码前缀三同、双向核对、21 条声明
+- [x] 绿 + commit：`feat(forms): API 面 21 端点与声明即授权（issue #710）`
 
 ### Task 6：全量门禁 + PR
 
-- [ ] 本地一次性空库：`pnpm test` 全绿；`pnpm typecheck`；12 守卫脚本 + `check-tenant-isolation`；web+mobile build + `pnpm smoke`
-- [ ] push + PR（squash，body `Closes #710`，验证清单如实）
-- [ ] CI CLEAN → 合并 → mytech 自动部署验证 → 山海例行（判内容：内核纯增量，无消费方前行为惰性）
+- [x] 本地一次性空库：`pnpm test` 全绿；`pnpm typecheck`；12 守卫脚本 + `check-tenant-isolation`；web+mobile build + `pnpm smoke`
+- [x] push + PR（squash，body `Closes #710`，验证清单如实）
+- [x] CI CLEAN → 合并 → mytech 自动部署验证 → 山海例行（判内容：内核纯增量，无消费方前行为惰性）
