@@ -633,8 +633,8 @@ v1 模板集 = 少量参数化通用模板：`case_awaiting_approval` / `case_st
 **实施注记**：
 
 - **架构先行**：本节落档先于代码；实施按 `docs/superpowers/plans/2026-10-18-notification-rules-layer.md` 走 issue → PR。
-- **跨服务 emit 认证未定**（本仓现只有会话 / PAT 两通道，**无服务令牌**）：case-engine → platform-core 的 emit 认证机制**到达 M3.4 时定**（该模块本就 gated on Wave 2 M2.2），不预编。
-- **定时器载体未定**：本仓既有定时形态是 duckle console `schedules/*.json`（duckle 管线专用，拉不动 platform 逻辑）；openship job 在本仓**无先例**，M3.5 须实测并沉淀。
+- **跨服务 emit 认证（D2）✅ 已定（2026-10-18）：复用通道 B（PAT）**——服务调用方（case-engine）= **一个账号持 token**，与外部 agent **同一条通道、同一套门禁**；**不造「服务令牌通道 D」**（见 §1.5 不做清单）。落地仍 gated on Wave 2 M2.2。决策与四方案对比见 `docs/superpowers/specs/2026-10-18-notify-emit-seam-and-scheduler.md`。
+- **定时器载体（D3）✅ 已定（2026-10-18）：openship job + 仓内管理命令**。本仓已有两处先例（审计清理 job、dbt runner 零常驻），并有仓内原则「有副作用的运维动作不该藏在 HTTP 服务里」。**in-platform 侧由此零新机制**——job 跑仓内脚本、脚本直连 DB（`scripts/` 不在 B1 扫描根，已核）。
 - **待实测（不得据以声称可用）**：PoC 硬指标 = 真实创建 case（`approval: single`）→ 声明自动派生规则 → **审批人企微真机收到通知**；五负对照（停用不通知 / fail-open / fail-closed / 幂等不双发 / manual 覆盖 derived）全过才算交付。
 
 ## 3. 宿主装配链与 I-1 顺序契约
