@@ -23,7 +23,7 @@ extract() {
   awk -v name="$1" '$0 ~ "^"name"\\(\\) \\{" {f=1} f {print} f && /^}$/ {exit}' "$SRC"
 }
 
-# ── ① mat_dbt_args：全量 build，没有 --select（#679 核心不变式）────────────────
+# ── ① mat_dbt_args：固定前缀；选择器**按域派生**且不在本函数里（#679 核心不变式）──────
 DBT_ARGS=$(extract mat_dbt_args)
 [ -n "$DBT_ARGS" ] || bad "mat_dbt_args 抽取失败（函数不存在或格式变了）"
 DBT_BODY=$(echo "$DBT_ARGS" | sed '1d;/^}/d')  # 剥掉函数定义行与闭括号行
@@ -59,6 +59,17 @@ check "非空值 ⇒ 无输出" sh -c '[ -z "$1" ]' _ "$REQ_OK_OUT"
 SRC_CONTENT=$(cat "$SRC")
 if printf '%s\n' "$SRC_CONTENT" | grep -Fq -- '$(mat_env_args)'; then ok "docker run 行引用 \$(mat_env_args)（字面量在场）"; else bad "docker run 行引用 \$(mat_env_args)（字面量在场）"; fi
 if printf '%s\n' "$SRC_CONTENT" | grep -Fq -- '$(mat_dbt_args)'; then ok "docker run 行引用 \$(mat_dbt_args)（字面量在场）"; else bad "docker run 行引用 \$(mat_dbt_args)（字面量在场）"; fi
+if printf '%s\n' "$SRC_CONTENT" | grep -Fq -- '--select "$(mat_dbt_select "$_d")"'; then ok "docker run 行把选择器作为**带引号的单个实参**传下去（词分割会切坏它）"; else bad "docker run 行把选择器作为**带引号的单个实参**传下去（词分割会切坏它）"; fi
+
+# ── ④-b 选择器是**派生三段式**（2026-10-18 补漏：+enabled 管不到 dbt/tests/）────────
+SEL_FN=$(extract mat_dbt_select)
+[ -n "$SEL_FN" ] || bad "mat_dbt_select 抽取失败（函数不存在或格式变了）"
+eval "$SEL_FN"
+SEL_OUT=$(mat_dbt_select forms)
+check "选择器只含**派生**三段：path:models/<域> + config.materialized:seed + path:tests/<域>" \
+  sh -c '[ "$1" = "path:models/$2 config.materialized:seed path:tests/$2" ]' _ "$SEL_OUT" forms
+check "选择器里没有任何具体模型名（手抄名单的形态：stg_/fct_）" \
+  sh -c '! echo "$1" | grep -Eq "stg_|fct_"' _ "$SEL_OUT"
 
 # ── ⑤ 物化落账（spec §10.1 + §10.7.2）：load_log DDL 与水位 SQL 的判别面 ──────────
 LOG_SQL_FN=$(extract mat_load_log_sql)

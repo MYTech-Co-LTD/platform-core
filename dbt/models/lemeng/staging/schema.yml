@@ -4,14 +4,14 @@
 #   `dbt/models/lemeng/marts/schema.yml`（口径模型与清洗模型各自归各自，别互相塞）。
 # ⚠️ L1 语义声明也不在这里，在 `dbt/semantics/l1_metrics.yml`（理由见 marts/schema.yml 头注）。
 #
-# 本文件的两类断言（都不替代对账 —— 对账是 `dbt/tests/audit_*.sql` 的独立复算）：
+# 本文件的两类断言（都不替代对账 —— 对账是 `dbt/tests/<域>/audit_*.sql` 的独立复算）：
 #   · 列级 `tests:`（dbt 原生）—— 钉「这一列该有的形状」
 #   · 结构断言（singular test）—— 钉「单列约束抓不住的形状」，见
-#     `dbt/tests/assert_stg_lemeng_*_key_unique.sql`（**复合自然键唯一性**）
+#     `dbt/tests/lemeng/assert_stg_lemeng_*_key_unique.sql`（**复合自然键唯一性**）
 #
 # ⚠️ 两种「空」都要当心（本文件的列级测试都是**非空断言**，空表上照样绿）：
 #   ① 表是空的 ⇒ 一切列级测试通过，而那不是「数据对」，是「没有数据」；
-#   ② 本层的 cast 写错（截断/取整/精度）⇒ 列级测试一条都不红。抓 ② 的是 `dbt/tests/audit_*.sql`
+#   ② 本层的 cast 写错（截断/取整/精度）⇒ 列级测试一条都不红。抓 ② 的是 `dbt/tests/<域>/audit_*.sql`
 #      （绕开 staging 直接打 parquet 的独立复算）。
 #
 # ⚠️ **逐列描述只写「本层引入的形状」**（分区键的 cast / 自然键 / 载荷列），**不复制契约的文字**：
@@ -541,13 +541,13 @@ models:
 
 # 三张维度/价格表的**行粒度自然键**唯一性由 singular test 手写（单列 `unique` 判不了复合键；
 # 引 dbt_utils 要加 packages.yml —— 多一层依赖、解析期还要联网）：
-#   dbt/tests/assert_stg_lemeng_branch_key_unique.sql     —— (system_book, snapshot, branch_num)
-#   dbt/tests/assert_stg_lemeng_item_key_unique.sql       —— (system_book, snapshot, item_num)
-#   dbt/tests/assert_stg_lemeng_item_price_key_unique.sql —— (system_book, snapshot, branch_num, item_num, item_grade_num)
-#   dbt/tests/assert_stg_lemeng_transfer_out_key_unique.sql —— (system_book, bizday, order_no, item_num, item_grade_num, lot_number)
-#   dbt/tests/assert_stg_lemeng_wholesale_out_key_unique.sql —— (system_book, bizday, order_no, order_detail_num)
-#   dbt/tests/assert_stg_lemeng_wholesale_return_key_unique.sql —— (system_book, bizday, wholesale_return_fid, item_num, order_detail_num)
-#   dbt/tests/assert_stg_lemeng_item_purchase_key_unique.sql    —— (system_book, bizday, supplier_num, item_num)
+#   dbt/tests/lemeng/assert_stg_lemeng_branch_key_unique.sql     —— (system_book, snapshot, branch_num)
+#   dbt/tests/lemeng/assert_stg_lemeng_item_key_unique.sql       —— (system_book, snapshot, item_num)
+#   dbt/tests/lemeng/assert_stg_lemeng_item_price_key_unique.sql —— (system_book, snapshot, branch_num, item_num, item_grade_num)
+#   dbt/tests/lemeng/assert_stg_lemeng_transfer_out_key_unique.sql —— (system_book, bizday, order_no, item_num, item_grade_num, lot_number)
+#   dbt/tests/lemeng/assert_stg_lemeng_wholesale_out_key_unique.sql —— (system_book, bizday, order_no, order_detail_num)
+#   dbt/tests/lemeng/assert_stg_lemeng_wholesale_return_key_unique.sql —— (system_book, bizday, wholesale_return_fid, item_num, order_detail_num)
+#   dbt/tests/lemeng/assert_stg_lemeng_item_purchase_key_unique.sql    —— (system_book, bizday, supplier_num, item_num)
 #
 # 列级测试的**范围**（有意为之，不是漏做）：只给**自然键列**挂 `not_null`（与
 # stg_lemeng_retail_order_line 的形状一致 —— 它也只给同名的两个自然键列挂）。

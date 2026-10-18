@@ -57,7 +57,7 @@ models/
 | 2 | 对应的 staging 模型（手写 cast，含 `r['` 取列） | 规则 ①（cast 规范见 `dbt/README.md` §3） |
 | 3 | `marts/` 的口径模型（口径只定义一次） | 纪律，无机检 |
 | 4 | `dbt/semantics/l1_metrics.yml` 里声明客户指标（必填字段齐全） | 规则 ⑤⑥ |
-| 5 | 每个新声明指标一条 `dbt/tests/audit_<指标>.sql`（文件名用 `metricToAuditFileName()` 算，别手写） | 规则 ⑦（含映射无碰撞） |
+| 5 | 每个新声明指标一条 `dbt/tests/<源>/audit_<指标>.sql`（文件名用 `metricToAuditFileName()` 算，别手写） | 规则 ⑦（含映射无碰撞） |
 | 6 | `dbt/README.md` §8「实证 vs 暂定」表补该客户的行 | 否则下一个接手的人分不清哪些是猜的 |
 
 **只加源不加契约与管线 = 半接**：新增数据源的三件套（`contracts/` 采集契约 + `duckle/` 管线 +

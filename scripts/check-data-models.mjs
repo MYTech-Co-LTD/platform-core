@@ -356,7 +356,7 @@ function firstMatchLine(masked, re) {
  *
  * 语义三条（逐字）：① 入参 = 语义声明的 `name` 原值（`<源>:<业务域>:<指标>` 命名空间形态）；
  * ② **每一个** `:` 都替换成 `__`（不是只换第一个；名字里若还有别的下划线一律不动）；
- * ③ 返回值 `audit_<替换后>.sql`，落点是 `dbt/tests/`。
+ * ③ 返回值 `audit_<替换后>.sql`，落点是 `dbt/tests/<源>/`（**按域分子目录**，见规则 ⑦ 的说明）。
  *
  * @param {string} metricName @returns {string}
  */
@@ -1281,8 +1281,14 @@ export function checkDataModels(rootDir, opts = {}) {
       }
     }
 
-    // ⑦ 对账 test 存在性（文件名由导出的唯一映射函数算出）
-    const auditFile = `${DBT_DIR}/tests/${metricToAuditFileName(metric.name)}`
+    // ⑦ 对账 test 存在性（文件名由导出的唯一映射函数算出）。
+    // **按域分子目录**：`dbt/tests/<源>/<文件名>`，`<源>` = 指标名第一段（= 域）。
+    // 为什么必须分域（2026-10-18 真机暴露）：物化是**逐域**跑的（`dbt build --select
+    // path:models/<域> ... path:tests/<域>`），而 `dbt/tests/` 是**平铺**的、`+enabled`
+    // 又只管 `models:` 路径 ⇒ 不分域时**乐檬的 singular test 会在 forms 面上照跑**，
+    // 去读本面并不存在的 `lemeng/` 前缀 ⇒ 该域 dbt 红 ⇒ 本域水位写不进去。
+    const auditDomain = metric.name.split(':')[0]
+    const auditFile = `${DBT_DIR}/tests/${auditDomain}/${metricToAuditFileName(metric.name)}`
     const owners = auditFileNameToMetrics.get(auditFile) ?? []
     owners.push(metric.name)
     auditFileNameToMetrics.set(auditFile, owners)
