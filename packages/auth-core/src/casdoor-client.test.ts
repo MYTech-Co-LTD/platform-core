@@ -161,6 +161,32 @@ describe('CasdoorClient 语义钉死（C2）', () => {
     expect(m.lastLoginApplication).toBe('app-built-in')
   })
 
+  it('admin 会话 cookie 取**最后一个** casdoor_session_id（#911：新版 Casdoor 一次登录发两个，第一个是占位/匿名）', async () => {
+    // 真机抓包（2026-10-18）：登录响应带两个 Set-Cookie；只发第一个 ⇒ Unauthorized operation，
+    // 只发第二个 ⇒ ok。浏览器语义 = 同名后者覆盖前者，故必须取最后一个。
+    let sentCookie = ''
+    const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/login')) {
+        return new Response(JSON.stringify({ status: 'ok', data: 'built-in/admin' }), {
+          status: 200,
+          headers: [
+            ['set-cookie', 'casdoor_session_id=decoy-anonymous; Path=/; HttpOnly'],
+            ['set-cookie', 'casdoor_session_id=real-authorized; Path=/; HttpOnly'],
+          ],
+        })
+      }
+      sentCookie = (init?.headers as Record<string, string>)?.Cookie ?? ''
+      return new Response(JSON.stringify({ status: 'ok', data: [] }), { status: 200 })
+    }) as typeof globalThis.fetch
+    const c = new CasdoorClient({
+      origin: 'https://sso.example', clientId: 'x', clientSecret: 'y', org: 'acme',
+      adminUser: 'admin', adminPwd: 'pw', fetchImpl: fakeFetch,
+    })
+    await c.getPermissions()
+    expect(sentCookie).toBe('casdoor_session_id=real-authorized')
+  })
+
   it('mock get-user 严格 id=<org>/<name> 全形（无斜杠不合法，wrong token count）', async () => {
     const r = await fetch(`${m.origin}/api/get-user?id=admin1`, { headers: { Cookie: await adminCookie() } })
     expect(r.status).toBe(200)
