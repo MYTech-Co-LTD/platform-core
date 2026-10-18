@@ -42,10 +42,25 @@ export type FreshnessStatus = 'normal' | 'late' | 'alert' | 'unknown'
 /** 水位查询（spec §10.7.3）：freshness_relations 各关系在 load_log 上 min(max_bizday)（木桶
  *  短板）+ 同一批 ok 行的最新物化时刻（固定行的 {t} 用）。status='ok' 且 relation 非空——
  *  旧「仓级」行（relation NULL）是历史，不进水位（spec §10.7.2）。关系字面量经 sqlQuote
- *  内联（值是服务端 sync 物化的关系名， quoting 与授权核心同一把尺）。 */
+ *  内联（值是服务端 sync 物化的关系名， quoting 与授权核心同一把尺）。
+ *
+ *  🔴 **2026-10-18 订正（issue #844）：先按关系取「最新一行」，再跨关系取 min。**
+ *  `data.load_log` 是**追加式**的（每次物化按关系插一行）⇒ 原来直接
+ *  `min(max_bizday) ... where relation in (...)` 取的是**历史上最差那一次**，不是当前水位：
+ *  实测 outbound 三关系 45 行历史 / 15 次物化，报 10-14 而真实水位 10-16，且偏差随历史增长
+ *  **只增不减**（`min` 只会往回走）⇒ 固定行永久显示「比平时慢了」。
+ *  行业口径：水位是**当前指针**（dbt source freshness 用 max(loaded_at_field)、Dagster
+ *  FreshnessPolicy 依据最近一次 materialization、Flink watermark 是分区级事件时间进度）；
+ *  指标级用 min（木桶/最弱环）本身是对的 —— 前提是喂进去的是**每个关系的当前水位**。
+ */
 const WATERMARK_SQL_HEAD =
-  "select min(max_bizday)::text as watermark, max(materialized_at) as materialized_at"
+  "with latest as (select distinct on (relation) relation, max_bizday, materialized_at"
   + " from data.load_log where status = 'ok' and relation in ("
+
+/** 见上：先闭合 `relation in (...)` 的括号（`HEAD` 以 `in (` 结尾），再闭合 CTE 并跨关系取木桶短板。 */
+const WATERMARK_SQL_TAIL =
+  ") order by relation, materialized_at desc)"
+  + " select min(max_bizday)::text as watermark, max(materialized_at) as materialized_at from latest"
 
 /** 水位的日历形状（watermark 列经 ::text 出来必须是 `YYYY-MM-DD`；坏形状宁可缺席不外递）。 */
 const WATERMARK_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -333,7 +348,8 @@ export async function runQuery(
   if (relations.length > 0) {
     try {
       const wm = await runWarehouseSql(
-        warehousePool(), `${WATERMARK_SQL_HEAD}${relations.map((r) => sqlQuote(r)).join(', ')})`)
+        warehousePool(),
+        `${WATERMARK_SQL_HEAD}${relations.map((r) => sqlQuote(r)).join(', ')}${WATERMARK_SQL_TAIL}`)
       const w = wm.rows[0]?.[0]
       const matAt = wm.rows[0]?.[1]
       if (typeof w === 'string' && WATERMARK_RE.test(w) && matAt instanceof Date) {
@@ -350,6 +366,13 @@ export async function runQuery(
       // load_log 缺表/缺列 / 仓库未配 ⇒ 链路三字段缺席（新鲜度未知，主查询结果照常交付）
     }
   }
+
+  // 口径射程与排除项（消费面 spec 2026-10-17 §12.6）：声明了 `scope_note` 才回包。
+  // 为什么必须由平台给：只报「5 家」会被读成「全部门店都没问题」，而「靠模型自觉复述」
+  // 已被参数面 spec §8.4 证伪（SKILL 对 flash 级模型是弱引导）⇒ 平台自动附、插件钉在末尾。
+  // 未声明（''）= 响应不带该字段——未知 ≠ 编一句。
+  const scopeNote = typeof metricRow?.scopeNote === 'string' ? metricRow.scopeNote.trim() : ''
+  const scopeLine = scopeNote === '' ? undefined : `📐 口径：${scopeNote}`
 
   // 审计掩码（spec §4.4）：与回包 `masking` 同一份 applied（授权层展开记录）——空则 **null**，
   // 不写 {}（null = 本次无掩码生效，'{}' 是审计里不该出现的第三种态）。
@@ -378,6 +401,9 @@ export async function runQuery(
           freshness_line: freshnessFace.freshness_line,
         }
       : {}),
+    // 口径射程（spec §12.6）：声明了才带。插件据此把该行钉在答案末尾（与 freshness_line 同一套
+    // 传输层确定性机制——剥模型自写、再附正典行）。
+    ...(scopeLine !== undefined ? { scope_line: scopeLine } : {}),
     // 值级脱敏面（spec §5.3）：授权层展开记录非空才回包——空对象不出现该键（缺席 = 原值）。
     // total（显式/自动合计）读的是同一个被掩的内层 select，天然与明细行同一套掩码值。
     // ★ 复用上面审计那一份 `appliedMasking`（T3-②，issue #824）：两处各写一遍

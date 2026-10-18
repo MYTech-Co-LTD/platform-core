@@ -274,7 +274,10 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
         // 新鲜度链路（spec §10.7）：L2 行没有这个概念，恒 null（不是 []——「没声明」与「声明为空」可辨）
         slaDays: null, freshnessRelations: null,
         // 值级掩码（spec 2026-10-17 §5.2）：同理不是 L2 写入面的概念，恒 null
-        masks: null })
+        masks: null,
+        // 口径射程（消费面 spec §12.6）：同理不是 L2 写入面的概念，恒 ''（不是 null——
+        // 列是 not null default ''，运行期恒为字符串；'' = 未声明）
+        scopeNote: '' })
   })
 
   it('deleteMetric 返「是否真删了一行」，且只删本租户的', async () => {

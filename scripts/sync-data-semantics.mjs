@@ -120,6 +120,8 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  * @property {Record<string, MetricParamDef>} params
  * @property {string | null} sourceSystem
  * @property {boolean} totalable 可加标记（spec §8.4，deriveTotalable 从 expression 推导）
+ * @property {string} [scopeNote] 口径射程与排除项（消费面 spec §12.6，声明 `scope_note` 的物化值；
+ *                  '' = 未声明——允许空串是为了接住**库内旧行**：sync 未刷过该列的存量 L1 行）
  * @property {number | null} slaDays 新鲜度 SLA 承诺天数（spec §10.7.1，声明 freshness_sla_days 的物化值；
  *                  允许 null 是为了接住**库内旧行**——sync 未刷过 sla_days 的存量 L1 行；
  *                  声明侧推导出的行恒为非负整数，库侧读取不信任存储形状）
@@ -140,7 +142,7 @@ const FRESHNESS_ASSET_RE = /^[a-z0-9_]+$/
  * `stg_lemeng_<资产>`。
  *
  * ── 为什么是「命名约定即事实」而不是再要一个显式声明字段 ─────────────────────────────
- * staging 模型名在仓内是 `stg_<源>_<资产>`（`dbt/models/common/staging/stg_lemeng_*.sql`，
+ * staging 模型名在仓内是 `stg_<源>_<资产>`（`dbt/models/<域>/staging/stg_lemeng_*.sql`，
  * 14 个全部同构，check-data-models 规则 ④ 的双向配对盯着的正是这个形状）；水位要查的表就是
  * 这些 staging 模型落的表。让声明再写一遍关系名 = 两处事实源（sources 已写了路径段）。
  * 故这里**机械推导**：推导不出来（路径里没有 `lemeng/` 段、资产段形状不安全）就**响亮失败**
@@ -490,6 +492,28 @@ export function deriveTotalable(expression, additivity = 'flow') {
   return /^\s*sum\s*\(/i.test(expression) && !/\s\/\s/.test(expression)
 }
 
+/**
+ * 口径射程与排除项（消费面 spec 2026-10-17 §12.6）：缺省空串 = 未声明（响应不带该行）。
+ *
+ * 为什么空白必须响亮失败：它会被**原样**钉进对外答案末尾——空串会让平台附一条空行（噪音），
+ * 而「声明了但没生效」正是本仓反复吃的静默形态。L2 租户行不开放该概念（写侧恒 ''）。
+ *
+ * @param {unknown} raw 声明里的 `scope_note` 原值
+ * @param {string} name 指标名（只用于错误信息）
+ * @returns {string}
+ */
+export function scopeNoteOf(raw, name) {
+  if (raw === undefined || raw === null) return ''
+  const v = String(raw).trim()
+  if (v === '') {
+    throw new Error(
+      `指标 \`${name}\` 的 \`scope_note\` 为空/纯空白 —— 它会被原样钉进对外答案的末尾`
+      + '（消费面 spec 2026-10-17 §12.6）；没内容就别声明（省略 = 未声明射程）。',
+    )
+  }
+  return v
+}
+
 /** 可加性分类的闭集（消费面 spec 2026-10-17 §12.3）。 */
 export const ADDITIVITY_VALUES = ['flow', 'stock', 'non_additive']
 
@@ -636,6 +660,8 @@ export function declarationsFromYaml(parsed) {
       // 可加标记（spec §8.4；2026-10-17 §12.3 起**先看声明的 additivity**）：ratio 在上面已包成
       // `… / nullif(…, 0)`，deriveTotalable 的除法排除正好接住它；`stock`/`non_additive` 直接 false。
       totalable: deriveTotalable(expression, additivityOf(m.additivity, name)),
+      // 口径射程与排除项（消费面 spec 2026-10-17 §12.6）：缺省空串 = 未声明（响应不带该行）。
+      scopeNote: scopeNoteOf(m.scope_note, name),
       slaDays,
       freshnessRelations,
       // 值级掩码声明（spec 2026-10-17 §5.2）：缺省 null（未声明）；给了就逐项校验
@@ -686,6 +712,7 @@ const comparableOf = (/** @type {ComparableMetric} */ row) => JSON.stringify(can
   row.title, row.description, row.requiredScope, row.subjectColumn, row.selectSql, row.groupBy, row.params,
   row.sourceSystem,
   row.totalable,
+  row.scopeNote,
   row.slaDays,
   row.freshnessRelations,
   row.masks,

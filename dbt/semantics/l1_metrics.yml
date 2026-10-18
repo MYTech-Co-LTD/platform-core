@@ -23,8 +23,20 @@
 #               它会**落库**（`data.metrics.source_system`，sync 物化）并被消费侧拿去与
 #               「已接入源」比对（未接入该源的租户看不到这条指标）⇒ 写法必须与登记值逐字一致。
 #   freshness_sla_days 必填。**新鲜度 SLA 承诺天数**（spec §10.7.1）：物化水位距今天 ≤N 个
-#               业务日即「正常」。值 = 采集正典实测窗口的登记，不是拍脑袋：inventory 两指标 = 2
-#               （源端发布滞后 16~40h 实测），其余 = 1（D+1 采集/日结）。sync 物化进
+#               业务日即「正常」—— 语义就是「T+N 可用」。
+#               🔴 **2026-10-18 按实测发布时钟重新标定（issue #849）**：用湖里 `batch_id`
+#               自带的批次时刻反推「bizday → 数据可用」的端到端延迟（近 7 天，3120）：
+#                 · retail_order_line ≈ 0（tick 每 5 分钟）            ⇒ N=1 不变
+#                 · transfer_out 39.6h / item_purchase 40.7h /
+#                   request_order 40.3h / branch_expense 40.1h /
+#                   client_expense 40.3h                              ⇒ N=2
+#                 · wholesale_out 43.4h（个别 64.6h）                 ⇒ N=2
+#                 · inventory_snapshot 64.6h（稳定）                  ⇒ N=3
+#               依据：采集窗口落在 16:25/16:35 UTC = **上海 00:25/00:35**，刚过午夜 25~35 分钟
+#               ⇒ 「T+1」对这些资产**从来不可达**，旧值 1 是标定错误（不是判据错误）。
+#               ⚠️ 已知边界：数据在上海 00:2x 落地而日界是 00:00 ⇒ 每天约 25 分钟窗口里水位
+#               仍指向前一天，状态会短暂显示 late。消掉它需小时级时钟（新声明字段+迁移），
+#               收益仅 25 分钟，暂不做。sync 物化进
 #               `data.metrics.sla_days`，服务端按它把水位转译成 freshness_status
 #               （normal/late/alert）与 freshness_line 固定展示行；**缺声明 sync 响亮失败**
 #               （新指标忘登记不许静默默认——那会让它永远「未知」且没人发现）。
@@ -52,19 +64,45 @@
 version: 1
 
 metrics:
-  - name: 'lemeng:retail:net_sales'
-    label: 净销售额
+  - name: 'lemeng:retail:sales'
+    label: 销售额（不冲退货）
     definition: >-
-      零售净销售额，平台口径（issue #430 定案，2026-10-05 双账套真机 5 天逐分归零）：
-      取 state=FINISHED 且 order_transaction_type=SALE_ORDER 的订单（退货单不进 gross——
-      平台 sale_money 不冲退货单），逐订单取「(Σ非赠品行额 + order_total_money) / 2」，
-      按门店×日合计后再减 Σ分摊折扣（order_detail_share_discount）；
+      零售销售侧金额（**不冲退货**）= 2026-10-17 之前 `lemeng:retail:net_sales` 的原值。
+      取 state=FINISHED 且 order_transaction_type=SALE_ORDER 的订单（**退货单不进本口径**），
+      逐订单取「(Σ非赠品行额 + order_total_money) / 2」，按门店×日合计后再减 Σ分摊折扣；
       赠品行按判别式排除（std_price>0 且 sale_money>0 且 quantity>0 且
       |discount_money − std_price×quantity| ≤ 0.02，容差标定见判别式正典
       docs/superpowers/specs/2026-09-30-recon-zeroing-self-attribution.md）。
+      ⚠️ 会计上这个量叫 **gross sales**，不是 net sales —— 本指标存在的意义正是把「毛」与「净」
+      在语义层**同时可见**，防「净销售额」被当成会计净收入用（2026-10-17 事故根因，issue #813）。
       粒度 = 账套 × 业务日 × 门店（口径模型 fct_retail_sale）。
-      ✅ tier=certified（2026-10-13 客户裁决：裁1 保持折半口径——换货即商品替换、退旧换新只计差价，
-      与乐檬报表口径一致；spec §6 裁1 已回签）。
+      ✅ tier=certified（沿用旧 `net_sales` 的 2026-10-05 双账套 5 天 × 63 店逐分归零验证，公式未变）。
+    expression: 'sum(fct_retail_sale.sale_amount)'
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: certified
+    source: lemeng
+    freshness_sla_days: 1
+    sources:
+      - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
+
+  - name: 'lemeng:retail:net_sales'
+    label: 净销售额
+    definition: >-
+      零售净销售额 = **销售侧 − 退货侧**（2026-10-17 起，issue #813；口径依据 = 客户裁1 的净额
+      L = Σsale − Σreturn 叠加「换货扣送出半边」）。**销售侧** = state=FINISHED 且
+      order_transaction_type=SALE_ORDER 的订单（退货单不进销售侧），逐订单取
+      「(Σ非赠品行额 + order_total_money) / 2」，按门店×日合计后再减 Σ分摊折扣；赠品行按判别式排除
+      （std_price>0 且 sale_money>0 且 quantity>0 且 |discount_money − std_price×quantity| ≤ 0.02，
+      容差标定见判别式正典 docs/superpowers/specs/2026-09-30-recon-zeroing-self-attribution.md）。
+      **退货侧** = 退货单**全额冲减**（不套折半）：Σ(sale_money + order_detail_share_discount)，
+      条件 order_transaction_type like '%RETURN%' AND state='FINISHED'（**REPAID_RETURN 不计**
+      —— 它们 state=REPAID；2026-10-17 四个 book-day 真机逐分验证）。
+      退货按**退货单自身 bizday** 归属，不是原单销售日。
+      粒度 = 账套 × 业务日 × 门店（口径模型 fct_retail_sale）。
+      ⚠️ 本口径实为**乐檬报表复现口径**（销售侧折半式是反推式），**不是会计口径的净收入**。
+      ⚠️ tier=experimental：退货侧存在逐店缺口（issue #814），缺口清零前不转 certified。
+      spec：docs/superpowers/specs/2026-10-17-retail-net-sales-return-offset-design.md
     expression: 'sum(fct_retail_sale.net_amount)'
     grain: [system_book, bizday, branch_num]
     owner: data-platform
@@ -81,12 +119,13 @@ metrics:
     label: 订单数
     definition: >-
       有效零售订单数：state=FINISHED 且 order_transaction_type=SALE_ORDER 的去重订单笔数
-      （与净销售额同基面，换货单算一单；口径模型 fct_retail_sale）。
+      （基面 = 销售单，与 `lemeng:retail:sales` 同基面，**不含退货单**——退货不是「订单」；
+      换货单算一单；口径模型 fct_retail_sale）。
       粒度 = 账套 × 业务日 × 门店。
       **上滚语义**：更粗粒度上对 expression 求和 = 各门店日去重笔数之和；跨门店重号的订单会被
       重复计入——`order_no` 的**跨门店唯一性未证**（单号语义的已证/未证边界见
       `dbt/tests/audit_lemeng__retail__order_count.sql` 头注），这是本口径的**已知边界**，
-      要「全账套唯一订单数」得单独声明一个新指标，不许改本定义。✅ certified（2026-10-13 裁1 回签：与净销售额同基面转正）。
+      要「全账套唯一订单数」得单独声明一个新指标，不许改本定义。✅ certified（2026-10-13 裁1 回签；基面 = 销售单，未随 #813 的净额口径变更而变）。
     expression: 'sum(fct_retail_sale.order_count)'
     grain: [system_book, bizday, branch_num]
     owner: data-platform
@@ -102,7 +141,9 @@ metrics:
       净销量 = 销售数量 − 退货数量（客户项 03-07「库存覆盖天数」的**分母**）。可加（按门店日求和）。
       **销售** = state=FINISHED 且 order_transaction_type=SALE_ORDER；**退货** = 单据类型含 RETURN
       且 state ∈ (FINISHED, REPAID)。⚠️ 载体见 `fct_retail_quantity`——它的基面与本族净**额**
-      指标**不同**（净额按裁1 不冲退货单，净销量必须减退货），故单开构件而不是共用 fct_retail_sale。
+      指标**不同**（净额自 2026-10-17 起也减退货，但退货谓词是 `like '%RETURN%' AND
+      state='FINISHED'`（**不含** REPAID_RETURN）；本指标是 `state in ('FINISHED','REPAID')`
+      —— 两者**刻意不同**，别合并），故单开构件而不是共用 fct_retail_sale。
       ⚠️ **两处解释性落地**（客户原文未细到这一层，故 experimental）：
       ① `REPAID_RETURN`（已退款退货）计入退货；② `state=CANCELED` 的销售与退货都不计。
       ⚠️ **本指标不产出「覆盖天数」**：客户公式里的「批准窗口 N」属 X08 口径阈值（客户待批），
@@ -132,6 +173,9 @@ metrics:
       待客户营业日历（`x01_branch_calendar`）或更长窗口；「断数 vs 零销售」的最终判定仍需 X09。
       ⚠️ 与 01-06「规则闭店候选」的区别：本指标只出**天数**，**15 日门槛属 01-06/X08，不在本口径**。
       粒度 = 账套 × 业务日 × 门店。
+    scope_note: >-
+      仅零售门店口径：批发客户/仓库/配送节点（观察窗内无零售销售）与停用门店已排除；
+      断数与零销售的最终区分仍待采集日志。
     expression: >-
       max(case when fct_branch_day_activity.retail_active
                then fct_branch_day_activity.consecutive_no_sales_days end)
@@ -163,6 +207,9 @@ metrics:
       （刻意保留，客户文档明确要求）。无可比门店或上期合计 ≤ 0 ⇒ 率不适用（分母 nullif）。
       粒度 = 账套 × 周期长度 × 报告期末日（列名 `bizday` = **本期报告期末那一天**，
       保留 bizday 这个名字是为了沿用问数参数白名单——它是业务日，`date_range` 过滤的是「期末日落在区间内的周期」）。
+    scope_note: >-
+      仅可比门店口径：新开店、闭店、两期内停用、以及无零售业务的节点（批发客户/仓库/配送节点）已排除；
+      周期为 7 天（不是客户要求的月——历史不足）。
     expression: >-
       sum(fct_retail_comparable_growth.cur_amount)
       / nullif(sum(fct_retail_comparable_growth.pri_amount), 0) - 1
@@ -198,7 +245,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -217,7 +264,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -236,7 +283,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -254,7 +301,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -270,7 +317,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -290,7 +337,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -310,7 +357,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -326,7 +373,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -344,7 +391,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -363,7 +410,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -377,7 +424,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -392,7 +439,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -407,7 +454,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -421,7 +468,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -435,7 +482,7 @@ metrics:
     owner: data-platform
     tier: certified
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -459,7 +506,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 2
+    freshness_sla_days: 3
     sources:
       - 's3://<bucket>/lemeng/inventory_snapshot/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -475,7 +522,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 2
+    freshness_sla_days: 3
     sources:
       - 's3://<bucket>/lemeng/inventory_snapshot/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -494,7 +541,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -507,7 +554,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -521,7 +568,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -535,7 +582,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -549,7 +596,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -562,7 +609,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -587,7 +634,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -602,7 +649,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/item_purchase/system_book=<账套>/bizday=<日期>/all.parquet'
 
@@ -629,7 +676,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -650,7 +697,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -675,7 +722,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -701,7 +748,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -721,7 +768,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -744,7 +791,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -766,7 +813,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/branch_expense/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -795,7 +842,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     # ⚠️ **刻意不声明 dim_item**：新鲜度关系由 `sources` 的路径段**机械推导**成 `stg_lemeng_<资产>`，
     #   而 `lemeng/dim_item` 会推成 `stg_lemeng_dim_item`——实际 staging 叫 `stg_lemeng_item`，
     #   两者对不上 ⇒ 水位查询永远落空 ⇒ 新鲜度恒「未知」（静默降级，2026-10-17 被门禁抓到）。
@@ -819,7 +866,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/request_order/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/transfer_in/system_book=<账套>/bizday=<日期>/all.parquet'
@@ -839,7 +886,7 @@ metrics:
     owner: data-platform
     tier: experimental
     source: lemeng
-    freshness_sla_days: 1
+    freshness_sla_days: 2
     sources:
       - 's3://<bucket>/lemeng/request_order/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/transfer_in/system_book=<账套>/bizday=<日期>/all.parquet'

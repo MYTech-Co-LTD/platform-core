@@ -33,15 +33,15 @@ check "带 --profiles-dir /usr/app" sh -c 'echo "$1" | grep -F -- "--profiles-di
 check "不含 --select（名单回来 = #677 假绿复发）" sh -c '! echo "$1" | grep -q -- "--select"' _ "$DBT_ARGS"
 check "不含任何 stg_/fct_ 模型名（按需名单的另一种长法）" sh -c '! echo "$1" | grep -Eq "stg_|fct_"' _ "$DBT_ARGS"
 
-# ── ② mat_env_args：8 键、只透传键名、值不落 argv ─────────────────────────────
+# ── ② mat_env_args：9 键、只透传键名、值不落 argv ─────────────────────────────
 ENV_ARGS=$(extract mat_env_args)
 [ -n "$ENV_ARGS" ] || bad "mat_env_args 抽取失败（函数不存在或格式变了）"
 E_TOKENS=$(echo "$ENV_ARGS" | tr -s ' ' '\n' | sed '/^$/d' | grep -c '^-e$')
-check "-e token 恰 8 个（键集由本函数唯一定义）" sh -c '[ "$1" = 8 ]' _ "$E_TOKENS"
+check "-e token 恰 9 个（键集由本函数唯一定义）" sh -c '[ "$1" = 9 ]' _ "$E_TOKENS"
 E_EQ=$(echo "$ENV_ARGS" | tr -s ' ' '\n' | sed '/^$/d' | grep -c '=' || true)
 check "带 = 的 token 恰 1 个（仅 DBT_HOST=pg_duckdb；值进 argv 就进 ps）" sh -c '[ "$1" = 1 ]' _ "$E_EQ"
 check "带 = 的那个正是 DBT_HOST=pg_duckdb" sh -c 'echo "$1" | grep -qx "DBT_HOST=pg_duckdb"' _ "$(echo "$ENV_ARGS" | tr -s ' ' '\n' | grep '=')"
-for k in DBT_USER DBT_PASSWORD DBT_DBNAME LEMENG_ZOS_BUCKET LEMENG_ZOS_REGION LEMENG_ZOS_ENDPOINT LEMENG_SUBJECT_ORG; do
+for k in DBT_USER DBT_PASSWORD DBT_DBNAME LEMENG_ZOS_BUCKET LEMENG_ZOS_REGION LEMENG_ZOS_ENDPOINT LEMENG_SUBJECT_ORG DATA_PLANE_DOMAINS; do
   check "透传键在场：-e ${k}" sh -c 'echo "$1" | grep -F -- "-e $2" >/dev/null' _ "$ENV_ARGS" "$k"
 done
 
@@ -145,10 +145,22 @@ elif [ "$1" = exec ]; then
   if [ "$4" = plat ]; then
     echo stub-org
   elif [ "$4" = pg ]; then
-    printf 'stg_lemeng_a\nstg_lemeng_b\n'
+    # 全 staging 内含 bizday 的表（含**别的域**的：域裁剪由脚本按本域模型名取子集，
+    # 不是靠这条 SQL 过滤 —— 断言「别的域的表没被落账」才有意义）
+    printf 'stg_lemeng_a\nstg_lemeng_b\nstg_forms_submission\n'
   fi
   [ "${STUB_EXEC_FAIL:-0}" = 1 ] && exit 1
 elif [ "$1" = run ]; then
+  # 按域失败（拆爆炸半径的用例）：脚本逐域跑时用「逐命令 env 赋值」把单个域给 docker CLI
+  # ⇒ 本桩读得到 ${DATA_PLANE_DOMAINS}（**不是**从 argv —— 域值刻意只走 env、不进 ps）。
+  # ⚠️ 按**域集合**匹配（逗号拆开逐项），不是整串子串：这样「一次全量跑 lemeng,forms」
+  # 也会因 forms 而红 ⇒ 下面「绿域照常落账」那条在**改动前**会红（用例真有判别力）。
+  if [ -n "${STUB_DBT_FAIL_DOMAINS:-}" ]; then
+    case " $(printf '%s' "${DATA_PLANE_DOMAINS:-}" | tr ',' ' ') " in
+      *" ${STUB_DBT_FAIL_DOMAINS} "*)
+        printf 'Completed with errors\nDone. PASS=20 WARN=0 ERROR=6 SKIP=0 TOTAL=26\n'; exit 1;;
+    esac
+  fi
   if [ "${STUB_DBT_FAIL:-0}" = 1 ]; then
     printf 'Completed with errors\nDone. PASS=20 WARN=0 ERROR=6 SKIP=0 TOTAL=26\n'
     exit 1
@@ -162,8 +174,13 @@ fi
 exit 0
 STUB
 chmod 0755 "$STUB_E2E/bin/docker"
-mkdir -p "$STUB_E2E/repo/dbt"
+mkdir -p "$STUB_E2E/repo/dbt/models/lemeng/staging" "$STUB_E2E/repo/dbt/models/forms/staging"
 : > "$STUB_E2E/repo/dbt/profiles.yml"   # profiles.yml 在场 ⇒ 不触发自愈分支（生产常态）
+# 逐域落账的模型名从**树**派生（mat_domain_staging_models）⇒ 桩检出必须有真实的域目录，
+# 否则本域的落账表集会空掉（这正是「树派生」与「手写名单」的差别所在）。
+: > "$STUB_E2E/repo/dbt/models/lemeng/staging/stg_lemeng_a.sql"
+: > "$STUB_E2E/repo/dbt/models/lemeng/staging/stg_lemeng_b.sql"
+: > "$STUB_E2E/repo/dbt/models/forms/staging/stg_forms_submission.sql"
 mkdir -p "$STUB_E2E/envdir"
 printf 'POSTGRES_PASSWORD=stub-pw\nPOSTGRES_USER=stub-user\nPOSTGRES_DB=stub-db\n' > "$STUB_E2E/envdir/env.pg"
 printf 'ZOS_BUCKET=b\nZOS_REGION=r\nZOS_ENDPOINT=http://e\n'                      > "$STUB_E2E/envdir/env.console"
@@ -174,8 +191,10 @@ run_mat() { # $1=用例名 → 假 docker 跑 materialize.sh，stdout/stderr 落
   MATERIALIZE_REPO_DIR="$STUB_E2E/repo" \
   MATERIALIZE_PG_CT=pg MATERIALIZE_CONSOLE_CT=console MATERIALIZE_PLAT_CT=plat \
   MATERIALIZE_NETWORK=stub-net MATERIALIZE_DBT_IMAGE=stub-dbt:stub \
+  DATA_PLANE_DOMAINS="${DOMAINS_FIXTURE-lemeng}" \
   STUB_STATE="$_w/state" STUB_ENV_DIR="$STUB_E2E/envdir" \
   STUB_DBT_FAIL="${STUB_DBT_FAIL:-0}" STUB_DBT_NO_SUMMARY="${STUB_DBT_NO_SUMMARY:-0}" \
+  STUB_DBT_FAIL_DOMAINS="${STUB_DBT_FAIL_DOMAINS:-}" \
   STUB_EXEC_FAIL="${STUB_EXEC_FAIL:-0}" \
   PATH="$STUB_E2E/bin:$PATH" \
   sh "$SRC" >"$_w/out" 2>"$_w/err"
@@ -198,6 +217,8 @@ check "水位：第二张表同样落位（逐表，不是一行汇总）" \
   LOG_GREP ok "SELECT 'stg_lemeng_b', max(bizday), now(), 26, 0, 'ok' FROM staging.stg_lemeng_b;"
 check "水位：旧「仓级」行（relation NULL）不再新写（VALUES 形态的仓级 INSERT 不在场）" \
   sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/ok/state/calls.log" "INSERT INTO data.load_log (status, tests_pass, tests_error) VALUES"
+check "水位：**别的域**的表不落账（域裁剪生效——本面只有 lemeng，forms 的表不在水位行里）" \
+  sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/ok/state/calls.log" "stg_forms_submission"
 
 # 失败路径：dbt 非零 ⇒ 仍 MATERIALIZE_FAILED:dbt_build，且**零落账**（status 只有 'ok'，失败不写行）
 STUB_DBT_FAIL=1
@@ -222,6 +243,39 @@ STUB_EXEC_FAIL=0
 check "落账：psql 失败 ⇒ 物化仍退出 0（记账失败不 retry 整个 build）" sh -c '[ "$1" = 0 ]' _ "$st"
 check "落账：psql 失败 ⇒ stderr 有告警（降级可见，不是静默）" sh -c 'grep -q "load_log 落账失败" "$1"' _ "$STUB_E2E/warn/err"
 check "落账：psql 失败 ⇒ 末行仍 MATERIALIZE_OK" sh -c 'tail -n 1 "$1" | grep -qx "MATERIALIZE_OK"' _ "$STUB_E2E/warn/out"
+
+# 域身份（DATA_PLANE_DOMAINS）缺配 ⇒ **响亮失败**，不许猜一个默认域：
+# 猜 `lemeng` 会让漏配的新面静默 build 乐檬模型（反向泄漏）；空串则 dbt 侧解析出 0 个模型、
+# 退出 0、照打 MATERIALIZE_OK（2026-10-17 实测的假绿）⇒ 空即停（docs/architecture.md §2.5）。
+DOMAINS_FIXTURE=''
+st=$(run_mat nodom)
+check "域身份：DATA_PLANE_DOMAINS 缺配 ⇒ 退出码 1（fail-closed，不猜默认域）" sh -c '[ "$1" = 1 ]' _ "$st"
+check "域身份：缺配 ⇒ MATERIALIZE_FAILED:missing_env 且点名该键" \
+  sh -c 'grep -q "MATERIALIZE_FAILED:missing_env" "$1" && grep -q "DATA_PLANE_DOMAINS" "$1"' _ "$STUB_E2E/nodom/err"
+check "域身份：缺配 ⇒ 不起 dbt 容器（守卫在 docker run 之前）" \
+  sh -c '! grep -Fq "run --rm" "$1"' _ "$STUB_E2E/nodom/state/calls.log"
+check "域身份：值经 -e 透传进 dbt 容器（键名形态，值不进 argv）" LOG_GREP ok "-e DATA_PLANE_DOMAINS"
+unset DOMAINS_FIXTURE
+
+# 多域 + 其中一个域红：**红的域不落账、绿的域照常落账、整体仍 exit 1**。
+# 这是本条改动存在的**全部理由**：`data.load_log` 是全部 relation 新鲜度的单一水位来源，
+# 改动前一个模型红 = 所有 relation 的 data_as_of 一起停（2026-10-17 一天内实测两次）。
+DOMAINS_FIXTURE='lemeng,forms'
+STUB_DBT_FAIL_DOMAINS=forms
+st=$(run_mat partial)
+STUB_DBT_FAIL_DOMAINS=''
+check "拆半径：一个域红 ⇒ 整体仍退出 1（响亮，不被静默吞掉）" sh -c '[ "$1" = 1 ]' _ "$st"
+check "拆半径：失败字面量仍是 MATERIALIZE_FAILED:dbt_build 且点名红域" \
+  sh -c 'grep -q "MATERIALIZE_FAILED:dbt_build" "$1" && grep -q "forms" "$1"' _ "$STUB_E2E/partial/err"
+check "拆半径：**绿域照常落账**（lemeng 的表有水位行 —— 改动前这里会是零行）" \
+  LOG_GREP partial "SELECT 'stg_lemeng_a', max(bizday), now(), 26, 0, 'ok' FROM staging.stg_lemeng_a;"
+check "拆半径：**红域不落账**（forms 的表没有水位行）" \
+  sh -c '! grep -Fq "$2" "$1"' _ "$STUB_E2E/partial/state/calls.log" "stg_forms_submission"
+check "拆半径：末行不是 MATERIALIZE_OK（失败不被末行掩盖）" \
+  sh -c '! tail -n 1 "$1" | grep -qx "MATERIALIZE_OK"' _ "$STUB_E2E/partial/out"
+check "拆半径：两个域各起一次 dbt 容器（逐域跑，不是一次全量）" \
+  sh -c '[ "$(grep -c "run --rm" "$1")" = 2 ]' _ "$STUB_E2E/partial/state/calls.log"
+unset DOMAINS_FIXTURE
 
 rm -rf "$STUB_E2E"
 

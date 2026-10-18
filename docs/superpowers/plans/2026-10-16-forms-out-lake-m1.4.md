@@ -113,7 +113,7 @@ dbt/models/common/marts/     ← 全是乐檬 fct_*
 |---|---|---|
 | 1 | **桶**：mytech 数据面复用 `shanhai-data`，还是新开 `mytech-data`？ | **新开 `mytech-data`**——复用 = 把 mytech 自身域的表单数据写进**客户（山海）的桶**，与交付边界相悖；同桶还会把 §3 的反向泄漏从「配错才发生」变成「隔离一失效就发生」。**✅ 已核实（2026-10-17）：湖侧只有 4 个桶，没有 mytech 自己的湖桶 ⇒ 开桶是人工前置。** 核实方法与证据见下 |
 | 2 | 山海侧 forms 残留（console `svc_nQaReL0EvSBqK9gW` + `staging.stg_forms_submission`）何时退 | 回迁验收通过后**同批退**，避免双写窗口 |
-| 3 | **爆炸半径**：「按域分次 build + 分次落账」是否纳入 R2？ | **建议纳入**。`data.load_log` 只在 dbt **全绿后**写（`materialize.sh` 的 `exit 1` 在落账**之前**）⇒ 现在**任一模型红，全部 relation 的 `data_as_of` 一起停**。域拆分天然给了切分点：按域各跑一次 dbt、各写各的 `load_log`，一个域红不再冻结别的域（退出码契约重设计：跑完所有域各自落账，任一失败仍 `exit 1`）。不纳入 ⇒ 域裁剪只挡了「迁移期这一种红」，将来任何红照旧全冻 |
+| 3 | ~~**爆炸半径**：「按域分次 build + 分次落账」是否纳入 R2？~~ | ✅ **已落地（2026-10-17，单开一个 PR）**。`materialize.sh` 改成**逐域跑**：每域一次 `dbt build`（域身份逐次收成单个值，**命令仍无 `--select`**）、每域成功即落该域的水位；红的域不落账、其余域照常，最后统一 `exit 1`。落账表集 = 「全 bizday 表」∩「本域 staging 模型名（**从树派生**）」⇒ 不引入手写名单。**动因是当天实测两次全量冻结**（#833 / #834 的 audit） |
 | 4 | **「源 ≠ 部署」怎么发现？** | **建议加管线断言**。三条不变量今天**无门禁**；而配置一致性检查**抓不到** #729——那次是**源**（mytech 的导出 API）与**面**（山海）不一致，两侧配置各自自洽。可用抓手：导出响应**带 `org`**（A2）⇒ 断言「本页 `distinct(org)` ⊆ 部署主体 org」，不通过**拒写湖**。**当前不存在这条断言** |
 
 ### 5.1 桶核实（2026-10-17，三条独立证据，全部经 openship MCP / 容器内只读）
@@ -135,12 +135,29 @@ dbt/models/common/marts/     ← 全是乐檬 fct_*
 
 ### 6 修订后的步骤（替代下文 E·console）
 
-- [ ] R1 **架构文档更新**（新增「域」维度 + 数据面归属口径）→ 人审 —— **稿已成：PR #818**（`docs/architecture.md` 新增 §2.5 + §2.2/§4.2/§5.1 三处交叉引用），**待人审**
-- [ ] R2 dbt 树按域分目录 + 域开关（`+enabled` + `env_var('DATA_PLANE_DOMAINS')` 不带默认值，已实测，见 §4 第 2 行）+ **fail-closed 域覆盖门禁** + 门禁文案。⚠️ **不是「纯仓内」**：`materialize.sh`/`materialize.test.sh` 必改（8 键清单 ⇒ 加第 9 键），`dbt/` 是投递项 ⇒ lock 变 ⇒ **山海侧要重新 sync**
-- [ ] R3 mytech 数据面启用：S3 凭据 → Gate-B 接线 + `search_path`（`wire-warehouse.sh --check` 七断言全绿）→ `dbt`/`duckle` 服务行改绝对路径卷 → 数据面工件 sync（lock）
-- [ ] R4 mytech 侧 materialize job（照 `lemeng-dbt-materialize` 形态，容器名/网络全换 mytech）
-- [ ] R5 forms console 落到 `proj_SU8cmQ8OLVfM971X`（**新桶 —— 人工前置：开 `mytech-data`，见 §5.1**）→ seed workspace（含 `.duckle/keys/secret.key`）→ 重建 catalog → 首跑成功
-- [ ] R6 验收：staging `org = mytech` + mytech 平台侧可查（四层验收）
+> **进度与实测（2026-10-17/18，全部经 openship，无裸 SSH）**
+> - **R1 ✅ 已合**（#812 计划稿 + #818 架构文档）。
+> - **R2 ✅ 已合且已上机**（#835 域拆分 + 开关 + 门禁；#841 逐域物化拆爆炸半径）：山海 `SYNC_OK 194/194`；
+>   真机 `materialize start … domains=lemeng` + `Found 29 models` 且 `stg_forms_submission` **0 次出现**
+>   ⇒ 域裁剪在生产生效。
+> - **R3 部分完成**：检出换版 ✅ ／ **Gate-B ✅**（复查 ① DNS `OK`、② TCP `OK`；改前两条都是 `ENOTFOUND`）
+>   ／ **`search_path` ✅**（③ 的报错已从 `ENOTFOUND` 变成 `relation "fct_retail_sale" does not exist`
+>   —— 正是接线通了、表还没物化的形态）／ **S3 凭据 ❌**（行为探针：连**存在的桶**也报 `region ''` + 404
+>   ⇒ 面上确实没有湖凭据）。
+> - ⚠️ **顺序订正（实测）**：`materialize.sh` 取 bucket 的方式是 `ZB=$(ct_env "$CONSOLE_CT" ZOS_BUCKET)`
+>   —— **bucket 来自某个 console 容器的 env**。mytech 面上现在**没有任何 console** ⇒ 现在建 R4 的 job，
+>   一上来就 `MATERIALIZE_FAILED:missing_env`。**R4 依赖 R5**，不是 R4 在前。
+> - **人工前置（ZOS 控制台，超出 agent 面）**：① 开桶 `mytech-data`；② 建一把**只对该桶有权限**的子账号
+>   密钥（不用账号级钥匙 —— 那会把「能读山海桶」的权限复制过来）；③ 把该密钥填进 mytech 数据面项目的
+>   openship env，**键名与山海面逐字一致**：`ZOS_ACCESS_KEY` / `ZOS_SECRET_KEY`（isSecret）+
+>   `ZOS_BUCKET` / `ZOS_REGION` / `ZOS_ENDPOINT`（非密）。**值不进对话。**
+
+- [x] R1 **架构文档更新**（新增「域」维度 + 数据面归属口径）—— #818 已合
+- [x] R2 dbt 树按域分目录 + 域开关（`+enabled` + `env_var('DATA_PLANE_DOMAINS')` **不带默认值**）+ **fail-closed 域覆盖门禁** + 门禁文案 —— #835 已合；**逐域物化 + 逐域落账（拆爆炸半径）** —— #841 已合。两处均已上机
+- [ ] R3 mytech 数据面启用：**S3 凭据（人工前置，见上）** → ~~Gate-B 接线 + `search_path`~~ ✅ → `dbt`/`duckle` 服务行改**绝对路径**卷 → ~~数据面工件 sync~~ ✅（已换版到当前 main）
+- [ ] **R5 forms console 落到 `proj_SU8cmQ8OLVfM971X`**（依赖上面的桶与密钥）→ seed workspace（含 `.duckle/keys/secret.key`）→ 重建 catalog → 首跑成功
+- [ ] **R4 mytech 侧 materialize job**（照 `lemeng-dbt-materialize` 形态，容器名/网络全换 mytech）—— **必须在 R5 之后**：它的 `MATERIALIZE_CONSOLE_CT` 要指到一个**已存在且带 `ZOS_BUCKET`** 的容器
+- [ ] R6 验收：staging `org = mytech` + mytech 平台侧可查（四层验收）。⚠️ `wire-warehouse.sh --check` 的 ④–⑨（新鲜度 / 词表 / 发布面 / 价目 / 取价）**在首次物化前必然红** ⇒ R3 阶段只能按 ①②③ 判，别把它们的红读成接线没成
 - [ ] R7 山海侧残留退役 + 正典三处登记更新 + WeKnora 沉淀
 
 > 数据**不需迁移**：mytech console 按 `id` 水位从源 API 重拉（增量语义天然覆盖）。

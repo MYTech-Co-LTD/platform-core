@@ -173,4 +173,12 @@ sources:
           partition_keys: ['system_book', 'snapshot']
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / snapshot::date）'
           pagination: '新湖由 duckle 管线写入（#516 段①）：**单页固定窗**（GET 零参数路由无翻页；行数带守卫 die：0 行或 <500 拒写湖）+ ctl.merge；生成器 scripts/lemeng/gen-client-pipeline.mjs，不手编'
+      - name: recon_preagg
+        description: '乐檬**口径对账逐店事实**（新湖，2026-10-18 契约）：湖侧自算 vs 乐檬报表引擎（nhsoft.report.ai.itemsales.find）的逐店两侧金额。hive **三级**分区 system_book/bizday/chunk——chunk 是绕端点「branch_nums 单次 ≤100 家、超出 code=10001」硬限的切块维度（64188 有 129 家、3120 有 271 家）。行粒度 = 账套 × 对账业务日 × 块 × 门店。⚠️ **只有事实**：容差/判定/原因不进湖（配置归 dbt seed、判定归 dbt 模型 recon_run/recon_break）。'
+        meta:
+          path_convention: 'lemeng/recon_preagg/system_book=<账套>/bizday=<日期>/chunk=<块号>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_recon_preagg_prefix\") }}/*/bizday=**/chunk=*/all.parquet') r"
+          partition_keys: ['system_book', 'bizday', 'chunk']
+          partition_key_typing: '由路径字符串自动推断（hive）；staging 显式 cast（system_book::varchar / bizday::date / chunk_no::int）'
+          pagination: '由 duckle **父/子管线**写入：父 lemeng.recon.preagg 按 ≤100 家切块（itemKey=item_key，各块独立水位）→ 子 lemeng.recon.preagg.item 逐块跑并写自己的 chunk 分区'
 

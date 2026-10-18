@@ -1,7 +1,12 @@
 {
   "_note": [
     "独立通道对账（正典 §1.4 第三层）· 父管线：定出 T-3 营业日与门店清单，交子管线 lemeng.recon.preagg.item 执行判据。",
-    "判据与口径的**唯一事实源** = scripts/lemeng/recon-preagg.sh 头注（赠品判别式 / 逐订单归并 / 不扣退货 / 容差 / 定稿线）；本管线不复制公式正文。",
+    "判据与口径的**唯一事实源** = scripts/lemeng/recon-preagg.sh 头注（赠品判别式 / 逐订单归并 / 销售侧不扣退货 + 净额侧减退货 / 容差 / 定稿线）；本管线不复制公式正文。",
+    "",
+    "【请求门店集 = 湖侧并集】（2026-10-17 定案）：pday 的 f **只筛 state='FINISHED'，不筛 order_transaction_type**。",
+    "子管线湖侧自 #813 起是 sale_side FULL JOIN ret_side = **销售 ∪ 退货**，请求集必须与之对齐——",
+    "否则「有退货、无销售」的店会出现在 lagg/diff 里却从没进过请求，端点不可能返回它 ⇒ net_pre 恒 NULL",
+    "⇒ vbranch 出行 ⇒ gbranch 死（排班面**确定性假红**，且方向误导）。",
     "",
     "调度语义：16:30 UTC = 上海 00:30。上海日 = CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + 8h",
     "（引擎 current_date 是 UTC，别直接用——SOP §E.7 同款教训）。bizday = 上海日 - 3 = 定稿线 T-3：",
@@ -28,7 +33,10 @@
     {
       "id": "plake",
       "type": "source",
-      "position": { "x": 0, "y": 0 },
+      "position": {
+        "x": 0,
+        "y": 0
+      },
       "data": {
         "label": "plake 全书零售明细（只取门店清单）",
         "componentId": "src.minio",
@@ -44,20 +52,26 @@
     {
       "id": "pday",
       "type": "transform",
-      "position": { "x": 280, "y": 0 },
+      "position": {
+        "x": 280,
+        "y": 0
+      },
       "data": {
-        "label": "pday 定稿日 T-3 + 门店清单 + settled",
+        "label": "pday 定稿日 T-3 + 门店清单（按 ≤100 家切块，端点硬限）",
         "componentId": "code.sql",
         "properties": {
           "pureSql": true,
-          "sql": "CREATE OR REPLACE TABLE \"pday\" AS\nWITH d AS (SELECT CAST(CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + INTERVAL 8 HOUR AS DATE) AS sh_today),\nf AS (SELECT * FROM \"plake\" WHERE CAST(bizday AS DATE) = (SELECT sh_today FROM d) - 3\n  AND CAST(state AS VARCHAR) = 'FINISHED'\n  AND CAST(order_transaction_type AS VARCHAR) = 'SALE_ORDER'),\nb AS (SELECT DISTINCT CAST(branch_num AS INTEGER) AS bn FROM f),\nj AS (SELECT '[' || string_agg(CAST(bn AS VARCHAR), ',' ORDER BY bn) || ']' AS branch_nums_json FROM b HAVING count(*) > 0)\nSELECT strftime((SELECT sh_today FROM d) - 3, '%Y-%m-%d') AS bizday,\n       1 AS settled,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       '${ENV:ZOS_BUCKET}' AS bucket,\n       branch_nums_json\nFROM j"
+          "sql": "CREATE OR REPLACE TABLE \"pday\" AS\nWITH d AS (SELECT CAST(CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + INTERVAL 8 HOUR AS DATE) AS sh_today),\nf AS (SELECT * FROM \"plake\" WHERE CAST(bizday AS DATE) = (SELECT sh_today FROM d) - 3\n  AND CAST(state AS VARCHAR) = 'FINISHED'),\nb AS (SELECT DISTINCT CAST(branch_num AS INTEGER) AS bn FROM f),\nn AS (SELECT bn, CAST(row_number() OVER (ORDER BY bn) - 1 AS INTEGER) AS rn FROM b),\nc AS (SELECT CAST(rn / 100 AS INTEGER) + 1 AS chunk_no, bn FROM n),\nj AS (SELECT chunk_no,\n             '[' || string_agg(CAST(bn AS VARCHAR), ',' ORDER BY bn) || ']' AS branch_nums_json\n      FROM c GROUP BY chunk_no)\nSELECT strftime((SELECT sh_today FROM d) - 3, '%Y-%m-%d') AS bizday,\n       1 AS settled,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       '${ENV:ZOS_BUCKET}' AS bucket,\n       '${ENV:ZOS_REGION}' AS region,\n       'recon-' || strftime((SELECT sh_today FROM d) - 3, '%Y%m%d') || '-c' || CAST(chunk_no AS VARCHAR) AS batch_id,\n       chunk_no,\n       branch_nums_json,\n       strftime((SELECT sh_today FROM d) - 3, '%Y-%m-%d') || '-c' || CAST(chunk_no AS VARCHAR) AS item_key\nFROM j\nORDER BY chunk_no"
         }
       }
     },
     {
       "id": "pguard",
       "type": "transform",
-      "position": { "x": 560, "y": 0 },
+      "position": {
+        "x": 560,
+        "y": 0
+      },
       "data": {
         "label": "pguard 依赖闸：T-3 无行即死",
         "componentId": "ctl.die",
@@ -70,21 +84,51 @@
     {
       "id": "pfe",
       "type": "transform",
-      "position": { "x": 840, "y": 0 },
+      "position": {
+        "x": 840,
+        "y": 0
+      },
       "data": {
-        "label": "pfe 逐日派发（当前恒 1 行：T-3）",
+        "label": "pfe 逐 (日, 块) 派发（itemKey=item_key，各块独立水位）",
         "componentId": "ctl.foreach",
         "properties": {
           "pipelineRef": "${workspace}/pipelines/lemeng.recon.preagg.item.json",
-          "itemKey": "bizday",
+          "itemKey": "item_key",
           "concurrency": 1
         }
       }
     }
   ],
   "edges": [
-    { "id": "e_plake_pday", "source": "plake", "target": "pday", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_pday_pguard", "source": "pday", "target": "pguard", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } },
-    { "id": "e_pguard_pfe", "source": "pguard", "target": "pfe", "sourceHandle": "main", "targetHandle": "main", "data": { "connectionType": "main" } }
+    {
+      "id": "e_plake_pday",
+      "source": "plake",
+      "target": "pday",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_pday_pguard",
+      "source": "pday",
+      "target": "pguard",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_pguard_pfe",
+      "source": "pguard",
+      "target": "pfe",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
   ]
 }

@@ -82,6 +82,11 @@ vars:
   # s3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet
   # 出处：contracts/common/lemeng.transfer_out.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
   # 消费者 = `stg_lemeng_transfer_out`（唯一）；采集范围仅 3120 主账套（64188=外部批发客户，R2 拍板）。
+  # 乐檬**口径对账逐店事实**前缀（2026-10-18，消费面 spec §12.4）：
+  # s3://<bucket>/lemeng/recon_preagg/system_book=<账套>/bizday=<日期>/chunk=<块号>/all.parquet
+  # 出处：contracts/common/lemeng.recon_preagg.json 的 `layout.prefix` / `partitionBy`（hive 三级）。
+  # 消费者 = `stg_lemeng_recon_preagg`（唯一）。**chunk 是绕端点硬限的切块维度**（单次 ≤100 家）。
+  lemeng_recon_preagg_prefix: 'lemeng/recon_preagg'
   lemeng_transfer_out_prefix: 'lemeng/transfer_out'
   # 乐檬**批发销售单**前缀（#499/R3；行=批发单商品行；不含 bucket / 协议）：
   # s3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet
@@ -124,3 +129,23 @@ vars:
 models:
   platform_data:
     +materialized: table
+
+    # ── 域开关：一个部署只物化自己的域（docs/architecture.md §2.5；2026-10-17 实测）──────────
+    # **目录即域**：`models/<域>/{staging,marts}/`。每个数据面按 env `DATA_PLANE_DOMAINS`
+    # （逗号分隔）只 build 自己拥有的域 —— 共享一棵 dbt/ 树但**不得互 build 对方的模型**：
+    # 本方侧会把对方租户的数据物化进本方仓库并标成本方 org（反向泄漏），对方侧则因前缀空而 dbt 红
+    # ⇒ `exit 1` 早于写 load_log ⇒ 水位冻结、全部指标新鲜度连带退化。
+    #
+    # ⚠️ 三条实测（dbt-core 1.9.1 + dbt-postgres 1.9.1，即 deploy/dbt/Dockerfile 钉的版本；
+    #    scratch 工程 dbt parse 后读 target/manifest.json 的 config.enabled）——**改这里之前先读**：
+    #    ① `env_var` **绝不能带默认值**：带 `''` 时变量漏配 ⇒ 解析成空串 ⇒ **0 个模型、退出 0**
+    #       ⇒ 物化脚本照打 MATERIALIZE_OK（假绿）。不带默认值时未设即 parse 报错（fail-closed）。
+    #    ② 域目录**未在此登记** ⇒ dbt 默认 `enabled: true` ⇒ **每个面都会 build 它**。
+    #    ③ `+enabled` 里**不能引用本文件 `vars:` 块的 var**（`models:` 的渲染早于工程 vars，
+    #       报 `Required var 'x' not found in config`）⇒ 部署身份只能来自 env / `--vars`。
+    #    ⇒ ①② 两个方向都**静默**，所以 `scripts/check-data-models.mjs` 规则 ⑪ 机检「每个
+    #      models/<域>/ 目录在这里都有显式 +enabled 条目」。新增域 = 加目录 + 加这里两处，缺一即红。
+    lemeng:
+      +enabled: "{{ 'lemeng' in env_var('DATA_PLANE_DOMAINS').split(',') }}"
+    forms:
+      +enabled: "{{ 'forms' in env_var('DATA_PLANE_DOMAINS').split(',') }}"

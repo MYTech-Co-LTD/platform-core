@@ -15,7 +15,7 @@
 //      （机械推导、不靠手登记 ⇒ 不会有"新管线忘了登记"这种漂移）。
 //      每个生产者文件里必须**恰好一个** `code.sql` 节点的输出别名序列 == 契约列序列（同序）。
 //      其余 `code.sql` 节点（`qa.contract` 前的守卫、回执等）不参与比对。
-//   ③ **消费面**：`dbt/models/common/staging/stg_<domain>_<table>.sql` 的投影别名序列
+//   ③ **消费面**：`dbt/models/<域>/staging/stg_<domain>_<table>.sql` 的投影别名序列（域目录按域找，见 findStagingModelRel）
 //      （去掉 dbt 注入的 `org`）必须是契约列序列的**同序前缀**；再按 `consumerVersion` 定档：
 //        · `consumerVersion == schemaVersion` ⇒ 前缀必须补齐成**完全相等**（迁移做完了）；
 //        · `consumerVersion <  schemaVersion` ⇒ 前缀必须**严格更短**，且门禁**打印一行提示**
@@ -63,6 +63,7 @@ import {
   extractStagingAliases,
   findProducerPipelines,
   findProjectionNode,
+  findStagingModelRel,
   maskSqlComments,
   readContractDoc,
 } from './lib/data-contract.mjs'
@@ -269,11 +270,14 @@ export function checkDataContract(rootDir) {
       })
     }
 
-    const stgRel = `dbt/models/common/staging/stg_${c.domain}_${c.table}.sql`
-    if (!existsSync(join(rootDir, stgRel))) {
+    // 域目录自 2026-10-17 起是顶层轴（`dbt/models/<域>/staging/`）⇒ **找**而不是拼死路径
+    // （拼死路径在分域后会静默找不到，把「路径该更新」误报成「没接 staging」）。
+    const { rel: stgRel, hits: stgHits } = findStagingModelRel(rootDir, c.domain, c.table)
+    if (stgRel === null) {
       violations.push({
         file: rel,
-        message: `找不到对应 staging 模型 \`${stgRel}\` —— ③ 层是唯一碰原始类型的地方，不许跳过`,
+        message: `找不到对应 staging 模型 \`dbt/models/<域>/staging/stg_${c.domain}_${c.table}.sql\` —— ③ 层是唯一碰原始类型的地方，不许跳过`
+          + (stgHits.length > 1 ? `（同名命中多处：${stgHits.join(' / ')}）` : ''),
       })
     } else {
       const aliases = extractStagingAliases(readFileSync(join(rootDir, stgRel), 'utf8')).filter(

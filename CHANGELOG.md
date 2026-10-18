@@ -11,6 +11,34 @@
 
 ## [Unreleased]
 
+## [0.155.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.3...v0.155.0) - 2026-10-18
+- 【新增】data: 口径对账落湖——父管线切块 + 子管线写 chunk 分区事实 ([#852](https://github.com/MYTech-Co-LTD/platform-core/pull/852), [25afc90](https://github.com/MYTech-Co-LTD/platform-core/commit/25afc90acf649ac67fabde2f9ac533abf7d6fd84))
+
+
+## [0.154.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.2...v0.154.3) - 2026-10-18
+- 【修复】data: 新鲜度 SLA 按实测发布时钟重新标定 ([#851](https://github.com/MYTech-Co-LTD/platform-core/pull/851), [5f83f82](https://github.com/MYTech-Co-LTD/platform-core/commit/5f83f82b78af5f56005c031c2195c1468c679400))
+
+
+## [0.154.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.1...v0.154.2) - 2026-10-17
+- 【修复】data: 新鲜度水位先按关系取最新行再取木桶 ([#847](https://github.com/MYTech-Co-LTD/platform-core/pull/847), [a6fb584](https://github.com/MYTech-Co-LTD/platform-core/commit/a6fb584e336fd0ebf6aeeba7c599b5ff52e512c9))
+
+
+## [0.154.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.0...v0.154.1) - 2026-10-17
+- 【优化】data: materialize 逐域跑 + 逐域落账（拆爆炸半径）（Refs #729） ([#841](https://github.com/MYTech-Co-LTD/platform-core/pull/841), [06b4a1f](https://github.com/MYTech-Co-LTD/platform-core/commit/06b4a1f3fc37704cc179683074be37e92ea91e76))
+
+
+## [0.154.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.153.2...v0.154.0) - 2026-10-17
+- 【新增】data: 答案自带射程与排除——scope_note 由平台自动附加（spec §12.6） ([#838](https://github.com/MYTech-Co-LTD/platform-core/pull/838), [7e3c60a](https://github.com/MYTech-Co-LTD/platform-core/commit/7e3c60a0ea2923158ef39177ed862c0aa38e438a))
+
+
+## [0.153.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.153.1...v0.153.2) - 2026-10-17
+- 【优化】data: dbt 树按域分目录 + 域开关（+enabled/env_var）+ fail-closed 域覆盖门禁（Refs #729） ([#835](https://github.com/MYTech-Co-LTD/platform-core/pull/835), [e937ab3](https://github.com/MYTech-Co-LTD/platform-core/commit/e937ab35d74360fc30ef69b05ff397ae9db80b94))
+
+
+## [0.153.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.153.0...v0.153.1) - 2026-10-17
+- 【修复】data: 零售净销售额口径改冲退货——构件拆三列 + 对账锚切换 ([#834](https://github.com/MYTech-Co-LTD/platform-core/pull/834), [72cf57a](https://github.com/MYTech-Co-LTD/platform-core/commit/72cf57a1d2b127bfdfcdfbc8216524ae4518c797))
+
+
 ## [0.153.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.152.2...v0.153.0) - 2026-10-17
 - 【新增】data: 01-05 可比门店增长率——验证「问 0」不是只对一个指标成立 ([#833](https://github.com/MYTech-Co-LTD/platform-core/pull/833), [6b2c068](https://github.com/MYTech-Co-LTD/platform-core/commit/6b2c0684cf1ed83b96d3f79a12801f52630469fb))
 

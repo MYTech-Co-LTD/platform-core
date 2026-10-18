@@ -155,7 +155,7 @@
 
 **3. dbt（runner 镜像；`etl` profile；按需 job）**
 - **职责**：**建模与物化**（staging 清洗 → marts 口径模型，物化进 pg_duckdb）；
-  **L1 语义声明的事实源**（`dbt/semantics/l1_metrics.yml` + `dbt/models/common/marts/schema.yml`）；
+  **L1 语义声明的事实源**（`dbt/semantics/l1_metrics.yml` + `dbt/models/<域>/marts/schema.yml`）；
   **对账/断言 tests**（`audit_*` 独立复算 + `assert_*` 结构断言）；**血缘与文档**（`dbt docs generate`）。
 - **输入**：湖里的 parquet（staging 读源）；语义声明是**仓内 YAML**。
 - **输出**：pg_duckdb 里的 marts 关系（**必须是 PG 可见关系**；**`view` 与表 / 物化视图同级，都是一等
@@ -461,8 +461,9 @@
   `dbt/models/<域>/customers/<客户>/{staging,marts,schema.yml}`。`common/` **溶解**成域的默认
   （`models/lemeng/...`）：`customers/README.md` 自己定义 `common/` 是「**所有客户共用**的域
   （当前只有乐檬）」——它本来就是「乐檬域内各客户共用的部分」，**不是「全公司通用」**。
-  **现在改最便宜**：实测 `dbt/models/customers/` 下**只有 README、没有任何真客户子目录**
-  （格子是空的）；等有了真客户分叉再动，就要搬真模型。
+  **✅ 已落地（2026-10-17，R2）**：动手时实测 `dbt/models/customers/` 下**只有 README、没有任何
+  真客户子目录**（格子是空的）⇒ 这是搬格子的最便宜窗口，已照此拆开（`common/` → `models/lemeng/`，
+  `customers/README.md` → `models/README.md`，forms 建 `models/forms/`）。
   ⚠️ 代价不是「纯仓内」：`dbt/` 在 `deploy/data-plane-manifest.txt` 是**投递项** ⇒ 重命名会改
   lock ⇒ **合入后山海侧必须重新 sync 数据面工件**，不是零运维动作。
 - **开关机制 = `dbt_project.yml` 按路径 `+enabled`，值由 `env_var()` 给**（2026-10-17 实测，
@@ -522,7 +523,7 @@
 |---|---|---|
 | 1 | **域开关机制** | ✅ **已实测并选定**：`+enabled` + `env_var()`（**不带默认值**），见上表。~~② 派生 `--select path:`~~ 不再需要。**仍待定的是配套的 fail-closed 域覆盖门禁怎么写** |
 | 2 | **是否现在做 `common/` → `models/<域>/` 重命名** | 现在格子是空的（`customers/` 无真子目录）⇒ 最便宜；但要动 lock + 山海重 sync |
-| 3 | **是否把「按域分次 build + 分次落账」纳入域裁剪的范围** | `data.load_log` 只在 dbt **全绿后**写（`materialize.sh` 的 `exit 1` 在落账**之前**）⇒ 现在**任一模型红，全部 relation 的 `data_as_of` 一起停**。域拆分天然给了切分点；不做 ⇒ 爆炸半径问题留到以后 |
+| 3 | ~~是否把「按域分次 build + 分次落账」纳入域裁剪的范围~~ | ✅ **已落地（2026-10-17）**。改动前 `data.load_log` 只在 dbt **全绿后**写 ⇒ **任一模型红，全部 relation 的 `data_as_of` 一起停** —— 同日实测**两次**（#833 与 #834 各自新增的 audit 各红一次，两次都冻结全量）。现在 `materialize.sh` **逐域**跑：红的域不落账、其余域照常落账，最后统一 `exit 1`（仍不是按需名单：命令还是 `build`、无 `--select`，域裁剪仍由 `+enabled` 表达） |
 | 4 | **「源 ≠ 部署」这类缺陷怎么发现** | 三条不变量今天**无门禁**（§4.2「仅文档」档）。配置一致性检查**抓不到** #729——那次是**源**（mytech 的导出 API）与**面**（山海）不一致，两侧配置各自自洽。可用的抓手：导出响应**带 `org`**（计划稿 A2）⇒ 管线里断言「本页 `distinct(org)` ⊆ 部署主体 org」，不通过**拒写湖**。**当前不存在这条断言** |
 
 ## 3. 宿主装配链与 I-1 顺序契约
@@ -758,7 +759,7 @@ env，多租户同进程部署就只能共用一份 ⇒ 无 BYO、单密钥爆�
 | 被取代的 spec 条 | 旧口径 | 现口径 |
 |---|---|---|
 | `specs/2026-09-20-data-stack-module-design.md` §11.2 #3 | pg_duckdb 走**自建镜像**、钉 DuckDB **v1.5.5**（理由是 ossie 只发到 v1.5.5） | **官方镜像** `pgduckdb/pgduckdb:18-v1.1.1`（上游自陈配对 = DuckDB v1.4.3）；自建降为**未启用备件**——实测该配对（pg_duckdb v1.1.1 × DuckDB v1.5.5）**编译失败：8 处 API 断裂** |
-| 同上 §11.2 #4 | L1 语义声明 = **Ossie JSON** | L1 事实源 = **dbt YAML**（`dbt/semantics/l1_metrics.yml` + `dbt/models/common/marts/schema.yml`）——**存储格式不是 Ossie** |
+| 同上 §11.2 #4 | L1 语义声明 = **Ossie JSON** | L1 事实源 = **dbt YAML**（`dbt/semantics/l1_metrics.yml` + `dbt/models/<域>/marts/schema.yml`）——**存储格式不是 Ossie** |
 | 同上 §11.3 | AI 走 **duckdb-ossie MCP** 问数据（两条 AI 通路） | **已废止**（2026-09-26 订正）——废止的是 `duckdb-ossie` **那套实现**；**入口不再唯一**：AI **可直读数据面**（不再要求经 facade），合规判据只剩「**受授权面约束 + 入审计**」；`modules/data` 降为**治理面**。理由与两条前置缺口见 §2.2 末注 |
 | 同上 §11.3.1 | 「**保护来自每租户会话绑定**」⇒ 任何绕开 facade 的数据面直连（含 **Metabase 官方 MCP**）不合规 | **（2026-09-26）「任何绕开 facade 的数据面直连都不合规」整句作废**——直连改由**授权面 + 审计**约束；§11.3.1 那条观察（**保护不来自 `filter allowlist`**）**仍成立**，只是「保护来自什么」的落点从**每租户会话绑定**改为**授权面**。⚠️ 「**Metabase 官方 MCP**」一项的判据随之改写（从「是否经 facade」→「是否受授权面约束 + 是否入审计」）——**本轮未重新裁决** |
 | 同上 §11.9 #3/#4 | 「Ossie 观察信号」「自建镜像的构建频率」两个开放项 | **两项均已消解**：ossie 出局 ⇒ 观察信号无对象；自建镜像未启用 ⇒ 构建频率无对象（备件将来启用时另议） |

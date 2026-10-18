@@ -15,7 +15,7 @@ dbt/
 ├── profiles.example.yml       连接模板（**不含真值**）+ ZOS 五键的键名登记
 ├── semantics/l1_metrics.yml   **L1 语义声明 = 唯一事实源**（落点理由见 §5）
 ├── macros/                    `generate_schema_name.sql`（多租户 schema 派生，见 §10）
-├── models/common/staging/     ③ 清洗：一对一、只规范化不改义
+├── models/<域>/staging/       ③ 清洗：一对一、只规范化不改义（**目录即域**，见 §12）
 │   ├── sources.yml            落地声明（**不是读路径**，见 §2）
 │   ├── schema.yml             列描述 + dbt tests
 │   ├── stg_lemeng_retail_order_line.sql   **新湖（现行）**：S1 换源后的零售 staging
@@ -23,14 +23,47 @@ dbt/
 │   └── stg_lemeng_item.sql               商品维（**全量快照**，S2-a 新增）——列全集见 §8/§9
 │   （旧湖 `stg_lemeng_retail_detail.sql` **已于 2026-10-06 仓内退役**（`git rm`）：湖上前缀
 │    `lemeng/retail_detail/…` **未下线**，退役的是仓内工件，见 handbook §2 的旧前缀行）
-├── models/common/marts/       ④ 建模：口径只在这里定义一次
+├── models/<域>/marts/         ④ 建模：口径只在这里定义一次
 │   ├── schema.yml             列描述 + dbt tests
 │   └── fct_retail_sale.sql
-├── models/customers/          按客户扩展（约定见该目录 README）
+├── models/<域>/customers/<客户>/  按客户分叉（约定见 `models/README.md`）
 └── tests/                     对账（audit_*.sql）+ 结构断言（assert_*.sql）
 ```
 
-静态门禁：`scripts/check-data-models.mjs`（七项检查，CI 的 `gates` job 跑）。**它是本目录唯一的机检**。
+静态门禁：`scripts/check-data-models.mjs`（**十项**检查，CI 的 `gates` job 跑）。**它是本目录唯一的机检**。
+
+### 1.1 域（`models/<域>/`）与域开关（2026-10-17）
+
+**目录即域**：`dbt/models/<域>/{staging,marts}/`，客户分叉嵌在域里（`<域>/customers/<客户>/`）。
+两个数据面（mytech / 山海）**共用这一棵树**，但**一个部署只物化自己的域** —— 口径与不变量见
+`docs/architecture.md` §2.5。
+
+**开关**在 `dbt_project.yml` 的按路径 `+enabled`，值由 **env `DATA_PLANE_DOMAINS`**（逗号分隔）给；
+`scripts/lemeng/materialize.sh` 只负责把这个**部署属性**透传进来（它本身不持名单）。
+
+四条实测（dbt-core 1.9.1 + dbt-postgres 1.9.1 = `deploy/dbt/Dockerfile` 钉的版本；**改开关前先读**）：
+
+| 情形 | 结果 |
+|---|---|
+| `DATA_PLANE_DOMAINS=forms` | manifest 里**只剩 forms 的模型**（lemeng 的整个不出现，不是 `enabled: false` 挂着） |
+| `env_var('DATA_PLANE_DOMAINS')` **不带默认值**，变量未设 | **`dbt parse` 报错** ⇒ fail-closed ✅ |
+| 同上但**带默认值 `''`** | 解析成空串 ⇒ **0 个模型、`dbt build` 退出 0** ⇒ 物化脚本照打 `MATERIALIZE_OK` ❌ **默认值绝不可给** |
+| 域目录存在但 `dbt_project.yml` **没登记** | dbt 默认 `enabled: true` ⇒ **每个面都会 build 它** ❌ |
+
+⚠️ 另两条：`+enabled` 里**不能引用 `dbt_project.yml` 自己的 `vars:` 块**（`models:` 的渲染早于工程
+vars，报 `Required var 'x' not found in config`）；`materialize.sh` 侧 `DATA_PLANE_DOMAINS` 缺配即
+`MATERIALIZE_FAILED:missing_env`（**不猜默认域** —— 猜 `lemeng` 会让漏配的新面静默 build 乐檬模型）。
+
+**机检**：门禁规则 ⑪（`scripts/check-data-models.mjs`）双向比对 `dbt/models/*` 目录集与
+`models.platform_data` 的域条目，并逐条查 `+enabled` 形态 —— 因为上面两个方向**都只有静默这一种
+症状**。**新增一个域 = 加目录 + 在 `dbt_project.yml` 登记两处，缺一即红。**
+
+**物化是逐域的**（2026-10-17）：`materialize.sh` **按域各跑一次** `dbt build`（命令仍无 `--select`，
+只是把域身份逐次收成单个值），**每个域成功即落该域的水位**。为什么：`data.load_log` 是全部 relation
+新鲜度的单一水位来源，改动前一红就整体 `exit 1` ⇒ **一个模型红 = 所有 relation 的 `data_as_of` 一起停**
+（同日实测两次）。现在红的域不落账、其余域照常，最后统一 `exit 1`。落账表集 = 「全 bizday 表」∩
+「本域 staging 模型名（**从树派生**，不是手写名单）」—— 所以 `models/<域>/staging/*.sql` 的**文件名**
+就是水位行的键，改名等于换表。
 
 ## 2 两条最容易踩错的口径（先读这个再改模型）
 
@@ -41,7 +74,7 @@ dbt/
 `"db"."schema"."table"` 这种 **PG 关系名**，湖上没有那个关系，渲染出来必然查不到。
 （能直接读 parquet 的 `external_location` 是 **dbt-duckdb** 适配器的能力，本仓不用它。）
 
-⇒ `models/common/staging/sources.yml` 的 `source` 声明是**声明与血缘的落点**，消费者是
+⇒ 本域 `models/<域>/staging/sources.yml` 的 `source` 声明是**声明与血缘的落点**，消费者是
 ① 静态门禁（④ staging 一对一的另一半）② 人（「这个域有哪些源」的事实源）。**不是** dbt 的运行时接口。
 ⇒ 由此推出一条硬命名约束：**staging 模型名 = `stg_<source.name>_<table.name>`**（如
 `stg_lemeng_retail_order_line`），因为「一对一」是**双向**机检的，只对一半就红。
@@ -140,7 +173,7 @@ metricToAuditFileName(metricName: string): string   // 例：'lemeng:retail:net_
 
 | 域 | fct 模型（W 后缀 = 落地波） | 构件列 |
 |---|---|---|
-| retail | `fct_retail_sale`（**W0 ✓**） | `net_amount`(L 净额)、`order_count` |
+| retail | `fct_retail_sale`（**W0 ✓**；2026-10-17 #813 拆三列） | `sale_amount`(销售侧，不冲退货)、`return_amount`(退货侧)、`net_amount`(L 净额 = 销售侧 − 退货侧)、`order_count` |
 | transfer | `fct_transfer_out`（W1） | `r_net`(R 出库净额)、`c_cost`(C 成本)、`g_gross`(G=R−C) |
 | wholesale | fct_wholesale（W1，随历史回填） | `r_net`、`c_cost`、`g_gross` |
 | expense | fct_expense（W2） | `ep_payable`(EP 门店/客户应付)、`er_receivable`(ER 应收)、`e_net`(E=应付−应收)、`q_compensation`(Q 补损净额) |
@@ -409,7 +442,7 @@ psql "$DATABASE_URL" -c "select distinct v.view_schema||'.'||v.view_name as view
 - ① 与 ⑤ **按 grain 对齐后数不一致** ⇒ 先怀疑 **cast / 列名**（§3）或**列集漂移**（§6）——这正是
   `dbt/tests/audit_*.sql` 在真数据上抓的东西。
 - ③ 的定义**与 ① 的表达式对不上** ⇒ 落库那一步没跟上声明（**重新物化**，别手改关系）。
-- ④ 读不出/报错 ⇒ **先核对路径形态**（与 `dbt/models/common/staging/sources.yml` 的
+- ④ 读不出/报错 ⇒ **先核对路径形态**（与 `dbt/models/<域>/staging/sources.yml` 的
   `meta.path_convention` 逐段对照），**再**查**凭据 / secret**（§4 与 §11.4）——**别把路径形态错误
   误判成凭据问题**（本节原判读表的归因顺序会把排查带偏，T9 评审 I-5 点出）。
 - 走到 ⑤ 仍与 BI 里的数不同 ⇒ 问题在**消费层**（locked 参数 / 报表 SQL），不在数据面。
@@ -441,7 +474,7 @@ psql "$DATABASE_URL" -c "select distinct v.view_schema||'.'||v.view_name as view
   故 ⑤ 采用与 audit **同一形态**的 `group by`（`try_strptime(...)::date` 也是照抄 audit 的写法）。
 - **④⑤ 的 parquet 路径形态必须与正典逐段一致**（I-5）：现行正典（**四处一致**，皆在仓内）是
   `s3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet`
-  —— `dbt/semantics/l1_metrics.yml` 的 `sources`、`dbt/models/common/staging/sources.yml` 的
+  —— `dbt/semantics/l1_metrics.yml` 的 `sources`、`dbt/models/<域>/staging/sources.yml` 的
   `meta.path_convention` 与 `access_path`、`dbt_project.yml` 的 `lemeng_retail_order_line_prefix` 段头注、
   `dbt/tests/audit_lemeng__retail__net_sales.sql` 的实际读路径。（订正前正典写的是旧湖
   `lemeng/retail_detail/<账套>/<日期>/all.parquet`——该前缀**仍在湖上被写**，只是仓内已无读它的模型。）
