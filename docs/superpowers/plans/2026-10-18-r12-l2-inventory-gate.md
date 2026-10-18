@@ -78,7 +78,14 @@ export const L2_INVENTORY_REL = 'docs/data/l2-sensitivity-inventory.md'
           + '而 `L2_BASE_MASKED` 只拦新建 ⇒ 那批必须先确认、留痕。',
       })
     } else {
-      const missing = sensitiveCols.filter((c) => !inventory.includes(c))
+      // ⚠️ 判据必须**定界匹配**，不能用 `includes` 子串匹配（Task 1 评审 Important 订正）：
+      //    本仓真实列名里有**前缀撞车对** —— `lemeng.branch_expense.settlement_state` ⊂
+      //    `…settlement_state_name`、`…other_inout_flag` ⊂ `…other_inout_flag_name`、
+      //    `…other_inout_kind` ⊂ `…other_inout_kind_code`、`lemeng.client_expense.other_inout_flag` ⊂
+      //    `…other_inout_flag_name`。同概念的两列一起打标、操作者只列长名 ⇒ 短名**静默通过**，
+      //    正是本闸存在的意义（防漏报）。⇒ 两侧都不许再接 `[A-Za-z0-9_.]`（列名含点，故点也算词内字符）。
+      const namedRe = (c) => new RegExp(`(?<![A-Za-z0-9_.])${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_.])`)
+      const missing = sensitiveCols.filter((c) => !namedRe(c).test(inventory))
       if (missing.length > 0) {
         violations.push({
           file: L2_INVENTORY_REL,
@@ -135,7 +142,17 @@ export const L2_INVENTORY_REL = 'docs/data/l2-sensitivity-inventory.md'
   it('②b 有敏感列且产物逐列点名 ⇒ 不违规', () => { … })
   it('②b 产物只点名了一部分 ⇒ 违规，且报出缺的那一列', () => { … })
   it('②b 无敏感列 ⇒ 不违规（今天的状态；产物可有可无）', () => { … })
+  it('②b ★ 前缀撞车：只列长名 ⇒ 短名仍报违规（子串匹配会漏报）', () => { … })   // Task 1 评审 Important 补入
 ```
+
+> ⚠️ **前缀撞车那条用真实存在的列名对**，例如同时打标
+> `lemeng.branch_expense.settlement_state` 与 `lemeng.branch_expense.settlement_state_name`，
+> 产物里**只写长名** ⇒ 断言违规里点名了**短名**。用真名而非编造的名字，是因为「不会撞车」这个
+> 假设正是被真实数据证伪的那个。
+>
+> ⚠️ 「无敏感列 ⇒ 产物可有可无」那条**两半都要跑**（Task 1 评审 Minor 订正）：除了「产物在」，
+> 还要跑一次 **`inventory: null`**（有敏感列才需要产物；无敏感列时缺产物不算违规），
+> 否则「把 `sensitiveCols.length > 0` 守卫删掉」这个变异不会红。
 
 - [ ] **Step 4: 跑门禁 + 变异确认**
 
@@ -145,7 +162,12 @@ cd /Users/duo/orca/workspaces/platform-core/p2-leftovers && pnpm exec tsx script
 
 Expected: 门禁 `OK`（今天零敏感列 ⇒ ②b 是 no-op）；用例全绿。
 
-**变异确认（必须做，绿不算）**：把 ②b 的判据从「逐列点名」退回「只看文件存在」（即删掉 `missing` 那段）⇒ **恰好**「产物只点名了一部分」那条红。记录红掉的用例名，然后复原。
+**变异确认（必须做，绿不算）**：
+
+1. 把 ②b 的判据从「逐列点名」退回「只看文件存在」（即删掉 `missing` 那段）⇒ **恰好**「产物只点名了一部分」那条红。
+2. 把定界匹配退回子串匹配（`inventory.includes(c)`）⇒ **恰好**「前缀撞车」那条红（Task 1 评审 Important 的判据）。
+
+记录红掉的用例名，然后复原。
 
 - [ ] **Step 5: 提交**
 
