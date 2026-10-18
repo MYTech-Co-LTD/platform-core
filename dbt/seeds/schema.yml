@@ -130,3 +130,45 @@ seeds:
           - not_null
       - name: source_note
         description: 来源与佐证（谁给的、拿什么交叉核过）。
+
+  - name: recon_tolerances
+    description: >-
+      **口径对账的容差配置**（消费面 spec §12.4；行业形态 control totals + break management）。
+      一行 = 一个 control 的容差与其**具名理由**。为什么要具名 + 到期：
+      `NET_ABS_TOL=200` 原先是脚本里的**匿名活口**——它同样放过任何 ≤200 元的新问题，
+      而且没人知道它何时该失效。落到本 seed 后，`reason_code` 具名、`expires_on` 到期，
+      **过期后 `abs_tol` 视为 0 ⇒ 任何非零差自动转 `over_tol`**（到期自动转红，不靠人记得）。
+      生效逻辑在 `dbt/models/lemeng/marts/recon_break.sql`。
+    config:
+      column_types:
+        control: varchar
+        abs_tol: decimal(20,2)
+        pct_tol: decimal(10,4)
+        reason_code: varchar
+        expires_on: date
+        disposition: varchar
+        disposition_by: varchar
+    columns:
+      - name: control
+        description: 控制名（`caliber_sale` 销售侧 / `caliber_net` 净额侧）。
+        tests:
+          - not_null
+          - unique
+      - name: abs_tol
+        description: 绝对容差（元）。与 `pct_tol` 取大者生效。
+        tests:
+          - not_null
+      - name: pct_tol
+        description: 相对容差（百分比，如 0.01 = 0.01%）。
+        tests:
+          - not_null
+      - name: reason_code
+        description: >-
+          具名理由（空 = 无已知缺口，任何差都算真红）。**不允许写成「容差内」这类无名描述**。
+      - name: expires_on
+        description: >-
+          到期日（空 = 无到期）。**到期后 `abs_tol` 视为 0** ⇒ 该 control 的差一律转 `over_tol`。
+      - name: disposition
+        description: 处置说明（为什么接受、按哪边修）。
+      - name: disposition_by
+        description: 认领人。
