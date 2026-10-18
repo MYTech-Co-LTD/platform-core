@@ -475,4 +475,24 @@ describe('authorize —— 值级掩码定点展开（spec §5.3，P2 T2）', ()
       expect(r.plan.sql).toBe(baseline.plan.sql)
     }
   })
+
+  // ★ 第 5 参（maskCatalog，spec §5.3.1 R10）：掩码按列从**全量** catalog 解析，堵 #820。
+  //   可见集里只有 L2 行（masks 恒 null），但掩码目录传全量（含被裁掉的 L1 行）⇒ L2 仍被掩。
+  it('★ 掩码从全量 catalog 取（第 5 参）：不可见 L1 行的掩码仍掩住可见 L2 行（#820）', () => {
+    const l1: MetricDef = { ...maskedCat[0] }                        // L1 行：带掩码（被裁掉，不在可见集）
+    const l2: MetricDef = { ...maskedCat[0], id: 'l2_metric', masks: null }  // L2 行：masks 恒 null
+
+    // 反证：只传可见集（= 第 5 参缺省的旧行为）⇒ L2 行 masks 恒 null ⇒ 掩码不生效（正是 #820 的洞）
+    const before = authorize([l2], req(), 'l2_metric', {})
+    expect(before.ok).toBe(true)
+    if (!before.ok) return
+    expect(before.plan.applied).toEqual({})
+
+    // 传全量掩码目录 ⇒ L2 的 selectSql 逐字保留了 L1 的列引用 ⇒ 命中 L1 的掩码（fail-closed）
+    const after = authorize([l2], req(), 'l2_metric', {}, [l1, l2])
+    expect(after.ok).toBe(true)
+    if (!after.ok) return
+    expect(after.plan.applied).toEqual({ 'mart_sales_daily.revenue': 'round:1000' })
+    expect(after.plan.sql).toContain('sum(round(mart_sales_daily.revenue, -1000)) as value')
+  })
 })
