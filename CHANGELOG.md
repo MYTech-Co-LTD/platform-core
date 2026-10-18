@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.155.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.3...v0.155.0) - 2026-10-18
+- 【新增】data: 口径对账落湖——父管线切块 + 子管线写 chunk 分区事实 ([#852](https://github.com/MYTech-Co-LTD/platform-core/pull/852), [25afc90](https://github.com/MYTech-Co-LTD/platform-core/commit/25afc90acf649ac67fabde2f9ac533abf7d6fd84))
+
+
 ## [0.154.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.2...v0.154.3) - 2026-10-18
 - 【修复】data: 新鲜度 SLA 按实测发布时钟重新标定 ([#851](https://github.com/MYTech-Co-LTD/platform-core/pull/851), [5f83f82](https://github.com/MYTech-Co-LTD/platform-core/commit/5f83f82b78af5f56005c031c2195c1468c679400))
 
