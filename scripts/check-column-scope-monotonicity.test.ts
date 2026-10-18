@@ -19,16 +19,34 @@ afterAll(() => {
 })
 
 /**
- * 造一棵最小假仓：一份契约（可选打标）+ 一份 L1 声明（可选 required_scope / reads）。
+ * 造一棵最小假仓：一份契约（可选打标）+ 一份 L1 声明（可选 required_scope / reads / 追加行）
+ * + 一份 manifest（权限码清单）。
  *
- * @param {{ sensitivity?: string, reads?: string[], requiredScope?: string }} [opts]
+ * ⚠️ **必须**给 manifest：T4 的 ②/④ 检查读 `modules/data/manifest.yaml` 的 `permissions[].code`，
+ *    缺了它 `loadManifestCodes` 会**抛**（设计如此，不静默返回空集）。既有「`required_scope: data:cost`
+ *    合法」用例也依赖 manifest 里有 `data:cost`——所以缺省给全四个码。
+ *
+ * @param {{
+ *   sensitivity?: string,
+ *   reads?: string[],
+ *   requiredScope?: string,
+ *   codes?: string[],
+ *   metricLines?: string[],
+ * }} [opts]
  * @returns {string} 临时仓根
  */
-function fixture(opts: { sensitivity?: string, reads?: string[], requiredScope?: string } = {}): string {
+function fixture(opts: {
+  sensitivity?: string
+  reads?: string[]
+  requiredScope?: string
+  codes?: string[]
+  metricLines?: string[]
+} = {}): string {
   const root = mkdtempSync(join(tmpdir(), 'colscope-'))
   roots.push(root)
   mkdirSync(join(root, 'contracts', 'common'), { recursive: true })
   mkdirSync(join(root, 'dbt', 'semantics'), { recursive: true })
+  mkdirSync(join(root, 'modules', 'data'), { recursive: true })
 
   writeFileSync(join(root, 'contracts', 'common', 'lemeng.item.json'), JSON.stringify({
     contractVersion: 2,
@@ -49,6 +67,17 @@ function fixture(opts: { sensitivity?: string, reads?: string[], requiredScope?:
     }],
   }, null, 2))
 
+  const codes = opts.codes ?? ['data:query', 'data:manage', 'data:cost', 'data:precise']
+  writeFileSync(join(root, 'modules', 'data', 'manifest.yaml'), [
+    'id: data',
+    'name: 数据问数',
+    'version: 0.1.0',
+    "platform: '>=0.1'",
+    'permissions:',
+    ...codes.map((c) => `  - { code: ${c}, name: 测试 }`),
+    '',
+  ].join('\n'))
+
   const lines = [
     'metrics:',
     "  - name: 'lemeng:item:gross_rate'",
@@ -65,8 +94,42 @@ function fixture(opts: { sensitivity?: string, reads?: string[], requiredScope?:
   if (opts.requiredScope !== undefined) {
     lines.push(`    required_scope: ${opts.requiredScope}`)
   }
+  if (opts.metricLines !== undefined) {
+    lines.push(...opts.metricLines)
+  }
   writeFileSync(join(root, 'dbt', 'semantics', 'l1_metrics.yml'), `${lines.join('\n')}\n`)
   return root
+}
+
+/**
+ * 一条最小指标块（可带 `mask`）——用于 ③ 的多指标用例（同一份 yml 里两条）。
+ *
+ * @param {string} name 指标名
+ * @param {string} [maskColumn] 给了就追加一条按列 `mask` 声明
+ * @param {string} [grantedBy] mask 的豁免码（缺省 = 合法码；用 `data:manage` 而非
+ *   `data:precise`，让 ① 的「合法码」用例与 ③ 用例的码解耦，变异确认才能逐条隔离）
+ * @returns {string[]} YAML 行
+ */
+function metricBlock(name: string, maskColumn?: string, grantedBy = 'data:manage'): string[] {
+  const b = [
+    `  - name: '${name}'`,
+    '    label: 测试',
+    '    definition: 测试用',
+    "    expression: 'sum(fct_item.item_cost_price)'",
+    '    grain: [bizday]',
+    '    source: lemeng',
+    '    freshness_sla_days: 2',
+  ]
+  if (maskColumn !== undefined) {
+    b.push(
+      '    mask:',
+      `      - column: ${maskColumn}`,
+      '        kind: round',
+      '        step: 1000',
+      `        grantedBy: ${grantedBy}`,
+    )
+  }
+  return b
 }
 
 const COL = 'lemeng.item.item_cost_price'
@@ -138,5 +201,81 @@ describe('血缘单调门：判据', () => {
     const joined = v.map((x) => x.message).join('\n')
     expect(joined).toContain('gross_rate')
     expect(joined).toContain('cost_ratio')
+  })
+})
+
+describe('P2 值级脱敏四项检查（T4：①#822 / ②#821 / ③同列单声明 / ④required_scope 可查）', () => {
+  it('① mask 的 grantedBy 不在 manifest ⇒ 违规（堵 #822）', () => {
+    const v = checkColumnScopeMonotonicity(fixture({
+      metricLines: metricBlock('lemeng:item:gross_rate', 'fct_item.item_cost_price', 'data:nope'),
+    }))
+    expect(v).toHaveLength(1)
+    expect(v[0]?.message).toContain('data:nope')
+    expect(v[0]?.message).toContain('gross_rate')
+  })
+
+  it('① mask 的 grantedBy 在 manifest ⇒ 不违规', () => {
+    // 用 `data:query`（本文件里只此一处拿它当 grantedBy）——与 ③ 用例的码解耦，
+    // 变异确认（把该码从可读集合里去掉）才能恰红这一条。
+    expect(checkColumnScopeMonotonicity(fixture({
+      metricLines: metricBlock('lemeng:item:gross_rate', 'fct_item.item_cost_price', 'data:query'),
+    }))).toEqual([])
+  })
+
+  it('② 有 sensitivity 列但 manifest 缺 data:precise ⇒ 违规（堵 #821）', () => {
+    const v = checkColumnScopeMonotonicity(fixture({
+      sensitivity: 'cost',
+      codes: ['data:query', 'data:manage', 'data:cost'],
+    }))
+    expect(v).toHaveLength(1)
+    expect(v[0]?.file).toBe('modules/data/manifest.yaml')
+    expect(v[0]?.message).toContain('data:precise')
+  })
+
+  it('② 无 sensitivity 列 ⇒ 不违规（今天的状态）', () => {
+    expect(checkColumnScopeMonotonicity(fixture({
+      codes: ['data:query', 'data:manage', 'data:cost'],
+    }))).toEqual([])
+  })
+
+  it('③ 同一列被两个指标声明 ⇒ 违规，报出两个指标名', () => {
+    const root = fixture()
+    writeFileSync(join(root, 'dbt', 'semantics', 'l1_metrics.yml'), [
+      'metrics:',
+      ...metricBlock('lemeng:item:gross_rate', 'fct_item.item_cost_price'),
+      ...metricBlock('lemeng:item:cost_ratio', 'fct_item.item_cost_price'),
+      '',
+    ].join('\n'))
+    const v = checkColumnScopeMonotonicity(root)
+    expect(v).toHaveLength(1)
+    expect(v[0]?.message).toContain('gross_rate')
+    expect(v[0]?.message).toContain('cost_ratio')
+    expect(v[0]?.message).toContain('fct_item.item_cost_price')
+  })
+
+  it('③ 不同列各声明一次 ⇒ 不违规', () => {
+    const root = fixture()
+    writeFileSync(join(root, 'dbt', 'semantics', 'l1_metrics.yml'), [
+      'metrics:',
+      ...metricBlock('lemeng:item:gross_rate', 'fct_item.item_cost_price'),
+      ...metricBlock('lemeng:item:cost_ratio', 'fct_item.net_amount'),
+      '',
+    ].join('\n'))
+    expect(checkColumnScopeMonotonicity(root)).toEqual([])
+  })
+
+  it('④ required_scope 不在 manifest ⇒ 违规（销 check-data-models:1005 的承诺）', () => {
+    const v = checkColumnScopeMonotonicity(fixture({ requiredScope: 'data:nope', reads: [COL] }))
+    expect(v).toHaveLength(1)
+    expect(v[0]?.message).toContain('data:nope')
+    expect(v[0]?.message).toContain('required_scope')
+  })
+
+  it('★ 指标没申报 reads ⇒ 四项检查照样跑（不被那条 continue 吃掉）', () => {
+    // 没申报 reads（既有的 continue 会命中）——但 ④ 在 continue 之上，仍必须报出。
+    // 变异确认：把 ④ 挪到 continue 之下 ⇒ 恰这条红。
+    const v = checkColumnScopeMonotonicity(fixture({ requiredScope: 'data:nope' }))
+    expect(v).toHaveLength(1)
+    expect(v[0]?.message).toContain('required_scope')
   })
 })

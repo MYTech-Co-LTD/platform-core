@@ -1002,7 +1002,9 @@ export function checkDataModels(rootDir, opts = {}) {
     }
 
     // ⑤-b `required_scope` 形态（spec 2026-10-17 §4.2）：给了就必须是非空、无首尾空白的字符串。
-    // 缺省不报（= null = 不限制，合法）。**这里不判码是否存在**（要读 manifest，属另一条门禁）。
+    // 缺省不报（= null = 不限制，合法）。**这里不判码是否存在**（要读 manifest）——
+    // 码是否真实存在于 `modules/data/manifest.yaml` 的 `permissions[]` 由
+    // `scripts/check-column-scope-monotonicity.mjs` 的 ④ 检查兜（码不存在 ⇒ 该指标对所有人静默不可见）。
     const rs = metric.fields?.required_scope
     if (rs !== undefined && rs !== null) {
       const s = typeof rs === 'string' ? rs : ''
