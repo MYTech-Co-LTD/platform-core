@@ -160,7 +160,8 @@ curl -fsS -X PATCH "$OPENSHIP_URL/api/projects/$PROJECT_ID/env" \
 | `CASDOOR_URL` | `https://sso.hookflow.cn` | 共享 SSO |
 | `CASDOOR_CLIENT_ID` / `_SECRET` | 该 application 的凭据 | 走 OIDC code 换 token |
 | `CASDOOR_ADMIN_USER` / `_PWD` | Casdoor 管理员 | **启动期必需**。它**不只**服务模块权限码供给：登录签发前必调 `getUser` + `getPermissions`，两者都走 admin 会话 —— 缺凭据时没有人能拿到会话（即便凭据正确也签不出：签发前 502；错凭据仍是 401） |
-| `CASDOOR_APPLICATION` | `signupApplication` | 账密登录要它，否则真实 Casdoor 报 Unauthorized operation |
+| `CASDOOR_APPLICATION` | `signupApplication` | 账密登录要它，否则真实 Casdoor 报 Unauthorized operation。**只管业务用户的登录方式**——业务 app 若只配扫码（密码登录关），**不要**用它当 admin 登录的 app |
+| `CASDOOR_ADMIN_APPLICATION` | **可省**（缺省 `app-built-in`） | **admin 会话登录**专用的 application（#911）。共享 Casdoor 新版严格校验 app 级登录方式：业务 app 只配扫码时，admin 登录被连坐 ⇒ 启动即挂（2026-10-18 双实例 crash loop）。缺省走内置应用（密码登录恒开）；内置被禁的交付才需显式指定 |
 | `PUBLIC_ORIGIN` | `https://<域名>` | 企微回调 `redirect_uri` 由它拼，必须与最终访问域名逐字一致 |
 | `SEED_DEMO` | **不要设** | 只在 dev/冒烟置 `1`；生产设了会种出 acme/beta 两个演示租户 |
 

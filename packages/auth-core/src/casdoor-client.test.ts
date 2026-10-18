@@ -140,6 +140,27 @@ describe('CasdoorClient 语义钉死（C2）', () => {
     expect(m.lastLoginApplication).toBe('acme-app')
   })
 
+  it('admin 会话登录与业务 application 解耦（#911）：admin 走 adminApplication（缺省 app-built-in），verifyPassword 仍走业务 app', async () => {
+    // 业务 app 只配企微扫码、密码登录关闭 ⇒ admin 会话若与用户密码验证共用 application，
+    // 启动期权限供给会被业务 app 的登录方式配置连坐（2026-10-18 山海/mytech 双实例 crash loop）。
+    const c = new CasdoorClient({
+      origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+      application: 'acme-app', adminApplication: 'ops-app',
+      adminUser: 'admin', adminPwd: 'pw',
+    })
+    await c.getPermissions() // 触发 admin 会话登录
+    expect(m.lastLoginApplication).toBe('ops-app')
+    expect((await c.verifyPassword('admin1', 'pw'))?.name).toBe('admin1') // 用户密码验证仍走业务 app
+    expect(m.lastLoginApplication).toBe('acme-app')
+    // 缺省：不配 adminApplication ⇒ admin 会话走 app-built-in（与 application 解耦）
+    const d = new CasdoorClient({
+      origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+      application: 'acme-app', adminUser: 'admin', adminPwd: 'pw',
+    })
+    await d.getPermissions()
+    expect(m.lastLoginApplication).toBe('app-built-in')
+  })
+
   it('mock get-user 严格 id=<org>/<name> 全形（无斜杠不合法，wrong token count）', async () => {
     const r = await fetch(`${m.origin}/api/get-user?id=admin1`, { headers: { Cookie: await adminCookie() } })
     expect(r.status).toBe(200)

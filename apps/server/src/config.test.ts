@@ -58,18 +58,22 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...baseEnv, DATA_QUERY_RATE_PER_MIN: '  ' }).dataQueryRatePerMin).toBe(60)
   })
 
-  it('multi 模式 PLATFORM_ORG 可缺省；CASDOOR_APPLICATION 可选透传；SEED_DEMO 开关', () => {
+  it('multi 模式 PLATFORM_ORG 可缺省；CASDOOR_APPLICATION / CASDOOR_ADMIN_APPLICATION 可选透传；SEED_DEMO 开关', () => {
     const cfg = loadConfig({
       ...baseEnv,
       TENANT_MODE: 'multi',
       PLATFORM_ORG: '',
       CASDOOR_APPLICATION: 'app-built-in',
+      CASDOOR_ADMIN_APPLICATION: 'ops-app',
       SEED_DEMO: '1',
     })
     expect(cfg.tenantMode).toBe('multi')
     expect(cfg.platformOrg).toBe('')
     expect(cfg.casdoor.application).toBe('app-built-in')
+    expect(cfg.casdoor.adminApplication).toBe('ops-app')
     expect(cfg.seedDemo).toBe(true)
+    // 缺省 ⇒ undefined（CasdoorClient 回落 app-built-in）
+    expect(loadConfig({ ...baseEnv, TENANT_MODE: 'multi', PLATFORM_ORG: '' }).casdoor.adminApplication).toBeUndefined()
   })
 
   // 曾经这两个键是可选的，理由写的是"纯登录场景不需要管理端点"——**那是错的**：
