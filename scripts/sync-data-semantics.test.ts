@@ -620,15 +620,24 @@ describe('真 YAML：41 条 sla_days / freshnessRelations 逐条断言（spec §
   // 为什么钉真实 YAML：sla_days 是人工登记值（不是推导产物），漏登记/登错不报错，只表现为
   // 线上状态转译错。逐字断言 + 计数兜底（加指标时这两条会替你守住「新指标必须显式登记」）。
   const rows = readDeclarations(ROOT)
-  const SLA2 = new Set(['lemeng:inventory:quantity', 'lemeng:inventory:money'])
+  // 2026-10-18 按实测发布时钟重新标定（issue #849）：sla_days 的语义就是「T+N 可用」，
+  // 采集窗口落在上海 00:25/00:35（刚过午夜）⇒ 除零售（tick 每 5 分钟）外都够不到 T+1。
+  const SLA3 = new Set(['lemeng:inventory:quantity', 'lemeng:inventory:money'])
+  const SLA1 = new Set([
+    'lemeng:retail:sales', 'lemeng:retail:net_sales', 'lemeng:retail:order_count',
+    'lemeng:retail:net_quantity', 'lemeng:retail:consecutive_no_sales_days',
+    'lemeng:retail:comparable_growth_rate',
+  ])
 
-  it('恰 41 条；inventory 两指标 sla_days=2，其余 39 条=1（采集正典实测窗口的登记）', () => {
+  it('恰 41 条；inventory 两指标 sla_days=3、retail 六条=1、其余 33 条=2（按实测发布时钟标定，#849）', () => {
     expect(rows.length).toBe(41)
     for (const row of rows) {
-      expect(row.slaDays, `${row.id} 的 sla_days 与登记不符`).toBe(SLA2.has(row.id) ? 2 : 1)
+      const want = SLA3.has(row.id) ? 3 : SLA1.has(row.id) ? 1 : 2
+      expect(row.slaDays, `${row.id} 的 sla_days 与标定不符`).toBe(want)
     }
-    expect(rows.filter((r) => r.slaDays === 2).length).toBe(2)
-    expect(rows.filter((r) => r.slaDays === 1).length).toBe(39)
+    expect(rows.filter((r) => r.slaDays === 3).length).toBe(2)
+    expect(rows.filter((r) => r.slaDays === 2).length).toBe(33)
+    expect(rows.filter((r) => r.slaDays === 1).length).toBe(6)
   })
 
   it('freshnessRelations 与声明 sources 推导逐字一致；没声明 sources 的 = 空（无自动水位）', () => {
