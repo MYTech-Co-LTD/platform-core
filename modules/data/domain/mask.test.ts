@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { maskedSelectSql } from './mask'
+import { maskedSelectSql, sqlMentionsColumn, topLevelValueHead } from './mask'
 
 const SEL = 'select sum(fct_x.net_amount) as value, bizday from fct_x'
 const R = (spec: string) => ({ column: 'fct_x.net_amount', kind: 'round' as const, step: 1000, grantedBy: 'data:precise', ...JSON.parse(spec) })
@@ -84,5 +84,57 @@ describe('maskedSelectSql（spec §5.3）', () => {
     const r = maskedSelectSql(sql, [{ column: 'value', kind: 'nullify', grantedBy: 'p' }], () => false)
     expect(r.sql).toBe(sql)
     expect(r.applied).toEqual({})
+  })
+})
+
+describe('sqlMentionsColumn（唯一 token 化，#830）', () => {
+  it('列在 selectSql 里 ⇒ true；不在 ⇒ false', () => {
+    expect(sqlMentionsColumn('select sum(fct_x.net_amount) as value from fct_x', 'fct_x.net_amount')).toBe(true)
+    expect(sqlMentionsColumn('select sum(fct_x.other) as value from fct_x', 'fct_x.net_amount')).toBe(false)
+  })
+
+  it('★ 别名位 value 不是列引用 ⇒ 只声明 value 的列判为「不在」（PR #827 评审 M1②）', () => {
+    expect(sqlMentionsColumn('select sum(f.x) as value from f', 'value')).toBe(false)
+  })
+
+  it('★ 不再依赖 `as __alias__` 文本哨兵 ⇒ 列名恰好叫 __alias__ 也判得准（M1①）', () => {
+    const sql = 'select sum(f.__alias__) as value from f'
+    expect(sqlMentionsColumn(sql, '__alias__')).toBe(true)
+  })
+
+  it('★ 大小写：`(select 1 AS VALUE) + sum(t.y) as value` 里的 value 是内层别名，不是列（M1②）', () => {
+    const sql = 'select (select 1 AS VALUE) + sum(t.y) as value from t'
+    expect(sqlMentionsColumn(sql, 'VALUE')).toBe(false)
+  })
+
+  it('子串不误伤：cost 不命中 cost_money', () => {
+    expect(sqlMentionsColumn('select sum(a.cost_money) as value from a', 'a.cost')).toBe(false)
+  })
+})
+
+describe('topLevelValueHead（深度/引号感知的 `… as value` 头）', () => {
+  it('顶层 `as value` ⇒ 三段偏移', () => {
+    const h = topLevelValueHead('select sum(f.x) as value, bizday from f')
+    expect(h).not.toBeNull()
+    expect('select sum(f.x) as value, bizday from f'.slice(h!.aliasStart, h!.aliasEnd)).toBe('value')
+  })
+
+  it('★ 内层 `as value … from` 不算头（PR #827 评审 M6）', () => {
+    const sql = 'select (select 1 as value from x) + sum(t.y) as value from t'
+    const h = topLevelValueHead(sql)
+    expect('select (select 1 as value from x) + sum(t.y) as value from t'.slice(h!.aliasStart, h!.aliasEnd)).toBe('value')
+    expect(h!.exprStart).toBe('select '.length)   // 顶层表达式从 `(` 起，不是内层
+    // ★ 补的鉴别断言（brief 原有两条在 M6 形状上**不具鉴别力**：内外层别名都恰好叫 `value`，
+    //   而 exprStart 恒 = 'select '.length ⇒ 退回非贪婪正则时两条都照样绿）。判据只有变异确认：
+    //   退回非贪婪正则后 aliasStart 落在**内层** value 上（20 ≠ 48）⇒ 本行红。
+    expect(h!.aliasStart).toBe(sql.lastIndexOf('value'))
+  })
+
+  it('单引号里的 `as value` 不算（字符串字面量）', () => {
+    expect(topLevelValueHead("select 'as value' as x from f")).toBeNull()
+  })
+
+  it('别名不是 value ⇒ null', () => {
+    expect(topLevelValueHead('select sum(f.x) as value_added, bizday from f')).toBeNull()
   })
 })

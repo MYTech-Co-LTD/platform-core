@@ -50,11 +50,13 @@
 #               MASK_KINDS 在 modules/data/domain/authz.ts（门禁与运行期共用一份，加 kind 走 PR）；
 #               column 是「关系.列」形态的限定列引用，**必须逐字出现在本指标物化的 selectSql 里**
 #               （运行期掩码是列引用定点替换，列不在 ⇒ 静默不生效，sync 会响亮拒绝）；
-#               column: null = **整值掩码**（把 `… as value` 整个换成 typed NULL，fail-closed
-#               默认档语义），此时 kind 只许 nullify。grantedBy 是**豁免码**（持有 ⇒ 看原值，
-#               与 requiredScope 的「默认拒绝」方向相反）。⚠️ 声明只进 `data.metrics.mask_spec`，
-#               **不进 select_sql**（占位符进 select_sql 会被 L2 编译原样带出去，spec §5.3 订正块）。
-#               当前无指标声明——首个声明随业务裁决走（掩码一声明，无豁免码的人立即看不到原值）。
+#               整值形态**只由默认档合成**（给源列打 `sensitivity`，物化层自动套整值 nullify，
+#               见 T5）；YAML 里**写不出**整值形态（`maskItemError` 一律拒）。grantedBy 是**豁免码**
+#               （持有 ⇒ 看原值，与 requiredScope 的「默认拒绝」方向相反）。⚠️ 声明只进
+#               `data.metrics.mask_spec`，**不进 select_sql**（占位符进 select_sql 会被 L2 编译
+#               原样带出去，spec §5.3 订正块）。
+#               本文件今天仍无指标手写 `mask`；**整值那一档不是手写来的**（默认档合成，见 T5），
+#               首个**按列**声明随业务裁决走（掩码一声明，无豁免码的人立即看不到原值）。
 #
 # ⚠️ 「声明 ↔ 实现一致」（expression 指向的模型/列真的存在且口径一致）这条**当前没有机检**
 #    —— 它需要真库（spec §10 门禁③ 的形态）。当前只有：本文件的**存在性/字段/命名/对账文件**机检

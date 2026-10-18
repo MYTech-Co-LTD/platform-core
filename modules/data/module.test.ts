@@ -15,8 +15,10 @@ describe('manifest（不需要数据库）', () => {
     const m = ManifestSchema.parse(raw)
     expect(m.id).toBe('data')
     // 权限码集合**逐字钉死**（新增码 = 显式改这一行，走 PR）——`data:cost` 是列级授权的
-    // 「看得到成本/毛利」档（spec 2026-10-17 §4.2），由租户管理员发放。
-    expect(m.permissions.map((p) => p.code).sort()).toEqual(['data:cost', 'data:manage', 'data:query'])
+    // 「看得到成本/毛利」档（spec 2026-10-17 §4.2），由租户管理员发放；`data:precise` 是
+    // 值级脱敏**默认档**的豁免码（spec 2026-10-17 §4.1.1 裁决 A，f5209ce 落清单）。
+    expect(m.permissions.map((p) => p.code).sort())
+      .toEqual(['data:cost', 'data:manage', 'data:precise', 'data:query'])
     expect(m.migrations?.dir).toBe('./migrations')
     // 本模块【不】声明 storage：问数不碰租户级对象存储（数据仓库连接是部署级，见 T3）
     expect(m.storage).toBeUndefined()

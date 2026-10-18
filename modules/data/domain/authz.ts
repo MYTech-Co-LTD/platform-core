@@ -32,6 +32,16 @@ export const MASK_KINDS = ['round', 'nullify'] as const
 export type MaskKind = (typeof MASK_KINDS)[number]
 
 /**
+ * 默认档的豁免码（spec §4.1.1 裁决 A：专用码，不复用 `data:cost`）。
+ *
+ * ⚠️ 值必须**逐字**等于 `modules/data/manifest.yaml` 的 `permissions[].code`——
+ * 声明了才发得出去（admin 端点校验码 ∈ 清单，否则 404 NO_SUCH_CODE）。
+ * `scripts/check-column-scope-monotonicity.mjs` 有门禁（T4 ②）兜这条。
+ * 写侧（sync 合成默认档）与门禁都从这里取，别各写一份字面量。
+ */
+export const DEFAULT_TIER_SCOPE = 'data:precise'
+
+/**
  * 单条值级掩码声明（spec §5.2 声明链；库里 `data.metrics.mask_spec` jsonb 数组的元素）。
  *
  * `column === null` = **整值掩码**：运行期把 `… as value` 的表达式**整个**换成 typed NULL。

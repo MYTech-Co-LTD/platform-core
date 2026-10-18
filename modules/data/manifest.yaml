@@ -11,6 +11,15 @@ permissions:
   #    否则 404 NO_SUCH_CODE）。漏声明 = 指标声明了 required_scope: data:cost 也永远匹配不上
   #    ⇒ 该指标对所有人静默不可见。
   - { code: data:cost,   name: 成本与毛利数据 }
+  # 值级脱敏的**默认档豁免码**（spec 2026-10-17 §4.1.1，裁决 A：专用码而非复用 data:cost）。
+  # 语义：持有它 ⇒ 看原值；否则默认档（整值 nullify）生效。与 data:cost 分开是刻意的——
+  # 列级可见（看得到成本指标）与值级精确（看得到精确值）是**两条独立的授权**，
+  # 合成一个码会让「给了成本可见就顺带给了精确值」。
+  # ⚠️ **打第一个 `sensitivity` 之前必须先声明它**：check-column-scope-monotonicity 会拦
+  #    （否则默认档的豁免码在清单里不存在 ⇒ 谁都豁免不了 ⇒ 全租户静默拿 NULL）。
+  # ⚠️ **这不是终态**：将来若按敏感级别细分（cost / pii / …各一码），本码拆成一组；
+  #    别把「一码走天下」当成设计意图。
+  - { code: data:precise, name: 精确值查看 }
 # ⚠️ api.internal 的 path 是**模块相对路径**（不带 /api/modules/<id> 前缀）——
 # loader 的 applyDeclaredApiGate 会用 moduleApiBasePath(id) 加前缀后再做门卫比对。
 # 声明集合必须与 createRouter 注册的集合逐条一致（装载期双向核对，任一方向差集 ⇒ 装载失败）。

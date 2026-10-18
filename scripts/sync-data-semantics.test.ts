@@ -27,6 +27,7 @@ import {
   MODE_DRY_RUN,
   MODE_HELP,
   MODE_WRITE,
+  applyDefaultMaskTier,
   buildSelectSql,
   declarationsFromYaml,
   deriveParams,
@@ -43,6 +44,9 @@ import {
   usageText,
 } from './sync-data-semantics.mjs'
 import { parseL1Select } from '../modules/data/domain/semantic-compiler.ts'
+// 默认档的豁免码：**从写侧同一个常量取**（别在测试里另写一份字面量）——被断言的值与被合成的值
+// 必须是同一个来源，否则「改了常量、测试照绿」。
+import { DEFAULT_TIER_SCOPE } from '../modules/data/domain/authz.ts'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -733,7 +737,7 @@ describe('declarationsFromYaml：mask（值级脱敏声明面，spec 2026-10-17 
     grain: ['g'], owner: 'o', tier: 'certified', freshness_sla_days: 1,
   }
 
-  it('缺声明 ⇒ masks = null（未声明；运行期由源列 sensitivity 推默认档，物化层不掺和）', () => {
+  it('缺声明 ⇒ masks = null（未声明；默认档由 `readDeclarations`/`applyDefaultMaskTier` 合成，本纯函数不推）', () => {
     expect(declarationsFromYaml(yaml([base]))[0].masks).toBeNull()
     expect(declarationsFromYaml(yaml([{ ...base, mask: null }]))[0].masks).toBeNull()
   })
@@ -747,13 +751,19 @@ describe('declarationsFromYaml：mask（值级脱敏声明面，spec 2026-10-17 
     ])
   })
 
-  it('合法整值掩码（column: null + nullify；column 键缺省同义）⇒ 物化', () => {
+  it('★ 手写整值声明（column: null / column 键缺省 / 整值配 round）⇒ 一律拒（spec §5.3.1 R10 配套 2；#830）', () => {
+    // 变异确认锚点 C：删掉 maskItemError 的整值拒绝 ⇒ **恰好**本用例红（本用例是唯一能红的一条）。
+    // 本任务之前这里断言的是「被接受并物化」——那是旧世界（YAML 写得出手写整值）；
+    // 现在整值形态只由默认档合成，手写它等于重开 #820 同型洞。
     for (const mask of [
       { column: null, kind: 'nullify', grantedBy: 'data:precise' },
       { kind: 'nullify', grantedBy: 'data:precise' },   // column 缺省 = null（整值）
+      { column: null, kind: 'round', step: 1000, grantedBy: 'p' },   // 整值 + round 同样拒
     ]) {
-      const rows = declarationsFromYaml(yaml([{ ...base, mask: [mask] }]))
-      expect(rows[0].masks).toEqual([{ column: null, kind: 'nullify', grantedBy: 'data:precise' }])
+      expect(
+        () => declarationsFromYaml(yaml([{ ...base, mask: [mask] }])),
+        `mask: ${JSON.stringify(mask)} 没被拦`,
+      ).toThrow(/整值/)
     }
   })
 
@@ -815,12 +825,6 @@ describe('declarationsFromYaml：mask（值级脱敏声明面，spec 2026-10-17 
     ]))).toThrow(/selectSql|逐字/)
   })
 
-  it('整值掩码（column null）配 round ⇒ 抛（整值做 round 没有语义；默认档只推 nullify）', () => {
-    expect(() => declarationsFromYaml(yaml([
-      { ...base, mask: [{ column: null, kind: 'round', step: 1000, grantedBy: 'p' }] },
-    ]))).toThrow(/nullify|整值/)
-  })
-
   it('★ 维度/grain 列不许按列掩码 ⇒ 抛（运行期会撞 must appear in GROUP BY；C-m3，#824）', () => {
     // grain 含 net_amount ⇒ 口径表达式与维度表引用的是**同一列**：运行期展开会把维度表那一处
     // 也换成掩码表达式，而 GROUP BY 仍是原列名 ⇒ SQL 报「must appear in GROUP BY」（运行期才炸）。
@@ -851,5 +855,74 @@ describe('declarationsFromYaml：mask（值级脱敏声明面，spec 2026-10-17 
     // 反向对照：两侧一致 ⇒ 判「未变」（可比不退化成恒更新；jsonb 键序由 canonical 兜住）
     const fromDb = [row([{ grantedBy: 'data:precise', step: 1000, kind: 'round', column: 't.c' }])]
     expect(diffDeclarations(declared, fromDb).unchanged).toEqual(['a'])
+  })
+})
+
+describe('applyDefaultMaskTier —— 默认档合成（spec §4.1.1 裁决；issue #821）', () => {
+  // ⚠️ 夹具**必须内联**、不得依赖生产数据：本仓今天**零** `reads`、**零** `sensitivity !== 'none'`
+  // 的契约列（下一条用例正是钉这个零）⇒ 拿真仓当夹具的话本组断言全是恒真式，默认档将来静默失效
+  // 也没人知道。夹具行 = `declarationsFromYaml` 产物的**最小形状**（默认档只读这三件：
+  // `reads` / `selectSql` / `masks`）。
+  const row = (
+    reads: string[] | null,
+    masks: Array<{ column: string | null; kind: 'round' | 'nullify'; step?: number; grantedBy: string }> | null,
+  ) => ({
+    id: 'x:y:z', title: 'Z', description: '', requiredScope: null, subjectColumn: 'org',
+    selectSql: 'select sum(fct_x.net_amount) as value, g from fct_x',
+    groupBy: 'g', params: {}, sourceSystem: 'lemeng', totalable: false, slaDays: 1,
+    freshnessRelations: [] as string[], masks, reads,
+  })
+  const sensitive = (col: string) => new Map([[col, 'pii']])
+
+  it('★ 今天真仓零 reads 零 sensitivity ⇒ 默认档合成 0 条（零行为变更）', () => {
+    // 这条是「本任务不改变今天的任何产物」的硬证据：加了默认档而真仓仍合成 0 条 ⇒
+    // `--check` 无漂移、库内 masks 一个不变。将来给源列打了 sensitivity、或给指标补了 reads，
+    // 这条会红——**那是预期**（默认档开始生效），届时改断言而不是删断言。
+    const rows = readDeclarations(ROOT)
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.every((r) => (r.masks ?? []).every((s) => s.grantedBy !== DEFAULT_TIER_SCOPE))).toBe(true)
+  })
+
+  it('读了敏感列且无列键命中 ⇒ 合成整值 nullify（严档：整个值都不给）', () => {
+    const rows = applyDefaultMaskTier(
+      [row(['lemeng.retail_order_line.sale_money'], null)],
+      sensitive('lemeng.retail_order_line.sale_money'),
+    )
+    expect(rows[0].masks).toEqual([{ column: null, kind: 'nullify', grantedBy: DEFAULT_TIER_SCOPE }])
+    // 整值形态 = column 为 null（运行期把 `… as value` 整个换成 typed NULL）——**不是**按列。
+    expect(rows[0].masks[0].column).toBeNull()
+  })
+
+  it('读了敏感列但列键命中 ⇒ 不叠加（① 优先于 ②，spec §5.2）', () => {
+    // 全仓任一 metric 有 column 非 null 的声明、且该列出现在**本行**的 selectSql 里 ⇒ 默认档不叠加。
+    const declarer = row(null, [{ column: 'fct_x.net_amount', kind: 'round', step: 1000, grantedBy: 'p' }])
+    const reader = row(['lemeng.retail_order_line.sale_money'], null)
+    const rows = applyDefaultMaskTier([declarer, reader], sensitive('lemeng.retail_order_line.sale_money'))
+    expect(rows[1].masks).toBeNull()   // 未叠加（原对象原样返回）
+  })
+
+  it('reads 全是 none 列 ⇒ 不合成（没读敏感列就不套默认档）', () => {
+    const rows = applyDefaultMaskTier(
+      [row(['lemeng.retail_order_line.sale_money'], null)],
+      new Map([['lemeng.retail_order_line.sale_money', 'none']]),
+    )
+    expect(rows[0].masks).toBeNull()
+  })
+
+  it('reads 含不存在的列 ⇒ 不合成（未声明 sensitivity 的按 none 计）', () => {
+    const rows = applyDefaultMaskTier(
+      [row(['lemeng.retail_order_line.no_such_col'], null)],
+      sensitive('lemeng.retail_order_line.sale_money'),
+    )
+    expect(rows[0].masks).toBeNull()
+  })
+
+  it('已声明按列掩码的行不因默认档被改写（叠加只发生在 masks 为空的行上）', () => {
+    const declared = [{ column: 'fct_x.net_amount', kind: 'round' as const, step: 1000, grantedBy: 'p' }]
+    const rows = applyDefaultMaskTier(
+      [row(['lemeng.retail_order_line.sale_money'], declared)],
+      sensitive('lemeng.retail_order_line.sale_money'),
+    )
+    expect(rows[0].masks).toEqual(declared)
   })
 })

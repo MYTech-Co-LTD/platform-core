@@ -1276,13 +1276,23 @@ describe('规则 ⑤-d：mask 形状（值级脱敏声明面，spec 2026-10-17 �
     expect(checkDataModels(variant(() => {}))).toEqual([])
   })
 
-  it('合法 mask（round 带步长 / 整值 nullify）⇒ 干净', () => {
+  it('合法 mask（round 带步长）⇒ 干净', () => {
     expect(checkDataModels(withMask(
       '    mask: [{ column: "fct_retail_sale.net_amount", kind: "round", step: 1000, grantedBy: "data:precise" }]',
     ))).toEqual([])
-    expect(checkDataModels(withMask(
+  })
+
+  it('★ 手写整值声明（column: null / column 键缺省）⇒ 违规（手写整值一律拒；#830）', () => {
+    // 本任务之前这里断言的是「整值 nullify 合法」——那是旧世界（YAML 写得出手写整值）；
+    // 现在整值形态只由默认档合成，手写它一律拒。唯一实现 = sync 的 maskItemError（本门禁 import 它）。
+    for (const line of [
       '    mask: [{ column: null, kind: "nullify", grantedBy: "data:precise" }]',
-    ))).toEqual([])
+      '    mask: [{ kind: "nullify", grantedBy: "data:precise" }]',   // column 缺省 = null（整值）
+    ]) {
+      const v = checkDataModels(withMask(line))
+      expect(v, `mask 行 ${line} 没被拦`).toHaveLength(1)
+      expect(v[0]?.message).toContain('整值')
+    }
   })
 
   it('★ mask 写成非数组 ⇒ 违规（变异确认锚点：去掉门禁这条形状核 ⇒ 本用例必须红）', () => {
