@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.162.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.161.0...v0.162.0) - 2026-10-18
+- 【新增】data: 审计掩码三态（含混合形）+ 与回包同源派生（#823） ([#881](https://github.com/MYTech-Co-LTD/platform-core/pull/881), [fbb4cfe](https://github.com/MYTech-Co-LTD/platform-core/commit/fbb4cfe92928e82414c919c9fbfad79e5b7faae1))
+
+
 ## [0.161.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.160.0...v0.161.0) - 2026-10-18
 - 【新增】data: 口径对账排班 + 新鲜度锚——3120 补排班、湖资产进 owners ([#878](https://github.com/MYTech-Co-LTD/platform-core/pull/878), [1ea397a](https://github.com/MYTech-Co-LTD/platform-core/commit/1ea397add13eb364897feda689e1b4f53a7ccd46))
 
