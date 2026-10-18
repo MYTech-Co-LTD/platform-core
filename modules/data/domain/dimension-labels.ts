@@ -22,7 +22,7 @@ export interface DimensionLookup {
   brandByBook: Map<string, string>
   /** `` `${账套}|${门店号}` `` → 门店名（`stg_lemeng_branch` 最新快照）。 */
   branchNameByKey: Map<string, string>
-  /** `` `${账套}|${战区号}` `` → 战区名称 + 一级战区（`x01_region_names` seed）。 */
+  /** `` `${账套}|${战区号}` `` → 战区名称 + 一级战区（`dim_region` seed）。 */
   regionByKey: Map<string, { name: string; l1: string | null }>
 }
 
@@ -46,13 +46,13 @@ const BRANCH_NAME_SQL = `
 const BRAND_NAME_SQL = 'select system_book::varchar as b, brand_name from dim_brand'
 
 /**
- * 战区名称（`x01_region_names` seed，git 受控）。
+ * 战区名称（`dim_region` seed，git 受控；2026-10-18 由 `x01_region_names` 升格为维，#883）。
  * ⚠️ 键必须带 `system_book`：两个账套**都有**「中部一区」这类同名战区，id 空间不相交，
- * 只按 region_id 关联会串账套。`region_l1` 为空 = 不归属四向的杂项组（schema.yml 有依据），
- * 原样给 `null`，**不拿二级名字截字符串去编**。
+ * 只按 region_id 关联会串账套。`region_l1` 为空 = **根节点**（`所有区域`，非一级）——原样给 `null`，
+ * **不拿二级名字截字符串去编**（2026-10-18 前是「去序号推导」，大区被误判成无一级）。
  */
 const REGION_NAME_SQL =
-  'select system_book::varchar as b, region_id::int as r, region_name, region_l1 from x01_region_names'
+  'select system_book::varchar as b, region_id::int as r, region_name, region_l1 from dim_region'
 
 /** 执行器形状（与 `runWarehouseSql` 一致；测试可注入）。 */
 type Exec = (sql: string) => Promise<{ columns: string[]; rows: unknown[][] }>
@@ -108,7 +108,10 @@ export async function loadDimensionLookup(exec: Exec): Promise<DimensionLookup |
  * 把标签列**插在对应键列之后**（原 key 保留：可追溯、可下钻）。
  *
  * - 结果里没有任何已知键列 ⇒ 原样返回（`total` 形态的单行 `['total']` 就属于这类）；
- * - 键存在但维度里查不到（新店未进维表 / 账套未登记品牌）⇒ 该格为 `null`，**不猜**。
+ * - 键存在但维度里查不到（新店未进维表 / 账套未登记品牌）⇒ 该格为 `null`，**不猜**；
+ * - **标签列已存在就跳过**：marts 侧可能已把标签物化出来（如 `dim_lemeng_branch` 的
+ *   `region_name` / `region_l1`，#883）⇒ 再插一次会让同一名字**出现两列**，而下游按列名取值时
+ *   拿到哪一列是隐式的。表头与行体**共用**同一个判据（`labelsAfter`），否则两边会错位。
  */
 export function decorateWithLabels(
   result: { columns: string[]; rows: unknown[][] },
@@ -117,10 +120,15 @@ export function decorateWithLabels(
   const hasKey = result.columns.some((c) => c in LABELS_OF_KEY)
   if (!hasKey) return result
 
+  /** 该键列后要插的标签列（滤掉结果集里已有的）。表头与行体共用 ⇒ 保证列数与值数一致。 */
+  const existing = new Set(result.columns)
+  const labelsAfter = (col: string): string[] =>
+    (LABELS_OF_KEY[col] ?? []).filter((label) => !existing.has(label))
+
   const columns: string[] = []
   for (const c of result.columns) {
     columns.push(c)
-    for (const label of LABELS_OF_KEY[c] ?? []) columns.push(label)
+    columns.push(...labelsAfter(c))
   }
 
   const bookIdx = result.columns.indexOf('system_book')
@@ -133,16 +141,17 @@ export function decorateWithLabels(
     const region = regionIdx >= 0 && row[regionIdx] != null
       ? lookup.regionByKey.get(`${book}|${String(row[regionIdx])}`)
       : undefined
+    /** 标签列 → 该行该格的值。键列只有三类，按 (键列, 标签列) 取值即可。 */
+    const valueOf = (col: string, label: string): unknown => {
+      if (col === 'system_book') return lookup.brandByBook.get(book) ?? null
+      if (col === 'branch_num') return branchKey === null ? null : (lookup.branchNameByKey.get(branchKey) ?? null)
+      return label === 'region_name' ? (region?.name ?? null) : (region?.l1 ?? null)
+    }
     const out: unknown[] = []
     for (let i = 0; i < result.columns.length; i++) {
       out.push(row[i])
       const col = result.columns[i]
-      if (col === 'system_book') out.push(lookup.brandByBook.get(book) ?? null)
-      else if (col === 'branch_num') out.push(branchKey === null ? null : (lookup.branchNameByKey.get(branchKey) ?? null))
-      else if (col === 'region_id') {
-        out.push(region?.name ?? null)
-        out.push(region?.l1 ?? null)
-      }
+      for (const label of labelsAfter(col)) out.push(valueOf(col, label))
     }
     return out
   })

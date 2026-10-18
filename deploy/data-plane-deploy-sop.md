@@ -556,6 +556,7 @@ sh /opt/lemeng-sync.sh <全SHA> --prune     # 同步 + 清点删除检出孤儿�
 5. **dbt 判据（僵尸 seed 真的退场）**：materialize 全量 `dbt build` 报 `Found 23 models, 157 data tests,
    3 seeds, 14 sources, 436 macros`，末尾 `PASS=183 WARN=0 ERROR=0 SKIP=0 TOTAL=183` + `MATERIALIZE_OK`；
    三个 seed = `x01_branch_calendar`(0 行) / `x01_region_names`(27 行) / `x08_thresholds`(0 行)——
+   （**2026-10-18 注**：该次跑数如实保留；`x01_region_names` 已改名 **`dim_region`** 并升格为维，见 #883）
    **`x01_branch_region` 不在其中**（它正是被 prune 掉的退役 seed，此前被当僵尸 seed 天天加载）。
 
 首跑删掉的 10 个孤儿（`PRUNED` 逐行，2026-10-15，target `5ee6d5535c6be70ef2c405a6baf88a511af075ab`；

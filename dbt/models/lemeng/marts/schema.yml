@@ -13,6 +13,66 @@
 version: 2
 
 models:
+  - name: dim_lemeng_branch
+    description: >-
+      **门店维（湖上每日快照 + 战区标签）**（#883，2026-10-18）。粒度与 `stg_lemeng_branch`
+      逐行一致：`(system_book, snapshot, branch_num)`——**保留全部快照**，fct 侧仍可按
+      `latest snapshot ≤ bizday` 做 as-of join；只要"当前值"的消费方自取 `snapshot = max(snapshot)`。
+      **为什么有它**：乐檬 `branch.find` **不回** `region_name`（实测）⇒ 战区名/一级原先只活在回包层，
+      marts / 报表 / 各下游源拿不到；本模型把 `dim_region` join 上来，**所有源免 join 即得**，
+      且 `region_l1` 可作 group by 键（「按一级战区汇总」必须发生在**聚合处**）。
+      **落点裁决**：标签落在**维**上，**不塞进湖上采集快照**（`lemeng/dim_branch` 是契约驱动的 raw 快照，
+      `region_name` 非源生；理由全文见模型头注）。**为什么叫 `dim_lemeng_branch` 而不是 `dim_branch`**：
+      后者在本仓**已专指湖上快照路径**，复用会失去所指（同头注）。
+      **join 语义**：`left join` + 键带 `system_book` ⇒ 未登记的新区**照出行**（标签 null，不捏造、不反噬），
+      且不会串账套（两账套有同名战区）。新 `region_id` 由 `dbt/tests/lemeng/warn_region_unregistered.sql`
+      **告警**（warn，不阻断——新区不影响存量指标的正确性）。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（宏注入）。
+        tests: [{not_null: {}}]
+      - name: snapshot
+        description: 快照日（Asia/Shanghai 日历日）。粒度键。
+        tests: [{not_null: {}}]
+      - name: branch_num
+        description: 门店号（账套内编号）。粒度键。
+        tests: [{not_null: {}}]
+      - name: code
+        description: 门店编码。
+      - name: name
+        description: 门店名。
+      - name: pinyin
+        description: 拼音码。
+      - name: type
+        description: 门店类型。
+      - name: enable
+        description: 是否启用。
+      - name: region_id
+        description: 战区编号（乐檬原值，与 `dim_region.region_id` 同空间）。**可空**（契约 nullable）。
+      - name: region_name
+        description: >-
+          战区二级名（`dim_region` join 所得）。**未登记的新区为 null**——「名称未知 ≠ 捏造名称」，
+          与回包层同姿态；该情形由 `warn_region_unregistered` 告警。
+      - name: region_l1
+        description: >-
+          一级战区（`dim_region` join 所得；东部战区/中部战区/南部战区/西部战区 + 大区/杂项自成一档）。
+          **空 = 根节点或未登记**（`dim_region.region_l1` 的语义见 `dbt/seeds/schema.yml`）。
+      - name: province
+        description: 省。
+      - name: city
+        description: 市。
+      - name: district
+        description: 区县。
+      - name: contact
+        description: 联系人。
+      - name: phone
+        description: 电话。
+      - name: address
+        description: 地址。
+
   - name: fct_branch_day_activity
     description: >-
       门店 × 日 **活动骨架**（03-05 连续无业绩天数的落点；2026-10-17 最小案例）。粒度

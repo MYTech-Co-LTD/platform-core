@@ -204,6 +204,12 @@ metricToAuditFileName(metricName: string): string   // 例：'lemeng:retail:net_
 真机残留已一次性清理）。fct 侧回落语义（dim_branch 最新快照 region_id，未映射=0）在
 `fct_hq_outbound` 头注。
 
+**战区名 / 一级战区的落点**（#883，2026-10-18）：权威在 **`dim_region`**（git 受控 seed，
+原 `x01_region_names` 升格为维，见 `dbt/seeds/schema.yml`）；门店维 **`dim_lemeng_branch`**
+（marts）join 它带出 `region_name` / `region_l1`，供所有下游源消费。**不塞进湖上
+`lemeng/dim_branch`**（那是契约驱动的采集快照，`region_name` 非源生）——裁决与理由见
+`docs/superpowers/plans/2026-10-18-region-dim-materialization.md`。
+
 ### 5.2 率类（不可加指标）的 L1/L2 边界（spec 2026-10-12 裁7 结论，W0 落）
 
 率类指标（毛利率/贡献率/占比/退货率/覆盖率…）用 L1 的 `ratio: {numerator, denominator}` 声明
@@ -260,6 +266,7 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
 | **物化落点形态**（table / view / `USING duckdb` 外表） | **已定：`table`** | 「必须是 PG 可见关系」实证；「用哪一种」T6 已选定 `table`（真机 PASS=2，两个模型都落成 PG 表）；`USING duckdb` 外表仍未实测 |
 | **「有效订单」的判定条件**（退货/赠品/作废是否剔除） | **已定案（#430）→ 实现随 W0 落地（2026-10-12）** | 平台口径 = FINISHED+SALE_ORDER 基面 + 换货「送出半边」公式 + 赠品判别式（真机 2026-10-05 逐分归零）；客户回签裁1（spec `2026-10-12-lemeng-metrics-sources-semantics-design.md` §6）前指标保持 experimental。声明见 `l1_metrics.yml`，实现见 `fct_retail_sale.sql` |
 | `try_strptime` / `::timestamptz` / `::date` 在 pg_duckdb 会话内可用 | **部分实证** | 新湖链实证的是 `::varchar` / `::int` / `::date`（真机 PASS=2）；`try_strptime` 与 `::timestamptz` **至今未验**——它们只出现在**旧湖**模型里，而那份模型已于 2026-10-06 仓内退役 ⇒ 这个「未验」不再是仓内待办，而是**已消失的形态**（新湖落盘即定型，本就不需要它们） |
+| **战区名 / 一级战区**（`dim_region`，原 `x01_region_names`） | **二级名实证 / 一级名暂定**（2026-10-18） | **二级名**来自 `branchindicator` 年频枚举（实测可得，2026-10-13）；**一级名来自乐檬后台 UI 树**（2026-10-17 读取）——唯一能返回完整树的 `nhsoft.user.ai.branch.region.find` **PAT 路由未配置**（目录有、`enabled=true`、schema 含 `parent_id`，仅未授权）⇒ 一级名是**受控配置、不是 API 权威**。**覆盖可能不全**：枚举接口实测有门店无行 ⇒ 首次真机跑大概率报「未登记战区」，那是**按设计点名**（`warn_region_unregistered`，warn 不阻断），不是故障。**哨兵只覆盖「新区」**——**「改名」那条没做**：`branchindicator` 未接日更管线（无 D10 契约/管线）⇒ 没有输入可比对，做了也是空转 |
 
 ## 9 未验清单（诚实边界，一条都不含糊）
 
