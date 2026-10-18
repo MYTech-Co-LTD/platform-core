@@ -7,7 +7,7 @@
 #   「L1 语义声明的落点」。静态门禁**两处都扫**（`dbt/semantics/**` 与 `dbt/models/**`），
 #   所以两种落点都不会漏检。
 #
-# 本文件的两类断言（都不替代对账：对账是 `dbt/tests/audit_*.sql` 的独立复算）：
+# 本文件的两类断言（都不替代对账：对账是 `dbt/tests/<域>/audit_*.sql` 的独立复算）：
 #   · 列级 `tests:`（dbt 原生，`not_null` / `accepted_values`）——钉「这一列该有的形状」
 #   · 结构断言（singular test）——钉「单列约束抓不住的形状」，如**复合粒度的唯一性**与金额范围
 version: 2
@@ -191,7 +191,7 @@ models:
           # 金额范围是结构断言（singular test）而不是列级 test：dbt 原生的 accepted_values 只判等值
           # 集合，判不了「≥ 0」这种区间；引 dbt_utils 又要加 packages.yml（多一层依赖 + 解析期要联网）。
           # ⚠️ net_amount **可负**（退货 > 销售的店日），故断言挂在 sale_amount 上：
-          # 见 dbt/tests/assert_fct_retail_sale_sale_amount_nonnegative.sql
+          # 见 dbt/tests/lemeng/assert_fct_retail_sale_sale_amount_nonnegative.sql
           - not_null
       - name: order_count
         description: 有效订单数 = 销售侧基面（FINISHED+SALE_ORDER）count(distinct 单号)。**与 l1_metrics.yml 的 `lemeng:retail:order_count` 同源**；基面 = 销售单，**不含退货单**（退货不是「订单」）。

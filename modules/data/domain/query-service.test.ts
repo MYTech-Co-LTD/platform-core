@@ -238,6 +238,39 @@ describePg('runQuery（需要 DATABASE_URL）', () => {
     expect(out.status === 'ok' && out.truncated).toBe(true)
   })
 
+  // ── 维度名称解析（issue #857）──────────────────────────────────────────────────
+  it('维度名称：回包在 system_book / branch_num 之后插入 brand_name / branch_name，原 key 保留', async () => {
+    const withDim: QueryDeps = {
+      pool,
+      adoptedSources: new Set(),
+      execute: async () => ({ columns: ['system_book', 'branch_num', 'value'], rows: [['3120', 142, 9.5]] }),
+      dimensionLookup: async () => ({
+        brandByBook: new Map([['3120', '熊喵鲜生']]),
+        branchNameByKey: new Map([['3120|142', '品品甜折扣昆明壹号广场店']]),
+        regionByKey: new Map(),
+      }),
+    }
+    const out = await runQuery(withDim, ORG, req(), 'sales_daily', {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(out.columns).toEqual(['system_book', 'brand_name', 'branch_num', 'branch_name', 'value'])
+    expect(out.rows[0]).toEqual(['3120', '熊喵鲜生', 142, '品品甜折扣昆明壹号广场店', 9.5])
+  })
+
+  it('维度缺席（lookup 返回 null）⇒ 不加名称列、主查询照常交付（缺账不反噬）', async () => {
+    const noDim: QueryDeps = {
+      pool,
+      adoptedSources: new Set(),
+      execute: async () => ({ columns: ['system_book', 'branch_num', 'value'], rows: [['3120', 142, 9.5]] }),
+      dimensionLookup: async () => null,
+    }
+    const out = await runQuery(noDim, ORG, req(), 'sales_daily', {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(out.columns).toEqual(['system_book', 'branch_num', 'value'])
+    expect(out.rows[0]).toEqual(['3120', 142, 9.5])
+  })
+
   // ── 合计形态（spec §8）＋ 自动伴随（spec §8.4）────────────────────────────────
   it('total：args.total=true → 单行聚合回包（total 字段=合计值，不再是布尔标记）、truncated 恒 false，审计记 ok', async () => {
     let totalSql = ''

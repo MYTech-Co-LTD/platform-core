@@ -37,7 +37,27 @@
     "",
     "【2026-10-18 落湖】新增 sinkprep + lakeout（snk.minio）：逐店两侧事实落 lemeng/recon_preagg/system_book=/bizday=/chunk=/all.parquet。",
     "  只落**事实**（两侧 4 个金额）；容差/判定/原因**不进湖**（配置归 seed、判定归 dbt）。",
-    "  父管线已切块（≤100 家/块）⇒ 子管线每块一跑；chunk_no 经 ${ITER_ITEM_CHUNK_NO} 进来。"
+    "  父管线已切块（≤100 家/块）⇒ 子管线每块一跑；chunk_no 经 ${ITER_ITEM_CHUNK_NO} 进来。",
+    "",
+    "【2026-10-18 判据闸退役】`vthresh` / `gthresh` / `vbranch` / `gbranch` 四个节点已删除。",
+    "  理由（真跑实证）：旧 `gthresh` 是 `ctl.die`——总差超容差即整条 run 死 ⇒ sink 不执行、",
+    "  后续块永不执行。而「净额侧容差 200」本是 issue #814（退货晚到）的**过渡活口**，",
+    "  意味着**只要 #814 没关，这条管线就永远不可能成功落数据**（历史上 last_run_at=null 即此）。",
+    "  界线：**采集只该因「拿不到」而死**（`lguard` 湖空 / `pguard` T-3 无行 / `gcode` 网关报错 —— 三个都保留），",
+    "  **不该因「数不一样」而死**。判定归 dbt：`recon_run` 四态（ok/within_tol/over_tol/not_evaluated）",
+    "  + `recon_break`（原因/到期/认领）。在管线里再判一次 = 同一判据的第二份实现。",
+    "",
+    "【2026-10-18 真跑修正·按块过滤】首跑两账套：3120 派发了 2 块（`pfe rows=2`，切块成立），",
+    "  但**两个 chunk 分区都写了全部门店（各 148 行）**——`lagg` 读的是**整日湖分区**，",
+    "  没按本块门店集过滤 ⇒ 每块都写了全集。修法：`diff` 末尾按 `PER_ITEM_BRANCH_NUMS_JSON`",
+    "  （`json_each` 展开）过滤；CSV 文件名加 `-c<块号>`（否则后一块覆盖前一块）。",
+    "  ⚠️ 教训：**切块只切了请求，没切湖侧**——「每块写自己那一片」要在 diff 层显式收口。",
+    "",
+    "【临时诊断】`diff` 多一列 `chunk_branch_count`（= 本块收到的门店数组长度），只进 CSV。",
+    "  用途：分辨「父管线吐的数组长度」与「diff 过滤后行数」是否一致。验完删除。",
+    "",
+    "【2026-10-18 撤诊断】`chunk_branch_count` 列已删除（诊断完成：证实子管线收到 51/97，",
+    "  根因在父管线切块的除法语义，不在传参）。"
   ],
   "name": "lemeng.recon.preagg.item",
   "version": 1,
@@ -204,73 +224,10 @@
         "y": 120
       },
       "data": {
-        "label": "diff 逐店透视（两侧销售/净额；任一侧缺=NULL）",
+        "label": "diff 逐店透视（**按本块门店集过滤**；两侧销售/净额）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       max(CASE WHEN side = 'lake' THEN sale END) AS platform_sale,\n       max(CASE WHEN side = 'pre'  THEN sale END) AS source_sale,\n       max(CASE WHEN side = 'lake' THEN net  END) AS platform_net,\n       max(CASE WHEN side = 'pre'  THEN net  END) AS source_net,\n       round(max(CASE WHEN side = 'pre' THEN net END)\n           - max(CASE WHEN side = 'lake' THEN net END), 2) AS diff\nFROM input GROUP BY 1 ORDER BY 1"
-        }
-      }
-    },
-    {
-      "id": "vbranch",
-      "type": "transform",
-      "position": {
-        "x": 1300,
-        "y": 0
-      },
-      "data": {
-        "label": "vbranch 门店缺失违规行（未定稿恒空）",
-        "componentId": "code.sql",
-        "properties": {
-          "sql": "SELECT branch_num, platform_net FROM input\nWHERE source_net IS NULL AND ${ITER_ITEM_SETTLED} = 1"
-        }
-      }
-    },
-    {
-      "id": "gbranch",
-      "type": "transform",
-      "position": {
-        "x": 1560,
-        "y": 0
-      },
-      "data": {
-        "label": "gbranch 判据闸：湖有源无即死（exit1 语义）",
-        "componentId": "ctl.die",
-        "properties": {
-          "condition": "has-rows",
-          "message": "recon 判据破（branch_missing）：湖有而源无 {rows} 家——bizday=${ITER_ITEM_BIZDAY}"
-        }
-      }
-    },
-    {
-      "id": "vthresh",
-      "type": "transform",
-      "position": {
-        "x": 1300,
-        "y": 220
-      },
-      "data": {
-        "label": "vthresh 容差违规（单行，未定稿恒空）",
-        "componentId": "code.sql",
-        "properties": {
-          "rawSql": true,
-          "sql": "WITH t AS (SELECT round(sum(platform_net), 2) AS lt, round(sum(source_net), 2) AS pt FROM \"diff\"),\nv AS (SELECT lt, pt, round(pt - lt, 2) AS diff,\n      CASE WHEN pt > 0 THEN round((pt - lt) / pt * 100, 4) ELSE 0.0 END AS pct,\n      round(greatest(200.00, abs(COALESCE(pt, 0)) * 0.0001), 2) AS tol\n      FROM t)\nSELECT lt, pt, diff, pct, tol FROM v\nWHERE ${ITER_ITEM_SETTLED} = 1 AND abs(COALESCE(diff, 0)) > tol"
-        }
-      }
-    },
-    {
-      "id": "gthresh",
-      "type": "transform",
-      "position": {
-        "x": 1560,
-        "y": 220
-      },
-      "data": {
-        "label": "gthresh 判据闸：差超容差即死（exit1 语义）",
-        "componentId": "ctl.die",
-        "properties": {
-          "condition": "has-rows",
-          "message": "recon 判据破（threshold）：总差超容差（bizday=${ITER_ITEM_BIZDAY}；违规行 {rows} 行，lt/pt/diff/pct/tol 数值见本 run 的 vthresh 节点输出与 reports/recon-preagg/*.csv）"
+          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       max(CASE WHEN side = 'lake' THEN sale END) AS platform_sale,\n       max(CASE WHEN side = 'pre'  THEN sale END) AS source_sale,\n       max(CASE WHEN side = 'lake' THEN net  END) AS platform_net,\n       max(CASE WHEN side = 'pre'  THEN net  END) AS source_net,\n       round(max(CASE WHEN side = 'pre' THEN net END)\n           - max(CASE WHEN side = 'lake' THEN net END), 2) AS diff\nFROM input\nWHERE CAST(branch_num AS BIGINT) IN (\n  SELECT CAST(j.value AS BIGINT) FROM json_each('${ITER_ITEM_BRANCH_NUMS_JSON}') j\n)\nGROUP BY 1 ORDER BY 1"
         }
       }
     },
@@ -282,10 +239,10 @@
         "y": 400
       },
       "data": {
-        "label": "report 逐店明细落盘（覆盖写=幂等）",
+        "label": "report 本块明细落盘（文件名含块号，块间不覆盖）",
         "componentId": "snk.csv",
         "properties": {
-          "path": "/workspace/reports/recon-preagg/recon-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.csv",
+          "path": "/workspace/reports/recon-preagg/recon-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}-c${ITER_ITEM_CHUNK_NO}.csv",
           "mode": "overwrite"
         }
       }
@@ -425,46 +382,6 @@
       "id": "e_diff_report",
       "source": "diff",
       "target": "report",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_diff_vbranch",
-      "source": "diff",
-      "target": "vbranch",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_vbranch_gbranch",
-      "source": "vbranch",
-      "target": "gbranch",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_diff_vthresh",
-      "source": "diff",
-      "target": "vthresh",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_vthresh_gthresh",
-      "source": "vthresh",
-      "target": "gthresh",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {

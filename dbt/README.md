@@ -58,12 +58,27 @@ vars，报 `Required var 'x' not found in config`）；`materialize.sh` 侧 `DAT
 `models.platform_data` 的域条目，并逐条查 `+enabled` 形态 —— 因为上面两个方向**都只有静默这一种
 症状**。**新增一个域 = 加目录 + 在 `dbt_project.yml` 登记两处，缺一即红。**
 
-**物化是逐域的**（2026-10-17）：`materialize.sh` **按域各跑一次** `dbt build`（命令仍无 `--select`，
-只是把域身份逐次收成单个值），**每个域成功即落该域的水位**。为什么：`data.load_log` 是全部 relation
-新鲜度的单一水位来源，改动前一红就整体 `exit 1` ⇒ **一个模型红 = 所有 relation 的 `data_as_of` 一起停**
-（同日实测两次）。现在红的域不落账、其余域照常，最后统一 `exit 1`。落账表集 = 「全 bizday 表」∩
-「本域 staging 模型名（**从树派生**，不是手写名单）」—— 所以 `models/<域>/staging/*.sql` 的**文件名**
-就是水位行的键，改名等于换表。
+**物化是逐域的**（2026-10-17）：`materialize.sh` **按域各跑一次** `dbt build`，**每个域成功即落该域的
+水位**。为什么：`data.load_log` 是全部 relation 新鲜度的单一水位来源，改动前一红就整体 `exit 1`
+⇒ **一个模型红 = 所有 relation 的 `data_as_of` 一起停**（同日实测两次）。现在红的域不落账、其余域
+照常，最后统一 `exit 1`。落账表集 = 「全 bizday 表」∩「本域 staging 模型名（**从树派生**，不是手写
+名单）」—— 所以 `models/<域>/staging/*.sql` 的**文件名**就是水位行的键，改名等于换表。
+
+**选择器是派生三段式**（2026-10-18，补 `+enabled` 的漏）：
+
+```
+--select "path:models/<域> config.materialized:seed path:tests/<域>"
+```
+
+为什么不能只靠 `dbt_project.yml` 的 `+enabled`：它按 **`models:` 路径**配，**管不到 `dbt/tests/`**
+⇒ 真机实测 forms 面上**乐檬的 singular test 照跑**（去读本面不存在的 `lemeng/` 前缀）⇒ 该域 dbt 红
+⇒ 本域水位写不进去。所以：
+
+- **测试也按域放**：`dbt/tests/<域>/`（对账 test 的落点由门禁规则 ⑦ 按指标名第一段钉死）；
+- 选择器三段**全部从域身份 + 目录树派生** ⇒ 新模型/新测试落在本域目录下就**自动纳入**，
+  #677/#679 的「手抄名单必漂」性质不变；
+- 尤其**别退回 `path:models/<域>` 单独用**：`audit_lemeng__retail__hour_row_count` 是**无 `ref()`**
+  的孤儿哨兵，不会被间接选中 —— 靠 `path:tests/<域>` 才保得住它。
 
 ## 2 两条最容易踩错的口径（先读这个再改模型）
 
@@ -162,7 +177,7 @@ metricToAuditFileName(metricName: string): string   // 例：'lemeng:retail:net_
 ```
 
 语义三条：入参 = 声明的 `name` 原值；**每一个** `:` 替换成 `__`（其余下划线不动）；返回值是
-**文件名**（落点 `dbt/tests/`）。**T9 必须 import 这个函数，不许照文档再实现一份**（计划 L645 的原话：
+**文件名**（落点 `dbt/tests/<源>/`）。**T9 必须 import 这个函数，不许照文档再实现一份**（计划 L645 的原话：
 两个 worker 不得各造一套）。门禁的规则 ⑦ 另外保证**映射无碰撞**（两个不同的指标名映到同一文件时报警）。
 
 ### 5.1 口径构件列约定（spec 2026-10-12 §5.2，W0 落）
@@ -218,7 +233,7 @@ value 列**——率在声明粒度上就地计算，不存在「引擎把日率
 | 档 | 抓什么 | 形态 | 现状 |
 |---|---|---|---|
 | **① 复算 marts vs staging** | ④ 的 join / 过滤 / 粒度漂移 | singular test | **未做**（本轮只做第二档，见下） |
-| **② 复算 parquet vs marts** | ③ 的 cast 错（截断/取整/精度丢），以及 marts 的全部口径错 | `dbt/tests/audit_*.sql`（每个声明指标一条） | **已交付**（两条） |
+| **② 复算 parquet vs marts** | ③ 的 cast 错（截断/取整/精度丢），以及 marts 的全部口径错 | `dbt/tests/<域>/audit_*.sql`（每个声明指标一条） | **已交付**（两条） |
 | **③ 人工抽样比对** | parquet 本身的错（源系统写错、落盘错） | 人 | 未做（T6 首跑时按样本抽） |
 
 **为什么交付的是第二档**：它绕开 staging 与 marts，**直接打 parquet**，是唯一能发现「staging 把
@@ -281,7 +296,7 @@ VARCHAR 手写 cast 成 numeric 时悄悄丢精度/截断」的形态（dbt 的�
    ⇒ 下次真机跑 dbt 时**顺手验一次裸跑**，绿了再把本条收成「已验」。#679 已把这次验证排进
    投递程序：`scripts/lemeng/materialize.sh` 真机首跑 = merge 后手动先跑一次验全量绿，才 patch job。
 7. **两张维度 staging 与两条维度唯一性断言从未执行过**：`stg_lemeng_branch` / `stg_lemeng_item` 与
-   `dbt/tests/assert_stg_lemeng_branch_key_unique.sql` / `assert_stg_lemeng_item_key_unique.sql`
+   `dbt/tests/lemeng/assert_stg_lemeng_branch_key_unique.sql` / `assert_stg_lemeng_item_key_unique.sql`
    都是 S2-a 新加的，**没在真库上跑过**（本机无 dbt / pg_duckdb），当前只有「契约钉死 + 静态门禁绿」
    这一档证据（§8「列全集」行）。真机验收归 **S2-a Task 5b**（投递 + 注册 job + 真机回读那段）——
    在那之前，别把静态门禁绿读成「维度面跑过了」（这条正是本节存在的意义）。
@@ -349,7 +364,7 @@ dbt / pg_duckdb）；「不给 var 时回内置行为」依赖 dbt-core 的 `gen
 |---|---|---|
 | ① 记录 | `dbt/semantics/l1_metrics.yml` 的必填八项（`name`/`definition`/`expression`/`grain`/`owner`/`tier`/`source`/`freshness_sla_days`） | 门禁规则 ⑤（静态必填 + `source` 形状 + `freshness_sla_days` 非负整数形状）；`sync-data-semantics.mjs` 物化进 `data.metrics`（`source` → `source_system`；`freshness_sla_days`/`sources` → `sla_days`/`freshness_relations`，spec §10.7） |
 | ② 血缘 | `dbt docs generate` 产物（见 §11.2） | 本节 runbook；**无静态门禁**（产物要 dbt 环境） |
-| ③ 测试 | `dbt/tests/audit_<指标>.sql`（singular test，**独立复算**） | 门禁规则 ⑦（存在性 + 文件名映射无碰撞，事实源 = `metricToAuditFileName()`） |
+| ③ 测试 | `dbt/tests/<源>/audit_<指标>.sql`（singular test，**独立复算**） | 门禁规则 ⑦（存在性 + 文件名映射无碰撞，事实源 = `metricToAuditFileName()`） |
 | ④ 状态选择 | `dbt run --select …` 的按需物化 + `sync-data-semantics.mjs --check` 对账 | 本节 §11.4（job）；`--check` 的**契约**由门禁规则 ⑨ 守着 |
 
 **T9 新增的两条机检**（`scripts/check-data-models.mjs`，改这两个面时先读规则头注）：
@@ -440,7 +455,7 @@ psql "$DATABASE_URL" -c "select distinct v.view_schema||'.'||v.view_name as view
 
 **每步的判读**：
 - ① 与 ⑤ **按 grain 对齐后数不一致** ⇒ 先怀疑 **cast / 列名**（§3）或**列集漂移**（§6）——这正是
-  `dbt/tests/audit_*.sql` 在真数据上抓的东西。
+  `dbt/tests/<域>/audit_*.sql` 在真数据上抓的东西。
 - ③ 的定义**与 ① 的表达式对不上** ⇒ 落库那一步没跟上声明（**重新物化**，别手改关系）。
 - ④ 读不出/报错 ⇒ **先核对路径形态**（与 `dbt/models/<域>/staging/sources.yml` 的
   `meta.path_convention` 逐段对照），**再**查**凭据 / secret**（§4 与 §11.4）——**别把路径形态错误
@@ -469,14 +484,14 @@ psql "$DATABASE_URL" -c "select distinct v.view_schema||'.'||v.view_name as view
   `not_null_stg_lemeng_retail_order_line_order_no` 过），但**去重语义**仍属**口径转正**（§8「`order_no`」行）
   ⇒ 抽查源仍不用它：拿它去核源就是**把未定的口径当事实**。
 - **⑤ 必须与声明的 grain 同量**（M-4）：`l1_metrics.yml` 的 `grain: [system_book, bizday]`，
-  `dbt/tests/audit_lemeng__retail__net_sales.sql` 也是按 `(system_book, bizday)` 对齐的。原文的
+  `dbt/tests/lemeng/audit_lemeng__retail__net_sales.sql` 也是按 `(system_book, bizday)` 对齐的。原文的
   **不带 `group by` 的总计**与粒度级声明**不同量** ⇒ 判读表那条「① 与 ⑤ 数不一致」**按字面不可执行**。
   故 ⑤ 采用与 audit **同一形态**的 `group by`（`try_strptime(...)::date` 也是照抄 audit 的写法）。
 - **④⑤ 的 parquet 路径形态必须与正典逐段一致**（I-5）：现行正典（**四处一致**，皆在仓内）是
   `s3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet`
   —— `dbt/semantics/l1_metrics.yml` 的 `sources`、`dbt/models/<域>/staging/sources.yml` 的
   `meta.path_convention` 与 `access_path`、`dbt_project.yml` 的 `lemeng_retail_order_line_prefix` 段头注、
-  `dbt/tests/audit_lemeng__retail__net_sales.sql` 的实际读路径。（订正前正典写的是旧湖
+  `dbt/tests/lemeng/audit_lemeng__retail__net_sales.sql` 的实际读路径。（订正前正典写的是旧湖
   `lemeng/retail_detail/<账套>/<日期>/all.parquet`——该前缀**仍在湖上被写**，只是仓内已无读它的模型。）
   原文曾写成 `<桶前缀>/retail_detail/<账套>/<日期>.parquet`：**丢了 `lemeng/` 段**，且把目录里的
   **叶子文件 `all.parquet` 换成了以日期命名的文件**（后者无论怎么读 `<桶前缀>` 都错）。这类错误

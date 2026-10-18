@@ -11,6 +11,31 @@
 
 ## [Unreleased]
 
+## [0.157.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.157.0...v0.157.1) - 2026-10-18
+- 【修复】data: 切块整除改 floor——CAST(rn/100) 在 DuckDB 里是四舍五入 ([#872](https://github.com/MYTech-Co-LTD/platform-core/pull/872), [de930a4](https://github.com/MYTech-Co-LTD/platform-core/commit/de930a470f3719506686d5cb791109dd9ea0a8b0))
+
+
+## [0.157.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.156.3...v0.157.0) - 2026-10-18
+- 【新增】data: 问数回包回战区名与一级战区 ([#869](https://github.com/MYTech-Co-LTD/platform-core/pull/869), [75bc476](https://github.com/MYTech-Co-LTD/platform-core/commit/75bc476a19e7e4be06951791939f07c075c5eaa0))
+
+
+## [0.156.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.156.2...v0.156.3) - 2026-10-18
+- 【修复】data: dbt 测试按域分目录 + 逐域 build 用派生选择器（域开关管不到 dbt/tests） ([#864](https://github.com/MYTech-Co-LTD/platform-core/pull/864), [c482956](https://github.com/MYTech-Co-LTD/platform-core/commit/c48295611711ed998e5e4a55f0e653362136d7fb))
+
+
+## [0.156.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.156.1...v0.156.2) - 2026-10-18
+- 【修复】data: forms 管线 sink 补 connectionRef:zos（新建 console 写湖必报 NoSuchBucket） ([#862](https://github.com/MYTech-Co-LTD/platform-core/pull/862), [5aa8c3b](https://github.com/MYTech-Co-LTD/platform-core/commit/5aa8c3b3f94ddb6f04269695c9adc576c3821e16))
+
+
+## [0.156.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.156.0...v0.156.1) - 2026-10-18
+- 【修复】data: 切块只切了请求没切湖侧——diff 按本块门店集过滤 ([#860](https://github.com/MYTech-Co-LTD/platform-core/pull/860), [8ad3d8c](https://github.com/MYTech-Co-LTD/platform-core/commit/8ad3d8c44660b1458661964d7ea3b462167456c6))
+
+
+## [0.156.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.155.0...v0.156.0) - 2026-10-18
+- 【新增】data: 问数回包回品牌名与门店名——名称在维度层解析 ([#858](https://github.com/MYTech-Co-LTD/platform-core/pull/858), [e2362af](https://github.com/MYTech-Co-LTD/platform-core/commit/e2362af0061edf1ef72c58e40dcbe72b33517936))
+- 【修复】data: 口径对账退役业务判据闸——采集不该因「数不一样」而死 ([#855](https://github.com/MYTech-Co-LTD/platform-core/pull/855), [3c87fd0](https://github.com/MYTech-Co-LTD/platform-core/commit/3c87fd0d68664296931f55d0ad0e6de3fca04165))
+
+
 ## [0.155.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.154.3...v0.155.0) - 2026-10-18
 - 【新增】data: 口径对账落湖——父管线切块 + 子管线写 chunk 分区事实 ([#852](https://github.com/MYTech-Co-LTD/platform-core/pull/852), [25afc90](https://github.com/MYTech-Co-LTD/platform-core/commit/25afc90acf649ac67fabde2f9ac533abf7d6fd84))
 

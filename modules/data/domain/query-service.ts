@@ -7,6 +7,7 @@ import { MAX_QUERY_ROWS, authorize, sqlQuote, visibleMetrics, type DenyReason, t
 import { loadMergedCatalog } from './metric-store'
 import { writeAudit } from './audit-store'
 import { DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './warehouse'
+import { decorateWithLabels, loadDimensionLookup, type DimensionLookup } from './dimension-labels'
 
 /** 湖 ETag 竞态的**窄匹配**（#452 定案 spec §3.1：宁可漏判也不误判——只认这一形状，
  *  不扩大到一般 5xx/超时；那类由 statement_timeout / job retry 语义管）。 */
@@ -158,6 +159,12 @@ export interface QueryDeps {
   /** 湖 ETag 竞态重试的退避毫秒数（缺省 1000）。测试注入 0 免等待。 */
   raceRetryDelayMs?: number
   /**
+   * 维度名称解析（issue #857）：缺省走真仓库池现取（品牌 seed + 门店最新快照）。
+   * 返回 `null` = 该次查询不做名称解析（维度缺席/失败）——名称列缺席，主查询照常交付。
+   * 测试可注入固定快照，免去建维表夹具。
+   */
+  dimensionLookup?: () => Promise<DimensionLookup | null>
+  /**
    * 本租户**已接入的源**（宿主投影 `TENANT_SOURCES`；计划 5）。
    *
    * **必填**（不是可选 + 默认空集）：本函数是 `query_metric` 的解析路径，不裁源就等于放行
@@ -306,6 +313,15 @@ export async function runQuery(
   } catch (err) {
     return await toError(err)
   }
+
+  // 维度名称解析（issue #857）：事实表只存键，名称在**展示层**贴——把 `brand_name` 插在
+  // `system_book` 之后、`branch_name` 插在 `branch_num` 之后，**原 key 保留**（可追溯/可下钻）。
+  // 只作用于明细行：`args.total` 的单行 `['total']` 没有键列，天然跳过。
+  // 维度缺席/查询失败 ⇒ 名称列缺席，主查询照常交付（fail-soft，与新鲜度面同一姿态）。
+  // 走真仓库池而非 `deps.execute`：后者是主计划 SQL 的测试缝，假执行器认不得这两条小查询。
+  const lookup = await (deps.dimensionLookup
+    ?? (() => loadDimensionLookup((sql) => runWarehouseSql(warehousePool(), sql))))()
+  if (lookup !== null) result = decorateWithLabels(result, lookup)
 
   // 自动伴随（spec §8.4）：plan.totalSql 在场 ⇒ 再执行合计计划，把值附到响应 total 字段。
   // sum() 对空集也回一行（NULL）⇒ rows[0][0] 即值；合计失败与主查询同一错误面（warehouse_*）。

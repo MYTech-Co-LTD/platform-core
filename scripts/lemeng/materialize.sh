@@ -5,7 +5,7 @@
 #    漂移过（2026-10-15 停在 26 节点），且 #677 假绿（新模型漏加名单 ⇒ 解析数涨、执行集不变、
 #    run 照绿）正是这套「手抄 + 无守卫」的结构性产物。
 #
-# ② 为什么全量 build、没有 --select（#679 用户裁决 + 26/26 实证）：仓内 23 模型（stg×14 + fct×9）
+# ② 为什么全量 build、当初没有 --select（#679 用户裁决 + 26/26 实证）：仓内 23 模型（stg×14 + fct×9）
 #    + 3 种子 = 26 节点，与去名单前的白名单**逐一对上**——全量执行与今日行为逐节点等价，
 #    但新模型从此**自动纳入**，#677 假绿在结构上不可能再发生。副产收益：孤儿 singular 测试
 #    `audit_lemeng__retail__hour_row_count`（无 ref()，白名单态被解析但从未执行）从今天起每天真跑——
@@ -15,12 +15,23 @@
 #    多个数据面共用一棵 dbt/ 树，不裁剪时**两侧互 build 对方模型**（本方侧反向泄漏／对方侧 dbt 红）。
 #    裁剪落在 `dbt_project.yml` 的**按路径 `+enabled`**（即 ② 说的「用模型 config 表达」），
 #    不是本脚本里的名单 —— 本脚本只负责把**域身份**（一个部署属性）透传进去。
+#    ⚠️ **2026-10-18 补漏：`+enabled` 管不到 `dbt/tests/`。** `+enabled` 是按 `models:` 路径配的，
+#    而 singular test 住在 `dbt/tests/` ⇒ 真机实测：forms 面上**乐檬的 singular test 照跑**，
+#    去读本面并不存在的 `lemeng/` 前缀 ⇒ 该域 dbt 红 ⇒ 本域水位写不进去。故逐域 build 现在
+#    带一个**派生**选择器（见 `mat_dbt_args`）：`path:models/<域>` + `config.materialized:seed`
+#    + `path:tests/<域>`。**它仍不是 ② 反对的那种手抄名单** —— 三个片段全部从域身份 + 目录树
+#    派生，#677/#679 的「新模型自动纳入」性质不变（新模型落在本域目录下就自动进选择集）；
+#    同时**保住了孤儿哨兵** `audit_lemeng__retail__hour_row_count`（它在 `tests/lemeng/` 下，
+#    被 `path:tests/lemeng` 选中；若只用 `path:models/<域>` 会把它漏掉）。
 #
 # ⑤ 为什么**逐域**跑（2026-10-17，爆炸半径）：`data.load_log` 是全部 relation 新鲜度的单一水位
 #    来源，而 dbt 一红就整体 exit 1 ⇒ 一个模型红 = **所有** relation 的 data_as_of 一起停
 #    （同日实测两次：#833、#834 各自新增的 audit 各红一次，两次都冻结全量）。逐域跑后，红的域
 #    不落账、其余域照常落账 ⇒ 故障面收窄到该域。**仍不是按需名单**（#679）：命令还是 `build`、
 #    无 `--select`，域裁剪仍由 `+enabled` 表达，本脚本不持模型名单 —— 只是把域身份逐次收成单个值。
+#    （2026-10-18 起本脚本**确实**加了一个 `--select`，但它是**从域身份派生**的三段式，不是手抄
+#     名单；理由见上一段的「补漏」与 `mat_dbt_select`。头注 ② 的「26/26 全量」性质与之不冲突：
+#     选择集仍随目录树自动增长。）
 #
 # ③ env 舞步：值一律运行时从运行中的容器 `docker inspect` 取（不落盘、不落 job 配置），
 #    再以 `docker run -e VAR`（**透传形态**，只带键名）传给 dbt 容器 ⇒ 值不进 ps。
@@ -52,9 +63,20 @@ mat_env_args() {
     -e LEMENG_SUBJECT_ORG \
     -e DATA_PLANE_DOMAINS
 }
-# dbt 命令：全量 build（seed+model+test 一把跑，按 DAG 依赖序）。没有 --select（#679 定案，见头注②）。
+# dbt 命令：`build`（seed+model+test 一把跑，按 DAG 依赖序）。**选择器由调用方按域追加**
+# （`--select "$(mat_dbt_select <域>)"`），所以本函数只给固定前缀。
 mat_dbt_args() {
   printf '%s ' build --profiles-dir /usr/app
+}
+# **按域派生**的选择器（不是手抄名单）：三段都由「域身份 + 目录树」得出 ——
+#   `path:models/<域>`           本域的模型（其 schema tests 随之间接选中）
+#   `config.materialized:seed`   seed 全域共享（不按域分），照旧加载
+#   `path:tests/<域>`            本域的 singular test（含无 ref() 的孤儿哨兵）
+# 为什么不用 `+enabled` 一把梭：它只作用于 `models:` 路径，管不到 `dbt/tests/`（见头注 ②）。
+# ⚠️ 它**必须**作为 docker run 行里的**一个带引号的实参**传下去：塞进 `$(mat_dbt_args)`
+#    这种命令替换里会被词分割切成三段，dbt 只会收到 `--select path:models/<域>` 一小截。
+mat_dbt_select() { # $1=域 → 打印给 --select 的**单个**值（调用方自己加引号）
+  printf '%s' "path:models/$1 config.materialized:seed path:tests/$1"
 }
 # 守卫：关键值缺失即响亮失败（fail-fast）。$1=名字（报错定位用） $2=值
 mat_require() {
@@ -186,7 +208,8 @@ fi
 # exit 1 ⇒ **一个模型红会让所有 relation 的 data_as_of 一起停**（2026-10-17 一天内实测两次：
 # #833 与 #834 各自新增的 audit 各红一次，每次都冻结全量）。逐域跑之后，红的那个域不落账、
 # 其余域照常落账 ⇒ 故障面收窄到该域。
-# ⚠️ 仍然**不是**按需名单（#679）：命令还是 `build`（无 `--select`），域裁剪仍由
+# ⚠️ 仍然**不是**按需名单（#679）：命令还是 `build`，选择器三段全从域身份 + 目录树派生
+#    （见 `mat_dbt_select`），域裁剪的第一道仍由
 #    `dbt_project.yml` 的按路径 `+enabled` 表达，本脚本**不持任何模型名单** —— 它只是把域身份
 #    从「一串」收成「一个」逐次喂进去（同一个变量，值域收窄）。
 # PASS/ERROR 取该域日志的汇总行（sed 贪婪匹配取该行最后一个 PASS=/ERROR=，行级结果
@@ -200,7 +223,7 @@ for _d in $(printf '%s' "$DOMAINS" | tr ',' ' '); do
   _rc="$_WORK/dbt.${_d}.rc"
   # 逐命令 env 赋值 ⇒ docker CLI 只看到这一个域，`-e DATA_PLANE_DOMAINS` 透传的就是它。
   ( if DATA_PLANE_DOMAINS="$_d" docker run --rm --network "$NETWORK" -v "$R/dbt:/usr/app" \
-      $(mat_env_args) "$IMAGE" $(mat_dbt_args) 2>&1; then
+      $(mat_env_args) "$IMAGE" $(mat_dbt_args) --select "$(mat_dbt_select "$_d")" 2>&1; then
     echo 0 >"$_rc"
   else
     echo $? >"$_rc"
