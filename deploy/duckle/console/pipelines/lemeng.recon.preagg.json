@@ -24,7 +24,10 @@
     "3120 不排班本管线：其报表族端点自 2026-09-30 起恒 10006（回归未修），",
     "排上去只会天天刷「依赖不可用」红——这正是销账判据里「3120 通道坏不刷红」的处理方式：**不排**，修好再加。",
     "",
-    "样板出处：docs/superpowers/specs/2026-10-06-console-vs-job-for-judgements.md（C 方案可行性实测）+ issue #428（接调度）。"
+    "样板出处：docs/superpowers/specs/2026-10-06-console-vs-job-for-judgements.md（C 方案可行性实测）+ issue #428（接调度）。",
+    "",
+    "【临时诊断 2026-10-18】`item_key` 末尾加了 `-n<本块门店数>`：子 run 的日志目录名会带出来，",
+    "  用于分辨「pday 吐的数组长度」与「子管线收到的长度」是否一致。验完去掉 -n 段。"
   ],
   "name": "lemeng.recon.preagg",
   "version": 1,
@@ -61,7 +64,7 @@
         "componentId": "code.sql",
         "properties": {
           "pureSql": true,
-          "sql": "CREATE OR REPLACE TABLE \"pday\" AS\nWITH d AS (SELECT CAST(CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + INTERVAL 8 HOUR AS DATE) AS sh_today),\nf AS (SELECT * FROM \"plake\" WHERE CAST(bizday AS DATE) = (SELECT sh_today FROM d) - 3\n  AND CAST(state AS VARCHAR) = 'FINISHED'),\nb AS (SELECT DISTINCT CAST(branch_num AS INTEGER) AS bn FROM f),\nn AS (SELECT bn, CAST(row_number() OVER (ORDER BY bn) - 1 AS INTEGER) AS rn FROM b),\nc AS (SELECT CAST(rn / 100 AS INTEGER) + 1 AS chunk_no, bn FROM n),\nj AS (SELECT chunk_no,\n             '[' || string_agg(CAST(bn AS VARCHAR), ',' ORDER BY bn) || ']' AS branch_nums_json\n      FROM c GROUP BY chunk_no)\nSELECT strftime((SELECT sh_today FROM d) - 3, '%Y-%m-%d') AS bizday,\n       1 AS settled,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       '${ENV:ZOS_BUCKET}' AS bucket,\n       '${ENV:ZOS_REGION}' AS region,\n       'recon-' || strftime((SELECT sh_today FROM d) - 3, '%Y%m%d') || '-c' || CAST(chunk_no AS VARCHAR) AS batch_id,\n       chunk_no,\n       branch_nums_json,\n       strftime((SELECT sh_today FROM d) - 3, '%Y-%m-%d') || '-c' || CAST(chunk_no AS VARCHAR) AS item_key\nFROM j\nORDER BY chunk_no"
+          "sql": "CREATE OR REPLACE TABLE \"pday\" AS\nWITH d AS (SELECT CAST(CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + INTERVAL 8 HOUR AS DATE) AS sh_today),\nf AS (SELECT * FROM \"plake\" WHERE CAST(bizday AS DATE) = (SELECT sh_today FROM d) - 3\n  AND CAST(state AS VARCHAR) = 'FINISHED'),\nb AS (SELECT DISTINCT CAST(branch_num AS INTEGER) AS bn FROM f),\nn AS (SELECT bn, CAST(row_number() OVER (ORDER BY bn) - 1 AS INTEGER) AS rn FROM b),\nc AS (SELECT CAST(rn / 100 AS INTEGER) + 1 AS chunk_no, bn FROM n),\nj AS (SELECT chunk_no,\n             '[' || string_agg(CAST(bn AS VARCHAR), ',' ORDER BY bn) || ']' AS branch_nums_json\n      FROM c GROUP BY chunk_no)\nSELECT strftime((SELECT sh_today FROM d) - 3, '%Y-%m-%d') AS bizday,\n       1 AS settled,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       '${ENV:ZOS_BUCKET}' AS bucket,\n       '${ENV:ZOS_REGION}' AS region,\n       'recon-' || strftime((SELECT sh_today FROM d) - 3, '%Y%m%d') || '-c' || CAST(chunk_no AS VARCHAR) AS batch_id,\n       chunk_no,\n       branch_nums_json,\n       -- 【临时诊断 2026-10-18】item_key 带上**本块数组长度**：子 run 的日志目录名\n       -- （/workspace/logs/lemeng.recon.preagg.item_<bizday>-c<n>-n<len>）即可自证。\n       strftime((SELECT sh_today FROM d) - 3, '%Y-%m-%d') || '-c' || CAST(chunk_no AS VARCHAR)\n         || '-n' || CAST(json_array_length(branch_nums_json) AS VARCHAR) AS item_key\nFROM j\nORDER BY chunk_no"
         }
       }
     },
