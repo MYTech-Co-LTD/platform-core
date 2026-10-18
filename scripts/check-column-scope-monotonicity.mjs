@@ -150,7 +150,15 @@ export function checkColumnScopeMonotonicity(rootDir) {
           + '而 `L2_BASE_MASKED` 只拦新建 ⇒ 那批必须先确认、留痕。',
       })
     } else {
-      const missing = sensitiveCols.filter((c) => !inventory.includes(c))
+      // ⚠️ 判据必须**定界匹配**，不能用 `includes` 子串匹配（Task 1 评审 Important 订正）：
+      //    本仓真实列名里有**前缀撞车对** —— `lemeng.branch_expense.settlement_state` ⊂
+      //    `…settlement_state_name`、`…other_inout_flag` ⊂ `…other_inout_flag_name`、
+      //    `…other_inout_kind` ⊂ `…other_inout_kind_code`、`lemeng.client_expense.other_inout_flag` ⊂
+      //    `…other_inout_flag_name`。同概念的两列一起打标、操作者只列长名 ⇒ 短名**静默通过**，
+      //    正是本闸存在的意义（防漏报）。⇒ 两侧都不许再接 `[A-Za-z0-9_.]`（列名含点，故点也算词内字符）。
+      /** @param {string} c @returns {RegExp} */
+      const namedRe = (c) => new RegExp(`(?<![A-Za-z0-9_.])${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_.])`)
+      const missing = sensitiveCols.filter((c) => !namedRe(c).test(inventory))
       if (missing.length > 0) {
         violations.push({
           file: L2_INVENTORY_REL,

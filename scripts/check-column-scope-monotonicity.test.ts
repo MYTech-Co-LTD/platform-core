@@ -166,6 +166,40 @@ function metricBlock(name: string, maskColumn?: string, grantedBy = 'data:manage
   return b
 }
 
+/**
+ * 往假仓里**再写一份**契约（前缀撞车用例需要一份带真实撞车列的契约——夹具只造 `lemeng.item`）。
+ *
+ * @param {string} root 临时仓根
+ * @param {string} file `contracts/common/` 下的文件名
+ * @param {string} domain 契约域
+ * @param {string} table 契约表
+ * @param {Array<{ name: string, sensitivity?: string }>} columns 列（可选打标）
+ */
+function writeContract(
+  root: string,
+  file: string,
+  domain: string,
+  table: string,
+  columns: Array<{ name: string, sensitivity?: string }>,
+): void {
+  writeFileSync(join(root, 'contracts', 'common', file), JSON.stringify({
+    contractVersion: 2,
+    domain,
+    table,
+    owner: 'data-platform',
+    layout: { prefix: `${domain}/dim_${table}`, partitionStyle: 'hive', partitionBy: ['bizday'], fileName: 'all.parquet' },
+    batch: { markerColumn: 'batch_id', type: 'varchar' },
+    schemaVersion: 1,
+    consumerVersion: 1,
+    columns: columns.map((c) => ({
+      name: c.name,
+      type: 'varchar',
+      nullable: true,
+      ...(c.sensitivity === undefined ? {} : { sensitivity: c.sensitivity }),
+    })),
+  }, null, 2))
+}
+
 const COL = 'lemeng.item.item_cost_price'
 
 describe('血缘单调门：判据', () => {
@@ -348,7 +382,27 @@ describe('②b R12 存量 L2 盘点门（spec §8.1 ③ 发布门硬化）', () 
   })
 
   it('②b 无敏感列 ⇒ 不违规（今天的状态；产物可有可无）', () => {
+    // ⚠️ 两半都要跑（Task 1 评审 Minor 订正）：产物**在**（缺省即写一份）与产物**缺**（`inventory: null`）。
+    //    少了「缺产物」那一半，把 `sensitiveCols.length > 0` 守卫删掉这个变异不会红。
     expect(checkColumnScopeMonotonicity(fixture())).toEqual([])
-    expect(checkColumnScopeMonotonicity(fixture({ inventory: '# 任意内容\n' }))).toEqual([])
+    expect(checkColumnScopeMonotonicity(fixture({ inventory: null }))).toEqual([])
+  })
+
+  it('②b ★ 前缀撞车：只列长名 ⇒ 短名仍报违规（子串匹配会漏报）', () => {
+    // 用**真实存在**的前缀撞车对（本仓 contracts 里就有）：`settlement_state` ⊂ `settlement_state_name`。
+    // 同概念两列一起打标、操作者只列长名 ⇒ 子串匹配会让短名**静默通过**（正是本闸要防的漏报）。
+    const SHORT = 'lemeng.branch_expense.settlement_state'
+    const LONG = 'lemeng.branch_expense.settlement_state_name'
+    const root = fixture({ inventory: `| ${LONG} | 2026-10-18 |\n` }) // 产物**只列长名**
+    writeContract(root, 'lemeng.branch_expense.json', 'lemeng', 'branch_expense', [
+      { name: 'settlement_state', sensitivity: 'cost' },
+      { name: 'settlement_state_name', sensitivity: 'cost' },
+    ])
+    const v = checkColumnScopeMonotonicity(root)
+    expect(v).toHaveLength(1)
+    expect(v[0]?.file).toBe('docs/data/l2-sensitivity-inventory.md')
+    expect(v[0]?.message).toContain(SHORT)
+    // 长名已点名 ⇒ 不该出现在违规里（`SHORT` 是 `LONG` 的前缀，故这里必须是**定界**匹配才行）。
+    expect(v[0]?.message).not.toContain(LONG)
   })
 })
