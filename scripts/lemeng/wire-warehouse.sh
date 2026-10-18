@@ -58,6 +58,21 @@
 #
 #    ④⑤⑥与前几条共用「平台容器 + 平台自己的连接串」的通路 ⇒ **顺带持续 exercising Gate-B 与
 #    search_path**——这正是「看得见下游」的判据：从**消费方**那条路问，不从旁路问。
+#
+# ── ⑩ 战区未登记（2026-10-18 新增；#898 = #538 Phase 1 第一刀）───────────────────────
+#    门店档案（`stg_lemeng_branch`）**最新快照**里的 `region_id` 必须都在 `dim_region` 里。
+#    抓的形状：乐檬侧开了一个**新战区**（或改了 region 分配）⇒ 该区在报表上恒为 null 而无人知晓。
+#    判据的**本意是「发现新区」**（变化检测），**不是覆盖率 100%**——2026-10-18 真机实测覆盖完整、
+#    零命中，所以它现在**不响**；将来响，就是「有新区，请归级」。
+#
+#    ⚠️ **它是 advisory（判红不阻断）——与 ①-⑨ 的处置不同，这是有意的**：
+#      语义判据**不走 openship 通知**（分工红线③：openship 只出基础设施与 job 崩溃级）。
+#      ⇒ 判红只吐一行 `verdict=ERR`（`mode=advisory`），**不让 job 变红**；
+#        通知由**桥**（`oo-notify-bridge.sh` 通道②：`verdict <> 'OK'` → 企微，≤2 分钟）承担。
+#      （①-⑨ 会失败 job，是 Phase 2 才收敛的历史形态；**新加的语义判据不再往那条腿上加码**。）
+#
+#    反向测试：`WIRE_REGION_SELFTEST=<不存在的 id> sh $0 --check` ⇒ 该断言吐 ERR 行 ⇒ 桥送到企微。
+#      **这是本断言的验收判据**（「人为制造一次真红」，见 #898）。
 
 set -eu
 
@@ -70,6 +85,9 @@ FRESH_DAYS=${WIRE_FRESH_DAYS:-2}
 METRICS_TABLE=${WIRE_METRICS_TABLE:-data.metrics}
 DIM_TABLE=${WIRE_DIM_TABLE:-data.dim_item}
 DIM_FRESH_DAYS=${WIRE_DIM_FRESH_DAYS:-3}
+# 反向测试钩子（#898）：给 ⑩ 塞一个**假的 region_id**，用来确认「判红行 → 桥 → 企微」这条腿真的通。
+# 默认空 ⇒ 生产行为不含它。见 assert_region_registered 的注释。
+REGION_SELFTEST=${WIRE_REGION_SELFTEST:-}
 
 die() { echo "WIRE_FAILED: $*" >&2; exit 1; }
 
@@ -243,24 +261,52 @@ const c=new Client({connectionString:process.env.DATABASE_URL});
 "
 }
 
+# ⑩ 战区未登记（advisory；见头注）：门店档案**最新快照**里的 `region_id` 必须都在 `dim_region` 里。
+#    走「平台容器 + 平台自己的连接串」、**不带 schema**（靠 search_path）——与 ④-⑨ 同一条**消费方**通路。
+#    `WIRE_REGION_SELFTEST=<id>` 把一个不存在的 id 混进判据，供**反向测试**（默认空 ⇒ 不生效）。
+assert_region_registered() {
+  printf '⑩ 战区未登记（门店档案最新快照 vs dim_region）—— '
+  docker exec -w /app/apps/server "$PLATFORM_CONTAINER" node -e "
+const {Client}=require('pg');
+const c=new Client({connectionString:process.env.DATA_WAREHOUSE_URL});
+const SELFTEST='${REGION_SELFTEST}';
+(async()=>{try{
+  await c.connect();
+  const r=await c.query(\"select b.system_book, b.region_id, count(distinct b.branch_num)::int as n from stg_lemeng_branch b where b.snapshot = (select max(snapshot) from stg_lemeng_branch) and b.region_id is not null and not exists (select 1 from dim_region r where r.system_book = b.system_book and r.region_id = b.region_id) group by 1,2 order by 1,2\");
+  await c.end();
+  const rows=r.rows.slice();
+  if(SELFTEST){rows.push({system_book:'SELFTEST',region_id:parseInt(SELFTEST,10),n:0})}
+  if(rows.length){console.log('ERR 未登记 '+rows.map(function(x){return x.system_book+'/'+x.region_id+'('+x.n+'店)'}).join(', '));process.exit(1)}
+  console.log('OK 全部已登记');
+}catch(e){console.log('ERR '+e.message);process.exit(1)}})()
+"
+}
+
+# advisory 断言集（判红**不进 rc**、只吐判红行）：语义判据**不走 openship 通知**（红线③），
+# 通知由桥承担（`oo-notify-bridge.sh` 通道② 读 `verdict <> 'OK'` → 企微）。加新条目**先想清它归谁**。
+ADVISORY_CHECKS=" region_registered "
+
 do_check() {
   # #538 Phase 1：逐断言产出判红行（probe 观测面）——执行与观测同行，判定逻辑不变。
   rc=0
   _vf=$(mktemp ${TMPDIR:-/tmp}/ww-verdicts.XXXXXX)
-  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face; do
+  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face region_registered; do
+    _mode=hard
+    case "$ADVISORY_CHECKS" in *" ${_step} "*) _mode=advisory ;; esac
     if _out=$(eval "assert_${_step}" 2>&1); then
       _verdict=OK
     else
       _verdict=ERR
-      rc=1
+      # advisory 的判红**不翻 rc**（job 保持绿 ⇒ 不进 openship 通知）；硬断言照旧翻。
+      [ "$_mode" = advisory ] || rc=1
     fi
     printf '%s\n' "$_out"
     _detail=$(printf '%s' "$_out" | grep -m1 -E 'OK|ERR|FAIL' | tr -d '"\\' | tr '\n' ' ' | cut -c1-200)
-    printf '{"probe":"wire-warehouse","check":"%s","verdict":"%s","detail":"%s"}\n' \
-      "$_step" "$_verdict" "$_detail" >> "$_vf"
+    printf '{"probe":"wire-warehouse","check":"%s","verdict":"%s","mode":"%s","detail":"%s"}\n' \
+      "$_step" "$_verdict" "$_mode" "$_detail" >> "$_vf"
   done
   if [ "$rc" -eq 0 ]; then
-    echo "wire-warehouse: OK（八条断言全过）"
+    echo "wire-warehouse: OK（硬断言全过；advisory 的判红只进 OO 流、不翻 job）"
   else
     echo "wire-warehouse: FAILED（见上）—— 重做：sh $0" >&2
   fi
