@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.164.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.163.0...v0.164.0) - 2026-10-18
+- 【新增】data: 战区维物化——dim_region 权威 + 门店维带战区标签（#883） ([#886](https://github.com/MYTech-Co-LTD/platform-core/pull/886), [c500768](https://github.com/MYTech-Co-LTD/platform-core/commit/c5007686430814ad8b5c366d5953c741b34fd2ff))
+
+
 ## [0.163.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.162.1...v0.163.0) - 2026-10-18
 - 【新增】data: 口径对账回填变体 + 订正两条过时豁免 ([#888](https://github.com/MYTech-Co-LTD/platform-core/pull/888), [8bd40f3](https://github.com/MYTech-Co-LTD/platform-core/commit/8bd40f3c62fb2c166a65ab263c82bf897791b438))
 
