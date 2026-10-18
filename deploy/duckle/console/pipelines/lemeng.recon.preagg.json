@@ -33,7 +33,21 @@
     "  （`/` 返 DOUBLE、CAST 到整数 round-half-even）⇒ 148 家被切成 51/97，而非 100/48；",
     "  而用 staging（Postgres，整数除法）重跑同一段 SQL 得 100/48 —— **同一 SQL 两个引擎两种切法**。",
     "  改为 `CAST(floor(rn/100.0) AS INTEGER)+1`。⚠️ 这条教训通用：跨引擎复算的判据，",
-    "  **除法/取整/舍入**必须先钉语义再比数。"
+    "  **除法/取整/舍入**必须先钉语义再比数。",
+    "",
+    "── 2026-10-18 追加：收尾汇总 + 次序锚（#891）────────────────────────────",
+    "为什么加：父管线此前只有 plake/pday/pguard/pfe —— **没有收尾汇总，也没有末尾判红**，",
+    "  而 §1.1.7 的 L1 标准形态要求「汇总 + 末尾判红（die）」。缺它的直接后果是：",
+    "  ① 「没跑」不可观测；② 「某块压根没派发」不可见；③ 新鲜度锚无处可挂。",
+    "panchor（ctl.anchor）：不做任何事，只做**次序**。trigger 边 pfe → panchor → psum",
+    "  ⇒ psum 在**全部块跑完之后**才求值。子管线任一块失败 ⇒ pfe 失败 ⇒ 整条 run 失败",
+    "  ⇒ psumout **不会**被写 —— 这就是「汇总只在全部块成功后写」的机制。",
+    "psum / psumout：把本轮的 bizday / 块数 / 门店数 / 计算时刻落成一行 CSV，",
+    "  路径**完全字面**（不含 *、不含任何占位符）。",
+    "⚠️ 这个 CSV 就是新鲜度锚该指的东西：引擎的新鲜度资产集 = ①运行记录里 direction=write 的资产",
+    "  ∪ ②pattern 里不含 * 的规则。子管线（foreach 派发）**不产运行记录** ⇒ 指向湖对象",
+    "  （子管线写的、且 pattern 带 *）的锚**两头不占**，`freshness.json` 里压根不出现。",
+    "  换成父管线自己写的字面路径资产后走 ②，必然生效。详见 owners.lemeng.json 对应条目。"
   ],
   "name": "lemeng.recon.preagg",
   "version": 1,
@@ -106,6 +120,50 @@
           "concurrency": 1
         }
       }
+    },
+    {
+      "id": "panchor",
+      "type": "transform",
+      "position": {
+        "x": 1120,
+        "y": 0
+      },
+      "data": {
+        "label": "panchor 次序锚：全部块跑完才放行收尾汇总",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "psum",
+      "type": "transform",
+      "position": {
+        "x": 1400,
+        "y": 0
+      },
+      "data": {
+        "label": "psum 收尾汇总（全部块成功后写）",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT bizday,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       CAST(count(*) AS INTEGER) AS chunk_count,\n       CAST(sum(json_array_length(branch_nums_json)) AS INTEGER) AS branch_count,\n       strftime(CAST(CURRENT_TIMESTAMP AS TIMESTAMP) + INTERVAL 8 HOUR, '%Y-%m-%dT%H:%M:%S') AS computed_at_sh\nFROM input\nGROUP BY bizday"
+        }
+      }
+    },
+    {
+      "id": "psumout",
+      "type": "sink",
+      "position": {
+        "x": 1680,
+        "y": 0
+      },
+      "data": {
+        "label": "psumout 汇总落盘（完全字面路径；新鲜度锚指它）",
+        "componentId": "snk.csv",
+        "properties": {
+          "path": "/workspace/reports/recon-preagg/_recon-summary.csv",
+          "mode": "overwrite"
+        }
+      }
     }
   ],
   "edges": [
@@ -137,6 +195,46 @@
       "targetHandle": "main",
       "data": {
         "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_pday_psum",
+      "source": "pday",
+      "target": "psum",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_psum_psumout",
+      "source": "psum",
+      "target": "psumout",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_pfe_panchor",
+      "source": "pfe",
+      "target": "panchor",
+      "sourceHandle": "iterate",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "trigger"
+      }
+    },
+    {
+      "id": "e_panchor_psum",
+      "source": "panchor",
+      "target": "psum",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "trigger"
       }
     }
   ]
