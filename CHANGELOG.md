@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.170.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.170.1...v0.170.2) - 2026-10-18
+- 【修复】auth: admin 会话登录与业务 application 解耦（#911） ([#913](https://github.com/MYTech-Co-LTD/platform-core/pull/913), [2154ea3](https://github.com/MYTech-Co-LTD/platform-core/commit/2154ea3ea16d41fe15e8f0b7b2351a38f49c53c7))
+
+
 ## [0.170.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.170.0...v0.170.1) - 2026-10-18
 - 【修复】data: 净销售额退货侧补套赠品判别式——0 元单整退被反向加回（#908） ([#909](https://github.com/MYTech-Co-LTD/platform-core/pull/909), [75ac4f5](https://github.com/MYTech-Co-LTD/platform-core/commit/75ac4f510f8d2caa612418cbe1d99b41636d85b0))
 
