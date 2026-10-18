@@ -155,14 +155,31 @@ break.disposition   | disposition_by
 ### H 回填
 - 首批近 14 天；走同一条管线换 `bizday` 窗，不写一次性脚本。
 
-## 5. 风险与未验
+## 5. 风险与未验（含 2026-10-18 实现侦查的三条**会静默出错**的约束）
 
-1. **`not_evaluated` 最容易被吞掉**：源挂/空/10001 时，代码最容易顺手记成「零不平 = ok」。
-   **上线首周必须主动制造一次源不可用**验证它。
-2. **`ctl.foreach` 的 itemKey 变更未验**：`itemKey` 从 `bizday` 改为 `bizday+chunk_no` 是**引擎行为改动**，
-   必须先跑一次两块的日期确认两个子 run 都执行、且各写各的分区。
-3. **inline foreach 持续失败会截尾**（既有实测）：块间失败不会自动补齐 ⇒ 需要「块级完整性」断言（F 层已列）。
-4. **未验**：`snk.parquet` 在 console 管线里的覆盖写语义。
+1. **`not_evaluated` 最容易被吞掉**：源挂/空/`10001` 时，代码最容易顺手记成「零不平 = ok」。
+   **上线首周必须主动制造一次源不可用**验证它。这是本设计最重要、也最容易悄悄失效的一条。
+
+2. **⚠️ `itemKey` 是每行独立的水位键**（读 `ctl.foreach` 组件 schema 确认，非推测）：
+   > 「Column whose value names each row's run… **Leave blank and all rows share one watermark,
+   > which silently skips rows**」
+   ⇒ 父管线吐 N 个 chunk 行却仍用 `itemKey=bizday` ⇒ **N 块共享水位、静默跳行**。
+   **必须**让 `pday` 多吐合成键 `item_key = bizday || '-c' || chunk_no`，并把 `pfe.itemKey` 改成 `item_key`。
+
+3. **⚠️ 子管线读不到 `${ENV:}`，且静默 ok**（既有实测 + 现状佐证：子管线 11 个节点**一个 `${ENV:}` 都没有**，
+   全用 `${ITER_ITEM_*}`）。⇒ 新 sink 需要 `bucket` / `region` 时**只能由父管线透传**；
+   父管线现在只吐 `bucket`，**缺 `region`**，须一并补。
+
+4. **⚠️ 湖 sink 是 `snk.minio`，不是 `snk.parquet`**：`snk.parquet` 没有 `connectionRef` 字段。
+   写湖必须 `snk.minio` + `connectionRef: "zos"` + `urlStyle: "path"` + `useSsl: "true"` + `format: "parquet"`。
+
+5. **父管线 `pday` 的目标形状**（由 2–4 推出，实施时照此写）：
+   `bizday | settled | system_book | bucket | region | chunk_no | branch_nums_json | item_key`
+
+6. **inline foreach 持续失败会截尾**（既有实测）：块间失败不会自动补齐 ⇒ 需要「块级完整性」断言（F 层已列）。
+
+7. **未验**：`snk.minio` 在同一 bizday 不同 `chunk=` 分区下的覆盖写语义；以及第一跑必须确认
+   N 个 chunk 子 run **各写各的分区**（不是互相覆盖）。
 
 ## 6. 不做
 - 不改口径、不动 `NET_ABS_TOL` 的值（改的是记账方式）。
