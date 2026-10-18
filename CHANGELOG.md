@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.156.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.156.2...v0.156.3) - 2026-10-18
+- 【修复】data: dbt 测试按域分目录 + 逐域 build 用派生选择器（域开关管不到 dbt/tests） ([#864](https://github.com/MYTech-Co-LTD/platform-core/pull/864), [c482956](https://github.com/MYTech-Co-LTD/platform-core/commit/c48295611711ed998e5e4a55f0e653362136d7fb))
+
+
 ## [0.156.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.156.1...v0.156.2) - 2026-10-18
 - 【修复】data: forms 管线 sink 补 connectionRef:zos（新建 console 写湖必报 NoSuchBucket） ([#862](https://github.com/MYTech-Co-LTD/platform-core/pull/862), [5aa8c3b](https://github.com/MYTech-Co-LTD/platform-core/commit/5aa8c3b3f94ddb6f04269695c9adc576c3821e16))
 
