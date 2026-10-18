@@ -32,7 +32,9 @@
 --     order_transaction_type=SALE_ORDER 的订单（**退货单不进销售侧**），逐订单取
 --     「(Σ非赠品行额 + order_total_money)/2」；退货侧 = **全额冲减**（不套折半）
 --     Σ(sale_money + order_detail_share_discount)，条件 order_transaction_type like '%RETURN%'
---     AND state='FINISHED'（REPAID_RETURN 不计）。
+--     AND state='FINISHED'（REPAID_RETURN 不计）。**退货侧行同样套赠品判别式**（2026-10-18 起，
+--     issue #908：金额/数量取绝对值比较——「0 元实付单整单退货」的退货行带负号，不排会反向加回；
+--     2026-10-18 实证 3120/10-17 差 130.79，修复后与乐檬客单分析逐分一致）。
 --     按门店日合计 − Σ分摊折扣；赠品行按判别式排除（正典
 --     docs/superpowers/specs/2026-09-30-recon-zeroing-self-attribution.md §0）。
 --   · 口径 spec：docs/superpowers/specs/2026-10-17-retail-net-sales-return-offset-design.md
@@ -113,11 +115,22 @@ sale_side as (
 return_side as (
     -- 退货侧：**全额冲减，不套折半**（整单退货 order_total_money = −Σsale_money，套折半恒得 0）。
     -- 只收 state='FINISHED' ⇒ 排除 REPAID_RETURN（state=REPAID）——2026-10-17 四个 book-day 真机逐分验证。
+    -- ⚠️ **退货行同样套赠品判别式**（2026-10-18，#908；金额/数量取绝对值比较）：
+    --   源数据的整单退货行**符号不一致**——有的带负号（sale_money = −原额），有的是正数。
+    --   带负号的那类若直接冲减，会**反向加回**：「0 元实付单」（discount = std×qty，被判赠品、
+    --   销售侧贡献 0）整单退货后净额凭空 **+原额**。2026-10-18 实证：3120/10-17 两笔
+    --   （10.00 + 120.79 = 130.79），修复后 402,866.47 → 402,735.68，与乐檬客单分析逐分一致。
+    --   对称性：赠品行不进销售侧，**赠品行的退货也不该进退货侧**——两侧行同一判别式（绝对值形态）。
     select
         system_book,
         bizday,
         branch_num,
-        (sum(sale_money + order_detail_share_discount))::numeric(20,2) as return_amount
+        (sum(case
+             when order_detail_std_price > 0 and abs(sale_money) > 0 and abs(quantity) > 0
+                  and abs(abs(discount_money) - order_detail_std_price * abs(quantity)) <= 0.02
+             then 0
+             else sale_money + order_detail_share_discount
+           end))::numeric(20,2) as return_amount
     from {{ ref('stg_lemeng_retail_order_line') }}
     where order_transaction_type like '%RETURN%'
       and state = 'FINISHED'
