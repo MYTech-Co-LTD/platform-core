@@ -18,6 +18,8 @@ api:
     - { method: PUT,    path: /rules/:id/enabled, scope: notify:manage }
     - { method: DELETE, path: /rules/:id,         scope: notify:manage }
     - { method: GET,    path: /deliveries,        scope: notify:view }
+    # 管理面 MCP 端点：工具 list_rules / propose_rule；**不含任何模板/发布类工具**（AI 永不碰文案）。
+    - { method: POST,   path: /mcp-manage,        scope: notify:manage }
     # 入口 A（事件驱动）：触发源携确定性 event_id 调此端点；入口 B（定时驱动）同调 pipeline.emit。
     - { method: POST,   path: /emit,              scope: notify:emit }
 migrations: { dir: ./migrations }

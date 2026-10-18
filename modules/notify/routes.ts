@@ -8,6 +8,7 @@ import type { Identity } from '@platform/sdk'
 import type { NovuConfig } from './domain/novu'
 import { validateRule, type Channel, type RecipientKind } from './domain/rules'
 import { emit } from './pipeline'
+import { registerNotifyMcpManage } from './mcp'
 import { deleteRule, listDeliveries, listRules, setRuleEnabled, upsertRule } from './storage'
 
 /** 机检错误码 → HTTP 状态（不解析 message）。 */
@@ -116,6 +117,9 @@ export function createNotifyRouter({ pool, novu = null }: { pool: Pool; novu?: N
       return c.json({ matched: 0, delivered: 0, failed: 0, error: 'EMIT_FAILED' }, 202)
     }
   })
+
+  // 管理面 MCP 端点（AI 建规则；**无模板/发布类工具**，§2.6 门禁分层）。
+  registerNotifyMcpManage(r, { pool })
 
   return r
 }
