@@ -204,6 +204,12 @@ metricToAuditFileName(metricName: string): string   // 例：'lemeng:retail:net_
 真机残留已一次性清理）。fct 侧回落语义（dim_branch 最新快照 region_id，未映射=0）在
 `fct_hq_outbound` 头注。
 
+**战区名 / 一级战区的落点**（#883，2026-10-18）：权威在 **`dim_region`**（git 受控 seed，
+原 `x01_region_names` 升格为维，见 `dbt/seeds/schema.yml`）；门店维 **`dim_lemeng_branch`**
+（marts）join 它带出 `region_name` / `region_l1`，供所有下游源消费。**不塞进湖上
+`lemeng/dim_branch`**（那是契约驱动的采集快照，`region_name` 非源生）——裁决与理由见
+`docs/superpowers/plans/2026-10-18-region-dim-materialization.md`。
+
 ### 5.2 率类（不可加指标）的 L1/L2 边界（spec 2026-10-12 裁7 结论，W0 落）
 
 率类指标（毛利率/贡献率/占比/退货率/覆盖率…）用 L1 的 `ratio: {numerator, denominator}` 声明

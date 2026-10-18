@@ -15,7 +15,7 @@ const LOOKUP: DimensionLookup = {
     ['64188|1', '甜选蒙自1店'],
   ]),
   regionByKey: new Map([
-    ['3120|25422', { name: '东部一区', l1: '东部' }],
+    ['3120|25422', { name: '东部一区', l1: '东部战区' }],
     ['3120|21278', { name: '其余门店1', l1: null }],
   ]),
 }
@@ -69,9 +69,41 @@ describe('decorateWithLabels —— 键之后插标签，原 key 保留', () => 
     )
     expect(out.columns).toEqual(['system_book', 'brand_name', 'region_id', 'region_name', 'region_l1', 'value'])
     expect(out.rows).toEqual([
-      ['3120', '熊喵鲜生', 25422, '东部一区', '东部', 1],
+      ['3120', '熊喵鲜生', 25422, '东部一区', '东部战区', 1],
       ['3120', '熊喵鲜生', 21278, '其余门店1', null, 2],
     ])
+  })
+
+  it('D7 标签列**已存在**（marts 已物化 region_name）⇒ 不重复插、不覆盖原值，缺的照插', () => {
+    // 场景：消费方直接查 `dim_lemeng_branch`（#883）⇒ 结果集里 region_name 已在。
+    // 期望：region_name 不重复出现、原值不动；**缺的 region_l1 仍补上**（插在键列之后）。
+    const out = decorateWithLabels(
+      {
+        columns: ['system_book', 'region_id', 'region_name', 'value'],
+        rows: [['3120', 25422, '东部一区', 1]],
+      },
+      LOOKUP,
+    )
+    expect(out.columns).toEqual([
+      'system_book', 'brand_name', 'region_id', 'region_l1', 'region_name', 'value',
+    ])
+    expect(out.rows).toEqual([['3120', '熊喵鲜生', 25422, '东部战区', '东部一区', 1]])
+  })
+
+  it('D8 标签列全已存在 ⇒ 无重名列，且表头与行体**同长**（不错位）', () => {
+    const out = decorateWithLabels(
+      {
+        columns: ['system_book', 'branch_num', 'region_id', 'region_name', 'region_l1'],
+        rows: [['3120', 142, 25422, '东部一区', '东部战区']],
+      },
+      LOOKUP,
+    )
+    // 战区两个标签都已在 ⇒ 一个都不补；品牌/门店名缺 ⇒ 各补一个。
+    expect(out.columns).toEqual([
+      'system_book', 'brand_name', 'branch_num', 'branch_name', 'region_id', 'region_name', 'region_l1',
+    ])
+    expect(new Set(out.columns).size).toBe(out.columns.length)
+    expect(out.rows[0]).toHaveLength(out.columns.length)
   })
 })
 
@@ -79,10 +111,10 @@ describe('loadDimensionLookup —— 取不到就返回 null（缺账不反噬�
   it('L1 三条小查询都成功 ⇒ 建出三张映射（战区含 region_l1 的空值语义）', async () => {
     const exec = async (sql: string) => {
       if (sql.includes('dim_brand')) return { columns: ['b', 'brand_name'], rows: [['3120', '熊喵鲜生']] }
-      if (sql.includes('x01_region_names')) {
+      if (sql.includes('dim_region')) {
         return {
           columns: ['b', 'r', 'region_name', 'region_l1'],
-          rows: [['3120', 25422, '东部一区', '东部'], ['3120', 21278, '其余门店1', null]],
+          rows: [['3120', 25422, '东部一区', '东部战区'], ['3120', 21278, '其余门店1', null]],
         }
       }
       return { columns: ['b', 'n', 'name'], rows: [['3120', 142, '某店']] }
@@ -90,7 +122,7 @@ describe('loadDimensionLookup —— 取不到就返回 null（缺账不反噬�
     const lk = await loadDimensionLookup(exec)
     expect(lk?.brandByBook.get('3120')).toBe('熊喵鲜生')
     expect(lk?.branchNameByKey.get('3120|142')).toBe('某店')
-    expect(lk?.regionByKey.get('3120|25422')).toEqual({ name: '东部一区', l1: '东部' })
+    expect(lk?.regionByKey.get('3120|25422')).toEqual({ name: '东部一区', l1: '东部战区' })
     expect(lk?.regionByKey.get('3120|21278')).toEqual({ name: '其余门店1', l1: null })
   })
 
