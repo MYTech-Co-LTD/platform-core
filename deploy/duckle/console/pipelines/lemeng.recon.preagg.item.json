@@ -54,7 +54,10 @@
     "  ⚠️ 教训：**切块只切了请求，没切湖侧**——「每块写自己那一片」要在 diff 层显式收口。",
     "",
     "【临时诊断】`diff` 多一列 `chunk_branch_count`（= 本块收到的门店数组长度），只进 CSV。",
-    "  用途：分辨「父管线吐的数组长度」与「diff 过滤后行数」是否一致。验完删除。"
+    "  用途：分辨「父管线吐的数组长度」与「diff 过滤后行数」是否一致。验完删除。",
+    "",
+    "【2026-10-18 撤诊断】`chunk_branch_count` 列已删除（诊断完成：证实子管线收到 51/97，",
+    "  根因在父管线切块的除法语义，不在传参）。"
   ],
   "name": "lemeng.recon.preagg.item",
   "version": 1,
@@ -224,7 +227,7 @@
         "label": "diff 逐店透视（**按本块门店集过滤**；两侧销售/净额）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       max(CASE WHEN side = 'lake' THEN sale END) AS platform_sale,\n       max(CASE WHEN side = 'pre'  THEN sale END) AS source_sale,\n       max(CASE WHEN side = 'lake' THEN net  END) AS platform_net,\n       max(CASE WHEN side = 'pre'  THEN net  END) AS source_net,\n       round(max(CASE WHEN side = 'pre' THEN net END)\n           - max(CASE WHEN side = 'lake' THEN net END), 2) AS diff,\n       -- 【临时诊断 2026-10-18】本块实际收到的门店数组长度：分辨「父管线吐的数组」与\n       -- 「diff 过滤后的行数」是否一致。只进 CSV（sinkprep 显式选列，不会进湖）。\n       json_array_length('${ITER_ITEM_BRANCH_NUMS_JSON}') AS chunk_branch_count\nFROM input\nWHERE CAST(branch_num AS BIGINT) IN (\n  SELECT CAST(j.value AS BIGINT) FROM json_each('${ITER_ITEM_BRANCH_NUMS_JSON}') j\n)\nGROUP BY 1 ORDER BY 1"
+          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       max(CASE WHEN side = 'lake' THEN sale END) AS platform_sale,\n       max(CASE WHEN side = 'pre'  THEN sale END) AS source_sale,\n       max(CASE WHEN side = 'lake' THEN net  END) AS platform_net,\n       max(CASE WHEN side = 'pre'  THEN net  END) AS source_net,\n       round(max(CASE WHEN side = 'pre' THEN net END)\n           - max(CASE WHEN side = 'lake' THEN net END), 2) AS diff\nFROM input\nWHERE CAST(branch_num AS BIGINT) IN (\n  SELECT CAST(j.value AS BIGINT) FROM json_each('${ITER_ITEM_BRANCH_NUMS_JSON}') j\n)\nGROUP BY 1 ORDER BY 1"
         }
       }
     },
