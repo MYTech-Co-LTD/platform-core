@@ -72,7 +72,15 @@ ret_base as (
         r['system_book']::varchar as system_book,
         r['bizday']::date         as bizday,
         r['branch_num']::int      as branch_num,
-        (r['sale_money']::numeric + r['order_detail_share_discount']::numeric) as return_amount
+        -- 退货行同样套赠品判别式（2026-10-18，#908；与 fct_retail_sale.sql 的 return_side 同一句，
+        -- 金额/数量取绝对值——「0 元实付单整单退货」的退货行带负号，不排会反向加回）。
+        case when r['order_detail_std_price']::numeric > 0 and abs(r['sale_money']::numeric) > 0
+                  and abs(r['quantity']::numeric) > 0
+                  and abs(abs(r['discount_money']::numeric)
+                          - r['order_detail_std_price']::numeric * abs(r['quantity']::numeric)) <= 0.02
+             then 0
+             else (r['sale_money']::numeric + r['order_detail_share_discount']::numeric)
+        end as return_amount
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/**/*.parquet'
     ) r
