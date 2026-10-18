@@ -156,10 +156,11 @@ export const listAdminSubscriptions = () =>
   request<{ subscriptions: AdminSubscription[] }>('/api/platform/admin/subscriptions')
 
 /**
- * 管理写操作统一通道：**现取** /session 拿 csrfToken（会话重签会轮换，禁止缓存旧值——
- * 与 logout 同一契约）→ 带 x-csrf-token 调用。无 body 的 DELETE 传 undefined。
+ * 写操作统一通道（管理域 + 个人 Key 域共用）：**现取** /session 拿 csrfToken
+ *（会话重签会轮换，禁止缓存旧值——与 logout 同一契约）→ 带 x-csrf-token 调用。
+ * 无 body 的 DELETE 传 undefined。
  */
-async function adminWrite<T>(path: string, method: string, body?: unknown): Promise<T> {
+async function csrfWrite<T>(path: string, method: string, body?: unknown): Promise<T> {
   const s = await getSession()
   return request<T>(path, {
     method,
@@ -172,17 +173,17 @@ async function adminWrite<T>(path: string, method: string, body?: unknown): Prom
 }
 
 export const createAdminUser = (v: { username: string; displayName?: string; password: string }) =>
-  adminWrite<{ name: string }>('/api/platform/admin/users', 'POST', v)
+  csrfWrite<{ name: string }>('/api/platform/admin/users', 'POST', v)
 export const setAdminUserForbidden = (name: string, isForbidden: boolean) =>
-  adminWrite<{ name: string }>(`/api/platform/admin/users/${encodeURIComponent(name)}`, 'PATCH', { isForbidden })
+  csrfWrite<{ name: string }>(`/api/platform/admin/users/${encodeURIComponent(name)}`, 'PATCH', { isForbidden })
 export const resetAdminUserPassword = (name: string, password: string) =>
-  adminWrite<{ name: string }>(`/api/platform/admin/users/${encodeURIComponent(name)}/password`, 'PATCH', { password })
+  csrfWrite<{ name: string }>(`/api/platform/admin/users/${encodeURIComponent(name)}/password`, 'PATCH', { password })
 export const deleteAdminUser = (name: string) =>
-  adminWrite<{ name: string }>(`/api/platform/admin/users/${encodeURIComponent(name)}`, 'DELETE')
+  csrfWrite<{ name: string }>(`/api/platform/admin/users/${encodeURIComponent(name)}`, 'DELETE')
 export const grantAdminPermission = (code: string, user: string) =>
-  adminWrite<{ ok: true }>(`/api/platform/admin/permissions/${encodeURIComponent(code)}/users`, 'POST', { user })
+  csrfWrite<{ ok: true }>(`/api/platform/admin/permissions/${encodeURIComponent(code)}/users`, 'POST', { user })
 export const revokeAdminPermission = (code: string, user: string) =>
-  adminWrite<{ ok: true }>(
+  csrfWrite<{ ok: true }>(
     `/api/platform/admin/permissions/${encodeURIComponent(code)}/users/${encodeURIComponent(user)}`,
     'DELETE',
   )
@@ -219,10 +220,35 @@ export interface AdminStorageInput {
 export const getAdminStorage = () => request<AdminStorage>('/api/platform/admin/storage')
 /** 保存（服务端**保存前探测**，不通过不写库）⇒ 400 STORAGE_PROBE_FAILED / INCOMPLETE */
 export const saveAdminStorage = (v: AdminStorageInput) =>
-  adminWrite<{ ok: true }>('/api/platform/admin/storage', 'PUT', v)
+  csrfWrite<{ ok: true }>('/api/platform/admin/storage', 'PUT', v)
 /** 显式「测试连接」：**不写库** */
 export const testAdminStorage = (v: AdminStorageInput) =>
-  adminWrite<{ ok: true }>('/api/platform/admin/storage/test', 'POST', v)
+  csrfWrite<{ ok: true }>('/api/platform/admin/storage/test', 'POST', v)
 /** 清除配置 ⇒ 活回落平台默认（五列置 null） */
 export const clearAdminStorage = () =>
-  adminWrite<{ ok: true }>('/api/platform/admin/storage', 'DELETE')
+  csrfWrite<{ ok: true }>('/api/platform/admin/storage', 'DELETE')
+
+// ---- 个人 Key（PAT，通道 B）域（issue #894，正典 §1.5）----
+// 个人档**免 scope**（任何登录账号管自己的）；管理档 `tenant:admin`（看/吊销全租户）。
+
+export interface ApiKeyRow {
+  id: number
+  name: string
+  createdAt: string
+  lastUsedAt: string | null
+  revoked: boolean
+}
+/** 管理档多一列归属用户 */
+export interface AdminApiKeyRow extends ApiKeyRow {
+  casdoorUser: string
+}
+
+export const listMyKeys = () => request<{ keys: ApiKeyRow[] }>('/api/platform/keys')
+export const listAllKeys = () => request<{ keys: AdminApiKeyRow[] }>('/api/platform/keys/all')
+
+/** 建 key：**明文 token 只在本响应里出现一次**（页面只显示一次，刷新即失）。 */
+export const createMyKey = (name: string) =>
+  csrfWrite<{ id: number; token: string }>('/api/platform/keys', 'POST', { name })
+export const revokeMyKey = (id: number) => csrfWrite<{ ok: true }>(`/api/platform/keys/${id}`, 'DELETE')
+export const revokeAnyKey = (id: number) =>
+  csrfWrite<{ ok: true }>(`/api/platform/keys/all/${id}`, 'DELETE')

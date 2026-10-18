@@ -58,17 +58,17 @@ describe('visibleConsoleEntries（三重过滤 + 去重）', () => {
 describe('buildConsoleMenu（spec §3 位置规则）', () => {
   it('概览恒第 1；case-engine 模块页钉第 2（即使 manifest 声明在后）；其余按声明序', () => {
     const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION, REGISTRY), {}, SESSION, { adminEntries: [], storageVisible: true })
-    expect(menu.map((m) => m.path)).toEqual(['/console', '/console/case-engine', '/console/first/a'])
+    expect(menu.map((m) => m.path)).toEqual(['/console', '/console/me/keys', '/console/case-engine', '/console/first/a'])
   })
   it('case-engine 未落地/无权限时该位自然缺席，不产生空位', () => {
     const menu = buildConsoleMenu(visibleConsoleEntries(CONFIG, SESSION_PARTIAL, REGISTRY), {}, SESSION_PARTIAL, { adminEntries: [], storageVisible: true })
-    expect(menu.map((m) => m.path)).toEqual(['/console', '/console/first/a'])
+    expect(menu.map((m) => m.path)).toEqual(['/console', '/console/me/keys', '/console/first/a'])
   })
 })
 
 // ---- M3：管理组（tenant:admin 门禁，spec D4/D9，issue #46）----
 describe('buildConsoleMenu 管理组', () => {
-  it('有 tenant:admin → 尾部追加「管理」组（四项子菜单）', () => {
+  it('有 tenant:admin → 尾部追加「管理」组（五项子菜单）', () => {
     const menu = buildConsoleMenu([], {}, { scopes: ['tenant:admin'] }, { adminEntries: [], storageVisible: true })
     const group = menu.at(-1)
     expect(group?.name).toBe('管理')
@@ -76,6 +76,7 @@ describe('buildConsoleMenu 管理组', () => {
       '/console/admin/users',
       '/console/admin/permissions',
       '/console/admin/subscriptions',
+      '/console/admin/keys',
       '/console/admin/storage',
     ])
   })
@@ -103,12 +104,13 @@ describe('管理组联动', () => {
     ...over,
   })
 
-  it('storageVisible=false → 管理组四项变三项（存储配置消失）', () => {
+  it('storageVisible=false → 管理组五项变四项（存储配置消失）', () => {
     const menu = buildConsoleMenu([], {}, ADMIN_SESSION, { adminEntries: [], storageVisible: false })
     expect(menu.at(-1)?.children?.map((c) => c.path)).toEqual([
       '/console/admin/users',
       '/console/admin/permissions',
       '/console/admin/subscriptions',
+      '/console/admin/keys',
     ])
   })
 
@@ -121,6 +123,7 @@ describe('管理组联动', () => {
       '/console/admin/users',
       '/console/admin/permissions',
       '/console/admin/subscriptions',
+      '/console/admin/keys',
       '/console/admin/storage',
       '/console/admin/demo/x',
     ])

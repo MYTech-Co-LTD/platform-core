@@ -57,6 +57,7 @@ function adminGroup(iconMap: Record<string, ReactNode>, admin: AdminMenuInput): 
     { path: '/console/admin/users', name: '用户管理' },
     { path: '/console/admin/permissions', name: '角色与授权' },
     { path: '/console/admin/subscriptions', name: '我的订阅' },
+    { path: '/console/admin/keys', name: 'Key 管理' },
     // 存储配置（M3c）：能力联动——启用的模块里至少一个声明 storage 才显示；
     // **不设图标** —— CONSOLE_ICONS 要求图标名先登记才渲染，不设就不欠这笔账
     ...(admin.storageVisible ? [{ path: '/console/admin/storage', name: '存储配置' }] : []),
@@ -114,6 +115,8 @@ export function buildConsoleMenu(
   const rest = entries.filter((e) => !PINNED_MODULE_IDS.includes(e.moduleId))
   const items: MenuDataItem[] = [
     { path: '/console', name: '概览' },
+    // 个人 Key（issue #894）：**免闸门**——与「概览」同档（任何登录账号都该能管自己的 token）
+    { path: '/console/me/keys', name: '个人 Key' },
     ...[...pinned, ...rest].map((e) => ({
       path: e.path,
       name: e.title,
