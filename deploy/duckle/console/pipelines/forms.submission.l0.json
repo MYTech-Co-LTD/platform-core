@@ -176,7 +176,8 @@
           "mode": "overwrite",
           "region": "${ENV:ZOS_REGION}",
           "urlStyle": "path",
-          "useSsl": "true"
+          "useSsl": "true",
+          "connectionRef": "zos"
         }
       },
       "id": "sink",
