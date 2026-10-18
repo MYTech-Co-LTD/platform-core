@@ -43,6 +43,7 @@ seeds:
         region_id: bigint
         region_name: varchar
         region_l1: varchar
+        level: integer
         source_note: varchar
     columns:
       - name: system_book
@@ -65,6 +66,14 @@ seeds:
           贵州宣威大区和广西大区」）。**空 = 根节点**（`所有区域`，非一级）。
           ⚠️ 2026-10-18 前的语义是「去序号推导 + 杂项组为空」——大区被误判成「无一级」；
           本次改为受控真值（#883）。层级佐证：报表中心三级 war_zone → region_l2 → store。
+      - name: level
+        description: >-
+          **该行自身所处的层级**（#883 复审补）：`0` = 根（`所有区域`，无上级）；
+          `1` = 一级节点**本身**（`广西大区` / `贵州宣威大区` / `其余门店1` / `其他门店`
+          ——它们的 `region_l1` 就是自己）；`2` = 二级（挂在某个「X战区」下的子区）。
+          ⚠️ **它由 `region_l1` 完全决定**（`null→0` / `=region_name→1` / 否则 `→2`），
+          不是独立事实——加它是为了让消费方**不必重推**这条规则（推错了会静默把大区当二级）。
+          一致性由 `dbt/tests/lemeng/assert_dim_region_level_matches_l1.sql` 钉住。
 
   - name: x01_branch_calendar
     description: >-

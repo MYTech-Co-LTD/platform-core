@@ -35,7 +35,7 @@
 
 | # | 动什么 | 为什么 / 守卫 |
 |---|---|---|
-| 1 | `dbt/seeds/x01_region_names.csv` → **`dbt/seeds/dim_region.csv`** | 升格为维（`x01_` 前缀 = 客户输入台账，战区名是**自力枚举**所得，名不副实）。`region_l1` 改**受控真值**。 |
+| 1 | `dbt/seeds/x01_region_names.csv` → **`dbt/seeds/dim_region.csv`** | 升格为维（`x01_` 前缀 = 客户输入台账，战区名是**自力枚举**所得，名不副实）。`region_l1` 改**受控真值**；加 `level`（0 根 / 1 一级本身 / 2 二级，由 `region_l1` 完全决定，见 §3）。 |
 | 2 | 新增 `dbt/models/lemeng/marts/dim_lemeng_branch.sql` | `stg_lemeng_branch` ⨝ `dim_region`；粒度不变 `(system_book, snapshot, branch_num)`；含 `{{ subject_org() }} as org`（门禁规则 ⑩）。 |
 | 3 | `dbt/models/lemeng/marts/schema.yml` 加 `dim_lemeng_branch` 条目 | 列描述 + 粒度测试 + **未登记 region_id 的 warn 哨兵**。 |
 | 4 | 新增 `dbt/tests/lemeng/assert_dim_lemeng_branch_key_unique.sql` | 覆盖写幂等的护栏（同 `assert_stg_lemeng_branch_key_unique.sql`，键含两个分区键）。 |
@@ -49,14 +49,19 @@
 
 现状 = 去序号推导；真值按 UI 树 + 客户文档「四向独立归属，排除其他门店/贵州宣威大区/广西大区」：
 
-| 二级（`region_name`） | `region_l1` |
-|---|---|
-| 东部一区 / 二区 / 三区 / 四区 | `东部战区` |
-| 中部一区 / 二区 / 三区 | `中部战区` |
-| 南部一区 / 二区 / 三区 / 四区 | `南部战区` |
-| 西部一区 / 二区 | `西部战区` |
-| 广西大区 / 贵州宣威大区 / 其余门店1 / 其他门店 | **自成一档**（同名） |
-| 所有区域 | 空（**根**，非一级） |
+| 二级（`region_name`） | `region_l1` | `level` |
+|---|---|---|
+| 东部一区 / 二区 / 三区 / 四区 | `东部战区` | 2 |
+| 中部一区 / 二区 / 三区 | `中部战区` | 2 |
+| 南部一区 / 二区 / 三区 / 四区 | `南部战区` | 2 |
+| 西部一区 / 二区 | `西部战区` | 2 |
+| 广西大区 / 贵州宣威大区 / 其余门店1 / 其他门店 | **自成一档**（同名） | 1 |
+| 所有区域 | 空（**根**，非一级） | 0 |
+
+`level` 由 `region_l1` **完全决定**（`null→0` / `=region_name→1` / 否则 `→2`），不是独立事实；
+加它只为让消费方不必重推这条规则（推错了会静默把大区当二级）。一致性由
+`dbt/tests/lemeng/assert_dim_region_level_matches_l1.sql` 钉住（已做**变异确认**：
+两个方向各改一行，断言都真的变红）。
 
 > 这条是**业务数据**：取值来自用户截图那棵树（2026-10-17 会话读取）与客户文档的排除声明。
 > 不进浏览器抓取（会话态不可作维度源），按「受控配置」维护；改值走 PR。
