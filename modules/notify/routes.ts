@@ -38,7 +38,7 @@ export function createNotifyRouter({ pool, novu = null }: { pool: Pool; novu?: N
       enabled?: boolean
     } | null
     if (!body || !body.eventType || !body.mount || !body.templateId || !body.recipient) {
-      return c.json({ code: 'RULE_INVALID_BODY' }, 400)
+      return c.json({ error: 'RULE_INVALID_BODY' }, 400)
     }
     const bad = validateRule({
       eventType: body.eventType,
@@ -46,7 +46,7 @@ export function createNotifyRouter({ pool, novu = null }: { pool: Pool; novu?: N
       recipient: body.recipient,
       recipientArg: body.recipientArg ?? null,
     })
-    if (bad) return c.json(bad, statusOf(bad.code))
+    if (bad) return c.json({ error: bad.code }, statusOf(bad.code))
 
     const ruleId = body.id ?? `rule:${randomUUID()}`
     await upsertRule(
@@ -75,13 +75,13 @@ export function createNotifyRouter({ pool, novu = null }: { pool: Pool; novu?: N
     const body = (await c.req.json().catch(() => null)) as { enabled?: boolean } | null
     if (!body || typeof body.enabled !== 'boolean') return c.json({ code: 'RULE_INVALID_BODY' }, 400)
     const n = await setRuleEnabled(pool, org(c), c.req.param('id'), body.enabled)
-    if (n === 0) return c.json({ code: 'NOT_FOUND' }, 404)
+    if (n === 0) return c.json({ error: 'NOT_FOUND' }, 404)
     return c.json({ ok: true })
   })
 
   r.delete('/rules/:id', async (c) => {
     const n = await deleteRule(pool, org(c), c.req.param('id'))
-    if (n === 0) return c.json({ code: 'NOT_FOUND' }, 404)
+    if (n === 0) return c.json({ error: 'NOT_FOUND' }, 404)
     return c.json({ ok: true })
   })
 
@@ -97,7 +97,7 @@ export function createNotifyRouter({ pool, novu = null }: { pool: Pool; novu?: N
       payload?: Record<string, unknown>
     } | null
     if (!body || !body.eventId || !body.eventType || !body.mount) {
-      return c.json({ code: 'EMIT_INVALID_BODY' }, 400)
+      return c.json({ error: 'EMIT_INVALID_BODY' }, 400)
     }
     try {
       const result = await emit(

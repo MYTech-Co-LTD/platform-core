@@ -44,7 +44,7 @@ describePg('notify routes', () => {
       json({ eventType: 'form.due_reminder', mount: 'fd1', templateId: 'form_due_reminder', recipient: 'assignee' }),
     )
     expect(res.status).toBe(400)
-    expect((await res.json()).code).toBe('RULE_RECIPIENT_MOUNT_MISMATCH')
+    expect((await res.json()).error).toBe('RULE_RECIPIENT_MOUNT_MISMATCH')
   })
 
   it('POST /rules ⇒ 201；GET /rules 回本 org 的规则', async () => {

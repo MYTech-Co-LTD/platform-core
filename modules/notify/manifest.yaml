@@ -22,4 +22,8 @@ api:
     - { method: POST,   path: /mcp-manage,        scope: notify:manage }
     # 入口 A（事件驱动）：触发源携确定性 event_id 调此端点；入口 B（定时驱动）同调 pipeline.emit。
     - { method: POST,   path: /emit,              scope: notify:emit }
+frontend:
+  console:
+    # 一个条目 + 页内 tabs（规则管理 / 投递记录）；scope=notify:view（只看不需要 manage）
+    - { path: /console/notify, title: 通知规则, icon: BellOutlined, scope: notify:view, entry: ./console/index.tsx }
 migrations: { dir: ./migrations }
