@@ -574,6 +574,69 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 | 3 | ~~是否把「按域分次 build + 分次落账」纳入域裁剪的范围~~ | ✅ **已落地（2026-10-17）**。改动前 `data.load_log` 只在 dbt **全绿后**写 ⇒ **任一模型红，全部 relation 的 `data_as_of` 一起停** —— 同日实测**两次**（#833 与 #834 各自新增的 audit 各红一次，两次都冻结全量）。现在 `materialize.sh` **逐域**跑：红的域不落账、其余域照常落账，最后统一 `exit 1`（仍不是按需名单：命令还是 `build`、无 `--select`，域裁剪仍由 `+enabled` 表达） |
 | 4 | **「源 ≠ 部署」这类缺陷怎么发现** | 三条不变量今天**无门禁**（§4.2「仅文档」档）。配置一致性检查**抓不到** #729——那次是**源**（mytech 的导出 API）与**面**（山海）不一致，两侧配置各自自洽。可用的抓手：导出响应**带 `org`**（计划稿 A2）⇒ 管线里断言「本页 `distinct(org)` ⊆ 部署主体 org」，不通过**拒写湖**。**当前不存在这条断言** |
 
+### 2.6 通知规则层：共享绑定面 + 声明派生默认通知（2026-10-18 拍板）
+
+> **本节是「绑定层」的正典**：`什么事件 × 通知谁 × 用哪个模板 × 什么通道`。通知拆四层后，投递（Novu）/ 模板（Novu workflow）/ 解析（case-engine routing 的 assignee）三层归属不变且已实证，唯独**绑定层**无人负责——这是「创建了 case 无法通知审批人」断链的根因，本节新增的全部就是这一层。
+> 上游：explore 仓 ADR 0005 **§18**（定案）+ spec `docs/superpowers/specs/2026-10-16-notification-rules-design.md`（已人审）；跨服务租户边界见 ADR §19。
+> 落点：**新模块 `modules/notify`**（`id` = DB schema 名 = API 前缀，三同纪律）；实施计划 `docs/superpowers/plans/2026-10-18-notification-rules-layer.md`。
+
+**五条取舍（2026-10-18 拍板）**：
+
+| # | 取舍 | 理由 |
+|---|------|------|
+| ① | Novu 留任投递/模板/收件箱；**新增共享规则登记层**（本模块数据面 + AI 工具面 + console 管理页） | 换 Novu 不解决缺口（缺的层它不提供）；自研投递 = 重造更差的 Novu，且 §17.9 待办页直接消费其 in-app feed |
+| ② | **声明派生默认通知**：`approval: single <审批人[]>` 落地即**幂等派生**默认规则（`case.awaiting_approval → assignee → 通用模板 → 企微 + in-app`，`origin=derived`）；同 mount+event 有 `manual` 规则时 **manual 优先** | 常路径**零配置默认就通**，不依赖人记得挂规则；规则登记退居覆盖/扩展面 |
+| ③ | **模板不进规则层**：规则行只存 Novu workflow identifier | 文案治理沿用既有交付纪律（repo 正典 + Dev 建 + sync），缝隙最小 |
+| ④ | **fail-open**：通知链失败**不阻塞业务**（case 照常创建） | 安全性由「待办查权威源」（§17.9）背书，滞留兜底 = case-engine SLA 告警；两决策互为前提 |
+| ⑤ | 待办/通知**两态分离**：待办查权威源（实时、reassign 自动正确）；Novu 收件箱 = 通知**副本** | reassign 后旧通知不消失、已读 ≠ 已办；把副本当权威会出「读过了所以列表里没了」的假完成 |
+
+**数据模型（两张表，全声明式，org-scoped）**：
+
+- `notify.rule`：`org` / `id` / `enabled` / `event_type` / `mount`（`case_type_id` ｜ `form_def_id` ｜ `'*'`）/ `template_id`（Novu workflow identifier）/ `recipient`（`assignee` ｜ `submitter` ｜ `user_list` ｜ `field`）/ `channels`（v1 = `{wechat_work,in_app}`）/ `cooldown_minutes`（可选节流）/ `origin`（`derived` ｜ `manual`）/ 审计列。
+- `notify.delivery`：`rule_id` / `event_id` / 事件 / 收件人 / 模板 / 状态 / 错误摘要 / 时间；主键 `(org, event_id, rule_id)` —— **幂等去重**（emit 带**确定性 event_id**，业务转移一次一枚），cooldown 留作第二道。
+- 校验 **fail-closed**：解析器 × 挂载点必须匹配（form 挂载无 assignee 语义）；`user_list` / `field` 禁跨租户引用。
+- 两表进**租户门禁扫描面**：`org text not null` 首列，`scripts/check-tenant-isolation.mjs` 真库对账（表有 org 列 + NOT NULL 两条判据）。
+
+**执行流（双入口，同一管道）**：
+
+**入口 A** 事件驱动 `emit(event_id, event_type, mountId, payload)`（case-engine / forms 各一行调用）；**入口 B** 定时驱动（`form.due_reminder` / `sla.breach_warning`，载体见实施注记）。两路进同一管道：**匹配**（`manual > derived`，`'*'` 兜底）→ **解析**收件人（assignee 从 case routing 取，§15 已定）→ `novu.trigger(template_id, subscriberId, payload)`（subscriberId = Casdoor 用户 id，确定性映射，首次自动建订阅者）→ 落**回执**。**同步调用无队列**（v1 规模，YAGNI）。**投递失败**：回执记 `failed` + 错误摘要 + OpenObserve 告警，**不建重试风暴**（v1 靠 Novu 自身重试 + 人工重触发）。payload schema 同 forms-seam 纪律：版本化、进 ADR、测试锚定，改 payload 必过 PR。
+
+**v1 事件清单**：`case.awaiting_approval`（原始痛点主路径）/ `case.status_changed` / `case.reassigned` / `form.assigned` / `form.due_reminder` / `sla.breach_warning`。扩展事件 = 加一个 emit/调度点 + payload schema，**规则层零改动**。
+
+**门禁分层（频率 × 爆炸半径）**：
+
+| 层 | 爆炸半径 | 门禁 |
+|---|---|---|
+| 规则行（绑定） | 高频 × 小（发错人可一键停用/删除，可逆） | **AI 直写数据、即时生效**；回执 + 审计 + console 可见兜底 |
+| 文案模板（话术） | 低频 × 大（外发客户/员工，不可撤回） | **Novu 生产 401 架构强制**：AI 在 Dev 建 + 人审 + sync（交付照 WeKnora `06425b22` 手册） |
+
+v1 模板集 = 少量参数化通用模板：`case_awaiting_approval` / `case_status_changed` / `form_assigned` / `form_due_reminder` / `sla.breach_warning`；AI 建规则默认引用现有模板，不每次造新文案。
+
+**鉴权（钉死，非可选项）**：
+
+1. 两表进**租户门禁扫描面**，org-scoped 行级隔离。
+2. 解析器参数校验**禁止跨租户引用**：`user_list` / `field` 只能解析到本 org 用户。
+3. **Novu key 永不进浏览器**：in-app feed 由 platform-core 后端代理消费 Novu API，前端只见代理端点。
+4. AI 写规则行**携会话租户上下文**，与全平台 AI 工具面同一套门禁（org 只来自身份，绝不读请求参数；保留键一律 400）。
+
+**不做清单（v1 明确不做，写死）**：
+
+| 反模式 | 为什么不做 |
+|---|---|
+| payload 条件规则 | 规则引擎变监控系统的起点；AI 生成条件不可审计，真需求出现再设门禁 |
+| 邮件 / 短信通道 | v1 只 `wechat_work` + `in_app`；Novu 加 step 即可，规则层零改动 |
+| 消息队列 / 独立 notifier 服务 | v1 规模纯增基建；自研投递 = 重造更差的 Novu |
+| 规则表单编辑器 | 编辑场景由 AI 创建覆盖，人只管看和开关 |
+| Novu digest 替代 cooldown | digest 挂 workflow，两规则共用模板会打架 |
+| 多级审批复杂路由 | case-engine 职责，通知层只认**最终 assignee** |
+
+**实施注记**：
+
+- **架构先行**：本节落档先于代码；实施按 `docs/superpowers/plans/2026-10-18-notification-rules-layer.md` 走 issue → PR。
+- **跨服务 emit 认证未定**（本仓现只有会话 / PAT 两通道，**无服务令牌**）：case-engine → platform-core 的 emit 认证机制**到达 M3.4 时定**（该模块本就 gated on Wave 2 M2.2），不预编。
+- **定时器载体未定**：本仓既有定时形态是 duckle console `schedules/*.json`（duckle 管线专用，拉不动 platform 逻辑）；openship job 在本仓**无先例**，M3.5 须实测并沉淀。
+- **待实测（不得据以声称可用）**：PoC 硬指标 = 真实创建 case（`approval: single`）→ 声明自动派生规则 → **审批人企微真机收到通知**；五负对照（停用不通知 / fail-open / fail-closed / 幂等不双发 / manual 覆盖 derived）全过才算交付。
+
 ## 3. 宿主装配链与 I-1 顺序契约
 
 `apps/server/src/app.ts` 里带标号的 **11 段（①–⑪）**，外加一个未编号的 **④.5 请求体上限**
