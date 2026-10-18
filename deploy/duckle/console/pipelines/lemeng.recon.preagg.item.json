@@ -45,7 +45,13 @@
     "  意味着**只要 #814 没关，这条管线就永远不可能成功落数据**（历史上 last_run_at=null 即此）。",
     "  界线：**采集只该因「拿不到」而死**（`lguard` 湖空 / `pguard` T-3 无行 / `gcode` 网关报错 —— 三个都保留），",
     "  **不该因「数不一样」而死**。判定归 dbt：`recon_run` 四态（ok/within_tol/over_tol/not_evaluated）",
-    "  + `recon_break`（原因/到期/认领）。在管线里再判一次 = 同一判据的第二份实现。"
+    "  + `recon_break`（原因/到期/认领）。在管线里再判一次 = 同一判据的第二份实现。",
+    "",
+    "【2026-10-18 真跑修正·按块过滤】首跑两账套：3120 派发了 2 块（`pfe rows=2`，切块成立），",
+    "  但**两个 chunk 分区都写了全部门店（各 148 行）**——`lagg` 读的是**整日湖分区**，",
+    "  没按本块门店集过滤 ⇒ 每块都写了全集。修法：`diff` 末尾按 `PER_ITEM_BRANCH_NUMS_JSON`",
+    "  （`json_each` 展开）过滤；CSV 文件名加 `-c<块号>`（否则后一块覆盖前一块）。",
+    "  ⚠️ 教训：**切块只切了请求，没切湖侧**——「每块写自己那一片」要在 diff 层显式收口。"
   ],
   "name": "lemeng.recon.preagg.item",
   "version": 1,
@@ -212,10 +218,10 @@
         "y": 120
       },
       "data": {
-        "label": "diff 逐店透视（两侧销售/净额；任一侧缺=NULL）",
+        "label": "diff 逐店透视（**按本块门店集过滤**；两侧销售/净额）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       max(CASE WHEN side = 'lake' THEN sale END) AS platform_sale,\n       max(CASE WHEN side = 'pre'  THEN sale END) AS source_sale,\n       max(CASE WHEN side = 'lake' THEN net  END) AS platform_net,\n       max(CASE WHEN side = 'pre'  THEN net  END) AS source_net,\n       round(max(CASE WHEN side = 'pre' THEN net END)\n           - max(CASE WHEN side = 'lake' THEN net END), 2) AS diff\nFROM input GROUP BY 1 ORDER BY 1"
+          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       max(CASE WHEN side = 'lake' THEN sale END) AS platform_sale,\n       max(CASE WHEN side = 'pre'  THEN sale END) AS source_sale,\n       max(CASE WHEN side = 'lake' THEN net  END) AS platform_net,\n       max(CASE WHEN side = 'pre'  THEN net  END) AS source_net,\n       round(max(CASE WHEN side = 'pre' THEN net END)\n           - max(CASE WHEN side = 'lake' THEN net END), 2) AS diff\nFROM input\nWHERE CAST(branch_num AS BIGINT) IN (\n  SELECT CAST(j.value AS BIGINT) FROM json_each('${ITER_ITEM_BRANCH_NUMS_JSON}') j\n)\nGROUP BY 1 ORDER BY 1"
         }
       }
     },
@@ -227,10 +233,10 @@
         "y": 400
       },
       "data": {
-        "label": "report 逐店明细落盘（覆盖写=幂等）",
+        "label": "report 本块明细落盘（文件名含块号，块间不覆盖）",
         "componentId": "snk.csv",
         "properties": {
-          "path": "/workspace/reports/recon-preagg/recon-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.csv",
+          "path": "/workspace/reports/recon-preagg/recon-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}-c${ITER_ITEM_CHUNK_NO}.csv",
           "mode": "overwrite"
         }
       }
