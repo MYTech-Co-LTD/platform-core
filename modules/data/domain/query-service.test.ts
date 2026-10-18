@@ -831,10 +831,13 @@ describe('runQuery —— 值级脱敏回包 masking（spec §5.3，P2 T2）', (
     await applyMigrations(pool)
     await pool.query('delete from data.query_audit where org = $1', [ORG])
     await pool.query('delete from data.metrics where org = $1 and id like $2', [L1_ORG, `${MASK_PREFIX}%`])
+    // L2 夹具落在本 org（`upsertMetric`）——同样按前缀清，别碰别人的行
+    await pool.query('delete from data.metrics where org = $1 and id like $2', [ORG, `${MASK_PREFIX}%`])
     lastSql = ''
   })
   afterAll(async () => {
     await pool.query('delete from data.metrics where org = $1 and id like $2', [L1_ORG, `${MASK_PREFIX}%`]).catch(() => {})
+    await pool.query('delete from data.metrics where org = $1 and id like $2', [ORG, `${MASK_PREFIX}%`]).catch(() => {})
     await pool.query('delete from data.query_audit where org = $1', [ORG]).catch(() => {})
     await pool.end().catch(() => {})
   })
@@ -899,5 +902,25 @@ describe('runQuery —— 值级脱敏回包 masking（spec §5.3，P2 T2）', (
     const r = await pool.query('select masking from data.query_audit where org = $1', [ORG])
     expect(r.rowCount).toBe(1)
     expect(r.rows[0].masking).toBeNull()
+  })
+
+  // ★ 端到端：L2 指标 + L1 带掩码 ⇒ 回包 masking **非空**（#820 路线 C）。改按列解析之前，
+  //   L2 行 masks 恒 null ⇒ 只读本行 ⇒ masking 恒空（fail-open 洞）；L2 的 selectSql 逐字保留
+  //   L1 的列引用 ⇒ 全量 catalog 按列解析后自动命中。
+  it('★ L2 指标：列在 L1 行声明过掩码 ⇒ 回包 masking 非空、执行层 SQL 真被掩（#820）', async () => {
+    await seedMasked([{ column: 'qp3_mask_f.revenue', kind: 'round', step: 1000, grantedBy: 'data:precise' }])
+    // L2 行（本 org）：masks 恒 null；selectSql 逐字复用 L1 的列引用（L2 编译原样保留，实测）
+    const L2_ID = `${MASK_PREFIX}l2`
+    await upsertMetric(pool, ORG, {
+      ...METRIC, id: L2_ID, groupBy: 'bizday',
+      selectSql: 'SELECT sum(qp3_mask_f.revenue) AS value, bizday FROM dbt.qp3_mask_f',
+    }, 'fixture')
+
+    const out = await runQuery(depsOf(), ORG, req(), L2_ID, {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(out.masking).toEqual({ 'qp3_mask_f.revenue': 'round:1000' })
+    expect(lastSql, '按列解析 ⇒ L2 也拿到 L1 的掩码（掩在聚合内部）')
+      .toContain('sum(round(qp3_mask_f.revenue, -1000))')
   })
 })

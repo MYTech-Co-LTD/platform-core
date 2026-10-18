@@ -272,9 +272,11 @@ export async function runQuery(
   //     list_metrics）**本来就**看不见它，只有 /query 会回「存在但你没权限」——那是个存在性
   //     探针，与三条面自相矛盾。`authorize` 自身的 `metric_not_authorized` 分支未变
   //     （authz.test.ts C2 仍钉着它：它是本核心的契约，只是消费面在它之前已把词表收窄）。
-  const catalog = visibleMetrics(
-    await loadMergedCatalog(deps.pool, org), requester, deps.adoptedSources)
-  const authz = authorize(catalog, requester, metricId, args)
+  // 全量 catalog 同时供两个用途：① 裁剪出可见集（问数面）；② 掩码按列解析的输入。
+  // ② 刻意用**未裁剪**的：掩码只减信息，用看不见的行上的掩码掩自己 = fail-closed。
+  const allMetrics = await loadMergedCatalog(deps.pool, org)
+  const catalog = visibleMetrics(allMetrics, requester, deps.adoptedSources)
+  const authz = authorize(catalog, requester, metricId, args, allMetrics)
   if (!authz.ok) {
     await audit('denied', authz.reason, null, null)
     return { status: 'denied', metricId, reason: authz.reason, detail: authz.detail }

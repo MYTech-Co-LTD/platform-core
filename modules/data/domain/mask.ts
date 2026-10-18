@@ -6,7 +6,7 @@
 // （Global Constraint 6：select_sql 是编译产物，掩码进它会被 L2 编译原样带出去）。
 //
 // 词表（MASK_KINDS / MaskKind / MaskSpec）**唯一定义**在 ./authz，这里只消费——别另立一份。
-import type { MaskSpec } from './authz'
+import type { MaskSpec, MetricDef } from './authz'
 
 /**
  * 整值掩码的 applied 记号键：掩码目标不是一个列，而是「`… as value` 的整个表达式」，
@@ -204,4 +204,32 @@ export function maskedSelectSql(
 export function sqlMentionsColumn(selectSql: string, column: string): boolean {
   const probe = maskedSelectSql(selectSql, [{ column, kind: 'nullify', grantedBy: 'probe' }], () => false)
   return Object.prototype.hasOwnProperty.call(probe.applied, column)
+}
+
+/**
+ * 按列解析本次查询的掩码集（spec §5.3.1 R10 裁决 C，堵 #820）。
+ *
+ * `掩码集 = ⋃{ 声明 d : d.column 逐字出现在 metric.selectSql 里 }`，d 取自**全量 catalog**。
+ *
+ * ★ 为什么取全量（含调用者看不见的行）：掩码**只会减少信息**⇒ 拿「我看不见的行」上的掩码
+ *   来掩自己，是 fail-closed 的正确方向；并集 ⊇ 原集合 ⇒ **行为只增不减**。
+ * ★ 为什么 L2 自动被覆盖：L2 的 `select_sql` **逐字保留** L1 的列引用（实测见 spec §5.3.1）
+ *   ⇒ L2 查的列在 L1 行里声明过 ⇒ 命中。不需要血缘列、不需要反向检查、**无过期状态**。
+ * ★ 整值（`column === null`）**不跨指标按列传播** ⇒ 只取本行的整值声明（默认档合成的那些）。
+ *
+ * @param catalog 全量 catalog（**未**经 visibleMetrics 裁剪）
+ * @param metric  本次查询的指标行
+ */
+export function effectiveMasks(catalog: MetricDef[], metric: MetricDef): MaskSpec[] {
+  const byColumn = new Map<string, MaskSpec>()
+  for (const row of catalog) {
+    for (const spec of row.masks ?? []) {
+      if (spec.column === null) continue                                  // 整值不按列传播
+      if (byColumn.has(spec.column)) continue                             // 同列单声明由门禁保证；这里防御性取首个
+      if (!sqlMentionsColumn(metric.selectSql, spec.column)) continue     // 本指标没查这列 ⇒ 与它无关
+      byColumn.set(spec.column, spec)
+    }
+  }
+  const whole = (metric.masks ?? []).filter((s) => s.column === null)
+  return [...byColumn.values(), ...whole]
 }

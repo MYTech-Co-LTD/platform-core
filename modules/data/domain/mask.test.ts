@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { maskedSelectSql, sqlMentionsColumn, topLevelValueHead } from './mask'
+import { effectiveMasks, maskedSelectSql, sqlMentionsColumn, topLevelValueHead } from './mask'
+import type { MetricDef } from './authz'
 
 const SEL = 'select sum(fct_x.net_amount) as value, bizday from fct_x'
 const R = (spec: string) => ({ column: 'fct_x.net_amount', kind: 'round' as const, step: 1000, grantedBy: 'data:precise', ...JSON.parse(spec) })
@@ -136,5 +137,48 @@ describe('topLevelValueHead（深度/引号感知的 `… as value` 头）', () 
 
   it('别名不是 value ⇒ null', () => {
     expect(topLevelValueHead('select sum(f.x) as value_added, bizday from f')).toBeNull()
+  })
+})
+
+describe('effectiveMasks（按列解析，#820 路线 C）', () => {
+  // 夹具只需 MetricDef 的必填面（本文件 typecheck 覆盖测试文件 ⇒ 形状要齐；id/selectSql/masks
+  // 三个载荷字段与 brief 逐字一致，其余是补齐的必填壳）。
+  const base = {
+    title: '', description: '', requiredScope: null, subjectColumn: 'org', groupBy: '', params: {},
+  }
+  const L1: MetricDef = {
+    ...base, id: 'l1',
+    selectSql: 'select sum(fct_x.net_amount) as value from fct_x',
+    masks: [{ column: 'fct_x.net_amount', kind: 'round', step: 1000, grantedBy: 'data:precise' }],
+  }
+  const L2: MetricDef = {
+    ...base, id: 'l2',
+    selectSql: 'select sum(fct_x.net_amount) as value, bizday from dbt.fct_x',
+    masks: null,
+  }
+
+  it('★ L2 行 masks 恒 null，但按列解析仍拿到 L1 的掩码（洞 #820 消失）', () => {
+    expect(effectiveMasks([L1, L2], L2)).toEqual(L1.masks)
+  })
+
+  it('★ 被 required_scope 裁掉的 L1 行**仍贡献**掩码（只看掩码集，不看可见性）', () => {
+    // 调用方传全量 ⇒ 传进来就有；这条钉的是「不要在 effectiveMasks 里做可见性过滤」
+    expect(effectiveMasks([L1], L2)).toHaveLength(1)
+  })
+
+  it('列不在本指标 selectSql 里 ⇒ 不贡献', () => {
+    const other: MetricDef = {
+      ...base, id: 'o', selectSql: 'select sum(fct_y.other) as value from fct_y', masks: L1.masks,
+    }
+    expect(effectiveMasks([L1, other], other)).toEqual([])
+  })
+
+  it('整值（column=null）**不跨指标**传播：只有本行的整值生效', () => {
+    const whole: MetricDef = {
+      ...base, id: 'w', selectSql: L1.selectSql,
+      masks: [{ column: null, kind: 'nullify', grantedBy: 'data:precise' }],
+    }
+    expect(effectiveMasks([whole, L2], L2)).toEqual([])
+    expect(effectiveMasks([whole, L2], whole)).toEqual(whole.masks)
   })
 })

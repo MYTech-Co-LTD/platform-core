@@ -8,7 +8,7 @@
 //
 // 原型实测 11/11：/tmp/iam-lab/mcp_authz_server.py + run_matrix.py（同序拒绝链）。
 // 本文件**不得** import 任何 pool / env / Hono —— 它是纯的，才能被三通道共用且可单测。
-import { maskedSelectSql } from './mask'
+import { effectiveMasks, maskedSelectSql } from './mask'
 
 export type MetricParamType = 'date' | 'date_range' | 'string' | 'number'
 export interface MetricParamDef {
@@ -271,6 +271,15 @@ export function authorize(
   requester: Requester,
   metricId: string,
   args: Record<string, unknown>,
+  /**
+   * 掩码解析用的**全量** catalog（spec §5.3.1 R10）。**缺省 = `catalog`** ⇒ 既有调用点
+   * （`authz.test.ts` 约 40 处）一字不改。生产调用点（`query-service.ts`）**显式传未裁剪的那份**。
+   *
+   * ⚠️ **刻意不把裁剪挪进本函数**：那会改变文档化的拒绝原因（`metric_not_declared`
+   *    → `metric_not_authorized`），重新引入 spec 刻意避开的**存在性探测**
+   *    （见 `query-service.ts` 的 catalog 裁剪注释）。
+   */
+  maskCatalog: MetricDef[] = catalog,
 ): AuthzResult {
   const metric = catalog.find((m) => m.id === metricId)
   if (!metric) return { ok: false, reason: 'metric_not_declared', metricId }
@@ -323,7 +332,9 @@ export function authorize(
   // 掩码包在聚合内部（sum(round(x,-n))，不是 round(sum(x))）。放在 whereAndGroup 拼装之前，
   // 故明细、显式合计、自动合计**读的是同一个内层 select** ⇒ total 与明细行用同一套掩码值
   // （spec §3.2 不变量 2：合计与明细不得一个掩一个不掩）。
-  const masked = maskedSelectSql(metric.selectSql, metric.masks, requester.hasScope)
+  // ★ 按**列**解析（spec §5.3.1 R10 裁决 C，堵 #820）：掩码集从**全量** catalog 取，不再只读
+  //   本行 `metric.masks`——L2 行 masks 恒 null，只读本行 ⇒ L2 恒不掩（fail-open 洞）。
+  const masked = maskedSelectSql(metric.selectSql, effectiveMasks(maskCatalog, metric), requester.hasScope)
   const whereAndGroup =
     `${masked.sql} WHERE ${metric.subjectColumn} = ${sqlQuote(subject)}` +
     filters.join('') +
