@@ -68,6 +68,15 @@
 > **两条不放松**：**禁止把 ② 写成 ①**；**禁止把 ③ 写成 ②**（挂个 gate 拖着 = 永远不做）。
 > **依据强度**：能力判断的出处**优先级 = 源码 > `capabilities --markdown` 产物 > 上游文档**
 > （上游文档漂过：出现过不存在的组件 id）。出处与逐条论证见外部分析件（**不在本仓**）。
+>
+> **适用范围（2026-10-19 订正，issue #920）**：本判据**不只管「接一个新能力」**——做**任何数据面工件**
+> （采集 / 判定 / 对账 / 管线节点）都先过它，并落进 `docs/architecture.md` §4.2「duckle 原生优先」。
+> 执法器 = `.claude/skills/duckle-native-first`（判停门：**查目录 → 横向试同类 → 落三档 → 登记缺口**）。
+>
+> ⚠️ **反例（2026-10-19，issue #917）**：对账子管线手搓了一份净销售额口径（`lagg` 节点），而同环境里
+> `src.postgres`（读物化结果）、`qa.reconcile`（原生源↔目标对账）、`routines/`（可被 `routineRef`
+> 引用的保存 SQL）**都在**。没人查目录 ⇒ 那份手搓的实现与 dbt 构件悄悄漂移，酿成两次静默事故
+> （#813 容差地板 / #917 退回侧判别式）。**「引擎有」不等于「我们知道它有」——先问引擎是动作，不是知识。**
 
 #### 1.1.1 通道选型
 
@@ -646,6 +655,16 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 > ⚠️ 仍然成立的老规矩：**「对账绿」只说明两侧算的是同一件事**，不等于口径已由业务确认——
 > 换货半边是**我方逆向**出来的（乐檬未确认），赠品侧仍有硬依赖（`order_detail_state` 真机恒空）。
 
+> **复算 vs 对账 —— 两种性质不同的控制，别写成同一个算式（2026-10-19 定案，issue #920）**
+>
+> | | 问的问题 | 对手方 | 该在哪 | 允许几份实现 |
+> |---|---|---|---|---|
+> | **复算**（内部一致性） | 我们自己算得对不对 | **同一份原始数据** | 贴着模型，同一工具链（dbt `audit_*`，独立**读路径**、不 ref staging） | **2 份**（构件 + 复算） |
+> | **对账**（外部一致性） | 我们和客户系统对不对 | **外部系统**（乐檬端点） | **消费者**：读物化结果（`fct_retail_sale`）比外部源 | **0 份** —— 不自带等价算式 |
+>
+> 把两者混在一起（对账侧也自己算一遍）⇒ 同一业务规则出现两份并列实现、靠人手同步 ⇒ **静默漂移**
+> （#813 容差地板、#917 退货侧判别式，两次都是这个形态）。机检 = `docs/architecture.md` §4.1 的 **B11**。
+
 #### 1.4.1 判据落位：闸在管线内只判「不可能」，量级判在管线外
 
 > 新增 **2026-10-05**（案例 = 乐檬零售量级判据选型，证据见 WeKnora 条目 `1b7724f1-45ae-4e36-b92e-8e7dc70468ca`）。
@@ -655,6 +674,11 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 |---|---|---|---|---|
 | **结构 / 内部一致性**：末页容量、契约非空与范围、跨页合并后行数自洽、行数下限的**粗保险丝** | **采集管线内**（sink 前）| 今天这一份数据本身 | **fail-closed**：拦住采集 | 末页守卫 / `qa.contract` / `xf.assert` |
 | **量级（vs 历史）** + **独立通道（vs 另一源）** | **管线外**：dbt `audit_*`（走 pg_duckdb，**免凭据**）| **历史** ＋ **第二条通路** | 事后告警，可人工复核 | dbt `audit_*` |
+| **对账（vs 外部系统）** | **管线外**：dbt 读**物化结果** ⋈ 外部源快照 | **外部系统**（乐檬端点） | 事后台账，可人工复核 | dbt `recon_break` / `recon_run` + 采集侧只负责**取数落湖** |
+
+> ⚠️ **对账侧不许自算口径**（2026-10-19，issue #920）：外部一致性只该问「我们发布的数 vs 别人的数」。
+> 让对账侧再实现一遍口径 = 第二份并列实现（机检见 architecture §4.1 B11）。采集管线在这一层只做
+> **取数**（调端点、落湖），比较与判定归 dbt。
 
 **为什么「量级」不进管线内**（三条，逐条有实测）：
 1. **它需要历史**，而管线内只有今天这一份。放进管线就得让管线去读自己的过去 ⇒ 耦合 + 冷启动 + 「状态按什么键分桶」一类坑（实测：`qa.baseline` 状态按「**运行名 + 节点 id**」键控，24 窗 foreach 共用同一子管线节点时会把**不同小时混进同一条基线**）。
@@ -738,7 +762,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | `data.dim_transfer_out` / `data.dim_wholesale_out` | transfer/wholesale l0（UTC `35 15` / `45 15`，采**昨日制单日**） | **T-1** | UTC `27 3` | 维表发布 UTC `43 3` | （随 ⑦ 面） | **T-3** |
 | `data.dim_settlement_order_line`（取价面） | 上两行的 staging 归一 | 同上 | 同上 | 同上 | **⑦ 时段感知：上海 13 点前 −3、后 −2** | **T-3**（结构下限） |
 
-| `recon_run` / `recon_break`（口径对账**台账**） | 湖 `lemeng/recon_preagg`（父管线每日 T-3 线；console UTC `16:30` 64188 / `16:40` 3120） | **T-3**（管线按「上海日 −3」定稿） | UTC `27 3`（上海 11:27） | 同左（dbt 表整表替换） | **⑨ 台账覆盖（时段感知）**：上海 12 点前按 −4、之后按 −3，须在 `recon_run` 里有行；`not_evaluated`（源侧零返回）与 `source_cover_pct < 1` **各成一条**——探活断言 **⑪⑫⑬**（`wire-warehouse.sh`，advisory，见 §1.5.3） | **T-3** |
+| `recon_run` / `recon_break`（口径对账**台账**） | 湖 `lemeng/recon_source`（父管线每日 T-3 线；console UTC `16:30` 64188 / `16:40` 3120） | **T-3**（管线按「上海日 −3」定稿） | UTC `27 3`（上海 11:27） | 同左（dbt 表整表替换） | **⑨ 台账覆盖（时段感知）**：上海 12 点前按 −4、之后按 −3，须在 `recon_run` 里有行；`not_evaluated`（源侧零返回）与 `source_cover_pct < 1` **各成一条**——探活断言 **⑪⑫⑬**（`wire-warehouse.sh`，advisory，见 §1.5.3） | **T-3** |
 
 > 要点：调出/批发链「23:35 采 T-1 → 次日 11:43 发布」意味着**取价面每天零点必然停在 T-3**——
 > 这不是故障，是节奏；判据必须容得下它。新增发布面时：先在本表加行，再定探活容差。
@@ -861,7 +885,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 |---|---|---|---|---|---|---|---|
 | 乐檬零售明细（3120） | duckle | — | `lemeng/retail_order_line` | `system_book=` + `hour=` | **日批在跑** + 5min tick 已定义（**试点待投递**，Task 6 未投——别读成「现行 5min」） | **duckle console**（调度 enabled，cron 不变；openship job 已先禁、观察期 ≥3 运行日后退役——#265） | 自证 ✓ / 幂等 ✓ / 独立通道 **口径已对齐**（2026-10-05；旧数 +1.15% 系**旧口径**、已废）——⚠️ 但 **3120 侧通道被乐檬改坏（恒 `10006`），无法复验**（§1.4） / 跨系统 待回填。**2026-10-17 采集清单改 whoami 现算**（可见 − `BRANCH_EXCLUDE`，静态 `BRANCH_NUMS` 退役为对账底账 + 双向漂移告警——#793；曾因静态清单漏新店 271 号店 17 天，见 §1.6 案例 33） |
 | 乐檬零售明细（64188） | duckle | — | 同上 | 同上 | 同 3120 | **未落**（调度；**数据已落盘**——见 §2） | 自证 / 幂等 同 3120 / 独立通道 **✓ 逐分归零**（2026-10-05 真机 5 天 × 63 店；执行面 `scripts/lemeng/recon-preagg.sh`） / 跨系统 待回填。2026-10-17 同改 whoami 现算（exclude=`[]`，行为不变——#793）。2026-10-17 净额口径改冲退货（#813）：对账锚**新增**净额锚 `sale_money − return_money`（**销售侧锚保留**），退货侧另有逐店缺口（#814，过渡容差 NET_ABS_TOL=200 带到期）；**退货行同套赠品判别式（绝对值形态，#908/#917）** |
-| **乐檬口径对账事实**（**派生资产，非源**：湖侧自算 vs `itemsales` 报表，逐店落湖；消费面 spec §12.4 缺口①） | duckle | — | `lemeng/recon_preagg` | `system_book=` + `bizday=` + **`chunk=`** | 日更（T-3 线；**当前口径对账没有排班**，本任务新建） | **duckle console**：父 `lemeng.recon.preagg`（`pday` 切块 → `pfe` foreach）→ 子 `lemeng.recon.preagg.item` | **未验收（B 段登记，2026-10-18）**——计划 `docs/superpowers/plans/2026-10-18-recon-preagg-lake-sink.md`。**分解（第三版）**：① 湖只放**逐店比对事实**（加 `chunk=` 分区解决端点单次 ≤100 家硬限——父管线原先把全部门店拼一个数组，64188/3120 都 >100 ⇒ 必 `10001`）；② **台账归 dbt**：`recon_run`（`status` 四态 `ok/within_tol/over_tol/**not_evaluated**` + `break_count`/`max_break`/容差）+ `recon_break`（超容差行 + 原因/到期/认领）——派生分析不进采集；③ **原因与到期在 seed**（`recon_tolerances.csv`，与 `x08_thresholds` 同形；`NET_ABS_TOL=200` 现为**具名 reason code** `late_return_restatement`，过期自动转红）；④ **健康判据 = `break_count`/`max_break` 趋势**，不是 `sum(diff)≈0`（正负可抵消）。⚠️ 本资产**不含 completeness 对账**（那是 `diagnose.sh recon`，另一个控制）。⚠️ 父管线 `_note` 的「3120 恒 10006 所以不排班」已被 2026-10-18 实测推翻 **2026-10-18 追加（PR #895）**：观测面修复——原两条锚指向**子管线**写的对象 ⇒ **不进资产集**（§1.6 案例 35）；改为父管线**收尾汇总**（字面路径）+ `ctl.anchor` 的 trigger 边。两账套真机验证：`freshness.json` 该资产 **fresh**、run 记录里 `direction=write`、次序实测成立（汇总写在最后一块之后）。**排班首跑验收仍待**（下一夜 00:30 / 00:40 CST）。 |
+| **乐檬口径对账源侧快照**（**派生资产，非源**：`itemsales` 报表逐店返回值；平台侧在 dbt 构件、比较在 dbt；消费面 spec §12.4 缺口①） | duckle | — | `lemeng/recon_source` | `system_book=` + `bizday=` + **`chunk=`** | 日更（T-3 线；**两账套都排班**：64188 `30 0` / 3120 `40 0` CST，2026-10-19 订正） | **duckle console**：父 `lemeng.recon.preagg`（`pday` 切块 → `pfe` foreach）→ 子 `lemeng.recon.preagg.item` | **未验收（B 段登记，2026-10-18）**——计划 `docs/superpowers/plans/2026-10-18-recon-preagg-lake-sink.md`。**分解（第三版）**：① 湖只放**源侧逐店值**（加 `chunk=` 分区解决端点单次 ≤100 家硬限——父管线原先把全部门店拼一个数组，64188/3120 都 >100 ⇒ 必 `10001`）；**2026-10-19 订正（#920）**：平台侧与比较**都不在管线里**——平台侧读 dbt 构件 `fct_retail_sale`，比较在 dbt `recon_fact`/`recon_break`（不变量 architecture §4.1 B11）；② **台账归 dbt**：`recon_run`（`status` 四态 `ok/within_tol/over_tol/**not_evaluated**` + `break_count`/`max_break`/容差）+ `recon_break`（超容差行 + 原因/到期/认领）——派生分析不进采集；③ **原因与到期在 seed**（`recon_tolerances.csv`，与 `x08_thresholds` 同形；`NET_ABS_TOL=200` 现为**具名 reason code** `late_return_restatement`，过期自动转红）；④ **健康判据 = `break_count`/`max_break` 趋势**，不是 `sum(diff)≈0`（正负可抵消）。⚠️ 本资产**不含 completeness 对账**（那是 `diagnose.sh recon`，另一个控制）。⚠️ 父管线 `_note` 的「3120 恒 10006 所以不排班」已被 2026-10-18 实测推翻 **2026-10-18 追加（PR #895）**：观测面修复——原两条锚指向**子管线**写的对象 ⇒ **不进资产集**（§1.6 案例 35）；改为父管线**收尾汇总**（字面路径）+ `ctl.anchor` 的 trigger 边。两账套真机验证：`freshness.json` 该资产 **fresh**、run 记录里 `direction=write`、次序实测成立（汇总写在最后一块之后）。**排班首跑验收仍待**（下一夜 00:30 / 00:40 CST）。 |
 | 乐檬门店维 / 商品维（双账套） | duckle | — | `lemeng/dim_branch`、`lemeng/dim_item` | `system_book=` + `snapshot=` | 日更（全量快照） | **duckle console** ×2（UTC `0 2 * * *` / `0 11 * * *`） | 首次真跑销账（**拒写湖**路径已验证；门店维见 `deploy/duckle/README.md` §9，商品维 2026-09-26 两账套 cron 真跑）——**不是「四层全过」** |
 | 乐檬价格批 / 门店商品应用价（双账套，#499/#481） | duckle | **首载走一次性脚本（H 例外）**：引擎 src.rest 响应体上限（into_string 编译期默认 **12.3MB 过 / 32.9MB 炸、不可配**）使单店即越限 ⇒ 管线无法承载 2 年窗全量；首载 = 探针测量产物直写湖（`scripts/lemeng/backfill-item-price-once.py`，已留档），日常增量走管线 | `lemeng/item_price` | `system_book=` + `bizday=`（**R1 增量模型**：行 = 价格变更事件，`last_edit_time` = 事件时间；staging 取每 key 最新物化现价） | 日更（请求侧增量水位 `incrementalField=last_edit_time`；响应 KB 级/天） | **duckle console** ×2（UTC `15 11 * * *`，与 dim.item 错峰） | 首载 ✓（64188 = 204,474 / 3120 = 734,682，写读对平）/ 日常增量首跑 ✓（**双账套均 ok**——3120 PAT 2026-10-08 晚已换发恢复，见 #499/#511）/ 幂等 ✓（同 key 覆盖写两次实证）/ 独立通道 ✓（发布表 vs 网关定点逐分平：蒙自01×22441 = 9.96/996）/ spec_rate 换算方向 ✓ 真机样本实证（礼盒 ÷3 公斤价、份装 ÷2 盒价；「鲜切」类 unit 同 rate=2 的 ~20 行语义留业务确认）/ 跨系统 待回填 |
 | 乐檬批发销售单（3120 单账套，#499/R3） | duckle | — | `lemeng/wholesale_out` | `system_book=` + `bizday=`（行=批发单商品行，`order_detail_price`=基本单位批发价——**按单结算，≠档案批发价**） | 日更（窗口=昨日制单日；`date_type=制单时间`——⚠️ 2026-10-08 组合反转实测订正（#513）：短词「制单/审核」被**静默忽略**返回全史，正确值恰是文档描述的「制单时间」；变更过滤参数后必须实证日期形状） | **duckle console**（UTC `45 15 * * *`，与调出单错峰） | 首跑 ✓（222 行落湖/staging 键唯一 PASS/发布 `data.dim_wholesale_out` 218 行，仅审核单）；历史批发单未回填——**2026-10-10 裁决：待数据稳定后发起全管线补采（覆盖时间范围更广），不单点补**（届时按 §1.3 阶段 H 参数化 run 实测后沉淀；本行与 §2 对应行同步此裁决）。**2026-10-12 契约 v2**（W1）：补采单头 `wholesale_order_total_money/cost_money` 两列（客户公式 R/C wholesale 侧构件，R3 当时未采）；已存在分区须按新 schema 重采覆盖（不属历史回填批次），未完成前 staging 读全表会炸列集漂移 |
@@ -916,7 +940,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 ---
 
-| 乐檬 | `lemeng/recon_preagg`（`system_book=` + `bizday=` + **`chunk=`**） | 账套 × 对账业务日 × 块 × 门店（**派生资产，非源**：湖侧自算 vs `itemsales` 报表） | **已落盘**（双账套，10-01～10-15 各 15 天；3120 每天 2 块 147–149 行 / 64188 1 块 65–74 行） | T-3 线日更（64188 `30 0` / 3120 `40 0` CST）；父 `lemeng.recon.preagg` → 子 `lemeng.recon.preagg.item`；**判定归 dbt** `recon_run`/`recon_break`；新鲜度锚 = 父管线收尾汇总 CSV（§1.6 案例 35）；回填变体带 `${BIZDAY}`（#888） |
+| 乐檬 | `lemeng/recon_source`（`system_book=` + `bizday=` + **`chunk=`**） | 账套 × 对账业务日 × 块 × 门店（**派生资产，非源**：`itemsales` 报表逐店返回值；**平台侧读 dbt 构件、比较归 dbt**，#920） | **已落盘**（双账套，10-01～10-15 各 15 天；3120 每天 2 块 147–149 行 / 64188 1 块 65–74 行） | T-3 线日更（64188 `30 0` / 3120 `40 0` CST）；父 `lemeng.recon.preagg` → 子 `lemeng.recon.preagg.item`；**判定归 dbt** `recon_run`/`recon_break`；新鲜度锚 = 父管线收尾汇总 CSV（§1.6 案例 35）；回填变体带 `${BIZDAY}`（#888） |
 ## 3 落地位置
 
 | 东西 | 在哪 |
