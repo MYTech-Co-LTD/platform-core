@@ -637,6 +637,24 @@ v1 模板集 = 少量参数化通用模板：`case_awaiting_approval` / `case_st
 - **定时器载体未定**：本仓既有定时形态是 duckle console `schedules/*.json`（duckle 管线专用，拉不动 platform 逻辑）；openship job 在本仓**无先例**，M3.5 须实测并沉淀。
 - **待实测（不得据以声称可用）**：PoC 硬指标 = 真实创建 case（`approval: single`）→ 声明自动派生规则 → **审批人企微真机收到通知**；五负对照（停用不通知 / fail-open / fail-closed / 幂等不双发 / manual 覆盖 derived）全过才算交付。
 
+**按租户解析 Novu 凭据（2026-10-19 定案，方案 A）**
+
+**背景**：租户隔离标准（team-harness `docs/standards/tenant-identity.md`）要求 **Novu 组织名 ≡ Casdoor 组织名** ⇒ **每租户一个 Novu 组织**，各自有独立的 Dev/Prod API key。而本仓现在只有一对 `NOVU_BASE_URL` / `NOVU_API_KEY`（`novuFromEnv()` 是单租户语义）⇒ 多租户单实例发通知时必须**按 org 选 key**。
+
+**定案：env 映射 + 回落，零 schema 变更。**
+
+| 优先级 | 来源 | 说明 |
+|---|---|---|
+| 1 | `NOVU_API_KEY__<ORG>` | `<ORG>` = org 名大写下划线化（`mytech` → `NOVU_API_KEY__MYTECH`）；openship 项目 env（isSecret）注入 |
+| 2 | `NOVU_API_KEY` | 兜底：单租户部署 / 未单独开通通知的 org（现网行为不变） |
+| 3 | 都无 | **该 org 视为未开通通知**：emit 落 `failed` 回执（`novu not configured`），**不抛**（与本节 fail-open 取舍一致） |
+
+- **落点**：`pipeline.emit` 按 `input.org` 解析客户端；`deps.novu` 从「固定配置」改为「解析函数」。`NOVU_BASE_URL` 仍全局一个（同一 Novu 实例）。
+- **否决 B（存进 `platform.tenant`）**：会引入**新的密钥存储面**（加密/轮换/审计纪律），与「密钥只在 env / openship / GitHub Secrets」的安全基线冲突；v1 租户数少，env 映射够用。
+- **否决 C（外部 KMS）**：v1 付新基建，同本节不做清单的取舍。
+- **约束**：org 名须能安全转成 env 变量名（当前租户名均为 ASCII）；含非 ASCII 的 org 需显式映射——**待实测**，不得据以声称可用。
+- **运维口径**：该 Novu 实例是 **CE 构建**，控制台**没有**组织管理入口（`/settings/organization`、`/auth/organization-list` 在 CE 下直接重定向；左上组织名无点击）。**租户创建 / 切换 / 取 API key 只能走 API** —— 步骤见 skill `novu-ops`（team-harness `skills/mytech/novu-ops/SKILL.md`）。
+
 ## 3. 宿主装配链与 I-1 顺序契约
 
 `apps/server/src/app.ts` 里带标号的 **11 段（①–⑪）**，外加一个未编号的 **④.5 请求体上限**
