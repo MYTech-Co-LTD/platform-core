@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.170.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.170.3...v0.170.4) - 2026-10-19
+- 【修复】data: 退货侧赠品判别式补到对账两副本 + 口径五副本同源门禁（#917/#831） ([#918](https://github.com/MYTech-Co-LTD/platform-core/pull/918), [086f11a](https://github.com/MYTech-Co-LTD/platform-core/commit/086f11afdfff8de188d69f1b6ca71e043d89fd80))
+
+
 ## [0.170.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.170.2...v0.170.3) - 2026-10-18
 - 【修复】auth: admin 会话 cookie 取最后一个 casdoor_session_id——新版 Casdoor 登录发两个（#915，承接 #911） ([#914](https://github.com/MYTech-Co-LTD/platform-core/pull/914), [87d0e85](https://github.com/MYTech-Co-LTD/platform-core/commit/87d0e85f92e670e0198363ad9487af2f568a3384))
 
