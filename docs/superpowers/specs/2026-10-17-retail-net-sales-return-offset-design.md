@@ -96,14 +96,22 @@ sale_amount    = Σ_订单[ (Σ非赠品行额 + order_total_money) / 2 − Σ�
                    条件 state='FINISHED' AND order_transaction_type='SALE_ORDER'
                    （现行式，一字不动；= 乐檬 sale_money 的湖侧复现）
 
-return_amount  = Σ_行[ sale_money + order_detail_share_discount ]      （存正数量级）
+return_amount  = Σ_行[ 0 若该行判为赠品行，否则 sale_money + order_detail_share_discount ]（存正数量级）
                    条件 order_transaction_type like '%RETURN%' AND state='FINISHED'
 
 net_amount     = sale_amount − return_amount
 ```
 
-- **赠品判别式**只作用于销售侧（现行式）。退货侧不设——退货行的赠品判别式等价于
-  `sale_money ≈ 0`，贡献本就为 0，设不设同值。
+- **赠品判别式两侧各一套**（⚠️ **2026-10-18 订正**，issue #908；本节原文写「只作用于销售侧」——
+  该判断**已被证伪**，理由见下）：
+  - 销售侧 = 现行式：`std_price>0 且 sale_money>0 且 qty>0 且 |折扣 − 标价×数量| ≤ 0.02`；
+  - 退货侧 = **同一判别式的绝对值形态**：`std_price>0 且 abs(sale_money)>0 且 abs(qty)>0 且
+    |abs(折扣) − 标价×abs(数量)| ≤ 0.02`。
+  - 原文的反推是「退货行的赠品判别式等价于 `sale_money ≈ 0`，贡献本就为 0」——**只在符号一致时成立**，
+    而源数据的整单退货行**符号不一致**（有的 `sale_money` 为负）。带负号那类若直接冲减，会
+    **反向加回**「0 元实付单」的原额：赠品行不进销售侧（贡献 0），其整单退货却凭空 **+原额**。
+  - 实证：3120/10-17 两笔（10.00 + 120.79 = 130.79），修复后 402,866.47 → **402,735.68**，
+    与乐檬客单分析逐分一致（2026-10-18）。
 - **逐行 vs 逐单**：退货侧无逐单项（无 `tot`、无 `/2`），逐行与逐单恒等，故按行写。
 - **行集**：`sale_amount` 与 `return_amount` **FULL JOIN** —— 只有退货没有销售的店日会出现
   （net 为负），这是正确的；`order_count` 在该行为 0。
@@ -128,6 +136,14 @@ net_amount     = sale_amount − return_amount
 | `deploy/duckle/console/pipelines/FLOW.lemeng.md` | `lagg` 行「不扣退货」订正 |
 | `docs/data-platform-handbook.md` | §1.4 独立通道表、§2 台账行、§5 验收记录行 |
 | `docs/lemeng-recon-questions.md` | 订正块补一句「net 口径另见 2026-10-17 spec」 |
+
+> ⚠️ **2026-10-19 订正（issue #917）**：上表里 `scripts/lemeng/recon-preagg.sh` 与
+> `deploy/duckle/console/pipelines/lemeng.recon.preagg.json` / `.item.json` 两行**当时没做全**——
+> #813 只把湖侧锚切成了「销售侧 − 退货侧」，**没把退货侧赠品判别式同步过去**；#908 又只改了构件与复算，
+> 两份对账副本仍缺该判别式 ⇒ 湖侧自算净额在「有赠品行退货」的日上**系统性偏大**
+> （3120/10-17 实测 402,866.47 vs 402,735.68，差 130.79），且被 `NET_ABS_TOL=200` 垫住 ⇒ 静默。
+> 已补齐，并落 `scripts/check-recon-caliber.mjs` 防再漂移（#831）。
+> ⚠️ 上表路径写的是 `dbt/models/common/…`；#835 按域重构后实际在 `dbt/models/lemeng/…`。
 
 **下游零改动**：`expression` 仍是 `sum(fct_retail_sale.net_amount)`；词表 / Metabase / 问数自动跟随。
 **无需回填**：模型是每次 materialize 全量重建。
