@@ -1,4 +1,4 @@
-sha256-of-rest e54a82c377d4cc1a8d78e1bc3e8276ad48a89ebd6ffd7592c94adef055e0d636
+sha256-of-rest d9a2a4cbaf6e0898aa1f120cfa6f1a5d050f141f8a463a6b242510a5a88230e8
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -207,6 +207,7 @@ bc36151a11daaf0d74da820e02ecda1c5a147f246e8b02b735420e02e2ddeed7 scripts/lemeng/
 b4449dcb10a616e83094cb9fc6af0765da9400b1be72500b87a89b18378a1900 scripts/lemeng/readback-helper.sh ${REPO}/lemeng-readback.sh 0755
 b22ee1315f9b2c3e5a7e041e4d3b6a99b0c4aa9e022934d5e64e1409b5164d21 scripts/lemeng/recon-day-heal.sh /opt/lemeng-recon-day-heal.sh 0755
 a3fedb93e109d82caee9783102a0081a30af4aa5b2f28147758790b3286a76aa scripts/lemeng/recon-preagg.sh /opt/lemeng-recon-preagg.sh 0755
+d3c303d2e0f4eb66d5125599c988b0b942d84424d29ff1643e3e1446cc444e49 scripts/lemeng/recon-restate.sh /opt/lemeng-recon-restate.sh 0755
 185b13c328e83a04651799684a38be905e9cc217d78ed9079fdf3aa2918299e3 scripts/lemeng/seal-lake.sh /opt/lemeng-seal.sh 0755
 e030b1ea2ce35efc8fcf60322938e0b8a8af1258ec08a7434fa255e49d7cd21e scripts/lemeng/seed-console.sh /opt/lemeng-seed-console.sh 0755
 7ec4703ae1ce7e6549f0a6bdf3c9fd4291a521150e64cc4ac5e4a24568ec4236 scripts/lemeng/wire-warehouse.sh /opt/lemeng-wire-warehouse.sh 0755
