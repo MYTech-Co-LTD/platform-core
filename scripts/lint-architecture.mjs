@@ -277,6 +277,31 @@ async function allowedSchema(rootDir, relPath, cache) {
 }
 
 /**
+ * 模块的 dataDependencies 声明集（M1.1，module-protocol 判据 1「声明↔实现一致」的读侧对账基线）：
+ * 读 modules/<dirName>/manifest.yaml 的 dataDependencies → Set<string>（条目 = `<schema>.<view>`）。
+ * 解析失败 / 无字段 ⇒ 空集——声明面的合法性由 check-manifests（B4/B5 + schema）负责，
+ * 这里只对账「已声明条目」，不替 schema 背形状校验的锅。
+ * @param {string} rootDir @param {string} dirName @param {Map<string, Set<string>>} cache
+ * @returns {Promise<Set<string>>}
+ */
+async function dataDepsOf(rootDir, dirName, cache) {
+  const cached = cache.get(dirName)
+  if (cached !== undefined) return cached
+  /** @type {Set<string>} */
+  const deps = new Set()
+  try {
+    const doc = parseYaml(await readFile(join(rootDir, 'modules', dirName, 'manifest.yaml'), 'utf8'))
+    if (Array.isArray(doc?.dataDependencies)) {
+      for (const d of doc.dataDependencies) if (typeof d === 'string') deps.add(d)
+    }
+  } catch {
+    // 无 manifest（或 YAML 挂了）⇒ 空声明面 ⇒ 无豁免（fail-closed：没有声明就不许读）
+  }
+  cache.set(dirName, deps)
+  return deps
+}
+
+/**
  * 扫描 rootDir，返回违规列表（file 为相对 rootDir 的 posix 路径）。
  * @param {string} rootDir
  * @returns {Promise<Violation[]>}
@@ -286,6 +311,8 @@ export async function findViolations(rootDir) {
   const violations = []
   /** @type {Map<string, string>} */
   const idCache = new Map()
+  /** @type {Map<string, Set<string>>} */
+  const depsCache = new Map()
   /**
    * @param {string} file @param {number} line @param {string} rule @param {string} message
    */
@@ -298,6 +325,11 @@ export async function findViolations(rootDir) {
 
     // B1 跨 schema
     const allowed = await allowedSchema(rootDir, rel, idCache)
+    // M1.1 声明面：仅 modules/<id>/ 文件有 dataDependencies 声明（平台代码无声明面，永不豁免——
+    // 与 allowedSchema 的 modules/ 判定同口径）
+    const seg = rel.split('/')
+    const inModule = seg[0] === 'modules' && seg.length > 2
+    const declared = inModule ? await dataDepsOf(rootDir, seg[1], depsCache) : undefined
     for (const m of code.matchAll(B1_RE)) {
       const [, kw, schema, table] = m
       if (schema === allowed) continue
@@ -311,6 +343,11 @@ export async function findViolations(rootDir) {
         && schema === 'data'
         && table.startsWith('dim_')
       ) continue
+      // M1.1 dataDependencies 声明集豁免（module-protocol「跨模块只读数据依赖」判据 1）：
+      // manifest.yaml 声明了 `<schema>.<view>` ⇒ 该条目可 from/join（声明 = 可读授权）——
+      // 但**只读**：update/into 不豁免。平台代码（非 modules/）无声明面不豁免；
+      // 既有 data.dim_* 豁免保留（声明面出现前的历史通道，收敛后可由声明集替代）。
+      if (declared !== undefined && (kw === 'from' || kw === 'join') && declared.has(`${schema}.${table}`)) continue
       report(rel, lineOf(code, m.index), 'B1', `跨 schema 引用 "${schema}."（本文件只许 "${allowed}."）`)
     }
 

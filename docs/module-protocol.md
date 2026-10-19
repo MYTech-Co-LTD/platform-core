@@ -560,16 +560,17 @@ app.use('/api/modules/*', patIdentityMiddleware({
 > **只读**哪些**别的模块拥有的稳定视图**。规则以本节为准；架构背景（数据所有权、一源两面、
 > 新鲜度分档、不做清单）读 `docs/architecture.md` §2.3；接入视角读 `docs/module-onboarding.md` §5。
 >
-> ⚠️ **本节是文档先行的契约**：manifest schema（`packages/platform-sdk/src/manifest.ts`）尚未收
-> 该字段，B1 守卫也未扩——落地随采集首管线（架构 §2.3 实施注记的「四件套」）。
+> **实施状态（2026-10-18 订正）**：本节不再是文档先行，三件事已落地——
+> ① manifest schema（`packages/platform-sdk/src/manifest.ts`）已收 `dataDependencies` 字段，
+>   且 `ManifestSchema` 已加 `.strict()`（issue #709）——未知键会被 schema 拒绝（不再是
+>   「写了等于没写」的静默剥离），字段本身 parse 通过、逐字保留；
+> ② 条目形状（两段式 `<schema>.<view>`）已进 schema superRefine——不合法条目 ⇒ 装载失败 /
+>   check-manifests 红；
+> ③ B1 读侧豁免已按声明集判（`scripts/lint-architecture.mjs`：`modules/<id>/` 里 from/join
+>   声明过的 `<schema>.<view>` 放行，未声明条目与一切写侧仍红）。
 >
-> ⚠️⚠️ **实施状态警告（2026-10-16 订正）**：落地前在 manifest 里写 `dataDependencies`
-> **不会报错**——`ManifestSchema` 是 `z.object({…})` 且**未加 `.strict()`**，未知字段被
-> Zod **静默剥离**（`scripts/check-manifests.mjs` 经 `checks.ts` 只做 `safeParse`，不枚举未知键；
-> 运行时消费方 `apps/server/src/loader.ts` 走 `ManifestSchema.parse`，同样剥离）。
-> ⇒ 现状是「**写了等于没写、且不报错**」——比"被拒绝"更危险（该能力**静默消失**，
-> 声明面形同虚设）。schema 收 `.strict()` 随采集首管线落地（fail-fast 口径）；在此之前
-> **禁止在 manifest 里写本字段**，跨 schema 读等实现落地后按本节声明。
+> 门禁判据 2（列集变更登记）**待首个真实跨模块依赖出现再实施**——当前零模块声明本字段，
+> 无案例不立标准。
 
 **它解决的是什么**：本仓**第一个跨模块数据依赖**（`modules/aftersales` 消费数据栈操作面产出的
 档案/订单数据）出现之前，先立规矩——不立，跨模块数据流会以「模块 A 直接 join 模块 B 的表」的
@@ -602,13 +603,14 @@ dataDependencies:
 
 ⚠️ **别把「没拦」读成「允许」**：这条契约的执行强度在门禁与评审，不在运行时。这是它与
 `api.internal` fail-closed 的**有意分叉**，不是缺口留白——模块代码里未声明的跨 schema 引用
-会在 `gates` 的 B1 检查上报红（守卫扩面后按声明集判），只是不会在运行期 403。
+会在 `gates` 的 B1 检查上报红（按声明集判，已落地），只是不会在运行期 403。
 
-### 门禁核什么（守卫实现留待实现期，**判据在这里定死**）
+### 门禁核什么（判据 1 已落地；判据 2 实现期待首个真实依赖，**判据在这里定死**）
 
 1. **声明与实现一致**：消费方代码里跨 schema 引用的视图集合 = manifest 声明集。
    `lint-architecture.mjs` 的 B1 **读侧豁免以声明为准**——`modules/<id>/` 里引用「声明过的
    `<提供方>.<视图>`」放行，引用**未声明的**任何跨 schema 对象（含物理表）仍报 B1。
+   （已落地：豁免条件 = 声明集命中 **且** from/join——写侧 update/into 不豁免。）
 2. **被依赖视图没被悄悄改**：提供方对**已被任何模块声明**的稳定视图做**列集变更**
    （加列 / 删列 / 改型 / 改名）时，门禁必须红——变更要先**显式登记**（同步更新消费方声明与
    迁移里的视图定义），否则就是静默漂移。核法候选：`check-manifests` 扩面或新守卫比对
