@@ -1,15 +1,14 @@
-// scripts/check-recon-caliber.test.ts — 口径四副本同源门禁（#831）的 fixtures 测试。
+// scripts/check-recon-caliber.test.ts — 「业务规则只定义一次」门禁（architecture §4.1 B11）的 fixtures 测试。
 //
 // **黑盒**：spawn 守卫 CLI（`node check-recon-caliber.mjs <rootDir>`）、断言退出码与输出
 // （与 check-diagnostic-tool.test.ts / check-data-plane-lock.test.ts 同形）。
 //
 // 为什么这条守卫必须有**能红**的证明：「守卫不红等于没有守卫」，而它最容易失效的地方正是
-// **它声称盯住的那条耦合**——真的比了四份副本吗？还是四份都没抽到、比了个空集合？
+// **它声称盯住的那条耦合**——真的在对账链路里搜口径原子吗？还是搜了个空集合？
 // ⇒ 每条判据都配一个**只违反它一条**的反例夹具，证明红是那条判据打出来的。
 //
 // ⚠️ 夹具里的 SQL 直接写**规范化后的形态**（裸列名，不写 `r['x']` / `CAST(...)`）——规范化会把
-//    这两种写法都折成裸列名，故夹具用裸列名既最短又**不引入方言副本**（方言副本本身就是漂移源）。
-//    判别式字面量一律**从守卫导出**（`SALE_GIFT_SQL` / `RET_GIFT_SQL` / …），不手抄一份。
+//    这两种写法都折成裸列名。判别式字面量一律**从守卫导出**（`SALE_GIFT_SQL` / …），不手抄。
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -17,17 +16,20 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
-  CALIBER_PATHS,
+  CONSUMER_SCRIPT,
+  CONSUMER_MUST_CITE,
+  DBT_COPIES,
   HALVING_SQL,
-  PIPELINE_SQL_NODE,
   RET_GIFT_SQL,
   RET_SUM_SQL,
   SALE_GIFT_SQL,
+  SCRIPT_SQL_VAR,
   TOLERANCES_PATH,
 } from './check-recon-caliber.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const GUARD = join(repoRoot, 'scripts/check-recon-caliber.mjs')
+const PIPELINE = 'deploy/duckle/console/pipelines/lemeng.recon.preagg.item.json'
 
 interface RunResult {
   status: number
@@ -54,92 +56,71 @@ function guard(rootDir: string): RunResult {
   }
 }
 
-/** 哪一份副本 —— 用于「只弄坏这一份」的参数化。 */
-type Copy = 'mart' | 'auditNet' | 'auditSales' | 'script' | 'pipeline'
-
-/** 有**退货侧**的副本（判据 ② 的作用面）；销售侧复算不在其中。 */
-const WITH_RETURN_SIDE: readonly Copy[] = ['mart', 'auditNet', 'script', 'pipeline']
+type CopyKey = 'mart' | 'auditNet' | 'auditSales'
 
 interface Over {
-  /** 去掉该副本的**销售侧**赠品判别式。 */
-  dropSaleGift?: Copy
-  /** 去掉该副本的**退货侧**赠品判别式。 */
-  dropRetGift?: Copy
-  /** 去掉该副本的**折半形态**（只在 script / pipeline 有意义）。 */
-  dropHalving?: 'script' | 'pipeline'
-  /** 给该副本的 `ret_side` 套上折半（判据 ④ 的反例）。 */
-  halveReturn?: 'script' | 'pipeline'
-  /** 删掉该副本的 `ret_side` CTE（判据 ④ 抽不到块）。 */
-  dropRetSide?: 'script' | 'pipeline'
-  /** 脚本的 `NET_ABS_TOL` 默认值（判据 ⑤ 的反例）。 */
+  /** 去掉该 dbt 副本的销售侧赠品判别式。 */
+  dropSaleGift?: CopyKey
+  /** 去掉该 dbt 副本的退货侧赠品判别式。 */
+  dropRetGift?: CopyKey
+  /** 往对账脚本的平台侧 SQL 里注入一段口径原子（模拟「又自立了一份」）。 */
+  scriptAtom?: string
+  /** 脚本 SQL 不引用构件（判据 ③ 的反例）。 */
+  scriptNoCite?: boolean
+  /** 往管线某个 code.sql 节点里注入口径原子。 */
+  pipelineAtom?: string
+  /** 脚本的 `NET_ABS_TOL` 默认值（判据 ④ 的反例）。 */
   netAbsTol?: string
-  /** seed 里 `caliber_net` 的 `abs_tol`（判据 ⑤ 的另一半）。 */
+  /** seed 里 `caliber_net` 的 `abs_tol`。 */
   seedNetAbs?: string
-  /** 把某份工件整个删掉。 */
-  remove?: Copy
-  /** 管线 JSON 里不写 lagg 节点。 */
-  pipelineWithoutLagg?: boolean
+  /** 删掉脚本。 */
+  removeScript?: boolean
 }
 
-const giftPredicate = (copy: Copy, dropSaleGift: Copy | undefined, dropRetGift: Copy | undefined): string => {
-  const parts: string[] = []
-  if (dropSaleGift !== copy) parts.push(SALE_GIFT_SQL)
-  // 销售侧复算**没有**退货侧 —— 给它补一条只会掩盖「判据 ② 的作用面」写错（那是真回归）
-  if (dropRetGift !== copy && copy !== 'auditSales') parts.push(RET_GIFT_SQL)
-  return parts.join('\n')
+/** dbt 副本夹具。 */
+function dbtFixture(copyKey: CopyKey, over: Over): string {
+  const copy = DBT_COPIES.find((c) => c.key === copyKey)
+  if (copy === undefined) throw new Error(`unknown copy ${copyKey}`)
+  const parts = ['-- fixture', 'select 1 as x']
+  if (over.dropSaleGift !== copyKey) parts.push(SALE_GIFT_SQL)
+  if (copy.retGift && over.dropRetGift !== copyKey) parts.push(RET_GIFT_SQL)
+  return `${parts.join('\n')}\n`
 }
 
-/** 构件 / 复算夹具（SQL 文件）：只放该副本该带的判别式即可（判据 ①② 比的是它们）。 */
-function sqlFixture(copy: Copy, over: Over): string {
-  return [
-    `-- ${copy} fixture`,
-    'select 1 as x',
-    giftPredicate(copy, over.dropSaleGift, over.dropRetGift),
-    '',
-  ].join('\n')
-}
-
-/** 脚本夹具：GIFT / GIFT_RET 两个 shell 变量 + SQL_LAKE 引用它们（**故意走展开路径**）。 */
+/** 对账脚本夹具：消费者形态（读构件）+ 三个容差 env。 */
 function scriptFixture(over: Over): string {
-  const gift = over.dropSaleGift === 'script' ? '' : SALE_GIFT_SQL
-  const giftRet = over.dropRetGift === 'script' ? '' : RET_GIFT_SQL
-  const halving = over.dropHalving === 'script' ? 'sum(ng + tot - sd)' : HALVING_SQL
-  const retTerm = over.halveReturn === 'script' ? `(${RET_SUM_SQL}) / 2` : RET_SUM_SQL
-  const retSide =
-    over.dropRetSide === 'script'
-      ? 'sale_side AS (SELECT b, round(sum(ng), 2) AS sale_net FROM per_order GROUP BY b)'
-      : `ret_side AS (SELECT b, round(sum(CASE WHEN \${GIFT_RET} THEN 0 ELSE ${retTerm} END), 2) AS ret FROM src WHERE order_transaction_type like '%RETURN%' AND state='FINISHED' GROUP BY 1)`
+  const table = over.scriptNoCite === true ? 'staging.some_other_table' : `staging.${CONSUMER_MUST_CITE}`
+  const atom = over.scriptAtom === undefined ? '' : `\n       AND ${over.scriptAtom}`
+  const sql = `SELECT branch_num, sale_amount, return_amount FROM ${table} WHERE bizday = '2026-10-17'${atom} ORDER BY 1`
   return [
     '#!/bin/sh',
-    'NET_ABS_TOL=${NET_ABS_TOL:-' + (over.netAbsTol ?? '200.00') + '}',
+    `NET_ABS_TOL=\${NET_ABS_TOL:-${over.netAbsTol ?? '200.00'}}`,
     'PREAGG_ABS_TOL=${PREAGG_ABS_TOL:-1.00}',
     'PREAGG_MAX_PCT=${PREAGG_MAX_PCT:-0.01}',
-    `GIFT="state='FINISHED' AND ${gift}"`,
-    `GIFT_RET="${giftRet}"`,
-    `SQL_LAKE="WITH per_order AS (SELECT b, sum(CASE WHEN \${GIFT} THEN 0 ELSE sale_money END) AS ng, max(order_total_money) AS tot, sum(order_detail_share_discount) AS sd FROM src GROUP BY 1), sale_side AS (SELECT b, round(${halving}, 2) AS sale_net FROM per_order GROUP BY b), ${retSide} SELECT 1"`,
+    `${SCRIPT_SQL_VAR}="${sql}"`,
     '',
   ].join('\n')
 }
 
-/** 管线夹具：`lagg` 节点的 sql 与脚本同形（口径四副本之一）。 */
+/** 管线夹具：一个 code.sql（源侧落湖行）+ 一个 src.rest。 */
 function pipelineFixture(over: Over): string {
-  const gift = over.dropSaleGift === 'pipeline' ? '' : SALE_GIFT_SQL
-  const giftRet = over.dropRetGift === 'pipeline' ? '' : RET_GIFT_SQL
-  const halving = over.dropHalving === 'pipeline' ? 'sum(ng + tot - sd)' : HALVING_SQL
-  const retTerm = over.halveReturn === 'pipeline' ? `(${RET_SUM_SQL}) / 2` : RET_SUM_SQL
-  const retSide =
-    over.dropRetSide === 'pipeline'
-      ? 'sale_side AS (SELECT b, round(sum(ng), 2) AS sale_net FROM per_order GROUP BY b)'
-      : `ret_side AS (SELECT b, round(sum(CASE WHEN ${giftRet} THEN 0 ELSE ${retTerm} END), 2) AS ret FROM "lguard" WHERE order_transaction_type like '%RETURN%' AND state='FINISHED' GROUP BY 1)`
-  const sql =
-    `WITH per_order AS (SELECT b, sum(CASE WHEN ${gift} THEN 0 ELSE sale_money END) AS ng, ` +
-    `max(order_total_money) AS tot, sum(order_detail_share_discount) AS sd FROM "lguard" GROUP BY 1), ` +
-    `sale_side AS (SELECT b, round(${halving}, 2) AS sale_net FROM per_order GROUP BY b), ${retSide} SELECT 1`
-  const nodes = over.pipelineWithoutLagg ? [{ id: 'other', data: { properties: { sql } } }] : [{ id: PIPELINE_SQL_NODE, data: { properties: { sql } } }]
-  return JSON.stringify({ name: 'fixture', nodes, edges: [] })
+  const baseSql =
+    "SELECT 'x' AS batch_id, CAST(j.value AS BIGINT) AS branch_num, CAST(p.source_sale AS DECIMAL(20, 2)) AS source_sale\n" +
+    "FROM json_each('[]') j LEFT JOIN \"pnormal\" p ON CAST(p.branch_num AS BIGINT) = CAST(j.value AS BIGINT)"
+  const nodes = [
+    { id: 'pre', data: { componentId: 'src.rest', properties: { url: 'https://example.test', body: '{}' } } },
+    { id: 'pnormal', data: { componentId: 'code.sql', properties: { sql: 'SELECT 1 AS branch_num' } } },
+    { id: 'srcprep', data: { componentId: 'code.sql', properties: { rawSql: true, sql: baseSql } } },
+    { id: 'lakeout', data: { componentId: 'snk.minio', properties: { key: 'lemeng/recon_source/x/all.parquet' } } },
+  ]
+  if (over.pipelineAtom !== undefined) {
+    const extra = `SELECT 1 AS branch_num WHERE ${over.pipelineAtom}`
+    nodes.push({ id: 'leak', data: { componentId: 'code.sql', properties: { sql: extra } } })
+  }
+  return JSON.stringify({ name: 'lemeng.recon.preagg.item', nodes, edges: [] })
 }
 
-/** seed 夹具：与脚本 env 默认值同源（`netAbs` 可覆盖成不同源）。 */
+/** seed 夹具。 */
 function seedFixture(over: Over): string {
   return [
     'control,abs_tol,pct_tol,reason_code,expires_on,disposition,disposition_by',
@@ -154,16 +135,13 @@ function fixture(over: Over = {}): string {
   const root = mkdtempSync(join(tmpdir(), 'platform-guard-caliber-'))
   tmpRoots.push(root)
   /** @type {Array<[string, string]>} */
-  const files: Array<[string, string]> = [
-    [CALIBER_PATHS.mart, sqlFixture('mart', over)],
-    [CALIBER_PATHS.auditNet, sqlFixture('auditNet', over)],
-    [CALIBER_PATHS.auditSales, sqlFixture('auditSales', over)],
-    [CALIBER_PATHS.script, scriptFixture(over)],
-    [CALIBER_PATHS.pipeline, pipelineFixture(over)],
-    [TOLERANCES_PATH, seedFixture(over)],
-  ]
+  const files = []
+  for (const c of DBT_COPIES) files.push([c.path, dbtFixture((c.key as CopyKey), over)])
+  files.push([CONSUMER_SCRIPT, scriptFixture(over)])
+  files.push([PIPELINE, pipelineFixture(over)])
+  files.push([TOLERANCES_PATH, seedFixture(over)])
   for (const [rel, content] of files) {
-    if (over.remove !== undefined && CALIBER_PATHS[over.remove] === rel) continue
+    if (over.removeScript === true && rel === CONSUMER_SCRIPT) continue
     const abs = join(root, rel)
     mkdirSync(dirname(abs), { recursive: true })
     writeFileSync(abs, content)
@@ -171,7 +149,7 @@ function fixture(over: Over = {}): string {
   return root
 }
 
-describe('check-recon-caliber：口径四副本同源门禁', () => {
+describe('check-recon-caliber：业务规则只定义一次（B11）', () => {
   it('一致 ⇒ exit 0', () => {
     const r = guard(fixture())
     expect(r.stderr).toBe('')
@@ -185,97 +163,92 @@ describe('check-recon-caliber：口径四副本同源门禁', () => {
     expect(r.status).toBe(0)
   })
 
-  it('副本整个不在场 ⇒ 红（不是静默通过）', () => {
-    const r = guard(fixture({ remove: 'pipeline' }))
+  it('脚本不在场 ⇒ 红（不是静默通过）', () => {
+    const r = guard(fixture({ removeScript: true }))
     expect(r.status).toBe(1)
-    expect(r.stderr).toContain(CALIBER_PATHS.pipeline)
+    expect(r.stderr).toContain(CONSUMER_SCRIPT)
   })
 
-  // ── 判据 ②：本门禁存在的**直接原因**（#917 缺的就是它）──────────────────────
-  for (const copy of WITH_RETURN_SIDE) {
-    it(`判据②：${copy} 缺**退货侧**赠品判别式 ⇒ 红（#917 的形态）`, () => {
-      const r = guard(fixture({ dropRetGift: copy }))
+  // ── 判据 ①②：dbt 副本里该带的判别式必须逐字在场 ─────────────────────────────
+  for (const c of DBT_COPIES) {
+    it(`判据①：${c.key} 缺销售侧赠品判别式 ⇒ 红`, () => {
+      const r = guard(fixture({ dropSaleGift: (c.key as CopyKey) }))
       expect(r.status).toBe(1)
-      expect(r.stderr).toContain(CALIBER_PATHS[copy])
-      expect(r.stderr).toContain('退货侧赠品判别式')
-    })
-  }
-
-  it('判据②的作用面：销售侧复算**不带**退货侧 ⇒ 不得因它没有而红（写宽了就是假红）', () => {
-    const r = guard(fixture())
-    expect(r.stderr).toBe('')
-    expect(r.status).toBe(0)
-  })
-
-  for (const copy of ['mart', 'auditNet', 'auditSales', 'script', 'pipeline'] as const) {
-    it(`判据①：${copy} 缺**销售侧**赠品判别式 ⇒ 红`, () => {
-      const r = guard(fixture({ dropSaleGift: copy }))
-      expect(r.status).toBe(1)
-      expect(r.stderr).toContain(CALIBER_PATHS[copy])
+      expect(r.stderr).toContain(c.path)
       expect(r.stderr).toContain('销售侧赠品判别式')
     })
   }
 
-  it('判据①③：脚本把判别式抽成 ${GIFT} 变量时**必须展开**再比（不展开会误报缺销售侧判别式）', () => {
-    // 一致夹具里 SQL_LAKE 写的就是 ${GIFT} / ${GIFT_RET} —— 能绿即证明展开生效。
+  for (const c of DBT_COPIES.filter((x) => x.retGift)) {
+    it(`判据①：${c.key} 缺退货侧赠品判别式 ⇒ 红（#917 的形态）`, () => {
+      const r = guard(fixture({ dropRetGift: (c.key as CopyKey) }))
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain(c.path)
+      expect(r.stderr).toContain('退货侧赠品判别式')
+    })
+  }
+
+  it('判据①的作用面：销售侧复算**不带**退货侧 ⇒ 不得因它没有而红', () => {
     const r = guard(fixture())
     expect(r.status).toBe(0)
   })
 
-  for (const copy of ['script', 'pipeline'] as const) {
-    it(`判据③：${copy} 的折半形态被改（先和后除）⇒ 红`, () => {
-      const r = guard(fixture({ dropHalving: copy }))
-      expect(r.status).toBe(1)
-      expect(r.stderr).toContain(CALIBER_PATHS[copy])
-      expect(r.stderr).toContain('折半形态')
-    })
-  }
+  // ── 判据 ②：对账链路出现口径原子 ⇒ 红（本次改造的核心断言）──────────────────
+  it('判据②：对账脚本里出现赠品判别式 ⇒ 红（对账又自立了一份口径）', () => {
+    const r = guard(fixture({ scriptAtom: SALE_GIFT_SQL }))
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain(CONSUMER_SCRIPT)
+    expect(r.stderr).toContain('销售侧赠品判别式')
+  })
 
-  for (const copy of ['script', 'pipeline'] as const) {
-    it(`判据④：${copy} 的退货侧套了折半 ⇒ 红`, () => {
-      const r = guard(fixture({ halveReturn: copy }))
-      expect(r.status).toBe(1)
-      expect(r.stderr).toContain(CALIBER_PATHS[copy])
-      expect(r.stderr).toContain('套了折半')
-    })
-  }
+  it('判据②：对账脚本里出现退货侧判别式 ⇒ 红', () => {
+    const r = guard(fixture({ scriptAtom: RET_GIFT_SQL }))
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('退货侧赠品判别式')
+  })
 
-  for (const copy of ['script', 'pipeline'] as const) {
-    it(`判据④：${copy} 抽不到 ret_side ⇒ 红（结构变了，门禁无从判）`, () => {
-      const r = guard(fixture({ dropRetSide: copy }))
-      expect(r.status).toBe(1)
-      expect(r.stderr).toContain('抽不到 `ret_side AS ( … )`')
-    })
-  }
+  it('判据②：对账脚本里出现折半形态 ⇒ 红', () => {
+    const r = guard(fixture({ scriptAtom: HALVING_SQL }))
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('折半形态')
+  })
 
-  it('判据④：**湖扫描路径里的 `/` 不得误判成折半**（裸 includes 会恒红）', () => {
-    // 一致夹具的 SQL 里没有 s3 路径；这里补一条：把 ret_side 的 FROM 换成带路径的 read_parquet，
-    // 规范化后应折成 `from src`，路径的 `/` 随之消失 ⇒ 仍绿。
+  it('判据②：对账管线 code.sql 里出现口径原子 ⇒ 红（#917 的形态）', () => {
+    const r = guard(fixture({ pipelineAtom: RET_SUM_SQL }))
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain(PIPELINE)
+    expect(r.stderr).toContain('退货侧全额冲减形态')
+  })
+
+  it('判据②：`_note` 里复述口径**不算违规**（只扫代码，不扫散文）', () => {
     const root = fixture()
-    const p = join(root, CALIBER_PATHS.script)
-    const s = readFileSync(p, 'utf8').replaceAll('FROM src', "FROM read_parquet('s3://b/x/system_book=1/bizday=2026-10-17/**/*.parquet') r")
-    writeFileSync(p, s)
+    const abs = join(root, PIPELINE)
+    const doc = JSON.parse(readFileSync(abs, 'utf8'))
+    doc._note = [`口径常识：${SALE_GIFT_SQL}`, `折半 ${HALVING_SQL}`]
+    writeFileSync(abs, JSON.stringify(doc))
     const r = guard(root)
     expect(r.stderr).toBe('')
     expect(r.status).toBe(0)
   })
 
-  it('判据⑤：脚本 NET_ABS_TOL 与 seed 不同源 ⇒ 红（#813 的实证形态）', () => {
+  // ── 判据 ③：消费者必须指向构件 ───────────────────────────────────────────────
+  it('判据③：脚本不引用构件 ⇒ 红（读别的表 = 又自立了一份口径）', () => {
+    const r = guard(fixture({ scriptNoCite: true }))
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain(CONSUMER_MUST_CITE)
+  })
+
+  // ── 判据 ④：容差地板同源 ────────────────────────────────────────────────────
+  it('判据④：脚本 NET_ABS_TOL 与 seed 不同源 ⇒ 红（#813 的实证形态）', () => {
     const r = guard(fixture({ netAbsTol: '50.00' }))
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('NET_ABS_TOL')
     expect(r.stderr).toContain('不同源')
   })
 
-  it('判据⑤：seed 侧被改（脚本没跟）⇒ 同样红', () => {
+  it('判据④：seed 侧被改（脚本没跟）⇒ 同样红', () => {
     const r = guard(fixture({ seedNetAbs: '50.00' }))
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('不同源')
-  })
-
-  it('管线 JSON 里没有 lagg 节点 ⇒ 红（节点改名/搬走要同步门禁）', () => {
-    const r = guard(fixture({ pipelineWithoutLagg: true }))
-    expect(r.status).toBe(1)
-    expect(r.stderr).toContain(PIPELINE_SQL_NODE)
   })
 })

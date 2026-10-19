@@ -7,32 +7,24 @@
 #   源侧 = 预聚合端点（该账套令牌调用）
 # 输出逐店 diff + 合计 + 差率 + 门店集合对齐检查。
 #
-# ── 湖侧净额口径（唯一事实源：spec docs/superpowers/specs/2026-10-17-retail-net-sales-return-offset-design.md
-#    §4 + 构件 dbt/models/lemeng/marts/fct_retail_sale.sql）—— 本文件是它的**对拍副本**──────
-#   对**每个订单**先归并，再按「送出半边」计入：
+# ── 平台侧的数从哪来：**读构件，不自算**（2026-10-19，issue #920）──────────────────
+#   「净销售额 = 销售侧 − 退货侧」的**唯一实现**在 dbt：
+#     · 口径定义 = spec docs/superpowers/specs/2026-10-17-retail-net-sales-return-offset-design.md §4
+#     · 唯一实现 = dbt/models/lemeng/marts/fct_retail_sale.sql（`sale_amount` / `return_amount` / `net_amount`）
+#     · 独立复算 = dbt/tests/lemeng/audit_lemeng__retail__{net_sales,sales}.sql（直打 parquet、不 ref staging）
+#   本脚本**没有**口径实现：它直接读已物化的 `sale_amount` / `return_amount`，只负责「比」。
+#   ⚠️ 为什么不再自算：同一业务规则出现两个并列实现、靠人手同步 ⇒ 静默漂移。已发生两次
+#      （#813 容差地板 / #917 退货侧赠品判别式）。机检 = `scripts/check-recon-caliber.mjs`
+#      （对账链路出现口径原子即红；不变量见 docs/architecture.md §4.1 B11）。
+#   ⚠️ 口径常识（读结果时用得上，**不要照着在本文件里实现**）：
+#      销售侧 = FINISHED + SALE_ORDER，逐订单 (Σ非赠品行额 + order_total_money)/2，再减分摊折扣；
+#        赠品 = std_price>0 且 sale_money>0 且 qty>0 且 |折扣 − 标价×数量| ≤ 0.02；
+#        换货「送出半边」不能按行算（会把「总额 × 行数」加进去）；
+#      退货侧 = 全额冲减、**不套折半**（`sale_money + order_detail_share_discount`，FINISHED + RETURN*），
+#        且**退货行同套赠品判别式（绝对值形态）**——源侧退货行符号不一致，带负号那类不排会反向加回；
+#      净额 = 销售侧 − 退货侧；按**退货单自身 bizday** 归属。
 #
-#     net(店, 营业日 D) = Σ_订单 [ (Σ非赠品行额 + order_total_money) / 2 ] − Σ(order_detail_share_discount)
-#     只收 state='FINISHED' 且 order_transaction_type='SALE_ORDER' 的订单
-#     赠品判定：order_detail_std_price>0 AND sale_money>0 AND quantity>0
-#               AND abs(discount_money − order_detail_std_price×quantity) ≤ 0.02
-#
-#   ⚠️ **销售侧不扣退货单**：`order_transaction_type <> 'SALE_ORDER'` 的单**本来就不进销售侧**，
-#      平台的 sale_money 也**不冲减**它（2026-09-30 的 spec 把这条理解反了 —— 那版规则已撤）。
-#   ⚠️ 2026-10-17（issue #813）起**另比一条净额侧判据**：净额 = 销售侧 − 退货侧，
-#      退货侧 = Σ(sale_money + order_detail_share_discount)，条件
-#      `order_transaction_type like '%RETURN%' AND state='FINISHED'`（**REPAID_RETURN 不计**），
-#      按**退货单自身 bizday** 归属。源侧对应端点字段 `return_money`。
-#   ⚠️ **退货行同样套赠品判别式**（2026-10-18 #908 定案、2026-10-19 #917 补到本副本；**绝对值形态**）：
-#      赠品行不进销售侧，其退货**也不该**进退货侧；而源数据的整单退货行**符号不一致**
-#      （有的 sale_money 为负）——带负号那类若直接冲减会**反向加回**「0 元实付单」的原额
-#      （3120/10-17 实证：402,866.47 → 402,735.68，差 130.79）。五份副本同源性由
-#      `scripts/check-recon-caliber.mjs` 机检。
-#   ⚠️ **同一张 SALE_ORDER 里可能装着换货的退回行**（礼盒↔散货）：平台只算「送出半边」，
-#      等价换货（总额 0）⇒ Σ/2；差价换货（总额=净补差）⇒ (Σ+总额)/2。**这就是 order_total_money 的用途**
-#      （2026-10-05 起湖里已有这一列，故本脚本能**完全自算**、不必回网关取总额）。
-#   ⚠️ 逐订单归并**不能省**：按行算 `(行额+总额)/2` 会把「总额 × 行数」加进去 ⇒ 系统性多算。
-#
-#   真机验证：4 天 × 13 店 = 52 组，差全部 **0.00**。
+#   历史真机验证（口径在 dbt 定型时）：4 天 × 13 店 = 52 组，差全部 **0.00**。
 #
 # ── 定稿线（settle line）：为什么默认只对 T-3 ─────────────────────────────────
 # 退货**可能发生在定稿日之后** ⇒ 湖（快照）与平台（活数据）永远有时间差。未过线的营业日**源还在变**，
@@ -51,7 +43,7 @@
 # 可选 env：BOOK（默认 64188）/ SETTLE_DAYS（默认 3）/ PGDUCK_CONTAINER / PGDUCK_USER / PGDUCK_DB
 #           PREAGG_ABILITY / PREAGG_URL_BASE / PREAGG_ABS_TOL（默认 1.00）/ PREAGG_MAX_PCT（默认 0.01）
 #           NET_ABS_TOL（默认 200.00 = 净额侧**过渡**容差，带到期条件，见上）
-#           PREAGG_MAX_BRANCHES（默认 100 = **批大小**，即端点单次上限，别改大）/ LAKE_PREFIX / CONSOLE_CT
+#           PREAGG_MAX_BRANCHES（默认 100 = **批大小**，即端点单次上限，别改大）/ CONSOLE_CT
 #
 # ── 分批（2026-10-10，#525 前车）──────────────────────────────────────────────
 # 报表端点单次 branch_nums ≤100 家（超限 code=10001）。3120 湖侧 147 家 ⇒ 必分批；
@@ -73,7 +65,6 @@ PREAGG_ABS_TOL=${PREAGG_ABS_TOL:-1.00}
 NET_ABS_TOL=${NET_ABS_TOL:-200.00}
 PREAGG_MAX_PCT=${PREAGG_MAX_PCT:-0.01}
 PREAGG_MAX_BRANCHES=${PREAGG_MAX_BRANCHES:-100}
-LAKE_PREFIX=${LAKE_PREFIX:-lemeng/retail_order_line}
 CONSOLE_CT=${CONSOLE_CT:-openship-platform-core-shanhai-data-lemeng-console-${BOOK}}
 
 usage() {
@@ -117,25 +108,22 @@ fi
 
 PGDUCK_CONTAINER=${PGDUCK_CONTAINER:-$(docker ps --format '{{.Names}}' 2>/dev/null | grep -m1 'pg_duckdb')}
 [ -n "${PGDUCK_CONTAINER}" ] || { echo "PREAGG_FAILED:lake_unavailable 找不到 pg_duckdb 容器" >&2; exit 3; }
-ZOS_BUCKET=${ZOS_BUCKET:-$(docker inspect "${CONSOLE_CT}" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^ZOS_BUCKET=//p')}
-[ -n "${ZOS_BUCKET}" ] || { echo "PREAGG_FAILED:lake_unavailable 取不到 ZOS_BUCKET" >&2; exit 3; }
-LAKE_ROOT=${LAKE_ROOT:-s3://${ZOS_BUCKET}/${LAKE_PREFIX}}
 
 _lake_q() {
-  docker exec "${PGDUCK_CONTAINER}" psql -U "${PGDUCK_USER}" -d "${PGDUCK_DB}" -t -A -F, -c \
-    "SELECT * FROM duckdb.query(\$\$${1}\$\$) AS r" 2>/dev/null
+  docker exec "${PGDUCK_CONTAINER}" psql -U "${PGDUCK_USER}" -d "${PGDUCK_DB}" -t -A -F, -c "${1}" 2>/dev/null
 }
 
-# 赠品判别式（见头注）：折让 = 标准价全额 × 数量 ⇒ 该行分文未收。三条件护栏排除退化命中。
-GIFT="r['state']='FINISHED' AND r['order_detail_std_price']>0 AND r['sale_money']>0 AND r['quantity']>0 AND abs(r['discount_money']-r['order_detail_std_price']*r['quantity'])<=0.02"
-# 退货侧赠品判别式（#908/#917）：**绝对值形态**（源侧退货行符号不一致，见头注）。
-GIFT_RET="r['order_detail_std_price']>0 AND abs(r['sale_money'])>0 AND abs(r['quantity'])>0 AND abs(abs(r['discount_money'])-r['order_detail_std_price']*abs(r['quantity']))<=0.02"
-
-# 湖侧净额：**先逐订单归并**（不能按行算——那会把「总额 × 行数」加进去），再 (Σ非赠品 + 总额)/2 − 分摊折扣。
-# 湖侧两列：销售侧净额 + 退货侧金额（同一 query，避免第二个 python 块 —— 测试只抽一个块）。
-SQL_LAKE="WITH per_order AS (SELECT r['branch_num']::int AS b, r['order_no'] AS o, sum(CASE WHEN ${GIFT} THEN 0 ELSE r['sale_money'] END) AS ng, max(r['order_total_money']) AS tot, sum(r['order_detail_share_discount']) AS sd FROM read_parquet('${LAKE_ROOT}/system_book=${BOOK}/bizday=${BIZDAY}/**/*.parquet') r WHERE r['state']='FINISHED' AND r['order_transaction_type']='SALE_ORDER' GROUP BY 1, 2), sale_side AS (SELECT b, round(sum((ng + tot) / 2 - sd), 2) AS sale_net FROM per_order GROUP BY b), ret_side AS (SELECT r['branch_num']::int AS b, round(sum(CASE WHEN ${GIFT_RET} THEN 0 ELSE r['sale_money'] + r['order_detail_share_discount'] END), 2) AS ret FROM read_parquet('${LAKE_ROOT}/system_book=${BOOK}/bizday=${BIZDAY}/**/*.parquet') r WHERE r['order_transaction_type'] like '%RETURN%' AND r['state']='FINISHED' GROUP BY 1) SELECT coalesce(s.b, t.b), coalesce(s.sale_net, 0), coalesce(t.ret, 0) FROM sale_side s FULL JOIN ret_side t ON s.b = t.b ORDER BY 1"
-LAKE_ROWS=$(_lake_q "${SQL_LAKE}")
-[ -n "${LAKE_ROWS}" ] || { echo "PREAGG_FAILED:lake_unavailable 湖侧取数为空（该账套该营业日没有分区？）" >&2; exit 3; }
+# ── 平台侧取数：**读构件，不自算**（2026-10-19，issue #920；不变量见 docs/architecture.md §4.1 B11）──
+# 「净销售额 = 销售侧 − 退货侧」的唯一实现在 dbt（`fct_retail_sale`）。本脚本是**消费者**：
+# 直接读已物化的 `sale_amount` / `return_amount`（与构件同一次计算），**不再自带一份等价算式**。
+# 自带一份 = 同一业务规则两个并列实现、靠人手同步 ⇒ 已酿成两次静默事故（#813 / #917）。
+# 机检 = scripts/check-recon-caliber.mjs（对账链路出现口径原子即红）。
+#
+# 输出形状与改造前**逐字相同**：3 列（门店 / 销售侧 / 退货侧）—— 下游 python 比较块与
+# scripts/lemeng/recon-preagg.test.sh 的 9 条用例都依赖这个形状。
+SQL_PLATFORM="SELECT branch_num, sale_amount, return_amount FROM staging.fct_retail_sale WHERE CAST(system_book AS VARCHAR) = '${BOOK}' AND bizday = '${BIZDAY}' ORDER BY 1"
+LAKE_ROWS=$(_lake_q "${SQL_PLATFORM}")
+[ -n "${LAKE_ROWS}" ] || { echo "PREAGG_FAILED:lake_unavailable 构件取数为空（该账套该营业日未物化？先跑 dbt fct_retail_sale）" >&2; exit 3; }
 
 BRANCHES=$(printf '%s\n' "${LAKE_ROWS}" | cut -d, -f1)
 NC=$(printf '%s\n' "${BRANCHES}" | grep -c .)

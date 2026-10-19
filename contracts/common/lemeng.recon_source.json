@@ -4,11 +4,11 @@
   "schemaVersion": 1,
   "consumerVersion": 1,
   "domain": "lemeng",
-  "table": "recon_preagg",
+  "table": "recon_source",
   "owner": "data-platform",
-  "description": "乐檬**口径对账逐店事实**（湖侧自算 vs 乐檬报表引擎 `nhsoft.report.ai.itemsales.find`；消费面 spec §12.4 缺口①）。【行粒度】一行 = 账套×对账业务日×**块**×门店。【为什么要 chunk】端点 `branch_nums` **单次 ≤100 家**，超出 `code=10001` fail-loud（2026-10-18 实测 101 家即拒）；父管线原先一次性传全部门店，64188（129 家）/3120（271 家）**都 >100 ⇒ 必炸** ⇒ 父管线按 ≤100 家切块，每块一个子管线 run、写自己那一片。【只有事实】本表只放**两侧金额**（销售侧/净额侧 各「平台自算 / 源报表」）；**容差、判定、原因、到期一律不进湖**——容差与原因是**判定配置**（`dbt/seeds/recon_reason_codes.csv`），四态与 break/max_break 是**派生物**（dbt `recon_run` / `recon_break`）。落湖会把配置冻进事实，改一次要重采一遍。【两侧口径】销售侧 = 湖侧 `sale_side`（换货三半边公式）vs 源 `sale_money`；净额侧 = 销售侧 − 退货侧 vs 源 `sale_money − return_money`。【窗口】T-3 定稿线（上海日 −3），过线源侧不再变。【已知缺口】退货晚到见 issue #814（源侧会重述），dbt 层用 `within_tol` + `reason_code`/`expires_on` 记账，不在采集侧放宽。",
+  "description": "乐檬**口径对账的源侧快照**（外部报表引擎 `nhsoft.report.ai.itemsales.find` 逐店返回值）。【它是什么】只装**源侧**（乐檬报表）的逐店金额，**不装平台侧、不做比较、不含任何口径**；**每个被请求的门店都有一行**（采集侧按父管线的门店清单左连端点返回；端点没返回的店 `source_*` 为 NULL，不是 0）——这一条是「平台有值而源未返回」这类真实覆盖缺口能进台账的前提。平台侧由 dbt 从构件 `fct_retail_sale` 取，比较由 dbt 的 `recon_break` 做（2026-10-19 起，issue #920；不变量见 docs/architecture.md §4.1 B11）。【为什么这样切】对账是**外部一致性**控制：对手方是外部系统，所以采集侧只该负责「把外部那一边拿回来」；让采集管线也实现一遍口径 = 同一业务规则两个并列实现、靠人手同步 ⇒ 静默漂移（#813 容差地板 / #917 退货侧赠品判别式，两次都是这个形态）。【行粒度】一行 = 账套×对账业务日×**块**×门店。【为什么要 chunk】端点 `branch_nums` **单次 ≤100 家**，超出 `code=10001` fail-loud（2026-10-18 实测 101 家即拒）；64188（129 家）/3120（271 家）都 >100 ⇒ 父管线按 ≤100 家切块，每块一个子管线 run、写自己那一片。【窗口】T-3 定稿线（上海日 −3），过线源侧不再变。【已知缺口】退货晚到见 issue #814（源侧会重述），dbt 层用 `within_tol` + `reason_code`/`expires_on` 记账，不在采集侧放宽。",
   "layout": {
-    "prefix": "lemeng/recon_preagg",
+    "prefix": "lemeng/recon_source",
     "partitionStyle": "hive",
     "partitionBy": [
       "system_book",
@@ -60,31 +60,17 @@
       "expr": "CAST(branch_num AS BIGINT)"
     },
     {
-      "name": "platform_sale",
-      "type": "decimal(20,2)",
-      "nullable": true,
-      "description": "**销售侧**：平台自算（换货三半边公式）。该门店当日无销售侧行为空",
-      "expr": "CAST(platform_sale AS DECIMAL(20, 2))"
-    },
-    {
       "name": "source_sale",
       "type": "decimal(20,2)",
       "nullable": true,
-      "description": "**销售侧**：乐檬报表 `sale_money`。源未返回该门店则空",
+      "description": "**源侧销售金额** = 乐檬报表 `sale_money`。⚠️ **可空**：端点这次没返回这家店 ⇒ NULL（≠ 0）——dbt 侧据此判 `missing_side='source'`",
       "expr": "CAST(source_sale AS DECIMAL(20, 2))"
-    },
-    {
-      "name": "platform_net",
-      "type": "decimal(20,2)",
-      "nullable": true,
-      "description": "**净额侧**：平台自算 = 销售侧 − 退货侧（#813 起冲退货）",
-      "expr": "CAST(platform_net AS DECIMAL(20, 2))"
     },
     {
       "name": "source_net",
       "type": "decimal(20,2)",
       "nullable": true,
-      "description": "**净额侧**：乐檬报表 `sale_money − return_money`",
+      "description": "**源侧净额** = 乐檬报表 `sale_money − return_money`。⚠️ **可空**：端点这次没返回这家店 ⇒ NULL（≠ 0）——dbt 侧据此判 `missing_side='source'`",
       "expr": "CAST(source_net AS DECIMAL(20, 2))"
     },
     {

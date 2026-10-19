@@ -1,141 +1,45 @@
 {
   "_note": [
-    "独立通道对账 · 子管线（被 lemeng.recon.preagg 的 foreach 派发，每营业日一次）。",
-    "判据：湖侧明细按已对齐口径净化后的净额 vs 网关预聚合端点（nhsoft.report.ai.itemsales.find），逐店 diff。",
-    "【取参口径】book/bucket/day/settled/门店清单**全部来自父管线 ITER 行**——foreach 只替 ${ITER_*}，",
+    "独立通道对账 · 子管线（被 lemeng.recon.preagg 的 foreach 派发，每营业日/每块一次）。",
+    "【本子管线只做一件事：把**源侧**（乐檬报表端点）逐店值拿回来落湖。】",
+    "判据与口径**都不在这里**——2026-10-19（issue #920）起：",
+    "  · 口径的唯一实现 = dbt 构件 dbt/models/lemeng/marts/fct_retail_sale.sql（本管线**不含任何口径**；",
+    "    机检 scripts/check-recon-caliber.mjs 反向断言：对账链路出现口径原子即红，不变量见 architecture §4.1 B11）；",
+    "  · 比较与判定 = dbt marts recon_fact / recon_break / recon_run（平台侧读构件，源侧读本管线落下的快照）。",
+    "为什么这样切：对账是**外部一致性**控制（对手方是外部系统），采集侧只该负责「把外部那一边拿回来」。",
+    "让采集管线也实现一遍口径 = 同一业务规则两个并列实现、靠人手同步 ⇒ 静默漂移（#813 容差地板 / #917 退货侧赠品判别式）。",
+    "",
+    "【取参口径】book/bucket/day/branch_nums/chunk 全部来自父管线 ITER 行——foreach 只替 ${ITER_*}，",
     "子管线（尤其 tmp/ 直跑时）不吃 ${ENV:} ⇒ 本文件上下文无关，探针态与工作区态同形。",
     "",
-    "【口径唯一事实源】scripts/lemeng/recon-preagg.sh 头注 + 构件 dbt/models/lemeng/marts/fct_retail_sale.sql：",
-    "  net(店) = Σ_订单[(Σ非赠品行额 + order_total_money)/2] − Σ分摊折扣，只收 FINISHED + SALE_ORDER；",
-    "  赠品判别式（销售侧）= std_price>0 AND sale_money>0 AND qty>0 AND |折扣 − 标价×数量| ≤ 0.02；",
-    "  逐订单归并**不能省**（按行算会把「总额×行数」加进去）；销售侧不扣退货单。",
-    "  ⚠️ 2026-10-17（issue #813）：本管线比的是**净额** = 销售侧 − 退货侧。退货侧 = Σ(sale_money + order_detail_share_discount)，",
-    "      条件 order_transaction_type like '%RETURN%' AND state='FINISHED'（REPAID_RETURN 不计）。源侧对应 return_money。",
-    "      ⚠️ 2026-10-18 #908 / 2026-10-19 #917：**退货行同样套赠品判别式（绝对值形态）**——赠品行不进销售侧，",
-    "      其退货**也不该**进退货侧；而源侧整单退货行**符号不一致**（有的 sale_money 为负），带负号那类直接冲减会**反向加回**。",
-    "      口径共四份副本（构件 / 复算 / 脚本 / 本管线），同源性由 scripts/check-recon-caliber.mjs 机检 —— 改口径必须四份一起改。",
-    "  源侧缺值按 0（pnormal 两侧 COALESCE(...,0)），与脚本 `or 0` 同源 —— 否则 NULL 传播会让 vbranch/gbranch 误报「湖有而源无」。",
+    "【行集 = 请求门店集】srcprep **按父管线给的 branch_nums 左连端点返回**：端点没返回的店也有一行，",
+    "source_* 为 NULL（不是 0）⇒ dbt 侧据此判 missing_side='source'（真实覆盖缺口）+ source_cover_pct。",
+    "⚠️ 若改成「只落端点返回的行」，「平台有值而源未返回」的门店会**整体消失**，台账的 rows_total/",
+    "   rows_platform/break_count 全部变形——这条是硬约束，别优化掉。",
     "",
-    "【gate ↔ 脚本退出码映射】（判红靠它，与 alerts.json 的 failure/recovery 规则接同一张网）",
-    "  lguard / gcode  = 脚本 exit 3（依赖不可用）——湖分区空 / 预聚合端点 code≠0",
-    "  ⚠️ 2026-10-18 起「判据破」（脚本 exit 1：门店缺 / 差超容差）在本管线里**已无对应节点**：",
-    "  那两档判定退役归 dbt（见下「判据闸退役」）。本管线只保留「拿不到才死」的三个闸（lguard / pguard / gcode）。",
-    "  全静默          = 脚本 exit 0（通过；未定稿日也走这条，只报数不判红）",
+    "srcprep 的列序 = 契约 contracts/common/lemeng.recon_source.json（check-data-contract 的别名抽取器",
+    "扫的是**整段 SQL** 的小写 `AS xxx`，故类型名一律大写、子查询别名不加 AS）——改列序 = 改契约一处。",
     "",
-    "【为什么先看 envelope（gcode 排在最前）】端点业务失败（如 3120 的恒 10006）是 HTTP 200 +",
-    "  code≠0，/result/rows 会是空 ⇒ 若不看 envelope 直接比行，会把「依赖坏了」误判成",
-    "  「全部门店缺失」（假红，且诊断错方向）。rawResponseDestination 落原始报文，",
-    "  envelope 从字节里抠 code——「对源的疑问从字节答，不靠争」（src.rest 该字段的文档语义）。",
+    "【网关失败先于判行】端点业务失败（如 3120 曾恒 10006）是 HTTP 200 + code≠0，/result/rows 会是空 ⇒",
+    "  若不看 envelope 直接比行，会把「依赖坏了」误判成「全部门店缺失」（假红，且诊断错方向）。",
+    "  rawResponseDestination 落原始报文，envelope 从字节里抠 code——「对源的疑问从字节答，不靠争」。",
     "",
-    "【容差】tol = max(abs_tol, |源侧值|×pct_tol%)；**地板与 pct 的事实源 = dbt/seeds/recon_tolerances.csv**",
-    "  （caliber_sale = 1.00 / 0.01，caliber_net = 200.00 / 0.01）。",
-    "  ⚠️ 本管线**不再判容差**（vthresh/gthresh 已于 2026-10-18 退役，见下）——本行只是口径说明，不是本文件的配置。",
-    "  脚本侧的 PREAGG_ABS_TOL / NET_ABS_TOL / PREAGG_MAX_PCT 与该 seed 的同源性由 scripts/check-recon-caliber.mjs 机检",
-    "  （#831；#813 的实证形态就是「只差地板」⇒ 一侧判 PREAGG_NET_DRIFT(rc 0)、一侧判 gthresh 死(exit 1)，排班面天天假红）。",
-    "  净额侧地板 200.00 是**退货侧缺口（issue #814）的过渡带**，带到期条件：修完 ⇒ 归 0，与销售侧同款逐分。",
-    "  来路：200.00 ≈ 实测最大退货缺口 123.06（64188/10-14）的 1.6 倍。",
-    "【两档】settled 由父管线按 T-3 定线传入。⚠️ 带 settled 条件的 violation SQL（vthresh/vbranch）已于",
-    "  2026-10-18 退役 ⇒ 本管线**不再**做「未定稿只报数」这一档——那个语义现在归 dbt（recon_run 的 not_evaluated /",
-    "  within_tol），以及脚本的 PREAGG_UNSETTLED（退出 0，只报数）。",
-    "【产物】/workspace/reports/recon-preagg/recon-<book>-<bizday>.csv（逐店明细，单对象覆盖=幂等）；",
-    "  owners.lemeng.json 以 *.csv maximumAge 36h 作「没有失败的停更」锚（close.l1 同公式：24h+12h）。",
-    "源有而湖无的门店（当日无销售）按脚本同款**只在明细里可见、不判红**。",
+    "【闸】sguard：端点对本块零返回即死（依赖不可用，不是「当天零销售」）；gcode：code≠0 即死。",
+    "  两者都是「拿不到才死」；「数不一样」不在本管线判（判定归 dbt）。",
     "",
-    "【2026-10-18 落湖】新增 sinkprep + lakeout（snk.minio）：逐店两侧事实落 lemeng/recon_preagg/system_book=/bizday=/chunk=/all.parquet。",
-    "  只落**事实**（两侧 4 个金额）；容差/判定/原因**不进湖**（配置归 seed、判定归 dbt）。",
-    "  父管线已切块（≤100 家/块）⇒ 子管线每块一跑；chunk_no 经 ${ITER_ITEM_CHUNK_NO} 进来。",
+    "【落湖】lakeout → lemeng/recon_source/system_book=/bizday=/chunk=/all.parquet（契约 lemeng.recon_source）。",
+    "  只落**事实**（源侧两个金额）；平台侧、容差、判定、原因一律不进湖。",
     "",
-    "【2026-10-18 判据闸退役】`vthresh` / `gthresh` / `vbranch` / `gbranch` 四个节点已删除。",
-    "  理由（真跑实证）：旧 `gthresh` 是 `ctl.die`——总差超容差即整条 run 死 ⇒ sink 不执行、",
-    "  后续块永不执行。而「净额侧容差 200」本是 issue #814（退货晚到）的**过渡活口**，",
-    "  意味着**只要 #814 没关，这条管线就永远不可能成功落数据**（历史上 last_run_at=null 即此）。",
-    "  界线：**采集只该因「拿不到」而死**（`lguard` 湖空 / `pguard` T-3 无行 / `gcode` 网关报错 —— 三个都保留），",
-    "  **不该因「数不一样」而死**。判定归 dbt：`recon_run` 四态（ok/within_tol/over_tol/not_evaluated）",
-    "  + `recon_break`（原因/到期/认领）。在管线里再判一次 = 同一判据的第二份实现。",
-    "",
-    "【2026-10-18 真跑修正·按块过滤】首跑两账套：3120 派发了 2 块（`pfe rows=2`，切块成立），",
-    "  但**两个 chunk 分区都写了全部门店（各 148 行）**——`lagg` 读的是**整日湖分区**，",
-    "  没按本块门店集过滤 ⇒ 每块都写了全集。修法：`diff` 末尾按 `PER_ITEM_BRANCH_NUMS_JSON`",
-    "  （`json_each` 展开）过滤；CSV 文件名加 `-c<块号>`（否则后一块覆盖前一块）。",
-    "  ⚠️ 教训：**切块只切了请求，没切湖侧**——「每块写自己那一片」要在 diff 层显式收口。",
-    "",
-    "【临时诊断】`diff` 多一列 `chunk_branch_count`（= 本块收到的门店数组长度），只进 CSV。",
-    "  用途：分辨「父管线吐的数组长度」与「diff 过滤后行数」是否一致。验完删除。",
-    "",
-    "【2026-10-18 撤诊断】`chunk_branch_count` 列已删除（诊断完成：证实子管线收到 51/97，",
-    "  根因在父管线切块的除法语义，不在传参）。"
+    "【退役（2026-10-19，#920）】lake / lmat / lguard / lagg / merge / diff / report / sinkprep 已删除：",
+    "  湖侧自算 → 改读构件（dbt）；逐店 diff 与 report CSV → 与 dbt recon_break 重复，随之退役。",
+    "  旧湖资产 lemeng/recon_preagg **停写**（数据保留，不再被读）——本文件不再出现该前缀。",
+    "  ⚠️ 新鲜度锚仍指父管线收尾汇总 /workspace/reports/recon-preagg/_recon-summary.csv（不要给本子管线",
+    "  写的对象加锚：foreach 子管线不产运行记录 ⇒ 带 * 的 glob 锚两头不占，见正典 §1.6 案例 35）。"
   ],
   "name": "lemeng.recon.preagg.item",
   "version": 1,
   "id": "lemeng.recon.preagg.item",
   "nodes": [
-    {
-      "id": "lake",
-      "type": "source",
-      "position": {
-        "x": 0,
-        "y": 0
-      },
-      "data": {
-        "label": "lake T-3 单日零售明细（精确分区）",
-        "componentId": "src.minio",
-        "properties": {
-          "connectionRef": "zos",
-          "bucket": "${ITER_ITEM_BUCKET}",
-          "key": "lemeng/retail_order_line/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/**/*.parquet",
-          "glob": true,
-          "format": "parquet"
-        }
-      }
-    },
-    {
-      "id": "lmat",
-      "type": "transform",
-      "position": {
-        "x": 130,
-        "y": 0
-      },
-      "data": {
-        "label": "lmat 物化湖行（控制节点上下文丢 S3 连接配置，先落 TABLE）",
-        "componentId": "code.sql",
-        "properties": {
-          "pureSql": true,
-          "sql": "CREATE OR REPLACE TABLE \"lmat\" AS SELECT * FROM \"lake\""
-        }
-      }
-    },
-    {
-      "id": "lguard",
-      "type": "transform",
-      "position": {
-        "x": 260,
-        "y": 0
-      },
-      "data": {
-        "label": "lguard 湖空即死（exit3 语义）",
-        "componentId": "ctl.die",
-        "properties": {
-          "condition": "no-rows",
-          "message": "recon 依赖不可用（lake_unavailable）：bizday=${ITER_ITEM_BIZDAY} 分区为空——采集未跑或分区缺失"
-        }
-      }
-    },
-    {
-      "id": "lagg",
-      "type": "transform",
-      "position": {
-        "x": 520,
-        "y": 0
-      },
-      "data": {
-        "label": "lagg 湖侧净化净额（逐订单归并，口径=recon-preagg.sh）",
-        "componentId": "code.sql",
-        "properties": {
-          "rawSql": true,
-          "sql": "WITH per_order AS (\n  SELECT CAST(branch_num AS INTEGER) AS b,\n         CAST(order_no AS VARCHAR) AS o,\n         sum(CASE WHEN CAST(order_detail_std_price AS DOUBLE) > 0\n                    AND CAST(sale_money AS DOUBLE) > 0\n                    AND CAST(quantity AS DOUBLE) > 0\n                    AND abs(CAST(discount_money AS DOUBLE)\n                            - CAST(order_detail_std_price AS DOUBLE) * CAST(quantity AS DOUBLE)) <= 0.02\n                  THEN 0 ELSE CAST(sale_money AS DOUBLE) END) AS ng,\n         max(CAST(order_total_money AS DOUBLE)) AS tot,\n         sum(CAST(order_detail_share_discount AS DOUBLE)) AS sd\n  FROM \"lguard\"\n  WHERE CAST(state AS VARCHAR) = 'FINISHED'\n    AND CAST(order_transaction_type AS VARCHAR) = 'SALE_ORDER'\n  GROUP BY 1, 2),\nsale_side AS (\n  SELECT b, round(sum((ng + tot) / 2 - sd), 2) AS sale_net FROM per_order GROUP BY b),\nret_side AS (\n  SELECT CAST(branch_num AS INTEGER) AS b,\n         round(sum(CASE WHEN CAST(order_detail_std_price AS DOUBLE) > 0\n                          AND abs(CAST(sale_money AS DOUBLE)) > 0\n                          AND abs(CAST(quantity AS DOUBLE)) > 0\n                          AND abs(abs(CAST(discount_money AS DOUBLE))\n                                  - CAST(order_detail_std_price AS DOUBLE) * abs(CAST(quantity AS DOUBLE))) <= 0.02\n                        THEN 0\n                        ELSE CAST(sale_money AS DOUBLE) + CAST(order_detail_share_discount AS DOUBLE) END), 2) AS ret\n  FROM \"lguard\"\n  WHERE CAST(order_transaction_type AS VARCHAR) like '%RETURN%'\n    AND CAST(state AS VARCHAR) = 'FINISHED'\n  GROUP BY 1)\nSELECT coalesce(s.b, t.b) AS branch_num,\n       coalesce(s.sale_net, 0) AS sale,\n       coalesce(s.sale_net, 0) - coalesce(t.ret, 0) AS net,\n       'lake' AS side\nFROM sale_side s FULL JOIN ret_side t ON s.b = t.b ORDER BY 1"
-        }
-      }
-    },
     {
       "id": "pre",
       "type": "source",
@@ -159,7 +63,21 @@
           "rawResponseDestination": "/workspace/reports/recon-preagg/raw-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.json",
           "retryAttempts": 3,
           "retryBackoffMs": 2000
-        }
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "sale_money",
+            "type": "decimal"
+          },
+          {
+            "name": "return_money",
+            "type": "decimal"
+          }
+        ]
       }
     },
     {
@@ -170,10 +88,42 @@
         "y": 260
       },
       "data": {
-        "label": "pnormal 源侧行定型（对齐湖侧形状）",
+        "label": "pnormal 源侧行定型（逐店销售/净额）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(COALESCE(sale_money, 0) AS DOUBLE) AS sale,\n       CAST(COALESCE(sale_money, 0) AS DOUBLE) - CAST(COALESCE(return_money, 0) AS DOUBLE) AS net,\n       'pre' AS side\nFROM input"
+          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(COALESCE(sale_money, 0) AS DECIMAL(20, 2)) AS source_sale,\n       CAST(COALESCE(sale_money, 0) - COALESCE(return_money, 0) AS DECIMAL(20, 2)) AS source_net\nFROM input"
+        }
+      }
+    },
+    {
+      "id": "sguard",
+      "type": "transform",
+      "position": {
+        "x": 520,
+        "y": 260
+      },
+      "data": {
+        "label": "sguard 端点零返回即死（依赖不可用，不是零销售）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "recon 依赖不可用（pre_call）：bizday=${ITER_ITEM_BIZDAY} 本块端点零返回——是依赖坏了，不是当天零销售"
+        }
+      }
+    },
+    {
+      "id": "srcprep",
+      "type": "transform",
+      "position": {
+        "x": 1400,
+        "y": 260
+      },
+      "data": {
+        "label": "srcprep 源侧落湖行定型（**行集 = 请求门店集**，端点未返回者为 NULL）",
+        "componentId": "code.sql",
+        "properties": {
+          "rawSql": true,
+          "sql": "SELECT\n  '${ITER_ITEM_BATCH_ID}' AS batch_id,\n  '${ITER_ITEM_SYSTEM_BOOK}' AS system_book,\n  CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday,\n  CAST(${ITER_ITEM_CHUNK_NO} AS INTEGER) AS chunk_no,\n  CAST(branch_num AS BIGINT) AS branch_num,\n  CAST(source_sale AS DECIMAL(20, 2)) AS source_sale,\n  CAST(source_net AS DECIMAL(20, 2)) AS source_net,\n  CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at\nFROM (\n  SELECT CAST(j.value AS BIGINT) AS \"branch_num\",\n         p.source_sale           AS \"source_sale\",\n         p.source_net            AS \"source_net\"\n  FROM json_each('${ITER_ITEM_BRANCH_NUMS_JSON}') j\n  LEFT JOIN \"pnormal\" p ON CAST(p.branch_num AS BIGINT) = CAST(j.value AS BIGINT)\n) q"
         }
       }
     },
@@ -210,66 +160,6 @@
       }
     },
     {
-      "id": "merge",
-      "type": "transform",
-      "position": {
-        "x": 780,
-        "y": 120
-      },
-      "data": {
-        "label": "merge 两侧并流（UNION ALL）",
-        "componentId": "ctl.merge",
-        "properties": {}
-      }
-    },
-    {
-      "id": "diff",
-      "type": "transform",
-      "position": {
-        "x": 1040,
-        "y": 120
-      },
-      "data": {
-        "label": "diff 逐店透视（**按本块门店集过滤**；两侧销售/净额）",
-        "componentId": "code.sql",
-        "properties": {
-          "sql": "SELECT CAST(branch_num AS INTEGER) AS branch_num,\n       max(CASE WHEN side = 'lake' THEN sale END) AS platform_sale,\n       max(CASE WHEN side = 'pre'  THEN sale END) AS source_sale,\n       max(CASE WHEN side = 'lake' THEN net  END) AS platform_net,\n       max(CASE WHEN side = 'pre'  THEN net  END) AS source_net,\n       round(max(CASE WHEN side = 'pre' THEN net END)\n           - max(CASE WHEN side = 'lake' THEN net END), 2) AS diff\nFROM input\nWHERE CAST(branch_num AS BIGINT) IN (\n  SELECT CAST(j.value AS BIGINT) FROM json_each('${ITER_ITEM_BRANCH_NUMS_JSON}') j\n)\nGROUP BY 1 ORDER BY 1"
-        }
-      }
-    },
-    {
-      "id": "report",
-      "type": "sink",
-      "position": {
-        "x": 1300,
-        "y": 400
-      },
-      "data": {
-        "label": "report 本块明细落盘（文件名含块号，块间不覆盖）",
-        "componentId": "snk.csv",
-        "properties": {
-          "path": "/workspace/reports/recon-preagg/recon-${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}-c${ITER_ITEM_CHUNK_NO}.csv",
-          "mode": "overwrite"
-        }
-      }
-    },
-    {
-      "id": "sinkprep",
-      "type": "transform",
-      "position": {
-        "x": 1400,
-        "y": 260
-      },
-      "data": {
-        "label": "sinkprep 落湖行定型（补 batch_id/分区列/时点）",
-        "componentId": "code.sql",
-        "properties": {
-          "rawSql": true,
-          "sql": "SELECT\n  '${ITER_ITEM_BATCH_ID}' AS batch_id,\n  '${ITER_ITEM_SYSTEM_BOOK}' AS system_book,\n  CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday,\n  CAST(${ITER_ITEM_CHUNK_NO} AS INTEGER) AS chunk_no,\n  CAST(branch_num AS BIGINT) AS branch_num,\n  CAST(platform_sale AS DECIMAL(20, 2)) AS platform_sale,\n  CAST(source_sale AS DECIMAL(20, 2)) AS source_sale,\n  CAST(platform_net AS DECIMAL(20, 2)) AS platform_net,\n  CAST(source_net AS DECIMAL(20, 2)) AS source_net,\n  CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at\nFROM \"diff\""
-        }
-      }
-    },
-    {
       "id": "lakeout",
       "type": "sink",
       "position": {
@@ -277,11 +167,11 @@
         "y": 260
       },
       "data": {
-        "label": "lakeout 逐店比对事实落湖（chunk 分区）",
+        "label": "lakeout 源侧快照落湖（chunk 分区；契约 lemeng.recon_source）",
         "componentId": "snk.minio",
         "properties": {
           "bucket": "${ITER_ITEM_BUCKET}",
-          "key": "lemeng/recon_preagg/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/chunk=${ITER_ITEM_CHUNK_NO}/all.parquet",
+          "key": "lemeng/recon_source/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/chunk=${ITER_ITEM_CHUNK_NO}/all.parquet",
           "region": "${ITER_ITEM_REGION}",
           "urlStyle": "path",
           "useSsl": "true",
@@ -295,46 +185,6 @@
   ],
   "edges": [
     {
-      "id": "e_lake_lmat",
-      "source": "lake",
-      "target": "lmat",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_lmat_lguard",
-      "source": "lmat",
-      "target": "lguard",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_lguard_lagg",
-      "source": "lguard",
-      "target": "lagg",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_lagg_merge",
-      "source": "lagg",
-      "target": "merge",
-      "sourceHandle": "main",
-      "targetHandle": "main_1",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
       "id": "e_pre_pnormal",
       "source": "pre",
       "target": "pnormal",
@@ -345,11 +195,31 @@
       }
     },
     {
-      "id": "e_pnormal_merge",
+      "id": "e_pnormal_sguard",
       "source": "pnormal",
-      "target": "merge",
+      "target": "sguard",
       "sourceHandle": "main",
-      "targetHandle": "main_2",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_pnormal_srcprep",
+      "source": "pnormal",
+      "target": "srcprep",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_srcprep_lakeout",
+      "source": "srcprep",
+      "target": "lakeout",
+      "sourceHandle": "main",
+      "targetHandle": "main",
       "data": {
         "connectionType": "main"
       }
@@ -368,46 +238,6 @@
       "id": "e_envelope_gcode",
       "source": "envelope",
       "target": "gcode",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_merge_diff",
-      "source": "merge",
-      "target": "diff",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_diff_report",
-      "source": "diff",
-      "target": "report",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_diff_sinkprep",
-      "source": "diff",
-      "target": "sinkprep",
-      "sourceHandle": "main",
-      "targetHandle": "main",
-      "data": {
-        "connectionType": "main"
-      }
-    },
-    {
-      "id": "e_sinkprep_lakeout",
-      "source": "sinkprep",
-      "target": "lakeout",
       "sourceHandle": "main",
       "targetHandle": "main",
       "data": {

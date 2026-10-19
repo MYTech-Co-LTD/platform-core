@@ -22,7 +22,7 @@
 --   不是「差 0」）——2026-10-18 实测 64188 有 23 家「湖有源无」贡献 −48,650.80，
 --   而**每一行都有值的那些店只差 −19.8**：合计不平、每行都平的典型样本。
 with src as (
-    select * from {{ ref('stg_lemeng_recon_preagg') }}
+    select * from {{ ref('recon_fact') }}
 ),
 tol as (
     select
@@ -37,14 +37,14 @@ tol as (
 ),
 unpivot as (
     select
-        system_book, org, bizday, chunk_no, branch_num, computed_at,
+        system_book, org, bizday, branch_num, computed_at,
         'caliber_sale' as control,
         platform_sale  as platform_value,
         source_sale    as source_value
     from src
     union all
     select
-        system_book, org, bizday, chunk_no, branch_num, computed_at,
+        system_book, org, bizday, branch_num, computed_at,
         'caliber_net'  as control,
         platform_net   as platform_value,
         source_net     as source_value
