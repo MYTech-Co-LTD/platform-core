@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.170.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.170.4...v0.170.5) - 2026-10-19
+- 【优化】data: 口径单源化（对账改消费者）+ duckle 原生优先立为正典与 skill（#920） ([#921](https://github.com/MYTech-Co-LTD/platform-core/pull/921), [9525341](https://github.com/MYTech-Co-LTD/platform-core/commit/9525341f3fe87bdd9ac3f85ee249ab18df00fcf0))
+
+
 ## [0.170.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.170.3...v0.170.4) - 2026-10-19
 - 【修复】data: 退货侧赠品判别式补到对账两副本 + 口径五副本同源门禁（#917/#831） ([#918](https://github.com/MYTech-Co-LTD/platform-core/pull/918), [086f11a](https://github.com/MYTech-Co-LTD/platform-core/commit/086f11afdfff8de188d69f1b6ca71e043d89fd80))
 
