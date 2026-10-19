@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.172.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.171.0...v0.172.0) - 2026-10-19
+- 【新增】data: 重述窗口调度——两账套 + 台账驱动 + T-3..T-9（#814 层 1+2+3） ([#925](https://github.com/MYTech-Co-LTD/platform-core/pull/925), [dbfa29f](https://github.com/MYTech-Co-LTD/platform-core/commit/dbfa29f89a5063480bec022b508d153a28857702))
+
+
 ## [0.171.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.170.5...v0.171.0) - 2026-10-19
 - 【新增】forms: 指派与催办（T9/T11）——契约 assignees/due + 声明式对账 + openship job ([#907](https://github.com/MYTech-Co-LTD/platform-core/pull/907), [6117b88](https://github.com/MYTech-Co-LTD/platform-core/commit/6117b88f09f64befe70c9d74344e1929117316d8))
 - 【新增】m1.1: dataDependencies 门禁判据 1 落地（形状校验 + B1 声明集豁免） ([#912](https://github.com/MYTech-Co-LTD/platform-core/pull/912), [905de1b](https://github.com/MYTech-Co-LTD/platform-core/commit/905de1bf9e103710d5456b5a4474c71aa3a38c2d))
