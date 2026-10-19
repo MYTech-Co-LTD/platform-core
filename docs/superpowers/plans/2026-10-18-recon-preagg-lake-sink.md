@@ -1,5 +1,11 @@
 # 口径对账落仓：`recon_run` + `recon_break` 两张表
 
+> ⚠️ **2026-10-19 已被 #920 在架构层面取代**：本文的「湖侧自算 vs 端点」形态已退役——
+> 口径只留 dbt 构件 + 复算，对账侧改为**消费者**（子管线只取数、落 `lemeng/recon_source`；
+> 比较在 dbt `recon_fact` / `recon_break`）。本文**保留为当时的实施记录**；判据与现状以
+> `docs/architecture.md` §4.1 **B11** 与 `docs/data-platform-handbook.md` §1.4 为准。
+
+
 > 2026-10-18（第二版，按行业形态重写）。上位：消费面 spec §12.4 缺口①「证据不落仓」。
 > 流程：`collect-source` A→I。A 段已完成并入库（PR #842）；B 段登记见 §1.7。
 
