@@ -18,8 +18,9 @@ const manifest = ManifestSchema.parse(
   parseYaml(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'manifest.yaml'), 'utf8')),
 )
 
-// Novu 客户端在模块加载期解析一次。缺 env ⇒ null ⇒ /emit 记失败但**不阻塞业务**（fail-open，§2.6）。
-const novu = novuFromEnv()
+// §2.6 方案 A：凭据**按 org** 在每次 emit 时解析（`NOVU_API_KEY__<ORG>` → 全局回落）。
+// 缺 env / 该 org 未开通 ⇒ null ⇒ 逐条回执记 failed，但**不阻塞业务**（fail-open）。
+const novu = (org: string) => novuFromEnv(process.env, org)
 
 export default defineModule({
   manifest,
