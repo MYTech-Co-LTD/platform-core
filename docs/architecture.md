@@ -455,6 +455,51 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 - **未验证（不得据以写码，实施期实测）**：渲染样式质量、权限投影层、服务端写权限绕过测试、
   超长表单（>40 字段）分段生成。
 
+**指派与催办：名单只存引用（2026-10-19 拍板；设计稿 `docs/superpowers/specs/2026-10-18-form-assignment-and-reminder-design.md` 已人审）**
+
+通知层的 `form.assigned` / `form.due_reminder` 需要一个「**谁该填**」的答案，而 forms 此前**没有任何指派/催办语义**（全模块搜 `assign` / `due` / `remind` / 催办 —— 零命中）。本节定义它。
+
+**核心判断**：**名单是「会变的运营数据」，不是「表单的语义」** ⇒ 按本节铁律「**契约里永不含值，只含引用**」，表单契约只写**对名单的引用**，名单本体由**受管数据集（字典）**承载——复用字典已有的软删 / key 不可变 / 租户 vs 全局双档纪律，**不新增概念**。
+
+**契约形状**（表单定义 `asset_version.body` 新增两个**可选**顶层键）：
+
+| 键 | 形状 | 语义 |
+|---|---|---|
+| `assignees` | `{ "dictRef": "dict:<id>" }` | 谁该填——**只存引用**；解析走与字段字典**同一套** `dictOptions`（`dict:` 租户私有 / `gdict:` 全局），**不新增解析器** |
+| `due` | `{ "afterDays": N }` | 截止 = **发布时刻 + N 天**（v1 只此一种；字段驱动的截止不做） |
+
+- 两键**都缺省** ⇒ 该表单**没有指派语义**：不派生 `form.assigned`、不派生催办规则——**向后兼容，存量表单行为完全不变**（负对照）。
+- 名单条目的 **key = Casdoor 用户名**（非显示名）——与 §2.6 通知层「人」的落库键同一套（零转换层）。
+
+**执行流（双入口，与 §2.6 的规则管道同源）**：
+
+- **发布路径**（T9）：契约含 `assignees` ⇒ 发布时解析 `dictRef`（**只取 enabled 条目**）→ 逐人 emit `form.assigned`（`event_id` **确定性**：`form:<assetId>:<version>:assigned:<user>`）→ 声明派生催办规则（幂等）。
+- **定时路径**（T11，**openship job** 跑仓内脚本）：对每个「含 `assignees` + `due`」的已发布表单：`due = published_at + afterDays`；**未提交** = 名单 − { 该版本 `submission.submitted_by` } → 逐人 emit `form.due_reminder`（`event_id` 含日期：`form:<assetId>:<version>:remind:<user>:<YYYY-MM-DD>`）。
+
+**幂等**：两处 `event_id` 都**确定性派生** ⇒ 重复发布 / 重复调度天然去重（回执表 `unique(event_id, rule_id)` 兜底）。
+
+> ⚠️ **定时载体 = openship job**（2026-10-19 拍板，方案对比见 `docs/superpowers/specs/2026-10-18-notify-emit-seam-and-scheduler.md`）：
+> job 跑**仓内脚本**（照 `deploy/data-compose.yml` 的 dbt runner 范式：openship 打 `docker run` 一次性容器，**零常驻**），
+> 脚本**直接 import `modules/notify/**`** 对 DB 操作——`scripts/` **不在** `lint-architecture.mjs` 扫描根（`apps/ packages/ modules/`）内 ⇒ **不触 B1**。
+> ⇒ **in-platform 这一半既不需要 HTTP、不需要令牌、更不需要跨模块通路。**
+
+**不做清单（v1 写死）**：
+
+| 反模式 | 为什么不做 |
+|---|---|
+| 多级 / 条件指派 | 无真实案例（无案例不立标准） |
+| 按角色 / 组织架构自动展开名单 | 需外部权威通路——本节「外部权威适配器」今天**无合法通路** |
+| 字段驱动的截止（从提交里取日期） | v1 只做「发布后 N 天」；真需求出现再加 |
+| 补填 / 代填 | 提交面只认 `submitted_by`；代填是另一套权限语义 |
+| 名单变更后重发 `form.assigned` | v1 只在发布时发一次；名单变更走**催办**兜底（下次调度自然覆盖） |
+| **门店作为 subject**（主体注入） | **演进项**：触发条件 = **首个真实门店巡检表单上线**（届时连带设计「`readOnly` 字段值从哪来」的**主体注入机制**）。今天唯一真实样本 `site-inspection` 的 `storeNo` 是 `readOnly`，但**全链路无服务端注入通路**（`readOnly` 今天**只拒不留**）——为假想需求先造主体注入 = 为不存在的案例付基建成本 |
+
+**实施注记**：
+
+- v1 名单 = **人**（`submitted_by` 与名单**直接对账，零新机制**）；门店 subject 见不做清单末条。
+- **待实测**：名单 N=500 时的调度耗时与 Novu 限速（T11 验收项）。
+- **`due` 重算口径**：以**当前 published 版本**的发布时间为准（表单回滚/重发是否重算，待实测确认）。
+
 ### 2.5 数据面归属与「域」维度（2026-10-17 拍板）
 
 > **本节由真实缺陷倒逼，不是推演**：M1.4 forms 出湖（#729）实施时把 console 落在**山海**数据面，
