@@ -26,6 +26,8 @@
 #   3 = 依赖不可用（pg_duckdb 容器不在 / 台账读不到 / console 不可达）
 #   可 grep 字面量：
 #     `RESTATE_PLAN book=<B> window=<a..b> candidates=<n> days=<d1,d2,...>`
+#     `RESTATE_START book=<B> day=<D>`（**逐日开跑前打一行**——单日 heal 可达数分钟，
+#        没有这行就只能靠 `ps` 猜「现在跑到哪天」，实测一次 43 分钟的跑批里这条很要紧）
 #     `RESTATE_SKIP reason=excluded day=<D>` / `RESTATE_SKIP reason=no_ledger`
 #     `RESTATE_DAY book=<B> day=<D> verdict=<HEAL_OK|HEAL_RECOVERED|HEAL_FAILED:…|HEAL_SKIP:…>`
 #     `RESTATE_OK candidates=<n> healed=<m> unchanged=<k>` / `RESTATE_PARTIAL failed=<n>`
@@ -96,6 +98,7 @@ for book in ${BOOKS}; do
       echo "RESTATE_DRY day=${d} (would run ${HEAL_BIN})"
       continue
     fi
+    echo "RESTATE_START book=${book} day=${d}"
     out=$(LEMENG_TOKEN="$(_get LEMENG_TOKEN)" \
           BRANCH_NUMS="$(_get BRANCH_NUMS)" \
           SYSTEM_BOOK="$(_get SYSTEM_BOOK)" \
