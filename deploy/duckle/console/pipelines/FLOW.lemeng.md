@@ -174,10 +174,6 @@ flowchart TD
   LA --> MG["① merge ctl.merge —— 两侧并流（UNION ALL BY NAME）"]:::e1
   PN --> MG
   MG --> DF["③ diff code.sql —— 逐店透视（任一侧缺=NULL）"]:::e3
-  DF --> VB["③ vbranch code.sql —— 门店缺失违规行（未定稿恒空）"]:::e3
-  VB --> GB["② gbranch ctl.die 判据闸（exit1：湖有源无）"]:::e2
-  DF --> VT["③ vthresh code.sql —— 容差违规单行（未定稿恒空）"]:::e3
-  VT --> GT["② gthresh ctl.die 判据闸（exit1：差超容差）"]:::e2
   DF --> RP["② report snk.csv —— 逐店明细落盘（覆盖写=幂等；<br/>owners 以 *.csv maximumAge 36h 作停更锚）"]:::e2
   classDef e1 fill:#e8f0fe,stroke:#4285f4,color:#0b3d91
   classDef e2 fill:#fff4e5,stroke:#e8710a,color:#7a3300
@@ -188,15 +184,16 @@ flowchart TD
 |---|---|---|---|
 | `pday` | ③ | SQL 执行壳 | T-3 定稿线（上海日-3）· 门店清单 JSON · settled 两档 |
 | `pguard` / `lguard` | ② | 无行即红 | 空分区/零销日 = 依赖不可用（脚本 exit3 同款保守） |
-| `lagg` | ③ | SQL 执行壳 | 净额口径逐字对应 `recon-preagg.sh`（赠品判别式 / 逐订单归并 / 销售侧不扣退货 + 净额侧减退货，issue #813） |
+| `lagg` | ③ | SQL 执行壳 | 净额口径逐字对应 `recon-preagg.sh`（赠品判别式——**两侧各一套**：销售侧 + **退货侧绝对值形态**（#908/#917）/ 逐订单归并 / 销售侧不扣退货 + 净额侧减退货，issue #813） |
 | `pre` | ② | REST · 重试 · 原始报文落盘 | 请求体（bizday / 门店清单来自 ITER）· `responsePath=/result/rows` |
 | `envelope` + `gcode` | ③+② | rawSql 读落盘字节 · 有行即红 | **先看 envelope 再判行**：code≠0 是依赖坏（10006 形状），不判会假红成「门店缺失」 |
 | `diff` | ③ | SQL 执行壳 | 逐店透视（两侧 UNION BY NAME，缺侧=NULL） |
-| `vbranch`/`gbranch` · `vthresh`/`gthresh` | ③+② | SQL 壳 + 有行即红 | 判据两档：violation SQL 恒带 `settled=1` ⇒ 未定稿日只报数不判红 |
+| ~~`vbranch`/`gbranch` · `vthresh`/`gthresh`~~ | — | — | **2026-10-18 已退役**（`ctl.die` 让「数不一样」也整条 run 死 ⇒ sink 永不执行）。判定归 dbt：`recon_run` 四态 + `recon_break`。见 `.item.json` 的「判据闸退役」段 |
 | `report` | ② | CSV 覆盖写 | 逐店明细 = 审计工件 + owners 停更锚（36h） |
 
 **与脚本（`recon-preagg.sh`）的关系**：判据本体已迁入本管线；脚本保留为**免 console 的手工/排障入口**
-（防漂移一致性测试见 spec §7，待补）；写动作（回填闭环 `recon-day-heal.sh`）**不进管线**，仍走
+（防漂移一致性测试 = `scripts/check-recon-caliber.mjs`，**2026-10-19 落地**，issue #831 —— 口径四副本同源 +
+容差地板同源）；写动作（回填闭环 `recon-day-heal.sh`）**不进管线**，仍走
 openship job —— 切分依据 = spec `docs/superpowers/specs/2026-10-06-console-vs-job-for-judgements.md` §5/§7。
 
 ---

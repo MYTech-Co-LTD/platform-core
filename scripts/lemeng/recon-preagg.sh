@@ -7,7 +7,8 @@
 #   源侧 = 预聚合端点（该账套令牌调用）
 # 输出逐店 diff + 合计 + 差率 + 门店集合对齐检查。
 #
-# ── 湖侧净额口径（唯一事实源：issue #430 的取证 + docs/architecture.md §5.2）──────
+# ── 湖侧净额口径（唯一事实源：spec docs/superpowers/specs/2026-10-17-retail-net-sales-return-offset-design.md
+#    §4 + 构件 dbt/models/lemeng/marts/fct_retail_sale.sql）—— 本文件是它的**对拍副本**──────
 #   对**每个订单**先归并，再按「送出半边」计入：
 #
 #     net(店, 营业日 D) = Σ_订单 [ (Σ非赠品行额 + order_total_money) / 2 ] − Σ(order_detail_share_discount)
@@ -21,6 +22,11 @@
 #      退货侧 = Σ(sale_money + order_detail_share_discount)，条件
 #      `order_transaction_type like '%RETURN%' AND state='FINISHED'`（**REPAID_RETURN 不计**），
 #      按**退货单自身 bizday** 归属。源侧对应端点字段 `return_money`。
+#   ⚠️ **退货行同样套赠品判别式**（2026-10-18 #908 定案、2026-10-19 #917 补到本副本；**绝对值形态**）：
+#      赠品行不进销售侧，其退货**也不该**进退货侧；而源数据的整单退货行**符号不一致**
+#      （有的 sale_money 为负）——带负号那类若直接冲减会**反向加回**「0 元实付单」的原额
+#      （3120/10-17 实证：402,866.47 → 402,735.68，差 130.79）。五份副本同源性由
+#      `scripts/check-recon-caliber.mjs` 机检。
 #   ⚠️ **同一张 SALE_ORDER 里可能装着换货的退回行**（礼盒↔散货）：平台只算「送出半边」，
 #      等价换货（总额 0）⇒ Σ/2；差价换货（总额=净补差）⇒ (Σ+总额)/2。**这就是 order_total_money 的用途**
 #      （2026-10-05 起湖里已有这一列，故本脚本能**完全自算**、不必回网关取总额）。
@@ -122,10 +128,12 @@ _lake_q() {
 
 # 赠品判别式（见头注）：折让 = 标准价全额 × 数量 ⇒ 该行分文未收。三条件护栏排除退化命中。
 GIFT="r['state']='FINISHED' AND r['order_detail_std_price']>0 AND r['sale_money']>0 AND r['quantity']>0 AND abs(r['discount_money']-r['order_detail_std_price']*r['quantity'])<=0.02"
+# 退货侧赠品判别式（#908/#917）：**绝对值形态**（源侧退货行符号不一致，见头注）。
+GIFT_RET="r['order_detail_std_price']>0 AND abs(r['sale_money'])>0 AND abs(r['quantity'])>0 AND abs(abs(r['discount_money'])-r['order_detail_std_price']*abs(r['quantity']))<=0.02"
 
 # 湖侧净额：**先逐订单归并**（不能按行算——那会把「总额 × 行数」加进去），再 (Σ非赠品 + 总额)/2 − 分摊折扣。
 # 湖侧两列：销售侧净额 + 退货侧金额（同一 query，避免第二个 python 块 —— 测试只抽一个块）。
-SQL_LAKE="WITH per_order AS (SELECT r['branch_num']::int AS b, r['order_no'] AS o, sum(CASE WHEN ${GIFT} THEN 0 ELSE r['sale_money'] END) AS ng, max(r['order_total_money']) AS tot, sum(r['order_detail_share_discount']) AS sd FROM read_parquet('${LAKE_ROOT}/system_book=${BOOK}/bizday=${BIZDAY}/**/*.parquet') r WHERE r['state']='FINISHED' AND r['order_transaction_type']='SALE_ORDER' GROUP BY 1, 2), sale_side AS (SELECT b, round(sum((ng + tot) / 2 - sd), 2) AS sale_net FROM per_order GROUP BY b), ret_side AS (SELECT r['branch_num']::int AS b, round(sum(r['sale_money'] + r['order_detail_share_discount']), 2) AS ret FROM read_parquet('${LAKE_ROOT}/system_book=${BOOK}/bizday=${BIZDAY}/**/*.parquet') r WHERE r['order_transaction_type'] like '%RETURN%' AND r['state']='FINISHED' GROUP BY 1) SELECT coalesce(s.b, t.b), coalesce(s.sale_net, 0), coalesce(t.ret, 0) FROM sale_side s FULL JOIN ret_side t ON s.b = t.b ORDER BY 1"
+SQL_LAKE="WITH per_order AS (SELECT r['branch_num']::int AS b, r['order_no'] AS o, sum(CASE WHEN ${GIFT} THEN 0 ELSE r['sale_money'] END) AS ng, max(r['order_total_money']) AS tot, sum(r['order_detail_share_discount']) AS sd FROM read_parquet('${LAKE_ROOT}/system_book=${BOOK}/bizday=${BIZDAY}/**/*.parquet') r WHERE r['state']='FINISHED' AND r['order_transaction_type']='SALE_ORDER' GROUP BY 1, 2), sale_side AS (SELECT b, round(sum((ng + tot) / 2 - sd), 2) AS sale_net FROM per_order GROUP BY b), ret_side AS (SELECT r['branch_num']::int AS b, round(sum(CASE WHEN ${GIFT_RET} THEN 0 ELSE r['sale_money'] + r['order_detail_share_discount'] END), 2) AS ret FROM read_parquet('${LAKE_ROOT}/system_book=${BOOK}/bizday=${BIZDAY}/**/*.parquet') r WHERE r['order_transaction_type'] like '%RETURN%' AND r['state']='FINISHED' GROUP BY 1) SELECT coalesce(s.b, t.b), coalesce(s.sale_net, 0), coalesce(t.ret, 0) FROM sale_side s FULL JOIN ret_side t ON s.b = t.b ORDER BY 1"
 LAKE_ROWS=$(_lake_q "${SQL_LAKE}")
 [ -n "${LAKE_ROWS}" ] || { echo "PREAGG_FAILED:lake_unavailable 湖侧取数为空（该账套该营业日没有分区？）" >&2; exit 3; }
 
