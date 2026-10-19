@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.171.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.170.5...v0.171.0) - 2026-10-19
+- 【新增】forms: 指派与催办（T9/T11）——契约 assignees/due + 声明式对账 + openship job ([#907](https://github.com/MYTech-Co-LTD/platform-core/pull/907), [6117b88](https://github.com/MYTech-Co-LTD/platform-core/commit/6117b88f09f64befe70c9d74344e1929117316d8))
+- 【新增】m1.1: dataDependencies 门禁判据 1 落地（形状校验 + B1 声明集豁免） ([#912](https://github.com/MYTech-Co-LTD/platform-core/pull/912), [905de1b](https://github.com/MYTech-Co-LTD/platform-core/commit/905de1bf9e103710d5456b5a4474c71aa3a38c2d))
+
+
 ## [0.170.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.170.4...v0.170.5) - 2026-10-19
 - 【优化】data: 口径单源化（对账改消费者）+ duckle 原生优先立为正典与 skill（#920） ([#921](https://github.com/MYTech-Co-LTD/platform-core/pull/921), [9525341](https://github.com/MYTech-Co-LTD/platform-core/commit/9525341f3fe87bdd9ac3f85ee249ab18df00fcf0))
 
