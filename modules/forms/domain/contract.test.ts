@@ -446,3 +446,38 @@ describe('提交闸与条件字段（then.properties）', () => {
     if (!bad.ok) expect(bad.code).toBe('DICT_REQUIRED_VIOLATION')
   })
 })
+
+// ── §2.4「指派与催办」：契约新增两个可选顶层键（assignees / due）的编译闸 ──────────────
+describe('compileGate：指派与催办两键（§2.4）', () => {
+  const base = { schema: { type: 'object', properties: { a: { type: 'string' } } } }
+
+  it('两键缺省 → 通过（向后兼容，存量表单不受影响）', () => {
+    expect(compileGate(base).ok).toBe(true)
+  })
+
+  it('assignees.dictRef 合法 → 通过', () => {
+    expect(compileGate({ ...base, assignees: { dictRef: 'dict:store-staff' } }).ok).toBe(true)
+    expect(compileGate({ ...base, assignees: { dictRef: 'gdict:staff' } }).ok).toBe(true)
+  })
+
+  it('assignees.dictRef 不匹配引用语法 → BAD_ASSIGNEE_REF', () => {
+    expect(compileGate({ ...base, assignees: { dictRef: 'store-staff' } }))
+      .toMatchObject({ ok: false, code: 'BAD_ASSIGNEE_REF' })
+  })
+
+  it('assignees 形状不对（数组 / 缺 dictRef / 非字符串 / null）→ BAD_ASSIGNEE_REF', () => {
+    for (const bad of [['a'], {}, { dictRef: 7 }, null]) {
+      expect(compileGate({ ...base, assignees: bad })).toMatchObject({ ok: false, code: 'BAD_ASSIGNEE_REF' })
+    }
+  })
+
+  it('due.afterDays 正整数 → 通过', () => {
+    expect(compileGate({ ...base, due: { afterDays: 7 } }).ok).toBe(true)
+  })
+
+  it('due.afterDays 非正整数（0 / 负数 / 小数 / 非数 / 缺）→ BAD_DUE', () => {
+    for (const bad of [{ afterDays: 0 }, { afterDays: -1 }, { afterDays: 1.5 }, { afterDays: '7' }, {}, null]) {
+      expect(compileGate({ ...base, due: bad })).toMatchObject({ ok: false, code: 'BAD_DUE' })
+    }
+  })
+})

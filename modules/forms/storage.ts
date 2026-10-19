@@ -63,6 +63,30 @@ export async function bodyAt(pool: Pool, org: string, assetId: string, version: 
   return rows[0]?.body ?? null
 }
 
+/**
+ * §2.4「指派与催办」：跨租户列出**当前活跃版本**、且**契约含 assignees 声明**的已发布表单
+ * （供 `scripts/notify-reconcile` 对账）。活跃版本 = `asset_head.active_version`（回滚即改此行）——
+ * 与正典「以当前 published 版本为准」口径一致。`body ? 'assignees'`（jsonb 键存在）在 SQL 侧先筛，
+ * 避免把全量已发布表单拖进脚本；脚本内 `parseAssignment` 是第二道守卫。
+ * ⚠️ 这是**唯一**一个不带 org 入参的读函数：调用方是 scripts/（不在 B1 扫描根内），它按租户逐条处理，
+ * 每次 emit 仍显式带该行的 org（不读请求参数）。
+ */
+export async function listAssignmentTargets(pool: Pool): Promise<Array<{
+  org: string; assetId: string; version: number; publishedAt: string; body: unknown
+}>> {
+  const { rows } = await pool.query(
+    `select v.org, v.asset_id, v.version, v.published_at, v.body
+       from forms.asset_version v
+       join forms.asset_head h
+         on h.org = v.org and h.kind = v.kind and h.asset_id = v.asset_id and h.active_version = v.version
+      where v.kind = $1 and v.status = 'published' and v.body ? 'assignees'`,
+    [KIND],
+  )
+  return rows.map((r) => ({
+    org: r.org, assetId: r.asset_id, version: r.version, publishedAt: r.published_at, body: r.body,
+  }))
+}
+
 /** 该资产在本租户下是否已有任何版本（AI 起草重名时据此拒，**不覆盖**）。 */
 export async function assetExists(pool: Pool, org: string, assetId: string): Promise<boolean> {
   const { rows } = await pool.query(

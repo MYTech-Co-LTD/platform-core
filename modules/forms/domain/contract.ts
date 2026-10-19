@@ -44,6 +44,8 @@ export type GateErrorCode =
   | 'CONDITIONAL_TOPLEVEL'
   | 'UI_SCHEMA_DRIFT'
   | 'UNSUPPORTED_WIDGET'
+  | 'BAD_ASSIGNEE_REF'
+  | 'BAD_DUE'
 
 /** 收集契约中全部字典引用（去重）——storage 据此预载各 ref 的生效 key 集。 */
 export function dictRefs(schema: unknown): string[] {
@@ -140,6 +142,10 @@ export interface FormContractBody {
   schema: Record<string, unknown>
   /** 可选：没有 UI 意图就不写（RJSF 用默认渲染）。 */
   uiSchema?: Record<string, unknown>
+  /** 可选（§2.4「指派与催办」）：谁该填——**只存对名单的引用**，名单本体在受管数据集（字典）。 */
+  assignees?: { dictRef: string }
+  /** 可选（§2.4）：截止 = 发布时刻 + afterDays 天（v1 只此一种）。 */
+  due?: { afterDays: number }
 }
 
 /**
@@ -278,6 +284,28 @@ export function compileGate(body: unknown): GateResult {
           detail: `ui:widget "${w}" 渲染层不认识（可用：${[...SUPPORTED_WIDGETS].join('/')}）`,
         }
       }
+    }
+  }
+  // ⑧ 指派声明（§2.4「指派与催办」）：只存引用，且引用语法与字段字典**同一套**（不新增解析器）。
+  const rawAssignees = (body as Record<string, unknown>)['assignees']
+  if (rawAssignees !== undefined) {
+    const ref = (rawAssignees as { dictRef?: unknown } | null)?.dictRef
+    if (
+      rawAssignees === null || typeof rawAssignees !== 'object' || Array.isArray(rawAssignees) ||
+      typeof ref !== 'string' || !DICT_REF_RE.test(ref)
+    ) {
+      return { ok: false, code: 'BAD_ASSIGNEE_REF', detail: 'assignees.dictRef 必须匹配 dict:<id> / gdict:<id>' }
+    }
+  }
+  // ⑨ 截止声明（§2.4）：v1 只支持「发布后 N 天」，N 必须是正整数。
+  const rawDue = (body as Record<string, unknown>)['due']
+  if (rawDue !== undefined) {
+    const n = (rawDue as { afterDays?: unknown } | null)?.afterDays
+    if (
+      rawDue === null || typeof rawDue !== 'object' || Array.isArray(rawDue) ||
+      typeof n !== 'number' || !Number.isInteger(n) || n <= 0
+    ) {
+      return { ok: false, code: 'BAD_DUE', detail: 'due.afterDays 必须是正整数（v1 只支持「发布后 N 天」）' }
     }
   }
   return { ok: true }

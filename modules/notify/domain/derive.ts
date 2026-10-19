@@ -46,7 +46,32 @@ export function deriveReminderRule(org: string, decl: ReminderDeclaration, now: 
     eventType: 'form.due_reminder',
     mount: decl.mount,
     templateId: decl.templateId ?? 'form_due_reminder',
-    recipient: 'submitter',
+    // §2.4：催办对象＝名单里的人（assignee）。原 shipped 的 'submitter' 语义错位——
+    // 被催的人**恰恰是还没提交的人**，不可能是 submitter；且与 form.assigned 同键（零转换层）。
+    recipient: 'assignee',
+    recipientArg: null,
+    channels: [...DEFAULT_CHANNELS],
+    cooldownMinutes: null,
+    origin: 'derived',
+    createdAt: now,
+  }
+}
+
+/** 表单指派声明（契约含 `assignees` ⇒ 派生 form.assigned 默认规则；§2.4）。 */
+export type FormAssignedDeclaration = {
+  mount: string // form_def_id
+  templateId?: string
+}
+
+export function deriveFormAssignedRule(org: string, decl: FormAssignedDeclaration, now: string): NotificationRule {
+  return {
+    id: `derived:form:${decl.mount}:form.assigned`,
+    org,
+    enabled: true,
+    eventType: 'form.assigned',
+    mount: decl.mount,
+    templateId: decl.templateId ?? 'form_assigned',
+    recipient: 'assignee',
     recipientArg: null,
     channels: [...DEFAULT_CHANNELS],
     cooldownMinutes: null,
