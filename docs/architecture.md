@@ -673,6 +673,7 @@ v1 模板集 = 少量参数化通用模板：`case_awaiting_approval` / `case_st
 | 装置完好 | `.githooks/pre-push` 带执行位 + 根 `prepare` 接线未被改掉（本地防线被改掉时**不会有任何报错**，只会"从此刻起拦不住"） | `.github/workflows/ci.yml` 的 gates | `gates` |
 | typecheck | 聚合 `tsc --noEmit`，**含 `scripts/`**（只跑包内会漏 `scripts/*.mjs` 的类型错误） | `.github/workflows/ci.yml` | `gates` |
 | **B10** 数据契约注册 | 湖的列集**只有一个事实源**：`contracts/*.json`。管线 `flatten` 的投影列集与对应 staging 模型的投影列集（去掉 dbt 注入的 `org`）必须与它**逐列一致**——漏改任一处 ⇒ 红。**2026-10-06 起（#460）③④ 已由 `scripts/gen-data-projection.mjs` 生成 ⇒ B10 从"事后查两处一致"降级为保险丝**（真正把关的是 `gen-data-projection --check`：生成物 == committed）；**改列集现在 = 改契约一处 + 跑生成器**。这条正是 §5.2 ① 的机检面 | `scripts/check-data-contract.mjs` + `scripts/gen-data-projection.mjs --check` | `gates` |
+| **B11** 口径单一定义 | 业务口径（指标公式）**只许在 `dbt/` 实现一次**。复算（内部一致性）只允许**贴着模型、在同一工具链里**再有一份（独立**读路径**，见 `audit_*`）；**对账 / 脚本 / 问数 / BI 一律是消费者**——读物化结果，不自带等价算式。违反 = 同一业务规则出现两个并列实现、靠人手同步 ⇒ **静默漂移**（#813 容差地板、#917 退货侧判别式，两次都是这个形态）。机检：口径原子（两侧赠品判别式 / 折半形态）只许出现在 `dbt/` 的三份副本（构件 + 两个复算）；**对账链路**（`scripts/lemeng/recon-preagg.sh` 与 recon 子管线的 `code.sql`）出现即红。⚠️ 边界：本门禁判「**在场/不在场**」，不判两份 dbt 副本的语义等价 | `scripts/check-recon-caliber.mjs`（反向断言） | `gates` |
 | 测试 / 冒烟 | 挂真 PG 的全量测试 / 双形态**真进程**装载冒烟 | `.github/workflows/ci.yml` | `unit` / `smoke` |
 
 > B1 的 schema 侧由门禁守；`id` → API 前缀由 `moduleApiBasePath(id)`（`apps/server/src/loader.ts:102`）
@@ -702,6 +703,7 @@ v1 模板集 = 少量参数化通用模板：`case_awaiting_approval` / `case_st
 | **数据面归属**（一个数据面 = 一个租户） | 数据面是**按租户交付的部署单元**；落进它的每一行，其租户归属**必须**等于部署租户。违反 ⇒ **跨租户可见**（`org` 是授权谓词，不是标签）：标了别家 org 的数据，**别家看得到、本家看不到**。**驱动是私有化交付**（非通则），**反转条件与连带翻转见 §2.5**。**无门禁**（要判它得先有跨租户的真库对账，本仓不存在） | §2.5；`dbt/macros/subject_org.sql`（空串 fail-closed） |
 | **主体列不进湖**（**仅在「一面一租户」成立时**） | `org` 由**部署面**注入（`subject_org()` 取部署租户常量），**不落进湖**。落进去就多一个可能与部署主体漂移的副本，而**无机制**发现漂移。⚠️ 共享面上本条**翻转**（org 必须进湖）——**别单独引用** | §2.5；`contracts/*/*.json`（15 份契约无一存 org） |
 | **域裁剪**（一个部署只物化自己的域） | 共享 `dbt/` 树 + 全量 build（无 `--select`，`mat_dbt_args()`）⇒ 不裁剪时**两侧互 build 对方模型**：本方侧**反向泄漏**（把对方租户数据标成本方 org），对方侧 **dbt 红**（前缀空）⇒ `exit 1` 早于写 `load_log` ⇒ 水位冻结、**所有**指标新鲜度连带退化。**无门禁** | §2.5；`scripts/lemeng/materialize.sh`；#729 R2 |
+| **duckle 原生优先** | 做**任何数据面工件**（采集 / 判定 / 对账 / 管线节点）前必须**先问引擎**：`list_components` + `get_component_schema` 看真实能力，并**横向试遍同类组件**；答案落采集正典 §1.1 的**三档之一**（①引擎有⇒首选 ②有但本环境未验⇒挂 gate ③结构性没有⇒归我方），**禁止把 ② 写成 ①、把 ③ 写成 ②**；手搓必须给**结构性理由**并登记缺口。违反 = 与引擎重复造一份且必然漂移（#917：对账子管线手搓口径，而 `src.postgres` / `qa.reconcile` / `routines` 本就存在）。⚠️ **无 CI 门禁**——「有没有先查引擎」是过程判断，做不成真闸；执法靠 skill | 采集正典 §1.1（三档）/ §1.1.1（E3 证成方法学）/ §1.1.7（下沉给引擎）；`duckle/README.md` §7；执法器 `.claude/skills/duckle-native-first` |
 
 > **「仅文档」不等于「不重要」**，而是「目前没有自动化的守门人」。把某一条升级成门禁是**另一个决定**，
 > 需要单独的真实案例支撑（本仓规矩：无案例不立标准）。
@@ -775,7 +777,8 @@ env，多租户同进程部署就只能共用一份 ⇒ 无 BYO、单密钥爆�
 演进走这三条：
 
 1. **改 dbt 模型 / 语义声明**：走 PR——口径只能有**单一定义**（同一指标不许两处各写一份 SQL），
-   改完由 `scripts/check-data-models.mjs`（T4 起）机检。
+   改完由 `scripts/check-data-models.mjs`（T4 起）机检。**对账 / 脚本 / 问数 / BI 一律是消费者**
+   （读物化结果，不自带等价算式）——这条由 §4.1 的 **B11** 机检（`scripts/check-recon-caliber.mjs` 反向断言）。
 2. **新增一个数据源**：`contracts/`（采集契约）+ `duckle/`（管线）+ `dbt/` staging **三件套同一个
    PR**——少一件即半接：契约没有 = 没人知道该源的结构；管线的 launcher 建在**镜像 ENTRYPOINT**里，
    不走模块路由。该纪律是流程约束，**当前无静态门禁**（见 §2）。
