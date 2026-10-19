@@ -32,7 +32,7 @@
     "",
     "【退役（2026-10-19，#920）】lake / lmat / lguard / lagg / merge / diff / report / sinkprep 已删除：",
     "  湖侧自算 → 改读构件（dbt）；逐店 diff 与 report CSV → 与 dbt recon_break 重复，随之退役。",
-    "  旧湖资产 lemeng/recon_preagg **停写**（数据保留，不再被读）——本文件不再出现该前缀。",
+    "  旧湖资产 lemeng/recon_preagg **已删除**（2026-10-19：停写后确认无消费者——契约/dbt/管线/新鲜度锚均不再引用，48 对象已清）。",
     "  ⚠️ 新鲜度锚仍指父管线收尾汇总 /workspace/reports/recon-preagg/_recon-summary.csv（不要给本子管线",
     "  写的对象加锚：foreach 子管线不产运行记录 ⇒ 带 * 的 glob 锚两头不占，见正典 §1.6 案例 35）。"
   ],
