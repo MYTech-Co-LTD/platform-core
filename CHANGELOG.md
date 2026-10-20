@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.176.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.175.0...v0.176.0) - 2026-10-20
+- 【新增】notify: trigger 前给订阅者挂 chat 渠道（ensureChannel，ADR 0008 ②） ([#947](https://github.com/MYTech-Co-LTD/platform-core/pull/947), [9920180](https://github.com/MYTech-Co-LTD/platform-core/commit/99201809d337e940bdeb5fc518b5dc2ea26d6d5c))
+
+
 ## [0.175.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.174.1...v0.175.0) - 2026-10-20
 - 【新增】data: 零售明细小时分区→天分区（热/冷混合布局） ([#944](https://github.com/MYTech-Co-LTD/platform-core/pull/944), [19d97be](https://github.com/MYTech-Co-LTD/platform-core/commit/19d97be201ee6e53add0eea0513126f5fd287f64))
 
