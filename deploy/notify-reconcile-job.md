@@ -29,6 +29,7 @@
 |---|---|
 | `DATABASE_URL` | openship 该项目 env（isSecret）注入 |
 | `NOVU_BASE_URL` / `NOVU_API_KEY` | 同上（缺省时脚本仍跑：emit 落 failed 回执，不抛） |
+| `NOVU_CHAT_WEBHOOK_URL__<ORG>` | 同上（isSecret）。**缺 ⇒ 该 org 不挂 chat 渠道**：`trigger` 照发，但 Novu 的 chat 作业恒 `canceled`（企微收不到）；`NOVU_API_KEY` 有回落、**本键没有**，见 `docs/architecture.md` §2.6 |
 
 > ⚠️ **不要去 SSH 读机器上的 env**——那是读机器状态，违反「唯一通道」铁律
 > （同 `scripts/reconcile-tenant-sources.mjs` 头注口径）。脚本只接受**运行方传进来的**声明。

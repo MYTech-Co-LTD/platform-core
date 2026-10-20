@@ -700,6 +700,38 @@ v1 模板集 = 少量参数化通用模板：`case_awaiting_approval` / `case_st
 - **约束**：org 名须能安全转成 env 变量名（当前租户名均为 ASCII）；含非 ASCII 的 org 需显式映射——**待实测**，不得据以声称可用。
 - **运维口径**：该 Novu 实例是 **CE 构建**，控制台**没有**组织管理入口（`/settings/organization`、`/auth/organization-list` 在 CE 下直接重定向；左上组织名无点击）。**租户创建 / 切换 / 取 API key 只能走 API** —— 步骤见 skill `novu-ops`（team-harness `skills/mytech/novu-ops/SKILL.md`）。
 
+**chat 渠道前置 `ensureChannel`（ADR 0008 ②，2026-10-20 人审）**
+
+**背景（实测）**：企微送达的闸门是 **`subscriber.channels[]`**，集成级 `webhookUrl` **不参与** ——
+无渠道 ⇒ chat 作业恒 **`canceled`**（集成在场也一样）；挂上渠道才开始尝试投递。
+而本仓原先唯一出站调用是 `POST /v1/events/trigger` ⇒ **通知永远到不了企微**。
+
+**定案**：`modules/notify/domain/novu.ts` 的 `ensureChannel` 在 `trigger` **之前**跑两步——
+`POST /v1/subscribers`（upsert，先建后挂最稳）→ `PUT /v1/subscribers/:id/credentials`
+（`{providerId:'chat-webhook', credentials:{webhookUrl}}`，`webhookUrl` = bridge 端点 + `&to=<订阅者>`；
+该端点**本身已带 `?t=<token>`** ⇒ 追加必须用 `&`）。
+
+- **落点**：`pipeline.emit` 在 `novu !== null` 且**本 org** 解析出 bridge URL 时调用。
+- **幂等**：进程内 Set 缓存，键 = **(bridge URL, subscriberId)** —— 不是裸 subscriberId：
+  后者是 Casdoor 用户名，**不同 org 可同名**，只按 id 缓存会让第二个 org 的同名用户命中缓存、
+  永远挂着**第一个 org 的** bridge URL = 跨租户串号。
+- **fail-open**（同 §2.6 取舍④）：挂渠道失败**不阻断** `trigger`、**不**记 `failed` 回执，只告警；
+  后果由 Novu 的 chat job 状态体现（`canceled` / `failed`）。失败不入缓存 ⇒ 下次 emit 重试。
+
+**env 契约：`NOVU_CHAT_WEBHOOK_URL__<ORG>`（per-org，**不回落全局**）**
+
+| 优先级 | 来源 | 说明 |
+|---|---|---|
+| 1 | `NOVU_CHAT_WEBHOOK_URL__<ORG>` | 本 org 的企微 bridge 端点（含 token ⇒ isSecret）；`<ORG>` 复用上面同一个 org→env 名规范化纯函数 |
+| 2 | 无 | **该 org 视为未配置**：不挂渠道，**照常 `trigger`**（fail-open） |
+
+- ⚠️ **与 `NOVU_API_KEY__<ORG>` 的「回落全局」范式刻意不同**（2026-10-20 裁决）：本键是一条
+  **带租户 token 的投递端点**，bridge 按 URL 里的 tenant + token 决定「用哪个企微 corp 发、发到哪个群」；
+  一旦回落，A 租户的通知会带着 A 的标题/链接投进 B 租户的企微群 = **跨租户数据泄露**，不是投递失败
+  ⇒ 本键 **fail-closed**。**本轮不引入全局 `NOVU_CHAT_WEBHOOK_URL`**（多租户下它没有正当语义）。
+  `NOVU_API_KEY` 的全局回落存在同类隐患，属既有设计、另案评估。
+- **勿当不一致来"修正"**：这处不对称是有意为之。改动前先读 explore ADR 0008 §3。
+
 ### 2.7 湖的存储格式：保持纯 Parquet，不引入 lakehouse 表格式（2026-10-20 拍板）
 
 > **本节是决定本身**；证据、被否决的收益、反转条件与全部实测数据在
