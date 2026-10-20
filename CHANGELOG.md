@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.174.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.174.0...v0.174.1) - 2026-10-20
+- 【修复】notify: notify-reconcile 的 Novu 装配传值不传函数（#929 回归） ([#938](https://github.com/MYTech-Co-LTD/platform-core/pull/938), [9aa1cd7](https://github.com/MYTech-Co-LTD/platform-core/commit/9aa1cd7103557b1efad55229b243b0534ffdc409))
+
+
 ## [0.174.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.173.2...v0.174.0) - 2026-10-20
 - 【新增】data: 库存快照改查 T-1 + 空集记具名状态 SOURCE_NOT_PUBLISHED ([#939](https://github.com/MYTech-Co-LTD/platform-core/pull/939), [a96618b](https://github.com/MYTech-Co-LTD/platform-core/commit/a96618ba3088eb54932654640236a4690b298d97))
 
