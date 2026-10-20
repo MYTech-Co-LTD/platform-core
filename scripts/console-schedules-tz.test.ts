@@ -2,7 +2,10 @@
 //
 // 钉什么：deploy/duckle/console/schedules/ 下两本种子（3120×17 + 64188×7，共 24 条）必须
 //   ① 全部显式 `timezone: 'Asia/Shanghai'`（含原先缺省无字段的 9 条）；
-//   ② `kind.expr` 与 §10.6 转换表**逐字**一致（旧 UTC expr +8h，触发瞬间不变）。
+//   ② `kind.expr` 与 §10.6 转换表**逐字**一致（旧 UTC expr +8h）。
+//   ⚠️ **2026-10-20 订正（#931）**：非销售采集统一到 **14–24 点每 2 小时**（`M 14,16,18,20,22 * * *`），
+//     触发瞬间**有意改变**——原因是 `${date-1d}` 按 UTC 解析、00:0x CST 时 UTC 仍在前一天 ⇒ 实际采成 T-2。
+//     14:00 CST = 06:00 UTC，UTC 与 CST 同日 ⇒ 日期基准回到北京。销售族（tick/windows/close）与对账不在本次范围。
 // 为什么钉真实 JSON（与 sync-data-semantics.test.ts 读真 YAML 同一理由）：排班是物化定义，
 // 谁回退一条 timezone / 抄错一个钟点都不报错，只表现为线上采集整体漂 8h——门禁必须红在仓内。
 // 期望表就是 §10.6 的表（逐条转抄，不自创）：改排班先改表，改表先改 spec。
@@ -17,27 +20,27 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const EXPECTED: Record<string, Record<string, string>> = {
   '3120': {
     'panel-lemeng.retail.tick.l1': '*/5 8-23 * * *',
-    'panel-lemeng.dim.item.l0': '0 19 * * *',
+    'panel-lemeng.dim.item.l0': '0 14,16,18,20,22 * * *',
     'panel-lemeng.retail.close.l1': '0 0 * * *',
-    'panel-lemeng.dim.branch.l0': '0 10 * * *',
-    'panel-lemeng.branch.expense.l0.3120': '5 0 * * *',
-    'panel-lemeng.dim.item_price.l0.3120': '15 19 * * *',
-    'panel-lemeng.client.expense.l0.3120': '15 0 * * *',
-    'panel-lemeng.request.order.l0.3120': '20 0 * * *',
-    'panel-lemeng.transfer.in.l0.3120': '25 0 * * *',
+    'panel-lemeng.dim.branch.l0': '0 14,16,18,20,22 * * *',
+    'panel-lemeng.branch.expense.l0.3120': '5 14,16,18,20,22 * * *',
+    'panel-lemeng.dim.item_price.l0.3120': '15 14,16,18,20,22 * * *',
+    'panel-lemeng.client.expense.l0.3120': '15 14,16,18,20,22 * * *',
+    'panel-lemeng.request.order.l0.3120': '20 14,16,18,20,22 * * *',
+    'panel-lemeng.transfer.in.l0.3120': '25 14,16,18,20,22 * * *',
     'panel-lemeng.retail.windows.l1': '30 10,18 * * *',
-    'panel-lemeng.transfer.out.l0.3120': '35 23 * * *',
-    'panel-lemeng.inventory.snapshot.l0.3120': '35 0 * * *',
-    'panel-lemeng.purchase.analysis.l0.3120': '40 0 * * *',
-    'panel-lemeng.wholesale.out.l0.3120': '45 23 * * *',
-    'panel-lemeng.client.l0.3120': '55 23 * * *',
-    'panel-lemeng.wholesale.return.l0.3120': '55 23 * * *',
+    'panel-lemeng.transfer.out.l0.3120': '35 14,16,18,20,22 * * *',
+    'panel-lemeng.inventory.snapshot.l0.3120': '35 14,16,18,20,22 * * *',
+    'panel-lemeng.purchase.analysis.l0.3120': '40 14,16,18,20,22 * * *',
+    'panel-lemeng.wholesale.out.l0.3120': '45 14,16,18,20,22 * * *',
+    'panel-lemeng.client.l0.3120': '55 14,16,18,20,22 * * *',
+    'panel-lemeng.wholesale.return.l0.3120': '55 14,16,18,20,22 * * *',
     'panel-lemeng.recon.preagg': '40 0 * * *',
   },
   '64188': {
-    'panel-lemeng.dim.branch.l0': '0 10 * * *',
-    'panel-lemeng.dim.item.l0': '0 19 * * *',
-    'panel-lemeng.dim.item_price.l0': '15 19 * * *',
+    'panel-lemeng.dim.branch.l0': '0 14,16,18,20,22 * * *',
+    'panel-lemeng.dim.item.l0': '0 14,16,18,20,22 * * *',
+    'panel-lemeng.dim.item_price.l0': '15 14,16,18,20,22 * * *',
     'panel-lemeng.retail.windows.l1': '30 10,18 * * *',
     'panel-lemeng.retail.tick.l1': '*/5 8-23 * * *',
     'panel-lemeng.retail.close.l1': '0 0 * * *',
