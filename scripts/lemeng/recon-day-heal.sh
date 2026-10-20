@@ -47,7 +47,11 @@
 # 可选 env：DIAGNOSE_BIN（默认 /opt/lemeng-diagnose.sh）
 #           CONSOLE_CT（默认 lemeng console 容器名，用于**运行时**取令牌——不落配置）
 #           CONSOLE_URL（默认 http://127.0.0.1:18080）
-#           BACKFILL_PIPELINE（默认 pipelines/lemeng.retail.windows.backfill.json）
+#           BACKFILL_PIPELINE（默认 pipelines/lemeng.retail.day.backfill.json——**按天重采**：
+#             2026-10-20 起零售明细改为热/冷混合布局（docs/architecture.md §5.3），关闭日写一个
+#             天文件；heal 因此也按天修，**并且必须告诉 diagnose 按天读**（LAKE_LAYOUT）——
+#             diagnose 若仍按 hour=NN 点名单文件，读到的会是**已被天文件取代的旧小时文件**，
+#             复核会误判「缺口还在」）
 #           SETTLE_DAYS（默认 3）/ HEAL_WAIT_SECONDS（默认 900）/ HEAL_POLL_SECONDS（默认 20）
 #           HEAL_DRY_RUN=1（**只判别与打印，不触发**——演练用）
 #           HEAL_BYPASS=0（**关旁路**：不删冻结条目直接回填——只会重放，仅确知无冻结条目时用）
@@ -59,7 +63,12 @@ set -u
 DIAGNOSE_BIN=${DIAGNOSE_BIN:-/opt/lemeng-diagnose.sh}
 CONSOLE_CT=${CONSOLE_CT:-openship-platform-core-shanhai-data-lemeng-console-3120}
 CONSOLE_URL=${CONSOLE_URL:-http://127.0.0.1:18080}
-BACKFILL_PIPELINE=${BACKFILL_PIPELINE:-pipelines/lemeng.retail.windows.backfill.json}
+BACKFILL_PIPELINE=${BACKFILL_PIPELINE:-pipelines/lemeng.retail.day.backfill.json}
+# 湖布局：告诉 diagnose 读天文件还是读 hour 单文件。**与 BACKFILL_PIPELINE 同源**——
+# 换回 windows.backfill（写小时文件）就必须同时把它设回 hour，否则复核读错层。
+LAKE_LAYOUT=${LAKE_LAYOUT:-day}
+# 运行收据 glob：管线名 lemeng.retail.day.backfill → run-lemeng_retail_day_backfill-*.json
+_rr_glob="run-$(printf '%s' "$(basename "${BACKFILL_PIPELINE}" .json)" | tr '.' '_')-*.json"
 SETTLE_DAYS=${SETTLE_DAYS:-3}
 HEAL_WAIT_SECONDS=${HEAL_WAIT_SECONDS:-900}
 HEAL_POLL_SECONDS=${HEAL_POLL_SECONDS:-20}
@@ -181,7 +190,7 @@ if [ "${HEAL_FORCE}" = "1" ]; then
   echo "HEAL_FORCED bizday=${DAY}——跳过 recon 复核直入修数（无条件口子）；定稿线闸门仍生效"
 else
   echo "heal bizday=${DAY} settle_days=${SETTLE_DAYS}"
-  _OUT=$(BIZDAY="$DAY" sh "$DIAGNOSE_BIN" recon-day "$DAY" 2>&1); _RC=$?
+  _OUT=$(BIZDAY="$DAY" LAKE_LAYOUT="$LAKE_LAYOUT" sh "$DIAGNOSE_BIN" recon-day "$DAY" 2>&1); _RC=$?
   printf '%s\n' "$_OUT"
   V=$(heal_verdict "$_OUT" "$_RC")
   echo "HEAL_VERDICT=${V} (recon exit=${_RC})"
@@ -233,9 +242,10 @@ esac
 _waited=0
 while [ "$_waited" -lt "$HEAL_WAIT_SECONDS" ]; do
   sleep "$HEAL_POLL_SECONDS"; _waited=$((_waited + HEAL_POLL_SECONDS))
-  _st=$(docker exec "$CONSOLE_CT" sh -c 'python3 -c "
+  # 收据名从**管线名**派生（duckle 把 name 的点换成下划线），不再写死某一条管线
+  _st=$(docker exec -e RR_GLOB="${_rr_glob}" "$CONSOLE_CT" sh -c 'python3 -c "
 import json,glob,os
-fs=glob.glob(\"/workspace/runs/receipts/run-lemeng_retail_windows_backfill-*.json\")
+fs=glob.glob(\"/workspace/runs/receipts/\" + os.environ[\"RR_GLOB\"])
 fs.sort(key=os.path.getmtime)
 print(json.load(open(fs[-1])).get(\"status\")) if fs else print(\"none\")
 "' 2>/dev/null)
@@ -249,7 +259,7 @@ if [ "$_waited" -ge "$HEAL_WAIT_SECONDS" ]; then
 fi
 
 # 复验
-_OUT2=$(BIZDAY="$DAY" sh "$DIAGNOSE_BIN" recon-day "$DAY" 2>&1); _RC2=$?
+_OUT2=$(BIZDAY="$DAY" LAKE_LAYOUT="$LAKE_LAYOUT" sh "$DIAGNOSE_BIN" recon-day "$DAY" 2>&1); _RC2=$?
 printf '%s\n' "$_OUT2"
 V2=$(heal_verdict "$_OUT2" "$_RC2")
 if [ "$V2" = "OK" ]; then

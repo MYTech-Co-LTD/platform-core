@@ -83,19 +83,70 @@ export function extractPipelineAliases(sql) {
 }
 
 /**
+ * 同一模型里的**所有** `SELECT … 顶层 FROM` 位点（按出现顺序）。
+ * 为什么需要多处、以及安全阀（嵌套 select 抛错），见 `gen-data-projection.mjs` 的同名说明。
+ *
+ * @param {string} sql
+ * @returns {{ selectStart: number, fromStart: number }[]}
+ */
+export function selectListBoundsAll(sql) {
+  const masked = maskSqlComments(sql)
+  /** @type {{ selectStart: number, fromStart: number }[]} */
+  const out = []
+  let cursor = 0
+  for (;;) {
+    const rest = masked.slice(cursor)
+    // 第 1 个位点沿用 selectListBounds 的老判据（`\bselect\b`，因为 staging 前面有 config/注释块）；
+    // **后续位点要求行首 select**——否则 `where … not exists (select 1 from …)` 这类**内联子查询**
+    // 会被误认成新位点、把 `1` 当列区重写掉（静默写坏）。
+    const sel = out.length === 0 ? /\bselect\b/i.exec(rest) : /\n[ \t]*select\b/i.exec(rest)
+    if (!sel) break
+    const offsetInMatch = out.length === 0 ? 0 : sel[0].toLowerCase().indexOf('select')
+    const selectStart = cursor + sel.index + offsetInMatch
+    const afterSel = masked.slice(selectStart)
+    const from = /\n\s*from\b/i.exec(afterSel)
+    if (!from) break
+    const fromStart = selectStart + from.index
+    if (/\bselect\b/i.test(masked.slice(selectStart + 6, fromStart))) {
+      throw new Error(`投影位点（第 ${out.length + 1} 处）的选列区里出现嵌套 select —— 本生成器不支持该形态，别猜`)
+    }
+    out.push({ selectStart, fromStart })
+    cursor = fromStart
+  }
+  return out
+}
+
+/**
  * 从 staging 模型的 SQL 里取投影别名序列（先掩注释；`as` 一律小写是本仓写法）。
+ * 多位点时返回**第 1 处**的序列，并要求其余位点与它逐字一致（不一致即抛错）。
  *
  * @param {string} sql
  * @returns {string[]}
  */
 export function extractStagingAliases(sql) {
-  /** @type {string[]} */
-  const out = []
-  const re = /\bas\s+([a-z][a-z0-9_]*)\b/g
-  let m
   const masked = maskSqlComments(sql)
-  while ((m = re.exec(masked)) !== null) out.push(m[1])
-  return out
+  const bounds = selectListBoundsAll(sql)
+  /** 取一段文本里的 `as <别名>` 序列 */
+  const aliasesOf = (/** @type {string} */ seg) => {
+    /** @type {string[]} */
+    const out = []
+    const re = /\bas\s+([a-z][a-z0-9_]*)\b/g
+    let m
+    while ((m = re.exec(seg)) !== null) out.push(m[1])
+    return out
+  }
+  // 单投影位点（绝大多数模型）：行为与旧版逐字等价
+  if (bounds.length <= 1) return aliasesOf(masked)
+  // 多位点（2026-10-20 起零售明细的冷/热两种布局，见 architecture.md §5.3）：
+  // **每一处都必须是同一份列区**——不一致就抛错，别让「第二处漂了」静默通过。
+  const all = bounds.map((b) => aliasesOf(masked.slice(b.selectStart, b.fromStart)))
+  const first = all[0] ?? []
+  for (let i = 1; i < all.length; i += 1) {
+    if ((all[i] ?? []).join('\u0000') !== first.join('\u0000')) {
+      throw new Error(`staging 模型的第 ${i + 1} 处投影位点与第 1 处不一致（${(all[i] ?? []).length} vs ${first.length} 列）——每一处都必须是同一份列区`)
+    }
+  }
+  return first
 }
 
 /**
