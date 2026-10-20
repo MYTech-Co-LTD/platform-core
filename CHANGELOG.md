@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.178.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.177.0...v0.178.0) - 2026-10-20
+- 【新增】data: 新增逐日迁移驱动 backfill-daily-partitions.py ([#954](https://github.com/MYTech-Co-LTD/platform-core/pull/954), [2627a65](https://github.com/MYTech-Co-LTD/platform-core/commit/2627a65bbfe074eac56b837bb1c2142681f1b3fa))
+
+
 ## [0.177.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.176.1...v0.177.0) - 2026-10-20
 - 【新增】data: 整天重采同一份数据镜像到旧路径（供审计层单 glob 读取） ([#952](https://github.com/MYTech-Co-LTD/platform-core/pull/952), [3702c02](https://github.com/MYTech-Co-LTD/platform-core/commit/3702c0224956c1c3f7cee1f8f048fa4da14559fa))
 
