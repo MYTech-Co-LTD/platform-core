@@ -51,7 +51,7 @@
 | `src.rest` 原生 `paginationType: page` | ❌ **不可用**——它把页码放 **query string**，本 API 要求页码在 **JSON body**（缺了报 `不能为null->[pageNumber:null]`）；`{page}` 占位符**不替换进 body**（实测 body 里原样留着，API JSON 解析直接炸） |
 | 空页/越界页 | 🔴 返回 `code:0` + 空数组，**不带错**（静默截断的形状） |
 | 空页在管线里的后果 | 🔴 **硬错**：`query returned 0 records and no schema is declared to type an empty result` ⇒ **必须申报 `data.schema`** |
-| 50 路汇流 | `ctl.merge` **会静默丢 49 路**（验证器抓到）；必须用 **`xf.unionall`** |
+| N 路汇流 | ⚠️ **订正（2026-10-20 复核）**：初记「`ctl.merge` 会静默丢 49 路」**是错的**——那是**探针的边形状写错**（N 条边全挂 `targetHandle: main`，即挂到了**输出**端口）。`ctl.merge` 的入端口是 **`main_1`/`main_2`/`main_3`…（动态扩展）**，**逐路用 `main_N` 即可**，现有 12 路管线就是这么接的且出数正确。⇒ **本设计用 `ctl.merge` + `main_N`**：它同时也是 `check-data-contract.mjs` 规则 ④ 唯一认的汇流点（用别的汇流件会让「申报面」检查**静默逃检**） |
 
 规模（3120 / 2026-10-17）：**8,850 行 = 45 页**，单页 **1.2–1.5 MB JSON** ⇒ 整天约 **60 MB**。
 历史峰值：2026-10-18 两账套 19,405 行 ⇒ 单账套约 13.2k 行 = **66 页**。
@@ -156,7 +156,7 @@ where sealed['schema_version'] = 3
 | 步 | 做什么 | 可回滚 |
 |---|---|---|
 | 0 | 本 spec 评审 → 改 `docs/architecture.md`（§5.1/§5.2 相应处 + 新节） | — |
-| 1 | 契约 + sink key + 新增整天取数管线（96 页 + schema + unionall + 哨兵） | 可（改回按小时） |
+| 1 | 契约 + sink key + 新增整天取数管线（96 页 + `data.schema` 申报 + `ctl.merge`(`main_N`) + 哨兵） | 可（改回按小时） |
 | 2 | **读侧两条 glob + 排除**（此时历史仍小时分区，**性能未变**，但读侧已能同时吃两种布局） | 可 |
 | 3 | **一次性重采历史**：逐日整天重采 → 写天文件 → 封版 → 删该日小时目录 | 天文件是新增；**删小时是唯一不可逆步** ⇒ 放最后、先 dry-run 比对 |
 | 4 | `windows.l1` 改整天；heal/restate 改按天 | 可 |
