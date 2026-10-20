@@ -124,6 +124,7 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.retail_order_line.tick', '旧零售族残留——已被 retail.tick.l1 取代，待退役（§2 台账）'],
   ['lemeng.retail_order_line.window', '旧零售族残留——已被 retail.windows.l1 取代，待退役（§2 台账）'],
   ['lemeng.retail_order_line.day', '**foreach 子管线**——由 lemeng.retail.windows.l1 的 ctl.foreach 逐天驱动（2026-10-20 起整天重采），不单独排班；排班在父管线'],
+  ['lemeng.retail.day.backfill', '回填专用（整天重采某一天，${BIZDAY} 由驱动脚本经 POST /api/run 的 params 传入，handbook §1.3 阶段 H）'],
   ['lemeng.recon.preagg.item', '按需手动（逐分归零对账执行面，无日更节奏）'],
   ['lemeng.recon.preagg.backfill', '回填专用（换 BIZDAY 参数手动触发，handbook §1.3 阶段 H）'],
   // （#729）forms 的那条旧豁免已**删除**：期望集改成「按**域**判」后，无后缀的
