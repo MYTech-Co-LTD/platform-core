@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type { Identity } from '@platform/sdk'
-import type { NovuConfig } from './domain/novu'
+import type { NovuResolver } from './domain/novu'
 import { deriveApprovalRule, deriveReminderRule } from './domain/derive'
 import { validateRule, type Channel, type RecipientKind } from './domain/rules'
 import { emit } from './pipeline'
@@ -19,7 +19,7 @@ function statusOf(code: string): 400 | 404 | 500 {
   return 500
 }
 
-export function createNotifyRouter({ pool, novu = null }: { pool: Pool; novu?: NovuConfig | null }) {
+export function createNotifyRouter({ pool, novu = () => null }: { pool: Pool; novu?: NovuResolver }) {
   const r = new Hono<{ Variables: { identity: Identity } }>()
   const org = (c: { get: (k: 'identity') => unknown }) => (c.get('identity') as Identity).orgId
 
