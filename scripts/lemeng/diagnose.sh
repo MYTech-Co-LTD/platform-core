@@ -74,6 +74,12 @@ SYSTEM_BOOK=${SYSTEM_BOOK:-3120}
 # 营业日 = Asia/Shanghai 日历日的昨天（同 run-retail-day.sh：显式钉 TZ，不让运行环境偶然决定正确性）。
 # 只有 `recon` 消费它（`rb` / `identity` 不需要）⇒ 形状断言只对 recon 生效，见分支内。
 BIZDAY=${BIZDAY:-}
+# 湖布局（2026-10-20 起零售明细是热/冷混合，见 docs/architecture.md §5.3）：
+#   hour（默认）= 点名单个 hour=NN/all.parquet 文件（热侧/迁移前的形态）
+#   day          = 点名单个 bizday=YYYY-MM-DD/all.parquet 天文件，按 hour 过滤
+# 由调用方声明（recon-day-heal.sh 在按天 heal 时置 day）——**不去猜文件在不在**：
+# 猜错等于拿另一样东西当复核依据，而本工具的判据就是复核。
+LAKE_LAYOUT=${LAKE_LAYOUT:-hour}
 if [ -z "$BIZDAY" ]; then
   BIZDAY=$(TZ=Asia/Shanghai date -d yesterday +%Y-%m-%d 2>/dev/null) || BIZDAY=''
   [ -n "$BIZDAY" ] || BIZDAY=$(TZ=Asia/Shanghai date -v-1d +%Y-%m-%d 2>/dev/null) || BIZDAY=''
@@ -196,12 +202,19 @@ rb_run() { # $1=SQL [$2=duckdb 旗标（如 -csv）] → duckdb 原始输出到 
     -e RB_FLAGS="${2:-}" -e RB_QUERY="$1" -v "$RB_HELPER":/rb.sh:ro --entrypoint sh duckle -c 'sh /rb.sh'
 }
 
-lake_read_sql() { # $1=bizday $2=hour $3=system_book → 精读该 hour 单文件的 SQL
+lake_read_sql() { # $1=bizday $2=hour $3=system_book → 精读**该小时**的 SQL
   # **两条通道共用这一份**（换通道复核 = 换通道，不换问句）。不带 hive_partitioning、点名单文件：
   # 路径里 hour=NN 与载荷列 hour 同名，hive 列会引入遮蔽歧义；单文件精读让 count(*)/count(DISTINCT
   # batch_id) 只来自载荷本身。对象不在 ⇒ duckdb IO 错 ⇒ 红（不是 0 行）。
-  printf "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://%s/lemeng/retail_order_line/system_book=%s/bizday=%s/hour=%s/all.parquet');" \
-    "$ZOS_BUCKET" "$3" "$1" "$2"
+  if [ "${LAKE_LAYOUT:-hour}" = "day" ]; then
+    # 天文件：同样是**单文件精读**；hour 是载荷列（契约列，整数），按它过滤出这一小时。
+    # ⚠️ 两侧都 CAST：$2 可能是零填充的 '03'，直接比较在 DuckDB 里会被当字符串/八进制。
+    printf "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://%s/lemeng/retail_order_line/system_book=%s/bizday=%s/all.parquet') WHERE CAST(hour AS INTEGER) = CAST('%s' AS INTEGER);" \
+      "$ZOS_BUCKET" "$3" "$1" "$2"
+  else
+    printf "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://%s/lemeng/retail_order_line/system_book=%s/bizday=%s/hour=%s/all.parquet');" \
+      "$ZOS_BUCKET" "$3" "$1" "$2"
+  fi
 }
 
 # ── 湖侧通道 B：`pg_duckdb` 免凭据回读（P3 裁决的「换通道复核」）──────────────────────

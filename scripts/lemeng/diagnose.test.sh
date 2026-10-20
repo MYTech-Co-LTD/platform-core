@@ -47,6 +47,16 @@ ok "$(lake_read_sql 2026-09-27 17 3120)" \
    "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://recon-test-bucket/lemeng/retail_order_line/system_book=3120/bizday=2026-09-27/hour=17/all.parquet');"
 hasnt "$(lake_read_sql 2026-09-27 17 3120)" "hive_partitioning"
 
+# ── E1b（2026-10-20）：LAKE_LAYOUT=day ⇒ 点名**天文件**并按载荷列 hour 过滤 ──────────
+# 为什么必须有这条：按天 heal 之后小时文件会被天文件取代；diagnose 若仍点名单 hour 文件，
+# 复核读到的是**过时的旧小时文件** ⇒ 误判「缺口还在」（heal 永远修不完）。
+ok "$(LAKE_LAYOUT=day lake_read_sql 2026-09-27 17 3120)" \
+   "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://recon-test-bucket/lemeng/retail_order_line/system_book=3120/bizday=2026-09-27/all.parquet') WHERE CAST(hour AS INTEGER) = CAST('17' AS INTEGER);"
+hasnt "$(LAKE_LAYOUT=day lake_read_sql 2026-09-27 17 3120)" "hive_partitioning"
+# 默认（未声明）必须仍是 hour 形态——未迁移的面不受影响
+ok "$(LAKE_LAYOUT=hour lake_read_sql 2026-09-27 17 3120)" \
+   "SELECT count(*) AS n_rows, count(DISTINCT batch_id) AS n_batches FROM read_parquet('s3://recon-test-bucket/lemeng/retail_order_line/system_book=3120/bizday=2026-09-27/hour=17/all.parquet');"
+
 # ── P3：免凭据通道必须**包裹同一份 SQL**（换通道而不换问句——否则比的不是同一件事）──
 _LS=$(lake_read_sql 2026-09-27 17 3120)
 ok "$(pg_duckdb_lake_sql "$_LS")" "SELECT * FROM duckdb.query(\$\$ $_LS \$\$);"
