@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.175.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.174.1...v0.175.0) - 2026-10-20
+- 【新增】data: 零售明细小时分区→天分区（热/冷混合布局） ([#944](https://github.com/MYTech-Co-LTD/platform-core/pull/944), [19d97be](https://github.com/MYTech-Co-LTD/platform-core/commit/19d97be201ee6e53add0eea0513126f5fd287f64))
+
+
 ## [0.174.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.174.0...v0.174.1) - 2026-10-20
 - 【修复】notify: notify-reconcile 的 Novu 装配传值不传函数（#929 回归） ([#938](https://github.com/MYTech-Co-LTD/platform-core/pull/938), [9aa1cd7](https://github.com/MYTech-Co-LTD/platform-core/commit/9aa1cd7103557b1efad55229b243b0534ffdc409))
 
