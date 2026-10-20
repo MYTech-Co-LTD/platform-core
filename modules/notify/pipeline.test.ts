@@ -3,7 +3,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { Pool } from 'pg'
 import { emit } from './pipeline'
-import { novuEnvKeyForOrg, novuFromEnv, type NovuResolver } from './domain/novu'
+import {
+  novuChatWebhookEnvKeyForOrg,
+  novuEnvKeyForOrg,
+  novuFromEnv,
+  type NovuResolver,
+} from './domain/novu'
 import { upsertRule, listDeliveries } from './storage'
 import { applyMigrations } from './test-util'
 import type { NotificationRule } from './domain/rules'
@@ -29,10 +34,21 @@ function rule(
   }
 }
 
-const cfg = { baseUrl: 'https://novu.test', apiKey: 'k' }
+const cfg = { baseUrl: 'https://novu.test', apiKey: 'k', chatWebhookUrl: null }
 const okFetch = () => vi.fn(async () => new Response('{}', { status: 201 }))
 const authOf = (fetchMock: ReturnType<typeof okFetch>) =>
   (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].headers as Record<string, string>
+/** 走真 env 解析的 resolver（ADR 0008 ② 的 per-org 键端到端）。 */
+const novuFrom = (extra: Record<string, string>): NovuResolver => (org) =>
+  novuFromEnv(
+    { NOVU_BASE_URL: 'https://novu.test', NOVU_API_KEY: 'k', ...extra } as NodeJS.ProcessEnv,
+    org,
+  )
+/** 调用序列：[url, method]。 */
+const seqOf = (fetchMock: ReturnType<typeof okFetch>): [string, string][] =>
+  (fetchMock.mock.calls as unknown as [string, RequestInit][]).map(
+    (c): [string, string] => [String(c[0]), String(c[1].method)],
+  )
 
 describePg('pipeline.emit', () => {
   let pool: Pool
@@ -177,7 +193,11 @@ describePg('pipeline.emit', () => {
       { org: '', eventId: 'e9', eventType: 'case.reassigned', mount: 'ct9', payload: { assignee: 'u9' } },
     )
     expect(resolve).toHaveBeenCalledWith('')
-    expect(resolve.mock.results[0]?.value).toEqual({ baseUrl: 'https://novu.test', apiKey: 'global-key' })
+    expect(resolve.mock.results[0]?.value).toEqual({
+      baseUrl: 'https://novu.test',
+      apiKey: 'global-key',
+      chatWebhookUrl: null,
+    })
     expect(res).toMatchObject({ matched: 0, delivered: 0, failed: 0 })
     expect(fetchMock).not.toHaveBeenCalled()
   })
@@ -194,5 +214,91 @@ describePg('pipeline.emit', () => {
     expect(res.matched).toBe(1)
     const ds = await listDeliveries(pool, ORG)
     expect(ds.filter((d) => d.eventId === 'e5').map((d) => d.ruleId)).toEqual(['m5'])
+  })
+
+  // ── ADR 0008 ②（2026-10-20 人审）：trigger 前给订阅者挂 chat 渠道 ──────────────────
+  // 闸门实测：chat 送达看 `subscriber.channels[]`；不挂 ⇒ chat 作业恒 canceled（集成在场也一样）。
+  const HOOK = 'https://push.hookflow.cn/wecom/woke?t=tok'
+
+  it('ADR 0008 ②①：本 org 配了 bridge URL ⇒ 先挂渠道（POST subscribers → PUT credentials）再 trigger', async () => {
+    const fetchMock = okFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    await upsertRule(pool, ORG, rule({ id: 'rc1', eventType: 'case.awaiting_approval', mount: 'ctc1', origin: 'manual' }), 'u')
+    const res = await emit(
+      { pool, novu: novuFrom({ [novuChatWebhookEnvKeyForOrg(ORG)]: HOOK }) },
+      { org: ORG, eventId: 'ec1', eventType: 'case.awaiting_approval', mount: 'ctc1', payload: { assignee: 'uc1' } },
+    )
+    expect(res).toMatchObject({ matched: 1, delivered: 1, failed: 0 })
+    expect(seqOf(fetchMock)).toEqual([
+      ['https://novu.test/v1/subscribers', 'POST'],
+      ['https://novu.test/v1/subscribers/uc1/credentials', 'PUT'],
+      ['https://novu.test/v1/events/trigger', 'POST'],
+    ])
+    expect(JSON.parse((fetchMock.mock.calls[1] as unknown as [string, RequestInit])[1].body as string)).toEqual({
+      providerId: 'chat-webhook',
+      credentials: { webhookUrl: `${HOOK}&to=uc1` },
+    })
+  })
+
+  it('ADR 0008 ②②：本 org 无该键 ⇒ 不调 ensure，但照常 trigger（不阻断）', async () => {
+    const fetchMock = okFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    await upsertRule(pool, ORG, rule({ id: 'rc2', eventType: 'case.status_changed', mount: 'ctc2', origin: 'manual' }), 'u')
+    const res = await emit(
+      { pool, novu: novuFrom({}) },
+      { org: ORG, eventId: 'ec2', eventType: 'case.status_changed', mount: 'ctc2', payload: { assignee: 'uc2' } },
+    )
+    expect(res).toMatchObject({ matched: 1, delivered: 1, failed: 0 })
+    expect(seqOf(fetchMock)).toEqual([['https://novu.test/v1/events/trigger', 'POST']])
+  })
+
+  it('ADR 0008 ②③：同一 subscriber 第二次 emit ⇒ 不重复挂渠道（进程内缓存）', async () => {
+    const fetchMock = okFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    await upsertRule(pool, ORG, rule({ id: 'rc3', eventType: 'case.reassigned', mount: 'ctc3', origin: 'manual' }), 'u')
+    const deps = { pool, novu: novuFrom({ [novuChatWebhookEnvKeyForOrg(ORG)]: HOOK }) }
+    for (const eventId of ['ec3a', 'ec3b']) {
+      await emit(deps, { org: ORG, eventId, eventType: 'case.reassigned', mount: 'ctc3', payload: { assignee: 'uc3' } })
+    }
+    const calls = seqOf(fetchMock)
+    expect(calls.filter((c) => c[1] === 'PUT')).toHaveLength(1)
+    expect(calls.filter((c) => c[0].endsWith('/v1/events/trigger'))).toHaveLength(2)
+  })
+
+  it('ADR 0008 ②④：ensure 非 2xx ⇒ 不阻断 trigger，回执仍 sent', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      String(url).includes('/subscribers') ? new Response('nope', { status: 500 }) : new Response('{}', { status: 201 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await upsertRule(pool, ORG, rule({ id: 'rc4', eventType: 'sla.breach_warning', mount: 'ctc4', origin: 'manual' }), 'u')
+    const res = await emit(
+      { pool, novu: novuFrom({ [novuChatWebhookEnvKeyForOrg(ORG)]: HOOK }) },
+      { org: ORG, eventId: 'ec4', eventType: 'sla.breach_warning', mount: 'ctc4', payload: { assignee: 'uc4' } },
+    )
+    expect(res).toMatchObject({ matched: 1, delivered: 1, failed: 0 })
+    expect(seqOf(fetchMock)).toEqual([
+      ['https://novu.test/v1/subscribers', 'POST'],
+      ['https://novu.test/v1/events/trigger', 'POST'],
+    ])
+    const ds = await listDeliveries(pool, ORG)
+    expect(ds.find((d) => d.eventId === 'ec4')).toMatchObject({ status: 'sent' })
+  })
+
+  it('ADR 0008 ②④：ensure 抛网络异常 ⇒ 不阻断 trigger', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/subscribers')) throw new Error('ECONNREFUSED')
+      return new Response('{}', { status: 201 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await upsertRule(pool, ORG, rule({ id: 'rc5', eventType: 'form.assigned', mount: 'ctc5', origin: 'manual' }), 'u')
+    const res = await emit(
+      { pool, novu: novuFrom({ [novuChatWebhookEnvKeyForOrg(ORG)]: HOOK }) },
+      { org: ORG, eventId: 'ec5', eventType: 'form.assigned', mount: 'ctc5', payload: { assignee: 'uc5' } },
+    )
+    expect(res).toMatchObject({ matched: 1, delivered: 1, failed: 0 })
+    expect(seqOf(fetchMock)).toEqual([
+      ['https://novu.test/v1/subscribers', 'POST'],
+      ['https://novu.test/v1/events/trigger', 'POST'],
+    ])
   })
 })

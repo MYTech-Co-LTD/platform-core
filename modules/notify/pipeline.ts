@@ -2,7 +2,7 @@
 // 正典 §2.6：**fail-open**——投递失败不阻塞业务；**幂等**——先认领回执再投递，重复 emit 不双发。
 import type { Pool } from 'pg'
 import { matchRules, type NotificationRule } from './domain/rules'
-import { trigger, type NovuResolver } from './domain/novu'
+import { ensureChannel, trigger, type NovuResolver } from './domain/novu'
 import { claimDelivery, listRules, markDeliveryFailed } from './storage'
 
 export type EmitInput = {
@@ -74,6 +74,22 @@ export async function emit(deps: { pool: Pool; novu: NovuResolver }, input: Emit
         failed++
         continue
       }
+
+      // ②.5 渠道前置（ADR 0008 ②）：chat 送达的闸门是 `subscriber.channels[]`，集成级
+      // webhookUrl **不参与** —— 不挂渠道则 chat 作业恒 `canceled`（有集成也一样，2026-10-20 实测）。
+      // 仅当**本 org** 解析出了 bridge URL 才做（该键 fail-closed、不回落全局，见 novu.ts）。
+      // **失败不阻断 trigger**（fail-open，§2.6 取舍④）：挂渠道失败不是投递失败，照常 trigger，
+      // 后果由 Novu 的 chat job 状态体现（canceled/failed）—— 故这里只告警，**不**记 failed 回执。
+      if (novu.chatWebhookUrl) {
+        const ensured = await ensureChannel(novu, {
+          subscriberId,
+          webhookUrl: novu.chatWebhookUrl,
+        })
+        if (!ensured.ok) {
+          console.warn(`[notify] ensureChannel 失败（不阻断投递）: ${ensured.error}`)
+        }
+      }
+
       const res = await trigger(novu, {
         templateId: rule.templateId,
         subscriberId,
