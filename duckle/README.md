@@ -165,16 +165,6 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
 3. ⚠️ **`pipelineHash` 是「代码指纹」，不是「数据指纹」** ⇒ **不能**用它判「输入数据变没变」。
    判定输入变化要靠**自建的输入指纹**（见 §7.2）。
 
-### 7.5 两件**判定为归我方**的原生件（③档，2026-10-19，issue #920）
-
-> 按采集正典 §1.1 的三档判据：这两件**引擎确实有**，但在我们的形态里**结构上安放不下**。
-> 记在这里是为了让下一个人不必再查一遍，也避免把 ③ 当成 ②（挂个 gate 拖着 = 永远不做）。
-
-| 原生件 | 引擎有什么 | 为什么仍归我方 | 什么时候该回头看 |
-|---|---|---|---|
-| `qa.reconcile` | 两源对账报告：按 key join，出 `source_rows` / `target_rows` / `rows_only_in_source` / `rows_only_in_target` / `keys_matched`，以及每个 measure 的 `source_sum` / `target_sum` / `difference` | 它出的是**聚合报告**（一 measure 一行），而 break management 需要**逐店行**（`recon_break` 的粒度 = 账套 × 日 × control × 门店，带 `reason_code` / `expires_on` / 认领人）。塞进管线 = 另建一套逐店台账 | 若将来只需要**总量对账**（不要逐店归因），直接用它，别再手写比对壳 |
-| `routines/`（保存 SQL 例程） | 工作区级、进 Git、与管线同路投递的命名 SQL；`code.sql` / `code.sqltemplate` 用 `routineRef` 引用 | 它解决的是**同一段 SQL 被多处引用**。2026-10-19 改造后口径**只剩 dbt 一份实现**、对账链路是消费者 ⇒ **没有第二份可共享**；给「读一张表再投影」包一层 routine 只增加间接层 | 若将来出现**多管线共用同一段非口径 SQL**（如多账套同一套清洗），用它替代复制粘贴 |
-
 ### 7.4 未验清单（**这些是 gate，不是「大概可以」**）
 
 1. **远端源（S3 / PG / REST）上的 `drift`** —— 未验（本机只验到本地形态）。
@@ -391,6 +381,18 @@ duckle 的管线文件是**引擎格式的 JSON**，其结构（节点 id / `dat
    `rows` / `status`）⇒ spec §6 的「行数/页数/窗口/耗时」四项里，**「页数」与「耗时」从未进入
    `_ops` 行**（本条只证「该行键集里没有」，**不证代码里没有**）；
    引擎原生侧两项都有（`duration_ms` 逐 run、`duckle_run_last_duration_seconds`）。
+
+### 7.4.1 能力缺口登记（③档：判定「引擎结构上安放不下」的原生件）
+
+> 按采集正典 §1.1 的三档判据：下面这些**引擎确实有**，但在我们的形态里**结构上安放不下**。
+> （若同一条被判定为 ②「有但未验」，**不要**登记在这里，挂 gate 去验。）
+> 记在这里是为了让下一个人不必再查一遍，也避免把 ③ 当成 ②（挂个 gate 拖着 = 永远不做）。
+
+| 原生件 | 引擎有什么 | 为什么仍归我方 | 什么时候该回头看 |
+|---|---|---|---|
+| `qa.reconcile` | 两源对账报告：按 key join，出 `source_rows` / `target_rows` / `rows_only_in_source` / `rows_only_in_target` / `keys_matched`，以及每个 measure 的 `source_sum` / `target_sum` / `difference` | 它出的是**聚合报告**（一 measure 一行），而 break management 需要**逐店行**（`recon_break` 的粒度 = 账套 × 日 × control × 门店，带 `reason_code` / `expires_on` / 认领人）。塞进管线 = 另建一套逐店台账 | 若将来只需要**总量对账**（不要逐店归因），直接用它，别再手写比对壳 |
+| `routines/`（保存 SQL 例程） | 工作区级、进 Git、与管线同路投递的命名 SQL；`code.sql` / `code.sqltemplate` 用 `routineRef` 引用 | 它解决的是**同一段 SQL 被多处引用**。2026-10-19 改造后口径**只剩 dbt 一份实现**、对账链路是消费者 ⇒ **没有第二份可共享**；给「读一张表再投影」包一层 routine 只增加间接层 | 若将来出现**多管线共用同一段非口径 SQL**（如多账套同一套清洗），用它替代复制粘贴 |
+| **「空集 = 正常状态」**（不写湖、不判红） | `ctl.switch` 逐行分支 / `ctl.try` 的 fallback / `snk.minio` 的写模式——**都不表达「0 行就别写、别失败」**：switch 对 0 行**什么都不路由**；try 的 fallback 跑完**原错误照样浮出**；sink 无 skip-empty | 采「源侧尚未发布」型数据（库存快照，发布滞后 16~40h）时，空集**必须 fail-closed**：① 引擎没有「空集=正常」的表达；② 空写会用**空分区覆盖**已采到的好数据（`mode: overwrite`）。⇒ 只能让 run 红、**在告警面把它降级为具名状态**（`SOURCE_NOT_PUBLISHED`，桥在 22 点前只记录不推群） | 若引擎出现「空集旁路」或 sink 的 skip-empty 选项，改回管线内表达（届时告警面的抑制逻辑可删） |
 
 ### 7.5 接入方式（**凭据与网络从哪来**）
 
