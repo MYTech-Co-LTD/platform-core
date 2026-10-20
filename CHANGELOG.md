@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.176.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.176.0...v0.176.1) - 2026-10-20
+- 【修复】data: 天文件挪 _DAY_DATA/ + 回填管线闸接线修复 ([#950](https://github.com/MYTech-Co-LTD/platform-core/pull/950), [40f3a3e](https://github.com/MYTech-Co-LTD/platform-core/commit/40f3a3e4ba537f1b68918a0302bb810f63173a84))
+
+
 ## [0.176.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.175.0...v0.176.0) - 2026-10-20
 - 【新增】notify: trigger 前给订阅者挂 chat 渠道（ensureChannel，ADR 0008 ②） ([#947](https://github.com/MYTech-Co-LTD/platform-core/pull/947), [9920180](https://github.com/MYTech-Co-LTD/platform-core/commit/99201809d337e940bdeb5fc518b5dc2ea26d6d5c))
 
