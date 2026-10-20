@@ -6,7 +6,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "0 10 * * *"
+      "expr": "0 14,16,18,20,22 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -27,7 +27,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "0 19 * * *"
+      "expr": "0 14,16,18,20,22 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
@@ -48,7 +48,7 @@
     "enabled": true,
     "kind": {
       "type": "cron",
-      "expr": "15 19 * * *"
+      "expr": "15 14,16,18,20,22 * * *"
     },
     "timezone": "Asia/Shanghai",
     "misfire": "skip",
