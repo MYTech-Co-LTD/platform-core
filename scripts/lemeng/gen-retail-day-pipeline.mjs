@@ -149,7 +149,7 @@ nodes.push(
       properties: {
         ...sink.data.properties,
         // ③ 天文件：去掉 /hour=…/，hour 落回文件体（契约列里有它，见 §5.3）
-        key: 'lemeng/retail_order_line/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/all.parquet',
+        key: 'lemeng/retail_order_line/_DAY_DATA/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/all.parquet',
       },
     },
   },

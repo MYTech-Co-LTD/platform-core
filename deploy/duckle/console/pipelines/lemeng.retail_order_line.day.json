@@ -6129,7 +6129,7 @@
     "properties": {
      "connectionRef": "zos",
      "bucket": "${ENV:ZOS_BUCKET}",
-     "key": "lemeng/retail_order_line/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/all.parquet",
+     "key": "lemeng/retail_order_line/_DAY_DATA/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/all.parquet",
      "format": "parquet",
      "mode": "overwrite",
      "compression": "zstd"

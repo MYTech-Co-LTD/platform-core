@@ -984,8 +984,15 @@ env，多租户同进程部署就只能共用一份 ⇒ 无 BYO、单密钥爆�
 | 层 | 路径 | 谁写 | 何时 |
 |---|---|---|---|
 | 热 | `<prefix>/system_book=<B>/bizday=<Y>/hour=<HH>/all.parquet` | tick（每 5 分钟） | **只有今天** |
-| 冷 | `<prefix>/system_book=<B>/bizday=<Y>/all.parquet` | **整天重采** | 关闭日，每账套每天 1 个 |
+| 冷 | `<prefix>/_DAY_DATA/system_book=<B>/bizday=<Y>/all.parquet` | **整天重采** | 关闭日，每账套每天 1 个 |
 | 标记 | `<prefix>/_DAILY/system_book=<B>/bizday=<Y>.parquet` | 同上 | 与冷文件同批（封版） |
+
+> **为什么冷侧在 `_DAY_DATA/` 而不是 `system_book=<B>/` 下**（2026-10-20 部署后订正）：
+> 审计层有 **7 个 `audit_lemeng__retail__*` 用单 glob `<prefix>/system_book=*/**/*.parquet`** 读湖。
+> 天文件若与小时文件同处一个 `system_book=` 下，那些读者会**同时命中两份 ⇒ 双算**
+> （部署后实测：`audit_lemeng__retail__recon_gift_hit` FAIL 67、`assert_stg_..._key_unique` FAIL 19678）。
+> 挪到 `_DAY_DATA/` 之后**单 glob 天然匹配不到天文件** ⇒ 既有读者一行不改，且**不再依赖删除时序**；
+> 「删小时文件」回到**纯性能**的定位（这是本节的原始判断，上一版曾因审计层被误判成「必须」，现订正）。
 
 **四条硬约束**（每条都有实测支撑，别绕）：
 
