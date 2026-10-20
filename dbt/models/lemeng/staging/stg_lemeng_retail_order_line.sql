@@ -105,27 +105,71 @@ select
   r['order_detail_price']::numeric(14,2) as order_detail_price,
   r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
   r['order_total_money']::numeric(14,2) as order_total_money
--- pg_duckdb 把 read_parquet 委托给 DuckDB 执行。裸扫描结果**不是 PG 关系、不进 pg_class**
--- （spec §9.4 可见性坑）⇒ 它只出现在 staging 模型内部，物化落点由上面的 config + 项目缺省保证
--- 是 PG 可见关系（gate 2）。
+-- ══ 冷：已封版的**天文件**（关闭日，每账套每天 1 个）════════════════════════════════════════
+-- 2026-10-20 起明细的湖布局是**热/冷混合**（正典 docs/architecture.md §5.3）：
+--   热 = 今天，仍按小时分区；冷 = 关闭日，整天重采落一个天文件。
+-- 两条 glob **互不重叠**：天文件只在关闭日有，小时文件只在「今天 / 尚未重采的昨天」有。
+-- ⚠️ 次序无关，但**两块都要在**——只留热侧会在迁移期丢已封版的日子，只留冷侧会丢今天。
 from read_parquet(
-  -- ⚠️ 路径段写 `system_book=*/` **通配两个账套**（账套靠 hive 推断成列，不按账套分 var）——与门店维/商品维**同源形态**
-  -- （见 sources.yml 的 branch 条目注释）。`system_book` 是**列**：由路径 `system_book=<值>/` 自动推断
-  -- （类型推成 bigint，下面显式 `::varchar` 定型）。
-  -- 2026-09-26 改：64188（品品甜）铺开后，钉单账套的路径会让它的数据**落湖了却进不了物化**（issue #250）。
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/**/*.parquet'
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/all.parquet'
 ) r,
--- ── 封版断言（正典 docs/architecture.md §5.2 ③）────────────────────────────────
--- 湖是一堆**分区**：回填逐个改写，中途任何时刻都可能「读得到、但没齐」。实测过它的后果——
--- **半写的湖会被读者静默读成「完整」**（392 行 vs 完整 796 行，rc=0），那比响亮报错危险得多。
--- ⇒ 读者必须**同 FROM 带一份封版标记**：`_SCHEMA/v<N>.parquet` 是整表写全之后才落的**唯一凭据**
---   （同 `.data-plane-revision` 的思想：**标记在 = 齐**）；它不在 ⇒ 404 ⇒ 带名字地失败。
+-- ── 封版断言（正典 §5.2 ③）：`_SCHEMA/v<N>.parquet` 是「这套文件是齐的」的唯一凭据 ──────────
+-- 它不在 ⇒ 404 ⇒ **带名字地失败**，而不是把半写的湖静默读成完整（实测过：392 行 vs 完整 796 行，rc=0）。
 -- ⚠️ 这里的 `v3` / `schema_version = 3` 必须与契约 `contracts/common/lemeng.retail_order_line.json`
---   的 `schemaVersion` **一致**（当前 3）——改契约就得改这里，两处漂开会让断言形同虚设。
--- ⚠️ 标记**在表根、不在 `system_book=*` 之下** ⇒ 不进上面那条读湖 glob（真机实测命中 0）。
---   若哪天有人把它挪到数据目录下面，`**/*.parquet` 会把它当**数据文件**读进来、结构体被解析成
---   标记的列（实测报 `Could not find key "sale_money" … Candidate Entries: "sealed_at"…`）。
+--   的 `schemaVersion` 一致（当前 3）——改契约就得改这里，两处漂开会让断言形同虚设。
+-- ⚠️ 标记**在表根**、不在 `system_book=*` 之下 ⇒ 不进任何读湖 glob（真机实测命中 0）。
+--   若把它挪到数据目录下面，`**/*.parquet` 会把它当**数据文件**读进来、结构体被解析成标记的列
+--   （实测报 `Could not find key "sale_money" … Candidate Entries: "sealed_at"…`）。
   read_parquet(
     's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_SCHEMA/v3.parquet'
   ) sealed
 where sealed['schema_version'] = 3
+union all
+select
+  r['batch_id']::varchar as batch_id,
+  r['system_book']::varchar as system_book,
+  {{ subject_org() }}       as org,
+  r['bizday']::date as bizday,
+  r['hour']::int as hour,
+  r['order_no']::varchar as order_no,
+  r['order_detail_num']::varchar as order_detail_num,
+  r['branch_num']::int as branch_num,
+  r['branch_name']::varchar as branch_name,
+  r['order_time']::timestamp as order_time,
+  r['order_operate_time']::timestamp as order_operate_time,
+  r['state']::varchar as state,
+  r['order_source']::varchar as order_source,
+  r['item_num']::varchar as item_num,
+  r['item_code']::varchar as item_code,
+  r['sale_money']::numeric(14,2) as sale_money,
+  r['discount_money']::numeric(14,2) as discount_money,
+  r['payment_money']::numeric(14,2) as payment_money,
+  r['quantity']::numeric(14,3) as quantity,
+  r['order_transaction_type']::varchar as order_transaction_type,
+  r['order_ref_billno']::varchar as order_ref_billno,
+  r['order_detail_share_discount']::numeric(14,2) as order_detail_share_discount,
+  r['order_detail_std_price']::numeric(14,2) as order_detail_std_price,
+  r['order_detail_price']::numeric(14,2) as order_detail_price,
+  r['order_detail_online_qty']::numeric(14,3) as order_detail_online_qty,
+  r['order_total_money']::numeric(14,2) as order_total_money
+-- ══ 热：未封版日子的小时文件 ═══════════════════════════════════════════════════════════════
+-- ⚠️ **必须排除已封版的日子**（`_DAILY/` 有该 (账套, 日) 的标记）。不排除的后果是**双算**：
+--   「写天文件」与「删小时目录」之间必然有一个两者并存的窗口，而 glob 会把两份都读进来。
+--   带上排除之后，删小时只是**变慢**（多开几个文件），不会错数 ⇒ 正确性与删除时机解耦。
+-- ⚠️ `_DAILY/` 必须**永远至少有一个对象**：空 glob 不是「读到 0 行」，是 `No files found that
+--   match the pattern` **建计划就失败**（真机实测）⇒ 迁移第 0 步先落 `_DAILY/_bootstrap.parquet`
+--   （system_book='' / bizday=1970-01-01，不匹配任何真日子）。
+-- ⚠️ 子查询里的 `select 1 from …` 要**写成一行**（`from` 不换行）：`gen-data-projection.mjs` 的
+--   位点识别要求「后续位点必须是行首 select」，内联写法才不会被当成第三个投影位点。
+from read_parquet(
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
+) r,
+  read_parquet(
+    's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_SCHEMA/v3.parquet'
+  ) sealed
+where sealed['schema_version'] = 3
+  and not exists (
+    select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m
+    where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar)
+      and cast(m['bizday'] as date) = cast(r['bizday'] as date)
+  )

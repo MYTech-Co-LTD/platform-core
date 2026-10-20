@@ -28,6 +28,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
+  selectListBoundsAll,
   CONTRACT_DIR,
   NON_CONTRACT,
   collectJson,
@@ -37,6 +38,9 @@ import {
   maskSqlComments,
   readContractDoc,
 } from './lib/data-contract.mjs'
+
+// 供夹具直接测位点识别（实现住在 lib，与门禁共用同一份判据）
+export { selectListBoundsAll }
 
 /**
  * 顶层逗号切分（忽略括号与单引号内的逗号）。
@@ -135,29 +139,6 @@ export function rewriteSelectList(sql, newSelectList) {
  * @param {string} sql
  * @returns {{ selectStart: number, fromStart: number }[]}
  */
-export function selectListBoundsAll(sql) {
-  const masked = maskSqlComments(sql)
-  /** @type {{ selectStart: number, fromStart: number }[]} */
-  const out = []
-  let cursor = 0
-  for (;;) {
-    const rest = masked.slice(cursor)
-    const sel = /\bselect\b/i.exec(rest)
-    if (!sel) break
-    const selectStart = cursor + sel.index
-    const afterSel = masked.slice(selectStart)
-    const from = /\n\s*from\b/i.exec(afterSel)
-    if (!from) break
-    const fromStart = selectStart + from.index
-    if (/\bselect\b/i.test(masked.slice(selectStart + 6, fromStart))) {
-      throw new Error(`投影位点（第 ${out.length + 1} 处）的选列区里出现嵌套 select —— 本生成器不支持该形态，别猜`)
-    }
-    out.push({ selectStart, fromStart })
-    cursor = fromStart
-  }
-  return out
-}
-
 /**
  * 重写**全部**投影位点（同一段列区文本）。单个位点时与 `rewriteSelectList` 等价。
  *

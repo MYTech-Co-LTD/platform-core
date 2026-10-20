@@ -245,3 +245,20 @@ describe('rewriteAllSelectLists（多投影位点）', () => {
     expect(() => selectListBoundsAll(nested)).toThrow(/嵌套 select/)
   })
 })
+
+describe('selectListBoundsAll：内联子查询不算投影位点', () => {
+  it('where … not exists (select 1 from …) 不被当成第 3 个位点', () => {
+    const sql = [
+      'select',
+      "  r['a'] as a",
+      "from read_parquet('cold') r",
+      'union all',
+      'select',
+      "  r['a'] as a",
+      "from read_parquet('hot') r",
+      "where not exists (select 1 from read_parquet('m') m where m.b = r['b'])",
+      '',
+    ].join('\n')
+    expect(selectListBoundsAll(sql)).toHaveLength(2)
+  })
+})
