@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.173.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.172.0...v0.173.0) - 2026-10-20
+- 【新增】notify: 按租户（org）解析 Novu 凭据——方案 A env 映射 + 回落 ([#929](https://github.com/MYTech-Co-LTD/platform-core/pull/929), [475179b](https://github.com/MYTech-Co-LTD/platform-core/commit/475179b8e0e362f73ba7a21a0f22a3f43d322cf5))
+
+
 ## [0.172.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.171.0...v0.172.0) - 2026-10-19
 - 【新增】data: 重述窗口调度——两账套 + 台账驱动 + T-3..T-9（#814 层 1+2+3） ([#925](https://github.com/MYTech-Co-LTD/platform-core/pull/925), [dbfa29f](https://github.com/MYTech-Co-LTD/platform-core/commit/dbfa29f89a5063480bec022b508d153a28857702))
 
