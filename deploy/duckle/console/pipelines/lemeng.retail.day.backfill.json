@@ -773,7 +773,7 @@
       "id": "e104",
       "source": "wc2",
       "sourceHandle": "main",
-      "target": "wc",
+      "target": "w0",
       "targetHandle": "main"
     },
     {
@@ -782,7 +782,7 @@
       },
       "id": "t30",
       "source": "dwf",
-      "target": "wc"
+      "target": "w0"
     },
     {
       "data": {
@@ -810,7 +810,7 @@
       },
       "id": "t31",
       "source": "dv2",
-      "target": "wc"
+      "target": "w0"
     },
     {
       "data": {
@@ -833,6 +833,15 @@
       "targetHandle": "main"
     },
     {
+      "id": "e_dv_wc",
+      "source": "dv",
+      "target": "wc",
+      "sourceHandle": "main",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
       "id": "e_wc_dw",
       "source": "wc",
       "target": "dw",
@@ -847,9 +856,8 @@
       "source": "dw",
       "target": "w0",
       "sourceHandle": "main",
-      "targetHandle": "main",
       "data": {
-        "connectionType": "main"
+        "connectionType": "on-subjob-ok"
       }
     }
   ],

@@ -111,7 +111,7 @@ select
 -- 两条 glob **互不重叠**：天文件只在关闭日有，小时文件只在「今天 / 尚未重采的昨天」有。
 -- ⚠️ 次序无关，但**两块都要在**——只留热侧会在迁移期丢已封版的日子，只留冷侧会丢今天。
 from read_parquet(
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/all.parquet'
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
 ) r,
 -- ── 封版断言（正典 §5.2 ③）：`_SCHEMA/v<N>.parquet` 是「这套文件是齐的」的唯一凭据 ──────────
 -- 它不在 ⇒ 404 ⇒ **带名字地失败**，而不是把半写的湖静默读成完整（实测过：392 行 vs 完整 796 行，rc=0）。
