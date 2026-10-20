@@ -6179,6 +6179,41 @@
      "mode": "overwrite"
     }
    }
+  },
+  {
+   "id": "msrc",
+   "type": "transform",
+   "position": {
+    "x": 1520,
+    "y": 260
+   },
+   "data": {
+    "label": "封版标记行（1 行：本账套 × 本日）",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT '${ITER_ITEM_SYSTEM_BOOK}' AS system_book, CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday"
+    }
+   }
+  },
+  {
+   "id": "msink",
+   "type": "sink",
+   "position": {
+    "x": 1760,
+    "y": 260
+   },
+   "data": {
+    "label": "封版标记 → _DAILY/",
+    "componentId": "snk.minio",
+    "properties": {
+     "connectionRef": "zos",
+     "bucket": "${ENV:ZOS_BUCKET}",
+     "key": "lemeng/retail_order_line/_DAILY/${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.parquet",
+     "format": "parquet",
+     "mode": "overwrite",
+     "compression": "zstd"
+    }
+   }
   }
  ],
  "edges": [
@@ -7213,9 +7248,39 @@
    }
   },
   {
+   "id": "e_gate_msrc",
+   "source": "gate",
+   "target": "msrc",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e_msrc_msink",
+   "source": "msrc",
+   "target": "msink",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
    "id": "t_ordered_summ",
    "source": "ordered",
    "target": "summ",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "trigger"
+   }
+  },
+  {
+   "id": "t_ordered_msrc",
+   "source": "ordered",
+   "target": "msrc",
    "sourceHandle": "main",
    "targetHandle": "main",
    "data": {

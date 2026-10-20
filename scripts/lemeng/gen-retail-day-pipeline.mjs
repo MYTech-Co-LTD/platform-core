@@ -175,6 +175,38 @@ nodes.push(
       properties: { path: '/workspace/logs/retail-windows/${ITER_ITEM_BIZDAY}.csv', mode: 'overwrite' },
     },
   },
+  // ── 封版标记（`_DAILY/<book>-<bizday>.parquet`）────────────────────────────────────
+  // 读侧靠它决定「这一天的小时文件要不要排除」（architecture.md §5.3）。
+  // ⚠️ 必须在**天文件落盘之后**才写：`ordered`（ctl.anchor）→ 本节点是 **trigger** 边，
+  //    与收据 `summ` 同一手法。写早了会让读侧去排除一片还不存在/没写完的小时文件。
+  // ⚠️ 标记**不能落进 `system_book=*/**/*.parquet` 射程**：这里放表根 `_DAILY/`，
+  //    与 `_SCHEMA/` 同一理由（落了就会被当数据文件读进来）。
+  {
+    id: 'msrc',
+    type: 'transform',
+    position: { x: 1520, y: 260 },
+    data: {
+      label: '封版标记行（1 行：本账套 × 本日）',
+      componentId: 'code.sql',
+      properties: {
+        // 不读 input 的行：即便当天 0 行也要写标记（天文件已落盘，只是空）
+        sql: "SELECT '${ITER_ITEM_SYSTEM_BOOK}' AS system_book, CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday",
+      },
+    },
+  },
+  {
+    id: 'msink',
+    type: 'sink',
+    position: { x: 1760, y: 260 },
+    data: {
+      label: '封版标记 → _DAILY/',
+      componentId: 'snk.minio',
+      properties: {
+        ...sink.data.properties,
+        key: 'lemeng/retail_order_line/_DAILY/${ITER_ITEM_SYSTEM_BOOK}-${ITER_ITEM_BIZDAY}.parquet',
+      },
+    },
+  },
 )
 
 const wire = (/** @type {string} */ source, /** @type {string} */ target) =>
@@ -192,6 +224,9 @@ wire('gate', 'sink')
 wire('gate', 'summ')
 wire('sink', 'ordered')
 wire('summ', 'receipt')
+// 封版标记：数据边来自 gate，**排序边**来自 ordered（先落盘再写标记），与 summ 同构
+wire('gate', 'msrc')
+wire('msrc', 'msink')
 // ⚠️ `ordered → summ` 是**排序边、不是数据边**：必须 `connectionType: "trigger"`。
 //    写成 `"main"` 会被验证器判「2 路进一个端口、只读一路」（2026-10-20 实测拦下）。
 //    `ctl.anchor` 的语义是「上游 sink 先落盘，再放行下游」——它是触发关系，不搬数据。
@@ -199,6 +234,14 @@ edges.push({
   id: 't_ordered_summ',
   source: 'ordered',
   target: 'summ',
+  sourceHandle: 'main',
+  targetHandle: 'main',
+  data: { connectionType: 'trigger' },
+})
+edges.push({
+  id: 't_ordered_msrc',
+  source: 'ordered',
+  target: 'msrc',
   sourceHandle: 'main',
   targetHandle: 'main',
   data: { connectionType: 'trigger' },
