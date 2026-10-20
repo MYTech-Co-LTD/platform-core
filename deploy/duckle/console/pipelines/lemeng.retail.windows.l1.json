@@ -1,5 +1,11 @@
 {
   "_note": [
+    "── 2026-10-20 形态变更：本管线不再按小时重采，改为**整天重采** ──",
+    "w0 只出「昨日 1 天」（hour 恒 \"-\"，故下游按 hour 键控的 wm/su/op/gd 一字未改）；",
+    "foreach 驱动 pipelines/lemeng.retail_order_line.day.json —— 它整天取数（96 页扇出），",
+    "落一个天文件 system_book=<B>/bizday=<Y>/all.parquet（无 /hour=）。",
+    "理由与实测：docs/architecture.md §5.3、docs/superpowers/specs/2026-10-20-retail-daily-partition-design.md。",
+    "",
     "lemeng.retail.windows 的 **L1 形态**（父管线）—— 一条管线 + 一条调度替代",
     "「薄管线 lemeng.retail.windows.run + run-retail-day.sh 的 windows 分支 + 重管线」三层。",
     "**foreach 首次上生产**。依据 docs/superpowers/plans/2026-09-28-all-pipelines-migration.md Wave B；",
@@ -58,7 +64,7 @@
     "   · 24 窗循环 / 单窗失败登记不拖垮 / 跨 run 只补失败窗 / 末尾判红：四条逐项实测；",
     "   · 身份自证：原 shell 的 identity 子命令（whoami×3 传输重试 + 账套 + 门店子集）1:1 表达；",
     "   · 运行记录：薄管线的 snk.csv（/workspace/logs/retail-windows-run.csv）由**汇总表**承接",
-    "     （/workspace/logs/retail-windows-summary.csv，每窗一行 hour/rows/status）；",
+    "     （/workspace/logs/retail-day-summary.csv，每窗一行 hour/rows/status）；",
     "   · 容器编排（每窗起一个新容器）整层消失 —— 本形态的收益本体。",
     "",
     "⑦【未随本文件处理的（明确不做）】",
@@ -211,7 +217,7 @@
         "label": "Assert expected-value shapes",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule\nWHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]')\nUNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only'\nWHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}')\nUNION ALL SELECT 'BIZDAY', b.bizday, 'YYYY-MM-DD（Asia/Shanghai 日历日的昨天）'\nFROM (SELECT strftime((now() AT TIME ZONE 'Asia/Shanghai') - INTERVAL 1 DAY, '%Y-%m-%d') AS bizday) b\nWHERE NOT regexp_full_match(b.bizday, '[0-9]{4}-[0-9]{2}-[0-9]{2}')\nUNION ALL SELECT 'RUN_TOKEN', t.tok, 'YYYYMMDDTHHMMSSZ'\nFROM (SELECT replace(replace('${datetime}','-',''),'_','T') || 'Z' AS tok) t\nWHERE NOT regexp_full_match(t.tok, '[0-9]{8}T[0-9]{6}Z')\nUNION ALL SELECT 'BATCH_ID', x.bid, 'retail-<book>-YYYYMMDDTHHMMSSZ-HH'\nFROM (SELECT 'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || replace(replace('${datetime}','-',''),'_','T') || 'Z-00' AS bid) x\nWHERE NOT regexp_full_match(x.bid, 'retail-[0-9]+-[0-9]{8}T[0-9]{6}Z-[0-9]{2}')\nUNION ALL SELECT 'HOUR_SET', CAST(count(*) AS VARCHAR) || '/' || CAST(count(DISTINCT s.hour) AS VARCHAR) || '/' || min(s.hour) || '-' || max(s.hour), '24 rows, hour = 00..23, 每窗一次'\nFROM (SELECT lpad(CAST(h AS VARCHAR), 2, '0') AS hour FROM generate_series(0, 23) g(h)) s\nHAVING count(*) <> 24 OR count(DISTINCT s.hour) <> 24 OR min(s.hour) <> '00' OR max(s.hour) <> '23'"
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule\nWHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]')\nUNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only'\nWHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}')\nUNION ALL SELECT 'BIZDAY', b.bizday, 'YYYY-MM-DD（Asia/Shanghai 日历日的昨天）'\nFROM (SELECT strftime((now() AT TIME ZONE 'Asia/Shanghai') - INTERVAL 1 DAY, '%Y-%m-%d') AS bizday) b\nWHERE NOT regexp_full_match(b.bizday, '[0-9]{4}-[0-9]{2}-[0-9]{2}')\nUNION ALL SELECT 'RUN_TOKEN', t.tok, 'YYYYMMDDTHHMMSSZ'\nFROM (SELECT replace(replace('${datetime}','-',''),'_','T') || 'Z' AS tok) t\nWHERE NOT regexp_full_match(t.tok, '[0-9]{8}T[0-9]{6}Z')\nUNION ALL SELECT 'BATCH_ID', x.bid, 'retail-<book>-YYYYMMDDTHHMMSSZ-day'\nFROM (SELECT 'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || replace(replace('${datetime}','-',''),'_','T') || 'Z-day' AS bid) x\nWHERE NOT regexp_full_match(x.bid, 'retail-[0-9]+-[0-9]{8}T[0-9]{6}Z-day')\nUNION ALL SELECT 'DAY_SET', CAST(count(*) AS VARCHAR) || '/' || min(b.bizday) || '-' || max(b.bizday), '1 row, bizday = 上海昨天（整天重采）'\nFROM (SELECT strftime((now() AT TIME ZONE 'Asia/Shanghai') - INTERVAL 1 DAY, '%Y-%m-%d') AS bizday) b\nHAVING count(*) <> 1"
         }
       }
     },
@@ -239,10 +245,10 @@
         "y": 1200
       },
       "data": {
-        "label": "窗口表（24 窗：bizday + hour + run_token + batch_id）",
+        "label": "窗口表（1 行：昨日整天；hour 恒 \"-\" 以复用下游 hour 键控机制）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT\n  t.run_token AS run_token,\n  strftime((now() AT TIME ZONE 'Asia/Shanghai') - INTERVAL 1 DAY, '%Y-%m-%d') AS bizday,\n  s.hour AS hour,\n  s.hour || ':00:00' AS hour_from,\n  s.hour || ':59:59' AS hour_to,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  (SELECT branch_nums FROM input) AS branch_nums,\n  'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || replace(replace('${datetime}','-',''),'_','T') || 'Z-' || s.hour AS batch_id\nFROM (SELECT replace(replace('${datetime}','-',''),'_','T') AS run_token) t,\n     (SELECT lpad(CAST(h AS VARCHAR), 2, '0') AS hour FROM generate_series(0, 23) g(h)) s"
+          "sql": "SELECT\n  t.run_token AS run_token,\n  strftime((now() AT TIME ZONE 'Asia/Shanghai') - INTERVAL 1 DAY, '%Y-%m-%d') AS bizday,\n  '-' AS hour,\n  '00:00:00' AS hour_from,\n  '23:59:59' AS hour_to,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  (SELECT branch_nums FROM input) AS branch_nums,\n  'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || replace(replace('${datetime}','-',''),'_','T') || 'Z-day' AS batch_id\nFROM (SELECT replace(replace('${datetime}','-',''),'_','T') AS run_token) t"
         }
       }
     },
@@ -254,10 +260,10 @@
         "y": 1200
       },
       "data": {
-        "label": "逐窗跑业务子管线",
+        "label": "逐天跑整天重采子管线",
         "componentId": "ctl.foreach",
         "properties": {
-          "pipelineRef": "${workspace}/pipelines/lemeng.retail_order_line.window.json",
+          "pipelineRef": "${workspace}/pipelines/lemeng.retail_order_line.day.json",
           "itemKey": "hour",
           "concurrency": 1,
           "retryAttempts": 4,
@@ -292,7 +298,7 @@
         "label": "本 run 的窗口清单落盘（收据目录的 schema 锚）",
         "componentId": "snk.csv",
         "properties": {
-          "path": "/workspace/logs/retail-windows/_windows-pending.csv",
+          "path": "/workspace/logs/retail-day/_days-pending.csv",
           "mode": "overwrite"
         }
       }
@@ -321,7 +327,7 @@
         "label": "汇总每窗（收据 × 窗口表）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT w.hour AS hour, w.bizday AS bizday,\n  w.run_token AS run_token,\n  COALESCE(r.\"rows\", 0) AS \"rows\",\n  COALESCE(r.status, 'missing') AS status\nFROM (SELECT DISTINCT hour, bizday, run_token FROM input) w\nLEFT JOIN (SELECT hour, run_token, \"rows\", status\n           FROM read_csv('/workspace/logs/retail-windows/*.csv', header = true, union_by_name = true)\n           WHERE status = 'ok') r\n  ON r.hour = w.hour AND r.run_token = w.run_token\nORDER BY w.hour"
+          "sql": "SELECT w.hour AS hour, w.bizday AS bizday,\n  w.run_token AS run_token,\n  COALESCE(r.\"rows\", 0) AS \"rows\",\n  COALESCE(r.status, 'missing') AS status\nFROM (SELECT DISTINCT hour, bizday, run_token FROM input) w\nLEFT JOIN (SELECT hour, run_token, \"rows\", status\n           FROM read_csv('/workspace/logs/retail-day/*.csv', header = true, union_by_name = true)\n           WHERE status = 'ok') r\n  ON r.hour = w.hour AND r.run_token = w.run_token\nORDER BY w.hour"
         }
       }
     },
@@ -333,10 +339,10 @@
         "y": 1560
       },
       "data": {
-        "label": "_ops 行成形（job=retail-window，wrapper ops_ship 同形：每窗一行，缺口窗也投）",
+        "label": "_ops 行成形（job=retail-day，wrapper ops_ship 同形：每天一行，缺口天也投）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-window' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n  bizday, hour, \"rows\", status, run_token FROM input"
+          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-day' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n  bizday, hour, \"rows\", status, run_token FROM input"
         }
       }
     },
@@ -375,7 +381,7 @@
         "label": "汇总表落盘（运行记录）",
         "componentId": "snk.csv",
         "properties": {
-          "path": "/workspace/logs/retail-windows-summary.csv",
+          "path": "/workspace/logs/retail-day-summary.csv",
           "mode": "overwrite"
         }
       }
@@ -420,7 +426,7 @@
         "componentId": "ctl.die",
         "properties": {
           "condition": "has-rows",
-          "message": "WINDOWS_FAILED {rows} 窗未采到（system_book=${ENV:SYSTEM_BOOK}）⇒ 整批判红。⚠️ windows 形只采「上海昨天」、无回溯重放 ⇒ 被截掉的尾窗**必须当日补跑**（本 run 的 checkpoint 会让补跑只发缺页数个请求）；缺口明细见 /workspace/logs/retail-windows-summary.csv"
+          "message": "WINDOWS_FAILED {rows} 窗未采到（system_book=${ENV:SYSTEM_BOOK}）⇒ 整批判红。⚠️ windows 形只采「上海昨天」、无回溯重放 ⇒ 被截掉的尾窗**必须当日补跑**（本 run 的 checkpoint 会让补跑只发缺页数个请求）；缺口明细见 /workspace/logs/retail-day-summary.csv"
         }
       }
     },
@@ -506,7 +512,7 @@
         "componentId": "code.sql",
         "label": "反向漂移：现算 vs 底账（只告警不阻断）",
         "properties": {
-          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-window' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n       '-' AS bizday, 'drift' AS hour, count(*) AS \"rows\", 'config_drift' AS status,\n       replace('${datetime}', '-', '') AS run_token,\n       string_agg(CASE WHEN w.b IS NULL THEN '底账有现算无(排除或不可见): ' || CAST(c.b AS VARCHAR)\n                       ELSE '现算有底账无(新店): ' || CAST(w.b AS VARCHAR) END, '；' ORDER BY 1) AS detail\nFROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS b) c\nFULL OUTER JOIN (SELECT unnest(CAST(json_extract(i.branch_nums, '$[*]') AS BIGINT[])) AS b FROM input i) w\n  ON c.b = w.b\nWHERE c.b IS NULL OR w.b IS NULL"
+          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-day' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n       '-' AS bizday, 'drift' AS hour, count(*) AS \"rows\", 'config_drift' AS status,\n       replace('${datetime}', '-', '') AS run_token,\n       string_agg(CASE WHEN w.b IS NULL THEN '底账有现算无(排除或不可见): ' || CAST(c.b AS VARCHAR)\n                       ELSE '现算有底账无(新店): ' || CAST(w.b AS VARCHAR) END, '；' ORDER BY 1) AS detail\nFROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS b) c\nFULL OUTER JOIN (SELECT unnest(CAST(json_extract(i.branch_nums, '$[*]') AS BIGINT[])) AS b FROM input i) w\n  ON c.b = w.b\nWHERE c.b IS NULL OR w.b IS NULL"
         }
       },
       "id": "gd",
