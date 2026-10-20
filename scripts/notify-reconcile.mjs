@@ -33,16 +33,37 @@ const KIND = 'form_def' // = modules/forms/storage.ts 的 KIND（三同纪律：
 export const ymd = (d) => new Date(d).toISOString().slice(0, 10)
 
 /**
+ * §2.6 方案 A：env → 按 org 解析的 **resolver 函数**（本文件唯一一处把 env 变成 resolver 的地方）。
+ *
+ * ⚠️ 必须返回**函数**而不是值：`emit`（modules/notify/pipeline.ts:54）在管道内按 `input.org`
+ * **调用**它（`NOVU_API_KEY__<ORG>` → 全局回落 → null）。传值 = 每次 emit 必 `TypeError`，
+ * 且被下面的 catch 兜成「对不成账」⇒ 退出码 2 ⇒ job 每次必败（**#936 的形态**：#929 把
+ * `emit` 改成收 resolver 时漏改本文件）。范式同 modules/notify/index.ts:23。
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {import('../modules/notify/domain/novu.ts').NovuResolver}
+ */
+const novuResolverFromEnv = (env = process.env) => (org) => novuFromEnv(env, org)
+
+/**
  * 跑一轮对账。依赖可注入（`deps`）——便于无 DB 单测编排逻辑；缺省用真实现。
+ *
+ * `deps` 各槽写**真实签名**（`typeof` 取真实现）而不是 `Function`：`Function` 对参数零检查，
+ * 正是 #936 里 `{ pool, novu }` 传错形状却让 `tsc` 放行的原因（`emitEvent` 一旦写宽，
+ * 它收到的 `novu` 就不再与 `emit` 的契约对账）。
  * @param {any} pool
  * @param {{ now?: Date,
- *           novu?: import('../modules/notify/domain/novu.ts').NovuConfig | null,
+ *           novu?: import('../modules/notify/domain/novu.ts').NovuResolver,
  *           dryRun?: boolean,
- *           deps?: { listTargets?: Function, resolveAssignees?: Function, emitEvent?: Function, upsert?: Function } }} [opts]
+ *           deps?: {
+ *             listTargets?: typeof listAssignmentTargets,
+ *             resolveAssignees?: typeof resolveAssigneeKeys,
+ *             emitEvent?: typeof emit,
+ *             upsert?: typeof upsertRule,
+ *           } }} [opts]
  * @returns {Promise<{ derived: number, emitted: number, failed: number, targets: number }>}
  */
 export async function reconcileOnce(pool, opts = {}) {
-  const { now = new Date(), novu = null, dryRun = false } = opts
+  const { now = new Date(), novu = novuResolverFromEnv(), dryRun = false } = opts
   const {
     listTargets = listAssignmentTargets,
     resolveAssignees = resolveAssigneeKeys,
@@ -125,7 +146,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const { Pool } = createRequire(import.meta.url)('pg')
   const pool = new Pool({ connectionString: url })
   try {
-    const r = await reconcileOnce(pool, { novu: novuFromEnv() })
+    const r = await reconcileOnce(pool, { novu: novuResolverFromEnv() })
     console.log(
       process.argv.includes('--json')
         ? JSON.stringify(r)

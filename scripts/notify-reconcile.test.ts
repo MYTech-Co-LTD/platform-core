@@ -115,3 +115,27 @@ describe('reconcileOnce（编排，依赖注入）', () => {
     expect(r.emitted).toBe(0)
   })
 })
+
+// ── 回归 #936：Novu 装配传「值」不传「函数」（#929 改 emit 签名时漏改本脚本）──────────────
+// 判据为什么钉在**缺省 DI** 这条缝上：脚本的 CLI 入口被
+// `import.meta.url === pathToFileURL(process.argv[1]).href` 守着，测试 import 不到它；
+// 但 CLI 传给 reconcileOnce 的 `novu` 与 reconcileOnce 的**缺省值**是同一个槽，缺省
+// `emitEvent` 又 = 真 `emit`（modules/notify/pipeline.ts）——它在管道内按 `deps.novu(input.org)`
+// **调用** novu。于是「缺省 DI 跑一轮不抛 TypeError」正是本 bug 的判据：
+// 修复前缺省 novu = null ⇒ `TypeError: deps.novu is not a function`（实测红）。
+// 负对照：上面那组用例全部注入假 emitEvent ⇒ 结构性绕开真管道，故对本 bug 恒绿。
+describe('缺省 DI 装配（#936：novu 必须是 resolver 函数，不是 NovuConfig 值）', () => {
+  it('不传 novu / 不传 emitEvent ⇒ 走真 emit 管道，不得抛 TypeError', async () => {
+    const pool = { query: vi.fn(async () => ({ rows: [] })) } // notify.rule 空 ⇒ emit 内 matched=0
+    const r = await reconcileOnce(pool as any, {
+      now: new Date(PUB), // = 发布时刻，未到期 ⇒ 不查 forms.submission
+      deps: {
+        listTargets: async () => [target()],
+        resolveAssignees: async () => ['u1'],
+        upsert: async () => {},
+      } as any,
+    })
+    // 含 due ⇒ 派生 2 条；规则表空 + 无 NOVU_* env ⇒ 零投递零失败（fail-open，不抛）
+    expect(r).toMatchObject({ targets: 1, derived: 2, emitted: 0, failed: 0 })
+  })
+})
