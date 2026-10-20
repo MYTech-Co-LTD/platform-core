@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.173.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.173.1...v0.173.2) - 2026-10-20
+- 【修复】data: 排班门禁期望表随 #931 同步（main unit 红追补） ([#934](https://github.com/MYTech-Co-LTD/platform-core/pull/934), [4ae0697](https://github.com/MYTech-Co-LTD/platform-core/commit/4ae069705c4abe2f58203588dc89ba42f44d44d2))
+
+
 ## [0.173.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.173.0...v0.173.1) - 2026-10-20
 - 【修复】data: 非销售采集排班统一到北京 14–24 点每 2 小时（修 ${date-1d} 的 UTC 偏一天） ([#932](https://github.com/MYTech-Co-LTD/platform-core/pull/932), [7c2bb9d](https://github.com/MYTech-Co-LTD/platform-core/commit/7c2bb9d1a8c82617fc49c121fa783bb3d178480a))
 
