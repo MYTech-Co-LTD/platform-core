@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.177.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.176.1...v0.177.0) - 2026-10-20
+- 【新增】data: 整天重采同一份数据镜像到旧路径（供审计层单 glob 读取） ([#952](https://github.com/MYTech-Co-LTD/platform-core/pull/952), [3702c02](https://github.com/MYTech-Co-LTD/platform-core/commit/3702c0224956c1c3f7cee1f8f048fa4da14559fa))
+
+
 ## [0.176.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.176.0...v0.176.1) - 2026-10-20
 - 【修复】data: 天文件挪 _DAY_DATA/ + 回填管线闸接线修复 ([#950](https://github.com/MYTech-Co-LTD/platform-core/pull/950), [40f3a3e](https://github.com/MYTech-Co-LTD/platform-core/commit/40f3a3e4ba537f1b68918a0302bb810f63173a84))
 
