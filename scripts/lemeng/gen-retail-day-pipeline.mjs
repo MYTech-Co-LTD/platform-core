@@ -153,6 +153,23 @@ nodes.push(
       },
     },
   },
+  {
+    id: 'sink_legacy',
+    type: 'sink',
+    position: { x: 1040, y: 140 },
+    data: {
+      label: '同日文件镜像 → system_book=*/bizday=*/all.parquet（审计层可见）',
+      componentId: 'snk.minio',
+      properties: {
+        ...sink.data.properties,
+        // 2026-10-20 过渡：审计层 7 个 audit_lemeng__retail__* 用**单 glob** 读湖，
+        // 看不见 `_DAY_DATA/` 下的天文件。同一份数据再落一份到旧路径，
+        // 让「staging 读 _DAY_DATA / 审计读旧路径」两侧各读各的、路径不重叠、不双算。
+        // 后续把审计改成两源读法后可摘掉本节点（删这个 sink 与它的边即可）。
+        key: 'lemeng/retail_order_line/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/all.parquet',
+      },
+    },
+  },
   { id: 'ordered', type: 'control', position: { x: 1280, y: 0 }, data: { ...nodeOf('ordered').data } },
   {
     id: 'summ',
@@ -221,6 +238,7 @@ const wire = (/** @type {string} */ source, /** @type {string} */ target) =>
 wire('merge', 'flatten')
 wire('flatten', 'gate')
 wire('gate', 'sink')
+wire('gate', 'sink_legacy')
 wire('gate', 'summ')
 wire('sink', 'ordered')
 wire('summ', 'receipt')
