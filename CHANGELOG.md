@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.174.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.173.2...v0.174.0) - 2026-10-20
+- 【新增】data: 库存快照改查 T-1 + 空集记具名状态 SOURCE_NOT_PUBLISHED ([#939](https://github.com/MYTech-Co-LTD/platform-core/pull/939), [a96618b](https://github.com/MYTech-Co-LTD/platform-core/commit/a96618ba3088eb54932654640236a4690b298d97))
+
+
 ## [0.173.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.173.1...v0.173.2) - 2026-10-20
 - 【修复】data: 排班门禁期望表随 #931 同步（main unit 红追补） ([#934](https://github.com/MYTech-Co-LTD/platform-core/pull/934), [4ae0697](https://github.com/MYTech-Co-LTD/platform-core/commit/4ae069705c4abe2f58203588dc89ba42f44d44d2))
 
