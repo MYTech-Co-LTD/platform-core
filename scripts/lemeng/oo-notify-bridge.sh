@@ -61,6 +61,30 @@ while [ "$i" -lt "$N" ]; do
     stale)    E='🟠'; L='停滞' ;;
     *)        E='🔴'; L='失败' ;;
   esac
+  # ── 源侧未发布：**具名状态，不是我们的失败**（2026-10-20，#931）────────────────
+  # 库存快照源发布滞后 16~40h（真机实测）：日内 5 轮（14/16/18/20/22 CST）都会重试，前几轮取到空集是**预期**。
+  # ⇒ 22 点前**只记录不推群**（该行仍落在 data_alerts，可查可统计）；22 点后仍空才推 —— 那才是「当夜未发布」。
+  case "$TX" in
+    *SOURCE_NOT_PUBLISHED*)
+      _H=$(TZ=Asia/Shanghai date +%H | sed 's/^0//')
+      if [ "${_H:-0}" -lt 22 ]; then
+        echo "BR_SKIP:source_not_published ${PL}（${TX}）"
+        NEWLAST=$TS; echo "$NEWLAST" > "$DA_FILE"
+        i=$((i + 1)); continue
+      fi ;;
+  esac
+  # ── 源侧未发布：**具名状态，不是我们的失败**（2026-10-20，#937）────────────────
+  # 库存快照源发布滞后 16~40h（真机实测）：日内 5 轮（14/16/18/20/22 CST）都会重试，前几轮取到空集是**预期**。
+  # ⇒ 22 点前**只记录不推群**（该行仍落在 data_alerts，可查可统计）；22 点后仍空才推 —— 那才是「当夜未发布」。
+  case "$TX" in
+    *SOURCE_NOT_PUBLISHED*)
+      _H=$(TZ=Asia/Shanghai date +%H | sed 's/^0//')
+      if [ "${_H:-0}" -lt 22 ]; then
+        echo "BR_SKIP:source_not_published ${PL}（${TX}）"
+        NEWLAST=$TS; echo "$NEWLAST" > "$DA_FILE"
+        i=$((i + 1)); continue
+      fi ;;
+  esac
   # shellcheck disable=SC2016
   BODY=$(printf '{"msgtype":"markdown","markdown":{"content":"%s **[OO 数据面] %s：%s**\\n> %s\\n> 明细: observe.hookflow.cn → Logs → data_alerts"}}' "$E" "$L" "$PL" "$TX")
   RESP=$(curl -sS -m 15 "$WECOM_WEBHOOK_URL" -H 'Content-Type: application/json' -d "$BODY") || {
