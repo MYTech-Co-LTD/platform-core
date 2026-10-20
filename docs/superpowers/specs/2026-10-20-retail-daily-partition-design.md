@@ -190,8 +190,9 @@ where sealed['schema_version'] = 3
    ✅ **已测（2026-10-20）**：96 页扇出 `status ok`，**66.5 s**，行数正确，容器未 OOM、未重启。
    仍**未测**的是**双账套同时跑**（两个 console 各跑一次，数据面机 4 核）——排班上要错开。
 4. **删小时目录是唯一不可逆步**。虽然读侧排除兜住正确性，但删错日子 = 源文件没了（天文件还在，可重采，所以**可恢复**——这一点比合并方案强）。
-5. **既有隐患**（与本次无关）：现有 tick 的 `p1..p12` **都没有申报 `data.schema`** ⇒ 若某小时**零订单**，第 1 页空 ⇒ 该小时子 run 报
-   `no schema is declared to type an empty result`。`continueOnFailure: true` 让它记成失败而非静默，但会污染 tick 汇总。**未查历史是否在烧。**
+5. ~~**既有隐患**（与本次无关）：现有 tick 的 `p1..p12` **都没有申报 `data.schema`** ⇒ 若某小时**零订单**，第 1 页空 ⇒ 该小时子 run 报 `no schema is declared to type an empty result`。~~
+   ✅ **撤回（2026-10-20 复核）**：现有 `p1..p12` **每一路都申报了 `data.schema`**（10 个字段：`order_no`/`state`/`order_time`/`order_operate_time`/`order_source`/`order_transaction_type`/`order_ref_billno`/`order_total_money`/`branch`/`pos_order_details`）。
+   先前判「没申报」是**看漏了**——schema 在 `node.data.schema`，与 `node.data.properties` 是**兄弟**，我只打了后者。**空页在现有管线上本来就已被申报兜住，不是隐患。**
 6. **`close.l1` 与 `windows.l1` 的职责重叠**未完全理清（前者补昨日 23 时，后者重采昨日全天）。本设计**不动 close**，但它写的小时文件会在 windows 整天重采后被排除 + 删除。**待确认无副作用。**
 
 ---
