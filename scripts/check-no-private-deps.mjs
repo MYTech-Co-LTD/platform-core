@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// B12 开源边界门禁（公开仓不得依赖私有件）—— 正典 docs/architecture.md §4.1 B12。
+// B12 公开仓边界门禁（公开仓不得依赖私有件）—— 正典 docs/architecture.md §4.1 B12。
 //
 // 用法：tsx scripts/check-no-private-deps.mjs [rootDir]   # rootDir 默认 = 仓库根（fixtures 测试用形参）
 // 契约：干净 → exit 0，stdout 一行 `check-no-private-deps: OK`；
@@ -7,7 +7,8 @@
 //
 // 为什么需要它：本仓（platform-core）是**公开仓**（GitHub visibility=public），闭源引擎在**私有仓**
 // case-engine。公开仓的核心不变量是「**外部 clone 即可独立构建与运行**」——一旦依赖任何私有件，
-// 外部构建必然失败，开源承诺就不成立。这条边界靠人守不住：加一行 dependency、加一个 submodule
+// 外部构建必然失败，这个不变量就不成立（**与是否授出开源许可无关**：许可只决定别人能否合法
+// 使用 / 分发，不决定别人能否 clone 下来构建）。这条边界靠人守不住：加一行 dependency、加一个 submodule
 // 都是**全绿通过、CI 一声不响**，故机械锁死。
 //
 // 四条判据（各自独立报违规；每条报错都说清「违反了哪条 + 怎么修」）：
@@ -141,7 +142,7 @@ function checkRegistryValue(value) {
   if (!PUBLIC_REGISTRY_HOSTS.has(url.hostname)) {
     return {
       ok: false,
-      reason: `registry 指向非公开主机 \`${url.hostname}\`——外部 clone 的人取不到它，**构建必失败**，开源承诺不成立。改用公开 registry（${[...PUBLIC_REGISTRY_HOSTS].join(' / ')}），或把这条声明从仓里去掉`,
+      reason: `registry 指向非公开主机 \`${url.hostname}\`——外部 clone 的人取不到它，**构建必失败**，公开仓的不变量不成立。改用公开 registry（${[...PUBLIC_REGISTRY_HOSTS].join(' / ')}），或把这条声明从仓里去掉`,
     }
   }
   return { ok: true, reason: '' }
