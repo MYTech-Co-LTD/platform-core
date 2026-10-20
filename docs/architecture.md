@@ -737,6 +737,7 @@ v1 模板集 = 少量参数化通用模板：`case_awaiting_approval` / `case_st
 | typecheck | 聚合 `tsc --noEmit`，**含 `scripts/`**（只跑包内会漏 `scripts/*.mjs` 的类型错误） | `.github/workflows/ci.yml` | `gates` |
 | **B10** 数据契约注册 | 湖的列集**只有一个事实源**：`contracts/*.json`。管线 `flatten` 的投影列集与对应 staging 模型的投影列集（去掉 dbt 注入的 `org`）必须与它**逐列一致**——漏改任一处 ⇒ 红。**2026-10-06 起（#460）③④ 已由 `scripts/gen-data-projection.mjs` 生成 ⇒ B10 从"事后查两处一致"降级为保险丝**（真正把关的是 `gen-data-projection --check`：生成物 == committed）；**改列集现在 = 改契约一处 + 跑生成器**。这条正是 §5.2 ① 的机检面 | `scripts/check-data-contract.mjs` + `scripts/gen-data-projection.mjs --check` | `gates` |
 | **B11** 口径单一定义 | 业务口径（指标公式）**只许在 `dbt/` 实现一次**。复算（内部一致性）只允许**贴着模型、在同一工具链里**再有一份（独立**读路径**，见 `audit_*`）；**对账 / 脚本 / 问数 / BI 一律是消费者**——读物化结果，不自带等价算式。违反 = 同一业务规则出现两个并列实现、靠人手同步 ⇒ **静默漂移**（#813 容差地板、#917 退货侧判别式，两次都是这个形态）。机检：口径原子（两侧赠品判别式 / 折半形态）只许出现在 `dbt/` 的三份副本（构件 + 两个复算）；**对账链路**（`scripts/lemeng/recon-preagg.sh` 与 recon 子管线的 `code.sql`）出现即红。⚠️ 边界：本门禁判「**在场/不在场**」，不判两份 dbt 副本的语义等价 | `scripts/check-recon-caliber.mjs`（反向断言） | `gates` |
+| **B12** 开源边界 | **公开仓不得依赖私有件**——禁止：`.gitmodules` 拉私有仓；`package.json` 指向私有 registry 或私有包；源码 `import` 私有包；构建期需要私有凭据。为什么：开源仓必须能被**外部独立构建与运行**；一旦依赖私有件，外部 clone 即构建失败，开源承诺不成立 | `scripts/check-no-private-deps.mjs` | `gates` |
 | 测试 / 冒烟 | 挂真 PG 的全量测试 / 双形态**真进程**装载冒烟 | `.github/workflows/ci.yml` | `unit` / `smoke` |
 
 > B1 的 schema 侧由门禁守；`id` → API 前缀由 `moduleApiBasePath(id)`（`apps/server/src/loader.ts:102`）
@@ -748,6 +749,16 @@ v1 模板集 = 少量参数化通用模板：`case_awaiting_approval` / `case_st
 > **模块端口**：模块用 `createPorts(ctx)` 声明能力，宿主用 `runtime.port(id, name)` 取用。
 > 契约见 `docs/module-protocol.md`「模块端口」。（2026-09-21 拍板：该冲突实测会让 `gates` 报
 > B1 违规，见该节。）
+
+> **B12 与 case-engine 的边界（2026-10-20 人已决策）**：platform-core = **公开仓**（挂 MIT，见仓根
+> `LICENSE`）；case-engine = **私有仓**（闭源）。两者走「**分仓 + 契约/扩展点**」：**平台侧只放薄模块
+> 与契约，引擎实现留在私有仓**——公开仓提供的是接入契约（`docs/module-protocol.md` 的 manifest 协议 /
+> 模块端口 / `@platform/sdk`），私有引擎按契约接入，中间只有**公开的契约面**。方案裁决与取舍见
+> explore 仓 ADR 0007（拟）。
+>
+> ⚠️ **名单式，非自动判定**：B12 的判据源是脚本里的常量 `PRIVATE_PACKAGE_PATTERNS`——**新增私有件
+> 必须往那里加名字**，否则门禁认不出它。同理，registry 的「公开」白名单（`PUBLIC_REGISTRY_HOSTS`）
+> 也是显式的：一个陌生主机名到底公开不公开，机械判不出来，宁可让人来加。
 
 ### 4.2 第二档：仅文档（无门禁，靠评审与人守）
 
