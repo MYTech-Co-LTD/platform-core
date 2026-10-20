@@ -15,9 +15,11 @@ import {
   buildPipelineSelect,
   buildStagingSelect,
   extractPipelineExprs,
+  rewriteAllSelectLists,
   rewriteSelectList,
   runGenerate,
   seedContractText,
+  selectListBoundsAll,
   sqlType,
 } from './gen-data-projection.mjs'
 
@@ -203,5 +205,43 @@ describe('生成器 --seed（反抽 expr 回填契约）', () => {
     expect(() => seedContractText('{ "columns": [ { "name": "a", "type": "varchar" } ] }', { missing: 'x' })).toThrow(
       /找不到列 missing/,
     )
+  })
+})
+
+// ── 多投影位点（2026-10-20，architecture.md §5.3 冷/热两种布局）──────────────────
+// 判据必须能变异确认：①两位点都重写；②单投影时与 rewriteSelectList 逐字等价；
+// ③选列区里有嵌套 select ⇒ 抛错而非猜（否则内层 select 会被一起重写、静默写坏）。
+describe('rewriteAllSelectLists（多投影位点）', () => {
+  // ⚠️ 不能带前置 CTE：那会被当成第 1 个位点、选列区跨到主 FROM ⇒ 被「嵌套 select」安全阀拦下
+  //    （staging 模型就是两个平铺 select，无 CTE；见 gen-data-projection.mjs 的同名注释）
+  const twoSites = [
+    'select',
+    '  r[\'a\'] as a',
+    'from read_parquet(\'cold\') r',
+    'union all',
+    'select',
+    '  r[\'a\'] as a',
+    'from read_parquet(\'hot\') r',
+    'where not exists (select 1 from read_parquet(\'m\') m)',
+    '',
+  ].join('\n')
+
+  it('两位点都被重写，FROM 及其后逐字保留', () => {
+    expect(selectListBoundsAll(twoSites)).toHaveLength(2)
+    const out = rewriteAllSelectLists(twoSites, 'NEW')
+    expect(out.match(/NEW/g)).toHaveLength(2)
+    expect(out).toContain("from read_parquet('cold') r")
+    expect(out).toContain("from read_parquet('hot') r")
+    expect(out).toContain("where not exists (select 1 from read_parquet('m') m)")
+  })
+
+  it('单个位点时与 rewriteSelectList 逐字等价', () => {
+    const one = ['select', "  r['a'] as a", "from read_parquet('p') r", ''].join('\n')
+    expect(rewriteAllSelectLists(one, 'NEW')).toBe(rewriteSelectList(one, 'NEW'))
+  })
+
+  it('选列区里有嵌套 select ⇒ 抛错（不猜）', () => {
+    const nested = ['select', '  (select max(z) from t) as a', "from read_parquet('p') r", ''].join('\n')
+    expect(() => selectListBoundsAll(nested)).toThrow(/嵌套 select/)
   })
 })

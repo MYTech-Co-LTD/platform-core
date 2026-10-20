@@ -113,6 +113,71 @@ export function rewriteSelectList(sql, newSelectList) {
 }
 
 /**
+ * 同一模型里的**所有** `SELECT … 顶层 FROM` 位点（按出现顺序）。
+ *
+ * ## 为什么需要「多处」
+ *
+ * 2026-10-20 起零售明细的读取要**两种布局并存**（`docs/architecture.md` §5.3）：冷（关闭日，每账套
+ * 每天一个天文件 `bizday=/all.parquet`）+ 热（今天，`bizday=/hour=HH/all.parquet`），且**热侧必须
+ * 排除已封版日子**（否则「写天文件」与「删小时目录」之间的并存窗口会双算）。
+ * 「这一行来自哪种布局」**没有可判别的列**——`hour` 在两种布局里都作为列存在，路径来源拿不到
+ * （pg_duckdb 的 `read_parquet` 只认位置参数，`filename=true` 递不进去）。
+ * ⇒ 只能写成**两个各自 read_parquet 的 SELECT 再 union**，于是投影位点变成两个。
+ *
+ * ## 安全阀：选列区里出现嵌套 `select` 就抛错
+ *
+ * 单投影版的兜底是「越界形态由调用方抛错」。多投影版必须**显式**拦住：否则一个
+ * `select (select …) as x from …` 会被当成两个位点、把内层 select 也重写掉——**静默写坏**。
+ * 这里宁可直接抛，让人来改形态，也不猜。
+ * （**前置 CTE 也会被这条拦下**：`WITH x AS (SELECT …)` 的 select 会成为第 1 个位点、
+ *   选列区一直跨到主 FROM ⇒ 判定为嵌套。模型要带 CTE 就得先改本函数，别绕过。）
+ *
+ * @param {string} sql
+ * @returns {{ selectStart: number, fromStart: number }[]}
+ */
+export function selectListBoundsAll(sql) {
+  const masked = maskSqlComments(sql)
+  /** @type {{ selectStart: number, fromStart: number }[]} */
+  const out = []
+  let cursor = 0
+  for (;;) {
+    const rest = masked.slice(cursor)
+    const sel = /\bselect\b/i.exec(rest)
+    if (!sel) break
+    const selectStart = cursor + sel.index
+    const afterSel = masked.slice(selectStart)
+    const from = /\n\s*from\b/i.exec(afterSel)
+    if (!from) break
+    const fromStart = selectStart + from.index
+    if (/\bselect\b/i.test(masked.slice(selectStart + 6, fromStart))) {
+      throw new Error(`投影位点（第 ${out.length + 1} 处）的选列区里出现嵌套 select —— 本生成器不支持该形态，别猜`)
+    }
+    out.push({ selectStart, fromStart })
+    cursor = fromStart
+  }
+  return out
+}
+
+/**
+ * 重写**全部**投影位点（同一段列区文本）。单个位点时与 `rewriteSelectList` 等价。
+ *
+ * @param {string} sql
+ * @param {string} newSelectList
+ * @returns {string}
+ */
+export function rewriteAllSelectLists(sql, newSelectList) {
+  const sites = selectListBoundsAll(sql)
+  if (sites.length === 0) throw new Error('无法界定 SELECT … 顶层 FROM —— 该投影不支持生成')
+  let out = ''
+  let prev = 0
+  for (const b of sites) {
+    out += sql.slice(prev, b.selectStart) + newSelectList
+    prev = b.fromStart
+  }
+  return out + sql.slice(prev)
+}
+
+/**
  * 契约列 → 管线投影列区文本。
  *
  * @param {{ name: string, expr: string }[]} columns
@@ -347,7 +412,8 @@ export function runGenerate(rootDir, opts = {}) {
     if (stgAbs !== '' && existsSync(stgAbs)) {
       const stgSql = readFileSync(stgAbs, 'utf8')
       const orgAfter = colNames.includes('system_book') ? 'system_book' : (colNames[0] ?? '')
-      const nextStg = rewriteSelectList(stgSql, buildStagingSelect(c.columns, orgAfter))
+      // 全部位点都重写：单投影模型与旧行为逐字等价；零售明细起有两处（冷/热两种布局，见 §5.3）
+      const nextStg = rewriteAllSelectLists(stgSql, buildStagingSelect(c.columns, orgAfter))
       if (nextStg !== stgSql) {
         changed++
         if (!opts.check) writeFileSync(stgAbs, nextStg)
