@@ -6175,7 +6175,7 @@
     "label": "单窗收据 CSV（父管线读它判缺口）",
     "componentId": "snk.csv",
     "properties": {
-     "path": "/workspace/logs/retail-day/${ITER_ITEM_BIZDAY}.csv",
+     "path": "/workspace/logs/retail-windows/${ITER_ITEM_BIZDAY}.csv",
      "mode": "overwrite"
     }
    }

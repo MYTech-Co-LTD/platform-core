@@ -4,6 +4,7 @@
     "w0 只出「昨日 1 天」（hour 恒 \"-\"，故下游按 hour 键控的 wm/su/op/gd 一字未改）；",
     "foreach 驱动 pipelines/lemeng.retail_order_line.day.json —— 它整天取数（96 页扇出），",
     "落一个天文件 system_book=<B>/bizday=<Y>/all.parquet（无 /hour=）。",
+    "⚠️ 收据/汇总路径**刻意不改名**（仍是 retail-windows*）——它们是 owners.lemeng.json 两条新鲜度锚的 match 目标，改名 = 锚静默失配。",
     "理由与实测：docs/architecture.md §5.3、docs/superpowers/specs/2026-10-20-retail-daily-partition-design.md。",
     "",
     "lemeng.retail.windows 的 **L1 形态**（父管线）—— 一条管线 + 一条调度替代",
@@ -64,7 +65,7 @@
     "   · 24 窗循环 / 单窗失败登记不拖垮 / 跨 run 只补失败窗 / 末尾判红：四条逐项实测；",
     "   · 身份自证：原 shell 的 identity 子命令（whoami×3 传输重试 + 账套 + 门店子集）1:1 表达；",
     "   · 运行记录：薄管线的 snk.csv（/workspace/logs/retail-windows-run.csv）由**汇总表**承接",
-    "     （/workspace/logs/retail-day-summary.csv，每窗一行 hour/rows/status）；",
+    "     （/workspace/logs/retail-windows-summary.csv，每窗一行 hour/rows/status）；",
     "   · 容器编排（每窗起一个新容器）整层消失 —— 本形态的收益本体。",
     "",
     "⑦【未随本文件处理的（明确不做）】",
@@ -298,7 +299,7 @@
         "label": "本 run 的窗口清单落盘（收据目录的 schema 锚）",
         "componentId": "snk.csv",
         "properties": {
-          "path": "/workspace/logs/retail-day/_days-pending.csv",
+          "path": "/workspace/logs/retail-windows/_windows-pending.csv",
           "mode": "overwrite"
         }
       }
@@ -327,7 +328,7 @@
         "label": "汇总每窗（收据 × 窗口表）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT w.hour AS hour, w.bizday AS bizday,\n  w.run_token AS run_token,\n  COALESCE(r.\"rows\", 0) AS \"rows\",\n  COALESCE(r.status, 'missing') AS status\nFROM (SELECT DISTINCT hour, bizday, run_token FROM input) w\nLEFT JOIN (SELECT hour, run_token, \"rows\", status\n           FROM read_csv('/workspace/logs/retail-day/*.csv', header = true, union_by_name = true)\n           WHERE status = 'ok') r\n  ON r.hour = w.hour AND r.run_token = w.run_token\nORDER BY w.hour"
+          "sql": "SELECT w.hour AS hour, w.bizday AS bizday,\n  w.run_token AS run_token,\n  COALESCE(r.\"rows\", 0) AS \"rows\",\n  COALESCE(r.status, 'missing') AS status\nFROM (SELECT DISTINCT hour, bizday, run_token FROM input) w\nLEFT JOIN (SELECT hour, run_token, \"rows\", status\n           FROM read_csv('/workspace/logs/retail-windows/*.csv', header = true, union_by_name = true)\n           WHERE status = 'ok') r\n  ON r.hour = w.hour AND r.run_token = w.run_token\nORDER BY w.hour"
         }
       }
     },
@@ -339,10 +340,10 @@
         "y": 1560
       },
       "data": {
-        "label": "_ops 行成形（job=retail-day，wrapper ops_ship 同形：每天一行，缺口天也投）",
+        "label": "_ops 行成形（job=retail-window，wrapper ops_ship 同形：每天一行，缺口天也投）",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-day' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n  bizday, hour, \"rows\", status, run_token FROM input"
+          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-window' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n  bizday, hour, \"rows\", status, run_token FROM input"
         }
       }
     },
@@ -381,7 +382,7 @@
         "label": "汇总表落盘（运行记录）",
         "componentId": "snk.csv",
         "properties": {
-          "path": "/workspace/logs/retail-day-summary.csv",
+          "path": "/workspace/logs/retail-windows-summary.csv",
           "mode": "overwrite"
         }
       }
@@ -426,7 +427,7 @@
         "componentId": "ctl.die",
         "properties": {
           "condition": "has-rows",
-          "message": "WINDOWS_FAILED {rows} 窗未采到（system_book=${ENV:SYSTEM_BOOK}）⇒ 整批判红。⚠️ windows 形只采「上海昨天」、无回溯重放 ⇒ 被截掉的尾窗**必须当日补跑**（本 run 的 checkpoint 会让补跑只发缺页数个请求）；缺口明细见 /workspace/logs/retail-day-summary.csv"
+          "message": "WINDOWS_FAILED {rows} 窗未采到（system_book=${ENV:SYSTEM_BOOK}）⇒ 整批判红。⚠️ windows 形只采「上海昨天」、无回溯重放 ⇒ 被截掉的尾窗**必须当日补跑**（本 run 的 checkpoint 会让补跑只发缺页数个请求）；缺口明细见 /workspace/logs/retail-windows-summary.csv"
         }
       }
     },
@@ -512,7 +513,7 @@
         "componentId": "code.sql",
         "label": "反向漂移：现算 vs 底账（只告警不阻断）",
         "properties": {
-          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-day' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n       '-' AS bizday, 'drift' AS hour, count(*) AS \"rows\", 'config_drift' AS status,\n       replace('${datetime}', '-', '') AS run_token,\n       string_agg(CASE WHEN w.b IS NULL THEN '底账有现算无(排除或不可见): ' || CAST(c.b AS VARCHAR)\n                       ELSE '现算有底账无(新店): ' || CAST(w.b AS VARCHAR) END, '；' ORDER BY 1) AS detail\nFROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS b) c\nFULL OUTER JOIN (SELECT unnest(CAST(json_extract(i.branch_nums, '$[*]') AS BIGINT[])) AS b FROM input i) w\n  ON c.b = w.b\nWHERE c.b IS NULL OR w.b IS NULL"
+          "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-window' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n       '-' AS bizday, 'drift' AS hour, count(*) AS \"rows\", 'config_drift' AS status,\n       replace('${datetime}', '-', '') AS run_token,\n       string_agg(CASE WHEN w.b IS NULL THEN '底账有现算无(排除或不可见): ' || CAST(c.b AS VARCHAR)\n                       ELSE '现算有底账无(新店): ' || CAST(w.b AS VARCHAR) END, '；' ORDER BY 1) AS detail\nFROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS b) c\nFULL OUTER JOIN (SELECT unnest(CAST(json_extract(i.branch_nums, '$[*]') AS BIGINT[])) AS b FROM input i) w\n  ON c.b = w.b\nWHERE c.b IS NULL OR w.b IS NULL"
         }
       },
       "id": "gd",

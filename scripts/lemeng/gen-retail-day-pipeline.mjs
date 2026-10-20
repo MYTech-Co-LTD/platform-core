@@ -172,7 +172,7 @@ nodes.push(
     position: { x: 1760, y: 0 },
     data: {
       ...nodeOf('receipt').data,
-      properties: { path: '/workspace/logs/retail-day/${ITER_ITEM_BIZDAY}.csv', mode: 'overwrite' },
+      properties: { path: '/workspace/logs/retail-windows/${ITER_ITEM_BIZDAY}.csv', mode: 'overwrite' },
     },
   },
 )
