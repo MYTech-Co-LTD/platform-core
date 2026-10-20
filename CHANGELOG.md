@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.173.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.173.0...v0.173.1) - 2026-10-20
+- 【修复】data: 非销售采集排班统一到北京 14–24 点每 2 小时（修 ${date-1d} 的 UTC 偏一天） ([#932](https://github.com/MYTech-Co-LTD/platform-core/pull/932), [7c2bb9d](https://github.com/MYTech-Co-LTD/platform-core/commit/7c2bb9d1a8c82617fc49c121fa783bb3d178480a))
+
+
 ## [0.173.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.172.0...v0.173.0) - 2026-10-20
 - 【新增】notify: 按租户（org）解析 Novu 凭据——方案 A env 映射 + 回落 ([#929](https://github.com/MYTech-Co-LTD/platform-core/pull/929), [475179b](https://github.com/MYTech-Co-LTD/platform-core/commit/475179b8e0e362f73ba7a21a0f22a3f43d322cf5))
 
