@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.180.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.179.3...v0.180.0) - 2026-10-21
+- 【新增】data: 新增零售订单明细行 L1 指标，让 bot 能翻明细定位根因 ([#966](https://github.com/MYTech-Co-LTD/platform-core/pull/966), [2524fd0](https://github.com/MYTech-Co-LTD/platform-core/commit/2524fd00bd9b8b0428a19744364a3e659b1f083e))
+
+
 ## [0.179.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.179.2...v0.179.3) - 2026-10-21
 - 【修复】askdata: 明确 date_range 是类型名不是键名（工具描述 + SKILL） ([#962](https://github.com/MYTech-Co-LTD/platform-core/pull/962), [9d9cf18](https://github.com/MYTech-Co-LTD/platform-core/commit/9d9cf1822b78d9f1964d67306e36af5dab96259a))
 
