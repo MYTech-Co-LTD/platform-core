@@ -273,34 +273,68 @@ function rangeLiteral(
   return { ok: true, from, to }
 }
 
+// ── 切片化（spec 2026-10-21 §5）——授权核心的唯一扩展点 ─────────────────────────────
+export interface SliceOrderBy { column: string; dir?: 'asc' | 'desc' }
+export interface SlicingSpec {
+  dimensions?: string[]
+  filters?: Record<string, unknown>
+  orderBy?: SliceOrderBy[]
+  limit?: number
+  total?: boolean
+}
+
+/** 粒度维度（与 semantic-compiler 的 dimensionNamesOf 同义；authz 零内依赖故自实现）。 */
+function grainDimsOf(metric: MetricDef): string[] {
+  return metric.groupBy.split(',').map((d) => d.trim()).filter((d) => d !== '')
+}
+
+const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+
 /**
- * 授权 + 出计划。拒绝链顺序**照原型**（未声明 → 未授权 → 主体钉死 → 参数），
- * 顺序是有意义的：未授权者拿到的 reason 不泄露「这个指标存在哪些参数」。
+ * 切片 filters 的**前置校验 + 字面量渲染**（authorize 里调，产物交 authorizeCore 拼进 WHERE）。
+ * 维度过滤与声明参数过滤落在**同一段** whereAndGroup 里（spec：filters = 已声明参数 + 维度等值/IN），
+ * 故必须经 `extraFilters` 在 authorizeCore 组装 filters 数组时追加，而不是事后拼字符串——
+ * GROUP BY 在 inner 尾部，事后追加会拼到 GROUP BY 之后（SQL 语法错）。
+ * 声明参数键不在这里处理（authorizeCore 的既有循环按类型走 literal/rangeLiteral）。
  */
-export function authorize(
-  catalog: MetricDef[],
-  requester: Requester,
-  metricId: string,
-  args: Record<string, unknown>,
-  /**
-   * 掩码解析用的**全量** catalog（spec §5.3.1 R10）。
-   *
-   * ⚠️ **必填、没有默认值**（2026-10-18 有意变更）：默认成 `catalog` 会让「忘了传」变成
-   *    拿**裁剪过的**词表解析掩码 ⇒ L2 洞（#820）**静默重开**，且编译、测试都不报。
-   *    安全参数不该有 fail-open 的默认值。测试里两份词表相同的场景用 `authorizeVisible`
-   *    helper 显式表达，不靠默认值。
-   *
-   * ⚠️ **残余（已知并接受）**：本参数与 `catalog` **同类型** ⇒ 显式传「裁剪过的那份」在类型上
-   *    仍合法。今天只有一个生产调用点（`query-service.ts`）且被**变异确认**的用例钉住 ⇒ 接受。
-   *    真出现**第二条**查询通道时，应把两份词表捆成一个值（`{ all, visible }`）让这个错
-   *    **不可表达**——而不是继续往上叠守卫。
-   *
-   * ⚠️ **刻意不把裁剪挪进本函数**：那会改变文档化的拒绝原因（`metric_not_declared`
-   *    → `metric_not_authorized`），重新引入 spec 刻意避开的**存在性探测**
-   *    （见 `query-service.ts` 的 catalog 裁剪注释）。
-   */
-  maskCatalog: MetricDef[],
-): AuthzResult {
+function sliceFilterFragments(
+  metric: MetricDef, slicing: SlicingSpec,
+): { ok: true; fragments: string[] } | { ok: false; detail: string } {
+  const grain = grainDimsOf(metric)
+  const fragments: string[] = []
+  for (const [key, value] of Object.entries(slicing.filters ?? {})) {
+    if (metric.params[key] !== undefined) continue
+    if (!grain.includes(key) || !IDENT_RE.test(key)) return { ok: false, detail: `unknown_dimension:${key}` }
+    if (Array.isArray(value)) {
+      if (value.length === 0) return { ok: false, detail: `empty_in_filter:${key}` }
+      const lits = value.map((v) => (typeof v === 'string' ? sqlQuote(v) : null))
+      if (lits.some((l) => l === null)) return { ok: false, detail: `invalid_value:${key}` }
+      fragments.push(` AND ${key} in (${lits.join(', ')})`)
+    } else if (typeof value === 'string') {
+      fragments.push(` AND ${key} = ${sqlQuote(value)}`)
+    } else {
+      return { ok: false, detail: `invalid_value:${key}` }
+    }
+  }
+  return { ok: true, fragments }
+}
+
+/**
+ * authorize 的**内核**：声明/scope/保留键/参数校验 + 内层 whereAndGroup（掩码展开后）。
+ * 实现 = 原 authorize 函数体逐字保留，仅两处差异：
+ *   ① 保留键检查的键集 = 调用方合并后的 args（切片 filters 已并入——见 authorize）；
+ *   ② 函数末尾不再组装 detail sql，改为返回组装材料（inner = whereAndGroup）。
+ * `extraFilters` = 切片维度过滤的已渲染片段（sliceFilterFragments 产物），在既有
+ * filters 循环之后、`filters.join('')` 之前 push——与声明参数同一位置拼装；
+ * 主体钉死那行不变（`WHERE subjectColumn = subject` 值只来自 requester.orgId）。
+ *
+ * 消费方：authorize（全形态）与 toolbox 的 sample_dimension_values（拿 inner 包 distinct 计数）。
+ */
+export function authorizeCore(
+  catalog: MetricDef[], requester: Requester, metricId: string,
+  args: Record<string, unknown>, maskCatalog: MetricDef[], extraFilters: string[],
+): { ok: true; inner: string; subject: string; metric: MetricDef; applied: Record<string, string>; exempted: string[]; wantTotal: boolean }
+  | { ok: false; reason: DenyReason; metricId: string; detail?: string } {
   const metric = catalog.find((m) => m.id === metricId)
   if (!metric) return { ok: false, reason: 'metric_not_declared', metricId }
   if (metric.requiredScope !== null && !requester.hasScope(metric.requiredScope)) {
@@ -339,6 +373,7 @@ export function authorize(
     if (lit === null) return { ok: false, reason: 'bad_param', metricId, detail: `invalid_value:${name}` }
     filters.push(` AND ${param.column} = ${lit}`)
   }
+  filters.push(...extraFilters)
   for (const [name, param] of Object.entries(metric.params)) {
     const v = args[name]
     if (param.required && (v === undefined || v === null || v === '')) {
@@ -355,39 +390,134 @@ export function authorize(
   // ★ 按**列**解析（spec §5.3.1 R10 裁决 C，堵 #820）：掩码集从**全量** catalog 取，不再只读
   //   本行 `metric.masks`——L2 行 masks 恒 null，只读本行 ⇒ L2 恒不掩（fail-open 洞）。
   const masked = maskedSelectSql(metric.selectSql, effectiveMasks(maskCatalog, metric), requester.hasScope)
-  const whereAndGroup =
+  const inner =
     `${masked.sql} WHERE ${metric.subjectColumn} = ${sqlQuote(subject)}` +
     filters.join('') +
     (metric.groupBy ? ` GROUP BY ${metric.groupBy}` : '')
-  // 确定性截断（spec §10.3）：明细 SQL 在 GROUP BY 与 LIMIT 之间补 `ORDER BY bizday DESC`——
-  // 截断集从「任意子集」变「最新优先」，最新分区不再被 cap 藏掉（与响应 truncated 信号配套）。
-  // 仅当分组粒度含 bizday（现行 27 条 L1 全命中）；\b 词边界——`bizday_utc` 这类前缀同形词不误伤。
-  // **只**加在明细路径：whereAndGroup 本身一字不动，故 totalSql / 显式合计（都包着 whereAndGroup）
-  // 不受影响——聚合无行序语义，排序无意义。
-  const detailOrder = /\bbizday\b/.test(metric.groupBy) ? ' ORDER BY bizday DESC' : ''
-  const sql = wantTotal
-    ? // 合计形态（spec §8.1）：内层（subject + filters + grain 分组）上再 sum——
-      // **无外层 LIMIT**：合计必须作用于全量匹配行，截断求和 = 错数。
-      // `value` 是 sync 编译器给指标 expression 的固定别名（buildSelectSql：
-      // `select <expr> as value, …`），故 sum(value) = 对该指标口径在全量匹配行上再聚合。
-      `SELECT sum(value) AS total FROM ( ${whereAndGroup} ) t`
-    : `${whereAndGroup}${detailOrder} LIMIT ${MAX_QUERY_ROWS}`
+  return { ok: true, inner, subject, metric, applied: masked.applied, exempted: masked.exempted, wantTotal }
+}
 
-  // 自动伴随（spec §8.4）：totalable 指标的**非显式**查询在计划上附合计 SQL——与显式合计
-  // 共用同一形状（无 LIMIT）。subject/filters 与主 sql 同源（同一 whereAndGroup），自动合计
-  // 因此同样钉死主体；不改变主 sql 一个字节（明细路径照旧）。显式合计模式不附（plan.sql
-  // 本身就是合计，再执行一遍 = 白跑）。
-  const totalSql = !wantTotal && metric.totalable === true
-    ? `SELECT sum(value) AS total FROM ( ${whereAndGroup} ) t`
+/**
+ * SQL 组装**单函数**（spec：切片 SQL 只在这一处组装；三形态共用同一 inner——
+ * 主体值只存在于 inner 那段 WHERE，本函数不引入任何第二主体来源）。
+ * `slicing === undefined` 的输出与重构前的三段组装**逐字节一致**（authz.test.ts 既有段是回归锁）。
+ */
+function buildSlicedPlan(p: {
+  metric: MetricDef; inner: string; slicing: SlicingSpec | undefined; wantTotal: boolean
+}): { sql: string; totalSql?: string } {
+  const { metric, inner, slicing, wantTotal } = p
+  const dims = grainDimsOf(metric)
+  const limit = slicing?.limit === undefined ? MAX_QUERY_ROWS : Math.min(slicing.limit, MAX_QUERY_ROWS)
+  const selDims = slicing?.dimensions === undefined ? null : [...new Set(slicing.dimensions)]
+  const isFullSet = selDims === null || (selDims.length === dims.length && dims.every((d) => selDims.includes(d)))
+
+  if (wantTotal || (selDims !== null && selDims.length === 0)) {
+    // 显式合计 / dimensions=[]：无外层 LIMIT——合计必须作用于全量匹配行（截断求和 = 错数）。
+    // `value` 是 sync 编译器给指标 expression 的固定别名（buildSelectSql：`select <expr> as value, …`）。
+    return { sql: `SELECT sum(value) AS total FROM ( ${inner} ) t` }
+  }
+  if (isFullSet) {
+    // 明细形态（dimensions 缺省）：确定性截断（spec §10.3）——GROUP BY 与 LIMIT 之间补
+    // `ORDER BY bizday DESC`，截断集最新优先；切片给了 orderBy 则以它为准（列已在 authorize 校验）。
+    const ob = slicing?.orderBy
+    const detailOrder = ob !== undefined && ob.length > 0
+      ? ` ORDER BY ${ob.map((o) => `${o.column} ${o.dir === 'asc' ? 'asc' : 'desc'}`).join(', ')}`
+      : (/\bbizday\b/.test(metric.groupBy) ? ' ORDER BY bizday DESC' : '')
+    const sql = `${inner}${detailOrder} LIMIT ${limit}`
+    // 自动合计（spec §8.4）仅「未切片」（slicing === undefined = 现状行为）；
+    // 切片形态只在显式 total=true 时给 totalSql——切片后的部分合计不是全局合计，缺省即「未请求」。
+    const totalSql = !wantTotal && metric.totalable === true && (slicing === undefined || slicing.total === true)
+      ? `SELECT sum(value) AS total FROM ( ${inner} ) t`
+      : undefined
+    return { sql, ...(totalSql !== undefined ? { totalSql } : {}) }
+  }
+  // 真子集 = 外层再聚合（掩码先于聚合不变量：掩码已在内层列引用处展开）。
+  // 要求 totalable（不可加指标的子集再聚合 = 错数），该拒绝在 authorize 的前置校验里给出。
+  // 显式 total=true ⇒ 附 totalSql（过滤范围的部分合计；缺省不带——部分合计≠全局合计）。
+  const totalSql = slicing !== undefined && slicing.total === true
+    ? `SELECT sum(value) AS total FROM ( ${inner} ) t`
     : undefined
+  return {
+    sql: `select ${selDims.join(', ')}, sum(value) as value from ( ${inner} ) t group by ${selDims.join(', ')} LIMIT ${limit}`,
+    ...(totalSql !== undefined ? { totalSql } : {}),
+  }
+}
 
+/**
+ * 授权 + 出计划（对外签名不变，第 6 参可选）。拒绝链顺序照原型：
+ * 未声明 → 未授权 → 保留键（args ∪ slicing.filters）→ 切片形状 → 参数/内核。
+ */
+export function authorize(
+  catalog: MetricDef[], requester: Requester, metricId: string,
+  args: Record<string, unknown>, maskCatalog: MetricDef[], slicing?: SlicingSpec,
+): AuthzResult {
+  const metric = catalog.find((m) => m.id === metricId)
+  if (!metric) return { ok: false, reason: 'metric_not_declared', metricId }
+  if (metric.requiredScope !== null && !requester.hasScope(metric.requiredScope)) {
+    return { ok: false, reason: 'metric_not_authorized', metricId }
+  }
+  // 切片 filters 里**声明参数键**并入 args（authorizeCore 的参数循环按类型校验它们）；
+  // 维度键不并入——它们已被 sliceFilterFragments 渲染成 extraFilters，进 args 会撞 unknown_param。
+  const declaredSliceFilters = slicing === undefined
+    ? {}
+    : Object.fromEntries(Object.entries(slicing.filters ?? {}).filter(([k]) => metric.params[k] !== undefined))
+  const mergedArgs = slicing === undefined ? args : { ...args, ...declaredSliceFilters }
+  if (slicing !== undefined) {
+    // 保留键检查覆盖 args ∪ 全部 filters（维度键也不例外——主体钉死唯一检查点仍是这一个循环语义）
+    for (const key of Object.keys({ ...args, ...(slicing.filters ?? {}) })) {
+      if ((SUBJECT_RESERVED_KEYS as readonly string[]).includes(key)) {
+        return { ok: false, reason: 'subject_pinned_by_platform', metricId }
+      }
+    }
+    const grain = grainDimsOf(metric)
+    if (slicing.dimensions !== undefined) {
+      for (const d of slicing.dimensions) {
+        if (!grain.includes(d) || !IDENT_RE.test(d)) {
+          return { ok: false, reason: 'bad_param', metricId, detail: `unknown_dimension:${d}` }
+        }
+      }
+      const sel = [...new Set(slicing.dimensions)]
+      // 真子集 / 空集都要做外层再聚合 ⇒ 不可加指标拒绝（fail-closed，spec §5「totalable」约束）
+      if ((sel.length === 0 || sel.length < grain.length) && metric.totalable !== true) {
+        return { ok: false, reason: 'bad_param', metricId, detail: 'slicing_not_additive' }
+      }
+    }
+    const orderScope = slicing.dimensions !== undefined
+      ? (slicing.dimensions.length === 0 ? grain : [...new Set(slicing.dimensions)])
+      : grain
+    for (const o of slicing.orderBy ?? []) {
+      if (!orderScope.includes(o.column) || !IDENT_RE.test(o.column)) {
+        return { ok: false, reason: 'bad_param', metricId, detail: `unknown_order_column:${o.column}` }
+      }
+      if (o.dir !== undefined && o.dir !== 'asc' && o.dir !== 'desc') {
+        return { ok: false, reason: 'bad_param', metricId, detail: `invalid_order_dir:${o.column}` }
+      }
+    }
+    if (slicing.limit !== undefined && (typeof slicing.limit !== 'number' || !Number.isInteger(slicing.limit) || slicing.limit <= 0)) {
+      return { ok: false, reason: 'bad_param', metricId, detail: 'invalid_limit' }
+    }
+    const fragments = sliceFilterFragments(metric, slicing)
+    if (!fragments.ok) return { ok: false, reason: 'bad_param', metricId, detail: fragments.detail }
+    const core = authorizeCore(catalog, requester, metricId, mergedArgs, maskCatalog, fragments.fragments)
+    if (!core.ok) return core
+    return {
+      ok: true,
+      plan: {
+        ...buildSlicedPlan({ metric, inner: core.inner, slicing, wantTotal: core.wantTotal }),
+        metricId, subject: core.subject, total: core.wantTotal,
+        applied: core.applied, exempted: core.exempted,
+      },
+    }
+  }
+  // slicing 缺省：与现状同一条路径（buildSlicedPlan 对 undefined 的输出 = 旧三段逐字节）
+  const core = authorizeCore(catalog, requester, metricId, args, maskCatalog, [])
+  if (!core.ok) return core
   return {
     ok: true,
     plan: {
-      sql, metricId, subject, total: wantTotal,
-      ...(totalSql !== undefined ? { totalSql } : {}),
-      applied: masked.applied,
-      exempted: masked.exempted,
+      ...buildSlicedPlan({ metric, inner: core.inner, slicing: undefined, wantTotal: core.wantTotal }),
+      metricId, subject: core.subject, total: core.wantTotal,
+      applied: core.applied, exempted: core.exempted,
     },
   }
 }

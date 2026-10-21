@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
-import { runQuery, freshnessLineOf, freshnessRelationsOf, freshnessStatusOf, formatHumanDay, type QueryDeps } from './query-service'
+import { runQuery, freshnessLineOf, freshnessRelationsOf, freshnessStatusOf, formatHumanDay, type QueryDeps, type SqlExecutor } from './query-service'
 import { L1_ORG, upsertL1Metric, upsertMetric } from './metric-store'
 import { applyMigrations } from '../test-util'
 import { MAX_QUERY_ROWS, type MaskSpec, type Requester } from './authz'
@@ -939,5 +939,90 @@ describe('runQuery —— 值级脱敏回包 masking（spec §5.3，P2 T2）', (
     expect(out.masking).toEqual({ 'qp3_mask_f.revenue': 'round:1000' })
     expect(lastSql, '按列解析 ⇒ L2 也拿到 L1 的掩码（掩在聚合内部）')
       .toContain('sum(round(qp3_mask_f.revenue, -1000))')
+  })
+})
+
+// ══ 分析师面接线（spec 2026-10-21：tool/warehouseExec/slicing 透传，audit id 回传）══════
+describe('runQuery 分析师面接线', () => {
+  // 假平台池：词表查询回两行夹具（普通 + totalable 切片样例）；其余 SQL（审计 insert 等）
+  // 回固定 {id, created_at}——与真机形状一致（scripts/e2e 的 #51 教训：mock 收严到真机形状）。
+  const catalogPool = (auditId: number) => ({
+    query: async (sql: string) => sql.includes('from data.metrics')
+      ? { rows: [
+          {
+            id: 'sales_daily', title: '销售日明细', description: '', required_scope: null,
+            subject_column: 'org', select_sql: 'SELECT org, day FROM marts.sales_daily',
+            group_by: '', params: {}, source: 'l2', source_system: null, updated_by: null,
+            version: 1, totalable: false, scope_note: '', sla_days: null, freshness_relations: null, mask_spec: null,
+          },
+          {
+            id: 'm_totalable', title: '可加样例', description: '', required_scope: null,
+            subject_column: 'org', select_sql: 'select org, day, sum(v) as value from fct group by org, day',
+            group_by: 'org, day', params: {}, source: 'l2', source_system: null, updated_by: null,
+            version: 1, totalable: true, scope_note: '', sla_days: null, freshness_relations: null, mask_spec: null,
+          },
+        ] }
+      : { rows: [{ id: auditId, created_at: new Date('2026-10-21T10:00:00Z') }] },
+  }) as never
+  const emptyWh = async () => ({ columns: [], rows: [] })
+
+  it('warehouseExec 承接辅助读（data_as_of/水位/维度解析不再直连 warehousePool）', async () => {
+    const seen: string[] = []
+    const main: SqlExecutor = async (sql) => {
+      seen.push(`main:${sql.slice(0, 20)}`)
+      return { columns: ['org', 'day'], rows: [['org_a', '2026-08-15']] }
+    }
+    const wh: SqlExecutor = async (sql) => {
+      seen.push(`wh:${sql.slice(0, 24)}`)
+      if (sql.includes('load_log')) return { columns: ['data_as_of'], rows: [[new Date('2026-10-21T02:10:00+08:00')]] }
+      return { columns: [], rows: [] }
+    }
+    const out = await runQuery(
+      { pool: catalogPool(1), execute: main, warehouseExec: wh, adoptedSources: new Set<string>(), raceRetryDelayMs: 0 },
+      'org_a', req(), 'sales_daily', {},
+    )
+    expect(out.status).toBe('ok')
+    expect(seen.some((s) => s.startsWith('wh:'))).toBe(true)   // 辅助读走了注入的 wh
+  })
+
+  it('tool 透传进审计；QueryOk.audit 带 id/北京时间 ts；ok 带 sql', async () => {
+    const inserts: { sql: string; values: unknown[] }[] = []
+    const pool = {
+      query: async (sql: string, values?: unknown[]) => {
+        inserts.push({ sql, values: values ?? [] })
+        if (sql.includes('from data.metrics')) return (catalogPool(501) as { query: (s: string) => unknown }).query(sql)
+        return { rows: [{ id: 501, created_at: new Date('2026-10-21T10:00:00Z') }] }
+      },
+    } as never
+    const out = await runQuery(
+      {
+        pool, execute: async () => ({ columns: ['org'], rows: [['org_a']] }),
+        warehouseExec: emptyWh,
+        adoptedSources: new Set<string>(), tool: 'query_metric', raceRetryDelayMs: 0,
+      },
+      'org_a', req(), 'sales_daily', {},
+    )
+    expect(out.status).toBe('ok')
+    if (out.status === 'ok') {
+      expect(out.audit).toMatchObject({ id: 501, ts: '2026-10-21T18:00:00+08:00' })
+      expect(typeof out.sql).toBe('string')
+    }
+    const auditCall = inserts.find((c) => c.sql.includes('insert into data.query_audit'))
+    expect(auditCall?.sql).toContain(', tool')
+    expect(auditCall?.values?.at(-1)).toBe('query_metric')
+  })
+
+  it('slicing 透传 authorize（切片 SQL 生效）', async () => {
+    let executed = ''
+    const out = await runQuery(
+      {
+        pool: catalogPool(1), execute: async (sql) => { executed = sql; return { columns: ['org'], rows: [['org_a']] } },
+        warehouseExec: emptyWh,
+        adoptedSources: new Set<string>(), raceRetryDelayMs: 0,
+      },
+      'org_a', req(), 'm_totalable', {}, { dimensions: ['org'] },
+    )
+    expect(out.status).toBe('ok')
+    expect(executed).toContain('sum(value) as value')
   })
 })

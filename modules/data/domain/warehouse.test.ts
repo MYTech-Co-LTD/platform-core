@@ -76,3 +76,32 @@ describePg('runWarehouseSql（需要 DATABASE_URL，借本地 pg 当替身）', 
     expect(r.rows).toEqual([])
   })
 })
+
+// ══ 分析师只读池（spec 2026-10-21 §8：default_transaction_read_only=on）════════════════
+describePg('analystPool：会话强制只读（需要 DATABASE_URL）', () => {
+  it('show default_transaction_read_only ⇒ on；写操作 ⇒ 报 read-only', async () => {
+    const { analystPool, resetAnalystPool } = await import('./warehouse')
+    resetAnalystPool()
+    const pool = analystPool({ DATA_WAREHOUSE_URL: process.env.DATABASE_URL! })
+    try {
+      const r = await pool.query('show default_transaction_read_only')
+      expect(r.rows[0].default_transaction_read_only).toBe('on')
+      await expect(
+        pool.query('create table data.__analyst_rw_probe (id int)'),
+      ).rejects.toThrow(/read-only/i)
+    } finally {
+      resetAnalystPool()
+      await pool.end().catch(() => {})
+    }
+  })
+  it('未配 URL ⇒ 抛 DATA_WAREHOUSE_UNCONFIGURED；单例（两次取同一实例）', async () => {
+    const { analystPool, DATA_WAREHOUSE_UNCONFIGURED, resetAnalystPool } = await import('./warehouse')
+    resetAnalystPool()
+    expect(() => analystPool({})).toThrow(DATA_WAREHOUSE_UNCONFIGURED)
+    const a = analystPool({ DATA_WAREHOUSE_URL: process.env.DATABASE_URL! })
+    const b = analystPool({ DATA_WAREHOUSE_URL: process.env.DATABASE_URL! })
+    expect(a).toBe(b)
+    resetAnalystPool()
+    await a.end().catch(() => {})
+  })
+})

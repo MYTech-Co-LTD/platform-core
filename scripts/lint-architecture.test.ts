@@ -117,6 +117,23 @@ describe('lint-architecture: B1 跨 schema 引用', () => {
     expect(out(r)).toContain('platform')
   })
 
+  it('PG 系统目录（information_schema/pg_catalog）不算跨 schema：B1 守业务数据，不守元数据目录', () => {
+    const r = run(
+      'lint-architecture.mjs',
+      fixture({
+        'modules/demo/index.ts': "pool.query('select column_name from information_schema.columns')\npool.query('select 1 from pg_catalog.pg_class')\n",
+      }),
+    )
+    expect(r.status).toBe(0)
+    // 业务跨 schema 仍红（同一文件里混一条即可证豁免没放大）
+    const other = fixture({
+      'modules/demo/index.ts': "pool.query('select id from information_schema.columns')\npool.query('select id from platform.tenant')\n",
+    })
+    const r2 = run('lint-architecture.mjs', other)
+    expect(r2.status).toBe(1)
+    expect(out(r2)).toContain('platform')
+  })
+
   it('模块的 schema 白名单取 manifest.yaml 的 id（三同：id = DB schema）', () => {
     const r = run(
       'lint-architecture.mjs',

@@ -22,8 +22,9 @@ import type { SqlExecutor } from '../domain/query-service'
 import type { ModuleHono, RouteCtx } from './context'
 import { requesterOf } from './context'
 
-/** 与 MCP 规范 2025-06-18 版协议字符串对齐；客户端不匹配时自行协商降级。 */
-export const PROTOCOL_VERSION = '2025-06-18'
+/** 与 MCP 规范 2025-11-25 版协议字符串对齐；客户端不匹配时自行协商降级
+ *  （2025-06-18 → 2025-11-25：spec 2026-10-21 §8——注解/outputSchema/structuredContent 面）。 */
+export const PROTOCOL_VERSION = '2025-11-25'
 
 type RpcRequest = {
   jsonrpc: '2.0'
@@ -37,6 +38,11 @@ export interface McpDeps {
   pool: Pool
   /** 缺省 = 真仓库（runQuery 惰性连）。测试注入假执行器。 */
   execute?: SqlExecutor
+  /**
+   * 仓库执行器（分析师面 wh 的**测试缝**；legacy 面的 warehouseExec 同源）。
+   * 装配处取 `ctx.execute`——生产为 undefined，消费方落到只读池（analystPool）。
+   */
+  wh?: SqlExecutor
   /** 隔离键（text）= 租户的 Casdoor org——与 /query 同一口径，不是数字 id。 */
   org: string
   requester: Requester | null
@@ -48,6 +54,8 @@ export interface McpDeps {
 export interface McpToolResult {
   text: string
   isError: boolean
+  /** 结构化回包（spec §8：numeric 工具带；MCP 2025-11-25 structuredContent）。 */
+  structured?: Record<string, unknown>
 }
 
 /** 一个端点暴露的工具集。协议壳只做分发。 */
@@ -97,6 +105,7 @@ export function registerMcpEndpoint(
     const deps: McpDeps = {
       pool: ctx.pool,
       execute: ctx.execute,
+      wh: ctx.execute,
       org: c.get('tenant').casdoor_org,
       requester: requesterOf(c),
       adoptedSources: new Set(c.get(TENANT_SOURCES) ?? []),
@@ -115,7 +124,11 @@ export function registerMcpEndpoint(
       const name = String(msg.params?.name ?? '')
       const args = (msg.params?.arguments ?? {}) as Record<string, unknown>
       const out = await toolset.call(deps, name, args)
-      return reply({ content: [{ type: 'text', text: out.text }], isError: out.isError })
+      return reply({
+        content: [{ type: 'text', text: out.text }],
+        isError: out.isError,
+        ...(out.structured !== undefined ? { structuredContent: out.structured } : {}),
+      })
     }
     return rpcError(-32601, 'method not found')
   })

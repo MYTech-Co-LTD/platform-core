@@ -161,6 +161,12 @@ jobs:
       # ④ 湖侧 SQL 点名单文件 / 写 s3:// / 不带 hive_partitioning ⑤ 容量闸同源 ⑥ 网关 body 键集合同源。
       # 纯静态：不连库、不取网络、不起容器（读两份文本 + 一次 stat）。
       - run: pnpm exec tsx scripts/check-diagnostic-tool.mjs
+
+      # MCP 工具面门禁（spec 2026-10-21 §8）：分析师面工具数 ≤14 / tools/list ≤10KB /
+      # 命名 [A-Za-z0-9_.-] / mutating 工具必须带注解与 scope。
+      # 事实源 = toolbox/registry.ts 的 ANALYST_TOOLS（显式 .ts import；registry 是纯的，
+      # 这条 import 链不拉运行时依赖——registry 头注有约束）。判据单测在 test:guard（unit）。
+      - run: pnpm exec tsx scripts/check-mcp-toolface.mjs
       # 回填工具链的行为测试（issue #387；判据正典 spec `2026-09-29-read-side-migration.md` §4 Phase 0/1）。
       #
       # 为什么它该进 CI（而别的 `.test.sh` 没进）：本工具的判据是**数字与顺序**——Phase 0 探针必须

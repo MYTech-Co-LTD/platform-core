@@ -125,3 +125,31 @@ describePg('audit-store（需要 DATABASE_URL）', () => {
     expect(oa.rows[0].masking).toBeNull()
   })
 })
+
+// ══ tool 字段 + 返回 id/created_at（spec 2026-10-21 §8）════════════════════════════════
+describePg('writeAudit tool 字段与返回值（需要 DATABASE_URL）', () => {
+  it('tool 带入/缺省 null 落列；返回 id 与 created_at；非指标工具 metric_id 可为空串', async () => {
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+    await applyMigrations(pool)
+    try {
+      const a = await writeAudit(pool, {
+        org: 'org-audit-tool', userId: 'u', channel: 'pat', keyId: null,
+        metricId: '', params: { tool: 'data_agent_guide' }, rowCount: null,
+        verdict: 'ok', reason: null, masking: null, tool: 'data_agent_guide',
+      })
+      expect(Number.isInteger(a.id)).toBe(true)
+      expect(a.createdAt).toBeInstanceOf(Date)
+      const b = await writeAudit(pool, {
+        org: 'org-audit-tool', userId: 'u', channel: 'session', keyId: null,
+        metricId: 'm', params: {}, rowCount: 1, verdict: 'ok', reason: null, masking: null,
+      })
+      const r = await pool.query(
+        'select metric_id, tool, row_count from data.query_audit where id = any($1) order by id', [[a.id, b.id]])
+      expect(r.rows[0]).toMatchObject({ metric_id: '', tool: 'data_agent_guide', row_count: null })
+      expect(r.rows[1]).toMatchObject({ metric_id: 'm', tool: null })
+    } finally {
+      await pool.query('delete from data.query_audit where org = $1', ['org-audit-tool'])
+      await pool.end()
+    }
+  })
+})
