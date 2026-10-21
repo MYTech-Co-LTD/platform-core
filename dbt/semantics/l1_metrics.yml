@@ -63,6 +63,28 @@
 #    （本仓 scripts/check-data-models.mjs），加上 `dbt/tests/audit_*.sql` 的独立复算（真库上跑）。
 version: 1
 
+# ── 域级度量组件（spec 2026-10-21 bot-drillthrough §2.3）：一个组件只声明一次，指标用 compose 组合 ──
+# 判别式**逐字**取自 dbt/models/lemeng/marts/fct_retail_sale.sql（销售侧正数形态 / 退货侧绝对值形态 #908），
+# 禁止另写一份；组件与 mart 是同口径的两种粒度。判别式必须保持 `case when <判别式> then 0 else …`
+# 的正形态：`not (…)` 会把 NULL 翻成假，改变 fct 的 ELSE 落点（NULL 语义保真）。
+# 交易类型闸（state/type）内嵌进 case 条件：下钻行域含退货单（口径同源要求退货冲减在场），
+# sale 侧组件靠闸把非 SALE_ORDER 行归零——而不是靠 detail.filter 排掉退货。
+measures:
+  sale_amount@order: >-
+    case when sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then 1 else 0 end) = 0 then 0
+    else (sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' and
+      (order_detail_std_price > 0 and sale_money > 0 and quantity > 0 and
+       abs(discount_money - order_detail_std_price * quantity) <= 0.02) then 0 else sale_money end)
+      + max(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then order_total_money end)) / 2
+      - sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then order_detail_share_discount else 0 end)
+    end
+  return_amount@line: >-
+    sum(case when order_transaction_type like '%RETURN%' and state = 'FINISHED' and
+      (order_detail_std_price > 0 and abs(sale_money) > 0 and abs(quantity) > 0 and
+       abs(abs(discount_money) - order_detail_std_price * abs(quantity)) <= 0.02) then 0
+    when order_transaction_type like '%RETURN%' and state = 'FINISHED' then sale_money + order_detail_share_discount
+    else 0 end)
+
 metrics:
   - name: 'lemeng:retail:sales'
     label: 销售额（不冲退货）
@@ -117,6 +139,13 @@ metrics:
     freshness_sla_days: 1
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
+    # ── 下钻绑定（spec §2.3/§2.4；Phase 1 裁决点：item_num 不进闭集——折半是订单级算术，
+    # 摊到行是设计选择，spec §2.4 明示不定案；data:cost 列掩码缓到 Phase 2，见计划裁决点 2）──
+    compose: 'sale_amount@order - return_amount@line'
+    dimensions: [system_book, bizday, branch_num, order_no]
+    detail:
+      relation: vw_lemeng_retail_order_line
+      filter: "state = 'FINISHED'"
     # 对账（每个声明指标一条独立复算，layered §7 硬约束 7）：对应的 singular test 文件名**不在这里写**
     # —— 名字由 `:` → `__` 的映射函数算出（scripts/check-data-models.mjs 导出的 metricToAuditFileName()，
     #   唯一事实源）。在这里再写一遍文件名 = 两处事实源，映射一改这两行就悄悄过期。
