@@ -236,19 +236,23 @@ git commit -m "feat(data): 门禁扫描面扩到 views/，重生成 data-plane.l
 
 ### Task 4: 视图 vs staging 的行为不变量
 
+> **2026-10-21 真机订正（本计划首版判据有误）**：闭窗日相等**盖不住热侧**。实测封版后
+> 闭窗日 `cold=518429 / hot=0` ⇒ 把视图的热侧整段删掉，本测试仍然绿。故拆成两条：
+> 4A 守冷侧与列区（对 staging），4B 守热侧（**对湖直读**，不看 staging）。
+
 **Files:**
-- Create: `dbt/tests/lemeng/assert_vw_retail_order_line_matches_stg.sql`
+- Create: `dbt/tests/lemeng/assert_vw_retail_order_line_matches_stg.sql`（4A）
+- Create: `dbt/tests/lemeng/assert_vw_retail_order_line_hot_branch.sql`（4B）
 
 **Interfaces:**
-- Consumes: `vw_lemeng_retail_order_line`（Task 2）、`stg_lemeng_retail_order_line`
+- Consumes: `vw_lemeng_retail_order_line`（Task 2）、`stg_lemeng_retail_order_line`（仅 4A）、湖热分区路径（仅 4B）
 - Produces: dbt singular test（返回任何行即失败）
 
 - [ ] **Step 1: 写测试**
 
 ```sql
--- assert_vw_retail_order_line_matches_stg — 视图与 staging 必须同源。
--- 为什么需要：两者的 FROM 块是**两份手写**（视图直读湖、staging 物化）。
--- 抄错一处（漏掉热侧/漏掉「排除已封版日子」的谓词）会**静默**多算或双算。
+-- assert_vw_retail_order_line_matches_stg — 视图与 staging 在**闭窗日**必须同源。
+-- 覆盖范围：冷侧（_DAY_DATA）+ 列区；**热侧**由 assert_vw_retail_order_line_hot_branch 守。
 -- 判据取**闭窗日**（bizday < 上海今天）：今天的文件被 tick 重写，两侧时点不同，不可比。
 with a as (
     select count(*)::bigint as n
@@ -278,16 +282,45 @@ where a.n = 0 and b.n = 0
 Run: `docker exec -w /app <dbt-runner> dbt test --select assert_vw_retail_order_line_matches_stg`
 Expected: PASS（0 行返回）
 
-- [ ] **Step 3: 变异确认（必做）**
+- [ ] **Step 3: 变异确认（4A，必做）**
 
-把视图 FROM 的热侧那一段**临时注释掉**，重跑：
-Expected: **FAIL 且 `vw_rows < stg_rows`** —— 证明这条测试真能抓漂移（不红就是空转绿）
+把视图 FROM 的**冷侧**那一段临时注释掉，重跑：
+Expected: **FAIL 且 `vw_rows < stg_rows`** —— 证明 4A 真能抓冷侧漂移。
+⚠️ **不要拿「注释掉热侧」做 4A 的变异**：封版后闭窗日热分区为空，那条变异**会存活**
+（2026-10-21 实测 cold=518429 / hot=0）。热侧归 4B。
+
+- [ ] **Step 3b: 4B —— 热侧不变量 + 它的变异确认**
+
+```sql
+-- assert_vw_retail_order_line_hot_branch — 视图必须真的把热侧（当天 hour= 分区）union 进来。
+-- 判据取**存在性**（湖今天有行、视图今天为 0 ⇒ 红），不取等值：
+--   tick 每 5 分钟重写当天分区，两条计数之间有时间差，等值会在落盘瞬间假红。
+-- 今天一定在 _DAY_DATA 之外（关账后才封版）⇒ 今天视图为 0 只可能是热侧缺席。
+with lake as (
+    select count(*)::bigint as n
+    from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet') r
+    where cast(r['bizday'] as date) = CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+),
+v as (
+    select count(*)::bigint as n
+    from {{ ref('vw_lemeng_retail_order_line') }}
+    where bizday = CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+)
+select v.n as vw_today_rows, lake.n as lake_hot_today_rows,
+       '热侧没接线：湖的热分区今天有行，视图今天返回 0（漏 UNION / 路径错 / 谓词反）' as note
+from v, lake
+where lake.n > 0 and v.n = 0
+```
+
+变异确认：把视图**热侧那一段**注释掉重跑 ⇒ 4B **FAIL**（`vw_today_rows = 0`、`lake_hot_today_rows > 0`）。
+> ⚠️ 变异要在**有当天数据**的时段做（08:00–24:00 CST）；凌晨 `lake.n = 0` 时这条测试按设计不判红。
 
 - [ ] **Step 4: 复原并提交**
 
 ```bash
-git add dbt/tests/lemeng/assert_vw_retail_order_line_matches_stg.sql
-git commit -m "test(data): 视图与 staging 的闭窗日行数不变量"
+git add dbt/tests/lemeng/assert_vw_retail_order_line_matches_stg.sql \
+        dbt/tests/lemeng/assert_vw_retail_order_line_hot_branch.sql
+git commit -m "test(data): 视图不变量拆成冷侧（对 staging）与热侧（对湖直读）两条"
 ```
 
 ---

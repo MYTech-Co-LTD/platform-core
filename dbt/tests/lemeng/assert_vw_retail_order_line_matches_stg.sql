@@ -1,7 +1,11 @@
--- assert_vw_retail_order_line_matches_stg — 视图与 staging 必须同源。
--- 为什么需要：两者的 FROM 块是**两份手写**（视图直读湖、staging 物化）。
--- 抄错一处（漏掉热侧/漏掉「排除已封版日子」的谓词）会**静默**多算或双算。
+-- assert_vw_retail_order_line_matches_stg — 视图与 staging 在**闭窗日**必须同源。
+-- 为什么需要：两者的 FROM 块是**两份手写**（视图直读湖、staging 物化），抄错会静默多算/双算。
 -- 判据取**闭窗日**（bizday < 上海今天）：今天的文件被 tick 重写，两侧时点不同，不可比。
+--
+-- ⚠️ **覆盖范围（2026-10-21 真机实测后订正）：只管冷侧 + 列区，盖不住热侧。**
+--    封版（_DAILY）之后当天热分区为空 ⇒ 闭窗日行数 100% 来自 `_DAY_DATA`：
+--    实测 cold=518429 / hot=0。把视图 UNION ALL 的热侧整段删掉，本测试**仍然相等**。
+--    热侧由 `assert_vw_retail_order_line_hot_branch` 单独守（对湖直读，不看 staging）。
 with a as (
     select count(*)::bigint as n
     from {{ ref('vw_lemeng_retail_order_line') }}
@@ -13,7 +17,7 @@ b as (
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 )
 select a.n as vw_rows, b.n as stg_rows,
-       '视图与 staging 行数不一致（FROM 块抄错：漏热侧 / 未排除已封版日子 / 封版断言缺失）' as note
+       '视图与 staging 行数不一致（冷侧 FROM 抄错：路径 / 封版断言 / 列区）' as note
 from a, b
 where a.n is distinct from b.n
 union all
