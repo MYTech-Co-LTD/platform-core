@@ -265,8 +265,12 @@ select a.n as vw_rows, b.n as stg_rows,
 from a, b
 where a.n is distinct from b.n
 union all
-select 0, 0, '两侧都为空：对账在空集上「通过」是空转绿'
-where not exists (select 1 from b)
+-- ⚠️ 空转绿守卫**必须**写成 `a.n = 0 and b.n = 0`。早先写的 `where not exists (select 1 from b)`
+-- 是**死分支**：a/b 都是无 group by 的 `count(*)`，恒返一行，`not exists` 恒为假。
+-- （既有 audit_*.sql 的同款守卫有效，是因为它那侧是**带 group by 的**子查询，可以为空。）
+select a.n, b.n, '两侧都为空：对账在空集上「通过」是空转绿'
+from a, b
+where a.n = 0 and b.n = 0
 ```
 
 - [ ] **Step 2: 真机跑一次（在数据面机器上，经 materialize job 的 dbt 环境）**
