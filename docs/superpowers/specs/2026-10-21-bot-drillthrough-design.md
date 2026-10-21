@@ -248,3 +248,24 @@ query_detail({
 - **沿用** 该 spec 的 §3.2（契约生成器）与 §3.3（逐列 cast + 封版断言）
 - **销账** 其 gate 2（分区裁剪）——已定论，见 `2026-10-20-lake-format-decision.md` §8.2
 - **Phase 2（另立项）**：聚合面改读组件、`fct_*` 降为缓存、删除 `expression`。需重跑 `net_sales` 的逐分验证（`tier: certified`）
+
+---
+
+## §7 实施订正（Phase 1 落地时）
+
+> 以下为实施期与计划作者、评审、人三方落定的修正；实施计划 `docs/superpowers/plans/2026-10-21-drillthrough-phase1.md` 为执行事实源。
+
+### 7.1 开工前三处裁决（保守解，PR 可翻案）
+
+1. **`item_num` 不进 `dimensions` 闭集**（§2.3 草图有它，§2.4 自己说「摊到行属设计选择」）。算术：折半式 `(非赠品额+订单总额)/2` 是**订单级**算术——允许按 item_num 分组会对每个 item 行各除一次，数值错。Phase 1 原子粒度 = 账套×业务日×门店×订单；摊到行缓 Phase 2。
+2. **Phase 1 不声明 `data:cost` 列级掩码**（`detail.columns[].granted_by` 与价格列 mask 缓 Phase 2）。算术：`order_detail_std_price` 在赠品判别式内部；对它 nullify ⇒ 判别式 NULL ⇒ `case when <判别式> then 0 else sale_money end` 走 else ⇒ 赠品行按 sale_money 计入 ⇒ 掩码后下钻 ≠ 聚合，§4「掩码同源」必红；而聚合路径的列掩码因聚合 selectSql 不含湖列不生效（§2.5 明文的不对称）⇒ Phase 1 声明列掩码没有能通过的判据。Phase 1 掩码 = 指标级整值掩码（两面 value 头），`masking` 三态照常透出。
+3. **`detail.filter` 定为 `state = 'FINISHED'`**（§2.3 草图含 `order_transaction_type = 'SALE_ORDER'`）。交易类型闸**内嵌进组件**的 case-when：下钻行域必须含退货单（口径同源要求退货冲减在场），sale 侧组件靠闸把非 SALE_ORDER 行归零——靠 filter 排掉退货会让逐店日与聚合面对不上。
+
+### 7.2 实施期订正
+
+4. **门禁 compose 整串文法锚定**（评审发现自由 SQL 可滑过首道门禁，人裁决 2A）：check-data-models 与 sync composeOf 同判据（剥组件引用与 `+ - ( )` 空白后必须无残留），纵深双门。
+5. **`L1MetricDef.drill` 落为可选** `drill?: DrillBinding`（`Omit<MetricDef,'drill'>` 形状）：必传会挂 7 个既有夹具与 sync 脚本；写侧 `== null` 收口保留 null 语义；sync 侧「未声明 compose」映成缺省/undefined。
+6. **口径同源不变量必须是完整 compose 逐单求值**：首版只算 sale 组件对 `net_amount`——结构性恒红（退货冲减缺席）。订正后原子值 = `(sale 组件) − (return 组件)`（退货单 = 0 − 退货冲减 = 负冲减），两个组件在 order 粒度 GROUP BY 内保持聚合形态（裸列 = 42803 编译错）。已对 fct_retail_sale.sql 原文验算 compose 符号自洽：`return_amount@line` 与 fct 的 return_side 是同一原始和，`net = sale − return`；YAML 声明未动。
+7. **composeOf 为逐引用包括号**（不整串再包）：组件体自带括号时多一层属预期；终态 SQL 经 buildDrillSql 外层 `(${expr})` 包裹后恰为两层括号，与不变量 atomic_value 同形。
+8. **掩码投影须含 from 子句**：mask.ts 整值掩码的 value 头尾锚要求 `value` 后跟 `,` 或 `from`——下钻投影串裸 select 尾会使整值掩码静默不生效；实施为投影串带 `from <relation>` 后接 where/group by。
+9. **下钻 count 腿的竞态重试并入审计 reason**（多腿累计，与聚合面 totalSql 同纪律）。
