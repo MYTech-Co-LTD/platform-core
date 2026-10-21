@@ -1,8 +1,9 @@
-// domain/agent-loop.ts —— 通道 A 的 LLM 编排。工具**只有两个**，且**都走同一个授权核心**
+// domain/agent-loop.ts —— 通道 A 的 LLM 编排。工具**只有三把**，且**都走同一个授权核心**
 // （spec §5 约束 1：任何通道不得自建权限判定）。
 import type { Pool } from 'pg'
 import type { MetricDef, MetricParamFace, Requester } from './authz'
 import { paramFaceOf, visibleMetrics } from './authz'
+import { runDetailQuery } from './drill'
 import { loadMergedCatalog } from './metric-store'
 import { runQuery } from './query-service'
 import type { SqlExecutor } from './query-service'
@@ -37,8 +38,8 @@ const SYSTEM_PROMPT = [
 ].join('\n')
 
 /**
- * 工具面：**两个**。
- * `query_metric` 的 inputSchema **刻意不暴露 org/subject**（spec §5 约束 2）——
+ * 工具面：**三把**。
+ * `query_metric` / `query_detail` 的 inputSchema **刻意不暴露 org/subject**（spec §5 约束 2）——
  * 主体不属于客户端可指定面，模型连"能不能填"都不该知道。
  * 参数契约（spec 2026-10-15 §2.5）：type=string/number/date 只做**等值**比较；
  * type=date_range 传 {from,to} 闭区间（from>to 服务端显式报错——T2 防的「恒空集且不报错」
@@ -75,6 +76,30 @@ export const TOOLS: ToolSpec[] = [
           description: '指标参数（等值过滤）。键必须是指标声明的参数名。',
           additionalProperties: true,
         },
+      },
+      required: ['metricId'],
+    },
+  },
+  {
+    name: 'query_detail',
+    description: [
+      '按指标下钻到明细构成（订单级）。**只对声明了下钻的指标可用**（调用后 status=denied 且 reason=no_detail_binding = 该指标不支持，改用 query_metric，不要重试）。',
+      'args.bizday **必传**（{"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}，查单日 from=to）——直读数据湖，范围越大越慢。',
+      '回包 rowCountTotal = 该范围的**全量原始行数**（不受 limit/分组影响）——回答「多少行」用它，不要拿 rows 长度或把样本当全量。',
+      'dimensions 缺省 = 最细（订单级）；传入必须是 list 后该指标声明维度的子集（变粗上卷）。回包默认按 value 降序。',
+      '「哪几行/哪几单贡献最大」用本工具；「合计多少」用 query_metric 的 total。',
+      '回包带 drill_as_of（明细查询时刻）与 data_as_of（聚合口径截止）+ clock_note——两个时钟不同，逐行相加可能与聚合值不一致，以 clock_note 为准原样转述。scope_line 有则原样单独一行附在答案末尾。',
+    ].join(''),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        metricId: { type: 'string', description: '指标 id，取自 list_metrics' },
+        args: { type: 'object', description: '指标参数；bizday 必传', additionalProperties: true },
+        dimensions: { type: 'array', items: { type: 'string' }, description: '分组维度子集；缺省 = 最细（订单级）' },
+        orderBy: { type: 'string', description: "排序键，'value'（缺省）或维度名" },
+        desc: { type: 'boolean', description: '降序（缺省 true）' },
+        limit: { type: 'number', description: '返回行数，默认 50，上限 500' },
+        offset: { type: 'number', description: '翻页偏移' },
       },
       required: ['metricId'],
     },
@@ -145,6 +170,26 @@ async function runTool(
       })),
     }
   }
+  // 下钻与聚合同序纪律：先 list_metrics，再 query_detail，最后 query_metric——
+  // dispatch 顺序显式落在本文件里，不靠 else-if 链的隐式顺序（改分支先看这里）。
+  if (call.name === 'query_detail') {
+    const metricId = typeof call.arguments.metricId === 'string' ? call.arguments.metricId : ''
+    const rawArgs = call.arguments.args
+    const args = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
+      ? (rawArgs as Record<string, unknown>) : {}
+    const num = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) ? v : undefined)
+    const dims = Array.isArray(call.arguments.dimensions)
+      ? call.arguments.dimensions.filter((d): d is string => typeof d === 'string') : undefined
+    return runDetailQuery(
+      { pool: deps.pool, execute: deps.execute, adoptedSources: deps.adoptedSources },
+      deps.org, requester, metricId, args, {
+        dimensions: dims,
+        orderBy: typeof call.arguments.orderBy === 'string' ? call.arguments.orderBy : undefined,
+        desc: typeof call.arguments.desc === 'boolean' ? call.arguments.desc : undefined,
+        limit: num(call.arguments.limit),
+        offset: num(call.arguments.offset),
+      })
+  }
   if (call.name !== 'query_metric') {
     return { status: 'error', reason: 'unknown_tool', detail: call.name }
   }
@@ -163,6 +208,12 @@ async function runTool(
 /** 活动事件的展示文案。**只放 id 与非敏感参数**——SQL、主体值、凭证都不进事件流。 */
 function describeCall(call: ToolCall): string {
   if (call.name === 'list_metrics') return '列出可用指标'
-  const metricId = typeof call.arguments.metricId === 'string' ? call.arguments.metricId : '(未指定)'
+  const metricId = metricIdOf(call)
+  if (call.name === 'query_detail') return `下钻明细 ${metricId}`
   return `查询指标 ${metricId}`
+}
+
+/** 既有取 id 逻辑抽出：query_metric 与 query_detail 共用（缺失给占位，不抛）。 */
+function metricIdOf(call: ToolCall): string {
+  return typeof call.arguments.metricId === 'string' ? call.arguments.metricId : '(未指定)'
 }

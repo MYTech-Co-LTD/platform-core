@@ -10,7 +10,8 @@ import { Pool } from 'pg'
 import type { Hono } from 'hono'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
-import { upsertMetric } from '../domain/metric-store'
+import { upsertL1Metric, upsertMetric } from '../domain/metric-store'
+import type { L1MetricDef } from '../domain/metric-store'
 import type { MetricDef } from '../domain/authz'
 import type { SqlExecutor } from '../domain/query-service'
 
@@ -18,6 +19,8 @@ const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
 /** 隔离键（text，值 = 该租户的 Casdoor org）——与 metrics/query/keys 各文件互不相同，避免互相擦数据。 */
 const ORG = 'org-t8-mcp'
+/** 本文件的 L1 夹具 id 前缀（平台桶 `org='platform'` 跨文件共用 ⇒ 清理只按前缀删）。 */
+const L1_PREFIX = 't8m:'
 
 // 词表形状照 domain/authz.ts 的 MetricDef（主体列 org，与 ORG 同值 ⇒ 主体钉死可断言）。
 // sales_daily 无 requiredScope（拿到 data:query 即可见）；finance_mrr 挂 data:finance ⇒ 裁掉。
@@ -41,6 +44,28 @@ const RANGE_DAILY: MetricDef = {
   selectSql: 'SELECT org, day, revenue FROM marts.mart_sales_daily',
   groupBy: '',
   params: { bizday: { column: 'bizday', type: 'date_range' } },
+}
+/**
+ * 带下钻绑定的夹具（绑定形状与 drill.test.ts 的 DRILL 同形）：query_detail 的 ok 路径要真走到
+ * 下钻 SQL。⚠️ 只能走 **L1 平台行**（upsertL1Metric）：`upsertMetric`（L2 写面）**刻意不写**
+ * 下钻三列——L2 声明面没有 compose/dimensions/detail 输入。L1 行带源维度 ⇒ seededApp 以
+ * `['lemeng']` 扮演「宿主投影：已接入该源」（query.test.ts 同款）；平台桶跨文件共用 ⇒
+ * id 带前缀、afterAll 按前缀清。
+ */
+const DRILL_NET: L1MetricDef = {
+  id: `${L1_PREFIX}drill_net_sales`, title: '净销售额', description: '带明细下钻的销售指标',
+  requiredScope: null, subjectColumn: 'org',
+  selectSql: 'SELECT org, system_book, bizday, sum(net) AS value FROM fct_t GROUP BY system_book, bizday',
+  groupBy: 'system_book, bizday',
+  params: { bizday: { column: 'bizday', type: 'date_range' } },
+  sourceSystem: 'lemeng',
+  slaDays: 1, freshnessRelations: [], masks: null,
+  drill: {
+    expr: '(sale_amount@order - return_amount@line)',
+    dims: ['system_book', 'bizday', 'branch_num', 'order_no'],
+    relation: 'vw_t',
+    filter: "state = 'FINISHED'",
+  },
 }
 
 /** 一次 JSON-RPC POST。raw 直接给字符串可测「不可解析 body」。 */
@@ -138,18 +163,22 @@ describePg('POST /mcp 的方法面（需要 DATABASE_URL）', () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
     await pool.query('delete from data.query_audit where org = $1', [ORG]).catch(() => {})
     await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
+    // 平台桶跨文件共用 ⇒ 只删本文件前缀的那些（别 `where org='platform'`，会删掉并行兄弟的夹具）
+    await pool.query('delete from data.metrics where org = $1 and id like $2', ['platform', `${L1_PREFIX}%`])
+      .catch(() => {})
     await pool.query('delete from data.query_keys where org = $1', [ORG]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
-  /** 种词表 + 建 app（默认身份 scopes = ['data:query']）。 */
+  /** 种词表 + 建 app（默认身份 scopes = ['data:query']）。sources=['lemeng'] = DRILL_NET（L1 行）的已接入源。 */
   async function seededApp(ctxExtra: { execute?: SqlExecutor } = {}) {
     await applyMigrations(pool)
     await upsertMetric(pool, ORG, SALES_DAILY, 'fixture')
     await upsertMetric(pool, ORG, FINANCE_MRR, 'fixture')
+    await upsertL1Metric(pool, DRILL_NET)
     // execute 用**变量**携带进 ctx：绕开 ModuleContext 字面量的多余属性检查（协议上只有 pool）
     const ctx = { pool, ...ctxExtra }
-    return buildTestApp(mod, makeIdentity({ orgId: ORG }), ctx, { id: 1, casdoor_org: ORG })
+    return buildTestApp(mod, makeIdentity({ orgId: ORG }), ctx, { id: 1, casdoor_org: ORG }, ['lemeng'])
   }
 
   it('tools/list → 词表内（sales_daily）在、data:finance（finance_mrr）不在——裁剪只走 visibleMetrics', async () => {
@@ -259,5 +288,63 @@ describePg('POST /mcp 的方法面（需要 DATABASE_URL）', () => {
     expect(calls.length).toBe(1)
     expect(calls[0]).toContain(`WHERE org = '${ORG}'`)
     expect(calls[0]).toContain(`day = '2026-08-15'::date`)
+  })
+
+  it('tools/list 含静态下钻工具 query_detail（恒在——工具存在不是存在性探针，required 只有 metricId）', async () => {
+    const app = await seededApp()
+    const res = await rpc(app, { jsonrpc: '2.0', id: 13, method: 'tools/list' })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    const tools = body.result.tools as { name: string; inputSchema: { required: string[] } }[]
+    const detail = tools.find((t) => t.name === 'query_detail')
+    expect(detail, 'query_detail 与每指标工具并列出现在 tools/list').toBeDefined()
+    expect(detail!.inputSchema.required).toEqual(['metricId'])
+  })
+
+  it('tools/call query_detail → 分发到 runDetailQuery（execute 透传，count 与明细两腿都走假执行器）', async () => {
+    // ok 路径会碰仓库缝（维度名解析 / data_as_of）：env 先清（drill.test.ts 同款纪律）
+    delete process.env.DATA_WAREHOUSE_URL
+    const calls: string[] = []
+    const execute: SqlExecutor = async (sql) => {
+      calls.push(sql)
+      return /count\(\*\)/.test(sql)
+        ? { columns: ['n'], rows: [[15222]] }
+        : { columns: ['system_book', 'value'], rows: [['3120', 123.4]] }
+    }
+    const app = await seededApp({ execute })
+    const res = await rpc(app, {
+      jsonrpc: '2.0', id: 43, method: 'tools/call',
+      params: { name: 'query_detail', arguments: {
+        metricId: DRILL_NET.id,
+        args: { bizday: { from: '2026-10-19', to: '2026-10-20' } },
+        dimensions: ['system_book'], limit: 10,
+      } },
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.id).toBe(43)
+    expect(body.result.isError).toBe(false)
+    expect(callTextOf(body)).toMatchObject({
+      status: 'ok', subject: ORG, rowCountTotal: 15222, dimensions: ['system_book'],
+    })
+    // 与 /query/detail 同一 runDetailQuery：下钻 SQL 带请求维度上卷 + value 降序 + limit 透传
+    const detailSql = calls.find((s) => !/count\(\*\)/.test(s))
+    expect(detailSql).toContain('group by system_book order by value desc limit 10')
+    expect(calls.some((s) => /count\(\*\)/.test(s))).toBe(true)
+  })
+
+  it('tools/call query_detail 打未声明下钻的指标 → no_detail_binding + isError:true（能力陈述在调用回包）', async () => {
+    const calls: string[] = []
+    const execute: SqlExecutor = async (sql) => { calls.push(sql); return { columns: ['n'], rows: [[1]] } }
+    const app = await seededApp({ execute })
+    const res = await rpc(app, {
+      jsonrpc: '2.0', id: 44, method: 'tools/call',
+      params: { name: 'query_detail', arguments: { metricId: 'sales_daily', args: { day_from: '2026-08-15' } } },
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.result.isError).toBe(true)
+    expect(callTextOf(body)).toMatchObject({ status: 'denied', reason: 'no_detail_binding' })
+    expect(calls, '能力边界拒绝 ⇒ 从未触达仓库').toEqual([])
   })
 })

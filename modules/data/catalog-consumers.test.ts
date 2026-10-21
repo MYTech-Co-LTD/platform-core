@@ -109,12 +109,16 @@ describe('消费面词表的来源守卫（不需要数据库）', () => {
    * 四条**读词表**的消费面，逐文件钉住它引用的是哪一个加载器。
    * 为什么读源码而不是跑行为：行为断言只能覆盖今天写下的场景；本组断言覆盖
    * 「这个模块的**词表来源**是哪一个」——那正是 C1 里漂掉的东西。
+   * `domain/drill.ts` 不是第五条通道：它是下钻执行核心（query_detail），被 ①（MCP
+   * tools/call）与 ③（chat 编排）两条既有通道共用——但它**自己直接**加载并裁剪词表，
+   * 故与四个路由/编排文件同列（Task 7 评审 handoff，#977）。
    */
   const CONSUMERS = [
     'domain/query-service.ts', // ① POST /query（通道 C + MCP tools/call）
     'domain/agent-loop.ts', // ③ chat（POST /chat 的编排）
     'routes/mcp.ts', // ② MCP tools/list
     'routes/metrics.ts', // ④ GET /metrics
+    'domain/drill.ts', // 下钻（query_detail）：①③ 共用的执行核心，同链 loadMergedCatalog + visibleMetrics
   ] as const
   /**
    * 读宿主「已接入源」投影的**接线点**：四个路由文件（域层经 deps 收，路由层读投影）。
