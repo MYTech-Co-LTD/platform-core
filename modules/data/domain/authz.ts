@@ -100,6 +100,20 @@ export interface MetricDef {
    * `scope_note` 物化）；L2 行恒 ''。
    */
   scopeNote?: string
+  /** 明细下钻绑定（下钻 spec 2026-10-21 §2.3），形状见 DrillBinding；未声明 = 字段缺席。 */
+  drill?: DrillBinding
+}
+
+/** 明细下钻绑定（spec 2026-10-21 §2.3）：sync 从声明 compose/dimensions/detail 物化；未声明 = 字段缺席。 */
+export interface DrillBinding {
+  /** 原子粒度值表达式（compose 的组件引用替换产物）。 */
+  expr: string
+  /** 原子粒度维度闭集：请求 dimensions 必须是其子集（只许变粗，不许加列）。 */
+  dims: string[]
+  /** 直读湖关系（PG 可见；Phase 1 只放 vw_*）。 */
+  relation: string
+  /** 行域过滤（声明 detail.filter 逐字进 WHERE）。 */
+  filter: string
 }
 
 /**
@@ -148,6 +162,8 @@ export type DenyReason =
   | 'metric_not_authorized'
   | 'subject_pinned_by_platform'
   | 'bad_param'
+  // 能力陈述不是权限拒绝——该指标未声明下钻（spec §2.6），消费面必须据此换措辞
+  | 'no_detail_binding'
 
 export type AuthzResult =
   | {
@@ -273,6 +289,35 @@ function rangeLiteral(
   return { ok: true, from, to }
 }
 
+/** 参数 → WHERE 连接词（` AND col op lit` 数组）。authorize 与下钻（drill.ts）共用同一判据。 */
+export type ParamFiltersResult =
+  | { ok: true; filters: string[] }
+  | { ok: false; reason: 'bad_param'; detail: string }
+
+export function paramFilters(
+  params: Record<string, MetricParamDef>,
+  args: Record<string, unknown>,
+  wantTotal: boolean,
+): ParamFiltersResult {
+  const filters: string[] = []
+  for (const [name, value] of Object.entries(args)) {
+    if (wantTotal && name === 'total') continue
+    const param = params[name]
+    if (!param) return { ok: false, reason: 'bad_param', detail: `unknown_param:${name}` }
+    if (value === undefined || value === null || value === '') continue
+    if (param.type === 'date_range') {
+      const r = rangeLiteral(value)
+      if (!r.ok) return { ok: false, reason: 'bad_param', detail: (r.detail === 'order' ? 'range_invalid:' : 'invalid_value:') + name }
+      filters.push(` AND ${param.column} BETWEEN ${sqlQuote(r.from)}::date AND ${sqlQuote(r.to)}::date`)
+      continue
+    }
+    const lit = literal(param, value)
+    if (lit === null) return { ok: false, reason: 'bad_param', detail: `invalid_value:${name}` }
+    filters.push(` AND ${param.column} = ${lit}`)
+  }
+  return { ok: true, filters }
+}
+
 /**
  * 授权 + 出计划。拒绝链顺序**照原型**（未声明 → 未授权 → 主体钉死 → 参数），
  * 顺序是有意义的：未授权者拿到的 reason 不泄露「这个指标存在哪些参数」。
@@ -318,27 +363,10 @@ export function authorize(
   // 它只是聚合形态开关：subject 钉死逻辑不受影响（下方 subject 仍只来自 requester.orgId）。
   const wantTotal = args.total === true
 
-  const filters: string[] = []
-  for (const [name, value] of Object.entries(args)) {
-    if (wantTotal && name === 'total') continue   // 已消费的保留键不再进参数校验
-    const param = metric.params[name]
-    if (!param) return { ok: false, reason: 'bad_param', metricId, detail: `unknown_param:${name}` }
-    if (value === undefined || value === null || value === '') continue
-    if (param.type === 'date_range') {
-      const r = rangeLiteral(value)
-      if (!r.ok) {
-        return {
-          ok: false, reason: 'bad_param', metricId,
-          detail: (r.detail === 'order' ? 'range_invalid:' : 'invalid_value:') + name,
-        }
-      }
-      filters.push(` AND ${param.column} BETWEEN ${sqlQuote(r.from)}::date AND ${sqlQuote(r.to)}::date`)
-      continue
-    }
-    const lit = literal(param, value)
-    if (lit === null) return { ok: false, reason: 'bad_param', metricId, detail: `invalid_value:${name}` }
-    filters.push(` AND ${param.column} = ${lit}`)
-  }
+  // 参数 → 过滤词抽取（下钻共用同一判据，参数→SQL 判据单源）；拒绝形状回填 metricId。
+  const pf = paramFilters(metric.params, args, wantTotal)
+  if (!pf.ok) return { ok: false, reason: pf.reason, metricId, detail: pf.detail }
+  const filters = pf.filters
   for (const [name, param] of Object.entries(metric.params)) {
     const v = args[name]
     if (param.required && (v === undefined || v === null || v === '')) {
