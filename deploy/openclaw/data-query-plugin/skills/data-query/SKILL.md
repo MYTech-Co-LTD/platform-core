@@ -25,7 +25,7 @@ metadata:
 
 ## 查询约定
 
-> ⚠️ **取数只走这两个工具（`list_metrics` / `query_data`）。**
+> ⚠️ **取数只走这三个工具（`list_metrics` / `query_data` / `query_detail`）。**
 > **不要**为了取数去用 `exec` / `curl` / 读插件源码 / 翻环境变量 —— 那不是「查得更准」，
 > 只是把「猜」换了个地方。`exec` 是给**非问数**的活用的；**问数时它是错误选择**。
 > 身份类报错（如 `requesterSenderId` 缺失）⇒ 如实告知用户重发一条，**不要用其它工具绕过身份检查**。
@@ -54,6 +54,14 @@ metadata:
 - **`date_range` 是类型名，不是键名。** 传 `{"date_range": {"from":…,"to":…}}` 会被服务端 400 `unknown_param:date_range`；
   正确写法是 `{"bizday": {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}}`（闭区间，单日则 from=to）。
 - 键名拿不准就先 `list_metrics` 看 `params`，**不要臆造键**；被 400 时**不要原样重试**，按 `detail` 自纠一次。
+
+## 明细下钻（query_detail，spec §2.6）
+
+- **什么时候用**：用户要「多少行 / 明细构成 / 哪几单贡献最大」这类**行级**答案时，用 `query_detail({ metricId, args })` 下钻到订单级；聚合口径的合计与分布仍走 `query_data`。
+- **`args.bizday` 必传**：`{"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}`（单日则 from=to）——明细直读数据湖，不带 bizday 会被拒。
+- **`rowCountTotal` 是行数的唯一权威**：它 = 该范围全量原始行数，返回 rows 只是截取。回答「多少行」用 rowCountTotal，**不要拿返回行数当全量**。
+- **回 `no_detail_binding` = 能力边界，不是权限问题**：如实告知「该指标暂不支持明细下钻，聚合口径可用 query_data 查询」，**不要重试、不要换参数试探**。
+- **双时钟声明原样转述**：`clock_note`（⏱ 开头，明细直读查询时刻 vs 聚合口径截至日）原样转述、钉在答案末尾；`drill_as_of` / `data_as_of` 照抄不要自行换算。`scope_line`（📐）由系统在消息末尾自动附加（同 📅 机制）——不要自己写 📐 行。
 
 ## 汇报与行为
 

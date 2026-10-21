@@ -97,6 +97,14 @@ export async function callPlatform(opts) {
         error: "参数不合法：" + (data.detail || "服务端未给原因") + "（键与形状以 list_metrics 返回的 params 为准）",
       };
     }
+    // `no_detail_binding` 是**能力陈述**不是权限拒绝（下钻 spec §2.6）：该指标没声明明细下钻，
+    // 换指标试探 / 重试都没用——照搬 DENIED 文案会诱导模型去试别的指标，必须如实告知能力边界。
+    if (data.reason === "no_detail_binding") {
+      return {
+        code: "NO_DETAIL_BINDING",
+        error: "该指标暂不支持明细下钻（能力边界，不是权限问题）——聚合口径可用 query_data 查询。",
+      };
+    }
     return { code: "DENIED", error: "该查询不在你的可见范围内。可用指标先调 list_metrics 看（词表按人裁剪）。" };
   }
   if (resp.status === 502) {

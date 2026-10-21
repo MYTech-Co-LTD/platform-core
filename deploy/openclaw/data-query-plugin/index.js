@@ -48,6 +48,24 @@ const QUERY_DEF = {
   },
 };
 
+const DETAIL_DEF = {
+  name: "query_detail",
+  description:
+    "按指标下钻到明细构成（订单级）。args.bizday 必传（{\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}，查单日 from=to）。回包 rowCountTotal = 该范围**全量原始行数**——回答「多少行」用它，不要拿返回行数当全量。dimensions 缺省=最细（订单级）；orderBy 缺省按 value 降序（「哪几单贡献最大」直接问）。仅对声明了下钻的指标可用；回 no_detail_binding 时如实告知该指标不支持下钻、可改用 query_data，不要重试。回包带 drill_as_of/data_as_of/clock_note（两个时钟）与 scope_line——clock_note 与 scope_line 原样转述/钉在答案末尾。",
+  parameters: {
+    type: "object",
+    properties: {
+      metricId: { type: "string", description: "指标 id（来自 list_metrics）" },
+      args: { type: "object", description: "参数；bizday 必传", additionalProperties: true },
+      dimensions: { type: "array", items: { type: "string" } },
+      orderBy: { type: "string" }, desc: { type: "boolean" },
+      limit: { type: "number" }, offset: { type: "number" },
+    },
+    required: ["metricId"],
+    additionalProperties: false,
+  },
+};
+
 export default definePluginEntry({
   id: "data-query",
   name: "Data Query",
@@ -110,6 +128,38 @@ export default definePluginEntry({
         },
       ),
       { name: QUERY_DEF.name },
+    );
+    // query_detail（明细下钻，2026-10-21 spec §2.6）：POST /query/detail。回包没有 freshness_line
+    // （明细面只有 data_as_of/clock_note 两个时钟），只有 scope_line 可能需要捕获——
+    // freshnessStore.capture 的对象形态按字段解构，缺 freshness 合法（entry.line=undefined，
+    // 钩子侧按非串过滤，scope 单独在场即只附 📐；scope.test.js「单独在场」已锁该形状）。
+    api.registerTool(
+      factory(
+        DETAIL_DEF,
+        (params, userId) =>
+          callPlatform({
+            apiBase,
+            channelKey: CHANNEL_KEY,
+            userId,
+            path: "/query/detail",
+            method: "POST",
+            body: {
+              metricId: params.metricId,
+              args: params.args ?? {},
+              ...(Array.isArray(params.dimensions) ? { dimensions: params.dimensions } : {}),
+              ...(typeof params.orderBy === "string" ? { orderBy: params.orderBy } : {}),
+              ...(typeof params.desc === "boolean" ? { desc: params.desc } : {}),
+              ...(typeof params.limit === "number" ? { limit: params.limit } : {}),
+              ...(typeof params.offset === "number" ? { offset: params.offset } : {}),
+            },
+          }),
+        (result, sessionKey, runId) => {
+          if (!result) return;
+          const scope = typeof result.scope_line === "string" && result.scope_line ? result.scope_line : undefined;
+          if (scope) freshnessStore.capture(sessionKey, { scope }, runId);
+        },
+      ),
+      { name: DETAIL_DEF.name },
     );
     // 新鲜度行确定性附加（strip-then-append，天然去重）。钩子注册方法按 zh-thinking 插件
     // 同款口径用 api.on（2026.9.9 实测公开方法）；拿不到就跳过并留诊断日志——工具仍可用，
