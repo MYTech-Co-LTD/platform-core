@@ -473,7 +473,9 @@ node scripts/check-data-models.mjs && DATABASE_URL=... node scripts/sync-data-se
 -- 折半净贡献，退货单 = 0 − 退货冲减 = 负冲减），按店×日上卷，与 fct_retail_sale.net_amount
 -- 逐分对（numeric(20,2)，1 分容差）。
 -- ⚠️ atomic_value 必须是**完整 compose**（sale 与 return 两个组件都在）——只算 sale 侧对
--- net_amount 必恒红（退货冲减缺席）。判别式逐字取自 fct_retail_sale.sql（销售正形态 l.85-86 /
+-- net_amount 必恒红（退货冲减缺席）。⚠️ 两个组件都必须保持**聚合形态**（sum/max 在 order 粒度
+-- 的 GROUP BY 内求值，即 YAML 组件体的原样 body）——裸列引用 = GROUP BY 编译错（42803）。
+-- 判别式逐字取自 fct_retail_sale.sql（销售正形态 l.85-86 /
 -- 退货绝对值形态 l.129-130，#908），漂移 = 本测试红。只测**闭窗日**（bizday < 上海今天）：
 -- 当日分区被 tick 持续重写，两侧时点不同不可比。
 -- 生产口径唯一事实源是 dbt/semantics/l1_metrics.yml 的 measures/compose；本文件漂移 ⇒ 本测试红。
@@ -489,7 +491,7 @@ with drill as (
                            - sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then order_detail_share_discount else 0 end)
                  end)
                 -
-                (case when order_transaction_type like '%RETURN%' and state = 'FINISHED' and
+                sum(case when order_transaction_type like '%RETURN%' and state = 'FINISHED' and
                       (order_detail_std_price > 0 and abs(sale_money) > 0 and abs(quantity) > 0 and
                        abs(abs(discount_money) - order_detail_std_price * abs(quantity)) <= 0.02) then 0
                       when order_transaction_type like '%RETURN%' and state = 'FINISHED' then sale_money + order_detail_share_discount
