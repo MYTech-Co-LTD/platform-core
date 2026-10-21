@@ -207,6 +207,8 @@ const METRIC_KEYS = new Set([
   // 口径射程与排除项（消费面 spec 2026-10-17 §12.6）：声明后由**平台自动附进答案**，
   // 不靠模型复述（参数面 spec §8.4 已证 SKILL 对 flash 级模型是弱引导）。
   'scope_note',
+  // 下钻三键（spec 2026-10-21 §2.3/§2.3.1）：compose/dimensions/detail 必须同现
+  'compose', 'dimensions', 'detail',
 ])
 
 /**
@@ -1078,7 +1080,9 @@ export function checkDataModels(rootDir, opts = {}) {
   for (const v of checkDomainCoverage(rootDir)) push(DBT_PROJECT_REL, v.line, v.message)
 
   // ── 规则 ⑤⑥⑦：语义声明 ───────────────────────────────────────────────────────
-  /** @type {Array<{ name: string, fields: any, file: string }>} */
+  /** 读面视图（`dbt/models/**\/views/vw_*.sql`）—— detail.relation 的存在性查这里（下钻三键） */
+  const viewFiles = sqlFiles.filter((f) => VIEW_RE.test(f))
+  /** @type {Array<{ name: string, fields: any, file: string, measureKeys: string[] }>} */
   const metrics = []
   for (const rel of ymlFiles) {
     let doc
@@ -1088,8 +1092,25 @@ export function checkDataModels(rootDir, opts = {}) {
       push(rel, 0, `YAML 解析失败：${/** @type {Error} */ (e).message}`)
       continue
     }
+    // 顶层 measures:（spec 2026-10-21 §2.3）：{ '组件名@粒度': 表达式 } 映射。
+    // 表达式是声明文本（与 expression 同信任级）：非空字符串、不含分号。
+    /** @type {string[]} */
+    const measureKeys = []
+    if (doc.measures !== undefined) {
+      if (typeof doc.measures !== 'object' || doc.measures === null || Array.isArray(doc.measures)) {
+        push(rel, 0, '`measures:` 必须是 `{ "组件名@粒度": 表达式 }` 映射，不是数组。')
+      } else {
+        for (const [k, v] of Object.entries(doc.measures)) {
+          if (!/^[a-z_]+@[a-z_]+$/.test(k)) push(rel, 0, `\`measures.${k}\` 键名不合 \`<snake>@<snake>\` 形态。`)
+          if (typeof v !== 'string' || v.trim() === '' || v.includes(';')) {
+            push(rel, 0, `\`measures.${k}\` 必须是非空、不含分号的表达式字符串。`)
+          }
+          measureKeys.push(k)
+        }
+      }
+    }
     if (!Array.isArray(doc.metrics)) continue
-    for (const m of doc.metrics) metrics.push({ name: asText(m?.name), fields: m, file: rel })
+    for (const m of doc.metrics) metrics.push({ name: asText(m?.name), fields: m, file: rel, measureKeys })
   }
 
   /** @type {Map<string, string[]>} */
@@ -1108,6 +1129,42 @@ export function checkDataModels(rootDir, opts = {}) {
         + '（声明写了但没生效，症状是该指标永远不受限制）。'
         + `允许的键：${[...METRIC_KEYS].join(' / ')}。`,
       )
+    }
+
+    // ⑤-x 下钻三键（spec 2026-10-21 §2.3）：同现或同缺——半套声明 = 消费面 NO_DETAIL_BINDING
+    // 与声明意图相左（静默面）。relation 只认 vw_*（Phase 1 下钻读直读湖视图）且文件必须在仓。
+    const dkeys = ['compose', 'dimensions', 'detail'].filter((k) => metric.fields?.[k] !== undefined)
+    if (dkeys.length > 0 && dkeys.length < 3) {
+      push(metric.file, 0, `指标 \`${metric.name}\` 的下钻三键只给了 ${dkeys.join('/')} —— `
+        + 'compose/dimensions/detail 必须**同现或同缺**（半套 = 声明了但下钻面起不来，静默）。')
+    }
+    const composeRaw = metric.fields?.compose
+    if (composeRaw !== undefined) {
+      const compose = typeof composeRaw === 'string' ? composeRaw : ''
+      if (compose === '' || compose.includes(';')) {
+        push(metric.file, 0, `指标 \`${metric.name}\` 的 compose 必须是非空、不含分号的组件组合式（如 \`sale_amount@order - return_amount@line\`）。`)
+      }
+      for (const m of compose.matchAll(/[A-Za-z_][A-Za-z0-9_]*@[a-z0-9_]+/g)) {
+        // 与**同文件**的 measures 键集比对（键集随 metric 一起收集，见上方收集循环）：未命中 = 引用了未声明的组件
+        if (!metric.measureKeys.includes(m[0])) {
+          push(metric.file, 0, `指标 \`${metric.name}\` 的 compose 引用了未声明的度量组件 \`${m[0]}\` —— 组件必须声明在**同文件**顶层 \`measures:\`（键形如 \`sale_amount@order\`），compose 只能组合已声明的组件。`)
+        }
+      }
+      const dims = metric.fields?.dimensions
+      if (!Array.isArray(dims) || dims.length === 0 || !dims.every((d) => typeof d === 'string' && /^[a-z_][a-z0-9_]*$/.test(d)) || new Set(dims).size !== dims.length) {
+        push(metric.file, 0, `指标 \`${metric.name}\` 的 dimensions 必须是非空、无重复、蛇形命名的字符串数组——它是**原子粒度闭集**，请求维度只能取其子集。`)
+      }
+      const detail = metric.fields?.detail
+      const rel = typeof detail?.relation === 'string' ? detail.relation : ''
+      if (!/^vw_[a-z0-9_]+$/.test(rel)) {
+        push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.relation ${JSON.stringify(rel)} 不合 \`vw_*\` 形态 —— Phase 1 下钻只读直读湖视图（spec §2.2）。`)
+      } else if (!viewFiles.includes(`dbt/models/lemeng/views/${rel}.sql`) && !viewFiles.some((f) => f.endsWith(`/${rel}.sql`))) {
+        push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.relation \`${rel}\` 在 dbt/models/**/views/ 下不存在——下钻会查一个不存在的关系（运行期才炸）。`)
+      }
+      const filter = typeof detail?.filter === 'string' ? detail.filter : ''
+      if (filter === '' || filter.includes(';')) {
+        push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.filter 必须是非空、不含分号的布尔表达式（如 \`state = 'FINISHED'\`）。`)
+      }
     }
 
     // ⑤-b `required_scope` 形态（spec 2026-10-17 §4.2）：给了就必须是非空、无首尾空白的字符串。

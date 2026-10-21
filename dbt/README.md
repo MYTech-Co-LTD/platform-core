@@ -169,6 +169,17 @@ vars，报 `Required var 'x' not found in config`）；`materialize.sh` 侧 `DAT
 sync 取路径段 `lemeng/<资产>` 推导 `stg_lemeng_<资产>` 关系集物化进
 `data.metrics.freshness_relations`，spec §10.7.3；不声明 = 该指标无自动水位）。
 
+**下钻三键与度量组件（spec 2026-10-21 §2.3/§2.3.1，#977）**：每条指标可另声明 `compose` /
+`dimensions` / `detail` —— **三者同现或同缺**（半套 = 声明了但下钻面起不来，静默）。
+`compose` = 非空、不含分号的**组件组合式**（如 `sale_amount@order - return_amount@line`）；
+`dimensions` = 非空、无重复、蛇形命名的字符串数组——**原子粒度闭集**，请求维度只能取其子集；
+`detail` = `{relation, filter}` 键闭集：`relation` 必须合 `vw_*` 且
+`dbt/models/**/views/<relation>.sql` 在仓（Phase 1 下钻只读直读湖视图），`filter` = 非空、
+不含分号的布尔表达式。配套的**顶层** `measures:`（与 `metrics:` 同级，一个文件一份）=
+`{ '组件名@粒度': 表达式 }` 映射（键合 `<snake>@<snake>`，表达式非空、不含分号）——它是
+`compose` 引用闭集的唯一事实源：compose 引用的组件必须声明在**同文件**的 `measures:`。
+本段键清单与 `check-data-models.mjs` 的 `METRIC_KEYS` 同步维护（加字段 = 改常量 + 改本 README + 走 PR）。
+
 **T9 消费的那条规则（唯一事实源）**：指标名 → 对账文件名，由
 `scripts/check-data-models.mjs` **导出的函数**给出，**文档不复述规则**：
 
