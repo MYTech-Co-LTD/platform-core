@@ -358,6 +358,12 @@ if (composeRaw !== undefined) {
   for (const m of compose.matchAll(/[A-Za-z_][A-Za-z0-9_]*@[a-z0-9_]+/g)) {
     push(metric.file, 0, `指标 \`${metric.name}\` 的 compose 引用组件 \`${m[0]}\`——其必须声明在同文件顶层 \`measures:\`（校验见下方 measures 扫描）。`)  // 占位：与 measures 集比对，见 Step 3b
   }
+  // 整串文法锚定（裁决 2A，2026-10-21 评审后人与裁定）：与 sync composeOf 同判据——剥掉组件引用与
+  // + - ( ) 空白后必须无残留，否则 = 自由 SQL 混进声明面。门禁期就红，不等 sync 物化前才炸。
+  const residue = compose.replace(/[A-Za-z_][A-Za-z0-9_]*@[a-z0-9_]+/g, ' ').replace(/[+\-()\s]/g, '')
+  if (residue !== '') {
+    push(metric.file, 0, `指标 \`${metric.name}\` 的 compose 含文法外记号「${residue.slice(0, 20)}」——只许组件引用与 + - ( ) 空白（不引入自由 SQL）；新算术请先落成同文件 \`measures:\` 组件。`)
+  }
   const dims = metric.fields?.dimensions
   if (!Array.isArray(dims) || dims.length === 0 || !dims.every((d) => typeof d === 'string' && /^[a-z_][a-z0-9_]*$/.test(d)) || new Set(dims).size !== dims.length) {
     push(metric.file, 0, `指标 \`${metric.name}\` 的 dimensions 必须是非空、无重复、蛇形命名的字符串数组——它是**原子粒度闭集**，请求维度只能取其子集。`)
@@ -1245,3 +1251,4 @@ const DETAIL_DEF = {
 - **Spec 覆盖**：§2.3 声明面 → Task 4/5/6；§2.4 query_detail+rowCountTotal+bizday 必传 → Task 7；§2.5 权限五机制 → Task 1/3/7/8（词表裁剪/主体谓词/掩码/审计/路由门各归位）；§2.6 错误与双时钟 → Task 7；§4 Phase 1 判据 → Task 11；§4 真机渠道轮 → Task 11 Step 6；回滚 → Task 11 Step 7；§5 非目标（L2 不支持=存储涌现、无自由 SQL=compose 文法、不改 marts=全程未触）。spec §2.7 内存对齐 Phase 0 已做（#973）。
 - **已知偏差**：三处（裁决点），均在计划头与 PR 显式声明，spec 附录回写。
 - **类型一致性**：`DrillBinding{expr,dims,relation,filter}` 贯穿 Task 1/3/5/6/7；`DetailOk.rowCountTotal` 贯穿 7/8/9/10/11；`paramFilters` 返回 `{ok:true,filters}`/`{ok:false,reason,detail}` 与 authorize 现行 AuthzResult 的 denied 形状对齐；audit `drill` 可选字段与迁移 021 列名一致。
+- **执行期订正（2026-10-21）**：① Task 4 评审 plan-mandated 发现「门禁 compose 未整串文法锚定」→ 人裁决 **2A**：门禁补整串锚定（Task 4 Step 3 代码已含），与 Task 6 composeOf 构成纵深。② Task 3 落地订正：`L1MetricDef.drill` 为可选 `drill?: DrillBinding`（`Omit<MetricDef,'drill'>` 形状，写侧 `== null` 收口）；sync 侧「未声明 compose」映成缺省/undefined，勿传字面 null（checkJs 加宽陷阱）。
