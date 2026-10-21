@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.179.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.179.1...v0.179.2) - 2026-10-21
+- 【修复】askdata: 轨迹采集改成遍历所有 agent + 每 agent 一份水位 ([#960](https://github.com/MYTech-Co-LTD/platform-core/pull/960), [e9c3662](https://github.com/MYTech-Co-LTD/platform-core/commit/e9c3662e565266c8cd64ef2c644013124be0ac32))
+
+
 ## [0.179.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.179.0...v0.179.1) - 2026-10-21
 - 【修复】data: 销售额审计改 1 分容差（原为精确比较） ([#957](https://github.com/MYTech-Co-LTD/platform-core/pull/957), [3f2f4f7](https://github.com/MYTech-Co-LTD/platform-core/commit/3f2f4f7624dccce22c6a3d947da3920884c071ca))
 
