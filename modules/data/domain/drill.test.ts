@@ -253,6 +253,33 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     expect(audits[0].params[AUDIT_REASON]).toBe('lake_race_retry')
   })
 
+  it('count 腿单独撞湖竞态：重试恰一次成功，审计 reason=lake_race_retry（retried 多处累计）', async () => {
+    // 明细腿全干净、只有 count 腿第一次撞 ETag——审计 reason 若只看明细腿（cnt.retried 被丢），
+    // ok 行会记 null，「重试是否长期够用」的数据源（spec §3.5）就漏了 count 这一半。
+    const { pool, audits } = fakePool([METRIC_ROW])
+    const sqls: string[] = []
+    let countCalls = 0
+    const deps = depsOf(pool, [], {
+      raceRetryDelayMs: 0,                                       // 测试缝：退避归零，免真等 1s
+      execute: async (sql: string) => {
+        sqls.push(sql)
+        if (/count\(\*\)/.test(sql)) {
+          countCalls++
+          if (countCalls === 1) throw new Error(RACE_MSG)
+          return { columns: ['n'], rows: [[15222]] }
+        }
+        return { columns: ['value'], rows: [[1]] }
+      },
+    })
+    const out = await runDetailQuery(deps, ORG, req(), 'drill:net_sales', ARGS, {})
+    expect(out.status).toBe('ok')
+    expect(sqls.length).toBe(3)                                  // 1 明细 + 2 count（1 撞 + 恰一次重试）
+    expect(sqls.filter((s) => /count\(\*\)/.test(s)).length).toBe(2)
+    expect(sqls[0], '明细腿全程干净').not.toContain('count(*)')
+    expect(audits[0].params[AUDIT_VERDICT]).toBe('ok')
+    expect(audits[0].params[AUDIT_REASON]).toBe('lake_race_retry')
+  })
+
   it('非 ETag 错误不重试（calls=1）→ warehouse_error 原文透出（窄匹配回归护栏）', async () => {
     const { pool, audits } = fakePool([METRIC_ROW])
     let calls = 0

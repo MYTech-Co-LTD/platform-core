@@ -170,7 +170,9 @@ export async function runDetailQuery(
   // ⚠️ 投影串必须带上 ` from <relation>`：整值掩码靠 topLevelValueHead 的「as value 后必须
   // 紧跟 , 或 from」尾锚定位（mask.ts，issue #824）——裸投影没有 from，头区间判 null ⇒
   // 整值掩码**静默不生效**。带上后 masked.sql 已含 from，下面拼 where 不再重复关系名；
-  // 无掩码时 masked.sql === projection ⇒ 执行的内层与 buildDrillSql 的 inner 逐字一致。
+  // 无掩码时 masked.sql === projection ⇒ 缺省维度（requested = 原子粒度）下执行的内层与
+  // buildDrillSql 的 inner 逐字一致；子集请求投影的是 requested（group by 仍是原子闭集，
+  // 外层 sum 后语义同值，但形状不与计划的 inner 逐字同——别拿「逐字一致」当全量前提）。
   const projection = `select ${requested.join(', ')}, (${drill.expr}) as value from ${drill.relation}`
   const masked = maskedSelectSql(
     projection,
@@ -206,6 +208,10 @@ export async function runDetailQuery(
     // ⚠️ brief 草稿此处写 `cnt.rows[0]`——execWithLakeRaceRetry 回的是 `{ result, retried }`，
     // cnt.rows 恒 undefined ⇒ TypeError「reading '0'」（ok 路径整体 500 化）。须取 cnt.result。
     rowCountTotal = Number(cnt.result.rows[0]?.[0] ?? 0)
+    // count 腿的竞态也要并入审计 reason（与 query-service「主计划 + totalSql 多处累计」同一
+    // 纪律）：count 单独撞 ETag 时，ok 行若记 reason=null，spec §3.5 判「重试是否长期够用」
+    // 的数据源就漏了 count 这一半。
+    if (cnt.retried) retried = true
   } catch (err) {
     return await toError(err)
   }
