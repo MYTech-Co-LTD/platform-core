@@ -25,7 +25,7 @@
 | 文件 | 职责 |
 |---|---|
 | `scripts/gen-data-projection.mjs` | **改**：新增「视图面」——把 `vw_*` 的 SELECT 列表也纳入生成/校验 |
-| `dbt/models/common/views/vw_lemeng_retail_order_line.sql` | **新建**：视图骨架（config + FROM 冷/热 + 封版断言），SELECT 列表由生成器写入 |
+| `dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql` | **新建**：视图骨架（config + FROM 冷/热 + 封版断言），SELECT 列表由生成器写入 |
 | `scripts/check-data-models.mjs` | **改**：主体列扫描面扩到 `views/` |
 | `dbt/tests/lemeng/assert_vw_retail_order_line_matches_stg.sql` | **新建**：行为不变量（闭窗日行数一致） |
 | `deploy/data-compose.yml` | **改**：pg_duckdb 显式 `duckdb.memory_limit` |
@@ -49,7 +49,7 @@
 it('视图面：vw_ 模型的 SELECT 列表与 staging 同源生成', () => {
   const root = mkTmpRepoWithViewSkeleton()   // 复用本文件已有的 temp-repo 构造器
   const code = runGenerate(root, {})
-  const view = readFileSync(join(root, 'dbt/models/common/views/vw_lemeng_retail_order_line.sql'), 'utf8')
+  const view = readFileSync(join(root, 'dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql'), 'utf8')
   // 列区与 staging 逐字相同（同一 buildStagingSelect）
   const stg = readFileSync(join(root, 'dbt/models/lemeng/staging/stg_lemeng_retail_order_line.sql'), 'utf8')
   assert.equal(selectListOf(view), selectListOf(stg))
@@ -58,7 +58,7 @@ it('视图面：vw_ 模型的 SELECT 列表与 staging 同源生成', () => {
 
 it('视图面：手改视图列区 ⇒ --check 报红', () => {
   const root = mkTmpRepoWithViewSkeleton()
-  const p = join(root, 'dbt/models/common/views/vw_lemeng_retail_order_line.sql')
+  const p = join(root, 'dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql')
   writeFileSync(p, readFileSync(p, 'utf8').replace('as sale_money', 'as sale_money_x'))
   assert.equal(runGenerate(root, { check: true }), 1)
 })
@@ -73,9 +73,9 @@ Expected: FAIL —— `ENOENT … vw_lemeng_retail_order_line.sql`（视图面�
 
 ```js
 // scripts/gen-data-projection.mjs —— 与 staging 分支并列
-/** 视图模型路径：vw_<domain>_<table>.sql，统一放 dbt/models/common/views/ */
+/** 视图模型路径：vw_<domain>_<table>.sql，统一放 dbt/models/<domain>/views/ */
 export function viewPathFor(rootDir, c) {
-  return join(rootDir, 'dbt/models/common/views', `vw_${c.domain}_${c.table}.sql`)
+  return join(rootDir, 'dbt/models/' + c.domain + '/views', `vw_${c.domain}_${c.table}.sql`)
 }
 ```
 
@@ -111,7 +111,7 @@ git commit -m "feat(data): 生成器新增视图面——vw_* 列清单与 stagi
 ### Task 2: 视图模型骨架
 
 **Files:**
-- Create: `dbt/models/common/views/vw_lemeng_retail_order_line.sql`
+- Create: `dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql`
 
 **Interfaces:**
 - Consumes: Task 1 的 `viewPathFor` + 生成器（写入 SELECT 列表）
@@ -128,7 +128,7 @@ git commit -m "feat(data): 生成器新增视图面——vw_* 列清单与 stagi
 
 ```bash
 cp dbt/models/lemeng/staging/stg_lemeng_retail_order_line.sql \
-   dbt/models/common/views/vw_lemeng_retail_order_line.sql
+   dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql
 ```
 
 然后只改两处：
@@ -153,7 +153,7 @@ cp dbt/models/lemeng/staging/stg_lemeng_retail_order_line.sql \
 - [ ] **Step 2: 生成列区**
 
 Run: `pnpm exec tsx scripts/gen-data-projection.mjs`
-Expected: 提示改写 `dbt/models/common/views/vw_lemeng_retail_order_line.sql`；文件列区变为 25 列 + `{{ subject_org() }} as org`
+Expected: 提示改写 `dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql`；文件列区变为 25 列 + `{{ subject_org() }} as org`
 
 - [ ] **Step 3: 校验生成物幂等 + 未被手改**
 
@@ -162,13 +162,18 @@ Expected: exit 0
 
 - [ ] **Step 4: 本地 YAML/SQL 结构自检（无 dbt 时）**
 
-Run: `grep -c "r\['" dbt/models/common/views/vw_lemeng_retail_order_line.sql`
-Expected: `25`（与契约列数一致；`org` 不是契约列）
+Run: `diff <(sed 's/^--.*//' dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql) <(sed 's/^--.*//' dbt/models/lemeng/staging/stg_lemeng_retail_order_line.sql)`
+Expected: 只差 `materialized='view'` 那一行（**这是本步的判据**）
+
+> ⚠️ **别用 `grep -c "r\['"` 当判据**（本稿早先写的 `25` 是错的，2026-10-21 实测订正）：
+> 该文件有**冷/热两个平铺投影位点**，每处 25 个契约列 = 50，再加 7 处出现在 FROM/注释里的 `r['`，
+> 实测恒为 **57**。「25」只是**单条**投影位点的列数，拿它当全文计数判据必然假红。
+> 与 staging 逐字 diff 才是真判据：它同时盖住「列区同源」与「FROM 块同源」两件事。
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add dbt/models/common/views/vw_lemeng_retail_order_line.sql
+git add dbt/models/lemeng/views/vw_lemeng_retail_order_line.sql
 git commit -m "feat(data): 新增零售明细直读湖视图 vw_lemeng_retail_order_line"
 ```
 
