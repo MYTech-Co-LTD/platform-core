@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.179.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.179.0...v0.179.1) - 2026-10-21
+- 【修复】data: 销售额审计改 1 分容差（原为精确比较） ([#957](https://github.com/MYTech-Co-LTD/platform-core/pull/957), [3f2f4f7](https://github.com/MYTech-Co-LTD/platform-core/commit/3f2f4f7624dccce22c6a3d947da3920884c071ca))
+
+
 ## [0.179.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.178.0...v0.179.0) - 2026-10-21
 - 【新增】data: 审计层改读「冷+热」两条路径，摘掉镜像 sink ([#956](https://github.com/MYTech-Co-LTD/platform-core/pull/956), [3b95bba](https://github.com/MYTech-Co-LTD/platform-core/commit/3b95bba30377dae017a9addb95058c7010a9931a))
 
