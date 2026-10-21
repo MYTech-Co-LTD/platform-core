@@ -36,6 +36,12 @@ export interface AuditEntry {
    *  ——判据空时调用方传 null，别传空对象。审计要能回答「看到的是原值还是掩码值」：
    *  「有列被豁免」与「压根没声明掩码」都必须可区分（前者记 `__exempted__`）。 */
   masking: MaskingAudit | null
+  /**
+   * 触发本条审计的 MCP 工具名（spec 2026-10-21 §8）。可空：
+   *   · 分析师面 11 工具 / legacy 指标工具（/mcp）恒写工具名；
+   *   · HTTP /query、chat 等无工具通路缺省（列落 null）。
+   */
+  tool?: string | null
 }
 
 /**
@@ -45,17 +51,21 @@ export interface AuditEntry {
  * ⚠️ `rowCount: null` 与 `0` 是两回事：null = 没有行数可记（被拒/未执行），0 = 执行了但零行。
  *    传值时不写 `?? 0` 之类的兜底，否则两者在库里被抹平成同一个值。
  */
-export async function writeAudit(pool: Pool, entry: AuditEntry): Promise<void> {
-  await pool.query(
+export async function writeAudit(pool: Pool, entry: AuditEntry): Promise<{ id: number; createdAt: Date }> {
+  const r = await pool.query(
     `insert into data.query_audit
-       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking, tool)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+     returning id, created_at`,
     [
       entry.org, entry.userId, entry.channel, entry.keyId, entry.metricId,
       // jsonb 参数位接受字符串（pg 侧 parse 成 jsonb）；显式 stringify 让线上格式不依赖驱动行为。
       // masking 的 null 必须原样落 NULL（不是 'null'::jsonb、更不能是 '{}'）——见字段注记。
       JSON.stringify(entry.params), entry.rowCount, entry.verdict, entry.reason,
       entry.masking === null ? null : JSON.stringify(entry.masking),
+      entry.tool ?? null,
     ],
   )
+  // 信封的 audit 节要用（spec 2026-10-21 §4：回包可独立核对审计行）；既有调用方不消费返回值。
+  return { id: Number(r.rows[0].id), createdAt: r.rows[0].created_at as Date }
 }

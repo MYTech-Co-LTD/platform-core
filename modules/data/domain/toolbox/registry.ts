@@ -18,9 +18,7 @@ import type { Pool } from 'pg'
 import type { MetricParamDef, Requester, SourceTaggedMetric } from '../authz'
 import { visibleMetrics } from '../authz'
 import type { SqlExecutor } from '../query-service'
-// 审计写侧：T1 先用本文件内的 writeCallAudit（列清单与 audit-store 对齐，含 tool 列；
-// 本任务的两个 callTool 测试用假 pool，不会真打库，故列先于迁移存在没有运行时问题）。
-// T5 给 writeAudit 加 tool 字段后，本文件**切换**到 writeAudit（单一写路径，见 Task 5 Step 3b）。
+import { writeAudit } from '../audit-store'
 
 export const TOOL_NAME_RE = /^[A-Za-z0-9_.-]+$/
 export const ANALYST_FACE_MAX_TOOLS = 14
@@ -256,9 +254,16 @@ export async function callTool(deps: ToolboxDeps, name: string, args: Record<str
   const finish = async (
     base: ToolImplResult, verdict: 'ok' | 'denied' | 'error', reason: string,
   ): Promise<ToolImplResult> => {
-    await writeCallAudit(deps, args, {
-      tool: name, metricId: base.auditMetricId ?? '', rowCount: base.auditRowCount ?? null,
+    // 单点审计（spec §8：拒绝/出错也写）。调用入参原样进 params（排障可重放这次调用）。
+    await writeAudit(deps.pool, {
+      org: deps.org,
+      userId: deps.requester?.userId ?? '(anonymous)',
+      channel: deps.requester?.channel ?? 'session',
+      keyId: deps.requester?.keyId ?? null,
+      metricId: base.auditMetricId ?? '',
+      params: args, rowCount: base.auditRowCount ?? null,
       verdict, reason: reason === '' ? null : reason,
+      masking: null, tool: name,
     })
     return base
   }
@@ -288,24 +293,6 @@ export async function callTool(deps: ToolboxDeps, name: string, args: Record<str
       'error', detail.slice(0, 200),
     )
   }
-}
-
-/** 审计写侧（过渡形态：T5 给 writeAudit 加 tool 后切换过去——见 Task 5 Step 3b，参数语义不变）。 */
-async function writeCallAudit(
-  deps: ToolboxDeps,
-  callArgs: Record<string, unknown>,
-  e: { tool: string; metricId: string; rowCount: number | null; verdict: 'ok' | 'denied' | 'error'; reason: string | null },
-): Promise<void> {
-  await deps.pool.query(
-    `insert into data.query_audit
-       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking, tool)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, null, $10)`,
-    [
-      deps.org, deps.requester?.userId ?? '(anonymous)', deps.requester?.channel ?? 'session',
-      deps.requester?.keyId ?? null, e.metricId, JSON.stringify(callArgs), e.rowCount,
-      e.verdict, e.reason, e.tool,
-    ],
-  )
 }
 
 // ── legacy 读面（每指标一工具）的命名与投影 ────────────────────────────────────────────
