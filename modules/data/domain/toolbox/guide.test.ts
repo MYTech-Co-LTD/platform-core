@@ -10,6 +10,7 @@ const deps = (): ToolboxDeps => ({
   requester: { userId: 'u', orgId: 'acme', channel: 'pat', keyId: null, scopes: [], hasScope: () => true } as Requester,
   adoptedSources: new Set<string>(),
   wh: async () => { throw new Error('guide 不该碰仓库') },
+  now: () => new Date('2026-10-21T10:00:00+08:00'),
 })
 
 describe('guideImpl / harnessCatalogImpl', () => {

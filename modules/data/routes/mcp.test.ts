@@ -255,9 +255,120 @@ describePg('POST /mcp 的方法面（需要 DATABASE_URL）', () => {
     expect(callTextOf(body)).toMatchObject({
       status: 'ok', subject: ORG, rows: [[ORG, '2026-08-15']],
     })
-    // 主体钉死 + 业务参数落位：SQL 只由授权核心拼，MCP 层不改写
-    expect(calls.length).toBe(1)
+    // 主体钉死 + 业务参数落位：SQL 只由授权核心拼，MCP 层不改写。
+    // ⚠️ Wave 1 起辅助读（新鲜度/维度名）也走 execute 这条缝（warehouseExec = execute）⇒
+    //    calls 里会出现 load_log 等辅助 SQL——主计划仍应恰一条（按表名计数）。
+    expect(calls.filter((c) => c.includes('mart_sales_daily'))).toHaveLength(1)
     expect(calls[0]).toContain(`WHERE org = '${ORG}'`)
     expect(calls[0]).toContain(`day = '2026-08-15'::date`)
+  })
+})
+
+// ══ 分析师面（spec 2026-10-21：协议 2025-11-25 + registry 驱动 + 信封 + 审计 tool）════════
+describePg('POST /mcp 分析师面（需要 DATABASE_URL）', () => {
+  const pool = new Pool({ connectionString: dbUrl })
+
+  afterAll(async () => {
+    expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
+    await pool.query('delete from data.query_audit where org = $1', [ORG]).catch(() => {})
+    await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
+    await pool.end().catch(() => {})
+  })
+
+  /** 冒号 id 夹具（sanitize 命名面：tools/list 出 acme__sales__v2，tools/call 可用）。 */
+  const ACME_V2: MetricDef = {
+    id: 'acme:sales:v2', title: '销售 v2', description: '',
+    requiredScope: null, subjectColumn: 'org',
+    selectSql: 'SELECT org, day FROM marts.sales_daily',
+    groupBy: '', params: {},
+  }
+
+  async function seeded(): Promise<Hono> {
+    await applyMigrations(pool)
+    await upsertMetric(pool, ORG, SALES_DAILY, 'fixture')
+    await upsertMetric(pool, ORG, ACME_V2, 'fixture')
+    const calls: string[] = []
+    const execute: SqlExecutor = async (sql) => {
+      calls.push(sql)
+      return { columns: ['org', 'day'], rows: [[ORG, '2026-08-15']] }
+    }
+    // execute 用**变量**携带进 ctx：绕开 ModuleContext 字面量的多余属性检查（既有 seededApp 同法）
+    const ctx = { pool, execute }
+    return buildTestApp(mod, makeIdentity({ orgId: ORG }), ctx, { id: 1, casdoor_org: ORG })
+  }
+
+  it('initialize 回 2025-11-25', async () => {
+    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), { pool: null as never })
+    const res = await rpc(app, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
+    const body = await res.json()
+    expect(body.result.protocolVersion).toBe('2025-11-25')
+  })
+
+  it('tools/list：分析师面固定工具在（带 annotations/outputSchema/title）、legacy 指标工具名 sanitized', async () => {
+    const app = await seeded()
+    const res = await rpc(app, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    const tools = (await res.json()).result.tools as { name: string; title?: string; annotations?: { readOnlyHint?: boolean }; outputSchema?: unknown }[]
+    const names = tools.map((t) => t.name)
+    for (const t of ['data_agent_guide', 'data_harness_catalog', 'search_catalog', 'describe_metric', 'query_metric', 'get_freshness']) {
+      expect(names).toContain(t)
+    }
+    expect(names).toContain('sales_daily')          // 无冒号 id 名不变
+    expect(names).toContain('acme__sales__v2')      // 冒号 id sanitize
+    expect(names).not.toContain('acme:sales:v2')
+    const guide = tools.find((t) => t.name === 'data_agent_guide')!
+    expect(guide.annotations?.readOnlyHint).toBe(true)
+    expect(guide.outputSchema).toBeDefined()
+    expect(typeof guide.title).toBe('string')
+  })
+
+  it('tools/call data_agent_guide ⇒ structuredContent 在场、isError=false、审计带 tool 且 metric_id 为空串', async () => {
+    const app = await seeded()
+    const res = await rpc(app, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'data_agent_guide', arguments: {} } })
+    const body = await res.json()
+    expect(body.result.isError).toBe(false)
+    expect(body.result.structuredContent.status).toBe('ok')
+    expect(typeof body.result.structuredContent.workflow).toBe('string')
+    const audit = await pool.query(
+      "select tool, metric_id, row_count from data.query_audit where org = $1 and verdict = 'ok' order by id desc limit 1", [ORG])
+    expect(audit.rows[0]).toMatchObject({ tool: 'data_agent_guide', metric_id: '', row_count: null })
+  })
+
+  it('tools/call query_metric（经 runQuery 全链）⇒ 信封 structuredContent；主体钉死回声', async () => {
+    const app = await seeded()
+    const res = await rpc(app, {
+      jsonrpc: '2.0', id: 3, method: 'tools/call',
+      params: { name: 'query_metric', arguments: { metricId: 'sales_daily', args: { day_from: '2026-08-15' } } },
+    })
+    const body = await res.json()
+    expect(body.result.isError).toBe(false)
+    const env = body.result.structuredContent as Record<string, Record<string, unknown>>
+    expect(env.status).toBe('ok')
+    expect(env.subject).toMatchObject({ org: ORG })
+    expect(env.result).toMatchObject({ rowCount: 1 })
+    expect(env.audit).toBeDefined()
+  })
+
+  it('tools/call 未声明指标（裸 id，兼容回退路径）⇒ denied/metric_not_declared + 审计留痕', async () => {
+    const app = await seeded()
+    const res = await rpc(app, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'nope', arguments: {} } })
+    const body = await res.json()
+    expect(body.result.isError).toBe(true)
+    // 兼容回退：非工具名的 name 当裸指标 id 走 runQuery ⇒ 拒因与升级前一致（metric_not_declared）
+    expect(callTextOf(body as { result: { content: { text: string }[] } })).toMatchObject({ status: 'denied', reason: 'metric_not_declared' })
+    const audit = await pool.query(
+      "select tool, verdict, reason from data.query_audit where org = $1 order by id desc limit 1", [ORG])
+    expect(audit.rows[0]).toMatchObject({ tool: 'nope', verdict: 'denied', reason: 'metric_not_declared' })
+  })
+
+  it('legacy 工具仍可用：sanitized 名反解回 metricId；structured 透传 runQuery 结果', async () => {
+    const app = await seeded()
+    const res = await rpc(app, {
+      jsonrpc: '2.0', id: 5, method: 'tools/call',
+      params: { name: 'acme__sales__v2', arguments: {} },
+    })
+    const body = await res.json()
+    expect(body.result.isError).toBe(false)
+    expect(callTextOf(body as { result: { content: { text: string }[] } })).toMatchObject({ status: 'ok', subject: ORG })
+    expect(body.result.structuredContent.status).toBe('ok')
   })
 })

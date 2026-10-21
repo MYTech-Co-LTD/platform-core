@@ -31,7 +31,7 @@ const shanghaiToday = (now: () => Date): string => {
 export const guideImpl: ToolImpl = async (deps) => {
   const today = shanghaiToday(deps.now ?? (() => new Date()))
   return {
-    payload: { today, workflow: GUIDE_TEXT_BUILDER(today) },
+    payload: { status: 'ok', today, workflow: GUIDE_TEXT_BUILDER(today) },
     isError: false,
     auditRowCount: null,
   }
@@ -39,6 +39,7 @@ export const guideImpl: ToolImpl = async (deps) => {
 
 export const harnessCatalogImpl: ToolImpl = async () => ({
   payload: {
+    status: 'ok',
     tools: ANALYST_TOOLS.map((t) => ({
       name: t.name, group: t.group, title: t.title, description: t.description,
       requiredScope: t.requiredScope, mutating: t.mutating, annotations: t.annotations,
