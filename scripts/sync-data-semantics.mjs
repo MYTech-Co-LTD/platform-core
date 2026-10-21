@@ -75,6 +75,7 @@ import { loadSensitivity } from './check-column-scope-monotonicity.mjs'
 // 而不是值 import：只借它的**形状**，不在运行期多 import 一个模块。
 /** @typedef {import('../modules/data/domain/authz.ts').MetricParamDef} MetricParamDef */
 /** @typedef {import('../modules/data/domain/authz.ts').MaskSpec} MaskSpec */
+/** @typedef {import('../modules/data/domain/authz.ts').DrillBinding} DrillBinding */
 
 export const SCRIPT_NAME = 'sync-data-semantics'
 
@@ -129,6 +130,12 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  *                  从 sources 推导；null 同上——接住库内旧行）
  * @property {MaskSpec[] | null} masks 值级掩码声明（spec 2026-10-17 §5.2，声明 `mask` 的物化值；
  *                  null = 未声明——接住库内旧行与 L2 侧）
+ * @property {string | null} drillExpr 下钻值表达式（下钻 spec 2026-10-21 §2.3，声明 compose 的编译产物
+ *                  ——composeOf；null = 未声明。库侧行的 `MetricRow.drill` 是归一后的可选绑定，
+ *                  **必须**先经 `drillTripleOf` 翻译成这份三键形状再进比对）
+ * @property {string[] | null} drillDims 下钻维度闭集（声明 `dimensions` 的物化值；null = 未声明）
+ * @property {{ relation: string, filter: string } | null} drillDetail 下钻明细关系与行域过滤
+ *                  （声明 `detail` 的物化值；null = 未声明）
  */
 
 /**
@@ -471,6 +478,66 @@ export function deriveParams(/** @type {readonly string[]} */ grain) {
 }
 
 /**
+ * 顶层 `measures:` → Map（键 `<snake>@<snake>`；形状由门禁把守，这里再兜一道：非空、无分号）。
+ *
+ * 为什么 sync 侧还要再兜一道：本脚本会被**手跑**（不经 CI），门禁拦不住手跑路径；
+ * 而组件体是要拼进下钻 SQL 的——分号/空体这类垃圾形状落库 = 静默坏下钻。
+ *
+ * @param {Record<string, unknown> | null | undefined} parsed YAML 解析结果（顶层对象）
+ * @returns {Map<string, string>} 组件键 → 组件体（首尾空白已剥；`measures:` 缺席 = 空 Map）
+ */
+export function measuresOf(parsed) {
+  const raw = parsed?.measures
+  if (raw === undefined || raw === null) return new Map()
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('`measures:` 必须是 `{ "组件名@粒度": 表达式 }` 映射')
+  }
+  const out = new Map()
+  for (const [k, v] of Object.entries(raw)) {
+    const body = typeof v === 'string' ? v.trim() : ''
+    if (!/^[a-z_]+@[a-z_]+$/.test(k) || body === '' || body.includes(';')) {
+      throw new Error(`\`measures.${k}\` 形态不合规 —— 键须 \`<snake>@<snake>\`，表达式须非空且不含分号`)
+    }
+    out.set(k, body)
+  }
+  return out
+}
+
+const MEASURE_REF_RE = /[A-Za-z_][A-Za-z0-9_]*@[a-z0-9_]+/g
+
+/**
+ * compose → drill_expr：组件引用替换为 `(<组件体>)`。封闭文法：只许组件引用与 `+ - ( )` 空白——
+ * 乘除/数字/其它标识符一律响亮失败（不引入自由 SQL，全局约束 12；括号包裹保证替换后优先级不变）。
+ *
+ * 文法检查**先于**引用替换：先把记号问题挡掉，再谈引用解析——否则「未知引用 * 2」会只报引用，
+ * 把文法漏洞藏在第二条错误后面。
+ *
+ * @param {unknown} raw 声明里的 `compose` 原值（undefined/null = 未声明）
+ * @param {string} metricName 指标名（只用于错误信息）
+ * @param {Map<string, string>} measures `measuresOf` 的产物（组件键 → 组件体）
+ * @returns {string | null} null = 未声明 compose（聚合照旧，不下钻）
+ */
+export function composeOf(raw, metricName, measures) {
+  if (raw === undefined || raw === null) return null
+  const compose = String(raw)
+  if (compose.trim() === '' || compose.includes(';')) {
+    throw new Error(`指标 \`${metricName}\` 的 compose 必须是非空、不含分号的组件组合式`)
+  }
+  const stripped = compose.replace(MEASURE_REF_RE, ' ').replace(/[+\-()\s]/g, '')
+  if (stripped !== '') {
+    throw new Error(`指标 \`${metricName}\` 的 compose 含文法外记号「${stripped.slice(0, 20)}」 —— `
+      + '只许组件引用与 + - ( ) 空白（不引入自由 SQL）；新算术请先落成组件')
+  }
+  return compose.replace(MEASURE_REF_RE, (ref) => {
+    const body = measures.get(ref)
+    if (body === undefined) {
+      throw new Error(`指标 \`${metricName}\` 的 compose 引用了未声明的度量组件 \`${ref}\` —— 请在同文件顶层 \`measures:\` 声明`)
+    }
+    return `(${body})`
+  })
+}
+
+/**
  * 可加判定（spec §8.4：total 自动伴随的物化依据）——**表达式形状的保守机械规则**。
  *
  * 两条判定，都取**保守**方向（漏给一个自动合计是小事；给比率编一个合计是错数）：
@@ -559,6 +626,10 @@ export function additivityOf(raw, name) {
  *   `source`      → `sourceSystem`（库列 `source_system`）：**源系统**（如 `lemeng`），
  *                     spec §3⑧ 的源维度。⚠️ 与同一份声明里的 `sources`（对象存储路径，人读）
  *                     **不是一回事**；也与库里的 `source`（取值 l1/l2 = 谁写的）不是一回事。
+ *   `compose` / `dimensions` / `detail` → 下钻三键 `drillExpr` / `drillDims` / `drillDetail`
+ *                     （下钻 spec 2026-10-21 §2.3；compose 经 `composeOf` 编译——组件引用替换为
+ *                     括号包裹的组件体。缺省三键全 null = 未声明下钻；顶层 `measures:` 是组件体
+ *                     的事实源，由 `measuresOf` 解析）。
  *   `owner` / `tier` / `sources` → **不落库**（`data.metrics` 没有对应列）。它们仍是治理面的
  *                     事实源（在 YAML 里、被静态门禁规则 ⑤ 强制必填），只是不在这张表上体现。
  *                     ⚠️ 这是本任务的一处**已知边界**，见 README「L2 的已知边界」。
@@ -573,6 +644,9 @@ export function declarationsFromYaml(parsed) {
   if (parsed === null || typeof parsed !== 'object') throw new Error(`${L1_DECLARATIONS_REL} 的顶层不是对象`)
   const metrics = /** @type {Record<string, unknown>} */ (parsed).metrics
   if (!Array.isArray(metrics)) throw new Error(`${L1_DECLARATIONS_REL} 缺少 metrics 数组`)
+  // 顶层 `measures:`（下钻 spec §2.3）：组件键 → 组件体。compose 的引用解析全靠它；
+  // 形状坏/引用悬空在这里响亮失败（发生在任何写库之前，--check 模式同样拦）。
+  const measures = measuresOf(/** @type {Record<string, unknown>} */ (parsed))
 
   return metrics.map((raw) => {
     const m = /** @type {Record<string, unknown>} */ (raw)
@@ -667,9 +741,22 @@ export function declarationsFromYaml(parsed) {
       // 值级掩码声明（spec 2026-10-17 §5.2）：缺省 null（未声明）；给了就逐项校验
       // （含「column 须逐字在 selectSql 里」——静默不生效形态的唯一拦点，见 masksOf）。
       masks: masksOf(m.mask, name, selectSql, grain),
+      // 下钻绑定（spec 2026-10-21 §2.3）：缺省三字段全 null（未声明）。门禁已拦「半套」，
+      // 这里对 dimensions/detail 再各兜一道形状（sync 会被手跑，不经 CI）。
+      drillExpr: composeOf(m.compose, name, measures),
+      drillDims: m.dimensions === undefined ? null
+        : (Array.isArray(m.dimensions) && m.dimensions.length > 0
+          && m.dimensions.every((/** @type {unknown} */ d) => typeof d === 'string' && /^[a-z_][a-z0-9_]*$/.test(d))
+          ? m.dimensions.map(String) : null),
+      drillDetail: m.detail === undefined ? null
+        : (typeof m.detail === 'object' && m.detail !== null
+          && typeof /** @type {any} */ (m.detail).relation === 'string'
+          && typeof /** @type {any} */ (m.detail).filter === 'string'
+          ? { relation: /** @type {any} */ (m.detail).relation, filter: /** @type {any} */ (m.detail).filter }
+          : null),
       // `reads` 上载进行对象：默认档要读它（`applyDefaultMaskTier`）。
-      // ⚠️ 它**不在** `comparableOf` 的 12 元组里 ⇒ 加它**不会**让 `--check` 凭空报漂移；
-      //    但 `reads` 的改动**仍可被 `--check` 检出**——经由它对**合成 masks**（第 12 元）的影响。
+      // ⚠️ 它**不在** `comparableOf` 的 16 元组里 ⇒ 加它**不会**让 `--check` 凭空报漂移；
+      //    但 `reads` 的改动**仍可被 `--check` 检出**——经由它对**合成 masks**（第 13 元）的影响。
       // ⚠️ 也**不会**影响写库：`upsertL1Metric` 的列清单来自 `ROW_COLUMNS` 白名单，多出的键被忽略。
       reads: Array.isArray(m.reads) ? m.reads.map(String) : null,
     }
@@ -687,6 +774,8 @@ export function declarationsFromYaml(parsed) {
  * 而库内没刷，水位/固定行会永远按旧链路算——必须被 --check 检出。
  * `masks` 第四组同理（spec 2026-10-17 §5.2）：掩码声明变了而库内没刷 = 掩码静默按旧声明生效
  * （安全面，宁可不生效也不能背着旧声明生效）——必须被 --check 检出。
+ * 下钻三键 第六组（下钻 spec 2026-10-21 §2.3）：下钻声明漂了而库内没刷 = 下钻面静默按旧声明跑，
+ * 必须被 --check 检出。
  */
 /**
  * 递归规范化：对象**键按字典序排序**，数组保序（顺序是语义的一部分）。
@@ -716,7 +805,57 @@ const comparableOf = (/** @type {ComparableMetric} */ row) => JSON.stringify(can
   row.slaDays,
   row.freshnessRelations,
   row.masks,
+  row.drillExpr,
+  row.drillDims,
+  row.drillDetail,
 ]))
+
+/**
+ * 声明行的下钻三键 → `upsertL1Metric` 入参的 `drill`（def 组装面；下钻 spec 2026-10-21 §2.3）。
+ *
+ * 为什么这层单独存在：行级三键是 **--check 比对面**的形状——恒在场，null = 未声明；
+ * 而 `L1MetricDef.drill` 是**可选** `DrillBinding`——字段**缺省**才是「未声明」的合法态
+ * （写侧 `== null` 收口）。两层各守各的口径，这层做翻译：未声明 ⇒ undefined（调用方省略
+ * drill 字段，不传字面 null）；「半套」（任一为 null 而另两个非 null）⇒ 响亮失败——
+ * 门禁的同现判据是 CI 权威，这里兜的是手跑路径（本脚本不经 CI）。
+ *
+ * @param {ComparableMetric} row declarationsFromYaml 的声明行
+ * @returns {DrillBinding | undefined} 未声明 = undefined（drill 字段缺省）
+ */
+export function drillOf(row) {
+  const expr = row.drillExpr ?? null
+  const dims = row.drillDims ?? null
+  const detail = row.drillDetail ?? null
+  if (expr === null && dims === null && detail === null) return undefined
+  if (expr === null || dims === null || detail === null) {
+    throw new Error('下钻三键必须同现（门禁同款判据，这里兜手跑）')
+  }
+  return { expr, dims, relation: detail.relation, filter: detail.filter }
+}
+
+/**
+ * 库行 → 比对行的下钻三键（--check 库侧的形状翻译；下钻 spec 2026-10-21 §2.3）。
+ *
+ * 为什么必须翻译：`loadPlatformCatalog` 回的 `MetricRow` 把三列归一成 `drill?: DrillBinding`
+ * （读侧 fail-closed：任一列缺/坏 ⇒ undefined = 未声明），而比对面（ComparableMetric）用
+ * 三键恒在场形状（null = 未声明）。不翻译 ⇒ 库侧三键恒 undefined ⇒ 声明了下钻的指标与库
+ * **恒不等** ⇒ --check 恒红（#700 同款「狼来了」形态，漂移信号作废）。声明侧与库侧都以
+ * 同一份三键进 `comparableOf`。
+ *
+ * @param {{ drill?: DrillBinding | null }} row 库行（MetricRow；只读它的 drill）
+ * @returns {{ drillExpr: string | null, drillDims: string[] | null, drillDetail: { relation: string, filter: string } | null }}
+ */
+export function drillTripleOf(row) {
+  const d = row.drill
+  if (d === undefined || d === null) {
+    return { drillExpr: null, drillDims: null, drillDetail: null }
+  }
+  return {
+    drillExpr: d.expr,
+    drillDims: [...d.dims],
+    drillDetail: { relation: d.relation, filter: d.filter },
+  }
+}
 
 /**
  * 计算「声明集 ↔ 已物化集」的差集（新增 / 更新 / 删除 / 未变）。
@@ -946,7 +1085,9 @@ async function main() {
   const declared = readDeclarations(rootDir)
   const pool = poolFromEnv()
   try {
-    const current = await loadPlatformCatalog(pool)
+    // 库行 → 比对行：MetricRow 的下钻是归一后的 `drill?`（读侧 fail-closed），比对面用的是
+    // 三键恒在场形状（null = 未声明）——不翻译，声明了下钻的指标与库恒不等 ⇒ --check 恒红。
+    const current = (await loadPlatformCatalog(pool)).map((r) => ({ ...r, ...drillTripleOf(r) }))
     const diff = diffDeclarations(declared, current)
 
     // 两种**不写库**的模式共用同一个 diff 打印器（T9 的门禁与人读的输出必须同源）
@@ -965,7 +1106,14 @@ async function main() {
       return
     }
 
-    for (const d of declared) await upsertL1Metric(pool, d)
+    // def 组装**先行于任何写库**：半套下钻声明在第一条 upsert 之前就响亮失败（不做半套物化）。
+    const defs = declared.map((row) => {
+      const drill = drillOf(row)
+      // 未声明下钻 ⇒ 省略 drill 字段（undefined），不传字面 null——`L1MetricDef.drill` 是
+      // 可选字段，「缺省」才是「未声明」的合法态（写侧 `== null` 收口）。
+      return drill === undefined ? row : { ...row, drill }
+    })
+    for (const d of defs) await upsertL1Metric(pool, d)
     // 删除侧：仓内声明里已经不存在的 L1 行（双向差集；作用域被 deleteStaleL1Metrics 钉在
     // org='platform' and source='l1'，碰不到任何租户的 L2 行）
     await deleteStaleL1Metrics(pool, declared.map((d) => d.id))
