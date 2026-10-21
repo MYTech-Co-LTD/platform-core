@@ -301,7 +301,7 @@ export function paramFilters(
 ): ParamFiltersResult {
   const filters: string[] = []
   for (const [name, value] of Object.entries(args)) {
-    if (wantTotal && name === 'total') continue
+    if (wantTotal && name === 'total') continue   // 已消费的保留键不再进参数校验（下钻面 wantTotal=false ⇒ total 是未知键，fail-closed）
     const param = params[name]
     if (!param) return { ok: false, reason: 'bad_param', detail: `unknown_param:${name}` }
     if (value === undefined || value === null || value === '') continue

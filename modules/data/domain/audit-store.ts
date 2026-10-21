@@ -36,6 +36,8 @@ export interface AuditEntry {
    *  ——判据空时调用方传 null，别传空对象。审计要能回答「看到的是原值还是掩码值」：
    *  「有列被豁免」与「压根没声明掩码」都必须可区分（前者记 `__exempted__`）。 */
   masking: MaskingAudit | null
+  /** 下钻面（spec 2026-10-21 §2.5）：下钻审计带粒度与总数；聚合审计缺席（null）。 */
+  drill?: { dimensions: string[]; rowCountTotal: number } | null
 }
 
 /**
@@ -48,14 +50,15 @@ export interface AuditEntry {
 export async function writeAudit(pool: Pool, entry: AuditEntry): Promise<void> {
   await pool.query(
     `insert into data.query_audit
-       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking, drill)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
     [
       entry.org, entry.userId, entry.channel, entry.keyId, entry.metricId,
       // jsonb 参数位接受字符串（pg 侧 parse 成 jsonb）；显式 stringify 让线上格式不依赖驱动行为。
       // masking 的 null 必须原样落 NULL（不是 'null'::jsonb、更不能是 '{}'）——见字段注记。
       JSON.stringify(entry.params), entry.rowCount, entry.verdict, entry.reason,
       entry.masking === null ? null : JSON.stringify(entry.masking),
+      entry.drill === undefined || entry.drill === null ? null : JSON.stringify(entry.drill),
     ],
   )
 }
