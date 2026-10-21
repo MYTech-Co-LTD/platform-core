@@ -476,7 +476,9 @@ node scripts/check-data-models.mjs && DATABASE_URL=... node scripts/sync-data-se
 -- net_amount 必恒红（退货冲减缺席）。⚠️ 两个组件都必须保持**聚合形态**（sum/max 在 order 粒度
 -- 的 GROUP BY 内求值，即 YAML 组件体的原样 body）——裸列引用 = GROUP BY 编译错（42803）。
 -- 判别式逐字取自 fct_retail_sale.sql（销售正形态 l.85-86 /
--- 退货绝对值形态 l.129-130，#908），漂移 = 本测试红。只测**闭窗日**（bizday < 上海今天）：
+-- 退货绝对值形态 l.129-130，#908），漂移 = 本测试红。⚠️ 对账用 **full join** 缺一侧按 0 计
+--（与 audit_lemeng__retail__net_sales 同型）——inner join 对「单侧局部丢分区」结构性失明。
+-- 只测**闭窗日**（bizday < 上海今天）：
 -- 当日分区被 tick 持续重写，两侧时点不同不可比。
 -- 生产口径唯一事实源是 dbt/semantics/l1_metrics.yml 的 measures/compose；本文件漂移 ⇒ 本测试红。
 with drill as (
@@ -507,12 +509,15 @@ fct as (
     from {{ ref('fct_retail_sale') }}
     group by system_book, bizday, branch_num
 )
-select drill.system_book, drill.bizday, drill.branch_num, drill.v as drill_v, fct.v as fct_v,
-       '下钻组件上卷与聚合口径不一致（measures/compose 与 fct_retail_sale 漂移：判别式、折半式或退货组件抄错）' as note
+select coalesce(drill.system_book, fct.system_book) as system_book,
+       coalesce(drill.bizday, fct.bizday)           as bizday,
+       coalesce(drill.branch_num, fct.branch_num)   as branch_num,
+       drill.v as drill_v, fct.v as fct_v,
+       '下钻组件上卷与聚合口径不一致（measures/compose 与 fct_retail_sale 漂移：判别式、折半式、退货组件抄错或单侧分区缺失）' as note
 from drill
-join fct using (system_book, bizday, branch_num)
-where drill.bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
-  and abs(drill.v - fct.v) > 0.01
+full join fct using (system_book, bizday, branch_num)
+where coalesce(drill.bizday, fct.bizday) < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+  and abs(coalesce(drill.v, 0) - coalesce(fct.v, 0)) > 0.01
 union all
 select null, null, null, null, null, '空转绿：闭窗日两侧有一侧为空，对账在空集上「通过」是空转绿'
 where (select count(*) from drill where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)) = 0
@@ -854,16 +859,23 @@ export async function runDetailQuery(
   // 掩码（spec §2.5 细节 1）：在场判定按**下钻 SQL**——拿合成行（selectSql 换成投影串）复用
   // effectiveMasks，本文件不写第二份掩码判定。只掩**投影串**（value 头与列），WHERE/count
   // 不掩：Phase 1 掩码只有整值形态（value 头），且列掩码声明期被 grain/在场守卫拦住碰不到
-  // 这里；rowCountTotal 数行数，与值掩码正交。
-  const projection = `select ${requested.join(', ')}, (${drill.expr}) as value`
+  // 这里；rowCountTotal 数行数，与值掩码正交。投影 value-first（dims 在后）——理由见下方
+  // rollupOver 处的 ⚠️（终审 C1：mask.ts 头部替换按 value-first 形状设计）。投影串含 from
+  //（整值掩码尾锚要求 value 后跟 `,` 或 `from`）。
+  const projection = `select (${drill.expr}) as value, ${requested.join(', ')} from ${drill.relation}`
   const masked = maskedSelectSql(
     projection,
     effectiveMasks(allMetrics, { ...metricRow, selectSql: projection }),
     requester.hasScope,
   )
   // 外层上卷与 buildDrillSql 共用 rollupOver——外层形状只有一份（掩码只改内层投影）。
+  // ⚠️ 投影必须 **value-first**（`select (<expr>) as value, <dims> from …`）：mask.ts 整值掩码
+  // 的头部替换按聚合 L1 形状（value 头在前）设计，从 `select ` 后一直吃到 `as value`——
+  // dims-first 会让替换吞掉维度列 ⇒ 内层只剩 `select cast(null…) as value` ⇒ 外层 42703。
+  // （终审 C1，2026-10-22 实机执行 mask 函数证实。）无掩码时 masked.sql 与 buildDrillSql 的
+  // inner 仅列序不同，语义等价（外层 sum 后同值）；形状逐字一致的说法只对掩码前的串成立。
   const sql = rollupOver(
-    `${masked.sql} from ${drill.relation} where ${where} group by ${drill.dims.join(', ')}`,
+    `${masked.sql} where ${where} group by ${drill.dims.join(', ')}`,
     requested, orderBy, desc, limit, offset,
   )
 
@@ -1263,4 +1275,4 @@ const DETAIL_DEF = {
 - **Spec 覆盖**：§2.3 声明面 → Task 4/5/6；§2.4 query_detail+rowCountTotal+bizday 必传 → Task 7；§2.5 权限五机制 → Task 1/3/7/8（词表裁剪/主体谓词/掩码/审计/路由门各归位）；§2.6 错误与双时钟 → Task 7；§4 Phase 1 判据 → Task 11；§4 真机渠道轮 → Task 11 Step 6；回滚 → Task 11 Step 7；§5 非目标（L2 不支持=存储涌现、无自由 SQL=compose 文法、不改 marts=全程未触）。spec §2.7 内存对齐 Phase 0 已做（#973）。
 - **已知偏差**：三处（裁决点），均在计划头与 PR 显式声明，spec 附录回写。
 - **类型一致性**：`DrillBinding{expr,dims,relation,filter}` 贯穿 Task 1/3/5/6/7；`DetailOk.rowCountTotal` 贯穿 7/8/9/10/11；`paramFilters` 返回 `{ok:true,filters}`/`{ok:false,reason,detail}` 与 authorize 现行 AuthzResult 的 denied 形状对齐；audit `drill` 可选字段与迁移 021 列名一致。
-- **执行期订正（2026-10-21）**：① Task 4 评审 plan-mandated 发现「门禁 compose 未整串文法锚定」→ 人裁决 **2A**：门禁补整串锚定（Task 4 Step 3 代码已含），与 Task 6 composeOf 构成纵深。② Task 3 落地订正：`L1MetricDef.drill` 为可选 `drill?: DrillBinding`（`Omit<MetricDef,'drill'>` 形状，写侧 `== null` 收口）；sync 侧「未声明 compose」映成缺省/undefined，勿传字面 null（checkJs 加宽陷阱）。③ Task 5 评审 plan-mandated 发现「不变量只算 sale 组件对 net_amount ⇒ 结构性恒红」→ 原子表达式改为**完整 compose 逐单求值**（sale − return，退货单 = 负冲减）；已对 fct 原文验算 compose 符号自洽（`return_amount@line` 与 fct return_side 同一原始和，`net = sale − return`；YAML 声明**不动**）；守卫 fct 计数同步限闭窗日。④ Task 6 落地订正：composeOf 为**逐引用包括号**（不整串再包）——Step 1 测试期望串以此为准（组件体自带括号时多一层属预期）；终态 SQL 经 Task 7 buildDrillSql 外层 `(${expr})` 包裹后恰为两层括号，与不变量 atomic_value 同形。
+- **执行期订正（2026-10-21）**：① Task 4 评审 plan-mandated 发现「门禁 compose 未整串文法锚定」→ 人裁决 **2A**：门禁补整串锚定（Task 4 Step 3 代码已含），与 Task 6 composeOf 构成纵深。② Task 3 落地订正：`L1MetricDef.drill` 为可选 `drill?: DrillBinding`（`Omit<MetricDef,'drill'>` 形状，写侧 `== null` 收口）；sync 侧「未声明 compose」映成缺省/undefined，勿传字面 null（checkJs 加宽陷阱）。③ Task 5 评审 plan-mandated 发现「不变量只算 sale 组件对 net_amount ⇒ 结构性恒红」→ 原子表达式改为**完整 compose 逐单求值**（sale − return，退货单 = 负冲减）；已对 fct 原文验算 compose 符号自洽（`return_amount@line` 与 fct return_side 同一原始和，`net = sale − return`；YAML 声明**不动**）；守卫 fct 计数同步限闭窗日。④ Task 6 落地订正：composeOf 为**逐引用包括号**（不整串再包）——Step 1 测试期望串以此为准（组件体自带括号时多一层属预期）；终态 SQL 经 Task 7 buildDrillSql 外层 `(${expr})` 包裹后恰为两层括号，与不变量 atomic_value 同形。⑤ 终审 C1：下钻掩码投影必须 **value-first**（`select (<expr>) as value, <dims> from …`）——mask.ts 整值掩码头部替换按聚合 value 头形状设计，dims-first 会被吞掉维度列 ⇒ 外层 42703（实机执行 mask 函数证实）。⑥ 终审 I1：口径不变量对账改 **full join** 缺一侧按 0 计（inner join 对单侧局部丢分区失明，与 audit_* 同型）。
