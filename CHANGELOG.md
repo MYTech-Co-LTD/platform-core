@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.179.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.179.2...v0.179.3) - 2026-10-21
+- 【修复】askdata: 明确 date_range 是类型名不是键名（工具描述 + SKILL） ([#962](https://github.com/MYTech-Co-LTD/platform-core/pull/962), [9d9cf18](https://github.com/MYTech-Co-LTD/platform-core/commit/9d9cf1822b78d9f1964d67306e36af5dab96259a))
+
+
 ## [0.179.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.179.1...v0.179.2) - 2026-10-21
 - 【修复】askdata: 轨迹采集改成遍历所有 agent + 每 agent 一份水位 ([#960](https://github.com/MYTech-Co-LTD/platform-core/pull/960), [e9c3662](https://github.com/MYTech-Co-LTD/platform-core/commit/e9c3662e565266c8cd64ef2c644013124be0ac32))
 
