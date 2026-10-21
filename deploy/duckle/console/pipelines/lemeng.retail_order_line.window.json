@@ -18,7 +18,7 @@
           "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 1, \"page_size\": 200}",
           "responsePath": "/result",
           "paginationType": "none",
-          "checkpoint": true
+          "checkpoint": false
         },
         "schema": [
           {
@@ -81,7 +81,7 @@
           "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 2, \"page_size\": 200}",
           "responsePath": "/result",
           "paginationType": "none",
-          "checkpoint": true
+          "checkpoint": false
         },
         "schema": [
           {
@@ -144,7 +144,7 @@
           "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 3, \"page_size\": 200}",
           "responsePath": "/result",
           "paginationType": "none",
-          "checkpoint": true
+          "checkpoint": false
         },
         "schema": [
           {
@@ -207,7 +207,7 @@
           "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 4, \"page_size\": 200}",
           "responsePath": "/result",
           "paginationType": "none",
-          "checkpoint": true
+          "checkpoint": false
         },
         "schema": [
           {
@@ -270,7 +270,7 @@
           "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 5, \"page_size\": 200}",
           "responsePath": "/result",
           "paginationType": "none",
-          "checkpoint": true
+          "checkpoint": false
         },
         "schema": [
           {
@@ -333,7 +333,7 @@
           "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 6, \"page_size\": 200}",
           "responsePath": "/result",
           "paginationType": "none",
-          "checkpoint": true
+          "checkpoint": false
         },
         "schema": [
           {
@@ -396,7 +396,7 @@
           "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 7, \"page_size\": 200}",
           "responsePath": "/result",
           "paginationType": "none",
-          "checkpoint": true
+          "checkpoint": false
         },
         "schema": [
           {
@@ -459,7 +459,7 @@
           "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 8, \"page_size\": 200}",
           "responsePath": "/result",
           "paginationType": "none",
-          "checkpoint": true
+          "checkpoint": false
         },
         "schema": [
           {
@@ -522,7 +522,7 @@
           "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 9, \"page_size\": 200}",
           "responsePath": "/result",
           "paginationType": "none",
-          "checkpoint": true
+          "checkpoint": false
         },
         "schema": [
           {
@@ -585,7 +585,7 @@
           "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 10, \"page_size\": 200}",
           "responsePath": "/result",
           "paginationType": "none",
-          "checkpoint": true
+          "checkpoint": false
         },
         "schema": [
           {
@@ -648,7 +648,7 @@
           "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 11, \"page_size\": 200}",
           "responsePath": "/result",
           "paginationType": "none",
-          "checkpoint": true
+          "checkpoint": false
         },
         "schema": [
           {
@@ -711,7 +711,7 @@
           "body": "{\"branch_nums\": ${ITER_ITEM_BRANCH_NUMS}, \"date_from\": \"${ITER_ITEM_BIZDAY}\", \"date_to\": \"${ITER_ITEM_BIZDAY}\", \"time_from\": \"${ITER_ITEM_HOUR_FROM}\", \"time_to\": \"${ITER_ITEM_HOUR_TO}\", \"page_number\": 12, \"page_size\": 200}",
           "responsePath": "/result",
           "paginationType": "none",
-          "checkpoint": true
+          "checkpoint": false
         },
         "schema": [
           {
@@ -1097,7 +1097,7 @@
     "lemeng.retail_order_line 的 **L1 子管线**（一窗一跑；父管线 = lemeng.retail.windows.l1）。",
     "",
     "①【身份】本文件**不是**独立管线：它只由父管线的 ctl.foreach 逐窗调用（itemKey=hour），",
-    "   运行名 <本文件名>@<hour> ⇒ 每窗一套 run log 与**每窗独立的 checkpoint 目录**。",
+    "   运行名 <本文件名>@<hour> ⇒ 每窗一套 run log（**不再产生 checkpoint 目录**，见 ③）。",
     "   直接单跑它会失败（${ITER_ITEM_*} 无值）—— 这是设计，不是缺陷。",
     "",
     "②【与 duckle/common/lemeng.retail_order_line.json 的六处差异】（机械改写，逐条可核）",
@@ -1105,24 +1105,24 @@
     "      **理由**：runner 的 env pass 只作用于顶层文档，子管线里的 ${ENV:} 会字面透传",
     "      （实测形状：URL 变相对路径 / body 变字面量）。窗号与营业日由父管线窗口表逐行代入。",
     "   R2 Authorization 头删除，改 connectionRef=\"lemeng\"（凭据走连接，节点零明文、零占位符）；",
-    "   R3 12 个 src.rest 加 checkpoint=true —— 这是本形态的**核心收益**：跨 run 只补失败窗；",
+    "   R3 12 个 src.rest 的 checkpoint=false（2026-10-21 由 true 改，理由见 ③）；",
     "   R4 guard 消息 / flatten SQL / sink key 的 ${ENV:SYSTEM_BOOK}/${ENV:BIZDAY}/${ENV:HOUR}/${ENV:BATCH_ID}",
     "      → ${ITER_ITEM_*}（system_book 由父管线从 ${ENV:SYSTEM_BOOK} 带下来）；",
     "   R5 sink 的 bucket/endpoint/region/accessKey/secretKey 收敛进 connectionRef=\"zos\"；",
     "   R6 末尾追加 summ/count → receipt（每窗一行收据），供父管线汇总与末尾判红。",
     "",
-    "③【checkpoint 的适用边界（硬约束，别挪用到 tick）】复用键 = 配置指纹(url/method/body/responsePath)",
-    "   + 父行，**不含上游内容指纹** ⇒ 数据会变的窗（tick 的 cur 窗）开它会把首快照冻住。",
-    "   本管线是 **windows 形（闭窗）**。⚠️ **「闭窗 ⇒ 内容不再变」这一设计假设已被 #528 真机证伪**",
-    "   （2026-10-09 定案，两类病害）：① **窗内抓拍**——手动回填会在营业日未结时点火（10-05 上海",
-    "   23:06–23:09 整日被截断快照冻结）；② **闭窗后源侧仍在变**——「已关闭小时计数事后仍增长」，",
-    "   首抓快照把后续补录永久挡在外面（10-01/04）。⇒ checkpoint=true 保留，靠三道闸配套：排班父",
-    "   管线（windows.l1 / close.l1）的 bizday 由 now 推导、构造性只在闭窗后抓；回填父管线加了",
-    "   bizday 闭窗守卫（wc/dw，WINDOW_OPEN fail-closed，#528）；真实缺口走 heal 旁路（先失效",
-    "   冻结条目再回填，recon-day-heal.sh）。上游缺口：duckle 引擎加载 checkpoint 时丢弃 `at`",
-    "   （crates/duckdb-engine/src/checkpoint.rs load 处），引擎侧无法验「抓取是否晚于闭窗」。",
-    "   依据 docs/superpowers/specs/2026-09-28-duckle-orchestration-capability-survey.md §10.1（B7 实测）+",
-    "   issue #528（2026-10-09 真机取证）。",
+    "③【checkpoint 已关闭（2026-10-21，#975）】复用键 = 配置指纹(url/method/body/responsePath) + 父行，",
+    "   **不含上游内容指纹、也不含 run 标识** ⇒ 数据会变的窗开它会把首快照冻住。",
+    "   ⚠️ 本条曾写「闭窗 ⇒ 内容不再变，故开它正确」——该假设已被 #528 真机证伪（窗内抓拍 / 闭窗后源侧仍在变），",
+    "   当时的选择是**保留并配三道闸兜**（排班父管线由 now 推导 bizday、回填父管线 WINDOW_OPEN 守卫、",
+    "   heal 先失效冻结条目再回填）。2026-10-21 改为**关闭**，理由：",
+    "   ① 成本无界：键含日期 ⇒ 条目只增不命中、引擎无保留期；两账套 state/ 累积到 11G，已致数据机 96% 满",
+    "      并让一次部署构建 ENOSPC；",
+    "   ② 三道闸的根源就是它：不再冻结 ⇒ heal 的旁路步骤自然空转（脚本对目录缺失有 `[ -f ] || continue` 兜底），",
+    "      也不必再依赖「排班构造性只在闭窗后抓」。",
+    "   代价：每次 windows 跑重抓 24 窗 × 12 页（约 +576 请求/天，相对 tick 的 ~2300/天 约 +25%）；",
+    "   跨 run 复用消失——同窗重试也会重抓（这正是 #528 想要的语义）。",
+    "   依据 issue #975（2026-10-21 实测）+ #528（2026-10-09）；同族对照见 tick 变体 ③。",
     "",
     "④【写法红线（D1/child-value-paths 两份 spec 的四条）】子文档里**绝不写** ${ENV:...} / ${VAULT:...}；",
     "   密钥不进 URL/query、不进返回行；连接字段写实值（连接里的 ${ENV:} 深一层即变字面量）。",
