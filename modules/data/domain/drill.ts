@@ -166,20 +166,21 @@ export async function runDetailQuery(
   // 掩码（spec §2.5 细节 1）：在场判定按**下钻 SQL**——拿合成行（selectSql 换成投影串）复用
   // effectiveMasks，本文件不写第二份掩码判定。只掩**投影串**（value 头与列），WHERE/count
   // 不掩：Phase 1 掩码只有整值形态（value 头），且列掩码声明期被 grain/在场守卫拦住碰不到
-  // 这里；rowCountTotal 数行数，与值掩码正交。
-  // ⚠️ 投影串必须带上 ` from <relation>`：整值掩码靠 topLevelValueHead 的「as value 后必须
-  // 紧跟 , 或 from」尾锚定位（mask.ts，issue #824）——裸投影没有 from，头区间判 null ⇒
-  // 整值掩码**静默不生效**。带上后 masked.sql 已含 from，下面拼 where 不再重复关系名；
-  // 无掩码时 masked.sql === projection ⇒ 缺省维度（requested = 原子粒度）下执行的内层与
-  // buildDrillSql 的 inner 逐字一致；子集请求投影的是 requested（group by 仍是原子闭集，
-  // 外层 sum 后语义同值，但形状不与计划的 inner 逐字同——别拿「逐字一致」当全量前提）。
-  const projection = `select ${requested.join(', ')}, (${drill.expr}) as value from ${drill.relation}`
+  // 这里；rowCountTotal 数行数，与值掩码正交。投影 value-first（dims 在后）——理由见下方
+  // rollupOver 处的 ⚠️（终审 C1：mask.ts 头部替换按 value-first 形状设计）。投影串含 from
+  //（整值掩码尾锚要求 value 后跟 `,` 或 `from`）。
+  const projection = `select (${drill.expr}) as value, ${requested.join(', ')} from ${drill.relation}`
   const masked = maskedSelectSql(
     projection,
     effectiveMasks(allMetrics, { ...metricRow, selectSql: projection }),
     requester.hasScope,
   )
   // 外层上卷与 buildDrillSql 共用 rollupOver——外层形状只有一份（掩码只改内层投影）。
+  // ⚠️ 投影必须 **value-first**（`select (<expr>) as value, <dims> from …`）：mask.ts 整值掩码
+  // 的头部替换按聚合 L1 形状（value 头在前）设计，从 `select ` 后一直吃到 `as value`——
+  // dims-first 会让替换吞掉维度列 ⇒ 内层只剩 `select cast(null…) as value` ⇒ 外层 42703。
+  // （终审 C1，2026-10-22 实机执行 mask 函数证实。）无掩码时 masked.sql 与 buildDrillSql 的
+  // inner 仅列序不同，语义等价（外层 sum 后同值）；形状逐字一致的说法只对掩码前的串成立。
   const sql = rollupOver(
     `${masked.sql} where ${where} group by ${drill.dims.join(', ')}`,
     requested, orderBy, desc, limit, offset,

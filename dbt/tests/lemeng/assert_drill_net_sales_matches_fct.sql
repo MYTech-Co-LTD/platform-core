@@ -6,7 +6,9 @@
 -- net_amount 必恒红（退货冲减缺席）。⚠️ 两个组件都必须保持**聚合形态**（sum/max 在 order 粒度
 -- 的 GROUP BY 内求值，即 YAML 组件体的原样 body）——裸列引用 = GROUP BY 编译错（42803）。
 -- 判别式逐字取自 fct_retail_sale.sql（销售正形态 l.85-86 /
--- 退货绝对值形态 l.129-130，#908），漂移 = 本测试红。只测**闭窗日**（bizday < 上海今天）：
+-- 退货绝对值形态 l.129-130，#908），漂移 = 本测试红。⚠️ 对账用 **full join** 缺一侧按 0 计
+--（与 audit_lemeng__retail__net_sales 同型）——inner join 对「单侧局部丢分区」结构性失明。
+-- 只测**闭窗日**（bizday < 上海今天）：
 -- 当日分区被 tick 持续重写，两侧时点不同不可比。
 -- 生产口径唯一事实源是 dbt/semantics/l1_metrics.yml 的 measures/compose；本文件漂移 ⇒ 本测试红。
 with drill as (
@@ -37,12 +39,15 @@ fct as (
     from {{ ref('fct_retail_sale') }}
     group by system_book, bizday, branch_num
 )
-select drill.system_book, drill.bizday, drill.branch_num, drill.v as drill_v, fct.v as fct_v,
-       '下钻组件上卷与聚合口径不一致（measures/compose 与 fct_retail_sale 漂移：判别式、折半式或退货组件抄错）' as note
+select coalesce(drill.system_book, fct.system_book) as system_book,
+       coalesce(drill.bizday, fct.bizday)           as bizday,
+       coalesce(drill.branch_num, fct.branch_num)   as branch_num,
+       drill.v as drill_v, fct.v as fct_v,
+       '下钻组件上卷与聚合口径不一致（measures/compose 与 fct_retail_sale 漂移：判别式、折半式、退货组件抄错或单侧分区缺失）' as note
 from drill
-join fct using (system_book, bizday, branch_num)
-where drill.bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
-  and abs(drill.v - fct.v) > 0.01
+full join fct using (system_book, bizday, branch_num)
+where coalesce(drill.bizday, fct.bizday) < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+  and abs(coalesce(drill.v, 0) - coalesce(fct.v, 0)) > 0.01
 union all
 select null, null, null, null, null, '空转绿：闭窗日两侧有一侧为空，对账在空集上「通过」是空转绿'
 where (select count(*) from drill where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)) = 0

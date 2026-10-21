@@ -6,7 +6,7 @@
 // 湖竞态重试与审计面。
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
-import { buildDrillSql, runDetailQuery, DETAIL_LIMIT_MAX } from './drill'
+import { buildDrillSql, runDetailQuery } from './drill'
 import type { DrillBinding, Requester } from './authz'
 import type { QueryDeps } from './query-service'
 import { resetWarehousePool } from './warehouse'
@@ -164,7 +164,7 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     const clamped = await runDetailQuery(depsOf(pool, sqls), ORG, req(), 'drill:net_sales', ARGS, { limit: 5000 })
     expect(clamped.status, '上限超出是静默夹紧，不是拒绝').toBe('ok')
     const detailSql = sqls.find((s) => !/count\(\*\)/.test(s))
-    expect(detailSql).toContain(`limit ${DETAIL_LIMIT_MAX} offset 0`)
+    expect(detailSql).toContain('limit 500 offset 0')            // 常量漂移必须红：钉字面量，不钉 import
     expect(clamped.status === 'ok' && clamped.scope_line).toBe('📐 口径：仅含乐檬直营 47 家门店')
 
     const zero = await runDetailQuery(depsOf(pool, []), ORG, req(), 'drill:net_sales', ARGS, { limit: 0 })
@@ -189,11 +189,11 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     expect('scope_line' in out, '未声明射程 ⇒ 字段缺席').toBe(false)
     expect('masking' in out, '未声明掩码 ⇒ 字段缺席').toBe(false)
     // 两条 SQL：明细（内层原子粒度求组件 + 外层按请求维度上卷）与 count；where 三件套 =
-    // 主体钉死 + 声明 filter + 参数连接词（与聚合面同一 paramFilters 产物）
+    // 主体钉死 + 声明 filter + 参数连接词（与聚合面同一 paramFilters 产物）。
+    // 内层 **value-first**（终审 C1 后掩码路径与 buildDrillSql 的 inner 仅列序不同、语义等价）
     expect(sqls).toHaveLength(2)
-    expect(sqls[0]).toContain(
-      "from ( select system_book, bizday, branch_num, order_no, ((sale_amount@order - return_amount@line)) as value from vw_t where org = 'org_a' AND state = 'FINISHED' AND bizday BETWEEN '2026-10-19'::date AND '2026-10-20'::date group by system_book, bizday, branch_num, order_no ) t")
-    expect(sqls[0]).toContain('order by value desc limit 50 offset 0')
+    expect(sqls[0]).toBe(
+      "select system_book, bizday, branch_num, order_no, sum(value) as value from ( select ((sale_amount@order - return_amount@line)) as value, system_book, bizday, branch_num, order_no from vw_t where org = 'org_a' AND state = 'FINISHED' AND bizday BETWEEN '2026-10-19'::date AND '2026-10-20'::date group by system_book, bizday, branch_num, order_no ) t group by system_book, bizday, branch_num, order_no order by value desc limit 50 offset 0")
     expect(sqls[1]).toBe("select count(*) as n from vw_t where org = 'org_a' AND state = 'FINISHED' AND bizday BETWEEN '2026-10-19'::date AND '2026-10-20'::date")
     // 审计：verdict ok + 行数（=回包行数）+ masking null（无掩码生效）+ drill 面 {dimensions, rowCountTotal}
     expect(audits).toHaveLength(1)
@@ -222,12 +222,23 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     const out = await runDetailQuery(deps, ORG, req(), 'drill:masked', ARGS, {})   // requester 无 data:precise ⇒ 不豁免
     expect(out.status).toBe('ok')
     if (out.status !== 'ok') return
-    expect(sqls[0]).toContain('cast(null as numeric) as value')
+    // 全形状钉（终审 C1 的缺口就在「只钉子串」：吞掉维度列的内层任何子串断言都照绿）——
+    // 内层 value 头之后必须**紧跟维度列**，外层 group by 的列必须都在内层投影里。
+    expect(sqls[0]).toBe(
+      "select system_book, bizday, branch_num, order_no, sum(value) as value from ( select cast(null as numeric) as value, system_book, bizday, branch_num, order_no from vw_t where org = 'org_a' AND state = 'FINISHED' AND bizday BETWEEN '2026-10-19'::date AND '2026-10-20'::date group by system_book, bizday, branch_num, order_no ) t group by system_book, bizday, branch_num, order_no order by value desc limit 50 offset 0")
+    expect(sqls[0]).toContain('cast(null as numeric) as value, system_book')
     expect(sqls[0], '原组件表达式一个不剩（掩码在授权层展开，执行层拿到的是已掩 SQL）').not.toContain('sale_amount@order')
     expect(sqls[1], 'rowCountTotal 数行数，与值掩码正交 ⇒ count SQL 不掩').not.toContain('cast(null')
     expect(out.masking).toEqual({ '<value>': 'nullify' })
     expect(out.rows[0][4]).toBeNull()                            // 执行器回 null ⇒ 原样透出
     expect(JSON.parse(audits[0].params[AUDIT_MASKING] as string)).toEqual({ '<value>': 'nullify' })
+    // 子集请求 + 掩码：requested 的维度列必须在整值替换后幸存（外层 group by 引用得到）
+    const subset = await runDetailQuery(deps, ORG, req(), 'drill:masked', ARGS, { dimensions: ['system_book', 'bizday'] })
+    expect(subset.status).toBe('ok')
+    if (subset.status !== 'ok') return
+    expect(sqls[2]).toBe(
+      "select system_book, bizday, sum(value) as value from ( select cast(null as numeric) as value, system_book, bizday from vw_t where org = 'org_a' AND state = 'FINISHED' AND bizday BETWEEN '2026-10-19'::date AND '2026-10-20'::date group by system_book, bizday, branch_num, order_no ) t group by system_book, bizday order by value desc limit 50 offset 0")
+    expect(subset.dimensions).toEqual(['system_book', 'bizday'])
   })
 
   it('湖竞态：首次 ETag 错误退避重试恰一次成功，审计 reason=lake_race_retry', async () => {
