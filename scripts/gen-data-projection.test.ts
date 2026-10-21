@@ -246,6 +246,80 @@ describe('rewriteAllSelectLists（多投影位点）', () => {
   })
 })
 
+// ── 视图面（2026-10-21，明细读面 Phase 0 / Task 1）─────────────────────────────────
+// 视图 `vw_*` 的列区必须**与 staging 同源**（同一个 `buildStagingSelect`）。两份列清单各写一份
+// 迟早漂开：漂开不会报错，只会让视图多/少一列，然后下游按名字取列时才炸。
+// 视图模型由 Task 2 创建 ⇒ 本任务对「不存在的视图文件」**静默跳过**。
+
+/** 视图骨架里的两处投影位点（冷/热两段平铺 select，与真仓 staging 同形、不带前置 CTE）。 */
+function twoSite(selectList: string): string {
+  return [
+    selectList,
+    "from read_parquet('cold') r",
+    'union all',
+    selectList,
+    "from read_parquet('hot') r",
+    '',
+  ].join('\n')
+}
+
+/** 视图骨架的占位列区：故意与生成物不同（生成器必须把它覆盖掉）。 */
+const VIEW_SKELETON_COLS = "  r['sale_money']::varchar as sale_money"
+
+/**
+ * 在既有假仓上补「staging 模型（已归一）+ 视图骨架（占位列区）」。
+ * staging 写成**已归一**态，是为了让两条视图用例的成败只取决于视图面：
+ * 否则 staging 自身待改会先把 `--check` 弄红，用例就成了空转绿。
+ */
+function fixtureWithViewSkeleton(): string {
+  const root = fixture({
+    batch_id: 'CAST(a AS VARCHAR)',
+    system_book: 'CAST(b AS VARCHAR)',
+    sale_money: 'CAST(c AS VARCHAR)',
+  })
+  const cols = [
+    { name: 'batch_id', type: 'varchar' },
+    { name: 'system_book', type: 'varchar' },
+    { name: 'sale_money', type: 'varchar' },
+  ]
+  mkdirSync(join(root, 'dbt/models/x/staging'), { recursive: true })
+  mkdirSync(join(root, 'dbt/models/common/views'), { recursive: true })
+  writeFileSync(
+    join(root, 'dbt/models/x/staging/stg_x_y.sql'),
+    twoSite(buildStagingSelect(cols, 'system_book')),
+  )
+  writeFileSync(join(root, 'dbt/models/common/views/vw_x_y.sql'), twoSite(`select\n${VIEW_SKELETON_COLS}`))
+  return root
+}
+
+/** 模型里每一处投影位点的列区文本（多位点时逐个比，不能只比第一处）。 */
+function selectListsOf(sql: string): string[] {
+  return selectListBoundsAll(sql).map((b) => sql.slice(b.selectStart, b.fromStart))
+}
+
+describe('生成器 ④b（视图面）', () => {
+  it('视图面：vw_ 模型的 SELECT 列表与 staging 同源生成', () => {
+    const root = fixtureWithViewSkeleton()
+    const code = runGenerate(root, {})
+    const view = readFileSync(join(root, 'dbt/models/common/views/vw_x_y.sql'), 'utf8')
+    const stg = readFileSync(join(root, 'dbt/models/x/staging/stg_x_y.sql'), 'utf8')
+    // 列区与 staging 逐字相同（同一 buildStagingSelect），且两处位点都是
+    expect(selectListsOf(view)).toEqual(selectListsOf(stg))
+    expect(view).not.toContain('sale_money_x')
+    expect(view).toContain("  {{ subject_org() }}       as org,")
+    expect(code).toBe(0)
+  })
+
+  it('视图面：手改视图列区 ⇒ --check 报红', () => {
+    const root = fixtureWithViewSkeleton()
+    // 先到稳态（staging/管线/视图都 == 生成物），再把改动只落在视图上
+    runGenerate(root, {})
+    const p = join(root, 'dbt/models/common/views/vw_x_y.sql')
+    writeFileSync(p, readFileSync(p, 'utf8').replace('as sale_money', 'as sale_money_x'))
+    expect(runGenerate(root, { check: true })).toBe(1)
+  })
+})
+
 describe('selectListBoundsAll：内联子查询不算投影位点', () => {
   it('where … not exists (select 1 from …) 不被当成第 3 个位点', () => {
     const sql = [

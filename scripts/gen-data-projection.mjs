@@ -3,7 +3,8 @@
 //
 // 设计稿：docs/superpowers/specs/2026-10-06-contract-projection-generator-design.md。
 // 让 `contracts/**/*.json` 成为湖列集的**唯一事实源**：改契约一处，生成器重写
-//   ③ 生产面（管线 `code.sql` 投影）与 ④ 消费面（dbt staging 投影）。
+//   ③ 生产面（管线 `code.sql` 投影）、④ 消费面（dbt staging 投影）、
+//   ④b 视图面（dbt `vw_*` 直读湖视图的列区，与 staging 同源）。
 //
 // ## 形态契约：只重写「SELECT … 顶层 FROM」之间的列区
 //
@@ -320,10 +321,24 @@ export function seedContractText(text, fills) {
 }
 
 /**
+ * 视图模型路径：`vw_<domain>_<table>.sql`，统一放 `dbt/models/common/views/`。
+ *
+ * 视图不进域目录：它是**直读湖**的读取面（不分域/客户），与 `dbt/models/<域>/` 的物化模型是两类东西。
+ *
+ * @param {string} rootDir 仓根
+ * @param {{ domain: string, table: string }} c 契约
+ * @returns {string} 绝对路径
+ */
+export function viewPathFor(rootDir, c) {
+  return join(rootDir, 'dbt/models/common/views', `vw_${c.domain}_${c.table}.sql`)
+}
+
+/**
  * 生成主流程。
  *
  * · 默认 / `--check`：对每份**已回填 `expr`** 的契约，重写其全部生产者管线的投影节点列区（③）
- *   与对应 staging 模型的列区（④，`org` 注入在 `system_book` 之后，无则首列之后）。
+ *   与对应 staging 模型的列区（④，`org` 注入在 `system_book` 之后，无则首列之后），
+ *   以及对应视图模型 `vw_*` 的列区（④b，**同一份** `buildStagingSelect`）。
  * · `--seed`：从现存投影反抽 `expr`，**只回填空缺列**（已有值不覆盖）写回契约；不动 ③/④。
  *
  * @param {string} rootDir 仓根
@@ -390,14 +405,29 @@ export function runGenerate(rootDir, opts = {}) {
     // 域目录自 2026-10-17 起是顶层轴（`dbt/models/<域>/staging/`）⇒ **找**而不是拼死路径。
     const { rel: stgRelFound } = findStagingModelRel(rootDir, c.domain, c.table)
     const stgAbs = stgRelFound === null ? '' : join(rootDir, stgRelFound)
+    const orgAfter = colNames.includes('system_book') ? 'system_book' : (colNames[0] ?? '')
     if (stgAbs !== '' && existsSync(stgAbs)) {
       const stgSql = readFileSync(stgAbs, 'utf8')
-      const orgAfter = colNames.includes('system_book') ? 'system_book' : (colNames[0] ?? '')
       // 全部位点都重写：单投影模型与旧行为逐字等价；零售明细起有两处（冷/热两种布局，见 §5.3）
       const nextStg = rewriteAllSelectLists(stgSql, buildStagingSelect(c.columns, orgAfter))
       if (nextStg !== stgSql) {
         changed++
         if (!opts.check) writeFileSync(stgAbs, nextStg)
+      }
+    }
+
+    // ④b 视图面：`vw_*` 的列区与 staging **同源**（同一个 `buildStagingSelect`，逐字不另写一份）。
+    //   · 视图模型的 FROM 块（冷/热两段 + 封版断言）是手写的，由 Task 2 建 ⇒ 不存在就**静默跳过**
+    //     （否则每份还没建视图的契约都会在这里炸，等于逼所有契约同时上视图）。
+    //   · 用 `rewriteAllSelectLists` 而非单点版：真仓视图的 FROM 逐字取自 staging，是**两处**
+    //     平铺 select（冷/热）——单点版只会重写第 1 处、把第 2 处留成旧列区，且**静默**。
+    const viewPath = viewPathFor(rootDir, c)
+    if (existsSync(viewPath)) {
+      const viewSql = readFileSync(viewPath, 'utf8')
+      const nextView = rewriteAllSelectLists(viewSql, buildStagingSelect(c.columns, orgAfter))
+      if (nextView !== viewSql) {
+        changed++
+        if (!opts.check) writeFileSync(viewPath, nextView)
       }
     }
   }
