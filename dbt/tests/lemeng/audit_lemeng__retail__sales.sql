@@ -103,7 +103,12 @@ full join materialized b using (system_book, bizday, branch_num)
 --    return_side`，含「只有退货、没有销售」的店日（sale_amount=0），而本复算侧只有销售基面
 --    ⇒ 那些行 a.sale_amount 为 NULL。coalesce 到 0 再比，既放过这些**结构上正确**的空缺，
 --    又不放松销售店日的逐分判据（复算=5/物化=0 与 复算=NULL/物化=5 仍判红）。
-where coalesce(a.sale_amount, 0) is distinct from coalesce(b.sale_amount, 0)
+-- ⚠️ 2026-10-21：**1 分容差**（原为 `is distinct from` 精确比较）。
+--   实测 3120/2026-10-05/门店 15：两侧**逐单输入完全一致**、表达式**逐字相同**，
+--   但原始和恰好落在 `2449.795` 这个**半分边界**上——staging 侧是 PG `numeric`（无界精度）
+--   进到 2449.80，parquet 侧是 `DECIMAL(14,2)/(14,3)` 运算得 2449.794999… 舍到 2449.79。
+--   这是**类型系统的固有差**，不是数据差；精确比较对它必假红（同 `numeric-audit-use-tolerance-not-equality`）。
+where abs(coalesce(a.sale_amount, 0) - coalesce(b.sale_amount, 0)) > 0.01
 
 union all
 
