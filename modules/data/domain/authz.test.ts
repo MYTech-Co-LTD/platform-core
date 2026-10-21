@@ -513,3 +513,85 @@ describe('authorize —— 值级掩码定点展开（spec §5.3，P2 T2）', ()
     expect(after.plan.sql).toContain('sum(round(mart_sales_daily.revenue, -1000)) as value')
   })
 })
+
+// ══ 切片化（spec 2026-10-21 §5「query_metric 切片化」——授权核心唯一扩展点）══════════════
+describe('authorize slicing：切片计划（授权核心唯一扩展点）', () => {
+  const totalable = (): MetricDef => ({
+    id: 'm', title: 'M', description: '', requiredScope: null, subjectColumn: 'org',
+    selectSql: 'select org, branch_name, bizday, sum(v) as value from fct group by org, branch_name, bizday',
+    groupBy: 'org, branch_name, bizday',
+    params: { day_from: { column: 'bizday', type: 'date', required: false } },
+    totalable: true,
+  })
+  const req = (): Requester => ({ userId: 'u', orgId: 'acme', channel: 'pat', keyId: null, scopes: [], hasScope: () => true })
+
+  it('slicing 缺省 ⇒ SQL 与现状逐字节一致（含 ORDER BY bizday DESC LIMIT 1000）', () => {
+    const r = authorize([totalable()], req(), 'm', {}, [totalable()])
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.plan.sql).toContain('ORDER BY bizday DESC')
+      expect(r.plan.sql.endsWith('LIMIT 1000')).toBe(true)
+    }
+  })
+
+  it('真子集 ⇒ 外层再聚合；GROUP BY 只含所选维度', () => {
+    const r = authorize([totalable()], req(), 'm', {}, [totalable()], { dimensions: ['org'] })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.plan.sql).toMatch(/^select org, sum\(value\) as value from \( .*\) t group by org/i)
+      expect(r.plan.sql).toContain("WHERE org = 'acme'")
+      expect(r.plan.sql).toContain('LIMIT 1000')
+      expect(r.plan.totalSql).toBeUndefined()  // 切片后缺省不带 total（部分合计≠全局）
+    }
+  })
+
+  it('dimensions=[] ⇒ 单行合计形态（需 totalable）', () => {
+    const r = authorize([totalable()], req(), 'm', {}, [totalable()], { dimensions: [] })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.plan.sql).toMatch(/^select sum\(value\) as total from \( .*\) t$/i)
+  })
+
+  it('不可加指标做真子集切片 ⇒ 拒 slicing_not_additive', () => {
+    const notAdditive = { ...totalable(), totalable: false }
+    const r = authorize([notAdditive], req(), 'm', {}, [notAdditive], { dimensions: ['org'] })
+    expect(r).toMatchObject({ ok: false, reason: 'bad_param', detail: 'slicing_not_additive' })
+  })
+
+  it('未知维度 / 空数组 IN / 非法 limit / 越界排序列 各自显式拒', () => {
+    expect(authorize([totalable()], req(), 'm', {}, [totalable()], { dimensions: ['nope'] }))
+      .toMatchObject({ ok: false, detail: 'unknown_dimension:nope' })
+    expect(authorize([totalable()], req(), 'm', {}, [totalable()], { filters: { branch_name: [] } }))
+      .toMatchObject({ ok: false, detail: 'empty_in_filter:branch_name' })
+    expect(authorize([totalable()], req(), 'm', {}, [totalable()], { limit: 0 }))
+      .toMatchObject({ ok: false, detail: 'invalid_limit' })
+    expect(authorize([totalable()], req(), 'm', {}, [totalable()], { dimensions: ['org'], orderBy: [{ column: 'bizday' }] }))
+      .toMatchObject({ ok: false, detail: 'unknown_order_column:bizday' })
+  })
+
+  it('filters 走声明参数与维度两条路；保留键在 filters 里也拒', () => {
+    const r = authorize([totalable()], req(), 'm', { day_from: '2026-10-01' }, [totalable()],
+      { dimensions: ['org'], filters: { branch_name: ['A店', "B'店"], org: 'someone-else' } })
+    expect(r).toMatchObject({ ok: false, reason: 'subject_pinned_by_platform' })
+    const okR = authorize([totalable()], req(), 'm', { day_from: '2026-10-01' }, [totalable()],
+      { dimensions: ['org'], filters: { branch_name: ['A店', "B'店"] } })
+    expect(okR.ok).toBe(true)
+    if (okR.ok) {
+      expect(okR.plan.sql).toContain("bizday = '2026-10-01'::date")
+      expect(okR.plan.sql).toContain("branch_name in ('A店', 'B''店')")
+    }
+  })
+
+  it('total=true 时切片也回 totalSql（过滤范围的部分合计）；limit=min(请求,1000)', () => {
+    const r = authorize([totalable()], req(), 'm', {}, [totalable()], { dimensions: ['org'], total: true, limit: 99999 })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.plan.totalSql).toContain('sum(value) AS total')
+      expect(r.plan.sql).toContain('LIMIT 1000')  // min(99999, 1000) 生效
+    }
+  })
+
+  it('★ 变异确认：切片 SQL 必须包住内层（from ( ... )），实现丢了内层即红', () => {
+    const r = authorize([totalable()], req(), 'm', {}, [totalable()], { dimensions: ['org'] })
+    expect(r.ok && r.plan.sql.includes(' from ( ')).toBe(true)
+  })
+})
