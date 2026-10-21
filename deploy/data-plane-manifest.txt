@@ -39,6 +39,9 @@ scripts/lemeng/recon-restate.sh          /opt/lemeng-recon-restate.sh           
 scripts/lemeng/seed-console.sh            /opt/lemeng-seed-console.sh             0755
 scripts/lemeng/delete-supplanted-hour-partitions.py  ${REPO}/scripts/lemeng/delete-supplanted-hour-partitions.py  0644
 scripts/lemeng/backfill-daily-partitions.py          ${REPO}/scripts/lemeng/backfill-daily-partitions.py          0644
+scripts/askdata/export-transcript.py      /var/lib/askdata/export-transcript.py     0644
+scripts/askdata/attribute.py              /var/lib/askdata/attribute.py             0644
+scripts/askdata/sync-and-run.sh           /var/lib/askdata/sync-and-run.sh          0755
 scripts/duckle/connection-setup.py       /opt/connection-setup.py                  0755
 deploy/duckle/console/                    ${REPO}/deploy/duckle/console/             0644
 deploy/duckle/Dockerfile                    ${REPO}/deploy/duckle/Dockerfile             0644

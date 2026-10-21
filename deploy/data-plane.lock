@@ -1,4 +1,4 @@
-sha256-of-rest 09843068fd2d24901366cc0e6c6057c819086b708e69cd2c3cf8a4b800929106
+sha256-of-rest 15996a561864b36dd2fc5bc4688ad207174d6690c7ef59d9f643b8754cf2083c
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -199,6 +199,9 @@ a6d73597b4cb6dad45f30b9201acf8af48ec42672c79a43989b6d7e71099dd92 deploy/duckle/e
 437e305a371039d59c9a47fd4457900203d4393942f2135273a4f486c1a7bf2d duckle/README.md ${REPO}/duckle/README.md 0644
 9c48a28d51a5c5d4f2232609c4312ea82fe4040edbd768b5966b49182ad6eef8 duckle/common/README.md ${REPO}/duckle/common/README.md 0644
 691d2f8416d4588f656c174cc00528e4bfa65b85ceb84758900086ca756b2e26 duckle/customers/README.md ${REPO}/duckle/customers/README.md 0644
+472172b7cafe73847ec8049089e31a1febb8624bf38362799fe1b10338bc5f34 scripts/askdata/attribute.py /var/lib/askdata/attribute.py 0644
+7008275436af2d9853c26268da5714159f297519a6dd349e16b98481a903a80f scripts/askdata/export-transcript.py /var/lib/askdata/export-transcript.py 0644
+739dd60b0444809b11c9b470916b4592896880a69afdbe601176997324af9a09 scripts/askdata/sync-and-run.sh /var/lib/askdata/sync-and-run.sh 0755
 a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814 scripts/duckle/connection-setup.py /opt/connection-setup.py 0755
 f3d418bca55705c7b1e68a269ee21466de165149dac41f7622d757368ecb18ec scripts/lemeng/backfill-daily-partitions.py ${REPO}/scripts/lemeng/backfill-daily-partitions.py 0644
 bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/backfill-retail-order-line.sh /opt/lemeng-backfill.sh 0755
