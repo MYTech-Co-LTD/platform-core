@@ -5,6 +5,8 @@
 # `diagnose.sh recon-day <D>`（**只读**）发现某定稿日对不平；本脚本负责**下一步**：
 #   ① 判别「真缺口」vs「通道/身份类故障」（**后者不回填**，见下）
 #   ② **旁路失效**：删掉目标营业日被 checkpoint 冻结的条目（备份先行；HEAL_BYPASS=0 可关）
+#      ⚠️ 2026-10-21 起零售明细 day/window 已关闭 checkpoint（#975）⇒ 本步自然空转（脚本对目录缺失
+#         有 `[ -f ] || continue` 兜底）；保留它是为了**回退保护**——若哪天重新开启，这道闸仍在。
 #   ③ 触发该营业日的整日回填（参数化 run，**一次**，不循环）
 #   ④ 等回填跑完 → **复验** recon-day
 #   ⑤ 如实结论：HEAL_OK / HEAL_RECOVERED / HEAL_FAILED / HEAL_REFUSED:* / HEAL_SKIP:*
