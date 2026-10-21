@@ -45,6 +45,8 @@ const SOURCES = 'dbt/models/common/staging/sources.yml'
 //    别因为「仓里搜不到这个文件」就去改夹具（规律 ④ 的双向配对靠它自己的一对源/模型成立）。
 const STAGING = 'dbt/models/common/staging/stg_lemeng_retail_detail.sql'
 const MARTS = 'dbt/models/common/marts/fct_retail_sale.sql'
+// 读面视图（规则 ⑩ 的第三类扫描对象）：`dbt/models/<域>/views/vw_*.sql`
+const VIEW = 'dbt/models/common/views/vw_retail_detail.sql'
 const METRICS = 'dbt/semantics/l1_metrics.yml'
 // 对账 test 按域分子目录（`dbt/tests/<源>/`）—— 与物料化侧逐域选取同源，见规则 ⑦
 const AUDIT = 'dbt/tests/lemeng/audit_lemeng__retail__net_sales.sql'
@@ -472,6 +474,23 @@ describe('格⑩：主体列 org（issue #176 缺口 A / spec 2026-09-26-subject
     files[STAGING] = files[STAGING].replace("    r['amount']::numeric as amount,\n    'acme' as org\n", "    r['amount']::numeric as amount\n")
     const violations = checkDataModels(fixture(files), { subjectOrgExempt: syntheticExempt() })
     expect(violations).toEqual([])
+  })
+
+  it('格⑩-7：views 下 `vw_*` 缺 `as org` → 恰好 1 条（读面视图同样是租户可查的关系）', () => {
+    // 视图与 marts/staging 一样会被 `modules/data` 按 `WHERE org = <orgId>` 查询（直读湖的读面），
+    // 少了主体列 ⇒ 查询以 502 收场。规则 ⑩ 的扫描面必须含 views/，否则这一整类文件裸奔。
+    const root = variant((f) => {
+      f[VIEW] = [
+        'select',
+        "    r['amount']::numeric as amount",
+        "from read_parquet('s3://bucket/lemeng/retail_detail/**/*.parquet') r",
+        '',
+      ].join('\n')
+    })
+    const violations = checkDataModels(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.file).toContain('vw_')
+    expect(violations[0]?.message).toContain('org')
   })
 })
 
