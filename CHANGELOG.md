@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.179.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.178.0...v0.179.0) - 2026-10-21
+- 【新增】data: 审计层改读「冷+热」两条路径，摘掉镜像 sink ([#956](https://github.com/MYTech-Co-LTD/platform-core/pull/956), [3b95bba](https://github.com/MYTech-Co-LTD/platform-core/commit/3b95bba30377dae017a9addb95058c7010a9931a))
+
+
 ## [0.178.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.177.0...v0.178.0) - 2026-10-20
 - 【新增】data: 新增逐日迁移驱动 backfill-daily-partitions.py ([#954](https://github.com/MYTech-Co-LTD/platform-core/pull/954), [2627a65](https://github.com/MYTech-Co-LTD/platform-core/commit/2627a65bbfe074eac56b837bb1c2142681f1b3fa))
 
