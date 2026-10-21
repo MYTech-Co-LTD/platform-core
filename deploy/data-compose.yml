@@ -18,7 +18,10 @@ services:
       POSTGRES_PASSWORD: ${PGDUCK_PASSWORD:-platform}     # 真值走 project env（openship），不进 git
       POSTGRES_DB: ${PGDUCK_DB:-warehouse}
     # shared_preload_libraries 是 pg_duckdb 硬要求（spec §9.4 方案 2）
-    command: ["postgres", "-c", "shared_preload_libraries=pg_duckdb"]
+    # 新增：duckdb.memory_limit 默认 4096MB/连接，而本服务 mem_limit 默认 2g（2048MB）
+    #   ⇒ DuckDB 以为自己有 4GB，重查询会被 cgroup OOM kill（无错误、容器重启）。
+    #   收到 1536MB 留出 PG 自身与连接开销的余量。
+    command: ["postgres", "-c", "shared_preload_libraries=pg_duckdb", "-c", "duckdb.memory_limit=1536MB"]
     volumes:
       # ⚠️ 挂**父目录**，不是 `<父>/data`：PG18 起官方把 PGDATA 挪进版本子目录——目标机实测
       #    `PGDATA=/var/lib/postgresql/18/docker`，且 `/var/lib/postgresql/` 下只有 `18/`、**没有 `data/`**。
