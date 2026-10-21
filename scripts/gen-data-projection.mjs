@@ -321,16 +321,18 @@ export function seedContractText(text, fills) {
 }
 
 /**
- * 视图模型路径：`vw_<domain>_<table>.sql`，统一放 `dbt/models/common/views/`。
+ * 视图模型路径：`vw_<domain>_<table>.sql`，落在**域目录** `dbt/models/<domain>/views/`。
  *
- * 视图不进域目录：它是**直读湖**的读取面（不分域/客户），与 `dbt/models/<域>/` 的物化模型是两类东西。
+ * 为什么进域目录（而不是另开顶层目录）：域开关（`dbt_project.yml` 按路径 `+enabled`）与
+ * `scripts/check-data-models.mjs` 规则 ⑪ 都以「`dbt/models/*` 顶层目录 = 一个域」为准；
+ * 新开顶层目录会被当成一个**未登记的域**（规则 ⑪ 报红）。放进 `<domain>/` 即自动继承该域的开关。
  *
  * @param {string} rootDir 仓根
  * @param {{ domain: string, table: string }} c 契约
  * @returns {string} 绝对路径
  */
 export function viewPathFor(rootDir, c) {
-  return join(rootDir, 'dbt/models/common/views', `vw_${c.domain}_${c.table}.sql`)
+  return join(rootDir, 'dbt/models', c.domain, 'views', `vw_${c.domain}_${c.table}.sql`)
 }
 
 /**

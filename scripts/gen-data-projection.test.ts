@@ -283,12 +283,12 @@ function fixtureWithViewSkeleton(): string {
     { name: 'sale_money', type: 'varchar' },
   ]
   mkdirSync(join(root, 'dbt/models/x/staging'), { recursive: true })
-  mkdirSync(join(root, 'dbt/models/common/views'), { recursive: true })
+  mkdirSync(join(root, 'dbt/models/x/views'), { recursive: true })
   writeFileSync(
     join(root, 'dbt/models/x/staging/stg_x_y.sql'),
     twoSite(buildStagingSelect(cols, 'system_book')),
   )
-  writeFileSync(join(root, 'dbt/models/common/views/vw_x_y.sql'), twoSite(`select\n${VIEW_SKELETON_COLS}`))
+  writeFileSync(join(root, 'dbt/models/x/views/vw_x_y.sql'), twoSite(`select\n${VIEW_SKELETON_COLS}`))
   return root
 }
 
@@ -301,7 +301,7 @@ describe('生成器 ④b（视图面）', () => {
   it('视图面：vw_ 模型的 SELECT 列表与 staging 同源生成', () => {
     const root = fixtureWithViewSkeleton()
     const code = runGenerate(root, {})
-    const view = readFileSync(join(root, 'dbt/models/common/views/vw_x_y.sql'), 'utf8')
+    const view = readFileSync(join(root, 'dbt/models/x/views/vw_x_y.sql'), 'utf8')
     const stg = readFileSync(join(root, 'dbt/models/x/staging/stg_x_y.sql'), 'utf8')
     // 列区与 staging 逐字相同（同一 buildStagingSelect），且两处位点都是
     expect(selectListsOf(view)).toEqual(selectListsOf(stg))
@@ -314,7 +314,7 @@ describe('生成器 ④b（视图面）', () => {
     const root = fixtureWithViewSkeleton()
     // 先到稳态（staging/管线/视图都 == 生成物），再把改动只落在视图上
     runGenerate(root, {})
-    const p = join(root, 'dbt/models/common/views/vw_x_y.sql')
+    const p = join(root, 'dbt/models/x/views/vw_x_y.sql')
     writeFileSync(p, readFileSync(p, 'utf8').replace('as sale_money', 'as sale_money_x'))
     expect(runGenerate(root, { check: true })).toBe(1)
   })
