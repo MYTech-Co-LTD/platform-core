@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.181.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.181.0...v0.181.1) - 2026-10-21
+- 【修复】data: 零售明细 day/window 关闭 checkpoint，本地状态不再无界增长 ([#976](https://github.com/MYTech-Co-LTD/platform-core/pull/976), [5b09c79](https://github.com/MYTech-Co-LTD/platform-core/commit/5b09c79e4e6b6df10663525e1daf43c4a39ab0be))
+
+
 ## [0.181.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.180.0...v0.181.0) - 2026-10-21
 - 【新增】data: 零售明细直读湖视图 vw_*——bot 问数下钻 Phase 0 ([#973](https://github.com/MYTech-Co-LTD/platform-core/pull/973), [9fad0b0](https://github.com/MYTech-Co-LTD/platform-core/commit/9fad0b027c4365274c8c82794f6be5d096f79394))
 
