@@ -30,6 +30,8 @@ api:
     # ── 问数面（data:query）──
     - { method: GET,  path: /metrics, scope: data:query }
     - { method: POST, path: /query,   scope: data:query }
+    # 明细下钻（spec 2026-10-21 §2.5：路由门必须与 /query 同清单声明——装载期双向核对）
+    - { method: POST, path: /query/detail, scope: data:query }
     # 通道 A：系统内问数（SSE 流式；LLM 编排在平台后端）
     - { method: POST, path: /chat,    scope: data:query }
     # MCP 端点（通道 B 的 JSON-RPC 单入口；协议错误自兜，授权仍走同一核心）
