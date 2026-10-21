@@ -117,41 +117,38 @@ git commit -m "feat(data): 生成器新增视图面——vw_* 列清单与 stagi
 - Consumes: Task 1 的 `viewPathFor` + 生成器（写入 SELECT 列表）
 - Produces: PG 关系 `vw_lemeng_retail_order_line`（列集 = 契约 25 列 + `org`）
 
-- [ ] **Step 1: 建骨架（SELECT 列表先写成 staging 的占位副本，随后由生成器覆盖）**
+- [ ] **Step 1: 建骨架 —— 逐字复制 staging 模型，只翻 materialized**
 
-```sql
-{{ config(materialized='view') }}
--- vw_lemeng_retail_order_line — 零售订单明细的**直读湖**视图（不物化）。
--- 列清单由 scripts/gen-data-projection.mjs 从契约生成，**禁止手写**。
--- FROM 块与 stg_lemeng_retail_order_line 同源（冷/热两段 + 封版断言）；两处漂移由
--- dbt/tests/lemeng/assert_vw_retail_order_line_matches_stg.sql 兜住（闭窗日行数必须相等）。
-with parquet_src as (
-    -- 冷：已封版的天文件
-    select * from read_parquet(
-      ARRAY['s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet']::text[]
-    )
-    union all
-    -- 热：未封版日子的小时文件
-    select * from read_parquet(
-      ARRAY['s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet']::text[]
-    )
-), r as (
-    select p.* from parquet_src p
-    -- 封版断言：_SCHEMA/v3.parquet 是「这套文件是齐的」的唯一凭据
-    where exists (
-      select 1 from read_parquet(
-        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_SCHEMA/v3.parquet'
-      ) sealed
-      where sealed['schema_version'] = 3
-    )
-)
-select
-  r['batch_id']::varchar as batch_id
-  -- … 占位：本段随后由 `pnpm exec tsx scripts/gen-data-projection.mjs` 覆盖为完整列区
-from r
+⚠️ **不要自己写 FROM**。`gen-data-projection.mjs` 的位点识别有两条硬约束（见脚本内注释）：
+
+1. **模型不能带前置 CTE**（`with x as (select …)`）——会被判为「嵌套位点」并**抛错**；
+2. 子查询里的 `select 1 from …` 必须**写成一行**，否则会被当成第三个投影位点。
+
+⇒ 唯一正确做法是**照抄** `dbt/models/lemeng/staging/stg_lemeng_retail_order_line.sql` 的正文：
+
+```bash
+cp dbt/models/lemeng/staging/stg_lemeng_retail_order_line.sql \
+   dbt/models/common/views/vw_lemeng_retail_order_line.sql
 ```
 
-> ⚠️ **不要照抄上面那段伪 FROM**：真正的 FROM 块必须**逐字取自** `dbt/models/lemeng/staging/stg_lemeng_retail_order_line.sql` 的冷/热/封版三段（含它对「热侧排除已封版日子」的谓词——不排除会**双算**）。把那段原样复制过来，只把 CTE 名对齐。
+然后只改两处：
+
+```diff
+-{{ config(materialized='table') }}
++{{ config(materialized='view') }}
+```
+```diff
+--- stg_lemeng_retail_order_line — …（原头注）
++-- vw_lemeng_retail_order_line — 与 stg_lemeng_retail_order_line **正文逐字相同**，只把物化方式
++-- 从 table 翻成 view ⇒ **直读湖**而不是读物化表（明细的近实时读面）。
++-- 列清单由 scripts/gen-data-projection.mjs 从契约生成，**禁止手写**；FROM 块（冷/热两段 +
++-- 封版断言 + 热侧排除已封版日子）与 staging 同源，漂移由
++-- dbt/tests/lemeng/assert_vw_retail_order_line_matches_stg.sql 兜住。
+```
+
+**为什么允许「复制 FROM」**：两条读面各自要读湖，没有能同时服务「物化一次」与「每次直读」的共用形态；而复制带来的漂移风险由 Task 4 的**行为不变量**（闭窗日行数相等）兜住——那是行为判据，比文本对比稳。
+
+
 
 - [ ] **Step 2: 生成列区**
 
@@ -381,7 +378,8 @@ Expected: 要么正常返回，要么 `warehouse_transient` 且**自动重试恰
 
 **1. Spec 覆盖**：spec §2.2（视图层）→ Task 2/3；§4 Phase 0 六条判据 → Task 4/5/6/7 全覆盖；"契约生成器"→ Task 1；"封版断言"→ Task 2；"内存对齐"→ Task 5；"gate 1/3"→ Task 7。
 
-**2. 占位符**：Task 2 Step 1 的 FROM 是**明确的占位副本并附了「不要照抄」警告**——这是刻意的：真正的 FROM 必须逐字取自 staging（含「热侧排除已封版日子」谓词），由执行者复制而非我在此重写一遍（重写会引入第二份可能抄错的副本）。
+**2. 占位符**：无。Task 2 Step 1 用 `cp` 复制 staging 正文 + 只翻 `materialized`，**不含任何占位 SQL**。
+（早期版本曾写带 CTE 的伪骨架，**已删**——`gen-data-projection.mjs` 的位点识别明确拒绝前置 CTE、并要求子查询里的 `select 1 from …` 写成一行。Task 1 的 worker 用 `rewriteAllSelectLists` 而非单点版是对的：真实模型有两个平铺 select。）
 
 **3. 类型一致性**：`buildStagingSelect(columns, orgAfter)`、`viewPathFor(rootDir, c)`、`runGenerate(rootDir, opts)` 全程同名同参。
 
