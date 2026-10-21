@@ -25,7 +25,7 @@
 //      「⑧ 的**强度**」一节）——别把它读成「同源即行为等价」。
 //   ⑨ **`sync-data-semantics.mjs --check` 契约**（T9 / 对账机制④ 的 L1 侧）：把 dry-run 的
 //      四条性质（--check 存在 / 用法错响亮 / 漂移非 0 / 无漂移 0）与出口码三分法接进机检面。
-//   ⑩ **主体列 `org`**：每个 staging / marts 模型须含 `{{ subject_org() }} as org`（见该规则处）。
+//   ⑩ **主体列 `org`**：每个 staging / marts 模型**与 `views/vw_*` 读面视图**须含 `{{ subject_org() }} as org`（见该规则处）。
 //   ⑪ **域覆盖（fail-closed）**：`dbt/models/*` 目录集 ↔ `dbt_project.yml` 的
 //      `models.platform_data` 域条目**双向**比对，且每条 `+enabled` 须引用
 //      `env_var('DATA_PLANE_DOMAINS')` 并含本域名字面量。为什么必须有：域开关的两个方向
@@ -148,6 +148,8 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'target', 'logs', 'dbt_packag
 const STAGING_RE = /^dbt\/models\/(?:.+\/)?staging\/stg_[A-Za-z0-9_]+\.sql$/
 /** marts 模型：`dbt/models/**\/marts/*.sql`（含 `fct_*` 与将来的 `dim_*`——主数据维度表同样按租户物化） */
 const MARTS_RE = /^dbt\/models\/(?:.+\/)?marts\/[A-Za-z0-9_]+\.sql$/
+/** 读面视图：`dbt/models/**\/views/vw_*.sql`（直读湖视图同样是租户可查的关系 ⇒ 同样要有主体列） */
+const VIEW_RE = /^dbt\/models\/(?:.+\/)?views\/vw_[A-Za-z0-9_]+\.sql$/
 /** 规则 ⑩：主体列（`org`）的注入形态 `… as org`。**注释掩码后**判（注释里提一句不算，同实现判断①） */
 export const SUBJECT_ORG_RE = /\bas\s+org\b/
 /**
@@ -1032,9 +1034,11 @@ export function checkDataModels(rootDir, opts = {}) {
   // 的 L1_SUBJECT_COLUMN）⇒ 关系里少这一列，拼出的 SQL 必然以仓库错误（502）收场，而
   // **静态看不出来**（旧状态正是这样活了很久，issue #176 缺口 A）。本规则只管**形状**
   // （模型里有没有这一列）；**值非空**由 dbt 测试管（schema.yml 的 not_null）。
+  // 扫描面 = staging + marts + **`views/vw_*` 读面视图**：视图同样经 `modules/data` 直查
+  // （喂 bot 问数下钻），少主体列与表模型同一种 502，不会因为「只是 view」就豁免。
   // 设计：docs/superpowers/specs/2026-09-26-subject-org-column-design.md
   const subjectOrgExempt = opts.subjectOrgExempt ?? SUBJECT_ORG_EXEMPT
-  const subjectFiles = sqlFiles.filter((f) => STAGING_RE.test(f) || MARTS_RE.test(f))
+  const subjectFiles = sqlFiles.filter((f) => STAGING_RE.test(f) || MARTS_RE.test(f) || VIEW_RE.test(f))
   let subjectScanned = 0
   for (const rel of subjectFiles) {
     if (subjectOrgExempt.has(rel)) continue
@@ -1044,7 +1048,7 @@ export function checkDataModels(rootDir, opts = {}) {
       push(
         rel,
         0,
-        'staging / marts 模型里没有主体列 `org`（须形如 `{{ subject_org() }} as org`，macro 见 dbt/macros/subject_org.sql）—— 行级授权的谓词是 `WHERE org = <orgId>`（modules/data/domain/authz.ts 恒拼），关系里少这一列 ⇒ 查询必以仓库错误（502）收场。设计见 docs/superpowers/specs/2026-09-26-subject-org-column-design.md',
+        'staging / marts / views 模型里没有主体列 `org`（须形如 `{{ subject_org() }} as org`，macro 见 dbt/macros/subject_org.sql）—— 行级授权的谓词是 `WHERE org = <orgId>`（modules/data/domain/authz.ts 恒拼），关系里少这一列 ⇒ 查询必以仓库错误（502）收场。设计见 docs/superpowers/specs/2026-09-26-subject-org-column-design.md',
       )
     }
   }
