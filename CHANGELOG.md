@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.181.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.180.0...v0.181.0) - 2026-10-21
+- 【新增】data: 零售明细直读湖视图 vw_*——bot 问数下钻 Phase 0 ([#973](https://github.com/MYTech-Co-LTD/platform-core/pull/973), [9fad0b0](https://github.com/MYTech-Co-LTD/platform-core/commit/9fad0b027c4365274c8c82794f6be5d096f79394))
+
+
 ## [0.180.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.179.3...v0.180.0) - 2026-10-21
 - 【新增】data: 新增零售订单明细行 L1 指标，让 bot 能翻明细定位根因 ([#966](https://github.com/MYTech-Co-LTD/platform-core/pull/966), [2524fd0](https://github.com/MYTech-Co-LTD/platform-core/commit/2524fd00bd9b8b0428a19744364a3e659b1f083e))
 
