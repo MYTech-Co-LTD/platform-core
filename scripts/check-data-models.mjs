@@ -1150,6 +1150,12 @@ export function checkDataModels(rootDir, opts = {}) {
           push(metric.file, 0, `指标 \`${metric.name}\` 的 compose 引用了未声明的度量组件 \`${m[0]}\` —— 组件必须声明在**同文件**顶层 \`measures:\`（键形如 \`sale_amount@order\`），compose 只能组合已声明的组件。`)
         }
       }
+      // 整串文法锚定（裁决 2A，2026-10-21 评审后人与裁定）：与 sync composeOf 同判据——剥掉组件引用与
+      // + - ( ) 空白后必须无残留，否则 = 自由 SQL 混进声明面。门禁期就红，不等 sync 物化前才炸。
+      const residue = compose.replace(/[A-Za-z_][A-Za-z0-9_]*@[a-z0-9_]+/g, ' ').replace(/[+\-()\s]/g, '')
+      if (residue !== '') {
+        push(metric.file, 0, `指标 \`${metric.name}\` 的 compose 含文法外记号「${residue.slice(0, 20)}」——只许组件引用与 + - ( ) 空白（不引入自由 SQL）；新算术请先落成同文件 \`measures:\` 组件。`)
+      }
       const dims = metric.fields?.dimensions
       if (!Array.isArray(dims) || dims.length === 0 || !dims.every((d) => typeof d === 'string' && /^[a-z_][a-z0-9_]*$/.test(d)) || new Set(dims).size !== dims.length) {
         push(metric.file, 0, `指标 \`${metric.name}\` 的 dimensions 必须是非空、无重复、蛇形命名的字符串数组——它是**原子粒度闭集**，请求维度只能取其子集。`)

@@ -1517,4 +1517,25 @@ describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', ()
   it('三键齐全 + measures 就位 ⇒ 零违规', () => {
     expect(checkDataModels(fixture(drillCompliant()))).toEqual([])
   })
+
+  it('compose 整串文法锚定：自由 SQL（如 (select 1)）⇒ 拒，合法组合式不误伤（裁决 2A）', () => {
+    // 变异：compose 换成无 @、无分号的自由 SQL —— 剥掉引用与 + - ( ) 空白后有残留，必须门禁期就红
+    //（修前这一格是绿的：matchAll 抓不到引用、无分号、其余三键全合规 ⇒ 自由 SQL 静默滑过）
+    const files = drillCompliant()
+    files[METRICS] = files[METRICS].replace(
+      'compose: "sale_amount@order - return_amount@line"',
+      "compose: '(select 1)'",
+    )
+    const vs = checkDataModels(fixture(files))
+    expect(vs).toHaveLength(1)
+    expect(vs[0]?.message).toMatch(/文法外记号/)
+
+    // 反面（防误伤）：合法组合式带括号与空白 ⇒ 锚定后残留为空，仍零违规
+    const legit = drillCompliant()
+    legit[METRICS] = legit[METRICS].replace(
+      'compose: "sale_amount@order - return_amount@line"',
+      'compose: "(sale_amount@order) - return_amount@line"',
+    )
+    expect(checkDataModels(fixture(legit))).toEqual([])
+  })
 })
