@@ -82,16 +82,20 @@ describe('makePipelineTools.call', () => {
     // 假 pool 刻意做成「只失败一次」：若谁把 reply 放回 try，catch 会再写一次审计（第二次成功）
     // 并回 {status:'error',reason:'tool_exception'} —— 本用例就会从 reject 变成 resolve 而红。
     // 用「永远 reject」的 pool 测不出这个结构差异（旧结构下第二次也 reject，照样 reject）。
-    let inserts = 0
+    // 计数只认审计 INSERT（将来该 impl 若读库，不该把读查询算成「第二次审计」）。
+    let auditInserts = 0
     const pool = {
-      query: async () => {
-        inserts += 1
-        if (inserts === 1) throw new Error('boom')
+      query: async (sql: unknown) => {
+        if (typeof sql !== 'string' || !/insert\s+into\s+data\.query_audit/i.test(sql)) {
+          return { rows: [] }
+        }
+        auditInserts += 1
+        if (auditInserts === 1) throw new Error('boom')
         return { rows: [{ id: 1, created_at: new Date() }] }
       },
     } as never
     await expect(g.call(depsOf({ pool }), 'list_pipelines', {})).rejects.toThrow('boom')
-    expect(inserts).toBe(1)   // 没有第二次 INSERT（也就不会有 error/tool_exception 假错行）
+    expect(auditInserts).toBe(1)   // 没有第二次 INSERT（也就不会有 error/tool_exception 假错行）
   })
 })
 
@@ -101,14 +105,22 @@ describe('verdictOf：审计判决按 status 分类（unknown/not_found ≠ deni
       .toEqual({ verdict: 'ok', reason: 'runs_source_not_wired' })
     expect(verdictOf({ status: 'not_found' }, true)).toEqual({ verdict: 'ok', reason: 'not_found' })
   })
-  it('denied / error 按 status（不看 isError）', () => {
+  it('denied / refused / error 按 status（不看 isError）', () => {
     expect(verdictOf({ status: 'denied', reason: 'mutating_disabled' }, true))
       .toEqual({ verdict: 'denied', reason: 'mutating_disabled' })
+    // refused = 草案没过校验、工具明确拒绝产出 ⇒ 也是「判了拒」（安全复核要能看出反复提非法草案）
+    expect(verdictOf({ status: 'refused', reason: 'invalid_draft' }, true))
+      .toEqual({ verdict: 'denied', reason: 'invalid_draft' })
     expect(verdictOf({ status: 'error', reason: 'tool_exception' }, true))
       .toEqual({ verdict: 'error', reason: 'tool_exception' })
   })
+  it('not_executed（沙箱校验过了但没跑）⇒ ok + reason 透传（不是拒，也不等于跑过）', () => {
+    expect(verdictOf({ status: 'not_executed', reason: 'sandbox_runner_unavailable' }, false))
+      .toEqual({ verdict: 'ok', reason: 'sandbox_runner_unavailable' })
+  })
   it('无 status 且 isError ⇒ denied/tool_error（未知形状不静默变 ok）', () => {
     expect(verdictOf({ detail: 'x' }, true)).toEqual({ verdict: 'denied', reason: 'tool_error' })
+    expect(verdictOf({ detail: 'x' }, false)).toEqual({ verdict: 'ok', reason: '' })
   })
   it('ok 行 reason 为空串（写库时转 null）', () => {
     expect(verdictOf({ status: 'ok', count: 1 }, false)).toEqual({ verdict: 'ok', reason: '' })

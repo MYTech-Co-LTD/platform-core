@@ -49,9 +49,12 @@ const entryOf = (t: (typeof PIPELINE_TOOLS)[number]): Record<string, unknown> =>
 /**
  * 审计判决的**唯一**映射（纯函数，可脱库单测）。
  *
- * 按 `status` 分类，而不是按 `isError`：`not_found`（问的客体不存在）与 `unknown`（读不到）
- * 都不是「调用被拒」——把它们记成 denied 会让安全复核分不清「判了拒」和「查了个空」。
- * 只有 `status:'denied'`、以及**没有 status 却 isError**（impl 抛出的未知形状）才算 denied。
+ * 按 `status` 分类，而不是按 `isError`：
+ *   · `denied` / `refused` 都是「判了拒」——后者是草案没过校验、工具**明确拒绝产出**，
+ *     不是「查了个空」；记成 ok 会让安全复核看不出「有人在反复提非法草案」；
+ *   · `not_found`（问的客体不存在）与 `unknown`（读不到）都不是拒绝；
+ *   · `not_executed`（沙箱闸「校验过了但没跑」）既不是拒、也不等于跑过 ⇒ ok + reason 透传；
+ *   · **没有 status 却 isError**（impl 抛出的未知形状）⇒ denied + `tool_error`。
  * reason：透传 payload.reason（含 ok 行）→ status 非 ok 时回落 status → 无 status 的 denied
  * 回落 'tool_error' → 其余 ''（写库时转 null）。
  */
@@ -61,8 +64,8 @@ export function verdictOf(
   const status = typeof payload.status === 'string' ? payload.status : null
   const verdict: 'ok' | 'denied' | 'error' =
     status === 'error' ? 'error'
-      : status === 'denied' ? 'denied'
-        : status === null && isError ? 'denied'
+      : status === 'denied' || status === 'refused' ? 'denied'
+        : status === null ? (isError ? 'denied' : 'ok')
           : 'ok'
   const reason = typeof payload.reason === 'string' ? payload.reason
     : status !== null && status !== 'ok' ? status
@@ -117,11 +120,16 @@ export function makePipelineTools(wiring: PipelineWiring = defaultPipelineWiring
       if (meta.mutating && !mutatingAllowed(wiring.env)) {
         return reply(d, name, args, { status: 'denied', reason: 'mutating_disabled', name }, true, null)
       }
+      // 「清单里有、分派表漏登记」⇒ 精确错误，而不是 TypeError 文本（工具清单与 IMPLS 是两份表）。
+      const impl = IMPLS[name]
+      if (impl === undefined) {
+        return reply(d, name, args, { status: 'error', reason: 'impl_missing', name }, true, null)
+      }
       // 只包 impl：审计（reply）必须在 try **之外**——否则审计连接抖动会被 catch 成
       // 「impl 异常」，再写一条 error/tool_exception 的假错行，把一次成功的调用记成失败。
       let out: Awaited<ReturnType<PipelineImpl>>
       try {
-        out = await IMPLS[name]!(depsOf(d), args)
+        out = await impl(depsOf(d), args)
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err)
         return reply(d, name, args, { status: 'error', reason: 'tool_exception', detail }, true, null)
