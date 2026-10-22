@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.183.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.182.0...v0.183.0) - 2026-10-22
+- 【新增】data: bot 问数明细下钻 Phase 1——度量组件声明面 + query_detail 四通道 ([#980](https://github.com/MYTech-Co-LTD/platform-core/pull/980), [c0b0558](https://github.com/MYTech-Co-LTD/platform-core/commit/c0b05585ebf33ab37b3f70329c4da4e32e59a275))
+
+
 ## [0.182.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.181.1...v0.182.0) - 2026-10-21
 - 【新增】data: 数据面 MCP 分析师面 Wave 1 (#978) ([#979](https://github.com/MYTech-Co-LTD/platform-core/pull/979), [80775ad](https://github.com/MYTech-Co-LTD/platform-core/commit/80775adeb7ab24e7a445074dd948270656db38a6))
 
