@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.185.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.184.2...v0.185.0) - 2026-10-22
+- 【新增】data: bot 问数明细下钻 Phase 2 (#994) ([#996](https://github.com/MYTech-Co-LTD/platform-core/pull/996), [981a806](https://github.com/MYTech-Co-LTD/platform-core/commit/981a8063183990ede11c77fc39dbcbd605ee633f))
+
+
 ## [0.184.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.184.1...v0.184.2) - 2026-10-22
 - 【修复】data: sample_dimension_values 外层别名撞内层 value 列——真库必炸 (#991) ([#992](https://github.com/MYTech-Co-LTD/platform-core/pull/992), [cdf5979](https://github.com/MYTech-Co-LTD/platform-core/commit/cdf5979b0afeff75fc19f41cf112814751a927d5))
 
