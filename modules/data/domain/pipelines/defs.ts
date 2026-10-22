@@ -65,12 +65,14 @@ export function loadPipelines(
 ): { defs: Map<string, PipelineDef>; warnings: string[] } {
   const defs = new Map<string, PipelineDef>()
   const warnings: string[] = []
-  const dir = join(roots.pipelinesRoot, 'pipelines')
+  let dir = ''
   let files: string[]
   try {
+    // join 也必须在 guard 内：非字符串 root 会让 join 抛错，破坏「不抛」铁律。
+    dir = join(roots.pipelinesRoot, 'pipelines')
     files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort()
   } catch {
-    warnings.push(`pipelines 目录不可读：${dir}`)
+    warnings.push(`pipelines 目录不可读：${roots.pipelinesRoot}`)
     return { defs, warnings }
   }
   for (const f of files) {
@@ -102,12 +104,14 @@ export function loadSchedules(
 ): { byPipeline: Map<string, ScheduleEntry[]>; warnings: string[] } {
   const byPipeline = new Map<string, ScheduleEntry[]>()
   const warnings: string[] = []
-  const dir = join(roots.pipelinesRoot, 'schedules')
+  let dir = ''
   let files: string[]
   try {
+    // 同 loadPipelines：join 在 guard 内，非字符串 root 也不抛。
+    dir = join(roots.pipelinesRoot, 'schedules')
     files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort()
   } catch {
-    warnings.push(`schedules 目录不可读：${dir}`)
+    warnings.push(`schedules 目录不可读：${roots.pipelinesRoot}`)
     return { byPipeline, warnings }
   }
   for (const f of files) {
@@ -145,7 +149,8 @@ export function loadContracts(
   }
   for (const domain of domains) {
     let files: string[]
-    try { files = readdirSync(join(roots.contractsRoot, domain)).filter((f) => f.endsWith('.json')).sort() } catch { continue }
+    try { files = readdirSync(join(roots.contractsRoot, domain)).filter((f) => f.endsWith('.json')).sort()
+    } catch { warnings.push(`契约目录不可读：${domain}`); continue }
     for (const f of files) {
       // `_` 前缀 = 基础设施（_schema/_template），跳过（contracts/README.md 明文）。
       if (f.startsWith('_')) continue

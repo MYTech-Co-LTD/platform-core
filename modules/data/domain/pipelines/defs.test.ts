@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -78,4 +78,19 @@ describe('loadContracts / contractFor', () => {
     expect(contractFor('lemeng.a.tick', contracts)?.id).toBe('lemeng.a')
     expect(contractFor('lemeng.zzz', contracts)).toBeNull()
   })
+  it.skipIf(typeof process.getuid === 'function' && process.getuid() === 0)(
+    '领域目录不可读 ⇒ 进 warnings，其余领域照常返回',
+    () => {
+      const locked = join(root, 'contracts/locked')
+      seed('contracts/locked/x.json', { domain: 'locked', table: 'x', columns: [] })
+      chmodSync(locked, 0o000)
+      try {
+        const { contracts, warnings } = loadContracts(roots)
+        expect(contracts.map((c) => c.id)).toEqual(['lemeng.a'])
+        expect(warnings.some((w) => w.includes('locked'))).toBe(true)
+      } finally {
+        chmodSync(locked, 0o755)
+      }
+    },
+  )
 })
