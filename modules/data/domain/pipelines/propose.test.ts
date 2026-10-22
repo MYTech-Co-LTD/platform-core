@@ -6,21 +6,26 @@ import { afterAll, describe, expect, it } from 'vitest'
 import {
   buildContractProposal, buildPipelineProposal, proposeContractChangeImpl, proposePipelineChangeImpl,
 } from './propose'
+import type { PipelineProposal } from './propose'
 import type { PipelineDeps } from './read'
 
 // 仓根（本测试文件在 modules/data/domain/pipelines/）：零写入断言要对**真实仓目录**做，
 // 不能只对比自己给的临时根（临时根里本来就没有真工件，写错了也看不出来）。
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..')
 
-const makeRoot = (pipelines: Record<string, unknown>, contracts: Record<string, unknown>): string => {
+/** contracts 的 key 是 `contracts/` 下的相对路径（不带 .json）；value 为对象或原始文本（坏件）。 */
+const makeRoot = (
+  pipelines: Record<string, unknown>, contracts: Record<string, unknown>,
+): string => {
   const root = mkdtempSync(join(tmpdir(), 'pl-propose-'))
   mkdirSync(join(root, 'pipelines'), { recursive: true })
   for (const [id, doc] of Object.entries(pipelines)) {
     writeFileSync(join(root, 'pipelines', `${id}.json`), JSON.stringify(doc))
   }
-  mkdirSync(join(root, 'contracts', 'common'), { recursive: true })
-  for (const [id, doc] of Object.entries(contracts)) {
-    writeFileSync(join(root, 'contracts', 'common', `${id}.json`), JSON.stringify(doc))
+  for (const [rel, doc] of Object.entries(contracts)) {
+    const p = join(root, 'contracts', `${rel}.json`)
+    mkdirSync(dirname(p), { recursive: true })
+    writeFileSync(p, typeof doc === 'string' ? doc : JSON.stringify(doc))
   }
   return root
 }
@@ -34,16 +39,27 @@ const basePipeline = { name: 'lemeng.a.b', nodes: [], edges: [] }
 
 const root = makeRoot(
   { 'lemeng.a.b': basePipeline, 'lemeng.a.c': { ...basePipeline, name: 'lemeng.a.c' } },
-  { 'lemeng.a': contractA },
+  { 'common/lemeng.a': contractA },
 )
 // 管线面**部分可读**（有文件被跳过）：只有一个坏文件名，目录本身读得到。
-const partialRoot = makeRoot({ 'lemeng.a.b': basePipeline, 'bad!': basePipeline }, { 'lemeng.a': contractA })
+const partialRoot = makeRoot({ 'lemeng.a.b': basePipeline, 'bad!': basePipeline }, { 'common/lemeng.a': contractA })
 // 新契约已有按命名约定指向它的管线（前缀命中但尚未解析到任何契约）。
-const prefixRoot = makeRoot({ 'lemeng.a_c.tick': { ...basePipeline, name: 'lemeng.a_c.tick' } }, { 'lemeng.a': contractA })
+const prefixRoot = makeRoot({ 'lemeng.a_c.tick': { ...basePipeline, name: 'lemeng.a_c.tick' } }, { 'common/lemeng.a': contractA })
+// 只有 customers 下的契约（loadContracts 只看一层目录，故文件直接挂在 customers/ 下）。
+const customersRoot = makeRoot({ 'lemeng.a.b': basePipeline }, { 'customers/lemeng.a': contractA })
+// 同 id 两份（common + customers）：归属未定案，禁止静默挑一份。
+const dupRoot = makeRoot(
+  { 'lemeng.a.b': basePipeline },
+  { 'common/lemeng.a': contractA, 'customers/lemeng.a': contractA },
+)
+// 契约面**部分可读**：一个坏文件 + 一个正常契约（查「读不全」与「已读到」是否自相矛盾）。
+const warnedContractsRoot = makeRoot(
+  { 'lemeng.a.b': basePipeline },
+  { 'common/lemeng.a': contractA, 'common/broken': '{not json' },
+)
+const allRoots = [root, partialRoot, prefixRoot, customersRoot, dupRoot, warnedContractsRoot]
 const nopeDeps: PipelineDeps = { roots: { pipelinesRoot: '/nope', contractsRoot: '/nope' }, runs: null, env: {} }
-afterAll(() => {
-  for (const r of [root, partialRoot, prefixRoot]) rmSync(r, { recursive: true, force: true })
-})
+afterAll(() => { for (const r of allRoots) rmSync(r, { recursive: true, force: true }) })
 
 const depsOf = (pipelinesRoot: string, contractsRoot: string): PipelineDeps =>
   ({ roots: { pipelinesRoot, contractsRoot }, runs: null, env: {} })
@@ -60,6 +76,12 @@ const contract = {
   layout: { prefix: 'lemeng/a_c', partitionStyle: 'hive', partitionBy: ['bizday'], fileName: 'all.parquet' },
   batch: { markerColumn: 'batch_id', type: 'varchar', unique: false },
   columns: [{ name: 'batch_id', type: 'varchar', nullable: false }],
+}
+
+/** `path` 是消费方的自然主键：任何两条下游项都不许共用（聚合项用不同目录哨兵）。 */
+const expectUniquePaths = (p: PipelineProposal): void => {
+  const paths = p.downstream.map((d) => d.path)
+  expect(new Set(paths).size).toBe(paths.length)
 }
 
 const repoTree = (): string[] => [
@@ -79,6 +101,7 @@ describe('buildPipelineProposal', () => {
     expect(JSON.parse(p.pieces[0].content).name).toBe('lemeng.a.c')
     expect(JSON.parse(p.pieces[1].content).table).toBe('a_c')
     expect(p.validation).toEqual([])
+    expectUniquePaths(p)
   })
   it('管线名非法 ⇒ validation 有 issue（path 是草案内 JSON 路径 name）', () => {
     const p = buildPipelineProposal(deps, { pipeline: { name: '../x', nodes: [], edges: [] }, title: 't', rationale: 'r' })
@@ -91,6 +114,7 @@ describe('buildPipelineProposal', () => {
     const contractItem = p.downstream.find((d) => d.why.includes('契约'))
     expect(contractItem).toMatchObject({ path: 'contracts/common/lemeng.a.json', kind: 'required' })
     expect(p.downstream.map((d) => d.path).join()).toContain('dbt/models/')
+    expectUniquePaths(p)
   })
   it('★ C1：基线里已有同 id 契约 ⇒ 用它的真实 path，不合成 contracts/<domain>/ 路径', () => {
     const existingDraft = { ...contract, table: 'a' } // id = lemeng.a，基线里真实存在
@@ -98,15 +122,50 @@ describe('buildPipelineProposal', () => {
     expect(p.pieces[1].path).toBe('contracts/common/lemeng.a.json')
     expect(p.downstream.some((d) => d.path === 'contracts/common/lemeng.a.json' && d.kind === 'required')).toBe(true)
     expect(p.downstream.every((d) => !d.path.includes('contracts/customers/'))).toBe(true)
+    expectUniquePaths(p)
+  })
+  it('★ C1（customers 分支）：基线里只有 customers 契约 ⇒ 照抄它的真实 path', () => {
+    const p = buildPipelineProposal(
+      depsOf(customersRoot, join(customersRoot, 'contracts')),
+      { pipeline, contract: { ...contract, table: 'a' }, title: 't', rationale: 'r' },
+    )
+    expect(p.pieces[1].path).toBe('contracts/customers/lemeng.a.json')
+    expectUniquePaths(p)
+  })
+  it('★ 同 id 多份 ⇒ unknown（归属未定）+ targets 列出全部候选，不静默挑一份', () => {
+    const p = buildPipelineProposal(
+      depsOf(dupRoot, join(dupRoot, 'contracts')),
+      { pipeline, contract: { ...contract, table: 'a' }, title: 't', rationale: 'r' },
+    )
+    const ambiguous = p.downstream.find((d) => d.kind === 'unknown' && d.why.includes('归属'))
+    expect(ambiguous?.targets).toEqual([
+      'contracts/common/lemeng.a.json', 'contracts/customers/lemeng.a.json',
+    ])
+    expect(ambiguous?.why).toContain('不替你选')
+    expect(p.pieces[1].path).toBe('contracts/common/lemeng.a.json') // 正典默认位，不是「挑中的那一份」
+    expectUniquePaths(p)
   })
   it('★ M1：契约面读不全时，即便带了契约草案也要显式报 unknown（不能对基线沉默）', () => {
     const p = buildPipelineProposal(nopeDeps, { pipeline, contract, title: 't', rationale: 'r' })
     expect(p.downstream.some((d) => d.kind === 'unknown' && d.why.includes('契约面读不全'))).toBe(true)
+    expectUniquePaths(p)
   })
   it('契约面读不全 + 未提供契约 ⇒ 不断言「新表必须先有契约」（那是拿未知当没有）', () => {
     const p = buildPipelineProposal(nopeDeps, { pipeline, title: 't', rationale: 'r' })
     expect(p.downstream.some((d) => d.kind === 'unknown')).toBe(true)
     expect(p.downstream.every((d) => !d.why.includes('新表必须先有契约'))).toBe(true)
+    expectUniquePaths(p)
+  })
+  it('★ 读不全 + 已读到同 id 契约 ⇒ 两句话作用域不同、不自相矛盾（已读项仍成立）', () => {
+    const p = buildPipelineProposal(
+      depsOf(warnedContractsRoot, join(warnedContractsRoot, 'contracts')),
+      { pipeline, contract: { ...contract, table: 'a' }, title: 't', rationale: 'r' },
+    )
+    const unknown = p.downstream.find((d) => d.kind === 'unknown')
+    expect(unknown?.why).toContain('已读到的项仍成立')
+    expect(unknown?.why).not.toContain('无法确认基线里是否已有这份契约')
+    expect(p.downstream.some((d) => d.kind === 'required' && d.why.includes('契约已存在'))).toBe(true)
+    expectUniquePaths(p)
   })
   it('★ 零写入：临时根与真实仓目录树调用前后完全不变；产出路径不落成仓内既有文件', () => {
     const before = readdirSync(root, { recursive: true }).sort()
@@ -136,17 +195,29 @@ describe('buildContractProposal', () => {
     ])
     expect(affected.every((d) => d.why.includes('其当前契约即 lemeng.a'))).toBe(true)
     expect(p.downstream.some((d) => d.kind === 'candidate')).toBe(false)
+    expectUniquePaths(p)
   })
-  it('新契约 ⇒ 落 contracts/common/；同域管线聚合成**一条** candidate（不是 affected，也不逐条）', () => {
+  it('新契约 ⇒ 落 contracts/common/；同域管线聚合成**一条** candidate，targets 给全量 id', () => {
     const p = buildContractProposal(deps, { contract, title: '改 A', rationale: 'r' })
     expect(p.pieces[0].path).toBe('contracts/common/lemeng.a_c.json')
     const candidates = p.downstream.filter((d) => d.kind === 'candidate')
     expect(candidates).toHaveLength(1)
-    expect(candidates[0].why).toContain('lemeng.a.b')
-    expect(candidates[0].why).toContain('lemeng.a.c')
-    expect(candidates[0].why).toContain('2 条管线')
-    expect(candidates[0].path.endsWith('.json')).toBe(false)
+    expect(candidates[0].targets).toEqual(['lemeng.a.b', 'lemeng.a.c'])
+    expect(candidates[0].path).toBe('deploy/duckle/console/pipelines/')
     expect(p.downstream.some((d) => d.kind === 'affected')).toBe(false)
+    expectUniquePaths(p)
+  })
+  it('★ candidate 的 targets 不截断（>5 条也给全量，句子只举例）', () => {
+    const many: Record<string, unknown> = {}
+    for (let i = 0; i < 8; i += 1) many[`lemeng.a.n${i}`] = { ...basePipeline, name: `lemeng.a.n${i}` }
+    const manyRoot = makeRoot(many, { 'common/lemeng.a': contractA })
+    try {
+      const p = buildContractProposal(depsOf(manyRoot, join(manyRoot, 'contracts')), { contract, title: 't', rationale: 'r' })
+      const candidate = p.downstream.find((d) => d.kind === 'candidate')
+      expect(candidate?.targets).toHaveLength(8)
+      expect([...(candidate?.targets ?? [])]).toEqual([...(candidate?.targets ?? [])].sort())
+      expectUniquePaths(p)
+    } finally { rmSync(manyRoot, { recursive: true, force: true }) }
   })
   it('命名前缀命中（新契约已有同名管线）⇒ affected，理由说明实际命中依据', () => {
     const p = buildContractProposal(depsOf(prefixRoot, join(prefixRoot, 'contracts')), { contract, title: 't', rationale: 'r' })
@@ -155,29 +226,45 @@ describe('buildContractProposal', () => {
       'deploy/duckle/console/pipelines/lemeng.a_c.tick.json',
     ])
     expect(affected[0].why).toContain('以契约 id 为前缀')
+    expectUniquePaths(p)
   })
   it('非法契约 ⇒ validation 非空', () => {
     expect(buildContractProposal(deps, { contract: { ...contract, contractVersion: 1 }, title: 't', rationale: 'r' })
       .validation.length).toBeGreaterThan(0)
   })
-  it('★ I2：管线面读不全（有坏件被跳过）⇒ 显式 unknown，且不据此断言「没有受影响管线」', () => {
-    const p = buildContractProposal(depsOf(partialRoot, join(partialRoot, 'contracts')), { contract, title: 't', rationale: 'r' })
-    expect(p.downstream.some((d) => d.kind === 'unknown' && d.why.includes('管线面读不全'))).toBe(true)
-    expect(p.downstream.every((d) => !d.why.includes('未找到引用该契约的管线'))).toBe(true)
-    // 正命中仍是事实：同域候选照样列出来（部分列表不影响已读到的项）。
-    expect(p.downstream.some((d) => d.kind === 'candidate' && d.why.includes('lemeng.a.b'))).toBe(true)
+  it('★ 同 id 多份 ⇒ 落正典默认位 + unknown（归属未定，targets 全量），不挑一份', () => {
+    const p = buildContractProposal(
+      depsOf(dupRoot, join(dupRoot, 'contracts')), { contract: { ...contract, table: 'a' }, title: 't', rationale: 'r' },
+    )
+    expect(p.pieces[0].path).toBe('contracts/common/lemeng.a.json')
+    const ambiguous = p.downstream.find((d) => d.kind === 'unknown' && d.why.includes('归属'))
+    expect(ambiguous?.targets).toEqual([
+      'contracts/common/lemeng.a.json', 'contracts/customers/lemeng.a.json',
+    ])
+    expectUniquePaths(p)
   })
-  it('管线目录不可读 ⇒ unknown（未知 ≠ 没有受影响管线）', () => {
-    const p = buildContractProposal(nopeDeps, { contract, title: 't', rationale: 'r' })
-    expect(p.downstream.some((d) => d.kind === 'unknown' && d.why.includes('管线目录不可读'))).toBe(true)
-    expect(p.downstream.some((d) => d.kind === 'affected' || d.kind === 'candidate')).toBe(false)
+  it('★ I2：管线面读不全 ⇒ 显式 unknown，且与 candidate 的 path 不是同一个键', () => {
+    const p = buildContractProposal(depsOf(partialRoot, join(partialRoot, 'contracts')), { contract, title: 't', rationale: 'r' })
+    const unknown = p.downstream.find((d) => d.kind === 'unknown' && d.why.includes('管线面读不全'))
+    const candidate = p.downstream.find((d) => d.kind === 'candidate')
+    expect(unknown?.path).toBe('deploy/duckle/console/pipelines/ (partial)')
+    expect(candidate?.targets).toEqual(['lemeng.a.b'])
+    expect(unknown?.path).not.toBe(candidate?.path)
+    expect(p.downstream.every((d) => !d.why.includes('未找到引用该契约的管线'))).toBe(true)
+    expectUniquePaths(p)
+  })
+  it('管线目录不可读 ⇒ unknown（未知 ≠ 没有受影响管线），与 candidate 用不同哨兵', () => {
+    const unreadable = buildContractProposal(nopeDeps, { contract, title: 't', rationale: 'r' })
+    const unknown = unreadable.downstream.find((d) => d.kind === 'unknown' && d.why.includes('管线目录不可读'))
+    expect(unknown?.path).toBe('deploy/duckle/console/pipelines/ (unreadable)')
+    expect(unreadable.downstream.some((d) => d.kind === 'affected' || d.kind === 'candidate')).toBe(false)
+    expectUniquePaths(unreadable)
   })
 })
 
 describe('impl', () => {
-  const okContract = { contract, title: 't', rationale: 'r' }
   it('合法草案 ⇒ ok，回包里声明不落盘；rationale 与 title 都截断', async () => {
-    const out = await proposeContractChangeImpl(deps, okContract)
+    const out = await proposeContractChangeImpl(deps, { contract, title: 't', rationale: 'r' })
     expect(out.payload).toMatchObject({ status: 'ok', branch: 'proposal/t' })
     expect(String(out.payload.note)).toContain('不落盘')
     const long = await proposeContractChangeImpl(deps, { contract, title: 't', rationale: 'x'.repeat(2000) })

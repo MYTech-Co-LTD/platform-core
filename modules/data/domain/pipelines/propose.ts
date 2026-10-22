@@ -33,7 +33,17 @@ export type DownstreamKind =
   | 'candidate'  // 同域候选：不是直接写入者，是否受影响需人判定（猜测，聚合为一条）
   | 'unknown'    // 基线读不到/读不全：无法判定（未知 ≠ 没有）
 
-export interface DownstreamItem { path: string; why: string; kind: DownstreamKind }
+export interface DownstreamItem {
+  path: string
+  why: string
+  kind: DownstreamKind
+  /**
+   * 聚合项的具体对象（管线 id / 契约 path）：`candidate` 与歧义 `unknown` 用它承载**全部**
+   * 命中对象——不能只塞进中文句子里，否则读 structuredContent 的 agent 无法枚举。
+   * 单项（required/affected）不需要它。
+   */
+  targets?: readonly string[]
+}
 
 export interface PipelineProposal {
   title: string
@@ -79,9 +89,37 @@ const stagingPathOf = (domain: string, table: string): string =>
     ? `dbt/models/${domain}/staging/stg_${domain}_${table}.sql`
     : 'dbt/models/<域>/staging/stg_<domain>_<table>.sql')
 
-/** 基线里按 id 精确查契约（`contractFor` 是「前缀最长」，语义不同，别混用）。 */
-const contractById = (id: string, contracts: readonly ContractRef[]): ContractRef | null =>
-  (id === '' ? null : contracts.find((c) => c.id === id) ?? null)
+/**
+ * 基线里按 id 精确查契约（`contractFor` 是「前缀最长」，语义不同，别混用）。
+ * **同 id 多份 ≠ 随便挑一份**：`contracts/customers/<客户>/` 与 `common/` 的优先级在
+ * `contracts/customers/README.md` 里尚未定案，且 `loadContracts` 按目录名排序枚举——
+ * 静默取第一个等于用排序结果冒充业务归属。故重复时 `ref = null` 并交出全部候选，
+ * 由调用方出 `unknown` 项让**人**定归属。
+ */
+interface ContractLookup { ref: ContractRef | null; duplicates: ContractRef[] }
+const contractLookup = (id: string, contracts: readonly ContractRef[]): ContractLookup => {
+  if (id === '') return { ref: null, duplicates: [] }
+  const hits = contracts.filter((c) => c.id === id)
+  if (hits.length === 0) return { ref: null, duplicates: [] }
+  if (hits.length > 1) return { ref: null, duplicates: hits }
+  return { ref: hits[0], duplicates: [] }
+}
+
+/** 目录哨兵（聚合项没有单一路径）：**每个哨兵必须互不相同**——`path` 是消费方的自然主键。 */
+const PIPELINES_SENTINEL = `${PIPELINES_DIR}/`
+const PIPELINES_UNREADABLE = `${PIPELINES_DIR}/ (unreadable)`
+const PIPELINES_PARTIAL = `${PIPELINES_DIR}/ (partial)`
+const PIPELINES_INVALID = `${PIPELINES_DIR}/ (invalid target)`
+const CONTRACTS_PARTIAL = `${CONTRACTS_DIR}/ (partial)`
+const CONTRACTS_AMBIGUOUS = `${CONTRACTS_DIR}/ (ambiguous)`
+
+const ambiguousContractItem = (duplicates: readonly ContractRef[]): DownstreamItem => ({
+  path: CONTRACTS_AMBIGUOUS,
+  kind: 'unknown',
+  targets: duplicates.map((c) => c.path),
+  why: `同一契约 id 在基线里有 ${duplicates.length} 份（${duplicates.map((c) => c.path).join('、')}）：`
+    + 'common 与 customers 的优先级尚未定案，本提案不替你选哪一份——请先定归属再落盘',
+})
 
 /** 该管线是否**直接写入**目标契约（两种证据，措辞必须区分，见下）。 */
 interface DirectHit { def: PipelineDef; basis: string }
@@ -140,7 +178,7 @@ export function buildPipelineProposal(
 
   let contractDomain = ''
   let contractTable = ''
-  let suppliedExisting: ContractRef | null = null
+  let suppliedLookup: ContractLookup = { ref: null, duplicates: [] }
   if (input.contract !== undefined) {
     const c = input.contract as { domain?: unknown; table?: unknown } | null | undefined
     contractDomain = str(c?.domain)
@@ -148,26 +186,37 @@ export function buildPipelineProposal(
     const suppliedId = DOMAIN_RE.test(contractDomain) && DOMAIN_RE.test(contractTable)
       ? `${contractDomain}.${contractTable}`
       : ''
-    suppliedExisting = contractById(suppliedId, baseline)
+    suppliedLookup = contractLookup(suppliedId, baseline)
     validation.push(...validateContractDraft(input.contract))
     pieces.push(file(
-      contractPathFor(contractDomain, contractTable, suppliedExisting),
+      contractPathFor(contractDomain, contractTable, suppliedLookup.ref),
       `${JSON.stringify(input.contract ?? null, null, 2)}\n`,
     ))
   }
 
   const downstream: DownstreamItem[] = []
   if (baselineIncomplete) {
+    // 措辞要同时容纳「已读到的项仍成立」与「没读到的不敢断言」——否则与下面
+    // 「契约已存在（基线里有同 id 契约）」读起来像自相矛盾（两句话的**作用域不同**）。
     downstream.push({
-      path: `${CONTRACTS_DIR}/`,
+      path: CONTRACTS_PARTIAL,
       kind: 'unknown',
-      why: `契约面读不全（${contractsLoad.warnings.join('；')}）：无法确认基线里是否已有这份契约——`
-        + '未知 ≠ 没有，请先确认基线再提案',
+      why: `契约面读不全（${contractsLoad.warnings.join('；')}）：基线里可能还有未读到的契约`
+        + '（例如 customers 覆盖）；下面已读到的项仍成立，但「只有这些」不是结论（未知 ≠ 没有）',
     })
   }
+  // 同 id 多份 ⇒ 先让人定归属，不静默挑一份（common / customers 优先级未定案）。
+  const ambiguity: readonly ContractRef[] = input.contract !== undefined
+    ? suppliedLookup.duplicates
+    : (existingForPipeline === null
+      ? []
+      : contractLookup(existingForPipeline.id, baseline).duplicates)
+  if (ambiguity.length > 0) downstream.push(ambiguousContractItem(ambiguity))
+
   if (input.contract === undefined) {
-    // 「新表必须先有契约」这句话只有**基线完整**时才敢说（否则是拿未知当没有）。
-    if (!baselineIncomplete) {
+    // 「新表必须先有契约」这句话只有**基线完整**时才敢说（否则是拿未知当没有）；
+    // 归属有歧义时也不说「沿用现有契约」——那等于替人挑了一份。
+    if (!baselineIncomplete && ambiguity.length === 0) {
       downstream.push(existingForPipeline !== null
         ? {
           path: existingForPipeline.path,
@@ -180,10 +229,10 @@ export function buildPipelineProposal(
           why: '契约未提供：新表必须先有契约（三件套之一）',
         })
     }
-  } else if (suppliedExisting !== null) {
-    // 基线里有同 id 契约 ⇒ 这是**改**它，不是新增；说清楚，别让人以为是新文件。
+  } else if (suppliedLookup.ref !== null) {
+    // 基线里有唯一同 id 契约 ⇒ 这是**改**它，不是新增；说清楚，别让人以为是新文件。
     downstream.push({
-      path: suppliedExisting.path,
+      path: suppliedLookup.ref.path,
       kind: 'required',
       why: '契约已存在（基线里有同 id 契约）：本提案是修改它，列集/类型/布局变更需与下游同 PR 核对',
     })
@@ -219,21 +268,23 @@ export function buildContractProposal(
   const contractsLoad = loadContracts(deps.roots)
   const baseline = contractsLoad.contracts
   const targetId = DOMAIN_RE.test(domain) && DOMAIN_RE.test(table) ? `${domain}.${table}` : ''
-  // 基线里已有同 id ⇒ 用它的真实 path（common/ 或 customers/<客户>/ 由基线决定，不猜）。
-  const path = contractPathFor(domain, table, contractById(targetId, baseline))
+  // 基线里已有**唯一**同 id ⇒ 用它的真实 path（common/ 或 customers 由基线决定，不猜）。
+  // 同 id 多份 ⇒ ref=null（落正典默认位），另出 unknown 项让人定归属。
+  const targetLookup = contractLookup(targetId, baseline)
+  const path = contractPathFor(domain, table, targetLookup.ref)
 
   const downstream: DownstreamItem[] = []
   if (!pipelinesLoad.readable) {
     // 读不到管线面 ≠ 没有受影响管线：必须显式说出来，否则读者会把「空」当结论。
     downstream.push({
-      path: `${PIPELINES_DIR}/`,
+      path: PIPELINES_UNREADABLE,
       kind: 'unknown',
       why: `管线目录不可读（${pipelinesLoad.warnings.join('；')}）：`
         + '无法反查受影响管线——未知 ≠ 没有受影响管线',
     })
   } else if (targetId === '') {
     downstream.push({
-      path: `${PIPELINES_DIR}/`,
+      path: PIPELINES_INVALID,
       kind: 'unknown',
       why: '契约 domain/table 形态非法，无法反查受影响管线（先修 validation 再提案）',
     })
@@ -249,24 +300,27 @@ export function buildContractProposal(
       })
     }
     if (direct.length === 0 && sameDomainIds.length > 0) {
-      const shown = sameDomainIds.slice(0, 5).join('、')
       downstream.push({
-        path: `${PIPELINES_DIR}/`,
+        path: PIPELINES_SENTINEL,
         kind: 'candidate',
-        why: `本域另有 ${sameDomainIds.length} 条管线（${shown}${sameDomainIds.length > 5 ? ' 等' : ''}），`
-          + '它们都不解析到该契约：不是直接写入者，是否受影响需人工判定',
+        // 聚合项的可枚举事实放 targets（**全部** id，不只是句子里举例的前 5 个）。
+        targets: sameDomainIds,
+        why: `本域另有 ${sameDomainIds.length} 条管线（${sameDomainIds.slice(0, 5).join('、')}`
+          + `${sameDomainIds.length > 5 ? ' 等' : ''}）：它们都不解析到该契约，`
+          + '不是直接写入者，是否受影响需人工判定（全量见 targets）',
       })
     }
     if (pipelinesLoad.warnings.length > 0) {
       // 读得到但有文件被跳过（非法名/坏 JSON）⇒ 枚举是**部分**的：正命中仍是事实，
       // 但没命中的部分不能当成「没有」。
       downstream.push({
-        path: `${PIPELINES_DIR}/`,
+        path: PIPELINES_PARTIAL,
         kind: 'unknown',
         why: `管线面读不全（${pipelinesLoad.warnings.join('；')}）：受影响判定可能不完整——未知 ≠ 没有`,
       })
     }
   }
+  if (targetLookup.duplicates.length > 0) downstream.push(ambiguousContractItem(targetLookup.duplicates))
 
   downstream.push({
     path: stagingPathOf(domain, table),
@@ -280,7 +334,7 @@ export function buildContractProposal(
   })
   if (contractsLoad.warnings.length > 0) {
     downstream.push({
-      path: `${CONTRACTS_DIR}/`,
+      path: CONTRACTS_PARTIAL,
       kind: 'unknown',
       why: `契约面读不全（${contractsLoad.warnings.join('；')}）：受影响判定可能不完整——未知 ≠ 没有`,
     })
