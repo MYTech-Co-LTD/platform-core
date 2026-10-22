@@ -1897,20 +1897,24 @@ describePg('审计单点（需要 DATABASE_URL）', () => {
 // 审计写不进去 ⇒ 必须 reject（不是「安静地成功」）。这条同时是「reply 不进 try」的回归网。
 // ⚠️ 假 pool 必须做成**只失败一次**：若用「永远 reject」，旧结构（reply 在 try 内）下
 // 第二次 INSERT 也 reject ⇒ 用例照样 reject ⇒ 测不出回归。只失败一次时，旧结构会把
-// 第二次写成功并回 tool_exception（resolve），本用例才会红。`inserts === 1` 钉住「没有二次尝试」。
+// 第二次写成功并回 tool_exception（resolve），本用例才会红。
+// 计数**只统计审计 INSERT**：将来 impl 若也读库，读查询不能被算成「第二次审计」。
+// （改 `data.query_audit` 的写入语句时同步这个正则——失配只会假红，不会假绿。）
 describe('审计失败必须上抛', () => {
   it('writeAudit 抛错 ⇒ call reject，且没有第二次 INSERT', async () => {
     const g = makePipelineTools(wiring())
-    let inserts = 0
+    const AUDIT_INSERT_RE = /insert\s+into\s+data\.query_audit/i
+    let auditInserts = 0
     const pool = {
-      query: async () => {
-        inserts += 1
-        if (inserts === 1) throw new Error('boom')
+      query: async (sql: string) => {
+        if (!AUDIT_INSERT_RE.test(sql)) return { rows: [] }
+        auditInserts += 1
+        if (auditInserts === 1) throw new Error('boom')
         return { rows: [{ id: 1, created_at: new Date() }] }
       },
     } as never
     await expect(g.call(depsOf({ pool }), 'list_pipelines', {})).rejects.toThrow('boom')
-    expect(inserts).toBe(1)
+    expect(auditInserts).toBe(1)
   })
 })
 
