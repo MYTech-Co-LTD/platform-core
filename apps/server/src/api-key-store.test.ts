@@ -2,6 +2,7 @@
 // 形状照搬原 modules/data/domain/key-store.test.ts（同一批断言语义），只有表/路径变。
 import { afterAll, describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { Pool } from 'pg'
 import {
@@ -41,8 +42,11 @@ describe('token 形状（不需要数据库）', () => {
 
 describePg('宿主 key-store（需要 DATABASE_URL）', () => {
   const pool = new Pool({ connectionString: dbUrl })
+  /** 回填用例的独立 org（与上面 ORG 分开，清理互不误伤）。 */
+  const BACKFILL_ORG = 'org-010-backfill'
   afterAll(async () => {
-    await pool.query('delete from platform.api_key where org = $1', [ORG]).catch(() => {})
+    await pool.query('delete from platform.api_key where org = any($1)', [[ORG, BACKFILL_ORG]]).catch(() => {})
+    await pool.query('delete from data.query_keys where org = $1', [BACKFILL_ORG]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
@@ -90,5 +94,62 @@ describePg('宿主 key-store（需要 DATABASE_URL）', () => {
     // 错的 org ⇒ 写不到
     await touchPatKey(pool, 'org-894-other', id)
     expect((await resolvePat(pool, token))?.keyId).toBe(id)
+  })
+
+  it('010 回填：旧表存量行搬进新表且 resolvePat 可解析；重跑幂等且不复活已吊销行', async () => {
+    await runMigrations(pool, 'platform', fileURLToPath(new URL('./migrations', import.meta.url)))
+
+    const backfill = () =>
+      pool.query(readFileSync(
+        fileURLToPath(new URL('./migrations/010_platform_api_key_backfill.sql', import.meta.url)), 'utf8'))
+    const backfillOn = (conn: { query: (sql: string) => Promise<unknown> }) =>
+      conn.query(readFileSync(
+        fileURLToPath(new URL('./migrations/010_platform_api_key_backfill.sql', import.meta.url)), 'utf8'))
+
+    // 守卫分支先钉住（CI smoke 2026-10-22 的炸点）：旧表还不存在的库上跑迁移必须无害跳过
+    // （全新库跑到 010 时 data.query_keys 尚未由模块迁移建出——无守卫装载即炸）。
+    // drop 用**事务内**做、随后 rollback：共享库上并行 worker 的 data.* 夹具不受影响
+    // （DDL 事务性——schema 消失只在本事务可见）。
+    const client = await pool.connect()
+    try {
+      await client.query('begin')
+      await client.query('drop schema if exists data cascade')
+      await backfillOn(client)
+      await client.query('rollback')
+    } finally {
+      client.release()
+    }
+
+    // 造「上移前的世界」：旧表按 data 001 形状幂等补齐（模块迁移由装载期跑，与本文件无顺序保证）。
+    await pool.query('create schema if not exists data')
+    await pool.query(`create table if not exists data.query_keys (
+      id           bigserial   primary key,
+      org          text        not null,
+      casdoor_user text        not null,
+      name         text        not null,
+      token_hash   text        not null unique,
+      created_at   timestamptz not null default now(),
+      last_used_at timestamptz,
+      revoked_at   timestamptz
+    )`)
+    // 一枚 key 只存在于旧表（createPatKey 只写新表，造不出来）。
+    const legacy = newPatToken()
+    await pool.query(
+      'insert into data.query_keys (org, casdoor_user, name, token_hash) values ($1,$2,$3,$4)',
+      [BACKFILL_ORG, user, 'legacy-010', hashPat(legacy)],
+    )
+    // 先钉住病灶：迁移前 resolvePat 必然 null（shanhai 2026-10-22 生产 401 的机制）。
+    expect(await resolvePat(pool, legacy)).toBeNull()
+
+    await backfill()
+    await backfill()
+    expect(await resolvePat(pool, legacy)).toMatchObject({ org: BACKFILL_ORG, casdoorUser: user })
+
+    // 幂等 + 不复活：新表侧吊销后重跑回填，吊销必须保持（on conflict do nothing 不覆盖新表行——
+    // 若写成 do update，重跑会把旧表的 revoked_at=null 盖回来 = 复活已吊销 key，安全回退）。
+    const row = await pool.query('select id from platform.api_key where token_hash = $1', [hashPat(legacy)])
+    expect(await revokePatKey(pool, BACKFILL_ORG, user, Number(row.rows[0].id))).toBe(true)
+    await backfill()
+    expect(await resolvePat(pool, legacy)).toBeNull()
   })
 })
