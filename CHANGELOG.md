@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.184.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.184.0...v0.184.1) - 2026-10-22
+- 【修复】openclaw: contracts.tools 补登 Wave 2 三工具 + 契约回归测试进 gates（网关拒载实锤，ref #989） ([#990](https://github.com/MYTech-Co-LTD/platform-core/pull/990), [18de78c](https://github.com/MYTech-Co-LTD/platform-core/commit/18de78c10f34fa95abeea1f477f40e984f9a3f37))
+
+
 ## [0.184.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.183.2...v0.184.0) - 2026-10-22
 - 【新增】data: 数据面 MCP Wave 2——三通道同享（A/C 绑定） ([#987](https://github.com/MYTech-Co-LTD/platform-core/pull/987), [0e63364](https://github.com/MYTech-Co-LTD/platform-core/commit/0e63364d22ac3f928fe2e3445b0937e017caf36d))
 
