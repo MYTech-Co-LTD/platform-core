@@ -1049,6 +1049,10 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     })
     // 聚合面表达式：FINISHED 内嵌 + 仍以 sum( 开头（可加判定）+ 仍带关系限定（deriveRelation）
     expect(row?.selectSql).toMatch(/^select sum\(case when stg_lemeng_retail_order_line\.state = 'FINISHED'/)
+    // 聚合面分组 = 同一个 8 列闭集；否则只改 grain 不改 dimensions（或反之）时明细行会被拆组
+    expect(row?.groupBy).toBe(
+      'system_book, bizday, branch_num, order_no, order_detail_num, item_num, item_code, order_transaction_type',
+    )
   })
 
   it('★ 下钻三键进 comparableOf：声明带了下钻而库内没跟上 ⇒ 判「更新」（缺这条 --check 假绿）', () => {

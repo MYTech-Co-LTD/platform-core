@@ -175,7 +175,8 @@ sync 取路径段 `lemeng/<资产>` 推导 `stg_lemeng_<资产>` 关系集物化
 `dimensions` = 非空、无重复、蛇形命名的字符串数组——**原子粒度闭集**，请求维度只能取其子集；
 `detail` = 键**闭集** `{relation, filter, columns}`：`relation` 必须合 `vw_*` 且
 `dbt/models/**/views/<relation>.sql` 在仓（Phase 1 下钻只读直读湖视图），`filter` = 非空、
-不含分号的布尔表达式；`columns`（选填）= **条件列**数组，每项 `{col, grantedBy}`
+不含分号的布尔表达式；`columns`（选填；**键在就必须是非空数组**，无条件列就别写这个键）=
+**条件列**数组，每项 `{col, grantedBy}`
 （`col` 蛇形、不与 `dimensions` 重叠、不许叫 `value`、不重复；`grantedBy` 必须是 manifest
 里真实存在的权限码）——**持码才投影，无码 ⇒ 该列不在回包里**（缺席，不是 NULL；
 spec 2026-10-22 §2.3）。条件列**不是**值级掩码，不进 `mask`。配套的**顶层** `measures:`（与 `metrics:` 同级，一个文件一份）=

@@ -134,6 +134,7 @@ metrics:
       粒度 = 账套 × 业务日 × 门店（口径模型 fct_retail_sale）。
       ⚠️ 本口径实为**乐檬报表复现口径**（销售侧折半式是反推式），**不是会计口径的净收入**。
       ⚠️ tier=experimental：退货侧存在逐店缺口（issue #814），缺口清零前不转 certified。
+      ⚠️ 行数 / 明细构成类问题**不要**用本指标——用 `lemeng:retail:order_line` 走 `query_detail`。
       spec：docs/superpowers/specs/2026-10-17-retail-net-sales-return-offset-design.md
     expression: 'sum(fct_retail_sale.net_amount)'
     grain: [system_book, bizday, branch_num]
@@ -963,8 +964,13 @@ metrics:
   #   污染聚合值（Phase 1 spec §7 订正 2 的算术仍成立）。
   # ⚠️ 契约层**未**打 sensitivity（spec 2026-10-22 §3.2）：打标会激活默认档**整值** nullify，
   #    把 sale_money 一起藏掉。列级暴露的机器声明缺口归 #780 后续，别在这里补假声明。
-  # ⚠️ 若将来有人给本列加值级 `mask`（按列），下钻投影里的 `max(<col>) as <col>` 会被掩码正则
-  #    同时替换两处 ⇒ 列别名被换成表达式、SQL 报错（响亮失败）。届时二选一：改走条件列，或换列。
+  # ⚠️ 若将来有人给本列加值级 `mask`（按列），两个方向都**不是**响亮失败（`mask.ts` 的按列替换
+  #    跳过 `as ` 后的别名位，issue #824）：① 声明用**裸列名** ⇒ 投影变成
+  #    `max(cast(null as numeric)) as <col>`——合法 SQL、列**在场但整列 NULL**（静默；审计仍记该列），
+  #    正是本设计要消灭的「NULL 被读成这行没值」；② 声明用**限定列名**（`vw_….`）⇒ 本投影是不限定
+  #    列名，掩码正则一个都不命中 ⇒ **掩码不生效（fail-open，明文照出）**。
+  #    结论：给本列打列级掩码前**必须先裁决**「掩码生效 ⇒ 整列缺席（推荐）vs 列在场全 NULL」，
+  #    缺口归 #780；别指望它自己报错。
   - name: 'lemeng:retail:order_line'
     label: 零售订单明细行
     definition: >-
