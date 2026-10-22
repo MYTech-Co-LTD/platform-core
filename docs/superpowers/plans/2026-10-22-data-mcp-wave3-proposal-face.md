@@ -48,7 +48,7 @@ duckle / duckle-runner → 未安装
 | 调度定义 | `deploy/duckle/console/schedules/<账套>.json` | ✅ 已在 | 同上 |
 | 数据契约（19 个） | `contracts/common/*.json` | ❌ **不在** | `Dockerfile.server` 的 COPY 清单无 `contracts` |
 
-⇒ 本 Wave **新增 `COPY contracts ./contracts`**（与 `dbt/` 同性质：运行时只读的仓内事实源），并通过两个 env 缝定位：`DATA_PIPELINES_ROOT` / `DATA_CONTRACTS_ROOT`。**缺省根锚在模块位置（`fileURLToPath(import.meta.url)` 上四级 = 仓根；镜像内即 `/app`），不是 `process.cwd()`**——容器 CMD 走 `pnpm --filter @platform/server start`，pnpm 把 cwd 设成 `/app/apps/server`，按 cwd 取会落到不存在的 `/app/apps/server/...`（Task 9 评审 C1 实测，见 Task 9 补记）。
+⇒ 本 Wave **新增 `COPY contracts ./contracts`**（与 `dbt/` 同性质：运行时只读的仓内事实源），并通过两个 env 缝定位：`DATA_PIPELINES_ROOT` / `DATA_CONTRACTS_ROOT`。**缺省根锚在模块位置（`fileURLToPath(import.meta.url)` 上四级 = 仓根；镜像内即 `/app`），不是 `process.cwd()`**——容器 CMD 走 `pnpm --filter @platform/server start`，pnpm 把 cwd 设成 `/app/apps/server`，按 cwd 取会落到不存在的 `/app/apps/server/...`（Task 9 评审 C1：静态取证见 `apps/server/src/app.ts:44-48` 与镜像 CMD；容器内实证在 Task 10 Step 4）。
 
 **不采用的方案（各有硬阻塞，写在这里免得后来者重走）：**
 - **走 OpenShip API**（spec §7 原文）：platform-core **没有任何 openship 客户端**，容器内也没有 openship token；把自己平台的 API 变成问数面运行时依赖，等于把「读一份 JSON」升级成「跨系统认证链」，本轮无案例支撑。
@@ -399,9 +399,9 @@ git commit -m "feat(data-mcp): T1 提案面 7 工具元数据 + 工具面门禁�
   - `interface ScheduleEntry { source: string; pipelineId: string; enabled: boolean; cron: string | null; timezone: string | null }`
   - `interface PipelineDef { id: string; name: string; version: unknown; doc: Record<string, unknown>; counts: { source: number; transform: number; sink: number; control: number }; lakeKeys: string[] }`
   - `interface ContractRef { id: string; domain: string; table: string; path: string; columns: number; doc: Record<string, unknown> }`
-  - `loadPipelines(roots): { defs: Map<string, PipelineDef>; warnings: string[] }`
+  - `loadPipelines(roots): { defs: Map<string, PipelineDef>; warnings: string[]; readable: boolean }`（`readable` 是本 Task 后续评审补的，见 Task 2 补记）
   - `loadSchedules(roots): { byPipeline: Map<string, ScheduleEntry[]>; warnings: string[] }`
-  - `loadContracts(roots): { contracts: ContractRef[]; warnings: string[] }`
+  - `loadContracts(roots): { contracts: ContractRef[]; warnings: string[]; incomplete: boolean }`（`incomplete` 同上）
   - `contractFor(pipelineId: string, contracts: readonly ContractRef[]): ContractRef | null`
 
 **关键口径（写进代码注释，别让后人猜）：**
@@ -711,6 +711,20 @@ git add modules/data/domain/pipelines/defs.ts modules/data/domain/pipelines/defs
 git commit -m "feat(data-mcp): 提案面只读定义源（管线/调度/契约）读取层"
 ```
 
+### Task 2 补记（交付形态与样例的差异，终审提出）
+
+本 Task 的样例代码是**首版**，后续评审按「未知 ≠ 没有」把两个签名加了信号位，最终交付形态以
+`modules/data/domain/pipelines/defs.ts` 为准：
+
+- `loadPipelines` 返回 `{ defs, warnings, readable }`——`readable=false` 只表示**目录读不到**，
+  调用方据此回 `unknown/pipelines_root_unreadable`，不得当成「没有管线」。
+- `loadContracts` 返回 `{ contracts, warnings, incomplete }`——目录读不到、文件不可解析、客户目录
+  不可读都会置 `incomplete`，调用方据此把下游清单降级为 `unknown`。
+- 契约不再只扫一层：`contracts/<域>/*.json` 之外还下探 `contracts/customers/<客户>/*.json`
+  （两层枚举），同 id 多份**只告警点名两条真实路径、不替人裁决优先级**（`customers/README.md`
+  明确未定案）；`customers/` 不存在不算错误。
+- `ContractRef.domain` 在文件缺 `domain` 字段时回落到文件名前缀（`<源>.<表>.json`）。
+
 ---
 
 ## Task 3: `list_pipelines` / `get_pipeline` 两个只读工具
@@ -912,6 +926,19 @@ Expected: PASS。
 git add modules/data/domain/pipelines/read.ts modules/data/domain/pipelines/read.test.ts
 git commit -m "feat(data-mcp): 提案面 list_pipelines / get_pipeline"
 ```
+
+### Task 3 补记（交付形态与样例的差异，终审提出）
+
+样例里的 `ReadAll` 只有 `{ defs, schedules, contracts, warnings }`；**交付版多一个 `readable`**
+（`read.ts:19-26`，由 `loadPipelines(...).readable` 透传）。三个工具据此分三态：
+
+- `readable=false` ⇒ `unknown / pipelines_root_unreadable`（读不到 ≠ 没有管线）；
+- `defs` 里没有该 id ⇒ `not_found`（带上 warnings，别把「读不全」的告警吞掉）；
+- 其余 ⇒ `ok`。
+
+**已知遗留（终审裁决项）**：`readable` 只覆盖管线根；`schedules/` 或 `contracts/` 根不可读时仍是
+`ok` + 空集合 / `contract: null`（只有 warnings），没有同款信号——即「同一类缺陷宽了两个根」。
+`contracts` 侧在 Task 6 补了 `incomplete`，但 `read.ts` 的 ReadAll 尚未汇总它。
 
 ---
 
@@ -1982,7 +2009,7 @@ export interface PipelineWiring {
   runs: PipelineRunSource | null
 }
 
-/** 缺省装配：仓内路径（镜像 /app 与本地 cwd 都成立）+ process.env + 运行记录 seam 未接通。 */
+/** 缺省装配：仓内路径（`rootsOf` 按模块位置解析 ⇒ 镜像内 /app，与 pnpm 脚本 cwd=apps/server 无关）+ process.env + 运行记录 seam 未接通。 */
 export function defaultPipelineWiring(env: Record<string, string | undefined> = process.env): PipelineWiring {
   return { roots: rootsOf(env), env, runs: null }
 }
@@ -2244,9 +2271,14 @@ git commit -m "build(data-mcp): 提案面把 contracts 打进镜像 + env 声明
    同 `modules/forms/index.ts:17-20`）。env 覆盖语义不变。
 3. **回归判据**（`defs.test.ts`）：`rootsOf({})` 的契约根父目录必须含 `pnpm-workspace.yaml`，
    管线根下必须有 `pipelines/`。锚点不取自被测常量，且 vitest 的 cwd 是 `modules/data` ⇒ 旧实现必红。
-4. 顺带订正两处措辞：Dockerfile `COPY contracts` 上方的「契约工具全线 unknown」不准确（不存在
-   「契约工具」，契约只以 `contractId`/`contract` 字段出现在 list/get；契约根读不到时是 `ok` +
-   字段 `null` + warnings，`read.ts:34-37`）；Task 8 样例注释「镜像 /app 与本地 cwd 都成立」同样作废。
+4. 顺带订正三处措辞（**以交付代码为准**）：
+   - 契约根有**两类**消费方，不止 list/get：只读工具（`read.ts:32`，`contractId`/`contract` 字段，
+     `read.ts:82-90` / `115-128`）与草案生成（`propose.ts:174`/`272`，反查基线契约的真实落点）。
+   - 契约根读不到**不会**翻成 `unknown`（`readable` 只来自管线根，`read.ts:34`）：只读工具回 `ok` +
+     字段 `null` + warnings；草案退化为「基线无此契约」，按 `contracts/common/<域>.<表>.json`
+     猜落点（`propose.ts:81-86`，在 `:196`/`:278` 调用），并另行标出 `kind: unknown` 的下游哨兵
+     （`propose.ts:202-210`/`340-345`，二者是两处、别混说）——缺目录不报错，只让产出错位。
+   - Task 8 样例注释「镜像 /app 与本地 cwd 都成立」作废（现为 `rootsOf` 按模块位置解析）。
 
 ---
 
