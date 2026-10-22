@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.183.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.183.0...v0.183.1) - 2026-10-22
+- 【修复】server: PAT 存量回填 platform.api_key + 企微闸只拦企微意图 ([#983](https://github.com/MYTech-Co-LTD/platform-core/pull/983), [2ac7755](https://github.com/MYTech-Co-LTD/platform-core/commit/2ac77550c09a010ecf71f7b4ca7aba07c232a2e4))
+
+
 ## [0.183.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.182.0...v0.183.0) - 2026-10-22
 - 【新增】data: bot 问数明细下钻 Phase 1——度量组件声明面 + query_detail 四通道 ([#980](https://github.com/MYTech-Co-LTD/platform-core/pull/980), [c0b0558](https://github.com/MYTech-Co-LTD/platform-core/commit/c0b05585ebf33ab37b3f70329c4da4e32e59a275))
 
