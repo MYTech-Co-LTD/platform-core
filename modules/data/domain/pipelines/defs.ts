@@ -13,19 +13,39 @@
 //   · 契约是**两层容器**：`contracts/<域>/<源>.<表>.json` 与 `contracts/customers/<客户>/…`；
 //     同 id 多份只告警不裁决（优先级未定案，contracts/customers/README.md）。
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const PIPELINE_ID_RE = /^[A-Za-z0-9_.-]+$/
 
+/**
+ * 仓根，**按本模块文件位置**解析（`modules/data/domain/pipelines/` 上四级）：
+ * `modules/data/domain/pipelines/defs.ts` → `modules/data/domain/pipelines` → … → 仓根。
+ *
+ * 为什么不按 `process.cwd()`：`pnpm --filter @platform/server start`（镜像 CMD）把 cwd
+ * 定在 `apps/server`，于是 `join(cwd, 'contracts')` 会落到 `apps/server/contracts`
+ * ——镜像里根本没有那个目录（缺省根会静默落空，读面回 unknown）。
+ * 镜像内本模块在 `/app/modules/data/domain/pipelines`，上四级即 `/app`。
+ *
+ * ⚠️ 路径用 `node:path` 取，**不要**写 `new URL(rel, import.meta.url)`：happy-dom 会替换
+ * 全局 URL 构造函数，`file:` 解析失效（#718 实测，同 modules/forms/index.ts:17-20）。
+ */
+export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..')
+
 export interface PipelineRoots { pipelinesRoot: string; contractsRoot: string }
 
-/** env 缝（B9：两键必须在根 .env.example 声明）。缺省值对「仓根 cwd」与「镜像 /app」都正确。 */
+/**
+ * env 缝（B9：两键必须在根 .env.example 声明）。
+ * 缺省根 = {@link REPO_ROOT}（**按模块位置解析，与 cwd 无关**；镜像内即 `/app`）——
+ * 故 pnpm 脚本把 cwd 设成 `apps/server` 不影响缺省解析。
+ * 第二参数是显式基准目录（测试用），不传则用仓根。
+ */
 export function rootsOf(
-  env: Record<string, string | undefined> = process.env, cwd: string = process.cwd(),
+  env: Record<string, string | undefined> = process.env, baseDir: string = REPO_ROOT,
 ): PipelineRoots {
   return {
-    pipelinesRoot: env.DATA_PIPELINES_ROOT?.trim() || join(cwd, 'deploy/duckle/console'),
-    contractsRoot: env.DATA_CONTRACTS_ROOT?.trim() || join(cwd, 'contracts'),
+    pipelinesRoot: env.DATA_PIPELINES_ROOT?.trim() || join(baseDir, 'deploy/duckle/console'),
+    contractsRoot: env.DATA_CONTRACTS_ROOT?.trim() || join(baseDir, 'contracts'),
   }
 }
 

@@ -93,8 +93,12 @@ COPY deploy ./deploy
 #    而声明的事实源在仓里、改它不该要走一次镜像构建（同 scripts/ 随镜像走的理由）。
 COPY dbt ./dbt
 # ⑨ contracts/：**提案面（Wave 3）读面的事实源之一**，契约 JSON 是运行时只读资产（与 dbt/ 同性质）。
-#    读面只看 `contracts/<域>/<源>.<表>.json` 与 `contracts/customers/<客户>/…`；缺目录时读面
-#    不抛（坏项进 warnings），但契约工具会**全线 unknown** ⇒ 必须随镜像在场。
+#    读面只看 `contracts/<域>/<源>.<表>.json` 与 `contracts/customers/<客户>/…`。
+#    没有「契约工具」：契约只作为 `list_pipelines`/`get_pipeline` 回包里的 `contractId`/`contract`
+#    字段出现；契约根读不到时读面**照常回 `ok`**，只是这些字段为 `null` 并带 warnings
+#    （modules/data/domain/pipelines/read.ts:34-37）⇒ 缺目录是静默降级，更必须随镜像在场。
+#    读面的缺省根按【模块文件位置】解析（与 pnpm 脚本 cwd = apps/server 无关），故服务端
+#    实际读的就是本行落下的 `/app/contracts`。
 #    注意：管线与调度已在 `COPY deploy ./deploy` 里（deploy/duckle/console/），不必另 COPY。
 COPY contracts ./contracts
 

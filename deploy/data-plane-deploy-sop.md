@@ -878,6 +878,9 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 
 - **可达且已在镜像内**：管线 `deploy/duckle/console/pipelines/*.json`、调度
   `deploy/duckle/console/schedules/*.json`（`COPY deploy`）、契约 `contracts/**`（Wave 3 新增 COPY）。
+  缺省根**按模块文件位置解析、与 cwd 无关**（镜像内即 `/app/deploy/duckle/console` 与
+  `/app/contracts`；`pnpm --filter @platform/server start` 把 cwd 设在 `apps/server` **不影响**它）；
+  `DATA_PIPELINES_ROOT` / `DATA_CONTRACTS_ROOT` 可覆盖缺省。
 - **不可达（待沉淀）**：运行记录在 console 的 per-账套 workspace 卷（`/workspace/runs/`）；
   platform-core 容器既看不到卷、也够不到 `127.0.0.1:18080/18081`（跨 compose 项目 + 回环）。
   故 `list_pipeline_runs`/`get_pipeline_run` 回**显式 unknown**，不是「没跑过」。

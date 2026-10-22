@@ -1,6 +1,6 @@
-import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { contractFor, loadContracts, loadPipelines, loadSchedules, rootsOf } from './defs'
 import type { PipelineRoots } from './defs'
@@ -40,6 +40,15 @@ describe('rootsOf', () => {
   it('缺省落在 cwd 下的仓内路径；env 可覆盖', () => {
     expect(rootsOf({}, '/repo')).toEqual({ pipelinesRoot: '/repo/deploy/duckle/console', contractsRoot: '/repo/contracts' })
     expect(rootsOf({ DATA_PIPELINES_ROOT: '/p', DATA_CONTRACTS_ROOT: '/c' }, '/repo')).toEqual({ pipelinesRoot: '/p', contractsRoot: '/c' })
+  })
+  // 回归（生产事故面）：镜像 CMD 是 `pnpm --filter @platform/server start`，pnpm 把 cwd 设为
+  // apps/server ⇒ 旧实现（缺省 = process.cwd()）解析出 apps/server/contracts（不存在），
+  // list_pipelines/get_pipeline 恒 unknown。vitest 的 cwd = modules/data，旧实现同样落空。
+  // 锚点不依赖实现：契约根的父目录必须是仓根标记 pnpm-workspace.yaml 所在处。
+  it('缺省根按模块位置解析（与 cwd 无关），锚在仓根', () => {
+    const { pipelinesRoot, contractsRoot } = rootsOf({})
+    expect(existsSync(join(dirname(contractsRoot), 'pnpm-workspace.yaml'))).toBe(true)
+    expect(existsSync(join(pipelinesRoot, 'pipelines'))).toBe(true)
   })
 })
 
