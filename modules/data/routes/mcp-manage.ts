@@ -6,9 +6,11 @@ import { registerMcpEndpoint } from './mcp-rpc'
 import type { McpDeps, McpToolGroup, McpToolResult, McpToolSet } from './mcp-rpc'
 import { metricTools } from './mcp-metric-tools'
 import { reportTools } from './mcp-report-tools'
+import { pipelineTools } from './mcp-pipeline-tools'
 
-/** 管理面的工具片。加新片只改这一行（协议壳与门档都不动）。 */
-const GROUPS: readonly McpToolGroup[] = [metricTools, reportTools]
+/** 管理面的工具片。加新片只改这一行（协议壳与门档都不动）。
+ *  `export` 是给测试的跨片重名断言用（新增片必须过），不是新的装配点。 */
+export const GROUPS: readonly McpToolGroup[] = [metricTools, reportTools, pipelineTools]
 
 const manageToolset: McpToolSet = {
   serverName: 'platform-data-mcp-manage',
