@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.186.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.186.0...v0.186.1) - 2026-10-22
+- 【修复】data: 提案面尾部加固——拒绝出口的 incomplete 语义成文 + 驱动型豁免只认 transform ([#1004](https://github.com/MYTech-Co-LTD/platform-core/pull/1004), [4918950](https://github.com/MYTech-Co-LTD/platform-core/commit/4918950c2f78c891da65aa4fc14d6328e21e6bd2))
+
+
 ## [0.186.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.185.0...v0.186.0) - 2026-10-22
 - 【新增】data: 数据面 MCP Wave 3——T1 提案面（7 工具，写闸 + 审计单点） ([#998](https://github.com/MYTech-Co-LTD/platform-core/pull/998), [311d9d2](https://github.com/MYTech-Co-LTD/platform-core/commit/311d9d2d2754cd8bd26f7aa2109b8dbbca2c426a))
 
