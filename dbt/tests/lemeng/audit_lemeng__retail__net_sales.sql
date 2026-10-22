@@ -40,7 +40,11 @@
 -- ② `hive_partitioning=1` **不能写成 read_parquet 的形参**（pg_duckdb 的 read_parquet 是 PG
 --    函数、只认位置参数）；分区推断默认生效，推断类型不合约 ⇒ 本文件显式 cast。
 -- ③ `r['列']` 之间的**算术必须先 `::numeric`**；FULL JOIN 的键两侧逐个显式 cast。
-with base as (
+-- ④ 湖读取走**冷热两腿合流**（#984）：day 天文件 + hour 小时文件**各自单读**，热腿排除已封版日
+--    （同 staging 冷热合流，含封版排除语义）——原 day+window 双 glob 一把读**没有封版排除**，
+--    封窗日两份并存 ⇒ 复算侧双计（销售侧 base 与退货侧 ret_base 两处同改）。
+with base_cold as (
+    -- 冷腿：已封版日的**天文件**
     select
         r['system_book']::varchar  as system_book,
         r['bizday']::date          as bizday,
@@ -56,8 +60,8 @@ with base as (
          and abs(r['discount_money']::numeric - r['order_detail_std_price']::numeric * r['quantity']::numeric) <= 0.02
         ) as is_gift
     from read_parquet(
-        -- ⚠️ 与 staging **同路径**（通配两账套）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
-        ARRAY['s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet', 's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet']::text[]
+        -- ⚠️ 与 staging **同路径**（通配两账套，含封版排除语义）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
     ) r
     where r['state'] = 'FINISHED'
       and r['order_transaction_type'] = 'SALE_ORDER'
@@ -67,7 +71,41 @@ with base as (
       --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 ),
-ret_base as (
+base_hot as (
+    -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
+    select
+        r['system_book']::varchar  as system_book,
+        r['bizday']::date          as bizday,
+        r['branch_num']::int       as branch_num,
+        r['order_no']::varchar     as order_no,
+        r['sale_money']::numeric   as sale_money,
+        r['order_total_money']::numeric     as order_total_money,
+        r['order_detail_share_discount']::numeric as share_discount,
+        -- 赠品判别式（**逐字照抄正典**）：护栏三条件排除退化命中，容差 ±0.02 标定见正典
+        (r['order_detail_std_price']::numeric > 0
+         and r['sale_money']::numeric > 0
+         and r['quantity']::numeric > 0
+         and abs(r['discount_money']::numeric - r['order_detail_std_price']::numeric * r['quantity']::numeric) <= 0.02
+        ) as is_gift
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
+    ) r
+    where r['state'] = 'FINISHED'
+      and r['order_transaction_type'] = 'SALE_ORDER'
+      -- ⚠️ 只比**已闭窗营业日**（bizday < 上海今天）：今天的文件正被 5 分钟一班的 tick 重写，
+      --    与「物化建表 → 本测试读湖」之间构成 ETag 竞态 ⇒ 读到中途被改的文件直接 **ERROR**
+      --    （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1 就红在这，报 ETag 变化）。
+      --    今天未定稿、按定稿线本就不判；两侧**都**滤掉今天，才是同量对比。
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+),
+base as (
+    select * from base_cold
+    union all
+    select * from base_hot
+),
+ret_base_cold as (
+    -- 冷腿：已封版日的**天文件**（#984 冷热两腿合流）
     select
         r['system_book']::varchar as system_book,
         r['bizday']::date         as bizday,
@@ -82,11 +120,39 @@ ret_base as (
              else (r['sale_money']::numeric + r['order_detail_share_discount']::numeric)
         end as return_amount
     from read_parquet(
-        ARRAY['s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet', 's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet']::text[]
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
     ) r
     where r['order_transaction_type'] like '%RETURN%'
       and r['state'] = 'FINISHED'
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+),
+ret_base_hot as (
+    -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
+    select
+        r['system_book']::varchar as system_book,
+        r['bizday']::date         as bizday,
+        r['branch_num']::int      as branch_num,
+        -- 退货行同样套赠品判别式（2026-10-18，#908；与 fct_retail_sale.sql 的 return_side 同一句，
+        -- 金额/数量取绝对值——「0 元实付单整单退货」的退货行带负号，不排会反向加回）。
+        case when r['order_detail_std_price']::numeric > 0 and abs(r['sale_money']::numeric) > 0
+                  and abs(r['quantity']::numeric) > 0
+                  and abs(abs(r['discount_money']::numeric)
+                          - r['order_detail_std_price']::numeric * abs(r['quantity']::numeric)) <= 0.02
+             then 0
+             else (r['sale_money']::numeric + r['order_detail_share_discount']::numeric)
+        end as return_amount
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
+    ) r
+    where r['order_transaction_type'] like '%RETURN%'
+      and r['state'] = 'FINISHED'
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+),
+ret_base as (
+    select * from ret_base_cold
+    union all
+    select * from ret_base_hot
 ),
 ret_side as (
     select

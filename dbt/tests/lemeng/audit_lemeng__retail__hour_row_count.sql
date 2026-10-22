@@ -34,7 +34,7 @@
 --      `cannot subscript type record`）；
 --   ② `hive_partitioning` **不能**写成 read_parquet 的形参（pg_duckdb 的 read_parquet 是 PG 函数、
 --      只认位置参数）；分区推断默认生效，`system_book` 推断成 bigint ⇒ 本文件显式 cast；
---   ③ **通配两账套**（与 staging 同路径），否则只看了 3120（issue #250）。
+--   ③ **通配两账套**（与 staging 同路径，含封版排除语义），否则只看了 3120（issue #250）。
 --
 -- ── 方言约束（2026-10-15 真机定案，issue #682）────────────────────────────────────────
 --   ④ 聚合函数用 **Postgres 方言**：dbt→pg_duckdb 的测试查询由 Postgres 规划器执行
@@ -57,16 +57,39 @@
 --   · 门店在凌晨/非营业小时**合法为空** ⇒ 常态中位数为 0 的窗**直接跳过**，不判；
 --   · 「0 明细单」的取消单让行数小幅起落（整单不落湖，见 §1.4.1 引的引擎实测）；
 --   · **源侧事后仍在变**（实测同一窗 8 小时内 472 → 476 → 482）。
-with landed as (
-    -- 湖里每个 (账套, 营业日, 小时) 实际落了行数
+with landed_raw as (
+    -- ══ 冷热两腿合流（#984）════════════════════════════════════════════════════════════════
+    -- 原 day+window 双 glob 一把读**没有封版排除**：封窗日「天文件 + 小时文件」两份并存 ⇒
+    -- 行数 ≈2×（双计）。拆两腿后热腿排除已封版日，合流语义同 staging 冷热合流（含封版排除语义）。
+    -- 冷腿：已封版日的**天文件**（关闭日的权威天文件）
     select
         r['system_book']::varchar as system_book,
         r['bizday']::date         as bizday,
-        r['hour']::int            as hour,
-        count(*)                  as rows_landed
+        r['hour']::int            as hour
     from read_parquet(
-        ARRAY['s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet', 's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet']::text[]
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
     ) r
+
+    union all
+
+    -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
+    select
+        r['system_book']::varchar as system_book,
+        r['bizday']::date         as bizday,
+        r['hour']::int            as hour
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
+    ) r
+    where not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+),
+landed as (
+    -- 湖里每个 (账套, 营业日, 小时) 实际落了行数
+    select
+        system_book,
+        bizday,
+        hour,
+        count(*) as rows_landed
+    from landed_raw
     group by 1, 2, 3
 ),
 newest as (
