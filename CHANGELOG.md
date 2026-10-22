@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.184.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.184.1...v0.184.2) - 2026-10-22
+- 【修复】data: sample_dimension_values 外层别名撞内层 value 列——真库必炸 (#991) ([#992](https://github.com/MYTech-Co-LTD/platform-core/pull/992), [cdf5979](https://github.com/MYTech-Co-LTD/platform-core/commit/cdf5979b0afeff75fc19f41cf112814751a927d5))
+
+
 ## [0.184.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.184.0...v0.184.1) - 2026-10-22
 - 【修复】openclaw: contracts.tools 补登 Wave 2 三工具 + 契约回归测试进 gates（网关拒载实锤，ref #989） ([#990](https://github.com/MYTech-Co-LTD/platform-core/pull/990), [18de78c](https://github.com/MYTech-Co-LTD/platform-core/commit/18de78c10f34fa95abeea1f477f40e984f9a3f37))
 
