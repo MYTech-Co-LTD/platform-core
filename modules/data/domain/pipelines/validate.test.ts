@@ -67,6 +67,11 @@ describe('validatePipelineDraft', () => {
       name: 'x', nodes: [{ id: 'f1', type: 'transform', data: { componentId: 'ctl.foreach' } }], edges: [],
     }
     expect(validatePipelineDraft(noSource).map((i) => i.message).join()).toContain('source')
+    // 驱动型只认 transform：别的类型挂上 ctl.foreach **不构成**豁免（否则 sink 要求可被静默绕过）。
+    const misTyped = {
+      name: 'x', nodes: [{ id: 's1', type: 'source', data: { componentId: 'ctl.foreach' } }], edges: [],
+    }
+    expect(validatePipelineDraft(misTyped).map((i) => i.message).join()).toContain('sink')
   })
 })
 

@@ -48,7 +48,9 @@ export function validatePipelineDraft(doc: unknown): Issue[] {
     else {
       const comp = str(data.componentId)
       if (comp === '') out.push({ path: `nodes[${i}].data.componentId`, message: 'componentId 必填' })
-      if (comp === DRIVER_COMPONENT) driver = true
+      // 驱动型 = **transform 节点挂 ctl.foreach**。只认 componentId 会把这个豁免送给任何类型——
+      // 例如 source 节点误挂 ctl.foreach 时，薄管线的 sink 要求就被静默免掉了（Tail 终审 R3）。
+      if (t === 'transform' && comp === DRIVER_COMPONENT) driver = true
     }
   })
   if (sources === 0) out.push({ path: 'nodes', message: '至少需要一个 source 节点' })

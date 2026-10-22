@@ -143,15 +143,21 @@ describe('listPipelinesImpl', () => {
       const out = await listPipelinesImpl(deps, args)
       expect(out.isError).toBe(true)
       expect(out.payload).toMatchObject({ status: 'denied', reason: 'bad_param', detail: 'invalid_filter' })
+      // 读之前就拒绝 ⇒ 不带 `incomplete`（缺席 = 没读，不是读全；见 read.ts 文件头 ★）。
+      // 补成 `[]` 会谎称三棵树都读全了 —— 这条断言就是防那次「顺手补齐」。
+      expect(Object.prototype.hasOwnProperty.call(out.payload, 'incomplete')).toBe(false)
     }
   })
-  it('pipelines 根不可读 ⇒ unknown（不是空清单）', async () => {
+  it('pipelines 根不可读 ⇒ unknown（不是空清单），且点名没读全的根', async () => {
     const out = await listPipelinesImpl(missingDeps, {})
     expect(out.isError).toBe(false)
-    const p = out.payload as { status: string; reason: string; warnings: string[] }
+    const p = out.payload as { status: string; reason: string; warnings: string[]; incomplete: string[] }
     expect(p.status).toBe('unknown')
     expect(p.reason).toBe('pipelines_root_unreadable')
     expect(p.warnings.some((w) => w.includes('pipelines'))).toBe(true)
+    // 与拒绝出口相反：这条**读过**（试图读）⇒ 必须点名读不全的根，而不是让「unknown」自己扛全部信息。
+    // 调度根与管线根同树 ⇒ 一起读不到；契约根可读 ⇒ 不得出现在这里（终审 R2）。
+    expect(p.incomplete).toEqual(['pipelines', 'schedules'])
   })
   it('坏件：warnings 点名，好管线照常返回', async () => {
     const out = await listPipelinesImpl(brokenDeps, {})
@@ -206,6 +212,8 @@ describe('getPipelineImpl', () => {
     for (const id of ['../../etc/passwd', 'a/b', '']) {
       const out = await getPipelineImpl(deps, { id })
       expect(out.payload).toMatchObject({ status: 'not_found', id, reason: 'invalid_id' })
+      // 与合法 id 的 not_found 不同：这条在读之前返回 ⇒ 没有 `incomplete`（缺席 = 没读）。
+      expect(Object.prototype.hasOwnProperty.call(out.payload, 'incomplete')).toBe(false)
     }
   })
   it('非法 id 在 readAll 之前就回 not_found（根不存在也仍是 not_found，不是 unknown）', async () => {

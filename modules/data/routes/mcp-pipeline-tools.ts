@@ -41,6 +41,16 @@ const IMPLS: Record<string, PipelineImpl> = {
   propose_contract_change: proposeContractChangeImpl,
 }
 
+// **装载期**一致性（Task 8 M10）：`PIPELINE_TOOLS` 与 `IMPLS` 是两份手写表，漏登记只会在
+// **被调用时**才暴露成 impl_missing —— 一个已经对客户端宣称存在的工具，调用却报错。
+// 这里在模块装载时就判死：新增工具必须两处同改（任何 import 本模块的测试即成为回归网）。
+// 用 throw 而不是降级成 warning：两张表同出一个 PR，不一致就是坏构建；早失败好过每次调用失败。
+for (const t of PIPELINE_TOOLS) {
+  if (typeof IMPLS[t.name] !== 'function') {
+    throw new Error(`pipeline tools: 「${t.name}」在 PIPELINE_TOOLS 里但没有实现（IMPLS 漏登记）`)
+  }
+}
+
 const entryOf = (t: (typeof PIPELINE_TOOLS)[number]): Record<string, unknown> => ({
   name: t.name, title: t.title, description: t.description,
   inputSchema: t.inputSchema, outputSchema: t.outputSchema, annotations: t.annotations,
