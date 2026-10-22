@@ -804,7 +804,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 #### 1.5.3 监控职责分工（🔴 决策定案 2026-10-10，用户裁决；执行计划 #538）
 
 > 背景：监控职责讨论过多轮，执行物散落未收口——**2026-09-27 用户已拍板「引擎原生告警经 OO 转投企微」并端到端配置在位**
-> （OO org=miyuan：`data_alerts_failure`/`data_alerts_recovery` 等 14 条 enabled 规则，机制正文唯一出处 =
+> （OO org=mytech（显示名 2026-10-22 前为 miyuan）：`data_alerts_failure`/`data_alerts_recovery` 等 10 条 enabled 规则（2026-10-22 抖音退役后；原 14 条含抖音 5 条），机制正文唯一出处 =
 > `deploy/duckle/console/README.md` §引擎原生告警）；未完成的是**开环确认（企微侧）、看门狗、覆盖面（L0 事件行 / 64188 未 seed alerts）**。
 > 本节是**终局分工**，配 skill `.claude/skills/data-monitor/`（执法器）强制后续执行；执行状态表与
 > #538 同步，翻绿/翻红都要改这里。
@@ -819,7 +819,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 
 | 层 | 职责 | 明确不做 |
 |---|---|---|
-| **OpenObserve** | 数据面**预警面**：对管线 run 事件（现网 `data_alerts` 流，org=miyuan）配规则（status≠ok / 该来的没来），通知企微；全量观测检索（run 史/判红史/基建日志一处 SQL）。**已在位**：管线失败/恢复、tick 缺席、基建探活（casdoor/novu/wecom/douyin）、宿主资源共 14 条 enabled 规则 | **不是探测器**：不 docker exec、不持库凭据、**不在 OO SQL 里写对账/新鲜度语义**（阈值与缺席规则只消费数据面吐出的判红结论） |
+| **OpenObserve** | 数据面**预警面**：对管线 run 事件（现网 `data_alerts` 流，**org=mytech**——⚠️ 2026-10-22 订正：显示名已由 miyuan 改为 mytech，identifier `3IJ5tM4en3A06FzcJQhoHMTl4Xe` 不变）配规则（status≠ok / 该来的没来），通知企微；全量观测检索（run 史/判红史/基建日志一处 SQL）。**已在位**：管线失败/恢复、tick 缺席、基建探活（casdoor/novu/wecom）、宿主资源、桥自警共 10 条 enabled 规则（2026-10-22 抖音源退役，5 条抖音规则删除；在位清单唯一事实源 = `deploy/oo-alert-registry.txt`，对账 job 每 30 分钟核）。⚠️ 该构建定时规则**流静默即评估跳过 ⇒ 状态机冻结**（恢复永不来、silence 到期重发成风暴；复位 = disable→enable，2026-10-22 `wecom_bridge_delivery_failed` 实证，详见 WeKnora「OO 告警链路排障」条目） | **不是探测器**：不 docker exec、不持库凭据、**不在 OO SQL 里写对账/新鲜度语义**（阈值与缺席规则只消费数据面吐出的判红结论） |
 | **openship** | 机器/进程/任务层：容器 crash_loop、服务器不可达、部署结果、job 崩溃；**告警兜底看门狗**（盯 OO 内最后证据年龄，OO 闪断即红——OO 2026-10-09 实测有 unreachable→0s 闪断，看门狗是切换前置） | 不承载语义判据脚本（历史遗留的探活/物化 job 保留，Phase 2 起通知收敛为 job 崩溃级） |
 | **数据面** | **判据本体**：对账、新鲜度容差（§1.5.2 对齐表）、契约 gate——脚本/qa gate 实现，判红结论**逐行吐进 OO 流**（带 org/账套标签） | — |
 
@@ -933,8 +933,8 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 乐檬经营指标校验 D10（3120，**A 阶段已探·暂不接**） | duckle | — | —（不落湖） | `date_type` 仅 `year`/`quarter`/`month`（**小写**）；`date` 须 `yyyy-MM-dd`；`metrics` 仅 `sale_money`（**小写**） | — | — | **暂不接**（2026-10-13 裁决）：`month` 实测恒空集（4 日期×2 门店全 0）；`year` 仅 **1 行/年**（`target_value`/`actual_value`/`actual_rate` 对照值）⇒ 对照价值极低；spec 明写它「只作对照注、**不决定波次**」且**无指标依赖**。若客户要系统目标对照再按此形状接（形态同 D11，年频）。详见 spec 附录 |
 | 乐檬批发客户档案（3120，#516 段①） | duckle | **固定窗例外（不用标准翻页形态，2026-10-10）**：GET 裸码路径是零参数路由（openapi paths 无 parameters；`limit=3/200/1000` 恒返 707、`offset/page/pageSize/rows/start/keyword` 全无效），POST 三形态全断（文档前缀→`PAT接口路由未配置`/裸码→method not supported/MCP 代理→AGI HTTP 500）⇒ 无翻页可配。窗口跟随活档案（最晚建档 09-23、最晚编辑 10-09 均在窗内，非静态切片），已知 41 个 WO 客户 41/41 在窗内；落窗外风险由发布侧未映射大声红兜底（探针报告 `.superpowers/sdd/2026-10-10-500-lemeng-client/probe-report.md`） | `lemeng/client` | `system_book=` + `snapshot=` | 日更（全量快照，单页固定窗；UTC `55 15 * * *`，wholesale 后 / 03:27 dbt 前） | **duckle console** | 首跑 ✓（707 行落湖/staging 写读对平 707/已知 41 WO 客户 41/41 命中/同名抽样 5/5 命中 dim_branch；行数带守卫 <500 die 在位）；跨系统 待回填 |
 | 乐檬调拨 / 批发 / 退货 / 要货（5 源） | duckle | — | `lemeng/transfer_out` 等 | `system_book=` + `bizday=` | 日更（见各源行） | **duckle console** | **已落**（W1/W3 分批：D01/D02 R2/R3 先行、D03 W1、D15/D16 W3；见上各源行） |
-| 抖音 `sku_daily` | 未定 | — | `douyin/sku_daily` | 月（**键名未定**） | 未定 | 未落 | 待接入 |
-| 抖音接收器（`dy-upload`，生产在跑） | **E1**（长驻接收，**未销账**） | 长驻接收器**在跑**（生产 project `dy-upload` 以 `bare` runtime 跑 `/opt/douyin-life/capture/dy_receiver_run.py`）⇒ 命中 E1；**落盘形态等细节待核实**（§7 #3） | 待核实 | 待核实 | 常驻 | 待核实 | — |
+| 抖音 `sku_daily` | 未定 | — | `douyin/sku_daily` | 月（**键名未定**） | 未定 | 未落 | **已退役（2026-10-22 用户裁决：抖音采集整体下线；本源未接入即废弃）** |
+| 抖音接收器（`dy-upload`） | **E1**（长驻接收，**未销账**） | 长驻接收器曾以 `bare` runtime 跑 `/opt/douyin-life/capture/dy_receiver_run.py`（openship project `dy-upload`，机 f225d818）；**2026-10-22 随抖音采集整体下线**：监控面已清（OO 5 条抖音规则删除 + 该机 6 条抖音 cron 已注释，备份 `/root/crontab.bak.douyin-retire-20261022`）；**服务本体（`dy-upload` / `huopan-reports` 两个 openship project）待停**，湖上历史数据不删 | — | — | 已停 | — | 退役登记：监控执法走 data-monitor；残留 Novu 侧 mytech tenant 收件人问题另案 |
 | 表单提交（forms，**platform-core 自身域**，#729 M1.4） | duckle | — | `forms/submission` | `bizday=` + `batch_id=`（**org 不在路径里**——由 `subject_org()` 注入，契约 description 记了这处对 ADR 的显式偏离；`batch_id` 即批次目录、防 append 实为覆写；行 = 提交 × 表单定义） | 日批（CST `20 0 * * *`；L0 直连默认形态） | **duckle console（forms 专属，**mytech 数据机** 18082，`openship-platform-core-data-forms-console`，2026-10-18 起运行）**：ADR-0014「一账套一 console」⇒ 不与 3120/64188 混装（调度条目带不了自己的 env，混装会静默采错源） | 自证 ✓（qa.contract）/ 幂等 ✓（批次目录）/ 独立通道 ✓（pg_duckdb 直读 1 行 5 列逐字段对）/ 跨系统 ✓（staging 1 行；#799 复 enable 后 materialize 内 `stg_forms_submission` PASS）/ **主验收 ✓ 新表单零改动自动可见**（form-m14-accept 全链路）；新鲜度锚 fresh（owners.forms.json）。✅ **已知偏差已闭合（2026-10-18）**：原 staging 的 org 被物化 job 盖成 **`shanhaiyiguo-org`**（forms console 当时落在山海数据面）。按 2026-10-17 裁决**已回迁**到 mytech 数据面（`proj_SU8cmQ8OLVfM971X` / server `23a1091e`）⇒ 现 **`org = mytech`**，落湖/物化/水位三处实测见 §5。**L1 指标的封锁随回迁解除**（回迁前那条禁令成立，现在不成立）——但 forms 目前**仍未声明任何 L1 指标**（M1.4 范围不含） |
 
 > ⚠️ **上表的「验收结论」列**才是这个登记区的价值所在：**空着 = 没验过**，别用「跑起来了」当验收。
@@ -963,7 +963,7 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 乐檬 | `lemeng/item_purchase`（`system_book=` + `bizday=`） | 3120（供应商 × 商品 summary） | **已落盘**（W3 余项 2026-10-13；首跑 + 独立通道逐分平，见 §1.7） | 采购**收货**口径（≠采购订单）；无门店维度（管理中心采购）；窗口 `${date-1d}` 单日、≤31 天硬限 |
 | 乐檬 | `lemeng/client`（`system_book=` + `snapshot=`） | 账套 × 客户（#516 工单取价对照表） | **已落盘**（3120，2026-10-10 首跑） | 进销存批发客户档案（GET 零参数固定窗，例外见 §1.7）；**不是门店维**——发布侧只消费 client_fid+client_name 做对照，行不进 dim_branch（spec §5 单源分工）；探针报告 `.superpowers/sdd/2026-10-10-500-lemeng-client/probe-report.md` |
 | 乐檬 | 调拨 / 批发 / 退货 / 要货 / 调入 / 库存快照 | 3120 | **已落盘**（W1/W3 分批全部落地，见上各行） | 设计源 `docs/superpowers/specs/2026-09-24-lemeng-collection-pipeline-design.md` |
-| 抖音 | `douyin/sku_daily/<月>/all.parquet` | — | **摸清源**（待接入） | 分区键名未定；见 `contracts/README.md` §7 |
+| 抖音 | `douyin/sku_daily/<月>/all.parquet` | — | **已退役（2026-10-22 用户裁决：采集整体下线，未接入即废弃；湖上历史不删）** | 分区键名未定；见 `contracts/README.md` §7 |
 | 平台（forms） | `forms/submission/bizday=<采集日>/batch_id=<run id>/all.parquet`（**无 `<org>` 段**） | 租户 org（一 PAT 一租户 ⇒ 一租户一管线；导出按 `identity.orgId` 隔离，PAT 跨租户被宿主拒）；⚠️ **org 不进湖**——契约 `layout.partitionBy` 只有 `["bizday","batch_id"]`，主体列由 `subject_org()` 注入（部署常量） | **已落盘**（2026-10-17：forms 专属 console 上线、排班/锚/告警齐，**主验收「新表单零改动自动可见」通过**——见 §5）；✅ **2026-10-18 已回迁 mytech 数据面**（console 18082 + `mytech-dbt-materialize` 日频 `27 3 * * *`；`org = mytech` 实测见 §5 末行） | 设计源 ADR-0005 §13.1（人审）+ `docs/superpowers/plans/2026-10-16-forms-out-lake-m1.4.md`；三个实施面选择已人确认（#729 评论 2026-10-16）：**水位=`id`(bigserial) / 日批 / 前缀如上**；分页 = id 键集游标；staging 已复 enable（#799，湖首文件已落）。📌 **2026-10-17 订正**：本行原写 `forms/submission/<org>/<bizday>/_batch=<ts>/all.parquet`——**两处错**（多一个 `<org>` 段、分区键写成 `_batch`），与已落盘契约不符（契约列名 pattern 不许前导下划线，故 `_batch` 落地为 `batch_id`） |
 
 > 「`_ops`」不是本仓目录约定（实测订正见 duckle/README.md §5）——桶内路径猜想，别再照抄。
@@ -1060,5 +1060,5 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 |---|---|---|
 | 1 | **E2 浏览器自动化通道**的正式条件与验收形态 | 无案例。写出来就是编 |
 | 2 | **退役流程（§1.3 阶段 I）** 的操作细节 | 仍**无已完成的退役案例**：乐檬旧湖于 2026-10-06 只做了**仓内退役（半步）**——湖上前缀**未下线**（生产方 `data-analysis` 每 5 min 仍在写它，观察期无法开始），**三步门槛一次都没走完** ⇒ 连「下前缀」的动作都还没发生过，**不能算案例**。**完整的③观察期后下前缀**仍待首次执行（见 §1.3 阶段 I 订正块与 §2 旧前缀行） |
-| 3 | **抖音接收器**的通道定性 | 需先核实其实现与落盘形态 |
+| 3 | ~~**抖音接收器**的通道定性~~ **✅ 随源退役销账（2026-10-22 用户裁决：抖音采集整体下线）**——监控面已清（OO 5 条抖音规则删 + f225d818 机 6 条抖音 cron 注释）；服务本体（`dy-upload`/`huopan-reports` project）待停，落盘形态不再需要核实 | 退役登记见 §1.7/§2 |
 | 4 | ~~「看得见下游」的探测与告警落地形态~~ **✅ 已落地（2026-10-06，销账 #297 最后一格）** | 机制 = `wire-warehouse.sh --check` 八断言：①DNS ②TCP ③真查询（Gate-B + search_path 接线）+ **④ PG 新鲜度**（fct 的 max(bizday) ≥ 上海今天−2，抓「dbt 绿但读湖读短了」）+ **⑤ 词表非空**（`data.metrics` ≥ 1 行）——挂在既有 `*/5` 探活 job 上（失败即告警）。**④⑤ 变异验证已做（2026-10-06 真机）**：容差调 −1 ⇒ ④ 红、表名指错 ⇒ ⑤ 红，对照五条全 OK。判据面出处 = 本行旧文与 #297。**⑥⑦ 增补（#476/#520，2026-10-07/09）**：⑥ 发布维表 `data.dim_item` 非空且 max(snapshot) ≥ 上海今天−3；⑦ 工单取价面 `dim_settlement_order_line` 非空且 max(order_bizday) ≥ 上海今天**−3/−2（上海 13 点前/后）**。⚠️ **⑦ 判据案例（#534，2026-10-10）**：首版固定 −2 首夜即结构性红 ~200 条企微误报——面由维表发布 job（上海 11:43）整批替换、读 L0 昨晚 23:35 采的 T-1 ⇒ **零点时面必然停在 T-3**。**通用判据：给发布面/物化面写新鲜度容差，必须 ≥「采集滞后 + 发布周期」，或按当前时刻分段取容差**；容差只看数据面拍天数 = 每晚零点红到中午发布完成（「停更」≠「断流」，先核发布节奏再定级）。**⑧ 增补（#538，2026-10-10）**：⑧ 价目发布面 `data.dim_item_price` 非空且 max(snapshot) ≥ 上海今天−3（判据见 §1.5.2 表）——价目管线 429 失败曾无任何告警，本断言补盲 |
