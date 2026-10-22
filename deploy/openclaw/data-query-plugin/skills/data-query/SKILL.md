@@ -65,10 +65,12 @@ metadata:
 ## 明细下钻（query_detail，spec §2.6）
 
 - **什么时候用**：用户要「多少行 / 明细构成 / 哪几单贡献最大」这类**行级**答案时，用 `query_detail({ metricId, args })` 下钻到订单级；聚合口径的合计与分布仍走 `query_data`。
+- **问「多少行 / 哪几行 / 按商品看明细」**：`metricId=lemeng:retail:order_line`（如「10-20 有多少行」⇒ `query_detail({metricId:"lemeng:retail:order_line", args:{bizday:{from:"2026-10-20",to:"2026-10-20"}}})`；单日即 from=to，**别写成裸日期串**——bizday 是 `date_range`，形状不对回 `bad_param`/`invalid_value:bizday`。行数看 `rowCountTotal`，别用聚合面的 1000 行截断）。
 - **`args.bizday` 必传**：`{"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}`（单日则 from=to）——明细直读数据湖，不带 bizday 会被拒。
 - **`rowCountTotal` 是行数的唯一权威**：它 = 该范围全量原始行数，返回 rows 只是截取。回答「多少行」用 rowCountTotal，**不要拿返回行数当全量**。
 - **回 `no_detail_binding` = 能力边界，不是权限问题**：如实告知「该指标暂不支持明细下钻，聚合口径可用 query_data 查询」，**不要重试、不要换参数试探**。
 - **双时钟声明原样转述**：`clock_note`（⏱ 开头，明细直读查询时刻 vs 聚合口径截至日）原样转述、钉在答案末尾；`drill_as_of` / `data_as_of` 照抄不要自行换算。`scope_line`（📐）由系统在消息末尾自动附加（同 📅 机制）——不要自己写 📐 行。
+- **回包可能少一列**：`lemeng:retail:order_line` 的 `order_detail_std_price` 等条件列**需授权**才出现（无 `data:cost` ⇒ 该列不在 `columns`/`rows` 里）。这是**未授权**，不是「没有数据」、不是 NULL、不是 0——如实答「该列需授权」。
 
 ## 口径确认与新鲜度（Wave 2 三新工具）
 

@@ -297,10 +297,15 @@ describePg('POST /mcp 的方法面（需要 DATABASE_URL）', () => {
     const res = await rpc(app, { jsonrpc: '2.0', id: 13, method: 'tools/list' })
     expect(res.status).toBe(200)
     const body = await res.json()
-    const tools = body.result.tools as { name: string; inputSchema: { required: string[] } }[]
+    const tools = body.result.tools as {
+      name: string; description: string; inputSchema: { required: string[] }
+    }[]
     const detail = tools.find((t) => t.name === 'query_detail')
     expect(detail, 'query_detail 与每指标工具并列出现在 tools/list').toBeDefined()
     expect(detail!.inputSchema.required).toEqual(['metricId'])
+    // 条件列缺席 = 未授权（spec 2026-10-22 §2.3/§2.7）：工具文案是四份副本之一，
+    // 与 agent-loop / 插件 index.js / SKILL 同口径（少一列 ≠ 没有数据）
+    expect(detail!.description).toContain('未授权')
   })
 
   it('tools/call query_detail → 分发到 runDetailQuery（execute 透传，count 与明细两腿都走假执行器）', async () => {

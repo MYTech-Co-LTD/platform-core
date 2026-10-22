@@ -270,6 +270,35 @@ describe('血缘单调门：判据', () => {
     expect(joined).toContain('gross_rate')
     expect(joined).toContain('cost_ratio')
   })
+
+  it('⑤ detail.columns[].grantedBy 不在 manifest ⇒ 违规（码发不出去 ⇒ 该列对所有人静默缺席）', () => {
+    const v = checkColumnScopeMonotonicity(fixture({
+      metricLines: [
+        '    detail:',
+        '      relation: vw_lemeng_retail_order_line',
+        '      filter: "state = \'FINISHED\'"',
+        '      columns:',
+        '        - { col: order_detail_std_price, grantedBy: data:ghost }',
+      ],
+    }))
+    // 只挑「命中 data:ghost 的那条」断言——不钉总条数（别的判据的条数会随夹具演进漂）
+    const hit = v.filter((x) => x.message.includes('data:ghost'))
+    expect(hit).toHaveLength(1)
+    expect(hit[0]?.message).toContain('gross_rate')
+    expect(hit[0]?.message).not.toContain('required_scope')   // 认哪一条（别让别的分支兜住）
+  })
+
+  it('⑤ detail.columns[].grantedBy 在 manifest（data:cost）⇒ 不违规', () => {
+    expect(checkColumnScopeMonotonicity(fixture({
+      metricLines: [
+        '    detail:',
+        '      relation: vw_lemeng_retail_order_line',
+        '      filter: "state = \'FINISHED\'"',
+        '      columns:',
+        '        - { col: order_detail_std_price, grantedBy: data:cost }',
+      ],
+    }))).toEqual([])
+  })
 })
 
 describe('P2 值级脱敏四项检查（T4：①#822 / ②#821 / ③同列单声明 / ④required_scope 可查）', () => {

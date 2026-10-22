@@ -215,6 +215,10 @@ test("query_detail 工具注册：path/method、bizday 必传、rowCountTotal �
   assert.match(src, /clock_note/);
   assert.match(src, /scope_line/);
   assert.match(src, /原样转述/);
+  // 条件列缺席 = 未授权（2026-10-22 spec §2.3/§2.7）：别把「没权限看」答成「没有数据」。
+  // 两条分开断言（旧的 `/条件列|未授权/` 二选一太松：只写其中任一词都能过）。
+  assert.match(src, /少一列/);
+  assert.match(src, /该列需授权/);
   // 口径行捕获：scope_line 在场才 capture（缺省不捕）——partial 入参 { scope } 合法
   assert.match(src, /capture\(sessionKey, \{ scope \}, runId\)/);
 });
@@ -228,6 +232,14 @@ test("data-query SKILL.md 明细下钻节：何时用 / bizday 必传 / rowCount
   assert.match(skill, /bizday/);
   assert.match(skill, /能力边界/);
   assert.match(skill, /不要重试/);
+  assert.match(skill, /未授权/);
+  // 条件列话术锁（2026-10-22 spec §2.7）：缺席 = 未授权，须让模型答「该列需授权」
+  assert.match(skill, /该列需授权/);
+  // 路标例子锁（spec §2.7 明示要求 metricId=lemeng:retail:order_line 的例子）：
+  // 「多少行 / 哪几行 / 按商品看明细」必须能路由到该指标。
+  // 裸指标名不够严（条件列那条 bullet 里早就有它）；`metricId=` 前缀才锁得住**例子本身**。
+  assert.match(skill, /lemeng:retail:order_line/);
+  assert.match(skill, /metricId=lemeng:retail:order_line/);
 });
 
 // ── 新鲜度行确定性附加（message_sending 钩子纯逻辑，2026-10-16）──────────────────

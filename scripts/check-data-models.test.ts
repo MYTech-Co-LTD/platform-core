@@ -1518,6 +1518,51 @@ describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', ()
     expect(checkDataModels(fixture(drillCompliant()))).toEqual([])
   })
 
+  /** 把 flow 形态的 detail 换成带条件列的 block 形态（同一份零违规夹具的单点变异）。 */
+  const withColumns = (yamlLines: string[]): Record<string, string> => {
+    const files = drillCompliant()
+    files[METRICS] = files[METRICS].replace(
+      `    detail: { relation: vw_t, filter: "state = 'FINISHED'" }`,
+      ['    detail:', '      relation: vw_t', `      filter: "state = 'FINISHED'"`, ...yamlLines].join('\n'),
+    )
+    return files
+  }
+
+  it('detail.columns 合法条件列 ⇒ 零违规', () => {
+    const files = withColumns(['      columns:', '        - { col: order_detail_std_price, grantedBy: data:cost }'])
+    expect(checkDataModels(fixture(files))).toEqual([])
+  })
+
+  it('detail.columns：蛇形键名写错（granted_by）⇒ 拒（静默不生效是这里最怕的形态）', () => {
+    const files = withColumns(['      columns:', '        - { col: order_detail_std_price, granted_by: data:cost }'])
+    const vs = checkDataModels(fixture(files))
+    expect(vs.some((v) => /未知键/.test(v.message) && /granted_by/.test(v.message))).toBe(true)
+  })
+
+  it('detail.columns：col 与 dimensions 重叠 / 叫 value / 重复 / 空数组 ⇒ 各自拒', () => {
+    const inDims = withColumns(['      columns:', '        - { col: system_book, grantedBy: data:cost }'])
+    expect(checkDataModels(fixture(inDims)).some((v) => /dimensions/.test(v.message))).toBe(true)
+
+    const asValue = withColumns(['      columns:', '        - { col: value, grantedBy: data:cost }'])
+    expect(checkDataModels(fixture(asValue)).some((v) => /value/.test(v.message))).toBe(true)
+
+    const dup = withColumns([
+      '      columns:',
+      '        - { col: order_detail_std_price, grantedBy: data:cost }',
+      '        - { col: order_detail_std_price, grantedBy: data:cost }',
+    ])
+    expect(checkDataModels(fixture(dup)).some((v) => /重复/.test(v.message))).toBe(true)
+
+    const empty = withColumns(['      columns: []'])
+    expect(checkDataModels(fixture(empty)).some((v) => /非空数组/.test(v.message))).toBe(true)
+  })
+
+  it('detail：未知键（如 colums 拼错）⇒ 拒', () => {
+    const files = withColumns(['      colums:', '        - { col: order_detail_std_price, grantedBy: data:cost }'])
+    const vs = checkDataModels(fixture(files))
+    expect(vs.some((v) => /未知键/.test(v.message))).toBe(true)
+  })
+
   it('compose 整串文法锚定：自由 SQL（如 (select 1)）⇒ 拒，合法组合式不误伤（裁决 2A）', () => {
     // 变异：compose 换成无 @、无分号的自由 SQL —— 剥掉引用与 + - ( ) 空白后有残留，必须门禁期就红
     //（修前这一格是绿的：matchAll 抓不到引用、无分号、其余三键全合规 ⇒ 自由 SQL 静默滑过）

@@ -462,6 +462,8 @@ describe('TOOLS —— query_detail 工具面（spec 2026-10-21 §2.4）', () =>
     expect(d).toContain('clock_note')
     expect(d).toContain('原样转述')
     expect(d).toContain('scope_line')
+    // 条件列缺席 = 未授权（spec 2026-10-22 §2.3/§2.7）：别把「没权限看」答成「没有数据」
+    expect(d).toContain('未授权')
     // 主体不在客户端可指定面：required 只有 metricId，schema 无 org/subject
     expect(spec.inputSchema.required).toEqual(['metricId'])
     expect(JSON.stringify(spec.inputSchema)).not.toMatch(/"org"|subject/)

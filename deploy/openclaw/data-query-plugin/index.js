@@ -51,7 +51,7 @@ const QUERY_DEF = {
 const DETAIL_DEF = {
   name: "query_detail",
   description:
-    "按指标下钻到明细构成（订单级）。args.bizday 必传（{\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}，查单日 from=to）。回包 rowCountTotal = 该范围**全量原始行数**——回答「多少行」用它，不要拿返回行数当全量。dimensions 缺省=最细（订单级）；orderBy 缺省按 value 降序（「哪几单贡献最大」直接问）。仅对声明了下钻的指标可用；回 no_detail_binding 时如实告知该指标不支持下钻、可改用 query_data，不要重试。回包带 drill_as_of/data_as_of/clock_note（两个时钟）与 scope_line——clock_note 与 scope_line 原样转述/钉在答案末尾。",
+    "按指标下钻到明细构成（订单级）。args.bizday 必传（{\"from\":\"YYYY-MM-DD\",\"to\":\"YYYY-MM-DD\"}，查单日 from=to）。回包 rowCountTotal = 该范围**全量原始行数**——回答「多少行」用它，不要拿返回行数当全量。dimensions 缺省=最细（订单级）；orderBy 缺省按 value 降序（「哪几单贡献最大」直接问）。仅对声明了下钻的指标可用；回 no_detail_binding 时如实告知该指标不支持下钻、可改用 query_data，不要重试。回包带 drill_as_of/data_as_of/clock_note（两个时钟）与 scope_line——clock_note 与 scope_line 原样转述/钉在答案末尾。回包可能**少一列**（如 order_detail_std_price）：那是条件列未授权（无 data:cost），**不是没有数据**——如实答「该列需授权」，不要当成 NULL、0 或未采集。",
   parameters: {
     type: "object",
     properties: {

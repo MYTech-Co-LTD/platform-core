@@ -636,7 +636,7 @@ describe('真 YAML：43 条 sla_days / freshnessRelations 逐条断言（spec §
     'lemeng:retail:sales', 'lemeng:retail:net_sales', 'lemeng:retail:order_count',
     'lemeng:retail:net_quantity', 'lemeng:retail:consecutive_no_sales_days',
     'lemeng:retail:comparable_growth_rate',
-    // 2026-10-21（issue #965）：明细透传指标，读同一份 retail_order_line 湖资产 ⇒ 与上面六条同档。
+    // 2026-10-21（issue #965）：行级明细读面（8 列闭集 + FINISHED 行域），读同一份 retail_order_line 湖资产 ⇒ 与上面六条同档。
     'lemeng:retail:order_line',
   ])
 
@@ -659,7 +659,7 @@ describe('真 YAML：43 条 sla_days / freshnessRelations 逐条断言（spec §
       'lemeng:retail:net_quantity': ['stg_lemeng_retail_order_line'],
       'lemeng:retail:consecutive_no_sales_days': ['stg_lemeng_retail_order_line'],
       'lemeng:retail:comparable_growth_rate': ['stg_lemeng_retail_order_line'],
-      // 2026-10-21（issue #965）：明细透传指标，读 retail_order_line 湖资产
+      // 2026-10-21（issue #965）：行级明细读面（8 列闭集 + FINISHED 行域），读 retail_order_line 湖资产
       'lemeng:retail:order_line': ['stg_lemeng_retail_order_line'],
       'lemeng:outbound:net_amount': ['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out', 'stg_lemeng_wholesale_return'],
       'lemeng:expense:branch_payable': ['stg_lemeng_branch_expense'],
@@ -1034,6 +1034,27 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     }
   })
 
+  it('★ 真事实源：order_line 的下钻绑定（8 列闭集 + 条件列）', () => {
+    const rows = readDeclarations(ROOT)
+    const row = new Map(rows.map((r) => [r.id, r])).get('lemeng:retail:order_line')
+    expect(row?.drillExpr).toBe('(sum(sale_money))')
+    expect(row?.drillDims).toEqual([
+      'system_book', 'bizday', 'branch_num', 'order_no',
+      'order_detail_num', 'item_num', 'item_code', 'order_transaction_type',
+    ])
+    expect(row?.drillDetail).toEqual({
+      relation: 'vw_lemeng_retail_order_line',
+      filter: "state = 'FINISHED'",
+      columns: [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }],
+    })
+    // 聚合面表达式：FINISHED 内嵌 + 仍以 sum( 开头（可加判定）+ 仍带关系限定（deriveRelation）
+    expect(row?.selectSql).toMatch(/^select sum\(case when stg_lemeng_retail_order_line\.state = 'FINISHED'/)
+    // 聚合面分组 = 同一个 8 列闭集；否则只改 grain 不改 dimensions（或反之）时明细行会被拆组
+    expect(row?.groupBy).toBe(
+      'system_book, bizday, branch_num, order_no, order_detail_num, item_num, item_code, order_transaction_type',
+    )
+  })
+
   it('★ 下钻三键进 comparableOf：声明带了下钻而库内没跟上 ⇒ 判「更新」（缺这条 --check 假绿）', () => {
     const row = (drillExpr: string | null, drillDetail: { relation: string; filter: string } | null) => ({
       id: 'a', title: 'A', description: '', requiredScope: null, subjectColumn: 'org',
@@ -1046,6 +1067,63 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     // 反向对照：两侧一致（jsonb 键序重排由 canonical 兜住）⇒ 判「未变」（可比不退化成恒更新）
     const fromDb = [row('(sum(x))', { filter: 'true', relation: 'vw_x' })]
     expect(diffDeclarations(declared, fromDb).unchanged).toEqual(['a'])
+  })
+
+  it('detail.columns：物化进 drillDetail；未声明时**不写键**（不是空数组）', () => {
+    const cols = [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }]
+    const withCols = declarationsFromYaml({
+      metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail: { ...detail, columns: cols } }],
+      measures: { 'a@b': 'sum(x)' },
+    })
+    expect(withCols[0].drillDetail).toEqual({
+      relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'", columns: cols,
+    })
+
+    const without = declarationsFromYaml({
+      metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail }],
+      measures: { 'a@b': 'sum(x)' },
+    })
+    expect(without[0].drillDetail).toEqual({ relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'" })
+  })
+
+  it('detail.columns 形状坏 ⇒ 响亮失败（sync 手跑路径，不静默物化坏权限声明）', () => {
+    const mk = (columns: unknown) => () => declarationsFromYaml({
+      metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail: { ...detail, columns } }],
+      measures: { 'a@b': 'sum(x)' },
+    })
+    expect(mk([])).toThrow(/非空数组/)
+    expect(mk([{ col: 'order_detail_std_price', granted_by: 'data:cost' }])).toThrow(/未知键/)
+    expect(mk([{ col: 'system_book', grantedBy: 'data:cost' }])).toThrow(/dimensions/)
+    expect(mk([{ col: 'value', grantedBy: 'data:cost' }])).toThrow(/value/)
+    expect(mk([{ col: 'x_price', grantedBy: '' }])).toThrow(/grantedBy/)
+    expect(mk([{ col: 'x_price', grantedBy: 'data:cost' }, { col: 'x_price', grantedBy: 'data:cost' }])).toThrow(/重复/)
+  })
+
+  it('`columns: null`（键在、值空，常见手误）⇒ 与门禁同判据：响亮失败，不静默物化成「无条件列」', () => {
+    // 门禁 check-data-models 的判据是 `if (D.columns !== undefined)` ⇒ 键在值空（YAML `columns:` ⇒ null）
+    // 报红；sync 若在这里回 null（= 未声明），手跑就会把那份坏声明静默落库——那列对所有人缺席且零报错。
+    expect(() => declarationsFromYaml({
+      metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail: { ...detail, columns: null } }],
+      measures: { 'a@b': 'sum(x)' },
+    })).toThrow(/非空数组/)
+  })
+
+  it('drillOf / drillTripleOf 透传 columns（库侧不透传 ⇒ --check 恒报更新）', () => {
+    const cols = [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }]
+    const detailWithCols = { relation: 'vw_x', filter: 'true', columns: cols }
+    expect(drillOf({
+      id: 'a', title: 'A', description: '', requiredScope: null, subjectColumn: 'org',
+      selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {}, sourceSystem: 'lemeng',
+      totalable: false, slaDays: 1, freshnessRelations: [], masks: null,
+      drillExpr: '(sum(x))', drillDims: ['system_book'], drillDetail: detailWithCols,
+    })?.columns).toEqual(cols)
+
+    expect(drillTripleOf({ drill: { expr: '(sum(x))', dims: ['system_book'], relation: 'vw_x', filter: 'true', columns: cols } }))
+      .toEqual({ drillExpr: '(sum(x))', drillDims: ['system_book'], drillDetail: detailWithCols })
+
+    // 反向对照：未声明 ⇒ 两侧都不写键（否则恒不等）
+    expect(drillTripleOf({ drill: { expr: '(sum(x))', dims: ['s'], relation: 'vw_x', filter: 'true' } }).drillDetail)
+      .toEqual({ relation: 'vw_x', filter: 'true' })
   })
 })
 

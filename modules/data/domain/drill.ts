@@ -3,7 +3,7 @@
 // 维度上卷。授权零自建：词表裁剪/拒绝链/主体钉死/参数校验全部复用 authz（与 runQuery 同链）；
 // 掩码在场判定按**下钻 SQL**做（spec §2.5 细节 1）——用「换 selectSql 的合成行」复用
 // effectiveMasks，不改 mask.ts 一个字。
-import type { DrillBinding, Requester } from './authz'
+import type { DrillBinding, DrillColumn, Requester } from './authz'
 import { authorize, paramFilters, sqlQuote, visibleMetrics } from './authz'
 import { maskingAuditOf, writeAudit } from './audit-store'
 import { loadMergedCatalog } from './metric-store'
@@ -48,11 +48,20 @@ export type DetailOutcome = DetailOk
 
 export interface DrillPlan { sql: string; rowCountSql: string; dimensions: string[] }
 
+/** 条件列投影（spec 2026-10-22 §2.3）：`max(<col>) as <col>`，内层与外层同形。
+ * 为什么用 max 而不是裸列：外层 group by 通常比原子粒度粗，裸列会 42803（不在 GROUP BY 里）。
+ * 原子粒度（缺省请求）下组内恒一行 ⇒ max = 该行原值；粗粒度下是「组内某一行的值」，
+ * **不是聚合语义**（spec §5 已知边界）。 */
+function columnProjection(columns: readonly DrillColumn[]): string {
+  return columns.length === 0 ? '' : `, ${columns.map((c) => `max(${c.col}) as ${c.col}`).join(', ')}`
+}
+
 /** 外层上卷：内层产出原子粒度行后按请求维度 rollup + 排序分页。
- * buildDrillSql 与掩码路径共用它——外层形状只有一份（掩码只改内层投影，见 runDetailQuery）。 */
-function rollupOver(inner: string, dims: string[], orderBy: string, desc: boolean, limit: number, offset: number): string {
+ * buildDrillSql 与掩码路径共用它——外层形状只有一份（掩码只改内层投影，见 runDetailQuery）。
+ * `extra` = 条件列投影串（外层也必须 max：外层 group by 通常比原子粒度粗）。 */
+function rollupOver(inner: string, dims: string[], orderBy: string, desc: boolean, limit: number, offset: number, extra = ''): string {
   const d = dims.join(', ')
-  return `select ${d}, sum(value) as value from ( ${inner} ) t group by ${d} order by ${orderBy} ${desc ? 'desc' : 'asc'} limit ${limit} offset ${offset}`
+  return `select ${d}, sum(value) as value${extra} from ( ${inner} ) t group by ${d} order by ${orderBy} ${desc ? 'desc' : 'asc'} limit ${limit} offset ${offset}`
 }
 
 /** 两段下钻 SQL（**纯函数**）：内层原子粒度求组件、外层请求维度上卷 + 排序分页；
@@ -60,11 +69,13 @@ function rollupOver(inner: string, dims: string[], orderBy: string, desc: boolea
 export function buildDrillSql(
   drill: DrillBinding, requested: string[], where: string,
   orderBy: string, desc: boolean, limit: number, offset: number,
+  columns: readonly DrillColumn[] = [],
 ): DrillPlan {
   const atomic = drill.dims.join(', ')
+  const extra = columnProjection(columns)
   const inner =
-    `select ${atomic}, (${drill.expr}) as value from ${drill.relation} where ${where} group by ${atomic}`
-  const sql = rollupOver(inner, requested, orderBy, desc, limit, offset)
+    `select ${atomic}, (${drill.expr}) as value${extra} from ${drill.relation} where ${where} group by ${atomic}`
+  const sql = rollupOver(inner, requested, orderBy, desc, limit, offset, extra)
   const rowCountSql = `select count(*) as n from ${drill.relation} where ${where}`
   return { sql, rowCountSql, dimensions: requested }
 }
@@ -76,7 +87,7 @@ export async function runDetailQuery(
   const audit = (
     verdict: 'ok' | 'denied' | 'error', reason: string | null, rowCount: number | null,
     masking: ReturnType<typeof maskingAuditOf>,
-    drillFacet: { dimensions: string[]; rowCountTotal: number } | null,
+    drillFacet: { dimensions: string[]; rowCountTotal: number; grantedColumns: string[] } | null,
   ) => writeAudit(deps.pool, {
     org, userId: requester?.userId ?? '(anonymous)', channel: requester?.channel ?? 'session',
     keyId: requester?.keyId ?? null, metricId, params: { ...args, ...(detail.dimensions !== undefined ? { dimensions: detail.dimensions } : {}) },
@@ -133,6 +144,11 @@ export async function runDetailQuery(
     requested = [...dims]
   }
 
+  // 条件列（spec 2026-10-22 §2.3）：持 `grantedBy` 才投影；无码 ⇒ 该列**不在场**（缺席，不是 NULL）。
+  // 放在维度校验之后、orderBy 之前——它只影响投影，不参与权限拒绝链（拒绝链全在 authorize）。
+  const granted = (drill.columns ?? []).filter((c) => requester.hasScope(c.grantedBy))
+  const extra = columnProjection(granted)
+
   // 排序：'value'（缺省，降序——「哪几行贡献最大」是下钻的主问题）或请求维度之一。
   const orderBy = detail.orderBy ?? 'value'
   if (orderBy !== 'value' && !requested.includes(orderBy)) {
@@ -162,14 +178,16 @@ export async function runDetailQuery(
   }
   const where = `${metricRow.subjectColumn} = ${sqlQuote(authz.plan.subject)} AND ${drill.filter}${pf.filters.join('')}`
 
-  const plan = buildDrillSql(drill, requested, where, orderBy, desc, limit, offset)
+  const plan = buildDrillSql(drill, requested, where, orderBy, desc, limit, offset, granted)
   // 掩码（spec §2.5 细节 1）：在场判定按**下钻 SQL**——拿合成行（selectSql 换成投影串）复用
   // effectiveMasks，本文件不写第二份掩码判定。只掩**投影串**（value 头与列），WHERE/count
-  // 不掩：Phase 1 掩码只有整值形态（value 头），且列掩码声明期被 grain/在场守卫拦住碰不到
-  // 这里；rowCountTotal 数行数，与值掩码正交。投影 value-first（dims 在后）——理由见下方
+  // 不掩：Phase 1 掩码只有整值形态（value 头）；但**列掩码不再结构性不可达**——投影里含裸条件列，
+  // effectiveMasks 的跨 catalog 按列传播可以命中它，语义缺口与裁决见
+  // `dbt/semantics/l1_metrics.yml` 的 ⚠️ 掩码块与 issue #995。rowCountTotal 数行数，与值掩码
+  // 正交。投影 value-first（dims 在后）——理由见下方
   // rollupOver 处的 ⚠️（终审 C1：mask.ts 头部替换按 value-first 形状设计）。投影串含 from
   //（整值掩码尾锚要求 value 后跟 `,` 或 `from`）。
-  const projection = `select (${drill.expr}) as value, ${requested.join(', ')} from ${drill.relation}`
+  const projection = `select (${drill.expr}) as value, ${requested.join(', ')}${extra} from ${drill.relation}`
   const masked = maskedSelectSql(
     projection,
     effectiveMasks(allMetrics, { ...metricRow, selectSql: projection }),
@@ -183,7 +201,7 @@ export async function runDetailQuery(
   // inner 仅列序不同，语义等价（外层 sum 后同值）；形状逐字一致的说法只对掩码前的串成立。
   const sql = rollupOver(
     `${masked.sql} where ${where} group by ${drill.dims.join(', ')}`,
-    requested, orderBy, desc, limit, offset,
+    requested, orderBy, desc, limit, offset, extra,
   )
 
   const execOnce = (q: string) =>
@@ -235,7 +253,7 @@ export async function runDetailQuery(
   const hasMasking = Object.keys(masked.applied).length > 0
   await audit('ok', retried ? 'lake_race_retry' : null, result.rows.length,
     maskingAuditOf(masked.applied, masked.exempted),
-    { dimensions: requested, rowCountTotal })
+    { dimensions: requested, rowCountTotal, grantedColumns: granted.map((c) => c.col) })
 
   return {
     status: 'ok',

@@ -23,7 +23,7 @@
 
 ## Global Constraints
 
-- **行域两面统一** `state = 'FINISHED'`（含退货行；REPAID / CANCELED 不在）。聚合面把谓词内嵌进 `expression` 的 CASE，下钻面写在 `detail.filter`；两处漂移 = `assert_drill_order_line_matches_metric` 红。
+- **行域统一** `state = 'FINISHED'`（含退货行；REPAID / CANCELED 不在；非 FINISHED 行在聚合面贡献 0）。聚合面把谓词内嵌进 `expression` 的 CASE，下钻面写在 `detail.filter`——**分组集不统一**（某店日全为作废行时，聚合面出零值组、下钻面 0 行）；两处**声明**漂移 = `scripts/sync-data-semantics.test.ts` 的真事实源用例红（`assert_drill_order_line_matches_metric` 守的是行域**数据同量**，读不到声明）。
 - **聚合面关系不动**：`expression` 引用的仍是 `stg_lemeng_retail_order_line`（§3.3）。
 - **`mask.ts` / `mask_spec` / `maskedSelectSql` 一字不动**；条件列**不进** `mask_spec`。
 - **缺席 ≠ NULL**：无码时该列**不出现在回包 `columns` / `rows`**；不得投影成 `cast(null as …)`。
@@ -56,7 +56,7 @@
 | `dbt/semantics/l1_metrics.yml` | `line_amount@line` 组件 + `order_line` 声明迁移 | 改 |
 | `dbt/README.md` | `detail` 键闭集文档（门禁头注要求同步维护） | 改 |
 | `dbt/tests/lemeng/audit_lemeng__retail__order_line.sql` | 行域收 FINISHED | 改 |
-| `dbt/tests/lemeng/assert_drill_order_line_matches_metric.sql` | **新建**：两处 FINISHED 声明同源不变量 | 新建 |
+| `dbt/tests/lemeng/assert_drill_order_line_matches_metric.sql` | **新建**：行域**数据面同量**不变量（读不到声明） | 新建 |
 | `deploy/openclaw/data-query-plugin/index.js` + `lib.test.js` | 工具描述补「条件列缺席 = 未授权」 | 改 |
 | `deploy/openclaw/data-query-plugin/skills/data-query/SKILL.md` | 明细下钻节补一行 | 改 |
 | `modules/data/domain/agent-loop.ts` | 同名工具描述补同一口径 | 改 |
@@ -902,17 +902,23 @@ git commit -m "feat(data): 下钻条件列投影（data:cost 门控）+ 审计�
   # ── 零售订单明细行（2026-10-21 建；2026-10-22 Phase 2 收口权限面）────────────────
   # 下钻绑定的**载体指标**：聚合面答「合计/分布」，下钻面（query_detail）答「多少行 / 哪几行造成的」。
   # 行数唯一权威 = 下钻回包的 rowCountTotal（不是聚合面的 1000 行截断）。
-  # 行域两面统一 `state = 'FINISHED'`（**含退货行**；REPAID / CANCELED 不在）：
+  # 行域统一 `state = 'FINISHED'`（**含退货行**；REPAID / CANCELED 不在）：非 FINISHED 行在聚合面贡献 0；
+  #   分组集**不统一**（聚合面可能出现「某店日全为作废行 ⇒ 零值组」，下钻面同一店日是 0 行）。
   #   聚合面把谓词内嵌进 expression（聚合面没有 detail.filter 可用），下钻面写在 detail.filter；
-  #   两处漂移由 dbt/tests/lemeng/assert_drill_order_line_matches_metric.sql 钉红。
+  #   两处**声明**漂移由 scripts/sync-data-semantics.test.ts 的真事实源用例钉死；assert_drill_order_line_matches_metric.sql
+  #   守的是**行域数据同量**（vw-FINISHED vs stg-CASE-FINISHED），它读不到声明。
   # 粒度 = 8 列原子行键闭集（业务键 distinct = 总行数，2026-10-21 真机核实；batch_id 不拆行）。
   # 价格列是**条件列**（detail.columns，grantedBy: data:cost）：无码 ⇒ 列**不在场**（缺席，不是 NULL）。
   #   它**不是**值级掩码——该列在 sale_amount@order 的赠品判别式内部，nullify 会让判别式变 NULL、
   #   污染聚合值（Phase 1 spec §7 订正 2 的算术仍成立）。
   # ⚠️ 契约层**未**打 sensitivity（spec 2026-10-22 §3.2）：打标会激活默认档**整值** nullify，
   #    把 sale_money 一起藏掉。列级暴露的机器声明缺口归 #780 后续，别在这里补假声明。
-  # ⚠️ 若将来有人给本列加值级 `mask`（按列），下钻投影里的 `max(<col>) as <col>` 会被掩码正则
-  #    同时替换两处 ⇒ 列别名被换成表达式、SQL 报错（响亮失败）。届时二选一：改走条件列，或换列。
+  # ⚠️ 若将来有人给本列加值级 `mask`（按列），两个方向都**不是**响亮失败（`mask.ts` 的按列替换
+  #    跳过 `as ` 后的别名位，issue #824）：① 声明用**裸列名** ⇒ 投影变成
+  #    `max(cast(null as numeric)) as <col>`——合法 SQL、列**在场但整列 NULL**（静默；审计仍记该列）；
+  #    ② 声明用**限定列名** ⇒ 本投影是不限定列名，掩码正则一个都不命中 ⇒ **掩码不生效（fail-open）**。
+  #    结论：给本列打列级掩码前**必须先裁决**「掩码生效 ⇒ 整列缺席（推荐）vs 列在场全 NULL」，
+  #    缺口归 #995；别指望它自己报错。
   - name: 'lemeng:retail:order_line'
     label: 零售订单明细行
     definition: >-
@@ -994,7 +1000,7 @@ git commit -m "feat(data): order_line 并入下钻声明面——FINISHED 行域
 
 **Interfaces:**
 - Consumes: `vw_lemeng_retail_order_line`（Phase 1 已在仓）、`stg_lemeng_retail_order_line`、Task 6 的 expression。
-- Produces: 一条 dbt singular test —— 两处 FINISHED 声明漂移即红。
+- Produces: 一条 dbt singular test —— 守**数据面同量**（vw-FINISHED vs stg-CASE-FINISHED，按账套×业务日对齐）；**它读不到 YAML 声明**，两处声明漂移由 `scripts/sync-data-semantics.test.ts` 的真事实源用例钉死。
 
 - [ ] **Step 1: 改 audit（行域收 FINISHED）**
 
@@ -1033,12 +1039,12 @@ git commit -m "feat(data): order_line 并入下钻声明面——FINISHED 行域
 - [ ] **Step 2: 新建不变量测试**
 
 ```sql
--- assert_drill_order_line_matches_metric.sql — 两处 FINISHED 声明同源不变量（spec 2026-10-22 §2.6）。
+-- assert_drill_order_line_matches_metric.sql — 行域数据同量不变量（spec 2026-10-22 §2.6）。
 --
--- 它守的是本批**唯一新增的重复声明**：`state = 'FINISHED'` 在两个地方各写了一遍——
---   · `detail.filter`（下钻面 WHERE）；
---   · `expression` 的 CASE（聚合面没有 detail.filter 可用）。
--- 两处漂移 ⇒ 同一个源答出两个行集 / 两个金额，而且**不会报错**。本测试是它的解毒剂。
+-- 它守的是**数据面同量**：`vw_` 直读湖的 FINISHED 行 vs `stg_` 按 CASE 物化的 FINISHED 行，
+-- 按 (system_book, bizday) 对齐——两跳之间丢行 / 丢分区 / cast 错会红。
+-- ⚠️ 它**读不到 YAML 声明**（两侧谓词都是本文件硬编码的独立参考实现），所以**声明漂移不会让它红**；
+--    声明层守卫在 scripts/sync-data-semantics.test.ts 的真事实源用例。
 --
 -- 形态同 audit_* / Phase 1 的 assert_drill_*：返回任何行即失败；full join 缺一侧按 0 计
 --（inner join 对「单侧局部丢分区」结构性失明）；金额 numeric(20,2) = 1 分容差；
@@ -1063,7 +1069,7 @@ select coalesce(a.system_book, b.system_book) as system_book,
        coalesce(a.bizday, b.bizday)           as bizday,
        a.line_count as drill_lines,  b.line_count as metric_lines,
        a.amount     as drill_amount, b.amount     as metric_amount,
-       '下钻行域与聚合表达式漂移（detail.filter 与 expression 的 FINISHED 条件不一致，或单侧分区缺失）' as note
+       'vw-FINISHED 与 stg-CASE-FINISHED 数据不同量（单侧分区缺失 / 行域数据漂移）' as note
 from drill a
 full join metric b using (system_book, bizday)
 where coalesce(a.bizday, b.bizday) < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
@@ -1175,7 +1181,7 @@ git commit -m "docs(data): 条件列缺席=未授权——工具描述与 SKILL 
 | 变异（在容器内用只读 SQL 或临时改声明后重跑） | 必须看到 |
 |---|---|
 | `detail.filter` 去掉 `state='FINISHED'` | `rowCountTotal` ≠ 14935（不预设新值，判据是「≠」） |
-| expression 的 CASE 写成 `state <> 'FINISHED'` | 新不变量返回 >0 行 |
+| expression 的 CASE 写成 `state <> 'FINISHED'`（**声明**变异） | `scripts/sync-data-semantics.test.ts` 真事实源用例红；若该变异同时改变了数据面（如已重新物化），新不变量 `assert_drill_order_line_matches_metric` 也可能返回 >0 行——但**声明**的守卫是那条单测，不是新不变量 |
 | `grantedBy` 改成清单外的码 | 门禁 ⑤ 红（本地 `pnpm exec tsx scripts/check-column-scope-monotonicity.mjs` 即可复现） |
 | `granted` 不过滤（对无码者也投影） | 单测红（Task 5 第二格） |
 

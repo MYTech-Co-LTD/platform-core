@@ -157,13 +157,17 @@ metrics:
 
 - **改** `audit_lemeng__retail__order_line.sql`：冷/热两腿与物化腿**都**加 `state = 'FINISHED'`
   （recheck 腿要把 `state` 取出来再滤），与指标同域。
-- **增** `assert_drill_order_line_matches_metric.sql`：闭窗日上逐店日对两条路径——
+- **增** `assert_drill_order_line_matches_metric.sql`：闭窗日上按**账套 × 业务日**（`(system_book, bizday)`）对两条路径——
   - 下钻路径：`vw_lemeng_retail_order_line where state='FINISHED'` 的 `sum(sale_money)` 与 `count(*)`；
   - 聚合路径：`stg_lemeng_retail_order_line` 上复算表达式里的 CASE，同样 `sum` 与 FINISHED 行数；
   - `full join` + `coalesce(…, 0)`（单侧局部丢分区不许失明）+ 金额 `0.01` 容差 +
     **空转绿守卫**（两侧皆空 ⇒ 报一行）。
-  - 它守的是一条声明事实：**FINISHED 谓词在 `detail.filter` 与 `expression` 两处各写了一遍**，
-    漂移必须红（这是本批唯一新增的重复声明，测试是它的解毒剂）。
+  - 它守的是**数据面同量**：`vw_` 直读湖的 FINISHED 行 vs `stg_` 按 CASE 物化的 FINISHED 行，
+    按 `(system_book, bizday)` 对齐——两跳之间丢行 / 丢分区 / cast 错会红。
+  - ⚠️ 它**读不到 YAML 声明**（两侧谓词都是测试文件里硬编码的独立参考实现），因此
+    **声明漂移不会让它红**。声明漂移由 `scripts/sync-data-semantics.test.ts` 的真事实源用例
+    `★ 真事实源：order_line 的下钻绑定（8 列闭集 + 条件列）` 钉死：`detail.filter` 走 `toEqual`、
+    `expression` 折进 `selectSql` 后用正则钉——**只改一处必红，两处一起改必须同 commit 更新该用例**。
 
 ### 2.7 机器人可发现性（零代码）
 
@@ -247,7 +251,7 @@ metrics:
 | `detail.columns[].grantedBy` 改成清单外的码 | 门禁 ⑤ |
 | `grantedCols` 不过滤（对无码者也投影） | 单测：无码请求的 projection 不含该列 |
 | 内层漏 `max()` | 编译错（列不在 GROUP BY 里）——单测钉形状 |
-| 表达式 CASE 的 `state` 条件写错 | 新不变量 `assert_drill_order_line_matches_metric` |
+| 表达式 CASE 的 `state` 条件写错（**声明**变异） | `scripts/sync-data-semantics.test.ts` 真事实源用例红；若数据面随之漂移，新不变量 **也**可能红——但它**不是**声明守卫 |
 
 ---
 

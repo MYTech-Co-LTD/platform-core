@@ -47,6 +47,28 @@ describePg('metric-store 下钻三列（迁移 021，需要 DATABASE_URL）', ()
     assert.deepEqual(row?.drill, { expr: '(sale_amount@order)', dims: ['system_book', 'bizday'], relation: 'vw_t', filter: "state = 'FINISHED'" })
   })
 
+  it('drill.columns 往返保真：条件列必须落进 drill_detail jsonb（写漏这一跳 = 功能不生效 + --check 恒报更新）', async () => {
+    await upsertL1Metric(pool, {
+      id: 'drillstore:retail:with_columns', title: 't', description: 'd',
+      requiredScope: null, subjectColumn: 'org',
+      selectSql: "select sum(fct_t.net_amount) as value, system_book from fct_t where state = 'FINISHED' group by system_book",
+      groupBy: 'system_book', params: {}, sourceSystem: 'lemeng',
+      slaDays: 1, freshnessRelations: [], masks: null,
+      drill: {
+        expr: '(sale_amount@order)', dims: ['system_book', 'bizday'], relation: 'vw_t', filter: "state = 'FINISHED'",
+        columns: [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }],
+      },
+    })
+    const rows = await loadMergedCatalog(pool, ORG)
+    const row = rows.find((m) => m.id === 'drillstore:retail:with_columns')
+    // 哨兵：行必须可见，否则下面断言是空转
+    assert.notEqual(row, undefined, '带 columns 的夹具行必须可见')
+    assert.deepEqual(row?.drill, {
+      expr: '(sale_amount@order)', dims: ['system_book', 'bizday'], relation: 'vw_t', filter: "state = 'FINISHED'",
+      columns: [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }],
+    })
+  })
+
   it('drill 列残缺（有 expr 无 dims）⇒ 读侧判未声明（fail-closed，不半绑）', async () => {
     await pool.query(
       "insert into data.metrics (org, id, title, description, subject_column, select_sql, group_by, params, source, drill_expr) values ($1,'drillstore:half','t','d','org','select 1 as value','','{}','l2','(x)') on conflict (org,id) do update set drill_expr = excluded.drill_expr",
