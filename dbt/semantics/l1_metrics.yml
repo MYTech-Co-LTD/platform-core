@@ -84,6 +84,10 @@ measures:
        abs(abs(discount_money) - order_detail_std_price * abs(quantity)) <= 0.02) then 0
     when order_transaction_type like '%RETURN%' and state = 'FINISHED' then sale_money + order_detail_share_discount
     else 0 end)
+  # 行级原始金额度量（spec 2026-10-22 §2.2）：不承载口径——行域由指标侧钉
+  # （聚合面 expression 的 CASE、下钻面 detail.filter），组件体只做行级求和。
+  line_amount@line: >-
+    sum(sale_money)
 
 metrics:
   - name: 'lemeng:retail:sales'
@@ -130,6 +134,7 @@ metrics:
       粒度 = 账套 × 业务日 × 门店（口径模型 fct_retail_sale）。
       ⚠️ 本口径实为**乐檬报表复现口径**（销售侧折半式是反推式），**不是会计口径的净收入**。
       ⚠️ tier=experimental：退货侧存在逐店缺口（issue #814），缺口清零前不转 certified。
+      ⚠️ 行数 / 明细构成类问题**不要**用本指标——用 `lemeng:retail:order_line` 走 `query_detail`。
       spec：docs/superpowers/specs/2026-10-17-retail-net-sales-return-offset-design.md
     expression: 'sum(fct_retail_sale.net_amount)'
     grain: [system_book, bizday, branch_num]
@@ -140,7 +145,8 @@ metrics:
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
     # ── 下钻绑定（spec §2.3/§2.4；Phase 1 裁决点：item_num 不进闭集——折半是订单级算术，
-    # 摊到行是设计选择，spec §2.4 明示不定案；data:cost 列掩码缓到 Phase 2，见计划裁决点 2）──
+    # 摊到行是设计选择，spec §2.4 明示不定案；价格列走**条件列**（detail.columns +
+    # grantedBy: data:cost）而非值级掩码——Phase 2 否决了值级掩码，见 spec 2026-10-22 §3.1）──
     compose: 'sale_amount@order - return_amount@line'
     dimensions: [system_book, bizday, branch_num, order_no]
     detail:
@@ -947,36 +953,60 @@ metrics:
       - 's3://<bucket>/lemeng/request_order/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/transfer_in/system_book=<账套>/bizday=<日期>/all.parquet'
 
-  # ── 零售订单明细行（2026-10-21，issue #965）────────────────────────────────────
-  # 唯一一条**明细透传**指标：grain 放全 26 列 ⇒ 每个分组恒为一行 ⇒ 回包即订单行级明细。
-  # 存在理由：bot 现有 L1 全是聚合、最细到 门店×日×商品，**翻不到交易行级**，定位不了根因。
-  # 走现有声明面（零新架构）。明细直读视图（views/vw_*）落地后本指标可退役，见
-  # docs/superpowers/specs/2026-09-26-detail-read-view-design.md。
-  # ⚠️ 本轮**不挂**列级/值级权限（PoC，用户 2026-10-21 确认）——**已知的临时敞口，不是终态**。
-  #    契约 contracts/common/lemeng.retail_order_line.json 现无 sensitivity 标记 ⇒ 默认档无物可套。
+  # ── 零售订单明细行（2026-10-21 建；2026-10-22 Phase 2 收口权限面）────────────────
+  # 下钻绑定的**载体指标**：聚合面答「合计/分布」，下钻面（query_detail）答「多少行 / 哪几行造成的」。
+  # 行数唯一权威 = 下钻回包的 rowCountTotal（不是聚合面的 1000 行截断）。
+  # 行域统一 `state = 'FINISHED'`（**含退货行**；REPAID / CANCELED 不在）：非 FINISHED 行在聚合面贡献 0；
+  #   分组集**不统一**（聚合面可能出现「某店日全为作废行 ⇒ 零值组」，下钻面同一店日是 0 行）。
+  #   聚合面把谓词内嵌进 expression（聚合面没有 detail.filter 可用），下钻面写在 detail.filter；
+  #   两处**声明**漂移由 scripts/sync-data-semantics.test.ts 的真事实源用例钉死（`detail.filter`
+  #   走 `toEqual`、`expression` 折进 `selectSql` 走正则）；assert_drill_order_line_matches_metric.sql
+  #   守的是**行域数据同量**（vw-FINISHED vs stg-CASE-FINISHED），它读不到声明。
+  # 粒度 = 8 列原子行键闭集（业务键 distinct = 总行数，2026-10-21 真机核实；batch_id 不拆行）。
+  # 价格列是**条件列**（detail.columns，grantedBy: data:cost）：无码 ⇒ 列**不在场**（缺席，不是 NULL）。
+  #   它**不是**值级掩码——该列在 sale_amount@order 的赠品判别式内部，nullify 会让判别式变 NULL、
+  #   污染聚合值（Phase 1 spec §7 订正 2 的算术仍成立）。
+  # ⚠️ 契约层**未**打 sensitivity（spec 2026-10-22 §3.2）：打标会激活默认档**整值** nullify，
+  #    把 sale_money 一起藏掉。列级暴露的机器声明缺口归 #780 后续，别在这里补假声明。
+  # ⚠️ 若将来有人给本列加值级 `mask`（按列），两个方向都**不是**响亮失败（`mask.ts` 的按列替换
+  #    跳过 `as ` 后的别名位，issue #824）：① 声明用**裸列名** ⇒ 投影变成
+  #    `max(cast(null as numeric)) as <col>`——合法 SQL、列**在场但整列 NULL**（静默；审计仍记该列），
+  #    正是本设计要消灭的「NULL 被读成这行没值」；② 声明用**限定列名**（`vw_….`）⇒ 本投影是不限定
+  #    列名，掩码正则一个都不命中 ⇒ **掩码不生效（fail-open，明文照出）**。
+  #    结论：给本列打列级掩码前**必须先裁决**「掩码生效 ⇒ 整列缺席（推荐）vs 列在场全 NULL」，
+  #    缺口归 #995（下钻条件列 × 列级掩码的语义缺口）；别指望它自己报错。
   - name: 'lemeng:retail:order_line'
     label: 零售订单明细行
     definition: >-
-      乐檬零售订单明细**行级透传**（UNNEST 后一行 = 一个订单明细行）。
+      乐檬零售订单明细的**行级**读面（一行 = 一个订单明细行）。
       用途是**定位根因**：聚合指标答「是多少」，本指标答「哪几行造成的」。
-      ⚠️ grain 放全 26 列 ⇒ 返回列 = value + 26 列，**每个分组恒为一行**（等价于明细透传）；
-      value = 该行 sale_money（与 grain 里的 sale_money 列重复，是声明面形状使然）。
-      ⚠️ **行数上限 1000**（MAX_QUERY_ROWS），按 bizday 降序 ⇒ 截断时最新优先；区间大时**先收窄 bizday**。
-      回包另有 total = **全量匹配行**的 sale_money 合计（不受 1000 行截断影响）——
-      要总数就用它，**不要**把返回的明细行自己加总。
-      ⚠️ 本指标**不承载口径**（销售/退货判别式、赠品排除等全在 fct_* 那族里）；
+      **行数的唯一权威 = query_detail 回包的 rowCountTotal**（不受 limit/分组影响）；
+      聚合面（query_data）仍受 1000 行截断，**不要**拿它数行。
+      行域 = state='FINISHED' 的全部行（**含退货行**；已退款 REPAID / 作废 CANCELED 不在）。
+      维度闭集（8 列）= 账套 × 业务日 × 门店 × 订单号 × 明细行号 × 商品 × 交易类型。
+      ⚠️ item_code 契约明文**恒为空串**（上游订单 API 无此字段），别当成有效商品码。
+      ⚠️ 价格列 order_detail_std_price 需 `data:cost` 授权——**未授权时该列不在回包里**
+      （是「无权限看这一列」，不是「这行没值」，也不是「没有数据」）。
+      ⚠️ 本指标**不承载口径**（销售/退货判别式、赠品排除全在 fct_* 那族）；
       拿它对账前先读 lemeng:retail:net_sales 的 definition。
-      ⚠️ 前置核实（2026-10-21 真机）：业务键（账套×日×单号×行号）distinct = 总行数 ⇒ 无重复；
+      前置核实（2026-10-21 真机）：业务键（账套×日×单号×行号）distinct = 总行数 ⇒ 无重复；
       加 batch_id 后仍无重复 ⇒ 85 个批次不拆行；hour 无空值。
-    expression: 'sum(stg_lemeng_retail_order_line.sale_money)'
-    grain: [batch_id, system_book, org, bizday, hour, order_no, order_detail_num, branch_num,
-            branch_name, order_time, order_operate_time, state, order_source, item_num, item_code,
-            sale_money, discount_money, payment_money, quantity, order_transaction_type,
-            order_ref_billno, order_detail_share_discount, order_detail_std_price,
-            order_detail_price, order_detail_online_qty, order_total_money]
+    expression: >-
+      sum(case when stg_lemeng_retail_order_line.state = 'FINISHED'
+               then stg_lemeng_retail_order_line.sale_money else 0 end)
+    grain: [system_book, bizday, branch_num, order_no, order_detail_num, item_num,
+            item_code, order_transaction_type]
     owner: data-platform
     tier: experimental
     source: lemeng
     freshness_sla_days: 1
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
+    compose: 'line_amount@line'
+    dimensions: [system_book, bizday, branch_num, order_no, order_detail_num, item_num,
+                 item_code, order_transaction_type]
+    detail:
+      relation: vw_lemeng_retail_order_line
+      filter: "state = 'FINISHED'"
+      columns:
+        - { col: order_detail_std_price, grantedBy: data:cost }

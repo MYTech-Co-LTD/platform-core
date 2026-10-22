@@ -40,6 +40,10 @@ api:
     - { method: POST, path: /chat,    scope: data:query }
     # MCP 端点（通道 B 的 JSON-RPC 单入口；协议错误自兜，授权仍走同一核心）
     - { method: POST, path: /mcp,     scope: data:query }
+    # toolbox HTTP 薄封装（Wave 2，spec §6/§9：registry 的通道无关面；通道 C 插件经它调
+    # 分析师面工具。与 /mcp 同档 data:query——工具级 requiredScope 仍是声明面（registry D1），
+    # 执法点在本端点门；dispatch/审计单点在 registry.callTool。
+    - { method: POST, path: /toolbox, scope: data:query }
     # ── 写面（MCP；管理面：口径 + 报表 + 管线提案；#486 口径写面 / #496 报表工具面）──
     # 与 /mcp 分成两个端点，是为了让**门禁仍由声明施加**（本模块不写 requireScope）：
     # 把写工具塞进 /mcp 会让「写所需的能力」不再出现在清单里，清单作为「声明即授权」的

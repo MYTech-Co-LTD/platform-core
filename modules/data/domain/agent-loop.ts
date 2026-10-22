@@ -8,6 +8,9 @@ import { loadMergedCatalog } from './metric-store'
 import { runQuery } from './query-service'
 import type { SqlExecutor } from './query-service'
 import type { ChatMessage, ChatModel, ToolCall, ToolSpec } from './llm'
+import { ANALYST_TOOLS, callTool, type ToolboxDeps } from './toolbox/registry'
+import { buildToolboxDeps } from './toolbox/all'
+import { GUIDE_INVARIANTS } from './toolbox/guide'
 
 export type AgentEvent =
   | { type: 'activity'; tool: string; detail: string }
@@ -33,8 +36,8 @@ export const MAX_AGENT_TURNS = 6
 const SYSTEM_PROMPT = [
   '你是平台数据问数助手。只能用提供的工具回答，不要臆造指标名或数字。',
   '你看到的数据**已经按当前用户权限裁剪过**：看不到的指标就是没权限，直接说明即可。',
-  '**不要向用户索要或猜测组织/主体（org/subject）**——主体由平台按登录身份钉死，不由请求参数指定。',
   '工具返回 status=denied 时，用其中 reason 向用户解释，不要重试同一个调用。',
+  ...GUIDE_INVARIANTS, // 通道中性硬约束：与 guide.ts（B）、SKILL.md（C）同源（Wave 2 决策 D-G1）
 ].join('\n')
 
 /**
@@ -50,7 +53,7 @@ const SYSTEM_PROMPT = [
  * total 值字段——「直接引用、勿自己加总」这条对 flash 级模型是弱引导兜底，规则下沉到
  * 模型上下文必在的工具文案。
  */
-export const TOOLS: ToolSpec[] = [
+const LEGACY_TOOLS: ToolSpec[] = [
   {
     name: 'list_metrics',
     description: '列出当前用户有权访问的指标（id / 标题 / 说明）。问数前若不确定指标 id，先调它。',
@@ -89,6 +92,7 @@ export const TOOLS: ToolSpec[] = [
       'dimensions 缺省 = 最细（订单级）；传入必须是 list 后该指标声明维度的子集（变粗上卷）。回包默认按 value 降序。',
       '「哪几行/哪几单贡献最大」用本工具；「合计多少」用 query_metric 的 total。',
       '回包带 drill_as_of（明细查询时刻）与 data_as_of（聚合口径截止）+ clock_note——两个时钟不同，逐行相加可能与聚合值不一致，以 clock_note 为准原样转述。scope_line 有则原样单独一行附在答案末尾。',
+      '回包可能**少一列**（条件列）：那是未授权（如 data:cost），**不是没有数据/不是 NULL**——如实说明「该列需授权」。',
     ].join(''),
     inputSchema: {
       type: 'object',
@@ -106,6 +110,20 @@ export const TOOLS: ToolSpec[] = [
   },
 ]
 
+/**
+ * 通道 A 绑定的 registry 子集（Wave 2 决策 D-A1，ref #985）：三把全只读，实现/文案/schema
+ * 全部同源直取 `ANALYST_TOOLS`（零第二份）；执行走 callTool 单点（审计含拒绝/出错）。
+ * 刻意不绑 search_catalog（list_metrics 已覆盖）/ describe_dataset / preview_query
+ * （A 的 query_metric 无切片形状，绑了只会诱导误用）/ get_quality / get_lineage
+ * （无已观测需求）——LLM 面最小化，6 把封顶。
+ */
+const BOUND_TOOL_NAMES: readonly string[] = ['describe_metric', 'sample_dimension_values', 'get_freshness']
+const REGISTRY_TOOLS: ToolSpec[] = ANALYST_TOOLS
+  .filter((t) => BOUND_TOOL_NAMES.includes(t.name))
+  .map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
+
+export const TOOLS: ToolSpec[] = [...LEGACY_TOOLS, ...REGISTRY_TOOLS]
+
 export async function* runAgentLoop(
   deps: AgentDeps, requester: Requester, model: ChatModel, question: string,
 ): AsyncGenerator<AgentEvent> {
@@ -122,6 +140,13 @@ export async function* runAgentLoop(
   ]
   let lastTable: { columns: string[]; rows: unknown[][] } | undefined
 
+  // registry 子集的 ToolboxDeps（requester 每轮固定 ⇒ 循环外构建一次）。
+  // wh 缺省 = deps.execute（测试注入）；生产无注入时落到只读池（analystPool）。
+  const toolbox = buildToolboxDeps(
+    { pool: deps.pool, org: deps.org, requester, adoptedSources: deps.adoptedSources },
+    { wh: deps.execute },
+  )
+
   for (let turn = 0; turn < MAX_AGENT_TURNS; turn++) {
     const reply = await model.complete(messages, TOOLS)
     // 原样回放 assistant 轮（含 tool_calls）——不回放则下一轮模型对不上工具结果
@@ -134,10 +159,14 @@ export async function* runAgentLoop(
 
     for (const call of reply.toolCalls) {
       yield { type: 'activity', tool: call.name, detail: describeCall(call) }
-      const result = await runTool(call, catalog, deps, requester)
+      const result = await runTool(call, catalog, deps, requester, toolbox)
       if (result.status === 'ok') lastTable = { columns: result.columns, rows: result.rows }
-      // 拒绝结果**原样**回给模型：可解释的 reason 才让它能对用户说清「你没权限」
-      messages.push({ role: 'tool', toolCallId: call.id, content: JSON.stringify(result) })
+      // 拒绝结果**原样**回给模型：可解释的 reason 才让它能对用户说清「你没权限」。
+      // toolbox 分支回 payload 原体（信封/拒绝形态即 impl 的产物），其余分支回整个 result。
+      messages.push({
+        role: 'tool', toolCallId: call.id,
+        content: JSON.stringify(result.status === 'toolbox' ? result.payload : result),
+      })
     }
   }
 
@@ -154,11 +183,18 @@ export async function* runAgentLoop(
 // 而 `pnpm --filter data typecheck` 是本任务的验收门禁之一——所以 `list_metrics` 那支
 // 也必须写成 `{ status: 'metrics'; metrics: … }`，不能只回 `{ metrics: … }`。
 async function runTool(
-  call: ToolCall, catalog: MetricDef[], deps: AgentDeps, requester: Requester,
+  call: ToolCall, catalog: MetricDef[], deps: AgentDeps, requester: Requester, toolbox: ToolboxDeps,
 ): Promise<{ status: 'ok'; columns: string[]; rows: unknown[][] }
         | { status: 'denied'; metricId: string; reason: string; detail?: string }
         | { status: 'error'; reason: string; detail: string }
-        | { status: 'metrics'; metrics: { id: string; title: string; description: string; params: MetricParamFace }[] }> {
+        | { status: 'metrics'; metrics: { id: string; title: string; description: string; params: MetricParamFace }[] }
+        | { status: 'toolbox'; payload: Record<string, unknown> }> {
+  // registry 子集（Wave 2）：走 callTool 单点——未知/未认证/mutating 闸/审计（含拒绝）全继承。
+  // payload 的 status 字段保持 impl 原形（ok/denied/not_found/unknown），模型按文案自解释。
+  if (BOUND_TOOL_NAMES.includes(call.name)) {
+    const out = await callTool(toolbox, call.name, call.arguments)
+    return { status: 'toolbox', payload: out.payload }
+  }
   if (call.name === 'list_metrics') {
     // 参数面与 HTTP 词表**同一份投影**（paramFaceOf，spec 2026-10-15 §2.4）：query_metric
     // 的描述让模型「参数键只能取 list_metrics 返回的 params 键名」——这里不给 params，
@@ -208,6 +244,10 @@ async function runTool(
 /** 活动事件的展示文案。**只放 id 与非敏感参数**——SQL、主体值、凭证都不进事件流。 */
 function describeCall(call: ToolCall): string {
   if (call.name === 'list_metrics') return '列出可用指标'
+  const str = (v: unknown): string => (typeof v === 'string' && v !== '' ? v : '(未指定)')
+  if (call.name === 'describe_metric') return `查指标详情 ${str(call.arguments.id)}`
+  if (call.name === 'sample_dimension_values') return `抽样维度值 ${str(call.arguments.metricId)}.${str(call.arguments.dimension)}`
+  if (call.name === 'get_freshness') return `查新鲜度 ${str(call.arguments.scope) === '(未指定)' ? '全局' : str(call.arguments.scope)}`
   const metricId = metricIdOf(call)
   if (call.name === 'query_detail') return `下钻明细 ${metricId}`
   return `查询指标 ${metricId}`

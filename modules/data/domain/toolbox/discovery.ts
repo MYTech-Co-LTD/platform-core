@@ -143,9 +143,17 @@ export const sampleDimensionValuesImpl: ToolImpl = async (deps, args) => {
     return denied('bad_param', `unknown_dimension:${dimension}`, metricId)
   }
   const q = typeof args.q === 'string' && args.q !== '' ? `%${args.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null
-  const sql = `select ${dimension} as value, count(*) as n from ( ${core.inner} ) t`
-    + (q !== null ? ` where value like ${sqlQuote(q)}` : '')
-    + ` group by value order by n desc, value limit ${limit}`
+  // ★ 外层别名不得与内层列名相撞（#991）。内层 select 的固定度量列名就叫 `value`
+  //   （buildSelectSql 给 expression 的别名），而本查询原先把维度别名也起成 `value` ⇒
+  //   `group by value` 被 PG 解析为**输入列** t.value（PG 在别名与输入列同名时优先输入列），
+  //   于是维度列既不在 GROUP BY 也不在聚合里 ⇒ 真库执行必炸
+  //   `column "t.<dim>" must appear in the GROUP BY clause or be used in an aggregate function`。
+  //   同源次生错：`where value like '%q%'` 过滤的是**度量值**而非维度值。
+  //   修法三条：①维度列一律写原名（不带别名）；②输出别名改 `dim_value`（不与内层任何列名相撞）；
+  //   ③ORDER BY 用列位号（2=count desc, 1=维度 asc），彻底不与列名/别名争解析。
+  const sql = `select ${dimension} as dim_value, count(*) as n from ( ${core.inner} ) t`
+    + (q !== null ? ` where cast(${dimension} as text) like ${sqlQuote(q)}` : '')
+    + ` group by ${dimension} order by 2 desc, 1 limit ${limit}`
   const r = await deps.wh(sql)
   // 响应保证 ≤50（spec §5「行数≤50」）：SQL LIMIT 之外响应侧再截一次（工程保护，防执行器不守约）。
   const values = r.rows.slice(0, limit).map((row) => ({ value: row[0], n: Number(row[1] ?? 0) }))

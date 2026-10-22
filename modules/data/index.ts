@@ -9,6 +9,7 @@ import { registerMetrics } from './routes/metrics'
 import { registerQuery } from './routes/query'
 import { registerQueryDetail } from './routes/query-detail'
 import { registerChat } from './routes/chat'
+import { registerToolbox } from './routes/toolbox'
 import { registerReports } from './routes/reports'
 
 // 装配形状照 modules/demo/index.ts 与 modules/aftersales/index.ts（本仓模块的唯一范式）。
@@ -36,6 +37,7 @@ export default defineModule({
     registerQuery(r, _ctx) // T6
     registerQueryDetail(r, _ctx) // spec 2026-10-21 下钻
     registerMcp(r, _ctx) // T8：MCP 读面（问数）
+    registerToolbox(r, _ctx) // Wave 2：registry 的 HTTP 薄封装（通道 A/C 共享面，#985）
     registerMcpManage(r, _ctx) // MCP 写面（本租户口径的定义；#486）
     registerChat(r, _ctx) // T9
     registerReports(r, _ctx) // #150 T7：Metabase 报表 facade

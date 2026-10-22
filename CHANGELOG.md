@@ -11,6 +11,26 @@
 
 ## [Unreleased]
 
+## [0.185.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.184.2...v0.185.0) - 2026-10-22
+- 【新增】data: bot 问数明细下钻 Phase 2 (#994) ([#996](https://github.com/MYTech-Co-LTD/platform-core/pull/996), [981a806](https://github.com/MYTech-Co-LTD/platform-core/commit/981a8063183990ede11c77fc39dbcbd605ee633f))
+
+
+## [0.184.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.184.1...v0.184.2) - 2026-10-22
+- 【修复】data: sample_dimension_values 外层别名撞内层 value 列——真库必炸 (#991) ([#992](https://github.com/MYTech-Co-LTD/platform-core/pull/992), [cdf5979](https://github.com/MYTech-Co-LTD/platform-core/commit/cdf5979b0afeff75fc19f41cf112814751a927d5))
+
+
+## [0.184.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.184.0...v0.184.1) - 2026-10-22
+- 【修复】openclaw: contracts.tools 补登 Wave 2 三工具 + 契约回归测试进 gates（网关拒载实锤，ref #989） ([#990](https://github.com/MYTech-Co-LTD/platform-core/pull/990), [18de78c](https://github.com/MYTech-Co-LTD/platform-core/commit/18de78c10f34fa95abeea1f477f40e984f9a3f37))
+
+
+## [0.184.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.183.2...v0.184.0) - 2026-10-22
+- 【新增】data: 数据面 MCP Wave 2——三通道同享（A/C 绑定） ([#987](https://github.com/MYTech-Co-LTD/platform-core/pull/987), [0e63364](https://github.com/MYTech-Co-LTD/platform-core/commit/0e63364d22ac3f928fe2e3445b0937e017caf36d))
+
+
+## [0.183.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.183.1...v0.183.2) - 2026-10-22
+- 【修复】data: retail audit recheck 补封版排除——封窗日双计 (#984) ([#986](https://github.com/MYTech-Co-LTD/platform-core/pull/986), [28ec2d6](https://github.com/MYTech-Co-LTD/platform-core/commit/28ec2d6c8c6b12317d11ddf98ff936c1a787e961))
+
+
 ## [0.183.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.183.0...v0.183.1) - 2026-10-22
 - 【修复】server: PAT 存量回填 platform.api_key + 企微闸只拦企微意图 ([#983](https://github.com/MYTech-Co-LTD/platform-core/pull/983), [2ac7755](https://github.com/MYTech-Co-LTD/platform-core/commit/2ac77550c09a010ecf71f7b4ca7aba07c232a2e4))
 

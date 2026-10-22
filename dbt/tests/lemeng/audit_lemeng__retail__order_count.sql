@@ -24,15 +24,18 @@
 -- `cannot subscript type record`）；`hive_partitioning=1` / `hive_types` 不能作 read_parquet 形参
 -- （pg_duckdb 的 read_parquet 是 PG 函数、只认位置参数），分区推断默认生效。详见 staging 头注。
 -- `bizday` 是**湖里的真列**（管线已定型为 date）⇒ 不再有 `try_strptime(order_detail_bizday)`。
-with recheck as (
+-- 湖读取走**冷热两腿合流**（#984）：day 天文件 + hour 小时文件**各自单读**，热腿排除已封版日
+-- （同 staging 冷热合流，含封版排除语义）——原双 glob 一把读在封窗日双计。
+with recheck_raw as (
+    -- 冷腿：已封版日的**天文件**
     select
         r['system_book']::varchar as system_book,
         r['bizday']::date         as bizday,
         r['branch_num']::int      as branch_num,
-        count(distinct r['order_no']) as order_count
+        r['order_no']::varchar    as order_no
     from read_parquet(
-        -- ⚠️ 与 staging **同路径**（通配两账套）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
-        ARRAY['s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet', 's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet']::text[]
+        -- ⚠️ 与 staging **同路径**（通配两账套，含封版排除语义）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
     ) r
     -- 基面与净销售额同口径（FINISHED+SALE_ORDER，2026-10-12 W0）
     where r['state'] = 'FINISHED'
@@ -41,6 +44,30 @@ with recheck as (
       --    ETag 竞态、报 ERROR（实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。
       --    今天未定稿不判；两侧都滤，才是同量对比。
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+
+    union all
+
+    -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
+    select
+        r['system_book']::varchar as system_book,
+        r['bizday']::date         as bizday,
+        r['branch_num']::int      as branch_num,
+        r['order_no']::varchar    as order_no
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
+    ) r
+    where r['state'] = 'FINISHED'
+      and r['order_transaction_type'] = 'SALE_ORDER'
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+),
+recheck as (
+    select
+        system_book,
+        bizday,
+        branch_num,
+        count(distinct order_no) as order_count
+    from recheck_raw
     group by 1, 2, 3
 ),
 materialized as (

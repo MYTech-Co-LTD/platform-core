@@ -2,7 +2,7 @@
 // 「无结论必须显式未知」（spec §5 get_quality 验收锚）：seam 缺席/坏形状一律 unknown——
 // 未知 ≠ 通过 ≠ 编数字。manifest 投递链（随 data-plane.lock）未验证，待真机案例沉淀。
 import { visibleMetrics } from '../authz'
-import { loadMergedCatalog, type MetricRow } from '../metric-store'
+import { loadMergedCatalog } from '../metric-store'
 import { freshnessLineOf, freshnessStatusOf, watermarkSqlFor } from '../query-service'
 import { readFileSync } from 'node:fs'
 import type { ToolImpl, ToolImplResult, ToolboxDeps } from './registry'
@@ -78,10 +78,6 @@ export function defaultDbtManifest(env: Record<string, string | undefined> = pro
 const WATERMARK_RE = /^\d{4}-\d{2}-\d{2}$/
 /** 全局水位 SQL（先按关系取最新一行再聚合——#844 同语义；metrics 级走 watermarkSqlFor）。 */
 const GLOBAL_LATEST_SQL = "select distinct on (relation) relation, max_bizday, materialized_at from data.load_log where status = 'ok' and relation is not null order by relation, materialized_at desc"
-const dayMsOf = (iso: string): number => {
-  const [y, m, d] = iso.split('-').map(Number)
-  return Date.UTC(y, (m ?? 1) - 1, d ?? 1)
-}
 const shanghaiToday = (now: () => Date): string => new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
 }).format(now())

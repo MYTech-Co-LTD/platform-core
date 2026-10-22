@@ -1,6 +1,6 @@
 ---
 name: data-query
-description: 平台问数。用户问业务数据（销售额/订单/商品/门店/趋势等）时激活：先 list_metrics 看可见词表，再 query_data 查数，用表格/要点汇报。
+description: 平台问数。用户问业务数据（销售额/订单/商品/门店/趋势等）时激活：先 list_metrics 看可见词表，describe_metric 看口径，query_data 查数，用表格/要点汇报。
 metadata:
   openclaw:
     emoji: "📊"
@@ -25,13 +25,20 @@ metadata:
 
 ## 查询约定
 
-> ⚠️ **取数只走这三个工具（`list_metrics` / `query_data` / `query_detail`）。**
+> ⚠️ **问数取数只走 `list_metrics` / `query_data` / `query_detail`；口径与维度值确认走 `describe_metric` / `sample_dimension_values`；「数据到几号/新不新」走 `get_freshness`。**
 > **不要**为了取数去用 `exec` / `curl` / 读插件源码 / 翻环境变量 —— 那不是「查得更准」，
 > 只是把「猜」换了个地方。`exec` 是给**非问数**的活用的；**问数时它是错误选择**。
 > 身份类报错（如 `requesterSenderId` 缺失）⇒ 如实告知用户重发一条，**不要用其它工具绕过身份检查**。
 >
 > 依据：2026-10 实测，bot 一度用 14 次 `exec` 反推插件源码、手工拼鉴权头、循环猜参数形状，
 > 才拿到一个数（见 issue #753）。
+
+## 同源硬约束（与平台 data_agent_guide 逐字同源）
+
+· 主体（org/租户/数据主体）由平台按身份钉死：不要索要、不要猜测，参数里出现即被拒；
+· 行上限 1000，truncated=true 说明被截断：不得把截断集当全量下结论，也不得对截断集自行求和；
+· 合计以回包的 total 字段为准：字段在场就直接引用，不要自己把行加总；切片/截断产生的部分合计不是全局合计；
+· 数据截止与新鲜度必须如实呈现：回包没有相应字段或正典行 = 新鲜度未知，如实说明，不要编；
 
 1. **先 `list_metrics()`**：看当前用户可见的指标（id/名称/参数说明）。词表按人裁剪且随权限实时变——**以返回为准，勿凭记忆**。
 2. **再 `query_data({ metricId, args })`**：args 按该指标的参数说明给，日期一律 `YYYY-MM-DD`。
@@ -58,10 +65,18 @@ metadata:
 ## 明细下钻（query_detail，spec §2.6）
 
 - **什么时候用**：用户要「多少行 / 明细构成 / 哪几单贡献最大」这类**行级**答案时，用 `query_detail({ metricId, args })` 下钻到订单级；聚合口径的合计与分布仍走 `query_data`。
+- **问「多少行 / 哪几行 / 按商品看明细」**：`metricId=lemeng:retail:order_line`（如「10-20 有多少行」⇒ `query_detail({metricId:"lemeng:retail:order_line", args:{bizday:{from:"2026-10-20",to:"2026-10-20"}}})`；单日即 from=to，**别写成裸日期串**——bizday 是 `date_range`，形状不对回 `bad_param`/`invalid_value:bizday`。行数看 `rowCountTotal`，别用聚合面的 1000 行截断）。
 - **`args.bizday` 必传**：`{"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}`（单日则 from=to）——明细直读数据湖，不带 bizday 会被拒。
 - **`rowCountTotal` 是行数的唯一权威**：它 = 该范围全量原始行数，返回 rows 只是截取。回答「多少行」用 rowCountTotal，**不要拿返回行数当全量**。
 - **回 `no_detail_binding` = 能力边界，不是权限问题**：如实告知「该指标暂不支持明细下钻，聚合口径可用 query_data 查询」，**不要重试、不要换参数试探**。
 - **双时钟声明原样转述**：`clock_note`（⏱ 开头，明细直读查询时刻 vs 聚合口径截至日）原样转述、钉在答案末尾；`drill_as_of` / `data_as_of` 照抄不要自行换算。`scope_line`（📐）由系统在消息末尾自动附加（同 📅 机制）——不要自己写 📐 行。
+- **回包可能少一列**：`lemeng:retail:order_line` 的 `order_detail_std_price` 等条件列**需授权**才出现（无 `data:cost` ⇒ 该列不在 `columns`/`rows` 里）。这是**未授权**，不是「没有数据」、不是 NULL、不是 0——如实答「该列需授权」。
+
+## 口径确认与新鲜度（Wave 2 三新工具）
+
+- **`describe_metric({ id })`**：args 键/维度名拿不准先调它——params（键与形状）、grain（维度全集）、口径定义都在回包里。**先 describe 再查**，不要凭记忆猜键名。
+- **`sample_dimension_values({ metricId, dimension, q?, limit? })`**：确认「门店名等过滤值的确切写法」用它（dimension 必须是 grain 之一）。`truncated:true` = 值太多被截断，可加 `q` 收窄——它不是数据错误。
+- **`get_freshness({ scope? })`**：`scope` 缺省查全局水位。回 `status:"unknown"` = 新鲜度未知，如实说明。指标支回包的 `line`（📅 行）由系统自动附加到消息末尾——**不要自己写任何 📅 行**（写了也会被系统剥掉再统一附加）。
 
 ## 汇报与行为
 

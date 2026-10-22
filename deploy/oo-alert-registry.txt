@@ -16,15 +16,11 @@ ALERT data_alerts_failure                       data_alerts_wecom    t
 ALERT data_alerts_recovery                      data_alerts_wecom    t
 ALERT retail_tick_absent_business_hours         data_alerts_wecom    t
 ALERT casdoor_down                              wecom-robot-p1       t
-ALERT douyin_collect_stall                      wecom-robot-p1       t
-ALERT douyin_data_stale                         wecom-robot-p1       t
-ALERT douyin_phone_down                         wecom-robot-p1       t
-ALERT dy_receiver_down                          wecom-robot-p1       t
-ALERT dy_upload_unreachable                     wecom-robot-p1       t
 ALERT host_cpu_high                             wecom-robot-p1       t
 ALERT host_disk_high                            wecom-robot-p1       t
 ALERT host_mem_high                             wecom-robot-p1       t
 ALERT novu_down                                 wecom-robot-p1       t
+ALERT wecom_bridge_delivery_failed              wecom-robot-p1       t
 ALERT wecom_down                                wecom-robot-p1       t
 ALERT ndevice采集失败                            wecom_bot            t
 ALERT ndevice采集成功缺失                        wecom_bot            t

@@ -1171,6 +1171,54 @@ export function checkDataModels(rootDir, opts = {}) {
       if (filter === '' || filter.includes(';')) {
         push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.filter 必须是非空、不含分号的布尔表达式（如 \`state = 'FINISHED'\`）。`)
       }
+      // ⑤-x2 条件列（spec 2026-10-22 §2.3）：`detail` 是键**闭集**，`columns` 每项 `{col, grantedBy}`。
+      //   为什么要闭集：拼错的键名（`granted_by` / `colums`）会被静默忽略——声明写了但不生效，
+      //   正是本仓最怕的失败形态；门禁期红掉它，不等到「某列对所有人都不出现」才发现。
+      if (detail !== undefined && detail !== null && typeof detail === 'object') {
+        const D = /** @type {Record<string, unknown>} */ (detail)
+        for (const k of Object.keys(D)) {
+          if (k !== 'relation' && k !== 'filter' && k !== 'columns') {
+            push(metric.file, 0, `指标 \`${metric.name}\` 的 detail 有未知键 \`${k}\` —— detail 是闭集 {relation, filter, columns}；拼错的键名会被**静默忽略**（写着但不生效）。`)
+          }
+        }
+        if (D.columns !== undefined) {
+          const cols = D.columns
+          const dimsOfMetric = Array.isArray(metric.fields?.dimensions)
+            ? metric.fields.dimensions.map(String) : []
+          if (!Array.isArray(cols) || cols.length === 0) {
+            push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.columns 必须是**非空数组**（每项 {col, grantedBy}）；不需要条件列就别写这个键。`)
+          } else {
+            const seen = new Set()
+            for (const item of cols) {
+              if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+                push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.columns 里有非对象项 ${JSON.stringify(item)} —— 每项必须是 {col, grantedBy}。`)
+                continue
+              }
+              const it = /** @type {Record<string, unknown>} */ (item)
+              for (const k of Object.keys(it)) {
+                if (k !== 'col' && k !== 'grantedBy') {
+                  push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.columns 项有未知键 \`${k}\`（只许 col / grantedBy；大小写敏感）。`)
+                }
+              }
+              const col = typeof it.col === 'string' ? it.col : ''
+              if (!/^[a-z_][a-z0-9_]*$/.test(col)) {
+                push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.columns[].col ${JSON.stringify(it.col)} 必须是蛇形列名。`)
+              } else if (col === 'value') {
+                push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.columns 不许用 \`value\` —— 它是回包值列的固定别名（spec 2026-10-21 §2.4）。`)
+              } else if (dimsOfMetric.includes(col)) {
+                push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.columns 列 \`${col}\` 同时出现在 dimensions 里 —— 维度本来就无条件返回，再声明条件列会让同名列有两条来源。`)
+              } else if (seen.has(col)) {
+                push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.columns 列 \`${col}\` 重复声明。`)
+              }
+              seen.add(col)
+              const g = it.grantedBy
+              if (typeof g !== 'string' || g.trim() === '') {
+                push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.columns[].grantedBy 必须是非空权限码字符串（方向同 mask.grantedBy：持有 ⇒ 看原值）。`)
+              }
+            }
+          }
+        }
+      }
     }
 
     // ⑤-b `required_scope` 形态（spec 2026-10-17 §4.2）：给了就必须是非空、无首尾空白的字符串。

@@ -36,8 +36,10 @@ export interface AuditEntry {
    *  ——判据空时调用方传 null，别传空对象。审计要能回答「看到的是原值还是掩码值」：
    *  「有列被豁免」与「压根没声明掩码」都必须可区分（前者记 `__exempted__`）。 */
   masking: MaskingAudit | null
-  /** 下钻面（spec 2026-10-21 §2.5）：下钻审计带粒度与总数；聚合审计缺席（null）。 */
-  drill?: { dimensions: string[]; rowCountTotal: number } | null
+  /** 下钻面（spec 2026-10-21 §2.5 / 2026-10-22 §2.3）：粒度、总数与**本次实际展示的条件列**。
+   *  `grantedColumns` 恒在场（空数组 = 未展示）——审计要能回答「哪次查询把价格列给出去了」。
+   *  聚合审计为 null。 */
+  drill?: { dimensions: string[]; rowCountTotal: number; grantedColumns: string[] } | null
   /**
    * 触发本条审计的 MCP 工具名（spec 2026-10-21 §8）。可空：
    *   · 分析师面 11 工具 / legacy 指标工具（/mcp）恒写工具名；

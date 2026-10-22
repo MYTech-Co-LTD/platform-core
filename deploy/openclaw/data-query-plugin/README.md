@@ -12,6 +12,10 @@ OpenClaw native tool-plugin：把可信企微 userid（`toolContext.requesterSen
 |---|---|
 | `list_metrics` | `GET {DATA_API_BASE}/metrics`——当前用户可见词表（按人裁剪） |
 | `query_data` | `POST {DATA_API_BASE}/query` `{metricId,args}`——查数，回包带 subject |
+| `query_detail` | `POST {DATA_API_BASE}/query/detail`——明细下钻（声明了下钻的指标） |
+| `describe_metric` | `POST {DATA_API_BASE}/toolbox` `{tool,args}`——指标详情（Wave 2，#985） |
+| `sample_dimension_values` | `POST {DATA_API_BASE}/toolbox`——维度值抽样 ≤50 行（Wave 2） |
+| `get_freshness` | `POST {DATA_API_BASE}/toolbox`——新鲜度/水位（Wave 2；📅 行进捕获链） |
 
 ## 新鲜度行：捕获 + 确定性附加 + 入站清账（2026-10-16）
 

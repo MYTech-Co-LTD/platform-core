@@ -13,9 +13,8 @@ import { loadMergedCatalog } from '../domain/metric-store'
 import { runDetailQuery } from '../domain/drill'
 import { runQuery } from '../domain/query-service'
 import { analystPool, runWarehouseSql } from '../domain/warehouse'
-import { defaultDbtManifest } from '../domain/toolbox/health'
-import { callTool, legacyMetricTools, listAnalystTools, mutatingAllowed } from '../domain/toolbox/registry'
-import type { ToolboxDeps } from '../domain/toolbox/registry'
+import { callTool, legacyMetricTools, listAnalystTools } from '../domain/toolbox/registry'
+import { buildToolboxDeps } from '../domain/toolbox/all'
 import '../domain/toolbox/all'
 import type { ModuleHono, RouteCtx } from './context'
 import { registerMcpEndpoint } from './mcp-rpc'
@@ -40,7 +39,7 @@ function analystListEntries(): Record<string, unknown>[] {
 // 下钻是**能力陈述**，只出现在调用回包里（denied/no_detail_binding，isError=true）。
 const DETAIL_TOOL = {
   name: 'query_detail',
-  description: '按指标下钻到明细构成（订单级）。args.bizday 必传；回包 rowCountTotal=全量原始行数；dimensions 缺省=最细。仅对声明了下钻的指标可用（否则回 no_detail_binding）。',
+  description: '按指标下钻到明细构成（订单级）。args.bizday 必传；回包 rowCountTotal=全量原始行数；dimensions 缺省=最细。仅对声明了下钻的指标可用（否则回 no_detail_binding）。回包可能少一列（条件列）：那是未授权（如 data:cost），不是没有数据/不是 NULL——如实说明该列需授权。',
   inputSchema: {
     type: 'object',
     properties: {
@@ -91,13 +90,12 @@ const readToolset: McpToolSet = {
       return { text: JSON.stringify(out), isError: out.status !== 'ok' }
     }
     // ① 分析师面固定工具：registry.callTool 单点分发（mutating 闸 + 审计含拒绝/出错）。
+    //    装配走 buildToolboxDeps（all.ts 唯一装配点，Wave 2 决策 D-M1）。
     if (listAnalystTools().some((t) => t.name === name)) {
-      const toolbox: ToolboxDeps = {
-        pool: deps.pool, org: deps.org, requester: deps.requester, adoptedSources: deps.adoptedSources,
-        wh: deps.wh ?? readonlyWh(),
-        dbtManifest: defaultDbtManifest(),
-        allowMutating: mutatingAllowed(process.env),
-      }
+      const toolbox = buildToolboxDeps(
+        { pool: deps.pool, org: deps.org, requester: deps.requester, adoptedSources: deps.adoptedSources },
+        { wh: deps.wh },
+      )
       const out = await callTool(toolbox, name, args)
       return {
         text: JSON.stringify(out.payload), isError: out.isError,

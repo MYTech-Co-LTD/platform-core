@@ -215,6 +215,10 @@ test("query_detail 工具注册：path/method、bizday 必传、rowCountTotal �
   assert.match(src, /clock_note/);
   assert.match(src, /scope_line/);
   assert.match(src, /原样转述/);
+  // 条件列缺席 = 未授权（2026-10-22 spec §2.3/§2.7）：别把「没权限看」答成「没有数据」。
+  // 两条分开断言（旧的 `/条件列|未授权/` 二选一太松：只写其中任一词都能过）。
+  assert.match(src, /少一列/);
+  assert.match(src, /该列需授权/);
   // 口径行捕获：scope_line 在场才 capture（缺省不捕）——partial 入参 { scope } 合法
   assert.match(src, /capture\(sessionKey, \{ scope \}, runId\)/);
 });
@@ -228,6 +232,14 @@ test("data-query SKILL.md 明细下钻节：何时用 / bizday 必传 / rowCount
   assert.match(skill, /bizday/);
   assert.match(skill, /能力边界/);
   assert.match(skill, /不要重试/);
+  assert.match(skill, /未授权/);
+  // 条件列话术锁（2026-10-22 spec §2.7）：缺席 = 未授权，须让模型答「该列需授权」
+  assert.match(skill, /该列需授权/);
+  // 路标例子锁（spec §2.7 明示要求 metricId=lemeng:retail:order_line 的例子）：
+  // 「多少行 / 哪几行 / 按商品看明细」必须能路由到该指标。
+  // 裸指标名不够严（条件列那条 bullet 里早就有它）；`metricId=` 前缀才锁得住**例子本身**。
+  assert.match(skill, /lemeng:retail:order_line/);
+  assert.match(skill, /metricId=lemeng:retail:order_line/);
 });
 
 // ── 新鲜度行确定性附加（message_sending 钩子纯逻辑，2026-10-16）──────────────────
@@ -508,4 +520,33 @@ test("入站清账：store 坏掉 / ctx 为 null → 不抛（宿主 fail-open�
   const badStore = { clear: () => { throw new Error("corrupted"); } };
   assert.equal(await makeFreshnessInboundHook(badStore)({ content: "x" }, { sessionKey: "s1" }), undefined);
   assert.equal(await makeFreshnessInboundHook(makeStore({ t: 0 }))(null, null), undefined);
+});
+
+// ── Wave 2（ref #985）：/toolbox 三新工具的请求形状（body 由 callPlatform 原样外发）─────────
+const toolboxBody = (f, args) => ({ apiBase: "http://x/api", channelKey: "k", userId: "u1", path: "/toolbox", method: "POST", body: args, fetchImpl: f });
+
+test("toolbox：describe_metric 的 body 形状 {tool, args:{id}}", async () => {
+  const f = stubFetch(200, { status: "ok", id: "lemeng:retail:net_sales" });
+  await callPlatform(toolboxBody(f, { tool: "describe_metric", args: { id: "lemeng:retail:net_sales" } }));
+  assert.equal(f.calls[0].init.method, "POST");
+  assert.equal(f.calls[0].url, "http://x/api/toolbox");
+  assert.deepEqual(JSON.parse(f.calls[0].init.body), { tool: "describe_metric", args: { id: "lemeng:retail:net_sales" } });
+});
+test("toolbox：not_found 走 403 → DENIED 文案（存在性不区分的既有约定不被新工具破坏）", async () => {
+  const f = stubFetch(403, { status: "not_found", metricId: "x" });
+  const r = await callPlatform(toolboxBody(f, { tool: "describe_metric", args: { id: "x" } }));
+  assert.equal(r.code, "DENIED");
+  assert.match(r.error, /可见范围/);
+});
+test("toolbox：get_freshness 的 unknown 回包 200 原样透传（未知≠错误，模型如实转述）", async () => {
+  const f = stubFetch(200, { status: "unknown", reason: "no_freshness_chain", scope: "lemeng:retail:net_sales" });
+  const r = await callPlatform(toolboxBody(f, { tool: "get_freshness", args: { scope: "lemeng:retail:net_sales" } }));
+  assert.equal(r.status, "unknown");
+  assert.equal(r.reason, "no_freshness_chain");
+});
+test("toolbox：403 bad_param → 参数文案带 detail（与 /query 同映射，零新逻辑）", async () => {
+  const f = stubFetch(403, { status: "denied", reason: "bad_param", detail: "unknown_dimension:store" });
+  const r = await callPlatform(toolboxBody(f, { tool: "sample_dimension_values", args: { metricId: "m", dimension: "store" } }));
+  assert.equal(r.code, "BAD_PARAM");
+  assert.match(r.error, /unknown_dimension:store/);
 });

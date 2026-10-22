@@ -11,6 +11,8 @@ import type { L1MetricDef } from './metric-store'
 import type { MetricDef, Requester } from './authz'
 import type { ChatMessage, ChatModel, ChatTurn, ToolSpec } from './llm'
 import { MAX_AGENT_TURNS, runAgentLoop, TOOLS } from './agent-loop'
+import { ANALYST_TOOLS } from './toolbox/registry'
+import { GUIDE_INVARIANTS } from './toolbox/guide'
 import type { SqlExecutor } from './query-service'
 
 const dbUrl = process.env.DATABASE_URL
@@ -246,7 +248,10 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
     const model = new FakeChatModel([{ content: '直接答了', toolCalls: [] }])
     await collect(runAgentLoop({ pool, org: ORG, adoptedSources: NO_SOURCES }, sessionRequester(), model, 'q'))
     const tools = model.calls[0]!.tools
-    expect(tools.map((t) => t.name).sort()).toEqual(['list_metrics', 'query_detail', 'query_metric'])
+    expect(tools.map((t) => t.name).sort()).toEqual([
+      'describe_metric', 'get_freshness', 'list_metrics',
+      'query_detail', 'query_metric', 'sample_dimension_values',
+    ])
     const spec = tools.find((t) => t.name === 'query_metric')!
     expect(spec.description).toContain('等值')
     expect(spec.description).toContain('同列')
@@ -308,6 +313,85 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
     expect(denied.reason).toBe('bad_param')
     expect(denied.detail).toBe('unknown_param:total')
     expect(sqlLog, '被拒 ⇒ 从未触达湖').toEqual([])
+
+  })
+
+  // ── Wave 2（ref #985）：registry 子集绑定。三把全只读，实现/文案/schema 同源直取
+  // ANALYST_TOOLS（零第二份），执行走 callTool 单点（审计含拒绝/出错）。
+  describe('通道 A 绑 registry 子集（Wave 2）', () => {
+    it('TOOLS = 既有三把 + describe_metric/sample_dimension_values/get_freshness，且无重名', () => {
+      const names = TOOLS.map((t) => t.name)
+      expect(names).toEqual(expect.arrayContaining(['list_metrics', 'query_metric', 'query_detail']))
+      expect(names).toEqual(expect.arrayContaining(['describe_metric', 'sample_dimension_values', 'get_freshness']))
+      expect(new Set(names).size).toBe(names.length) // 重名会让模型对不上工具，装载即测
+    })
+
+    it('子集工具的 description/inputSchema 与 registry 同源（不得第二份文案）', () => {
+      const meta = ANALYST_TOOLS.find((t) => t.name === 'describe_metric')!
+      const spec = TOOLS.find((t) => t.name === 'describe_metric')!
+      expect(spec.description).toBe(meta.description)
+      expect(spec.inputSchema).toBe(meta.inputSchema)
+    })
+
+    it('describe_metric 经 callTool 单点：工具消息回 payload；审计 tool=describe_metric、channel=session', async () => {
+      await upsertMetric(pool, ORG, SALES_DAILY, 'fixture')
+      const model = new FakeChatModel([
+        { content: '', toolCalls: [{ id: 'c1', name: 'describe_metric', arguments: { id: 'sales_daily' } }] },
+        { content: 'sales_daily 是销售日明细。', toolCalls: [] },
+      ])
+      const events = await collect(runAgentLoop(
+        { pool, org: ORG, adoptedSources: NO_SOURCES }, sessionRequester(), model, 'sales_daily 是什么口径？'))
+      // 工具消息 = payload 原体（status=ok + id/title/definition/grain/params/owner/tier/version）
+      const toolMsg = model.calls[1]!.messages.find((m) => m.role === 'tool')!
+      const payload = JSON.parse(toolMsg.content) as { status: string; id: string; title: string }
+      expect(payload.status).toBe('ok')
+      expect(payload.id).toBe('sales_daily')
+      expect(payload.title).toBe('销售日明细')
+      // 活动事件与最终事件
+      expect(events[0]).toMatchObject({ type: 'activity', tool: 'describe_metric', detail: '查指标详情 sales_daily' })
+      expect(events.at(-1)).toMatchObject({ type: 'final', text: 'sales_daily 是销售日明细。' })
+      // 审计（callTool 单点写入，含 tool 字段）
+      const audit = await pool.query(
+        "select tool, channel, verdict from data.query_audit where tool = 'describe_metric' order by id desc limit 1")
+      expect(audit.rows[0]).toMatchObject({ tool: 'describe_metric', channel: 'session', verdict: 'ok' })
+    })
+
+    it('sample_dimension_values 拒绝（维度不在粒度）原样回给模型；不进 lastTable', async () => {
+      await upsertMetric(pool, ORG, SALES_DAILY, 'fixture') // groupBy='' ⇒ 任何维度都不在粒度
+      const model = new FakeChatModel([
+        { content: '', toolCalls: [{ id: 'c1', name: 'sample_dimension_values', arguments: { metricId: 'sales_daily', dimension: 'store' } }] },
+        { content: '该维度不存在。', toolCalls: [] },
+      ])
+      const events = await collect(runAgentLoop(
+        { pool, org: ORG, adoptedSources: NO_SOURCES }, sessionRequester(), model, '按门店看看'))
+      const toolMsg = model.calls[1]!.messages.find((m) => m.role === 'tool')!
+      expect(JSON.parse(toolMsg.content)).toMatchObject({ status: 'denied', reason: 'bad_param' })
+      const final = events.at(-1) as { type: string; table?: unknown }
+      expect(final.type).toBe('final')
+      expect(final.table).toBeUndefined() // toolbox 结果不得顶掉/伪装查询表
+    })
+
+    it('get_freshness：activity 文案带 scope；回包不进 lastTable（freshnessLagSeconds 不进事件流）', async () => {
+      const fakeWh = (async () => ({
+        rows: [['fct_x', '2026-10-20', new Date('2026-10-21T02:10:00+08:00')]],
+      })) as unknown as SqlExecutor
+      const model = new FakeChatModel([
+        { content: '', toolCalls: [{ id: 'c1', name: 'get_freshness', arguments: {} }] },
+        { content: '数据截至 2026-10-20。', toolCalls: [] },
+      ])
+      const events = await collect(runAgentLoop(
+        { pool, org: ORG, adoptedSources: NO_SOURCES, execute: fakeWh }, sessionRequester(), model, '数据到几号'))
+      expect(events[0]).toMatchObject({ type: 'activity', tool: 'get_freshness', detail: '查新鲜度 全局' })
+      expect(events.at(-1)).toMatchObject({ type: 'final', text: '数据截至 2026-10-20。' })
+    })
+
+    it('SYSTEM_PROMPT 已含 GUIDE_INVARIANTS 四行（A 通道同源 = 编译期 import）', async () => {
+      await upsertMetric(pool, ORG, SALES_DAILY, 'fixture')
+      const model = new FakeChatModel([{ content: '好', toolCalls: [] }])
+      await collect(runAgentLoop({ pool, org: ORG, adoptedSources: NO_SOURCES }, sessionRequester(), model, 'hi'))
+      const system = model.calls[0]!.messages[0]!.content
+      for (const line of GUIDE_INVARIANTS) expect(system).toContain(line)
+    })
   })
 })
 
@@ -360,7 +444,10 @@ describe('TOOLS —— query_metric 参数契约（spec 2026-10-15 §2.5 + §8.4
 // 纯断言（无 DATABASE_URL）：锁 query_detail 的工具面位置与 flash 级行为规则文案本身。
 describe('TOOLS —— query_detail 工具面（spec 2026-10-21 §2.4）', () => {
   it('第三把工具 query_detail 在面上，行为规则下沉在描述里（flash 级口径）', () => {
-    expect(TOOLS.map((t) => t.name)).toEqual(['list_metrics', 'query_metric', 'query_detail'])
+    expect(TOOLS.map((t) => t.name)).toEqual([
+      'list_metrics', 'query_metric', 'query_detail',
+      'describe_metric', 'sample_dimension_values', 'get_freshness',
+    ])
     const spec = TOOLS.find((t) => t.name === 'query_detail')!
     const d = spec.description
     // 能力边界：no_detail_binding = 该指标不支持下钻，改用 query_metric、不要重试
@@ -375,6 +462,8 @@ describe('TOOLS —— query_detail 工具面（spec 2026-10-21 §2.4）', () =>
     expect(d).toContain('clock_note')
     expect(d).toContain('原样转述')
     expect(d).toContain('scope_line')
+    // 条件列缺席 = 未授权（spec 2026-10-22 §2.3/§2.7）：别把「没权限看」答成「没有数据」
+    expect(d).toContain('未授权')
     // 主体不在客户端可指定面：required 只有 metricId，schema 无 org/subject
     expect(spec.inputSchema.required).toEqual(['metricId'])
     expect(JSON.stringify(spec.inputSchema)).not.toMatch(/"org"|subject/)

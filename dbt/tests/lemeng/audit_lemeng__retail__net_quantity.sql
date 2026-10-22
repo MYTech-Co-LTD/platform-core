@@ -4,7 +4,9 @@
 -- ⚠️ 比较的是「销售数量 / 退货数量 / 净销量」三列，不只是净销量——W1 的教训：两侧同值 0 时
 -- 比较 0 vs 0 等于没验。本指标真机上销售≈71 万、退货≈9.8 千，都有区分度。
 -- ⚠️ 两侧**都**滤掉今天：今天的文件正被 5 分钟一班的 tick 重写（ETag 竞态，2026-10-06 实测）。
-with base as (
+with base_cold as (
+    -- ══ 冷热两腿合流（#984）：原 day+window 双 glob 一把读**没有封版排除**，封窗日
+    -- 「天文件 + 小时文件」两份并存 ⇒ 双计；拆两腿后热腿排除已封版日（同 stg 冷热合流）。
     select
         r['system_book']::varchar as system_book,
         r['bizday']::date         as bizday,
@@ -16,10 +18,34 @@ with base as (
                   and r['state']::varchar in ('FINISHED', 'REPAID')
              then r['quantity']::numeric else 0 end as return_quantity
     from read_parquet(
-        -- ⚠️ 与 staging **同路径**（通配两账套）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
-        ARRAY['s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet', 's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet']::text[]
+        -- 冷腿：已封版日的**天文件**；⚠️ 与 staging **同路径**（通配两账套，含封版排除语义）——
+        -- 对账必须与受测面同口径，否则只对账了 3120（issue #250）。
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
     ) r
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+),
+base_hot as (
+    -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
+    select
+        r['system_book']::varchar as system_book,
+        r['bizday']::date         as bizday,
+        r['branch_num']::int      as branch_num,
+        r['item_num']::varchar    as item_num,
+        case when r['order_transaction_type']::varchar = 'SALE_ORDER' and r['state']::varchar = 'FINISHED'
+             then r['quantity']::numeric else 0 end as sale_quantity,
+        case when r['order_transaction_type']::varchar like '%RETURN%'
+                  and r['state']::varchar in ('FINISHED', 'REPAID')
+             then r['quantity']::numeric else 0 end as return_quantity
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
+    ) r
+    where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+),
+base as (
+    select * from base_cold
+    union all
+    select * from base_hot
 ),
 recheck as (
     select
