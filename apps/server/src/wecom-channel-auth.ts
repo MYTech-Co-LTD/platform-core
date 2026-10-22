@@ -37,14 +37,20 @@ export function wecomChannelIdentityMiddleware(deps: WecomChannelAuthDeps): Midd
     if (deps.channelKey === undefined || deps.channelKey === '') return next()  // 通道 C 未启用
     if (c.get('identity')) return next()                                        // first-setter-wins
 
+    // 只拦「带企微意图」的请求（x-channel-key / X-Wecom-Userid 至少其一在场）——本闸在 pat
+    // 之后，对其他请求抢答会把它们的错误形态（PAT 的 INVALID_KEY、端点门卫的 403）盖成
+    // CHANNEL_KEY_INVALID（shanhai 2026-10-22 首批冒烟被它误导）。放行后的终局拒绝仍 fail-closed：
+    // 由 pat 中间件 / 宿主声明门卫 / 模块自身的 requester-null 路径各自关上。
     const provided = c.req.header('x-channel-key')
+    const useridHeader = c.req.header(WECOM_USERID_HEADER)
+    if (provided === undefined && useridHeader === undefined) return next()
     if (!provided || !keyMatches(provided, deps.channelKey)) {
       return c.json({ error: 'CHANNEL_KEY_INVALID' }, 401)
     }
 
     // userid 走**头部**不走 body：body 是问数参数，让身份的来源与参数混在一个面上会诱发
     // 「参数里塞身份」这类越权（同 spec §5 约束 2 的立意）。
-    const userid = c.req.header(WECOM_USERID_HEADER)?.trim()
+    const userid = useridHeader?.trim()
     if (!userid) return c.json({ error: 'WECOM_USERID_REQUIRED' }, 401)
 
     const tenant = c.get('tenant')

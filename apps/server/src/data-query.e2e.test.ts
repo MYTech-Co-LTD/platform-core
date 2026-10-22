@@ -377,18 +377,18 @@ describePg('问数三通道 e2e：同一授权核心的主体一致性', () => {
 
   it('用例 9｜requester-null 接缝：空身份打 /query 与 /mcp 的 tools/call，各自 fail-closed 的可解释拒绝', async () => {
     // 无 cookie、无 Bearer、无渠道凭证——"空身份"真打模块面。本装配配了
-    // DATA_WECOM_CHANNEL_KEY ⇒ 请求在企微中间件就被关上（401 CHANNEL_KEY_INVALID），
-    // 到不了授权核心；模块侧 requesterOf→null→runQuery 的 unauthenticated 路径由
-    // T6/T8 的壳测试覆盖——接缝两侧都 fail-closed，这就是端到端要证的结局。
+    // DATA_WECOM_CHANNEL_KEY，但企微闸只拦「带企微意图」的请求（shanhai 2026-10-22 订正：
+    // 修前它对无意图请求也无条件 401 CHANNEL_KEY_INVALID，把下游错误形态盖掉），
+    // 故空身份穿过闸、由**宿主声明门卫**关上（两端口都声明 scope: data:query，
+    // manifest「声明即授权」fail-closed）：401 UNAUTHENTICATED。
+    // 钉死错误码 = 钉死拒绝的**产地**：闸若回退成抢答，这里会变回 CHANNEL_KEY_INVALID 而红。
     const q = await req('/api/modules/data/query', 'acme.test', {}, QUERY_BODY)
     expect(q.status).toBe(401)
-    const qErr = (await q.json()) as { error?: string }
-    expect(typeof qErr.error, '拒绝必须带可解释 error 码').toBe('string')
+    expect(await q.json(), '拒绝来自宿主声明门卫（不是企微闸抢答）').toMatchObject({ error: 'UNAUTHENTICATED' })
 
     const m = await req('/api/modules/data/mcp', 'acme.test', {},
       { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'sales_daily', arguments: {} } })
     expect(m.status).toBe(401)
-    const mErr = (await m.json()) as { error?: string }
-    expect(typeof mErr.error, '拒绝必须带可解释 error 码').toBe('string')
+    expect(await m.json(), '拒绝来自宿主声明门卫（不是企微闸抢答）').toMatchObject({ error: 'UNAUTHENTICATED' })
   })
 })
