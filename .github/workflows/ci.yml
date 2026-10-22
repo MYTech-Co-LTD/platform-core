@@ -169,6 +169,12 @@ jobs:
       - run: pnpm exec tsx scripts/check-mcp-toolface.mjs
       # guide↔SKILL 同源（Wave 2，#985）：SKILL.md 漏抄/改写 GUIDE_INVARIANTS 即红（D-G1 机检）
       - run: pnpm exec tsx scripts/check-guide-sync.mjs
+      # openclaw 插件工具契约回归（#989）：插件目录不在 pnpm workspace（deploy/ 不进 -r 递归），
+      # pnpm test 扫不到 ⇒ 显式跑 node --test（发现 *.test.js：lib/scope/contracts 三份）。
+      # contracts.test.js 钉「index.js 注册的工具名 ⊆ openclaw.plugin.json contracts.tools」——
+      # 网关按声明放行工具，漏登即真机拒载（Wave 2 三新工具在 shanhai 实锤过）。
+      - run: node --test
+        working-directory: deploy/openclaw/data-query-plugin
       # 回填工具链的行为测试（issue #387；判据正典 spec `2026-09-29-read-side-migration.md` §4 Phase 0/1）。
       #
       # 为什么它该进 CI（而别的 `.test.sh` 没进）：本工具的判据是**数字与顺序**——Phase 0 探针必须
