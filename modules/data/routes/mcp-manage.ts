@@ -1,14 +1,17 @@
 // mcp-manage.ts — POST /mcp-manage：管理面 MCP 端点。**只做合成 + 注册**：
-// 把各工具片（口径片 mcp-metric-tools / 报表片 mcp-report-tools）拼成一个 McpToolSet，
+// 把各工具片（口径片 mcp-metric-tools / 报表片 mcp-report-tools / 管线提案片 mcp-pipeline-tools）
+// 拼成一个 McpToolSet，
 // 交给共享协议壳 mcp-rpc.ts。工具判定本身都在各片里，本文件不含业务逻辑。
 import type { ModuleHono, RouteCtx } from './context'
 import { registerMcpEndpoint } from './mcp-rpc'
 import type { McpDeps, McpToolGroup, McpToolResult, McpToolSet } from './mcp-rpc'
 import { metricTools } from './mcp-metric-tools'
 import { reportTools } from './mcp-report-tools'
+import { pipelineTools } from './mcp-pipeline-tools'
 
-/** 管理面的工具片。加新片只改这一行（协议壳与门档都不动）。 */
-const GROUPS: readonly McpToolGroup[] = [metricTools, reportTools]
+/** 管理面的工具片。加新片只改这一行（协议壳与门档都不动）。
+ *  `export` 是给测试的跨片重名断言用（新增片必须过），不是新的装配点。 */
+export const GROUPS: readonly McpToolGroup[] = [metricTools, reportTools, pipelineTools]
 
 const manageToolset: McpToolSet = {
   serverName: 'platform-data-mcp-manage',

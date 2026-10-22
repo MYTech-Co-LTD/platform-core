@@ -92,6 +92,21 @@ COPY deploy ./deploy
 #    为什么不干脆把解析结果烘进构建期：那会让「改一条 L1 声明」必须重建镜像，
 #    而声明的事实源在仓里、改它不该要走一次镜像构建（同 scripts/ 随镜像走的理由）。
 COPY dbt ./dbt
+# ⑨ contracts/：**提案面（Wave 3）读面的事实源之一**，契约 JSON 是运行时只读资产（与 dbt/ 同性质）。
+#    读面只看 `contracts/<域>/<源>.<表>.json` 与 `contracts/customers/<客户>/…`。
+#    两类消费方都读这个根：只读工具（`list_pipelines`/`get_pipeline` 回包里的 `contractId`/
+#    `contract` 字段）与草案生成（`propose_pipeline_change`/`propose_contract_change` 用它反查
+#    基线契约的真实落点，propose.ts:174/272）。契约根读不到**不会**翻成 unknown（`readable`
+#    只来自管线根）：只读工具照常回 `ok`、字段为 `null` 并带 warnings，且回包的 `incomplete`
+#    会点名 `contracts`（`'pipelines'|'schedules'|'contracts'`，见 read.ts 的 listPipelinesImpl/
+#    getPipelineImpl）——「读不到」与「没有契约」由这个字段机器区分，不靠 warnings 文本；
+#    草案则退化成「基线无此契约」，按 `contracts/common/<域>.<表>.json` 猜落点（propose.ts:81-86，
+#    在 :196/:278 调用），另在下游清单里留 `kind: unknown` 的哨兵（propose.ts:202-210/340-345）。
+#    缺目录不报错，只让产出错位 ⇒ 更必须随镜像在场。
+#    读面的缺省根按【模块文件位置】解析（与 pnpm 脚本 cwd = apps/server 无关），故服务端
+#    实际读的就是本行落下的 `/app/contracts`。
+#    注意：管线与调度已在 `COPY deploy ./deploy` 里（deploy/duckle/console/），不必另 COPY。
+COPY contracts ./contracts
 
 # 装依赖与构建合成一层：上面的 COPY 是目录级的，源码任一改动都会让本层缓存失效，拆成两条
 # RUN 并不能省下依赖下载（要真省得用 BuildKit cache mount——那会把「构建必须走 BuildKit」
@@ -128,6 +143,8 @@ COPY --from=build /app/modules ./modules
 COPY --from=build /app/deploy ./deploy
 # ⑧ dbt/ 的对应项（理由同 build 阶段 ⑧，不复述）：sync 脚本在运行态读 L1 声明事实源
 COPY --from=build /app/dbt ./dbt
+# ⑨ contracts/ 的对应项（理由同 build 阶段 ⑨，不复述）：提案面读面在运行态读契约事实源
+COPY --from=build /app/contracts ./contracts
 
 # 非 root 运行（node 镜像自带 uid 1000 的 node 用户）。被 COPY 的文件是 root 拥有但
 # world-readable，宿主进程只读磁盘：tsx 在内存里转译不落盘，pnpm run 也不写 store。

@@ -871,6 +871,26 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 
 ---
 
+## G 提案面（Wave 3）读面的事实来源
+
+提案面（分析师面 / 数据面 MCP）的只读工具**同步读镜像内的文件**，不走 duckle console HTTP。
+本节只写「哪条路径可达 / 哪条不可达 / 为什么不可达」，不写推测。
+
+- **可达且已在镜像内**：管线 `deploy/duckle/console/pipelines/*.json`、调度
+  `deploy/duckle/console/schedules/*.json`（`COPY deploy`）、契约 `contracts/**`（Wave 3 新增 COPY）。
+  缺省根**按模块文件位置解析、与 cwd 无关**（镜像内即 `/app/deploy/duckle/console` 与
+  `/app/contracts`；`pnpm --filter @platform/server start` 把 cwd 设在 `apps/server` **不影响**它）；
+  `DATA_PIPELINES_ROOT` / `DATA_CONTRACTS_ROOT` 可覆盖缺省。
+- **不可达（待沉淀）**：运行记录在 console 的 per-账套 workspace 卷（`/workspace/runs/`）；
+  platform-core 容器既看不到卷、也够不到 `127.0.0.1:18080/18081`（跨 compose 项目 + 回环）。
+  故 `list_pipeline_runs`/`get_pipeline_run` 回**显式 unknown**，不是「没跑过」。
+- **不执行**：`run_pipeline_sandbox` 只做结构校验与 `__sandbox/` 前缀断言，回 `not_executed`
+  （容器内无 duckle / duckle-runner）。执行通道需真机验证后另案。
+- **校验闸的覆盖面（接执行面之前必须补）**：`run_pipeline_sandbox` 的前缀断言是**裸字符串**
+  `startsWith('__sandbox/')`，不做路径规范化（`__sandbox/../正式前缀/…` 能通过）；且只检查
+  `type === 'sink'` 的节点（把 `snk.minio` 挂在 `transform` 上不会被发现）。本轮**不执行**，
+  故无写入风险；**将来接通执行面时，必须先做前缀规范化 + 覆盖所有可能写湖的组件，再谈放行**。
+
 ## 关联
 
 - `deploy/customer-onboarding.md` §5 阶段 5（拆缝建数据面 project 的入口决策）

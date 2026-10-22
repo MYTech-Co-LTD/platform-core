@@ -87,16 +87,19 @@ describePg('写面（需要 DATABASE_URL）', () => {
     })
   }
 
-  it('tools/list → 恰好六件（口径三 + 报表三，#496），且 customize 的描述写明「不能凭空造新指标」', async () => {
+  /** 口径片 + 报表片：设计稿 §6#7 的结构约束（多出发布/回收类 = 「能提不能发」被破坏）。 */
+  const METRIC_REPORT_TOOL_NAMES = ['customize_metric', 'delete_custom_metric', 'list_metrics',
+    'list_reports', 'propose_report', 'revise_report_spec']
+  /** Wave 3 提案面（spec §7）：七个，缺一或多一都算漂。 */
+  const PIPELINE_TOOL_NAMES = ['get_pipeline', 'get_pipeline_run', 'list_pipeline_runs', 'list_pipelines',
+    'propose_contract_change', 'propose_pipeline_change', 'run_pipeline_sandbox']
+
+  it('tools/list → 口径三 + 报表三（#496）与提案七件（Wave 3）各自恰好', async () => {
     await seedL1()
     const body = await (await rpc(app(), { jsonrpc: '2.0', id: 1, method: 'tools/list' })).json()
     const tools = (body as { result: { tools: { name: string; description: string }[] } }).result.tools
-    // 「恰为那六个」是设计稿 §6#7 的结构约束机检落点：多出发布/回收类 = 能提不能发被破坏
-    expect(tools.map((t) => t.name).sort())
-      .toEqual(['customize_metric', 'delete_custom_metric', 'list_metrics',
-        'list_reports', 'propose_report', 'revise_report_spec'])
-    expect(tools.find((t) => t.name === 'customize_metric')!.description)
-      .toContain('不能凭空造新指标')
+    expect(tools.map((t) => t.name).sort()).toEqual([...METRIC_REPORT_TOOL_NAMES, ...PIPELINE_TOOL_NAMES].sort())
+    expect(tools.find((t) => t.name === 'customize_metric')!.description).toContain('不能凭空造新指标')
   })
 
   it('list_metrics → 基底含刚种的 L1（带可用维度）；自定义面初始为空', async () => {
@@ -234,5 +237,18 @@ describePg('写面（需要 DATABASE_URL）', () => {
     expect((bad as { error: { code: number } }).error.code).toBe(-32700)
     const unknown = await (await rpc(app(), { jsonrpc: '2.0', id: 99, method: 'nope' })).json()
     expect((unknown as { error: { code: number } }).error.code).toBe(-32601)
+  })
+})
+
+describe('管理面工具片：跨片名字不重（新增片必过）', () => {
+  it('三片合成后工具名唯一', async () => {
+    const { GROUPS } = await import('./mcp-manage')
+    const fake = {
+      pool: { query: async () => ({ rows: [] }) } as never,
+      org: 'acme', adoptedSources: new Set<string>(),
+      requester: { userId: 'u', orgId: 'acme', channel: 'pat' as const, keyId: 1, scopes: ['data:manage'], hasScope: () => true },
+    }
+    const names = (await Promise.all(GROUPS.map((g) => g.list(fake as never)))).flat().map((t) => t.name)
+    expect(new Set(names).size).toBe(names.length)
   })
 })
