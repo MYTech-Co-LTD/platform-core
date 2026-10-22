@@ -208,10 +208,10 @@ describe('报表面声明（不需要数据库）', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
-    // 总数钉 21（23 − 3：个人 Key 三条 /keys 已上移宿主 issue #894；+1：明细下钻 /query/detail，
-    // spec 2026-10-21）：穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
-    // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(21)
+    // 总数钉 22（23 − 3：个人 Key 三条 /keys 已上移宿主 issue #894；+1：明细下钻 /query/detail，
+    // spec 2026-10-21；+1：/toolbox registry 薄封装，Wave 2 #985）：穷举口径（同 module.test.ts
+    // 的表清单）——别处加端点而漏改这里会红，逼着声明与测试一起动。
+    expect(declared).toHaveLength(22)
     expect(declared.get('POST /reports')).toBe('data:manage')
     expect(declared.get('GET /reports')).toBe('data:query')
     expect(declared.get('GET /reports/:id/embed-url')).toBe('data:query')
