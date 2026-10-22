@@ -37,12 +37,13 @@ const denied = (detail: string): ToolImplResult => ({
 })
 
 /**
- * 解析可选的 `pipelineId` 过滤参数。缺省（undefined / null）⇒ 不过滤，回 `null`；
+ * 解析 `list_pipeline_runs` 的可选 `pipelineId` 过滤参数。
+ * 缺省（undefined / null，以及空串——schema 未声明 minLength 故空串是 schema 合法值）⇒ 不过滤，回 `null`；
  * 其余一律必须过 PIPELINE_ID_RE，否则 fail closed（denied）——`typeof === 'string'` 松判会把
  * 数字等非法值静默放宽成「所有管线」，而 seam 未来按 `<pipeline_id>.json` 拼路径时更要挡注入。
  */
 const pipelineIdOf = (v: unknown): { ok: true; value: string | undefined } | { ok: false } => {
-  if (v === undefined || v === null) return { ok: true, value: undefined }
+  if (v === undefined || v === null || v === '') return { ok: true, value: undefined }
   if (typeof v !== 'string' || !PIPELINE_ID_RE.test(v)) return { ok: false }
   return { ok: true, value: v }
 }
@@ -69,29 +70,29 @@ export const listPipelineRunsImpl: PipelineImpl = async (deps: PipelineDeps, arg
 export const getPipelineRunImpl: PipelineImpl = async (deps: PipelineDeps, args) => {
   const runId = typeof args.runId === 'string' ? args.runId : ''
   if (runId === '') return denied('runId_required')
-  const id = pipelineIdOf(args.pipelineId)
-  if (!id.ok) return denied('invalid_pipeline_id')
-  const pipelineId = id.value
-  const applied = pipelineId ?? null
-  if (deps.runs === null) return notWired({ runId, pipelineId: applied })
-  const hits = await deps.runs({ pipelineId, limit: MAX_LIMIT })
+  // 只声明了 runId（tools.ts required:['runId']）⇒ 这里不消费 args.pipelineId：
+  // tools/call 不校验入参，接受未声明参数会造出「schema 未写但行为不同」的两套饱和语义。
+  // 回显一律 null（无过滤生效）。按管线收窄窗口留给真 seam 那一轮，与 tools.ts/门禁一起改。
+  if (deps.runs === null) return notWired({ runId, pipelineId: null })
+  const hits = await deps.runs({ limit: MAX_LIMIT })
   const scanned = hits.length
   const run = hits.find((r) => r.runId === runId)
   if (run !== undefined) {
-    return { payload: { status: 'ok', run, pipelineId: applied, scanned }, isError: false, auditRowCount: null }
+    return { payload: { status: 'ok', run, pipelineId: null, scanned }, isError: false, auditRowCount: null }
   }
   // 窗口打满 ⇒ 缺席不可证：回 unknown，不回 not_found（否则把「看不到」说成「没跑过」）。
-  if (scanned === MAX_LIMIT) {
+  // 用 >=：来源若忽略 limit 或回「一页多一行」，都是窗口已满，不能退化成 not_found。
+  if (scanned >= MAX_LIMIT) {
     return {
       payload: {
         status: 'unknown', reason: 'runs_window_saturated', note: SATURATED_NOTE,
-        runId, pipelineId: applied, scanned, limit: MAX_LIMIT,
+        runId, pipelineId: null, scanned, limit: MAX_LIMIT,
       },
       isError: false, auditRowCount: null,
     }
   }
   return {
-    payload: { status: 'not_found', reason: 'not_found', runId, pipelineId: applied, scanned },
+    payload: { status: 'not_found', reason: 'not_found', runId, pipelineId: null, scanned },
     isError: true, auditRowCount: null,
   }
 }

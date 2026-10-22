@@ -60,13 +60,35 @@ describe('pipelineId 形状校验（fail closed）', () => {
     expect(out.payload).toMatchObject({ status: 'denied', reason: 'bad_param', detail: 'invalid_pipeline_id' })
     expect(called).toBe(0)
   })
-  it('路径穿越值 ⇒ 同样 denied，不落到未来的路径拼接', async () => {
+  it('路径穿越值 ⇒ list 同样 denied，不落到未来的路径拼接', async () => {
     const deps: PipelineDeps = { roots, env: {}, runs: async () => [] }
     const out = await listPipelineRunsImpl(deps, { pipelineId: '../../deploy/duckle/console/schedules/3120' })
     expect(out.isError).toBe(true)
     expect(out.payload).toMatchObject({ status: 'denied', reason: 'bad_param', detail: 'invalid_pipeline_id' })
+  })
+  it('空串是 schema 合法值 ⇒ 视为「不过滤」，回 null', async () => {
+    let seen: string | undefined = 'sentinel'
+    const deps: PipelineDeps = {
+      roots, env: {},
+      runs: async (q) => { seen = q.pipelineId; return [] },
+    }
+    const out = await listPipelineRunsImpl(deps, { pipelineId: '' })
+    expect(out.isError).toBe(false)
+    expect(out.payload).toMatchObject({ status: 'ok', pipelineId: null })
+    expect(seen).toBeUndefined()
+  })
+  it('get 不消费 pipelineId（schema 未声明）⇒ 即便传入也忽略并回 null', async () => {
+    const deps: PipelineDeps = {
+      roots, env: {},
+      runs: async () => [
+        { runId: 'r1', pipelineId: 'p', startedAt: '2026-10-22T00:00:00Z', status: 'ok' as const },
+      ],
+    }
     const got = await getPipelineRunImpl(deps, { runId: 'r1', pipelineId: '../../deploy/duckle/console/schedules/3120' })
-    expect(got.payload).toMatchObject({ status: 'denied', reason: 'bad_param', detail: 'invalid_pipeline_id' })
+    expect(got.isError).toBe(false)
+    expect(got.payload).toMatchObject({ status: 'ok', run: { runId: 'r1' }, pipelineId: null })
+    const got2 = await getPipelineRunImpl(deps, { runId: 'r1', pipelineId: 'p' })
+    expect(got2.payload).toMatchObject({ status: 'ok', pipelineId: null })
   })
 })
 
@@ -88,6 +110,15 @@ describe('扫描窗口饱和 ⇒ 缺席不可证', () => {
     const out = await getPipelineRunImpl(deps, { runId: 'old-one' })
     expect(out.isError).toBe(true)
     expect(out.payload).toMatchObject({ status: 'not_found', reason: 'not_found', runId: 'old-one', scanned: 49 })
+  })
+  it('来源忽略 limit 回 51 条 ⇒ 仍判饱和（>= 而非 ===）', async () => {
+    const plusOne = [...full, { runId: 'r50', pipelineId: 'p', startedAt: '2026-10-22T00:00:00Z', status: 'ok' as const }]
+    const deps: PipelineDeps = { roots, env: {}, runs: async () => plusOne }
+    const out = await getPipelineRunImpl(deps, { runId: 'old-one' })
+    expect(out.isError).toBe(false)
+    expect(out.payload).toMatchObject({
+      status: 'unknown', reason: 'runs_window_saturated', scanned: 51, limit: 50,
+    })
   })
   it('list ok 回显已生效的 pipelineId 与 scanned', async () => {
     const deps: PipelineDeps = { roots, env: {}, runs: async () => full.slice(0, 2) }
