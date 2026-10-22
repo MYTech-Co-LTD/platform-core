@@ -19,6 +19,12 @@
 - **工具名**守 MCP 2025-11-25 `[A-Za-z0-9_.-]`；mutating 工具必须带 `annotations` 与 `requiredScope`。
 - **无案例不立标准**：任何「未验证的运行时能力」一律回**显式 unknown/not_executed**，不得编造成功。
 
+> **样例代码的效力（终审 I3 订正）**：各 Task 里的代码块是**首版设计意图**，交付过程中被多轮评审改过
+> （共享类型拆 `types.ts`、`readable`/`incomplete` 信号位、契约客户级覆盖、缺省根改模块锚定、
+> 校验器对齐引擎词汇……）。**以交付代码为准**；每个 Task 末尾的「补记」逐条记录差异。
+> 直接照抄样例会踩到已知的编译错与已修的缺陷——重写某 Task 前先读该 Task 的补记与
+> `modules/data/domain/pipelines/` 下的现码。
+
 ---
 
 ## 0. 开工前必须知道的两条设计决定（**已按推荐值写死本计划；人有异议则改计划再动工**）
@@ -461,16 +467,21 @@ describe('rootsOf', () => {
 
 describe('loadPipelines', () => {
   it('按文件名取 id、统计节点类型、收集湖写入 key；坏 JSON 进 warnings 不抛', () => {
-    const { defs, warnings } = loadPipelines(roots)
+    const { defs, warnings, readable, incomplete } = loadPipelines(roots)
     expect([...defs.keys()]).toEqual(['lemeng.a.b'])
     const d = defs.get('lemeng.a.b')!
     expect(d.name).toBe('lemeng.a.b')
-    expect(d.counts).toEqual({ source: 1, transform: 1, sink: 2, control: 0 })
+    expect(d.counts).toEqual({ source: 1, transform: 1, sink: 2, control: 0, quality: 0 })
     expect(d.lakeKeys).toEqual(['lemeng/a/system_book=1/all.parquet'])
     expect(warnings.some((w) => w.includes('broken.json'))).toBe(true)
+    expect(readable).toBe(true)
+    // 有坏件 ⇒ 读不全（缺席的 id 不等于不存在）。
+    expect(incomplete).toBe(true)
   })
-  it('目录不存在 ⇒ 空 + warning（不抛）', () => {
-    expect(loadPipelines(rootsOf({}, '/definitely/not/here'))).toEqual({ defs: new Map(), warnings: [expect.stringContaining('pipelines')] })
+  it('目录不存在 ⇒ 空 + warning + readable=false + incomplete=true（不抛）', () => {
+    expect(loadPipelines(rootsOf({}, '/definitely/not/here'))).toEqual({
+      defs: new Map(), warnings: [expect.stringContaining('pipelines')], readable: false, incomplete: true,
+    })
   })
 })
 
@@ -547,7 +558,7 @@ export interface PipelineDef {
   name: string
   version: unknown
   doc: Record<string, unknown>
-  counts: { source: number; transform: number; sink: number; control: number }
+  counts: { source: number; transform: number; sink: number; control: number; quality: number }
   /** 所有 snk.minio sink 的 key（湖写入面的事实清单；沙箱断言与契约匹配都用它）。 */
   lakeKeys: string[]
 }
@@ -573,29 +584,35 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 
 export function loadPipelines(
   roots: PipelineRoots,
-): { defs: Map<string, PipelineDef>; warnings: string[] } {
+): { defs: Map<string, PipelineDef>; warnings: string[]; readable: boolean; incomplete: boolean } {
   const defs = new Map<string, PipelineDef>()
   const warnings: string[] = []
+  // 「读不全」与「读不到」是两件事：前者仍可答（附注），后者必须 unknown——由 read.ts 定语义。
+  let incomplete = false
+  let dir = ''
   let files: string[]
   try {
     // join 必须在 try 内：roots 若被传成非字符串，join 自己会抛（本层铁律是「不抛」）。
-    const dir = join(roots.pipelinesRoot, 'pipelines')
+    // `dir` 声明在 try **外**、赋值在 try 内——它是给下面读文件环用的，留在块内会 TS2304。
+    dir = join(roots.pipelinesRoot, 'pipelines')
     files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort()
   } catch (err) {
     warnings.push(`pipelines 目录不可读：${roots.pipelinesRoot}（${err instanceof Error ? err.message : String(err)}）`)
-    return { defs, warnings }
+    return { defs, warnings, readable: false, incomplete: true }
   }
   for (const f of files) {
     const id = f.slice(0, -'.json'.length)
-    if (!PIPELINE_ID_RE.test(id)) { warnings.push(`跳过非法管线名：${f}`); continue }
+    if (!PIPELINE_ID_RE.test(id)) { warnings.push(`跳过非法管线名：${f}`); incomplete = true; continue }
     const raw = readJson(join(dir, f))
-    if (!isObj(raw)) { warnings.push(`跳过不可解析的管线：${f}`); continue }
+    if (!isObj(raw)) { warnings.push(`跳过不可解析的管线：${f}`); incomplete = true; continue }
     const nodes = Array.isArray(raw.nodes) ? raw.nodes.filter(isObj) : []
-    const counts = { source: 0, transform: 0, sink: 0, control: 0 }
+    const counts = { source: 0, transform: 0, sink: 0, control: 0, quality: 0 }
     const lakeKeys: string[] = []
     for (const n of nodes) {
       const t = str(n.type)
-      if (t === 'source' || t === 'transform' || t === 'sink' || t === 'control') counts[t] += 1
+      if (t === 'source' || t === 'transform' || t === 'sink' || t === 'control' || t === 'quality') {
+        counts[t] += 1
+      }
       const data = isObj(n.data) ? n.data : {}
       if (t === 'sink' && str(data.componentId) === 'snk.minio') {
         const props = isObj(data.properties) ? data.properties : {}
@@ -606,32 +623,34 @@ export function loadPipelines(
       id, name: str(raw.name) || id, version: raw.version ?? null, doc: raw, counts, lakeKeys,
     })
   }
-  return { defs, warnings }
+  return { defs, warnings, readable: true, incomplete }
 }
 
 export function loadSchedules(
   roots: PipelineRoots,
-): { byPipeline: Map<string, ScheduleEntry[]>; warnings: string[] } {
+): { byPipeline: Map<string, ScheduleEntry[]>; warnings: string[]; incomplete: boolean } {
   const byPipeline = new Map<string, ScheduleEntry[]>()
   const warnings: string[] = []
+  let incomplete = false
+  let dir = ''
   let files: string[]
   try {
-    // 同 loadPipelines：join 在 try 内（非字符串 root 也不能抛）。
-    const dir = join(roots.pipelinesRoot, 'schedules')
+    // 同 loadPipelines：join 在 try 内（非字符串 root 也不能抛），`dir` 声明在 try 外供下面复用。
+    dir = join(roots.pipelinesRoot, 'schedules')
     files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort()
   } catch (err) {
     warnings.push(`schedules 目录不可读：${roots.pipelinesRoot}（${err instanceof Error ? err.message : String(err)}）`)
-    return { byPipeline, warnings }
+    return { byPipeline, warnings, incomplete: true }
   }
   for (const f of files) {
     const source = f.slice(0, -'.json'.length)
     const raw = readJson(join(dir, f))
     // 调度文件是**数组**（每条带 pipeline_id），不是字典——见 deploy/duckle/console/README.md。
-    if (!Array.isArray(raw)) { warnings.push(`跳过不可解析的调度：${f}`); continue }
+    if (!Array.isArray(raw)) { warnings.push(`跳过不可解析的调度：${f}`); incomplete = true; continue }
     for (const e of raw) {
-      if (!isObj(e)) continue
+      if (!isObj(e)) { warnings.push(`调度条目不是对象：${f}`); incomplete = true; continue }
       const pid = str(e.pipeline_id)
-      if (pid === '') { warnings.push(`调度条目缺 pipeline_id：${f}`); continue }
+      if (pid === '') { warnings.push(`调度条目缺 pipeline_id：${f}`); incomplete = true; continue }
       const kind = isObj(e.kind) ? e.kind : {}
       const entry: ScheduleEntry = {
         source, pipelineId: pid, enabled: e.enabled === true,
@@ -640,21 +659,23 @@ export function loadSchedules(
       byPipeline.set(pid, [...(byPipeline.get(pid) ?? []), entry])
     }
   }
-  return { byPipeline, warnings }
+  return { byPipeline, warnings, incomplete }
 }
 
 export function loadContracts(
   roots: PipelineRoots,
-): { contracts: ContractRef[]; warnings: string[] } {
+): { contracts: ContractRef[]; warnings: string[]; incomplete: boolean; duplicateIds: string[] } {
   const contracts: ContractRef[] = []
   const warnings: string[] = []
+  let incomplete = false
   let domains: string[]
   try {
     domains = readdirSync(roots.contractsRoot, { withFileTypes: true })
       .filter((d) => d.isDirectory()).map((d) => d.name).sort()
   } catch {
     warnings.push(`contracts 目录不可读：${roots.contractsRoot}`)
-    return { contracts, warnings }
+    // 读不到 ≠ 没有契约；duplicateIds 此时为空也不代表「没有重复」。
+    return { contracts, warnings, incomplete: true, duplicateIds: [] }
   }
   for (const domain of domains) {
     let files: string[]
@@ -663,13 +684,14 @@ export function loadContracts(
     } catch {
       // 不能静默跳过：整个域消失会被下游读成「没有契约」，那是另一种谎。
       warnings.push(`契约目录不可读：${domain}`)
+      incomplete = true
       continue
     }
     for (const f of files) {
       // `_` 前缀 = 基础设施（_schema/_template），跳过（contracts/README.md 明文）。
       if (f.startsWith('_')) continue
       const raw = readJson(join(roots.contractsRoot, domain, f))
-      if (!isObj(raw)) { warnings.push(`跳过不可解析的契约：${domain}/${f}`); continue }
+      if (!isObj(raw)) { warnings.push(`跳过不可解析的契约：${domain}/${f}`); incomplete = true; continue }
       const table = str(raw.table)
       const dom = str(raw.domain) || domain
       const cols = Array.isArray(raw.columns) ? raw.columns.length : 0
@@ -679,7 +701,12 @@ export function loadContracts(
       })
     }
   }
-  return { contracts, warnings }
+  // 同 id 多份（将来接入 customers/ 两层枚举后会更常见）：机器通道给 duplicateIds，
+  // 由调用方在回包里如实标「可能指错」——本层不替人裁决优先级。
+  const seen = new Map<string, number>()
+  for (const c of contracts) seen.set(c.id, (seen.get(c.id) ?? 0) + 1)
+  const duplicateIds = [...seen.entries()].filter(([, n]) => n > 1).map(([id]) => id)
+  return { contracts, warnings, incomplete, duplicateIds }
 }
 
 /**
@@ -713,13 +740,15 @@ git commit -m "feat(data-mcp): 提案面只读定义源（管线/调度/契约�
 
 ### Task 2 补记（交付形态与样例的差异，终审提出）
 
-本 Task 的样例代码是**首版**，后续评审按「未知 ≠ 没有」把两个签名加了信号位，最终交付形态以
-`modules/data/domain/pipelines/defs.ts` 为准：
+本 Task 的样例代码曾按「未知 ≠ 没有」加了信号位，样例已同步到下列形态（最终交付仍以
+`modules/data/domain/pipelines/defs.ts` 为准）：
 
-- `loadPipelines` 返回 `{ defs, warnings, readable }`——`readable=false` 只表示**目录读不到**，
-  调用方据此回 `unknown/pipelines_root_unreadable`，不得当成「没有管线」。
-- `loadContracts` 返回 `{ contracts, warnings, incomplete }`——目录读不到、文件不可解析、客户目录
-  不可读都会置 `incomplete`，调用方据此把下游清单降级为 `unknown`。
+- `loadPipelines` 返回 `{ defs, warnings, readable, incomplete }`——`readable=false` 只表示
+  **目录读不到**，调用方据此回 `unknown/pipelines_root_unreadable`，不得当成「没有管线」；
+  `incomplete` 表示有文件没读进来（坏 JSON / 非法文件名），仍可答但要附注。
+- `loadSchedules` 返回 `{ byPipeline, warnings, incomplete }`；`loadContracts` 返回
+  `{ contracts, warnings, incomplete, duplicateIds }`——目录读不到、文件不可解析、客户目录
+  不可读都会置 `incomplete`；同 id 多份进 `duplicateIds`（调用方在回包里标 `ambiguousContracts`）。
 - 契约不再只扫一层：`contracts/<域>/*.json` 之外还下探 `contracts/customers/<客户>/*.json`
   （两层枚举），同 id 多份**只告警点名两条真实路径、不替人裁决优先级**（`customers/README.md`
   明确未定案）；`customers/` 不存在不算错误。
@@ -767,28 +796,35 @@ put('pipelines/lemeng.a.b.json', {
   edges: [{ id: 'e1', source: 's1', target: 'k1' }],
 })
 put('schedules/3120.json', [{ pipeline_id: 'lemeng.a.b', pipelineId: 'x', enabled: true, kind: { type: 'cron', expr: '*/5 * * * *' }, timezone: 'Asia/Shanghai' }])
-put('../contracts/common/lemeng.a.json', {
+// 契约写进**临时根内**（put 只接受相对 root 的路径）：`../contracts` 会把文件写到临时根
+// 之外，`afterAll` 的 rmSync 清不到，跨用例互相污染。
+put('contracts/common/lemeng.a.json', {
   contractVersion: 2, domain: 'lemeng', table: 'a', owner: 'data-platform', columns: [{ name: 'x', type: 'varchar' }],
   layout: { prefix: 'lemeng/a', partitionStyle: 'hive', partitionBy: ['d'], fileName: 'all.parquet' },
 })
 const deps: PipelineDeps = {
-  roots: { pipelinesRoot: root, contractsRoot: join(root, '..', 'contracts') },
+  roots: { pipelinesRoot: root, contractsRoot: join(root, 'contracts') },
   runs: null, env: {},
 }
 
 describe('listPipelinesImpl', () => {
-  it('回清单：id/name/版本/节点统计/调度/契约', async () => {
+  it('回清单：id/name/版本/节点统计/调度/契约；全读全 ⇒ incomplete 为空', async () => {
     const out = await listPipelinesImpl(deps, {})
     expect(out.isError).toBe(false)
-    const p = out.payload as { status: string; count: number; pipelines: Record<string, unknown>[] }
+    const p = out.payload as { status: string; count: number; incomplete: string[]; pipelines: Record<string, unknown>[] }
     expect(p.status).toBe('ok')
     expect(p.count).toBe(1)
+    expect(p.incomplete).toEqual([])
     expect(p.pipelines[0]).toMatchObject({
       id: 'lemeng.a.b', name: 'lemeng.a.b', version: 2,
-      nodes: { source: 1, transform: 0, sink: 1, control: 0 },
+      nodes: { source: 1, transform: 0, sink: 1, control: 0, quality: 0 },
       contractId: 'lemeng.a',
     })
     expect((p.pipelines[0].schedules as unknown[]).length).toBe(1)
+  })
+  it('过滤值先去首尾空白再匹配（` lemeng.a ` 不再静默回 count:0）', async () => {
+    const q = await listPipelinesImpl(deps, { q: ' lemeng.a ' })
+    expect(q.payload).toMatchObject({ status: 'ok', count: 1 })
   })
   it('q 过滤 + source 过滤', async () => {
     const none = await listPipelinesImpl(deps, { q: 'zzz' })
@@ -839,7 +875,7 @@ Expected: FAIL —— 模块不存在。
 import {
   contractFor, loadContracts, loadPipelines, loadSchedules, PIPELINE_ID_RE,
 } from './defs'
-import type { ContractRef, PipelineDef, ScheduleEntry } from './defs'
+import type { ContractRef, PipelineDef, PipelineRoots, ScheduleEntry } from './defs'
 import { validatePipelineDraft } from './validate'
 // 共享类型住在 types.ts（Task 4 建），此处只取用并对外转出，避免与 runs.ts 形成类型循环。
 import type { PipelineDeps, PipelineImpl } from './types'
@@ -850,6 +886,14 @@ export interface ReadAll {
   defs: Map<string, PipelineDef>
   schedules: Map<string, ScheduleEntry[]>
   contracts: ContractRef[]
+  /** pipelines 根目录是否读得到（`loadPipelines` 的显式信号，不靠 warnings 文本反推）。 */
+  readable: boolean
+  /** 三棵树各自的「读不全」信号——缺席的一行不等于不存在（「未知 ≠ 没有」）。 */
+  pipelinesIncomplete: boolean
+  schedulesIncomplete: boolean
+  contractsIncomplete: boolean
+  /** 同 id 多份的契约 id（`contractFor` 只取第一份 ⇒ 回包里的 contract 可能是错的）。 */
+  contractDuplicates: string[]
   warnings: string[]
 }
 
@@ -859,21 +903,77 @@ export function readAll(deps: PipelineDeps): ReadAll {
   const s = loadSchedules(deps.roots)
   const c = loadContracts(deps.roots)
   return {
-    defs: p.defs, schedules: s.byPipeline, contracts: c.contracts,
+    defs: p.defs, schedules: s.byPipeline, contracts: c.contracts, readable: p.readable,
+    pipelinesIncomplete: p.incomplete, schedulesIncomplete: s.incomplete,
+    contractsIncomplete: c.incomplete, contractDuplicates: c.duplicateIds,
     warnings: [...p.warnings, ...s.warnings, ...c.warnings],
   }
 }
 
+/** 读不全的根名（顺序固定，便于断言与阅读）：只列**这次确实没读全**的。 */
+const incompleteOf = (all: ReadAll): ('pipelines' | 'schedules' | 'contracts')[] => [
+  ...(all.pipelinesIncomplete ? (['pipelines'] as const) : []),
+  ...(all.schedulesIncomplete ? (['schedules'] as const) : []),
+  ...(all.contractsIncomplete ? (['contracts'] as const) : []),
+]
+
+/** 回包里「契约有歧义」的机器通道：只有真的重复时才出现（否则字段缺席 = 无歧义）。 */
+const ambiguousOf = (all: ReadAll): { ambiguousContracts?: string[] } =>
+  (all.contractDuplicates.length > 0 ? { ambiguousContracts: all.contractDuplicates } : {})
+
 const schedulesOf = (all: ReadAll, id: string, source: string | null): ScheduleEntry[] =>
   (all.schedules.get(id) ?? []).filter((e) => source === null || e.source === source)
 
+/** 读不到 pipelines 根时的统一回包：isError=false（不是调用方的错），但语义是「不知道」。 */
+const unreadable = (roots: PipelineRoots, warnings: string[], incomplete: string[]): Record<string, unknown> => ({
+  status: 'unknown', reason: 'pipelines_root_unreadable', roots, warnings, incomplete,
+})
+
+/**
+ * 解析可选的字符串过滤参数（`q` / `source`）。
+ * 缺省（undefined / null）与空串 ⇒ 不过滤（回 `null`）；
+ * 非字符串或**纯空白串** ⇒ fail closed：静默当成「不过滤」会把一次错误的调用
+ * 放大成「所有管线都匹配」，读数的人无从察觉。
+ * 有值则**去掉首尾空白**再匹配：`' retail '` 原样匹配只会回 `ok/count:0`，
+ * 与「确实没有」同形（同一条不变式）。
+ */
+const filterOf = (v: unknown): { ok: true; value: string | null } | { ok: false } => {
+  if (v === undefined || v === null || v === '') return { ok: true, value: null }
+  if (typeof v !== 'string' || v.trim() === '') return { ok: false }
+  return { ok: true, value: v.trim() }
+}
+
+const deniedFilter = (): { payload: Record<string, unknown>; isError: true; auditRowCount: null } => ({
+  payload: { status: 'denied', reason: 'bad_param', detail: 'invalid_filter' },
+  isError: true, auditRowCount: null,
+})
+
 export const listPipelinesImpl: PipelineImpl = async (deps, args) => {
+  const q = filterOf(args.q)
+  const source = filterOf(args.source)
+  if (!q.ok || !source.ok) return deniedFilter()
   const all = readAll(deps)
-  const q = typeof args.q === 'string' && args.q !== '' ? args.q.toLowerCase() : null
-  const source = typeof args.source === 'string' && args.source !== '' ? args.source : null
+  if (!all.readable) {
+    return {
+      payload: unreadable(deps.roots, all.warnings, incompleteOf(all)),
+      isError: false, auditRowCount: null,
+    }
+  }
+  // 带 source 过滤时，调度面读不全就**答不了**这个问题：缺席可能只是没读到。
+  // 回 unknown 而不是 ok/count:0 —— 后者会被读成「这个账套没有任何管线」。
+  if (source.value !== null && all.schedulesIncomplete) {
+    return {
+      payload: {
+        status: 'unknown', reason: 'schedules_incomplete', source: source.value,
+        warnings: all.warnings, incomplete: incompleteOf(all),
+      },
+      isError: false, auditRowCount: null,
+    }
+  }
+  const needle = q.value === null ? null : q.value.toLowerCase()
   const pipelines = [...all.defs.values()]
-    .filter((d) => q === null || d.id.toLowerCase().includes(q) || d.name.toLowerCase().includes(q))
-    .filter((d) => source === null || schedulesOf(all, d.id, source).length > 0)
+    .filter((d) => needle === null || d.id.toLowerCase().includes(needle) || d.name.toLowerCase().includes(needle))
+    .filter((d) => source.value === null || schedulesOf(all, d.id, source.value).length > 0)
     .map((d) => ({
       id: d.id, name: d.name, version: d.version, nodes: d.counts,
       lakeKeys: d.lakeKeys.length,
@@ -884,6 +984,9 @@ export const listPipelinesImpl: PipelineImpl = async (deps, args) => {
   return {
     payload: {
       status: 'ok', count: pipelines.length, pipelines,
+      // 清单始终可答（不带 source 过滤时不需要调度面完整）；读不全只作为附注，不改 status。
+      incomplete: incompleteOf(all),
+      ...ambiguousOf(all),
       ...(all.warnings.length > 0 ? { warnings: all.warnings } : {}),
     },
     isError: false, auditRowCount: pipelines.length,
@@ -892,10 +995,33 @@ export const listPipelinesImpl: PipelineImpl = async (deps, args) => {
 
 export const getPipelineImpl: PipelineImpl = async (deps, args) => {
   const id = typeof args.id === 'string' ? args.id : ''
+  // 先过 id 形态再读三棵树：非法 id 结构上不可能命中，没必要为它扫盘（也不给它拼路径的机会）。
+  // `reason: 'invalid_id'` 是**审计可筛**的机器通道：畸形 id 与「确实没有这个管线」都落在
+  // not_found（verdict 仍是 ok），没有 reason 就分不出「有人在打畸形输入」。
+  if (!PIPELINE_ID_RE.test(id)) {
+    return {
+      payload: { status: 'not_found', id, reason: 'invalid_id' },
+      isError: true, auditRowCount: null,
+    }
+  }
   const all = readAll(deps)
-  const def = PIPELINE_ID_RE.test(id) ? all.defs.get(id) : undefined
+  if (!all.readable) {
+    return {
+      payload: unreadable(deps.roots, all.warnings, incompleteOf(all)),
+      isError: false, auditRowCount: null,
+    }
+  }
+  const def = all.defs.get(id)
   if (def === undefined) {
-    return { payload: { status: 'not_found', id }, isError: true, auditRowCount: null }
+    // not_found 必须带上 warnings 与 incomplete：目录读得到但**这个文件坏了**（「跳过不可解析的管线」）
+    // 与「确实没有这个 id」在读者眼里必须可区分。
+    return {
+      payload: {
+        status: 'not_found', id, incomplete: incompleteOf(all), warnings: all.warnings,
+        ...ambiguousOf(all),
+      },
+      isError: true, auditRowCount: null,
+    }
   }
   const contract = contractFor(def.id, all.contracts)
   return {
@@ -903,11 +1029,14 @@ export const getPipelineImpl: PipelineImpl = async (deps, args) => {
       status: 'ok', id: def.id, name: def.name, version: def.version,
       nodes: def.counts, lakeKeys: def.lakeKeys,
       schedules: schedulesOf(all, def.id, null),
+      // 投影是有损的（无 layout / 无列名），字段名必须说真话：这里是列数，不是列清单。
       contract: contract === null ? null : {
-        id: contract.id, path: contract.path, columns: contract.columns,
+        id: contract.id, path: contract.path, columnCount: contract.columns,
       },
       validation: validatePipelineDraft(def.doc),
       definition: def.doc,
+      incomplete: incompleteOf(all),
+      ...ambiguousOf(all),
       ...(all.warnings.length > 0 ? { warnings: all.warnings } : {}),
     },
     isError: false, auditRowCount: null,
@@ -1722,7 +1851,9 @@ describe('runPipelineSandboxImpl', () => {
     expect(out.payload).toMatchObject({ status: 'denied', reason: 'sandbox_prefix_violation' })
   })
   it('webhook 出口 ⇒ 同样被拒', async () => {
-    const bad = { ...good, nodes: [good.nodes[0], { id: 'w', type: 'sink', data: { componentId: 'snk.webhook', properties: { url: 'https://x' } } }] }
+    // 沿用的 `edges` 指向 `k1`：替换 sink 时**必须保留 id 'k1'**，否则结构闸先判
+    // 「边指向不存在的节点」⇒ refused/invalid_draft，够不到前缀闸（断言会红且看不出真实原因）。
+    const bad = { ...good, nodes: [good.nodes[0], { id: 'k1', type: 'sink', data: { componentId: 'snk.webhook', properties: { url: 'https://x' } } }] }
     expect((await runPipelineSandboxImpl(deps, { pipeline: bad })).payload).toMatchObject({ status: 'denied' })
   })
 })
@@ -1835,7 +1966,9 @@ const requester: Requester = {
   hasScope: (c) => c === 'data:manage',
 }
 const depsOf = (over: Partial<McpDeps> = {}): McpDeps => ({
-  pool: { query: async () => ({ rows: [] }) } as never,
+  // 审计单点是**无条件**的：`writeAudit` 读 `rows[0].id`。回 `{ rows: [] }` 会让每条用例
+  // 在审计处抛 TypeError，把「审计写不进去」伪装成工具失败 ⇒ 必须回一行。
+  pool: { query: async () => ({ rows: [{ id: 1, created_at: new Date() }] }) } as never,
   org: 'acme', requester, adoptedSources: new Set(), ...over,
 })
 const wiring = (env: Record<string, string | undefined> = {}) => ({
