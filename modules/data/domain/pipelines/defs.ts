@@ -62,7 +62,7 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 
 export function loadPipelines(
   roots: PipelineRoots,
-): { defs: Map<string, PipelineDef>; warnings: string[] } {
+): { defs: Map<string, PipelineDef>; warnings: string[]; readable: boolean } {
   const defs = new Map<string, PipelineDef>()
   const warnings: string[] = []
   let dir = ''
@@ -72,8 +72,10 @@ export function loadPipelines(
     dir = join(roots.pipelinesRoot, 'pipelines')
     files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort()
   } catch {
+    // readable=false 是给调用方的**显式**信号：目录读不到 ≠ 目录里没有管线。
+    // 不要靠 warnings 文本反推（文案会变），也别让调用方自己再 stat 一遍。
     warnings.push(`pipelines 目录不可读：${roots.pipelinesRoot}`)
-    return { defs, warnings }
+    return { defs, warnings, readable: false }
   }
   for (const f of files) {
     const id = f.slice(0, -'.json'.length)
@@ -96,7 +98,7 @@ export function loadPipelines(
       id, name: str(raw.name) || id, version: raw.version ?? null, doc: raw, counts, lakeKeys,
     })
   }
-  return { defs, warnings }
+  return { defs, warnings, readable: true }
 }
 
 export function loadSchedules(

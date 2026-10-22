@@ -44,16 +44,17 @@ describe('rootsOf', () => {
 
 describe('loadPipelines', () => {
   it('按文件名取 id、统计节点类型、收集湖写入 key；坏 JSON 进 warnings 不抛', () => {
-    const { defs, warnings } = loadPipelines(roots)
+    const { defs, warnings, readable } = loadPipelines(roots)
     expect([...defs.keys()]).toEqual(['lemeng.a.b'])
     const d = defs.get('lemeng.a.b')!
     expect(d.name).toBe('lemeng.a.b')
     expect(d.counts).toEqual({ source: 1, transform: 1, sink: 2, control: 0 })
     expect(d.lakeKeys).toEqual(['lemeng/a/system_book=1/all.parquet'])
     expect(warnings.some((w) => w.includes('broken.json'))).toBe(true)
+    expect(readable).toBe(true)
   })
-  it('目录不存在 ⇒ 空 + warning（不抛）', () => {
-    expect(loadPipelines(rootsOf({}, '/definitely/not/here'))).toEqual({ defs: new Map(), warnings: [expect.stringContaining('pipelines')] })
+  it('目录不存在 ⇒ 空 + warning + readable=false（不抛）', () => {
+    expect(loadPipelines(rootsOf({}, '/definitely/not/here'))).toEqual({ defs: new Map(), warnings: [expect.stringContaining('pipelines')], readable: false })
   })
 })
 
