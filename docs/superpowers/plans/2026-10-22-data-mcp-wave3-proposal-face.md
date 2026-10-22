@@ -1785,9 +1785,9 @@ git commit -m "feat(data-mcp): run_pipeline_sandbox 校验闸（沙箱前缀断�
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
-import { makePipelineTools } from './mcp-pipeline-tools'
+import { makePipelineTools, verdictOf } from './mcp-pipeline-tools'
 import type { McpDeps } from './mcp-rpc'
 import type { Requester } from '../domain/authz'
 
@@ -1862,6 +1862,8 @@ const describePg = dbUrl ? describe : describe.skip
 describePg('审计单点（需要 DATABASE_URL）', () => {
   const ORG = 'org-wave3-audit'
   const pool = new Pool({ connectionString: dbUrl })
+  // beforeAll 也要删：上次运行崩溃留下的行会让下面的**精确数组断言**在下次直接失败（flaky）。
+  beforeAll(async () => { await pool.query('delete from data.query_audit where org = $1', [ORG]) })
   afterAll(async () => {
     await pool.query('delete from data.query_audit where org = $1', [ORG])
     await pool.end()
@@ -1881,6 +1883,39 @@ describePg('审计单点（需要 DATABASE_URL）', () => {
     expect(rows.map((r) => r.verdict)).toEqual(['ok', 'ok', 'ok', 'denied'])
     // reason 是区分三种「空」的唯一抓手：'' 落 null，其余透传。
     expect(rows.map((r) => r.reason)).toEqual([null, 'not_found', 'runs_source_not_wired', 'mutating_disabled'])
+  })
+
+  it('空身份调用也落一行审计（userId = (anonymous)）', async () => {
+    const g = makePipelineTools(wiring())
+    await g.call(depsOf({ pool, org: ORG, requester: null }), 'list_pipelines', {})
+    const { rows } = await pool.query<{ user_id: string; verdict: string }>(
+      'select user_id, verdict from data.query_audit where org = $1 order by id desc limit 1', [ORG])
+    expect(rows[0]).toMatchObject({ user_id: '(anonymous)', verdict: 'denied' })
+  })
+})
+
+// 审计写不进去 ⇒ 必须 reject（不是「安静地成功」）。这条同时是「reply 不进 try」的回归网：
+// 谁把 reply 放回 try，审计报错会被 catch 成 tool_exception ⇒ 不再 reject ⇒ 本用例红。
+describe('审计失败必须上抛', () => {
+  it('writeAudit 抛错 ⇒ call reject', async () => {
+    const g = makePipelineTools(wiring())
+    const boom = { query: () => Promise.reject(new Error('boom')) } as never
+    await expect(g.call(depsOf({ pool: boom }), 'list_pipelines', {})).rejects.toThrow('boom')
+  })
+})
+
+// verdictOf 纯函数：三种「空」判 ok，只有真被拒才 denied（且不看 isError）。
+describe('verdictOf', () => {
+  it('status 分类', () => {
+    expect(verdictOf({ status: 'ok' }, false)).toEqual({ verdict: 'ok', reason: '' })
+    expect(verdictOf({ status: 'not_found' }, true)).toEqual({ verdict: 'ok', reason: 'not_found' })
+    expect(verdictOf({ status: 'unknown', reason: 'runs_source_not_wired' }, true))
+      .toEqual({ verdict: 'ok', reason: 'runs_source_not_wired' })
+    expect(verdictOf({ status: 'denied', reason: 'mutating_disabled' }, true))
+      .toEqual({ verdict: 'denied', reason: 'mutating_disabled' })
+    expect(verdictOf({ status: 'error', reason: 'tool_exception' }, true))
+      .toEqual({ verdict: 'error', reason: 'tool_exception' })
+    expect(verdictOf({}, true)).toEqual({ verdict: 'denied', reason: 'tool_error' })
   })
 })
 ```
@@ -1942,6 +1977,29 @@ const entryOf = (t: (typeof PIPELINE_TOOLS)[number]): Record<string, unknown> =>
   inputSchema: t.inputSchema, outputSchema: t.outputSchema, annotations: t.annotations,
 })
 
+/**
+ * 审计判决（**纯函数**，单独可测）：按 status 分类，不按 isError。
+ *   · `error`            ⇒ error
+ *   · `denied`           ⇒ denied
+ *   · 其余 status        ⇒ ok（`ok` / `not_found` / `unknown` —— 「查了个空」「读不到」都不是拒）
+ *   · 无 status + isError ⇒ denied / `tool_error`（impl 抛出未知形状时兜底）
+ * reason：透传 payload.reason（含 ok 行）⇒ 否则 status 非 ok 时回落 status ⇒ 再否则 `''`（落库转 null）。
+ */
+export function verdictOf(
+  payload: Record<string, unknown>, isError: boolean,
+): { verdict: 'ok' | 'denied' | 'error'; reason: string } {
+  const status = typeof payload.status === 'string' ? payload.status : null
+  const verdict: 'ok' | 'denied' | 'error' =
+    status === 'error' ? 'error'
+      : status === 'denied' ? 'denied'
+        : status === null ? (isError ? 'denied' : 'ok')
+          : 'ok'
+  const reason = typeof payload.reason === 'string' ? payload.reason
+    : status !== null && status !== 'ok' ? status
+      : verdict === 'denied' && status === null ? 'tool_error' : ''
+  return { verdict, reason }
+}
+
 export function makePipelineTools(wiring: PipelineWiring = defaultPipelineWiring()): McpToolGroup {
   const depsOf = (d: McpDeps): PipelineDeps => ({ roots: wiring.roots, env: wiring.env, runs: wiring.runs })
 
@@ -1966,9 +2024,11 @@ export function makePipelineTools(wiring: PipelineWiring = defaultPipelineWiring
     // 前者是「被问的客体不存在」、后者是「读不到」，都不是「调用被拒」——把它们记成 denied
     // 会让安全复核分不清「判了拒」和「查了个空」。reason 一律透传 payload.reason（含 ok 行），
     // 这样 `select tool, verdict, reason, count(*) … group by 1,2,3` 能区分三种空。
-    const status = typeof payload.status === 'string' ? payload.status : null
-    const verdict = status === 'error' ? 'error' : isError && status !== 'not_found' ? 'denied' : 'ok'
-    const reason = typeof payload.reason === 'string' ? payload.reason : (status !== null && status !== 'ok' ? status : '')
+    //
+    // 判决**按 status 分类，不按 isError**（评审裁定，2026-10-22）：`unknown` 今天恰好
+    // isError:false，但 runs seam 真接通后按源错误返回时很可能是 isError:true——按 isError 判
+    // 会把「读不到」记成「判了拒」，正是本 Wave 要守的那条纪律。故抽成纯函数 verdictOf 单独测。
+    const { verdict, reason } = verdictOf(payload, isError)
     await audit(d, name, args, verdict, reason, rowCount)
     return {
       text: JSON.stringify(payload), isError,
@@ -1991,13 +2051,22 @@ export function makePipelineTools(wiring: PipelineWiring = defaultPipelineWiring
       if (meta.mutating && !mutatingAllowed(wiring.env)) {
         return reply(d, name, args, { status: 'denied', reason: 'mutating_disabled', name }, true, null)
       }
+      // ★ try 只包 impl 派发，**不包 reply**（评审裁定，2026-10-22）：reply 里要写审计，
+      //   若把 reply 也包进 try，审计写失败会被 catch 成「impl 异常」，再写一行
+      //   verdict=error/tool_exception 的假错行（把一次成功调用记成失败），且对审计表二次尝试。
+      //   审计失败必须冒泡（协议壳不兜 ⇒ 500）——宁可报错，也不要「执行成功但无审计」。
+      const impl = IMPLS[name]
+      if (impl === undefined) {
+        return await reply(d, name, args, { status: 'error', reason: 'impl_missing', name }, true, null)
+      }
+      let out
       try {
-        const out = await IMPLS[name]!(depsOf(d), args)
-        return await reply(d, name, args, out.payload, out.isError, out.auditRowCount ?? null)
+        out = await impl(depsOf(d), args)
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err)
         return await reply(d, name, args, { status: 'error', reason: 'tool_exception', detail }, true, null)
       }
+      return await reply(d, name, args, out.payload, out.isError, out.auditRowCount ?? null)
     },
   }
 }
