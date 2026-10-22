@@ -104,6 +104,12 @@ export interface MetricDef {
   drill?: DrillBinding
 }
 
+/** 下钻的条件列（spec 2026-10-22 §2.3）：持 `grantedBy` 才投影；无码 ⇒ 该列**不在场**。 */
+export interface DrillColumn {
+  col: string
+  grantedBy: string
+}
+
 /** 明细下钻绑定（spec 2026-10-21 §2.3）：sync 从声明 compose/dimensions/detail 物化；未声明 = 字段缺席。 */
 export interface DrillBinding {
   /** 原子粒度值表达式（compose 的组件引用替换产物）。 */
@@ -114,6 +120,8 @@ export interface DrillBinding {
   relation: string
   /** 行域过滤（声明 detail.filter 逐字进 WHERE）。 */
   filter: string
+  /** 条件列（spec 2026-10-22 §2.3）：缺省 = 无（**字段缺席**，不是空数组）。 */
+  columns?: DrillColumn[]
 }
 
 /**

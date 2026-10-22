@@ -309,4 +309,27 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     expect(audits[0].params[AUDIT_VERDICT]).toBe('error')
     expect(audits[0].params[AUDIT_REASON]).toBe('warehouse_error')
   })
+
+  it('detail.columns 坏形状 ⇒ 整个下钻绑定作废（no_detail_binding，fail-closed）', async () => {
+    // 读侧不信任存储形状（同三键纪律）：一份读不懂的权限声明，宁可不给下钻，
+    // 也不按它去投影列——「半绑」会让未授权列有暴露面。
+    const { pool, audits } = fakePool([{
+      ...METRIC_ROW, id: 'drill:badcols',
+      drill_detail: { relation: 'vw_t', filter: 'true', columns: [{ col: 'order_detail_std_price' }] },
+    }])
+    const sqls: string[] = []
+    const out = await runDetailQuery(depsOf(pool, sqls), ORG, req(), 'drill:badcols', ARGS, {})
+    expect(out).toEqual({ status: 'denied', metricId: 'drill:badcols', reason: 'no_detail_binding', detail: NO_BINDING_DETAIL })
+    expect(sqls).toEqual([])
+    expect(audits[0].params[AUDIT_REASON]).toBe('no_detail_binding')
+  })
+
+  it('detail.columns 合法 ⇒ 绑定照常成立（条件列由执行面消费，Task 5 验）', async () => {
+    const { pool } = fakePool([{
+      ...METRIC_ROW, id: 'drill:cols',
+      drill_detail: { relation: 'vw_t', filter: 'true', columns: [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }] },
+    }])
+    const out = await runDetailQuery(depsOf(pool, []), ORG, req(), 'drill:cols', ARGS, {})
+    expect(out.status).toBe('ok')
+  })
 })

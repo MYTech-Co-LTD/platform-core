@@ -4,7 +4,7 @@
 // 正典 docs/module-protocol.md「租户数据隔离」，机器判据 scripts/check-tenant-isolation.mjs。
 // 三处读写**全部**带 `where org = $1`——漏一处就是跨租户串数据。
 import type { Pool, PoolClient } from 'pg'
-import type { DrillBinding, MaskSpec, MetricDef, MetricParamDef } from './authz'
+import type { DrillBinding, DrillColumn, MaskSpec, MetricDef, MetricParamDef } from './authz'
 import type { MetricRowSnapshot } from './metric-audit-store'
 
 /**
@@ -160,9 +160,26 @@ function drillBindingOf(row: Record<string, unknown>): DrillBinding | undefined 
   if (typeof expr !== 'string' || expr === '') return undefined
   if (!Array.isArray(dims) || dims.length === 0 || dims.some((d) => typeof d !== 'string' || d === '')) return undefined
   if (typeof detail !== 'object' || detail === null) return undefined
-  const d = detail as { relation?: unknown; filter?: unknown }
+  const d = detail as { relation?: unknown; filter?: unknown; columns?: unknown }
   if (typeof d.relation !== 'string' || d.relation === '' || typeof d.filter !== 'string' || d.filter === '') return undefined
-  return { expr, dims: dims as string[], relation: d.relation, filter: d.filter }
+  // 条件列（spec 2026-10-22 §2.3）：给了就必须是合法非空数组；坏形状 ⇒ **整个绑定作废**
+  // （fail-closed：宁可不给下钻，也不按一份读不懂的权限声明投影列）。缺省 = 字段缺席。
+  let columns: DrillColumn[] | undefined
+  if (d.columns !== undefined) {
+    if (!Array.isArray(d.columns) || d.columns.length === 0) return undefined
+    const out: DrillColumn[] = []
+    for (const item of d.columns) {
+      if (item === null || typeof item !== 'object') return undefined
+      const it = item as { col?: unknown; grantedBy?: unknown }
+      if (typeof it.col !== 'string' || it.col === '' || typeof it.grantedBy !== 'string' || it.grantedBy === '') return undefined
+      out.push({ col: it.col, grantedBy: it.grantedBy })
+    }
+    columns = out
+  }
+  return {
+    expr, dims: dims as string[], relation: d.relation, filter: d.filter,
+    ...(columns === undefined ? {} : { columns }),
+  }
 }
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
