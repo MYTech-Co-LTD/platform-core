@@ -18,6 +18,8 @@
 //     ③ 同一列只许一处 `mask` 声明（#820 路线 C 前置）——两处会让「取哪个规格」无定义。
 //     ④ 指标 `required_scope` 必须 ∈ manifest `permissions[].code`——码不存在 ⇒ 该指标对
 //        所有人静默不可见（销 `check-data-models.mjs` 里「属另一条门禁」的陈旧承诺）。
+//     ⑤ 指标 `detail.columns[].grantedBy` 必须 ∈ manifest `permissions[].code`——同 ①：
+//        码发不出去 ⇒ 该列对**所有人**静默缺席（fail-closed 方向，但功能等于白声明）。
 //   ⚠️ 四项都只查「**申报了**的自洽性」，查不到「漏申报」——与下方同源的弱点，别让它看起来更强。
 //
 // ── ⚠️ 这道门**查不到「漏申报」**，别让它看起来比实际强 ─────────────────────────
@@ -222,6 +224,25 @@ export function checkColumnScopeMonotonicity(rootDir) {
               + ' `permissions[]` 里没有它 —— 装载器按各租户 org 逐个 upsert，**没声明就发不出去**'
               + '（admin 端点会 404 NO_SUCH_CODE）。失败方向是**过度掩码**（fail-closed）：'
               + '持码人也看掩码值。修法：在 manifest 里声明该码，或改掉 `grantedBy`。',
+          })
+        }
+      }
+    }
+
+    // ⑤ 条件列（下钻 spec 2026-10-22 §2.3）的授权码必须真实存在。
+    //    与 ① 同因：装载器按各租户 org 逐个 upsert，没在 manifest 声明就发不出去 ⇒
+    //    `hasScope(c.grantedBy)` 恒 false ⇒ 该列对**所有人**静默缺席（功能白声明，且没人报错）。
+    //    形状问题归 check-data-models（这里只判「码存不存在」）。
+    if (Array.isArray(m?.detail?.columns)) {
+      for (const item of m.detail.columns) {
+        const g = item?.grantedBy
+        if (typeof g !== 'string' || g === '') continue
+        if (!codes.has(g)) {
+          violations.push({
+            file: L1_DECLARATIONS_REL,
+            message: `指标 \`${name}\` 的 \`detail.columns\` 声明了授权码 \`${g}\`，但 ${DATA_MANIFEST_REL} 的`
+              + ' `permissions[]` 里没有它 —— 码发不出去 ⇒ 该列对**所有人**静默缺席'
+              + '（fail-closed，但声明等于白写）。修法：在 manifest 里声明该码，或改掉 `grantedBy`。',
           })
         }
       }
