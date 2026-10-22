@@ -203,7 +203,7 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     expect(audits[0].params[6]).toBe(1)
     expect(audits[0].params[AUDIT_REASON]).toBeNull()
     expect(audits[0].params[AUDIT_MASKING]).toBeNull()
-    expect(JSON.parse(audits[0].params[AUDIT_DRILL] as string)).toEqual({ dimensions: DRILL.dims, rowCountTotal: 15222 })
+    expect(JSON.parse(audits[0].params[AUDIT_DRILL] as string)).toEqual({ dimensions: DRILL.dims, rowCountTotal: 15222, grantedColumns: [] })
   })
 
   it('整值掩码：内层 value 头被 null 化（原表达式一个不剩），masking 三态透出；count SQL 不掩', async () => {
@@ -331,5 +331,80 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     }])
     const out = await runDetailQuery(depsOf(pool, []), ORG, req(), 'drill:cols', ARGS, {})
     expect(out.status).toBe('ok')
+  })
+})
+
+/** 声明了条件列的指标行（drill_detail 多一个 columns 键——与 sync 物化形状一致）。 */
+const COLUMN_ROW: Record<string, unknown> = {
+  ...METRIC_ROW,
+  id: 'drill:cols',
+  drill_detail: { ...(METRIC_ROW.drill_detail as Record<string, unknown>), columns: [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }] },
+}
+const COST = { scopes: ['data:query', 'data:cost'] }
+
+describe('条件列（spec 2026-10-22 §2.3）', () => {
+  it('无 data:cost ⇒ 投影里没有该列（缺席，不是 NULL），审计 grantedColumns=[]', async () => {
+    const { pool, audits } = fakePool([COLUMN_ROW])
+    const sqls: string[] = []
+    const out = await runDetailQuery(depsOf(pool, sqls), ORG, req(), 'drill:cols', ARGS, {})
+    expect(out.status).toBe('ok')
+    expect(sqls[0]).not.toContain('order_detail_std_price')   // 不投影、不 cast(null)
+    expect(sqls[0]).not.toContain('max(')
+    expect(JSON.parse(audits[0].params[AUDIT_DRILL] as string))
+      .toEqual({ dimensions: DRILL.dims, rowCountTotal: 15222, grantedColumns: [] })
+  })
+
+  it('有 data:cost ⇒ 内层与外层各一次 max(col) as col（值在 value 之后）', async () => {
+    const { pool, audits } = fakePool([COLUMN_ROW])
+    const sqls: string[] = []
+    const out = await runDetailQuery(depsOf(pool, sqls), ORG, req(COST), 'drill:cols', ARGS, {})
+    expect(out.status).toBe('ok')
+    // 整串钉（只断言子串会放过「内层漏 max ⇒ 42803」这类编译错）
+    expect(sqls[0]).toBe(
+      "select system_book, bizday, branch_num, order_no, sum(value) as value, max(order_detail_std_price) as order_detail_std_price from ( select ((sale_amount@order - return_amount@line)) as value, system_book, bizday, branch_num, order_no, max(order_detail_std_price) as order_detail_std_price from vw_t where org = 'org_a' AND state = 'FINISHED' AND bizday BETWEEN '2026-10-19'::date AND '2026-10-20'::date group by system_book, bizday, branch_num, order_no ) t group by system_book, bizday, branch_num, order_no order by value desc limit 50 offset 0")
+    expect(JSON.parse(audits[0].params[AUDIT_DRILL] as string))
+      .toEqual({ dimensions: DRILL.dims, rowCountTotal: 15222, grantedColumns: ['order_detail_std_price'] })
+  })
+
+  it('子集上卷：条件列两层都在，外层 group by 只按请求维度', async () => {
+    const { pool } = fakePool([COLUMN_ROW])
+    const sqls: string[] = []
+    await runDetailQuery(depsOf(pool, sqls), ORG, req(COST), 'drill:cols', ARGS, { dimensions: ['system_book', 'bizday'] })
+    expect(sqls[0]).toBe(
+      "select system_book, bizday, sum(value) as value, max(order_detail_std_price) as order_detail_std_price from ( select ((sale_amount@order - return_amount@line)) as value, system_book, bizday, max(order_detail_std_price) as order_detail_std_price from vw_t where org = 'org_a' AND state = 'FINISHED' AND bizday BETWEEN '2026-10-19'::date AND '2026-10-20'::date group by system_book, bizday, branch_num, order_no ) t group by system_book, bizday order by value desc limit 50 offset 0")
+  })
+
+  it('条件列不可作为维度请求、也不可 orderBy（它不是维度）', async () => {
+    const { pool } = fakePool([COLUMN_ROW])
+    const asDim = await runDetailQuery(depsOf(pool, []), ORG, req(COST), 'drill:cols', ARGS, { dimensions: ['order_detail_std_price'] })
+    expect(asDim).toEqual({ status: 'denied', metricId: 'drill:cols', reason: 'bad_param', detail: 'unknown_dimension:order_detail_std_price' })
+    const asOrder = await runDetailQuery(depsOf(pool, []), ORG, req(COST), 'drill:cols', ARGS, { orderBy: 'order_detail_std_price' })
+    expect(asOrder).toEqual({ status: 'denied', metricId: 'drill:cols', reason: 'bad_param', detail: 'unknown_orderby:order_detail_std_price' })
+  })
+
+  it('整值掩码 + 条件列：value 头被 null 化，条件列照常投影（掩码只改内层 value 头）', async () => {
+    const MASKED_COL_ROW: Record<string, unknown> = {
+      ...COLUMN_ROW, id: 'drill:cols_masked',
+      mask_spec: [{ column: null, kind: 'nullify', grantedBy: 'data:precise' }],
+    }
+    const { pool } = fakePool([MASKED_COL_ROW])
+    const sqls: string[] = []
+    await runDetailQuery(depsOf(pool, sqls), ORG, req(COST), 'drill:cols_masked', ARGS, {})
+    expect(sqls[0]).toContain('cast(null as numeric) as value, system_book')
+    expect(sqls[0]).toContain('max(order_detail_std_price) as order_detail_std_price')
+  })
+})
+
+describe('buildDrillSql 条件列（纯函数）', () => {
+  it('无 columns ⇒ 与 Phase 1 的 SQL 逐字一致（回归：默认参数不许改形状）', () => {
+    const p = buildDrillSql(DRILL, DRILL.dims, "org = 'o' AND state = 'FINISHED'", 'value', true, 50, 0)
+    expect(p.sql).toBe("select system_book, bizday, branch_num, order_no, sum(value) as value from ( select system_book, bizday, branch_num, order_no, ((sale_amount@order - return_amount@line)) as value from vw_t where org = 'o' AND state = 'FINISHED' group by system_book, bizday, branch_num, order_no ) t group by system_book, bizday, branch_num, order_no order by value desc limit 50 offset 0")
+  })
+
+  it('给了 columns ⇒ 内外层都追加 max(col) as col', () => {
+    const p = buildDrillSql(DRILL, DRILL.dims, 'w', 'value', true, 50, 0,
+      [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }])
+    expect(p.sql).toContain(', max(order_detail_std_price) as order_detail_std_price from vw_t')
+    expect(p.sql).toContain('sum(value) as value, max(order_detail_std_price) as order_detail_std_price from (')
   })
 })
