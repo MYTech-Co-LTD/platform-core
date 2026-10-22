@@ -403,11 +403,11 @@ git commit -m "feat(data-mcp): T1 提案面 7 工具元数据 + 工具面门禁�
   - `rootsOf(env: Record<string,string|undefined>, baseDir?: string): PipelineRoots`（缺省 `baseDir` = 仓根，按模块位置解析；见 Task 9 补记）
   - `PIPELINE_ID_RE = /^[A-Za-z0-9_.-]+$/`
   - `interface ScheduleEntry { source: string; pipelineId: string; enabled: boolean; cron: string | null; timezone: string | null }`
-  - `interface PipelineDef { id: string; name: string; version: unknown; doc: Record<string, unknown>; counts: { source: number; transform: number; sink: number; control: number }; lakeKeys: string[] }`
+  - `interface PipelineDef { id: string; name: string; version: unknown; doc: Record<string, unknown>; counts: { source: number; transform: number; sink: number; control: number; quality: number }; lakeKeys: string[] }`
   - `interface ContractRef { id: string; domain: string; table: string; path: string; columns: number; doc: Record<string, unknown> }`
-  - `loadPipelines(roots): { defs: Map<string, PipelineDef>; warnings: string[]; readable: boolean }`（`readable` 是本 Task 后续评审补的，见 Task 2 补记）
-  - `loadSchedules(roots): { byPipeline: Map<string, ScheduleEntry[]>; warnings: string[] }`
-  - `loadContracts(roots): { contracts: ContractRef[]; warnings: string[]; incomplete: boolean }`（`incomplete` 同上）
+  - `loadPipelines(roots): { defs: Map<string, PipelineDef>; warnings: string[]; readable: boolean; incomplete: boolean }`（两个信号位是后续评审补的，见 Task 2 补记）
+  - `loadSchedules(roots): { byPipeline: Map<string, ScheduleEntry[]>; warnings: string[]; incomplete: boolean }`
+  - `loadContracts(roots): { contracts: ContractRef[]; warnings: string[]; incomplete: boolean; duplicateIds: string[] }`（同上）
   - `contractFor(pipelineId: string, contracts: readonly ContractRef[]): ContractRef | null`
 
 **关键口径（写进代码注释，别让后人猜）：**
@@ -766,7 +766,8 @@ git commit -m "feat(data-mcp): 提案面只读定义源（管线/调度/契约�
 - Consumes: Task 2 的 `loadPipelines/loadSchedules/loadContracts/contractFor/rootsOf`；Task 5 的 `validatePipelineDraft`（**已在分支上，直接 import，不要写桩**）；Task 4 的 `types.ts` 里的 `PipelineDeps`/`PipelineImpl`。
 - Produces:
   - `listPipelinesImpl: PipelineImpl`、`getPipelineImpl: PipelineImpl`
-  - `readAll(deps): { defs; schedules; contracts; warnings }`（一次读三份，供两个工具共用）
+  - `readAll(deps): ReadAll`（一次读三份，供两个工具共用；`ReadAll` 含 `readable` + 三棵树的
+    `*Incomplete` + `contractDuplicates`，见 Step 3 样例）
   - **转出**（`export type { PipelineDeps, PipelineImpl } from './types'`）——下游 Task 6/7/8 照旧从 `./read` 取这两个类型。
 
 **注意**：`PipelineDeps` / `PipelineImpl` 定义在 `types.ts`（Task 4 建），**不要在本文件里重新声明**——重复声明会让 `PipelineDeps` 变成两个不兼容的结构类型。本文件只需 `import type` + `export type` 转出。
