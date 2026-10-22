@@ -394,7 +394,7 @@ git commit -m "feat(data-mcp): T1 提案面 7 工具元数据 + 工具面门禁�
 **Interfaces:**
 - Produces:
   - `interface PipelineRoots { pipelinesRoot: string; contractsRoot: string }`
-  - `rootsOf(env: Record<string,string|undefined>, cwd?: string): PipelineRoots`
+  - `rootsOf(env: Record<string,string|undefined>, baseDir?: string): PipelineRoots`（缺省 `baseDir` = 仓根，按模块位置解析；见 Task 9 补记）
   - `PIPELINE_ID_RE = /^[A-Za-z0-9_.-]+$/`
   - `interface ScheduleEntry { source: string; pipelineId: string; enabled: boolean; cron: string | null; timezone: string | null }`
   - `interface PipelineDef { id: string; name: string; version: unknown; doc: Record<string, unknown>; counts: { source: number; transform: number; sink: number; control: number }; lakeKeys: string[] }`
@@ -453,7 +453,7 @@ seed('contracts/common/_schema.schema.json', { title: 'infra' })
 const roots = rootsOf({}, root)
 
 describe('rootsOf', () => {
-  it('缺省落在 cwd 下的仓内路径；env 可覆盖', () => {
+  it('显式基准目录可解析仓内路径；env 可覆盖', () => {
     expect(rootsOf({}, '/repo')).toEqual({ pipelinesRoot: '/repo/deploy/duckle/console', contractsRoot: '/repo/contracts' })
     expect(rootsOf({ DATA_PIPELINES_ROOT: '/p', DATA_CONTRACTS_ROOT: '/c' }, '/repo')).toEqual({ pipelinesRoot: '/p', contractsRoot: '/c' })
   })
@@ -517,19 +517,24 @@ Expected: FAIL —— `Failed to resolve import "./defs"`。
 //   · **用户输入永不拼进路径**：只按 id 在已枚举的结果里查（path traversal 结构性不可能）。
 //   · 契约里 `_` 开头的文件是基础设施（_schema/_template），必须跳过（contracts/README.md）。
 import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const PIPELINE_ID_RE = /^[A-Za-z0-9_.-]+$/
 
 export interface PipelineRoots { pipelinesRoot: string; contractsRoot: string }
 
-/** env 缝（B9：两键必须在根 .env.example 声明）。缺省值对「仓根 cwd」与「镜像 /app」都正确。 */
+/** env 缝（B9：两键必须在根 .env.example 声明）。
+ *  缺省根 = REPO_ROOT（按模块位置解析，与 cwd 无关；镜像内即 /app）——Task 9 补记的订正：
+ *  原样例按 process.cwd() 取，容器里 pnpm 把 cwd 设成 apps/server ⇒ 缺省根落空。 */
+export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..')
+
 export function rootsOf(
-  env: Record<string, string | undefined> = process.env, cwd: string = process.cwd(),
+  env: Record<string, string | undefined> = process.env, baseDir: string = REPO_ROOT,
 ): PipelineRoots {
   return {
-    pipelinesRoot: env.DATA_PIPELINES_ROOT?.trim() || join(cwd, 'deploy/duckle/console'),
-    contractsRoot: env.DATA_CONTRACTS_ROOT?.trim() || join(cwd, 'contracts'),
+    pipelinesRoot: env.DATA_PIPELINES_ROOT?.trim() || join(baseDir, 'deploy/duckle/console'),
+    contractsRoot: env.DATA_CONTRACTS_ROOT?.trim() || join(baseDir, 'contracts'),
   }
 }
 
@@ -2190,9 +2195,9 @@ COPY --from=build /app/contracts ./contracts
 - [ ] **Step 2: `.env.example` 追加两键**
 
 ```bash
-# 提案面（Wave 3）只读定义源：管线与调度目录（缺省 <cwd>/deploy/duckle/console；镜像内 = /app/deploy/duckle/console）。
+# 提案面（Wave 3）只读定义源：管线与调度目录（缺省 = 仓根/deploy/duckle/console，按模块位置解析、与 cwd 无关；镜像内 = /app/deploy/duckle/console）。
 DATA_PIPELINES_ROOT=
-# 提案面只读定义源：数据契约目录（缺省 <cwd>/contracts；镜像内 = /app/contracts）。
+# 提案面只读定义源：数据契约目录（缺省 = 仓根/contracts，按模块位置解析、与 cwd 无关；镜像内 = /app/contracts）。
 DATA_CONTRACTS_ROOT=
 ```
 

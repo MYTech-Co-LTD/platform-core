@@ -26,7 +26,7 @@ export interface PipelineWiring {
   runs: PipelineRunSource | null
 }
 
-/** 缺省装配：仓内路径（镜像 /app 与本地 cwd 都成立）+ process.env + 运行记录 seam 未接通。 */
+/** 缺省装配：仓内路径（`rootsOf` 按模块位置解析 ⇒ 镜像内 /app，与 pnpm 脚本 cwd=apps/server 无关）+ process.env + 运行记录 seam 未接通。 */
 export function defaultPipelineWiring(env: Record<string, string | undefined> = process.env): PipelineWiring {
   return { roots: rootsOf(env), env, runs: null }
 }

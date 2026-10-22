@@ -37,7 +37,7 @@ seed('contracts/common/_schema.schema.json', { title: 'infra' })
 const roots = rootsOf({}, root)
 
 describe('rootsOf', () => {
-  it('缺省落在 cwd 下的仓内路径；env 可覆盖', () => {
+  it('显式基准目录可解析仓内路径；env 可覆盖', () => {
     expect(rootsOf({}, '/repo')).toEqual({ pipelinesRoot: '/repo/deploy/duckle/console', contractsRoot: '/repo/contracts' })
     expect(rootsOf({ DATA_PIPELINES_ROOT: '/p', DATA_CONTRACTS_ROOT: '/c' }, '/repo')).toEqual({ pipelinesRoot: '/p', contractsRoot: '/c' })
   })
