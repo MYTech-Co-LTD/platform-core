@@ -1368,6 +1368,25 @@ git commit -m "feat(data-mcp): 提案面纯校验器（管线/契约/沙箱前�
 - `downstream` 必须**具体**：管线提案至少要列出「dbt staging 模型」「契约」两项（缺则标 `missing` 理由），契约提案要列出受影响管线（按 `contractFor` 反查）。
 - 非法草案 ⇒ 由路由片上抛成 `refused/invalid_draft`（本文件返回 `validation`，路由片判空）。
 
+> **补记（2026-10-22，实施后订正）：下面 Step 1/3 的样例在四处与**已交付**代码不一致，以交付代码为准（`5fbd3fd1`..`9b2c68e5`）。**
+>
+> 1. **契约落点**：样例的 `contracts/<domain>/<domain>.<table>.json` **不是**仓内真实布局。canon 是
+>    `contracts/common/<源>.<表>.json`（`contracts/README.md`），客户覆盖在
+>    `contracts/customers/<客户>/<源>.<表>.json`（`contracts/customers/README.md`）。
+>    交付口径：**基线里已有同 id 契约 ⇒ 复用它的真实 `path`**；否则才 `contracts/common/<domain>.<table>.json`。
+>    （样例若照抄，人工新建会落进 `contracts/<domain>/` 这个不存在的目录，且被 `contractFor` 的最长前缀规则静默遮蔽。）
+> 2. **契约反查**：样例的 `startsWith('<domain>.<table>.')` 对其自身 fixture（基线 `lemeng.a.b`、草案 `lemeng.a_c`）**永不命中**，
+>    与同一段测试的断言自相矛盾 ⇒ 改为两级反查（精确 id → 同域前缀）。
+> 3. **下游档位**：`DownstreamItem` 由 `{path, why}` 扩为 `{path, why, kind}`，`kind ∈ required|affected|candidate|unknown`，
+>    另加可选 `targets` 承载**全量**可枚举事实（candidate ⇒ 管线 id；歧义 unknown ⇒ 契约 path）。
+>    聚合项**不得**只把可枚举事实写在散文里。
+> 4. **loader 支持客户级契约**：`loadContracts` 下探 `contracts/customers/<客户>/` 两层（`_` 前缀与非 `.json` 跳过；
+>    客户目录不可读 ⇒ 告警 + `incomplete`；`customers/` 整个缺失 ⇒ 静默），同 id 多份**只告警、点名两个真实 path、
+>    不裁决优先级**（优先级未定案，要问 owner），并返回 `incomplete: boolean`。
+>
+> **已知遗留（转终审裁决）**：`read.ts` 的 `ReadAll` 未透出 `contractsIncomplete`（读面仍只能靠 warning 文本判断基线不完）；
+> `propose` 的「契约面读不全」理由把同 id 重复告警一并拼进散文。
+
 - [ ] **Step 1: 写失败测试**
 
 ```ts
