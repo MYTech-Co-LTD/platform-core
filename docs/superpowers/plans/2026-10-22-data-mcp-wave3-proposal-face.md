@@ -48,7 +48,7 @@ duckle / duckle-runner → 未安装
 | 调度定义 | `deploy/duckle/console/schedules/<账套>.json` | ✅ 已在 | 同上 |
 | 数据契约（19 个） | `contracts/common/*.json` | ❌ **不在** | `Dockerfile.server` 的 COPY 清单无 `contracts` |
 
-⇒ 本 Wave **新增 `COPY contracts ./contracts`**（与 `dbt/` 同性质：运行时只读的仓内事实源），并通过两个 env 缝定位：`DATA_PIPELINES_ROOT`（缺省 `<cwd>/deploy/duckle/console`）、`DATA_CONTRACTS_ROOT`（缺省 `<cwd>/contracts`）。容器 WORKDIR 是 `/app`，缺省值天然正确。
+⇒ 本 Wave **新增 `COPY contracts ./contracts`**（与 `dbt/` 同性质：运行时只读的仓内事实源），并通过两个 env 缝定位：`DATA_PIPELINES_ROOT` / `DATA_CONTRACTS_ROOT`。**缺省根锚在模块位置（`fileURLToPath(import.meta.url)` 上四级 = 仓根；镜像内即 `/app`），不是 `process.cwd()`**——容器 CMD 走 `pnpm --filter @platform/server start`，pnpm 把 cwd 设成 `/app/apps/server`，按 cwd 取会落到不存在的 `/app/apps/server/...`（Task 9 评审 C1 实测，见 Task 9 补记）。
 
 **不采用的方案（各有硬阻塞，写在这里免得后来者重走）：**
 - **走 OpenShip API**（spec §7 原文）：platform-core **没有任何 openship 客户端**，容器内也没有 openship token；把自己平台的 API 变成问数面运行时依赖，等于把「读一份 JSON」升级成「跨系统认证链」，本轮无案例支撑。
@@ -2224,6 +2224,25 @@ git add deploy/Dockerfile.server .env.example deploy/data-plane-deploy-sop.md
 git commit -m "build(data-mcp): 提案面把 contracts 打进镜像 + env 声明 + SOP 事实来源"
 ```
 
+### Task 9 补记（评审 C1 后的订正，commit d23c7885）
+
+计划的原始假设「容器 WORKDIR 是 `/app` ⇒ 缺省路径天然正确」**是错的**，两条事实：
+
+1. **运行时 cwd 是 `/app/apps/server`，不是 `/app`**。镜像 CMD 是 `pnpm --filter @platform/server start`，
+   pnpm 执行包脚本时把 cwd 设成包目录；仓内 `apps/server/src/app.ts:44-48` 自己就写着这条
+   （`modulesDir = resolve(process.cwd(), '../../modules')`，生产能起服务 ⇒ cwd 必为 `apps/server`）。
+   故 `join(cwd, 'contracts')` 在镜像里解析成 `/app/apps/server/contracts`（不存在）。
+2. 修法**不是**在 compose 里钉 env（第二事实源），而是让缺省根**锚定模块位置**：
+   `defs.ts` 导出 `REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..','..','..','..')`，
+   `rootsOf(env, baseDir = REPO_ROOT)`。`⚠️` 必须用 `node:path` + `fileURLToPath`，**不要**写
+   `new URL(rel, import.meta.url)`：happy-dom 替换全局 URL 构造函数后 `file:` 解析失效（#718，
+   同 `modules/forms/index.ts:17-20`）。env 覆盖语义不变。
+3. **回归判据**（`defs.test.ts`）：`rootsOf({})` 的契约根父目录必须含 `pnpm-workspace.yaml`，
+   管线根下必须有 `pipelines/`。锚点不取自被测常量，且 vitest 的 cwd 是 `modules/data` ⇒ 旧实现必红。
+4. 顺带订正两处措辞：Dockerfile `COPY contracts` 上方的「契约工具全线 unknown」不准确（不存在
+   「契约工具」，契约只以 `contractId`/`contract` 字段出现在 list/get；契约根读不到时是 `ok` +
+   字段 `null` + warnings，`read.ts:34-37`）；Task 8 样例注释「镜像 /app 与本地 cwd 都成立」同样作废。
+
 ---
 
 ## Task 10: 全量验证与部署交接
@@ -2253,15 +2272,21 @@ Expected: 每条 `… : OK`。
 
 - [ ] **Step 4: 镜像内路径自证（**部署后**，生产容器）**
 
-用 openship exec 在 mytech `server` 容器里验三件事（把输出贴进 PR 评论）：
+用 openship exec 在 mytech `server` 容器里验四件事（把输出贴进 PR 评论）。
+**`ls` 只能证明文件在镜像里，证明不了服务读的是它**（Task 9 的 C1 就是这么漏的：文件在
+`/app/contracts`，而按 cwd 解析出的却是 `/app/apps/server/contracts`）⇒ 必须打印真实解析结果：
 
 ```sh
 ls /app/contracts/common | head -3
 ls /app/deploy/duckle/console/pipelines | wc -l
 ls /app/deploy/duckle/console/schedules
+# 关键一条：从镜像里的真实 cwd 解析缺省根，两个路径都必须存在
+cd /app/apps/server && pnpm exec tsx -e "import { rootsOf } from '../../modules/data/domain/pipelines/defs.ts'; const r = rootsOf({}); console.log(process.cwd(), JSON.stringify(r), require('node:fs').existsSync(r.contractsRoot), require('node:fs').existsSync(r.pipelinesRoot))"
 ```
 
-Expected: 契约目录有文件；管线数 = 仓内 28（±本 Wave 新增）；schedules 三个文件。
+Expected: 契约目录有文件；管线数 = 仓内 28（±本 Wave 新增）；schedules 三个文件；
+最后一条 `process.cwd()` = `/app/apps/server`，两个根分别是 `/app/deploy/duckle/console` 与
+`/app/contracts`，且两个 `existsSync` 都是 `true`。
 
 - [ ] **Step 5: MCP 冒烟（mytech，`data:manage` 临时 Key；用完即删）**
 
