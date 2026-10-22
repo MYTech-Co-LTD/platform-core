@@ -1,5 +1,6 @@
 // mcp-manage.ts — POST /mcp-manage：管理面 MCP 端点。**只做合成 + 注册**：
-// 把各工具片（口径片 mcp-metric-tools / 报表片 mcp-report-tools）拼成一个 McpToolSet，
+// 把各工具片（口径片 mcp-metric-tools / 报表片 mcp-report-tools / 管线提案片 mcp-pipeline-tools）
+// 拼成一个 McpToolSet，
 // 交给共享协议壳 mcp-rpc.ts。工具判定本身都在各片里，本文件不含业务逻辑。
 import type { ModuleHono, RouteCtx } from './context'
 import { registerMcpEndpoint } from './mcp-rpc'

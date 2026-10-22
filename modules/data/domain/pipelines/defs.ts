@@ -53,12 +53,18 @@ export interface ScheduleEntry {
   source: string; pipelineId: string; enabled: boolean; cron: string | null; timezone: string | null
 }
 
+/** 节点类型计数键。`quality` 是引擎真实接受的词汇（`qa.contract` 写 `"type":"quality"`，
+ *  `docs/data-platform-handbook.md` 实测引擎照跑），不能漏计——否则 `get_pipeline` 的
+ *  `nodes` 明细会静默吞掉判据节点。 */
+const COUNT_KEYS = ['source', 'transform', 'sink', 'control', 'quality'] as const
+type CountKey = (typeof COUNT_KEYS)[number]
+
 export interface PipelineDef {
   id: string
   name: string
   version: unknown
   doc: Record<string, unknown>
-  counts: { source: number; transform: number; sink: number; control: number }
+  counts: Record<CountKey, number>
   /** 所有 snk.minio sink 的 key（湖写入面的事实清单；沙箱断言与契约匹配都用它）。 */
   lakeKeys: string[]
 }
@@ -84,9 +90,12 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 
 export function loadPipelines(
   roots: PipelineRoots,
-): { defs: Map<string, PipelineDef>; warnings: string[]; readable: boolean } {
+): { defs: Map<string, PipelineDef>; warnings: string[]; readable: boolean; incomplete: boolean } {
   const defs = new Map<string, PipelineDef>()
   const warnings: string[] = []
+  // 「有东西没读到/没解析成功」的显式信号（≠「目录里没有」）。读不全时清单里的 **缺席**
+  // 不等于「不存在」——调用方必须能机器区分，不能靠 warnings 文本反推。
+  let incomplete = false
   let dir = ''
   let files: string[]
   try {
@@ -97,19 +106,21 @@ export function loadPipelines(
     // readable=false 是给调用方的**显式**信号：目录读不到 ≠ 目录里没有管线。
     // 不要靠 warnings 文本反推（文案会变），也别让调用方自己再 stat 一遍。
     warnings.push(`pipelines 目录不可读：${roots.pipelinesRoot}`)
-    return { defs, warnings, readable: false }
+    return { defs, warnings, readable: false, incomplete: true }
   }
   for (const f of files) {
     const id = f.slice(0, -'.json'.length)
-    if (!PIPELINE_ID_RE.test(id)) { warnings.push(`跳过非法管线名：${f}`); continue }
+    if (!PIPELINE_ID_RE.test(id)) {
+      warnings.push(`跳过非法管线名：${f}`); incomplete = true; continue
+    }
     const raw = readJson(join(dir, f))
-    if (!isObj(raw)) { warnings.push(`跳过不可解析的管线：${f}`); continue }
+    if (!isObj(raw)) { warnings.push(`跳过不可解析的管线：${f}`); incomplete = true; continue }
     const nodes = Array.isArray(raw.nodes) ? raw.nodes.filter(isObj) : []
-    const counts = { source: 0, transform: 0, sink: 0, control: 0 }
+    const counts: Record<CountKey, number> = { source: 0, transform: 0, sink: 0, control: 0, quality: 0 }
     const lakeKeys: string[] = []
     for (const n of nodes) {
       const t = str(n.type)
-      if (t === 'source' || t === 'transform' || t === 'sink' || t === 'control') counts[t] += 1
+      if ((COUNT_KEYS as readonly string[]).includes(t)) counts[t as CountKey] += 1
       const data = isObj(n.data) ? n.data : {}
       if (t === 'sink' && str(data.componentId) === 'snk.minio') {
         const props = isObj(data.properties) ? data.properties : {}
@@ -120,14 +131,15 @@ export function loadPipelines(
       id, name: str(raw.name) || id, version: raw.version ?? null, doc: raw, counts, lakeKeys,
     })
   }
-  return { defs, warnings, readable: true }
+  return { defs, warnings, readable: true, incomplete }
 }
 
 export function loadSchedules(
   roots: PipelineRoots,
-): { byPipeline: Map<string, ScheduleEntry[]>; warnings: string[] } {
+): { byPipeline: Map<string, ScheduleEntry[]>; warnings: string[]; incomplete: boolean } {
   const byPipeline = new Map<string, ScheduleEntry[]>()
   const warnings: string[] = []
+  let incomplete = false
   let dir = ''
   let files: string[]
   try {
@@ -135,18 +147,20 @@ export function loadSchedules(
     dir = join(roots.pipelinesRoot, 'schedules')
     files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort()
   } catch {
+    // 调度根读不到 ≠ 没有调度。没有这条信号，`source` 过滤会回 ok/count:0，
+    // 被读成「这个账套没有任何管线」——最危险的一类假绿。
     warnings.push(`schedules 目录不可读：${roots.pipelinesRoot}`)
-    return { byPipeline, warnings }
+    return { byPipeline, warnings, incomplete: true }
   }
   for (const f of files) {
     const source = f.slice(0, -'.json'.length)
     const raw = readJson(join(dir, f))
     // 调度文件是**数组**（每条带 pipeline_id），不是字典——见 deploy/duckle/console/README.md。
-    if (!Array.isArray(raw)) { warnings.push(`跳过不可解析的调度：${f}`); continue }
+    if (!Array.isArray(raw)) { warnings.push(`跳过不可解析的调度：${f}`); incomplete = true; continue }
     for (const e of raw) {
-      if (!isObj(e)) continue
+      if (!isObj(e)) { warnings.push(`调度条目不是对象：${f}`); incomplete = true; continue }
       const pid = str(e.pipeline_id)
-      if (pid === '') { warnings.push(`调度条目缺 pipeline_id：${f}`); continue }
+      if (pid === '') { warnings.push(`调度条目缺 pipeline_id：${f}`); incomplete = true; continue }
       const kind = isObj(e.kind) ? e.kind : {}
       const entry: ScheduleEntry = {
         source, pipelineId: pid, enabled: e.enabled === true,
@@ -155,12 +169,12 @@ export function loadSchedules(
       byPipeline.set(pid, [...(byPipeline.get(pid) ?? []), entry])
     }
   }
-  return { byPipeline, warnings }
+  return { byPipeline, warnings, incomplete }
 }
 
 export function loadContracts(
   roots: PipelineRoots,
-): { contracts: ContractRef[]; warnings: string[]; incomplete: boolean } {
+): { contracts: ContractRef[]; warnings: string[]; incomplete: boolean; duplicateIds: string[] } {
   const contracts: ContractRef[] = []
   const warnings: string[] = []
   // 「有东西没读到/没解析成功」的显式信号（≠「仓里没有」，也 ≠「同 id 重复」那种读到了但有歧义）。
@@ -172,7 +186,7 @@ export function loadContracts(
       .filter((d) => d.isDirectory()).map((d) => d.name).sort()
   } catch {
     warnings.push(`contracts 目录不可读：${roots.contractsRoot}`)
-    return { contracts, warnings, incomplete: true }
+    return { contracts, warnings, incomplete: true, duplicateIds: [] }
   }
 
   /** 枚举一个目录里的契约（`_` 前缀 = 基础设施，跳过；坏件进 warnings 并标记读不全）。 */
@@ -226,14 +240,18 @@ export function loadContracts(
   // contracts/customers/README.md 明写优先级未定案，遇到并存要问 owner，不许猜顺序。
   const byId = new Map<string, ContractRef[]>()
   for (const c of contracts) byId.set(c.id, [...(byId.get(c.id) ?? []), c])
+  // 重复 id 也是**机器信号**：`contractFor` 只取第一份 ⇒ `contractId`/`contract` 可能指错。
+  // 光有散文 warning，调用方无从判断「这个 contract 字段可不可信」。
+  const duplicateIds: string[] = []
   for (const [id, list] of [...byId.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     if (list.length > 1) {
+      duplicateIds.push(id)
       warnings.push(`契约 id 重复：${id}（${list.map((c) => c.path).join('、')}）`
         + '——common 与 customers 的优先级未定案，不要猜，先问 owner')
     }
   }
 
-  return { contracts, warnings, incomplete }
+  return { contracts, warnings, incomplete, duplicateIds }
 }
 
 /**

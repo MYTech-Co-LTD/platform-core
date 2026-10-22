@@ -4,8 +4,13 @@
 //   ok      —— 读到了，答案就是 payload；
 //   unknown —— **读不到**（pipelines 根目录不可读）⇒ isError=false 但明确说「不知道」，
 //              绝不回 {status:'ok', count:0}（空清单会被读成「确实没有管线」）；
-//   not_found —— 目录读得到、也枚举过了，就是没有这个 id（坏文件在 warnings 里点名）。
+//   not_found —— 目录读得到、也枚举过了，就是没有这个 id（坏文件在 warnings 里点名）；
+//                **非法 id 形态**另带 reason:'invalid_id'，审计可筛（畸形输入 ≠ 确实没有）。
 // not_found 在 Task 8 里按 verdict=ok 审计，所以「读不到」绝不能落到 not_found。
+//
+// 「读不全」不翻 status：ok/not_found 回包里恒有 `incomplete`（'pipelines'|'schedules'|'contracts'），
+// 只有**带 source 过滤**且调度面读不全时才答不了（unknown/schedules_incomplete）；
+// 契约同 id 重复时另出 `ambiguousContracts`（contractFor 只取第一份 ⇒ contract 可能指错）。
 import {
   contractFor, loadContracts, loadPipelines, loadSchedules, PIPELINE_ID_RE,
 } from './defs'
@@ -22,6 +27,12 @@ export interface ReadAll {
   contracts: ContractRef[]
   /** pipelines 根目录是否读得到（`loadPipelines` 的显式信号，不靠 warnings 文本反推）。 */
   readable: boolean
+  /** 三棵树各自的「读不全」信号——缺席的一行不等于不存在（「未知 ≠ 没有」）。 */
+  pipelinesIncomplete: boolean
+  schedulesIncomplete: boolean
+  contractsIncomplete: boolean
+  /** 同 id 多份的契约 id（`contractFor` 只取第一份 ⇒ 回包里的 contract 可能是错的）。 */
+  contractDuplicates: string[]
   warnings: string[]
 }
 
@@ -32,16 +43,29 @@ export function readAll(deps: PipelineDeps): ReadAll {
   const c = loadContracts(deps.roots)
   return {
     defs: p.defs, schedules: s.byPipeline, contracts: c.contracts, readable: p.readable,
+    pipelinesIncomplete: p.incomplete, schedulesIncomplete: s.incomplete,
+    contractsIncomplete: c.incomplete, contractDuplicates: c.duplicateIds,
     warnings: [...p.warnings, ...s.warnings, ...c.warnings],
   }
 }
+
+/** 读不全的根名（顺序固定，便于断言与阅读）：只列**这次确实没读全**的。 */
+const incompleteOf = (all: ReadAll): ('pipelines' | 'schedules' | 'contracts')[] => [
+  ...(all.pipelinesIncomplete ? (['pipelines'] as const) : []),
+  ...(all.schedulesIncomplete ? (['schedules'] as const) : []),
+  ...(all.contractsIncomplete ? (['contracts'] as const) : []),
+]
+
+/** 回包里「契约有歧义」的机器通道：只有真的重复时才出现（否则字段缺席 = 无歧义）。 */
+const ambiguousOf = (all: ReadAll): { ambiguousContracts?: string[] } =>
+  (all.contractDuplicates.length > 0 ? { ambiguousContracts: all.contractDuplicates } : {})
 
 const schedulesOf = (all: ReadAll, id: string, source: string | null): ScheduleEntry[] =>
   (all.schedules.get(id) ?? []).filter((e) => source === null || e.source === source)
 
 /** 读不到 pipelines 根时的统一回包：isError=false（不是调用方的错），但语义是「不知道」。 */
-const unreadable = (roots: PipelineRoots, warnings: string[]): Record<string, unknown> => ({
-  status: 'unknown', reason: 'pipelines_root_unreadable', roots, warnings,
+const unreadable = (roots: PipelineRoots, warnings: string[], incomplete: string[]): Record<string, unknown> => ({
+  status: 'unknown', reason: 'pipelines_root_unreadable', roots, warnings, incomplete,
 })
 
 /**
@@ -49,11 +73,13 @@ const unreadable = (roots: PipelineRoots, warnings: string[]): Record<string, un
  * 缺省（undefined / null）与空串 ⇒ 不过滤（回 `null`）；
  * 非字符串或**纯空白串** ⇒ fail closed：静默当成「不过滤」会把一次错误的调用
  * 放大成「所有管线都匹配」，读数的人无从察觉。
+ * 有值则**去掉首尾空白**再匹配：`' retail '` 原样匹配只会回 `ok/count:0`，
+ * 与「确实没有」同形（同一条不变式）。
  */
 const filterOf = (v: unknown): { ok: true; value: string | null } | { ok: false } => {
   if (v === undefined || v === null || v === '') return { ok: true, value: null }
   if (typeof v !== 'string' || v.trim() === '') return { ok: false }
-  return { ok: true, value: v }
+  return { ok: true, value: v.trim() }
 }
 
 const deniedFilter = (): { payload: Record<string, unknown>; isError: true; auditRowCount: null } => ({
@@ -68,7 +94,19 @@ export const listPipelinesImpl: PipelineImpl = async (deps, args) => {
   const all = readAll(deps)
   if (!all.readable) {
     return {
-      payload: unreadable(deps.roots, all.warnings), isError: false, auditRowCount: null,
+      payload: unreadable(deps.roots, all.warnings, incompleteOf(all)),
+      isError: false, auditRowCount: null,
+    }
+  }
+  // 带 source 过滤时，调度面读不全就**答不了**这个问题：缺席可能只是没读到。
+  // 回 unknown 而不是 ok/count:0 —— 后者会被读成「这个账套没有任何管线」。
+  if (source.value !== null && all.schedulesIncomplete) {
+    return {
+      payload: {
+        status: 'unknown', reason: 'schedules_incomplete', source: source.value,
+        warnings: all.warnings, incomplete: incompleteOf(all),
+      },
+      isError: false, auditRowCount: null,
     }
   }
   const needle = q.value === null ? null : q.value.toLowerCase()
@@ -85,6 +123,9 @@ export const listPipelinesImpl: PipelineImpl = async (deps, args) => {
   return {
     payload: {
       status: 'ok', count: pipelines.length, pipelines,
+      // 清单始终可答（不带 source 过滤时不需要调度面完整）；读不全只作为附注，不改 status。
+      incomplete: incompleteOf(all),
+      ...ambiguousOf(all),
       ...(all.warnings.length > 0 ? { warnings: all.warnings } : {}),
     },
     isError: false, auditRowCount: pipelines.length,
@@ -94,21 +135,30 @@ export const listPipelinesImpl: PipelineImpl = async (deps, args) => {
 export const getPipelineImpl: PipelineImpl = async (deps, args) => {
   const id = typeof args.id === 'string' ? args.id : ''
   // 先过 id 形态再读三棵树：非法 id 结构上不可能命中，没必要为它扫盘（也不给它拼路径的机会）。
+  // `reason: 'invalid_id'` 是**审计可筛**的机器通道：畸形 id 与「确实没有这个管线」都落在
+  // not_found（verdict 仍是 ok），没有 reason 就分不出「有人在打畸形输入」。
   if (!PIPELINE_ID_RE.test(id)) {
-    return { payload: { status: 'not_found', id }, isError: true, auditRowCount: null }
+    return {
+      payload: { status: 'not_found', id, reason: 'invalid_id' },
+      isError: true, auditRowCount: null,
+    }
   }
   const all = readAll(deps)
   if (!all.readable) {
     return {
-      payload: unreadable(deps.roots, all.warnings), isError: false, auditRowCount: null,
+      payload: unreadable(deps.roots, all.warnings, incompleteOf(all)),
+      isError: false, auditRowCount: null,
     }
   }
   const def = all.defs.get(id)
   if (def === undefined) {
-    // not_found 必须带上 warnings：目录读得到但**这个文件坏了**（「跳过不可解析的管线」）
+    // not_found 必须带上 warnings 与 incomplete：目录读得到但**这个文件坏了**（「跳过不可解析的管线」）
     // 与「确实没有这个 id」在读者眼里必须可区分。
     return {
-      payload: { status: 'not_found', id, warnings: all.warnings },
+      payload: {
+        status: 'not_found', id, incomplete: incompleteOf(all), warnings: all.warnings,
+        ...ambiguousOf(all),
+      },
       isError: true, auditRowCount: null,
     }
   }
@@ -124,6 +174,8 @@ export const getPipelineImpl: PipelineImpl = async (deps, args) => {
       },
       validation: validatePipelineDraft(def.doc),
       definition: def.doc,
+      incomplete: incompleteOf(all),
+      ...ambiguousOf(all),
       ...(all.warnings.length > 0 ? { warnings: all.warnings } : {}),
     },
     isError: false, auditRowCount: null,

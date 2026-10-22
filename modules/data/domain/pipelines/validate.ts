@@ -9,7 +9,12 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 
-const NODE_TYPES = ['source', 'transform', 'sink', 'control']
+// `quality` 是引擎的**真实词汇**：`qa.contract` 判据写 `"type":"quality"`，引擎照跑
+// （`docs/data-platform-handbook.md` 实测；仓内语料里已有管线这么写）。
+// 校验器比引擎严 = 把合法草案判红，`propose_*` / `run_pipeline_sandbox` 会拒真草案。
+const NODE_TYPES = ['source', 'transform', 'sink', 'control', 'quality']
+/** 驱动型节点：`ctl.foreach` 把活派给子管线，产物在子管线里落湖，自身**没有** sink。 */
+const DRIVER_COMPONENT = 'ctl.foreach'
 const DOMAIN_RE = /^[a-z][a-z0-9_]*$/
 const SANDBOX_LAKE_PREFIX = '__sandbox/'
 const SANDBOX_LOCAL_PREFIX = '/workspace/logs/sandbox/'
@@ -27,6 +32,7 @@ export function validatePipelineDraft(doc: unknown): Issue[] {
   const ids = new Set<string>()
   let sources = 0
   let sinks = 0
+  let driver = false
   nodes.forEach((n, i) => {
     if (!isObj(n)) { out.push({ path: `nodes[${i}]`, message: '节点必须是对象' }); return }
     const id = str(n.id)
@@ -39,10 +45,19 @@ export function validatePipelineDraft(doc: unknown): Issue[] {
     if (t === 'sink') sinks += 1
     const data = isObj(n.data) ? n.data : null
     if (data === null) out.push({ path: `nodes[${i}].data`, message: 'data 必填' })
-    else if (str(data.componentId) === '') out.push({ path: `nodes[${i}].data.componentId`, message: 'componentId 必填' })
+    else {
+      const comp = str(data.componentId)
+      if (comp === '') out.push({ path: `nodes[${i}].data.componentId`, message: 'componentId 必填' })
+      if (comp === DRIVER_COMPONENT) driver = true
+    }
   })
   if (sources === 0) out.push({ path: 'nodes', message: '至少需要一个 source 节点' })
-  if (sinks === 0) out.push({ path: 'nodes', message: '至少需要一个 sink 节点（薄管线必须以 sink 收尾）' })
+  // 薄管线必须以 sink 收尾（否则判据求值不了，实测见 deploy/duckle/console/README.md），
+  // 但这条**只对薄管线**成立：`ctl.foreach` 驱动把活派给子管线，自身没有 sink 是正常形态
+  // （仓内 `lemeng.recon.preagg.backfill.json` 即此）。source 要求仍然无条件。
+  if (sinks === 0 && !driver) {
+    out.push({ path: 'nodes', message: `至少需要一个 sink 节点（薄管线必须以 sink 收尾；${DRIVER_COMPONENT} 驱动的编排管线除外）` })
+  }
   const edges = Array.isArray(doc.edges) ? doc.edges : null
   if (edges === null) out.push({ path: 'edges', message: 'edges 必须是数组（可为空）' })
   else edges.forEach((e, i) => {

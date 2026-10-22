@@ -18,6 +18,8 @@ seed('deploy/duckle/console/pipelines/lemeng.a.b.json', {
   nodes: [
     { id: 's1', type: 'source', data: { componentId: 'src.rest', properties: {} } },
     { id: 't1', type: 'transform', data: { componentId: 'tr.sql', properties: {} } },
+    // `type:'quality'` 是引擎的真实词汇（qa.contract），必须计入 counts 不能被吞。
+    { id: 'q1', type: 'quality', data: { componentId: 'qa.contract', properties: {} } },
     { id: 'k1', type: 'sink', data: { componentId: 'snk.minio', properties: { key: 'lemeng/a/system_book=1/all.parquet' } } },
     { id: 'k2', type: 'sink', data: { componentId: 'snk.csv', properties: { path: '/workspace/logs/a.csv' } } },
   ],
@@ -53,28 +55,84 @@ describe('rootsOf', () => {
 })
 
 describe('loadPipelines', () => {
-  it('按文件名取 id、统计节点类型、收集湖写入 key；坏 JSON 进 warnings 不抛', () => {
-    const { defs, warnings, readable } = loadPipelines(roots)
+  it('按文件名取 id、统计节点类型（含 quality）、收集湖写入 key；坏 JSON 进 warnings 不抛', () => {
+    const { defs, warnings, readable, incomplete } = loadPipelines(roots)
     expect([...defs.keys()]).toEqual(['lemeng.a.b'])
     const d = defs.get('lemeng.a.b')!
     expect(d.name).toBe('lemeng.a.b')
-    expect(d.counts).toEqual({ source: 1, transform: 1, sink: 2, control: 0 })
+    expect(d.counts).toEqual({ source: 1, transform: 1, sink: 2, control: 0, quality: 1 })
     expect(d.lakeKeys).toEqual(['lemeng/a/system_book=1/all.parquet'])
     expect(warnings.some((w) => w.includes('broken.json'))).toBe(true)
     expect(readable).toBe(true)
+    // 有坏件 ⇒ 读不全（缺席的 id 不等于不存在）。
+    expect(incomplete).toBe(true)
   })
-  it('目录不存在 ⇒ 空 + warning + readable=false（不抛）', () => {
-    expect(loadPipelines(rootsOf({}, '/definitely/not/here'))).toEqual({ defs: new Map(), warnings: [expect.stringContaining('pipelines')], readable: false })
+  it('目录不存在 ⇒ 空 + warning + readable=false + incomplete=true（不抛）', () => {
+    expect(loadPipelines(rootsOf({}, '/definitely/not/here'))).toEqual({
+      defs: new Map(), warnings: [expect.stringContaining('pipelines')], readable: false, incomplete: true,
+    })
+  })
+  it('全部读全 ⇒ incomplete=false；非法文件名 / 不可解析各置 true', () => {
+    const clean = tmpRoot()
+    clean.seed('pipelines/ok.json', { name: 'ok', nodes: [], edges: [] })
+    expect(loadPipelines(clean.roots).incomplete).toBe(false)
+
+    clean.seed('pipelines/bad name!.json', { name: 'x', nodes: [], edges: [] })
+    expect(loadPipelines(clean.roots).incomplete).toBe(true)
+
+    const torn = tmpRoot()
+    torn.seed('pipelines/ok.json', { name: 'ok', nodes: [], edges: [] })
+    torn.seed('pipelines/torn.json', '{ not json')
+    expect(loadPipelines(torn.roots).incomplete).toBe(true)
   })
 })
 
+/** 每个用例独立临时根：读面三棵树的「读不全」必须能单独构造，混在一个根里会互相污染。 */
+function tmpRoot(): { dir: string; roots: PipelineRoots; seed: (rel: string, body: unknown) => void } {
+  const dir = mkdtempSync(join(tmpdir(), 'pl-defs-case-'))
+  made.push(dir)
+  return {
+    dir, roots: rootsOf({}, dir),
+    seed: (rel: string, body: unknown): void => {
+      const p = join(dir, 'deploy/duckle/console', rel)
+      mkdirSync(join(p, '..'), { recursive: true })
+      writeFileSync(p, typeof body === 'string' ? body : JSON.stringify(body))
+    },
+  }
+}
+const made: string[] = []
+afterAll(() => { for (const d of made) rmSync(d, { recursive: true, force: true }) })
+
 describe('loadSchedules', () => {
-  it('按 pipeline_id 归并，cron 抽平，interval 型 cron=null', () => {
-    const { byPipeline } = loadSchedules(roots)
+  it('按 pipeline_id 归并，cron 抽平，interval 型 cron=null；读全 ⇒ incomplete=false', () => {
+    const { byPipeline, incomplete } = loadSchedules(roots)
     expect(byPipeline.get('lemeng.a.b')).toEqual([
       { source: '3120', pipelineId: 'lemeng.a.b', enabled: true, cron: '*/5 * * * *', timezone: 'Asia/Shanghai' },
     ])
     expect(byPipeline.get('gone.away')?.[0]).toMatchObject({ enabled: false, cron: null, timezone: null })
+    expect(incomplete).toBe(false)
+  })
+  it('调度根不可读 ⇒ incomplete=true（不抛）', () => {
+    const t = tmpRoot()
+    t.seed('pipelines/ok.json', { name: 'ok', nodes: [], edges: [] })
+    expect(loadSchedules(t.roots)).toEqual({
+      byPipeline: new Map(), warnings: [expect.stringContaining('schedules')], incomplete: true,
+    })
+  })
+  it('文件不是数组 / 条目不是对象 / 缺 pipeline_id ⇒ 都置 incomplete=true', () => {
+    const notArray = tmpRoot()
+    notArray.seed('schedules/3120.json', { pipeline_id: 'a.b' })
+    expect(loadSchedules(notArray.roots).incomplete).toBe(true)
+
+    const notObj = tmpRoot()
+    notObj.seed('schedules/3120.json', ['nope', { pipeline_id: 'a.b', kind: {} }])
+    const noObj = loadSchedules(notObj.roots)
+    expect(noObj.incomplete).toBe(true)
+    expect(noObj.byPipeline.get('a.b')).toHaveLength(1)
+
+    const noPid = tmpRoot()
+    noPid.seed('schedules/3120.json', [{ enabled: true, kind: {} }])
+    expect(loadSchedules(noPid.roots).incomplete).toBe(true)
   })
 })
 
@@ -83,6 +141,11 @@ describe('loadContracts / contractFor', () => {
     const { contracts } = loadContracts(roots)
     expect(contracts.map((c) => c.id)).toEqual(['lemeng.a'])
     expect(contracts[0]).toMatchObject({ domain: 'lemeng', table: 'a', columns: 1 })
+  })
+  it('契约根不可读 ⇒ incomplete=true 且 duplicateIds 为空（读不到 ≠ 没重复）', () => {
+    expect(loadContracts(rootsOf({}, '/definitely/not/here'))).toEqual({
+      contracts: [], warnings: [expect.stringContaining('contracts')], incomplete: true, duplicateIds: [],
+    })
   })
   it('contractFor：最长 domain.table 前缀命中；无命中回 null', () => {
     const { contracts } = loadContracts(roots)
@@ -147,11 +210,11 @@ describe('loadContracts —— customers/<客户>/ 两层覆盖', () => {
     expect(warnings).toEqual([])
     expect(incomplete).toBe(false)
   })
-  it('同 id 多份（common + customers/acme）⇒ warning 点名两份 path；但**不是**读不全', () => {
+  it('同 id 多份（common + customers/acme）⇒ warning 点名两份 path + duplicateIds；但**不是**读不全', () => {
     const m = mkRoot()
     m.seed('contracts/common/lemeng.a.json', contractDoc())
     m.seed('contracts/customers/acme/lemeng.a.json', contractDoc())
-    const { contracts, warnings, incomplete } = loadContracts(m.roots)
+    const { contracts, warnings, incomplete, duplicateIds } = loadContracts(m.roots)
     expect(contracts.map((c) => c.path)).toEqual([
       'contracts/common/lemeng.a.json', 'contracts/customers/acme/lemeng.a.json',
     ])
@@ -159,6 +222,8 @@ describe('loadContracts —— customers/<客户>/ 两层覆盖', () => {
     expect(dup).toContain('contracts/common/lemeng.a.json')
     expect(dup).toContain('contracts/customers/acme/lemeng.a.json')
     expect(dup).toContain('优先级未定案')
+    // 机器通道：contractFor 只取第一份 ⇒ 调用方要能知道这个 id 有歧义。
+    expect(duplicateIds).toEqual(['lemeng.a'])
     expect(incomplete).toBe(false)
   })
   it.skipIf(typeof process.getuid === 'function' && process.getuid() === 0)(

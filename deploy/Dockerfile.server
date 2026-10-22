@@ -97,7 +97,9 @@ COPY dbt ./dbt
 #    两类消费方都读这个根：只读工具（`list_pipelines`/`get_pipeline` 回包里的 `contractId`/
 #    `contract` 字段）与草案生成（`propose_pipeline_change`/`propose_contract_change` 用它反查
 #    基线契约的真实落点，propose.ts:174/272）。契约根读不到**不会**翻成 unknown（`readable`
-#    只来自管线根）：只读工具照常回 `ok`、字段为 `null` 并带 warnings（read.ts:82-90、115-128）；
+#    只来自管线根）：只读工具照常回 `ok`、字段为 `null` 并带 warnings，且回包的 `incomplete`
+#    会点名 `contracts`（`'pipelines'|'schedules'|'contracts'`，见 read.ts 的 listPipelinesImpl/
+#    getPipelineImpl）——「读不到」与「没有契约」由这个字段机器区分，不靠 warnings 文本；
 #    草案则退化成「基线无此契约」，按 `contracts/common/<域>.<表>.json` 猜落点（propose.ts:81-86，
 #    在 :196/:278 调用），另在下游清单里留 `kind: unknown` 的哨兵（propose.ts:202-210/340-345）。
 #    缺目录不报错，只让产出错位 ⇒ 更必须随镜像在场。

@@ -1,4 +1,7 @@
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { REPO_ROOT } from './defs'
 import { sandboxViolations, validateContractDraft, validatePipelineDraft } from './validate'
 
 const goodPipeline = {
@@ -35,6 +38,50 @@ describe('validatePipelineDraft', () => {
     expect(badEdge.some((i) => i.path === 'edges[0].target')).toBe(true)
     const badType = validatePipelineDraft({ ...goodPipeline, nodes: [{ id: 'a', type: 'weird', data: {} }] })
     expect(badType.some((i) => i.message.includes('type'))).toBe(true)
+  })
+  // 校验器不得比引擎严：`qa.contract` 判据写 `type:"quality"`，引擎照跑
+  // （docs/data-platform-handbook.md 实测；仓内 lemeng.purchase.analysis.l0.3120.json 即此）。
+  it("'quality'（qa.contract）是引擎真实词汇 ⇒ 零 issue", () => {
+    const doc = {
+      ...goodPipeline,
+      nodes: [...goodPipeline.nodes, { id: 'q1', type: 'quality', data: { componentId: 'qa.contract' } }],
+    }
+    expect(validatePipelineDraft(doc)).toEqual([])
+  })
+  // sink 要求只对**薄管线**成立：ctl.foreach 驱动把活派给子管线，自身没有 sink 是正常形态
+  // （仓内 lemeng.recon.preagg.backfill.json）。source 要求仍无条件。
+  it('ctl.foreach 驱动的编排管线没有 sink ⇒ 零 issue；非驱动管线照旧要 sink', () => {
+    const driver = {
+      name: 'x', nodes: [
+        { id: 's1', type: 'source', data: { componentId: 'src.minio' } },
+        { id: 'f1', type: 'transform', data: { componentId: 'ctl.foreach' } },
+      ], edges: [],
+    }
+    expect(validatePipelineDraft(driver)).toEqual([])
+    const noSink = {
+      name: 'x', nodes: [{ id: 's1', type: 'source', data: { componentId: 'src.minio' } }], edges: [],
+    }
+    expect(validatePipelineDraft(noSink).map((i) => i.message).join()).toContain('sink')
+    // source 要求无条件：驱动管线也必须有 source。
+    const noSource = {
+      name: 'x', nodes: [{ id: 'f1', type: 'transform', data: { componentId: 'ctl.foreach' } }], edges: [],
+    }
+    expect(validatePipelineDraft(noSource).map((i) => i.message).join()).toContain('source')
+  })
+})
+
+// 语料测试：仓内**每一条**在跑的管线都必须零 issue。校验器比引擎严 = 真草案被拒
+// （propose_* / run_pipeline_sandbox），比引擎松 = 假绿；语料是这条边界的唯一事实源。
+describe('validatePipelineDraft —— 仓内语料', () => {
+  it('deploy/duckle/console/pipelines/*.json 逐条零 issue', () => {
+    const dir = join(REPO_ROOT, 'deploy/duckle/console/pipelines')
+    const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort()
+    expect(files.length).toBeGreaterThan(0)
+    for (const f of files) {
+      const doc: unknown = JSON.parse(readFileSync(join(dir, f), 'utf8'))
+      // 断言消息带文件名：红了要一眼看出是哪条管线。
+      expect(validatePipelineDraft(doc), f).toEqual([])
+    }
   })
 })
 
