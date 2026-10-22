@@ -92,6 +92,11 @@ COPY deploy ./deploy
 #    为什么不干脆把解析结果烘进构建期：那会让「改一条 L1 声明」必须重建镜像，
 #    而声明的事实源在仓里、改它不该要走一次镜像构建（同 scripts/ 随镜像走的理由）。
 COPY dbt ./dbt
+# ⑨ contracts/：**提案面（Wave 3）读面的事实源之一**，契约 JSON 是运行时只读资产（与 dbt/ 同性质）。
+#    读面只看 `contracts/<域>/<源>.<表>.json` 与 `contracts/customers/<客户>/…`；缺目录时读面
+#    不抛（坏项进 warnings），但契约工具会**全线 unknown** ⇒ 必须随镜像在场。
+#    注意：管线与调度已在 `COPY deploy ./deploy` 里（deploy/duckle/console/），不必另 COPY。
+COPY contracts ./contracts
 
 # 装依赖与构建合成一层：上面的 COPY 是目录级的，源码任一改动都会让本层缓存失效，拆成两条
 # RUN 并不能省下依赖下载（要真省得用 BuildKit cache mount——那会把「构建必须走 BuildKit」
@@ -128,6 +133,8 @@ COPY --from=build /app/modules ./modules
 COPY --from=build /app/deploy ./deploy
 # ⑧ dbt/ 的对应项（理由同 build 阶段 ⑧，不复述）：sync 脚本在运行态读 L1 声明事实源
 COPY --from=build /app/dbt ./dbt
+# ⑨ contracts/ 的对应项（理由同 build 阶段 ⑨，不复述）：提案面读面在运行态读契约事实源
+COPY --from=build /app/contracts ./contracts
 
 # 非 root 运行（node 镜像自带 uid 1000 的 node 用户）。被 COPY 的文件是 root 拥有但
 # world-readable，宿主进程只读磁盘：tsx 在内存里转译不落盘，pnpm run 也不写 store。
