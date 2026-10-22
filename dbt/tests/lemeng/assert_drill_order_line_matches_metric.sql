@@ -1,9 +1,13 @@
--- assert_drill_order_line_matches_metric.sql — 两处 FINISHED 声明同源不变量（spec 2026-10-22 §2.6）。
+-- assert_drill_order_line_matches_metric.sql — 行域数据同量不变量（spec 2026-10-22 §2.6）。
 --
--- 它守的是本批**唯一新增的重复声明**：`state = 'FINISHED'` 在两个地方各写了一遍——
---   · `detail.filter`（下钻面 WHERE）；
---   · `expression` 的 CASE（聚合面没有 detail.filter 可用）。
--- 两处漂移 ⇒ 同一个源答出两个行集 / 两个金额，而且**不会报错**。本测试是它的解毒剂。
+-- 它守的是**数据面同量**：`vw_lemeng_retail_order_line`（直读湖）在 `state = 'FINISHED'` 行域上的
+-- 行数 / 金额，与 `stg_lemeng_retail_order_line` 按 expression 的 `CASE` 语义物化出来的行数 /
+-- 金额，按 (账套 × 业务日) 对齐——两跳之间丢行 / 丢分区 / cast 错会红。
+-- ⚠️ 它**读不到 YAML 声明**：两侧谓词都是本文件硬编码的独立参考实现（dbt singular test 的既定
+--    范式，同 assert_drill_net_sales_matches_fct）。所以**声明本身漂移时它不会红**。
+--    声明层守卫在 `scripts/sync-data-semantics.test.ts` 的
+--    `★ 真事实源：order_line 的下钻绑定（8 列闭集 + 条件列）`：`detail.filter` 走 `toEqual` 钉死，
+--    `expression` 折进 `selectSql` 后用正则钉死。**两处要一起改才安全**——任一单独改由那条单测拦。
 --
 -- 形态同 audit_* / Phase 1 的 assert_drill_*：返回任何行即失败；full join 缺一侧按 0 计
 --（inner join 对「单侧局部丢分区」结构性失明）；金额 numeric(20,2) = 1 分容差；

@@ -957,7 +957,9 @@ metrics:
   # 行数唯一权威 = 下钻回包的 rowCountTotal（不是聚合面的 1000 行截断）。
   # 行域两面统一 `state = 'FINISHED'`（**含退货行**；REPAID / CANCELED 不在）：
   #   聚合面把谓词内嵌进 expression（聚合面没有 detail.filter 可用），下钻面写在 detail.filter；
-  #   两处漂移由 dbt/tests/lemeng/assert_drill_order_line_matches_metric.sql 钉红。
+  #   两处**声明**漂移由 scripts/sync-data-semantics.test.ts 的真事实源用例钉死（`detail.filter`
+  #   走 `toEqual`、`expression` 折进 `selectSql` 走正则）；assert_drill_order_line_matches_metric.sql
+  #   守的是**行域数据同量**（vw-FINISHED vs stg-CASE-FINISHED），它读不到声明。
   # 粒度 = 8 列原子行键闭集（业务键 distinct = 总行数，2026-10-21 真机核实；batch_id 不拆行）。
   # 价格列是**条件列**（detail.columns，grantedBy: data:cost）：无码 ⇒ 列**不在场**（缺席，不是 NULL）。
   #   它**不是**值级掩码——该列在 sale_amount@order 的赠品判别式内部，nullify 会让判别式变 NULL、
