@@ -5,6 +5,6 @@
   "version": "0.1.0",
   "configSchema": { "type": "object", "additionalProperties": false, "properties": {} },
   "activation": { "onStartup": true },
-  "contracts": { "tools": ["list_metrics", "query_data"] },
+  "contracts": { "tools": ["list_metrics", "query_data", "query_detail"] },
   "skills": ["./skills"]
 }

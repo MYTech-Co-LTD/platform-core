@@ -1414,3 +1414,128 @@ describe('规则 ⑪：域覆盖（models/<域>/ ↔ dbt_project.yml 的 +enable
     expect(v[0]?.message).toContain('死配置')
   })
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// 下钻三键（compose/dimensions/detail）与顶层 measures:（spec 2026-10-21 §2.3/§2.3.1，#977）
+//
+// 契约：三键**同现或同缺**——半套声明 = 消费面 NO_DETAIL_BINDING 与声明意图相左（静默面）；
+// compose 是组件组合式，引用闭集 = **同文件**顶层 `measures:`（`{ '组件名@粒度': 表达式 }`）；
+// detail.relation 只认 `vw_*`（Phase 1 下钻读直读湖视图，spec §2.2）且
+// `dbt/models/**/views/<relation>.sql` 必须在仓；detail.filter 非空、不含分号。
+// 夹具照本文件既有 temp-repo helper（compliant / variant / fixture）构造：先有一份
+// 「三键 + measures + 视图」全就位的零违规夹具，再逐格做单点变异。
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+/** 下钻读面视图（`detail.relation` 指向的在仓骨架；规则 ⑩ 的扫描面 ⇒ 必须带 `as org`）。 */
+const DRILL_VIEW = 'dbt/models/common/views/vw_t.sql'
+
+/**
+ * 「三键齐全 + measures 就位 + 视图在仓」的**唯一零违规**下钻夹具。
+ * ⚠️ 视图骨架必须真合规（带 `as org`）：否则「零违规」那格的红分不清来自下钻面还是规则 ⑩
+ * （同头注对基线 compliant() 的要求）。
+ */
+function drillCompliant(): Record<string, string> {
+  const files = compliant()
+  files[METRICS] = [
+    'measures:',
+    '  "sale_amount@order": "sum(fct_retail_sale.net_amount)"',
+    '  "return_amount@line": "sum(fct_retail_sale.return_amount)"',
+    'metrics:',
+    '  - name: "lemeng:retail:net_sales"',
+    '    expression: "sum(fct_retail_sale.net_amount)"',
+    '    grain: [system_book, bizday]',
+    '    owner: data-platform',
+    '    tier: certified',
+    '    source: lemeng',
+    '    freshness_sla_days: 1',
+    '    definition: 净销售额 = 有效零售订单成交金额合计',
+    '    compose: "sale_amount@order - return_amount@line"',
+    '    dimensions: [system_book, bizday]',
+    `    detail: { relation: vw_t, filter: "state = 'FINISHED'" }`,
+    '',
+  ].join('\n')
+  files[DRILL_VIEW] = [
+    'select',
+    "    'acme' as org,",
+    '    system_book,',
+    '    order_id',
+    'from staging.stg_lemeng_retail_detail',
+    '',
+  ].join('\n')
+  return files
+}
+
+describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', () => {
+  it('下钻三键：全给或全不给，半套声明拒绝', () => {
+    const root = variant((f) => {
+      f[METRICS] = f[METRICS].replace(
+        '    freshness_sla_days: 1\n',
+        '    freshness_sla_days: 1\n    compose: "sale_amount@order - return_amount@line"\n',
+      ) // 只给 compose —— 缺 dimensions/detail
+    })
+    const vs = checkDataModels(root)
+    expect(vs.some((v) => /compose.*dimensions.*detail|三键/.test(v.message))).toBe(true)
+  })
+
+  it('compose 引用未声明组件 ⇒ 拒', () => {
+    // 三键齐全但同文件没有 measures: ⇒ 两个引用都未命中闭集
+    const files = drillCompliant()
+    files[METRICS] = files[METRICS].replace(
+      'measures:\n'
+      + '  "sale_amount@order": "sum(fct_retail_sale.net_amount)"\n'
+      + '  "return_amount@line": "sum(fct_retail_sale.return_amount)"\n',
+      '',
+    )
+    const vs = checkDataModels(fixture(files))
+    expect(vs.some((v) => /未声明的度量组件/.test(v.message))).toBe(true)
+  })
+
+  it('detail.relation 非 vw_* 或视图文件不存在 ⇒ 拒', () => {
+    // 变异一：relation 不合 vw_* 形态（Phase 1 下钻只读直读湖视图，spec §2.2）
+    const files1 = drillCompliant()
+    files1[METRICS] = files1[METRICS].replace('relation: vw_t', 'relation: fct_retail_sale')
+    const vs1 = checkDataModels(fixture(files1))
+    expect(vs1.some((v) => /vw_|视图/.test(v.message))).toBe(true)
+
+    // 变异二：形态合规但 dbt/models/**/views/ 下没有这个文件（下钻会查一个不存在的关系）
+    const files2 = drillCompliant()
+    files2[METRICS] = files2[METRICS].replace('relation: vw_t', 'relation: vw_ghost_detail')
+    const vs2 = checkDataModels(fixture(files2))
+    expect(vs2.some((v) => /vw_|视图|不存在/.test(v.message))).toBe(true)
+  })
+
+  it('measures 表达式含分号 ⇒ 拒', () => {
+    // replace 只换第一处 = measures: 的那个值（metrics 的 expression 在其后，不被波及）
+    const files = drillCompliant()
+    files[METRICS] = files[METRICS].replace('"sum(fct_retail_sale.net_amount)"', '"sum(x); drop table t"')
+    const vs = checkDataModels(fixture(files))
+    expect(vs).toHaveLength(1)
+    expect(vs[0]?.message).toContain('measures.')
+    expect(vs[0]?.message).toMatch(/分号|;/)
+  })
+
+  it('三键齐全 + measures 就位 ⇒ 零违规', () => {
+    expect(checkDataModels(fixture(drillCompliant()))).toEqual([])
+  })
+
+  it('compose 整串文法锚定：自由 SQL（如 (select 1)）⇒ 拒，合法组合式不误伤（裁决 2A）', () => {
+    // 变异：compose 换成无 @、无分号的自由 SQL —— 剥掉引用与 + - ( ) 空白后有残留，必须门禁期就红
+    //（修前这一格是绿的：matchAll 抓不到引用、无分号、其余三键全合规 ⇒ 自由 SQL 静默滑过）
+    const files = drillCompliant()
+    files[METRICS] = files[METRICS].replace(
+      'compose: "sale_amount@order - return_amount@line"',
+      "compose: '(select 1)'",
+    )
+    const vs = checkDataModels(fixture(files))
+    expect(vs).toHaveLength(1)
+    expect(vs[0]?.message).toMatch(/文法外记号/)
+
+    // 反面（防误伤）：合法组合式带括号与空白 ⇒ 锚定后残留为空，仍零违规
+    const legit = drillCompliant()
+    legit[METRICS] = legit[METRICS].replace(
+      'compose: "sale_amount@order - return_amount@line"',
+      'compose: "(sale_amount@order) - return_amount@line"',
+    )
+    expect(checkDataModels(fixture(legit))).toEqual([])
+  })
+})

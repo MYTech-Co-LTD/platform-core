@@ -35,9 +35,13 @@ import {
   deriveRelation,
   deriveTotalable,
   additivityOf,
+  composeOf,
   diffDeclarations,
+  drillOf,
+  drillTripleOf,
   exitCodeFor,
   formatDiff,
+  measuresOf,
   parseArgs,
   readDeclarations,
   usageError,
@@ -266,6 +270,7 @@ describe('diffDeclarations：双向差集的四态分类', () => {
     id, title, description: '', requiredScope: null,
     subjectColumn: 'org', selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {}, sourceSystem,
     totalable: false, slaDays: 1, freshnessRelations: [] as string[], masks: null,
+    drillExpr: null, drillDims: null, drillDetail: null,
   })
   const declared = [row('a', 'A'), row('b', 'B2'), row('c', 'C')]
   const current = [row('a', 'A'), row('b', 'B1'), row('d', 'D')]
@@ -854,6 +859,7 @@ describe('declarationsFromYaml：mask（值级脱敏声明面，spec 2026-10-17 
       id: 'a', title: 'A', description: '', requiredScope: null, subjectColumn: 'org',
       selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {}, sourceSystem: 'lemeng',
       totalable: false, slaDays: 1, freshnessRelations: [] as string[], masks,
+      drillExpr: null, drillDims: null, drillDetail: null,
     })
     const declared = [row([{ column: 't.c', kind: 'round', step: 1000, grantedBy: 'data:precise' }])]
     expect(diffDeclarations(declared, [row(null)]).updated).toEqual(['a'])
@@ -929,5 +935,171 @@ describe('applyDefaultMaskTier —— 默认档合成（spec §4.1.1 裁决；is
       sensitive('lemeng.retail_order_line.sale_money'),
     )
     expect(rows[0].masks).toEqual(declared)
+  })
+})
+
+// ── 下钻编译（Task 6，spec 2026-10-21 §2.3）：compose→drill_expr、dims/detail 三键、comparableOf 第六组 ──
+// 门禁（check-data-models 规则 ⑤⑥）是声明形状的 CI 权威；这里的判据是 **sync 侧兜底**——
+// 本脚本会被手跑（不经 CI），取不到/说不准就响亮失败，绝不静默物化一个坏下钻。
+describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-10-21 §2.3）', () => {
+  const base = {
+    name: 'lemeng:retail:net_sales', label: 't', definition: 'd', source: 'lemeng',
+    expression: 'sum(fct_retail_sale.net_amount)',
+    grain: ['system_book', 'bizday', 'branch_num'], owner: 'o', tier: 'certified', freshness_sla_days: 1,
+  }
+  const dims = ['system_book', 'bizday', 'branch_num', 'order_no']
+  const detail = { relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'" }
+
+  it('compose：组件引用替换为括号包裹的组件体', () => {
+    // ⚠️ 对计划的一处**逐字偏离**（本文件唯一）：计划 Step-1 期望串写的是
+    // `((sum(x)) - (sum(y)))`，但同计划 Step-3 的 composeOf（逐字采纳）是「每引用替换为
+    // `(<组件体>)`、不整串再包」——体自带括号时会得到 `((sum(x))) - (sum(y))`。取实现为准：
+    // 整串的括号由 Task 7 `buildDrillSql` 的 `(${expr})` 再包，终态 SQL 恰为已落地不变量
+    // （assert_drill_net_sales_matches_fct）atomic_value 的两层括号形状
+    // `((case…) - (sum(case…)))`；若在这里再整串包一层，终态会多出第三层（无害但无典）。
+    const rows = declarationsFromYaml({
+      measures: { 'sale_amount@order': '(sum(x))', 'return_amount@line': 'sum(y)' },
+      metrics: [{ ...base, compose: 'sale_amount@order - return_amount@line', dimensions: dims, detail }],
+    })
+    expect(rows[0].drillExpr).toBe('((sum(x))) - (sum(y))')
+    expect(rows[0].drillDims).toEqual(['system_book', 'bizday', 'branch_num', 'order_no'])
+    expect(rows[0].drillDetail).toEqual({ relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'" })
+  })
+
+  it('compose 引用未声明组件 ⇒ 响亮失败', () => {
+    expect(() => declarationsFromYaml({
+      metrics: [{ ...base, compose: 'ghost@order', dimensions: ['system_book'],
+        detail: { relation: 'vw_x', filter: 'true' } }],
+    })).toThrow(/未声明的度量组件/)
+  })
+
+  it('compose 含乘除/数字等文法外记号 ⇒ 响亮失败', () => {
+    expect(() => declarationsFromYaml({
+      metrics: [{ ...base, compose: 'sale_amount@order * 2', dimensions: dims, detail }],
+    })).toThrow(/文法外|组件引用与/)
+  })
+
+  it('文法检查先于引用替换：未知引用与文法外记号同时在场 ⇒ 报文法（先挡记号，再谈引用）', () => {
+    expect(() => declarationsFromYaml({
+      metrics: [{ ...base, compose: 'ghost@order * 2', dimensions: dims, detail }],
+    })).toThrow(/文法外/)
+  })
+
+  it('未声明 compose ⇒ 三字段 null（聚合照旧）', () => {
+    const rows = declarationsFromYaml(yaml([base]))
+    expect(rows[0].drillExpr).toBeNull()
+    expect(rows[0].drillDims).toBeNull()
+    expect(rows[0].drillDetail).toBeNull()
+  })
+
+  it('半套声明（compose 在、dimensions/detail 缺）⇒ 行级半键（同现判据在 def 组装面兜底，见 drillOf）', () => {
+    // 行组装面按键各自判缺省（null = 未声明），「三键同现」由写库前的 drillOf 兜手跑——
+    // 门禁的同现规则（check-data-models 规则 ⑥）是 CI 权威，行组装面不重复抛。
+    const rows = declarationsFromYaml({
+      measures: { 'sale_amount@order': 'sum(x)' },
+      metrics: [{ ...base, compose: 'sale_amount@order' }],
+    })
+    expect(rows[0].drillExpr).toBe('(sum(x))')
+    expect(rows[0].drillDims).toBeNull()
+    expect(rows[0].drillDetail).toBeNull()
+  })
+
+  it('dimensions/detail 形状坏 ⇒ 各自落 null（不猜、不半物化）', () => {
+    const rows = declarationsFromYaml({
+      measures: { 'sale_amount@order': 'sum(x)' },
+      metrics: [
+        { ...base, compose: 'sale_amount@order', dimensions: [], detail },
+        { ...base, compose: 'sale_amount@order', dimensions: [123], detail },
+        { ...base, compose: 'sale_amount@order', dimensions: dims, detail: 'vw_x' },
+        { ...base, compose: 'sale_amount@order', dimensions: dims, detail: { relation: 'vw_x' } },
+      ],
+    })
+    for (const r of rows) {
+      expect(r.drillDims === null || r.drillDetail === null, JSON.stringify(r.drillDims)).toBe(true)
+    }
+  })
+
+  it('★ 真事实源：net_sales 的下钻三键物化；未声明 compose 的指标全 null', () => {
+    const rows = readDeclarations(ROOT)
+    const byId = new Map(rows.map((r) => [r.id, r]))
+    const net = byId.get('lemeng:retail:net_sales')
+    expect(net?.drillDims).toEqual(['system_book', 'bizday', 'branch_num', 'order_no'])
+    expect(net?.drillDetail).toEqual({ relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'" })
+    // 组件体替换 + 括号包裹：sale 侧组件体在前（case when 判别式形态），return 在后，` - ` 连接
+    expect(net?.drillExpr).toMatch(/^\(case when /)
+    expect(net?.drillExpr).toMatch(/ - \(sum\(case when order_transaction_type like '%RETURN%'/)
+    expect(net?.drillExpr).toMatch(/\)$/)
+    for (const id of ['lemeng:retail:sales', 'lemeng:retail:order_count']) {
+      expect(byId.get(id)?.drillExpr, `${id} 未声明 compose`).toBeNull()
+    }
+  })
+
+  it('★ 下钻三键进 comparableOf：声明带了下钻而库内没跟上 ⇒ 判「更新」（缺这条 --check 假绿）', () => {
+    const row = (drillExpr: string | null, drillDetail: { relation: string; filter: string } | null) => ({
+      id: 'a', title: 'A', description: '', requiredScope: null, subjectColumn: 'org',
+      selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {}, sourceSystem: 'lemeng',
+      totalable: false, slaDays: 1, freshnessRelations: [] as string[], masks: null,
+      drillExpr, drillDims: drillExpr === null ? null : (['system_book', 'bizday'] as string[]), drillDetail,
+    })
+    const declared = [row('(sum(x))', { relation: 'vw_x', filter: 'true' })]
+    expect(diffDeclarations(declared, [row(null, null)]).updated).toEqual(['a'])
+    // 反向对照：两侧一致（jsonb 键序重排由 canonical 兜住）⇒ 判「未变」（可比不退化成恒更新）
+    const fromDb = [row('(sum(x))', { filter: 'true', relation: 'vw_x' })]
+    expect(diffDeclarations(declared, fromDb).unchanged).toEqual(['a'])
+  })
+})
+
+describe('measuresOf / composeOf —— 下钻编译的纯函数面（spec 2026-10-21 §2.3）', () => {
+  it('measuresOf：缺省 ⇒ 空 Map；形状坏（数组 / 键不合 <snake>@<snake> / 空体 / 分号）⇒ 响亮失败', () => {
+    expect(measuresOf({}).size).toBe(0)
+    expect(measuresOf({ measures: undefined }).size).toBe(0)
+    expect(measuresOf(null).size).toBe(0)
+    expect(() => measuresOf({ measures: ['a@b'] })).toThrow(/映射/)
+    expect(() => measuresOf({ measures: { 'Sale@b': 'sum(x)' } })).toThrow(/形态不合规/)
+    expect(() => measuresOf({ measures: { 'a@b': '' } })).toThrow(/形态不合规/)
+    expect(() => measuresOf({ measures: { 'a@b': 'sum(x); delete' } })).toThrow(/分号/)
+    // 合法：剥首尾空白（YAML 折叠标量的常态），体原样进 Map
+    expect(measuresOf({ measures: { 'a@b': '  sum(x)  ' } }).get('a@b')).toBe('sum(x)')
+  })
+
+  it('composeOf：括号包裹保优先级（(a) - (b) 形态）；文法检查先于引用替换；compose 缺省 ⇒ null', () => {
+    const measures = measuresOf({ measures: { 'sale@x': 'sum(a)', 'return@y': 'sum(b)' } })
+    expect(composeOf('sale@x - return@y', 'm:1:m', measures)).toBe('(sum(a)) - (sum(b))')
+    // 乘除/数字/其它标识符 ⇒ 文法外（先于「未声明组件」被报告）
+    expect(() => composeOf('ghost@x * 2', 'm:1:m', measures)).toThrow(/文法外/)
+    expect(() => composeOf('ghost@x', 'm:1:m', measures)).toThrow(/未声明的度量组件/)
+    expect(() => composeOf('', 'm:1:m', measures)).toThrow(/非空/)
+    expect(() => composeOf('sale@x;', 'm:1:m', measures)).toThrow(/非空|分号/)
+    expect(composeOf(undefined, 'm:1:m', measures)).toBeNull()
+    expect(composeOf(null, 'm:1:m', measures)).toBeNull()
+  })
+
+  it('drillOf：三键全 null ⇒ undefined（drill 字段缺省，不造字面 null）；半套 ⇒ 同现判据响亮失败', () => {
+    const row = (drillExpr: string | null, drillDims: string[] | null, drillDetail: { relation: string; filter: string } | null) => ({
+      id: 'a', title: 'A', description: '', requiredScope: null, subjectColumn: 'org',
+      selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {}, sourceSystem: 'lemeng',
+      totalable: false, slaDays: 1, freshnessRelations: [] as string[], masks: null,
+      drillExpr, drillDims, drillDetail,
+    })
+    expect(drillOf(row(null, null, null))).toBeUndefined()
+    expect(drillOf(row('(sum(x))', ['g'], { relation: 'vw_x', filter: 'true' })))
+      .toEqual({ expr: '(sum(x))', dims: ['g'], relation: 'vw_x', filter: 'true' })
+    // 半套三态：任一为 null 而另两个非 null ⇒ 抛（门禁同款判据，这里兜手跑）
+    expect(() => drillOf(row('(sum(x))', null, { relation: 'vw_x', filter: 'true' }))).toThrow(/同现/)
+    expect(() => drillOf(row(null, ['g'], { relation: 'vw_x', filter: 'true' }))).toThrow(/同现/)
+    expect(() => drillOf(row('(sum(x))', ['g'], null))).toThrow(/同现/)
+  })
+
+  it('drillTripleOf：库行 drill 缺省 ⇒ 三键 null；有绑定 ⇒ 三键（dims 拷贝，detail 形状逐字）', () => {
+    expect(drillTripleOf({})).toEqual({ drillExpr: null, drillDims: null, drillDetail: null })
+    expect(drillTripleOf({ drill: undefined })).toEqual({ drillExpr: null, drillDims: null, drillDetail: null })
+    const dims = ['system_book', 'bizday']
+    const t = drillTripleOf({ drill: { expr: '(sum(x))', dims, relation: 'vw_x', filter: 'true' } })
+    expect(t).toEqual({
+      drillExpr: '(sum(x))', drillDims: ['system_book', 'bizday'],
+      drillDetail: { relation: 'vw_x', filter: 'true' },
+    })
+    // dims 是拷贝不是引用：库行数组后续变更不得渗进比对行
+    expect(t.drillDims).not.toBe(dims)
   })
 })

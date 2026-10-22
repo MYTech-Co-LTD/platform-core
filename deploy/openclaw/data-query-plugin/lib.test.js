@@ -90,6 +90,15 @@ test("403 bad_param 缺 detail → 仍回参数文案（带兜底说明，不吞
   assert.match(r.error, /参数不合法/);
   assert.match(r.error, /params 为准/);
 });
+test("403 no_detail_binding ⇒ 能力陈述文案（不当权限拒绝说）", async () => {
+  // 服务端（drill.ts）对未声明下钻的指标回 403 + reason:no_detail_binding——是「能力边界」
+  // 不是「没权限」：照搬 DENIED 文案会让模型换指标试探（实际该指标永远下钻不了）。
+  const f = stubFetch(403, { status: "denied", metricId: "m1", reason: "no_detail_binding" });
+  const r = await callPlatform({ ...BASE, fetchImpl: f, path: "/query/detail", method: "POST", body: { metricId: "m1", args: {} } });
+  assert.equal(r.code, "NO_DETAIL_BINDING");
+  assert.match(r.error, /不支持.*下钻|能力/);
+  assert.doesNotMatch(r.error, /不在你的可见范围/); // 与 DENIED 文案严格分家
+});
 test("502 → 仓库侧文案", async () => {
   const f = stubFetch(502, { error: "warehouse_transient" });
   const r = await callPlatform({ ...BASE, fetchImpl: f });
@@ -186,6 +195,39 @@ test("data-query SKILL.md 新鲜度条改系统附加口径且既有判据句原
   assert.match(skill, /truncated:true/);
   assert.match(skill, /BAD_PARAM/);
   assert.match(skill, /区间超过 4 天必用/);
+});
+
+// query_detail（明细下钻，2026-10-21 spec §2.6）：第四把工具。同一性质——文案就是契约，
+// SDK 装不上 ⇒ 源文本断言锁 flash 口径的行为规则。
+test("query_detail 工具注册：path/method、bizday 必传、rowCountTotal 权威、no_detail_binding 不重试、双时钟转述、scope 捕获", () => {
+  const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  // 注册形状：path/method 与平台 HTTP 面一致（routes/query-detail.ts POST /query/detail）
+  assert.match(src, /name: "query_detail"/);
+  assert.match(src, /path: "\/query\/detail"/);
+  assert.match(src, /method: "POST"/);
+  // flash 口径行为规则（brief 逐条）：bizday 必传（防全史扫湖）；行数以 rowCountTotal 为权威；
+  // 能力边界如实告知不重试；两个时钟与口径行原样转述
+  assert.match(src, /bizday 必传/);
+  assert.match(src, /rowCountTotal/);
+  assert.match(src, /不要拿返回行数当全量/);
+  assert.match(src, /no_detail_binding/);
+  assert.match(src, /不要重试/);
+  assert.match(src, /clock_note/);
+  assert.match(src, /scope_line/);
+  assert.match(src, /原样转述/);
+  // 口径行捕获：scope_line 在场才 capture（缺省不捕）——partial 入参 { scope } 合法
+  assert.match(src, /capture\(sessionKey, \{ scope \}, runId\)/);
+});
+
+// SKILL 明细下钻节（2026-10-21 spec §2.6）：模型侧指引与工具描述同一套口径。
+test("data-query SKILL.md 明细下钻节：何时用 / bizday 必传 / rowCountTotal 权威 / 能力话术 / 双时钟", () => {
+  const skill = readFileSync(new URL("./skills/data-query/SKILL.md", import.meta.url), "utf8");
+  assert.match(skill, /query_detail/);
+  assert.match(skill, /明细下钻/);
+  assert.match(skill, /rowCountTotal/);
+  assert.match(skill, /bizday/);
+  assert.match(skill, /能力边界/);
+  assert.match(skill, /不要重试/);
 });
 
 // ── 新鲜度行确定性附加（message_sending 钩子纯逻辑，2026-10-16）──────────────────

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MAX_QUERY_ROWS, authorize, sqlQuote, visibleMetrics,
+  MAX_QUERY_ROWS, authorize, paramFilters, sqlQuote, visibleMetrics,
   type MaskSpec, type MetricDef, type MetricParamType, type Requester, type SourceTaggedMetric,
 } from './authz'
 
@@ -511,6 +511,27 @@ describe('authorize —— 值级掩码定点展开（spec §5.3，P2 T2）', ()
     if (!after.ok) return
     expect(after.plan.applied).toEqual({ 'mart_sales_daily.revenue': 'round:1000' })
     expect(after.plan.sql).toContain('sum(round(mart_sales_daily.revenue, -1000)) as value')
+  })
+})
+
+describe('paramFilters（下钻共用抽取）', () => {
+  const params = { bizday: { column: 'bizday', type: 'date_range' as const } }
+
+  it('date_range 参数产出 BETWEEN 连接词，与 authorize 内联版逐字一致', () => {
+    const r = paramFilters(params, { bizday: { from: '2026-10-19', to: '2026-10-20' } }, false)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.filters[0]).toBe(" AND bizday BETWEEN '2026-10-19'::date AND '2026-10-20'::date")
+  })
+
+  it('from>to → range_invalid（保留既有可解释 detail）', () => {
+    const r = paramFilters(params, { bizday: { from: '2026-10-20', to: '2026-10-19' } }, false)
+    expect(r).toEqual({ ok: false, reason: 'bad_param', detail: 'range_invalid:bizday' })
+  })
+
+  it('wantTotal=false 时 total 是未知键（fail-closed）', () => {
+    const r = paramFilters(params, { total: true }, false)
+    expect(r).toEqual({ ok: false, reason: 'bad_param', detail: 'unknown_param:total' })
   })
 })
 

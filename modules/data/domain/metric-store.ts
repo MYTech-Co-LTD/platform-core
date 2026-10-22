@@ -4,7 +4,7 @@
 // 正典 docs/module-protocol.md「租户数据隔离」，机器判据 scripts/check-tenant-isolation.mjs。
 // 三处读写**全部**带 `where org = $1`——漏一处就是跨租户串数据。
 import type { Pool, PoolClient } from 'pg'
-import type { MaskSpec, MetricDef, MetricParamDef } from './authz'
+import type { DrillBinding, MaskSpec, MetricDef, MetricParamDef } from './authz'
 import type { MetricRowSnapshot } from './metric-audit-store'
 
 /**
@@ -77,6 +77,13 @@ export interface MetricRow extends MetricDef {
    * 物化，声明侧已拦「列不在 selectSql 里」的静默失效形态）；L2 行恒 null。
    */
   masks: MaskSpec[] | null
+  /**
+   * 明细下钻绑定（021 迁移，下钻 spec 2026-10-21 §2.3）：三列（drill_expr/drill_dims/drill_detail）
+   * 经 `drillBindingOf` 归一后的产物。**读侧不信任存储形状**——任一列缺/坏 ⇒ undefined（= 未声明），
+   * 绝不半绑（半个绑定比没有绑定更危险，spec §2.5：未声明即不下钻）。
+   * 真值只来自 L1 物化路径；L2 行三列恒 NULL ⇒ 恒 undefined（「L2 不支持下钻」由存储形状自然涌现）。
+   */
+  drill?: DrillBinding
 }
 
 /**
@@ -86,7 +93,7 @@ export interface MetricRow extends MetricDef {
  * 物化出的 L1 行因此恒有源。写成可选会给「漏传 ⇒ 静默落 null」留门，而那正是
  * 「平台行的源维度凭空消失、Task 5 的裁剪把它判成未接入源」的失败形态。
  */
-export interface L1MetricDef extends MetricDef {
+export interface L1MetricDef extends Omit<MetricDef, 'drill'> {
   sourceSystem: string | null
   /** 新鲜度 SLA 承诺天数（spec §10.7.1，声明 `freshness_sla_days` 的物化值）。 */
   slaDays: number
@@ -100,6 +107,14 @@ export interface L1MetricDef extends MetricDef {
    * 与显式 '' 同义（写库侧统一 `?? ''` 收口）。
    */
   scopeNote?: string
+  /**
+   * 明细下钻绑定（下钻 spec 2026-10-21 §2.3，声明 compose/dimensions/detail 的物化值）：
+   * **sync 物化路径必传**（声明有 compose/dimensions/detail 就给绑定；未声明 compose = 缺省，
+   * 与读侧 `MetricDef.drill?` 的「未声明 = 字段缺席」同一口径）。类型上可选与 `scopeNote`
+   * 同一条理由——合成契约与测试夹具可以不带；写侧 `== null` 收口（显式 null/undefined 同义，
+   * 都落 NULL = 未声明下钻）。
+   */
+  drill?: DrillBinding
 }
 
 /** 行 → MetricRow：只映射契约里的字段（created_at/updated_at 不外泄给授权核心）。 */
@@ -131,12 +146,28 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     // 掩码声明（spec §5.2）：mask_spec 是 jsonb 数组（pg 已反序列化），只认真数组——
     // 列缺省/坏形状宁可落 null（= 未声明），不让 undefined 冒充真值（同 freshness_relations）。
     masks: Array.isArray(row.mask_spec) ? (row.mask_spec as MaskSpec[]) : null,
+    // 下钻绑定（下钻 spec §2.3）：三列归一收口在 drillBindingOf——读侧不信任存储形状，
+    // 任一列缺/坏 ⇒ undefined（= 未声明），绝不半绑。
+    drill: drillBindingOf(row),
   }
+}
+
+/** 行的下钻三列 → DrillBinding；任一列缺/坏形状 ⇒ undefined（= 未声明）。读侧不信任存储形状。 */
+function drillBindingOf(row: Record<string, unknown>): DrillBinding | undefined {
+  const expr = row.drill_expr
+  const dims = row.drill_dims
+  const detail = row.drill_detail
+  if (typeof expr !== 'string' || expr === '') return undefined
+  if (!Array.isArray(dims) || dims.length === 0 || dims.some((d) => typeof d !== 'string' || d === '')) return undefined
+  if (typeof detail !== 'object' || detail === null) return undefined
+  const d = detail as { relation?: unknown; filter?: unknown }
+  if (typeof d.relation !== 'string' || d.relation === '' || typeof d.filter !== 'string' || d.filter === '') return undefined
+  return { expr, dims: dims as string[], relation: d.relation, filter: d.filter }
 }
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
@@ -238,6 +269,9 @@ export async function loadMergedCatalog(pool: Pool, org: string): Promise<Metric
 // ⚠️ 值级掩码声明（mask_spec，spec 2026-10-17 §5.2）第三组同理：L2 是结构化编译的产物，
 //    掩码不在其声明面 ⇒ 插入值缺席（列缺省 null），冲突分支也不碰（同上，抹掉平台行的
 //    掩码 = 掩码静默失效——那是安全面，更不能被一次租户写洗掉）。
+// ⚠️ 下钻三列（drill_expr/drill_dims/drill_detail，下钻 spec 2026-10-21 §2.3）同理不写：
+//    L2 没有「compose/dimensions/detail」这个输入 ⇒ 三列恒 NULL——「L2 不支持下钻」（spec §5）
+//    由存储形状自然涌现（读侧 drillBindingOf 恒判 undefined），无需运行期特判。
 export async function upsertMetric(
   db: Pool | PoolClient, org: string, def: MetricDef, updatedBy: string,
 ): Promise<void> {
@@ -288,12 +322,16 @@ export async function upsertMetric(
  * 值级掩码声明（`mask_spec`，spec 2026-10-17 §5.2）第四组同进退：sync 从声明 `mask` 物化
  * （声明侧 masksOf 校验含「column 须逐字在 selectSql 里」）；冲突分支也刷——声明撤了掩码
  * 而库里还留着 = 掩码静默生效（安全面宁可不生效也不能背着旧声明生效）。
+ *
+ * 下钻三列（`drill_expr` / `drill_dims` / `drill_detail`，下钻 spec 2026-10-21 §2.3/§2.5）第五组
+ * 同进退：sync 从声明 compose/dimensions/detail 物化（未声明 compose 传 null）；冲突分支也刷——
+ * 声明撤了下钻而库里还留着，读侧 `drillBindingOf` 虽判 undefined 不生效，但那是脏数据不是「未声明」。
  */
 export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void> {
   await pool.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, scope_note, sla_days, freshness_relations, mask_spec)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13, $14::jsonb, $15::jsonb)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, $17::jsonb, $18::jsonb)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -308,6 +346,9 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
        sla_days            = excluded.sla_days,
        freshness_relations = excluded.freshness_relations,
        mask_spec           = excluded.mask_spec,
+       drill_expr          = excluded.drill_expr,
+       drill_dims          = excluded.drill_dims,
+       drill_detail        = excluded.drill_detail,
        updated_at     = now()`,
     [
       L1_ORG, def.id, def.title, def.description, def.requiredScope,
@@ -315,6 +356,11 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
       def.sourceSystem, def.totalable === true, def.scopeNote ?? '',
       def.slaDays, JSON.stringify(def.freshnessRelations),
       def.masks === null ? null : JSON.stringify(def.masks),
+      // 下钻三列（spec §2.3）：未声明（null / 夹具缺省 undefined）⇒ 三列全 NULL，不半写——
+      // 半写的残行读侧虽 fail-closed 判 undefined，但那是把「未声明」伪装成「残缺」，形状失真。
+      def.drill == null ? null : def.drill.expr,
+      def.drill == null ? null : JSON.stringify(def.drill.dims),
+      def.drill == null ? null : JSON.stringify({ relation: def.drill.relation, filter: def.drill.filter }),
     ],
   )
 }

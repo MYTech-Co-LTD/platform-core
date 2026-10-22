@@ -16,8 +16,9 @@ const LAKE_RACE_RE = /ETag on reading file/
  * 新鲜度查询（spec §10.2）：load_log 最新一次**成功**物化的 materialized_at。
  * 同仓池上的一条主键级聚合——问数执行池就是仓（DATA_WAREHOUSE_URL），单跳；
  * 物化侧只写 status='ok' 行（materialize.sh，spec §10.1），这里也只认 ok。
+ * drill.ts 共用：明细读面的 data_as_of 与主计划同一条 as-of 查询，不再各写一份 SQL。
  */
-const DATA_AS_OF_SQL = "select max(materialized_at) as data_as_of from data.load_log where status='ok'"
+export const DATA_AS_OF_SQL = "select max(materialized_at) as data_as_of from data.load_log where status='ok'"
 /**
  * data_as_of 呈现（spec §10.6）：不回裸 Date（JSON 序列化成 UTC ISO 串，模型/人都要自己换算），
  * 服务端格式化成**北京时间**确定性字符串 `YYYY-MM-DD HH:mm:ss +08:00`。Intl（Node 22+ full-ICU）
@@ -30,8 +31,8 @@ const DATA_AS_OF_DATE_FMT = new Intl.DateTimeFormat('en-CA', {
 const DATA_AS_OF_TIME_FMT = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
 })
-/** timestamptz（node-pg 回 Date）→ `YYYY-MM-DD HH:mm:ss +08:00`（spec §10.6 呈现定案）。 */
-function formatDataAsOf(v: Date): string {
+/** timestamptz（node-pg 回 Date）→ `YYYY-MM-DD HH:mm:ss +08:00`（spec §10.6 呈现定案）。drill.ts 共用。 */
+export function formatDataAsOf(v: Date): string {
   return `${DATA_AS_OF_DATE_FMT.format(v)} ${DATA_AS_OF_TIME_FMT.format(v)} +08:00`
 }
 
@@ -154,11 +155,29 @@ export function freshnessRelationsOf(row: { freshnessRelations?: string[] | null
 /** 退避：写入是原子 PUT，撞上时新文件多半已就绪，~1s 后重试恰一次足够（spec §3.1）。 */
 const LAKE_RACE_RETRY_DELAY_MS = 1_000
 
-function isLakeRaceError(err: unknown): boolean {
+/** drill.ts 共用：竞态窄匹配的判定出口（LAKE_RACE_RE 经此间接导出，正则本体不外泄）。 */
+export function isLakeRaceError(err: unknown): boolean {
   return LAKE_RACE_RE.test(err instanceof Error ? err.message : String(err))
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/**
+ * 湖 ETag 竞态的统一处置（#452 定案 A）：撞重写窗 ⇒ 退避 ~1s 重试恰一次。
+ * 本通路全为只读 SELECT，天然幂等。runQuery 与 runDetailQuery 共用 ⇒ 重试纪律只有一份。
+ */
+export async function execWithLakeRaceRetry(
+  exec: () => Promise<{ columns: string[]; rows: unknown[][] }>,
+  delayMs: number,
+): Promise<{ result: { columns: string[]; rows: unknown[][] }; retried: boolean }> {
+  try {
+    return { result: await exec(), retried: false }
+  } catch (err) {
+    if (!isLakeRaceError(err)) throw err
+    await sleep(delayMs)
+    return { result: await exec(), retried: true }
+  }
+}
 
 /** 见 Interfaces 块：命名出来，供 T6 的 RouteCtx 与 T8/T9 的 deps 共同引用。 */
 export type SqlExecutor = (sql: string) => Promise<{ columns: string[]; rows: unknown[][] }>
@@ -313,19 +332,19 @@ export async function runQuery(
   // 任意时刻的读可能撞上重写窗 ⇒ 咽喉处退避 ~1s 重试**恰一次**（本通路全为只读 SELECT，天然幂等）。
   // 重试成功也把 `lake_race_retry` 写进审计 reason——那是 spec §3.5「重试是否长期够用」的数据源。
   // 自动伴随（spec §8.4）的 totalSql 是同一条通道上的第二只读查询 ⇒ 共用同一套竞态处置。
+  // 处置本体已提为模块级 `execWithLakeRaceRetry`（drill 的明细读面共用 ⇒ 重试纪律只有一份）；
+  // 这里只留两件本地事：绑定执行缝（deps.execute 测试缝 / 真仓池）与把 retried 累计进审计标志。
+  const execOnce = (sql: string) =>
+    deps.execute ? deps.execute(sql) : runWarehouseSql(warehousePool(), sql)
+  const race = (sql: string) =>
+    execWithLakeRaceRetry(() => execOnce(sql), deps.raceRetryDelayMs ?? LAKE_RACE_RETRY_DELAY_MS)
   let result: { columns: string[]; rows: unknown[][] }
   let raceRetried = false
+  // raceRetried 需要在多处累计（主计划 + totalSql）：小 helper 把 retried 并进本地标志。
   const execWithRaceRetry = async (sql: string) => {
-    const exec = () =>
-      deps.execute ? deps.execute(sql) : runWarehouseSql(warehousePool(), sql)
-    try {
-      return await exec()
-    } catch (err) {
-      if (!isLakeRaceError(err)) throw err
-      raceRetried = true
-      await sleep(deps.raceRetryDelayMs ?? LAKE_RACE_RETRY_DELAY_MS)
-      return await exec()
-    }
+    const r = await race(sql)
+    if (r.retried) raceRetried = true
+    return r.result
   }
   const toError = async (err: unknown): Promise<QueryError> => {
     const detail = err instanceof Error ? err.message : String(err)

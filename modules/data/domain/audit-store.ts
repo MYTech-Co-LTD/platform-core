@@ -36,6 +36,8 @@ export interface AuditEntry {
    *  ——判据空时调用方传 null，别传空对象。审计要能回答「看到的是原值还是掩码值」：
    *  「有列被豁免」与「压根没声明掩码」都必须可区分（前者记 `__exempted__`）。 */
   masking: MaskingAudit | null
+  /** 下钻面（spec 2026-10-21 §2.5）：下钻审计带粒度与总数；聚合审计缺席（null）。 */
+  drill?: { dimensions: string[]; rowCountTotal: number } | null
   /**
    * 触发本条审计的 MCP 工具名（spec 2026-10-21 §8）。可空：
    *   · 分析师面 11 工具 / legacy 指标工具（/mcp）恒写工具名；
@@ -54,8 +56,8 @@ export interface AuditEntry {
 export async function writeAudit(pool: Pool, entry: AuditEntry): Promise<{ id: number; createdAt: Date }> {
   const r = await pool.query(
     `insert into data.query_audit
-       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking, tool)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       (org, user_id, channel, key_id, metric_id, params, row_count, verdict, reason, masking, drill, tool)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)
      returning id, created_at`,
     [
       entry.org, entry.userId, entry.channel, entry.keyId, entry.metricId,
@@ -63,6 +65,7 @@ export async function writeAudit(pool: Pool, entry: AuditEntry): Promise<{ id: n
       // masking 的 null 必须原样落 NULL（不是 'null'::jsonb、更不能是 '{}'）——见字段注记。
       JSON.stringify(entry.params), entry.rowCount, entry.verdict, entry.reason,
       entry.masking === null ? null : JSON.stringify(entry.masking),
+      entry.drill === undefined || entry.drill === null ? null : JSON.stringify(entry.drill),
       entry.tool ?? null,
     ],
   )

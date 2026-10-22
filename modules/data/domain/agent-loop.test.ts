@@ -6,15 +6,19 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from '../test-util'
-import { upsertMetric } from './metric-store'
+import { upsertL1Metric, upsertMetric } from './metric-store'
+import type { L1MetricDef } from './metric-store'
 import type { MetricDef, Requester } from './authz'
 import type { ChatMessage, ChatModel, ChatTurn, ToolSpec } from './llm'
 import { MAX_AGENT_TURNS, runAgentLoop, TOOLS } from './agent-loop'
+import type { SqlExecutor } from './query-service'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
 /** 隔离键（text，值 = 该租户的 Casdoor org）——与 metrics/query/keys/mcp 各文件互不相同。 */
 const ORG = 'org-t9-agent'
+/** 本文件的 L1 夹具 id 前缀（平台桶 `org='platform'` 跨文件共用 ⇒ 清理只按前缀删）。 */
+const L1_PREFIX = 't9d:'
 
 /**
  * `AgentDeps.adoptedSources` 在本文件一律空集（计划 5）：夹具全部经 `upsertMetric` 落库，
@@ -36,6 +40,28 @@ const FINANCE_MRR: MetricDef = {
   requiredScope: 'data:finance', subjectColumn: 'org',
   selectSql: 'SELECT org, mrr FROM marts.mart_finance_mrr',
   groupBy: '', params: {},
+}
+/**
+ * 带下钻绑定的夹具（绑定形状与 drill.test.ts 的 DRILL 同形）：query_detail 要真走到下钻 SQL。
+ * ⚠️ 只能走 **L1 平台行**（upsertL1Metric）：`upsertMetric`（L2 写面）**刻意不写下钻三列**
+ * ——L2 声明面没有 compose/dimensions/detail 输入，「L2 不支持下钻」由存储形状涌现。
+ * L1 行带源维度 ⇒ 可见性要求 adoptedSources 含 `lemeng`（query.test.ts 同款：`['lemeng']`
+ * 扮演「宿主投影：已接入该源」）；平台桶跨文件共用 ⇒ id 带前缀、afterAll 按前缀清。
+ */
+const DRILL_NET: L1MetricDef = {
+  id: `${L1_PREFIX}drill_net_sales`, title: '净销售额', description: '带明细下钻的销售指标',
+  requiredScope: null, subjectColumn: 'org',
+  selectSql: 'SELECT org, system_book, bizday, sum(net) AS value FROM fct_t GROUP BY system_book, bizday',
+  groupBy: 'system_book, bizday',
+  params: { bizday: { column: 'bizday', type: 'date_range' } },
+  sourceSystem: 'lemeng',
+  slaDays: 1, freshnessRelations: [], masks: null,
+  drill: {
+    expr: '(sale_amount@order - return_amount@line)',
+    dims: ['system_book', 'bizday', 'branch_num', 'order_no'],
+    relation: 'vw_t',
+    filter: "state = 'FINISHED'",
+  },
 }
 
 /** 会话通道的请求者：只有 data:query（finance_mrr 挂 data:finance ⇒ 未授权）。 */
@@ -74,6 +100,9 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
     expect(pool.ended, '池在本 afterAll 之前已被 end').toBe(false)
     await pool.query('delete from data.query_audit where org = $1', [ORG]).catch(() => {})
     await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
+    // 平台桶跨文件共用 ⇒ 只删本文件前缀的那些（别 `where org='platform'`，会删掉并行兄弟的夹具）
+    await pool.query('delete from data.metrics where org = $1 and id like $2', ['platform', `${L1_PREFIX}%`])
+      .catch(() => {})
     await pool.query('delete from data.query_keys where org = $1', [ORG]).catch(() => {})
     await pool.end().catch(() => {})
   })
@@ -217,12 +246,68 @@ describePg('runAgentLoop（需要 DATABASE_URL）', () => {
     const model = new FakeChatModel([{ content: '直接答了', toolCalls: [] }])
     await collect(runAgentLoop({ pool, org: ORG, adoptedSources: NO_SOURCES }, sessionRequester(), model, 'q'))
     const tools = model.calls[0]!.tools
-    expect(tools.map((t) => t.name).sort()).toEqual(['list_metrics', 'query_metric'])
+    expect(tools.map((t) => t.name).sort()).toEqual(['list_metrics', 'query_detail', 'query_metric'])
     const spec = tools.find((t) => t.name === 'query_metric')!
     expect(spec.description).toContain('等值')
     expect(spec.description).toContain('同列')
     // 主体不在客户端可指定面：inputSchema 的键里没有 org/subject
     expect(JSON.stringify(spec.inputSchema)).not.toMatch(/"org"|subject/)
+  })
+
+  it('query_detail：透传 dimensions/limit 并走 runDetailQuery（与聚合同一授权核心）', async () => {
+    await seed()
+    await upsertL1Metric(pool, DRILL_NET)
+    // ok 路径会碰仓库缝（维度名解析 / data_as_of）：env 先清（drill.test.ts 同款纪律），
+    // 不吃同 worker 先跑文件可能留在 process.env 里的 DATA_WAREHOUSE_URL。
+    delete process.env.DATA_WAREHOUSE_URL
+    const sqlLog: string[] = []
+    // 下钻是两条腿：明细 SQL + 同一 where 的 count——假执行器按形状分叉应答（与 drill.test.ts 同法）
+    const execute: SqlExecutor = async (sql) => {
+      sqlLog.push(sql)
+      return /count\(\*\)/.test(sql)
+        ? { columns: ['n'], rows: [[15222]] }
+        : { columns: ['system_book', 'value'], rows: [['3120', 123.4]] }
+    }
+    const model = new FakeChatModel([
+      { content: '', toolCalls: [{ id: 'c1', name: 'query_detail', arguments: { metricId: DRILL_NET.id, args: { bizday: { from: '2026-10-19', to: '2026-10-20' } }, dimensions: ['system_book'], limit: 10 } }] },
+      { content: '3120 账套贡献最大。', toolCalls: [] },
+    ])
+    const events = await collect(
+      // L1 夹具带源维度 ⇒ adoptedSources 必须含 lemeng（源裁剪三态的「已接入」侧）
+      runAgentLoop({ pool, org: ORG, execute, adoptedSources: new Set(['lemeng']) }, sessionRequester(), model, '哪个账套贡献最大'),
+    )
+    expect(events[0]).toMatchObject({ type: 'activity', tool: 'query_detail', detail: `下钻明细 ${DRILL_NET.id}` })
+    expect(events.at(-1)).toMatchObject({ type: 'final', table: { columns: ['system_book', 'value'] } })
+    // 明细腿：dimensions/limit 原样进 SQL（外层按请求维度上卷 + value 降序）；count 腿是另一条
+    const detailSql = sqlLog.find((s) => !/count\(\*\)/.test(s))
+    expect(detailSql).toContain('group by system_book order by value desc limit 10')
+    // 工具结果原样回给模型：status ok + rowCountTotal 来自 count 腿（不是 rows.length）
+    const toolMsg = model.calls[1]!.messages.find((m) => m.role === 'tool')
+    const detail = JSON.parse(toolMsg!.content) as { status: string; rowCountTotal: number; dimensions: string[] }
+    expect(detail.status).toBe('ok')
+    expect(detail.rowCountTotal).toBe(15222)
+    expect(detail.dimensions).toEqual(['system_book'])
+  })
+
+  it('query_detail 的 total 键被拒（unknown_param:total）——聚合面吃 total，下钻面 fail-closed', async () => {
+    await seed()
+    await upsertL1Metric(pool, DRILL_NET)
+    const sqlLog: string[] = []
+    const execute: SqlExecutor = async (sql) => { sqlLog.push(sql); return { columns: ['n'], rows: [[1]] } }
+    const model = new FakeChatModel([
+      { content: '', toolCalls: [{ id: 'c1', name: 'query_detail', arguments: { metricId: DRILL_NET.id, args: { bizday: { from: '2026-10-19', to: '2026-10-20' }, total: true } } }] },
+      { content: '下钻明细没有合计形态。', toolCalls: [] },
+    ])
+    await collect(
+      runAgentLoop({ pool, org: ORG, execute, adoptedSources: new Set(['lemeng']) }, sessionRequester(), model, 'q'),
+    )
+    // authorize（聚合门）吃掉了 total，下钻自己的 paramFilters(wantTotal=false) 把它当未知键拒
+    const toolMsg = model.calls[1]!.messages.find((m) => m.role === 'tool')
+    const denied = JSON.parse(toolMsg!.content) as { status: string; reason: string; detail?: string }
+    expect(denied.status).toBe('denied')
+    expect(denied.reason).toBe('bad_param')
+    expect(denied.detail).toBe('unknown_param:total')
+    expect(sqlLog, '被拒 ⇒ 从未触达湖').toEqual([])
   })
 })
 
@@ -269,5 +354,29 @@ describe('TOOLS —— query_metric 参数契约（spec 2026-10-15 §2.5 + §8.4
     expect(d).toContain('最新')
     // 当日数据为部分天，须标注
     expect(d).toContain('部分天')
+  })
+})
+
+// 纯断言（无 DATABASE_URL）：锁 query_detail 的工具面位置与 flash 级行为规则文案本身。
+describe('TOOLS —— query_detail 工具面（spec 2026-10-21 §2.4）', () => {
+  it('第三把工具 query_detail 在面上，行为规则下沉在描述里（flash 级口径）', () => {
+    expect(TOOLS.map((t) => t.name)).toEqual(['list_metrics', 'query_metric', 'query_detail'])
+    const spec = TOOLS.find((t) => t.name === 'query_detail')!
+    const d = spec.description
+    // 能力边界：no_detail_binding = 该指标不支持下钻，改用 query_metric、不要重试
+    expect(d).toContain('no_detail_binding')
+    expect(d).toContain('不要重试')
+    // bizday 必传（直读数据湖，范围越大越慢）
+    expect(d).toContain('bizday **必传**')
+    // rowCountTotal 是「多少行」的唯一权威（不是 rows 长度、不是样本即全量）
+    expect(d).toContain('rowCountTotal')
+    expect(d).toContain('不要拿 rows 长度')
+    // 两只时钟：clock_note 原样转述；scope_line 有则单独一行附末尾
+    expect(d).toContain('clock_note')
+    expect(d).toContain('原样转述')
+    expect(d).toContain('scope_line')
+    // 主体不在客户端可指定面：required 只有 metricId，schema 无 org/subject
+    expect(spec.inputSchema.required).toEqual(['metricId'])
+    expect(JSON.stringify(spec.inputSchema)).not.toMatch(/"org"|subject/)
   })
 })
