@@ -148,13 +148,16 @@ describe('listPipelinesImpl', () => {
       expect(Object.prototype.hasOwnProperty.call(out.payload, 'incomplete')).toBe(false)
     }
   })
-  it('pipelines 根不可读 ⇒ unknown（不是空清单）', async () => {
+  it('pipelines 根不可读 ⇒ unknown（不是空清单），且点名没读全的根', async () => {
     const out = await listPipelinesImpl(missingDeps, {})
     expect(out.isError).toBe(false)
-    const p = out.payload as { status: string; reason: string; warnings: string[] }
+    const p = out.payload as { status: string; reason: string; warnings: string[]; incomplete: string[] }
     expect(p.status).toBe('unknown')
     expect(p.reason).toBe('pipelines_root_unreadable')
     expect(p.warnings.some((w) => w.includes('pipelines'))).toBe(true)
+    // 与拒绝出口相反：这条**读过**（试图读）⇒ 必须点名读不全的根，而不是让「unknown」自己扛全部信息。
+    // 调度根与管线根同树 ⇒ 一起读不到；契约根可读 ⇒ 不得出现在这里（终审 R2）。
+    expect(p.incomplete).toEqual(['pipelines', 'schedules'])
   })
   it('坏件：warnings 点名，好管线照常返回', async () => {
     const out = await listPipelinesImpl(brokenDeps, {})
