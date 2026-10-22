@@ -10,7 +10,9 @@
 //     `deploy/duckle/console/README.md` 的「console 只认自己 workspace 里的 pipelines/」一致）。
 //   · 调度文件是**数组**（不是字典），每条带 `pipeline_id`。
 //   · 契约里 `_` 开头的文件是基础设施（_schema/_template），必须跳过（contracts/README.md）。
-import { readdirSync, readFileSync } from 'node:fs'
+//   · 契约是**两层容器**：`contracts/<域>/<源>.<表>.json` 与 `contracts/customers/<客户>/…`；
+//     同 id 多份只告警不裁决（优先级未定案，contracts/customers/README.md）。
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const PIPELINE_ID_RE = /^[A-Za-z0-9_.-]+$/
@@ -138,36 +140,80 @@ export function loadSchedules(
 
 export function loadContracts(
   roots: PipelineRoots,
-): { contracts: ContractRef[]; warnings: string[] } {
+): { contracts: ContractRef[]; warnings: string[]; incomplete: boolean } {
   const contracts: ContractRef[] = []
   const warnings: string[] = []
+  // 「有东西没读到/没解析成功」的显式信号（≠「仓里没有」，也 ≠「同 id 重复」那种读到了但有歧义）。
+  // 调用方要判断「基线是否可信」，不要靠 warnings 文本反推（文案会变）。
+  let incomplete = false
   let domains: string[]
   try {
     domains = readdirSync(roots.contractsRoot, { withFileTypes: true })
       .filter((d) => d.isDirectory()).map((d) => d.name).sort()
   } catch {
     warnings.push(`contracts 目录不可读：${roots.contractsRoot}`)
-    return { contracts, warnings }
+    return { contracts, warnings, incomplete: true }
   }
-  for (const domain of domains) {
+
+  /** 枚举一个目录里的契约（`_` 前缀 = 基础设施，跳过；坏件进 warnings 并标记读不全）。 */
+  const collect = (relDir: string): void => {
     let files: string[]
-    try { files = readdirSync(join(roots.contractsRoot, domain)).filter((f) => f.endsWith('.json')).sort()
-    } catch { warnings.push(`契约目录不可读：${domain}`); continue }
+    try { files = readdirSync(join(roots.contractsRoot, relDir)).filter((f) => f.endsWith('.json')).sort()
+    } catch { warnings.push(`契约目录不可读：${relDir}`); incomplete = true; return }
     for (const f of files) {
       // `_` 前缀 = 基础设施（_schema/_template），跳过（contracts/README.md 明文）。
       if (f.startsWith('_')) continue
-      const raw = readJson(join(roots.contractsRoot, domain, f))
-      if (!isObj(raw)) { warnings.push(`跳过不可解析的契约：${domain}/${f}`); continue }
+      const stem = f.slice(0, -'.json'.length)
+      const raw = readJson(join(roots.contractsRoot, relDir, f))
+      if (!isObj(raw)) { warnings.push(`跳过不可解析的契约：${relDir}/${f}`); incomplete = true; continue }
       const table = str(raw.table)
-      const dom = str(raw.domain) || domain
+      // domain 缺省时按 `<源>.<表>.json` 的文件名取源。**不能**用目录名兜底：
+      // 客户覆盖目录名是**客户**（customers/acme），不是数据域。
+      const fallbackDomain = stem.includes('.') ? stem.slice(0, stem.lastIndexOf('.')) : relDir
+      const dom = str(raw.domain) || fallbackDomain
       const cols = Array.isArray(raw.columns) ? raw.columns.length : 0
       contracts.push({
-        id: table === '' ? f.slice(0, -'.json'.length) : `${dom}.${table}`,
-        domain: dom, table, path: `contracts/${domain}/${f}`, columns: cols, doc: raw,
+        id: table === '' ? stem : `${dom}.${table}`,
+        domain: dom, table, path: `contracts/${relDir}/${f}`, columns: cols, doc: raw,
       })
     }
   }
-  return { contracts, warnings }
+
+  for (const domain of domains) {
+    // `customers/` 是**容器**（下一层才是客户目录），不是数据域——见下方两层枚举与
+    // contracts/customers/README.md。把它当域扫只会读到空/README。
+    if (domain === 'customers') continue
+    collect(domain)
+  }
+
+  // 客户级覆盖：`contracts/customers/<客户>/<源>.<表>.json`（README.md 明文的两层形态）。
+  // 缺 `customers/` 目录是正常形态（当前仓就是空目录，只有 README）⇒ 不告警；
+  // 目录在但读不到 ⇒ 告警并标记读不全（否则客户覆盖会**静默消失**）。
+  const customersDir = join(roots.contractsRoot, 'customers')
+  if (existsSync(customersDir)) {
+    let customers: string[] = []
+    try {
+      customers = readdirSync(customersDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory()).map((d) => d.name).sort()
+    } catch {
+      warnings.push('契约目录不可读：customers')
+      incomplete = true
+    }
+    for (const customer of customers) collect(`customers/${customer}`)
+  }
+
+  // 同 id 多份（common 与 customers/<客户>，或两个客户）：**只告警，不裁决**——
+  // contracts/customers/README.md 明写优先级未定案，遇到并存要问 owner，不许猜顺序。
+  const byId = new Map<string, ContractRef[]>()
+  for (const c of contracts) byId.set(c.id, [...(byId.get(c.id) ?? []), c])
+  for (const [id, list] of [...byId.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (list.length > 1) {
+      warnings.push(`契约 id 重复：${id}（${list.map((c) => c.path).join('、')}）`
+        + '——common 与 customers 的优先级未定案，不要猜，先问 owner')
+    }
+  }
+
+  return { contracts, warnings, incomplete }
 }
 
 /**

@@ -45,12 +45,12 @@ const root = makeRoot(
 const partialRoot = makeRoot({ 'lemeng.a.b': basePipeline, 'bad!': basePipeline }, { 'common/lemeng.a': contractA })
 // 新契约已有按命名约定指向它的管线（前缀命中但尚未解析到任何契约）。
 const prefixRoot = makeRoot({ 'lemeng.a_c.tick': { ...basePipeline, name: 'lemeng.a_c.tick' } }, { 'common/lemeng.a': contractA })
-// 只有 customers 下的契约（loadContracts 只看一层目录，故文件直接挂在 customers/ 下）。
-const customersRoot = makeRoot({ 'lemeng.a.b': basePipeline }, { 'customers/lemeng.a': contractA })
-// 同 id 两份（common + customers）：归属未定案，禁止静默挑一份。
+// 只有 customers 下的契约：**两层**布局（contracts/customers/<客户>/<源>.<表>.json，README 明文）。
+const customersRoot = makeRoot({ 'lemeng.a.b': basePipeline }, { 'customers/acme/lemeng.a': contractA })
+// 同 id 两份（common + customers/acme）：归属未定案，禁止静默挑一份。
 const dupRoot = makeRoot(
   { 'lemeng.a.b': basePipeline },
-  { 'common/lemeng.a': contractA, 'customers/lemeng.a': contractA },
+  { 'common/lemeng.a': contractA, 'customers/acme/lemeng.a': contractA },
 )
 // 契约面**部分可读**：一个坏文件 + 一个正常契约（查「读不全」与「已读到」是否自相矛盾）。
 const warnedContractsRoot = makeRoot(
@@ -107,6 +107,7 @@ describe('buildPipelineProposal', () => {
     const p = buildPipelineProposal(deps, { pipeline: { name: '../x', nodes: [], edges: [] }, title: 't', rationale: 'r' })
     expect(p.validation.length).toBeGreaterThan(0)
     expect(p.validation.some((i) => i.path === 'name')).toBe(true)
+    expectUniquePaths(p)
   })
   it('未提供契约 ⇒ 点名缺契约（required）并沿用既有契约的真实 path；dbt staging 仍是 required', () => {
     const p = buildPipelineProposal(deps, { pipeline, title: 't', rationale: 'r' })
@@ -129,7 +130,7 @@ describe('buildPipelineProposal', () => {
       depsOf(customersRoot, join(customersRoot, 'contracts')),
       { pipeline, contract: { ...contract, table: 'a' }, title: 't', rationale: 'r' },
     )
-    expect(p.pieces[1].path).toBe('contracts/customers/lemeng.a.json')
+    expect(p.pieces[1].path).toBe('contracts/customers/acme/lemeng.a.json')
     expectUniquePaths(p)
   })
   it('★ 同 id 多份 ⇒ unknown（归属未定）+ targets 列出全部候选，不静默挑一份', () => {
@@ -139,10 +140,12 @@ describe('buildPipelineProposal', () => {
     )
     const ambiguous = p.downstream.find((d) => d.kind === 'unknown' && d.why.includes('归属'))
     expect(ambiguous?.targets).toEqual([
-      'contracts/common/lemeng.a.json', 'contracts/customers/lemeng.a.json',
+      'contracts/common/lemeng.a.json', 'contracts/customers/acme/lemeng.a.json',
     ])
     expect(ambiguous?.why).toContain('不替你选')
     expect(p.pieces[1].path).toBe('contracts/common/lemeng.a.json') // 正典默认位，不是「挑中的那一份」
+    // 同 id 重复是 loader 的 warning，但**不是**「读不全」——不许冒充 partial。
+    expect(p.downstream.every((d) => !d.why.includes('契约面读不全'))).toBe(true)
     expectUniquePaths(p)
   })
   it('★ M1：契约面读不全时，即便带了契约草案也要显式报 unknown（不能对基线沉默）', () => {
@@ -181,6 +184,7 @@ describe('buildPipelineProposal', () => {
       expect(fp).not.toContain('contracts/customers/')
       expect(existsSync(join(REPO_ROOT, fp))).toBe(false)
     }
+    expectUniquePaths(p)
   })
 })
 
@@ -229,8 +233,9 @@ describe('buildContractProposal', () => {
     expectUniquePaths(p)
   })
   it('非法契约 ⇒ validation 非空', () => {
-    expect(buildContractProposal(deps, { contract: { ...contract, contractVersion: 1 }, title: 't', rationale: 'r' })
-      .validation.length).toBeGreaterThan(0)
+    const p = buildContractProposal(deps, { contract: { ...contract, contractVersion: 1 }, title: 't', rationale: 'r' })
+    expect(p.validation.length).toBeGreaterThan(0)
+    expectUniquePaths(p)
   })
   it('★ 同 id 多份 ⇒ 落正典默认位 + unknown（归属未定，targets 全量），不挑一份', () => {
     const p = buildContractProposal(
@@ -238,9 +243,11 @@ describe('buildContractProposal', () => {
     )
     expect(p.pieces[0].path).toBe('contracts/common/lemeng.a.json')
     const ambiguous = p.downstream.find((d) => d.kind === 'unknown' && d.why.includes('归属'))
+    // 歧义项的 targets 是**契约 path** 命名空间（不是管线 id），且两份都在。
     expect(ambiguous?.targets).toEqual([
-      'contracts/common/lemeng.a.json', 'contracts/customers/lemeng.a.json',
+      'contracts/common/lemeng.a.json', 'contracts/customers/acme/lemeng.a.json',
     ])
+    expect(p.downstream.every((d) => !d.why.includes('契约面读不全'))).toBe(true)
     expectUniquePaths(p)
   })
   it('★ I2：管线面读不全 ⇒ 显式 unknown，且与 candidate 的 path 不是同一个键', () => {

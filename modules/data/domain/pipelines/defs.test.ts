@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { contractFor, loadContracts, loadPipelines, loadSchedules, rootsOf } from './defs'
+import type { PipelineRoots } from './defs'
 
 const root = mkdtempSync(join(tmpdir(), 'pl-defs-'))
 afterAll(() => rmSync(root, { recursive: true, force: true }))
@@ -94,4 +95,86 @@ describe('loadContracts / contractFor', () => {
       }
     },
   )
+})
+
+// 客户级覆盖是**两层**（contracts/customers/<客户>/<源>.<表>.json，contracts/customers/README.md）。
+// 每个用例用独立临时根：契约面是共享状态，混在一个根里会互相污染断言。
+describe('loadContracts —— customers/<客户>/ 两层覆盖', () => {
+  const made: { dir: string; roots: PipelineRoots; seed: (rel: string, body: unknown) => void }[] = []
+  const mkRoot = (): (typeof made)[number] => {
+    const dir = mkdtempSync(join(tmpdir(), 'pl-defs-cust-'))
+    const r = {
+      dir,
+      roots: rootsOf({}, dir),
+      seed: (rel: string, body: unknown): void => {
+        const p = join(dir, rel)
+        mkdirSync(join(p, '..'), { recursive: true })
+        writeFileSync(p, typeof body === 'string' ? body : JSON.stringify(body))
+      },
+    }
+    made.push(r)
+    return r
+  }
+  const contractDoc = (table = 'a') => ({
+    contractVersion: 2, domain: 'lemeng', table, owner: 'data-platform', columns: [{ name: 'x', type: 'varchar' }],
+    layout: { prefix: `lemeng/${table}`, partitionStyle: 'hive', partitionBy: ['d'], fileName: 'all.parquet' },
+  })
+  afterAll(() => {
+    for (const m of made) {
+      // chmod 000 的目录先恢复，否则 rmSync 在 macOS 上清不掉。
+      try { chmodSync(join(m.dir, 'contracts/customers/acme'), 0o755) } catch { /* 不存在/无权都无所谓 */ }
+      rmSync(m.dir, { recursive: true, force: true })
+    }
+  })
+
+  it('两层客户覆盖能被发现：path 是仓内相对路径，跳过 _ 前缀与非 .json', () => {
+    const m = mkRoot()
+    m.seed('contracts/customers/acme/lemeng.a.json', contractDoc())
+    m.seed('contracts/customers/acme/_template.contract.json', { title: 'infra' })
+    m.seed('contracts/customers/acme/README.md', '# 说明')
+    const { contracts, warnings, incomplete } = loadContracts(m.roots)
+    expect(contracts.map((c) => c.path)).toEqual(['contracts/customers/acme/lemeng.a.json'])
+    expect(contracts[0]).toMatchObject({ id: 'lemeng.a', domain: 'lemeng', table: 'a' })
+    expect(warnings).toEqual([])
+    expect(incomplete).toBe(false)
+  })
+  it('同 id 多份（common + customers/acme）⇒ warning 点名两份 path；但**不是**读不全', () => {
+    const m = mkRoot()
+    m.seed('contracts/common/lemeng.a.json', contractDoc())
+    m.seed('contracts/customers/acme/lemeng.a.json', contractDoc())
+    const { contracts, warnings, incomplete } = loadContracts(m.roots)
+    expect(contracts.map((c) => c.path)).toEqual([
+      'contracts/common/lemeng.a.json', 'contracts/customers/acme/lemeng.a.json',
+    ])
+    const dup = warnings.find((w) => w.includes('契约 id 重复'))
+    expect(dup).toContain('contracts/common/lemeng.a.json')
+    expect(dup).toContain('contracts/customers/acme/lemeng.a.json')
+    expect(dup).toContain('优先级未定案')
+    expect(incomplete).toBe(false)
+  })
+  it.skipIf(typeof process.getuid === 'function' && process.getuid() === 0)(
+    '客户目录不可读 ⇒ warning + incomplete=true，其余契约照常返回',
+    () => {
+      const m = mkRoot()
+      m.seed('contracts/common/lemeng.a.json', contractDoc())
+      m.seed('contracts/customers/acme/lemeng.b.json', contractDoc('b'))
+      chmodSync(join(m.dir, 'contracts/customers/acme'), 0o000)
+      try {
+        const { contracts, warnings, incomplete } = loadContracts(m.roots)
+        expect(contracts.map((c) => c.id)).toEqual(['lemeng.a'])
+        expect(warnings.some((w) => w.includes('customers/acme'))).toBe(true)
+        expect(incomplete).toBe(true)
+      } finally {
+        chmodSync(join(m.dir, 'contracts/customers/acme'), 0o755)
+      }
+    },
+  )
+  it('坏件 ⇒ incomplete=true（有契约没读进来，不能当「没有」）', () => {
+    const m = mkRoot()
+    m.seed('contracts/common/lemeng.a.json', contractDoc())
+    m.seed('contracts/common/broken.json', '{not json')
+    const { contracts, incomplete } = loadContracts(m.roots)
+    expect(contracts.map((c) => c.id)).toEqual(['lemeng.a'])
+    expect(incomplete).toBe(true)
+  })
 })

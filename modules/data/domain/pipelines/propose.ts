@@ -38,9 +38,11 @@ export interface DownstreamItem {
   why: string
   kind: DownstreamKind
   /**
-   * 聚合项的具体对象（管线 id / 契约 path）：`candidate` 与歧义 `unknown` 用它承载**全部**
-   * 命中对象——不能只塞进中文句子里，否则读 structuredContent 的 agent 无法枚举。
-   * 单项（required/affected）不需要它。
+   * 聚合项的**全量**命中对象——不能只塞进中文句子里，否则读 structuredContent 的 agent
+   * 无法枚举。命名空间按 `kind` 区分，**不可跨 kind 混用/join**：
+   *   · `candidate` ⇒ 管线 **id**（如 `lemeng.a.b`；`path` 是目录哨兵）
+   *   · `unknown`（契约归属歧义）⇒ 契约的**仓内相对 path**（如 `contracts/common/x.y.json`）
+   *   · 其余 kind 不带本字段（各自已有单一 `path`）。
    */
   targets?: readonly string[]
 }
@@ -173,7 +175,9 @@ export function buildPipelineProposal(
   const baseline = contractsLoad.contracts
   // 契约面读不全（整目录不可读，或个别文件坏）：**不许**据此推断「没有契约」。
   // 这条与「是否带了契约草案」无关——带了也照样说不出基线长什么样。
-  const baselineIncomplete = contractsLoad.warnings.length > 0
+  // 用 `incomplete` 而不是 `warnings.length`：同 id 重复也是 warning，但那是「读到了、
+  // 归属未定」（由 ambiguous 项处理），不是「没读到」。
+  const baselineIncomplete = contractsLoad.incomplete
   const existingForPipeline = nameOk ? contractFor(pipelineId, baseline) : null
 
   let contractDomain = ''
@@ -201,8 +205,8 @@ export function buildPipelineProposal(
     downstream.push({
       path: CONTRACTS_PARTIAL,
       kind: 'unknown',
-      why: `契约面读不全（${contractsLoad.warnings.join('；')}）：基线里可能还有未读到的契约`
-        + '（例如 customers 覆盖）；下面已读到的项仍成立，但「只有这些」不是结论（未知 ≠ 没有）',
+      why: `契约面读不全（${contractsLoad.warnings.join('；')}）：基线里可能还有未读到的契约；`
+        + '下面已读到的项仍成立，但「只有这些」不是结论（未知 ≠ 没有）',
     })
   }
   // 同 id 多份 ⇒ 先让人定归属，不静默挑一份（common / customers 优先级未定案）。
@@ -332,7 +336,8 @@ export function buildContractProposal(
     kind: 'required',
     why: '若该表参与了 L1 口径，语义声明可能要跟着改',
   })
-  if (contractsLoad.warnings.length > 0) {
+  // 只对「没读到」出 unknown；同 id 重复已由 ambiguous 项表达，别在这里重复一遍。
+  if (contractsLoad.incomplete) {
     downstream.push({
       path: CONTRACTS_PARTIAL,
       kind: 'unknown',
