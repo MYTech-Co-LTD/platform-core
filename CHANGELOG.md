@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.186.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.185.0...v0.186.0) - 2026-10-22
+- 【新增】data: 数据面 MCP Wave 3——T1 提案面（7 工具，写闸 + 审计单点） ([#998](https://github.com/MYTech-Co-LTD/platform-core/pull/998), [311d9d2](https://github.com/MYTech-Co-LTD/platform-core/commit/311d9d2d2754cd8bd26f7aa2109b8dbbca2c426a))
+
+
 ## [0.185.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.184.2...v0.185.0) - 2026-10-22
 - 【新增】data: bot 问数明细下钻 Phase 2 (#994) ([#996](https://github.com/MYTech-Co-LTD/platform-core/pull/996), [981a806](https://github.com/MYTech-Co-LTD/platform-core/commit/981a8063183990ede11c77fc39dbcbd605ee633f))
 
