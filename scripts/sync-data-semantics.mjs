@@ -820,7 +820,10 @@ const comparableOf = (/** @type {ComparableMetric} */ row) => JSON.stringify(can
  * @returns {DrillColumn[] | null} null = 未声明
  */
 export function detailColumnsOf(v, metricName, dims) {
-  if (v === undefined || v === null) return null
+  // 只在**键缺席**时回 null。`columns: null`（YAML 写了键、值空——常见手误）必须与门禁同判据：
+  // check-data-models 的判据是 `if (D.columns !== undefined)` ⇒ 键在值空报红；这里若也回 null，
+  // 手跑 sync 就会把那份坏声明静默物化成「无条件列」——那列随后对所有人缺席且零报错。
+  if (v === undefined) return null
   if (!Array.isArray(v) || v.length === 0) {
     throw new Error(`指标 \`${metricName}\` 的 \`detail.columns\` 必须是非空数组（每项 {col, grantedBy}）`)
   }

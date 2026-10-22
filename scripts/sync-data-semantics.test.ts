@@ -1078,6 +1078,15 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     expect(mk([{ col: 'x_price', grantedBy: 'data:cost' }, { col: 'x_price', grantedBy: 'data:cost' }])).toThrow(/重复/)
   })
 
+  it('`columns: null`（键在、值空，常见手误）⇒ 与门禁同判据：响亮失败，不静默物化成「无条件列」', () => {
+    // 门禁 check-data-models 的判据是 `if (D.columns !== undefined)` ⇒ 键在值空（YAML `columns:` ⇒ null）
+    // 报红；sync 若在这里回 null（= 未声明），手跑就会把那份坏声明静默落库——那列对所有人缺席且零报错。
+    expect(() => declarationsFromYaml({
+      metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail: { ...detail, columns: null } }],
+      measures: { 'a@b': 'sum(x)' },
+    })).toThrow(/非空数组/)
+  })
+
   it('drillOf / drillTripleOf 透传 columns（库侧不透传 ⇒ --check 恒报更新）', () => {
     const cols = [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }]
     const detailWithCols = { relation: 'vw_x', filter: 'true', columns: cols }

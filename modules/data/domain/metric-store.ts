@@ -344,6 +344,19 @@ export async function upsertMetric(
  * 同进退：sync 从声明 compose/dimensions/detail 物化（未声明 compose 传 null）；冲突分支也刷——
  * 声明撤了下钻而库里还留着，读侧 `drillBindingOf` 虽判 undefined 不生效，但那是脏数据不是「未声明」。
  */
+/**
+ * `drill_detail` 的物化形状 `{relation, filter, columns?}`——与 sync 的 `drillDetailOf`、
+ * 读侧 `drillBindingOf` 同一闭集。
+ *
+ * `columns` 缺省**不写键**（缺席 ≠ 空数组）：声明侧 `comparableOf` 的比对面同形，写漏这一跳会让
+ * `--check` 恒报更新（库侧读回「无 columns」、声明侧有 ⇒ 每日 sync job 永不收敛）。
+ */
+function drillDetailJson(drill: DrillBinding): string {
+  return JSON.stringify(drill.columns === undefined
+    ? { relation: drill.relation, filter: drill.filter }
+    : { relation: drill.relation, filter: drill.filter, columns: drill.columns })
+}
+
 export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void> {
   await pool.query(
     `insert into data.metrics
@@ -377,7 +390,7 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
       // 半写的残行读侧虽 fail-closed 判 undefined，但那是把「未声明」伪装成「残缺」，形状失真。
       def.drill == null ? null : def.drill.expr,
       def.drill == null ? null : JSON.stringify(def.drill.dims),
-      def.drill == null ? null : JSON.stringify({ relation: def.drill.relation, filter: def.drill.filter }),
+      def.drill == null ? null : drillDetailJson(def.drill),
     ],
   )
 }
