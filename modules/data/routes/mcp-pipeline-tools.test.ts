@@ -4,9 +4,9 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
-import { makePipelineTools } from './mcp-pipeline-tools'
+import { makePipelineTools, verdictOf } from './mcp-pipeline-tools'
 import type { McpDeps } from './mcp-rpc'
 import type { Requester } from '../domain/authz'
 
@@ -76,6 +76,43 @@ describe('makePipelineTools.call', () => {
     const out = await g.call(depsOf({ requester: null }), 'list_pipelines', {})
     expect(JSON.parse(out!.text)).toMatchObject({ status: 'denied', reason: 'unauthenticated' })
   })
+  it('★ 审计写不进去 ⇒ 调用 reject（不被伪装成 tool_exception，也不写假错行）', async () => {
+    const g = makePipelineTools(wiring())
+    // impl 会成功；审计（reply）必须把**第一次**插入的错误往上抛。
+    // 假 pool 刻意做成「只失败一次」：若谁把 reply 放回 try，catch 会再写一次审计（第二次成功）
+    // 并回 {status:'error',reason:'tool_exception'} —— 本用例就会从 reject 变成 resolve 而红。
+    // 用「永远 reject」的 pool 测不出这个结构差异（旧结构下第二次也 reject，照样 reject）。
+    let inserts = 0
+    const pool = {
+      query: async () => {
+        inserts += 1
+        if (inserts === 1) throw new Error('boom')
+        return { rows: [{ id: 1, created_at: new Date() }] }
+      },
+    } as never
+    await expect(g.call(depsOf({ pool }), 'list_pipelines', {})).rejects.toThrow('boom')
+    expect(inserts).toBe(1)   // 没有第二次 INSERT（也就不会有 error/tool_exception 假错行）
+  })
+})
+
+describe('verdictOf：审计判决按 status 分类（unknown/not_found ≠ denied）', () => {
+  it('unknown / not_found 即使 isError 也记 ok', () => {
+    expect(verdictOf({ status: 'unknown', reason: 'runs_source_not_wired' }, true))
+      .toEqual({ verdict: 'ok', reason: 'runs_source_not_wired' })
+    expect(verdictOf({ status: 'not_found' }, true)).toEqual({ verdict: 'ok', reason: 'not_found' })
+  })
+  it('denied / error 按 status（不看 isError）', () => {
+    expect(verdictOf({ status: 'denied', reason: 'mutating_disabled' }, true))
+      .toEqual({ verdict: 'denied', reason: 'mutating_disabled' })
+    expect(verdictOf({ status: 'error', reason: 'tool_exception' }, true))
+      .toEqual({ verdict: 'error', reason: 'tool_exception' })
+  })
+  it('无 status 且 isError ⇒ denied/tool_error（未知形状不静默变 ok）', () => {
+    expect(verdictOf({ detail: 'x' }, true)).toEqual({ verdict: 'denied', reason: 'tool_error' })
+  })
+  it('ok 行 reason 为空串（写库时转 null）', () => {
+    expect(verdictOf({ status: 'ok', count: 1 }, false)).toEqual({ verdict: 'ok', reason: '' })
+  })
 })
 
 // ── 审计：真库（写 data.query_audit）────────────────────────────────────────────
@@ -83,9 +120,14 @@ const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
 describePg('审计单点（需要 DATABASE_URL）', () => {
   const ORG = 'org-wave3-audit'
+  const ORG_ANON = 'org-wave3-audit-anon'
   const pool = new Pool({ connectionString: dbUrl })
+  // 上次运行崩溃可能留下残留行 ⇒ 精确数组断言会直接红。跑前先清（防 flaky）。
+  beforeAll(async () => {
+    await pool.query('delete from data.query_audit where org = any($1)', [[ORG, ORG_ANON]])
+  })
   afterAll(async () => {
-    await pool.query('delete from data.query_audit where org = $1', [ORG])
+    await pool.query('delete from data.query_audit where org = any($1)', [[ORG, ORG_ANON]])
     await pool.end()
   })
   it('每条调用（ok / not_found / unknown / denied）都落一行，verdict 不把「空」当「拒」', async () => {
@@ -103,5 +145,16 @@ describePg('审计单点（需要 DATABASE_URL）', () => {
     expect(rows.map((r) => r.verdict)).toEqual(['ok', 'ok', 'ok', 'denied'])
     // reason 是区分三种「空」的唯一抓手：'' 落 null，其余透传。
     expect(rows.map((r) => r.reason)).toEqual([null, 'not_found', 'runs_source_not_wired', 'mutating_disabled'])
+  })
+
+  it('空身份路径也落一行审计（userId = anonymous，verdict = denied）', async () => {
+    const g = makePipelineTools(wiring())
+    await g.call(depsOf({ pool, org: ORG_ANON, requester: null }), 'list_pipelines', {})
+    const { rows } = await pool.query<{ user_id: string; tool: string; verdict: string; reason: string }>(
+      'select user_id, tool, verdict, reason from data.query_audit where org = $1 order by id', [ORG_ANON])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      user_id: '(anonymous)', tool: 'list_pipelines', verdict: 'denied', reason: 'unauthenticated',
+    })
   })
 })

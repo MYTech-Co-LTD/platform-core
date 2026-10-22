@@ -46,6 +46,31 @@ const entryOf = (t: (typeof PIPELINE_TOOLS)[number]): Record<string, unknown> =>
   inputSchema: t.inputSchema, outputSchema: t.outputSchema, annotations: t.annotations,
 })
 
+/**
+ * 审计判决的**唯一**映射（纯函数，可脱库单测）。
+ *
+ * 按 `status` 分类，而不是按 `isError`：`not_found`（问的客体不存在）与 `unknown`（读不到）
+ * 都不是「调用被拒」——把它们记成 denied 会让安全复核分不清「判了拒」和「查了个空」。
+ * 只有 `status:'denied'`、以及**没有 status 却 isError**（impl 抛出的未知形状）才算 denied。
+ * reason：透传 payload.reason（含 ok 行）→ status 非 ok 时回落 status → 无 status 的 denied
+ * 回落 'tool_error' → 其余 ''（写库时转 null）。
+ */
+export function verdictOf(
+  payload: Record<string, unknown>, isError: boolean,
+): { verdict: 'ok' | 'denied' | 'error'; reason: string } {
+  const status = typeof payload.status === 'string' ? payload.status : null
+  const verdict: 'ok' | 'denied' | 'error' =
+    status === 'error' ? 'error'
+      : status === 'denied' ? 'denied'
+        : status === null && isError ? 'denied'
+          : 'ok'
+  const reason = typeof payload.reason === 'string' ? payload.reason
+    : status !== null && status !== 'ok' ? status
+      : verdict === 'denied' ? 'tool_error'
+        : ''
+  return { verdict, reason }
+}
+
 export function makePipelineTools(wiring: PipelineWiring = defaultPipelineWiring()): McpToolGroup {
   const depsOf = (d: McpDeps): PipelineDeps => ({ roots: wiring.roots, env: wiring.env, runs: wiring.runs })
 
@@ -66,13 +91,10 @@ export function makePipelineTools(wiring: PipelineWiring = defaultPipelineWiring
     d: McpDeps, name: string, args: Record<string, unknown>,
     payload: Record<string, unknown>, isError: boolean, rowCount: number | null,
   ): Promise<McpToolResult> => {
-    // 审计三态只有 ok / denied / error。**`not_found` 与 `unknown` 都不是 denied**：
-    // 前者是「被问的客体不存在」、后者是「读不到」，都不是「调用被拒」——把它们记成 denied
-    // 会让安全复核分不清「判了拒」和「查了个空」。reason 一律透传 payload.reason（含 ok 行），
-    // 这样 `select tool, verdict, reason, count(*) … group by 1,2,3` 能区分三种空。
-    const status = typeof payload.status === 'string' ? payload.status : null
-    const verdict = status === 'error' ? 'error' : isError && status !== 'not_found' ? 'denied' : 'ok'
-    const reason = typeof payload.reason === 'string' ? payload.reason : (status !== null && status !== 'ok' ? status : '')
+    // 判决映射见 `verdictOf`（按 status 分类，unknown/not_found ≠ denied）；reason 的三种空由它统一。
+    // ⚠️ 本函数**不得**被 call() 的 try 包住：审计写不进去必须向上抛（协议壳不兜 ⇒ 500），
+    //    而不是被当成 impl 异常再写一条 `error/tool_exception` 的假错行。
+    const { verdict, reason } = verdictOf(payload, isError)
     await audit(d, name, args, verdict, reason, rowCount)
     return {
       text: JSON.stringify(payload), isError,
@@ -95,13 +117,16 @@ export function makePipelineTools(wiring: PipelineWiring = defaultPipelineWiring
       if (meta.mutating && !mutatingAllowed(wiring.env)) {
         return reply(d, name, args, { status: 'denied', reason: 'mutating_disabled', name }, true, null)
       }
+      // 只包 impl：审计（reply）必须在 try **之外**——否则审计连接抖动会被 catch 成
+      // 「impl 异常」，再写一条 error/tool_exception 的假错行，把一次成功的调用记成失败。
+      let out: Awaited<ReturnType<PipelineImpl>>
       try {
-        const out = await IMPLS[name]!(depsOf(d), args)
-        return await reply(d, name, args, out.payload, out.isError, out.auditRowCount ?? null)
+        out = await IMPLS[name]!(depsOf(d), args)
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err)
-        return await reply(d, name, args, { status: 'error', reason: 'tool_exception', detail }, true, null)
+        return reply(d, name, args, { status: 'error', reason: 'tool_exception', detail }, true, null)
       }
+      return reply(d, name, args, out.payload, out.isError, out.auditRowCount ?? null)
     },
   }
 }
