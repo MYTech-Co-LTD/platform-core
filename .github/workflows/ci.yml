@@ -167,6 +167,8 @@ jobs:
       # 事实源 = toolbox/registry.ts 的 ANALYST_TOOLS（显式 .ts import；registry 是纯的，
       # 这条 import 链不拉运行时依赖——registry 头注有约束）。判据单测在 test:guard（unit）。
       - run: pnpm exec tsx scripts/check-mcp-toolface.mjs
+      # guide↔SKILL 同源（Wave 2，#985）：SKILL.md 漏抄/改写 GUIDE_INVARIANTS 即红（D-G1 机检）
+      - run: pnpm exec tsx scripts/check-guide-sync.mjs
       # 回填工具链的行为测试（issue #387；判据正典 spec `2026-09-29-read-side-migration.md` §4 Phase 0/1）。
       #
       # 为什么它该进 CI（而别的 `.test.sh` 没进）：本工具的判据是**数字与顺序**——Phase 0 探针必须

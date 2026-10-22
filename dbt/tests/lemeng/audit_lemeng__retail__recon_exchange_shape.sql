@@ -25,20 +25,43 @@
 --
 -- ── 形态坑（与同族文件同一套实测形态，出处见 recon_gift_hit 头注 ①②③）────────────────
 --   r['列'] 算术先 ::numeric；键/字面量 coalesce 先 cast；read_parquet 只认位置参数。
-with src_pq as (
+--   湖读取走**冷热两腿合流**（#984）：day 天文件 + hour 小时文件**各自单读**，热腿排除已封版日
+--   （同 staging 冷热合流，含封版排除语义）——原双 glob 一把读在封窗日双计。
+with src_pq_cold as (
+    -- 冷腿：已封版日的**天文件**
     select
         r['system_book']::varchar          as system_book,
         r['bizday']::date                  as bizday,
         r['order_total_money']::numeric    as total_money,
         r['payment_money']::numeric        as pay_money
     from read_parquet(
-        ARRAY['s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet', 's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet']::text[]
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
     ) r
     where r['state'] = 'FINISHED'
       and r['order_transaction_type'] = 'SALE_ORDER'
       -- 只比已闭窗营业日：今天的分区被 tick 重写 ⇒ 与物化建表互撞 ETag 竞态而报 ERROR
       -- （实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。两侧都滤，才是同量。
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+),
+src_pq_hot as (
+    -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
+    select
+        r['system_book']::varchar          as system_book,
+        r['bizday']::date                  as bizday,
+        r['order_total_money']::numeric    as total_money,
+        r['payment_money']::numeric        as pay_money
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
+    ) r
+    where r['state'] = 'FINISHED'
+      and r['order_transaction_type'] = 'SALE_ORDER'
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+),
+src_pq as (
+    select * from src_pq_cold
+    union all
+    select * from src_pq_hot
 ),
 src_stg as (
     select
@@ -114,17 +137,34 @@ select
     0::bigint                                                          as pay_neg,
     '退货侧公式输入形状违规（FINISHED 退货行：sale_money / order_detail_share_discount 为空）——恒空 ⇒ 该行被 sum 静默丢掉，退货额虚低' as note
 from (
+    -- #984 冷热两腿合流（冷：已封版日的天文件；热：未封版日的小时文件，排除已封版日）
     select
         r['system_book']::varchar                 as system_book,
         r['bizday']::date                         as bizday,
         r['sale_money']::numeric                  as sale_money,
         r['order_detail_share_discount']::numeric as share_discount
     from read_parquet(
-        ARRAY['s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet', 's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet']::text[]
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
     ) r
     where r['order_transaction_type'] like '%RETURN%'
       and r['state'] = 'FINISHED'
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+
+    union all
+
+    -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
+    select
+        r['system_book']::varchar                 as system_book,
+        r['bizday']::date                         as bizday,
+        r['sale_money']::numeric                  as sale_money,
+        r['order_detail_share_discount']::numeric as share_discount
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
+    ) r
+    where r['order_transaction_type'] like '%RETURN%'
+      and r['state'] = 'FINISHED'
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
 ) ret
 where sale_money is null or share_discount is null
 group by 1, 2

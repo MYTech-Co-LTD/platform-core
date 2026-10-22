@@ -211,4 +211,48 @@ describe('wecomChannelIdentityMiddleware', () => {
     expect(body).toMatchObject({ userId: 'alice', channel: 'pat' })
     await mock.stop()
   })
+
+  // ── Wave 2（ref #985）：/toolbox 新路由上的多通道共存回归。两条合起来钉：
+  // 同一新端点上，PAT 与企微意图互不干扰，通道 C 开启不影响 PAT 通路（#983 修的形态）。
+  function toolboxApp(mock: MockCasdoor) {
+    const a = new Hono<RequesterEnv>()
+    a.use('*', async (c, next) => {
+      c.set('tenant', baseTenant)
+      await next()
+    })
+    a.use('/api/modules/*', patIdentityMiddleware({
+      casdoor: casdoorFor(mock),
+      resolveKey: async (token) =>
+        token === 'dkq_valid-pat-token' ? { keyId: 1, org: ORG, casdoorUser: 'alice' } : null,
+    }))
+    a.use('/api/modules/*', wecomChannelIdentityMiddleware({
+      casdoor: casdoorFor(mock), channelKey: CHANNEL_KEY,
+    }))
+    a.post('/api/modules/data/toolbox', (c) => c.json({
+      userId: c.get('identity')?.userId ?? null,
+      channel: c.get(REQUESTER_CHANNEL) ?? null,
+    }))
+    return a
+  }
+
+  it('多通道共存 ×/toolbox：通道 C 开启 + 合法 PAT（无企微意图头）→ pat 身份放行（Wave 2 新路由同规）', async () => {
+    const mock = withAlice(); await mock.start()
+    const res = await toolboxApp(mock).request('/api/modules/data/toolbox', {
+      method: 'POST', headers: { authorization: 'Bearer dkq_valid-pat-token' },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ userId: 'alice', channel: 'pat' })
+    await mock.stop()
+  })
+
+  it('多通道共存 ×/toolbox：带企微意图 → wecom 身份（新路由走同一闸，fail-closed 同链）', async () => {
+    const mock = withAlice(); await mock.start()
+    const res = await toolboxApp(mock).request('/api/modules/data/toolbox', {
+      method: 'POST',
+      headers: { 'x-channel-key': CHANNEL_KEY, [WECOM_USERID_HEADER]: 'alice' },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ userId: 'alice', channel: 'wecom' })
+    await mock.stop()
+  })
 })

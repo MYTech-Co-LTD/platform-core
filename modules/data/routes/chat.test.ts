@@ -197,4 +197,48 @@ describePg('POST /chat 的 SSE 形状（需要 DATABASE_URL；fetch stub 成脚�
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({ type: 'error', reason: 'AGENT_FAILED', detail: 'LLM_HTTP_502' })
   }, 15000)
+
+  // Wave 2（ref #985，spec §9 验收锚）：registry 子集进 LLM 面 + 全事件序列快照。
+  // 快照用例要**自己的** fakeWh（全局新鲜度支只读 data.load_log，注入一行即确定），
+  // 不复用组内那份 `execute`；事件解析用组内既有 parseEvents。
+  it('SSE 事件序列快照：activity(get_freshness) → final（无表）；LLM 工具面含 registry 子集', async () => {
+    await applyMigrations(pool)
+    setLlmEnv(true)
+    const fakeWh = (async () => ({
+      rows: [['fct_retail_sale', '2026-10-20', new Date('2026-10-21T02:10:00+08:00')]],
+    })) as unknown as SqlExecutor
+    // 同组先例：execute 用**变量**携带进 ctx，绕开 ModuleContext 字面量的多余属性检查
+    const snapCtx = { pool, execute: fakeWh }
+    const llmCalls: { tools: { function?: { name?: string } }[] }[] = []
+    const turns = [
+      { choices: [{ message: { content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'get_freshness', arguments: '{}' } }] } }] },
+      { choices: [{ message: { content: '数据截至 2026-10-20。' } }] },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { tools?: { function?: { name?: string } }[] }
+      llmCalls.push({ tools: body.tools ?? [] })
+      return new Response(JSON.stringify(turns[Math.min(llmCalls.length - 1, turns.length - 1)]), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }))
+
+    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), snapCtx, { id: 1, casdoor_org: ORG })
+    const res = await app.request('/chat', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: '数据到几号了' }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/event-stream')
+    // 先消费流（SSE 流在读取时才开跑，模型调用发生在流处理期），再断言
+    const events = parseEvents(await res.text())
+    // LLM 面断言：三把 registry 子集工具随请求下发（绑定的路由级证据）
+    const names = llmCalls[0]!.tools.map((t) => t.function?.name)
+    expect(names).toEqual(expect.arrayContaining(['describe_metric', 'sample_dimension_values', 'get_freshness']))
+    // ★ 事件序列快照（spec §9 Wave 2 验收锚）：整表 deep-equal，非 toMatchObject
+    expect(events).toEqual([
+      { type: 'activity', tool: 'get_freshness', detail: '查新鲜度 全局' },
+      { type: 'final', text: '数据截至 2026-10-20。' },
+    ])
+  }, 15000)
 })

@@ -161,6 +161,93 @@ export default definePluginEntry({
       ),
       { name: DETAIL_DEF.name },
     );
+    // ── Wave 2（ref #985）：registry 子集三工具，经 POST /toolbox（registry 的 HTTP 薄封装）调用。
+    // 与既有工具同一 callPlatform/同一错误文案映射/同一捕获机制——插件仍零权限逻辑。
+    const DESCRIBE_DEF = {
+      name: "describe_metric",
+      description:
+        "按 id 取指标详情：口径定义/粒度维度/参数/归属/档位/版本/新鲜度。args 键或维度名拿不准时先调它（id 取自 list_metrics）；sample_dimension_values 的 dimension 必须是这里 grain 里的一员。",
+      parameters: {
+        type: "object",
+        properties: { id: { type: "string", description: "指标 id（来自 list_metrics）" } },
+        required: ["id"],
+        additionalProperties: false,
+      },
+    };
+    const SAMPLE_DEF = {
+      name: "sample_dimension_values",
+      description:
+        "取某指标某维度的取值与频次（≤50 行），用于确认过滤值/分组维度的确切写法（如门店名）。dimension 必须是该指标粒度维度之一（describe_metric 返回的 grain）；回包 truncated=true 时只说明「值太多被截断」，不是数据错误。",
+      parameters: {
+        type: "object",
+        properties: {
+          metricId: { type: "string", description: "指标 id" },
+          dimension: { type: "string", description: "维度名（grain 之一）" },
+          q: { type: "string", description: "子串过滤（可选）" },
+          limit: { type: "number", description: "1–50，缺省 50" },
+        },
+        required: ["metricId", "dimension"],
+        additionalProperties: false,
+      },
+    };
+    const FRESHNESS_DEF = {
+      name: "get_freshness",
+      description:
+        "数据截止日/物化时刻/滞后秒。scope=指标 id 查该指标链路水位；缺省查全局水位。用户问「数据到几号/新不新」用它，不要靠猜。回 status=unknown 如实说「新鲜度未知」，不要编。",
+      parameters: {
+        type: "object",
+        properties: { scope: { type: "string", description: "指标 id（缺省 = 全局）" } },
+        required: [],
+        additionalProperties: false,
+      },
+    };
+    api.registerTool(
+      factory(DESCRIBE_DEF, (params, userId) =>
+        callPlatform({
+          apiBase, channelKey: CHANNEL_KEY, userId,
+          path: "/toolbox", method: "POST",
+          body: { tool: "describe_metric", args: { id: params.id } },
+        }),
+      ),
+      { name: DESCRIBE_DEF.name },
+    );
+    api.registerTool(
+      factory(SAMPLE_DEF, (params, userId) =>
+        callPlatform({
+          apiBase, channelKey: CHANNEL_KEY, userId,
+          path: "/toolbox", method: "POST",
+          body: {
+            tool: "sample_dimension_values",
+            args: {
+              metricId: params.metricId,
+              dimension: params.dimension,
+              ...(typeof params.q === "string" && params.q ? { q: params.q } : {}),
+              ...(typeof params.limit === "number" ? { limit: params.limit } : {}),
+            },
+          },
+        }),
+      ),
+      { name: SAMPLE_DEF.name },
+    );
+    api.registerTool(
+      factory(
+        FRESHNESS_DEF,
+        (params, userId) =>
+          callPlatform({
+            apiBase, channelKey: CHANNEL_KEY, userId,
+            path: "/toolbox", method: "POST",
+            body: { tool: "get_freshness", args: { ...(typeof params.scope === "string" && params.scope ? { scope: params.scope } : {}) } },
+          }),
+        // 捕获 get_freshness 回包的正典 📅 行（metric 支才有 line 字段）。不捕获的话：模型转述
+        // 该行会被 message_sending 钩子剥掉、又没有捕获可重附 ⇒ 新鲜度行静默丢失（决策 D-F1）。
+        (result, sessionKey, runId) => {
+          if (!result) return;
+          const line = typeof result.line === "string" && result.line ? result.line : undefined;
+          if (line) freshnessStore.capture(sessionKey, { freshness: line }, runId);
+        },
+      ),
+      { name: FRESHNESS_DEF.name },
+    );
     // 新鲜度行确定性附加（strip-then-append，天然去重）。钩子注册方法按 zh-thinking 插件
     // 同款口径用 api.on（2026.9.9 实测公开方法）；拿不到就跳过并留诊断日志——工具仍可用，
     // 只退回「模型自附」的旧行为，绝不让插件装载失败。

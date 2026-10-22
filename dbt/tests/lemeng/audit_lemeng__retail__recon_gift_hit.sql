@@ -49,18 +49,20 @@
 --      `JOIN/USING types duckdb.unresolved_type and integer cannot be matched` ⇒ 键逐个显式 cast。
 --   ③ DuckDB 侧聚合值与**字面量**做 coalesce 也要先 cast：`coalesce(a.hit_amount, 0)` 报
 --      `COALESCE types duckdb.unresolved_type and integer cannot be matched` ⇒ 先 `::numeric` 再 coalesce。
-with recheck as (
-    -- 复算：直接打 parquet，按归零公式的消费粒度 (账套,日,店,商品) 聚合命中集。
+--   ④ 湖读取走**冷热两腿合流**（#984）：day 天文件 + hour 小时文件**各自单读**，热腿排除已封版日
+--      （同 staging 冷热合流，含封版排除语义）——原双 glob 一把读在封窗日双计。
+with recheck_raw as (
+    -- 复算：直接打 parquet（冷热两腿合流后），按归零公式的消费粒度聚合。
+    -- 冷腿：已封版日的**天文件**
     select
         r['system_book']::varchar               as system_book,
         r['bizday']::date                       as bizday,
         r['branch_num']::int                    as branch_num,
         r['item_num']::varchar                  as item_num,
-        count(*)                                as hit_rows,
-        sum(r['quantity'])                      as hit_qty,
-        sum(r['sale_money'])                    as hit_amount
+        r['quantity']::numeric                  as quantity,
+        r['sale_money']::numeric                as sale_money
     from read_parquet(
-        ARRAY['s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet', 's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet']::text[]
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
     ) r
     where r['state'] = 'FINISHED'
       and r['order_detail_std_price']::numeric > 0
@@ -70,6 +72,39 @@ with recheck as (
       -- 只比已闭窗营业日（今天的分区被 tick 重写 ⇒ ETag 竞态报 ERROR；实测 2026-10-06
       -- run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。两侧都滤，才是同量。
       and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+
+    union all
+
+    -- 热腿：未封版日的小时文件——排除已封版日（同 stg 冷热合流，#984）
+    select
+        r['system_book']::varchar               as system_book,
+        r['bizday']::date                       as bizday,
+        r['branch_num']::int                    as branch_num,
+        r['item_num']::varchar                  as item_num,
+        r['quantity']::numeric                  as quantity,
+        r['sale_money']::numeric                as sale_money
+    from read_parquet(
+        's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
+    ) r
+    where r['state'] = 'FINISHED'
+      and r['order_detail_std_price']::numeric > 0
+      and r['sale_money']::numeric > 0
+      and r['quantity']::numeric > 0
+      and abs(r['discount_money']::numeric - r['order_detail_std_price']::numeric * r['quantity']::numeric) <= 0.02
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+),
+recheck as (
+    -- 复算聚合：按归零公式的消费粒度 (账套,日,店,商品) 聚合命中集（#984 拆腿后聚合式不变）。
+    select
+        system_book,
+        bizday,
+        branch_num,
+        item_num,
+        count(*)          as hit_rows,
+        sum(quantity)     as hit_qty,
+        sum(sale_money)   as hit_amount
+    from recheck_raw
     group by 1, 2, 3, 4
 ),
 materialized as (
@@ -117,8 +152,21 @@ select
 where not exists (select 1 from recheck)
   and exists (
       select 1
-      from read_parquet(
-          ARRAY['s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet', 's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet']::text[]
-      ) r
-      where r['state'] = 'FINISHED' and r['sale_money']::numeric > 0
+      from (
+          -- #984 冷热两腿合流（冷：已封版日的天文件；热：未封版日的小时文件，排除已封版日）
+          select 1
+          from read_parquet(
+              's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
+          ) r
+          where r['state'] = 'FINISHED' and r['sale_money']::numeric > 0
+
+          union all
+
+          select 1
+          from read_parquet(
+              's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
+          ) r
+          where r['state'] = 'FINISHED' and r['sale_money']::numeric > 0
+            and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+      ) src_any
   )

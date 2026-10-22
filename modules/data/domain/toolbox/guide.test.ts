@@ -1,6 +1,6 @@
 // guide.test.ts — 纯层（不连库；impl 不触 pool/wh）。
 import { describe, expect, it } from 'vitest'
-import { GUIDE_TEXT_BUILDER, guideImpl, harnessCatalogImpl } from './guide'
+import { GUIDE_INVARIANTS, GUIDE_TEXT_BUILDER, guideImpl, harnessCatalogImpl } from './guide'
 import { ANALYST_TOOLS, type ToolboxDeps } from './registry'
 import type { Requester } from '../authz'
 
@@ -32,5 +32,27 @@ describe('guideImpl / harnessCatalogImpl', () => {
   })
   it('GUIDE_TEXT_BUILDER 的今天日期由调用方注入（不隐藏依赖系统时钟）', () => {
     expect(GUIDE_TEXT_BUILDER('2026-01-02')).toContain('2026-01-02')
+  })
+})
+
+describe('GUIDE_INVARIANTS（三通道同源内核，Wave 2 决策 D-G1）', () => {
+  it('恰四行，每行都进 GUIDE_TEXT_BUILDER 输出（B 通道同源现状不破）', () => {
+    expect(GUIDE_INVARIANTS).toHaveLength(4)
+    const built = GUIDE_TEXT_BUILDER('2026-10-22')
+    for (const line of GUIDE_INVARIANTS) expect(built).toContain(line)
+  })
+  it('行文案是通道中性的：不出现 B 专属工具名（A/C 没有这些工具，引用即误导）', () => {
+    for (const line of GUIDE_INVARIANTS) {
+      expect(line.includes('search_catalog') || line.includes('preview_query') || line.includes('data_harness_catalog')).toBe(false)
+    }
+  })
+  it('四行分别钉住：主体钉死 / 截断语义（含 1000）/ total 语义 / 新鲜度如实', () => {
+    const all = GUIDE_INVARIANTS.join('\n')
+    expect(all).toContain('钉死')
+    expect(all).toContain('1000')
+    expect(all).toContain('truncated')
+    expect(all).toContain('total')
+    expect(all).toContain('新鲜度')
+    expect(all).toContain('不要编')
   })
 })

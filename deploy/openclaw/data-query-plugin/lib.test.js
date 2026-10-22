@@ -509,3 +509,32 @@ test("入站清账：store 坏掉 / ctx 为 null → 不抛（宿主 fail-open�
   assert.equal(await makeFreshnessInboundHook(badStore)({ content: "x" }, { sessionKey: "s1" }), undefined);
   assert.equal(await makeFreshnessInboundHook(makeStore({ t: 0 }))(null, null), undefined);
 });
+
+// ── Wave 2（ref #985）：/toolbox 三新工具的请求形状（body 由 callPlatform 原样外发）─────────
+const toolboxBody = (f, args) => ({ apiBase: "http://x/api", channelKey: "k", userId: "u1", path: "/toolbox", method: "POST", body: args, fetchImpl: f });
+
+test("toolbox：describe_metric 的 body 形状 {tool, args:{id}}", async () => {
+  const f = stubFetch(200, { status: "ok", id: "lemeng:retail:net_sales" });
+  await callPlatform(toolboxBody(f, { tool: "describe_metric", args: { id: "lemeng:retail:net_sales" } }));
+  assert.equal(f.calls[0].init.method, "POST");
+  assert.equal(f.calls[0].url, "http://x/api/toolbox");
+  assert.deepEqual(JSON.parse(f.calls[0].init.body), { tool: "describe_metric", args: { id: "lemeng:retail:net_sales" } });
+});
+test("toolbox：not_found 走 403 → DENIED 文案（存在性不区分的既有约定不被新工具破坏）", async () => {
+  const f = stubFetch(403, { status: "not_found", metricId: "x" });
+  const r = await callPlatform(toolboxBody(f, { tool: "describe_metric", args: { id: "x" } }));
+  assert.equal(r.code, "DENIED");
+  assert.match(r.error, /可见范围/);
+});
+test("toolbox：get_freshness 的 unknown 回包 200 原样透传（未知≠错误，模型如实转述）", async () => {
+  const f = stubFetch(200, { status: "unknown", reason: "no_freshness_chain", scope: "lemeng:retail:net_sales" });
+  const r = await callPlatform(toolboxBody(f, { tool: "get_freshness", args: { scope: "lemeng:retail:net_sales" } }));
+  assert.equal(r.status, "unknown");
+  assert.equal(r.reason, "no_freshness_chain");
+});
+test("toolbox：403 bad_param → 参数文案带 detail（与 /query 同映射，零新逻辑）", async () => {
+  const f = stubFetch(403, { status: "denied", reason: "bad_param", detail: "unknown_dimension:store" });
+  const r = await callPlatform(toolboxBody(f, { tool: "sample_dimension_values", args: { metricId: "m", dimension: "store" } }));
+  assert.equal(r.code, "BAD_PARAM");
+  assert.match(r.error, /unknown_dimension:store/);
+});
