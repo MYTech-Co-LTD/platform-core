@@ -92,6 +92,7 @@ const LEGACY_TOOLS: ToolSpec[] = [
       'dimensions 缺省 = 最细（订单级）；传入必须是 list 后该指标声明维度的子集（变粗上卷）。回包默认按 value 降序。',
       '「哪几行/哪几单贡献最大」用本工具；「合计多少」用 query_metric 的 total。',
       '回包带 drill_as_of（明细查询时刻）与 data_as_of（聚合口径截止）+ clock_note——两个时钟不同，逐行相加可能与聚合值不一致，以 clock_note 为准原样转述。scope_line 有则原样单独一行附在答案末尾。',
+      '回包可能**少一列**（条件列）：那是未授权（如 data:cost），**不是没有数据/不是 NULL**——如实说明「该列需授权」。',
     ].join(''),
     inputSchema: {
       type: 'object',
