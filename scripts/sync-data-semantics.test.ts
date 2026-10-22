@@ -1047,6 +1047,54 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     const fromDb = [row('(sum(x))', { filter: 'true', relation: 'vw_x' })]
     expect(diffDeclarations(declared, fromDb).unchanged).toEqual(['a'])
   })
+
+  it('detail.columns：物化进 drillDetail；未声明时**不写键**（不是空数组）', () => {
+    const cols = [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }]
+    const withCols = declarationsFromYaml({
+      metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail: { ...detail, columns: cols } }],
+      measures: { 'a@b': 'sum(x)' },
+    })
+    expect(withCols[0].drillDetail).toEqual({
+      relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'", columns: cols,
+    })
+
+    const without = declarationsFromYaml({
+      metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail }],
+      measures: { 'a@b': 'sum(x)' },
+    })
+    expect(without[0].drillDetail).toEqual({ relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'" })
+  })
+
+  it('detail.columns 形状坏 ⇒ 响亮失败（sync 手跑路径，不静默物化坏权限声明）', () => {
+    const mk = (columns: unknown) => () => declarationsFromYaml({
+      metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail: { ...detail, columns } }],
+      measures: { 'a@b': 'sum(x)' },
+    })
+    expect(mk([])).toThrow(/非空数组/)
+    expect(mk([{ col: 'order_detail_std_price', granted_by: 'data:cost' }])).toThrow(/未知键/)
+    expect(mk([{ col: 'system_book', grantedBy: 'data:cost' }])).toThrow(/dimensions/)
+    expect(mk([{ col: 'value', grantedBy: 'data:cost' }])).toThrow(/value/)
+    expect(mk([{ col: 'x_price', grantedBy: '' }])).toThrow(/grantedBy/)
+    expect(mk([{ col: 'x_price', grantedBy: 'data:cost' }, { col: 'x_price', grantedBy: 'data:cost' }])).toThrow(/重复/)
+  })
+
+  it('drillOf / drillTripleOf 透传 columns（库侧不透传 ⇒ --check 恒报更新）', () => {
+    const cols = [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }]
+    const detailWithCols = { relation: 'vw_x', filter: 'true', columns: cols }
+    expect(drillOf({
+      id: 'a', title: 'A', description: '', requiredScope: null, subjectColumn: 'org',
+      selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {}, sourceSystem: 'lemeng',
+      totalable: false, slaDays: 1, freshnessRelations: [], masks: null,
+      drillExpr: '(sum(x))', drillDims: ['system_book'], drillDetail: detailWithCols,
+    })?.columns).toEqual(cols)
+
+    expect(drillTripleOf({ drill: { expr: '(sum(x))', dims: ['system_book'], relation: 'vw_x', filter: 'true', columns: cols } }))
+      .toEqual({ drillExpr: '(sum(x))', drillDims: ['system_book'], drillDetail: detailWithCols })
+
+    // 反向对照：未声明 ⇒ 两侧都不写键（否则恒不等）
+    expect(drillTripleOf({ drill: { expr: '(sum(x))', dims: ['s'], relation: 'vw_x', filter: 'true' } }).drillDetail)
+      .toEqual({ relation: 'vw_x', filter: 'true' })
+  })
 })
 
 describe('measuresOf / composeOf —— 下钻编译的纯函数面（spec 2026-10-21 §2.3）', () => {

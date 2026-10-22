@@ -76,6 +76,7 @@ import { loadSensitivity } from './check-column-scope-monotonicity.mjs'
 /** @typedef {import('../modules/data/domain/authz.ts').MetricParamDef} MetricParamDef */
 /** @typedef {import('../modules/data/domain/authz.ts').MaskSpec} MaskSpec */
 /** @typedef {import('../modules/data/domain/authz.ts').DrillBinding} DrillBinding */
+/** @typedef {import('../modules/data/domain/authz.ts').DrillColumn} DrillColumn */
 
 export const SCRIPT_NAME = 'sync-data-semantics'
 
@@ -134,8 +135,9 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  *                  ——composeOf；null = 未声明。库侧行的 `MetricRow.drill` 是归一后的可选绑定，
  *                  **必须**先经 `drillTripleOf` 翻译成这份三键形状再进比对）
  * @property {string[] | null} drillDims 下钻维度闭集（声明 `dimensions` 的物化值；null = 未声明）
- * @property {{ relation: string, filter: string } | null} drillDetail 下钻明细关系与行域过滤
- *                  （声明 `detail` 的物化值；null = 未声明）
+ * @property {{ relation: string, filter: string, columns?: Array<{ col: string, grantedBy: string }> } | null} drillDetail
+ *                  下钻明细关系、行域过滤与条件列（声明 `detail` 的物化值；null = 未声明。
+ *                  `columns` 缺省**不写键**——库侧 `drillTripleOf` 必须同形，否则 --check 恒报更新）
  */
 
 /**
@@ -748,12 +750,7 @@ export function declarationsFromYaml(parsed) {
         : (Array.isArray(m.dimensions) && m.dimensions.length > 0
           && m.dimensions.every((/** @type {unknown} */ d) => typeof d === 'string' && /^[a-z_][a-z0-9_]*$/.test(d))
           ? m.dimensions.map(String) : null),
-      drillDetail: m.detail === undefined ? null
-        : (typeof m.detail === 'object' && m.detail !== null
-          && typeof /** @type {any} */ (m.detail).relation === 'string'
-          && typeof /** @type {any} */ (m.detail).filter === 'string'
-          ? { relation: /** @type {any} */ (m.detail).relation, filter: /** @type {any} */ (m.detail).filter }
-          : null),
+      drillDetail: drillDetailOf(m.detail, name, m.dimensions),
       // `reads` 上载进行对象：默认档要读它（`applyDefaultMaskTier`）。
       // ⚠️ 它**不在** `comparableOf` 的 16 元组里 ⇒ 加它**不会**让 `--check` 凭空报漂移；
       //    但 `reads` 的改动**仍可被 `--check` 检出**——经由它对**合成 masks**（第 13 元）的影响。
@@ -811,6 +808,84 @@ const comparableOf = (/** @type {ComparableMetric} */ row) => JSON.stringify(can
 ]))
 
 /**
+ * 声明 `detail.columns` → 物化形态（spec 2026-10-22 §2.3）。
+ *
+ * 为什么在 sync 侧**抛而不是落 null**：本脚本会被手跑（不经 CI）。门禁（check-data-models）
+ * 是 CI 权威，这里兜的是「手跑时把坏权限声明物化进库」——一份读不懂的条件列声明，
+ * 最坏形态是某列对所有人消失或对不该看的人出现，宁响亮勿静默。
+ *
+ * @param {unknown} v 声明里的 `detail.columns` 原值
+ * @param {string} metricName 指标名（只用于错误信息）
+ * @param {unknown} dims 声明的 `dimensions` 原值（只用于「不许与维度重叠」判据；形状坏时跳过）
+ * @returns {DrillColumn[] | null} null = 未声明
+ */
+export function detailColumnsOf(v, metricName, dims) {
+  if (v === undefined || v === null) return null
+  if (!Array.isArray(v) || v.length === 0) {
+    throw new Error(`指标 \`${metricName}\` 的 \`detail.columns\` 必须是非空数组（每项 {col, grantedBy}）`)
+  }
+  const dimsList = Array.isArray(dims) ? dims.map(String) : []
+  /** @type {DrillColumn[]} */
+  const out = []
+  const seen = new Set()
+  for (const raw of v) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error(`指标 \`${metricName}\` 的 \`detail.columns\` 里有非对象项 ${JSON.stringify(raw)}`)
+    }
+    const it = /** @type {Record<string, unknown>} */ (raw)
+    for (const k of Object.keys(it)) {
+      if (k !== 'col' && k !== 'grantedBy') {
+        throw new Error(`指标 \`${metricName}\` 的 \`detail.columns\` 项有未知键 \`${k}\`（只许 col / grantedBy）`)
+      }
+    }
+    const col = typeof it.col === 'string' ? it.col : ''
+    if (!/^[a-z_][a-z0-9_]*$/.test(col)) {
+      throw new Error(`指标 \`${metricName}\` 的 \`detail.columns[].col\` ${JSON.stringify(it.col)} 必须是蛇形列名`)
+    }
+    if (col === 'value') {
+      throw new Error(`指标 \`${metricName}\` 的 \`detail.columns\` 不许用 \`value\`（回包值列的固定别名）`)
+    }
+    if (dimsList.includes(col)) {
+      throw new Error(`指标 \`${metricName}\` 的 \`detail.columns\` 列 \`${col}\` 同时出现在 dimensions 里`)
+    }
+    if (seen.has(col)) {
+      throw new Error(`指标 \`${metricName}\` 的 \`detail.columns\` 列 \`${col}\` 重复声明`)
+    }
+    seen.add(col)
+    const grantedBy = typeof it.grantedBy === 'string' ? it.grantedBy.trim() : ''
+    if (grantedBy === '') {
+      throw new Error(`指标 \`${metricName}\` 的 \`detail.columns[].grantedBy\` 必须是非空权限码字符串`)
+    }
+    out.push({ col, grantedBy })
+  }
+  return out
+}
+
+/**
+ * 声明 `detail` → 物化形态（三键之一；`columns` 缺省**不写键**）。
+ *
+ * @param {unknown} detail 声明里的 `detail` 原值（undefined = 未声明）
+ * @param {string} metricName 指标名（只用于错误信息）
+ * @param {unknown} dims 声明的 `dimensions` 原值
+ * @returns {{ relation: string, filter: string, columns?: DrillColumn[] } | null}
+ */
+export function drillDetailOf(detail, metricName, dims) {
+  if (detail === undefined) return null
+  if (typeof detail !== 'object' || detail === null || Array.isArray(detail)) return null
+  const d = /** @type {Record<string, unknown>} */ (detail)
+  if (typeof d.relation !== 'string' || typeof d.filter !== 'string') return null
+  for (const k of Object.keys(d)) {
+    if (k !== 'relation' && k !== 'filter' && k !== 'columns') {
+      throw new Error(`指标 \`${metricName}\` 的 \`detail\` 有未知键 \`${k}\`（闭集 {relation, filter, columns}）`)
+    }
+  }
+  const columns = detailColumnsOf(d.columns, metricName, dims)
+  return columns === null
+    ? { relation: d.relation, filter: d.filter }
+    : { relation: d.relation, filter: d.filter, columns }
+}
+
+/**
  * 声明行的下钻三键 → `upsertL1Metric` 入参的 `drill`（def 组装面；下钻 spec 2026-10-21 §2.3）。
  *
  * 为什么这层单独存在：行级三键是 **--check 比对面**的形状——恒在场，null = 未声明；
@@ -830,7 +905,10 @@ export function drillOf(row) {
   if (expr === null || dims === null || detail === null) {
     throw new Error('下钻三键必须同现（门禁同款判据，这里兜手跑）')
   }
-  return { expr, dims, relation: detail.relation, filter: detail.filter }
+  return {
+    expr, dims, relation: detail.relation, filter: detail.filter,
+    ...(detail.columns === undefined ? {} : { columns: detail.columns }),
+  }
 }
 
 /**
@@ -843,18 +921,17 @@ export function drillOf(row) {
  * 同一份三键进 `comparableOf`。
  *
  * @param {{ drill?: DrillBinding | null }} row 库行（MetricRow；只读它的 drill）
- * @returns {{ drillExpr: string | null, drillDims: string[] | null, drillDetail: { relation: string, filter: string } | null }}
+ * @returns {{ drillExpr: string | null, drillDims: string[] | null, drillDetail: { relation: string, filter: string, columns?: DrillColumn[] } | null }}
  */
 export function drillTripleOf(row) {
   const d = row.drill
   if (d === undefined || d === null) {
     return { drillExpr: null, drillDims: null, drillDetail: null }
   }
-  return {
-    drillExpr: d.expr,
-    drillDims: [...d.dims],
-    drillDetail: { relation: d.relation, filter: d.filter },
-  }
+  const detail = d.columns === undefined
+    ? { relation: d.relation, filter: d.filter }
+    : { relation: d.relation, filter: d.filter, columns: d.columns.map((c) => ({ col: c.col, grantedBy: c.grantedBy })) }
+  return { drillExpr: d.expr, drillDims: [...d.dims], drillDetail: detail }
 }
 
 /**
