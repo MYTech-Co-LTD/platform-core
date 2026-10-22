@@ -1894,13 +1894,23 @@ describePg('审计单点（需要 DATABASE_URL）', () => {
   })
 })
 
-// 审计写不进去 ⇒ 必须 reject（不是「安静地成功」）。这条同时是「reply 不进 try」的回归网：
-// 谁把 reply 放回 try，审计报错会被 catch 成 tool_exception ⇒ 不再 reject ⇒ 本用例红。
+// 审计写不进去 ⇒ 必须 reject（不是「安静地成功」）。这条同时是「reply 不进 try」的回归网。
+// ⚠️ 假 pool 必须做成**只失败一次**：若用「永远 reject」，旧结构（reply 在 try 内）下
+// 第二次 INSERT 也 reject ⇒ 用例照样 reject ⇒ 测不出回归。只失败一次时，旧结构会把
+// 第二次写成功并回 tool_exception（resolve），本用例才会红。`inserts === 1` 钉住「没有二次尝试」。
 describe('审计失败必须上抛', () => {
-  it('writeAudit 抛错 ⇒ call reject', async () => {
+  it('writeAudit 抛错 ⇒ call reject，且没有第二次 INSERT', async () => {
     const g = makePipelineTools(wiring())
-    const boom = { query: () => Promise.reject(new Error('boom')) } as never
-    await expect(g.call(depsOf({ pool: boom }), 'list_pipelines', {})).rejects.toThrow('boom')
+    let inserts = 0
+    const pool = {
+      query: async () => {
+        inserts += 1
+        if (inserts === 1) throw new Error('boom')
+        return { rows: [{ id: 1, created_at: new Date() }] }
+      },
+    } as never
+    await expect(g.call(depsOf({ pool }), 'list_pipelines', {})).rejects.toThrow('boom')
+    expect(inserts).toBe(1)
   })
 })
 
@@ -1913,6 +1923,12 @@ describe('verdictOf', () => {
       .toEqual({ verdict: 'ok', reason: 'runs_source_not_wired' })
     expect(verdictOf({ status: 'denied', reason: 'mutating_disabled' }, true))
       .toEqual({ verdict: 'denied', reason: 'mutating_disabled' })
+    // refused = 工具明确拒绝产出（草案没过校验）⇒ 判了拒，不是「查了个空」。
+    expect(verdictOf({ status: 'refused', reason: 'invalid_draft' }, true))
+      .toEqual({ verdict: 'denied', reason: 'invalid_draft' })
+    // not_executed = 校验过了但没执行（沙箱闸）⇒ 不是拒，也不代表跑过。
+    expect(verdictOf({ status: 'not_executed', reason: 'sandbox_runner_unavailable' }, false))
+      .toEqual({ verdict: 'ok', reason: 'sandbox_runner_unavailable' })
     expect(verdictOf({ status: 'error', reason: 'tool_exception' }, true))
       .toEqual({ verdict: 'error', reason: 'tool_exception' })
     expect(verdictOf({}, true)).toEqual({ verdict: 'denied', reason: 'tool_error' })
@@ -1979,10 +1995,12 @@ const entryOf = (t: (typeof PIPELINE_TOOLS)[number]): Record<string, unknown> =>
 
 /**
  * 审计判决（**纯函数**，单独可测）：按 status 分类，不按 isError。
- *   · `error`            ⇒ error
- *   · `denied`           ⇒ denied
- *   · 其余 status        ⇒ ok（`ok` / `not_found` / `unknown` —— 「查了个空」「读不到」都不是拒）
- *   · 无 status + isError ⇒ denied / `tool_error`（impl 抛出未知形状时兜底）
+ *   · `error`                          ⇒ error
+ *   · `denied` / `refused`             ⇒ denied（**refused 也是「判了拒」**：草案没过校验、
+ *                                        工具明确拒绝产出——不是「查了个空」，不能记 ok）
+ *   · `ok` / `not_found` / `unknown` / `not_executed` ⇒ ok
+ *     （查空 / 读不到 / 校验过了但没执行，都不是「调用被拒」）
+ *   · 无 status + isError              ⇒ denied / `tool_error`（impl 抛出未知形状时兜底）
  * reason：透传 payload.reason（含 ok 行）⇒ 否则 status 非 ok 时回落 status ⇒ 再否则 `''`（落库转 null）。
  */
 export function verdictOf(
@@ -1991,7 +2009,7 @@ export function verdictOf(
   const status = typeof payload.status === 'string' ? payload.status : null
   const verdict: 'ok' | 'denied' | 'error' =
     status === 'error' ? 'error'
-      : status === 'denied' ? 'denied'
+      : status === 'denied' || status === 'refused' ? 'denied'
         : status === null ? (isError ? 'denied' : 'ok')
           : 'ok'
   const reason = typeof payload.reason === 'string' ? payload.reason
