@@ -5,6 +5,15 @@
   "version": "0.1.0",
   "configSchema": { "type": "object", "additionalProperties": false, "properties": {} },
   "activation": { "onStartup": true },
-  "contracts": { "tools": ["list_metrics", "query_data", "query_detail"] },
+  "contracts": {
+    "tools": [
+      "list_metrics",
+      "query_data",
+      "query_detail",
+      "describe_metric",
+      "sample_dimension_values",
+      "get_freshness"
+    ]
+  },
   "skills": ["./skills"]
 }
