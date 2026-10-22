@@ -143,6 +143,9 @@ describe('listPipelinesImpl', () => {
       const out = await listPipelinesImpl(deps, args)
       expect(out.isError).toBe(true)
       expect(out.payload).toMatchObject({ status: 'denied', reason: 'bad_param', detail: 'invalid_filter' })
+      // 读之前就拒绝 ⇒ 不带 `incomplete`（缺席 = 没读，不是读全；见 read.ts 文件头 ★）。
+      // 补成 `[]` 会谎称三棵树都读全了 —— 这条断言就是防那次「顺手补齐」。
+      expect(Object.prototype.hasOwnProperty.call(out.payload, 'incomplete')).toBe(false)
     }
   })
   it('pipelines 根不可读 ⇒ unknown（不是空清单）', async () => {
@@ -206,6 +209,8 @@ describe('getPipelineImpl', () => {
     for (const id of ['../../etc/passwd', 'a/b', '']) {
       const out = await getPipelineImpl(deps, { id })
       expect(out.payload).toMatchObject({ status: 'not_found', id, reason: 'invalid_id' })
+      // 与合法 id 的 not_found 不同：这条在读之前返回 ⇒ 没有 `incomplete`（缺席 = 没读）。
+      expect(Object.prototype.hasOwnProperty.call(out.payload, 'incomplete')).toBe(false)
     }
   })
   it('非法 id 在 readAll 之前就回 not_found（根不存在也仍是 not_found，不是 unknown）', async () => {

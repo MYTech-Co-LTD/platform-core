@@ -11,6 +11,12 @@
 // 「读不全」不翻 status：ok/not_found 回包里恒有 `incomplete`（'pipelines'|'schedules'|'contracts'），
 // 只有**带 source 过滤**且调度面读不全时才答不了（unknown/schedules_incomplete）；
 // 契约同 id 重复时另出 `ambiguousContracts`（contractFor 只取第一份 ⇒ contract 可能指错）。
+//
+// ★ 两个「字段缺席」的语义**相反**，别混用（终审 R1）：
+//   · `incomplete` **只在读过之后出现**：`deniedFilter`（bad_param）与 `invalid_id` 两个出口
+//     在读之前就返回，故不带该字段 —— 缺席 =「没读，不表态」。**不要**补成 `[]`：那会谎称
+//     「三棵树都读全了」，而实际情况是一棵都没读。
+//   · `ambiguousContracts` **缺席 = 无歧义**（只有真的同 id 重复才出现），因为它在读之后计算。
 import {
   contractFor, loadContracts, loadPipelines, loadSchedules, PIPELINE_ID_RE,
 } from './defs'
@@ -82,6 +88,7 @@ const filterOf = (v: unknown): { ok: true; value: string | null } | { ok: false 
   return { ok: true, value: v.trim() }
 }
 
+// 读之前就返回 ⇒ 不带 `incomplete`（缺席 = 没读，不是读全；理由见文件头 ★）。
 const deniedFilter = (): { payload: Record<string, unknown>; isError: true; auditRowCount: null } => ({
   payload: { status: 'denied', reason: 'bad_param', detail: 'invalid_filter' },
   isError: true, auditRowCount: null,
@@ -138,6 +145,7 @@ export const getPipelineImpl: PipelineImpl = async (deps, args) => {
   // `reason: 'invalid_id'` 是**审计可筛**的机器通道：畸形 id 与「确实没有这个管线」都落在
   // not_found（verdict 仍是 ok），没有 reason 就分不出「有人在打畸形输入」。
   if (!PIPELINE_ID_RE.test(id)) {
+    // 同样在读之前返回 ⇒ 不带 `incomplete`（缺席 = 没读；理由见文件头 ★）。
     return {
       payload: { status: 'not_found', id, reason: 'invalid_id' },
       isError: true, auditRowCount: null,
