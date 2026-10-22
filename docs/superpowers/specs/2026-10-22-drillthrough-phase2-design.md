@@ -284,3 +284,58 @@ metrics:
   聚合面回 26 列 / 无 FINISHED 约束；
 - 回滚代码（`drill.ts` / `metric-store.ts` / 门禁）与之同批；
 - 无数据迁移、无 DDL。
+
+---
+
+## 8 实施订正与实证（2026-10-22，实施期回填）
+
+> 本节只记**已经发生**的事；没做的不写。
+
+### 8.1 订正
+
+1. **声明漂移的守卫归口**（§2.6 / §4 原文已同批订正）：新 dbt singular test
+   `assert_drill_order_line_matches_metric.sql` 的两侧谓词都是文件内**硬编码的独立参考实现**，
+   读不到 YAML ⇒ **声明**漂移不会让它红。现分工：它守**数据面同量**
+   （`vw_` 直读湖 FINISHED vs `stg_` CASE 物化 FINISHED）；
+   声明层守卫是 `scripts/sync-data-semantics.test.ts` 的
+   `★ 真事实源：order_line 的下钻绑定（8 列闭集 + 条件列）`
+   （`detail.filter` 走 `toEqual`、`expression` 折进 `selectSql` 走前缀正则）。
+2. **`bizday` 参数形状不可省**：示例必须写 `{from,to}` 且为 `YYYY-MM-DD`
+   （`authz.ts` 的 `rangeLiteral` 只认该形状；裸日期串被 `paramFilters` 判
+   `invalid_value:bizday`，无归一化）。
+3. **声明字段的三跳要同批改**（计划审查盲区）：写库（sync 物化 `drill_detail`）→
+   catalog → 读回（`drillBindingOf`）。本次 Task 1 只改读侧，
+   `upsertL1Metric` 的序列化漏 `columns`，靠任务评审抓出——后续加声明字段时三跳一起列进任务。
+
+### 8.2 实证
+
+- **部署**：platform-core（mytech 实例）`dep_FbAXOvthkuxU4oXl` → v477 ready；
+  `platform-core-shanhai` `dep_pM3DUn_OkfHWvbXX` → ready。两者容器 pid1 启动时间均晚于镜像构建；
+  容器内 `grantedColumns` 命中、YAML `grantedBy: data:cost` ×3。
+- **检出同步**：`lemeng-sync.sh 981a8063` ⇒ `SYNC_OK 225/225`，revision 落地。
+- **词表物化**：新增 0 / **更新 2** / 删除 0 / 未变 41（43 条）；
+  `tsx scripts/sync-data-semantics.mjs --check` ⇒ 零漂移。
+- **库内声明**：`drill_detail` = `{filter: "state = 'FINISHED'", columns: [{col: order_detail_std_price,
+  grantedBy: data:cost}], relation: vw_lemeng_retail_order_line}`；`drill_dims` 与 `group_by` 均为 8 列；
+  `select_sql` 以 `sum(case when stg_lemeng_retail_order_line.state = 'FINISHED'` 开头（§3.3 偏差仍在）。
+- **materialize**：`PASS=312 WARN=0 ERROR=0 TOTAL=312`、`MATERIALIZE_OK`；
+  `assert_drill_order_line_matches_metric` PASS、`audit_lemeng__retail__order_line` PASS。
+- **锚值**：`vw_lemeng_retail_order_line` 的 FINISHED 行数
+  2026-10-20 = **14935**、2026-10-21 = **14395**（逐字复现）。
+- **行域对照**（变异 ①，只读 SQL）：同日全状态行数 15267 / 14714 ⇒ 去掉 `state='FINISHED'`
+  谓词必然改变 `rowCountTotal`。
+- **聚合面一致**：2026-10-20 聚合面（`stg_` CASE）与直查（`vw_` FINISHED）合计均为 **445417.24**
+  （逐分一致）。
+- **变异确认**（本机改后还原）：
+  ② 声明 `expression` 改 `state <> 'FINISHED'` ⇒ 真事实源用例红（1 failed）；
+  ③ `grantedBy` 改 manifest 外码 ⇒ `check-column-scope-monotonicity` 规则⑤ 红；
+  ④ `granted` 去掉 scope 过滤 ⇒ `drill.test.ts`「无 data:cost ⇒ 缺席」红。
+
+### 8.3 未做（如实登记）
+
+- `query_detail` 真机上「无 `data:cost` / 有 `data:cost`」两侧的列在场性与审计 `drill.grantedColumns`
+  回读：需登录态/渠道身份，本轮未做（单元测试已覆盖该分支）。
+- 企微渠道轮（§4 第 6 条）：需真机渠道身份，待人工轮测。
+- `detail.columns[].col` 无静态存在性校验（拼错只有持码者运行时报 `warehouse_error`）——
+  已登记为后续门禁候选。
+- 列级掩码 × 条件列的语义缺口归 **#995**（今天结构性不可达；若落掩码必须「生效 ⇒ 整列缺席」）。
