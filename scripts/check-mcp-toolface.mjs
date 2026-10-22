@@ -6,9 +6,12 @@
 //
 // 四断言（spec §8）：① 分析师面工具数 ≤14；② tools/list 静态序列化 ≤10KB；
 // ③ 工具名 [A-Za-z0-9_.-]；④ mutating 工具必须有注解与 scope。
+// 两面都判（Wave 3 扩面）：分析师面（ANALYST_TOOLS，≤14）+ 提案面（PIPELINE_TOOLS，≤7，
+// 清单见 modules/data/domain/pipelines/tools.ts）。
 // 事实源 = modules/data/domain/toolbox/registry.ts 的 ANALYST_TOOLS（显式 .ts import；
 // registry 是纯的——这条 import 链不拉 pool/框架，否则门禁会连坐运行时依赖）。
 import { ANALYST_FACE_MAX_LIST_BYTES, ANALYST_FACE_MAX_TOOLS, ANALYST_TOOLS } from '../modules/data/domain/toolbox/registry.ts'
+import { PIPELINE_FACE_MAX_TOOLS, PIPELINE_TOOLS } from '../modules/data/domain/pipelines/tools.ts'
 
 const TOOL_NAME_RE = /^[A-Za-z0-9_.-]+$/
 
@@ -23,7 +26,7 @@ export function checkToolface(metas, opts = {}) {
   const maxBytes = opts.maxBytes ?? ANALYST_FACE_MAX_LIST_BYTES
   const out = []
   if (metas.length > maxTools) {
-    out.push(`[TOOLFACE] 分析师面工具数 ${metas.length} > 上限 ${maxTools}（spec §8 ①）`)
+    out.push(`[TOOLFACE] 工具面 ${metas.length} 个 > 上限 ${maxTools}（spec §8 ①）`)
   }
   const bytes = JSON.stringify(metas).length
   if (bytes > maxBytes) {
@@ -45,7 +48,10 @@ export function checkToolface(metas, opts = {}) {
 
 // main：真仓清单判定（argv 守卫——被单测 import 时不触发，e2e-data-cross-tenant.mjs 同款先例）
 if (process.argv[1]?.endsWith('check-mcp-toolface.mjs')) {
-  const violations = checkToolface(ANALYST_TOOLS)
+  const violations = [
+    ...checkToolface(ANALYST_TOOLS),
+    ...checkToolface(PIPELINE_TOOLS, { maxTools: PIPELINE_FACE_MAX_TOOLS }),
+  ]
   if (violations.length > 0) {
     for (const v of violations) console.error(v)
     process.exit(1)
