@@ -7,6 +7,7 @@ import { Hono } from 'hono'
 import { CasdoorClient } from '@platform/auth-core'
 import { MockCasdoor } from '@platform/auth-core/src/test-util/mock-casdoor'
 import { REQUESTER_CHANNEL } from '@platform/sdk'
+import { patIdentityMiddleware } from './pat-auth'
 import { WECOM_USERID_HEADER, wecomChannelIdentityMiddleware } from './wecom-channel-auth'
 import type { RequesterEnv } from './pat-auth'
 import type { TenantRow } from './tenant'
@@ -120,6 +121,27 @@ describe('wecomChannelIdentityMiddleware', () => {
     await mock.stop()
   })
 
+  it('通道 C 开启 + 无企微意图头 → 放行（本闸不管匿名/其他通道的请求）', async () => {
+    // 闸缺陷回归（shanhai 2026-10-22）：修前对「没带 x-channel-key 的请求」无条件 401，
+    // 把 PAT/端点门卫的错误形态盖成 CHANNEL_KEY_INVALID，首批冒烟被它误导。
+    // 放行后的终局拒绝由各自的面负责（PAT 中间件 / 端点门卫 fail-closed），不在本闸。
+    const mock = withAlice(); await mock.start()
+    const res = await call(app(mock), {})
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.userId).toBeNull()
+    expect(body.channel).toBeNull()
+    await mock.stop()
+  })
+
+  it('带企微意图（仅 X-Wecom-Userid）但没带 key → 仍 401 CHANNEL_KEY_INVALID（fail-closed 不放松）', async () => {
+    const mock = withAlice(); await mock.start()
+    const res = await call(app(mock), { [WECOM_USERID_HEADER]: 'alice' })
+    expect(res.status).toBe(401)
+    expect((await res.json()).error).toBe('CHANNEL_KEY_INVALID')
+    await mock.stop()
+  })
+
   it('getUser 返 null（未关联）→ 401 WECOM_USER_NOT_LINKED', async () => {
     // 造法：userid 取一个 mock 里**不存在**的人（mock 没有删除方法，只能"从来没播过种"）。
     const mock = withAlice(); await mock.start()
@@ -159,6 +181,34 @@ describe('wecomChannelIdentityMiddleware', () => {
     const res = await call(a, { 'x-channel-key': CHANNEL_KEY, [WECOM_USERID_HEADER]: 'alice' })
     const body = await res.json()
     expect(body).toMatchObject({ userId: 'sess', channel: null })
+    await mock.stop()
+  })
+
+  it('多通道共存：通道 C 开启 + 合法 PAT（无企微意图头）→ pat 中间件放行身份，本闸不挡', async () => {
+    // 与 app.ts §⑥.5 同构：pat 先、wecom 闸后。闸修前这条靠 first-setter-wins 也能过
+    // （pat 已设 identity），本用例钉的是「闸改窄后 PAT 通路不受影响」的回归护栏。
+    const mock = withAlice(); await mock.start()
+    const a = new Hono<RequesterEnv>()
+    a.use('*', async (c, next) => {
+      c.set('tenant', baseTenant)
+      await next()
+    })
+    a.use('/api/modules/*', patIdentityMiddleware({
+      casdoor: casdoorFor(mock),
+      resolveKey: async (token) =>
+        token === 'dkq_valid-pat-token' ? { keyId: 1, org: ORG, casdoorUser: 'alice' } : null,
+    }))
+    a.use('/api/modules/*', wecomChannelIdentityMiddleware({
+      casdoor: casdoorFor(mock), channelKey: CHANNEL_KEY,
+    }))
+    a.post('/api/modules/data/query', (c) => c.json({
+      userId: c.get('identity')?.userId ?? null,
+      channel: c.get(REQUESTER_CHANNEL) ?? null,
+    }))
+    const res = await call(a, { authorization: 'Bearer dkq_valid-pat-token' })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({ userId: 'alice', channel: 'pat' })
     await mock.stop()
   })
 })
