@@ -41,7 +41,8 @@ const NO_DRILL_ROW: Record<string, unknown> = {
 function fakePool(metrics: Record<string, unknown>[]) {
   const pool = {
     query: async (text: string, params?: unknown[]) => {
-      if (/insert\s+into\s+data\.query_audit/.test(text)) return { rows: [], rowCount: 1 }
+      // Wave1 起 writeAudit 读 returning 行——替身收严到真机形状（registry.test.ts 同款）
+      if (/insert\s+into\s+data\.query_audit/.test(text)) return { rows: [{ id: 1, created_at: new Date('2026-10-21T10:00:00Z') }] }
       if (/from\s+data\.metrics/.test(text)) {
         void params
         return { rows: metrics.map((m) => ({ ...m })), rowCount: metrics.length }

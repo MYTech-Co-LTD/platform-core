@@ -42,3 +42,24 @@ export async function runWarehouseSql(
   const rows = r.rows.map((row) => columns.map((c) => (row as Record<string, unknown>)[c]))
   return { columns, rows }
 }
+
+// ── 分析师只读池（spec 2026-10-21 §8：分析师面 warehouse 连接强制只读）─────────────────
+// 与写池同一份 DATA_WAREHOUSE_URL、同一个部署——差别只在**会话**：每条新连接先
+// `set default_transaction_read_only = on`。写池不动（dbt 物化继续走 warehousePool()），
+// 分析师面（toolbox）的主计划与辅助读全走这里 ⇒ 「持 data:query 的连接对湖写必失败」。
+let analystSingleton: Pool | null = null
+
+export function analystPool(env: Record<string, string | undefined> = process.env): Pool {
+  if (analystSingleton) return analystSingleton
+  const url = env.DATA_WAREHOUSE_URL?.trim()
+  if (!url) throw new Error(DATA_WAREHOUSE_UNCONFIGURED)
+  const pool = new Pool({ connectionString: url, statement_timeout: STATEMENT_TIMEOUT_MS })
+  pool.on('connect', (client) => { void client.query('set default_transaction_read_only = on') })
+  analystSingleton = pool
+  return analystSingleton
+}
+
+/** 测试钩子：清掉单例（换 env 的用例之间必须调；与 resetWarehousePool 对称）。 */
+export function resetAnalystPool(): void {
+  analystSingleton = null
+}

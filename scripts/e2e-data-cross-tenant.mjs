@@ -300,6 +300,16 @@ export function loadConfig(env) {
     )
   }
 
+  // toolface 自洽闸（spec §9「两租户探针同值即抛」的面⑤落点）：对侧指标 id 与本侧要问的
+  // 指标 id 重叠 ⇒ 面①④⑤ 的判据分不开两侧（同值探针 = 恒绿）。
+  const overlapped = foreignMetricIds.filter((id) => metricIds.includes(id))
+  if (overlapped.length > 0) {
+    throw new Error(
+      `对侧指标 id 与本侧指标 id 重叠（${overlapped.join(', ')}）：面①④⑤ 的判据分不开两侧`
+      + '（同值探针 = 恒绿）。请给 B org 真正独有的 L2 指标 id。',
+    )
+  }
+
   const reportId = (env.E2E_REPORT_ID ?? '').trim()
   return {
     platformUrl: trimSlash(env.E2E_PLATFORM_URL ?? ''),
@@ -645,6 +655,78 @@ export function judgeCatalog({ foreignMetricIds, metrics, tools }) {
   return out
 }
 
+// ═══ 判定：面⑤ MCP 工具面（分析师面上线 + sanitized 词表，spec 2026-10-21 §9）══════════
+
+/** 工具名清洗的**本地副本**（与 modules/data registry 的 sanitizeToolName 等价；
+ *  等价性由 e2e-data-cross-tenant.test.ts 的对齐用例钉住——那条红 = 两份实现漂了）。 */
+/**
+ * @param {string} id @returns {string}
+ */
+export function sanitizeToolNameForProbe(id) {
+  return String(id).replaceAll(':', '__')
+}
+
+/** 分析师面固定工具名（与 registry.analystToolNames() 等价；同样由对齐用例钉住）。 */
+export function analystToolNamesForProbe() {
+  return [
+    'data_agent_guide', 'data_harness_catalog', 'search_catalog', 'describe_metric',
+    'describe_dataset', 'sample_dimension_values', 'preview_query', 'query_metric',
+    'get_freshness', 'get_quality', 'get_lineage',
+  ]
+}
+
+const PROBE_TOOL_NAME_RE = /^[A-Za-z0-9_.-]+$/
+
+/**
+ * 面⑤ 判定（判据与防假绿纪律照本文件头注：正面先验、两侧互为断言面、读不出 ≠ 没有）。
+ * @param {{ toolsA: any, toolsB: any, foreignMetricIds: string[], analystToolNames: string[] }} args
+ * @returns {Judgement}
+ */
+export function judgeToolface({ toolsA, toolsB, foreignMetricIds, analystToolNames }) {
+  const out = clean()
+  const namesA = toolNamesOf(toolsA)
+  const namesB = toolNamesOf(toolsB)
+  if (namesA === null) {
+    out.violations.push({ surface: 'toolface', message: '面⑤ 租户 A 的 tools/list 形状读不出（缺 result.tools 或协议级 error）：本面无法判定——读不出 ≠ 没有。' })
+  }
+  if (namesB === null) {
+    out.violations.push({ surface: 'toolface', message: '面⑤ 租户 B 的 tools/list 形状读不出：同上，本面无法判定。' })
+  }
+  if (namesA !== null && namesB !== null) {
+    const foreignNames = foreignMetricIds.map((id) => sanitizeToolNameForProbe(id))
+    for (const fn of foreignNames) {
+      if (namesA.includes(fn)) {
+        out.violations.push({ surface: 'toolface', message: `面⑤ 串租户：租户 A 的 tools/list 出现对侧指标的工具名 '${fn}'（sanitized 形态）——词表裁剪没覆盖分析师面的 legacy 工具命名。` })
+      }
+      if (!namesB.includes(fn)) {
+        out.violations.push({ surface: 'toolface', message: `面⑤ 正面信号缺席：租户 B 自己的 tools/list 里没有 '${fn}'——「A 没泄」与「B 根本没上线」分不开（不要据此判绿）。` })
+      }
+    }
+    /** 命名合规 + 重名（单形状参数——异质元组数组会被 checkJs 加宽，团队在案陷阱）。
+     *  @param {string} label @param {string[]} names */
+    const checkNames = (label, names) => {
+      for (const n of names) {
+        if (!PROBE_TOOL_NAME_RE.test(n)) {
+          out.violations.push({ surface: 'toolface', message: `面⑤ 命名违规：租户 ${label} 的工具名 '${n}' 不匹配 [A-Za-z0-9_.-]（MCP 2025-11-25）。` })
+        }
+      }
+      const dup = names.filter((n, i) => names.indexOf(n) !== i)
+      if (dup.length > 0) {
+        out.violations.push({ surface: 'toolface', message: `面⑤ 工具重名：租户 ${label} 的 tools/list 有重复名 ${JSON.stringify([...new Set(dup)])}——registry 的撞名跳过没生效或两条面叠加。` })
+      }
+    }
+    checkNames('A', namesA)
+    checkNames('B', namesB)
+    for (const an of analystToolNames) {
+      if (!namesA.includes(an)) {
+        out.violations.push({ surface: 'toolface', message: `面⑤ 分析师面缺席：租户 A 的 tools/list 没有固定工具 '${an}'——分析师面未上线或 registry 驱动没接上（正面信号）。` })
+      }
+    }
+    out.notes.push(`面⑤ A ${namesA.length} 个工具 / B ${namesB.length} 个工具；对侧 ${foreignMetricIds.length} 个指标的 sanitized 名均按判定核对；分析师面固定工具 ${analystToolNames.length} 个。`)
+  }
+  return out
+}
+
 // ═══ 编排 ═══════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -866,13 +948,20 @@ export async function runSuite(deps) {
     }))
   })
 
-  // ── 面④ L2 词表（A 的 PAT 两条通道）────────────────────────────────────────────────
+  // ── 面④+⑤ L2 词表 + MCP 工具面（同一对响应喂两个判定，不重复请求）──────────────────
   await runFace('catalog', async () => {
     const metrics = await callJson(deps, 'GET', '/metrics', config.tenantA.pat)
-    const tools = await callJson(deps, 'POST', '/mcp', config.tenantA.pat, {
+    const toolsA = await callJson(deps, 'POST', '/mcp', config.tenantA.pat, {
       jsonrpc: '2.0', id: 1, method: 'tools/list',
     })
-    merge(judgeCatalog({ foreignMetricIds: config.foreignMetricIds, metrics, tools }))
+    const toolsB = await callJson(deps, 'POST', '/mcp', config.tenantB.pat, {
+      jsonrpc: '2.0', id: 1, method: 'tools/list',
+    })
+    merge(judgeCatalog({ foreignMetricIds: config.foreignMetricIds, metrics, tools: toolsA }))
+    merge(judgeToolface({
+      toolsA, toolsB, foreignMetricIds: config.foreignMetricIds,
+      analystToolNames: analystToolNamesForProbe(),
+    }))
   })
 
   return out
@@ -942,7 +1031,7 @@ export async function probeReadParquet(dsn, s3Path) {
 /** `--help` 正文：env 契约从 `ENV_SPEC` 派生（单一事实源，别在别处复述）。 */
 export function helpText() {
   const lines = [
-    '串租户回归套件（issue #150 / 计划 Task 12；spec 验收 #2）—— 四面：问数 / 嵌入缓存重放 / 凭据负测 / L2 词表',
+    '串租户回归套件（issue #150 / 计划 Task 12；spec 验收 #2；面⑤ toolface = spec 2026-10-21）—— 五面：问数 / 嵌入缓存重放 / 凭据负测 / L2 词表 / MCP 工具面',
     '',
     '用法：pnpm exec tsx scripts/e2e-data-cross-tenant.mjs           # 四面全跑',
     '      pnpm exec tsx scripts/e2e-data-cross-tenant.mjs --help    # 本页',
@@ -998,7 +1087,7 @@ function printJudgement(j) {
     return
   }
   if (j.violations.length === 0) {
-    console.log('[e2e-cross-tenant] OK：四面全过（问数 / 嵌入缓存重放 / 凭据负测 / L2 词表）')
+    console.log('[e2e-cross-tenant] OK：五面全过（问数 / 嵌入缓存重放 / 凭据负测 / L2 词表 / MCP 工具面）')
   }
 }
 

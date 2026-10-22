@@ -20,6 +20,10 @@ permissions:
   # ⚠️ **这不是终态**：将来若按敏感级别细分（cost / pii / …各一码），本码拆成一组；
   #    别把「一码走天下」当成设计意图。
   - { code: data:precise, name: 精确值查看 }
+  # 数据探索（spec 2026-10-21 §8）：清单/描述/健康类工具的声明面码。
+  # ⚠️ Wave 1 端点门仍是 data:query（/mcp）——本码先收录进清单（可授予、可审计），
+  #    端点级 read/query 分离留人工裁决（计划决策 D1：一端点一 scope 的正典约束）。
+  - { code: data:read,   name: 数据探索 }
 # ⚠️ api.internal 的 path 是**模块相对路径**（不带 /api/modules/<id> 前缀）——
 # loader 的 applyDeclaredApiGate 会用 moduleApiBasePath(id) 加前缀后再做门卫比对。
 # 声明集合必须与 createRouter 注册的集合逐条一致（装载期双向核对，任一方向差集 ⇒ 装载失败）。

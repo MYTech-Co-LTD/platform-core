@@ -511,11 +511,13 @@ describe('runSuite：四面编排（I/O 全桩）', () => {
     return { ok: true, status: 200, json: async () => ({}), text: async () => body }
   }
 
-  /** 全绿的一组桩：四个面都返回「符合预期」的响应。`calls` 记下**所有被请求的 URL**。 */
-  function healthyDeps(): any {
+  /** 全绿的一组桩：五个面都返回「符合预期」的响应。`calls` 记下**所有被请求的 URL**。
+   *  `analystNames`：面⑤ 需要两租户都带分析师面固定工具（全绿用例传真清单；其余用例可空）。 */
+  function healthyDeps(analystNames: string[] = []): any {
     const cfg = loadConfigStub()
     /** @type {string[]} */
     const calls: string[] = []
+    const mcpCalls: string[] = []
     return {
       config: cfg,
       calls,
@@ -549,7 +551,17 @@ describe('runSuite：四面编排（I/O 全桩）', () => {
           return jsonResponse({ metrics: [{ id: cfg.metricId, title: '净销', description: '' }] })
         }
         if (url.includes('/mcp')) {
-          return jsonResponse({ jsonrpc: '2.0', id: 1, result: { tools: [{ name: cfg.metricId, description: '', inputSchema: {} }] } })
+          // 编排先取 A 再取 B（toolsA → toolsB）；按调用序区分租户，各自带分析师面 + 自己的指标工具
+          mcpCalls.push(url)
+          const isB = mcpCalls.length === 2
+          const ownNames = (isB ? cfg.foreignMetricIds : cfg.metricIds).map((id: string) => id.replaceAll(':', '__'))
+          return jsonResponse({
+            jsonrpc: '2.0', id: 1,
+            result: { tools: [
+              ...analystNames.map((n: string) => ({ name: n, description: '', inputSchema: {} })),
+              ...ownNames.map((n: string) => ({ name: n, description: '', inputSchema: {} })),
+            ] },
+          })
         }
         throw new Error(`桩没覆盖的 URL：${url}`)
       },
@@ -579,9 +591,9 @@ describe('runSuite：四面编排（I/O 全桩）', () => {
     }
   }
 
-  it('四面全绿 ⇒ violations 空**且 cannotRun 空**（不然「桩没覆盖」会伪装成全绿）', async () => {
-    const { runSuite, exitCodeOf, EXIT_CLEAN } = await suite()
-    const out = await runSuite(healthyDeps())
+  it('五面全绿 ⇒ violations 空**且 cannotRun 空**（不然「桩没覆盖」会伪装成全绿）', async () => {
+    const { runSuite, exitCodeOf, EXIT_CLEAN, analystToolNamesForProbe } = await suite()
+    const out = await runSuite(healthyDeps(analystToolNamesForProbe()))
     expect(out.violations).toEqual([])
     // ⚠️ 这条不是装饰：面级解耦之后，某个面「跑不起来」只会进 cannotRun、**violations 照旧为空**
     // ⇒ 只断言 violations 的写法会让「二面没跑」伪装成全绿。出口码才是判据。
@@ -794,5 +806,87 @@ describe('CLI 契约（真起进程）', () => {
     const { status, out } = runCli([], {})
     expect(status).not.toBe(0)
     expect(out).toContain('E2E_PLATFORM_URL')
+  })
+})
+
+// ═══ 8. 面⑤ toolface：sanitized 词表 + 分析师面在位（spec 2026-10-21 §9 Wave 1）═════════
+
+describe('sanitizeToolNameForProbe：与真实现等价（防本地副本漂移）', () => {
+  it('本地副本 === registry.sanitizeToolName（夹具表逐字对照）', async () => {
+    const { sanitizeToolNameForProbe } = await suite()
+    // 跨根 import registry（纯模块，tsx/vitest 均可解析 .ts 后缀）
+    const { sanitizeToolName } = await import('../modules/data/domain/toolbox/registry.ts') as { sanitizeToolName: (s: string) => string }
+    for (const id of ['lemeng:retail:net_sales', 'a:b:c', 'plain', 'x__y', 'bravo:bravo_only_metric']) {
+      expect(sanitizeToolNameForProbe(id)).toBe(sanitizeToolName(id))
+    }
+  })
+})
+
+describe('analystToolNamesForProbe：与 registry 清单逐字相等（防两处清单漂移）', () => {
+  it('11 个名字逐字一致', async () => {
+    const { analystToolNamesForProbe } = await suite()
+    const { analystToolNames } = await import('../modules/data/domain/toolbox/registry.ts') as { analystToolNames: () => string[] }
+    expect(analystToolNamesForProbe()).toEqual(analystToolNames())
+  })
+})
+
+describe('loadConfig toolface 自洽闸：对侧指标 id 与本侧指标 id 重叠 ⇒ 抛', () => {
+  it('E2E_METRIC_ID 与 E2E_TENANT_B_METRIC_IDS 有交集 ⇒ 抛且点名重叠 id', async () => {
+    const { loadConfig } = await suite()
+    expect(() => loadConfig(fullEnv({
+      E2E_METRIC_ID: 'lemeng:retail:net_sales,shared:metric',
+      E2E_TENANT_B_METRIC_IDS: 'bravo:bravo_only_metric,shared:metric',
+    }))).toThrow(/shared:metric/)
+  })
+})
+
+describe('judgeToolface：面⑤ 判定', () => {
+  const FID = ['bravo:bravo_only_metric']
+  const FNAMES = ['bravo__bravo_only_metric']
+  const A_TOOLS = ['data_agent_guide', 'query_metric', 'lemeng__retail__net_sales']
+  const B_TOOLS = ['data_agent_guide', 'query_metric', ...FNAMES]
+  const ANALYST = ['data_agent_guide', 'query_metric']
+
+  function body(...names: string[]): unknown {
+    return { jsonrpc: '2.0', id: 1, result: { tools: names.map((n) => ({ name: n, inputSchema: {} })) } }
+  }
+
+  it('两租户各见各的、分析师面在 ⇒ 无 violation', async () => {
+    const { judgeToolface } = await suite()
+    const out = judgeToolface({ toolsA: body(...A_TOOLS), toolsB: body(...B_TOOLS), foreignMetricIds: FID, analystToolNames: ANALYST })
+    expect(out.violations).toEqual([])
+    expect(out.notes.some((n: string) => /面⑤/.test(n))).toBe(true)
+  })
+
+  it('★ A 的 tools 出现 B 指标的 sanitized 名 ⇒ violation（点名该名）', async () => {
+    const { judgeToolface } = await suite()
+    const out = judgeToolface({ toolsA: body(...A_TOOLS, FNAMES[0]), toolsB: body(...B_TOOLS), foreignMetricIds: FID, analystToolNames: ANALYST })
+    expect(out.violations.some((v: any) => v.surface === 'toolface' && v.message.includes(FNAMES[0]))).toBe(true)
+  })
+
+  it('★ B 的 tools 缺自己的指标工具 ⇒ violation（正面信号缺席）', async () => {
+    const { judgeToolface } = await suite()
+    const out = judgeToolface({ toolsA: body(...A_TOOLS), toolsB: body(...A_TOOLS), foreignMetricIds: FID, analystToolNames: ANALYST })
+    expect(out.violations.some((v: any) => /正面|缺席/.test(v.message))).toBe(true)
+  })
+
+  it('名字含非法字符 / 重名 ⇒ violation', async () => {
+    const { judgeToolface } = await suite()
+    const bad = judgeToolface({ toolsA: body(...A_TOOLS, 'bad name!'), toolsB: body(...B_TOOLS), foreignMetricIds: FID, analystToolNames: ANALYST })
+    expect(bad.violations.some((v: any) => v.message.includes('bad name!'))).toBe(true)
+    const dup = judgeToolface({ toolsA: body(...A_TOOLS, 'query_metric'), toolsB: body(...B_TOOLS), foreignMetricIds: FID, analystToolNames: ANALYST })
+    expect(dup.violations.some((v: any) => /重名|重复/.test(v.message))).toBe(true)
+  })
+
+  it('A 缺分析师面固定工具 ⇒ violation（面未上线的正面信号）', async () => {
+    const { judgeToolface } = await suite()
+    const out = judgeToolface({ toolsA: body('legacy_tool_only'), toolsB: body(...B_TOOLS), foreignMetricIds: FID, analystToolNames: ANALYST })
+    expect(out.violations.some((v: any) => /data_agent_guide/.test(v.message))).toBe(true)
+  })
+
+  it('响应形状坏 ⇒ violation（读不出 ≠ 空词表）', async () => {
+    const { judgeToolface } = await suite()
+    const out = judgeToolface({ toolsA: { error: { code: -32601, message: 'x' } }, toolsB: body(...B_TOOLS), foreignMetricIds: FID, analystToolNames: ANALYST })
+    expect(out.violations.length).toBeGreaterThan(0)
   })
 })

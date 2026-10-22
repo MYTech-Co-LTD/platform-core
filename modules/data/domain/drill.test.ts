@@ -60,7 +60,9 @@ function fakePool(metrics: Record<string, unknown>[]) {
     query: async (text: string, params?: unknown[]) => {
       if (/insert\s+into\s+data\.query_audit/.test(text)) {
         audits.push({ text, params: params ?? [] })
-        return { rows: [], rowCount: 1 }
+        // Wave1 起 writeAudit 读 returning 行（信封 audit 节用）——替身收严到真机形状
+        // （registry.test.ts / query-service.test.ts 同款）。
+        return { rows: [{ id: 1, created_at: new Date('2026-10-21T10:00:00Z') }] }
       }
       if (/from\s+data\.metrics/.test(text)) {
         return { rows: metrics.map((m) => ({ ...m })), rowCount: metrics.length }
@@ -71,7 +73,7 @@ function fakePool(metrics: Record<string, unknown>[]) {
   return { pool: pool as unknown as Pool, audits }
 }
 
-/** writeAudit 的位置参数序（021 起 11 列）——断言用下标，靠本常量组自释。 */
+/** writeAudit 的位置参数序（合并后 12 列：…, masking=9, drill=10, tool=11）——断言用下标，靠本常量组自释。 */
 const AUDIT_VERDICT = 7
 const AUDIT_REASON = 8
 const AUDIT_MASKING = 9

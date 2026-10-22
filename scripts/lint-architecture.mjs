@@ -333,6 +333,10 @@ export async function findViolations(rootDir) {
     for (const m of code.matchAll(B1_RE)) {
       const [, kw, schema, table] = m
       if (schema === allowed) continue
+      // PG 系统目录豁免（2026-10-22，数据面 MCP 分析师面实测）：information_schema / pg_catalog
+      // 是 PG 向所有角色开放的**元数据目录**，不是业务/租户 schema——B1 守的是「业务数据不跨
+      // 模块/租户」，目录查询（describe_dataset 列清单等）不属于该面。别把豁免扩到别的形状。
+      if (schema === 'information_schema' || schema === 'pg_catalog') continue
       // 已发布维表只读豁免（ADR 2026-10-07 形状②）：模块可以 from/join `data.dim_*`
       // （owner 发布进 data schema 的维表快照，契约与裁剪在发布侧）——但**只读**：
       // update/into 不豁免 ⇒ 发布表只许 owner（data 模块）写。非 dim_ 前缀的 data. 表

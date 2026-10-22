@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.182.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.181.1...v0.182.0) - 2026-10-21
+- 【新增】data: 数据面 MCP 分析师面 Wave 1 (#978) ([#979](https://github.com/MYTech-Co-LTD/platform-core/pull/979), [80775ad](https://github.com/MYTech-Co-LTD/platform-core/commit/80775adeb7ab24e7a445074dd948270656db38a6))
+
+
 ## [0.181.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.181.0...v0.181.1) - 2026-10-21
 - 【修复】data: 零售明细 day/window 关闭 checkpoint，本地状态不再无界增长 ([#976](https://github.com/MYTech-Co-LTD/platform-core/pull/976), [5b09c79](https://github.com/MYTech-Co-LTD/platform-core/commit/5b09c79e4e6b6df10663525e1daf43c4a39ab0be))
 

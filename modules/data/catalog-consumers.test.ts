@@ -15,6 +15,7 @@
 // **来源级守卫**另起一组（不需要数据库）：行为断言只能覆盖「今天这四条面」，
 // 来源守卫覆盖「明天新增的第五条」——它钉的是「消费面只有**一个**词表加载器」这件事本身。
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { sanitizeToolName } from './domain/toolbox/registry'
 import { readFileSync } from 'node:fs'
 import { Pool } from 'pg'
 import type { Hono } from 'hono'
@@ -246,7 +247,10 @@ describePg('消费面词表四通道一致（需要 DATABASE_URL）', () => {
   it('面② MCP tools/list：平台 L1 指标出现在工具面里', async () => {
     const res = await rpc(app(), { jsonrpc: '2.0', id: 1, method: 'tools/list' })
     const names = (await res.json()).result.tools.map((t: { name: string }) => t.name)
-    expect(names, '平台 L1 指标不在 MCP 工具面里 ⇒ agent 看不见平台指标').toContain(PLATFORM_ID)
+    // Wave 1（spec 2026-10-21 §8）起工具名走 2025-11-25 命名（冒号 → __）；legacy 调用方
+    // 的裸 id 兼容回退在 tools/call（下一条用例）。工具**面**上断言 sanitized 名。
+    expect(names, '平台 L1 指标不在 MCP 工具面里 ⇒ agent 看不见平台指标')
+      .toContain(sanitizeToolName(PLATFORM_ID))
   })
 
   it('面② MCP tools/call：撞 id 时 L1 赢', async () => {

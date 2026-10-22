@@ -3,7 +3,7 @@
 // 通道差别到 Requester 为止：拿到 Requester 之后，会话/PAT/企微走的是同一条路径。
 // 审计在**所有**结局都写（spec §5 约束 7）——包括被拒与出错，否则「为什么被拒」查不出来。
 import type { Pool } from 'pg'
-import { MAX_QUERY_ROWS, authorize, sqlQuote, visibleMetrics, type DenyReason, type Requester } from './authz'
+import { MAX_QUERY_ROWS, authorize, sqlQuote, visibleMetrics, type DenyReason, type Requester, type SlicingSpec } from './authz'
 import { loadMergedCatalog } from './metric-store'
 import { maskingAuditOf, writeAudit, type MaskingAudit } from './audit-store'
 import { DATA_WAREHOUSE_UNCONFIGURED, runWarehouseSql, warehousePool } from './warehouse'
@@ -63,6 +63,17 @@ const WATERMARK_SQL_HEAD =
 const WATERMARK_SQL_TAIL =
   ") order by relation, materialized_at desc)"
   + " select min(max_bizday)::text as watermark, max(materialized_at) as materialized_at from latest"
+
+/** 水位 SQL（先按关系取最新一行，再跨关系取木桶短板——#844 订正语义）。唯一拼装点，
+ *  metrics 级消费方（query-service 本体）与 toolbox 的 health.ts 都从这里取。 */
+export function watermarkSqlFor(relations: readonly string[]): string {
+  return `${WATERMARK_SQL_HEAD}${relations.map((r) => sqlQuote(r)).join(', ')}${WATERMARK_SQL_TAIL}`
+}
+
+/** 北京时间 ISO 形态（spec §4 audit.ts 示例同区）：`YYYY-MM-DDTHH:mm:ss+08:00`。 */
+export function formatAuditTs(v: Date): string {
+  return `${DATA_AS_OF_DATE_FMT.format(v)}T${DATA_AS_OF_TIME_FMT.format(v)}+08:00`
+}
 
 /** 水位的日历形状（watermark 列经 ::text 出来必须是 `YYYY-MM-DD`；坏形状宁可缺席不外递）。 */
 const WATERMARK_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -192,11 +203,22 @@ export interface QueryDeps {
    * `deps.adoptedSources` 透传下来（同一份事实，不再读一次投影）。
    */
   adoptedSources: ReadonlySet<string>
+  /** 审计工具名（分析师面 / MCP legacy 面 = 被调工具名；HTTP/chat 不带 ⇒ 审计 tool 列 null）。 */
+  tool?: string
+  /**
+   * 辅助读执行器（data_as_of / 水位 / 维度名称解析）。缺省 = 仓写池（现状行为）。
+   * 分析师面注入只读池执行器 ⇒ 主计划与辅助读**全部**只读（计划决策 D5）。
+   */
+  warehouseExec?: SqlExecutor
 }
 
 export interface QueryOk {
   status: 'ok'; subject: string; metricId: string
   columns: string[]; rows: unknown[][]; truncated: boolean
+  /** 本次执行的授权计划 SQL（授权确定性：同参数同 SQL）。信封 query 节的来源（spec §4）。 */
+  sql?: string
+  /** 审计回执（writeAudit returning）：信封 audit 节 = {id, ts}，可独立核对 data.query_audit。 */
+  audit?: { id: number; ts: string }
   /**
    * 合计值（spec §8.4 修订二：`total` 字段 = 合计值，#699 的布尔标记已废——同日契约变更）。
    * 两种在场方式：**自动伴随**（totalable 指标的任何查询，plan.totalSql 执行结果）与
@@ -251,6 +273,7 @@ export async function runQuery(
   requester: Requester | null,
   metricId: string,
   args: Record<string, unknown>,
+  slicing?: SlicingSpec,
 ): Promise<QueryOutcome> {
   const audit = (
     verdict: 'ok' | 'denied' | 'error', reason: string | null, rowCount: number | null,
@@ -271,12 +294,16 @@ export async function runQuery(
     verdict,
     reason,
     masking,
+    ...(deps.tool !== undefined ? { tool: deps.tool } : {}),
   })
 
   if (!requester) {
     await audit('denied', 'unauthenticated', null, null)
     return { status: 'denied', metricId, reason: 'unauthenticated' }
   }
+
+  // 辅助读执行器（缺省 = 仓写池 = 现状行为）；主计划/合计仍走 deps.execute ?? 真写池（既有语义）。
+  const whExec = deps.warehouseExec ?? ((sql: string) => runWarehouseSql(warehousePool(), sql))
 
   // 词表 = L1（平台）∪ L2（本 org）——**合并加载器**，与 `GET /metrics`/MCP/chat 同一落点
   // （T8 评审 C1：这里曾用只回本 org 的加载器 ⇒ 平台指标在 /query 上 403「未声明」，
@@ -295,7 +322,7 @@ export async function runQuery(
   // ② 刻意用**未裁剪**的：掩码只减信息，用看不见的行上的掩码掩自己 = fail-closed。
   const allMetrics = await loadMergedCatalog(deps.pool, org)
   const catalog = visibleMetrics(allMetrics, requester, deps.adoptedSources)
-  const authz = authorize(catalog, requester, metricId, args, allMetrics)
+  const authz = authorize(catalog, requester, metricId, args, allMetrics, slicing)
   if (!authz.ok) {
     await audit('denied', authz.reason, null, null)
     return { status: 'denied', metricId, reason: authz.reason, detail: authz.detail }
@@ -340,8 +367,7 @@ export async function runQuery(
   // 只作用于明细行：`args.total` 的单行 `['total']` 没有键列，天然跳过。
   // 维度缺席/查询失败 ⇒ 名称列缺席，主查询照常交付（fail-soft，与新鲜度面同一姿态）。
   // 走真仓库池而非 `deps.execute`：后者是主计划 SQL 的测试缝，假执行器认不得这两条小查询。
-  const lookup = await (deps.dimensionLookup
-    ?? (() => loadDimensionLookup((sql) => runWarehouseSql(warehousePool(), sql))))()
+  const lookup = await (deps.dimensionLookup ?? (() => loadDimensionLookup(whExec)))()
   if (lookup !== null) result = decorateWithLabels(result, lookup)
 
   // 自动伴随（spec §8.4）：plan.totalSql 在场 ⇒ 再执行合计计划，把值附到响应 total 字段。
@@ -362,7 +388,7 @@ export async function runQuery(
   // SQL 的测试缝，假执行器认不得这条 SQL；生产路径（不注入 execute）本来就是这条池。
   let dataAsOf: unknown
   try {
-    const fresh = await runWarehouseSql(warehousePool(), DATA_AS_OF_SQL)
+    const fresh = await whExec(DATA_AS_OF_SQL)
     const v = fresh.rows[0]?.[0]
     // timestamptz 经 node-pg 回 Date——在此处换成北京时间字符串（spec §10.6）；
     // 非预期形状（不该发生）宁可缺席也不把坏值递出去。
@@ -384,9 +410,7 @@ export async function runQuery(
   const relations = metricRow === undefined ? [] : freshnessRelationsOf(metricRow)
   if (relations.length > 0) {
     try {
-      const wm = await runWarehouseSql(
-        warehousePool(),
-        `${WATERMARK_SQL_HEAD}${relations.map((r) => sqlQuote(r)).join(', ')}${WATERMARK_SQL_TAIL}`)
+      const wm = await whExec(watermarkSqlFor(relations))
       const w = wm.rows[0]?.[0]
       const matAt = wm.rows[0]?.[1]
       if (typeof w === 'string' && WATERMARK_RE.test(w) && matAt instanceof Date) {
@@ -417,7 +441,7 @@ export async function runQuery(
   //   ⇒ 判据只有一份 `hasMasking`（回包用）；审计那份的 null 判据在 maskingAuditOf 内部。
   const hasMasking = Object.keys(authz.plan.applied).length > 0
   const auditMasking = maskingAuditOf(authz.plan.applied, authz.plan.exempted)
-  await audit('ok', raceRetried ? 'lake_race_retry' : null, result.rows.length, auditMasking)
+  const auditRow = await audit('ok', raceRetried ? 'lake_race_retry' : null, result.rows.length, auditMasking)
   // 显式合计模式（spec §8）：plan.sql 已是 `SELECT sum(value) …`（无外层 LIMIT）⇒ 恒单行，
   // total 字段 = 该行的合计值；`truncated` 恒 false（合计无截断面）。
   // 自动伴随：明细 rows/truncated 语义不变，只多附一个 total 值。
@@ -430,6 +454,8 @@ export async function runQuery(
     columns: result.columns,
     rows: result.rows,
     truncated: authz.plan.total ? false : result.rows.length >= MAX_QUERY_ROWS,
+    sql: authz.plan.sql,
+    ...(auditRow !== undefined ? { audit: { id: auditRow.id, ts: formatAuditTs(auditRow.createdAt) } } : {}),
     ...(authz.plan.total
       ? { total: (result.rows[0]?.[0] as string | number | null | undefined) ?? null }
       : totalValue !== undefined ? { total: totalValue } : {}),
