@@ -93,9 +93,15 @@ spec §7 写「落 PR 分支」。本轮**不做**分支写入，理由：platfo
 
 ## 执行顺序（**不是编号顺序**）
 
-`Task 3`（read.ts）import `Task 5`（validate.ts）的 `validatePipelineDraft`。故实际派发顺序：
+两条依赖决定派发顺序：
 
-**1 → 2 → 5 → 3 → 4 → 6 → 7 → 8 → 9 → 10**
+1. `Task 3`（read.ts）import `Task 5`（validate.ts）的 `validatePipelineDraft`。
+2. `Task 3`（read.ts）与 `Task 4`（runs.ts）**互相需要对方的类型**：read 的 `PipelineDeps.runs` 是运行时 seam 类型 `PipelineRunSource`，而 runs 的两个实现是 `PipelineImpl` 类型。这构成**类型级循环**——哪个先做都无法编译。
+   **解法**：把四个共享类型收进新的 `types.ts`（`PipelineRunRecord` / `PipelineRunSource` / `PipelineDeps` / `PipelineImpl`），由 `Task 4` 先建；`read.ts` 与 `runs.ts` 各自 `import type` 再对外**转出**自己那份，下游仍可照旧从 `./read` 或 `./runs` 取。
+
+故实际派发顺序：
+
+**1 → 2 → 5 → 4 → 3 → 6 → 7 → 8 → 9 → 10**
 
 （编号保持文档结构不变；只在派发时换序。）
 
@@ -109,6 +115,7 @@ spec §7 写「落 PR 分支」。本轮**不做**分支写入，理由：platfo
 | `modules/data/domain/pipelines/tools.test.ts` | 元数据断言（7 个、命名、mutating 三件套、无重名）。 |
 | `modules/data/domain/pipelines/defs.ts` | 磁盘只读：管线 / 调度 / 契约的枚举与解析、契约↔管线匹配、路径解析（`rootsOf`）。 |
 | `modules/data/domain/pipelines/defs.test.ts` | 临时目录夹具：正常/坏 JSON/`_` 前缀/路径穿越/契约匹配。 |
+| `modules/data/domain/pipelines/types.ts` | 领域层共享类型（`PipelineRunRecord` / `PipelineRunSource` / `PipelineDeps` / `PipelineImpl`）——避开 read↔runs 的类型循环。 |
 | `modules/data/domain/pipelines/read.ts` | `list_pipelines` / `get_pipeline` 两个实现。 |
 | `modules/data/domain/pipelines/read.test.ts` | 回包形状、未知名、调度合并、契约附带。 |
 | `modules/data/domain/pipelines/runs.ts` | `PipelineRunSource` seam + 两个工具实现（缺省 unknown）。 |
@@ -564,12 +571,13 @@ export function loadPipelines(
 ): { defs: Map<string, PipelineDef>; warnings: string[] } {
   const defs = new Map<string, PipelineDef>()
   const warnings: string[] = []
-  const dir = join(roots.pipelinesRoot, 'pipelines')
   let files: string[]
   try {
+    // join 必须在 try 内：roots 若被传成非字符串，join 自己会抛（本层铁律是「不抛」）。
+    const dir = join(roots.pipelinesRoot, 'pipelines')
     files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort()
-  } catch {
-    warnings.push(`pipelines 目录不可读：${dir}`)
+  } catch (err) {
+    warnings.push(`pipelines 目录不可读：${roots.pipelinesRoot}（${err instanceof Error ? err.message : String(err)}）`)
     return { defs, warnings }
   }
   for (const f of files) {
@@ -601,12 +609,13 @@ export function loadSchedules(
 ): { byPipeline: Map<string, ScheduleEntry[]>; warnings: string[] } {
   const byPipeline = new Map<string, ScheduleEntry[]>()
   const warnings: string[] = []
-  const dir = join(roots.pipelinesRoot, 'schedules')
   let files: string[]
   try {
+    // 同 loadPipelines：join 在 try 内（非字符串 root 也不能抛）。
+    const dir = join(roots.pipelinesRoot, 'schedules')
     files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort()
-  } catch {
-    warnings.push(`schedules 目录不可读：${dir}`)
+  } catch (err) {
+    warnings.push(`schedules 目录不可读：${roots.pipelinesRoot}（${err instanceof Error ? err.message : String(err)}）`)
     return { byPipeline, warnings }
   }
   for (const f of files) {
@@ -644,7 +653,13 @@ export function loadContracts(
   }
   for (const domain of domains) {
     let files: string[]
-    try { files = readdirSync(join(roots.contractsRoot, domain)).filter((f) => f.endsWith('.json')).sort() } catch { continue }
+    try {
+      files = readdirSync(join(roots.contractsRoot, domain)).filter((f) => f.endsWith('.json')).sort()
+    } catch {
+      // 不能静默跳过：整个域消失会被下游读成「没有契约」，那是另一种谎。
+      warnings.push(`契约目录不可读：${domain}`)
+      continue
+    }
     for (const f of files) {
       // `_` 前缀 = 基础设施（_schema/_template），跳过（contracts/README.md 明文）。
       if (f.startsWith('_')) continue
@@ -700,13 +715,13 @@ git commit -m "feat(data-mcp): 提案面只读定义源（管线/调度/契约�
 - Create: `modules/data/domain/pipelines/read.test.ts`
 
 **Interfaces:**
-- Consumes: Task 2 的 `loadPipelines/loadSchedules/loadContracts/contractFor/rootsOf`；Task 5 的 `validatePipelineDraft`（本任务先用**已存在**的静态校验桩——见 Step 3 的注意事项，Task 5 会把桩换成真实现）。
+- Consumes: Task 2 的 `loadPipelines/loadSchedules/loadContracts/contractFor/rootsOf`；Task 5 的 `validatePipelineDraft`（**已在分支上，直接 import，不要写桩**）；Task 4 的 `types.ts` 里的 `PipelineDeps`/`PipelineImpl`。
 - Produces:
-  - `interface PipelineDeps { roots: PipelineRoots; runs: PipelineRunSource | null; env: Record<string,string|undefined> }`（`runs` 在 Task 4 定义；本任务可先省略该字段，Task 4 追加）
   - `listPipelinesImpl: PipelineImpl`、`getPipelineImpl: PipelineImpl`
   - `readAll(deps): { defs; schedules; contracts; warnings }`（一次读三份，供两个工具共用）
+  - **转出**（`export type { PipelineDeps, PipelineImpl } from './types'`）——下游 Task 6/7/8 照旧从 `./read` 取这两个类型。
 
-**注意（避免本任务与 Task 5 互相阻塞）**：Task 5 的 `validate.ts` 是本任务 `get_pipeline` 回包 `validation` 字段的来源。若按顺序执行，先在 `read.ts` 里 import `validatePipelineDraft` 并在本任务 Step 3 之前**先落一份最小实现**（下面的代码块即 Task 5 的完整实现，可提前粘贴）。**推荐执行顺序：Task 5 与 Task 3 同一 worker 内先做 Task 5**。
+**注意**：`PipelineDeps` / `PipelineImpl` 定义在 `types.ts`（Task 4 建），**不要在本文件里重新声明**——重复声明会让 `PipelineDeps` 变成两个不兼容的结构类型。本文件只需 `import type` + `export type` 转出。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -802,21 +817,15 @@ Expected: FAIL —— 模块不存在。
 ```ts
 // modules/data/domain/pipelines/read.ts
 // read.ts —— 提案面两个只读工具的实现（清单 / 详情）。纯读：不写盘、不联网。
-import type { ToolImplResult } from '../toolbox/registry'
 import {
   contractFor, loadContracts, loadPipelines, loadSchedules, PIPELINE_ID_RE,
 } from './defs'
-import type { ContractRef, PipelineDef, PipelineRoots, ScheduleEntry } from './defs'
+import type { ContractRef, PipelineDef, ScheduleEntry } from './defs'
 import { validatePipelineDraft } from './validate'
-import type { PipelineRunSource } from './runs'
+// 共享类型住在 types.ts（Task 4 建），此处只取用并对外转出，避免与 runs.ts 形成类型循环。
+import type { PipelineDeps, PipelineImpl } from './types'
 
-export interface PipelineDeps {
-  roots: PipelineRoots
-  runs: PipelineRunSource | null
-  env: Record<string, string | undefined>
-}
-
-export type PipelineImpl = (deps: PipelineDeps, args: Record<string, unknown>) => Promise<ToolImplResult>
+export type { PipelineDeps, PipelineImpl } from './types'
 
 export interface ReadAll {
   defs: Map<string, PipelineDef>
@@ -904,16 +913,27 @@ git commit -m "feat(data-mcp): 提案面 list_pipelines / get_pipeline"
 ## Task 4: 运行记录 seam + 两个工具
 
 **Files:**
+- Create: `modules/data/domain/pipelines/types.ts`
 - Create: `modules/data/domain/pipelines/runs.ts`
 - Create: `modules/data/domain/pipelines/runs.test.ts`
 
 **Interfaces:**
-- Produces:
+- Produces（`types.ts`，**本任务先建，Task 3 依赖它**）：
   - `interface PipelineRunRecord { runId: string; pipelineId: string; startedAt: string; status: 'ok' | 'failed' | 'running'; endedAt?: string; rows?: number; error?: string }`
   - `type PipelineRunSource = (q: { pipelineId?: string; limit: number }) => Promise<PipelineRunRecord[]>`
-  - `listPipelineRunsImpl: PipelineImpl`、`getPipelineRunImpl: PipelineImpl`
+  - `interface PipelineDeps { roots: PipelineRoots; runs: PipelineRunSource | null; env: Record<string, string | undefined> }`
+  - `type PipelineImpl = (deps: PipelineDeps, args: Record<string, unknown>) => Promise<ToolImplResult>`
+- Produces（`runs.ts`）：`listPipelineRunsImpl: PipelineImpl`、`getPipelineRunImpl: PipelineImpl`；并**转出** `export type { PipelineRunRecord, PipelineRunSource } from './types'`（Task 8 从 `./runs` 取 `PipelineRunSource`）。
+- **为什么要有 `types.ts`**：`read.ts` 的 `PipelineDeps` 含 `PipelineRunSource`，`runs.ts` 的实现标注是 `PipelineImpl` —— 两边互相 import 会成**类型循环**，哪个先写都编译不过。共享类型放中立文件，read.ts / runs.ts 各自 `import type` 后对外转出，下游 import 路径不变。
 
 **口径：** seam 为 `null` 时**只回 unknown**，不猜、不构造空数组（空数组会被读成「跑过且都成功/一条没有」）。`limit` 上限 50（与控制面既有「抽样 ≤50」同一档）。
+
+> **补记（2026-10-22，已交付后订正）**：本任务实际交付的 `runs.ts` **以 `84af2b03` 的代码为准**，下面 Step 3 的样例在三点上已被评审订正，**照抄样例会把已修的缺陷写回去**：
+> 1. **`pipelineId` 形状门**：样例直接 `typeof === 'string'` ⇒ 非字符串静默放宽成「全部管线」。已改为过 `PIPELINE_ID_RE`（源自 `defs.ts`），非法值 `denied/bad_param/invalid_pipeline_id` 且**不调 seam**；`''` 视同不筛。
+> 2. **窗口饱和 ≠ 不存在**：`get_pipeline_run` 恒以 `{ limit: MAX_LIMIT }` 全局扫（不看 `pipelineId`——那是 `list` 的参数，`get` 的 `inputSchema` 只声明 `runId`）。`scanned >= MAX_LIMIT` 且未命中 ⇒ `unknown / runs_window_saturated`（`isError:false`、回包带 `scanned`）；**只有窗口未饱和才允许 `not_found`**。
+> 3. **`not_found` 必须带 `reason:'not_found'`**：否则审计把它记成 `denied/tool_error`，与真异常不可分。
+>
+> 另：`get_pipeline_run` 的实现**不得**读取 `args.pipelineId`（未在 `tools.ts` 声明 ⇒ 契约外能力，且 CI 无门禁可比对），四个分支一律回显 `pipelineId: null`。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -921,7 +941,7 @@ git commit -m "feat(data-mcp): 提案面 list_pipelines / get_pipeline"
 // modules/data/domain/pipelines/runs.test.ts
 import { describe, expect, it } from 'vitest'
 import { getPipelineRunImpl, listPipelineRunsImpl } from './runs'
-import type { PipelineDeps } from './read'
+import type { PipelineDeps } from './types'
 
 const roots = { pipelinesRoot: '/nope', contractsRoot: '/nope' }
 const noSeam: PipelineDeps = { roots, runs: null, env: {} }
@@ -979,6 +999,39 @@ Expected: FAIL —— 模块不存在。
 
 - [ ] **Step 3: 写实现**
 
+**先建 `types.ts`**（Task 3 依赖它，必须先落盘）：
+
+```ts
+// modules/data/domain/pipelines/types.ts
+// types.ts —— 提案面领域层的共享类型。
+// 单独成文件只为破 read.ts ↔ runs.ts 的类型循环：read 的 PipelineDeps 要 PipelineRunSource，
+// runs 的实现标注要 PipelineImpl。两边各自 import type 本文件，再对外转出，下游路径不变。
+import type { ToolImplResult } from '../toolbox/registry'
+import type { PipelineRoots } from './defs'
+
+export interface PipelineRunRecord {
+  runId: string
+  pipelineId: string
+  startedAt: string
+  status: 'ok' | 'failed' | 'running'
+  endedAt?: string
+  rows?: number
+  error?: string
+}
+
+export type PipelineRunSource = (q: { pipelineId?: string; limit: number }) => Promise<PipelineRunRecord[]>
+
+export interface PipelineDeps {
+  roots: PipelineRoots
+  runs: PipelineRunSource | null
+  env: Record<string, string | undefined>
+}
+
+export type PipelineImpl = (deps: PipelineDeps, args: Record<string, unknown>) => Promise<ToolImplResult>
+```
+
+**再写 `runs.ts`**：
+
 ```ts
 // modules/data/domain/pipelines/runs.ts
 // runs.ts —— 管线运行记录的**只读 seam**（D-W3-3）。
@@ -992,19 +1045,9 @@ Expected: FAIL —— 模块不存在。
 // seam 为 null ⇒ 回 **显式 unknown**，绝不回空数组：空数组会被读成
 // 「跑过、且一条都没问题」——这跟「读不到」是两件事（同 get_quality 的纪律）。
 import type { ToolImplResult } from '../toolbox/registry'
-import type { PipelineDeps, PipelineImpl } from './read'
+import type { PipelineDeps, PipelineImpl } from './types'
 
-export interface PipelineRunRecord {
-  runId: string
-  pipelineId: string
-  startedAt: string
-  status: 'ok' | 'failed' | 'running'
-  endedAt?: string
-  rows?: number
-  error?: string
-}
-
-export type PipelineRunSource = (q: { pipelineId?: string; limit: number }) => Promise<PipelineRunRecord[]>
+export type { PipelineRunRecord, PipelineRunSource } from './types'
 
 const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 50
@@ -1804,16 +1847,21 @@ describePg('审计单点（需要 DATABASE_URL）', () => {
     await pool.query('delete from data.query_audit where org = $1', [ORG])
     await pool.end()
   })
-  it('每条调用（ok / denied / unknown）都落一行，tool 字段 = 工具名', async () => {
+  it('每条调用（ok / not_found / unknown / denied）都落一行，verdict 不把「空」当「拒」', async () => {
     const g = makePipelineTools(wiring())
     const deps = depsOf({ pool, org: ORG })
     await g.call(deps, 'list_pipelines', {})
     await g.call(deps, 'get_pipeline', { id: 'nope' })
     await g.call(deps, 'list_pipeline_runs', {})
-    const { rows } = await pool.query<{ tool: string; verdict: string }>(
-      'select tool, verdict from data.query_audit where org = $1 order by id', [ORG])
-    expect(rows.map((r) => r.tool)).toEqual(['list_pipelines', 'get_pipeline', 'list_pipeline_runs'])
-    expect(rows.map((r) => r.verdict)).toEqual(['ok', 'denied', 'ok'])
+    await g.call(deps, 'propose_pipeline_change', { id: 'x' })
+    const { rows } = await pool.query<{ tool: string; verdict: string; reason: string | null }>(
+      'select tool, verdict, reason from data.query_audit where org = $1 order by id', [ORG])
+    expect(rows.map((r) => r.tool)).toEqual([
+      'list_pipelines', 'get_pipeline', 'list_pipeline_runs', 'propose_pipeline_change'])
+    // not_found（问的客体不存在）与 unknown（读不到）都是 **ok**；只有真被拒（写闸关）才是 denied。
+    expect(rows.map((r) => r.verdict)).toEqual(['ok', 'ok', 'ok', 'denied'])
+    // reason 是区分三种「空」的唯一抓手：'' 落 null，其余透传。
+    expect(rows.map((r) => r.reason)).toEqual([null, 'not_found', 'runs_source_not_wired', 'mutating_disabled'])
   })
 })
 ```
@@ -1895,8 +1943,13 @@ export function makePipelineTools(wiring: PipelineWiring = defaultPipelineWiring
     d: McpDeps, name: string, args: Record<string, unknown>,
     payload: Record<string, unknown>, isError: boolean, rowCount: number | null,
   ): Promise<McpToolResult> => {
-    const verdict = isError ? (payload.status === 'error' ? 'error' : 'denied') : 'ok'
-    const reason = isError ? String(payload.reason ?? 'tool_error') : ''
+    // 审计三态只有 ok / denied / error。**`not_found` 与 `unknown` 都不是 denied**：
+    // 前者是「被问的客体不存在」、后者是「读不到」，都不是「调用被拒」——把它们记成 denied
+    // 会让安全复核分不清「判了拒」和「查了个空」。reason 一律透传 payload.reason（含 ok 行），
+    // 这样 `select tool, verdict, reason, count(*) … group by 1,2,3` 能区分三种空。
+    const status = typeof payload.status === 'string' ? payload.status : null
+    const verdict = status === 'error' ? 'error' : isError && status !== 'not_found' ? 'denied' : 'ok'
+    const reason = typeof payload.reason === 'string' ? payload.reason : (status !== null && status !== 'ok' ? status : '')
     await audit(d, name, args, verdict, reason, rowCount)
     return {
       text: JSON.stringify(payload), isError,
@@ -2146,4 +2199,4 @@ git commit -m "docs(data-mcp): Wave 3 提案面实现计划"
 2. **开 PR**：spec 写「落 PR 分支」；本轮只产出内存草案 + 建议分支名（D-W3-5）。开 PR 另立 issue。
 3. **沙箱真执行**：本轮只做校验闸 + 前缀断言（D-W3-4），执行通道标待沉淀。
 
-**类型/命名一致性**：`PipelineDeps`（Task 3 定义，Task 4/6/7/8 使用）、`PipelineImpl`（Task 3）、`PipelineRunSource`（Task 4）、`Issue`（Task 5 的 `validate-types.ts`）、`PipelineWiring`（Task 8）在两个以上任务间出现，命名已统一。
+**类型/命名一致性**：`PipelineDeps` / `PipelineImpl`（均在 Task 4 的 `types.ts` 定义，read.ts 转出，Task 3/6/7/8 使用）、`PipelineRunRecord` / `PipelineRunSource`（Task 4 的 `types.ts`，runs.ts 转出）、`Issue`（Task 5 的 `validate-types.ts`）、`PipelineWiring`（Task 8）在两个以上任务间出现，命名已统一。
