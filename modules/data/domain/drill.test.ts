@@ -197,7 +197,7 @@ describe('runDetailQuery（假执行器 + 假词表池，不需要湖）', () =>
     expect(sqls[0]).toBe(
       "select system_book, bizday, branch_num, order_no, sum(value) as value from ( select ((sale_amount@order - return_amount@line)) as value, system_book, bizday, branch_num, order_no from vw_t where org = 'org_a' AND state = 'FINISHED' AND bizday BETWEEN '2026-10-19'::date AND '2026-10-20'::date group by system_book, bizday, branch_num, order_no ) t group by system_book, bizday, branch_num, order_no order by value desc limit 50 offset 0")
     expect(sqls[1]).toBe("select count(*) as n from vw_t where org = 'org_a' AND state = 'FINISHED' AND bizday BETWEEN '2026-10-19'::date AND '2026-10-20'::date")
-    // 审计：verdict ok + 行数（=回包行数）+ masking null（无掩码生效）+ drill 面 {dimensions, rowCountTotal}
+    // 审计：verdict ok + 行数（=回包行数）+ masking null（无掩码生效）+ drill 面 {dimensions, rowCountTotal, grantedColumns}
     expect(audits).toHaveLength(1)
     expect(audits[0].params[AUDIT_VERDICT]).toBe('ok')
     expect(audits[0].params[6]).toBe(1)

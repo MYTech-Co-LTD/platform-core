@@ -145,7 +145,8 @@ metrics:
     sources:
       - 's3://<bucket>/lemeng/retail_order_line/system_book=<账套>/bizday=<日期>/hour=<时>/all.parquet'
     # ── 下钻绑定（spec §2.3/§2.4；Phase 1 裁决点：item_num 不进闭集——折半是订单级算术，
-    # 摊到行是设计选择，spec §2.4 明示不定案；data:cost 列掩码缓到 Phase 2，见计划裁决点 2）──
+    # 摊到行是设计选择，spec §2.4 明示不定案；价格列走**条件列**（detail.columns +
+    # grantedBy: data:cost）而非值级掩码——Phase 2 否决了值级掩码，见 spec 2026-10-22 §3.1）──
     compose: 'sale_amount@order - return_amount@line'
     dimensions: [system_book, bizday, branch_num, order_no]
     detail:
@@ -955,7 +956,8 @@ metrics:
   # ── 零售订单明细行（2026-10-21 建；2026-10-22 Phase 2 收口权限面）────────────────
   # 下钻绑定的**载体指标**：聚合面答「合计/分布」，下钻面（query_detail）答「多少行 / 哪几行造成的」。
   # 行数唯一权威 = 下钻回包的 rowCountTotal（不是聚合面的 1000 行截断）。
-  # 行域两面统一 `state = 'FINISHED'`（**含退货行**；REPAID / CANCELED 不在）：
+  # 行域统一 `state = 'FINISHED'`（**含退货行**；REPAID / CANCELED 不在）：非 FINISHED 行在聚合面贡献 0；
+  #   分组集**不统一**（聚合面可能出现「某店日全为作废行 ⇒ 零值组」，下钻面同一店日是 0 行）。
   #   聚合面把谓词内嵌进 expression（聚合面没有 detail.filter 可用），下钻面写在 detail.filter；
   #   两处**声明**漂移由 scripts/sync-data-semantics.test.ts 的真事实源用例钉死（`detail.filter`
   #   走 `toEqual`、`expression` 折进 `selectSql` 走正则）；assert_drill_order_line_matches_metric.sql
@@ -972,7 +974,7 @@ metrics:
   #    正是本设计要消灭的「NULL 被读成这行没值」；② 声明用**限定列名**（`vw_….`）⇒ 本投影是不限定
   #    列名，掩码正则一个都不命中 ⇒ **掩码不生效（fail-open，明文照出）**。
   #    结论：给本列打列级掩码前**必须先裁决**「掩码生效 ⇒ 整列缺席（推荐）vs 列在场全 NULL」，
-  #    缺口归 #780；别指望它自己报错。
+  #    缺口归 #995（下钻条件列 × 列级掩码的语义缺口）；别指望它自己报错。
   - name: 'lemeng:retail:order_line'
     label: 零售订单明细行
     definition: >-

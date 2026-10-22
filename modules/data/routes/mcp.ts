@@ -39,7 +39,7 @@ function analystListEntries(): Record<string, unknown>[] {
 // 下钻是**能力陈述**，只出现在调用回包里（denied/no_detail_binding，isError=true）。
 const DETAIL_TOOL = {
   name: 'query_detail',
-  description: '按指标下钻到明细构成（订单级）。args.bizday 必传；回包 rowCountTotal=全量原始行数；dimensions 缺省=最细。仅对声明了下钻的指标可用（否则回 no_detail_binding）。',
+  description: '按指标下钻到明细构成（订单级）。args.bizday 必传；回包 rowCountTotal=全量原始行数；dimensions 缺省=最细。仅对声明了下钻的指标可用（否则回 no_detail_binding）。回包可能少一列（条件列）：那是未授权（如 data:cost），不是没有数据/不是 NULL——如实说明该列需授权。',
   inputSchema: {
     type: 'object',
     properties: {

@@ -32,7 +32,7 @@ select coalesce(a.system_book, b.system_book) as system_book,
        coalesce(a.bizday, b.bizday)           as bizday,
        a.line_count as drill_lines,  b.line_count as metric_lines,
        a.amount     as drill_amount, b.amount     as metric_amount,
-       '下钻行域与聚合表达式漂移（detail.filter 与 expression 的 FINISHED 条件不一致，或单侧分区缺失）' as note
+       'vw-FINISHED 与 stg-CASE-FINISHED 数据不同量（单侧分区缺失 / 行域数据漂移）' as note
 from drill a
 full join metric b using (system_book, bizday)
 where coalesce(a.bizday, b.bizday) < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)

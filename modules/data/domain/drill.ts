@@ -181,8 +181,10 @@ export async function runDetailQuery(
   const plan = buildDrillSql(drill, requested, where, orderBy, desc, limit, offset, granted)
   // 掩码（spec §2.5 细节 1）：在场判定按**下钻 SQL**——拿合成行（selectSql 换成投影串）复用
   // effectiveMasks，本文件不写第二份掩码判定。只掩**投影串**（value 头与列），WHERE/count
-  // 不掩：Phase 1 掩码只有整值形态（value 头），且列掩码声明期被 grain/在场守卫拦住碰不到
-  // 这里；rowCountTotal 数行数，与值掩码正交。投影 value-first（dims 在后）——理由见下方
+  // 不掩：Phase 1 掩码只有整值形态（value 头）；但**列掩码不再结构性不可达**——投影里含裸条件列，
+  // effectiveMasks 的跨 catalog 按列传播可以命中它，语义缺口与裁决见
+  // `dbt/semantics/l1_metrics.yml` 的 ⚠️ 掩码块与 issue #995。rowCountTotal 数行数，与值掩码
+  // 正交。投影 value-first（dims 在后）——理由见下方
   // rollupOver 处的 ⚠️（终审 C1：mask.ts 头部替换按 value-first 形状设计）。投影串含 from
   //（整值掩码尾锚要求 value 后跟 `,` 或 `from`）。
   const projection = `select (${drill.expr}) as value, ${requested.join(', ')}${extra} from ${drill.relation}`
