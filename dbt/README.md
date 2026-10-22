@@ -173,9 +173,12 @@ sync 取路径段 `lemeng/<资产>` 推导 `stg_lemeng_<资产>` 关系集物化
 `dimensions` / `detail` —— **三者同现或同缺**（半套 = 声明了但下钻面起不来，静默）。
 `compose` = 非空、不含分号的**组件组合式**（如 `sale_amount@order - return_amount@line`）；
 `dimensions` = 非空、无重复、蛇形命名的字符串数组——**原子粒度闭集**，请求维度只能取其子集；
-`detail` = `{relation, filter}` 键闭集：`relation` 必须合 `vw_*` 且
+`detail` = 键**闭集** `{relation, filter, columns}`：`relation` 必须合 `vw_*` 且
 `dbt/models/**/views/<relation>.sql` 在仓（Phase 1 下钻只读直读湖视图），`filter` = 非空、
-不含分号的布尔表达式。配套的**顶层** `measures:`（与 `metrics:` 同级，一个文件一份）=
+不含分号的布尔表达式；`columns`（选填）= **条件列**数组，每项 `{col, grantedBy}`
+（`col` 蛇形、不与 `dimensions` 重叠、不许叫 `value`、不重复；`grantedBy` 必须是 manifest
+里真实存在的权限码）——**持码才投影，无码 ⇒ 该列不在回包里**（缺席，不是 NULL；
+spec 2026-10-22 §2.3）。条件列**不是**值级掩码，不进 `mask`。配套的**顶层** `measures:`（与 `metrics:` 同级，一个文件一份）=
 `{ '组件名@粒度': 表达式 }` 映射（键合 `<snake>@<snake>`，表达式非空、不含分号）——它是
 `compose` 引用闭集的唯一事实源：compose 引用的组件必须声明在**同文件**的 `measures:`。
 本段键清单与 `check-data-models.mjs` 的 `METRIC_KEYS` 同步维护（加字段 = 改常量 + 改本 README + 走 PR）。

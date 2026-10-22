@@ -1034,6 +1034,23 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     }
   })
 
+  it('★ 真事实源：order_line 的下钻绑定（8 列闭集 + 条件列）', () => {
+    const rows = readDeclarations(ROOT)
+    const row = new Map(rows.map((r) => [r.id, r])).get('lemeng:retail:order_line')
+    expect(row?.drillExpr).toBe('(sum(sale_money))')
+    expect(row?.drillDims).toEqual([
+      'system_book', 'bizday', 'branch_num', 'order_no',
+      'order_detail_num', 'item_num', 'item_code', 'order_transaction_type',
+    ])
+    expect(row?.drillDetail).toEqual({
+      relation: 'vw_lemeng_retail_order_line',
+      filter: "state = 'FINISHED'",
+      columns: [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }],
+    })
+    // 聚合面表达式：FINISHED 内嵌 + 仍以 sum( 开头（可加判定）+ 仍带关系限定（deriveRelation）
+    expect(row?.selectSql).toMatch(/^select sum\(case when stg_lemeng_retail_order_line\.state = 'FINISHED'/)
+  })
+
   it('★ 下钻三键进 comparableOf：声明带了下钻而库内没跟上 ⇒ 判「更新」（缺这条 --check 假绿）', () => {
     const row = (drillExpr: string | null, drillDetail: { relation: string; filter: string } | null) => ({
       id: 'a', title: 'A', description: '', requiredScope: null, subjectColumn: 'org',
