@@ -102,11 +102,55 @@ export function validateContractDraft(doc: unknown): Issue[] {
   return out
 }
 
+/** 沙箱允许的**写入组件**（allowlist）：新增组件默认不可写——安全的一侧是默认拒绝（#1005）。 */
+const SANDBOX_WRITE_COMPONENTS = ['snk.minio', 'snk.csv']
+
+/**
+ * POSIX 路径 / 对象键**规范化**。返回 `null` = 这个值判不了 ⇒ 调用方一律当违规。
+ *
+ * 为什么必须规范化再判：`startsWith('__sandbox/')` 判的是**字面**——`__sandbox/../prod/x`
+ * 字面通过、语义却写在正式湖里。接执行面之前这里是一条直接写生产湖的路（#1005）。
+ *
+ * 规则（判不了就拒，不猜）：
+ *   · 反斜杠：Linux 上是普通字符、别处是分隔符 ⇒ 拒（我们的键里不需要它）；
+ *   · 百分号编码**只解一层**：解不开、或解完还剩 `%`（多重编码）⇒ 拒——不猜有几层；
+ *   · `.` 与空段（`//`、首尾斜杠）折叠，`..` 回退；**回退越过根 ⇒ 拒**；
+ *   · 控制字符（含 NUL）⇒ 拒：在 shell / 日志 / 客户端里可能被截断或转义；
+ *   · 开头 `/` **保留**（本地落盘规则要求绝对路径，抹掉就等于把相对路径当绝对路径）；
+ *   · 大小写**不动**（S3 键区分大小写，`__SANDBOX/` 是另一个前缀，必须判违规而不是被「归一」放行）。
+ */
+const normalizePosixPath = (raw: string): string | null => {
+  if (raw === '' || raw.includes('\\') || /[\u0000-\u001f\u007f]/.test(raw)) return null
+  let decoded: string
+  try { decoded = decodeURIComponent(raw) } catch { return null }
+  if (decoded.includes('%')) return null
+  const absolute = decoded.startsWith('/')
+  const out: string[] = []
+  for (const seg of decoded.split('/')) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') {
+      if (out.length === 0) return null
+      out.pop()
+      continue
+    }
+    out.push(seg)
+  }
+  if (out.length === 0) return null
+  return `${absolute ? '/' : ''}${out.join('/')}`
+}
+
+/** 规范化后的值是否**严格落在** `prefix` 之下（`prefix` 自带尾斜杠；光有目录本身不算一个文件）。 */
+const underPrefix = (norm: string, prefix: string): boolean =>
+  norm.startsWith(prefix) && norm.length > prefix.length
+
 /**
  * 沙箱试跑的**写入面**断言（spec §7 红线：产物写 __sandbox 前缀，不入正式湖）：
- *   · 每个 snk.minio 的 properties.key 必须 `__sandbox/` 开头；
- *   · 每个 snk.csv 的 properties.path 必须 `/workspace/logs/sandbox/` 开头；
- *   · 出现 snk.webhook ⇒ 违规（沙箱试跑不得对外发数据）。
+ *   · 写入组件只允许 `snk.minio` / `snk.csv`，其余（含 `snk.webhook` 与**未知**组件）一律违规；
+ *   · `snk.minio` 的 `properties.key` 必须落在 `__sandbox/` 之下；
+ *   · `snk.csv` 的 `properties.path` 必须落在 `/workspace/logs/sandbox/` 之下；
+ *   · 前缀判据一律**按规范化后的路径**判（`..`、`//`、`%2e%2e`、反斜杠都先归一或判不了即拒）；
+ *   · 是否「写」按 `componentId`（`snk.*`）或 `type === 'sink'` 判——**不只看 type 标签**：
+ *     写不写由组件决定，误标成 `transform` 的 `snk.webhook` 不能整个漏过去（Task 7 ⑤）。
  * 源节点不在这里限制：读生产 API 是试跑的题中之义（只读）。
  */
 export function sandboxViolations(doc: unknown): Issue[] {
@@ -115,22 +159,32 @@ export function sandboxViolations(doc: unknown): Issue[] {
     return [{ path: 'nodes', message: 'nodes 缺失，无法断言沙箱前缀' }]
   }
   doc.nodes.forEach((n, i) => {
-    if (!isObj(n) || str(n.type) !== 'sink') return
+    if (!isObj(n)) return
     const data = isObj(n.data) ? n.data : {}
     const comp = str(data.componentId)
+    const isWrite = str(n.type) === 'sink' || comp.startsWith('snk.')
+    if (!isWrite) return
+    if (!SANDBOX_WRITE_COMPONENTS.includes(comp)) {
+      out.push({
+        path: `nodes[${i}].data.componentId`,
+        message: `沙箱只允许写入 ${SANDBOX_WRITE_COMPONENTS.join(' / ')}，实际：${comp || '(空)'}`
+          + (comp === 'snk.webhook' ? '（沙箱试跑不得对外发数据）' : ''),
+      })
+      return
+    }
     const props = isObj(data.properties) ? data.properties : {}
-    if (comp === 'snk.minio') {
-      const key = str(props.key)
-      if (!key.startsWith(SANDBOX_LAKE_PREFIX)) {
-        out.push({ path: `nodes[${i}].data.properties.key`, message: `湖写入必须以 ${SANDBOX_LAKE_PREFIX} 开头，实际：${key || '(空)'}` })
-      }
-    } else if (comp === 'snk.csv') {
-      const path = str(props.path)
-      if (!path.startsWith(SANDBOX_LOCAL_PREFIX)) {
-        out.push({ path: `nodes[${i}].data.properties.path`, message: `本地落盘必须在 ${SANDBOX_LOCAL_PREFIX} 下，实际：${path || '(空)'}` })
-      }
-    } else if (comp === 'snk.webhook') {
-      out.push({ path: `nodes[${i}].data.componentId`, message: '沙箱试跑不得含 webhook 出口（会对外发数据）' })
+    const [field, prefix, label] = comp === 'snk.minio'
+      ? (['key', SANDBOX_LAKE_PREFIX, '湖写入'] as const)
+      : (['path', SANDBOX_LOCAL_PREFIX, '本地落盘'] as const)
+    const raw = str(props[field])
+    const norm = normalizePosixPath(raw)
+    if (norm === null || !underPrefix(norm, prefix)) {
+      out.push({
+        path: `nodes[${i}].data.properties.${field}`,
+        message: norm === null
+          ? `${label}路径无法规范化（含反斜杠/坏编码/越界回退或为空），判为违规：${raw || '(空)'}`
+          : `${label}必须落在 ${prefix} 之下（按规范化后的路径判），实际：${raw} → ${norm}`,
+      })
     }
   })
   return out
