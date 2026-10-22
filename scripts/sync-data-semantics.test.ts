@@ -636,7 +636,7 @@ describe('真 YAML：43 条 sla_days / freshnessRelations 逐条断言（spec §
     'lemeng:retail:sales', 'lemeng:retail:net_sales', 'lemeng:retail:order_count',
     'lemeng:retail:net_quantity', 'lemeng:retail:consecutive_no_sales_days',
     'lemeng:retail:comparable_growth_rate',
-    // 2026-10-21（issue #965）：明细透传指标，读同一份 retail_order_line 湖资产 ⇒ 与上面六条同档。
+    // 2026-10-21（issue #965）：行级明细读面（8 列闭集 + FINISHED 行域），读同一份 retail_order_line 湖资产 ⇒ 与上面六条同档。
     'lemeng:retail:order_line',
   ])
 
@@ -659,7 +659,7 @@ describe('真 YAML：43 条 sla_days / freshnessRelations 逐条断言（spec §
       'lemeng:retail:net_quantity': ['stg_lemeng_retail_order_line'],
       'lemeng:retail:consecutive_no_sales_days': ['stg_lemeng_retail_order_line'],
       'lemeng:retail:comparable_growth_rate': ['stg_lemeng_retail_order_line'],
-      // 2026-10-21（issue #965）：明细透传指标，读 retail_order_line 湖资产
+      // 2026-10-21（issue #965）：行级明细读面（8 列闭集 + FINISHED 行域），读 retail_order_line 湖资产
       'lemeng:retail:order_line': ['stg_lemeng_retail_order_line'],
       'lemeng:outbound:net_amount': ['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out', 'stg_lemeng_wholesale_return'],
       'lemeng:expense:branch_payable': ['stg_lemeng_branch_expense'],

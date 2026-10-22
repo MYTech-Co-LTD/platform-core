@@ -6,14 +6,22 @@
 -- metricToAuditFileName()）。
 --
 -- ── 本指标的复算面与别的指标**不同**，说清楚 ───────────────────────────────────────────
--- 该指标是**明细透传**（grain 放全 26 列 ⇒ 每个分组恒为一行），它**不承载口径**：销售/退货的
--- 判别式、赠品排除全在 `fct_*` 那族里。所以本对账**不复算口径**，只回答一个问题：
--- **「物化进 PG 的明细表，与湖里的 parquet 是不是同一件事」**——即 staging 这一跳有没有
--- 静默丢行 / 丢列 / cast 错。判据取**行数 + sale_money 合计**按 (账套 × 业务日) 对齐。
+-- 该指标是**行级明细读面**（grain = 8 列闭集，同一分组可有多行）；2026-10-22 Phase 2 起，
+-- 此前那句「26 列 ⇒ 每个分组恒为一行」的明细透传描述**已不成立**。行域 = state='FINISHED'，
+-- 故本指标承载的口径只有**行域**与**行级求和**两条；销售/退货判别式、赠品排除仍全在
+-- `fct_*` 那族里。所以本对账**不复算 fct 口径**，只回答一个问题：
+-- **「物化进 PG 的这批 FINISHED 明细，与湖里的 parquet 是不是同一件事」**——即 staging 这一跳
+-- 有没有静默丢行 / 丢列 / cast 错。判据取**行数 + sale_money 合计**按 (账套 × 业务日) 对齐。
 --
 -- ⚠️ 本对账**保证不了**的事（免得将来把「对账绿」读成「明细口径已确认」）：
 --    它逐行比对不了**行内容**（只比每分区的行数与金额合计）——同一分区内「A 行换成 B 行、
 --    行数金额恰好不变」这类置换它抓不到。要逐行比对得比全键哈希，成本与收益不成比例，故不做。
+--
+-- ── 2026-10-22 Phase 2：行域收 FINISHED（与指标同域）────────────────────────────────
+-- 指标 lemeng:retail:order_line 的两面行域都是 state='FINISHED'（聚合面内嵌进 expression、
+-- 下钻面写在 detail.filter）⇒ 本对账也只看 FINISHED 行，才是「与受测面同量对比」。
+-- ⚠️ 边界：REPAID / CANCELED 行**不再被本对账覆盖**（staging 若在这部分丢行，这里看不见）。
+--    本对账守的是 FINISHED 行域的湖↔物化一致性；全状态一致性没有独立守护，登记为已知边界。
 --
 -- ── 形态：与 staging / 另一条 audit **同一套实测形态**（2026-09-24 数据面真机）────────────
 -- 取列用 `from read_parquet(…) r` + `r['列名']`（别名挂函数调用上，不是 CTE：CTE 形态取列报
@@ -34,7 +42,10 @@ with recheck_raw as (
     -- ⚠️ 只比**已闭窗营业日**（bizday < 上海今天）：今天的文件被 tick 重写 ⇒ 与物化建表互撞
     --    ETag 竞态、报 ERROR（实测 2026-10-06 run `jrun_dtyVWZnnFaQ_pCCN` attempt 1）。
     --    今天未定稿不判；两侧都滤，才是同量对比。
+    -- ⚠️ 行域也收 state='FINISHED'（与指标同域，见头注 Phase 2 段）——否则 REPAID/CANCELED
+    --    行会让「湖侧多出来的行」看起来像 staging 丢行（假红），也不是受测面。
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['state']::varchar = 'FINISHED'
 
     union all
 
@@ -47,6 +58,7 @@ with recheck_raw as (
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
     ) r
     where r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and r['state']::varchar = 'FINISHED'
       and not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
 ),
 recheck as (
@@ -66,6 +78,7 @@ materialized as (
         sum(sale_money)::numeric(20,2) as sale_money_sum
     from {{ ref('stg_lemeng_retail_order_line') }}
     where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
+      and state = 'FINISHED'
     group by 1, 2
 )
 select
@@ -75,7 +88,7 @@ select
     b.line_count                           as materialized_lines,
     a.sale_money_sum                       as recheck_amount,
     b.sale_money_sum                       as materialized_amount,
-    '复算与物化不一致（明细透传：湖 parquet vs stg_lemeng_retail_order_line，按账套×业务日对齐行数与金额合计）' as note
+    '复算与物化不一致（FINISHED 行域：湖 parquet vs stg_lemeng_retail_order_line，按账套×业务日对齐行数与金额合计）' as note
 from recheck a
 full join materialized b using (system_book, bizday)
 -- 金额用 numeric(20,2) 双侧对齐（= 1 分容差，同 #957）——全精度直接比必假红。
