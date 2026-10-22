@@ -46,13 +46,15 @@ describePg('POST /toolbox：分发与审计（需要 DATABASE_URL）', () => {
     await pool.end()
   })
   const fakeWh = (async () => ({ rows: [] })) as unknown as SqlExecutor
+  // execute 用**变量**携带进 ctx：绕开 ModuleContext 字面量的多余属性检查（协议上只有 pool）
+  const ctx = { pool, execute: fakeWh }
   const call = (app: Hono, body: Record<string, unknown>) =>
     app.request('/toolbox', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
 
   it('describe_metric 命中 → 200 + payload 直通；审计 verdict=ok 且 tool 字段在', async () => {
     await applyMigrations(pool)
     await upsertMetric(pool, ORG, M1, 'fixture')
-    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), { pool, execute: fakeWh }, { id: 1, casdoor_org: ORG })
+    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), ctx, { id: 1, casdoor_org: ORG })
     const res = await call(app, { tool: 'describe_metric', args: { id: 'w2_sales' } })
     expect(res.status).toBe(200)
     const payload = (await res.json()) as { status: string; id: string; title: string }
@@ -65,7 +67,7 @@ describePg('POST /toolbox：分发与审计（需要 DATABASE_URL）', () => {
   })
 
   it('未知名 → 403 {status:denied, reason:unknown_tool}（fail-closed 继承 callTool，不暴露存在性）', async () => {
-    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), { pool, execute: fakeWh }, { id: 1, casdoor_org: ORG })
+    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), ctx, { id: 1, casdoor_org: ORG })
     const res = await call(app, { tool: 'no_such_tool', args: {} })
     expect(res.status).toBe(403)
     expect(await res.json()).toMatchObject({ status: 'denied', reason: 'unknown_tool' })
@@ -74,7 +76,7 @@ describePg('POST /toolbox：分发与审计（需要 DATABASE_URL）', () => {
   it('sample_dimension_values 维度不在粒度 → 403 reason=bad_param（detail 原样带出，插件文案映射靠它）', async () => {
     await applyMigrations(pool)
     await upsertMetric(pool, ORG, M1, 'fixture')
-    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), { pool, execute: fakeWh }, { id: 1, casdoor_org: ORG })
+    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), ctx, { id: 1, casdoor_org: ORG })
     const res = await call(app, { tool: 'sample_dimension_values', args: { metricId: 'w2_sales', dimension: 'not_a_dim' } })
     expect(res.status).toBe(403)
     const body = (await res.json()) as { status: string; reason: string; detail: string }
@@ -87,7 +89,7 @@ describePg('POST /toolbox：分发与审计（需要 DATABASE_URL）', () => {
     const wh = (async () => ({
       rows: [['fct_x', '2026-10-20', new Date('2026-10-21T02:10:00+08:00')]],
     })) as unknown as SqlExecutor
-    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), { pool, execute: wh })
+    const app = buildTestApp(mod, makeIdentity({ orgId: ORG }), { pool, execute: wh } as never,)
     const res = await call(app, { tool: 'get_freshness', args: {} })
     expect(res.status).toBe(200)
     // 全局支回包刻意无 status 字段（health.ts 既有形状：只有 unknown 分支带 status）
