@@ -1,4 +1,4 @@
-sha256-of-rest 6305303a19482536f7a118cb2e4938b732276473c04702f7f1b6afbcbf3440ef
+sha256-of-rest 1e6fca48048a2fe9601efe2f4ac687a94b45d105f12092adc9fcb402faa14b5a
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -40,7 +40,7 @@ ca91f07f48dc8d26a7dcd84959f0aa6a20ff7dc21ede5b29a012242bf68edcac dbt/models/leme
 62c07279fd092e81de58ab3caa7e7b885d8d9dcf0aaa882c5791d36326fa2972 dbt/models/lemeng/marts/fct_request_fulfillment.sql ${REPO}/dbt/models/lemeng/marts/fct_request_fulfillment.sql 0644
 e3ab46e7866d7359e706e8c303e2c6445eeb7cd1dc5ddc5e3af118bd7f6be6ba dbt/models/lemeng/marts/fct_retail_comparable_growth.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_comparable_growth.sql 0644
 40519798835e4d7082a3889b2b9c3821e898e3943e68a19d332191748d726d07 dbt/models/lemeng/marts/fct_retail_quantity.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_quantity.sql 0644
-633ecf89f3e5b4e609545a5955cdfd12d1593805e13d559fa39c1c76eae2d418 dbt/models/lemeng/marts/fct_retail_sale.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_sale.sql 0644
+56c85ce8969bc3def6fcf18ccabd84e24089e3c8a5adb68cb1f8709a935138f6 dbt/models/lemeng/marts/fct_retail_sale.sql ${REPO}/dbt/models/lemeng/marts/fct_retail_sale.sql 0644
 70a7f1cd649d4176a9866c67ecdf05361b2a957cc9e324d937e43f2310e22067 dbt/models/lemeng/marts/fct_transfer_item.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_item.sql 0644
 3b9116afdd844059274d18a22e15d23c5c6600c21c7947cf96470d7cfd21425e dbt/models/lemeng/marts/fct_transfer_line_quality.sql ${REPO}/dbt/models/lemeng/marts/fct_transfer_line_quality.sql 0644
 02144ad63c80881fed3dba2b580fc29923c6cde0f4f72ec0af45cb13e449458f dbt/models/lemeng/marts/recon_break.sql ${REPO}/dbt/models/lemeng/marts/recon_break.sql 0644

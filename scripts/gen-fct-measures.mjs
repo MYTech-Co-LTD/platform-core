@@ -10,8 +10,10 @@
 //      退货侧只要退货行），故**每个组件各带一个**；
 //   ② 两阶段编译（Task 4 的 `compilePerGroup` / `compileAggregate`）：
 //      阶段 1 在组件自述的 grain 键上求 `measure_value`（CTE 名 `<组件>__gen`），
-//      阶段 2 在 fct 粒度（`FCT_GRAIN`）上 `sum(measure_value)`；
-//   ③ `gen_agg` —— 把各组件阶段 1 的结果按 fct 粒度对齐（full join + coalesce 键）后聚合。
+//      阶段 2 在 fct 粒度（`FCT_GRAIN`）上 `sum(measure_value)`（CTE 名 `<组件>__rollup`）；
+//   ③ `gen_agg` —— 把各组件**上卷后**的结果按 fct 粒度对齐（full join + coalesce 键）。
+//      ⚠️ 必须先各自上卷再 join：两个组件的阶段 1 粒度不同（订单 / 明细行），细粒度直接 join
+//      会做笛卡尔积、把每侧按对方行数放大（fix round 1 的 Critical）。
 // 唯一的**手写**派生列 `net_amount__gen` 不在本区里（它不属任何单一组件，见 fct 模型的最终 SELECT）。
 //
 // ## 为什么只写标记区、且 `--check` 逐字节比对
@@ -104,7 +106,7 @@ const REGION_HEADER = [
  * 一份生成结果。
  * @typedef {object} RenderedFct
  * @property {string} ctes 基面 + 阶段 1 的 CTE 定义（逗号分隔，不含结尾逗号）
- * @property {string} cols 阶段 2 的聚合列（逗号 + 换行分隔）
+ * @property {string[]} cols 阶段 2 的聚合表达式（顺序与 `names` 一致；各自住进一层的上卷 CTE）
  * @property {string[]} names 各组件阶段 1 的 CTE 名（= 输出列名，顺序与 `columns` 一致）
  */
 
@@ -160,36 +162,70 @@ export function renderFctMeasures(measures, columns = FCT_MEASURE_COLUMNS, domai
     names.push(`${name}__gen`)
   }
 
-  return { ctes: ctes.join(',\n'), cols: cols.join(',\n        '), names }
+  return { ctes: ctes.join(',\n'), cols, names }
 }
 
 /**
- * 把各组件阶段 1 的结果在 fct 粒度上对齐后聚合（`gen_agg`）。
+ * 某个组件的上卷 CTE 名：阶段 1 是**细粒度**（order / line 键），必须先各自上卷到 fct 粒度。
+ * @param {string} name 组件名（阶段 1 的 CTE 名去掉 `__gen`）
+ * @returns {string}
+ */
+function rollupName(name) {
+  return `${name}__rollup`
+}
+
+/**
+ * 上卷 CTE：把某组件的阶段 1 结果按 fct 粒度求和。
+ *
+ * 为什么**必须**先上卷再 join（2026-10-23 fix round 1 的 Critical）：两个组件的阶段 1 粒度不同
+ * （sale 逐订单、return 逐明细行），直接按 `(账套, 业务日, 门店)` full join **会做笛卡尔积**——
+ * 一个门店日 m 张订单 × n 条退货行 = m×n 行，随后 `sum()` 把每侧按对方的行数放大
+ * （实测 2 单 100+50 + 3 行退货 −10/−20/−30 ⇒ 450 / −120，正确值 150 / −60）。
+ * 单订单 + 单退货行的日子恰好乘 1 ⇒ 小样本看不出来，只有多行日才炸。
+ *
+ * @param {string} name 组件的阶段 1 CTE 名（`<组件>__gen`）
+ * @param {string} col 阶段 2 的聚合表达式（`compileAggregate` 的产物）
+ * @returns {string}
+ */
+function renderRollup(name, col) {
+  return [
+    `${rollupName(name.replace(/__gen$/, ''))} as (`,
+    `    select ${FCT_GRAIN.join(', ')}, ${col}`,
+    `    from ${name}`,
+    `    group by ${FCT_GRAIN.map((_, i) => i + 1).join(', ')}`,
+    ')',
+  ].join('\n')
+}
+
+/**
+ * 把各组件**上卷后**的结果按 fct 粒度对齐（`gen_agg`）。
  *
  * 为什么 full join + coalesce 键：sale 与 return 的行域**不重叠**（一侧排掉退货行、一侧只要退货行），
  * 某个门店日只有销售没有退货是常态 ⇒ 内连接会**静默丢行**（影子列少数，对账红但原因隐蔽）。
- * `sum(<name>__gen.measure_value)` 在缺侧时为 NULL，与手写侧 `coalesce(…, 0)` 的语义一致。
+ * 缺侧的列在此为 NULL，**由最终 SELECT 统一 `coalesce(…, 0)` 归零**——与手写侧的净额算法同形
+ * （见 fct 模型：`coalesce(sale_side.sale_amount, 0)`）。
  *
- * @param {{ cols: string, names: string[] }} rendered
+ * @param {{ names: string[] }} rendered
  * @returns {string}
  */
-function renderGenAgg({ cols, names }) {
-  const first = names[0]
+function renderGenAgg({ names }) {
+  const rollups = names.map((n) => rollupName(n.replace(/__gen$/, '')))
+  const first = rollups[0]
   const keyLines = FCT_GRAIN.map(
-    (k) => `        coalesce(${names.map((n) => `${n}.${k}`).join(', ')}) as ${k}`,
+    (k) => `        coalesce(${rollups.map((r) => `${r}.${k}`).join(', ')}) as ${k}`,
   )
-  const joins = names.slice(1).map(
-    (n) => `    full join ${n}\n        on  ${first}.${FCT_GRAIN[0]} = ${n}.${FCT_GRAIN[0]}`
-      + FCT_GRAIN.slice(1).map((k) => `\n        and ${first}.${k} = ${n}.${k}`).join(''),
+  const colLines = rollups.map((r) => `        ${r}.${r.replace(/__rollup$/, '__gen')}`)
+  const joins = rollups.slice(1).map(
+    (r) => `    full join ${r}\n        on  ${first}.${FCT_GRAIN[0]} = ${r}.${FCT_GRAIN[0]}`
+      + FCT_GRAIN.slice(1).map((k) => `\n        and ${first}.${k} = ${r}.${k}`).join(''),
   )
   return [
     'gen_agg as (',
     '    select',
     `${keyLines.join(',\n')},`,
-    `        ${cols}`,
+    colLines.join(',\n'),
     `    from ${first}`,
     ...joins,
-    `    group by ${FCT_GRAIN.map((_, i) => i + 1).join(', ')}`,
     ')',
   ].join('\n')
 }
@@ -201,7 +237,9 @@ function renderGenAgg({ cols, names }) {
  * @returns {string}
  */
 export function renderRegion(rendered) {
-  return [BEGIN, ...REGION_HEADER, `${rendered.ctes},`, renderGenAgg(rendered), END].join('\n')
+  const rollups = rendered.names.map((n, i) => renderRollup(n, rendered.cols[i]))
+  const body = [rendered.ctes, ...rollups, renderGenAgg(rendered)].join(',\n')
+  return [BEGIN, ...REGION_HEADER, body, END].join('\n')
 }
 
 /**

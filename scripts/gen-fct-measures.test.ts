@@ -18,6 +18,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import {
   BEGIN,
   END,
+  FCT_GRAIN,
   FCT_MEASURE_COLUMNS,
   FCT_REL,
   GRAIN_KEYS,
@@ -103,10 +104,28 @@ describe('renderFctMeasures —— 生成的 SQL 形状', () => {
 
   it('聚合列在 fct 粒度上两阶段求和（先逐组求值、再 sum(measure_value)）', () => {
     const { cols } = renderFctMeasures(FIXTURE_MEASURES, FCT_MEASURE_COLUMNS, DOMAINS)
-    expect(cols).toBe(
-      'sum(sale_amount__gen.measure_value)::numeric(20,2) as sale_amount__gen,\n'
-      + '        sum(return_amount__gen.measure_value)::numeric(20,2) as return_amount__gen',
-    )
+    expect(cols).toEqual([
+      'sum(sale_amount__gen.measure_value)::numeric(20,2) as sale_amount__gen',
+      'sum(return_amount__gen.measure_value)::numeric(20,2) as return_amount__gen',
+    ])
+  })
+
+  it('gen_agg 先按 fct 粒度上卷再 join（细粒度直接 join = 笛卡尔放大，fix round 1）', () => {
+    const region = renderRegion(renderFctMeasures(FIXTURE_MEASURES, FCT_MEASURE_COLUMNS, DOMAINS))
+    // 每侧都有一条**自己的**上卷 CTE（group by fct 粒度）
+    for (const name of ['sale_amount', 'return_amount']) {
+      expect(region).toContain(
+        `${name}__rollup as (\n`
+        + `    select ${FCT_GRAIN.join(', ')}, sum(${name}__gen.measure_value)::numeric(20,2) as ${name}__gen\n`
+        + `    from ${name}__gen\n`
+        + `    group by 1, 2, 3\n)`,
+      )
+    }
+    // gen_agg 的 join 输入必须是上卷后的 CTE，绝不是阶段 1 的细粒度 CTE
+    const genAgg = region.slice(region.indexOf('gen_agg as ('), region.indexOf(END))
+    expect(genAgg).toContain('from sale_amount__rollup\n    full join return_amount__rollup')
+    expect(genAgg).not.toMatch(/from (sale_amount|return_amount)__gen\b/)
+    expect(genAgg).not.toContain('group by')
   })
 
   it('默认列清单只有 sale/return 两个：line_amount@line 属 order_line 视图，不物化进本 fct', () => {
@@ -160,7 +179,7 @@ describe('声明自洽 —— 不知道就抛错，不许默认', () => {
 describe('标记区逐字节比对（--check 的判据）', () => {
   it('手改标记区 ⇒ 报漂移/不一致', () => {
     const once = renderFctMeasures(FIXTURE_MEASURES, FCT_MEASURE_COLUMNS, DOMAINS)
-    const tampered = { ...once, cols: once.cols.replace('sum(', 'sum(1 + ') }
+    const tampered = { ...once, cols: [once.cols[0].replace('sum(', 'sum(1 + '), ...once.cols.slice(1)] }
     const msg = driftMessage(renderRegion(tampered), renderRegion(once))
     expect(msg).toMatch(/漂移|不一致/)
   })

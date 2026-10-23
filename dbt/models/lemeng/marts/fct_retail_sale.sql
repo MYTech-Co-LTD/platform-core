@@ -162,19 +162,28 @@ return_amount__gen as (
    abs(abs(discount_money) - order_detail_std_price * abs(quantity)) <= 0.02) then 0
 when order_transaction_type like '%RETURN%' and state = 'FINISHED' then sale_money + order_detail_share_discount else 0 end)) as measure_value from base_return group by system_book, bizday, branch_num, order_no, order_detail_num
 ),
+sale_amount__rollup as (
+    select system_book, bizday, branch_num, sum(sale_amount__gen.measure_value)::numeric(20,2) as sale_amount__gen
+    from sale_amount__gen
+    group by 1, 2, 3
+),
+return_amount__rollup as (
+    select system_book, bizday, branch_num, sum(return_amount__gen.measure_value)::numeric(20,2) as return_amount__gen
+    from return_amount__gen
+    group by 1, 2, 3
+),
 gen_agg as (
     select
-        coalesce(sale_amount__gen.system_book, return_amount__gen.system_book) as system_book,
-        coalesce(sale_amount__gen.bizday, return_amount__gen.bizday) as bizday,
-        coalesce(sale_amount__gen.branch_num, return_amount__gen.branch_num) as branch_num,
-        sum(sale_amount__gen.measure_value)::numeric(20,2) as sale_amount__gen,
-        sum(return_amount__gen.measure_value)::numeric(20,2) as return_amount__gen
-    from sale_amount__gen
-    full join return_amount__gen
-        on  sale_amount__gen.system_book = return_amount__gen.system_book
-        and sale_amount__gen.bizday = return_amount__gen.bizday
-        and sale_amount__gen.branch_num = return_amount__gen.branch_num
-    group by 1, 2, 3
+        coalesce(sale_amount__rollup.system_book, return_amount__rollup.system_book) as system_book,
+        coalesce(sale_amount__rollup.bizday, return_amount__rollup.bizday) as bizday,
+        coalesce(sale_amount__rollup.branch_num, return_amount__rollup.branch_num) as branch_num,
+        sale_amount__rollup.sale_amount__gen,
+        return_amount__rollup.return_amount__gen
+    from sale_amount__rollup
+    full join return_amount__rollup
+        on  sale_amount__rollup.system_book = return_amount__rollup.system_book
+        and sale_amount__rollup.bizday = return_amount__rollup.bizday
+        and sale_amount__rollup.branch_num = return_amount__rollup.branch_num
 )
 -- END GENERATED MEASURES
 
@@ -184,6 +193,8 @@ gen_agg as (
 -- `assert_fct_retail_sale_measure_shadow_parity.sql` 与旧列逐分对账（1 分容差）。
 -- 本阶段只**并行输出**、不切换；切换（P3.2）要等影子对账稳定后另开笔。
 -- `net_amount__gen` 是**手写**派生列：净额 = 销售侧 − 退货侧，不属任何单一 measure。
+-- 单侧缺行（只有销售 / 只有退货的门店日）⇒ 该侧 `coalesce(…, 0)` 归零，与旧列同形
+-- （不归零会让 `return_amount__gen` 在纯销售日恒为 NULL，P3.2 切列时撞 not_null 断言）。
 select
     coalesce(sale_side.system_book, return_side.system_book) as system_book,
     {{ subject_org() }}                                      as org,
@@ -194,8 +205,8 @@ select
     (coalesce(sale_side.sale_amount, 0)
      - coalesce(return_side.return_amount, 0))::numeric(20,2) as net_amount,
     coalesce(sale_side.order_count, 0)                       as order_count,
-    gen_agg.sale_amount__gen                                 as sale_amount__gen,
-    gen_agg.return_amount__gen                               as return_amount__gen,
+    coalesce(gen_agg.sale_amount__gen, 0)::numeric(20,2)      as sale_amount__gen,
+    coalesce(gen_agg.return_amount__gen, 0)::numeric(20,2)    as return_amount__gen,
     (coalesce(gen_agg.sale_amount__gen, 0)
      - coalesce(gen_agg.return_amount__gen, 0))::numeric(20,2) as net_amount__gen
 from sale_side
