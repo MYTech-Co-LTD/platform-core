@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.189.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.188.0...v0.189.0) - 2026-10-23
+- 【新增】data: 沙箱真执行面——sandbox-console + 组件策略 + 失败语义 (#1002) ([#1013](https://github.com/MYTech-Co-LTD/platform-core/pull/1013), [98e3039](https://github.com/MYTech-Co-LTD/platform-core/commit/98e3039926a5a98fec72060795b853a12f4695c1))
+
+
 ## [0.188.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.187.0...v0.188.0) - 2026-10-23
 - 【新增】data: 下钻条件列 col 按契约列集校验（#1009） ([#1010](https://github.com/MYTech-Co-LTD/platform-core/pull/1010), [d47a468](https://github.com/MYTech-Co-LTD/platform-core/commit/d47a4686662a4c5e99c3fd95709f67c6e607b4f6))
 
