@@ -1131,19 +1131,17 @@ export function checkDataModels(rootDir, opts = {}) {
       push(rel, 0, `YAML 解析失败：${/** @type {Error} */ (e).message}`)
       continue
     }
-    // 顶层 measures:（spec 2026-10-21 §2.3）：{ '组件名@粒度': 表达式 } 映射。
-    // 表达式是声明文本（与 expression 同信任级）：非空字符串、不含分号。
+    // 顶层 measures:（spec 2026-10-21 §2.3；P3.0 起对象形态）：{ '组件名@粒度': Measure } 映射。
+    // 判据与 sync **同一函数**（`syncContract.measureOf`）：对象形态、additivity 必填、未知键拒。
     /** @type {string[]} */
     const measureKeys = []
     if (doc.measures !== undefined) {
       if (typeof doc.measures !== 'object' || doc.measures === null || Array.isArray(doc.measures)) {
-        push(rel, 0, '`measures:` 必须是 `{ "组件名@粒度": 表达式 }` 映射，不是数组。')
+        push(rel, 0, '`measures:` 必须是 `{ "组件名@粒度": { expr, additivity, … } }` 映射，不是数组。')
       } else {
         for (const [k, v] of Object.entries(doc.measures)) {
           if (!/^[a-z_]+@[a-z_]+$/.test(k)) push(rel, 0, `\`measures.${k}\` 键名不合 \`<snake>@<snake>\` 形态。`)
-          if (typeof v !== 'string' || v.trim() === '' || v.includes(';')) {
-            push(rel, 0, `\`measures.${k}\` 必须是非空、不含分号的表达式字符串。`)
-          }
+          try { syncContract.measureOf(v) } catch (e) { push(rel, 0, `\`measures.${k}\` ${/** @type {Error} */ (e).message}`) }
           measureKeys.push(k)
         }
       }

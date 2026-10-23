@@ -959,7 +959,10 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     // （assert_drill_net_sales_matches_fct）atomic_value 的两层括号形状
     // `((case…) - (sum(case…)))`；若在这里再整串包一层，终态会多出第三层（无害但无典）。
     const rows = declarationsFromYaml({
-      measures: { 'sale_amount@order': '(sum(x))', 'return_amount@line': 'sum(y)' },
+      measures: {
+        'sale_amount@order': { expr: '(sum(x))', additivity: 'flow' },
+        'return_amount@line': { expr: 'sum(y)', additivity: 'flow' },
+      },
       metrics: [{ ...base, compose: 'sale_amount@order - return_amount@line', dimensions: dims, detail }],
     })
     expect(rows[0].drillExpr).toBe('((sum(x))) - (sum(y))')
@@ -997,7 +1000,7 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     // 行组装面按键各自判缺省（null = 未声明），「三键同现」由写库前的 drillOf 兜手跑——
     // 门禁的同现规则（check-data-models 规则 ⑥）是 CI 权威，行组装面不重复抛。
     const rows = declarationsFromYaml({
-      measures: { 'sale_amount@order': 'sum(x)' },
+      measures: { 'sale_amount@order': { expr: 'sum(x)', additivity: 'flow' } },
       metrics: [{ ...base, compose: 'sale_amount@order' }],
     })
     expect(rows[0].drillExpr).toBe('(sum(x))')
@@ -1007,7 +1010,7 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
 
   it('dimensions/detail 形状坏 ⇒ 各自落 null（不猜、不半物化）', () => {
     const rows = declarationsFromYaml({
-      measures: { 'sale_amount@order': 'sum(x)' },
+      measures: { 'sale_amount@order': { expr: 'sum(x)', additivity: 'flow' } },
       metrics: [
         { ...base, compose: 'sale_amount@order', dimensions: [], detail },
         { ...base, compose: 'sale_amount@order', dimensions: [123], detail },
@@ -1074,7 +1077,7 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     const cols = [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }]
     const withCols = declarationsFromYaml({
       metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail: { ...detail, columns: cols } }],
-      measures: { 'a@b': 'sum(x)' },
+      measures: { 'a@b': { expr: 'sum(x)', additivity: 'flow' } },
     })
     expect(withCols[0].drillDetail).toEqual({
       relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'", columns: cols,
@@ -1082,7 +1085,7 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
 
     const without = declarationsFromYaml({
       metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail }],
-      measures: { 'a@b': 'sum(x)' },
+      measures: { 'a@b': { expr: 'sum(x)', additivity: 'flow' } },
     })
     expect(without[0].drillDetail).toEqual({ relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'" })
   })
@@ -1090,7 +1093,7 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
   it('detail.columns 形状坏 ⇒ 响亮失败（sync 手跑路径，不静默物化坏权限声明）', () => {
     const mk = (columns: unknown) => () => declarationsFromYaml({
       metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail: { ...detail, columns } }],
-      measures: { 'a@b': 'sum(x)' },
+      measures: { 'a@b': { expr: 'sum(x)', additivity: 'flow' } },
     })
     expect(mk([])).toThrow(/非空数组/)
     expect(mk([{ col: 'order_detail_std_price', granted_by: 'data:cost' }])).toThrow(/未知键/)
@@ -1105,7 +1108,7 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     // 报红；sync 若在这里回 null（= 未声明），手跑就会把那份坏声明静默落库——那列对所有人缺席且零报错。
     expect(() => declarationsFromYaml({
       metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail: { ...detail, columns: null } }],
-      measures: { 'a@b': 'sum(x)' },
+      measures: { 'a@b': { expr: 'sum(x)', additivity: 'flow' } },
     })).toThrow(/非空数组/)
   })
 
@@ -1129,20 +1132,26 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
 })
 
 describe('measuresOf / composeOf —— 下钻编译的纯函数面（spec 2026-10-21 §2.3）', () => {
-  it('measuresOf：缺省 ⇒ 空 Map；形状坏（数组 / 键不合 <snake>@<snake> / 空体 / 分号）⇒ 响亮失败', () => {
+  it('measuresOf：缺省 ⇒ 空 Map；形状坏（数组 / 键不合 <snake>@<snake> / 字符串形态 / 空 expr / 缺 additivity / 分号）⇒ 响亮失败', () => {
     expect(measuresOf({}).size).toBe(0)
     expect(measuresOf({ measures: undefined }).size).toBe(0)
     expect(measuresOf(null).size).toBe(0)
     expect(() => measuresOf({ measures: ['a@b'] })).toThrow(/映射/)
-    expect(() => measuresOf({ measures: { 'Sale@b': 'sum(x)' } })).toThrow(/形态不合规/)
-    expect(() => measuresOf({ measures: { 'a@b': '' } })).toThrow(/形态不合规/)
-    expect(() => measuresOf({ measures: { 'a@b': 'sum(x); delete' } })).toThrow(/分号/)
-    // 合法：剥首尾空白（YAML 折叠标量的常态），体原样进 Map
-    expect(measuresOf({ measures: { 'a@b': '  sum(x)  ' } }).get('a@b')).toBe('sum(x)')
+    expect(() => measuresOf({ measures: { 'Sale@b': { expr: 'sum(x)', additivity: 'flow' } } })).toThrow(/形态不合规/)
+    // 字符串形态（P3.0 起拒绝：表达不了 additivity）——与门禁同一判据（measureOf）
+    expect(() => measuresOf({ measures: { 'a@b': 'sum(x)' } })).toThrow(/对象形态/)
+    expect(() => measuresOf({ measures: { 'a@b': { expr: '', additivity: 'flow' } } })).toThrow(/expr/)
+    expect(() => measuresOf({ measures: { 'a@b': { expr: 'sum(x)' } } })).toThrow(/additivity/)
+    expect(() => measuresOf({ measures: { 'a@b': { expr: 'sum(x); delete', additivity: 'flow' } } })).toThrow(/分号/)
+    // 合法：expr 剥首尾空白（YAML 折叠标量的常态），解析出的对象进 Map
+    expect(measuresOf({ measures: { 'a@b': { expr: '  sum(x)  ', additivity: 'flow' } } }).get('a@b')?.expr).toBe('sum(x)')
   })
 
   it('composeOf：括号包裹保优先级（(a) - (b) 形态）；文法检查先于引用替换；compose 缺省 ⇒ null', () => {
-    const measures = measuresOf({ measures: { 'sale@x': 'sum(a)', 'return@y': 'sum(b)' } })
+    const measures = measuresOf({ measures: {
+      'sale@x': { expr: 'sum(a)', additivity: 'flow' },
+      'return@y': { expr: 'sum(b)', additivity: 'flow' },
+    } })
     expect(composeOf('sale@x - return@y', 'm:1:m', measures)).toBe('(sum(a)) - (sum(b))')
     // 乘除/数字/其它标识符 ⇒ 文法外（先于「未声明组件」被报告）
     expect(() => composeOf('ghost@x * 2', 'm:1:m', measures)).toThrow(/文法外/)

@@ -70,24 +70,35 @@ version: 1
 # 交易类型闸（state/type）内嵌进 case 条件：下钻行域含退货单（口径同源要求退货冲减在场），
 # sale 侧组件靠闸把非 SALE_ORDER 行归零——而不是靠 detail.filter 排掉退货。
 measures:
-  sale_amount@order: >-
-    case when sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then 1 else 0 end) = 0 then 0
-    else (sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' and
-      (order_detail_std_price > 0 and sale_money > 0 and quantity > 0 and
-       abs(discount_money - order_detail_std_price * quantity) <= 0.02) then 0 else sale_money end)
-      + max(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then order_total_money end)) / 2
-      - sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then order_detail_share_discount else 0 end)
-    end
-  return_amount@line: >-
-    sum(case when order_transaction_type like '%RETURN%' and state = 'FINISHED' and
-      (order_detail_std_price > 0 and abs(sale_money) > 0 and abs(quantity) > 0 and
-       abs(abs(discount_money) - order_detail_std_price * abs(quantity)) <= 0.02) then 0
-    when order_transaction_type like '%RETURN%' and state = 'FINISHED' then sale_money + order_detail_share_discount
-    else 0 end)
+  sale_amount@order:
+    expr: >-
+      case when sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then 1 else 0 end) = 0 then 0
+      else (sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' and
+        (order_detail_std_price > 0 and sale_money > 0 and quantity > 0 and
+         abs(discount_money - order_detail_std_price * quantity) <= 0.02) then 0 else sale_money end)
+        + max(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then order_total_money end)) / 2
+        - sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then order_detail_share_discount else 0 end)
+      end
+    grain: [order]
+    additivity: flow
+    unit: CNY
+  return_amount@line:
+    expr: >-
+      sum(case when order_transaction_type like '%RETURN%' and state = 'FINISHED' and
+        (order_detail_std_price > 0 and abs(sale_money) > 0 and abs(quantity) > 0 and
+         abs(abs(discount_money) - order_detail_std_price * abs(quantity)) <= 0.02) then 0
+      when order_transaction_type like '%RETURN%' and state = 'FINISHED' then sale_money + order_detail_share_discount
+      else 0 end)
+    grain: [line]
+    additivity: flow
+    unit: CNY
   # 行级原始金额度量（spec 2026-10-22 §2.2）：不承载口径——行域由指标侧钉
   # （聚合面 expression 的 CASE、下钻面 detail.filter），组件体只做行级求和。
-  line_amount@line: >-
-    sum(sale_money)
+  line_amount@line:
+    expr: 'sum(sale_money)'
+    grain: [line]
+    additivity: flow
+    unit: CNY
 
 metrics:
   - name: 'lemeng:retail:sales'

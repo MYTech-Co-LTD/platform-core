@@ -522,27 +522,31 @@ export function measureOf(v) {
 }
 
 /**
- * 顶层 `measures:` → Map（键 `<snake>@<snake>`；形状由门禁把守，这里再兜一道：非空、无分号）。
+ * 顶层 `measures:` → Map（键 `<snake>@<snake>`；**每个值走 `measureOf` 同一解析**——
+ * 门禁 `check-data-models` import 的是同一个函数，两侧判据逐字一致）。
  *
- * 为什么 sync 侧还要再兜一道：本脚本会被**手跑**（不经 CI），门禁拦不住手跑路径；
+ * 为什么 sync 侧也要兜一道：本脚本会被**手跑**（不经 CI），门禁拦不住手跑路径；
  * 而组件体是要拼进下钻 SQL 的——分号/空体这类垃圾形状落库 = 静默坏下钻。
  *
  * @param {Record<string, unknown> | null | undefined} parsed YAML 解析结果（顶层对象）
- * @returns {Map<string, string>} 组件键 → 组件体（首尾空白已剥；`measures:` 缺席 = 空 Map）
+ * @returns {Map<string, Measure>} 组件键 → 解析后的 measure（`measures:` 缺席 = 空 Map）
  */
 export function measuresOf(parsed) {
   const raw = parsed?.measures
   if (raw === undefined || raw === null) return new Map()
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('`measures:` 必须是 `{ "组件名@粒度": 表达式 }` 映射')
+    throw new Error('`measures:` 必须是 `{ "组件名@粒度": { expr, additivity, … } }` 映射')
   }
   const out = new Map()
   for (const [k, v] of Object.entries(raw)) {
-    const body = typeof v === 'string' ? v.trim() : ''
-    if (!/^[a-z_]+@[a-z_]+$/.test(k) || body === '' || body.includes(';')) {
-      throw new Error(`\`measures.${k}\` 形态不合规 —— 键须 \`<snake>@<snake>\`，表达式须非空且不含分号`)
+    if (!/^[a-z_]+@[a-z_]+$/.test(k)) {
+      throw new Error(`\`measures.${k}\` 形态不合规 —— 键须 \`<snake>@<snake>\``)
     }
-    out.set(k, body)
+    try {
+      out.set(k, measureOf(v))
+    } catch (e) {
+      throw new Error(`\`measures.${k}\` ${/** @type {Error} */ (e).message}`)
+    }
   }
   return out
 }
@@ -558,7 +562,7 @@ const MEASURE_REF_RE = /[A-Za-z_][A-Za-z0-9_]*@[a-z0-9_]+/g
  *
  * @param {unknown} raw 声明里的 `compose` 原值（undefined/null = 未声明）
  * @param {string} metricName 指标名（只用于错误信息）
- * @param {Map<string, string>} measures `measuresOf` 的产物（组件键 → 组件体）
+ * @param {Map<string, Measure>} measures `measuresOf` 的产物（组件键 → 解析后的 measure）
  * @returns {string | null} null = 未声明 compose（聚合照旧，不下钻）
  */
 export function composeOf(raw, metricName, measures) {
@@ -573,11 +577,11 @@ export function composeOf(raw, metricName, measures) {
       + '只许组件引用与 + - ( ) 空白（不引入自由 SQL）；新算术请先落成组件')
   }
   return compose.replace(MEASURE_REF_RE, (ref) => {
-    const body = measures.get(ref)
-    if (body === undefined) {
+    const measure = measures.get(ref)
+    if (measure === undefined) {
       throw new Error(`指标 \`${metricName}\` 的 compose 引用了未声明的度量组件 \`${ref}\` —— 请在同文件顶层 \`measures:\` 声明`)
     }
-    return `(${body})`
+    return `(${measure.expr})`
   })
 }
 

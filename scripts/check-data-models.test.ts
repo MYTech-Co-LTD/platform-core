@@ -1438,8 +1438,8 @@ function drillCompliant(): Record<string, string> {
   const files = compliant()
   files[METRICS] = [
     'measures:',
-    '  "sale_amount@order": "sum(fct_retail_sale.net_amount)"',
-    '  "return_amount@line": "sum(fct_retail_sale.return_amount)"',
+    '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow }',
+    '  "return_amount@line": { expr: "sum(fct_retail_sale.return_amount)", additivity: flow }',
     'metrics:',
     '  - name: "lemeng:retail:net_sales"',
     '    expression: "sum(fct_retail_sale.net_amount)"',
@@ -1482,8 +1482,8 @@ describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', ()
     const files = drillCompliant()
     files[METRICS] = files[METRICS].replace(
       'measures:\n'
-      + '  "sale_amount@order": "sum(fct_retail_sale.net_amount)"\n'
-      + '  "return_amount@line": "sum(fct_retail_sale.return_amount)"\n',
+      + '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow }\n'
+      + '  "return_amount@line": { expr: "sum(fct_retail_sale.return_amount)", additivity: flow }\n',
       '',
     )
     const vs = checkDataModels(fixture(files))
@@ -1502,6 +1502,27 @@ describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', ()
     files2[METRICS] = files2[METRICS].replace('relation: vw_t', 'relation: vw_ghost_detail')
     const vs2 = checkDataModels(fixture(files2))
     expect(vs2.some((v) => /vw_|视图|不存在/.test(v.message))).toBe(true)
+  })
+
+  it('measures 对象形态：缺 additivity / 字符串形态 / 未知键 ⇒ 拒', () => {
+    const base = drillCompliant()
+    const OBJ = '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow }'
+
+    // 字符串形态（P3.0 起拒绝：表达不了 additivity）
+    const bad1 = { ...base, [METRICS]: base[METRICS].replace(OBJ, '  "sale_amount@order": "sum(sale_money)"') }
+    expect(checkDataModels(fixture(bad1)).some((v) => /对象形态|additivity/.test(v.message))).toBe(true)
+
+    // 对象形态但缺 additivity
+    const bad2 = { ...base, [METRICS]: base[METRICS].replace(OBJ, '  "sale_amount@order": { expr: "sum(sale_money)" }') }
+    expect(checkDataModels(fixture(bad2)).some((v) => /additivity/.test(v.message))).toBe(true)
+
+    // 未知键（拼错的键名会被静默忽略，必须在门禁期红）
+    const bad3 = { ...base, [METRICS]: base[METRICS].replace(OBJ, '  "sale_amount@order": { expr: "sum(sale_money)", additivity: flow, bogus: 1 }') }
+    expect(checkDataModels(fixture(bad3)).some((v) => /未知键/.test(v.message))).toBe(true)
+
+    // 反面（防误伤）：合法对象形态 ⇒ 零违规
+    const good = { ...base, [METRICS]: base[METRICS].replace(OBJ, '  "sale_amount@order": { expr: "sum(sale_money)", additivity: flow }') }
+    expect(checkDataModels(fixture(good))).toEqual([])
   })
 
   it('measures 表达式含分号 ⇒ 拒', () => {
