@@ -24,6 +24,7 @@
 |---|---|
 | `postgres` | `postgres:16-alpine`，卷 `pgdata` |
 | `server` | 由 `deploy/Dockerfile.server` 构建，**build context 必须是仓根**（Dockerfile 要 COPY `packages/` `apps/` `modules/` `scripts/`） |
+| `sandbox-console` | **数据 MCP 的沙箱执行面**（`duckle-runner serve`，与单元 B 的 `lemeng-console-*` 同镜像；**不发布任何宿主端口**，只经单元 A 默认网络被 `server` 调用）。卷 `sandbox-workspace` 同时挂给 `server`。职责与口径见 **§2.8**（issue #1002） |
 | `openclaw` | **问数 bot（通道 C）**：由 `deploy/Dockerfile.openclaw` 构建（**基底** `ghcr.io/openclaw/openclaw` digest 钉 v2026.9.9，spec §3；**构建期 COPY** 插件 `deploy/openclaw/data-query-plugin/`），`profiles: ['openclaw']` 本机默认不起；**仅 platform-core-shanhai 项目在 openship 服务级启用**（mytech 项目保持 disabled）。企微智能机器人 WebSocket 长连接接入。⚠️ 插件**不能**用相对 bind 挂载送进来——openship services 模式按 Docker API 建容器、不解析相对路径（`./openclaw/…` 被当卷名，400），成例与替代解法见 `deploy/data-plane-deploy-sop.md` 坑 9。设计 `docs/superpowers/specs/2026-10-10-shanhai-openclaw-wecom-design.md` |
 
 `server` 以 `service_healthy` 依赖 `postgres`——迁移在**启动期**跑，PG 未就绪即失败。
@@ -199,6 +200,8 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 - **依赖关系**：写对象存储；`drift` / `review --data` 要凭据与网络 ⇒ **etl job 显式带 `--token` 跑**
   （**不是**放宽 `deploy/duckle/entrypoint.sh` 的闸）。引擎能力的接入口径与三条坑读
   `duckle/README.md` §7，**未验清单是 gate**。
+- **沙箱试跑不走本 runner**：数据 MCP 的 `run_pipeline_sandbox` 用**单元 A 的 `sandbox-console`**，
+  理由与全部口径见 **§2.8**（2026-10-23 拍板，issue #1002）。
 
 **3. dbt（runner 镜像；`etl` profile；按需 job）**
 - **职责**：**建模与物化**（staging 清洗 → marts 口径模型，物化进 pg_duckdb）；
@@ -774,6 +777,93 @@ append-only，修数偶发而非常态。
 
 ⚠️ **要不要把本节升格成 §4 的不变量，是另一个决定**：本仓规矩「无案例不立标准」，
 现在只有这一次决策案例 ⇒ 先落本节，**不升格**。
+
+### 2.8 数据 MCP 的沙箱执行面（2026-10-23 拍板，issue #1002）
+
+> **本节是「沙箱在哪跑」的边界与口径**（D-W3-4 由「待沉淀」转为已定）。代码落在
+> `modules/data/domain/pipelines/`；本节不写实现细节，只定**落点、隔离、凭据与失败语义**。
+
+**决定**：沙箱执行面 = **单元 A 新增一个常驻 `sandbox-console` 服务**（`duckle-runner serve`，
+与 `lemeng-console-*` **同镜像同 API**），**不发布任何宿主端口**，只经单元 A 默认网络被 `server`
+调用；草案与回执走**两服务共享的命名卷** `sandbox-workspace`，不跨项目、不动宿主网络。
+
+**为什么不是另外三种**（各一条，均已实测）：
+
+| 方案 | 否决理由 |
+|---|---|
+| 装进 `server` 镜像、进程内跑 | 草案里一旦有执行任意代码的节点（`code.*`，见下），它就在**持有 Casdoor 管理员口令 / `DATABASE_URL` / LLM key 的容器里**执行。沙箱校验当前**只挡 sink**（`sandboxViolations` 实测不拦 `code.shell`）⇒ 校验一被绕过就是平台被拿，不是「试跑失败」 |
+| 放进单元 B（`data-compose.yml`） | 单元 A 与单元 B 是**两张 docker 网**（2026-10-23 实测：`server` 在 `172.18.0.3`，数据面 console 侧在 `172.19.x`；`lemeng-console-3120` 从 `server` 容器内**不可达**，而 `pg_duckdb` 因被双挂才可达）。要接线只能建 external network（**宿主级手工操作，不经 compose**）或把 console 发布到私网 IP——后者**直接违反 §1.3 的回环规矩** |
+| 文件队列 + 自研 watcher | 要造一个**非引擎自带**的执行器；异步链路多一段自造机制要验证。没有案例支撑，不立这条 |
+
+**已验证的引擎面**（2026-10-23，`lemeng-console-3120` 容器内实测；供实现照抄，**别重新发明**）：
+
+| 面 | 事实 |
+|---|---|
+| CLI | `duckle --pipeline <file> --workspace <dir> --duckdb <path>`；可选 `--memory-limit / --threads / --temp-dir / --max-temp-size / --target / --param / --name`。`duckle validate --json` **不需要凭据、不需要 DuckDB 网络面**（引擎帮助原文） |
+| HTTP | `POST /api/run`（**同步等整条跑完**）、`POST /api/run/async`，body `{"file":"<工作区相对路径>","params":{…}}`；`GET /api/runs`（含 `status/durationMs/rows/error/trigger`）、`GET /api/pipelines`（含 `running/lastStatus`）、`GET /api/schedules`；认证 `Authorization: Bearer $DUCKLE_TOKEN`（实测：不带凭据一律 401，`/healthz` 除外） |
+| 组件面 | `duckle components schema --json` 返回 **417** 个组件（`xf` 144 / `src` 133 / `snk` 81 / `qa` 30 / `ctl` 22 / **`code` 7**）。7 个 `code.*` = `code.shell / code.python / code.javascript / code.rust / code.wasm / code.sql / code.sqltemplate` |
+
+**未验（实施前逐条销账，不许猜）**：
+1. `/api/pipeline`（单数）的**方法与语义**——是否存在「保存草案」的写接口（有则不必让 `server` 直接写卷）；
+2. `serve` 是否把 `--memory-limit / --threads` 传给每次 run ⇒ **在此之前资源上限只认容器 `mem_limit`/`cpus`**；
+3. `/api/run` 的 `file` 是否接受 `pipelines/` 之外的相对路径（决定草案放 `<workspace>/sandbox/` 还是 `pipelines/sandbox/`）；
+4. `/api/run` 的返回体是否带**逐节点**结果（`/api/runs` 列表只带汇总；逐节点可能在回执 `runs/receipts/<runId>.json` 里）。
+
+**服务形态**：
+- `sandbox-console`：`build: { context: .., dockerfile: deploy/duckle/Dockerfile }`，
+  `duckle serve --host 0.0.0.0 --port 18090 --workspace /workspace --duckdb /usr/local/bin/duckdb`。
+  **无 `ports`**（宿主不可达；`--host 0.0.0.0` 只是容器内网卡，不构成对外暴露）。
+- `DUCKLE_TOKEN` 必配（openship env，isSecret；空 token 由 `entrypoint.sh` 拒跑）。同网络内能到它的
+  只有本项目的 `server` / `postgres` / `openclaw`——都是我们自己的容器。
+- 卷 `sandbox-workspace` **同一命名卷挂两次**：console 侧 `/workspace`，server 侧 `/run/duckle-sandbox`
+  （**同 project 命名卷，不写绝对宿主路径**；与 #1001 那两条跨项目绝对路径挂载不同，别照抄错）。
+- 资源：容器 `mem_limit` + `cpus` 是**硬上限**；run 级预算参数见上「未验 2」。
+- ⚠️ 它会出现在**每个**用本 compose 的项目（同 `lemeng-console-*` 的教训）：不需要的项目在 openship
+  服务行 `enabled: false`，**别忘**。
+
+**交换协议（server 侧，实现照此）**：
+1. 写草案到 `<共享卷>/sandbox/<runId>.json`（路径以「未验 3」的结论为准）；
+2. `POST /api/run/async {"file":"sandbox/<runId>.json"}`；
+3. **有界轮询** `GET /api/runs` 直到该 `runId` 出现终态（或直接读 `<共享卷>/runs/receipts/`）；
+   超时即回 `status: running` + `runId`，**不无限等**；
+4. 返回逐节点 `status/rows/durationMs`（可用时）+ 总时长；审计照旧落 `data.query_audit`。
+
+**两条硬约束（比「跑起来」更重要）**：
+
+1. **组件白名单（默认拒绝）**。沙箱 v1 的规则是**族级 allowlist**：只放行 `xf` / `src` / `snk` / `qa` / `ctl`
+   五个内置族；**`code.*` 七个全部拒绝**（执行任意代码/脚本）；**`ctl.foreach` 也拒绝**（它把执行委托给
+   子管线文件，而子管线不在本工具的校验范围里）；**不在五个族里的组件一律拒绝**。
+   ⚠️ 逐条 417 项评审**尚未做**（标「待沉淀」）——在那之前，族级 allowlist 是**有意收窄**的边界，
+   **不是「全放行」**。名单与理由落在 `validate.ts` 注释里（唯一事实源；本文件不复制）。
+   ⚠️ 这条不是优化项：执行面接上以后，它的缺口是**可直接执行**的，不是理论风险。
+2. **凭据两档，默认无凭据**：
+   - **默认档（本轮落地）**：`sandbox-console` **不带任何生产凭据**。能跑 `validate`、无鉴权源、
+     本地 CSV/构造数据；需鉴权的源会在源节点失败 ⇒ 工具**如实回** `status: failed` + 引擎错误原文，
+     **绝不**把「源 401」读成「草案没问题」。
+   - **opt-in 档（有真实案例再落；标「待沉淀」）**：按账套给**只读**凭据。**一个账套一个 sandbox 服务**
+     （同 ADR-0014 的理由：运行面继承 console 的 env，一套 env 只能对应一个账套）⇒ 凭据只存在沙箱服务
+     自己的 env 里，**永不进 `server`**。另外 `src.rest` 的 `method` 在 opt-in 档要**限 GET**（否则草案
+     可借源凭据对外 POST）；`__sandbox/` 前缀能否再由 ZOS 侧 key 策略兜底**待核实**。
+
+**失败语义（工具面；与 `verdictOf` 对齐，别让「空」变「拒」）**：
+
+| 情形 | `status` / `reason` | `isError` | 审计 verdict |
+|---|---|---|---|
+| `DATA_SANDBOX_URL` 未配 | `not_executed / sandbox_runner_unconfigured` | false | ok（未知 ≠ 失败） |
+| console 不可达 / 401 | `unknown / sandbox_unreachable` | true | ok（不是草案的错） |
+| 结构校验不过 | `refused / invalid_draft` | true | denied |
+| 写入面违规 | `denied / sandbox_prefix_violation` | true | denied |
+| 组件不在白名单 | `denied / component_not_allowed` | true | denied |
+| 跑完失败 | `failed / pipeline_failed` + 引擎错误 | true | **ok**（工具完成了工作；失败是草案的结论） |
+| 跑成功 | `ok` + 节点明细 | false | ok |
+| 超时仍在跑 | `running` + `runId` | false | ok |
+| 本实例已有沙箱 run 在跑 | `denied / sandbox_busy` | true | denied |
+
+**并发与清理**：进程内单飞（同实例同时只允许一条沙箱 run）；草案文件保留策略在实现时按实测体积定
+（保留最近 N 条），**不许无限增长**。
+
+**反转条件**（出现任一即重议本节）：需要并发多条沙箱 run / 沙箱必须访问单元 B 的私有服务 /
+引擎提供一次性容器执行面（那时隔离与配额模型不同）。
 
 ## 3. 宿主装配链与 I-1 顺序契约
 
