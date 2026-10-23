@@ -331,11 +331,23 @@ metrics:
   ③ `grantedBy` 改 manifest 外码 ⇒ `check-column-scope-monotonicity` 规则⑤ 红；
   ④ `granted` 去掉 scope 过滤 ⇒ `drill.test.ts`「无 data:cost ⇒ 缺席」红。
 
-### 8.3 未做（如实登记）
+### 8.3 真机两轮（2026-10-22 晚补记）
 
-- `query_detail` 真机上「无 `data:cost` / 有 `data:cost`」两侧的列在场性与审计 `drill.grantedColumns`
-  回读：需登录态/渠道身份，本轮未做（单元测试已覆盖该分支）。
-- 企微渠道轮（§4 第 6 条）：需真机渠道身份，待人工轮测。
+- **无码侧**（`ZhangDuo`，账号无 `data:cost`）：`query_detail(lemeng:retail:order_line, 2026-10-20)`
+  ⇒ 回包 `columns` **不含** `order_detail_std_price`、`rowCountTotal = 14935`；
+  审计 `drill.grantedColumns = []`。
+- **有码侧**（`yangwei`）：在 Casdoor org `shanhaiyiguo-org` 的 `data:cost` 权限记录里追加该用户后，
+  同一日期、同一参数再查 ⇒ 该列出现在回包**最后一列**，首行值 `10.00` 与该行直查
+  `std_price` **逐字一致**；审计 `grantedColumns = ["order_detail_std_price"]`。
+  该身份**发码前**的同一条查询审计为 `[]` —— 同一人前后对照即权限开关的现场证据。
+- **企微渠道轮**（§4 第 6 条）：问「多少行」⇒ 答 14,935；点名 order_line 问明细 ⇒ 审计两条
+  order_line 钻取、`rowCountTotal` 均 14935；问「标准价」⇒ 答「需要单独授权（类似 `data:cost`
+  这类权限）；在你的账号下目前不可见」——**话术合格**（不是「没有数据」）。
+- **运维备注**：新版 Casdoor 登录回两个**同名** `casdoor_session_id`；调用 admin 接口
+  （`get-permissions` 等）须用**最后一个** cookie，拿第一个恒 `Unauthorized operation`。
+
+### 8.4 仍开放
+
 - `detail.columns[].col` 无静态存在性校验（拼错只有持码者运行时报 `warehouse_error`）——
   已登记为后续门禁候选。
 - 列级掩码 × 条件列的语义缺口归 **#995**（今天结构性不可达；若落掩码必须「生效 ⇒ 整列缺席」）。
