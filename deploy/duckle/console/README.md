@@ -121,6 +121,12 @@ python3 -c "import json,glob,os;fs=glob.glob('/workspace/runs/receipts/*branch_l
 ⚠️ **回执有保留上限**（`runs/receipts/` 200 条、`runs/` 50 条/管线——正典 §1.6）⇒ 它是**近期**
 排障入口，不是长期审计账。日频管线 ≈ 200 天。
 
+> 📌 **平台读面（#1001）**：数据面 MCP 的 `list_pipeline_runs` / `get_pipeline_run` 读的就是本目录——
+> 部署期把 `<workspace 卷>/_data/runs` 以 `:ro` bind mount 挂进 platform-core server，
+> 用 `DATA_RUN_DIRS=<账套>=<挂载目录>,…` 声明。**只挂 `runs/`**，不挂 `connections/` 等凭据目录。
+> 卷名由 openship 生成（`openship-<project>-<service>-ws`），项目重建会改名 ⇒ 挂载配置要随之巡检。
+> ⚠️ 实测（2026-10-23）：`runs/receipts/` 已有 5137 / 4884 条，**远超上面写的 200** ⇒ 保留策略待核实。
+
 ### 🔴 新增 L0 管线的硬前置：**重建 catalog**
 
 `owners.json` 的新鲜度**依赖 catalog**（见其 ②）：catalog 是**静态扫描 `pipelines/` 的产物**、

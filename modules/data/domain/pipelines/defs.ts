@@ -19,6 +19,13 @@ import { fileURLToPath } from 'node:url'
 export const PIPELINE_ID_RE = /^[A-Za-z0-9_.-]+$/
 
 /**
+ * 运行 id：引擎形如 `run-manual-<管线>-<epochMs>` / `run-scheduled-…`。
+ * **不得含 `/`、不得以 `.` 开头**——来源要把它拼进 `receipts/<runId>.json`，
+ * 这条正则就是路径穿越的结构性防线（先用它判，再用 `join`）。
+ */
+export const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/
+
+/**
  * 仓根，**按本模块文件位置**解析（`modules/data/domain/pipelines/` 上四级）：
  * `modules/data/domain/pipelines/defs.ts` → `modules/data/domain/pipelines` → … → 仓根。
  *
