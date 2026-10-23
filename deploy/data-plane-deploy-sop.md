@@ -900,6 +900,11 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 > ④ 负向三连全中（见下表脚本）。**取证方式** = `docker exec` 进 `server`/`sandbox-console` 容器
 > （openship MCP 的 exec 端点），不是裸 SSH。
 >
+> ✅ **2026-10-23 修复后复验（`dep_KaAE5Y25cCpta4mw`，commit `beb6263a`）**：先 `rm -rf`
+> 共享卷里的 `sandbox/`（确认没了），再部署 ⇒ 容器起来后 `/workspace/sandbox` **由入口脚本自动建成
+> `1000:1000`**，**零手工步骤**；随后经平台代码路径真跑 `src.csv → snk.csv` ⇒
+> `status: ok`，`nodes.s1/k1` 各 `rows: 3`，产物与前一轮同形。属主修复与镜像入口的接管逻辑**同时验通**。
+>
 > ⚠️ **上线当天踩到的坑（先读本条）**：新 compose 服务被 openship **默认 `enabled: true`**，
 > 而 mytech 当时没有 `DUCKLE_TOKEN` ⇒ `entrypoint.sh` 对 `serve` 拒起（exit 1）⇒ **crash loop**
 > （日志逐条重复「拒绝启动 —— 需要凭据但 token 为空」，退避拉到 60s 一次）。
@@ -923,6 +928,17 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 > 两个字段已补进 `validatePipelineDraft`（`refused/invalid_draft` + 定位到具体路径）。
 > 其它解析失败仍是同一个黑洞——排查手法：把 `sandbox/<runId>.json` 拿同步 `/api/run` 跑一次，
 > 引擎原话立刻出来。
+>
+> ⚠️ **第四个坑：compose 里给「已有服务行」加 env，部署不会自动生效**（2026-10-23 实测）。
+> 改完 `deploy/docker-compose.yml` 的 `sandbox-console.environment`（加 `DUCKLE_SHARE_DIR` 等）后
+> 部署：CI 绿、部署 `ready`、容器也换了新镜像，**但容器里没有这几个 env、`sandbox/` 也没被建**。
+> 根因：openship 把 compose 与已存服务行 env 的差异记成 **`drift`**（`GET .../services/:id`
+> 返回 `drift.changes`），**不自动写入服务行**。正确顺序 = ① 接受 drift
+> （`POST .../services/:id/drift-accept`，或直接 `PATCH .../services/:id` 写 env）→
+> ② **再发一次部署**（服务行 env 是在部署时注入容器的）。**`restart` 不够**：它只重启容器，
+> 不重读服务行 env（实测：drift 接受后 `restart` 出的新容器，env 仍为空）。
+> 判据：`docker exec <console 容器> env | grep DUCKLE_SHARE` 有输出才算真生效——
+> 「部署成功」不等于「配置生效」。
 
 | 项 | 值 / 做法 |
 |---|---|
@@ -931,7 +947,7 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 | **token** | `DUCKLE_TOKEN`，**与 console 同一个值**（openship env(isSecret)；仓内不写）。server 侧用 `DATA_SANDBOX_TOKEN` 注入同一值（同样在 `server` 服务行 env） |
 | **token 怎么取** | **自己生成**：引擎不铸 token，`serve --token` 收的就是任意强口令（既有 `lemeng-console-*` 同口径）。生成一次强随机串后，落**三处**：① 项目 env `DUCKLE_TOKEN`(isSecret)（compose 服务行的 `${DUCKLE_TOKEN:-}` 由它插值）② `sandbox-console` 服务行 `DUCKLE_TOKEN` ③ `server` 服务行 `DATA_SANDBOX_TOKEN`。**轮换必须三处同改**，否则一边 401/一边拒起 |
 | **交换卷** | 命名卷 `sandbox-workspace`：console 看到 `/workspace`，server 看到 `/run/duckle-sandbox`（`DATA_SANDBOX_DIR`）。草案 = `sandbox/<runId>.json`，回执 = `runs/receipts/`。**`sandbox/` 必须交权给 uid 1000**（见上方第二个坑的 `DUCKLE_SHARE_DIR`），否则 server 写不进去 |
-| **不要它的项目** | openship 服务行 `enabled: false`（**别只靠 compose profiles**——openship 按自己的服务清单逐服务启停，profiles 对它无效，见 mb-proxy 的教训） |
+| **不要它的项目** | openship 服务行 `enabled: false`（**别只靠 compose profiles**——openship 按自己的服务清单逐服务启停，profiles 对它无效，见 mb-proxy 的教训）。**`platform-core-shanhai` 已按此置 `enabled: false`（2026-10-23）**：那条服务行是预建的，同 compose 的下次部署按名字合并，不会把没备 token 的服务拉起来 |
 | **默认档凭据** | **无**：沙箱容器不注入任何 ZOS/LEMENG 凭据 ⇒ 源端只能是公开/无鉴权端点。按账套 opt-in 的只读凭据档**待沉淀**（一个账套 = 一个 sandbox 服务，理由同 ADR-0014） |
 
 部署后按序自证（每条都要**看见**，不看「应该」）：
