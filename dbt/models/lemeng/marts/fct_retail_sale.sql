@@ -41,7 +41,7 @@
 --   · 订单数   = 同基面的 count(distinct order_no)。
 --   公式出处：issue #430 定案，2026-10-05 双账套真机 5 天 × 63 店与乐檬预聚合端点**逐分归零**
 --   （对拍实现 = console 管线 `deploy/duckle/console/pipelines/lemeng.recon.preagg.item.json`）。
---   本文件的除法形态**逐字同构照抄它**：per_order 出 ng/tot/sd 三列，最终
+--   本文件的除法形态**逐字同构照抄它**：逐单层（每单一行）出 ng/tot/sd 三列，最终
 --   `sum((ng + tot) / 2 - sd)`——除法在**逐单层**（sum 的参数表达式里），不是先和后除；
 --   别引入第三种除法形态（逐分归零是按这个形状验证的）。
 --
@@ -71,71 +71,7 @@
 -- 而**两个 audit 恰恰是跨引擎查询**（复算侧 = DuckDB 直接打 parquet，物化侧 = PG 读本表）⇒
 -- 不 cast 的后果不是「数不对」，是**对账根本执行不了**（实测：加 cast 前该查询报上面这条错）。
 -- 精度取 20 位足够（真要溢出会**响亮报错**，不会静默截断）。
-with sale_base as (
-    select
-        system_book,
-        bizday,
-        branch_num,
-        order_no,
-        sale_money,
-        order_total_money,
-        order_detail_share_discount,
-        -- 赠品判别式（**逐字照抄正典**，与 audit_lemeng__retail__recon_gift_hit.sql 同一句）：
-        -- 折让 = 标准价全额 × 数量 ⇒ 该行分文未收（白送）；护栏三条件排除退化命中。
-        (order_detail_std_price > 0 and sale_money > 0 and quantity > 0
-         and abs(discount_money - order_detail_std_price * quantity) <= 0.02) as is_gift
-    from {{ ref('stg_lemeng_retail_order_line') }}
-    where state = 'FINISHED'
-      and order_transaction_type = 'SALE_ORDER'
-),
-per_order as (
-    select
-        system_book,
-        bizday,
-        branch_num,
-        order_no,
-        sum(case when is_gift then 0 else sale_money end) as non_gift_amount,
-        max(order_total_money)                            as order_total_money,
-        sum(order_detail_share_discount)                  as share_discount
-    from sale_base
-    group by 1, 2, 3, 4
-),
-sale_side as (
-    select
-        system_book,
-        bizday,
-        branch_num,
-        -- 除法形态逐字同构 recon-preagg（见头注）：sum 的参数表达式里**逐单**除 2、逐单减 sd，
-        -- 不是先和后除（decimal 除法的舍入位置是口径的一部分）
-        (sum((non_gift_amount + order_total_money) / 2 - share_discount))::numeric(20,2) as sale_amount,
-        count(distinct order_no)                                                          as order_count
-    from per_order
-    group by 1, 2, 3
-),
-return_side as (
-    -- 退货侧：**全额冲减，不套折半**（整单退货 order_total_money = −Σsale_money，套折半恒得 0）。
-    -- 只收 state='FINISHED' ⇒ 排除 REPAID_RETURN（state=REPAID）——2026-10-17 四个 book-day 真机逐分验证。
-    -- ⚠️ **退货行同样套赠品判别式**（2026-10-18，#908；金额/数量取绝对值比较）：
-    --   源数据的整单退货行**符号不一致**——有的带负号（sale_money = −原额），有的是正数。
-    --   带负号的那类若直接冲减，会**反向加回**：「0 元实付单」（discount = std×qty，被判赠品、
-    --   销售侧贡献 0）整单退货后净额凭空 **+原额**。2026-10-18 实证：3120/10-17 两笔
-    --   （10.00 + 120.79 = 130.79），修复后 402,866.47 → 402,735.68，与乐檬客单分析逐分一致。
-    --   对称性：赠品行不进销售侧，**赠品行的退货也不该进退货侧**——两侧行同一判别式（绝对值形态）。
-    select
-        system_book,
-        bizday,
-        branch_num,
-        (sum(case
-             when order_detail_std_price > 0 and abs(sale_money) > 0 and abs(quantity) > 0
-                  and abs(abs(discount_money) - order_detail_std_price * abs(quantity)) <= 0.02
-             then 0
-             else sale_money + order_detail_share_discount
-           end))::numeric(20,2) as return_amount
-    from {{ ref('stg_lemeng_retail_order_line') }}
-    where order_transaction_type like '%RETURN%'
-      and state = 'FINISHED'
-    group by 1, 2, 3
-),
+with
 -- BEGIN GENERATED MEASURES
 -- ⚠️ 本区由 scripts/gen-fct-measures.mjs 从 dbt/semantics/l1_metrics.yml 生成，**别手改**：
 --    基面的 where 由组件 domain 派生、两阶段聚合由 measure 编译而来。改声明 → 重跑生成器 → 一并提交；
@@ -186,37 +122,28 @@ gen_agg as (
         and sale_amount__rollup.branch_num = return_amount__rollup.branch_num
 )
 -- END GENERATED MEASURES
-
--- ── 影子列（P3.0 聚合面组件化；spec 2026-10-23 §4.2）──────────────────────────────────────
--- 上面 `sale_side` / `return_side` 是**旧实现**（手写，一字不动）；下面三列是同一口径的
--- **组件编译版**（`l1_metrics.yml` 的 measure 两阶段编译），由 singular test
--- `assert_fct_retail_sale_measure_shadow_parity.sql` 与旧列逐分对账（1 分容差）。
--- 本阶段只**并行输出**、不切换；切换（P3.2）要等影子对账稳定后另开笔。
--- `net_amount__gen` 是**手写**派生列：净额 = 销售侧 − 退货侧，不属任何单一 measure。
--- 单侧缺行（只有销售 / 只有退货的门店日）⇒ 该侧 `coalesce(…, 0)` 归零，与旧列同形
--- （不归零会让 `return_amount__gen` 在纯销售日恒为 NULL，P3.2 切列时撞 not_null 断言）。
+-- ⚠️ 逗号只能落在标记区**外**（区内逐字节受 `--check` 管），故单独起一行。
+,
+-- 订单数保持**手写**（不属任何 measure）：销售基面上的去重订单笔数。
+-- 基面 `base_sale` 来自生成区（domain = FINISHED ∧ SALE_ORDER），与旧实现同基面。
+order_count_cte as (
+    select system_book, bizday, branch_num,
+           count(distinct order_no) as order_count
+    from base_sale
+    group by 1, 2, 3
+)
 select
-    coalesce(sale_side.system_book, return_side.system_book) as system_book,
-    {{ subject_org() }}                                      as org,
-    coalesce(sale_side.bizday, return_side.bizday)           as bizday,
-    coalesce(sale_side.branch_num, return_side.branch_num)   as branch_num,
-    coalesce(sale_side.sale_amount, 0)::numeric(20,2)        as sale_amount,
-    coalesce(return_side.return_amount, 0)::numeric(20,2)    as return_amount,
-    (coalesce(sale_side.sale_amount, 0)
-     - coalesce(return_side.return_amount, 0))::numeric(20,2) as net_amount,
-    coalesce(sale_side.order_count, 0)                       as order_count,
-    coalesce(gen_agg.sale_amount__gen, 0)::numeric(20,2)      as sale_amount__gen,
-    coalesce(gen_agg.return_amount__gen, 0)::numeric(20,2)    as return_amount__gen,
+    gen_agg.system_book,
+    {{ subject_org() }}                                as org,
+    gen_agg.bizday,
+    gen_agg.branch_num,
+    coalesce(gen_agg.sale_amount__gen, 0)::numeric(20,2)   as sale_amount,
+    coalesce(gen_agg.return_amount__gen, 0)::numeric(20,2) as return_amount,
     (coalesce(gen_agg.sale_amount__gen, 0)
-     - coalesce(gen_agg.return_amount__gen, 0))::numeric(20,2) as net_amount__gen
-from sale_side
-full join return_side
-    on  sale_side.system_book = return_side.system_book
-    and sale_side.bizday      = return_side.bizday
-    and sale_side.branch_num  = return_side.branch_num
--- 影子侧按 fct 粒度（账套 × 业务日 × 门店）对齐；两侧行域是同一批 FINISHED 行的划分
--- （销售侧排掉退货、退货侧只要退货），⇒ 行集相同，left join 不会增删最终行。
-left join gen_agg
-    on  gen_agg.system_book = coalesce(sale_side.system_book, return_side.system_book)
-    and gen_agg.bizday      = coalesce(sale_side.bizday, return_side.bizday)
-    and gen_agg.branch_num  = coalesce(sale_side.branch_num, return_side.branch_num)
+     - coalesce(gen_agg.return_amount__gen, 0))::numeric(20,2) as net_amount,
+    coalesce(order_count_cte.order_count, 0)               as order_count
+from gen_agg
+left join order_count_cte
+    on  gen_agg.system_book = order_count_cte.system_book
+    and gen_agg.bizday      = order_count_cte.bizday
+    and gen_agg.branch_num  = order_count_cte.branch_num
