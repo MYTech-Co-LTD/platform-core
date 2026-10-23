@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.190.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.190.0...v0.190.1) - 2026-10-23
+- 【修复】data: 沙箱执行面改走同步 /api/run——不再把「解析失败/没等到终态」谎报成 running ([#1022](https://github.com/MYTech-Co-LTD/platform-core/pull/1022), [de60ae8](https://github.com/MYTech-Co-LTD/platform-core/commit/de60ae80fcd60d2fde9f7deaf3b60567997e161f))
+
+
 ## [0.190.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.189.1...v0.190.0) - 2026-10-23
 - 【新增】data: 聚合面组件化 P3.0——measure 对象形态 + 具名行域 + 影子对账（#1012） ([#1018](https://github.com/MYTech-Co-LTD/platform-core/pull/1018), [4c0cf89](https://github.com/MYTech-Co-LTD/platform-core/commit/4c0cf89a68ba3242adb7e00d824ce637b69794f2))
 
