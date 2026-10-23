@@ -1419,7 +1419,7 @@ describe('规则 ⑪：域覆盖（models/<域>/ ↔ dbt_project.yml 的 +enable
 // 下钻三键（compose/dimensions/detail）与顶层 measures:（spec 2026-10-21 §2.3/§2.3.1，#977）
 //
 // 契约：三键**同现或同缺**——半套声明 = 消费面 NO_DETAIL_BINDING 与声明意图相左（静默面）；
-// compose 是组件组合式，引用闭集 = **同文件**顶层 `measures:`（`{ '组件名@粒度': 表达式 }`）；
+// compose 是组件组合式，引用闭集 = **同文件**顶层 `measures:`（`{ '组件名@粒度': { expr, additivity, ... } }`，对象形态）；
 // detail.relation 只认 `vw_*`（Phase 1 下钻读直读湖视图，spec §2.2）且
 // `dbt/models/**/views/<relation>.sql` 必须在仓；detail.filter 非空、不含分号。
 // 夹具照本文件既有 temp-repo helper（compliant / variant / fixture）构造：先有一份

@@ -180,8 +180,13 @@ sync 取路径段 `lemeng/<资产>` 推导 `stg_lemeng_<资产>` 关系集物化
 （`col` 蛇形、不与 `dimensions` 重叠、不许叫 `value`、不重复；`grantedBy` 必须是 manifest
 里真实存在的权限码）——**持码才投影，无码 ⇒ 该列不在回包里**（缺席，不是 NULL；
 spec 2026-10-22 §2.3）。条件列**不是**值级掩码，不进 `mask`。配套的**顶层** `measures:`（与 `metrics:` 同级，一个文件一份）=
-`{ '组件名@粒度': 表达式 }` 映射（键合 `<snake>@<snake>`，表达式非空、不含分号）——它是
-`compose` 引用闭集的唯一事实源：compose 引用的组件必须声明在**同文件**的 `measures:`。
+`{ '组件名@粒度': { expr, domain?, grain?, additivity, unit? } }` 映射（键合 `<snake>@<snake>`）——
+它是 `compose` 引用闭集的唯一事实源：compose 引用的组件必须声明在**同文件**的 `measures:`。
+每个组件**必须是对象形态**（字符串形态已拒绝，spec 2026-10-23 §3.1）：
+`expr` 非空、不含分号；`additivity` **必填**且只允许 `flow` / `stock` / `non_additive`
+（与指标级 `additivity` 同一词表）；`domain`（选填）= `domains:` 里的具名行域（蛇形标识符）；
+`grain`（选填）= 表达式逐组求值的键（`[order]` / `[line]`）；`unit`（选填）= `CNY` / `count` / `ratio`。
+解析的唯一实现是 `scripts/sync-data-semantics.mjs` 导出的 `measureOf`（门禁复用同一函数）。
 本段键清单与 `check-data-models.mjs` 的 `METRIC_KEYS` 同步维护（加字段 = 改常量 + 改本 README + 走 PR）。
 
 **T9 消费的那条规则（唯一事实源）**：指标名 → 对账文件名，由
