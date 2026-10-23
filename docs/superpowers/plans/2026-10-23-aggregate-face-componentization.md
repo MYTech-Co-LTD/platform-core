@@ -307,10 +307,10 @@ domains:
   sale_finished:   { extends: finished, filter: "order_transaction_type = 'SALE_ORDER'" }
   return_finished: { extends: finished, filter: "order_transaction_type like '%RETURN%'" }
 
-measures:
-  sale_amount@order:  { ..., domain: sale_finished }
-  return_amount@line: { ..., domain: return_finished }
-  line_amount@line:   { ..., domain: finished }
+# 在三个 measure 条目上各加一行（其余字段沿用 Task 2 的迁移结果）：
+#   sale_amount@order    →  domain: sale_finished
+#   return_amount@line   →  domain: return_finished
+#   line_amount@line     →  domain: finished
 
 # 两条指标的 detail 删掉 filter:
     detail:
