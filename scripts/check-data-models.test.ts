@@ -1577,6 +1577,19 @@ describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', ()
     expect(checkDataModels(fixture(badParent)).some((v) => /未知行域|domains/.test(v.message))).toBe(true)
   })
 
+  it('显式 detail.filter + 拼错的 measure.domain ⇒ 拒（该组合下 sync 完全静默，只有门禁抓得到）', () => {
+    // 为什么这条必须单独钉：filter 写了 ⇒ sync 根本不走派生路径 ⇒ 拼错的 domain 一辈子不生效、
+    // 也不报错（component 域形同虚设）。成员性检查是这份声明唯一的红点。
+    const files = drillCompliant() // 显式 filter 的形态（迁移窗口）
+    files[METRICS] = files[METRICS].replace('domain: sale_finished', 'domain: sale_finishedd')
+    const vs = checkDataModels(fixture(files))
+    const hit = vs.find((v) => /sale_finishedd/.test(v.message) && /domains/.test(v.message))
+    expect(hit).toBeDefined()
+    expect(hit?.message).toContain('measures.sale_amount@order.domain')
+    // 不得只报「派生失败」——显式 filter 在场时派生根本没跑
+    expect(vs.some((v) => /缺席且无法/.test(v.message))).toBe(false)
+  })
+
   it('domains: 形状坏 ⇒ 门禁期就红（未知键 / 空谓词）', () => {
     const badKey = drillCompliant()
     badKey[METRICS] = badKey[METRICS].replace('{ extends: finished, filter:', '{ extnds: finished, filter:')

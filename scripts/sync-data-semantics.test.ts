@@ -17,8 +17,10 @@
 //    metric-store/metrics 等测试文件并行的 L1 夹具（跨文件擦数据，症状是随机红）。
 // check-data-models 的 L2 同源断言**不在这里**——那是 T9 的面。
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse as parseYaml } from 'yaml'
 import {
   EXIT_DRIFT,
   EXIT_OK,
@@ -1231,6 +1233,32 @@ describe('具名行域（domains:）与 detail.filter 派生（P3.0 Task 3）', 
     expect(resolveDomain('sale_finished', DOMAINS)).toBe("state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'")
     expect(domainLub(['sale_finished', 'return_finished'], DOMAINS)).toBe('finished')
     expect(domainLub(['sale_finished'], DOMAINS)).toBe('sale_finished')
+  })
+
+  it('父域含顶层 or ⇒ 拼接时给该段加括号（否则 and 优先级把父域吃掉）', () => {
+    const d = {
+      root: { filter: "state = 'FINISHED' or state = 'REPAID'" },
+      child: { extends: 'root', filter: "system_book = '3120'" },
+    }
+    // 不加括号的话是 `a or b and c`，SQL 把它解成 `a or (b and c)` ⇒ 父域的另一支绕过子域条件。
+    expect(resolveDomain('child', d)).toBe("(state = 'FINISHED' or state = 'REPAID') and system_book = '3120'")
+    // 字符串层面钉住「or 段被括号包住」这件事（不是只钉整串）
+    expect(resolveDomain('child', d)).toMatch(/^\([^()]*\bor\b[^()]*\)\s+and\s+/)
+
+    // 不含**顶层**析取 ⇒ 不加括号：括号内的 or 与字符串字面量里的 or 都不该触发
+    expect(resolveDomain('a', { a: { filter: '(x = 1 or y = 2)' } })).toBe('(x = 1 or y = 2)')
+    expect(resolveDomain('a', { a: { filter: "note = 'a or b'" } })).toBe("note = 'a or b'")
+    expect(resolveDomain('a', { a: { filter: "order_transaction_type = 'SALE_ORDER'" } }))
+      .toBe("order_transaction_type = 'SALE_ORDER'")
+  })
+
+  it('回归：真仓三条行域编译结果逐字不变（无顶层析取 ⇒ 不加括号）', () => {
+    // 直接读真事实源的 domains:（不经过 metric 行），钉住「迁移前后派生谓词逐字节相同」。
+    const parsed = parseYaml(readFileSync(path.join(ROOT, 'dbt/semantics/l1_metrics.yml'), 'utf8'))
+    const real = domainsOf(/** @type {Record<string, unknown>} */ (parsed))
+    expect(resolveDomain('finished', real)).toBe("state = 'FINISHED'")
+    expect(resolveDomain('sale_finished', real)).toBe("state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'")
+    expect(resolveDomain('return_finished', real)).toBe("state = 'FINISHED' and order_transaction_type like '%RETURN%'")
   })
 
   it('无公共祖先 ⇒ 抛错（fail-closed，不许放宽成 true）', () => {

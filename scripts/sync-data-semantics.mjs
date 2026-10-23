@@ -621,7 +621,42 @@ export function domainsOf(parsed) {
 }
 
 /**
+ * 谓词里有没有**顶层析取**（`or`，大小写不敏感）。
+ *
+ * 扫描时跳过字符串字面量与 `(…)` 内部：`(a = 1 or b = 2)` 自带括号、`note = 'a or b'` 是值，
+ * 两者都不受 `and` 的优先级影响。只在**顶层**出现 `or` 时，外层 `and` 拼接才会改变语义。
+ *
+ * @param {string} filter 单条行域谓词
+ * @returns {boolean}
+ */
+function hasTopLevelOr(filter) {
+  let depth = 0
+  let quote = ''
+  for (let i = 0; i < filter.length; i++) {
+    const ch = filter.charAt(i)
+    if (quote !== '') {
+      if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === "'" || ch === '"') { quote = ch; continue }
+    if (ch === '(') { depth += 1; continue }
+    if (ch === ')') { depth = Math.max(0, depth - 1); continue }
+    if (depth === 0 && (ch === 'o' || ch === 'O') && (filter.charAt(i + 1) === 'r' || filter.charAt(i + 1) === 'R')) {
+      // 词边界：两侧必须是空白（`order` / `_or_` 这类不算）
+      if (/\s/.test(filter.charAt(i - 1)) && /\s/.test(filter.charAt(i + 2))) return true
+    }
+  }
+  return false
+}
+
+/**
  * 具名行域：完整谓词 = 沿 extends 链**自根向下**逐层 `and`。
+ *
+ * ★ 含**顶层 `or`** 的谓词必须**加括号**再参与 `and` 拼接：
+ *   `parent` 若是 `a = 1 or b = 2`，不加括号就变成 `a = 1 or b = 2 and c = 3`，
+ *   SQL 优先级（and 高于 or）把它解成 `a = 1 or (b = 2 and c = 3)` —— 父域的 `b = 2` 那支
+ *   绕过子域条件，**行域被悄悄放宽**且没有任何报错。这是未来一声明就会中的静默面。
+ *   不含顶层析取时**不加**括号：`detail.filter` 与迁移前手写值必须逐字节一致。
  *
  * @param {string} name 行域名
  * @param {Record<string, Domain>} domains `domainsOf` 的产物
@@ -639,7 +674,7 @@ export function resolveDomain(name, domains) {
     /** @type {Domain | undefined} */
     const d = domains[cur]
     if (!d) throw new Error(`未知行域 \`${cur}\``)
-    chain.unshift(d.filter)
+    chain.unshift(hasTopLevelOr(d.filter) ? `(${d.filter})` : d.filter)
     cur = d.extends
   }
   return chain.join(' and ')
