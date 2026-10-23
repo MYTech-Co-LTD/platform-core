@@ -260,8 +260,9 @@ models:
       # 聚合面组件化 P3.2（2026-10-23）后，本模型不再输出 `*__gen` 影子列：`sale_amount` /
       # `return_amount` 直接取自 `scripts/gen-fct-measures.mjs` 生成区的 rollup（标记区见
       # fct_retail_sale.sql），`net_amount` 由前两者相减，归零仍在最终 SELECT 的 `coalesce(…, 0)`。
-      # 口径的独立复算守卫是 audit_lemeng__retail__sales.sql / audit_lemeng__retail__net_sales.sql
-      # （不读生成物，直接打 staging/parquet）。
+      # 口径的独立复算守卫是 audit_lemeng__retail__sales.sql / audit_lemeng__retail__net_sales.sql：
+      # 复算侧不读生成物、直接打 parquet，且**不 ref staging**（若走 staging，staging 的 cast 错会
+      # 同时污染两边 ⇒ 对账恒等永远绿）；只有比对侧 ref 本模型（fct_retail_sale）。
 
 
   - name: fct_hq_outbound

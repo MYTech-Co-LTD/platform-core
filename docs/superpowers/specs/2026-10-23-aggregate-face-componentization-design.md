@@ -197,6 +197,13 @@ measures:
 | **P3.3** | 其余 13 个 fct 按族迁移 | 每族独立影子对账 + 签核 |
 | **P3.4** | `expression` 全量退役；`measures` 成为唯一口径面 | 全量指标切换完成 + 一个观察窗无回归 |
 
+> **P3.2 实施记录（2026-10-23，issue #1020）**：只切列、不改口径——`fct_retail_sale` 输出仍是同样 8 列
+> （`system_book, org, bizday, branch_num, sale_amount, return_amount, net_amount, order_count`），
+> `sale_amount` / `return_amount` 改取生成区 rollup、`net_amount` 由两者相减，指标 `expression` 逐字未动。
+> 切换依据 = **P3.0 真机影子对账**（issue #1012 / PR #1018 → `4c0cf89a`）：2026-10-09..10-22 共 **14 天 / 3087 个店日**，
+> 三列与旧列 **diffs=0 / nulls=0**。实现分支 `feat/aggregate-face-p32`（实现 PR 待提）；本行退出判据中的
+> 「切换后首日物化 PASS / 守恒校验 / certified 签核」属**合并后真机验收**，尚未发生，勿据此行当作已通过。
+
 **首批只做 retail_sale 一族**，其余按需推进——第一段目标是「证明脚手架」，不是「改造全仓」。
 
 ---
