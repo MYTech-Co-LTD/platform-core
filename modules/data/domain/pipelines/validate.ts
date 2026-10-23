@@ -108,6 +108,66 @@ export function validateContractDraft(doc: unknown): Issue[] {
 const SANDBOX_WRITE_COMPONENTS = ['snk.minio', 'snk.csv']
 
 /**
+ * 沙箱**可执行组件**的族级 allowlist（#1002，口径见 `docs/architecture.md` §2.8）。
+ *
+ * 为什么不逐条评审那 417 个组件：评审不动（每次引擎升级还会变），也守不住（新组件默认落进哪一侧全看运气）。
+ * 族级 allowlist + 显式拒绝是**有意收窄**的 v1 —— 不得在实现里悄悄改回「拒绝已知危险项」的 denylist 形态。
+ */
+const SANDBOX_COMPONENT_FAMILIES = ['xf', 'src', 'snk', 'qa', 'ctl']
+
+/**
+ * allowlist 里仍要单独拒绝的组件，值为拒绝理由（理由进 issue，人看得懂才改得动）。
+ *
+ * · `code.*`（7 个）：执行任意代码 —— 接上执行面之后，草案作者能跑什么就是沙箱的边界；
+ * · `ctl.foreach`：唯一一个「**校验对象 ≠ 执行对象**」的组件 —— 它把活委托给子管线文件，
+ *   本函数只看得见父文件，子管线里写什么都拦不住。
+ */
+const SANDBOX_DENIED_COMPONENTS: Record<string, string> = {
+  'ctl.foreach': '把执行委托给子管线文件，子管线不经本层校验',
+}
+
+/**
+ * 沙箱试跑的**组件策略**：族级 allowlist（`xf` / `src` / `snk` / `qa` / `ctl`），
+ * 外加 `code.*` 全拒与 `ctl.foreach` 拒绝；**未知族默认拒绝**。
+ *
+ * 与 `sandboxViolations`（写入面）是两回事，两者都要过：
+ * 写入面管「写到哪」，这里管「拿什么组件去写」——`code.shell` 不进 sink 也能执行任意命令。
+ */
+export function sandboxComponentViolations(doc: unknown): Issue[] {
+  const out: Issue[] = []
+  if (!isObj(doc) || !Array.isArray(doc.nodes)) {
+    return [{ path: 'nodes', message: 'nodes 缺失，无法断言沙箱组件策略' }]
+  }
+  doc.nodes.forEach((n, i) => {
+    if (!isObj(n)) return
+    const data = isObj(n.data) ? n.data : {}
+    const comp = str(data.componentId)
+    const path = `nodes[${i}].data.componentId`
+    if (comp === '') {
+      out.push({ path, message: 'componentId 为空，无法判定组件策略（判不了即拒）' })
+      return
+    }
+    const denied = SANDBOX_DENIED_COMPONENTS[comp]
+    if (denied !== undefined) {
+      out.push({ path, message: `沙箱不执行 ${comp}：${denied}` })
+      return
+    }
+    if (comp.startsWith('code.')) {
+      out.push({ path, message: `沙箱不执行 ${comp}：执行任意代码（沙箱不得成为执行面）` })
+      return
+    }
+    const family = comp.split('.')[0]
+    if (!SANDBOX_COMPONENT_FAMILIES.includes(family)) {
+      out.push({
+        path,
+        message: `沙箱只允许 ${SANDBOX_COMPONENT_FAMILIES.join(' / ')} 族组件，实际：${comp}（未知族默认拒绝）`,
+      })
+    }
+  })
+  return out
+}
+
+/**
  * POSIX 路径 / 对象键**规范化**。返回 `null` = 这个值判不了 ⇒ 调用方一律当违规。
  *
  * 为什么必须规范化再判：`startsWith('__sandbox/')` 判的是**字面**——`__sandbox/../prod/x`

@@ -74,8 +74,8 @@ export const PIPELINE_TOOLS: readonly PipelineToolMeta[] = [
     outputSchema: anyObject, requiredScope: MANAGE_SCOPE, mutating: false, annotations: readOnly,
   },
   {
-    name: 'run_pipeline_sandbox', group: 'pipeline', title: '沙箱试跑（校验闸）',
-    description: '对一份管线草案做结构校验与沙箱前缀断言：所有湖写入的 key 必须以 __sandbox/ 开头、本地落盘必须在 /workspace/logs/sandbox/ 下、不得含 webhook 出口。通过后**并不执行**——执行面未接通（见 D-W3-4），回 not_executed。',
+    name: 'run_pipeline_sandbox', group: 'pipeline', title: '沙箱试跑（校验 + 执行）',
+    description: '对一份管线草案先做三道校验——结构、组件策略（只允许 xf/src/snk/qa/ctl 族；code.* 与 ctl.foreach 一律拒）、沙箱写入面（湖写入的 key 必须以 __sandbox/ 开头、本地落盘必须在 /workspace/logs/sandbox/ 下、不得含 webhook 出口）；通过后在沙箱 console 里**真跑一次**。默认档不带任何生产凭据（源端只能是公开/无鉴权端点）。结果 status：ok / failed（管线跑了但失败，看 error）/ running（等超时仍在跑，用 runId 继续追）/ unknown（执行面不可达，不知道跑没跑）/ not_executed（本部署没接执行面）。',
     inputSchema: {
       type: 'object',
       properties: {

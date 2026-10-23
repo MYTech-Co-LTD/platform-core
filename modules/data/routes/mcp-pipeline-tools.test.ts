@@ -29,7 +29,7 @@ const depsOf = (over: Partial<McpDeps> = {}): McpDeps => ({
   org: 'acme', requester, adoptedSources: new Set(), ...over,
 })
 const wiring = (env: Record<string, string | undefined> = {}) => ({
-  roots: { pipelinesRoot: root, contractsRoot: join(root, 'contracts') }, env, runs: null,
+  roots: { pipelinesRoot: root, contractsRoot: join(root, 'contracts') }, env, runs: null, sandbox: null,
 })
 
 describe('makePipelineTools.list', () => {
@@ -106,6 +106,16 @@ describe('defaultPipelineWiring：运行记录来源按 env 决定', () => {
   })
   it('配置了 ⇒ 接只读文件源', () => {
     expect(defaultPipelineWiring({ DATA_RUN_DIRS: '3120=/run/duckle-runs/3120' }).runs).not.toBeNull()
+  })
+})
+
+describe('defaultPipelineWiring：沙箱执行面按 env 决定', () => {
+  it('DATA_SANDBOX_URL 未配置 ⇒ sandbox=null（工具只校验、不执行）', () => {
+    expect(defaultPipelineWiring({}).sandbox).toBeNull()
+    expect(defaultPipelineWiring({ DATA_SANDBOX_URL: '   ' }).sandbox).toBeNull()
+  })
+  it('配置了 ⇒ 接执行面（配了但不通是运行期 unknown/sandbox_unreachable，不是静默退回只校验）', () => {
+    expect(defaultPipelineWiring({ DATA_SANDBOX_URL: 'http://sandbox-console:18090' }).sandbox).not.toBeNull()
   })
 })
 

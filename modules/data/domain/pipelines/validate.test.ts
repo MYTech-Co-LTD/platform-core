@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './defs'
-import { sandboxViolations, validateContractDraft, validatePipelineDraft } from './validate'
+import { sandboxComponentViolations, sandboxViolations, validateContractDraft, validatePipelineDraft } from './validate'
 
 const goodPipeline = {
   name: 'lemeng.x.y', nodes: [
@@ -175,5 +175,43 @@ describe('sandboxViolations', () => {
     // 非写组件不受影响（quality 节点照旧放行）。
     const quality = { ...goodPipeline, nodes: [...goodPipeline.nodes, { id: 'q1', type: 'quality', data: { componentId: 'qa.contract' } }] }
     expect(sandboxViolations(quality)).toEqual([])
+  })
+})
+
+describe('sandboxComponentViolations —— 组件族 allowlist', () => {
+  const draft = (componentId: string, type = 'transform') => ({
+    ...goodPipeline,
+    nodes: [{ id: 'n', type, data: { componentId, properties: {} } }],
+  })
+
+  it('普通族组件放行（src / xf / snk / qa / ctl 各自一个）', () => {
+    for (const comp of ['src.rest', 'xf.filter', 'snk.minio', 'qa.contract', 'ctl.setvar']) {
+      expect(sandboxComponentViolations(draft(comp)), comp).toEqual([])
+    }
+    expect(sandboxComponentViolations(goodPipeline)).toEqual([])
+  })
+  // 执行任意代码 = 沙箱边界本身。逐个数：只测一个的话，名单漏掉 code.python 也发现不了。
+  it('code.* 七个全拒，理由写「执行任意代码」', () => {
+    for (const comp of ['code.javascript', 'code.python', 'code.rust', 'code.shell', 'code.sql', 'code.sqltemplate', 'code.wasm']) {
+      const out = sandboxComponentViolations(draft(comp))
+      expect(out, comp).toHaveLength(1)
+      expect(out[0].path, comp).toBe('nodes[0].data.componentId')
+      expect(out[0].message, comp).toContain('执行任意代码')
+    }
+  })
+  it('ctl.foreach 拒绝（校验对象 ≠ 执行对象）', () => {
+    const out = sandboxComponentViolations(draft('ctl.foreach'))
+    expect(out).toHaveLength(1)
+    expect(out[0].message).toContain('子管线')
+  })
+  // allowlist 形态本身：不在名单里的族必须是「拒」，而不是「不知道就算了」。
+  it('未知族默认拒绝（foo.bar / 无点组件 / 空组件）', () => {
+    expect(sandboxComponentViolations(draft('foo.bar'))[0].message).toContain('未知族默认拒绝')
+    expect(sandboxComponentViolations(draft('shell'))).toHaveLength(1)
+    expect(sandboxComponentViolations(draft(''))).toHaveLength(1)
+  })
+  it('nodes 缺失 ⇒ 一条违规（判不了即拒）', () => {
+    expect(sandboxComponentViolations({ name: 'x' })).toHaveLength(1)
+    expect(sandboxComponentViolations(null)).toHaveLength(1)
   })
 })
