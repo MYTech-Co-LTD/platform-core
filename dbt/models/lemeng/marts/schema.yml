@@ -257,25 +257,11 @@ models:
         description: 有效订单数 = 销售侧基面（FINISHED+SALE_ORDER）count(distinct 单号)。**与 l1_metrics.yml 的 `lemeng:retail:order_count` 同源**；基面 = 销售单，**不含退货单**（退货不是「订单」）。
         tests:
           - not_null
-      # ── 影子列（聚合面组件化 P3.0；plan 2026-10-23 Task 5/6）──────────────────────────
-      # 与上面三列**同口径**的 measure 编译版，由 `scripts/gen-fct-measures.mjs` 生成（改声明后重跑生成器）。
-      # 本阶段只并行输出、**任何消费方都不许读**：切换（P3.2）要等影子对账
-      # `dbt/tests/lemeng/assert_fct_retail_sale_measure_shadow_parity.sql` 稳定后另开笔。
-      # ⚠️ not_null 是**结构守卫**不是冗余：影子对账里两侧都 coalesce(…, 0)，单看差值会把
-      #    「影子列为 NULL、旧列为 0」算成 0 = 0 而静默绿；归零发生在最终 SELECT，这里的 NULL
-      #    只可能来自生成区形态被改坏。
-      - name: sale_amount__gen
-        description: 影子列 = `lemeng:retail:sales` 的 measure 两阶段编译版（销售侧金额，与 `sale_amount` 同口径）。**P3.0 期不许被消费**；单侧缺行由最终 SELECT 归零。
-        tests:
-          - not_null
-      - name: return_amount__gen
-        description: 影子列 = `lemeng:retail:net_sales` 退货侧组件的 measure 编译版（正数量级，与 `return_amount` 同口径）。**P3.0 期不许被消费**；纯销售日由最终 SELECT 归零。
-        tests:
-          - not_null
-      - name: net_amount__gen
-        description: 影子列 = `sale_amount__gen − return_amount__gen`（手写派生，不是单一 measure；与 `net_amount` 同口径，可负）。**P3.0 期不许被消费**。
-        tests:
-          - not_null
+      # 聚合面组件化 P3.2（2026-10-23）后，本模型不再输出 `*__gen` 影子列：`sale_amount` /
+      # `return_amount` 直接取自 `scripts/gen-fct-measures.mjs` 生成区的 rollup（标记区见
+      # fct_retail_sale.sql），`net_amount` 由前两者相减，归零仍在最终 SELECT 的 `coalesce(…, 0)`。
+      # 口径的独立复算守卫是 audit_lemeng__retail__sales.sql / audit_lemeng__retail__net_sales.sql
+      # （不读生成物，直接打 staging/parquet）。
 
 
   - name: fct_hq_outbound

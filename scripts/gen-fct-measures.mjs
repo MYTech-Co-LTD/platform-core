@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// scripts/gen-fct-measures.mjs — fct 度量列「影子生成器」（P3.0 聚合面组件化 / issue #1012）。
+// scripts/gen-fct-measures.mjs — fct 度量列生成区生成器（P3.0 聚合面组件化 / issue #1012；P3.2 起
+// 生成区产物就是正式列，见 #1020）。
 //
 // ## 它生成什么
 //
@@ -14,18 +15,19 @@
 //   ③ `gen_agg` —— 把各组件**上卷后**的结果按 fct 粒度对齐（full join + coalesce 键）。
 //      ⚠️ 必须先各自上卷再 join：两个组件的阶段 1 粒度不同（订单 / 明细行），细粒度直接 join
 //      会做笛卡尔积、把每侧按对方行数放大（fix round 1 的 Critical）。
-// 唯一的**手写**派生列 `net_amount__gen` 不在本区里（它不属任何单一组件，见 fct 模型的最终 SELECT）。
+// 本区只产出各组件自己的度量列（现为 `sale_amount` / `return_amount`）。`net_amount` **不在本区、
+// 也不由本生成器产出**：它不属任何单一组件，由 fct 模型最终 SELECT 用上面两列相减得到。
 //
 // ## 为什么只写标记区、且 `--check` 逐字节比对
 //
 // 生成器一旦「顺手格式化整份 SQL」，每次改声明都会把无关行卷进 diff；更糟的是**手改也能过**
-// ——而影子列的职责正是「与手写实现**独立**算一遍、由 singular test 逐分对账」（Task 6）。
+// ——标记区是声明（`l1_metrics.yml`）的唯一投影，手改它等于让生成物与声明悄悄漂移。
 // 只认标记区 = 手改区外无害、手改区内必红。CI 里挂的是 `--check`（gates job）。
 //
 // ## 声明自洽（fail loud）
 //
 // `measure.grain[0]` 必须等于键名的 `@grain` 后缀，且域名必须已声明、组件必须在 `measures:` 里。
-// 缺 domain 的组件**不许**默认成全表（那会让影子列的基面比旧实现宽，对账红但看不出为什么）。
+// 缺 domain 的组件**不许**默认成全表（那会让生成列的基面比声明语义宽，数偏大却看不出为什么）。
 //
 // 用法：
 //   pnpm exec tsx scripts/gen-fct-measures.mjs            # 写回标记区
@@ -57,12 +59,12 @@ export const END = '-- END GENERATED MEASURES'
 /** 重新生成命令——失败信息里必须复述，否则「有意的摩擦」会变成「无解的摩擦」。 */
 export const REGEN_COMMAND = 'pnpm exec tsx scripts/gen-fct-measures.mjs'
 
-/** 基面 CTE 的输入关系（与 fct 手写侧同一 staging：口径模型只从 ④ 的输入取数）。 */
+/** 基面 CTE 的输入关系（口径模型只从 ④ 的输入取数）。 */
 export const STAGING_REF = "{{ ref('stg_lemeng_retail_order_line') }}"
 
 /**
  * grain 名 → 分组键的**唯一映射**（组件键的 `@` 后缀是这里的一把钥匙）。
- * 键集与 fct 手写侧逐字一致：`per_order` 按前四键、明细侧按五键。
+ * 销售侧（订单粒度）按前四键、退货侧（明细行粒度）按五键。
  * @type {Record<string, string[]>}
  */
 export const GRAIN_KEYS = {
@@ -70,7 +72,7 @@ export const GRAIN_KEYS = {
   line: ['system_book', 'bizday', 'branch_num', 'order_no', 'order_detail_num'],
 }
 
-/** fct 的粒度键（影子列最终按它聚合；与模型头注声明的 grain 同源）。 */
+/** fct 的粒度键（生成列最终按它上卷；与模型头注声明的 grain 同源）。 */
 export const FCT_GRAIN = ['system_book', 'bizday', 'branch_num']
 
 /**
@@ -201,9 +203,9 @@ function renderRollup(name, col) {
  * 把各组件**上卷后**的结果按 fct 粒度对齐（`gen_agg`）。
  *
  * 为什么 full join + coalesce 键：sale 与 return 的行域**不重叠**（一侧排掉退货行、一侧只要退货行），
- * 某个门店日只有销售没有退货是常态 ⇒ 内连接会**静默丢行**（影子列少数，对账红但原因隐蔽）。
- * 缺侧的列在此为 NULL，**由最终 SELECT 统一 `coalesce(…, 0)` 归零**——与手写侧的净额算法同形
- * （见 fct 模型：`coalesce(sale_side.sale_amount, 0)`）。
+ * 某个门店日只有销售没有退货是常态 ⇒ 内连接会**静默丢行**（生成列少数，数偏小但原因隐蔽）。
+ * 缺侧的列在此为 NULL，**由最终 SELECT 统一 `coalesce(…, 0)` 归零**
+ * （见 fct 模型：`coalesce(gen_agg.sale_amount__gen, 0)`）。
  *
  * @param {{ names: string[] }} rendered
  * @returns {string}
