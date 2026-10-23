@@ -1247,6 +1247,9 @@ describe('具名行域（domains:）与 detail.filter 派生（P3.0 Task 3）', 
 
     // 不含**顶层**析取 ⇒ 不加括号：括号内的 or 与字符串字面量里的 or 都不该触发
     expect(resolveDomain('a', { a: { filter: '(x = 1 or y = 2)' } })).toBe('(x = 1 or y = 2)')
+    // 词边界不只认空白：括号紧邻的 or 同样是顶层析取
+    expect(resolveDomain('a', { a: { filter: '(x = 1)or(y = 2)' } })).toBe('((x = 1)or(y = 2))')
+    expect(resolveDomain('a', { a: { filter: 'x = 1 or(y = 2)' } })).toBe('(x = 1 or(y = 2))')
     expect(resolveDomain('a', { a: { filter: "note = 'a or b'" } })).toBe("note = 'a or b'")
     expect(resolveDomain('a', { a: { filter: "order_transaction_type = 'SALE_ORDER'" } }))
       .toBe("order_transaction_type = 'SALE_ORDER'")

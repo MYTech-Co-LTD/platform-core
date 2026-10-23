@@ -642,8 +642,10 @@ function hasTopLevelOr(filter) {
     if (ch === '(') { depth += 1; continue }
     if (ch === ')') { depth = Math.max(0, depth - 1); continue }
     if (depth === 0 && (ch === 'o' || ch === 'O') && (filter.charAt(i + 1) === 'r' || filter.charAt(i + 1) === 'R')) {
-      // 词边界：两侧必须是空白（`order` / `_or_` 这类不算）
-      if (/\s/.test(filter.charAt(i - 1)) && /\s/.test(filter.charAt(i + 2))) return true
+      // 词边界：两侧不能是标识符字符（`order` / `_or_` 不算）。**空白不是唯一分隔符**——
+      // SQL 里 `(` / `)` / 运算符同样是 token 边界，`(a=1)or(b=2)` 是真析取；只认空白会让
+      // 这类写法逃过加括号（2026-10-23 scoped re-review 实测的残留缺口）。
+      if (!/[A-Za-z0-9_]/.test(filter.charAt(i - 1)) && !/[A-Za-z0-9_]/.test(filter.charAt(i + 2))) return true
     }
   }
   return false
