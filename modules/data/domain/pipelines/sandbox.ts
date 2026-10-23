@@ -7,7 +7,9 @@
 //   · 管线跑失败（引擎报红）⇒ `failed / pipeline_failed` + `isError: true` —— 这是**关于草案的结论**，
 //     不是工具坏了；审计判决仍是 ok（`verdictOf` 不改语义）。
 //   · 执行面不可达 ⇒ `unknown / sandbox_unreachable` + `isError: true` —— 「不知道跑没跑」，不是拒绝。
-//   · 超时仍 running ⇒ `running` + `runId`，`isError: false` —— 引擎还在跑，别报成失败。
+//   · 引擎解析不过（同步 400）⇒ `refused / engine_parse_error` + 引擎原话 —— 一个节点都没跑，改草案。
+//   · 等待预算耗尽 ⇒ `unknown / sandbox_run_timeout` + `runId` —— **不知道**终态，不是「还在跑」，
+//     也不是失败；引擎侧仍在跑（实测断连不取消），回执稍后会落盘。
 import { randomUUID } from 'node:crypto'
 import { sandboxComponentViolations, sandboxViolations, validatePipelineDraft } from './validate'
 import { SandboxUnreachableError } from './sandbox-runner'
@@ -20,8 +22,9 @@ const NOTE_PREFIX = '沙箱试跑不得写正式湖、不得对外发数据—�
 const NOTE_OK = '已在沙箱 console 真跑：默认档**不带任何生产凭据**，源端读的是公开/无鉴权端点。'
   + '此结果只反映这一次执行，不代表口径正确（口径靠 dbt tests 与对账）。'
 const NOTE_FAILED = '管线在沙箱里跑了但失败了（引擎报红）——这是关于草案的结论，按 error / nodes 里的节点定位。'
-const NOTE_RUNNING = '到等待上限仍未结束：引擎可能还在跑。用 runId 对应的草案文件与 `list_pipeline_runs` 继续追，'
-  + '不要据此判失败。'
+const NOTE_TIMEOUT = '到了平台的等待上限，**没拿到终态**（不知道跑完没，不是失败）。引擎侧不会因为这次断开而停'
+  + '（实测），回执稍后会落在执行面工作区的 runs/receipts/ 下——用 runId 对应的草案文件继续追，不要据此判失败。'
+const NOTE_PARSE_ERROR = '引擎不认这份草案（解析失败，一个节点都没跑）：原话见 error。改草案再试，别去查执行面。'
 const NOTE_BUSY = '沙箱同一时刻只跑一条（单飞）：上一次试跑还没结束。稍后重试。'
 
 /**
@@ -70,7 +73,11 @@ export const runPipelineSandboxImpl: PipelineImpl = async (deps, args) => {
   const runId = newRunId()
   try {
     const outcome = await runner.run(args.pipeline, runId)
-    const where = { runId: outcome.runId, file: outcome.file }
+    const where = {
+      runId: outcome.runId,
+      file: outcome.file,
+      ...(outcome.engineRunId === undefined ? {} : { engineRunId: outcome.engineRunId }),
+    }
     const timing = {
       ...(outcome.durationMs === undefined ? {} : { durationMs: outcome.durationMs }),
       ...(outcome.rows === undefined ? {} : { rows: outcome.rows }),
@@ -87,7 +94,22 @@ export const runPipelineSandboxImpl: PipelineImpl = async (deps, args) => {
         isError: true, auditRowCount: null,
       }
     }
-    return { payload: { status: 'running', ...where, note: NOTE_RUNNING }, isError: false, auditRowCount: null }
+    if (outcome.status === 'parse_error') {
+      return {
+        payload: {
+          status: 'refused', reason: 'engine_parse_error', ...where,
+          ...(outcome.error === undefined ? {} : { error: outcome.error }), note: NOTE_PARSE_ERROR,
+        },
+        isError: true, auditRowCount: null,
+      }
+    }
+    if (outcome.status === 'timeout') {
+      return {
+        payload: { status: 'unknown', reason: 'sandbox_run_timeout', ...where, note: NOTE_TIMEOUT },
+        isError: true, auditRowCount: null,
+      }
+    }
+    throw new Error(`未处理的执行面状态：${String(outcome.status)}`)
   } catch (err) {
     if (err instanceof SandboxUnreachableError) {
       return {

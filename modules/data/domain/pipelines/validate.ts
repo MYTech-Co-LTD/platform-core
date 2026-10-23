@@ -47,7 +47,8 @@ export function validatePipelineDraft(doc: unknown): Issue[] {
     // 直接 400（2026-10-23 生产实测：`missing field \`position\`` / `` `x` `` / `` `y` `` / `` `label` ``；
     // `label: ""` 合法）。后果还不止「跑不成」——`POST /api/run/async` 对**解析失败**的草案
     // 仍回 202 `{status:"queued"}`，但不登记 `/api/runs`、不产回执、`lastStatus` 留 null
-    // ⇒ 执行面只能轮询到超时后回 `running`（「还在跑」），其实是根本没跑。必须在这一层挡住。
+    // ⇒ 走异步的话只能轮询到超时后报「还在跑」，其实根本没跑（执行面现已改走同步 `/api/run`，
+    // 这类失败会直接回 `refused / engine_parse_error`；这一层仍要挡，把成本留在本地）。
     const pos = isObj(n.position) ? n.position : null
     if (pos === null) out.push({ path: `nodes[${i}].position`, message: 'position 必填（{x,y}）' })
     else {

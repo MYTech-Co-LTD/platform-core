@@ -2,15 +2,18 @@
 //
 // 执行面是单元 A 的 `sandbox-console`（`duckle-runner serve`，无宿主端口），
 // 决策与全部口径在 `docs/architecture.md` §2.8。下面每条 HTTP 形状都在真机容器里实测过（2026-10-23）：
-//   · `POST /api/run/async` 体 `{"file":"<工作区相对路径>"}`，`Authorization: Bearer $DUCKLE_TOKEN`；
-//   · `GET  /api/runs`      汇总（status / durationMs / rows / error），**没有**唯一 runId；
-//   · `<workspace>/runs/receipts/*.json` 由引擎自产，逐节点明细只在这里。
+//   · `POST /api/run` 体 `{"file":"<工作区相对路径>"}`，`Authorization: Bearer $DUCKLE_TOKEN`；
+//     **同步**：挂到整条跑完才回，响应体 `{id,runId,status,durationMs,error,nodes:[…]}`；
+//   · 草案解析不过 ⇒ 同步立即 `400`，body 是引擎原话（`missing field …`）；
+//   · 客户端断开**不取消**运行（实测：10s 断开、引擎仍跑到 71.4s 并落回执）；
+//   · `<workspace>/runs/receipts/*.json` 由引擎自产，只在「我们不等了」时用来捡结果。
 //
-// 两条纪律：
+// 三条纪律：
 //   · **不抛业务错误**：跑失败（管线红了）是正常产出，走 `status: 'failed'`；
 //     只有「根本连不上 / 鉴权不过 / 回的不是 JSON」才抛 `SandboxUnreachableError`——
 //     「跑不了」和「跑失败」是两件事，混在一起会让人去改草案（错的方向）。
-//   · **回执读不到不算失败**：它只是明细来源（尽力而为），终态判定不依赖它。
+//   · **不谎报 running**：等不到终态就是 `timeout`（不知道），由上层说「不知道」，不说「还在跑」。
+//   · **回执读不到不算失败**：它只是超时后的补救来源（尽力而为）。
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -21,29 +24,35 @@ export interface SandboxRunnerConfig {
   token: string
   /** `DATA_SANDBOX_DIR`：server 侧看到的共享卷路径（写草案、读回执） */
   dir: string
-  /** `DATA_SANDBOX_TIMEOUT_MS`：等一次试跑的上限，超时返回 `running`（不判失败） */
+  /**
+   * `DATA_SANDBOX_TIMEOUT_MS`：**愿意为一次试跑持有多久**（不是轮询上限）。
+   * 到点只是我们不等了——引擎侧仍在跑（实测断连不取消）。
+   */
   timeoutMs: number
-  /** 轮询间隔（测试注入小值） */
-  intervalMs?: number
 }
 
 export interface SandboxOutcome {
-  status: 'ok' | 'failed' | 'running'
-  /** 我们为这次试跑写的文件名主干（引擎的 `/api/runs` 汇总不带唯一 id） */
+  /** `timeout` = 没拿到终态（不知道跑完没）；`parse_error` = 引擎不认这份草案，一个节点都没跑。 */
+  status: 'ok' | 'failed' | 'timeout' | 'parse_error'
+  /** 我们为这次试跑写的文件名主干 */
   runId: string
   /** 工作区相对路径 `sandbox/<runId>.json` */
   file: string
+  /** 引擎自己的 runId（同步响应带；超时/回执路径可能没有） */
+  engineRunId?: string
   durationMs?: number
+  /** sink 节点行数之和（拿得到时） */
   rows?: number
   error?: string
-  nodes?: Record<string, unknown>
+  /** 逐节点结果（同步响应是数组，回执是 map——形状随来源，原样透传） */
+  nodes?: unknown
 }
 
 export interface SandboxRunner {
   run(draft: unknown, runId: string): Promise<SandboxOutcome>
 }
 
-/** 执行面不可达（网络 / 非 2xx / 非 JSON）。**不是**管线跑失败。 */
+/** 执行面不可达（网络 / 非 2xx（400 除外）/ 非 JSON）。**不是**管线跑失败。 */
 export class SandboxUnreachableError extends Error {
   constructor(message: string) {
     super(message)
@@ -54,9 +63,6 @@ export class SandboxUnreachableError extends Error {
 /** 与 compose 里 `server` 的挂载点一致（`sandbox-workspace:/run/duckle-sandbox`）。 */
 export const SANDBOX_DEFAULT_DIR = '/run/duckle-sandbox'
 const DEFAULT_TIMEOUT_MS = 120_000
-const DEFAULT_INTERVAL_MS = 1_000
-/** 单个 HTTP 请求的超时（与整次试跑的 `timeoutMs` 是两回事）。 */
-const REQUEST_TIMEOUT_MS = 10_000
 /** 回执 mtime 与我们的开始时刻之间允许的时钟毛刺。 */
 const CLOCK_SKEW_MS = 2_000
 /** runId 会变成文件名主干 ⇒ 只收安全字符，路径注入在触盘前就挡掉。 */
@@ -69,8 +75,8 @@ const num = (v: unknown): number | undefined =>
   (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
-/** 引擎状态词汇（实测 `ok / error / interrupted / cancelled`，另见 running/queued）→ 三态。 */
-const normalizeStatus = (raw: string): SandboxOutcome['status'] | null => {
+/** 引擎状态词汇（实测 `ok / error / interrupted / cancelled`）→ 三态；空串 = 认不出。 */
+const normalizeStatus = (raw: string): 'ok' | 'failed' | 'running' | null => {
   if (raw === 'ok' || raw === 'success') return 'ok'
   if (raw === 'running' || raw === 'queued' || raw === 'pending') return 'running'
   if (raw === '') return null
@@ -83,45 +89,36 @@ const intOf = (raw: string | undefined, fallback: number): number => {
   return Number.isFinite(n) && n > 0 ? n : fallback
 }
 
+/** 400 的 body 是引擎原话（JSON `{error}` 或纯文本）——两种都要能读出来。 */
+const engineError = (text: string): string => {
+  const trimmed = text.trim()
+  if (trimmed === '') return '引擎拒绝解析这份草案（400，无正文）'
+  try {
+    const doc: unknown = JSON.parse(trimmed)
+    if (isObj(doc) && str(doc.error) !== '') return str(doc.error)
+  } catch {
+    // 不是 JSON：原样用
+  }
+  return trimmed
+}
+
+/** 超时/中止：`AbortSignal.timeout` 抛 TimeoutError，手工 abort 抛 AbortError。 */
+const isAbort = (err: unknown): boolean =>
+  err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+
 export interface SandboxRunnerIo {
   /** 注入用（测试不连网） */
   fetchImpl?: typeof fetch
-  /** 注入用（测试不想真等） */
-  sleep?: (ms: number) => Promise<void>
   /** 注入用（测试推进假时钟） */
   now?: () => number
 }
 
 export const createSandboxRunner = (cfg: SandboxRunnerConfig, io: SandboxRunnerIo = {}): SandboxRunner => {
   const fetchImpl = io.fetchImpl ?? fetch
-  const sleep = io.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const now = io.now ?? Date.now
-  const intervalMs = cfg.intervalMs !== undefined && cfg.intervalMs >= 0 ? cfg.intervalMs : DEFAULT_INTERVAL_MS
   const receiptsDir = join(cfg.dir, 'runs', 'receipts')
 
-  const call = async (path: string, init: RequestInit = {}): Promise<unknown> => {
-    let res: Response
-    try {
-      res = await fetchImpl(`${cfg.baseUrl}${path}`, {
-        ...init,
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.token}` },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      })
-    } catch (err) {
-      throw new SandboxUnreachableError(`${path} 不可达：${errText(err)}`)
-    }
-    if (!res.ok) throw new SandboxUnreachableError(`${path} → HTTP ${res.status}`)
-    // 空体合法（`/api/run/async` 可能只回 202）——空 ≠ 坏。
-    const text = await res.text().catch(() => '')
-    if (text.trim() === '') return null
-    try {
-      return JSON.parse(text) as unknown
-    } catch {
-      throw new SandboxUnreachableError(`${path} 返回的不是 JSON`)
-    }
-  }
-
-  /** 回执目录快照；读不到就返回空集（不是错误——回执只是明细来源）。 */
+  /** 回执目录快照；读不到就返回空集（不是错误——回执只是兜底来源）。 */
   const listReceipts = async (): Promise<string[]> => {
     try {
       return (await readdir(receiptsDir)).filter((n) => n.endsWith('.json'))
@@ -132,7 +129,7 @@ export const createSandboxRunner = (cfg: SandboxRunnerConfig, io: SandboxRunnerI
 
   /**
    * 找**本次**试跑新产生的回执。靠「开始前快照里没有 + mtime 不早于开始时刻」认领——
-   * 回执文件名不含我们写的 `file`，这是唯一可靠的认领方式；单飞（Task 3）保证同一 workspace
+   * 回执文件名不含我们写的 `file`，这是唯一可靠的认领方式；单飞（`sandbox.ts`）保证同一 workspace
    * 同一时刻只有一次试跑，所以新回执不会认错人。
    */
   const freshReceipt = async (seen: string[], startedAt: number): Promise<SandboxOutcome | null> => {
@@ -164,42 +161,56 @@ export const createSandboxRunner = (cfg: SandboxRunnerConfig, io: SandboxRunnerI
   const receiptOutcome = (doc: unknown, name: string): SandboxOutcome | null => {
     if (!isObj(doc)) return null
     const status = normalizeStatus(str(doc.status))
-    if (status === null) return null
-    const nodes = isObj(doc.nodes) ? doc.nodes : undefined
-    const sinkRows = nodes !== undefined && isObj(nodes.sink) ? num((nodes.sink as Record<string, unknown>).rows) : undefined
+    if (status === null || status === 'running') return null
+    const nodes = doc.nodes
+    const sinkRows = isObj(nodes) && isObj(nodes.sink) ? num((nodes.sink as Record<string, unknown>).rows) : undefined
     const durationMs = num(doc.durationMs) ?? spanMs(doc.startedAt, doc.finishedAt)
     const error = str(doc.error)
     const base = { runId: '', file: name, ...(durationMs === undefined ? {} : { durationMs }), ...(sinkRows === undefined ? {} : { rows: sinkRows }) }
-    if (status === 'running') return { ...base, status }
     if (status === 'failed') return { ...base, status, ...(error === '' ? {} : { error }) }
-    return { ...base, status, ...(nodes === undefined ? {} : { nodes }) }
+    return { ...base, status, nodes }
   }
 
-  /** `GET /api/runs` 里找本次条目；没有 / 仍在跑 ⇒ `null`（继续轮询）。 */
-  const findRun = async (file: string, name: string): Promise<SandboxOutcome | null> => {
-    const body = await call('/api/runs')
-    const runs = Array.isArray(body) ? body : isObj(body) && Array.isArray(body.runs) ? body.runs : []
-    const matches = runs.filter((r) => {
-      if (!isObj(r)) return false
-      return str(r.file) === file || (name !== '' && str(r.name) === name)
-    })
-    for (const r of matches.reverse()) {
-      if (!isObj(r)) continue
-      const status = normalizeStatus(str(r.status))
-      if (status === null || status === 'running') continue
-      const durationMs = num(r.durationMs)
-      const rows = num(r.rows)
-      const error = str(r.error)
-      return {
-        status,
-        runId: '',
-        file,
-        ...(durationMs === undefined ? {} : { durationMs }),
-        ...(rows === undefined ? {} : { rows }),
-        ...(status === 'failed' && error !== '' ? { error } : {}),
-      }
+  /** 同步响应的形状：`{id,runId,status,durationMs,error,nodes:[…]}`。 */
+  const syncOutcome = (body: unknown, draft: unknown, runId: string, file: string): SandboxOutcome => {
+    if (!isObj(body)) throw new SandboxUnreachableError('/api/run 返回的不是 JSON 对象')
+    const status = normalizeStatus(str(body.status))
+    if (status === null) throw new SandboxUnreachableError('/api/run 响应缺 status')
+    const engineRunId = str(body.runId) || undefined
+    const durationMs = num(body.durationMs)
+    const nodes = body.nodes
+    const base = {
+      runId, file,
+      ...(engineRunId === undefined ? {} : { engineRunId }),
+      ...(durationMs === undefined ? {} : { durationMs }),
     }
-    return null
+    // 同步接口只该回终态；真回了 running（异常形状）就按「没拿到终态」处理，不谎报在跑。
+    if (status === 'running') return { ...base, status: 'timeout' }
+    const rows = sinkRows(draft, nodes)
+    const withRows = { ...base, ...(rows === undefined ? {} : { rows }) }
+    if (status === 'ok') return { ...withRows, status, ...(nodes === undefined ? {} : { nodes }) }
+    const error = str(body.error)
+    return { ...withRows, status, ...(error === '' ? {} : { error }), ...(nodes === undefined ? {} : { nodes }) }
+  }
+
+  /** sink 节点的行数：按草案里 `type:'sink'` 的节点 id 到响应里取，避免把源/中间节点重复计。 */
+  const sinkRows = (draft: unknown, nodes: unknown): number | undefined => {
+    if (!Array.isArray(nodes) || !isObj(draft) || !Array.isArray(draft.nodes)) return undefined
+    const sinkIds = new Set<string>()
+    for (const n of draft.nodes) {
+      if (!isObj(n)) continue
+      if (str(n.type) === 'sink' && str(n.id) !== '') sinkIds.add(str(n.id))
+    }
+    if (sinkIds.size === 0) return undefined
+    let total: number | undefined
+    for (const n of nodes) {
+      if (!isObj(n)) continue
+      if (!sinkIds.has(str(n.id))) continue
+      const rows = num(n.rows)
+      if (rows === undefined) continue
+      total = (total ?? 0) + rows
+    }
+    return total
   }
 
   const run = async (draft: unknown, runId: string): Promise<SandboxOutcome> => {
@@ -211,20 +222,37 @@ export const createSandboxRunner = (cfg: SandboxRunnerConfig, io: SandboxRunnerI
 
     const startedAt = now()
     const seen = await listReceipts()
-    const name = isObj(draft) ? str(draft.name) : ''
-    // 先起跑再轮询：/api/run/async 立即返回，跑完的证据来自回执或 /api/runs。
-    await call('/api/run/async', { method: 'POST', body: JSON.stringify({ file }) })
 
-    const deadline = startedAt + cfg.timeoutMs
-    for (;;) {
+    let res: Response
+    try {
+      res = await fetchImpl(`${cfg.baseUrl}/api/run`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.token}` },
+        body: JSON.stringify({ file }),
+        signal: AbortSignal.timeout(cfg.timeoutMs),
+      })
+    } catch (err) {
+      if (!isAbort(err)) throw new SandboxUnreachableError(`/api/run 不可达：${errText(err)}`)
+      // 预算耗尽 ≠ 失败：引擎侧仍在跑（实测断连不取消）⇒ 先捡一次回执，捡不到就说「不知道」。
       const receipt = await freshReceipt(seen, startedAt)
-      if (receipt !== null && receipt.status !== 'running') return { ...receipt, runId, file }
-      const summary = await findRun(file, name)
-      if (summary !== null) return { ...summary, runId, file }
-      // 超时 ≠ 失败：引擎可能还在跑。如实报 running + runId，让人用 get/list 去追。
-      if (now() >= deadline) return { status: 'running', runId, file }
-      await sleep(intervalMs)
+      if (receipt !== null) return { ...receipt, runId, file }
+      return { status: 'timeout', runId, file }
     }
+
+    // 400 是引擎的原话（解析不过），不是执行面坏了。
+    if (res.status === 400) {
+      const text = await res.text().catch(() => '')
+      return { status: 'parse_error', runId, file, error: engineError(text) }
+    }
+    if (!res.ok) throw new SandboxUnreachableError(`/api/run → HTTP ${res.status}`)
+    const text = await res.text().catch(() => '')
+    let body: unknown
+    try {
+      body = JSON.parse(text) as unknown
+    } catch {
+      throw new SandboxUnreachableError('/api/run 返回的不是 JSON')
+    }
+    return syncOutcome(body, draft, runId, file)
   }
 
   return { run }

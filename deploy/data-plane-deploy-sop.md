@@ -924,10 +924,11 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 >
 > ⚠️ **第三个坑：草案必须带 `position` / `data.label`（引擎必填，校验器一度没查）**。
 > 缺任一项 ⇒ 同步 `/api/run` 回 `400 missing field …`；而**异步** `/api/run/async` 照回 `202`
-> 却不登记运行 ⇒ 工具轮询到超时回 `status: running`（看着像「还在跑」，其实没跑）。
-> 两个字段已补进 `validatePipelineDraft`（`refused/invalid_draft` + 定位到具体路径）。
-> 其它解析失败仍是同一个黑洞——排查手法：把 `sandbox/<runId>.json` 拿同步 `/api/run` 跑一次，
-> 引擎原话立刻出来。
+> 却不登记运行 ⇒ 走异步就只能轮询到超时、报「还在跑」，其实没跑。
+> 两个字段已补进 `validatePipelineDraft`（`refused/invalid_draft` + 定位到具体路径）；
+> **执行面已改走同步**（见下方 ⚠️ 第五条），其它解析失败现在也会在提交时立刻回
+> `refused / engine_parse_error` + 引擎原话，不再有黑洞。
+> 排查手法不变：把 `sandbox/<runId>.json` 拿同步 `/api/run` 跑一次，引擎原话立刻出来。
 >
 > ⚠️ **第四个坑：compose 里给「已有服务行」加 env，部署不会自动生效**（2026-10-23 实测）。
 > 改完 `deploy/docker-compose.yml` 的 `sandbox-console.environment`（加 `DUCKLE_SHARE_DIR` 等）后
@@ -939,6 +940,16 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 > 不重读服务行 env（实测：drift 接受后 `restart` 出的新容器，env 仍为空）。
 > 判据：`docker exec <console 容器> env | grep DUCKLE_SHARE` 有输出才算真生效——
 > 「部署成功」不等于「配置生效」。
+>
+> ⚠️ **第五条（2026-10-23 定案）：执行面从异步改回**同步 `POST /api/run`**，量具别再把引擎判错**。
+> 同步接口挂着跑到整条结束才回：生产实测 1.7s / 14.7s / 36.9s / 71.0s / 71.4s / 72.2s 六次全部
+> `200` + 完整逐节点结果，`time_total` 与引擎 `durationMs` 对得上；处理器无运行时长上限
+> （`serve.rs` 里 30s 只是**单次读/写停顿**保护）。**客户端断开不取消运行**：`curl -m 10` 断开后
+> 该次仍跑到 71.4s、`ok`、回执照落。⇒ 平台侧等待预算（`DATA_SANDBOX_TIMEOUT_MS`，**语义 = 愿意持有多久**）
+> 用完只表示「我们不等了」，报 `unknown / sandbox_run_timeout`（**不是**「还在跑」也不是失败），
+> 引擎侧仍在跑、回执稍后落 `<共享卷>/runs/receipts/`。
+> **量具提醒**：早期一次「sync 长跑 120s 不回」是 **openship exec 的 120s 上限**把 curl 截断造成的假象，
+> 不是引擎截断。判长跑行为时把观测挪到不受调用方上限约束的位置（容器内 `nohup` 后台跑 + 落文件 + 事后读）。
 
 | 项 | 值 / 做法 |
 |---|---|
@@ -949,6 +960,7 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 | **交换卷** | 命名卷 `sandbox-workspace`：console 看到 `/workspace`，server 看到 `/run/duckle-sandbox`（`DATA_SANDBOX_DIR`）。草案 = `sandbox/<runId>.json`，回执 = `runs/receipts/`。**`sandbox/` 必须交权给 uid 1000**（见上方第二个坑的 `DUCKLE_SHARE_DIR`），否则 server 写不进去 |
 | **不要它的项目** | openship 服务行 `enabled: false`（**别只靠 compose profiles**——openship 按自己的服务清单逐服务启停，profiles 对它无效，见 mb-proxy 的教训）。**`platform-core-shanhai` 已按此置 `enabled: false`（2026-10-23）**：那条服务行是预建的，同 compose 的下次部署按名字合并，不会把没备 token 的服务拉起来 |
 | **默认档凭据** | **无**：沙箱容器不注入任何 ZOS/LEMENG 凭据 ⇒ 源端只能是公开/无鉴权端点。按账套 opt-in 的只读凭据档**待沉淀**（一个账套 = 一个 sandbox 服务，理由同 ADR-0014） |
+| **等待预算** | `DATA_SANDBOX_TIMEOUT_MS`（`server` 服务行 env，默认 120000）：**平台愿意为一次试跑持有多久**（不是轮询上限）。到点回 `unknown / sandbox_run_timeout`——引擎侧仍在跑（断连不取消，实测），回执稍后落盘。设值要小于调用方（MCP 客户端）的工具超时，否则调用方先断、平台还在等 |
 
 部署后按序自证（每条都要**看见**，不看「应该」）：
 
@@ -961,6 +973,10 @@ docker exec <server 容器> node -e "fetch('http://sandbox-console:18090/healthz
 #      docker exec -w /app <server 容器> node_modules/.bin/tsx /tmp/probe.ts
 #    探针 = 组 deps{env, sandbox: sandboxRunnerFromEnv(process.env)} → runPipelineSandboxImpl(...)
 #    期望 status: ok + runId + durationMs/rows + auditRowCount==rows
+#    另验两条失败语义（2026-10-23 起）：
+#      草案删掉 data.label  ⇒ refused/engine_parse_error + 引擎原话（一个节点都没跑）
+#      跑超过 DATA_SANDBOX_TIMEOUT_MS 的管线 ⇒ unknown/sandbox_run_timeout + runId（不是 running、不是 failed）；
+#        引擎侧仍会跑完，回执稍后出现在 runs/receipts/
 #    排障用（引擎原话）：对同一草案文件 POST /api/run（同步）⇒ 200 status ok|error，或 400 parse …
 # ③ 共享卷两个方向都通：server 写的草案在 console 里可见并被执行；console 写的
 #    产物（logs/sandbox/*.csv）与回执（runs/receipts/*.json）在 server 里可读

@@ -104,12 +104,21 @@ describe('runPipelineSandboxImpl —— 真执行（接了执行面）', () => {
     expect(out.payload).toMatchObject({ status: 'failed', reason: 'pipeline_failed', error: 'Data contract violated: in_range(exit_code)' })
     expect(verdictOf(out.payload as Record<string, unknown>, out.isError)).toEqual({ verdict: 'ok', reason: 'pipeline_failed' })
   })
-  it('超时仍 running ⇒ running + runId，不判失败', async () => {
-    const { runner } = runnerOf({ status: 'running', runId: '', file: 'sandbox/x.json' })
+  it('等待预算耗尽 ⇒ unknown/sandbox_run_timeout + runId（不知道 ≠ 还在跑 ≠ 失败）', async () => {
+    const { runner } = runnerOf({ status: 'timeout', runId: '', file: 'sandbox/x.json' })
     const out = await runPipelineSandboxImpl(depsWith(runner), { pipeline: good })
-    expect(out.isError).toBe(false)
-    expect(out.payload).toMatchObject({ status: 'running', file: 'sandbox/x.json' })
+    expect(out.isError).toBe(true)
+    expect(out.payload).toMatchObject({ status: 'unknown', reason: 'sandbox_run_timeout', file: 'sandbox/x.json' })
+    expect((out.payload as { runId: string }).runId).toMatch(/^sbx-/)
     expect(String((out.payload as { note: string }).note)).toContain('不要据此判失败')
+    expect(verdictOf(out.payload as Record<string, unknown>, out.isError)).toEqual({ verdict: 'ok', reason: 'sandbox_run_timeout' })
+  })
+  it('引擎解析不过 ⇒ refused/engine_parse_error + 引擎原话（一个节点都没跑）', async () => {
+    const { runner } = runnerOf({ status: 'parse_error', runId: '', file: 'sandbox/x.json', error: 'parse x: missing field label' })
+    const out = await runPipelineSandboxImpl(depsWith(runner), { pipeline: good })
+    expect(out.isError).toBe(true)
+    expect(out.payload).toMatchObject({ status: 'refused', reason: 'engine_parse_error', error: 'parse x: missing field label' })
+    expect(verdictOf(out.payload as Record<string, unknown>, out.isError)).toEqual({ verdict: 'denied', reason: 'engine_parse_error' })
   })
   it('执行面不可达 ⇒ unknown/sandbox_unreachable（「不知道跑没跑」≠ denied）', async () => {
     const { runner } = runnerOf(new SandboxUnreachableError('/api/runs → HTTP 401'))
