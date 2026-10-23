@@ -175,7 +175,10 @@ sync 取路径段 `lemeng/<资产>` 推导 `stg_lemeng_<资产>` 关系集物化
 `dimensions` = 非空、无重复、蛇形命名的字符串数组——**原子粒度闭集**，请求维度只能取其子集；
 `detail` = 键**闭集** `{relation, filter, columns}`：`relation` 必须合 `vw_*` 且
 `dbt/models/**/views/<relation>.sql` 在仓（Phase 1 下钻只读直读湖视图），`filter` = 非空、
-不含分号的布尔表达式；`columns`（选填；**键在就必须是非空数组**，无条件列就别写这个键）=
+不含分号的布尔表达式——**可省略**（P3.0 Task 3）：省略时由 `compose` 所引用组件的 `domain`
+取**最小上界**（LUB，公共祖先里最深的那个）派生完整谓词；派不出来（组件缺 `domain`、
+无公共祖先）⇒ 门禁与 sync 都**响亮失败**（放宽成 `true` 会让下钻面悄悄多出别的行域的行）。
+显式写了 `filter` 仍按上面的规则校验（迁移窗口）；`columns`（选填；**键在就必须是非空数组**，无条件列就别写这个键）=
 **条件列**数组，每项 `{col, grantedBy}`
 （`col` 蛇形、不与 `dimensions` 重叠、不许叫 `value`、不重复；`grantedBy` 必须是 manifest
 里真实存在的权限码）——**持码才投影，无码 ⇒ 该列不在回包里**（缺席，不是 NULL；
@@ -188,6 +191,12 @@ spec 2026-10-22 §2.3）。条件列**不是**值级掩码，不进 `mask`。配
 `grain`（选填）= 表达式逐组求值的键（`[order]` / `[line]`）；`unit`（选填）= `CNY` / `count` / `ratio`。
 解析的唯一实现是 `scripts/sync-data-semantics.mjs` 导出的 `measureOf`（门禁复用同一函数）。
 本段键清单与 `check-data-models.mjs` 的 `METRIC_KEYS` 同步维护（加字段 = 改常量 + 改本 README + 走 PR）。
+
+配套的**顶层** `domains:`（与 `metrics:` / `measures:` 同级）= `{ 行域名: { extends?, filter } }`
+（`finished: "state = 'FINISHED'"` 这种字符串简写等价于 `{ filter }`）。完整谓词 = 沿 `extends`
+链自根向下逐层 `and`；组件 `domain` 必须是这里登记过的名字（拼错 ⇒ 门禁红）。
+解析/派生四件套的唯一实现同样是 sync 的导出：`domainsOf` / `resolveDomain` / `domainLub` /
+`detailFilterOf`——门禁不另写一份。
 
 **T9 消费的那条规则（唯一事实源）**：指标名 → 对账文件名，由
 `scripts/check-data-models.mjs` **导出的函数**给出，**文档不复述规则**：

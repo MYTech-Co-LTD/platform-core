@@ -553,6 +553,162 @@ export function measuresOf(parsed) {
 
 const MEASURE_REF_RE = /[A-Za-z_][A-Za-z0-9_]*@[a-z0-9_]+/g
 
+// ── 具名行域（P3.0 Task 3）：下钻面的行域不再手写，由所引用组件的域 LUB 派生 ──────────────
+
+/**
+ * `domains:` 的一条：行域名 → `{ extends?, filter }`。
+ * `filter` 是该域**自身**新增的谓词（不含父域）；完整谓词由 `resolveDomain` 沿链拼出。
+ * @typedef {{ extends?: string, filter: string }} Domain
+ */
+
+const DOMAIN_KEYS = new Set(['extends', 'filter'])
+const DOMAIN_NAME_RE = /^[a-z_][a-z0-9_]*$/
+
+/**
+ * 顶层 `domains:` → 解析后的行域表（**唯一解析实现**：门禁 `check-data-models` 也 import 它）。
+ *
+ * 支持两种书写形态（同义）：
+ *   · 字符串简写 `finished: "state = 'FINISHED'"` ⇒ `{ filter }`（无父域）
+ *   · 对象形态   `sale_finished: { extends: finished, filter: … }`
+ * 未知键 / 非蛇形域名 / 空谓词一律响亮失败——拼错的键（`extnds`）会被静默忽略，
+ * 于是该域悄悄少了父域谓词，下钻面多出别的行域的行且零报错（本设计最怕的形态）。
+ *
+ * @param {Record<string, unknown> | null | undefined} parsed YAML 解析结果（顶层对象）
+ * @returns {Record<string, Domain>} 行域名 → `{ extends?, filter }`（`domains:` 缺席 = 空表）
+ */
+export function domainsOf(parsed) {
+  const raw = parsed?.domains
+  if (raw === undefined || raw === null) return {}
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('`domains:` 必须是 `{ 行域名: { extends?, filter } }` 映射（对象形态，或 `行域名: "谓词"` 的字符串简写）')
+  }
+  /** @type {Record<string, Domain>} */
+  const out = {}
+  for (const [name, v] of Object.entries(/** @type {Record<string, unknown>} */ (raw))) {
+    if (!DOMAIN_NAME_RE.test(name)) {
+      throw new Error(`\`domains.${name}\` 名字不合规 —— 行域名必须是蛇形标识符（小写字母/数字/下划线，非数字开头）`)
+    }
+    /** @type {Record<string, unknown>} */
+    let o
+    if (typeof v === 'string') {
+      o = { filter: v }
+    } else if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+      o = /** @type {Record<string, unknown>} */ (v)
+    } else {
+      throw new Error(`\`domains.${name}\` 必须是 \`{ extends?, filter }\` 对象或谓词字符串，收到 ${JSON.stringify(v ?? null)}`)
+    }
+    for (const k of Object.keys(o)) {
+      if (!DOMAIN_KEYS.has(k)) {
+        throw new Error(`\`domains.${name}\` 有未知键 \`${k}\` —— 键闭集是 {extends, filter}；`
+          + '拼错的键会被静默忽略（该行域悄悄少了父域/谓词，下钻面多出别的行域的行且零报错）')
+      }
+    }
+    // trim 只抹掉书写空白：谓词里首尾空白不改变 SQL 语义，但会让 `and` 拼出的串形态不可预期。
+    const filter = typeof o.filter === 'string' ? o.filter.trim() : ''
+    if (filter === '' || filter.includes(';')) {
+      throw new Error(`\`domains.${name}.filter\` 必须是非空、不含分号的布尔表达式（如 \`state = 'FINISHED'\`）`)
+    }
+    if (o.extends !== undefined) {
+      if (typeof o.extends !== 'string' || !DOMAIN_NAME_RE.test(o.extends)) {
+        throw new Error(`\`domains.${name}.extends\` ${JSON.stringify(o.extends)} 必须是蛇形行域名（引用 \`domains:\` 里的另一条）`)
+      }
+      out[name] = { extends: o.extends, filter }
+    } else {
+      out[name] = { filter }
+    }
+  }
+  return out
+}
+
+/**
+ * 具名行域：完整谓词 = 沿 extends 链**自根向下**逐层 `and`。
+ *
+ * @param {string} name 行域名
+ * @param {Record<string, Domain>} domains `domainsOf` 的产物
+ * @returns {string} 完整谓词（如 `state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'`）
+ */
+export function resolveDomain(name, domains) {
+  /** @type {string[]} */
+  const chain = []
+  /** @type {string | undefined} */
+  let cur = name
+  const seen = new Set()
+  while (cur !== undefined) {
+    if (seen.has(cur)) throw new Error(`domains 出现环：${name}`)
+    seen.add(cur)
+    /** @type {Domain | undefined} */
+    const d = domains[cur]
+    if (!d) throw new Error(`未知行域 \`${cur}\``)
+    chain.unshift(d.filter)
+    cur = d.extends
+  }
+  return chain.join(' and ')
+}
+
+/**
+ * 祖先集合（含自身），自根向下。
+ * @param {string} name
+ * @param {Record<string, Domain>} domains
+ * @returns {string[]}
+ */
+function ancestry(name, domains) {
+  /** @type {string[]} */
+  const out = []
+  /** @type {string | undefined} */
+  let cur = name
+  const seen = new Set()
+  while (cur !== undefined) {
+    if (seen.has(cur)) throw new Error(`domains 出现环：${name}`)
+    seen.add(cur)
+    /** @type {Domain | undefined} */
+    const d = domains[cur]
+    if (!d) throw new Error(`未知行域 \`${cur}\``)
+    out.unshift(cur)
+    cur = d.extends
+  }
+  return out
+}
+
+/**
+ * 最小上界（LUB）= 公共祖先里**最深**的一个。
+ *
+ * ★ 为什么没有公共祖先必须抛错，而不是退回 `true`：下钻行域要**≥**每个组件自己的行域
+ * （少了行 = 明细与合计对不上），放宽成 `true` 则下钻面悄悄多出别的行域的行——
+ * 多出来的行不会让任何断言失败，只是数字对不上，且没有任何报错。
+ *
+ * @param {string[]} names 行域名（≥1）
+ * @param {Record<string, Domain>} domains
+ * @returns {string} LUB 的行域名
+ */
+export function domainLub(names, domains) {
+  if (names.length === 0) throw new Error('domainLub 需要至少一个行域')
+  const chains = names.map((n) => ancestry(n, domains))
+  const first = chains[0] ?? []
+  const common = first.filter((a) => chains.every((c) => c.includes(a)))
+  if (common.length === 0) throw new Error(`行域 ${names.join(' / ')} 没有公共祖先 —— 无法为下钻面定义 LUB`)
+  return /** @type {string} */ (common[common.length - 1])
+}
+
+/**
+ * `detail.filter` = compose 所引用组件域的 LUB 的完整谓词（P3.0：行域**声明一次**，下钻面派生）。
+ *
+ * @param {string} compose 声明里的 compose 原文（组件组合式）
+ * @param {Map<string, Measure>} measures `measuresOf` 的产物
+ * @param {Record<string, Domain>} domains `domainsOf` 的产物
+ * @returns {string} 派生出的 filter 谓词
+ */
+export function detailFilterOf(compose, measures, domains) {
+  const refs = [...new Set([...compose.matchAll(MEASURE_REF_RE)].map((m) => m[0]))]
+  if (refs.length === 0) throw new Error(`compose 里没有组件引用：${compose}`)
+  const names = refs.map((r) => {
+    const m = measures.get(r)
+    if (!m) throw new Error(`compose 引用了未声明的组件 ${r}`)
+    if (!m.domain) throw new Error(`组件 ${r} 缺 domain —— 下钻行域不能靠放宽，必须显式声明`)
+    return m.domain
+  })
+  return resolveDomain(domainLub(names, domains), domains)
+}
+
 /**
  * compose → drill_expr：组件引用替换为 `(<组件体>)`。封闭文法：只许组件引用与 `+ - ( )` 空白——
  * 乘除/数字/其它标识符一律响亮失败（不引入自由 SQL，全局约束 12；括号包裹保证替换后优先级不变）。
@@ -694,6 +850,9 @@ export function declarationsFromYaml(parsed) {
   // 顶层 `measures:`（下钻 spec §2.3）：组件键 → 组件体。compose 的引用解析全靠它；
   // 形状坏/引用悬空在这里响亮失败（发生在任何写库之前，--check 模式同样拦）。
   const measures = measuresOf(/** @type {Record<string, unknown>} */ (parsed))
+  // 顶层 `domains:`（P3.0 Task 3）：具名行域的事实源。与 measures 同一次解析——
+  // 组件 `domain` 的成员性、下钻 `filter` 的派生都以它为准（sync 与门禁共用 domainsOf）。
+  const domains = domainsOf(/** @type {Record<string, unknown>} */ (parsed))
 
   return metrics.map((raw) => {
     const m = /** @type {Record<string, unknown>} */ (raw)
@@ -765,6 +924,14 @@ export function declarationsFromYaml(parsed) {
     const slaDays = slaDaysOf(m.freshness_sla_days, name)
     const freshnessRelations = deriveFreshnessRelations(
       Array.isArray(m.sources) ? m.sources.map((/** @type {unknown} */ s) => String(s)) : undefined)
+    // 下钻三键（spec 2026-10-21 §2.3）：compose 先编译（文法/引用错在 filter 派生之前亮相），
+    // 再派生 detail.filter——filter 缺席时取所引用组件域的 LUB（`detailFilterOf`）。
+    const drillExpr = composeOf(m.compose, name, measures)
+    const drillDims = m.dimensions === undefined ? null
+      : (Array.isArray(m.dimensions) && m.dimensions.length > 0
+        && m.dimensions.every((/** @type {unknown} */ d) => typeof d === 'string' && /^[a-z_][a-z0-9_]*$/.test(d))
+        ? m.dimensions.map(String) : null)
+    const drillDetail = drillDetailOf(m.detail, name, m.dimensions, String(m.compose ?? ''), measures, domains)
     return {
       id: name,
       title: String(m.label ?? name),
@@ -790,12 +957,9 @@ export function declarationsFromYaml(parsed) {
       masks: masksOf(m.mask, name, selectSql, grain),
       // 下钻绑定（spec 2026-10-21 §2.3）：缺省三字段全 null（未声明）。门禁已拦「半套」，
       // 这里对 dimensions/detail 再各兜一道形状（sync 会被手跑，不经 CI）。
-      drillExpr: composeOf(m.compose, name, measures),
-      drillDims: m.dimensions === undefined ? null
-        : (Array.isArray(m.dimensions) && m.dimensions.length > 0
-          && m.dimensions.every((/** @type {unknown} */ d) => typeof d === 'string' && /^[a-z_][a-z0-9_]*$/.test(d))
-          ? m.dimensions.map(String) : null),
-      drillDetail: drillDetailOf(m.detail, name, m.dimensions),
+      drillExpr,
+      drillDims,
+      drillDetail,
       // `reads` 上载进行对象：默认档要读它（`applyDefaultMaskTier`）。
       // ⚠️ 它**不在** `comparableOf` 的 16 元组里 ⇒ 加它**不会**让 `--check` 凭空报漂移；
       //    但 `reads` 的改动**仍可被 `--check` 检出**——经由它对**合成 masks**（第 13 元）的影响。
@@ -912,25 +1076,46 @@ export function detailColumnsOf(v, metricName, dims) {
 /**
  * 声明 `detail` → 物化形态（三键之一；`columns` 缺省**不写键**）。
  *
+ * ── `filter` 可缺席（P3.0 Task 3）────────────────────────────────────────────
+ * 写了 ⇒ 按旧规则原样物化（**迁移窗口**内允许；门禁对显式值仍做非空/无分号校验）。
+ * 没写 ⇒ 从 `compose` 所引用组件的 `domain` 派生（`detailFilterOf`）；派不出来就**响亮失败**
+ * ——静默落 null = 明细面 NO_DETAIL_BINDING，与「声明了下钻」的意图相左（下钻直接起不来）。
+ *
  * @param {unknown} detail 声明里的 `detail` 原值（undefined = 未声明）
  * @param {string} metricName 指标名（只用于错误信息）
  * @param {unknown} dims 声明的 `dimensions` 原值
+ * @param {string} compose 声明里的 `compose` 原文（派生 filter 的组件集来源）
+ * @param {Map<string, Measure>} measures `measuresOf` 的产物
+ * @param {Record<string, Domain>} domains `domainsOf` 的产物
  * @returns {{ relation: string, filter: string, columns?: DrillColumn[] } | null}
  */
-export function drillDetailOf(detail, metricName, dims) {
+export function drillDetailOf(detail, metricName, dims, compose, measures, domains) {
   if (detail === undefined) return null
   if (typeof detail !== 'object' || detail === null || Array.isArray(detail)) return null
   const d = /** @type {Record<string, unknown>} */ (detail)
-  if (typeof d.relation !== 'string' || typeof d.filter !== 'string') return null
+  if (typeof d.relation !== 'string') return null
   for (const k of Object.keys(d)) {
     if (k !== 'relation' && k !== 'filter' && k !== 'columns') {
       throw new Error(`指标 \`${metricName}\` 的 \`detail\` 有未知键 \`${k}\`（闭集 {relation, filter, columns}）`)
     }
   }
+  let filter
+  if (d.filter === undefined || d.filter === null) {
+    try {
+      filter = detailFilterOf(compose, measures, domains)
+    } catch (e) {
+      throw new Error(`指标 \`${metricName}\` 的 \`detail.filter\` 缺席且无法从组件域派生：${/** @type {Error} */ (e).message}`)
+    }
+  } else {
+    if (typeof d.filter !== 'string' || d.filter.trim() === '' || d.filter.includes(';')) {
+      throw new Error(`指标 \`${metricName}\` 的 \`detail.filter\` 必须是非空、不含分号的布尔表达式${d.filter === '' ? '（写了空串 ⇒ 明细面无行域过滤，与「声明了下钻」相左；不想过滤就别声明 detail.filter）' : ''}`)
+    }
+    filter = d.filter
+  }
   const columns = detailColumnsOf(d.columns, metricName, dims)
   return columns === null
-    ? { relation: d.relation, filter: d.filter }
-    : { relation: d.relation, filter: d.filter, columns }
+    ? { relation: d.relation, filter }
+    : { relation: d.relation, filter, columns }
 }
 
 /**

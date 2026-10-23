@@ -36,8 +36,12 @@ import {
   deriveTotalable,
   additivityOf,
   composeOf,
+  detailFilterOf,
   diffDeclarations,
+  domainLub,
+  domainsOf,
   drillOf,
+  resolveDomain,
   drillTripleOf,
   exitCodeFor,
   formatDiff,
@@ -1015,12 +1019,17 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
         { ...base, compose: 'sale_amount@order', dimensions: [], detail },
         { ...base, compose: 'sale_amount@order', dimensions: [123], detail },
         { ...base, compose: 'sale_amount@order', dimensions: dims, detail: 'vw_x' },
-        { ...base, compose: 'sale_amount@order', dimensions: dims, detail: { relation: 'vw_x' } },
       ],
     })
     for (const r of rows) {
       expect(r.drillDims === null || r.drillDetail === null, JSON.stringify(r.drillDims)).toBe(true)
     }
+    // ⚠️ P3.0 Task 3 起 `detail: { relation }`（filter 缺席）**不再落 null**：要么能从组件域派生，
+    // 要么响亮失败——静默落 null = 明细面 NO_DETAIL_BINDING，与「声明了下钻」的意图相左。
+    expect(() => declarationsFromYaml({
+      measures: { 'sale_amount@order': { expr: 'sum(x)', additivity: 'flow' } },
+      metrics: [{ ...base, compose: 'sale_amount@order', dimensions: dims, detail: { relation: 'vw_x' } }],
+    })).toThrow(/缺 domain/)
   })
 
   it('★ 真事实源：net_sales 的下钻三键物化；未声明 compose 的指标全 null', () => {
@@ -1203,5 +1212,98 @@ describe('measureOf —— measure 对象形态（P3.0 唯一解析实现，门�
     expect(() => measureOf({ expr: 'sum(x)', additivity: 'unknown' })).toThrow(/additivity/)
     expect(() => measureOf({ expr: 'sum(x)', additivity: 'flow', domain: "state = 'FINISHED'" })).toThrow(/具名行域/)
     expect(() => measureOf({ expr: 'sum(x)', additivity: 'flow', bogus: 1 })).toThrow(/未知键/)
+  })
+})
+
+// ── 具名行域 + detail.filter 派生（P3.0 Task 3）───────────────────────────────────
+// `domains:` 是行域的事实源：完整谓词沿 `extends` 链自根向下 `and` 拼出；
+// 下钻面的 `detail.filter` 不再手写，而是取所引用组件域的 **LUB**（最小上界）。
+// 为什么 LUB 是安全的：下钻行域必须**≥**聚合面每个组件自己的行域（少一行 = 明细与合计对不上），
+// 而放宽到 `true` 会让下钻面悄悄多出别的行域的行且零报错 ⇒ 无公共祖先时必须响亮失败。
+describe('具名行域（domains:）与 detail.filter 派生（P3.0 Task 3）', () => {
+  const DOMAINS = {
+    finished: { filter: "state = 'FINISHED'" },
+    sale_finished: { extends: 'finished', filter: "order_transaction_type = 'SALE_ORDER'" },
+    return_finished: { extends: 'finished', filter: "order_transaction_type like '%RETURN%'" },
+  }
+
+  it('具名行域：完整谓词沿链拼接；LUB = 最近公共祖先', () => {
+    expect(resolveDomain('sale_finished', DOMAINS)).toBe("state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'")
+    expect(domainLub(['sale_finished', 'return_finished'], DOMAINS)).toBe('finished')
+    expect(domainLub(['sale_finished'], DOMAINS)).toBe('sale_finished')
+  })
+
+  it('无公共祖先 ⇒ 抛错（fail-closed，不许放宽成 true）', () => {
+    const d = { ...DOMAINS, other: { filter: "state = 'REPAID'" } }
+    expect(() => domainLub(['sale_finished', 'other'], d)).toThrow(/公共祖先|LUB/)
+  })
+
+  it('域环 / 未知域 ⇒ 抛错（拼错的行域名不许静默派生出一条半截谓词）', () => {
+    expect(() => resolveDomain('ghost', DOMAINS)).toThrow(/未知行域/)
+    expect(() => resolveDomain('a', { a: { extends: 'b', filter: 'x = 1' }, b: { extends: 'a', filter: 'y = 2' } }))
+      .toThrow(/环/)
+  })
+
+  it('detail.filter = 组件域 LUB：净销售额两组件 ⇒ finished，谓词逐字等于今日物化值', () => {
+    const measures = new Map([
+      ['sale_amount@order', measureOf({ expr: 'sum(x)', domain: 'sale_finished', additivity: 'flow' })],
+      ['return_amount@line', measureOf({ expr: 'sum(y)', domain: 'return_finished', additivity: 'flow' })],
+    ])
+    expect(detailFilterOf('sale_amount@order - return_amount@line', measures, DOMAINS)).toBe("state = 'FINISHED'")
+  })
+
+  it('组件缺 domain / compose 无引用 / 引用未声明组件 ⇒ 各自抛错（不下钻就明确不下钻，不许猜）', () => {
+    const noDomain = new Map([['a@b', measureOf({ expr: 'sum(x)', additivity: 'flow' })]])
+    expect(() => detailFilterOf('a@b', noDomain, DOMAINS)).toThrow(/缺 domain/)
+    expect(() => detailFilterOf('(1)', new Map(), DOMAINS)).toThrow(/没有组件引用/)
+    expect(() => detailFilterOf('ghost@order', new Map(), DOMAINS)).toThrow(/未声明/)
+  })
+
+  it('domainsOf：字符串简写与对象形态同解析；未知键 / 空谓词 / 非蛇形名 ⇒ 抛错', () => {
+    expect(domainsOf({ domains: { finished: "state = 'FINISHED'", sale: { extends: 'finished', filter: 'x = 1' } } }))
+      .toEqual({ finished: { filter: "state = 'FINISHED'" }, sale: { extends: 'finished', filter: 'x = 1' } })
+    expect(domainsOf({})).toEqual({})
+    expect(() => domainsOf({ domains: { x: { filter: 'a = 1', extnds: 'y' } } })).toThrow(/未知键/)
+    expect(() => domainsOf({ domains: { x: { filter: '  ' } } })).toThrow(/非空/)
+    expect(() => domainsOf({ domains: { 'Bad-Name': { filter: 'a = 1' } } })).toThrow(/蛇形/)
+  })
+
+  it('detail.filter 缺席 ⇒ 由组件域派生后物化（declarationsFromYaml 单点）', () => {
+    const rows = declarationsFromYaml({
+      domains: DOMAINS,
+      measures: {
+        'sale_amount@order': { expr: 'sum(x)', domain: 'sale_finished', additivity: 'flow' },
+        'return_amount@line': { expr: 'sum(y)', domain: 'return_finished', additivity: 'flow' },
+      },
+      metrics: [{
+        name: 'lemeng:retail:net_sales', label: 't', definition: 'd', source: 'lemeng',
+        expression: 'sum(fct_retail_sale.net_amount)', grain: ['system_book'],
+        owner: 'o', tier: 'certified', freshness_sla_days: 1,
+        compose: 'sale_amount@order - return_amount@line',
+        dimensions: ['system_book'],
+        // 迁移窗口：YAML 里已经没有 filter 了
+        detail: { relation: 'vw_lemeng_retail_order_line' },
+      }],
+    })
+    expect(rows[0].drillDetail).toEqual({ relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'" })
+  })
+
+  it('detail.filter 缺席且无法派生 ⇒ 响亮失败（sync 被手跑时也不许静默物化缺行域的明细）', () => {
+    expect(() => declarationsFromYaml({
+      measures: { 'a@b': { expr: 'sum(x)', additivity: 'flow' } },
+      metrics: [{
+        name: 'lemeng:retail:net_sales', label: 't', definition: 'd', source: 'lemeng',
+        expression: 'sum(fct_retail_sale.net_amount)', grain: ['system_book'],
+        owner: 'o', tier: 'certified', freshness_sla_days: 1,
+        compose: 'a@b', dimensions: ['system_book'], detail: { relation: 'vw_x' },
+      }],
+    })).toThrow(/缺 domain/)
+  })
+
+  it('★ 真事实源：两条下钻指标的 filter 是**派生**来的，且逐字等于迁移前的手写值', () => {
+    // 硬判据：YAML 里已删掉 detail.filter，物化结果必须字节不变（"state = 'FINISHED'"）。
+    const byId = new Map(readDeclarations(ROOT).map((r) => [r.id, r]))
+    expect(byId.get('lemeng:retail:net_sales')?.drillDetail?.filter).toBe("state = 'FINISHED'")
+    expect(byId.get('lemeng:retail:order_line')?.drillDetail?.filter).toBe("state = 'FINISHED'")
   })
 })

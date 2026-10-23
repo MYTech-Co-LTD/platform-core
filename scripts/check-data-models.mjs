@@ -1121,7 +1121,7 @@ export function checkDataModels(rootDir, opts = {}) {
     }
     scanContracts(contractsRoot)
   }
-  /** @type {Array<{ name: string, fields: any, file: string, measureKeys: string[] }>} */
+  /** @type {Array<{ name: string, fields: any, file: string, measureKeys: string[], measureMap: Map<string, import('./sync-data-semantics.mjs').Measure>, domains: Record<string, import('./sync-data-semantics.mjs').Domain> }>} */
   const metrics = []
   for (const rel of ymlFiles) {
     let doc
@@ -1131,23 +1131,49 @@ export function checkDataModels(rootDir, opts = {}) {
       push(rel, 0, `YAML 解析失败：${/** @type {Error} */ (e).message}`)
       continue
     }
+    // 顶层 domains:（P3.0 Task 3）：具名行域 `{ 域名: { extends?, filter } }`（或用字符串简写）。
+    // 解析与 sync **同一函数**（`syncContract.domainsOf`）——键闭集/形状/谓词空分号两侧逐字一致。
+    /** @type {Record<string, import('./sync-data-semantics.mjs').Domain>} */
+    let domains = {}
+    if (doc.domains !== undefined) {
+      try {
+        domains = syncContract.domainsOf(/** @type {Record<string, unknown>} */ (doc))
+      } catch (e) {
+        push(rel, 0, `\`domains:\` ${/** @type {Error} */ (e).message}`)
+      }
+    }
     // 顶层 measures:（spec 2026-10-21 §2.3；P3.0 起对象形态）：{ '组件名@粒度': Measure } 映射。
     // 判据与 sync **同一函数**（`syncContract.measureOf`）：对象形态、additivity 必填、未知键拒。
     /** @type {string[]} */
     const measureKeys = []
+    /** @type {Map<string, import('./sync-data-semantics.mjs').Measure>} */
+    const measureMap = new Map()
     if (doc.measures !== undefined) {
       if (typeof doc.measures !== 'object' || doc.measures === null || Array.isArray(doc.measures)) {
         push(rel, 0, '`measures:` 必须是 `{ "组件名@粒度": { expr, additivity, … } }` 映射，不是数组。')
       } else {
         for (const [k, v] of Object.entries(doc.measures)) {
           if (!/^[a-z_]+@[a-z_]+$/.test(k)) push(rel, 0, `\`measures.${k}\` 键名不合 \`<snake>@<snake>\` 形态。`)
-          try { syncContract.measureOf(v) } catch (e) { push(rel, 0, `\`measures.${k}\` ${/** @type {Error} */ (e).message}`) }
+          try {
+            const measure = syncContract.measureOf(v)
+            measureMap.set(k, measure)
+            // 成员性（P3.0 Task 3）：组件 `domain` 必须是**同文件** `domains:` 里登记过的行域名。
+            // 拼错 = 派生 filter 时会抛「未知行域」；显式写了 filter 的指标则**完全不经过派生**，
+            // 于是拼错的 domain 一辈子不生效、也不报错——成员性检查是唯一能抓住它的地方。
+            if (measure.domain !== undefined && !Object.hasOwn(domains, measure.domain)) {
+              push(rel, 0, `\`measures.${k}.domain\` \`${measure.domain}\` 不在同文件 \`domains:\` 里 —— `
+                + `已登记的行域：${Object.keys(domains).join(' / ') || '（无）'}。拼错的行域名会让下钻 filter 派生失败，`
+                + '或（显式写了 filter 时）永远不生效且不报错。')
+            }
+          } catch (e) {
+            push(rel, 0, `\`measures.${k}\` ${/** @type {Error} */ (e).message}`)
+          }
           measureKeys.push(k)
         }
       }
     }
     if (!Array.isArray(doc.metrics)) continue
-    for (const m of doc.metrics) metrics.push({ name: asText(m?.name), fields: m, file: rel, measureKeys })
+    for (const m of doc.metrics) metrics.push({ name: asText(m?.name), fields: m, file: rel, measureKeys, measureMap, domains })
   }
 
   /** @type {Map<string, string[]>} */
@@ -1204,8 +1230,24 @@ export function checkDataModels(rootDir, opts = {}) {
       } else if (!viewFiles.includes(`dbt/models/lemeng/views/${rel}.sql`) && !viewFiles.some((f) => f.endsWith(`/${rel}.sql`))) {
         push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.relation \`${rel}\` 在 dbt/models/**/views/ 下不存在——下钻会查一个不存在的关系（运行期才炸）。`)
       }
+      // ⑤-x1 行域（P3.0 Task 3）：`detail.filter` 可**缺席**，但必须能从 compose + measures + domains
+      // 派生（同一实现：syncContract.detailFilterOf —— 门禁不另写一份派生）。
+      //   · 写了 ⇒ 按旧规则校验（迁移窗口内允许；显式值与派生值并存时**以显式为准**，与 sync 一致）；
+      //   · 没写 ⇒ 派生失败即红：静默缺 filter = 明细面无行域过滤（或直接 NO_DETAIL_BINDING），
+      //     下钻数字对不上合计并零报错——正是本仓最怕的形态。
+      const detailIsObj = detail !== undefined && detail !== null && typeof detail === 'object'
       const filter = typeof detail?.filter === 'string' ? detail.filter : ''
-      if (filter === '' || filter.includes(';')) {
+      const hasExplicitFilter = detailIsObj && Object.hasOwn(/** @type {Record<string, unknown>} */ (detail), 'filter')
+      if (detailIsObj && !hasExplicitFilter) {
+        try {
+          const derived = syncContract.detailFilterOf(String(metric.fields?.compose ?? ''), metric.measureMap, metric.domains)
+          if (derived === '' || derived.includes(';')) {
+            push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.filter 派生结果 ${JSON.stringify(derived)} 不合规 —— 必须是非空、不含分号的布尔表达式。`)
+          }
+        } catch (e) {
+          push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.filter 缺席且无法从组件域派生：${/** @type {Error} */ (e).message}`)
+        }
+      } else if (filter === '' || filter.includes(';')) {
         push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.filter 必须是非空、不含分号的布尔表达式（如 \`state = 'FINISHED'\`）。`)
       }
       // ⑤-x2 条件列（spec 2026-10-22 §2.3）：`detail` 是键**闭集**，`columns` 每项 `{col, grantedBy}`。

@@ -1437,9 +1437,14 @@ const DRILL_VIEW = 'dbt/models/common/views/vw_t.sql'
 function drillCompliant(): Record<string, string> {
   const files = compliant()
   files[METRICS] = [
+    // 具名行域（P3.0 Task 3）：组件 `domain` 必须在本块里登记；下钻面的 filter 由组件域 LUB 派生。
+    'domains:',
+    '  finished: { filter: "state = \'FINISHED\'" }',
+    '  sale_finished: { extends: finished, filter: "order_transaction_type = \'SALE_ORDER\'" }',
+    '  return_finished: { extends: finished, filter: "order_transaction_type like \'%RETURN%\'\'" }',
     'measures:',
-    '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow }',
-    '  "return_amount@line": { expr: "sum(fct_retail_sale.return_amount)", additivity: flow }',
+    '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow, domain: sale_finished }',
+    '  "return_amount@line": { expr: "sum(fct_retail_sale.return_amount)", additivity: flow, domain: return_finished }',
     'metrics:',
     '  - name: "lemeng:retail:net_sales"',
     '    expression: "sum(fct_retail_sale.net_amount)"',
@@ -1465,6 +1470,19 @@ function drillCompliant(): Record<string, string> {
   return files
 }
 
+/**
+ * 同一夹具的**迁移后形态**（P3.0 Task 3）：`detail.filter` 缺席，由 compose 所引用组件域的 LUB 派生。
+ * 两组件（sale_finished + return_finished）⇒ LUB `finished` ⇒ `state = 'FINISHED'`，与手写值逐字一致。
+ */
+function drillCompliantWithDomains(): Record<string, string> {
+  const files = drillCompliant()
+  files[METRICS] = files[METRICS].replace(
+    `    detail: { relation: vw_t, filter: "state = 'FINISHED'" }`,
+    '    detail: { relation: vw_t }',
+  )
+  return files
+}
+
 describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', () => {
   it('下钻三键：全给或全不给，半套声明拒绝', () => {
     const root = variant((f) => {
@@ -1482,8 +1500,8 @@ describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', ()
     const files = drillCompliant()
     files[METRICS] = files[METRICS].replace(
       'measures:\n'
-      + '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow }\n'
-      + '  "return_amount@line": { expr: "sum(fct_retail_sale.return_amount)", additivity: flow }\n',
+      + '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow, domain: sale_finished }\n'
+      + '  "return_amount@line": { expr: "sum(fct_retail_sale.return_amount)", additivity: flow, domain: return_finished }\n',
       '',
     )
     const vs = checkDataModels(fixture(files))
@@ -1506,7 +1524,7 @@ describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', ()
 
   it('measures 对象形态：缺 additivity / 字符串形态 / 未知键 ⇒ 拒', () => {
     const base = drillCompliant()
-    const OBJ = '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow }'
+    const OBJ = '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow, domain: sale_finished }'
 
     // 字符串形态（P3.0 起拒绝：表达不了 additivity）
     const bad1 = { ...base, [METRICS]: base[METRICS].replace(OBJ, '  "sale_amount@order": "sum(sale_money)"') }
@@ -1537,6 +1555,36 @@ describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', ()
 
   it('三键齐全 + measures 就位 ⇒ 零违规', () => {
     expect(checkDataModels(fixture(drillCompliant()))).toEqual([])
+  })
+
+  it('detail.filter 缺席但可派生 ⇒ 零违规；domain 拼错 / 缺 domain ⇒ 拒（P3.0 Task 3）', () => {
+    // 迁移后形态：没有 filter，两组件域 LUB = finished ⇒ 派生 `state = 'FINISHED'`
+    expect(checkDataModels(fixture(drillCompliantWithDomains()))).toEqual([])
+
+    // 行域名拼错 ⇒ 派生时「未知行域」+ 成员性不过
+    const bad = drillCompliantWithDomains()
+    bad[METRICS] = bad[METRICS].replace('domain: sale_finished', 'domain: sale_finishedd')
+    expect(checkDataModels(fixture(bad)).some((v) => /domain|domains/.test(v.message))).toBe(true)
+
+    // 组件缺 domain ⇒ 不许放宽成 true，派生失败即红
+    const noDomain = drillCompliantWithDomains()
+    noDomain[METRICS] = noDomain[METRICS].replace(', domain: sale_finished', '')
+    expect(checkDataModels(fixture(noDomain)).some((v) => /缺 domain|派生/.test(v.message))).toBe(true)
+
+    // extends 指向未登记的行域 ⇒ 派生链走到未知域时响亮失败
+    const badParent = drillCompliantWithDomains()
+    badParent[METRICS] = badParent[METRICS].replace('extends: finished', 'extends: finishedd')
+    expect(checkDataModels(fixture(badParent)).some((v) => /未知行域|domains/.test(v.message))).toBe(true)
+  })
+
+  it('domains: 形状坏 ⇒ 门禁期就红（未知键 / 空谓词）', () => {
+    const badKey = drillCompliant()
+    badKey[METRICS] = badKey[METRICS].replace('{ extends: finished, filter:', '{ extnds: finished, filter:')
+    expect(checkDataModels(fixture(badKey)).some((v) => /domains/.test(v.message))).toBe(true)
+
+    const emptyFilter = drillCompliant()
+    emptyFilter[METRICS] = emptyFilter[METRICS].replace(`"state = 'FINISHED'"`, '""')
+    expect(checkDataModels(fixture(emptyFilter)).some((v) => /domains.*filter/.test(v.message))).toBe(true)
   })
 
   /** 把 flow 形态的 detail 换成带条件列的 block 形态（同一份零违规夹具的单点变异）。 */

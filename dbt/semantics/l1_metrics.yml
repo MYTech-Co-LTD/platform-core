@@ -63,6 +63,16 @@
 #    （本仓 scripts/check-data-models.mjs），加上 `dbt/tests/audit_*.sql` 的独立复算（真库上跑）。
 version: 1
 
+# ── 具名行域（P3.0 Task 3）：行域**声明一次**，聚合面内嵌、下钻面由组件域 LUB 派生 ─────────────
+# 完整谓词 = 沿 extends 链自根向下逐层 `and`（`sale_finished` ⇒
+# `state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'`）。
+# 下钻面 `detail.filter` 不再手写：取 compose 所引用组件域的**最小上界**（公共祖先里最深的那个）。
+# 没有公共祖先 ⇒ 门禁/sync 都响亮失败（放宽成 true 会让下钻面悄悄多出别的行域的行，零报错）。
+domains:
+  finished:        "state = 'FINISHED'"
+  sale_finished:   { extends: finished, filter: "order_transaction_type = 'SALE_ORDER'" }
+  return_finished: { extends: finished, filter: "order_transaction_type like '%RETURN%'" }
+
 # ── 域级度量组件（spec 2026-10-21 bot-drillthrough §2.3）：一个组件只声明一次，指标用 compose 组合 ──
 # 判别式**逐字**取自 dbt/models/lemeng/marts/fct_retail_sale.sql（销售侧正数形态 / 退货侧绝对值形态 #908），
 # 禁止另写一份；组件与 mart 是同口径的两种粒度。判别式必须保持 `case when <判别式> then 0 else …`
@@ -82,6 +92,7 @@ measures:
     grain: [order]
     additivity: flow
     unit: CNY
+    domain: sale_finished
   return_amount@line:
     expr: >-
       sum(case when order_transaction_type like '%RETURN%' and state = 'FINISHED' and
@@ -92,6 +103,7 @@ measures:
     grain: [line]
     additivity: flow
     unit: CNY
+    domain: return_finished
   # 行级原始金额度量（spec 2026-10-22 §2.2）：不承载口径——行域由指标侧钉
   # （聚合面 expression 的 CASE、下钻面 detail.filter），组件体只做行级求和。
   line_amount@line:
@@ -99,6 +111,7 @@ measures:
     grain: [line]
     additivity: flow
     unit: CNY
+    domain: finished
 
 metrics:
   - name: 'lemeng:retail:sales'
@@ -160,9 +173,10 @@ metrics:
     # grantedBy: data:cost）而非值级掩码——Phase 2 否决了值级掩码，见 spec 2026-10-22 §3.1）──
     compose: 'sale_amount@order - return_amount@line'
     dimensions: [system_book, bizday, branch_num, order_no]
+    # detail.filter 不手写（P3.0 Task 3）：由 compose 两组件域（sale_finished / return_finished）
+    # 的 LUB 派生 ⇒ `finished` ⇒ `state = 'FINISHED'`，与迁移前手写值逐字一致。
     detail:
       relation: vw_lemeng_retail_order_line
-      filter: "state = 'FINISHED'"
     # 对账（每个声明指标一条独立复算，layered §7 硬约束 7）：对应的 singular test 文件名**不在这里写**
     # —— 名字由 `:` → `__` 的映射函数算出（scripts/check-data-models.mjs 导出的 metricToAuditFileName()，
     #   唯一事实源）。在这里再写一遍文件名 = 两处事实源，映射一改这两行就悄悄过期。
@@ -1016,8 +1030,8 @@ metrics:
     compose: 'line_amount@line'
     dimensions: [system_book, bizday, branch_num, order_no, order_detail_num, item_num,
                  item_code, order_transaction_type]
+    # detail.filter 不手写（P3.0 Task 3）：compose 只有 line_amount@line（domain: finished）⇒ 派生 `state = 'FINISHED'`。
     detail:
       relation: vw_lemeng_retail_order_line
-      filter: "state = 'FINISHED'"
       columns:
         - { col: order_detail_std_price, grantedBy: data:cost }
