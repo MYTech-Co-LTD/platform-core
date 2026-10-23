@@ -196,9 +196,10 @@ git commit -m "feat(data): measures 必填 additivity，门禁与 sync 共用解
 ### Task 3: 具名行域 + `detail.filter` 由组件域 LUB 派生
 
 **Files:**
-- Modify: `scripts/sync-data-semantics.mjs`（`drillDetailOf` / `declarationsFromYaml`）
-- Modify: `dbt/semantics/l1_metrics.yml`（`order_line` / `net_sales` 删 `detail.filter`，组件补 `domain`）
-- Test: `scripts/sync-data-semantics.test.ts`（真事实源用例改为断言派生结果）
+- Modify: `scripts/sync-data-semantics.mjs`（`drillDetailOf` / `declarationsFromYaml`：解析 `domains:`，派生 filter）
+- Modify: `scripts/check-data-models.mjs`（`detail.filter` 可缺席但必须可派生；`measure.domain` 必须在 `domains:` 里）——**同一解析/派生实现，不另写**
+- Modify: `dbt/semantics/l1_metrics.yml`（`order_line` / `net_sales` 删 `detail.filter`，组件补 `domain`，新增 `domains:`）
+- Test: `scripts/sync-data-semantics.test.ts` / `scripts/check-data-models.test.ts`（真事实源用例改为断言派生结果）
 
 **Interfaces:**
 - Consumes: Task 1 的 `measureOf`
@@ -296,6 +297,32 @@ export function detailFilterOf(compose, measures, domains) {
   })
   return resolveDomain(domainLub(names, domains), domains)
 }
+```
+
+- [ ] **Step 3.5: 门禁接同一派生（`check-data-models.mjs`）**
+
+```js
+// detail.filter 的处理（与 sync 同源）：
+//  - 写了 ⇒ 按旧规则校验（迁移窗口内允许）；
+//  - 没写 ⇒ 必须能从 compose + measures + domains 派生；派生抛错 ⇒ 门禁红（不许静默缺 filter）。
+const filter = typeof detail?.filter === 'string' ? detail.filter : ''
+const derived = filter === '' && typeof detail?.relation === 'string'
+  ? (() => { try { return syncContract.detailFilterOf(String(metric.fields?.compose ?? ''), measuresOfFile, domainsOfFile) } catch (e) { push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.filter 缺席且无法从组件域派生：${/** @type {Error} */ (e).message}`); return '' } })()
+  : filter
+if (derived === '' && filter === '') { /* 已在上面 push */ }
+// measure.domain 成员性：不在 domains: 里 ⇒ 门禁红（reviewer 指出的 Task 1 缺口在这里闭合）
+```
+
+- [ ] **Step 3.6: 门禁用例**
+
+```ts
+it('detail.filter 缺席但可派生 ⇒ 零违规；domain 拼错 ⇒ 拒', () => {
+  const ok = drillCompliantWithDomains()   // compose 两组件 + domains + detail 无 filter
+  expect(checkDataModels(fixture(ok))).toEqual([])
+  const bad = drillCompliantWithDomains()
+  bad[METRICS] = bad[METRICS].replace('domain: sale_finished', 'domain: sale_finishedd')
+  expect(checkDataModels(fixture(bad)).some((v) => /domain|domains/.test(v.message))).toBe(true)
+})
 ```
 
 - [ ] **Step 4: 改 YAML**
