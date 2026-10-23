@@ -905,6 +905,14 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 > `1000:1000`**，**零手工步骤**；随后经平台代码路径真跑 `src.csv → snk.csv` ⇒
 > `status: ok`，`nodes.s1/k1` 各 `rows: 3`，产物与前一轮同形。属主修复与镜像入口的接管逻辑**同时验通**。
 >
+> ✅ **2026-10-23 同步执行面复验（`dep_BIP-9bhZNZvas-qY`，commit `de60ae80`，PR #1022）**：
+> 容器创建于 `11:37:46Z`（晚于本次构建），经平台代码路径跑两条——
+> ① 正常最小管线 ⇒ `status: ok`、`engineRunId: run-manual-sbx-…`、`durationMs: 169`、`rows: 3`、
+> `nodes` 逐节点 `rows: 3`（`engineRunId` 与 sink 行数是本次新增字段，旧代码给不出 ⇒ **新行为已在线上**）；
+> ② 同一草案把等待预算压到 50ms ⇒ `unknown / sandbox_run_timeout` + `runId`、`isError: true`，
+> **不是 `running`、不是 `failed`**；随后该次运行在引擎侧**跑完并落回执**（`status: ok`、`k1 rows 3`）——
+> 实测印证「我们不等了 ≠ 运行被杀了」。探针与产物（草案/回执/CSV）跑完即删。
+>
 > ⚠️ **上线当天踩到的坑（先读本条）**：新 compose 服务被 openship **默认 `enabled: true`**，
 > 而 mytech 当时没有 `DUCKLE_TOKEN` ⇒ `entrypoint.sh` 对 `serve` 拒起（exit 1）⇒ **crash loop**
 > （日志逐条重复「拒绝启动 —— 需要凭据但 token 为空」，退避拉到 60s 一次）。
