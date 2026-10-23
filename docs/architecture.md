@@ -803,9 +803,18 @@ append-only，修数偶发而非常态。
 | HTTP | `POST /api/run`（**同步等整条跑完**）、`POST /api/run/async`，body `{"file":"<工作区相对路径>","params":{…}}`；`GET /api/runs`（含 `status/durationMs/rows/error/trigger`）、`GET /api/pipelines`（含 `running/lastStatus`）、`GET /api/schedules`；认证 `Authorization: Bearer $DUCKLE_TOKEN`（实测：不带凭据一律 401，`/healthz` 除外） |
 | 组件面 | `duckle components schema --json` 返回 **417** 个组件（`xf` 144 / `src` 133 / `snk` 81 / `qa` 30 / `ctl` 22 / **`code` 7**）。7 个 `code.*` = `code.shell / code.python / code.javascript / code.rust / code.wasm / code.sql / code.sqltemplate` |
 
-**未验（实施前逐条销账，不许猜）**：
-1. `/api/pipeline`（单数）的**方法与语义**——是否存在「保存草案」的写接口（有则不必让 `server` 直接写卷）；
-2. `serve` 是否把 `--memory-limit / --threads` 传给每次 run ⇒ **在此之前资源上限只认容器 `mem_limit`/`cpus`**。
+**已销账（2026-10-23，读 duckle 引擎源码定案）**：
+
+1. `/api/pipeline`（单数）**只有读**：`GET /api/pipeline?file=<工作区相对路径>` 返回一份管线文件
+   （`duckle-runner/src/serve.rs` 的路由表）。**没有任何「保存草案」的写接口** ⇒ 平台侧写草案
+   只能**直接写共享卷**（现状即如此，不是权宜之计）。
+2. `serve` **不接受** `--memory-limit / --threads`：`ServeArgs` 只认
+   `--host / --port / --workspace / --duckdb / --token / --tick-interval`，传别的直接报 unknown argument。
+   引擎取的是**进程环境变量** `DUCKLE_MEMORY_LIMIT` / `DUCKLE_THREADS` / `DUCKLE_TEMP_DIR` /
+   `DUCKLE_MAX_TEMP_DIR_SIZE`（`duckdb-engine/src/lib.rs`）；`serve` 启动时只会用工作区
+   `.duckle/settings.json` 的 `memory_limit_mb` 兜底设置内存上限（环境里已有值时不覆盖）。
+   ⇒ 容器化部署的资源上限 = **compose 服务行 env**（写 `DUCKLE_*`）；容器级 `mem_limit`/`cpus`
+   是硬上限（超了 OOM），`DUCKLE_MEMORY_LIMIT` 决定 DuckDB **何时落盘**——两者不是一回事，都要设。
 
 **已销账（2026-10-23 生产 `sandbox-console` 实测）**：
 
