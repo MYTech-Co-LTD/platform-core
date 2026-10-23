@@ -135,7 +135,55 @@ return_side as (
     where order_transaction_type like '%RETURN%'
       and state = 'FINISHED'
     group by 1, 2, 3
+),
+-- BEGIN GENERATED MEASURES
+-- ⚠️ 本区由 scripts/gen-fct-measures.mjs 从 dbt/semantics/l1_metrics.yml 生成，**别手改**：
+--    基面的 where 由组件 domain 派生、两阶段聚合由 measure 编译而来。改声明 → 重跑生成器 → 一并提交；
+--    CI 的 `pnpm exec tsx scripts/gen-fct-measures.mjs --check` 逐字节比对本区，手改即红。
+base_sale as (
+    select * from {{ ref('stg_lemeng_retail_order_line') }}
+    where state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'
+),
+sale_amount__gen as (
+    select system_book, bizday, branch_num, order_no, (case when sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then 1 else 0 end) = 0 then 0 else (sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' and
+  (order_detail_std_price > 0 and sale_money > 0 and quantity > 0 and
+   abs(discount_money - order_detail_std_price * quantity) <= 0.02) then 0 else sale_money end)
+  + max(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then order_total_money end)) / 2
+  - sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then order_detail_share_discount else 0 end)
+end) as measure_value from base_sale group by system_book, bizday, branch_num, order_no
+),
+base_return as (
+    select * from {{ ref('stg_lemeng_retail_order_line') }}
+    where state = 'FINISHED' and order_transaction_type like '%RETURN%'
+),
+return_amount__gen as (
+    select system_book, bizday, branch_num, order_no, order_detail_num, (sum(case when order_transaction_type like '%RETURN%' and state = 'FINISHED' and
+  (order_detail_std_price > 0 and abs(sale_money) > 0 and abs(quantity) > 0 and
+   abs(abs(discount_money) - order_detail_std_price * abs(quantity)) <= 0.02) then 0
+when order_transaction_type like '%RETURN%' and state = 'FINISHED' then sale_money + order_detail_share_discount else 0 end)) as measure_value from base_return group by system_book, bizday, branch_num, order_no, order_detail_num
+),
+gen_agg as (
+    select
+        coalesce(sale_amount__gen.system_book, return_amount__gen.system_book) as system_book,
+        coalesce(sale_amount__gen.bizday, return_amount__gen.bizday) as bizday,
+        coalesce(sale_amount__gen.branch_num, return_amount__gen.branch_num) as branch_num,
+        sum(sale_amount__gen.measure_value)::numeric(20,2) as sale_amount__gen,
+        sum(return_amount__gen.measure_value)::numeric(20,2) as return_amount__gen
+    from sale_amount__gen
+    full join return_amount__gen
+        on  sale_amount__gen.system_book = return_amount__gen.system_book
+        and sale_amount__gen.bizday = return_amount__gen.bizday
+        and sale_amount__gen.branch_num = return_amount__gen.branch_num
+    group by 1, 2, 3
 )
+-- END GENERATED MEASURES
+
+-- ── 影子列（P3.0 聚合面组件化；spec 2026-10-23 §4.2）──────────────────────────────────────
+-- 上面 `sale_side` / `return_side` 是**旧实现**（手写，一字不动）；下面三列是同一口径的
+-- **组件编译版**（`l1_metrics.yml` 的 measure 两阶段编译），由 singular test
+-- `assert_fct_retail_sale_measure_shadow_parity.sql` 与旧列逐分对账（1 分容差）。
+-- 本阶段只**并行输出**、不切换；切换（P3.2）要等影子对账稳定后另开笔。
+-- `net_amount__gen` 是**手写**派生列：净额 = 销售侧 − 退货侧，不属任何单一 measure。
 select
     coalesce(sale_side.system_book, return_side.system_book) as system_book,
     {{ subject_org() }}                                      as org,
@@ -145,9 +193,19 @@ select
     coalesce(return_side.return_amount, 0)::numeric(20,2)    as return_amount,
     (coalesce(sale_side.sale_amount, 0)
      - coalesce(return_side.return_amount, 0))::numeric(20,2) as net_amount,
-    coalesce(sale_side.order_count, 0)                       as order_count
+    coalesce(sale_side.order_count, 0)                       as order_count,
+    gen_agg.sale_amount__gen                                 as sale_amount__gen,
+    gen_agg.return_amount__gen                               as return_amount__gen,
+    (coalesce(gen_agg.sale_amount__gen, 0)
+     - coalesce(gen_agg.return_amount__gen, 0))::numeric(20,2) as net_amount__gen
 from sale_side
 full join return_side
     on  sale_side.system_book = return_side.system_book
     and sale_side.bizday      = return_side.bizday
     and sale_side.branch_num  = return_side.branch_num
+-- 影子侧按 fct 粒度（账套 × 业务日 × 门店）对齐；两侧行域是同一批 FINISHED 行的划分
+-- （销售侧排掉退货、退货侧只要退货），⇒ 行集相同，left join 不会增删最终行。
+left join gen_agg
+    on  gen_agg.system_book = coalesce(sale_side.system_book, return_side.system_book)
+    and gen_agg.bizday      = coalesce(sale_side.bizday, return_side.bizday)
+    and gen_agg.branch_num  = coalesce(sale_side.branch_num, return_side.branch_num)
