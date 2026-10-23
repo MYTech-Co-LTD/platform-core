@@ -12,7 +12,7 @@
 
 - **运行时零变化**：`query_data` / `query_detail` 的 SQL 形状、`data.metrics` 的字段、四通道回包一律不改。
 - **fct 骨架手写**：join / 去重 / 分母 / 分区 / 断言不进声明面；生成器只写标记区。
-- **`additivity` 必填**，只允许 `additive` / `semi_additive` / `non_additive`；字符串形态与 `unknown` 均门禁红。
+- **`additivity` 必填**，只允许 `flow` / `stock` / `non_additive`（与指标级 additivity 同一词表）；字符串形态与 `unknown` 均门禁红。
 - **对账窗口**：默认 7 天；`tier: certified` 14 天（本批涉及 `net_sales`）。
 - **口径不许顺手改**：影子列必须与现有列**逐分一致**（容差 0.01），任何语义变更都停下来裁决。
 - 提交规范：`type(scope): subject`；本批每个任务一个提交；CHANGELOG 不手写。
