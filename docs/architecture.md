@@ -805,9 +805,22 @@ append-only，修数偶发而非常态。
 
 **未验（实施前逐条销账，不许猜）**：
 1. `/api/pipeline`（单数）的**方法与语义**——是否存在「保存草案」的写接口（有则不必让 `server` 直接写卷）；
-2. `serve` 是否把 `--memory-limit / --threads` 传给每次 run ⇒ **在此之前资源上限只认容器 `mem_limit`/`cpus`**；
-3. `/api/run` 的 `file` 是否接受 `pipelines/` 之外的相对路径（决定草案放 `<workspace>/sandbox/` 还是 `pipelines/sandbox/`）；
-4. `/api/run` 的返回体是否带**逐节点**结果（`/api/runs` 列表只带汇总；逐节点可能在回执 `runs/receipts/<runId>.json` 里）。
+2. `serve` 是否把 `--memory-limit / --threads` 传给每次 run ⇒ **在此之前资源上限只认容器 `mem_limit`/`cpus`**。
+
+**已销账（2026-10-23 生产 `sandbox-console` 实测）**：
+
+- 草案放 `<workspace>/sandbox/<runId>.json` **可以**（`/api/run` 收 `pipelines/` 之外的相对路径），
+  `GET /api/pipelines` 会把 `sandbox/*.json` 一并列出（带 `running/lastStatus`）。
+- **`POST /api/run`（同步）返回体带逐节点结果**：`nodes:[{id,status,rows,durationMs,error}]`；
+  回执 `runs/receipts/<引擎 runId>.json` 同样是逐节点 `nodes:{<id>:{status,kind,rows,durationMs}}`。
+  `/api/runs` 列表只带汇总（`id/name/file/at/status/durationMs/rows/nodeCount/trigger/error`）。
+- ⚠️ **解析失败的草案在异步路径上是黑洞**：`POST /api/run/async` 照回 `202 {status:"queued"}`，
+  但不进 `/api/runs`、不产回执、`/api/pipelines` 里 `running:false` 且 `lastStatus` 留 `null`
+  ⇒ 执行面只能轮询到超时后回 `running`（「还在跑」），其实**根本没跑**。同步 `/api/run` 对同一
+  草案直接回 `400 {"error":"parse …: missing field \`label\`"}`。
+  引擎必填而**校验器一度没查**的两个字段：节点 `position:{x,y}`（数值）、`data.label`（字符串，可为空串）。
+  已在校验器补上（见 `validate.ts`）；**其它解析失败仍会落到这条黑洞里**，改用同步或加「未起跑」判定
+  属改失败语义表 ⇒ 先改本表再改码。
 
 **服务形态**：
 - `sandbox-console`：`build: { context: .., dockerfile: deploy/duckle/Dockerfile }`，
@@ -822,7 +835,9 @@ append-only，修数偶发而非常态。
   服务行 `enabled: false`，**别忘**。
 
 **交换协议（server 侧，实现照此）**：
-1. 写草案到 `<共享卷>/sandbox/<runId>.json`（路径以「未验 3」的结论为准）；
+1. 写草案到 `<共享卷>/sandbox/<runId>.json`（该路径已实测可跑，见上「已销账」）；
+   ⚠️ 共享卷根目录归 `root`，而 `server` 是 uid 1000 ⇒ `sandbox/` 必须由 console 侧预建并交权
+   （`entrypoint.sh` 的 `DUCKLE_SHARE_DIR`），否则第一步 `mkdir` 就 EACCES；
 2. `POST /api/run/async {"file":"sandbox/<runId>.json"}`；
 3. **有界轮询** `GET /api/runs` 直到该 `runId` 出现终态（或直接读 `<共享卷>/runs/receipts/`）；
    超时即回 `status: running` + `runId`，**不无限等**；

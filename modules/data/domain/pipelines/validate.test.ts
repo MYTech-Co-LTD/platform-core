@@ -4,10 +4,14 @@ import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './defs'
 import { sandboxComponentViolations, sandboxViolations, validateContractDraft, validatePipelineDraft } from './validate'
 
+/** 引擎反序列化必填 `position` / `data.label`（缺了 `POST /api/run` 直接 400）⇒ 草案统一补齐。 */
+const node = (id: string, type: string, data: Record<string, unknown>, x = 0) =>
+  ({ id, type, position: { x, y: 0 }, data: { label: id, ...data } })
+
 const goodPipeline = {
   name: 'lemeng.x.y', nodes: [
-    { id: 's1', type: 'source', data: { componentId: 'src.rest', properties: {} } },
-    { id: 'k1', type: 'sink', data: { componentId: 'snk.minio', properties: { key: '__sandbox/lemeng/x/all.parquet' } } },
+    node('s1', 'source', { componentId: 'src.rest', properties: {} }),
+    node('k1', 'sink', { componentId: 'snk.minio', properties: { key: '__sandbox/lemeng/x/all.parquet' } }, 200),
   ], edges: [{ source: 's1', target: 'k1' }],
 }
 const goodContract = {
@@ -39,12 +43,24 @@ describe('validatePipelineDraft', () => {
     const badType = validatePipelineDraft({ ...goodPipeline, nodes: [{ id: 'a', type: 'weird', data: {} }] })
     expect(badType.some((i) => i.message.includes('type'))).toBe(true)
   })
+  // 引擎反序列化必填：缺了 `POST /api/run` 直接 400 `missing field`；而 `/api/run/async`
+  // 对解析失败的草案仍回 202 却不登记运行 ⇒ 执行面只能超时后回 `running`（其实是没跑）。
+  // 五种变体实测于 2026-10-23 生产 console；`label: ""` 合法，不得误杀。
+  it('缺 position / position 缺 x、y / 缺 data.label ⇒ 各自定位到具体路径', () => {
+    const withNode0 = (patch: Record<string, unknown>) =>
+      validatePipelineDraft({ ...goodPipeline, nodes: [{ ...goodPipeline.nodes[0], ...patch }, goodPipeline.nodes[1]] })
+    expect(withNode0({ position: undefined }).map((i) => i.path)).toEqual(['nodes[0].position'])
+    expect(withNode0({ position: { x: 0 } }).map((i) => i.path)).toEqual(['nodes[0].position.y'])
+    expect(withNode0({ position: { x: '0', y: 0 } }).map((i) => i.path)).toEqual(['nodes[0].position.x'])
+    expect(withNode0({ data: { componentId: 'src.rest' } }).map((i) => i.path)).toEqual(['nodes[0].data.label'])
+    expect(withNode0({ data: { label: '', componentId: 'src.rest' } })).toEqual([])
+  })
   // 校验器不得比引擎严：`qa.contract` 判据写 `type:"quality"`，引擎照跑
   // （docs/data-platform-handbook.md 实测；仓内 lemeng.purchase.analysis.l0.3120.json 即此）。
   it("'quality'（qa.contract）是引擎真实词汇 ⇒ 零 issue", () => {
     const doc = {
       ...goodPipeline,
-      nodes: [...goodPipeline.nodes, { id: 'q1', type: 'quality', data: { componentId: 'qa.contract' } }],
+      nodes: [...goodPipeline.nodes, node('q1', 'quality', { componentId: 'qa.contract' })],
     }
     expect(validatePipelineDraft(doc)).toEqual([])
   })
@@ -53,8 +69,8 @@ describe('validatePipelineDraft', () => {
   it('ctl.foreach 驱动的编排管线没有 sink ⇒ 零 issue；非驱动管线照旧要 sink', () => {
     const driver = {
       name: 'x', nodes: [
-        { id: 's1', type: 'source', data: { componentId: 'src.minio' } },
-        { id: 'f1', type: 'transform', data: { componentId: 'ctl.foreach' } },
+        node('s1', 'source', { componentId: 'src.minio' }),
+        node('f1', 'transform', { componentId: 'ctl.foreach' }, 100),
       ], edges: [],
     }
     expect(validatePipelineDraft(driver)).toEqual([])

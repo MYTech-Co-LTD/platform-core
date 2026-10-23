@@ -1,4 +1,4 @@
-sha256-of-rest 85838d867ecf7987be42af74bfcdabd0b231748497ad15998c1254ca9988e2f7
+sha256-of-rest 058ce892e6c21351d50874dab4828cbf4197a5dda39a202b656afa928b229d79
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -200,7 +200,7 @@ c471c6a9f25d02b2419f5f9a05e79eb80fdfdc5d599633d892fcff72b208e959 deploy/duckle/c
 62e7cea39f8d9d9fc6f3d36186c91ed7c202cf078b4f2230e7f94e4f5377eeec deploy/duckle/console/schedules/3120.json ${REPO}/deploy/duckle/console/schedules/3120.json 0644
 bf8c4f49e6a952d201b8ab61990a98de1deca911d399eb52e835ca00c3b2df47 deploy/duckle/console/schedules/64188.json ${REPO}/deploy/duckle/console/schedules/64188.json 0644
 127dde28f2d058ec300de7777f171f1922fa8b787af810f2ce63fbfa7a52d53d deploy/duckle/console/schedules/forms.json ${REPO}/deploy/duckle/console/schedules/forms.json 0644
-a6d73597b4cb6dad45f30b9201acf8af48ec42672c79a43989b6d7e71099dd92 deploy/duckle/entrypoint.sh ${REPO}/deploy/duckle/entrypoint.sh 0644
+43381a794c2909ebe1fc184b9ab55e5b301345aac3dc492e10716de5ec5157db deploy/duckle/entrypoint.sh ${REPO}/deploy/duckle/entrypoint.sh 0644
 1adccd79d9d5a1ddad55401259312c332fc63e210d8865f4d14bc6f0263a8c7c deploy/oo-alert-registry.txt ${REPO}/deploy/oo-alert-registry.txt 0644
 437e305a371039d59c9a47fd4457900203d4393942f2135273a4f486c1a7bf2d duckle/README.md ${REPO}/duckle/README.md 0644
 9c48a28d51a5c5d4f2232609c4312ea82fe4040edbd768b5966b49182ad6eef8 duckle/common/README.md ${REPO}/duckle/common/README.md 0644

@@ -67,8 +67,8 @@ const deps: PipelineDeps = depsOf(root, join(root, 'contracts'))
 
 const pipeline = {
   name: 'lemeng.a.c', nodes: [
-    { id: 's1', type: 'source', data: { componentId: 'src.rest', properties: {} } },
-    { id: 'k1', type: 'sink', data: { componentId: 'snk.minio', properties: { key: 'lemeng/a_c/all.parquet' } } },
+    { id: 's1', type: 'source', position: { x: 0, y: 0 }, data: { label: 's1', componentId: 'src.rest', properties: {} } },
+    { id: 'k1', type: 'sink', position: { x: 200, y: 0 }, data: { label: 'k1', componentId: 'snk.minio', properties: { key: 'lemeng/a_c/all.parquet' } } },
   ], edges: [{ source: 's1', target: 'k1' }],
 }
 const contract = {

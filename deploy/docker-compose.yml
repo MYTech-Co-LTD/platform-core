@@ -199,6 +199,13 @@ services:
     restart: unless-stopped
     environment:
       DUCKLE_TOKEN: ${DUCKLE_TOKEN:-}
+      # 共享卷里 `sandbox/`（草案）由 `server` 写 ⇒ 必须由**以 root 起的本服务**预建并交权：
+      # 命名卷根目录归 root:root，`server` 是 `USER node`（uid 1000），不交权就 EACCES
+      # （2026-10-23 生产实测，见 deploy/data-plane-deploy-sop.md §G.1）。
+      # uid/gid 与 `deploy/Dockerfile.server` 的 `USER node` 对齐；换基础镜像时同步改这里。
+      DUCKLE_SHARE_DIR: /workspace/sandbox
+      DUCKLE_SHARE_UID: '1000'
+      DUCKLE_SHARE_GID: '1000'
     volumes:
       # 同一个卷同时挂给 server（`/run/duckle-sandbox`）：草案进、回执出，都靠它交换。
       - sandbox-workspace:/workspace
