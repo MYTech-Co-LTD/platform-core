@@ -56,7 +56,7 @@ Expected: FAIL —— `measureOf` 未导出/不存在。
 
 ```js
 // scripts/sync-data-semantics.mjs
-/** @typedef {{ expr: string, domain?: string, grain?: string[], additivity: 'flow'|'semi_additive'|'non_additive', unit?: string }} Measure */
+/** @typedef {{ expr: string, domain?: string, grain?: string[], additivity: 'flow'|'stock'|'non_additive', unit?: string }} Measure */
 const MEASURE_KEYS = new Set(['expr', 'domain', 'grain', 'additivity', 'unit'])
 const ADDITIVITY = new Set(ADDITIVITY_VALUES)  // 与指标级共用：flow / stock / non_additive
 
@@ -71,7 +71,7 @@ export function measureOf(v) {
   const expr = typeof o.expr === 'string' ? o.expr.trim() : ''
   if (!expr || expr.includes(';')) throw new Error('measure.expr 必须是非空、不含分号的表达式')
   const add = o.additivity
-  if (typeof add !== 'string' || !ADDITIVITY.has(add)) throw new Error('measure.additivity 必填且只允许 additive / semi_additive / non_additive')
+  if (typeof add !== 'string' || !ADDITIVITY.has(add)) throw new Error('measure.additivity 必填且只允许 flow / stock / non_additive')
   if (o.domain !== undefined && (typeof o.domain !== 'string' || !/^[a-z_][a-z0-9_]*$/.test(o.domain))) throw new Error('measure.domain 必须是 domains: 里的具名行域（蛇形标识符），不是自由 SQL')
   if (o.grain !== undefined && (!Array.isArray(o.grain) || o.grain.length === 0 || o.grain.some((g) => typeof g !== 'string' || !/^[a-z_][a-z0-9_]*$/.test(g)))) throw new Error('measure.grain 必须是非空蛇形列名数组')
   if (o.unit !== undefined && (typeof o.unit !== 'string' || !/^[A-Za-z_]+$/.test(o.unit))) throw new Error('measure.unit 必须是简单标识符（CNY / count / ratio）')
