@@ -813,14 +813,28 @@ append-only，修数偶发而非常态。
   `GET /api/pipelines` 会把 `sandbox/*.json` 一并列出（带 `running/lastStatus`）。
 - **`POST /api/run`（同步）返回体带逐节点结果**：`nodes:[{id,status,rows,durationMs,error}]`；
   回执 `runs/receipts/<引擎 runId>.json` 同样是逐节点 `nodes:{<id>:{status,kind,rows,durationMs}}`。
-  `/api/runs` 列表只带汇总（`id/name/file/at/status/durationMs/rows/nodeCount/trigger/error`）。
+  `/api/runs` 列表只带汇总（`id/name/file/at/status/durationMs/rows/nodeCount/trigger/error`），**没有唯一 runId**。
 - ⚠️ **解析失败的草案在异步路径上是黑洞**：`POST /api/run/async` 照回 `202 {status:"queued"}`，
   但不进 `/api/runs`、不产回执、`/api/pipelines` 里 `running:false` 且 `lastStatus` 留 `null`
   ⇒ 执行面只能轮询到超时后回 `running`（「还在跑」），其实**根本没跑**。同步 `/api/run` 对同一
   草案直接回 `400 {"error":"parse …: missing field \`label\`"}`。
   引擎必填而**校验器一度没查**的两个字段：节点 `position:{x,y}`（数值）、`data.label`（字符串，可为空串）。
-  已在校验器补上（见 `validate.ts`）；**其它解析失败仍会落到这条黑洞里**，改用同步或加「未起跑」判定
-  属改失败语义表 ⇒ 先改本表再改码。
+  已在校验器补上（见 `validate.ts`）。**引擎侧的异步黑洞本身没修**（异步接口行为不变），
+  本工具改为**不再走它**，见下「交换协议」。
+- **同步 `/api/run` 对长跑没有服务端时长上限**（2026-10-23 生产 `sandbox-console` 测量）：
+  1.7s / 14.7s / 36.9s / 71.0s / 71.4s / 72.2s 六次全部 `200` 返回完整逐节点结果，
+  `time_total` 与引擎 `durationMs` 对得上（如 72.160s ↔ 72160ms）。处理器是阻塞直调，
+  源码里连接上只有 **30s 的单次读/写停顿**保护（`serve.rs` 的 `READ_TIMEOUT`），不是总时长上限。
+  ⇒ 此前一次「sync 长跑 120s 不回」的观测是**量具造成的假象**（curl 挂在 openship exec 的 120s 上限里被截断），
+  不是引擎截断。判长跑行为时先把观测挪到不受调用方上限约束的位置（后台跑 + 落文件 + 事后读）。
+- **客户端断开不取消运行**：`curl -m 10` 在第 10 秒断开，该 run 仍在服务端跑到 71.4s、`status: ok`，
+  回执正常落盘。⇒ 平台侧等待预算耗尽只表示「我们不等了」，**不是「运行被杀了」**。
+- 同步响应体**带唯一 `runId`**（`run-manual-<pipeline>-<毫秒>`）⇒ 认领一次运行不再需要靠回执猜。
+- 同步路径**不取** per-pipeline runlock（异步路径的 `claim_for_run` 才取）⇒ 同名管线的排他完全
+  依赖本工具的进程内单飞。
+- 一次未复现的孤例（2026-10-23 10:14:20）：一条 run 记录为 `interrupted / durationMs 0 / nodes {}`，
+  回执无 `finishedAt`；同规模另三次均 `ok`。源码里 `interrupted` 的语义是「所属进程已死的运行被回收」。
+  **不据此改语义**，仅留档待再见。
 
 **服务形态**：
 - `sandbox-console`：`build: { context: .., dockerfile: deploy/duckle/Dockerfile }`，
@@ -838,10 +852,15 @@ append-only，修数偶发而非常态。
 1. 写草案到 `<共享卷>/sandbox/<runId>.json`（该路径已实测可跑，见上「已销账」）；
    ⚠️ 共享卷根目录归 `root`，而 `server` 是 uid 1000 ⇒ `sandbox/` 必须由 console 侧预建并交权
    （`entrypoint.sh` 的 `DUCKLE_SHARE_DIR`），否则第一步 `mkdir` 就 EACCES；
-2. `POST /api/run/async {"file":"sandbox/<runId>.json"}`；
-3. **有界轮询** `GET /api/runs` 直到该 `runId` 出现终态（或直接读 `<共享卷>/runs/receipts/`）；
-   超时即回 `status: running` + `runId`，**不无限等**；
-4. 返回逐节点 `status/rows/durationMs`（可用时）+ 总时长；审计照旧落 `data.query_audit`。
+2. **一次同步调用** `POST /api/run {"file":"sandbox/<runId>.json"}`，挂到跑完为止；
+   等待预算由 `DATA_SANDBOX_TIMEOUT_MS` 给（语义 = **平台愿意持有的时长**，不是轮询上限），
+   客户端超时只断开我们这一侧，运行仍在引擎里继续（已实测）；
+3. 响应分三种，**不存在「不知道跑没跑却报 running」的第四种**：
+   - `200` ⇒ 用响应体的 `runId` / `status` / `nodes[]`（逐节点 `status/rows/durationMs/error`）出结论；
+   - `400` ⇒ 草案解析不过，body 是引擎原话 ⇒ `refused / engine_parse_error`，**不进执行面统计**；
+   - 预算耗尽 ⇒ `unknown / sandbox_run_timeout` + 我们的草案 `runId`，并**再查一次**新回执
+     （开始前快照 + mtime 认领）以捡回刚好在边界跑完的结果；捡不到就如实说「仍在跑、结论未知」；
+4. 审计照旧落 `data.query_audit`。
 
 **两条硬约束（比「跑起来」更重要）**：
 
@@ -867,11 +886,12 @@ append-only，修数偶发而非常态。
 | `DATA_SANDBOX_URL` 未配 | `not_executed / sandbox_runner_unconfigured` | false | ok（未知 ≠ 失败） |
 | console 不可达 / 401 | `unknown / sandbox_unreachable` | true | ok（不是草案的错） |
 | 结构校验不过 | `refused / invalid_draft` | true | denied |
+| **引擎解析不过（同步 `400`）** | **`refused / engine_parse_error` + 引擎原话** | true | denied |
 | 写入面违规 | `denied / sandbox_prefix_violation` | true | denied |
 | 组件不在白名单 | `denied / component_not_allowed` | true | denied |
 | 跑完失败 | `failed / pipeline_failed` + 引擎错误 | true | **ok**（工具完成了工作；失败是草案的结论） |
 | 跑成功 | `ok` + 节点明细 | false | ok |
-| 超时仍在跑 | `running` + `runId` | false | ok |
+| **等待预算耗尽（跑没跑完未知）** | **`unknown / sandbox_run_timeout` + `runId`** | true | ok |
 | 本实例已有沙箱 run 在跑 | `denied / sandbox_busy` | true | denied |
 
 **并发与清理**：进程内单飞（同实例同时只允许一条沙箱 run）；草案文件保留策略在实现时按实测体积定

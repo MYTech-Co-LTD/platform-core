@@ -31,96 +31,97 @@ const fakeConsole = (script: ((req: Rec, i: number) => Response | Promise<Respon
 }
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
-/** 假时钟：sleep 推进时间（不然超时用例会真的等下去）。 */
-const clock = () => {
-  const state = { t: Date.now() }
-  return { now: () => state.t, sleep: async (ms: number) => { state.t += ms } }
+/** 超时的真实形状：`AbortSignal.timeout` 让 fetch 以 TimeoutError 拒绝。 */
+const timeoutError = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' })
+
+const sinkDraft = {
+  name: 'lemeng.x.y',
+  nodes: [
+    { id: 's1', type: 'source' },
+    { id: 'k1', type: 'sink' },
+  ],
+  edges: [],
 }
 
 describe('createSandboxRunner', () => {
-  it('成功路径：写草案 → async 起跑 → 轮询到 ok', async () => {
+  it('成功路径：写草案 → 一次同步 /api/run → ok（带逐节点结果与引擎 runId）', async () => {
     const dir = await workspace()
     const { fetchImpl, seen } = fakeConsole([
-      () => new Response('', { status: 202 }),
-      () => json({ runs: [{ file: 'sandbox/sbx-1-a.json', status: 'running' }] }),
-      () => json({ runs: [{ file: 'sandbox/sbx-1-a.json', status: 'ok', durationMs: 42, rows: 7 }] }),
+      () => json({
+        id: 'lemeng.x.y', runId: 'run-manual-lemeng.x.y-1700000000000', status: 'ok', durationMs: 42, error: null,
+        nodes: [{ id: 's1', status: 'ok', rows: 3, durationMs: 5 }, { id: 'k1', status: 'ok', rows: 3, durationMs: 7 }],
+      }),
     ])
-    const c = clock()
     const runner = createSandboxRunner(
-      { baseUrl: 'http://sandbox-console:18090', token: 'tok-test', dir, timeoutMs: 3_000, intervalMs: 100 },
-      { fetchImpl, now: c.now, sleep: c.sleep },
+      { baseUrl: 'http://sandbox-console:18090', token: 'tok-test', dir, timeoutMs: 3_000 },
+      { fetchImpl },
     )
 
-    const out = await runner.run(draft, 'sbx-1-a')
+    const out = await runner.run(sinkDraft, 'sbx-1-a')
 
-    expect(out).toEqual({ status: 'ok', runId: 'sbx-1-a', file: 'sandbox/sbx-1-a.json', durationMs: 42, rows: 7 })
+    expect(out).toMatchObject({
+      status: 'ok', runId: 'sbx-1-a', file: 'sandbox/sbx-1-a.json',
+      engineRunId: 'run-manual-lemeng.x.y-1700000000000', durationMs: 42, rows: 3,
+    })
+    expect(out.nodes).toEqual([
+      { id: 's1', status: 'ok', rows: 3, durationMs: 5 },
+      { id: 'k1', status: 'ok', rows: 3, durationMs: 7 },
+    ])
     // 草案落在共享卷上，且是合法 JSON
-    expect(JSON.parse(await readFile(join(dir, 'sandbox', 'sbx-1-a.json'), 'utf8'))).toEqual(draft)
-    // 起跑那一次：POST + Bearer + 工作区相对路径
+    expect(JSON.parse(await readFile(join(dir, 'sandbox', 'sbx-1-a.json'), 'utf8'))).toEqual(sinkDraft)
+    // 只发一次：POST 同步 /api/run + Bearer + 工作区相对路径（不再起跑后轮询）
+    expect(seen).toHaveLength(1)
     expect(seen[0].method).toBe('POST')
-    expect(seen[0].url).toBe('http://sandbox-console:18090/api/run/async')
+    expect(seen[0].url).toBe('http://sandbox-console:18090/api/run')
     expect(seen[0].auth).toBe('Bearer tok-test')
     expect(JSON.parse(seen[0].body)).toEqual({ file: 'sandbox/sbx-1-a.json' })
-    // 轮询走 /api/runs
-    expect(seen[1].url).toBe('http://sandbox-console:18090/api/runs')
   })
 
   it('管线跑失败 ⇒ failed + 引擎错误原文（不是抛）', async () => {
     const dir = await workspace()
     const { fetchImpl } = fakeConsole([
-      () => new Response('', { status: 202 }),
-      () => json({ runs: [{ file: 'sandbox/sbx-2-a.json', status: 'error', error: 'Data contract violated: in_range(exit_code)' }] }),
+      () => json({ id: 'x', runId: 'r1', status: 'error', durationMs: 9, error: 'Data contract violated: in_range(exit_code)', nodes: [] }),
     ])
-    const c = clock()
-    const runner = createSandboxRunner(
-      { baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 3_000, intervalMs: 0 },
-      { fetchImpl, now: c.now, sleep: c.sleep },
-    )
+    const runner = createSandboxRunner({ baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 3_000 }, { fetchImpl })
     const out = await runner.run(draft, 'sbx-2-a')
     expect(out.status).toBe('failed')
     expect(out.error).toContain('Data contract violated')
   })
 
-  it('一直 running ⇒ 超时回 running（不判失败）', async () => {
+  it('引擎 400 ⇒ parse_error + 引擎原话（一个节点都没跑）', async () => {
     const dir = await workspace()
-    const { fetchImpl, seen } = fakeConsole([
-      () => new Response('', { status: 202 }),
-      () => json({ runs: [{ file: 'sandbox/sbx-3-a.json', status: 'running' }] }),
+    const { fetchImpl } = fakeConsole([
+      () => json({ error: 'parse sandbox/sbx-3-a.json: missing field `label`' }, 400),
     ])
-    const c = clock()
-    const runner = createSandboxRunner(
-      { baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 500, intervalMs: 100 },
-      { fetchImpl, now: c.now, sleep: c.sleep },
-    )
+    const runner = createSandboxRunner({ baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 3_000 }, { fetchImpl })
     const out = await runner.run(draft, 'sbx-3-a')
-    expect(out).toEqual({ status: 'running', runId: 'sbx-3-a', file: 'sandbox/sbx-3-a.json' })
-    // 有界：不是死循环（起跑 1 次 + 轮询若干次）
-    expect(seen.length).toBeLessThan(20)
+    expect(out).toMatchObject({ status: 'parse_error', runId: 'sbx-3-a' })
+    expect(out.error).toContain('missing field `label`')
   })
 
-  it('回执先到 ⇒ 用回执（带逐节点明细）收敛，不依赖 /api/runs 是否收录该文件', async () => {
+  it('等待预算耗尽 ⇒ timeout（不说「还在跑」）', async () => {
+    const dir = await workspace()
+    const fetchImpl = (async () => { throw timeoutError() }) as unknown as typeof fetch
+    const runner = createSandboxRunner({ baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 500 }, { fetchImpl })
+    const out = await runner.run(draft, 'sbx-4-a')
+    expect(out).toEqual({ status: 'timeout', runId: 'sbx-4-a', file: 'sandbox/sbx-4-a.json' })
+  })
+
+  it('预算耗尽前刚好跑完 ⇒ 用新回执捡回结果（带逐节点明细）', async () => {
     const dir = await workspace()
     const receipts = join(dir, 'runs', 'receipts')
     await mkdir(receipts, { recursive: true })
-    const { fetchImpl } = fakeConsole([
-      () => new Response('', { status: 202 }),
-      // console 的 /api/runs 不认 sandbox/ 下的文件（实测未证）⇒ 只靠回执也必须能收敛
-      async () => {
-        await writeFile(join(receipts, 'run-manual-lemeng.x.y-1700000000000.json'), JSON.stringify({
-          status: 'ok',
-          startedAt: new Date(Date.now() - 30).toISOString(),
-          finishedAt: new Date().toISOString(),
-          nodes: { source: { rows: 3 }, sink: { rows: 3 } },
-        }))
-        return json({ runs: [] })
-      },
-    ])
-    const c = clock()
-    const runner = createSandboxRunner(
-      { baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 1_000, intervalMs: 100 },
-      { fetchImpl, now: c.now, sleep: c.sleep },
-    )
-    const out = await runner.run(draft, 'sbx-4-a')
+    const fetchImpl = (async () => {
+      await writeFile(join(receipts, 'run-manual-lemeng.x.y-1700000000000.json'), JSON.stringify({
+        status: 'ok',
+        startedAt: new Date(Date.now() - 30).toISOString(),
+        finishedAt: new Date().toISOString(),
+        nodes: { source: { rows: 3 }, sink: { rows: 3 } },
+      }))
+      throw timeoutError()
+    }) as unknown as typeof fetch
+    const runner = createSandboxRunner({ baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 1_000 }, { fetchImpl })
+    const out = await runner.run(draft, 'sbx-5-a')
     expect(out.status).toBe('ok')
     expect(out.rows).toBe(3)
     expect(out.durationMs).toBeGreaterThanOrEqual(0)
@@ -132,31 +133,21 @@ describe('createSandboxRunner', () => {
     const receipts = join(dir, 'runs', 'receipts')
     await mkdir(receipts, { recursive: true })
     await writeFile(join(receipts, 'run-manual-old.json'), JSON.stringify({ status: 'ok', nodes: {} }))
-    const { fetchImpl } = fakeConsole([
-      () => new Response('', { status: 202 }),
-      () => json({ runs: [] }),
-    ])
-    const c = clock()
-    const runner = createSandboxRunner(
-      { baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 300, intervalMs: 100 },
-      { fetchImpl, now: c.now, sleep: c.sleep },
-    )
-    expect((await runner.run(draft, 'sbx-5-a')).status).toBe('running')
+    const fetchImpl = (async () => { throw timeoutError() }) as unknown as typeof fetch
+    const runner = createSandboxRunner({ baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 300 }, { fetchImpl })
+    expect((await runner.run(draft, 'sbx-6-a')).status).toBe('timeout')
   })
 
   it('401 / 网络错误 ⇒ 抛 SandboxUnreachableError（跑不了 ≠ 跑失败）', async () => {
     const dir = await workspace()
     const unauth = fakeConsole([() => json({ error: 'unauthorized' }, 401)])
-    const r1 = createSandboxRunner(
-      { baseUrl: 'http://x:1', token: '', dir, timeoutMs: 100, intervalMs: 0 },
-      { fetchImpl: unauth.fetchImpl },
-    )
-    await expect(r1.run(draft, 'sbx-6-a')).rejects.toBeInstanceOf(SandboxUnreachableError)
+    const r1 = createSandboxRunner({ baseUrl: 'http://x:1', token: '', dir, timeoutMs: 100 }, { fetchImpl: unauth.fetchImpl })
+    await expect(r1.run(draft, 'sbx-7-a')).rejects.toBeInstanceOf(SandboxUnreachableError)
 
     const dir2 = await workspace()
     const netErr = (async () => { throw new TypeError('fetch failed') }) as unknown as typeof fetch
-    const r2 = createSandboxRunner({ baseUrl: 'http://x:1', token: 't', dir: dir2, timeoutMs: 100, intervalMs: 0 }, { fetchImpl: netErr })
-    await expect(r2.run(draft, 'sbx-6-b')).rejects.toBeInstanceOf(SandboxUnreachableError)
+    const r2 = createSandboxRunner({ baseUrl: 'http://x:1', token: 't', dir: dir2, timeoutMs: 100 }, { fetchImpl: netErr })
+    await expect(r2.run(draft, 'sbx-7-b')).rejects.toBeInstanceOf(SandboxUnreachableError)
   })
 
   it('拒绝非法 runId（它会变成文件名主干）', async () => {
