@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.190.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.189.1...v0.190.0) - 2026-10-23
+- 【新增】data: 聚合面组件化 P3.0——measure 对象形态 + 具名行域 + 影子对账（#1012） ([#1018](https://github.com/MYTech-Co-LTD/platform-core/pull/1018), [4c0cf89](https://github.com/MYTech-Co-LTD/platform-core/commit/4c0cf89a68ba3242adb7e00d824ce637b69794f2))
+
+
 ## [0.189.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.189.0...v0.189.1) - 2026-10-23
 - 【修复】deploy: 沙箱执行面实证补两个缺口——共享卷交权 + 校验器补引擎必填字段 ([#1016](https://github.com/MYTech-Co-LTD/platform-core/pull/1016), [beb6263](https://github.com/MYTech-Co-LTD/platform-core/commit/beb6263a295824fa1c57c68b995f5c37774e0ed6))
 
