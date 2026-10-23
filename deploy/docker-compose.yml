@@ -65,6 +65,11 @@ services:
       # 容器监听端口。**端口在 compose 里就这两处**：这里定容器内监听，下面 ports 的左端
       # 定宿主映射（右端必须跟这里一致）。.env 里的同名键会被本项覆盖，别去改 .env 的 PORT。
       PORT: '13000'
+      # 沙箱交换卷在 server 侧的挂载点（与下面 volumes 一致）。`DATA_SANDBOX_URL` /
+      # `DATA_SANDBOX_TOKEN` **不写在这里**：compose 的 ${} 插值读的是 deploy/.env 或 shell，
+      # 不是 env_file 指的 ../.env（同 openclaw 的 OPENCLAW_GATEWAY_TOKEN 一类的坑）⇒
+      # 写了反而可能用空值覆盖掉真值。它们由根 .env / openship 服务行 env 注入。
+      DATA_SANDBOX_DIR: /run/duckle-sandbox
     depends_on:
       postgres:
         # service_healthy 而非 service_started：迁移在启动期跑，PG 未就绪即失败
@@ -91,6 +96,10 @@ services:
       # 另：`network_mode: host` 不在这条覆盖内（该模式下 compose 忽略 ports，真实绑定取决于
       # 进程自己的 listen 地址，守卫读文本读不出来）——本仓不用该模式。
       - '127.0.0.1:${HOST_PORT:-13000}:13000'
+    volumes:
+      # 沙箱交换卷（#1002）：写草案（sandbox/）、读回执（runs/receipts/）。**不 readonly**——
+      # 草案由 server 写。与 sandbox-console 共用同一命名卷。
+      - sandbox-workspace:/run/duckle-sandbox
     # 启动期故障（如 Casdoor 不可达 → upsertPermission 抛错）不该让容器一停不起；
     # 反复重启会把失败暴露在 docker compose ps 的 Restarting 上，而不是静默躺着
     restart: unless-stopped
@@ -172,6 +181,33 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  # ── 数据 MCP 的沙箱执行面（#1002；决策与全部口径 = docs/architecture.md §2.8）────────────
+  # · 为什么在单元 A 而不是数据面：`server` 要调它，而单元 A ↔ 单元 B 是**两个 compose 网络**
+  #   （实测 172.18 / 172.19，互不可达），打通要么加外部网络、要么把回环绑改成私网发布——
+  #   后者破 §1.3 的「只绑回环」口径。同网络 + 服务名最省事。
+  # · 为什么不塞进 server 容器：沙箱跑的是**草案作者写的管线**，而 server 容器里有 Casdoor
+  #   管理员口令 / 库密码 / LLM key ⇒ 等于把它们放到不可信代码同一个进程空间里。
+  # · **无 ports**：只被同网络的 `server` 用服务名访问，宿主面为零。
+  # · `DUCKLE_TOKEN` 为空时 entrypoint 会**拒起**（serve 属非离线动词，见 entrypoint 的台账）——
+  #   真值在 openship 服务行 env / 根 .env，不进本文件。不需要沙箱的项目把本服务置 `enabled: false`。
+  # · `--duckdb` 必给（不给则每次触发都记 "DuckDB engine isn't installed yet."，实测见 console README）。
+  sandbox-console:
+    build:
+      context: ..
+      dockerfile: deploy/duckle/Dockerfile
+    image: platform-core-duckle-sandbox:local
+    restart: unless-stopped
+    environment:
+      DUCKLE_TOKEN: ${DUCKLE_TOKEN:-}
+    volumes:
+      # 同一个卷同时挂给 server（`/run/duckle-sandbox`）：草案进、回执出，都靠它交换。
+      - sandbox-workspace:/workspace
+    command: ["serve", "--host", "0.0.0.0", "--port", "18090",
+              "--workspace", "/workspace", "--duckdb", "/usr/local/bin/duckdb"]
+    # 无 ports：见本节标题下的理由
+
 volumes:
   pgdata:
   openclaw_state:
+  # 沙箱交换卷：草案（sandbox/<runId>.json）与引擎回执（runs/receipts/）都在这里
+  sandbox-workspace:

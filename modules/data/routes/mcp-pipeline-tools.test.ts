@@ -109,6 +109,16 @@ describe('defaultPipelineWiring：运行记录来源按 env 决定', () => {
   })
 })
 
+describe('defaultPipelineWiring：沙箱执行面按 env 决定', () => {
+  it('DATA_SANDBOX_URL 未配置 ⇒ sandbox=null（工具只校验、不执行）', () => {
+    expect(defaultPipelineWiring({}).sandbox).toBeNull()
+    expect(defaultPipelineWiring({ DATA_SANDBOX_URL: '   ' }).sandbox).toBeNull()
+  })
+  it('配置了 ⇒ 接执行面（配了但不通是运行期 unknown/sandbox_unreachable，不是静默退回只校验）', () => {
+    expect(defaultPipelineWiring({ DATA_SANDBOX_URL: 'http://sandbox-console:18090' }).sandbox).not.toBeNull()
+  })
+})
+
 describe('verdictOf：审计判决按 status 分类（unknown/not_found ≠ denied）', () => {
   it('unknown / not_found 即使 isError 也记 ok', () => {
     expect(verdictOf({ status: 'unknown', reason: 'runs_source_not_wired' }, true))

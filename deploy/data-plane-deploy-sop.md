@@ -881,15 +881,43 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
   缺省根**按模块文件位置解析、与 cwd 无关**（镜像内即 `/app/deploy/duckle/console` 与
   `/app/contracts`；`pnpm --filter @platform/server start` 把 cwd 设在 `apps/server` **不影响**它）；
   `DATA_PIPELINES_ROOT` / `DATA_CONTRACTS_ROOT` 可覆盖缺省。
-- **不可达（待沉淀）**：运行记录在 console 的 per-账套 workspace 卷（`/workspace/runs/`）；
-  platform-core 容器既看不到卷、也够不到 `127.0.0.1:18080/18081`（跨 compose 项目 + 回环）。
-  故 `list_pipeline_runs`/`get_pipeline_run` 回**显式 unknown**，不是「没跑过」。
-- **不执行**：`run_pipeline_sandbox` 只做结构校验与 `__sandbox/` 前缀断言，回 `not_executed`
-  （容器内无 duckle / duckle-runner）。执行通道需真机验证后另案。
-- **校验闸的覆盖面（接执行面之前必须补）**：`run_pipeline_sandbox` 的前缀断言是**裸字符串**
-  `startsWith('__sandbox/')`，不做路径规范化（`__sandbox/../正式前缀/…` 能通过）；且只检查
-  `type === 'sink'` 的节点（把 `snk.minio` 挂在 `transform` 上不会被发现）。本轮**不执行**，
-  故无写入风险；**将来接通执行面时，必须先做前缀规范化 + 覆盖所有可能写湖的组件，再谈放行**。
+- **运行记录（#1001 起可达）**：console 的 per-账套 workspace 卷里的 `<workspace>/_data/runs`
+  以 **`:ro` bind mount** 挂进 platform-core server（部署期按账套各挂一条），用
+  `DATA_RUN_DIRS=<账套>=<挂载目录>,…` 声明。**从不对 console HTTP 取运行记录**——`/api/runs`
+  不带唯一 runId、只覆盖已登记管线，且端口只绑回环（跨 compose 项目不可达）。
+  未声明的账套 ⇒ 显式 `unknown/runs_source_not_wired`，不是「没跑过」。
+- **执行面（#1002）**：`run_pipeline_sandbox` 在**单元 A 的 `sandbox-console`** 里真跑，
+  不碰单元 B 的 `lemeng-console-*`（两个 compose 网络互不可达，实测 172.18 / 172.19）。
+  决策与全部口径见 `docs/architecture.md` §2.8。接线见下面 §G.1。
+
+### G.1 沙箱执行面（`sandbox-console`）接线与自证
+
+> ⚠️ 截至本段写入（2026-10-23）**尚未部署上线**——下面是验收清单，不是已完成的记录。
+> 部署后把实测结论补在这里（无案例不立标准）。
+
+| 项 | 值 / 做法 |
+|---|---|
+| **服务在哪** | `deploy/docker-compose.yml` 的 `sandbox-console`（单元 A），`platform-core-duckle-sandbox:local`，`serve --port 18090`，**无宿主端口** |
+| **地址** | server 侧 `DATA_SANDBOX_URL=http://sandbox-console:18090`（容器 DNS 名 = compose 服务名；只在单元 A 默认网络内可解析） |
+| **token** | `DUCKLE_TOKEN`，**与 console 同一个值**（openship 服务行 env / isSecret；仓内不写）。server 侧用 `DATA_SANDBOX_TOKEN` 注入同一值 |
+| **交换卷** | 命名卷 `sandbox-workspace`：console 看到 `/workspace`，server 看到 `/run/duckle-sandbox`（`DATA_SANDBOX_DIR`）。草案 = `sandbox/<runId>.json`，回执 = `runs/receipts/` |
+| **不要它的项目** | openship 服务行 `enabled: false`（**别只靠 compose profiles**——openship 按自己的服务清单逐服务启停，profiles 对它无效，见 mb-proxy 的教训） |
+| **默认档凭据** | **无**：沙箱容器不注入任何 ZOS/LEMENG 凭据 ⇒ 源端只能是公开/无鉴权端点。按账套 opt-in 的只读凭据档**待沉淀**（一个账套 = 一个 sandbox 服务，理由同 ADR-0014） |
+
+部署后按序自证（每条都要**看见**，不看「应该」）：
+
+```sh
+# ① 服务面：healthz 公开（其它端点要 token）
+docker exec <server 容器> node -e "fetch('http://sandbox-console:18090/healthz').then(r=>console.log(r.status))"   # 期望 200
+# ② 真跑一条无鉴权最小管线（src.csv 或构造数据 → snk.csv，路径在 /workspace/logs/sandbox/ 下）
+#    经 openship MCP 调 run_pipeline_sandbox ⇒ 期望 status: ok 且带 rows
+# ③ 共享卷两个方向都通：server 写的草案在 console 里可见；console 写的回执在 server 里可读
+# ④ 负向三连（缺一条都说明闸没生效）：code.shell ⇒ denied/component_not_allowed；
+#    写正式湖 ⇒ denied/sandbox_prefix_violation；DATA_SANDBOX_URL 清空 ⇒ not_executed/sandbox_runner_unconfigured
+```
+
+排障入口与 L0 管线同规：**回执**（`runs/receipts/`）带逐节点 `status/rows/durationMs`，
+**console 自己的日志**看 `serve` 起没起来（token 为空时 entrypoint 会拒起，见 `deploy/duckle/entrypoint.sh`）。
 
 ## 关联
 
