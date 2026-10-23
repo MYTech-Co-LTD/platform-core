@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.189.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.189.0...v0.189.1) - 2026-10-23
+- 【修复】deploy: 沙箱执行面实证补两个缺口——共享卷交权 + 校验器补引擎必填字段 ([#1016](https://github.com/MYTech-Co-LTD/platform-core/pull/1016), [beb6263](https://github.com/MYTech-Co-LTD/platform-core/commit/beb6263a295824fa1c57c68b995f5c37774e0ed6))
+
+
 ## [0.189.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.188.0...v0.189.0) - 2026-10-23
 - 【新增】data: 沙箱真执行面——sandbox-console + 组件策略 + 失败语义 (#1002) ([#1013](https://github.com/MYTech-Co-LTD/platform-core/pull/1013), [98e3039](https://github.com/MYTech-Co-LTD/platform-core/commit/98e3039926a5a98fec72060795b853a12f4695c1))
 
