@@ -485,10 +485,15 @@ export function deriveParams(/** @type {readonly string[]} */ grain) {
  * `grain` 缺省 = `['line']` 语义（组件自述的原子粒度，**仅供门禁校验**，不进 SQL）。
  * `additivity` 必填：字符串形态无法表达它，P3.0 起一律拒绝。
  *
- * @typedef {{ expr: string, domain?: string, grain?: string[], additivity: 'additive'|'semi_additive'|'non_additive', unit?: string }} Measure
+ * @typedef {{ expr: string, domain?: string, grain?: string[], additivity: 'flow'|'stock'|'non_additive', unit?: string }} Measure
  */
+/**
+ * 可加性分类的闭集（消费面 spec 2026-10-17 §12.3；**指标级与组件级共用同一词表**）：
+ * flow=全维可加；stock=跨实体可加、跨时间不可加；non_additive=任何上卷都不成立。
+ */
+export const ADDITIVITY_VALUES = ['flow', 'stock', 'non_additive']
 const MEASURE_KEYS = new Set(['expr', 'domain', 'grain', 'additivity', 'unit'])
-const ADDITIVITY = new Set(['additive', 'semi_additive', 'non_additive'])
+const ADDITIVITY = new Set(ADDITIVITY_VALUES)
 
 /**
  * measure 的**唯一解析实现**（门禁 `check-data-models` import 它，别在别处再写一份）。
@@ -509,7 +514,7 @@ export function measureOf(v) {
   const expr = typeof o.expr === 'string' ? o.expr.trim() : ''
   if (!expr || expr.includes(';')) throw new Error('measure.expr 必须是非空、不含分号的表达式')
   const add = o.additivity
-  if (typeof add !== 'string' || !ADDITIVITY.has(add)) throw new Error('measure.additivity 必填且只允许 additive / semi_additive / non_additive')
+  if (typeof add !== 'string' || !ADDITIVITY.has(add)) throw new Error('measure.additivity 必填且只允许 flow / stock / non_additive')
   if (o.domain !== undefined && (typeof o.domain !== 'string' || !/^[a-z_][a-z0-9_]*$/.test(o.domain))) throw new Error('measure.domain 必须是 domains: 里的具名行域（蛇形标识符），不是自由 SQL')
   if (o.grain !== undefined && (!Array.isArray(o.grain) || o.grain.length === 0 || o.grain.some((g) => typeof g !== 'string' || !/^[a-z_][a-z0-9_]*$/.test(g)))) throw new Error('measure.grain 必须是非空蛇形列名数组')
   if (o.unit !== undefined && (typeof o.unit !== 'string' || !/^[A-Za-z_]+$/.test(o.unit))) throw new Error('measure.unit 必须是简单标识符（CNY / count / ratio）')
@@ -621,7 +626,6 @@ export function scopeNoteOf(raw, name) {
 }
 
 /** 可加性分类的闭集（消费面 spec 2026-10-17 §12.3）。 */
-export const ADDITIVITY_VALUES = ['flow', 'stock', 'non_additive']
 
 /**
  * 可加性分类（消费面 spec 2026-10-17 §12.3）：缺省 `flow`；未知值**响亮失败**。
