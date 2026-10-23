@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.188.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.187.0...v0.188.0) - 2026-10-23
+- 【新增】data: 下钻条件列 col 按契约列集校验（#1009） ([#1010](https://github.com/MYTech-Co-LTD/platform-core/pull/1010), [d47a468](https://github.com/MYTech-Co-LTD/platform-core/commit/d47a4686662a4c5e99c3fd95709f67c6e607b4f6))
+
+
 ## [0.187.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.186.2...v0.187.0) - 2026-10-23
 - 【新增】data: 运行记录面接线——只读挂载 runs/ + 应用内文件读源 (#1001) ([#1008](https://github.com/MYTech-Co-LTD/platform-core/pull/1008), [658dd7d](https://github.com/MYTech-Co-LTD/platform-core/commit/658dd7d0f33008e5b58ac00bc75ac8fb0e14e833))
 
