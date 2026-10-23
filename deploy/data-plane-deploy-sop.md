@@ -892,14 +892,23 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 
 ### G.1 沙箱执行面（`sandbox-console`）接线与自证
 
-> ⚠️ 截至本段写入（2026-10-23）**尚未部署上线**——下面是验收清单，不是已完成的记录。
-> 部署后把实测结论补在这里（无案例不立标准）。
+> ✅ **2026-10-23：mytech 已上线**（`dep_KthxaixGDuTyx7LO`）。执行面容器起来并对外服务
+> （`duckle-runner: management console on http://0.0.0.0:18090` / `sign-in required`，三容器均
+> `running`）。⚠️ 下表 ①–④ 的**端到端自证尚未做完**（缺 server 侧运行面取证入口）——
+> **「已上线」≠「已验通」**，别据此判定沙箱可用。
+>
+> ⚠️ **上线当天踩到的坑（先读本条）**：新 compose 服务被 openship **默认 `enabled: true`**，
+> 而 mytech 当时没有 `DUCKLE_TOKEN` ⇒ `entrypoint.sh` 对 `serve` 拒起（exit 1）⇒ **crash loop**
+> （日志逐条重复「拒绝启动 —— 需要凭据但 token 为空」，退避拉到 60s 一次）。
+> **正确顺序 = 先备 token 再让服务出现**；同一份 compose 在**任何尚未备 token 的项目**（含 shanhai）
+> 下次部署都会重演，部署前先把该项目的 `DUCKLE_TOKEN` 备好，或把服务行置 `enabled: false`。
 
 | 项 | 值 / 做法 |
 |---|---|
 | **服务在哪** | `deploy/docker-compose.yml` 的 `sandbox-console`（单元 A），`platform-core-duckle-sandbox:local`，`serve --port 18090`，**无宿主端口** |
-| **地址** | server 侧 `DATA_SANDBOX_URL=http://sandbox-console:18090`（容器 DNS 名 = compose 服务名；只在单元 A 默认网络内可解析） |
-| **token** | `DUCKLE_TOKEN`，**与 console 同一个值**（openship 服务行 env / isSecret；仓内不写）。server 侧用 `DATA_SANDBOX_TOKEN` 注入同一值 |
+| **地址** | server 侧 `DATA_SANDBOX_URL=http://sandbox-console:18090`（容器 DNS 名 = compose 服务名；只在单元 A 默认网络内可解析）。**注入点 = `server` 服务行 env**——compose 的 `server.environment` **故意不声明**它（理由见文件内注释：`${}` 插值在本地会读 `deploy/.env`/shell，写空值反覆盖真值） |
+| **token** | `DUCKLE_TOKEN`，**与 console 同一个值**（openship env(isSecret)；仓内不写）。server 侧用 `DATA_SANDBOX_TOKEN` 注入同一值（同样在 `server` 服务行 env） |
+| **token 怎么取** | **自己生成**：引擎不铸 token，`serve --token` 收的就是任意强口令（既有 `lemeng-console-*` 同口径）。生成一次强随机串后，落**三处**：① 项目 env `DUCKLE_TOKEN`(isSecret)（compose 服务行的 `${DUCKLE_TOKEN:-}` 由它插值）② `sandbox-console` 服务行 `DUCKLE_TOKEN` ③ `server` 服务行 `DATA_SANDBOX_TOKEN`。**轮换必须三处同改**，否则一边 401/一边拒起 |
 | **交换卷** | 命名卷 `sandbox-workspace`：console 看到 `/workspace`，server 看到 `/run/duckle-sandbox`（`DATA_SANDBOX_DIR`）。草案 = `sandbox/<runId>.json`，回执 = `runs/receipts/` |
 | **不要它的项目** | openship 服务行 `enabled: false`（**别只靠 compose profiles**——openship 按自己的服务清单逐服务启停，profiles 对它无效，见 mb-proxy 的教训） |
 | **默认档凭据** | **无**：沙箱容器不注入任何 ZOS/LEMENG 凭据 ⇒ 源端只能是公开/无鉴权端点。按账套 opt-in 的只读凭据档**待沉淀**（一个账套 = 一个 sandbox 服务，理由同 ADR-0014） |
@@ -918,6 +927,13 @@ docker exec <server 容器> node -e "fetch('http://sandbox-console:18090/healthz
 
 排障入口与 L0 管线同规：**回执**（`runs/receipts/`）带逐节点 `status/rows/durationMs`，
 **console 自己的日志**看 `serve` 起没起来（token 为空时 entrypoint 会拒起，见 `deploy/duckle/entrypoint.sh`）。
+
+**部署告警怎么读（2026-10-23 实测）**：两种告警要分开——
+`it restarted 3 times in the first 15s (exit code 1)` 是**真问题**（进程起不来，优先查 token / 命令）；
+`"sandbox-console" never answered at <容器IP>:13000/healthz` 是**误报**：openship 的端口探针固定按
+`13000` 探，而本服务听 `18090` 且**无宿主端口**。判「起没起」看容器 `running` + 它自己的日志
+（成功形状 = `management console on http://0.0.0.0:18090` + `sign-in required`），别看那条探针。
+`postgres ... :5432/healthz` 同理（HTTP 探针打的是 PG 端口）。
 
 ## 关联
 
