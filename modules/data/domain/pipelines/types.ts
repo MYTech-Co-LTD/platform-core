@@ -8,13 +8,52 @@ export interface PipelineRunRecord {
   runId: string
   pipelineId: string
   startedAt: string
-  status: 'ok' | 'failed' | 'running'
+  /** 引擎真实词汇的归一：`error → failed`；`cancelled` / `interrupted` 原样；未知值 → `unknown`（rawStatus 留原值）。 */
+  status: 'ok' | 'failed' | 'running' | 'cancelled' | 'interrupted' | 'unknown'
+  rawStatus?: string
   endedAt?: string
   rows?: number
   error?: string
+  durationMs?: number
+  trigger?: string
+  /** 来源账套名：同一 pipeline_id 可在多个 workspace 各有一份记录，不能混成一条。 */
+  source?: string
 }
 
-export type PipelineRunSource = (q: { pipelineId?: string; limit: number }) => Promise<PipelineRunRecord[]>
+/** 读不到的一个来源（workspace 名 + 原因摘要）。非空 ⇒ 结果的**缺席不可证**。 */
+export interface RunSourceIssue { workspace: string; detail: string }
+
+export interface RunListQuery { pipelineId?: string; limit: number }
+
+export interface RunListResult {
+  runs: PipelineRunRecord[]
+  /** 结果被 limit 截断，或任一被扫描管线已达保留上限（更早的记录看不到）。 */
+  truncated: boolean
+  unreadable: RunSourceIssue[]
+  warnings: string[]
+  /** 参与排序/筛选的记录总数（截断前）。 */
+  scanned: number
+}
+
+export interface RunGetResult {
+  run: PipelineRunRecord | null
+  /** 缺席是否可证；false ⇒ 调用方只能回 unknown，不许回 not_found。 */
+  absenceProven: boolean
+  /** 命中的原始收据（有则带出，供排障看逐节点结果）。 */
+  receipt?: Record<string, unknown>
+  unreadable: RunSourceIssue[]
+  warnings: string[]
+  scanned: number
+}
+
+/**
+ * 运行记录来源。**对象而非函数**：`get` 直读收据，避免被 `list` 的「最近 N 条」窗口误判；
+ * 两个方法都返回结构化信号（截断 / 不可读 / 缺席可证），因为「未知 ≠ 没有」要靠它们落地。
+ */
+export interface PipelineRunSource {
+  list(q: RunListQuery): Promise<RunListResult>
+  get(runId: string): Promise<RunGetResult>
+}
 
 export interface PipelineDeps {
   roots: PipelineRoots

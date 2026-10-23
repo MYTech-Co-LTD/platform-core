@@ -16,6 +16,7 @@ import { getPipelineImpl, listPipelinesImpl } from '../domain/pipelines/read'
 import type { PipelineDeps, PipelineImpl } from '../domain/pipelines/read'
 import { getPipelineRunImpl, listPipelineRunsImpl } from '../domain/pipelines/runs'
 import type { PipelineRunSource } from '../domain/pipelines/runs'
+import { runSourceFromEnv } from '../domain/pipelines/run-source'
 import { proposeContractChangeImpl, proposePipelineChangeImpl } from '../domain/pipelines/propose'
 import { runPipelineSandboxImpl } from '../domain/pipelines/sandbox'
 import type { McpDeps, McpToolGroup, McpToolResult } from './mcp-rpc'
@@ -26,9 +27,15 @@ export interface PipelineWiring {
   runs: PipelineRunSource | null
 }
 
-/** 缺省装配：仓内路径（`rootsOf` 按模块位置解析 ⇒ 镜像内 /app，与 pnpm 脚本 cwd=apps/server 无关）+ process.env + 运行记录 seam 未接通。 */
+/**
+ * 缺省装配：仓内路径（`rootsOf` 按模块位置解析 ⇒ 镜像内 /app，与 pnpm 脚本 cwd=apps/server 无关）
+ * + process.env + 运行记录来源。
+ *
+ * 运行记录来源**按 env 决定**：`DATA_RUN_DIRS` 未配置 ⇒ `null`（seam：`runs_source_not_wired`
+ * 语义不变）；配置了 ⇒ 只读文件源（部署期把 console 的 `runs/` 以 `:ro` 挂进来）。
+ */
 export function defaultPipelineWiring(env: Record<string, string | undefined> = process.env): PipelineWiring {
-  return { roots: rootsOf(env), env, runs: null }
+  return { roots: rootsOf(env), env, runs: runSourceFromEnv(env) }
 }
 
 const IMPLS: Record<string, PipelineImpl> = {

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
-import { makePipelineTools, verdictOf } from './mcp-pipeline-tools'
+import { defaultPipelineWiring, makePipelineTools, verdictOf } from './mcp-pipeline-tools'
 import type { McpDeps } from './mcp-rpc'
 import type { Requester } from '../domain/authz'
 
@@ -96,6 +96,16 @@ describe('makePipelineTools.call', () => {
     } as never
     await expect(g.call(depsOf({ pool }), 'list_pipelines', {})).rejects.toThrow('boom')
     expect(auditInserts).toBe(1)   // 没有第二次 INSERT（也就不会有 error/tool_exception 假错行）
+  })
+})
+
+describe('defaultPipelineWiring：运行记录来源按 env 决定', () => {
+  it('DATA_RUN_DIRS 未配置 ⇒ runs=null（seam 语义不变）', () => {
+    expect(defaultPipelineWiring({}).runs).toBeNull()
+    expect(defaultPipelineWiring({ DATA_RUN_DIRS: '  ' }).runs).toBeNull()
+  })
+  it('配置了 ⇒ 接只读文件源', () => {
+    expect(defaultPipelineWiring({ DATA_RUN_DIRS: '3120=/run/duckle-runs/3120' }).runs).not.toBeNull()
   })
 })
 
