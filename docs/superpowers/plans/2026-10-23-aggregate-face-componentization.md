@@ -375,7 +375,6 @@ git commit -m "feat(data): 具名行域 + detail.filter 由组件域 LUB 派生�
 - Produces:
   - `compilePerGroup({ measure, keys, baseAlias }) => string` —— `<expr>` 在 `keys` 分组上的 per-group 表达式（用于 CTE）
   - `compileAggregate({ measure, column, valueExpr }) => string` —— 指标粒度的聚合（`sum(<value>)::numeric(20,2)`）
-  - `compileShadowColumns(measures, spec) => string` —— 供 Task 5 的生成器写标记区
 
 - [ ] **Step 1: 写失败测试**
 
@@ -486,6 +485,8 @@ export function renderFctMeasures(measures, columns) {
     const [name, grain] = key.split('@')
     const keys = GRAIN_KEYS[grain]
     if (!keys) throw new Error(`未知 grain \`${grain}\`（只认 ${Object.keys(GRAIN_KEYS).join(' / ')}）`)
+    // 声明自洽：measure.grain 必须与键名后缀一致（`line_amount@line` 却声明 grain:[order] = 声明面自相矛盾）
+    if (m.grain && m.grain[0] !== grain) throw new Error(`组件 ${key} 的 grain ${JSON.stringify(m.grain)} 与键名后缀 @${grain} 不一致`)
     ctes.push(`${name}__gen as (\n    ${compilePerGroup({ measure: m, keys, baseAlias: 'base' })}\n)`)
     cols.push(compileAggregate({ measure: m, column: `${name}__gen`, valueExpr: `${name}__gen.measure_value` }))
   }
