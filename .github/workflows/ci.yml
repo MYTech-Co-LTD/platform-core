@@ -128,6 +128,14 @@ jobs:
       # 手改投影/漏跑生成器 ⇒ 这里红（B10 已降级为保险丝）。
       # ⚠️ 契约未回填 `expr` 时生成器**跳过**该契约（打印一行提示，不是红）——存量回填后此闸才覆盖其产出。
       - run: pnpm exec tsx scripts/gen-data-projection.mjs --check
+      # fct 度量列影子区（P3.0 聚合面组件化 / issue #1012）：`fct_retail_sale.sql` 里
+      # `-- BEGIN/END GENERATED MEASURES` 之间由 `l1_metrics.yml` 的 measure 生成（基面 where 来自
+      # 具名行域、两阶段编译）。判据 = **标记区逐字节 == 生成物**：手改区内 ⇒ 这里红
+      # （这正是影子列的设计前提——生成列必须与手写列**独立**算、由 singular test 逐分对账，
+      #  手改它就等于两边同时改，对账形同虚设）。区外（旧实现）改动不受影响。
+      # 纯静态：只读仓内文本，不连库、不跑 dbt。**怎么修**：跑
+      # `pnpm exec tsx scripts/gen-fct-measures.mjs` 重新生成后一并提交。
+      - run: pnpm exec tsx scripts/gen-fct-measures.mjs --check
       # 数据面投递门禁（issue #199；正典 deploy/data-plane-deploy-sop.md §E.3）：判据三条——
       # ① lock 首行自校验（截断/被改必对不上）；② lock ↔ 工作区逐文件 sha256/落地路径/模式一致
       # （**改了清单覆盖的任一文件却忘了重跑生成器，这里红**——S1 之前 dbt/ 有 5 个文件静默漂在

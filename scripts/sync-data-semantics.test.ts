@@ -17,8 +17,10 @@
 //    metric-store/metrics 等测试文件并行的 L1 夹具（跨文件擦数据，症状是随机红）。
 // check-data-models 的 L2 同源断言**不在这里**——那是 T9 的面。
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse as parseYaml } from 'yaml'
 import {
   EXIT_DRIFT,
   EXIT_OK,
@@ -36,11 +38,16 @@ import {
   deriveTotalable,
   additivityOf,
   composeOf,
+  detailFilterOf,
   diffDeclarations,
+  domainLub,
+  domainsOf,
   drillOf,
+  resolveDomain,
   drillTripleOf,
   exitCodeFor,
   formatDiff,
+  measureOf,
   measuresOf,
   parseArgs,
   readDeclarations,
@@ -958,7 +965,10 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     // （assert_drill_net_sales_matches_fct）atomic_value 的两层括号形状
     // `((case…) - (sum(case…)))`；若在这里再整串包一层，终态会多出第三层（无害但无典）。
     const rows = declarationsFromYaml({
-      measures: { 'sale_amount@order': '(sum(x))', 'return_amount@line': 'sum(y)' },
+      measures: {
+        'sale_amount@order': { expr: '(sum(x))', additivity: 'flow' },
+        'return_amount@line': { expr: 'sum(y)', additivity: 'flow' },
+      },
       metrics: [{ ...base, compose: 'sale_amount@order - return_amount@line', dimensions: dims, detail }],
     })
     expect(rows[0].drillExpr).toBe('((sum(x))) - (sum(y))')
@@ -996,7 +1006,7 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     // 行组装面按键各自判缺省（null = 未声明），「三键同现」由写库前的 drillOf 兜手跑——
     // 门禁的同现规则（check-data-models 规则 ⑥）是 CI 权威，行组装面不重复抛。
     const rows = declarationsFromYaml({
-      measures: { 'sale_amount@order': 'sum(x)' },
+      measures: { 'sale_amount@order': { expr: 'sum(x)', additivity: 'flow' } },
       metrics: [{ ...base, compose: 'sale_amount@order' }],
     })
     expect(rows[0].drillExpr).toBe('(sum(x))')
@@ -1006,17 +1016,22 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
 
   it('dimensions/detail 形状坏 ⇒ 各自落 null（不猜、不半物化）', () => {
     const rows = declarationsFromYaml({
-      measures: { 'sale_amount@order': 'sum(x)' },
+      measures: { 'sale_amount@order': { expr: 'sum(x)', additivity: 'flow' } },
       metrics: [
         { ...base, compose: 'sale_amount@order', dimensions: [], detail },
         { ...base, compose: 'sale_amount@order', dimensions: [123], detail },
         { ...base, compose: 'sale_amount@order', dimensions: dims, detail: 'vw_x' },
-        { ...base, compose: 'sale_amount@order', dimensions: dims, detail: { relation: 'vw_x' } },
       ],
     })
     for (const r of rows) {
       expect(r.drillDims === null || r.drillDetail === null, JSON.stringify(r.drillDims)).toBe(true)
     }
+    // ⚠️ P3.0 Task 3 起 `detail: { relation }`（filter 缺席）**不再落 null**：要么能从组件域派生，
+    // 要么响亮失败——静默落 null = 明细面 NO_DETAIL_BINDING，与「声明了下钻」的意图相左。
+    expect(() => declarationsFromYaml({
+      measures: { 'sale_amount@order': { expr: 'sum(x)', additivity: 'flow' } },
+      metrics: [{ ...base, compose: 'sale_amount@order', dimensions: dims, detail: { relation: 'vw_x' } }],
+    })).toThrow(/缺 domain/)
   })
 
   it('★ 真事实源：net_sales 的下钻三键物化；未声明 compose 的指标全 null', () => {
@@ -1073,7 +1088,7 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     const cols = [{ col: 'order_detail_std_price', grantedBy: 'data:cost' }]
     const withCols = declarationsFromYaml({
       metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail: { ...detail, columns: cols } }],
-      measures: { 'a@b': 'sum(x)' },
+      measures: { 'a@b': { expr: 'sum(x)', additivity: 'flow' } },
     })
     expect(withCols[0].drillDetail).toEqual({
       relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'", columns: cols,
@@ -1081,7 +1096,7 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
 
     const without = declarationsFromYaml({
       metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail }],
-      measures: { 'a@b': 'sum(x)' },
+      measures: { 'a@b': { expr: 'sum(x)', additivity: 'flow' } },
     })
     expect(without[0].drillDetail).toEqual({ relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'" })
   })
@@ -1089,7 +1104,7 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
   it('detail.columns 形状坏 ⇒ 响亮失败（sync 手跑路径，不静默物化坏权限声明）', () => {
     const mk = (columns: unknown) => () => declarationsFromYaml({
       metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail: { ...detail, columns } }],
-      measures: { 'a@b': 'sum(x)' },
+      measures: { 'a@b': { expr: 'sum(x)', additivity: 'flow' } },
     })
     expect(mk([])).toThrow(/非空数组/)
     expect(mk([{ col: 'order_detail_std_price', granted_by: 'data:cost' }])).toThrow(/未知键/)
@@ -1104,7 +1119,7 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
     // 报红；sync 若在这里回 null（= 未声明），手跑就会把那份坏声明静默落库——那列对所有人缺席且零报错。
     expect(() => declarationsFromYaml({
       metrics: [{ ...base, compose: 'a@b', dimensions: dims, detail: { ...detail, columns: null } }],
-      measures: { 'a@b': 'sum(x)' },
+      measures: { 'a@b': { expr: 'sum(x)', additivity: 'flow' } },
     })).toThrow(/非空数组/)
   })
 
@@ -1128,20 +1143,26 @@ describe('declarationsFromYaml：下钻编译（measures + compose，spec 2026-1
 })
 
 describe('measuresOf / composeOf —— 下钻编译的纯函数面（spec 2026-10-21 §2.3）', () => {
-  it('measuresOf：缺省 ⇒ 空 Map；形状坏（数组 / 键不合 <snake>@<snake> / 空体 / 分号）⇒ 响亮失败', () => {
+  it('measuresOf：缺省 ⇒ 空 Map；形状坏（数组 / 键不合 <snake>@<snake> / 字符串形态 / 空 expr / 缺 additivity / 分号）⇒ 响亮失败', () => {
     expect(measuresOf({}).size).toBe(0)
     expect(measuresOf({ measures: undefined }).size).toBe(0)
     expect(measuresOf(null).size).toBe(0)
     expect(() => measuresOf({ measures: ['a@b'] })).toThrow(/映射/)
-    expect(() => measuresOf({ measures: { 'Sale@b': 'sum(x)' } })).toThrow(/形态不合规/)
-    expect(() => measuresOf({ measures: { 'a@b': '' } })).toThrow(/形态不合规/)
-    expect(() => measuresOf({ measures: { 'a@b': 'sum(x); delete' } })).toThrow(/分号/)
-    // 合法：剥首尾空白（YAML 折叠标量的常态），体原样进 Map
-    expect(measuresOf({ measures: { 'a@b': '  sum(x)  ' } }).get('a@b')).toBe('sum(x)')
+    expect(() => measuresOf({ measures: { 'Sale@b': { expr: 'sum(x)', additivity: 'flow' } } })).toThrow(/形态不合规/)
+    // 字符串形态（P3.0 起拒绝：表达不了 additivity）——与门禁同一判据（measureOf）
+    expect(() => measuresOf({ measures: { 'a@b': 'sum(x)' } })).toThrow(/对象形态/)
+    expect(() => measuresOf({ measures: { 'a@b': { expr: '', additivity: 'flow' } } })).toThrow(/expr/)
+    expect(() => measuresOf({ measures: { 'a@b': { expr: 'sum(x)' } } })).toThrow(/additivity/)
+    expect(() => measuresOf({ measures: { 'a@b': { expr: 'sum(x); delete', additivity: 'flow' } } })).toThrow(/分号/)
+    // 合法：expr 剥首尾空白（YAML 折叠标量的常态），解析出的对象进 Map
+    expect(measuresOf({ measures: { 'a@b': { expr: '  sum(x)  ', additivity: 'flow' } } }).get('a@b')?.expr).toBe('sum(x)')
   })
 
   it('composeOf：括号包裹保优先级（(a) - (b) 形态）；文法检查先于引用替换；compose 缺省 ⇒ null', () => {
-    const measures = measuresOf({ measures: { 'sale@x': 'sum(a)', 'return@y': 'sum(b)' } })
+    const measures = measuresOf({ measures: {
+      'sale@x': { expr: 'sum(a)', additivity: 'flow' },
+      'return@y': { expr: 'sum(b)', additivity: 'flow' },
+    } })
     expect(composeOf('sale@x - return@y', 'm:1:m', measures)).toBe('(sum(a)) - (sum(b))')
     // 乘除/数字/其它标识符 ⇒ 文法外（先于「未声明组件」被报告）
     expect(() => composeOf('ghost@x * 2', 'm:1:m', measures)).toThrow(/文法外/)
@@ -1179,5 +1200,141 @@ describe('measuresOf / composeOf —— 下钻编译的纯函数面（spec 2026-
     })
     // dims 是拷贝不是引用：库行数组后续变更不得渗进比对行
     expect(t.drillDims).not.toBe(dims)
+  })
+})
+
+describe('measureOf —— measure 对象形态（P3.0 唯一解析实现，门禁 import 它）', () => {
+  it('measure 对象形态：合法字段解析；字符串形态与 missing additivity 抛错', () => {
+    const ok = measureOf({ expr: 'sum(sale_money)', domain: 'sale_finished', grain: ['order'], additivity: 'flow', unit: 'CNY' })
+    expect(ok.expr).toBe('sum(sale_money)')
+    expect(ok.domain).toBe('sale_finished')
+    expect(ok.additivity).toBe('flow')
+    expect(() => measureOf('sum(sale_money)')).toThrow(/对象形态|additivity/)
+    expect(() => measureOf({ expr: 'sum(x)' })).toThrow(/additivity/)
+    expect(() => measureOf({ expr: 'sum(x)', additivity: 'unknown' })).toThrow(/additivity/)
+    expect(() => measureOf({ expr: 'sum(x)', additivity: 'flow', domain: "state = 'FINISHED'" })).toThrow(/具名行域/)
+    expect(() => measureOf({ expr: 'sum(x)', additivity: 'flow', bogus: 1 })).toThrow(/未知键/)
+  })
+})
+
+// ── 具名行域 + detail.filter 派生（P3.0 Task 3）───────────────────────────────────
+// `domains:` 是行域的事实源：完整谓词沿 `extends` 链自根向下 `and` 拼出；
+// 下钻面的 `detail.filter` 不再手写，而是取所引用组件域的 **LUB**（最小上界）。
+// 为什么 LUB 是安全的：下钻行域必须**≥**聚合面每个组件自己的行域（少一行 = 明细与合计对不上），
+// 而放宽到 `true` 会让下钻面悄悄多出别的行域的行且零报错 ⇒ 无公共祖先时必须响亮失败。
+describe('具名行域（domains:）与 detail.filter 派生（P3.0 Task 3）', () => {
+  const DOMAINS = {
+    finished: { filter: "state = 'FINISHED'" },
+    sale_finished: { extends: 'finished', filter: "order_transaction_type = 'SALE_ORDER'" },
+    return_finished: { extends: 'finished', filter: "order_transaction_type like '%RETURN%'" },
+  }
+
+  it('具名行域：完整谓词沿链拼接；LUB = 最近公共祖先', () => {
+    expect(resolveDomain('sale_finished', DOMAINS)).toBe("state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'")
+    expect(domainLub(['sale_finished', 'return_finished'], DOMAINS)).toBe('finished')
+    expect(domainLub(['sale_finished'], DOMAINS)).toBe('sale_finished')
+  })
+
+  it('父域含顶层 or ⇒ 拼接时给该段加括号（否则 and 优先级把父域吃掉）', () => {
+    const d = {
+      root: { filter: "state = 'FINISHED' or state = 'REPAID'" },
+      child: { extends: 'root', filter: "system_book = '3120'" },
+    }
+    // 不加括号的话是 `a or b and c`，SQL 把它解成 `a or (b and c)` ⇒ 父域的另一支绕过子域条件。
+    expect(resolveDomain('child', d)).toBe("(state = 'FINISHED' or state = 'REPAID') and system_book = '3120'")
+    // 字符串层面钉住「or 段被括号包住」这件事（不是只钉整串）
+    expect(resolveDomain('child', d)).toMatch(/^\([^()]*\bor\b[^()]*\)\s+and\s+/)
+
+    // 不含**顶层**析取 ⇒ 不加括号：括号内的 or 与字符串字面量里的 or 都不该触发
+    expect(resolveDomain('a', { a: { filter: '(x = 1 or y = 2)' } })).toBe('(x = 1 or y = 2)')
+    // 词边界不只认空白：括号紧邻的 or 同样是顶层析取
+    expect(resolveDomain('a', { a: { filter: '(x = 1)or(y = 2)' } })).toBe('((x = 1)or(y = 2))')
+    expect(resolveDomain('a', { a: { filter: 'x = 1 or(y = 2)' } })).toBe('(x = 1 or(y = 2))')
+    expect(resolveDomain('a', { a: { filter: "note = 'a or b'" } })).toBe("note = 'a or b'")
+    expect(resolveDomain('a', { a: { filter: "order_transaction_type = 'SALE_ORDER'" } }))
+      .toBe("order_transaction_type = 'SALE_ORDER'")
+  })
+
+  it('回归：真仓三条行域编译结果逐字不变（无顶层析取 ⇒ 不加括号）', () => {
+    // 直接读真事实源的 domains:（不经过 metric 行），钉住「迁移前后派生谓词逐字节相同」。
+    const parsed = parseYaml(readFileSync(path.join(ROOT, 'dbt/semantics/l1_metrics.yml'), 'utf8'))
+    const real = domainsOf(/** @type {Record<string, unknown>} */ (parsed))
+    expect(resolveDomain('finished', real)).toBe("state = 'FINISHED'")
+    expect(resolveDomain('sale_finished', real)).toBe("state = 'FINISHED' and order_transaction_type = 'SALE_ORDER'")
+    expect(resolveDomain('return_finished', real)).toBe("state = 'FINISHED' and order_transaction_type like '%RETURN%'")
+  })
+
+  it('无公共祖先 ⇒ 抛错（fail-closed，不许放宽成 true）', () => {
+    const d = { ...DOMAINS, other: { filter: "state = 'REPAID'" } }
+    expect(() => domainLub(['sale_finished', 'other'], d)).toThrow(/公共祖先|LUB/)
+  })
+
+  it('域环 / 未知域 ⇒ 抛错（拼错的行域名不许静默派生出一条半截谓词）', () => {
+    expect(() => resolveDomain('ghost', DOMAINS)).toThrow(/未知行域/)
+    expect(() => resolveDomain('a', { a: { extends: 'b', filter: 'x = 1' }, b: { extends: 'a', filter: 'y = 2' } }))
+      .toThrow(/环/)
+  })
+
+  it('detail.filter = 组件域 LUB：净销售额两组件 ⇒ finished，谓词逐字等于今日物化值', () => {
+    const measures = new Map([
+      ['sale_amount@order', measureOf({ expr: 'sum(x)', domain: 'sale_finished', additivity: 'flow' })],
+      ['return_amount@line', measureOf({ expr: 'sum(y)', domain: 'return_finished', additivity: 'flow' })],
+    ])
+    expect(detailFilterOf('sale_amount@order - return_amount@line', measures, DOMAINS)).toBe("state = 'FINISHED'")
+  })
+
+  it('组件缺 domain / compose 无引用 / 引用未声明组件 ⇒ 各自抛错（不下钻就明确不下钻，不许猜）', () => {
+    const noDomain = new Map([['a@b', measureOf({ expr: 'sum(x)', additivity: 'flow' })]])
+    expect(() => detailFilterOf('a@b', noDomain, DOMAINS)).toThrow(/缺 domain/)
+    expect(() => detailFilterOf('(1)', new Map(), DOMAINS)).toThrow(/没有组件引用/)
+    expect(() => detailFilterOf('ghost@order', new Map(), DOMAINS)).toThrow(/未声明/)
+  })
+
+  it('domainsOf：字符串简写与对象形态同解析；未知键 / 空谓词 / 非蛇形名 ⇒ 抛错', () => {
+    expect(domainsOf({ domains: { finished: "state = 'FINISHED'", sale: { extends: 'finished', filter: 'x = 1' } } }))
+      .toEqual({ finished: { filter: "state = 'FINISHED'" }, sale: { extends: 'finished', filter: 'x = 1' } })
+    expect(domainsOf({})).toEqual({})
+    expect(() => domainsOf({ domains: { x: { filter: 'a = 1', extnds: 'y' } } })).toThrow(/未知键/)
+    expect(() => domainsOf({ domains: { x: { filter: '  ' } } })).toThrow(/非空/)
+    expect(() => domainsOf({ domains: { 'Bad-Name': { filter: 'a = 1' } } })).toThrow(/蛇形/)
+  })
+
+  it('detail.filter 缺席 ⇒ 由组件域派生后物化（declarationsFromYaml 单点）', () => {
+    const rows = declarationsFromYaml({
+      domains: DOMAINS,
+      measures: {
+        'sale_amount@order': { expr: 'sum(x)', domain: 'sale_finished', additivity: 'flow' },
+        'return_amount@line': { expr: 'sum(y)', domain: 'return_finished', additivity: 'flow' },
+      },
+      metrics: [{
+        name: 'lemeng:retail:net_sales', label: 't', definition: 'd', source: 'lemeng',
+        expression: 'sum(fct_retail_sale.net_amount)', grain: ['system_book'],
+        owner: 'o', tier: 'certified', freshness_sla_days: 1,
+        compose: 'sale_amount@order - return_amount@line',
+        dimensions: ['system_book'],
+        // 迁移窗口：YAML 里已经没有 filter 了
+        detail: { relation: 'vw_lemeng_retail_order_line' },
+      }],
+    })
+    expect(rows[0].drillDetail).toEqual({ relation: 'vw_lemeng_retail_order_line', filter: "state = 'FINISHED'" })
+  })
+
+  it('detail.filter 缺席且无法派生 ⇒ 响亮失败（sync 被手跑时也不许静默物化缺行域的明细）', () => {
+    expect(() => declarationsFromYaml({
+      measures: { 'a@b': { expr: 'sum(x)', additivity: 'flow' } },
+      metrics: [{
+        name: 'lemeng:retail:net_sales', label: 't', definition: 'd', source: 'lemeng',
+        expression: 'sum(fct_retail_sale.net_amount)', grain: ['system_book'],
+        owner: 'o', tier: 'certified', freshness_sla_days: 1,
+        compose: 'a@b', dimensions: ['system_book'], detail: { relation: 'vw_x' },
+      }],
+    })).toThrow(/缺 domain/)
+  })
+
+  it('★ 真事实源：两条下钻指标的 filter 是**派生**来的，且逐字等于迁移前的手写值', () => {
+    // 硬判据：YAML 里已删掉 detail.filter，物化结果必须字节不变（"state = 'FINISHED'"）。
+    const byId = new Map(readDeclarations(ROOT).map((r) => [r.id, r]))
+    expect(byId.get('lemeng:retail:net_sales')?.drillDetail?.filter).toBe("state = 'FINISHED'")
+    expect(byId.get('lemeng:retail:order_line')?.drillDetail?.filter).toBe("state = 'FINISHED'")
   })
 })
