@@ -480,6 +480,43 @@ export function deriveParams(/** @type {readonly string[]} */ grain) {
 }
 
 /**
+ * measure 的对象形态（P3.0 聚合面组件化）：`{ expr, domain?, grain?, additivity, unit? }`。
+ *
+ * `grain` 缺省 = `['line']` 语义（组件自述的原子粒度，**仅供门禁校验**，不进 SQL）。
+ * `additivity` 必填：字符串形态无法表达它，P3.0 起一律拒绝。
+ *
+ * @typedef {{ expr: string, domain?: string, grain?: string[], additivity: 'additive'|'semi_additive'|'non_additive', unit?: string }} Measure
+ */
+const MEASURE_KEYS = new Set(['expr', 'domain', 'grain', 'additivity', 'unit'])
+const ADDITIVITY = new Set(['additive', 'semi_additive', 'non_additive'])
+
+/**
+ * measure 的**唯一解析实现**（门禁 `check-data-models` import 它，别在别处再写一份）。
+ *
+ * 为什么拒绝字符串形态：`additivity` 决定合计/半可加/不可加，字符串表达不了它；默认为可加
+ * 会把比率/存量类指标的合计算错数（错数比报错更糟）。
+ *
+ * @param {unknown} v measure 原值（对象形态；字符串形态一律失败）
+ * @returns {Measure}
+ */
+export function measureOf(v) {
+  if (typeof v === 'string') {
+    throw new Error('measure 必须是对象形态 { expr, additivity } —— 字符串形态无法表达 additivity（P3.0 起拒绝）')
+  }
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new Error('measure 必须是对象')
+  const o = /** @type {Record<string, unknown>} */ (v)
+  for (const k of Object.keys(o)) if (!MEASURE_KEYS.has(k)) throw new Error(`measure 有未知键 \`${k}\`（只许 expr/domain/grain/additivity/unit）`)
+  const expr = typeof o.expr === 'string' ? o.expr.trim() : ''
+  if (!expr || expr.includes(';')) throw new Error('measure.expr 必须是非空、不含分号的表达式')
+  const add = o.additivity
+  if (typeof add !== 'string' || !ADDITIVITY.has(add)) throw new Error('measure.additivity 必填且只允许 additive / semi_additive / non_additive')
+  if (o.domain !== undefined && (typeof o.domain !== 'string' || !/^[a-z_][a-z0-9_]*$/.test(o.domain))) throw new Error('measure.domain 必须是 domains: 里的具名行域（蛇形标识符），不是自由 SQL')
+  if (o.grain !== undefined && (!Array.isArray(o.grain) || o.grain.length === 0 || o.grain.some((g) => typeof g !== 'string' || !/^[a-z_][a-z0-9_]*$/.test(g)))) throw new Error('measure.grain 必须是非空蛇形列名数组')
+  if (o.unit !== undefined && (typeof o.unit !== 'string' || !/^[A-Za-z_]+$/.test(o.unit))) throw new Error('measure.unit 必须是简单标识符（CNY / count / ratio）')
+  return /** @type {Measure} */ ({ expr, ...(o.domain ? { domain: o.domain } : {}), ...(o.grain ? { grain: o.grain } : {}), additivity: add, ...(o.unit ? { unit: o.unit } : {}) })
+}
+
+/**
  * 顶层 `measures:` → Map（键 `<snake>@<snake>`；形状由门禁把守，这里再兜一道：非空、无分号）。
  *
  * 为什么 sync 侧还要再兜一道：本脚本会被**手跑**（不经 CI），门禁拦不住手跑路径；

@@ -41,6 +41,7 @@ import {
   drillTripleOf,
   exitCodeFor,
   formatDiff,
+  measureOf,
   measuresOf,
   parseArgs,
   readDeclarations,
@@ -1179,5 +1180,19 @@ describe('measuresOf / composeOf —— 下钻编译的纯函数面（spec 2026-
     })
     // dims 是拷贝不是引用：库行数组后续变更不得渗进比对行
     expect(t.drillDims).not.toBe(dims)
+  })
+})
+
+describe('measureOf —— measure 对象形态（P3.0 唯一解析实现，门禁 import 它）', () => {
+  it('measure 对象形态：合法字段解析；字符串形态与 missing additivity 抛错', () => {
+    const ok = measureOf({ expr: 'sum(sale_money)', domain: 'sale_finished', grain: ['order'], additivity: 'additive', unit: 'CNY' })
+    expect(ok.expr).toBe('sum(sale_money)')
+    expect(ok.domain).toBe('sale_finished')
+    expect(ok.additivity).toBe('additive')
+    expect(() => measureOf('sum(sale_money)')).toThrow(/对象形态|additivity/)
+    expect(() => measureOf({ expr: 'sum(x)' })).toThrow(/additivity/)
+    expect(() => measureOf({ expr: 'sum(x)', additivity: 'unknown' })).toThrow(/additivity/)
+    expect(() => measureOf({ expr: 'sum(x)', additivity: 'additive', domain: "state = 'FINISHED'" })).toThrow(/具名行域/)
+    expect(() => measureOf({ expr: 'sum(x)', additivity: 'additive', bogus: 1 })).toThrow(/未知键/)
   })
 })
