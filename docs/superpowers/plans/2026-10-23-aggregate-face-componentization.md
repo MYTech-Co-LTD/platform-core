@@ -225,10 +225,10 @@ it('无公共祖先 ⇒ 抛错（fail-closed，不许放宽成 true）', () => {
   expect(() => domainLub(['sale_finished', 'other'], d)).toThrow(/公共祖先|LUB/)
 })
 it('detail.filter = 组件域 LUB：净销售额两组件 ⇒ finished，谓词逐字等于今日物化值', () => {
-  const measures = {
-    'sale_amount@order': measureOf({ expr: 'sum(x)', domain: 'sale_finished', additivity: 'flow' }),
-    'return_amount@line': measureOf({ expr: 'sum(y)', domain: 'return_finished', additivity: 'flow' }),
-  }
+  const measures = new Map([
+    ['sale_amount@order', measureOf({ expr: 'sum(x)', domain: 'sale_finished', additivity: 'flow' })],
+    ['return_amount@line', measureOf({ expr: 'sum(y)', domain: 'return_finished', additivity: 'flow' })],
+  ])
   expect(detailFilterOf('sale_amount@order - return_amount@line', measures, DOMAINS)).toBe("state = 'FINISHED'")
 })
 ```
@@ -284,12 +284,12 @@ export function domainLub(names, domains) {
   return common[common.length - 1]
 }
 
-/** @param {string} compose @param {Record<string, Measure>} measures @param {Record<string, {extends?: string, filter: string}>} domains */
+/** @param {string} compose @param {Map<string, Measure>} measures @param {Record<string, {extends?: string, filter: string}>} domains */
 export function detailFilterOf(compose, measures, domains) {
   const refs = [...compose.matchAll(/([a-z_]+@[a-z_]+)/g)].map((m) => m[1])
   if (refs.length === 0) throw new Error(`compose 里没有组件引用：${compose}`)
   const names = refs.map((r) => {
-    const m = measures[r]
+    const m = measures.get(r)
     if (!m) throw new Error(`compose 引用了未声明的组件 ${r}`)
     if (!m.domain) throw new Error(`组件 ${r} 缺 domain —— 下钻行域不能靠放宽，必须显式声明`)
     return m.domain
@@ -449,12 +449,12 @@ export const GRAIN_KEYS = {
   line:  ['system_book', 'bizday', 'branch_num', 'order_no', 'order_detail_num'],
 }
 
-/** @param {Record<string, import('./sync-data-semantics.mjs').Measure>} measures @param {string[]} columns 该 fct 物化的组件键 */
+/** @param {Map<string, import('./sync-data-semantics.mjs').Measure>} measures @param {string[]} columns 该 fct 物化的组件键 */
 export function renderFctMeasures(measures, columns) {
   const ctes = []
   const cols = []
   for (const key of columns) {
-    const m = measures[key]
+    const m = measures.get(key)
     if (!m) throw new Error(`fct 引用了未声明的组件 ${key}`)
     const [name, grain] = key.split('@')
     const keys = GRAIN_KEYS[grain]
