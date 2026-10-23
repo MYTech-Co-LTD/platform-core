@@ -15,8 +15,9 @@
 //   ③ `gen_agg` —— 把各组件**上卷后**的结果按 fct 粒度对齐（full join + coalesce 键）。
 //      ⚠️ 必须先各自上卷再 join：两个组件的阶段 1 粒度不同（订单 / 明细行），细粒度直接 join
 //      会做笛卡尔积、把每侧按对方行数放大（fix round 1 的 Critical）。
-// 本区只产出各组件自己的度量列（现为 `sale_amount` / `return_amount`）。`net_amount` **不在本区、
-// 也不由本生成器产出**：它不属任何单一组件，由 fct 模型最终 SELECT 用上面两列相减得到。
+// 本区产出的列是 `sale_amount__gen` / `return_amount__gen`（生成区的列名，由 fct 模型最终 SELECT
+// 重命名为 `sale_amount` / `return_amount`）。`net_amount` **不在本区、也不由本生成器产出**：
+// 它不属任何单一组件，由最终 SELECT 用上面两列相减得到。
 //
 // ## 为什么只写标记区、且 `--check` 逐字节比对
 //

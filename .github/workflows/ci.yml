@@ -132,7 +132,7 @@ jobs:
       # `fct_retail_sale.sql` 里 `-- BEGIN/END GENERATED MEASURES` 之间由 `l1_metrics.yml` 的
       # measure 生成（基面 where 来自具名行域、两阶段编译）。判据 = **标记区逐字节 == 生成物**：
       # 手改区内 ⇒ 这里红（生成区是声明的唯一投影，手改它就会让线上列与 `l1_metrics.yml` 悄悄
-      # 漂移，而口径的独立复算守卫读的是声明侧，抓不到这种漂移）。区外改动不受影响。
+      # 漂移；值级漂移由 audit_* 独立复算（直打 parquet、不读生成物）在 fct 粒度上守）。区外改动不受影响。
       # 纯静态：只读仓内文本，不连库、不跑 dbt。**怎么修**：跑
       # `pnpm exec tsx scripts/gen-fct-measures.mjs` 重新生成后一并提交。
       - run: pnpm exec tsx scripts/gen-fct-measures.mjs --check

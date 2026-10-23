@@ -1,4 +1,4 @@
-// scripts/gen-fct-measures.test.ts — fct 度量列「影子生成器」（P3.0 聚合面组件化 / issue #1012）。
+// scripts/gen-fct-measures.test.ts — fct 度量列生成区生成器（P3.0 聚合面组件化 / issue #1012）。
 //
 // 断言面分三层，缺一层就会漏一类漂移：
 //   · ① 形状：生成 SQL 的分组键 / 基面 where / 聚合列逐字钉住（两阶段编译落地到 fct 的形状）；
