@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.187.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.186.2...v0.187.0) - 2026-10-23
+- 【新增】data: 运行记录面接线——只读挂载 runs/ + 应用内文件读源 (#1001) ([#1008](https://github.com/MYTech-Co-LTD/platform-core/pull/1008), [658dd7d](https://github.com/MYTech-Co-LTD/platform-core/commit/658dd7d0f33008e5b58ac00bc75ac8fb0e14e833))
+
+
 ## [0.186.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.186.1...v0.186.2) - 2026-10-23
 - 【修复】data: 沙箱写入面改按规范化路径判 + 写入组件 allowlist ([#1006](https://github.com/MYTech-Co-LTD/platform-core/pull/1006), [e16b7af](https://github.com/MYTech-Co-LTD/platform-core/commit/e16b7af1d2a398926f4c8908569a4d8c23705cfa))
 
