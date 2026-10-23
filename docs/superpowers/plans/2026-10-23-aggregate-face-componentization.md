@@ -25,10 +25,9 @@
 **Files:**
 - Modify: `scripts/sync-data-semantics.mjs`（`measureKeys` / measure 读取处）
 - Test: `scripts/sync-data-semantics.test.ts`
-- Test: `scripts/check-data-models.test.ts`
 
 **Interfaces:**
-- Produces: `parseMeasure(value) => { expr: string, domain?: string, grain?: string[], additivity: 'additive'|'semi_additive'|'non_additive', unit?: string }`（导出给门禁复用；**唯一解析实现**）
+- Produces: `measureOf(value) => { expr: string, domain?: string, grain?: string[], additivity: 'flow'|'stock'|'non_additive', unit?: string }`（导出给门禁复用；**唯一解析实现**）
 - 对象形态：`{ expr, domain?, grain?, additivity, unit? }`；`grain` 缺省 = `['line']` 语义（组件自述的原子粒度，仅供门禁校验，不进 SQL）
 
 - [ ] **Step 1: 写失败测试**
@@ -36,15 +35,15 @@
 ```ts
 // scripts/sync-data-semantics.test.ts 追加
 it('measure 对象形态：合法字段解析；字符串形态与 missing additivity 抛错', () => {
-  const ok = measureOf({ expr: 'sum(sale_money)', domain: 'sale_finished', grain: ['order'], additivity: 'additive', unit: 'CNY' })
+  const ok = measureOf({ expr: 'sum(sale_money)', domain: 'sale_finished', grain: ['order'], additivity: 'flow', unit: 'CNY' })
   expect(ok.expr).toBe('sum(sale_money)')
   expect(ok.domain).toBe('sale_finished')
-  expect(ok.additivity).toBe('additive')
+  expect(ok.additivity).toBe('flow')
   expect(() => measureOf('sum(sale_money)')).toThrow(/对象形态|additivity/)
   expect(() => measureOf({ expr: 'sum(x)' })).toThrow(/additivity/)
   expect(() => measureOf({ expr: 'sum(x)', additivity: 'unknown' })).toThrow(/additivity/)
-  expect(() => measureOf({ expr: 'sum(x)', additivity: 'additive', domain: "state = 'FINISHED'" })).toThrow(/具名行域/)
-  expect(() => measureOf({ expr: 'sum(x)', additivity: 'additive', bogus: 1 })).toThrow(/未知键/)
+  expect(() => measureOf({ expr: 'sum(x)', additivity: 'flow', domain: "state = 'FINISHED'" })).toThrow(/具名行域/)
+  expect(() => measureOf({ expr: 'sum(x)', additivity: 'flow', bogus: 1 })).toThrow(/未知键/)
 })
 ```
 
@@ -57,9 +56,9 @@ Expected: FAIL —— `measureOf` 未导出/不存在。
 
 ```js
 // scripts/sync-data-semantics.mjs
-/** @typedef {{ expr: string, domain?: string, grain?: string[], additivity: 'additive'|'semi_additive'|'non_additive', unit?: string }} Measure */
+/** @typedef {{ expr: string, domain?: string, grain?: string[], additivity: 'flow'|'semi_additive'|'non_additive', unit?: string }} Measure */
 const MEASURE_KEYS = new Set(['expr', 'domain', 'grain', 'additivity', 'unit'])
-const ADDITIVITY = new Set(['additive', 'semi_additive', 'non_additive'])
+const ADDITIVITY = new Set(ADDITIVITY_VALUES)  // 与指标级共用：flow / stock / non_additive
 
 /** @param {unknown} v @returns {Measure} */
 export function measureOf(v) {
@@ -122,7 +121,7 @@ it('measures 对象形态：缺 additivity / 字符串形态 / 未知键 ⇒ 拒
 
   const good = { ...base, [METRICS]: base[METRICS].replace(
     '  "sale_amount@order": "sum(fct_retail_sale.net_amount)"',
-    '  "sale_amount@order": { expr: "sum(sale_money)", additivity: additive }') }
+    '  "sale_amount@order": { expr: "sum(sale_money)", additivity: flow }') }
   expect(checkDataModels(fixture(good))).toEqual([])
 })
 ```
@@ -145,7 +144,7 @@ for (const [k, v] of Object.entries(doc.measures)) {
 
 - [ ] **Step 4: 迁移测试夹具**
 
-`drillCompliant()` 里的两个 measure 改对象形态（`{ expr: ..., additivity: additive }`），否则同一提交里「三键齐全 ⇒ 零违规」等用例会因字符串形态红掉；同时把删 measures 的用例（`compose 引用未声明组件`）保持不变。
+`drillCompliant()` 里的两个 measure 改对象形态（`{ expr: ..., additivity: flow }`），否则同一提交里「三键齐全 ⇒ 零违规」等用例会因字符串形态红掉；同时把删 measures 的用例（`compose 引用未声明组件`）保持不变。
 
 - [ ] **Step 5: 迁移 YAML 三个组件**
 
@@ -161,7 +160,7 @@ measures:
         - sum(case when state = 'FINISHED' and order_transaction_type = 'SALE_ORDER' then order_detail_share_discount else 0 end)
       end
     grain: [order]
-    additivity: additive
+    additivity: flow
     unit: CNY
   return_amount@line:
     expr: >-
@@ -171,12 +170,12 @@ measures:
       when order_transaction_type like '%RETURN%' and state = 'FINISHED' then sale_money + order_detail_share_discount
       else 0 end)
     grain: [line]
-    additivity: additive
+    additivity: flow
     unit: CNY
   line_amount@line:
     expr: 'sum(sale_money)'
     grain: [line]
-    additivity: additive
+    additivity: flow
     unit: CNY
 ```
 
@@ -227,8 +226,8 @@ it('无公共祖先 ⇒ 抛错（fail-closed，不许放宽成 true）', () => {
 })
 it('detail.filter = 组件域 LUB：净销售额两组件 ⇒ finished，谓词逐字等于今日物化值', () => {
   const measures = {
-    'sale_amount@order': measureOf({ expr: 'sum(x)', domain: 'sale_finished', additivity: 'additive' }),
-    'return_amount@line': measureOf({ expr: 'sum(y)', domain: 'return_finished', additivity: 'additive' }),
+    'sale_amount@order': measureOf({ expr: 'sum(x)', domain: 'sale_finished', additivity: 'flow' }),
+    'return_amount@line': measureOf({ expr: 'sum(y)', domain: 'return_finished', additivity: 'flow' }),
   }
   expect(detailFilterOf('sale_amount@order - return_amount@line', measures, DOMAINS)).toBe("state = 'FINISHED'")
 })
@@ -355,7 +354,7 @@ git commit -m "feat(data): 具名行域 + detail.filter 由组件域 LUB 派生�
 
 ```ts
 it('两阶段：per-order 表达式先逐单求值、再按指标粒度求和（不是先和后除）', () => {
-  const m = measureOf({ expr: 'sum(a) + max(b)', grain: ['order'], additivity: 'additive' })
+  const m = measureOf({ expr: 'sum(a) + max(b)', grain: ['order'], additivity: 'flow' })
   const cte = compilePerGroup({ measure: m, keys: ['system_book', 'bizday', 'branch_num', 'order_no'], baseAlias: 'base' })
   expect(cte).toContain('group by system_book, bizday, branch_num, order_no')
   expect(cte).toContain('as measure_value')
@@ -364,7 +363,7 @@ it('两阶段：per-order 表达式先逐单求值、再按指标粒度求和（
 })
 
 it('grain 缺失时拒绝编译两阶段（缺省不许猜）', () => {
-  const m = measureOf({ expr: 'sum(a)', additivity: 'additive' })
+  const m = measureOf({ expr: 'sum(a)', additivity: 'flow' })
   expect(() => compilePerGroup({ measure: m, keys: ['order_no'], baseAlias: 'base' })).toThrow(/grain/)
 })
 ```

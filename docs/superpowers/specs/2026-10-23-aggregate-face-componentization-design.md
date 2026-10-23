@@ -118,9 +118,9 @@ measures:
   （fail-closed：不许悄悄放宽成 `true`）；
 - 例：`sale_finished ⊔ return_finished = finished`，`where` 谓词逐字为 `state = 'FINISHED'`——
   与两条指标今日的 `detail.filter` 完全一致（逐字复现是本批的验收判据之一）。
-- **`additivity` 必填**，三值：
-  - `additive`：任意维度上卷 = 先分组求和再相加（金额类）；
-  - `semi_additive`：跨时间不可加、跨实体可加（库存快照类）；
+- **`additivity` 必填**，**与指标级 `additivity` 同一词表**（避免第二套方言）：
+  - `flow`：任意维度上卷 = 先分组求和再相加（金额类）；
+  - `stock`：跨时间不可加、跨实体可加（库存快照类）；
   - `non_additive`：任何上卷都不成立（去重计数、比率）。
   **缺省值不存在**——漏写即门禁红（默认值会把「不知道」伪装成「可加」）。
 - **`unit`**：人读与机器校验用（`CNY` / `count` / `ratio`）；比率类指标必须声明，防止「金额 + 笔数」被同轴展示。
@@ -253,5 +253,5 @@ measures:
 ## 9 已裁决（2026-10-23）
 
 1. **影子对账窗口**：默认 **7 天**；`tier: certified` 的指标取 **14 天**（覆盖跨周与封版重写周期）。
-2. **`additivity` 不允许 `unknown`**：三值必填，漏写/写 `unknown` 均门禁红——不给「不知道」留挡箭牌。
+2. **`additivity` 不允许 `unknown`**：三值（flow / stock / non_additive）必填，漏写/写 `unknown` 均门禁红——不给「不知道」留挡箭牌。
 3. **certified 口径变更的签核载体**：**PR 正文固定节**（Who / Why / 期望数值变化 / 对账窗口）＋ 由 release 流程汇总进发版说明；不单独建 `docs/metric-changelog/`（避免第二份台账）。
