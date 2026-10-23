@@ -115,4 +115,65 @@ describe('sandboxViolations', () => {
     const bad = { ...goodPipeline, nodes: [{ id: 'w', type: 'sink', data: { componentId: 'snk.webhook', properties: { url: 'https://x' } } }] }
     expect(sandboxViolations(bad)[0].message).toContain('webhook')
   })
+  // 前缀必须按**规范化后**的路径判：字面 startsWith 会放过「写着沙箱、实际写生产」的形状（#1005）。
+  it('湖写入的绕过形状一律违规（.. / 编码 / 大小写 / 绝对 / 反斜杠 / 无文件名）', () => {
+    const draft = (key: string) => ({
+      ...goodPipeline,
+      nodes: [{ id: 'k', type: 'sink', data: { componentId: 'snk.minio', properties: { key } } }],
+    })
+    for (const key of [
+      '__sandbox/../prod/x.parquet',      // 字面通过、语义越界
+      'a/../../__sandbox/x',              // 回退越过根
+      '__sandbox/%2e%2e/prod/x',          // 编码的 ..
+      '__sandbox/..%2fprod/x',            // 编码的 /
+      '__SANDBOX/x',                      // S3 键区分大小写 ⇒ 另一个前缀
+      '__sandbox',                        // 没有文件名（目录本身不是产物）
+      '__sandbox/',                       // 同上
+      '/__sandbox/x',                     // 绝对路径 ≠ 相对键
+      '__sandbox/x\\..\\y',               // 反斜杠：不同平台语义不同，判不了就拒
+      '__sandbox/%252e%252e/x',           // 多重编码：不猜层数
+    ]) {
+      expect(sandboxViolations(draft(key)), key).toHaveLength(1)
+    }
+  })
+  it('合法但非规范的形状放行（折叠后仍在沙箱内，不是一刀切拒绝）', () => {
+    const draft = (key: string) => ({
+      ...goodPipeline,
+      nodes: [{ id: 'k', type: 'sink', data: { componentId: 'snk.minio', properties: { key } } }],
+    })
+    for (const key of ['__sandbox//lemeng/x.parquet', './__sandbox/./lemeng/x.parquet']) {
+      expect(sandboxViolations(draft(key)), key).toEqual([])
+    }
+  })
+  it('本地落盘同样按规范化判（越界 / 相对 / 大小写）', () => {
+    const draft = (path: string) => ({
+      ...goodPipeline,
+      nodes: [{ id: 'k', type: 'sink', data: { componentId: 'snk.csv', properties: { path } } }],
+    })
+    for (const path of [
+      '/workspace/logs/sandbox/../prod/x.csv',
+      '/workspace/logs/sandbox/../../etc/passwd',
+      'workspace/logs/sandbox/x.csv',
+      '/workspace/logs/SANDBOX/x.csv',
+    ]) {
+      expect(sandboxViolations(draft(path)), path).toHaveLength(1)
+    }
+    expect(sandboxViolations(draft('/workspace/logs/sandbox//sub/./x.csv'))).toEqual([])
+  })
+  // allowlist：未知写入组件与误标类型的写组件都不能漏（denylist 只拦了 snk.webhook 一个）。
+  it('写入组件走 allowlist（未知组件 / 误标 type 的写组件都违规）', () => {
+    const unknown = { ...goodPipeline, nodes: [{ id: 'k', type: 'sink', data: { componentId: 'snk.ftp', properties: {} } }] }
+    // 断言**理由**而不只是条数：退回 denylist 时 snk.ftp 会掉进 csv 那条前缀分支，
+    // 照样产出 1 条违规 —— 只数条数的话这条用例抓不到退化（变异检查实测）。
+    expect(sandboxViolations(unknown)).toHaveLength(1)
+    expect(sandboxViolations(unknown)[0].message).toContain('只允许写入')
+    const misTyped = {
+      ...goodPipeline,
+      nodes: [{ id: 'w', type: 'transform', data: { componentId: 'snk.webhook', properties: { url: 'https://x' } } }],
+    }
+    expect(sandboxViolations(misTyped)).toHaveLength(1)
+    // 非写组件不受影响（quality 节点照旧放行）。
+    const quality = { ...goodPipeline, nodes: [...goodPipeline.nodes, { id: 'q1', type: 'quality', data: { componentId: 'qa.contract' } }] }
+    expect(sandboxViolations(quality)).toEqual([])
+  })
 })
