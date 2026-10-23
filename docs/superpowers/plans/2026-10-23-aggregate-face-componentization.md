@@ -419,7 +419,7 @@ git commit -m "feat(data): measure 两阶段编译纯函数（#1012）"
 
 **Interfaces:**
 - Consumes: Task 4 的 `compilePerGroup` / `compileAggregate`
-- Produces: `generate(fctPath, measures) => string`；CLI `--check`
+- Produces: `renderFctMeasures(measures, columns) => { ctes, cols }` —— `columns` 是**该 fct 物化的 measure 键列表**（本批 `['sale_amount@order','return_amount@line']`；`line_amount@line` 属 order_line 的视图，不在这里物化）；CLI `--check`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -450,11 +450,13 @@ export const GRAIN_KEYS = {
   line:  ['system_book', 'bizday', 'branch_num', 'order_no', 'order_detail_num'],
 }
 
-/** @param {Record<string, import('./sync-data-semantics.mjs').Measure>} measures */
-export function renderFctMeasures(measures) {
+/** @param {Record<string, import('./sync-data-semantics.mjs').Measure>} measures @param {string[]} columns 该 fct 物化的组件键 */
+export function renderFctMeasures(measures, columns) {
   const ctes = []
   const cols = []
-  for (const [key, m] of Object.entries(measures)) {
+  for (const key of columns) {
+    const m = measures[key]
+    if (!m) throw new Error(`fct 引用了未声明的组件 ${key}`)
     const [name, grain] = key.split('@')
     const keys = GRAIN_KEYS[grain]
     if (!keys) throw new Error(`未知 grain \`${grain}\`（只认 ${Object.keys(GRAIN_KEYS).join(' / ')}）`)
@@ -469,7 +471,14 @@ export function renderFctMeasures(measures) {
 
 - [ ] **Step 4: 改 fct 模型**
 
-`fct_retail_sale.sql` 保留手写 `base` CTE（含 `is_gift` 判别式与 `where <domain>`），其后插入标记区；标记区内为生成的影子 CTE 与影子列；最终 SELECT 同时输出旧列与 `*__gen` 列（**本任务不改旧列**）。
+`fct_retail_sale.sql` 保留手写 `base` CTE（含 `is_gift` 判别式与 `where <domain>`），其后插入标记区：
+
+- 生成的 CTE：`sale_amount__gen`（keys = order 键）、`return_amount__gen`（keys = line 键）；
+- 生成的聚合列：`sale_amount__gen` / `return_amount__gen`；
+- **手写**派生列（不属任何单一 measure）：`(coalesce(sale_amount__gen,0) - coalesce(return_amount__gen,0))::numeric(20,2) as net_amount__gen`；
+- 最终 SELECT 同时输出旧列与三个 `*__gen` 列（**本任务不改旧列**）。
+
+`line_amount@line` **不物化进本 fct**（它属 `vw_lemeng_retail_order_line` 的聚合面）。
 
 - [ ] **Step 5: 跑生成与测试**
 
