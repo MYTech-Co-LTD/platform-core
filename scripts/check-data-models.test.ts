@@ -1528,6 +1528,44 @@ describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', ()
     return files
   }
 
+  /** 下钻夹具 + 契约（`vw_<domain>_<table>` ← contracts/<domain>.<table>.json，与生成器同一约定）。 */
+  const withContract = (col: string): Record<string, string> => {
+    const files = drillCompliant()
+    files[METRICS] = files[METRICS].replace(
+      `    detail: { relation: vw_t, filter: "state = 'FINISHED'" }`,
+      [
+        '    detail:',
+        '      relation: vw_lemeng_retail_detail',
+        `      filter: "state = 'FINISHED'"`,
+        '      columns:',
+        `        - { col: ${col}, grantedBy: data:cost }`,
+      ].join('\n'),
+    )
+    files['dbt/models/lemeng/views/vw_lemeng_retail_detail.sql'] = [
+      'select',
+      "    'acme' as org,",
+      '    system_book,',
+      '    order_detail_std_price',
+      'from staging.stg_lemeng_retail_detail',
+      '',
+    ].join('\n')
+    files['contracts/common/lemeng.retail_detail.json'] = JSON.stringify({
+      domain: 'lemeng',
+      table: 'retail_detail',
+      columns: [{ name: 'system_book' }, { name: 'order_detail_std_price' }],
+    })
+    return files
+  }
+
+  it('detail.columns[].col 按契约列集校验：真列 ⇒ 零违规；拼错 ⇒ 拒（#1009）', () => {
+    expect(checkDataModels(fixture(withContract('order_detail_std_price')))).toEqual([])
+
+    const vs = checkDataModels(fixture(withContract('order_detail_stdprice')))
+    expect(vs).toHaveLength(1)
+    expect(vs[0]?.message).toContain('契约列集')
+    expect(vs[0]?.message).toContain('order_detail_stdprice')
+  })
+
   it('detail.columns 合法条件列 ⇒ 零违规', () => {
     const files = withColumns(['      columns:', '        - { col: order_detail_std_price, grantedBy: data:cost }'])
     expect(checkDataModels(fixture(files))).toEqual([])
