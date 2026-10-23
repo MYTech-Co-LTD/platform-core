@@ -25,7 +25,7 @@ put('contracts/common/lemeng.a.json', {
 })
 const deps: PipelineDeps = {
   roots: { pipelinesRoot: root, contractsRoot: join(root, 'contracts') },
-  runs: null, env: {},
+  runs: null, env: {}, sandbox: null,
 }
 
 // 独立坏件树：一份好管线 + 一份 JSON 坏件（warnings 必须点名，坏 id 必须缺席）。
@@ -39,13 +39,13 @@ writeFileSync(join(brokenRoot, 'pipelines/lemeng.a.b.json'), JSON.stringify({
 writeFileSync(join(brokenRoot, 'pipelines/torn.json'), '{ not json')
 const brokenDeps: PipelineDeps = {
   roots: { pipelinesRoot: brokenRoot, contractsRoot: join(root, 'contracts') },
-  runs: null, env: {},
+  runs: null, env: {}, sandbox: null,
 }
 
 // 根目录**不存在**：读不到 ≠ 没有。
 const missingDeps: PipelineDeps = {
   roots: { pipelinesRoot: join(root, 'no-such-root'), contractsRoot: join(root, 'contracts') },
-  runs: null, env: {},
+  runs: null, env: {}, sandbox: null,
 }
 
 // 有管线、**没有 schedules/**：调度面读不全（≠ 没有调度）。
@@ -56,13 +56,13 @@ writeFileSync(join(schedlessRoot, 'pipelines/lemeng.a.b.json'), JSON.stringify({
 }))
 const schedlessDeps: PipelineDeps = {
   roots: { pipelinesRoot: schedlessRoot, contractsRoot: join(root, 'contracts') },
-  runs: null, env: {},
+  runs: null, env: {}, sandbox: null,
 }
 
 // 管线与调度都在，契约根不可读：contract 字段为 null，但必须机器可辨（incomplete 点名 contracts）。
 const noContractsDeps: PipelineDeps = {
   roots: { pipelinesRoot: root, contractsRoot: join(root, 'no-such-contracts') },
-  runs: null, env: {},
+  runs: null, env: {}, sandbox: null,
 }
 
 // 同 id 两份契约（common + customers/acme）：contractFor 只取第一份 ⇒ 回包必须出 ambiguousContracts。
@@ -76,7 +76,7 @@ for (const rel of ['common', 'customers/acme']) {
 }
 const dupContractsDeps: PipelineDeps = {
   roots: { pipelinesRoot: root, contractsRoot: dupContractsRoot },
-  runs: null, env: {},
+  runs: null, env: {}, sandbox: null,
 }
 
 describe('listPipelinesImpl', () => {

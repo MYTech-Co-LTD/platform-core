@@ -58,11 +58,11 @@ const warnedContractsRoot = makeRoot(
   { 'common/lemeng.a': contractA, 'common/broken': '{not json' },
 )
 const allRoots = [root, partialRoot, prefixRoot, customersRoot, dupRoot, warnedContractsRoot]
-const nopeDeps: PipelineDeps = { roots: { pipelinesRoot: '/nope', contractsRoot: '/nope' }, runs: null, env: {} }
+const nopeDeps: PipelineDeps = { roots: { pipelinesRoot: '/nope', contractsRoot: '/nope' }, runs: null, env: {}, sandbox: null }
 afterAll(() => { for (const r of allRoots) rmSync(r, { recursive: true, force: true }) })
 
 const depsOf = (pipelinesRoot: string, contractsRoot: string): PipelineDeps =>
-  ({ roots: { pipelinesRoot, contractsRoot }, runs: null, env: {} })
+  ({ roots: { pipelinesRoot, contractsRoot }, runs: null, env: {}, sandbox: null })
 const deps: PipelineDeps = depsOf(root, join(root, 'contracts'))
 
 const pipeline = {

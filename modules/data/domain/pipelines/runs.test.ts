@@ -5,7 +5,7 @@ import type {
 } from './types'
 
 const roots = { pipelinesRoot: '/nope', contractsRoot: '/nope' }
-const noSeam: PipelineDeps = { roots, runs: null, env: {} }
+const noSeam: PipelineDeps = { roots, runs: null, env: {}, sandbox: null }
 
 const listRes = (over: Partial<RunListResult> = {}): RunListResult => ({
   runs: [], truncated: false, unreadable: [], warnings: [], scanned: 0, ...over,
@@ -16,12 +16,12 @@ const getRes = (over: Partial<RunGetResult> = {}): RunGetResult => ({
 
 /** 只关心 list 的假来源。 */
 const listOnly = (r: RunListResult): PipelineDeps => ({
-  roots, env: {},
+  roots, env: {}, sandbox: null,
   runs: { list: async () => r, get: async () => getRes() },
 })
 /** 只关心 get 的假来源。 */
 const getOnly = (r: RunGetResult): PipelineDeps => ({
-  roots, env: {},
+  roots, env: {}, sandbox: null,
   runs: { list: async () => listRes(), get: async () => r },
 })
 
@@ -61,14 +61,14 @@ describe('运行记录（seam 接通后转真）', () => {
   })
   it('list：透传过滤与 limit，回 truncated/scanned', async () => {
     const seen: { pipelineId?: string; limit: number }[] = []
-    const deps: PipelineDeps = { roots, env: {}, runs: source(seen) }
+    const deps: PipelineDeps = { roots, env: {}, sandbox: null, runs: source(seen) }
     const out = await listPipelineRunsImpl(deps, { pipelineId: 'p', limit: 1 })
     expect(out.payload).toMatchObject({ status: 'ok', count: 1, truncated: false, scanned: 2 })
     expect((out.payload as { runs: { runId: string }[] }).runs[0].runId).toBe('r2')
     expect(seen[0]).toEqual({ pipelineId: 'p', limit: 1 })
   })
   it('get：命中回 run，未命中且缺席可证 ⇒ not_found', async () => {
-    const deps: PipelineDeps = { roots, env: {}, runs: source() }
+    const deps: PipelineDeps = { roots, env: {}, sandbox: null, runs: source() }
     expect((await getPipelineRunImpl(deps, { runId: 'r1' })).payload).toMatchObject({ status: 'ok', run: { runId: 'r1' } })
     expect((await getPipelineRunImpl(deps, { runId: 'zz' })).payload).toMatchObject({ status: 'not_found', runId: 'zz' })
   })
@@ -83,7 +83,7 @@ describe('运行记录（seam 接通后转真）', () => {
   it('limit 越界/非法 ⇒ 缺省 20，硬顶 50', async () => {
     const seen: number[] = []
     const deps: PipelineDeps = {
-      roots, env: {},
+      roots, env: {}, sandbox: null,
       runs: {
         list: async (q) => { seen.push(q.limit); return listRes() },
         get: async () => getRes(),
@@ -100,7 +100,7 @@ describe('pipelineId 形状校验（fail closed）', () => {
   it('非字符串 ⇒ denied / bad_param / invalid_pipeline_id，且不透传给来源', async () => {
     let called = 0
     const deps: PipelineDeps = {
-      roots, env: {},
+      roots, env: {}, sandbox: null,
       runs: {
         list: async () => { called += 1; return listRes() },
         get: async () => getRes(),
@@ -121,7 +121,7 @@ describe('pipelineId 形状校验（fail closed）', () => {
   it('空串是 schema 合法值 ⇒ 视为「不过滤」，回 null', async () => {
     let seen: string | undefined = 'sentinel'
     const deps: PipelineDeps = {
-      roots, env: {},
+      roots, env: {}, sandbox: null,
       runs: {
         list: async (q) => { seen = q.pipelineId; return listRes() },
         get: async () => getRes(),
@@ -145,7 +145,7 @@ describe('pipelineId 形状校验（fail closed）', () => {
   it('runId 畸形（穿越/含斜杠/前导点）⇒ denied，且不触来源', async () => {
     let called = 0
     const deps: PipelineDeps = {
-      roots, env: {},
+      roots, env: {}, sandbox: null,
       runs: {
         list: async () => listRes(),
         get: async () => { called += 1; return getRes() },

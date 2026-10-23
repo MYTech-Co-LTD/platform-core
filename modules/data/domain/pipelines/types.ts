@@ -3,6 +3,7 @@
 // runs 的实现标注要 PipelineImpl。两边各自 import type 本文件，再对外转出，下游路径不变。
 import type { ToolImplResult } from '../toolbox/registry'
 import type { PipelineRoots } from './defs'
+import type { SandboxRunner } from './sandbox-runner'
 
 export interface PipelineRunRecord {
   runId: string
@@ -59,6 +60,8 @@ export interface PipelineDeps {
   roots: PipelineRoots
   runs: PipelineRunSource | null
   env: Record<string, string | undefined>
+  /** 沙箱执行面；`null` = 未接（`run_pipeline_sandbox` 只做校验，不执行）。 */
+  sandbox: SandboxRunner | null
 }
 
 export type PipelineImpl = (deps: PipelineDeps, args: Record<string, unknown>) => Promise<ToolImplResult>

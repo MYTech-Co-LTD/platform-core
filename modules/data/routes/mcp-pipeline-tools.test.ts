@@ -29,7 +29,7 @@ const depsOf = (over: Partial<McpDeps> = {}): McpDeps => ({
   org: 'acme', requester, adoptedSources: new Set(), ...over,
 })
 const wiring = (env: Record<string, string | undefined> = {}) => ({
-  roots: { pipelinesRoot: root, contractsRoot: join(root, 'contracts') }, env, runs: null,
+  roots: { pipelinesRoot: root, contractsRoot: join(root, 'contracts') }, env, runs: null, sandbox: null,
 })
 
 describe('makePipelineTools.list', () => {
