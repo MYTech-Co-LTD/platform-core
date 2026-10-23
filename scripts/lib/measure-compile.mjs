@@ -32,6 +32,10 @@ export function compilePerGroup({ measure, keys, baseAlias }) {
  * @returns {string}
  */
 export function compileAggregate({ measure, column, valueExpr }) {
-  if (measure.additivity === 'non_additive') throw new Error(`non_additive measure 不能直接求和（column=${column}）`)
+  // fail-open 的反面：只拒绝 `non_additive` 时，缺 additivity 的手工对象会被**静默求和**。
+  // 唯一合法来源 measureOf 已强制三值，这里做纵深防御（spec 2026-10-23 §3.1：不给「不知道」留默认）。
+  if (measure.additivity !== 'flow' && measure.additivity !== 'stock') {
+    throw new Error(`measure.additivity=${JSON.stringify(measure.additivity)} 不能直接求和（只允许 flow / stock；column=${column}）`)
+  }
   return `sum(${valueExpr})::numeric(20,2) as ${column}`
 }

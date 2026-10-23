@@ -29,7 +29,12 @@ describe('compilePerGroup —— 在组件 grain 键上逐组求值', () => {
     expect(agg).toBe('sum(measure_value)::numeric(20,2) as sale_amount__gen')
   })
 
-  it('grain 缺失时拒绝编译两阶段（缺省不许猜）', () => {
+  it('additivity 缺失/非法 ⇒ 拒绝聚合（不许静默求和）', () => {
+  const m = { expr: 'sum(a)' } as unknown as import('../sync-data-semantics.mjs').Measure
+  expect(() => compileAggregate({ measure: m, column: 'x__gen', valueExpr: 'measure_value' })).toThrow(/additivity/)
+})
+
+it('grain 缺失时拒绝编译两阶段（缺省不许猜）', () => {
     const m = measureOf({ expr: 'sum(a)', additivity: 'flow' })
     expect(() => compilePerGroup({ measure: m, keys: ['order_no'], baseAlias: 'base' })).toThrow(/grain/)
   })
