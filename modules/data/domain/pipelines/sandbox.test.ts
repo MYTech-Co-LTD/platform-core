@@ -7,10 +7,14 @@ import type { PipelineDeps } from './types'
 const depsWith = (sandbox: SandboxRunner | null): PipelineDeps =>
   ({ roots: { pipelinesRoot: '/nope', contractsRoot: '/nope' }, runs: null, env: {}, sandbox })
 
+/** 引擎反序列化必填 `position` / `data.label`（缺了 `POST /api/run` 直接 400）⇒ 草案统一补齐。 */
+const node = (id: string, type: string, data: Record<string, unknown>, x = 0) =>
+  ({ id, type, position: { x, y: 0 }, data: { label: id, ...data } })
+
 const good = {
   name: 'lemeng.sbx', nodes: [
-    { id: 's1', type: 'source', data: { componentId: 'src.rest', properties: {} } },
-    { id: 'k1', type: 'sink', data: { componentId: 'snk.minio', properties: { key: '__sandbox/lemeng/sbx/all.parquet' } } },
+    node('s1', 'source', { componentId: 'src.rest', properties: {} }),
+    node('k1', 'sink', { componentId: 'snk.minio', properties: { key: '__sandbox/lemeng/sbx/all.parquet' } }, 200),
   ], edges: [{ source: 's1', target: 'k1' }],
 }
 
@@ -43,13 +47,13 @@ describe('runPipelineSandboxImpl —— 校验闸（未接执行面）', () => {
     expect(out.payload).toMatchObject({ status: 'refused', reason: 'invalid_draft' })
   })
   it('写正式湖 ⇒ denied/sandbox_prefix_violation', async () => {
-    const bad = { ...good, nodes: [good.nodes[0], { id: 'k1', type: 'sink', data: { componentId: 'snk.minio', properties: { key: 'lemeng/sbx/all.parquet' } } }] }
+    const bad = { ...good, nodes: [good.nodes[0], node('k1', 'sink', { componentId: 'snk.minio', properties: { key: 'lemeng/sbx/all.parquet' } }, 200)] }
     const out = await runPipelineSandboxImpl(depsWith(null), { pipeline: bad })
     expect(out.isError).toBe(true)
     expect(out.payload).toMatchObject({ status: 'denied', reason: 'sandbox_prefix_violation' })
   })
   it('webhook 出口 ⇒ 同样被拒', async () => {
-    const bad = { ...good, nodes: [good.nodes[0], { id: 'k1', type: 'sink', data: { componentId: 'snk.webhook', properties: { url: 'https://x' } } }] }
+    const bad = { ...good, nodes: [good.nodes[0], node('k1', 'sink', { componentId: 'snk.webhook', properties: { url: 'https://x' } }, 200)] }
     expect((await runPipelineSandboxImpl(depsWith(null), { pipeline: bad })).payload).toMatchObject({ status: 'denied' })
   })
 })
@@ -59,8 +63,8 @@ describe('runPipelineSandboxImpl —— 组件策略先于执行', () => {
   const withNodes = (componentId: string) => ({
     ...good,
     nodes: [
-      { id: 's1', type: 'source', data: { componentId: 'src.rest', properties: {} } },
-      { id: 'x1', type: 'transform', data: { componentId, properties: {} } },
+      node('s1', 'source', { componentId: 'src.rest', properties: {} }),
+      node('x1', 'transform', { componentId, properties: {} }, 100),
       good.nodes[1],
     ],
     edges: [{ source: 's1', target: 'x1' }, { source: 'x1', target: 'k1' }],

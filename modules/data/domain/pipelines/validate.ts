@@ -43,9 +43,27 @@ export function validatePipelineDraft(doc: unknown): Issue[] {
     if (!NODE_TYPES.includes(t)) out.push({ path: `nodes[${i}].type`, message: `type 必须是 ${NODE_TYPES.join('/')} 之一` })
     if (t === 'source') sources += 1
     if (t === 'sink') sinks += 1
+    // `position` / `data.label` **不是 UI 装饰**：引擎反序列化是必填字段，缺了 `POST /api/run`
+    // 直接 400（2026-10-23 生产实测：`missing field \`position\`` / `` `x` `` / `` `y` `` / `` `label` ``；
+    // `label: ""` 合法）。后果还不止「跑不成」——`POST /api/run/async` 对**解析失败**的草案
+    // 仍回 202 `{status:"queued"}`，但不登记 `/api/runs`、不产回执、`lastStatus` 留 null
+    // ⇒ 执行面只能轮询到超时后回 `running`（「还在跑」），其实是根本没跑。必须在这一层挡住。
+    const pos = isObj(n.position) ? n.position : null
+    if (pos === null) out.push({ path: `nodes[${i}].position`, message: 'position 必填（{x,y}）' })
+    else {
+      for (const axis of ['x', 'y'] as const) {
+        const v = pos[axis]
+        if (typeof v !== 'number' || !Number.isFinite(v)) {
+          out.push({ path: `nodes[${i}].position.${axis}`, message: `${axis} 必须是数值` })
+        }
+      }
+    }
     const data = isObj(n.data) ? n.data : null
     if (data === null) out.push({ path: `nodes[${i}].data`, message: 'data 必填' })
     else {
+      if (typeof data.label !== 'string') {
+        out.push({ path: `nodes[${i}].data.label`, message: 'label 必填（字符串，可为空串）' })
+      }
       const comp = str(data.componentId)
       if (comp === '') out.push({ path: `nodes[${i}].data.componentId`, message: 'componentId 必填' })
       // 驱动型 = **transform 节点挂 ctl.foreach**。只认 componentId 会把这个豁免送给任何类型——

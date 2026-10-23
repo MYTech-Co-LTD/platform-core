@@ -892,16 +892,37 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 
 ### G.1 沙箱执行面（`sandbox-console`）接线与自证
 
-> ✅ **2026-10-23：mytech 已上线**（`dep_KthxaixGDuTyx7LO`）。执行面容器起来并对外服务
-> （`duckle-runner: management console on http://0.0.0.0:18090` / `sign-in required`，三容器均
-> `running`）。⚠️ 下表 ①–④ 的**端到端自证尚未做完**（缺 server 侧运行面取证入口）——
-> **「已上线」≠「已验通」**，别据此判定沙箱可用。
+> ✅ **2026-10-23：mytech 已上线且 ①–④ 全部验通**（上线 `dep_KthxaixGDuTyx7LO`，
+> 复验部署 `dep_SzQ74TJbw0Cq1stV`）。① 执行面起来（`management console on http://0.0.0.0:18090` /
+> `sign-in required`）；② 经**平台代码路径**（`runPipelineSandboxImpl`，在生产 `server` 容器内用
+> `tsx` 跑）真跑 `src.csv → snk.csv` ⇒ `status: ok, rows: 3`（产物落 `/workspace/logs/sandbox/`）；
+> ③ 共享卷双向通（server 写的草案 console 读到并执行；console 写的产物/回执 server 读到）；
+> ④ 负向三连全中（见下表脚本）。**取证方式** = `docker exec` 进 `server`/`sandbox-console` 容器
+> （openship MCP 的 exec 端点），不是裸 SSH。
 >
 > ⚠️ **上线当天踩到的坑（先读本条）**：新 compose 服务被 openship **默认 `enabled: true`**，
 > 而 mytech 当时没有 `DUCKLE_TOKEN` ⇒ `entrypoint.sh` 对 `serve` 拒起（exit 1）⇒ **crash loop**
 > （日志逐条重复「拒绝启动 —— 需要凭据但 token 为空」，退避拉到 60s 一次）。
 > **正确顺序 = 先备 token 再让服务出现**；同一份 compose 在**任何尚未备 token 的项目**（含 shanhai）
 > 下次部署都会重演，部署前先把该项目的 `DUCKLE_TOKEN` 备好，或把服务行置 `enabled: false`。
+>
+> ⚠️ **第二个坑：共享卷的属主（不修则②永远跑不通）**。docker 建的命名卷根目录是
+> `root:root 0755`，而 `server` 容器是 `USER node`（uid 1000）⇒ 平台侧第一步
+> `mkdir -p $DATA_SANDBOX_DIR/sandbox` 就 `Permission denied`（实测；该错误还不是
+> `SandboxUnreachableError`，会以裸异常冒到协议壳）。处置已写进镜像入口：`entrypoint.sh` 在
+> **以 root 起且给了 `DUCKLE_SHARE_DIR`** 时 `mkdir -p` + 只对该层目录 `chown`（不 `-R`），
+> compose 的 `sandbox-console` 服务行给 `DUCKLE_SHARE_DIR=/workspace/sandbox`、
+> `DUCKLE_SHARE_UID/GID=1000`（与 `Dockerfile.server` 的 `USER node` 对齐）。
+> 手工补丁（排查时用过，**别当常规做法**）：在 console 容器里
+> `mkdir -p /workspace/sandbox && chown 1000:1000 /workspace/sandbox`——它是卷上的状态，
+> 换卷/换机不复现，正解是上面的入口脚本。
+>
+> ⚠️ **第三个坑：草案必须带 `position` / `data.label`（引擎必填，校验器一度没查）**。
+> 缺任一项 ⇒ 同步 `/api/run` 回 `400 missing field …`；而**异步** `/api/run/async` 照回 `202`
+> 却不登记运行 ⇒ 工具轮询到超时回 `status: running`（看着像「还在跑」，其实没跑）。
+> 两个字段已补进 `validatePipelineDraft`（`refused/invalid_draft` + 定位到具体路径）。
+> 其它解析失败仍是同一个黑洞——排查手法：把 `sandbox/<runId>.json` 拿同步 `/api/run` 跑一次，
+> 引擎原话立刻出来。
 
 | 项 | 值 / 做法 |
 |---|---|
@@ -909,7 +930,7 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 | **地址** | server 侧 `DATA_SANDBOX_URL=http://sandbox-console:18090`（容器 DNS 名 = compose 服务名；只在单元 A 默认网络内可解析）。**注入点 = `server` 服务行 env**——compose 的 `server.environment` **故意不声明**它（理由见文件内注释：`${}` 插值在本地会读 `deploy/.env`/shell，写空值反覆盖真值） |
 | **token** | `DUCKLE_TOKEN`，**与 console 同一个值**（openship env(isSecret)；仓内不写）。server 侧用 `DATA_SANDBOX_TOKEN` 注入同一值（同样在 `server` 服务行 env） |
 | **token 怎么取** | **自己生成**：引擎不铸 token，`serve --token` 收的就是任意强口令（既有 `lemeng-console-*` 同口径）。生成一次强随机串后，落**三处**：① 项目 env `DUCKLE_TOKEN`(isSecret)（compose 服务行的 `${DUCKLE_TOKEN:-}` 由它插值）② `sandbox-console` 服务行 `DUCKLE_TOKEN` ③ `server` 服务行 `DATA_SANDBOX_TOKEN`。**轮换必须三处同改**，否则一边 401/一边拒起 |
-| **交换卷** | 命名卷 `sandbox-workspace`：console 看到 `/workspace`，server 看到 `/run/duckle-sandbox`（`DATA_SANDBOX_DIR`）。草案 = `sandbox/<runId>.json`，回执 = `runs/receipts/` |
+| **交换卷** | 命名卷 `sandbox-workspace`：console 看到 `/workspace`，server 看到 `/run/duckle-sandbox`（`DATA_SANDBOX_DIR`）。草案 = `sandbox/<runId>.json`，回执 = `runs/receipts/`。**`sandbox/` 必须交权给 uid 1000**（见上方第二个坑的 `DUCKLE_SHARE_DIR`），否则 server 写不进去 |
 | **不要它的项目** | openship 服务行 `enabled: false`（**别只靠 compose profiles**——openship 按自己的服务清单逐服务启停，profiles 对它无效，见 mb-proxy 的教训） |
 | **默认档凭据** | **无**：沙箱容器不注入任何 ZOS/LEMENG 凭据 ⇒ 源端只能是公开/无鉴权端点。按账套 opt-in 的只读凭据档**待沉淀**（一个账套 = 一个 sandbox 服务，理由同 ADR-0014） |
 
@@ -918,11 +939,19 @@ docker exec -w /app openship-platform-core-shanhai-server node_modules/.bin/tsx 
 ```sh
 # ① 服务面：healthz 公开（其它端点要 token）
 docker exec <server 容器> node -e "fetch('http://sandbox-console:18090/healthz').then(r=>console.log(r.status))"   # 期望 200
-# ② 真跑一条无鉴权最小管线（src.csv 或构造数据 → snk.csv，路径在 /workspace/logs/sandbox/ 下）
-#    经 openship MCP 调 run_pipeline_sandbox ⇒ 期望 status: ok 且带 rows
-# ③ 共享卷两个方向都通：server 写的草案在 console 里可见；console 写的回执在 server 里可读
-# ④ 负向三连（缺一条都说明闸没生效）：code.shell ⇒ denied/component_not_allowed；
-#    写正式湖 ⇒ denied/sandbox_prefix_violation；DATA_SANDBOX_URL 清空 ⇒ not_executed/sandbox_runner_unconfigured
+# ② 真跑一条无鉴权最小管线（src.csv → snk.csv，sink 路径必须在 /workspace/logs/sandbox/ 下）
+#    首选：经 openship MCP 调 run_pipeline_sandbox（需平台 PAT）；没有 PAT 时的等效取证 =
+#    在生产 server 容器内直接用平台代码路径跑 impl（2026-10-23 用这条）：
+#      docker exec -w /app <server 容器> node_modules/.bin/tsx /tmp/probe.ts
+#    探针 = 组 deps{env, sandbox: sandboxRunnerFromEnv(process.env)} → runPipelineSandboxImpl(...)
+#    期望 status: ok + runId + durationMs/rows + auditRowCount==rows
+#    排障用（引擎原话）：对同一草案文件 POST /api/run（同步）⇒ 200 status ok|error，或 400 parse …
+# ③ 共享卷两个方向都通：server 写的草案在 console 里可见并被执行；console 写的
+#    产物（logs/sandbox/*.csv）与回执（runs/receipts/*.json）在 server 里可读
+# ④ 负向三连（缺一条都说明闸没生效）：
+#      code.shell            ⇒ denied/component_not_allowed（且执行面零调用）
+#      写正式湖（非 __sandbox/）⇒ denied/sandbox_prefix_violation
+#      DATA_SANDBOX_URL 清空  ⇒ not_executed/sandbox_runner_unconfigured（isError=false）
 ```
 
 排障入口与 L0 管线同规：**回执**（`runs/receipts/`）带逐节点 `status/rows/durationMs`，

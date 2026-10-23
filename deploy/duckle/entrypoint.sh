@@ -2,10 +2,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # deploy/duckle/entrypoint.sh — duckle headless runner 的容器入口
 #
-# 这个脚本只做三件事，都不含业务逻辑：
+# 这个脚本只做四件事，都不含业务逻辑：
 #   ① 把 token 从「编排声明的名字」翻成「引擎真正读的名字」（两个名字不一样，见下）；
 #   ② 在「会开控制台面、或会跑管线」而 token 为空时**拒跑**（exit 1）；
-#   ③ exec 引擎本体，让信号 / 退出码 / stdio 与直接调用它完全一致。
+#   ③ 需要时把共享卷里「别人也要写」的目录预建出来并交权（可选；不设则完全不动）；
+#   ④ exec 引擎本体，让信号 / 退出码 / stdio 与直接调用它完全一致。
 #
 # ── 为什么需要 ②（而不是靠引擎自己兜） ──────────────────────────────────────
 # 引擎的控制台安全模型（`duckle-runner serve --help` 原文，从 v0.7.3 二进制提取）：
@@ -145,6 +146,23 @@ fi
 if [ -n "$TOKEN" ]; then
   DUCKLE_CONSOLE_TOKEN="$TOKEN"
   export DUCKLE_CONSOLE_TOKEN
+fi
+
+# ── ③ 共享卷里「另一侧也要写」的目录（可选；不设 `DUCKLE_SHARE_DIR` 时完全不动）─────
+# 为什么需要：docker 建的**命名卷根目录归 root:root 0755**，而 `server` 容器是 `USER node`
+# （uid 1000）。沙箱交换卷里 `sandbox/` 由 server 写草案 ⇒ 不预建并交权，平台侧第一步
+# `mkdir -p <dir>/sandbox` 就 EACCES（2026-10-23 生产实测；手工补 chown 后立刻跑通，
+# 见 deploy/data-plane-deploy-sop.md §G.1）。这事只能由**以 root 起的那一侧**（本 console）做。
+#
+# 三条边界：
+#   · 只在显式给了 `DUCKLE_SHARE_DIR` 时动手 —— 本镜像也用于**不共享卷**的 console，
+#     那些部署保持零副作用（别把「顺手 chown 一下」做成默认行为）。
+#   · 只在以 root 起时动手；非 root 也 chown 不了，静默跳过（权限该由编排侧负责）。
+#   · **只 chown 那一层目录，不 `-R`**：共享卷里还有引擎自己写的 `runs/` / `logs/` / `.duckle/`，
+#     递归改属主会把这些产物也交出去，等于白白扩大可写面。
+if [ -n "${DUCKLE_SHARE_DIR:-}" ] && [ "$(id -u)" = "0" ]; then
+  mkdir -p "$DUCKLE_SHARE_DIR"
+  chown "${DUCKLE_SHARE_UID:-1000}:${DUCKLE_SHARE_GID:-1000}" "$DUCKLE_SHARE_DIR"
 fi
 
 # exec 而非 sh -c 包一层：信号（Ctrl-C / docker stop 的 SIGTERM）直达引擎进程，
