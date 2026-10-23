@@ -91,15 +91,47 @@ measures:
 ```
 
 - **字符串形态在 P3.0 内一次性迁走**：`additivity` 必填（见下），字符串形态无法表达它 ⇒ P3.0 完成时门禁对字符串形态报红。存量只有 3 个组件，迁移成本可忽略；留一个「字符串 = 隐含 additive」的兼容口，等于把「不知道」默认为「可加」，正是本设计要消灭的失败形态。
-- **`domain` 的语义**：该 measure 的**基础行集**。`expr` 写在这个行集之上（不再重复域谓词）；编译时：
-  - 聚合面：`base as (select … from <relation> where <domain>)`，度量列在 base 上聚合；
-  - 下钻面：`detail.filter = domain`（生成，不再手写）。
+- **`domain` 的语义**：引用 **`domains:` 里声明的具名行域**（不是自由 SQL），该 measure 的**基础行集**。`expr` 写在这个行集之上（不再重复域谓词）；编译时：
+  - 聚合面：`base as (select … from <relation> where <该域的完整谓词>)`，度量列在 base 上聚合；
+  - 下钻面：`detail.filter` = compose 所引用组件域的**最小上界（LUB）**（见 §3.1.1）。
+
+### 3.1.1 具名行域与最小上界
+
+同一条 compose 可能混合**不同行域**的组件（例：净销售额 = 销售侧 `FINISHED ∧ SALE_ORDER` − 退货侧
+`FINISHED ∧ RETURN`）。下钻面要展示的是「构成这个指标的全部行」，即两者的**最小上界**——
+用交集/「字符串相同」都算不出来，所以行域必须**声明成层次**：
+
+```yaml
+domains:
+  finished:        "state = 'FINISHED'"
+  sale_finished:   { extends: finished, filter: "order_transaction_type = 'SALE_ORDER'" }
+  return_finished: { extends: finished, filter: "order_transaction_type like '%RETURN%'" }
+
+measures:
+  sale_amount@order:
+    domain: sale_finished
+    ...
+```
+
+- 完整谓词 = 沿 `extends` 链自根向下的 `filter` 逐层用 `and` 连接；
+- `detail.filter` = 所引用组件域的 LUB（沿链上溯到最近公共祖先）；**无公共祖先 ⇒ 抛错**
+  （fail-closed：不许悄悄放宽成 `true`）；
+- 例：`sale_finished ⊔ return_finished = finished`，`where` 谓词逐字为 `state = 'FINISHED'`——
+  与两条指标今日的 `detail.filter` 完全一致（逐字复现是本批的验收判据之一）。
 - **`additivity` 必填**，三值：
   - `additive`：任意维度上卷 = 先分组求和再相加（金额类）；
   - `semi_additive`：跨时间不可加、跨实体可加（库存快照类）；
   - `non_additive`：任何上卷都不成立（去重计数、比率）。
   **缺省值不存在**——漏写即门禁红（默认值会把「不知道」伪装成「可加」）。
 - **`unit`**：人读与机器校验用（`CNY` / `count` / `ratio`）；比率类指标必须声明，防止「金额 + 笔数」被同轴展示。
+- **`grain`**：该表达式**逐组求值的键**（`order` / `line`），两阶段编译的输入（§4.2）。
+
+> **为什么必须两阶段（规划期发现，2026-10-23）**：`fct_retail_sale` 的算术是
+> **逐单 `(ng+tot)/2 - sd`，再按门店日求和**；而下钻面的 measure 表达式是
+> `(Σng + max(tot))/2 - Σsd`——两者**只在订单粒度上相等**，在门店日粒度上因舍入位置不同而可能差几分。
+> 若把单个 measure 表达式直接当聚合式编译到门店日，就会**改变 certified 指标的数值**。
+> 因此 measure 必须声明 `grain`，编译时先按该 grain 的键求值、再按指标 grain 聚合——
+> 这正是把「除法在哪一层」从两份实现里收回到一处声明的唯一办法。
 
 ### 3.2 指标侧的变化
 
@@ -139,7 +171,8 @@ measures:
 ### 4.2 表达式编译规则
 
 1. 以 `domain` 构造 `base` CTE（无 `domain` 时 `base` = 原行集）；
-2. measure `expr` 原样进入该 base 的聚合上下文；
+2. **两阶段**：先按 `grain` 的键分组求 `expr`（`<measure>__gen` CTE），再按指标 grain 聚合（`sum(...)`）——
+   除法/减值发生在第一阶段，与 fct 现有形态逐字节同构；
 3. **生成的 fct 度量列沿用现有列名**（如 `net_amount`）⇒ 指标 `expression`（`sum(fct_retail_sale.net_amount)`）在切换期**逐字不变**，这就是「运行时零变化」的落点；`expression` 的退役是 P3.4 的事，与本设计不耦合；
 4. 下钻面：`drill expr = compose`（既有）；`detail.filter` **由 sync 从 measure.domain 派生后物化**（`data.metrics.drill_detail`），声明面删掉该键——派生规则与编译同源，避免第三份抄本。
 
@@ -217,8 +250,8 @@ measures:
 
 ---
 
-## 9 开放问题（实施前需裁决）
+## 9 已裁决（2026-10-23）
 
-1. **影子对账的窗口 N**：取 7 天（覆盖跨周）还是 14 天（覆盖封版重写周期）？建议 7 天起，certified 取 14 天。
-2. **`additivity` 缺省**：本文定为「必填、漏写即红」；若存量 3 个组件补齐时发现语义拿不准，是否允许 `unknown` 作为显式值（并要求后续补）？建议**不允许**——`unknown` 会被当成万能挡箭牌。
-3. **签核的载体**：PR 正文的固定节，还是新增 `docs/metric-changelog/` 记录？建议 PR 正文 + 由 release 流程汇总。
+1. **影子对账窗口**：默认 **7 天**；`tier: certified` 的指标取 **14 天**（覆盖跨周与封版重写周期）。
+2. **`additivity` 不允许 `unknown`**：三值必填，漏写/写 `unknown` 均门禁红——不给「不知道」留挡箭牌。
+3. **certified 口径变更的签核载体**：**PR 正文固定节**（Who / Why / 期望数值变化 / 对账窗口）＋ 由 release 流程汇总进发版说明；不单独建 `docs/metric-changelog/`（避免第二份台账）。
