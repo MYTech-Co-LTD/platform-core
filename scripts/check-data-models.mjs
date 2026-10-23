@@ -1082,6 +1082,45 @@ export function checkDataModels(rootDir, opts = {}) {
   // ── 规则 ⑤⑥⑦：语义声明 ───────────────────────────────────────────────────────
   /** 读面视图（`dbt/models/**\/views/vw_*.sql`）—— detail.relation 的存在性查这里（下钻三键） */
   const viewFiles = sqlFiles.filter((f) => VIEW_RE.test(f))
+
+  // 契约列集（#1009）：`detail.columns[].col` 必须真在 relation 的列集里。
+  // 为什么查契约而不是解析视图 SQL：视图列区是 `scripts/gen-data-projection.mjs` 的**生成物**
+  // （`vw_<domain>_<table>` ← `contracts/<domain>.<table>.json`），契约才是湖列集唯一事实源
+  // （docs/architecture.md §4.1）；解析生成物等于把同一事实再猜一遍。
+  // 只对**有契约**的视图判：没有契约的视图不在这里报（避免把「还没补契约」误判成列名错）。
+  /** @type {Map<string, Set<string>>} */
+  const viewContractCols = new Map()
+  const contractsRoot = join(rootDir, 'contracts')
+  if (existsSync(contractsRoot)) {
+    /** @type {(dir: string) => void} */
+    const scanContracts = (dir) => {
+      for (const ent of readdirSync(dir)) {
+        const abs = join(dir, ent)
+        if (statSync(abs).isDirectory()) {
+          scanContracts(abs)
+          continue
+        }
+        if (!ent.endsWith('.json')) continue
+        /** @type {any} */
+        let c
+        try {
+          c = JSON.parse(readFileSync(abs, 'utf8'))
+        } catch {
+          continue
+        }
+        const domain = typeof c?.domain === 'string' ? c.domain : ''
+        const table = typeof c?.table === 'string' ? c.table : ''
+        if (!domain || !table || !Array.isArray(c?.columns)) continue
+        /** @type {Set<string>} */
+        const cols = new Set()
+        for (const col of c.columns) {
+          if (typeof col?.name === 'string' && col.name) cols.add(col.name)
+        }
+        if (cols.size > 0) viewContractCols.set(`vw_${domain}_${table}`, cols)
+      }
+    }
+    scanContracts(contractsRoot)
+  }
   /** @type {Array<{ name: string, fields: any, file: string, measureKeys: string[] }>} */
   const metrics = []
   for (const rel of ymlFiles) {
@@ -1211,6 +1250,22 @@ export function checkDataModels(rootDir, opts = {}) {
                 push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.columns 列 \`${col}\` 重复声明。`)
               }
               seen.add(col)
+              // ⑤-x3 列存在性（#1009）：名字形态合规还不够，必须真在 relation 的列集里。
+              // 失败形态：拼错时只有**持授权码的人**运行时报 warehouse_error；无码者连列都看不到
+              // （结构性不可见）⇒ 错误被权限面掩盖，可能长期无人发现。
+              if (/^[a-z_][a-z0-9_]*$/.test(col) && col !== 'value') {
+                const contractCols = viewContractCols.get(rel)
+                // `org` 是生成器给每个视图注入的列（不在契约 columns 里），合法，别误伤。
+                if (contractCols !== undefined && col !== 'org' && !contractCols.has(col)) {
+                  push(
+                    metric.file,
+                    0,
+                    `指标 \`${metric.name}\` 的 detail.columns[].col \`${col}\` 不在 \`${rel}\` 的**契约列集**里 —— `
+                    + '拼错时只有持授权码的人运行时报 warehouse_error（无码者结构上看不见，错误被权限面掩盖）。'
+                    + `该契约的列：${[...contractCols].join(', ')}。`,
+                  )
+                }
+              }
               const g = it.grantedBy
               if (typeof g !== 'string' || g.trim() === '') {
                 push(metric.file, 0, `指标 \`${metric.name}\` 的 detail.columns[].grantedBy 必须是非空权限码字符串（方向同 mask.grantedBy：持有 ⇒ 看原值）。`)
