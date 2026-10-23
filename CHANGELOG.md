@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.186.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.186.1...v0.186.2) - 2026-10-23
+- 【修复】data: 沙箱写入面改按规范化路径判 + 写入组件 allowlist ([#1006](https://github.com/MYTech-Co-LTD/platform-core/pull/1006), [e16b7af](https://github.com/MYTech-Co-LTD/platform-core/commit/e16b7af1d2a398926f4c8908569a4d8c23705cfa))
+
+
 ## [0.186.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.186.0...v0.186.1) - 2026-10-22
 - 【修复】data: 提案面尾部加固——拒绝出口的 incomplete 语义成文 + 驱动型豁免只认 transform ([#1004](https://github.com/MYTech-Co-LTD/platform-core/pull/1004), [4918950](https://github.com/MYTech-Co-LTD/platform-core/commit/4918950c2f78c891da65aa4fc14d6328e21e6bd2))
 
