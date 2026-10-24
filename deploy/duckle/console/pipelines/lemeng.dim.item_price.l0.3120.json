@@ -240,6 +240,80 @@
    "data": {
     "label": "price batch 1 (46 branches)",
     "componentId": "src.rest",
+    "schema": [
+     {
+      "name": "branch_num",
+      "type": "int64"
+     },
+     {
+      "name": "branch",
+      "type": "json"
+     },
+     {
+      "name": "item_num",
+      "type": "int64"
+     },
+     {
+      "name": "item_grade_num",
+      "type": "int64"
+     },
+     {
+      "name": "pos_variant",
+      "type": "json"
+     },
+     {
+      "name": "last_edit_time",
+      "type": "string"
+     },
+     {
+      "name": "branch_item_regular_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level2_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level3_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level4_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_max_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_min_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_regular_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level2_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level3_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level4_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_max_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_min_real_price",
+      "type": "float64"
+     }
+    ],
     "properties": {
      "connectionRef": "lemeng",
      "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
@@ -264,6 +338,80 @@
    "data": {
     "label": "price batch 2 (46 branches)",
     "componentId": "src.rest",
+    "schema": [
+     {
+      "name": "branch_num",
+      "type": "int64"
+     },
+     {
+      "name": "branch",
+      "type": "json"
+     },
+     {
+      "name": "item_num",
+      "type": "int64"
+     },
+     {
+      "name": "item_grade_num",
+      "type": "int64"
+     },
+     {
+      "name": "pos_variant",
+      "type": "json"
+     },
+     {
+      "name": "last_edit_time",
+      "type": "string"
+     },
+     {
+      "name": "branch_item_regular_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level2_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level3_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level4_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_max_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_min_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_regular_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level2_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level3_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level4_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_max_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_min_real_price",
+      "type": "float64"
+     }
+    ],
     "properties": {
      "connectionRef": "lemeng",
      "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
@@ -288,6 +436,80 @@
    "data": {
     "label": "price batch 3 (46 branches)",
     "componentId": "src.rest",
+    "schema": [
+     {
+      "name": "branch_num",
+      "type": "int64"
+     },
+     {
+      "name": "branch",
+      "type": "json"
+     },
+     {
+      "name": "item_num",
+      "type": "int64"
+     },
+     {
+      "name": "item_grade_num",
+      "type": "int64"
+     },
+     {
+      "name": "pos_variant",
+      "type": "json"
+     },
+     {
+      "name": "last_edit_time",
+      "type": "string"
+     },
+     {
+      "name": "branch_item_regular_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level2_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level3_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level4_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_max_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_min_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_regular_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level2_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level3_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level4_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_max_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_min_real_price",
+      "type": "float64"
+     }
+    ],
     "properties": {
      "connectionRef": "lemeng",
      "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
@@ -312,6 +534,80 @@
    "data": {
     "label": "price batch 4 (46 branches)",
     "componentId": "src.rest",
+    "schema": [
+     {
+      "name": "branch_num",
+      "type": "int64"
+     },
+     {
+      "name": "branch",
+      "type": "json"
+     },
+     {
+      "name": "item_num",
+      "type": "int64"
+     },
+     {
+      "name": "item_grade_num",
+      "type": "int64"
+     },
+     {
+      "name": "pos_variant",
+      "type": "json"
+     },
+     {
+      "name": "last_edit_time",
+      "type": "string"
+     },
+     {
+      "name": "branch_item_regular_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level2_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level3_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level4_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_max_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_min_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_regular_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level2_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level3_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level4_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_max_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_min_real_price",
+      "type": "float64"
+     }
+    ],
     "properties": {
      "connectionRef": "lemeng",
      "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
@@ -336,6 +632,80 @@
    "data": {
     "label": "price batch 5 (46 branches)",
     "componentId": "src.rest",
+    "schema": [
+     {
+      "name": "branch_num",
+      "type": "int64"
+     },
+     {
+      "name": "branch",
+      "type": "json"
+     },
+     {
+      "name": "item_num",
+      "type": "int64"
+     },
+     {
+      "name": "item_grade_num",
+      "type": "int64"
+     },
+     {
+      "name": "pos_variant",
+      "type": "json"
+     },
+     {
+      "name": "last_edit_time",
+      "type": "string"
+     },
+     {
+      "name": "branch_item_regular_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level2_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level3_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level4_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_max_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_min_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_regular_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level2_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level3_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level4_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_max_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_min_real_price",
+      "type": "float64"
+     }
+    ],
     "properties": {
      "connectionRef": "lemeng",
      "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
@@ -360,6 +730,80 @@
    "data": {
     "label": "price batch 6 (41 branches)",
     "componentId": "src.rest",
+    "schema": [
+     {
+      "name": "branch_num",
+      "type": "int64"
+     },
+     {
+      "name": "branch",
+      "type": "json"
+     },
+     {
+      "name": "item_num",
+      "type": "int64"
+     },
+     {
+      "name": "item_grade_num",
+      "type": "int64"
+     },
+     {
+      "name": "pos_variant",
+      "type": "json"
+     },
+     {
+      "name": "last_edit_time",
+      "type": "string"
+     },
+     {
+      "name": "branch_item_regular_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level2_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level3_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level4_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_max_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_min_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_regular_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level2_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level3_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_level4_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_max_real_price",
+      "type": "float64"
+     },
+     {
+      "name": "branch_item_min_real_price",
+      "type": "float64"
+     }
+    ],
     "properties": {
      "connectionRef": "lemeng",
      "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.retail.ai.branchitem.realprice.find",
