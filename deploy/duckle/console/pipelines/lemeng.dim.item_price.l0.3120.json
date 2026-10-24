@@ -945,7 +945,7 @@
    "source": "p1",
    "target": "merge",
    "sourceHandle": "main",
-   "targetHandle": "main",
+   "targetHandle": "main_1",
    "data": {
     "connectionType": "main"
    }
@@ -965,7 +965,7 @@
    "source": "p2",
    "target": "merge",
    "sourceHandle": "main",
-   "targetHandle": "main",
+   "targetHandle": "main_2",
    "data": {
     "connectionType": "main"
    }
@@ -985,7 +985,7 @@
    "source": "p3",
    "target": "merge",
    "sourceHandle": "main",
-   "targetHandle": "main",
+   "targetHandle": "main_3",
    "data": {
     "connectionType": "main"
    }
@@ -1005,7 +1005,7 @@
    "source": "p4",
    "target": "merge",
    "sourceHandle": "main",
-   "targetHandle": "main",
+   "targetHandle": "main_4",
    "data": {
     "connectionType": "main"
    }
@@ -1025,7 +1025,7 @@
    "source": "p5",
    "target": "merge",
    "sourceHandle": "main",
-   "targetHandle": "main",
+   "targetHandle": "main_5",
    "data": {
     "connectionType": "main"
    }
@@ -1045,7 +1045,7 @@
    "source": "p6",
    "target": "merge",
    "sourceHandle": "main",
-   "targetHandle": "main",
+   "targetHandle": "main_6",
    "data": {
     "connectionType": "main"
    }
