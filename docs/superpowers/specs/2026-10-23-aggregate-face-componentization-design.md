@@ -247,6 +247,16 @@ measures:
 > `__gen` 退役 / order 键值字面断言 / 重锁规矩 / 连合 PR deploy 互斥坑六项），明细见上述
 > 终局评审档案。§8 的 defer/exclude 登记与 §5 表 P3.3 行已随计划 PR #1032 落地（2026-10-24）。
 
+> **合并后真机验收（2026-10-24 已通过，PR #1033 → 合并提交 `9c42efd1`）**：数据面四步链全绿——
+> sync `SYNC_OK 229/229`、`# extra 0`（按 manifest 钉 `9c42efd1` 全 SHA）→ 山海 manual deploy
+> `dep_IsqIDCwCQspwepeS`（postgres / server / openclaw 三服务 healthy，console / metabase /
+> pg_duckdb 不在本部署单元未动）→ 词表 job **43**（新增 0 / 更新 1 / 删除 0——更新 1 =
+> `539319d5` 对 client_net `definition` 文的 F-4 订正，预期内、无结构变化）→ materialize
+> **PASS=323 / ERROR=0**（= 312 基线 + 4 对账 + 7 影子 not_null，逐项吻合）`MATERIALIZE_OK`。
+> **验收达成**：10 条 audit 真机 PASS（expense 6 + transfer 3 + retail_quantity 1）+
+> **4 族影子对账零差异**（parity 为值级判据，任一行不等即红；窗口即上文 14 天×3 / 7 天×1）。
+> 影子窗口自本日 D0 起算：experimental 批 ≈ **2026-10-31** 先切、certified 批 ≈ **2026-11-07** 签核切换。
+
 ---
 
 ## 6 守卫与验收
