@@ -97,7 +97,19 @@ export const MODELS = [
       'return_amount@line': 'base_return',
     },
   },
-  // P3.3 Task 2-5 逐族追加四个 fct 的块（见各任务 Interfaces）
+  // P3.3 Task 2（#1031）：门店费用构件——两列都是 flat（单层直聚，无中间粒度键 ⇒ grainKeys 空）。
+  {
+    rel: 'dbt/models/lemeng/marts/fct_branch_expense.sql',
+    stagingRef: "{{ ref('stg_lemeng_branch_expense') }}",
+    grainKeys: {},
+    fctGrain: ['system_book', 'bizday', 'branch_num', 'expense_type'],
+    columns: ['ep_payable@flat', 'er_receivable@flat'],
+    baseAliases: {
+      'ep_payable@flat': 'base_payable',
+      'er_receivable@flat': 'base_receivable',
+    },
+  },
+  // P3.3 Task 3-5 逐族追加其余三个 fct 的块（见各任务 Interfaces）
 ]
 
 /**

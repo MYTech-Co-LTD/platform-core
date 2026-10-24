@@ -61,7 +61,9 @@ function fixture(opts: { region?: string; sqlPrefix?: string; sqlSuffix?: string
   const root = mkdtempSync(join(tmpdir(), 'gfctm-'))
   roots.push(root)
   mkdirSync(join(root, dirname(L1_DECLARATIONS_REL)), { recursive: true })
-  mkdirSync(join(root, dirname(MODELS[0].rel)), { recursive: true })
+  // MODELS 注册表驱动 run() ⇒ 每个注册模型都要有文件、每个物化组件都要有声明：
+  // P3.3 Task 2（#1031）起注册表不止一项，夹具跟着注册表走（少一份 = 第二个模型抛「未声明的组件」）。
+  for (const spec of MODELS) mkdirSync(join(root, dirname(spec.rel)), { recursive: true })
   writeFileSync(
     join(root, L1_DECLARATIONS_REL),
     [
@@ -69,16 +71,22 @@ function fixture(opts: { region?: string; sqlPrefix?: string; sqlSuffix?: string
       '  finished: "state = \'FINISHED\'"',
       '  sale_finished: { extends: finished, filter: "order_transaction_type = \'SALE_ORDER\'" }',
       '  return_finished: { extends: finished, filter: "order_transaction_type like \'%RETURN%\'" }',
+      '  expense_payable: "direction = \'应付\'"',
+      '  expense_receivable: "direction = \'应收\'"',
       'measures:',
       '  sale_amount@order: { expr: \'sum(sale_money)\', grain: [order], additivity: flow, domain: sale_finished }',
       '  return_amount@line: { expr: \'sum(return_money)\', grain: [line], additivity: flow, domain: return_finished }',
+      '  ep_payable@flat: { expr: \'sum(coalesce(amount, 0))\', grain: [flat], additivity: flow, domain: expense_payable }',
+      '  er_receivable@flat: { expr: \'sum(coalesce(amount, 0))\', grain: [flat], additivity: flow, domain: expense_receivable }',
       '',
     ].join('\n'),
   )
-  writeFileSync(
-    join(root, MODELS[0].rel),
-    `${opts.sqlPrefix ?? 'with x as (\n    select 1 as a\n),\n'}${opts.region ?? `${BEGIN}\n手改的旧内容\n${END}`}\n\n${opts.sqlSuffix ?? 'select * from x\n'}`,
-  )
+  for (const spec of MODELS) {
+    writeFileSync(
+      join(root, spec.rel),
+      `${opts.sqlPrefix ?? 'with x as (\n    select 1 as a\n),\n'}${opts.region ?? `${BEGIN}\n手改的旧内容\n${END}`}\n\n${opts.sqlSuffix ?? 'select * from x\n'}`,
+    )
+  }
   return root
 }
 
@@ -310,5 +318,17 @@ describe('P3.3 多模型注册表 / flat 粒度 / precision（#1031）', () => {
     // gen_agg 的 join 输入：flat 直接用阶段 1 CTE（排第一时做 full join 的左基表），分组组件用上卷
     expect(region).toContain('from ep_payable__gen\n    full join x__rollup')
     expect(region).toMatch(/coalesce\(ep_payable__gen\.system_book/)
+  })
+
+  it('⑤ ModelSpec.columns 为空 ⇒ 抛错（fail-loud；Task 1 评审 Minor 1 钉住）', () => {
+    expect(() => renderFctMeasures(FLAT_MEASURES, { ...FLAT_SPEC, columns: [] }, PAYABLE_DOMAINS))
+      .toThrow('ModelSpec.columns 不能为空')
+  })
+
+  it('⑥ precision 形态坏（点号 "20.3"）⇒ measureOf 抛「整,小」形态错（Task 1 评审 Minor 2）', () => {
+    // 负面对照钉在**声明层**（measureOf 是门禁与生成器共用的唯一解析实现）：
+    // `"20.3"` 若静默过关，会物化出 `::numeric()` 缺参的 SQL，到 dbt 才炸（离声明很远）。
+    expect(() => measureOf({ expr: 'sum(a)', additivity: 'flow', precision: '20.3' }))
+      .toThrow(/整,小/)
   })
 })

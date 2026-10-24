@@ -72,6 +72,10 @@ domains:
   finished:        "state = 'FINISHED'"
   sale_finished:   { extends: finished, filter: "order_transaction_type = 'SALE_ORDER'" }
   return_finished: { extends: finished, filter: "order_transaction_type like '%RETURN%'" }
+  # 门店费用构件（P3.3 影子波 Task 2，issue #1031）：费用行方向域——谓词逐字取自
+  # fct_branch_expense.sql 的 case-when 条件（生成器基面 where 的派生源，改判别式两边一起改）。
+  expense_payable:    "direction = '应付'"
+  expense_receivable: "direction = '应收'"
 
 # ── 域级度量组件（spec 2026-10-21 bot-drillthrough §2.3）：一个组件只声明一次，指标用 compose 组合 ──
 # 判别式**逐字**取自 dbt/models/lemeng/marts/fct_retail_sale.sql（销售侧正数形态 / 退货侧绝对值形态 #908），
@@ -112,6 +116,22 @@ measures:
     additivity: flow
     unit: CNY
     domain: finished
+  # 门店费用构件（P3.3 影子波 Task 2，issue #1031）：expr = fct_branch_expense.sql 里
+  # ep_payable / er_receivable 的**聚合内层逐字**（`sum(coalesce(amount, 0))`；方向 case-when
+  # 不进组件——它上移为 domain 基面，数值上与 `else 0` 等价，由影子对账测试逐分钉住）。
+  # flat = 单层可结合聚合：生成器直接在 fct 粒度求值，无两阶段上卷。
+  ep_payable@flat:
+    expr: 'sum(coalesce(amount, 0))'
+    grain: [flat]
+    additivity: flow
+    unit: CNY
+    domain: expense_payable
+  er_receivable@flat:
+    expr: 'sum(coalesce(amount, 0))'
+    grain: [flat]
+    additivity: flow
+    unit: CNY
+    domain: expense_receivable
 
 metrics:
   - name: 'lemeng:retail:sales'
