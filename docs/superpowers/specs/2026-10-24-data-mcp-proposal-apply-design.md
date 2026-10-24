@@ -16,9 +16,15 @@
 ## 1. 工具
 
 - 名字：`apply_pipeline_proposal`；`mutating: true`、`readOnlyHint: false`、scope `data:manage`；挂 `/mcp-manage`。
-- **输入 = `propose_pipeline_change` 回包原样回传**：`{title, branch, pieces:[{path, content}], downstream, validation}`。
-- **服务端不信任回包内容**：对每个 piece 重跑 `validateContractDraft` / `validatePipelineDraft`
-  （按 path 判类型），不过 ⇒ `refused / invalid_draft` + issues，**零网络调用**。
+  `PIPELINE_FACE_MAX_TOOLS` 7→8（CI 门 `scripts/check-mcp-toolface.mjs` 读常量，自动跟随）。
+- **输入 = `propose_pipeline_change` 回包原样回传**：`{status, title, rationale, branch, pieces, downstream, validation, note}`
+  整包作为 `proposal` 参数；服务端只取 title/rationale/branch/pieces/downstream/validation。
+- **服务端不信任回包内容**，两道前置（都不过 ⇒ `refused / invalid_draft` + issues，**零网络调用**）：
+  1. **路径白名单**：piece.path 必须以 `contracts/` 或 `deploy/duckle/console/pipelines/` 开头、
+     `.json` 结尾、不含 `..`、不以 `/` 开头。理由：PR 会触发分支 CI，放任任意路径等于允许
+     MCP 面改 `.github/workflows`（提权通道）。
+  2. **内容重校验**：按 path 判类型重跑 `validateContractDraft` / `validatePipelineDraft`
+     （挡「propose 之后被改过的脏草案」）。
 - 现有两条 `propose_*` 本体不动：仍零写入，结构性红线不破。
 
 ## 2. 机制（GitHub REST，容器内 fetch，无 git 依赖）
@@ -53,17 +59,17 @@
 
 ## 4. 审计
 
-- 沿用 `mcp-pipeline-tools.ts` 的单点 `writeAudit`。apply 过程**两行**：建分支成功后一行
-  （`ok / proposal_branch_created`）、PR 开成后一行（`ok / proposal_pr_created`）；
-  拒绝 / unknown 各一行。多行同 params 便于对账。
-- **args 存摘要不存全文**：审计 params 用 `{title, branch, piecePaths, pieceCount, downstreamCount}`，
-  pieces 内容不进审计表（`params` 是整包 JSON 入库，大 payload 会撑爆行）。
+- **单行，走 `reply()` 现有单点**（`mcp-pipeline-tools.ts` 的 `writeAudit`），不另加行、不做摘要特判：
+  `params: args` 整包入库与 `propose_*` 现状同口径（它们今天就把整份管线/契约草案存进审计，
+  apply 的回传是同量级，不需要新机制）。
+- 中间态可观测性由 payload 承担：`unknown / proposal_apply_unknown` 的 detail 里带已建分支名。
 
 ## 5. 测试（vitest，fetch 全注入，不连网）
 
 1. 冲突：contents 返回不同内容 ⇒ `refused / proposal_conflict` + 摘要，且**零**建分支/开 PR 调用（调用序列断言）。
 2. 幂等：全部 piece 相同 ⇒ `ok / nothing_to_apply`，零写调用、不开 PR。
-3. 重校验：回传脏草案（如删 `data.label`）⇒ `refused / invalid_draft`，零网络调用。
+3. 重校验：回传脏草案（如删 `data.label`）⇒ `refused / invalid_draft`，零网络调用；
+   路径白名单：`piece.path = '.github/workflows/x.yml'` 或含 `..` ⇒ `refused / invalid_draft`，零网络调用。
 4. 分支撞名 ⇒ 建分支 409/422 后带后缀重试成功。
 5. GitHub 401 ⇒ `denied / proposal_apply_rejected` + 原话；500 ⇒ `unknown / proposal_apply_unknown` + 已建分支名。
 6. 闸门：总闸关 ⇒ `denied / mutating_disabled`；PAT 空 ⇒ `not_executed / proposal_apply_unconfigured`，零网络。
