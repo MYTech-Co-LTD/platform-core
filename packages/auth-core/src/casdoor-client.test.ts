@@ -1032,3 +1032,35 @@ describe('listGroups（组织架构数据源）', () => {
     await expect(other.listGroups()).resolves.toEqual([])
   })
 })
+
+// ---- 角色管理（账户和权限体系 Task 4：listRoles / createRole / deleteRole） ----
+describe('角色管理（Task 4）', () => {
+  let mr: MockCasdoor
+  beforeAll(async () => {
+    mr = new MockCasdoor({
+      roles: [{ owner: 'acme', name: 'dup', displayName: '重复', users: [] }],
+    })
+    await mr.start()
+  })
+  afterAll(async () => { await mr.stop() })
+  const client = () =>
+    new CasdoorClient({ origin: mr.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
+
+  it('listRoles 列本 org 角色（owner 分桶；users 透传）', async () => {
+    const roles = await client().listRoles()
+    expect(roles).toContainEqual({ name: 'dup', displayName: '重复', users: [] })
+  })
+
+  it('createRole 幂等竞态：已存在视为成功；新建写后回读', async () => {
+    await expect(client().createRole({ name: 'dup' })).resolves.toBeUndefined() // 已在即成功
+    await client().createRole({ name: 'fresh', displayName: '新角色' })
+    expect((await client().listRoles()).find((r) => r.name === 'fresh')).toMatchObject({ displayName: '新角色', users: [] })
+  })
+
+  it('deleteRole 删除 + 回读确认消失；删不存在者响亮抛', async () => {
+    await client().createRole({ name: 'gone' })
+    await client().deleteRole('gone')
+    expect((await client().listRoles()).some((r) => r.name === 'gone')).toBe(false)
+    await expect(client().deleteRole('never-was')).rejects.toThrow()
+  })
+})
