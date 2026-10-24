@@ -75,6 +75,7 @@ function fixture(opts: { region?: string; sqlPrefix?: string; sqlSuffix?: string
       '  expense_receivable: "direction = \'应收\'"',
       '  client_expense_payable: "other_inout_flag = false"',
       '  client_expense_receivable: "other_inout_flag = true"',
+      '  transfer_line_quality_base: "state_code = 3 and out_branch_num = 99 and branch_num <> out_branch_num"',
       'measures:',
       '  sale_amount@order: { expr: \'sum(sale_money)\', grain: [order], additivity: flow, domain: sale_finished }',
       '  return_amount@line: { expr: \'sum(return_money)\', grain: [line], additivity: flow, domain: return_finished }',
@@ -82,6 +83,7 @@ function fixture(opts: { region?: string; sqlPrefix?: string; sqlSuffix?: string
       '  er_receivable@flat: { expr: \'sum(coalesce(amount, 0))\', grain: [flat], additivity: flow, domain: expense_receivable }',
       '  client_ep_payable@flat: { expr: \'sum(coalesce(other_inout_money, 0))\', grain: [flat], additivity: flow, domain: client_expense_payable }',
       '  client_er_receivable@flat: { expr: \'sum(coalesce(other_inout_money, 0))\', grain: [flat], additivity: flow, domain: client_expense_receivable }',
+      '  tq_zero_cost_amount@order: { expr: \'sum(case when coalesce(out_money, 0) <> 0 and subtotal = 0 then out_money else 0 end)\', grain: [order], additivity: flow, domain: transfer_line_quality_base }',
       '',
     ].join('\n'),
   )

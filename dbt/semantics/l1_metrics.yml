@@ -81,6 +81,9 @@ domains:
   # 与门店族分名：行域是扁平命名空间，两族谓词列不同（direction / other_inout_flag），不许共用。
   client_expense_payable:    "other_inout_flag = false"
   client_expense_receivable: "other_inout_flag = true"
+  # 配送行质量构件（P3.3 影子波 Task 4，issue #1031）：transfer 出库行域——谓词逐字取自
+  # fct_transfer_line_quality.sql 的手写 base where（生成器基面 where 的派生源，改判别式两边一起改）。
+  transfer_line_quality_base: "state_code = 3 and out_branch_num = 99 and branch_num <> out_branch_num"
 
 # ── 域级度量组件（spec 2026-10-21 bot-drillthrough §2.3）：一个组件只声明一次，指标用 compose 组合 ──
 # 判别式**逐字**取自 dbt/models/lemeng/marts/fct_retail_sale.sql（销售侧正数形态 / 退货侧绝对值形态 #908），
@@ -155,6 +158,19 @@ measures:
     additivity: flow
     unit: CNY
     domain: client_expense_receivable
+  # 配送行质量构件（P3.3 影子波 Task 4，issue #1031）：expr = fct_transfer_line_quality.sql 里
+  # zero_cost_amount 的**聚合内层逐字**（含 `coalesce(out_money, 0)` 守卫与 `subtotal = 0` 的 null
+  # 排除——后者是与 missing_cost_amount **互斥**的锚，2026-10-17 订正，不许改成 coalesce(subtotal,0)）。
+  # 手写版的 `b.` 前缀随基面别名消失（生成区基面已带同款谓词，语义不变）。
+  # 键带 tq_ 族前缀：measures 是扁平命名空间（Task 3 同款，同名键后写静默覆盖）。
+  # 影子波唯一的两阶段族：grain [order] ⇒ 先逐单求 measure_value、再上卷店日（分组键与手写
+  # per_order 链同源：账套 × 业务日 × 门店 × 单号）。
+  tq_zero_cost_amount@order:
+    expr: 'sum(case when coalesce(out_money, 0) <> 0 and subtotal = 0 then out_money else 0 end)'
+    grain: [order]
+    additivity: flow
+    unit: CNY
+    domain: transfer_line_quality_base
 
 metrics:
   - name: 'lemeng:retail:sales'

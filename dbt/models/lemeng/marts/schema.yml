@@ -413,6 +413,18 @@ models:
         description: 负金额合计（保留负号；不按绝对值变正收入）。
         tests:
           - not_null
+      # ── 影子列（聚合面组件化 P3.3 影子波 Task 4，#1031）────────────────────────────
+      # 与上面 zero_cost_amount **同口径**的 measure 编译版（影子波唯一的两阶段族：先逐单求
+      # measure_value、再上卷店日），由 `scripts/gen-fct-measures.mjs` 生成（改声明后重跑生成器）。
+      # 本阶段只并行输出、**任何消费方都不许读**：切换要等影子对账
+      # `dbt/tests/lemeng/assert_fct_transfer_line_quality_measure_shadow_parity.sql` 稳定后另开笔。
+      # ⚠️ not_null 是**结构守卫**不是冗余：影子对账里两侧都 coalesce(…, 0)，单看差值会把
+      #    「影子列为 NULL、旧列为 0」算成 0 = 0 而静默绿；归零发生在最终 SELECT，这里的 NULL
+      #    只可能来自生成区形态被改坏。
+      - name: zero_cost_amount__gen
+        description: 影子列 = `zero_cost_amount` 的 measure 编译版（`tq_zero_cost_amount@order` 两阶段：逐单 → 店日；`coalesce(out_money, 0)` 守卫与 `subtotal = 0` 的 null 排除随 expr 原样保留）。**P3.3 期不许被消费**；单侧缺行由最终 SELECT 归零。
+        tests:
+          - not_null
 
   - name: fct_branch_expense
     description: >-

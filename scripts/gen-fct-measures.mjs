@@ -124,7 +124,23 @@ export const MODELS = [
       'client_er_receivable@flat': 'base_receivable',
     },
   },
-  // P3.3 Task 4-5 逐族追加其余两个 fct 的块（transfer_line_quality / retail_quantity）
+  // P3.3 Task 4（#1031）：配送行质量构件——影子波**唯一的两阶段族**：zero_cost_amount 是 order
+  // 粒度 measure（先逐单求 measure_value、再上卷店日），与手写 per_order 链的分组键同源。
+  // 组件键带 tq_ 族前缀（measures 扁平命名空间，Task 3 同款）。手写 base/per_order CTE 原样留在
+  // 标记区外（自带 staging 读取 ⇒ staging 扫两次，影子期已知代价，切换批消除）。
+  {
+    rel: 'dbt/models/lemeng/marts/fct_transfer_line_quality.sql',
+    stagingRef: "{{ ref('stg_lemeng_transfer_out') }}",
+    grainKeys: {
+      order: ['system_book', 'bizday', 'branch_num', 'order_no'],
+    },
+    fctGrain: ['system_book', 'bizday', 'branch_num'],
+    columns: ['tq_zero_cost_amount@order'],
+    baseAliases: {
+      'tq_zero_cost_amount@order': 'base_transfer_quality',
+    },
+  },
+  // P3.3 Task 5 追加最后一个 fct 的块（retail_quantity）
 ]
 
 /**
