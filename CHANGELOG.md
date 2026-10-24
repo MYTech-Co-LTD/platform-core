@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.191.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.190.1...v0.191.0) - 2026-10-24
+- 【新增】data: P3.2 正式列切换——fct_retail_sale 度量列改由生成物产出（#1020） ([#1026](https://github.com/MYTech-Co-LTD/platform-core/pull/1026), [8810e2e](https://github.com/MYTech-Co-LTD/platform-core/commit/8810e2efd4568f2ce4fde5edde3803e8291cfe1e))
+
+
 ## [0.190.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.190.0...v0.190.1) - 2026-10-23
 - 【修复】data: 沙箱执行面改走同步 /api/run——不再把「解析失败/没等到终态」谎报成 running ([#1022](https://github.com/MYTech-Co-LTD/platform-core/pull/1022), [de60ae8](https://github.com/MYTech-Co-LTD/platform-core/commit/de60ae80fcd60d2fde9f7deaf3b60567997e161f))
 
