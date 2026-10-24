@@ -172,7 +172,8 @@ group by 1, 2
 union all
 
 -- part1b（退货行形状，staging 物化侧）：同一形状在投影/cast 之后再验一遍——湖里有、投丢了也能抓。
--- ⚠️ 模型退货侧读的**正是这一层**（fct_retail_sale 的 return_side → stg_lemeng_retail_order_line），
+-- ⚠️ 模型退货侧读的**正是这一层**（fct_retail_sale 生成区的 `return_amount__gen`（基面 base_return）
+-- → stg_lemeng_retail_order_line），
 -- 故 parquet 侧绿**不代表**模型输入绿：staging 取错源键/改了 cast 仍会产 NULL 而两列名照在
 -- （check-data-contract 只比别名序列的名字、不求值 ⇒ 拦不住这一类），sum 会把那些行静默丢掉。
 select

@@ -136,8 +136,9 @@ select
     '复算与物化结果不一致（销售额·销售侧，#430 换货半边口径）' as note
 from recheck a
 full join materialized b using (system_book, bizday, branch_num)
--- ⚠️ 2026-10-17（issue #813）：物化侧（fct_retail_sale）自 T1 起是 `sale_side full join
---    return_side`，含「只有退货、没有销售」的店日（sale_amount=0），而本复算侧只有销售基面
+-- ⚠️ 2026-10-17（issue #813）：物化侧（fct_retail_sale）自 T1 起是销售侧 full join 退货侧
+--    （现由生成区的 `sale_amount__rollup full join return_amount__rollup` 落地），含「只有退货、
+--    没有销售」的店日（sale_amount=0），而本复算侧只有销售基面
 --    ⇒ 那些行 a.sale_amount 为 NULL。coalesce 到 0 再比，既放过这些**结构上正确**的空缺，
 --    又不放松销售店日的逐分判据（复算=5/物化=0 与 复算=NULL/物化=5 仍判红）。
 -- ⚠️ 2026-10-21：**1 分容差**（原为 `is distinct from` 精确比较）。
