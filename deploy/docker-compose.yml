@@ -206,6 +206,14 @@ services:
       DUCKLE_SHARE_DIR: /workspace/sandbox
       DUCKLE_SHARE_UID: '1000'
       DUCKLE_SHARE_GID: '1000'
+      # 资源上限（2026-10-24 定案；出处：duckle 引擎源码——`serve` 不接 --memory-limit/--threads，
+      # 引擎按**进程环境变量**取值，见 docs/architecture.md §2.8「已销账」）。
+      # DUCKLE_MEMORY_LIMIT 决定 DuckDB **何时落盘**（超了 spill 到 DUCKLE_TEMP_DIR），不是容器硬上限；
+      # 容器级硬上限在 openship 服务行 advanced.resources（mem 1536MB / cpu 1.0，超了 OOM）——两者都要设。
+      # 值必须与生产服务行保持一致，改就一起改（compose env 对「已有服务行」不自动生效，见 SOP §G.1 坑四）。
+      DUCKLE_MEMORY_LIMIT: '1152MB'
+      DUCKLE_THREADS: '2'
+      DUCKLE_MAX_TEMP_DIR_SIZE: '1GB'
     volumes:
       # 同一个卷同时挂给 server（`/run/duckle-sandbox`）：草案进、回执出，都靠它交换。
       - sandbox-workspace:/workspace
