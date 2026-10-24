@@ -191,7 +191,7 @@ measures:
 
 | 阶段 | 内容 | 退出判据 |
 |---|---|---|
-| **P3.0** | 声明模型扩展（对象形态 / domain / additivity / unit）+ 门禁改造（字符串形态报红、`additivity` 缺失报红）+ 生成器骨架 + **影子对账框架** | 存量 3 个组件迁成对象形态；生成器对空集幂等；门禁全绿；**运行时零变化** |
+| **P3.0** | 声明模型扩展（对象形态 / domain / additivity / unit）+ 门禁改造（字符串形态报红、`additivity` 缺失报红）+ 生成器骨架 + **影子对账框架** | 存量 3 个组件迁成对象形态；「空集幂等」限于声明缺席面（`measures:` / `domains:` 缺席 = 空表），生成器对空列清单 **fail loud**（#1019 措辞订正，与实现一致）；门禁全绿；**运行时零变化** |
 | **P3.1** | retail_sale 一族双跑：`fct_retail_sale` 的度量列新旧两路并行 | 连续 ≥N 天、全账套×全店日逐分一致（≤ 1 分）；差异全部有归因 |
 | **P3.2** | 切 `fct_retail_sale` 度量列到生成物；删 `net_sales` / `order_line` 的 `detail.filter` 与重复谓词 | 切换后首日物化 PASS；聚合==下钻上卷守恒校验通过；certified 签核记录在案 |
 | **P3.3** | 4 族影子迁移（branch_expense / client_expense / transfer_line_quality / retail_quantity），一波影子、分批签核；其余 8 族例外登记见 §8（2026-10-24 勘察缩幅，issue #1031） | 4 族影子对账全绿；experimental ~7 天先切、certified ~14 天签核切换 |

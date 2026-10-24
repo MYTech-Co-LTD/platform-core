@@ -1156,6 +1156,12 @@ export function checkDataModels(rootDir, opts = {}) {
           if (!/^[a-z_]+@[a-z_]+$/.test(k)) push(rel, 0, `\`measures.${k}\` 键名不合 \`<snake>@<snake>\` 形态。`)
           try {
             const measure = syncContract.measureOf(v)
+            // grain 后缀一致性（#1019）：判据与 sync **同一函数**（`measureGrainMismatch`）——
+            // 解析期红，不等生成器物化时才抓（只用于 compose 面的组件没人会查它）。
+            const grainNote = syncContract.measureGrainMismatch(k, measure)
+            if (grainNote) {
+              push(rel, 0, `\`measures.${k}\` ${grainNote} —— 键名的 \`@\` 后缀是生成器选分组键的钥匙（生成器侧同判据会抛）。`)
+            }
             measureMap.set(k, measure)
             // 成员性（P3.0 Task 3）：组件 `domain` 必须是**同文件** `domains:` 里登记过的行域名。
             // 拼错 = 派生 filter 时会抛「未知行域」；显式写了 filter 的指标则**完全不经过派生**，

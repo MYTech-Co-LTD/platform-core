@@ -419,8 +419,9 @@ models:
       # 本阶段只并行输出、**任何消费方都不许读**：切换要等影子对账
       # `dbt/tests/lemeng/assert_fct_transfer_line_quality_measure_shadow_parity.sql` 稳定后另开笔。
       # ⚠️ not_null 是**结构守卫**不是冗余：影子对账里两侧都 coalesce(…, 0)，单看差值会把
-      #    「影子列为 NULL、旧列为 0」算成 0 = 0 而静默绿；归零发生在最终 SELECT，这里的 NULL
-      #    只可能来自生成区形态被改坏。
+      #    「影子列为 NULL、旧列为 0」算成 0 = 0 而静默绿；归零发生在最终 SELECT —— 生成区
+      #    单侧缺行的 NULL 已被它归零，**生成区坏了表现为数错**（归影子对账管），不表现为
+      #    NULL；这里的 NULL 只可能来自最终 SELECT 的 coalesce 被移除/失效（#1019 订正因果）。
       - name: zero_cost_amount__gen
         description: 影子列 = `zero_cost_amount` 的 measure 编译版（`tq_zero_cost_amount@order` 两阶段：逐单 → 店日；`coalesce(out_money, 0)` 守卫与 `subtotal = 0` 的 null 排除随 expr 原样保留）。**P3.3 期不许被消费**；单侧缺行由最终 SELECT 归零。
         tests:
@@ -464,8 +465,9 @@ models:
       # （改声明后重跑生成器）。本阶段只并行输出、**任何消费方都不许读**：切换要等影子对账
       # `dbt/tests/lemeng/assert_fct_branch_expense_measure_shadow_parity.sql` 稳定后另开笔。
       # ⚠️ not_null 是**结构守卫**不是冗余：影子对账里两侧都 coalesce(…, 0)，单看差值会把
-      #    「影子列为 NULL、旧列为 0」算成 0 = 0 而静默绿；归零发生在最终 SELECT，这里的 NULL
-      #    只可能来自生成区形态被改坏。
+      #    「影子列为 NULL、旧列为 0」算成 0 = 0 而静默绿；归零发生在最终 SELECT —— 生成区
+      #    单侧缺行的 NULL 已被它归零，**生成区坏了表现为数错**（归影子对账管），不表现为
+      #    NULL；这里的 NULL 只可能来自最终 SELECT 的 coalesce 被移除/失效（#1019 订正因果）。
       - name: ep_payable__gen
         description: 影子列 = `ep_payable` 的 measure 编译版（expr `sum(coalesce(amount, 0))`，方向过滤上移到 domain 基面）。**P3.3 期不许被消费**；单侧缺行由最终 SELECT 归零。
         tests: [{not_null: {}}]
@@ -510,8 +512,9 @@ models:
       # （改声明后重跑生成器）。本阶段只并行输出、**任何消费方都不许读**：切换要等影子对账
       # `dbt/tests/lemeng/assert_fct_client_expense_measure_shadow_parity.sql` 稳定后另开笔。
       # ⚠️ not_null 是**结构守卫**不是冗余：影子对账里两侧都 coalesce(…, 0)，单看差值会把
-      #    「影子列为 NULL、旧列为 0」算成 0 = 0 而静默绿；归零发生在最终 SELECT，这里的 NULL
-      #    只可能来自生成区形态被改坏。
+      #    「影子列为 NULL、旧列为 0」算成 0 = 0 而静默绿；归零发生在最终 SELECT —— 生成区
+      #    单侧缺行的 NULL 已被它归零，**生成区坏了表现为数错**（归影子对账管），不表现为
+      #    NULL；这里的 NULL 只可能来自最终 SELECT 的 coalesce 被移除/失效（#1019 订正因果）。
       - name: ep_payable__gen
         description: 影子列 = `ep_payable` 的 measure 编译版（expr `sum(coalesce(other_inout_money, 0))`，方向过滤上移到 domain 基面）。**P3.3 期不许被消费**；单侧缺行由最终 SELECT 归零。
         tests: [{not_null: {}}]
@@ -712,7 +715,8 @@ models:
       # `dbt/tests/lemeng/assert_fct_retail_quantity_measure_shadow_parity.sql` 稳定后另开笔
       # （experimental ⇒ 对账窗口 7 天）。⚠️ not_null 是**结构守卫**不是冗余：影子对账里两侧都
       # coalesce(…, 0)，单看差值会把「影子列为 NULL、旧列为 0」算成 0 = 0 而静默绿；归零发生在
-      # 最终 SELECT，这里的 NULL 只可能来自生成区形态被改坏。
+      # 最终 SELECT —— 生成区单侧缺行的 NULL 已被它归零，**生成区坏了表现为数错**（归影子对账
+      # 管），不表现为 NULL；这里的 NULL 只可能来自最终 SELECT 的 coalesce 被移除/失效（#1019）。
       - name: sale_quantity__gen
         description: 影子列 = `sale_quantity` 的 measure 编译版（`sale_quantity@flat`，expr `sum(quantity)`，单据类型/状态过滤上移到 domain 基面）。**P3.3 期不许被消费**；单侧缺行由最终 SELECT 归零。
         tests: [{not_null: {}}]

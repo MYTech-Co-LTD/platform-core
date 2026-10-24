@@ -47,6 +47,7 @@ import {
   drillTripleOf,
   exitCodeFor,
   formatDiff,
+  measureGrainMismatch,
   measureOf,
   measuresOf,
   parseArgs,
@@ -1158,6 +1159,22 @@ describe('measuresOf / composeOf —— 下钻编译的纯函数面（spec 2026-
     expect(measuresOf({ measures: { 'a@b': { expr: '  sum(x)  ', additivity: 'flow' } } }).get('a@b')?.expr).toBe('sum(x)')
   })
 
+  it('measuresOf：grain 与键名 @ 后缀不一致 ⇒ 抛（#1019 解析侧补齐；与生成器同判据、门禁同函数）', () => {
+    // 后缀是生成器选分组键的钥匙（grainKeys[后缀]）：错位声明若只用于 compose 面，
+    // 生成器一辈子不会查它——必须在解析期红。
+    expect(() => measuresOf({ measures: { 'a@order': { expr: 'sum(x)', grain: ['line'], additivity: 'flow' } } }))
+      .toThrow(/不一致/)
+    // 一致与 grain 缺席（compose-only 组件）都放行
+    expect(measuresOf({ measures: { 'a@order': { expr: 'sum(x)', grain: ['order'], additivity: 'flow' } } }).size).toBe(1)
+    expect(measuresOf({ measures: { 'a@order': { expr: 'sum(x)', additivity: 'flow' } } }).size).toBe(1)
+  })
+
+  it('measureGrainMismatch：共享判据本体（null = 一致或 grain 缺席；非 null = 人读描述）', () => {
+    expect(measureGrainMismatch('a@order', measureOf({ expr: 'sum(x)', grain: ['order'], additivity: 'flow' }))).toBeNull()
+    expect(measureGrainMismatch('a@order', measureOf({ expr: 'sum(x)', grain: ['flat'], additivity: 'flow' }))).toMatch(/@order/)
+    expect(measureGrainMismatch('a@order', measureOf({ expr: 'sum(x)', additivity: 'flow' }))).toBeNull()
+  })
+
   it('composeOf：括号包裹保优先级（(a) - (b) 形态）；文法检查先于引用替换；compose 缺省 ⇒ null', () => {
     const measures = measuresOf({ measures: {
       'sale@x': { expr: 'sum(a)', additivity: 'flow' },
@@ -1299,6 +1316,17 @@ describe('具名行域（domains:）与 detail.filter 派生（P3.0 Task 3）', 
     expect(() => domainsOf({ domains: { 'Bad-Name': { filter: 'a = 1' } } })).toThrow(/蛇形/)
   })
 
+  it('domainsOf：extends 坏链 / 环 ⇒ 解析期抛（#1019：不等某次引用走到 resolveDomain 才暴露）', () => {
+    expect(() => domainsOf({ domains: { a: { extends: 'ghost', filter: 'x = 1' } } })).toThrow(/ghost.*不存在|不存在/)
+    // 链上深层缺目标同样红（不是只查一层）
+    expect(() => domainsOf({
+      domains: { a: { extends: 'b', filter: 'x = 1' }, b: { extends: 'ghost', filter: 'y = 2' } },
+    })).toThrow(/不存在/)
+    expect(() => domainsOf({
+      domains: { a: { extends: 'b', filter: 'x = 1' }, b: { extends: 'a', filter: 'y = 2' } },
+    })).toThrow(/环/)
+  })
+
   it('detail.filter 缺席 ⇒ 由组件域派生后物化（declarationsFromYaml 单点）', () => {
     const rows = declarationsFromYaml({
       domains: DOMAINS,
@@ -1329,6 +1357,21 @@ describe('具名行域（domains:）与 detail.filter 派生（P3.0 Task 3）', 
         compose: 'a@b', dimensions: ['system_book'], detail: { relation: 'vw_x' },
       }],
     })).toThrow(/缺 domain/)
+  })
+
+  it('detail.filter 显式写 null ⇒ 抛（#1019：与门禁同判，不再当缺席派生——同一份声明两侧说法必须一致）', () => {
+    // 组件带 domain、派生本来能成功 ⇒ 红只能来自「显式 null」这一件事，判据才钉得准
+    expect(() => declarationsFromYaml({
+      domains: DOMAINS,
+      measures: { 'sale_amount@order': { expr: 'sum(x)', domain: 'sale_finished', additivity: 'flow' } },
+      metrics: [{
+        name: 'lemeng:retail:net_sales', label: 't', definition: 'd', source: 'lemeng',
+        expression: 'sum(fct_retail_sale.net_amount)', grain: ['system_book'],
+        owner: 'o', tier: 'certified', freshness_sla_days: 1,
+        compose: 'sale_amount@order', dimensions: ['system_book'],
+        detail: { relation: 'vw_x', filter: null },
+      }],
+    })).toThrow(/null/)
   })
 
   it('★ 真事实源：两条下钻指标的 filter 是**派生**来的，且逐字等于迁移前的手写值', () => {

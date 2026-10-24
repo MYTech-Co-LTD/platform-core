@@ -1543,6 +1543,24 @@ describe('下钻三键 + measures（spec 2026-10-21 §2.3/§2.3.1，#977）', ()
     expect(checkDataModels(fixture(good))).toEqual([])
   })
 
+  it('measures 的 grain 与键名 @ 后缀不一致 ⇒ 拒（#1019：解析侧补齐，判据与 sync 同一函数）', () => {
+    const files = drillCompliant()
+    files[METRICS] = files[METRICS].replace(
+      '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow, domain: sale_finished }',
+      '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow, domain: sale_finished, grain: [line] }',
+    )
+    const vs = checkDataModels(fixture(files))
+    expect(vs.some((v) => /不一致/.test(v.message))).toBe(true)
+
+    // 反面（防误伤）：后缀一致（grain: [order]）⇒ 零违规
+    const good = drillCompliant()
+    good[METRICS] = good[METRICS].replace(
+      '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow, domain: sale_finished }',
+      '  "sale_amount@order": { expr: "sum(fct_retail_sale.net_amount)", additivity: flow, domain: sale_finished, grain: [order] }',
+    )
+    expect(checkDataModels(fixture(good))).toEqual([])
+  })
+
   it('measures 表达式含分号 ⇒ 拒', () => {
     // replace 只换第一处 = measures: 的那个值（metrics 的 expression 在其后，不被波及）
     const files = drillCompliant()
