@@ -109,7 +109,22 @@ export const MODELS = [
       'er_receivable@flat': 'base_receivable',
     },
   },
-  // P3.3 Task 3-5 逐族追加其余三个 fct 的块（见各任务 Interfaces）
+  // P3.3 Task 3（#1031）：客户费用构件——与门店族同构的 flat 双列。组件键带 client_ 族前缀：
+  // measures 是扁平命名空间，门店族已占 `ep_payable@flat` / `er_receivable@flat`，同名键会静默
+  // 覆盖其声明（Map 后写胜，门店族生成区会悄悄改用客户侧 expr/domain）；列名前缀由 fct 最终
+  // SELECT 的别名剥掉（影子列仍叫 `ep_payable__gen` / `er_receivable__gen`）。
+  {
+    rel: 'dbt/models/lemeng/marts/fct_client_expense.sql',
+    stagingRef: "{{ ref('stg_lemeng_client_expense') }}",
+    grainKeys: {},
+    fctGrain: ['system_book', 'bizday', 'client_fid', 'other_inout_kind'],
+    columns: ['client_ep_payable@flat', 'client_er_receivable@flat'],
+    baseAliases: {
+      'client_ep_payable@flat': 'base_payable',
+      'client_er_receivable@flat': 'base_receivable',
+    },
+  },
+  // P3.3 Task 4-5 逐族追加其余两个 fct 的块（transfer_line_quality / retail_quantity）
 ]
 
 /**

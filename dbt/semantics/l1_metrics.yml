@@ -76,6 +76,11 @@ domains:
   # fct_branch_expense.sql 的 case-when 条件（生成器基面 where 的派生源，改判别式两边一起改）。
   expense_payable:    "direction = '应付'"
   expense_receivable: "direction = '应收'"
+  # 客户费用构件（P3.3 影子波 Task 3，issue #1031）：费用行方向域——谓词逐字取自
+  # fct_client_expense.sql 的 case-when 条件（生成器基面 where 的派生源，改判别式两边一起改）。
+  # 与门店族分名：行域是扁平命名空间，两族谓词列不同（direction / other_inout_flag），不许共用。
+  client_expense_payable:    "other_inout_flag = false"
+  client_expense_receivable: "other_inout_flag = true"
 
 # ── 域级度量组件（spec 2026-10-21 bot-drillthrough §2.3）：一个组件只声明一次，指标用 compose 组合 ──
 # 判别式**逐字**取自 dbt/models/lemeng/marts/fct_retail_sale.sql（销售侧正数形态 / 退货侧绝对值形态 #908），
@@ -132,6 +137,24 @@ measures:
     additivity: flow
     unit: CNY
     domain: expense_receivable
+  # 客户费用构件（P3.3 影子波 Task 3，issue #1031）：expr = fct_client_expense.sql 里
+  # ep_payable / er_receivable 的**聚合内层逐字**（`sum(coalesce(other_inout_money, 0))`；方向
+  # case-when 不进组件——它上移为 domain 基面，数值上与 `else 0` 等价，由影子对账测试逐分钉住）。
+  # 键带 client_ 族前缀：measures 是扁平命名空间，复用门店族的 `ep_payable@flat` 会静默覆盖其声明
+  # （Map 后写胜，门店族的生成区会悄悄改用客户侧 expr/domain）。flat = 单层可结合聚合：生成器
+  # 直接在 fct 粒度求值，无两阶段上卷。
+  client_ep_payable@flat:
+    expr: 'sum(coalesce(other_inout_money, 0))'
+    grain: [flat]
+    additivity: flow
+    unit: CNY
+    domain: client_expense_payable
+  client_er_receivable@flat:
+    expr: 'sum(coalesce(other_inout_money, 0))'
+    grain: [flat]
+    additivity: flow
+    unit: CNY
+    domain: client_expense_receivable
 
 metrics:
   - name: 'lemeng:retail:sales'
