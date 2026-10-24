@@ -56,21 +56,21 @@
       "type": "varchar",
       "nullable": true,
       "description": "门店业务代码（观测列；= dim_branch.code 同源，但全量覆盖率未验，不作 join 键）",
-      "expr": "json_extract_string(CAST(o.branch AS JSON), '$.branch_code')"
+      "expr": "json_extract_string(TRY_CAST(o.branch AS JSON), '$.branch_code')"
     },
     {
       "name": "branch_name",
       "type": "varchar",
       "nullable": true,
       "description": "门店名称（观测）",
-      "expr": "json_extract_string(CAST(o.branch AS JSON), '$.branch_name')"
+      "expr": "json_extract_string(TRY_CAST(o.branch AS JSON), '$.branch_name')"
     },
     {
       "name": "branch_matrix_price_actived",
       "type": "boolean",
       "nullable": true,
       "description": "门店价格启用状态：true-启用门店设定价参与应用价计算；false-用商品档案价",
-      "expr": "CAST(json_extract_string(CAST(o.branch AS JSON), '$.branch_matrix_price_actived') AS BOOLEAN)"
+      "expr": "CAST(json_extract_string(TRY_CAST(o.branch AS JSON), '$.branch_matrix_price_actived') AS BOOLEAN)"
     },
     {
       "name": "item_num",
@@ -91,63 +91,63 @@
       "type": "varchar",
       "nullable": false,
       "description": "商品编码（= dim_item.item_code 同源，发布 join 键）",
-      "expr": "json_extract_string(CAST(o.pos_variant AS JSON), '$.item_code')"
+      "expr": "json_extract_string(TRY_CAST(o.pos_variant AS JSON), '$.item_code')"
     },
     {
       "name": "bar_code",
       "type": "varchar",
       "nullable": true,
       "description": "条码（pos_variant.item_barcode）",
-      "expr": "json_extract_string(CAST(o.pos_variant AS JSON), '$.item_barcode')"
+      "expr": "json_extract_string(TRY_CAST(o.pos_variant AS JSON), '$.item_barcode')"
     },
     {
       "name": "item_name",
       "type": "varchar",
       "nullable": true,
       "description": "商品名称（观测）",
-      "expr": "json_extract_string(CAST(o.pos_variant AS JSON), '$.item_name')"
+      "expr": "json_extract_string(TRY_CAST(o.pos_variant AS JSON), '$.item_name')"
     },
     {
       "name": "spec_num",
       "type": "varchar",
       "nullable": true,
       "description": "规格编号",
-      "expr": "json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_num')"
+      "expr": "json_extract_string(TRY_CAST(o.pos_variant AS JSON), '$.spec_num')"
     },
     {
       "name": "spec_unit",
       "type": "varchar",
       "nullable": true,
       "description": "规格单位（价格挂在它上；公斤/提等）",
-      "expr": "json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_unit')"
+      "expr": "json_extract_string(TRY_CAST(o.pos_variant AS JSON), '$.spec_unit')"
     },
     {
       "name": "spec_rate",
       "type": "decimal(18,8)",
       "nullable": true,
       "description": "规格换算率（基本单位换算的钥匙；口径验证 = 计划 Task 7 未验环节①）",
-      "expr": "CAST(json_extract_string(CAST(o.pos_variant AS JSON), '$.spec_rate') AS DECIMAL(18,8))"
+      "expr": "CAST(json_extract_string(TRY_CAST(o.pos_variant AS JSON), '$.spec_rate') AS DECIMAL(18,8))"
     },
     {
       "name": "item_unit",
       "type": "varchar",
       "nullable": true,
       "description": "商品基本单位（观测）",
-      "expr": "json_extract_string(CAST(o.pos_variant AS JSON), '$.item_unit')"
+      "expr": "json_extract_string(TRY_CAST(o.pos_variant AS JSON), '$.item_unit')"
     },
     {
       "name": "item_category",
       "type": "varchar",
       "nullable": true,
       "description": "商品类别（观测）",
-      "expr": "json_extract_string(CAST(o.pos_variant AS JSON), '$.item_category')"
+      "expr": "json_extract_string(TRY_CAST(o.pos_variant AS JSON), '$.item_category')"
     },
     {
       "name": "item_department",
       "type": "varchar",
       "nullable": true,
       "description": "商品部门（观测）",
-      "expr": "json_extract_string(CAST(o.pos_variant AS JSON), '$.item_department')"
+      "expr": "json_extract_string(TRY_CAST(o.pos_variant AS JSON), '$.item_department')"
     },
     {
       "name": "last_edit_time",
