@@ -35,10 +35,10 @@ describe('apply_pipeline_proposal', () => {
     expect(verdictOf(out.payload as Record<string, unknown>, out.isError)).toEqual({ verdict: 'ok', reason: 'proposal_apply_unconfigured' })
   })
 
-  it('路径白名单：非允许前缀 / 含 .. / 非 .json ⇒ refused/invalid_draft，applier 零调用', async () => {
-    for (const bad of ['.github/workflows/x.yml', 'contracts/../secrets.json', 'contracts/common/x.json ', 'contracts/common/x.txt']) {
+  it('路径白名单：非允许前缀 / 含 .. / 非 .json / 以 / 开头 ⇒ refused/invalid_draft，applier 零调用', async () => {
+    for (const bad of ['.github/workflows/x.yml', 'contracts/../secrets.json', 'contracts/common/x.json ', 'contracts/common/x.txt', '/contracts/x.json']) {
       const { applier, calls } = applierOf({ kind: 'applied', branch: 'b', prUrl: 'u', prNumber: 1, commitCount: 1, skipped: [] })
-      const out = await applyPipelineProposalImpl(depsWith(applier), { proposal: { ...proposal, pieces: [{ path: bad.trim(), content: '{}\n' }] } })
+      const out = await applyPipelineProposalImpl(depsWith(applier), { proposal: { ...proposal, pieces: [{ path: bad, content: '{}\n' }] } })
       expect(out.payload).toMatchObject({ status: 'refused', reason: 'invalid_draft' })
       expect(calls()).toBe(0)
     }

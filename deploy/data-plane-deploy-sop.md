@@ -1019,11 +1019,12 @@ docker exec <server 容器> node -e "fetch('http://sandbox-console:18090/healthz
 | **目标仓** | `DATA_MCP_GITHUB_REPO`（缺省 `MYTech-Co-LTD/platform-core`，一般不配） |
 | **不生效口径** | PAT 未配 ⇒ 工具回 `not_executed / proposal_apply_unconfigured`；总闸关 ⇒ `denied / mutating_disabled`。**生产默认不配 PAT** |
 | **产出** | 提案分支 + draft PR（每文件一个 commit；body 带 downstream 与 validation）。**永不直写正式目录** |
+| **工具清单正典** | `modules/data/domain/pipelines/tools.ts` 头注 + `scripts/check-mcp-toolface.mjs` 门（用 `pnpm exec tsx` 跑）——apply_pipeline_proposal 的名称/描述/schema 以它为准 |
 
 部署后自证（每条都要**看见**）：
 
 - ① **关闸冒烟**（#1003 验收第三条）：`DATA_MCP_ALLOW_MUTATING != true` 时调 apply ⇒ `denied/mutating_disabled`
-- ② **未配 PAT 冒烟**：配了总闸但 `DATA_MCP_GITHUB_TOKEN` 空 ⇒ `not_executed/proposal_apply_unconfigured`
+- ② **未配 PAT 冒烟**：配了总闸但 `DATA_MCP_GITHUB_TOKEN` 空 ⇒ `not_executed/proposal_apply_unconfigured`（需用能过校验的合法草案——坏草案在未配 PAT 的实例上先回 `refused/invalid_draft` 而非 not_executed：校验闸先于 seam）
 - ③ **白名单冒烟**：`piece.path = .github/workflows/x.yml` ⇒ `refused/invalid_draft`（零网络）
 - ④ **冲突冒烟**：对一个基线上已存在的契约回传不同内容 ⇒ `refused/proposal_conflict` + 当前内容摘要
 - ⑤ **端到端**：`propose_*` → apply ⇒ GitHub 上出现提案分支 + draft PR（body 带 downstream/validation）
