@@ -194,8 +194,8 @@ measures:
 | **P3.0** | 声明模型扩展（对象形态 / domain / additivity / unit）+ 门禁改造（字符串形态报红、`additivity` 缺失报红）+ 生成器骨架 + **影子对账框架** | 存量 3 个组件迁成对象形态；生成器对空集幂等；门禁全绿；**运行时零变化** |
 | **P3.1** | retail_sale 一族双跑：`fct_retail_sale` 的度量列新旧两路并行 | 连续 ≥N 天、全账套×全店日逐分一致（≤ 1 分）；差异全部有归因 |
 | **P3.2** | 切 `fct_retail_sale` 度量列到生成物；删 `net_sales` / `order_line` 的 `detail.filter` 与重复谓词 | 切换后首日物化 PASS；聚合==下钻上卷守恒校验通过；certified 签核记录在案 |
-| **P3.3** | 其余 13 个 fct 按族迁移 | 每族独立影子对账 + 签核 |
-| **P3.4** | `expression` 全量退役；`measures` 成为唯一口径面 | 全量指标切换完成 + 一个观察窗无回归 |
+| **P3.3** | 4 族影子迁移（branch_expense / client_expense / transfer_line_quality / retail_quantity），一波影子、分批签核；其余 8 族例外登记见 §8（2026-10-24 勘察缩幅，issue #1031） | 4 族影子对账全绿；experimental ~7 天先切、certified ~14 天签核切换 |
+| **P3.4** | **measure-backed 指标**的 `expression` 退役；defer/exclude 族（§8）的 `expression` 即口径正典单点，**保留** | 可退役指标全切 + 一个观察窗无回归 |
 
 > **P3.2 实施记录（2026-10-23/24，issue #1020）**：只切列、不改口径——`fct_retail_sale` 输出仍是同样 8 列
 > （`system_book, org, bizday, branch_num, sale_amount, return_amount, net_amount, order_count`），
@@ -217,6 +217,12 @@ measures:
 > （11:27/13:27/15:27 UTC vs 前日同槽 115/120/117s）复核；持续超预算才触发反转条件第二条。
 
 **首批只做 retail_sale 一族**，其余按需推进——第一段目标是「证明脚手架」，不是「改造全仓」。
+
+> **P3.3 勘察定案（2026-10-24，issue #1031）**：15 个 fct 全列逐一勘察 + 43 条指标 expression
+> 提取（结论：候选指标全部是 `sum(fct_x.col)` 直引，无第二份口径实现）后，范围从「其余 13 族」
+> 缩到 **4 族 9 条指标**；6 族 defer（双源 join / 组合长表 / streak / 跨期窗——measure 的单
+> relation 假设与两阶段编译装不下）、2 族 exclude（纯透传，0 聚合，无口径可组件化）。
+> P3.4 的「expression 全量退役」前提随之修正（见上表行）。逐族结构性理由登记在 §8。
 
 ---
 
@@ -265,7 +271,17 @@ measures:
 - **不做贡献分解 / 比率重算的分析面**（本批只铺元数据；另立 spec）；
 - **不做自由 SQL / 自定义度量**（约束 12 不变）；
 - 比率类指标（`ratio` 形态的 10 条）暂不纳入组件化，等口径模型统一后再议；
-- `detail.columns`（条件列）与掩码语义不动，归 #995。
+- `detail.columns`（条件列）与掩码语义不动，归 #995；
+- **fct 族例外登记（P3.3 勘察，2026-10-24，issue #1031）**——结构性理由，不是优先级排序：
+  - **defer（6 族，编译器能力外）**：`fct_request_fulfillment`（双源 left join + 派生列）、
+    `fct_contribution` / `fct_client_contribution` / `fct_hq_outbound`（组合长表：多湖表
+    union/join + 域选择性冲减 + 快照去重）、`fct_branch_day_activity`（streak 连续无销售）、
+    `fct_retail_comparable_growth`（跨期窗 cur/pri 对比）——measure 的单 relation 假设与
+    两阶段编译装不下这些结构；其 `expression`（`sum(fct_x.col)`）就是口径正典单点；
+  - **exclude（2 族，结构性透传）**：`fct_purchase`、`fct_inventory_snapshot`——0 聚合直落，
+    聚合面无口径可拆，无可组件化对象；
+  - **重开条件**：编译器支持多 relation / 窗口形态的 measure 声明，且有真实消费需求时再议；
+    不为「架构完整性」而迁。
 
 ---
 
