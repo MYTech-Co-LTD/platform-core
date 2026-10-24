@@ -381,6 +381,9 @@ describe('Console 壳（菜单聚合 + 权限门禁）', () => {
     // 菜单无「存储配置」（点开管理组后断言——子菜单懒渲染，不点开恒不可见）
     fireEvent.click(await screen.findByText('管理'))
     await waitFor(() => expect(screen.getByText('用户管理')).toBeInTheDocument())
+    // 组织架构/角色管理（账户和权限体系 Task 11）：平台内置页，恒在管理组
+    expect(screen.getByText('组织架构')).toBeInTheDocument()
+    expect(screen.getByText('角色管理')).toBeInTheDocument()
     expect(screen.queryByText('存储配置')).not.toBeInTheDocument()
     // 直敲 /console/admin/storage → 未启用 Result（AdminGate 先过：session 有 tenant:admin；
     // history.pushState 不触发 router 重渲染，从目标路径重新 render——与 ②c 同法）

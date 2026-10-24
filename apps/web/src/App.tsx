@@ -3,6 +3,8 @@ import { Navigate, RouterProvider, createBrowserRouter } from 'react-router-dom'
 import ConsoleShell, { AdminGate, ConsoleModulePage, ConsoleOverview, StorageGate } from './pages/Console'
 import LoginPage from './pages/Login'
 import AdminUsersPage from './pages/admin/Users'
+import AdminOrgTreePage from './pages/admin/OrgTree'
+import AdminRolesPage from './pages/admin/Roles'
 import AdminPermissionsPage from './pages/admin/Permissions'
 import AdminSubscriptionsPage from './pages/admin/Subscriptions'
 import AdminStoragePage from './pages/admin/Storage'
@@ -28,6 +30,9 @@ export function createAppRouter() {
         // 静态路由按特异性胜出通配（react-router v6 排序规则：admin/users > admin/* > *），
         // 平台内置管理页不会被模块通配吃掉
         { path: 'admin/users', element: <AdminGate><AdminUsersPage /></AdminGate> },
+        // 组织架构/角色管理（账户和权限体系 Task 11）：AdminGate 组门与平台内置四项同待遇
+        { path: 'admin/org-tree', element: <AdminGate><AdminOrgTreePage /></AdminGate> },
+        { path: 'admin/roles', element: <AdminGate><AdminRolesPage /></AdminGate> },
         { path: 'admin/permissions', element: <AdminGate><AdminPermissionsPage /></AdminGate> },
         { path: 'admin/subscriptions', element: <AdminGate><AdminSubscriptionsPage /></AdminGate> },
         { path: 'admin/storage', element: <AdminGate><StorageGate><AdminStoragePage /></StorageGate></AdminGate> },
