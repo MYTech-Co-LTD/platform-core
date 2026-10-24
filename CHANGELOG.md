@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.195.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.195.0...v0.195.1) - 2026-10-24
+- 【修复】data: item_price 批量节点 merge 入边 targetHandle 补唯一序号（ctl.merge 单端口多入需 main_N） ([#1042](https://github.com/MYTech-Co-LTD/platform-core/pull/1042), [ea12c8d](https://github.com/MYTech-Co-LTD/platform-core/commit/ea12c8da50f6871991f778a11e4c9cafbc329afb))
+
+
 ## [0.195.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.194.0...v0.195.0) - 2026-10-24
 - 【新增】data: apply_pipeline_proposal——提案落盘并开 draft PR（#1003） ([#1041](https://github.com/MYTech-Co-LTD/platform-core/pull/1041), [faaceef](https://github.com/MYTech-Co-LTD/platform-core/commit/faaceeff15f5d6e33042bf9753612d761182e031))
 
