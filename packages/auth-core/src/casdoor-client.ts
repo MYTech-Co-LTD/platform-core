@@ -405,6 +405,67 @@ export class CasdoorClient {
   }
 
   /**
+   * 码↔角色挂接（账户和权限体系 Task 6）：把角色加进权限记录的 roles[]。照
+   * grantPermissionToUser 的 body 全字段与回读模式，唯一差异：操作 roles 数组、
+   * 角色落 `org/<role>` 全形；幂等判定短名/全形双认（与 effectiveScopes.matchRoles
+   * 的双向语义一致）。铁律② `?id=` + 铁律③ 回读。
+   */
+  async grantPermissionToRole(code: string, roleName: string): Promise<void> {
+    const p = await this.#findPermissionByCode(code)
+    const roles = (p.roles as string[] | undefined) ?? []
+    const full = `${this.#o.org}/${roleName}`
+    if (roles.includes(roleName) || roles.includes(full)) return
+    const body = {
+      owner: this.#o.org,
+      name: String(p.name),
+      displayName: String(p.displayName ?? p.name),
+      model: String(p.model ?? 'built-in/user-model-built-in'),
+      users: (p.users as string[] | undefined) ?? [],
+      roles: [...roles, full],
+      resources: (p.resources as string[] | undefined) ?? [],
+      actions: (p.actions as string[] | undefined) ?? ['Read'],
+      isEnabled: p.isEnabled === undefined ? true : p.isEnabled,
+    }
+    const j = await this.#adminJson(
+      `update-permission?id=${encodeURIComponent(`${this.#o.org}/${String(p.name)}`)}`,
+      { method: 'POST', body },
+    )
+    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    const back = await this.#findPermissionByCode(code)
+    const br = (back.roles as string[] | undefined) ?? []
+    if (!br.includes(roleName) && !br.includes(full)) {
+      throw new Error(`casdoor: 角色挂码回读未命中 ${code} ← ${roleName}`)
+    }
+  }
+
+  /**
+   * 码↔角色摘除：把角色从权限记录的 roles[] 摘下。短名与 `org/role` 全形**一并清**
+   * （历史数据两种形态都可能存在）。幂等：本就没挂直接返回（不发 update）。
+   */
+  async revokePermissionFromRole(code: string, roleName: string): Promise<void> {
+    const p = await this.#findPermissionByCode(code)
+    const roles = (p.roles as string[] | undefined) ?? []
+    const kept = roles.filter((r) => r !== roleName && r !== `${this.#o.org}/${roleName}`)
+    if (kept.length === roles.length) return
+    const body = {
+      owner: this.#o.org,
+      name: String(p.name),
+      displayName: String(p.displayName ?? p.name),
+      model: String(p.model ?? 'built-in/user-model-built-in'),
+      users: (p.users as string[] | undefined) ?? [],
+      roles: kept,
+      resources: (p.resources as string[] | undefined) ?? [],
+      actions: (p.actions as string[] | undefined) ?? ['Read'],
+      isEnabled: p.isEnabled === undefined ? true : p.isEnabled,
+    }
+    const j = await this.#adminJson(
+      `update-permission?id=${encodeURIComponent(`${this.#o.org}/${String(p.name)}`)}`,
+      { method: 'POST', body },
+    )
+    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+  }
+
+  /**
    * 建角色。add 竞态与 createManagedUser 同口径：失败**重读验证**目标状态，已在即视为
    * 成功；仍无此人 ⇒ 抛（fail loudly）。写后回读（铁律③）。
    */

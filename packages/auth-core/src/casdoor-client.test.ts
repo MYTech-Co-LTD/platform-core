@@ -1094,3 +1094,39 @@ describe('setRoleMembers（Task 5）', () => {
     await expect(client().setRoleMembers('ghost', ['a'])).rejects.toThrow('角色不存在')
   })
 })
+
+// ---- 码↔角色（账户和权限体系 Task 6：grant/revokePermissionToRole） ----
+describe('码↔角色（Task 6）', () => {
+  let mp: MockCasdoor
+  beforeAll(async () => {
+    mp = new MockCasdoor({
+      perms: [{ owner: 'org', name: 'demo:view', resources: ['demo:view'], users: [] }],
+      roles: [{ owner: 'org', name: 'store-manager', displayName: '店长', users: [] }],
+    })
+    await mp.start()
+  })
+  afterAll(async () => { await mp.stop() })
+  const client = () =>
+    new CasdoorClient({ origin: mp.origin, clientId: 'x', clientSecret: 'y', org: 'org', adminUser: 'admin', adminPwd: 'pw' })
+  const permRoles = () => mp.permissionsIn('org').find((p) => p.name === 'demo:view')?.roles ?? []
+
+  it('grantPermissionToRole：roles 全形落库 + 回读；重复挂幂等不炸', async () => {
+    const c = client()
+    await c.grantPermissionToRole('demo:view', 'store-manager')
+    expect(permRoles()).toContain('org/store-manager')
+    // users/resources 不被洗（整记录替换带回）
+    expect(mp.permissionsIn('org').find((p) => p.name === 'demo:view')?.resources).toEqual(['demo:view'])
+    await expect(c.grantPermissionToRole('demo:view', 'store-manager')).resolves.toBeUndefined()
+  })
+
+  it('revokePermissionFromRole：短名/全形残留一并清；未挂幂等不发 update', async () => {
+    const c = client()
+    // 造短名残留：直接重建一枚 roles 含短名的码（绕过 grant 的全形惯例）
+    await c.upsertPermission('legacy:view', 'legacy:view')
+    // 先 revoke 全形（上一步挂的）
+    await c.revokePermissionFromRole('demo:view', 'store-manager')
+    expect(permRoles()).not.toContain('org/store-manager')
+    // 再 revoke 未挂过的 → 幂等不抛
+    await expect(c.revokePermissionFromRole('demo:view', 'store-manager')).resolves.toBeUndefined()
+  })
+})
