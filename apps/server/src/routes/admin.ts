@@ -42,6 +42,7 @@ async function writeAudit(
   tenantId: number,
   actor: string,
   action: 'admin.user.create' | 'admin.user.update' | 'admin.user.delete' | 'admin.grant' | 'admin.revoke'
+    | 'admin.role.create' | 'admin.role.delete' | 'admin.role.members' | 'admin.role.grant' | 'admin.role.revoke'
     | 'admin.storage.update' | 'admin.storage.clear' | 'admin.sources.update',
   detail: Record<string, unknown>,
 ): Promise<void> {
@@ -167,6 +168,96 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
     const t = c.get('tenant')
     await deps.casdoor(t.casdoor_org).revokePermissionFromUser(code, user)
     await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.revoke', { code, user })
+    return c.json({ ok: true })
+  })
+
+  // ---- 角色管理（账户和权限体系 spec §3.4：Casdoor Role（org 内）——角色批量授权面。
+  // 语义要点：setRoleMembers 设置的是【角色的成员表】，授/收 = 对变更角色整组替换；
+  // effectiveScopes 已按 matchRoles 消费角色继承（真机 spike 附录 B：get-user 回填 roles）。----
+
+  /** 角色 name 禁用字符集：与 Casdoor `safePermissionName` 同源 `"/?:#&%=+;"` + 长度上限 */
+  const RoleNameSchema = z.string().regex(/^[^/?:#&%=+;]{1,64}$/)
+
+  app.get('/roles', async (c) => {
+    const org = c.get('tenant').casdoor_org
+    const cas = deps.casdoor(org)
+    const roles = await cas.listRoles()
+    const raw = await cas.getPermissions()
+    const universe = deps.permissions()
+    return c.json({
+      roles: roles.map((r) => {
+        const short = r.name.startsWith(`${org}/`) ? r.name.slice(org.length + 1) : r.name
+        const codes = universe
+          .filter((u) =>
+            raw.some(
+              (p) =>
+                p.resources?.includes(u.code) &&
+                (p.roles ?? []).some((x) => x === short || x === r.name || x.endsWith(`/${short}`)),
+            ),
+          )
+          .map((u) => u.code)
+        return { name: short, displayName: r.displayName, members: r.users.length, users: shortNames(r.users), codes }
+      }),
+    })
+  })
+
+  app.post('/roles', async (c) => {
+    const body = await c.req.json<{ name?: unknown; displayName?: unknown }>().catch(() => null)
+    const name = typeof body?.name === 'string' ? body.name : ''
+    const displayName = typeof body?.displayName === 'string' ? body.displayName : undefined
+    if (!RoleNameSchema.safeParse(name).success || name === ANCHOR_USER) return c.json({ error: 'INVALID' }, 400)
+    if (displayName !== undefined && displayName.length > 128) return c.json({ error: 'INVALID' }, 400)
+    const t = c.get('tenant')
+    await deps.casdoor(t.casdoor_org).createRole({ name, displayName })
+    await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.role.create', { name })
+    return c.json({ ok: true })
+  })
+
+  app.delete('/roles/:name', async (c) => {
+    const name = c.req.param('name')
+    if (!RoleNameSchema.safeParse(name).success) return c.json({ error: 'INVALID' }, 400)
+    const t = c.get('tenant')
+    await deps.casdoor(t.casdoor_org).deleteRole(name)
+    await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.role.delete', { name })
+    return c.json({ ok: true })
+  })
+
+  app.put('/roles/:name/members', async (c) => {
+    const name = c.req.param('name')
+    if (!RoleNameSchema.safeParse(name).success) return c.json({ error: 'INVALID' }, 400)
+    const body = await c.req.json<{ users?: unknown }>().catch(() => null)
+    const users = Array.isArray(body?.users) ? (body.users as unknown[]) : null
+    if (!users || users.some((u) => typeof u !== 'string' || !/^[A-Za-z0-9]+$/.test(u))) {
+      return c.json({ error: 'INVALID' }, 400)
+    }
+    if (users.includes(ANCHOR_USER)) return c.json({ error: 'ANCHOR_FORBIDDEN' }, 400)
+    const t = c.get('tenant')
+    await deps.casdoor(t.casdoor_org).setRoleMembers(name, users as string[])
+    await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.role.members', { name, users })
+    return c.json({ ok: true })
+  })
+
+  app.post('/permissions/:code/roles', async (c) => {
+    const code = c.req.param('code')
+    if (!deps.permissions().some((p) => p.code === code)) return c.json({ error: 'NO_SUCH_CODE' }, 404)
+    const body = await c.req.json<{ role?: unknown }>().catch(() => null)
+    const role = typeof body?.role === 'string' ? body.role : ''
+    if (!RoleNameSchema.safeParse(role).success) return c.json({ error: 'INVALID' }, 400)
+    const t = c.get('tenant')
+    await deps.casdoor(t.casdoor_org).grantPermissionToRole(code, role)
+    await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.role.grant', { code, role })
+    return c.json({ ok: true })
+  })
+
+  app.delete('/permissions/:code/roles', async (c) => {
+    const code = c.req.param('code')
+    if (!deps.permissions().some((p) => p.code === code)) return c.json({ error: 'NO_SUCH_CODE' }, 404)
+    const body = await c.req.json<{ role?: unknown }>().catch(() => null)
+    const role = typeof body?.role === 'string' ? body.role : ''
+    if (!RoleNameSchema.safeParse(role).success) return c.json({ error: 'INVALID' }, 400)
+    const t = c.get('tenant')
+    await deps.casdoor(t.casdoor_org).revokePermissionFromRole(code, role)
+    await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.role.revoke', { code, role })
     return c.json({ ok: true })
   })
 

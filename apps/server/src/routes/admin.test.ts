@@ -807,3 +807,120 @@ describe('admin 路由：组织架构', () => {
     expect(u2.roles).toEqual(['区域']) // 全形角色名剥 org 前缀
   })
 })
+
+// ---- 角色管理（账户和权限体系 Task 8：roles CRUD + members + 码↔角色） ----
+describe('admin 路由：角色管理', () => {
+  interface RoleCalls {
+    created: Array<{ org: string; input: { name: string; displayName?: string } }>
+    deleted: Array<{ org: string; name: string }>
+    members: Array<{ org: string; name: string; users: string[] }>
+    granted: Array<{ org: string; code: string; role: string }>
+    revoked: Array<{ org: string; code: string; role: string }>
+    listRolesOrgs: string[]
+  }
+  function roleFake(
+    roles: Array<{ name: string; displayName: string; users: string[] }> = [],
+    calls: RoleCalls = { created: [], deleted: [], members: [], granted: [], revoked: [], listRolesOrgs: [] },
+  ): { fake: CasdoorClient; calls: RoleCalls } {
+    const fake = {
+      async listRoles() {
+        calls.listRolesOrgs.push('myorg')
+        return roles
+      },
+      async getPermissions() {
+        return [{ name: 'demo-view', resources: ['demo:view'], users: [], roles: ['myorg/店长'] }]
+      },
+      async createRole(input: { name: string; displayName?: string }) {
+        calls.created.push({ org: 'myorg', input })
+      },
+      async deleteRole(name: string) {
+        calls.deleted.push({ org: 'myorg', name })
+      },
+      async setRoleMembers(name: string, users: string[]) {
+        calls.members.push({ org: 'myorg', name, users })
+      },
+      async grantPermissionToRole(code: string, role: string) {
+        calls.granted.push({ org: 'myorg', code, role })
+      },
+      async revokePermissionFromRole(code: string, role: string) {
+        calls.revoked.push({ org: 'myorg', code, role })
+      },
+    } as unknown as CasdoorClient
+    return { fake, calls }
+  }
+
+  it('GET /roles：成员短名化（锚剔除）+ codes 按权限 roles 反查', async () => {
+    const { fake } = roleFake([
+      { name: '店长', displayName: '店长', users: ['myorg/u1', `myorg/${ANCHOR_USER}`] },
+    ])
+    const app = mount(deps({ casdoor: () => fake }), { scopes: ['tenant:admin'] })
+    const res = await app.request('/api/platform/admin/roles')
+    expect(await res.json()).toEqual({
+      roles: [{ name: '店长', displayName: '店长', members: 2, users: ['u1'], codes: ['demo:view'] }],
+    })
+  })
+
+  it('POST /roles：合法建 + 禁用字符/锚用户名 400 + 审计', async () => {
+    const { fake, calls } = roleFake()
+    const app = mount(deps({ casdoor: () => fake }), { scopes: ['tenant:admin'] })
+    const ok = await app.request('/api/platform/admin/roles', {
+      method: 'POST', headers: withCsrf, body: JSON.stringify({ name: '店长', displayName: '门店店长' }),
+    })
+    expect(ok.status).toBe(200)
+    expect(calls.created).toEqual([{ org: 'myorg', input: { name: '店长', displayName: '门店店长' } }])
+    for (const bad of [{ name: 'a/b' }, { name: 'a:b' }, { name: ANCHOR_USER }, { name: '' }, { name: 'x'.repeat(65) }]) {
+      const res = await app.request('/api/platform/admin/roles', {
+        method: 'POST', headers: withCsrf, body: JSON.stringify(bad),
+      })
+      expect(res.status).toBe(400)
+    }
+  })
+
+  it('DELETE /roles/:name 透传客户端（三铁律在客户端）+ 审计', async () => {
+    const { fake, calls } = roleFake()
+    const app = mount(deps({ casdoor: () => fake }), { scopes: ['tenant:admin'] })
+    const res = await app.request('/api/platform/admin/roles/%E5%BA%97%E9%95%BF', {
+      method: 'DELETE', headers: withCsrf,
+    })
+    expect(res.status).toBe(200)
+    expect(calls.deleted).toEqual([{ org: 'myorg', name: '店长' }])
+  })
+
+  it('PUT /roles/:name/members：短名校验 + 锚用户 400 + 全形化在客户端', async () => {
+    const { fake, calls } = roleFake()
+    const app = mount(deps({ casdoor: () => fake }), { scopes: ['tenant:admin'] })
+    const ok = await app.request('/api/platform/admin/roles/%E5%BA%97%E9%95%BF/members', {
+      method: 'PUT', headers: withCsrf, body: JSON.stringify({ users: ['u1', 'u2'] }),
+    })
+    expect(ok.status).toBe(200)
+    expect(calls.members).toEqual([{ org: 'myorg', name: '店长', users: ['u1', 'u2'] }])
+    const anchor = await app.request('/api/platform/admin/roles/%E5%BA%97%E9%95%BF/members', {
+      method: 'PUT', headers: withCsrf, body: JSON.stringify({ users: [ANCHOR_USER] }),
+    })
+    expect(anchor.status).toBe(400)
+    expect(await anchor.json()).toEqual({ error: 'ANCHOR_FORBIDDEN' })
+    const bad = await app.request('/api/platform/admin/roles/%E5%BA%97%E9%95%BF/members', {
+      method: 'PUT', headers: withCsrf, body: JSON.stringify({ users: ['bad/name'] }),
+    })
+    expect(bad.status).toBe(400)
+  })
+
+  it('码↔角色：POST 挂 / DELETE 收（JSON body role）+ 未知码 404 + 审计', async () => {
+    const { fake, calls } = roleFake()
+    const app = mount(deps({ casdoor: () => fake }), { scopes: ['tenant:admin'] })
+    const grant = await app.request('/api/platform/admin/permissions/demo:view/roles', {
+      method: 'POST', headers: withCsrf, body: JSON.stringify({ role: '店长' }),
+    })
+    expect(grant.status).toBe(200)
+    expect(calls.granted).toEqual([{ org: 'myorg', code: 'demo:view', role: '店长' }])
+    const revoke = await app.request('/api/platform/admin/permissions/demo:view/roles', {
+      method: 'DELETE', headers: withCsrf, body: JSON.stringify({ role: '店长' }),
+    })
+    expect(revoke.status).toBe(200)
+    expect(calls.revoked).toEqual([{ org: 'myorg', code: 'demo:view', role: '店长' }])
+    const unknown = await app.request('/api/platform/admin/permissions/nope:view/roles', {
+      method: 'POST', headers: withCsrf, body: JSON.stringify({ role: '店长' }),
+    })
+    expect(unknown.status).toBe(404)
+  })
+})
