@@ -1011,6 +1011,23 @@ docker exec <server 容器> node -e "fetch('http://sandbox-console:18090/healthz
 （成功形状 = `management console on http://0.0.0.0:18090` + `sign-in required`），别看那条探针。
 `postgres ... :5432/healthz` 同理（HTTP 探针打的是 PG 端口）。
 
+### G.2 提案应用通路（apply_pipeline_proposal）接线与自证
+
+| 项 | 值 / 做法 |
+|---|---|
+| **PAT** | `DATA_MCP_GITHUB_TOKEN`（openship env isSecret，`server` 服务行）。**Fine-grained**：仅 platform-core 仓，`Contents: Read and write` + `Pull requests: Read and write`，其余全不给 |
+| **目标仓** | `DATA_MCP_GITHUB_REPO`（缺省 `MYTech-Co-LTD/platform-core`，一般不配） |
+| **不生效口径** | PAT 未配 ⇒ 工具回 `not_executed / proposal_apply_unconfigured`；总闸关 ⇒ `denied / mutating_disabled`。**生产默认不配 PAT** |
+| **产出** | 提案分支 + draft PR（每文件一个 commit；body 带 downstream 与 validation）。**永不直写正式目录** |
+
+部署后自证（每条都要**看见**）：
+
+- ① **关闸冒烟**（#1003 验收第三条）：`DATA_MCP_ALLOW_MUTATING != true` 时调 apply ⇒ `denied/mutating_disabled`
+- ② **未配 PAT 冒烟**：配了总闸但 `DATA_MCP_GITHUB_TOKEN` 空 ⇒ `not_executed/proposal_apply_unconfigured`
+- ③ **白名单冒烟**：`piece.path = .github/workflows/x.yml` ⇒ `refused/invalid_draft`（零网络）
+- ④ **冲突冒烟**：对一个基线上已存在的契约回传不同内容 ⇒ `refused/proposal_conflict` + 当前内容摘要
+- ⑤ **端到端**：`propose_*` → apply ⇒ GitHub 上出现提案分支 + draft PR（body 带 downstream/validation）
+
 ## 关联
 
 - `deploy/customer-onboarding.md` §5 阶段 5（拆缝建数据面 project 的入口决策）

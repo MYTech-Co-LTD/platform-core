@@ -78,8 +78,10 @@
 
 ## 6. 文档与部署
 
-- 正典：`docs/architecture.md` 提案面小节补 apply 通路；spec §7 原文位置补第 8 个工具
-  （spec 正文位置实现时定位，找不到就在 SOP 给指针并标待沉淀）。
+- 正典：`docs/architecture.md` 提案面小节补 apply 通路（已落，§2.9）。spec §7 原文位置结论：
+  wave 计划引用的「spec §7」原文在本仓 docs 里 grep 不到（T1 spec 不在本仓），**工具清单正典以
+  `modules/data/domain/pipelines/tools.ts` 头注 + `scripts/check-mcp-toolface.mjs` 门为准**，
+  SOP（`deploy/data-plane-deploy-sop.md` §G.2）给指针——不再是「待沉淀」。
 - SOP：`deploy/data-plane-deploy-sop.md` 增「提案应用通路」段——PAT 在哪、怎么取、怎么 scoped、
   关闸/未配 PAT 的冒烟口径。
 - 部署：仅 `server` 服务行加 `DATA_MCP_GITHUB_TOKEN`(isSecret) + `DATA_MCP_GITHUB_REPO`（有默认可不配）。
