@@ -1064,3 +1064,33 @@ describe('角色管理（Task 4）', () => {
     await expect(client().deleteRole('never-was')).rejects.toThrow()
   })
 })
+
+// ---- 角色成员整组替换（账户和权限体系 Task 5：setRoleMembers） ----
+describe('setRoleMembers（Task 5）', () => {
+  let ms: MockCasdoor
+  beforeAll(async () => {
+    ms = new MockCasdoor({
+      users: [
+        { name: 'a', password: 'pw', owner: 'org' },
+        { name: 'b', password: 'pw', owner: 'org' },
+      ],
+    })
+    await ms.start()
+  })
+  afterAll(async () => { await ms.stop() })
+  const client = () =>
+    new CasdoorClient({ origin: ms.origin, clientId: 'x', clientSecret: 'y', org: 'org', adminUser: 'admin', adminPwd: 'pw' })
+
+  it('成员全形落库 + 整组替换可回读；清空合法', async () => {
+    await client().createRole({ name: 'r1' })
+    await client().setRoleMembers('r1', ['a', 'b'])
+    expect((await client().listRoles()).find((r) => r.name === 'r1')?.users)
+      .toEqual(['org/a', 'org/b']) // 全形惯例（grantPermissionToUser 同款）
+    await client().setRoleMembers('r1', []) // 清空 = 合法操作
+    expect((await client().listRoles()).find((r) => r.name === 'r1')?.users).toEqual([])
+  })
+
+  it('不存在的角色响亮抛；回读未命中抛（铁律③）', async () => {
+    await expect(client().setRoleMembers('ghost', ['a'])).rejects.toThrow('角色不存在')
+  })
+})

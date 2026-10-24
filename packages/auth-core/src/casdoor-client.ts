@@ -375,6 +375,35 @@ export class CasdoorClient {
     return roles.find((r) => r.name === name) ?? null
   }
 
+  /** 角色原始记录（get-roles 全量行）。update-role 是整记录替换——改成员必须先取全量带回，防其余字段被洗。 */
+  async #findRawRole(name: string): Promise<Record<string, unknown> | null> {
+    const j = await this.#adminJson(`get-roles?owner=${encodeURIComponent(this.#o.org)}`)
+    if (j.status !== 'ok') throw new Error(`casdoor get-roles: ${j.msg || 'error'}`)
+    if (!Array.isArray(j.data)) return null
+    return (j.data as Array<Record<string, unknown>>).find((r) => r.name === name) ?? null
+  }
+
+  /**
+   * 角色成员**整组替换**（账户和权限体系 Task 5）。users 入参短名，落库全形 `org/name`
+   * （grantPermissionToUser 同款惯例）；update-role 整记录替换——原记录全量带回（#findRawRole）。
+   * 铁律② `?id=` + 铁律③ 回读逐个命中。
+   */
+  async setRoleMembers(name: string, users: ReadonlyArray<string>): Promise<void> {
+    const raw = await this.#findRawRole(name)
+    if (!raw) throw new Error(`casdoor: 角色不存在 ${this.#o.org}/${name}`)
+    const full = users.map((u) => `${this.#o.org}/${u}`)
+    const j = await this.#adminJson(
+      `update-role?id=${encodeURIComponent(`${this.#o.org}/${name}`)}`,
+      { method: 'POST', body: { ...raw, users: full } },
+    )
+    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    const back = (await this.listRoles()).find((r) => r.name === name)
+    const want = new Set(full)
+    if (!back || back.users.length !== want.size || !back.users.every((u) => want.has(u))) {
+      throw new Error(`casdoor: 角色成员回读未命中 ${this.#o.org}/${name}`)
+    }
+  }
+
   /**
    * 建角色。add 竞态与 createManagedUser 同口径：失败**重读验证**目标状态，已在即视为
    * 成功；仍无此人 ⇒ 抛（fail loudly）。写后回读（铁律③）。
