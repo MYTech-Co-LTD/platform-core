@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **本计划是运维作业**：Task 3–5 在 Casdoor 机（113.249.101.33）上执行，根本法则第 1 条例外（该机不在控制面），**执行前留档授权**（spec §6.3——本计划的用户批准即授权记录，执行日志再确认一次）。
 
-**Goal:** 山海租户 org 完成企微通讯录 → Casdoor 同步（用户 + 组织树），存量对账按摸底数据裁决，全程零影响其他 5 个 org。
+**Goal:** Casdoor org **`shanhaiyiguo-org`**（platform 实例 `PLATFORM_ORG` 实证，2026-10-24）完成企微通讯录 → Casdoor 同步（用户 + 组织树），存量对账按摸底数据裁决，全程零影响其他 org。
+
+> **红线（用户 2026-10-24 明确指示）：`shanhai` org（628 户/27 角色/49 组）是另一套生产体系，本作业对它只读（基线比对）、绝不写。** syncer 行的 organization 字段一旦配错就是写穿红线——写前后都逐字核对 `organization='shanhaiyiguo-org'`。
 
 **Architecture:** 复刻 mytech 已实证通路（WeKnora 条目 `919ae8e9-52b8-4553-9ae4-7983f3891d82`）：官方 latest Casdoor 内建 WeCom Syncer，`userid→Name+isKey:true` + `is_read_only=true` + disabled 手动 run-syncer。共享生产库——副本彩排全绿才动生产。
 
@@ -10,7 +12,9 @@
 
 ## Global Constraints
 
-- **共享生产库**：Casdoor DB 6 组织 600+ 用户；任何写动作前先备份，验收含「其他 org 零影响」。
+- **共享生产库**：Casdoor DB 6 组织 640+ 用户；任何写动作前先备份，验收含「其他 org 零影响」。
+- **目标 org = `shanhaiyiguo-org`**（3 户/0 组/0 角色，干净 org，与 mytech 同步前同构）；`shanhai` org 红线勿写（见 Goal 下方）。
+- **syncer 现状（2026-10-24 实测 get-syncers）**：全库仅 2 个——mytech WeCom（disabled/只读，本文的 copy 源）、`shanhai` 的 Database syncer（disabled，**别人的，勿动勿删**）。目标 org 无既有 syncer。
 - **is_read_only=true 铁律**：关掉会把本地户反向创建进企微通讯录。
 - **secret 纪律**：corpid/secret 只进 Casdoor syncer 配置与一次性 env，不进文档/命令历史/日志。
 - Casdoor 机 daemon.json 有**失效 mirror 残留未清**（WeKnora 全案遗留）——若需在机上拉镜像，用新前缀直拉或临时 override，不重启 docker daemon（波及同机 Novu 栈）。
@@ -29,7 +33,7 @@
 ```sh
 psql "$DATABASE_URL" -c "select slug, casdoor_org from platform.tenant order by slug;"
 ```
-Expected: 山海一果行，记录 `casdoor_org`（下文 `<shanhai-org>`）。**只记录名字，不记录任何 secret。**
+✅ **已确认（2026-10-24 spike）**：山海实例 `PLATFORM_ORG=shanhaiyiguo-org`；Casdoor org 列表含 `shanhaiyiguo-org`（目标）与 `shanhai`（生产在用，勿动）。下文统一写 `<target-org>` = `shanhaiyiguo-org`。**只记录名字，不记录任何 secret。**
 
 - [ ] **Step 3: 阻断门**：corpid + secret + 白名单三项齐备才进 Task 2。缺任一项 → 停，回头找企微管理员。
 
@@ -116,8 +120,8 @@ export function compareRoster(wecom, local) {
 //    GET /cgi-bin/user/list?access_token=&department_id=<id>&fetch_child=1 → userlist[]（userid/name/mobile）
 //    多部门遍历后按 userid 去重（fetch_child 递归 + 多顶级部门会重叠）
 //    mobile 为空 = 企微侧没填（全案已知坑），如实报告不猜测
-// ② 本地：select casdoor_name, phone from platform.identity_link where org='<shanhai-org>' and phone is not null
-//    union all（去重）select name, phone from aftersales.employee where org='<shanhai-org>' and phone is not null —— 表名以实际 schema 为准，跑前 \d 确认
+// ② 本地：select casdoor_name, phone from platform.identity_link where org='shanhaiyiguo-org' and phone is not null
+//    union all（去重）select name, phone from aftersales.employee where org='shanhaiyiguo-org' and phone is not null —— 表名以实际 schema 为准，跑前 \d 确认
 // ③ compareRoster → console.table 摘要 + JSON 落盘
 ```
 
@@ -145,15 +149,15 @@ git commit -m "feat(scripts): 山海企微通讯录存量摸底脚本（手机�
 - [ ] **Step 1: 预检（只读）**：compose/镜像 digest/磁盘/容器健康/用户总数基线（`select count(*) from user` 按 owner 分组）。记录基线表——验收的「其他 org 零影响」以它为锚。
 - [ ] **Step 2: T0 备份**：`pg_dump` 压缩**两份**落盘（全案惯例：不同目录），记录文件名与 sha256。确认旧镜像 tag 在盘。
 - [ ] **Step 3: 副本环境**（mytech 全案同款）：临时 docker 网络隔离 + 副本 postgres 容器（恢复 T0 备份）+ conf 副本改 DB host + casdoor 容器指向副本。**副本 casdoor 用与生产同镜像 tag**。
-- [ ] **Step 4: 建 shanhai syncer 行（副本库）**：照 mytech 的 syncer 行 copy，改四值——`organization='<shanhai-org>'`、user 字段=山海 **corpid**、password 字段=通讯录同步助手 **secret**、name 标识=`shanhai-wecom-directory`；其余照抄：table_columns 的 **userid 列 casdoorName=Name + isKey:true**、**is_read_only=true**、**disabled=true**（手动触发）。
+- [ ] **Step 4: 建目标 org syncer 行（副本库）**：照 mytech 的 syncer 行 copy，改四值——`organization='shanhaiyiguo-org'`（**写前逐字核对，防写穿 `shanhai` 红线**）、user 字段=山海一果 **corpid**、password 字段=通讯录同步助手 **secret**、name 标识=`shanhaiyiguo-wecom-directory`；其余照抄：table_columns 的 **userid 列 casdoorName=Name + isKey:true**、**is_read_only=true**、**disabled=true**（手动触发）。
 - [ ] **Step 5: 副本真同步**：`POST /api/run-syncer`（**新镜像是 POST**；请求体形状**逐字重放** mytech 全案执行留档里的成功请求，只换 syncerId/org——不按想象构造）。等任务完成后逐项验：
 
 | # | 验收项 | 判据 |
 |---|---|---|
 | 1 | 撞键零 | run-syncer 无 duplicate key 报错 |
-| 2 | 用户增量 | `<shanhai-org>` 用户数 = 企微通讯录人数（Task 2 报告口径） |
+| 2 | 用户增量 | `shanhaiyiguo-org` 用户数 = 企微通讯录人数（Task 2 报告口径） |
 | 3 | 组织树 | group 数与企微部门数一致，挂接正确（is_top_group 唯一） |
-| 4 | 其他 org 零影响 | 基线表逐 org 比对：用户数/权限/订阅原样 |
+| 4 | 其他 org 零影响 | 基线表逐 org 比对：用户数/权限/订阅原样；**`shanhai` org（628 户）逐字节不变** |
 | 5 | tenantsub 未动 | 锚用户原样（is_read_only 生效证据） |
 | 6 | 反向零推送 | （结构性保证，副本上无法验企微侧，生产验收补） |
 | 7 | roles 回填 | 抽同步户 get-user 看 roles/group（**给 console 计划 Task 1 spike 补山海样本**） |

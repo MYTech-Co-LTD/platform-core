@@ -33,7 +33,16 @@
   门店员工存量户**按 openid 命名**（`scripts/backfill-identity-links.mjs:242` `ensureUser(openId)`，
   Casdoor 用户名限字母数字），手机号在 `identity_link.phone`。山海 org 的数百存量用户即来源于此。
 - session scopes 计算链路（session-middleware → Casdoor effectiveScopes）当前只覆盖
-  「用户∈权限 users[]」直挂语义；**「用户∈角色→角色∈权限」继承是否自动生效未实测**（§3.4 命门项）。
+  「用户∈权限 users[]」直挂语义；**「用户∈角色→角色∈权限」继承已真机实证成立**（2026-10-24 spike：
+  get-user 回填 roles，`effectiveScopes.matchRoles` 生效——见 §1.3 spike 记录）。
+
+### 1.3 真机 spike 记录（2026-10-24，Console 计划附录 B 同源）
+
+- **目标 org 钉死 = `shanhaiyiguo-org`**（platform 实例 `PLATFORM_ORG` 实测）：3 户/0 组/0 角色，
+  与 mytech 同步前同构。**红线：`shanhai` org（628 户/27 角色/49 组）是另一套生产体系，本设计全线对它只读（基线比对）、绝不写**（用户 2026-10-24 明确指示；全库 org 实测：mytech/woke/customerb/built-in/shanhai/shanhaiyiguo-org）。
+- Casdoor API 形状实测：get-roles 返回 `{owner,name,displayName,users[],roles[],domains[],groups[],isEnabled}`（users 全形）；get-groups 返回 `{owner,name,parentId,displayName,isTopGroup,haveChildren,users[]}`——**无 `title` 字段，显示名是 `displayName`**，parentId=父组名，顶层组 parentId 可为空串也可为 org 名；用户对象**无 `group` 单数——是 `groups` 数组**（全形 `org/组名`，WeCom 已同步户有值）；get-user 回填 roles；get-permissions 形状与既有 grantPermissionToUser 假设一致；角色写三件套（add-role / update-role?id= / delete-role JSON body）真机走通（mytech org 测试角色，已清理）。
+- 登录陷阱补记：admin 会话登录体 `{type:'login',username,password,application}` **不带 organization**（带错报 user-not-found）；新版 Casdoor 发两个 session cookie，取最后一个。
+- syncer 现状：全库仅 2 个——mytech WeCom（disabled/只读）、`shanhai` Database（disabled，别人的）；目标 org 无既有 syncer；`shanhai` 的 49 组非 syncer 产物。
 
 ## 2. 决策
 
@@ -78,9 +87,9 @@
 **摸底（Phase 0）**：`scripts/` 一次性只读脚本，拉山海企微通讯录全量（部门树 + 成员
 userid/姓名/手机号）与山海 org 存量用户 + `identity_link` 存量按手机号比对，输出交集数字。
 手机号若企微侧不可读（敏感字段）→ 记录并降级姓名匹配（弱键，重名不自动判，转人工清单）。
-顺带确认：山海租户 org 在 Casdoor 的真名（实施时从 `platform.tenant.casdoor_org` 读取，不硬编码）。
+目标 org 已实证：`shanhaiyiguo-org`（platform 实例 `PLATFORM_ORG`，2026-10-24）；**`shanhai` org 红线勿写（§1.3）**。
 
-**syncer 配置（Phase 1）**：`type=wecom`，organization=山海 org；corpid 放 user 字段；
+**syncer 配置（Phase 1）**：`type=wecom`，organization=**`shanhaiyiguo-org`**（写前后逐字核对，防写穿 `shanhai` 红线）；corpid 放 user 字段；
 secret=通讯录同步助手的；`table_columns` 照 mytech 模板（**userid→Name + isKey:true**）；
 **`is_read_only=true` 铁律**；建好后 disabled，手动 run-syncer（POST）。
 

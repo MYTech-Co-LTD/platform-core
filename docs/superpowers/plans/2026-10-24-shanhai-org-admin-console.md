@@ -4,7 +4,7 @@
 
 **Goal:** platform-core console 新增「组织架构」「角色管理」两页 + 后端 Casdoor 代理（group 树 / 角色 CRUD / 码↔角色），使租户管理员能按部门视图批量授权。
 
-**Architecture:** Casdoor 为组织权威源（spec D5），console 纯代理读、无本地表。CasdoorClient 扩展全部走既有 `#adminJson` 通道；角色继承**默认零改动**——`effectiveScopes` 已实现 `matchRoles`（`packages/auth-core/src/effective-scopes.ts:26`），session-middleware 已传 `user.roles`；唯一未钉死的是真机 `get-user` 是否回填 roles（Task 1 spike 判定，未回填则执行附录 A）。
+**Architecture:** Casdoor 为组织权威源（spec D5），console 纯代理读、无本地表。CasdoorClient 扩展全部走既有 `#adminJson` 通道；角色继承**零改动**——真机 spike（附录 B）实证 get-user 回填 roles，`effectiveScopes` 的 `matchRoles`（`packages/auth-core/src/effective-scopes.ts:26`）直接生效；**附录 A 不执行**（保留作历史记录）。目标 org = `shanhaiyiguo-org`（用户 2026-10-24 指示；`shanhai` org 是另一套生产体系，红线勿动）。
 
 **Tech Stack:** Hono + zod（后端）、React + antd + vite（前端）、vitest、TypeScript。
 
@@ -91,9 +91,9 @@ curl -s "$CASDOOR_URL/api/get-permissions?owner=<mytech-org>" -H "Cookie: $COOKI
   - `POST /api/update-role?id=<org>/<name>` → 整记录替换 `users/displayName`；id 缺失或段数≠2 → `{status:'error',msg:'wrong token count…'}`（镜像 update-permission 纪律）
   - `POST /api/delete-role` body `{owner,name}` → body 缺任一键 → error（delete JSON body 铁律）
   - `GET /api/get-groups?owner=<org>` → `{status:'ok',data:MockGroup[]}`
-  - `get-users` 的行增加 `group: string` 与 `roles: string[]` 投影
+  - `get-users` 的行增加 `groups: string[]`（全形 `org/组名`，附录 B）与 `roles: string[]` 投影
 
-**内部状态：** `#roles: Map<string, Map<string, { displayName: string; users: string[] }>>`（外层键=org）、`#groups: Map<string, Array<{ name: string; title: string; parentId: string; isTopGroup?: boolean }>>`；`roleOf(org,name)` 断言助手照 `permissionOf` 模式。
+**内部状态：** `#roles: Map<string, Map<string, { displayName: string; users: string[] }>>`（外层键=org）、`#groups: Map<string, Array<{ name: string; displayName: string; parentId: string; isTopGroup?: boolean }>>`；`roleOf(org,name)` 断言助手照 `permissionOf` 模式。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -166,19 +166,19 @@ git commit -m "test(auth-core): mock-casdoor 补 role/group 端点（形状按�
 - Modify: `packages/auth-core/src/casdoor-client.ts`（追加方法）
 
 **Interfaces:**
-- Produces:
+- Produces（形状按附录 B 实测：显示名是 `displayName`、无 `title`；根判定需 org 参数）:
   ```ts
   // group-tree.ts
-  export interface CasdoorGroupLike { name: string; title: string; parentId: string }
+  export interface CasdoorGroupLike { name: string; displayName: string; parentId: string }
   export interface GroupTreeNode {
-    name: string; title: string; parentId: string
-    orphan: boolean            // parentId 非空但找不到父 → 挂根并标记，不丢人（spec §3.4）
+    name: string; displayName: string; parentId: string
+    orphan: boolean            // parentId 非空、非 org 名、父又不存在 → 挂根并标记，不丢人（spec §3.4）
     memberCount: number
     children: GroupTreeNode[]
   }
-  export function buildGroupTree(groups: CasdoorGroupLike[], memberCounts?: Map<string, number>): GroupTreeNode[]
+  export function buildGroupTree(org: string, groups: CasdoorGroupLike[], memberCounts?: Map<string, number>): GroupTreeNode[]
   // casdoor-client.ts
-  export interface CasdoorGroup { name: string; title: string; parentId: string; isTopGroup?: boolean }
+  export interface CasdoorGroup { name: string; displayName: string; parentId: string; isTopGroup?: boolean }
   async listGroups(): Promise<CasdoorGroup[]>   // GET get-groups?owner=<org>，error 抛不静默
   ```
 
@@ -190,9 +190,10 @@ import { buildGroupTree } from './group-tree'
 
 test('parentId 组装成树；memberCount 按名归节点', () => {
   const tree = buildGroupTree(
+    'org',
     [
-      { name: 'hq', title: '总部', parentId: '' },
-      { name: 'shop-a', title: 'A 店', parentId: 'hq' },
+      { name: 'hq', displayName: '总部', parentId: 'org' },   // 真机形态：顶层 parentId=org 名
+      { name: 'shop-a', displayName: 'A 店', parentId: 'hq' },
     ],
     new Map([['shop-a', 12]]),
   )
@@ -201,18 +202,22 @@ test('parentId 组装成树；memberCount 按名归节点', () => {
   expect(tree[0].children[0]).toMatchObject({ name: 'shop-a', memberCount: 12, orphan: false })
 })
 
+test('parentId 为空串的顶层组也是根（真机两种顶层形态并存）', () => {
+  const tree = buildGroupTree('org', [{ name: 'top', displayName: '顶级', parentId: '' }])
+  expect(tree).toHaveLength(1)
+  expect(tree[0]).toMatchObject({ name: 'top', orphan: false })
+})
+
 test('孤儿节点挂根并标记 orphan（不丢人）', () => {
-  const tree = buildGroupTree([
-    { name: 'lost', title: '失联部门', parentId: 'ghost' },
-  ])
+  const tree = buildGroupTree('org', [{ name: 'lost', displayName: '失联部门', parentId: 'ghost' }])
   expect(tree).toHaveLength(1)
   expect(tree[0]).toMatchObject({ name: 'lost', orphan: true, children: [] })
 })
 
-test('环引用不挂死：成环对也按孤儿挂根', () => {
-  const tree = buildGroupTree([
-    { name: 'a', title: 'A', parentId: 'b' },
-    { name: 'b', title: 'B', parentId: 'a' },
+test('环引用不挂死：成环对按孤儿挂根', () => {
+  const tree = buildGroupTree('org', [
+    { name: 'a', displayName: 'A', parentId: 'b' },
+    { name: 'b', displayName: 'B', parentId: 'a' },
   ])
   expect(tree.every((n) => n.orphan)).toBe(true)
 })
@@ -229,60 +234,66 @@ Expected: FAIL（模块不存在）。
 
 ```ts
 // group-tree.ts — Casdoor group 平表 → 树（spec §3.4：孤儿挂根标记，不丢人；环引用同待遇）
-export interface CasdoorGroupLike { name: string; title: string; parentId: string }
+// 根判定（附录 B 真机形态）：parentId === '' 或 === org 名 → 根；
+// parentId 指向集合内父 → 挂父；其余（父不存在/成环）→ 孤儿挂根。
+export interface CasdoorGroupLike { name: string; displayName: string; parentId: string }
 export interface GroupTreeNode {
   name: string
-  title: string
+  displayName: string
   parentId: string
   orphan: boolean
   memberCount: number
   children: GroupTreeNode[]
 }
 
-export function buildGroupTree(groups: CasdoorGroupLike[], memberCounts?: Map<string, number>): GroupTreeNode[] {
-  const byName = new Map(groups.map((g) => [g.name, g]))
+export function buildGroupTree(org: string, groups: CasdoorGroupLike[], memberCounts?: Map<string, number>): GroupTreeNode[] {
   const counts = memberCounts ?? new Map<string, number>()
   const nodes = new Map<string, GroupTreeNode>(
     groups.map((g) => [g.name, { ...g, orphan: false, memberCount: counts.get(g.name) ?? 0, children: [] }]),
   )
   const roots: GroupTreeNode[] = []
+  const pending: Array<{ node: GroupTreeNode; parentName: string }> = []
   for (const g of groups) {
     const node = nodes.get(g.name)!
-    const parent = g.parentId === '' ? undefined : nodes.get(g.parentId)
-    // 父缺失或父是自己（自环）或父不在集合（跨环）→ 挂根
-    if (!parent || parent === node) {
-      node.orphan = g.parentId !== ''
-      roots.push(node)
+    if (g.parentId === '' || g.parentId === org) roots.push(node)
+    else pending.push({ node, parentName: g.parentId })
+  }
+  // 挂链 + 环防护：attach 过的不再动；一轮挂不完的（成环/父缺失）标记孤儿挂根
+  const attached = new Set<string>()
+  let progress = true
+  while (progress && pending.length > 0) {
+    progress = false
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const { node, parentName } = pending[i]
+      if (attached.has(parentName) || roots.some((r) => r.name === parentName)) {
+        nodes.get(parentName)?.children.push(node)
+        attached.add(node.name)
+        pending.splice(i, 1)
+        progress = true
+      }
     }
   }
-  // 二段式挂链：先定根，再把非根节点逐个挂到父下——成环对（互相指向）双方都不会被挂，作为孤儿根输出
-  const attached = new Set<string>()
-  for (const g of groups) {
-    const node = nodes.get(g.name)!
-    if (roots.includes(node)) continue
-    const parent = nodes.get(g.parentId)
-    if (parent && !attached.has(g.name)) {
-      parent.children.push(node)
-      attached.add(g.name)
-    }
+  for (const { node } of pending) {
+    node.orphan = true
+    roots.push(node)
   }
   const sortRec = (n: GroupTreeNode) => {
-    n.children.sort((x, y) => x.title.localeCompare(y.title, 'zh'))
+    n.children.sort((x, y) => x.displayName.localeCompare(y.displayName, 'zh'))
     n.children.forEach(sortRec)
   }
-  roots.sort((x, y) => x.title.localeCompare(y.title, 'zh')).forEach(sortRec)
+  roots.sort((x, y) => x.displayName.localeCompare(y.displayName, 'zh')).forEach(sortRec)
   return roots
 }
 ```
 
-> 注：`attached` 防重复挂；环对双方 `attached` 互不成立时仍可能一方挂上——测试断言「成环对都 orphan」即验收判据，实现若挂不干净按测试修。环检测若上述实现过不了测试，改为先 Tarjan/着色找环再全挂根——以测试为准。
+> 注：`roots.some(...)` 在组数（数百级）下无性能问题；若将来上千组再换 Map 化根索引（YAGNI）。环对（a↔b）两轮无 progress → 双双孤儿挂根，与测试判据一致。
 
 - [ ] **Step 4: casdoor-client.ts 追加 listGroups**
 
 ```ts
 export interface CasdoorGroup {
   name: string
-  title: string
+  displayName: string
   parentId: string
   isTopGroup?: boolean
 }
@@ -295,7 +306,7 @@ async listGroups(): Promise<CasdoorGroup[]> {
   return (j.data as Array<Record<string, unknown>>)
     .map((g) => ({
       name: String(g.name ?? ''),
-      title: String(g.title ?? g.name ?? ''),
+      displayName: String(g.displayName ?? g.name ?? ''),
       parentId: String(g.parentId ?? ''),
       isTopGroup: g.isTopGroup === true,
     }))
@@ -454,15 +465,15 @@ git commit -m "feat(auth-core): 权限码↔角色挂/收（roles 数组，全�
   GET /api/platform/admin/org-tree/members?group=<name>?      // group 缺省 = 全员
     → { users: Array<{ name,displayName,isForbidden,roles:string[] }> }        // 锚用户剔除（既有 toShortUser 同款）
   ```
-- memberCount 统计口径：`listUsers()` 按 `group === 节点名 || group.endsWith('/' + 节点名)` 计数（短名/全形双认，matchUser 同防御）。
+- memberCount 统计口径（附录 B：用户组键是 `groups` 数组）：`listUsers()` 按 `u.groups.some(g => g === 节点名 || g.endsWith('/' + 节点名))` 计数（短名/全形双认，matchUser 同防御）；members 端点同口径过滤。
 
 - [ ] **Step 1: mock get-users 投影扩展**（group/roles 透传）+ 失败的路由测试：
 
 ```ts
 // admin.test.ts 追加（沿用文件内既有 app 构造与登录助剂）
-test('org-tree 返回树且成员计数按 group 归节点；members 剔除锚用户', async () => {
+test('org-tree 返回树且成员计数按 groups 归节点；members 剔除锚用户', async () => {
   // 注入 fake casdoor factory：listGroups 返回 hq+shop-a(hq)；listUsers 返回
-  //   {name:'u1',group:'shop-a',…}、{name:'tenantsub',group:'hq',…}
+  //   {name:'u1',groups:['org/shop-a'],…}、{name:'tenantsub',groups:['org/hq'],…}
   const tree = await GET('/api/platform/admin/org-tree')
   expect(tree.tree[0].name).toBe('hq')
   expect(tree.tree[0].memberCount).toBe(0)            // tenantsub 被剔除后 hq 计 0
@@ -472,7 +483,7 @@ test('org-tree 返回树且成员计数按 group 归节点；members 剔除锚�
 })
 ```
 
-- [ ] **Step 2: 确认失败 → Step 3: 实现**（client 投影：`group: String(u.group ?? '')`、`roles: Array.isArray(u.roles) ? u.roles.map(String) : []`；路由 `GET /org-tree` 组装 `buildGroupTree(listGroups(), counts)`，counts 从剔除锚用户后的 listUsers 统计；`GET /org-tree/members` 过滤+剔除锚用户）。**Step 4: 绿 → Step 5: Commit**
+- [ ] **Step 2: 确认失败 → Step 3: 实现**（client 投影：`groups: Array.isArray(u.groups) ? u.groups.map(String) : []`、`roles: Array.isArray(u.roles) ? u.roles.map(String) : []`；路由 `GET /org-tree` 组装 `buildGroupTree(org, listGroups(), counts)`，counts 从剔除锚用户后的 listUsers 按 groups 统计；`GET /org-tree/members` 同口径过滤 + 剔除锚用户）。**Step 4: 绿 → Step 5: Commit**
 
 ```sh
 git commit -m "feat(server): 管理端组织架构树与成员代理端点（锁 org、剔锚用户）"
@@ -525,7 +536,7 @@ git commit -m "feat(server): 管理端角色 CRUD/成员/码↔角色代理端�
 
 ```ts
 export interface AdminGroupNode {
-  name: string; title: string; parentId: string; orphan: boolean
+  name: string; displayName: string; parentId: string; orphan: boolean
   memberCount: number; children: AdminGroupNode[]
 }
 export const getAdminOrgTree = () => request<{ tree: AdminGroupNode[] }>('/api/platform/admin/org-tree')
@@ -557,7 +568,7 @@ import type { ConsoleOutletContext } from '../Console'
 // antd Tree需要 {title,key,children} —— AdminGroupNode → TreeDataNode 的映射
 function toTreeData(nodes: AdminGroupNode[]): { title: string; key: string; children: ReturnType<typeof toTreeData> }[] {
   return nodes.map((n) => ({
-    title: `${n.title}${n.orphan ? '（未挂接）' : ''}（${n.memberCount}）`,
+    title: `${n.displayName}${n.orphan ? '（未挂接）' : ''}（${n.memberCount}）`,
     key: n.name,
     children: toTreeData(n.children),
   }))
@@ -782,15 +793,24 @@ const userRoles = roleList
 
 ---
 
-## 附录 B：Spike 形状记录（Task 1 回填）
+## 附录 B：Spike 形状记录（2026-10-24 实测回填）
+
+**结论（决策门）：真机 get-user 回填 roles（shanhai/LiuHeFa 实证，返回完整 Role 对象数组）⇒ effectiveScopes 链路成立，附录 A 不执行。**
 
 | # | 探针 | 预期（Casdoor master） | 实测 |
 |---|---|---|---|
-| a | get-roles 字段 | owner/name/displayName/users[] | 【Task 1 填】 |
-| b | get-groups 路径与字段 | get-groups?owner=；owner/name/parentId/title/isTopGroup | 【Task 1 填】 |
-| c | get-users 的 group/roles | group=裸名或全形【二选一定死】；roles=? | 【Task 1 填】 |
-| d | get-user 的 roles 回填 | 预期非空（wecom-channel-auth/pat-auth 已在消费） | 【Task 1 填】 |
-| e | permission.roles 形态 | org/role 全形 | 【Task 1 填】 |
-| f | update-role id 形参 | ?id=owner/name | 【Task 1 填】 |
+| orgs | get-organizations | — | `mytech / woke / customerb / built-in / shanhai / shanhaiyiguo-org`；**目标 org=`shanhaiyiguo-org`**（3 户/0 组/0 角色，platform 实例 `PLATFORM_ORG` 实证）；**`shanhai`（628 户/27 角色/49 组）是另一套生产体系，红线勿动**（用户 2026-10-24 明确指示） |
+| a | get-roles 字段 | owner/name/displayName/users[] | ✅ 另有 `roles[]/domains[]/groups[]/isEnabled/description`；users 全形 `org/name` |
+| b | get-groups 路径与字段 | get-groups?owner=；owner/name/parentId/title/isTopGroup | ✅ 路径同预期；**无 `title` 字段——显示名是 `displayName`**；parentId=父组**名**；顶层组 parentId 可为 `""` 也可为 org 名（mytech 顶层即 parentId="mytech"） |
+| c | get-users 的 group/roles | group=裸名或全形 | **用户无 `group` 单数字段——是 `groups` 数组**（全形 `org/组名`；WeCom 已同步户有值，如 `["mytech/62"]`）；roles 键在但 null |
+| d | get-user 的 roles 回填 | 预期非空 | ✅ **回填**（完整 Role 对象数组） |
+| e | permission.roles 形态 | org/role 全形 | ✅ `{owner,name,users[],roles[],resources[],actions[],groups,...}` 与既有 grantPermissionToUser 假设一致 |
+| f | 角色写形状（mytech org 实测，已清理） | add/update/delete | ✅ `add-role` body 含 `{owner,name,displayName,users,roles,domains,isEnabled}`；`update-role?id=<owner>/<name>` ok；`delete-role` JSON body `{owner,name}` ok |
+| — | get-syncers | — | 全库仅 2 个 syncer：mytech WeCom（disabled/只读）、`shanhai` Database（disabled）——**目标 org 无既有 syncer**；`shanhai` 的 49 组非 syncer 产物（另一套体系的） |
 
-**结论（决策门）：** 【Task 1 填：roles 回填成立 → 附录 A 不执行 / 不回填 → 附录 A 执行】
+**对 Task 2–10 的订正（以本表为准）：**
+1. Group/树节点显示名用 `displayName`（无 `title`）；`CasdoorGroupLike/GroupTreeNode/AdminGroupNode` 的 `title` 字段全改 `displayName`。
+2. 用户组键是 `groups: string[]`（全形 `org/组名`）——`CasdoorListedUser` 投影 `groups: string[]`（非 `group: string`）；成员/计数过滤 = `groups.some(g => g === name || g.endsWith('/' + name))`。
+3. 树根判定：`parentId === '' || parentId === org || 父名不在集合` 时挂根；其中「parentId 非空、非 org、父又不存在」才算 `orphan`（buildGroupTree 需接收 org 参数区分）。
+4. 角色写：客户端一律「get 原记录 → merge → update 全形」（update-role 整记录替换语义与 update-permission 同族）。
+5. 登录体：`{type:'login',username,password,application}` **不带 organization**（带错报 user-not-found）；新版 Casdoor 发两个 session cookie，取最后一个。
