@@ -911,6 +911,26 @@ append-only，修数偶发而非常态。
 **反转条件**（出现任一即重议本节）：需要并发多条沙箱 run / 沙箱必须访问单元 B 的私有服务 /
 引擎提供一次性容器执行面（那时隔离与配额模型不同）。
 
+### 2.9 提案应用通路（2026-10-24 拍板，issue #1003）
+
+**决定**：`propose_*` 保持零写入不变；应用走**独立工具 `apply_pipeline_proposal`**——
+agent 把 propose 回包**原样回传**，服务端无状态。WYSIWYG：PR 内容 = 人 review 过的草案，
+不依赖「重新生成是确定的」。
+
+**闸门 = 写总闸 + PAT 存在性**：`DATA_MCP_ALLOW_MUTATING=true`（否则 `denied / mutating_disabled`）
+且 `DATA_MCP_GITHUB_TOKEN` 已配（否则 `not_executed / proposal_apply_unconfigured`，与沙箱 seam 同构）。
+生产**默认不配 PAT ⇒ 默认不生效**。
+
+**机制 = GitHub REST（容器内 fetch，无 git）**：基线 head → 逐 piece contents 预检
+（内容不同 ⇒ `refused / proposal_conflict` + 当前内容 sha256 前 16 位，**不自动合并**；一致 ⇒ 幂等跳过）
+→ 建提案分支（建议名撞车 ⇒ 加 `-<6hex>` 后缀，不是拒绝路径）→ 逐文件 PUT（每文件一个 commit）
+→ **draft PR**（dbt staging 第三件不机械生成 ⇒ draft + downstream 清单 = 诚实的半成品）。
+
+**安全不变式**：piece 路径白名单 = `contracts/` 或 `deploy/duckle/console/pipelines/` 前缀、
+`.json` 结尾、禁 `..`——PR 会触发分支 CI，放任任意路径等于允许改 `.github/workflows`（提权通道）。
+PAT 最小权限（单仓 contents:write + pull_requests:write），只在 server 行 env。
+审计：`params: args` 整包入库，与 `propose_*` 现状同口径。
+
 ## 3. 宿主装配链与 I-1 顺序契约
 
 `apps/server/src/app.ts` 里带标号的 **11 段（①–⑪）**，外加一个未编号的 **④.5 请求体上限**

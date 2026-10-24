@@ -1,4 +1,4 @@
-// mcp-pipeline-tools.ts —— 管理面 MCP 端点的**管线提案片**（Wave 3 / spec §7 的 7 个工具）。
+// mcp-pipeline-tools.ts —— 管理面 MCP 端点的**管线提案片**（Wave 3 / spec §7 的 8 个工具）。
 //
 // 门禁由宿主按 manifest 的 `POST /mcp-manage → data:manage` 施加——**本文件不写 requireScope**
 // （与 mcp-metric-tools.ts 同规：声明即授权）。空身份守卫与读面/口径片同形（M3）。
@@ -17,6 +17,9 @@ import type { PipelineDeps, PipelineImpl } from '../domain/pipelines/read'
 import { getPipelineRunImpl, listPipelineRunsImpl } from '../domain/pipelines/runs'
 import type { PipelineRunSource } from '../domain/pipelines/runs'
 import { runSourceFromEnv } from '../domain/pipelines/run-source'
+import { applyPipelineProposalImpl } from '../domain/pipelines/apply'
+import { proposalApplierFromEnv } from '../domain/pipelines/proposal-apply'
+import type { ProposalApplier } from '../domain/pipelines/proposal-apply'
 import { proposeContractChangeImpl, proposePipelineChangeImpl } from '../domain/pipelines/propose'
 import { runPipelineSandboxImpl } from '../domain/pipelines/sandbox'
 import { sandboxRunnerFromEnv } from '../domain/pipelines/sandbox-runner'
@@ -28,6 +31,7 @@ export interface PipelineWiring {
   env: Record<string, string | undefined>
   runs: PipelineRunSource | null
   sandbox: SandboxRunner | null
+  apply: ProposalApplier | null
 }
 
 /**
@@ -40,9 +44,16 @@ export interface PipelineWiring {
  * 沙箱执行面同理：`DATA_SANDBOX_URL` 未配 ⇒ `null`（`run_pipeline_sandbox` 只做校验、不执行）。
  * 配了但连不上 ⇒ 工具回 `unknown / sandbox_unreachable`，**不**静默退回「只校验」——
  * 那会让人以为试跑过了（§2.8 的失败语义表）。
+ *
+ * 提案应用通路同样按 env 决定：`DATA_MCP_GITHUB_TOKEN` 未配 ⇒ `null`
+ * （`apply_pipeline_proposal` 过完白名单与重校验后回 `not_executed`——不配不生效）。
  */
 export function defaultPipelineWiring(env: Record<string, string | undefined> = process.env): PipelineWiring {
-  return { roots: rootsOf(env), env, runs: runSourceFromEnv(env), sandbox: sandboxRunnerFromEnv(env) }
+  return {
+    roots: rootsOf(env), env,
+    runs: runSourceFromEnv(env), sandbox: sandboxRunnerFromEnv(env),
+    apply: proposalApplierFromEnv(env),
+  }
 }
 
 const IMPLS: Record<string, PipelineImpl> = {
@@ -53,6 +64,7 @@ const IMPLS: Record<string, PipelineImpl> = {
   run_pipeline_sandbox: runPipelineSandboxImpl,
   propose_pipeline_change: proposePipelineChangeImpl,
   propose_contract_change: proposeContractChangeImpl,
+  apply_pipeline_proposal: applyPipelineProposalImpl,
 }
 
 // **装载期**一致性（Task 8 M10）：`PIPELINE_TOOLS` 与 `IMPLS` 是两份手写表，漏登记只会在
@@ -99,7 +111,7 @@ export function verdictOf(
 }
 
 export function makePipelineTools(wiring: PipelineWiring = defaultPipelineWiring()): McpToolGroup {
-  const depsOf = (d: McpDeps): PipelineDeps => ({ roots: wiring.roots, env: wiring.env, runs: wiring.runs, sandbox: wiring.sandbox })
+  const depsOf = (d: McpDeps): PipelineDeps => ({ roots: wiring.roots, env: wiring.env, runs: wiring.runs, sandbox: wiring.sandbox, apply: wiring.apply })
 
   /** 单点审计：工具名恒写；metricId 恒 ''（管线工具不是指标工具）。 */
   const audit = async (

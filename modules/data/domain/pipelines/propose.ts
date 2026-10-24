@@ -58,8 +58,8 @@ export interface PipelineProposal {
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 const DOMAIN_RE = /^[a-z][a-z0-9_]*$/
-const PIPELINES_DIR = 'deploy/duckle/console/pipelines'
-const CONTRACTS_DIR = 'contracts'
+export const PIPELINES_DIR = 'deploy/duckle/console/pipelines'
+export const CONTRACTS_DIR = 'contracts'
 /** 标题/理由的长度上限：两者都会进审计与回包，不设界就是把入参原样放大。 */
 const MAX_TITLE = 120
 const MAX_RATIONALE = 500

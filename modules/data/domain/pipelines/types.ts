@@ -3,6 +3,7 @@
 // runs 的实现标注要 PipelineImpl。两边各自 import type 本文件，再对外转出，下游路径不变。
 import type { ToolImplResult } from '../toolbox/registry'
 import type { PipelineRoots } from './defs'
+import type { ProposalApplier } from './proposal-apply'
 import type { SandboxRunner } from './sandbox-runner'
 
 export interface PipelineRunRecord {
@@ -62,6 +63,8 @@ export interface PipelineDeps {
   env: Record<string, string | undefined>
   /** 沙箱执行面；`null` = 未接（`run_pipeline_sandbox` 只做校验，不执行）。 */
   sandbox: SandboxRunner | null
+  /** 提案应用通路（#1003）；`null`/缺省 = PAT 未配 ⇒ apply 工具回 not_executed。 */
+  apply?: ProposalApplier | null
 }
 
 export type PipelineImpl = (deps: PipelineDeps, args: Record<string, unknown>) => Promise<ToolImplResult>

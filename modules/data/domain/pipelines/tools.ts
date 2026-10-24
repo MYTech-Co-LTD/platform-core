@@ -1,4 +1,4 @@
-// tools.ts —— T1 提案面 7 个工具的**静态元数据**（spec 2026-10-21 §7）。
+// tools.ts —— T1 提案面 8 个工具的**静态元数据**（spec 2026-10-21 §7）。
 //
 // ★ 本文件是**纯**的：不得 import pg / Hono / zod / warehouse。CI 门
 //   （scripts/check-mcp-toolface.mjs）与路由片共用本清单——两处各写一份必漂。
@@ -7,7 +7,7 @@
 // 且分析师面的工具预算（≤14，现用 11）与 tools/list ≤10KB 预算**不动**。
 import type { ToolAnnotations } from '../toolbox/registry'
 
-export const PIPELINE_FACE_MAX_TOOLS = 7
+export const PIPELINE_FACE_MAX_TOOLS = 8
 export const MANAGE_SCOPE = 'data:manage'
 
 export interface PipelineToolMeta {
@@ -112,6 +112,16 @@ export const PIPELINE_TOOLS: readonly PipelineToolMeta[] = [
         rationale: { type: 'string', description: '为什么改' },
       },
       required: ['contract', 'title', 'rationale'],
+    },
+    outputSchema: anyObject, requiredScope: MANAGE_SCOPE, mutating: true, annotations: writeable,
+  },
+  {
+    name: 'apply_pipeline_proposal', group: 'pipeline', title: '提案应用：落盘并开 draft PR',
+    description: '把 propose_* 的回包原样回传，经 GitHub API 落到提案分支并开 **draft PR**（每文件一个 commit；body 带 downstream 清单与 validation 结论）。三道前置：目标文件与基线不同 ⇒ 拒绝并回当前内容摘要（不自动合并）；piece 路径必须在 contracts/ 或 deploy/duckle/console/pipelines/ 下且为 .json；内容重校验不过 ⇒ 拒绝。本服务未配 DATA_MCP_GITHUB_TOKEN 时回 not_executed（不生效）；写总闸关闭时整个工具不可用。',
+    inputSchema: {
+      type: 'object',
+      properties: { proposal: { type: 'object', description: 'propose_pipeline_change / propose_contract_change 的完整回包（原样回传，不要改写）' } },
+      required: ['proposal'],
     },
     outputSchema: anyObject, requiredScope: MANAGE_SCOPE, mutating: true, annotations: writeable,
   },

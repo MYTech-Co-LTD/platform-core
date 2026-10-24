@@ -30,15 +30,16 @@ const depsOf = (over: Partial<McpDeps> = {}): McpDeps => ({
 })
 const wiring = (env: Record<string, string | undefined> = {}) => ({
   roots: { pipelinesRoot: root, contractsRoot: join(root, 'contracts') }, env, runs: null, sandbox: null,
+  apply: null,
 })
 
 describe('makePipelineTools.list', () => {
   it('空身份 ⇒ 空工具面', async () => {
     expect(await makePipelineTools(wiring()).list(depsOf({ requester: null }))).toEqual([])
   })
-  it('持身份 ⇒ 7 个工具，且不外泄 requiredScope/mutating 等治理字段', async () => {
+  it('持身份 ⇒ 8 个工具，且不外泄 requiredScope/mutating 等治理字段', async () => {
     const list = await makePipelineTools(wiring()).list(depsOf())
-    expect(list.map((t) => t.name)).toHaveLength(7)
+    expect(list.map((t) => t.name)).toHaveLength(8)
     for (const t of list) {
       expect('requiredScope' in t).toBe(false)
       expect('mutating' in t).toBe(false)
@@ -60,7 +61,7 @@ describe('makePipelineTools.call', () => {
   })
   it('写工具在总闸关时 denied/mutating_disabled（默认 false）', async () => {
     const g = makePipelineTools(wiring({ DATA_MCP_ALLOW_MUTATING: '' }))
-    for (const name of ['run_pipeline_sandbox', 'propose_pipeline_change', 'propose_contract_change']) {
+    for (const name of ['run_pipeline_sandbox', 'propose_pipeline_change', 'propose_contract_change', 'apply_pipeline_proposal']) {
       const out = await g.call(depsOf(), name, {})
       expect(out!.isError).toBe(true)
       expect(JSON.parse(out!.text)).toMatchObject({ status: 'denied', reason: 'mutating_disabled', name })
@@ -116,6 +117,16 @@ describe('defaultPipelineWiring：沙箱执行面按 env 决定', () => {
   })
   it('配置了 ⇒ 接执行面（配了但不通是运行期 unknown/sandbox_unreachable，不是静默退回只校验）', () => {
     expect(defaultPipelineWiring({ DATA_SANDBOX_URL: 'http://sandbox-console:18090' }).sandbox).not.toBeNull()
+  })
+})
+
+describe('defaultPipelineWiring：提案应用通路按 env 决定', () => {
+  it('DATA_MCP_GITHUB_TOKEN 未配置 ⇒ apply=null（apply 工具过完白名单与重校验后回 not_executed）', () => {
+    expect(defaultPipelineWiring({}).apply).toBeNull()
+    expect(defaultPipelineWiring({ DATA_MCP_GITHUB_TOKEN: '   ' }).apply).toBeNull()
+  })
+  it('配置了 ⇒ 接提案应用通路（apply 工具真正落到 GitHub 侧）', () => {
+    expect(defaultPipelineWiring({ DATA_MCP_GITHUB_TOKEN: 'ghp_test' }).apply).not.toBeNull()
   })
 })
 
