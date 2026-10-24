@@ -6,7 +6,7 @@
 //
 // 四断言（spec §8）：① 分析师面工具数 ≤14；② tools/list 静态序列化 ≤10KB；
 // ③ 工具名 [A-Za-z0-9_.-]；④ mutating 工具必须有注解与 scope。
-// 两面都判（Wave 3 扩面）：分析师面（ANALYST_TOOLS，≤14）+ 提案面（PIPELINE_TOOLS，≤7，
+// 两面都判（Wave 3 扩面）：分析师面（ANALYST_TOOLS，≤14）+ 提案面（PIPELINE_TOOLS，≤8，
 // 清单见 modules/data/domain/pipelines/tools.ts）。
 // 事实源 = modules/data/domain/toolbox/registry.ts 的 ANALYST_TOOLS（显式 .ts import；
 // registry 是纯的——这条 import 链不拉 pool/框架，否则门禁会连坐运行时依赖）。
