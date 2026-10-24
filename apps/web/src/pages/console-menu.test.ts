@@ -68,12 +68,15 @@ describe('buildConsoleMenu（spec §3 位置规则）', () => {
 
 // ---- M3：管理组（tenant:admin 门禁，spec D4/D9，issue #46）----
 describe('buildConsoleMenu 管理组', () => {
-  it('有 tenant:admin → 尾部追加「管理」组（五项子菜单）', () => {
+  it('有 tenant:admin → 尾部追加「管理」组（七项子菜单）', () => {
     const menu = buildConsoleMenu([], {}, { scopes: ['tenant:admin'] }, { adminEntries: [], storageVisible: true })
     const group = menu.at(-1)
     expect(group?.name).toBe('管理')
+    // 组织架构/角色管理（账户和权限体系 Task 11）：平台内置页，插在用户管理之后
     expect(group?.children?.map((c) => c.path)).toEqual([
       '/console/admin/users',
+      '/console/admin/org-tree',
+      '/console/admin/roles',
       '/console/admin/permissions',
       '/console/admin/subscriptions',
       '/console/admin/keys',
@@ -104,23 +107,27 @@ describe('管理组联动', () => {
     ...over,
   })
 
-  it('storageVisible=false → 管理组五项变四项（存储配置消失）', () => {
+  it('storageVisible=false → 存储配置消失（组织架构/角色管理恒在）', () => {
     const menu = buildConsoleMenu([], {}, ADMIN_SESSION, { adminEntries: [], storageVisible: false })
     expect(menu.at(-1)?.children?.map((c) => c.path)).toEqual([
       '/console/admin/users',
+      '/console/admin/org-tree',
+      '/console/admin/roles',
       '/console/admin/permissions',
       '/console/admin/subscriptions',
       '/console/admin/keys',
     ])
   })
 
-  it('storageVisible=true → 存储配置在第 4 位；模块 admin 页排其后', () => {
+  it('storageVisible=true → 存储配置在第 6 位；模块 admin 页排其后', () => {
     const menu = buildConsoleMenu([], {}, ADMIN_SESSION, {
       adminEntries: [{ moduleId: 'demo', path: '/console/admin/demo/x', title: '演示管理页' }],
       storageVisible: true,
     })
     expect(menu.at(-1)?.children?.map((c) => c.path)).toEqual([
       '/console/admin/users',
+      '/console/admin/org-tree',
+      '/console/admin/roles',
       '/console/admin/permissions',
       '/console/admin/subscriptions',
       '/console/admin/keys',

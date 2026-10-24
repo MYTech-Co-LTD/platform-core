@@ -454,3 +454,107 @@ describe('MockCasdoor 改密域形状（#119）', () => {
     }
   })
 })
+
+// ==========================================================================
+// role/group 端点（账户和权限体系 Task 2）——形状按真机 spike（2026-10-24，附录 B）：
+// get-roles/get-groups owner 分桶；add-role 重名拒绝；update-role 认 ?id=（POST，PUT 405）；
+// delete-role 必须 JSON body {owner,name}；get-users 行带 groups 数组（全形 org/组名）。
+describe('MockCasdoor：role/group 端点（owner 分桶 + 三铁律形状）', () => {
+  let r: MockCasdoor
+  beforeAll(async () => {
+    r = new MockCasdoor({
+      users: [{ name: 'u1', password: 'pw', owner: 'org1', groups: ['org1/dept-a'] }],
+      roles: [{ owner: 'org1', name: 'r1', displayName: '角色一', users: ['org1/u1'] }],
+      groups: [
+        { owner: 'org1', name: 'dept-a', displayName: '部门A', parentId: 'org1', isTopGroup: true },
+        { owner: 'org1', name: 'dept-a1', displayName: '部门A1', parentId: 'dept-a' },
+      ],
+    })
+    await r.start()
+  })
+  afterAll(async () => { await r.stop() })
+
+  async function cookie(): Promise<string> {
+    const res = await fetch(`${r.origin}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pw' }),
+    })
+    const hit = /casdoor_session_id=([^;]+)/.exec(res.headers.get('set-cookie') ?? '')
+    return hit ? `casdoor_session_id=${hit[1]}` : ''
+  }
+  async function getJson(path: string): Promise<Record<string, unknown>> {
+    const res = await fetch(`${r.origin}${path}`, { headers: { Cookie: await cookie() } })
+    return (await res.json()) as Record<string, unknown>
+  }
+  async function postRole(path: string, body?: unknown, method: 'POST' | 'PUT' = 'POST'): Promise<Record<string, unknown>> {
+    const res = await fetch(`${r.origin}${path}`, {
+      method,
+      headers: { Cookie: await cookie(), 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+    return (await res.json()) as Record<string, unknown>
+  }
+
+  it('get-roles：owner 分桶、缺 owner 报错、种子回带全形 users', async () => {
+    const hit = await getJson('/api/get-roles?owner=org1')
+    expect(hit.status).toBe('ok')
+    expect(hit.data).toEqual([{ owner: 'org1', name: 'r1', displayName: '角色一', users: ['org1/u1'], roles: [], domains: [], isEnabled: true }])
+    const other = await getJson('/api/get-roles?owner=org2')
+    expect(other.data).toEqual([])
+    const miss = await getJson('/api/get-roles')
+    expect(miss.status).toBe('error')
+  })
+
+  it('add-role：成功可读；重名按 owner+name 拒绝', async () => {
+    const ok = await postRole('/api/add-role', { owner: 'org1', name: 'r2', displayName: '角色二', users: [], roles: [], domains: [], isEnabled: true })
+    expect(ok.status).toBe('ok')
+    const dup = await postRole('/api/add-role', { owner: 'org1', name: 'r1' })
+    expect(dup.status).toBe('error')
+    expect(dup.msg).toBe('the role already exists: org1/r1')
+  })
+
+  it('update-role：缺 id 或段数≠2 报错；PUT 405；带 id 整记录替换可回读', async () => {
+    const noId = await postRole('/api/update-role', { displayName: 'x' })
+    expect(noId.status).toBe('error')
+    const badId = await postRole('/api/update-role?id=r1', { displayName: 'x' })
+    expect(badId.status).toBe('error')
+    const put = await postRole('/api/update-role?id=org1/r1', { displayName: 'x' }, 'PUT')
+    expect(put.status).toBe('error')
+    const upd = await postRole('/api/update-role?id=org1/r1', { owner: 'org1', name: 'r1', displayName: '角色一改', users: ['org1/u1', 'org1/u2'], roles: [], domains: [], isEnabled: true })
+    expect(upd.status).toBe('ok')
+    const back = (await getJson('/api/get-roles?owner=org1')) as { data: Array<Record<string, unknown>> }
+    expect(back.data.find((x) => x.name === 'r1')).toMatchObject({ displayName: '角色一改', users: ['org1/u1', 'org1/u2'] })
+  })
+
+  it('update-role：不存在的角色报错', async () => {
+    const miss = await postRole('/api/update-role?id=org1/ghost', { owner: 'org1', name: 'ghost' })
+    expect(miss.status).toBe('error')
+  })
+
+  it('delete-role：必须 JSON body {owner,name}；删后消失', async () => {
+    const noBody = await postRole('/api/delete-role', {})
+    expect(noBody.status).toBe('error')
+    const del = await postRole('/api/delete-role', { owner: 'org1', name: 'r2' })
+    expect(del.status).toBe('ok')
+    const back = (await getJson('/api/get-roles?owner=org1')) as { data: Array<{ name: string }> }
+    expect(back.data.some((x) => x.name === 'r2')).toBe(false)
+  })
+
+  it('get-groups：owner 分桶、缺 owner 报错、形状含 displayName/parentId/isTopGroup', async () => {
+    const hit = await getJson('/api/get-groups?owner=org1')
+    expect(hit.status).toBe('ok')
+    expect(hit.data).toEqual([
+      { owner: 'org1', name: 'dept-a', displayName: '部门A', parentId: 'org1', isTopGroup: true },
+      { owner: 'org1', name: 'dept-a1', displayName: '部门A1', parentId: 'dept-a', isTopGroup: false },
+    ])
+    const miss = await getJson('/api/get-groups')
+    expect(miss.status).toBe('error')
+  })
+
+  it('get-users：行带 groups 数组（全形）', async () => {
+    const hit = (await getJson('/api/get-users?owner=org1')) as { data: Array<Record<string, unknown>> }
+    const u1 = hit.data.find((x) => x.name === 'u1')
+    expect(u1?.groups).toEqual(['org1/dept-a'])
+  })
+})

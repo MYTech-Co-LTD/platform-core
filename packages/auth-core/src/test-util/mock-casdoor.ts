@@ -65,6 +65,12 @@ export interface MockCasdoorUser {
    * （这正是"删号重建"改密法被否掉的理由）。种子给值即可让用例钉住"改密后绑定仍在"。
    */
   thirdPartyLinks?: string[]
+  /**
+   * 组归属（账户和权限体系 Task 2，真机 spike 2026-10-24）：真机用户**无 `group` 单数字段**，
+   * 是 `groups` 数组、存全形 `org/组名`（WeCom 同步器写的就是这个形状，实测 `["mytech/62"]`）。
+   * get-users / get-user 回带；组织架构成员过滤按本字段（短名/全形双认在客户端做）。
+   */
+  groups?: string[]
 }
 
 export interface MockCasdoorPerm {
@@ -129,6 +135,30 @@ export interface MockCasdoorOptions {
   users?: MockCasdoorUser[]
   perms?: MockCasdoorPerm[]
   orgs?: MockCasdoorOrg[]
+  /** 角色种子（账户和权限体系 Task 2）。缺省 owner=MOCK_ORG */
+  roles?: MockCasdoorRole[]
+  /** 组种子（同上）。缺省 owner=MOCK_ORG */
+  groups?: MockCasdoorGroup[]
+}
+
+/** 角色种子形状（真机 spike 2026-10-24：Role 含 users[]/roles[]/domains[]，users 全形 org/name） */
+export interface MockCasdoorRole {
+  owner?: string
+  name: string
+  displayName?: string
+  users?: string[]
+  roles?: string[]
+  domains?: string[]
+  isEnabled?: boolean
+}
+
+/** 组种子形状（真机 spike：显示名是 `displayName`【无 title】，parentId=父组名，顶层 parentId 可为空串/org 名） */
+export interface MockCasdoorGroup {
+  owner?: string
+  name: string
+  displayName?: string
+  parentId?: string
+  isTopGroup?: boolean
 }
 
 const MOCK_ORG = 'mock-org'
@@ -176,10 +206,31 @@ interface StoredOrg {
   applications: string[]
 }
 
+/** 角色/组的存储形状：字段一律补全（StoredPerm 同理——读写全受检，纪律 #11） */
+interface StoredRole {
+  owner: string
+  name: string
+  displayName: string
+  users: string[]
+  roles: string[]
+  domains: string[]
+  isEnabled: boolean
+}
+
+interface StoredGroup {
+  owner: string
+  name: string
+  displayName: string
+  parentId: string
+  isTopGroup: boolean
+}
+
 export class MockCasdoor {
   #users: StoredUser[]
   #perms: StoredPerm[] = []
   #orgs: StoredOrg[] = []
+  #roles: StoredRole[] = []
+  #groups: StoredGroup[] = []
   #sessions = new Map<string, { user: string; anonymous: boolean }>()
   #oidcCodes = new Map<string, string>() // authorization code → 用户名（单次即焚）
   #addPermissionCalls: Array<{ owner: string; name: string }> = []
@@ -252,6 +303,31 @@ export class MockCasdoor {
     }
     for (const u of this.#users) ensureOrgSeeded(u.owner)
     for (const p of this.#perms) ensureOrgSeeded(p.owner)
+    // 角色/组种子：owner 缺省 MOCK_ORG（StoredPerm 同先例——字段一律补全），字段缺省照真机形状
+    for (const r of opts.roles ?? []) {
+      const owner = r.owner ?? MOCK_ORG
+      ensureOrgSeeded(owner)
+      this.#roles.push({
+        owner,
+        name: r.name,
+        displayName: r.displayName ?? r.name,
+        users: [...(r.users ?? [])],
+        roles: [...(r.roles ?? [])],
+        domains: [...(r.domains ?? [])],
+        isEnabled: r.isEnabled ?? true,
+      })
+    }
+    for (const g of opts.groups ?? []) {
+      const owner = g.owner ?? MOCK_ORG
+      ensureOrgSeeded(owner)
+      this.#groups.push({
+        owner,
+        name: g.name,
+        displayName: g.displayName ?? g.name,
+        parentId: g.parentId ?? '',
+        isTopGroup: g.isTopGroup ?? false,
+      })
+    }
     // 口令哈希类型标记（issue #119）：**有口令的种子用户取其 org 的类型**（真机 add-user 走过
     // UpdateUserPassword ⇒ user.PasswordType = org.PasswordType）；无口令的留空串（真机同形：
     // UpdateUserPassword 对空口令直接 return，类型不落）。**故意不在种子缺省里写死 'bcrypt'**：
@@ -265,6 +341,10 @@ export class MockCasdoor {
     this.#app.put('/api/update-permission', (c: Context) =>
       c.json({ status: 'error', msg: 'method not allowed: update-permission 走 POST' }, 405))
     this.#app.post('/api/update-permission', this.#updatePermission)
+    // 角色写路由（Task 2）：update-role 同族形状钉死（PUT 405、POST + ?id=）
+    this.#app.put('/api/update-role', (c: Context) =>
+      c.json({ status: 'error', msg: 'method not allowed: update-role 走 POST' }, 405))
+    this.#app.post('/api/update-role', this.#updateRole)
   }
 
   get port(): number { return this.#port }
@@ -306,6 +386,16 @@ export class MockCasdoor {
   /** 某 org 的权限记录（断言用；等价 get-permissions?owner=，但不经 HTTP） */
   permissionsIn(org: string): Array<Record<string, unknown>> {
     return this.#perms.filter((p) => p.owner === org).map((p) => ({ ...p }))
+  }
+
+  /** 某 org 的角色记录（断言用；等价 get-roles?owner=，不经 HTTP）。Task 2 */
+  rolesIn(org: string): Array<Record<string, unknown>> {
+    return this.#roles.filter((r) => r.owner === org).map((r) => ({ ...r }))
+  }
+
+  /** 某 org 的组记录（断言用；等价 get-groups?owner=，不经 HTTP）。Task 2 */
+  groupsIn(org: string): Array<Record<string, unknown>> {
+    return this.#groups.filter((g) => g.owner === org).map((g) => ({ ...g }))
   }
 
   /**
@@ -443,6 +533,25 @@ export class MockCasdoor {
       return c.json({ status: 'error', msg }, 401)
     }
     return c.json({ status: 'error', msg })
+  }
+
+  #updateRole = async (c: Context) => {
+    if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+    // 纪律 ②：id=<org>/<name> 全形 query 形参（update-permission 同一套段数规则）
+    const segs = (c.req.query('id') ?? '').split('/')
+    if (segs.length !== 2) {
+      return c.json({ status: 'error', msg: 'wrong token count, expect <org>/<name>' })
+    }
+    const role = this.#roles.find((r) => r.owner === segs[0] && r.name === segs[1])
+    if (!role) return c.json({ status: 'error', msg: 'role not found' })
+    // 整记录替换语义（真机 update-* 同族）：载荷字段覆盖既有值，缺的落空形状
+    const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+    if (b.displayName !== undefined) role.displayName = String(b.displayName)
+    if (b.users !== undefined) role.users = (b.users as string[]) ?? []
+    if (b.roles !== undefined) role.roles = (b.roles as string[]) ?? []
+    if (b.domains !== undefined) role.domains = (b.domains as string[]) ?? []
+    if (b.isEnabled !== undefined) role.isEnabled = (b.isEnabled as boolean) ?? true
+    return c.json({ status: 'ok', data: 'Affected' })
   }
 
   #updatePermission = async (c: Context) => {
@@ -609,6 +718,56 @@ export class MockCasdoor {
         },
       })
     })
+    // GET /api/get-roles?owner=<org> —— 角色清单（Task 2）。owner 分桶与 get-permissions 同口径。
+    .get('/api/get-roles', (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const owner = c.req.query('owner') ?? ''
+      if (!owner) return c.json({ status: 'error', msg: 'owner required' })
+      return c.json({ status: 'ok', data: this.rolesIn(owner) })
+    })
+    // GET /api/get-groups?owner=<org> —— 组清单（Task 2）。同上分桶。
+    .get('/api/get-groups', (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const owner = c.req.query('owner') ?? ''
+      if (!owner) return c.json({ status: 'error', msg: 'owner required' })
+      return c.json({ status: 'ok', data: this.groupsIn(owner) })
+    })
+    // POST /api/add-role —— 载荷 JSON body；(owner,name) 重复拒绝（真机 spike：重名报
+    // 'the role already exists: <owner>/<name>' 形状）
+    .post('/api/add-role', async (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+      const owner = String(b.owner ?? '')
+      const name = String(b.name ?? '')
+      if (!owner) return c.json({ status: 'error', msg: 'owner required' })
+      if (!name) return c.json({ status: 'error', msg: 'name required' })
+      if (this.#roles.some((r) => r.owner === owner && r.name === name)) {
+        return c.json({ status: 'error', msg: `the role already exists: ${owner}/${name}` })
+      }
+      this.#roles.push({
+        owner,
+        name,
+        displayName: String(b.displayName ?? name),
+        users: (b.users as string[]) ?? [],
+        roles: (b.roles as string[]) ?? [],
+        domains: (b.domains as string[]) ?? [],
+        isEnabled: (b.isEnabled as boolean) ?? true,
+      })
+      return c.json({ status: 'ok', data: 'Affected' })
+    })
+    // POST /api/delete-role —— **必须 JSON body {owner,name}**（铁律①：delete 类端点 query
+    // 形式静默无效——mock 直接拒绝，防客户端用错形状还以为成功）
+    .post('/api/delete-role', async (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+      const owner = String(b.owner ?? '')
+      const name = String(b.name ?? '')
+      if (!owner || !name) return c.json({ status: 'error', msg: 'owner and name required (JSON body)' })
+      const idx = this.#roles.findIndex((r) => r.owner === owner && r.name === name)
+      if (idx === -1) return c.json({ status: 'error', msg: 'role not found' })
+      this.#roles.splice(idx, 1)
+      return c.json({ status: 'ok', data: 'Affected' })
+    })
     // GET /api/get-permissions?owner=<org> —— 纪律 ②：owner= query 形参，**按 org 分桶**。
     // owner 缺失一律 status:error：绝不"忽略形参回全部"——那正是 M0 门禁对 multi 权限
     // 结构性失明的根因（issue #3 第二节成因①），回退成那个形状必须立刻可见
@@ -764,6 +923,7 @@ export class MockCasdoor {
           displayName: u.displayName ?? u.name,
           email: u.email ?? '',
           roles: [...u.roles],
+          groups: [...(u.groups ?? [])],
           isAdmin: u.isAdmin,
           isForbidden: u.isForbidden,
         }))

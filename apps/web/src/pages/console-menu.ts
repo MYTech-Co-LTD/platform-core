@@ -55,6 +55,8 @@ export interface AdminMenuInput {
 function adminGroup(iconMap: Record<string, ReactNode>, admin: AdminMenuInput): MenuDataItem {
   const children: MenuDataItem[] = [
     { path: '/console/admin/users', name: '用户管理' },
+    { path: '/console/admin/org-tree', name: '组织架构' },
+    { path: '/console/admin/roles', name: '角色管理' },
     { path: '/console/admin/permissions', name: '角色与授权' },
     { path: '/console/admin/subscriptions', name: '我的订阅' },
     { path: '/console/admin/keys', name: 'Key 管理' },

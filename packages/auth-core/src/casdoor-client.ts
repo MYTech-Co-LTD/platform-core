@@ -82,11 +82,41 @@ export interface CasdoorPermission {
   resources?: string[]
 }
 
-/** listUsers 的返回形状（M3 spec D4：租户管理员用户管理页数据源） */
+/**
+ * listUsers 的返回形状（M3 spec D4：租户管理员用户管理页数据源）。
+ * `groups`（账户和权限体系 Task 7；真机 spike 2026-10-24 附录 B）：用户**无 `group` 单数**，
+ * 是 `groups` 数组、全形 `org/组名`（WeCom 同步器写入形状）；组织架构成员过滤按它。
+ * `roles`：get-users 行的 roles 键真机恒 null（回填只在 get-user 单查）——投影成空数组，
+ * 角色归属由调用方经 listRoles() 反查（admin org-tree/members 路由），不在此处 N+1。
+ */
 export interface CasdoorListedUser {
   name: string
   displayName: string
   isForbidden: boolean
+  groups: string[]
+  roles: string[]
+}
+
+/**
+ * listGroups 的返回形状（账户和权限体系 Task 3；真机 spike 2026-10-24 附录 B）：
+ * 显示名是 `displayName`（真机无 `title` 字段）；parentId=父组名；顶层组 parentId
+ * 可为空串也可为 org 名（两种形态并存，树组装在 group-tree.buildGroupTree 处理）。
+ */
+export interface CasdoorGroup {
+  name: string
+  displayName: string
+  parentId: string
+  isTopGroup?: boolean
+}
+
+/**
+ * listRoles 的返回形状（账户和权限体系 Task 4；真机 spike 2026-10-24 附录 B）：
+ * Role 含 users[]（全形 `org/name`）/roles[]/domains[]；本客户端只投影授权面用到的三字段。
+ */
+export interface CasdoorRole {
+  name: string
+  displayName: string
+  users: string[]
 }
 
 interface LoginResult {
@@ -301,6 +331,8 @@ export class CasdoorClient {
         name: String(u.name ?? ''),
         displayName: typeof u.displayName === 'string' && u.displayName ? u.displayName : String(u.name ?? ''),
         isForbidden: u.isForbidden === true,
+        groups: Array.isArray(u.groups) ? (u.groups as string[]) : [],
+        roles: Array.isArray(u.roles) ? (u.roles as string[]) : [],
       }))
       .filter((u) => u.name !== '')
   }
@@ -311,6 +343,172 @@ export class CasdoorClient {
     if (j.status !== 'ok') throw new Error(`casdoor get-user: ${j.msg || 'error'}`)
     const u = j.data as Record<string, unknown> | null | undefined
     return u && typeof u === 'object' && u.name ? u : null
+  }
+
+  /**
+   * 列**本 client org** 的 group 平表（账户和权限体系 Task 3：组织架构页数据源；树组装
+   * 交给 `buildGroupTree`）。error 一律抛、绝不静默空表（listUsers 同口径）。
+   */
+  async listGroups(): Promise<CasdoorGroup[]> {
+    const j = await this.#adminJson(`get-groups?owner=${encodeURIComponent(this.#o.org)}`)
+    if (j.status !== 'ok') throw new Error(`casdoor get-groups: ${j.msg || 'error'}`)
+    if (!Array.isArray(j.data)) return []
+    return (j.data as Array<Record<string, unknown>>)
+      .map((g) => ({
+        name: String(g.name ?? ''),
+        displayName: String(g.displayName ?? g.name ?? ''),
+        parentId: String(g.parentId ?? ''),
+        isTopGroup: g.isTopGroup === true,
+      }))
+      .filter((g) => g.name !== '')
+  }
+
+  /**
+   * 列**本 client org** 的角色（账户和权限体系 Task 4：角色管理页数据源）。error 一律抛
+   * （listUsers 同口径）。owner 分桶由 Casdoor 的 owner= 形参保证。
+   */
+  async listRoles(): Promise<CasdoorRole[]> {
+    const j = await this.#adminJson(`get-roles?owner=${encodeURIComponent(this.#o.org)}`)
+    if (j.status !== 'ok') throw new Error(`casdoor get-roles: ${j.msg || 'error'}`)
+    if (!Array.isArray(j.data)) return []
+    return (j.data as Array<Record<string, unknown>>)
+      .map((r) => ({
+        name: String(r.name ?? ''),
+        displayName: String(r.displayName ?? r.name ?? ''),
+        users: Array.isArray(r.users) ? (r.users as string[]) : [],
+      }))
+      .filter((r) => r.name !== '')
+  }
+
+  async #findRoleByName(name: string): Promise<CasdoorRole | null> {
+    const roles = await this.listRoles()
+    return roles.find((r) => r.name === name) ?? null
+  }
+
+  /** 角色原始记录（get-roles 全量行）。update-role 是整记录替换——改成员必须先取全量带回，防其余字段被洗。 */
+  async #findRawRole(name: string): Promise<Record<string, unknown> | null> {
+    const j = await this.#adminJson(`get-roles?owner=${encodeURIComponent(this.#o.org)}`)
+    if (j.status !== 'ok') throw new Error(`casdoor get-roles: ${j.msg || 'error'}`)
+    if (!Array.isArray(j.data)) return null
+    return (j.data as Array<Record<string, unknown>>).find((r) => r.name === name) ?? null
+  }
+
+  /**
+   * 角色成员**整组替换**（账户和权限体系 Task 5）。users 入参短名，落库全形 `org/name`
+   * （grantPermissionToUser 同款惯例）；update-role 整记录替换——原记录全量带回（#findRawRole）。
+   * 铁律② `?id=` + 铁律③ 回读逐个命中。
+   */
+  async setRoleMembers(name: string, users: ReadonlyArray<string>): Promise<void> {
+    const raw = await this.#findRawRole(name)
+    if (!raw) throw new Error(`casdoor: 角色不存在 ${this.#o.org}/${name}`)
+    const full = users.map((u) => `${this.#o.org}/${u}`)
+    const j = await this.#adminJson(
+      `update-role?id=${encodeURIComponent(`${this.#o.org}/${name}`)}`,
+      { method: 'POST', body: { ...raw, users: full } },
+    )
+    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    const back = (await this.listRoles()).find((r) => r.name === name)
+    const want = new Set(full)
+    if (!back || back.users.length !== want.size || !back.users.every((u) => want.has(u))) {
+      throw new Error(`casdoor: 角色成员回读未命中 ${this.#o.org}/${name}`)
+    }
+  }
+
+  /**
+   * 码↔角色挂接（账户和权限体系 Task 6）：把角色加进权限记录的 roles[]。照
+   * grantPermissionToUser 的 body 全字段与回读模式，唯一差异：操作 roles 数组、
+   * 角色落 `org/<role>` 全形；幂等判定短名/全形双认（与 effectiveScopes.matchRoles
+   * 的双向语义一致）。铁律② `?id=` + 铁律③ 回读。
+   */
+  async grantPermissionToRole(code: string, roleName: string): Promise<void> {
+    const p = await this.#findPermissionByCode(code)
+    const roles = (p.roles as string[] | undefined) ?? []
+    const full = `${this.#o.org}/${roleName}`
+    if (roles.includes(roleName) || roles.includes(full)) return
+    const body = {
+      owner: this.#o.org,
+      name: String(p.name),
+      displayName: String(p.displayName ?? p.name),
+      model: String(p.model ?? 'built-in/user-model-built-in'),
+      users: (p.users as string[] | undefined) ?? [],
+      roles: [...roles, full],
+      resources: (p.resources as string[] | undefined) ?? [],
+      actions: (p.actions as string[] | undefined) ?? ['Read'],
+      isEnabled: p.isEnabled === undefined ? true : p.isEnabled,
+    }
+    const j = await this.#adminJson(
+      `update-permission?id=${encodeURIComponent(`${this.#o.org}/${String(p.name)}`)}`,
+      { method: 'POST', body },
+    )
+    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+    const back = await this.#findPermissionByCode(code)
+    const br = (back.roles as string[] | undefined) ?? []
+    if (!br.includes(roleName) && !br.includes(full)) {
+      throw new Error(`casdoor: 角色挂码回读未命中 ${code} ← ${roleName}`)
+    }
+  }
+
+  /**
+   * 码↔角色摘除：把角色从权限记录的 roles[] 摘下。短名与 `org/role` 全形**一并清**
+   * （历史数据两种形态都可能存在）。幂等：本就没挂直接返回（不发 update）。
+   */
+  async revokePermissionFromRole(code: string, roleName: string): Promise<void> {
+    const p = await this.#findPermissionByCode(code)
+    const roles = (p.roles as string[] | undefined) ?? []
+    const kept = roles.filter((r) => r !== roleName && r !== `${this.#o.org}/${roleName}`)
+    if (kept.length === roles.length) return
+    const body = {
+      owner: this.#o.org,
+      name: String(p.name),
+      displayName: String(p.displayName ?? p.name),
+      model: String(p.model ?? 'built-in/user-model-built-in'),
+      users: (p.users as string[] | undefined) ?? [],
+      roles: kept,
+      resources: (p.resources as string[] | undefined) ?? [],
+      actions: (p.actions as string[] | undefined) ?? ['Read'],
+      isEnabled: p.isEnabled === undefined ? true : p.isEnabled,
+    }
+    const j = await this.#adminJson(
+      `update-permission?id=${encodeURIComponent(`${this.#o.org}/${String(p.name)}`)}`,
+      { method: 'POST', body },
+    )
+    if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
+  }
+
+  /**
+   * 建角色。add 竞态与 createManagedUser 同口径：失败**重读验证**目标状态，已在即视为
+   * 成功；仍无此人 ⇒ 抛（fail loudly）。写后回读（铁律③）。
+   */
+  async createRole(input: { name: string; displayName?: string }): Promise<void> {
+    const body = {
+      owner: this.#o.org,
+      name: input.name,
+      displayName: input.displayName || input.name,
+      users: [],
+      roles: [],
+      domains: [],
+      isEnabled: true,
+    }
+    const j = await this.#adminJson('add-role', { method: 'POST', body })
+    if (j.status === 'ok') return
+    if ((await this.#findRoleByName(input.name)) === null) {
+      throw new Error(`casdoor add-role: ${j.msg || 'error'}`)
+    }
+  }
+
+  /**
+   * 删角色。铁律①：delete 类端点一律 JSON body `{owner,name}`（query 形式静默无效）；
+   * 铁律③：删后回读确认消失，仍在即抛。不存在者 = 抛（fail loudly，调用方先列表再删）。
+   */
+  async deleteRole(name: string): Promise<void> {
+    const j = await this.#adminJson('delete-role', {
+      method: 'POST',
+      body: { owner: this.#o.org, name },
+    })
+    if (j.status && j.status !== 'ok') throw new Error(`casdoor delete-role: ${j.msg || 'error'}`)
+    if ((await this.#findRoleByName(name)) !== null) {
+      throw new Error(`casdoor: 删角色回读仍在 ${this.#o.org}/${name}`)
+    }
   }
 
   async #requireRawUser(name: string): Promise<Record<string, unknown>> {

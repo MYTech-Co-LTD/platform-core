@@ -811,10 +811,10 @@ describe('M3 用户与授权（D4）', () => {
   const client = () =>
     new CasdoorClient({ origin: mm.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
 
-  it('listUsers 列本 org 用户（三字段；built-in admin 不在桶内）', async () => {
+  it('listUsers 列本 org 用户（五字段投影；built-in admin 不在桶内）', async () => {
     const users = await client().listUsers()
-    expect(users).toContainEqual({ name: 'alice', displayName: 'Alice', isForbidden: false })
-    expect(users).toContainEqual({ name: 'bob', displayName: 'bob', isForbidden: true })
+    expect(users).toContainEqual({ name: 'alice', displayName: 'Alice', isForbidden: false, groups: [], roles: [] })
+    expect(users).toContainEqual({ name: 'bob', displayName: 'bob', isForbidden: true, groups: [], roles: [] })
     expect(users.map((u) => u.name)).not.toContain('admin')
   })
 
@@ -1002,5 +1002,131 @@ describe('M3 用户与授权（D4）', () => {
   it('grant/revoke 对未知码抛错（先跑装载器供给）', async () => {
     await expect(client().grantPermissionToUser('nope:code', 'alice')).rejects.toThrow('不存在权限码')
     await expect(client().revokePermissionFromUser('nope:code', 'alice')).rejects.toThrow('不存在权限码')
+  })
+})
+
+// ---- 组织架构（账户和权限体系 Task 3：listGroups） ----
+describe('listGroups（组织架构数据源）', () => {
+  let mg: MockCasdoor
+  beforeAll(async () => {
+    mg = new MockCasdoor({
+      groups: [
+        { owner: 'acme', name: 'hq', displayName: '总部', parentId: 'acme', isTopGroup: true },
+        { owner: 'acme', name: 'shop-a', displayName: 'A 店', parentId: 'hq' },
+      ],
+    })
+    await mg.start()
+  })
+  afterAll(async () => { await mg.stop() })
+
+  it('列本 org 平表并投影四字段（displayName 兜底 name；error 抛）', async () => {
+    const client = () =>
+      new CasdoorClient({ origin: mg.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
+    const groups = await client().listGroups()
+    expect(groups).toEqual([
+      { name: 'hq', displayName: '总部', parentId: 'acme', isTopGroup: true },
+      { name: 'shop-a', displayName: 'A 店', parentId: 'hq', isTopGroup: false },
+    ])
+    // owner 分桶：别的 org 拿不到
+    const other = new CasdoorClient({ origin: mg.origin, clientId: 'x', clientSecret: 'y', org: 'beta', adminUser: 'admin', adminPwd: 'pw' })
+    await expect(other.listGroups()).resolves.toEqual([])
+  })
+})
+
+// ---- 角色管理（账户和权限体系 Task 4：listRoles / createRole / deleteRole） ----
+describe('角色管理（Task 4）', () => {
+  let mr: MockCasdoor
+  beforeAll(async () => {
+    mr = new MockCasdoor({
+      roles: [{ owner: 'acme', name: 'dup', displayName: '重复', users: [] }],
+    })
+    await mr.start()
+  })
+  afterAll(async () => { await mr.stop() })
+  const client = () =>
+    new CasdoorClient({ origin: mr.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
+
+  it('listRoles 列本 org 角色（owner 分桶；users 透传）', async () => {
+    const roles = await client().listRoles()
+    expect(roles).toContainEqual({ name: 'dup', displayName: '重复', users: [] })
+  })
+
+  it('createRole 幂等竞态：已存在视为成功；新建写后回读', async () => {
+    await expect(client().createRole({ name: 'dup' })).resolves.toBeUndefined() // 已在即成功
+    await client().createRole({ name: 'fresh', displayName: '新角色' })
+    expect((await client().listRoles()).find((r) => r.name === 'fresh')).toMatchObject({ displayName: '新角色', users: [] })
+  })
+
+  it('deleteRole 删除 + 回读确认消失；删不存在者响亮抛', async () => {
+    await client().createRole({ name: 'gone' })
+    await client().deleteRole('gone')
+    expect((await client().listRoles()).some((r) => r.name === 'gone')).toBe(false)
+    await expect(client().deleteRole('never-was')).rejects.toThrow()
+  })
+})
+
+// ---- 角色成员整组替换（账户和权限体系 Task 5：setRoleMembers） ----
+describe('setRoleMembers（Task 5）', () => {
+  let ms: MockCasdoor
+  beforeAll(async () => {
+    ms = new MockCasdoor({
+      users: [
+        { name: 'a', password: 'pw', owner: 'org' },
+        { name: 'b', password: 'pw', owner: 'org' },
+      ],
+    })
+    await ms.start()
+  })
+  afterAll(async () => { await ms.stop() })
+  const client = () =>
+    new CasdoorClient({ origin: ms.origin, clientId: 'x', clientSecret: 'y', org: 'org', adminUser: 'admin', adminPwd: 'pw' })
+
+  it('成员全形落库 + 整组替换可回读；清空合法', async () => {
+    await client().createRole({ name: 'r1' })
+    await client().setRoleMembers('r1', ['a', 'b'])
+    expect((await client().listRoles()).find((r) => r.name === 'r1')?.users)
+      .toEqual(['org/a', 'org/b']) // 全形惯例（grantPermissionToUser 同款）
+    await client().setRoleMembers('r1', []) // 清空 = 合法操作
+    expect((await client().listRoles()).find((r) => r.name === 'r1')?.users).toEqual([])
+  })
+
+  it('不存在的角色响亮抛；回读未命中抛（铁律③）', async () => {
+    await expect(client().setRoleMembers('ghost', ['a'])).rejects.toThrow('角色不存在')
+  })
+})
+
+// ---- 码↔角色（账户和权限体系 Task 6：grant/revokePermissionToRole） ----
+describe('码↔角色（Task 6）', () => {
+  let mp: MockCasdoor
+  beforeAll(async () => {
+    mp = new MockCasdoor({
+      perms: [{ owner: 'org', name: 'demo:view', resources: ['demo:view'], users: [] }],
+      roles: [{ owner: 'org', name: 'store-manager', displayName: '店长', users: [] }],
+    })
+    await mp.start()
+  })
+  afterAll(async () => { await mp.stop() })
+  const client = () =>
+    new CasdoorClient({ origin: mp.origin, clientId: 'x', clientSecret: 'y', org: 'org', adminUser: 'admin', adminPwd: 'pw' })
+  const permRoles = () => mp.permissionsIn('org').find((p) => p.name === 'demo:view')?.roles ?? []
+
+  it('grantPermissionToRole：roles 全形落库 + 回读；重复挂幂等不炸', async () => {
+    const c = client()
+    await c.grantPermissionToRole('demo:view', 'store-manager')
+    expect(permRoles()).toContain('org/store-manager')
+    // users/resources 不被洗（整记录替换带回）
+    expect(mp.permissionsIn('org').find((p) => p.name === 'demo:view')?.resources).toEqual(['demo:view'])
+    await expect(c.grantPermissionToRole('demo:view', 'store-manager')).resolves.toBeUndefined()
+  })
+
+  it('revokePermissionFromRole：短名/全形残留一并清；未挂幂等不发 update', async () => {
+    const c = client()
+    // 造短名残留：直接重建一枚 roles 含短名的码（绕过 grant 的全形惯例）
+    await c.upsertPermission('legacy:view', 'legacy:view')
+    // 先 revoke 全形（上一步挂的）
+    await c.revokePermissionFromRole('demo:view', 'store-manager')
+    expect(permRoles()).not.toContain('org/store-manager')
+    // 再 revoke 未挂过的 → 幂等不抛
+    await expect(c.revokePermissionFromRole('demo:view', 'store-manager')).resolves.toBeUndefined()
   })
 })
