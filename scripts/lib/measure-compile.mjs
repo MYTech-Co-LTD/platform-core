@@ -24,11 +24,14 @@ export function compilePerGroup({ measure, keys, baseAlias }) {
 }
 
 /**
- * 阶段 2：指标粒度的聚合（`sum(<value>)::numeric(20,2)`）。
+ * 指标粒度的聚合列表达式：分组组件是阶段 2（`sum(<value>)::numeric(<precision>)`，
+ * precision 缺省 `"20,2"`）；flat 组件（`grain[0] === 'flat'`，P3.3）是阶段 1 本身——
+ * expr 自身就是单层可结合聚合，直接 cast，**不再包一层 sum**（那会变成 `sum(sum(...))`）。
  *
  * `stock` 允许求和：跨时间不可加性由调用方的时间键保证；`non_additive` 任何上卷都不成立 ⇒ 抛错。
  *
- * @param {{ measure: Measure, column: string, valueExpr: string }} a
+ * @param {{ measure: Measure, column: string, valueExpr?: string }} a
+ *   `valueExpr` 只在分组形态下被读（阶段 1 的 `measure_value` 引用）；flat 形态可省。
  * @returns {string}
  */
 export function compileAggregate({ measure, column, valueExpr }) {
@@ -37,5 +40,9 @@ export function compileAggregate({ measure, column, valueExpr }) {
   if (measure.additivity !== 'flow' && measure.additivity !== 'stock') {
     throw new Error(`measure.additivity=${JSON.stringify(measure.additivity)} 不能直接求和（只允许 flow / stock；column=${column}）`)
   }
-  return `sum(${valueExpr})::numeric(20,2) as ${column}`
+  const precision = measure.precision ?? '20,2'
+  if (measure.grain && measure.grain[0] === 'flat') {
+    return `${measure.expr}::numeric(${precision}) as ${column}`
+  }
+  return `sum(${valueExpr})::numeric(${precision}) as ${column}`
 }
