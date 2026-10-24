@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.194.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.193.2...v0.194.0) - 2026-10-24
+- 【新增】auth: console 组织架构与角色管理后台 ([#1040](https://github.com/MYTech-Co-LTD/platform-core/pull/1040), [1778b15](https://github.com/MYTech-Co-LTD/platform-core/commit/1778b152f325a8d6f8370bcac51e9e0089f607c7))
+
+
 ## [0.193.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.193.1...v0.193.2) - 2026-10-24
 - 【修复】data: 下钻条件列被列级掩码命中时整列缺席（#995） ([#1037](https://github.com/MYTech-Co-LTD/platform-core/pull/1037), [5d558d5](https://github.com/MYTech-Co-LTD/platform-core/commit/5d558d5d26fa3c99362419b5af818a292678a16c))
 
