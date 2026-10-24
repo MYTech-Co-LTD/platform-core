@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.193.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.192.0...v0.193.0) - 2026-10-24
+- 【新增】data: 聚合面组件化 P3.3 影子波——4 族度量迁生成器（#1031） ([#1033](https://github.com/MYTech-Co-LTD/platform-core/pull/1033), [9c42efd](https://github.com/MYTech-Co-LTD/platform-core/commit/9c42efd13c731b742c7dd824fe9c3cb53416c4d3))
+
+
 ## [0.192.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.191.0...v0.192.0) - 2026-10-24
 - 【新增】data: 沙箱草案保留策略——试跑后按 mtime 裁到最近 N 份（#1029） ([#1030](https://github.com/MYTech-Co-LTD/platform-core/pull/1030), [0ad82b0](https://github.com/MYTech-Co-LTD/platform-core/commit/0ad82b0e744c18eb01390841ff9c2f332e2cf87b))
 
