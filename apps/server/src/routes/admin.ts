@@ -10,7 +10,7 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import type { Pool } from 'pg'
 import { z } from 'zod'
-import { csrfToken } from '@platform/auth-core'
+import { buildGroupTree, csrfToken } from '@platform/auth-core'
 import { METRIC_SOURCE_RE, normalizeEndpoint, platformStorageFromEnv, requireScope } from '@platform/sdk'
 import type { TenantStorageConfig } from '@platform/sdk'
 import type { TenantEnv, TenantRow } from '../tenant'
@@ -168,6 +168,43 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
     await deps.casdoor(t.casdoor_org).revokePermissionFromUser(code, user)
     await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.revoke', { code, user })
     return c.json({ ok: true })
+  })
+
+  // ---- 组织架构（账户和权限体系 spec §3.4：Casdoor group 树代理视图——syncer 是唯一写者，
+  // 本路由组只读。用户组键是 groups 数组、全形 `org/组名`（真机 spike 2026-10-24 附录 B））----
+
+  app.get('/org-tree', async (c) => {
+    const org = c.get('tenant').casdoor_org
+    const cas = deps.casdoor(org)
+    const users = (await cas.listUsers()).filter((u) => u.name !== ANCHOR_USER)
+    const counts = new Map<string, number>()
+    for (const u of users) {
+      for (const g of u.groups) {
+        const name = g.startsWith(`${org}/`) ? g.slice(org.length + 1) : g
+        counts.set(name, (counts.get(name) ?? 0) + 1)
+      }
+    }
+    return c.json({ tree: buildGroupTree(org, await cas.listGroups(), counts) })
+  })
+
+  app.get('/org-tree/members', async (c) => {
+    const org = c.get('tenant').casdoor_org
+    const group = c.req.query('group') ?? ''
+    const cas = deps.casdoor(org)
+    let users = (await cas.listUsers()).filter((u) => u.name !== ANCHOR_USER)
+    if (group) users = users.filter((u) => u.groups.some((g) => g === group || g.endsWith(`/${group}`)))
+    // 真机 get-users 行的 roles 恒 null（spike 附录 B）→ 角色归属从 listRoles 倒排（一次调用，不 N+1）
+    const roles = await cas.listRoles()
+    return c.json({
+      users: users.map((u) => ({
+        name: u.name,
+        displayName: u.displayName,
+        isForbidden: u.isForbidden,
+        roles: roles
+          .filter((r) => r.users.some((x) => x === u.name || x.endsWith(`/${u.name}`)))
+          .map((r) => (r.name.startsWith(`${org}/`) ? r.name.slice(org.length + 1) : r.name)),
+      })),
+    })
   })
 
   // ---- 我的订阅（只读）----

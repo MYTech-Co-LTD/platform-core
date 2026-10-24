@@ -740,3 +740,70 @@ describe.skipIf(!dbUrl)('admin 路由：已接入源（真 PG 路由级）', () 
     expect(res.status).toBe(403)
   })
 })
+
+// ---- 组织架构（账户和权限体系 Task 7：org-tree + members） ----
+describe('admin 路由：组织架构', () => {
+  function mounted(fake: CasdoorClient) {
+    const d = deps({ casdoor: () => fake })
+    return mount(d, { scopes: ['tenant:admin'] })
+  }
+
+  it('GET /org-tree：buildGroupTree 组装 + memberCount 按 groups 归节点（锚用户剔除）', async () => {
+    const fake = {
+      async listUsers() {
+        return [
+          { name: ANCHOR_USER, displayName: 'anchor', isForbidden: true, groups: ['myorg/hq'], roles: [] },
+          { name: 'u1', displayName: 'U一', isForbidden: false, groups: ['myorg/shop-a'], roles: [] },
+          { name: 'u2', displayName: 'U二', isForbidden: true, groups: ['myorg/hq'], roles: [] },
+        ]
+      },
+      async listGroups() {
+        return [
+          { name: 'hq', displayName: '总部', parentId: 'myorg', isTopGroup: true },
+          { name: 'shop-a', displayName: 'A 店', parentId: 'hq' },
+        ]
+      },
+      async listRoles() {
+        return []
+      },
+    } as unknown as CasdoorClient
+    const res = await mounted(fake).request('/api/platform/admin/org-tree')
+    expect(res.status).toBe(200)
+    const { tree } = await res.json()
+    expect(tree).toHaveLength(1)
+    expect(tree[0]).toMatchObject({ name: 'hq', memberCount: 1 }) // 锚剔除后 hq 只剩 u2
+    expect(tree[0].children[0]).toMatchObject({ name: 'shop-a', displayName: 'A 店', memberCount: 1 })
+  })
+
+  it('GET /org-tree/members：group 过滤（短名命中全形 groups）+ 角色从 listRoles 倒排 + 锚剔除', async () => {
+    const fake = {
+      async listUsers() {
+        return [
+          { name: ANCHOR_USER, displayName: 'anchor', isForbidden: true, groups: ['myorg/shop-a'], roles: [] },
+          { name: 'u1', displayName: 'U一', isForbidden: false, groups: ['myorg/shop-a'], roles: [] },
+          { name: 'u2', displayName: 'U二', isForbidden: false, groups: ['myorg/hq'], roles: [] },
+        ]
+      },
+      async listGroups() {
+        return []
+      },
+      async listRoles() {
+        return [
+          { name: '店长', displayName: '店长', users: ['myorg/u1'] },
+          { name: 'myorg/区域', displayName: '区域', users: ['u2'] }, // 反向全形也要命中
+        ]
+      },
+    } as unknown as CasdoorClient
+    const res = await mounted(fake).request('/api/platform/admin/org-tree/members?group=shop-a')
+    expect(res.status).toBe(200)
+    const { users } = await res.json()
+    expect(users).toEqual([
+      { name: 'u1', displayName: 'U一', isForbidden: false, roles: ['店长'] },
+    ])
+    const all = await mounted(fake).request('/api/platform/admin/org-tree/members')
+    const allBody = await all.json()
+    expect(allBody.users.map((u: { name: string }) => u.name).sort()).toEqual(['u1', 'u2'])
+    const u2 = allBody.users.find((u: { name: string }) => u.name === 'u2')
+    expect(u2.roles).toEqual(['区域']) // 全形角色名剥 org 前缀
+  })
+})

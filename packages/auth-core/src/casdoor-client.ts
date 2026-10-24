@@ -82,11 +82,19 @@ export interface CasdoorPermission {
   resources?: string[]
 }
 
-/** listUsers 的返回形状（M3 spec D4：租户管理员用户管理页数据源） */
+/**
+ * listUsers 的返回形状（M3 spec D4：租户管理员用户管理页数据源）。
+ * `groups`（账户和权限体系 Task 7；真机 spike 2026-10-24 附录 B）：用户**无 `group` 单数**，
+ * 是 `groups` 数组、全形 `org/组名`（WeCom 同步器写入形状）；组织架构成员过滤按它。
+ * `roles`：get-users 行的 roles 键真机恒 null（回填只在 get-user 单查）——投影成空数组，
+ * 角色归属由调用方经 listRoles() 反查（admin org-tree/members 路由），不在此处 N+1。
+ */
 export interface CasdoorListedUser {
   name: string
   displayName: string
   isForbidden: boolean
+  groups: string[]
+  roles: string[]
 }
 
 /**
@@ -323,6 +331,8 @@ export class CasdoorClient {
         name: String(u.name ?? ''),
         displayName: typeof u.displayName === 'string' && u.displayName ? u.displayName : String(u.name ?? ''),
         isForbidden: u.isForbidden === true,
+        groups: Array.isArray(u.groups) ? (u.groups as string[]) : [],
+        roles: Array.isArray(u.roles) ? (u.roles as string[]) : [],
       }))
       .filter((u) => u.name !== '')
   }

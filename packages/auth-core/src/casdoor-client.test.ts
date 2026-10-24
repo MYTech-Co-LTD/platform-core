@@ -811,10 +811,10 @@ describe('M3 用户与授权（D4）', () => {
   const client = () =>
     new CasdoorClient({ origin: mm.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
 
-  it('listUsers 列本 org 用户（三字段；built-in admin 不在桶内）', async () => {
+  it('listUsers 列本 org 用户（五字段投影；built-in admin 不在桶内）', async () => {
     const users = await client().listUsers()
-    expect(users).toContainEqual({ name: 'alice', displayName: 'Alice', isForbidden: false })
-    expect(users).toContainEqual({ name: 'bob', displayName: 'bob', isForbidden: true })
+    expect(users).toContainEqual({ name: 'alice', displayName: 'Alice', isForbidden: false, groups: [], roles: [] })
+    expect(users).toContainEqual({ name: 'bob', displayName: 'bob', isForbidden: true, groups: [], roles: [] })
     expect(users.map((u) => u.name)).not.toContain('admin')
   })
 
