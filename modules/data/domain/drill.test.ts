@@ -393,6 +393,38 @@ describe('条件列（spec 2026-10-22 §2.3）', () => {
     expect(sqls[0]).toContain('cast(null as numeric) as value, system_book')
     expect(sqls[0]).toContain('max(order_detail_std_price) as order_detail_std_price')
   })
+
+  it('#995 列级掩码命中条件列 ⇒ 整列缺席（不是 NULL；SQL 里一字不剩，审计记剔除）', async () => {
+    const CMASK_ROW: Record<string, unknown> = {
+      ...COLUMN_ROW, id: 'drill:cols_cmask',
+      mask_spec: [{ column: 'order_detail_std_price', kind: 'nullify', grantedBy: 'data:precise' }],
+    }
+    const { pool, audits } = fakePool([CMASK_ROW])
+    const sqls: string[] = []
+    const out = await runDetailQuery(depsOf(pool, sqls), ORG, req(COST), 'drill:cols_cmask', ARGS, {})
+    expect(out.status).toBe('ok')
+    if (out.status !== 'ok') return
+    expect(sqls[0]).not.toContain('order_detail_std_price')
+    expect(out.columns).not.toContain('order_detail_std_price')
+    const drill = JSON.parse(audits[0].params[AUDIT_DRILL] as string) as Record<string, unknown>
+    expect(drill.grantedColumns).toEqual([])
+    expect(drill.maskedOutColumns).toEqual(['order_detail_std_price'])
+  })
+
+  it('#995 持掩码 grantedBy（豁免方向）⇒ 条件列照常在场看原值', async () => {
+    const CMASK_ROW: Record<string, unknown> = {
+      ...COLUMN_ROW, id: 'drill:cols_cmask',
+      mask_spec: [{ column: 'order_detail_std_price', kind: 'nullify', grantedBy: 'data:precise' }],
+    }
+    const { pool } = fakePool([CMASK_ROW])
+    const sqls: string[] = []
+    await runDetailQuery(
+      depsOf(pool, sqls), ORG,
+      req({ scopes: ['data:query', 'data:cost', 'data:precise'] }),
+      'drill:cols_cmask', ARGS, {},
+    )
+    expect(sqls[0]).toContain('max(order_detail_std_price) as order_detail_std_price')
+  })
 })
 
 describe('buildDrillSql 条件列（纯函数）', () => {
