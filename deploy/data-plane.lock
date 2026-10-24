@@ -1,4 +1,4 @@
-sha256-of-rest 48870efff5c4eac9aaf6bec34966eac18fc0242677c344a5bfd5e19a985e1034
+sha256-of-rest 58b120e34df9e125bb54e41ff4d92097e9fe4b1a5840e2b2ebc8c0da3e369474
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -179,7 +179,7 @@ deca92f308eba60e8d9d4981b92aa3411d49d4074c3c4decf3db3f53ffe4d6fc deploy/duckle/c
 4c332362b7832cec68ef766016f7ba312005c349965c5fbca777f6b7e4dd0aa1 deploy/duckle/console/pipelines/lemeng.client.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.client.l0.3120.json 0644
 70f4eea18187b50fed5144aac7e8fb7c5e644983a42063cc91ae00580d8a6a03 deploy/duckle/console/pipelines/lemeng.dim.branch.l0.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.branch.l0.json 0644
 f27414725b75d8f8764645e7366c45ad8da85a836106656f7490c45370b0d968 deploy/duckle/console/pipelines/lemeng.dim.item.l0.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item.l0.json 0644
-6a558e66c877672ccb03ab6601e7f1fd37dc9563f323f2f07f5a3eca2efe378c deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.3120.json 0644
+fbdc58b11926564d1b19de61cb5d20a03eb3ee5926928cf324b7bcd819ad3b2f deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.3120.json 0644
 db746151831a664b64463d6c42553254c20710eba7e9d5535d583abdf9083b0e deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.json ${REPO}/deploy/duckle/console/pipelines/lemeng.dim.item_price.l0.json 0644
 b952f1b53f26390b1b2db8a48e0abb6730754b49bfc95853241beb4ba8d46334 deploy/duckle/console/pipelines/lemeng.inventory.snapshot.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.inventory.snapshot.l0.3120.json 0644
 30256e611a054a80e695015518c60c5058bcdf357efccb118029d8172f49da01 deploy/duckle/console/pipelines/lemeng.purchase.analysis.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.purchase.analysis.l0.3120.json 0644
