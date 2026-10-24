@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.193.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.193.1...v0.193.2) - 2026-10-24
+- 【修复】data: 下钻条件列被列级掩码命中时整列缺席（#995） ([#1037](https://github.com/MYTech-Co-LTD/platform-core/pull/1037), [5d558d5](https://github.com/MYTech-Co-LTD/platform-core/commit/5d558d5d26fa3c99362419b5af818a292678a16c))
+
+
 ## [0.193.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.193.0...v0.193.1) - 2026-10-24
 - 【修复】data: item_price 271 单店节点合并为 6 批量节点——乐檬 429 限流减量 98% ([#1036](https://github.com/MYTech-Co-LTD/platform-core/pull/1036), [3663d29](https://github.com/MYTech-Co-LTD/platform-core/commit/3663d29d680557b49304be9a6df6f50d601373cb))
 
