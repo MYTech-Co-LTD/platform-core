@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.192.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.191.0...v0.192.0) - 2026-10-24
+- 【新增】data: 沙箱草案保留策略——试跑后按 mtime 裁到最近 N 份（#1029） ([#1030](https://github.com/MYTech-Co-LTD/platform-core/pull/1030), [0ad82b0](https://github.com/MYTech-Co-LTD/platform-core/commit/0ad82b0e744c18eb01390841ff9c2f332e2cf87b))
+
+
 ## [0.191.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.190.1...v0.191.0) - 2026-10-24
 - 【新增】data: P3.2 正式列切换——fct_retail_sale 度量列改由生成物产出（#1020） ([#1026](https://github.com/MYTech-Co-LTD/platform-core/pull/1026), [8810e2e](https://github.com/MYTech-Co-LTD/platform-core/commit/8810e2efd4568f2ce4fde5edde3803e8291cfe1e))
 
