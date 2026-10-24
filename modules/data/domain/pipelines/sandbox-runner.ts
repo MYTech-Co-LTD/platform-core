@@ -14,7 +14,7 @@
 //     「跑不了」和「跑失败」是两件事，混在一起会让人去改草案（错的方向）。
 //   · **不谎报 running**：等不到终态就是 `timeout`（不知道），由上层说「不知道」，不说「还在跑」。
 //   · **回执读不到不算失败**：它只是超时后的补救来源（尽力而为）。
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export interface SandboxRunnerConfig {
@@ -29,6 +29,11 @@ export interface SandboxRunnerConfig {
    * 到点只是我们不等了——引擎侧仍在跑（实测断连不取消）。
    */
   timeoutMs: number
+  /**
+   * 试跑结束后保留最近多少份草案（`sandbox/<runId>.json`）；`<1` = 不清理。
+   * 清理是尽力而为：只碰符合 runId 模式的文件，失败不影响本次结果（§2.8「并发与清理」）。
+   */
+  keepDrafts?: number
 }
 
 export interface SandboxOutcome {
@@ -63,10 +68,13 @@ export class SandboxUnreachableError extends Error {
 /** 与 compose 里 `server` 的挂载点一致（`sandbox-workspace:/run/duckle-sandbox`）。 */
 export const SANDBOX_DEFAULT_DIR = '/run/duckle-sandbox'
 const DEFAULT_TIMEOUT_MS = 120_000
+const DEFAULT_KEEP_DRAFTS = 20
 /** 回执 mtime 与我们的开始时刻之间允许的时钟毛刺。 */
 const CLOCK_SKEW_MS = 2_000
 /** runId 会变成文件名主干 ⇒ 只收安全字符，路径注入在触盘前就挡掉。 */
 const RUN_ID_RE = /^[a-z0-9][a-z0-9-]*$/
+/** 保留策略只碰自己写的草案（`<runId>.json`）；别的文件一律不动。 */
+const DRAFT_FILE_RE = /^[a-z0-9][a-z0-9-]*\.json$/
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -87,6 +95,12 @@ const normalizeStatus = (raw: string): 'ok' | 'failed' | 'running' | null => {
 const intOf = (raw: string | undefined, fallback: number): number => {
   const n = Number.parseInt((raw ?? '').trim(), 10)
   return Number.isFinite(n) && n > 0 ? n : fallback
+}
+
+/** 保留份数与 `intOf` 不同：`0`/负数是合法语义（= 不清理），要原样通过。 */
+const keepOf = (raw: string | undefined, fallback: number): number => {
+  const n = Number.parseInt((raw ?? '').trim(), 10)
+  return Number.isFinite(n) ? n : fallback
 }
 
 /** 400 的 body 是引擎原话（JSON `{error}` 或纯文本）——两种都要能读出来。 */
@@ -117,6 +131,35 @@ export const createSandboxRunner = (cfg: SandboxRunnerConfig, io: SandboxRunnerI
   const fetchImpl = io.fetchImpl ?? fetch
   const now = io.now ?? Date.now
   const receiptsDir = join(cfg.dir, 'runs', 'receipts')
+
+  /**
+   * §2.8「并发与清理」：草案不许无限增长。只认自己写的 `<runId>.json`（runId 模式已在写入前挡过
+   * 路径注入），按 mtime 保留最近 keep 份；单飞（`sandbox.ts`）保证同一 workspace 没有并发试跑，
+   * 不会与在写的草案互踩。全程尽力而为——任何一步失败都静默跳过，调用方不受影响。
+   */
+  const cleanupDrafts = async (draftsDir: string, keep: number): Promise<void> => {
+    if (keep < 1) return
+    let names: string[]
+    try {
+      names = await readdir(draftsDir)
+    } catch {
+      return
+    }
+    const drafts: { name: string; mtimeMs: number }[] = []
+    for (const name of names) {
+      if (!DRAFT_FILE_RE.test(name)) continue
+      try {
+        const st = await stat(join(draftsDir, name))
+        drafts.push({ name, mtimeMs: st.mtimeMs })
+      } catch {
+        // 正被写/已被清：下一轮再看
+      }
+    }
+    drafts.sort((a, b) => b.mtimeMs - a.mtimeMs)
+    for (const { name } of drafts.slice(keep)) {
+      await rm(join(draftsDir, name), { force: true }).catch(() => {})
+    }
+  }
 
   /** 回执目录快照；读不到就返回空集（不是错误——回执只是兜底来源）。 */
   const listReceipts = async (): Promise<string[]> => {
@@ -223,6 +266,8 @@ export const createSandboxRunner = (cfg: SandboxRunnerConfig, io: SandboxRunnerI
     const startedAt = now()
     const seen = await listReceipts()
 
+    const runOnce = async (): Promise<SandboxOutcome> => {
+
     let res: Response
     try {
       res = await fetchImpl(`${cfg.baseUrl}/api/run`, {
@@ -253,6 +298,15 @@ export const createSandboxRunner = (cfg: SandboxRunnerConfig, io: SandboxRunnerI
       throw new SandboxUnreachableError('/api/run 返回的不是 JSON')
     }
     return syncOutcome(body, draft, runId, file)
+    }
+
+    // 草案清理挂在所有出口上（ok / failed / parse_error / timeout / 不可达）：
+    // 本次草案是最新一份，必在保留集内 ⇒ 「用 runId 对应的草案继续追」的口径不受影响。
+    try {
+      return await runOnce()
+    } finally {
+      await cleanupDrafts(absDir, cfg.keepDrafts ?? DEFAULT_KEEP_DRAFTS).catch(() => {})
+    }
   }
 
   return { run }
@@ -277,5 +331,6 @@ export const sandboxRunnerFromEnv = (env: Record<string, string | undefined>): S
     token: (env.DATA_SANDBOX_TOKEN ?? '').trim(),
     dir,
     timeoutMs: intOf(env.DATA_SANDBOX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
+    keepDrafts: keepOf(env.DATA_SANDBOX_KEEP_DRAFTS, DEFAULT_KEEP_DRAFTS),
   })
 }

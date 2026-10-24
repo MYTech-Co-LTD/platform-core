@@ -990,6 +990,8 @@ docker exec <server 容器> node -e "fetch('http://sandbox-console:18090/healthz
 #      草案删掉 data.label  ⇒ refused/engine_parse_error + 引擎原话（一个节点都没跑）
 #      跑超过 DATA_SANDBOX_TIMEOUT_MS 的管线 ⇒ unknown/sandbox_run_timeout + runId（不是 running、不是 failed）；
 #        引擎侧仍会跑完，回执稍后出现在 runs/receipts/
+# ⑤ 草案保留策略（2026-10-24 起）：连跑 N+1 次试跑 ⇒ sandbox/ 里草案数 ≤ N
+#      （默认 N=20，DATA_SANDBOX_KEEP_DRAFTS 可调；别的文件不会被清）
 #    排障用（引擎原话）：对同一草案文件 POST /api/run（同步）⇒ 200 status ok|error，或 400 parse …
 # ③ 共享卷两个方向都通：server 写的草案在 console 里可见并被执行；console 写的
 #    产物（logs/sandbox/*.csv）与回执（runs/receipts/*.json）在 server 里可读

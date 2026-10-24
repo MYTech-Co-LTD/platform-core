@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, writeFile, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -156,6 +156,92 @@ describe('createSandboxRunner', () => {
     await expect(runner.run(draft, '../../etc/passwd')).rejects.toThrow('非法 runId')
     // 什么也没写出去
     await expect(readdir(dir)).resolves.toEqual([])
+  })
+
+  describe('草案保留策略（§2.8 不许无限增长）', () => {
+    const draftsDirOf = async (dir: string, count: number): Promise<void> => {
+      await mkdir(join(dir, 'sandbox'), { recursive: true })
+      for (let i = 0; i < count; i += 1) {
+        const name = `sbx-old-${String(i).padStart(2, '0')}.json`
+        await writeFile(join(dir, 'sandbox', name), '{}\n')
+        // mtime 决定去留：第 i 份的时间戳随 i 递增
+        await utimes(join(dir, 'sandbox', name), i, i)
+      }
+    }
+
+    it('超出 keepDrafts ⇒ 裁到 N 份，最新的（含本次）保留', async () => {
+      const dir = await workspace()
+      await draftsDirOf(dir, 25)
+      const { fetchImpl } = fakeConsole([
+        () => json({ id: 'x', runId: 'r1', status: 'ok', durationMs: 1, nodes: [] }),
+      ])
+      const runner = createSandboxRunner(
+        { baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 1_000, keepDrafts: 20 },
+        { fetchImpl },
+      )
+      const out = await runner.run(draft, 'sbx-new-a')
+      expect(out.status).toBe('ok')
+      const left = (await readdir(join(dir, 'sandbox'))).sort()
+      expect(left).toHaveLength(20)
+      expect(left).toContain('sbx-new-a.json') // 本次草案最新，必在
+      expect(left).not.toContain('sbx-old-00.json') // 最旧的被裁
+      expect(left).toContain('sbx-old-24.json')
+    })
+
+    it('keepDrafts < 1 ⇒ 不清理（排查期全留）', async () => {
+      const dir = await workspace()
+      await draftsDirOf(dir, 5)
+      const { fetchImpl } = fakeConsole([
+        () => json({ id: 'x', runId: 'r1', status: 'ok', durationMs: 1, nodes: [] }),
+      ])
+      const runner = createSandboxRunner(
+        { baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 1_000, keepDrafts: 0 },
+        { fetchImpl },
+      )
+      await runner.run(draft, 'sbx-new-b')
+      const left = await readdir(join(dir, 'sandbox'))
+      expect(left).toHaveLength(6)
+    })
+
+    it('只碰符合 runId 模式的 <runId>.json，别的文件不动', async () => {
+      const dir = await workspace()
+      await mkdir(join(dir, 'sandbox'), { recursive: true })
+      for (let i = 0; i < 25; i += 1) {
+        const name = `sbx-old-${String(i).padStart(2, '0')}.json`
+        await writeFile(join(dir, 'sandbox', name), '{}\n')
+        await utimes(join(dir, 'sandbox', name), i, i)
+      }
+      await writeFile(join(dir, 'sandbox', 'notes.txt'), 'keep me')
+      await writeFile(join(dir, 'sandbox', 'has space.json'), 'keep me')
+      await writeFile(join(dir, 'sandbox', '.hidden.json'), 'keep me')
+      const { fetchImpl } = fakeConsole([
+        () => json({ id: 'x', runId: 'r1', status: 'ok', durationMs: 1, nodes: [] }),
+      ])
+      const runner = createSandboxRunner(
+        { baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 1_000, keepDrafts: 3 },
+        { fetchImpl },
+      )
+      await runner.run(draft, 'sbx-new-c')
+      const left = (await readdir(join(dir, 'sandbox'))).sort()
+      expect(left).toContain('notes.txt')
+      expect(left).toContain('has space.json')
+      expect(left).toContain('.hidden.json')
+      expect(left.filter((n) => /^sbx-/.test(n))).toHaveLength(3)
+    })
+
+    it('不可达路径也清理（草案已写出）但异常照抛', async () => {
+      const dir = await workspace()
+      await draftsDirOf(dir, 25)
+      const unauth = fakeConsole([() => json({ error: 'unauthorized' }, 401)])
+      const runner = createSandboxRunner(
+        { baseUrl: 'http://x:1', token: 't', dir, timeoutMs: 1_000, keepDrafts: 20 },
+        { fetchImpl: unauth.fetchImpl },
+      )
+      await expect(runner.run(draft, 'sbx-new-d')).rejects.toBeInstanceOf(SandboxUnreachableError)
+      const left = await readdir(join(dir, 'sandbox'))
+      expect(left).toHaveLength(20)
+      expect(left).toContain('sbx-new-d.json')
+    })
   })
 })
 
