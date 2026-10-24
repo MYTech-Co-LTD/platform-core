@@ -482,8 +482,11 @@ export function deriveParams(/** @type {readonly string[]} */ grain) {
 /**
  * measure 的对象形态（P3.0 聚合面组件化）：`{ expr, domain?, grain?, additivity, unit?, precision? }`。
  *
- * `grain` 缺省 = `['line']` 语义（组件自述的原子粒度，**仅供门禁校验**，不进 SQL）；
- * `'flat'` = 单层可结合聚合，生成器直接在 fct 粒度求值（P3.3，issue #1031）。
+ * `grain` = 组件自述的原子粒度标签（可选，**没有** `['line']` 之类的缺省——缺就是不声明）：
+ * 生成器拿它做键名 `@` 后缀的一致性校验与 `'flat'` 判定；分组键本身取自
+ * `gen-fct-measures.mjs` `MODELS` 的 `grainKeys`（grain 名 → 键集）。两阶段编译（P3.0 起）
+ * 后它**间接进 SQL**——决定 per-group 求值落在哪个粒度；「仅供门禁校验、不进 SQL」
+ * 是 P3.0 骨架期的旧说法（#1019 订正）。
  * `precision`（P3.3）= 生成列 cast 的精度 `"整,小"` 形态字符串（如 `"20,3"`）；缺省 `"20,2"`。
  * `additivity` 必填：字符串形态无法表达它，P3.0 起一律拒绝。
  *
@@ -525,6 +528,24 @@ export function measureOf(v) {
 }
 
 /**
+ * 组件键 `@` 后缀与 `measure.grain[0]` 的一致性判据（**唯一实现**：`measuresOf` 解析侧、
+ * 门禁 `check-data-models`、生成器同一判据，各侧别再手写一份）。
+ *
+ * 为什么解析期就校验：后缀是生成器选分组键的钥匙（`grainKeys[后缀]`），错位声明只有被
+ * `MODELS` 物化时才被生成器抓到——只用于 compose 面的组件一辈子没人查它。
+ *
+ * @param {string} key 组件键（`<snake>@<grain>`）
+ * @param {Measure} measure 解析后的 measure
+ * @returns {string | null} null = 一致（或 grain 缺席，无判据面）；非 null = 人读的不一致描述
+ */
+export function measureGrainMismatch(key, measure) {
+  if (!measure.grain || measure.grain.length === 0) return null
+  const at = key.lastIndexOf('@')
+  const suffix = at >= 0 ? key.slice(at + 1) : ''
+  return measure.grain[0] === suffix ? null : `grain ${JSON.stringify(measure.grain)} 与键名后缀 @${suffix} 不一致`
+}
+
+/**
  * 顶层 `measures:` → Map（键 `<snake>@<snake>`；**每个值走 `measureOf` 同一解析**——
  * 门禁 `check-data-models` import 的是同一个函数，两侧判据逐字一致）。
  *
@@ -546,7 +567,10 @@ export function measuresOf(parsed) {
       throw new Error(`\`measures.${k}\` 形态不合规 —— 键须 \`<snake>@<snake>\``)
     }
     try {
-      out.set(k, measureOf(v))
+      const m = measureOf(v)
+      const mismatch = measureGrainMismatch(k, m)
+      if (mismatch) throw new Error(`${mismatch} —— 键名的 \`@\` 后缀是生成器选分组键的钥匙，解析期先红`)
+      out.set(k, m)
     } catch (e) {
       throw new Error(`\`measures.${k}\` ${/** @type {Error} */ (e).message}`)
     }
@@ -618,6 +642,22 @@ export function domainsOf(parsed) {
       out[name] = { extends: o.extends, filter }
     } else {
       out[name] = { filter }
+    }
+  }
+  // extends 坏链 / 环在**解析期**响亮失败（#1019）：`resolveDomain` 只在被引用时才沿链走，
+  // 未被引用的域的坏链要等「将来某天被人引用」才炸——那时离笔误已隔几个 PR。
+  for (const name of Object.keys(out)) {
+    /** @type {Set<string>} */
+    const seen = new Set()
+    /** @type {string | undefined} */
+    let cur = name
+    while (cur !== undefined) {
+      if (seen.has(cur)) throw new Error(`\`domains.${name}\` 的 extends 链出现环：${[...seen, cur].join(' → ')}`)
+      seen.add(cur)
+      /** @type {Domain | undefined} */
+      const parent = out[cur]
+      if (!parent) throw new Error(`\`domains.${name}\` 的 extends 目标 \`${cur}\` 不存在 —— 坏链不许等被引用才暴露`)
+      cur = parent.extends
     }
   }
   return out
@@ -1140,12 +1180,16 @@ export function drillDetailOf(detail, metricName, dims, compose, measures, domai
     }
   }
   let filter
-  if (d.filter === undefined || d.filter === null) {
+  if (d.filter === undefined) {
     try {
       filter = detailFilterOf(compose, measures, domains)
     } catch (e) {
       throw new Error(`指标 \`${metricName}\` 的 \`detail.filter\` 缺席且无法从组件域派生：${/** @type {Error} */ (e).message}`)
     }
+  } else if (d.filter === null) {
+    // 显式 `filter: null` 与门禁同判（#1019 订正：旧实现当缺席派生，同一份声明
+    // sync 手跑静默派生、CI 门禁恒红——两路说法不一正是最贵的静默面）。要派生就整个键别写。
+    throw new Error(`指标 \`${metricName}\` 的 \`detail.filter\` 显式写了 null —— 要派生就整个键别写（写了就必须是非空、不含分号的布尔表达式；门禁同判）`)
   } else {
     if (typeof d.filter !== 'string' || d.filter.trim() === '' || d.filter.includes(';')) {
       throw new Error(`指标 \`${metricName}\` 的 \`detail.filter\` 必须是非空、不含分号的布尔表达式${d.filter === '' ? '（写了空串 ⇒ 明细面无行域过滤，与「声明了下钻」相左；不想过滤就别声明 detail.filter）' : ''}`)

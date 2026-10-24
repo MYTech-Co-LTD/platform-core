@@ -200,8 +200,10 @@ export function renderFctMeasures(measures, spec, domains = {}) {
   const ctes = []
   /** @type {RenderedComp[]} */
   const comps = []
-  /** @type {Set<string>} */
-  const emittedBases = new Set()
+  // 基面别名 → 已解析的 where（#1019：同别名复用必须谓词逐字一致——同一 CTE 只有一份 where，
+  // 两个行域不同却共用别名时，后到者会**静默沿用**先到者的行域，行域被悄悄改写且零报错）。
+  /** @type {Map<string, string>} */
+  const emittedBases = new Map()
 
   for (const key of spec.columns) {
     const m = measures.get(key)
@@ -230,9 +232,14 @@ export function renderFctMeasures(measures, spec, domains = {}) {
     if (!Object.hasOwn(domains, m.domain)) {
       throw new Error(`组件 ${key} 的 domain \`${m.domain}\` 未在 \`domains:\` 里声明`)
     }
-    if (!emittedBases.has(base)) {
-      emittedBases.add(base)
-      ctes.push(`${base} as (\n    select * from ${spec.stagingRef}\n    where ${resolveDomain(m.domain, domains)}\n)`)
+    const where = resolveDomain(m.domain, domains)
+    const priorWhere = emittedBases.get(base)
+    if (priorWhere === undefined) {
+      emittedBases.set(base, where)
+      ctes.push(`${base} as (\n    select * from ${spec.stagingRef}\n    where ${where}\n)`)
+    } else if (priorWhere !== where) {
+      throw new Error(`组件 ${key} 复用基面 CTE \`${base}\`，但行域谓词与先到者不同（\`${where}\` ≠ \`${priorWhere}\`）`
+        + ' —— 同一 CTE 只有一份 where，后到者会静默沿用先到者的行域；给它们各自的基面别名（baseAliases）')
     }
     if (grain === 'flat') {
       // flat：阶段 1 直接在 fct 粒度求值（expr 自身是单层可结合聚合，cast 走 precision），
@@ -369,6 +376,23 @@ export function extractRegion(text) {
 }
 
 /**
+ * 标记区的**位置**守卫（#1019）：`--check` 只逐字节比对区内内容，管不到区在哪儿——把整块
+ * 挪出 `with` 子句，内容不变 ⇒ `--check` 仍绿，直到真机 dbt parse 才炸（本地无库更晚）。
+ * 判据：标记区之前的文本剥掉行注释与尾部空白后，必须以 `with` 关键字或 `,` 收尾——
+ * 即本区还挂在 CTE 链上（首个 CTE 前是 `with`，后续 CTE 前是逗号）。
+ *
+ * @param {string} text fct 文件全文
+ * @returns {string | null} null = 位置合法；非 null = 人读的错因
+ */
+export function regionPlacementError(text) {
+  const b = text.indexOf(BEGIN)
+  if (b < 0) return null // 缺标记由 extractRegion 报，这里不重复
+  const prefix = text.slice(0, b).replace(/--[^\n]*/g, '').trimEnd()
+  if (/(?:^|[^A-Za-z0-9_])with$/i.test(prefix) || prefix.endsWith(',')) return null
+  return '标记区不在 with 子句里（前文剥掉注释后既不是 `with` 也不是 `,` 收尾）—— 区内逐字节合法也不行，挪出 CTE 链就是非法 SQL，dbt parse 才炸'
+}
+
+/**
  * 用新的标记区替换旧的；区外逐字节不动。
  *
  * @param {string} text fct 文件全文
@@ -424,6 +448,16 @@ export function run(rootDir, opts = {}) {
     const expected = renderRegion(rendered)
     const file = join(rootDir, spec.rel)
     const text = readFileSync(file, 'utf8')
+    // 位置守卫先于内容比对：挪了窝的区内容不变，比对恒绿（#1019）。
+    const placement = regionPlacementError(text)
+    if (placement !== null) {
+      const msg = `${spec.rel}\n  ${placement}\n  修法：把标记区放回 with 子句的 CTE 链上（前文以 \`with\` 或 \`,\` 收尾），再重跑：${REGEN_COMMAND}`
+      if (opts.check) {
+        console.error(`${SCRIPT_NAME}: ${msg}`)
+        return 1
+      }
+      throw new Error(`${SCRIPT_NAME}: ${msg}`)
+    }
     const drift = driftMessage(extractRegion(text), expected)
     if (drift === null) {
       console.log(`${SCRIPT_NAME}: OK（${spec.rel}：${rendered.names.length} 个度量列：${rendered.names.join(', ')}）`)

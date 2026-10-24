@@ -27,6 +27,7 @@ import {
   renderRegion,
   replaceRegion,
   run,
+  regionPlacementError,
 } from './gen-fct-measures.mjs'
 import { measureOf } from './sync-data-semantics.mjs'
 import type { Domain, Measure } from './sync-data-semantics.mjs'
@@ -104,6 +105,54 @@ function fixture(opts: { region?: string; sqlPrefix?: string; sqlSuffix?: string
 function specWith(columns: string[]) {
   return { ...MODELS[0], columns }
 }
+
+describe('regionPlacementError —— 标记区位置守卫（#1019：--check 只逐字节比内容，挪了窝它照样绿）', () => {
+  const REGION = `${BEGIN}\nbase_x as (\n    select 1\n)\n${END}`
+
+  it('with 收尾 / 逗号收尾（CTE 链上）/ 注释行夹在中间 ⇒ 合法', () => {
+    expect(regionPlacementError(`with\n${REGION}`)).toBeNull()
+    expect(regionPlacementError(`with x as (\n    select 1 as a\n),\n${REGION}`)).toBeNull()
+    expect(regionPlacementError(`-- 头注\n-- ⚠️ 逗号只能落在标记区**外**\n,\n${REGION}`)).toBeNull()
+  })
+
+  it('挪出 with 子句（前文是完整查询的收尾 / 文件头） ⇒ 报位置错（SQL 非法要等 dbt parse 才炸）', () => {
+    expect(regionPlacementError(`select 1 as one\n)\n${REGION}`)).toMatch(/with 子句/)
+    expect(regionPlacementError(`${REGION}\nselect * from t`)).toMatch(/with 子句/)
+  })
+
+  it('run()：位置错时 check 路径 ⇒ 1、write 路径 ⇒ 抛（不把生成物写进非法位置）', () => {
+    // 只动 retail_sale 一份：注册表其余模型保持合法（错误面只来自位置这一件事）
+    const root = fixture()
+    writeFileSync(join(root, MODELS[0].rel), `select 1 as one\n${BEGIN}\n手改的旧内容\n${END}\n\nselect * from t\n`)
+    expect(run(root, { check: true })).toBe(1)
+    expect(() => run(root)).toThrow(/with 子句/)
+  })
+})
+
+describe('emittedBases 同别名复用 —— 行域谓词必须逐字一致（#1019：封「静默沿用第一个 WHERE」）', () => {
+  it('同别名、不同 domain ⇒ 抛（同一 CTE 只有一份 where，后到者会被静默喂错行域）', () => {
+    const spec = {
+      ...MODELS[0],
+      columns: ['sale_amount@order', 'return_amount@line'],
+      baseAliases: { 'sale_amount@order': 'base_dup', 'return_amount@line': 'base_dup' },
+    }
+    expect(() => renderFctMeasures(FIXTURE_MEASURES, spec, DOMAINS)).toThrow(/base_dup/)
+  })
+
+  it('同别名、解析谓词逐字相同 ⇒ 照常去重，只产一份 base CTE（去重本身是特性）', () => {
+    const measures = new Map([
+      ['a@order', measureOf({ expr: 'sum(x)', grain: ['order'], additivity: 'flow', domain: 'sale_finished' })],
+      ['b@order', measureOf({ expr: 'sum(y)', grain: ['order'], additivity: 'flow', domain: 'sale_finished' })],
+    ])
+    const spec = {
+      ...MODELS[0],
+      columns: ['a@order', 'b@order'],
+      baseAliases: { 'a@order': 'base_same', 'b@order': 'base_same' },
+    }
+    const { ctes } = renderFctMeasures(measures, spec, DOMAINS)
+    expect(ctes.match(/base_same as \(/g)?.length).toBe(1)
+  })
+})
 
 describe('renderFctMeasures —— 生成的 SQL 形状', () => {
   it('两个度量各按自己的 grain 键分组，基面 where 由各自的 domain 派生', () => {
