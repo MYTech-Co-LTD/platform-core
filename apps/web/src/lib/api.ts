@@ -188,6 +188,56 @@ export const revokeAdminPermission = (code: string, user: string) =>
     'DELETE',
   )
 
+// ---- 组织架构与角色管理（账户和权限体系 Task 9/10；后端契约见 routes/admin.ts）----
+
+/** 组织树节点（后端 buildGroupTree 产物；displayName 来自 Casdoor Group——真机无 title 字段） */
+export interface AdminGroupNode {
+  name: string
+  displayName: string
+  parentId: string
+  orphan: boolean
+  memberCount: number
+  children: AdminGroupNode[]
+}
+export const getAdminOrgTree = () => request<{ tree: AdminGroupNode[] }>('/api/platform/admin/org-tree')
+
+export interface AdminMember {
+  name: string
+  displayName: string
+  isForbidden: boolean
+  /** 角色短名清单（后端从 listRoles 倒排，已剥 org 前缀） */
+  roles: string[]
+}
+export const listAdminMembers = (group?: string) =>
+  request<{ users: AdminMember[] }>(
+    `/api/platform/admin/org-tree/members${group ? `?group=${encodeURIComponent(group)}` : ''}`,
+  )
+
+export interface AdminRoleRow {
+  name: string
+  displayName: string
+  members: number
+  /** 挂在该角色上的权限码（后端按权限 roles[] 反查） */
+  codes: string[]
+  /** 角色成员短名清单（授角色时算整组替换用） */
+  users: string[]
+}
+export const listAdminRoles = () => request<{ roles: AdminRoleRow[] }>('/api/platform/admin/roles')
+export const createAdminRole = (v: { name: string; displayName?: string }) =>
+  csrfWrite<{ ok: true }>('/api/platform/admin/roles', 'POST', v)
+export const deleteAdminRole = (name: string) =>
+  csrfWrite<{ ok: true }>(`/api/platform/admin/roles/${encodeURIComponent(name)}`, 'DELETE')
+/**
+ * 角色成员**整组替换**。注意语义：设置的是【角色的成员表】——给用户授/收角色 =
+ * 对每个变更角色算「现成员 ± 该用户」后调用（见 OrgTree 页 onGrant）。
+ */
+export const setAdminRoleMembers = (name: string, users: string[]) =>
+  csrfWrite<{ ok: true }>(`/api/platform/admin/roles/${encodeURIComponent(name)}/members`, 'PUT', { users })
+export const grantAdminPermissionRole = (code: string, role: string) =>
+  csrfWrite<{ ok: true }>(`/api/platform/admin/permissions/${encodeURIComponent(code)}/roles`, 'POST', { role })
+export const revokeAdminPermissionRole = (code: string, role: string) =>
+  csrfWrite<{ ok: true }>(`/api/platform/admin/permissions/${encodeURIComponent(code)}/roles`, 'DELETE', { role })
+
 // ---- 租户级存储配置（M3c）----
 
 /**
