@@ -34,7 +34,21 @@
 --   用 `like '%RETURN%'` 而不是枚举 IN：单据类型是**外部系统**的枚举，新增退货类型时
 --   宁可自动纳入，也不要静默漏减（漏减 = 净销量虚高 = 覆盖天数虚高 = 补货决策偏保守）。
 --
--- 【粒度】(system_book, bizday, branch_num) —— 与 fct_retail_sale 同粒度，便于消费面并排取用。
+-- 【粒度】(system_book, bizday, branch_num, item_num)（2026-10-17 扩商品级，见上）
+--   —— 比 fct_retail_sale 的三键粒度**多 item_num 一层**，不再是同粒度；消费面并排取用
+--   须先按三键聚合对齐（对表达式求和）。原注仍写三键「与 fct_retail_sale 同粒度」，
+--   系 #770 时代旧稿，2026-10-24 终审 F-6 订正。
+--
+-- ── 影子列（聚合面组件化 P3.3 影子波 Task 5，issue #1031）────────────────────────────────
+-- `sale_quantity` / `return_quantity` 是**旧实现**（手写 case-when 判别式，逐字未动）；生成区里的
+-- `sale_quantity__gen` / `return_quantity__gen` 是同一口径的 measure 编译版（expr =
+-- `sum(quantity)`，单据类型/状态过滤上移到基面 domain，由 `scripts/gen-fct-measures.mjs`
+-- 生成——改声明后重跑生成器）。本阶段只**并行输出**、任何消费方都不许读；切换要等影子对账
+-- `dbt/tests/lemeng/assert_fct_retail_quantity_measure_shadow_parity.sql` 稳定后另开笔
+-- （本表指标 experimental ⇒ 对账窗口 7 天，certified 族的 14 天惯例不适用）。
+-- 单侧缺行（该商品当日只有销售 / 只有退货）⇒ 该侧 `coalesce(…, 0)` 归零，与旧列同形。
+-- `net_quantity` **无影子**：净销量不属任何单一 measure（与 retail 的 net_amount、expense 的
+-- e_net 同款判例），仍由旧两列相减。
 with base as (
     select
         system_book,
@@ -47,14 +61,64 @@ with base as (
              then quantity else 0 end as return_quantity
     from {{ ref('stg_lemeng_retail_order_line') }}
 )
+-- ⚠️ 逗号只能落在标记区**外**（区内逐字节受 `--check` 管），故单独起一行。
+,
+-- BEGIN GENERATED MEASURES
+-- ⚠️ 本区由 scripts/gen-fct-measures.mjs 从 dbt/semantics/l1_metrics.yml 生成，**别手改**：
+--    基面的 where 由组件 domain 派生、两阶段聚合由 measure 编译而来。改声明 → 重跑生成器 → 一并提交；
+--    CI 的 `pnpm exec tsx scripts/gen-fct-measures.mjs --check` 逐字节比对本区，手改即红。
+base_rq_sale as (
+    select * from {{ ref('stg_lemeng_retail_order_line') }}
+    where order_transaction_type = 'SALE_ORDER' and state = 'FINISHED'
+),
+sale_quantity__gen as (
+    select system_book, bizday, branch_num, item_num, sum(quantity)::numeric(20,3) as sale_quantity__gen from base_rq_sale group by 1, 2, 3, 4
+),
+base_rq_return as (
+    select * from {{ ref('stg_lemeng_retail_order_line') }}
+    where order_transaction_type like '%RETURN%' and state in ('FINISHED', 'REPAID')
+),
+return_quantity__gen as (
+    select system_book, bizday, branch_num, item_num, sum(quantity)::numeric(20,3) as return_quantity__gen from base_rq_return group by 1, 2, 3, 4
+),
+gen_agg as (
+    select
+        coalesce(sale_quantity__gen.system_book, return_quantity__gen.system_book) as system_book,
+        coalesce(sale_quantity__gen.bizday, return_quantity__gen.bizday) as bizday,
+        coalesce(sale_quantity__gen.branch_num, return_quantity__gen.branch_num) as branch_num,
+        coalesce(sale_quantity__gen.item_num, return_quantity__gen.item_num) as item_num,
+        sale_quantity__gen.sale_quantity__gen,
+        return_quantity__gen.return_quantity__gen
+    from sale_quantity__gen
+    full join return_quantity__gen
+        on  sale_quantity__gen.system_book = return_quantity__gen.system_book
+        and sale_quantity__gen.bizday = return_quantity__gen.bizday
+        and sale_quantity__gen.branch_num = return_quantity__gen.branch_num
+        and sale_quantity__gen.item_num = return_quantity__gen.item_num
+)
+-- END GENERATED MEASURES
 select
-    system_book,
+    base.system_book,
     {{ subject_org() }} as org,
-    bizday,
-    branch_num,
-    item_num,
-    sum(sale_quantity)::numeric(20, 3)                          as sale_quantity,
-    sum(return_quantity)::numeric(20, 3)                        as return_quantity,
-    (sum(sale_quantity) - sum(return_quantity))::numeric(20, 3) as net_quantity
+    base.bizday,
+    base.branch_num,
+    base.item_num,
+    sum(base.sale_quantity)::numeric(20, 3)                               as sale_quantity,
+    sum(base.return_quantity)::numeric(20, 3)                             as return_quantity,
+    (sum(base.sale_quantity) - sum(base.return_quantity))::numeric(20, 3) as net_quantity,
+    -- 影子列 = sale_quantity / return_quantity 的 measure 编译版（P3.3 期不许被消费）。本表
+    -- final SELECT 自带 group by（不像 Task 2/3 的 CTE 已聚合形态）⇒ gen_agg 列必须包聚合才能
+    -- 进；gen_agg 按 fct 粒度唯一（两个 flat 聚合各 group by 同 4 键再 full join）⇒ left join
+    -- 全键至多 1:1，组内恒单值，max 取常量/NULL，与裸 `coalesce(…, 0)` 语义逐行等价。
+    -- gen_agg 行域是 base 全分组域的**子集**：两个行域都不命中的组（纯 CANCELED 单）在 gen_agg
+    -- 无行——缺的恰是旧列两侧都为 0 的组，coalesce(…, 0) 补上；其余组恰 1 行匹配 ⇒ left join
+    -- 不增删行（行集由 assert_fct_retail_quantity_grain_unique.sql 钉住）。
+    coalesce(max(gen_agg.sale_quantity__gen), 0)::numeric(20, 3)          as sale_quantity__gen,
+    coalesce(max(gen_agg.return_quantity__gen), 0)::numeric(20, 3)        as return_quantity__gen
 from base
-group by system_book, bizday, branch_num, item_num
+left join gen_agg
+    on  base.system_book = gen_agg.system_book
+    and base.bizday = gen_agg.bizday
+    and base.branch_num = gen_agg.branch_num
+    and base.item_num = gen_agg.item_num
+group by base.system_book, base.bizday, base.branch_num, base.item_num

@@ -480,19 +480,21 @@ export function deriveParams(/** @type {readonly string[]} */ grain) {
 }
 
 /**
- * measure 的对象形态（P3.0 聚合面组件化）：`{ expr, domain?, grain?, additivity, unit? }`。
+ * measure 的对象形态（P3.0 聚合面组件化）：`{ expr, domain?, grain?, additivity, unit?, precision? }`。
  *
- * `grain` 缺省 = `['line']` 语义（组件自述的原子粒度，**仅供门禁校验**，不进 SQL）。
+ * `grain` 缺省 = `['line']` 语义（组件自述的原子粒度，**仅供门禁校验**，不进 SQL）；
+ * `'flat'` = 单层可结合聚合，生成器直接在 fct 粒度求值（P3.3，issue #1031）。
+ * `precision`（P3.3）= 生成列 cast 的精度 `"整,小"` 形态字符串（如 `"20,3"`）；缺省 `"20,2"`。
  * `additivity` 必填：字符串形态无法表达它，P3.0 起一律拒绝。
  *
- * @typedef {{ expr: string, domain?: string, grain?: string[], additivity: 'flow'|'stock'|'non_additive', unit?: string }} Measure
+ * @typedef {{ expr: string, domain?: string, grain?: string[], additivity: 'flow'|'stock'|'non_additive', unit?: string, precision?: string }} Measure
  */
 /**
  * 可加性分类的闭集（消费面 spec 2026-10-17 §12.3；**指标级与组件级共用同一词表**）：
  * flow=全维可加；stock=跨实体可加、跨时间不可加；non_additive=任何上卷都不成立。
  */
 export const ADDITIVITY_VALUES = ['flow', 'stock', 'non_additive']
-const MEASURE_KEYS = new Set(['expr', 'domain', 'grain', 'additivity', 'unit'])
+const MEASURE_KEYS = new Set(['expr', 'domain', 'grain', 'additivity', 'unit', 'precision'])
 const ADDITIVITY = new Set(ADDITIVITY_VALUES)
 
 /**
@@ -510,7 +512,7 @@ export function measureOf(v) {
   }
   if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new Error('measure 必须是对象')
   const o = /** @type {Record<string, unknown>} */ (v)
-  for (const k of Object.keys(o)) if (!MEASURE_KEYS.has(k)) throw new Error(`measure 有未知键 \`${k}\`（只许 expr/domain/grain/additivity/unit）`)
+  for (const k of Object.keys(o)) if (!MEASURE_KEYS.has(k)) throw new Error(`measure 有未知键 \`${k}\`（只许 expr/domain/grain/additivity/unit/precision）`)
   const expr = typeof o.expr === 'string' ? o.expr.trim() : ''
   if (!expr || expr.includes(';')) throw new Error('measure.expr 必须是非空、不含分号的表达式')
   const add = o.additivity
@@ -518,7 +520,8 @@ export function measureOf(v) {
   if (o.domain !== undefined && (typeof o.domain !== 'string' || !/^[a-z_][a-z0-9_]*$/.test(o.domain))) throw new Error('measure.domain 必须是 domains: 里的具名行域（蛇形标识符），不是自由 SQL')
   if (o.grain !== undefined && (!Array.isArray(o.grain) || o.grain.length === 0 || o.grain.some((g) => typeof g !== 'string' || !/^[a-z_][a-z0-9_]*$/.test(g)))) throw new Error('measure.grain 必须是非空蛇形列名数组')
   if (o.unit !== undefined && (typeof o.unit !== 'string' || !/^[A-Za-z_]+$/.test(o.unit))) throw new Error('measure.unit 必须是简单标识符（CNY / count / ratio）')
-  return /** @type {Measure} */ ({ expr, ...(o.domain ? { domain: o.domain } : {}), ...(o.grain ? { grain: o.grain } : {}), additivity: add, ...(o.unit ? { unit: o.unit } : {}) })
+  if (o.precision !== undefined && (typeof o.precision !== 'string' || !/^\d+,\d+$/.test(o.precision))) throw new Error(`measure.precision 必须是 "整,小" 形态字符串（如 "20,3"），收到 ${JSON.stringify(o.precision)}`)
+  return /** @type {Measure} */ ({ expr, ...(o.domain ? { domain: o.domain } : {}), ...(o.grain ? { grain: o.grain } : {}), additivity: add, ...(o.unit ? { unit: o.unit } : {}), ...(o.precision ? { precision: o.precision } : {}) })
 }
 
 /**

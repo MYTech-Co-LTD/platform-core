@@ -11,7 +11,8 @@
 //      退货侧只要退货行），故**每个组件各带一个**；
 //   ② 两阶段编译（Task 4 的 `compilePerGroup` / `compileAggregate`）：
 //      阶段 1 在组件自述的 grain 键上求 `measure_value`（CTE 名 `<组件>__gen`），
-//      阶段 2 在 fct 粒度（`FCT_GRAIN`）上 `sum(measure_value)`（CTE 名 `<组件>__rollup`）；
+//      阶段 2 在 fct 粒度（`MODELS` 各项的 `fctGrain`）上 `sum(measure_value)`（CTE 名 `<组件>__rollup`）；
+//      `grain: [flat]` 的组件（P3.3）没有阶段 2：阶段 1 直接在 fct 粒度求值；
 //   ③ `gen_agg` —— 把各组件**上卷后**的结果按 fct 粒度对齐（full join + coalesce 键）。
 //      ⚠️ 必须先各自上卷再 join：两个组件的阶段 1 粒度不同（订单 / 明细行），细粒度直接 join
 //      会做笛卡尔积、把每侧按对方行数放大（fix round 1 的 Critical）。
@@ -50,9 +51,6 @@ export { L1_DECLARATIONS_REL }
 
 export const SCRIPT_NAME = 'gen-fct-measures'
 
-/** 被生成的目标模型（仓内相对路径）。 */
-export const FCT_REL = 'dbt/models/lemeng/marts/fct_retail_sale.sql'
-
 /** 标记区边界（逐字；改了它等于改了 `--check` 的判据面）。 */
 export const BEGIN = '-- BEGIN GENERATED MEASURES'
 export const END = '-- END GENERATED MEASURES'
@@ -60,40 +58,105 @@ export const END = '-- END GENERATED MEASURES'
 /** 重新生成命令——失败信息里必须复述，否则「有意的摩擦」会变成「无解的摩擦」。 */
 export const REGEN_COMMAND = 'pnpm exec tsx scripts/gen-fct-measures.mjs'
 
-/** 基面 CTE 的输入关系（口径模型只从 ④ 的输入取数）。 */
-export const STAGING_REF = "{{ ref('stg_lemeng_retail_order_line') }}"
-
 /**
- * grain 名 → 分组键的**唯一映射**（组件键的 `@` 后缀是这里的一把钥匙）。
- * 销售侧（订单粒度）按前四键、退货侧（明细行粒度）按五键。
- * @type {Record<string, string[]>}
- */
-export const GRAIN_KEYS = {
-  order: ['system_book', 'bizday', 'branch_num', 'order_no'],
-  line: ['system_book', 'bizday', 'branch_num', 'order_no', 'order_detail_num'],
-}
-
-/** fct 的粒度键（生成列最终按它上卷；与模型头注声明的 grain 同源）。 */
-export const FCT_GRAIN = ['system_book', 'bizday', 'branch_num']
-
-/**
- * 本 fct **物化**的组件键（顺序即生成顺序）。
- * `line_amount@line` **不在这里**：它属 `vw_lemeng_retail_order_line` 的聚合面（行级原始金额）。
- */
-export const FCT_MEASURE_COLUMNS = ['sale_amount@order', 'return_amount@line']
-
-/**
- * 组件键 → 基面 CTE 名。
+ * 一个 fct 模型的生成输入：声明语义 → 生成物的全部绑定，一处收齐（P3.3 起，issue #1031）。
  *
- * 显式映射而不是从名字里剥后缀：`sale_amount` → `sale` 这种推导一旦组件的命名换了口径
- * （如 `gross_amount@order`），生成的 CTE 名会**跟着悄悄变**，而 SQL 引用侧是按名字读的。
- * 名字是契约，宁可在加组件时被这里逼着做一次决定。缺项 ⇒ 抛错（不猜默认 base）。
- * @type {Record<string, string>}
+ * @typedef {object} ModelSpec
+ * @property {string} rel 仓内相对路径
+ * @property {string} stagingRef 基面输入关系（口径模型只从这里取数）
+ * @property {Record<string, string[]>} grainKeys grain 名 → 分组键；`flat` 不在此（单层直聚）
+ * @property {string[]} fctGrain 该 fct 的粒度键（与模型头注声明的 grain 同源）
+ * @property {string[]} columns 物化的组件键（顺序即生成顺序）
+ * @property {Record<string, string>} baseAliases 组件键 → 基面 CTE 名
  */
-export const BASE_ALIASES = {
-  'sale_amount@order': 'base_sale',
-  'return_amount@line': 'base_return',
-}
+
+/**
+ * 被生成的目标模型注册表（`run` / `--check` 逐模型走同一渲染与比对流程）。
+ *
+ * 显式映射（baseAliases）而不是从名字里剥后缀：`sale_amount` → `sale` 这种推导一旦组件的
+ * 命名换了口径（如 `gross_amount@order`），生成的 CTE 名会**跟着悄悄变**，而 SQL 引用侧是
+ * 按名字读的。名字是契约，宁可在加组件时被这里逼着做一次决定。
+ *
+ * @type {ModelSpec[]}
+ */
+export const MODELS = [
+  {
+    rel: 'dbt/models/lemeng/marts/fct_retail_sale.sql',
+    stagingRef: "{{ ref('stg_lemeng_retail_order_line') }}",
+    // grain 名 → 分组键的唯一映射（组件键的 `@` 后缀是这里的一把钥匙）：
+    // 销售侧（订单粒度）按前四键、退货侧（明细行粒度）按五键。
+    grainKeys: {
+      order: ['system_book', 'bizday', 'branch_num', 'order_no'],
+      line: ['system_book', 'bizday', 'branch_num', 'order_no', 'order_detail_num'],
+    },
+    fctGrain: ['system_book', 'bizday', 'branch_num'],
+    // `line_amount@line` 不在这里：它属 `vw_lemeng_retail_order_line` 的聚合面（行级原始金额）。
+    columns: ['sale_amount@order', 'return_amount@line'],
+    baseAliases: {
+      'sale_amount@order': 'base_sale',
+      'return_amount@line': 'base_return',
+    },
+  },
+  // P3.3 Task 2（#1031）：门店费用构件——两列都是 flat（单层直聚，无中间粒度键 ⇒ grainKeys 空）。
+  {
+    rel: 'dbt/models/lemeng/marts/fct_branch_expense.sql',
+    stagingRef: "{{ ref('stg_lemeng_branch_expense') }}",
+    grainKeys: {},
+    fctGrain: ['system_book', 'bizday', 'branch_num', 'expense_type'],
+    columns: ['ep_payable@flat', 'er_receivable@flat'],
+    baseAliases: {
+      'ep_payable@flat': 'base_payable',
+      'er_receivable@flat': 'base_receivable',
+    },
+  },
+  // P3.3 Task 3（#1031）：客户费用构件——与门店族同构的 flat 双列。组件键带 client_ 族前缀：
+  // measures 是扁平命名空间，门店族已占 `ep_payable@flat` / `er_receivable@flat`，同名键会静默
+  // 覆盖其声明（Map 后写胜，门店族生成区会悄悄改用客户侧 expr/domain）；列名前缀由 fct 最终
+  // SELECT 的别名剥掉（影子列仍叫 `ep_payable__gen` / `er_receivable__gen`）。
+  {
+    rel: 'dbt/models/lemeng/marts/fct_client_expense.sql',
+    stagingRef: "{{ ref('stg_lemeng_client_expense') }}",
+    grainKeys: {},
+    fctGrain: ['system_book', 'bizday', 'client_fid', 'other_inout_kind'],
+    columns: ['client_ep_payable@flat', 'client_er_receivable@flat'],
+    baseAliases: {
+      'client_ep_payable@flat': 'base_payable',
+      'client_er_receivable@flat': 'base_receivable',
+    },
+  },
+  // P3.3 Task 4（#1031）：配送行质量构件——影子波**唯一的两阶段族**：zero_cost_amount 是 order
+  // 粒度 measure（先逐单求 measure_value、再上卷店日），与手写 per_order 链的分组键同源。
+  // 组件键带 tq_ 族前缀（measures 扁平命名空间，Task 3 同款）。手写 base/per_order CTE 原样留在
+  // 标记区外（自带 staging 读取 ⇒ staging 扫两次，影子期已知代价，切换批消除）。
+  {
+    rel: 'dbt/models/lemeng/marts/fct_transfer_line_quality.sql',
+    stagingRef: "{{ ref('stg_lemeng_transfer_out') }}",
+    grainKeys: {
+      order: ['system_book', 'bizday', 'branch_num', 'order_no'],
+    },
+    fctGrain: ['system_book', 'bizday', 'branch_num'],
+    columns: ['tq_zero_cost_amount@order'],
+    baseAliases: {
+      'tq_zero_cost_amount@order': 'base_transfer_quality',
+    },
+  },
+  // P3.3 Task 5（#1031）：零售数量构件——experimental 族 + numeric(20,3)。键 `sale_quantity@flat` /
+  // `return_quantity@flat` 与既有四族全量互异，无需族前缀（client_/tq_ 是给被占用的键让位）；
+  // 声明带 `precision: '20,3'`（现表 numeric(20,3)，影子波首个真消费 precision 覆盖，缺省 20,2
+  // 不适用）。两列都是 flat（单层直聚，grainKeys 空）；final SELECT 自带 group by ⇒ 影子列走
+  // `max(gen_agg.x)` 形态（Task 4 同款，缘由写在模型内注释）。
+  {
+    rel: 'dbt/models/lemeng/marts/fct_retail_quantity.sql',
+    stagingRef: "{{ ref('stg_lemeng_retail_order_line') }}",
+    grainKeys: {},
+    fctGrain: ['system_book', 'bizday', 'branch_num', 'item_num'],
+    columns: ['sale_quantity@flat', 'return_quantity@flat'],
+    baseAliases: {
+      'sale_quantity@flat': 'base_rq_sale',
+      'return_quantity@flat': 'base_rq_return',
+    },
+  },
+]
 
 /**
  * 标记区的「不要手改」头注（生成物的一部分，逐字节参与 `--check`）。
@@ -106,66 +169,100 @@ const REGION_HEADER = [
 ]
 
 /**
+ * 逐组件的生成产物。
+ * @typedef {object} RenderedComp
+ * @property {string} name 阶段 1 的 CTE 名（`<组件>__gen`；flat 组件它同时是最终聚合输入）
+ * @property {boolean} flat 是否 flat 组件（阶段 1 已在 fct 粒度 ⇒ 无上卷 CTE）
+ * @property {string | null} col 非 flat 组件的阶段 2 聚合表达式（rollup 里用）；flat 组件为 null
+ */
+
+/**
  * 一份生成结果。
  * @typedef {object} RenderedFct
  * @property {string} ctes 基面 + 阶段 1 的 CTE 定义（逗号分隔，不含结尾逗号）
- * @property {string[]} cols 阶段 2 的聚合表达式（顺序与 `names` 一致；各自住进一层的上卷 CTE）
- * @property {string[]} names 各组件阶段 1 的 CTE 名（= 输出列名，顺序与 `columns` 一致）
+ * @property {RenderedComp[]} comps 逐组件产物（顺序与 `spec.columns` 一致）
+ * @property {ModelSpec} spec 渲染用的模型 spec（`renderRegion` 据此取 fct 粒度）
+ * @property {string[]} cols 非 flat 组件的阶段 2 聚合表达式（顺序同 `comps` 里的非 flat 项）
+ * @property {string[]} names 各组件阶段 1 的 CTE 名（= 输出列名，顺序与 `spec.columns` 一致）
  */
 
 /**
  * 渲染某个 fct 的度量 CTE 与聚合列。
  *
  * @param {Map<string, Measure>} measures 组件键 → measure（`measuresOf` 的产物）
- * @param {string[]} [columns] 该 fct 物化的组件键（默认 `FCT_MEASURE_COLUMNS`）
+ * @param {ModelSpec} spec 目标模型的生成输入（`MODELS` 的一项）
  * @param {Record<string, Domain>} [domains] `domainsOf` 的产物（基面 where 的派生源）
  * @returns {RenderedFct}
  */
-export function renderFctMeasures(measures, columns = FCT_MEASURE_COLUMNS, domains = {}) {
-  if (!Array.isArray(columns) || columns.length === 0) throw new Error('fct 的度量列清单不能为空')
+export function renderFctMeasures(measures, spec, domains = {}) {
+  if (!spec || !Array.isArray(spec.columns) || spec.columns.length === 0) throw new Error('ModelSpec.columns 不能为空')
   /** @type {string[]} */
   const ctes = []
-  /** @type {string[]} */
-  const cols = []
-  /** @type {string[]} */
-  const names = []
+  /** @type {RenderedComp[]} */
+  const comps = []
   /** @type {Set<string>} */
   const emittedBases = new Set()
 
-  for (const key of columns) {
+  for (const key of spec.columns) {
     const m = measures.get(key)
     if (!m) throw new Error(`fct 引用了未声明的组件 ${key}`)
     const at = key.lastIndexOf('@')
     const name = key.slice(0, at)
     const grain = key.slice(at + 1)
-    const keys = GRAIN_KEYS[grain]
-    if (!keys) throw new Error(`未知 grain \`${grain}\`（只认 ${Object.keys(GRAIN_KEYS).join(' / ')}）`)
-    // 声明自洽：grain 必须与键名后缀一致（`line_amount@line` 却声明 grain:[order] = 声明面自相矛盾）。
-    // 只校验「有没有 grain」不够——缺省或写错都会让分组键与组件自述的原子粒度错位，而 SQL 照编不误。
+    // 声明自洽：grain 必须与键名后缀一致（`line_amount@line` 却声明 grain:[order] = 声明面自相矛盾；
+    // `x@flat` 却声明 grain:[order] 同理——flat 不豁免这道）。只校验「有没有 grain」不够——
+    // 缺省或写错都会让分组键与组件自述的原子粒度错位，而 SQL 照编不误。
     if (!m.grain || m.grain[0] !== grain) {
       throw new Error(`组件 ${key} 的 grain ${JSON.stringify(m.grain)} 与键名后缀 @${grain} 不一致`)
     }
-    const missing = FCT_GRAIN.filter((k) => !keys.includes(k))
-    if (missing.length > 0) throw new Error(`grain \`${grain}\` 缺 fct 粒度键 ${missing.join(', ')}`)
-
-    const base = BASE_ALIASES[key]
-    if (!base) throw new Error(`组件 ${key} 没有基面 CTE 名（BASE_ALIASES 缺项 —— 名字是契约，别靠推导）`)
+    /** @type {string[] | undefined} 该 grain 的唯一键集；flat 没有（跳过键集两道校验） */
+    let keys
+    if (grain !== 'flat') {
+      const ks = spec.grainKeys[grain]
+      if (!ks) throw new Error(`未知 grain \`${grain}\`（只认 ${Object.keys(spec.grainKeys).join(' / ')} 与 flat）`)
+      const missing = spec.fctGrain.filter((k) => !ks.includes(k))
+      if (missing.length > 0) throw new Error(`grain \`${grain}\` 缺 fct 粒度键 ${missing.join(', ')}`)
+      keys = ks
+    }
+    const base = spec.baseAliases[key]
+    if (!base) throw new Error(`组件 ${key} 没有基面 CTE 名（baseAliases 缺项 —— 名字是契约，别靠推导）`)
     if (!m.domain) throw new Error(`组件 ${key} 缺 domain —— 基面 CTE 的 where 由它派生（不许默认全表）`)
     if (!Object.hasOwn(domains, m.domain)) {
       throw new Error(`组件 ${key} 的 domain \`${m.domain}\` 未在 \`domains:\` 里声明`)
     }
     if (!emittedBases.has(base)) {
       emittedBases.add(base)
-      ctes.push(`${base} as (\n    select * from ${STAGING_REF}\n    where ${resolveDomain(m.domain, domains)}\n)`)
+      ctes.push(`${base} as (\n    select * from ${spec.stagingRef}\n    where ${resolveDomain(m.domain, domains)}\n)`)
+    }
+    if (grain === 'flat') {
+      // flat：阶段 1 直接在 fct 粒度求值（expr 自身是单层可结合聚合，cast 走 precision），
+      // **不产 rollup**（阶段 1 就是 fct 粒度，再上卷只是恒等的 group by）。无键集可校验 ⇒
+      // 跳过「grain 键集查找」与「fctGrain ⊆ keys」两道；后缀一致性校验不豁免（上面已做）。
+      ctes.push(
+        `${name}__gen as (\n    select ${spec.fctGrain.join(', ')}, `
+        + `${compileAggregate({ measure: m, column: `${name}__gen` })}`
+        + ` from ${base} group by ${spec.fctGrain.map((_, i) => i + 1).join(', ')}\n)`,
+      )
+      comps.push({ name: `${name}__gen`, flat: true, col: null })
+      continue
     }
     // 阶段 1：在组件自述的 grain 键上逐组求值（`keys` 是这个 grain 的唯一键集）
-    ctes.push(`${name}__gen as (\n    ${compilePerGroup({ measure: m, keys, baseAlias: base })}\n)`)
+    ctes.push(`${name}__gen as (\n    ${compilePerGroup({ measure: m, keys: /** @type {string[]} */ (keys), baseAlias: base })}\n)`)
     // 阶段 2：fct 粒度求和（值来自阶段 1 的 `measure_value`，不是把 expr 直接塞进最终 SELECT）
-    cols.push(compileAggregate({ measure: m, column: `${name}__gen`, valueExpr: `${name}__gen.measure_value` }))
-    names.push(`${name}__gen`)
+    comps.push({
+      name: `${name}__gen`,
+      flat: false,
+      col: compileAggregate({ measure: m, column: `${name}__gen`, valueExpr: `${name}__gen.measure_value` }),
+    })
   }
 
-  return { ctes: ctes.join(',\n'), cols, names }
+  return {
+    ctes: ctes.join(',\n'),
+    comps,
+    spec,
+    cols: comps.filter((c) => !c.flat).map((c) => /** @type {string} */ (c.col)),
+    names: comps.map((c) => c.name),
+  }
 }
 
 /**
@@ -186,41 +283,45 @@ function rollupName(name) {
  * （实测 2 单 100+50 + 3 行退货 −10/−20/−30 ⇒ 450 / −120，正确值 150 / −60）。
  * 单订单 + 单退货行的日子恰好乘 1 ⇒ 小样本看不出来，只有多行日才炸。
  *
+ * @param {ModelSpec} spec 目标模型（fct 粒度的来源）
  * @param {string} name 组件的阶段 1 CTE 名（`<组件>__gen`）
  * @param {string} col 阶段 2 的聚合表达式（`compileAggregate` 的产物）
  * @returns {string}
  */
-function renderRollup(name, col) {
+function renderRollup(spec, name, col) {
   return [
     `${rollupName(name.replace(/__gen$/, ''))} as (`,
-    `    select ${FCT_GRAIN.join(', ')}, ${col}`,
+    `    select ${spec.fctGrain.join(', ')}, ${col}`,
     `    from ${name}`,
-    `    group by ${FCT_GRAIN.map((_, i) => i + 1).join(', ')}`,
+    `    group by ${spec.fctGrain.map((_, i) => i + 1).join(', ')}`,
     ')',
   ].join('\n')
 }
 
 /**
- * 把各组件**上卷后**的结果按 fct 粒度对齐（`gen_agg`）。
+ * 把各组件对齐到 fct 粒度（`gen_agg`）：分组组件用**上卷后**的结果，flat 组件直接用其
+ * 阶段 1 CTE（它已在 fct 粒度，无 rollup 可言）。
  *
  * 为什么 full join + coalesce 键：sale 与 return 的行域**不重叠**（一侧排掉退货行、一侧只要退货行），
  * 某个门店日只有销售没有退货是常态 ⇒ 内连接会**静默丢行**（生成列少数，数偏小但原因隐蔽）。
  * 缺侧的列在此为 NULL，**由最终 SELECT 统一 `coalesce(…, 0)` 归零**
  * （见 fct 模型：`coalesce(gen_agg.sale_amount__gen, 0)`）。
  *
- * @param {{ names: string[] }} rendered
+ * @param {ModelSpec} spec 目标模型（fct 粒度的来源）
+ * @param {RenderedComp[]} comps 逐组件产物
  * @returns {string}
  */
-function renderGenAgg({ names }) {
-  const rollups = names.map((n) => rollupName(n.replace(/__gen$/, '')))
+function renderGenAgg(spec, comps) {
+  // flat 组件直接以阶段 1 CTE 参与 join；分组组件以上卷 CTE 参与
+  const rollups = comps.map((c) => (c.flat ? c.name : rollupName(c.name.replace(/__gen$/, ''))))
   const first = rollups[0]
-  const keyLines = FCT_GRAIN.map(
+  const keyLines = spec.fctGrain.map(
     (k) => `        coalesce(${rollups.map((r) => `${r}.${k}`).join(', ')}) as ${k}`,
   )
   const colLines = rollups.map((r) => `        ${r}.${r.replace(/__rollup$/, '__gen')}`)
   const joins = rollups.slice(1).map(
-    (r) => `    full join ${r}\n        on  ${first}.${FCT_GRAIN[0]} = ${r}.${FCT_GRAIN[0]}`
-      + FCT_GRAIN.slice(1).map((k) => `\n        and ${first}.${k} = ${r}.${k}`).join(''),
+    (r) => `    full join ${r}\n        on  ${first}.${spec.fctGrain[0]} = ${r}.${spec.fctGrain[0]}`
+      + spec.fctGrain.slice(1).map((k) => `\n        and ${first}.${k} = ${r}.${k}`).join(''),
   )
   return [
     'gen_agg as (',
@@ -240,8 +341,11 @@ function renderGenAgg({ names }) {
  * @returns {string}
  */
 export function renderRegion(rendered) {
-  const rollups = rendered.names.map((n, i) => renderRollup(n, rendered.cols[i]))
-  const body = [rendered.ctes, ...rollups, renderGenAgg(rendered)].join(',\n')
+  const { spec, comps } = rendered
+  const rollups = comps
+    .filter((c) => !c.flat)
+    .map((c) => renderRollup(spec, c.name, /** @type {string} */ (c.col)))
+  const body = [rendered.ctes, ...rollups, renderGenAgg(spec, comps)].join(',\n')
   return [BEGIN, ...REGION_HEADER, body, END].join('\n')
 }
 
@@ -307,7 +411,7 @@ export function readSemantics(rootDir) {
 }
 
 /**
- * 生成主流程。
+ * 生成主流程：遍历 `MODELS`，逐模型渲染并比对/写回（`--check` 有任一模型漂移 ⇒ 1）。
  *
  * @param {string} rootDir 仓根
  * @param {{ check?: boolean }} [opts] `check` = 只比对不写（CI 用；有漂移 ⇒ 1）
@@ -315,21 +419,23 @@ export function readSemantics(rootDir) {
  */
 export function run(rootDir, opts = {}) {
   const { measures, domains } = readSemantics(rootDir)
-  const rendered = renderFctMeasures(measures, FCT_MEASURE_COLUMNS, domains)
-  const expected = renderRegion(rendered)
-  const file = join(rootDir, FCT_REL)
-  const text = readFileSync(file, 'utf8')
-  const drift = driftMessage(extractRegion(text), expected)
-  if (drift === null) {
-    console.log(`${SCRIPT_NAME}: OK（${rendered.names.length} 个度量列：${rendered.names.join(', ')}）`)
-    return 0
+  for (const spec of MODELS) {
+    const rendered = renderFctMeasures(measures, spec, domains)
+    const expected = renderRegion(rendered)
+    const file = join(rootDir, spec.rel)
+    const text = readFileSync(file, 'utf8')
+    const drift = driftMessage(extractRegion(text), expected)
+    if (drift === null) {
+      console.log(`${SCRIPT_NAME}: OK（${spec.rel}：${rendered.names.length} 个度量列：${rendered.names.join(', ')}）`)
+      continue
+    }
+    if (opts.check) {
+      console.error(`${SCRIPT_NAME}: ${spec.rel}\n  ${drift}\n  重跑：${REGEN_COMMAND}`)
+      return 1
+    }
+    writeFileSync(file, replaceRegion(text, expected))
+    console.log(`${SCRIPT_NAME}: 已重写 ${spec.rel} 的标记区（${rendered.names.length} 个度量列）`)
   }
-  if (opts.check) {
-    console.error(`${SCRIPT_NAME}: ${FCT_REL}\n  ${drift}\n  重跑：${REGEN_COMMAND}`)
-    return 1
-  }
-  writeFileSync(file, replaceRegion(text, expected))
-  console.log(`${SCRIPT_NAME}: 已重写 ${FCT_REL} 的标记区（${rendered.names.length} 个度量列）`)
   return 0
 }
 

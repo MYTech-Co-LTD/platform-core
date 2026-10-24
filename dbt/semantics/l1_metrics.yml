@@ -72,6 +72,24 @@ domains:
   finished:        "state = 'FINISHED'"
   sale_finished:   { extends: finished, filter: "order_transaction_type = 'SALE_ORDER'" }
   return_finished: { extends: finished, filter: "order_transaction_type like '%RETURN%'" }
+  # 门店费用构件（P3.3 影子波 Task 2，issue #1031）：费用行方向域——谓词逐字取自
+  # fct_branch_expense.sql 的 case-when 条件（生成器基面 where 的派生源，改判别式两边一起改）。
+  expense_payable:    "direction = '应付'"
+  expense_receivable: "direction = '应收'"
+  # 客户费用构件（P3.3 影子波 Task 3，issue #1031）：费用行方向域——谓词逐字取自
+  # fct_client_expense.sql 的 case-when 条件（生成器基面 where 的派生源，改判别式两边一起改）。
+  # 与门店族分名：行域是扁平命名空间，两族谓词列不同（direction / other_inout_flag），不许共用。
+  client_expense_payable:    "other_inout_flag = false"
+  client_expense_receivable: "other_inout_flag = true"
+  # 配送行质量构件（P3.3 影子波 Task 4，issue #1031）：transfer 出库行域——谓词逐字取自
+  # fct_transfer_line_quality.sql 的手写 base where（生成器基面 where 的派生源，改判别式两边一起改）。
+  transfer_line_quality_base: "state_code = 3 and out_branch_num = 99 and branch_num <> out_branch_num"
+  # 零售数量构件（P3.3 影子波 Task 5，issue #1031）：零售行单据类型域——谓词逐字取自
+  # fct_retail_quantity.sql 的 case-when 条件（生成器基面 where 的派生源，改判别式两边一起改）。
+  # 退货侧含 REPAID_RETURN（净销量解释性落地①）——与净额族的 return_finished（state='FINISHED'，
+  # 不含 REPAID）刻意不同，别共用（见 fct_retail_quantity 头注「为什么单开一张 mart」）。
+  retail_quantity_sale:   "order_transaction_type = 'SALE_ORDER' and state = 'FINISHED'"
+  retail_quantity_return: "order_transaction_type like '%RETURN%' and state in ('FINISHED', 'REPAID')"
 
 # ── 域级度量组件（spec 2026-10-21 bot-drillthrough §2.3）：一个组件只声明一次，指标用 compose 组合 ──
 # 判别式**逐字**取自 dbt/models/lemeng/marts/fct_retail_sale.sql（销售侧正数形态 / 退货侧绝对值形态 #908），
@@ -112,6 +130,73 @@ measures:
     additivity: flow
     unit: CNY
     domain: finished
+  # 门店费用构件（P3.3 影子波 Task 2，issue #1031）：expr = fct_branch_expense.sql 里
+  # ep_payable / er_receivable 的**聚合内层逐字**（`sum(coalesce(amount, 0))`；方向 case-when
+  # 不进组件——它上移为 domain 基面，数值上与 `else 0` 等价，由影子对账测试逐分钉住）。
+  # flat = 单层可结合聚合：生成器直接在 fct 粒度求值，无两阶段上卷。
+  ep_payable@flat:
+    expr: 'sum(coalesce(amount, 0))'
+    grain: [flat]
+    additivity: flow
+    unit: CNY
+    domain: expense_payable
+  er_receivable@flat:
+    expr: 'sum(coalesce(amount, 0))'
+    grain: [flat]
+    additivity: flow
+    unit: CNY
+    domain: expense_receivable
+  # 客户费用构件（P3.3 影子波 Task 3，issue #1031）：expr = fct_client_expense.sql 里
+  # ep_payable / er_receivable 的**聚合内层逐字**（`sum(coalesce(other_inout_money, 0))`；方向
+  # case-when 不进组件——它上移为 domain 基面，数值上与 `else 0` 等价，由影子对账测试逐分钉住）。
+  # 键带 client_ 族前缀：measures 是扁平命名空间，复用门店族的 `ep_payable@flat` 会静默覆盖其声明
+  # （Map 后写胜，门店族的生成区会悄悄改用客户侧 expr/domain）。flat = 单层可结合聚合：生成器
+  # 直接在 fct 粒度求值，无两阶段上卷。
+  client_ep_payable@flat:
+    expr: 'sum(coalesce(other_inout_money, 0))'
+    grain: [flat]
+    additivity: flow
+    unit: CNY
+    domain: client_expense_payable
+  client_er_receivable@flat:
+    expr: 'sum(coalesce(other_inout_money, 0))'
+    grain: [flat]
+    additivity: flow
+    unit: CNY
+    domain: client_expense_receivable
+  # 配送行质量构件（P3.3 影子波 Task 4，issue #1031）：expr = fct_transfer_line_quality.sql 里
+  # zero_cost_amount 的**聚合内层逐字**（含 `coalesce(out_money, 0)` 守卫与 `subtotal = 0` 的 null
+  # 排除——后者是与 missing_cost_amount **互斥**的锚，2026-10-17 订正，不许改成 coalesce(subtotal,0)）。
+  # 手写版的 `b.` 前缀随基面别名消失（生成区基面已带同款谓词，语义不变）。
+  # 键带 tq_ 族前缀：measures 是扁平命名空间（Task 3 同款，同名键后写静默覆盖）。
+  # 影子波唯一的两阶段族：grain [order] ⇒ 先逐单求 measure_value、再上卷店日（分组键与手写
+  # per_order 链同源：账套 × 业务日 × 门店 × 单号）。
+  tq_zero_cost_amount@order:
+    expr: 'sum(case when coalesce(out_money, 0) <> 0 and subtotal = 0 then out_money else 0 end)'
+    grain: [order]
+    additivity: flow
+    unit: CNY
+    domain: transfer_line_quality_base
+  # 零售数量构件（P3.3 影子波 Task 5，issue #1031）：expr = fct_retail_quantity.sql 里
+  # sale_quantity / return_quantity 的**求和内层逐字**（`sum(quantity)`；单据类型/状态 case-when
+  # 不进组件——它上移为 domain 基面，数值上与 `else 0` 等价，由影子对账测试逐行钉住）。
+  # 键不带族前缀：`sale_quantity@flat` / `return_quantity@flat` 与既有四族键全量互异，无需让位
+  # （client_/tq_ 前缀是给被占用的键让位）。flat = 单层可结合聚合：生成器直接在 fct 粒度求值。
+  # precision '20,3' = 现表 numeric(20,3)（影子波首个真消费 precision 覆盖的族，缺省 20,2 不适用）。
+  sale_quantity@flat:
+    expr: 'sum(quantity)'
+    grain: [flat]
+    additivity: flow
+    unit: count
+    precision: '20,3'
+    domain: retail_quantity_sale
+  return_quantity@flat:
+    expr: 'sum(quantity)'
+    grain: [flat]
+    additivity: flow
+    unit: count
+    precision: '20,3'
+    domain: retail_quantity_return
 
 metrics:
   - name: 'lemeng:retail:sales'
@@ -463,8 +548,10 @@ metrics:
 
 
   # ── W2（2026-10-13）：费用两件套 6 条 ────────────────────────────────────────────────
-  # 构件落点：fct_branch_expense / fct_client_expense。全部 experimental——
-  # 裁9（净费用 e = 应付 − 应收 的符号语义）未回签；费用率类为跨模型比率 → L2（消费面）。
+  # 构件落点：fct_branch_expense / fct_client_expense。六条全 tier: certified——
+  # 裁9（净费用 e = 应付 − 应收 的符号语义）客户已回签 2026-10-13（本段落地时为 experimental，
+  # 回签后升 certified；旧注「全部 experimental / 未回签」已过时，2026-10-24 终审 F-4 订正）；
+  # 费用率类为跨模型比率 → L2（消费面）。
 
   - name: 'lemeng:expense:branch_payable'
     label: 门店应付费用
@@ -538,10 +625,13 @@ metrics:
     sources:
       - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
+  # （client_net 描述文曾滞留「符号语义待裁9 → experimental」，与 tier: certified 矛盾
+  #   —— 2026-10-24 终审 F-4 订正。）
   - name: 'lemeng:expense:client_net'
     label: 客户净费用
     definition: >-
-      客户净费用（E 构件）= 应付合计 − 应收合计。可加。符号语义待裁9 → experimental。
+      客户净费用（E 构件）= 应付合计 − 应收合计。可加。（符号语义 = 应付 − 应收；
+      **裁9 客户已回签 2026-10-13**，与 branch_net 同。）
       粒度 = 账套 × 审核日 × 客户 × 项目。
     expression: 'sum(fct_client_expense.e_net)'
     grain: [system_book, bizday, client_fid, other_inout_kind]
