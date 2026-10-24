@@ -147,7 +147,20 @@ export async function runDetailQuery(
   // 条件列（spec 2026-10-22 §2.3）：持 `grantedBy` 才投影；无码 ⇒ 该列**不在场**（缺席，不是 NULL）。
   // 放在维度校验之后、orderBy 之前——它只影响投影，不参与权限拒绝链（拒绝链全在 authorize）。
   const granted = (drill.columns ?? []).filter((c) => requester.hasScope(c.grantedBy))
-  const extra = columnProjection(granted)
+  // #995（Phase 2 终审 deferred-Important）：条件列被**列级掩码**命中 ⇒ 整列缺席（与上行「缺席 ≠ NULL」
+  // 同一语义）。旧行为两向皆坏：裸列名形态会被 maskedSelectSql 换成 max(cast(null as numeric))
+  // （列在场、整列 NULL、静默——模型会把 NULL 答成「这行没值」）；限定名形态不命中（fail-open，明文照出）。
+  // 判定直接问 catalog：存在 `column === 本列` 的列级掩码声明即视为命中（掩码声明的是列级意图，
+  // 与投影里裸名/限定名的写法无关）；请求者持声明的 `grantedBy` ⇒ 豁免方向照旧（看原值，全持才留）。
+  // 剔除后投影里根本没有该列 ⇒ maskedSelectSql 结构性够不着它（探针/替换两向缺口同时消灭）。
+  const maskedOutColumns: string[] = []
+  const effectiveGranted = granted.filter((c) => {
+    const hits = allMetrics.flatMap((m) => m.masks ?? []).filter((s) => s.column === c.col)
+    if (hits.length === 0 || hits.every((s) => requester.hasScope(s.grantedBy))) return true
+    maskedOutColumns.push(c.col)
+    return false
+  })
+  const extra = columnProjection(effectiveGranted)
 
   // 排序：'value'（缺省，降序——「哪几行贡献最大」是下钻的主问题）或请求维度之一。
   const orderBy = detail.orderBy ?? 'value'
@@ -178,7 +191,7 @@ export async function runDetailQuery(
   }
   const where = `${metricRow.subjectColumn} = ${sqlQuote(authz.plan.subject)} AND ${drill.filter}${pf.filters.join('')}`
 
-  const plan = buildDrillSql(drill, requested, where, orderBy, desc, limit, offset, granted)
+  const plan = buildDrillSql(drill, requested, where, orderBy, desc, limit, offset, effectiveGranted)
   // 掩码（spec §2.5 细节 1）：在场判定按**下钻 SQL**——拿合成行（selectSql 换成投影串）复用
   // effectiveMasks，本文件不写第二份掩码判定。只掩**投影串**（value 头与列），WHERE/count
   // 不掩：Phase 1 掩码只有整值形态（value 头）；但**列掩码不再结构性不可达**——投影里含裸条件列，
@@ -253,7 +266,8 @@ export async function runDetailQuery(
   const hasMasking = Object.keys(masked.applied).length > 0
   await audit('ok', retried ? 'lake_race_retry' : null, result.rows.length,
     maskingAuditOf(masked.applied, masked.exempted),
-    { dimensions: requested, rowCountTotal, grantedColumns: granted.map((c) => c.col) })
+    { dimensions: requested, rowCountTotal, grantedColumns: effectiveGranted.map((c) => c.col),
+      ...(maskedOutColumns.length > 0 ? { maskedOutColumns } : {}) })
 
   return {
     status: 'ok',
