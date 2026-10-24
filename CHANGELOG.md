@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.195.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.194.0...v0.195.0) - 2026-10-24
+- 【新增】data: apply_pipeline_proposal——提案落盘并开 draft PR（#1003） ([#1041](https://github.com/MYTech-Co-LTD/platform-core/pull/1041), [faaceef](https://github.com/MYTech-Co-LTD/platform-core/commit/faaceeff15f5d6e33042bf9753612d761182e031))
+
+
 ## [0.194.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.193.2...v0.194.0) - 2026-10-24
 - 【新增】auth: console 组织架构与角色管理后台 ([#1040](https://github.com/MYTech-Co-LTD/platform-core/pull/1040), [1778b15](https://github.com/MYTech-Co-LTD/platform-core/commit/1778b152f325a8d6f8370bcac51e9e0089f607c7))
 
