@@ -1004,3 +1004,31 @@ describe('M3 用户与授权（D4）', () => {
     await expect(client().revokePermissionFromUser('nope:code', 'alice')).rejects.toThrow('不存在权限码')
   })
 })
+
+// ---- 组织架构（账户和权限体系 Task 3：listGroups） ----
+describe('listGroups（组织架构数据源）', () => {
+  let mg: MockCasdoor
+  beforeAll(async () => {
+    mg = new MockCasdoor({
+      groups: [
+        { owner: 'acme', name: 'hq', displayName: '总部', parentId: 'acme', isTopGroup: true },
+        { owner: 'acme', name: 'shop-a', displayName: 'A 店', parentId: 'hq' },
+      ],
+    })
+    await mg.start()
+  })
+  afterAll(async () => { await mg.stop() })
+
+  it('列本 org 平表并投影四字段（displayName 兜底 name；error 抛）', async () => {
+    const client = () =>
+      new CasdoorClient({ origin: mg.origin, clientId: 'x', clientSecret: 'y', org: 'acme', adminUser: 'admin', adminPwd: 'pw' })
+    const groups = await client().listGroups()
+    expect(groups).toEqual([
+      { name: 'hq', displayName: '总部', parentId: 'acme', isTopGroup: true },
+      { name: 'shop-a', displayName: 'A 店', parentId: 'hq', isTopGroup: false },
+    ])
+    // owner 分桶：别的 org 拿不到
+    const other = new CasdoorClient({ origin: mg.origin, clientId: 'x', clientSecret: 'y', org: 'beta', adminUser: 'admin', adminPwd: 'pw' })
+    await expect(other.listGroups()).resolves.toEqual([])
+  })
+})

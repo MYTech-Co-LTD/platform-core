@@ -89,6 +89,18 @@ export interface CasdoorListedUser {
   isForbidden: boolean
 }
 
+/**
+ * listGroups 的返回形状（账户和权限体系 Task 3；真机 spike 2026-10-24 附录 B）：
+ * 显示名是 `displayName`（真机无 `title` 字段）；parentId=父组名；顶层组 parentId
+ * 可为空串也可为 org 名（两种形态并存，树组装在 group-tree.buildGroupTree 处理）。
+ */
+export interface CasdoorGroup {
+  name: string
+  displayName: string
+  parentId: string
+  isTopGroup?: boolean
+}
+
 interface LoginResult {
   r: Response
   j: Record<string, unknown>
@@ -311,6 +323,24 @@ export class CasdoorClient {
     if (j.status !== 'ok') throw new Error(`casdoor get-user: ${j.msg || 'error'}`)
     const u = j.data as Record<string, unknown> | null | undefined
     return u && typeof u === 'object' && u.name ? u : null
+  }
+
+  /**
+   * 列**本 client org** 的 group 平表（账户和权限体系 Task 3：组织架构页数据源；树组装
+   * 交给 `buildGroupTree`）。error 一律抛、绝不静默空表（listUsers 同口径）。
+   */
+  async listGroups(): Promise<CasdoorGroup[]> {
+    const j = await this.#adminJson(`get-groups?owner=${encodeURIComponent(this.#o.org)}`)
+    if (j.status !== 'ok') throw new Error(`casdoor get-groups: ${j.msg || 'error'}`)
+    if (!Array.isArray(j.data)) return []
+    return (j.data as Array<Record<string, unknown>>)
+      .map((g) => ({
+        name: String(g.name ?? ''),
+        displayName: String(g.displayName ?? g.name ?? ''),
+        parentId: String(g.parentId ?? ''),
+        isTopGroup: g.isTopGroup === true,
+      }))
+      .filter((g) => g.name !== '')
   }
 
   async #requireRawUser(name: string): Promise<Record<string, unknown>> {
