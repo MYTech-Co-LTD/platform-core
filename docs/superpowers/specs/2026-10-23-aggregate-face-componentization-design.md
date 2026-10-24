@@ -224,6 +224,29 @@ measures:
 > relation 假设与两阶段编译装不下）、2 族 exclude（纯透传，0 聚合，无口径可组件化）。
 > P3.4 的「expression 全量退役」前提随之修正（见上表行）。逐族结构性理由登记在 §8。
 
+> **P3.3 Wave 1 实施记录（2026-10-24，issue #1031）**：4 族影子列已随分支 `feat/p33-shadow-wave`
+> 落地，六个实现提交：`f26cad48`（生成器 per-model 注册表化，5 模型）→ `29d8958f`（branch）→
+> `47ea4dd3`（client）→ `34aafcf0` + `9f3841f7`（transfer + gen_agg 行域注释勘误）→
+> `e93126f4`（retail_quantity）；收官两笔：注释勘误批 `539319d5`（终审 F-1/F-2/F-3/F-4/F-6，
+> 只动注释文本、零 SQL 语义/断言/yml 结构改动）+ 本记录。生成器随本波新增 **flat 粒度**
+> （单层可结合聚合直接在 fct 粒度求值，不产 rollup）与 **precision**（生成列 cast 精度，
+> 如 `"20,3"`）；影子列共 **7** 条（branch 2 / client 2 / transfer 1 / retail_quantity 2），
+> schema.yml 逐一登记并带 not_null 守卫。影子对账 singular 测试 **4** 个：certified 14 天
+> ×3（branch / client / transfer，窗口依据 spec §9.1）+ experimental 7 天 ×1（retail_quantity），
+> 均带空窗哨兵行防空转绿。质量门：任务级评审 5 轮全 PASS、终局全分支评审 ✅（2026-10-24，
+> 无 Critical、无阻塞性 Important）；评审明细存于会话工作档案
+> `.superpowers/sdd/2026-10-24-aggregate-face-p33-shadow-wave/`（gitignored，不入仓），正文只记结论。
+>
+> **窗口与签核时间线（以合并日为 D0）**：experimental 批（retail_quantity）D0+7 切换
+> （约 2026-10-31）；certified 批（expense 6 + transfer 1）D0+14 签核切换（约 2026-11-07，
+> 切列 PR 按 §6.1 带签核节——影子波没改口径不用签，切列把 certified 指标的计算路径换掉必须签）。
+> **合并后真机入场清单**：数据面四步链（`lemeng-sync.sh` 只增改不删 → 山海 manual deploy →
+> 词表 job 未变 43 → materialize `MATERIALIZE_OK`）之后，10 条 audit PASS 入场
+> （expense 6 + transfer 3 + retail_quantity 1，即本地无湖边界跑不了的那批）+ 4 族影子列
+> 对账零差异。**Wave 2（切列波）入场清单**以终局评审核实版为准（切列形态 / parity 删改 /
+> `__gen` 退役 / order 键值字面断言 / 重锁规矩 / 连合 PR deploy 互斥坑六项），明细见上述
+> 终局评审档案。§8 的 defer/exclude 登记与 §5 表 P3.3 行已随计划 PR #1032 落地（2026-10-24）。
+
 ---
 
 ## 6 守卫与验收
