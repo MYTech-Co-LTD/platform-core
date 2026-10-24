@@ -548,8 +548,10 @@ metrics:
 
 
   # ── W2（2026-10-13）：费用两件套 6 条 ────────────────────────────────────────────────
-  # 构件落点：fct_branch_expense / fct_client_expense。全部 experimental——
-  # 裁9（净费用 e = 应付 − 应收 的符号语义）未回签；费用率类为跨模型比率 → L2（消费面）。
+  # 构件落点：fct_branch_expense / fct_client_expense。六条全 tier: certified——
+  # 裁9（净费用 e = 应付 − 应收 的符号语义）客户已回签 2026-10-13（本段落地时为 experimental，
+  # 回签后升 certified；旧注「全部 experimental / 未回签」已过时，2026-10-24 终审 F-4 订正）；
+  # 费用率类为跨模型比率 → L2（消费面）。
 
   - name: 'lemeng:expense:branch_payable'
     label: 门店应付费用
@@ -623,10 +625,13 @@ metrics:
     sources:
       - 's3://<bucket>/lemeng/client_expense/system_book=<账套>/bizday=<日期>/all.parquet'
 
+  # （client_net 描述文曾滞留「符号语义待裁9 → experimental」，与 tier: certified 矛盾
+  #   —— 2026-10-24 终审 F-4 订正。）
   - name: 'lemeng:expense:client_net'
     label: 客户净费用
     definition: >-
-      客户净费用（E 构件）= 应付合计 − 应收合计。可加。符号语义待裁9 → experimental。
+      客户净费用（E 构件）= 应付合计 − 应收合计。可加。（符号语义 = 应付 − 应收；
+      **裁9 客户已回签 2026-10-13**，与 branch_net 同。）
       粒度 = 账套 × 审核日 × 客户 × 项目。
     expression: 'sum(fct_client_expense.e_net)'
     grain: [system_book, bizday, client_fid, other_inout_kind]

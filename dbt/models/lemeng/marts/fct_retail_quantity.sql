@@ -34,7 +34,10 @@
 --   用 `like '%RETURN%'` 而不是枚举 IN：单据类型是**外部系统**的枚举，新增退货类型时
 --   宁可自动纳入，也不要静默漏减（漏减 = 净销量虚高 = 覆盖天数虚高 = 补货决策偏保守）。
 --
--- 【粒度】(system_book, bizday, branch_num) —— 与 fct_retail_sale 同粒度，便于消费面并排取用。
+-- 【粒度】(system_book, bizday, branch_num, item_num)（2026-10-17 扩商品级，见上）
+--   —— 比 fct_retail_sale 的三键粒度**多 item_num 一层**，不再是同粒度；消费面并排取用
+--   须先按三键聚合对齐（对表达式求和）。原注仍写三键「与 fct_retail_sale 同粒度」，
+--   系 #770 时代旧稿，2026-10-24 终审 F-6 订正。
 --
 -- ── 影子列（聚合面组件化 P3.3 影子波 Task 5，issue #1031）────────────────────────────────
 -- `sale_quantity` / `return_quantity` 是**旧实现**（手写 case-when 判别式，逐字未动）；生成区里的
