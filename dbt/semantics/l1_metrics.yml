@@ -84,6 +84,12 @@ domains:
   # 配送行质量构件（P3.3 影子波 Task 4，issue #1031）：transfer 出库行域——谓词逐字取自
   # fct_transfer_line_quality.sql 的手写 base where（生成器基面 where 的派生源，改判别式两边一起改）。
   transfer_line_quality_base: "state_code = 3 and out_branch_num = 99 and branch_num <> out_branch_num"
+  # 零售数量构件（P3.3 影子波 Task 5，issue #1031）：零售行单据类型域——谓词逐字取自
+  # fct_retail_quantity.sql 的 case-when 条件（生成器基面 where 的派生源，改判别式两边一起改）。
+  # 退货侧含 REPAID_RETURN（净销量解释性落地①）——与净额族的 return_finished（state='FINISHED'，
+  # 不含 REPAID）刻意不同，别共用（见 fct_retail_quantity 头注「为什么单开一张 mart」）。
+  retail_quantity_sale:   "order_transaction_type = 'SALE_ORDER' and state = 'FINISHED'"
+  retail_quantity_return: "order_transaction_type like '%RETURN%' and state in ('FINISHED', 'REPAID')"
 
 # ── 域级度量组件（spec 2026-10-21 bot-drillthrough §2.3）：一个组件只声明一次，指标用 compose 组合 ──
 # 判别式**逐字**取自 dbt/models/lemeng/marts/fct_retail_sale.sql（销售侧正数形态 / 退货侧绝对值形态 #908），
@@ -171,6 +177,26 @@ measures:
     additivity: flow
     unit: CNY
     domain: transfer_line_quality_base
+  # 零售数量构件（P3.3 影子波 Task 5，issue #1031）：expr = fct_retail_quantity.sql 里
+  # sale_quantity / return_quantity 的**求和内层逐字**（`sum(quantity)`；单据类型/状态 case-when
+  # 不进组件——它上移为 domain 基面，数值上与 `else 0` 等价，由影子对账测试逐行钉住）。
+  # 键不带族前缀：`sale_quantity@flat` / `return_quantity@flat` 与既有四族键全量互异，无需让位
+  # （client_/tq_ 前缀是给被占用的键让位）。flat = 单层可结合聚合：生成器直接在 fct 粒度求值。
+  # precision '20,3' = 现表 numeric(20,3)（影子波首个真消费 precision 覆盖的族，缺省 20,2 不适用）。
+  sale_quantity@flat:
+    expr: 'sum(quantity)'
+    grain: [flat]
+    additivity: flow
+    unit: count
+    precision: '20,3'
+    domain: retail_quantity_sale
+  return_quantity@flat:
+    expr: 'sum(quantity)'
+    grain: [flat]
+    additivity: flow
+    unit: count
+    precision: '20,3'
+    domain: retail_quantity_return
 
 metrics:
   - name: 'lemeng:retail:sales'

@@ -140,7 +140,22 @@ export const MODELS = [
       'tq_zero_cost_amount@order': 'base_transfer_quality',
     },
   },
-  // P3.3 Task 5 追加最后一个 fct 的块（retail_quantity）
+  // P3.3 Task 5（#1031）：零售数量构件——experimental 族 + numeric(20,3)。键 `sale_quantity@flat` /
+  // `return_quantity@flat` 与既有四族全量互异，无需族前缀（client_/tq_ 是给被占用的键让位）；
+  // 声明带 `precision: '20,3'`（现表 numeric(20,3)，影子波首个真消费 precision 覆盖，缺省 20,2
+  // 不适用）。两列都是 flat（单层直聚，grainKeys 空）；final SELECT 自带 group by ⇒ 影子列走
+  // `max(gen_agg.x)` 形态（Task 4 同款，缘由写在模型内注释）。
+  {
+    rel: 'dbt/models/lemeng/marts/fct_retail_quantity.sql',
+    stagingRef: "{{ ref('stg_lemeng_retail_order_line') }}",
+    grainKeys: {},
+    fctGrain: ['system_book', 'bizday', 'branch_num', 'item_num'],
+    columns: ['sale_quantity@flat', 'return_quantity@flat'],
+    baseAliases: {
+      'sale_quantity@flat': 'base_rq_sale',
+      'return_quantity@flat': 'base_rq_return',
+    },
+  },
 ]
 
 /**

@@ -76,6 +76,8 @@ function fixture(opts: { region?: string; sqlPrefix?: string; sqlSuffix?: string
       '  client_expense_payable: "other_inout_flag = false"',
       '  client_expense_receivable: "other_inout_flag = true"',
       '  transfer_line_quality_base: "state_code = 3 and out_branch_num = 99 and branch_num <> out_branch_num"',
+      '  retail_quantity_sale: "order_transaction_type = \'SALE_ORDER\' and state = \'FINISHED\'"',
+      '  retail_quantity_return: "order_transaction_type like \'%RETURN%\' and state in (\'FINISHED\', \'REPAID\')"',
       'measures:',
       '  sale_amount@order: { expr: \'sum(sale_money)\', grain: [order], additivity: flow, domain: sale_finished }',
       '  return_amount@line: { expr: \'sum(return_money)\', grain: [line], additivity: flow, domain: return_finished }',
@@ -84,6 +86,8 @@ function fixture(opts: { region?: string; sqlPrefix?: string; sqlSuffix?: string
       '  client_ep_payable@flat: { expr: \'sum(coalesce(other_inout_money, 0))\', grain: [flat], additivity: flow, domain: client_expense_payable }',
       '  client_er_receivable@flat: { expr: \'sum(coalesce(other_inout_money, 0))\', grain: [flat], additivity: flow, domain: client_expense_receivable }',
       '  tq_zero_cost_amount@order: { expr: \'sum(case when coalesce(out_money, 0) <> 0 and subtotal = 0 then out_money else 0 end)\', grain: [order], additivity: flow, domain: transfer_line_quality_base }',
+      '  sale_quantity@flat: { expr: \'sum(quantity)\', grain: [flat], additivity: flow, domain: retail_quantity_sale, precision: \'20,3\' }',
+      '  return_quantity@flat: { expr: \'sum(quantity)\', grain: [flat], additivity: flow, domain: retail_quantity_return, precision: \'20,3\' }',
       '',
     ].join('\n'),
   )
@@ -302,6 +306,16 @@ describe('P3.3 多模型注册表 / flat 粒度 / precision（#1031）', () => {
     expect(expected).toBe(
       readFileSync(join(repoRoot, MODELS[0].rel), 'utf8').match(/-- BEGIN GENERATED MEASURES[\s\S]*-- END GENERATED MEASURES/)![0],
     )
+  })
+
+  it('③b 真仓 retail_quantity：precision 20,3 落进生成区（现表 numeric(20,3)，缺省 20,2 不适用）', () => {
+    const { measures, domains } = readSemantics(repoRoot)
+    const spec = MODELS.find((m) => m.rel.endsWith('fct_retail_quantity.sql'))!
+    expect(spec.columns).toEqual(['sale_quantity@flat', 'return_quantity@flat'])
+    const region = renderRegion(renderFctMeasures(measures, spec, domains))
+    expect(region).toContain('sum(quantity)::numeric(20,3) as sale_quantity__gen')
+    expect(region).toContain('sum(quantity)::numeric(20,3) as return_quantity__gen')
+    expect(region).not.toContain('numeric(20,2)')
   })
 
   it('④ flat + 多组件 gen_agg：flat 组件不产 rollup，gen_agg 直接引阶段 1', () => {
