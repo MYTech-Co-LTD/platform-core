@@ -16,8 +16,9 @@
 -- 本测试按 fct 粒度（账套 × 业务日 × 门店）**逐行**比这两套值：任一分差 > 0.01 即红。
 --
 -- 比的是**同一行上的两列**（同一张 fct 表）⇒ 不需要 full join：行集由最终 SELECT 的驱动基面
--- （旧实现的全量分组）保证——gen_agg 的行域是它的子集（只有含零成本行的组），left join 不增删
--- 最终行；粒度行集另有 `assert_fct_transfer_line_quality_grain_unique.sql` 钉住。
+-- （旧实现的全量分组）保证——gen_agg 行域与 base 全分组域**相等**（阶段 1 `else 0` 全单出行、
+-- 阶段 2 全组出值，无零成本组也出 0.00 行，不是缺行）⇒ left join 恰 1:1 不增删最终行；
+-- 粒度行集另有 `assert_fct_transfer_line_quality_grain_unique.sql` 钉住。
 --
 -- ⚠️ **NULL 必须显式判红**：两侧都 `coalesce(…, 0)`，只比差值的话「影子列变 NULL、旧列是 0」
 --    会算成 0 = 0 而**静默绿**（P3.0 修过的 I1 缺陷同型：单侧缺行输出 NULL，差值判据结构性

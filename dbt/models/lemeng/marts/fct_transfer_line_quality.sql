@@ -98,16 +98,18 @@ select
     count(distinct case when p.order_money < 0 then b.order_no end)   as negative_order_count,
     sum(case when p.order_money < 0 then p.order_money else 0 end)::numeric(20,2) as negative_amount,
     -- 影子列 = zero_cost_amount 的 measure 编译版（P3.3 期不许被消费）。本表 final SELECT 自带
-    -- group by（不像 Task 2/3 的 CTE 已聚合形态）⇒ gen_agg 列必须包聚合才能进；gen_agg 按 fct
-    -- 粒度唯一、left join 也按全键对上 ⇒ max 取「单值或 NULL」，与裸 `coalesce(…, 0)` 语义逐行等价。
+    -- group by（不像 Task 2/3 的 CTE 已聚合形态）⇒ gen_agg 列必须包聚合才能进；gen_agg 与 base
+    -- 全分组域**恰 1:1**（行域相等见下方 join 注）+ left join 全键对上 ⇒ 组内恒单值，
+    -- max 取常量/NULL，与裸 `coalesce(…, 0)` 语义逐行等价。
     coalesce(max(gen_agg.tq_zero_cost_amount__gen), 0)::numeric(20,2) as zero_cost_amount__gen
 from base b
 join per_order p on b.system_book = p.system_book
                 and b.bizday = p.bizday
                 and b.branch_num = p.branch_num
                 and b.order_no = p.order_no
--- gen_agg 的行域是 base 分组的子集（同谓词基面里只有「含零成本行」的组）⇒ left join 不增删行
--- （行集由 assert_fct_transfer_line_quality_grain_unique.sql 钉住）。
+-- gen_agg 的行域**等于** base 全分组域（不是子集）：阶段 1 `sum(case…else 0 end)` **全单出行**、
+-- 阶段 2 全组出值——无零成本行的组也出 0.00 行，不是缺行 ⇒ join-miss 结构上不可达，left join
+-- 恰 1:1 不增删行（行集由 assert_fct_transfer_line_quality_grain_unique.sql 钉住）。
 left join gen_agg
     on  b.system_book = gen_agg.system_book
     and b.bizday = gen_agg.bizday
