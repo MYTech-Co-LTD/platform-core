@@ -99,14 +99,12 @@ describe('AdminRolesPage 渲染冒烟', () => {
   it('编辑角色：成员勾选变化 → setAdminRoleMembers 整组替换；码勾选差分 → grant', async () => {
     renderPage()
     fireEvent.click(await screen.findByText('编辑'))
-    // 弹窗内勾上 店员二（现成员 [u1] → [u1,u2]）
-    const checkboxes = await screen.findAllByRole('checkbox')
-    await waitFor(() => expect(checkboxes.length).toBeGreaterThan(2)) // 候选集异步到齐
-    const u2box = checkboxes.find((el) => (el.closest('label')?.textContent ?? '').includes('店员二'))
-    fireEvent.click(u2box as HTMLElement)
-    // 码勾上 demo:manage（原 codes [demo:view] → 差分 grant）
-    const manage = checkboxes.find((el) => (el.closest('label')?.textContent ?? '') === 'demo:manage')
-    fireEvent.click(manage as HTMLElement)
+    // 候选集是异步加载——先等两组的文本真实渲染（CI 慢机时序下，拿旧数组点会点到 detached 节点，
+    // onChange 不触发 ⇒ 保存的是初始勾选态。教训：勾选类断言一律先 findByText 再 getByLabelText）
+    await screen.findByText('店员二（u2）')
+    await screen.findByText('demo:manage')
+    fireEvent.click(screen.getByLabelText('店员二（u2）')) // 现成员 [u1] → [u1,u2]
+    fireEvent.click(screen.getByLabelText('demo:manage')) // 原 codes [demo:view] → 差分 grant
     await okBtn()
     await waitFor(() => {
       expect(setAdminRoleMembers).toHaveBeenCalledWith('店长', ['u1', 'u2'])
