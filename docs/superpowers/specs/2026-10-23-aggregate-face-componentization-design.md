@@ -197,13 +197,24 @@ measures:
 | **P3.3** | 其余 13 个 fct 按族迁移 | 每族独立影子对账 + 签核 |
 | **P3.4** | `expression` 全量退役；`measures` 成为唯一口径面 | 全量指标切换完成 + 一个观察窗无回归 |
 
-> **P3.2 实施记录（2026-10-23，issue #1020）**：只切列、不改口径——`fct_retail_sale` 输出仍是同样 8 列
+> **P3.2 实施记录（2026-10-23/24，issue #1020）**：只切列、不改口径——`fct_retail_sale` 输出仍是同样 8 列
 > （`system_book, org, bizday, branch_num, sale_amount, return_amount, net_amount, order_count`），
 > `sale_amount` / `return_amount` 改取生成区 rollup、`net_amount` 由两者相减，指标 `expression` 逐字未动。
 > 切换依据 = **P3.0 真机影子对账**（框架见 issue #1012 / PR #1018 → `4c0cf89a`）：2026-10-09..10-22 共 **14 天 / 3087 个店日**，
 > `sale_amount` / `return_amount` / `net_amount` 三列与旧列 **diffs=0 / nulls=0**（该数字出自 P3.0 上线会话的真机复核，
-> **仓内未落盘**；PR #1018 正文只记了框架与判据）。实现分支 `feat/aggregate-face-p32`（实现 PR 待提）；本行退出判据中的
-> 「切换后首日物化 PASS / 守恒校验 / certified 签核」属**合并后真机验收**，尚未发生，勿据此行当作已通过。
+> **仓内未落盘**；PR #1018 正文只记了框架与判据）。
+>
+> **合并后真机验收（2026-10-24 已通过）**：计划 PR #1023 → `7969154e`、实现 PR #1026 → `8810e2ef`（v0.191.0），
+> main CI 两轮 CLEAN（#1026 轮 deploy 因连合互斥挂一次，rerun 后绿）。数据面链：SYNC_OK 225/225（钉 `8810e2ef`）→
+> 词表 job **未变 43 / 回读 43** → materialize **PASS=312**（= 316 − 影子对账 1 − `__gen` not_null 3）`MATERIALIZE_OK` →
+> 山海实例 `dep_3l9MpY-ppaYpp3W5` ready（v109，3/3 服务）。**零差异裁决**：切换前后同窗指纹
+> `n=3087, md5=ceb30fc583806787015e9e06b58653d0` **逐字节一致**（后续物化重建两轮后终验仍一致）；
+> 表恰 8 列、`__gen` 全退（information_schema 实测）。其间一次 materialize 失败系**采集窗口并发写湖**
+> （`recon_gift_hit` / `assert_vw_retail_order_line_matches_stg` / `audit_lemeng__retail__net_quantity` 三审计瞬时红；
+> 切换前 10-23 09:27 已有同签名失败先例，重跑即绿）——与本切换无关。
+> **性能观察（§6.3，未裁决）**：切换后干净单跑 165s（attempt-1 单轮全绿），切换前跨窗干净样本 97–151s
+> （中位 ~110s；02:27 UTC 槽位排班不存在，无严格同窗基线）——同槽位对照留待切换后排班运行
+> （11:27/13:27/15:27 UTC vs 前日同槽 115/120/117s）复核；持续超预算才触发反转条件第二条。
 
 **首批只做 retail_sale 一族**，其余按需推进——第一段目标是「证明脚手架」，不是「改造全仓」。
 
