@@ -35,6 +35,7 @@ describe('proposalApplierFromEnv', () => {
   })
   it('token 在 ⇒ applier；repo 默认 MYTech-Co-LTD/platform-core', async () => {
     const { fetchImpl, seen } = fakeGithub([refRoute])
+    // 第二参为测试 seam（Task 1 评审已批的偏离：proposalApplierFromEnv 带可选 io 透传 fetchImpl），注入假 fetch 不连网
     const ap = proposalApplierFromEnv({ DATA_MCP_GITHUB_TOKEN: 'tok' }, { fetchImpl })
     expect(ap).not.toBeNull()
     await ap!.apply({ title: 't', rationale: 'r', branch: 'proposal/t', pieces: [piece], downstream: [], validation: [] })
@@ -69,14 +70,120 @@ describe('冲突预检与 nothing_to_apply', () => {
     expect(seen.every((r) => r.method === 'GET')).toBe(true)
   })
 
-  it('404 ⇒ 视为新文件（本任务只走到预检通过前的 rejected/unknown 映射留给 Task 2；这里断言不误判 conflict）', async () => {
-    const { fetchImpl } = fakeGithub([
+  it('404 ⇒ 视为新文件（不误判 conflict；走完整写入通路至 applied）', async () => {
+    const { fetchImpl, seen } = fakeGithub([
       refRoute,
-      { match: /\/contents\//, reply: () => ({ status: 404, body: { message: 'Not Found' } }) },
+      { match: /\/contents\//, reply: (rec) => rec.method === 'PUT'
+        ? { status: 201, body: { commit: { sha: 'c1' } } }
+        : { status: 404, body: { message: 'Not Found' } } },
+      { match: /\/git\/refs$/, reply: () => ({ status: 201, body: { ref: 'refs/heads/proposal/t' } }) },
+      { match: /\/pulls$/, reply: () => ({ status: 201, body: { number: 1, html_url: 'http://x/1' } }) },
     ])
     const ap = createProposalApplier({ repo, token: 't' }, { fetchImpl })
-    // Task 1 阶段：新文件尚未有后续流程 ⇒ 以 github_rejected 收口（Task 2 会改成完整 applied 路径）
+    // Task 2 起：新文件走完整通路（建分支 → PUT → draft PR），404 不再以 github_rejected 收口
     const out = await ap.apply({ title: 't', rationale: 'r', branch: 'proposal/t', pieces: [piece], downstream: [], validation: [] })
+    expect(out.kind).toBe('applied')
+    expect(seen.some((r) => r.method === 'PUT')).toBe(true)
+  })
+})
+
+describe('写入通路（分支 → PUT → draft PR）', () => {
+  const happyRoutes = () => {
+    const seen: Rec[] = []
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      const method = init?.method ?? 'GET'
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
+      seen.push({ url: u, method, body })
+      const path = u.replace(/^https:\/\/api\.github\.com/, '')
+      const j = (status: number, body2?: unknown) => new Response(body2 === undefined ? undefined : JSON.stringify(body2), { status })
+      if (/\/git\/ref\/heads\/main$/.test(path)) return j(200, { object: { sha: 'base000' } })
+      if (/\/contents\/contracts%2F/.test(path) && method === 'GET') return j(404, { message: 'Not Found' })
+      if (/\/git\/refs$/.test(path) && method === 'POST') return j(201, { ref: body!.ref })
+      if (/\/contents\/contracts%2F/.test(path) && method === 'PUT') return j(201, { commit: { sha: 'c1' } })
+      if (/\/pulls$/.test(path) && method === 'POST') return j(201, { number: 42, html_url: 'https://github.com/x/pull/42' })
+      throw new Error(`unexpected ${method} ${path}`)
+    }) as unknown as typeof fetch
+    return { fetchImpl, seen }
+  }
+
+  const input = (extra?: Partial<Parameters<ReturnType<typeof createProposalApplier>['apply']>[0]>) =>
+    ({ title: '加字段', rationale: '需要新列', branch: 'proposal/jia-zi-duan', pieces: [piece], downstream: [], validation: [], ...extra })
+
+  it('成功路径：ref → contents GET → git/refs → PUT → pulls；回包齐', async () => {
+    const { fetchImpl, seen } = happyRoutes()
+    const ap = createProposalApplier({ repo, token: 't' }, { fetchImpl })
+    const out = await ap.apply(input({ downstream: [{ path: 'dbt/models/x', why: '要补 staging', kind: 'required' }], validation: [{ path: 'nodes[0]', message: '缺 label' }] }))
+    expect(out).toEqual({ kind: 'applied', branch: 'proposal/jia-zi-duan', prUrl: 'https://github.com/x/pull/42', prNumber: 42, commitCount: 1, skipped: [] })
+    const postRefs = seen.find((r) => r.url.endsWith('/git/refs') && r.method === 'POST')
+    expect((postRefs!.body as { ref: string }).ref).toBe('refs/heads/proposal/jia-zi-duan')
+    const pull = seen.find((r) => r.url.endsWith('/pulls') && r.method === 'POST')
+    const pullBody = pull!.body as { title: string; draft: boolean; body: string; base: string }
+    expect(pullBody.draft).toBe(true)
+    expect(pullBody.base).toBe('main')
+    expect(pullBody.body).toContain('dbt/models/x')      // downstream 进 PR body
+    expect(pullBody.body).toContain('缺 label')           // validation 进 PR body
+    const put = seen.find((r) => r.method === 'PUT')
+    expect((put!.body as { branch: string; content: string }).branch).toBe('proposal/jia-zi-duan')
+    expect((put!.body as { content: string }).content).toBe(b64(piece.content))
+  })
+
+  it('分支撞名（422）⇒ 换 -<6hex> 后缀重试并成功；PR 用最终分支名', async () => {
+    const seen: Rec[] = []
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = String(url); const method = init?.method ?? 'GET'
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
+      seen.push({ url: u, method, body })
+      const path = u.replace(/^https:\/\/api\.github\.com/, '')
+      const j = (status: number, body2?: unknown) => new Response(body2 === undefined ? undefined : JSON.stringify(body2), { status })
+      if (/\/git\/ref\/heads\/main$/.test(path)) return j(200, { object: { sha: 'base000' } })
+      if (/\/contents\/contracts%2F/.test(path) && method === 'GET') return j(404)
+      if (/\/git\/refs$/.test(path) && method === 'POST') {
+        return (body as { ref: string }).ref === 'refs/heads/proposal/jia-zi-duan' ? j(422, { message: 'already exists' }) : j(201, {})
+      }
+      if (/\/contents\/contracts%2F/.test(path) && method === 'PUT') return j(201, { commit: { sha: 'c1' } })
+      if (/\/pulls$/.test(path) && method === 'POST') return j(201, { number: 7, html_url: 'http://x/7' })
+      throw new Error(`unexpected ${method} ${path}`)
+    }) as unknown as typeof fetch
+    const ap = createProposalApplier({ repo, token: 't' }, { fetchImpl })
+    const out = await ap.apply(input())
+    expect(out.kind).toBe('applied')
+    if (out.kind === 'applied') expect(out.branch).toMatch(/^proposal\/jia-zi-duan-[0-9a-f]{6}$/)
+  })
+
+  it('PUT 阶段 403 ⇒ github_rejected，detail 带已建分支名（部分提交可观测）', async () => {
+    const seen: Rec[] = []
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = String(url); const method = init?.method ?? 'GET'
+      seen.push({ url: u, method, body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined })
+      const path = u.replace(/^https:\/\/api\.github\.com/, '')
+      const j = (status: number, body2?: unknown) => new Response(body2 === undefined ? undefined : JSON.stringify(body2), { status })
+      if (/\/git\/ref\/heads\/main$/.test(path)) return j(200, { object: { sha: 'base000' } })
+      if (/\/contents\/contracts%2F/.test(path) && method === 'GET') return j(404)
+      if (/\/git\/refs$/.test(path) && method === 'POST') return j(201, {})
+      return j(403, { message: 'Resource not accessible by personal access token' })
+    }) as unknown as typeof fetch
+    const ap = createProposalApplier({ repo, token: 't' }, { fetchImpl })
+    const out = await ap.apply(input())
     expect(out.kind).toBe('github_rejected')
+    if (out.kind === 'github_rejected') expect(out.detail).toContain('proposal/jia-zi-duan')
+  })
+
+  it('pulls 500 ⇒ unknown + 已建分支名', async () => {
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = String(url); const method = init?.method ?? 'GET'
+      const path = u.replace(/^https:\/\/api\.github\.com/, '')
+      const j = (status: number, body2?: unknown) => new Response(body2 === undefined ? undefined : JSON.stringify(body2), { status })
+      if (/\/git\/ref\/heads\/main$/.test(path)) return j(200, { object: { sha: 'base000' } })
+      if (/\/contents\/contracts%2F/.test(path) && method === 'GET') return j(404)
+      if (/\/git\/refs$/.test(path) && method === 'POST') return j(201, {})
+      if (/\/contents\/contracts%2F/.test(path) && method === 'PUT') return j(201, { commit: { sha: 'c1' } })
+      if (/\/pulls$/.test(path) && method === 'POST') return j(502, { message: 'upstream' })
+      throw new Error(`unexpected ${method} ${path}`)
+    }) as unknown as typeof fetch
+    const ap = createProposalApplier({ repo, token: 't' }, { fetchImpl })
+    const out = await ap.apply(input())
+    expect(out.kind).toBe('unknown')
+    if (out.kind === 'unknown') expect(out.branch).toMatch(/^proposal\/jia-zi-duan/)
   })
 })
