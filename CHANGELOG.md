@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.193.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.193.0...v0.193.1) - 2026-10-24
+- 【修复】data: item_price 271 单店节点合并为 6 批量节点——乐檬 429 限流减量 98% ([#1036](https://github.com/MYTech-Co-LTD/platform-core/pull/1036), [3663d29](https://github.com/MYTech-Co-LTD/platform-core/commit/3663d29d680557b49304be9a6df6f50d601373cb))
+
+
 ## [0.193.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.192.0...v0.193.0) - 2026-10-24
 - 【新增】data: 聚合面组件化 P3.3 影子波——4 族度量迁生成器（#1031） ([#1033](https://github.com/MYTech-Co-LTD/platform-core/pull/1033), [9c42efd](https://github.com/MYTech-Co-LTD/platform-core/commit/9c42efd13c731b742c7dd824fe9c3cb53416c4d3))
 
