@@ -1,0 +1,830 @@
+{
+  "name": "lemeng.member.summary.l0.3120",
+  "nodes": [
+    {
+      "id": "w0",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "w0",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.customeranalysissummary.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"
+          },
+          "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"whoami\", \"arguments\": {}}}",
+          "paginationType": "none",
+          "responseFormat": "xml",
+          "rawResponseDestination": "/workspace/.duckle-raw/whoami-${datetime}.sse",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "g0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g0",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/whoami-${datetime}.sse')"
+        }
+      }
+    },
+    {
+      "id": "g1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g1",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()"
+        }
+      }
+    },
+    {
+      "id": "g2",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g2",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input"
+        }
+      }
+    },
+    {
+      "id": "d0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d0",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "g3",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g3",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}' UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) WHERE w.branch_num IS NULL"
+        }
+      }
+    },
+    {
+      "id": "d1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d1",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "gv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gv",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${date-1d}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${date-1d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'ms-' || '${ENV:SYSTEM_BOOK}' || '-member_summary-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'ms-<book>-member_summary-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('ms-' || '${ENV:SYSTEM_BOOK}' || '-member_summary-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'ms-[0-9]+-member_summary-[0-9]{8}T[0-9]{6}Z')"
+        }
+      }
+    },
+    {
+      "id": "dv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dv",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入"
+        }
+      }
+    },
+    {
+      "id": "p1",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_sale_type",
+            "type": "int64"
+          },
+          {
+            "name": "order_sale_type_name",
+            "type": "string"
+          },
+          {
+            "name": "receive_money",
+            "type": "decimal"
+          },
+          {
+            "name": "receipt_coupon_share_money",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_nums",
+            "type": "int64"
+          },
+          {
+            "name": "customer_ave_price_no_coupon",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_ave_price",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_vip_money",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_vip_nums",
+            "type": "int64"
+          },
+          {
+            "name": "customer_vip_ave_price",
+            "type": "decimal"
+          },
+          {
+            "name": "member_customer_price",
+            "type": "decimal"
+          },
+          {
+            "name": "relat_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "relat_rate_vip",
+            "type": "decimal"
+          },
+          {
+            "name": "buy_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "item_sale_cost",
+            "type": "decimal"
+          },
+          {
+            "name": "item_sale_profit",
+            "type": "decimal"
+          },
+          {
+            "name": "item_sale_profit_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.customeranalysissummary.find",
+          "method": "POST",
+          "body": "{\"bizday_start\":\"${date-1d}\",\"bizday_end\":\"${date-1d}\",\"summary_types\":[\"order_sale_type\",\"bizday\"],\"page_number\":1,\"page_size\":100}",
+          "responsePath": "/result/rows",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "merge",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "merge",
+        "componentId": "ctl.merge",
+        "properties": {
+          "sql": "SELECT * FROM \"p1\" UNION ALL BY NAME SELECT * FROM \"p2\" UNION ALL BY NAME SELECT * FROM \"p3\" UNION ALL BY NAME SELECT * FROM \"p4\""
+        }
+      }
+    },
+    {
+      "id": "shape",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "shape",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  'ms-' || '${ENV:SYSTEM_BOOK}' || '-member_summary-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-1d}' AS DATE) AS bizday,\n  CAST(o.order_sale_type AS INTEGER) AS order_sale_type,\n  CAST(o.order_sale_type_name AS VARCHAR) AS order_sale_type_name,\n  CAST(o.receive_money AS DECIMAL(14,2)) AS receive_money,\n  CAST(o.receipt_coupon_share_money AS DECIMAL(14,2)) AS receipt_coupon_share_money,\n  CAST(o.customer_nums AS BIGINT) AS customer_nums,\n  CAST(o.customer_ave_price_no_coupon AS DECIMAL(14,2)) AS customer_ave_price_no_coupon,\n  CAST(o.customer_ave_price AS DECIMAL(14,2)) AS customer_ave_price,\n  CAST(o.customer_vip_money AS DECIMAL(14,2)) AS customer_vip_money,\n  CAST(o.customer_vip_nums AS BIGINT) AS customer_vip_nums,\n  CAST(o.customer_vip_ave_price AS DECIMAL(14,2)) AS customer_vip_ave_price,\n  CAST(o.member_customer_price AS DECIMAL(14,2)) AS member_customer_price,\n  CAST(o.relat_rate AS DECIMAL(18,8)) AS relat_rate,\n  CAST(o.relat_rate_vip AS DECIMAL(18,8)) AS relat_rate_vip,\n  CAST(o.buy_rate AS DECIMAL(18,8)) AS buy_rate,\n  CAST(o.item_sale_cost AS DECIMAL(14,2)) AS item_sale_cost,\n  CAST(o.item_sale_profit AS DECIMAL(14,2)) AS item_sale_profit,\n  CAST(o.item_sale_profit_rate AS DECIMAL(18,8)) AS item_sale_profit_rate,\n  CAST(92 AS INTEGER) AS branch_num,\n  CAST('沾益02' AS VARCHAR) AS branch_code,\n  CAST('熊喵曲靖沾益2店' AS VARCHAR) AS branch_name\nFROM input o"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "bizday": "not_null",
+            "order_sale_type": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/member_summary/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/all.parquet",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd",
+          "connectionRef": "zos"
+        }
+      }
+    },
+    {
+      "id": "p2",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p2",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_sale_type",
+            "type": "int64"
+          },
+          {
+            "name": "order_sale_type_name",
+            "type": "string"
+          },
+          {
+            "name": "receive_money",
+            "type": "decimal"
+          },
+          {
+            "name": "receipt_coupon_share_money",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_nums",
+            "type": "int64"
+          },
+          {
+            "name": "customer_ave_price_no_coupon",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_ave_price",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_vip_money",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_vip_nums",
+            "type": "int64"
+          },
+          {
+            "name": "customer_vip_ave_price",
+            "type": "decimal"
+          },
+          {
+            "name": "member_customer_price",
+            "type": "decimal"
+          },
+          {
+            "name": "relat_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "relat_rate_vip",
+            "type": "decimal"
+          },
+          {
+            "name": "buy_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "item_sale_cost",
+            "type": "decimal"
+          },
+          {
+            "name": "item_sale_profit",
+            "type": "decimal"
+          },
+          {
+            "name": "item_sale_profit_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.customeranalysissummary.find",
+          "method": "POST",
+          "body": "{\"bizday_start\":\"${date-1d}\",\"bizday_end\":\"${date-1d}\",\"summary_types\":[\"order_sale_type\",\"bizday\"],\"page_number\":1,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p3",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p3",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_sale_type",
+            "type": "int64"
+          },
+          {
+            "name": "order_sale_type_name",
+            "type": "string"
+          },
+          {
+            "name": "receive_money",
+            "type": "decimal"
+          },
+          {
+            "name": "receipt_coupon_share_money",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_nums",
+            "type": "int64"
+          },
+          {
+            "name": "customer_ave_price_no_coupon",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_ave_price",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_vip_money",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_vip_nums",
+            "type": "int64"
+          },
+          {
+            "name": "customer_vip_ave_price",
+            "type": "decimal"
+          },
+          {
+            "name": "member_customer_price",
+            "type": "decimal"
+          },
+          {
+            "name": "relat_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "relat_rate_vip",
+            "type": "decimal"
+          },
+          {
+            "name": "buy_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "item_sale_cost",
+            "type": "decimal"
+          },
+          {
+            "name": "item_sale_profit",
+            "type": "decimal"
+          },
+          {
+            "name": "item_sale_profit_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.customeranalysissummary.find",
+          "method": "POST",
+          "body": "{\"bizday_start\":\"${date-1d}\",\"bizday_end\":\"${date-1d}\",\"summary_types\":[\"order_sale_type\",\"bizday\"],\"page_number\":1,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p4",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p4",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "order_sale_type",
+            "type": "int64"
+          },
+          {
+            "name": "order_sale_type_name",
+            "type": "string"
+          },
+          {
+            "name": "receive_money",
+            "type": "decimal"
+          },
+          {
+            "name": "receipt_coupon_share_money",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_nums",
+            "type": "int64"
+          },
+          {
+            "name": "customer_ave_price_no_coupon",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_ave_price",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_vip_money",
+            "type": "decimal"
+          },
+          {
+            "name": "customer_vip_nums",
+            "type": "int64"
+          },
+          {
+            "name": "customer_vip_ave_price",
+            "type": "decimal"
+          },
+          {
+            "name": "member_customer_price",
+            "type": "decimal"
+          },
+          {
+            "name": "relat_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "relat_rate_vip",
+            "type": "decimal"
+          },
+          {
+            "name": "buy_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "item_sale_cost",
+            "type": "decimal"
+          },
+          {
+            "name": "item_sale_profit",
+            "type": "decimal"
+          },
+          {
+            "name": "item_sale_profit_rate",
+            "type": "decimal"
+          },
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.customeranalysissummary.find",
+          "method": "POST",
+          "body": "{\"bizday_start\":\"${date-1d}\",\"bizday_end\":\"${date-1d}\",\"summary_types\":[\"order_sale_type\",\"bizday\"],\"page_number\":1,\"page_size\":100}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-w0-g0",
+      "source": "w0",
+      "target": "g0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g0-g1",
+      "source": "g0",
+      "target": "g1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g1-g2",
+      "source": "g1",
+      "target": "g2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g2-d0",
+      "source": "g2",
+      "target": "d0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d0-g3",
+      "source": "d0",
+      "target": "g3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g3-d1",
+      "source": "g3",
+      "target": "d1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d1-gv",
+      "source": "d1",
+      "target": "gv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gv-dv",
+      "source": "gv",
+      "target": "dv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p1",
+      "source": "dv",
+      "target": "p1",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p1-merge",
+      "source": "p1",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-merge-shape",
+      "source": "merge",
+      "target": "shape",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-shape-gate",
+      "source": "shape",
+      "target": "gate",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gate-sink",
+      "source": "gate",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_dv_p2",
+      "source": "dv",
+      "target": "p2",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e_p2_merge",
+      "source": "p2",
+      "target": "merge",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_dv_p3",
+      "source": "dv",
+      "target": "p3",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e_p3_merge",
+      "source": "p3",
+      "target": "merge",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_dv_p4",
+      "source": "dv",
+      "target": "p4",
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e_p4_merge",
+      "source": "p4",
+      "target": "merge",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}
