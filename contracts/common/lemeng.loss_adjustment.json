@@ -1,0 +1,181 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "loss_adjustment",
+  "owner": "data-platform",
+  "description": "乐檬库存调整单（nhsoft.ama.ai.adjustment.order.find；#1047 P1 2026-10-25 接源）。【行粒度】一行 = 账套×采集bizday×调整单（无 items 明细申报，明细仅在 memo 文本）。【窗口】查询窗 = `${date-1d}` 纯 yyyy-MM-dd（该端点带时分秒报 DateTimeParseException——2026-10-25 实测；与 ama 费用系不同）。【分页】page_number/page_size=100，result 为数组无 count ⇒ 空页耗尽+第 10 页哨兵。【报损判定】direction='出库' 且 cause ∈ {来货损,自然损,试吃,…}（真机锚：店92/10-01..19 三 cause 合计 806.64 与乐檬报表逐分）。【采集范围】全店（不传 branch_nums=授权门店）。注意 otherinout（客户费用）不是报损宿主——审核窗全量仅补贴/补损两类。",
+  "layout": {
+    "prefix": "lemeng/loss_adjustment",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "system_book",
+      "bizday"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id。每 bizday 分区只写一次，重跑覆盖同 key。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "批次标记（采集 run id）",
+      "expr": "'adj-' || '${ENV:SYSTEM_BOOK}' || '-loss_adjustment-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'"
+    },
+    {
+      "name": "system_book",
+      "type": "varchar",
+      "nullable": false,
+      "description": "账套（采集范围=3120）；分区键",
+      "expr": "'${ENV:SYSTEM_BOOK}'"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "业务日期（=查询窗口日=制单日期族；纯 yyyy-MM-dd）；分区键",
+      "expr": "CAST('${date-1d}' AS DATE)"
+    },
+    {
+      "name": "order_no",
+      "type": "varchar",
+      "nullable": false,
+      "description": "调整单号（OO…；自然键）",
+      "expr": "CAST(o.order_no AS VARCHAR)"
+    },
+    {
+      "name": "order_type",
+      "type": "varchar",
+      "nullable": true,
+      "description": "单据类型（真样本「库存调整单」）",
+      "expr": "CAST(o.order_type AS VARCHAR)"
+    },
+    {
+      "name": "branch_num",
+      "type": "int",
+      "nullable": false,
+      "description": "归属门店编号（报损计入哪家店）",
+      "expr": "CAST(o.branch_num AS INTEGER)"
+    },
+    {
+      "name": "business_date",
+      "type": "varchar",
+      "nullable": true,
+      "description": "营业日期（与 bizday=制单族可能差；归属以 bizday 计）",
+      "expr": "CAST(o.business_date AS VARCHAR)"
+    },
+    {
+      "name": "state_code",
+      "type": "int",
+      "nullable": true,
+      "description": "单据状态码（3=制单|审核）",
+      "expr": "CAST(o.state_code AS INTEGER)"
+    },
+    {
+      "name": "state_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "状态名（真样本「制单|审核」）",
+      "expr": "CAST(o.state_name AS VARCHAR)"
+    },
+    {
+      "name": "total_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "调整金额（出库报损为正数原值）",
+      "expr": "CAST(o.total_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "operator",
+      "type": "varchar",
+      "nullable": true,
+      "description": "操作员",
+      "expr": "CAST(o.operator AS VARCHAR)"
+    },
+    {
+      "name": "memo",
+      "type": "varchar",
+      "nullable": true,
+      "description": "备注（部分含商品明细描述）",
+      "expr": "CAST(o.memo AS VARCHAR)"
+    },
+    {
+      "name": "department",
+      "type": "varchar",
+      "nullable": true,
+      "description": "部门（真样本「水果部」）",
+      "expr": "CAST(o.department AS VARCHAR)"
+    },
+    {
+      "name": "creator",
+      "type": "varchar",
+      "nullable": true,
+      "description": "制单人",
+      "expr": "CAST(o.creator AS VARCHAR)"
+    },
+    {
+      "name": "create_time",
+      "type": "varchar",
+      "nullable": true,
+      "description": "制单时间",
+      "expr": "CAST(o.create_time AS VARCHAR)"
+    },
+    {
+      "name": "auditor",
+      "type": "varchar",
+      "nullable": true,
+      "description": "审核人",
+      "expr": "CAST(o.auditor AS VARCHAR)"
+    },
+    {
+      "name": "audit_time",
+      "type": "varchar",
+      "nullable": true,
+      "description": "审核时间",
+      "expr": "CAST(o.audit_time AS VARCHAR)"
+    },
+    {
+      "name": "storehouse_num",
+      "type": "bigint",
+      "nullable": true,
+      "description": "仓库编号",
+      "expr": "CAST(o.storehouse_num AS BIGINT)"
+    },
+    {
+      "name": "direction",
+      "type": "varchar",
+      "nullable": true,
+      "description": "方向（出库=报损/盘亏；入库=盘盈）",
+      "expr": "CAST(o.direction AS VARCHAR)"
+    },
+    {
+      "name": "cause",
+      "type": "varchar",
+      "nullable": false,
+      "description": "调整原因（真样本枚举：来货损/自然损/试吃；cause_code 003 等）",
+      "expr": "CAST(o.cause AS VARCHAR)"
+    },
+    {
+      "name": "cause_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "原因编码",
+      "expr": "CAST(o.cause_code AS VARCHAR)"
+    },
+    {
+      "name": "related_order_no",
+      "type": "varchar",
+      "nullable": true,
+      "description": "关联单号",
+      "expr": "CAST(o.related_order_no AS VARCHAR)"
+    }
+  ]
+}

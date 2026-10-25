@@ -183,3 +183,12 @@ sources:
           pagination: '由 duckle **父/子管线**写入：父 lemeng.recon.preagg 按 ≤100 家切块（itemKey=item_key，各块独立水位）→ 子 lemeng.recon.preagg.item 逐块跑并写自己的 chunk 分区'
 
 
+
+      - name: loss_adjustment
+        description: '乐檬**库存调整单**（#1047 P1 2026-10-25 契约）：行 = 调整单；查询窗=制单日期族（纯 yyyy-MM-dd）；接口 nhsoft.ama.ai.adjustment.order.find。报损三类 cause（来货损/自然损/试吃）direction=出库；result 数组无 count ⇒ 哨兵页翻页。'
+        meta:
+          path_convention: 'lemeng/loss_adjustment/system_book=<账套>/bizday=<日期>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_loss_adjustment_prefix\") }}/system_book=*/bizday=*/all.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '静态页扇出（page_number/page_size=100，哨兵同构）+ ctl.merge；result 数组无 count'
