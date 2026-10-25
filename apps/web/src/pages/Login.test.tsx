@@ -49,6 +49,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.resetAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('LoginPage（运行时品牌）', () => {
@@ -290,6 +291,27 @@ describe('LoginPage（运行时品牌）', () => {
     render(<LoginPage />)
 
     expect(await screen.findByTestId('brand-panel')).not.toHaveClass(s.brandDark)
+  })
+
+  it('⑦ 企微内置浏览器（wxwork UA）：挂载即整页跳服务端 /silent 静默免登', async () => {
+    // state 由服务端 /silent 种 HttpOnly cookie 绑定（auth-wecom.ts），前端自拼 authorize URL
+    // 会被回调 BAD_STATE 拒掉——钉死入口只能是 /silent（issue #1047 企微免登热修回归）
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Linux; Android) wxwork/4.1.27' })
+    mockApi({ '/api/platform/branding': () => jsonResponse(BRANDING_PASSWORD_ONLY) })
+
+    render(<LoginPage />)
+
+    await waitForLocation('/api/platform/auth/wecom/silent')
+  })
+
+  it('⑧ 桌面浏览器（非 wxwork UA）：不触发免登跳转', async () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh) Chrome/126.0 Safari/537.36' })
+    mockApi({ '/api/platform/branding': () => jsonResponse(BRANDING_PASSWORD_ONLY) })
+
+    render(<LoginPage />)
+
+    await screen.findByText('Platform')
+    expect(window.location.pathname).toBe('/login')
   })
 })
 
