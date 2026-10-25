@@ -192,3 +192,12 @@ sources:
           partition_keys: ['system_book', 'bizday']
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
           pagination: '静态页扇出（page_number/page_size=100，哨兵同构）+ ctl.merge；result 数组无 count'
+
+      - name: member_summary
+        description: '乐檬**会员销售汇总**（#1047 P5 2026-10-25 契约）：行 = 门店×营业日×订单类型汇总；接口 nhsoft.report.ai.customeranalysissummary.find；**无分页**（responsePath=/result/rows）；branch_nums 必传 ≤100 家 ⇒ 四批静态扇出。会员口径=全部 order_sale_type 的 customer_vip_* 合计。'
+        meta:
+          path_convention: 'lemeng/member_summary/system_book=<账套>/bizday=<日期>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_member_summary_prefix\") }}/system_book=*/bizday=*/all.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '无分页（page_number 报不支持）；单请求全量'
