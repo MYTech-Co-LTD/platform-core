@@ -376,26 +376,5 @@
     "last_run_duration_ms": null,
     "last_run_error": null,
     "next_run_at": null
-  },
-  {
-    "id": "panel-lemeng.member.summary.l0.3120",
-    "pipeline_id": "lemeng.member.summary.l0.3120",
-    "name": "lemeng.member.summary.l0.3120",
-    "enabled": true,
-    "kind": {
-      "type": "cron",
-      "expr": "55 14,16,18,20,22 * * *"
-    },
-    "timezone": "Asia/Shanghai",
-    "misfire": "all",
-    "catchup": {
-      "maxCatchupRuns": 31,
-      "maxCatchupAgeDays": 45
-    },
-    "last_run_at": null,
-    "last_run_status": null,
-    "last_run_duration_ms": null,
-    "last_run_error": null,
-    "next_run_at": null
   }
 ]

@@ -29,5 +29,5 @@ select
   r['cause_code']::varchar as cause_code,
   r['related_order_no']::varchar as related_order_no
 from read_parquet(
-'s3://{{ var("zos_bucket") }}/{{ var("lemeng_loss_adjustment_prefix") }}/system_book=*/bizday=*/all.parquet'
+'s3://{{{{ var("zos_bucket") }}}}/{{{{ var("lemeng_loss_adjustment_prefix") }}}}/system_book=*/bizday=*/all.parquet'
 ) r
