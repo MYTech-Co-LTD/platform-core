@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.197.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.196.1...v0.197.0) - 2026-10-25
+- 【新增】web: 企微内自动静默免登——登录页 wxwork UA 自动跳企微授权 (#1047) ([#1050](https://github.com/MYTech-Co-LTD/platform-core/pull/1050), [ab564c7](https://github.com/MYTech-Co-LTD/platform-core/commit/ab564c799617a11917143e899be41614d84435f5))
+
+
 ## [0.196.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.196.0...v0.196.1) - 2026-10-25
 - 【修复】data: 报损/会员 staging 四重大括号热修——lemeng 域物化冻结恢复 (#1047) ([#1049](https://github.com/MYTech-Co-LTD/platform-core/pull/1049), [871320c](https://github.com/MYTech-Co-LTD/platform-core/commit/871320c0dec478d0eac1b587c932f244dd2d5ab6))
 
