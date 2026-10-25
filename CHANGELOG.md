@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.196.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.195.2...v0.196.0) - 2026-10-25
+- 【新增】data: 熊喵月度报告数据面补齐——费用回填+报损调整单采集与语义层 (#1047) ([#1048](https://github.com/MYTech-Co-LTD/platform-core/pull/1048), [9a18d3a](https://github.com/MYTech-Co-LTD/platform-core/commit/9a18d3a80df99dc06e773b54f52d691bb364901b))
+
+
 ## [0.195.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.195.1...v0.195.2) - 2026-10-25
 - 【修复】data: item_price schema 申报 branch/pos_variant type json→string——提示文本行不再炸在上游解析 ([#1046](https://github.com/MYTech-Co-LTD/platform-core/pull/1046), [ce80f82](https://github.com/MYTech-Co-LTD/platform-core/commit/ce80f8246a5f4c4e90e2d0cf079142129c876a53))
 
