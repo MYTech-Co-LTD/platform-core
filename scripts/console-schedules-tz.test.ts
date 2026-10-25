@@ -36,6 +36,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.wholesale.out.l0.3120': '45 14,16,18,20,22 * * *',
     'panel-lemeng.client.l0.3120': '55 14,16,18,20,22 * * *',
     'panel-lemeng.wholesale.return.l0.3120': '55 14,16,18,20,22 * * *',
+    'panel-lemeng.member.summary.l0.3120': '55 14,16,18,20,22 * * *',
     'panel-lemeng.recon.preagg': '40 0 * * *',
   },
   '64188': {
@@ -78,8 +79,8 @@ describe('console 排班时区统一（spec §10.6）：25 条全显式 Asia/Sha
     })
   }
 
-  it('合计恰 26 条（3120×18 + 64188×7 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
+  it('合计恰 27 条（3120×19 + 64188×7 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
     const total = Object.values(EXPECTED).reduce((n, m) => n + Object.keys(m).length, 0)
-    expect(total).toBe(26)
+    expect(total).toBe(27)
   })
 })
