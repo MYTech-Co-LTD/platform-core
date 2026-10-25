@@ -24,6 +24,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.retail.close.l1': '0 0 * * *',
     'panel-lemeng.dim.branch.l0': '0 14,16,18,20,22 * * *',
     'panel-lemeng.branch.expense.l0.3120': '5 14,16,18,20,22 * * *',
+    'panel-lemeng.loss.adjustment.l0.3120': '5 14,16,18,20,22 * * *',
     'panel-lemeng.dim.item_price.l0.3120': '15 14,16,18,20,22 * * *',
     'panel-lemeng.client.expense.l0.3120': '15 14,16,18,20,22 * * *',
     'panel-lemeng.request.order.l0.3120': '20 14,16,18,20,22 * * *',
