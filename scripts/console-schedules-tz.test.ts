@@ -1,6 +1,6 @@
 // console-schedules-tz.test.ts — 业务排班时区统一门禁（spec 2026-10-15 §10.6，2026-10-16 用户拍板）。
 //
-// 钉什么：deploy/duckle/console/schedules/ 下两本种子（3120×17 + 64188×7，共 24 条）必须
+// 钉什么：deploy/duckle/console/schedules/ 下两本种子（3120×18 + 64188×7，共 26 条）必须
 //   ① 全部显式 `timezone: 'Asia/Shanghai'`（含原先缺省无字段的 9 条）；
 //   ② `kind.expr` 与 §10.6 转换表**逐字**一致（旧 UTC expr +8h）。
 //   ⚠️ **2026-10-20 订正（#931）**：非销售采集统一到 **14–24 点每 2 小时**（`M 14,16,18,20,22 * * *`），
@@ -80,6 +80,6 @@ describe('console 排班时区统一（spec §10.6）：25 条全显式 Asia/Sha
 
   it('合计恰 26 条（3120×18 + 64188×7 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
     const total = Object.values(EXPECTED).reduce((n, m) => n + Object.keys(m).length, 0)
-    expect(total).toBe(25)
+    expect(total).toBe(26)
   })
 })
