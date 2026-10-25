@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.197.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.197.0...v0.197.1) - 2026-10-25
+- 【修复】web: 企微免登改跳服务端 /silent——客户端拼 Casdoor authorize 必 BAD_STATE 且 unused 变量挡构建 (#1047) ([#1051](https://github.com/MYTech-Co-LTD/platform-core/pull/1051), [b794c24](https://github.com/MYTech-Co-LTD/platform-core/commit/b794c24e7647997ca853c340c998bd84f0b10146))
+
+
 ## [0.197.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.196.1...v0.197.0) - 2026-10-25
 - 【新增】web: 企微内自动静默免登——登录页 wxwork UA 自动跳企微授权 (#1047) ([#1050](https://github.com/MYTech-Co-LTD/platform-core/pull/1050), [ab564c7](https://github.com/MYTech-Co-LTD/platform-core/commit/ab564c799617a11917143e899be41614d84435f5))
 
