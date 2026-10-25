@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.196.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.196.0...v0.196.1) - 2026-10-25
+- 【修复】data: 报损/会员 staging 四重大括号热修——lemeng 域物化冻结恢复 (#1047) ([#1049](https://github.com/MYTech-Co-LTD/platform-core/pull/1049), [871320c](https://github.com/MYTech-Co-LTD/platform-core/commit/871320c0dec478d0eac1b587c932f244dd2d5ab6))
+
+
 ## [0.196.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.195.2...v0.196.0) - 2026-10-25
 - 【新增】data: 熊喵月度报告数据面补齐——费用回填+报损调整单采集与语义层 (#1047) ([#1048](https://github.com/MYTech-Co-LTD/platform-core/pull/1048), [9a18d3a](https://github.com/MYTech-Co-LTD/platform-core/commit/9a18d3a80df99dc06e773b54f52d691bb364901b))
 
