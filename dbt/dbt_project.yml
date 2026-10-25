@@ -102,6 +102,8 @@ vars:
   # 出处：contracts/common/lemeng.branch_expense.json 的 `layout.prefix` / `partitionBy`。
   # 消费者 = `stg_lemeng_branch_expense`（唯一）；采集范围仅 3120 主账套。
   lemeng_branch_expense_prefix: 'lemeng/branch_expense'
+  lemeng_loss_adjustment_prefix: 'lemeng/loss_adjustment'
+  lemeng_member_summary_prefix: 'lemeng/member_summary'
   # 乐檬**客户费用**前缀（W2 2026-10-13；行=客户费用单；不含 bucket / 协议）：
   # 出处：contracts/common/lemeng.client_expense.json 的 `layout.prefix` / `partitionBy`。
   # 消费者 = `stg_lemeng_client_expense`（唯一）；采集范围仅 3120 主账套。
