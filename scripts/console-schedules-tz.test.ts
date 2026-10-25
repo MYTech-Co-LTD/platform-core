@@ -59,7 +59,7 @@ function readBook(book: string): Array<{ id?: unknown; kind?: { type?: unknown; 
   return JSON.parse(readFileSync(path.join(ROOT, 'deploy', 'duckle', 'console', 'schedules', `${book}.json`), 'utf8'))
 }
 
-describe('console 排班时区统一（spec §10.6）：24 条全显式 Asia/Shanghai + expr 逐字合表', () => {
+describe('console 排班时区统一（spec §10.6）：25 条全显式 Asia/Shanghai + expr 逐字合表', () => {
   for (const [book, expected] of Object.entries(EXPECTED)) {
     it(`book=${book}：条目集与期望表恰同集，timezone 全显式 Asia/Shanghai，expr 逐字一致`, () => {
       const entries = readBook(book)
@@ -78,7 +78,7 @@ describe('console 排班时区统一（spec §10.6）：24 条全显式 Asia/Sha
     })
   }
 
-  it('合计恰 25 条（3120×17 + 64188×7 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
+  it('合计恰 26 条（3120×18 + 64188×7 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
     const total = Object.values(EXPECTED).reduce((n, m) => n + Object.keys(m).length, 0)
     expect(total).toBe(25)
   })
