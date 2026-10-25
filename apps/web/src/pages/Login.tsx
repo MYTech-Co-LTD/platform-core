@@ -80,6 +80,20 @@ export default function LoginPage() {
   useEffect(() => {
     document.title = branding.productName
   }, [branding.productName])
+  // WeCom in-app silent login (wxwork UA) -> Casdoor wecom_silent provider, snsapi_base
+  useEffect(() => {
+    if (!/wxwork/i.test(navigator.userAgent)) return
+    const origin = window.location.origin
+    const target = window.location.pathname + window.location.search
+    const p = new URLSearchParams({
+      client_id: "shanhaiyiguo-app",
+      response_type: "code",
+      redirect_uri: origin + "/api/platform/auth/wecom/callback",
+      scope: "openid profile email",
+      state: Math.random().toString(36).slice(2),
+    })
+    window.location.assign("https://sso.hookflow.cn/login/oauth/authorize?" + p)
+  }, [])
 
   // 白名单过滤已知方法；空集兜底单账密（评审 fix-4：租户配置错也不留零 Tab 白页）
   const known = (Object.keys(METHOD_LABELS) as Array<keyof typeof METHOD_LABELS>).filter((m) =>
