@@ -80,19 +80,12 @@ export default function LoginPage() {
   useEffect(() => {
     document.title = branding.productName
   }, [branding.productName])
-  // WeCom in-app silent login (wxwork UA) -> Casdoor wecom_silent provider, snsapi_base
+  // 企微内置浏览器静默免登：整页跳服务端 /silent（服务端直连企微 snsapi_base——issue #30：
+  // 经 Casdoor authorize 会撞自建应用可信域名限制；state 由服务端种 HttpOnly cookie 绑定、
+  // 回调校验一致，前端不得自拼 authorize URL）
   useEffect(() => {
     if (!/wxwork/i.test(navigator.userAgent)) return
-    const origin = window.location.origin
-    const target = window.location.pathname + window.location.search
-    const p = new URLSearchParams({
-      client_id: "shanhaiyiguo-app",
-      response_type: "code",
-      redirect_uri: origin + "/api/platform/auth/wecom/callback",
-      scope: "openid profile email",
-      state: Math.random().toString(36).slice(2),
-    })
-    window.location.assign("https://sso.hookflow.cn/login/oauth/authorize?" + p)
+    window.location.assign('/api/platform/auth/wecom/silent')
   }, [])
 
   // 白名单过滤已知方法；空集兜底单账密（评审 fix-4：租户配置错也不留零 Tab 白页）

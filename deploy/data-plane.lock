@@ -1,4 +1,4 @@
-sha256-of-rest e07d065d2ad37fd28ea6678a1524f81cadaee208178b8a96f0ea13c107879b8e
+sha256-of-rest 15781a6a7544709ac52298c0de58777e0bb71972a98c0e3202a6c205faff6165
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -22,7 +22,7 @@ d4789190d6f6953a2d0f490096c3eb820a3c8266b24437e2aeed4025608c4260 contracts/commo
 81895b6736040f34f479157faaa94b7d8be89b0049dde0c75b14ddb4decb8229 contracts/common/lemeng.wholesale_return.json ${REPO}/contracts/common/lemeng.wholesale_return.json 0644
 a9209aad12e3020eefc11f94f51d935c49d1bff9eabf94fb0262d182a6a37c7a contracts/customers/README.md ${REPO}/contracts/customers/README.md 0644
 c7a160228022f75f82d07d3ed4e1d9a07307bf6fc91cc0f012dc7e77913f922f dbt/README.md ${REPO}/dbt/README.md 0644
-55c513ef3c9ad176386fd792e5016ebe8126701d6c4d9ec7439ef888e222f72e dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
+690155d0be75f44357d6a55e3287403caf5e2d91c1e968633970f0509a5220ae dbt/dbt_project.yml ${REPO}/dbt/dbt_project.yml 0644
 26d553e851b08aed2e399284165f9b314bf09a3ae13047a03386270a12f4f2b6 dbt/macros/generate_schema_name.sql ${REPO}/dbt/macros/generate_schema_name.sql 0644
 d9a9697ca436b57024e8f2bf998ae08b91e42dd0698616b6198827bda6f49d41 dbt/macros/subject_org.sql ${REPO}/dbt/macros/subject_org.sql 0644
 f0d45cde1b1a35109bf8f9214cfb23f9be642ae0844daa16352a2277dfa82530 dbt/models/README.md ${REPO}/dbt/models/README.md 0644
@@ -61,8 +61,8 @@ d4bd75baeaaf110df58027a35ac59355c710bd114b1987234fe59d7d4d91ed9e dbt/models/leme
 4ae58c36566be04fdb5bc672a667a976d03ad23d61ffc1139fe8e8dad17e2c8f dbt/models/lemeng/staging/stg_lemeng_item.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_item.sql 0644
 7019e2a3aadcf711764dacc00bae1c359981b15a059ecd8b2e59b74e20a3ef08 dbt/models/lemeng/staging/stg_lemeng_item_price.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_item_price.sql 0644
 a617cd42a55661eba8ef6217afa4c9d4e947b51a5c5411325977a5d2539e2556 dbt/models/lemeng/staging/stg_lemeng_item_purchase.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_item_purchase.sql 0644
-ea8d9ac0bd008a4148ca5c1709982aeef09eefbc1ac72d253743f60d02e715e4 dbt/models/lemeng/staging/stg_lemeng_loss_adjustment.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_loss_adjustment.sql 0644
-5549e732221da8e941ab1121959df9d31433fa1e7c240c729d04ef6358e32b2b dbt/models/lemeng/staging/stg_lemeng_member_summary.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_member_summary.sql 0644
+5a25be9a0003d62cdbab853f7ff05898cba246933d33234e0c6993f82e75f6db dbt/models/lemeng/staging/stg_lemeng_loss_adjustment.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_loss_adjustment.sql 0644
+3a1b15114b10c8891e7b1a02495b975f7df098043b9e4d0db7c84b616077cc5c dbt/models/lemeng/staging/stg_lemeng_member_summary.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_member_summary.sql 0644
 ed0ecb00ad78f81bb44fcaf6da06ab97a652365a10c502165ec2ddf943c89469 dbt/models/lemeng/staging/stg_lemeng_recon_source.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_recon_source.sql 0644
 2238cd20e5f7d6889fb873ab53b8d1c95a0a3b0c021efd5d392ffa97f4c0a986 dbt/models/lemeng/staging/stg_lemeng_request_order.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_request_order.sql 0644
 941a5d64b5b5b984569b0f80643c6a6c5d06ae289e2562f05a846336cbcfa254 dbt/models/lemeng/staging/stg_lemeng_retail_order_line.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_retail_order_line.sql 0644
