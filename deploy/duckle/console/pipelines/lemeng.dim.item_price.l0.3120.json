@@ -247,7 +247,7 @@
      },
      {
       "name": "branch",
-      "type": "json"
+      "type": "string"
      },
      {
       "name": "item_num",
@@ -259,7 +259,7 @@
      },
      {
       "name": "pos_variant",
-      "type": "json"
+      "type": "string"
      },
      {
       "name": "last_edit_time",
@@ -345,7 +345,7 @@
      },
      {
       "name": "branch",
-      "type": "json"
+      "type": "string"
      },
      {
       "name": "item_num",
@@ -357,7 +357,7 @@
      },
      {
       "name": "pos_variant",
-      "type": "json"
+      "type": "string"
      },
      {
       "name": "last_edit_time",
@@ -443,7 +443,7 @@
      },
      {
       "name": "branch",
-      "type": "json"
+      "type": "string"
      },
      {
       "name": "item_num",
@@ -455,7 +455,7 @@
      },
      {
       "name": "pos_variant",
-      "type": "json"
+      "type": "string"
      },
      {
       "name": "last_edit_time",
@@ -541,7 +541,7 @@
      },
      {
       "name": "branch",
-      "type": "json"
+      "type": "string"
      },
      {
       "name": "item_num",
@@ -553,7 +553,7 @@
      },
      {
       "name": "pos_variant",
-      "type": "json"
+      "type": "string"
      },
      {
       "name": "last_edit_time",
@@ -639,7 +639,7 @@
      },
      {
       "name": "branch",
-      "type": "json"
+      "type": "string"
      },
      {
       "name": "item_num",
@@ -651,7 +651,7 @@
      },
      {
       "name": "pos_variant",
-      "type": "json"
+      "type": "string"
      },
      {
       "name": "last_edit_time",
@@ -737,7 +737,7 @@
      },
      {
       "name": "branch",
-      "type": "json"
+      "type": "string"
      },
      {
       "name": "item_num",
@@ -749,7 +749,7 @@
      },
      {
       "name": "pos_variant",
-      "type": "json"
+      "type": "string"
      },
      {
       "name": "last_edit_time",
