@@ -1,0 +1,188 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "member_summary",
+  "owner": "data-platform",
+  "description": "乐檬会员销售汇总（nhsoft.report.ai.customeranalysissummary.find；#1047 P5 2026-10-25 接源）。【行粒度】一行 = 账套×采集bizday×门店×订单类型。【窗口】查询窗 = `${date-1d}` 纯 yyyy-MM-dd。【分页】**无分页**（page_number 报不支持；result={total_count,rows} 嵌套 ⇒ responsePath=/result/rows）。【branch_nums】必传且 ≤100 家（#1047 实测：272 店全量报错）⇒ 管线四批静态扇出（whoami 授权清单快照 2026-10-25；新店加入须更新批次）。【会员口径】**全部 order_sale_type 的 customer_vip_* 字段合计**（漏「拼团」型差 82.19/455 客单中 9 单——2026-10-25 网关逐日累加锚：店92/10-01..19 vip=24284.39/nums=455/占比 47.36% 与乐檬报表逐分）。【采集范围】branch_nums=[92]（报告首期目标店；全量待 foreach 父子管线，后续项）。",
+  "layout": {
+    "prefix": "lemeng/member_summary",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "system_book",
+      "bizday"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 采集 run id。每 bizday 分区只写一次，重跑覆盖同 key。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "批次标记（采集 run id）",
+      "expr": "'ms-' || '${ENV:SYSTEM_BOOK}' || '-member_summary-' || replace(replace('${datetime}','-',''),'_','T') || 'Z'"
+    },
+    {
+      "name": "system_book",
+      "type": "varchar",
+      "nullable": false,
+      "description": "账套（采集范围=3120）；分区键",
+      "expr": "'${ENV:SYSTEM_BOOK}'"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "营业日（=查询窗口日，纯 yyyy-MM-dd）；分区键",
+      "expr": "CAST('${date-1d}' AS DATE)"
+    },
+    {
+      "name": "order_sale_type",
+      "type": "int",
+      "nullable": false,
+      "description": "订单类型编码（1=销售 3=拼团…；会员口径=全部类型 vip 字段合计）",
+      "expr": "CAST(o.order_sale_type AS INTEGER)"
+    },
+    {
+      "name": "order_sale_type_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "订单类型名",
+      "expr": "CAST(o.order_sale_type_name AS VARCHAR)"
+    },
+    {
+      "name": "receive_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "收款金额（全型合计）",
+      "expr": "CAST(o.receive_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "receipt_coupon_share_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "券分摊收款",
+      "expr": "CAST(o.receipt_coupon_share_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "customer_nums",
+      "type": "bigint",
+      "nullable": true,
+      "description": "客单数（全型）",
+      "expr": "CAST(o.customer_nums AS BIGINT)"
+    },
+    {
+      "name": "customer_ave_price_no_coupon",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "客单价（无券）",
+      "expr": "CAST(o.customer_ave_price_no_coupon AS DECIMAL(14,2))"
+    },
+    {
+      "name": "customer_ave_price",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "客单价",
+      "expr": "CAST(o.customer_ave_price AS DECIMAL(14,2))"
+    },
+    {
+      "name": "customer_vip_money",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "**会员销售**（该类型 vip 合计）",
+      "expr": "CAST(o.customer_vip_money AS DECIMAL(14,2))"
+    },
+    {
+      "name": "customer_vip_nums",
+      "type": "bigint",
+      "nullable": true,
+      "description": "**会员客单**",
+      "expr": "CAST(o.customer_vip_nums AS BIGINT)"
+    },
+    {
+      "name": "customer_vip_ave_price",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "会员客单价",
+      "expr": "CAST(o.customer_vip_ave_price AS DECIMAL(14,2))"
+    },
+    {
+      "name": "member_customer_price",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "会员客单价（别名，服务端同出）",
+      "expr": "CAST(o.member_customer_price AS DECIMAL(14,2))"
+    },
+    {
+      "name": "relat_rate",
+      "type": "decimal(18,8)",
+      "nullable": true,
+      "description": "目标完成率",
+      "expr": "CAST(o.relat_rate AS DECIMAL(18,8))"
+    },
+    {
+      "name": "relat_rate_vip",
+      "type": "decimal(18,8)",
+      "nullable": true,
+      "description": "会员目标完成率",
+      "expr": "CAST(o.relat_rate_vip AS DECIMAL(18,8))"
+    },
+    {
+      "name": "buy_rate",
+      "type": "decimal(18,8)",
+      "nullable": true,
+      "description": "购买率",
+      "expr": "CAST(o.buy_rate AS DECIMAL(18,8))"
+    },
+    {
+      "name": "item_sale_cost",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "销售成本",
+      "expr": "CAST(o.item_sale_cost AS DECIMAL(14,2))"
+    },
+    {
+      "name": "item_sale_profit",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "销售毛利",
+      "expr": "CAST(o.item_sale_profit AS DECIMAL(14,2))"
+    },
+    {
+      "name": "item_sale_profit_rate",
+      "type": "decimal(18,8)",
+      "nullable": true,
+      "description": "毛利率",
+      "expr": "CAST(o.item_sale_profit_rate AS DECIMAL(18,8))"
+    },
+    {
+      "name": "branch_num",
+      "type": "int",
+      "nullable": false,
+      "description": "归属门店（**shape 常量注入**：端点行不含店维，采集按 branch_nums=[92] 单店）",
+      "expr": "CAST(92 AS INTEGER)"
+    },
+    {
+      "name": "branch_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店编码（shape 常量）",
+      "expr": "CAST('沾益02' AS VARCHAR)"
+    },
+    {
+      "name": "branch_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店名（shape 常量）",
+      "expr": "CAST('熊喵曲靖沾益2店' AS VARCHAR)"
+    }
+  ]
+}
