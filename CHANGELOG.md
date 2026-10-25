@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.195.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.195.1...v0.195.2) - 2026-10-25
+- 【修复】data: item_price schema 申报 branch/pos_variant type json→string——提示文本行不再炸在上游解析 ([#1046](https://github.com/MYTech-Co-LTD/platform-core/pull/1046), [ce80f82](https://github.com/MYTech-Co-LTD/platform-core/commit/ce80f8246a5f4c4e90e2d0cf079142129c876a53))
+
+
 ## [0.195.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.195.0...v0.195.1) - 2026-10-24
 - 【修复】data: item_price 批量节点 merge 入边 targetHandle 补唯一序号（ctl.merge 单端口多入需 main_N） ([#1042](https://github.com/MYTech-Co-LTD/platform-core/pull/1042), [ea12c8d](https://github.com/MYTech-Co-LTD/platform-core/commit/ea12c8da50f6871991f778a11e4c9cafbc329afb))
 
