@@ -1125,3 +1125,18 @@ metrics:
       relation: vw_lemeng_retail_order_line
       columns:
         - { col: order_detail_std_price, grantedBy: data:cost }
+
+  - name: 'lemeng:loss:branch_amount'
+    label: 门店报损金额
+    definition: >-
+      报损/调整出库金额合计：库存调整单（direction 含出库=报损/盘亏、入库=盘盈）按原因（cause：
+      来货损/自然损/试吃 等）的 total_money 合计。真机锚：3120/店92/2026-10-01..19 三 cause
+      合计 806.64 与乐檬报表逐分（单数 10/17/8）。粒度 = 账套 × 制单日 × 门店 × 原因 × 方向。
+    expression: 'sum(fct_loss_adjustment.loss_money)'
+    grain: [system_book, bizday, branch_num, cause, direction]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+    sources:
+    - 's3://<bucket>/lemeng/loss_adjustment/system_book=<账套>/bizday=<日期>/all.parquet'
