@@ -31,5 +31,5 @@ select
   r['branch_code']::varchar as branch_code,
   r['branch_name']::varchar as branch_name
 from read_parquet(
-'s3://{{{{ var("zos_bucket") }}}}/{{{{ var("lemeng_member_summary_prefix") }}}}/system_book=*/bizday=*/all.parquet'
+'s3://{{ var("zos_bucket") }}/{{ var("lemeng_member_summary_prefix") }}/system_book=*/bizday=*/all.parquet'
 ) r
