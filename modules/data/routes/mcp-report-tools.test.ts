@@ -277,4 +277,63 @@ describePg('报表工具面（能提、不能发）', () => {
     expect(out).toMatchObject({ status: 'refused', error: 'CHART_REQUIRES_ADDITIVE', metricId: RATIO_ID })
     expect((await getReport(pool, ORG, id))!.version).toBe(v)
   })
+
+  // ── ai_text 工具面（Task 8）：描述里必须点名这个图型，写侧结构闸翻成工具级 refused ────
+  // 工具描述是 agent 认识图型的**唯一**入口——描述里没有 ai_text，它就只会画 line/bar/table。
+  it('tools/list：propose / revise 的描述点名 ai_text（并说明它与数据面板同报的约束）', async () => {
+    const tools = (await (await rpc(app(), { jsonrpc: '2.0', id: 9, method: 'tools/list' })).json())
+      .result.tools as { name: string; description: string }[]
+    for (const name of ['propose_report', 'revise_report_spec']) {
+      const description = tools.find((t) => t.name === name)!.description
+      expect(description).toContain('ai_text')
+      // 不点名约束的话 agent 会造「纯 ai_text 报表」，然后被拒得莫名其妙。
+      expect(description).toMatch(/数据面板|period/)
+    }
+  })
+
+  const AI_PERIOD = { mode: 'custom', from: '2026-10-01', to: '2026-10-19' }
+  const AI_PANEL = { chart: 'ai_text', title: '本月结论', focus: 'overview' }
+
+  it('propose 接受 ai_text（与数据面板同报 + 带 period）⇒ ok，且 get_report_spec 原样读回', async () => {
+    const out = await call('propose_report', {
+      title: 'AI 月报', spec: { period: AI_PERIOD, panels: [LEGAL_SPEC.panels[0], AI_PANEL] },
+    })
+    expect(out.status).toBe('ok')
+    const read = await call('get_report_spec', { id: out.id })
+    expect(read.spec).toEqual({
+      period: AI_PERIOD,
+      // 归一化后的形状：ai_text 的 span 由白名单补默认值，其余原样。
+      panels: [LEGAL_SPEC.panels[0], { ...AI_PANEL, span: 24 }],
+    })
+  })
+
+  it('propose 纯 ai_text（无数据面板）⇒ refused AI_TEXT_REQUIRES_DATA_PANEL，且不落行', async () => {
+    const out = await call('propose_report', {
+      title: '纯 AI 报表', spec: { period: AI_PERIOD, panels: [AI_PANEL] },
+    })
+    // 整份规格不成立 ⇒ 没有 metricId 可点名（extra 恒空）。
+    expect(out).toEqual({ status: 'refused', error: 'AI_TEXT_REQUIRES_DATA_PANEL' })
+    const rows = await pool.query('select 1 from data.reports where org = $1 and title = $2', [ORG, '纯 AI 报表'])
+    expect(rows.rowCount).toBe(0)
+  })
+
+  it('propose ai_text 缺 period ⇒ refused AI_TEXT_REQUIRES_PERIOD', async () => {
+    const out = await call('propose_report', {
+      title: '无期间 AI 报表', spec: { panels: [LEGAL_SPEC.panels[0], AI_PANEL] },
+    })
+    expect(out).toEqual({ status: 'refused', error: 'AI_TEXT_REQUIRES_PERIOD' })
+  })
+
+  it('revise 与 propose 同一道结构闸：纯 ai_text ⇒ AI_TEXT_REQUIRES_DATA_PANEL，行未变', async () => {
+    const id = await upsertReport(pool, ORG, {
+      title: '待改纯 AI', metabaseId: 0, embedParams: {}, requiredScope: 'data:manage',
+      renderer: 'platform', spec: { panels: [] },
+    })
+    const v = (await getReport(pool, ORG, id))!.version
+    const out = await call('revise_report_spec', {
+      id, expectedVersion: v, spec: { period: AI_PERIOD, panels: [AI_PANEL] },
+    })
+    expect(out).toEqual({ status: 'refused', error: 'AI_TEXT_REQUIRES_DATA_PANEL' })
+    expect((await getReport(pool, ORG, id))!.version).toBe(v)
+  })
 })

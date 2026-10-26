@@ -1863,6 +1863,49 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         expect(await res.json()).toEqual({ error: 'CHART_REQUIRES_ADDITIVE', metricId: COST_METRIC })
         expect(await versionOf(app, id)).toBe(v0)
       })
+
+      // ── ai_text 的结构闸（Task 8）：整份规格不成立 ⇒ 400，且**没有 metricId 可点名** ──
+      // 与「逐面板指标」那几档同一条 HTTP 通路，但响应体不带 metricId——把它当理由去改某个
+      // 面板会改错地方（问题在「整份规格缺什么」）。
+      const AI_PERIOD = { mode: 'custom', from: '2026-10-01', to: '2026-10-19' }
+      const aiPanel = { chart: 'ai_text', title: '本月结论', focus: 'overview' }
+
+      it('★ POST：纯 ai_text（无数据面板）⇒ 400 AI_TEXT_REQUIRES_DATA_PANEL，不带 metricId、一行不落', async () => {
+        const res = await post(manage().app, {
+          title: '纯 AI 报表', renderer: 'platform', spec: { period: AI_PERIOD, panels: [aiPanel] },
+        })
+        expect(res.status).toBe(400)
+        expect(await res.json()).toEqual({ error: 'AI_TEXT_REQUIRES_DATA_PANEL' })
+        expect((await pool.query(
+          'select count(*)::int as n from data.reports where org = $1 and title = $2', [ORG, '纯 AI 报表'],
+        )).rows[0].n).toBe(0)
+      })
+
+      it('★ POST：ai_text 与数据面板同报且带 period ⇒ 201（结构闸不误伤合法规格）', async () => {
+        const res = await post(manage().app, {
+          title: 'AI 月报', renderer: 'platform',
+          spec: { period: AI_PERIOD, panels: [metricPanel(ADDITIVE_METRIC), aiPanel] },
+        })
+        expect(res.status).toBe(201)
+      })
+
+      it('★ PUT /spec：AI_TEXT_REQUIRES_PERIOD / DATA_PANEL ⇒ 400 且无 metricId；拒 = 版本不动', async () => {
+        const { app } = manage()
+        const id = await createPlatform(app, 'AI 写入闸')
+        const cases: { spec: unknown; error: string }[] = [
+          // 有数据面板、缺 period ⇒ 期间闸
+          { spec: { panels: [metricPanel(ADDITIVE_METRIC), aiPanel] }, error: 'AI_TEXT_REQUIRES_PERIOD' },
+          // 有 period、缺数据面板 ⇒ 数据面闸
+          { spec: { period: AI_PERIOD, panels: [aiPanel] }, error: 'AI_TEXT_REQUIRES_DATA_PANEL' },
+        ]
+        for (const c of cases) {
+          const v0 = await versionOf(app, id)
+          const res = await putSpec(app, id, c.spec, v0)
+          expect(res.status).toBe(400)
+          expect(await res.json()).toEqual({ error: c.error })
+          expect(await versionOf(app, id)).toBe(v0)
+        }
+      })
     })
   })
 

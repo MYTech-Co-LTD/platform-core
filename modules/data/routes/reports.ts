@@ -220,7 +220,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       // line/bar/kpi 上的不可加指标在**建行时**就拒——否则报表看着正常、点进去 403，
       // 或者图表把不可加指标（比率/去重计数）沿维度求和出一份假数。
       // 分档：源未接入 = 本租户的接入状态（与 `/query` 403 同因）⇒ 403；其余 = 入参本身
-      // 不成立（调用方缺陷）⇒ 400。位置在**任何写之前**（拒 = 一行都不落）。
+      // 不成立（调用方缺陷）⇒ 400。ai_text 的结构闸（AI_TEXT_REQUIRES_DATA_PANEL / _PERIOD）
+      // 属后者，且没有 metricId 可点名（问题在整份规格）⇒ 只回 `error`。
+      // 位置在**任何写之前**（拒 = 一行都不落）。
       const adoptedSources = new Set(c.get(TENANT_SOURCES) ?? [])
       const metrics = validatePanelMetrics(spec.spec, catalog, adoptedSources)
       if (!metrics.ok) {
@@ -465,6 +467,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       const adoptedSources = new Set(c.get(TENANT_SOURCES) ?? [])
       const metrics = validatePanelMetrics(spec.spec, catalog, adoptedSources)
       if (!metrics.ok) {
+        // 与 POST 同档：源未接入 ⇒ 403；入参不成立（含 ai_text 的缺数据面板/缺期间）⇒ 400。
+        // 后者的 reason 不带 metricId（整份规格不成立，没有单个面板可点名）⇒ 只回 `error`。
         return c.json(
           { error: metrics.reason, ...('metricId' in metrics ? { metricId: metrics.metricId } : {}) },
           metrics.reason === 'METRIC_SOURCE_NOT_ADOPTED' ? 403 : 400,
