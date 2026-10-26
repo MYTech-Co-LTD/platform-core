@@ -13,7 +13,13 @@
 --   分区键顺序 `["system_book","bizday"]` 与管线的 sink `key` 逐段一致（backfill 另有 bf-*.parquet 同层文件，glob 一并吃）；见
 --   `deploy/duckle/console/pipelines/lemeng.dim.item_price.l0*.json` 的 sink 节点）。
 --
--- 【覆盖双账套】路径段写 `*/bizday=**/` 而不是钉单账套 —— 与 branch/item 同款：一个模型读两个
+-- 【run 层】2026-10-26 起 sink 在 `bizday=<日>/` 下**多一层 run 戳目录**（`${datetime}/all.parquet`，
+--   issue #1069：本管线 5 次/天而 snk.minio 只有覆盖写 ⇒ 日级 key 会让后一轮覆盖前一轮的增量）。
+--   ⇒ glob 写 `bizday=*/**/*.parquet` 而不是 `bizday=**/*.parquet`：单层形态匹配不到多出来的这一层，
+--   而新形态**同时**匹配历史单层老文件（2026-10-26 真机实测两种深度都命中）。行语义仍是「变更事件」，
+--   同日多轮不会互相覆盖，去重照旧落在 publish-dims 的 last_edit_time 最新窗口。
+--
+-- 【覆盖双账套】路径段写 `*/bizday=*/` 而不是钉单账套 —— 与 branch/item 同款：一个模型读两个
 --   账套分区（`system_book` 是**列**、不是 var）。
 --
 -- 列与空值性以 `contracts/common/lemeng.item_price.json` 为准（31 列全带，本层不加语义；
@@ -54,5 +60,5 @@ select
   r['max_real_price']::decimal(18,8) as max_real_price,
   r['min_real_price']::decimal(18,8) as min_real_price
 from read_parquet(
-  's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_price_prefix") }}/*/bizday=**/*.parquet'
+  's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_price_prefix") }}/*/bizday=*/**/*.parquet'
 ) r
