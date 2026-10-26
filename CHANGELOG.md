@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.200.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.200.1...v0.200.2) - 2026-10-26
+- 【修复】data: 会员汇总全店采集——summary_types 含 branch 等五处根因 ([#1061](https://github.com/MYTech-Co-LTD/platform-core/pull/1061), [a589b44](https://github.com/MYTech-Co-LTD/platform-core/commit/a589b444b586168903a9ea9bf00d164e6d4e8fd2))
+
+
 ## [0.200.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.200.0...v0.200.1) - 2026-10-26
 - 【修复】auth: 深链登录回跳丢查询串——三层 next 透传（SDK/静默/回调） ([#1060](https://github.com/MYTech-Co-LTD/platform-core/pull/1060), [7432b85](https://github.com/MYTech-Co-LTD/platform-core/commit/7432b8564446538ad9c1d29883f0e8b7ff65e406))
 
