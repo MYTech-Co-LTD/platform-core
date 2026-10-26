@@ -1,13 +1,50 @@
-// report-scope.ts — 报表 `requiredScope` 的派生（spec §4.2）。
+// report-scope.ts — 报表写入侧校验（spec §4.2）。
 //
-// 纯函数、无 IO：入参故意收窄到「派生动得到的两个字段」，这样单测不用造完整的 MetricDef，
+// 纯函数、无 IO：入参故意收窄到「校验动得到的字段」，这样单测不用造完整的 MetricDef，
 // 也让「这个函数不碰库」变成类型上的事实而不是约定。
 import type { ReportSpec } from './report-spec'
+
+/**
+ * 校验只看词表行的这四个字段（`MetricRow` 结构性满足它）：
+ * - `requiredScope`：页门派生（§4.2）
+ * - `totalable`：可加性（line/bar/kpi 不过合计就是假数）
+ * - `sourceSystem`：源裁剪（未接入的源的指标不得进报表；`null` = 本租户自己的 L2 行，恒可用）
+ */
+export interface ScopeRow {
+  id: string
+  requiredScope: string | null
+  totalable: boolean
+  sourceSystem: string | null
+}
 
 export type DeriveResult =
   | { ok: true; requiredScope: string | null }
   | { ok: false; reason: 'UNKNOWN_PANEL_METRIC'; metricId: string }
   | { ok: false; reason: 'CONFLICTING_PANEL_SCOPES'; scopes: string[] }
+
+export type ValidateResult =
+  | { ok: true }
+  | {
+    ok: false
+    reason: 'UNKNOWN_PANEL_METRIC' | 'METRIC_SOURCE_NOT_ADOPTED' | 'CHART_REQUIRES_ADDITIVE' | 'KPI_NOT_TOTALABLE'
+    metricId: string
+  }
+
+/**
+ * 面板引用的指标 id（**全部**，不是只取主指标）。
+ *
+ * ⚠️ text 面板没有 metricId ⇒ 必须跳过：按 `panel.metricId` 硬取会把它当成
+ *    「指向不存在的指标」拒掉，文字块就没法进报表。
+ * ⚠️ kpi 的分母是**第二个指标**：它的 scope 与源接入情况同样约束报表可见性，
+ *    漏掉分母 = 「主指标可见、分母 403」的报表在运行时才炸。
+ */
+function metricIdsOf(panel: ReportSpec['panels'][number]): string[] {
+  if (panel.chart === 'text') return []
+  if (panel.chart === 'kpi' && panel.denominatorMetricId !== undefined) {
+    return [panel.metricId, panel.denominatorMetricId]
+  }
+  return [panel.metricId]
+}
 
 /**
  * 从面板指标派生报表的 `requiredScope`——它是「**报表可见 ⇒ 每个面板的指标都可见**」
@@ -26,16 +63,53 @@ export type DeriveResult =
  */
 export function deriveRequiredScope(
   spec: ReportSpec,
-  catalog: readonly { id: string; requiredScope: string | null }[],
+  catalog: readonly ScopeRow[],
 ): DeriveResult {
   const scopes = new Set<string>()
   for (const panel of spec.panels) {
-    const metric = catalog.find((m) => m.id === panel.metricId)
-    if (metric === undefined) {
-      return { ok: false, reason: 'UNKNOWN_PANEL_METRIC', metricId: panel.metricId }
+    for (const id of metricIdsOf(panel)) {
+      const metric = catalog.find((m) => m.id === id)
+      if (metric === undefined) return { ok: false, reason: 'UNKNOWN_PANEL_METRIC', metricId: id }
+      if (metric.requiredScope !== null) scopes.add(metric.requiredScope)
     }
-    if (metric.requiredScope !== null) scopes.add(metric.requiredScope)
   }
   if (scopes.size > 1) return { ok: false, reason: 'CONFLICTING_PANEL_SCOPES', scopes: [...scopes] }
   return { ok: true, requiredScope: scopes.size === 0 ? null : [...scopes][0] }
+}
+
+/**
+ * 面板指标在**写入侧**的可发布性校验（spec §4.2 补强）：
+ *
+ * - `UNKNOWN_PANEL_METRIC`：面板指向词表里没有的指标（含 kpi 分母）。
+ * - `METRIC_SOURCE_NOT_ADOPTED`：指标所属源系统本租户未接入——它的 `/query` 会 403。
+ *   L2 行（`sourceSystem === null`）恒可用。
+ * - `CHART_REQUIRES_ADDITIVE`：line/bar 会沿维度求和，不可加指标（比率/去重计数）
+ *   求和出来是没有意义的数 ⇒ 写入即拒（table 展示明细不受此限）。
+ * - `KPI_NOT_TOTALABLE`：kpi 大数字本就是合计值，不可加指标放上去同样出假数。
+ *
+ * ⚠️ 校验顺序即**错误归因优先级**：未知指标先于源裁剪，源裁剪先于可加性——
+ *    同一面板有多个问题时点名最上游的那个，避免让人先修下游再被拦回来。
+ */
+export function validatePanelMetrics(
+  spec: ReportSpec,
+  catalog: readonly ScopeRow[],
+  adoptedSources: ReadonlySet<string>,
+): ValidateResult {
+  for (const panel of spec.panels) {
+    if (panel.chart === 'text') continue
+    for (const id of metricIdsOf(panel)) {
+      const metric = catalog.find((m) => m.id === id)
+      if (metric === undefined) return { ok: false, reason: 'UNKNOWN_PANEL_METRIC', metricId: id }
+      if (metric.sourceSystem !== null && !adoptedSources.has(metric.sourceSystem)) {
+        return { ok: false, reason: 'METRIC_SOURCE_NOT_ADOPTED', metricId: id }
+      }
+      if ((panel.chart === 'line' || panel.chart === 'bar') && !metric.totalable) {
+        return { ok: false, reason: 'CHART_REQUIRES_ADDITIVE', metricId: id }
+      }
+      if (panel.chart === 'kpi' && !metric.totalable) {
+        return { ok: false, reason: 'KPI_NOT_TOTALABLE', metricId: id }
+      }
+    }
+  }
+  return { ok: true }
 }
