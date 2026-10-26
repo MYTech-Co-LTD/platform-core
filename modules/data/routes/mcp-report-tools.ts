@@ -16,6 +16,7 @@ import { parseReportSpec } from '../domain/report-spec'
 import type { ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, validatePanelMetrics } from '../domain/report-scope'
 import { getReport, getReportVersion, listReports, updateSpec, upsertReport } from '../domain/report-store'
+import { getVersion } from '../domain/report-version'
 import type { McpDeps, McpToolGroup, McpToolResult } from './mcp-rpc'
 
 /**
@@ -71,10 +72,10 @@ export const reportTools: McpToolGroup = {
     if (deps.requester === null) return []
     return [
       { name: 'list_reports',
-        description: '列出本租户已有报表（标题 / 渲染器 / 页门 / 版本 / 面板数）。**提议新报表前先调它查重**。',
+        description: '列出本租户已有报表（标题 / 渲染器 / 页门 / 版本 / 面板数 / 已发布版本 / 是否有未发布改动）。**提议新报表前先调它查重**。',
         inputSchema: { type: 'object', properties: {}, required: [] } },
       { name: 'get_report_spec',
-        description: '读一张报表的当前规格与版本（改报前先读，不要凭记忆重写整份 spec）。',
+        description: '读一张报表的当前规格与版本（改报前先读，不要凭记忆重写整份 spec）。已发布的报表另带 publishedVersion / publishedAt。',
         inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
       { name: 'propose_report',
         description: [
@@ -116,6 +117,12 @@ export const reportTools: McpToolGroup = {
       return ok({ reports: rows.map((r) => ({
         id: r.id, title: r.title, renderer: r.renderer, requiredScope: r.requiredScope,
         version: r.version, panels: r.spec?.panels.length ?? null,
+        // 「已发布」看的是**发布指针**（`publishedVersion != null`），不是页门：发布时页门
+        // 会被重算成快照口径（可能仍是 null），指针才是唯一状态来源。
+        publishedVersion: r.publishedVersion,
+        // 发布后草稿又登记过（`data.reports.version` 前进了）⇒ 线上不是最新的。
+        // 未发布的行不算「有未发布改动」——它整张都还没上线。
+        hasUnpublishedChanges: r.publishedVersion !== null && r.version > (r.publishedDraftVersion ?? 0),
       })) })
     }
 
@@ -124,9 +131,16 @@ export const reportTools: McpToolGroup = {
       if (!parsed.success) return refused('INVALID_BODY')
       const row = await getReport(deps.pool, org, parsed.data.id)
       if (row === null) return refused('NOT_FOUND')
+      // 发布时间只在 `report_versions` 上（读路径 join 只带出版本号与草稿号），故按指针
+      // 再取一次那一版；未发布不查库。指针悬空（无 FK 兜底）⇒ 时间缺席，但版本号仍如实返回。
+      const published = row.publishedVersion === null
+        ? null
+        : await getVersion(deps.pool, org, row.id, row.publishedVersion)
       return ok({
         id: row.id, title: row.title, renderer: row.renderer,
         requiredScope: row.requiredScope, version: row.version, spec: row.spec,
+        publishedVersion: row.publishedVersion,
+        publishedAt: published?.publishedAt ?? null,
       })
     }
 
@@ -160,8 +174,10 @@ export const reportTools: McpToolGroup = {
       const row = await getReport(deps.pool, org, id)
       if (row === null) return refused('NOT_FOUND')
       if (row.renderer !== 'platform') return refused('RENDERER_NOT_SELF_DRAWN')
-      // ★ 结构落点②：已发布（页门清空）⇒ 拒
-      if (row.requiredScope === null) return refused('PUBLISHED_REPORT')
+      // ★ 结构落点②：已发布 ⇒ 拒。判据是**发布指针**非空（旧口径「页门清空」在定义版本
+      // 上线后不再等价：发布的快照页门可能本就为 null，而未发布的草稿页门也可能被改成 null）。
+      // 用指针而不是 join 出的 publishedVersion，指针悬空时也 fail-closed。
+      if (row.publishedVersionId !== null) return refused('PUBLISHED_REPORT')
       // 与 propose 同一道写入侧闸。放在「已发布 ⇒ 拒」之后：不可改的行不该先收到
       // 「指标不存在」这种**改不了**的错——那会误导 agent 去修一个它无权修的东西。
       const invalid = await validateSpec(deps, spec.spec)
