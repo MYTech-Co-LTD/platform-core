@@ -7,6 +7,10 @@
 -- 键 = 事件键 (system_book, bizday, branch_num, item_num, item_grade_num, last_edit_time)：
 --   R1 增量模型下行 = 变更事件，同 key 不同 last_edit_time 跨天多行是**合法**的
 --   ⇒ 唯一性必须含事件时间；少它则「同一天同一价格改两次」误红，多 bizday 维则跨天重改误红。
+--   ⚠️ 同一个事件（键 + last_edit_time 全相同）**结构性**会出现两次：run 目录布局下同日多轮各自落文件，
+--      而增量过滤是闭区间 ⇒ 水位边界事件被下一轮重取（2026-10-26 实测 108 组）。那份重复由
+--      `stg_lemeng_item_price` 自己的事件键去重消掉（见该模型头注【事件去重】）——本断言不改，
+--      它负责在去重失效时**红**。
 select
     system_book,
     bizday,
