@@ -1,23 +1,27 @@
 // SpecView.tsx — 平台自绘报表的渲染器（spec §5；计划 6 Task 4）。
 //
 // 数据纪律（Task 1 评审转办的判据，硬要求）：
-//  **只把 `panel.args` 原样转发给既有 `POST /query`，绝不解释、绝不加工**——args 的开放键名
+//  **面板 args 只来自「规格声明 + 筛选栏覆盖」两个源头，绝不做第三种加工**——args 的开放键名
 //  （租户自定义过滤参数）安全性全押在服务端 `authorize` 那条链上（unknown_param 拒绝 +
-//  保留键闸 + literal 转义）。渲染器若在这里「帮忙」加工，等于在授权链之外私开第二口径。
+//  保留键闸 + literal/rangeLiteral 转义）。渲染器若在链外「帮忙」加工，等于私开第二口径。
+//  筛选栏（#1047）：覆盖键**只能是面板 args 里已存在的键**（defaults 从规格反推），值仍是
+//  查询面的合法参数形状（{from,to} / 标量）——它就是 /query 参数面的查看态 UI，不是新口径。
 //  dims 是**渲染层**的透视轴（规格里声明的返回列怎么摆），不是查询参数——/query 的
 //  QueryBody 只有 `{metricId, args}`（routes/query.ts），dims 不进 body。
 //
 // 通路纪律（spec §5 / 计划 6 裁决 5）：面板数据走既有 `POST /query`，**一个面板一次**——
 // 语义裁剪、授权、按调用者身份注入主体值、逐查询落 `data.query_audit` 全部复用；
-// 不造「整报表数据」端点（那会把 N 次授权/审计合并成一次）。
+// 不造「整报表数据」端点（那会把 N 次授权/审计合并成一次）。门店下拉走既有
+// `GET /branches`（同一 data:query 门；下拉是筛选辅助，拉不到不挡页面）。
 //
-// 渲染质量归我们（spec §5「代价明写」），两条实测坑的修法落在本文件：
+// 渲染质量归我们（spec §5「代价明写」），实测坑的修法落在本文件：
 //  ① 多系列要**透视数据集**（buildOption）：spec §5 实测「分组数据按『过滤同组』塞进系列
 //     会把多出来的点**连成一条线**」⇒ 每个系列一个 `data` 数组、`xAxis.data` 用维度值。
 //  ② 画布要收 `overflow`（EChart 容器 + option.grid 显式留白）：spec §5 实测
 //     「图表画布会**溢出到隔壁格子**」。
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Card, Col, Row, Spin, Table, Typography } from 'antd'
+import { Alert, Button, Card, Col, DatePicker, Row, Select, Spin, Table, Typography } from 'antd'
+import dayjs, { Dayjs } from 'dayjs'
 import { init, use } from 'echarts/core'
 import type { EChartsCoreOption, EChartsType } from 'echarts/core'
 import { BarChart, LineChart } from 'echarts/charts'
@@ -131,6 +135,15 @@ function EChart({ option }: { option: EChartsCoreOption }) {
   return <div ref={ref} style={{ width: '100%', height: 280, overflow: 'hidden' }} />
 }
 
+/** 筛选栏的 RangePicker 取值：override 优先，回落规格默认。形状坏（非 {from,to}）⇒ null（不受控）。 */
+function bizdayRange(override: Record<string, unknown>, defaults: Record<string, unknown>): [Dayjs, Dayjs] | null {
+  const v = (override.bizday ?? defaults.bizday) as { from?: unknown; to?: unknown } | undefined
+  if (v === null || typeof v !== 'object' || typeof v.from !== 'string' || typeof v.to !== 'string') return null
+  const f = dayjs(v.from)
+  const t = dayjs(v.to)
+  return f.isValid() && t.isValid() ? [f, t] : null
+}
+
 /** 单个面板的呈现：查询未回 ⇒ Spin；denied ⇒ 人话（不拖垮整页）；table ⇒ antd Table；图 ⇒ EChart。 */
 function PanelBody({ panel, result }: { panel: Panel; result: PanelResult | undefined }) {
   if (result === undefined) return <Spin size="small" />
@@ -177,6 +190,11 @@ export default function SpecView({ reportId, title, onClose }: { reportId: strin
   const [panels, setPanels] = useState<Panel[] | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [results, setResults] = useState<Record<number, PanelResult>>({})
+  // 筛选栏（#1047）：defaults 从规格 args 反推（键级），override 是用户改选的值；
+  // 查询时 {...panel.args, ...override}——覆盖键 ⊆ args 键，值仍走服务端授权链（见文件头）。
+  const [defaults, setDefaults] = useState<Record<string, unknown> | null>(null)
+  const [override, setOverride] = useState<Record<string, unknown>>({})
+  const [branches, setBranches] = useState<Array<{ branchNum: string; name: string }> | null>(null)
 
   useEffect(() => {
     apiGet(`/reports/${reportId}/spec`)
@@ -192,17 +210,33 @@ export default function SpecView({ reportId, title, onClose }: { reportId: strin
           return
         }
         setPanels(spec.panels)
+        // 筛选栏默认值：键级合并（任何面板出现过的参数键都给控件；值取首个面板的）
+        const merged: Record<string, unknown> = {}
+        for (const p of spec.panels) {
+          for (const [k, v] of Object.entries(p.args ?? {})) {
+            if (!(k in merged)) merged[k] = v
+          }
+        }
+        setDefaults(merged)
+        // 门店下拉：规格 args 带 system_book 才拉（拉不到不挡页面——筛选是辅助，非必需）
+        if (typeof merged.system_book === 'string' && merged.system_book !== '') {
+          apiGet(`/branches?system_book=${encodeURIComponent(merged.system_book)}`)
+            .then((bb) => setBranches((bb as { branches: Array<{ branchNum: string; name: string }> }).branches))
+            .catch(() => setBranches([]))
+        }
       })
       .catch((e) => setFailed(messageOf(e)))
   }, [reportId])
 
-  // 规格到了 ⇒ 逐面板查数据。每面板独立落自己的 state：一个面板 denied/出错**只塌自己那格**，
-  // 不拖垮整页（本文件的两条验收之一）。
+  // 规格到了 ⇒ 逐面板查数据（筛选变更 ⇒ override 变 ⇒ 整页重查）。每面板独立落自己的 state：
+  // 一个面板 denied/出错**只塌自己那格**，不拖垮整页（本文件的两条验收之一）。
   useEffect(() => {
     if (panels === null) return
+    setResults({})
     panels.forEach((p, i) => {
-      // ⚠️ args **原样转发**（文件头纪律）：body 只含 metricId + panel.args 逐字，别的东西都不加。
-      void apiSend('/query', 'POST', { metricId: p.metricId, args: p.args })
+      // args 纪律（文件头）：规格声明 + 筛选覆盖，除此之外不加工。
+      const args = { ...p.args, ...override }
+      void apiSend('/query', 'POST', { metricId: p.metricId, args })
         .then((b) => {
           const out = b as { columns: string[]; rows: unknown[][]; truncated: boolean }
           setResults((prev) => ({
@@ -221,7 +255,7 @@ export default function SpecView({ reportId, title, onClose }: { reportId: strin
           }))
         })
     })
-  }, [panels])
+  }, [panels, override])
 
   return (
     <div>
@@ -234,16 +268,49 @@ export default function SpecView({ reportId, title, onClose }: { reportId: strin
       ) : panels === null ? (
         <Spin />
       ) : (
-        // 面板 span 走 antd 24 栅格（规格字段 span: 1–24，语义就是 Col 的 span）
-        <Row gutter={[12, 12]}>
-          {panels.map((p, i) => (
-            <Col key={i} span={p.span}>
-              <Card size="small" title={p.title}>
-                <PanelBody panel={p} result={results[i]} />
-              </Card>
-            </Col>
-          ))}
-        </Row>
+        <>
+          {/* 筛选栏（#1047）：只为规格 args 里出现过的参数键出控件；改选即重查（override）。
+              窄屏换行（flexWrap），控件全部 small 档。 */}
+          {defaults !== null && (defaults.bizday !== undefined || defaults.branch_num !== undefined) && (
+            <div data-testid="spec-filters" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+              {defaults.bizday !== undefined && (
+                <DatePicker.RangePicker
+                  size="small"
+                  value={bizdayRange(override, defaults)}
+                  allowClear={false}
+                  onChange={(_, strs) => {
+                    if (strs[0] !== '' && strs[1] !== '') {
+                      setOverride((o) => ({ ...o, bizday: { from: strs[0], to: strs[1] } }))
+                    }
+                  }}
+                />
+              )}
+              {defaults.branch_num !== undefined && (
+                <span data-testid="branch-filter">
+                  <Select
+                    size="small"
+                    style={{ minWidth: 200 }}
+                    showSearch
+                    optionFilterProp="label"
+                    loading={branches === null}
+                    value={String(override.branch_num ?? defaults.branch_num)}
+                    options={(branches ?? []).map((b) => ({ value: b.branchNum, label: `${b.branchNum} · ${b.name}` }))}
+                    onChange={(v) => setOverride((o) => ({ ...o, branch_num: v }))}
+                  />
+                </span>
+              )}
+            </div>
+          )}
+          <Row gutter={[12, 12]}>
+            {panels.map((p, i) => (
+              <Col key={i} span={p.span}>
+                <Card size="small" title={p.title}>
+                  <PanelBody panel={p} result={results[i]} />
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        </>
       )}
     </div>
   )

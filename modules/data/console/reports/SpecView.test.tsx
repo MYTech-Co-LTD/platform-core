@@ -1,11 +1,11 @@
 // SpecView.test.tsx — 平台自绘渲染器（计划 6 Task 4）：拉规格 → 逐面板 POST /query → 渲染。
 //
 // ★ 本文件最重的两条（Task 1 评审转办的判据 + spec §5 实测坑）：
-//  ① **args 原样转发**：渲染器只把 `panel.args` 逐字塞进 /query 的 body，**不解释、不加工**——
-//     args 的开放键名（租户自定义过滤参数）安全性全押在服务端 `authorize` 那条链上
-//     （unknown_param 拒绝 + 保留键闸 + literal 转义）。渲染器若在这里「帮忙」，
-//     等于在授权链之外私开第二口径。夹具的 args 因此**必须非空且带混合类型**——
-//     args 是 `{}` 时「转发」与「硬编码 `{}`」不可区分（假绿）。
+//  ① **args 两个源头**：渲染器把「`panel.args` + 筛选栏覆盖（#1047）」塞进 /query 的 body，
+//     **不做第三种加工**——args 的开放键名（租户自定义过滤参数）安全性全押在服务端
+//     `authorize` 那条链上（unknown_param 拒绝 + 保留键闸 + literal/rangeLiteral 转义）。
+//     覆盖键 ⊆ 面板 args 键（筛选栏只为出现过的键出控件）。夹具的 args 因此**必须非空
+//     且带混合类型**——args 是 `{}` 时「转发」与「硬编码 `{}`」不可区分（假绿）。
 //  ② **多系列按透视数据集装配**：每个系列一个 `data` 数组、`xAxis.data` 用维度值——
 //     把多出来的点塞进一个系列会被连成一条线（spec §5 实测）。
 //
@@ -46,7 +46,7 @@ interface Panel {
   title: string
   metricId: string
   dims: string[]
-  args: Record<string, string | number | boolean>
+  args: Record<string, unknown>
   span: number
 }
 
@@ -55,10 +55,18 @@ interface Panel {
  * `denied` 集合里的口径回 403 `{status:'denied'}`（照 routes/query.ts 的真实映射），
  * 其余回 `okQueries` 里的结果（缺省一张单列表）。
  */
-function stub(spec: { panels: Panel[] }, okQueries: Record<string, { columns: string[]; rows: unknown[][] }>, denied: Set<string>) {
+function stub(
+  spec: { panels: Panel[] },
+  okQueries: Record<string, { columns: string[]; rows: unknown[][] }>,
+  denied: Set<string>,
+  extraGet: Record<string, unknown> = {},
+) {
   m.mockImplementation(async (url: string, init?: RequestInit) => {
     calls.push({ url, init })
     if (/\/reports\/[^/]+\/spec$/.test(url)) return json({ spec, version: 7 })
+    for (const [suffix, body] of Object.entries(extraGet)) {
+      if (url.endsWith(suffix)) return json(body)
+    }
     if (url.endsWith('/query')) {
       const body = JSON.parse(String(init?.body)) as { metricId: string }
       if (denied.has(body.metricId)) {
@@ -118,6 +126,44 @@ describe('自绘渲染器 SpecView', () => {
     expect(JSON.parse(String(q.init?.body))).toEqual({
       metricId: 'lemeng:retail:net_sales',
       args: { system_book: '3120', include_refund: false },
+    })
+  })
+
+  it('★ 筛选栏：默认值取自面板 args；改门店 ⇒ 以覆盖后的 args 重查（#1047）', async () => {
+    stub({
+      panels: [{
+        chart: 'table', title: '会员销售', metricId: 'lemeng:member:branch_vip_money', dims: [],
+        args: { system_book: '3120', branch_num: '92', bizday: { from: '2026-10-01', to: '2026-10-19' } },
+        span: 24,
+      }],
+    }, { 'lemeng:member:branch_vip_money': { columns: ['value'], rows: [[24284.39]] } }, new Set(), {
+      '/branches?system_book=3120': { branches: [
+        { branchNum: '91', name: '熊喵曲靖沾益1店' },
+        { branchNum: '92', name: '熊喵曲靖沾益2店' },
+      ] },
+    })
+    renderView()
+
+    expect(await screen.findByText('24284.39')).toBeInTheDocument()
+    // 筛选栏渲染：门店默认值来自规格 args（名称来自 /branches）
+    expect(screen.getByTestId('spec-filters')).toBeInTheDocument()
+    expect(screen.getByText('92 · 熊喵曲靖沾益2店')).toBeInTheDocument()
+
+    // 改门店 92 → 91：antd Select 交互（mouseDown 开 + 点选项；combobox role 配方照 metrics/index.test）
+    const combos = screen.getAllByRole('combobox')
+    fireEvent.mouseDown(combos[combos.length - 1])
+    fireEvent.click(await screen.findByTitle('91 · 熊喵曲靖沾益1店'))
+
+    // 重查：POST body 的 args.branch_num 被覆盖，其余参数保持规格值
+    await waitFor(() => {
+      const posts = calls.filter((c) => c.url.endsWith('/query'))
+      expect(posts.length).toBeGreaterThanOrEqual(2)
+      const last = JSON.parse(String(posts[posts.length - 1].init?.body)) as { args: Record<string, unknown> }
+      expect(last.args).toMatchObject({
+        branch_num: '91',
+        system_book: '3120',
+        bizday: { from: '2026-10-01', to: '2026-10-19' },
+      })
     })
   })
 
