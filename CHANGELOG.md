@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.199.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.199.0...v0.199.1) - 2026-10-26
+- 【修复】data: 会员管线 w0 换 /agi/mcp + gate 放宽 order_sale_type——数据机实测五处修复回仓 (#1047) ([#1058](https://github.com/MYTech-Co-LTD/platform-core/pull/1058), [fb51bcb](https://github.com/MYTech-Co-LTD/platform-core/commit/fb51bcbeec47c2c8cac140cd908c340ed685423b))
+
+
 ## [0.199.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.198.0...v0.199.0) - 2026-10-26
 - 【新增】data: 会员汇总全店采集——三批静态 branch_nums + BIZDAY 参数化回填管线 (#1047) ([#1056](https://github.com/MYTech-Co-LTD/platform-core/pull/1056), [b01c2da](https://github.com/MYTech-Co-LTD/platform-core/commit/b01c2da8c448af5fa964a0051c01e100128c79ce))
 
