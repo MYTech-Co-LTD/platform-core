@@ -34,7 +34,7 @@ const ROWS = [
   { id: 'r3', title: '自绘大盘', requiredScope: null, renderer: 'platform', version: 3 },
 ]
 
-function renderPage(scopes: string[]) {
+function renderPage(scopes: string[], initialEntry = '/console/data/reports') {
   const router = createMemoryRouter(
     [
       {
@@ -42,7 +42,7 @@ function renderPage(scopes: string[]) {
         children: [{ path: '/console/data/reports', element: <ReportsPage /> }],
       },
     ],
-    { initialEntries: ['/console/data/reports'] },
+    { initialEntries: [initialEntry] },
   )
   render(<RouterProvider router={router} />)
 }
@@ -169,6 +169,37 @@ describe('报表页签双视图', () => {
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/reports/r3/spec'))).toBe(true))
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/query'))).toBe(true))
     expect(calls.filter((c) => /\/reports\/[^/]+\/embed-url$/.test(c.url))).toHaveLength(1)   // 只有 metabase 那次
+  })
+
+  it('★ 深链 ?open=<id>：列表就绪后自动打开该自绘报表，无需点「打开」(#1047)', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports')) return json({ reports: ROWS.filter((r) => r.requiredScope === null) })
+      if (/\/reports\/[^/]+\/spec$/.test(url)) {
+        return json({ spec: { panels: [{ chart: 'table', title: '净销售额趋势', metricId: 'm1', dims: [], args: {}, span: 24 }] }, version: ROWS[2].version })
+      }
+      if (url.endsWith('/query')) return json({ status: 'ok', truncated: false, columns: ['value'], rows: [['5678']] })
+      return json({})
+    })
+    renderPage(['data:query'], '/console/data/reports?open=r3')
+
+    // 不点「打开」⇒ SpecView 直挂（拉规格 + 面板查询）
+    expect(await screen.findByText('净销售额趋势')).toBeInTheDocument()
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/reports/r3/spec'))).toBe(true))
+  })
+
+  it('★ 深链指向不存在/不可见的 id ⇒ 静默留在列表，不弹不炸 (#1047)', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports')) return json({ reports: ROWS.filter((r) => r.requiredScope === null) })
+      return json({})
+    })
+    renderPage(['data:query'], '/console/data/reports?open=no-such')
+
+    // 列表正常渲染；spec 端点一次都没被碰（不存在 silently nothing to open）
+    expect(await screen.findByText('自绘大盘')).toBeInTheDocument()
+    expect(await screen.findByText('销售日报')).toBeInTheDocument()
+    expect(calls.some((c) => /\/spec$/.test(c.url))).toBe(false)
   })
 
   it('发布：Popconfirm 确认 ⇒ PUT requiredScope=null', async () => {
