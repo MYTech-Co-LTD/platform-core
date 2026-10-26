@@ -59,6 +59,26 @@ export async function apiSend(path: string, method: 'POST' | 'PUT' | 'DELETE', b
   return res.status === 204 ? undefined : res.json()
 }
 
+/**
+ * 流式 POST（`ai_text` 的 SSE）：与 `apiSend` 同前缀、同失败体翻译，但**不解析 body**——
+ * 调用方拿 `res.body` 自己读事件流。
+ *
+ * ⚠️ 失败必须走 `toError`（先读错误体再抛）：SSE 端点在校验失败时回的是普通 JSON
+ * （404 NOT_FOUND / 400 NOT_AI_TEXT_PANEL / 502 NARRATIVE_FAILED），吞掉状态码会让界面
+ * 只剩「AI 不可用」，看不出是权限/未发布还是模型故障。
+ * `signal` 原样透传：切期间/切门店/卸载时中断旧流（否则 delta 会串到新请求的正文里）。
+ */
+export async function streamPost(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
+  const res = await platformFetch(PREFIX + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!res.ok) throw await toError(res)
+  return res
+}
+
 const MESSAGES: Record<string, string> = {
   INVALID_BODY: '输入不合法，请检查后重试',
   NOT_FOUND: '目标不存在或已被删除',

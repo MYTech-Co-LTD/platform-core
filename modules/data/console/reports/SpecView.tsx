@@ -38,5 +38,6 @@ export default function SpecView({ reportId, title, onClose }: { reportId: strin
   if (failed !== null) return <Alert type="error" showIcon message={failed} />
   if (spec === null) return <Spin />
   // key=reportId：切报表时重建内部状态（期间/筛选覆盖/面板结果），不跨报表串味。
-  return <ReportView key={reportId} title={title} spec={spec} chrome="console" onClose={onClose} />
+  // reportId 透传：`ai_text` 的流式端点按 id 定位（`/reports/:id/narrative/stream`）。
+  return <ReportView key={reportId} reportId={reportId} title={title} spec={spec} chrome="console" onClose={onClose} />
 }

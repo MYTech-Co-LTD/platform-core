@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 import { platformFetch } from '@platform/sdk/web'
-import { ApiError, apiGet, apiSend, messageOf } from './api'
+import { ApiError, apiGet, apiSend, messageOf, streamPost } from './api'
 
 const m = vi.mocked(platformFetch)
 const calls: Array<{ url: string; init?: RequestInit }> = []
@@ -85,6 +85,30 @@ describe('失败体 → ApiError', () => {
 
     m.mockImplementation(async () => new Response('<html>502</html>', { status: 502 }))
     await expect(apiGet('/reports')).rejects.toMatchObject({ status: 502, code: 'HTTP_502', detail: undefined })
+  })
+})
+
+describe('streamPost（SSE）', () => {
+  it('拼前缀 + POST JSON + 透传 signal；成功时原样返回未解析的 Response', async () => {
+    const res = json({ ok: true })
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      return res
+    })
+    const ac = new AbortController()
+    await expect(streamPost('/reports/r1/narrative/stream', { panelIndex: 8 }, ac.signal)).resolves.toBe(res)
+    expect(calls[0]!.url).toBe('/api/modules/data/reports/r1/narrative/stream')
+    expect(calls[0]!.init?.method).toBe('POST')
+    expect(calls[0]!.init?.body).toBe(JSON.stringify({ panelIndex: 8 }))
+    expect((calls[0]!.init?.headers as Record<string, string>)['Content-Type']).toBe('application/json')
+    expect(calls[0]!.init?.signal).toBe(ac.signal)
+  })
+
+  it('失败体走同一套翻译（SSE 端点的 404/400/502 都是普通 JSON）', async () => {
+    m.mockImplementation(async () => json({ error: 'NOT_FOUND' }, 404))
+    await expect(streamPost('/reports/r1/narrative/stream', {})).rejects.toMatchObject({
+      status: 404, code: 'NOT_FOUND',
+    })
   })
 })
 

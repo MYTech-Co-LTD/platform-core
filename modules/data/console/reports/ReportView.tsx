@@ -46,6 +46,7 @@ import type { DataPanel } from '../../domain/report-query'
 import { compareRangeOf, panelArgsOf, panelQueryBodyOf } from '../../domain/report-query'
 import type { PeriodSpec, ReportSpec } from '../../domain/report-spec'
 import { KpiCard } from './KpiCard'
+import AiTextPanel from './AiTextPanel'
 
 type Panel = ReportSpec['panels'][number]
 
@@ -350,8 +351,13 @@ function rangePickerValue(override: Record<string, unknown>, defaults: Record<st
  * 本组件只认已过闸的 `ReportSpec`。
  */
 export default function ReportView({
-  title, spec, chrome, onClose, pinnedVersion,
+  reportId, title, spec, chrome, onClose, pinnedVersion,
 }: {
+  /**
+   * 报表 id：`ai_text` 的流式端点按它定位（`/reports/:id/narrative/stream`）。
+   * 其余面板走 `/query`，不需要 id。
+   */
+  reportId: string
   title: string
   spec: ReportSpec
   chrome: 'console' | 'standalone'
@@ -469,6 +475,11 @@ export default function ReportView({
 
   const showRangePicker = period === null && defaults.bizday !== undefined
   const showBranchPicker = defaults.branch_num !== undefined
+  // `ai_text` 的切片门店：筛选栏覆盖优先，其次规格默认——与 argsOf 的 branch 口径**同源**
+  // （`panelArgsOf` 只覆盖声明过 `branch_num` 的面板；ai_text 没有 args，故这里显式取）。
+  const aiBranchNum = typeof override.branch_num === 'string'
+    ? override.branch_num
+    : typeof defaults.branch_num === 'string' ? defaults.branch_num : undefined
 
   return (
     <div style={chrome === 'standalone' ? { padding: 12 } : undefined}>
@@ -518,7 +529,20 @@ export default function ReportView({
       <Row gutter={[12, 12]}>
         {panels.map((p, i) => (
           <Col key={i} span={p.span}>
-            {p.chart === 'kpi' ? (
+            {p.chart === 'ai_text' ? (
+              // ai_text 的正文在观看时由服务端流式生成（不进 /query、不读 spec 文案）。
+              // 期间/门店/版本都是**当前观看态**：切期间即重生成，切门店即换切片。
+              <Card size="small" title={<Space>{p.title}<Tag color="blue">AI</Tag></Space>}>
+                <AiTextPanel
+                  reportId={reportId}
+                  panelIndex={i}
+                  focus={p.focus}
+                  period={period}
+                  branchNum={aiBranchNum}
+                  version={pinnedVersion ?? undefined}
+                />
+              </Card>
+            ) : p.chart === 'kpi' ? (
               // KpiCard 自带卡片与标题（与面板同款 size="small"），这里不再套第二层 Card
               // 对比段：auto 依当前期间模式（月 → 上月同日段；其余 → 等长前移）
               <KpiCard panel={p} args={argsOf(p)} compareRange={compareRangeOf(p, period?.mode, range)} />
