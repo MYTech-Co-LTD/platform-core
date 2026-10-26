@@ -36,6 +36,16 @@ describe('platformFetch', () => {
     expect(location.search).toBe('?next=' + encodeURIComponent('/#/tickets/42'))
   })
 
+  it('401 时 next 含 search（#1047 深链：?open= 这类查询参数不丢）', async () => {
+    // 同文档改写真实 URL（同上方「/login 以外」用例的 idiom）：search 随之真实变化
+    location.href = '/console/data/reports?open=r3'
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })))
+
+    await expect(platformFetch('/api/whoami')).rejects.toThrow('UNAUTHENTICATED')
+    expect(location.pathname).toBe('/login')
+    expect(location.search).toBe('?next=' + encodeURIComponent('/console/data/reports?open=r3'))
+  })
+
   it('200 → 原样透传 Response', async () => {
     const res = new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json' } })
     const fetchMock = vi.fn(async () => res)
