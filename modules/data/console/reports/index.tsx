@@ -237,10 +237,9 @@ export default function ReportsPage() {
 
   /**
    * 版本端点的失败体是 `{ ok:false, reason, detail }`（服务端直接回 `PublishOutcome`），
-   * **不是**其余端点的 `{ error }` ⇒ 模块薄封装 `toError` 只认 `error`，会把 `reason` 落成
-   * `HTTP_4xx`。这里按状态码回填人话，避免界面吐 `HTTP_400` 裸码。
+   * 模块薄封装 `toError` 已同时认 `{ error }` 与 `{ ok:false, reason, detail }`，`reason`/`detail`
+   * 会经 `messageOf` 呈现（2026-10-26 起）。下面按状态码回填只是 `HTTP_4xx` 兜底，避免裸码。
    * ⚠️ 「已为你刷新」为真：三个调用点的 catch 都 `await load()`（与 STALE_WRITE 同口径）。
-   * （薄封装不透传 `detail`；要精确定位到指标得改 `lib/api.ts`，不在本任务 ownership 内。）
    */
   const versionErrorText = (e: unknown): string => {
     if (e instanceof ApiError && e.code.startsWith('HTTP_')) {
