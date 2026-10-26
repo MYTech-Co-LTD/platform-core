@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.203.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.202.1...v0.203.0) - 2026-10-26
+- 【新增】data: 月度报表 B+C、版本管理与独立链接 ([#1066](https://github.com/MYTech-Co-LTD/platform-core/pull/1066), [7109da1](https://github.com/MYTech-Co-LTD/platform-core/commit/7109da14301635764f8d454b71c9a0c0a3100da1))
+
+
 ## [0.202.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.202.0...v0.202.1) - 2026-10-26
 - 【修复】data: fct_branch_indicator 入口把 system_book 转 varchar，构件面归一 (#1047) ([#1064](https://github.com/MYTech-Co-LTD/platform-core/pull/1064), [8743f1f](https://github.com/MYTech-Co-LTD/platform-core/commit/8743f1ff669311fc79919534a74b1a4d13c2f5b9))
 
