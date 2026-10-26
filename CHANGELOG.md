@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.201.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.200.2...v0.201.0) - 2026-10-26
+- 【新增】data: 乐檬 D10 门店指标日采集收口——契约+调度+新鲜度锚+回填变体 ([#1062](https://github.com/MYTech-Co-LTD/platform-core/pull/1062), [0408bcf](https://github.com/MYTech-Co-LTD/platform-core/commit/0408bcf5c81231fa206ed5d3e7cf3a1ebc753a53))
+
+
 ## [0.200.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.200.1...v0.200.2) - 2026-10-26
 - 【修复】data: 会员汇总全店采集——summary_types 含 branch 等五处根因 ([#1061](https://github.com/MYTech-Co-LTD/platform-core/pull/1061), [a589b44](https://github.com/MYTech-Co-LTD/platform-core/commit/a589b444b586168903a9ea9bf00d164e6d4e8fd2))
 
