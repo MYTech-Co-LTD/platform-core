@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.197.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.197.2...v0.197.3) - 2026-10-26
+- 【修复】data: 报表表格卡窄屏横向滚动——overflowX+scroll.x 收敛在卡内，不再撑破页面 (#1047) ([#1054](https://github.com/MYTech-Co-LTD/platform-core/pull/1054), [fed555b](https://github.com/MYTech-Co-LTD/platform-core/commit/fed555b3779a7dc597de514a74bf4f08eb457545))
+
+
 ## [0.197.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.197.1...v0.197.2) - 2026-10-26
 - 【修复】data: 报表面板参数面对齐——branch_num 进白名单 + args 放行 {from,to} 日期窗 (#1047) ([#1053](https://github.com/MYTech-Co-LTD/platform-core/pull/1053), [0dbb2ef](https://github.com/MYTech-Co-LTD/platform-core/commit/0dbb2eff12ab709dfdf52766d62989d0a41ec0aa))
 
