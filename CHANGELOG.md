@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.203.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.203.0...v0.203.1) - 2026-10-26
+- 【修复】data: item_price 分页嵌套类型逐页 to_json 归一，修 10-23 起断供 ([#1068](https://github.com/MYTech-Co-LTD/platform-core/pull/1068), [20dbb3b](https://github.com/MYTech-Co-LTD/platform-core/commit/20dbb3b206777f2448b61b26f30481e31d678ecb))
+
+
 ## [0.203.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.202.1...v0.203.0) - 2026-10-26
 - 【新增】data: 月度报表 B+C、版本管理与独立链接 ([#1066](https://github.com/MYTech-Co-LTD/platform-core/pull/1066), [7109da1](https://github.com/MYTech-Co-LTD/platform-core/commit/7109da14301635764f8d454b71c9a0c0a3100da1))
 
