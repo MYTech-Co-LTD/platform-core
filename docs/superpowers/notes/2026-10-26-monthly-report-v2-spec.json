@@ -1,0 +1,95 @@
+{
+  "period": { "mode": "custom", "from": "2026-10-01", "to": "2026-10-19" },
+  "panels": [
+    {
+      "chart": "kpi", "title": "销售额", "metricId": "lemeng:retail:net_sales",
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "format": "currency", "compare": "auto", "goodDirection": "up", "span": 12
+    },
+    {
+      "chart": "kpi", "title": "订单数", "metricId": "lemeng:retail:order_count",
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "format": "number", "compare": "auto", "goodDirection": "up", "span": 12
+    },
+    {
+      "chart": "kpi", "title": "客单价", "metricId": "lemeng:retail:net_sales",
+      "denominatorMetricId": "lemeng:retail:order_count",
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "format": "currency", "compare": "auto", "goodDirection": "up", "span": 12
+    },
+    {
+      "chart": "kpi", "title": "会员销售占比", "metricId": "lemeng:member:branch_vip_money",
+      "denominatorMetricId": "lemeng:retail:net_sales",
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "format": "percent", "compare": "auto", "goodDirection": "up", "span": 12
+    },
+    {
+      "chart": "kpi", "title": "报损金额", "metricId": "lemeng:loss:branch_amount",
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "format": "currency", "compare": "auto", "goodDirection": "down", "span": 12
+    },
+    {
+      "chart": "kpi", "title": "报损率", "metricId": "lemeng:loss:branch_amount",
+      "denominatorMetricId": "lemeng:retail:net_sales",
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "format": "percent", "compare": "auto", "goodDirection": "down", "span": 12
+    },
+    {
+      "chart": "kpi", "title": "费用合计（净费用）", "metricId": "lemeng:expense:branch_net",
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "format": "currency", "compare": "auto", "goodDirection": "down", "span": 12
+    },
+    {
+      "chart": "kpi", "title": "费用率", "metricId": "lemeng:expense:branch_net",
+      "denominatorMetricId": "lemeng:retail:net_sales",
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "format": "percent", "compare": "auto", "goodDirection": "down", "span": 12
+    },
+    {
+      "chart": "text", "title": "本月结论",
+      "content": "本月（10-01~19）销售额 51,273.89 元，订单 957 笔，客单价 53.57 元；会员销售 24,284.39 元，占 47.36%。报损 806.64 元（占销售额 1.57%），门店净费用 2,613.42 元（占 5.10%）。\n下月重点：① 会员占比已接近一半，继续盯会员复购；② 报损集中在自然损，按原因逐项压降；③ 费用按项目复盘，优先处理占比最高的两项。",
+      "span": 24
+    },
+    {
+      "chart": "line", "title": "销售额日趋势",
+      "metricId": "lemeng:retail:net_sales", "dims": ["bizday"],
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "slice": { "dimensions": ["bizday"], "orderBy": [{ "column": "bizday", "dir": "asc" }], "limit": 31 },
+      "span": 24
+    },
+    {
+      "chart": "bar", "title": "会员销售（按订单类型）",
+      "metricId": "lemeng:member:branch_vip_money", "dims": ["order_sale_type_name"],
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "slice": { "dimensions": ["order_sale_type_name"] },
+      "span": 24
+    },
+    {
+      "chart": "bar", "title": "会员订单数（按订单类型）",
+      "metricId": "lemeng:member:branch_vip_nums", "dims": ["order_sale_type_name"],
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "slice": { "dimensions": ["order_sale_type_name"] },
+      "span": 24
+    },
+    {
+      "chart": "bar", "title": "报损金额（按原因）",
+      "metricId": "lemeng:loss:branch_amount", "dims": ["cause"],
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "slice": { "dimensions": ["cause"] },
+      "span": 24
+    },
+    {
+      "chart": "bar", "title": "费用（按项目，净额）",
+      "metricId": "lemeng:expense:branch_net", "dims": ["expense_type"],
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "slice": { "dimensions": ["expense_type"] },
+      "span": 24
+    },
+    {
+      "chart": "table", "title": "连续无业绩天数（按业务日）",
+      "metricId": "lemeng:retail:consecutive_no_sales_days", "dims": ["bizday"],
+      "args": { "system_book": "3120", "branch_num": "92" },
+      "span": 24
+    }
+  ]
+}
