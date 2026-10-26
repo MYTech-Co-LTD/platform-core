@@ -27,7 +27,20 @@
 --   每组 batch 数 2、价 payload 唯一 ⇒ 是同一事件、不是两个不同事件）。
 --   ⇒ 本层按**事件键**去重、保留 `batch_id` 最新那行：声明粒度（一行 = 一个变更事件 · 每采集日）
 --   由此自洽。去重放在这里而不是 publish：publish 取的是「每 key 最新价」，看不见重复；而断言的
---   护栏只在 staging 有意义。`qualify` + `row_number()` 直读湖实测可跑（15133 → 15025，正好 −108）。
+--   护栏只在 staging 有意义。
+--
+-- 【去重形态：内联 `where not exists`，两条都被真机红过】
+--   ① 不能 `QUALIFY row_number() … = 1`（直读湖在 duckdb.query 里实测能跑、15133 → 15025 正好 −108，
+--      所以这一版是「以为验过了」）。物化即红：`syntax error at or near "qualify"`——dbt 的 table
+--      物化把模型包进 `CREATE TABLE AS <select>`，那一层先过 **Postgres 解析器**（pg_duckdb 只转写
+--      它认识的 DuckDB 语法），`QUALIFY` 不在其中。
+--   ② 也不能另起一个「行首 select … 行首 from」的投影位点（子查询包一层再外层 `where rn = 1` 就是）。
+--      契约生成器把**每一处**位点都当契约列区整段重写 ⇒ 外层会被灌成 `r['…']`、`r` 不在作用域；
+--      `check-data-contract` 更早先红（各位点别名序列必须逐字一致，实测 `32 vs 0 列`）。
+--   ⇒ 落成内联 `where not exists (…)`：`select` 不落行首，位点扫描不认它（`data-contract.mjs`
+--      注释里举的合法形态就是 `where … not exists (select 1 from …)`）。
+--   ⚠️ 代价：湖要读两遍（内联子查询再扫一次同 glob）。当前规模（~15k 行 / 数百小文件）可忽略；
+--      若将来这层变慢，先怀疑这里。
 -- 【覆盖双账套】路径段写 `*/bizday=*/` 而不是钉单账套 —— 与 branch/item 同款：一个模型读两个
 --   账套分区（`system_book` 是**列**、不是 var）。
 --
@@ -72,14 +85,25 @@ from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_price_prefix") }}/*/bizday=*/**/*.parquet'
 ) r
 -- 事件键去重（跨 run 重取，见头注【事件去重】）：同键同 last_edit_time 只留 batch_id 最新那行。
--- 必须挂在 `from read_parquet(…) r` 这一层（`r['…']` 要求 r 是函数别名，不能包 CTE/子查询）。
-qualify row_number() over (
-  partition by
-    r['system_book']::varchar,
-    r['bizday']::date,
-    r['branch_num']::int,
-    r['item_num']::bigint,
-    r['item_grade_num']::bigint,
-    r['last_edit_time']::varchar
-  order by r['batch_id']::varchar desc
-) = 1
+-- ⚠️ 形态要求（两次真机红的教训，别改成「看起来更整齐」的样子）：
+--   ① 不能用 `QUALIFY`：dbt 的 table 物化把它包进 `CREATE TABLE AS <select>`，那一层先过 Postgres
+--      解析器 ⇒ `syntax error at or near "qualify"`（2026-10-26 物化实测）。
+--   ② 不能另起一个「行首 select … 行首 from」的投影位点（子查询/CTE 包一层再 `where _rn = 1` 都算）：
+--      契约生成器把每一处位点都当**契约列区**整段重写 ⇒ 外层会被灌成 `r['…']` 表达式、`r` 不在作用域。
+--      `check-data-contract` 也会先红（各位点别名序列必须逐字一致）。
+--   ⇒ 用**内联** `where not exists (…)`：`select` 不落在行首，位点扫描不认它
+--      （同 `data-contract.mjs` 注释里举的 `where … not exists (select 1 from …)` 形态）。
+where not exists (select 1
+  from read_parquet(
+    's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_price_prefix") }}/*/bizday=*/**/*.parquet'
+  ) x
+  where x['system_book']::varchar = r['system_book']::varchar
+    and x['bizday']::date = r['bizday']::date
+    and x['branch_num']::int = r['branch_num']::int
+    and x['item_num']::bigint = r['item_num']::bigint
+    -- 分级商品编号可空（主商品行为 null）；`=` 遇 null 得 unknown 会漏掉整类重复 ⇒ 用 null 安全比较。
+    and x['item_grade_num']::bigint is not distinct from r['item_grade_num']::bigint
+    and x['last_edit_time']::varchar = r['last_edit_time']::varchar
+    -- 「同一事件键的更晚批次」存在 ⇒ 本行是被重取的那份，丢掉。
+    and x['batch_id']::varchar > r['batch_id']::varchar
+)

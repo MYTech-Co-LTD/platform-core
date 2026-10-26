@@ -1,4 +1,4 @@
-sha256-of-rest b97ef415af2d5d7f94af1f99fcdcde7b98edc1e93dbaedfdc3123f1eff55898e
+sha256-of-rest baa5a749bd20eb4e1afcb929bdd98d1cf8cc361e6e93730bc9eebf1e05f64b86
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -62,7 +62,7 @@ b614c4e1d31c3c51f2a988b54419b917ce7d6ef99d57fb1805ef47161784199c dbt/models/leme
 d4bd75baeaaf110df58027a35ac59355c710bd114b1987234fe59d7d4d91ed9e dbt/models/lemeng/staging/stg_lemeng_client_expense.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_client_expense.sql 0644
 7ec2e2b2a6fafb4ae7c29e22805b991bafc480e7ee1b21a895457cb96d6a3acd dbt/models/lemeng/staging/stg_lemeng_inventory_snapshot.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_inventory_snapshot.sql 0644
 4ae58c36566be04fdb5bc672a667a976d03ad23d61ffc1139fe8e8dad17e2c8f dbt/models/lemeng/staging/stg_lemeng_item.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_item.sql 0644
-0ff57bb7559290fa46ca2c5397279eb2a50148fe2f408dd7129ebf3a31db51c6 dbt/models/lemeng/staging/stg_lemeng_item_price.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_item_price.sql 0644
+5e94ee813066e3d9206e093422a8685be71bdf298128a07d1552df7c3bb3c426 dbt/models/lemeng/staging/stg_lemeng_item_price.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_item_price.sql 0644
 a617cd42a55661eba8ef6217afa4c9d4e947b51a5c5411325977a5d2539e2556 dbt/models/lemeng/staging/stg_lemeng_item_purchase.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_item_purchase.sql 0644
 5a25be9a0003d62cdbab853f7ff05898cba246933d33234e0c6993f82e75f6db dbt/models/lemeng/staging/stg_lemeng_loss_adjustment.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_loss_adjustment.sql 0644
 0c3c754d5363e1651763404f6bdca8202d3684cb5c3bdb33bec0df97c8419f53 dbt/models/lemeng/staging/stg_lemeng_member_summary.sql ${REPO}/dbt/models/lemeng/staging/stg_lemeng_member_summary.sql 0644
