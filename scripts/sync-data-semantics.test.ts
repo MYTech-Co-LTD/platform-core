@@ -127,8 +127,13 @@ describe('declarationsFromYaml：语义事实源 → L1 行', () => {
       } else {
         expect(row.params.domain, `${row.id} grain 不含 domain 却出了参数`).toBeUndefined()
       }
+      if (grain.includes('branch_num')) {
+        expect(row.params.branch_num, `${row.id} grain 含 branch_num 却没出参数（#1047 报表页门店过滤）`).toEqual({ column: 'branch_num', type: 'string' })
+      } else {
+        expect(row.params.branch_num, `${row.id} grain 不含 branch_num 却出了参数`).toBeUndefined()
+      }
       for (const name of Object.keys(row.params)) {
-        expect(['bizday', 'system_book', 'domain'], `${row.id} 出现白名单外参数 ${name}`).toContain(name)
+        expect(['bizday', 'system_book', 'domain', 'branch_num'], `${row.id} 出现白名单外参数 ${name}`).toContain(name)
       }
     }
     // domain 不是全量维度（2026-10-15 清点：出库/批发族才有）——「恰好」的口径要有实证数：
@@ -729,22 +734,25 @@ describe('真 YAML：43 条 sla_days / freshnessRelations 逐条断言（spec §
 })
 
 describe('deriveParams —— 问数参数面白名单推导（spec 2026-10-15 §2.2）', () => {
-  it('D1 全维 grain → 只剩白名单三件，参数名=列名', () => {
+  it('D1 全维 grain → 只剩白名单四件（branch_num 已进集 #1047），参数名=列名', () => {
     expect(deriveParams(['system_book', 'bizday', 'domain', 'branch_num', 'region_id'])).toEqual({
       bizday: { column: 'bizday', type: 'date_range' },
       system_book: { column: 'system_book', type: 'string' },
       domain: { column: 'domain', type: 'string' },
+      branch_num: { column: 'branch_num', type: 'string' },
     })
   })
-  it('D2 无 domain 的 grain → 两件（bizday + system_book）', () => {
+  it('D2 无 domain 的 grain → 三件（bizday + system_book + branch_num）', () => {
     expect(deriveParams(['system_book', 'bizday', 'branch_num'])).toEqual({
       bizday: { column: 'bizday', type: 'date_range' },
       system_book: { column: 'system_book', type: 'string' },
+      branch_num: { column: 'branch_num', type: 'string' },
     })
   })
-  it('D3 编码维度一个不进（branch_num/item_num/supplier_num/storehouse_num/client_fid/region_id/expense_type/other_inout_kind）', () => {
+  it('D3 编码维度一个不进（item_num/supplier_num/storehouse_num/client_fid/region_id/expense_type/other_inout_kind）；branch_num 已进集（#1047 报表页拼装侧钉值，bot 随之获得门店过滤）', () => {
     const p = deriveParams(['system_book', 'bizday', 'branch_num', 'storehouse_num', 'item_num', 'client_fid', 'supplier_num', 'region_id', 'expense_type', 'other_inout_kind'])
-    expect(Object.keys(p).sort()).toEqual(['bizday', 'system_book'])
+    expect(Object.keys(p).sort()).toEqual(['bizday', 'branch_num', 'system_book'])
+    expect(p.branch_num).toEqual({ column: 'branch_num', type: 'string' })
   })
   it('D4 required 恒缺省（空参=全量，历史调用形态不破坏）', () => {
     expect(Object.values(deriveParams(['system_book', 'bizday', 'domain'])).every((p) => p.required === undefined)).toBe(true)

@@ -13,12 +13,17 @@ export const CHART_TYPES = ['line', 'bar', 'table'] as const
 export const MAX_PANELS = 24
 export const MAX_DIMS = 4
 
+/** date_range 窗口值（{from,to}）：/query 侧 rangeLiteral 的同形档（#1047 报表页日期窗）。 */
+const RangeValueSchema = z.object({ from: z.string().min(1).max(32), to: z.string().min(1).max(32) }).strict()
+
 const PanelSchema = z.object({
   chart: z.enum(CHART_TYPES),
   title: z.string().trim().min(1).max(120),
   metricId: z.string().min(1).max(128),                  // 语义 id；合法性由 runQuery 判（同源判据）
   dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
-  args: z.record(z.union([z.string(), z.number(), z.boolean()])).default({}),   // 等值过滤，与 /query 同形
+  // 等值过滤 + date_range 窗口（{from,to}），与 /query 参数面同形——rangeLiteral 在查询侧校验
+  // from/to 形状与顺序，这里只锁外壳形状（值合法性单一事实源在 /query，不重复实现）。
+  args: z.record(z.union([z.string(), z.number(), z.boolean(), RangeValueSchema])).default({}),
   span: z.number().int().min(1).max(24).default(12),     // 24 栅格
 }).strict()
 

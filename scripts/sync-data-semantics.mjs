@@ -452,9 +452,13 @@ export function buildSelectSql(expression, grain, relation) {
 /**
  * 问数参数白名单（spec 2026-10-15 §2.2）：grain ∩ 白名单 = 该指标的问数参数面。
  * 判定原则：值域「模型或用户说得出」的维度才可作参数（bizday 日期人会说、system_book=3120/64188
- * 记得住、domain∈{transfer,wholesale} 记得住）；业务编码维度（branch_num/item_num/…）说了不出合法值，
- * 暴露即死参数——回流条件：设计「维度值解析」工具后再扩集。
+ * 记得住、domain∈{transfer,wholesale} 记得住）；其余业务编码维度（item_num/storehouse_num/…）
+ * 说了不出合法值，暴露即死参数——回流条件：设计「维度值解析」工具后再扩集。
  * 参数名 = 列名（与 group_by 同名，模型看到什么就能填什么）；required 恒缺省（空参=全量）。
+ *
+ * branch_num 进集（#1047 P4 报表页）：报表面板的 args 在**拼装时**由人/agent 钉死字面值
+ * （如店 92），不存在「说了不出合法值」问题；问数 bot 侧随之获得门店过滤能力（答错只是
+ * 空集，无越权面——主体 org 仍被 authorizeCore 钉死）。原 D3 判定的其余编码维度不变。
  *
  * @type {Record<string, MetricParamDef>}
  */
@@ -462,6 +466,7 @@ const ASK_PARAM_WHITELIST = {
   bizday: { column: 'bizday', type: 'date_range' },
   system_book: { column: 'system_book', type: 'string' },
   domain: { column: 'domain', type: 'string' },
+  branch_num: { column: 'branch_num', type: 'string' },
 }
 
 /**
