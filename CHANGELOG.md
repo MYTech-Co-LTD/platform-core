@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.198.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.197.3...v0.198.0) - 2026-10-26
+- 【新增】data: 报表页筛选栏——日期范围+门店下拉，覆盖 args 重查全面板 (#1047) ([#1055](https://github.com/MYTech-Co-LTD/platform-core/pull/1055), [6cebb2c](https://github.com/MYTech-Co-LTD/platform-core/commit/6cebb2cd8747430ee329e322ebb5c5f40eddaae2))
+
+
 ## [0.197.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.197.2...v0.197.3) - 2026-10-26
 - 【修复】data: 报表表格卡窄屏横向滚动——overflowX+scroll.x 收敛在卡内，不再撑破页面 (#1047) ([#1054](https://github.com/MYTech-Co-LTD/platform-core/pull/1054), [fed555b](https://github.com/MYTech-Co-LTD/platform-core/commit/fed555b3779a7dc597de514a74bf4f08eb457545))
 
