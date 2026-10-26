@@ -54,13 +54,14 @@ const METRICS: MetricDef[] = [
     id: 'rf:net_sales', title: '销售额', groupBy: 'bizday',
     selectSql: 'SELECT sum(net_amount) AS value, bizday FROM marts.facts_sales',
   }),
+  // 真实 L1 的粒度都带 bizday（覆盖探测要按 bizday 升序取最早一天）。
   metric({
-    id: 'rf:order_count', title: '订单数',
-    selectSql: 'SELECT sum(order_count) AS value FROM marts.facts_orders',
+    id: 'rf:order_count', title: '订单数', groupBy: 'bizday',
+    selectSql: 'SELECT sum(order_count) AS value, bizday FROM marts.facts_orders',
   }),
   metric({
-    id: 'rf:vip_money', title: '会员销售',
-    selectSql: 'SELECT sum(vip_money) AS value FROM marts.facts_member',
+    id: 'rf:vip_money', title: '会员销售', groupBy: 'bizday',
+    selectSql: 'SELECT sum(vip_money) AS value, bizday FROM marts.facts_member',
   }),
   metric({
     id: 'rf:loss_amount', title: '报损金额', groupBy: 'cause',
@@ -115,13 +116,20 @@ const VALUES: Values = {
  * 原 select_sql（line/bar 的切片）。指标再按 select_sql 里的特征列名区分；
  * **不**按调用顺序/次数匹配（脆弱且会把错配变成假绿）。
  */
-function execWith(v: Values): SqlExecutor {
+function execWith(v: Values, coverageFrom: string | null = '2026-01-01'): SqlExecutor {
   const total = (n?: number) => ({ columns: ['total'], rows: [[n ?? null]] })
   return async (sql) => {
     // 辅助读先匹配：新鲜度与维度名称解析走同一个执行缝（deps.warehouseExec = deps.execute）
     if (sql.includes('data.load_log')) return { columns: ['data_as_of'], rows: [[AS_OF_INSTANT]] }
     if (sql.includes('dim_brand') || sql.includes('stg_lemeng_branch') || sql.includes('dim_region')) {
       return { columns: [], rows: [] }
+    }
+    // 覆盖探测（issue #1078）：明细形态 + bizday 升序 + LIMIT 1 ⇒ 第一行 = 最早有数日。
+    // null = 探测失败/无数据（空集），事实包据此不出对比。
+    if (sql.includes('ORDER BY bizday asc LIMIT 1')) {
+      return coverageFrom === null
+        ? { columns: [], rows: [] }
+        : { columns: ['value', 'bizday'], rows: [[1, coverageFrom]] }
     }
     const prev = sql.includes(PREV_MARK)
     if (sql.startsWith('SELECT sum(value) AS total')) {
@@ -275,6 +283,28 @@ describePg('buildFacts（需要 DATABASE_URL）', () => {
     expect(facts.kpis[0]).toMatchObject({ current: '-', previous: null, delta: '-' })
     expect(facts.missing).toEqual([])
     expect(facts.numbers).not.toContain('-')
+  })
+
+  it('对比期起点早于数据覆盖起点 ⇒ 不出环比（#1078 现场：9-12 起的对比期，零售只有 9-23 起）', async () => {
+    const spec = specOf()
+    const aiIndex = spec.panels.findIndex((p) => p.chart === 'ai_text')
+    const facts = await buildFacts(depsOf(execWith(VALUES, '2026-09-23')), spec, aiIndex, PERIOD, '92')
+
+    // 销售额/订单数/会员占比的对比期都是 9-12..9-30，早于数据起点 ⇒ 一律不出对比。
+    for (const title of ['销售额', '订单数', '会员销售占比']) {
+      expect(facts.kpis.find((k) => k.panel === title)).toMatchObject({ previous: null, delta: '-' })
+    }
+    // 本期值照常（不出对比 ≠ 不出数）。
+    expect(facts.kpis.find((k) => k.panel === '销售额')?.current).toBe('51,273.89')
+    // 白名单不因此收进「假环比」百分比。
+    expect(facts.numbers.some((n) => n.startsWith('+') || n.startsWith('-'))).toBe(false)
+  })
+
+  it('覆盖探测失败（空集）⇒ 不出对比（宁可不出，不出假数）', async () => {
+    const spec = specOf()
+    const aiIndex = spec.panels.findIndex((p) => p.chart === 'ai_text')
+    const facts = await buildFacts(depsOf(execWith(VALUES, null)), spec, aiIndex, PERIOD, '92')
+    expect(facts.kpis.find((k) => k.panel === '销售额')).toMatchObject({ previous: null, delta: '-' })
   })
 
   it('timeScoped=false 的 KPI 不做对比（固定窗口不拿报表期间的前移段去比）', async () => {

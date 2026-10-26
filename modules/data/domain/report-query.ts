@@ -16,6 +16,7 @@
 // ⚠️ args 的开放键名（租户自定义过滤参数）安全性全押在服务端 `authorize` 那条链上
 //    （unknown_param 拒绝 + 保留键闸 + literal/rangeLiteral 转义）——本文件只负责**原样转发**，
 //    不做第三种加工，也不在前端「顺手」过滤未知键（那会让服务端的拒绝面变得不可观测）。
+import type { SlicingSpec } from './authz'
 import type { DateRange } from './report-period'
 import { previousRangeOf } from './report-period'
 import type { KpiPanel, PeriodSpec, ReportSpec } from './report-spec'
@@ -77,4 +78,77 @@ export function compareRangeOf(
   if (range === null || p.compare === 'none') return null
   const mode = p.compare === 'auto' ? (periodMode === 'month' ? 'prev_month' : 'prev_period') : p.compare
   return previousRangeOf(range, mode)
+}
+
+// ── 对比的数据覆盖度（issue #1078）──────────────────────────────────────────────
+//
+// 判据不是「对比期查询得数」：对比期只被数据覆盖了一部分时**也会得数**，于是算出假环比
+// （现场：10-01..19 的对比期 9-12..30，零售数据从 9-23 起 ⇒ 只有 8/19 天）。
+// 正确判据 = 对比期**整段**落在指标已有数据范围内：
+//   prev.from >= 最早有数日   且   prev.to <= 水位（数据完整到哪天）
+// 覆盖探测复用 `/query`（同一授权/掩码/审计通道，不新写 SQL 通道）：
+//   明细形态（**不发 dimensions**）+ `orderBy bizday asc` + `limit 1` ⇒ 第一行即最早一天。
+//   ⚠️ 子集聚合形态（发 dimensions）的 `orderBy` 会被组装器丢掉，LIMIT 1 变成任意一天，
+//      所以这里刻意不发 `dimensions`；指标无 bizday 粒度时查询失败 ⇒ 覆盖未知（不出对比）。
+
+/** 指标在某组过滤条件下的数据覆盖：最早有数日 + 水位（未知 ⇒ null）。 */
+export interface CoverageInfo {
+  /** 最早有数的一天（YYYY-MM-DD）。 */
+  from: string
+  /** 数据完整到哪一天（`/query` 的 watermark）；未声明新鲜度关系时缺席。 */
+  to: string | null
+}
+
+const DAY_PREFIX = /^(\d{4}-\d{2}-\d{2})/
+
+/**
+ * 覆盖探测的 args：去掉期间窗口与 `total`——探测要的是**全历史**最早一天，
+ * 带上期间窗口就只会看到窗口内的最早值（正是要避开的偏差）。
+ */
+export function coverageArgsOf(args: Record<string, unknown>): Record<string, unknown> {
+  const { bizday: _bizday, total: _total, ...rest } = args
+  return rest
+}
+
+/** 覆盖探测的切片：明细形态 + bizday 升序 + 1 行（第一行 = 最早一天）。 */
+export function coverageSlicing(): SlicingSpec {
+  return { orderBy: [{ column: 'bizday', dir: 'asc' }], limit: 1 }
+}
+
+/** `/query` 的覆盖探测 body（console 侧直接 POST）。 */
+export function coverageQueryBodyOf(metricId: string, args: Record<string, unknown>): Record<string, unknown> {
+  const slicing = coverageSlicing()
+  return { metricId, args: coverageArgsOf(args), orderBy: slicing.orderBy, limit: slicing.limit }
+}
+
+/**
+ * 从 `/query` 回包解析覆盖度。任何「读不出可信形状」的情形一律 null（调用方据此不出对比）：
+ * 失败状态、空集、没有 bizday 列、日期不是 `YYYY-MM-DD` 开头——都不猜。
+ */
+export function coverageOfQueryResult(body: unknown): CoverageInfo | null {
+  if (typeof body !== 'object' || body === null) return null
+  const b = body as { status?: unknown; columns?: unknown; rows?: unknown; watermark?: unknown }
+  if (b.status !== 'ok') return null
+  if (!Array.isArray(b.columns) || !Array.isArray(b.rows) || b.rows.length === 0) return null
+  const idx = b.columns.indexOf('bizday')
+  if (idx < 0) return null
+  const row = b.rows[0]
+  if (!Array.isArray(row)) return null
+  const raw = row[idx]
+  if (typeof raw !== 'string') return null
+  const m = DAY_PREFIX.exec(raw)
+  if (m === null) return null
+  const from = m[1]!
+  const to = typeof b.watermark === 'string' && DAY_PREFIX.test(b.watermark)
+    ? b.watermark.slice(0, 10)
+    : null
+  return { from, to }
+}
+
+/** 对比期是否**整段**可覆盖。覆盖未知（null）⇒ false：宁可不出对比，不出假数。 */
+export function comparisonCovered(prev: DateRange, coverage: CoverageInfo | null): boolean {
+  if (coverage === null) return false
+  if (prev.from < coverage.from) return false
+  if (coverage.to !== null && prev.to > coverage.to) return false
+  return true
 }

@@ -15,6 +15,9 @@ import { useEffect, useState } from 'react'
 import { Card, Typography } from 'antd'
 import { apiSend } from '../lib/api'
 import type { DateRange } from '../../domain/report-period'
+import {
+  comparisonCovered, coverageOfQueryResult, coverageQueryBodyOf, type CoverageInfo,
+} from '../../domain/report-query'
 import { formatDelta, formatValue, toneOf } from '../../domain/report-format'
 import type { KpiPanel } from '../../domain/report-spec'
 
@@ -38,6 +41,20 @@ async function valueOf(panel: KpiPanel, args: Record<string, unknown>): Promise<
   return numerator / denominator
 }
 
+/**
+ * 指标的数据覆盖（issue #1078）：最早有数日 + 水位。走 `/query` 的明细形态
+ * （`orderBy bizday asc` + `limit 1`），同一授权/掩码/审计通道；探测失败 ⇒ null。
+ */
+async function coverageOf(metricId: string, args: Record<string, unknown>): Promise<CoverageInfo | null> {
+  try {
+    const body = await apiSend('/query', 'POST', coverageQueryBodyOf(metricId, args))
+    return coverageOfQueryResult(body)
+  } catch {
+    // 探测失败与「覆盖未知」同呈现：不出对比（宁可不出，不出假数）。
+    return null
+  }
+}
+
 export function KpiCard({
   panel, args, compareRange,
 }: {
@@ -59,8 +76,22 @@ export function KpiCard({
         if (!alive) return
         setCurrent(cur)
         if (compareRange !== null) {
-          const prev = await valueOf(panel, { ...args, bizday: compareRange })
-          if (alive) setPrevious(prev)
+          // 对比期**整段**落在覆盖内才出环比；比率要分子/分母都覆盖。
+          const [cov, denCov] = await Promise.all([
+            coverageOf(panel.metricId, args),
+            panel.denominatorMetricId === undefined
+              ? Promise.resolve<CoverageInfo | null>(null)
+              : coverageOf(panel.denominatorMetricId, args),
+          ])
+          if (!alive) return
+          const covered = comparisonCovered(compareRange, cov)
+            && (panel.denominatorMetricId === undefined || comparisonCovered(compareRange, denCov))
+          if (covered) {
+            const prev = await valueOf(panel, { ...args, bizday: compareRange })
+            if (alive) setPrevious(prev)
+          } else {
+            setPrevious(null)
+          }
         }
       } catch {
         // denied / 上游错误与「没有数」同呈现（-）：KPI 卡不承担错误详情，
