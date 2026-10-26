@@ -726,6 +726,15 @@ duckle/common/lemeng.retail_order_line.json
 | **bind-mount 进来的文件**：仓内 `duckle/`（挂 `/pipelines:ro`） | seed/同步 + **重建容器**（**用 `serviceIds` 定向部署**） | **bind-mount 钉的是 inode**，原子替换（同步程序就是这么做的）后运行中的容器**仍看到旧文件** ⇒ 只有重建才换。<br>⚠️ **重建就用 `serviceIds`，别单传 `refreshServiceIds`**——后者名字很像「只重建点名的那个」，但 **2026-09-26 实测：单传它触发了全量重建**，把 `pg_duckdb` 与 `metabase-db` 一并重启（正是本表第三类要避免的）。那次靠卷持久化**数据无损**（实测物化表逐字不变、5 服务全 healthy、outage 0）——但**别把「没出事」读成「这个参数没问题」**。<br>**自证**：重建后**进容器**比对（`$CONTAINER 内` 的 sha256 ≠ 宿主上的 sha256 ⇒ 仍是旧 inode）。 |
 | **新增/改服务**（compose 服务集变了） | `post_projects_by_id_services_sync` → 按 `serviceIds` **定向部署** | 只重建点名的那几个；**别全量部署** —— 会重启 `pg_duckdb`。 |
 
+> **seed 的两个操作坑（2026-10-27 实测，库存快照 #1079 端到端投递）**：
+> ① **`seed-console.sh` 的校验走 `docker exec`**（`_vol_sha()` 进目标容器算 sha256）⇒ **那个 console 必须在运行态**。
+> 容器停着时 `docker cp` 照样成功，但校验会把每个文件都报成「缺失」——`SEED_DRIFT <账套> mismatched=N/N … 实际 <缺失>`。
+> **这是假红，不是真漂移**（实测把卷挂到临时容器里重算，40/40 全对；容器起来后 `--check all` 即 `SEED_OK`）。
+> 序列：**先让容器起着**（`…/start`，或与本轮重启合并做），再 `--seed`。
+> ② **数据面机直连 GitHub 不通**（`raw.githubusercontent.com` 超时、0 字节）⇒ `seed-console.sh` 取 `data-plane.lock` 那步必须带
+> `SYNC_PROXY`（与 `lemeng-sync.sh` 的默认值同一个：控制面**公网 EIP** 的 4878；裸跑报 `SEED_FAILED:deps 取不到 lock`）。
+> 用法形状：`SYNC_PROXY=<代理> sh /opt/lemeng-seed-console.sh <账套> --seed all`。
+
 **第 1 类怎么自证它真读到了**（别只看「文件写进去了」——那不等于 console 读了）：带凭据打 console 自己的调度 API，看**已加载**的条目：
 
 ```sh
