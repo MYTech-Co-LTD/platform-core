@@ -17,8 +17,8 @@
 //     照发）。逐行按 renderer 给按钮（platform 行没有可编辑的 dashboard），同 ③ 一样只是视图选择。
 //     ⚠️ 正因为票据**一次性**，「在新标签打开」兜底不能复用 iframe 那枚票，必须**重新领票**
 //     （见 `edit` 的 opts.newTab）——否则兜底在最需要它的场景下必然 401。
-import { useEffect, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import { Button, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import SpecView from './SpecView'
@@ -79,6 +79,22 @@ export default function ReportsPage() {
       .catch((e) => messageApi.error(messageOf(e)))
   }
   useEffect(() => { void load() }, [])
+
+  // 深链（#1047）：`/console/data/reports?open=<id>` —— 列表就绪后自动打开该自绘报表（分享/收藏直达）。
+  // 只消费一次（deepLinkDone 防 load 刷新后重复弹）；行不在观看清单（页门不过/已删）⇒ 静默留在列表，
+  // 列表自身的页门列就是解释。Metabase 行不走此路（它的独立地址是 embed-url 那条线）。
+  const [searchParams] = useSearchParams()
+  const deepLinkDone = useRef(false)
+  useEffect(() => {
+    if (deepLinkDone.current || rows.length === 0) return
+    deepLinkDone.current = true
+    const id = searchParams.get('open')
+    if (!id) return
+    const r = rows.find((x) => x.id === id)
+    if (r && r.renderer === 'platform' && canOpen(r)) {
+      setSelfDrawn({ title: r.title, id: r.id })
+    }
+  }, [rows, searchParams])
 
   /** 打开 = 向平台换一次嵌入 URL（每次现签，10 分钟有效）。失败只提示，不留半开的面板。 */
   const open = async (r: ReportRow) => {
