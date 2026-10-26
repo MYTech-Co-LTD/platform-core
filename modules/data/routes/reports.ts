@@ -22,6 +22,7 @@
 //   查找 / 创建（都过 `dashboardName`）、发布与归档（按 upsert / 登记行给出的 id 走）。
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, RouteCtx } from './context'
 import { requesterOf } from './context'
 import { signEditHandoff } from '../domain/edit-handoff'
@@ -51,6 +52,15 @@ import {
 } from '../domain/report-store'
 import { parseReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope } from '../domain/report-scope'
+import {
+  getPublishedSpec,
+  getVersion,
+  listVersions,
+  publishVersion,
+  rollbackVersion,
+  unpublishVersion,
+} from '../domain/report-version'
+import type { PublishErrorReason } from '../domain/report-version'
 // ⚠️ `loadMergedCatalog` 的**家在 `domain/metric-store.ts`**，不在 query-service（后者只是它的
 //    调用方之一）。写计划时第一版写成了 `'../domain/query-service'`——那是错的，已订正。
 import { loadMergedCatalog } from '../domain/metric-store'
@@ -280,9 +290,14 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     return c.json({
       // `version` 是**登记侧**版本（写保护的读侧）：console 从本清单拿它、写时回带。
       // 观看面 GET /reports 刻意不带它（那里没有写动作，外泄版本号无消费方）。
+      // 版本徽标（设计 §8.2）：`publishedVersion` = 线上内容版本号（null = 未发布/已下线）；
+      // `hasUnpublishedChanges` = 指针存在且草稿计数器越过了那一版发布时的 draft_version。
       reports: rows.map((row) => ({
         id: row.id, title: row.title, requiredScope: row.requiredScope,
         renderer: row.renderer, version: row.version,
+        publishedVersion: row.publishedVersion,
+        hasUnpublishedChanges:
+          row.publishedVersionId !== null && row.version > (row.publishedDraftVersion ?? 0),
       })),
     })
   })
@@ -311,31 +326,17 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const parsed = GateBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     const org = c.get('tenant').casdoor_org
-    // ── 发布门（spec §4.2 / #764 P1 Task 4）：platform 报表的 `requiredScope` **不从调用方取**，
-    //    改为**从面板指标派生**——保证「报表可见 ⇒ 每个面板的指标都可见」。调用方给的值只对
-    //    metabase 行有效（那种行没有面板可推）。
-    // ⚠️ 读 `current` 在**锁外**：派生只需一次读，而陈旧由 `expectedVersion` 兜（并发改了 spec ⇒
-    //    版本变 ⇒ 条件 UPDATE 落空 ⇒ 409），不会写错。锁内那段仍只管写。
+    // ── 平台自绘行：改页门入口**已下线**（月报重做 Task 10；设计 §8.2）────────────────────
+    // 自绘行的页门是**发布时从面板派生**并随快照钉死的（见 domain/report-version.ts）。若还允许
+    // 这里直接改 `requiredScope`，产出两种不一致态：①「发布了却没有版本行」——独立链接
+    // 读不到快照；②行上的页门与线上快照不同步——独立链接按快照判权，改了行也不生效。
+    // ⇒ 平台行走 `POST /reports/:id/publish` / `unpublish`；metabase 行（没有面板可派生、
+    // 也没有版本通路）保持现状。
+    // ⚠️ 读 `current` 在**锁外**：陈旧由 `expectedVersion` 兜（条件 UPDATE 落空 ⇒ 409），不会写错。
     const current = await getReport(ctx.pool, org, id)
     if (current === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    let effectiveScope = parsed.data.requiredScope
-    if (current.renderer === 'platform') {
-      // 库侧跨列 check（迁移 007）保证 platform 行 spec 非空 ⇒ 这个分支不可达，只做类型收窄。
-      if (current.spec === null) return c.json({ error: 'NO_SPEC' }, 400)
-      const catalog = await loadMergedCatalog(ctx.pool, org)
-      const d = deriveRequiredScope(current.spec, catalog)
-      if (!d.ok) {
-        // 派生不了 ⇒ **拒绝发布**并点名（多码 = 单值列表达不了「这些码都要有」；未知指标 = 规格
-        // 指向了不存在的词表条目）。挑一个码放行会让「只有 C1 没有 C2」的人看到报表而 C2 面板 403。
-        return c.json(
-          d.reason === 'UNKNOWN_PANEL_METRIC'
-            ? { error: d.reason, metricId: d.metricId }
-            : { error: d.reason, scopes: d.scopes },
-          400,
-        )
-      }
-      effectiveScope = d.requiredScope
-    }
+    if (current.renderer === 'platform') return c.json({ error: 'USE_PUBLISH_ENDPOINT' }, 409)
+    const effectiveScope = parsed.data.requiredScope
     // ── 每对象一把锁（spec §3③）：条件 UPDATE + 「陈旧时分清 404/409」的二次读**同锁**，
     //    否则两次读之间夹一次并发写会拿到互相矛盾的版本。键用行 id（写对象已在，id 才是身份）。
     return await withObjectLock(`${org}/row:${id}`, async () => {
@@ -427,6 +428,192 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // ⇒ 显式 409，与 embed-url/edit-url 的守卫同族。
     if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
     return c.json({ spec: row.spec, version: row.version })
+  })
+
+  // ── 定义版本：发布 / 下线 / 回滚 / 历史 / 已发布快照 / 草稿（月报重做 Task 10）──────────────
+  // 版本语义与五条不变量在 `domain/report-version.ts` 的头注。本层只负责：入参形状、身份、
+  // HTTP 码映射、页门裁剪。
+  //
+  // ⚠️ 两个「版本」别混（设计 §3.3）：
+  //   · `data.reports.version`         —— **草稿写入计数器**（`expectedVersion` 那条通路）
+  //   · `data.report_versions.version` —— **已发布内容版本号**（`?v=N` / 历史 / 回滚）
+  //   发布**不推进**草稿计数器——推了的话「无改动再发布」永远判成有改动（设计 §4.2 第 4 步）。
+  const VersionBody = z.object({
+    // 与 GateBody 同款上界：值会绑进 SQL 与 `version`（int4）比较，无上界 ⇒ 22003 被兜成 500
+    expectedVersion: z.number().int().positive().max(2147483647),
+    /** 发布/回滚备注（审计面；存储层再截 200 字符兜底）。 */
+    note: z.string().max(200).default(''),
+  }).strict()
+
+  /** 路径里的版本号：非正 / 非整数 / 超 int4 ⇒ null（一律 404，同 reportIdOf：不给存在性探针）。 */
+  const versionParamOf = (raw: string | undefined): number | null => {
+    if (raw === undefined || !/^\d+$/.test(raw)) return null
+    const n = Number(raw)
+    return Number.isSafeInteger(n) && n > 0 && n <= 2147483647 ? n : null
+  }
+
+  /**
+   * 发布类失败 → HTTP 码。**只把「找不到」与「版本陈旧」升格**；其余（规格 / 词表 / 源 /
+   * 可加性）都是调用方可修的入参问题 ⇒ 400。⚠️ 渲染器不对也走 400：设计 §4.2 明写
+   * `RENDERER_NOT_SELF_DRAWN` 是 400（发布动作打到没有版本通道的 metabase 行 = 用错端点）。
+   */
+  const statusOfVersionFailure = (reason: PublishErrorReason): 400 | 404 | 409 =>
+    reason === 'NOT_FOUND' ? 404 : reason === 'STALE_WRITE' ? 409 : 400
+
+  // 宿主投影的「本租户已接入源」。没投影（`undefined`）按「一个源都没接」处理——
+  // 发布是写入动作，fail-closed：未接入源的指标宁可拒发布，也不上线（它的 `/query` 会 403）。
+  // 写法是 `new Set(c.get(TENANT_SOURCES) ?? [])`（不抽 helper：只需两处，抽了要额外引 Context 类型）。
+
+  r.post('/reports/:id/publish', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const body = VersionBody.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const out = await publishVersion(
+      ctx.pool, c.get('tenant').casdoor_org, id, body.data.expectedVersion,
+      requester.userId, body.data.note, new Set(c.get(TENANT_SOURCES) ?? []),
+    )
+    if (!out.ok) return c.json(out, statusOfVersionFailure(out.reason))
+    return c.json(out)
+  })
+
+  r.post('/reports/:id/unpublish', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const body = VersionBody.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const org = c.get('tenant').casdoor_org
+    // 先读行分流：① 不存在 / 跨租户 ⇒ 404；② **本来就没有已发布版本** ⇒ 幂等 200 unchanged
+    // （设计 §4.3 末条：没有状态变化就不产生写——尤其不推进草稿计数器）。
+    const current = await getReport(ctx.pool, org, id)
+    if (current === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    if (current.publishedVersionId === null) return c.json({ unpublished: true, unchanged: true })
+    const ok = await unpublishVersion(ctx.pool, org, id, body.data.expectedVersion)
+    if (!ok) {
+      // 存储层把「陈旧 / 不存在 / 跨租户」合流成 false ⇒ 再查一次分 404 与 409（与 PUT 页门同口径）
+      const cur = await getReportVersion(ctx.pool, org, id)
+      if (cur === null) return c.json({ error: 'NOT_FOUND' }, 404)
+      return c.json({ error: 'STALE_WRITE', currentVersion: cur }, 409)
+    }
+    return c.json({ unpublished: true })
+  })
+
+  r.post('/reports/:id/versions/:version/rollback', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const version = versionParamOf(c.req.param('version'))
+    if (version === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const body = VersionBody.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const out = await rollbackVersion(
+      ctx.pool, c.get('tenant').casdoor_org, id, version, body.data.expectedVersion,
+      requester.userId, body.data.note, new Set(c.get(TENANT_SOURCES) ?? []),
+    )
+    if (!out.ok) return c.json(out, statusOfVersionFailure(out.reason))
+    return c.json(out)
+  })
+
+  r.get('/reports/:id/versions', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const org = c.get('tenant').casdoor_org
+    // 先确认报表存在：直接列版本会把「不存在 / 跨租户」伪装成空历史（等于存在性探针）。
+    const report = await getReport(ctx.pool, org, id)
+    if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // 列表只给元数据（正文快照走 /versions/:version —— 100 条 × 全量 spec 没有消费方）。
+    const rows = await listVersions(ctx.pool, org, id)
+    return c.json({
+      versions: rows.map((row) => ({
+        version: row.version,
+        title: row.title,
+        publishedAt: row.publishedAt,
+        publishedBy: row.publishedBy,
+        note: row.note,
+        draftVersion: row.draftVersion,
+        // 「线上用的是这一版」：比对指针的 id（同一 version 号在别的报表/租户上互不相干）
+        isCurrent: row.id === report.publishedVersionId,
+      })),
+    })
+  })
+
+  r.get('/reports/:id/versions/:version', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const version = versionParamOf(c.req.param('version'))
+    if (version === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // 存储层每条 SQL 都带 org ⇒ 跨租户与不存在同形（null ⇒ 404，不给存在性探针）。
+    const row = await getVersion(ctx.pool, c.get('tenant').casdoor_org, id, version)
+    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // 完整快照（含 spec）：供 review / 回滚确认。spec 原样返回——回填行未过当前白名单，
+    // 「原样展示给人看」比「解析失败就 500」正确（要上线的走回滚，那里会重新校验）。
+    return c.json({
+      version: row.version, title: row.title, spec: row.spec, requiredScope: row.requiredScope,
+      draftVersion: row.draftVersion, publishedAt: row.publishedAt, publishedBy: row.publishedBy,
+      note: row.note,
+    })
+  })
+
+  r.get('/reports/:id/published-spec', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const rawVersion = c.req.query('v')
+    let version: number | undefined
+    if (rawVersion !== undefined) {
+      const parsedVersion = versionParamOf(rawVersion)
+      if (parsedVersion === null) return c.json({ error: 'NOT_FOUND' }, 404)
+      version = parsedVersion
+    }
+    const org = c.get('tenant').casdoor_org
+    const report = await getReport(ctx.pool, org, id)
+    // 页门与观看面同一判据（`visibleTo`，照 embed-url / GET /spec 的口径）：不通过 / 跨租户 /
+    // 不存在一律 **404**（不给存在性探针——403 会泄露「这个 id 存在且未发布」）。
+    if (report === null || !visibleTo(report, requester)) {
+      return c.json({ error: 'NOT_FOUND' }, 404)
+    }
+    // 下线总闸在存储层：`published_version_id is null` ⇒ 含 `?v=N` 一律 null ⇒ NOT_PUBLISHED。
+    const snapshot = await getPublishedSpec(ctx.pool, org, id, version)
+    if (snapshot === null) return c.json({ error: 'NOT_PUBLISHED' }, 404)
+    return c.json(snapshot)
+  })
+
+  r.get('/reports/:id/draft', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const org = c.get('tenant').casdoor_org
+    const report = await getReport(ctx.pool, org, id)
+    if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // 管理面（data:manage）：**不裁** visibleTo——页门未放行的草稿对管理员必须可见可改
+    // （同 GET /reports/manage）。metabase 行的内容在 Metabase 侧，没有可读的 spec 列。
+    if (report.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
+    const published = report.publishedVersion === null
+      ? null
+      : await getVersion(ctx.pool, org, id, report.publishedVersion)
+    return c.json({
+      spec: report.spec,
+      version: report.version,
+      publishedVersion: report.publishedVersion,
+      publishedAt: published?.publishedAt ?? null,
+      // 「发布后又改过草稿没有」：唯一判据是草稿计数器越过了**那一版发布时**记下的
+      // `draft_version`。⚠️ 别用「spec 与快照不等」判——jsonb 键序 / 旧白名单归一会让同内容
+      // 看起来不同（稳定序列化只在发布幂等判据里用，且对象是解析后的 spec）。
+      hasUnpublishedChanges:
+        report.publishedVersionId !== null
+        && report.version > (report.publishedDraftVersion ?? 0),
+    })
   })
 
   // ── 编辑页入口（spec §3⑦：把 Metabase 编辑页经反代搬进后台）─────────────────────────
