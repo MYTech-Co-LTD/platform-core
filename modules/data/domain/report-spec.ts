@@ -9,37 +9,102 @@
 //     「渲染器能力」与「平台代码」脱钩 ⇒ 库里加了图型而渲染器不认 = **静默空白**。
 import { z } from 'zod'
 
-export const CHART_TYPES = ['line', 'bar', 'table'] as const
+export const CHART_TYPES = ['line', 'bar', 'table', 'kpi', 'text'] as const
 export const MAX_PANELS = 24
 export const MAX_DIMS = 4
+export const MAX_TEXT = 2000
 
-/** date_range 窗口值（{from,to}）：/query 侧 rangeLiteral 的同形档（#1047 报表页日期窗）。 */
-const RangeValueSchema = z.object({ from: z.string().min(1).max(32), to: z.string().min(1).max(32) }).strict()
+const RangeValueSchema = z.object({
+  from: z.string().min(1).max(32),
+  to: z.string().min(1).max(32),
+}).strict()
+const ArgValue = z.union([z.string(), z.number(), z.boolean(), RangeValueSchema])
+const ArgsSchema = z.record(ArgValue).default({})
+const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+const MonthStr = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)
 
-const PanelSchema = z.object({
-  chart: z.enum(CHART_TYPES),
-  title: z.string().trim().min(1).max(120),
-  metricId: z.string().min(1).max(128),                  // 语义 id；合法性由 runQuery 判（同源判据）
-  dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
-  // 等值过滤 + date_range 窗口（{from,to}），与 /query 参数面同形——rangeLiteral 在查询侧校验
-  // from/to 形状与顺序，这里只锁外壳形状（值合法性单一事实源在 /query，不重复实现）。
-  args: z.record(z.union([z.string(), z.number(), z.boolean(), RangeValueSchema])).default({}),
-  span: z.number().int().min(1).max(24).default(12),     // 24 栅格
+export const PeriodSchema = z.object({
+  mode: z.enum(['month', 'last_7_days', 'custom']),
+  month: MonthStr.optional(),
+  from: DateStr.optional(),
+  to: DateStr.optional(),
+}).strict().superRefine((p, ctx) => {
+  if (p.mode === 'month' && p.month === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['month'], message: 'mode=month 需要 month' })
+  }
+  if (p.mode === 'custom') {
+    if (p.from === undefined || p.to === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['from'], message: 'mode=custom 需要 from/to' })
+    } else if (p.from > p.to) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: 'from 必须 <= to' })
+    }
+  }
+})
+
+const SliceSchema = z.object({
+  dimensions: z.array(z.string().min(1).max(64)).max(MAX_DIMS).optional(),
+  orderBy: z.array(z.object({
+    column: z.string().min(1).max(64),
+    dir: z.enum(['asc', 'desc']),
+  }).strict()).max(4).optional(),
+  limit: z.number().int().min(1).max(1000).optional(),
+  total: z.boolean().optional(),
 }).strict()
 
-export const ReportSpecSchema = z.object({ panels: z.array(PanelSchema).max(MAX_PANELS) }).strict()
+const metricBase = {
+  title: z.string().trim().min(1).max(120),
+  metricId: z.string().min(1).max(128),
+  args: ArgsSchema,
+  span: z.number().int().min(1).max(24).default(12),
+  timeScoped: z.boolean().default(true),
+}
+
+const LinePanel = z.object({
+  chart: z.literal('line'), ...metricBase,
+  dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
+  slice: SliceSchema.optional(),
+}).strict()
+const BarPanel = z.object({ chart: z.literal('bar'), ...metricBase, dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]), slice: SliceSchema.optional() }).strict()
+const TablePanel = z.object({ chart: z.literal('table'), ...metricBase, dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]), slice: SliceSchema.optional() }).strict()
+
+const KpiPanel = z.object({
+  chart: z.literal('kpi'),
+  title: z.string().trim().min(1).max(120),
+  metricId: z.string().min(1).max(128),
+  denominatorMetricId: z.string().min(1).max(128).optional(),
+  args: ArgsSchema,
+  format: z.enum(['currency', 'number', 'percent']),
+  compare: z.enum(['auto', 'prev_period', 'prev_month', 'none']).default('auto'),
+  goodDirection: z.enum(['up', 'down', 'none']).default('none'),
+  span: z.number().int().min(1).max(24).default(12),
+  timeScoped: z.boolean().default(true),
+}).strict()
+
+const TextPanel = z.object({
+  chart: z.literal('text'),
+  title: z.string().trim().min(1).max(120).optional(),
+  content: z.string().min(1).max(MAX_TEXT),
+  span: z.number().int().min(1).max(24).default(24),
+}).strict()
+
+export const ReportSpecSchema = z.object({
+  period: PeriodSchema.optional(),
+  panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, KpiPanel, TextPanel])).max(MAX_PANELS),
+}).strict()
 
 export type ReportSpec = z.infer<typeof ReportSpecSchema>
+export type PeriodSpec = z.infer<typeof PeriodSchema>
+export type MetricPanel = z.infer<typeof LinePanel> | z.infer<typeof BarPanel> | z.infer<typeof TablePanel>
+export type KpiPanel = z.infer<typeof KpiPanel>
+export type TextPanel = z.infer<typeof TextPanel>
 export type SpecErrorCode = 'INVALID_SPEC' | 'UNKNOWN_CHART_TYPE' | 'SPEC_TOO_LARGE'
 
 export function parseReportSpec(input: unknown): { ok: true; spec: ReportSpec } | { ok: false; code: SpecErrorCode } {
-  // 体量闸先判（避免超大体量先被逐字段解析）
   const panels = (input as { panels?: unknown })?.panels
   if (Array.isArray(panels) && panels.length > MAX_PANELS) return { ok: false, code: 'SPEC_TOO_LARGE' }
   const parsed = ReportSpecSchema.safeParse(input)
   if (parsed.success) return { ok: true, spec: parsed.data }
-  // 未知图型单独给码：前端要能说「这个图型平台还不支持」，而不是笼统的「规格不合法」
   const bad = parsed.error.issues.find((i) => i.path.at(-1) === 'chart')
-  if (bad) return { ok: false, code: 'UNKNOWN_CHART_TYPE' }
+  if (bad !== undefined) return { ok: false, code: 'UNKNOWN_CHART_TYPE' }
   return { ok: false, code: 'INVALID_SPEC' }
 }
