@@ -8,6 +8,7 @@ import { registerMcpManage } from './routes/mcp-manage'
 import { registerMetrics } from './routes/metrics'
 import { registerQuery } from './routes/query'
 import { registerQueryDetail } from './routes/query-detail'
+import { registerBranches } from './routes/branches'
 import { registerChat } from './routes/chat'
 import { registerToolbox } from './routes/toolbox'
 import { registerReports } from './routes/reports'
@@ -36,6 +37,7 @@ export default defineModule({
     registerMetrics(r, _ctx)
     registerQuery(r, _ctx) // T6
     registerQueryDetail(r, _ctx) // spec 2026-10-21 下钻
+    registerBranches(r, _ctx) // #1047 报表页筛选器：门店维读面
     registerMcp(r, _ctx) // T8：MCP 读面（问数）
     registerToolbox(r, _ctx) // Wave 2：registry 的 HTTP 薄封装（通道 A/C 共享面，#985）
     registerMcpManage(r, _ctx) // MCP 写面（本租户口径的定义；#486）
