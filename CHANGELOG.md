@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.203.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.203.1...v0.203.2) - 2026-10-26
+- 【修复】data: item_price sink 按 run 分化目录，修同日多轮互相覆盖 (#1069) ([#1070](https://github.com/MYTech-Co-LTD/platform-core/pull/1070), [919257a](https://github.com/MYTech-Co-LTD/platform-core/commit/919257a3308f0cef088f6c38b8895961890a419b))
+
+
 ## [0.203.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.203.0...v0.203.1) - 2026-10-26
 - 【修复】data: item_price 分页嵌套类型逐页 to_json 归一，修 10-23 起断供 ([#1068](https://github.com/MYTech-Co-LTD/platform-core/pull/1068), [20dbb3b](https://github.com/MYTech-Co-LTD/platform-core/commit/20dbb3b206777f2448b61b26f30481e31d678ecb))
 
