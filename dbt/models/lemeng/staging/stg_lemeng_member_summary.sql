@@ -4,7 +4,7 @@ config(materialized='table')
 -- stg_lemeng_member_summary.sql — 乐檬**会员销售汇总** staging（#1047 P5 2026-10-25 接源；一对一、只规范化不改义）
 -- 【行】= 门店×营业日×订单类型的汇总行（report 端点，无明细）。【会员口径】customer_vip_* 字段；
 --   全部 order_sale_type 的 vip 合计才是报表口径（漏「拼团」型差 82.19——2026-10-25 网关锚）。
--- 【店维】shape 常量注入（branch_nums=[92] 单店批次；全量待 foreach 父子管线）。
+-- 【店维】三批静态全店（branch_nums 各≤100，API 上限 100 家/次——2026-10-26 实测）。
 select
   r['batch_id']::varchar as batch_id,
   r['system_book']::varchar as system_book,
