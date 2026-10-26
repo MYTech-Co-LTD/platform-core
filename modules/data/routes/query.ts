@@ -7,10 +7,20 @@ import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, RouteCtx } from './context'
 import { requesterOf } from './context'
 import { runQuery } from '../domain/query-service'
+import type { SlicingSpec } from '../domain/authz'
 
+// 形状层只做**形状**校验（每层逐字段收紧）：这些值是否合法（粒度/可加/列名/上限）
+// 由授权核心判定——路由不自造第二份切片判定（否则两条通道的判据会分叉）。
 const QueryBody = z.object({
   metricId: z.string().min(1),
   args: z.record(z.unknown()).default({}),
+  dimensions: z.array(z.string().min(1)).optional(),
+  orderBy: z.array(z.object({
+    column: z.string().min(1),
+    dir: z.enum(['asc', 'desc']).optional(),
+  })).optional(),
+  limit: z.number().int().positive().optional(),
+  total: z.boolean().optional(),
 })
 
 export function registerQuery(r: ModuleHono, ctx: RouteCtx): void {
@@ -28,9 +38,24 @@ export function registerQuery(r: ModuleHono, ctx: RouteCtx): void {
     // context，宿主投影只能在这里读，再经 deps 穿下去。宿主没投影 ⇒ `?? []` ⇒ 空集
     // ⇒ 平台 L1 一律不可见（fail-closed；「未接入源」与「宿主没给这条事实」都不放行）。
     const adoptedSources = new Set(c.get(TENANT_SOURCES) ?? [])
+    const body = parsed.data
+    // 切片只在**真有字段**时构造：全缺省 ⇒ 传 undefined ⇒ 授权核心走与重构前逐字节一致的
+    // 旧路径（authz.test.ts 的回归锁钉着这一点）。用 `!== undefined` 而非真值判断：
+    // `dimensions: []`（显式合计形态）与 `limit` 都是「给了就生效」的请求。
+    const slicing: SlicingSpec | undefined = (
+      body.dimensions !== undefined || body.orderBy !== undefined
+      || body.limit !== undefined || body.total !== undefined
+    )
+      ? {
+          ...(body.dimensions !== undefined ? { dimensions: body.dimensions } : {}),
+          ...(body.orderBy !== undefined ? { orderBy: body.orderBy } : {}),
+          ...(body.limit !== undefined ? { limit: body.limit } : {}),
+          ...(body.total !== undefined ? { total: body.total } : {}),
+        }
+      : undefined
     const outcome = await runQuery(
       { pool: ctx.pool, execute: ctx.execute, adoptedSources },
-      org, requesterOf(c), parsed.data.metricId, parsed.data.args,
+      org, requesterOf(c), body.metricId, body.args, slicing,
     )
 
     if (outcome.status === 'ok') return c.json(outcome)
