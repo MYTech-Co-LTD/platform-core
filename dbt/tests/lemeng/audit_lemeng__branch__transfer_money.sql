@@ -3,6 +3,8 @@
 -- 复算走 staging 会让 cast/投影错同时污染两边 ⇒ 对账恒绿）。
 -- 契约：dbt singular test 返回任何行即失败；空转自检防「空集上的假绿」。
 -- 口径见 fct_branch_indicator.sql 头注（本文件比较：门店配送金额 = 源 transfer_money 的 actual_value 合计）。
+-- 类型：两侧 `system_book` 都是 `varchar`（湖里是 int，构件面在 fct 入口转 varchar，见 fct 头注 #1064）——
+--   本文件的 `::varchar` 就是转成与物化侧同型再 join，别改回 int。
 -- 锚：店 92 2026-10-01..19 合计 32,114.96（与乐檬源界面逐分对上，handbook §1.7 D10 行）。
 with recheck as (
     select

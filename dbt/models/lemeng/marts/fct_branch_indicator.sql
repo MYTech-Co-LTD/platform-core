@@ -13,9 +13,14 @@
 --   不要在消费面拿本列的 0 当「源侧确认为零」。
 -- 【门店维】只留键 `branch_num`（与 fct_branch_expense 同形）：店名/战区走
 --   `dim_lemeng_branch` join，别在 fct 里冗余维度列。
+-- 【system_book 转 varchar（#1064）】湖里这一列是 `int`（契约 `CAST(system_book AS INTEGER)`，
+--   源侧本就是数字，staging 是生成物不可手改），但**构件面一律 `varchar`**——本仓其余 18 个
+--   fct/staging 都这么转。消费面按 `system_book = '3120'` 过滤（问数参数面 `deriveParams`
+--   把它定成 string），留 int ⇒ `operator does not exist: integer = character varying`
+--   （2026-10-26 对账实测）。故在消费面入口这一层归一，湖与契约保持数值语义不变。
 with agg as (
     select
-        system_book,
+        cast(system_book as varchar) as system_book,
         bizday,
         branch_num,
         sum(case when metric = 'transfer_money' then coalesce(actual_value, 0) else 0 end)::numeric(20,2) as transfer_money
