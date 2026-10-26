@@ -19,7 +19,7 @@
         ],
         "properties": {
           "connectionRef": "lemeng",
-          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.customeranalysissummary.find",
+          "url": "https://cloud.nhsoft.cn/agi/mcp",
           "method": "POST",
           "headers": {
             "Content-Type": "application/json",
@@ -305,8 +305,7 @@
           "rules": {
             "batch_id": "not_null",
             "system_book": "not_null",
-            "bizday": "not_null",
-            "order_sale_type": "not_null"
+            "bizday": "not_null"
           }
         }
       }
