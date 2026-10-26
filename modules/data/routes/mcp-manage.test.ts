@@ -89,12 +89,12 @@ describePg('写面（需要 DATABASE_URL）', () => {
 
   /** 口径片 + 报表片：设计稿 §6#7 的结构约束（多出发布/回收类 = 「能提不能发」被破坏）。 */
   const METRIC_REPORT_TOOL_NAMES = ['customize_metric', 'delete_custom_metric', 'list_metrics',
-    'list_reports', 'propose_report', 'revise_report_spec']
+    'list_reports', 'propose_report', 'revise_report_spec', 'get_report_spec']
   /** Wave 3 提案面（spec §7）：八个，缺一或多一都算漂。 */
   const PIPELINE_TOOL_NAMES = ['apply_pipeline_proposal', 'get_pipeline', 'get_pipeline_run', 'list_pipeline_runs', 'list_pipelines',
     'propose_contract_change', 'propose_pipeline_change', 'run_pipeline_sandbox']
 
-  it('tools/list → 口径三 + 报表三（#496）与提案七件（Wave 3）各自恰好', async () => {
+  it('tools/list → 口径三 + 报表四（#496）与提案七件（Wave 3）各自恰好', async () => {
     await seedL1()
     const body = await (await rpc(app(), { jsonrpc: '2.0', id: 1, method: 'tools/list' })).json()
     const tools = (body as { result: { tools: { name: string; description: string }[] } }).result.tools

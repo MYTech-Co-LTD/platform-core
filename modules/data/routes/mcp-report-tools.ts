@@ -11,7 +11,10 @@
 // 门禁由宿主按 manifest 的 `scope: data:manage` 施加——本文件不写 requireScope（同口径片）。
 import { z } from 'zod'
 import { withObjectLock } from '../domain/object-lock'
+import { loadMergedCatalog } from '../domain/metric-store'
 import { parseReportSpec } from '../domain/report-spec'
+import type { ReportSpec } from '../domain/report-spec'
+import { deriveRequiredScope, validatePanelMetrics } from '../domain/report-scope'
 import { getReport, getReportVersion, listReports, updateSpec, upsertReport } from '../domain/report-store'
 import type { McpDeps, McpToolGroup, McpToolResult } from './mcp-rpc'
 
@@ -32,11 +35,36 @@ const ReviseArgs = z.object({
   expectedVersion: z.number().int().positive(),
 }).strict()
 
-const NAMES = ['list_reports', 'propose_report', 'revise_report_spec'] as const
+const GetSpecArgs = z.object({ id: z.string().min(1) }).strict()
+
+const NAMES = ['list_reports', 'propose_report', 'revise_report_spec', 'get_report_spec'] as const
 const ok = (o: Record<string, unknown>): McpToolResult =>
   ({ text: JSON.stringify({ status: 'ok', ...o }), isError: false })
 const refused = (error: string, extra: Record<string, unknown> = {}): McpToolResult =>
   ({ text: JSON.stringify({ status: 'refused', error, ...extra }), isError: true })
+
+/**
+ * 提报 / 改报共用的**写入侧校验**（spec §4.2 补强）——与 HTTP 面是同一份判定
+ * （domain/report-scope），本面只把结果翻译成工具级错误码：
+ *
+ *   · `deriveRequiredScope`：指标必须存在；面板不能要多个互不相同的 scope（单值页门表达不了）。
+ *   · `validatePanelMetrics`：源未接入 ⇒ 拒（否则报表看着正常、点进去 403）；line/bar/kpi
+ *     必须可加（不可加指标求和 = 假数）。
+ *
+ * 返回 `null` 表示通过。顺序即错误归因优先级：存在性 → 源裁剪 → 可加性。
+ */
+async function validateSpec(deps: McpDeps, spec: ReportSpec): Promise<McpToolResult | null> {
+  const catalog = await loadMergedCatalog(deps.pool, deps.org)
+  const scope = deriveRequiredScope(spec, catalog)
+  if (!scope.ok) {
+    return scope.reason === 'UNKNOWN_PANEL_METRIC'
+      ? refused(scope.reason, { metricId: scope.metricId })
+      : refused(scope.reason, { scopes: scope.scopes })
+  }
+  const metrics = validatePanelMetrics(spec, catalog, deps.adoptedSources)
+  if (!metrics.ok) return refused(metrics.reason, { metricId: metrics.metricId })
+  return null
+}
 
 export const reportTools: McpToolGroup = {
   async list(deps: McpDeps) {
@@ -45,6 +73,9 @@ export const reportTools: McpToolGroup = {
       { name: 'list_reports',
         description: '列出本租户已有报表（标题 / 渲染器 / 页门 / 版本 / 面板数）。**提议新报表前先调它查重**。',
         inputSchema: { type: 'object', properties: {}, required: [] } },
+      { name: 'get_report_spec',
+        description: '读一张报表的当前规格与版本（改报前先读，不要凭记忆重写整份 spec）。',
+        inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
       { name: 'propose_report',
         description: [
           '提议一张新的平台自绘报表。**只是提议**：建出来的一定是未发布状态（页门挂在管理档），',
@@ -88,11 +119,25 @@ export const reportTools: McpToolGroup = {
       })) })
     }
 
+    if (name === 'get_report_spec') {
+      const parsed = GetSpecArgs.safeParse(args)
+      if (!parsed.success) return refused('INVALID_BODY')
+      const row = await getReport(deps.pool, org, parsed.data.id)
+      if (row === null) return refused('NOT_FOUND')
+      return ok({
+        id: row.id, title: row.title, renderer: row.renderer,
+        requiredScope: row.requiredScope, version: row.version, spec: row.spec,
+      })
+    }
+
     if (name === 'propose_report') {
       const parsed = ProposeArgs.safeParse(args)
       if (!parsed.success) return refused('INVALID_BODY')
       const spec = parseReportSpec(parsed.data.spec)
       if (!spec.ok) return refused(spec.code)
+      // 写入侧校验先于落库：词表里没有的指标 / 未接入源 / 不可加指标画线 ⇒ 拒，不建行。
+      const invalid = await validateSpec(deps, spec.spec)
+      if (invalid !== null) return invalid
       // ★ 原子 create-only：撞名 ⇒ 什么都不写、返回 null ⇒ 这里拒掉（§3.3④）
       const id = await upsertReport(deps.pool, org, {
         title: parsed.data.title, metabaseId: 0, embedParams: {},
@@ -117,6 +162,10 @@ export const reportTools: McpToolGroup = {
       if (row.renderer !== 'platform') return refused('RENDERER_NOT_SELF_DRAWN')
       // ★ 结构落点②：已发布（页门清空）⇒ 拒
       if (row.requiredScope === null) return refused('PUBLISHED_REPORT')
+      // 与 propose 同一道写入侧闸。放在「已发布 ⇒ 拒」之后：不可改的行不该先收到
+      // 「指标不存在」这种**改不了**的错——那会误导 agent 去修一个它无权修的东西。
+      const invalid = await validateSpec(deps, spec.spec)
+      if (invalid !== null) return invalid
       const updated = await updateSpec(deps.pool, org, id, spec.spec, parsed.data.expectedVersion)
       if (updated === null) {
         const cur = await getReportVersion(deps.pool, org, id)
