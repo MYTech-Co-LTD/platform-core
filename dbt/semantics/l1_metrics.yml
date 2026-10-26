@@ -1169,3 +1169,26 @@ metrics:
     freshness_sla_days: 2
     sources:
     - 's3://<bucket>/lemeng/member_summary/system_book=<账套>/bizday=<日期>/all.parquet'
+
+  # ── D10 门店经营指标（2026-10-26，#1047 P2/P3）：首发 transfer_money ─────────────────────
+  # 构件落点 fct_branch_indicator（宽表：staging 的 metric 行转列）。新增 D10 指标 = mart 加一列
+  # + 本节加一条声明；采集形态/网关省略语义见契约 contracts/common/lemeng.branch_indicator.json。
+  - name: 'lemeng:branch:transfer_money'
+    label: 门店配送金额
+    definition: >-
+      D10「配送金额」（乐檬 `transfer_money` 指标）= 源 `actual_value` 按门店×日合计，**可加**。
+      采集形态：`date_type=month` + `date=<月内任一天>` + `group_type=day` + `metrics=["transfer_money"]`，
+      源返回整月 `periods[]`，采集侧只留 `period_day = 业务日` 那一格 ⇒ 日粒度。
+      **缺行语义（必读）**：源侧「本月无数据」的门店不出现在响应里 ⇒ 该店日湖里无行；构件对无行店日给 0
+      ⇒ **本指标分不出「源侧没报」与「报了 0」**，要区分须读 staging 行集（契约 description 详）。
+      锚：3120/店92/2026-10-01..19 合计 **32,114.96**（与乐檬源界面逐分对上；湖侧两面独立复算恒等）。
+      ⚠️ tier=experimental：仅 3120 单账套 × 单指标 × 19 天验证，多指标/跨账套未复核前不升。
+      粒度 = 账套 × 业务日 × 门店。
+    expression: 'sum(fct_branch_indicator.transfer_money)'
+    grain: [system_book, bizday, branch_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+    sources:
+    - 's3://<bucket>/lemeng/branch_indicator/system_book=<账套>/bizday=<日期>/all.parquet'
