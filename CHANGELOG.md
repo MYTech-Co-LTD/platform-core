@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.204.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.203.4...v0.204.0) - 2026-10-26
+- 【新增】data: AI 文本组件 ai_text（流式生成 + 缓存） ([#1077](https://github.com/MYTech-Co-LTD/platform-core/pull/1077), [8c60d86](https://github.com/MYTech-Co-LTD/platform-core/commit/8c60d8661b059fe587d719f45cc35ba41b1a6711))
+
+
 ## [0.203.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.203.3...v0.203.4) - 2026-10-26
 - 【修复】data: item_price staging 去重改内联 not exists，修 qualify 在 CTAS 外壳下解析失败 (#1071) ([#1074](https://github.com/MYTech-Co-LTD/platform-core/pull/1074), [40af834](https://github.com/MYTech-Co-LTD/platform-core/commit/40af834195993c2bbe8b00b78c3ff158638d23e7))
 
