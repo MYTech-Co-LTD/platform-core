@@ -345,8 +345,60 @@ describe('自绘渲染器 SpecView', () => {
     renderView()
     await waitFor(() => expect(mInit).toHaveBeenCalled())
     const chartStub = mInit.mock.results[0].value as unknown as { setOption: ReturnType<typeof vi.fn> }
-    const option = chartStub.setOption.mock.calls[0][0] as { series: Array<{ name: string; type: string }> }
-    expect(option.series).toEqual([{ name: '', type: 'bar', data: [80] }])
+    // 柱状图走 baseOption + media（窄屏类目标签自适应，见下条用例）⇒ series 在 baseOption 里
+    const option = chartStub.setOption.mock.calls[0][0] as { baseOption: { series: Array<{ name: string; type: string }> } }
+    expect(option.baseOption.series).toEqual([{ name: '', type: 'bar', data: [80] }])
+  })
+
+  it('★ 窄屏柱状类目标签：media 查询强制全显 + 45° 倾斜 + 截断；折线图不带 media（Task 13 走查）', async () => {
+    // 症状复现：8 个 4–5 字类目在 ~340px 画布里，echarts 默认 interval:'auto' 会抽掉一半标签
+    // （柱在、标签没了）；标签更长时相邻重叠。修法 = 窄容器下 interval:0 + rotate:45 + truncate。
+    // 组件测试只能断言**声明面**（echarts 是桩，媒体查询不会真求值）——真实触发由 390×844
+    // 截图验收兜底；两条用例合起来才是闭环（声明 + 真机）。
+    const labels = ['会员消费', '普通零售', '团购核销', '外卖配送', '储值卡消费', '企业团购', '员工内购', '其他销售']
+    stub({
+      panels: [
+        { chart: 'bar', title: '柱状面板', metricId: 'm1', dims: ['order_sale_type_name'], args: {}, span: 24 },
+        { chart: 'line', title: '折线面板', metricId: 'm2', dims: ['bizday'], args: {}, span: 24 },
+      ],
+    }, {
+      m1: { columns: ['value', 'order_sale_type_name'], rows: labels.map((l, i) => [String(i + 1), l]) },
+      m2: { columns: ['value', 'bizday'], rows: [['1', '2026-09-01']] },
+    }, new Set())
+    renderView()
+    await waitFor(() => expect(mInit).toHaveBeenCalledTimes(2))
+
+    type Option = {
+      baseOption?: {
+        xAxis: { type: string; data: string[]; axisLabel?: unknown }
+        grid: Record<string, unknown>
+        series: Array<{ type: string }>
+      }
+      media?: Array<Record<string, unknown>>
+      xAxis?: { axisLabel?: unknown }
+    }
+    const options = mInit.mock.results.map(
+      (r) => (r.value as unknown as { setOption: ReturnType<typeof vi.fn> }).setOption.mock.calls[0][0] as Option,
+    )
+    const bar = options.find((o) => o.baseOption?.series[0]?.type === 'bar')!
+    const line = options.find((o) => o.baseOption === undefined)!
+
+    // 柱状图：类目全量保留（不是被抽稀的 4 个），且窄屏媒体查询把标签钉成「全显 + 倾斜 + 截断」
+    expect(bar.baseOption!.xAxis.data).toEqual(labels)
+    expect(bar.media).toEqual([{
+      query: { maxWidth: 520 },
+      option: {
+        grid: { bottom: 24 },
+        xAxis: { axisLabel: { interval: 0, rotate: 45, fontSize: 11, overflow: 'truncate', width: 84 } },
+      },
+    }])
+    // 呼吸位：宽屏留白仍是原来的 12，窄屏 bottom 在 media 里抬到 24（> 12，见上面的 toEqual）
+    expect(bar.baseOption!.grid.bottom).toBe(12)
+
+    // 折线图**一字不动**：option 根部就是原形状，没有 baseOption/media（宽屏桌面行为不变）
+    expect(line.baseOption).toBeUndefined()
+    expect(line.media).toBeUndefined()
+    expect(line.xAxis).toEqual({ type: 'category', data: ['2026-09-01'] })
   })
 })
 

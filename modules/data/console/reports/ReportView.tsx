@@ -25,6 +25,8 @@
 // 渲染质量归我们（spec §5「代价明写」），实测坑的修法：
 //  ① 多系列要**透视数据集**（buildOption）：每个系列一个 `data` 数组、`xAxis.data` 用维度值。
 //  ② 画布要收 `overflow`（EChart 容器 + option.grid 显式留白）。
+//  ③ 窄屏柱状图的类目标签要**强制全显 + 倾斜**（Task 13 走查的 390px 实测：8 个 4–5 字类目
+//     默认 `interval:'auto'` 会被抽掉一半——柱还在、标签没了，读者无法把柱对齐到类目）。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, Col, DatePicker, Row, Segmented, Select, Space, Spin, Table, Tag, Typography } from 'antd'
 import dayjs, { Dayjs } from 'dayjs'
@@ -68,6 +70,23 @@ type PanelResult =
   | { kind: 'error'; text: string }
 
 type OkResult = Extract<PanelResult, { kind: 'ok' }>
+
+/**
+ * 窄屏柱状图的类目轴策略（Task 13 走查的 390px 实测 + 真机截图校验）。
+ *
+ * 症状：8 个 4–5 字类目标签在 ~340px 宽的画布里，echarts 默认 `interval:'auto'` 直接**抽掉
+ * 一半标签**（柱还在、标签没了）——类目轴的可读性归零；标签更长的口径则相邻重叠。
+ * 修法（只对柱状图，折线不碰）：窄容器下 `interval: 0` 强制全显、45° 倾斜排开、
+ * `overflow:'truncate'` + `width` 兜住超长类目（完整名仍在 tooltip 的 axis 值里）。
+ *
+ * 用 echarts 原生 `media` 查询（按**容器宽度**求值，resize/竖屏切换自动重算）而不是在 JS 里
+ * 量宽度：宽屏不命中 ⇒ 桌面视觉与改动前逐像素一致。`containLabel: true` 已把倾斜标签算进
+ * grid 外沿（实测不裁切），`bottom` 只是再留一点呼吸位。
+ */
+const NARROW_BAR_MAX_WIDTH = 520
+const NARROW_BAR_AXIS_LABEL = { interval: 0, rotate: 45, fontSize: 11, overflow: 'truncate', width: 84 } as const
+/** 画布留白（宽窄屏共用；窄屏媒体查询只把 bottom 再抬一点，给倾斜标签呼吸位）。 */
+const GRID_MARGINS = { left: 12, right: 20, top: 36, bottom: 12, containLabel: true } as const
 
 /**
  * 透视数据集装配（spec §5 实测坑 1 的修法）。
@@ -115,14 +134,29 @@ function buildOption(chart: 'line' | 'bar', dimensions: string[], result: OkResu
     data: xLabels.map((x) => cells.get(`${x}\u0000${seriesKey}`) ?? null),
   }))
 
-  return {
+  const baseOption = {
     // option 半边：grid 显式留白——与 EChart 容器的 overflow:hidden 是同一坑的两半。
-    grid: { left: 12, right: 20, top: 36, bottom: 12, containLabel: true },
+    grid: GRID_MARGINS,
     tooltip: { trigger: 'axis' },
     ...(series.length > 1 ? { legend: {} } : {}),
     xAxis: { type: 'category', data: xLabels },
     yAxis: { type: 'value' },
     series,
+  }
+  // 折线图的 x 轴是连续时间轴、标签天然稀疏——**一字不动**（走查只发现柱状图的重叠/抽稀）。
+  if (chart === 'line') return baseOption
+  // 柱状图：用 echarts 原生 media 查询按**容器宽度**自适应（resize / 竖屏切换自动重算）——
+  // 不在 JS 里量宽度，也不用 ResizeObserver。窄屏下强制全显 + 45° 倾斜 + 超长截断；
+  // 宽屏（桌面 console）仍是原来的水平标签，媒体查询不命中 ⇒ 视觉零变化。
+  return {
+    baseOption,
+    media: [{
+      query: { maxWidth: NARROW_BAR_MAX_WIDTH },
+      option: {
+        grid: { bottom: 24 },
+        xAxis: { axisLabel: NARROW_BAR_AXIS_LABEL },
+      },
+    }],
   }
 }
 
