@@ -264,7 +264,12 @@ const pipeline = {
     } }),
     node('sink', 'snk.minio', {
       bucket: '${ENV:ZOS_BUCKET}',
-      key: 'lemeng/item_price/system_book=${ENV:SYSTEM_BOOK}/bizday=${date+8h}/all.parquet',
+      // 目录多一层 run 戳（`${datetime}`，2026-10-26 #1069）：本管线一天跑 5 轮，而引擎
+      // snk.minio 只有覆盖写没有 append —— key 只到日 ⇒ 后一轮把前一轮的增量覆盖掉
+      // （实测 940 行 → 6 行）。同款先例 = forms.submission.l0 的 `batch_id=${datetime}/`。
+      // 下游 staging 的 glob 相应换成 `bizday=*/**/*.parquet`（单层 `bizday=**/` 匹配不到
+      // 多出来的这一层，2026-10-26 真机实测；新 glob 同时吃历史单层老文件）。
+      key: 'lemeng/item_price/system_book=${ENV:SYSTEM_BOOK}/bizday=${date+8h}/${datetime}/all.parquet',
       region: '${ENV:ZOS_REGION}',
       urlStyle: 'path',
       useSsl: 'true',

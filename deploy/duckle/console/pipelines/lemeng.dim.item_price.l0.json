@@ -12861,7 +12861,7 @@
         "componentId": "snk.minio",
         "properties": {
           "bucket": "${ENV:ZOS_BUCKET}",
-          "key": "lemeng/item_price/system_book=${ENV:SYSTEM_BOOK}/bizday=${date+8h}/all.parquet",
+          "key": "lemeng/item_price/system_book=${ENV:SYSTEM_BOOK}/bizday=${date+8h}/${datetime}/all.parquet",
           "region": "${ENV:ZOS_REGION}",
           "urlStyle": "path",
           "useSsl": "true",
