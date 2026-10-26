@@ -161,8 +161,8 @@
    "id": "merge",
    "type": "transform",
    "position": {
-    "x": 0,
-    "y": 0
+    "x": 1800,
+    "y": -200
    },
    "data": {
     "label": "merge",
@@ -174,8 +174,8 @@
    "id": "shape",
    "type": "transform",
    "position": {
-    "x": 0,
-    "y": 0
+    "x": 2080,
+    "y": -200
    },
    "data": {
     "label": "shape",
@@ -189,8 +189,8 @@
    "id": "gate",
    "type": "transform",
    "position": {
-    "x": 0,
-    "y": 0
+    "x": 2360,
+    "y": -200
    },
    "data": {
     "label": "gate",
@@ -211,8 +211,8 @@
    "id": "sink",
    "type": "sink",
    "position": {
-    "x": 0,
-    "y": 0
+    "x": 2640,
+    "y": -200
    },
    "data": {
     "label": "sink",
@@ -235,7 +235,7 @@
    "type": "source",
    "position": {
     "x": 1200,
-    "y": 100
+    "y": -240
    },
    "data": {
     "label": "price batch 1 (46 branches)",
@@ -333,7 +333,7 @@
    "type": "source",
    "position": {
     "x": 1200,
-    "y": 200
+    "y": -80
    },
    "data": {
     "label": "price batch 2 (46 branches)",
@@ -431,7 +431,7 @@
    "type": "source",
    "position": {
     "x": 1200,
-    "y": 300
+    "y": 80
    },
    "data": {
     "label": "price batch 3 (46 branches)",
@@ -529,7 +529,7 @@
    "type": "source",
    "position": {
     "x": 1200,
-    "y": 400
+    "y": 240
    },
    "data": {
     "label": "price batch 4 (46 branches)",
@@ -627,7 +627,7 @@
    "type": "source",
    "position": {
     "x": 1200,
-    "y": 500
+    "y": 400
    },
    "data": {
     "label": "price batch 5 (46 branches)",
@@ -725,7 +725,7 @@
    "type": "source",
    "position": {
     "x": 1200,
-    "y": 600
+    "y": 560
    },
    "data": {
     "label": "price batch 6 (41 branches)",
@@ -815,6 +815,96 @@
      "retryBackoffMs": 2000,
      "incrementalField": "last_edit_time",
      "incrementalInitial": "2026-10-08 00:00:00"
+    }
+   }
+  },
+  {
+   "id": "j1",
+   "type": "transform",
+   "position": {
+    "x": 1480,
+    "y": -240
+   },
+   "data": {
+    "label": "j1",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT * EXCLUDE (branch, pos_variant), to_json(branch) AS branch, to_json(pos_variant) AS pos_variant FROM input"
+    }
+   }
+  },
+  {
+   "id": "j2",
+   "type": "transform",
+   "position": {
+    "x": 1480,
+    "y": -80
+   },
+   "data": {
+    "label": "j2",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT * EXCLUDE (branch, pos_variant), to_json(branch) AS branch, to_json(pos_variant) AS pos_variant FROM input"
+    }
+   }
+  },
+  {
+   "id": "j3",
+   "type": "transform",
+   "position": {
+    "x": 1480,
+    "y": 80
+   },
+   "data": {
+    "label": "j3",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT * EXCLUDE (branch, pos_variant), to_json(branch) AS branch, to_json(pos_variant) AS pos_variant FROM input"
+    }
+   }
+  },
+  {
+   "id": "j4",
+   "type": "transform",
+   "position": {
+    "x": 1480,
+    "y": 240
+   },
+   "data": {
+    "label": "j4",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT * EXCLUDE (branch, pos_variant), to_json(branch) AS branch, to_json(pos_variant) AS pos_variant FROM input"
+    }
+   }
+  },
+  {
+   "id": "j5",
+   "type": "transform",
+   "position": {
+    "x": 1480,
+    "y": 400
+   },
+   "data": {
+    "label": "j5",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT * EXCLUDE (branch, pos_variant), to_json(branch) AS branch, to_json(pos_variant) AS pos_variant FROM input"
+    }
+   }
+  },
+  {
+   "id": "j6",
+   "type": "transform",
+   "position": {
+    "x": 1480,
+    "y": 560
+   },
+   "data": {
+    "label": "j6",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT * EXCLUDE (branch, pos_variant), to_json(branch) AS branch, to_json(pos_variant) AS pos_variant FROM input"
     }
    }
   }
@@ -941,8 +1031,18 @@
    }
   },
   {
-   "id": "e-p1-merge",
+   "id": "e-p1-j1",
    "source": "p1",
+   "target": "j1",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e-p1-merge-j",
+   "source": "j1",
    "target": "merge",
    "sourceHandle": "main",
    "targetHandle": "main_1",
@@ -961,8 +1061,18 @@
    }
   },
   {
-   "id": "e-p2-merge",
+   "id": "e-p2-j2",
    "source": "p2",
+   "target": "j2",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e-p2-merge-j",
+   "source": "j2",
    "target": "merge",
    "sourceHandle": "main",
    "targetHandle": "main_2",
@@ -981,8 +1091,18 @@
    }
   },
   {
-   "id": "e-p3-merge",
+   "id": "e-p3-j3",
    "source": "p3",
+   "target": "j3",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e-p3-merge-j",
+   "source": "j3",
    "target": "merge",
    "sourceHandle": "main",
    "targetHandle": "main_3",
@@ -1001,8 +1121,18 @@
    }
   },
   {
-   "id": "e-p4-merge",
+   "id": "e-p4-j4",
    "source": "p4",
+   "target": "j4",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e-p4-merge-j",
+   "source": "j4",
    "target": "merge",
    "sourceHandle": "main",
    "targetHandle": "main_4",
@@ -1021,8 +1151,18 @@
    }
   },
   {
-   "id": "e-p5-merge",
+   "id": "e-p5-j5",
    "source": "p5",
+   "target": "j5",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e-p5-merge-j",
+   "source": "j5",
    "target": "merge",
    "sourceHandle": "main",
    "targetHandle": "main_5",
@@ -1041,8 +1181,18 @@
    }
   },
   {
-   "id": "e-p6-merge",
+   "id": "e-p6-j6",
    "source": "p6",
+   "target": "j6",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e-p6-merge-j",
+   "source": "j6",
    "target": "merge",
    "sourceHandle": "main",
    "targetHandle": "main_6",
