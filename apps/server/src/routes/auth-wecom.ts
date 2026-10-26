@@ -146,6 +146,16 @@ function trimSlash(s: string): string {
   return s.replace(/\/+$/, '')
 }
 
+/**
+ * 回跳目标（#1047 深链）：?next= 仅当是本站绝对路径（以 / 开头且非协议相对 //）才采用，
+ * 否则回落 /。防开放重定向规则与登录页 nextTarget() 同一款——企微静默链把 next 从
+ * /silent 经 redirect_uri 透传到 /callback，成功落地用。
+ */
+function safeNextOf(c: { req: { query: (k: string) => string | undefined } }): string {
+  const next = c.req.query('next')
+  return next !== null && next !== undefined && next.startsWith('/') && !next.startsWith('//') ? next : '/'
+}
+
 export function wecomRoutes(deps: WecomRoutesDeps) {
   const callbackUri = trimSlash(deps.publicOrigin) + CALLBACK_PATH
 
@@ -186,9 +196,13 @@ export function wecomRoutes(deps: WecomRoutesDeps) {
         return c.json({ error: 'WECOM_NOT_CONFIGURED' }, 404)
       }
       const state = randomUUID()
+      // next 透传（#1047 深链）：redirect_uri 已带 ?via=silent ⇒ 企微追加 code/state 用 &，
+      // next 作为第三个 query 参数随回调回来（encodeURIComponent 后安全）。
+      const next = safeNextOf(c)
+      const callbackQ = next === '/' ? 'via=silent' : `via=silent&next=${encodeURIComponent(next)}`
       const url = buildWecomSilentUrl(
         { corpId: t.wecom_corp_id, agentId: t.wecom_agent_id ?? undefined },
-        `${callbackUri}?via=silent`,
+        `${callbackUri}?${callbackQ}`,
         state,
       )
       c.res.headers.append('Set-Cookie', stateCookie(state))
@@ -363,6 +377,6 @@ export function wecomRoutes(deps: WecomRoutesDeps) {
       if (c.req.header('sec-fetch-dest') === 'iframe') {
         return c.html(IFRAME_DONE_HTML)
       }
-      return c.redirect('/')
+      return c.redirect(safeNextOf(c))
     })
 }

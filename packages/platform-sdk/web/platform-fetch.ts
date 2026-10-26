@@ -13,7 +13,8 @@
 export async function platformFetch(input: string, init?: RequestInit): Promise<Response> {
   const res = await globalThis.fetch(input, { ...init, credentials: init?.credentials ?? 'same-origin' })
   if (res.status === 401 && !location.pathname.startsWith('/login')) {
-    location.href = '/login?next=' + encodeURIComponent(location.pathname + location.hash)
+    // search 一并入 next（#1047 深链：/console/data/reports?open=… 这类带查询的直达地址，登录回跳后不丢参数）
+    location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search + location.hash)
     throw new Error('UNAUTHENTICATED')
   }
   return res

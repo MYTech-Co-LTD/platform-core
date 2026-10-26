@@ -85,7 +85,8 @@ export default function LoginPage() {
   // 回调校验一致，前端不得自拼 authorize URL）
   useEffect(() => {
     if (!/wxwork/i.test(navigator.userAgent)) return
-    window.location.assign('/api/platform/auth/wecom/silent')
+    // next 透传（#1047 深链）：登录页由 401 拦截带来 ?next=，静默链一路带到回调成功落地
+    window.location.assign('/api/platform/auth/wecom/silent?next=' + encodeURIComponent(nextTarget()))
   }, [])
 
   // 白名单过滤已知方法；空集兜底单账密（评审 fix-4：租户配置错也不留零 Tab 白页）

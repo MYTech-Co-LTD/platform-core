@@ -304,6 +304,18 @@ describe('LoginPage（运行时品牌）', () => {
     await waitForLocation('/api/platform/auth/wecom/silent')
   })
 
+  it('⑦b wxwork UA 且登录页带 ?next=：静默跳转透传 next（#1047 深链回跳）', async () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Linux; Android) wxwork/4.1.27' })
+    mockApi({ '/api/platform/branding': () => jsonResponse(BRANDING_PASSWORD_ONLY) })
+    window.history.pushState({}, '', '/login?next=%2Fconsole%2Fdata%2Freports%3Fopen%3Dr3')
+
+    render(<LoginPage />)
+
+    await waitForLocation('/api/platform/auth/wecom/silent')
+    // happy-dom 对 assign 的 search 解析不稳 ⇒ 断言 href 整体包含编码后的 next
+    expect(window.location.href).toContain(encodeURIComponent('/console/data/reports?open=r3'))
+  })
+
   it('⑧ 桌面浏览器（非 wxwork UA）：不触发免登跳转', async () => {
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh) Chrome/126.0 Safari/537.36' })
     mockApi({ '/api/platform/branding': () => jsonResponse(BRANDING_PASSWORD_ONLY) })

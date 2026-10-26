@@ -390,6 +390,42 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     expect(rows[0]?.detail.via).toBe('wecom-silent')
   })
 
+  // ⑥.3 next 透传（#1047 深链）：/silent?next=<本站路径> ⇒ redirect_uri 带上 next；
+  //    回调成功 ⇒ 302 落 next（不再是 /）
+  it('/silent?next=… 透传；回调成功 302 落 next', async () => {
+    const next = '/console/data/reports?open=r3'
+    const s1 = await client.api.platform.auth.wecom.silent.$get(
+      { query: { next } },
+      { headers: { host: 'acme.test', 'user-agent': WXWORK_UA } },
+    )
+    expect(s1.status).toBe(302)
+    const loc = s1.headers.get('location') ?? ''
+    // WeCom URL 会把整个 redirect_uri 再编一层 ⇒ loc 里是**双编码**的 next（企微解一层、
+    // 我们回调 query 解一层，正好还原）
+    expect(loc).toContain(encodeURIComponent(`next=${encodeURIComponent(next)}`))
+    const state = stateToken(s1)
+
+    const res = await client.api.platform.auth.wecom.callback.$get(
+      { query: { code: 'wecom-silent-code', state, via: 'silent', next } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe(next)
+  })
+
+  // ⑥.4 开放重定向防护：next=//evil 与 next=https://evil ⇒ 回落 /（不出站）
+  it('/silent?next= 协议相对/绝对外链 ⇒ 回落 /', async () => {
+    for (const bad of ['//evil.example', 'https://evil.example']) {
+      const s1 = await client.api.platform.auth.wecom.silent.$get(
+        { query: { next: bad } },
+        { headers: { host: 'acme.test', 'user-agent': WXWORK_UA } },
+      )
+      const loc = s1.headers.get('location') ?? ''
+      expect(loc).not.toContain('evil.example')
+      expect(loc).toContain('via%3Dsilent')
+    }
+  })
+
   // ⑥.5 扫码**直连**全链（issue #30）：/qr 给企微登录页 → 企微 code 回调（via=qr-corp）
   //      → 假企微 fetch 换 userid wo_alice → Casdoor 用户 → authVia=wecom-qr
   //      （authVia 仍是 'wecom-qr'——它确实是"企微扫码"；与经 Casdoor 的代开发路同名，
