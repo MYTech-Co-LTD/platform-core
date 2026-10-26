@@ -354,7 +354,7 @@ slice?: {
 
 - 规格白名单：`modules/data/domain/report-spec.ts:12-30`
 - 报表工具面：`modules/data/routes/mcp-report-tools.ts:22,96-119`
-- 报表取数：`modules/data/routes/query.ts:11-14`；`modules/data/console/reports/SpecView.tsx:88,178,239,274`
+- 报表取数：`modules/data/routes/query.ts:11-14`；`modules/data/console/reports/ReportView.tsx:128,223,435`（T6 起渲染/取数从 SpecView 抽到 ReportView）
 - 1000 行/明细排序：`modules/data/domain/authz.ts:157,447-469`
 - `total` 绕过可加性：`modules/data/domain/authz.ts:406,451-454`（totalable 闸只在切片真子集，516-520）
 - L2 params：`modules/data/domain/metric-write.ts:131-142`；`modules/data/domain/semantic-compiler.ts:509-515`
