@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.202.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.202.0...v0.202.1) - 2026-10-26
+- 【修复】data: fct_branch_indicator 入口把 system_book 转 varchar，构件面归一 (#1047) ([#1064](https://github.com/MYTech-Co-LTD/platform-core/pull/1064), [8743f1f](https://github.com/MYTech-Co-LTD/platform-core/commit/8743f1ff669311fc79919534a74b1a4d13c2f5b9))
+
+
 ## [0.202.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.201.0...v0.202.0) - 2026-10-26
 - 【新增】data: 配送金额 L1 语义层——fct_branch_indicator + 对账测试 + 词表条目 (#1047) ([#1063](https://github.com/MYTech-Co-LTD/platform-core/pull/1063), [5aea455](https://github.com/MYTech-Co-LTD/platform-core/commit/5aea4551e4e834420a3ad0cd52493fee58f598fe))
 
