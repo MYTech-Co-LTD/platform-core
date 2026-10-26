@@ -52,7 +52,7 @@ import {
   upsertReport,
 } from '../domain/report-store'
 import { parseReportSpec } from '../domain/report-spec'
-import { deriveRequiredScope } from '../domain/report-scope'
+import { deriveRequiredScope, validatePanelMetrics } from '../domain/report-scope'
 import {
   getPublishedSpec,
   getVersion,
@@ -171,6 +171,20 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         return c.json(
           { error: 'SCOPE_CONFLICT_WITH_PANELS', derivedScope: effectiveScope, givenScope: parsed.data.requiredScope },
           400,
+        )
+      }
+      // ── 写入侧可发布性（月报重做 Task 3 后续；spec §4.2 补强）────────────────────────
+      // 与发布门 / MCP 提报面**同一份判定**（`domain/report-scope`）：未接入源的指标、
+      // line/bar/kpi 上的不可加指标在**建行时**就拒——否则报表看着正常、点进去 403，
+      // 或者图表把不可加指标（比率/去重计数）沿维度求和出一份假数。
+      // 分档：源未接入 = 本租户的接入状态（与 `/query` 403 同因）⇒ 403；其余 = 入参本身
+      // 不成立（调用方缺陷）⇒ 400。位置在**任何写之前**（拒 = 一行都不落）。
+      const adoptedSources = new Set(c.get(TENANT_SOURCES) ?? [])
+      const metrics = validatePanelMetrics(spec.spec, catalog, adoptedSources)
+      if (!metrics.ok) {
+        return c.json(
+          { error: metrics.reason, metricId: metrics.metricId },
+          metrics.reason === 'METRIC_SOURCE_NOT_ADOPTED' ? 403 : 400,
         )
       }
       const id = await upsertReport(ctx.pool, org, {
@@ -401,12 +415,22 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       //    的副本。草稿编辑是「改还没上线的内容」⇒ **只写 spec**（`updateSpec`），绝不回写派生值：
       //    回写会让线上门在草稿改动的瞬间跟着变（已经发出去的链接悄悄换了一道门），且行上与快照
       //    记录的页门不再同源。新页门等下一次发布/回滚时由发布门重新派生。
-      // ⚠️ 派生不了时（多码 / 未知指标）**保持页门原值、规格照存**——拒绝权在**发布门**
-      //    （POST /reports/:id/publish），本端点是「改规格」不是「发布」；把拒绝搬到这里会让
-      //    「存一份待修的多码草稿」变成不可能。已发布行走 updateSpec，连派生都不做（catalog 也不必读）。
+      // ⚠️ 派生不了时（**多码**）**保持页门原值、规格照存**——「存一份待修的多码草稿」是
+      //    正常中间态，拒绝权在**发布门**（POST /reports/:id/publish）。未知指标 / 不可加 /
+      //    未接入源不在此列：它们由下面 `validatePanelMetrics` 在**写入时**拒（与 MCP 提报面
+      //    同一份判定）；已发布行的草稿编辑同样过这道校验（两条分支都验，发布门只是第二道）。
+      const catalog = await loadMergedCatalog(ctx.pool, org)
+      const adoptedSources = new Set(c.get(TENANT_SOURCES) ?? [])
+      const metrics = validatePanelMetrics(spec.spec, catalog, adoptedSources)
+      if (!metrics.ok) {
+        return c.json(
+          { error: metrics.reason, metricId: metrics.metricId },
+          metrics.reason === 'METRIC_SOURCE_NOT_ADOPTED' ? 403 : 400,
+        )
+      }
       let updated: { version: number } | null
       if (row.publishedVersionId === null) {
-        const catalog = await loadMergedCatalog(ctx.pool, org)
+        // 页门同步派生只对**未发布行**做（已发布行的线上门归快照，见上）。
         const d = deriveRequiredScope(spec.spec, catalog)
         updated = await updateSpecAndScope(
           ctx.pool, org, id, spec.spec, d.ok ? d.requiredScope : row.requiredScope,
@@ -476,7 +500,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
 
   // 宿主投影的「本租户已接入源」。没投影（`undefined`）按「一个源都没接」处理——
   // 发布是写入动作，fail-closed：未接入源的指标宁可拒发布，也不上线（它的 `/query` 会 403）。
-  // 写法是 `new Set(c.get(TENANT_SOURCES) ?? [])`（不抽 helper：只需两处，抽了要额外引 Context 类型）。
+  // 写法是 `new Set(c.get(TENANT_SOURCES) ?? [])`（不抽 helper：各调用点一行，抽了要额外引 Context 类型）。
 
   r.post('/reports/:id/publish', async (c) => {
     const requester = requesterOf(c)

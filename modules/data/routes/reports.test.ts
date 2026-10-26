@@ -16,8 +16,9 @@ import { Hono } from 'hono'
 import { Pool } from 'pg'
 import { declaredScopeGate } from '@platform/sdk'
 import mod from '../index'
-import { upsertReport } from '../domain/report-store'
-import { upsertMetric } from '../domain/metric-store'
+import { updateSpec, upsertReport } from '../domain/report-store'
+import { upsertL1Metric, upsertMetric } from '../domain/metric-store'
+import { parseReportSpec } from '../domain/report-spec'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import type { ModuleVars } from './context'
 
@@ -41,6 +42,9 @@ const COST_METRIC = 't4rg:cost'
 const MARGIN_METRIC = 't4rg:margin'
 /** 无码指标（`requiredScope = null`）——用于钉「面板都不需要码 ⇒ 报表也不收严」（#778）。 */
 const OPEN_METRIC = 't4rg:open'
+/** 写入侧校验（`validatePanelMetrics`）的 L1 夹具：只有 L1 能带可加/源维度。 */
+const ADDITIVE_METRIC = 't4http:additive'
+const SOURCED_METRIC = 't4http:sourced'
 
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
@@ -334,6 +338,15 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     await upsertMetric(pool, ORG, def(COST_METRIC, '成本', 'data:cost'), 'fixture')
     await upsertMetric(pool, ORG, def(MARGIN_METRIC, '毛利', 'data:margin'), 'fixture')
     await upsertMetric(pool, ORG, def(OPEN_METRIC, '公开指标', null), 'fixture')
+    // 写入侧校验的两个面只有 **L1 物化**能给：`upsertMetric`（L2）恒写 `totalable=false`、
+    // `source_system=null` ⇒ 测不出「可加」「源未接入」。id 自带 `t4http:` 前缀，避免撞全局 L1 桶。
+    const l1 = (id: string, totalable: boolean, sourceSystem: string | null) => ({
+      id, title: id, description: '', requiredScope: null, subjectColumn: 'org',
+      selectSql: 'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
+      groupBy: 'bizday', params: {}, sourceSystem, slaDays: 1, freshnessRelations: [], masks: null, totalable,
+    })
+    await upsertL1Metric(pool, l1(ADDITIVE_METRIC, true, null))
+    await upsertL1Metric(pool, l1(SOURCED_METRIC, true, 'lemeng'))
   })
 
   beforeEach(async () => {
@@ -363,11 +376,15 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     await pool.query('delete from data.reports where org = any($1)', [[ORG, OTHER_ORG]]).catch(() => {})
     // 发布门夹具（L2，本 org 独占）——按 org 删，不碰共享的 platform 桶。
     await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
+    // L1 桶是全局的：只删本文件种的两条（带 t4http: 前缀，别误删别人的夹具）。
+    await pool.query('delete from data.metrics where org = $1 and id = any($2)', ['platform', [ADDITIVE_METRIC, SOURCED_METRIC]]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
-  const shell = (identity: ReturnType<typeof makeIdentity>) => ({
-    app: buildTestApp(mod, identity, { pool }, { id: TENANT, casdoor_org: identity.orgId }),
+  // `sources` 不传 = 宿主没投影（`c.get(TENANT_SOURCES)` 恒 undefined）；传了（含空数组）=
+  // 宿主投影了该集合。语义见 test-util.buildTestApp。
+  const shell = (identity: ReturnType<typeof makeIdentity>, sources?: string[]) => ({
+    app: buildTestApp(mod, identity, { pool }, { id: TENANT, casdoor_org: identity.orgId }, sources),
     identity,
   })
   const manage = () => shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }))
@@ -1659,10 +1676,20 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect(db.rows[0].published_version_id).not.toBeNull()
     })
 
-    it('★ 面板指向词表外的指标 ⇒ 发布被拒并点名 metricId', async () => {
+    it('★ 面板指向词表外的指标 ⇒ 写入即被拒（400）；绕过写面的坏草稿发布门照样拒', async () => {
       const { app } = manage()
       const id = await createPlatform(app, '幽灵面板')
-      await putSpec(app, id, { panels: [panel('t4rg:ghost', '幽灵')] }, await versionOf(app, id))
+      const v0 = await versionOf(app, id)
+      // 写入侧校验（Task 3 后续）：HTTP 写面与发布门 / MCP 提报面同一份判定 ⇒ 这里就 400
+      const put = await putSpec(app, id, { panels: [panel('t4rg:ghost', '幽灵')] }, v0)
+      expect(put.status).toBe(400)
+      expect(await put.json()).toEqual({ error: 'UNKNOWN_PANEL_METRIC', metricId: 't4rg:ghost' })
+      expect(await versionOf(app, id)).toBe(v0)              // 拒 = 不写
+
+      // 发布门仍是第二道：绕过写面（store 直写）种一份坏草稿，发布照样被拒并点名
+      const parsed = parseReportSpec({ panels: [panel('t4rg:ghost', '幽灵')] })
+      if (!parsed.ok) throw new Error('夹具规格应通过白名单')
+      await updateSpec(pool, ORG, id, parsed.spec, v0)
       const res = await publish(app, id, await versionOf(app, id))
       expect(res.status).toBe(400)
       expect(await res.json()).toMatchObject({
@@ -1737,6 +1764,97 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         expect(await res.json()).toEqual({
           error: 'SCOPE_CONFLICT_WITH_PANELS', derivedScope: 'data:cost', givenScope: 'data:manage',
         })
+      })
+    })
+
+    // ── 写入侧面板指标校验（月报重做 Task 3 后续）──────────────────────────────────
+    // `validatePanelMetrics` 接进 **HTTP 写面**（POST /reports 的 platform 分支 + PUT /reports/:id/spec）：
+    // 与发布门 / MCP 提报面同一份判定。分档：源未接入 ⇒ 403（与 /query 同因）；未知指标 /
+    // 不可加 ⇒ 400（入参本身不成立）。**拒 = 不写**（版本与规格都不动）。
+    describe('写入侧面板指标校验（validatePanelMetrics 接进 HTTP 写面）', () => {
+      /** 面板只给必填字段（dims/args/span 由 parseReportSpec 补默认值）。 */
+      const metricPanel = (metricId: string, chart = 'line') => ({ chart, title: 't', metricId })
+
+      it('★ POST：不可加指标放 line / bar ⇒ 400 CHART_REQUIRES_ADDITIVE，且一行不落', async () => {
+        const { app } = manage()
+        for (const chart of ['line', 'bar']) {
+          const res = await post(app, {
+            title: `不可加 ${chart}`, renderer: 'platform', spec: { panels: [metricPanel(COST_METRIC, chart)] },
+          })
+          expect(res.status).toBe(400)
+          expect(await res.json()).toEqual({ error: 'CHART_REQUIRES_ADDITIVE', metricId: COST_METRIC })
+          expect((await pool.query(
+            'select count(*)::int as n from data.reports where org = $1 and title = $2', [ORG, `不可加 ${chart}`],
+          )).rows[0].n).toBe(0)
+        }
+      })
+
+      it('★ POST：不可加指标放 kpi ⇒ 400 KPI_NOT_TOTALABLE', async () => {
+        const res = await post(manage().app, {
+          title: '不可加 kpi', renderer: 'platform',
+          spec: { panels: [{ chart: 'kpi', title: 't', metricId: COST_METRIC, format: 'number' }] },
+        })
+        expect(res.status).toBe(400)
+        expect(await res.json()).toEqual({ error: 'KPI_NOT_TOTALABLE', metricId: COST_METRIC })
+      })
+
+      it('★ POST：未接入源的指标 ⇒ 403 METRIC_SOURCE_NOT_ADOPTED；宿主投影该源后 201', async () => {
+        const body = {
+          title: '未接入源', renderer: 'platform', spec: { panels: [metricPanel(SOURCED_METRIC)] },
+        }
+        // 本文件的管理壳不传 sources = 宿主没投影（fail-closed：一个源都没接）
+        const denied = await post(manage().app, body)
+        expect(denied.status).toBe(403)
+        expect(await denied.json()).toEqual({ error: 'METRIC_SOURCE_NOT_ADOPTED', metricId: SOURCED_METRIC })
+        // 宿主投影了 lemeng ⇒ 同一份 spec 可建（证明读的是 c.get(TENANT_SOURCES)，不是硬编码）
+        const allowed = await post(
+          shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }), ['lemeng']).app,
+          body,
+        )
+        expect(allowed.status).toBe(201)
+      })
+
+      it('★ POST：可加指标放 line ⇒ 201（正向不受影响）', async () => {
+        const res = await post(manage().app, {
+          title: '可加 line', renderer: 'platform', spec: { panels: [metricPanel(ADDITIVE_METRIC)] },
+        })
+        expect(res.status).toBe(201)
+      })
+
+      it('★ PUT /spec：四种拒绝各自的分档与 metricId，且拒 = 版本与规格都不动；正向 200', async () => {
+        const { app } = manage()
+        const id = await createPlatform(app, '写入校验')
+        const cases: { spec: unknown; error: string; metricId: string; status: number }[] = [
+          { spec: { panels: [metricPanel(COST_METRIC, 'line')] }, error: 'CHART_REQUIRES_ADDITIVE', metricId: COST_METRIC, status: 400 },
+          { spec: { panels: [metricPanel(COST_METRIC, 'bar')] }, error: 'CHART_REQUIRES_ADDITIVE', metricId: COST_METRIC, status: 400 },
+          {
+            spec: { panels: [{ chart: 'kpi', title: 't', metricId: COST_METRIC, format: 'number' }] },
+            error: 'KPI_NOT_TOTALABLE', metricId: COST_METRIC, status: 400,
+          },
+          { spec: { panels: [metricPanel(SOURCED_METRIC)] }, error: 'METRIC_SOURCE_NOT_ADOPTED', metricId: SOURCED_METRIC, status: 403 },
+        ]
+        for (const c of cases) {
+          const v0 = await versionOf(app, id)
+          const res = await putSpec(app, id, c.spec, v0)
+          expect(res.status).toBe(c.status)
+          expect(await res.json()).toEqual({ error: c.error, metricId: c.metricId })
+          // 拒 = 不写：草稿计数器没推进（规格也就没落库）
+          expect(await versionOf(app, id)).toBe(v0)
+        }
+        // 正向：可加指标放 line 照 200
+        const v0 = await versionOf(app, id)
+        expect((await putSpec(app, id, { panels: [metricPanel(ADDITIVE_METRIC)] }, v0)).status).toBe(200)
+      })
+
+      it('★ PUT /spec：**已发布行**的草稿编辑同样过写入侧校验（发布门只是第二道）', async () => {
+        const { app } = manage()
+        const id = await createPlatform(app, '已发布改草稿')
+        const v0 = await versionOf(app, id)
+        expect((await publish(app, id, v0)).status).toBe(200)       // 发布不推进草稿计数器
+        const res = await putSpec(app, id, { panels: [metricPanel(COST_METRIC)] }, v0)
+        expect(res.status).toBe(400)
+        expect(await res.json()).toEqual({ error: 'CHART_REQUIRES_ADDITIVE', metricId: COST_METRIC })
+        expect(await versionOf(app, id)).toBe(v0)
       })
     })
   })
@@ -2067,10 +2185,18 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect(mbPublish.status).toBe(400)
       expect(await mbPublish.json()).toMatchObject({ ok: false, reason: 'RENDERER_NOT_SELF_DRAWN' })
 
-      // 面板指向词表外的指标：PUT /spec 照存（拒绝权在发布门），发布被拒且**一条版本不落**
-      expect((await putSpec(app, id, {
+      // 面板指向词表外的指标：写入侧就拒（Task 3 后续）；发布门是第二道——
+      // 绕过写面（store 直写）种一份坏草稿，发布被拒且**一条版本不落**
+      const v0 = await versionOf(app, id)
+      const putGhost = await putSpec(app, id, {
         panels: [{ chart: 'table', title: '幽灵', metricId: 't4rg:ghost' }],
-      }, await versionOf(app, id))).status).toBe(200)
+      }, v0)
+      expect(putGhost.status).toBe(400)
+      expect(await putGhost.json()).toEqual({ error: 'UNKNOWN_PANEL_METRIC', metricId: 't4rg:ghost' })
+      expect(await versionOf(app, id)).toBe(v0)            // 拒 = 不写
+      const parsed = parseReportSpec({ panels: [{ chart: 'table', title: '幽灵', metricId: 't4rg:ghost' }] })
+      if (!parsed.ok) throw new Error('夹具规格应通过白名单')
+      await updateSpec(pool, ORG, id, parsed.spec, v0)
       const ghost = await publish(app, id, await versionOf(app, id))
       expect(ghost.status).toBe(400)
       expect(await ghost.json()).toMatchObject({
