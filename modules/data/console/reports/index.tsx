@@ -17,9 +17,14 @@
 //     照发）。逐行按 renderer 给按钮（platform 行没有可编辑的 dashboard），同 ③ 一样只是视图选择。
 //     ⚠️ 正因为票据**一次性**，「在新标签打开」兜底不能复用 iframe 那枚票，必须**重新领票**
 //     （见 `edit` 的 opts.newTab）——否则兜底在最需要它的场景下必然 401。
+//  ⑤ **版本通路只属于 renderer='platform' 行**（月报重做 Task 12；设计 §6.4）：「发布/下线/版本/
+//     独立链接」走 `/reports/:id/publish|unpublish|versions`，而 Metabase 行的「发布」仍旧是
+//     **清页门**（PUT `/reports/:id`）——两条同名动作语义不同，一律按 renderer 分流，互不影响。
+//     平台行的「改页门」入口下线（页门由发布时从面板派生；手改会与版本快照不一致，服务端
+//     `PUT` 对 platform 行回 409 `USE_PUBLISH_ENDPOINT`）。
 import { useEffect, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
-import { Button, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Drawer, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import SpecView from './SpecView'
 
@@ -39,6 +44,22 @@ interface ReportRow {
   // ⚠️ 本仓有**第二份**同名 `ReportRow`（`modules/data/domain/report-store.ts`，Task 1/3 已加 version）：
   //    两处不同文件、编译器不会互相提醒，加字段时都要改（Task 1 已知 minor）。
   version: number
+  // ── 版本徽标（月报重做 Task 12；设计 §8.2）─────────────────────────────────────
+  // 只有 `GET /reports/manage` 回带（观看清单刻意不带）；版本通路也只属于 platform 行。
+  // `publishedVersion = null` = 未发布/已下线；`hasUnpublishedChanges` = 指针存在且草稿改过。
+  publishedVersion: number | null
+  hasUnpublishedChanges: boolean
+}
+
+/** `GET /reports/:id/versions` 的一行（列表只给元数据，正文快照走 `/versions/:version`）。 */
+interface VersionRow {
+  version: number
+  title: string
+  publishedAt: string
+  publishedBy: string
+  note: string
+  draftVersion: number
+  isCurrent: boolean
 }
 
 export default function ReportsPage() {
@@ -55,28 +76,39 @@ export default function ReportsPage() {
   const [editRow, setEditRow] = useState<ReportRow | null>(null)
   const [gateEdit, setGateEdit] = useState<ReportRow | null>(null)
   const [gateDraft, setGateDraft] = useState('')
+  // 版本通路（platform 行）的三种面：发布备注 Modal / 版本历史抽屉 / 抽屉里的行快照。
+  const [publishTarget, setPublishTarget] = useState<ReportRow | null>(null)
+  const [publishNote, setPublishNote] = useState('')
+  const [versions, setVersions] = useState<{ row: ReportRow; rows: VersionRow[] } | null>(null)
   const [messageApi, ctx] = message.useMessage()
 
-  const load = () => {
+  /**
+   * 拉清单。**返回值 = 本次落地的行**（null = 失败）：回滚成功后要拿刷新后的行去换抽屉里的
+   * 行快照（否则第二次回滚还带陈旧 `expectedVersion`，必撞 409）。
+   */
+  const load = async (): Promise<ReportRow[] | null> => {
     // 视图选择（不是鉴权）：manage 身份用管理清单（含页门未放行的行），观看清单不变
     const path = canManage ? '/reports/manage' : '/reports'
-    return apiGet(path)
-      .then((b) => {
-        const reports = (b as { reports: ReportRow[] }).reports
-        // ── fail-closed（评审 Minor ③，2026-09-29）────────────────────────────────
-        // 无校验断言 `as ReportRow[]` 曾把「服务端漏带 version」静默成坏快照：写动作随后发出
-        // `?expectedVersion=undefined`（PUT 则 body 里 undefined 被 JSON 丢掉 ⇒ 缺键）——服务端
-        // 只回一句 400 `INVALID_BODY`「输入不合法」，**根因（清单契约破损）彻底静默**。
-        // 这里提前拦：**坏快照不落地**（不 setRows ⇒ 表里没有行、也就没有能发出坏版本的写按钮），
-        // 并把「缺版本」这件事明说。只在管理清单上判——观看清单 `GET /reports` **刻意不带** version
-        // （那里没有写动作），对它判会把正常观看视图误判成坏数据。
-        if (canManage && !reports.every((r) => Number.isInteger(r.version) && r.version > 0)) {
-          // 客户端侧错误（非 HTTP 响应）⇒ status 传 0；`messageOf` 只认 `code`。
-          throw new ApiError(0, 'SNAPSHOT_INVALID')
-        }
-        setRows(reports)
-      })
-      .catch((e) => messageApi.error(messageOf(e)))
+    try {
+      const b = await apiGet(path)
+      const reports = (b as { reports: ReportRow[] }).reports
+      // ── fail-closed（评审 Minor ③，2026-09-29）────────────────────────────────
+      // 无校验断言 `as ReportRow[]` 曾把「服务端漏带 version」静默成坏快照：写动作随后发出
+      // `?expectedVersion=undefined`（PUT 则 body 里 undefined 被 JSON 丢掉 ⇒ 缺键）——服务端
+      // 只回一句 400 `INVALID_BODY`「输入不合法」，**根因（清单契约破损）彻底静默**。
+      // 这里提前拦：**坏快照不落地**（不 setRows ⇒ 表里没有行、也就没有能发出坏版本的写按钮），
+      // 并把「缺版本」这件事明说。只在管理清单上判——观看清单 `GET /reports` **刻意不带** version
+      // （那里没有写动作），对它判会把正常观看视图误判成坏数据。
+      if (canManage && !reports.every((r) => Number.isInteger(r.version) && r.version > 0)) {
+        // 客户端侧错误（非 HTTP 响应）⇒ status 传 0；`messageOf` 只认 `code`。
+        throw new ApiError(0, 'SNAPSHOT_INVALID')
+      }
+      setRows(reports)
+      return reports
+    } catch (e) {
+      messageApi.error(messageOf(e))
+      return null
+    }
   }
   useEffect(() => { void load() }, [])
 
@@ -155,7 +187,9 @@ export default function ReportsPage() {
   //    不是页面级缓存、更不是常量——取错行的版本会被 409 拦下（这正是写保护要的）。
   // ② **catch 里总是 `await load()`**：409（STALE_WRITE = 别人刚改过）之后列表必须刷新，
   //    否则用户拿着陈旧版本重试必然再撞一次；文案「已为你刷新」也因此为真。
-  const publish = async (r: ReportRow) => {
+  // ⚠️ 名字带 Gate：Metabase 行的「发布」= **清页门**，与平台行的「发布版本」是两条通路
+  //    （见文件头 ⑤）。本函数只由 metabase 行的按钮调用。
+  const publishGate = async (r: ReportRow) => {
     try {
       await apiSend(`/reports/${r.id}`, 'PUT', { requiredScope: null, expectedVersion: r.version })
       messageApi.success(`已发布「${r.title}」`)
@@ -195,6 +229,115 @@ export default function ReportsPage() {
       if (e instanceof ApiError && e.status === 409) setGateEdit(null)
     }
     await load()
+  }
+
+  // ── 版本通路（platform 行；设计 §6.4）───────────────────────────────────────────
+  // 发布 = 对当前草稿做**不可变快照**（`POST /reports/:id/publish`），独立链接从此展示这一版；
+  // 与 Metabase 行的「发布」（清页门）是两条不同通路，见文件头 ⑤。
+
+  /**
+   * 版本端点的失败体是 `{ ok:false, reason, detail }`（服务端直接回 `PublishOutcome`），
+   * **不是**其余端点的 `{ error }` ⇒ 模块薄封装 `toError` 只认 `error`，会把 `reason` 落成
+   * `HTTP_4xx`。这里按状态码回填人话，避免界面吐 `HTTP_400` 裸码。
+   * ⚠️ 「已为你刷新」为真：三个调用点的 catch 都 `await load()`（与 STALE_WRITE 同口径）。
+   * （薄封装不透传 `detail`；要精确定位到指标得改 `lib/api.ts`，不在本任务 ownership 内。）
+   */
+  const versionErrorText = (e: unknown): string => {
+    if (e instanceof ApiError && e.code.startsWith('HTTP_')) {
+      if (e.status === 409) return '这份报表刚被别人改过，已为你刷新，请重试'
+      if (e.status === 404) return '目标不存在或已被删除'
+      if (e.status === 403) return '没有权限执行该操作（需要更高授权或页门放行）'
+      return '操作未通过校验（规格/指标/可加性），请修正草稿后重试'
+    }
+    return messageOf(e)
+  }
+
+  /** 发布（platform 行）：Modal 里可填 note，随版本永久留存。 */
+  const publishPlatform = async () => {
+    const r = publishTarget
+    if (r === null) return
+    try {
+      const b = await apiSend(`/reports/${r.id}/publish`, 'POST', {
+        expectedVersion: r.version,
+        note: publishNote.trim(),
+      }) as { publishedVersion: number; unchanged?: boolean }
+      messageApi.success(b.unchanged === true
+        ? `内容未变，仍是 v${b.publishedVersion}`
+        : `已发布 v${b.publishedVersion}`)
+      setPublishTarget(null)
+      setPublishNote('')
+    } catch (e) {
+      messageApi.error(versionErrorText(e))
+      // 同改页门 Modal 的订正记录：409 必须**关框**——框里持的是加载时的行快照，
+      // 不关就会拿着陈旧 expectedVersion 反复重试、反复 409（看起来像坏掉了）。
+      if (e instanceof ApiError && e.status === 409) {
+        setPublishTarget(null)
+        setPublishNote('')
+      }
+    }
+    await load()
+  }
+
+  /** 下线：独立链接立即失效，但**版本行不删**（append-only），可再发布恢复。 */
+  const unpublish = async (r: ReportRow) => {
+    try {
+      await apiSend(`/reports/${r.id}/unpublish`, 'POST', { expectedVersion: r.version })
+      messageApi.success(`已下线「${r.title}」`)
+    } catch (e) {
+      messageApi.error(versionErrorText(e))
+    }
+    await load()
+  }
+
+  /** 复制独立链接；剪贴板不可用（非安全上下文 / 权限被拒）⇒ 把链接摆出来让人自己复制。 */
+  const copyLink = async (r: ReportRow) => {
+    const url = `${window.location.origin}/r/${r.id}`
+    try {
+      await navigator.clipboard.writeText(url)
+      messageApi.success('独立链接已复制')
+    } catch {
+      messageApi.info(url)
+    }
+  }
+
+  const fetchVersions = async (id: string) =>
+    (await apiGet(`/reports/${id}/versions`)) as { versions: VersionRow[] }
+
+  const openVersions = async (r: ReportRow) => {
+    try {
+      const b = await fetchVersions(r.id)
+      setVersions({ row: r, rows: b.versions })
+    } catch (e) {
+      messageApi.error(messageOf(e))
+    }
+  }
+
+  /**
+   * 回滚 = 用旧版本内容**生成一个新版本**（不删历史、不倒退版本号），故不是「恢复指针」。
+   * 成功后必须同时刷新两处：列表（`load()` → 新 `version`）与抽屉里的行快照
+   * （否则再点一次回滚仍带旧 `expectedVersion`）＋版本列表（`isCurrent` 挪到新版本）。
+   */
+  const rollback = async (r: ReportRow, v: number) => {
+    try {
+      const b = await apiSend(`/reports/${r.id}/versions/${v}/rollback`, 'POST', {
+        expectedVersion: r.version,
+        note: `回滚自 v${v}`,
+      }) as { publishedVersion: number }
+      messageApi.success(`已回滚，当前发布 v${b.publishedVersion}`)
+      const fresh = await load()
+      const live = fresh?.find((x) => x.id === r.id) ?? r
+      try {
+        const list = await fetchVersions(r.id)
+        setVersions((cur) => (cur !== null && cur.row.id === r.id ? { row: live, rows: list.versions } : cur))
+      } catch {
+        // 抽屉列表刷新失败不影响回滚结果；下次打开抽屉会重新拉。
+      }
+    } catch (e) {
+      messageApi.error(versionErrorText(e))
+      // 与改页门同款收口：409 关抽屉，重试只能从刷新后的列表重新进入。
+      if (e instanceof ApiError && e.status === 409) setVersions(null)
+      await load()
+    }
   }
 
   /**
@@ -241,9 +384,19 @@ export default function ReportsPage() {
         {
           title: '报表标题', dataIndex: 'title',
           render: (v: string, r: ReportRow) => (
-            <Space size={4}>
+            <Space size={4} wrap>
               {v}
               {r.renderer === 'platform' && <Tag color="purple">平台自绘</Tag>}
+              {/* 版本徽标（月报重做 Task 12；设计 §8.2）：只有管理清单带 `publishedVersion` /
+                  `hasUnpublishedChanges`，且版本通路只属于 platform 行——Metabase 行标题保持原样，
+                  不硬造一个「未发布」（它根本没有版本概念）。 */}
+              {canManage && r.renderer === 'platform' && (
+                r.publishedVersion === null
+                  ? <Tag>未发布</Tag>
+                  : r.hasUnpublishedChanges
+                    ? <Tag color="orange">{`v${r.publishedVersion} · 有未发布改动`}</Tag>
+                    : <Tag color="green">{`已发布 v${r.publishedVersion}`}</Tag>
+              )}
             </Space>
           ),
         },
@@ -262,7 +415,8 @@ export default function ReportsPage() {
               {canManage && r.renderer === 'metabase' && (
                 <Button size="small" onClick={() => void edit(r)}>编辑</Button>
               )}
-              {canManage && (
+              {/* ── Metabase 行：既有管理动作**一字不动**（改页门/发布=清页门/回收）────────── */}
+              {canManage && r.renderer === 'metabase' && (
                 <>
                   <Button size="small" onClick={() => { setGateEdit(r); setGateDraft(r.requiredScope ?? '') }}>
                     改页门
@@ -273,11 +427,37 @@ export default function ReportsPage() {
                     // 应当自己掌握，不随宿主是否配了 locale 漂（同 console/metrics 的裁决）。
                     <Popconfirm title={`发布后所有拿到本模块的人都能看到「${r.title}」，确定？`}
                                 okText="确认发布" cancelText="取消"
-                                onConfirm={() => void publish(r)}>
+                                onConfirm={() => void publishGate(r)}>
                       <Button size="small">发布</Button>
                     </Popconfirm>
                   )}
                   <Popconfirm title={`回收会删除「${r.title}」及其报表本体，确定？`}
+                              okText="确认回收" cancelText="取消"
+                              okButtonProps={{ danger: true }}
+                              onConfirm={() => void recycle(r)}>
+                    <Button size="small" danger>回收</Button>
+                  </Popconfirm>
+                </>
+              )}
+              {/* ── platform 行：版本通路（设计 §6.4）。**没有「改页门」**——页门由发布时从面板
+                     派生并随快照钉死；手改会与线上快照不一致（服务端 PUT 对该类行 409）。────── */}
+              {canManage && r.renderer === 'platform' && (
+                <>
+                  <Button size="small" onClick={() => { setPublishTarget(r); setPublishNote('') }}>发布</Button>
+                  {r.publishedVersion !== null && (
+                    <Popconfirm title={`下线后独立链接立即失效（历史版本保留），确定下线「${r.title}」？`}
+                                okText="确认下线" cancelText="取消"
+                                onConfirm={() => void unpublish(r)}>
+                      <Button size="small">下线</Button>
+                    </Popconfirm>
+                  )}
+                  <Button size="small" onClick={() => void openVersions(r)}>版本</Button>
+                  {r.publishedVersion !== null && (
+                    <Button size="small" onClick={() => void copyLink(r)}>复制链接</Button>
+                  )}
+                  {/* 回收连带删 report_versions（on delete cascade）⇒ 文案必须写明历史一并删除
+                      （设计 §6.4），否则会有人以为还能找回旧版本。 */}
+                  <Popconfirm title={`回收会删除「${r.title}」、报表本体及其全部历史版本，确定？`}
                               okText="确认回收" cancelText="取消"
                               okButtonProps={{ danger: true }}
                               onConfirm={() => void recycle(r)}>
@@ -300,6 +480,67 @@ export default function ReportsPage() {
         </Typography.Paragraph>
         <Input value={gateDraft} onChange={(e) => setGateDraft(e.target.value)} placeholder="如 sales:read" />
       </Modal>
+      {/* 发布版本（platform 行）：note 随版本永久留存（审计面），可选但值得填。 */}
+      <Modal title={`发布：${publishTarget?.title ?? ''}`}
+             open={publishTarget !== null}
+             okText="确认发布" cancelText="取消"
+             onOk={() => void publishPlatform()}
+             onCancel={() => { setPublishTarget(null); setPublishNote('') }}>
+        <Typography.Paragraph type="secondary">
+          发布会对当前草稿生成不可变快照；独立链接从现在起展示这一版。发布备注可选（随版本永久留存）。
+        </Typography.Paragraph>
+        <Input value={publishNote} maxLength={200}
+               onChange={(e) => setPublishNote(e.target.value)}
+               placeholder="发布备注（可选）" />
+      </Modal>
+      {/* 版本历史抽屉：每行可「查看」钉住版本的独立链接（`/r/:id?v=N`）或「回滚」到该版。
+          `wide` 的列不多，640 足够；正文快照不进列表（服务端只给元数据）。 */}
+      <Drawer title={`版本历史：${versions?.row.title ?? ''}`}
+              open={versions !== null}
+              onClose={() => setVersions(null)}
+              width={640}>
+        <Table rowKey="version" size="small" pagination={false}
+               dataSource={versions?.rows ?? []}
+               locale={{ emptyText: '暂无发布历史' }}
+               columns={[
+                 {
+                   title: '版本', dataIndex: 'version',
+                   render: (v: number, row: VersionRow) => (
+                     <Space size={4}>
+                       {`v${v}`}
+                       {row.isCurrent && <Tag color="green">线上</Tag>}
+                     </Space>
+                   ),
+                 },
+                 {
+                   title: '发布时间', dataIndex: 'publishedAt',
+                   // 服务端是 RFC3339 UTC；这里只做扫读用的截断，时区不换算（审计原文在 API）。
+                   render: (v: string) => v.slice(0, 16).replace('T', ' '),
+                 },
+                 { title: '发布人', dataIndex: 'publishedBy' },
+                 { title: '备注', dataIndex: 'note' },
+                 {
+                   title: '操作',
+                   render: (_: unknown, row: VersionRow) => (
+                     <Space size="small">
+                       <Button size="small" onClick={() => {
+                         if (versions === null) return
+                         window.open(`${window.location.origin}/r/${versions.row.id}?v=${row.version}`,
+                           '_blank', 'noopener,noreferrer')
+                       }}>查看</Button>
+                       {/* 线上版自己不能「回滚到自己」（会白生成一版），故只在非当前版本给。 */}
+                       {!row.isCurrent && (
+                         <Popconfirm title={`回滚会用 v${row.version} 的内容生成一个新版本（历史不删），确定？`}
+                                     okText="确认回滚" cancelText="取消"
+                                     onConfirm={() => { if (versions !== null) void rollback(versions.row, row.version) }}>
+                           <Button size="small">回滚</Button>
+                         </Popconfirm>
+                       )}
+                     </Space>
+                   ),
+                 },
+               ]} />
+      </Drawer>
       {/* platform 行的「打开」面板（Task 4）：标题栏与关闭按钮由 SpecView 自带；
           数据面（GET /spec + 逐面板 POST /query）全在组件内——本页不替它转发任何请求。 */}
       {selfDrawn !== null && (

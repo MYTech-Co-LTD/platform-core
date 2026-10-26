@@ -28,10 +28,20 @@ const json = (b: unknown, status = 200) =>
 // ⚠️ **三行必须互不相同**（评审 I-1，2026-09-29）：若三行同值，「硬写常量」与「读到该行版本」
 //    不可区分 ⇒ 写用例全是**假绿**（实测：全行 = 1 时把实现硬写成常量 1，五条写用例照样绿）。
 //    互异后，硬写任一常量（含 `1`）都会被**别的行**的断言咬住；断言一律 `ROWS[i].version`，**不硬写**。
+// ── 版本徽标字段（月报重做 Task 12）：只有 `GET /reports/manage` 回带。
+// r3 = 已发布 v2 且草稿改过（橙色「有未发布改动」）；r4 = 从未发布（灰色「未发布」）。
+// Metabase 行（r1/r2）的 publishedVersion 恒 null，但**不渲染**徽标（版本通路只属 platform 行）。
 const ROWS = [
-  { id: 'r1', title: '销售日报', requiredScope: null, renderer: 'metabase', version: 1 },
-  { id: 'r2', title: '未放行报表', requiredScope: 'sales:read', renderer: 'metabase', version: 2 },
-  { id: 'r3', title: '自绘大盘', requiredScope: null, renderer: 'platform', version: 3 },
+  { id: 'r1', title: '销售日报', requiredScope: null, renderer: 'metabase', version: 1, publishedVersion: null, hasUnpublishedChanges: false },
+  { id: 'r2', title: '未放行报表', requiredScope: 'sales:read', renderer: 'metabase', version: 2, publishedVersion: null, hasUnpublishedChanges: false },
+  { id: 'r3', title: '自绘大盘', requiredScope: null, renderer: 'platform', version: 3, publishedVersion: 2, hasUnpublishedChanges: true },
+  { id: 'r4', title: '未发布报表', requiredScope: null, renderer: 'platform', version: 5, publishedVersion: null, hasUnpublishedChanges: false },
+]
+
+/** `GET /reports/:id/versions` 夹具：r3 线上 v2，v1 是历史版（可回滚）。 */
+const VERSIONS = [
+  { version: 2, title: '自绘大盘', publishedAt: '2026-10-24T08:00:00.000Z', publishedBy: 'u1', note: '第二版', draftVersion: 3, isCurrent: true },
+  { version: 1, title: '自绘大盘', publishedAt: '2026-10-20T08:00:00.000Z', publishedBy: 'u1', note: '首版', draftVersion: 1, isCurrent: false },
 ]
 
 function renderPage(scopes: string[], initialEntry = '/console/data/reports') {
@@ -58,6 +68,12 @@ const button = (label: string) =>
   screen.getByRole('button', { name: new RegExp(`^${label.split('').join('\\s*')}$`) })
 const buttons = (label: string) =>
   screen.getAllByRole('button', { name: new RegExp(`^${label.split('').join('\\s*')}$`) })
+
+/** 按**行**取按钮：页面上现在有两个「发布」（Metabase 行清页门 / platform 行发版本），
+ *  全页 `getByRole` 会因歧义抛错。`rowOf` 用标题文本定位 `<tr>`（标题唯一）。 */
+const rowOf = (title: string) => screen.getByText(title).closest('tr')!
+const rowButton = (title: string, label: string) =>
+  within(rowOf(title)).getByRole('button', { name: new RegExp(`^${label.split('').join('\\s*')}$`) })
 
 /**
  * Popconfirm 的确认按钮。与 metrics 页测试同一条理由：确认按钮的文案由组件**显式**给定
@@ -92,7 +108,9 @@ describe('报表页签双视图', () => {
     expect(calls[0]?.url.endsWith('/reports/manage')).toBe(true)
     // 徽章在管理视图出现**两次**（标题内联 + 渲染器列）⇒ 复数断言（见实现块里的订正记录）
     expect(screen.getAllByText('平台自绘').length).toBeGreaterThanOrEqual(2)
-    expect(button('发布')).toBeInTheDocument()
+    // 两个「发布」= 两条不同通路（Task 12）：Metabase 行清页门、platform 行发版本。按行取。
+    expect(rowButton('未放行报表', '发布')).toBeInTheDocument()
+    expect(rowButton('自绘大盘', '发布')).toBeInTheDocument()
     // 回收是**逐行**给的（三行都有）⇒ 按复数查；「发布」只在页门未放行的那一行（r2）出现，故是单数
     expect(buttons('回收').length).toBeGreaterThan(0)
     expect(buttons('改页门').length).toBeGreaterThan(0)
@@ -205,7 +223,7 @@ describe('报表页签双视图', () => {
   it('发布：Popconfirm 确认 ⇒ PUT requiredScope=null', async () => {
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
-    fireEvent.click(button('发布'))
+    fireEvent.click(rowButton('未放行报表', '发布'))
     await confirmPopconfirm('确认发布')
     await waitFor(() => {
       const put = calls.find((c) => c.init?.method === 'PUT')
@@ -401,7 +419,7 @@ describe('报表页签双视图', () => {
     })
     renderPage(['data:query', 'data:manage'])
     await waitFor(() => expect(screen.getByText('未放行报表')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: /发\s*布/ }))
+    fireEvent.click(rowButton('未放行报表', '发布'))
     await confirmPopconfirm('确认发布')
 
     // ① 请求体带版本（ROWS[1].version）② 409 出人话 ③ 列表被重新拉取（reload）
@@ -489,5 +507,212 @@ describe('报表页签双视图', () => {
     // 坏快照不落地 ⇒ 表里没有行，也就没有能发出坏版本的写按钮
     expect(screen.queryByRole('button', { name: /^发\s*布$/ })).not.toBeInTheDocument()
     expect(screen.queryByText('销售日报')).not.toBeInTheDocument()
+  })
+})
+
+// ── 版本管理（月报重做 Task 12；设计 §6.4）──────────────────────────────────────────
+// 只覆盖 platform 行：徽标 / 发布（note）/ 下线 / 版本抽屉（查看·回滚）/ 独立链接 /
+// 平台行隐藏改页门。Metabase 行的既有动作由上面的 describe 守住（「一字不动」）。
+describe('平台自绘行的版本管理', () => {
+  const manageRows = (rows = ROWS) => m.mockImplementation(async (url: string, init?: RequestInit) => {
+    calls.push({ url, init })
+    if (url.endsWith('/reports/manage')) return json({ reports: rows })
+    return json({})
+  })
+
+  it('版本徽标：未发布 / 有未发布改动；Metabase 行不硬造徽标', async () => {
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+
+    expect(within(rowOf('未发布报表')).getByText('未发布')).toBeInTheDocument()
+    expect(within(rowOf('自绘大盘')).getByText('v2 · 有未发布改动')).toBeInTheDocument()
+    // 反证：Metabase 行的 publishedVersion 也是 null，但版本通路不属它——不渲染「未发布」。
+    expect(within(rowOf('销售日报')).queryByText('未发布')).toBeNull()
+  })
+
+  it('版本徽标：发布后无改动 ⇒ 已发布 vN', async () => {
+    manageRows([{ ...ROWS[2], hasUnpublishedChanges: false }])
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+    expect(within(rowOf('自绘大盘')).getByText('已发布 v2')).toBeInTheDocument()
+    expect(within(rowOf('自绘大盘')).queryByText('v2 · 有未发布改动')).toBeNull()
+  })
+
+  it('观看视图（无 data:manage）不渲染版本徽标（GET /reports 不带版本字段）', async () => {
+    renderPage(['data:query'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+    expect(screen.queryByText('v2 · 有未发布改动')).toBeNull()
+    expect(screen.queryByText('未发布')).toBeNull()
+  })
+
+  it('平台行隐藏「改页门」，Metabase 行保持；未发布行没有下线/复制链接', async () => {
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+
+    expect(within(rowOf('自绘大盘')).queryByRole('button', { name: /改\s*页\s*门/ })).toBeNull()
+    expect(within(rowOf('未发布报表')).queryByRole('button', { name: /改\s*页\s*门/ })).toBeNull()
+    // 正向对照：Metabase 行的改页门仍在 ⇒ 上面的缺席不是整页没渲染
+    expect(within(rowOf('销售日报')).getByRole('button', { name: /改\s*页\s*门/ })).toBeInTheDocument()
+
+    // 未发布 ⇒ 没有可失效的线上版本，也没有可复制的独立链接
+    expect(within(rowOf('未发布报表')).queryByRole('button', { name: /下\s*线/ })).toBeNull()
+    expect(within(rowOf('未发布报表')).queryByRole('button', { name: /复制链接/ })).toBeNull()
+    // 但发布 / 版本历史入口恒在
+    expect(within(rowOf('未发布报表')).getByRole('button', { name: /^发\s*布$/ })).toBeInTheDocument()
+    expect(within(rowOf('未发布报表')).getByRole('button', { name: /^版\s*本$/ })).toBeInTheDocument()
+  })
+
+  it('发布：Modal 填 note ⇒ POST /reports/r3/publish 带行版本', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) return json({ reports: ROWS })
+      if (url.endsWith('/reports/r3/publish')) return json({ ok: true, publishedVersion: 3 })
+      return json({})
+    })
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+
+    fireEvent.click(rowButton('自绘大盘', '发布'))
+    fireEvent.change(screen.getByPlaceholderText('发布备注（可选）'), { target: { value: '十月月报' } })
+    fireEvent.click(button('确认发布'))
+
+    await waitFor(() => {
+      const post = calls.find((c) => c.url.endsWith('/reports/r3/publish'))!
+      expect(post.init?.method).toBe('POST')
+      // 版本取**该行**读回值（不硬写数值；互异夹具下硬写会被别的行咬住）
+      expect(JSON.parse(String(post.init?.body))).toEqual({ expectedVersion: ROWS[2].version, note: '十月月报' })
+    })
+    expect(await screen.findByText('已发布 v3')).toBeInTheDocument()
+  })
+
+  it('发布幂等：服务端 unchanged ⇒ 文案说「仍是 vN」而不是谎报新版本', async () => {
+    m.mockImplementation(async (url: string) => {
+      if (url.endsWith('/reports/manage')) return json({ reports: ROWS })
+      if (url.endsWith('/reports/r3/publish')) return json({ ok: true, publishedVersion: 2, unchanged: true })
+      return json({})
+    })
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+    fireEvent.click(rowButton('自绘大盘', '发布'))
+    fireEvent.click(button('确认发布'))
+    expect(await screen.findByText('内容未变，仍是 v2')).toBeInTheDocument()
+  })
+
+  it('发布 409（版本陈旧）⇒ 人话 + 关 Modal + 刷新列表', async () => {
+    let reloads = 0
+    m.mockImplementation(async (url: string) => {
+      if (url.endsWith('/reports/manage')) { reloads += 1; return json({ reports: ROWS }) }
+      // 版本端点的失败体是 `{ ok:false, reason }`（不是 `{error}`）——按真机形状桩
+      if (url.endsWith('/reports/r3/publish')) return json({ ok: false, reason: 'STALE_WRITE' }, 409)
+      return json({})
+    })
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+    fireEvent.click(rowButton('自绘大盘', '发布'))
+    fireEvent.click(button('确认发布'))
+
+    expect(await screen.findByText('这份报表刚被别人改过，已为你刷新，请重试')).toBeInTheDocument()
+    await waitFor(() => expect(reloads).toBeGreaterThan(1))
+    // Modal 关闭在本环境只能观测离场态（happy-dom 不派发 transitionend；同改页门用例）
+    const modalClosing = () => {
+      const modal = document.querySelector('.ant-modal')
+      return modal === null || modal.className.includes('-leave')
+    }
+    await waitFor(() => expect(modalClosing()).toBe(true))
+  })
+
+  it('下线：Popconfirm 确认 ⇒ POST /reports/r3/unpublish 带行版本', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) return json({ reports: ROWS })
+      if (url.endsWith('/reports/r3/unpublish')) return json({ unpublished: true })
+      return json({})
+    })
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+
+    fireEvent.click(rowButton('自绘大盘', '下线'))
+    await confirmPopconfirm('确认下线')
+
+    await waitFor(() => {
+      const post = calls.find((c) => c.url.endsWith('/reports/r3/unpublish'))!
+      expect(post.init?.method).toBe('POST')
+      expect(JSON.parse(String(post.init?.body))).toEqual({ expectedVersion: ROWS[2].version })
+    })
+    expect(await screen.findByText('已下线「自绘大盘」')).toBeInTheDocument()
+  })
+
+  it('版本历史抽屉：列出历史、查看钉版本链接、回滚旧版带行版本', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) return json({ reports: ROWS })
+      if (url.endsWith('/reports/r3/versions')) return json({ versions: VERSIONS })
+      if (url.endsWith('/reports/r3/versions/1/rollback')) return json({ ok: true, publishedVersion: 3 })
+      return json({})
+    })
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    try {
+      renderPage(['data:query', 'data:manage'])
+      await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+      fireEvent.click(rowButton('自绘大盘', '版本'))
+
+      expect(await screen.findByText('版本历史：自绘大盘')).toBeInTheDocument()
+      expect(screen.getByText('v2')).toBeInTheDocument()
+      const v1Row = screen.getByText('v1').closest('tr')!
+      // 线上版自己不给回滚（白生成一版）；历史版给
+      expect(within(v1Row).getByRole('button', { name: /回\s*滚/ })).toBeInTheDocument()
+      expect(within(screen.getByText('v2').closest('tr')!).queryByRole('button', { name: /回\s*滚/ })).toBeNull()
+
+      // 「查看」= 钉住旧版本的独立链接（新标签）
+      fireEvent.click(within(v1Row).getByRole('button', { name: /查\s*看/ }))
+      expect(openSpy).toHaveBeenCalledWith(
+        `${window.location.origin}/r/r3?v=1`, '_blank', 'noopener,noreferrer',
+      )
+
+      fireEvent.click(within(v1Row).getByRole('button', { name: /回\s*滚/ }))
+      await confirmPopconfirm('确认回滚')
+      await waitFor(() => {
+        const post = calls.find((c) => c.url.endsWith('/reports/r3/versions/1/rollback'))!
+        expect(post.init?.method).toBe('POST')
+        expect(JSON.parse(String(post.init?.body))).toEqual({
+          expectedVersion: ROWS[2].version, note: '回滚自 v1',
+        })
+      })
+      expect(await screen.findByText('已回滚，当前发布 v3')).toBeInTheDocument()
+    } finally {
+      openSpy.mockRestore()
+    }
+  })
+
+  it('复制独立链接：写剪贴板 origin + /r/:id', async () => {
+    const writeText = vi.fn(async () => {})
+    const desc = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    try {
+      renderPage(['data:query', 'data:manage'])
+      await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+      fireEvent.click(rowButton('自绘大盘', '复制链接'))
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/r/r3`))
+      expect(await screen.findByText('独立链接已复制')).toBeInTheDocument()
+    } finally {
+      if (desc) Object.defineProperty(navigator, 'clipboard', desc)
+      else delete (navigator as unknown as { clipboard?: unknown }).clipboard
+    }
+  })
+
+  it('剪贴板不可用 ⇒ 回退把链接文本摆出来', async () => {
+    const writeText = vi.fn(async () => { throw new Error('denied') })
+    const desc = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const url = `${window.location.origin}/r/r3`
+    try {
+      renderPage(['data:query', 'data:manage'])
+      await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+      fireEvent.click(rowButton('自绘大盘', '复制链接'))
+      expect(await screen.findByText(url)).toBeInTheDocument()
+    } finally {
+      if (desc) Object.defineProperty(navigator, 'clipboard', desc)
+      else delete (navigator as unknown as { clipboard?: unknown }).clipboard
+    }
   })
 })
