@@ -50,8 +50,10 @@ const json = (b: unknown, status = 200) =>
 
 /** 夹具形状照 domain/report-spec.ts 的白名单字段（只写用例关心的那些）。 */
 interface Panel {
-  chart: 'line' | 'bar' | 'table' | 'kpi' | 'text'
+  chart: 'line' | 'bar' | 'table' | 'kpi' | 'text' | 'ai_text'
   title?: string
+  /** ai_text 的生成口径（v1 只有 overview）。 */
+  focus?: 'overview'
   metricId?: string
   denominatorMetricId?: string
   format?: 'currency' | 'number' | 'percent'
@@ -565,6 +567,60 @@ describe('Task 6：期间 / slice / KPI / 文本 / 信任信号', () => {
     expect(para).toHaveStyle({ whiteSpace: 'pre-wrap' })
     // 纯文本：内容里的尖括号**没有**被当成标签渲染
     expect(document.querySelector('b')).toBeNull()
+  })
+
+  it('★ ai_text 面板：不进 /query，按 reportId/panelIndex/期间/门店 拉 SSE 并流式上屏（Task 9）', async () => {
+    const enc = new TextEncoder()
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        for (const chunk of [
+          'data: {"type":"phase","phase":"thinking","label":"正在分析…"}\n\n',
+          'data: {"type":"delta","text":"本月"}\n\n',
+          'data: {"type":"done","text":"本月销售额稳","fallback":false,"dataAsOf":"2026-10-25","generatedAt":"x","cached":false}\n\n',
+        ]) c.enqueue(enc.encode(chunk))
+        c.close()
+      },
+    })
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (/\/reports\/[^/]+\/spec$/.test(url)) {
+        return json({
+          spec: {
+            period: { mode: 'custom', from: '2026-10-01', to: '2026-10-19' },
+            panels: [
+              // 数据面板声明 branch_num（筛选栏默认值从它来 ⇒ ai_text 的切片门店与之一致）
+              { chart: 'table', title: '会员销售', metricId: 'm1', dims: [], args: { system_book: '3120', branch_num: '92' }, span: 12 },
+              { chart: 'ai_text', title: '本月结论', focus: 'overview', span: 24 },
+            ],
+          },
+          version: 7,
+        })
+      }
+      if (url.endsWith('/narrative/stream')) return { ok: true, body: stream } as unknown as Response
+      if (url.endsWith('/branches?system_book=3120')) {
+        return json({ branches: [{ branchNum: '92', name: '熊喵曲靖沾益2店' }] })
+      }
+      if (url.endsWith('/query')) {
+        return json({ status: 'ok', truncated: false, columns: ['value'], rows: [[1]] })
+      }
+      return json({})
+    })
+    renderView()
+
+    expect(await screen.findByText('本月销售额稳', undefined, { timeout: 3000 })).toBeInTheDocument()
+    // ① ai_text 不走 /query：查询循环只发了那一个 table 面板
+    expect(queryBodies().map((b) => b.metricId)).toEqual(['m1'])
+    // ② 流请求体：面板下标（1）+ 当前期间 + 门店；未钉版本 ⇒ 不带 version 键（`.strict()` 端点）
+    const call = calls.find((c) => c.url.endsWith('/narrative/stream'))!
+    expect(call.init?.method).toBe('POST')
+    expect(JSON.parse(String(call.init?.body))).toEqual({
+      panelIndex: 1,
+      period: { mode: 'custom', from: '2026-10-01', to: '2026-10-19' },
+      branchNum: '92',
+    })
+    // ③ 卡片标题 + AI 标签（与静态 text 面板可区分）
+    expect(screen.getByText('本月结论')).toBeInTheDocument()
+    expect(screen.getByText('AI')).toBeInTheDocument()
   })
 
   it('★ 信任信号页脚：masking / freshness_line / data_as_of / truncated 如实展示', async () => {

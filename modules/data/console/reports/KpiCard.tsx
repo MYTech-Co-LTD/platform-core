@@ -9,10 +9,13 @@
 //  · 对比段（`compareRange`）由调用方算好：`prev_period` / `prev_month` 的取法在
 //    domain/report-period.ts，本组件只管「当前段 vs 对比段」。
 //  · `goodDirection` 只影响**颜色**，不影响数值与文案。
+//  · 值与差值的格式化 / 颜色语义在 domain/report-format.ts（AI 文本事实包与模板共用同一套，
+//    两处数字文案才逐字一致）；本组件只管取数与呈现。
 import { useEffect, useState } from 'react'
 import { Card, Typography } from 'antd'
 import { apiSend } from '../lib/api'
 import type { DateRange } from '../../domain/report-period'
+import { formatDelta, formatValue, toneOf } from '../../domain/report-format'
 import type { KpiPanel } from '../../domain/report-spec'
 
 /** 单个指标的显式合计。回包没有 `total` 字段（不可加 / 空集为 null）⇒ 一律 null。 */
@@ -33,35 +36,6 @@ async function valueOf(panel: KpiPanel, args: Record<string, unknown>): Promise<
   const denominator = await totalOf(panel.denominatorMetricId, args)
   if (denominator === null || denominator === 0) return null
   return numerator / denominator
-}
-
-function formatValue(v: number | null, format: KpiPanel['format']): string {
-  if (v === null) return '-'
-  if (format === 'percent') return `${(v * 100).toFixed(2)}%`
-  if (format === 'currency') return `¥${v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  return v.toLocaleString('zh-CN')
-}
-
-/**
- * 对比差值：百分比型指标给**百分点**（pp，避免「率的增长率」这种二级歧义）；
- * 其余给相对变化率。对比基数为 0 ⇒ `-`（增长率无定义，不显示 ∞）。
- */
-function formatDelta(current: number, previous: number, format: KpiPanel['format']): string {
-  if (format === 'percent') {
-    const d = (current - previous) * 100
-    return `${d >= 0 ? '+' : ''}${d.toFixed(2)}pp`
-  }
-  if (previous === 0) return '-'
-  const d = ((current - previous) / previous) * 100
-  return `${d >= 0 ? '+' : ''}${d.toFixed(1)}%`
-}
-
-/** 颜色只由 goodDirection 决定；无方向/持平 ⇒ 中性（别把「持平」染成失败）。 */
-function toneOf(panel: KpiPanel, current: number, previous: number): 'success' | 'danger' | 'secondary' {
-  if (panel.goodDirection === 'none' || current === previous) return 'secondary'
-  const rose = current > previous
-  const good = panel.goodDirection === 'up' ? rose : !rose
-  return good ? 'success' : 'danger'
 }
 
 export function KpiCard({

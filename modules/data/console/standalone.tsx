@@ -63,6 +63,8 @@ export default function StandaloneReport() {
   return (
     <ReportView
       key={id}
+      // id 在 effect 里已是 `string`（未定义直接 return），这里只是 TS 收口。
+      reportId={id ?? ''}
       title={data.title}
       spec={data.spec}
       chrome="standalone"

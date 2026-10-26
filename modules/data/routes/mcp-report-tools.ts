@@ -50,7 +50,8 @@ const refused = (error: string, extra: Record<string, unknown> = {}): McpToolRes
  *
  *   · `deriveRequiredScope`：指标必须存在；面板不能要多个互不相同的 scope（单值页门表达不了）。
  *   · `validatePanelMetrics`：源未接入 ⇒ 拒（否则报表看着正常、点进去 403）；line/bar/kpi
- *     必须可加（不可加指标求和 = 假数）。
+ *     必须可加（不可加指标求和 = 假数）；ai_text 的结构闸（缺数据面板 / 缺 period）只有
+ *     reason、没有 metricId——问题在整份规格，不在某个面板。
  *
  * 返回 `null` 表示通过。顺序即错误归因优先级：存在性 → 源裁剪 → 可加性。
  */
@@ -63,7 +64,8 @@ async function validateSpec(deps: McpDeps, spec: ReportSpec): Promise<McpToolRes
       : refused(scope.reason, { scopes: scope.scopes })
   }
   const metrics = validatePanelMetrics(spec, catalog, deps.adoptedSources)
-  if (!metrics.ok) return refused(metrics.reason, { metricId: metrics.metricId })
+  // ai_text 的结构闸没有 metricId 可点名（问题在整份规格）⇒ extra 留空。
+  if (!metrics.ok) return refused(metrics.reason, 'metricId' in metrics ? { metricId: metrics.metricId } : {})
   return null
 }
 
@@ -81,7 +83,9 @@ export const reportTools: McpToolGroup = {
         description: [
           '提议一张新的平台自绘报表。**只是提议**：建出来的一定是未发布状态（页门挂在管理档），',
           '要发布得由人在控制台改页门。**不能凭空发明指标**——metricId 必须是 list_metrics 里出现的 id；',
-          '图型只支持 line / bar / table。**标题不能与已有报表重名**（重名会被拒，不会覆盖）。',
+          '图型支持 line / bar / table / kpi / text / ai_text。ai_text = 观看时按当前期间服务端生成的',
+          '分析文本（结论/异常/行动）：只声明 focus=overview，不写 content；必须与至少一个数据面板',
+          '同报，且报表要带 period。**标题不能与已有报表重名**（重名会被拒，不会覆盖）。',
         ].join(''),
         inputSchema: {
           type: 'object',
@@ -92,7 +96,10 @@ export const reportTools: McpToolGroup = {
           required: ['title', 'spec'],
         } },
       { name: 'revise_report_spec',
-        description: '修改**尚未发布**的报表的规格（已发布的会被拒——那要人在控制台改）。带 expectedVersion（取自 list_reports）。',
+        description: [
+          '修改**尚未发布**的报表的规格（已发布的会被拒——那要人在控制台改）。带 expectedVersion（取自 list_reports）。',
+          '可用图型与 propose_report 相同（含 ai_text：需与数据面板同报且报表带 period）。',
+        ].join(''),
         inputSchema: {
           type: 'object',
           properties: {

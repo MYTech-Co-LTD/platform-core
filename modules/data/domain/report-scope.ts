@@ -29,17 +29,22 @@ export type ValidateResult =
     reason: 'UNKNOWN_PANEL_METRIC' | 'METRIC_SOURCE_NOT_ADOPTED' | 'CHART_REQUIRES_ADDITIVE' | 'KPI_NOT_TOTALABLE'
     metricId: string
   }
+  // ai_text 的结构闸没有 metricId 可点名（问题出在「整份规格缺什么」，不在某个面板）。
+  | { ok: false; reason: 'AI_TEXT_REQUIRES_DATA_PANEL' | 'AI_TEXT_REQUIRES_PERIOD' }
+
+/** 真有数据面的图型（ai_text 不是数据面板：它读的是**别人**算出来的事实包）。 */
+const DATA_CHARTS = new Set<ReportSpec['panels'][number]['chart']>(['line', 'bar', 'table', 'kpi'])
 
 /**
  * 面板引用的指标 id（**全部**，不是只取主指标）。
  *
- * ⚠️ text 面板没有 metricId ⇒ 必须跳过：按 `panel.metricId` 硬取会把它当成
+ * ⚠️ text / ai_text 面板没有 metricId ⇒ 必须跳过：按 `panel.metricId` 硬取会把它当成
  *    「指向不存在的指标」拒掉，文字块就没法进报表。
  * ⚠️ kpi 的分母是**第二个指标**：它的 scope 与源接入情况同样约束报表可见性，
  *    漏掉分母 = 「主指标可见、分母 403」的报表在运行时才炸。
  */
 function metricIdsOf(panel: ReportSpec['panels'][number]): string[] {
-  if (panel.chart === 'text') return []
+  if (panel.chart === 'text' || panel.chart === 'ai_text') return []
   if (panel.chart === 'kpi' && panel.denominatorMetricId !== undefined) {
     return [panel.metricId, panel.denominatorMetricId]
   }
@@ -86,17 +91,27 @@ export function deriveRequiredScope(
  * - `CHART_REQUIRES_ADDITIVE`：line/bar 会沿维度求和，不可加指标（比率/去重计数）
  *   求和出来是没有意义的数 ⇒ 写入即拒（table 展示明细不受此限）。
  * - `KPI_NOT_TOTALABLE`：kpi 大数字本就是合计值，不可加指标放上去同样出假数。
+ * - `AI_TEXT_REQUIRES_DATA_PANEL`：ai_text 的文本**只能引用报表自身面板的事实**；
+ *   纯 ai_text 报表没有事实可依据 ⇒ 生成出来的是脱离数据的空话（写侧即拒）。
+ * - `AI_TEXT_REQUIRES_PERIOD`：ai_text 说的是「当前期间」的结论；没有报表期间就无从确定
+ *   时间窗，生成内容的语义不成立。
  *
- * ⚠️ 校验顺序即**错误归因优先级**：未知指标先于源裁剪，源裁剪先于可加性——
- *    同一面板有多个问题时点名最上游的那个，避免让人先修下游再被拦回来。
+ * ⚠️ 校验顺序即**错误归因优先级**：结构闸（ai_text 缺数据面/缺期间）先于逐面板指标——
+ *    它说的是「整份规格不成立」，先修它再谈指标。逐面板内部仍是未知指标 → 源裁剪 → 可加性。
  */
 export function validatePanelMetrics(
   spec: ReportSpec,
   catalog: readonly ScopeRow[],
   adoptedSources: ReadonlySet<string>,
 ): ValidateResult {
+  const hasAi = spec.panels.some((p) => p.chart === 'ai_text')
+  if (hasAi && !spec.panels.some((p) => DATA_CHARTS.has(p.chart))) {
+    return { ok: false, reason: 'AI_TEXT_REQUIRES_DATA_PANEL' }
+  }
+  if (hasAi && spec.period === undefined) return { ok: false, reason: 'AI_TEXT_REQUIRES_PERIOD' }
+
   for (const panel of spec.panels) {
-    if (panel.chart === 'text') continue
+    if (panel.chart === 'text' || panel.chart === 'ai_text') continue
     for (const id of metricIdsOf(panel)) {
       const metric = catalog.find((m) => m.id === id)
       if (metric === undefined) return { ok: false, reason: 'UNKNOWN_PANEL_METRIC', metricId: id }

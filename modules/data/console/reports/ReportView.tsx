@@ -17,7 +17,11 @@
 //     无 `period` 的旧规格**一字不变**（仍是 RangePicker 覆盖 + 面板 args）。
 //  ② `slice`（面板级）：服务端分组/排序/截断/合计，body 追加 `dimensions/orderBy/limit/total`；
 //     无 `slice` 时不追加任何键（旧规格的 body 仍是 `{metricId, args}` 逐字节一致）。
-//  ③ `kpi` 的 `compare`：对比段由 `previousRangeOf` 算好交给 KpiCard；KpiCard 只发显式合计查询。
+//  ③ `kpi` 的 `compare`：对比段由 `domain/report-query.ts` 的 `compareRangeOf` 算好交给 KpiCard；
+//     KpiCard 只发显式合计查询。
+//
+// args / query body 的装配规则**不在本文件**：与 AI 文本事实包共用 `domain/report-query.ts`
+// （两处各写一份，args 形状会静默漂移）。
 //
 // 信任信号（spec §10 + 掩码）：/query 回包的 `masking/data_as_of/freshness_line/truncated/total`
 // 收进结果 state，面板页脚一行展示——**如实转述，缺席就是没有**（不编「数据新鲜」）。
@@ -36,10 +40,13 @@ import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
-import { periodRangeOf, previousRangeOf } from '../../domain/report-period'
+import { periodRangeOf } from '../../domain/report-period'
 import type { DateRange } from '../../domain/report-period'
-import type { KpiPanel, PeriodSpec, ReportSpec } from '../../domain/report-spec'
+import type { DataPanel } from '../../domain/report-query'
+import { compareRangeOf, panelArgsOf, panelQueryBodyOf } from '../../domain/report-query'
+import type { PeriodSpec, ReportSpec } from '../../domain/report-spec'
 import { KpiCard } from './KpiCard'
+import AiTextPanel from './AiTextPanel'
 
 type Panel = ReportSpec['panels'][number]
 
@@ -190,28 +197,8 @@ function EChart({ option }: { option: EChartsCoreOption }) {
 
 /** 渲染轴：有 slice 时以服务端分组维度为准，否则用面板声明的 dims（两者都是规格声明）。 */
 function dimsOf(panel: Panel): string[] {
-  if (panel.chart === 'text' || panel.chart === 'kpi') return []
+  if (panel.chart === 'text' || panel.chart === 'kpi' || panel.chart === 'ai_text') return []
   return panel.slice?.dimensions ?? panel.dims
-}
-
-/**
- * 查询 body：`{metricId, args}` +（**仅有 slice 时**）服务端分组参数。
- *
- * 无 slice ⇒ **不加任何键**：旧规格（90% 的存量报表）的 body 与 Task 4 逐字节一致，
- * 也避免把「没要求分组」静默变成 `dimensions: []`（那是**显式合计**形态，语义完全不同）。
- * `dimensions` 的回退顺序 = 规格的 slice.dimensions → 面板 dims；两者都空时**不发**
- * （空数组 = 显式合计，不能由「没声明维度」推出来）。
- */
-function queryBodyOf(panel: Exclude<Panel, { chart: 'text' | 'kpi' }>, args: Record<string, unknown>): Record<string, unknown> {
-  const body: Record<string, unknown> = { metricId: panel.metricId, args }
-  const slice = panel.slice
-  if (slice === undefined) return body
-  const dims = slice.dimensions ?? panel.dims
-  if (slice.dimensions !== undefined || dims.length > 0) body.dimensions = dims
-  if (slice.orderBy !== undefined) body.orderBy = slice.orderBy
-  if (slice.limit !== undefined) body.limit = slice.limit
-  if (slice.total !== undefined) body.total = slice.total
-  return body
 }
 
 /**
@@ -245,6 +232,9 @@ function PanelBody({ panel, result }: { panel: Panel; result: PanelResult | unde
     return <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{panel.content}</Typography.Paragraph>
   }
   if (panel.chart === 'kpi') return null
+  // ai_text：内容在**观看时**由服务端生成，不经过 /query 结果。渲染（SSE + AI 感）是
+  // 计划 Task 9 的范围，本期只做类型收口——先留空，不查询、不伪造内容。
+  if (panel.chart === 'ai_text') return null
 
   if (result === undefined) return <Spin size="small" />
   if (result.kind === 'denied') {
@@ -361,8 +351,13 @@ function rangePickerValue(override: Record<string, unknown>, defaults: Record<st
  * 本组件只认已过闸的 `ReportSpec`。
  */
 export default function ReportView({
-  title, spec, chrome, onClose, pinnedVersion,
+  reportId, title, spec, chrome, onClose, pinnedVersion,
 }: {
+  /**
+   * 报表 id：`ai_text` 的流式端点按它定位（`/reports/:id/narrative/stream`）。
+   * 其余面板走 `/query`，不需要 id。
+   */
+  reportId: string
   title: string
   spec: ReportSpec
   chrome: 'console' | 'standalone'
@@ -390,11 +385,11 @@ export default function ReportView({
   }, [period])
 
   // 筛选栏默认值：键级合并（任何面板出现过的参数键都给控件；值取首个面板的）。
-  // text 面板没有 args（schema 保证），显式跳过。
+  // text / ai_text 面板没有 args（schema 保证），显式跳过。
   const defaults = useMemo(() => {
     const merged: Record<string, unknown> = {}
     for (const p of panels) {
-      if (p.chart === 'text') continue
+      if (p.chart === 'text' || p.chart === 'ai_text') continue
       for (const [k, v] of Object.entries(p.args ?? {})) {
         if (!(k in merged)) merged[k] = v
       }
@@ -416,12 +411,23 @@ export default function ReportView({
 
   /**
    * 面板 args 的唯一装配点（文件头「两个源头」）：规格 args + 筛选覆盖 + 期间窗口。
+   * 共享装配规则在 `domain/report-query.ts`（panelArgsOf）——与 AI 文本事实包同源。
    * 期间窗口**最后**写入：它是规格级的当前期间，优先于面板自带的 bizday 默认值。
    * `timeScoped === false` 的面板（如字典/排行快照）不注入 bizday。
+   *
+   * 筛选栏的**分支**覆盖走 `panelArgsOf` 的 `branchNum`（只覆盖声明过 `branch_num` 的面板：
+   * 控件只因某面板声明了该键才出现，没声明的面板不该被静默加上它从未要过的过滤参数）；
+   * 其余覆盖键（period 未声明时的 bizday 区间）按键级叠加——覆盖键 ⊆ 面板 args 键由筛选栏保证，
+   * 值的合法性仍由服务端 authorize 链兜底。
    */
-  const argsOf = (p: Exclude<Panel, { chart: 'text' }>): Record<string, unknown> => {
-    const args: Record<string, unknown> = { ...(p.args ?? {}), ...override }
-    if (range !== null && p.timeScoped !== false) args.bizday = range
+  const argsOf = (p: DataPanel): Record<string, unknown> => {
+    const branchNum = typeof override.branch_num === 'string' ? override.branch_num : undefined
+    const args = panelArgsOf(p, range, branchNum)
+    for (const [k, v] of Object.entries(override)) {
+      if (k === 'branch_num') continue
+      if (k === 'bizday' && range !== null) continue // 规格级期间窗口优先
+      args[k] = v
+    }
     return args
   }
 
@@ -430,9 +436,9 @@ export default function ReportView({
   useEffect(() => {
     setResults({})
     panels.forEach((p, i) => {
-      // text 无数据面；kpi 的取数在 KpiCard 内部（显式合计），都不进这条循环
-      if (p.chart === 'text' || p.chart === 'kpi') return
-      void apiSend('/query', 'POST', queryBodyOf(p, argsOf(p)))
+      // text / ai_text 无数据面；kpi 的取数在 KpiCard 内部（显式合计），都不进这条循环
+      if (p.chart === 'text' || p.chart === 'kpi' || p.chart === 'ai_text') return
+      void apiSend('/query', 'POST', panelQueryBodyOf(p, argsOf(p)))
         .then((b) => {
           const out = b as {
             columns?: string[]; rows?: unknown[][]; truncated?: boolean
@@ -467,15 +473,13 @@ export default function ReportView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panels, override, period])
 
-  /** KPI 的对比段：auto 依当前期间模式（月 → 上月同日段；其余 → 等长前移）。 */
-  const compareRangeOf = (p: KpiPanel): DateRange | null => {
-    if (range === null || p.compare === 'none') return null
-    const mode = p.compare === 'auto' ? (period?.mode === 'month' ? 'prev_month' : 'prev_period') : p.compare
-    return previousRangeOf(range, mode)
-  }
-
   const showRangePicker = period === null && defaults.bizday !== undefined
   const showBranchPicker = defaults.branch_num !== undefined
+  // `ai_text` 的切片门店：筛选栏覆盖优先，其次规格默认——与 argsOf 的 branch 口径**同源**
+  // （`panelArgsOf` 只覆盖声明过 `branch_num` 的面板；ai_text 没有 args，故这里显式取）。
+  const aiBranchNum = typeof override.branch_num === 'string'
+    ? override.branch_num
+    : typeof defaults.branch_num === 'string' ? defaults.branch_num : undefined
 
   return (
     <div style={chrome === 'standalone' ? { padding: 12 } : undefined}>
@@ -525,9 +529,23 @@ export default function ReportView({
       <Row gutter={[12, 12]}>
         {panels.map((p, i) => (
           <Col key={i} span={p.span}>
-            {p.chart === 'kpi' ? (
+            {p.chart === 'ai_text' ? (
+              // ai_text 的正文在观看时由服务端流式生成（不进 /query、不读 spec 文案）。
+              // 期间/门店/版本都是**当前观看态**：切期间即重生成，切门店即换切片。
+              <Card size="small" title={<Space>{p.title}<Tag color="blue">AI</Tag></Space>}>
+                <AiTextPanel
+                  reportId={reportId}
+                  panelIndex={i}
+                  focus={p.focus}
+                  period={period}
+                  branchNum={aiBranchNum}
+                  version={pinnedVersion ?? undefined}
+                />
+              </Card>
+            ) : p.chart === 'kpi' ? (
               // KpiCard 自带卡片与标题（与面板同款 size="small"），这里不再套第二层 Card
-              <KpiCard panel={p} args={argsOf(p)} compareRange={compareRangeOf(p)} />
+              // 对比段：auto 依当前期间模式（月 → 上月同日段；其余 → 等长前移）
+              <KpiCard panel={p} args={argsOf(p)} compareRange={compareRangeOf(p, period?.mode, range)} />
             ) : (
               <Card size="small" title={p.title}>
                 <PanelBody panel={p} result={results[i]} />

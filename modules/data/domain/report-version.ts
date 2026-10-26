@@ -85,6 +85,8 @@ export type PublishErrorReason =
   | 'CHART_REQUIRES_ADDITIVE'
   | 'KPI_NOT_TOTALABLE'
   | 'METRIC_SOURCE_NOT_ADOPTED'
+  | 'AI_TEXT_REQUIRES_DATA_PANEL'
+  | 'AI_TEXT_REQUIRES_PERIOD'
 
 export type PublishError = { ok: false; reason: PublishErrorReason; detail?: string }
 export type PublishResult = PublishOutcome | PublishError
@@ -223,7 +225,10 @@ export async function publishVersion(
       }
     }
     const validated = validatePanelMetrics(parsed.spec, catalog, adoptedSources)
-    if (!validated.ok) return { ok: false, reason: validated.reason, detail: validated.metricId }
+    if (!validated.ok) {
+      // ai_text 的结构闸没有 metricId 可点名（问题在整份规格），`in` 收窄后按空 detail 处理。
+      return { ok: false, reason: validated.reason, detail: 'metricId' in validated ? validated.metricId : undefined }
+    }
 
     const attempt = async (): Promise<PublishOutcome> => withTx(pool, async (c) => {
       const latest = await c.query(
@@ -356,7 +361,9 @@ export async function rollbackVersion(
       }
     }
     const validated = validatePanelMetrics(parsed.spec, catalog, adoptedSources)
-    if (!validated.ok) return { ok: false, reason: validated.reason, detail: validated.metricId }
+    if (!validated.ok) {
+      return { ok: false, reason: validated.reason, detail: 'metricId' in validated ? validated.metricId : undefined }
+    }
 
     const rollbackNote = note.trim() === '' ? `rollback from v${version}` : note
 

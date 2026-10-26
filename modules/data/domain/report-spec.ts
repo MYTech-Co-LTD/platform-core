@@ -9,7 +9,7 @@
 //     「渲染器能力」与「平台代码」脱钩 ⇒ 库里加了图型而渲染器不认 = **静默空白**。
 import { z } from 'zod'
 
-export const CHART_TYPES = ['line', 'bar', 'table', 'kpi', 'text'] as const
+export const CHART_TYPES = ['line', 'bar', 'table', 'kpi', 'text', 'ai_text'] as const
 export const MAX_PANELS = 24
 export const MAX_DIMS = 4
 export const MAX_TEXT = 2000
@@ -87,9 +87,23 @@ const TextPanel = z.object({
   span: z.number().int().min(1).max(24).default(24),
 }).strict()
 
+/**
+ * `ai_text`：观看时按当前期间/门店**服务端生成**的分析文本（结论/异常/行动）。
+ *
+ * ⚠️ 只声明「生成什么」，不声明「说什么」——没有 `content`（那是静态 `text` 的事），
+ *    写侧也不接受任何自由文本键：`.strict()` 下多一个 `content` 即 INVALID_SPEC。
+ * ⚠️ `focus` 是**代码常量白名单**（v1 只有 `overview`）：加口径 = 改这里 + 事实包 + 提示词，走 PR。
+ */
+const AiTextPanel = z.object({
+  chart: z.literal('ai_text'),
+  title: z.string().trim().min(1).max(120).default('AI 分析'),
+  focus: z.enum(['overview']),
+  span: z.number().int().min(1).max(24).default(24),
+}).strict()
+
 export const ReportSpecSchema = z.object({
   period: PeriodSchema.optional(),
-  panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, KpiPanel, TextPanel])).max(MAX_PANELS),
+  panels: z.array(z.discriminatedUnion('chart', [LinePanel, BarPanel, TablePanel, KpiPanel, TextPanel, AiTextPanel])).max(MAX_PANELS),
 }).strict()
 
 export type ReportSpec = z.infer<typeof ReportSpecSchema>
@@ -97,7 +111,8 @@ export type PeriodSpec = z.infer<typeof PeriodSchema>
 export type MetricPanel = z.infer<typeof LinePanel> | z.infer<typeof BarPanel> | z.infer<typeof TablePanel>
 export type KpiPanel = z.infer<typeof KpiPanel>
 export type TextPanel = z.infer<typeof TextPanel>
-export type SpecErrorCode = 'INVALID_SPEC' | 'UNKNOWN_CHART_TYPE' | 'SPEC_TOO_LARGE'
+export type AiTextPanel = z.infer<typeof AiTextPanel>
+export type SpecErrorCode = 'INVALID_SPEC' | 'UNKNOWN_CHART_TYPE' | 'UNKNOWN_AI_FOCUS' | 'SPEC_TOO_LARGE'
 
 export function parseReportSpec(input: unknown): { ok: true; spec: ReportSpec } | { ok: false; code: SpecErrorCode } {
   const panels = (input as { panels?: unknown })?.panels
@@ -106,5 +121,9 @@ export function parseReportSpec(input: unknown): { ok: true; spec: ReportSpec } 
   if (parsed.success) return { ok: true, spec: parsed.data }
   const bad = parsed.error.issues.find((i) => i.path.at(-1) === 'chart')
   if (bad !== undefined) return { ok: false, code: 'UNKNOWN_CHART_TYPE' }
+  // focus 越界单列一码：这是「图型认得、口径不认得」（前端出人话：可选值有哪些），
+  // 与未知图型/白名单外键混成一个码会让人去改图型。
+  const badFocus = parsed.error.issues.find((i) => i.path.at(-1) === 'focus' && i.code === 'invalid_enum_value')
+  if (badFocus !== undefined) return { ok: false, code: 'UNKNOWN_AI_FOCUS' }
   return { ok: false, code: 'INVALID_SPEC' }
 }

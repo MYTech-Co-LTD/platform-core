@@ -1,0 +1,233 @@
+{
+  "period": {
+    "mode": "custom",
+    "from": "2026-10-01",
+    "to": "2026-10-19"
+  },
+  "panels": [
+    {
+      "chart": "kpi",
+      "title": "销售额",
+      "metricId": "lemeng:retail:net_sales",
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "format": "currency",
+      "compare": "auto",
+      "goodDirection": "up",
+      "span": 12
+    },
+    {
+      "chart": "kpi",
+      "title": "订单数",
+      "metricId": "lemeng:retail:order_count",
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "format": "number",
+      "compare": "auto",
+      "goodDirection": "up",
+      "span": 12
+    },
+    {
+      "chart": "kpi",
+      "title": "客单价",
+      "metricId": "lemeng:retail:net_sales",
+      "denominatorMetricId": "lemeng:retail:order_count",
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "format": "currency",
+      "compare": "auto",
+      "goodDirection": "up",
+      "span": 12
+    },
+    {
+      "chart": "kpi",
+      "title": "会员销售占比",
+      "metricId": "lemeng:member:branch_vip_money",
+      "denominatorMetricId": "lemeng:retail:net_sales",
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "format": "percent",
+      "compare": "auto",
+      "goodDirection": "up",
+      "span": 12
+    },
+    {
+      "chart": "kpi",
+      "title": "报损金额",
+      "metricId": "lemeng:loss:branch_amount",
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "format": "currency",
+      "compare": "auto",
+      "goodDirection": "down",
+      "span": 12
+    },
+    {
+      "chart": "kpi",
+      "title": "报损率",
+      "metricId": "lemeng:loss:branch_amount",
+      "denominatorMetricId": "lemeng:retail:net_sales",
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "format": "percent",
+      "compare": "auto",
+      "goodDirection": "down",
+      "span": 12
+    },
+    {
+      "chart": "kpi",
+      "title": "费用合计（净费用）",
+      "metricId": "lemeng:expense:branch_net",
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "format": "currency",
+      "compare": "auto",
+      "goodDirection": "down",
+      "span": 12
+    },
+    {
+      "chart": "kpi",
+      "title": "费用率",
+      "metricId": "lemeng:expense:branch_net",
+      "denominatorMetricId": "lemeng:retail:net_sales",
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "format": "percent",
+      "compare": "auto",
+      "goodDirection": "down",
+      "span": 12
+    },
+    {
+      "chart": "ai_text",
+      "title": "本月结论",
+      "focus": "overview",
+      "span": 24
+    },
+    {
+      "chart": "line",
+      "title": "销售额日趋势",
+      "metricId": "lemeng:retail:net_sales",
+      "dims": [
+        "bizday"
+      ],
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "slice": {
+        "dimensions": [
+          "bizday"
+        ],
+        "orderBy": [
+          {
+            "column": "bizday",
+            "dir": "asc"
+          }
+        ],
+        "limit": 31
+      },
+      "span": 24
+    },
+    {
+      "chart": "bar",
+      "title": "会员销售（按订单类型）",
+      "metricId": "lemeng:member:branch_vip_money",
+      "dims": [
+        "order_sale_type_name"
+      ],
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "slice": {
+        "dimensions": [
+          "order_sale_type_name"
+        ]
+      },
+      "span": 24
+    },
+    {
+      "chart": "bar",
+      "title": "会员订单数（按订单类型）",
+      "metricId": "lemeng:member:branch_vip_nums",
+      "dims": [
+        "order_sale_type_name"
+      ],
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "slice": {
+        "dimensions": [
+          "order_sale_type_name"
+        ]
+      },
+      "span": 24
+    },
+    {
+      "chart": "bar",
+      "title": "报损金额（按原因）",
+      "metricId": "lemeng:loss:branch_amount",
+      "dims": [
+        "cause"
+      ],
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "slice": {
+        "dimensions": [
+          "cause"
+        ]
+      },
+      "span": 24
+    },
+    {
+      "chart": "bar",
+      "title": "费用（按项目，净额）",
+      "metricId": "lemeng:expense:branch_net",
+      "dims": [
+        "expense_type"
+      ],
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "slice": {
+        "dimensions": [
+          "expense_type"
+        ]
+      },
+      "span": 24
+    },
+    {
+      "chart": "table",
+      "title": "连续无业绩天数（按业务日）",
+      "metricId": "lemeng:retail:consecutive_no_sales_days",
+      "dims": [
+        "bizday"
+      ],
+      "args": {
+        "system_book": "3120",
+        "branch_num": "92"
+      },
+      "span": 24
+    }
+  ]
+}

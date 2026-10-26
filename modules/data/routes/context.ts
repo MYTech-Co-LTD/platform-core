@@ -5,6 +5,7 @@ import type { Pool } from 'pg'
 import type { Identity, RequesterVars } from '@platform/sdk'
 import { REQUESTER_CHANNEL, REQUESTER_KEY_ID, TENANT_SOURCES } from '@platform/sdk'
 import type { Requester } from '../domain/authz'
+import type { StreamingChatModel } from '../domain/llm'
 import type { SqlExecutor } from '../domain/query-service'
 
 /**
@@ -43,6 +44,12 @@ export interface RouteCtx {
   pool: Pool
   /** 缺省 = 真仓库（runQuery 惰性连）。测试注入假执行器（T8/T9 的测试也靠它）。 */
   execute?: SqlExecutor
+  /**
+   * LLM 测试缝（计划 2026-10-26 Task 7）：缺省 = `llmFromEnv()` + `openAiCompatModel`
+   * （生产装配下 `index.ts` 不传 ⇒ 恒走 env）。返回 `null` = 本次无模型（模板回退）。
+   * ⚠️ 与 `execute` 同款：只给测试注入，不是模块协议的字段。
+   */
+  llm?: () => StreamingChatModel | null
 }
 
 /**
