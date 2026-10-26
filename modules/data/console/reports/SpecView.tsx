@@ -146,17 +146,22 @@ function PanelBody({ panel, result }: { panel: Panel; result: PanelResult | unde
   }
   if (result.kind === 'error') return <Alert type="error" showIcon message={result.text} />
   if (panel.chart === 'table') {
-    // table 不进 echarts（图型白名单三选一里它是纯 DOM 呈现）；行值 String 化照 console/query 的先例
+    // table 不进 echarts（图型白名单三选一里它是纯 DOM 呈现）；行值 String 化照 console/query 的先例。
+    // 窄屏（企微内置浏览器 ~390px）：表按内容宽渲染会顶破 Col 撑破页面——外层 overflowX:auto +
+    // scroll.x=max-content 让横向滚动收敛在卡片内部（#1047 报表页移动端实测）。
     return (
       <>
-        <Table
-          size="small"
-          rowKey={(_, idx) => String(idx)}
-          pagination={false}
-          columns={result.columns.map((c) => ({ title: c, dataIndex: c }))}
-          dataSource={result.rows.map((row) =>
-            Object.fromEntries(result.columns.map((c, ci) => [c, String(row[ci])])))}
-        />
+        <div data-testid="table-scroll" style={{ overflowX: 'auto' }}>
+          <Table
+            size="small"
+            rowKey={(_, idx) => String(idx)}
+            pagination={false}
+            scroll={{ x: 'max-content' }}
+            columns={result.columns.map((c) => ({ title: c, dataIndex: c }))}
+            dataSource={result.rows.map((row) =>
+              Object.fromEntries(result.columns.map((c, ci) => [c, String(row[ci])])))}
+          />
+        </div>
         {result.truncated && <Typography.Text type="secondary">结果超过单次查询上限，已截断</Typography.Text>}
       </>
     )
