@@ -156,7 +156,8 @@
         "label": "drv",
         "componentId": "code.sql",
         "properties": {
-          "sql": "WITH w AS (\n  SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS bn FROM input\n),\nn AS (SELECT bn, CAST(row_number() OVER (ORDER BY bn) - 1 AS INTEGER) AS rn FROM w),\n-- floor(rn / 100.0)：DuckDB 的 `/` 返回 DOUBLE，CAST 取整是四舍五入；整数除法会错切（148 → 51/97）。\nc AS (SELECT CAST(floor(rn / 100.0) AS INTEGER) + 1 AS chunk_no, bn FROM n),\nj AS (SELECT chunk_no,\n             '[' || string_agg(CAST(bn AS VARCHAR), ',' ORDER BY bn) || ']' AS branch_nums_json,\n             CAST(count(*) AS INTEGER) AS n_branches\n      FROM c GROUP BY chunk_no),\nm AS (SELECT CAST(count(*) AS INTEGER) AS n_chunks FROM j)\nSELECT CAST('${date-1d}' AS DATE) AS bizday,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       strftime(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', '%Y%m%dT%H%M%SZ') AS batch_id,\n       CAST(j.chunk_no AS INTEGER) AS chunk_no,\n       CAST(j.branch_nums_json AS VARCHAR) AS branch_nums_json,\n       j.n_branches,\n       m.n_chunks,\n       '${ENV:SYSTEM_BOOK}-${date-1d}-c' || CAST(j.chunk_no AS VARCHAR) AS item_key\nFROM j CROSS JOIN m\nORDER BY j.chunk_no"
+          "pureSql": true,
+          "sql": "CREATE OR REPLACE TABLE \"drv\" AS\nWITH w AS (\n  SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS bn FROM \"d0\"\n),\nn AS (SELECT bn, CAST(row_number() OVER (ORDER BY bn) - 1 AS INTEGER) AS rn FROM w),\n-- floor(rn / 100.0)：DuckDB 的 `/` 返回 DOUBLE，CAST 取整是四舍五入；整数除法会错切（148 -> 51/97）。\nc AS (SELECT CAST(floor(rn / 100.0) AS INTEGER) + 1 AS chunk_no, bn FROM n),\nj AS (SELECT chunk_no,\n             '[' || string_agg(CAST(bn AS VARCHAR), ',' ORDER BY bn) || ']' AS branch_nums_json,\n             CAST(count(*) AS INTEGER) AS n_branches\n      FROM c GROUP BY chunk_no),\nm AS (SELECT CAST(count(*) AS INTEGER) AS n_chunks FROM j)\nSELECT CAST('${date-1d}' AS DATE) AS bizday,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       strftime(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', '%Y%m%dT%H%M%SZ') AS batch_id,\n       CAST(j.chunk_no AS INTEGER) AS chunk_no,\n       CAST(j.branch_nums_json AS VARCHAR) AS branch_nums_json,\n       j.n_branches,\n       m.n_chunks,\n       '${ENV:SYSTEM_BOOK}-${date-1d}-c' || CAST(j.chunk_no AS VARCHAR) AS item_key\nFROM j CROSS JOIN m\nORDER BY j.chunk_no"
         }
       }
     },
@@ -201,7 +202,7 @@
         "label": "asm",
         "componentId": "code.sql",
         "properties": {
-          "sql": "WITH exp AS (\n  SELECT any_value(batch_id) AS batch_id,\n         max(CAST(n_chunks AS INTEGER)) AS n_chunks,\n         sum(CAST(n_branches AS INTEGER)) AS n_branches\n  FROM input\n),\nraw AS (\n  SELECT * FROM read_parquet('/workspace/.duckle-stage/branch_indicator/*.parquet', filename = true)\n),\ncur AS (\n  SELECT * FROM (SELECT *, regexp_extract(filename, 'chunk-([0-9]{8}T[0-9]{6}Z)-([0-9]+)\\.parquet$', 1) AS file_batch FROM raw)\n  WHERE file_batch = (SELECT batch_id FROM exp)\n),\nagg AS (\n  SELECT CAST(count(DISTINCT regexp_extract(filename, 'chunk-([0-9]{8}T[0-9]{6}Z)-([0-9]+)\\.parquet$', 2)) AS INTEGER) AS file_n_chunks\n  FROM cur\n)\nSELECT CAST(cur.batch_id AS VARCHAR) AS batch_id,\n       CAST(cur.system_book AS INTEGER) AS system_book,\n       CAST(cur.bizday AS DATE) AS bizday,\n       CAST(cur.branch_num AS INTEGER) AS branch_num,\n       CAST(cur.branch_code AS VARCHAR) AS branch_code,\n       CAST(cur.branch_name AS VARCHAR) AS branch_name,\n       CAST(cur.branch_region_num AS INTEGER) AS branch_region_num,\n       CAST(cur.branch_region_name AS VARCHAR) AS branch_region_name,\n       CAST(cur.metric AS VARCHAR) AS metric,\n       CAST(cur.actual_value AS DECIMAL(20, 2)) AS actual_value,\n       CAST(cur.target_value AS DECIMAL(20, 2)) AS target_value,\n       CAST(cur.actual_rate AS DECIMAL(20, 6)) AS actual_rate,\n       CAST(cur.computed_at AS TIMESTAMPTZ) AS computed_at,\n       CAST(e.n_chunks AS INTEGER) AS exp_n_chunks,\n       CAST(e.n_branches AS INTEGER) AS exp_n_branches,\n       agg.file_n_chunks AS file_n_chunks\nFROM cur CROSS JOIN exp e CROSS JOIN agg"
+          "sql": "SELECT CAST(cur.batch_id AS VARCHAR) AS batch_id,\n       CAST(cur.system_book AS INTEGER) AS system_book,\n       CAST(cur.bizday AS DATE) AS bizday,\n       CAST(cur.branch_num AS INTEGER) AS branch_num,\n       CAST(cur.branch_code AS VARCHAR) AS branch_code,\n       CAST(cur.branch_name AS VARCHAR) AS branch_name,\n       CAST(cur.branch_region_num AS INTEGER) AS branch_region_num,\n       CAST(cur.branch_region_name AS VARCHAR) AS branch_region_name,\n       CAST(cur.metric AS VARCHAR) AS metric,\n       CAST(cur.actual_value AS DECIMAL(20, 2)) AS actual_value,\n       CAST(cur.target_value AS DECIMAL(20, 2)) AS target_value,\n       CAST(cur.actual_rate AS DECIMAL(20, 6)) AS actual_rate,\n       CAST(cur.computed_at AS TIMESTAMPTZ) AS computed_at,\n       CAST(cur.file_chunk AS INTEGER) AS file_chunk,\n       CAST(cur.chunk_n_matched AS INTEGER) AS chunk_n_matched,\n       CAST(e.n_chunks AS INTEGER) AS exp_n_chunks,\n       CAST(e.n_branches AS INTEGER) AS exp_n_branches\nFROM (\n  SELECT *, regexp_extract(filename, 'chunk-([0-9]{8}T[0-9]{6}Z)-([0-9]+)\\.parquet$', 1) AS file_batch,\n            CAST(regexp_extract(filename, 'chunk-([0-9]{8}T[0-9]{6}Z)-([0-9]+)\\.parquet$', 2) AS INTEGER) AS file_chunk\n  FROM read_parquet('/workspace/.duckle-stage/branch_indicator/*.parquet', filename = true)\n) cur\nCROSS JOIN (\n  SELECT any_value(batch_id) AS batch_id,\n         max(CAST(n_chunks AS INTEGER)) AS n_chunks,\n         sum(CAST(n_branches AS INTEGER)) AS n_branches\n  FROM input\n) e\nWHERE cur.file_batch = e.batch_id"
         }
       }
     },
@@ -232,7 +233,7 @@
         "label": "gchk",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT exp_n_chunks, file_n_chunks, exp_n_branches,\n       CAST(count(*) AS BIGINT) AS n_rows,\n       CAST(count(DISTINCT branch_num) AS BIGINT) AS n_branches\nFROM input\nGROUP BY 1, 2, 3\nHAVING exp_n_chunks <> file_n_chunks\n    OR count(*) <> exp_n_branches\n    OR count(DISTINCT branch_num) <> exp_n_branches"
+          "sql": "SELECT 'chunk_missing' AS violation, CAST(count(DISTINCT file_chunk) AS VARCHAR) AS detail, CAST(any_value(exp_n_chunks) AS VARCHAR) AS expected\nFROM input\nHAVING count(DISTINCT file_chunk) <> any_value(exp_n_chunks) OR count(*) = 0\nUNION ALL\nSELECT 'chunk_rows_vs_matched', CAST(file_chunk AS VARCHAR), CAST(max(chunk_n_matched) AS VARCHAR)\nFROM input\nGROUP BY file_chunk\nHAVING count(*) <> max(chunk_n_matched)"
         }
       }
     },
@@ -248,7 +249,7 @@
         "componentId": "ctl.die",
         "properties": {
           "condition": "has-rows",
-          "message": "分块汇总与期望不一致（{rows} 条）：块数 / 行数 / 店数与父侧名单不符 ⇒ 拒绝写湖（防静默截断）"
+          "message": "汇总自证未过（{rows} 条违规，明细见上）：chunk_missing=应到的分块没到（detail=实到块数 / expected=应有块数）；chunk_rows_vs_matched=某块落盘行数 ≠ 该块自报的有数据门店数（detail=实际行数 / expected=自报匹配数）。拒绝写湖"
         }
       }
     },
@@ -263,7 +264,7 @@
         "label": "s",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT batch_id, system_book, bizday, branch_num, branch_code, branch_name,\n       branch_region_num, branch_region_name, metric,\n       actual_value, target_value, actual_rate, computed_at\nFROM input"
+          "sql": "SELECT\n  CAST(batch_id AS VARCHAR) AS batch_id,\n  CAST(system_book AS INTEGER) AS system_book,\n  CAST(bizday AS DATE) AS bizday,\n  CAST(branch_num AS INTEGER) AS branch_num,\n  CAST(branch_code AS VARCHAR) AS branch_code,\n  CAST(branch_name AS VARCHAR) AS branch_name,\n  CAST(branch_region_num AS INTEGER) AS branch_region_num,\n  CAST(branch_region_name AS VARCHAR) AS branch_region_name,\n  CAST(metric AS VARCHAR) AS metric,\n  CAST(actual_value AS DECIMAL(20,2)) AS actual_value,\n  CAST(target_value AS DECIMAL(20,2)) AS target_value,\n  CAST(actual_rate AS DECIMAL(20,6)) AS actual_rate,\n  CAST(computed_at AS TIMESTAMPTZ) AS computed_at\nFROM input"
         }
       }
     },

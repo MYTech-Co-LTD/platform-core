@@ -195,6 +195,15 @@
       "maximumAge": "36h"
     },
     {
+      "match": "minio://*/lemeng/branch_indicator/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "门店经营指标日采集的成功凭证（L0 lemeng.branch_indicator.l0.3120 的 snk.minio 目标；写入=当天采集成功）。锚形仍是湖 glob（不用 retail 那种字面路径兜底）的依据：**写湖的是父管线自己**、子管线只写 .duckle-stage ⇒ 父管线运行记录里有 direction=write 的该资产，glob 规则与运行记录两侧都占。缺失语义天然区分「源当日无数据」与「没采」：前者仍会写分区（0 行也写），后者压根不写。",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
+    },
+    {
       "match": "minio://*/lemeng/client_expense/system_book=*/bizday=*/all.parquet",
       "owner": "data-eng",
       "description": "客户费用单每日采集的成功凭证（L0 lemeng.client.expense.l0.3120）",

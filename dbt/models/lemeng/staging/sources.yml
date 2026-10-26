@@ -201,3 +201,12 @@ sources:
           partition_keys: ['system_book', 'bizday']
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
           pagination: '无分页（page_number 报不支持）；单请求全量'
+
+      - name: branch_indicator
+        description: '乐檬**门店经营指标日粒度**（D10 2026-10-26 契约，#1047 P2 配送口径）：行 = 账套 × bizday × 门店 × 指标（metric）。接口 nhsoft.ama.ai.branchindicator.find，形态 `date_type=month` + `date=<月内任一天>` + `group_type=day` ⇒ 每条门店的 `periods[]` 覆盖整月，管线只保留 `period_day = 查询 bizday` 那一格。⚠️ 源侧「本月无数据」的门店**不出现在 result.rows 里**（合法，`total_count == len(rows)`）⇒ 当日**缺行 = 无数据**，不是零值；零值门店才是真 0.00。'
+        meta:
+          path_convention: 'lemeng/branch_indicator/system_book=<账套>/bizday=<日期>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_branch_indicator_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / bizday::date）'
+          pagination: '无分页（responsePath=/result/rows）；`branch_nums` 单次 ≤100 家（超出 code=10001）⇒ 父管线 whoami 取全店、按 100 切块经 ctl.foreach 派子管线，子管线只写 .duckle-stage，父管线 asm 合并后写湖（2026-10-26 起每轮 date-1d）'
