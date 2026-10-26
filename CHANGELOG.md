@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.204.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.1...v0.204.2) - 2026-10-26
+- 【修复】data: 环比按数据覆盖度判定，对比期覆盖不足不出对比 ([#1080](https://github.com/MYTech-Co-LTD/platform-core/pull/1080), [d661d2e](https://github.com/MYTech-Co-LTD/platform-core/commit/d661d2e5be06cec094ce41f4a86cb0f95850b362))
+
+
 ## [0.204.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.0...v0.204.1) - 2026-10-26
 - 【修复】data: 库存快照窗口退回 T-2 并加每日 T-3 兜底，修 7 天 35 轮空集 ([#1079](https://github.com/MYTech-Co-LTD/platform-core/pull/1079), [274e216](https://github.com/MYTech-Co-LTD/platform-core/commit/274e2160d9419e5cc5e7940cbdaa233c1e362c9e))
 
