@@ -233,7 +233,7 @@
     {
       "match": "minio://*/lemeng/inventory_snapshot/system_book=*/bizday=*/all.parquet",
       "owner": "data-eng",
-      "description": "库存快照每日采集的成功凭证（L0 lemeng.inventory.snapshot.l0.3120；窗口=date-2d）",
+      "description": "库存快照每日采集的成功凭证（L0 lemeng.inventory.snapshot.l0.3120 窗口=date-2d 日内 5 轮；兜底 lemeng.inventory.snapshot.catchup.3120 窗口=date-3d 每日 00:35；#1079）",
       "tags": [
         "lemeng"
       ],

@@ -1,6 +1,6 @@
 // console-schedules-tz.test.ts — 业务排班时区统一门禁（spec 2026-10-15 §10.6，2026-10-16 用户拍板）。
 //
-// 钉什么：deploy/duckle/console/schedules/ 下三本种子（3120×20 + 64188×7 + forms×1，共 28 条）必须
+// 钉什么：deploy/duckle/console/schedules/ 下三本种子（3120×21 + 64188×7 + forms×1，共 29 条）必须
 //   ① 全部显式 `timezone: 'Asia/Shanghai'`（含原先缺省无字段的 9 条）；
 //   ② `kind.expr` 与 §10.6 转换表**逐字**一致（旧 UTC expr +8h）。
 //   ⚠️ **2026-10-20 订正（#931）**：非销售采集统一到 **14–24 点每 2 小时**（`M 14,16,18,20,22 * * *`），
@@ -33,6 +33,8 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.retail.windows.l1': '30 10,18 * * *',
     'panel-lemeng.transfer.out.l0.3120': '35 14,16,18,20,22 * * *',
     'panel-lemeng.inventory.snapshot.l0.3120': '35 14,16,18,20,22 * * *',
+    // #1079 兜底轮：主轮（T-2）当天全空时补前一日（T-3），每日 00:35 CST 一轮
+    'panel-lemeng.inventory.snapshot.catchup.3120': '35 0 * * *',
     'panel-lemeng.purchase.analysis.l0.3120': '40 14,16,18,20,22 * * *',
     'panel-lemeng.wholesale.out.l0.3120': '45 14,16,18,20,22 * * *',
     'panel-lemeng.client.l0.3120': '55 14,16,18,20,22 * * *',
@@ -80,8 +82,8 @@ describe('console 排班时区统一（spec §10.6）：28 条全显式 Asia/Sha
     })
   }
 
-  it('合计恰 28 条（3120×20 + 64188×7 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
+  it('合计恰 29 条（3120×21 + 64188×7 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
     const total = Object.values(EXPECTED).reduce((n, m) => n + Object.keys(m).length, 0)
-    expect(total).toBe(28)
+    expect(total).toBe(29)
   })
 })
