@@ -6,7 +6,7 @@
   "domain": "lemeng",
   "table": "member_summary",
   "owner": "data-platform",
-  "description": "乐檬会员销售汇总（nhsoft.report.ai.customeranalysissummary.find；#1047 P5 2026-10-25 接源）。【行粒度】一行 = 账套×采集bizday×门店×订单类型。【窗口】查询窗 = `${date-1d}` 纯 yyyy-MM-dd。【分页】**无分页**（page_number 报不支持；result={total_count,rows} 嵌套 ⇒ responsePath=/result/rows）。【branch_nums】必传且 ≤100 家（#1047 实测：272 店全量报错）⇒ 管线四批静态扇出（whoami 授权清单快照 2026-10-25；新店加入须更新批次）。【会员口径】**全部 order_sale_type 的 customer_vip_* 字段合计**（漏「拼团」型差 82.19/455 客单中 9 单——2026-10-25 网关逐日累加锚：店92/10-01..19 vip=24284.39/nums=455/占比 47.36% 与乐檬报表逐分）。【采集范围】branch_nums=[92]（报告首期目标店；全量待 foreach 父子管线，后续项）。",
+  "description": "乐檬会员销售汇总（nhsoft.report.ai.customeranalysissummary.find；#1047 P5 2026-10-25 接源）。【行粒度】一行 = 账套×采集bizday×门店×订单类型。【窗口】查询窗 = `${date-1d}` 纯 yyyy-MM-dd。【分页】**无分页**（page_number 报不支持；result={total_count,rows} 嵌套 ⇒ responsePath=/result/rows）。【branch_nums】必传且 ≤100 家（#1047 实测：272 店全量报错）⇒ 管线四批静态扇出（whoami 授权清单快照 2026-10-25；新店加入须更新批次）。【会员口径】**全部 order_sale_type 的 customer_vip_* 字段合计**（漏「拼团」型差 82.19/455 客单中 9 单——2026-10-25 网关逐日累加锚：店92/10-01..19 vip=24284.39/nums=455/占比 47.36% 与乐檬报表逐分）。【采集范围】全店三批静态扇出（每批 ≤100 家；whoami 授权清单快照 2026-10-26）。【店维来源】**summary_types 必须含 \"branch\"**——不含则网关无视 branch_nums、只回凭据绑定店（2026-10-26 实测：同批同日 3 行/1 店 vs 87 行/62 店）；未选维度不进结果行，故 shape 从行内取 branch_*。",
   "layout": {
     "prefix": "lemeng/member_summary",
     "partitionStyle": "hive",
@@ -167,22 +167,22 @@
       "name": "branch_num",
       "type": "int",
       "nullable": false,
-      "description": "归属门店（**shape 常量注入**：端点行不含店维，采集按 branch_nums=[92] 单店）",
-      "expr": "CAST(92 AS INTEGER)"
+      "description": "归属门店（**行内字段**：summary_types 含 branch 时端点直接给店维；不含 branch 则网关无视 branch_nums 只回绑定店——2026-10-26 实测）",
+      "expr": "CAST(o.branch_num AS INTEGER)"
     },
     {
       "name": "branch_code",
       "type": "varchar",
       "nullable": true,
-      "description": "门店编码（shape 常量）",
-      "expr": "CAST('沾益02' AS VARCHAR)"
+      "description": "门店编码（行内字段）",
+      "expr": "CAST(o.branch_code AS VARCHAR)"
     },
     {
       "name": "branch_name",
       "type": "varchar",
       "nullable": true,
-      "description": "门店名（shape 常量）",
-      "expr": "CAST('熊喵曲靖沾益2店' AS VARCHAR)"
+      "description": "门店名（行内字段）",
+      "expr": "CAST(o.branch_name AS VARCHAR)"
     }
   ]
 }
