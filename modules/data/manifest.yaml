@@ -116,6 +116,11 @@ api:
     - { method: GET,    path: /reports/:id/versions/:version,         scope: data:manage }
     - { method: GET,    path: /reports/:id/published-spec,            scope: data:query }
     - { method: GET,    path: /reports/:id/draft,                     scope: data:manage }
+    # ── AI 文本（ai_text；设计 2026-10-26 §4，计划 Task 7）：观看面 = data:query。
+    #    更细的页门在 handler 里按**快照自己的** required_scope 另判（同 published-spec），
+    #    草稿预览（preview:'draft'）另要 data:manage；跨租户 / 无门一律 404。──
+    - { method: POST,   path: /reports/:id/narrative,                 scope: data:query }
+    - { method: POST,   path: /reports/:id/narrative/stream,          scope: data:query }
 frontend:
   console:
     - { path: /console/data, title: 数据问数, icon: BarChartOutlined, scope: data:query, entry: ./console/index.tsx }

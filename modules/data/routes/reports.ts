@@ -23,8 +23,16 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { TENANT_SOURCES } from '@platform/sdk'
-import type { ModuleHono, RouteCtx } from './context'
+import type { Context } from 'hono'
+import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf } from './context'
+import type { Requester } from '../domain/authz'
+import { llmFromEnv, openAiCompatModel } from '../domain/llm'
+import type { StreamingChatModel } from '../domain/llm'
+import { buildFacts } from '../domain/report-facts'
+import type { FactBundle } from '../domain/report-facts'
+import { generateNarrative, streamNarrative } from '../domain/narrative'
+import type { NarrativeEvent } from '../domain/narrative'
 import { signEditHandoff } from '../domain/edit-handoff'
 import { withObjectLock } from '../domain/object-lock'
 import {
@@ -51,7 +59,8 @@ import {
   updateSpecAndScope,
   upsertReport,
 } from '../domain/report-store'
-import { parseReportSpec } from '../domain/report-spec'
+import { PeriodSchema, parseReportSpec } from '../domain/report-spec'
+import type { AiTextPanel, ReportSpec } from '../domain/report-spec'
 import { deriveRequiredScope, validatePanelMetrics } from '../domain/report-scope'
 import {
   getPublishedSpec,
@@ -106,6 +115,39 @@ const ReportBody = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['spec'], message: 'spec 仅 platform 行接受' })
     }
   })
+
+/**
+ * AI 文本请求体（设计 spec §4.1，计划 2026-10-26 Task 7）。
+ * `panelIndex` 指向**已发布/草稿快照**里的 ai_text 面板；`period` 是**本次观看**的期间
+ * （随筛选栏变化，不一定等于 spec.period）。`preview:'draft'` = 管理面预览草稿
+ * （仅 `data:manage`；其余人一律 404——不给「草稿存在」的探针）。
+ */
+const NarrativeBody = z.object({
+  panelIndex: z.number().int().min(0),
+  period: PeriodSchema,
+  branchNum: z.string().min(1).max(64).optional(),
+  /** 钉住历史快照（仍要求报表处于已发布状态，同 `GET /published-spec?v=`）。 */
+  version: z.number().int().positive().optional(),
+  preview: z.literal('draft').optional(),
+}).strict()
+
+/** 叙述上下文解析的失败码（handler 统一按 `narrativeErrorStatus` 映射到 400/403/404）。 */
+type NarrativeContextErr = {
+  error:
+    | 'UNAUTHENTICATED'
+    | 'NOT_FOUND'
+    | 'RENDERER_NOT_SELF_DRAWN'
+    | 'NO_SPEC'
+    | 'NOT_PUBLISHED'
+    | 'NOT_AI_TEXT_PANEL'
+}
+
+/** 失败码 → HTTP 状态（「不给存在性探针」：NOT_FOUND / NOT_PUBLISHED 同 404）。 */
+const narrativeErrorStatus = (e: NarrativeContextErr): 400 | 403 | 404 => {
+  if (e.error === 'UNAUTHENTICATED') return 403
+  if (e.error === 'NOT_FOUND' || e.error === 'NOT_PUBLISHED') return 404
+  return 400
+}
 
 /**
  * 报表 id 的解析口径（text，uuid）。**只挡「空/缺失」**，一律 404——与 aftersales /
@@ -656,6 +698,164 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       hasUnpublishedChanges:
         report.publishedVersionId !== null
         && report.version > (report.publishedDraftVersion ?? 0),
+    })
+  })
+
+  // ── AI 文本（`ai_text`；设计 2026-10-26 §4；计划 Task 7）────────────────────────────
+  // JSON 与 SSE 共用**同一份**上下文解析，差异只在「校验时机」（JSON 可重生成一次，SSE 只能
+  // 整段 `replace`——都是 narrative.ts 的职责，路由不重复实现）。三条路由层硬约束：
+  //  ① **页门跟快照走**（同 `GET /published-spec`）：已发布用**那一版**的 `required_scope`；
+  //     `version` 钉旧版时也判旧版的门——行上的门可能已被后续发布改过。过不去同样 404。
+  //  ② 草稿预览（`preview:'draft'`）是**未发布内容** ⇒ 只有 `data:manage`；其余人 404。
+  //  ③ 事实包只经 `buildFacts`（→ `runQuery`，与 `/query` 同源）；**禁止**在这里另开 SQL。
+  type NarrativeContextOk = {
+    requester: Requester
+    facts: FactBundle
+    focus: AiTextPanel['focus']
+    specKey: string
+    model: (StreamingChatModel & { id?: string }) | null
+  }
+
+  async function loadNarrativeContext(
+    c: Context<ModuleVars>, id: string, body: z.infer<typeof NarrativeBody>,
+  ): Promise<NarrativeContextOk | NarrativeContextErr> {
+    const requester = requesterOf(c)
+    if (requester === null) return { error: 'UNAUTHENTICATED' }
+    const org = c.get('tenant').casdoor_org
+    const report = await getReport(ctx.pool, org, id)
+    if (report === null) return { error: 'NOT_FOUND' }
+    if (report.renderer !== 'platform') return { error: 'RENDERER_NOT_SELF_DRAWN' }
+
+    let spec: ReportSpec
+    let specKey: string
+    let title: string
+    if (body.preview === 'draft') {
+      // 草稿 = 未发布内容（同 `GET /reports/:id/draft` 的分档）：没有 data:manage 一律 404。
+      if (!requester.hasScope('data:manage')) return { error: 'NOT_FOUND' }
+      if (report.spec === null) return { error: 'NO_SPEC' }
+      spec = report.spec
+      specKey = `draft:${report.version}`
+      title = report.title
+    } else {
+      const snapshot = body.version !== undefined
+        ? await getPublishedSpec(ctx.pool, org, id, body.version)
+        : await getPublishedSpec(ctx.pool, org, id)
+      if (snapshot === null) return { error: 'NOT_PUBLISHED' }
+      if (snapshot.requiredScope !== null && !requester.hasScope(snapshot.requiredScope)) {
+        return { error: 'NOT_FOUND' }
+      }
+      spec = snapshot.spec
+      specKey = `published:${snapshot.version}`
+      title = snapshot.title
+    }
+
+    const panel = spec.panels[body.panelIndex]
+    if (panel === undefined || panel.chart !== 'ai_text') return { error: 'NOT_AI_TEXT_PANEL' }
+
+    const facts = await buildFacts(
+      {
+        pool: ctx.pool,
+        org,
+        requester,
+        // `[]` = 「本租户一个源都没接」（宿主投影了空集），与「宿主没投影」同形——事实包
+        // 的源裁剪输入必须显式给（见 `FactsDeps.adoptedSources`）。
+        adoptedSources: new Set(c.get(TENANT_SOURCES) ?? []),
+        execute: ctx.execute,
+        reportTitle: title,
+        specKey,
+      },
+      spec,
+      body.panelIndex,
+      body.period,
+      body.branchNum,
+    )
+
+    // 未配 LLM ⇒ null（模板回退，`fallback:true`）——不是错误路径。
+    const cfg = llmFromEnv()
+    const model = ctx.llm !== undefined
+      ? ctx.llm()
+      : cfg === null ? null : { ...openAiCompatModel(cfg), id: cfg.model }
+    return { requester, facts, focus: panel.focus, specKey, model }
+  }
+
+  r.post('/reports/:id/narrative', async (c) => {
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const body = NarrativeBody.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    try {
+      const n = await loadNarrativeContext(c, id, body.data)
+      if ('error' in n) return c.json(n, narrativeErrorStatus(n))
+      const out = await generateNarrative({
+        pool: ctx.pool,
+        org: c.get('tenant').casdoor_org,
+        reportId: id,
+        specKey: n.specKey,
+        panelIndex: body.data.panelIndex,
+        facts: n.facts,
+        focus: n.focus,
+        userId: n.requester.userId,
+        model: n.model,
+      })
+      return c.json(out)
+    } catch (e) {
+      // 详情**不回显**（可能含上游请求片段/凭证）；只截断进 body 给排障，完整原因在日志。
+      return c.json(
+        { error: 'NARRATIVE_FAILED', detail: e instanceof Error ? e.message.slice(0, 200) : undefined },
+        502,
+      )
+    }
+  })
+
+  r.post('/reports/:id/narrative/stream', async (c) => {
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const body = NarrativeBody.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    let n: NarrativeContextOk | NarrativeContextErr
+    try {
+      n = await loadNarrativeContext(c, id, body.data)
+    } catch (e) {
+      return c.json(
+        { error: 'NARRATIVE_FAILED', detail: e instanceof Error ? e.message.slice(0, 200) : undefined },
+        502,
+      )
+    }
+    if ('error' in n) return c.json(n, narrativeErrorStatus(n))
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        const enc = new TextEncoder()
+        const send = (ev: NarrativeEvent) =>
+          controller.enqueue(enc.encode(`data: ${JSON.stringify(ev)}\n\n`))
+        try {
+          for await (const ev of streamNarrative({
+            pool: ctx.pool,
+            org: c.get('tenant').casdoor_org,
+            reportId: id,
+            specKey: n.specKey,
+            panelIndex: body.data.panelIndex,
+            facts: n.facts,
+            focus: n.focus,
+            userId: n.requester.userId,
+            model: n.model,
+          })) send(ev)
+        } catch {
+          // 流已开（200 已发）⇒ 只能用事件收敛状态，改不了状态码。
+          send({ type: 'error', reason: 'NARRATIVE_FAILED' })
+        } finally {
+          controller.close()
+        }
+      },
+    })
+    return new Response(stream, {
+      headers: {
+        'content-type': 'text/event-stream',
+        // 关掉 nginx 一类反代的响应缓冲：不关的话 delta 会被攒成一次性大块（「流式」名存实亡）。
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      },
     })
   })
 

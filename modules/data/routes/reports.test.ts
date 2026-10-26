@@ -14,8 +14,11 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Hono } from 'hono'
 import { Pool } from 'pg'
-import { declaredScopeGate } from '@platform/sdk'
+import { TENANT_SOURCES, declaredScopeGate } from '@platform/sdk'
 import mod from '../index'
+import { registerReports } from './reports'
+import type { ChatMessage, StreamDelta, StreamOpts, StreamingChatModel, ToolSpec } from '../domain/llm'
+import type { SqlExecutor } from '../domain/query-service'
 import { updateSpec, upsertReport } from '../domain/report-store'
 import { upsertL1Metric, upsertMetric } from '../domain/metric-store'
 import { parseReportSpec } from '../domain/report-spec'
@@ -208,16 +211,17 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('十七个报表端点都声明了（api.internal 全模块共 30 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('十九个报表端点都声明了（api.internal 全模块共 32 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
     // 总数钉 30（24 − 3：个人 Key 三条 /keys 已上移宿主 issue #894；+1：明细下钻 /query/detail，
     // spec 2026-10-21；+1：/toolbox registry 薄封装，Wave 2 #985；+1：/branches 门店维读面，
     // #1047 报表页筛选器；+7：报表定义版本（publish/unpublish/rollback/versions×2/
-    // published-spec/draft，月报重做 Task 10））：穷举口径（同 module.test.ts 的表清单）——
+    // published-spec/draft，月报重做 Task 10）；+2：AI 文本 JSON/SSE（计划 2026-10-26
+    // Task 7））：穷举口径（同 module.test.ts 的表清单）——
     // 别处加端点而漏改这里会红，逼着声明与测试一起动。
-    expect(declared).toHaveLength(30)
+    expect(declared).toHaveLength(32)
     expect(declared.get('GET /branches')).toBe('data:query')
     expect(declared.get('POST /reports')).toBe('data:manage')
     expect(declared.get('GET /reports')).toBe('data:query')
@@ -241,6 +245,9 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('GET /reports/:id/versions/:version')).toBe('data:manage')
     expect(declared.get('GET /reports/:id/published-spec')).toBe('data:query')
     expect(declared.get('GET /reports/:id/draft')).toBe('data:manage')
+    // ── AI 文本（ai_text，计划 2026-10-26 Task 7）：观看面；更细的页门按快照另判（handler）。──
+    expect(declared.get('POST /reports/:id/narrative')).toBe('data:query')
+    expect(declared.get('POST /reports/:id/narrative/stream')).toBe('data:query')
   })
 
   it('★ 页门负测：只有 data:query ⇒ 版本管理动作全 403（带 need）；published-spec 过门', async () => {
@@ -2222,6 +2229,193 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect(await staleUnpublish.json()).toEqual({ error: 'STALE_WRITE', currentVersion: v0 + 1 })
       // 仍然在线（被拒的下线没有落任何写）
       expect((await app.request(`/reports/${id}/published-spec`)).status).toBe(200)
+    })
+  })
+
+  // ── AI 文本（`ai_text` 叙述；设计 2026-10-26 §4；计划 Task 7）──────────────────────────
+  //
+  // 装配刻意**不走 `buildTestApp`**：本组要注入两处测试缝（`execute` 假仓库 + `llm` 假模型）。
+  // `execute` 由 `index.ts` 转发，`llm` 刻意只存在于 `RouteCtx`（生产装配不传 ⇒ 走 env）——
+  // 直接挂 `registerReports` 才用得上它，且不必为本文件去改 `index.ts`。
+  // 判据都在**路由层**：快照/版本解析、页门跟快照走、草稿仅管理面、SSE 形状与缓存头；
+  // 事实包与数字校验的细判在 report-facts.test.ts / narrative.test.ts，不在这里重测。
+  describe('AI 文本（ai_text 叙述）', () => {
+    const AI_PERIOD = { mode: 'custom' as const, from: '2026-10-01', to: '2026-10-19' }
+    /** runQuery 呈现的 data_as_of 是北京时间定长串；桩给 Date 即由 query-service 自己格式化。 */
+    const AS_OF_INSTANT = new Date('2026-10-24T22:00:00Z')
+    /** **无数字**的合规文本：任何数字都会被数字校验判越界（事实是另一条测试的事）。 */
+    const SAFE_TEXT = '结论：本期经营平稳。\n异常：-\n行动：继续跟踪日趋势。\n数据截至 新鲜度未知'
+
+    /** 假仓库：只满足事实包的两类读（合计 + 新鲜度）；其余空集 = 「本期没有」。 */
+    const narrativeExec: SqlExecutor = async (sql) => {
+      if (sql.includes('data.load_log')) return { columns: ['data_as_of'], rows: [[AS_OF_INSTANT]] }
+      if (sql.includes('dim_brand') || sql.includes('stg_lemeng_branch') || sql.includes('dim_region')) {
+        return { columns: [], rows: [] }
+      }
+      if (sql.startsWith('SELECT sum(value) AS total')) return { columns: ['total'], rows: [[1234]] }
+      return { columns: [], rows: [] }
+    }
+
+    /** 固定输出模型；`id` 进缓存键（缺省 `'none'` 会与「无模型 → 模板」撞键）。 */
+    const fakeModel = (text: string, id = 'fake-model'): StreamingChatModel & { id: string } => ({
+      id,
+      async complete(_messages: ChatMessage[], _tools: ToolSpec[]) {
+        return { content: text, toolCalls: [] }
+      },
+      async *completeStream(
+        _messages: ChatMessage[], _tools: ToolSpec[], _opts?: StreamOpts,
+      ): AsyncGenerator<StreamDelta> {
+        yield { content: text }
+      },
+    })
+
+    const admin = () => makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] })
+
+    /** 报表壳 + 两处缝。路由集合只含 reports 域（本组不测别的域）。 */
+    const narrativeShell = (
+      identity: ReturnType<typeof makeIdentity>,
+      llm: (() => StreamingChatModel | null) | undefined,
+    ): Hono => {
+      const app = new Hono<ModuleVars>()
+      app.use('*', async (c, next) => {
+        c.set('identity', identity)
+        c.set('tenant', { id: TENANT, casdoor_org: identity.orgId })
+        // 宿主投影了「一个源都没接」（不是「没投影」）：事实包的源裁剪输入必须显式给。
+        c.set(TENANT_SOURCES, [])
+        await next()
+      })
+      registerReports(app, { pool, execute: narrativeExec, llm })
+      // 同 `buildTestApp` 的绕法：带 Variables 的实例【不如约】赋给裸 Hono（Env 泛型不变）。
+      return app as unknown as Hono
+    }
+
+    /**
+     * ai_text 的写侧结构闸要求**至少一个数据面板** ⇒ 0 = 数据面板、1..7 = 文本、8 = ai_text。
+     * 默认数据面板用 L1 可加指标（`requiredScope=null` ⇒ 派生门也是 null，观看面全开放）。
+     */
+    const aiSpec = (dataPanel: Record<string, unknown> = {
+      chart: 'kpi', title: '销售额', metricId: ADDITIVE_METRIC, format: 'number',
+    }) => ({
+      period: AI_PERIOD,
+      panels: [
+        dataPanel,
+        ...Array.from({ length: 7 }, (_, i) => ({
+          chart: 'text', title: `说明 ${i + 1}`, content: `静态说明 ${i + 1}`,
+        })),
+        { chart: 'ai_text', title: '本月结论', focus: 'overview' },
+      ],
+    })
+
+    const narrate = (app: Hono, id: string, extra: Record<string, unknown> = {}) =>
+      app.request(`/reports/${id}/narrative`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ panelIndex: 8, period: AI_PERIOD, ...extra }),
+      })
+
+    async function createPublished(app: Hono, spec: unknown = aiSpec()): Promise<string> {
+      const res = await post(app, { title: 'AI 月报', renderer: 'platform', spec })
+      expect(res.status).toBe(201)
+      const { id } = await res.json() as { id: string }
+      const pub = await app.request(`/reports/${id}/publish`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: await versionOf(app, id) }),
+      })
+      expect(pub.status).toBe(200)
+      return id
+    }
+
+    it('★ 已发布快照生成 JSON 文本；同参第二次命中缓存', async () => {
+      const app = narrativeShell(admin(), () => fakeModel(SAFE_TEXT))
+      const id = await createPublished(app)
+      const r1 = await narrate(app, id)
+      expect(r1.status).toBe(200)
+      expect(await r1.json()).toMatchObject({ text: SAFE_TEXT, fallback: false, cached: false })
+      // 内容寻址：同一 (报表/快照/面板/期间/facts/模型) ⇒ 不调模型
+      expect((await (await narrate(app, id)).json() as { cached: boolean }).cached).toBe(true)
+    })
+
+    it('★ SSE：text/event-stream + x-accel-buffering:no，事件序含 phase/delta/done', async () => {
+      const app = narrativeShell(admin(), () => fakeModel(SAFE_TEXT))
+      const id = await createPublished(app)
+      const res = await app.request(`/reports/${id}/narrative/stream`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ panelIndex: 8, period: AI_PERIOD }),
+      })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('text/event-stream')
+      // 反代缓冲必须关：否则 delta 会被攒成一次性大块（「流式」名存实亡）。
+      expect(res.headers.get('x-accel-buffering')).toBe('no')
+      const text = await res.text()
+      expect(text).toContain('"type":"phase"')
+      expect(text).toContain('"type":"delta"')
+      expect(text).toContain('"type":"done"')
+      expect(text).not.toContain('"fallback":true')
+    })
+
+    it('★ panelIndex 不是 ai_text ⇒ 400 NOT_AI_TEXT_PANEL（不是 404：报表与快照都在）', async () => {
+      const app = narrativeShell(admin(), () => fakeModel(SAFE_TEXT))
+      const id = await createPublished(app)
+      const r = await narrate(app, id, { panelIndex: 0 })
+      expect(r.status).toBe(400)
+      expect(await r.json()).toEqual({ error: 'NOT_AI_TEXT_PANEL' })
+    })
+
+    it('★ 跨租户 ⇒ 404；已发布但页门不够 ⇒ 404（不给存在性探针）', async () => {
+      const app = narrativeShell(admin(), () => fakeModel(SAFE_TEXT))
+      // 成本指标（requiredScope=data:cost）派生出页门 ⇒ 数据面必须真的挡人
+      const id = await createPublished(app, aiSpec({ chart: 'table', title: '成本明细', metricId: COST_METRIC }))
+
+      const otherOrg = narrativeShell(
+        makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] }),
+        () => fakeModel(SAFE_TEXT),
+      )
+      expect((await narrate(otherOrg, id)).status).toBe(404)
+
+      const noGate = narrativeShell(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), () => fakeModel(SAFE_TEXT))
+      const denied = await narrate(noGate, id)
+      expect(denied.status).toBe(404)
+      expect(await denied.json()).toEqual({ error: 'NOT_FOUND' })
+    })
+
+    it('★ 页门跟**快照**走：钉 version 时按那一版的 required_scope 判（行上已放开也不能越门）', async () => {
+      const app = narrativeShell(admin(), () => fakeModel(SAFE_TEXT))
+      // v1：成本面板 ⇒ 页门 data:cost
+      const id = await createPublished(app, aiSpec({ chart: 'table', title: '成本明细', metricId: COST_METRIC }))
+      // 改成无码指标并发布 v2 ⇒ **行上**的门变 null（旧快照行里的门不变）
+      const put = await app.request(`/reports/${id}/spec`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          spec: aiSpec({ chart: 'table', title: '公开维度', metricId: OPEN_METRIC }),
+          expectedVersion: await versionOf(app, id),
+        }),
+      })
+      expect(put.status).toBe(200)
+      const pub2 = await app.request(`/reports/${id}/publish`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: await versionOf(app, id) }),
+      })
+      expect(pub2.status).toBe(200)
+
+      const viewer = narrativeShell(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), () => fakeModel(SAFE_TEXT))
+      // 最新版（v2，无门）可看
+      expect((await narrate(viewer, id)).status).toBe(200)
+      // 钉 v1：那一版要 data:cost ⇒ 404。若误用行上的 null 放行，这里会变 200。
+      expect((await narrate(viewer, id, { version: 1 })).status).toBe(404)
+    })
+
+    it('★ 草稿预览（preview:draft）仅管理面；未发布对观看面 404', async () => {
+      const app = narrativeShell(admin(), () => fakeModel(SAFE_TEXT))
+      const res = await post(app, { title: '草稿 AI', renderer: 'platform', spec: aiSpec() })
+      expect(res.status).toBe(201)
+      const { id } = await res.json() as { id: string }
+
+      const viewer = narrativeShell(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), () => fakeModel(SAFE_TEXT))
+      expect((await narrate(viewer, id, { preview: 'draft' })).status).toBe(404)
+      expect((await narrate(viewer, id)).status).toBe(404)   // 未发布 ⇒ NOT_PUBLISHED
+
+      const ok = await narrate(app, id, { preview: 'draft' })
+      expect(ok.status).toBe(200)
+      expect(await ok.json()).toMatchObject({ text: SAFE_TEXT, fallback: false })
     })
   })
 })
