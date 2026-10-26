@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.200.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.199.1...v0.200.0) - 2026-10-26
+- 【新增】data: 报表列表深链 ?open=<id>——列表就绪后自动打开自绘报表 (#1047) ([#1059](https://github.com/MYTech-Co-LTD/platform-core/pull/1059), [05b42bb](https://github.com/MYTech-Co-LTD/platform-core/commit/05b42bbf3eccb0f1081ad7bdf23a182a9ad14ec3))
+
+
 ## [0.199.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.199.0...v0.199.1) - 2026-10-26
 - 【修复】data: 会员管线 w0 换 /agi/mcp + gate 放宽 order_sale_type——数据机实测五处修复回仓 (#1047) ([#1058](https://github.com/MYTech-Co-LTD/platform-core/pull/1058), [fb51bcb](https://github.com/MYTech-Co-LTD/platform-core/commit/fb51bcbeec47c2c8cac140cd908c340ed685423b))
 
