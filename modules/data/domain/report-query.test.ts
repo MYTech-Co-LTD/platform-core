@@ -9,7 +9,10 @@
 //  · 对比段：auto 依期间模式（月 → 上月同日期段；其余 → 等长前移），none / 无期间 ⇒ null。
 import { describe, expect, it } from 'vitest'
 import type { DataPanel } from './report-query'
-import { compareRangeOf, panelArgsOf, panelQueryBodyOf } from './report-query'
+import {
+  compareRangeOf, comparisonCovered, coverageArgsOf, coverageOfQueryResult, coverageQueryBodyOf,
+  panelArgsOf, panelQueryBodyOf,
+} from './report-query'
 import type { KpiPanel } from './report-spec'
 
 const RANGE = { from: '2026-10-01', to: '2026-10-19' }
@@ -101,5 +104,68 @@ describe('compareRangeOf', () => {
       .toEqual({ from: '2026-09-01', to: '2026-09-19' })
     expect(compareRangeOf({ ...kpi, compare: 'none' }, 'month', RANGE)).toBeNull()
     expect(compareRangeOf(kpi, 'month', null)).toBeNull()
+  })
+})
+
+// 对比可用性 = 数据覆盖度（issue #1078）：判据是「对比期整段落在指标已有数据范围内」，
+// 不是「对比期查询得数」——后者在只覆盖了一部分时也会得数，于是产出假环比。
+describe('coverageArgsOf / coverageQueryBodyOf', () => {
+  it('覆盖探测去掉期间窗口与 total，保留其余过滤参数', () => {
+    const args = { system_book: '3120', branch_num: '92', bizday: { from: '2026-10-01', to: '2026-10-19' }, total: true }
+    expect(coverageArgsOf(args)).toEqual({ system_book: '3120', branch_num: '92' })
+  })
+
+  it('body 走**明细形态**（不发 dimensions）：子集聚合的 orderBy 会被组装器丢掉，earliest 就不可靠', () => {
+    const body = coverageQueryBodyOf('m', { branch_num: '92', bizday: { from: '2026-10-01', to: '2026-10-19' } })
+    expect(body).toEqual({
+      metricId: 'm',
+      args: { branch_num: '92' },
+      orderBy: [{ column: 'bizday', dir: 'asc' }],
+      limit: 1,
+    })
+    expect(body).not.toHaveProperty('dimensions')
+  })
+})
+
+describe('coverageOfQueryResult', () => {
+  it('取最早 bizday 与水位 watermark；水位缺席 ⇒ to=null（只判起点）', () => {
+    expect(coverageOfQueryResult({
+      status: 'ok',
+      columns: ['value', 'business_day', 'bizday'],
+      rows: [['15938.60', 'x', '2026-09-23T00:00:00.000Z']],
+      watermark: '2026-10-26',
+    })).toEqual({ from: '2026-09-23', to: '2026-10-26' })
+    expect(coverageOfQueryResult({
+      status: 'ok', columns: ['bizday'], rows: [['2026-09-23']],
+    })).toEqual({ from: '2026-09-23', to: null })
+  })
+
+  it('失败 / 空集 / 没有 bizday 列 / 坏形状 ⇒ null（宁可不出对比，不出假数）', () => {
+    expect(coverageOfQueryResult({ status: 'denied', columns: ['bizday'], rows: [['2026-09-23']] })).toBeNull()
+    expect(coverageOfQueryResult({ status: 'ok', columns: ['bizday'], rows: [] })).toBeNull()
+    expect(coverageOfQueryResult({ status: 'ok', columns: ['value'], rows: [[1]] })).toBeNull()
+    expect(coverageOfQueryResult({ status: 'ok', columns: ['bizday'], rows: [['not-a-day']] })).toBeNull()
+    expect(coverageOfQueryResult(null)).toBeNull()
+  })
+})
+
+describe('comparisonCovered', () => {
+  const PREV = { from: '2026-09-12', to: '2026-09-30' }
+
+  it('对比期起点早于数据起点 ⇒ 不完整（本 issue 的现场：9-12 < 9-23）', () => {
+    expect(comparisonCovered(PREV, { from: '2026-09-23', to: '2026-10-26' })).toBe(false)
+  })
+
+  it('整段落在覆盖范围内 ⇒ 可用（含边界日）', () => {
+    expect(comparisonCovered(PREV, { from: '2026-09-01', to: '2026-10-26' })).toBe(true)
+    expect(comparisonCovered(PREV, { from: '2026-09-12', to: '2026-09-30' })).toBe(true)
+  })
+
+  it('对比期末尾超过水位 ⇒ 不完整（尾段没物化完）', () => {
+    expect(comparisonCovered(PREV, { from: '2026-09-01', to: '2026-09-20' })).toBe(false)
+  })
+
+  it('覆盖未知（探测失败）⇒ 不出对比', () => {
+    expect(comparisonCovered(PREV, null)).toBe(false)
   })
 })

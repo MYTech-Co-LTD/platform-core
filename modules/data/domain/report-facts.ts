@@ -22,7 +22,10 @@ import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import type { Requester, SlicingSpec, SliceOrderBy } from './authz'
 import { runQuery, type QueryDeps, type SqlExecutor } from './query-service'
-import { compareRangeOf, panelArgsOf, panelQueryBodyOf, type DataPanel } from './report-query'
+import {
+  compareRangeOf, comparisonCovered, coverageArgsOf, coverageOfQueryResult, coverageSlicing,
+  panelArgsOf, panelQueryBodyOf, type CoverageInfo, type DataPanel,
+} from './report-query'
 import { periodRangeOf } from './report-period'
 import { formatDelta, formatValue } from './report-format'
 import type { AiTextPanel, KpiPanel, PeriodSpec, ReportSpec } from './report-spec'
@@ -165,6 +168,23 @@ async function readTotal(
 }
 
 /**
+ * 对比的数据覆盖度（issue #1078）：走 `/query` 的**明细形态** + `bizday asc` + LIMIT 1，
+ * 第一行即最早有数日；水位取回包的 `watermark`（数据完整到哪天）。
+ *
+ * 为什么必须判覆盖：对比期只被覆盖一部分时**也会得数**，于是算出假环比（现场：9-12..30 的
+ * 对比期，零售只有 9-23 起）。探测失败 / 空集 ⇒ null，调用方不出对比——宁可不出，不出假数。
+ */
+async function coverageOf(
+  deps: FactsDeps, metricId: string, args: Record<string, unknown>,
+): Promise<CoverageInfo | null> {
+  const out = await runQuery(
+    queryDepsOf(deps), deps.org, deps.requester, metricId, coverageArgsOf(args), coverageSlicing(),
+  )
+  if (out.status !== 'ok') return null
+  return coverageOfQueryResult(out)
+}
+
+/**
  * KPI 值。比率型（`denominatorMetricId`）**先各自合计再相除** —— 明细行求和/先除后加
  * 都会被 LIMIT 截断或口径错位污染；分母为 0 / 任一合计为空 ⇒ null（格式化后是 `-`）。
  */
@@ -211,6 +231,19 @@ export async function buildFacts(
   // 的最低最高揉成一对不属于任何指标的值。报表顺序即声明顺序，作者可控。
   let dailyPanelSeen = false
 
+  // 同一 (metricId, args) 的覆盖探测在本事实包内只查一次：8 张 KPI 会复用同一批指标
+  // （销售额既是「销售额」也是客单价/会员占比的分母）。
+  const coverageCache = new Map<string, Promise<CoverageInfo | null>>()
+  const coverageFor = (metricId: string, args: Record<string, unknown>): Promise<CoverageInfo | null> => {
+    const key = `${metricId}\u0000${canonicalJson(coverageArgsOf(args))}`
+    let p = coverageCache.get(key)
+    if (p === undefined) {
+      p = coverageOf(deps, metricId, args)
+      coverageCache.set(key, p)
+    }
+    return p
+  }
+
   for (const p of dataPanels) {
     const args = panelArgsOf(p, range, branchNum)
     const q = queryOfPanel(p, args)
@@ -223,10 +256,19 @@ export async function buildFacts(
       // 对比段只对**期间型**面板有意义：`timeScoped === false` 的面板有自己固定的窗口
       // （字典 / 排行快照），拿报表期间的前移段去比是错口径；而且它的 args 里没有期间注入，
       // 强行塞 bizday 还会撞 unknown_param（被拒 → 对比恒缺，审计里多一条假拒绝）。
+      // 对比期**整段**落在数据覆盖内才做对比（issue #1078）：只判「查询得数」会把
+      // 部分覆盖算成完整环比（9-12..30 只覆盖 8/19 天也照样出百分比）。
       const prevRange = compareRangeOf(p, period.mode, range)
-      const prev = cur.ok && prevRange !== null && p.timeScoped !== false
-        ? await readKpiValue(deps, p, { ...q.args, bizday: prevRange })
-        : null
+      let prev: ReadValue | null = null
+      if (cur.ok && prevRange !== null && p.timeScoped !== false) {
+        const numCov = await coverageFor(p.metricId, q.args)
+        const denCov = p.denominatorMetricId === undefined
+          ? null
+          : await coverageFor(p.denominatorMetricId, q.args)
+        const covered = comparisonCovered(prevRange, numCov)
+          && (p.denominatorMetricId === undefined || comparisonCovered(prevRange, denCov))
+        if (covered) prev = await readKpiValue(deps, p, { ...q.args, bizday: prevRange })
+      }
       if (prev !== null) asOfList.push(...prev.asOf)
       const prevValue = prev !== null && prev.ok ? prev.value : null
 

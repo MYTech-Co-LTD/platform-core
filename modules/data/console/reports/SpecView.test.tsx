@@ -99,9 +99,16 @@ function stub(
       if (url.endsWith(suffix)) return json(body)
     }
     if (url.endsWith('/query')) {
-      const body = JSON.parse(String(init?.body)) as { metricId: string }
+      const body = JSON.parse(String(init?.body)) as { metricId: string; orderBy?: unknown }
       if (denied.has(body.metricId)) {
         return json({ status: 'denied', metricId: body.metricId, reason: 'metric_not_declared' }, 403)
+      }
+      // 覆盖探测（#1078）：默认数据从 2000 年起、水位 2099 年 ⇒ 对比段可用。
+      if (body.orderBy !== undefined) {
+        return json({
+          status: 'ok', columns: ['value', 'bizday'],
+          rows: [[1, '2000-01-01T00:00:00.000Z']], watermark: '2099-12-31',
+        })
       }
       return json({ status: 'ok', truncated: false, ...(okQueries[body.metricId] ?? { columns: ['value'], rows: [[1]] }) })
     }
@@ -477,6 +484,13 @@ describe('Task 6：期间 / slice / KPI / 文本 / 信任信号', () => {
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
       const body = JSON.parse(String(init?.body)) as QueryBody
+      // 覆盖探测（#1078）：明细形态 + orderBy bizday asc；数据从 2000 年起、水位 2099 年 ⇒ 覆盖完整。
+      if (body.orderBy !== undefined) {
+        return json({
+          status: 'ok', columns: ['value', 'bizday'],
+          rows: [[1, '2000-01-01T00:00:00.000Z']], watermark: '2099-12-31',
+        })
+      }
       const inCompare = (body.args.bizday as { from?: string } | undefined)?.from === '2026-09-12'
       const totals: Record<string, number | null> = inCompare
         ? { sales: null, orders: 3 }
@@ -500,11 +514,12 @@ describe('Task 6：期间 / slice / KPI / 文本 / 信任信号', () => {
     // 对比期：分子 null ⇒ 已知无数（「-」），不是 0 也不是空白
     await waitFor(() => expect(screen.getByTestId('kpi-delta').textContent).toBe('-'))
     // 取数纪律：当前段 2 次（分子+分母）+ 对比段 1 次（分子已缺数 ⇒ 分母不再查）——
-    // **全部**是显式合计，对比段的 bizday 被替换为上个等长段
+    // **全部**是显式合计，对比段的 bizday 被替换为上个等长段；另有 2 次覆盖探测（分子+分母）。
     const bodies = queryBodies()
-    expect(bodies).toHaveLength(3)
-    expect(bodies.every((b) => b.args.total === true)).toBe(true)
-    expect(bodies.filter((b) => (b.args.bizday as { from?: string }).from === '2026-09-12')).toHaveLength(1)
+    const totals = bodies.filter((b) => b.args.total === true)
+    expect(totals).toHaveLength(3)
+    expect(totals.filter((b) => (b.args.bizday as { from?: string }).from === '2026-09-12')).toHaveLength(1)
+    expect(bodies.filter((b) => b.orderBy !== undefined)).toHaveLength(2)
   })
 
   it('★ KPI：零分母 ⇒ 值「-」（不显示 0 / ∞ / 空白）', async () => {
@@ -543,12 +558,23 @@ describe('Task 6：期间 / slice / KPI / 文本 / 信任信号', () => {
           version: 7,
         })
       }
+      const body = JSON.parse(String(init?.body)) as QueryBody
+      // 覆盖探测：数据从 2000 年起、水位 2099 年 ⇒ 对比段可用。
+      if (body.orderBy !== undefined) {
+        return json({
+          status: 'ok', columns: ['value', 'bizday'],
+          rows: [[1, '2000-01-01T00:00:00.000Z']], watermark: '2099-12-31',
+        })
+      }
       return json({ status: 'ok', truncated: false, columns: ['total'], rows: [[111]], total: 111 })
     })
     renderView()
-    await waitFor(() => expect(queryBodies().length).toBe(2))
+    await waitFor(() => expect(queryBodies().filter((b) => b.args.total === true).length).toBe(2))
 
-    const byRange = new Map(queryBodies().map((b) => [(b.args.bizday as { from: string }).from, b]))
+    const byRange = new Map(
+      queryBodies().filter((b) => b.args.total === true)
+        .map((b) => [(b.args.bizday as { from: string }).from, b]),
+    )
     expect(byRange.has('2026-10-01')).toBe(true)
     expect(byRange.get('2026-10-01')!.args.bizday).toEqual({ from: '2026-10-01', to: '2026-10-26' })
     // auto + month ⇒ prev_month（不是等长前移的 09-06..09-30）
