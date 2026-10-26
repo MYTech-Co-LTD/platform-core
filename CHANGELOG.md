@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.203.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.203.2...v0.203.3) - 2026-10-26
+- 【修复】data: item_price staging 按事件键去重，修同日多轮重取导致的唯一性断言红 (#1071) ([#1072](https://github.com/MYTech-Co-LTD/platform-core/pull/1072), [de8702c](https://github.com/MYTech-Co-LTD/platform-core/commit/de8702c8c2599bad1f5be50b3fd2eb74f4f546aa))
+
+
 ## [0.203.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.203.1...v0.203.2) - 2026-10-26
 - 【修复】data: item_price sink 按 run 分化目录，修同日多轮互相覆盖 (#1069) ([#1070](https://github.com/MYTech-Co-LTD/platform-core/pull/1070), [919257a](https://github.com/MYTech-Co-LTD/platform-core/commit/919257a3308f0cef088f6c38b8895961890a419b))
 
