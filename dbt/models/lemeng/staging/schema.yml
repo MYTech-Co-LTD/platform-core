@@ -493,7 +493,7 @@ models:
 
   - name: stg_lemeng_inventory_snapshot
     description: >-
-      乐檬**库存快照** staging（新湖；W3，#632 订正）。行=仓库×商品。窗口 T-2（源端发布滞后 16~40h，T-1 通常未发布；**历史深可回溯**）。 列全集以 `contracts/common/lemeng.inventory_snapshot.json` 为准。⚠️ 采集范围仅 3120。
+      乐檬**库存快照** staging（新湖；W3，#632 订正）。行=仓库×商品。窗口 `date-2d`（源端发布滞后实测 46.6~48.2h，T-1 在采集时点尚未发布；主轮全空时兜底管线补 T-3；**历史深可回溯**）。 列全集以 `contracts/common/lemeng.inventory_snapshot.json` 为准。⚠️ 采集范围仅 3120。
     columns:
       - name: system_book
         description: 账套。hive 分区键。

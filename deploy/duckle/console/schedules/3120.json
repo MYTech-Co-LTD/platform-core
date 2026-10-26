@@ -273,6 +273,27 @@
     "next_run_at": null
   },
   {
+    "id": "panel-lemeng.inventory.snapshot.catchup.3120",
+    "pipeline_id": "lemeng.inventory.snapshot.catchup.3120",
+    "name": "lemeng.inventory.snapshot.catchup.3120",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "35 0 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "all",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
     "id": "panel-lemeng.purchase.analysis.l0.3120",
     "pipeline_id": "lemeng.purchase.analysis.l0.3120",
     "name": "lemeng.purchase.analysis.l0.3120",

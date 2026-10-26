@@ -149,6 +149,11 @@ jobs:
       # （拼写错/漏生成）② enabled 引用**他账套**后缀管线 = SOP §F.1 的危害形态（一账套一 console
       # 的本体是凭据/env 隔离，错账套排班会**静默采错数据**）。纯静态：只读仓内 JSON，秒级。
       - run: pnpm exec tsx scripts/check-console-schedules.mjs
+      # 库存快照变体生成物 == committed（#1079）。catchup / backfill 两个变体由主管线
+      # `lemeng.inventory.snapshot.l0.3120` 机械派生（只差窗口 token / 管线名 / 空集文案）——
+      # 改了主管线（加页、改契约、改窗口）却没重跑生成器 ⇒ 这里红。纯静态：只读仓内 JSON。
+      # **怎么修**：node scripts/lemeng/gen-inventory-snapshot-variants.mjs 后一并提交。
+      - run: node scripts/lemeng/gen-inventory-snapshot-variants.mjs --check
       # console 告警覆盖门禁（issue #565）。盯的是**今天没有任何门禁盯的那条耦合**：
       # `schedules/<账套>.json` 里**被调度**的管线 ↔ `alerts.<源>.json` 里**含 failure 的规则集**。
       # 案例（2026-10-10；PR #562 实证）：`lemeng.dim.item_price.l0.3120` 定时 429 失败、群里一声不响——

@@ -1,0 +1,4022 @@
+{
+  "name": "lemeng.inventory.snapshot.catchup.3120",
+  "nodes": [
+    {
+      "id": "w0",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "w0",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/mcp",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"
+          },
+          "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"whoami\", \"arguments\": {}}}",
+          "paginationType": "none",
+          "responseFormat": "xml",
+          "rawResponseDestination": "/workspace/.duckle-raw/whoami-${datetime}.sse",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "g0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g0",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/whoami-${datetime}.sse')"
+        }
+      }
+    },
+    {
+      "id": "g1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g1",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()"
+        }
+      }
+    },
+    {
+      "id": "g2",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g2",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input"
+        }
+      }
+    },
+    {
+      "id": "d0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d0",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "g3",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g3",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}' UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) WHERE w.branch_num IS NULL"
+        }
+      }
+    },
+    {
+      "id": "d1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d1",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "gv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gv",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'BIZDAY', '${date-3d}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('${date-3d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', 'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS v, 'iv-<book>-inventory_snapshot-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match('iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z', 'iv-[0-9]+-inventory_snapshot-[0-9]{8}T[0-9]{6}Z')"
+        }
+      }
+    },
+    {
+      "id": "dv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dv",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入"
+        }
+      }
+    },
+    {
+      "id": "p1",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":1,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p2",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p2",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":2,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p3",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p3",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":3,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p4",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p4",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":4,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p5",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p5",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":5,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p6",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p6",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":6,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p7",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p7",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":7,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p8",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p8",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":8,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p9",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "p9",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":9,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "merge",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "merge",
+        "componentId": "ctl.merge",
+        "properties": {}
+      }
+    },
+    {
+      "id": "shape",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "shape",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  'iv-' || '${ENV:SYSTEM_BOOK}' || '-inventory_snapshot-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${date-3d}' AS DATE) AS bizday,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name,\n  CAST(o.storehouse_num AS BIGINT) AS storehouse_num,\n  CAST(o.storehouse_code AS VARCHAR) AS storehouse_code,\n  CAST(o.storehouse_name AS VARCHAR) AS storehouse_name,\n  CAST(o.item_num AS BIGINT) AS item_num,\n  CAST(o.item_code AS VARCHAR) AS item_code,\n  CAST(o.item_barcode AS VARCHAR) AS item_barcode,\n  CAST(o.item_name AS VARCHAR) AS item_name,\n  CAST(o.item_spec AS VARCHAR) AS item_spec,\n  CAST(o.item_unit AS VARCHAR) AS item_unit,\n  CAST(o.inventory_quantity AS DECIMAL(14,6)) AS inventory_quantity,\n  CAST(o.inventory_assist_quantity AS DECIMAL(14,6)) AS inventory_assist_quantity,\n  CAST(o.inventory_use_quantity AS DECIMAL(14,6)) AS inventory_use_quantity,\n  CAST(o.inventory_money AS DECIMAL(14,2)) AS inventory_money,\n  CAST(o.carry_cost_price AS DECIMAL(18,8)) AS carry_cost_price,\n  CAST(o.sale_price AS DECIMAL(18,8)) AS sale_price,\n  CAST(o.difference_quantity AS DECIMAL(14,6)) AS difference_quantity,\n  CAST(o.difference_money AS DECIMAL(14,2)) AS difference_money\nFROM input o"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gate",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "bizday": "not_null",
+            "branch_num": "not_null",
+            "storehouse_num": "not_null",
+            "item_num": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.minio",
+        "properties": {
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/inventory_snapshot/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-3d}/all.parquet",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd",
+          "connectionRef": "zos"
+        }
+      }
+    },
+    {
+      "id": "p10",
+      "type": "source",
+      "position": {
+        "x": 2340,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":10,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p11",
+      "type": "source",
+      "position": {
+        "x": 2600,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":11,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p12",
+      "type": "source",
+      "position": {
+        "x": 2860,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":12,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p13",
+      "type": "source",
+      "position": {
+        "x": 3120,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":13,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p14",
+      "type": "source",
+      "position": {
+        "x": 3380,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":14,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p15",
+      "type": "source",
+      "position": {
+        "x": 3640,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":15,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p16",
+      "type": "source",
+      "position": {
+        "x": 3900,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":16,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p17",
+      "type": "source",
+      "position": {
+        "x": 4160,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":17,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p18",
+      "type": "source",
+      "position": {
+        "x": 4420,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":18,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p19",
+      "type": "source",
+      "position": {
+        "x": 4680,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":19,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p20",
+      "type": "source",
+      "position": {
+        "x": 4940,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":20,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p21",
+      "type": "source",
+      "position": {
+        "x": 5200,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":21,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p22",
+      "type": "source",
+      "position": {
+        "x": 5460,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":22,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p23",
+      "type": "source",
+      "position": {
+        "x": 5720,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":23,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p24",
+      "type": "source",
+      "position": {
+        "x": 5980,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":24,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p25",
+      "type": "source",
+      "position": {
+        "x": 6240,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":25,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p26",
+      "type": "source",
+      "position": {
+        "x": 6500,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":26,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p27",
+      "type": "source",
+      "position": {
+        "x": 6760,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":27,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p28",
+      "type": "source",
+      "position": {
+        "x": 7020,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":28,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p29",
+      "type": "source",
+      "position": {
+        "x": 7280,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":29,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p30",
+      "type": "source",
+      "position": {
+        "x": 7540,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":30,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "p31",
+      "type": "source",
+      "position": {
+        "x": 7800,
+        "y": 0
+      },
+      "data": {
+        "label": "p1",
+        "componentId": "src.rest",
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_num",
+            "type": "int64"
+          },
+          {
+            "name": "storehouse_code",
+            "type": "string"
+          },
+          {
+            "name": "storehouse_name",
+            "type": "string"
+          },
+          {
+            "name": "item_num",
+            "type": "int64"
+          },
+          {
+            "name": "item_code",
+            "type": "string"
+          },
+          {
+            "name": "item_barcode",
+            "type": "string"
+          },
+          {
+            "name": "item_name",
+            "type": "string"
+          },
+          {
+            "name": "item_spec",
+            "type": "string"
+          },
+          {
+            "name": "item_unit",
+            "type": "string"
+          },
+          {
+            "name": "inventory_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_assist_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_use_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "inventory_money",
+            "type": "decimal"
+          },
+          {
+            "name": "carry_cost_price",
+            "type": "decimal"
+          },
+          {
+            "name": "sale_price",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_quantity",
+            "type": "decimal"
+          },
+          {
+            "name": "difference_money",
+            "type": "decimal"
+          }
+        ],
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.ama.ai.inventory.snapshot.find",
+          "method": "POST",
+          "body": "{\"bizday\":\"${date-3d}\",\"page_number\":31,\"page_size\":200}",
+          "responsePath": "/result",
+          "paginationType": "none",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        }
+      }
+    },
+    {
+      "id": "die_empty",
+      "type": "control",
+      "position": {
+        "x": 0,
+        "y": 300
+      },
+      "data": {
+        "label": "空集 ⇒ 具名状态（兜底也没拿到；T-3 距日结 ≥72h，此时零行 = 源端真缺这一天）",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "SOURCE_NOT_PUBLISHED: bizday=${date-3d} 源端零行——**兜底轮次也没拿到**。本管线窗口为 T-3，距营业日日结 ≥72h，远超源端实测发布上限 46.6~48.2h（2026-10-26 探针实测）⇒ 此刻零行意味着**源端真的缺这一天**（当日未日结/未结转），不是窗口问题。处置：先手工探一次该 bizday 确认；确属源端缺失则登记进正典 §1.7 台账，源端补齐后用 lemeng.inventory.snapshot.backfill.3120 补采。"
+        }
+      }
+    },
+    {
+      "id": "sentinel",
+      "type": "control",
+      "position": {
+        "x": 8060,
+        "y": 0
+      },
+      "data": {
+        "label": "容量哨兵",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "lemeng inventory_snapshot 容量截断：第 31 页（哨兵页）仍有 {rows} 行（system_book=${ENV:SYSTEM_BOOK}）⇒ 单量已击穿真阈值 6,000 条/日（算式：数据页 30 × page_size 200；2026-10-13 实测 10-11 单日 4,192 行）。处置：加数据页节点 → 同步改本算式与哨兵页页号 → 重生成 → 走 PR"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-w0-g0",
+      "source": "w0",
+      "target": "g0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g0-g1",
+      "source": "g0",
+      "target": "g1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g1-g2",
+      "source": "g1",
+      "target": "g2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g2-d0",
+      "source": "g2",
+      "target": "d0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d0-g3",
+      "source": "d0",
+      "target": "g3",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g3-d1",
+      "source": "g3",
+      "target": "d1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d1-gv",
+      "source": "d1",
+      "target": "gv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gv-dv",
+      "source": "gv",
+      "target": "dv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dv-p1",
+      "source": "dv",
+      "target": "p1",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p2",
+      "source": "dv",
+      "target": "p2",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p3",
+      "source": "dv",
+      "target": "p3",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p4",
+      "source": "dv",
+      "target": "p4",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p5",
+      "source": "dv",
+      "target": "p5",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p6",
+      "source": "dv",
+      "target": "p6",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p7",
+      "source": "dv",
+      "target": "p7",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p8",
+      "source": "dv",
+      "target": "p8",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-dv-p9",
+      "source": "dv",
+      "target": "p9",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-p1-merge",
+      "source": "p1",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_1",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p2-merge",
+      "source": "p2",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_2",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p3-merge",
+      "source": "p3",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_3",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p4-merge",
+      "source": "p4",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_4",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p5-merge",
+      "source": "p5",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_5",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p6-merge",
+      "source": "p6",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_6",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p7-merge",
+      "source": "p7",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_7",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p8-merge",
+      "source": "p8",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_8",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p9-merge",
+      "source": "p9",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_9",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-merge-shape",
+      "source": "merge",
+      "target": "shape",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-shape-gate",
+      "source": "shape",
+      "target": "gate",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gate-sink",
+      "source": "gate",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p10-merge",
+      "source": "p10",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_10",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p11-merge",
+      "source": "p11",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_11",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p12-merge",
+      "source": "p12",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_12",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p13-merge",
+      "source": "p13",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_13",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p14-merge",
+      "source": "p14",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_14",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p15-merge",
+      "source": "p15",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_15",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p16-merge",
+      "source": "p16",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_16",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p17-merge",
+      "source": "p17",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_17",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p18-merge",
+      "source": "p18",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_18",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p19-merge",
+      "source": "p19",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_19",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p20-merge",
+      "source": "p20",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_20",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p21-merge",
+      "source": "p21",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_21",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p22-merge",
+      "source": "p22",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_22",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p23-merge",
+      "source": "p23",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_23",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p24-merge",
+      "source": "p24",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_24",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p25-merge",
+      "source": "p25",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_25",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p26-merge",
+      "source": "p26",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_26",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p27-merge",
+      "source": "p27",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_27",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p28-merge",
+      "source": "p28",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_28",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p29-merge",
+      "source": "p29",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_29",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p30-merge",
+      "source": "p30",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_30",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-merge-die_empty",
+      "source": "merge",
+      "target": "die_empty",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-p31-sentinel",
+      "source": "p31",
+      "target": "sentinel",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-sentinel-merge",
+      "source": "sentinel",
+      "target": "merge",
+      "sourceHandle": "main",
+      "targetHandle": "main_32",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}

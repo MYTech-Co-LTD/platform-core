@@ -259,11 +259,13 @@ export function readContractDoc(root, rel) {
  */
 export function findProducerPipelines(root, prefix) {
   return PIPELINE_DIRS.flatMap((d) => collectJson(root, d)).filter((p) => {
-    // 回填变体（文件名含 `.backfill.`）**不是生产者**：它的窗参（如 `${BIZDAY}`）就在选列区里，
-    // 与契约 expr（`${date-1d}` 族）恒不一致 ⇒ 生成器按契约归一会把参数化打回常量窗
-    // （2026-10-12 实测：wholesale backfill 的 bizday 行被重写、CI gates 的 gen --check 红）。
-    // 变体由 API params 驱动（POST /api/run 的 params），不进调度、不属「列集唯一事实源」的归一面。
-    if (p.includes('.backfill.')) return false
+    // 窗口变体（文件名含 `.backfill.` / `.catchup.`）**不是生产者**：它的窗口 token（`${BIZDAY}` /
+    // `${date-3d}`）就在选列区里，与契约 expr（`${date-2d}` 族）恒不一致 ⇒ 生成器按契约归一会把
+    // 参数化/错日窗口打回常量窗（2026-10-12 实测：wholesale backfill 的 bizday 行被重写、gen --check 红；
+    // 2026-10-27 #1079 同型：catchup 的 `${date-3d}` 被改写成 `${date-2d}`）。
+    // 变体由 API params / 独立排班驱动，不属「列集唯一事实源」的归一面；列集正确性由
+    // gen-inventory-snapshot-variants.js 的「由主管线派生 + --check」保证（变体与主管线恒同源）。
+    if (p.includes('.backfill.') || p.includes('.catchup.')) return false
     // 前缀匹配带 `/` 边界（2026-10-13 W2 实测）：`lemeng/client` 不得命中 `lemeng/client_expense`
     // 的 sink key——子串匹配把费用管线误当 client 契约的生产者，gen 按错契约重写其投影。
     const bounded = prefix.endsWith('/') ? prefix : prefix + '/'
