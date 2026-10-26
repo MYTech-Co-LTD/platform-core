@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.200.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.200.0...v0.200.1) - 2026-10-26
+- 【修复】auth: 深链登录回跳丢查询串——三层 next 透传（SDK/静默/回调） ([#1060](https://github.com/MYTech-Co-LTD/platform-core/pull/1060), [7432b85](https://github.com/MYTech-Co-LTD/platform-core/commit/7432b8564446538ad9c1d29883f0e8b7ff65e406))
+
+
 ## [0.200.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.199.1...v0.200.0) - 2026-10-26
 - 【新增】data: 报表列表深链 ?open=<id>——列表就绪后自动打开自绘报表 (#1047) ([#1059](https://github.com/MYTech-Co-LTD/platform-core/pull/1059), [05b42bb](https://github.com/MYTech-Co-LTD/platform-core/commit/05b42bbf3eccb0f1081ad7bdf23a182a9ad14ec3))
 
