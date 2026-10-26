@@ -16,8 +16,9 @@ import { Hono } from 'hono'
 import { Pool } from 'pg'
 import { declaredScopeGate } from '@platform/sdk'
 import mod from '../index'
-import { upsertReport } from '../domain/report-store'
-import { upsertMetric } from '../domain/metric-store'
+import { updateSpec, upsertReport } from '../domain/report-store'
+import { upsertL1Metric, upsertMetric } from '../domain/metric-store'
+import { parseReportSpec } from '../domain/report-spec'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import type { ModuleVars } from './context'
 
@@ -41,6 +42,9 @@ const COST_METRIC = 't4rg:cost'
 const MARGIN_METRIC = 't4rg:margin'
 /** 无码指标（`requiredScope = null`）——用于钉「面板都不需要码 ⇒ 报表也不收严」（#778）。 */
 const OPEN_METRIC = 't4rg:open'
+/** 写入侧校验（`validatePanelMetrics`）的 L1 夹具：只有 L1 能带可加/源维度。 */
+const ADDITIVE_METRIC = 't4http:additive'
+const SOURCED_METRIC = 't4http:sourced'
 
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
@@ -204,15 +208,16 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('十个报表端点都声明了（api.internal 全模块共 23 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('十七个报表端点都声明了（api.internal 全模块共 30 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
-    // 总数钉 23（24 − 3：个人 Key 三条 /keys 已上移宿主 issue #894；+1：明细下钻 /query/detail，
+    // 总数钉 30（24 − 3：个人 Key 三条 /keys 已上移宿主 issue #894；+1：明细下钻 /query/detail，
     // spec 2026-10-21；+1：/toolbox registry 薄封装，Wave 2 #985；+1：/branches 门店维读面，
-    // #1047 报表页筛选器）：穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里
-    // 会红，逼着声明与测试一起动。
-    expect(declared).toHaveLength(23)
+    // #1047 报表页筛选器；+7：报表定义版本（publish/unpublish/rollback/versions×2/
+    // published-spec/draft，月报重做 Task 10））：穷举口径（同 module.test.ts 的表清单）——
+    // 别处加端点而漏改这里会红，逼着声明与测试一起动。
+    expect(declared).toHaveLength(30)
     expect(declared.get('GET /branches')).toBe('data:query')
     expect(declared.get('POST /reports')).toBe('data:manage')
     expect(declared.get('GET /reports')).toBe('data:query')
@@ -227,6 +232,37 @@ describe('报表面声明（不需要数据库）', () => {
     //    写=管理面（改规格就是改报表内容，与 PUT /reports/:id 同档）。
     expect(declared.get('GET /reports/:id/spec')).toBe('data:query')
     expect(declared.get('PUT /reports/:id/spec')).toBe('data:manage')
+    // ── 定义版本（月报重做 Task 10）：发布类动作全是管理面；只有「读已发布快照」是观看面
+    //    （独立链接 /r/:id 的用户只有 data:query）。──
+    expect(declared.get('POST /reports/:id/publish')).toBe('data:manage')
+    expect(declared.get('POST /reports/:id/unpublish')).toBe('data:manage')
+    expect(declared.get('POST /reports/:id/versions/:version/rollback')).toBe('data:manage')
+    expect(declared.get('GET /reports/:id/versions')).toBe('data:manage')
+    expect(declared.get('GET /reports/:id/versions/:version')).toBe('data:manage')
+    expect(declared.get('GET /reports/:id/published-spec')).toBe('data:query')
+    expect(declared.get('GET /reports/:id/draft')).toBe('data:manage')
+  })
+
+  it('★ 页门负测：只有 data:query ⇒ 版本管理动作全 403（带 need）；published-spec 过门', async () => {
+    const app = gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), null)
+    const manageCalls: [string, string][] = [
+      ['POST', '/reports/x/publish'],
+      ['POST', '/reports/x/unpublish'],
+      ['POST', '/reports/x/versions/1/rollback'],
+      ['GET', '/reports/x/versions'],
+      ['GET', '/reports/x/versions/1'],
+      ['GET', '/reports/x/draft'],
+    ]
+    for (const [method, path] of manageCalls) {
+      const res = await app.request(path, { method })
+      // 断言带 body（need: 'data:manage'）：只断 status 的话「未声明路径」的 !hit 兜底同样 403，
+      // manifest 的声明就没被这条负测承重（同上方管理清单负测的订正口径）。
+      expect(res.status).toBe(403)
+      expect(await res.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
+    }
+    // 观看面：data:query 恰好够 ⇒ 门卫放行（壳里 pool=null ⇒ 后续 500 也可能，唯独不许 403）
+    const pub = await app.request('/reports/x/published-spec')
+    expect(pub.status).not.toBe(403)
   })
 
   it('★ 页门负测：只有 data:query ⇒ 管理清单 / 页门改动同样 403', async () => {
@@ -302,6 +338,15 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     await upsertMetric(pool, ORG, def(COST_METRIC, '成本', 'data:cost'), 'fixture')
     await upsertMetric(pool, ORG, def(MARGIN_METRIC, '毛利', 'data:margin'), 'fixture')
     await upsertMetric(pool, ORG, def(OPEN_METRIC, '公开指标', null), 'fixture')
+    // 写入侧校验的两个面只有 **L1 物化**能给：`upsertMetric`（L2）恒写 `totalable=false`、
+    // `source_system=null` ⇒ 测不出「可加」「源未接入」。id 自带 `t4http:` 前缀，避免撞全局 L1 桶。
+    const l1 = (id: string, totalable: boolean, sourceSystem: string | null) => ({
+      id, title: id, description: '', requiredScope: null, subjectColumn: 'org',
+      selectSql: 'select sum(mart_sales_daily.revenue) as value, bizday from mart_sales_daily',
+      groupBy: 'bizday', params: {}, sourceSystem, slaDays: 1, freshnessRelations: [], masks: null, totalable,
+    })
+    await upsertL1Metric(pool, l1(ADDITIVE_METRIC, true, null))
+    await upsertL1Metric(pool, l1(SOURCED_METRIC, true, 'lemeng'))
   })
 
   beforeEach(async () => {
@@ -331,11 +376,15 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     await pool.query('delete from data.reports where org = any($1)', [[ORG, OTHER_ORG]]).catch(() => {})
     // 发布门夹具（L2，本 org 独占）——按 org 删，不碰共享的 platform 桶。
     await pool.query('delete from data.metrics where org = $1', [ORG]).catch(() => {})
+    // L1 桶是全局的：只删本文件种的两条（带 t4http: 前缀，别误删别人的夹具）。
+    await pool.query('delete from data.metrics where org = $1 and id = any($2)', ['platform', [ADDITIVE_METRIC, SOURCED_METRIC]]).catch(() => {})
     await pool.end().catch(() => {})
   })
 
-  const shell = (identity: ReturnType<typeof makeIdentity>) => ({
-    app: buildTestApp(mod, identity, { pool }, { id: TENANT, casdoor_org: identity.orgId }),
+  // `sources` 不传 = 宿主没投影（`c.get(TENANT_SOURCES)` 恒 undefined）；传了（含空数组）=
+  // 宿主投影了该集合。语义见 test-util.buildTestApp。
+  const shell = (identity: ReturnType<typeof makeIdentity>, sources?: string[]) => ({
+    app: buildTestApp(mod, identity, { pool }, { id: TENANT, casdoor_org: identity.orgId }, sources),
     identity,
   })
   const manage = () => shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }))
@@ -1563,9 +1612,11 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
         method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ spec, expectedVersion }),
       })
-    const putGate = (app: Hono, id: string, body: unknown) =>
-      app.request(`/reports/${id}`, {
-        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    // 发布走 /publish（Task 10 起平台行的 `PUT /reports/:id` 已 409 USE_PUBLISH_ENDPOINT）
+    const publish = (app: Hono, id: string, expectedVersion: number) =>
+      app.request(`/reports/${id}/publish`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedVersion }),
       })
     const panel = (metricId: string, title: string, chart = 'table') => ({ chart, title, metricId })
     /** 自绘报表（页门 = data:manage ⇒ **未发布**，符合「先建后发」的正常流程）。 */
@@ -1586,47 +1637,73 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect((await pool.query('select required_scope from data.reports where id = $1', [id]))
         .rows[0].required_scope).toBe('data:manage')
 
-      // ③ 发布（requiredScope: null + expectedVersion）⇒ 被门拒、点名两个码
-      const res = await putGate(app, id, { requiredScope: null, expectedVersion: await versionOf(app, id) })
+      // ③ 发布 ⇒ 被门拒、点名两个码（Task 10 起发布走 /publish；T9 返回 {ok:false, reason, detail}）
+      const res = await publish(app, id, await versionOf(app, id))
       expect(res.status).toBe(400)
-      const body = await res.json() as { error: string; scopes: string[] }
-      expect(body.error).toBe('CONFLICTING_PANEL_SCOPES')
-      expect([...body.scopes].sort()).toEqual(['data:cost', 'data:margin'])
+      expect(await res.json()).toMatchObject({
+        ok: false, reason: 'CONFLICTING_PANEL_SCOPES', detail: 'data:cost,data:margin',
+      })
       // 「拒」= 不写：页门没被改成 null（挑一个码放行会让「只有 C1 没有 C2」的人看到报表而 C2 面板 403）
       expect((await pool.query('select required_scope from data.reports where id = $1', [id]))
         .rows[0].required_scope).toBe('data:manage')
+      // 且**一条版本都不落**（设计 §4.2 第 3 步：校验全在同事务/锁内，失败即不写）
+      expect((await pool.query(
+        'select count(*)::int as n from data.report_versions where org = $1 and report_id = $2', [ORG, id],
+      )).rows[0].n).toBe(0)
     })
 
     it('★ 面板指标同一个码 ⇒ 发布成功且回包 requiredScope = 该码（不是调用方传的 null）', async () => {
       const { app } = manage()
       const id = await createPlatform(app, '单码面板')
+      // ⚠️ 两张都用 table：发布路径比旧 PUT 多跑 `validatePanelMetrics`，而夹具 L2 指标
+      //    `totalable=false`（`upsertMetric` 恒写 false）⇒ line/bar 会被 CHART_REQUIRES_ADDITIVE 拒。
+      //    本用例考的是「同一码 ⇒ 发布成功且页门 = 该码」，不是可加性（那条由 domain 单测咬）。
       const specRes = await putSpec(app, id, {
-        panels: [panel(COST_METRIC, '成本 A'), panel(COST_METRIC, '成本 B', 'bar')],
+        panels: [panel(COST_METRIC, '成本 A'), panel(COST_METRIC, '成本 B')],
       }, await versionOf(app, id))
       expect(specRes.status).toBe(200)
       // 写规格**同时**同步页门：「先发空报表再补面板」不再绕过门
       expect((await pool.query('select required_scope from data.reports where id = $1', [id]))
         .rows[0].required_scope).toBe('data:cost')
 
-      const res = await putGate(app, id, { requiredScope: null, expectedVersion: await versionOf(app, id) })
+      const res = await publish(app, id, await versionOf(app, id))
       expect(res.status).toBe(200)
-      // 调用方给的是 null，落库/回包的都是**派生值**
-      expect((await res.json()).requiredScope).toBe('data:cost')
+      // 发布时从面板**派生**（不是调用方给的值）+ 落版本行 + 指针
+      expect(await res.json()).toMatchObject({
+        ok: true, publishedVersion: 1, requiredScope: 'data:cost',
+      })
+      const db = await pool.query('select published_version_id from data.reports where id = $1', [id])
+      expect(db.rows[0].published_version_id).not.toBeNull()
     })
 
-    it('★ 面板指向词表外的指标 ⇒ 发布被拒并点名 metricId', async () => {
+    it('★ 面板指向词表外的指标 ⇒ 写入即被拒（400）；绕过写面的坏草稿发布门照样拒', async () => {
       const { app } = manage()
       const id = await createPlatform(app, '幽灵面板')
-      await putSpec(app, id, { panels: [panel('t4rg:ghost', '幽灵')] }, await versionOf(app, id))
-      const res = await putGate(app, id, { requiredScope: null, expectedVersion: await versionOf(app, id) })
+      const v0 = await versionOf(app, id)
+      // 写入侧校验（Task 3 后续）：HTTP 写面与发布门 / MCP 提报面同一份判定 ⇒ 这里就 400
+      const put = await putSpec(app, id, { panels: [panel('t4rg:ghost', '幽灵')] }, v0)
+      expect(put.status).toBe(400)
+      expect(await put.json()).toEqual({ error: 'UNKNOWN_PANEL_METRIC', metricId: 't4rg:ghost' })
+      expect(await versionOf(app, id)).toBe(v0)              // 拒 = 不写
+
+      // 发布门仍是第二道：绕过写面（store 直写）种一份坏草稿，发布照样被拒并点名
+      const parsed = parseReportSpec({ panels: [panel('t4rg:ghost', '幽灵')] })
+      if (!parsed.ok) throw new Error('夹具规格应通过白名单')
+      await updateSpec(pool, ORG, id, parsed.spec, v0)
+      const res = await publish(app, id, await versionOf(app, id))
       expect(res.status).toBe(400)
-      expect(await res.json()).toEqual({ error: 'UNKNOWN_PANEL_METRIC', metricId: 't4rg:ghost' })
+      expect(await res.json()).toMatchObject({
+        ok: false, reason: 'UNKNOWN_PANEL_METRIC', detail: 't4rg:ghost',
+      })
     })
 
-    it('★ renderer=metabase ⇒ 不派生（无面板可推），仍用调用方给的值', async () => {
+    it('★ renderer=metabase ⇒ 不派生（无面板可推），仍用调用方给的值（PUT 通路保留）', async () => {
       const { app } = manage()
       const { id } = await (await post(app, { title: 'Metabase 报表' })).json()
-      const res = await putGate(app, id, { requiredScope: 'data:manage', expectedVersion: await versionOf(app, id) })
+      const res = await app.request(`/reports/${id}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ requiredScope: 'data:manage', expectedVersion: await versionOf(app, id) }),
+      })
       expect(res.status).toBe(200)
       expect((await res.json()).requiredScope).toBe('data:manage')
     })
@@ -1688,6 +1765,463 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
           error: 'SCOPE_CONFLICT_WITH_PANELS', derivedScope: 'data:cost', givenScope: 'data:manage',
         })
       })
+    })
+
+    // ── 写入侧面板指标校验（月报重做 Task 3 后续）──────────────────────────────────
+    // `validatePanelMetrics` 接进 **HTTP 写面**（POST /reports 的 platform 分支 + PUT /reports/:id/spec）：
+    // 与发布门 / MCP 提报面同一份判定。分档：源未接入 ⇒ 403（与 /query 同因）；未知指标 /
+    // 不可加 ⇒ 400（入参本身不成立）。**拒 = 不写**（版本与规格都不动）。
+    describe('写入侧面板指标校验（validatePanelMetrics 接进 HTTP 写面）', () => {
+      /** 面板只给必填字段（dims/args/span 由 parseReportSpec 补默认值）。 */
+      const metricPanel = (metricId: string, chart = 'line') => ({ chart, title: 't', metricId })
+
+      it('★ POST：不可加指标放 line / bar ⇒ 400 CHART_REQUIRES_ADDITIVE，且一行不落', async () => {
+        const { app } = manage()
+        for (const chart of ['line', 'bar']) {
+          const res = await post(app, {
+            title: `不可加 ${chart}`, renderer: 'platform', spec: { panels: [metricPanel(COST_METRIC, chart)] },
+          })
+          expect(res.status).toBe(400)
+          expect(await res.json()).toEqual({ error: 'CHART_REQUIRES_ADDITIVE', metricId: COST_METRIC })
+          expect((await pool.query(
+            'select count(*)::int as n from data.reports where org = $1 and title = $2', [ORG, `不可加 ${chart}`],
+          )).rows[0].n).toBe(0)
+        }
+      })
+
+      it('★ POST：不可加指标放 kpi ⇒ 400 KPI_NOT_TOTALABLE', async () => {
+        const res = await post(manage().app, {
+          title: '不可加 kpi', renderer: 'platform',
+          spec: { panels: [{ chart: 'kpi', title: 't', metricId: COST_METRIC, format: 'number' }] },
+        })
+        expect(res.status).toBe(400)
+        expect(await res.json()).toEqual({ error: 'KPI_NOT_TOTALABLE', metricId: COST_METRIC })
+      })
+
+      it('★ POST：未接入源的指标 ⇒ 403 METRIC_SOURCE_NOT_ADOPTED；宿主投影该源后 201', async () => {
+        const body = {
+          title: '未接入源', renderer: 'platform', spec: { panels: [metricPanel(SOURCED_METRIC)] },
+        }
+        // 本文件的管理壳不传 sources = 宿主没投影（fail-closed：一个源都没接）
+        const denied = await post(manage().app, body)
+        expect(denied.status).toBe(403)
+        expect(await denied.json()).toEqual({ error: 'METRIC_SOURCE_NOT_ADOPTED', metricId: SOURCED_METRIC })
+        // 宿主投影了 lemeng ⇒ 同一份 spec 可建（证明读的是 c.get(TENANT_SOURCES)，不是硬编码）
+        const allowed = await post(
+          shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }), ['lemeng']).app,
+          body,
+        )
+        expect(allowed.status).toBe(201)
+      })
+
+      it('★ POST：可加指标放 line ⇒ 201（正向不受影响）', async () => {
+        const res = await post(manage().app, {
+          title: '可加 line', renderer: 'platform', spec: { panels: [metricPanel(ADDITIVE_METRIC)] },
+        })
+        expect(res.status).toBe(201)
+      })
+
+      it('★ PUT /spec：四种拒绝各自的分档与 metricId，且拒 = 版本与规格都不动；正向 200', async () => {
+        const { app } = manage()
+        const id = await createPlatform(app, '写入校验')
+        const cases: { spec: unknown; error: string; metricId: string; status: number }[] = [
+          { spec: { panels: [metricPanel(COST_METRIC, 'line')] }, error: 'CHART_REQUIRES_ADDITIVE', metricId: COST_METRIC, status: 400 },
+          { spec: { panels: [metricPanel(COST_METRIC, 'bar')] }, error: 'CHART_REQUIRES_ADDITIVE', metricId: COST_METRIC, status: 400 },
+          {
+            spec: { panels: [{ chart: 'kpi', title: 't', metricId: COST_METRIC, format: 'number' }] },
+            error: 'KPI_NOT_TOTALABLE', metricId: COST_METRIC, status: 400,
+          },
+          { spec: { panels: [metricPanel(SOURCED_METRIC)] }, error: 'METRIC_SOURCE_NOT_ADOPTED', metricId: SOURCED_METRIC, status: 403 },
+        ]
+        for (const c of cases) {
+          const v0 = await versionOf(app, id)
+          const res = await putSpec(app, id, c.spec, v0)
+          expect(res.status).toBe(c.status)
+          expect(await res.json()).toEqual({ error: c.error, metricId: c.metricId })
+          // 拒 = 不写：草稿计数器没推进（规格也就没落库）
+          expect(await versionOf(app, id)).toBe(v0)
+        }
+        // 正向：可加指标放 line 照 200
+        const v0 = await versionOf(app, id)
+        expect((await putSpec(app, id, { panels: [metricPanel(ADDITIVE_METRIC)] }, v0)).status).toBe(200)
+      })
+
+      it('★ PUT /spec：**已发布行**的草稿编辑同样过写入侧校验（发布门只是第二道）', async () => {
+        const { app } = manage()
+        const id = await createPlatform(app, '已发布改草稿')
+        const v0 = await versionOf(app, id)
+        expect((await publish(app, id, v0)).status).toBe(200)       // 发布不推进草稿计数器
+        const res = await putSpec(app, id, { panels: [metricPanel(COST_METRIC)] }, v0)
+        expect(res.status).toBe(400)
+        expect(await res.json()).toEqual({ error: 'CHART_REQUIRES_ADDITIVE', metricId: COST_METRIC })
+        expect(await versionOf(app, id)).toBe(v0)
+      })
+    })
+  })
+
+  // ── 定义版本：路由层（月报重做 Task 10；存储层行为见 domain/report-version.test.ts）──────────
+  // 这里钉的是**契约面**：HTTP 码、响应形状、页门/租户隔离、下线总闸、以及
+  // 「发布不推进草稿计数器」这条与「无改动再发布」相互依赖的时序事实。
+  describe('定义版本：发布 / 下线 / 回滚 / 历史 / 已发布快照 / 草稿', () => {
+    /** 无码指标面板（派生页门 = null ⇒ 发布后 data:query 的观看者也看得到）。 */
+    const openPanel = { chart: 'table', title: '公开', metricId: OPEN_METRIC }
+    /** 有码指标面板（派生页门 = data:cost；⚠️ 用 table：夹具 L2 指标 `totalable=false`）。 */
+    const costPanel = { chart: 'table', title: '成本', metricId: COST_METRIC }
+    const textSpec = (content: string) => ({ panels: [{ chart: 'text', content, span: 24 }] })
+    /** 自绘报表（缺省面板无码 ⇒ 页门 null）。 */
+    const createVersioned = async (
+      app: Hono, title = '版本报表', panels: unknown[] = [openPanel],
+    ): Promise<string> => {
+      const res = await post(app, { title, renderer: 'platform', spec: { panels } })
+      expect(res.status).toBe(201)
+      return (await res.json()).id
+    }
+    /** 有 `data:cost` 的观看者（页门 fixtures 的另一侧）。 */
+    const costViewer = () => shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:cost'] })).app
+    const publish = (
+      app: Hono, id: string, expectedVersion: number, extra: Record<string, unknown> = {},
+    ) => app.request(`/reports/${id}/publish`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedVersion, ...extra }),
+    })
+    const unpublish = (app: Hono, id: string, expectedVersion: number) =>
+      app.request(`/reports/${id}/unpublish`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedVersion }),
+      })
+    const putSpec = (app: Hono, id: string, spec: unknown, expectedVersion: number) =>
+      app.request(`/reports/${id}/spec`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ spec, expectedVersion }),
+      })
+    const versionCount = async (id: string): Promise<number> =>
+      (await pool.query(
+        'select count(*)::int as n from data.report_versions where org = $1 and report_id = $2', [ORG, id],
+      )).rows[0].n
+    const listedRow = async (app: Hono, id: string) => {
+      const body = await (await app.request('/reports/manage')).json() as {
+        reports: Record<string, unknown>[]
+      }
+      return body.reports.find((r) => r.id === id)!
+    }
+
+    it('★ 发布 v1 ⇒ published-spec 可读；改草稿后 published-spec 不变（快照不跟草稿走）', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app)
+      const v0 = await versionOf(app, id)
+
+      const p = await publish(app, id, v0, { note: '首版' })
+      expect(p.status).toBe(200)
+      expect(await p.json()).toMatchObject({ ok: true, publishedVersion: 1, requiredScope: null })
+      // 发布**不推进**草稿计数器——推进了的话「无改动再发布」永远判成有改动（设计 §4.2 第 4 步）
+      expect(await versionOf(app, id)).toBe(v0)
+      // 管理清单的版本徽标（设计 §8.2：console 从 /reports/manage 拿）
+      expect(await listedRow(app, id)).toMatchObject({ publishedVersion: 1, hasUnpublishedChanges: false })
+
+      const v1 = await (await app.request(`/reports/${id}/published-spec`)).json()
+      expect(v1).toMatchObject({ version: 1, title: '版本报表', requiredScope: null })
+      expect(v1.spec.panels[0]).toMatchObject(openPanel)
+
+      // 草稿改成纯文本：行级页门仍是 null（派生值），但**快照不动**
+      expect((await putSpec(app, id, textSpec('changed'), v0)).status).toBe(200)
+      expect(await listedRow(app, id)).toMatchObject({ publishedVersion: 1, hasUnpublishedChanges: true })
+      const still = await (await app.request(`/reports/${id}/published-spec`)).json()
+      expect(still.version).toBe(1)
+      expect(still.spec.panels[0]).toMatchObject(openPanel)
+
+      // 观看者（只有 data:query）也读得到（快照页门 null）
+      expect((await viewer().app.request(`/reports/${id}/published-spec`)).status).toBe(200)
+    })
+
+    // ── 页门归属：已发布 ⇒ 门随快照；未发布 ⇒ 门随草稿（Task 10 后续）──────────────────
+    it('★ 已发布行的草稿编辑只改 spec，不动线上页门（required_scope 保持发布时的派生值）', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app, '带门的版本报表', [costPanel])
+      // 创建即派生（未发布态：行上门 = 预览门 = data:cost）
+      expect(await listedRow(app, id)).toMatchObject({ requiredScope: 'data:cost', publishedVersion: null })
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+      // 草稿改成纯文本（派生值会变成 null）——若仍走 updateSpecAndScope，线上门就在这里被放开
+      expect((await putSpec(app, id, textSpec('草稿改过'), await versionOf(app, id))).status).toBe(200)
+      expect(await listedRow(app, id)).toMatchObject({
+        requiredScope: 'data:cost', publishedVersion: 1, hasUnpublishedChanges: true,
+      })
+      // 库侧直证（消费面之外再钉一次列本体）
+      expect((await pool.query('select required_scope from data.reports where org = $1 and id = $2', [ORG, id]))
+        .rows[0].required_scope).toBe('data:cost')
+      // 反证（本次改动的要害）：门若被草稿放开，只有 data:query 的人就能读线上内容
+      expect((await viewer().app.request(`/reports/${id}/published-spec`)).status).toBe(404)
+      // 有门的人照常读得到快照（不是把整条通道关掉）
+      expect((await costViewer().request(`/reports/${id}/published-spec`)).status).toBe(200)
+    })
+
+    it('★ ?v=N 按**那一版快照**的页门判权（旧版有门、新版公开 ⇒ 无码者只能看新版）', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app, '两版不同门', [costPanel])
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)   // v1：data:cost
+      // 草稿换成无需码的面板并发布 v2 ⇒ 发布重派生的行上门 = null；v1 快照仍是 data:cost
+      expect((await putSpec(app, id, { panels: [openPanel] }, await versionOf(app, id))).status).toBe(200)
+      const p2 = await publish(app, id, await versionOf(app, id))
+      expect(await p2.json()).toMatchObject({ ok: true, publishedVersion: 2, requiredScope: null })
+
+      const plain = viewer().app   // 只有 data:query
+      expect((await plain.request(`/reports/${id}/published-spec`)).status).toBe(200)   // v2 页门 null
+      // 钉住 v1：按 v1 快照的 data:cost 判 ⇒ 404（若用当前行的 visibleTo 会误判成 200）
+      const pinnedDenied = await plain.request(`/reports/${id}/published-spec?v=1`)
+      expect(pinnedDenied.status).toBe(404)
+      expect(await pinnedDenied.json()).toEqual({ error: 'NOT_FOUND' })
+
+      // 反证：有 data:cost 的观看者读得到 v1，且拿到的是旧版内容 + 那一版自己的页门
+      const pinned = await costViewer().request(`/reports/${id}/published-spec?v=1`)
+      expect(pinned.status).toBe(200)
+      const body = await pinned.json()
+      expect(body).toMatchObject({ version: 1, requiredScope: 'data:cost' })
+      expect(body.spec.panels[0]).toMatchObject(costPanel)
+    })
+
+    it('★ 未发布行的草稿编辑仍同步派生页门（预览门跟着草稿）', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app, '未发布的草稿', [openPanel])
+      expect(await listedRow(app, id)).toMatchObject({ requiredScope: null, publishedVersion: null })
+
+      // 草稿补上需要 data:cost 的面板 ⇒ 预览门立刻收严（不留「新面板 + 旧页门」的窗口）
+      expect((await putSpec(app, id, { panels: [costPanel] }, await versionOf(app, id))).status).toBe(200)
+      expect(await listedRow(app, id)).toMatchObject({ requiredScope: 'data:cost', publishedVersion: null })
+      // 观看面同步收严：无 data:cost 的观看者读草稿规格被行门拦住
+      const denied = await viewer().app.request(`/reports/${id}/spec`)
+      expect(denied.status).toBe(403)
+      expect(await denied.json()).toEqual({ error: 'FORBIDDEN', need: 'data:cost' })
+
+      // 反向：换回无码面板 ⇒ 门跟着放开（未发布行的门是「草稿的函数」，双向都成立）
+      expect((await putSpec(app, id, { panels: [openPanel] }, await versionOf(app, id))).status).toBe(200)
+      expect(await listedRow(app, id)).toMatchObject({ requiredScope: null })
+      expect((await viewer().app.request(`/reports/${id}/spec`)).status).toBe(200)
+    })
+
+    it('★ 发布 v2 后 ?v=1 定格旧定义；?v=99 / ?v=abc / ?v=0 ⇒ 404；无 ?v ⇒ 最新 v2', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app)
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+      expect((await putSpec(app, id, textSpec('第二版'), await versionOf(app, id))).status).toBe(200)
+      const p2 = await publish(app, id, await versionOf(app, id))
+      expect(p2.status).toBe(200)
+      expect(await p2.json()).toMatchObject({ ok: true, publishedVersion: 2 })
+
+      const latest = await (await app.request(`/reports/${id}/published-spec`)).json()
+      expect(latest.version).toBe(2)
+      expect(latest.spec.panels[0]).toMatchObject({ chart: 'text', content: '第二版' })
+
+      // 钉住 v1：用**旧定义**查当前湖数据（版本 ≠ 数据快照）
+      const pinned = await (await app.request(`/reports/${id}/published-spec?v=1`)).json()
+      expect(pinned.version).toBe(1)
+      expect(pinned.spec.panels[0]).toMatchObject(openPanel)
+
+      for (const bad of ['99', 'abc', '0', '-1']) {
+        expect((await app.request(`/reports/${id}/published-spec?v=${bad}`)).status).toBe(404)
+      }
+    })
+
+    it('★ 幂等发布：草稿未变 ⇒ unchanged 且不新建版本', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app)
+      const v0 = await versionOf(app, id)
+      expect((await publish(app, id, v0)).status).toBe(200)
+
+      const again = await publish(app, id, v0)
+      expect(again.status).toBe(200)
+      expect(await again.json()).toMatchObject({ ok: true, publishedVersion: 1, unchanged: true })
+      expect(await versionCount(id)).toBe(1)
+      // 历史也只有一条
+      const list = await (await app.request(`/reports/${id}/versions`)).json() as { versions: unknown[] }
+      expect(list.versions).toHaveLength(1)
+    })
+
+    it('★ 下线 ⇒ published-spec 与 ?v=1 全 404（下线总闸）；重复下线幂等 200 unchanged；可再发布恢复', async () => {
+      const { app } = manage()   // 有 data:manage ⇒ 404 不可能来自页门，只能是「未发布」
+      const id = await createVersioned(app)
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+      const u = await unpublish(app, id, await versionOf(app, id))
+      expect(u.status).toBe(200)
+      expect(await u.json()).toMatchObject({ unpublished: true })
+
+      for (const path of [`/reports/${id}/published-spec`, `/reports/${id}/published-spec?v=1`]) {
+        const res = await app.request(path)
+        expect(res.status).toBe(404)
+        expect(await res.json()).toEqual({ error: 'NOT_PUBLISHED' })
+      }
+      // 版本行**不删**（append-only）；徽标回到「未发布」
+      expect(await versionCount(id)).toBe(1)
+      expect(await listedRow(app, id)).toMatchObject({ publishedVersion: null, hasUnpublishedChanges: false })
+
+      // 重复下线：本来就没有已发布版本 ⇒ 200 unchanged（不产生写）
+      const again = await unpublish(app, id, 1)
+      expect(again.status).toBe(200)
+      expect(await again.json()).toEqual({ unpublished: true, unchanged: true })
+
+      // 再发布可恢复：指针为空 ⇒ unchanged 判据不成立 ⇒ 真的新建一版（v2）
+      const restored = await publish(app, id, await versionOf(app, id))
+      expect(restored.status).toBe(200)
+      expect(await restored.json()).toMatchObject({ ok: true, publishedVersion: 2 })
+      expect((await app.request(`/reports/${id}/published-spec`)).status).toBe(200)
+    })
+
+    it('★ 回滚 v1 ⇒ 新版本 v3（内容 = v1），历史 v1/v2/v3 齐全、指针指向 v3', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app)
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+      expect((await putSpec(app, id, textSpec('第二版'), await versionOf(app, id))).status).toBe(200)
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+      const rb = await app.request(`/reports/${id}/versions/1/rollback`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: await versionOf(app, id), note: '回到初版' }),
+      })
+      expect(rb.status).toBe(200)
+      expect(await rb.json()).toMatchObject({ ok: true, publishedVersion: 3 })
+
+      // 草稿跟着回到 v1 的内容（回滚后编辑面看到的就是那一版）
+      const draft = await (await app.request(`/reports/${id}/draft`)).json()
+      expect(draft.spec.panels[0]).toMatchObject(openPanel)
+      expect(draft).toMatchObject({ publishedVersion: 3, hasUnpublishedChanges: false })
+
+      // 历史 append-only：v1/v2/v3 都在，只有 v3 是线上版
+      const list = await (await app.request(`/reports/${id}/versions`)).json() as {
+        versions: { version: number; isCurrent: boolean; note: string }[]
+      }
+      expect(list.versions.map((v) => v.version)).toEqual([3, 2, 1])
+      expect(list.versions.filter((v) => v.isCurrent).map((v) => v.version)).toEqual([3])
+      expect(list.versions[0].note).toBe('回到初版')
+
+      const latest = await (await app.request(`/reports/${id}/published-spec`)).json()
+      expect(latest.version).toBe(3)
+      expect(latest.spec.panels[0]).toMatchObject(openPanel)
+      // 回滚「向前走」：新版本号更大，旧版本号不被复写
+      expect(await versionCount(id)).toBe(3)
+    })
+
+    it('★ GET /draft：发布后 hasUnpublishedChanges=false，改草稿后 true；metabase 行 409', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app)
+      const v0 = await versionOf(app, id)
+      expect((await publish(app, id, v0)).status).toBe(200)
+
+      const clean = await (await app.request(`/reports/${id}/draft`)).json()
+      expect(clean).toMatchObject({ version: v0, publishedVersion: 1, hasUnpublishedChanges: false })
+      expect(typeof clean.publishedAt).toBe('string')
+
+      expect((await putSpec(app, id, textSpec('改过了'), v0)).status).toBe(200)
+      const dirty = await (await app.request(`/reports/${id}/draft`)).json()
+      expect(dirty).toMatchObject({ version: v0 + 1, publishedVersion: 1, hasUnpublishedChanges: true })
+      expect(dirty.spec.panels[0]).toMatchObject({ chart: 'text', content: '改过了' })
+
+      // 渲染器守卫与 GET /spec 同码：metabase 行没有可读的草稿规格
+      const { id: mbId } = await (await post(app, { title: '普通 Metabase 报表' })).json()
+      const mb = await app.request(`/reports/${mbId}/draft`)
+      expect(mb.status).toBe(409)
+      expect(await mb.json()).toEqual({ error: 'RENDERER_NOT_SELF_DRAWN' })
+    })
+
+    it('★ GET /versions/:version 回完整快照（含 spec）；不存在 / 非数字 ⇒ 404', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app)
+      expect((await publish(app, id, await versionOf(app, id), { note: 'n1' })).status).toBe(200)
+
+      const one = await (await app.request(`/reports/${id}/versions/1`)).json()
+      expect(one).toMatchObject({ version: 1, title: '版本报表', note: 'n1', requiredScope: null })
+      expect(one.spec.panels[0]).toMatchObject(openPanel)
+      expect((await app.request(`/reports/${id}/versions/99`)).status).toBe(404)
+      expect((await app.request(`/reports/${id}/versions/zero`)).status).toBe(404)
+    })
+
+    it('★ 跨租户：published-spec / versions / draft / publish 一律 404（不给存在性探针）', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app)
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+      const other = shell(makeIdentity({ orgId: OTHER_ORG, scopes: ['data:query', 'data:manage'] })).app
+      expect((await other.request(`/reports/${id}/published-spec`)).status).toBe(404)
+      expect((await other.request(`/reports/${id}/versions`)).status).toBe(404)
+      expect((await other.request(`/reports/${id}/versions/1`)).status).toBe(404)
+      expect((await other.request(`/reports/${id}/draft`)).status).toBe(404)
+      // 带着**本 org 的合法草稿版本**跨租户发布：404 必须由 org 隔离产生（不是版本不符）
+      const cross = await other.request(`/reports/${id}/publish`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: await versionOf(app, id) }),
+      })
+      expect(cross.status).toBe(404)
+      expect(await versionCount(id)).toBe(1)   // 没有替别人造版本
+    })
+
+    it('★ 平台行 PUT /reports/:id ⇒ 409 USE_PUBLISH_ENDPOINT（发布必须走 /publish，避免发布无版本）', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app)
+      const res = await app.request(`/reports/${id}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ requiredScope: null, expectedVersion: await versionOf(app, id) }),
+      })
+      expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({ error: 'USE_PUBLISH_ENDPOINT' })
+      // 「拒」= 不写：没有版本行、指针仍空
+      expect(await versionCount(id)).toBe(0)
+      expect((await pool.query('select published_version_id from data.reports where id = $1', [id]))
+        .rows[0].published_version_id).toBeNull()
+    })
+
+    it('★ 发布负测：缺 expectedVersion ⇒ 400；metabase 行 ⇒ 400；未知指标 ⇒ 400 且不落版本', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app)
+
+      const missing = await app.request(`/reports/${id}/publish`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ note: '没版本' }),
+      })
+      expect(missing.status).toBe(400)
+      expect(await missing.json()).toEqual({ error: 'INVALID_BODY' })
+
+      const { id: mbId } = await (await post(app, { title: '普通 Metabase 报表' })).json()
+      const mbPublish = await publish(app, mbId, await versionOf(app, mbId))
+      expect(mbPublish.status).toBe(400)
+      expect(await mbPublish.json()).toMatchObject({ ok: false, reason: 'RENDERER_NOT_SELF_DRAWN' })
+
+      // 面板指向词表外的指标：写入侧就拒（Task 3 后续）；发布门是第二道——
+      // 绕过写面（store 直写）种一份坏草稿，发布被拒且**一条版本不落**
+      const v0 = await versionOf(app, id)
+      const putGhost = await putSpec(app, id, {
+        panels: [{ chart: 'table', title: '幽灵', metricId: 't4rg:ghost' }],
+      }, v0)
+      expect(putGhost.status).toBe(400)
+      expect(await putGhost.json()).toEqual({ error: 'UNKNOWN_PANEL_METRIC', metricId: 't4rg:ghost' })
+      expect(await versionOf(app, id)).toBe(v0)            // 拒 = 不写
+      const parsed = parseReportSpec({ panels: [{ chart: 'table', title: '幽灵', metricId: 't4rg:ghost' }] })
+      if (!parsed.ok) throw new Error('夹具规格应通过白名单')
+      await updateSpec(pool, ORG, id, parsed.spec, v0)
+      const ghost = await publish(app, id, await versionOf(app, id))
+      expect(ghost.status).toBe(400)
+      expect(await ghost.json()).toMatchObject({
+        ok: false, reason: 'UNKNOWN_PANEL_METRIC', detail: 't4rg:ghost',
+      })
+      expect(await versionCount(id)).toBe(0)
+    })
+
+    it('★ 版本保护：发布 / 下线拿旧草稿版本 ⇒ 409 STALE_WRITE，且不落版本', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app)
+      const v0 = await versionOf(app, id)
+      expect((await publish(app, id, v0)).status).toBe(200)
+      expect((await putSpec(app, id, textSpec('改过'), v0)).status).toBe(200)
+
+      const stale = await publish(app, id, v0)     // 草稿已推进到 v0+1
+      expect(stale.status).toBe(409)
+      expect(await stale.json()).toMatchObject({ ok: false, reason: 'STALE_WRITE' })
+      expect(await versionCount(id)).toBe(1)       // 没有多造版本
+
+      const staleUnpublish = await unpublish(app, id, v0)
+      expect(staleUnpublish.status).toBe(409)
+      expect(await staleUnpublish.json()).toEqual({ error: 'STALE_WRITE', currentVersion: v0 + 1 })
+      // 仍然在线（被拒的下线没有落任何写）
+      expect((await app.request(`/reports/${id}/published-spec`)).status).toBe(200)
     })
   })
 })

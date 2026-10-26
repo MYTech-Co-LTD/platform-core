@@ -103,6 +103,19 @@ api:
     #    注册序保持字面量在前、param 在后（#145 口径）。──
     - { method: GET,    path: /reports/:id/spec,      scope: data:query }
     - { method: PUT,    path: /reports/:id/spec,      scope: data:manage }
+    # ── 定义版本（月报重做 Task 10；设计 2026-10-26-report-versioning-and-standalone §4/§5）──
+    # 发布/下线/回滚/历史/草稿 = 管理动作（data:manage，只有人；agent 无这些工具）。
+    # 已发布快照 = 观看面（data:query）——独立链接 `/r/:id` 的用户拿到的就是它；**页门另判**：
+    # 行上 `required_scope` 不通过 ⇒ 404（本模块 handler 的 visibleTo，清单表达不了「行级」）。
+    # ⚠️ 平台行的 `PUT /reports/:id` 已改为 409 USE_PUBLISH_ENDPOINT（发布必须走 /publish，
+    #    否则会出现「发布却没有版本行」）；metabase 行保持 PUT。
+    - { method: POST,   path: /reports/:id/publish,                   scope: data:manage }
+    - { method: POST,   path: /reports/:id/unpublish,                 scope: data:manage }
+    - { method: POST,   path: /reports/:id/versions/:version/rollback, scope: data:manage }
+    - { method: GET,    path: /reports/:id/versions,                  scope: data:manage }
+    - { method: GET,    path: /reports/:id/versions/:version,         scope: data:manage }
+    - { method: GET,    path: /reports/:id/published-spec,            scope: data:query }
+    - { method: GET,    path: /reports/:id/draft,                     scope: data:manage }
 frontend:
   console:
     - { path: /console/data, title: 数据问数, icon: BarChartOutlined, scope: data:query, entry: ./console/index.tsx }

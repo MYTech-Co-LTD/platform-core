@@ -55,6 +55,38 @@ const SALES_DAILY = {
   groupBy: '', params: {},
 }
 
+/**
+ * 服务端分组（Task 4）的两条夹具——**粒度决定切片的两种合法/非法形态**：
+ *  · `slicing_day`：粒度只有 `bizday`。选 `['bizday']` = **全选**（明细形态），合法；
+ *  · `slicing_ratio`：粒度两维且**未声明可加**（`upsertMetric` 恒写 totalable=false）。
+ *    选 `['bizday']` = **真子集**（外层再聚合 = 错数）⇒ 授权层必须拒（bad_param）。
+ */
+const SLICING_DAY = {
+  id: 'slicing_day', title: '销售日汇总', description: '',
+  requiredScope: null, subjectColumn: 'org',
+  selectSql: 'SELECT org, bizday, sum(revenue) as value FROM marts.mart_sales_daily',
+  groupBy: 'bizday', params: {},
+}
+const SLICING_RATIO = {
+  id: 'slicing_ratio', title: '比率（不可加）', description: '',
+  requiredScope: null, subjectColumn: 'org',
+  selectSql: 'SELECT org, bizday, cause, avg(rate) as value FROM marts.mart_ratio',
+  groupBy: 'bizday, cause', params: {},
+}
+
+/**
+ * `total: true` 的夹具必须是**was declared additive**的（`totalable === true`）——
+ * 只有 L1 物化路径能带这个标记（`upsertMetric`/L2 恒写 false），故这里走 `upsertL1Metric`
+ * + 宿主投影「已接入 lemeng」；前缀沿用 `t6q:` 让 afterAll 的前缀清理一并覆盖本行。
+ */
+const SLICING_TOTALABLE: L1MetricDef = {
+  ...PANEL_METRIC,
+  id: `${L1_PREFIX}slicing_totalable`,
+  selectSql: 'select org, bizday, sum(t6q_fct.day_amount) as value from t6q_fct',
+  groupBy: 'bizday',
+  totalable: true,
+}
+
 // ⚠️ 必须**先**建 app 再断言：`buildTestApp` 里的 `createRouter` 就是被测的模块装配，
 // 建 app 这一步本身会跑装载期双向核对（声明集合 ≡ 注册集合）。
 describe('POST /query 的参数面（不需要数据库）', () => {
@@ -192,6 +224,91 @@ describePg('POST /query（需要 DATABASE_URL）', () => {
     const body = await res.json()
     expect(body.status).toBe('error')
     expect(body.reason).toBe('warehouse_error')
+  })
+
+  // ── 服务端分组（月报重做计划 Task 4）────────────────────────────────────────
+  // 路由只负责**形状**（zod）与**透传**：分组的合法性判定（粒度/可加/列名）全在授权核心，
+  // 本组断言「body 的 dimensions/orderBy/limit/total 变成 slicing 落到那条 SQL 上」，
+  // 以及「非法切片照样由授权层拒（路由不自己造第二份判定）」。
+
+  /** 打一发带切片 body 的 /query，返回响应 + 实际执行的 SQL 列表。 */
+  const querySliced = async (
+    org: string, body: Record<string, unknown>, sources?: string[],
+  ): Promise<{ res: Response; calls: string[] }> => {
+    const calls: string[] = []
+    const execute: SqlExecutor = async (sql) => {
+      calls.push(sql)
+      // 合计计划与明细计划同一执行缝：按 SQL 形状回不同行（保证 total 断言有真值）。
+      if (sql.includes('AS total')) return { columns: ['total'], rows: [[42]] }
+      return { columns: ['bizday', 'value'], rows: [['2026-08-15', 1]] }
+    }
+    const ctx = { pool, execute }
+    const app = buildTestApp(
+      mod, makeIdentity({ orgId: org }), ctx, { id: 1, casdoor_org: org }, sources,
+    )
+    const res = await app.request('/query', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    return { res, calls }
+  }
+
+  it('dimensions/orderBy/limit 透传到 slicing（服务端分组）', async () => {
+    await applyMigrations(pool)
+    await upsertMetric(pool, ORG, SLICING_DAY, 'fixture')
+    const { res, calls } = await querySliced(ORG, {
+      metricId: SLICING_DAY.id, args: {},
+      dimensions: ['bizday'], orderBy: [{ column: 'bizday', dir: 'asc' }], limit: 10,
+    })
+    expect(res.status).toBe(200)
+    expect(calls).toHaveLength(1)
+    // 分组是声明的粒度（内层 GROUP BY），排序/截断是切片给的（外层）——三者各自落地。
+    expect(calls[0]).toContain('GROUP BY bizday')
+    expect(calls[0]).toContain('ORDER BY bizday asc')
+    expect(calls[0]).toContain('LIMIT 10')
+    // 主体钉死不因切片而松动（切片只能收窄，不能换主体）
+    expect(calls[0]).toContain(`WHERE org = '${ORG}'`)
+  })
+
+  it('total:true 透传为 slicing.total ⇒ 附合计计划，回包带 total', async () => {
+    await applyMigrations(pool)
+    await upsertL1Metric(pool, SLICING_TOTALABLE)
+    const { res, calls } = await querySliced(
+      ORG_A, { metricId: SLICING_TOTALABLE.id, args: {}, total: true }, ['lemeng'],
+    )
+    expect(res.status).toBe(200)
+    // 显式请求合计 ⇒ 明细之外**再**执行一次 sum 计划（截断前的全量合计）
+    expect(calls.some((s) => s.includes('sum(value) AS total'))).toBe(true)
+    expect((await res.json()).total).toBe(42)
+  })
+
+  it('不可加指标真子集切片 ⇒ 403 bad_param（授权层拒，不触达仓库）', async () => {
+    await applyMigrations(pool)
+    await upsertMetric(pool, ORG, SLICING_RATIO, 'fixture')
+    const { res, calls } = await querySliced(ORG, {
+      metricId: SLICING_RATIO.id, args: {}, dimensions: ['bizday'],
+    })
+    expect(res.status).toBe(403)
+    const body = await res.json()
+    expect(body.reason).toBe('bad_param')
+    expect(body.detail).toBe('slicing_not_additive')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('切片形状非法（limit 非正整数 / 未知排序列）⇒ 400 INVALID_BODY 或 403 bad_param', async () => {
+    await applyMigrations(pool)
+    await upsertMetric(pool, ORG, SLICING_DAY, 'fixture')
+    // 路由形状层（zod）：limit 必须为正整数 ⇒ 0 在碰 DB 之前就拒
+    const zero = await querySliced(ORG, { metricId: SLICING_DAY.id, args: {}, limit: 0 })
+    expect(zero.res.status).toBe(400)
+    expect((await zero.res.json()).error).toBe('INVALID_BODY')
+    // 授权层：排序列必须在本次切片的维度范围内 ⇒ 未知列 403 bad_param
+    const bad = await querySliced(ORG, {
+      metricId: SLICING_DAY.id, args: {}, orderBy: [{ column: 'nope', dir: 'asc' }],
+    })
+    expect(bad.res.status).toBe(403)
+    expect((await bad.res.json()).reason).toBe('bad_param')
   })
 
   // ── 自绘面板的数据通路（计划 6 Task 5）───────────────────────────────────────

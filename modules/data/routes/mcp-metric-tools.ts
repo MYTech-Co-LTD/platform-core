@@ -52,9 +52,20 @@ const refused = (r: MetricWriteOutcome) => ({
   isError: true,
 })
 
-/** 只投影**口径本身**：不回 selectSql（上游 spec §4.4：给人/给 agent 看的是口径，不是 SQL）。 */
+/**
+ * 只投影**口径本身**：不回 selectSql（上游 spec §4.4：给人/给 agent 看的是口径，不是 SQL）。
+ *
+ * `params`（name/type/required）与 `totalable` 是**动作面**信息，不是实现细节：
+ *   · 缺参数面 ⇒ agent 只能靠试错撞「缺参数 / 参数类型错」；
+ *   · 缺可加标记 ⇒ agent 无从知道哪些指标能画 line/bar、能进 kpi（写入侧会拒）。
+ * 与 HTTP 词表的 `paramFaceOf` 同源事实，但形状是 MCP 友好的数组（spec 计划 Task 5）。
+ */
 const view = (m: Parameters<typeof dimensionNamesOf>[0] & { id: string; title: string; description: string }) =>
-  ({ id: m.id, title: m.title, description: m.description, dimensions: dimensionNamesOf(m) })
+  ({
+    id: m.id, title: m.title, description: m.description, dimensions: dimensionNamesOf(m),
+    params: Object.entries(m.params).map(([name, p]) => ({ name, type: p.type, required: p.required === true })),
+    totalable: m.totalable === true,
+  })
 
 export const metricTools: McpToolGroup = {
   async list(deps: McpDeps) {

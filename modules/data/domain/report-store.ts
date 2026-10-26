@@ -38,13 +38,37 @@ export interface ReportRow {
   spec: ReportSpec | null
   /** 登记侧版本号（spec §3③）：每次写 +1；写请求必须回带它（人裁 2026-09-29 fail-closed）。 */
   version: number
+  /**
+   * 当前**发布指针**（迁移 022）：指向 `data.report_versions.id`；`null` = 未发布 / 已下线。
+   * 指针只做「线上用的是哪一版定义」，草稿仍是 `spec` 列——两者独立（见 domain/report-version.ts）。
+   */
+  publishedVersionId: string | null
+  /** 指针指向的版本号（`report_versions.version`）；未发布 ⇒ `null`。由读路径 left join 带出。 */
+  publishedVersion: number | null
+  /**
+   * 那一版发布时的 `data.reports.version`（草稿登记版本）。「草稿又改过没有」的判据是
+   * `version > publishedDraftVersion`；未发布 ⇒ `null`。
+   */
+  publishedDraftVersion: number | null
 }
 
 /**
- * 八列投影提成常量：五处 `select/returning` 共用（避免漏改一处导致 `toReportRow` 拿到 `undefined`）。
- * `data.reports` 的读取一律走它，新增列只改这一行。
+ * 九列投影的**唯一**列清单：所有读写共用（避免漏改一处导致 `toReportRow` 拿到 `undefined`）。
+ * 新增列只改这个数组。投影一律 `r.` 限定——读路径带 join，`report_versions` 也有
+ * `org`/`version` 同名（不限定就是 ambiguous column）。
  */
-const REPORT_COLS = 'id, title, metabase_id, embed_params, required_scope, renderer, version, spec'
+const REPORT_COLUMNS = [
+  'id', 'title', 'metabase_id', 'embed_params', 'required_scope', 'renderer', 'version', 'spec',
+  'published_version_id',
+] as const
+const REPORT_COLS_R = REPORT_COLUMNS.map((c) => `r.${c}`).join(', ')
+/**
+ * 发布指针指向的版本号 + 当时的草稿版本（读路径 left join `report_versions`）。
+ * 未发布 / 指针悬空 ⇒ 两列都是 null（left join 无匹配行）。
+ */
+const PUBLISHED_COLS_R = 'v.version as published_version, v.draft_version as published_draft_version'
+/** 指针 join：同一 org 且 id 命中（`report_versions` 主键是全局唯一 id，org 一起带是纵深防御）。 */
+const PUBLISHED_JOIN = 'left join data.report_versions v on v.org = r.org and v.id = r.published_version_id'
 
 /** 行 → ReportRow。`metabase_id` 是 int4 ⇒ pg 回 JS number（**bigint 会回 string**，故列类型选 int4）。 */
 function toReportRow(row: Record<string, unknown>): ReportRow {
@@ -58,16 +82,21 @@ function toReportRow(row: Record<string, unknown>): ReportRow {
     renderer: row.renderer as ReportRenderer,
     version: row.version as number,
     spec: (row.spec ?? null) as ReportSpec | null,
+    publishedVersionId: (row.published_version_id ?? null) as string | null,
+    // 投影里缺席（老查询）与「未发布」同为 null：两列只由 join 带出，无 join 的路径拿不到
+    publishedVersion: (row.published_version ?? null) as number | null,
+    publishedDraftVersion: (row.published_draft_version ?? null) as number | null,
   }
 }
 
 /** 本 org 的全部登记。`order by title`：顺序确定，对账差集与 console 列表都不必猜。 */
 export async function listReports(pool: Pool, org: string): Promise<ReportRow[]> {
   const r = await pool.query(
-    `select ${REPORT_COLS}
-       from data.reports
-      where org = $1
-      order by title`,
+    `select ${REPORT_COLS_R}, ${PUBLISHED_COLS_R}
+       from data.reports r
+       ${PUBLISHED_JOIN}
+      where r.org = $1
+      order by r.title`,
     [org],
   )
   return r.rows.map(toReportRow)
@@ -76,9 +105,10 @@ export async function listReports(pool: Pool, org: string): Promise<ReportRow[]>
 /** 单行读取。**必须带 org**——否则 id 就是跨租户探测句柄。 */
 export async function getReport(pool: Pool, org: string, id: string): Promise<ReportRow | null> {
   const r = await pool.query(
-    `select ${REPORT_COLS}
-       from data.reports
-      where org = $1 and id = $2`,
+    `select ${REPORT_COLS_R}, ${PUBLISHED_COLS_R}
+       from data.reports r
+       ${PUBLISHED_JOIN}
+      where r.org = $1 and r.id = $2`,
     [org, id],
   )
   return r.rowCount === 0 ? null : toReportRow(r.rows[0])
@@ -101,9 +131,10 @@ export interface RegisteredReport extends ReportRow {
  */
 export async function listAllReports(pool: Pool): Promise<RegisteredReport[]> {
   const r = await pool.query(
-    `select org, ${REPORT_COLS}
-       from data.reports
-      order by org, title`,
+    `select r.org, ${REPORT_COLS_R}, ${PUBLISHED_COLS_R}
+       from data.reports r
+       ${PUBLISHED_JOIN}
+      order by r.org, r.title`,
   )
   return r.rows.map((row) => ({ ...toReportRow(row), org: row.org as string }))
 }
@@ -199,11 +230,18 @@ export async function deleteReport(pool: Pool, org: string, id: string): Promise
 export async function updateRequiredScope(
   pool: Pool, org: string, id: string, requiredScope: string | null, expectedVersion: number,
 ): Promise<ReportRow | null> {
+  // 用「数据修改 CTE + 外层 join」而不是裸 `returning`：返回值也要带发布字段
+  // （`publishedVersion`/`publishedDraftVersion` 来自 `report_versions`，`returning` 里 join 不到）。
   const r = await pool.query(
-    `update data.reports
-        set required_scope = $3, version = version + 1, updated_at = now()
-      where org = $1 and id = $2 and version = $4
-      returning ${REPORT_COLS}`,
+    `with updated as (
+       update data.reports
+          set required_scope = $3, version = version + 1, updated_at = now()
+        where org = $1 and id = $2 and version = $4
+       returning *
+     )
+     select ${REPORT_COLS_R}, ${PUBLISHED_COLS_R}
+       from updated r
+       ${PUBLISHED_JOIN}`,
     [org, id, requiredScope, expectedVersion],
   )
   return r.rowCount === 0 ? null : toReportRow(r.rows[0])
@@ -222,10 +260,15 @@ export async function updateSpec(
   pool: Pool, org: string, id: string, spec: ReportSpec, expectedVersion: number,
 ): Promise<ReportRow | null> {
   const r = await pool.query(
-    `update data.reports
-        set spec = $3, version = version + 1, updated_at = now()
-      where org = $1 and id = $2 and version = $4
-      returning ${REPORT_COLS}`,
+    `with updated as (
+       update data.reports
+          set spec = $3, version = version + 1, updated_at = now()
+        where org = $1 and id = $2 and version = $4
+       returning *
+     )
+     select ${REPORT_COLS_R}, ${PUBLISHED_COLS_R}
+       from updated r
+       ${PUBLISHED_JOIN}`,
     [org, id, JSON.stringify(spec), expectedVersion],
   )
   return r.rowCount === 0 ? null : toReportRow(r.rows[0])
@@ -250,10 +293,15 @@ export async function updateSpecAndScope(
   pool: Pool, org: string, id: string, spec: ReportSpec, requiredScope: string | null, expectedVersion: number,
 ): Promise<ReportRow | null> {
   const r = await pool.query(
-    `update data.reports
-        set spec = $3, required_scope = $5, version = version + 1, updated_at = now()
-      where org = $1 and id = $2 and version = $4
-      returning ${REPORT_COLS}`,
+    `with updated as (
+       update data.reports
+          set spec = $3, required_scope = $5, version = version + 1, updated_at = now()
+        where org = $1 and id = $2 and version = $4
+       returning *
+     )
+     select ${REPORT_COLS_R}, ${PUBLISHED_COLS_R}
+       from updated r
+       ${PUBLISHED_JOIN}`,
     [org, id, JSON.stringify(spec), expectedVersion, requiredScope],
   )
   return r.rowCount === 0 ? null : toReportRow(r.rows[0])

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { lazy, Suspense, useMemo } from 'react'
 import { Navigate, RouterProvider, createBrowserRouter } from 'react-router-dom'
 import ConsoleShell, { AdminGate, ConsoleModulePage, ConsoleOverview, StorageGate } from './pages/Console'
 import LoginPage from './pages/Login'
@@ -12,9 +12,16 @@ import AdminKeysPage from './pages/admin/Keys'
 import MyKeysPage from './pages/me/Keys'
 
 /**
+ * 报表独立页（计划 2026-10-26 Task 13）：`/r/:id` 顶层裸路由，**在 `/console` 壳之外**——
+ * 无 ProLayout / 导航 / 菜单 / 关闭按钮，登录态只读渲染已发布版本（session-only，无 token/公开通道）。
+ * 懒加载：独立页只带它自己的渲染分包，不为 console 用户增重（echarts 在模块分包里）。
+ */
+const StandaloneReport = lazy(() => import('../../../modules/data/console/standalone'))
+
+/**
  * 路由表（Task 17 骨架 / Task 18 console 壳 / #36 SaaS 化 / #38 根路径修订 / #46 M3 管理组）：
  * 唯一前端应用。`/` 与顶层未知路径一律重定向 /console（工作台本体；未登录由 platformFetch
- * 401 带 next 跳登录）。/console 为管理台壳（ProLayout），模块页由 console-registry 聚合
+ * 401 带 next 跳登录）。唯一例外是 `/r/:id`（报表独立页，Task 13）：裸路由、无 console 壳。/console 为管理台壳（ProLayout），模块页由 console-registry 聚合
  * 懒加载，壳内 404 自带；/console/admin/* 为管理区——平台内置页（不走 registry）与模块
  * admin 页（走 registry 聚合）一律 AdminGate 组门（#127，模块 admin 页同待遇）。
  */
@@ -22,6 +29,9 @@ export function createAppRouter() {
   return createBrowserRouter([
     { path: '/login', element: <LoginPage /> },
     { path: '/', element: <Navigate to="/console" replace /> },
+    // 报表独立页：顶层裸路由，**必须在 `*` 兜底之前**（否则会被重定向 /console）。
+    // 未登录时 platformFetch 401 会带 search 跳 /login?next=/r/:id?v=N，登录后原样回跳。
+    { path: '/r/:id', element: <Suspense fallback={null}><StandaloneReport /></Suspense> },
     {
       path: '/console',
       element: <ConsoleShell />,

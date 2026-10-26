@@ -10,18 +10,36 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    /**
+     * 服务端给的**定位信息**（版本端点的 `detail`：出问题的指标 id、冲突的 scope 列表等）。
+     * 与 `code` 分开放：`code` 是**码**（查文案），`detail` 只做补充定位。缺省 undefined
+     * ——既有 `{ error }` 端点不带它，构造点也照旧两参。
+     */
+    readonly detail?: string,
   ) {
     super(code)
     this.name = 'ApiError'
   }
 }
 
+/**
+ * 失败体**两种形状都要认**（月报重做 Task 12 起版本端点回 `{ ok:false, reason, detail }`，
+ * 其余端点仍是 `{ error: code }`）：
+ * - `error` **优先**：既有契约的解析结果一字不变（同体带 error+reason 时仍取 error）；
+ * - 无 `error` 时取 `reason` 进 `code`、`detail` 进 `detail`——否则版本端点的失败会塌成
+ *   `HTTP_400/409`，界面只剩「操作未通过校验」，看不出是哪个指标不可加（KPI_NOT_TOTALABLE + metricId）。
+ * - 两者都不是 / 非 JSON ⇒ 回落 `HTTP_<status>`，**不因解析失败吞掉状态**。
+ */
 async function toError(res: Response): Promise<ApiError> {
   try {
-    const body = (await res.json()) as { error?: unknown }
-    return new ApiError(res.status, typeof body.error === 'string' ? body.error : `HTTP_${res.status}`)
+    const body = (await res.json()) as { error?: unknown; reason?: unknown; detail?: unknown }
+    const code = typeof body.error === 'string'
+      ? body.error
+      : typeof body.reason === 'string' ? body.reason : `HTTP_${res.status}`
+    // 空串当没给：`detail: ''` 不该在文案后面留一个空括号。
+    const detail = typeof body.detail === 'string' && body.detail !== '' ? body.detail : undefined
+    return new ApiError(res.status, code, detail)
   } catch {
-    // 响应体不是 JSON（edge 502 的 HTML 页等）⇒ 回落成状态码，**不因解析失败吞掉状态**
     return new ApiError(res.status, `HTTP_${res.status}`)
   }
 }
@@ -109,10 +127,27 @@ const MESSAGES: Record<string, string> = {
   INVALID_SPEC: '报表规格不合法（含不支持的字段或取值）',
   UNKNOWN_CHART_TYPE: '这个图型平台还不支持（图型白名单由平台代码维护）',
   SPEC_TOO_LARGE: '报表规格过大（面板数超出上限）',
+  // ── 版本端点的拒绝码（`{ ok:false, reason }`，月报重做 Task 12）─────────────────────────
+  // 这些是**发布/回滚前的校验**拒绝，调用方（编辑草稿的人）改一下就能过 ⇒ 逐码给文案；
+  // 回落成裸码或 `HTTP_400` 只会让人不知道改什么。服务端把出问题的 `metricId`/`scopes`
+  // 放在 `detail`，`messageOf` 会把它附在文案后（见下）。
+  UNKNOWN_PANEL_METRIC: '报表里有平台词表没有声明的指标',
+  METRIC_SOURCE_NOT_ADOPTED: '用到的指标所属源系统本租户还没接入',
+  CHART_REQUIRES_ADDITIVE: '这个图型会沿维度求和，不能放不可加的指标（比率/去重计数）',
+  KPI_NOT_TOTALABLE: 'KPI 大数字本身就是合计值，不能放不可加的指标（比率/去重计数）',
+  CONFLICTING_PANEL_SCOPES: '报表里的面板跨越了不同页门，拆到不同报表里再发布',
+  NO_SPEC: '这份报表还没有规格内容，先编辑草稿再发布',
 }
 
-/** 已知码给中文文案；未知码回落成码本身（便于排障）。 */
+/**
+ * 已知码给中文文案；未知码回落成码本身（便于排障）。
+ * 服务端给了 `detail`（如出问题的 metricId）就附在文案后——**精确到哪一项**，
+ * 而不是只知道「有东西没通过」。
+ */
 export function messageOf(err: unknown): string {
-  if (err instanceof ApiError) return MESSAGES[err.code] ?? err.code
+  if (err instanceof ApiError) {
+    const text = MESSAGES[err.code] ?? err.code
+    return err.detail === undefined ? text : `${text}：${err.detail}`
+  }
   return '网络异常，请稍后重试'
 }

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { parseReportSpec, MAX_PANELS } from './report-spec'
+import { parseReportSpec, MAX_PANELS, MAX_TEXT } from './report-spec'
 
 const ok = {
   panels: [{
     chart: 'line', title: '净销售额趋势', metricId: 'lemeng:retail:net_sales',
-    dims: ['bizday'], args: { system_book: '3120' }, span: 12,
+    dims: ['bizday'], args: { system_book: '3120' }, span: 12, timeScoped: true,
   }],
 }
 
@@ -51,5 +51,42 @@ describe('报表规格（严格白名单）', () => {
   it('面板数与字段长度有上限（体量闸）', () => {
     const many = { panels: Array.from({ length: MAX_PANELS + 1 }, () => ok.panels[0]) }
     expect(parseReportSpec(many)).toEqual({ ok: false, code: 'SPEC_TOO_LARGE' })
+  })
+})
+
+const base = { system_book: '3120', branch_num: '92', bizday: { from: '2026-10-01', to: '2026-10-19' } }
+
+describe('B+C schema', () => {
+  it('period 三种模式通过；month/custom 缺参拒', () => {
+    const ok = { period: { mode: 'month', month: '2026-10' }, panels: [{ chart: 'line', title: 't', metricId: 'm', dims: ['bizday'], args: base, span: 24 }] }
+    expect(parseReportSpec(ok).ok).toBe(true)
+    expect(parseReportSpec({ ...ok, period: { mode: 'month' } }).ok).toBe(false)
+    expect(parseReportSpec({ ...ok, period: { mode: 'custom', from: '2026-10-19', to: '2026-10-01' } }).ok).toBe(false)
+  })
+
+  it('kpi 通过；compare 只能出现在 kpi', () => {
+    const kpi = { chart: 'kpi', title: '客单价', metricId: 'm1', denominatorMetricId: 'm2', format: 'currency', compare: 'prev_month', span: 12 }
+    const spec = { panels: [kpi] }
+    expect(parseReportSpec(spec).ok).toBe(true)
+    const bad = { panels: [{ chart: 'line', title: 't', metricId: 'm', dims: [], args: {}, span: 24, compare: 'prev_month' }] }
+    expect(parseReportSpec(bad).ok).toBe(false)
+  })
+
+  it('text 通过；超长/带 metricId 拒', () => {
+    expect(parseReportSpec({ panels: [{ chart: 'text', content: '本月结论', span: 24 }] }).ok).toBe(true)
+    expect(parseReportSpec({ panels: [{ chart: 'text', content: 'x'.repeat(MAX_TEXT + 1), span: 24 }] }).ok).toBe(false)
+    expect(parseReportSpec({ panels: [{ chart: 'text', content: 'x', metricId: 'm', span: 24 }] }).ok).toBe(false)
+  })
+
+  it('slice 只在 line/bar/table；kpi 带 slice 拒', () => {
+    const table = { chart: 'table', title: 't', metricId: 'm', dims: ['bizday'], args: {}, span: 24, slice: { dimensions: ['bizday'], orderBy: [{ column: 'bizday', dir: 'asc' }], limit: 100 } }
+    expect(parseReportSpec({ panels: [table] }).ok).toBe(true)
+    const kpi = { chart: 'kpi', title: 't', metricId: 'm', format: 'number', slice: {}, span: 12 }
+    expect(parseReportSpec({ panels: [kpi] }).ok).toBe(false)
+  })
+
+  it('旧规格仍通过（默认值补齐）', () => {
+    const old = { panels: [{ chart: 'line', title: 't', metricId: 'm', dims: ['bizday'], args: {}, span: 12 }] }
+    expect(parseReportSpec(old).ok).toBe(true)
   })
 })
