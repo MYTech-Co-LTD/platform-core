@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.204.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.0...v0.204.1) - 2026-10-26
+- 【修复】data: 库存快照窗口退回 T-2 并加每日 T-3 兜底，修 7 天 35 轮空集 ([#1079](https://github.com/MYTech-Co-LTD/platform-core/pull/1079), [274e216](https://github.com/MYTech-Co-LTD/platform-core/commit/274e2160d9419e5cc5e7940cbdaa233c1e362c9e))
+
+
 ## [0.204.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.203.4...v0.204.0) - 2026-10-26
 - 【新增】data: AI 文本组件 ai_text（流式生成 + 缓存） ([#1077](https://github.com/MYTech-Co-LTD/platform-core/pull/1077), [8c60d86](https://github.com/MYTech-Co-LTD/platform-core/commit/8c60d8661b059fe587d719f45cc35ba41b1a6711))
 
