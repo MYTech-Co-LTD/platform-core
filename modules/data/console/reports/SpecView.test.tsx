@@ -1,16 +1,22 @@
-// SpecView.test.tsx — 平台自绘渲染器（计划 6 Task 4）：拉规格 → 逐面板 POST /query → 渲染。
+// SpecView.test.tsx — 平台自绘渲染器（Task 4 起的既有验收 + 2026-10-26 Task 6 新增面）。
 //
 // ★ 本文件最重的两条（Task 1 评审转办的判据 + spec §5 实测坑）：
 //  ① **args 两个源头**：渲染器把「`panel.args` + 筛选栏覆盖（#1047）」塞进 /query 的 body，
 //     **不做第三种加工**——args 的开放键名（租户自定义过滤参数）安全性全押在服务端
 //     `authorize` 那条链上（unknown_param 拒绝 + 保留键闸 + literal/rangeLiteral 转义）。
-//     覆盖键 ⊆ 面板 args 键（筛选栏只为出现过的键出控件）。夹具的 args 因此**必须非空
-//     且带混合类型**——args 是 `{}` 时「转发」与「硬编码 `{}`」不可区分（假绿）。
+//     夹具的 args 因此**必须非空且带混合类型**——args 是 `{}` 时「转发」与「硬编码 `{}`」不可区分。
 //  ② **多系列按透视数据集装配**：每个系列一个 `data` 数组、`xAxis.data` 用维度值——
 //     把多出来的点塞进一个系列会被连成一条线（spec §5 实测）。
 //
+// Task 6 新增的三组判据（与实现一一对应）：
+//  ③ **旧规格零变化**：无 `period`/`slice` 时 body 恒为 `{metricId, args}`（第一条用例逐字咬）；
+//  ④ **期间是规格声明**：`period` 只覆盖 `timeScoped !== false` 的面板；KPI 的 `auto` 对比段
+//     按期间模式解析（月 → 上月同日期段）；
+//  ⑤ **信任信号如实转述**：masking / data_as_of / freshness_line / truncated 有则显示、
+//     没有就不编（「未知 ≠ 新鲜」）。
+//
 // echarts 桩说明：happy-dom 的 `canvas.getContext('2d')` 返回 **null**（实测），真 echarts `init`
-// 必抛 ⇒ 组件测试里把 SpecView 用到的 echarts 表面桩掉（形状收严到实际调用的
+// 必抛 ⇒ 组件测试里把渲染器用到的 echarts 表面桩掉（形状收严到实际调用的
 // use/init + setOption/resize/dispose）。图表**装配**正确性经 `setOption` 入参断言；
 // 真实渲染由 `pnpm --filter web build`（echarts 打进 console 分包）与真机验收兜。
 import '@testing-library/jest-dom/vitest'
@@ -31,7 +37,9 @@ import { init, use } from 'echarts/core'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import SpecView, { ECHARTS_REGISTRY } from './SpecView'
+import SpecView from './SpecView'
+import { ECHARTS_REGISTRY } from './ReportView'
+import { KpiCard } from './KpiCard'
 
 const m = vi.mocked(platformFetch)
 const mInit = vi.mocked(init)
@@ -40,15 +48,36 @@ const calls: { url: string; init?: RequestInit }[] = []
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
 
-/** 一个自绘面板的最小形状（与 domain/report-spec.ts 的白名单字段一致）。 */
+/** 夹具形状照 domain/report-spec.ts 的白名单字段（只写用例关心的那些）。 */
 interface Panel {
-  chart: 'line' | 'bar' | 'table'
-  title: string
-  metricId: string
-  dims: string[]
-  args: Record<string, unknown>
+  chart: 'line' | 'bar' | 'table' | 'kpi' | 'text'
+  title?: string
+  metricId?: string
+  denominatorMetricId?: string
+  format?: 'currency' | 'number' | 'percent'
+  compare?: 'auto' | 'prev_period' | 'prev_month' | 'none'
+  goodDirection?: 'up' | 'down' | 'none'
+  timeScoped?: boolean
+  dims?: string[]
+  args?: Record<string, unknown>
   span: number
+  slice?: {
+    dimensions?: string[]
+    orderBy?: Array<{ column: string; dir: 'asc' | 'desc' }>
+    limit?: number
+    total?: boolean
+  }
+  content?: string
 }
+interface SpecFixture {
+  period?: { mode: 'month' | 'last_7_days' | 'custom'; month?: string; from?: string; to?: string }
+  panels: Panel[]
+}
+type QueryBody = { metricId: string; args: Record<string, unknown> } & Record<string, unknown>
+
+/** 所有已发出的 /query body（按发出顺序）。 */
+const queryBodies = (): QueryBody[] =>
+  calls.filter((c) => c.url.endsWith('/query')).map((c) => JSON.parse(String(c.init?.body)) as QueryBody)
 
 /**
  * 桩集合：`GET /reports/:id/spec` 回一份规格；`POST /query` 按 metricId 分流——
@@ -56,8 +85,8 @@ interface Panel {
  * 其余回 `okQueries` 里的结果（缺省一张单列表）。
  */
 function stub(
-  spec: { panels: Panel[] },
-  okQueries: Record<string, { columns: string[]; rows: unknown[][] }>,
+  spec: SpecFixture,
+  okQueries: Record<string, Record<string, unknown> & { columns: string[]; rows: unknown[][] }>,
   denied: Set<string>,
   extraGet: Record<string, unknown> = {},
 ) {
@@ -101,11 +130,15 @@ beforeEach(() => {
   m.mockReset()
   mInit.mockClear()
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers() // 期间用例可能钉过 Date（vi.setSystemTime）
+})
 
 describe('自绘渲染器 SpecView', () => {
   it('★ 打开自绘行 ⇒ 拉规格 + 逐面板查数据（走既有 /query）', async () => {
-    // args 非空且混合类型（见文件头①）：字符串 + 布尔——「原样转发」才可被判
+    // args 非空且混合类型（见文件头①）：字符串 + 布尔——「原样转发」才可被判。
+    // 旧规格（无 period / 无 slice）⇒ body **只有** {metricId, args}（文件头③）。
     stub({
       panels: [{
         chart: 'line', title: '净销售额趋势', metricId: 'lemeng:retail:net_sales',
@@ -120,8 +153,8 @@ describe('自绘渲染器 SpecView', () => {
     // ② 页面出现面板标题
     expect(await screen.findByText('净销售额趋势')).toBeInTheDocument()
     // ③ query 的 body 里该面板的 metricId/args **逐字**（toEqual：多带键/改值都咬）
-    //    ⚠️ dims **不进 body**——/query 的 QueryBody 只有 {metricId, args}（dims 是渲染层的
-    //    透视轴，不是查询参数）；渲染器替 dims 加工 args 恰是 Task 1 评审要拦的那类「帮忙」。
+    //    ⚠️ dims **不进 body**——/query 的 QueryBody 只有 {metricId, args}；无 slice 时
+    //    `dimensions` 也不得凭空出现（`dimensions: []` 是显式合计，语义完全不同）。
     const q = calls.find((c) => c.url.endsWith('/query'))!
     expect(JSON.parse(String(q.init?.body))).toEqual({
       metricId: 'lemeng:retail:net_sales',
@@ -148,6 +181,8 @@ describe('自绘渲染器 SpecView', () => {
     // 筛选栏渲染：门店默认值来自规格 args（名称来自 /branches）
     expect(screen.getByTestId('spec-filters')).toBeInTheDocument()
     expect(screen.getByText('92 · 熊喵曲靖沾益2店')).toBeInTheDocument()
+    // 无 period ⇒ RangePicker 在（期间控件不在）
+    expect(screen.queryByTestId('period-bar')).not.toBeInTheDocument()
 
     // 改门店 92 → 91：antd Select 交互（mouseDown 开 + 点选项；combobox role 配方照 metrics/index.test）
     const combos = screen.getAllByRole('combobox')
@@ -156,10 +191,9 @@ describe('自绘渲染器 SpecView', () => {
 
     // 重查：POST body 的 args.branch_num 被覆盖，其余参数保持规格值
     await waitFor(() => {
-      const posts = calls.filter((c) => c.url.endsWith('/query'))
+      const posts = queryBodies()
       expect(posts.length).toBeGreaterThanOrEqual(2)
-      const last = JSON.parse(String(posts[posts.length - 1].init?.body)) as { args: Record<string, unknown> }
-      expect(last.args).toMatchObject({
+      expect(posts[posts.length - 1].args).toMatchObject({
         branch_num: '91',
         system_book: '3120',
         bizday: { from: '2026-10-01', to: '2026-10-19' },
@@ -214,7 +248,6 @@ describe('自绘渲染器 SpecView', () => {
     await waitFor(() => expect(mInit).toHaveBeenCalled())
 
     // echarts 收到的 option：透视数据集（数值经 Number 归一——pg 的 numeric 走驱动回来是字符串）
-    // （init 被 vi.mock 换了实现但类型仍是真 echarts ⇒ 返回值收窄到桩实例用到的表面）
     const chartStub = mInit.mock.results[0].value as unknown as { setOption: ReturnType<typeof vi.fn> }
     const option = chartStub.setOption.mock.calls[0][0] as {
       xAxis: { data: string[] }
@@ -284,7 +317,6 @@ describe('自绘渲染器 SpecView', () => {
 
   it('★ 空度量值保留 null（断线，不画成 0）——评审 Minor ②', async () => {
     // Number(null) === 0 且 finite ⇒ 裸 Number() 会把「无值」洗成 0 画出去（撒谎的折线）。
-    // null 在 echarts 里默认断线（connectNulls 不开），正是「这天没数」的正确语义。
     stub({
       panels: [{ chart: 'line', title: '断线面板', metricId: 'm1', dims: ['bizday'], args: {}, span: 12 }],
     }, {
@@ -303,9 +335,7 @@ describe('自绘渲染器 SpecView', () => {
     for (const item of [LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]) {
       expect(ECHARTS_REGISTRY).toContain(item)
     }
-    // 闭环的另一半（评审 Minor ③ 原话「一行 `expect(use).toHaveBeenCalledWith([...])` 可闭环」）：
-    // 清单必须**真的**被交给 `use()`——只断言常量的话，把调用点改成 `use([LineChart])` 仍照绿，
-    // 而真机上 bar 面板会因组件未注册直接空白。两条合起来才叫「注册面有机检」。
+    // 闭环的另一半：清单必须**真的**被交给 `use()`。
     expect(mUse).toHaveBeenCalledWith(ECHARTS_REGISTRY)
     stub({
       panels: [{ chart: 'bar', title: '柱状面板', metricId: 'm1', dims: ['bizday'], args: {}, span: 12 }],
@@ -317,5 +347,199 @@ describe('自绘渲染器 SpecView', () => {
     const chartStub = mInit.mock.results[0].value as unknown as { setOption: ReturnType<typeof vi.fn> }
     const option = chartStub.setOption.mock.calls[0][0] as { series: Array<{ name: string; type: string }> }
     expect(option.series).toEqual([{ name: '', type: 'bar', data: [80] }])
+  })
+})
+
+describe('Task 6：期间 / slice / KPI / 文本 / 信任信号', () => {
+  it('★ period=month ⇒ timeScoped 面板注入 bizday 窗口；timeScoped=false 的面板不受影响', async () => {
+    // 「今天」钉在 2026-10-26（上海日）：当月区间 = 10-01 .. 10-26（只到当天，不画未来）
+    vi.setSystemTime(new Date('2026-10-26T12:00:00+08:00'))
+    stub({
+      period: { mode: 'month', month: '2026-10' },
+      panels: [
+        {
+          chart: 'table', title: '本月销售额', metricId: 'net_sales', dims: [],
+          args: { system_book: '3120', branch_num: '92' }, span: 24,
+        },
+        {
+          chart: 'table', title: '门店字典快照', metricId: 'store_snapshot', dims: [],
+          args: { system_book: '3120' }, span: 24, timeScoped: false,
+        },
+      ],
+    }, {}, new Set(), {
+      '/branches?system_book=3120': { branches: [{ branchNum: '92', name: '熊喵曲靖沾益2店' }] },
+    })
+    renderView()
+
+    // 期间控件在场（旧规格没有这条栏）
+    expect(await screen.findByTestId('period-bar')).toBeInTheDocument()
+    await waitFor(() => expect(queryBodies().length).toBe(2))
+
+    const byMetric = new Map(queryBodies().map((b) => [b.metricId, b]))
+    expect(byMetric.get('net_sales')!.args).toMatchObject({
+      system_book: '3120', branch_num: '92', bizday: { from: '2026-10-01', to: '2026-10-26' },
+    })
+    // timeScoped=false ⇒ 不注入期间（这条面板按自身 args 取数）
+    expect(byMetric.get('store_snapshot')!.args.bizday).toBeUndefined()
+  })
+
+  it('★ slice ⇒ body 追加服务端分组/排序/截断；无 slice 的面板一个键都不多', async () => {
+    stub({
+      panels: [
+        {
+          chart: 'bar', title: '会员销售（按订单类型）', metricId: 'vip', dims: ['order_sale_type_name'],
+          args: { system_book: '3120' }, span: 24,
+          slice: { dimensions: ['order_sale_type_name'], orderBy: [{ column: 'order_sale_type_name', dir: 'asc' }], limit: 20 },
+        },
+        {
+          chart: 'table', title: '明细', metricId: 'detail', dims: [], args: { system_book: '3120' }, span: 24,
+        },
+      ],
+    }, {
+      vip: { columns: ['order_sale_type_name', 'value'], rows: [['会员', '100']] },
+      detail: { columns: ['value'], rows: [['1']] },
+    }, new Set())
+    renderView()
+    await waitFor(() => expect(queryBodies().length).toBe(2))
+
+    const byMetric = new Map(queryBodies().map((b) => [b.metricId, b]))
+    // slice：dimensions 回落到声明的 dims，orderBy/limit 原样透传（授权核心再校验列名）
+    expect(byMetric.get('vip')).toEqual({
+      metricId: 'vip',
+      args: { system_book: '3120' },
+      dimensions: ['order_sale_type_name'],
+      orderBy: [{ column: 'order_sale_type_name', dir: 'asc' }],
+      limit: 20,
+    })
+    // 无 slice ⇒ 与旧规格逐字一致（不凭空补 dimensions: []——那是显式合计）
+    expect(byMetric.get('detail')).toEqual({
+      metricId: 'detail',
+      args: { system_book: '3120' },
+    })
+  })
+
+  it('★ KPI：比率 = 两个显式合计相除；对比期无数据 ⇒ 差值「-」', async () => {
+    // 客单价 = sales ÷ orders。当前段 150/3 = 50；对比段 sales 无数据 ⇒ 差值为「-」（不是 0）。
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      const body = JSON.parse(String(init?.body)) as QueryBody
+      const inCompare = (body.args.bizday as { from?: string } | undefined)?.from === '2026-09-12'
+      const totals: Record<string, number | null> = inCompare
+        ? { sales: null, orders: 3 }
+        : { sales: 150, orders: 3 }
+      return json({ status: 'ok', truncated: false, columns: ['total'], rows: [[totals[body.metricId]]], total: totals[body.metricId] })
+    })
+    render(
+      <KpiCard
+        panel={{
+          chart: 'kpi', title: '客单价', metricId: 'sales', denominatorMetricId: 'orders',
+          format: 'currency', compare: 'prev_period', goodDirection: 'up', span: 12,
+          // zod 的 default 让这两个键在**输出**类型里是必填的（渲染器拿到的就是补全后的形状）
+          args: {}, timeScoped: true,
+        }}
+        args={{ system_book: '3120', bizday: { from: '2026-10-01', to: '2026-10-19' } }}
+        compareRange={{ from: '2026-09-12', to: '2026-09-30' }}
+      />,
+    )
+
+    expect(await screen.findByText('¥50.00')).toBeInTheDocument()
+    // 对比期：分子 null ⇒ 已知无数（「-」），不是 0 也不是空白
+    await waitFor(() => expect(screen.getByTestId('kpi-delta').textContent).toBe('-'))
+    // 取数纪律：当前段 2 次（分子+分母）+ 对比段 1 次（分子已缺数 ⇒ 分母不再查）——
+    // **全部**是显式合计，对比段的 bizday 被替换为上个等长段
+    const bodies = queryBodies()
+    expect(bodies).toHaveLength(3)
+    expect(bodies.every((b) => b.args.total === true)).toBe(true)
+    expect(bodies.filter((b) => (b.args.bizday as { from?: string }).from === '2026-09-12')).toHaveLength(1)
+  })
+
+  it('★ KPI：零分母 ⇒ 值「-」（不显示 0 / ∞ / 空白）', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      const body = JSON.parse(String(init?.body)) as QueryBody
+      const total = body.metricId === 'sales' ? 150 : 0
+      return json({ status: 'ok', columns: ['total'], rows: [[total]], total })
+    })
+    render(
+      <KpiCard
+        panel={{
+          chart: 'kpi', title: '客单价', metricId: 'sales', denominatorMetricId: 'orders',
+          format: 'currency', compare: 'none', goodDirection: 'none', span: 12,
+          args: {}, timeScoped: true,
+        }}
+        args={{ system_book: '3120' }}
+        compareRange={null}
+      />,
+    )
+    await waitFor(() => expect(screen.getByTestId('kpi-value').textContent).toBe('-'))
+    // 无对比段 ⇒ 不渲染差值（别拿「-」冒充「对比过」）
+    expect(screen.queryByTestId('kpi-delta')).toBeNull()
+  })
+
+  it('★ period=month + kpi compare=auto ⇒ 对比段取上月同日期段（10-01..10-26 → 09-01..09-26）', async () => {
+    vi.setSystemTime(new Date('2026-10-26T12:00:00+08:00'))
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (/\/reports\/[^/]+\/spec$/.test(url)) {
+        return json({
+          spec: {
+            period: { mode: 'month', month: '2026-10' },
+            panels: [{ chart: 'kpi', title: '本月销售额', metricId: 'sales', format: 'number', span: 12 }],
+          },
+          version: 7,
+        })
+      }
+      return json({ status: 'ok', truncated: false, columns: ['total'], rows: [[111]], total: 111 })
+    })
+    renderView()
+    await waitFor(() => expect(queryBodies().length).toBe(2))
+
+    const byRange = new Map(queryBodies().map((b) => [(b.args.bizday as { from: string }).from, b]))
+    expect(byRange.has('2026-10-01')).toBe(true)
+    expect(byRange.get('2026-10-01')!.args.bizday).toEqual({ from: '2026-10-01', to: '2026-10-26' })
+    // auto + month ⇒ prev_month（不是等长前移的 09-06..09-30）
+    expect(byRange.get('2026-09-01')!.args.bizday).toEqual({ from: '2026-09-01', to: '2026-09-26' })
+  })
+
+  it('★ text 面板：保留换行、按纯文本渲染（不解析 HTML）', async () => {
+    stub({
+      panels: [{ chart: 'text', title: '本月结论', content: '第一行\n<b>不是标签</b>', span: 24 }],
+    }, {}, new Set())
+    renderView()
+
+    const para = await screen.findByText(/第一行/)
+    expect(para.textContent).toBe('第一行\n<b>不是标签</b>')
+    // whiteSpace:pre-wrap ⇒ 换行真的折行（不是被压成一行）
+    expect(para).toHaveStyle({ whiteSpace: 'pre-wrap' })
+    // 纯文本：内容里的尖括号**没有**被当成标签渲染
+    expect(document.querySelector('b')).toBeNull()
+  })
+
+  it('★ 信任信号页脚：masking / freshness_line / data_as_of / truncated 如实展示', async () => {
+    stub({
+      panels: [
+        { chart: 'table', title: '会员销售', metricId: 'm1', dims: [], args: {}, span: 24 },
+        { chart: 'table', title: '库存', metricId: 'm2', dims: [], args: {}, span: 24 },
+      ],
+    }, {
+      // 面板 1：脱敏 + 新鲜度行 + 截断（freshness_line 在场时以它为准）
+      m1: {
+        columns: ['value'], rows: [['1']],
+        truncated: true,
+        masking: { shop_name: 'partial' },
+        freshness_line: '数据截止 2026-10-25（T+1）',
+        data_as_of: '2026-10-25 03:00:00 +08:00',
+      },
+      // 面板 2：只有 data_as_of（没有 freshness_line）⇒ 回落到「数据截止 <ts>」
+      m2: { columns: ['value'], rows: [['2']], data_as_of: '2026-10-24 03:00:00 +08:00' },
+    }, new Set())
+    renderView()
+
+    await waitFor(() => expect(screen.getAllByTestId('trust-line')).toHaveLength(2))
+    const all = screen.getAllByTestId('trust-line').map((el) => el.textContent ?? '').join(' | ')
+    expect(all).toContain('结果超过单次查询上限，已截断')
+    expect(all).toContain('含脱敏列：shop_name')
+    expect(all).toContain('数据截止 2026-10-25（T+1）')
+    expect(all).toContain('数据截止 2026-10-24 03:00:00 +08:00')
   })
 })
