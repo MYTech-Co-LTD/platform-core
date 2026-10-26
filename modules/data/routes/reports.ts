@@ -183,7 +183,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       const metrics = validatePanelMetrics(spec.spec, catalog, adoptedSources)
       if (!metrics.ok) {
         return c.json(
-          { error: metrics.reason, metricId: metrics.metricId },
+          { error: metrics.reason, ...('metricId' in metrics ? { metricId: metrics.metricId } : {}) },
           metrics.reason === 'METRIC_SOURCE_NOT_ADOPTED' ? 403 : 400,
         )
       }
@@ -424,7 +424,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       const metrics = validatePanelMetrics(spec.spec, catalog, adoptedSources)
       if (!metrics.ok) {
         return c.json(
-          { error: metrics.reason, metricId: metrics.metricId },
+          { error: metrics.reason, ...('metricId' in metrics ? { metricId: metrics.metricId } : {}) },
           metrics.reason === 'METRIC_SOURCE_NOT_ADOPTED' ? 403 : 400,
         )
       }

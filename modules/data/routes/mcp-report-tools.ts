@@ -63,7 +63,8 @@ async function validateSpec(deps: McpDeps, spec: ReportSpec): Promise<McpToolRes
       : refused(scope.reason, { scopes: scope.scopes })
   }
   const metrics = validatePanelMetrics(spec, catalog, deps.adoptedSources)
-  if (!metrics.ok) return refused(metrics.reason, { metricId: metrics.metricId })
+  // ai_text 的结构闸没有 metricId 可点名（问题在整份规格）⇒ extra 留空。
+  if (!metrics.ok) return refused(metrics.reason, 'metricId' in metrics ? { metricId: metrics.metricId } : {})
   return null
 }
 

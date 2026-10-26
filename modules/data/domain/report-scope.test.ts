@@ -135,3 +135,27 @@ describe('validatePanelMetrics（写入侧可加性 / 源裁剪）', () => {
     )).toEqual({ ok: true })
   })
 })
+
+describe('ai_text 的写侧结构闸（必须有数据面板 + 报表期间）', () => {
+  const period = { mode: 'custom' as const, from: '2026-10-01', to: '2026-10-19' }
+  const ai = { chart: 'ai_text' as const, title: '结论', focus: 'overview' as const, span: 24 }
+  const line = { chart: 'line' as const, title: '趋势', metricId: 'sales', dims: [], args: {}, span: 24, timeScoped: true }
+  const catRows = cat(['sales', null, true, 'lemeng'])
+  const adopted = new Set(['lemeng'])
+
+  it('ai_text 无数据面板 ⇒ AI_TEXT_REQUIRES_DATA_PANEL（没有事实可依据）', () => {
+    expect(validatePanelMetrics(specOf(ai), catRows, adopted))
+      .toEqual({ ok: false, reason: 'AI_TEXT_REQUIRES_DATA_PANEL' })
+  })
+
+  it('ai_text 无 report period ⇒ AI_TEXT_REQUIRES_PERIOD（不知道说哪段时间）', () => {
+    expect(validatePanelMetrics(specOf(ai, line), catRows, adopted))
+      .toEqual({ ok: false, reason: 'AI_TEXT_REQUIRES_PERIOD' })
+  })
+
+  it('ai_text + 数据面板 + period 通过；且不引入任何 scope', () => {
+    const spec = { ...specOf(ai, line), period }
+    expect(validatePanelMetrics(spec, catRows, adopted)).toEqual({ ok: true })
+    expect(deriveRequiredScope(spec, catRows)).toEqual({ ok: true, requiredScope: null })
+  })
+})

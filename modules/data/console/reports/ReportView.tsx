@@ -190,7 +190,7 @@ function EChart({ option }: { option: EChartsCoreOption }) {
 
 /** 渲染轴：有 slice 时以服务端分组维度为准，否则用面板声明的 dims（两者都是规格声明）。 */
 function dimsOf(panel: Panel): string[] {
-  if (panel.chart === 'text' || panel.chart === 'kpi') return []
+  if (panel.chart === 'text' || panel.chart === 'kpi' || panel.chart === 'ai_text') return []
   return panel.slice?.dimensions ?? panel.dims
 }
 
@@ -202,7 +202,7 @@ function dimsOf(panel: Panel): string[] {
  * `dimensions` 的回退顺序 = 规格的 slice.dimensions → 面板 dims；两者都空时**不发**
  * （空数组 = 显式合计，不能由「没声明维度」推出来）。
  */
-function queryBodyOf(panel: Exclude<Panel, { chart: 'text' | 'kpi' }>, args: Record<string, unknown>): Record<string, unknown> {
+function queryBodyOf(panel: Exclude<Panel, { chart: 'text' | 'kpi' | 'ai_text' }>, args: Record<string, unknown>): Record<string, unknown> {
   const body: Record<string, unknown> = { metricId: panel.metricId, args }
   const slice = panel.slice
   if (slice === undefined) return body
@@ -245,6 +245,9 @@ function PanelBody({ panel, result }: { panel: Panel; result: PanelResult | unde
     return <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{panel.content}</Typography.Paragraph>
   }
   if (panel.chart === 'kpi') return null
+  // ai_text：内容在**观看时**由服务端生成，不经过 /query 结果。渲染（SSE + AI 感）是
+  // 计划 Task 9 的范围，本期只做类型收口——先留空，不查询、不伪造内容。
+  if (panel.chart === 'ai_text') return null
 
   if (result === undefined) return <Spin size="small" />
   if (result.kind === 'denied') {
@@ -390,11 +393,11 @@ export default function ReportView({
   }, [period])
 
   // 筛选栏默认值：键级合并（任何面板出现过的参数键都给控件；值取首个面板的）。
-  // text 面板没有 args（schema 保证），显式跳过。
+  // text / ai_text 面板没有 args（schema 保证），显式跳过。
   const defaults = useMemo(() => {
     const merged: Record<string, unknown> = {}
     for (const p of panels) {
-      if (p.chart === 'text') continue
+      if (p.chart === 'text' || p.chart === 'ai_text') continue
       for (const [k, v] of Object.entries(p.args ?? {})) {
         if (!(k in merged)) merged[k] = v
       }
@@ -419,7 +422,7 @@ export default function ReportView({
    * 期间窗口**最后**写入：它是规格级的当前期间，优先于面板自带的 bizday 默认值。
    * `timeScoped === false` 的面板（如字典/排行快照）不注入 bizday。
    */
-  const argsOf = (p: Exclude<Panel, { chart: 'text' }>): Record<string, unknown> => {
+  const argsOf = (p: Exclude<Panel, { chart: 'text' | 'ai_text' }>): Record<string, unknown> => {
     const args: Record<string, unknown> = { ...(p.args ?? {}), ...override }
     if (range !== null && p.timeScoped !== false) args.bizday = range
     return args
@@ -430,8 +433,8 @@ export default function ReportView({
   useEffect(() => {
     setResults({})
     panels.forEach((p, i) => {
-      // text 无数据面；kpi 的取数在 KpiCard 内部（显式合计），都不进这条循环
-      if (p.chart === 'text' || p.chart === 'kpi') return
+      // text / ai_text 无数据面；kpi 的取数在 KpiCard 内部（显式合计），都不进这条循环
+      if (p.chart === 'text' || p.chart === 'kpi' || p.chart === 'ai_text') return
       void apiSend('/query', 'POST', queryBodyOf(p, argsOf(p)))
         .then((b) => {
           const out = b as {
