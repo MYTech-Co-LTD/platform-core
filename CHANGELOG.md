@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.202.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.201.0...v0.202.0) - 2026-10-26
+- 【新增】data: 配送金额 L1 语义层——fct_branch_indicator + 对账测试 + 词表条目 (#1047) ([#1063](https://github.com/MYTech-Co-LTD/platform-core/pull/1063), [5aea455](https://github.com/MYTech-Co-LTD/platform-core/commit/5aea4551e4e834420a3ad0cd52493fee58f598fe))
+
+
 ## [0.201.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.200.2...v0.201.0) - 2026-10-26
 - 【新增】data: 乐檬 D10 门店指标日采集收口——契约+调度+新鲜度锚+回填变体 ([#1062](https://github.com/MYTech-Co-LTD/platform-core/pull/1062), [0408bcf](https://github.com/MYTech-Co-LTD/platform-core/commit/0408bcf5c81231fa206ed5d3e7cf3a1ebc753a53))
 
