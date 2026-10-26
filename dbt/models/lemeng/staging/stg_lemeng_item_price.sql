@@ -19,6 +19,15 @@
 --   而新形态**同时**匹配历史单层老文件（2026-10-26 真机实测两种深度都命中）。行语义仍是「变更事件」，
 --   同日多轮不会互相覆盖，去重照旧落在 publish-dims 的 last_edit_time 最新窗口。
 --
+-- 【事件去重】run 目录布局（#1069）之后，同一天的 5 轮各自落文件；而源端增量过滤是**闭区间**
+--   （`last_edit_time >= 水位`，刻意：秒级时间戳改 `>` 会漏同秒的后续修改）⇒ 水位边界那个事件会被
+--   下一轮**重取**，落进另一个 run 目录 ⇒ 同一事件（键 + last_edit_time 完全相同）出现两行。
+--   此前「日级单文件覆盖」把这份重复结构性地掩盖了（同日只剩最后一个文件），所以
+--   `assert_stg_lemeng_item_price_key_unique` 到 #1069 上线才红（2026-10-26 实测 108 组，
+--   每组 batch 数 2、价 payload 唯一 ⇒ 是同一事件、不是两个不同事件）。
+--   ⇒ 本层按**事件键**去重、保留 `batch_id` 最新那行：声明粒度（一行 = 一个变更事件 · 每采集日）
+--   由此自洽。去重放在这里而不是 publish：publish 取的是「每 key 最新价」，看不见重复；而断言的
+--   护栏只在 staging 有意义。`qualify` + `row_number()` 直读湖实测可跑（15133 → 15025，正好 −108）。
 -- 【覆盖双账套】路径段写 `*/bizday=*/` 而不是钉单账套 —— 与 branch/item 同款：一个模型读两个
 --   账套分区（`system_book` 是**列**、不是 var）。
 --
@@ -62,3 +71,15 @@ select
 from read_parquet(
   's3://{{ var("zos_bucket") }}/{{ var("lemeng_item_price_prefix") }}/*/bizday=*/**/*.parquet'
 ) r
+-- 事件键去重（跨 run 重取，见头注【事件去重】）：同键同 last_edit_time 只留 batch_id 最新那行。
+-- 必须挂在 `from read_parquet(…) r` 这一层（`r['…']` 要求 r 是函数别名，不能包 CTE/子查询）。
+qualify row_number() over (
+  partition by
+    r['system_book']::varchar,
+    r['bizday']::date,
+    r['branch_num']::int,
+    r['item_num']::bigint,
+    r['item_grade_num']::bigint,
+    r['last_edit_time']::varchar
+  order by r['batch_id']::varchar desc
+) = 1
