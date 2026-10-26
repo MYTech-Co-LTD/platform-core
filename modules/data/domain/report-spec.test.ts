@@ -32,6 +32,22 @@ describe('报表规格（严格白名单）', () => {
     expect(out).toEqual({ ok: false, code: 'UNKNOWN_CHART_TYPE' })
   })
 
+  it('args 放行 date_range 窗口对象（{from,to}），坏对象拒（#1047 报表页日期窗）', () => {
+    // 合法档：bizday 窗口与 /query 参数面同形（rangeLiteral 在查询侧校验形状/顺序）
+    const windowed = {
+      panels: [{
+        ...ok.panels[0],
+        args: { system_book: '3120', bizday: { from: '2026-10-01', to: '2026-10-19' } },
+      }],
+    }
+    expect(parseReportSpec(windowed).ok).toBe(true)
+    // 坏档：外壳不符（缺 to / 多余键）一律 INVALID_SPEC——值合法性的单一事实源在 /query
+    for (const bad of [{ from: '2026-10-01' }, { from: '2026-10-01', to: '2026-10-19', till: 'x' }]) {
+      const out = parseReportSpec({ panels: [{ ...ok.panels[0], args: { bizday: bad } }] })
+      expect(out.ok).toBe(false)
+    }
+  })
+
   it('面板数与字段长度有上限（体量闸）', () => {
     const many = { panels: Array.from({ length: MAX_PANELS + 1 }, () => ok.panels[0]) }
     expect(parseReportSpec(many)).toEqual({ ok: false, code: 'SPEC_TOO_LARGE' })
