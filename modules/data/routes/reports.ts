@@ -47,6 +47,7 @@ import {
   listAllReports,
   listReports,
   updateRequiredScope,
+  updateSpec,
   updateSpecAndScope,
   upsertReport,
 } from '../domain/report-store'
@@ -390,17 +391,30 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       const row = await getReport(ctx.pool, org, id)
       if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
       if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
-      // ── 写规格**同时**同步页门（spec §4.2 / #764 P1 Task 4）：面板变了，`requiredScope` 必须
-      //    跟着重派生——否则「先发空报表再补面板」会把门绕过去（报表仍是 null 而面板有码 ⇒
-      //    低权限者点进去炸）。规格与页门**同一条 UPDATE** 落库，不留「新面板 + 旧页门」的窗口。
+      // ── 页门归属：**已发布行的线上门归快照，草稿编辑不动它**（月报重做 Task 10 后续）─────
+      // `required_scope` 在本文件有两个身份，靠「有没有发布指针」分开：
+      //  · **未发布行**（`publishedVersionId === null`）：行上的 `required_scope` 就是**预览门**，
+      //    没有快照可跟 ⇒ 沿用「改面板 ⇒ 页门跟着重派生」的同一 UPDATE（spec §4.2 / #764 P1
+      //    Task 4），不留「新面板 + 旧页门」的可见窗口。
+      //  · **已发布行**：线上门是**发布那一刻从面板派生、随快照钉死**的那份
+      //    （`data.report_versions.required_scope`，见 domain/report-version.ts）；行上的值只是它
+      //    的副本。草稿编辑是「改还没上线的内容」⇒ **只写 spec**（`updateSpec`），绝不回写派生值：
+      //    回写会让线上门在草稿改动的瞬间跟着变（已经发出去的链接悄悄换了一道门），且行上与快照
+      //    记录的页门不再同源。新页门等下一次发布/回滚时由发布门重新派生。
       // ⚠️ 派生不了时（多码 / 未知指标）**保持页门原值、规格照存**——拒绝权在**发布门**
-      //    （PUT /reports/:id），本端点是「改规格」不是「发布」；把拒绝搬到这里会让「存一份待修的
-      //    多码草稿」变成不可能。代价：已发布行（页门 null）补上多码面板后仍是 null，下一次
-      //    发布/回收动作会被发布门拒——这是已知的窄缝，见 PR 说明。
-      const catalog = await loadMergedCatalog(ctx.pool, org)
-      const d = deriveRequiredScope(spec.spec, catalog)
-      const effectiveScope = d.ok ? d.requiredScope : row.requiredScope
-      const updated = await updateSpecAndScope(ctx.pool, org, id, spec.spec, effectiveScope, parsed.data.expectedVersion)
+      //    （POST /reports/:id/publish），本端点是「改规格」不是「发布」；把拒绝搬到这里会让
+      //    「存一份待修的多码草稿」变成不可能。已发布行走 updateSpec，连派生都不做（catalog 也不必读）。
+      let updated: { version: number } | null
+      if (row.publishedVersionId === null) {
+        const catalog = await loadMergedCatalog(ctx.pool, org)
+        const d = deriveRequiredScope(spec.spec, catalog)
+        updated = await updateSpecAndScope(
+          ctx.pool, org, id, spec.spec, d.ok ? d.requiredScope : row.requiredScope,
+          parsed.data.expectedVersion,
+        )
+      } else {
+        updated = await updateSpec(ctx.pool, org, id, spec.spec, parsed.data.expectedVersion)
+      }
       if (updated === null) {
         const cur = await getReportVersion(ctx.pool, org, id)
         if (cur === null) return c.json({ error: 'NOT_FOUND' }, 404)
@@ -576,15 +590,20 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       version = parsedVersion
     }
     const org = c.get('tenant').casdoor_org
+    // ① 先在**本 org**里确认报表存在：不存在 / 跨租户一律 404（不给存在性探针）。
     const report = await getReport(ctx.pool, org, id)
-    // 页门与观看面同一判据（`visibleTo`，照 embed-url / GET /spec 的口径）：不通过 / 跨租户 /
-    // 不存在一律 **404**（不给存在性探针——403 会泄露「这个 id 存在且未发布」）。
-    if (report === null || !visibleTo(report, requester)) {
-      return c.json({ error: 'NOT_FOUND' }, 404)
-    }
-    // 下线总闸在存储层：`published_version_id is null` ⇒ 含 `?v=N` 一律 null ⇒ NOT_PUBLISHED。
+    if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // ② 再确认**有已发布版本**（下线总闸在存储层：`published_version_id is null` ⇒ 含 `?v=N`
+    //    一律 null ⇒ NOT_PUBLISHED）。必须先到这一步，判权才有对象可依。
     const snapshot = await getPublishedSpec(ctx.pool, org, id, version)
     if (snapshot === null) return c.json({ error: 'NOT_PUBLISHED' }, 404)
+    // ③ 页门**跟着快照走**（月报重做 Task 10 后续）：独立链接渲染的是这一版快照的内容，门也必须
+    //    是**那一版**记下的 `required_scope`，不是当前行的 `visibleTo`——`?v=N` 钉住旧定义时，
+    //    行上的页门可能已被后续发布改过（甚至变成 null），拿它判权会让旧链接越过本该有的门。
+    //    ⚠️ 不通过同样回 **404**（与①同形）：403 会泄露「这个 id 已发布、且有一道你过不去的门」。
+    if (snapshot.requiredScope !== null && !requester.hasScope(snapshot.requiredScope)) {
+      return c.json({ error: 'NOT_FOUND' }, 404)
+    }
     return c.json(snapshot)
   })
 

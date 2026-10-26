@@ -1747,13 +1747,19 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
   describe('定义版本：发布 / 下线 / 回滚 / 历史 / 已发布快照 / 草稿', () => {
     /** 无码指标面板（派生页门 = null ⇒ 发布后 data:query 的观看者也看得到）。 */
     const openPanel = { chart: 'table', title: '公开', metricId: OPEN_METRIC }
+    /** 有码指标面板（派生页门 = data:cost；⚠️ 用 table：夹具 L2 指标 `totalable=false`）。 */
+    const costPanel = { chart: 'table', title: '成本', metricId: COST_METRIC }
     const textSpec = (content: string) => ({ panels: [{ chart: 'text', content, span: 24 }] })
-    /** 自绘报表（空页门 ⇒ 发布即公开）。 */
-    const createVersioned = async (app: Hono, title = '版本报表'): Promise<string> => {
-      const res = await post(app, { title, renderer: 'platform', spec: { panels: [openPanel] } })
+    /** 自绘报表（缺省面板无码 ⇒ 页门 null）。 */
+    const createVersioned = async (
+      app: Hono, title = '版本报表', panels: unknown[] = [openPanel],
+    ): Promise<string> => {
+      const res = await post(app, { title, renderer: 'platform', spec: { panels } })
       expect(res.status).toBe(201)
       return (await res.json()).id
     }
+    /** 有 `data:cost` 的观看者（页门 fixtures 的另一侧）。 */
+    const costViewer = () => shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:cost'] })).app
     const publish = (
       app: Hono, id: string, expectedVersion: number, extra: Record<string, unknown> = {},
     ) => app.request(`/reports/${id}/publish`, {
@@ -1807,6 +1813,71 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
 
       // 观看者（只有 data:query）也读得到（快照页门 null）
       expect((await viewer().app.request(`/reports/${id}/published-spec`)).status).toBe(200)
+    })
+
+    // ── 页门归属：已发布 ⇒ 门随快照；未发布 ⇒ 门随草稿（Task 10 后续）──────────────────
+    it('★ 已发布行的草稿编辑只改 spec，不动线上页门（required_scope 保持发布时的派生值）', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app, '带门的版本报表', [costPanel])
+      // 创建即派生（未发布态：行上门 = 预览门 = data:cost）
+      expect(await listedRow(app, id)).toMatchObject({ requiredScope: 'data:cost', publishedVersion: null })
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+      // 草稿改成纯文本（派生值会变成 null）——若仍走 updateSpecAndScope，线上门就在这里被放开
+      expect((await putSpec(app, id, textSpec('草稿改过'), await versionOf(app, id))).status).toBe(200)
+      expect(await listedRow(app, id)).toMatchObject({
+        requiredScope: 'data:cost', publishedVersion: 1, hasUnpublishedChanges: true,
+      })
+      // 库侧直证（消费面之外再钉一次列本体）
+      expect((await pool.query('select required_scope from data.reports where org = $1 and id = $2', [ORG, id]))
+        .rows[0].required_scope).toBe('data:cost')
+      // 反证（本次改动的要害）：门若被草稿放开，只有 data:query 的人就能读线上内容
+      expect((await viewer().app.request(`/reports/${id}/published-spec`)).status).toBe(404)
+      // 有门的人照常读得到快照（不是把整条通道关掉）
+      expect((await costViewer().request(`/reports/${id}/published-spec`)).status).toBe(200)
+    })
+
+    it('★ ?v=N 按**那一版快照**的页门判权（旧版有门、新版公开 ⇒ 无码者只能看新版）', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app, '两版不同门', [costPanel])
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)   // v1：data:cost
+      // 草稿换成无需码的面板并发布 v2 ⇒ 发布重派生的行上门 = null；v1 快照仍是 data:cost
+      expect((await putSpec(app, id, { panels: [openPanel] }, await versionOf(app, id))).status).toBe(200)
+      const p2 = await publish(app, id, await versionOf(app, id))
+      expect(await p2.json()).toMatchObject({ ok: true, publishedVersion: 2, requiredScope: null })
+
+      const plain = viewer().app   // 只有 data:query
+      expect((await plain.request(`/reports/${id}/published-spec`)).status).toBe(200)   // v2 页门 null
+      // 钉住 v1：按 v1 快照的 data:cost 判 ⇒ 404（若用当前行的 visibleTo 会误判成 200）
+      const pinnedDenied = await plain.request(`/reports/${id}/published-spec?v=1`)
+      expect(pinnedDenied.status).toBe(404)
+      expect(await pinnedDenied.json()).toEqual({ error: 'NOT_FOUND' })
+
+      // 反证：有 data:cost 的观看者读得到 v1，且拿到的是旧版内容 + 那一版自己的页门
+      const pinned = await costViewer().request(`/reports/${id}/published-spec?v=1`)
+      expect(pinned.status).toBe(200)
+      const body = await pinned.json()
+      expect(body).toMatchObject({ version: 1, requiredScope: 'data:cost' })
+      expect(body.spec.panels[0]).toMatchObject(costPanel)
+    })
+
+    it('★ 未发布行的草稿编辑仍同步派生页门（预览门跟着草稿）', async () => {
+      const { app } = manage()
+      const id = await createVersioned(app, '未发布的草稿', [openPanel])
+      expect(await listedRow(app, id)).toMatchObject({ requiredScope: null, publishedVersion: null })
+
+      // 草稿补上需要 data:cost 的面板 ⇒ 预览门立刻收严（不留「新面板 + 旧页门」的窗口）
+      expect((await putSpec(app, id, { panels: [costPanel] }, await versionOf(app, id))).status).toBe(200)
+      expect(await listedRow(app, id)).toMatchObject({ requiredScope: 'data:cost', publishedVersion: null })
+      // 观看面同步收严：无 data:cost 的观看者读草稿规格被行门拦住
+      const denied = await viewer().app.request(`/reports/${id}/spec`)
+      expect(denied.status).toBe(403)
+      expect(await denied.json()).toEqual({ error: 'FORBIDDEN', need: 'data:cost' })
+
+      // 反向：换回无码面板 ⇒ 门跟着放开（未发布行的门是「草稿的函数」，双向都成立）
+      expect((await putSpec(app, id, { panels: [openPanel] }, await versionOf(app, id))).status).toBe(200)
+      expect(await listedRow(app, id)).toMatchObject({ requiredScope: null })
+      expect((await viewer().app.request(`/reports/${id}/spec`)).status).toBe(200)
     })
 
     it('★ 发布 v2 后 ?v=1 定格旧定义；?v=99 / ?v=abc / ?v=0 ⇒ 404；无 ?v ⇒ 最新 v2', async () => {
