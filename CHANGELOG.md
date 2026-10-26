@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.197.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.197.1...v0.197.2) - 2026-10-26
+- 【修复】data: 报表面板参数面对齐——branch_num 进白名单 + args 放行 {from,to} 日期窗 (#1047) ([#1053](https://github.com/MYTech-Co-LTD/platform-core/pull/1053), [0dbb2ef](https://github.com/MYTech-Co-LTD/platform-core/commit/0dbb2eff12ab709dfdf52766d62989d0a41ec0aa))
+
+
 ## [0.197.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.197.0...v0.197.1) - 2026-10-25
 - 【修复】web: 企微免登改跳服务端 /silent——客户端拼 Casdoor authorize 必 BAD_STATE 且 unused 变量挡构建 (#1047) ([#1051](https://github.com/MYTech-Co-LTD/platform-core/pull/1051), [b794c24](https://github.com/MYTech-Co-LTD/platform-core/commit/b794c24e7647997ca853c340c998bd84f0b10146))
 
