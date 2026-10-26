@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.203.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.203.3...v0.203.4) - 2026-10-26
+- 【修复】data: item_price staging 去重改内联 not exists，修 qualify 在 CTAS 外壳下解析失败 (#1071) ([#1074](https://github.com/MYTech-Co-LTD/platform-core/pull/1074), [40af834](https://github.com/MYTech-Co-LTD/platform-core/commit/40af834195993c2bbe8b00b78c3ff158638d23e7))
+
+
 ## [0.203.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.203.2...v0.203.3) - 2026-10-26
 - 【修复】data: item_price staging 按事件键去重，修同日多轮重取导致的唯一性断言红 (#1071) ([#1072](https://github.com/MYTech-Co-LTD/platform-core/pull/1072), [de8702c](https://github.com/MYTech-Co-LTD/platform-core/commit/de8702c8c2599bad1f5be50b3fd2eb74f4f546aa))
 
