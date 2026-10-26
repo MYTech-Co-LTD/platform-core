@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.199.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.198.0...v0.199.0) - 2026-10-26
+- 【新增】data: 会员汇总全店采集——三批静态 branch_nums + BIZDAY 参数化回填管线 (#1047) ([#1056](https://github.com/MYTech-Co-LTD/platform-core/pull/1056), [b01c2da](https://github.com/MYTech-Co-LTD/platform-core/commit/b01c2da8c448af5fa964a0051c01e100128c79ce))
+
+
 ## [0.198.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.197.3...v0.198.0) - 2026-10-26
 - 【新增】data: 报表页筛选栏——日期范围+门店下拉，覆盖 args 重查全面板 (#1047) ([#1055](https://github.com/MYTech-Co-LTD/platform-core/pull/1055), [6cebb2c](https://github.com/MYTech-Co-LTD/platform-core/commit/6cebb2cd8747430ee329e322ebb5c5f40eddaae2))
 
