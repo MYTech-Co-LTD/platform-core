@@ -138,6 +138,8 @@ describe('自绘渲染器 SpecView', () => {
     // 其余面板照常渲染：标题 + 数据真的画出来了（table 走 DOM，最硬的可观测面）
     expect(await screen.findByText('9876')).toBeInTheDocument()
     expect(screen.getByText('门店明细')).toBeInTheDocument()
+    // 窄屏护栏：表在卡内横向滚动，不撑破 Col/页面（#1047 企微 390px 实测顶破）
+    expect(screen.getByTestId('table-scroll')).toHaveStyle({ overflowX: 'auto' })
     // 整页没塌：标题栏与关闭按钮仍在
     expect(screen.getByText('自绘大盘')).toBeInTheDocument()
     expect(button('关闭')).toBeInTheDocument()
