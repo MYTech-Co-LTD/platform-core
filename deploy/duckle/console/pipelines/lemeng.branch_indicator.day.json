@@ -1,0 +1,393 @@
+{
+  "name": "lemeng.branch_indicator.day",
+  "id": "lemeng.branch_indicator.day",
+  "version": 1,
+  "_note": [
+    "lemeng.branch_indicator 的 L0 子管线（一块 ≤100 店）：只由父管线 lemeng.branch_indicator.l0.<账套> 的 ctl.foreach 调用（itemKey=item_key）。",
+    "",
+    "①【身份】不是独立管线：${ITER_ITEM_*} 由父代入；直接单跑必失败（设计如此）。",
+    "",
+    "②【网关硬约束（2026-10-26 探针实测）】",
+    "   · branch_nums 必填且单请求最多 100 家：缺省 → 0 行；>100 → code 10001「最多支持 100 家门店」。",
+    "   · 名单里夹一个本凭据无权限的店号 → code 10003 → 整块 0 行。",
+    "   · 上面两种在 responsePath=/result/rows 下都只表现为「0 行」（duckle 只说 query returned 0 records）",
+    "     ⇒ 必须靠 rawResponseDestination + env 节点读 code 才看得见真因。",
+    "   · 日粒度 = date_type=month + date=<月内某天> + group_type=day ⇒ 每行 periods[] 带整月逐日。",
+    "③【覆盖语义（2026-10-26 探针实测，勿回退）】网关对「本月无数据」的门店**正当省略**：店 3/4/99 连 sale_money 都返回 0 行，",
+    "   且 total_count == len(rows)；同月店 92 逐日合计 32114.96 分毫不差。⇒ 不能断言「请求的每一家都必须返回」。",
+    "",
+    "④【四闸】① env/denv：网关 code≠0（10001 超 100 家 / 10003 名单含无权限店）；",
+    "   ② gs/ds：本块 0 家匹配（权限收窄 / 月份锚错 / 网关空集）；③ gday/dday：periods[] 缺 bizday 日项（粒度变了）；",
+    "   ④ gtc/dtc：total_count ≠ len(rows)（响应被截断）。缺数据的店显形为 matched=false，不算违规。",
+    "",
+    "⑤【产物】写 /workspace/.duckle-stage/branch_indicator/chunk-<batch>-<n>.parquet（含常数列 chunk_n_matched），",
+    "   由父管线按 batch_id 汇总，并用 chunk_n_matched 对账「每块行数 == 匹配数」后写湖。"
+  ],
+  "nodes": [
+    {
+      "id": "f",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "f",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/api/nhsoft.report.ai.branchindicator.find",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"date_type\":\"month\",\"date\":\"${ITER_ITEM_BIZDAY}\",\"group_type\":\"day\",\"metrics\":[\"transfer_money\"],\"branch_nums\":${ITER_ITEM_BRANCH_NUMS_JSON}}",
+          "paginationType": "none",
+          "responsePath": "/result/rows",
+          "rawResponseDestination": "/workspace/.duckle-raw/branch-indicator-${ITER_ITEM_BATCH_ID}-c${ITER_ITEM_CHUNK_NO}.json",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        },
+        "schema": [
+          {
+            "name": "branch_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_code",
+            "type": "string"
+          },
+          {
+            "name": "branch_name",
+            "type": "string"
+          },
+          {
+            "name": "branch_region_num",
+            "type": "int64"
+          },
+          {
+            "name": "branch_region_name",
+            "type": "string"
+          },
+          {
+            "name": "metric",
+            "type": "string"
+          },
+          {
+            "name": "period",
+            "type": "string"
+          },
+          {
+            "name": "target_value",
+            "type": "float64"
+          },
+          {
+            "name": "actual_value",
+            "type": "float64"
+          },
+          {
+            "name": "actual_rate",
+            "type": "float64"
+          },
+          {
+            "name": "periods",
+            "type": "json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "env",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "env",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(code AS INTEGER) AS code, CAST(msg AS VARCHAR) AS msg\nFROM read_json_auto('/workspace/.duckle-raw/branch-indicator-${ITER_ITEM_BATCH_ID}-c${ITER_ITEM_CHUNK_NO}.json')\nWHERE CAST(code AS INTEGER) <> 0"
+        }
+      }
+    },
+    {
+      "id": "denv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "denv",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "branchindicator 网关非 0 code（{rows} 条）：chunk ${ITER_ITEM_CHUNK_NO}/${ITER_ITEM_N_CHUNKS} bizday=${ITER_ITEM_BIZDAY}；10001=单请求超 100 家，10003=名单里有本凭据无权限的店号。raw 见 /workspace/.duckle-raw/branch-indicator-${ITER_ITEM_BATCH_ID}-c${ITER_ITEM_CHUNK_NO}.json"
+        }
+      }
+    },
+    {
+      "id": "gtc",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gtc",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT * FROM (\n  SELECT CAST(json_extract_string(CAST(content AS JSON), '$.result.total_count') AS BIGINT) AS total_count,\n         CAST(json_array_length(json_extract(CAST(content AS JSON), '$.result.rows')) AS BIGINT) AS n_rows\n  FROM read_text('/workspace/.duckle-raw/branch-indicator-${ITER_ITEM_BATCH_ID}-c${ITER_ITEM_CHUNK_NO}.json')\n) t\nWHERE t.total_count IS DISTINCT FROM t.n_rows"
+        }
+      }
+    },
+    {
+      "id": "dtc",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dtc",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "网关自相矛盾：total_count 与返回行数不等（{rows} 条）——响应被截断，拒绝写湖。raw 见 /workspace/.duckle-raw/branch-indicator-${ITER_ITEM_BATCH_ID}-c${ITER_ITEM_CHUNK_NO}.json"
+        }
+      }
+    },
+    {
+      "id": "n",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "n",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(req.branch_num AS INTEGER) AS branch_num,\n       per.branch_code AS branch_code,\n       per.branch_name AS branch_name,\n       per.branch_region_num AS branch_region_num,\n       per.branch_region_name AS branch_region_name,\n       per.metric AS metric,\n       per.period_day AS period_day,\n       per.target_value AS target_value,\n       per.actual_value AS actual_value,\n       per.actual_rate AS actual_rate,\n       per.branch_num IS NOT NULL AS matched\nFROM (SELECT CAST(j.value AS BIGINT) AS branch_num FROM json_each('${ITER_ITEM_BRANCH_NUMS_JSON}') j) req\nLEFT JOIN (\n  SELECT CAST(r.branch_num AS BIGINT) AS branch_num,\n         CAST(r.branch_code AS VARCHAR) AS branch_code,\n         CAST(r.branch_name AS VARCHAR) AS branch_name,\n         CAST(r.branch_region_num AS INTEGER) AS branch_region_num,\n         CAST(r.branch_region_name AS VARCHAR) AS branch_region_name,\n         CAST(r.metric AS VARCHAR) AS metric,\n         CAST(json_extract_string(u.d, '$.period') AS DATE) AS period_day,\n         CAST(json_extract_string(u.d, '$.target_value') AS DECIMAL(20, 2)) AS target_value,\n         CAST(json_extract_string(u.d, '$.actual_value') AS DECIMAL(20, 2)) AS actual_value,\n         CAST(json_extract_string(u.d, '$.actual_rate') AS DECIMAL(20, 6)) AS actual_rate\n  FROM input r\n  CROSS JOIN UNNEST(from_json(CAST(r.periods AS JSON), '[\"JSON\"]')) AS u(d)\n) per ON per.branch_num = req.branch_num"
+        }
+      }
+    },
+    {
+      "id": "gday",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gday",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT DISTINCT branch_num FROM input WHERE matched AND period_day IS NULL"
+        }
+      }
+    },
+    {
+      "id": "dday",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dday",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "periods[] 里没有 bizday=${ITER_ITEM_BIZDAY} 的日项（{rows} 家门店命中）——月份锚不对或网关换了粒度，拒绝写湖"
+        }
+      }
+    },
+    {
+      "id": "gs",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gs",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT count(DISTINCT branch_num) AS n_matched\nFROM input\nWHERE matched\nHAVING count(DISTINCT branch_num) = 0"
+        }
+      }
+    },
+    {
+      "id": "ds",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "ds",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "本块 0 家门店有数据（请求 ${ITER_ITEM_N_BRANCHES} 家，chunk ${ITER_ITEM_CHUNK_NO}/${ITER_ITEM_N_CHUNKS}，bizday=${ITER_ITEM_BIZDAY}）——权限收窄 / 月份锚错 / 网关空集，拒绝写湖"
+        }
+      }
+    },
+    {
+      "id": "s",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "s",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT '${ITER_ITEM_BATCH_ID}' AS batch_id,\n       CAST(${ITER_ITEM_SYSTEM_BOOK} AS INTEGER) AS system_book,\n       CAST('${ITER_ITEM_BIZDAY}' AS DATE) AS bizday,\n       CAST(branch_num AS INTEGER) AS branch_num,\n       CAST(branch_code AS VARCHAR) AS branch_code,\n       CAST(branch_name AS VARCHAR) AS branch_name,\n       CAST(branch_region_num AS INTEGER) AS branch_region_num,\n       CAST(branch_region_name AS VARCHAR) AS branch_region_name,\n       CAST(metric AS VARCHAR) AS metric,\n       CAST(actual_value AS DECIMAL(20, 2)) AS actual_value,\n       CAST(target_value AS DECIMAL(20, 2)) AS target_value,\n       CAST(actual_rate AS DECIMAL(20, 6)) AS actual_rate,\n       CAST(CURRENT_TIMESTAMP AS TIMESTAMPTZ) AS computed_at,\n       -- 本块「本月有数据」的门店数（常数列）：父侧据此对账「每块行数 == 匹配数」；写湖前由父 s 丢弃\n       CAST((SELECT count(DISTINCT branch_num) FROM input WHERE matched) AS INTEGER) AS chunk_n_matched\nFROM input\nWHERE period_day = CAST('${ITER_ITEM_BIZDAY}' AS DATE)"
+        }
+      }
+    },
+    {
+      "id": "sink",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "sink",
+        "componentId": "snk.parquet",
+        "properties": {
+          "path": "/workspace/.duckle-stage/branch_indicator/chunk-${ITER_ITEM_BATCH_ID}-${ITER_ITEM_CHUNK_NO}.parquet",
+          "mode": "overwrite",
+          "compression": "zstd"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-f-env",
+      "source": "f",
+      "target": "env",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-env-denv",
+      "source": "env",
+      "target": "denv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-f-n",
+      "source": "f",
+      "target": "n",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-n-gday",
+      "source": "n",
+      "target": "gday",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gday-dday",
+      "source": "gday",
+      "target": "dday",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-n-gs",
+      "source": "n",
+      "target": "gs",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gs-ds",
+      "source": "gs",
+      "target": "ds",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-n-s",
+      "source": "n",
+      "target": "s",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-s-sink",
+      "source": "s",
+      "target": "sink",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-ds-sink",
+      "source": "ds",
+      "target": "sink",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-f-gtc",
+      "source": "f",
+      "target": "gtc",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gtc-dtc",
+      "source": "gtc",
+      "target": "dtc",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}

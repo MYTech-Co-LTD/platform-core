@@ -1,0 +1,118 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "branch_indicator",
+  "owner": "data-platform",
+  "description": "乐檬门店经营指标日粒度（nhsoft.ama.ai.branchindicator.find；D10，2026-10-26 接源）。【行粒度】一行 = 账套×bizday×门店×指标（metric）。【窗口】调用形态 = `date_type=month` + `date=<月内任一天>` + `group_type=day` + `metrics=[…]` ⇒ 每行门店的 `periods[]` 覆盖整月，本表只保留 `period_day = 查询 bizday` 的那一格（族内其它日弃用，改天另跑）。【采集范围】仅 3120；`branch_nums` 单次 ≤100（超限 code 10001）。【网关省略语义】源侧「本月无数据」的门店**不出现在 result.rows 里**（合法，`total_count == len(rows)`）⇒ 零值不等于零采集，管线用四道闸区分「0 匹配」与「真 0 值」。【首发指标】`transfer_money`（配送金额；店92 2026-10-01..19 实测合计 32114.96，与源界面逐分对上）。【用途】门店月报「配送金额」面板（P2 口径对账，issue #1047）。",
+  "layout": {
+    "prefix": "lemeng/branch_indicator",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "system_book",
+      "bizday"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 父管线 lemeng.branch_indicator.l0.3120 每轮的批次号（UTC 时间戳串，形如 20261026T100941Z）。同一 bizday 分区每轮覆盖写；回填变体 lemeng.branch_indicator.backfill.3120 由 params.BIZDAY 驱动、复用同一 layout。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "采集批次（父管线 drv 的 batch_id，UTC 时间戳串）",
+      "expr": "CAST(batch_id AS VARCHAR)"
+    },
+    {
+      "name": "system_book",
+      "type": "int",
+      "nullable": false,
+      "description": "账套（采集范围=3120）；分区键",
+      "expr": "CAST(system_book AS INTEGER)"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "指标业务日（= 查询窗日；子管线按 period_day 裁到这一天）；分区键",
+      "expr": "CAST(bizday AS DATE)"
+    },
+    {
+      "name": "branch_num",
+      "type": "int",
+      "nullable": false,
+      "description": "门店编号（与 dim_branch.branch_num 同键）",
+      "expr": "CAST(branch_num AS INTEGER)"
+    },
+    {
+      "name": "branch_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店编码",
+      "expr": "CAST(branch_code AS VARCHAR)"
+    },
+    {
+      "name": "branch_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店名",
+      "expr": "CAST(branch_name AS VARCHAR)"
+    },
+    {
+      "name": "branch_region_num",
+      "type": "int",
+      "nullable": true,
+      "description": "门店所属区域编号",
+      "expr": "CAST(branch_region_num AS INTEGER)"
+    },
+    {
+      "name": "branch_region_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店所属区域名",
+      "expr": "CAST(branch_region_name AS VARCHAR)"
+    },
+    {
+      "name": "metric",
+      "type": "varchar",
+      "nullable": false,
+      "description": "指标英文名（源 metrics[] 的元素；首发 transfer_money=配送金额，后续指标同表扩行不扩列）",
+      "expr": "CAST(metric AS VARCHAR)"
+    },
+    {
+      "name": "actual_value",
+      "type": "decimal(20,2)",
+      "nullable": false,
+      "description": "指标实际值（源 periods[].actual_value）",
+      "expr": "CAST(actual_value AS DECIMAL(20,2))"
+    },
+    {
+      "name": "target_value",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "指标目标值（源 periods[].target_value；无目标时 0.00，非 NULL）",
+      "expr": "CAST(target_value AS DECIMAL(20,2))"
+    },
+    {
+      "name": "actual_rate",
+      "type": "decimal(20,6)",
+      "nullable": true,
+      "description": "达成率（源 periods[].actual_rate；无目标时 0.000000）",
+      "expr": "CAST(actual_rate AS DECIMAL(20,6))"
+    },
+    {
+      "name": "computed_at",
+      "type": "timestamptz",
+      "nullable": false,
+      "description": "采集落库时刻（UTC，CURRENT_TIMESTAMP）",
+      "expr": "CAST(computed_at AS TIMESTAMPTZ)"
+    }
+  ]
+}
