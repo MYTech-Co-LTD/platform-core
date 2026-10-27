@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.205.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.6...v0.205.0) - 2026-10-27
+- 【新增】data: 64188 补采八类数据源（批发/配送明确不采） ([#1092](https://github.com/MYTech-Co-LTD/platform-core/pull/1092), [fe5f102](https://github.com/MYTech-Co-LTD/platform-core/commit/fe5f10263700b1e185350a1bd46974a0d49ab4cc))
+
+
 ## [0.204.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.5...v0.204.6) - 2026-10-27
 - 【修复】data: 门店号/门店名数字进 AI 文本数字白名单 (#1089) ([#1090](https://github.com/MYTech-Co-LTD/platform-core/pull/1090), [79b8c89](https://github.com/MYTech-Co-LTD/platform-core/commit/79b8c899d3ac3fe24376d9e8d9c9433540062947))
 
