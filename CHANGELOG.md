@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.206.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.4...v0.206.5) - 2026-10-27
+- 【修复】data: 提示词 narrative-v4，数字逐字复制 + temperature=0 (#1113) ([#1114](https://github.com/MYTech-Co-LTD/platform-core/pull/1114), [eebcab2](https://github.com/MYTech-Co-LTD/platform-core/commit/eebcab23c80cb9a4b2a1be5241b5bd7005b0a854))
+
+
 ## [0.206.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.3...v0.206.4) - 2026-10-27
 - 【修复】data: SSE 增量校验在日期分块边界误判 (#1111) ([#1112](https://github.com/MYTech-Co-LTD/platform-core/pull/1112), [fc5ede5](https://github.com/MYTech-Co-LTD/platform-core/commit/fc5ede5b566e8b2af5a53dd3868cbfe2cea474a5))
 
