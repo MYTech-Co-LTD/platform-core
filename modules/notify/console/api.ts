@@ -117,3 +117,14 @@ export type DeliveryView = {
   lastError: string | null
   createdAt: string
 }
+
+export type InboxItem = {
+  id: string
+  eventId: string
+  eventKey: string
+  title: string
+  body: string
+  link: string | null
+  readAt: string | null
+  createdAt: string
+}

@@ -7,6 +7,8 @@ import EventsTab from './events'
 import RulesTab from './rules'
 import TemplatesTab from './templates'
 import ChannelsTab from './channels'
+import DeliveriesTab from './deliveries'
+import InboxTab from './inbox'
 
 const BASE = '/console/notify'
 
@@ -48,8 +50,8 @@ export default function NotifyConsolePage() {
       {active === 'rules' && <RulesTab />}
       {active === 'templates' && <TemplatesTab />}
       {active === 'channels' && <ChannelsTab />}
-      {active === 'deliveries' && <Empty description="P2 待实现" />}
-      {active === 'inbox' && <Empty description="P2 待实现" />}
+      {active === 'deliveries' && <DeliveriesTab />}
+      {active === 'inbox' && <InboxTab />}
     </Layout>
   )
 }

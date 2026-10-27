@@ -573,7 +573,16 @@ export async function listInbox(
       order by created_at desc limit 100`,
     [org, recipient],
   )
-  return rows
+  return rows.map((r) => ({
+    id: r.id,
+    eventId: r.event_id,
+    eventKey: r.event_key,
+    title: r.title,
+    body: r.body,
+    link: r.link,
+    readAt: r.read_at ? (r.read_at as Date).toISOString() : null,
+    createdAt: (r.created_at as Date).toISOString(),
+  }))
 }
 
 export async function markInboxRead(
