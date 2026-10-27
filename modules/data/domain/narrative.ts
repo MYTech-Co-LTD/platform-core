@@ -24,7 +24,7 @@ import {
 } from './report-narrative-store'
 
 /** 参与缓存键；**改提示词 = 升版本号**（旧缓存自然不再命中）。 */
-export const NARRATIVE_PROMPT_VERSION = 'narrative-v4'
+export const NARRATIVE_PROMPT_VERSION = 'narrative-v5'
 
 /** 与 spec §4.1 同形的 SSE 事件。`replace` 表示「已流出的内容作废」，客户端必须整段替换。 */
 export type NarrativeEvent =
@@ -70,6 +70,7 @@ export interface NarrativeDeps {
 const SYSTEM = [
   '你是门店经营分析助手。只能使用 facts 中的数字和项目名；不得编造、不得做 facts 之外的算术；缺失写 "-"。',
   '数字必须逐字复制 facts.numbers 中的字符串（包括负号、千分位、百分号、小数位）；不得改写符号、去掉负号、取绝对值或做四舍五入。',
+  '例如 facts.numbers 里是 -1,234.56，正文必须写 -1,234.56，不能写 1,234.56；facts.numbers 之外的数字不要写。',
   '输出三段，纯文本，不要 Markdown 表格/HTML：',
   '结论：…',
   '异常：…',

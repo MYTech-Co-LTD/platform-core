@@ -142,7 +142,7 @@ export default function AiTextPanel({ reportId, panelIndex, focus, period, branc
   return (
     <div data-testid="ai-text">
       <Typography.Text type="secondary">
-        {phase === 'done' ? (fallback ? '模板摘要（AI 暂不可用）' : 'AI 分析') : label}
+        {phase === 'done' ? (fallback ? '数据摘要' : 'AI 分析') : label}
       </Typography.Text>
       <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginTop: 8, marginBottom: 0 }}>
         {text}
