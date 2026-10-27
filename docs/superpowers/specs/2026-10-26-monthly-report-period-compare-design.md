@@ -212,6 +212,21 @@ slice?: {
 - 非可加指标的 line/bar 在写入侧直接拒（§8），避免前端求和错数；table 允许非可加（原始行）。
 - 表格有 `slice.total` 时在页脚显示「合计」；图表有 `truncated` 时显示「已截断」提示。
 
+### 7.3.1 `columns`（仅 `table`，渲染期投影）
+
+```ts
+columns?: string[]   // 1..32 个唯一列名，按声明顺序展示
+```
+
+- **只影响渲染，不影响查询**：`/query` 的 body/分组/排序/截断完全不变（与 `slice` 正交）。
+- 声明的列按顺序展示；**返回里不存在的列直接丢弃**（不凭空造列），并在面板上给出「列不存在」的人话告警（fail-visible）。
+- 未声明 `columns` ⇒ 保持现状（展示返回的全部列，旧规格行为不变）。
+- 只允许 `table`；`line/bar/kpi/text/ai_text` 带 `columns` ⇒ `INVALID_SPEC`（schema 严格性同上）。
+- 存在理由：非可加指标（如 `max` 语义的「连续无业绩天数」）**不能**做子集聚合（`authorize` 拒），
+  但原始 grain 明细会把 `system_book/branch_num/brand_name/branch_name` 等内部列摊给用户；
+  用一个只读的展示投影收口，既不新增数据面指标、也不改变取数语义。
+- 日期维度（`bizday`）的单元格与图表 x 轴统一显示 `YYYY-MM-DD`（`/query` 可能返回 ISO 串）。
+
 ### 7.4 渲染器其余修正
 
 - 折线/柱状：`slice.orderBy` 给 `bizday asc` 时，x 轴按返回顺序即升序；无 `slice` 的旧规格保持现状。

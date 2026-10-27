@@ -85,6 +85,19 @@ describe('B+C schema', () => {
     expect(parseReportSpec({ panels: [kpi] }).ok).toBe(false)
   })
 
+  it('columns 只在 table：非空、唯一；其它图型带 columns 拒', () => {
+    const table = {
+      chart: 'table', title: 't', metricId: 'm', dims: ['bizday'], args: {}, span: 24,
+      columns: ['bizday', 'value'],
+    }
+    expect(parseReportSpec({ panels: [table] }).ok).toBe(true)
+    expect(parseReportSpec({ panels: [{ ...table, columns: [] }] }).ok).toBe(false)
+    expect(parseReportSpec({ panels: [{ ...table, columns: ['value', 'value'] }] }).ok).toBe(false)
+    expect(parseReportSpec({
+      panels: [{ chart: 'line', title: 't', metricId: 'm', dims: ['bizday'], args: {}, span: 24, columns: ['value'] }],
+    }).ok).toBe(false)
+  })
+
   it('旧规格仍通过（默认值补齐）', () => {
     const old = { panels: [{ chart: 'line', title: 't', metricId: 'm', dims: ['bizday'], args: {}, span: 12 }] }
     expect(parseReportSpec(old).ok).toBe(true)

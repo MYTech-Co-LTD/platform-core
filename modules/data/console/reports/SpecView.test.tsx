@@ -69,6 +69,8 @@ interface Panel {
     limit?: number
     total?: boolean
   }
+  /** table 的渲染期列投影（设计 §7.3.1）。 */
+  columns?: string[]
   content?: string
 }
 interface SpecFixture {
@@ -232,6 +234,41 @@ describe('自绘渲染器 SpecView', () => {
     // 整页没塌：标题栏与关闭按钮仍在
     expect(screen.getByText('自绘大盘')).toBeInTheDocument()
     expect(button('关闭')).toBeInTheDocument()
+  })
+
+  it('★ table columns 投影：只渲染声明列，bizday 显示 YYYY-MM-DD', async () => {
+    stub({
+      panels: [{
+        chart: 'table', title: '连续无业绩天数', metricId: 'm1', dims: ['bizday'],
+        columns: ['bizday', 'value'], args: {}, span: 24,
+      }],
+    }, {
+      m1: {
+        columns: ['value', 'system_book', 'brand_name', 'bizday', 'branch_num', 'branch_name'],
+        rows: [[0, 3120, '熊喵鲜生', '2026-10-01T00:00:00.000Z', 92, '熊喵曲靖沾益2店']],
+      },
+    }, new Set())
+    renderView()
+    await waitFor(() => expect(screen.getByText('2026-10-01')).toBeInTheDocument())
+    expect(screen.queryByText('branch_name')).toBeNull()
+    expect(screen.queryByText('system_book')).toBeNull()
+    expect(screen.queryByText('熊喵曲靖沾益2店')).toBeNull()
+  })
+
+  it('★ 图表 x 轴日期显示 YYYY-MM-DD（ISO 串截断，不再显示 T00:00:00Z）', async () => {
+    stub({
+      panels: [{ chart: 'line', title: '趋势', metricId: 'm1', dims: ['bizday'], args: {}, span: 24 }],
+    }, {
+      m1: {
+        columns: ['value', 'bizday'],
+        rows: [['100', '2026-09-01T00:00:00.000Z'], ['200', '2026-09-02T00:00:00.000Z']],
+      },
+    }, new Set())
+    renderView()
+    await waitFor(() => expect(mInit).toHaveBeenCalled())
+    const chartStub = mInit.mock.results[0].value as unknown as { setOption: ReturnType<typeof vi.fn> }
+    const option = chartStub.setOption.mock.calls[0][0] as { xAxis: { data: string[] } }
+    expect(option.xAxis.data).toEqual(['2026-09-01', '2026-09-02'])
   })
 
   it('★ 多系列按透视数据集装配（每系列一个 data 数组；xAxis.data 用维度值）——spec §5 实测坑 1', async () => {
