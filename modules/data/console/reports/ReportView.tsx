@@ -96,6 +96,19 @@ const NARROW_BAR_AXIS_LABEL = { interval: 0, rotate: 45, fontSize: 11, overflow:
 const GRID_MARGINS = { left: 12, right: 20, top: 36, bottom: 12, containLabel: true } as const
 
 /**
+ * 日期维度在表格/图表上的统一展示（#1094）：`/query` 的 `date` 列可能回 ISO 串
+ * （`2026-10-13T00:00:00.000Z`），表格单元格与 x 轴统一截成 `YYYY-MM-DD`；其它值 String 化。
+ */
+function displayValue(column: string, v: unknown): string {
+  const s = v === null || v === undefined ? '' : String(v)
+  if (column === 'bizday') {
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(s)
+    if (m !== null) return m[1]!
+  }
+  return s
+}
+
+/**
  * 透视数据集装配（spec §5 实测坑 1 的修法）。
  *
  * 形状：`dims[0]` 做 x 轴（`xAxis.data` 用维度值）、其余 dims 组合成**系列**——每个系列
@@ -120,7 +133,7 @@ function buildOption(chart: 'line' | 'bar', dimensions: string[], result: OkResu
   // 同一 (x, 系列) 多行 ⇒ 求和：声明 dims 少于指标 groupBy 时会出现（这些值本来就是 sum 出来的度量）
   const cells = new Map<string, number>()
   for (const row of result.rows) {
-    const x = xIdx >= 0 ? String(row[xIdx]) : ''
+    const x = xIdx >= 0 ? displayValue(cols[xIdx]!, row[xIdx]) : ''
     if (!xLabels.includes(x)) xLabels.push(x)
     const seriesKey = seriesDims.map((d) => String(row[cols.indexOf(d)])).join('/')
     if (seriesDims.length > 0 && !seriesKeys.includes(seriesKey)) seriesKeys.push(seriesKey)
@@ -252,17 +265,34 @@ function PanelBody({ panel, result }: { panel: Panel; result: PanelResult | unde
     // table 不进 echarts（图型白名单里它是纯 DOM 呈现）；行值 String 化照 console/query 的先例。
     // 窄屏（企微内置浏览器 ~390px）：外层 overflowX:auto + scroll.x=max-content 让横向滚动
     // 收敛在卡片内部（#1047 报表页移动端实测顶破）。
+    //
+    // `columns` 是**渲染期投影**（设计 §7.3.1）：声明的列按序展示，返回里没有的列丢弃并
+    // 显式告警（fail-visible，不静默展示全部/伪造列）；未声明 = 旧规格的「展示全部」。
+    const declared = panel.columns
+    const cols = declared === undefined
+      ? result.columns
+      : declared.filter((c) => result.columns.includes(c))
+    const missing = declared?.filter((c) => !result.columns.includes(c)) ?? []
     return (
       <>
+        {missing.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            message={`声明的列不存在：${missing.join('、')}`}
+            style={{ marginBottom: 8 }}
+          />
+        )}
         <div data-testid="table-scroll" style={{ overflowX: 'auto' }}>
           <Table
             size="small"
             rowKey={(_, idx) => String(idx)}
             pagination={false}
             scroll={{ x: 'max-content' }}
-            columns={result.columns.map((c) => ({ title: c, dataIndex: c }))}
+            columns={cols.map((c) => ({ title: c, dataIndex: c }))}
             dataSource={result.rows.map((row) =>
-              Object.fromEntries(result.columns.map((c, ci) => [c, String(row[ci])])))}
+              Object.fromEntries(cols.map((c) =>
+                [c, displayValue(c, row[result.columns.indexOf(c)])])))}
           />
         </div>
         <TrustLine result={result} />

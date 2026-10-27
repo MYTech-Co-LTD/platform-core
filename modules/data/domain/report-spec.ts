@@ -65,7 +65,21 @@ const LinePanel = z.object({
   slice: SliceSchema.optional(),
 }).strict()
 const BarPanel = z.object({ chart: z.literal('bar'), ...metricBase, dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]), slice: SliceSchema.optional() }).strict()
-const TablePanel = z.object({ chart: z.literal('table'), ...metricBase, dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]), slice: SliceSchema.optional() }).strict()
+
+/**
+ * table 的**渲染期列投影**（设计 §7.3.1）：只影响展示，不进 `/query`。
+ * 非可加指标不能做子集聚合（`authorize` 拒），但原始 grain 明细会把内部列摊给用户；
+ * 用这个只读投影收口。列名唯一、1..32 个。
+ */
+const TableColumnsSchema = z.array(z.string().trim().min(1).max(64)).min(1).max(32)
+  .refine((cols) => new Set(cols).size === cols.length, { message: 'DUPLICATE_COLUMN' })
+
+const TablePanel = z.object({
+  chart: z.literal('table'), ...metricBase,
+  dims: z.array(z.string().min(1).max(64)).max(MAX_DIMS).default([]),
+  slice: SliceSchema.optional(),
+  columns: TableColumnsSchema.optional(),
+}).strict()
 
 const KpiPanel = z.object({
   chart: z.literal('kpi'),
