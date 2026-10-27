@@ -40,4 +40,80 @@ export async function apiSend<T>(method: string, path: string, body?: unknown): 
 export const get = <T>(path: string) => apiGet<T>(`${BASE}${path}`)
 export const post = <T>(path: string, body?: unknown) => apiSend<T>('POST', `${BASE}${path}`, body)
 export const patch = <T>(path: string, body?: unknown) => apiSend<T>('PATCH', `${BASE}${path}`, body)
+export const put = <T>(path: string, body?: unknown) => apiSend<T>('PUT', `${BASE}${path}`, body)
 export const del = <T>(path: string) => apiSend<T>('DELETE', `${BASE}${path}`)
+
+// ── 视图类型（页面共用）────────────────────────────────────────────────────────
+export type EventField = { type: string; required?: boolean; label?: string }
+export type EventRecipient = { kind: string; field?: string; scope?: string; label?: string }
+export type EventView = {
+  key: string
+  title: string
+  description?: string
+  scope?: { key: string; label?: string }
+  payload: Record<string, EventField>
+  recipients: Record<string, EventRecipient>
+  defaults?: { recipient: string; template: string; channels: string[] }
+}
+
+export type RuleView = {
+  id: string
+  enabled: boolean
+  eventKey: string
+  scope: string
+  recipientKey: string
+  recipientLiteral: string[] | null
+  templateKey: string
+  channels: string[]
+  cooldownMinutes: number | null
+  origin: string
+  createdAt: string
+}
+
+export type TemplateView = {
+  key: string
+  name: string
+  eventKey: string
+  status: string
+  origin: string
+  publishedRevision: number | null
+  updatedAt: string
+}
+
+export type TemplateRevisionView = {
+  revision: number
+  contents: Record<string, Record<string, string>>
+  bodyHash: string
+  reviewStatus: string
+  createdBy: string
+  createdAt: string
+}
+
+export type TemplateDetailView = TemplateView & { revisions: TemplateRevisionView[] }
+
+export type ChannelView = {
+  id: string
+  provider: string
+  enabled: boolean
+  configured: boolean
+  config: Record<string, unknown>
+  secretRefs: Record<string, string>
+  health: string | null
+  healthAt: string | null
+}
+
+export type DeliveryView = {
+  eventId: string
+  eventKey: string
+  ruleId: string
+  recipient: string
+  channel: string
+  address: string
+  templateKey: string
+  revision: number
+  status: string
+  attempts: number
+  isTest: boolean
+  lastError: string | null
+  createdAt: string
+}

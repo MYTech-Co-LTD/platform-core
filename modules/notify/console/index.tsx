@@ -3,6 +3,8 @@
 import { useEffect } from 'react'
 import { Empty, Layout, Menu } from 'antd'
 import { useLocation, useNavigate } from 'react-router-dom'
+import EventsTab from './events'
+import RulesTab from './rules'
 
 const BASE = '/console/notify'
 
@@ -40,8 +42,8 @@ export default function NotifyConsolePage() {
         onClick={({ key }) => navigate(`${BASE}/${key}`)}
         style={{ marginBottom: 16 }}
       />
-      {active === 'events' && <Empty description="P2 待实现" />}
-      {active === 'rules' && <Empty description="P2 待实现" />}
+      {active === 'events' && <EventsTab />}
+      {active === 'rules' && <RulesTab />}
       {active === 'templates' && <Empty description="P2 待实现" />}
       {active === 'channels' && <Empty description="P2 待实现" />}
       {active === 'deliveries' && <Empty description="P2 待实现" />}
