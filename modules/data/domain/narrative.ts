@@ -24,7 +24,7 @@ import {
 } from './report-narrative-store'
 
 /** 参与缓存键；**改提示词 = 升版本号**（旧缓存自然不再命中）。 */
-export const NARRATIVE_PROMPT_VERSION = 'narrative-v1'
+export const NARRATIVE_PROMPT_VERSION = 'narrative-v2'
 
 /** 与 spec §4.1 同形的 SSE 事件。`replace` 表示「已流出的内容作废」，客户端必须整段替换。 */
 export type NarrativeEvent =
@@ -73,6 +73,7 @@ const SYSTEM = [
   '结论：…',
   '异常：…',
   '行动：…',
+  '日期一律写成 facts 里的 YYYY-MM-DD 形式（例如 2026-10-13），不要写「X月X日」。',
   '全文不超过 400 个汉字；末尾单独一行写：数据截至 <dataAsOf>（缺失写「新鲜度未知」）。',
   '不要推测外部原因（天气/竞品/促销），只写数据内可见的构成与需要核对的事项。',
 ].join('\n')
@@ -112,8 +113,10 @@ function normalizeNum(s: string): string {
  * 不抹掉的话 `06:00:00 +08:00` 会被拆成 `06/00/08` 判越界 ⇒ 合规输出反而全被替换。
  */
 export function badNumbers(text: string, allowed: Set<string>): string[] {
+  // 日期形态整段抹掉：ISO / 中文全日期（2026年10月13日）/ 中文月日（10月13日）/ 单月（10月）。
+  // 中文形态是 #1083 的现场根因：模型写「10月13日」时，`10/13` 会被拆成两个 facts 之外的数字。
   const noDates = text.replace(
-    /\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?(?:\s*(?:\+08:00|Z))?|\d{2}-\d{2}/g,
+    /\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?(?:\s*(?:\+08:00|Z))?|\d{4}年\d{1,2}月(?:\d{1,2}[日号])?|\d{1,2}月(?:\d{1,2}[日号])?|\d{2}-\d{2}/g,
     ' ',
   )
   const out: string[] = []
@@ -139,10 +142,15 @@ export function templateOf(f: FactBundle): string {
   const loss = f.breakdowns.find((b) => b.panel.includes('报损'))
   const expense = f.breakdowns.find((b) => b.panel.includes('费用'))
   const lossTop = loss?.rows[0]
-  const expTop = expense?.rows.slice(0, 2).map((r) => r.label).join('、')
+  const expTop = expense?.rows.slice(0, 2).map((r) => r.label).join('、') ?? ''
+  // 缺数据时不输出空括号：`-（）` / `-（- -）` 只会让回退文本更像故障（#1083）。
+  const withDetail = (base: string, detail: string): string =>
+    detail === '' ? base : `${base}（${detail}）`
+  const minText = f.daily.min === null ? '-' : `${f.daily.min.day}（${f.daily.min.value}）`
+  const lossDetail = lossTop === undefined ? '' : `${lossTop.label} ${lossTop.value}`
   return [
     `结论：本期销售额 ${k('销售额')?.current ?? '-'}，订单 ${k('订单数')?.current ?? '-'}，客单价 ${k('客单价')?.current ?? '-'}；会员销售占比 ${k('会员销售占比')?.current ?? '-'}。`,
-    `异常：最低销售日 ${f.daily.min?.day ?? '-'}（${f.daily.min?.value ?? '-'}）；报损 ${k('报损金额')?.current ?? '-'}（${lossTop?.label ?? '-'} ${lossTop?.value ?? '-'}）；费用 ${k('费用合计（净费用）')?.current ?? k('费用合计')?.current ?? '-'}（${expTop ?? '-'}）。`,
+    `异常：最低销售日 ${minText}；${withDetail(`报损 ${k('报损金额')?.current ?? '-'}`, lossDetail)}；${withDetail(`费用 ${k('费用合计（净费用）')?.current ?? k('费用合计')?.current ?? '-'}`, expTop)}。`,
     '行动：① 核对最低销售日是否采集缺口/闭店；② 复盘报损最大原因明细；③ 复盘费用最大两项的投放产出。',
     `数据截至 ${f.dataAsOf ?? '新鲜度未知'}。`,
   ].join('\n')
@@ -185,9 +193,12 @@ async function fallbackResult(
   deps: NarrativeDeps,
   key: NarrativeKey,
   log?: string,
+  cache = true,
 ): Promise<NarrativeResult> {
   const text = templateOf(deps.facts)
-  await putNarrative(deps.pool, key, text, true, deps.userId)
+  // 有模型时的失败回退**不落缓存**：一次瞬时失败/格式偏差不能钉死同一事实的后续观看
+  // （#1083）；未配模型（model=null）才缓存模板——那没有「下次重试」可言。
+  if (cache) await putNarrative(deps.pool, key, text, true, deps.userId)
   if (log !== undefined) deps.log?.(log)
   return {
     text,
@@ -219,6 +230,7 @@ export async function generateNarrative(deps: NarrativeDeps): Promise<NarrativeR
   if (model === null) return fallbackResult(deps, key)
 
   const allowed = allowedNumbers(deps.facts)
+  let lastLog = 'narrative_number_check_failed'
   for (let attempt = 0; attempt < 2; attempt++) {
     let text = ''
     try {
@@ -229,7 +241,7 @@ export async function generateNarrative(deps: NarrativeDeps): Promise<NarrativeR
             role: 'user',
             content: userPrompt(
               deps.facts,
-              attempt === 0 ? '' : '上一次输出包含 facts 之外的数字；只允许复制 facts 的 formatted 值。',
+              attempt === 0 ? '' : '上一次输出包含 facts 之外的数字；只允许复制 facts 的 formatted 值，日期写 YYYY-MM-DD。',
             ),
           },
         ],
@@ -240,11 +252,13 @@ export async function generateNarrative(deps: NarrativeDeps): Promise<NarrativeR
         if (d.content !== undefined) text += d.content
       }
     } catch (err) {
-      deps.log?.(`narrative_llm_failed: ${err instanceof Error ? err.message : String(err)}`)
+      lastLog = `narrative_llm_failed: ${err instanceof Error ? err.message : String(err)}`
+      deps.log?.(lastLog)
       text = ''
     }
     // 空输出与越界同罪：空白文本不能当成功缓存（spec §6「永远不空白」）
-    if (text.trim() !== '' && badNumbers(text, allowed).length === 0) {
+    const bad = text.trim() === '' ? [] : badNumbers(text, allowed)
+    if (text.trim() !== '' && bad.length === 0) {
       await putNarrative(deps.pool, key, text, false, deps.userId)
       return {
         text,
@@ -254,8 +268,12 @@ export async function generateNarrative(deps: NarrativeDeps): Promise<NarrativeR
         cached: false,
       }
     }
+    if (bad.length > 0) {
+      lastLog = 'narrative_number_check_failed'
+      deps.log?.(`narrative_number_check: ${bad.join(',')}`)
+    }
   }
-  return fallbackResult(deps, key, 'narrative_number_check_failed')
+  return fallbackResult(deps, key, lastLog, false)
 }
 
 /**
@@ -295,70 +313,80 @@ export async function* streamNarrative(
   }
 
   const allowed = allowedNumbers(deps.facts)
-  const controller = new AbortController()
-  // 与 JSON 端点同一口径（spec §4.4：`signal=AbortSignal.timeout(30000)`）：
-  // 模型卡住 ⇒ 超时 abort ⇒ catch 走模板，绝不让浏览器无限等。
-  const timer = setTimeout(() => controller.abort(), 30000)
-  let full = ''
-  let pending = ''
-  let sawContent = false
-  // 终态只许一次：`return` 会触发 for-await 调底层 `return()`，若它抛错（连接已断的极端情形），
-  // 外层 catch 不能再发一次 `replace`/`done`——客户端会看到两个 done。
-  let settled = false
-  try {
-    for await (const d of model.completeStream(
-      [
-        { role: 'system', content: SYSTEM },
-        { role: 'user', content: userPrompt(deps.facts) },
-      ],
-      [],
-      { temperature: 0.2, maxTokens: 1500, signal: controller.signal },
-    )) {
-      if (d.content === undefined) continue // reasoning 不展示、也不拼进正文
-      if (!sawContent) {
-        sawContent = true
-        yield { type: 'phase', phase: 'writing', label: '正在生成…' }
-      }
-      full += d.content
-      pending += d.content
-      // 只校验已闭合的数字：以数字/逗号/点结尾说明 token 可能还没完，留到下一块
-      if (!/[0-9,.]$/.test(pending)) {
-        const bad = badNumbers(pending, allowed)
-        pending = ''
-        if (bad.length > 0) {
-          controller.abort()
-          settled = true
-          deps.log?.(`narrative_number_check: ${bad.join(',')}`)
-          const text = templateOf(deps.facts)
-          yield { type: 'replace', text, reason: 'number_check' }
-          yield doneEvent(text, true, deps.facts)
-          await putNarrative(deps.pool, key, text, true, deps.userId)
-          return
-        }
-      }
-      yield { type: 'delta', text: d.content }
+  // 与 JSON 端点对齐：数字校验失败重试一次（#1083 现场模型写「10月13日」被误判越界）。
+  // 模型**异常**不重试——瞬时故障走模板，避免 2×30s 长挂。
+  const MAX_ATTEMPTS = 2
+  let lastReason: 'number_check' | 'llm_failed' = 'number_check'
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      // 第一遍可能已向客户端吐过正文：整段清空，否则两遍文本会拼在一起。
+      yield { type: 'replace', text: '', reason: 'number_check' }
+      yield { type: 'phase', phase: 'thinking', label: '正在重新核对数字…' }
     }
-    // 流结束再全文校验一次（末块可能停在数字上，逐块校验覆盖不到）
-    if (full.trim() === '' || badNumbers(full, allowed).length > 0) {
-      settled = true
-      deps.log?.('narrative_number_check_failed')
-      const text = templateOf(deps.facts)
-      yield { type: 'replace', text, reason: 'number_check' }
-      yield doneEvent(text, true, deps.facts)
-      await putNarrative(deps.pool, key, text, true, deps.userId)
+    const controller = new AbortController()
+    // 与 JSON 端点同一口径（spec §4.4：`signal=AbortSignal.timeout(30000)`）：
+    // 模型卡住 ⇒ 超时 abort ⇒ catch 走模板，绝不让浏览器无限等。
+    const timer = setTimeout(() => controller.abort(), 30000)
+    let full = ''
+    let pending = ''
+    let sawContent = false
+    let failed: 'number_check' | 'llm_failed' | null = null
+    try {
+      for await (const d of model.completeStream(
+        [
+          { role: 'system', content: SYSTEM },
+          {
+            role: 'user',
+            content: userPrompt(
+              deps.facts,
+              attempt === 0 ? '' : '上一次输出包含 facts 之外的数字；只允许复制 facts 的 formatted 值，日期写 YYYY-MM-DD。',
+            ),
+          },
+        ],
+        [],
+        { temperature: 0.2, maxTokens: 1500, signal: controller.signal },
+      )) {
+        if (d.content === undefined) continue // reasoning 不展示、也不拼进正文
+        if (!sawContent) {
+          sawContent = true
+          yield { type: 'phase', phase: 'writing', label: '正在生成…' }
+        }
+        full += d.content
+        pending += d.content
+        // 只校验已闭合的数字：以数字/逗号/点结尾说明 token 可能还没完，留到下一块
+        if (!/[0-9,.]$/.test(pending)) {
+          const bad = badNumbers(pending, allowed)
+          pending = ''
+          if (bad.length > 0) {
+            controller.abort()
+            failed = 'number_check'
+            deps.log?.(`narrative_number_check: ${bad.join(',')}`)
+            break
+          }
+        }
+        yield { type: 'delta', text: d.content }
+      }
+      // 流结束再全文校验一次（末块可能停在数字上，逐块校验覆盖不到）
+      if (failed === null && (full.trim() === '' || badNumbers(full, allowed).length > 0)) {
+        failed = 'number_check'
+        deps.log?.(`narrative_number_check_failed: ${badNumbers(full, allowed).join(',')}`)
+      }
+    } catch (err) {
+      failed = 'llm_failed'
+      deps.log?.(`narrative_llm_failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      clearTimeout(timer)
+    }
+    if (failed === null) {
+      await putNarrative(deps.pool, key, full, false, deps.userId)
+      yield doneEvent(full, false, deps.facts)
       return
     }
-    await putNarrative(deps.pool, key, full, false, deps.userId)
-    settled = true
-    yield doneEvent(full, false, deps.facts)
-  } catch (err) {
-    if (settled) return
-    deps.log?.(`narrative_llm_failed: ${err instanceof Error ? err.message : String(err)}`)
-    const text = templateOf(deps.facts)
-    yield { type: 'replace', text, reason: 'llm_failed' }
-    yield doneEvent(text, true, deps.facts)
-    await putNarrative(deps.pool, key, text, true, deps.userId)
-  } finally {
-    clearTimeout(timer)
+    lastReason = failed
+    if (failed === 'llm_failed') break
   }
+  const text = templateOf(deps.facts)
+  yield { type: 'replace', text, reason: lastReason }
+  yield doneEvent(text, true, deps.facts)
+  // 有模型时回退**不落缓存**：下一次观看重新尝试，瞬时失败不再钉死整天（#1083）。
 }

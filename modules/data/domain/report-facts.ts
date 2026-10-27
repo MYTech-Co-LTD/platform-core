@@ -101,6 +101,29 @@ export function factValue(v: number | null, format: KpiPanel['format']): string 
 }
 
 /**
+ * 日极值里的「日」归一成 `YYYY-MM-DD`（#1083）。
+ *
+ * pg 的 `date` 列经 node-pg 回来是 **Date 对象**（不是 ISO 串）——`String(Date)` 会得到
+ * `Tue Oct 13 2026 00:00:00 GMT+0000 (…)`，模板会把它原样打给用户，模型也会看到这串英文。
+ * node-pg 按**本地日历日**解析 `date`（`new Date(y, m-1, d)`），所以取本地分量而不是
+ * `toISOString()`——后者在东八区会把 10-13 零点漂成 10-12。
+ */
+export function dayLabelOf(v: unknown): string | null {
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null
+    const y = v.getFullYear()
+    const m = String(v.getMonth() + 1).padStart(2, '0')
+    const d = String(v.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  if (typeof v === 'string') {
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(v)
+    return m === null ? null : m[1]!
+  }
+  return null
+}
+
+/**
  * `dataAsOf` 取**最早**的非空值（spec §4.3「保守」）。呈现是定长北京时间串
  * `YYYY-MM-DD HH:mm:ss +08:00`（query-service 的唯一格式化器）⇒ 字典序即时间序。
  */
@@ -299,7 +322,8 @@ export async function buildFacts(
           for (const row of out.rows) {
             const value = Number(row[vIdx])
             if (!Number.isFinite(value)) continue
-            const day = String(row[xIdx])
+            const day = dayLabelOf(row[xIdx])
+            if (day === null) continue // 取不到可信的日历日 ⇒ 不拿它进极值（不编）
             if (minRaw === null || value < minRaw.value) minRaw = { day, value }
             if (maxRaw === null || value > maxRaw.value) maxRaw = { day, value }
           }

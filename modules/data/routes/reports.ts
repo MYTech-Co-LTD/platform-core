@@ -800,9 +800,12 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         focus: n.focus,
         userId: n.requester.userId,
         model: n.model,
+        // 失败原因只进日志（#1083：此前没接线，回退在生产里完全不可诊断）。
+        log: (m) => console.warn(`[data/narrative] ${id} ${m}`),
       })
       return c.json(out)
     } catch (e) {
+      console.error(`[data/narrative] ${id} failed: ${e instanceof Error ? e.message : String(e)}`)
       // 详情**不回显**（可能含上游请求片段/凭证）；只截断进 body 给排障，完整原因在日志。
       return c.json(
         { error: 'NARRATIVE_FAILED', detail: e instanceof Error ? e.message.slice(0, 200) : undefined },
@@ -843,8 +846,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
             focus: n.focus,
             userId: n.requester.userId,
             model: n.model,
+            log: (m) => console.warn(`[data/narrative] ${id} ${m}`),
           })) send(ev)
-        } catch {
+        } catch (e) {
+          console.error(`[data/narrative] ${id} stream failed: ${e instanceof Error ? e.message : String(e)}`)
           // 流已开（200 已发）⇒ 只能用事件收敛状态，改不了状态码。
           send({ type: 'error', reason: 'NARRATIVE_FAILED' })
         } finally {

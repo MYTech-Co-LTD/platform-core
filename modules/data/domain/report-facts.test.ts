@@ -138,7 +138,12 @@ function execWith(v: Values, coverageFrom: string | null = '2026-01-01'): SqlExe
       if (sql.includes('vip_money')) return total(prev ? v.vipPrev : v.vip)
     }
     if (sql.includes('marts.facts_sales')) {
-      return { columns: ['bizday', 'value'], rows: [['2026-10-13', 875.59], ['2026-10-16', 3564.8]] }
+      // 真实链路里 pg 的 date 列回 **Date 对象**（不是 ISO 串）：日极值必须归一成 YYYY-MM-DD，
+      // 否则模板会把 `String(Date)` 的英文时间串原样打给用户（#1083 现场）。
+      return {
+        columns: ['bizday', 'value'],
+        rows: [[new Date(2026, 9, 13), 875.59], [new Date(2026, 9, 16), 3564.8]],
+      }
     }
     if (sql.includes('marts.facts_loss')) {
       return { columns: ['cause', 'value'], rows: v.loss }

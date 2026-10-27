@@ -14,6 +14,8 @@ import { describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
 import type { ChatMessage, StreamDelta, StreamOpts, StreamingChatModel } from './llm'
 import {
+  allowedNumbers,
+  badNumbers,
   generateNarrative,
   streamNarrative,
   templateOf,
@@ -67,6 +69,21 @@ function fakeModel(chunks: StreamDelta[]) {
   return { model, calls }
 }
 
+/** 多轮模型：第 n 次调用吐 rounds[n]（越界重试/失败恢复的判据）。 */
+function sequencedModel(rounds: StreamDelta[][]) {
+  const calls: { messages: ChatMessage[]; opts?: StreamOpts }[] = []
+  const model: StreamingChatModel & { id: string } = {
+    id: 'deepseek-flash',
+    complete: async () => ({ content: '', toolCalls: [] }),
+    async *completeStream(messages, _tools, opts) {
+      calls.push({ messages, opts })
+      const chunks = rounds[Math.min(calls.length - 1, rounds.length - 1)] ?? []
+      for (const c of chunks) yield c
+    },
+  }
+  return { model, calls }
+}
+
 /** 假池：缓存读按 seed 应答；写只记录（参数下标见 putNarrative 的列序）。 */
 function fakePool(seed?: { text: string; fallback: boolean; created_at: Date }) {
   const inserts: unknown[][] = []
@@ -107,6 +124,13 @@ async function collect(gen: AsyncGenerator<NarrativeEvent>): Promise<NarrativeEv
   return evs
 }
 
+describe('badNumbers（日期形态）', () => {
+  it('中文日期整段抹掉（10月13日 / 2026年10月16日 / 2026年10月 / 10月13号）', () => {
+    const allowed = allowedNumbers(facts)
+    expect(badNumbers('最低销售日为10月13日，最高为2026年10月16日；2026年10月整体平稳；10月13号。', allowed)).toEqual([])
+  })
+})
+
 describe('streamNarrative', () => {
   it('流式输出 phase → delta → done；数字合法；reasoning 不外泄', async () => {
     const { pool, inserts } = fakePool()
@@ -140,18 +164,39 @@ describe('streamNarrative', () => {
     expect(evs.at(-1)).toMatchObject({ type: 'done', fallback: false })
   })
 
-  it('越界数字 ⇒ replace 模板（number_check），done fallback', async () => {
+  it('越界数字 ⇒ 清屏重试一次；仍越界 ⇒ 模板（有模型时不缓存回退）', async () => {
     const { pool, inserts } = fakePool()
-    const { model } = fakeModel([{ content: '结论：销售额 99,999.99。' }])
+    const { model, calls } = fakeModel([{ content: '结论：销售额 99,999.99。' }])
     const evs = await collect(streamNarrative(depsOf(pool, { model })))
 
-    const replaced = evs.find((e) => e.type === 'replace')
-    expect(replaced).toMatchObject({ type: 'replace', reason: 'number_check' })
+    expect(calls).toHaveLength(2)
+    // 第一遍已向客户端吐过文本：重试前必须整段清空，不能两遍拼接
+    expect(evs).toContainEqual({ type: 'replace', text: '', reason: 'number_check' })
+    const replaces = evs.filter((e) => e.type === 'replace')
+    expect(replaces.at(-1)).toMatchObject({ type: 'replace', reason: 'number_check' })
     expect(evs.at(-1)).toMatchObject({ type: 'done', fallback: true })
     // done 的文本就是模板（客户端整段替换后看到的）
     const done = evs.at(-1)
     expect(done?.type === 'done' ? done.text : '').toBe(templateOf(facts))
-    expect(inserts[0][INSERT_FALLBACK]).toBe(true)
+    // 瞬时失败不再钉死整套缓存：下次观看会重新尝试模型
+    expect(inserts).toHaveLength(0)
+  })
+
+  it('首次越界、第二次合法 ⇒ 出 AI 文本（fallback=false），不写回退缓存', async () => {
+    const { pool, inserts } = fakePool()
+    const { model, calls } = sequencedModel([
+      [{ content: '结论：销售额 99,999.99。' }],
+      [{ content: '结论：销售额 51,273.89。\n异常：无。\n行动：核对明细。' }],
+    ])
+    const evs = await collect(streamNarrative(depsOf(pool, { model })))
+
+    expect(calls).toHaveLength(2)
+    expect(calls[1].messages[1]?.content).toContain('上一次输出包含 facts 之外的数字')
+    expect(evs).toContainEqual({ type: 'replace', text: '', reason: 'number_check' })
+    expect(evs.at(-1)).toMatchObject({ type: 'done', fallback: false })
+    expect(inserts).toHaveLength(1)
+    expect(inserts[0][INSERT_FALLBACK]).toBe(false)
+    expect(inserts[0][INSERT_TEXT]).toContain('51,273.89')
   })
 
   it('未配模型 ⇒ 直接模板，done fallback', async () => {
@@ -164,7 +209,7 @@ describe('streamNarrative', () => {
   })
 
   it('模型抛错 ⇒ replace(llm_failed) + done fallback，不长挂', async () => {
-    const { pool } = fakePool()
+    const { pool, inserts } = fakePool()
     const model: StreamingChatModel & { id: string } = {
       id: 'deepseek-flash',
       complete: async () => ({ content: '', toolCalls: [] }),
@@ -176,6 +221,8 @@ describe('streamNarrative', () => {
     const evs = await collect(streamNarrative(depsOf(pool, { model })))
     expect(evs.find((e) => e.type === 'replace')).toMatchObject({ reason: 'llm_failed' })
     expect(evs.at(-1)).toMatchObject({ type: 'done', fallback: true })
+    // 模型异常不缓存回退（瞬时故障下次观看重试）
+    expect(inserts).toHaveLength(0)
   })
 
   it('缓存命中 ⇒ 回放单段 delta + done.cached，且不调模型', async () => {
@@ -215,7 +262,8 @@ describe('generateNarrative', () => {
     expect(calls[1].messages[1]?.content).toContain('上一次输出包含 facts 之外的数字')
     expect(res).toMatchObject({ fallback: true, cached: false })
     expect(res.text).toBe(templateOf(facts))
-    expect(inserts[0][INSERT_FALLBACK]).toBe(true)
+    // 有模型时失败不缓存回退：下次观看必须重新尝试
+    expect(inserts).toHaveLength(0)
   })
 
   it('缓存命中 ⇒ 直接返回，不调模型', async () => {
@@ -236,12 +284,13 @@ describe('generateNarrative', () => {
   })
 
   it('空输出不算成功（不缓存空白）', async () => {
-    const { pool } = fakePool()
+    const { pool, inserts } = fakePool()
     const { model, calls } = fakeModel([{ reasoning: '想了很久' }])
     const res = await generateNarrative(depsOf(pool, { model }))
     expect(calls).toHaveLength(2)
     expect(res).toMatchObject({ fallback: true })
     expect(res.text).toBe(templateOf(facts))
+    expect(inserts).toHaveLength(0)
   })
 
   it('未配模型 ⇒ 模板', async () => {
@@ -264,5 +313,19 @@ describe('templateOf', () => {
     const text = templateOf(bare)
     expect(text).toContain('销售额 -')
     expect(text).toContain('数据截至 新鲜度未知。')
+  })
+
+  it('缺日极值/拆解时不留空括号（-（） / -（- -））', () => {
+    const bare: FactBundle = {
+      ...facts,
+      kpis: [],
+      breakdowns: [],
+      daily: { min: null, max: null },
+      dataAsOf: null,
+    }
+    const text = templateOf(bare)
+    expect(text).not.toContain('（）')
+    expect(text).not.toContain('（- -）')
+    expect(text).not.toContain('（-）')
   })
 })
