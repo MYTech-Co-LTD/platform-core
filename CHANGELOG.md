@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.210.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.210.1...v0.210.2) - 2026-10-27
+- 【修复】notify: worker 起只读 /healthz，镜像探活不再恒 unhealthy ([#1133](https://github.com/MYTech-Co-LTD/platform-core/pull/1133), [d3455d4](https://github.com/MYTech-Co-LTD/platform-core/commit/d3455d45db5de1e9abaf39401a8410d7bcfb26eb))
+
+
 ## [0.210.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.210.0...v0.210.1) - 2026-10-27
 - 【修复】notify: notify-worker 用自己的心跳做健康检查（不再继承 HTTP 探活） ([#1132](https://github.com/MYTech-Co-LTD/platform-core/pull/1132), [911762c](https://github.com/MYTech-Co-LTD/platform-core/commit/911762c356b4db8290df4f750729b08b7e704851))
 
