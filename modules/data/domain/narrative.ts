@@ -24,7 +24,7 @@ import {
 } from './report-narrative-store'
 
 /** 参与缓存键；**改提示词 = 升版本号**（旧缓存自然不再命中）。 */
-export const NARRATIVE_PROMPT_VERSION = 'narrative-v3'
+export const NARRATIVE_PROMPT_VERSION = 'narrative-v4'
 
 /** 与 spec §4.1 同形的 SSE 事件。`replace` 表示「已流出的内容作废」，客户端必须整段替换。 */
 export type NarrativeEvent =
@@ -69,6 +69,7 @@ export interface NarrativeDeps {
 
 const SYSTEM = [
   '你是门店经营分析助手。只能使用 facts 中的数字和项目名；不得编造、不得做 facts 之外的算术；缺失写 "-"。',
+  '数字必须逐字复制 facts.numbers 中的字符串（包括负号、千分位、百分号、小数位）；不得改写符号、去掉负号、取绝对值或做四舍五入。',
   '输出三段，纯文本，不要 Markdown 表格/HTML：',
   '结论：…',
   '异常：…',
@@ -333,7 +334,7 @@ export async function generateNarrative(deps: NarrativeDeps): Promise<NarrativeR
             },
           ],
           [],
-          { temperature: 0.2, maxTokens: 1500, signal: AbortSignal.timeout(30000) },
+          { temperature: 0, maxTokens: 1500, signal: AbortSignal.timeout(30000) },
         )) {
           // reason 只用于进度感，不进正文（不读即不泄）
           if (d.content !== undefined) text += d.content
@@ -459,7 +460,7 @@ export async function* streamNarrative(
           },
         ],
         [],
-        { temperature: 0.2, maxTokens: 1500, signal: controller.signal },
+        { temperature: 0, maxTokens: 1500, signal: controller.signal },
       )) {
         if (d.content === undefined) continue // reasoning 不展示、也不拼进正文
         if (!sawContent) {
