@@ -1,10 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { collectHolders, shortName } from './audit-permission-holders-lib.mjs'
+import { collectHolders, isServiceAccount, SERVICE_ACCOUNTS, shortName } from './audit-permission-holders-lib.mjs'
 
 describe('shortName', () => {
   it('全形取最后一段，短名原样', () => {
     expect(shortName('org/alice')).toBe('alice')
     expect(shortName('alice')).toBe('alice')
+  })
+})
+
+describe('服务账号名单', () => {
+  it('tenantsub / casdoor-user-1 是机器身份；普通同步账号不是', () => {
+    expect(isServiceAccount('tenantsub')).toBe(true)
+    expect(isServiceAccount('mytech/tenantsub')).toBe(true)
+    expect(isServiceAccount('casdoor-user-1')).toBe(true)
+    expect(isServiceAccount('mytech/casdoor-user-1')).toBe(true)
+    expect(isServiceAccount('ZhangDuo')).toBe(false)
+    expect(isServiceAccount('SunPing01')).toBe(false)
+  })
+
+  it('名单是显式常量（新增机器身份必须改这里，不靠命名规律猜）', () => {
+    expect([...SERVICE_ACCOUNTS].sort()).toEqual(['casdoor-user-1', 'tenantsub'])
   })
 })
 
