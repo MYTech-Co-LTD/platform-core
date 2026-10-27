@@ -889,7 +889,12 @@ git commit -m "feat(server): 装载器三阶段与通知注入"
 - Modify: `modules/notify/migrations.test.ts`
 
 **Interfaces:**
-- Produces: `notify.rule/template/template_revision/channel/event/delivery/delivery_attempt/inbox`
+- Produces: `notify.rule_v2/template/template_revision/channel/event/delivery_v2/delivery_attempt/inbox`
+
+> **expand/contract（2026-10-27 人拍板）**：Task 15 之前**保留**旧 `notify.rule` / `notify.delivery`，
+> 新表用 `rule_v2` / `delivery_v2`，旧代码/旧测试保持绿。Task 8–14 的新代码里凡是
+> `notify.rule` / `notify.delivery` **一律写 `_v2` 版本**；Task 15 做 contract（drop 旧表 + rename）。
+> 本计划后续代码片段为了可读性写的是**最终名**，执行时按这条规则加 `_v2`。
 
 - [ ] **Step 1: 写迁移**
 
@@ -2204,6 +2209,8 @@ git commit -m "feat(aftersales): 员工审批事件与默认通知"
 > `scripts/notify-reconcile.mjs` 仍 import 旧 `emit`/`novuFromEnv`，必须同批迁移。
 
 **Files:**
+- Create: `modules/notify/migrations/003_notify_contract.sql`
+- Modify: `modules/notify/migrations.test.ts`（最终只剩 v2 表名）
 - Delete: `modules/notify/pipeline.ts`、`pipeline.test.ts`、`domain/derive.ts`、`domain/derive.test.ts`、
   `domain/novu.ts`、`domain/novu.test.ts`、`novu/`（整目录）、`mcp.ts`、`mcp.test.ts`、`console/`（整目录）
 - Modify: `modules/notify/manifest.yaml`（去掉 `frontend.console`；权限码补齐）
@@ -2211,6 +2218,32 @@ git commit -m "feat(aftersales): 员工审批事件与默认通知"
 - Modify: `scripts/notify-reconcile.mjs`、`scripts/notify-reconcile.test.ts`
 - Modify: `modules/forms/manifest.yaml`（声明两个事件）
 - Modify: `deploy/notify-reconcile-job.md`（退出码语义）
+
+- [ ] **Step 0: contract（drop 旧表 + rename `_v2`，新迁移 `003_notify_contract.sql`）**
+
+```sql
+-- 幂等：只在旧表存在时 drop，只在 _v2 存在且最终名不存在时 rename
+do $$
+begin
+  if to_regclass('notify.rule') is not null then drop table notify.rule; end if;
+  if to_regclass('notify.delivery') is not null then drop table notify.delivery; end if;
+  if to_regclass('notify.rule_v2') is not null and to_regclass('notify.rule') is null then
+    alter table notify.rule_v2 rename to rule;
+  end if;
+  if to_regclass('notify.delivery_v2') is not null and to_regclass('notify.delivery') is null then
+    alter table notify.delivery_v2 rename to delivery;
+  end if;
+  if to_regclass('notify.idx_notify_rule_v2_match') is not null then
+    alter index notify.idx_notify_rule_v2_match rename to idx_notify_rule_match;
+  end if;
+  if to_regclass('notify.idx_notify_delivery_v2_due') is not null then
+    alter index notify.idx_notify_delivery_v2_due rename to idx_notify_delivery_due;
+  end if;
+end $$;
+```
+
+然后全仓把新代码 / seed / worker 里的 `notify.rule_v2` / `notify.delivery_v2` 改回最终名
+（`rg 'rule_v2|delivery_v2'` 应为零；测试里的迁移断言同步改）。
 
 - [ ] **Step 1: 删除旧文件并重生成 console registry**
 
