@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.207.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.8...v0.207.0) - 2026-10-27
+- 【新增】notify: 租户级通知基础设施（P0+P1） ([#1120](https://github.com/MYTech-Co-LTD/platform-core/pull/1120), [0003a54](https://github.com/MYTech-Co-LTD/platform-core/commit/0003a546c839ed8743bb638e4fe19dd04f190757))
+
+
 ## [0.206.8](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.7...v0.206.8) - 2026-10-27
 - 【修复】ops: 权限持有者审计脚本展开角色授权 ([#1122](https://github.com/MYTech-Co-LTD/platform-core/pull/1122), [08e6984](https://github.com/MYTech-Co-LTD/platform-core/commit/08e69841806ee580e2701976f76b7c69e5c83e0e))
 
