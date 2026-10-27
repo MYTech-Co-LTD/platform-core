@@ -701,6 +701,20 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 - MCP：12 个工具（发现 / 规则 / 草稿 / 预览 / 回执 / 自测），**无 publish/channel 工具**；
   写操作落 `notify.audit`。
 
+#### 收口（P3，2026-10-28 交付）
+
+- **`webhook` 通道**：只允许 https；拒绝私网/回环/链路本地/元数据地址（字面量 + DNS 解析后双重校验）；
+  **不跟随重定向**；超时 5s；body ≤ 32KB；带 `X-Notify-Signature`（HMAC-SHA256 over `ts.body`）与
+  `X-Notify-Timestamp`。目标 URL 与密钥只在 env（`NOTIFY_WEBHOOK_URL__<ORG>__<CHANNEL>` /
+  `NOTIFY_WEBHOOK_KEY__<ORG>__<CHANNEL>`）。
+- **每通道限流**：`notify.channel.config.rate_limit_per_min` 真正执行（窗口内 `sent` 计数）；
+  命中即顺延一个窗口，回执记 `channel_rate_limited`。缺省 0 = 不限。
+- **健康面**：`notify-health` 除 dead/积压/心跳外，还报 `oldestPendingSeconds` / `failedLastHour` /
+  `channelErrors`（近 1 小时失败 > 50 判红）。
+- **保留期**：`notify-retention` job（每日）清 `inbox` 90 天 / `delivery_attempt` 180 天 /
+  `delivery` 365 天，**只删终态**。两个 job 的口径见 `deploy/notify-jobs.md`。
+- **收件箱**：`POST /inbox/read-all` 批量已读（只作用于调用者本人）。
+
 #### 实施注记
 
 - 竖切：aftersales 员工审批（`aftersales.employee_approval.pending`）；五条负对照见 spec §13.3。

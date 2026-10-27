@@ -56,6 +56,8 @@ export type WorkerDeps = {
     now: Date,
   ): Promise<boolean>
   send(d: DeliveryRow): Promise<ProviderResult>
+  /** 通道限流：返回剩余等待毫秒；null = 放行。未注入 = 不限流。 */
+  channelRateLimited?(org: string, channel: string, now: Date): Promise<number | null>
 }
 
 /** 退避：30s / 2m / 10m / 30m（±20% 抖动）；attempt 从 1 起 */
@@ -174,6 +176,16 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
   let dead = 0
 
   for (const d of due) {
+    const wait = deps.channelRateLimited
+      ? await deps.channelRateLimited(d.org, d.channel, deps.now())
+      : null
+    if (wait !== null) {
+      await deps.markDeliveryFailed(
+        d, 'channel_rate_limited', new Date(deps.now().getTime() + wait))
+      failed++
+      continue
+    }
+
     const res = await deps.send(d)
     await deps.insertAttempt(d, res)
     if (res.ok) {

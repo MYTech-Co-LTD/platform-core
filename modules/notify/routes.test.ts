@@ -230,6 +230,43 @@ describePg('routes v2', () => {
     expect(res.status).toBe(403)
   })
 
+  it('POST /inbox/read-all 只标记自己的', async () => {
+    await pool.query(
+      `insert into notify.inbox(org,id,recipient,event_id,event_key,template_key,revision,title,body)
+       values ($1,'i1','u1','e1','m.a.b','t1',1,'T','B'),
+              ($1,'i2','u1','e2','m.a.b','t1',1,'T','B'),
+              ($1,'i3','other','e3','m.a.b','t1',1,'T','B')`, [ORG])
+
+    const res = await app.request('/inbox/read-all', { method: 'POST' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ marked: 2 })
+
+    const { rows } = await pool.query(
+      `select recipient, count(*) filter (where read_at is not null)::int n
+         from notify.inbox where org=$1 group by recipient order by recipient`, [ORG])
+    expect(rows).toEqual([
+      { recipient: 'other', n: 0 },
+      { recipient: 'u1', n: 2 },
+    ])
+  })
+
+  it('webhook 通道健康：env 未配 ⇒ error（不假装 ok）', async () => {
+    await pool.query('delete from notify.channel where org=$1', [ORG])
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'webhook_ops','webhook',true,'{}',
+               '{"url":"NOTIFY_WEBHOOK_URL__NOPE__OPS","key":"NOTIFY_WEBHOOK_KEY__NOPE__OPS"}','u')`,
+      [ORG])
+
+    const res = await app.request('/channels/webhook_ops/health', { method: 'POST' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ok: false })
+
+    const { rows } = await pool.query(
+      "select health from notify.channel where org=$1 and id='webhook_ops'", [ORG])
+    expect(String(rows[0].health)).toMatch(/^error/)
+  })
+
   it('投递重试：仅 failed/dead 可重试', async () => {
     await pool.query(
       `insert into notify.delivery

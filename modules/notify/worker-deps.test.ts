@@ -3,6 +3,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations, makeIdentity } from './test-util'
 import { buildWorkerDeps } from './worker-deps'
+import { isForbiddenHost } from './domain/net-guard'
 import type { DeliveryRow } from './storage'
 
 const url = process.env.DATABASE_URL
@@ -78,6 +79,51 @@ describePg('buildWorkerDeps', () => {
     expect(r).toEqual({ ok: true })
     const { rows } = await pool.query('select title,body from notify.inbox where org=$1', [ORG])
     expect(rows[0]).toEqual({ title: 'T', body: 'B' })
+  })
+
+  it('webhook：从 secret_refs 取 url/key 并发送', async () => {
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'webhook_ops','webhook',true,'{}',
+               '{"url":"NOTIFY_WEBHOOK_URL__ORG_WD2__OPS","key":"NOTIFY_WEBHOOK_KEY__ORG_WD2__OPS"}','u')`,
+      [ORG])
+
+    const deps = buildWorkerDeps(pool, async () => null, {
+      NOTIFY_WEBHOOK_URL__ORG_WD2__OPS: 'https://hooks.example.com/x',
+      NOTIFY_WEBHOOK_KEY__ORG_WD2__OPS: 'secret',
+    }, async () => ['93.184.216.34'])
+
+    let captured: { url: string; body: string } | null = null
+    const orig = globalThis.fetch
+    globalThis.fetch = (async (u: string | URL | Request, init?: RequestInit) => {
+      captured = { url: String(u), body: String(init?.body) }
+      return new Response(null, { status: 204 })
+    }) as typeof fetch
+    try {
+      const r = await deps.send(row({
+        channel: 'webhook_ops', address: '', rendered: { text: 'hello' },
+      }))
+      expect(r).toEqual({ ok: true })
+      expect(captured!.url).toBe('https://hooks.example.com/x')
+      expect(captured!.body).toContain('"rendered":{"text":"hello"}')
+    } finally {
+      globalThis.fetch = orig
+    }
+  })
+
+  it('webhook：私网 URL ⇒ permanent，不外发', async () => {
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'webhook_intranet','webhook',true,'{}',
+               '{"url":"NOTIFY_WEBHOOK_URL__ORG_WD2__IN","key":"NOTIFY_WEBHOOK_KEY__ORG_WD2__IN"}','u')`,
+      [ORG])
+    const deps = buildWorkerDeps(pool, async () => null, {
+      NOTIFY_WEBHOOK_URL__ORG_WD2__IN: 'https://10.0.0.7/hook',
+      NOTIFY_WEBHOOK_KEY__ORG_WD2__IN: 'secret',
+    })
+    const r = await deps.send(row({ channel: 'webhook_intranet', address: '' }))
+    expect(r).toMatchObject({ ok: false, kind: 'permanent', code: 'unsafe_url' })
+    expect(isForbiddenHost('10.0.0.7')).toBe(true)
   })
 
   it('scope_holders v1 返回空（literal 兜底）', async () => {

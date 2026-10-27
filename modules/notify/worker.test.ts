@@ -137,6 +137,19 @@ describe('runOnce', () => {
     expect((await runOnce(last.deps)).dead).toBe(1)
   })
 
+  it('通道达上限 ⇒ 不发送，delivery 顺延（failed + retryAfter）', async () => {
+    const f = makeDeps({
+      claimDueDeliveries: async () => [dueRow()],
+      channelRateLimited: async () => 12_000,
+    })
+    const s = await runOnce(f.deps)
+    expect(s.sent).toBe(0)
+    expect(f.sent).toHaveLength(0)
+    expect(f.failed[0]!.msg).toBe('channel_rate_limited')
+    expect(f.failed[0]!.at.getTime())
+      .toBe(new Date('2026-01-01T00:00:00Z').getTime() + 12_000)
+  })
+
   it('成功发送 ⇒ sent 回执', async () => {
     const f = makeDeps({ claimDueDeliveries: async () => [dueRow()] })
     expect((await runOnce(f.deps)).sent).toBe(1)

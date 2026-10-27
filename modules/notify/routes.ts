@@ -6,7 +6,7 @@ import { Hono } from 'hono'
 import type { Pool } from 'pg'
 import type { ChannelAddressResolver, EventCatalogReader, Identity } from '@platform/sdk'
 import { validatePayload } from '@platform/sdk'
-import { checkWecomHealth } from './domain/channel'
+import { checkWecomHealth, checkWebhookHealth } from './domain/channel'
 import { renderContents } from './domain/render'
 import { validateRule } from './domain/rules'
 import { validateContents } from './domain/template'
@@ -15,7 +15,7 @@ import {
   audit, channelConfigured, countRecentTestDeliveries, createTemplateRevision,
   deleteRule, enqueueEvent, getChannel, getTemplate, insertDelivery, listChannels,
   listDeliveries, listEnabledChannelIds, listInbox, listPublishedTemplateKeys, listRules,
-  listTemplates, markInboxRead, patchChannel, publishTemplateRevision, retryDelivery,
+  listTemplates, markAllInboxRead, markInboxRead, patchChannel, publishTemplateRevision, retryDelivery,
   setChannelHealth, setRuleEnabled, upsertRule,
 } from './storage'
 
@@ -130,6 +130,12 @@ export function createNotifyRouter(deps: {
     const identity = c.get('identity') as Identity
     const unread = c.req.query('unread') === '1'
     return c.json({ items: await listInbox(deps.pool, identity.orgId, identity.userId, unread) })
+  })
+
+  r.post('/inbox/read-all', async (c) => {
+    const identity = c.get('identity') as Identity
+    const marked = await markAllInboxRead(deps.pool, identity.orgId, identity.userId)
+    return c.json({ marked })
   })
 
   r.post('/inbox/:id/read', async (c) => {
@@ -267,6 +273,14 @@ export function createNotifyRouter(deps: {
       result = bridgeUrl
         ? await checkWecomHealth(bridgeUrl)
         : { ok: false, detail: 'bridge_url env 未配置' }
+    } else if (ch.provider === 'webhook') {
+      const urlKey = ch.secret_refs.url
+      const keyKey = ch.secret_refs.key
+      const hookUrl = urlKey ? process.env[urlKey] : undefined
+      const hookSecret = keyKey ? process.env[keyKey] : undefined
+      result = hookUrl && hookSecret
+        ? await checkWebhookHealth({ url: hookUrl, key: hookSecret })
+        : { ok: false, detail: 'webhook url/key env 未配置' }
     }
     await setChannelHealth(deps.pool, org(c), ch.id, result.ok ? 'ok' : 'error', result.detail)
     return c.json(result)

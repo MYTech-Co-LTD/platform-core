@@ -1,7 +1,7 @@
 // templates.test.tsx — 模板编辑/预览/版本/发布
 import '@testing-library/jest-dom/vitest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { message } from 'antd'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
@@ -10,6 +10,7 @@ import TemplatesTab from './templates'
 import { fetchMock, json, routeFetch } from './test-util'
 
 beforeEach(() => {
+  cleanup()
   fetchMock.mockReset()
   // antd message 会起 3s 定时器；测试拆除后触发会被报成 unhandled error
   vi.spyOn(message, 'success').mockImplementation(() => (() => {}) as never)

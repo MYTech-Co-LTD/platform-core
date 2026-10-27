@@ -5,6 +5,8 @@ import type { NotificationEventDecl } from '@platform/sdk'
 import { createChannelAddressResolver } from '../../apps/server/src/channel-address'
 import { sendInApp } from './providers/in-app'
 import { sendWecom } from './providers/wecom'
+import { rateLimitVerdict } from './domain/rate-limit'
+import { sendWebhook } from './providers/webhook'
 import * as storage from './storage'
 import { runOnce, type WorkerDeps, type WorkerStats } from './worker'
 
@@ -15,6 +17,8 @@ export function buildWorkerDeps(
   pool: Pool,
   getEventDecl: EventDeclLoader,
   env: NodeJS.ProcessEnv = process.env,
+  /** 测试注入：webhook 的 DNS 解析（缺省 = 真 lookup）。生产不需要传。 */
+  resolveHost?: (host: string) => Promise<string[]>,
 ): WorkerDeps {
   const addresses = createChannelAddressResolver({ pool })
 
@@ -47,6 +51,16 @@ export function buildWorkerDeps(
     resolveAddress: (input) => addresses.resolve(input),
     isCoolingDown: (org, rule, recipient, now) =>
       storage.isCoolingDown(pool, org, rule, recipient, now),
+    channelRateLimited: async (org, channel) => {
+      const ch = await storage.getChannel(pool, org, channel)
+      const limit = typeof ch?.config.rate_limit_per_min === 'number'
+        ? ch.config.rate_limit_per_min
+        : 0
+      if (limit <= 0) return null
+      const sent = await storage.countChannelSends(pool, org, channel, 60)
+      const v = rateLimitVerdict(sent, limit)
+      return v.allow ? null : v.retryAfterMs
+    },
     send: async (d) => {
       const ch = await storage.getChannel(pool, d.org, d.channel)
       if (!ch || !ch.enabled) {
@@ -73,6 +87,22 @@ export function buildWorkerDeps(
           bridgeUrl: secrets.bridge_url,
           to: d.address,
           content: d.rendered.text ?? '',
+        })
+      }
+      if (ch.provider === 'webhook') {
+        return sendWebhook({
+          url: secrets.url,
+          secret: secrets.key,
+          payload: {
+            eventId: d.eventId,
+            eventKey: d.eventKey,
+            recipient: d.recipient,
+            templateKey: d.templateKey,
+            revision: d.revision,
+            rendered: d.rendered,
+          },
+          timeoutMs: typeof ch.config.timeout_ms === 'number' ? ch.config.timeout_ms : undefined,
+          resolveHost,
         })
       }
       return { ok: false, kind: 'permanent', code: 'provider_unsupported', summary: ch.provider }
