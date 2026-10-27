@@ -692,6 +692,15 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 - 所有业务表 `org text not null` 首列；org 只来自 identity。
 - 明确不做：邮件 / 短信 / digest / 条件规则 / 多级路由 / 偏好中心 / 消息队列。
 
+#### 产品面（P2，2026-10-27 交付）
+
+- console `/console/notify` 六区：事件目录 / 规则 / 模板 / 通道 / 投递 / 收件箱。
+- 模板：草稿 → 预览（**与投递同一渲染函数**）→ 发布/回滚；发布需 `notify:publish`。
+- 通道：启停 / 非敏感配置 / 健康检查；密钥只显示 env 键名，**不回显值**。
+- 测试发送：收件人强制 = 当前登录人；不提供「发给别人」的 UI/工具。
+- MCP：12 个工具（发现 / 规则 / 草稿 / 预览 / 回执 / 自测），**无 publish/channel 工具**；
+  写操作落 `notify.audit`。
+
 #### 实施注记
 
 - 竖切：aftersales 员工审批（`aftersales.employee_approval.pending`）；五条负对照见 spec §13.3。

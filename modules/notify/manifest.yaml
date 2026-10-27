@@ -23,5 +23,25 @@ api:
     - { method: POST,   path: /emit,              scope: notify:emit }
     - { method: GET,    path: /inbox,             scope: notify:view }
     - { method: POST,   path: /inbox/:id/read,    scope: notify:view }
+    # 事件目录（只读；来自宿主注入的 reader）
+    - { method: GET,    path: /events,                  scope: notify:view }
+    - { method: GET,    path: /events/:key,             scope: notify:view }
+    # 模板：草稿/预览/发布
+    - { method: GET,    path: /templates,               scope: notify:view }
+    - { method: GET,    path: /templates/:key,          scope: notify:view }
+    - { method: POST,   path: /templates/:key/revisions,scope: notify:manage }
+    - { method: POST,   path: /templates/:key/preview,  scope: notify:manage }
+    - { method: POST,   path: /templates/:key/publish,  scope: notify:publish }
+    # 通道：列表/配置/健康
+    - { method: GET,    path: /channels,                scope: notify:view }
+    - { method: PATCH,  path: /channels/:id,            scope: notify:channel }
+    - { method: POST,   path: /channels/:id/health,     scope: notify:manage }
+    # 测试发送（只发给自己）/ 手动重试
+    - { method: POST,   path: /test-send,               scope: notify:manage }
+    - { method: POST,   path: /deliveries/retry,        scope: notify:manage }
+    # 管理面 MCP（agent）：工具清单见 mcp-tools.ts；无 publish/channel 工具
+    - { method: POST,   path: /mcp-manage,              scope: notify:manage }
+frontend:
+  console:
+    - { path: /console/notify, title: 通知, icon: BellOutlined, scope: notify:view, entry: ./console/index.tsx }
 migrations: { dir: ./migrations }
-# frontend.console 在 P2 重建（事件目录/规则/模板/通道/投递/收件箱五区）；P1 先摘掉半成品入口。

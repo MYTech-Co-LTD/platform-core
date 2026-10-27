@@ -56,8 +56,9 @@ Casdoor 后台运营，租户管理员在 console 自建页管理——spec D4 �
 11. **测试替身必须收严到真机形状**（#50/#51 教训）：mock 接受比真机宽松的形状 = 缺陷结构性
     不可见；mock-casdoor 的端点形状以真机实测为准，别按想象放宽。
 12. **通知事件先声明再发**：模块必须在 manifest `notifications.events` 声明事件；`ctx.notify.emit`
-    的返回**不参与业务分支**（fail-open）；通道密钥只在 env（DB 只存键名）。正典见
-    `docs/architecture.md` §2.6 与 `docs/module-protocol.md`「通知事件声明」。
+    的返回**不参与业务分支**（fail-open）；通道密钥只在 env（DB 只存键名）；模板预览与投递共用
+    同一渲染函数；所有写操作落 `notify.audit`。正典见 `docs/architecture.md` §2.6 与
+    `docs/module-protocol.md`「通知事件声明」。
 
 ## 命令 / 门禁 / 部署（指针）
 

@@ -3,8 +3,10 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from './test-util'
 import {
-  claimDueDeliveries, deleteRule, enqueueEvent, getPublishedTemplate, isCoolingDown,
-  listRules, markDeliverySent, setRuleEnabled, upsertRule,
+  audit, channelConfigured, claimDueDeliveries, createTemplateRevision, deleteRule,
+  enqueueEvent, getPublishedTemplate, getTemplate, isCoolingDown, listChannels,
+  listRules, markDeliverySent, patchChannel, publishTemplateRevision,
+  setChannelHealth, setRuleEnabled, upsertRule,
 } from './storage'
 
 const url = process.env.DATABASE_URL
@@ -30,6 +32,17 @@ describePg('notify storage v2', () => {
     await pool.query('delete from notify.delivery where org=$1', [ORG])
     await pool.query('delete from notify.template_revision where org=$1', [ORG])
     await pool.query('delete from notify.template where org=$1', [ORG])
+    await pool.query('delete from notify.audit where org=$1', [ORG])
+    await pool.query('delete from notify.channel where org=$1', [ORG])
+  }
+
+  async function seedTemplate() {
+    await pool.query(
+      `insert into notify.template(org,key,name,event_key,status,origin,published_revision,created_by)
+       values ($1,'t1','T','m.a.b','published','tenant',1,'u')`, [ORG])
+    await pool.query(
+      `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
+       values ($1,'t1',1,'{"wecom_chat":{"text":"v1"}}','h1','approved','u')`, [ORG])
   }
 
   it('enqueueEvent 幂等（同 org+event_id 第二次 duplicate）', async () => {
@@ -89,6 +102,54 @@ describePg('notify storage v2', () => {
 
     await pool.query("update notify.template set status='draft' where org=$1 and key='t1'", [ORG])
     expect(await getPublishedTemplate(pool, ORG, 't1')).toBeNull()
+  })
+
+  it('草稿追加 revision；发布移动指针；旧版本可回滚', async () => {
+    await seedTemplate()
+    expect((await getTemplate(pool, ORG, 't1'))!.publishedRevision).toBe(1)
+
+    const d1 = await createTemplateRevision(pool, ORG, 't1', { wecom_chat: { text: 'v2' } }, 'u')
+    expect(d1.revision).toBe(2)
+    await publishTemplateRevision(pool, ORG, 't1', 2, 'publisher')
+
+    const t1 = await getTemplate(pool, ORG, 't1')
+    expect(t1!.publishedRevision).toBe(2)
+    expect(t1!.revisions.find((r) => r.revision === 2)!.reviewStatus).toBe('approved')
+
+    await publishTemplateRevision(pool, ORG, 't1', 1, 'publisher')
+    expect((await getTemplate(pool, ORG, 't1'))!.publishedRevision).toBe(1)
+  })
+
+  it('通道：list 只回 env 键名；patch 合并 config 并审计；health 写入', async () => {
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'wecom_default','wecom_chat',true,'{"address_fallback":"none"}',
+               '{"bridge_url":"WECOM_BRIDGE_URL__X"}','u')`, [ORG])
+
+    const list = await listChannels(pool, ORG)
+    expect(list[0]).toMatchObject({ id: 'wecom_default', provider: 'wecom_chat', enabled: true })
+    expect(list[0]!.secretRefs).toEqual({ bridge_url: 'WECOM_BRIDGE_URL__X' })
+    expect(channelConfigured(list[0]!.secretRefs, {})).toBe(false)
+    expect(channelConfigured(list[0]!.secretRefs, { WECOM_BRIDGE_URL__X: 'v' })).toBe(true)
+
+    expect(await patchChannel(pool, ORG, 'wecom_default',
+      { enabled: false, config: { rate_limit_per_min: 10 } }, 'u')).toBe(1)
+    const after = (await listChannels(pool, ORG))[0]!
+    expect(after.enabled).toBe(false)
+    expect(after.config).toMatchObject({ address_fallback: 'none', rate_limit_per_min: 10 })
+
+    await setChannelHealth(pool, ORG, 'wecom_default', 'ok')
+    expect((await listChannels(pool, ORG))[0]!.health).toBe('ok')
+    const a = await pool.query(
+      'select action from notify.audit where org=$1 order by id desc limit 1', [ORG])
+    expect(a.rows[0].action).toBe('channel.patch')
+  })
+
+  it('审计行落库', async () => {
+    await audit(pool, ORG, 'u1', 'template.publish', 't1', { revision: 2 })
+    const { rows } = await pool.query(
+      'select action,target,detail from notify.audit where org=$1 order by id desc limit 1', [ORG])
+    expect(rows[0]).toMatchObject({ action: 'template.publish', target: 't1', detail: { revision: 2 } })
   })
 
   it('冷却：窗口内有 sent 才抑制；无 cooldown 恒 false', async () => {

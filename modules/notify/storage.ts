@@ -1,5 +1,6 @@
 // storage-v2.ts — 新通知存储层（expand 阶段：rule/delivery 用 _v2 表名，Task 15 rename）。
 // 纪律：org 一律由调用方传入；SQL 一律 where org=$1；本层不读请求/身份。
+import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import type { EnqueueEventInput } from '@platform/sdk'
 import type { NotificationRule } from './domain/rules'
@@ -165,6 +166,124 @@ export async function getPublishedTemplate(
     : null
 }
 
+// ── 模板管理（P2）──────────────────────────────────────────────────────────────
+
+export type TemplateSummary = {
+  key: string
+  name: string
+  eventKey: string
+  status: string
+  origin: string
+  publishedRevision: number | null
+  updatedAt: string
+}
+
+export type TemplateRevision = {
+  revision: number
+  contents: Record<string, Record<string, string>>
+  bodyHash: string
+  reviewStatus: string
+  createdBy: string
+  createdAt: string
+}
+
+export type TemplateDetail = TemplateSummary & { revisions: TemplateRevision[] }
+
+export async function listTemplates(pool: Pool, org: string): Promise<TemplateSummary[]> {
+  const { rows } = await pool.query(
+    `select key,name,event_key,status,origin,published_revision,updated_at
+       from notify.template where org=$1 order by key`, [org])
+  return rows.map((r) => ({
+    key: r.key,
+    name: r.name,
+    eventKey: r.event_key,
+    status: r.status,
+    origin: r.origin,
+    publishedRevision: r.published_revision,
+    updatedAt: (r.updated_at as Date).toISOString(),
+  }))
+}
+
+export async function getTemplate(
+  pool: Pool, org: string, key: string,
+): Promise<TemplateDetail | null> {
+  const t = await pool.query(
+    `select key,name,event_key,status,origin,published_revision,updated_at
+       from notify.template where org=$1 and key=$2`, [org, key])
+  if (!t.rows[0]) return null
+
+  const revs = await pool.query(
+    `select revision,contents,body_hash,review_status,created_by,created_at
+       from notify.template_revision where org=$1 and key=$2 order by revision desc`, [org, key])
+  const r = t.rows[0]
+  return {
+    key: r.key,
+    name: r.name,
+    eventKey: r.event_key,
+    status: r.status,
+    origin: r.origin,
+    publishedRevision: r.published_revision,
+    updatedAt: (r.updated_at as Date).toISOString(),
+    revisions: revs.rows.map((x) => ({
+      revision: x.revision,
+      contents: x.contents,
+      bodyHash: x.body_hash,
+      reviewStatus: x.review_status,
+      createdBy: x.created_by,
+      createdAt: (x.created_at as Date).toISOString(),
+    })),
+  }
+}
+
+export async function createTemplateRevision(
+  pool: Pool,
+  org: string,
+  key: string,
+  contents: Record<string, Record<string, string>>,
+  actor: string,
+): Promise<{ revision: number }> {
+  const bodyHash = createHash('sha256').update(JSON.stringify(contents)).digest('hex').slice(0, 16)
+  const { rows } = await pool.query<{ max: number }>(
+    'select coalesce(max(revision),0)::int as max from notify.template_revision where org=$1 and key=$2',
+    [org, key])
+  const revision = Number(rows[0]!.max) + 1
+  await pool.query(
+    `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
+     values ($1,$2,$3,$4::jsonb,$5,'draft',$6)`,
+    [org, key, revision, JSON.stringify(contents), bodyHash, actor])
+  await pool.query('update notify.template set updated_at=now() where org=$1 and key=$2', [org, key])
+  return { revision }
+}
+
+export async function publishTemplateRevision(
+  pool: Pool,
+  org: string,
+  key: string,
+  revision: number,
+  actor: string,
+): Promise<void> {
+  await pool.query(
+    `update notify.template_revision
+        set review_status='approved', approved_by=$4, approved_at=now()
+      where org=$1 and key=$2 and revision=$3`, [org, key, revision, actor])
+  await pool.query(
+    `update notify.template set status='published', published_revision=$3, updated_at=now()
+      where org=$1 and key=$2`, [org, key, revision])
+}
+
+export async function audit(
+  pool: Pool,
+  org: string,
+  actor: string,
+  action: string,
+  target: string,
+  detail: Record<string, unknown> = {},
+): Promise<void> {
+  await pool.query(
+    `insert into notify.audit(org,actor,action,target,detail) values ($1,$2,$3,$4,$5::jsonb)`,
+    [org, actor, action, target, JSON.stringify(detail)])
+}
+
 export type ChannelRow = {
   org: string
   id: string
@@ -181,6 +300,67 @@ export async function getChannel(pool: Pool, org: string, id: string): Promise<C
     [org, id],
   )
   return (rows[0] as ChannelRow | undefined) ?? null
+}
+
+// ── 通道管理（P2）──────────────────────────────────────────────────────────────
+
+export type ChannelView = {
+  id: string
+  provider: string
+  enabled: boolean
+  config: Record<string, unknown>
+  secretRefs: Record<string, string>
+  health: string | null
+  healthAt: string | null
+}
+
+export async function listChannels(pool: Pool, org: string): Promise<ChannelView[]> {
+  const { rows } = await pool.query(
+    `select id,provider,enabled,config,secret_refs,health,health_at
+       from notify.channel where org=$1 order by id`, [org])
+  return rows.map((r) => ({
+    id: r.id,
+    provider: r.provider,
+    enabled: r.enabled,
+    config: r.config,
+    secretRefs: r.secret_refs,
+    health: r.health,
+    healthAt: r.health_at ? (r.health_at as Date).toISOString() : null,
+  }))
+}
+
+/** 该通道的每个 secret_refs env 键在当前进程 env 都有值 ⇒ configured */
+export function channelConfigured(
+  secretRefs: Record<string, string>,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return Object.values(secretRefs).every((k) => !!env[k])
+}
+
+export async function patchChannel(
+  pool: Pool,
+  org: string,
+  id: string,
+  patch: { enabled?: boolean; config?: Record<string, unknown> },
+  actor: string,
+): Promise<number> {
+  const r = await pool.query(
+    `update notify.channel set
+       enabled = coalesce($3, enabled),
+       config = case when $4::jsonb is null then config else config || $4::jsonb end,
+       updated_at = now()
+     where org=$1 and id=$2`,
+    [org, id, patch.enabled ?? null, patch.config ? JSON.stringify(patch.config) : null])
+  if ((r.rowCount ?? 0) > 0) await audit(pool, org, actor, 'channel.patch', id, patch)
+  return r.rowCount ?? 0
+}
+
+export async function setChannelHealth(
+  pool: Pool, org: string, id: string, health: string, detail?: string,
+): Promise<void> {
+  await pool.query(
+    'update notify.channel set health=$3, health_at=now(), updated_at=now() where org=$1 and id=$2',
+    [org, id, detail ? `${health}:${detail}` : health])
 }
 
 /** 规则校验用：本 org 已启用的通道 id 集合 */
@@ -211,17 +391,18 @@ export type InsertDeliveryInput = {
   revision: number
   rendered: unknown
   status: 'pending' | 'suppressed' | 'dead'
+  isTest?: boolean
   lastError?: string
 }
 
 export async function insertDelivery(pool: Pool, d: InsertDeliveryInput): Promise<void> {
   await pool.query(
     `insert into notify.delivery
-       (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,last_error)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
+       (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,is_test,last_error)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13)
      on conflict (org,event_id,rule_id,recipient,channel) do nothing`,
     [d.org, d.eventId, d.eventKey, d.ruleId, d.recipient, d.channel, d.address, d.templateKey,
-     d.revision, JSON.stringify(d.rendered), d.status, d.lastError ?? null],
+     d.revision, JSON.stringify(d.rendered), d.status, d.isTest ?? false, d.lastError ?? null],
   )
 }
 
@@ -332,8 +513,8 @@ export async function isCoolingDown(
 
 export async function listDeliveries(pool: Pool, org: string, limit = 100) {
   const { rows } = await pool.query(
-    `select event_id,rule_id,recipient,channel,address,template_key,revision,
-            status,attempts,last_error,created_at
+    `select event_id,event_key,rule_id,recipient,channel,address,template_key,revision,
+            status,attempts,is_test,last_error,created_at
        from notify.delivery where org=$1 order by created_at desc limit $2`,
     [org, limit],
   )
@@ -348,9 +529,36 @@ export async function listDeliveries(pool: Pool, org: string, limit = 100) {
     revision: r.revision,
     status: r.status,
     attempts: r.attempts,
+    isTest: r.is_test,
     lastError: r.last_error,
     createdAt: (r.created_at as Date).toISOString(),
   }))
+}
+
+/** 手动重试：只把 failed/dead 置回 pending；返回 0 = 不存在或不可重试 */
+export async function retryDelivery(
+  pool: Pool,
+  org: string,
+  k: { eventId: string; ruleId: string; recipient: string; channel: string },
+): Promise<number> {
+  const r = await pool.query(
+    `update notify.delivery
+        set status='pending', next_attempt_at=now(), locked_until=null, last_error=null, updated_at=now()
+      where org=$1 and event_id=$2 and rule_id=$3 and recipient=$4 and channel=$5
+        and status in ('failed','dead')`,
+    [org, k.eventId, k.ruleId, k.recipient, k.channel])
+  return r.rowCount ?? 0
+}
+
+/** 测试发送速率：同一收件人最近 1 分钟的测试投递数 */
+export async function countRecentTestDeliveries(
+  pool: Pool, org: string, recipient: string,
+): Promise<number> {
+  const { rows } = await pool.query(
+    `select count(*)::int n from notify.delivery
+      where org=$1 and recipient=$2 and is_test and created_at > now()-interval '1 minute'`,
+    [org, recipient])
+  return rows[0].n as number
 }
 
 // ── in-app 收件箱 ─────────────────────────────────────────────────────────────
@@ -365,7 +573,16 @@ export async function listInbox(
       order by created_at desc limit 100`,
     [org, recipient],
   )
-  return rows
+  return rows.map((r) => ({
+    id: r.id,
+    eventId: r.event_id,
+    eventKey: r.event_key,
+    title: r.title,
+    body: r.body,
+    link: r.link,
+    readAt: r.read_at ? (r.read_at as Date).toISOString() : null,
+    createdAt: (r.created_at as Date).toISOString(),
+  }))
 }
 
 export async function markInboxRead(
