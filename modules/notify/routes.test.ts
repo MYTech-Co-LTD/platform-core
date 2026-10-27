@@ -250,6 +250,23 @@ describePg('routes v2', () => {
     ])
   })
 
+  it('webhook 通道健康：env 未配 ⇒ error（不假装 ok）', async () => {
+    await pool.query('delete from notify.channel where org=$1', [ORG])
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'webhook_ops','webhook',true,'{}',
+               '{"url":"NOTIFY_WEBHOOK_URL__NOPE__OPS","key":"NOTIFY_WEBHOOK_KEY__NOPE__OPS"}','u')`,
+      [ORG])
+
+    const res = await app.request('/channels/webhook_ops/health', { method: 'POST' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ ok: false })
+
+    const { rows } = await pool.query(
+      "select health from notify.channel where org=$1 and id='webhook_ops'", [ORG])
+    expect(String(rows[0].health)).toMatch(/^error/)
+  })
+
   it('投递重试：仅 failed/dead 可重试', async () => {
     await pool.query(
       `insert into notify.delivery
