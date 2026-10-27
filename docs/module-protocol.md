@@ -609,6 +609,12 @@ await ctx.notify?.emit(c.get('identity'), {
 `notify` 模块通过 `createPorts` 暴露 `enqueueEvent`；宿主包装成 `ctx.notify` 注入所有模块。
 其它模块**不直接**拿 notify 的 port（校验面只一处）。
 
+### AI 工具面的硬边界（2026-10-27，P2）
+
+`POST /mcp-manage` 只提供：事件发现、规则增改启停、模板**草稿**、预览、回执、给自己试发。
+**没有 publish / channel 工具**；`draft_template` 只写草稿，发布仍由持 `notify:publish` 的人在
+console 触发。写操作落 `notify.audit`；通道密钥只以 env 键名出现，任何端点不回显值。
+
 ## 跨模块只读数据依赖：`dataDependencies`（2026-09-23 拍板）
 
 > 适用：`modules/<id>/manifest.yaml` 的**可选** `dataDependencies` 字段——消费方声明自己
