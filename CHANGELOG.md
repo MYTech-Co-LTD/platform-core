@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.204.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.4...v0.204.5) - 2026-10-27
+- 【修复】data: AI 文本门店归属/标题跟随/费用净额/空态/KPI 原因 (#1085) ([#1088](https://github.com/MYTech-Co-LTD/platform-core/pull/1088), [d52ed31](https://github.com/MYTech-Co-LTD/platform-core/commit/d52ed31f93411a87e14c2cce4446e2657fd5e814))
+
+
 ## [0.204.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.3...v0.204.4) - 2026-10-27
 - 【修复】data: 补 4 条湖侧新鲜度锚，堵停更无告警的 unknown 盲区 (#1086) ([#1087](https://github.com/MYTech-Co-LTD/platform-core/pull/1087), [2a331c2](https://github.com/MYTech-Co-LTD/platform-core/commit/2a331c2eeab9df3423fe12b29155fdc7b6e009e7))
 
