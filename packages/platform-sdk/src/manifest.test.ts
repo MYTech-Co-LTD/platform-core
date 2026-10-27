@@ -52,6 +52,30 @@ describe('ManifestSchema', () => {
     expect(r.data.config).toEqual({ schema: 'config.schema.json' })
   })
 
+  it('permissions[].platformOnly：可选布尔；非布尔 / 拼错字段名 ⇒ 校验失败', () => {
+    const ok = ManifestSchema.safeParse({
+      ...validManifest,
+      permissions: [
+        { code: 'demo:view', name: '查看', platformOnly: true },
+        { code: 'demo:edit', name: '编辑' },
+      ],
+    })
+    expect(ok.success).toBe(true)
+    if (ok.success) expect(ok.data.permissions[0]?.platformOnly).toBe(true)
+
+    const badType = ManifestSchema.safeParse({
+      ...validManifest,
+      permissions: [{ code: 'demo:view', name: '查看', platformOnly: 'yes' }],
+    })
+    expect(badType.success).toBe(false)
+
+    const typo = ManifestSchema.safeParse({
+      ...validManifest,
+      permissions: [{ code: 'demo:view', name: '查看', platform_only: true }],
+    })
+    expect(typo.success).toBe(false)
+  })
+
   it('最小样例（仅必填段）parse 通过，可选段为 undefined', () => {
     const r = ManifestSchema.safeParse({
       id: 'demo', name: 'x', version: '1.0.0', platform: '>=1.2.3', permissions: [],

@@ -302,6 +302,45 @@ describe('admin 路由：角色与授权', () => {
     const audits = d.audits as Array<{ sql: string; params: unknown[] }>
     expect(audits.at(-1)?.params[2]).toBe('admin.revoke')
   })
+
+  it('platformOnly 码：即使宇宙误注入，grant/revoke 仍 404（defense in depth）', async () => {
+    const d = deps({
+      permissions: () => [
+        { code: 'tenant:admin', name: '租户管理员' },
+        { code: 'forms:global-manage', name: '平台全局字典管理', platformOnly: true },
+      ],
+      platformOnlyPermissions: () => new Set(['forms:global-manage']),
+    })
+    const app = mount(d, { scopes: ['tenant:admin'] })
+    const res = await app.request('/api/platform/admin/permissions/forms:global-manage/users', {
+      method: 'POST',
+      headers: withCsrf,
+      body: JSON.stringify({ user: 'alice' }),
+    })
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'NO_SUCH_CODE' })
+
+    const revoke = await app.request('/api/platform/admin/permissions/forms:global-manage/users/alice', {
+      method: 'DELETE',
+      headers: withCsrf,
+    })
+    expect(revoke.status).toBe(404)
+    expect(await revoke.json()).toEqual({ error: 'NO_SUCH_CODE' })
+
+    const grantRole = await app.request('/api/platform/admin/permissions/forms:global-manage/roles', {
+      method: 'POST',
+      headers: withCsrf,
+      body: JSON.stringify({ role: 'ops' }),
+    })
+    expect(grantRole.status).toBe(404)
+
+    const revokeRole = await app.request('/api/platform/admin/permissions/forms:global-manage/roles', {
+      method: 'DELETE',
+      headers: withCsrf,
+      body: JSON.stringify({ role: 'ops' }),
+    })
+    expect(revokeRole.status).toBe(404)
+  })
 })
 
 describe('admin 路由：我的订阅（只读）', () => {

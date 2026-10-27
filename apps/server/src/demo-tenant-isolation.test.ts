@@ -38,6 +38,10 @@ describePg('demo 模块租户隔离（spec-1 §2：org 不可互见）', () => {
   let app: Awaited<ReturnType<typeof buildApp>>['app']
 
   beforeAll(async () => {
+    // 本文件验的是 demo 的租户隔离，与订阅源正交。默认订阅源已是 casdoor（2026-10-27），
+    // 而这里的 mock 不实现 get-subscriptions ⇒ 显式钉旧表源，保住「无行 = 启用」的夹具前提。
+    // casdoor 默认路径由 smoke 覆盖。
+    process.env.PLATFORM_SUBSCRIPTION_SOURCE = 'platform'
     await mock.start()
     const config: AppConfig = {
       port: 13000,
@@ -54,13 +58,14 @@ describePg('demo 模块租户隔离（spec-1 §2：org 不可互见）', () => {
         adminPwd: 'pw',
       },
       publicOrigin: 'http://127.0.0.1:13000',
-      seedDemo: true, // 种 acme/beta 两租户 + demo 启用（tenant_module 源，默认订阅源=platform）
+      seedDemo: true, // 种 acme/beta 两租户 + demo 启用（显式指定 tenant_module 旧表源）
       // 数据问数 per-key 限速（T5 加的**必填**字段）：本组用例不走 PAT 通道，取 loadConfig 的缺省值
       dataQueryRatePerMin: 60,
     }
     app = (await buildApp({ config })).app
   })
   afterAll(async () => {
+    delete process.env.PLATFORM_SUBSCRIPTION_SOURCE
     await mock.stop()
   })
 

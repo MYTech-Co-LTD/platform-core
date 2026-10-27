@@ -167,7 +167,9 @@ describe.skipIf(!dbUrl)('session 中间件正式态分支（账户统一 Task 5�
     { users: [ACCT], resources: ['ticket:view'] },
     { roles: ['store_ops'], resources: ['ticket:admin'] },
   ]
-  const T5_USER: CasdoorUser = { name: ACCT, roles: ['store_ops'], displayName: '门店操作员' }
+  const T5_USER: CasdoorUser = {
+    name: ACCT, roles: ['store_ops'], displayName: '门店操作员', isForbidden: false,
+  }
 
   it('正式态刷新：getUser 正常 ⇒ scopes=Casdoor 有效码、ext 重算重签', async () => {
     const cas = stubCasdoor(T5_USER, T5_PERMS)
@@ -207,6 +209,29 @@ describe.skipIf(!dbUrl)('session 中间件正式态分支（账户统一 Task 5�
     expect(setCookies(res).join('\n')).toContain('Max-Age=0') // 唯一清会话分支
     expect(await res.json()).toBeNull() // 未注 identity
     expect(bound.calls).toEqual([]) // 即将清除的会话不必再算绑定集合
+  })
+
+  it('内部会话：getUser 返 isForbidden ⇒ 清会话', async () => {
+    const cas = stubCasdoor({ name: 'alice', roles: [], isForbidden: true }, [])
+    const app = makeApp(pool, { casdoor: cas.factory })
+    const now = nowSec()
+    const token = await signSession(
+      { sub: 'alice', org: 'acme', name: 'alice', scopes: ['stale'], authVia: 'password' },
+      SECRET,
+      now - SCOPES_TTL_SEC - 60,
+    )
+    const res = await probe(app, token)
+    expect(setCookies(res).join('\n')).toContain('Max-Age=0')
+    expect(await res.json()).toBeNull()
+  })
+
+  it('正式态：getUser 返 isForbidden ⇒ 清会话（不重签、不查绑定集合）', async () => {
+    const cas = stubCasdoor({ name: ACCT, roles: [], isForbidden: true }, [])
+    const bound = stubBoundIds(new Error('清会话路不应触达绑定集合'))
+    const app = makeApp(pool, { casdoor: cas.factory, boundExternalIds: bound.dep })
+    const res = await probe(app, await formalToken())
+    expect(setCookies(res).join('\n')).toContain('Max-Age=0')
+    expect(bound.calls).toEqual([])
   })
 
   it('正式态：Casdoor 抛错 ⇒ 降级旧 scopes 不重签 + warn（复用现有窗口断言形状）', async () => {

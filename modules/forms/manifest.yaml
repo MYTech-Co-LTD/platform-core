@@ -1,7 +1,8 @@
 # forms 模块（架构正典 docs/architecture.md §2.4「采集底座：受管数据集（表单+字典）」）。
 # 三同纪律：id = DB schema 名 = API 前缀——改 id = 三处同改，选错比放错难改。
 # M1.2（issue #710）：受管数据集内核——生命周期 + 字典双档（P4）+ 绑定强度两档（P7）。
-# scope 矩阵即 P4 分档：forms:global-manage 默认无任何租户角色持有（授予=平台运营显式动作）。
+# scope 矩阵即 P4 分档：forms:global-manage 标记 platformOnly——装载器仍供给到各租户 org，
+# 但宿主的租户管理员授权宇宙会过滤掉它（平台运营在 Casdoor 后台授予）。
 id: forms
 name: 表单模块
 version: 0.2.0
@@ -11,7 +12,7 @@ permissions:
   - { code: forms:fill,           name: 表单填报 }
   - { code: forms:manage,         name: 表单与租户字典管理 }
   - { code: forms:publish,        name: 表单发布（人 gate） }
-  - { code: forms:global-manage,  name: 平台全局字典管理 }
+  - { code: forms:global-manage,  name: 平台全局字典管理, platformOnly: true }
 # ⚠️ api.internal 的 path 是模块相对路径；声明集合必须与 createRouter 注册集合逐条一致
 #（装载期双向核对，任一方向差集 ⇒ 装载失败）。改路由或改本清单必须同一提交对齐。
 api:
@@ -41,7 +42,7 @@ api:
     - { method: GET,    path: /dicts/:dictId/resolve,               scope: forms:view }
     - { method: POST,   path: /dicts,                               scope: forms:manage }
     - { method: PUT,    path: /dicts/:dictId/keys/:key,             scope: forms:manage }
-    # ── 全局字典（P4：编辑权收平台超管——forms:global-manage 默认无租户角色持有）──
+    # ── 全局字典（P4：编辑权收平台运营——forms:global-manage platformOnly，租户管理员授不了）──
     - { method: GET,    path: /global-dicts,                        scope: forms:view }
     - { method: GET,    path: /global-dicts/:dictId/options,        scope: forms:view }
     - { method: GET,    path: /global-dicts/:dictId/resolve,        scope: forms:view }

@@ -32,6 +32,8 @@ import { apiKeyRoutes } from './routes/api-keys'
 import { authRoutes } from './routes/auth'
 import { adminRoutes } from './routes/admin'
 import { PLATFORM_BUILTIN_PERMISSIONS } from './loader'
+import { platformOnlyCodes, tenantGrantable } from './admin-permissions'
+import { resolveSubscriptionSource } from './subscription-source'
 import { wecomRoutes } from './routes/auth-wecom'
 import { wechatOaRoutes } from './routes/auth-wechat-oa'
 import { findActiveLink, listActiveExternalIds } from './identity-links'
@@ -149,11 +151,21 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   if (overrides.modules) {
     runtime = overrides.modules
   } else {
+    // spec D6 灰度开关 + 2026-10-27 fail-closed 默认：只有显式 platform 才读旧表；
+    // 未设 / 非法值一律 casdoor。旧表语义是「无行 = 启用」，漏配时默认走它是 fail-open。
+    const rawSubscriptionSource = process.env.PLATFORM_SUBSCRIPTION_SOURCE
+    const subscriptionSource = resolveSubscriptionSource(rawSubscriptionSource)
+    if (rawSubscriptionSource === undefined) {
+      console.info('[modules] PLATFORM_SUBSCRIPTION_SOURCE 未设置，默认 casdoor（fail-closed）')
+    } else if (rawSubscriptionSource === 'platform') {
+      console.warn('[modules] PLATFORM_SUBSCRIPTION_SOURCE=platform：旧表是回滚档，不是生产口径')
+    } else if (rawSubscriptionSource !== 'casdoor') {
+      console.warn(`[modules] PLATFORM_SUBSCRIPTION_SOURCE=${JSON.stringify(rawSubscriptionSource)} 未知，按 casdoor 处理`)
+    }
     runtime = await loadModules(overrides.modulesDir ?? modulesDir, {
       pool,
       casdoorFor: casdoorFactory,
-      // spec D6 灰度开关：默认 platform（旧表）；显式 casdoor 才切订阅源
-      subscriptionSource: process.env.PLATFORM_SUBSCRIPTION_SOURCE === 'casdoor' ? 'casdoor' : 'platform',
+      subscriptionSource,
       subscriptionCacheTtlMs: Number(process.env.PLATFORM_SUBSCRIPTION_CACHE_TTL_MS) || 60_000,
     })
   }
@@ -303,15 +315,19 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
 
   // ⑧b 租户管理域（spec D4/D9，M3，issue #46）：/api/platform/admin/*——
   // org 锁本租户 + requireScope('tenant:admin') 门禁 + 写操作 CSRF，全在路由内部结构锁死。
-  // 权限码宇宙 = 平台内置码（tenant:admin）+ 已装载模块码——授权页只能看到这两层发得出来的码
+  // 权限码宇宙 = 平台内置码（tenant:admin）+ 已装载模块码——**但 platformOnly 码要过滤掉**：
+  // 那是平台专属码（如 forms:global-manage），装载器仍供给到各 org 让平台运营在 Casdoor 授予，
+  // 租户管理员看不到、授不了。过滤与显式拒绝的单一实现在 admin-permissions.ts。
+  const adminPermissionUniverse = [
+    ...PLATFORM_BUILTIN_PERMISSIONS,
+    ...runtime.modules.flatMap((m) => m.manifest.permissions),
+  ]
   app.route('/api/platform/admin', adminRoutes({
     casdoor: casdoorFactory,
     sessionSecret: config.sessionSecret,
     pool,
-    permissions: () => [
-      ...PLATFORM_BUILTIN_PERMISSIONS,
-      ...runtime.modules.flatMap((m) => m.manifest.permissions),
-    ],
+    permissions: () => tenantGrantable(adminPermissionUniverse),
+    platformOnlyPermissions: () => platformOnlyCodes(adminPermissionUniverse),
     modules: () => runtime.modules.map((m) => ({ id: m.manifest.id, name: m.manifest.name })),
   }))
 

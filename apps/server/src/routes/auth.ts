@@ -195,6 +195,10 @@ export function authRoutes(deps: AuthRoutesDeps) {
         // 这里是密码已验过却查无此人 ⇒ 上游不一致 ⇒ 502 `CASDOOR_UNAVAILABLE`
         // （502 是对的呈现，别改成 401——那会把上游故障误报成"你没有账户"）。
         if (user === null) return c.json({ error: 'CASDOOR_UNAVAILABLE' }, 502)
+        if (user.isForbidden) {
+          await writeAudit(deps.pool, t.id, name, 'login.fail', { via: 'password', reason: 'forbidden' })
+          return c.json({ error: 'BAD_CREDENTIALS' }, 401)
+        }
         scopes = effectiveScopes(name, user.roles ?? [], perms)
       } catch {
         return c.json({ error: 'CASDOOR_UNAVAILABLE' }, 502)

@@ -36,6 +36,7 @@ const mock = new MockCasdoor({
     // owner 与租户 org 一致：用户按 (org,name) 命中（评审 S3，同 auth.test.ts）
     { name: 'alice', password: 'pw', roles: ['ops'], owner: 'acme' },
     { name: 'wo_alice', password: 'pw', roles: ['ops'], owner: 'acme' },
+    { name: 'wo_forbidden', password: 'pw', roles: ['ops'], owner: 'acme', isForbidden: true },
   ],
   perms: [
     // owner 必须与租户 org 一致（同 auth.test.ts）：权限按 org 分桶后，不标 owner 的码
@@ -774,7 +775,7 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     ])
   }
 
-  it('★ JIT（qr-corp）：旗标开 + 陌生企微号 → 自动建号 + 挂全量码 → 302 / 全 scopes + audit login.ok', async () => {
+  it('★ JIT（qr-corp）：旗标开 + 陌生企微号 → 自动建号但**不挂任何码** → 302 / scopes=[] + audit jit:true', async () => {
     await setAutoSignup(true)
     try {
       const c = testClient(makeApp(pool, casdoorFor, createLoginLimiter(), wecomFetchFor('wo_new')))
@@ -792,8 +793,8 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
       expect(p?.authVia).toBe('wecom-qr')
       expect(p?.name).toBe('wo_new')
       expect(p?.org).toBe('acme')
-      // 新号无角色，全量权限码挂 users ⇒ 直挂全集（p-view + p-admin），排序后即平台全集
-      expect(p?.scopes).toEqual(['ticket:admin', 'ticket:view'])
+      // 新号无角色；JIT 不再挂任何码 ⇒ scopes 为空
+      expect(p?.scopes).toEqual([])
       // 建号载荷落档：signupApplication 缺省 app-built-in（与 #login 同口径）
       expect(mock.userIn('acme', 'wo_new')).toMatchObject({
         owner: 'acme',
@@ -801,13 +802,15 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
         type: 'normal-user',
         signupApplication: 'app-built-in',
       })
-      // 绑定侧证据：p-view 的 users 追加了 wo_new（alice/wo_alice 原值保留）
+      // 绑定侧反证：p-view 的 users 不变（没有追加 wo_new）
       const pView = mock.permissionsIn('acme').find((x) => x.name === 'p-view')
-      expect(pView?.users).toEqual(['alice', 'wo_alice', 'wo_new'])
-      const { rows } = await pool.query<{ action: string; actor: string; detail: { via?: string } }>(
+      expect(pView?.users).toEqual(['alice', 'wo_alice'])
+      const { rows } = await pool.query<{ action: string; actor: string; detail: { via?: string; jit?: boolean } }>(
         "select action, actor, detail from platform.audit where action='login.ok' and actor='wo_new' order by id desc limit 1",
       )
-      expect(rows[0]).toMatchObject({ action: 'login.ok', actor: 'wo_new', detail: { via: 'wecom-qr' } })
+      expect(rows[0]).toMatchObject({
+        action: 'login.ok', actor: 'wo_new', detail: { via: 'wecom-qr', jit: true },
+      })
     } finally {
       await setAutoSignup(false)
     }
@@ -831,6 +834,22 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
       "select actor, detail from platform.audit where action='login.fail' and actor='wo_off' order by id desc limit 1",
     )
     expect(rows[0]).toMatchObject({ actor: 'wo_off', detail: { reason: 'no-account' } })
+  })
+
+  it('★ 禁用用户：企微直连回调 → 302 /login?error=NO_ACCOUNT + audit login.fail(forbidden)，不建号', async () => {
+    const c = testClient(makeApp(pool, casdoorFor, createLoginLimiter(), wecomFetchFor('wo_forbidden')))
+    const qr = await c.api.platform.auth.wecom.qr.$get(undefined, { headers: { host: 'acme.test' } })
+    const state = stateToken(qr)
+    const res = await c.api.platform.auth.wecom.callback.$get(
+      { query: { code: 'forbidden-code', state, via: 'qr-corp' } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/login?error=NO_ACCOUNT')
+    const { rows } = await pool.query<{ detail: { reason?: string } }>(
+      "select detail from platform.audit where action='login.fail' and actor='wo_forbidden' order by id desc limit 1",
+    )
+    expect(rows[0]?.detail.reason).toBe('forbidden')
   })
 
   it('★ Casdoor OIDC code 路**永不** JIT：旗标开 + org 外用户照旧 NO_ACCOUNT（JIT 只属企微直连两路）', async () => {
@@ -904,7 +923,7 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
       const p = await verifySession(sessionToken(res), SECRET)
       expect(p?.authVia).toBe('wecom-silent')
       expect(p?.name).toBe('wo_silent_new')
-      expect(p?.scopes).toEqual(['ticket:admin', 'ticket:view'])
+      expect(p?.scopes).toEqual([])
       expect(mock.userIn('acme', 'wo_silent_new')).toMatchObject({ name: 'wo_silent_new' })
     } finally {
       await setAutoSignup(false)

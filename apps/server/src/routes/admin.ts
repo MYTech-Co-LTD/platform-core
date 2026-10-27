@@ -13,6 +13,7 @@ import { z } from 'zod'
 import { buildGroupTree, csrfToken } from '@platform/auth-core'
 import { METRIC_SOURCE_RE, normalizeEndpoint, platformStorageFromEnv, requireScope } from '@platform/sdk'
 import type { TenantStorageConfig } from '@platform/sdk'
+import type { PermissionSpec } from '../admin-permissions'
 import type { TenantEnv, TenantRow } from '../tenant'
 import type { CasdoorFactory, SessionEnv } from '../session-middleware'
 import { probeStorage, type ProbeResult } from '../storage-probe'
@@ -26,7 +27,9 @@ export interface AdminRoutesDeps {
   sessionSecret: string
   pool: Pool
   /** 权限码全集（平台内置 + 已装载模块）——授权页的可见宇宙 */
-  permissions: () => ReadonlyArray<{ code: string; name: string }>
+  permissions: () => ReadonlyArray<PermissionSpec>
+  /** 平台专属码（defense in depth：即使调用方误把全量宇宙传进来，授权端点也拒绝） */
+  platformOnlyPermissions?: () => ReadonlySet<string>
   /** 已装载模块（订阅页把 mod-<id> 映射回模块名） */
   modules: () => Array<{ id: string; name: string }>
   /**
@@ -66,6 +69,13 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
     }
     await next()
   })
+
+  /**
+   * platformOnly 码（如 forms:global-manage）只由平台运营在 Casdoor 后台授予。
+   * 租户管理员的授权面一律 404——这是过滤宇宙之外的第二道锁（defense in depth）。
+   */
+  const isPlatformOnly = (code: string): boolean =>
+    deps.platformOnlyPermissions?.().has(code) ?? false
 
   // ---- 用户管理 ----
 
@@ -150,7 +160,7 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
 
   app.post('/permissions/:code/users', async (c) => {
     const code = c.req.param('code')
-    if (!deps.permissions().some((p) => p.code === code)) return c.json({ error: 'NO_SUCH_CODE' }, 404)
+    if (isPlatformOnly(code) || !deps.permissions().some((p) => p.code === code)) return c.json({ error: 'NO_SUCH_CODE' }, 404)
     const body = await c.req.json<{ user?: unknown }>().catch(() => null)
     const user = typeof body?.user === 'string' ? body.user : ''
     if (!/^[A-Za-z0-9]+$/.test(user) || user === ANCHOR_USER) return c.json({ error: 'INVALID' }, 400)
@@ -162,7 +172,7 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
 
   app.delete('/permissions/:code/users/:user', async (c) => {
     const code = c.req.param('code')
-    if (!deps.permissions().some((p) => p.code === code)) return c.json({ error: 'NO_SUCH_CODE' }, 404)
+    if (isPlatformOnly(code) || !deps.permissions().some((p) => p.code === code)) return c.json({ error: 'NO_SUCH_CODE' }, 404)
     const user = c.req.param('user')
     if (user === ANCHOR_USER) return c.json({ error: 'FORBIDDEN_TARGET' }, 400)
     const t = c.get('tenant')
@@ -239,7 +249,7 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
 
   app.post('/permissions/:code/roles', async (c) => {
     const code = c.req.param('code')
-    if (!deps.permissions().some((p) => p.code === code)) return c.json({ error: 'NO_SUCH_CODE' }, 404)
+    if (isPlatformOnly(code) || !deps.permissions().some((p) => p.code === code)) return c.json({ error: 'NO_SUCH_CODE' }, 404)
     const body = await c.req.json<{ role?: unknown }>().catch(() => null)
     const role = typeof body?.role === 'string' ? body.role : ''
     if (!RoleNameSchema.safeParse(role).success) return c.json({ error: 'INVALID' }, 400)
@@ -251,7 +261,7 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
 
   app.delete('/permissions/:code/roles', async (c) => {
     const code = c.req.param('code')
-    if (!deps.permissions().some((p) => p.code === code)) return c.json({ error: 'NO_SUCH_CODE' }, 404)
+    if (isPlatformOnly(code) || !deps.permissions().some((p) => p.code === code)) return c.json({ error: 'NO_SUCH_CODE' }, 404)
     const body = await c.req.json<{ role?: unknown }>().catch(() => null)
     const role = typeof body?.role === 'string' ? body.role : ''
     if (!RoleNameSchema.safeParse(role).success) return c.json({ error: 'INVALID' }, 400)

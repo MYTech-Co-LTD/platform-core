@@ -47,7 +47,7 @@ globs 是 `['apps/*', 'packages/*', 'modules/*', 'modules/*/*']`——`modules/<
 | `name` | 是 | string | 展示名 | schema |
 | `version` | 是 | `x.y.z` | 宽松 semver，三段数字 | schema |
 | `platform` | 是 | `^>=?[0-9]` | 平台版本约束（如 `>=0.1`）；**裸版本号不合法** | schema |
-| `permissions[]` | 是 | `{code,name}[]` | 权限码清单；`code` 必须 `<id>:` 前缀 | schema |
+| `permissions[]` | 是 | `{code,name,platformOnly?}[]` | 权限码清单；`code` 必须 `<id>:` 前缀；`platformOnly` = 平台专属码（租户管理员授权宇宙不含它） | schema |
 | `api.internal[]` | 否 | `{method,path,scope}[]` | 模块 API 声明，**未声明 = 不可达**；path 模块内相对、禁裸 `/`；scope ∈ permissions | schema + 装载期双向核对 |
 | `guest.scope` | 否 | string | 访客码，必须 ∈ permissions；宿主 wechat-oa 登录路按已启用模块发放 | schema |
 | `storage.kind` | 否 | `'s3'`（枚举收窄） | 声明 = 宿主在本模块 API 子树注入 `c.get(TENANT_STORAGE)`；**声明的是能力不是租户** | schema |

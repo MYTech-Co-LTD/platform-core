@@ -153,6 +153,20 @@ describe('wecomChannelIdentityMiddleware', () => {
     await mock.stop()
   })
 
+  it('用户被禁用 → 401 USER_DISABLED（与 PAT 同口径）', async () => {
+    const mock = new MockCasdoor({
+      users: [{ name: 'alice', password: 'pw', owner: ORG, isForbidden: true }],
+      perms: [{ owner: ORG, users: ['alice'], resources: ['data:query'] }],
+    })
+    await mock.start()
+    const res = await call(app(mock), {
+      'x-channel-key': CHANNEL_KEY, [WECOM_USERID_HEADER]: 'alice',
+    })
+    expect(res.status).toBe(401)
+    expect((await res.json()).error).toBe('USER_DISABLED')
+    await mock.stop()
+  })
+
   it('Casdoor 挂 → 503 CASDOOR_UNAVAILABLE（与 PAT 同口径：fail-closed，无缓存可降级）', async () => {
     const mock = withAlice(); await mock.start()
     await mock.stop()   // 关掉 → 连接失败

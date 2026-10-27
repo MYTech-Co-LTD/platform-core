@@ -114,6 +114,10 @@ token 只决定「这个账号能调哪些面」，不改变分层。
   的行按哈希原样搬进 `platform.*` ⇒ **已发出的 token 继续有效、用户无感**（哈希实现只有一份，见 `key-store.ts` 头注）。
 - **架构先行**：本节先于代码；实施走 issue → PR，正典冲突以本节为准。
 
+**禁用账户的失效语义（2026-10-27）**：`getUser` 暴露 Casdoor 的 `isForbidden`。PAT 与渠道 C
+每次请求实时判定 ⇒ **即时 401**；平台会话在下一次 scopes 刷新（≤5 分钟）清 cookie；企微 /
+公众号登录路直接拒绝。禁用不是「绑定悬空」：公众号正式态被禁用时**不降级为访客**。
+
 ## 2. 组件与职责边界
 
 依赖边**读自各 `package.json`**，不是推测。
@@ -446,10 +450,12 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 - **模块落点（2026-10-16 拍板）：新建 `modules/forms`**（运营面，与 `modules/data` 治理面域不同；
   且 §2.3 已定「模块只是档案/订单的消费者」）。⚠️ `manifest.id` = DB schema 名 = API 前缀
   （§5 三同纪律），**选错比放错难改**——建模块时随行核一遍三同。
-- **字典的 org 归属（P4，2026-10-16 人同意定档）**：**租户私有字典为主**（`forms.dict_item`，
-  编辑权 `forms:manage` = 租户管理员）；**平台全局字典单列**（`forms.dict_global_item`，
-  `-- global-table` 豁免的**首个真实用例**），编辑权 `forms:global-manage`——该码**默认无任何
-  租户角色持有**，授予 = 平台运营显式动作 ⇒ 一个租户管理员**改不到**全局字典。契约引用以
+- **字典的 org 归属（P4，2026-10-16 人同意定档；2026-10-27 机制订正）**：**租户私有字典为主**
+  （`forms.dict_item`，编辑权 `forms:manage` = 租户管理员）；**平台全局字典单列**
+  （`forms.dict_global_item`，`-- global-table` 豁免的**首个真实用例**），编辑权
+  `forms:global-manage` 标记 `platformOnly: true`——装载器仍把它供给到各租户 org（平台运营要能
+  在 Casdoor 后台授予），但宿主注入**租户管理员**的授权宇宙时会过滤掉它 ⇒ 租户管理员看不到、
+  授不了；存量回收同样只能由平台运营在 Casdoor 完成。契约引用以
   前缀分档：`dict:<id>` = 租户私有、`gdict:<id>` = 全局。
   > 📌 订正：本节原两处「§2.2 三角色」是**悬空指针**（platform-core 的 §2.2 是数据栈组件分工，
   > 从未定义过角色清单）——授权划线以本分档的 scope 矩阵为准。
@@ -1002,7 +1008,7 @@ PAT 最小权限（单仓 contents:write + pull_requests:write），只在 serve
 | **HEAD 归一 GET** | Hono 把 HEAD 按 GET 派发，但 `c.req.method` 仍是 `'HEAD'`；不归一 ⇒ 已声明的 GET 端点在 HEAD 下**恒 403**。**只归一 HEAD→GET**，未声明的路径照旧 fail-closed（不是"放行一切 HEAD"） | `packages/platform-sdk/src/module.ts:121-125` |
 | **`enabledFor` 只能请求期门控** | `enabledFor(tenantId)` 是**按租户**的（`apps/server/src/loader.ts:52`），而 `mount()` 全仓只调一次（`apps/server/src/app.ts:231`）⇒ 停用模块只能在**请求期**过滤；闸门每请求查一次库、**刻意不做缓存**（`apps/server/src/loader.ts:350,369`）。装成「装载期过滤」会连带把启用租户也挡掉 | `apps/server/src/loader.ts:45,350,369` |
 | **I-1 挂载顺序** | 租户→会话必须先于 `runtime.mount`（见 §3） | `apps/server/src/app.ts:3-9` |
-| **JIT 建号三条件** | 企微自动建号（issue #32）必须同时满足：① **企微直连 code**（qr-corp/silent；Casdoor OIDC code 路**永不** JIT——那条路的账号来源是 Casdoor 自己的注册/管理面）② 租户旗标 `wecom_auto_signup`（**默认 false**，seed 收敛关；放宽 = 企微成员自动获得平台账号，必须租户级显式决定）③ 建号 + 挂全量码后重读成功。任一不满足 ⇒ fail-closed（NO_ACCOUNT / CASDOOR_UNAVAILABLE）。建号失败**绝不静默放行**（audit `login.fail reason=jit-create-failed`） | `apps/server/src/routes/auth-wecom.ts:324`、`packages/auth-core/src/casdoor-client.ts:236,268`、`apps/server/src/migrations/004_tenant_wecom_auto_signup.sql` |
+| **JIT 建号三条件** | 企微自动建号（issue #32）必须同时满足：① **企微直连 code**（qr-corp/silent；Casdoor OIDC code 路**永不** JIT——那条路的账号来源是 Casdoor 自己的注册/管理面）② 租户旗标 `wecom_auto_signup`（**默认 false**，seed 收敛关；放宽 = 企微成员自动获得平台账号，必须租户级显式决定）③ 建号 + 重读成功（**不挂任何码**；自动建号 ≠ 自动授权）。任一不满足 ⇒ fail-closed（NO_ACCOUNT / CASDOOR_UNAVAILABLE）。建号失败**绝不静默放行**（audit `login.fail reason=jit-create-failed`） | `apps/server/src/routes/auth-wecom.ts:324`、`packages/auth-core/src/casdoor-client.ts:236,268`、`apps/server/src/migrations/004_tenant_wecom_auto_signup.sql` |
 | **跨模块数据消费走契约** | 业务模块消费其他域的数据（如采集产出的维表）**只许两种形状**：① owner 的同步查询 API（交互类，执法在读时）或 ② owner 发布的带版本快照（批量类，执法在发布时）；**禁止直连**他模块的生产表/生产库（staging/湖不对业务模块暴露；不给业务模块发 `DATA_WAREHOUSE_URL`）。违反 = 跨 schema/租户耦合藏进存储层（lint 看不见），schema 一变运行时静默炸。判定三问与形状选择见决策正典 | `docs/superpowers/specs/2026-10-07-cross-module-data-consumption.md`（人裁 2026-10-07） |
 | **血缘单调**（列级/值级授权） | `policy(指标) ⊇ ∪ policy(该指标读到的源列)`——给源列加限制而读它的指标**未同步收窄** ⇒ 泄漏：藏了 `item_cost_price`，但「毛利率」照旧算得出。⚠️ **门禁尚未落仓**：随 spec §4.3 的 P1 落 `gates`，**缺席期间不拦**（本档按现状如实登记）。⚠️ 只查**申报**的单调性；完整性需 contract→marts 的列级血缘，**仓内不存在**（无 dbt manifest）⇒ **拦不住漏申报**，如实标注 | spec `2026-10-17-column-and-value-level-security-design.md` §4.3 |
 | **掩码先于聚合**（列级/值级授权） | `sum(round(x,-1000))`，**不是** `round(sum(x),-1000)`——后者可被差分攻击（换过滤/换窗取差）逼近精确值。由**运行期定点替换**保证：`selectSql` 存原值，掩码就在**列引用**处就地替换 ⇒ 换掉的正是聚合函数**里面**那个列引用，顺序不可能写错（运行期不做 SQL 解析，也就没有把顺序重排的余地）。⚠️ **解析单位是「列」不是「指标行」**（R10，2026-10-17 裁决）：`掩码集 = ⋃{声明 d : d.column 逐字出现在本次 selectSql 里}`，声明取自**全部**指标行 ⇒ 读同一列的 L2 与别的指标**自动**被覆盖（旧文按行解析 ⇒ L2 行 `mask_spec` 恒 null ⇒ 恒不掩，是个 fail-open 洞）。⚠️ **列键声明如此；默认档**（整值 / 指标级）**不覆盖 L2** —— spec §7 R12。⚠️ **门禁尚未落仓**：随 P2 落护栏测试，**缺席期间不拦** | 同上 §5.3、§5.3.1 |

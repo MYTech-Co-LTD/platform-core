@@ -100,6 +100,7 @@ export function patIdentityMiddleware(deps: PatAuthDeps): MiddlewareHandler<Requ
       const casdoor = deps.casdoor(tenant.casdoor_org)
       const user = await casdoor.getUser(key.casdoorUser)
       if (user === null) return c.json({ error: 'USER_GONE' }, 401)
+      if (user.isForbidden) return c.json({ error: 'USER_DISABLED' }, 401)
       const perms = await casdoor.getPermissions()
       scopes = effectiveScopes(key.casdoorUser, user.roles ?? [], perms)
     } catch {

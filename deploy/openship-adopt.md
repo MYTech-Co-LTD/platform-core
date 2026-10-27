@@ -260,6 +260,7 @@ pnpm exec tsx scripts/provision-tenant.mjs <slug> --org <casdoor-org> --module <
 - **`PLATFORM_SUBSCRIPTION_SOURCE=casdoor` 是新交付的统一口径**：模块启用走 Casdoor 订阅
   （CLI 的 `--module` 建 plan+Active 订阅）。往 `tenant_module` 插表的旧做法**废弃**——
   casdoor 源下没人读那张表，插了也白插。platform 源仅作我方实例的临时回滚兜底。
+  **未设置时默认 casdoor（fail-closed）**；要回滚必须显式设 `platform`。
 - `plan` 上还要记得：**新客户 = 新 org + 新租户行**，这套是逐客户一份。
 
 #### 6.2 发起部署：**必须传 `serverId`**

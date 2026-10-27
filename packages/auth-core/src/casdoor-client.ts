@@ -74,6 +74,8 @@ export interface CasdoorUser {
   roles?: string[]
   displayName?: string
   isAdmin?: boolean
+  /** Casdoor 禁用标记（get-user 真机字段）；true = 停用 */
+  isForbidden: boolean
 }
 
 export interface CasdoorPermission {
@@ -169,6 +171,7 @@ export class CasdoorClient {
       roles,
       displayName: typeof u.displayName === 'string' ? u.displayName : undefined,
       isAdmin: u.isAdmin === true,
+      isForbidden: u.isForbidden === true,
     }
   }
 
@@ -663,7 +666,7 @@ export class CasdoorClient {
   /**
    * 授权：把用户挂到权限码（M3 授权页）。users 追加 `org/user` **全形**（Casdoor UI 同款写法；
    * effectiveScopes 的 matchUser 对短名/全形都可命中）。幂等：已挂（任一形态）直接返回。
-   * 整记录替换（bindUserToAllPermissions 同形状），写后回读验证（铁律③）。
+   * 整记录替换（与既有 update 类端点同形状），写后回读验证（铁律③）。
    */
   async grantPermissionToUser(code: string, userName: string): Promise<void> {
     const p = await this.#findPermissionByCode(code)
@@ -819,36 +822,6 @@ export class CasdoorClient {
     const backState = String((back.data as { state?: string }).state ?? '')
     if (backState !== opts.state) {
       throw new Error(`casdoor upsert-subscription: 写后回读 state 不符 ${id} 期望=${opts.state} 实际=${backState}`)
-    }
-  }
-
-/**
-   * 把用户挂到本 org 的**全部**权限码上（issue #32 JIT 建号后的授权步）：
-   * 逐条 update-permission 把 name 追加进 users 数组，其余字段（roles/resources/
-   * actions/isEnabled）原样保留。已挂的跳过（幂等，重复 bind 不产生写调用）。
-   * 口径与装载器一致：模块码 upsert 时不带用户，JIT 建的号没有任何角色 ⇒
-   * 不挂 users 则 effectiveScopes 恒空、登录即空权限。**逐条**而非合并成一次
-   * update：Casdoor 的 update-permission 是整记录替换，逐条=最小破坏面。
-   */
-  async bindUserToAllPermissions(user: string): Promise<void> {
-    const list = await this.#permissionsRaw()
-    for (const p of list) {
-      const users = (p.users as string[] | undefined) ?? []
-      if (users.includes(user)) continue
-      const body = {
-        owner: this.#o.org,
-        name: String(p.name),
-        displayName: String(p.displayName ?? p.name),
-        model: String(p.model ?? 'built-in/user-model-built-in'),
-        users: [...users, user],
-        roles: (p.roles as string[] | undefined) ?? [],
-        resources: (p.resources as string[] | undefined) ?? [],
-        actions: (p.actions as string[] | undefined) ?? ['Read'],
-        isEnabled: p.isEnabled === undefined ? true : p.isEnabled,
-      }
-      const path = `update-permission?id=${encodeURIComponent(`${this.#o.org}/${String(p.name)}`)}`
-      const j = await this.#adminJson(path, { method: 'POST', body })
-      if (j.status && j.status !== 'ok') throw new Error(`casdoor: ${j.msg || 'error'}`)
     }
   }
 

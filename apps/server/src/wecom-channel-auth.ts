@@ -60,6 +60,8 @@ export function wecomChannelIdentityMiddleware(deps: WecomChannelAuthDeps): Midd
       const user = await casdoor.getUser(userid)
       // 未关联 = Casdoor 里没有这个企微账号 ⇒ fail-closed + 客户端回一句扫码登录指引
       if (user === null) return c.json({ error: 'WECOM_USER_NOT_LINKED' }, 401)
+      // 停用账户：PAT / 会话同一口径，即时 401
+      if (user.isForbidden) return c.json({ error: 'USER_DISABLED' }, 401)
       const perms = await casdoor.getPermissions()
       scopes = effectiveScopes(userid, user.roles ?? [], perms)
     } catch {

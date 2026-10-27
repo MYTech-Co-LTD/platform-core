@@ -165,6 +165,18 @@ describe('patIdentityMiddleware', () => {
     await mock.stop()
   })
 
+  it('用户被禁用 → 401 USER_DISABLED（isForbidden）', async () => {
+    const mock = new MockCasdoor({
+      users: [{ name: 'alice', password: 'pw', owner: ORG, isForbidden: true }],
+      perms: [{ owner: ORG, users: ['alice'], resources: ['data:query'] }],
+    })
+    await mock.start()
+    const res = await post(app(mock), TOKEN)
+    expect(res.status).toBe(401)
+    expect((await res.json()).error).toBe('USER_DISABLED')
+    await mock.stop()
+  })
+
   it('已有 identity（会话通道）→ 不覆盖（first-setter-wins）', async () => {
     const mock = withAlice(); await mock.start()
     const a = new Hono<RequesterEnv>()

@@ -90,7 +90,7 @@ Casdoor 后台（platform 超管）建：owner=`admin`、organization=`<客户 o
 > 所属）。三键指同一个 application，别一半旧一半新。
 | `PLATFORM_SESSION_SECRET` | 随机生成（isSecret） |
 | `PUBLIC_ORIGIN` | `https://<客户域名>` |
-| `PLATFORM_SUBSCRIPTION_SOURCE` | `casdoor`（**新交付一律 casdoor 源，全平台单一口径**；platform 源仅我方实例回滚兜底） |
+| `PLATFORM_SUBSCRIPTION_SOURCE` | `casdoor`（**新交付一律 casdoor 源，全平台单一口径**；未设置时默认也是 casdoor，platform 源仅我方实例回滚兜底） |
 | `AFTERSALES_ZOS_ENDPOINT` | 天翼 ZOS（S3 兼容）端点（**可省协议**，代码补 `https://`；如 `zos.xinan1.ctyun.cn`） |
 | `AFTERSALES_ZOS_REGION` | ZOS 区域（如 `xinan1`） |
 | `AFTERSALES_ZOS_BUCKET` | 附件桶名 |
