@@ -203,6 +203,38 @@ export function narrativeKeyOf(deps: NarrativeDeps): NarrativeKey {
   }
 }
 
+// ── 同事实的单飞（in-process single-flight，#1105）────────────────────────────
+//
+// 同一条缓存键（org/报表/快照/面板/期间/门店/factsHash/prompt/模型）并发观看时，
+// 只让**一个**请求调模型；其余请求 await 同一份结果再回放。
+//  · 范围是**单进程**：platform-core 的 server 是单容器；跨实例需要 DB/Redis 租约
+//    （未做，见 issue #1105 的「不在本轮」）。
+//  · 失败/客户端中断也必须 settle（用模板兜底）——否则等待者会永久挂起。
+interface SharedNarrative { text: string; fallback: boolean }
+
+const inflightNarratives = new Map<string, Promise<SharedNarrative>>()
+
+/** 缓存键的稳定字符串（顺序固定，避免 JSON 键序带来的伪不同）。 */
+function keyStringOf(k: NarrativeKey): string {
+  return [k.org, k.reportId, k.specKey, k.panelIndex, k.focus, k.periodKey,
+    k.branchKey, k.factsHash, k.promptVersion, k.model].join('\u0000')
+}
+
+function beginShared(k: NarrativeKey): {
+  promise: Promise<SharedNarrative>
+  settle: (v: SharedNarrative) => void
+} {
+  let settle!: (v: SharedNarrative) => void
+  const promise = new Promise<SharedNarrative>((resolve) => { settle = resolve })
+  inflightNarratives.set(keyStringOf(k), promise)
+  return { promise, settle }
+}
+
+/** 测试钩子：清空单飞表（用例之间避免互相等待）。 */
+export function resetNarrativeInflight(): void {
+  inflightNarratives.clear()
+}
+
 function doneEvent(
   text: string,
   fallback: boolean,
@@ -260,51 +292,80 @@ export async function generateNarrative(deps: NarrativeDeps): Promise<NarrativeR
   const model = deps.model
   if (model === null) return fallbackResult(deps, key)
 
-  const allowed = allowedNumbers(deps.facts)
-  let lastLog = 'narrative_number_check_failed'
-  for (let attempt = 0; attempt < 2; attempt++) {
-    let text = ''
-    try {
-      for await (const d of model.completeStream(
-        [
-          { role: 'system', content: SYSTEM },
-          {
-            role: 'user',
-            content: userPrompt(
-              deps.facts,
-              attempt === 0 ? '' : '上一次输出包含 facts 之外的数字；只允许复制 facts 的 formatted 值，日期写 YYYY-MM-DD。',
-            ),
-          },
-        ],
-        [],
-        { temperature: 0.2, maxTokens: 1500, signal: AbortSignal.timeout(30000) },
-      )) {
-        // reason 只用于进度感，不进正文（不读即不泄）
-        if (d.content !== undefined) text += d.content
-      }
-    } catch (err) {
-      lastLog = `narrative_llm_failed: ${err instanceof Error ? err.message : String(err)}`
-      deps.log?.(lastLog)
-      text = ''
-    }
-    // 空输出与越界同罪：空白文本不能当成功缓存（spec §6「永远不空白」）
-    const bad = text.trim() === '' ? [] : badNumbers(text, allowed)
-    if (text.trim() !== '' && bad.length === 0) {
-      await putNarrative(deps.pool, key, text, false, deps.userId)
-      return {
-        text,
-        fallback: false,
-        dataAsOf: deps.facts.dataAsOf,
-        generatedAt: new Date().toISOString(),
-        cached: false,
-      }
-    }
-    if (bad.length > 0) {
-      lastLog = 'narrative_number_check_failed'
-      deps.log?.(`narrative_number_check: ${bad.join(',')}`)
+  // 同事实并发：等先到者的结果，不再调一次模型（单飞）。
+  const sharedKey = keyStringOf(key)
+  const shared = inflightNarratives.get(sharedKey)
+  if (shared !== undefined) {
+    const r = await shared
+    return {
+      text: r.text,
+      fallback: r.fallback,
+      dataAsOf: deps.facts.dataAsOf,
+      generatedAt: new Date().toISOString(),
+      cached: true,
     }
   }
-  return fallbackResult(deps, key, lastLog, false)
+  const flight = beginShared(key)
+  let settled = false
+  const settleOnce = (v: SharedNarrative): void => {
+    if (settled) return
+    settled = true
+    flight.settle(v)
+  }
+  try {
+    const allowed = allowedNumbers(deps.facts)
+    let lastLog = 'narrative_number_check_failed'
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let text = ''
+      try {
+        for await (const d of model.completeStream(
+          [
+            { role: 'system', content: SYSTEM },
+            {
+              role: 'user',
+              content: userPrompt(
+                deps.facts,
+                attempt === 0 ? '' : '上一次输出包含 facts 之外的数字；只允许复制 facts 的 formatted 值，日期写 YYYY-MM-DD。',
+              ),
+            },
+          ],
+          [],
+          { temperature: 0.2, maxTokens: 1500, signal: AbortSignal.timeout(30000) },
+        )) {
+          // reason 只用于进度感，不进正文（不读即不泄）
+          if (d.content !== undefined) text += d.content
+        }
+      } catch (err) {
+        lastLog = `narrative_llm_failed: ${err instanceof Error ? err.message : String(err)}`
+        deps.log?.(lastLog)
+        text = ''
+      }
+      // 空输出与越界同罪：空白文本不能当成功缓存（spec §6「永远不空白」）
+      const bad = text.trim() === '' ? [] : badNumbers(text, allowed)
+      if (text.trim() !== '' && bad.length === 0) {
+        await putNarrative(deps.pool, key, text, false, deps.userId)
+        settleOnce({ text, fallback: false })
+        return {
+          text,
+          fallback: false,
+          dataAsOf: deps.facts.dataAsOf,
+          generatedAt: new Date().toISOString(),
+          cached: false,
+        }
+      }
+      if (bad.length > 0) {
+        lastLog = 'narrative_number_check_failed'
+        deps.log?.(`narrative_number_check: ${bad.join(',')}`)
+      }
+    }
+    const fb = await fallbackResult(deps, key, lastLog, false)
+    settleOnce({ text: fb.text, fallback: fb.fallback })
+    return fb
+  } finally {
+    // 异常 / 提前返回也必须 settle：等待者不能永久挂起。
+    if (!settled) settleOnce({ text: templateOf(deps.facts), fallback: true })
+    inflightNarratives.delete(sharedKey)
+  }
 }
 
 /**
@@ -334,14 +395,34 @@ export async function* streamNarrative(
     return
   }
 
-  yield { type: 'phase', phase: 'thinking', label: '正在分析…' }
   const model = deps.model
   if (model === null) {
+    yield { type: 'phase', phase: 'thinking', label: '正在分析…' }
     const text = templateOf(deps.facts)
     await putNarrative(deps.pool, key, text, true, deps.userId)
     yield doneEvent(text, true, deps.facts)
     return
   }
+
+  // 同事实并发：等待先到者，完成后整段回放（不再调模型）。
+  const sharedKey = keyStringOf(key)
+  const shared = inflightNarratives.get(sharedKey)
+  if (shared !== undefined) {
+    yield { type: 'phase', phase: 'writing', label: '等待同一事实的生成…' }
+    const r = await shared
+    yield { type: 'delta', text: r.text }
+    yield doneEvent(r.text, r.fallback, deps.facts, true)
+    return
+  }
+  const flight = beginShared(key)
+  let settled = false
+  const settleOnce = (v: SharedNarrative): void => {
+    if (settled) return
+    settled = true
+    flight.settle(v)
+  }
+  try {
+  yield { type: 'phase', phase: 'thinking', label: '正在分析…' }
 
   const allowed = allowedNumbers(deps.facts)
   // 与 JSON 端点对齐：数字校验失败重试一次（#1083 现场模型写「10月13日」被误判越界）。
@@ -410,6 +491,7 @@ export async function* streamNarrative(
     }
     if (failed === null) {
       await putNarrative(deps.pool, key, full, false, deps.userId)
+      settleOnce({ text: full, fallback: false })
       yield doneEvent(full, false, deps.facts)
       return
     }
@@ -417,7 +499,13 @@ export async function* streamNarrative(
     if (failed === 'llm_failed') break
   }
   const text = templateOf(deps.facts)
+  settleOnce({ text, fallback: true })
   yield { type: 'replace', text, reason: lastReason }
   yield doneEvent(text, true, deps.facts)
   // 有模型时回退**不落缓存**：下一次观看重新尝试，瞬时失败不再钉死整天（#1083）。
+  } finally {
+    // 客户端中断 / 异常：等待者不能永久挂起（用模板兜底）。
+    if (!settled) settleOnce({ text: templateOf(deps.facts), fallback: true })
+    inflightNarratives.delete(sharedKey)
+  }
 }

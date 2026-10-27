@@ -10,13 +10,14 @@
 //  · **JSON 端点最多重生成一次**：第二次带严格提示；两次都越界 ⇒ 模板。
 //  · **缓存内容寻址**：命中回放且**不调模型**；未命中时把最终文本（含模板）写回，
 //    `fallback` 标记随行落审计。
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
 import type { ChatMessage, StreamDelta, StreamOpts, StreamingChatModel } from './llm'
 import {
   allowedNumbers,
   badNumbers,
   generateNarrative,
+  resetNarrativeInflight,
   streamNarrative,
   templateOf,
   type NarrativeDeps,
@@ -86,6 +87,28 @@ function sequencedModel(rounds: StreamDelta[][]) {
   return { model, calls }
 }
 
+/** 受门控的模型：先记录调用，等 gate 放行再吐 chunk（并发单飞用）。 */
+function gatedModel(chunks: StreamDelta[], gate: Promise<void>) {
+  const calls: { messages: ChatMessage[]; opts?: StreamOpts }[] = []
+  const model: StreamingChatModel & { id: string } = {
+    id: 'deepseek-flash',
+    complete: async () => ({ content: '', toolCalls: [] }),
+    async *completeStream(messages, _tools, opts) {
+      calls.push({ messages, opts })
+      await gate
+      for (const c of chunks) yield c
+    },
+  }
+  return { model, calls }
+}
+
+/** 手动放行的 gate。 */
+function gateOf(): { gate: Promise<void>; release: () => void } {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  return { gate, release }
+}
+
 /** 假池：缓存读按 seed 应答；写只记录（参数下标见 putNarrative 的列序）。 */
 function fakePool(seed?: { text: string; fallback: boolean; created_at: Date }) {
   const inserts: unknown[][] = []
@@ -125,6 +148,8 @@ async function collect(gen: AsyncGenerator<NarrativeEvent>): Promise<NarrativeEv
   for await (const e of gen) evs.push(e)
   return evs
 }
+
+beforeEach(() => { resetNarrativeInflight() })
 
 describe('badNumbers（日期形态）', () => {
   it('中文日期整段抹掉（10月13日 / 2026年10月16日 / 2026年10月 / 10月13号）', () => {
@@ -375,5 +400,45 @@ describe('templateOf', () => {
     }
     const text = templateOf(withNeg)
     expect(text).toContain('冲减 整车运费 -410.00')
+  })
+})
+
+// 同事实并发（#1105）：一条缓存键只让一个请求调模型，其余等待并回放。
+describe('同事实单飞', () => {
+  const OK = '结论：销售额 51,273.89。\n异常：无。\n行动：核对明细。'
+
+  it('JSON 并发：只调一次模型，第二个返回 cached', async () => {
+    const { pool, inserts } = fakePool()
+    const g = gateOf()
+    const { model, calls } = gatedModel([{ content: OK }], g.gate)
+
+    const p1 = generateNarrative(depsOf(pool, { model }))
+    await new Promise((resolve) => setTimeout(resolve, 0)) // 让 p1 注册单飞并等模型
+    const p2 = generateNarrative(depsOf(pool, { model }))
+    g.release()
+    const [a, b] = await Promise.all([p1, p2])
+
+    expect(calls).toHaveLength(1)
+    expect(a).toMatchObject({ fallback: false, cached: false })
+    expect(b).toMatchObject({ fallback: false, cached: true })
+    expect(inserts).toHaveLength(1)
+  })
+
+  it('SSE 并发：第二个等待后整段回放（cached），模型只调一次', async () => {
+    const { pool } = fakePool()
+    const g = gateOf()
+    const { model, calls } = gatedModel([{ content: OK }], g.gate)
+
+    const first = collect(streamNarrative(depsOf(pool, { model })))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const second = collect(streamNarrative(depsOf(pool, { model })))
+    g.release()
+    const [ev1, ev2] = await Promise.all([first, second])
+
+    expect(calls).toHaveLength(1)
+    expect(ev1.at(-1)).toMatchObject({ type: 'done', fallback: false })
+    expect(ev2.at(-1)).toMatchObject({ type: 'done', fallback: false, cached: true })
+    const text2 = ev2.flatMap((e) => (e.type === 'delta' ? [e.text] : [])).join('')
+    expect(text2).toContain('51,273.89')
   })
 })
