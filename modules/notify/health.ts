@@ -11,8 +11,8 @@ export function healthVerdict(h: Health): 0 | 1 {
 export async function checkHealth(pool: Pool): Promise<Health> {
   const { rows } = await pool.query(`
     select
-      (select count(*)::int from notify.delivery_v2 where status='dead') as dead,
-      (select count(*)::int from notify.delivery_v2
+      (select count(*)::int from notify.delivery where status='dead') as dead,
+      (select count(*)::int from notify.delivery
         where status='pending' and created_at < now()-interval '10 minutes') as stale,
       (select count(*)::int from notify.worker_heartbeat
         where beat_at > now()-interval '2 minutes') as workers`)

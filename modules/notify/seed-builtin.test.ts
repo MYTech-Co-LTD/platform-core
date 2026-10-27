@@ -21,7 +21,7 @@ describePg('seedBuiltin', () => {
   beforeEach(cleanup)
 
   async function cleanup() {
-    await pool.query('delete from notify.rule_v2 where org=$1', [ORG])
+    await pool.query('delete from notify.rule where org=$1', [ORG])
     await pool.query('delete from notify.channel where org=$1', [ORG])
     await pool.query('delete from notify.template_revision where org=$1', [ORG])
     await pool.query('delete from notify.template where org=$1', [ORG])
@@ -36,7 +36,7 @@ describePg('seedBuiltin', () => {
       templates: await q('template'),
       revisions: await q('template_revision'),
       channels: await q('channel'),
-      rules: await q('rule_v2'),
+      rules: await q('rule'),
     }
   }
 
@@ -47,7 +47,7 @@ describePg('seedBuiltin', () => {
     expect(first).toEqual({ templates: 1, revisions: 1, channels: 2, rules: 2 })
 
     const manual = await pool.query(
-      "select recipient_key, recipient_literal from notify.rule_v2 where org=$1 and id like 'manual:%'",
+      "select recipient_key, recipient_literal from notify.rule where org=$1 and id like 'manual:%'",
       [ORG],
     )
     expect(manual.rows[0]).toEqual({ recipient_key: 'approvers_manual', recipient_literal: ['alice', 'bob'] })

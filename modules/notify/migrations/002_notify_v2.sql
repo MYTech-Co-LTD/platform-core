@@ -151,6 +151,7 @@ create table if not exists notify.inbox (
 );
 
 -- ── worker 心跳：健康 job 用它判断「worker 还在跑」 ──
+-- global-table: worker 心跳是进程级健康信号，不含任何租户数据（不为任何租户读写）
 create table if not exists notify.worker_heartbeat (
   id       text primary key,
   beat_at  timestamptz not null default now()

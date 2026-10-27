@@ -5,7 +5,7 @@ import { applyMigrations } from './test-util'
 import {
   claimDueDeliveries, deleteRule, enqueueEvent, getPublishedTemplate, isCoolingDown,
   listRules, markDeliverySent, setRuleEnabled, upsertRule,
-} from './storage-v2'
+} from './storage'
 
 const url = process.env.DATABASE_URL
 const describePg = url ? describe : describe.skip
@@ -25,9 +25,9 @@ describePg('notify storage v2', () => {
   beforeEach(cleanup)
 
   async function cleanup() {
-    await pool.query('delete from notify.rule_v2 where org=$1', [ORG])
+    await pool.query('delete from notify.rule where org=$1', [ORG])
     await pool.query('delete from notify.event where org=$1', [ORG])
-    await pool.query('delete from notify.delivery_v2 where org=$1', [ORG])
+    await pool.query('delete from notify.delivery where org=$1', [ORG])
     await pool.query('delete from notify.template_revision where org=$1', [ORG])
     await pool.query('delete from notify.template where org=$1', [ORG])
   }
@@ -62,7 +62,7 @@ describePg('notify storage v2', () => {
 
   it('claimDueDeliveries 只领到期行并加租约', async () => {
     const ins = (eventId: string, at: string) => pool.query(
-      `insert into notify.delivery_v2
+      `insert into notify.delivery
          (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,next_attempt_at)
        values ($1,$2,'m.a.b','r1','u1','wecom_default','wecom-u1','t1',1,'{}','pending',$3)`,
       [ORG, eventId, at],
@@ -93,7 +93,7 @@ describePg('notify storage v2', () => {
 
   it('冷却：窗口内有 sent 才抑制；无 cooldown 恒 false', async () => {
     await pool.query(
-      `insert into notify.delivery_v2
+      `insert into notify.delivery
          (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status)
        values ($1,'e-cool','m.a.b','r1','u1','wecom_default','wecom-u1','t1',1,'{}','sent')`, [ORG])
     expect(await isCoolingDown(pool, ORG, { id: 'r1', cooldownMinutes: 10 }, 'u1', new Date())).toBe(true)

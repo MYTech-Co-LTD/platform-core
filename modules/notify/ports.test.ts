@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from './test-util'
-import { createPortsV2 } from './ports-v2'
+import { createPorts } from './ports'
 
 const url = process.env.DATABASE_URL
 const describePg = url ? describe : describe.skip
@@ -23,7 +23,7 @@ describePg('ports v2', () => {
   })
 
   it('enqueueEvent 直达 storage 且幂等', async () => {
-    const p = createPortsV2({ pool })
+    const p = createPorts({ pool })
     const input = {
       org: ORG, eventId: 'p1', eventKey: 'm.a.b', scope: '*', payload: {}, producer: 'm',
     }

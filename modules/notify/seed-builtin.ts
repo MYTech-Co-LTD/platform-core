@@ -21,12 +21,11 @@ const CHANNELS = ['wecom_default', 'inapp_default']
 
 export async function seedBuiltin(
   pool: Pool,
-  env: NodeJS.ProcessEnv = process.env,
-  orgs?: string[],
+  env: NodeJS.ProcessEnv,
+  orgs: string[],
 ): Promise<SeedStats> {
-  const targets = orgs ?? (await pool.query<{ casdoor_org: string }>(
-    'select casdoor_org from platform.tenant order by casdoor_org',
-  )).rows.map((r) => r.casdoor_org)
+  // B1：模块不读 platform schema；租户清单由 scripts/notify-seed-builtin.mjs 查好注入
+  const targets = orgs
 
   let templates = 0
   let channels = 0
@@ -91,7 +90,7 @@ export async function seedBuiltin(
     channels += inapp.rowCount ?? 0
 
     const derived = await pool.query(
-      `insert into notify.rule_v2
+      `insert into notify.rule
          (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
        values ($1,$2,true,$3,'*','approvers',$4,$5::text[],'derived','system')
        on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
@@ -106,7 +105,7 @@ export async function seedBuiltin(
       .filter(Boolean)
     if (names.length > 0) {
       const manual = await pool.query(
-        `insert into notify.rule_v2
+        `insert into notify.rule
            (org,id,enabled,event_key,scope,recipient_key,recipient_literal,template_key,channels,origin,created_by)
          values ($1,$2,true,$3,'*','approvers_manual',$4::text[],$5,$6::text[],'manual','system')
          on conflict (org,id) do update set recipient_literal=excluded.recipient_literal,

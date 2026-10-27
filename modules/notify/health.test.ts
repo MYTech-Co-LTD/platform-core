@@ -24,14 +24,14 @@ describePg('checkHealth', () => {
     await applyMigrations(pool)
   })
   afterAll(async () => {
-    await pool.query('delete from notify.delivery_v2 where org=$1', [ORG])
+    await pool.query('delete from notify.delivery where org=$1', [ORG])
     await pool.query("delete from notify.worker_heartbeat where id='test-health'")
     await pool.end()
   })
 
   it('统计 dead / stale / 心跳', async () => {
     await pool.query(
-      `insert into notify.delivery_v2
+      `insert into notify.delivery
          (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,created_at)
        values ($1,'h-dead','m.a.b','r1','u1','wecom_default','u1','t1',1,'{}','dead',now()-interval '20 minutes'),
               ($1,'h-stale','m.a.b','r1','u2','wecom_default','u2','t1',1,'{}','pending',now()-interval '20 minutes')`,

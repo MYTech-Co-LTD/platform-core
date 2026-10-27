@@ -1,8 +1,8 @@
 // worker.test.ts — 编排核心：匹配→渲染冻结→到期发送→回执（依赖全注入，无 DB）
 import { describe, it, expect } from 'vitest'
 import type { NotificationEventDecl } from '@platform/sdk'
-import type { DeliveryRow, InsertDeliveryInput, PendingEvent } from './storage-v2'
-import type { NotificationRule } from './domain/rules-v2'
+import type { DeliveryRow, InsertDeliveryInput, PendingEvent } from './storage'
+import type { NotificationRule } from './domain/rules'
 import { nextAt, runOnce, type WorkerDeps } from './worker'
 
 const decl: NotificationEventDecl = {

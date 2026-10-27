@@ -1473,7 +1473,7 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
   })
 
   it('注入 ctx.notify，并把事件写进 platform.event_catalog', async () => {
-    cleanupModules.push('prodmod', 'notify')
+    cleanupModules.push('prodmod')
     cleanupSqls.push("delete from platform.event_catalog where module_id = 'prodmod'")
     const modulesDir = await newModulesDir()
 

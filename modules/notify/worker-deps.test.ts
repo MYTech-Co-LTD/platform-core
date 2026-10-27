@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations, makeIdentity } from './test-util'
 import { buildWorkerDeps } from './worker-deps'
-import type { DeliveryRow } from './storage-v2'
+import type { DeliveryRow } from './storage'
 
 const url = process.env.DATABASE_URL
 const describePg = url ? describe : describe.skip
@@ -40,7 +40,7 @@ describePg('buildWorkerDeps', () => {
        values ($1,'wecom_default','wecom_chat',true,'{}','{"bridge_url":"WECOM_BRIDGE_URL__ORG_WD2"}','u')`,
       [ORG])
 
-    const deps = buildWorkerDeps(pool, { WECOM_BRIDGE_URL__ORG_WD2: 'https://bridge/wecom/x?t=tok' })
+    const deps = buildWorkerDeps(pool, async () => null, { WECOM_BRIDGE_URL__ORG_WD2: 'https://bridge/wecom/x?t=tok' })
     let captured: { url: string; body: string } | null = null
     const orig = globalThis.fetch
     globalThis.fetch = (async (u: string | URL | Request, init?: RequestInit) => {
@@ -61,7 +61,7 @@ describePg('buildWorkerDeps', () => {
       `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
        values ($1,'wecom_default','wecom_chat',true,'{}','{"bridge_url":"MISSING_KEY"}','u')`,
       [ORG])
-    const deps = buildWorkerDeps(pool, {})
+    const deps = buildWorkerDeps(pool, async () => null, {})
     expect(await deps.send(row())).toMatchObject({ ok: false, kind: 'permanent', code: 'secret_missing' })
   })
 
@@ -70,7 +70,7 @@ describePg('buildWorkerDeps', () => {
       `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
        values ($1,'inapp_default','in_app',true,'{}','{}','u')`,
       [ORG])
-    const deps = buildWorkerDeps(pool, {})
+    const deps = buildWorkerDeps(pool, async () => null, {})
     const r = await deps.send(row({
       channel: 'inapp_default', address: 'u1',
       rendered: { title: 'T', body: 'B', link: 'https://x' },
@@ -81,7 +81,7 @@ describePg('buildWorkerDeps', () => {
   })
 
   it('scope_holders v1 返回空（literal 兜底）', async () => {
-    const deps = buildWorkerDeps(pool, {})
+    const deps = buildWorkerDeps(pool, async () => null, {})
     expect(await deps.resolveScopeHolders(ORG, 'approvers', {
       key: 'm.a.b', title: '', payload: {}, recipients: {},
     })).toEqual([])

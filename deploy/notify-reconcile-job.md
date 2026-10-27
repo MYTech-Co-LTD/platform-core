@@ -1,49 +1,49 @@
-# notify-reconcile job（指派与催办定时对账）
+# notify-reconcile job（指派与催办定时入队）
 
-> 正典依据：`docs/architecture.md` §2.4「指派与催办」；实施计划
-> `docs/superpowers/plans/2026-10-19-form-assignment-reminder-impl.md`（Task 4/5）；
-> 决策 D-A（2026-10-19 人拍板）：`form.assigned` **全交本 job**，发布路径不接线。
+> 正典依据：`docs/architecture.md` §2.4「指派与催办」；通知基础设施设计
+> `docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md`；决策 D-A（2026-10-19）：
+> `form.assigned` 全交本 job，发布路径不接线。
+> ⚠️ 2026-10-27 起本 job **只入队、不投递、不派生规则**（规则由 `notify-seed-builtin` seed；投递由 `notify-worker`）。
 
 ## 这个 job 干什么
 
-跑仓内脚本 `scripts/notify-reconcile.mjs`，三件事（全部幂等）：
+跑仓内脚本 `scripts/notify-reconcile.mjs`，两件事（全部幂等）：
 
-1. **派生**：已发布表单的 `assignees` 声明 → upsert `form.assigned` / `form.due_reminder` 两条 notify 规则（确定性 id）。
-2. **指派**：逐人 emit `form.assigned`（`event_id = form:<assetId>:<version>:assigned:<user>`）。
-3. **催办**：`published_at + due.afterDays` 到期且**未提交**者，逐人 emit `form.due_reminder`（`event_id` 含日期 ⇒ 同日重跑不重复）。
+1. **指派**：逐人入队 `forms.form.assigned`（`event_id = form:<assetId>:<version>:assigned:<user>`）。
+2. **催办**：`published_at + due.afterDays` 到期且**未提交**者，逐人入队 `forms.form.due_reminder`
+   （`event_id` 含日期 ⇒ 同日重跑不重复）。
 
-> ⚠️ **D-A 的语义后果**：`form.assigned` 的投递时刻 = **下一次调度**，不是发布瞬间。
-> 要「发布后尽快通知」就把频率设成小时级（延迟 ≤ 1 个周期）。
+> ⚠️ **D-A 的语义后果**：入队时刻 = **下一次调度**；真正送达还要等 `notify-worker` 的下一次轮询
+> （≤2s）与 provider 投递。要「发布后尽快通知」就把本 job 频率设成小时级（延迟 ≤ 1 个周期）。
 
 ## 建在哪 / 怎么建
 
-- **openship 面板 → Jobs** 新建（口径见 `deploy/openship-adopt.md` 同款「清理由 openship job 定时执行，应用进程不自己跑」）。
+- **openship 面板 → Jobs** 新建（口径见 `deploy/openship-adopt.md`：「清理由 openship job 定时执行，
+  应用进程不自己跑」）。
 - 执行形态照 `deploy/data-compose.yml` 的 dbt runner 范式：**一次性容器跑 `docker run`，零常驻**。
 - 命令（示意）：在项目容器内跑 `pnpm exec tsx scripts/notify-reconcile.mjs --json`。
-- **cron 按 UTC 解释**（`deploy/data-plane-deploy-sop.md` §E.7 已实测，不是服务器本地时区）：
-  要「每日 08:00 CST」须写 UTC `0 0 * * *`；建议**小时级**（见上）。
+- **cron 按 UTC 解释**（`deploy/data-plane-deploy-sop.md` §E.7 已实测）：要「每日 08:00 CST」
+  须写 UTC `0 0 * * *`；建议**小时级**（见上）。
 
 ## 配置从哪取（不写明文）
 
 | 键 | 从哪取 |
 |---|---|
 | `DATABASE_URL` | openship 该项目 env（isSecret）注入 |
-| `NOVU_BASE_URL` / `NOVU_API_KEY` | 同上（缺省时脚本仍跑：emit 落 failed 回执，不抛） |
-| `NOVU_CHAT_WEBHOOK_URL__<ORG>` | 同上（isSecret）。**缺 ⇒ 该 org 不挂 chat 渠道**：`trigger` 照发，但 Novu 的 chat 作业恒 `canceled`（企微收不到）；`NOVU_API_KEY` 有回落、**本键没有**，见 `docs/architecture.md` §2.6 |
+| `PLATFORM_CONSOLE_BASE_URL` | 同上；拼通知里的详情链接（缺省 ⇒ 相对路径，企微里不可点） |
 
-> ⚠️ **不要去 SSH 读机器上的 env**——那是读机器状态，违反「唯一通道」铁律
-> （同 `scripts/reconcile-tenant-sources.mjs` 头注口径）。脚本只接受**运行方传进来的**声明。
+> ⚠️ **不要去 SSH 读机器上的 env**——那是读机器状态，违反「唯一通道」铁律。
+> 投递侧的 `WECOM_BRIDGE_URL__<ORG>` 等密钥属于 **notify-worker** 服务行，不在本 job。
 
 ## 怎么读结果 / 告警
 
-- 退出码（与既有对账脚本同口径）：**0** = 干净；**1** = 有失败（emit 回执 `failed > 0`）；
-  **2** = 对不成账（缺 `DATABASE_URL` / 查询失败）。
-- stdout：一行结论（`--json` 则给结构化 `{targets, derived, emitted, failed}`）。
-- **必须订阅失败通知**：job 静默失败 = 指派/催办没发生，且没有任何一处会红
-  （`deploy/openship-adopt.md` 同款要求；不许 `continue-on-error`）。
+- 退出码：**0** = 全部入队成功（含重复）；**1** = 有入队异常；**2** = 缺 `DATABASE_URL` / 查询失败。
+- stdout：一行结论（`--json` 则 `{targets, emitted, duplicates}`）。
+- **投递失败不在本 job 可见**（已异步）：由 `scripts/notify-health.mjs` job（dead / 积压 / 心跳）
+  与 console 投递回执负责红。**本 job 必须订阅失败通知**（静默失败 = 指派/催办没发生）。
 
 ## 待实测（不得据以声称可用）
 
-- **N=500 名单**时的调度耗时与 Novu 限速（正典 §2.4 实施注记的验收项）。
+- **N=500 名单**时的入队耗时与 worker 发送节奏 / 企微限流（正典 §2.4 实施注记）。
 - 首次上线前按 §2.4 验收五条走一遍：发布各收到一次 / 到期未提交各一次 / 已提交不收 /
   存量（无 `assignees`）零影响 / 停用规则后不通知。

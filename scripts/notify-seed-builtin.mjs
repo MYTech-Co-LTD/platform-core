@@ -14,7 +14,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const { Pool } = createRequire(import.meta.url)('pg')
   const pool = new Pool({ connectionString: url })
   try {
-    const s = await seedBuiltin(pool, process.env)
+    // B1：租户清单在 scripts/ 查（platform schema），模块只收 orgs
+    /** @type {{ rows: Array<{ casdoor_org: string }> }} */
+    const { rows } = await pool.query('select casdoor_org from platform.tenant order by casdoor_org')
+    const s = await seedBuiltin(pool, process.env, rows.map((r) => r.casdoor_org))
     console.log(JSON.stringify(s))
   } catch (e) {
     console.error('notify-seed-builtin 失败:', e instanceof Error ? e.message : e)

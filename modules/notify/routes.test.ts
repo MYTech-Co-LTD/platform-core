@@ -1,112 +1,137 @@
-// routes.test.ts — 端点：校验 fail-closed / org 钉死 / emit 边界（DB）。计划 Task 6 Step 5。
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
+// routes-v2.test.ts — v2 端点（规则/投递/外部 emit/收件箱）
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
-import { Hono } from 'hono'
-import mod from './index'
+import type { NotificationEventDecl } from '@platform/sdk'
+import notifyV2 from './index'
 import { applyMigrations, buildTestApp, makeIdentity } from './test-util'
 
-const dbUrl = process.env.DATABASE_URL
-const describePg = dbUrl ? describe : describe.skip
-const SUF = Math.random().toString(36).slice(2, 8)
-const ORG_A = `org-notify-a-${SUF}`
-const ORG_B = `org-notify-b-${SUF}`
+const url = process.env.DATABASE_URL
+const describePg = url ? describe : describe.skip
+const ORG = 'org-routes2'
 
-const json = (body: unknown) => ({
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify(body),
-})
+const decl: NotificationEventDecl = {
+  key: 'm.a.b',
+  title: 't',
+  payload: { u: { type: 'user', required: true }, link: { type: 'url', required: true } },
+  recipients: { approver: { kind: 'field', field: 'u' } },
+}
+const events = {
+  get: (k: string) => (k === 'm.a.b' ? decl : undefined),
+  list: () => [decl],
+}
 
-describePg('notify routes', () => {
+describePg('routes v2', () => {
   let pool: Pool
-  let appA: Hono
-  let appB: Hono
+  let app: ReturnType<typeof buildTestApp>
 
   beforeAll(async () => {
-    pool = new Pool({ connectionString: dbUrl })
+    pool = new Pool({ connectionString: url })
     await applyMigrations(pool)
-    const scopes = ['notify:view', 'notify:manage', 'notify:emit']
-    appA = buildTestApp(mod, makeIdentity({ orgId: ORG_A, scopes }), { pool })
-    appB = buildTestApp(mod, makeIdentity({ orgId: ORG_B, scopes }), { pool })
+    app = buildTestApp(
+      notifyV2,
+      makeIdentity({ orgId: ORG, userId: 'u1', scopes: ['notify:view', 'notify:manage', 'notify:emit'] }),
+      { pool, events },
+    )
   })
   afterAll(async () => {
-    for (const org of [ORG_A, ORG_B]) {
-      await pool.query('delete from notify.delivery where org=$1', [org])
-      await pool.query('delete from notify.rule where org=$1', [org])
-    }
+    await cleanup()
     await pool.end()
   })
-  beforeEach(() => vi.unstubAllGlobals())
-
-  it('负对照③：解析器 × 挂载点错配 ⇒ 400（fail-closed）', async () => {
-    const res = await appA.request(
-      '/rules',
-      json({ eventType: 'form.due_reminder', mount: 'fd1', templateId: 'form_due_reminder', recipient: 'assignee' }),
-    )
-    expect(res.status).toBe(400)
-    expect((await res.json()).error).toBe('RULE_RECIPIENT_MOUNT_MISMATCH')
+  beforeEach(async () => {
+    await cleanup()
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'wecom_default','wecom_chat',true,'{}','{}','u')`, [ORG])
+    await pool.query(
+      `insert into notify.template(org,key,name,event_key,status,origin,published_revision,created_by)
+       values ($1,'t1','T','m.a.b','published','tenant',1,'u')`, [ORG])
+    await pool.query(
+      `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
+       values ($1,'t1',1,'{"wecom_chat":{"text":"hi"}}','h1','approved','u')`, [ORG])
   })
 
-  it('POST /rules ⇒ 201；GET /rules 回本 org 的规则', async () => {
-    const res = await appA.request(
-      '/rules',
-      json({ eventType: 'case.awaiting_approval', mount: 'ctA', templateId: 'case_awaiting_approval', recipient: 'assignee' }),
-    )
-    expect(res.status).toBe(201)
-    const list = await (await appA.request('/rules')).json()
-    expect(list.rules.map((r: { mount: string }) => r.mount)).toContain('ctA')
+  async function cleanup() {
+    await pool.query('delete from notify.rule where org=$1', [ORG])
+    await pool.query('delete from notify.event where org=$1', [ORG])
+    await pool.query('delete from notify.inbox where org=$1', [ORG])
+    await pool.query('delete from notify.template_revision where org=$1', [ORG])
+    await pool.query('delete from notify.template where org=$1', [ORG])
+    await pool.query('delete from notify.channel where org=$1', [ORG])
+  }
+
+  const post = (path: string, body: unknown) => app.request(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
   })
 
-  it('org 钉死：A 建的规则 B 看不到', async () => {
-    const listB = await (await appB.request('/rules')).json()
-    expect(listB.rules.map((r: { mount: string }) => r.mount)).not.toContain('ctA')
+  it('规则：合法创建、列表、启停、删除', async () => {
+    const created = await post('/rules', {
+      eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1',
+      channels: ['wecom_default'],
+    })
+    expect(created.status).toBe(201)
+    const { id } = await created.json() as { id: string }
+
+    const list = await app.request('/rules')
+    expect(((await list.json()) as { rules: unknown[] }).rules).toHaveLength(1)
+
+    const off = await app.request(`/rules/${encodeURIComponent(id)}/enabled`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    })
+    expect(off.status).toBe(200)
+
+    const del = await app.request(`/rules/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    expect(del.status).toBe(200)
   })
 
-  it('POST /emit 缺必填 ⇒ 400', async () => {
-    const res = await appA.request('/emit', json({ eventType: 'case.awaiting_approval' }))
-    expect(res.status).toBe(400)
+  it('规则：未知事件 / 未知收件人 / 未发布模板 ⇒ 400', async () => {
+    expect((await post('/rules', {
+      eventKey: 'm.x.y', recipientKey: 'approver', templateKey: 't1', channels: ['wecom_default'],
+    })).status).toBe(400)
+
+    expect((await post('/rules', {
+      eventKey: 'm.a.b', recipientKey: 'nope', templateKey: 't1', channels: ['wecom_default'],
+    })).status).toBe(400)
+
+    expect((await post('/rules', {
+      eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 'nope', channels: ['wecom_default'],
+    })).status).toBe(400)
   })
 
-  it('POST /emit ⇒ 202（fail-open 边界：即便无规则也 202）', async () => {
-    const res = await appA.request(
-      '/emit',
-      json({ eventId: 'evA', eventType: 'case.awaiting_approval', mount: 'ctA', payload: { assignee: 'u1' } }),
-    )
-    expect(res.status).toBe(202)
-    const body = await res.json()
-    expect(body).toMatchObject({ matched: 1 })
+  it('外部 emit：202 + 幂等 + 非法 payload 400', async () => {
+    const ok = await post('/emit', {
+      eventId: 'e1', eventKey: 'm.a.b', payload: { u: 'u1', link: 'https://x' },
+    })
+    expect(ok.status).toBe(202)
+    expect(await ok.json()).toEqual({ accepted: true })
+
+    const dup = await post('/emit', {
+      eventId: 'e1', eventKey: 'm.a.b', payload: { u: 'u1', link: 'https://x' },
+    })
+    expect(await dup.json()).toEqual({ accepted: false, reason: 'duplicate' })
+
+    const bad = await post('/emit', { eventId: 'e2', eventKey: 'm.a.b', payload: { u: 'u1' } })
+    expect(bad.status).toBe(400)
   })
 
-  it('POST /derive 派生默认规则（origin=derived）', async () => {
-    const res = await appA.request('/derive', json({ kind: 'approval', mount: 'ctD' }))
-    expect(res.status).toBe(201)
-    const body = await res.json()
-    expect(body).toMatchObject({ eventType: 'case.awaiting_approval', origin: 'derived' })
-    const list = await (await appA.request('/rules')).json()
-    expect(list.rules.find((r: { mount: string }) => r.mount === 'ctD')).toMatchObject({ origin: 'derived' })
-  })
+  it('收件箱：只读自己的、未读筛选、标记已读', async () => {
+    await pool.query(
+      `insert into notify.inbox(org,id,recipient,event_id,event_key,template_key,revision,title,body)
+       values ($1,'i1','u1','e1','m.a.b','t1',1,'T','B')`, [ORG])
+    await pool.query(
+      `insert into notify.inbox(org,id,recipient,event_id,event_key,template_key,revision,title,body)
+       values ($1,'i2','other','e2','m.a.b','t1',1,'T','B')`, [ORG])
 
-  it('POST /derive 幂等：同声明重算不新增行（确定性 id）', async () => {
-    await appA.request('/derive', json({ kind: 'approval', mount: 'ctD2' }))
-    await appA.request('/derive', json({ kind: 'approval', mount: 'ctD2' }))
-    const list = await (await appA.request('/rules')).json()
-    expect(list.rules.filter((r: { mount: string }) => r.mount === 'ctD2')).toHaveLength(1)
-  })
+    const all = await app.request('/inbox')
+    expect(((await all.json()) as { items: unknown[] }).items).toHaveLength(1)
 
-  it('POST /derive 表单催办 ⇒ form.due_reminder', async () => {
-    const res = await appA.request('/derive', json({ kind: 'reminder', mount: 'fdD' }))
-    expect((await res.json()).eventType).toBe('form.due_reminder')
-  })
+    const unread = await app.request('/inbox?unread=1')
+    expect(((await unread.json()) as { items: unknown[] }).items).toHaveLength(1)
 
-  it('POST /derive 缺 mount / kind 非法 ⇒ 400', async () => {
-    expect((await appA.request('/derive', json({ kind: 'approval' }))).status).toBe(400)
-    expect((await appA.request('/derive', json({ kind: 'nope', mount: 'x' }))).status).toBe(400)
-  })
-
-  it('GET /deliveries 回本 org 的回执', async () => {
-    const res = await appA.request('/deliveries')
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(Array.isArray(body.deliveries)).toBe(true)
+    expect((await app.request('/inbox/i1/read', { method: 'POST' })).status).toBe(200)
+    const after = await app.request('/inbox?unread=1')
+    expect(((await after.json()) as { items: unknown[] }).items).toHaveLength(0)
   })
 })

@@ -2,10 +2,10 @@
 // 正典：docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md §7
 // 关键语义：事件先入队；worker 匹配 → 渲染冻结 → 到期领取 → provider 发送 → 回执。
 import type { NotificationEventDecl } from '@platform/sdk'
-import { matchRules, type NotificationRule } from './domain/rules-v2'
+import { matchRules, type NotificationRule } from './domain/rules'
 import { resolveRecipientNames } from './domain/recipients'
 import { renderContents, type Contents } from './domain/render'
-import type { DeliveryRow, InsertDeliveryInput, PendingEvent } from './storage-v2'
+import type { DeliveryRow, InsertDeliveryInput, PendingEvent } from './storage'
 
 export type ProviderResult =
   | { ok: true }
