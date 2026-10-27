@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.204.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.2...v0.204.3) - 2026-10-27
+- 【修复】data: AI 文本回退模板（中文日期误判/Date 串/回退缓存） (#1083) ([#1084](https://github.com/MYTech-Co-LTD/platform-core/pull/1084), [71b443c](https://github.com/MYTech-Co-LTD/platform-core/commit/71b443c5999ee2a68a0db7d47b6fed05128acab6))
+
+
 ## [0.204.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.1...v0.204.2) - 2026-10-26
 - 【修复】data: 环比按数据覆盖度判定，对比期覆盖不足不出对比 ([#1080](https://github.com/MYTech-Co-LTD/platform-core/pull/1080), [d661d2e](https://github.com/MYTech-Co-LTD/platform-core/commit/d661d2e5be06cec094ce41f4a86cb0f95850b362))
 
