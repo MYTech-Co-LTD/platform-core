@@ -1,11 +1,16 @@
 export { ManifestSchema } from './manifest'
 export type { ModuleManifest, ModuleManifestInferred } from './manifest'
+export type {
+  NotificationEventDecl, EventFieldDecl, EventRecipientDecl, EventPayloadType,
+} from './manifest'
 export { BINDING_KEYS, runChecks } from './checks'
 export type { CheckResult } from './checks'
+export { validatePayload } from './events'
 export { DECLARED_GATE_APPROVED, defineModule, requireScope, declaredScopeGate, LinkError } from './module'
 export type {
-  DeclaredEndpoint, Identity, IdentityLinkView, IdentityLinks, LinkProvider,
-  ModuleContext, ModuleDefinition, ModulePorts, ResolvedPatKey,
+  ChannelAddressResolver, DeclaredEndpoint, EnqueueEventInput, EventCatalogReader,
+  Identity, IdentityLinkView, IdentityLinks, LinkProvider,
+  ModuleContext, ModuleDefinition, ModulePorts, NotifyEmitInput, NotifyPort, ResolvedPatKey,
 } from './module'
 export { METRIC_SOURCE_RE, TENANT_SOURCES, TENANT_STORAGE } from './module'
 export type { TenantStorageConfig } from './module'

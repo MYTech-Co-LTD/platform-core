@@ -104,6 +104,24 @@ services:
     # 反复重启会把失败暴露在 docker compose ps 的 Restarting 上，而不是静默躺着
     restart: unless-stopped
 
+  # 通知投递 worker（2026-10-27 通知基础设施 §7.4）：同镜像、换 command、**无端口**。
+  # 轮询 outbox（租约 + SKIP LOCKED）；与 server 共用 DATABASE_URL 与项目 env。
+  notify-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      DATABASE_URL: postgres://platform:platform@postgres:5432/platform
+    # 运行镜像已含 tsx（node_modules 全量 COPY，未 prune）；不要用裸 node 跑 .ts import
+    command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   # 报表编辑页专用入口（spec §3⑦）：反代会话。与 server 同镜像、换 command。
   # 对外由 edge 路由到一个每客户专用 host（部署 SOP 见 deploy/data-plane-deploy-sop.md）。
   mb-proxy:

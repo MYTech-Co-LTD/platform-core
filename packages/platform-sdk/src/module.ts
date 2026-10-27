@@ -1,6 +1,6 @@
 import type { Hono, MiddlewareHandler } from 'hono'
 import type { Pool } from 'pg'
-import type { ModuleManifest } from './manifest'
+import type { ModuleManifest, NotificationEventDecl } from './manifest'
 
 /**
  * 模块接入三原语（Task 9）：模块开发者只经 defineModule / requireScope / Identity 接入宿主。
@@ -33,6 +33,45 @@ export interface Identity {
   boundExternalIds?: string[]
 }
 
+/** 模块发事件的入参（宿主包装后用 `ctx.notify.emit` 暴露给模块）。 */
+export interface NotifyEmitInput {
+  eventKey: string
+  /** 确定性 event_id：业务转移一次一枚（幂等去重的唯一依据） */
+  eventId: string
+  /** 实例级作用域；缺省 = '*' */
+  scope?: string
+  payload: Record<string, unknown>
+}
+
+/** 宿主注入的 emit 端口：校验 + 异步入 outbox；**不阻塞业务**（fail-open）。 */
+export interface NotifyPort {
+  emit(
+    identity: Identity,
+    input: NotifyEmitInput,
+  ): Promise<{ accepted: boolean; reason?: string }>
+}
+
+/** 宿主按 manifest / 快照构建的只读事件目录；模块不直接查 platform schema。 */
+export interface EventCatalogReader {
+  get(key: string): NotificationEventDecl | undefined
+  list(filter?: { moduleId?: string; active?: boolean }): NotificationEventDecl[]
+}
+
+/** 渠道地址解析（Casdoor 用户 → 企微 userid 等）；与 worker 共用同一实现。 */
+export interface ChannelAddressResolver {
+  resolve(input: { org: string; provider: string; casdoorName: string }): Promise<string | null>
+}
+
+/** 模块端口：notify 模块供给、宿主装载期取用的入队实现。 */
+export interface EnqueueEventInput {
+  org: string
+  eventId: string
+  eventKey: string
+  scope: string
+  payload: Record<string, unknown>
+  producer: string
+}
+
 /** 宿主递给 createRouter 的运行时上下文：绑定资源在此，模块不自己建连接。 */
 export interface ModuleContext {
   pool: Pool
@@ -42,6 +81,12 @@ export interface ModuleContext {
    * 这是「缺省不炸」的向后兼容契约，不是可选风格。
    */
   identityLinks?: IdentityLinks
+  /** 只读事件目录（宿主按 manifest / platform.event_catalog 快照构建；仅 notify/管理面使用）。 */
+  events?: EventCatalogReader
+  /** 任意模块可用：发事件（异步入 outbox，fail-open）。未注入 = notify 模块未装载。 */
+  notify?: NotifyPort
+  /** 渠道地址解析（Casdoor 用户 → 通道地址）；仅 notify 模块使用。 */
+  addresses?: ChannelAddressResolver
 }
 
 /**
@@ -130,6 +175,11 @@ export interface ModulePorts {
    * 明文 token 不得进日志/审计（正典「模块端口」安全性质第 4 条）。
    */
   resolvePatKey?(token: string): Promise<ResolvedPatKey | null>
+  /**
+   * 通知入队（notify 模块供给）：宿主包装成 `ctx.notify.emit` 并按事件目录校验。
+   * 幂等：同 `(org, event_id)` 重复调用返回 `{accepted:false, reason:'duplicate'}`。
+   */
+  enqueueEvent?(input: EnqueueEventInput): Promise<{ accepted: boolean; reason?: string }>
 }
 
 /**

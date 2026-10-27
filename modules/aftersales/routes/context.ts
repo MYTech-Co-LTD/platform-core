@@ -6,7 +6,7 @@
 import type { Hono } from 'hono'
 import type { Pool } from 'pg'
 import { TENANT_STORAGE } from '@platform/sdk'
-import type { Identity, IdentityLinks, TenantStorageConfig } from '@platform/sdk'
+import type { Identity, IdentityLinks, NotifyPort, TenantStorageConfig } from '@platform/sdk'
 
 /**
  * 模块路由的统一类型：identity 由宿主注入（模块自己【不写】门禁，spec/协议见 module-protocol）。
@@ -31,6 +31,8 @@ export type ModuleHono = Hono<{ Variables: ModuleVars }>
 export interface RouteCtx {
   pool: Pool
   identityLinks?: IdentityLinks
+  /** 通知端口（宿主注入；缺省 = 旧宿主/单测，调用点判空跳过） */
+  notify?: NotifyPort
 }
 
 /** 列表分页上界：模块自己的护栏，防止 size=99999 一次拉全表。 */

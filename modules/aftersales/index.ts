@@ -21,13 +21,13 @@ const manifest = ManifestSchema.parse(
 
 export default defineModule({
   manifest,
-  createRouter: ({ pool, identityLinks }) => {
+  createRouter: ({ pool, identityLinks, notify }) => {
     // ⚠️ 装载期**不读任何配置**（M3c 步 4）：存储配置由宿主按请求投影进 `TENANT_STORAGE`，
     // 各 handler 自己 `c.get`。这里读 env 是步 4 之前的形态，已消灭——它带来的正是
     // 「多租户同进程必然共用一份配置」。
     const r = new Hono<{ Variables: { identity: Identity; [TENANT_STORAGE]?: TenantStorageConfig } }>()
     // storage 已从 RouteCtx 消失，配置改为按请求取；identityLinks 可缺省（旧宿主不注入）
-    const ctx: RouteCtx = { pool, identityLinks }
+    const ctx: RouteCtx = { pool, identityLinks, notify }
 
     registerTicketManage(r, ctx)
     registerTicketGuest(r, ctx)

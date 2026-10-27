@@ -1,164 +1,378 @@
-// storage.ts — notify 的 SQL 封装。
-// 薄封装纪律：主体（org）一律来自调用方传入的 identity.orgId，**本层绝不读请求**；
-// SQL 一律 `where org=$1`（org-scoped 行级隔离，§2.6 鉴权钉死）。
+// storage-v2.ts — 新通知存储层（expand 阶段：rule/delivery 用 _v2 表名，Task 15 rename）。
+// 纪律：org 一律由调用方传入；SQL 一律 where org=$1；本层不读请求/身份。
 import type { Pool } from 'pg'
-import type { Channel, NotificationRule, RecipientKind, RuleOrigin } from './domain/rules'
+import type { EnqueueEventInput } from '@platform/sdk'
+import type { NotificationRule } from './domain/rules'
 
-/** 机检错误码载体：routes 按 code 映射 HTTP 状态与文案，不解析 message。 */
-export class NotifyError extends Error {
-  constructor(
-    public readonly code: string,
-    public readonly detail?: string,
-  ) {
-    super(detail ?? code)
-  }
-}
-
-type RuleRow = {
-  org: string
+export type RuleInput = {
   id: string
   enabled: boolean
-  event_type: string
-  mount: string
-  template_id: string
-  recipient: RecipientKind
-  recipient_arg: string | null
-  channels: Channel[]
-  cooldown_minutes: number | null
-  origin: RuleOrigin
-  created_at: Date
+  eventKey: string
+  scope: string
+  recipientKey: string
+  recipientLiteral: string[] | null
+  templateKey: string
+  channels: string[]
+  cooldownMinutes: number | null
+  origin: 'derived' | 'manual'
 }
 
-const COLS =
-  'org,id,enabled,event_type,mount,template_id,recipient,recipient_arg,channels,cooldown_minutes,origin,created_at'
+export type DeliveryRow = {
+  org: string
+  eventId: string
+  eventKey: string
+  ruleId: string
+  recipient: string
+  channel: string
+  address: string
+  templateKey: string
+  revision: number
+  rendered: Record<string, string>
+  status: string
+  attempts: number
+  lockedUntil: string | null
+}
 
-function toRule(r: RuleRow): NotificationRule {
-  return {
-    id: r.id,
+export type PendingEvent = {
+  org: string
+  eventId: string
+  eventKey: string
+  scope: string
+  payload: Record<string, unknown>
+}
+
+// ── 入队 ──────────────────────────────────────────────────────────────────────
+
+export async function enqueueEvent(
+  pool: Pool,
+  e: EnqueueEventInput,
+): Promise<{ accepted: boolean; reason?: string }> {
+  const r = await pool.query(
+    `insert into notify.event(org,event_id,event_key,scope,payload,producer)
+     values ($1,$2,$3,$4,$5::jsonb,$6)
+     on conflict (org,event_id) do nothing`,
+    [e.org, e.eventId, e.eventKey, e.scope, JSON.stringify(e.payload), e.producer],
+  )
+  return (r.rowCount ?? 0) > 0 ? { accepted: true } : { accepted: false, reason: 'duplicate' }
+}
+
+export async function claimEvents(pool: Pool, limit = 50): Promise<PendingEvent[]> {
+  const { rows } = await pool.query(
+    `with picked as (
+       select org,event_id from notify.event
+        where status='new' and (locked_until is null or locked_until < now())
+        order by created_at limit $1 for update skip locked
+     )
+     update notify.event e set locked_until = now() + interval '60 seconds'
+       from picked p where e.org=p.org and e.event_id=p.event_id
+     returning e.org, e.event_id as "eventId", e.event_key as "eventKey", e.scope, e.payload`,
+    [limit],
+  )
+  return rows as PendingEvent[]
+}
+
+export async function markEvent(
+  pool: Pool,
+  ev: { org: string; eventId: string },
+  status: string,
+): Promise<void> {
+  await pool.query(
+    `update notify.event set status=$3, processed_at=now(), locked_until=null
+      where org=$1 and event_id=$2`,
+    [ev.org, ev.eventId, status],
+  )
+}
+
+// ── 规则 ──────────────────────────────────────────────────────────────────────
+
+export async function listRules(pool: Pool, org: string): Promise<NotificationRule[]> {
+  const { rows } = await pool.query(
+    `select org,id,enabled,event_key,scope,recipient_key,recipient_literal,template_key,
+            channels,cooldown_minutes,origin,created_at
+       from notify.rule where org=$1 order by created_at,id`,
+    [org],
+  )
+  return rows.map((r) => ({
     org: r.org,
+    id: r.id,
     enabled: r.enabled,
-    eventType: r.event_type,
-    mount: r.mount,
-    templateId: r.template_id,
-    recipient: r.recipient,
-    recipientArg: r.recipient_arg,
+    eventKey: r.event_key,
+    scope: r.scope,
+    recipientKey: r.recipient_key,
+    recipientLiteral: r.recipient_literal,
+    templateKey: r.template_key,
     channels: r.channels,
     cooldownMinutes: r.cooldown_minutes,
     origin: r.origin,
-    createdAt: r.created_at.toISOString(),
-  }
+    createdAt: (r.created_at as Date).toISOString(),
+  }))
 }
 
-// ── 规则登记 ──
-
-export async function listRules(pool: Pool, org: string): Promise<NotificationRule[]> {
-  const { rows } = await pool.query<RuleRow>(
-    `select ${COLS} from notify.rule where org=$1 order by created_at, id`,
-    [org],
-  )
-  return rows.map(toRule)
-}
-
-/**
- * upsert（幂等）：撞 `(org,id)` 则更新业务列，**不覆盖 created_at**——保住「首次派生/创建时间」语义，
- * 让声明重算（derive 幂等）落成 no-op。
- */
-export async function upsertRule(pool: Pool, org: string, rule: NotificationRule, actor: string): Promise<void> {
+export async function upsertRule(
+  pool: Pool,
+  org: string,
+  rule: RuleInput,
+  actor: string,
+): Promise<void> {
   await pool.query(
     `insert into notify.rule
-       (org,id,enabled,event_type,mount,template_id,recipient,recipient_arg,channels,cooldown_minutes,origin,created_by)
+       (org,id,enabled,event_key,scope,recipient_key,recipient_literal,
+        template_key,channels,cooldown_minutes,origin,created_by)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      on conflict (org,id) do update set
-       enabled          = excluded.enabled,
-       event_type       = excluded.event_type,
-       mount            = excluded.mount,
-       template_id      = excluded.template_id,
-       recipient        = excluded.recipient,
-       recipient_arg    = excluded.recipient_arg,
-       channels         = excluded.channels,
-       cooldown_minutes = excluded.cooldown_minutes,
-       origin           = excluded.origin`,
-    [
-      org,
-      rule.id,
-      rule.enabled,
-      rule.eventType,
-      rule.mount,
-      rule.templateId,
-      rule.recipient,
-      rule.recipientArg ?? null,
-      rule.channels,
-      rule.cooldownMinutes ?? null,
-      rule.origin,
-      actor,
-    ],
+       enabled=excluded.enabled,
+       event_key=excluded.event_key,
+       scope=excluded.scope,
+       recipient_key=excluded.recipient_key,
+       recipient_literal=excluded.recipient_literal,
+       template_key=excluded.template_key,
+       channels=excluded.channels,
+       cooldown_minutes=excluded.cooldown_minutes,
+       origin=excluded.origin`,
+    [org, rule.id, rule.enabled, rule.eventKey, rule.scope, rule.recipientKey,
+     rule.recipientLiteral, rule.templateKey, rule.channels, rule.cooldownMinutes,
+     rule.origin, actor],
   )
 }
 
-export async function setRuleEnabled(pool: Pool, org: string, id: string, enabled: boolean): Promise<number> {
-  const res = await pool.query('update notify.rule set enabled=$3 where org=$1 and id=$2', [org, id, enabled])
-  return res.rowCount ?? 0
+export async function setRuleEnabled(
+  pool: Pool, org: string, id: string, enabled: boolean,
+): Promise<number> {
+  const r = await pool.query('update notify.rule set enabled=$3 where org=$1 and id=$2',
+    [org, id, enabled])
+  return r.rowCount ?? 0
 }
 
 export async function deleteRule(pool: Pool, org: string, id: string): Promise<number> {
-  const res = await pool.query('delete from notify.rule where org=$1 and id=$2', [org, id])
-  return res.rowCount ?? 0
+  const r = await pool.query('delete from notify.rule where org=$1 and id=$2', [org, id])
+  return r.rowCount ?? 0
 }
 
-// ── 投递回执 ──
+// ── 模板 / 通道 ───────────────────────────────────────────────────────────────
 
-export type DeliveryRow = {
-  ruleId: string
-  eventId: string
-  eventType: string
-  recipient: string
-  template: string
-}
-
-/**
- * **认领**投递（幂等去重的实现）：撞 `(org,event_id,rule_id)` 即 no-op 并返回 false ⇒ 调用方**跳过**，
- * 不双发。返回 true = 本次认领成功（**先认领后投递**：认领即占位，投递失败再 markDeliveryFailed）。
- * 崩溃窗口（认领后未投递）在 v1 可接受——fail-open、无队列，靠 Novu 自身重试 + 人工重触发（§2.6 取舍④）。
- */
-export async function claimDelivery(pool: Pool, org: string, row: DeliveryRow): Promise<boolean> {
-  const res = await pool.query(
-    `insert into notify.delivery (org,rule_id,event_id,event_type,recipient,template,status)
-     values ($1,$2,$3,$4,$5,$6,'sent')
-     on conflict (org,event_id,rule_id) do nothing`,
-    [org, row.ruleId, row.eventId, row.eventType, row.recipient, row.template],
+export async function getPublishedTemplate(
+  pool: Pool, org: string, key: string,
+): Promise<{ revision: number; contents: Record<string, Record<string, string>> } | null> {
+  const { rows } = await pool.query(
+    `select r.revision, r.contents from notify.template t
+       join notify.template_revision r
+         on r.org=t.org and r.key=t.key and r.revision=t.published_revision
+      where t.org=$1 and t.key=$2 and t.status='published'`,
+    [org, key],
   )
-  return (res.rowCount ?? 0) > 0
+  return rows[0]
+    ? { revision: rows[0].revision as number, contents: rows[0].contents }
+    : null
+}
+
+export type ChannelRow = {
+  org: string
+  id: string
+  provider: string
+  enabled: boolean
+  config: Record<string, unknown>
+  secret_refs: Record<string, string>
+}
+
+export async function getChannel(pool: Pool, org: string, id: string): Promise<ChannelRow | null> {
+  const { rows } = await pool.query(
+    `select org,id,provider,enabled,config,secret_refs from notify.channel
+      where org=$1 and id=$2`,
+    [org, id],
+  )
+  return (rows[0] as ChannelRow | undefined) ?? null
+}
+
+/** 规则校验用：本 org 已启用的通道 id 集合 */
+export async function listEnabledChannelIds(pool: Pool, org: string): Promise<Set<string>> {
+  const { rows } = await pool.query(
+    'select id from notify.channel where org=$1 and enabled', [org])
+  return new Set(rows.map((r) => r.id as string))
+}
+
+/** 规则校验用：本 org 已发布的模板 key 集合 */
+export async function listPublishedTemplateKeys(pool: Pool, org: string): Promise<Set<string>> {
+  const { rows } = await pool.query(
+    "select key from notify.template where org=$1 and status='published'", [org])
+  return new Set(rows.map((r) => r.key as string))
+}
+
+// ── 投递 ──────────────────────────────────────────────────────────────────────
+
+export type InsertDeliveryInput = {
+  org: string
+  eventId: string
+  eventKey: string
+  ruleId: string
+  recipient: string
+  channel: string
+  address: string
+  templateKey: string
+  revision: number
+  rendered: unknown
+  status: 'pending' | 'suppressed' | 'dead'
+  lastError?: string
+}
+
+export async function insertDelivery(pool: Pool, d: InsertDeliveryInput): Promise<void> {
+  await pool.query(
+    `insert into notify.delivery
+       (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,last_error)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
+     on conflict (org,event_id,rule_id,recipient,channel) do nothing`,
+    [d.org, d.eventId, d.eventKey, d.ruleId, d.recipient, d.channel, d.address, d.templateKey,
+     d.revision, JSON.stringify(d.rendered), d.status, d.lastError ?? null],
+  )
+}
+
+export async function claimDueDeliveries(pool: Pool, limit = 50): Promise<DeliveryRow[]> {
+  const { rows } = await pool.query(
+    `with picked as (
+       select org,event_id,rule_id,recipient,channel from notify.delivery
+        where status in ('pending','failed') and next_attempt_at <= now()
+          and (locked_until is null or locked_until < now())
+        order by next_attempt_at limit $1 for update skip locked
+     )
+     update notify.delivery d set locked_until = now() + interval '60 seconds', updated_at = now()
+       from picked p
+      where d.org=p.org and d.event_id=p.event_id and d.rule_id=p.rule_id
+        and d.recipient=p.recipient and d.channel=p.channel
+     returning d.org, d.event_id, d.event_key, d.rule_id, d.recipient, d.channel, d.address,
+               d.template_key, d.revision, d.rendered, d.status, d.attempts, d.locked_until`,
+    [limit],
+  )
+  return rows.map((r) => ({
+    org: r.org,
+    eventId: r.event_id,
+    eventKey: r.event_key,
+    ruleId: r.rule_id,
+    recipient: r.recipient,
+    channel: r.channel,
+    address: r.address,
+    templateKey: r.template_key,
+    revision: r.revision,
+    rendered: r.rendered,
+    status: r.status,
+    attempts: r.attempts,
+    lockedUntil: r.locked_until ? (r.locked_until as Date).toISOString() : null,
+  }))
+}
+
+export function deliveryKey(d: {
+  eventId: string; ruleId: string; recipient: string; channel: string
+}): string {
+  return `${d.eventId}|${d.ruleId}|${d.recipient}|${d.channel}`
+}
+
+export async function insertAttempt(
+  pool: Pool,
+  d: DeliveryRow,
+  r: { ok: true } | { ok: false; kind: string; code: string; summary: string },
+): Promise<void> {
+  await pool.query(
+    `insert into notify.delivery_attempt
+       (org,delivery_key,attempt_no,provider,status,error_code,error_summary)
+     values ($1,$2,$3,$4,$5,$6,$7)`,
+    [d.org, deliveryKey(d), d.attempts + 1, d.channel, r.ok ? 'sent' : 'failed',
+     r.ok ? null : r.code, r.ok ? null : r.summary],
+  )
+}
+
+/** 只按投递键更新时用的最小形状（不需要整行） */
+export type DeliveryKey = Pick<DeliveryRow, 'org' | 'eventId' | 'ruleId' | 'recipient' | 'channel'>
+
+export async function markDeliverySent(pool: Pool, d: DeliveryKey): Promise<void> {
+  await pool.query(
+    `update notify.delivery set status='sent', attempts=attempts+1, locked_until=null,
+       updated_at=now()
+      where org=$1 and event_id=$2 and rule_id=$3 and recipient=$4 and channel=$5`,
+    [d.org, d.eventId, d.ruleId, d.recipient, d.channel],
+  )
 }
 
 export async function markDeliveryFailed(
-  pool: Pool,
-  org: string,
-  eventId: string,
-  ruleId: string,
-  error: string,
+  pool: Pool, d: DeliveryKey, msg: string, at: Date,
 ): Promise<void> {
   await pool.query(
-    "update notify.delivery set status='failed', error=$4 where org=$1 and event_id=$2 and rule_id=$3",
-    [org, eventId, ruleId, error],
+    `update notify.delivery set status='failed', attempts=attempts+1, locked_until=null,
+       next_attempt_at=$6, last_error=$7, updated_at=now()
+      where org=$1 and event_id=$2 and rule_id=$3 and recipient=$4 and channel=$5`,
+    [d.org, d.eventId, d.ruleId, d.recipient, d.channel, at.toISOString(), msg],
   )
 }
 
-export async function listDeliveries(pool: Pool, org: string, limit = 100): Promise<
-  { ruleId: string; eventId: string; eventType: string; recipient: string; template: string; status: string; error: string | null; createdAt: string }[]
-> {
+export async function markDeliveryDead(pool: Pool, d: DeliveryKey, msg: string): Promise<void> {
+  await pool.query(
+    `update notify.delivery set status='dead', attempts=attempts+1, locked_until=null,
+       last_error=$6, updated_at=now()
+      where org=$1 and event_id=$2 and rule_id=$3 and recipient=$4 and channel=$5`,
+    [d.org, d.eventId, d.ruleId, d.recipient, d.channel, msg],
+  )
+}
+
+export async function isCoolingDown(
+  pool: Pool,
+  org: string,
+  rule: { id: string; cooldownMinutes: number | null },
+  recipient: string,
+  now: Date,
+): Promise<boolean> {
+  if (!rule.cooldownMinutes || rule.cooldownMinutes <= 0) return false
   const { rows } = await pool.query(
-    `select rule_id, event_id, event_type, recipient, template, status, error, created_at
+    `select 1 from notify.delivery
+      where org=$1 and rule_id=$2 and recipient=$3 and status='sent'
+        and created_at > $4::timestamptz - ($5 || ' minutes')::interval
+      limit 1`,
+    [org, rule.id, recipient, now.toISOString(), String(rule.cooldownMinutes)],
+  )
+  return rows.length > 0
+}
+
+// ── 回执列表（console） ───────────────────────────────────────────────────────
+
+export async function listDeliveries(pool: Pool, org: string, limit = 100) {
+  const { rows } = await pool.query(
+    `select event_id,rule_id,recipient,channel,address,template_key,revision,
+            status,attempts,last_error,created_at
        from notify.delivery where org=$1 order by created_at desc limit $2`,
     [org, limit],
   )
   return rows.map((r) => ({
-    ruleId: r.rule_id,
     eventId: r.event_id,
-    eventType: r.event_type,
+    eventKey: r.event_key,
+    ruleId: r.rule_id,
     recipient: r.recipient,
-    template: r.template,
+    channel: r.channel,
+    address: r.address,
+    templateKey: r.template_key,
+    revision: r.revision,
     status: r.status,
-    error: r.error,
+    attempts: r.attempts,
+    lastError: r.last_error,
     createdAt: (r.created_at as Date).toISOString(),
   }))
+}
+
+// ── in-app 收件箱 ─────────────────────────────────────────────────────────────
+
+export async function listInbox(
+  pool: Pool, org: string, recipient: string, unreadOnly: boolean,
+) {
+  const { rows } = await pool.query(
+    `select id,event_id,event_key,title,body,link,read_at,created_at
+       from notify.inbox
+      where org=$1 and recipient=$2 ${unreadOnly ? 'and read_at is null' : ''}
+      order by created_at desc limit 100`,
+    [org, recipient],
+  )
+  return rows
+}
+
+export async function markInboxRead(
+  pool: Pool, org: string, recipient: string, id: string,
+): Promise<void> {
+  await pool.query(
+    'update notify.inbox set read_at=now() where org=$1 and recipient=$2 and id=$3',
+    [org, recipient, id],
+  )
 }

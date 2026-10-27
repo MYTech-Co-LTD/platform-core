@@ -53,3 +53,25 @@ frontend:
     # 一个条目 + 页内三页签（表单/填报/提交记录，照 aftersales 姿势）；scope=forms:view
     - { path: /console/forms, title: 表单, icon: FileTextOutlined, scope: forms:view, entry: ./console/index.tsx }
 migrations: { dir: ./migrations }
+
+# 通知事件声明（2026-10-27 通知基础设施 §3.1）：对账脚本/发布路径入队，worker 投递。
+notifications:
+  events:
+    - key: forms.form.assigned
+      title: 表单指派
+      scope: { key: assetId, label: 表单 }
+      payload:
+        assetId:  { type: string, required: true }
+        assignee: { type: user, required: true }
+        link:     { type: url, required: true }
+      recipients:
+        assignee: { kind: field, field: assignee }
+    - key: forms.form.due_reminder
+      title: 表单催办
+      scope: { key: assetId, label: 表单 }
+      payload:
+        assetId:  { type: string, required: true }
+        assignee: { type: user, required: true }
+        link:     { type: url, required: true }
+      recipients:
+        assignee: { kind: field, field: assignee }

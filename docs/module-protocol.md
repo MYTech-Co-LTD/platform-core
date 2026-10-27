@@ -565,6 +565,50 @@ app.use('/api/modules/*', patIdentityMiddleware({
 - **一份实现的纪律**：有了端口，宿主侧**不再需要**复制模块的哈希行。任何「两侧逐字一致」的
   人工约定，都是一份可以消失的漂移面——**能消失就让它消失**，别为了对称而保留。
 
+## 通知事件声明：`notifications.events`（2026-10-27）
+
+模块在 manifest 声明**能发什么事件**；宿主装载期登记到事件目录，并注入 `ctx.notify.emit`。
+**不声明 = 发不出去**（契约违规拒绝入队，但不阻塞业务）。正典：
+`docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md` §3。
+
+### 模块侧：怎么声明
+
+```yaml
+notifications:
+  events:
+    - key: <module>.<entity>.<event>
+      title: 人话标题
+      scope: { key: <payload 字段>, label: ... }   # 可选
+      payload:
+        <field>: { type: string|number|boolean|date|url|user|user_list, required?: true, label?: ... }
+      recipients:
+        <key>: { kind: field|scope_holders|literal, field?/scope?, label? }
+      defaults: { recipient: <key>, template: <builtin>, channels: [<channel id>] }  # 可选
+```
+
+约束（`ManifestSchema` 强校验，fail-fast）：`key` 至少三段且前缀 = `manifest.id`、同模块唯一；
+`scope.key` 必须是 payload 的 string 字段；`field` 收件人必须指向 payload 的 `user`/`user_list`
+字段；`defaults.recipient` 必须已声明；payload 最多 20 个字段、不支持嵌套。
+
+### 运行时：怎么发
+
+```ts
+await ctx.notify?.emit(c.get('identity'), {
+  eventKey: 'aftersales.employee_approval.pending',
+  eventId: `...`,          // 确定性：业务转移一次一枚
+  scope: String(id),
+  payload: { ... },        // 必须满足事件声明
+})
+```
+
+返回 `{accepted, reason?}`；**不要拿它做业务分支**（fail-open）。`ctx.notify` 缺省 = 旧宿主/单测，
+调用点判空跳过。宿主侧校验（事件 owner / payload / scope / org）只有一处。
+
+### 与模块端口的关系
+
+`notify` 模块通过 `createPorts` 暴露 `enqueueEvent`；宿主包装成 `ctx.notify` 注入所有模块。
+其它模块**不直接**拿 notify 的 port（校验面只一处）。
+
 ## 跨模块只读数据依赖：`dataDependencies`（2026-09-23 拍板）
 
 > 适用：`modules/<id>/manifest.yaml` 的**可选** `dataDependencies` 字段——消费方声明自己

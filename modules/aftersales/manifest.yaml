@@ -78,3 +78,25 @@ frontend:
   # dist 相对**模块目录**解析（loader 的 path.resolve(m.dir, dist)）。
   userApp: { mount: /app/aftersales, dist: ./mobile/dist }
 migrations: { dir: ./migrations }
+
+# 通知事件声明（2026-10-27 通知基础设施 §3.1）：宿主装载期登记到 platform.event_catalog。
+# 收件人由平台解析：approvers = 本 org 持有 aftersales:manage 的用户；不可枚举时用
+# approvers_manual（manual 规则的字面名单，manual 优先于 derived）。
+notifications:
+  events:
+    - key: aftersales.employee_approval.pending
+      title: 员工登记待审批
+      description: 访客提交员工登记/变更后，通知本租户售后管理员
+      scope: { key: approvalId, label: 审批单 }
+      payload:
+        approvalId:    { type: string, required: true, label: 审批单号 }
+        approveType:   { type: string, required: true, label: 类型 }
+        applicantName: { type: string, label: 申请人 }
+        link:          { type: url, required: true, label: 详情链接 }
+      recipients:
+        approvers:        { kind: scope_holders, scope: aftersales:manage, label: 售后管理员 }
+        approvers_manual: { kind: literal, label: 手动指定审批人 }
+      defaults:
+        recipient: approvers
+        template: aftersales_employee_approval_pending
+        channels: [wecom_default, inapp_default]
