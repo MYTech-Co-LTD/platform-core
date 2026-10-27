@@ -5,6 +5,7 @@ export type {
 } from './manifest'
 export { BINDING_KEYS, runChecks } from './checks'
 export type { CheckResult } from './checks'
+export { validatePayload } from './events'
 export { DECLARED_GATE_APPROVED, defineModule, requireScope, declaredScopeGate, LinkError } from './module'
 export type {
   ChannelAddressResolver, DeclaredEndpoint, EnqueueEventInput, EventCatalogReader,
