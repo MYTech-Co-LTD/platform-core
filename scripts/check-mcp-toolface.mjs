@@ -12,6 +12,7 @@
 // registry 是纯的——这条 import 链不拉 pool/框架，否则门禁会连坐运行时依赖）。
 import { ANALYST_FACE_MAX_LIST_BYTES, ANALYST_FACE_MAX_TOOLS, ANALYST_TOOLS } from '../modules/data/domain/toolbox/registry.ts'
 import { PIPELINE_FACE_MAX_TOOLS, PIPELINE_TOOLS } from '../modules/data/domain/pipelines/tools.ts'
+import { NOTIFY_MAX_TOOLS, NOTIFY_TOOLS } from '../modules/notify/mcp-tools.ts'
 
 const TOOL_NAME_RE = /^[A-Za-z0-9_.-]+$/
 
@@ -51,6 +52,7 @@ if (process.argv[1]?.endsWith('check-mcp-toolface.mjs')) {
   const violations = [
     ...checkToolface(ANALYST_TOOLS),
     ...checkToolface(PIPELINE_TOOLS, { maxTools: PIPELINE_FACE_MAX_TOOLS }),
+    ...checkToolface(NOTIFY_TOOLS, { maxTools: NOTIFY_MAX_TOOLS }),
   ]
   if (violations.length > 0) {
     for (const v of violations) console.error(v)

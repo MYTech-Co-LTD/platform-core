@@ -10,6 +10,7 @@ import { checkWecomHealth } from './domain/channel'
 import { renderContents } from './domain/render'
 import { validateRule } from './domain/rules'
 import { validateContents } from './domain/template'
+import { registerNotifyMcpManage } from './mcp'
 import {
   audit, channelConfigured, countRecentTestDeliveries, createTemplateRevision,
   deleteRule, enqueueEvent, getChannel, getTemplate, insertDelivery, listChannels,
@@ -348,6 +349,10 @@ export function createNotifyRouter(deps: {
     await audit(deps.pool, org(c), (c.get('identity') as Identity).userId,
       'delivery.retry', `${body.eventId}|${body.ruleId}`, body)
     return c.json({ ok: true })
+  })
+
+  registerNotifyMcpManage(r, {
+    pool: deps.pool, events: deps.events, addresses: deps.addresses,
   })
 
   return r

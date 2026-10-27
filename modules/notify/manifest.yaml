@@ -39,6 +39,8 @@ api:
     # 测试发送（只发给自己）/ 手动重试
     - { method: POST,   path: /test-send,               scope: notify:manage }
     - { method: POST,   path: /deliveries/retry,        scope: notify:manage }
+    # 管理面 MCP（agent）：工具清单见 mcp-tools.ts；无 publish/channel 工具
+    - { method: POST,   path: /mcp-manage,              scope: notify:manage }
 frontend:
   console:
     - { path: /console/notify, title: 通知, icon: BellOutlined, scope: notify:view, entry: ./console/index.tsx }
