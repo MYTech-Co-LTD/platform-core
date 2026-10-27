@@ -1,7 +1,7 @@
 // console/index.tsx — 通知 console 入口（六区；照 forms/aftersales 姿势）。
 // frontend.console 是扁平数组、协议不支持嵌套 ⇒ 页内 tabs + URL 深链；导航必须绝对路径。
 import { useEffect } from 'react'
-import { Empty, Layout, Menu } from 'antd'
+import { Layout, Menu } from 'antd'
 import { useLocation, useNavigate } from 'react-router-dom'
 import EventsTab from './events'
 import RulesTab from './rules'
