@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.206.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.205.3...v0.206.0) - 2026-10-27
+- 【新增】data: table 面板支持 columns 渲染投影，收口连续无业绩天数明细 (#1094) ([#1103](https://github.com/MYTech-Co-LTD/platform-core/pull/1103), [4a056ff](https://github.com/MYTech-Co-LTD/platform-core/commit/4a056ffc4b8a4d8af0782ac5d943ad5736eb39a6))
+
+
 ## [0.205.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.205.2...v0.205.3) - 2026-10-27
 - 【修复】data: recon 改读封版天文件，修 T-3 永久缺失 ([#1100](https://github.com/MYTech-Co-LTD/platform-core/pull/1100), [356206f](https://github.com/MYTech-Co-LTD/platform-core/commit/356206f7563f3a2f2609b54e6043eaa89741bd89))
 
