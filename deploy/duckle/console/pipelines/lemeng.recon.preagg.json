@@ -61,12 +61,12 @@
         "y": 0
       },
       "data": {
-        "label": "plake 全书零售明细（只取门店清单）",
+        "label": "plake 封版天文件 _DAY_DATA（只取门店清单）",
         "componentId": "src.minio",
         "properties": {
           "connectionRef": "zos",
           "bucket": "${ENV:ZOS_BUCKET}",
-          "key": "lemeng/retail_order_line/system_book=${ENV:SYSTEM_BOOK}/**/*.parquet",
+          "key": "lemeng/retail_order_line/_DAY_DATA/system_book=${ENV:SYSTEM_BOOK}/**/*.parquet",
           "glob": true,
           "format": "parquet"
         }
@@ -100,7 +100,7 @@
         "componentId": "ctl.die",
         "properties": {
           "condition": "no-rows",
-          "message": "recon 依赖不可用（lake_unavailable）：T-3（上海日-3）无 FINISHED SALE_ORDER 行——分区缺失或当日零销，保守判依赖不判账（脚本 exit 3 同款）。book=${ENV:SYSTEM_BOOK}"
+          "message": "recon 依赖不可用（lake_unavailable）：T-3（上海日-3）的**封版天文件**里没有 FINISHED SALE_ORDER 行——天文件缺失或当日零销，保守判依赖不判账。本节点读 `_DAY_DATA/`（封版整天文件），**不再读热分区 `hour=`**：热分区会被封版流程删掉，读了会在 T-3 时已被清空（2026-10-27 实测 10-21 即因此永久缺失）。book=${ENV:SYSTEM_BOOK}"
         }
       }
     },
