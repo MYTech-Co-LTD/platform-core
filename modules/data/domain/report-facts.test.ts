@@ -255,6 +255,8 @@ describePg('buildFacts（需要 DATABASE_URL）', () => {
     for (const n of ['51,273.89', '48,000.00', '+6.8%', '47.36%', '+5.70pp', '875.59', '3,564.80', '387.64', '2026-10-01', '2026-10-19']) {
       expect(facts.numbers).toContain(n)
     }
+    // 门店号也要进白名单：提示词要求文本写当前门店，模型写「85」不能被判成越界数字
+    expect(facts.numbers).toContain('92')
     expect(facts.numbers.some((n) => n.startsWith('¥'))).toBe(false)
     expect(facts.numbers).not.toContain('-')
 
@@ -312,6 +314,21 @@ describePg('buildFacts（需要 DATABASE_URL）', () => {
     expect(facts.kpis.find((k) => k.panel === '销售额')?.current).toBe('51,273.89')
     // 白名单不因此收进「假环比」百分比。
     expect(facts.numbers.some((n) => n.startsWith('+') || n.startsWith('-'))).toBe(false)
+  })
+
+  it('门店名里的数字也进白名单（文本要写门店名，不能被判越界）', async () => {
+    const spec = specOf()
+    const aiIndex = spec.panels.findIndex((p) => p.chart === 'ai_text')
+    const base = execWith(VALUES)
+    const named: SqlExecutor = async (sql) => sql.includes('ORDER BY bizday asc LIMIT 1')
+      ? {
+          columns: ['value', 'bizday', 'branch_name', 'branch_num'],
+          rows: [[1, '2026-01-01', '测试99店', 92]],
+        }
+      : base(sql)
+    const facts = await buildFacts(depsOf(named), spec, aiIndex, PERIOD, '92')
+    expect(facts.branchName).toBe('测试99店')
+    expect(facts.numbers).toContain('99')
   })
 
   it('全 0 的拆解行不算有数据（无业绩门店的合成 0 行）', async () => {
