@@ -139,6 +139,8 @@ export interface MockCasdoorOptions {
   roles?: MockCasdoorRole[]
   /** 组种子（同上）。缺省 owner=MOCK_ORG */
   groups?: MockCasdoorGroup[]
+  /** 订阅种子（E：订阅源默认 casdoor 的冒烟/单测） */
+  subscriptions?: MockCasdoorSubscription[]
 }
 
 /** 角色种子形状（真机 spike 2026-10-24：Role 含 users[]/roles[]/domains[]，users 全形 org/name） */
@@ -159,6 +161,17 @@ export interface MockCasdoorGroup {
   displayName?: string
   parentId?: string
   isTopGroup?: boolean
+}
+
+/** 订阅种子形状（真机 object/subscription.go；时间 RFC3339 UTC） */
+export interface MockCasdoorSubscription {
+  owner?: string
+  name: string
+  user: string
+  plan: string
+  startTime: string
+  endTime: string
+  state: string
 }
 
 const MOCK_ORG = 'mock-org'
@@ -231,6 +244,7 @@ export class MockCasdoor {
   #orgs: StoredOrg[] = []
   #roles: StoredRole[] = []
   #groups: StoredGroup[] = []
+  #subscriptions: Array<Required<MockCasdoorSubscription>> = []
   #sessions = new Map<string, { user: string; anonymous: boolean }>()
   #oidcCodes = new Map<string, string>() // authorization code → 用户名（单次即焚）
   #addPermissionCalls: Array<{ owner: string; name: string }> = []
@@ -326,6 +340,17 @@ export class MockCasdoor {
         displayName: g.displayName ?? g.name,
         parentId: g.parentId ?? '',
         isTopGroup: g.isTopGroup ?? false,
+      })
+    }
+    for (const s of opts.subscriptions ?? []) {
+      this.#subscriptions.push({
+        owner: s.owner ?? MOCK_ORG,
+        name: s.name,
+        user: s.user,
+        plan: s.plan,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        state: s.state,
       })
     }
     // 口令哈希类型标记（issue #119）：**有口令的种子用户取其 org 的类型**（真机 add-user 走过
@@ -776,6 +801,16 @@ export class MockCasdoor {
       const owner = c.req.query('owner') ?? ''
       if (!owner) return c.json({ status: 'error', msg: 'owner required' })
       return c.json({ status: 'ok', data: this.permissionsIn(owner) })
+    })
+    // GET /api/get-subscriptions?owner=<org> —— 真机形状：owner 必填、按 org 分桶
+    .get('/api/get-subscriptions', (c) => {
+      if (!this.#isAdminSession(c)) return this.#unauthorized(c)
+      const owner = c.req.query('owner') ?? ''
+      if (!owner) return c.json({ status: 'error', msg: 'owner required' })
+      return c.json({
+        status: 'ok',
+        data: this.#subscriptions.filter((s) => s.owner === owner),
+      })
     })
     // POST /api/add-permission —— 载荷在 JSON body；owner 必填并据此归桶；
     // (owner,name) 重复拒绝（钉死 upsert 必须先查重）

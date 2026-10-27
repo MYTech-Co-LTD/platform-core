@@ -865,6 +865,17 @@ async function main() {
     // 刻意【不预种任何权限码】：预种会让装载器的 upsert 查重必命中、add-permission 全程零调用，
     // 于是「装载器真的建过码」这件事在门禁里不可见（issue #3 第二节成因②）。
     // 用户授权改由 grantPermission() 以租户管理员身份走 HTTP 完成——装载器建码、管理员授权是两件事
+    // 订阅源默认 casdoor（2026-10-27）：acme / beta 各一条 Active 的 mod-demo。
+    // beta 也必须有——否则启用闸门先回 404，会把「授权缺失」误判成「模块不存在」。
+    subscriptions: ['acme', 'beta'].map((owner) => ({
+      owner,
+      name: `sub_mod-demo_${owner}`,
+      user: 'tenantsub',
+      plan: 'mod-demo',
+      startTime: '2026-01-01T00:00:00Z',
+      endTime: '2099-01-01T00:00:00Z',
+      state: 'Active',
+    })),
   })
 
   /**

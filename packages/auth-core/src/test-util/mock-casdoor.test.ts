@@ -3,6 +3,7 @@
 // 测试替身自己的语义也要有测试——否则它给出的"全绿"没有任何证据价值。
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MockCasdoor } from './mock-casdoor'
+import { CasdoorClient } from '../casdoor-client'
 
 let m: MockCasdoor
 beforeAll(async () => {
@@ -459,6 +460,30 @@ describe('MockCasdoor 改密域形状（#119）', () => {
 // role/group 端点（账户和权限体系 Task 2）——形状按真机 spike（2026-10-24，附录 B）：
 // get-roles/get-groups owner 分桶；add-role 重名拒绝；update-role 认 ?id=（POST，PUT 405）；
 // delete-role 必须 JSON body {owner,name}；get-users 行带 groups 数组（全形 org/组名）。
+describe('MockCasdoor 订阅端点（E：订阅源默认 casdoor）', () => {
+  it('get-subscriptions?owner= 按 org 返回种子；缺 owner 报错', async () => {
+    const sub = new MockCasdoor({
+      subscriptions: [
+        { owner: 'acme', name: 'sub_demo', user: 'tenantsub', plan: 'mod-demo',
+          startTime: '2026-01-01T00:00:00Z', endTime: '2099-01-01T00:00:00Z', state: 'Active' },
+      ],
+    })
+    await sub.start()
+    try {
+      const c = new CasdoorClient({
+        origin: sub.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
+        adminUser: 'admin', adminPwd: 'pw',
+      })
+      const subs = await c.listSubscriptions('acme')
+      expect(subs).toHaveLength(1)
+      expect(subs[0]).toMatchObject({ plan: 'mod-demo', state: 'Active' })
+      await expect(c.listSubscriptions('')).rejects.toThrow(/owner required/)
+    } finally {
+      await sub.stop()
+    }
+  })
+})
+
 describe('MockCasdoor：role/group 端点（owner 分桶 + 三铁律形状）', () => {
   let r: MockCasdoor
   beforeAll(async () => {
