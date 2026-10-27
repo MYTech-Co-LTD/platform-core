@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.205.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.205.2...v0.205.3) - 2026-10-27
+- 【修复】data: recon 改读封版天文件，修 T-3 永久缺失 ([#1100](https://github.com/MYTech-Co-LTD/platform-core/pull/1100), [356206f](https://github.com/MYTech-Co-LTD/platform-core/commit/356206f7563f3a2f2609b54e6043eaa89741bd89))
+
+
 ## [0.205.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.205.1...v0.205.2) - 2026-10-27
 - 【修复】data: 64188 库存快照扩容到 90 数据页 ([#1098](https://github.com/MYTech-Co-LTD/platform-core/pull/1098), [7682488](https://github.com/MYTech-Co-LTD/platform-core/commit/7682488a12e08a2d2dde554bd6e8811e64ee238a))
 
