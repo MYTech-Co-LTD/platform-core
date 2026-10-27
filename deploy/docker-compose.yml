@@ -120,6 +120,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # ⚠️ **必须覆盖镜像的 HEALTHCHECK**：Dockerfile.server 的探活打 `127.0.0.1:${PORT}/healthz`，
+    #    而 worker 是**无 HTTP 端口的常驻进程** ⇒ 继承下来恒 unhealthy（2026-10-27 生产实测：
+    #    `Up 26 minutes (unhealthy)`，进程实际正常跑、日志每 2s 一轮）。
+    #    这里改用 worker 自己的事实源：心跳表新鲜度（worker 每轮 upsert `notify.worker_heartbeat`）。
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "const{Client}=require('/app/apps/server/node_modules/pg');const c=new Client({connectionString:process.env.DATABASE_URL});c.connect().then(()=>c.query(\"select 1 from notify.worker_heartbeat where beat_at > now()-interval '2 minutes'\")).then(r=>{process.exit(r.rowCount?0:1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
     restart: unless-stopped
 
   # 报表编辑页专用入口（spec §3⑦）：反代会话。与 server 同镜像、换 command。
