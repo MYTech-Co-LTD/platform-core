@@ -201,7 +201,7 @@ export function resolveSubscriptionSource(raw: string | undefined): 'platform' |
 新增只读脚本 `scripts/audit-permission-holders.mjs`：
 
 ```sh
-node scripts/audit-permission-holders.mjs \
+pnpm exec tsx scripts/audit-permission-holders.mjs \
   [--org <casdoor_org>] \
   [--code tenant:admin] [--code forms:global-manage] ...
 ```
