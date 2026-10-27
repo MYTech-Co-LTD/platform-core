@@ -92,6 +92,7 @@ create index if not exists idx_notify_event_new
 create table if not exists notify.delivery_v2 (
   org             text not null,
   event_id        text not null,
+  event_key       text not null,
   rule_id         text not null,
   recipient       text not null,
   channel         text not null,

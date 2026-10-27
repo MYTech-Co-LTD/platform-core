@@ -20,6 +20,7 @@ export type RuleInput = {
 export type DeliveryRow = {
   org: string
   eventId: string
+  eventKey: string
   ruleId: string
   recipient: string
   channel: string
@@ -182,11 +183,26 @@ export async function getChannel(pool: Pool, org: string, id: string): Promise<C
   return (rows[0] as ChannelRow | undefined) ?? null
 }
 
+/** 规则校验用：本 org 已启用的通道 id 集合 */
+export async function listEnabledChannelIds(pool: Pool, org: string): Promise<Set<string>> {
+  const { rows } = await pool.query(
+    'select id from notify.channel where org=$1 and enabled', [org])
+  return new Set(rows.map((r) => r.id as string))
+}
+
+/** 规则校验用：本 org 已发布的模板 key 集合 */
+export async function listPublishedTemplateKeys(pool: Pool, org: string): Promise<Set<string>> {
+  const { rows } = await pool.query(
+    "select key from notify.template where org=$1 and status='published'", [org])
+  return new Set(rows.map((r) => r.key as string))
+}
+
 // ── 投递 ──────────────────────────────────────────────────────────────────────
 
 export type InsertDeliveryInput = {
   org: string
   eventId: string
+  eventKey: string
   ruleId: string
   recipient: string
   channel: string
@@ -201,10 +217,10 @@ export type InsertDeliveryInput = {
 export async function insertDelivery(pool: Pool, d: InsertDeliveryInput): Promise<void> {
   await pool.query(
     `insert into notify.delivery_v2
-       (org,event_id,rule_id,recipient,channel,address,template_key,revision,rendered,status,last_error)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)
+       (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,last_error)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
      on conflict (org,event_id,rule_id,recipient,channel) do nothing`,
-    [d.org, d.eventId, d.ruleId, d.recipient, d.channel, d.address, d.templateKey,
+    [d.org, d.eventId, d.eventKey, d.ruleId, d.recipient, d.channel, d.address, d.templateKey,
      d.revision, JSON.stringify(d.rendered), d.status, d.lastError ?? null],
   )
 }
@@ -221,13 +237,14 @@ export async function claimDueDeliveries(pool: Pool, limit = 50): Promise<Delive
        from picked p
       where d.org=p.org and d.event_id=p.event_id and d.rule_id=p.rule_id
         and d.recipient=p.recipient and d.channel=p.channel
-     returning d.org, d.event_id, d.rule_id, d.recipient, d.channel, d.address,
+     returning d.org, d.event_id, d.event_key, d.rule_id, d.recipient, d.channel, d.address,
                d.template_key, d.revision, d.rendered, d.status, d.attempts, d.locked_until`,
     [limit],
   )
   return rows.map((r) => ({
     org: r.org,
     eventId: r.event_id,
+    eventKey: r.event_key,
     ruleId: r.rule_id,
     recipient: r.recipient,
     channel: r.channel,
@@ -322,6 +339,7 @@ export async function listDeliveries(pool: Pool, org: string, limit = 100) {
   )
   return rows.map((r) => ({
     eventId: r.event_id,
+    eventKey: r.event_key,
     ruleId: r.rule_id,
     recipient: r.recipient,
     channel: r.channel,

@@ -116,7 +116,7 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
       if (!rendered.ok) {
         for (const c of channelRows) {
           await deps.insertDelivery({
-            org: ev.org, eventId: ev.eventId, ruleId: rule.id,
+            org: ev.org, eventId: ev.eventId, eventKey: ev.eventKey, ruleId: rule.id,
             recipient: '<render>', channel: c.id, address: '', templateKey: rule.templateKey,
             revision: tpl.revision, rendered: {}, status: 'dead',
             lastError: rendered.issues.join('; '),
@@ -131,7 +131,8 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
           if (!out) continue
 
           const base = {
-            org: ev.org, eventId: ev.eventId, ruleId: rule.id, recipient, channel: channelId,
+            org: ev.org, eventId: ev.eventId, eventKey: ev.eventKey, ruleId: rule.id,
+            recipient, channel: channelId,
             templateKey: rule.templateKey, revision: tpl.revision,
           }
 

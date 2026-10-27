@@ -29,7 +29,7 @@ const event = (over: Partial<PendingEvent> = {}): PendingEvent => ({
 })
 
 const dueRow = (over: Partial<DeliveryRow> = {}): DeliveryRow => ({
-  org: 'o', eventId: 'e1', ruleId: 'r1', recipient: 'u1', channel: 'wecom_default',
+  org: 'o', eventId: 'e1', eventKey: 'm.a.b', ruleId: 'r1', recipient: 'u1', channel: 'wecom_default',
   address: 'wecom-u1', templateKey: 't1', revision: 1, rendered: { text: 'hi' },
   status: 'pending', attempts: 0, lockedUntil: null,
   ...over,

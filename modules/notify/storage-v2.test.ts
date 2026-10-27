@@ -63,8 +63,8 @@ describePg('notify storage v2', () => {
   it('claimDueDeliveries 只领到期行并加租约', async () => {
     const ins = (eventId: string, at: string) => pool.query(
       `insert into notify.delivery_v2
-         (org,event_id,rule_id,recipient,channel,address,template_key,revision,rendered,status,next_attempt_at)
-       values ($1,$2,'r1','u1','wecom_default','wecom-u1','t1',1,'{}','pending',$3)`,
+         (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,next_attempt_at)
+       values ($1,$2,'m.a.b','r1','u1','wecom_default','wecom-u1','t1',1,'{}','pending',$3)`,
       [ORG, eventId, at],
     )
     await ins('past', '2020-01-01T00:00:00Z')
@@ -94,8 +94,8 @@ describePg('notify storage v2', () => {
   it('冷却：窗口内有 sent 才抑制；无 cooldown 恒 false', async () => {
     await pool.query(
       `insert into notify.delivery_v2
-         (org,event_id,rule_id,recipient,channel,address,template_key,revision,rendered,status)
-       values ($1,'e-cool','r1','u1','wecom_default','wecom-u1','t1',1,'{}','sent')`, [ORG])
+         (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status)
+       values ($1,'e-cool','m.a.b','r1','u1','wecom_default','wecom-u1','t1',1,'{}','sent')`, [ORG])
     expect(await isCoolingDown(pool, ORG, { id: 'r1', cooldownMinutes: 10 }, 'u1', new Date())).toBe(true)
     expect(await isCoolingDown(pool, ORG, { id: 'r1', cooldownMinutes: null }, 'u1', new Date())).toBe(false)
     expect(await isCoolingDown(pool, ORG, { id: 'r1', cooldownMinutes: 10 }, 'u2', new Date())).toBe(false)
