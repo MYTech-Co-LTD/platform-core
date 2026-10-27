@@ -105,7 +105,8 @@
     "⑨【2026-09-28 Wave A 新鲜度锚换点：item 面改锚**湖对象**（与 ⑧ 的 branch 同形）】\n   · 改前：`/workspace/logs/dim-item-run.csv` 是**薄管线** `lemeng.dim.item.run` 的 `snk.csv` 运行记录\n     （catalog kind=file）。薄壳停跑后它不再被写 ⇒ 留着就是**永久 Stale**。\n   · 新锚（本次替换）：L0 管线 `lemeng.dim.item.l0` 的 `snk.minio` 目标，catalog 里 kind=**object**，\n     id = `minio://${ENV:ZOS_BUCKET}/lemeng/dim_item/system_book=${ENV:SYSTEM_BOOK}/snapshot=${date+8h}/all.parquet`。\n     匹配 glob `minio://*/lemeng/dim_item/system_book=*/snapshot=*/all.parquet`——**本机 `duckle catalog owners`\n     实测匹配通过**（同 ⑧ 的复核手法，不靠猜）。阈值 36h，公式同 ③（日频 24h + 12h 余量；item 调度 UTC 11:00）。\n   · ⚠️ **与 ⑧ 的做法有一处刻意不同，记在这里**：branch 当年是「**过渡期两条规则并存**（薄壳 CSV + L0 湖对象），\n     到切流那一批才删 CSV」；本次按 Wave A 计划「**观测面同批**」**一次做完**（删 CSV + 挂新锚）。\n     代价：若切流延后，**过渡期里「薄壳 item 是否还在按日写」不再有独立告警**——只有新锚那条在把 L0 的关。\n     判据取舍：新旧两条锚**指向同一件事**（item 面当天采集是否发生），并行期两条并存会让「L0 已挂但手动触发\n     ⇒ 36h 无写 ⇒ Stale」与「薄壳正常」同时成立、读数互相打架（⑧ 已记载 branch 过渡期会出现这个**预期读数**）。\n     ⇒ 本批选**单锚**：以 **L0 湖对象**为准（切流后它就是唯一真相）。若切流延后于本批交付，这是**已知观测缺口**。\n   · ⚠️ **未验项（同 ⑧ 如实带走）**：object 资产的时钟**端到端仍未在生产验过** ⇒ 切流前按 ⑤ 自检确认：\n     seed + 重建 catalog + 成功跑一次 L0 之后，`freshness.json` 里该资产必须**出现且非 unknown**。",
     "⑩【2026-09-29 Wave B 新鲜度锚换点：retail 面改锚**湖对象**（retail.windows 切 L1 的投递准备；#330）】\n   · 改前：`/workspace/logs/retail-windows-run.csv` 是**薄管线** `lemeng.retail.windows.run` 的 run record\n     sink（见 ④）。同批声明已把该薄壳调度关停（schedules/3120.json enabled:false）⇒ 停止写入 ⇒\n     留着就是**永久 Stale**（同 ⑧ branch 的形状）⇒ 本批按 ⑨ 的「观测面同批」口径**一次换完**（删 CSV + 挂新锚）。\n   · 新锚（本文件替换条目）：L1 **子管线** `lemeng.retail_order_line.window` 的 `snk.minio` 目标，\n     key = `lemeng/retail_order_line/system_book=${ITER_ITEM_SYSTEM_BOOK}/bizday=${ITER_ITEM_BIZDAY}/hour=${ITER_ITEM_HOUR}/all.parquet`\n     （由父管线 `lemeng.retail.windows.l1` 的 foreach 逐窗写入）。catalog kind=**object**；匹配 glob\n     `minio://*/lemeng/retail_order_line/system_book=*/bizday=*/hour=*/all.parquet`——同 ⑧⑨ 的写法：\n     `*` 吸收**不展开的占位符**（${ITER_ITEM_*} 同 ${ENV:…} 不展开，见 ⑧）与桶名段，匹配不靠猜。\n     阈值 36h，公式同 ③（日更 24h + 12h 余量；L1 调度 UTC 02:30/10:30 双点火）。\n   · **L1 双点火同日重写、锚按对象写时刻起算**：两轮点火写的是**同一个**「上海昨天」bizday 的 24 个\n     hour 分区对象（10:30 轮覆盖 02:30 轮）⇒ 新鲜度钟每天被刷两次；36h 的语义 = 整整一天半没有任何\n     一窗成功写湖才算事故。\n   · 粒度与 dim 锚的差异（有意，非疏漏）：dim 是日快照**单对象**；本锚按 bizday/hour 分区（一营业日\n     24 对象）。判定取 glob 命中资产的**最近一次成功写**（①），分区多少不改变判定语义，节奏仍是日更。\n   · tick/薄壳**不污染本锚**：它们经 wrapper 的 `/pipelines/common/` 重管线写湖，不在本 console\n     workspace 的 catalog 里 ⇒ 不进新鲜度钟；catalog 中唯一命中该 glob 的资产就是本子管线 sink。\n   · ⚠️ **同 ⑧⑨ 的硬前置与未验项**：投递时必须 seed 本文件 + **重建 catalog**（Operator\n     `POST /api/catalog`）+ 成功跑一次 L1；`freshness.json` 该资产**出现且非 unknown** 才算锚挂上\n     （⑤ 判据）。object 资产（含 foreach 子管线的资产）时钟端到端未在生产验过——**先验再切**。\n   · 64188 账套未 seed 本文件（⑦ 口径不变，要不要切是独立决定）⇒ 本锚只对 3120 生效。",
     "⑪【2026-09-29 tick/close 激活当天：本文件**首次**使用 `expectedAfterSchedule`（先前刻意不用，理由已不成立）】· 旧理由（见本 _note 上文）：「expectedAfterSchedule 的『禁用即 Stale』语义本仓依旧刻意不用；且 tick 调度在 64188 侧 enabled:false 属正常预备态，用它必误报」。**两条前提在 2026-09-29 都不成立了**：① 两账套的 `tick.l1` 已于本日**同时激活**（`schedules/{3120,64188}.json` 均为 `enabled:true`）；② 我们要抓的**恰恰是**「该跑却没跑」——调度被置停/静默停摆时，`alerts.json` 的 failure/recovery 规则**不会响**（它只在**失败事件**上触发，抓不到「根本没有事件」）。⇒ 对**「活体心跳型」资产**（tick 这种 5 分钟级）用 `expectedAfterSchedule` 是对的；对**日更型**资产仍用 `maximumAge`（既有三条）+ 本文件既有纪律不变。· 为什么不用 `maximumAge`：tick 的 cron 是 `*/5 0-15 * * *`（UTC 只有 0–15 点）⇒ 夜里 8 小时空档，任何 <8h 的平铺阈值**每晚必误报**；而 `expectedAfterSchedule` 按该管线自己的 cron 算「下次应到」，跨夜空档**天然不误报**（引擎源码已注：调度存在但被 DISABLED 时返回「已过期」——正是我们要的信号）。· ✅ **close 的锚已补（2026-09-30 凌晨）**：`/workspace/logs/retail-close-summary.csv` 于 2026-09-29 16:00 UTC **两账套首点均 `ok`**，随下一批按本条定的口径补上（日更型 `maximumAge: 36h`）——**先首点、后配锚**，避免「声明了却没写」那一轮 stale。",
-    "⑫【2026-10-18 recon 面新鲜度锚换点（与 ⑧/⑨/⑩ 同形，但**根因不同**：那三条是薄壳退役，这条是**锚挂错了对象**）】· 改前两条锚：`/workspace/reports/recon-preagg/recon-*.csv`（子管线的 snk.csv）与`minio://*/lemeng/recon_preagg/system_book=*/bizday=*/chunk=*/all.parquet`（子管线的 snk.minio 目标）。· 为什么不生效（**不是漏步骤**）：2026-10-18 实测——owners seed 09:17 ✓、catalog 重建 09:21（晚于 owners）✓、父管线 10-16/10-17 两个排班 run 均 ok ✓，而两账套 freshness.json 里**仍然没有**这两条。根因见引擎资产集定义（②∪①）：**写这两处的是 foreach 子管线，而子管线不产运行记录** ⇒ 带 * 的 glob 锚两头不占 ⇒ **压根不进资产集**（读的人看不到任何异常迹象，比恒 Stale 更阴）。· 新锚 `/workspace/reports/recon-preagg/_recon-summary.csv`：**父管线自己写、完全字面路径** ⇒ 走 ②。它由本次同批加的 psum/psumout 产出，并用 ctl.anchor 的 trigger 边排在 pfe 之后 ⇒ **存在 = 全部块成功**。· **旧两条一并删除**（照 ⑧ 的纪律：换锚必删旧锚，否则成为永久 Stale 或永久不存在）。· ⚠️ 自检按 ⑤：seed 后 ≤120s 内该资产应出现；**首次**因为「声明了但从未写入」按 ① 是 **Stale**（不是 Unknown，不是不存在）——跑一次成功 run 后转 fresh。"
+    "⑫【2026-10-18 recon 面新鲜度锚换点（与 ⑧/⑨/⑩ 同形，但**根因不同**：那三条是薄壳退役，这条是**锚挂错了对象**）】· 改前两条锚：`/workspace/reports/recon-preagg/recon-*.csv`（子管线的 snk.csv）与`minio://*/lemeng/recon_preagg/system_book=*/bizday=*/chunk=*/all.parquet`（子管线的 snk.minio 目标）。· 为什么不生效（**不是漏步骤**）：2026-10-18 实测——owners seed 09:17 ✓、catalog 重建 09:21（晚于 owners）✓、父管线 10-16/10-17 两个排班 run 均 ok ✓，而两账套 freshness.json 里**仍然没有**这两条。根因见引擎资产集定义（②∪①）：**写这两处的是 foreach 子管线，而子管线不产运行记录** ⇒ 带 * 的 glob 锚两头不占 ⇒ **压根不进资产集**（读的人看不到任何异常迹象，比恒 Stale 更阴）。· 新锚 `/workspace/reports/recon-preagg/_recon-summary.csv`：**父管线自己写、完全字面路径** ⇒ 走 ②。它由本次同批加的 psum/psumout 产出，并用 ctl.anchor 的 trigger 边排在 pfe 之后 ⇒ **存在 = 全部块成功**。· **旧两条一并删除**（照 ⑧ 的纪律：换锚必删旧锚，否则成为永久 Stale 或永久不存在）。· ⚠️ 自检按 ⑤：seed 后 ≤120s 内该资产应出现；**首次**因为「声明了但从未写入」按 ① 是 **Stale**（不是 Unknown，不是不存在）——跑一次成功 run 后转 fresh。",
+    "⑬【2026-10-27 补 4 条湖锚：client / item_price / loss_adjustment / member_summary（#1086）】· 现象：3120 的 freshness.json 里这 4 个湖资产的 state 恒为 **unknown**。按 ① 的判定语义，unknown 有两个来源——资产不在资产集，或**在资产集但没有规则匹配**。这 4 条属于后者：它们都出现在运行记录的 direction=write 资产里（所以 freshness.json 里**看得见**它，只是没有裁决），加规则即生效，不需要动管线。· 为什么现在补：2026-10-27 排查数据源完整性时发现，会员全店的按店明细自 10-20 起断了 7 天**没有任何告警**——它既没有自己的锚，日更汇总那条当时也没挂。同一批里 item_price 有间歇 429（10-23 起）、client 与 loss_adjustment 完全裸奔。**没有锚的资产，停更在观测面上等于不存在**，这正是 ① 里 Unknown 与 Fresh 必须分开的原因。· 阈值：36h，与既有日更条同公式（③：日频 24h + 12h 余量）。· ⚠️ 本批**没有**给 member_summary 的按店明细（branch= 下一层）配锚：那是 foreach 子管线写的，子管线不产运行记录、且 `*` glob 也得两头占（② 的教训），直接挂会得到一条**永不参与评估**的死锚——要挂必须先解决子管线资产入集的问题（与 ⑫ 同源的坑），另案处理。"
   ],
   "assets": [
     {
@@ -257,6 +258,42 @@
       ],
       "maximumAge": "36h",
       "description": "口径对账**当日跑完**的凭证（父管线 lemeng.recon.preagg 的 snk.csv 收尾汇总）。一行 = 一个对账业务日：bizday / system_book / chunk_count / branch_count / computed_at_sh。⚠️ 路径**完全字面**（无 *、无占位符）是刻意的：引擎的新鲜度资产集 = ①运行记录里 direction=write 的资产 ∪ ②**pattern 里不含 * 的规则**；写湖的是 foreach **子管线**、而子管线不产运行记录 ⇒ 旧的两条锚（recon-*.csv 与湖 glob）**两头不占**，2026-10-18 两账套实测在 freshness.json 里**压根不出现**（不是 Stale）。本条目走 ②，无条件进资产集。语义：psum 经 ctl.anchor 的 trigger 边排在 pfe 之后 ⇒ **存在 = 当天全部块都成功**；任一块失败则整条 run 失败、本文件不写。阈值 36h 同 ③ 公式（日频 + 12h 余量）。"
+    },
+    {
+      "match": "minio://*/lemeng/client/system_book=*/snapshot=*/all.parquet",
+      "owner": "data-eng",
+      "description": "客户档案每日采集的成功凭证（L0 lemeng.client.l0.3120，日快照 snapshot=${date}）。2026-10-27 #1086 补：此前本资产在运行记录里（进资产集）却**没有规则匹配** ⇒ freshness.json 恒 unknown ⇒ 停更不产生 stale 事件（头注 ① 的 Unknown ≠ Fresh 盲区）。",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
+    },
+    {
+      "match": "minio://*/lemeng/item_price/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "商品价格每日采集的成功凭证（L0 lemeng.dim.item_price.l0.3120，bizday=${date+8h} 当日分片）。2026-10-27 #1086 补：同上的 unknown 盲区；本资产有间歇 429（2026-10-23 起）与「少分片」形态，正好需要停更告警兜底。",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
+    },
+    {
+      "match": "minio://*/lemeng/loss_adjustment/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "报损报溢每日采集的成功凭证（L0 lemeng.loss.adjustment.l0.3120，两个占位符变体 BIZDAY / date-1d 由同一条 glob 一并覆盖）。2026-10-27 #1086 补：此前恒 unknown，停更无告警。",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
+    },
+    {
+      "match": "minio://*/lemeng/member_summary/system_book=*/bizday=*/all.parquet",
+      "owner": "data-eng",
+      "description": "会员汇总**日更汇总**的成功凭证（L0 lemeng.member.summary.l0.3120，bizday=${date-1d}）。⚠️ 本 glob 只match 顶层 all.parquet（按店明细在 branch= 下一层，不在此列，其停更是另一个面）。2026-10-27 #1086 补：同上的 unknown 盲区——同一批里按店明细已静默断供 7 天而无人被通知。",
+      "tags": [
+        "lemeng"
+      ],
+      "maximumAge": "36h"
     }
   ]
 }
