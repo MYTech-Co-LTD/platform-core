@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.204.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.3...v0.204.4) - 2026-10-27
+- 【修复】data: 补 4 条湖侧新鲜度锚，堵停更无告警的 unknown 盲区 (#1086) ([#1087](https://github.com/MYTech-Co-LTD/platform-core/pull/1087), [2a331c2](https://github.com/MYTech-Co-LTD/platform-core/commit/2a331c2eeab9df3423fe12b29155fdc7b6e009e7))
+
+
 ## [0.204.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.2...v0.204.3) - 2026-10-27
 - 【修复】data: AI 文本回退模板（中文日期误判/Date 串/回退缓存） (#1083) ([#1084](https://github.com/MYTech-Co-LTD/platform-core/pull/1084), [71b443c](https://github.com/MYTech-Co-LTD/platform-core/commit/71b443c5999ee2a68a0db7d47b6fed05128acab6))
 
