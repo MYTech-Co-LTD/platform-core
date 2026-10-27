@@ -455,12 +455,12 @@ describe('getUser：错误 ≠ 不存在', () => {
   })
 })
 
-// ---- JIT 自动建号（issue #32）：ensureUser + bindUserToAllPermissions ----
+// ---- JIT 自动建号（issue #32）：ensureUser ----
 // 形状依据：2026-09-13 生产手工解卡时在真 Casdoor（sso.hookflow.cn）上验证过的 add-user
 // 载荷——owner=<org>、name=<企微 userid>、type='normal-user'、signupApplication=<配置的
-// application>。建号后把该用户补进 org 全部权限记录的 users（装载器供给只建记录不挂人）。
+// application>。**建号后不挂任何权限码**（2026-10-27 起 JIT 零授权）。
 
-describe('ensureUser + bindUserToAllPermissions（JIT 自动建号，issue #32）', () => {
+describe('ensureUser（JIT 自动建号，issue #32）', () => {
   it('★ ensureUser：add-user 带 owner/name/type=normal-user/signupApplication（application 可配，缺省 app-built-in 同 #login 口径）', async () => {
     // orgs 种子：#117 起 add-user 有两个 org 前置（org 存在 + 已有 application）——
     // 真机上 org 先于用户存在，替身同样不再「来者不拒」
@@ -520,37 +520,6 @@ describe('ensureUser + bindUserToAllPermissions（JIT 自动建号，issue #32�
       expect(m.userIn('acme', 'wo_absent')).toBeUndefined()
     } finally {
       m.setAddUserFault('off')
-      await m.stop()
-    }
-  })
-
-  it('★ bindUserToAllPermissions：逐条补 users、保留 roles/resources 原值、其他 org 的权限不受影响、幂等', async () => {
-    const m = new MockCasdoor({
-      perms: [
-        { owner: 'acme', name: 'p-view', users: ['alice'], resources: ['ticket:view'] },
-        { owner: 'acme', name: 'p-admin', users: [], roles: ['ops'], resources: ['ticket:admin'] },
-        { owner: 'other-org', name: 'p-other', users: [], resources: ['ticket:view'] },
-      ],
-    })
-    await m.start()
-    try {
-      const c = new CasdoorClient({
-        origin: m.origin, clientId: 'x', clientSecret: 'y', org: 'acme',
-        adminUser: 'admin', adminPwd: 'pw',
-      })
-      await c.bindUserToAllPermissions('wo_new')
-      const acme = m.permissionsIn('acme')
-      expect(acme.find((p) => p.name === 'p-view')?.users).toEqual(['alice', 'wo_new'])
-      expect(acme.find((p) => p.name === 'p-admin')?.users).toEqual(['wo_new'])
-      // 既有字段不被洗掉（update 全量载荷必须回填 roles/resources）
-      expect(acme.find((p) => p.name === 'p-admin')?.roles).toEqual(['ops'])
-      expect(acme.find((p) => p.name === 'p-admin')?.resources).toEqual(['ticket:admin'])
-      // 其他 org 的同名资源权限**不在本 org 的 get-permissions 桶里** ⇒ 一行都不能碰
-      expect(m.permissionsIn('other-org').find((p) => p.name === 'p-other')?.users).toEqual([])
-      // 幂等：已绑过的不再重复 push
-      await c.bindUserToAllPermissions('wo_new')
-      expect(m.permissionsIn('acme').find((p) => p.name === 'p-view')?.users).toEqual(['alice', 'wo_new'])
-    } finally {
       await m.stop()
     }
   })

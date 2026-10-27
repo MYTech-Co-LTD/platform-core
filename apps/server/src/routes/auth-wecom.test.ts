@@ -774,7 +774,7 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     ])
   }
 
-  it('★ JIT（qr-corp）：旗标开 + 陌生企微号 → 自动建号 + 挂全量码 → 302 / 全 scopes + audit login.ok', async () => {
+  it('★ JIT（qr-corp）：旗标开 + 陌生企微号 → 自动建号但**不挂任何码** → 302 / scopes=[] + audit jit:true', async () => {
     await setAutoSignup(true)
     try {
       const c = testClient(makeApp(pool, casdoorFor, createLoginLimiter(), wecomFetchFor('wo_new')))
@@ -792,8 +792,8 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
       expect(p?.authVia).toBe('wecom-qr')
       expect(p?.name).toBe('wo_new')
       expect(p?.org).toBe('acme')
-      // 新号无角色，全量权限码挂 users ⇒ 直挂全集（p-view + p-admin），排序后即平台全集
-      expect(p?.scopes).toEqual(['ticket:admin', 'ticket:view'])
+      // 新号无角色；JIT 不再挂任何码 ⇒ scopes 为空
+      expect(p?.scopes).toEqual([])
       // 建号载荷落档：signupApplication 缺省 app-built-in（与 #login 同口径）
       expect(mock.userIn('acme', 'wo_new')).toMatchObject({
         owner: 'acme',
@@ -801,13 +801,15 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
         type: 'normal-user',
         signupApplication: 'app-built-in',
       })
-      // 绑定侧证据：p-view 的 users 追加了 wo_new（alice/wo_alice 原值保留）
+      // 绑定侧反证：p-view 的 users 不变（没有追加 wo_new）
       const pView = mock.permissionsIn('acme').find((x) => x.name === 'p-view')
-      expect(pView?.users).toEqual(['alice', 'wo_alice', 'wo_new'])
-      const { rows } = await pool.query<{ action: string; actor: string; detail: { via?: string } }>(
+      expect(pView?.users).toEqual(['alice', 'wo_alice'])
+      const { rows } = await pool.query<{ action: string; actor: string; detail: { via?: string; jit?: boolean } }>(
         "select action, actor, detail from platform.audit where action='login.ok' and actor='wo_new' order by id desc limit 1",
       )
-      expect(rows[0]).toMatchObject({ action: 'login.ok', actor: 'wo_new', detail: { via: 'wecom-qr' } })
+      expect(rows[0]).toMatchObject({
+        action: 'login.ok', actor: 'wo_new', detail: { via: 'wecom-qr', jit: true },
+      })
     } finally {
       await setAutoSignup(false)
     }
@@ -904,7 +906,7 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
       const p = await verifySession(sessionToken(res), SECRET)
       expect(p?.authVia).toBe('wecom-silent')
       expect(p?.name).toBe('wo_silent_new')
-      expect(p?.scopes).toEqual(['ticket:admin', 'ticket:view'])
+      expect(p?.scopes).toEqual([])
       expect(mock.userIn('acme', 'wo_silent_new')).toMatchObject({ name: 'wo_silent_new' })
     } finally {
       await setAutoSignup(false)
