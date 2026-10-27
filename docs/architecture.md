@@ -622,118 +622,74 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 | 3 | ~~是否把「按域分次 build + 分次落账」纳入域裁剪的范围~~ | ✅ **已落地（2026-10-17）**。改动前 `data.load_log` 只在 dbt **全绿后**写 ⇒ **任一模型红，全部 relation 的 `data_as_of` 一起停** —— 同日实测**两次**（#833 与 #834 各自新增的 audit 各红一次，两次都冻结全量）。现在 `materialize.sh` **逐域**跑：红的域不落账、其余域照常落账，最后统一 `exit 1`（仍不是按需名单：命令还是 `build`、无 `--select`，域裁剪仍由 `+enabled` 表达） |
 | 4 | **「源 ≠ 部署」这类缺陷怎么发现** | 三条不变量今天**无门禁**（§4.2「仅文档」档）。配置一致性检查**抓不到** #729——那次是**源**（mytech 的导出 API）与**面**（山海）不一致，两侧配置各自自洽。可用的抓手：导出响应**带 `org`**（计划稿 A2）⇒ 管线里断言「本页 `distinct(org)` ⊆ 部署主体 org」，不通过**拒写湖**。**当前不存在这条断言** |
 
-### 2.6 通知规则层：共享绑定面 + 声明派生默认通知（2026-10-18 拍板）
+### 2.6 通知基础设施：事件声明 + 绑定规则 + 平台投递（2026-10-27 重构）
 
-> **本节是「绑定层」的正典**：`什么事件 × 通知谁 × 用哪个模板 × 什么通道`。通知拆四层后，投递（Novu）/ 模板（Novu workflow）/ 解析（case-engine routing 的 assignee）三层归属不变且已实证，唯独**绑定层**无人负责——这是「创建了 case 无法通知审批人」断链的根因，本节新增的全部就是这一层。
-> 上游：explore 仓 ADR 0005 **§18**（定案）+ spec `docs/superpowers/specs/2026-10-16-notification-rules-design.md`（已人审）；跨服务租户边界见 ADR §19。
-> 落点：**新模块 `modules/notify`**（`id` = DB schema 名 = API 前缀，三同纪律）；实施计划 `docs/superpowers/plans/2026-10-18-notification-rules-layer.md`。
+> 本节是通知域的**正典摘要**；完整设计、数据模型与验收在
+> `docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md`，
+> 实施计划 `docs/superpowers/plans/2026-10-27-notification-infrastructure-p1.md`。
+> **2026-10-27 重开 2026-10-18 的「不自研投递」取舍**：目标从「只补绑定层」变成
+> 「事件目录 + 模板 + 通道 + 预览发布 + 收件箱」，原取舍前提不成立。
 
-**五条取舍（2026-10-18 拍板）**：
+#### 四层职责
 
-| # | 取舍 | 理由 |
-|---|------|------|
-| ① | Novu 留任投递/模板/收件箱；**新增共享规则登记层**（本模块数据面 + AI 工具面 + console 管理页） | 换 Novu 不解决缺口（缺的层它不提供）；自研投递 = 重造更差的 Novu，且 §17.9 待办页直接消费其 in-app feed |
-| ② | **声明派生默认通知**：`approval: single <审批人[]>` 落地即**幂等派生**默认规则（`case.awaiting_approval → assignee → 通用模板 → 企微 + in-app`，`origin=derived`）；同 mount+event 有 `manual` 规则时 **manual 优先** | 常路径**零配置默认就通**，不依赖人记得挂规则；规则登记退居覆盖/扩展面 |
-| ③ | **模板不进规则层**：规则行只存 Novu workflow identifier | 文案治理沿用既有交付纪律（repo 正典 + Dev 建 + sync），缝隙最小 |
-| ④ | **fail-open**：通知链失败**不阻塞业务**（case 照常创建） | 安全性由「待办查权威源」（§17.9）背书，滞留兜底 = case-engine SLA 告警；两决策互为前提 |
-| ⑤ | 待办/通知**两态分离**：待办查权威源（实时、reassign 自动正确）；Novu 收件箱 = 通知**副本** | reassign 后旧通知不消失、已读 ≠ 已办；把副本当权威会出「读过了所以列表里没了」的假完成 |
-
-**数据模型（两张表，全声明式，org-scoped）**：
-
-- `notify.rule`：`org` / `id` / `enabled` / `event_type` / `mount`（`case_type_id` ｜ `form_def_id` ｜ `'*'`）/ `template_id`（Novu workflow identifier）/ `recipient`（`assignee` ｜ `submitter` ｜ `user_list` ｜ `field`）/ `channels`（v1 = `{wechat_work,in_app}`）/ `cooldown_minutes`（可选节流）/ `origin`（`derived` ｜ `manual`）/ 审计列。
-- `notify.delivery`：`rule_id` / `event_id` / 事件 / 收件人 / 模板 / 状态 / 错误摘要 / 时间；主键 `(org, event_id, rule_id)` —— **幂等去重**（emit 带**确定性 event_id**，业务转移一次一枚），cooldown 留作第二道。
-- 校验 **fail-closed**：解析器 × 挂载点必须匹配（form 挂载无 assignee 语义）；`user_list` / `field` 禁跨租户引用。
-- 两表进**租户门禁扫描面**：`org text not null` 首列，`scripts/check-tenant-isolation.mjs` 真库对账（表有 org 列 + NOT NULL 两条判据）。
-
-**执行流（双入口，同一管道）**：
-
-**入口 A** 事件驱动 `emit(event_id, event_type, mountId, payload)`（case-engine / forms 各一行调用）；**入口 B** 定时驱动（`form.due_reminder` / `sla.breach_warning`，载体见实施注记）。两路进同一管道：**匹配**（`manual > derived`，`'*'` 兜底）→ **解析**收件人（assignee 从 case routing 取，§15 已定）→ `novu.trigger(template_id, subscriberId, payload)`（subscriberId = Casdoor 用户 id，确定性映射，首次自动建订阅者）→ 落**回执**。**同步调用无队列**（v1 规模，YAGNI）。**投递失败**：回执记 `failed` + 错误摘要 + OpenObserve 告警，**不建重试风暴**（v1 靠 Novu 自身重试 + 人工重触发）。payload schema 同 forms-seam 纪律：版本化、进 ADR、测试锚定，改 payload 必过 PR。
-
-**v1 事件清单**：`case.awaiting_approval`（原始痛点主路径）/ `case.status_changed` / `case.reassigned` / `form.assigned` / `form.due_reminder` / `sla.breach_warning`。扩展事件 = 加一个 emit/调度点 + payload schema，**规则层零改动**。
-
-**门禁分层（频率 × 爆炸半径）**：
-
-| 层 | 爆炸半径 | 门禁 |
+| 层 | 负责 | 落点 |
 |---|---|---|
-| 规则行（绑定） | 高频 × 小（发错人可一键停用/删除，可逆） | **AI 直写数据、即时生效**；回执 + 审计 + console 可见兜底 |
-| 文案模板（话术） | 低频 × 大（外发客户/员工，不可撤回） | **Novu 生产 401 架构强制**：AI 在 Dev 建 + 人审 + sync（交付照 WeKnora `06425b22` 手册） |
+| 事件声明/目录 | 模块声明「我能发什么」；宿主校验并登记 | manifest `notifications.events`；`platform.event_catalog` |
+| 绑定规则 | 事件 × 作用域 × 收件人 × 模板 × 通道（+节流） | `notify.rule` |
+| 模板 | 草稿/版本/预览/发布；租户管理员审批 | `notify.template` / `notify.template_revision` |
+| 投递 | outbox → worker → provider；重试/退避/限流/回执 | `notify.event` / `notify.delivery` / `notify.delivery_attempt` |
 
-v1 模板集 = 少量参数化通用模板：`case_awaiting_approval` / `case_status_changed` / `form_assigned` / `form_due_reminder` / `sla.breach_warning`；AI 建规则默认引用现有模板，不每次造新文案。
+#### 接入协议
 
-**鉴权（钉死，非可选项）**：
+模块在 manifest 声明事件（key/scope/payload/recipients/defaults），宿主装载期：
 
-1. 两表进**租户门禁扫描面**，org-scoped 行级隔离。
-2. 解析器参数校验**禁止跨租户引用**：`user_list` / `field` 只能解析到本 org 用户。
-3. **Novu key 永不进浏览器**：in-app feed 由 platform-core 后端代理消费 Novu API，前端只见代理端点。
-4. AI 写规则行**携会话租户上下文**，与全平台 AI 工具面同一套门禁（org 只来自身份，绝不读请求参数；保留键一律 400）。
+1. 建内存注册表 + `platform.event_catalog` 快照（只对本次已加载模块标 inactive）；
+2. 注入 `ctx.notify.emit(identity, event)`（任意模块可用；`ctx.events` 只读目录给管理面）；
+3. 模块只发事件、不直接调 notify/Novu；契约违规**拒绝入队但不阻塞业务**。
 
-**不做清单（v1 明确不做，写死）**：
+事件 key = `<module>.<entity>.<event>`，前缀 = manifest.id；payload 只增不改，改语义 = 新 key。
 
-| 反模式 | 为什么不做 |
-|---|---|
-| payload 条件规则 | 规则引擎变监控系统的起点；AI 生成条件不可审计，真需求出现再设门禁 |
-| 邮件 / 短信通道 | v1 只 `wechat_work` + `in_app`；Novu 加 step 即可，规则层零改动 |
-| 消息队列 / 独立 notifier 服务 | v1 规模纯增基建；自研投递 = 重造更差的 Novu |
-| 规则表单编辑器 | 编辑场景由 AI 创建覆盖，人只管看和开关 |
-| Novu digest 替代 cooldown | digest 挂 workflow，两规则共用模板会打架 |
-| 多级审批复杂路由 | case-engine 职责，通知层只认**最终 assignee** |
+#### 规则与收件人
 
-**实施注记**：
+- 规则五元组：`event_key × scope × recipient_key × template_key × channels`；`manual > derived`，
+  精确 scope 优先于 `*`。**不做条件/延迟/摘要**。
+- 收件人：`field`（payload 的 user/user_list）、`scope_holders`（本 org 持有权限码）、`literal`
+  （人工名单）。平台解析到 Casdoor 用户，再按通道解析地址（企微 userid 走
+  `platform.identity_link`；映射不到 = `failed`，**不假装成功**）。
+- 派生：事件声明的 `defaults` 幂等派生默认规则（零配置就通）；`scripts/notify-seed-builtin.mjs`
+  在开通/升级时 seed 模板、默认通道与默认规则。
 
-- **架构先行**：本节落档先于代码；实施按 `docs/superpowers/plans/2026-10-18-notification-rules-layer.md` 走 issue → PR。
-- **跨服务 emit 认证（D2）✅ 已定（2026-10-18）：复用通道 B（PAT）**——服务调用方（case-engine）= **一个账号持 token**，与外部 agent **同一条通道、同一套门禁**；**不造「服务令牌通道 D」**（见 §1.5 不做清单）。落地仍 gated on Wave 2 M2.2。决策与四方案对比见 `docs/superpowers/specs/2026-10-18-notify-emit-seam-and-scheduler.md`。
-- **定时器载体（D3）✅ 已定（2026-10-18）：openship job + 仓内管理命令**。本仓已有两处先例（审计清理 job、dbt runner 零常驻），并有仓内原则「有副作用的运维动作不该藏在 HTTP 服务里」。**in-platform 侧由此零新机制**——job 跑仓内脚本、脚本直连 DB（`scripts/` 不在 B1 扫描根，已核）。
-- **待实测（不得据以声称可用）**：PoC 硬指标 = 真实创建 case（`approval: single`）→ 声明自动派生规则 → **审批人企微真机收到通知**；五负对照（停用不通知 / fail-open / fail-closed / 幂等不双发 / manual 覆盖 derived）全过才算交付。
+#### 模板与发布
 
-**按租户解析 Novu 凭据（2026-10-19 定案，方案 A）**
+- 模板正典在 DB（`origin=builtin` 由 repo seed；租户可 fork 成 `origin=tenant` 草稿）。
+- **预览与投递共用同一渲染函数**；发布 = 租户管理员（`notify:publish`）动作；AI 只能提草稿。
+- 版本不可变；回滚 = 发布旧 revision。
 
-**背景**：租户隔离标准（team-harness `docs/standards/tenant-identity.md`）要求 **Novu 组织名 ≡ Casdoor 组织名** ⇒ **每租户一个 Novu 组织**，各自有独立的 Dev/Prod API key。而本仓现在只有一对 `NOVU_BASE_URL` / `NOVU_API_KEY`（`novuFromEnv()` 是单租户语义）⇒ 多租户单实例发通知时必须**按 org 选 key**。
+#### 通道与投递
 
-**定案：env 映射 + 回落，零 schema 变更。**
+- 内置 provider：`wecom_chat`（公司 bridge 直发）、`in_app`（自建 `notify.inbox`）、`webhook`（P3）。
+  **不做运行时插件/外部沙箱**；租户只能启用/配置平台预备的通道实例。
+- 通道密钥：DB 只存 env 键名（`secret_refs`），值只在 openship env（isSecret）。
+- 投递：`notify.event` 入队 → `notify-worker`（独立进程，租约 + `SKIP LOCKED`）→ provider；
+  至少一次、指数退避、企微 45009 退避；`notify.delivery` 是唯一回执事实源。
+- **fail-open**：通知失败不阻塞业务；`dead`/积压由 `scripts/notify-health.mjs` job 报警。
 
-| 优先级 | 来源 | 说明 |
-|---|---|---|
-| 1 | `NOVU_API_KEY__<ORG>` | `<ORG>` = org 名大写下划线化（`mytech` → `NOVU_API_KEY__MYTECH`）；openship 项目 env（isSecret）注入 |
-| 2 | `NOVU_API_KEY` | 兜底：单租户部署 / 未单独开通通知的 org（现网行为不变） |
-| 3 | 都无 | **该 org 视为未开通通知**：emit 落 `failed` 回执（`novu not configured`），**不抛**（与本节 fail-open 取舍一致） |
+#### 与 Novu 的关系（2026-10-27 变更）
 
-- **落点**：`pipeline.emit` 按 `input.org` 解析客户端；`deps.novu` 从「固定配置」改为「解析函数」。`NOVU_BASE_URL` 仍全局一个（同一 Novu 实例）。
-- **否决 B（存进 `platform.tenant`）**：会引入**新的密钥存储面**（加密/轮换/审计纪律），与「密钥只在 env / openship / GitHub Secrets」的安全基线冲突；v1 租户数少，env 映射够用。
-- **否决 C（外部 KMS）**：v1 付新基建，同本节不做清单的取舍。
-- **约束**：org 名须能安全转成 env 变量名（当前租户名均为 ASCII）；含非 ASCII 的 org 需显式映射——**待实测**，不得据以声称可用。
-- **运维口径**：该 Novu 实例是 **CE 构建**，控制台**没有**组织管理入口（`/settings/organization`、`/auth/organization-list` 在 CE 下直接重定向；左上组织名无点击）。**租户创建 / 切换 / 取 API key 只能走 API** —— 步骤见 skill `novu-ops`（team-harness `skills/mytech/novu-ops/SKILL.md`）。
+- **Novu 退出 platform-core 关键路径**；企微 bridge 保留（它不是 Novu）。
+- 旧 `modules/notify/novu/**`、`NOVU_*` env、`notify-reconcile` 的 Novu resolver 已退役。
+- 公司其他项目仍可用 Novu；本条只约束本仓。
 
-**chat 渠道前置 `ensureChannel`（ADR 0008 ②，2026-10-20 人审）**
+#### 权限与边界
 
-**背景（实测）**：企微送达的闸门是 **`subscriber.channels[]`**，集成级 `webhookUrl` **不参与** ——
-无渠道 ⇒ chat 作业恒 **`canceled`**（集成在场也一样）；挂上渠道才开始尝试投递。
-而本仓原先唯一出站调用是 `POST /v1/events/trigger` ⇒ **通知永远到不了企微**。
+- `notify:view` / `manage` / `publish` / `channel` / `emit`；`emit` 只给服务/PAT。
+- 所有业务表 `org text not null` 首列；org 只来自 identity。
+- 明确不做：邮件 / 短信 / digest / 条件规则 / 多级路由 / 偏好中心 / 消息队列。
 
-**定案**：`modules/notify/domain/novu.ts` 的 `ensureChannel` 在 `trigger` **之前**跑两步——
-`POST /v1/subscribers`（upsert，先建后挂最稳）→ `PUT /v1/subscribers/:id/credentials`
-（`{providerId:'chat-webhook', credentials:{webhookUrl}}`，`webhookUrl` = bridge 端点 + `&to=<订阅者>`；
-该端点**本身已带 `?t=<token>`** ⇒ 追加必须用 `&`）。
+#### 实施注记
 
-- **落点**：`pipeline.emit` 在 `novu !== null` 且**本 org** 解析出 bridge URL 时调用。
-- **幂等**：进程内 Set 缓存，键 = **(bridge URL, subscriberId)** —— 不是裸 subscriberId：
-  后者是 Casdoor 用户名，**不同 org 可同名**，只按 id 缓存会让第二个 org 的同名用户命中缓存、
-  永远挂着**第一个 org 的** bridge URL = 跨租户串号。
-- **fail-open**（同 §2.6 取舍④）：挂渠道失败**不阻断** `trigger`、**不**记 `failed` 回执，只告警；
-  后果由 Novu 的 chat job 状态体现（`canceled` / `failed`）。失败不入缓存 ⇒ 下次 emit 重试。
-
-**env 契约：`NOVU_CHAT_WEBHOOK_URL__<ORG>`（per-org，**不回落全局**）**
-
-| 优先级 | 来源 | 说明 |
-|---|---|---|
-| 1 | `NOVU_CHAT_WEBHOOK_URL__<ORG>` | 本 org 的企微 bridge 端点（含 token ⇒ isSecret）；`<ORG>` 复用上面同一个 org→env 名规范化纯函数 |
-| 2 | 无 | **该 org 视为未配置**：不挂渠道，**照常 `trigger`**（fail-open） |
-
-- ⚠️ **与 `NOVU_API_KEY__<ORG>` 的「回落全局」范式刻意不同**（2026-10-20 裁决）：本键是一条
-  **带租户 token 的投递端点**，bridge 按 URL 里的 tenant + token 决定「用哪个企微 corp 发、发到哪个群」；
-  一旦回落，A 租户的通知会带着 A 的标题/链接投进 B 租户的企微群 = **跨租户数据泄露**，不是投递失败
-  ⇒ 本键 **fail-closed**。**本轮不引入全局 `NOVU_CHAT_WEBHOOK_URL`**（多租户下它没有正当语义）。
-  `NOVU_API_KEY` 的全局回落存在同类隐患，属既有设计、另案评估。
-- **勿当不一致来"修正"**：这处不对称是有意为之。改动前先读 explore ADR 0008 §3。
+- 竖切：aftersales 员工审批（`aftersales.employee_approval.pending`）；五条负对照见 spec §13.3。
+- 待实测：bridge `to=` 映射、Casdoor scope 持有者枚举、N=500 限流；未见证前不得声称可用。
 
 ### 2.7 湖的存储格式：保持纯 Parquet，不引入 lakehouse 表格式（2026-10-20 拍板）
 
