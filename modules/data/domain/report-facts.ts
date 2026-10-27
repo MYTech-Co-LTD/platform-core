@@ -304,10 +304,11 @@ export async function buildFacts(
   }
   // 当前门店名：只从查询回包的维度列里取；同一个事实包内捕获一次即可。
   // **只在本次观看明确了门店（branchNum）时捕获**——多店视图取第一行会张冠李戴。
-  let branchName: string | null = null
+  // 用对象承载：闭包里的赋值不会被 TS 的控制流分析跟踪（直接 let 会被窄化成 null）。
+  const branchInfo: { name: string | null } = { name: null }
   const captureBranch = (name: string | null): void => {
     if (branchNum === undefined) return
-    if (branchName === null && name !== null) branchName = name
+    if (branchInfo.name === null && name !== null) branchInfo.name = name
   }
 
   for (const p of dataPanels) {
@@ -409,6 +410,11 @@ export async function buildFacts(
   // 白名单只收**事实里出现过的格式化值**与期间日期：未格式化的变体（去千分位/去符号/去
   // 百分号）由 narrative 的 allowedNumbers 统一归一化推导 —— 白名单不在两处各维护一份。
   const numbers = new Set<string>(dates)
+  // 门店号是文本要引用的**事实**（提示词要求写当前门店）；不放进白名单的话，模型写
+  // 「85」会被数字校验判成越界 ⇒ 好文本被模板替换（#1085 回归点）。
+  if (branchNum !== undefined) numbers.add(branchNum)
+  // 门店名里的数字同样是专名的一部分（如「测试99店」），不是数据主张。
+  if (branchInfo.name !== null) for (const d of branchInfo.name.match(/\d+/g) ?? []) numbers.add(d)
   const addNumber = (s: string | null): void => {
     if (s !== null && s !== '') numbers.add(s)
   }
@@ -438,7 +444,7 @@ export async function buildFacts(
     focus: ai.focus,
     period: { from: range.from, to: range.to, label: `${range.from} ~ ${range.to}` },
     branchNum: branchNum ?? null,
-    branchName,
+    branchName: branchInfo.name,
     hasData,
     dataAsOf: earliestDataAsOf(asOfList),
     kpis,
