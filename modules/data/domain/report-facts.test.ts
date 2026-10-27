@@ -127,9 +127,14 @@ function execWith(v: Values, coverageFrom: string | null = '2026-01-01'): SqlExe
     // 覆盖探测（issue #1078）：明细形态 + bizday 升序 + LIMIT 1 ⇒ 第一行 = 最早有数日。
     // null = 探测失败/无数据（空集），事实包据此不出对比。
     if (sql.includes('ORDER BY bizday asc LIMIT 1')) {
+      // 明细形态的覆盖探测会带维度名称列（真实 /query 由 dimension-labels 追加）：
+      // 事实包从这里捕获当前门店名（#1085）。
       return coverageFrom === null
         ? { columns: [], rows: [] }
-        : { columns: ['value', 'bizday'], rows: [[1, coverageFrom]] }
+        : {
+            columns: ['value', 'bizday', 'branch_name', 'branch_num'],
+            rows: [[1, coverageFrom, '熊喵曲靖沾益2店', 92]],
+          }
     }
     const prev = sql.includes(PREV_MARK)
     if (sql.startsWith('SELECT sum(value) AS total')) {
@@ -203,6 +208,9 @@ describePg('buildFacts（需要 DATABASE_URL）', () => {
     expect(facts.focus).toBe('overview')
     expect(facts.period).toEqual({ from: '2026-10-01', to: '2026-10-19', label: '2026-10-01 ~ 2026-10-19' })
     expect(facts.branchNum).toBe('92')
+    // 门店名从 /query 的维度名称列捕获（不是报表标题——切店后标题仍是登记时的那家店）
+    expect(facts.branchName).toBe('熊喵曲靖沾益2店')
+    expect(facts.hasData).toBe(true)
     expect(facts.dates).toEqual(['2026-10-01', '2026-10-19'])
     expect(facts.dataAsOf).toBe(AS_OF)
 
@@ -286,6 +294,7 @@ describePg('buildFacts（需要 DATABASE_URL）', () => {
 
     const facts = await buildFacts(depsOf(emptyTotal), parsed.spec, 1, PERIOD, '92')
     expect(facts.kpis[0]).toMatchObject({ current: '-', previous: null, delta: '-' })
+    expect(facts.hasData).toBe(false)
     expect(facts.missing).toEqual([])
     expect(facts.numbers).not.toContain('-')
   })
@@ -303,6 +312,30 @@ describePg('buildFacts（需要 DATABASE_URL）', () => {
     expect(facts.kpis.find((k) => k.panel === '销售额')?.current).toBe('51,273.89')
     // 白名单不因此收进「假环比」百分比。
     expect(facts.numbers.some((n) => n.startsWith('+') || n.startsWith('-'))).toBe(false)
+  })
+
+  it('全 0 的拆解行不算有数据（无业绩门店的合成 0 行）', async () => {
+    const parsed = parseReportSpec({
+      panels: [
+        { chart: 'table', title: '连续无业绩天数', metricId: 'rf:loss_amount', dims: ['bizday'], span: 24 },
+        { chart: 'ai_text', title: '结论', focus: 'overview' },
+      ],
+    })
+    if (!parsed.ok) throw new Error(parsed.code)
+    const base = execWith(VALUES)
+    const zeros: SqlExecutor = async (sql) => sql.includes('marts.facts_loss')
+      ? { columns: ['value'], rows: [[0], [0]] }
+      : base(sql)
+    const facts = await buildFacts(depsOf(zeros), parsed.spec, 1, PERIOD, '91')
+    expect(facts.hasData).toBe(false)
+  })
+
+  it('未指定门店（多店视图）不捕获 branchName——取第一行会张冠李戴', async () => {
+    const spec = specOf()
+    const aiIndex = spec.panels.findIndex((p) => p.chart === 'ai_text')
+    const facts = await buildFacts(depsOf(execWith(VALUES)), spec, aiIndex, PERIOD)
+    expect(facts.branchNum).toBeNull()
+    expect(facts.branchName).toBeNull()
   })
 
   it('覆盖探测失败（空集）⇒ 不出对比（宁可不出，不出假数）', async () => {

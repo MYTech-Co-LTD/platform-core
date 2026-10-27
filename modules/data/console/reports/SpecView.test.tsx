@@ -581,6 +581,30 @@ describe('Task 6：期间 / slice / KPI / 文本 / 信任信号', () => {
     expect(byRange.get('2026-09-01')!.args.bizday).toEqual({ from: '2026-09-01', to: '2026-09-26' })
   })
 
+  it('★ 动态副标题：登记标题不跟随期间/门店时，当前视图由副标题说清', async () => {
+    stub({
+      period: { mode: 'custom', from: '2026-10-01', to: '2026-10-19' },
+      panels: [{ chart: 'text', title: '说明', content: 'x', span: 24 }],
+    }, {}, new Set())
+    renderView()
+    const scope = await screen.findByTestId('view-scope')
+    expect(scope).toHaveTextContent('统计期间 2026-10-01 ~ 2026-10-19')
+  })
+
+  it('★ 动态副标题：门店名取自 /branches（不是登记标题）', async () => {
+    stub({
+      panels: [{
+        chart: 'line', title: '趋势', metricId: 'm', dims: ['bizday'],
+        args: { system_book: '3120', branch_num: '92' }, span: 24,
+      }],
+    }, {}, new Set(), {
+      '/branches?system_book=3120': { branches: [{ branchNum: '92', name: '熊喵曲靖沾益2店' }] },
+    })
+    renderView()
+    await waitFor(() =>
+      expect(screen.getByTestId('view-scope')).toHaveTextContent('门店 熊喵曲靖沾益2店（92）'))
+  })
+
   it('★ text 面板：保留换行、按纯文本渲染（不解析 HTML）', async () => {
     stub({
       panels: [{ chart: 'text', title: '本月结论', content: '第一行\n<b>不是标签</b>', span: 24 }],

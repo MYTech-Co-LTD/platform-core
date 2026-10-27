@@ -475,6 +475,19 @@ export default function ReportView({
 
   const showRangePicker = period === null && defaults.bizday !== undefined
   const showBranchPicker = defaults.branch_num !== undefined
+  // 动态副标题（#1085）：登记标题里的门店/期间是创建时的，切门店/切期间后必须由副标题说清。
+  const selectedBranchNum = typeof override.branch_num === 'string'
+    ? override.branch_num
+    : typeof defaults.branch_num === 'string' ? defaults.branch_num : undefined
+  const selectedBranch = selectedBranchNum === undefined
+    ? undefined
+    : branches?.find((b) => b.branchNum === selectedBranchNum)
+  const branchScope = selectedBranchNum === undefined
+    ? null
+    : selectedBranch === undefined
+      ? `门店 ${selectedBranchNum}`
+      : `门店 ${selectedBranch.name}（${selectedBranchNum}）`
+  const periodScope = range === null ? null : `${range.from} ~ ${range.to}`
   // `ai_text` 的切片门店：筛选栏覆盖优先，其次规格默认——与 argsOf 的 branch 口径**同源**
   // （`panelArgsOf` 只覆盖声明过 `branch_num` 的面板；ai_text 没有 args，故这里显式取）。
   const aiBranchNum = typeof override.branch_num === 'string'
@@ -492,6 +505,17 @@ export default function ReportView({
         </Space>
         {chrome === 'console' && onClose !== undefined && <Button size="small" onClick={onClose}>关闭</Button>}
       </div>
+      {(branchScope !== null || periodScope !== null) && (
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 12, display: 'block', marginBottom: 8 }}
+          data-testid="view-scope"
+        >
+          当前视图：
+          {[branchScope, periodScope === null ? null : `统计期间 ${periodScope}`]
+            .filter((s): s is string => s !== null).join(' · ')}
+        </Typography.Text>
+      )}
       {period !== null && <PeriodBar period={period} range={range} onChange={setPeriod} />}
       {/* 筛选栏（#1047）：只为规格 args 里出现过的参数键出控件；改选即重查（override）。
           period 声明后 bizday 归期间控件管，这里不再出 RangePicker（避免两个口径同屏）。
