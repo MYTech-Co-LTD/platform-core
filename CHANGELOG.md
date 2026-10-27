@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.204.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.5...v0.204.6) - 2026-10-27
+- 【修复】data: 门店号/门店名数字进 AI 文本数字白名单 (#1089) ([#1090](https://github.com/MYTech-Co-LTD/platform-core/pull/1090), [79b8c89](https://github.com/MYTech-Co-LTD/platform-core/commit/79b8c899d3ac3fe24376d9e8d9c9433540062947))
+
+
 ## [0.204.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.4...v0.204.5) - 2026-10-27
 - 【修复】data: AI 文本门店归属/标题跟随/费用净额/空态/KPI 原因 (#1085) ([#1088](https://github.com/MYTech-Co-LTD/platform-core/pull/1088), [d52ed31](https://github.com/MYTech-Co-LTD/platform-core/commit/d52ed31f93411a87e14c2cce4446e2657fd5e814))
 
