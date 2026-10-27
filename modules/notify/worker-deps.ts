@@ -5,6 +5,7 @@ import type { NotificationEventDecl } from '@platform/sdk'
 import { createChannelAddressResolver } from '../../apps/server/src/channel-address'
 import { sendInApp } from './providers/in-app'
 import { sendWecom } from './providers/wecom'
+import { rateLimitVerdict } from './domain/rate-limit'
 import { sendWebhook } from './providers/webhook'
 import * as storage from './storage'
 import { runOnce, type WorkerDeps, type WorkerStats } from './worker'
@@ -50,6 +51,16 @@ export function buildWorkerDeps(
     resolveAddress: (input) => addresses.resolve(input),
     isCoolingDown: (org, rule, recipient, now) =>
       storage.isCoolingDown(pool, org, rule, recipient, now),
+    channelRateLimited: async (org, channel) => {
+      const ch = await storage.getChannel(pool, org, channel)
+      const limit = typeof ch?.config.rate_limit_per_min === 'number'
+        ? ch.config.rate_limit_per_min
+        : 0
+      if (limit <= 0) return null
+      const sent = await storage.countChannelSends(pool, org, channel, 60)
+      const v = rateLimitVerdict(sent, limit)
+      return v.allow ? null : v.retryAfterMs
+    },
     send: async (d) => {
       const ch = await storage.getChannel(pool, d.org, d.channel)
       if (!ch || !ch.enabled) {

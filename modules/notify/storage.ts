@@ -535,6 +535,18 @@ export async function listDeliveries(pool: Pool, org: string, limit = 100) {
   }))
 }
 
+/** 每通道限流：窗口内已 sent 的条数 */
+export async function countChannelSends(
+  pool: Pool, org: string, channel: string, windowSeconds = 60,
+): Promise<number> {
+  const { rows } = await pool.query(
+    `select count(*)::int n from notify.delivery
+      where org=$1 and channel=$2 and status='sent'
+        and created_at > now() - ($3 || ' seconds')::interval`,
+    [org, channel, String(windowSeconds)])
+  return rows[0].n as number
+}
+
 /** 手动重试：只把 failed/dead 置回 pending；返回 0 = 不存在或不可重试 */
 export async function retryDelivery(
   pool: Pool,

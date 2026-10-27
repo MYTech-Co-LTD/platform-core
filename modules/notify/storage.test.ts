@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from './test-util'
 import {
-  audit, channelConfigured, claimDueDeliveries, createTemplateRevision, deleteRule,
+  audit, channelConfigured, claimDueDeliveries, countChannelSends, createTemplateRevision, deleteRule,
   enqueueEvent, getPublishedTemplate, getTemplate, isCoolingDown, listChannels,
   listRules, markDeliverySent, patchChannel, publishTemplateRevision,
   setChannelHealth, setRuleEnabled, upsertRule,
@@ -150,6 +150,22 @@ describePg('notify storage v2', () => {
     const { rows } = await pool.query(
       'select action,target,detail from notify.audit where org=$1 order by id desc limit 1', [ORG])
     expect(rows[0]).toMatchObject({ action: 'template.publish', target: 't1', detail: { revision: 2 } })
+  })
+
+  it('countChannelSends 只数窗口内 sent', async () => {
+    const ins = (eventId: string, status: string, at: string) => pool.query(
+      `insert into notify.delivery
+         (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,created_at)
+       values ($1,$2,'m.a.b','r1','u1','wecom_default','wecom-u1','t1',1,'{}',$3,$4)`,
+      [ORG, eventId, status, at])
+
+    await ins('rl-1', 'sent', '2026-01-01T00:00:00Z')
+    await ins('rl-2', 'sent', '2026-01-01T00:00:00Z')
+    await ins('rl-3', 'failed', '2026-01-01T00:00:00Z')
+    await ins('rl-4', 'sent', '2020-01-01T00:00:00Z') // 远早于窗口
+
+    expect(await countChannelSends(pool, ORG, 'wecom_default', 60)).toBe(0) // 夹具都在过去
+    expect(await countChannelSends(pool, ORG, 'wecom_default', 60 * 60 * 24 * 365 * 10)).toBe(3)
   })
 
   it('冷却：窗口内有 sent 才抑制；无 cooldown 恒 false', async () => {
