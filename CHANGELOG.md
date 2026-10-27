@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.205.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.205.0...v0.205.1) - 2026-10-27
+- 【修复】data: AI 文本 P2——明细不进事实包/格式跟随 KPI/探测去重 (#1093) ([#1095](https://github.com/MYTech-Co-LTD/platform-core/pull/1095), [3669ba6](https://github.com/MYTech-Co-LTD/platform-core/commit/3669ba6c89819b936b4bf05f15e25411798c4521))
+
+
 ## [0.205.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.204.6...v0.205.0) - 2026-10-27
 - 【新增】data: 64188 补采八类数据源（批发/配送明确不采） ([#1092](https://github.com/MYTech-Co-LTD/platform-core/pull/1092), [fe5f102](https://github.com/MYTech-Co-LTD/platform-core/commit/fe5f10263700b1e185350a1bd46974a0d49ab4cc))
 
