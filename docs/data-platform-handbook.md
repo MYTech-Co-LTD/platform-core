@@ -965,9 +965,13 @@ capabilities / policy 门禁 / run 回执」一句打包，**实测与其中两�
 | 库存快照 `inventory_snapshot`（主轮 + T-3 兜底） | **采** | 实测 10-24 首页 200 条；窗口语义沿用 #1079 |
 | 门店费用 `branch_expense` / 客户费用 `client_expense` | **采** | 同族接口 |
 | 门店经营指标 `branch_indicator` | **采** | 同族接口（子管线 `branch_indicator.day` 已是共享族） |
-| 会员汇总日更 `member_summary` | **采**（仅日更汇总 `bizday=*/all.parquet`） | ⚠️ **按店明细（`branch=`）不在此列**：那条 fanout 目前是坏的且未进仓，另行处理 |
+| 会员汇总 `member_summary` | **采**（日更 `bizday=*/all.parquet`，**行本身就是按门店**：带 `branch_num/branch_code/branch_name`） | ✅ **按店文件（`branch=`）已于 2026-10-27 退役**：逐项核对过是日更文件的**子集**（11 列 vs 23 列，数值逐行相同），且仓内/console/dbt **零消费者**；按店取数直接 `where branch_num=` 过滤日更文件即可，不必再请求源 |
 | **配送 `transfer_in` / `transfer_out`** | **不采（明确）** | 用户 2026-10-27 裁决 |
 | **批发 `wholesale_out` / `wholesale_return`** | **不采（明确）** | 用户 2026-10-27 裁决；退货两端源端本就恒 0 |
+
+**对账源读取口径修正（2026-10-27，PR #1100）**：`recon.preagg` 的 `plake` 原读 `retail_order_line/system_book=<账套>/**`（**只有热分区 `hour=`**），
+而热分区会被封版流程删掉、完整数据只剩 `_DAY_DATA/` 下的天文件 ⇒ T-3 跑时可能已被清空 ⇒ 那天**永久缺**（recon 无重试，回填同理）。
+10-21 即因此丢失（热分区只剩 `hour=07` 且无 FINISHED 行，而天文件有 9,341 条）。已改为读 `_DAY_DATA/`，与 staging 对封版日的读法一致。
 
 **实现形态**：按 #531 账套后缀约定生成 `<name>.64188.json`（管线体与 `.3120` 版逐字相同，仅顶层 `name` 不同，
 已机检），排班进 `schedules/64188.json`。**不做**共享族化改名——那会把 3120 的在跑管线改 id，
