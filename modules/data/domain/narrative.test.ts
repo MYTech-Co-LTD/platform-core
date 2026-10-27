@@ -165,6 +165,11 @@ describe('badNumbers（日期形态）', () => {
     )).toEqual([])
   })
 
+  it('裸年份（省写「年/月/日」）也抹掉：2026 10月21日 / 2026 10-21 / 2026 全年', () => {
+    const allowed = allowedNumbers(facts)
+    expect(badNumbers('2026 10月21日；2026 10-21；2026 全年。', allowed)).toEqual([])
+  })
+
   it('尾零差异不算越界（facts 1,254.60 / -410.00，模型写 1,254.6 / -410）', () => {
     const withDecimals: FactBundle = {
       ...facts,
