@@ -302,6 +302,67 @@ export async function getChannel(pool: Pool, org: string, id: string): Promise<C
   return (rows[0] as ChannelRow | undefined) ?? null
 }
 
+// ── 通道管理（P2）──────────────────────────────────────────────────────────────
+
+export type ChannelView = {
+  id: string
+  provider: string
+  enabled: boolean
+  config: Record<string, unknown>
+  secretRefs: Record<string, string>
+  health: string | null
+  healthAt: string | null
+}
+
+export async function listChannels(pool: Pool, org: string): Promise<ChannelView[]> {
+  const { rows } = await pool.query(
+    `select id,provider,enabled,config,secret_refs,health,health_at
+       from notify.channel where org=$1 order by id`, [org])
+  return rows.map((r) => ({
+    id: r.id,
+    provider: r.provider,
+    enabled: r.enabled,
+    config: r.config,
+    secretRefs: r.secret_refs,
+    health: r.health,
+    healthAt: r.health_at ? (r.health_at as Date).toISOString() : null,
+  }))
+}
+
+/** 该通道的每个 secret_refs env 键在当前进程 env 都有值 ⇒ configured */
+export function channelConfigured(
+  secretRefs: Record<string, string>,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return Object.values(secretRefs).every((k) => !!env[k])
+}
+
+export async function patchChannel(
+  pool: Pool,
+  org: string,
+  id: string,
+  patch: { enabled?: boolean; config?: Record<string, unknown> },
+  actor: string,
+): Promise<number> {
+  const r = await pool.query(
+    `update notify.channel set
+       enabled = coalesce($3, enabled),
+       config = case when $4::jsonb is null then config else config || $4::jsonb end,
+       updated_at = now()
+     where org=$1 and id=$2`,
+    [org, id, patch.enabled ?? null, patch.config ? JSON.stringify(patch.config) : null])
+  if ((r.rowCount ?? 0) > 0) await audit(pool, org, actor, 'channel.patch', id, patch)
+  return r.rowCount ?? 0
+}
+
+export async function setChannelHealth(
+  pool: Pool, org: string, id: string, health: string, detail?: string,
+): Promise<void> {
+  await pool.query(
+    'update notify.channel set health=$3, health_at=now(), updated_at=now() where org=$1 and id=$2',
+    [org, id, detail ? `${health}:${detail}` : health])
+}
+
 /** 规则校验用：本 org 已启用的通道 id 集合 */
 export async function listEnabledChannelIds(pool: Pool, org: string): Promise<Set<string>> {
   const { rows } = await pool.query(

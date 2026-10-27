@@ -3,9 +3,10 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from './test-util'
 import {
-  audit, claimDueDeliveries, createTemplateRevision, deleteRule, enqueueEvent,
-  getPublishedTemplate, getTemplate, isCoolingDown, listRules, markDeliverySent,
-  publishTemplateRevision, setRuleEnabled, upsertRule,
+  audit, channelConfigured, claimDueDeliveries, createTemplateRevision, deleteRule,
+  enqueueEvent, getPublishedTemplate, getTemplate, isCoolingDown, listChannels,
+  listRules, markDeliverySent, patchChannel, publishTemplateRevision,
+  setChannelHealth, setRuleEnabled, upsertRule,
 } from './storage'
 
 const url = process.env.DATABASE_URL
@@ -32,6 +33,7 @@ describePg('notify storage v2', () => {
     await pool.query('delete from notify.template_revision where org=$1', [ORG])
     await pool.query('delete from notify.template where org=$1', [ORG])
     await pool.query('delete from notify.audit where org=$1', [ORG])
+    await pool.query('delete from notify.channel where org=$1', [ORG])
   }
 
   async function seedTemplate() {
@@ -116,6 +118,31 @@ describePg('notify storage v2', () => {
 
     await publishTemplateRevision(pool, ORG, 't1', 1, 'publisher')
     expect((await getTemplate(pool, ORG, 't1'))!.publishedRevision).toBe(1)
+  })
+
+  it('通道：list 只回 env 键名；patch 合并 config 并审计；health 写入', async () => {
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'wecom_default','wecom_chat',true,'{"address_fallback":"none"}',
+               '{"bridge_url":"WECOM_BRIDGE_URL__X"}','u')`, [ORG])
+
+    const list = await listChannels(pool, ORG)
+    expect(list[0]).toMatchObject({ id: 'wecom_default', provider: 'wecom_chat', enabled: true })
+    expect(list[0]!.secretRefs).toEqual({ bridge_url: 'WECOM_BRIDGE_URL__X' })
+    expect(channelConfigured(list[0]!.secretRefs, {})).toBe(false)
+    expect(channelConfigured(list[0]!.secretRefs, { WECOM_BRIDGE_URL__X: 'v' })).toBe(true)
+
+    expect(await patchChannel(pool, ORG, 'wecom_default',
+      { enabled: false, config: { rate_limit_per_min: 10 } }, 'u')).toBe(1)
+    const after = (await listChannels(pool, ORG))[0]!
+    expect(after.enabled).toBe(false)
+    expect(after.config).toMatchObject({ address_fallback: 'none', rate_limit_per_min: 10 })
+
+    await setChannelHealth(pool, ORG, 'wecom_default', 'ok')
+    expect((await listChannels(pool, ORG))[0]!.health).toBe('ok')
+    const a = await pool.query(
+      'select action from notify.audit where org=$1 order by id desc limit 1', [ORG])
+    expect(a.rows[0].action).toBe('channel.patch')
   })
 
   it('审计行落库', async () => {
