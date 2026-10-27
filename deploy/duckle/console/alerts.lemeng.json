@@ -198,7 +198,10 @@
   "rules": [
     {
       "match": "*",
-      "on": ["stale", "refreshed"],
+      "on": [
+        "stale",
+        "refreshed"
+      ],
       "cooldownMinutes": 15,
       "channel": "webhook",
       "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
@@ -208,7 +211,10 @@
     },
     {
       "match": "lemeng.dim.*.l0",
-      "on": ["failure", "recovery"],
+      "on": [
+        "failure",
+        "recovery"
+      ],
       "cooldownMinutes": 15,
       "channel": "webhook",
       "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
@@ -218,7 +224,10 @@
     },
     {
       "match": "lemeng.*.l0.3120",
-      "on": ["failure", "recovery"],
+      "on": [
+        "failure",
+        "recovery"
+      ],
       "cooldownMinutes": 15,
       "channel": "webhook",
       "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
@@ -228,7 +237,10 @@
     },
     {
       "match": "lemeng.inventory.snapshot.catchup.3120",
-      "on": ["failure", "recovery"],
+      "on": [
+        "failure",
+        "recovery"
+      ],
       "cooldownMinutes": 15,
       "channel": "webhook",
       "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
@@ -238,7 +250,10 @@
     },
     {
       "match": "lemeng.retail.windows.l1",
-      "on": ["failure", "recovery"],
+      "on": [
+        "failure",
+        "recovery"
+      ],
       "cooldownMinutes": 15,
       "channel": "webhook",
       "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
@@ -248,7 +263,10 @@
     },
     {
       "match": "lemeng.retail.tick.l1",
-      "on": ["failure", "recovery"],
+      "on": [
+        "failure",
+        "recovery"
+      ],
       "cooldownMinutes": 60,
       "channel": "webhook",
       "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
@@ -258,7 +276,10 @@
     },
     {
       "match": "lemeng.retail.close.l1",
-      "on": ["failure", "recovery"],
+      "on": [
+        "failure",
+        "recovery"
+      ],
       "cooldownMinutes": 15,
       "channel": "webhook",
       "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
@@ -268,7 +289,36 @@
     },
     {
       "match": "lemeng.recon.*",
-      "on": ["failure", "recovery"],
+      "on": [
+        "failure",
+        "recovery"
+      ],
+      "cooldownMinutes": 15,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
+    },
+    {
+      "match": "lemeng.*.l0.64188",
+      "on": [
+        "failure",
+        "recovery"
+      ],
+      "cooldownMinutes": 15,
+      "channel": "webhook",
+      "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
+      "headers": {
+        "Authorization": "Basic ${ENV:OO_AUTH}"
+      }
+    },
+    {
+      "match": "lemeng.inventory.snapshot.catchup.64188",
+      "on": [
+        "failure",
+        "recovery"
+      ],
       "cooldownMinutes": 15,
       "channel": "webhook",
       "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/data_alerts/_json",
