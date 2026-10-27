@@ -832,7 +832,7 @@ export const json = (body: unknown, status = 200) =>
 ```tsx
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 import { routeFetch, json, fetchMock } from './test-util'
-beforeEach(() => fetchMock.mockReset())
+beforeEach(() => { fetchMock.mockReset() })
 ```
 
 - [ ] **Step 3: tab 壳**
