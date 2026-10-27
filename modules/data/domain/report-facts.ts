@@ -289,6 +289,15 @@ export async function buildFacts(
   // 日趋势只认**第一个** line 面板：多个 line 面板混算会把不同指标（金额/件数/比率）
   // 的最低最高揉成一对不属于任何指标的值。报表顺序即声明顺序，作者可控。
   let dailyPanelSeen = false
+  // 指标格式：bar/table/line 面板本身不声明 format；同名 KPI 的 format 是作者的口径声明，
+  // 用它来格式化拆解值与日极值（否则金额会丢尾零：1,254.6 / 1,136）。无同名 KPI ⇒ number。
+  const formatByMetric = new Map<string, KpiPanel['format']>()
+  for (const panel of spec.panels) {
+    if (panel.chart === 'kpi' && !formatByMetric.has(panel.metricId)) {
+      formatByMetric.set(panel.metricId, panel.format)
+    }
+  }
+  let dailyFormat: KpiPanel['format'] = 'number'
 
   // 同一 (metricId, args) 的覆盖探测在本事实包内只查一次：8 张 KPI 会复用同一批指标
   // （销售额既是「销售额」也是客单价/会员占比的分母）。
@@ -363,6 +372,7 @@ export async function buildFacts(
     if (p.chart === 'line') {
       if (!dailyPanelSeen) {
         dailyPanelSeen = true
+        dailyFormat = formatByMetric.get(p.metricId) ?? 'number'
         const xIdx = q.dims.length === 0 ? -1 : out.columns.indexOf(q.dims[0]!)
         const vIdx = out.columns.indexOf('value')
         if (xIdx >= 0 && vIdx >= 0) {
@@ -378,6 +388,11 @@ export async function buildFacts(
       }
       continue
     }
+
+    // 无 `slice` 的 bar/table 是**原始 grain 明细**（旧规格形态），不是语义拆解：
+    // 直接跳过。否则会按「显式合计」把每行标成「合计」（#1093 现场：连续无业绩天数
+    // 19 行全 0、6 列明细），既污染提示词也没有信息量。
+    if (p.slice === undefined) continue
 
     // bar / table ⇒ 拆解。行标签 = 声明维度的值按 `/` 连接；无维度 ⇒ 单行即合计。
     const vIdx = out.columns.indexOf('value')
@@ -397,14 +412,14 @@ export async function buildFacts(
       dimension: q.dims.join('/'),
       rows: rows.slice(0, MAX_BREAKDOWN_ROWS).map((r) => ({
         label: r.label,
-        value: r.value === null ? '-' : factValue(r.value, 'number'),
+        value: r.value === null ? '-' : factValue(r.value, formatByMetric.get(p.metricId) ?? 'number'),
       })),
     })
   }
 
   const daily: FactBundle['daily'] = {
-    min: minRaw === null ? null : { day: minRaw.day, value: factValue(minRaw.value, 'currency') },
-    max: maxRaw === null ? null : { day: maxRaw.day, value: factValue(maxRaw.value, 'currency') },
+    min: minRaw === null ? null : { day: minRaw.day, value: factValue(minRaw.value, dailyFormat) },
+    max: maxRaw === null ? null : { day: maxRaw.day, value: factValue(maxRaw.value, dailyFormat) },
   }
 
   // 白名单只收**事实里出现过的格式化值**与期间日期：未格式化的变体（去千分位/去符号/去

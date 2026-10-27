@@ -93,20 +93,30 @@ export function allowedNumbers(facts: FactBundle): Set<string> {
   for (const n of [...facts.numbers, ...facts.dates]) {
     out.add(n)
     const base = n.replace(/^¥/, '')
-    // 「去逗号」「去正号」「去单位」两两组合都要能对上：模型不保证同时带或不带。
+    // 「去逗号」「去正号」「去单位」「去尾零」组合都要能对上：模型不保证带哪一种。
     for (const noComma of [base, base.replaceAll(',', '')]) {
       for (const noSign of [noComma, noComma.replace(/^\+/, '')]) {
         out.add(noSign)
-        out.add(noSign.replace(/(%|pp)$/, ''))
+        const unitMatch = /(%|pp)$/.exec(noSign)
+        const unit = unitMatch?.[1] ?? ''
+        const bare = unit === '' ? noSign : noSign.slice(0, -unit.length)
+        out.add(bare)
+        out.add(normalizeNum(bare))
+        // 单位保留的形态（5.10% 的模型常写 5.1%）
+        out.add(normalizeNum(bare) + unit)
       }
     }
   }
   return out
 }
 
-/** 与 `allowedNumbers` 的归一化口径对齐（逗号/正号在数字内部不改变值）。 */
+/**
+ * 与 `allowedNumbers` 的归一化口径对齐：逗号/正号不改变值；**小数尾零也不改变值**
+ * （facts 的 `1,254.60` 与模型写的 `1,254.6` 必须判等，否则格式统一后会新增回退）。
+ */
 function normalizeNum(s: string): string {
-  return s.replaceAll(',', '').replace(/^\+/, '')
+  const t = s.replaceAll(',', '').replace(/^\+/, '')
+  return /^-?\d*\.\d+$/.test(t) ? t.replace(/0+$/, '').replace(/\.$/, '') : t
 }
 
 /**

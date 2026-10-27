@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../lib/api', () => ({ apiSend: vi.fn() }))
 import { apiSend } from '../lib/api'
 import { parseReportSpec } from '../../domain/report-spec'
-import KpiCard from './KpiCard'
+import KpiCard, { resetCoverageCache } from './KpiCard'
 
 const m = vi.mocked(apiSend)
 
@@ -51,7 +51,7 @@ function mockApi(opts: { from?: string | null; to?: string | null; cur?: number;
   })
 }
 
-beforeEach(() => { m.mockReset() })
+beforeEach(() => { resetCoverageCache(); m.mockReset() })
 afterEach(() => { cleanup() })
 
 describe('KpiCard 对比覆盖', () => {
@@ -96,6 +96,19 @@ describe('KpiCard 对比覆盖', () => {
     render(<KpiCard panel={panelOf()} args={ARGS} compareRange={PREV} />)
 
     await waitFor(() => expect(screen.getByTestId('kpi-delta')).toHaveTextContent('-'))
+  })
+
+  it('同一指标的覆盖探测 60s 内复用（不重复请求）', async () => {
+    mockApi({ from: '2026-01-01', to: '2026-10-26' })
+    const first = render(<KpiCard panel={panelOf()} args={ARGS} compareRange={PREV} />)
+    await waitFor(() => expect(screen.getByTestId('kpi-delta')).toHaveTextContent('+25.0%'))
+    first.unmount()
+    render(<KpiCard panel={panelOf()} args={ARGS} compareRange={PREV} />)
+    await waitFor(() => expect(screen.getByTestId('kpi-delta')).toHaveTextContent('+25.0%'))
+
+    const probes = m.mock.calls.filter(([, , body]) =>
+      ((body ?? {}) as Body).orderBy !== undefined)
+    expect(probes).toHaveLength(1)
   })
 
   it('覆盖探测失败 ⇒ 不出环比（宁可不出，不出假数）', async () => {

@@ -331,10 +331,75 @@ describePg('buildFacts（需要 DATABASE_URL）', () => {
     expect(facts.numbers).toContain('99')
   })
 
+  it('无 slice 的 bar/table 不作为事实拆解（原始明细不是语义拆解）', async () => {
+    const parsed = parseReportSpec({
+      panels: [
+        { chart: 'table', title: '原始明细', metricId: 'rf:loss_amount', dims: ['bizday'], span: 24 },
+        { chart: 'ai_text', title: '结论', focus: 'overview' },
+      ],
+    })
+    if (!parsed.ok) throw new Error(parsed.code)
+    const facts = await buildFacts(depsOf(execWith(VALUES)), parsed.spec, 1, PERIOD, '92')
+    expect(facts.breakdowns).toEqual([])
+  })
+
+  it('拆解金额跟随同名 KPI 的 format（currency ⇒ 两位小数）', async () => {
+    const parsed = parseReportSpec({
+      panels: [
+        {
+          chart: 'kpi', title: '报损金额', metricId: 'rf:loss_amount', format: 'currency',
+          compare: 'none', span: 12, args: { branch_num: '92' },
+        },
+        {
+          chart: 'bar', title: '报损（按原因）', metricId: 'rf:loss_amount', dims: ['cause'],
+          slice: { dimensions: ['cause'] }, span: 24, args: { branch_num: '92' },
+        },
+        { chart: 'ai_text', title: '结论', focus: 'overview' },
+      ],
+    })
+    if (!parsed.ok) throw new Error(parsed.code)
+    const base = execWith(VALUES)
+    const exec: SqlExecutor = async (sql) => sql.includes('marts.facts_loss') && !sql.includes('AS total')
+      ? { columns: ['cause', 'value'], rows: [['自然损', 1136], ['冲减', -5]] }
+      : base(sql)
+    const facts = await buildFacts(depsOf(exec), parsed.spec, 2, PERIOD, '92')
+    expect(facts.breakdowns[0]?.rows[0]).toEqual({ label: '自然损', value: '1,136.00' })
+  })
+
+  it('日极值格式跟随指标（订单数 line 不再按金额两位小数）', async () => {
+    const parsed = parseReportSpec({
+      panels: [
+        {
+          chart: 'kpi', title: '订单数', metricId: 'rf:order_count', format: 'number',
+          compare: 'none', span: 12, args: { branch_num: '92' },
+        },
+        {
+          chart: 'line', title: '订单日趋势', metricId: 'rf:order_count', dims: ['bizday'],
+          slice: { dimensions: ['bizday'], orderBy: [{ column: 'bizday', dir: 'asc' }] },
+          span: 24, args: { branch_num: '92' },
+        },
+        { chart: 'ai_text', title: '结论', focus: 'overview' },
+      ],
+    })
+    if (!parsed.ok) throw new Error(parsed.code)
+    const base = execWith(VALUES)
+    const exec: SqlExecutor = async (sql) => sql.includes('marts.facts_orders')
+      ? {
+          columns: ['bizday', 'value'],
+          rows: [[new Date(2026, 9, 13), 875.59], [new Date(2026, 9, 16), 3564.8]],
+        }
+      : base(sql)
+    const facts = await buildFacts(depsOf(exec), parsed.spec, 2, PERIOD, '92')
+    expect(facts.daily.max).toEqual({ day: '2026-10-16', value: '3,564.8' })
+  })
+
   it('全 0 的拆解行不算有数据（无业绩门店的合成 0 行）', async () => {
     const parsed = parseReportSpec({
       panels: [
-        { chart: 'table', title: '连续无业绩天数', metricId: 'rf:loss_amount', dims: ['bizday'], span: 24 },
+        {
+          chart: 'table', title: '连续无业绩天数', metricId: 'rf:loss_amount', dims: ['bizday'],
+          slice: { dimensions: ['bizday'] }, span: 24,
+        },
         { chart: 'ai_text', title: '结论', focus: 'overview' },
       ],
     })
