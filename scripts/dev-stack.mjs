@@ -224,6 +224,17 @@ async function main() {
       { owner: 'acme', name: 'p-notify-manage', users: [ADMIN1], resources: ['notify:manage'] },
       { owner: 'acme', name: 'p-notify-emit', users: [ADMIN1], resources: ['notify:emit'] },
     ],
+    // 订阅源默认已是 casdoor（2026-10-27）：不种订阅 ⇒ enabledFor 恒空 ⇒ 所有模块 404。
+    // 种子与上面的权限码同域（acme），plan 用裸 mod-<id>（enabledFromSubscriptions 的口径）。
+    subscriptions: ['demo', 'aftersales', 'notify'].map((id) => ({
+      owner: 'acme',
+      name: `sub_mod-${id}`,
+      user: 'tenantsub',
+      plan: `mod-${id}`,
+      startTime: '2026-01-01T00:00:00Z',
+      endTime: '2099-01-01T00:00:00Z',
+      state: 'Active',
+    })),
   })
 
   /** @type {ChildProcess | undefined} */
