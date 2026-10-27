@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.206.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.5...v0.206.6) - 2026-10-27
+- 【修复】data: 回退标签改「数据摘要」+ 提示词 v5 负数示例 (#1115) ([#1116](https://github.com/MYTech-Co-LTD/platform-core/pull/1116), [d1765c6](https://github.com/MYTech-Co-LTD/platform-core/commit/d1765c6994bc4dd547c12bac8f1597564fc1695a))
+
+
 ## [0.206.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.4...v0.206.5) - 2026-10-27
 - 【修复】data: 提示词 narrative-v4，数字逐字复制 + temperature=0 (#1113) ([#1114](https://github.com/MYTech-Co-LTD/platform-core/pull/1114), [eebcab2](https://github.com/MYTech-Co-LTD/platform-core/commit/eebcab23c80cb9a4b2a1be5241b5bd7005b0a854))
 
