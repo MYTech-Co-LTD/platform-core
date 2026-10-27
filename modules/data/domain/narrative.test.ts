@@ -170,6 +170,11 @@ describe('badNumbers（日期形态）', () => {
     expect(badNumbers('2026 10月21日；2026 10-21；2026 全年。', allowed)).toEqual([])
   })
 
+  it('日/号/时/点与时间形态也抹掉（10 日 / 10号 / 10 时 / 10:30）', () => {
+    const allowed = allowedNumbers(facts)
+    expect(badNumbers('10 日；10号；10 时；10:30。', allowed)).toEqual([])
+  })
+
   it('尾零差异不算越界（facts 1,254.60 / -410.00，模型写 1,254.6 / -410）', () => {
     const withDecimals: FactBundle = {
       ...facts,
@@ -272,6 +277,17 @@ describe('streamNarrative', () => {
     expect(evs.at(-1)).toMatchObject({ type: 'done', fallback: true })
     // 模型异常不缓存回退（瞬时故障下次观看重试）
     expect(inserts).toHaveLength(0)
+  })
+
+  it('日期在 chunk 边界被切开（"…10 " + "月21日…"）不触发 replace（#1111）', async () => {
+    const { pool } = fakePool()
+    const { model } = fakeModel([
+      { content: '结论：销售额 51,273.89。\n异常：最低销售日为10 ' },
+      { content: '月21日。\n行动：核对明细。' },
+    ])
+    const evs = await collect(streamNarrative(depsOf(pool, { model })))
+    expect(evs.some((e) => e.type === 'replace')).toBe(false)
+    expect(evs.at(-1)).toMatchObject({ type: 'done', fallback: false })
   })
 
   it('缓存命中 ⇒ 回放单段 delta + done.cached，且不调模型', async () => {
