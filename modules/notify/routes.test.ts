@@ -1,7 +1,9 @@
 // routes-v2.test.ts — v2 端点（规则/投递/外部 emit/收件箱）
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { Hono } from 'hono'
+import { declaredScopeGate } from '@platform/sdk'
 import { Pool } from 'pg'
-import type { ChannelAddressResolver, NotificationEventDecl } from '@platform/sdk'
+import type { ChannelAddressResolver, Identity, NotificationEventDecl } from '@platform/sdk'
 import notifyV2 from './index'
 import { applyMigrations, buildTestApp, makeIdentity } from './test-util'
 
@@ -19,6 +21,10 @@ const events = {
   get: (k: string) => (k === 'm.a.b' ? decl : undefined),
   list: () => [decl],
 }
+const addresses: ChannelAddressResolver = {
+  resolve: async ({ provider, casdoorName }) =>
+    provider === 'wecom_chat' ? `wecom-${casdoorName}` : casdoorName,
+}
 
 describePg('routes v2', () => {
   let pool: Pool
@@ -27,10 +33,6 @@ describePg('routes v2', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: url })
     await applyMigrations(pool)
-    const addresses: ChannelAddressResolver = {
-      resolve: async ({ provider, casdoorName }) =>
-        provider === 'wecom_chat' ? `wecom-${casdoorName}` : casdoorName,
-    }
     app = buildTestApp(
       notifyV2,
       makeIdentity({ orgId: ORG, userId: 'u1', scopes: ['notify:view', 'notify:manage', 'notify:emit'] }),
@@ -208,6 +210,24 @@ describePg('routes v2', () => {
     const { rows } = await pool.query(
       'select distinct recipient, is_test from notify.delivery where org=$1', [ORG])
     expect(rows).toEqual([{ recipient: 'u1', is_test: true }])
+  })
+
+  it('publish 缺 notify:publish ⇒ 403（宿主门卫）', async () => {
+    const declared = [{ method: 'POST', path: '/templates/:key/publish', scope: 'notify:publish' }]
+    const guarded = new Hono<{ Variables: { identity: Identity } }>()
+    guarded.use('*', async (c, next) => {
+      c.set('identity', makeIdentity({ orgId: ORG, userId: 'u1', scopes: ['notify:manage'] }))
+      await next()
+    })
+    guarded.use('/templates/:key/publish', declaredScopeGate(declared))
+    guarded.route('/', notifyV2.createRouter({ pool, events, addresses }))
+
+    const res = await guarded.request('/templates/t1/publish', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ revision: 1 }),
+    })
+    expect(res.status).toBe(403)
   })
 
   it('投递重试：仅 failed/dead 可重试', async () => {
