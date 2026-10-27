@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.208.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.207.0...v0.208.0) - 2026-10-27
+- 【新增】notify: P2 产品面——模板/通道/console 六区/agent MCP ([#1124](https://github.com/MYTech-Co-LTD/platform-core/pull/1124), [e8af293](https://github.com/MYTech-Co-LTD/platform-core/commit/e8af2939d69537c2630e749a5598c310c7d6d4f4))
+
+
 ## [0.207.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.8...v0.207.0) - 2026-10-27
 - 【新增】notify: 租户级通知基础设施（P0+P1） ([#1120](https://github.com/MYTech-Co-LTD/platform-core/pull/1120), [0003a54](https://github.com/MYTech-Co-LTD/platform-core/commit/0003a546c839ed8743bb638e4fe19dd04f190757))
 
