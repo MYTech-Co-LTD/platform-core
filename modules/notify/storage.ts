@@ -1,5 +1,6 @@
 // storage-v2.ts — 新通知存储层（expand 阶段：rule/delivery 用 _v2 表名，Task 15 rename）。
 // 纪律：org 一律由调用方传入；SQL 一律 where org=$1；本层不读请求/身份。
+import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import type { EnqueueEventInput } from '@platform/sdk'
 import type { NotificationRule } from './domain/rules'
@@ -163,6 +164,124 @@ export async function getPublishedTemplate(
   return rows[0]
     ? { revision: rows[0].revision as number, contents: rows[0].contents }
     : null
+}
+
+// ── 模板管理（P2）──────────────────────────────────────────────────────────────
+
+export type TemplateSummary = {
+  key: string
+  name: string
+  eventKey: string
+  status: string
+  origin: string
+  publishedRevision: number | null
+  updatedAt: string
+}
+
+export type TemplateRevision = {
+  revision: number
+  contents: Record<string, Record<string, string>>
+  bodyHash: string
+  reviewStatus: string
+  createdBy: string
+  createdAt: string
+}
+
+export type TemplateDetail = TemplateSummary & { revisions: TemplateRevision[] }
+
+export async function listTemplates(pool: Pool, org: string): Promise<TemplateSummary[]> {
+  const { rows } = await pool.query(
+    `select key,name,event_key,status,origin,published_revision,updated_at
+       from notify.template where org=$1 order by key`, [org])
+  return rows.map((r) => ({
+    key: r.key,
+    name: r.name,
+    eventKey: r.event_key,
+    status: r.status,
+    origin: r.origin,
+    publishedRevision: r.published_revision,
+    updatedAt: (r.updated_at as Date).toISOString(),
+  }))
+}
+
+export async function getTemplate(
+  pool: Pool, org: string, key: string,
+): Promise<TemplateDetail | null> {
+  const t = await pool.query(
+    `select key,name,event_key,status,origin,published_revision,updated_at
+       from notify.template where org=$1 and key=$2`, [org, key])
+  if (!t.rows[0]) return null
+
+  const revs = await pool.query(
+    `select revision,contents,body_hash,review_status,created_by,created_at
+       from notify.template_revision where org=$1 and key=$2 order by revision desc`, [org, key])
+  const r = t.rows[0]
+  return {
+    key: r.key,
+    name: r.name,
+    eventKey: r.event_key,
+    status: r.status,
+    origin: r.origin,
+    publishedRevision: r.published_revision,
+    updatedAt: (r.updated_at as Date).toISOString(),
+    revisions: revs.rows.map((x) => ({
+      revision: x.revision,
+      contents: x.contents,
+      bodyHash: x.body_hash,
+      reviewStatus: x.review_status,
+      createdBy: x.created_by,
+      createdAt: (x.created_at as Date).toISOString(),
+    })),
+  }
+}
+
+export async function createTemplateRevision(
+  pool: Pool,
+  org: string,
+  key: string,
+  contents: Record<string, Record<string, string>>,
+  actor: string,
+): Promise<{ revision: number }> {
+  const bodyHash = createHash('sha256').update(JSON.stringify(contents)).digest('hex').slice(0, 16)
+  const { rows } = await pool.query<{ max: number }>(
+    'select coalesce(max(revision),0)::int as max from notify.template_revision where org=$1 and key=$2',
+    [org, key])
+  const revision = Number(rows[0]!.max) + 1
+  await pool.query(
+    `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
+     values ($1,$2,$3,$4::jsonb,$5,'draft',$6)`,
+    [org, key, revision, JSON.stringify(contents), bodyHash, actor])
+  await pool.query('update notify.template set updated_at=now() where org=$1 and key=$2', [org, key])
+  return { revision }
+}
+
+export async function publishTemplateRevision(
+  pool: Pool,
+  org: string,
+  key: string,
+  revision: number,
+  actor: string,
+): Promise<void> {
+  await pool.query(
+    `update notify.template_revision
+        set review_status='approved', approved_by=$4, approved_at=now()
+      where org=$1 and key=$2 and revision=$3`, [org, key, revision, actor])
+  await pool.query(
+    `update notify.template set status='published', published_revision=$3, updated_at=now()
+      where org=$1 and key=$2`, [org, key, revision])
+}
+
+export async function audit(
+  pool: Pool,
+  org: string,
+  actor: string,
+  action: string,
+  target: string,
+  detail: Record<string, unknown> = {},
+): Promise<void> {
+  await pool.query(
+    `insert into notify.audit(org,actor,action,target,detail) values ($1,$2,$3,$4,$5::jsonb)`,
+    [org, actor, action, target, JSON.stringify(detail)])
 }
 
 export type ChannelRow = {
