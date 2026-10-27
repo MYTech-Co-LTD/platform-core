@@ -62,6 +62,7 @@ Casdoor 后台运营，租户管理员在 console 自建页管理——spec D4 �
 
 ## 命令 / 门禁 / 部署（指针）
 
+- 通知运维 job（`notify-health` / `notify-retention`）口径见 `deploy/notify-jobs.md`。
 - 测试/类型/构建/守卫命令见 `README.md §常用命令`；CI = `.github/workflows/ci.yml`
   （unit/gates/web/smoke + discipline + main-guard）。
 - **部署已全自动**：merge main = 门禁全绿自动部署（adopt runbook §7）。控制面 API 直调
