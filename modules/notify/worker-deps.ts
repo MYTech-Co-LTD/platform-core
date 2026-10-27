@@ -5,6 +5,7 @@ import type { NotificationEventDecl } from '@platform/sdk'
 import { createChannelAddressResolver } from '../../apps/server/src/channel-address'
 import { sendInApp } from './providers/in-app'
 import { sendWecom } from './providers/wecom'
+import { sendWebhook } from './providers/webhook'
 import * as storage from './storage'
 import { runOnce, type WorkerDeps, type WorkerStats } from './worker'
 
@@ -15,6 +16,8 @@ export function buildWorkerDeps(
   pool: Pool,
   getEventDecl: EventDeclLoader,
   env: NodeJS.ProcessEnv = process.env,
+  /** 测试注入：webhook 的 DNS 解析（缺省 = 真 lookup）。生产不需要传。 */
+  resolveHost?: (host: string) => Promise<string[]>,
 ): WorkerDeps {
   const addresses = createChannelAddressResolver({ pool })
 
@@ -73,6 +76,22 @@ export function buildWorkerDeps(
           bridgeUrl: secrets.bridge_url,
           to: d.address,
           content: d.rendered.text ?? '',
+        })
+      }
+      if (ch.provider === 'webhook') {
+        return sendWebhook({
+          url: secrets.url,
+          secret: secrets.key,
+          payload: {
+            eventId: d.eventId,
+            eventKey: d.eventKey,
+            recipient: d.recipient,
+            templateKey: d.templateKey,
+            revision: d.revision,
+            rendered: d.rendered,
+          },
+          timeoutMs: typeof ch.config.timeout_ms === 'number' ? ch.config.timeout_ms : undefined,
+          resolveHost,
         })
       }
       return { ok: false, kind: 'permanent', code: 'provider_unsupported', summary: ch.provider }
