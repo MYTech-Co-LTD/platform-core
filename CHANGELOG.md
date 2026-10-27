@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.206.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.0...v0.206.1) - 2026-10-27
+- 【修复】data: AI 文本缓存 GC 与同事实单飞 (#1105) ([#1106](https://github.com/MYTech-Co-LTD/platform-core/pull/1106), [a009383](https://github.com/MYTech-Co-LTD/platform-core/commit/a009383e0fc1635108d0d3c480fc90c3425cf5d5))
+
+
 ## [0.206.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.205.3...v0.206.0) - 2026-10-27
 - 【新增】data: table 面板支持 columns 渲染投影，收口连续无业绩天数明细 (#1094) ([#1103](https://github.com/MYTech-Co-LTD/platform-core/pull/1103), [4a056ff](https://github.com/MYTech-Co-LTD/platform-core/commit/4a056ffc4b8a4d8af0782ac5d943ad5736eb39a6))
 
