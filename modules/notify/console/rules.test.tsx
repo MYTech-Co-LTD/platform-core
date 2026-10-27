@@ -2,13 +2,19 @@
 import '@testing-library/jest-dom/vitest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { message } from 'antd'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 
 import RulesTab, { recipientOptions, publishedTemplateOptions, enabledChannelOptions } from './rules'
 import { fetchMock, json, routeFetch } from './test-util'
 
-beforeEach(() => { fetchMock.mockReset() })
+beforeEach(() => {
+  fetchMock.mockReset()
+  // antd message 会起 3s 定时器；测试拆除后触发会被报成 unhandled error
+  vi.spyOn(message, 'success').mockImplementation(() => (() => {}) as never)
+  vi.spyOn(message, 'error').mockImplementation(() => (() => {}) as never)
+})
 
 const rule = {
   id: 'r1', enabled: true, eventKey: 'm.a.b', scope: '*',

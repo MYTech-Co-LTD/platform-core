@@ -5,6 +5,7 @@ import { Empty, Layout, Menu } from 'antd'
 import { useLocation, useNavigate } from 'react-router-dom'
 import EventsTab from './events'
 import RulesTab from './rules'
+import TemplatesTab from './templates'
 
 const BASE = '/console/notify'
 
@@ -44,7 +45,7 @@ export default function NotifyConsolePage() {
       />
       {active === 'events' && <EventsTab />}
       {active === 'rules' && <RulesTab />}
-      {active === 'templates' && <Empty description="P2 待实现" />}
+      {active === 'templates' && <TemplatesTab />}
       {active === 'channels' && <Empty description="P2 待实现" />}
       {active === 'deliveries' && <Empty description="P2 待实现" />}
       {active === 'inbox' && <Empty description="P2 待实现" />}
