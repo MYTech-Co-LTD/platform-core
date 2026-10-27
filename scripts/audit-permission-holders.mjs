@@ -8,6 +8,7 @@
 //         [--org <casdoor_org>] [--code tenant:admin] [--code forms:global-manage] ...
 import { createRequire } from 'node:module'
 import { parseArgs } from 'node:util'
+import { collectHolders } from './audit-permission-holders-lib.mjs'
 
 const { values } = parseArgs({
   options: {
@@ -47,15 +48,17 @@ try {
       adminPwd: process.env.CASDOOR_ADMIN_PWD,
     })
     const perms = await c.getPermissions()
+    // 有效权限 = 直挂 ∪ 角色关联；只读 users[] 会漏掉角色路径（issue #1121）。
+    const roles = await c.listRoles()
     console.log(`\n[${org}]`)
-    let printed = false
     for (const code of codes) {
-      const users = perms.find((p) => p.resources?.includes(code))?.users ?? []
-      if (users.length === 0) continue
-      printed = true
-      console.log(`  ${code}: ${users.join(', ')}`)
+      const { direct, viaRole } = collectHolders(perms, roles, code)
+      const parts = [
+        ...direct,
+        ...viaRole.map(({ user, roles: rs }) => `${user} (role: ${rs.join(', ')})`),
+      ]
+      console.log(`  ${code}: ${parts.length > 0 ? parts.join(', ') : '(无)'}`)
     }
-    if (!printed) console.log('  (无匹配持有者)')
   }
 } finally {
   await pool.end()
