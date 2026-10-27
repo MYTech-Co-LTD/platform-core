@@ -15,7 +15,7 @@ import {
   audit, channelConfigured, countRecentTestDeliveries, createTemplateRevision,
   deleteRule, enqueueEvent, getChannel, getTemplate, insertDelivery, listChannels,
   listDeliveries, listEnabledChannelIds, listInbox, listPublishedTemplateKeys, listRules,
-  listTemplates, markInboxRead, patchChannel, publishTemplateRevision, retryDelivery,
+  listTemplates, markAllInboxRead, markInboxRead, patchChannel, publishTemplateRevision, retryDelivery,
   setChannelHealth, setRuleEnabled, upsertRule,
 } from './storage'
 
@@ -130,6 +130,12 @@ export function createNotifyRouter(deps: {
     const identity = c.get('identity') as Identity
     const unread = c.req.query('unread') === '1'
     return c.json({ items: await listInbox(deps.pool, identity.orgId, identity.userId, unread) })
+  })
+
+  r.post('/inbox/read-all', async (c) => {
+    const identity = c.get('identity') as Identity
+    const marked = await markAllInboxRead(deps.pool, identity.orgId, identity.userId)
+    return c.json({ marked })
   })
 
   r.post('/inbox/:id/read', async (c) => {

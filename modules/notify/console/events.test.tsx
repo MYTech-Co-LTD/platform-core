@@ -1,7 +1,7 @@
 // events.test.tsx — 事件目录渲染
 import '@testing-library/jest-dom/vitest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 

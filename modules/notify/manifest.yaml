@@ -23,6 +23,7 @@ api:
     - { method: POST,   path: /emit,              scope: notify:emit }
     - { method: GET,    path: /inbox,             scope: notify:view }
     - { method: POST,   path: /inbox/:id/read,    scope: notify:view }
+    - { method: POST,   path: /inbox/read-all,    scope: notify:view }
     # 事件目录（只读；来自宿主注入的 reader）
     - { method: GET,    path: /events,                  scope: notify:view }
     - { method: GET,    path: /events/:key,             scope: notify:view }

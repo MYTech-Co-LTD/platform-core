@@ -230,6 +230,26 @@ describePg('routes v2', () => {
     expect(res.status).toBe(403)
   })
 
+  it('POST /inbox/read-all 只标记自己的', async () => {
+    await pool.query(
+      `insert into notify.inbox(org,id,recipient,event_id,event_key,template_key,revision,title,body)
+       values ($1,'i1','u1','e1','m.a.b','t1',1,'T','B'),
+              ($1,'i2','u1','e2','m.a.b','t1',1,'T','B'),
+              ($1,'i3','other','e3','m.a.b','t1',1,'T','B')`, [ORG])
+
+    const res = await app.request('/inbox/read-all', { method: 'POST' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ marked: 2 })
+
+    const { rows } = await pool.query(
+      `select recipient, count(*) filter (where read_at is not null)::int n
+         from notify.inbox where org=$1 group by recipient order by recipient`, [ORG])
+    expect(rows).toEqual([
+      { recipient: 'other', n: 0 },
+      { recipient: 'u1', n: 2 },
+    ])
+  })
+
   it('投递重试：仅 failed/dead 可重试', async () => {
     await pool.query(
       `insert into notify.delivery

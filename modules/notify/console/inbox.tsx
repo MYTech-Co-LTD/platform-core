@@ -22,6 +22,15 @@ export default function InboxTab() {
 
   useEffect(() => { void load() }, [load])
 
+  const markAllRead = async () => {
+    try {
+      await post('/inbox/read-all')
+      await load()
+    } catch (e) {
+      message.error(`全部已读失败：${String(e)}`)
+    }
+  }
+
   const markRead = async (id: string) => {
     try {
       await post(`/inbox/${encodeURIComponent(id)}/read`)
@@ -41,6 +50,7 @@ export default function InboxTab() {
         <Button type={unread ? 'primary' : 'default'} onClick={() => setUnread((x) => !x)}>
           {unread ? '只看未读' : '全部'}
         </Button>
+        <Button onClick={() => void markAllRead()}>全部已读</Button>
         <Button onClick={() => void load()}>刷新</Button>
       </Space>
 

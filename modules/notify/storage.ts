@@ -597,6 +597,38 @@ export async function listInbox(
   }))
 }
 
+export async function markAllInboxRead(
+  pool: Pool, org: string, recipient: string,
+): Promise<number> {
+  const r = await pool.query(
+    'update notify.inbox set read_at=now() where org=$1 and recipient=$2 and read_at is null',
+    [org, recipient])
+  return r.rowCount ?? 0
+}
+
+/** 保留期清理：只删终态/过期行；返回各表删除条数。 */
+export async function purgeOldNotifications(
+  pool: Pool,
+  opts: { inboxDays: number; attemptDays: number; deliveryDays: number },
+): Promise<{ inbox: number; attempts: number; deliveries: number }> {
+  const inbox = await pool.query(
+    `delete from notify.inbox where created_at < now() - ($1 || ' days')::interval`,
+    [String(opts.inboxDays)])
+  const attempts = await pool.query(
+    `delete from notify.delivery_attempt where created_at < now() - ($1 || ' days')::interval`,
+    [String(opts.attemptDays)])
+  const deliveries = await pool.query(
+    `delete from notify.delivery
+      where created_at < now() - ($1 || ' days')::interval
+        and status in ('sent','suppressed','dead')`,
+    [String(opts.deliveryDays)])
+  return {
+    inbox: inbox.rowCount ?? 0,
+    attempts: attempts.rowCount ?? 0,
+    deliveries: deliveries.rowCount ?? 0,
+  }
+}
+
 export async function markInboxRead(
   pool: Pool, org: string, recipient: string, id: string,
 ): Promise<void> {

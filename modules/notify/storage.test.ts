@@ -5,7 +5,7 @@ import { applyMigrations } from './test-util'
 import {
   audit, channelConfigured, claimDueDeliveries, countChannelSends, createTemplateRevision, deleteRule,
   enqueueEvent, getPublishedTemplate, getTemplate, isCoolingDown, listChannels,
-  listRules, markDeliverySent, patchChannel, publishTemplateRevision,
+  listRules, markDeliverySent, patchChannel, publishTemplateRevision, purgeOldNotifications,
   setChannelHealth, setRuleEnabled, upsertRule,
 } from './storage'
 
@@ -150,6 +150,33 @@ describePg('notify storage v2', () => {
     const { rows } = await pool.query(
       'select action,target,detail from notify.audit where org=$1 order by id desc limit 1', [ORG])
     expect(rows[0]).toMatchObject({ action: 'template.publish', target: 't1', detail: { revision: 2 } })
+  })
+
+  it('purgeOldNotifications 只删过期行（delivery 只删终态）', async () => {
+    // 前置清干净：本用例用固定 id，重复跑会撞 inbox_pkey
+    await pool.query('delete from notify.inbox where org=$1', [ORG])
+    await pool.query("delete from notify.delivery where org=$1 and event_id like 'pg-%'", [ORG])
+    const insDelivery = (eventId: string, status: string, at: string) => pool.query(
+      `insert into notify.delivery
+         (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,created_at)
+       values ($1,$2,'m.a.b','r1','u1','wecom_default','wecom-u1','t1',1,'{}',$3,$4)`,
+      [ORG, eventId, status, at])
+    await insDelivery('pg-old-sent', 'sent', '2020-01-01T00:00:00Z')
+    await insDelivery('pg-old-pending', 'pending', '2020-01-01T00:00:00Z')
+    await insDelivery('pg-new-sent', 'sent', new Date().toISOString())
+
+    await pool.query(
+      `insert into notify.inbox(org,id,recipient,event_id,event_key,template_key,revision,title,body,created_at)
+       values ($1,'pg-i-old','u1','e1','m.a.b','t1',1,'T','B','2020-01-01T00:00:00Z'),
+              ($1,'pg-i-new','u1','e2','m.a.b','t1',1,'T','B',now())`, [ORG])
+
+    const r = await purgeOldNotifications(pool, { inboxDays: 90, attemptDays: 180, deliveryDays: 365 })
+    expect(r.inbox).toBe(1)
+    expect(r.deliveries).toBe(1)
+
+    const left = await pool.query(
+      "select event_id from notify.delivery where org=$1 and event_id like 'pg-%' order by event_id", [ORG])
+    expect(left.rows.map((x) => x.event_id)).toEqual(['pg-new-sent', 'pg-old-pending'])
   })
 
   it('countChannelSends 只数窗口内 sent', async () => {

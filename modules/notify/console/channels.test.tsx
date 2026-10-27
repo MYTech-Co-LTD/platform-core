@@ -1,7 +1,7 @@
 // channels.test.tsx — 通道页：只显示 env 键名、启停/健康、测试发送无收件人输入
 import '@testing-library/jest-dom/vitest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { message } from 'antd'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
@@ -10,6 +10,7 @@ import ChannelsTab from './channels'
 import { fetchMock, json, routeFetch } from './test-util'
 
 beforeEach(() => {
+  cleanup()
   fetchMock.mockReset()
   vi.spyOn(message, 'success').mockImplementation(() => (() => {}) as never)
   vi.spyOn(message, 'error').mockImplementation(() => (() => {}) as never)
