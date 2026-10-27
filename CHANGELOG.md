@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.206.7](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.6...v0.206.7) - 2026-10-27
+- 【修复】auth: 权限体系加固（JIT 零授权 / platformOnly / 禁用失效 / 订阅源 fail-closed） ([#1118](https://github.com/MYTech-Co-LTD/platform-core/pull/1118), [9a12fc1](https://github.com/MYTech-Co-LTD/platform-core/commit/9a12fc11b8f6ee4cc894517b441bb0cd00bf00a5))
+
+
 ## [0.206.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.5...v0.206.6) - 2026-10-27
 - 【修复】data: 回退标签改「数据摘要」+ 提示词 v5 负数示例 (#1115) ([#1116](https://github.com/MYTech-Co-LTD/platform-core/pull/1116), [d1765c6](https://github.com/MYTech-Co-LTD/platform-core/commit/d1765c6994bc4dd547c12bac8f1597564fc1695a))
 
