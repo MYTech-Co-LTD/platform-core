@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.209.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.208.0...v0.209.0) - 2026-10-27
+- 【新增】notify: P3 收口——webhook 通道/限流/健康/保留期 ([#1126](https://github.com/MYTech-Co-LTD/platform-core/pull/1126), [033a466](https://github.com/MYTech-Co-LTD/platform-core/commit/033a4662f213e989301262a6a6b41e53a87d21f4))
+
+
 ## [0.208.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.207.0...v0.208.0) - 2026-10-27
 - 【新增】notify: P2 产品面——模板/通道/console 六区/agent MCP ([#1124](https://github.com/MYTech-Co-LTD/platform-core/pull/1124), [e8af293](https://github.com/MYTech-Co-LTD/platform-core/commit/e8af2939d69537c2630e749a5598c310c7d6d4f4))
 
