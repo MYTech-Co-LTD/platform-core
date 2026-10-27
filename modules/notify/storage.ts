@@ -391,17 +391,18 @@ export type InsertDeliveryInput = {
   revision: number
   rendered: unknown
   status: 'pending' | 'suppressed' | 'dead'
+  isTest?: boolean
   lastError?: string
 }
 
 export async function insertDelivery(pool: Pool, d: InsertDeliveryInput): Promise<void> {
   await pool.query(
     `insert into notify.delivery
-       (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,last_error)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
+       (org,event_id,event_key,rule_id,recipient,channel,address,template_key,revision,rendered,status,is_test,last_error)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13)
      on conflict (org,event_id,rule_id,recipient,channel) do nothing`,
     [d.org, d.eventId, d.eventKey, d.ruleId, d.recipient, d.channel, d.address, d.templateKey,
-     d.revision, JSON.stringify(d.rendered), d.status, d.lastError ?? null],
+     d.revision, JSON.stringify(d.rendered), d.status, d.isTest ?? false, d.lastError ?? null],
   )
 }
 
@@ -512,8 +513,8 @@ export async function isCoolingDown(
 
 export async function listDeliveries(pool: Pool, org: string, limit = 100) {
   const { rows } = await pool.query(
-    `select event_id,rule_id,recipient,channel,address,template_key,revision,
-            status,attempts,last_error,created_at
+    `select event_id,event_key,rule_id,recipient,channel,address,template_key,revision,
+            status,attempts,is_test,last_error,created_at
        from notify.delivery where org=$1 order by created_at desc limit $2`,
     [org, limit],
   )
@@ -528,9 +529,36 @@ export async function listDeliveries(pool: Pool, org: string, limit = 100) {
     revision: r.revision,
     status: r.status,
     attempts: r.attempts,
+    isTest: r.is_test,
     lastError: r.last_error,
     createdAt: (r.created_at as Date).toISOString(),
   }))
+}
+
+/** 手动重试：只把 failed/dead 置回 pending；返回 0 = 不存在或不可重试 */
+export async function retryDelivery(
+  pool: Pool,
+  org: string,
+  k: { eventId: string; ruleId: string; recipient: string; channel: string },
+): Promise<number> {
+  const r = await pool.query(
+    `update notify.delivery
+        set status='pending', next_attempt_at=now(), locked_until=null, last_error=null, updated_at=now()
+      where org=$1 and event_id=$2 and rule_id=$3 and recipient=$4 and channel=$5
+        and status in ('failed','dead')`,
+    [org, k.eventId, k.ruleId, k.recipient, k.channel])
+  return r.rowCount ?? 0
+}
+
+/** 测试发送速率：同一收件人最近 1 分钟的测试投递数 */
+export async function countRecentTestDeliveries(
+  pool: Pool, org: string, recipient: string,
+): Promise<number> {
+  const { rows } = await pool.query(
+    `select count(*)::int n from notify.delivery
+      where org=$1 and recipient=$2 and is_test and created_at > now()-interval '1 minute'`,
+    [org, recipient])
+  return rows[0].n as number
 }
 
 // ── in-app 收件箱 ─────────────────────────────────────────────────────────────
