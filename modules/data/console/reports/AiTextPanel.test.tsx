@@ -3,7 +3,7 @@
 // 判据（与实现一一对应）：
 //  ① **事件序**：phase（人话 label，首正文 ~3.2s 不能空白）→ delta 追加 → done 终稿；
 //  ② **replace = 整段替换**（不是追加）：数字校验越界/模型失败后旧 delta 作废；
-//  ③ **回退与缓存如实上屏**：fallback ⇒「模板摘要（AI 暂不可用）」；cached ⇒「· 已缓存」；
+//  ③ **回退与缓存如实上屏**：fallback ⇒「数据摘要」（中性：可能是校验未通过/模型不可用）；cached ⇒「· 已缓存」；
 //  ④ **防抖 + 中止**：500ms 窗口内连切期间/门店只发最后一次；卸载清定时器（不发请求）；
 //  ⑤ **光标只在流式期间**：未 done 且已有正文时显示 `▍`，done 后消失；
 //  ⑥ **流内错误**：`error` 事件 ⇒ 人话告警（状态码细节不上屏）。
@@ -120,7 +120,7 @@ describe('AiTextPanel', () => {
     expect(await screen.findByText('模板：本月销售额 51273.89', undefined, { timeout: 3000 })).toBeInTheDocument()
     // 旧 delta 不能再出现（追加式实现的典型错法会留下「编造的结论 999」）
     expect(screen.queryByText(/999/)).not.toBeInTheDocument()
-    expect(screen.getByText('模板摘要（AI 暂不可用）')).toBeInTheDocument()
+    expect(screen.getByText('数据摘要')).toBeInTheDocument()
     expect(screen.getByText('数据截至 新鲜度未知 · 已缓存')).toBeInTheDocument()
   })
 
