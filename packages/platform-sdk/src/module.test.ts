@@ -186,3 +186,19 @@ describe('defineModule', () => {
     expect(router).toBeInstanceOf(Hono)
   })
 })
+
+// 通知注入面（2026-10-27 通知基础设施设计 §3.3）：类型契约，红/绿由 tsc --noEmit 判定。
+describe('ModuleContext 通知注入面', () => {
+  it('可携带 events / notify / addresses', () => {
+    const ctx = {
+      pool: {} as never,
+      events: { get: () => undefined, list: () => [] },
+      notify: { emit: async () => ({ accepted: true }) },
+      addresses: { resolve: async () => null },
+    } satisfies import('./module').ModuleContext
+
+    expect(typeof ctx.notify?.emit).toBe('function')
+    expect(typeof ctx.events?.get).toBe('function')
+    expect(typeof ctx.addresses?.resolve).toBe('function')
+  })
+})
