@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.206.8](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.7...v0.206.8) - 2026-10-27
+- 【修复】ops: 权限持有者审计脚本展开角色授权 ([#1122](https://github.com/MYTech-Co-LTD/platform-core/pull/1122), [08e6984](https://github.com/MYTech-Co-LTD/platform-core/commit/08e69841806ee580e2701976f76b7c69e5c83e0e))
+
+
 ## [0.206.7](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.6...v0.206.7) - 2026-10-27
 - 【修复】auth: 权限体系加固（JIT 零授权 / platformOnly / 禁用失效 / 订阅源 fail-closed） ([#1118](https://github.com/MYTech-Co-LTD/platform-core/pull/1118), [9a12fc1](https://github.com/MYTech-Co-LTD/platform-core/commit/9a12fc11b8f6ee4cc894517b441bb0cd00bf00a5))
 
