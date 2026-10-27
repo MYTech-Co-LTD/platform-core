@@ -56,6 +56,15 @@ export const consoleRegistry: ConsoleRegistryEntry[] = [
     scope: "forms:view",
     load: () => import("../../../modules/forms/console/index.tsx"),
   },
+  {
+    path: "/console/notify",
+    title: "通知",
+    group: "main",
+    moduleId: "notify",
+    icon: "BellOutlined",
+    scope: "notify:view",
+    load: () => import("../../../modules/notify/console/index.tsx"),
+  },
 ]
 
 export const storageDeclarers: string[] = ["aftersales"]
