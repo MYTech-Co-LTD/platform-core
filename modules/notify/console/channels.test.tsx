@@ -38,7 +38,7 @@ describe('ChannelsTab', () => {
       },
     })
 
-    render(<ChannelsTab />)
+    const view = render(<ChannelsTab />)
     expect(await screen.findByText('wecom_default')).toBeInTheDocument()
     expect(screen.getByText('未配置')).toBeInTheDocument()
     expect(screen.getByText('WECOM_BRIDGE_URL__X')).toBeInTheDocument()
@@ -46,12 +46,21 @@ describe('ChannelsTab', () => {
 
     fireEvent.click(screen.getByRole('switch'))
     await waitFor(() => expect(patched).toEqual({ enabled: false }))
+    await waitFor(() => {
+      const paths = fetchMock.mock.calls.map((c) => String(c[0]))
+      expect(paths.filter((p) => p === '/api/modules/notify/channels').length).toBeGreaterThanOrEqual(2)
+    })
 
     fireEvent.click(screen.getByRole('button', { name: '健康检查' }))
     await waitFor(() => expect(healthCalled).toBe(true))
+    await waitFor(() => {
+      const paths = fetchMock.mock.calls.map((c) => String(c[0]))
+      expect(paths.filter((p) => p === '/api/modules/notify/channels').length).toBeGreaterThanOrEqual(3)
+    })
 
     fireEvent.click(screen.getByRole('button', { name: /测试发送/ }))
     await waitFor(() => expect(screen.getByText(/收件人固定为当前登录人/)).toBeInTheDocument())
     expect(screen.queryByLabelText('收件人')).toBeNull()
+    view.unmount()
   })
 })
