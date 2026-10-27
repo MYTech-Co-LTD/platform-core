@@ -157,6 +157,14 @@ describe('badNumbers（日期形态）', () => {
     expect(badNumbers('最低销售日为10月13日，最高为2026年10月16日；2026年10月整体平稳；10月13号。', allowed)).toEqual([])
   })
 
+  it('年份单独 / 带空格日期 / 点号斜杠日期也整段抹掉（#1107）', () => {
+    const allowed = allowedNumbers(facts)
+    expect(badNumbers(
+      '2026年整体平稳；2026 年 10 月 21 日；10 月 21 日；2026.10.21；2026/10/21；2026年度。',
+      allowed,
+    )).toEqual([])
+  })
+
   it('尾零差异不算越界（facts 1,254.60 / -410.00，模型写 1,254.6 / -410）', () => {
     const withDecimals: FactBundle = {
       ...facts,
