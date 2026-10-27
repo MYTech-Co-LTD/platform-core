@@ -29,12 +29,32 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         }
       : null
   }
+  // 权限码持有者（Casdoor 直挂 ∪ 角色展开）：宿主侧能力，缺凭据时降级为「不解析」
+  // （→ 只能靠 manual literal 规则；**不静默假装没人持有**，有 warn）
+  let resolveScopeHolderNames
+  if (process.env.CASDOOR_URL && process.env.CASDOOR_ADMIN_USER && process.env.CASDOOR_ADMIN_PWD) {
+    const { createScopeHolderResolver } = await import('../apps/server/src/scope-holders.ts')
+    const { CasdoorClient } = await import('../packages/auth-core/src/public.ts')
+    /** @param {string} org */
+    const casdoorFor = (org) => new CasdoorClient({
+      origin: String(process.env.CASDOOR_URL),
+      clientId: process.env.CASDOOR_CLIENT_ID ?? '',
+      clientSecret: process.env.CASDOOR_CLIENT_SECRET ?? '',
+      org,
+      adminUser: String(process.env.CASDOOR_ADMIN_USER),
+      adminPwd: String(process.env.CASDOOR_ADMIN_PWD),
+    })
+    resolveScopeHolderNames = createScopeHolderResolver(casdoorFor)
+  } else {
+    console.warn('notify-worker: 缺 CASDOOR_* 凭据 ⇒ scope_holders 不解析（仅 manual literal 规则可用）')
+  }
+
   const once = process.argv.includes('--once')
 
   try {
     do {
       try {
-        const s = await runOnceCli(pool, getEventDecl, process.env)
+        const s = await runOnceCli(pool, getEventDecl, process.env, resolveScopeHolderNames)
         console.log(JSON.stringify({ ts: new Date().toISOString(), ...s }))
       } catch (e) {
         console.error('notify-worker 本轮失败:', e instanceof Error ? e.message : e)
