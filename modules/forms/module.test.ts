@@ -23,7 +23,7 @@ describe('forms 模块声明（#708/#710）', () => {
     expect(m.migrations?.dir).toBe('./migrations')
   })
 
-  it('权限码矩阵：五码全 forms: 前缀；global-manage 在列（P4：默认无租户角色持有，授予=平台运营显式动作）', () => {
+  it('权限码矩阵：五码全 forms: 前缀；global-manage 在列（P4：platformOnly，租户管理员授不了）', () => {
     const codes = mod.manifest.permissions.map((p) => p.code).sort()
     expect(codes).toEqual([
       'forms:fill',
@@ -32,6 +32,11 @@ describe('forms 模块声明（#708/#710）', () => {
       'forms:publish',
       'forms:view',
     ])
+  })
+
+  it('全局字典管理码标记 platformOnly（租户管理员授权宇宙不含它）', () => {
+    const p = mod.manifest.permissions.find((x) => x.code === 'forms:global-manage')
+    expect(p?.platformOnly).toBe(true)
   })
 
   it('api.internal 声明集合与 createRouter 注册的路由集合逐条一致（双向核对的本地版）', () => {

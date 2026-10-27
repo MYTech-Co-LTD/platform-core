@@ -16,7 +16,7 @@ export interface ModuleApiEndpoint {
 
 export interface ModuleManifest {
   id: string; name: string; version: string; platform: string
-  permissions: Array<{ code: string; name: string }>
+  permissions: Array<{ code: string; name: string; platformOnly?: boolean }>
   api?: { internal?: ModuleApiEndpoint[] }
   /** 售后 spec §1.3：访客侧授权声明——scope 必须 ∈ permissions[].code（与 api.internal[].scope 同纪律） */
   guest?: { scope: string }
@@ -68,7 +68,13 @@ const ManifestObject = z.object({
   name: z.string(),
   version: z.string().regex(VERSION_REGEX, 'version 必须是 x.y.z 三段数字（宽松 semver）'),
   platform: z.string().regex(PLATFORM_REGEX, 'platform 必须匹配 ^>=?[0-9]（如 >=0.1.0）'),
-  permissions: z.array(z.object({ code: z.string(), name: z.string() })),
+  permissions: z.array(z.object({
+    code: z.string(),
+    name: z.string(),
+    // 平台专属码（2026-10-27）：loader 仍供给到各租户 org，但宿主的租户管理员授权宇宙会过滤掉它。
+    // 内层 .strict()：拼错字段名（如 platform_only）必须装载失败，不允许 Zod 静默剥离。
+    platformOnly: z.boolean().optional(),
+  }).strict()),
   api: z.object({
     internal: z.array(z.object({
       method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),

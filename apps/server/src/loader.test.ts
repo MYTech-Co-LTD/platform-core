@@ -496,6 +496,36 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
     expect(mock.permissionsIn('beta').flatMap((p) => p.resources ?? [])).toContain('orgmod:view')
   })
 
+  it('platformOnly 码仍供给到每个租户 org（租户管理员授不了 ≠ 平台运营授不了）', async () => {
+    cleanupModules.push('platmod')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'platmod', {
+      'manifest.yaml': [
+        'id: platmod',
+        'name: platmod 模块',
+        'version: 1.0.0',
+        'platform: ">=0.1.0"',
+        'permissions:',
+        '  - code: platmod:view',
+        '    name: platmod 查看',
+        '  - code: platmod:global',
+        '    name: platmod 平台专属',
+        '    platformOnly: true',
+        'api:',
+        '  internal:',
+        '    - { method: GET, path: /ping, scope: platmod:view }',
+        '',
+      ].join('\n'),
+      'index.ts': indexTs('platmod', 'platmod:view'),
+    })
+    const runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
+    expect(runtime.modules.map((m) => m.manifest.id)).toEqual(['platmod'])
+    for (const org of ['acme', 'beta']) {
+      const resources = mock.permissionsIn(org).flatMap((p) => p.resources ?? [])
+      expect(resources).toContain('platmod:global')
+    }
+  })
+
   it('零租户：不供给、不抛错（全新库尚未 seed 是正常分支，不是异常）', async () => {
     const requested: string[] = []
     const emptyPool = { query: async () => ({ rows: [] }) } as unknown as Pool
