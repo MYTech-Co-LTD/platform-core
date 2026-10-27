@@ -995,7 +995,7 @@ it('预览展示逐通道渲染；未知变量由服务端 400 展示', async ()
   render(<TemplatesTab />)
   await userEvent.click(await screen.findByText('t1'))
   await userEvent.type(screen.getByLabelText('样例 payload'), '{"title":"T"}')
-  await userEvent.click(screen.getByRole('button', { name: /预览/ }))
+  await userEvent.click(screen.getByRole('button', { name: /预\s*览/ }))
   expect(await screen.findByText('T')).toBeInTheDocument()
 })
 
