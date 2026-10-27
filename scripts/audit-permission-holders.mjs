@@ -8,7 +8,7 @@
 //         [--org <casdoor_org>] [--code tenant:admin] [--code forms:global-manage] ...
 import { createRequire } from 'node:module'
 import { parseArgs } from 'node:util'
-import { collectHolders } from './audit-permission-holders-lib.mjs'
+import { collectHolders, isServiceAccount } from './audit-permission-holders-lib.mjs'
 
 const { values } = parseArgs({
   options: {
@@ -53,9 +53,11 @@ try {
     console.log(`\n[${org}]`)
     for (const code of codes) {
       const { direct, viaRole } = collectHolders(perms, roles, code)
+      // 服务账号（tenantsub / casdoor-user-1）**标注不隐藏**：它们是机器身份，不是漏同步的真人。
+      const mark = (u) => (isServiceAccount(u) ? `${u} [服务账号]` : u)
       const parts = [
-        ...direct,
-        ...viaRole.map(({ user, roles: rs }) => `${user} (role: ${rs.join(', ')})`),
+        ...direct.map(mark),
+        ...viaRole.map(({ user, roles: rs }) => `${mark(user)} (role: ${rs.join(', ')})`),
       ]
       console.log(`  ${code}: ${parts.length > 0 ? parts.join(', ') : '(无)'}`)
     }
