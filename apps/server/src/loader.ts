@@ -25,8 +25,10 @@ import {
   TENANT_SOURCES,
   TENANT_STORAGE,
   declaredScopeGate,
+  type ChannelAddressResolver,
   type DeclaredEndpoint,
   type Identity,
+  type ModuleContext,
   type ModuleDefinition,
   type ModuleManifest,
   type ModulePorts,
@@ -38,6 +40,9 @@ import type { Pool } from 'pg'
 import { runMigrations } from './migrate'
 import { createIdentityLinks } from './identity-links'
 import { listEnabledSources } from './tenant-source'
+import { buildCatalog, createCatalogReader, upsertCatalog } from './event-catalog'
+import { buildNotifyPort } from './notify-port'
+import { createChannelAddressResolver } from './channel-address'
 import { resolveTenantStorage } from './tenant-storage'
 import type { TenantRow } from './tenant'
 
@@ -131,6 +136,11 @@ export interface LoadModulesDeps {
    * 登录签发前必调 getUser + getPermissions，两者都走 admin 会话，缺凭据时无人能拿到会话。
    */
   casdoorFor?: (org: string) => CasdoorClient
+  /**
+   * 渠道地址解析（测试注入用）。缺省 = `createChannelAddressResolver({ pool })`。
+   * 生产不存在缺省以外的形态；注入口只服务单测。
+   */
+  channelAddressResolver?: ChannelAddressResolver
 }
 
 /** 待供给的权限码（manifest.permissions 的元素形状） */
@@ -301,6 +311,8 @@ export async function loadModules(
   const seen = new Map<string, string>() // id → 首见模块目录（重复 id 报错带两个路径）
   /** id → 该模块声明的端口（`createPorts` 产物）。没声明的模块不入表 ⇒ `port()` 返 undefined */
   const portsByModule = new Map<string, ModulePorts>()
+  /** 待装配模块：先收 manifest/def，等事件目录建好后再调 createPorts/createRouter（三阶段） */
+  const pending: { dir: string; manifest: ModuleManifest; def: ModuleDefinition }[] = []
 
   // 绑定服务（账户统一 Task 7）：装载期构造**一次**，注入各模块 ctx.identityLinks。
   // casdoor 工厂同源复用权限码供给的那把（deps.casdoorFor）——别造第二把（第二把 = 第二份
@@ -364,17 +376,38 @@ export async function loadModules(
       )
     }
 
-    // ④.5 端口收集（正典「模块端口」）：模块**可选**声明 createPorts，宿主在 mount 前取用。
-    //      与 createRouter 同形、同一次装载里建；不声明就跳过（取用侧得 undefined）。
-    //      **抛错与 createRouter 同级 fail-fast**：装载期建不起来的端口不该等到第一个请求才暴露。
-    if (typeof def.createPorts === 'function') {
-      portsByModule.set(manifest.id, def.createPorts({ pool: deps.pool }))
-    }
+    // ④.5 先收集，**不**在此调 createPorts/createRouter（三阶段装配：见循环后的目录构建）。
+    pending.push({ dir, manifest, def: def as ModuleDefinition })
+  }
 
+  // ── 阶段 2：事件目录 + 端口 ──────────────────────────────────────────────────
+  // 事件目录必须先于 createPorts/createRouter：notify 的 enqueueEvent 与其它模块的
+  // ctx.notify 都依赖它。未加载模块/外部生产者不动（只对本批 module_id 标 inactive）。
+  const catalogEntries = buildCatalog(pending.map((p) => p.manifest))
+  await upsertCatalog(deps.pool, catalogEntries, pending.map((p) => p.manifest.id))
+  const events = createCatalogReader(catalogEntries)
+  const addresses = deps.channelAddressResolver ?? createChannelAddressResolver({ pool: deps.pool })
+
+  const baseCtx: ModuleContext = { pool: deps.pool, identityLinks, events, addresses }
+  for (const p of pending) {
+    if (typeof p.def.createPorts === 'function') {
+      portsByModule.set(p.manifest.id, p.def.createPorts(baseCtx))
+    }
+  }
+
+  // 基础设施模块 id 固定为 notify（与三同纪律同性质：改名 = 破坏性变更）
+  const notify = buildNotifyPort({
+    catalog: events,
+    enqueue: portsByModule.get('notify')?.enqueueEvent,
+  })
+
+  // ── 阶段 3：createRouter（带完整 ctx）────────────────────────────────────────
+  const ctx: ModuleContext = { ...baseCtx, notify }
+  for (const p of pending) {
     loaded.push({
-      manifest,
-      router: applyDeclaredApiGate(def.createRouter({ pool: deps.pool, identityLinks }), manifest),
-      dir,
+      manifest: p.manifest,
+      router: applyDeclaredApiGate(p.def.createRouter(ctx), p.manifest),
+      dir: p.dir,
     })
   }
 

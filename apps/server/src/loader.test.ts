@@ -1471,6 +1471,75 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
     })
     await expect(loadModules(modulesDir, { pool })).rejects.toThrow('createPorts 抛错，装载必须失败')
   })
+
+  it('注入 ctx.notify，并把事件写进 platform.event_catalog', async () => {
+    cleanupModules.push('prodmod', 'notify')
+    cleanupSqls.push("delete from platform.event_catalog where module_id = 'prodmod'")
+    const modulesDir = await newModulesDir()
+
+    await writeModule(modulesDir, 'prodmod', {
+      'manifest.yaml': [
+        'id: prodmod',
+        'name: 生产者',
+        'version: 1.0.0',
+        "platform: '>=0.1.0'",
+        'permissions: [{ code: prodmod:view, name: view }]',
+        'api: { internal: [{ method: GET, path: /ping, scope: prodmod:view }] }',
+        'notifications:',
+        '  events:',
+        '    - key: prodmod.a.b',
+        '      title: t',
+        '      payload: { u: { type: user, required: true } }',
+        '      recipients: { r: { kind: field, field: u } }',
+        '',
+      ].join('\n'),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        "  manifest: { id: 'prodmod', name: 'p', version: '1.0.0', platform: '>=0.1.0',",
+        "    permissions: [{ code: 'prodmod:view', name: 'v' }],",
+        "    api: { internal: [{ method: 'GET', path: '/ping', scope: 'prodmod:view' }] } },",
+        '  createRouter: (ctx) => {',
+        '    const app = new Hono()',
+        "    app.get('/ping', async (c) => c.json(await ctx.notify!.emit(c.get('identity'), {",
+        "      eventKey: 'prodmod.a.b', eventId: 'e1', payload: { u: 'u1' },",
+        '    })))',
+        '    return app',
+        '  },',
+        '})',
+        '',
+      ].join('\n'),
+    })
+
+    await writeModule(modulesDir, 'notify', {
+      'manifest.yaml': manifestYaml('notify', '', null),
+      'index.ts': [
+        "import { Hono } from 'hono'",
+        "import { defineModule } from '@platform/sdk'",
+        'export default defineModule({',
+        "  manifest: { id: 'notify', name: 'n', version: '1.0.0', platform: '>=0.1.0',",
+        "    permissions: [{ code: 'notify:view', name: 'v' }] },",
+        '  createPorts: () => ({ enqueueEvent: async () => ({ accepted: true }) }),',
+        '  createRouter: () => new Hono(),',
+        '})',
+        '',
+      ].join('\n'),
+    })
+
+    const runtime = await loadModules(modulesDir, { pool, casdoorFor: casdoorFactoryFor() })
+    const app = new Hono<TestEnv>()
+    app.use('*', injectIdentity(['prodmod:view']))
+    runtime.mount(app)
+
+    const res = await app.request('/api/modules/prodmod/ping')
+    expect(await res.json()).toEqual({ accepted: true })
+
+    const cat = await pool.query(
+      "select key, module_id from platform.event_catalog where key = 'prodmod.a.b'",
+    )
+    expect(cat.rows[0]).toEqual({ key: 'prodmod.a.b', module_id: 'prodmod' })
+  })
 })
 
 // ---- D9：平台内置码 tenant:admin 随装载扇出（M3，issue #46） ----
