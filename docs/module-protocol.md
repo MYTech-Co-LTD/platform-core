@@ -9,6 +9,17 @@
 > **接入视角的指南见 `docs/module-onboarding.md`**——本文是语义与边界的正典，那份文档管
 > 「怎么接入」（步骤、属性全字段参考、验收清单、故障速查），不复制本文正文。
 
+## 权限码声明（`permissions[]`）
+
+模块的权限码声明在 `manifest.permissions[]`，每项 `{ code, name, platformOnly? }`：
+
+- `code` 必须以 `<moduleId>:` 开头（schema 拒越界）；
+- 装载器按 `platform.tenant` 的每个 `casdoor_org` 各建一套码（写读同源）；
+- `platformOnly: true` 表示**平台专属码**：loader 仍供给到各 org，但宿主不会把它放进租户
+  管理员的授权宇宙（`GET /permissions` 与授权端点都看不到 / 授不了）。平台运营在 Casdoor
+  后台授予。它不改变端点门卫：持有该码的人仍可调用声明了该 scope 的端点。
+- 权限条目的未知字段现在是 **schema 拒绝**（`.strict()`），拼错字段名会装载失败。
+
 ## 规则：没声明 = 不可达
 
 模块的每条 API 路由**必须**在 manifest 里声明 method / path / scope：
