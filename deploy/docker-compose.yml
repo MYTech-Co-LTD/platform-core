@@ -104,8 +104,9 @@ services:
     # 反复重启会把失败暴露在 docker compose ps 的 Restarting 上，而不是静默躺着
     restart: unless-stopped
 
-  # 通知投递 worker（2026-10-27 通知基础设施 §7.4）：同镜像、换 command、**无端口**。
+  # 通知投递 worker（2026-10-27 通知基础设施 §7.4）：同镜像、换 command。
   # 轮询 outbox（租约 + SKIP LOCKED）；与 server 共用 DATABASE_URL 与项目 env。
+  # 只额外起**回环**健康端点（给镜像自带 HEALTHCHECK 用），不对外暴露任何业务端口。
   notify-worker:
     build:
       context: ..
@@ -115,24 +116,18 @@ services:
         required: false
     environment:
       DATABASE_URL: postgres://platform:platform@postgres:5432/platform
+      # worker 的只读健康端点端口：与镜像 HEALTHCHECK 的 ${PORT:-13000} 对齐
+      WORKER_HEALTH_PORT: '13000'
     # 运行镜像已含 tsx（node_modules 全量 COPY，未 prune）；不要用裸 node 跑 .ts import
     command: ['pnpm', 'exec', 'tsx', 'scripts/notify-worker.mjs']
     depends_on:
       postgres:
         condition: service_healthy
-    # ⚠️ **必须覆盖镜像的 HEALTHCHECK**：Dockerfile.server 的探活打 `127.0.0.1:${PORT}/healthz`，
-    #    而 worker 是**无 HTTP 端口的常驻进程** ⇒ 继承下来恒 unhealthy（2026-10-27 生产实测：
-    #    `Up 26 minutes (unhealthy)`，进程实际正常跑、日志每 2s 一轮）。
-    #    这里改用 worker 自己的事实源：心跳表新鲜度（worker 每轮 upsert `notify.worker_heartbeat`）。
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          node -e "const{Client}=require('/app/apps/server/node_modules/pg');const c=new Client({connectionString:process.env.DATABASE_URL});c.connect().then(()=>c.query(\"select 1 from notify.worker_heartbeat where beat_at > now()-interval '2 minutes'\")).then(r=>{process.exit(r.rowCount?0:1)}).catch(()=>process.exit(1))"
-      interval: 30s
-      timeout: 10s
-      start_period: 40s
-      retries: 3
+    # 健康检查**沿用镜像默认**（`wget 127.0.0.1:${PORT:-13000}/healthz`）：
+    # worker 自己起了只读 /healthz（见 scripts/notify-worker.mjs）。
+    # ⚠️ 2026-10-27 教训：worker 原先没有 HTTP 面 ⇒ 继承镜像探活恒 unhealthy；
+    #    且 openship 是**直接 docker run**（容器带 openship.* 标签、无 compose 标签），
+    #    所以「在 compose 里覆盖 healthcheck」不生效 —— 必须让**进程自己**有 HTTP 面。
     restart: unless-stopped
 
   # 报表编辑页专用入口（spec §3⑦）：反代会话。与 server 同镜像、换 command。

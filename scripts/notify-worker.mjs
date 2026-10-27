@@ -49,6 +49,30 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.warn('notify-worker: 缺 CASDOOR_* 凭据 ⇒ scope_holders 不解析（仅 manual literal 规则可用）')
   }
 
+  // 健康端点：镜像的 HEALTHCHECK 打 `127.0.0.1:${PORT:-13000}/healthz`（与 server 同镜像继承），
+  // worker 本无 HTTP 面 ⇒ 恒 unhealthy（2026-10-27 生产实测 Up 26m (unhealthy)）。
+  // 这里起一个**只读**的极简端点，回答「worker 进程还活着 + 心跳新鲜」。
+  // 端口用 WORKER_HEALTH_PORT（缺省 13000，与镜像 HEALTHCHECK 的 ${PORT:-13000} 对齐）；
+  // 只绑回环，不对外暴露。
+  const healthPort = Number(process.env.WORKER_HEALTH_PORT ?? process.env.PORT ?? 13000)
+  const { createServer } = await import('node:http')
+  const healthServer = createServer(async (req, res) => {
+    if (req.url !== '/healthz') { res.writeHead(404); res.end('not found'); return }
+    try {
+      const { rows } = await pool.query(
+        "select 1 from notify.worker_heartbeat where beat_at > now()-interval '2 minutes'")
+      const ok = rows.length > 0
+      res.writeHead(ok ? 200 : 503, { 'content-type': 'text/plain' })
+      res.end(ok ? 'ok' : 'stale heartbeat')
+    } catch (e) {
+      res.writeHead(503, { 'content-type': 'text/plain' })
+      res.end(e instanceof Error ? e.message : String(e))
+    }
+  })
+  healthServer.listen(healthPort, '127.0.0.1', () => {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), health: `127.0.0.1:${healthPort}/healthz` }))
+  })
+
   const once = process.argv.includes('--once')
 
   try {
@@ -64,6 +88,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       await new Promise((r) => setTimeout(r, 2000))
     } while (true)
   } finally {
+    healthServer.close()
     await pool.end()
   }
 }
