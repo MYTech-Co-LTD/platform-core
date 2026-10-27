@@ -15,7 +15,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const pool = new Pool({ connectionString: url })
   try {
     const r = await checkHealth(pool)
-    console.log(`notify-health: dead=${r.dead} stale=${r.stale} workers=${r.workers}`)
+    console.log(
+      `notify-health: dead=${r.dead} stale=${r.stale} workers=${r.workers} `
+      + `oldestPending=${r.oldestPendingSeconds}s failedLastHour=${r.failedLastHour} `
+      + `channelErrors=${r.channelErrors}`)
     process.exit(healthVerdict(r))
   } catch (e) {
     console.error('notify-health 查不成账:', e instanceof Error ? e.message : e)
