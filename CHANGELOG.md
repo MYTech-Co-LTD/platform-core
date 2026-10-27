@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.205.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.205.1...v0.205.2) - 2026-10-27
+- 【修复】data: 64188 库存快照扩容到 90 数据页 ([#1098](https://github.com/MYTech-Co-LTD/platform-core/pull/1098), [7682488](https://github.com/MYTech-Co-LTD/platform-core/commit/7682488a12e08a2d2dde554bd6e8811e64ee238a))
+
+
 ## [0.205.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.205.0...v0.205.1) - 2026-10-27
 - 【修复】data: AI 文本 P2——明细不进事实包/格式跟随 KPI/探测去重 (#1093) ([#1095](https://github.com/MYTech-Co-LTD/platform-core/pull/1095), [3669ba6](https://github.com/MYTech-Co-LTD/platform-core/commit/3669ba6c89819b936b4bf05f15e25411798c4521))
 
