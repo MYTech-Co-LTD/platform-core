@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.210.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.209.0...v0.210.0) - 2026-10-27
+- 【新增】notify: scope_holders 真正解析（Casdoor 直挂 ∪ 角色展开） ([#1130](https://github.com/MYTech-Co-LTD/platform-core/pull/1130), [5a2de8a](https://github.com/MYTech-Co-LTD/platform-core/commit/5a2de8a8d13baaf72bc710118c6d22d926da0e7b))
+
+
 ## [0.209.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.208.0...v0.209.0) - 2026-10-27
 - 【新增】notify: P3 收口——webhook 通道/限流/健康/保留期 ([#1126](https://github.com/MYTech-Co-LTD/platform-core/pull/1126), [033a466](https://github.com/MYTech-Co-LTD/platform-core/commit/033a4662f213e989301262a6a6b41e53a87d21f4))
 
