@@ -1,0 +1,499 @@
+{
+  "name": "lemeng.branch_indicator.l0.64188",
+  "id": "lemeng.branch_indicator.l0.3120",
+  "version": 1,
+  "_note": [
+    "乐檬 D10 branchindicator（门店指标）日粒度采集——写湖 lemeng/branch_indicator/system_book=<book>/bizday=<day>/all.parquet。",
+    "粒度：system_book × bizday × branch_num × metric（当前只取 transfer_money 配送金额）。",
+    "",
+    "①【身份自证（fail-closed）】whoami → company_id 必须等于 SYSTEM_BOOK、env BRANCH_NUMS 必须 ⊆ whoami branch_nums、",
+    "   whoami 名单非空、env/日期形状合法；任一不满足 → ctl.die 拒采（gf → di）。先例：lemeng.branch.expense.l0.3120。",
+    "",
+    "②【分块扇出】网关硬约束：branch_nums 必填、单请求 ≤100 家、夹一个无权限店号整块 0 行（code 10003）。",
+    "   ⇒ drv 按 whoami 名单切块（floor(rn/100.0)，别用整数除法），ctl.foreach 逐块调子管线",
+    "   lemeng.branch_indicator.day（${ITER_ITEM_*} 代入；子管线自己读 code 判网关错误）。",
+    "",
+    "③【汇总闸】子管线每块写 .duckle-stage/branch_indicator/chunk-<batch_id>-<n>.parquet；",
+    "   asm 只认本次 batch_id（文件名解析），dasm 断非空、dchk 断「块数 / 行数 / 店数」与父侧期望一致，",
+    "   qa.contract 再断空值与唯一性 → 才写湖。**任何一环不一致都拒写湖，不静默截断。**",
+    "",
+    "④【回填】同一条管线换时间窗：params 覆盖内置日期（如 {\"date\":\"2026-10-20\"} ⇒ date-1d=2026-10-19）。"
+  ],
+  "nodes": [
+    {
+      "id": "w0",
+      "type": "source",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "w0",
+        "componentId": "src.rest",
+        "properties": {
+          "connectionRef": "lemeng",
+          "url": "https://cloud.nhsoft.cn/agi/mcp",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"
+          },
+          "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"whoami\", \"arguments\": {}}}",
+          "paginationType": "none",
+          "responseFormat": "xml",
+          "rawResponseDestination": "/workspace/.duckle-raw/whoami-${datetime}.sse",
+          "retryAttempts": 3,
+          "retryBackoffMs": 2000
+        },
+        "schema": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "g0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g0",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/whoami-${datetime}.sse')"
+        }
+      }
+    },
+    {
+      "id": "g1",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g1",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()"
+        }
+      }
+    },
+    {
+      "id": "g2",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "g2",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input"
+        }
+      }
+    },
+    {
+      "id": "d0",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "d0",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "gf",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gf",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'book' AS violation, company_id AS detail, 'company_id must equal SYSTEM_BOOK' AS rule\nFROM input\nWHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}'\nUNION ALL\nSELECT 'branch_not_permitted' AS violation, CAST(c.branch_num AS VARCHAR) AS detail, 'env BRANCH_NUMS ⊆ whoami branch_nums' AS rule\nFROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c\nLEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num)\nWHERE w.branch_num IS NULL\nUNION ALL\nSELECT 'whoami_empty' AS violation, '0' AS detail, 'whoami branch_nums must be non-empty' AS rule\nFROM input WHERE len(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) = 0\nUNION ALL\nSELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule\nWHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]')\nUNION ALL\nSELECT 'SYSTEM_BOOK' AS violation, '${ENV:SYSTEM_BOOK}' AS detail, 'digits only' AS rule\nWHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}')\nUNION ALL\nSELECT 'BIZDAY' AS violation, '${date-1d}' AS detail, 'YYYY-MM-DD' AS rule\nWHERE NOT regexp_full_match('${date-1d}', '[0-9]{4}-[0-9]{2}-[0-9]{2}')"
+        }
+      }
+    },
+    {
+      "id": "di",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "di",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "identity: 凭据账套/门店清单自证未过（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖"
+        }
+      }
+    },
+    {
+      "id": "drv",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "drv",
+        "componentId": "code.sql",
+        "properties": {
+          "pureSql": true,
+          "sql": "CREATE OR REPLACE TABLE \"drv\" AS\nWITH w AS (\n  SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS bn FROM \"d0\"\n),\nn AS (SELECT bn, CAST(row_number() OVER (ORDER BY bn) - 1 AS INTEGER) AS rn FROM w),\n-- floor(rn / 100.0)：DuckDB 的 `/` 返回 DOUBLE，CAST 取整是四舍五入；整数除法会错切（148 -> 51/97）。\nc AS (SELECT CAST(floor(rn / 100.0) AS INTEGER) + 1 AS chunk_no, bn FROM n),\nj AS (SELECT chunk_no,\n             '[' || string_agg(CAST(bn AS VARCHAR), ',' ORDER BY bn) || ']' AS branch_nums_json,\n             CAST(count(*) AS INTEGER) AS n_branches\n      FROM c GROUP BY chunk_no),\nm AS (SELECT CAST(count(*) AS INTEGER) AS n_chunks FROM j)\nSELECT CAST('${date-1d}' AS DATE) AS bizday,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       strftime(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', '%Y%m%dT%H%M%SZ') AS batch_id,\n       CAST(j.chunk_no AS INTEGER) AS chunk_no,\n       CAST(j.branch_nums_json AS VARCHAR) AS branch_nums_json,\n       j.n_branches,\n       m.n_chunks,\n       '${ENV:SYSTEM_BOOK}-${date-1d}-c' || CAST(j.chunk_no AS VARCHAR) AS item_key\nFROM j CROSS JOIN m\nORDER BY j.chunk_no"
+        }
+      }
+    },
+    {
+      "id": "fe",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "fe",
+        "componentId": "ctl.foreach",
+        "properties": {
+          "pipelineRef": "${workspace}/pipelines/lemeng.branch_indicator.day.json",
+          "itemKey": "item_key",
+          "concurrency": 1
+        }
+      }
+    },
+    {
+      "id": "an",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "an",
+        "componentId": "ctl.anchor",
+        "properties": {}
+      }
+    },
+    {
+      "id": "asm",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "asm",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT CAST(cur.batch_id AS VARCHAR) AS batch_id,\n       CAST(cur.system_book AS INTEGER) AS system_book,\n       CAST(cur.bizday AS DATE) AS bizday,\n       CAST(cur.branch_num AS INTEGER) AS branch_num,\n       CAST(cur.branch_code AS VARCHAR) AS branch_code,\n       CAST(cur.branch_name AS VARCHAR) AS branch_name,\n       CAST(cur.branch_region_num AS INTEGER) AS branch_region_num,\n       CAST(cur.branch_region_name AS VARCHAR) AS branch_region_name,\n       CAST(cur.metric AS VARCHAR) AS metric,\n       CAST(cur.actual_value AS DECIMAL(20, 2)) AS actual_value,\n       CAST(cur.target_value AS DECIMAL(20, 2)) AS target_value,\n       CAST(cur.actual_rate AS DECIMAL(20, 6)) AS actual_rate,\n       CAST(cur.computed_at AS TIMESTAMPTZ) AS computed_at,\n       CAST(cur.file_chunk AS INTEGER) AS file_chunk,\n       CAST(cur.chunk_n_matched AS INTEGER) AS chunk_n_matched,\n       CAST(e.n_chunks AS INTEGER) AS exp_n_chunks,\n       CAST(e.n_branches AS INTEGER) AS exp_n_branches\nFROM (\n  SELECT *, regexp_extract(filename, 'chunk-([0-9]{8}T[0-9]{6}Z)-([0-9]+)\\.parquet$', 1) AS file_batch,\n            CAST(regexp_extract(filename, 'chunk-([0-9]{8}T[0-9]{6}Z)-([0-9]+)\\.parquet$', 2) AS INTEGER) AS file_chunk\n  FROM read_parquet('/workspace/.duckle-stage/branch_indicator/*.parquet', filename = true)\n) cur\nCROSS JOIN (\n  SELECT any_value(batch_id) AS batch_id,\n         max(CAST(n_chunks AS INTEGER)) AS n_chunks,\n         sum(CAST(n_branches AS INTEGER)) AS n_branches\n  FROM input\n) e\nWHERE cur.file_batch = e.batch_id"
+        }
+      }
+    },
+    {
+      "id": "dasm",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dasm",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "no-rows",
+          "message": "汇总为空：本期 batch 的 staging 分块没产出（foreach 全失败 / 目录被清）⇒ 拒绝写湖"
+        }
+      }
+    },
+    {
+      "id": "gchk",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gchk",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT 'chunk_missing' AS violation, CAST(count(DISTINCT file_chunk) AS VARCHAR) AS detail, CAST(any_value(exp_n_chunks) AS VARCHAR) AS expected\nFROM input\nHAVING count(DISTINCT file_chunk) <> any_value(exp_n_chunks) OR count(*) = 0\nUNION ALL\nSELECT 'chunk_rows_vs_matched', CAST(file_chunk AS VARCHAR), CAST(max(chunk_n_matched) AS VARCHAR)\nFROM input\nGROUP BY file_chunk\nHAVING count(*) <> max(chunk_n_matched)"
+        }
+      }
+    },
+    {
+      "id": "dchk",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "dchk",
+        "componentId": "ctl.die",
+        "properties": {
+          "condition": "has-rows",
+          "message": "汇总自证未过（{rows} 条违规，明细见上）：chunk_missing=应到的分块没到（detail=实到块数 / expected=应有块数）；chunk_rows_vs_matched=某块落盘行数 ≠ 该块自报的有数据门店数（detail=实际行数 / expected=自报匹配数）。拒绝写湖"
+        }
+      }
+    },
+    {
+      "id": "s",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "s",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "SELECT\n  CAST(batch_id AS VARCHAR) AS batch_id,\n  CAST(system_book AS INTEGER) AS system_book,\n  CAST(bizday AS DATE) AS bizday,\n  CAST(branch_num AS INTEGER) AS branch_num,\n  CAST(branch_code AS VARCHAR) AS branch_code,\n  CAST(branch_name AS VARCHAR) AS branch_name,\n  CAST(branch_region_num AS INTEGER) AS branch_region_num,\n  CAST(branch_region_name AS VARCHAR) AS branch_region_name,\n  CAST(metric AS VARCHAR) AS metric,\n  CAST(actual_value AS DECIMAL(20,2)) AS actual_value,\n  CAST(target_value AS DECIMAL(20,2)) AS target_value,\n  CAST(actual_rate AS DECIMAL(20,6)) AS actual_rate,\n  CAST(computed_at AS TIMESTAMPTZ) AS computed_at\nFROM input"
+        }
+      }
+    },
+    {
+      "id": "gc",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "gc",
+        "componentId": "qa.contract",
+        "properties": {
+          "rules": {
+            "batch_id": "not_null",
+            "system_book": "not_null",
+            "bizday": "not_null",
+            "branch_num": "unique",
+            "metric": "in_set:transfer_money",
+            "actual_value": "not_null"
+          }
+        }
+      }
+    },
+    {
+      "id": "snk",
+      "type": "sink",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "snk",
+        "componentId": "snk.minio",
+        "properties": {
+          "bucket": "${ENV:ZOS_BUCKET}",
+          "key": "lemeng/branch_indicator/system_book=${ENV:SYSTEM_BOOK}/bizday=${date-1d}/all.parquet",
+          "region": "${ENV:ZOS_REGION}",
+          "urlStyle": "path",
+          "useSsl": "true",
+          "format": "parquet",
+          "mode": "overwrite",
+          "compression": "zstd",
+          "connectionRef": "zos"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-w0-g0",
+      "source": "w0",
+      "target": "g0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g0-g1",
+      "source": "g0",
+      "target": "g1",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g1-g2",
+      "source": "g1",
+      "target": "g2",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-g2-d0",
+      "source": "g2",
+      "target": "d0",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-d0-gf",
+      "source": "d0",
+      "target": "gf",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gf-di",
+      "source": "gf",
+      "target": "di",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-di-drv",
+      "source": "di",
+      "target": "drv",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-drv-fe",
+      "source": "drv",
+      "target": "fe",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-drv-asm",
+      "source": "drv",
+      "target": "asm",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-fe-an",
+      "source": "fe",
+      "target": "an",
+      "sourceHandle": "iterate",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "trigger"
+      }
+    },
+    {
+      "id": "e-an-asm",
+      "source": "an",
+      "target": "asm",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "trigger"
+      }
+    },
+    {
+      "id": "e-asm-dasm",
+      "source": "asm",
+      "target": "dasm",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dasm-gchk",
+      "source": "dasm",
+      "target": "gchk",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gchk-dchk",
+      "source": "gchk",
+      "target": "dchk",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dasm-s",
+      "source": "dasm",
+      "target": "s",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-dchk-s",
+      "source": "dchk",
+      "target": "s",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "data": {
+        "connectionType": "on-subjob-ok"
+      }
+    },
+    {
+      "id": "e-s-gc",
+      "source": "s",
+      "target": "gc",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e-gc-snk",
+      "source": "gc",
+      "target": "snk",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    }
+  ]
+}

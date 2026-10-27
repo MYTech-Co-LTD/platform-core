@@ -145,5 +145,194 @@
     "last_run_duration_ms": null,
     "last_run_error": null,
     "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.branch.expense.l0.64188",
+    "pipeline_id": "lemeng.branch.expense.l0.64188",
+    "name": "lemeng.branch.expense.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "5 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.branch_indicator.l0.64188",
+    "pipeline_id": "lemeng.branch_indicator.l0.64188",
+    "name": "lemeng.branch_indicator.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "10 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.loss.adjustment.l0.64188",
+    "pipeline_id": "lemeng.loss.adjustment.l0.64188",
+    "name": "lemeng.loss.adjustment.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "5 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.request.order.l0.64188",
+    "pipeline_id": "lemeng.request.order.l0.64188",
+    "name": "lemeng.request.order.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "20 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.inventory.snapshot.l0.64188",
+    "pipeline_id": "lemeng.inventory.snapshot.l0.64188",
+    "name": "lemeng.inventory.snapshot.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "35 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.inventory.snapshot.catchup.64188",
+    "pipeline_id": "lemeng.inventory.snapshot.catchup.64188",
+    "name": "lemeng.inventory.snapshot.catchup.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "35 0 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.purchase.analysis.l0.64188",
+    "pipeline_id": "lemeng.purchase.analysis.l0.64188",
+    "name": "lemeng.purchase.analysis.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "40 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.client.expense.l0.64188",
+    "pipeline_id": "lemeng.client.expense.l0.64188",
+    "name": "lemeng.client.expense.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "15 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.member.summary.l0.64188",
+    "pipeline_id": "lemeng.member.summary.l0.64188",
+    "name": "lemeng.member.summary.l0.64188",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "55 14,16,18,20,22 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
   }
 ]
