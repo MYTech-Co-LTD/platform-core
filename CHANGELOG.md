@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.210.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.210.0...v0.210.1) - 2026-10-27
+- 【修复】notify: notify-worker 用自己的心跳做健康检查（不再继承 HTTP 探活） ([#1132](https://github.com/MYTech-Co-LTD/platform-core/pull/1132), [911762c](https://github.com/MYTech-Co-LTD/platform-core/commit/911762c356b4db8290df4f750729b08b7e704851))
+
+
 ## [0.210.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.209.0...v0.210.0) - 2026-10-27
 - 【新增】notify: scope_holders 真正解析（Casdoor 直挂 ∪ 角色展开） ([#1130](https://github.com/MYTech-Co-LTD/platform-core/pull/1130), [5a2de8a](https://github.com/MYTech-Co-LTD/platform-core/commit/5a2de8a8d13baaf72bc710118c6d22d926da0e7b))
 
