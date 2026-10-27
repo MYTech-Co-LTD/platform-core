@@ -1,5 +1,5 @@
 // worker-deps.test.ts — 组合根：env → secret_refs、provider 分发、in-app 落库
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations, makeIdentity } from './test-util'
 import { buildWorkerDeps } from './worker-deps'
@@ -131,6 +131,39 @@ describePg('buildWorkerDeps', () => {
     expect(await deps.resolveScopeHolders(ORG, 'approvers', {
       key: 'm.a.b', title: '', payload: {}, recipients: {},
     })).toEqual([])
+  })
+
+  it('scope_holders：未注入解析器 ⇒ 空 + warn；注入后按权限码解析', async () => {
+    const decl = {
+      key: 'm.a.b', title: '',
+      payload: {},
+      recipients: { approvers: { kind: 'scope_holders', scope: 'aftersales:manage' } },
+    }
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const noResolver = buildWorkerDeps(pool, async () => null, {})
+      expect(await noResolver.resolveScopeHolders(ORG, 'approvers', decl as never)).toEqual([])
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('scope_holders 未注入'))).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+
+    const calls: Array<[string, string]> = []
+    const withResolver = buildWorkerDeps(pool, async () => null, {}, undefined,
+      async (org, code) => { calls.push([org, code]); return ['alice', 'bob'] })
+    expect(await withResolver.resolveScopeHolders(ORG, 'approvers', decl as never))
+      .toEqual(['alice', 'bob'])
+    expect(calls).toEqual([[ORG, 'aftersales:manage']])
+  })
+
+  it('scope_holders：recipient 不是 scope_holders ⇒ 不调解析器', async () => {
+    const decl = { key: 'm.a.b', title: '', payload: {}, recipients: { u: { kind: 'field', field: 'x' } } }
+    const calls: unknown[] = []
+    const deps = buildWorkerDeps(pool, async () => null, {}, undefined,
+      async () => { calls.push(1); return ['x'] })
+    expect(await deps.resolveScopeHolders(ORG, 'u', decl as never)).toEqual([])
+    expect(calls).toEqual([])
   })
 
   it('测试脚手架可用（makeIdentity 未被用到时也不报错）', () => {
