@@ -25,13 +25,20 @@ describePg('notify 迁移', () => {
     expect(after).toBe(before)
   })
 
-  it('两表建在 notify schema，org 列存在且 NOT NULL', async () => {
+  it('v2 表齐全且 org 列 NOT NULL', async () => {
     const r = await pool.query(
       `select table_name, is_nullable from information_schema.columns
         where table_schema = 'notify' and column_name = 'org' order by table_name`,
     )
     const names = r.rows.map((x) => x.table_name as string).sort()
-    expect(names).toEqual(['delivery', 'rule'])
+    expect(names).toEqual([
+      'channel', 'delivery', 'delivery_attempt', 'delivery_v2', 'event',
+      'inbox', 'rule', 'rule_v2', 'template', 'template_revision',
+    ])
     expect(r.rows.every((x) => x.is_nullable === 'NO')).toBe(true)
+
+    // worker_heartbeat 是平台级（无 org），单独断言存在
+    const hb = await pool.query("select to_regclass('notify.worker_heartbeat') as t")
+    expect(hb.rows[0].t).not.toBeNull()
   })
 })
