@@ -895,6 +895,11 @@ git commit -m "feat(server): 装载器三阶段与通知注入"
 > 新表用 `rule_v2` / `delivery_v2`，旧代码/旧测试保持绿。Task 8–14 的新代码里凡是
 > `notify.rule` / `notify.delivery` **一律写 `_v2` 版本**；Task 15 做 contract（drop 旧表 + rename）。
 > 本计划后续代码片段为了可读性写的是**最终名**，执行时按这条规则加 `_v2`。
+>
+> **代码同样 expand/contract**：与旧文件冲突的新文件先加 `-v2` 后缀——
+> `domain/rules-v2.ts`、`storage-v2.ts`、`ports-v2.ts`、`routes-v2.ts`、`index-v2.ts`；
+> 不冲突的新文件（`render.ts` / `recipients.ts` / `org-env.ts` / `worker.ts` / `providers/`）用最终名。
+> Task 15 用 `git mv` 回最终名并删旧文件。中间每个提交都保持可编译/可测。
 
 - [ ] **Step 1: 写迁移**
 
