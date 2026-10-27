@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { enabledFromSubscriptions, SubscriptionCache } from './subscription-source'
+import { enabledFromSubscriptions, resolveSubscriptionSource, SubscriptionCache } from './subscription-source'
 
 const SUB = (over: Partial<{ plan: string; state: string; endTime: string }>) => ({
   owner: 'acme', name: 'n', user: 'u', plan: 'mod-demo',
@@ -14,6 +14,16 @@ describe('enabledFromSubscriptions（spec D5 口径）', () => {
       Date.parse('2026-09-13T00:00:00Z'),
     )
     expect([...out]).toEqual(['demo'])
+  })
+})
+
+describe('resolveSubscriptionSource（fail-closed 默认）', () => {
+  it('只有显式 platform 走旧表；未设 / 空串 / casdoor / 垃圾值一律 casdoor', () => {
+    expect(resolveSubscriptionSource('platform')).toBe('platform')
+    expect(resolveSubscriptionSource(undefined)).toBe('casdoor')
+    expect(resolveSubscriptionSource('')).toBe('casdoor')
+    expect(resolveSubscriptionSource('casdoor')).toBe('casdoor')
+    expect(resolveSubscriptionSource('garbage')).toBe('casdoor')
   })
 })
 

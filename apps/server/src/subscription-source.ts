@@ -41,3 +41,11 @@ export class SubscriptionCache {
     return value
   }
 }
+
+/**
+ * 订阅源解析（fail-closed）：只有显式 `platform` 才读旧表；未设 / 非法值一律 casdoor。
+ * 旧表语义是「无行 = 启用」——漏配时默认走它是 fail-open，故默认值必须站在 casdoor 侧。
+ */
+export function resolveSubscriptionSource(raw: string | undefined): 'platform' | 'casdoor' {
+  return raw === 'platform' ? 'platform' : 'casdoor'
+}

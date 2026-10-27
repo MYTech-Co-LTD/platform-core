@@ -33,6 +33,7 @@ import { authRoutes } from './routes/auth'
 import { adminRoutes } from './routes/admin'
 import { PLATFORM_BUILTIN_PERMISSIONS } from './loader'
 import { platformOnlyCodes, tenantGrantable } from './admin-permissions'
+import { resolveSubscriptionSource } from './subscription-source'
 import { wecomRoutes } from './routes/auth-wecom'
 import { wechatOaRoutes } from './routes/auth-wechat-oa'
 import { findActiveLink, listActiveExternalIds } from './identity-links'
@@ -150,11 +151,21 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   if (overrides.modules) {
     runtime = overrides.modules
   } else {
+    // spec D6 灰度开关 + 2026-10-27 fail-closed 默认：只有显式 platform 才读旧表；
+    // 未设 / 非法值一律 casdoor。旧表语义是「无行 = 启用」，漏配时默认走它是 fail-open。
+    const rawSubscriptionSource = process.env.PLATFORM_SUBSCRIPTION_SOURCE
+    const subscriptionSource = resolveSubscriptionSource(rawSubscriptionSource)
+    if (rawSubscriptionSource === undefined) {
+      console.info('[modules] PLATFORM_SUBSCRIPTION_SOURCE 未设置，默认 casdoor（fail-closed）')
+    } else if (rawSubscriptionSource === 'platform') {
+      console.warn('[modules] PLATFORM_SUBSCRIPTION_SOURCE=platform：旧表是回滚档，不是生产口径')
+    } else if (rawSubscriptionSource !== 'casdoor') {
+      console.warn(`[modules] PLATFORM_SUBSCRIPTION_SOURCE=${JSON.stringify(rawSubscriptionSource)} 未知，按 casdoor 处理`)
+    }
     runtime = await loadModules(overrides.modulesDir ?? modulesDir, {
       pool,
       casdoorFor: casdoorFactory,
-      // spec D6 灰度开关：默认 platform（旧表）；显式 casdoor 才切订阅源
-      subscriptionSource: process.env.PLATFORM_SUBSCRIPTION_SOURCE === 'casdoor' ? 'casdoor' : 'platform',
+      subscriptionSource,
       subscriptionCacheTtlMs: Number(process.env.PLATFORM_SUBSCRIPTION_CACHE_TTL_MS) || 60_000,
     })
   }
