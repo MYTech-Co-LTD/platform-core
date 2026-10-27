@@ -361,6 +361,11 @@ export function wecomRoutes(deps: WecomRoutesDeps) {
         deps.limiter.record(t.id, 'wecom', null, false) // 企微路不建 user 桶（check 也不看它）
         return fail('NO_ACCOUNT')
       }
+      if (user.isForbidden) {
+        await writeAudit(deps.pool, t.id, name, 'login.fail', { via, reason: 'forbidden' })
+        deps.limiter.record(t.id, 'wecom', null, false)
+        return fail('NO_ACCOUNT')
+      }
       const scopes = effectiveScopes(name, user.roles ?? [], perms)
 
       const now = Math.floor(Date.now() / 1000)

@@ -298,6 +298,14 @@ export function wechatOaRoutes(deps: WechatOaRoutesDeps) {
           degraded = 'casdoor-down'
         }
         if (user !== null && degraded === null) {
+          // 禁用是账户停用，不是绑定悬空：不给正式 scopes，也不降级成访客（2026-10-27）
+          if (user.isForbidden) {
+            await writeAudit(deps.pool, t.id, openid, 'login.fail', {
+              via: 'wechat-oa', reason: 'forbidden', acct: active.casdoorName,
+            })
+            deps.limiter.record(t.id, 'wechat-oa', null, false)
+            return fail('NO_ACCOUNT')
+          }
           // ② 正式态：ext = 本 openid + 账户其余 active 绑定（wecom 等）。openid 本身也在
           //    link 表里，listActiveExternalIds 会把它再吐一遍——拼接时去重，恰好一次
           const acct = active.casdoorName

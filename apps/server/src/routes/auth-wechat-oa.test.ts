@@ -638,7 +638,7 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
    *  「明确说没这个人」=null、不可达=throw 的两分与 CasdoorClient.getUser 契约同源；
    *  getPermissions 返 [{users,roles,resources}] 记录数组）。记录 getUser 收到的名字供断言。 */
   function fakeCasdoor(
-    user: { name: string; roles?: string[] } | null | 'throw',
+    user: { name: string; roles?: string[]; isForbidden?: boolean } | null | 'throw',
     perms: Array<{ users?: string[]; roles?: string[]; resources?: string[] }> = [],
   ): { factory: CasdoorFactory; getUserNames: () => string[] } {
     const names: string[] = []
@@ -646,7 +646,7 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
       getUser: async (name: string) => {
         names.push(name)
         if (user === 'throw') throw new Error('casdoor unreachable')
-        return user
+        return user === null ? null : { ...user, isForbidden: user.isForbidden ?? false }
       },
       getPermissions: async () => perms,
     } as unknown as CasdoorClient
@@ -711,6 +711,25 @@ describe.skipIf(!dbUrl)('公众号访客登录路由（wechat-oa）', () => {
     expect(fake.getUserNames()).toEqual(['t4_acct'])
     // audit：actor 仍 openid（审计键连续），detail 带 acct
     expect(await latestLoginOkDetail('o_t4_linked')).toEqual({ via: 'wechat-oa', acct: 't4_acct' })
+  })
+
+  it('⑦ 正式态：Casdoor 用户被禁用 ⇒ 302 /login?error=NO_ACCOUNT，不降级访客', async () => {
+    await seedLink('wechat-oa', 'o_t4_forbidden', 't4_forbidden_acct')
+    const fake = fakeCasdoor(
+      { name: 't4_forbidden_acct', roles: [], isForbidden: true },
+      [{ users: ['acme/t4_forbidden_acct'], resources: ['moda:view'] }],
+    )
+    const client = testClient(
+      makeApp(pool, { wechatFetch: wechatOpenid('o_t4_forbidden'), routeCasdoor: fake.factory }),
+    )
+    const state = await silentState(client)
+    const res = await client.api.platform.auth['wechat-oa'].callback.$get(
+      { query: { code: 'good-code', state } },
+      { headers: { host: 'acme.test', cookie: `wechat_oa_state=${state}` } },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/login?error=NO_ACCOUNT')
+    expect(res.headers.getSetCookie().join('\n')).not.toContain('platform_session=')
   })
 
   it('⑦ 正式态：绑定集合含本 openid 之外的其他渠道绑定（wecom 行）', async () => {

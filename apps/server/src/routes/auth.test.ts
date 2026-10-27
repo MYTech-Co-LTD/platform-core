@@ -149,6 +149,22 @@ describe.skipIf(!dbUrl)('会话中间件 + 账密登录/登出/会话', () => {
     expect(sc).toContain(`Max-Age=${SESSION_TTL_SEC}`)
   })
 
+  it('账密路防御：verifyPassword 通过但 getUser 返 isForbidden ⇒ 401 且不发会话', async () => {
+    const fake = (() => ({
+      verifyPassword: async () => ({ name: 'bob' }),
+      getUser: async () => ({ name: 'bob', roles: [], isForbidden: true }),
+      getPermissions: async () => [],
+    } as unknown as CasdoorClient)) as CasdoorFactory
+    const app = makeApp(pool, fake)
+    const res = await app.request('/api/platform/auth/login', {
+      method: 'POST',
+      headers: { host: 'acme.test', 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'bob', password: 'pw' }),
+    })
+    expect(res.status).toBe(401)
+    expect(setCookies(res)).toEqual([])
+  })
+
   // ② 错密码
   it('错密码：401 {"error":"BAD_CREDENTIALS"}', async () => {
     const res = await client.api.platform.auth.login.$post(

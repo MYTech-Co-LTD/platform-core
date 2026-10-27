@@ -36,6 +36,7 @@ const mock = new MockCasdoor({
     // owner 与租户 org 一致：用户按 (org,name) 命中（评审 S3，同 auth.test.ts）
     { name: 'alice', password: 'pw', roles: ['ops'], owner: 'acme' },
     { name: 'wo_alice', password: 'pw', roles: ['ops'], owner: 'acme' },
+    { name: 'wo_forbidden', password: 'pw', roles: ['ops'], owner: 'acme', isForbidden: true },
   ],
   perms: [
     // owner 必须与租户 org 一致（同 auth.test.ts）：权限按 org 分桶后，不标 owner 的码
@@ -833,6 +834,22 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
       "select actor, detail from platform.audit where action='login.fail' and actor='wo_off' order by id desc limit 1",
     )
     expect(rows[0]).toMatchObject({ actor: 'wo_off', detail: { reason: 'no-account' } })
+  })
+
+  it('★ 禁用用户：企微直连回调 → 302 /login?error=NO_ACCOUNT + audit login.fail(forbidden)，不建号', async () => {
+    const c = testClient(makeApp(pool, casdoorFor, createLoginLimiter(), wecomFetchFor('wo_forbidden')))
+    const qr = await c.api.platform.auth.wecom.qr.$get(undefined, { headers: { host: 'acme.test' } })
+    const state = stateToken(qr)
+    const res = await c.api.platform.auth.wecom.callback.$get(
+      { query: { code: 'forbidden-code', state, via: 'qr-corp' } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+    )
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/login?error=NO_ACCOUNT')
+    const { rows } = await pool.query<{ detail: { reason?: string } }>(
+      "select detail from platform.audit where action='login.fail' and actor='wo_forbidden' order by id desc limit 1",
+    )
+    expect(rows[0]?.detail.reason).toBe('forbidden')
   })
 
   it('★ Casdoor OIDC code 路**永不** JIT：旗标开 + org 外用户照旧 NO_ACCOUNT（JIT 只属企微直连两路）', async () => {
