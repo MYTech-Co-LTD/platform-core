@@ -78,4 +78,44 @@ export async function putNarrative(
       k.periodKey, k.branchKey, k.factsHash, k.promptVersion, k.model,
       text, fallback, createdBy],
   )
+  // 惰性 GC：写缓存时最多每 24h 触发一次；失败不反噬生成主路径（见下方）。
+  void maybePruneNarratives(pool)
+}
+
+/** 缓存保留期（天）。内容寻址缓存没有天然 TTL，靠 GC 删除旧事实行（索引见迁移 024）。 */
+export const NARRATIVE_RETENTION_DAYS = 90
+const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000
+let lastPruneAt = 0
+
+/** 测试钩子：重置 GC 节流时钟（用例之间）。 */
+export function resetNarrativePruneClock(): void {
+  lastPruneAt = 0
+}
+
+/** 删除超过保留期的缓存行；返回删除行数。 */
+export async function pruneNarratives(
+  pool: Pool,
+  retentionDays: number = NARRATIVE_RETENTION_DAYS,
+): Promise<number> {
+  const days = Math.max(1, Math.floor(retentionDays))
+  const r = await pool.query(
+    `delete from data.report_narratives where created_at < now() - ($1 * interval '1 day')`,
+    [days],
+  )
+  return r.rowCount ?? 0
+}
+
+/**
+ * 进程级节流：写缓存时最多每 24h 跑一次 GC。失败只跳过本轮——表缺/权限/并发竞争
+ * 都不能让一次生成失败（GC 是维护动作，不是主路径的正确性条件）。
+ */
+async function maybePruneNarratives(pool: Pool): Promise<void> {
+  const now = Date.now()
+  if (now - lastPruneAt < PRUNE_INTERVAL_MS) return
+  lastPruneAt = now
+  try {
+    await pruneNarratives(pool)
+  } catch {
+    /* 下一轮再试 */
+  }
 }
