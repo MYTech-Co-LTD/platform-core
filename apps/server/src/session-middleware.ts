@@ -186,7 +186,7 @@ export const sessionMiddleware = (
           try {
             const casdoor = deps.casdoor(p.org)
             const user = await casdoor.getUser(p.acct)
-            if (user === null) {
+            if (user === null || user.isForbidden) {
               userGone = true
             } else {
               const perms = await casdoor.getPermissions()
@@ -227,10 +227,12 @@ export const sessionMiddleware = (
           try {
             const casdoor = deps.casdoor(p.org)
             const user = await casdoor.getUser(p.name)
-            if (user === null) {
-              // Casdoor 明确说没这个人（2xx + body status:'ok' 且 data:null）→ 唯一清会话分支。
-              // **不是** status:error —— error 覆盖的是与"不存在"无关的一堆情形（admin 会话失效、
-              // id 非两段、DB 出错…），CasdoorClient.getUser 对它们一律抛错（上方 catch 接住降级）
+            if (user === null || user.isForbidden) {
+              // Casdoor 明确说没这个人（2xx + body status:'ok' 且 data:null）→ 唯一清会话分支；
+              // 或用户被禁用（isForbidden=true，2026-10-27）⇒ 同处置：清 cookie，最多等下一次
+              // scopes 刷新（≤5 分钟）。**不是** status:error —— error 覆盖的是与"不存在/禁用"
+              // 无关的一堆情形（admin 会话失效、id 非两段、DB 出错…），CasdoorClient.getUser
+              // 对它们一律抛错（上方 catch 接住降级）
               userGone = true
             } else {
               const perms = await casdoor.getPermissions()

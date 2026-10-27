@@ -254,7 +254,7 @@ describe.skipIf(!dbUrl)('identity_link 读写层（真 PG）', () => {
 function fakeCasdoorFor(ensured: string[], missingUsers: string[] = []) {
   return (org: string) => ({
     getUser: async (name: string) =>
-      missingUsers.includes(name) ? null : { name, roles: [] as string[], isAdmin: false },
+      missingUsers.includes(name) ? null : { name, roles: [] as string[], isAdmin: false, isForbidden: false },
     ensureUser: async (name: string) => {
       ensured.push(`${org}/${name}`)
     },

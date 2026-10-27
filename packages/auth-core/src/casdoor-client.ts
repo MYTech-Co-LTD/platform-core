@@ -74,6 +74,8 @@ export interface CasdoorUser {
   roles?: string[]
   displayName?: string
   isAdmin?: boolean
+  /** Casdoor 禁用标记（get-user 真机字段）；true = 停用 */
+  isForbidden: boolean
 }
 
 export interface CasdoorPermission {
@@ -169,6 +171,7 @@ export class CasdoorClient {
       roles,
       displayName: typeof u.displayName === 'string' ? u.displayName : undefined,
       isAdmin: u.isAdmin === true,
+      isForbidden: u.isForbidden === true,
     }
   }
 
