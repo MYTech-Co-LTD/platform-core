@@ -103,6 +103,10 @@ export default function ChannelsTab() {
       <Typography.Paragraph type="secondary">
         通道凭据由运维在 env 层预备；这里只显示 env 键名，不回显值。测试发送只发给当前登录人。
       </Typography.Paragraph>
+      <Typography.Paragraph type="secondary">
+        webhook 通道：出站只允许 https、拒绝私网/回环/元数据地址、不跟随重定向、带 HMAC 签名；
+        健康检查会发一个签名探针（2xx 视为健康）。
+      </Typography.Paragraph>
 
       <Table<ChannelView>
         rowKey="id"
