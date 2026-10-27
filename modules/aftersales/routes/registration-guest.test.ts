@@ -1,7 +1,7 @@
 // routes/registration-guest.test.ts — 访客面登记端点（真 PG，与既有 routes/*.test.ts 同栈）
 import { Hono } from 'hono'
 import { Pool } from 'pg'
-import type { Identity, IdentityLinkView, IdentityLinks } from '@platform/sdk'
+import type { Identity, IdentityLinkView, IdentityLinks, NotifyPort } from '@platform/sdk'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { applyMigrations, ensureDimTables } from '../test-util'
 import { registerRegistrationGuest } from './registration-guest'
@@ -11,7 +11,7 @@ const OTHER_ORG = 'test-m3b1-other'
 const OPENID = 'openid-guest-1'
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 
-function app(openid = OPENID, identityLinks?: IdentityLinks, boundExternalIds?: string[]) {
+function app(openid = OPENID, identityLinks?: IdentityLinks, boundExternalIds?: string[], notify?: NotifyPort) {
   const r = new Hono<{ Variables: { identity: Identity } }>()
   r.use('*', async (c, next) => {
     c.set('identity', {
@@ -19,7 +19,7 @@ function app(openid = OPENID, identityLinks?: IdentityLinks, boundExternalIds?: 
     })
     await next()
   })
-  registerRegistrationGuest(r, { pool, identityLinks })
+  registerRegistrationGuest(r, { pool, identityLinks, notify })
   return r
 }
 
@@ -160,6 +160,41 @@ describe('POST /guest/employee-approvals', () => {
     expect(row.status).toBe('pending')
     expect(row.old_info).toEqual({})
     expect(row.new_info).toEqual({ name: '张三', phone: '138', storeCodes: [c1] })
+  })
+
+  it('提交后 emit 员工审批事件（eventId 确定性）', async () => {
+    const calls: Array<{ eventKey: string; eventId: string; scope?: string; payload: Record<string, unknown> }> = []
+    const notify: NotifyPort = {
+      emit: async (_identity, input) => {
+        calls.push(input)
+        return { accepted: true }
+      },
+    }
+    const [c1] = await storeCodes()
+    const res = await submit(app(OPENID, undefined, undefined, notify), {
+      name: '张三', phone: '138', storeCodes: [c1],
+    })
+    expect(res.status).toBe(201)
+    const { id } = (await res.json()) as { id: number }
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({
+      eventKey: 'aftersales.employee_approval.pending',
+      eventId: `aftersales.employee_approval:${id}:pending`,
+      scope: String(id),
+      payload: { approvalId: String(id), approveType: 'register', applicantName: '张三' },
+    })
+    expect(String(calls[0]!.payload.link)).toContain('/console/aftersales/approvals')
+  })
+
+  it('notify 抛错 ⇒ 业务照旧 201（fail-open）', async () => {
+    const notify: NotifyPort = {
+      emit: async () => { throw new Error('notify db down') },
+    }
+    const [c1] = await storeCodes()
+    const res = await submit(app(OPENID, undefined, undefined, notify), {
+      name: '张三', phone: '138', storeCodes: [c1],
+    })
+    expect(res.status).toBe(201)
   })
 
   it('★ 已有待审 ⇒ 409（由**库**的部分唯一索引保证，不是先查后插）', async () => {

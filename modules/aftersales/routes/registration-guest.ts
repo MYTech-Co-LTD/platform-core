@@ -158,6 +158,27 @@ export function registerRegistrationGuest(r: ModuleHono, ctx: RouteCtx): void {
         approvalId,
       })
     }
+
+    // 通知（fail-open）：审批人由 notify 层按 aftersales:manage 解析；失败不得阻塞业务。
+    if (ctx.notify) {
+      try {
+        await ctx.notify.emit(c.get('identity'), {
+          eventKey: 'aftersales.employee_approval.pending',
+          eventId: `aftersales.employee_approval:${approvalId}:pending`,
+          scope: String(approvalId),
+          payload: {
+            approvalId: String(approvalId),
+            approveType: diff.approveType,
+            applicantName: target.name,
+            // 审批页是单页列表（无 :id 深链）；审批单号在 scope/payload 里
+            link: `${process.env.PLATFORM_CONSOLE_BASE_URL ?? ''}/console/aftersales/approvals`,
+          },
+        })
+      } catch (e) {
+        console.warn('[aftersales] notify emit failed（不阻断业务）:', e instanceof Error ? e.message : e)
+      }
+    }
+
     return c.json({ id: approvalId, approveType: diff.approveType }, 201)
   })
 
