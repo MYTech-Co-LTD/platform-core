@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.206.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.2...v0.206.3) - 2026-10-27
+- 【修复】data: 裸年份（2026 10月21日）也抹掉，修近7天仍回退 (#1109) ([#1110](https://github.com/MYTech-Co-LTD/platform-core/pull/1110), [80ea863](https://github.com/MYTech-Co-LTD/platform-core/commit/80ea863888671e9a4daddfa4a999c62dfb00194c))
+
+
 ## [0.206.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.1...v0.206.2) - 2026-10-27
 - 【修复】data: 数字校验补齐「2026年」/空格/点号日期，修近7天回退模板 (#1107) ([#1108](https://github.com/MYTech-Co-LTD/platform-core/pull/1108), [deb3b31](https://github.com/MYTech-Co-LTD/platform-core/commit/deb3b31091a91ded161ed1ebb26925af9ae50909))
 
