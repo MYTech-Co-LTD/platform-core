@@ -23,7 +23,20 @@ const validManifest = {
   },
   migrations: { dir: 'migrations' },
   bindings: { postgres: 'required', novu: 'optional', cube: 'optional' },
-  notifications: { dir: 'notifications' },
+  notifications: {
+    events: [{
+      key: 'demo.note.created',
+      title: '便签创建',
+      scope: { key: 'noteId' },
+      payload: {
+        noteId: { type: 'string', required: true },
+        author: { type: 'user' },
+        link: { type: 'url', required: true },
+      },
+      recipients: { author: { kind: 'field', field: 'author' } },
+      defaults: { recipient: 'author', template: 'demo_note_created', channels: ['inapp_default'] },
+    }],
+  },
   config: { schema: 'config.schema.json' },
 }
 
@@ -48,7 +61,7 @@ describe('ManifestSchema', () => {
     expect(r.data.frontend?.console?.[1].icon).toBeUndefined()
     expect(r.data.migrations).toEqual({ dir: 'migrations' })
     expect(r.data.bindings).toEqual({ postgres: 'required', novu: 'optional', cube: 'optional' })
-    expect(r.data.notifications).toEqual({ dir: 'notifications' })
+    expect(r.data.notifications?.events?.[0]?.key).toBe('demo.note.created')
     expect(r.data.config).toEqual({ schema: 'config.schema.json' })
   })
 
@@ -347,5 +360,62 @@ describe('未知键拒绝（ManifestObject.strict）', () => {
   it('全量合法样例（含所有已收字段）不受 strict 影响', () => {
     const r = ManifestSchema.safeParse(validManifest)
     expect(r.success).toBe(true)
+  })
+})
+
+// 通知事件声明（2026-10-27 通知基础设施设计 §3.1）
+describe('notifications.events', () => {
+  const base = {
+    id: 'demo', name: 'demo', version: '0.1.0', platform: '>=0.1',
+    permissions: [{ code: 'demo:view', name: 'v' }],
+  }
+  const ev = (over: Record<string, unknown> = {}) => ({
+    key: 'demo.note.created', title: 't',
+    payload: { noteId: { type: 'string' }, author: { type: 'user' } },
+    recipients: { author: { kind: 'field', field: 'author' } },
+    ...over,
+  })
+  const parse = (events: unknown[]) =>
+    ManifestSchema.safeParse({ ...base, notifications: { events } })
+
+  it('合法声明通过', () => {
+    expect(parse([ev()]).success).toBe(true)
+  })
+
+  it('事件 key 前缀必须是模块 id', () => {
+    expect(parse([ev({ key: 'other.note.created' })]).success).toBe(false)
+  })
+
+  it('事件 key 必须至少三段', () => {
+    expect(parse([ev({ key: 'demo.created' })]).success).toBe(false)
+  })
+
+  it('同模块内 key 重复 ⇒ 拒绝', () => {
+    expect(parse([ev(), ev()]).success).toBe(false)
+  })
+
+  it('scope.key 必须是 payload 的 string 字段', () => {
+    expect(parse([ev({ scope: { key: 'n' }, payload: { n: { type: 'number' } } })]).success).toBe(false)
+  })
+
+  it('field 收件人必须指向 user/user_list 字段', () => {
+    expect(parse([ev({
+      payload: { s: { type: 'string' } },
+      recipients: { r: { kind: 'field', field: 's' } },
+    })]).success).toBe(false)
+  })
+
+  it('scope_holders 必须给 scope；literal 不能带 field/scope', () => {
+    expect(parse([ev({ recipients: { r: { kind: 'scope_holders' } } })]).success).toBe(false)
+    expect(parse([ev({ recipients: { r: { kind: 'literal', scope: 'x' } } })]).success).toBe(false)
+  })
+
+  it('defaults.recipient 必须已声明', () => {
+    expect(parse([ev({ defaults: { recipient: 'nope', template: 't', channels: ['c'] } })]).success).toBe(false)
+  })
+
+  it('payload 超过 20 个字段 ⇒ 拒绝', () => {
+    const payload = Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`f${i}`, { type: 'string' }]))
+    expect(parse([ev({ payload })]).success).toBe(false)
   })
 })

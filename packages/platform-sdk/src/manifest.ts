@@ -14,6 +14,40 @@ export interface ModuleApiEndpoint {
   scope: string
 }
 
+/**
+ * 通知事件声明（2026-10-27 通知基础设施设计 §3.1）。
+ * 模块是事件的唯一事实源；宿主装载期据此建事件目录并注入 `ctx.notify.emit`。
+ */
+export type EventPayloadType = 'string' | 'number' | 'boolean' | 'date' | 'url' | 'user' | 'user_list'
+
+export interface EventFieldDecl {
+  type: EventPayloadType
+  required?: boolean
+  label?: string
+}
+
+export interface EventRecipientDecl {
+  kind: 'field' | 'scope_holders' | 'literal'
+  /** kind=field：payload 中的 user/user_list 字段名 */
+  field?: string
+  /** kind=scope_holders：权限码（如 aftersales:manage） */
+  scope?: string
+  label?: string
+}
+
+export interface NotificationEventDecl {
+  /** <module>.<entity>.<event>；小写蛇形 + 点号，至少三段 */
+  key: string
+  title: string
+  description?: string
+  /** 实例级作用域：payload 中的 string 字段名 */
+  scope?: { key: string; label?: string }
+  payload: Record<string, EventFieldDecl>
+  recipients: Record<string, EventRecipientDecl>
+  /** 零配置默认规则；template 必须是内置模板 */
+  defaults?: { recipient: string; template: string; channels: string[] }
+}
+
 export interface ModuleManifest {
   id: string; name: string; version: string; platform: string
   permissions: Array<{ code: string; name: string }>
@@ -49,7 +83,7 @@ export interface ModuleManifest {
     admin?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }> }
   migrations?: { dir: string }
   bindings?: Record<string, 'required' | 'optional'>
-  notifications?: { dir: string }
+  notifications?: { events: NotificationEventDecl[] }
   config?: { schema: string }
 }
 
@@ -62,6 +96,33 @@ const PLATFORM_REGEX = /^>=?[0-9]/
 // dataDependencies 条目（M1.1）：两段式 <schema>.<view>——schema 段沿用模块 id 的 kebab-case
 // 字母表（同 ID_REGEX），视图段小写 snake_case。声明的是**稳定视图**，不声明物理表。
 const DATA_DEP_REGEX = /^[a-z][a-z0-9-]*\.[a-z][a-z0-9_]*$/
+
+/** 事件 key：<module>.<entity>.<event>，小写蛇形 + 点号，至少三段（2026-10-27 通知基础设施 §3.1） */
+const EVENT_KEY_RE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){2,}$/
+const PAYLOAD_TYPES = ['string', 'number', 'boolean', 'date', 'url', 'user', 'user_list'] as const
+
+const EventDeclSchema = z.object({
+  key: z.string().regex(EVENT_KEY_RE, '事件 key 必须是 <module>.<entity>.<event> 小写蛇形（至少三段）'),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  scope: z.object({ key: z.string().min(1), label: z.string().optional() }).strict().optional(),
+  payload: z.record(z.string(), z.object({
+    type: z.enum(PAYLOAD_TYPES),
+    required: z.boolean().optional(),
+    label: z.string().optional(),
+  }).strict()),
+  recipients: z.record(z.string(), z.object({
+    kind: z.enum(['field', 'scope_holders', 'literal']),
+    field: z.string().optional(),
+    scope: z.string().optional(),
+    label: z.string().optional(),
+  }).strict()),
+  defaults: z.object({
+    recipient: z.string(),
+    template: z.string(),
+    channels: z.array(z.string()).min(1),
+  }).strict().optional(),
+}).strict()
 
 const ManifestObject = z.object({
   id: z.string().regex(ID_REGEX, `id 必须匹配 ^[a-z][a-z0-9-]*$`),
@@ -117,7 +178,7 @@ const ManifestObject = z.object({
   }).optional(),
   migrations: z.object({ dir: z.string() }).optional(),
   bindings: z.record(z.string(), z.enum(['required', 'optional'])).optional(),
-  notifications: z.object({ dir: z.string() }).optional(),
+  notifications: z.object({ events: z.array(EventDeclSchema) }).strict().optional(),
   config: z.object({ schema: z.string() }).optional(),
 // .strict()（issue #708，fix 分项）：未知键 ⇒ schema 拒 ⇒ 装载失败 / check-manifests 红。
 // 没 strict 时 Zod **静默剥离**未知键——「写了等于没写、且不报错」（曾让 dataDependencies
@@ -214,6 +275,75 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
         code: z.ZodIssueCode.custom,
         path: ['frontend', 'console', i, 'path'],
         message: `frontend.console[${i}].path 不得以 /console/admin/ 开头（该前缀保留给 frontend.admin）`,
+      })
+    }
+  }
+
+  // 通知事件声明（2026-10-27 通知基础设施 §3.1）：key 前缀 = 模块 id；payload/recipients/defaults
+  // 的形状必须自洽——形状松了，宿主会把无法派发的声明写进事件目录，UI/agent 看到的是假能力。
+  const seenEventKeys = new Set<string>()
+  for (const [i, ev] of (m.notifications?.events ?? []).entries()) {
+    const p = ['notifications', 'events', i]
+    if (!ev.key.startsWith(m.id + '.')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [...p, 'key'],
+        message: `事件 key "${ev.key}" 必须以 "${m.id}." 开头（事件前缀 = 模块 id）`,
+      })
+    }
+    if (seenEventKeys.has(ev.key)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [...p, 'key'],
+        message: `事件 key "${ev.key}" 重复（同模块内必须唯一）`,
+      })
+    }
+    seenEventKeys.add(ev.key)
+    if (Object.keys(ev.payload).length > 20) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [...p, 'payload'],
+        message: 'payload 最多 20 个字段（超出请拆事件或改传引用）',
+      })
+    }
+    if (ev.scope && ev.payload[ev.scope.key]?.type !== 'string') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [...p, 'scope', 'key'],
+        message: `scope.key "${ev.scope.key}" 必须是 payload 的 string 字段`,
+      })
+    }
+    for (const [rk, r] of Object.entries(ev.recipients)) {
+      if (r.kind === 'field') {
+        const f = r.field ? ev.payload[r.field] : undefined
+        if (!f || (f.type !== 'user' && f.type !== 'user_list')) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [...p, 'recipients', rk],
+            message: `recipients.${rk}（field）必须指向 payload 的 user/user_list 字段`,
+          })
+        }
+      } else if (r.kind === 'scope_holders') {
+        if (!r.scope) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [...p, 'recipients', rk],
+            message: `recipients.${rk}（scope_holders）必须给 scope`,
+          })
+        }
+      } else if (r.field !== undefined || r.scope !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [...p, 'recipients', rk],
+          message: `recipients.${rk}（literal）不能带 field/scope`,
+        })
+      }
+    }
+    if (ev.defaults && !ev.recipients[ev.defaults.recipient]) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [...p, 'defaults', 'recipient'],
+        message: `defaults.recipient "${ev.defaults.recipient}" 必须已在 recipients 声明`,
       })
     }
   }
