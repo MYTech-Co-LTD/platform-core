@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.206.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.1...v0.206.2) - 2026-10-27
+- 【修复】data: 数字校验补齐「2026年」/空格/点号日期，修近7天回退模板 (#1107) ([#1108](https://github.com/MYTech-Co-LTD/platform-core/pull/1108), [deb3b31](https://github.com/MYTech-Co-LTD/platform-core/commit/deb3b31091a91ded161ed1ebb26925af9ae50909))
+
+
 ## [0.206.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.0...v0.206.1) - 2026-10-27
 - 【修复】data: AI 文本缓存 GC 与同事实单飞 (#1105) ([#1106](https://github.com/MYTech-Co-LTD/platform-core/pull/1106), [a009383](https://github.com/MYTech-Co-LTD/platform-core/commit/a009383e0fc1635108d0d3c480fc90c3425cf5d5))
 
