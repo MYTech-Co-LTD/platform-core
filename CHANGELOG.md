@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.206.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.3...v0.206.4) - 2026-10-27
+- 【修复】data: SSE 增量校验在日期分块边界误判 (#1111) ([#1112](https://github.com/MYTech-Co-LTD/platform-core/pull/1112), [fc5ede5](https://github.com/MYTech-Co-LTD/platform-core/commit/fc5ede5b566e8b2af5a53dd3868cbfe2cea474a5))
+
+
 ## [0.206.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.206.2...v0.206.3) - 2026-10-27
 - 【修复】data: 裸年份（2026 10月21日）也抹掉，修近7天仍回退 (#1109) ([#1110](https://github.com/MYTech-Co-LTD/platform-core/pull/1110), [80ea863](https://github.com/MYTech-Co-LTD/platform-core/commit/80ea863888671e9a4daddfa4a999c62dfb00194c))
 
