@@ -24,7 +24,7 @@ import {
 } from './report-narrative-store'
 
 /** 参与缓存键；**改提示词 = 升版本号**（旧缓存自然不再命中）。 */
-export const NARRATIVE_PROMPT_VERSION = 'narrative-v2'
+export const NARRATIVE_PROMPT_VERSION = 'narrative-v3'
 
 /** 与 spec §4.1 同形的 SSE 事件。`replace` 表示「已流出的内容作废」，客户端必须整段替换。 */
 export type NarrativeEvent =
@@ -74,6 +74,8 @@ const SYSTEM = [
   '异常：…',
   '行动：…',
   '日期一律写成 facts 里的 YYYY-MM-DD 形式（例如 2026-10-13），不要写「X月X日」。',
+  '当前门店以 facts.branchName（缺省 branchNum）为准；reportTitle 只是报表登记标题，不得用于指代当前数据。',
+  '费用按项目是净额：写净额合计；有负数明细时说明主要冲减项，不要把正向大项相加当合计。',
   '全文不超过 400 个汉字；末尾单独一行写：数据截至 <dataAsOf>（缺失写「新鲜度未知」）。',
   '不要推测外部原因（天气/竞品/促销），只写数据内可见的构成与需要核对的事项。',
 ].join('\n')
@@ -130,7 +132,8 @@ export function badNumbers(text: string, allowed: Set<string>): string[] {
 function userPrompt(facts: FactBundle, strictNote = ''): string {
   return [
     `focus=${facts.focus}。请严格按 system 约束写三段。`,
-    '重点：结论先销售额/订单/客单价与对比；异常写最低销售日、报损最大原因、费用最大两项（有数才写）；行动 2-3 条，带金额/项目名。',
+    '重点：结论首句写当前门店（branchName，缺省 branchNum），再写销售额/订单/客单价与对比；异常写最低销售日、报损最大原因、费用最大正向项与主要冲减项（有负数才写）；行动 2-3 条，带金额/项目名。',
+    ...(facts.hasData ? [] : ['facts.hasData=false：只写一句「该期间门店无有效数据（未接入或未物化）」，不要写异常/行动。']),
     ...(strictNote === '' ? [] : [strictNote]),
     `facts=${JSON.stringify(facts)}`,
   ].join('\n')
@@ -142,17 +145,35 @@ export function templateOf(f: FactBundle): string {
   const loss = f.breakdowns.find((b) => b.panel.includes('报损'))
   const expense = f.breakdowns.find((b) => b.panel.includes('费用'))
   const lossTop = loss?.rows[0]
-  const expTop = expense?.rows.slice(0, 2).map((r) => r.label).join('、') ?? ''
+  const expRows = expense?.rows ?? []
+  const numOf = (s: string): number => Number(s.replaceAll(',', ''))
+  const expTop = expRows.slice(0, 2).map((r) => r.label).join('、')
+  // 费用是**净额**：有负数明细时必须写主要冲减项，否则读者会把正向大项相加当合计（#1085）。
+  const negTop = expRows
+    .filter((r) => Number.isFinite(numOf(r.value)) && numOf(r.value) < 0)
+    .sort((a, b) => numOf(a.value) - numOf(b.value))[0]
+  // 当前门店：优先名称，其次编号；**不用 reportTitle**（切店后它仍是登记时那家店）。
+  const branchLabel = f.branchNum === null
+    ? ''
+    : `门店 ${f.branchNum}${f.branchName === null ? '' : `（${f.branchName}）`}，`
+  const asOfLine = `数据截至 ${f.dataAsOf ?? '新鲜度未知'}。`
+  if (!f.hasData) {
+    return [`结论：${branchLabel}该期间无有效数据（未接入或未物化）。`, asOfLine].join('\n')
+  }
   // 缺数据时不输出空括号：`-（）` / `-（- -）` 只会让回退文本更像故障（#1083）。
   const withDetail = (base: string, detail: string): string =>
     detail === '' ? base : `${base}（${detail}）`
   const minText = f.daily.min === null ? '-' : `${f.daily.min.day}（${f.daily.min.value}）`
   const lossDetail = lossTop === undefined ? '' : `${lossTop.label} ${lossTop.value}`
+  const expDetail = [
+    expTop,
+    negTop === undefined ? '' : `冲减 ${negTop.label} ${negTop.value}`,
+  ].filter((s) => s !== '').join('；')
   return [
-    `结论：本期销售额 ${k('销售额')?.current ?? '-'}，订单 ${k('订单数')?.current ?? '-'}，客单价 ${k('客单价')?.current ?? '-'}；会员销售占比 ${k('会员销售占比')?.current ?? '-'}。`,
-    `异常：最低销售日 ${minText}；${withDetail(`报损 ${k('报损金额')?.current ?? '-'}`, lossDetail)}；${withDetail(`费用 ${k('费用合计（净费用）')?.current ?? k('费用合计')?.current ?? '-'}`, expTop)}。`,
+    `结论：${branchLabel}本期销售额 ${k('销售额')?.current ?? '-'}，订单 ${k('订单数')?.current ?? '-'}，客单价 ${k('客单价')?.current ?? '-'}；会员销售占比 ${k('会员销售占比')?.current ?? '-'}。`,
+    `异常：最低销售日 ${minText}；${withDetail(`报损 ${k('报损金额')?.current ?? '-'}`, lossDetail)}；${withDetail(`费用 ${k('费用合计（净费用）')?.current ?? k('费用合计')?.current ?? '-'}`, expDetail)}。`,
     '行动：① 核对最低销售日是否采集缺口/闭店；② 复盘报损最大原因明细；③ 复盘费用最大两项的投放产出。',
-    `数据截至 ${f.dataAsOf ?? '新鲜度未知'}。`,
+    asOfLine,
   ].join('\n')
 }
 

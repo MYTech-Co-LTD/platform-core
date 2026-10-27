@@ -33,7 +33,7 @@ const PREV = { from: '2026-09-12', to: '2026-09-30' }
 type Body = { args?: Record<string, unknown>; orderBy?: unknown }
 
 /** 覆盖探测 = 带 orderBy 的请求；其余是合计（本期/对比期）。 */
-function mockApi(opts: { from?: string | null; to?: string | null; cur?: number; prev?: number }) {
+function mockApi(opts: { from?: string | null; to?: string | null; cur?: number; prev?: number | null }) {
   m.mockImplementation(async (_path, _method, body) => {
     const b = (body ?? {}) as Body
     if (b.orderBy !== undefined) {
@@ -47,7 +47,7 @@ function mockApi(opts: { from?: string | null; to?: string | null; cur?: number;
     }
     const args = b.args ?? {}
     const isPrev = args.bizday !== undefined && (args.bizday as { from?: string }).from === PREV.from
-    return { total: isPrev ? (opts.prev ?? 80) : (opts.cur ?? 100) }
+    return { total: isPrev ? (opts.prev === undefined ? 80 : opts.prev) : (opts.cur ?? 100) }
   })
 }
 
@@ -62,6 +62,9 @@ describe('KpiCard 对比覆盖', () => {
     await waitFor(() => expect(screen.getByTestId('kpi-delta')).toHaveTextContent('-'))
     // 本期数值照常
     expect(screen.getByTestId('kpi-value')).toHaveTextContent('100')
+    // `-` 带原因（覆盖不足 + 数据起点），不让用户以为坏了
+    expect(screen.getByTestId('kpi-delta')).toHaveAttribute('title', expect.stringContaining('覆盖不足'))
+    expect(screen.getByTestId('kpi-delta')).toHaveAttribute('title', expect.stringContaining('2026-09-23'))
 
     const prevCalls = m.mock.calls.filter(([, , body]) =>
       ((body ?? {}) as Body).args?.bizday !== undefined
@@ -71,11 +74,21 @@ describe('KpiCard 对比覆盖', () => {
     expect(prevCalls).toHaveLength(0)
   })
 
-  it('整段覆盖 ⇒ 正常出环比', async () => {
+  it('整段覆盖 ⇒ 正常出环比（无原因提示）', async () => {
     mockApi({ from: '2026-01-01', to: '2026-10-26' })
     render(<KpiCard panel={panelOf()} args={ARGS} compareRange={PREV} />)
 
     await waitFor(() => expect(screen.getByTestId('kpi-delta')).toHaveTextContent('+25.0%'))
+    expect(screen.getByTestId('kpi-delta')).not.toHaveAttribute('title')
+  })
+
+  it('覆盖完整但对比期无数 ⇒ `-` 说明「对比期无数据或基数无定义」', async () => {
+    mockApi({ from: '2026-01-01', to: '2026-10-26', prev: null })
+    render(<KpiCard panel={panelOf()} args={ARGS} compareRange={PREV} />)
+
+    await waitFor(() => expect(screen.getByTestId('kpi-delta')).toHaveTextContent('-'))
+    expect(screen.getByTestId('kpi-delta'))
+      .toHaveAttribute('title', '对比期无数据或基数无定义')
   })
 
   it('对比期终点晚于水位 ⇒ 不出环比（尾段没物化完）', async () => {
@@ -90,5 +103,6 @@ describe('KpiCard 对比覆盖', () => {
     render(<KpiCard panel={panelOf()} args={ARGS} compareRange={PREV} />)
 
     await waitFor(() => expect(screen.getByTestId('kpi-delta')).toHaveTextContent('-'))
+    expect(screen.getByTestId('kpi-delta')).toHaveAttribute('title', '对比期数据覆盖未知，暂不展示环比')
   })
 })

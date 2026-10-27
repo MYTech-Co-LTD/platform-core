@@ -33,6 +33,8 @@ const facts: FactBundle = {
   focus: 'overview',
   period: { from: '2026-10-01', to: '2026-10-19', label: '2026-10-01 ~ 2026-10-19' },
   branchNum: '92',
+  branchName: '熊喵曲靖沾益2店',
+  hasData: true,
   dataAsOf: '2026-10-25 06:00:00 +08:00',
   kpis: [
     { panel: '销售额', metricId: 'n:sales', format: 'currency', current: '51,273.89', previous: '48,000.00', delta: '6.82%' },
@@ -302,16 +304,19 @@ describe('generateNarrative', () => {
 })
 
 describe('templateOf', () => {
-  it('只用 facts 的格式化值；缺失写 -', () => {
+  it('只用 facts 的格式化值；缺失写 -；带当前门店（不是 reportTitle）', () => {
     const bare: FactBundle = {
       ...facts,
       kpis: [],
       breakdowns: [],
       daily: { min: null, max: null },
       dataAsOf: null,
+      // 其余事实（日极值/拆解）都空，但「有数据」这一位由事实包给；本用例只判模板形态
+      hasData: true,
     }
     const text = templateOf(bare)
     expect(text).toContain('销售额 -')
+    expect(text).toContain('门店 92（熊喵曲靖沾益2店）')
     expect(text).toContain('数据截至 新鲜度未知。')
   })
 
@@ -322,10 +327,44 @@ describe('templateOf', () => {
       breakdowns: [],
       daily: { min: null, max: null },
       dataAsOf: null,
+      hasData: true,
     }
     const text = templateOf(bare)
     expect(text).not.toContain('（）')
     expect(text).not.toContain('（- -）')
     expect(text).not.toContain('（-）')
+  })
+
+  it('hasData=false ⇒ 空态：只写无数据，不输出行动建议', () => {
+    const empty: FactBundle = {
+      ...facts,
+      kpis: [],
+      breakdowns: [],
+      daily: { min: null, max: null },
+      hasData: false,
+    }
+    const text = templateOf(empty)
+    expect(text).toContain('无有效数据')
+    expect(text).toContain('门店 92')
+    expect(text).not.toContain('行动：')
+  })
+
+  it('费用有负数明细 ⇒ 模板写主要冲减项（不把正向大项相加当合计）', () => {
+    const withNeg: FactBundle = {
+      ...facts,
+      breakdowns: [
+        ...facts.breakdowns.filter((b) => !b.panel.includes('费用')),
+        {
+          panel: '费用构成', dimension: 'item',
+          rows: [
+            { label: '抖音直播补贴', value: '1,254.60' },
+            { label: '线下销售补贴-运营部', value: '1,136.00' },
+            { label: '整车运费', value: '-410.00' },
+          ],
+        },
+      ],
+    }
+    const text = templateOf(withNeg)
+    expect(text).toContain('冲减 整车运费 -410.00')
   })
 })

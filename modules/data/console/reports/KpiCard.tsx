@@ -65,11 +65,14 @@ export function KpiCard({
   // undefined = 还没回来（渲染 …）；null = 已知没有数（渲染 -）。两者不可混：缺点面要可辨。
   const [current, setCurrent] = useState<number | null | undefined>(undefined)
   const [previous, setPrevious] = useState<number | null | undefined>(undefined)
+  // `-` 的原因（#1085）：覆盖不足 / 覆盖未知 / 对比期无数据，别让用户以为坏了。
+  const [compareNote, setCompareNote] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
     setCurrent(undefined)
     setPrevious(undefined)
+    setCompareNote(null)
     async function load() {
       try {
         const cur = await valueOf(panel, args)
@@ -84,13 +87,25 @@ export function KpiCard({
               : coverageOf(panel.denominatorMetricId, args),
           ])
           if (!alive) return
-          const covered = comparisonCovered(compareRange, cov)
-            && (panel.denominatorMetricId === undefined || comparisonCovered(compareRange, denCov))
-          if (covered) {
+          const numCovered = comparisonCovered(compareRange, cov)
+          const denCovered = panel.denominatorMetricId === undefined
+            || comparisonCovered(compareRange, denCov)
+          if (numCovered && denCovered) {
             const prev = await valueOf(panel, { ...args, bizday: compareRange })
-            if (alive) setPrevious(prev)
+            if (!alive) return
+            setPrevious(prev)
+            setCompareNote(prev === null ? '对比期无数据或基数无定义' : null)
           } else {
             setPrevious(null)
+            const unknown = cov === null || (panel.denominatorMetricId !== undefined && denCov === null)
+            const from = !numCovered ? cov?.from : denCov?.from
+            setCompareNote(
+              unknown
+                ? '对比期数据覆盖未知，暂不展示环比'
+                : from === undefined
+                  ? '对比期数据覆盖不足，暂不展示环比'
+                  : `对比期数据覆盖不足（数据自 ${from} 起）`,
+            )
           }
         }
       } catch {
@@ -122,7 +137,12 @@ export function KpiCard({
         {current === undefined ? '…' : formatValue(current, panel.format)}
       </Typography.Title>
       {compareRange !== null && (
-        <Typography.Text data-testid="kpi-delta" type={tone} style={{ fontSize: 12 }}>
+        <Typography.Text
+          data-testid="kpi-delta"
+          type={tone}
+          style={{ fontSize: 12 }}
+          title={compareNote ?? undefined}
+        >
           {previous === undefined ? '…' : delta}
         </Typography.Text>
       )}

@@ -72,6 +72,13 @@ export interface FactBundle {
   focus: AiTextPanel['focus']
   period: { from: string; to: string; label: string }
   branchNum: string | null
+  /**
+   * 当前门店名（#1085）：从 `/query` 结果的 `branch_name` 维度列捕获。
+   * **不能用 `reportTitle` 代替**——切门店后报表登记标题仍是创建时那家店。
+   */
+  branchName: string | null
+  /** KPI / 拆解 / 日极值是否至少有一个有效值（全无 ⇒ 空态，不编行动建议）。 */
+  hasData: boolean
   /** 各查询 `data_as_of` 的**最早**值（保守）；全缺 ⇒ null（文本写「新鲜度未知」）。 */
   dataAsOf: string | null
   kpis: FactKpi[]
@@ -98,6 +105,26 @@ const MAX_BREAKDOWN_ROWS = 20
 /** 事实包里的数值：格式化结果去掉货币符号（spec §4.3 示例：currency 面板也是 `51,273.89`）。 */
 export function factValue(v: number | null, format: KpiPanel['format']): string {
   return formatValue(v, format).replace(/^¥/, '')
+}
+
+/**
+ * 从 `/query` 回包捕获当前门店名（#1085）。明细形态的查询会由 dimension-labels 追加
+ * `branch_name` / `branch_num` 列；只认与请求的 `branchNum` 一致的那一行（多行时不会串店）。
+ * 取不到（聚合形态 / 无数据）⇒ null，调用方回落到 branchNum。
+ */
+export function branchNameOf(
+  out: { columns: readonly string[]; rows: readonly unknown[][] },
+  branchNum?: string,
+): string | null {
+  const nameIdx = out.columns.indexOf('branch_name')
+  if (nameIdx < 0) return null
+  const numIdx = out.columns.indexOf('branch_num')
+  for (const row of out.rows) {
+    if (branchNum !== undefined && numIdx >= 0 && String(row[numIdx]) !== branchNum) continue
+    const name = row[nameIdx]
+    if (typeof name === 'string' && name.trim() !== '') return name.trim()
+  }
+  return null
 }
 
 /**
@@ -190,6 +217,13 @@ async function readTotal(
   }
 }
 
+/** 覆盖探测结果：覆盖区间 + 顺带捕获的门店名（#1085）。 */
+interface CoverageProbe {
+  coverage: CoverageInfo | null
+  /** 同一次明细查询顺带捕获的门店名（#1085）；取不到 ⇒ null。 */
+  branchName: string | null
+}
+
 /**
  * 对比的数据覆盖度（issue #1078）：走 `/query` 的**明细形态** + `bizday asc` + LIMIT 1，
  * 第一行即最早有数日；水位取回包的 `watermark`（数据完整到哪天）。
@@ -199,12 +233,14 @@ async function readTotal(
  */
 async function coverageOf(
   deps: FactsDeps, metricId: string, args: Record<string, unknown>,
-): Promise<CoverageInfo | null> {
+): Promise<CoverageProbe> {
+  const probeArgs = coverageArgsOf(args)
   const out = await runQuery(
-    queryDepsOf(deps), deps.org, deps.requester, metricId, coverageArgsOf(args), coverageSlicing(),
+    queryDepsOf(deps), deps.org, deps.requester, metricId, probeArgs, coverageSlicing(),
   )
-  if (out.status !== 'ok') return null
-  return coverageOfQueryResult(out)
+  if (out.status !== 'ok') return { coverage: null, branchName: null }
+  const branch = typeof probeArgs.branch_num === 'string' ? probeArgs.branch_num : undefined
+  return { coverage: coverageOfQueryResult(out), branchName: branchNameOf(out, branch) }
 }
 
 /**
@@ -256,8 +292,8 @@ export async function buildFacts(
 
   // 同一 (metricId, args) 的覆盖探测在本事实包内只查一次：8 张 KPI 会复用同一批指标
   // （销售额既是「销售额」也是客单价/会员占比的分母）。
-  const coverageCache = new Map<string, Promise<CoverageInfo | null>>()
-  const coverageFor = (metricId: string, args: Record<string, unknown>): Promise<CoverageInfo | null> => {
+  const coverageCache = new Map<string, Promise<CoverageProbe>>()
+  const coverageFor = (metricId: string, args: Record<string, unknown>): Promise<CoverageProbe> => {
     const key = `${metricId}\u0000${canonicalJson(coverageArgsOf(args))}`
     let p = coverageCache.get(key)
     if (p === undefined) {
@@ -265,6 +301,13 @@ export async function buildFacts(
       coverageCache.set(key, p)
     }
     return p
+  }
+  // 当前门店名：只从查询回包的维度列里取；同一个事实包内捕获一次即可。
+  // **只在本次观看明确了门店（branchNum）时捕获**——多店视图取第一行会张冠李戴。
+  let branchName: string | null = null
+  const captureBranch = (name: string | null): void => {
+    if (branchNum === undefined) return
+    if (branchName === null && name !== null) branchName = name
   }
 
   for (const p of dataPanels) {
@@ -288,8 +331,10 @@ export async function buildFacts(
         const denCov = p.denominatorMetricId === undefined
           ? null
           : await coverageFor(p.denominatorMetricId, q.args)
-        const covered = comparisonCovered(prevRange, numCov)
-          && (p.denominatorMetricId === undefined || comparisonCovered(prevRange, denCov))
+        captureBranch(numCov.branchName)
+        captureBranch(denCov?.branchName ?? null)
+        const covered = comparisonCovered(prevRange, numCov.coverage)
+          && (p.denominatorMetricId === undefined || comparisonCovered(prevRange, denCov?.coverage ?? null))
         if (covered) prev = await readKpiValue(deps, p, { ...q.args, bizday: prevRange })
       }
       if (prev !== null) asOfList.push(...prev.asOf)
@@ -311,6 +356,7 @@ export async function buildFacts(
       queryDepsOf(deps), deps.org, deps.requester, p.metricId, q.args, q.slicing,
     )
     if (out.status !== 'ok') { missing.push(p.title); continue }
+    captureBranch(branchNameOf(out, branchNum))
     if (typeof out.data_as_of === 'string') asOfList.push(out.data_as_of)
 
     if (p.chart === 'line') {
@@ -374,12 +420,26 @@ export async function buildFacts(
   for (const b of breakdowns) for (const r of b.rows) if (r.value !== '-') addNumber(r.value)
   for (const d of [daily.min, daily.max]) if (d !== null) addNumber(d.value)
 
+  // 「有没有数据」是事实，不是推断。注意**全 0 的合成序列不算数据**：无业绩门店的
+  // 「连续无业绩天数」仍会返回逐日 0 行（实测店 91 有 31 行 0）；只看「有行」会把空店
+  // 判成有数据。判据：KPI 本期值 / 日极值 / 非零拆解行，任一存在即有数据。
+  const nonZero = (s: string): boolean => {
+    const n = Number(s.replaceAll(',', ''))
+    return Number.isFinite(n) && n !== 0
+  }
+  const hasData =
+    kpis.some((k) => k.current !== '-') ||
+    breakdowns.some((b) => b.rows.some((r) => nonZero(r.value))) ||
+    daily.min !== null || daily.max !== null
+
   const facts: Omit<FactBundle, 'factsHash'> = {
     reportTitle: deps.reportTitle,
     specKey: deps.specKey,
     focus: ai.focus,
     period: { from: range.from, to: range.to, label: `${range.from} ~ ${range.to}` },
     branchNum: branchNum ?? null,
+    branchName,
+    hasData,
     dataAsOf: earliestDataAsOf(asOfList),
     kpis,
     breakdowns,
