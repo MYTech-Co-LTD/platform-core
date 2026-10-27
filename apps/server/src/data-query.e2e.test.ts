@@ -200,6 +200,9 @@ beforeAll(async () => {
   //    ⚠️ 顺序是实测订正（brief 原稿把 seedDemo/upsertMetric 放在 buildApp 之前——全新空库上
   //    必炸 `relation "platform.tenant" does not exist`）：platform schema 迁移、seedDemo、
   //    各模块迁移（含 data.metrics 建表）**全部在 buildApp 内**先跑完，夹具才能往上挂。
+  //    订阅源显式钉旧表：本文件验的是问数三通道，与订阅源正交；mock 不实现 get-subscriptions。
+  //    casdoor 默认路径由 smoke 覆盖。
+  process.env.PLATFORM_SUBSCRIPTION_SOURCE = 'platform'
   app = (await buildApp({ config: configWithCasdoor(mock.origin) })).app
 
   // ④ tenantId/org 从库里查（platform.tenant.id 是自增，非空库上不是 1；
@@ -229,6 +232,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (!dbUrl) return
+  delete process.env.PLATFORM_SUBSCRIPTION_SOURCE
   await mock.stop()
   // 文件级关池守卫（app.test.ts / demo-tenant-isolation.test.ts 同款）：
   // 断言「没人私自 end 过」再关——这条断言本身就是防"某个 describe 提前关池"的探针。

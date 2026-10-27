@@ -100,6 +100,10 @@ describePg('存储注入的端到端面（M3c 步 4：注入真的驱动预签�
     vi.stubEnv('AFTERSALES_ZOS_BUCKET', PLATFORM_CFG.bucket)
     vi.stubEnv('AFTERSALES_ZOS_ACCESS_KEY', PLATFORM_CFG.accessKeyId)
     vi.stubEnv('AFTERSALES_ZOS_SECRET', PLATFORM_CFG.secretAccessKey)
+    // 本文件验的是存储注入，与订阅源正交。默认订阅源已是 casdoor（2026-10-27），而这里的
+    // mock 不实现 get-subscriptions ⇒ 显式钉旧表源，保住「无行 = 启用」的夹具前提。
+    // casdoor 默认路径由 smoke 覆盖。
+    vi.stubEnv('PLATFORM_SUBSCRIPTION_SOURCE', 'platform')
 
     await mock.start()
     const config: AppConfig = {
