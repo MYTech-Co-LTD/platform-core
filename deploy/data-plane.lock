@@ -1,4 +1,4 @@
-sha256-of-rest 997634ab5b74c4e9714551dca665fb564d3e18c7adc2882b075561c9c30fca63
+sha256-of-rest b0e8c83ec686e8082c5e7045482470de686ee902d03b2fbe9672602429a0252b
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -178,7 +178,7 @@ f0110d29f00b44d74da6038f1a2badf7e16a6b60a78e11b80c18565714b3ac72 dbt/tests/lemen
 36b0c7adb27506ef250a15edf0b902b9e7b1c670017432cc69ea5ff3bceba8ff dbt/tests/lemeng/audit_lemeng__transfer__negative_order_count.sql ${REPO}/dbt/tests/lemeng/audit_lemeng__transfer__negative_order_count.sql 0644
 1fb86a5c66b77cb5fed286d3a8b0cb65451710f585161d0376c5a3f3bcced0e7 dbt/tests/lemeng/audit_lemeng__transfer__zero_cost_exposure_amount.sql ${REPO}/dbt/tests/lemeng/audit_lemeng__transfer__zero_cost_exposure_amount.sql 0644
 07c69dd1c6fa9180254339e2bc3fb22823f6d3200aeadacff885bddaad5e3678 dbt/tests/lemeng/warn_region_unregistered.sql ${REPO}/dbt/tests/lemeng/warn_region_unregistered.sql 0644
-8c0d76614d3f6c3ed647a31caf9930e63ed8351ad130cb3727b17f47845421f0 deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
+22f34828cddee400045c07572fa47783b0b3d2bb729bd25891849904597f78a5 deploy/data-compose.yml ${REPO}/deploy/data-compose.yml 0644
 a3fc0976e30b18c2e4d4358128e02e02388668007eeff5fa0f4dc6db48be47c0 deploy/dbt/Dockerfile ${REPO}/deploy/dbt/Dockerfile 0644
 8679ed09c1ac5c65194c59fb2044e9edb2b7e5266ce08af4e08bd90bd4c70f6d deploy/duckle/Dockerfile ${REPO}/deploy/duckle/Dockerfile 0644
 0c3622c27da2a3a990d2ba9729a91ce7c2058d4c143e957afbf5425aa3ea011d deploy/duckle/console/DELIVERY.md ${REPO}/deploy/duckle/console/DELIVERY.md 0644
@@ -251,7 +251,7 @@ f3d418bca55705c7b1e68a269ee21466de165149dac41f7622d757368ecb18ec scripts/lemeng/
 bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/backfill-retail-order-line.sh /opt/lemeng-backfill.sh 0755
 01030dcce0bee5c3c50ed54c0be7b9fa302da3de50be65cf137e03881fd453dc scripts/lemeng/delete-supplanted-hour-partitions.py ${REPO}/scripts/lemeng/delete-supplanted-hour-partitions.py 0644
 f030ebf00606c0e64157c69bd60aaa74ee932f647165d3f8ec8f419982e63344 scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755
-ded2dffbe07a66f46e47269f3bf2ad1eb8bc6020741ed9ea79ae08cbbe328e29 scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
+2cb0ba5430ec83b6b812178d7aa9df1c62d379f7a263bdc09ed09d4b2465c32a scripts/lemeng/materialize.sh /opt/lemeng-materialize.sh 0755
 98074d99903bd7092dc8e8179ebec4a968e123e72884502a2a2664e08607eeb9 scripts/lemeng/oo-config-audit.sh /opt/lemeng-oo-config-audit.sh 0755
 6f7c9215e44e145c08b53a1b48d078a6cd73aee92af64d3b903a09c5deb94447 scripts/lemeng/oo-notify-bridge.sh /opt/lemeng-oo-notify-bridge.sh 0755
 bc36151a11daaf0d74da820e02ecda1c5a147f246e8b02b735420e02e2ddeed7 scripts/lemeng/oo-watchdog.sh /opt/lemeng-oo-watchdog.sh 0755

@@ -65,8 +65,14 @@ mat_env_args() {
 }
 # dbt 命令：`build`（seed+model+test 一把跑，按 DAG 依赖序）。**选择器由调用方按域追加**
 # （`--select "$(mat_dbt_select <域>)"`），所以本函数只给固定前缀。
+# ⚠️ `--threads 1`（2026-10-28，issue #1157）：**并发连接数直接决定 pg_duckdb 的内存峰值**
+#   （每连接一个 DuckDB 实例，`duckdb.memory_limit=1536MB`/连接）。实测：默认 2 线程物化期间
+#   postmaster 反复 `terminating any other active server processes; reinitializing`，该轮测试大面积
+#   `Database Error`（07:27 那轮 PASS=12 ERROR=41），而空闲期零重启 ⇒ 与 dbt test 阶段严格同步。
+#   串行化把峰值压到单连接；代价是物化时长约 ×1.5~2。**本函数体保持单行 printf**：
+#   `materialize.test.sh` 用「剥首行与闭括号行、取载荷首词」的方式抽取命令，插注释会打挂该断言。
 mat_dbt_args() {
-  printf '%s ' build --profiles-dir /usr/app
+  printf '%s ' build --profiles-dir /usr/app --threads 1
 }
 # **按域派生**的选择器（不是手抄名单）：三段都由「域身份 + 目录树」得出 ——
 #   `path:models/<域>`           本域的模型（其 schema tests 随之间接选中）
