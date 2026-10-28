@@ -223,6 +223,9 @@ const whoamiNode = (properties) => ({
 /** @param {string} id @param {string} condition @param {string} message */
 const die = (id, condition, message) => node(id, 'ctl.die', { condition, message })
 
+/** 批节点 id 清单（`p1..pN`）。**必须显式标注**：日常模式的循环用 `pIds.length` 推 id，
+ *  不标注时 TS 解析 `pIds` 类型会绕回自身 → TS7022（CI `typecheck:scripts` 实测红）。 */
+/** @type {string[]} */
 const pIds = []
 /** @type {unknown[]} */
 const pNodes = []
