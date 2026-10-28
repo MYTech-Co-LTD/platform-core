@@ -1,4 +1,4 @@
-# 通知基础设施的三个运维 job（健康检查 / 保留期清理 / 内置 seed）
+# 通知基础设施的四个运维 job（健康检查 / 保留期清理 / 内置 seed / 可送达性体检）
 
 > 正典：`docs/architecture.md` §2.6；设计 `docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md` §12。
 > 二者都是**仓内脚本 + openship job**（零常驻），命令形如 `docker exec <server 容器> sh -lc '…'`
@@ -13,7 +13,7 @@
 | `notify-health（通知投递健康检查）` | `custom:2H4wFWXzMvzbt2UU` | `*/5 * * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-health.mjs'` |
 | `notify-retention（通知保留期清理）` | `custom:OwCrOG0dkixdkxTL` | `23 3 * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-retention.mjs'` |
 | `notify-seed-builtin（内置模板/通道/默认规则幂等 seed）` | `custom:NWK_D7nKpsC7hdhe` | `13 * * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-seed-builtin.mjs'` |
-| `notify-preflight（全量规则可送达性体检）` | 待建（D4，建议 `43 3 * * *`） | `43 3 * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-preflight.mjs'` |
+| `notify-preflight（全量规则可送达性体检）` | `custom:D39a1KLz9mMRuxoP` | `43 3 * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-preflight.mjs'` |
 
 - 两者都 `serverId=23a1091e`（mytech-weknora），`notifyConfig.states=['failed']`，
   通道 `nch_XBUs425hd_KsA_lt`（与 `notify-reconcile` 同一通道）。
@@ -90,3 +90,25 @@ DATABASE_URL=<平台库> pnpm exec tsx scripts/notify-preflight.mjs
 - **只扫 `platform.tenant` 里登记的租户**（2026-10-28 实测）：不在租户表里的 org 的规则不会被体检。
   ⇒ 新建租户后必须先登记进 `platform.tenant`，否则它的通知规则是体检盲区。
 - `field` 类规则被**跳过并单独计数**（`skippedFieldRules`）——它们必须真实 payload，sample 无意义。
+
+## 4. `notify-preflight` 的首跑结果（2026-10-28 生产实测）
+
+手动触发 → **exit 1**，输出：
+
+```json
+{"tenants":1,"checked":2,"skippedFieldRules":0,"blockedCount":1,
+ "scopeHoldersUnavailable":false,
+ "blocked":[{"org":"mytech",
+   "ruleId":"derived:aftersales:aftersales.employee_approval.pending:*",
+   "blocked":"no_recipient"}]}
+```
+
+**这条告警是真实且有益的**：`aftersales:manage` 在生产**无人持有**，derived 规则解析不出收件人。
+目前链路仍能通，是因为有一条 **manual literal 规则**（`ZhangDuo`）覆盖了它——
+manual 优先于 derived，所以实际投递不受影响。
+
+⇒ **它揭穿的是「权限一直没配，只是被兜底掩盖了」**。两个选择：
+1. 给真实的售后管理员授予 `aftersales:manage`（治本，之后 derived 规则自动生效、可删兜底）；
+2. 保留 literal 兜底并**接受 preflight 每天红**（不推荐：红会失去信号价值）。
+
+⚠️ `scopeHoldersUnavailable:false` 说明 Casdoor 解析器**在工作**——这是「真没人」而非「查不了」。
