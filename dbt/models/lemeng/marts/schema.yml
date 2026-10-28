@@ -409,6 +409,21 @@ models:
         description: 负金额单数（单头口径）。**与 lemeng:transfer:negative_order_count 同源**。
         tests:
           - not_null
+      # ── 成本覆盖率的两端（2026-10-28，#816；正典 §1.4.2「哨兵值不可反解」）────────────
+      - name: out_money_amount
+        description: >-
+          本店日出库金额合计（成本覆盖率的**分母**；与 zero_cost_amount 同域、同 coalesce 守卫）。
+          恒等式 `costed_amount + zero_cost_amount + missing_cost_amount = out_money_amount`
+          由 audit_lemeng__transfer__cost_coverage_pct 钉住。
+        tests:
+          - not_null
+      - name: costed_amount
+        description: >-
+          有成本金额（`subtotal` 非空且非 0）——成本覆盖率的**分子**。
+          **为什么需要它**：源端 `subtotal = 0` 表示「成本未知」，已知零/未知两态不可分
+          ⇒ 只能度量覆盖度，不能逐行判定（#816 定案）。
+        tests:
+          - not_null
       - name: negative_amount
         description: 负金额合计（保留负号；不按绝对值变正收入）。
         tests:
@@ -724,3 +739,35 @@ models:
         description: 影子列 = `return_quantity` 的 measure 编译版（`return_quantity@flat`，同上形态，退货谓词含 REPAID）。**P3.3 期不许被消费**；单侧缺行由最终 SELECT 归零。
         tests: [{not_null: {}}]
 
+
+  - name: fct_transfer_zero_cost_item
+    description: >-
+      **零成本出库的可复核清单**（2026-10-28，#816 定案）。粒度
+      `(system_book, bizday, item_num)`：把 `lemeng:transfer:zero_cost_exposure_amount` 的金额
+      摊到商品×日，供业务按商品定位**成本率主数据缺口**（采购/门店据此维护成本率）。
+      口径与 `fct_transfer_line_quality` 的 transfer 域逐字同款（state=3、out_branch_num=99、
+      排除店间直调），零成本判据同 `zero_cost_amount`。
+      ⚠️ **本表不做「未核 vs 真零」判定**——源端两态不可分（正典 §1.4.2）。只给原始计数
+      （该商品全期带成本天数 / 零成本天数）与金额，判定靠业务问源系统。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（宏注入）。
+        tests: [{not_null: {}}]
+      - name: bizday
+        description: 业务日。粒度键。
+        tests: [{not_null: {}}]
+      - name: item_num
+        description: 商品号。粒度键。
+        tests: [{not_null: {}}]
+      - name: zero_cost_amount
+        description: 该商品该日的零成本金额（口径同 fct_transfer_line_quality.zero_cost_amount）。
+        tests: [{not_null: {}}]
+      - name: item_days_with_cost
+        description: 该商品在本域**全期**有成本的天数（0 = 从未带成本，供业务判断是否为物料/礼盒；**不是结论**）。
+        tests: [{not_null: {}}]
+      - name: item_days_zero_cost
+        description: 该商品在本域全期零成本的天数（跨多日持续 ⇒ 更像主数据缺口；**不是结论**）。
+        tests: [{not_null: {}}]

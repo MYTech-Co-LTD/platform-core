@@ -14,6 +14,10 @@
 --     （missing_cost_amount——客户文档「null 不当 0」，两类暴露**互斥、不相加**）。
 --     ⚠️ 两面对**必须互斥**：`subtotal = 0`（已知为 0）与 `subtotal is null`（未知）不相交。
 --     2026-10-17 订正：原写法 `coalesce(b.subtotal, 0) = 0` 把 null 并进零成本面 ⇒ 两面重叠。
+--     🔴 **2026-10-28 实证（#816）**：本源**从不送 null**（全湖 `subtotal IS NULL` = 0 行，15,115 行域内实测）
+--     ⇒ `missing_cost_amount` **恒 0**。**这不等于「没有未核金额」**：源把「成本未知」编码成 `0`
+--     （售价金额核算法下差价率未维护），两态不可分。故 04-06 的零成本面**不能**当「全部未核金额」读，
+--     只能当「成本缺失暴露」读；覆盖度用 `costed_amount / out_money_amount` 度量（见下方两列）。
 --     对账互斥断言见 tests/audit_lemeng__transfer__zero_cost_exposure_amount.sql。
 --   · negative_order_count / negative_amount：04-07「单头金额<0 的单数与合计」；负数可能是退补/
 --     冲红/调整，「不按绝对值变正收入，也不一律称退货」（客户文档原话）。
@@ -95,6 +99,15 @@ select
     )                                                                 as zero_cost_rows,
     sum(case when b.subtotal is null and coalesce(b.out_money, 0) <> 0
              then b.out_money else 0 end)::numeric(20,2)              as missing_cost_amount,
+    -- ── 成本覆盖率的两端（2026-10-28，#816 定案；口径正典 §1.4.2「哨兵值不可反解」）──
+    -- 源端用 `subtotal = 0` 表示「成本未知」（售价金额核算法下差价率未维护），两态不可分 ⇒
+    -- 不逐行判定，改度量**覆盖度**：costed_amount / out_money_amount。
+    -- 恒等式（由 audit_lemeng__transfer__cost_coverage_pct 钉住）：
+    --     costed_amount + zero_cost_amount + missing_cost_amount = out_money_amount
+    -- ⇒ 三面互斥且完备；任一面把另一面并进来都会破坏它。
+    sum(coalesce(b.out_money, 0))::numeric(20,2)                      as out_money_amount,
+    sum(case when b.subtotal is not null and b.subtotal <> 0
+             then coalesce(b.out_money, 0) else 0 end)::numeric(20,2) as costed_amount,
     count(distinct case when p.order_money < 0 then b.order_no end)   as negative_order_count,
     sum(case when p.order_money < 0 then p.order_money else 0 end)::numeric(20,2) as negative_amount,
     -- 影子列 = zero_cost_amount 的 measure 编译版（P3.3 期不许被消费）。本表 final SELECT 自带
