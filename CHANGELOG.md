@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.213.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.213.0...v0.213.1) - 2026-10-28
+- 【修复】dbt: 对账复算禁用裸 ::numeric（pg_duckdb 推成 DOUBLE 致 1 分假红，修 #761） ([#1154](https://github.com/MYTech-Co-LTD/platform-core/pull/1154), [56a349b](https://github.com/MYTech-Co-LTD/platform-core/commit/56a349b5e0269f1ab712c12c19ad00d0eebbb525))
+
+
 ## [0.213.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.212.0...v0.213.0) - 2026-10-28
 - 【新增】data: 加成本覆盖率与零成本可复核清单 (#816) ([#1148](https://github.com/MYTech-Co-LTD/platform-core/pull/1148), [17fbdd1](https://github.com/MYTech-Co-LTD/platform-core/commit/17fbdd14709c570d2304380aa222d0d0d381f91c))
 
