@@ -49,3 +49,4 @@ duckle/**/secrets.enc
 #    一条模式覆盖两者及将来同前缀的变体（`*` 不跨 `/` ⇒ 只影响 apps/server/ 下这一族）。
 apps/server/.tmp-loader-fixtures*/
 .superpowers/
+scripts/.out/

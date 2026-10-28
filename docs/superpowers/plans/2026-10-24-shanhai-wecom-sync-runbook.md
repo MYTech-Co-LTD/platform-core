@@ -236,11 +236,13 @@ git commit -m "feat(scripts): 山海企微重叠自然人对账脚本（绑定�
 
 ---
 
-## 执行记录（执行时追加）
+## 执行记录（2026-10-26 执行完毕）
 
-- 【Task 1 前置：corpid/secret/白名单 到位日期】
-- 【Task 2 摸底结论：交集 N / ambiguous N / wecomNoPhone N → 对账决策】
-- 【Task 3 彩排：七项验收结果】
-- 【Task 4 生产同步：验收结果 + forbidden 翻转实测结论】
-- 【Task 5 对账：动作数】（条件执行）
-- 【Task 6 WeKnora 更新：diff 摘要】
+- **授权留档（根本法则第 1 条例外）**：Casdoor 机 SSH 作业经本 runbook 审批授权（2026-10-24 spec 定稿 + 用户 2026-10-26 指示「用 casdoor provider 凭证做同步」）。secret 全程 DB 侧/变量内流转，未进终端记录与文件。
+- **Task 1 前置**：用户改道——不用通讯录同步助手 secret，改用 Casdoor 已配 provider `wecom_silent`（corpid ww8252c1eee248867c）的自建应用凭证；企微侧权限已由用户放开，实测能拉全量。⚠️ 修订认知：自建应用权限给够也能拉通讯录（旧认知「必须通讯录同步助手」作废，已写进 WeKnora 订正）；手机号字段仍不可得。
+- **Task 2 摸底**：243 部门 / 403 人（status 1=170 已激活、4=232 未激活、5=1 退出中）、手机号 0。对账判定：目标 org 存量仅 3 户（identity_link 0 行 / employee 0 行），唯一撞名 `ZhangDuo` = 同一人（预期覆盖，mytech 先例），**交集≈0 → Task 5 跳过**。摸底 dump 留存 `scripts/.out/shanhai-wecom-dir.json`（gitignore）。
+- **Task 3 彩排（副本七项全绿）**：T0 备份双份（容器内 -f 落盘 + docker cp；流式重定向会产出脏文件——新坑已沉淀 WeKnora）→ 副本 pg17（版本对齐生产）+ conf 整目录挂载 → syncer 行 INSERT…SELECT 模板 copy（secret 走 provider 子查询）→ `POST /api/run-syncer?id=admin/shanhaiyiguo-wecom-directory` → 用户数 405=3+402 精确命中、243 组、其他 org 零扰动、锚用户原样、权限绑定逐行一致、未激活→isForbidden 映射确认（171 外/234 内）。
+- **Task 4 生产同步**：二次备份 → 生产行（is_read_only=t / is_enabled=f / interval=0）→ run-syncer 72 秒 ok → **验收全绿**：405/243/其他 org 原样/tenantsub 原样/权限 18 条原样/无重复名；**反向零推送实锤：企微通讯录人数 403→403**。回滚三件套在 `/root/casdoor-backup-2/`（3 份 dump）。重跑方式 = 同一条 run-syncer（syncer 保持 disabled 手动）。
+- **Task 5 对账**：按判定跳过，未执行。
+- **Task 6 WeKnora**：已更新原条目（`919ae8e9`，山海复刻章节 + 备份姿势坑 + 自建应用凭证订正），reparse 后新内容可检索。
+- **后续**：山海实例手工更版（console 页面等本同步数据就绪后发布）——待用户触发。
