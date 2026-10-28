@@ -150,6 +150,48 @@ describe('runOnce', () => {
       .toBe(new Date('2026-01-01T00:00:00Z').getTime() + 12_000)
   })
 
+  // ── D1 等价性守门（正常路径仍须一致；零结果语义已由 D2 改变）──────────────
+  it('D1 等价：正常路径 1 人 1 通道 ⇒ 1 条 delivery + matched', async () => {
+    const f = makeDeps()
+    const stats = await runOnce(f.deps)
+    expect(stats).toMatchObject({ deliveries: 1, sent: 0 })
+    expect(f.inserted).toHaveLength(1)
+    expect(f.marks).toEqual([{ status: 'matched' }])
+  })
+
+  // ── D2：零结果是状态，不再静默 ──────────────────────────────────────────────
+  it('D2：零收件人 ⇒ event=no_recipients', async () => {
+    const f = makeDeps({
+      listRules: async () => [rule({ recipientKey: 'managers' })],
+      resolveScopeHolders: async () => [],
+      claimEvents: async () => [event({ payload: { title: 'T', link: 'https://x' } })],
+    })
+    await runOnce(f.deps)
+    expect(f.marks).toEqual([{ status: 'no_recipients' }])
+  })
+
+  it('D2：通道全停用 ⇒ event=no_channel', async () => {
+    const f = makeDeps({ getChannel: async () => ({ provider: 'wecom_chat', enabled: false }) })
+    await runOnce(f.deps)
+    expect(f.marks).toEqual([{ status: 'no_channel' }])
+  })
+
+  it('D2：模板缺失 ⇒ event=invalid', async () => {
+    const f = makeDeps({ getPublishedTemplate: async () => null })
+    await runOnce(f.deps)
+    expect(f.marks).toEqual([{ status: 'invalid' }])
+  })
+
+  it('D2：两条规则一好一坏 ⇒ matched（有投递即算通）', async () => {
+    const f = makeDeps({
+      listRules: async () => [rule({ id: 'ok' }), rule({ id: 'bad', recipientKey: 'managers' })],
+      resolveScopeHolders: async () => [],
+    })
+    await runOnce(f.deps)
+    expect(f.marks).toEqual([{ status: 'matched' }])
+    expect(f.inserted.length).toBeGreaterThan(0)
+  })
+
   it('成功发送 ⇒ sent 回执', async () => {
     const f = makeDeps({ claimDueDeliveries: async () => [dueRow()] })
     expect((await runOnce(f.deps)).sent).toBe(1)

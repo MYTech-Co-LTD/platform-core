@@ -715,6 +715,31 @@ token 只决定「这个账号能调哪些面」，不改变分层。
   `delivery` 365 天，**只删终态**。两个 job 的口径见 `deploy/notify-jobs.md`。
 - **收件箱**：`POST /inbox/read-all` 批量已读（只作用于调用者本人）。
 
+#### 可送达性（D2，2026-10-28 交付）
+
+> 设计：`docs/superpowers/specs/2026-10-28-notify-deliverability-design.md`。
+> 触发案例：`aftersales:manage` 在 mytech 无持有者 ⇒ 事件零投递，而事件标 `matched`、
+> health 全绿——**失败没有被建模成状态，所以不可观测**。
+
+**收件人解析只有一个实现**：`modules/notify/domain/deliverability.ts` 的
+`resolveDeliverability()`。worker 调它；D3/D4 的 HTTP 预检与 MCP `check_rule` 会调同一个函数
+（防止「预检说能发、实际发不出」）。
+
+**`notify.event.status` 完整取值**（多规则聚合：**有产出一条 delivery 即 `matched`**，
+否则取最严重者，严重度 `invalid > no_channel > no_recipients`）：
+
+| 状态 | 含义 |
+|---|---|
+| `new` | 待处理 |
+| `matched` | 至少产出了一条投递（真的要发） |
+| `no_rules` | 无规则命中 |
+| `no_recipients` | 有规则但解析出 0 人 |
+| `no_channel` | 有人但通道全停用/缺失 |
+| `invalid` | 事件声明或模板缺失 |
+
+**判红口径**（`notify-health`）：`eventsNoRecipients > 0` 或 `eventsNoChannel > 0` **直接红**
+——这是**配置错误**，不是流量波动，不给阈值；`eventsInvalid > 5` 才红（模板轮换期会短暂出现）。
+
 #### 实施注记
 
 - 竖切：aftersales 员工审批（`aftersales.employee_approval.pending`）；五条负对照见 spec §13.3。

@@ -80,13 +80,19 @@ describePg('notify storage v2', () => {
        values ($1,$2,'m.a.b','r1','u1','wecom_default','wecom-u1','t1',1,'{}','pending',$3)`,
       [ORG, eventId, at],
     )
+    // ⚠️ claimDueDeliveries 是**全表**领取（无 org 过滤，worker 就该跨租户领）⇒
+    // 别的测试文件留下的到期行也会被领到。这里只断言「本 org 的 past 被领、future 没被领」，
+    // 并把自己的行过滤出来比较（跨文件污染不是本用例的断言对象）。
     await ins('past', '2020-01-01T00:00:00Z')
     await ins('future', '2999-01-01T00:00:00Z')
 
-    const first = await claimDueDeliveries(pool, 10)
-    expect(first.map((d) => d.eventId)).toEqual(['past'])
-    expect(first[0]!.lockedUntil).not.toBeNull()
-    expect(await claimDueDeliveries(pool, 10)).toEqual([])
+    const first = await claimDueDeliveries(pool, 50)
+    const mine = first.filter((d) => d.org === ORG)
+    expect(mine.map((d) => d.eventId)).toEqual(['past'])
+    expect(mine[0]!.lockedUntil).not.toBeNull()
+
+    const second = await claimDueDeliveries(pool, 50)
+    expect(second.filter((d) => d.org === ORG)).toEqual([])
   })
 
   it('getPublishedTemplate 只认 published 指针', async () => {
