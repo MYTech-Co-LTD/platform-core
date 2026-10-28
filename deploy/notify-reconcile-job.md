@@ -20,8 +20,9 @@
 
 - **openship 面板 → Jobs** 新建（口径见 `deploy/openship-adopt.md`：「清理由 openship job 定时执行，
   应用进程不自己跑」）。
-- 执行形态照 `deploy/data-compose.yml` 的 dbt runner 范式：**一次性容器跑 `docker run`，零常驻**。
-- 命令（示意）：在项目容器内跑 `pnpm exec tsx scripts/notify-reconcile.mjs --json`。
+- **生产实际形态（2026-10-28 核对）**：job 命令 = `docker exec openship-platform-core-server sh -lc
+  'pnpm exec tsx scripts/notify-reconcile.mjs --json'`（进 server 容器跑仓内脚本，零常驻）。
+  ⚠️ 本文早期写的「一次性容器跑 `docker run`」是**示意**，生产未采用。
 - **cron 按 UTC 解释**（`deploy/data-plane-deploy-sop.md` §E.7 已实测）：要「每日 08:00 CST」
   须写 UTC `0 0 * * *`；建议**小时级**（见上）。
 
