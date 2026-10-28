@@ -60,6 +60,21 @@ export interface EventCatalogReader {
 /** 渠道地址解析（Casdoor 用户 → 企微 userid 等）；与 worker 共用同一实现。 */
 export interface ChannelAddressResolver {
   resolve(input: { org: string; provider: string; casdoorName: string }): Promise<string | null>
+  /**
+   * 权限码 → 持有者（Casdoor 用户名），直挂 ∪ 角色展开。
+   *
+   * 为什么挂在**地址解析**上：两者都是「把人解析成投递所需的目标」，且都需要宿主级能力
+   * （Casdoor 客户端），模块层（B1）两样都拿不到。
+   *
+   * **未注入 ≠ 没人持有**：缺省时调用方必须当作「查不了」处理（预检要报
+   * `scope_holders_unavailable`），不得当成空集——那会把「配好了但没授权」与
+   * 「宿主没配解析器」混为一谈。
+   */
+  resolveScopeHolders?(
+    org: string,
+    permissionCode: string,
+    decl: NotificationEventDecl,
+  ): Promise<string[]>
 }
 
 /** 模块端口：notify 模块供给、宿主装载期取用的入队实现。 */

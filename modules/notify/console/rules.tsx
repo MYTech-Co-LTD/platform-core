@@ -5,8 +5,16 @@ import {
 } from 'antd'
 import {
   del, get, post, put,
-  type ChannelView, type EventView, type RuleView, type TemplateView,
+  type ChannelView, type EventView, type RuleDeliverability, type RuleView, type TemplateView,
 } from './api'
+
+/** 阻塞原因 → 人话（与 domain/deliverability.ts 的 Blocked 一一对应） */
+export const blockedLabel = (blocked: string): string => {
+  if (blocked === 'no_recipient') return '无可解析收件人'
+  if (blocked === 'no_channel') return '通道全停用'
+  if (blocked === 'template_missing') return '模板未发布'
+  return blocked
+}
 
 export const recipientOptions = (decl?: EventView) =>
   Object.entries(decl?.recipients ?? {}).map(([value, r]) => ({ value, label: r.label ?? value }))
@@ -25,6 +33,7 @@ export default function RulesTab() {
   const [templates, setTemplates] = useState<TemplateView[]>([])
   const [channels, setChannels] = useState<ChannelView[]>([])
   const [loading, setLoading] = useState(false)
+  const [deliv, setDeliv] = useState<Map<string, RuleDeliverability>>(new Map())
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
   const eventKey = Form.useWatch('eventKey', form) as string | undefined
@@ -33,16 +42,20 @@ export default function RulesTab() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [r, ev, t, ch] = await Promise.all([
+      const [r, ev, t, ch, dv] = await Promise.all([
         get<{ rules: RuleView[] }>('/rules'),
         get<{ events: EventView[] }>('/events'),
         get<{ templates: TemplateView[] }>('/templates'),
         get<{ channels: ChannelView[] }>('/channels'),
+        // 可送达性预检（只读）。失败不该拖垮整页 ⇒ 单独 catch 成空表
+        get<{ rules: RuleDeliverability[] }>('/rules/deliverability')
+          .catch(() => ({ rules: [] as RuleDeliverability[] })),
       ])
       setRules(r.rules)
       setEvents(ev.events)
       setTemplates(t.templates)
       setChannels(ch.channels)
+      setDeliv(new Map(dv.rules.map((x) => [x.ruleId, x])))
     } catch (e) {
       message.error(`加载失败：${String(e)}`)
     } finally {
@@ -138,6 +151,16 @@ export default function RulesTab() {
           },
           { title: '模板', dataIndex: 'templateKey' },
           { title: '通道', render: (_, r) => r.channels.join(' / ') },
+          {
+            title: '可解析',
+            render: (_, r) => {
+              const d = deliv.get(r.id)
+              if (!d) return '—'
+              return d.blocked === null
+                ? <Tag color="green">{d.recipientCount} 人</Tag>
+                : <Tag color="red">0 人（{blockedLabel(d.blocked)}）</Tag>
+            },
+          },
           {
             title: '来源',
             dataIndex: 'origin',

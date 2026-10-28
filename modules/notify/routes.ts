@@ -7,13 +7,14 @@ import type { Pool } from 'pg'
 import type { ChannelAddressResolver, EventCatalogReader, Identity } from '@platform/sdk'
 import { validatePayload } from '@platform/sdk'
 import { checkWecomHealth, checkWebhookHealth } from './domain/channel'
+import { resolveDeliverability, type DeliverabilityDeps } from './domain/deliverability'
 import { renderContents } from './domain/render'
 import { validateRule } from './domain/rules'
-import { validateContents } from './domain/template'
+import { samplePayload, validateContents } from './domain/template'
 import { registerNotifyMcpManage } from './mcp'
 import {
   audit, channelConfigured, countRecentTestDeliveries, createTemplateRevision,
-  deleteRule, enqueueEvent, getChannel, getTemplate, insertDelivery, listChannels,
+  deleteRule, enqueueEvent, getChannel, getPublishedTemplate, getTemplate, insertDelivery, listChannels,
   listDeliveries, listEnabledChannelIds, listInbox, listPublishedTemplateKeys, listRules,
   listTemplates, markAllInboxRead, markInboxRead, patchChannel, publishTemplateRevision, retryDelivery,
   setChannelHealth, setRuleEnabled, upsertRule,
@@ -29,7 +30,90 @@ export function createNotifyRouter(deps: {
   const r = new Hono<Vars>()
   const org = (c: { get: (k: 'identity') => unknown }) => (c.get('identity') as Identity).orgId
 
+  /**
+   * 把模块 storage + 注入的 events/addresses 适配成 deliverability 依赖（**唯一一处**）。
+   * worker 有自己的适配（它直连 storage），但解析逻辑是同一个 `resolveDeliverability`。
+   */
+  const ddeps: DeliverabilityDeps = {
+    getEventDecl: async (key) => deps.events?.get(key) ?? null,
+    getPublishedTemplate: async (o, key) => {
+      const t = await getPublishedTemplate(deps.pool, o, key)
+      return t ? { revision: t.revision, contents: t.contents } : null
+    },
+    getChannel: async (o, id) => {
+      const ch = await getChannel(deps.pool, o, id)
+      return ch ? { id, provider: ch.provider, enabled: ch.enabled, config: ch.config } : null
+    },
+    resolveScopeHolders: async (o, key, decl) =>
+      deps.addresses?.resolveScopeHolders?.(o, key, decl) ?? [],
+  }
+
   r.get('/rules', async (c) => c.json({ rules: await listRules(deps.pool, org(c)) }))
+
+  // ── 可送达性预检（只读，D3）：回答「会发给谁 / 为什么发不出去」─────────────
+  // 与投递期共用 `resolveDeliverability`（单一实现）⇒ 不会「预检说能发、实际发不出」。
+  const resolveFor = async (
+    o: string,
+    id: string,
+    mode: 'sample' | 'payload',
+    payload?: Record<string, unknown>,
+  ) => {
+    const rule = (await listRules(deps.pool, o)).find((x) => x.id === id)
+    if (!rule) return { notFound: true as const }
+    const decl = deps.events?.get(rule.eventKey)
+    if (!decl) return { eventMissing: true as const }
+
+    const warnings: string[] = []
+    // 「查不了」≠「没人持有」：解析器未注入时必须显式说出来
+    if (!deps.addresses?.resolveScopeHolders) warnings.push('scope_holders_unavailable')
+    // sample 模式下 field 类的 user 值是占位符，解析不到真实用户
+    if (mode === 'sample') warnings.push('sample_mode_field_recipients_unverified')
+
+    const r2 = await resolveDeliverability(
+      { org: o, rule, payload: payload ?? samplePayload(decl) },
+      ddeps,
+    )
+    return {
+      body: {
+        ruleId: rule.id, eventKey: rule.eventKey, scope: rule.scope, mode,
+        blocked: r2.blocked, recipients: r2.recipients, channels: r2.channels, warnings,
+      },
+    }
+  }
+
+  r.get('/rules/deliverability', async (c) => {
+    const o = org(c)
+    const out: Array<{ ruleId: string; eventKey: string; blocked: string | null; recipientCount: number }> = []
+    for (const rule of await listRules(deps.pool, o)) {
+      const decl = deps.events?.get(rule.eventKey)
+      const r2 = await resolveDeliverability(
+        { org: o, rule, payload: decl ? samplePayload(decl) : {} },
+        ddeps,
+      )
+      out.push({
+        ruleId: rule.id, eventKey: rule.eventKey,
+        blocked: r2.blocked, recipientCount: r2.recipients.length,
+      })
+    }
+    return c.json({ rules: out })
+  })
+
+  r.get('/rules/:id/resolve', async (c) => {
+    const res = await resolveFor(org(c), c.req.param('id'), 'sample')
+    if ('notFound' in res) return c.json({ error: 'NOT_FOUND' }, 404)
+    if ('eventMissing' in res) return c.json({ error: 'EVENT_NOT_DECLARED' }, 400)
+    return c.json(res.body)
+  })
+
+  r.post('/rules/:id/resolve', async (c) => {
+    const body = (await c.req.json().catch(() => null)) as
+      { payload?: Record<string, unknown> } | null
+    if (!body?.payload) return c.json({ error: 'INVALID_BODY' }, 400)
+    const res = await resolveFor(org(c), c.req.param('id'), 'payload', body.payload)
+    if ('notFound' in res) return c.json({ error: 'NOT_FOUND' }, 404)
+    if ('eventMissing' in res) return c.json({ error: 'EVENT_NOT_DECLARED' }, 400)
+    return c.json(res.body)
+  })
 
   r.post('/rules', async (c) => {
     const body = (await c.req.json().catch(() => null)) as {

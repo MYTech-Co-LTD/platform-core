@@ -740,6 +740,21 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 **判红口径**（`notify-health`）：`eventsNoRecipients > 0` 或 `eventsNoChannel > 0` **直接红**
 ——这是**配置错误**，不是流量波动，不给阈值；`eventsInvalid > 5` 才红（模板轮换期会短暂出现）。
 
+**四个预检入口（D3/D4，2026-10-28 交付）** —— 都调用同一个 `resolveDeliverability`
+（这是防「预检说能发、实际发不出」的唯一手段）：
+
+| 入口 | 形态 | 用途 |
+|---|---|---|
+| HTTP 单条 | `GET /rules/:id/resolve?mode=sample` ／ `POST /rules/:id/resolve {payload}` | 查一条规则「会发给谁 / 为什么发不出」 |
+| HTTP 批量 | `GET /rules/deliverability` | console 列表用（避免 N+1） |
+| console | 规则表「可解析」列：`N 人` / `0 人（原因）` | 人肉巡检 |
+| MCP | `check_rule`（**只读**，`readOnlyHint: true`） | agent 建完规则自证 |
+| 定期 job | `scripts/notify-preflight.mjs`（只扫 `platform.tenant` 内租户；`field` 类跳过并计数） | 每日体检，有阻塞即 exit 1 |
+
+⚠️ **`mode=sample` 的射程**：`field` 类收件人的 sample 值是占位符 ⇒ 只能验「字段存在」，
+解析不到真实用户；响应必带 `warnings: sample_mode_field_recipients_unverified`。
+`scope_holders` / `literal` 才是真值。**`scopeHoldersUnavailable: true` ≠ 「没人持有」**。
+
 #### 实施注记
 
 - 竖切：aftersales 员工审批（`aftersales.employee_approval.pending`）；五条负对照见 spec §13.3。

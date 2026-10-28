@@ -267,6 +267,70 @@ describePg('routes v2', () => {
     expect(String(rows[0].health)).toMatch(/^error/)
   })
 
+  // ── D3 可送达性预检（只读）────────────────────────────────────────────────
+  async function createRule(): Promise<string> {
+    const res = await post('/rules', {
+      eventKey: 'm.a.b', recipientKey: 'approver', templateKey: 't1',
+      channels: ['wecom_default'],
+    })
+    expect(res.status).toBe(201)
+    return ((await res.json()) as { id: string }).id
+  }
+
+  it('resolve：sample 模式能解析出 field 收件人；带 sample 局限 warning', async () => {
+    const id = await createRule()
+    const res = await app.request(`/rules/${encodeURIComponent(id)}/resolve`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      mode: string; blocked: string | null
+      recipients: Array<{ name: string; source: string }>; warnings: string[]
+    }
+    expect(body.mode).toBe('sample')
+    expect(body.blocked).toBeNull()
+    expect(body.recipients).toHaveLength(1)
+    expect(body.warnings).toContain('sample_mode_field_recipients_unverified')
+  })
+
+  it('resolve：payload 模式缺字段 ⇒ no_recipient', async () => {
+    const id = await createRule()
+    const res = await app.request(`/rules/${encodeURIComponent(id)}/resolve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ payload: {} }),
+    })
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { blocked: string }).blocked).toBe('no_recipient')
+  })
+
+  it('resolve：未知 id ⇒ 404；缺 payload ⇒ 400', async () => {
+    expect((await app.request('/rules/nope/resolve')).status).toBe(404)
+    expect((await app.request('/rules/x/resolve', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).status).toBe(400)
+  })
+
+  it('批量 deliverability：每条规则给人数（不被 :id 抢先匹配）', async () => {
+    const id = await createRule()
+    const res = await app.request('/rules/deliverability')
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      rules: Array<{ ruleId: string; blocked: string | null; recipientCount: number }>
+    }
+    const mine = body.rules.find((x) => x.ruleId === id)
+    expect(mine).toMatchObject({ blocked: null, recipientCount: 1 })
+  })
+
+  it('预检只读：不产生任何 delivery', async () => {
+    const id = await createRule()
+    const before = (await pool.query(
+      'select count(*)::int n from notify.delivery where org=$1', [ORG])).rows[0].n
+    await app.request(`/rules/${encodeURIComponent(id)}/resolve`)
+    await app.request('/rules/deliverability')
+    const after = (await pool.query(
+      'select count(*)::int n from notify.delivery where org=$1', [ORG])).rows[0].n
+    expect(after).toBe(before)
+  })
+
   it('投递重试：仅 failed/dead 可重试', async () => {
     await pool.query(
       `insert into notify.delivery

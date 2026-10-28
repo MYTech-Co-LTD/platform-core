@@ -128,3 +128,13 @@ export type InboxItem = {
   readAt: string | null
   createdAt: string
 }
+
+export type RuleDeliverability = {
+  ruleId: string
+  eventKey: string
+  blocked: string | null
+  recipientCount: number
+}
+
+export const fetchDeliverability = (): Promise<RuleDeliverability[]> =>
+  apiGet<{ rules: RuleDeliverability[] }>(`${BASE}/rules/deliverability`).then((r) => r.rules)

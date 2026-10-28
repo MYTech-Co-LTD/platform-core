@@ -24,9 +24,9 @@ const addresses: ChannelAddressResolver = {
 }
 
 describe('notify mcp tool face', () => {
-  it('恰 12 个工具，无 publish/channel', () => {
-    expect(NOTIFY_TOOLS).toHaveLength(12)
-    expect(toolDefs()).toHaveLength(12)
+  it('恰 13 个工具，无 publish/channel', () => {
+    expect(NOTIFY_TOOLS).toHaveLength(13)
+    expect(toolDefs()).toHaveLength(13)
     expect(NOTIFY_TOOLS.some((t) => /publish|channel/.test(t.name))).toBe(false)
   })
 })
@@ -54,6 +54,10 @@ describePg('notify mcp handlers', () => {
     await pool.query(
       `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
        values ($1,'t1',1,'{"wecom_chat":{"text":"hi {{u}}"}}','h1','approved','u')`, [ORG])
+    await pool.query(
+      `insert into notify.rule(org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+       values ($1,'r1',true,'m.a.b','*','approver','t1','{wecom_default}','manual','u')
+       on conflict (org,id) do nothing`, [ORG])
   })
 
   async function cleanup() {
@@ -102,6 +106,28 @@ describePg('notify mcp handlers', () => {
     expect(rows).toEqual([{ recipient: 'u1', is_test: true }])
   })
 
+  it('check_rule 只读：返回 blocked/recipients/warnings，不写任何表', async () => {
+    const before = (await pool.query(
+      'select count(*)::int n from notify.delivery where org=$1', [ORG])).rows[0].n
+    const out = await callTool(deps(), 'check_rule', { id: 'r1' })
+    expect(out.isError).toBe(false)
+    const body = JSON.parse(out.text) as {
+      blocked: string | null; recipients: unknown[]; warnings: string[]
+    }
+    expect(body).toHaveProperty('blocked')
+    expect(Array.isArray(body.recipients)).toBe(true)
+    expect(body.warnings).toContain('sample_mode_field_recipients_unverified')
+
+    const after = (await pool.query(
+      'select count(*)::int n from notify.delivery where org=$1', [ORG])).rows[0].n
+    expect(after).toBe(before)
+  })
+
+  it('check_rule：未知 id ⇒ 错误', async () => {
+    const out = await callTool(deps(), 'check_rule', { id: 'nope' })
+    expect(out.isError).toBe(true)
+  })
+
   it('propose_rule 走同一套校验并审计', async () => {
     const out = await callTool(deps(), 'propose_rule', {
       eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',
@@ -131,6 +157,6 @@ describePg('notify mcp handlers', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     })
     const body = await res.json() as { result: { tools: unknown[] } }
-    expect(body.result.tools).toHaveLength(12)
+    expect(body.result.tools).toHaveLength(13)
   })
 })

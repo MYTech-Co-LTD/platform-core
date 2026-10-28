@@ -15,6 +15,11 @@ permissions:
 api:
   internal:
     - { method: GET,    path: /rules,             scope: notify:view }
+    # 可送达性预检（只读，D3）。/rules/deliverability 是静态路径，Hono 静态优先于 param，
+    # 与 /rules/:id/resolve 的注册顺序无关（2026-10-28 实测：param 先注册也照样命中静态）。
+    - { method: GET,    path: /rules/deliverability,   scope: notify:view }
+    - { method: GET,    path: /rules/:id/resolve,      scope: notify:view }
+    - { method: POST,   path: /rules/:id/resolve,      scope: notify:view }
     - { method: POST,   path: /rules,             scope: notify:manage }
     - { method: PUT,    path: /rules/:id/enabled, scope: notify:manage }
     - { method: DELETE, path: /rules/:id,         scope: notify:manage }

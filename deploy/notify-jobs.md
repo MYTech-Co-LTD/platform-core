@@ -13,6 +13,7 @@
 | `notify-health（通知投递健康检查）` | `custom:2H4wFWXzMvzbt2UU` | `*/5 * * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-health.mjs'` |
 | `notify-retention（通知保留期清理）` | `custom:OwCrOG0dkixdkxTL` | `23 3 * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-retention.mjs'` |
 | `notify-seed-builtin（内置模板/通道/默认规则幂等 seed）` | `custom:NWK_D7nKpsC7hdhe` | `13 * * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-seed-builtin.mjs'` |
+| `notify-preflight（全量规则可送达性体检）` | 待建（D4，建议 `43 3 * * *`） | `43 3 * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-preflight.mjs'` |
 
 - 两者都 `serverId=23a1091e`（mytech-weknora），`notifyConfig.states=['failed']`，
   通道 `nch_XBUs425hd_KsA_lt`（与 `notify-reconcile` 同一通道）。
@@ -70,3 +71,22 @@ DATABASE_URL=<平台库> pnpm exec tsx scripts/notify-retention.mjs
 | `NOTIFY_*_RETENTION_DAYS` | 同上（非敏感） |
 
 > ⚠️ **不要去 SSH 读机器上的 env**——那是读机器状态，违反「唯一通道」铁律。
+
+## 3. `notify-preflight`（每日 03:43 UTC，D4）
+
+```bash
+DATABASE_URL=<平台库> pnpm exec tsx scripts/notify-preflight.mjs
+```
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 全部规则可送达 |
+| 1 | **存在阻塞规则**（输出里 `blocked[]` 逐条列出 org / ruleId / eventKey / 原因） |
+| 2 | 查不成账（缺 `DATABASE_URL` / 查询失败） |
+
+- **只读**：不写表、不外发。
+- `scopeHoldersUnavailable: true` ⇒ 该实例没配 `CASDOOR_*`，`scope_holders` 类规则**查不了**
+  （不等于「没人持有」）——配齐凭据再跑才可信。
+- **只扫 `platform.tenant` 里登记的租户**（2026-10-28 实测）：不在租户表里的 org 的规则不会被体检。
+  ⇒ 新建租户后必须先登记进 `platform.tenant`，否则它的通知规则是体检盲区。
+- `field` 类规则被**跳过并单独计数**（`skippedFieldRules`）——它们必须真实 payload，sample 无意义。
