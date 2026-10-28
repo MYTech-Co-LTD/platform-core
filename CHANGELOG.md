@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.213.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.213.1...v0.213.2) - 2026-10-28
+- 【修复】dbt: net_sales 对账改 1 分容差并把容差作为数据列 (#761) ([#1155](https://github.com/MYTech-Co-LTD/platform-core/pull/1155), [265e4b5](https://github.com/MYTech-Co-LTD/platform-core/commit/265e4b53ecf9c55548d13188710c0ee27ae3eebc))
+
+
 ## [0.213.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.213.0...v0.213.1) - 2026-10-28
 - 【修复】dbt: 对账复算禁用裸 ::numeric（pg_duckdb 推成 DOUBLE 致 1 分假红，修 #761） ([#1154](https://github.com/MYTech-Co-LTD/platform-core/pull/1154), [56a349b](https://github.com/MYTech-Co-LTD/platform-core/commit/56a349b5e0269f1ab712c12c19ad00d0eebbb525))
 
