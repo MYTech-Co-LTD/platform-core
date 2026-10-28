@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.212.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.211.0...v0.212.0) - 2026-10-28
+- 【新增】notify: 可送达性 D3+D4——配置期预检与 agent 自证 ([#1147](https://github.com/MYTech-Co-LTD/platform-core/pull/1147), [ab911b9](https://github.com/MYTech-Co-LTD/platform-core/commit/ab911b9e267608dacb5f38376e4291652d5d21a6))
+
+
 ## [0.211.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.210.4...v0.211.0) - 2026-10-28
 - 【新增】notify: 可送达性 D1+D2——零结果成为状态并可告警 ([#1145](https://github.com/MYTech-Co-LTD/platform-core/pull/1145), [f40e420](https://github.com/MYTech-Co-LTD/platform-core/commit/f40e420b16fab81e784d1a2a8e4b8f068ae391cc))
 
