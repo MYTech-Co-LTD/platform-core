@@ -81,6 +81,11 @@ with landed_raw as (
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
     ) r
     where not exists (select 1 from read_parquet('s3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAILY/*.parquet') m where cast(m['system_book'] as varchar) = cast(r['system_book'] as varchar) and cast(m['bizday'] as date) = cast(r['bizday'] as date))
+      -- ⚠️ **必须排除今天**（2026-10-28，issue #452）：tick 每 5 分钟重写**当天**的 hour 分区，
+      --   物化又在 11:27/15:27/… 这些营业时段内跑 ⇒ 读今天的热分区必然撞 ETag：
+      --   `ETag on reading file … was initially "…" and now it returned "…"` ⇒ 整条测试 ERROR。
+      --   本对账只判「已落定的历史小时」，今天的部分由 tick 自身与次日对账覆盖。
+      and r['bizday']::date < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 ),
 landed as (
     -- 湖里每个 (账套, 营业日, 小时) 实际落了行数
