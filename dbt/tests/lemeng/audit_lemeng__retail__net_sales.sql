@@ -8,6 +8,16 @@
 --   ⚠️ **取证窗口很短**：materialize job 自带 2 次重试，第 2 次若通过，dbt 会用空结果**覆盖**
 --   那张表。所以看到 FAIL 要**赶在重试之前**查（或临时把该 job 的 retry 关掉再复现）。
 --
+-- ★★ **根因已定位（2026-10-28，issue #761）**：本对账的间歇 FAIL 1 不是数据问题，是 **DuckDB 的浮点陷阱**。
+--   pg_duckdb 里裸 `::numeric` 参与除法（`(a+b)/2`）时，结果类型会被推成 **DOUBLE**：
+--   实测 `sum((non_gift+tototal)/2 - sd)` = **542.2949999999998**（typeof=DOUBLE），
+--   而同一算式在 Postgres（物化侧，NUMERIC 任意精度）= **542.295** ⇒ 最终 `::numeric(20,2)` 一个舍成 542.29、一个舍成 542.30。
+--   实测格：64188 / 2026-10-24 / 门店 8，差额 **0.01**（`dbt_test__audit.audit_lemeng__retail__net_sales` 里存着这一行）。
+--   **修法**：本文件所有裸 `::numeric` 改为 **`::decimal(38,10)`**（精确十进制，不落 DOUBLE）。
+--   ⚠️ 只改裸 `::numeric`；`::numeric(20,2)` 这类显式精度的最终 cast **保留**（那是有意的结果定精度）。
+--   ⚠️ 同一形态存在于其余 audit_*.sql（全仓 48 个文件 / 84 处裸 `::numeric`）——**尚未全量清理**，
+--      只在两处已复现 flaky（本文件与 audit_lemeng__retail__sales）先修，其余待扫（见 #761 后续）。
+--
 -- 契约：dbt 的 singular test **返回任何行即失败** ⇒ 本查询只在「复算 ≠ 物化结果」时出行。
 -- 文件名由指标名经 `:` → `__` 映射得出（唯一事实源 = scripts/check-data-models.mjs 的
 -- metricToAuditFileName()；同名唯一 + 每个指标一条对账由该门禁的规则 ⑥⑦ 机检）。
@@ -39,7 +49,7 @@
 --    CTE 形态在本栈上取列即报 `cannot subscript type record`。
 -- ② `hive_partitioning=1` **不能写成 read_parquet 的形参**（pg_duckdb 的 read_parquet 是 PG
 --    函数、只认位置参数）；分区推断默认生效，推断类型不合约 ⇒ 本文件显式 cast。
--- ③ `r['列']` 之间的**算术必须先 `::numeric`**；FULL JOIN 的键两侧逐个显式 cast。
+-- ③ `r['列']` 之间的**算术必须先 `::decimal(38,10)`**；FULL JOIN 的键两侧逐个显式 cast。
 -- ④ 湖读取走**冷热两腿合流**（#984）：day 天文件 + hour 小时文件**各自单读**，热腿排除已封版日
 --    （同 staging 冷热合流，含封版排除语义）——原 day+window 双 glob 一把读**没有封版排除**，
 --    封窗日两份并存 ⇒ 复算侧双计（销售侧 base 与退货侧 ret_base 两处同改）。
@@ -50,14 +60,14 @@ with base_cold as (
         r['bizday']::date          as bizday,
         r['branch_num']::int       as branch_num,
         r['order_no']::varchar     as order_no,
-        r['sale_money']::numeric   as sale_money,
-        r['order_total_money']::numeric     as order_total_money,
-        r['order_detail_share_discount']::numeric as share_discount,
+        r['sale_money']::decimal(38,10)   as sale_money,
+        r['order_total_money']::decimal(38,10)     as order_total_money,
+        r['order_detail_share_discount']::decimal(38,10) as share_discount,
         -- 赠品判别式（**逐字照抄正典**）：护栏三条件排除退化命中，容差 ±0.02 标定见正典
-        (r['order_detail_std_price']::numeric > 0
-         and r['sale_money']::numeric > 0
-         and r['quantity']::numeric > 0
-         and abs(r['discount_money']::numeric - r['order_detail_std_price']::numeric * r['quantity']::numeric) <= 0.02
+        (r['order_detail_std_price']::decimal(38,10) > 0
+         and r['sale_money']::decimal(38,10) > 0
+         and r['quantity']::decimal(38,10) > 0
+         and abs(r['discount_money']::decimal(38,10) - r['order_detail_std_price']::decimal(38,10) * r['quantity']::decimal(38,10)) <= 0.02
         ) as is_gift
     from read_parquet(
         -- ⚠️ 与 staging **同路径**（通配两账套，含封版排除语义）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
@@ -78,14 +88,14 @@ base_hot as (
         r['bizday']::date          as bizday,
         r['branch_num']::int       as branch_num,
         r['order_no']::varchar     as order_no,
-        r['sale_money']::numeric   as sale_money,
-        r['order_total_money']::numeric     as order_total_money,
-        r['order_detail_share_discount']::numeric as share_discount,
+        r['sale_money']::decimal(38,10)   as sale_money,
+        r['order_total_money']::decimal(38,10)     as order_total_money,
+        r['order_detail_share_discount']::decimal(38,10) as share_discount,
         -- 赠品判别式（**逐字照抄正典**）：护栏三条件排除退化命中，容差 ±0.02 标定见正典
-        (r['order_detail_std_price']::numeric > 0
-         and r['sale_money']::numeric > 0
-         and r['quantity']::numeric > 0
-         and abs(r['discount_money']::numeric - r['order_detail_std_price']::numeric * r['quantity']::numeric) <= 0.02
+        (r['order_detail_std_price']::decimal(38,10) > 0
+         and r['sale_money']::decimal(38,10) > 0
+         and r['quantity']::decimal(38,10) > 0
+         and abs(r['discount_money']::decimal(38,10) - r['order_detail_std_price']::decimal(38,10) * r['quantity']::decimal(38,10)) <= 0.02
         ) as is_gift
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
@@ -113,12 +123,12 @@ ret_base_cold as (
         -- 退货行同样套赠品判别式（2026-10-18，#908；与 fct_retail_sale.sql 生成区
         -- return_amount__gen 的退货侧同一句，
         -- 金额/数量取绝对值——「0 元实付单整单退货」的退货行带负号，不排会反向加回）。
-        case when r['order_detail_std_price']::numeric > 0 and abs(r['sale_money']::numeric) > 0
-                  and abs(r['quantity']::numeric) > 0
-                  and abs(abs(r['discount_money']::numeric)
-                          - r['order_detail_std_price']::numeric * abs(r['quantity']::numeric)) <= 0.02
+        case when r['order_detail_std_price']::decimal(38,10) > 0 and abs(r['sale_money']::decimal(38,10)) > 0
+                  and abs(r['quantity']::decimal(38,10)) > 0
+                  and abs(abs(r['discount_money']::decimal(38,10))
+                          - r['order_detail_std_price']::decimal(38,10) * abs(r['quantity']::decimal(38,10))) <= 0.02
              then 0
-             else (r['sale_money']::numeric + r['order_detail_share_discount']::numeric)
+             else (r['sale_money']::decimal(38,10) + r['order_detail_share_discount']::decimal(38,10))
         end as return_amount
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/_DAY_DATA/system_book=*/bizday=*/all.parquet'
@@ -136,12 +146,12 @@ ret_base_hot as (
         -- 退货行同样套赠品判别式（2026-10-18，#908；与 fct_retail_sale.sql 生成区
         -- return_amount__gen 的退货侧同一句，
         -- 金额/数量取绝对值——「0 元实付单整单退货」的退货行带负号，不排会反向加回）。
-        case when r['order_detail_std_price']::numeric > 0 and abs(r['sale_money']::numeric) > 0
-                  and abs(r['quantity']::numeric) > 0
-                  and abs(abs(r['discount_money']::numeric)
-                          - r['order_detail_std_price']::numeric * abs(r['quantity']::numeric)) <= 0.02
+        case when r['order_detail_std_price']::decimal(38,10) > 0 and abs(r['sale_money']::decimal(38,10)) > 0
+                  and abs(r['quantity']::decimal(38,10)) > 0
+                  and abs(abs(r['discount_money']::decimal(38,10))
+                          - r['order_detail_std_price']::decimal(38,10) * abs(r['quantity']::decimal(38,10))) <= 0.02
              then 0
-             else (r['sale_money']::numeric + r['order_detail_share_discount']::numeric)
+             else (r['sale_money']::decimal(38,10) + r['order_detail_share_discount']::decimal(38,10))
         end as return_amount
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
