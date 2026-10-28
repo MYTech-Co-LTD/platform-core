@@ -5,8 +5,12 @@
 // gv/dv env 形状门 → 批量扇出 → merge → 门店覆盖守卫 → shape → qa.contract → sink）。
 //
 // 与 dim.item 的两个结构差（都有理由，别"对齐"回去）：
-//   ① 扇出基准：item.find 按页扇出（页数稳定）；realprice **无分页** ⇒ 按**门店批**扇出
-//      （15 店/批，单批载荷远低于 REST 门实测上限——探针报告 §2②）。
+//   ① 扇出基准：item.find 按页扇出（页数稳定）；realprice **无分页** ⇒ 按**门店批**扇出。
+//      **日常模式必须与已提交的批形态一致（#1073）**：3120 是 6 个批节点、41~46 店/批
+//      （由 `--batch-size` 指定，默认 45）。历史教训：生成器曾按「一店一节点」生成 271 个节点，
+//      与仓内已提交的 6 批形态漂移 ⇒「顺手重生成」会把批形态悄悄打回逐店形态，请求数 ×45
+//      并直接撞 429（2026-10-22~24 实测）。批大小由引擎响应体上限反推（into_string 实测
+//      12.3MB 过 / 32.9MB 炸、不可配），改它必须先量载荷。
 //      ⚠️ 批内门店号是**生成时的字面量**：门店增减 ⇒ 重跑本生成器（FC 维护义务，FLOW.lemeng.md 有行）。
 //      过期不会被静默放行：merge 后的**门店覆盖守卫**拿 merged 门店集合对 `${ENV:BRANCH_NUMS}`
 //      （运行时唯一事实源）点名，多/少一家都 die——等价 dim.item 哨兵页的角色。
@@ -49,6 +53,24 @@ if (!Array.isArray(branches) || branches.length === 0 || branches.some((b) => !N
   console.error('--branches 必须是非空整数数组')
   process.exit(2)
 }
+/** 日常模式的门店批大小（#1073）。默认 45 = 与 3120 已提交的 6 批形态一致（41~46 店/批）。 */
+const BATCH_SIZE = (() => {
+  const i = process.argv.indexOf('--batch-size')
+  if (i === -1) return 45
+  const n = Number(process.argv[i + 1])
+  if (!Number.isInteger(n) || n < 1) {
+    console.error('--batch-size 必须是正整数')
+    process.exit(2)
+  }
+  return n
+})()
+/** #1068：src.rest 无 data.schema ⇒ 嵌套列 branch/pos_variant 逐批 autodetect 类型不一
+ *  （一页推成 VARCHAR、另一页推成 JSON）⇒ ctl.merge 的 UNION ALL BY NAME 会把 VARCHAR∪JSON
+ *  提升成 JSON 并逐值校验，业务值「注意」不是合法 JSON ⇒ merge 整条失败、0 行。
+ *  每批后接一个 code.sql 归一成 to_json，批间类型一致。
+ *  原生 xf.json.stringify 对 STRUCT 输出 dict repr，不可用（实测）。 */
+const JSON_NORMALIZE_SQL =
+  'SELECT * EXCLUDE (branch, pos_variant), to_json(branch) AS branch, to_json(pos_variant) AS pos_variant FROM input'
 const out = argOf('--out')
 const BACKFILL = process.argv.includes('--backfill')
 const initIdx = process.argv.indexOf('--initial')
@@ -201,6 +223,9 @@ const whoamiNode = (properties) => ({
 /** @param {string} id @param {string} condition @param {string} message */
 const die = (id, condition, message) => node(id, 'ctl.die', { condition, message })
 
+/** 批节点 id 清单（`p1..pN`）。**必须显式标注**：日常模式的循环用 `pIds.length` 推 id，
+ *  不标注时 TS 解析 `pIds` 类型会绕回自身 → TS7022（CI `typecheck:scripts` 实测红）。 */
+/** @type {string[]} */
 const pIds = []
 /** @type {unknown[]} */
 const pNodes = []
@@ -216,12 +241,21 @@ if (BACKFILL) {
     pNodes.push(priceNode(id, n.stores, isChunk ? (n.items ?? null) : null, isChunk ? (n.range ?? null) : null))
   })
 } else {
-  for (let i = 0; i < branches.length; i++) {
-    const id = `p${i + 1}`
+  // 日常模式按门店批扇出（#1073：与已提交的 6 批形态一致，别回退成一店一节点）
+  for (let i = 0; i < branches.length; i += BATCH_SIZE) {
+    const id = `p${pIds.length + 1}`
     pIds.push(id)
-    pNodes.push(priceNode(id, [branches[i]], null, null))
+    pNodes.push(priceNode(id, branches.slice(i, i + BATCH_SIZE), null, null))
   }
 }
+
+/** 逐批 to_json 归一节点（j1..jN），插在 p* 与 merge 之间（#1068 形状）。 */
+const jNodes = pIds.map((pid) => ({
+  id: `j${pid.slice(1)}`,
+  type: 'transform',
+  position: { x: 1480, y: -240 },
+  data: { label: `j${pid.slice(1)}`, componentId: 'code.sql', properties: { sql: JSON_NORMALIZE_SQL } },
+}))
 
 /** @type {any} */
 const pipeline = {
@@ -250,6 +284,7 @@ const pipeline = {
     node('gv', 'code.sql', codeSql(`SELECT 'BRANCH_NUMS' AS violation, '\${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule WHERE NOT regexp_full_match('\${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]') UNION ALL SELECT 'SYSTEM_BOOK', '\${ENV:SYSTEM_BOOK}', 'digits only' WHERE NOT regexp_full_match('\${ENV:SYSTEM_BOOK}', '[0-9]{1,32}') UNION ALL SELECT 'SNAPSHOT', '\${date+8h}', 'YYYY-MM-DD' WHERE NOT regexp_full_match('\${date+8h}', '[0-9]{4}-[0-9]{2}-[0-9]{2}') UNION ALL SELECT 'BATCH_ID', ${batchIdExpr} AS v, 'dim-<book>-item_price-YYYYMMDDTHHMMSSZ' WHERE NOT regexp_full_match(${batchIdExpr}, 'dim-[0-9]+-item_price-[0-9]{8}T[0-9]{6}Z')`)),
     die('dv', 'has-rows', 'EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖。处置：检查该管线调度/触发面的 env 注入'),
     ...pNodes,
+    ...jNodes,
     node('merge', 'ctl.merge', {}),
     // coverage 守卫只属 backfill（全窗下每店必有价格行，覆盖断言成立）；日常增量下
     // 「安静店无变更 = 合法 0 行」⇒ 覆盖断言会误判红（R1 修订）。
@@ -291,7 +326,9 @@ const pipeline = {
     // dv→p* 是**控制依赖**（子作业触发，不载运数据——dim.item 同款：handle null + on-subjob-ok）
     ...pIds.map((id) => ({ id: `e-dv-${id}`, source: 'dv', target: id, sourceHandle: null, targetHandle: null, data: { connectionType: 'on-subjob-ok' } })),
     // 扇入 merge 的边要**编号 handle**（main_1..main_N）——全写 'main' 会被引擎判「多入单读」拒
-    ...pIds.map((id, i) => ({ id: `e-${id}-merge`, source: id, target: 'merge', sourceHandle: 'main', targetHandle: `main_${i + 1}`, data: { connectionType: 'main' } })),
+    // 逐批 to_json 归一（#1068）后再扇入 merge，避免跨批类型不一致
+    ...pIds.map((id) => ({ id: `e-${id}-j`, source: id, target: `j${id.slice(1)}`, sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } })),
+    ...pIds.map((id, i) => ({ id: `e-j${id.slice(1)}-merge`, source: `j${id.slice(1)}`, target: 'merge', sourceHandle: 'main', targetHandle: `main_${i + 1}`, data: { connectionType: 'main' } })),
     ...(BACKFILL ? [
       { id: 'e-merge-coverage', source: 'merge', target: 'coverage', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
       { id: 'e-coverage-cg', source: 'coverage', target: 'cg', sourceHandle: 'main', targetHandle: 'main', data: { connectionType: 'main' } },
