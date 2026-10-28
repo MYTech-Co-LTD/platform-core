@@ -2,7 +2,7 @@
 // 供 scripts/check-mcp-toolface.mjs 静态检查；实现见 mcp.ts。
 // 硬边界：没有 publish / channel 工具；没有「给别人试发」工具。
 
-export const NOTIFY_MAX_TOOLS = 12
+export const NOTIFY_MAX_TOOLS = 13
 
 export type NotifyToolMeta = {
   name: string
@@ -61,6 +61,8 @@ export const NOTIFY_TOOLS: NotifyToolMeta[] = [
     { key: { type: 'string' }, revision: { type: 'number' }, payload: { type: 'object' } },
     ['key', 'payload'], false, 'notify:manage'),
   t('list_deliveries', '查看投递回执与错误摘要。', { limit: { type: 'number' } }, ['limit'], false, null),
+  t('check_rule', '只读：跑一次投递可行性，回答「会发给谁 / 为什么发不出去」。建完规则用它自证。',
+    { id: { type: 'string' }, payload: { type: 'object' } }, ['id'], false, null),
   t('send_test', '给自己试发一条（收件人强制为调用者本人）。',
     { templateKey: { type: 'string' }, channel: { type: 'string' }, payload: { type: 'object' } },
     ['templateKey', 'channel', 'payload'], true, 'notify:manage'),

@@ -7,11 +7,12 @@ import type { Pool } from 'pg'
 import type { ChannelAddressResolver, EventCatalogReader, Identity } from '@platform/sdk'
 import { validatePayload } from '@platform/sdk'
 import { NOTIFY_TOOLS } from './mcp-tools'
+import { resolveDeliverability } from './domain/deliverability'
 import { renderContents } from './domain/render'
 import { validateRule } from './domain/rules'
-import { validateContents } from './domain/template'
+import { samplePayload, validateContents } from './domain/template'
 import {
-  audit, createTemplateRevision, getChannel, getTemplate, insertDelivery, listChannels,
+  audit, createTemplateRevision, getChannel, getPublishedTemplate, getTemplate, insertDelivery, listChannels,
   listDeliveries, listEnabledChannelIds, listPublishedTemplateKeys, listRules,
   setRuleEnabled, upsertRule,
 } from './storage'
@@ -158,6 +159,48 @@ export async function callTool(
   if (name === 'list_deliveries') {
     const limit = typeof args.limit === 'number' ? Math.min(Math.max(Math.trunc(args.limit), 1), 100) : 100
     return ok({ deliveries: await listDeliveries(deps.pool, deps.org, limit) })
+  }
+
+  if (name === 'check_rule') {
+    const id = str(args.id)
+    if (!id) return err('id_required')
+    const rule = (await listRules(deps.pool, deps.org)).find((x) => x.id === id)
+    if (!rule) return err('not_found')
+
+    const decl = deps.events?.get(rule.eventKey)
+    if (!decl) return err('event_not_declared')
+
+    const warnings: string[] = []
+    // 「查不了」≠「没人持有」
+    if (!deps.addresses?.resolveScopeHolders) warnings.push('scope_holders_unavailable')
+    const given = args.payload as Record<string, unknown> | undefined
+    if (!given) warnings.push('sample_mode_field_recipients_unverified')
+
+    const r = await resolveDeliverability(
+      { org: deps.org, rule, payload: given ?? samplePayload(decl) },
+      {
+        getEventDecl: async (key) => deps.events?.get(key) ?? null,
+        getPublishedTemplate: async (org, key) => {
+          const t = await getPublishedTemplate(deps.pool, org, key)
+          return t ? { revision: t.revision, contents: t.contents } : null
+        },
+        getChannel: async (org, cid) => {
+          const ch = await getChannel(deps.pool, org, cid)
+          return ch ? { id: cid, provider: ch.provider, enabled: ch.enabled, config: ch.config } : null
+        },
+        resolveScopeHolders: async (org, key, d) =>
+          deps.addresses?.resolveScopeHolders?.(org, key, d) ?? [],
+      },
+    )
+    return ok({
+      ruleId: rule.id,
+      eventKey: rule.eventKey,
+      blocked: r.blocked,
+      recipients: r.recipients,
+      channels: r.channels,
+      warnings,
+      next: r.blocked === null ? '可送达' : '按 blocked 修配置后重跑 check_rule',
+    })
   }
 
   if (name === 'send_test') {
