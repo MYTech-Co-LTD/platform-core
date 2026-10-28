@@ -238,6 +238,7 @@ where abs(coalesce(a.net_sales, 0) - coalesce(b.net_sales, 0)) > 0.01
 union all
 
 select
-    null, null, null, null, null, null,
-    '物化侧一行都没有：对账在空集上「通过」是空转绿（不是对上了）'
+    null, null, null, null, null,
+    '物化侧一行都没有：对账在空集上「通过」是空转绿（不是对上了）',
+    null::numeric
 where not exists (select 1 from materialized)
