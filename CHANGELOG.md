@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.213.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.213.3...v0.213.4) - 2026-10-28
+- 【修复】data: pg_duckdb mem_limit 2g→4g + dbt 物化串行化，止住崩溃恢复 (#1157) ([#1158](https://github.com/MYTech-Co-LTD/platform-core/pull/1158), [2838d3d](https://github.com/MYTech-Co-LTD/platform-core/commit/2838d3da3af86edfd86678d1066d5b77fa634767))
+
+
 ## [0.213.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.213.2...v0.213.3) - 2026-10-28
 - 【修复】dbt: 补 union 哨兵行的 tolerance 列，修列错位 (#761) ([#1156](https://github.com/MYTech-Co-LTD/platform-core/pull/1156), [ca1c941](https://github.com/MYTech-Co-LTD/platform-core/commit/ca1c941716e21a1476cd7e4ef01ccfc398fcce99))
 
