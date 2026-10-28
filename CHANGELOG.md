@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.210.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.210.2...v0.210.3) - 2026-10-28
+- 【修复】data: item_price 生成器日常模式改按门店批扇出 + 补 to_json 归一 (#1073) ([#1140](https://github.com/MYTech-Co-LTD/platform-core/pull/1140), [18a2a09](https://github.com/MYTech-Co-LTD/platform-core/commit/18a2a09eed5943ede255a1007a4e49fb94dbfb68))
+
+
 ## [0.210.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.210.1...v0.210.2) - 2026-10-27
 - 【修复】notify: worker 起只读 /healthz，镜像探活不再恒 unhealthy ([#1133](https://github.com/MYTech-Co-LTD/platform-core/pull/1133), [d3455d4](https://github.com/MYTech-Co-LTD/platform-core/commit/d3455d45db5de1e9abaf39401a8410d7bcfb26eb))
 
