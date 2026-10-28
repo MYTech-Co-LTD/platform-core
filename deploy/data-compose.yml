@@ -35,11 +35,17 @@ services:
       # 两份 compose 各一个 default 网络、无共享 external 网络/extra_hosts ⇒ **按现值不可达**。
       # 接线方式待 T6 裁决（计划 Task 6 Step 1 的 Gate-B）。
       - '127.0.0.1:15432:5432'
-    mem_limit: ${PGDUCK_MEM_LIMIT:-2g}    # 每连接一个 DuckDB 实例（max_memory 默认 4096MB/连接，
+    mem_limit: ${PGDUCK_MEM_LIMIT:-4g}    # 每连接一个 DuckDB 实例（max_memory 默认 4096MB/连接，
                                           # spec §9.4）——连接数 × 内存必须显式收口，见 pg-duckdb/README §3
                                           # 实测语境：Compose v5.3.0 下解析进规范模型（2g → 2147483648）；
                                           # `mem_limit` 属**非 deploy 面**旧键，按 deploy-spec/swarm 模型
                                           # 解析的消费方可能不读 ⇒ 被静默忽略 = 本行唯一目的落空（spec §9.4）
+                                          # 🔴 **2026-10-28 由 2g 抬到 4g（issue #1157）**：实测物化期间
+                                          # postmaster 反复 `terminating … reinitializing`（与 dbt test 阶段
+                                          # 严格同步、空闲期零重启，全天 46 次）。2g 与
+                                          # `duckdb.memory_limit=1536MB`/连接 的组合在多连接下无余量。
+                                          # 宿主 7G/峰值用 2G，抬到 4g 仍有余量；同时 materialize.sh
+                                          # 已加 `--threads 1` 把连接数压到 1（双管齐下）。
     restart: unless-stopped
 
   # ── Metabase 应用库（spec §8：生产必须 Postgres，H2 官方 AVOID；不放 pg_duckdb 实例上：
