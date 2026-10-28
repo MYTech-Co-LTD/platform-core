@@ -1,4 +1,8 @@
 {{ config(store_failures=true) }}
+-- ★ **2026-10-28（issue #761）**：裸 `::numeric` 在 pg_duckdb 里参与除法会被推成 DOUBLE
+--   （实测 542.2949999999998 vs 精确 542.295）⇒ 最终 2 位小数会差 1 分、间歇假红。
+--   本文件所有裸 `::numeric` 已改 `::decimal(38,10)`；`::numeric(20,2)` 最终 cast 保留。
+
 -- audit_lemeng__retail__sales.sql — 指标 `lemeng:retail:sales` 的**独立复算**（对账；销售侧，不冲退货）。
 --
 -- ★ `store_failures=true`（2026-10-17 加，issue #761）：本对账出现过**间歇 FAIL 1、重试自愈**，
@@ -31,7 +35,7 @@
 --    CTE 形态在本栈上取列即报 `cannot subscript type record`。
 -- ② `hive_partitioning=1` **不能写成 read_parquet 的形参**（pg_duckdb 的 read_parquet 是 PG
 --    函数、只认位置参数）；分区推断默认生效，推断类型不合约 ⇒ 本文件显式 cast。
--- ③ `r['列']` 之间的**算术必须先 `::numeric`**；FULL JOIN 的键两侧逐个显式 cast。
+-- ③ `r['列']` 之间的**算术必须先 `::decimal(38,10)`**；FULL JOIN 的键两侧逐个显式 cast。
 -- ④ 湖读取走**冷热两腿合流**（#984）：day 天文件 + hour 小时文件**各自单读**，热腿排除已封版日
 --    （同 staging 冷热合流，含封版排除语义）——原 day+window 双 glob 一把读**没有封版排除**，
 --    封窗日两份并存 ⇒ 复算侧双计。
@@ -42,14 +46,14 @@ with base_cold as (
         r['bizday']::date          as bizday,
         r['branch_num']::int       as branch_num,
         r['order_no']::varchar     as order_no,
-        r['sale_money']::numeric   as sale_money,
-        r['order_total_money']::numeric     as order_total_money,
-        r['order_detail_share_discount']::numeric as share_discount,
+        r['sale_money']::decimal(38,10)   as sale_money,
+        r['order_total_money']::decimal(38,10)     as order_total_money,
+        r['order_detail_share_discount']::decimal(38,10) as share_discount,
         -- 赠品判别式（**逐字照抄正典**）：护栏三条件排除退化命中，容差 ±0.02 标定见正典
-        (r['order_detail_std_price']::numeric > 0
-         and r['sale_money']::numeric > 0
-         and r['quantity']::numeric > 0
-         and abs(r['discount_money']::numeric - r['order_detail_std_price']::numeric * r['quantity']::numeric) <= 0.02
+        (r['order_detail_std_price']::decimal(38,10) > 0
+         and r['sale_money']::decimal(38,10) > 0
+         and r['quantity']::decimal(38,10) > 0
+         and abs(r['discount_money']::decimal(38,10) - r['order_detail_std_price']::decimal(38,10) * r['quantity']::decimal(38,10)) <= 0.02
         ) as is_gift
     from read_parquet(
         -- ⚠️ 与 staging **同路径**（通配两账套，含封版排除语义）——对账必须与受测面同口径，否则只对账了 3120（issue #250）。
@@ -70,14 +74,14 @@ base_hot as (
         r['bizday']::date          as bizday,
         r['branch_num']::int       as branch_num,
         r['order_no']::varchar     as order_no,
-        r['sale_money']::numeric   as sale_money,
-        r['order_total_money']::numeric     as order_total_money,
-        r['order_detail_share_discount']::numeric as share_discount,
+        r['sale_money']::decimal(38,10)   as sale_money,
+        r['order_total_money']::decimal(38,10)     as order_total_money,
+        r['order_detail_share_discount']::decimal(38,10) as share_discount,
         -- 赠品判别式（**逐字照抄正典**）：护栏三条件排除退化命中，容差 ±0.02 标定见正典
-        (r['order_detail_std_price']::numeric > 0
-         and r['sale_money']::numeric > 0
-         and r['quantity']::numeric > 0
-         and abs(r['discount_money']::numeric - r['order_detail_std_price']::numeric * r['quantity']::numeric) <= 0.02
+        (r['order_detail_std_price']::decimal(38,10) > 0
+         and r['sale_money']::decimal(38,10) > 0
+         and r['quantity']::decimal(38,10) > 0
+         and abs(r['discount_money']::decimal(38,10) - r['order_detail_std_price']::decimal(38,10) * r['quantity']::decimal(38,10)) <= 0.02
         ) as is_gift
     from read_parquet(
         's3://{{ var("zos_bucket") }}/{{ var("lemeng_retail_order_line_prefix") }}/system_book=*/bizday=*/hour=*/all.parquet'
