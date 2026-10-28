@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.210.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.210.3...v0.210.4) - 2026-10-28
+- 【修复】auth: 登录审计 via 改白名单映射——未知/丢失不再冒充扫码 (#1139) ([#1143](https://github.com/MYTech-Co-LTD/platform-core/pull/1143), [e76afcb](https://github.com/MYTech-Co-LTD/platform-core/commit/e76afcbff42e5e0fa9258a57ad94ab96a483a35c))
+
+
 ## [0.210.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.210.2...v0.210.3) - 2026-10-28
 - 【修复】data: item_price 生成器日常模式改按门店批扇出 + 补 to_json 归一 (#1073) ([#1140](https://github.com/MYTech-Co-LTD/platform-core/pull/1140), [18a2a09](https://github.com/MYTech-Co-LTD/platform-core/commit/18a2a09eed5943ede255a1007a4e49fb94dbfb68))
 
