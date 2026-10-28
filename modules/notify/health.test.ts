@@ -11,6 +11,7 @@ const ORG = 'org-health2'
 const clean = (over: Partial<Health> = {}): Health => ({
   dead: 0, stale: 0, workers: 1,
   oldestPendingSeconds: 0, failedLastHour: 0, channelErrors: 0,
+  eventsNoRecipients: 0, eventsNoChannel: 0, eventsInvalid: 0,
   ...over,
 })
 
@@ -25,6 +26,16 @@ describe('healthVerdict', () => {
   it('近 1 小时失败超阈值 ⇒ 1；等于阈值 ⇒ 0', () => {
     expect(healthVerdict(clean({ failedLastHour: FAILED_LAST_HOUR_LIMIT }))).toBe(0)
     expect(healthVerdict(clean({ failedLastHour: FAILED_LAST_HOUR_LIMIT + 1 }))).toBe(1)
+  })
+
+  it('零收件人 / 零通道 ⇒ 直接红（配置错误，不给阈值）', () => {
+    expect(healthVerdict(clean({ eventsNoRecipients: 1 }))).toBe(1)
+    expect(healthVerdict(clean({ eventsNoChannel: 1 }))).toBe(1)
+  })
+
+  it('eventsInvalid 超阈值才红（模板轮换期可能短暂出现）', () => {
+    expect(healthVerdict(clean({ eventsInvalid: 5 }))).toBe(0)
+    expect(healthVerdict(clean({ eventsInvalid: 6 }))).toBe(1)
   })
 
   it('channelErrors / oldestPendingSeconds 单独不判红（作为诊断面）', () => {
@@ -67,5 +78,15 @@ describePg('checkHealth', () => {
     expect(r.oldestPendingSeconds).toBeGreaterThanOrEqual(1200)
     expect(r.failedLastHour).toBeGreaterThanOrEqual(1)
     expect(r.channelErrors).toBeGreaterThanOrEqual(1)
+
+    // D2：可送达性计数（插一条 no_recipients 事件）
+    await pool.query(
+      `insert into notify.event(org,event_id,event_key,scope,payload,producer,status)
+       values ($1,'h-norecip','m.a.b','*','{}','t','no_recipients')
+       on conflict (org,event_id) do update set status='no_recipients'`, [ORG])
+    const r2 = await checkHealth(pool)
+    expect(r2.eventsNoRecipients).toBeGreaterThanOrEqual(1)
+    expect(healthVerdict(r2)).toBe(1)
+    await pool.query('delete from notify.event where org=$1', [ORG])
   })
 })

@@ -5,6 +5,7 @@ import { healthVerdict, type Health } from '../modules/notify/health.ts'
 const clean = (over: Partial<Health> = {}): Health => ({
   dead: 0, stale: 0, workers: 1,
   oldestPendingSeconds: 0, failedLastHour: 0, channelErrors: 0,
+  eventsNoRecipients: 0, eventsNoChannel: 0, eventsInvalid: 0,
   ...over,
 })
 
@@ -18,5 +19,12 @@ describe('healthVerdict', () => {
 
   it('近 1 小时失败超阈值 ⇒ 1', () => {
     expect(healthVerdict(clean({ failedLastHour: 51 }))).toBe(1)
+  })
+
+  it('零收件人/零通道 ⇒ 直接红；invalid 超阈值才红', () => {
+    expect(healthVerdict(clean({ eventsNoRecipients: 1 }))).toBe(1)
+    expect(healthVerdict(clean({ eventsNoChannel: 1 }))).toBe(1)
+    expect(healthVerdict(clean({ eventsInvalid: 5 }))).toBe(0)
+    expect(healthVerdict(clean({ eventsInvalid: 6 }))).toBe(1)
   })
 })
