@@ -73,6 +73,38 @@ describe('RulesTab', () => {
     expect(JSON.parse(calls[0]!)).toEqual({ enabled: false })
   })
 
+  it('规则表显示可解析人数；0 人时显示原因', async () => {
+    routeFetch({
+      'GET /api/modules/notify/rules': () => json({ rules: [
+        { ...rule, id: 'r-ok' }, { ...rule, id: 'r-bad' },
+      ] }),
+      'GET /api/modules/notify/rules/deliverability': () => json({ rules: [
+        { ruleId: 'r-ok', eventKey: 'm.a.b', blocked: null, recipientCount: 2 },
+        { ruleId: 'r-bad', eventKey: 'm.a.b', blocked: 'no_recipient', recipientCount: 0 },
+      ] }),
+      'GET /api/modules/notify/events': () => json({ events: [event] }),
+      'GET /api/modules/notify/templates': () => json({ templates: [] }),
+      'GET /api/modules/notify/channels': () => json({ channels: [] }),
+    })
+
+    render(<RulesTab />)
+    expect(await screen.findByText('2 人')).toBeInTheDocument()
+    expect(screen.getByText(/无可解析收件人/)).toBeInTheDocument()
+  })
+
+  it('deliverability 拉取失败不该拖垮规则列表', async () => {
+    routeFetch({
+      'GET /api/modules/notify/rules': () => json({ rules: [rule] }),
+      'GET /api/modules/notify/rules/deliverability': () => json({ error: 'BOOM' }, 500),
+      'GET /api/modules/notify/events': () => json({ events: [event] }),
+      'GET /api/modules/notify/templates': () => json({ templates: [] }),
+      'GET /api/modules/notify/channels': () => json({ channels: [] }),
+    })
+
+    render(<RulesTab />)
+    expect(await screen.findByText('m.a.b')).toBeInTheDocument()
+  })
+
   it('收件人/模板/通道选项只来自声明与启用集', () => {
     expect(recipientOptions(event as never).map((o) => o.value)).toEqual(['approver'])
     expect(recipientOptions(undefined)).toEqual([])
