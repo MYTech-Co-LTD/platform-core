@@ -147,6 +147,31 @@ function trimSlash(s: string): string {
 }
 
 /**
+ * 审计里的 `via`（issue #1139）：**白名单映射**，不是二元兜底。
+ *
+ * 曾经写成 `viaRaw === 'silent' ? 'wecom-silent' : 'wecom-qr'`——于是三个互不相同的来源
+ * （`qr-corp` 直连扫码 / `silent` 静默 / **参数整个丢失**）里，后两者落进同一个桶，且方向
+ * 系统性偏向 qr。真机排障已因此推错结论（2026-10-28 yangwei 案例：见 issue #1139），
+ * **但那条审计行到底来自哪条支路，现有代码已无法回溯**——这正是要消灭的不可判定性。
+ *
+ * 白名单同时是**安全边界**：`viaRaw` 直接进审计体 = 把 query 内容落库（可被任意构造、长度无界）
+ * ⇒ 未知值一律折叠成 `wecom-unknown`，**绝不原样记**。
+ *
+ * 与会话载荷的 `authVia` 分道：那个是四值联合（`password|wecom-qr|wecom-silent|wechat-oa`）
+ * 且旧 token 兼容是红线，本函数只服务审计保真。
+ */
+function auditViaOf(viaRaw: string): 'wecom-qr' | 'wecom-silent' | 'wecom-unknown' {
+  switch (viaRaw) {
+    case 'qr-corp':
+      return 'wecom-qr'
+    case 'silent':
+      return 'wecom-silent'
+    default:
+      return 'wecom-unknown'
+  }
+}
+
+/**
  * 回跳目标（#1047 深链）：?next= 仅当是本站绝对路径（以 / 开头且非协议相对 //）才采用，
  * 否则回落 /。防开放重定向规则与登录页 nextTarget() 同一款——企微静默链把 next 从
  * /silent 经 redirect_uri 透传到 /callback，成功落地用。
@@ -215,7 +240,12 @@ export function wecomRoutes(deps: WecomRoutesDeps) {
       const state = c.req.query('state') ?? ''
       const code = c.req.query('code') ?? ''
       const viaRaw = c.req.query('via') ?? ''
+      // 会话载荷的 authVia（四值联合，旧 token 兼容红线）：**行为零改动**——未知/丢失一律按
+      // 扫码记，因为 session-middleware 只对 'wechat-oa' 分支，这两个值在授权链上等价。
       const via = viaRaw === 'silent' ? 'wecom-silent' : 'wecom-qr'
+      // 审计的 via（#1139）：白名单映射，未知/丢失 → wecom-unknown。**判据与上面分开**：
+      // 会话值是为兼容而保守，审计值要的是保真——两者混用正是本 issue 的成因。
+      const auditVia = auditViaOf(viaRaw)
       // 是否是**企微** code（而非 Casdoor OIDC code）：silent 路与自建应用的扫码路（`qr-corp`，
       // issue #30）都是**我们直连企微**拿到的 code ⟹ 走同一个换票函数；只有经 Casdoor 的代开发路
       // 拿的是 OIDC code。**这同时决定失败时的错误码**（企微故障 vs Casdoor 故障）。
@@ -351,18 +381,18 @@ export function wecomRoutes(deps: WecomRoutesDeps) {
           jitCreated = true
         } catch {
           // 建号失败 = 上游故障，fail loudly：绝不静默放行一个半建成的号。
-          await writeAudit(deps.pool, t.id, name, 'login.fail', { via, reason: 'jit-create-failed' })
+          await writeAudit(deps.pool, t.id, name, 'login.fail', { via: auditVia, reason: 'jit-create-failed' })
           deps.limiter.record(t.id, 'wecom', null, false)
           return fail('CASDOOR_UNAVAILABLE')
         }
       }
       if (user === null) {
-        await writeAudit(deps.pool, t.id, name, 'login.fail', { via, reason: 'no-account' })
+        await writeAudit(deps.pool, t.id, name, 'login.fail', { via: auditVia, reason: 'no-account' })
         deps.limiter.record(t.id, 'wecom', null, false) // 企微路不建 user 桶（check 也不看它）
         return fail('NO_ACCOUNT')
       }
       if (user.isForbidden) {
-        await writeAudit(deps.pool, t.id, name, 'login.fail', { via, reason: 'forbidden' })
+        await writeAudit(deps.pool, t.id, name, 'login.fail', { via: auditVia, reason: 'forbidden' })
         deps.limiter.record(t.id, 'wecom', null, false)
         return fail('NO_ACCOUNT')
       }
@@ -375,7 +405,7 @@ export function wecomRoutes(deps: WecomRoutesDeps) {
         now,
       )
       // 审计先行（M-4，与 auth.ts 同序）：插入抛错 → 500 且未发任何会话 cookie
-      await writeAudit(deps.pool, t.id, name, 'login.ok', { via, ...(jitCreated ? { jit: true } : {}) })
+      await writeAudit(deps.pool, t.id, name, 'login.ok', { via: auditVia, ...(jitCreated ? { jit: true } : {}) })
       deps.limiter.record(t.id, 'wecom', null, true)
       c.res.headers.append('Set-Cookie', serializeSessionCookie(token))
       // iframe 分支（登录页内嵌扫码页回跳）：顶层 302 指到 iframe 外不可行 → 小 HTML 通知父页
