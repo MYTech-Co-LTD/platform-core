@@ -1,10 +1,29 @@
-# 通知基础设施的两个运维 job（健康检查 / 保留期清理）
+# 通知基础设施的三个运维 job（健康检查 / 保留期清理 / 内置 seed）
 
 > 正典：`docs/architecture.md` §2.6；设计 `docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md` §12。
-> 二者都是**仓内脚本 + openship job 一次性容器**（零常驻），同 `deploy/notify-reconcile-job.md` 范式。
+> 二者都是**仓内脚本 + openship job**（零常驻），命令形如 `docker exec <server 容器> sh -lc '…'`
+> —— 与既有 `notify-reconcile` job 同一范式（本仓实际形态；`deploy/notify-reconcile-job.md` 早期写的
+> 「一次性容器跑 docker run」是**示意**，生产未采用）。
 > **不要**把这两个 job 的逻辑塞进 server 进程（应用进程不跑定时副作用）。
 
-## 1. `notify-health`（建议每 5 分钟）
+## 已在生产建成的两个 job（2026-10-28 实测）
+
+| job | key | cron（UTC） | 命令 |
+|---|---|---|---|
+| `notify-health（通知投递健康检查）` | `custom:2H4wFWXzMvzbt2UU` | `*/5 * * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-health.mjs'` |
+| `notify-retention（通知保留期清理）` | `custom:OwCrOG0dkixdkxTL` | `23 3 * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-retention.mjs'` |
+| `notify-seed-builtin（内置模板/通道/默认规则幂等 seed）` | `custom:NWK_D7nKpsC7hdhe` | `13 * * * *` | `docker exec openship-platform-core-server sh -lc 'pnpm exec tsx scripts/notify-seed-builtin.mjs'` |
+
+- 两者都 `serverId=23a1091e`（mytech-weknora），`notifyConfig.states=['failed']`，
+  通道 `nch_XBUs425hd_KsA_lt`（与 `notify-reconcile` 同一通道）。
+- **手动触发已验**：health → `dead=0 stale=0 workers=1 …` exit 0；retention → `inbox=0 attempts=0 deliveries=0` exit 0；
+  seed → `{"tenants":1,"templates":0,"channels":0,"rules":1}` exit 0（幂等：已存在的模板/通道不再新建）。
+- **为什么 seed 也要定时跑**：2026-10-27 生产首次上线时**漏跑 seed**，导致模板/通道/规则全空、
+  事件进来零投递。做成小时级幂等 job 后，新租户开通也会被自动兜住。
+- 命令用 `docker exec` 进 server 容器（仓内脚本与 `node_modules` 都在），**不是** `docker run` 一次性容器
+  —— 与 `notify-reconcile` 的既有范式一致（本机验证过这条路径能跑）。
+
+## 1. `notify-health`（每 5 分钟）
 
 ```bash
 DATABASE_URL=<平台库> pnpm exec tsx scripts/notify-health.mjs
@@ -21,7 +40,7 @@ stdout 一行：`notify-health: dead=… stale=… workers=… oldestPending=…
 - `channelErrors` 与 `oldestPendingSeconds` 是**诊断面**，单独不判红（阈值容易误报）。
 - **必须订阅失败通知**：job 静默失败 = 投递积压无人知晓。
 
-## 2. `notify-retention`（建议每日 03:00 UTC）
+## 2. `notify-retention`（每日 03:23 UTC）
 
 ```bash
 DATABASE_URL=<平台库> pnpm exec tsx scripts/notify-retention.mjs
