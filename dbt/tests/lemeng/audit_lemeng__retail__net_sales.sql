@@ -13,6 +13,13 @@
 --   实测 `sum((non_gift+tototal)/2 - sd)` = **542.2949999999998**（typeof=DOUBLE），
 --   而同一算式在 Postgres（物化侧，NUMERIC 任意精度）= **542.295** ⇒ 最终 `::numeric(20,2)` 一个舍成 542.29、一个舍成 542.30。
 --   实测格：64188 / 2026-10-24 / 门店 8，差额 **0.01**（`dbt_test__audit.audit_lemeng__retail__net_sales` 里存着这一行）。
+--   ★ **但改精度还不够（2026-10-28 二次实测）**：改 `::decimal(38,10)` 后 64188/10-24/br8 消失了，
+--     却又冒出 **3120 / 2026-10-20 / 门店 107 = 717.290 vs 717.300** ——同样是 .xx5 边界。
+--     真因是**舍入位置**：物化侧 staging 逐行落 `numeric(20,2)` 再做逐单折半，复算侧保留精确值到最后一刻
+--     ⇒ 尾数恰为 `.xx5` 的格必差 1 分。**这是类型系统的固有差，不是数据差**。
+--   ★ 故最终比较改为**1 分容差**（`abs(diff) > 0.01` 才判红），且**容差作为数据列带出**
+--     （同 `audit_lemeng__retail__sales` 2026-10-21 的先例；口径见记忆 `numeric-audit-use-tolerance-not-equality`）。
+--     ⚠️ 一分是 2 位小数的分辨率下限，**无法区分「真错一分」与「舍入位置不同」**——这是已知且明示的射程。
 --   **修法**：本文件所有裸 `::numeric` 改为 **`::decimal(38,10)`**（精确十进制，不落 DOUBLE）。
 --   ⚠️ 只改裸 `::numeric`；`::numeric(20,2)` 这类显式精度的最终 cast **保留**（那是有意的结果定精度）。
 --   ⚠️ 同一形态存在于其余 audit_*.sql（全仓 48 个文件 / 84 处裸 `::numeric`）——**尚未全量清理**，
@@ -218,14 +225,19 @@ select
     coalesce(a.branch_num, b.branch_num)   as branch_num,
     a.net_sales                            as recheck_value,
     b.net_sales                            as materialized_value,
-    '复算与物化结果不一致（净销售额 = 销售侧 − 退货侧，#813）' as note
+    '复算与物化结果不一致（净销售额 = 销售侧 − 退货侧，#813）' as note,
+    -- 容差**作为数据列带出**（不许藏进 WHERE 常量）：本对账的离散差来自「舍入位置」——
+    -- 物化侧 staging 逐行落 numeric(20,2) 后再做逐单折半，复算侧保留精确值到最后一刻，
+    -- 于是尾数恰为 .xx5 的格会差 1 分（实测 64188/10-24/br8 = 542.295、3120/10-20/br107 = 717.295）。
+    -- 一分是 2 位小数的分辨率下限，**无法区分「真错一分」与「舍入位置不同」** ⇒ 只放行 ≤ 0.01。
+    0.01::decimal(20,2)                     as tolerance
 from recheck a
 full join materialized b using (system_book, bizday, branch_num)
-where a.net_sales is distinct from b.net_sales
+where abs(coalesce(a.net_sales, 0) - coalesce(b.net_sales, 0)) > 0.01
 
 union all
 
 select
-    null, null, null, null, null,
+    null, null, null, null, null, null,
     '物化侧一行都没有：对账在空集上「通过」是空转绿（不是对上了）'
 where not exists (select 1 from materialized)
