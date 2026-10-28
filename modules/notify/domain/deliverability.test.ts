@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import type { NotificationEventDecl } from '@platform/sdk'
 import type { NotificationRule } from './rules'
-import { resolveDeliverability, type DeliverabilityDeps } from './deliverability'
+import { aggregateEventStatus, resolveDeliverability, type DeliverabilityDeps } from './deliverability'
 
 const decl: NotificationEventDecl = {
   key: 'm.a.b',
@@ -139,5 +139,27 @@ describe('resolveDeliverability', () => {
       { name: 'dup', source: 'field' },
       { name: 'other', source: 'scope_holders' },
     ])
+  })
+})
+
+describe('aggregateEventStatus', () => {
+  it('任一规则产出投递 ⇒ matched', () => {
+    expect(aggregateEventStatus([null, 'no_recipient'], true)).toBe('matched')
+    expect(aggregateEventStatus(['no_recipient'], true)).toBe('matched')
+  })
+
+  it('全部阻塞时取最靠后（invalid > no_channel > no_recipient）', () => {
+    expect(aggregateEventStatus(['no_recipient', 'no_channel'], false)).toBe('no_channel')
+    expect(aggregateEventStatus(['no_recipient', 'template_missing'], false)).toBe('invalid')
+    expect(aggregateEventStatus(['no_channel', 'template_missing'], false)).toBe('invalid')
+    expect(aggregateEventStatus(['no_recipient'], false)).toBe('no_recipients')
+  })
+
+  it('无规则 ⇒ no_rules', () => {
+    expect(aggregateEventStatus([], false)).toBe('no_rules')
+  })
+
+  it('全 null 但没产出投递（如全被冷却/渲染失败）⇒ matched（不是阻塞）', () => {
+    expect(aggregateEventStatus([null], false)).toBe('matched')
   })
 })

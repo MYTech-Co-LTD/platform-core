@@ -119,3 +119,48 @@ function recipientSource(
   if (kind === 'scope_holders') return 'scope_holders'
   return 'field'
 }
+
+// ── 事件状态聚合（D2）─────────────────────────────────────────────────────────
+
+export type EventStatus =
+  | 'new'
+  | 'matched'
+  | 'no_rules'
+  | 'no_recipients'
+  | 'no_channel'
+  | 'invalid'
+
+/** 严重度：越靠前越该先修（模板坏了什么都发不出去；通道停了比没人更接近「能修好」） */
+const SEVERITY: Record<Blocked, number> = {
+  template_missing: 3,
+  no_channel: 2,
+  no_recipient: 1,
+}
+
+/**
+ * 多规则聚合：**只要有任一条真的产出了投递，就是 matched**；否则取最严重的阻塞原因。
+ *
+ * 为什么「有投递就算通」：一个事件命中两条规则时，一条能发、一条不能，
+ * 事件整体**确实发出去了一部分**——标成阻塞会掩盖「已经有人收到」的事实。
+ * 「哪条规则坏了」由 `notify.delivery` 的缺席 + 规则体检（D3 preflight）定位。
+ */
+export function aggregateEventStatus(
+  perRule: Array<Blocked | null>,
+  producedDeliveries: boolean,
+): EventStatus {
+  if (producedDeliveries) return 'matched'
+  if (perRule.length === 0) return 'no_rules'
+
+  const worst = perRule.reduce<Blocked | null>((acc, b) => {
+    if (b === null) return acc
+    if (acc === null) return b
+    return SEVERITY[b] > SEVERITY[acc] ? b : acc
+  }, null)
+
+  if (worst === 'template_missing') return 'invalid'
+  if (worst === 'no_channel') return 'no_channel'
+  if (worst === 'no_recipient') return 'no_recipients'
+  // 全部规则都拿到 null（可送达）但没有任何 delivery 产出（全被判冷却/渲染失败）：
+  // 这不是「发不出去」的配置问题 ⇒ 保持 matched（与旧行为一致）。
+  return 'matched'
+}

@@ -3,7 +3,7 @@
 // 关键语义：事件先入队；worker 匹配 → 渲染冻结 → 到期领取 → provider 发送 → 回执。
 import type { NotificationEventDecl } from '@platform/sdk'
 import { matchRules, type NotificationRule } from './domain/rules'
-import { resolveDeliverability } from './domain/deliverability'
+import { aggregateEventStatus, resolveDeliverability, type Blocked } from './domain/deliverability'
 import { renderContents, type Contents } from './domain/render'
 import type { DeliveryRow, InsertDeliveryInput, PendingEvent } from './storage'
 
@@ -90,10 +90,12 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
       continue
     }
 
+    // D2：逐规则记录阻塞原因，最后聚合成一个事件状态（不再逐条静默 continue）
+    const perRule: Array<Blocked | null> = []
+    let produced = false
+
     for (const rule of rules) {
       // 可送达性解析（**唯一实现**）：模板/收件人/通道一次算清。
-      // 模板缺失由 deliv.blocked='template_missing' 表达（不再单独读一次库）。
-      // D1 阶段仍按旧口径处理零结果（静默 continue），D2 才落成事件状态。
       const deliv = await resolveDeliverability(
         { org: ev.org, rule, payload: ev.payload },
         {
@@ -109,11 +111,8 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
           resolveScopeHolders: deps.resolveScopeHolders,
         },
       )
-      if (deliv.blocked === 'template_missing') {
-        await deps.markEvent(ev, 'invalid')   // D1 保持旧口径
-        continue
-      }
-      if (deliv.blocked !== null) continue     // no_recipient / no_channel：D1 仍静默
+      perRule.push(deliv.blocked)
+      if (deliv.blocked !== null) continue
 
       const recipients = deliv.recipients.map((r) => r.name)
       const channelRows = deliv.channels
@@ -172,11 +171,13 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
             ...base, address: address ?? recipient, rendered: out, status: 'pending',
           })
           deliveries++
+          // D2：只有「真的排进投递」才算发出去一部分 ⇒ 事件不判阻塞
+          produced = true
         }
       }
     }
 
-    await deps.markEvent(ev, 'matched')
+    await deps.markEvent(ev, aggregateEventStatus(perRule, produced))
   }
 
   const due = await deps.claimDueDeliveries(50)
