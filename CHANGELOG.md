@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.213.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.212.0...v0.213.0) - 2026-10-28
+- 【新增】data: 加成本覆盖率与零成本可复核清单 (#816) ([#1148](https://github.com/MYTech-Co-LTD/platform-core/pull/1148), [17fbdd1](https://github.com/MYTech-Co-LTD/platform-core/commit/17fbdd14709c570d2304380aa222d0d0d381f91c))
+
+
 ## [0.212.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.211.0...v0.212.0) - 2026-10-28
 - 【新增】notify: 可送达性 D3+D4——配置期预检与 agent 自证 ([#1147](https://github.com/MYTech-Co-LTD/platform-core/pull/1147), [ab911b9](https://github.com/MYTech-Co-LTD/platform-core/commit/ab911b9e267608dacb5f38376e4291652d5d21a6))
 
