@@ -5,6 +5,7 @@ import { applyMigrations } from './test-util'
 
 const dbUrl = process.env.DATABASE_URL
 const describePg = dbUrl ? describe : describe.skip
+const ORG = 'org-mig005'
 
 describePg('notify 迁移', () => {
   let pool: Pool
@@ -23,6 +24,25 @@ describePg('notify 迁移', () => {
     await applyMigrations(pool) // 第二遍：同批重跑
     const after = (await pool.query(q)).rows[0].n as number
     expect(after).toBe(before)
+  })
+
+  it('event.status 接受新增的可送达性终态，非法值仍被拒', async () => {
+    await pool.query('delete from notify.event where org=$1', [ORG])
+    for (const st of ['no_recipients', 'no_channel']) {
+      await pool.query(
+        `insert into notify.event(org,event_id,event_key,scope,payload,producer,status)
+         values ($1,$2,'m.a.b','*','{}','t',$3)
+         on conflict (org,event_id) do update set status = excluded.status`,
+        [ORG, `st-${st}`, st])
+    }
+    const { rows } = await pool.query(
+      "select status from notify.event where org=$1 and event_id like 'st-%' order by event_id", [ORG])
+    expect(rows.map((r) => r.status)).toEqual(['no_channel', 'no_recipients'])
+    await pool.query('delete from notify.event where org=$1', [ORG])
+
+    await expect(pool.query(
+      `insert into notify.event(org,event_id,event_key,scope,payload,producer,status)
+       values ($1,'st-bad','m.a.b','*','{}','t','bogus')`, [ORG])).rejects.toThrow()
   })
 
   it('v2 表齐全且 org 列 NOT NULL', async () => {
