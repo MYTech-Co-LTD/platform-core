@@ -25,7 +25,13 @@ export type DeliverabilityDeps = {
   getChannel(
     org: string,
     id: string,
-  ): Promise<{ id: string; provider: string; enabled: boolean } | null>
+  ): Promise<{
+    id: string
+    provider: string
+    enabled: boolean
+    /** 非敏感配置（address_fallback 等）；worker 的地址回退判定要用 */
+    config?: Record<string, unknown>
+  } | null>
   resolveScopeHolders(
     org: string,
     key: string,
@@ -36,7 +42,12 @@ export type DeliverabilityDeps = {
 export type Deliverability = {
   blocked: Blocked | null
   recipients: ResolvedRecipient[]
-  channels: Array<{ id: string; provider: string; enabled: boolean }>
+  channels: Array<{
+    id: string
+    provider: string
+    enabled: boolean
+    config?: Record<string, unknown>
+  }>
   usableChannels: string[]
   /** 已发布模板（blocked=template_missing 时缺省）；worker 复用它渲染，避免二次读库 */
   tpl?: { revision: number; contents: unknown }
@@ -81,7 +92,12 @@ export async function resolveDeliverability(
   const channels: Deliverability['channels'] = []
   for (const id of rule.channels) {
     const ch = await deps.getChannel(org, id)
-    channels.push({ id, provider: ch?.provider ?? 'unknown', enabled: ch?.enabled === true })
+    channels.push({
+      id,
+      provider: ch?.provider ?? 'unknown',
+      enabled: ch?.enabled === true,
+      config: ch?.config,
+    })
   }
   const usableChannels = channels.filter((c) => c.enabled).map((c) => c.id)
 

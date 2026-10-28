@@ -3,7 +3,7 @@
 // 关键语义：事件先入队；worker 匹配 → 渲染冻结 → 到期领取 → provider 发送 → 回执。
 import type { NotificationEventDecl } from '@platform/sdk'
 import { matchRules, type NotificationRule } from './domain/rules'
-import { resolveRecipientNames } from './domain/recipients'
+import { resolveDeliverability } from './domain/deliverability'
 import { renderContents, type Contents } from './domain/render'
 import type { DeliveryRow, InsertDeliveryInput, PendingEvent } from './storage'
 
@@ -91,36 +91,45 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
     }
 
     for (const rule of rules) {
-      const tpl = await deps.getPublishedTemplate(ev.org, rule.templateKey)
-      if (!tpl) {
-        await deps.markEvent(ev, 'invalid')
+      // 可送达性解析（**唯一实现**）：模板/收件人/通道一次算清。
+      // 模板缺失由 deliv.blocked='template_missing' 表达（不再单独读一次库）。
+      // D1 阶段仍按旧口径处理零结果（静默 continue），D2 才落成事件状态。
+      const deliv = await resolveDeliverability(
+        { org: ev.org, rule, payload: ev.payload },
+        {
+          getEventDecl: deps.getEventDecl,
+          getPublishedTemplate: async (org, key) => {
+            const t = await deps.getPublishedTemplate(org, key)
+            return t ? { revision: t.revision, contents: t.contents } : null
+          },
+          getChannel: async (org, id) => {
+            const ch = await deps.getChannel(org, id)
+            return ch ? { id, provider: ch.provider, enabled: ch.enabled, config: ch.config } : null
+          },
+          resolveScopeHolders: deps.resolveScopeHolders,
+        },
+      )
+      if (deliv.blocked === 'template_missing') {
+        await deps.markEvent(ev, 'invalid')   // D1 保持旧口径
         continue
       }
+      if (deliv.blocked !== null) continue     // no_recipient / no_channel：D1 仍静默
 
-      const names = resolveRecipientNames(rule, decl, ev.payload)
-      const holders = rule.recipientLiteral
-        ? []
-        : await deps.resolveScopeHolders(ev.org, rule.recipientKey, decl)
-      const recipients = [...new Set([...names, ...holders])].filter(Boolean)
-      if (recipients.length === 0) continue
-
-      const hits = await Promise.all(rule.channels.map(async (id) => ({
-        id, row: await deps.getChannel(ev.org, id),
-      })))
-      const channelRows = hits
-        .filter((c) => c.row !== null && c.row.enabled)
-        .map((c) => ({ id: c.id, row: c.row! }))
+      const recipients = deliv.recipients.map((r) => r.name)
+      const channelRows = deliv.channels
+        .filter((c) => c.enabled)
+        .map((c) => ({ id: c.id, row: { provider: c.provider, enabled: c.enabled, config: c.config } }))
       if (channelRows.length === 0) continue
 
       // 模板内容按 provider 组织（wecom_chat / in_app / webhook），规则引用的是通道实例 id
       const providers = [...new Set(channelRows.map((c) => c.row.provider))]
-      const rendered = renderContents(tpl.contents, ev.payload, providers)
+      const rendered = renderContents(deliv.tpl!.contents as Contents, ev.payload, providers)
       if (!rendered.ok) {
         for (const c of channelRows) {
           await deps.insertDelivery({
             org: ev.org, eventId: ev.eventId, eventKey: ev.eventKey, ruleId: rule.id,
             recipient: '<render>', channel: c.id, address: '', templateKey: rule.templateKey,
-            revision: tpl.revision, rendered: {}, status: 'dead',
+            revision: deliv.tpl!.revision, rendered: {}, status: 'dead',
             lastError: rendered.issues.join('; '),
           })
         }
@@ -135,7 +144,7 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
           const base = {
             org: ev.org, eventId: ev.eventId, eventKey: ev.eventKey, ruleId: rule.id,
             recipient, channel: channelId,
-            templateKey: rule.templateKey, revision: tpl.revision,
+            templateKey: rule.templateKey, revision: deliv.tpl!.revision,
           }
 
           if (await deps.isCoolingDown(ev.org, rule, recipient, now)) {

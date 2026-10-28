@@ -150,6 +150,33 @@ describe('runOnce', () => {
       .toBe(new Date('2026-01-01T00:00:00Z').getTime() + 12_000)
   })
 
+  // ── D1 等价性守门：抽函数后行为必须与改造前逐字相同 ──────────────────────────
+  it('D1 等价：正常路径 1 人 1 通道 ⇒ 1 条 delivery + matched', async () => {
+    const f = makeDeps()
+    const stats = await runOnce(f.deps)
+    expect(stats).toMatchObject({ deliveries: 1, sent: 0 })
+    expect(f.inserted).toHaveLength(1)
+    expect(f.marks).toEqual([{ status: 'matched' }])
+  })
+
+  it('D1 等价：零收件人仍然静默（D2 才改状态）', async () => {
+    const f = makeDeps({
+      listRules: async () => [rule({ recipientKey: 'managers' })],
+      resolveScopeHolders: async () => [],
+      claimEvents: async () => [event({ payload: { title: 'T', link: 'https://x' } })],
+    })
+    const stats = await runOnce(f.deps)
+    expect(stats.deliveries).toBe(0)
+    expect(f.inserted).toEqual([])
+  })
+
+  it('D1 等价：通道全停用仍然静默（D2 才改状态）', async () => {
+    const f = makeDeps({ getChannel: async () => ({ provider: 'wecom_chat', enabled: false }) })
+    const stats = await runOnce(f.deps)
+    expect(stats.deliveries).toBe(0)
+    expect(f.inserted).toEqual([])
+  })
+
   it('成功发送 ⇒ sent 回执', async () => {
     const f = makeDeps({ claimDueDeliveries: async () => [dueRow()] })
     expect((await runOnce(f.deps)).sent).toBe(1)
