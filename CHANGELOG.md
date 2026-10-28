@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.213.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.213.2...v0.213.3) - 2026-10-28
+- 【修复】dbt: 补 union 哨兵行的 tolerance 列，修列错位 (#761) ([#1156](https://github.com/MYTech-Co-LTD/platform-core/pull/1156), [ca1c941](https://github.com/MYTech-Co-LTD/platform-core/commit/ca1c941716e21a1476cd7e4ef01ccfc398fcce99))
+
+
 ## [0.213.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.213.1...v0.213.2) - 2026-10-28
 - 【修复】dbt: net_sales 对账改 1 分容差并把容差作为数据列 (#761) ([#1155](https://github.com/MYTech-Co-LTD/platform-core/pull/1155), [265e4b5](https://github.com/MYTech-Co-LTD/platform-core/commit/265e4b53ecf9c55548d13188710c0ee27ae3eebc))
 
