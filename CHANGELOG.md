@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.211.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.210.4...v0.211.0) - 2026-10-28
+- 【新增】notify: 可送达性 D1+D2——零结果成为状态并可告警 ([#1145](https://github.com/MYTech-Co-LTD/platform-core/pull/1145), [f40e420](https://github.com/MYTech-Co-LTD/platform-core/commit/f40e420b16fab81e784d1a2a8e4b8f068ae391cc))
+
+
 ## [0.210.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.210.3...v0.210.4) - 2026-10-28
 - 【修复】auth: 登录审计 via 改白名单映射——未知/丢失不再冒充扫码 (#1139) ([#1143](https://github.com/MYTech-Co-LTD/platform-core/pull/1143), [e76afcb](https://github.com/MYTech-Co-LTD/platform-core/commit/e76afcbff42e5e0fa9258a57ad94ab96a483a35c))
 
