@@ -209,6 +209,8 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
   })
 
   // ② qr 全链：Casdoor code + 正确 state → platform_session + 302 /，authVia=wecom-qr
+  //    ⚠️ 本用例**不带 via 参数**（Casdoor OIDC 代开发路的形状）⇒ #1139 起审计记 wecom-unknown，
+  //       而会话 authVia 仍按兼容口径记 wecom-qr（两者判据分开，见 auditViaOf 注记）。
   it('callback（qr）：正确 code/state → 302 / + platform_session（authVia=wecom-qr、scopes 直挂∪角色）+ audit login.ok', async () => {
     const qr = await client.api.platform.auth.wecom.qr.$get(undefined, {
       headers: { host: 'acme.test' },
@@ -233,7 +235,11 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     }>(
       "select action, actor, detail from platform.audit where action='login.ok' order by id desc limit 1",
     )
-    expect(rows[0]).toMatchObject({ action: 'login.ok', actor: 'alice', detail: { via: 'wecom-qr' } })
+    expect(rows[0]).toMatchObject({
+      action: 'login.ok',
+      actor: 'alice',
+      detail: { via: 'wecom-unknown' },
+    })
   })
 
   // ③ 错 state（cookie 与 query 不一致）→ 浏览器上下文兜底：302 /login?error=BAD_STATE（评审 I1）
@@ -304,7 +310,7 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     expect(rows[0]).toMatchObject({
       action: 'login.fail',
       actor: 'stranger',
-      detail: { via: 'wecom-qr', reason: 'no-account' },
+      detail: { via: 'wecom-unknown', reason: 'no-account' },
     })
   })
 
@@ -449,6 +455,77 @@ describe.skipIf(!dbUrl)('企微登录路由（qr + 静默）', () => {
     expect(p?.authVia).toBe('wecom-qr')
     expect(p?.name).toBe('wo_alice')
     expect(p?.org).toBe('acme')
+    // #1139 正向面：带 via=qr-corp 时才落 wecom-qr（白名单命中，不是兜底）
+    const { rows } = await pool.query<{ detail: { via?: string } }>(
+      "select detail from platform.audit where action='login.ok' order by id desc limit 1",
+    )
+    expect(rows[0]?.detail.via).toBe('wecom-qr')
+  })
+
+  // ⑥.6 审计 via 白名单（#1139）：via 缺失/被构造 ⇒ wecom-unknown，绝不回落 qr、绝不原样落库
+  //     背景：旧实现是 `viaRaw === 'silent' ? 'wecom-silent' : 'wecom-qr'`——`qr-corp`（直连扫码）、
+  //     `silent`（静默）、**参数整个丢失**三个来源里，后两者落进同一个桶且方向偏向 qr。真机排障
+  //     已因此推错结论（yangwei 案例），而那条审计行来自哪条支路**已无法回溯** = 本 issue 的病灶。
+  it('审计 via 白名单：#1139 via 缺失 / 注入串 → wecom-unknown（不回落 qr，不把 query 原文落库）', async () => {
+    const cases: Array<{ label: string; via?: string }> = [
+      { label: '无 via 参数（Casdoor OIDC 支路）' },
+      { label: '注入串', via: "x';drop table platform.audit;--" },
+      { label: '未知值', via: 'wecom-magic' },
+    ]
+    for (const cs of cases) {
+      const qr = await client.api.platform.auth.wecom.qr.$get(undefined, {
+        headers: { host: 'acme.test' },
+      })
+      const state = stateToken(qr)
+      // 三个 case 都走 **Casdoor OIDC 换票支路**（via 非 silent/qr-corp ⇒ wecomCode=false）
+      // ⇒ 必须用 Casdoor 签发的 OIDC code，否则在换票阶段就 CASDOOR_UNAVAILABLE（写不出 login.ok）
+      const code = mock.issueOidcCode('alice')
+      const res = await client.api.platform.auth.wecom.callback.$get(
+        { query: { code, state, ...(cs.via === undefined ? {} : { via: cs.via }) } },
+        { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+      )
+      expect(res.status, cs.label).toBe(302)
+      expect(res.headers.get('location'), cs.label).toBe('/')
+      // 会话 authVia 保持兼容口径（未知/丢失按 qr 记）——**行为零改动**，只审计面收紧
+      const p = await verifySession(sessionToken(res), SECRET)
+      expect(p?.authVia, cs.label).toBe('wecom-qr')
+      const { rows } = await pool.query<{ detail: { via?: string } }>(
+        "select detail from platform.audit where action='login.ok' order by id desc limit 1",
+      )
+      expect(rows[0]?.detail.via, cs.label).toBe('wecom-unknown')
+    }
+    // 反证：注入串没有被原样写进任何审计行
+    const { rows: leaked } = await pool.query<{ n: string }>(
+      "select count(*)::text as n from platform.audit where detail->>'via' like '%drop table%'",
+    )
+    expect(leaked[0].n).toBe('0')
+  })
+
+  // ⑥.7 反证（判据边界）：via 缺失 + **企微** code ⇒ 走 Casdoor OIDC 换票支路 ⇒ 换不到名字 ⇒
+  //     失败收场（BAD_CODE），**不产生 login.ok**。言外之意：真机那条 via 缺失的 login.ok
+  //     不可能是「企微 code + via 丢失」这一组合——要么有人给它带了非 silent/qr-corp 的 via 值，
+  //     要么就是 OIDC 支路。两者在新口径下都是 `wecom-unknown`，不再冒充扫码。
+  it('#1139 反证：via 缺失 + 企微 code ⇒ 登录失败（无 platform_session、无 login.ok）', async () => {
+    const qr = await client.api.platform.auth.wecom.qr.$get(undefined, {
+      headers: { host: 'acme.test' },
+    })
+    const state = stateToken(qr)
+    const { rows: before } = await pool.query<{ n: string }>(
+      "select count(*)::text as n from platform.audit where action='login.ok'",
+    )
+    const res = await client.api.platform.auth.wecom.callback.$get(
+      { query: { code: 'wecom-silent-code', state } },
+      { headers: { host: 'acme.test', cookie: `wecom_state=${state}` } },
+    )
+    expect(res.status).toBe(302)
+    // 失败原因具体是 BAD_CODE（换票被上游拒）还是 CASDOOR_UNAVAILABLE（传输故障）**不重要**——
+    // 本用例钉的是「走不到发会话那一步」。钉死具体码会把 mock 的换票细节耦合进来。
+    expect(res.headers.get('location')).toMatch(/^\/login\?error=(BAD_CODE|CASDOOR_UNAVAILABLE)$/)
+    expect(setCookies(res)).toEqual([])
+    const { rows: after } = await pool.query<{ n: string }>(
+      "select count(*)::text as n from platform.audit where action='login.ok'",
+    )
+    expect(after[0].n).toBe(before[0].n)
   })
 
   // ⑦ 未配企微的租户（beta）：/qr 与 /silent（wxwork UA）都 404 WECOM_NOT_CONFIGURED
