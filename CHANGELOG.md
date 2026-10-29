@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.214.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.213.5...v0.214.0) - 2026-10-29
+- 【新增】data: 补齐全量历史回填变体（13 个，双账套）(#1160) ([#1161](https://github.com/MYTech-Co-LTD/platform-core/pull/1161), [1ecd907](https://github.com/MYTech-Co-LTD/platform-core/commit/1ecd9077042c17010539162829ff8ebe39db9799))
+
+
 ## [0.213.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.213.4...v0.213.5) - 2026-10-28
 - 【修复】dbt: 小时行数对账热腿排除今天，止住读热分区撞 ETag (#452) ([#1159](https://github.com/MYTech-Co-LTD/platform-core/pull/1159), [d442aed](https://github.com/MYTech-Co-LTD/platform-core/commit/d442aed11e55385bd5b9e7da89b96fa97b198ef2))
 
