@@ -133,6 +133,20 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.inventory.snapshot.backfill.3120', '回填专用（#1079 库存快照 10-18..10-25 补采；${BIZDAY} 参数化，同族 transfer.in 先例）'],
   ['lemeng.recon.preagg.item', '按需手动（逐分归零对账执行面，无日更节奏）'],
   ['lemeng.recon.preagg.backfill', '回填专用（换 BIZDAY 参数手动触发，handbook §1.3 阶段 H）'],
+  // ── #1160 全量历史回填（2024-10-01 起，双账套）：以下变体由
+  //    scripts/lemeng/gen-backfill-variants.mjs 从同账套 l0 机械派生，只在回填期手动驱动。
+  ['lemeng.request.order.backfill.3120', '回填专用（#1160 全量历史回填；${BIZDAY} 参数化）'],
+  ['lemeng.transfer.out.backfill.3120', '回填专用（#1160 全量历史回填；${BIZDAY} 参数化）'],
+  ['lemeng.purchase.analysis.backfill.3120', '回填专用（#1160 全量历史回填；${BIZDAY} 参数化）'],
+  ['lemeng.client.expense.backfill.3120', '回填专用（#1160 全量历史回填；${BIZDAY} 参数化）'],
+  ['lemeng.branch.expense.backfill.64188', '回填专用（#1160 64188 侧全量历史回填；${BIZDAY} 参数化）'],
+  ['lemeng.loss.adjustment.backfill.64188', '回填专用（#1160 64188 侧全量历史回填；${BIZDAY} 参数化）'],
+  ['lemeng.member.summary.backfill.64188', '回填专用（#1160 64188 侧全量历史回填；${BIZDAY} 参数化）'],
+  ['lemeng.branch_indicator.backfill.64188', '回填专用（#1160 64188 侧全量历史回填；${BIZDAY} 参数化）'],
+  ['lemeng.inventory.snapshot.backfill.64188', '回填专用（#1160 64188 侧全量历史回填；${BIZDAY} 参数化）'],
+  ['lemeng.request.order.backfill.64188', '回填专用（#1160 64188 侧全量历史回填；${BIZDAY} 参数化）'],
+  ['lemeng.purchase.analysis.backfill.64188', '回填专用（#1160 64188 侧全量历史回填；${BIZDAY} 参数化）'],
+  ['lemeng.client.expense.backfill.64188', '回填专用（#1160 64188 侧全量历史回填；${BIZDAY} 参数化）'],
   // （#729）forms 的那条旧豁免已**删除**：期望集改成「按**域**判」后，无后缀的
   // `forms.submission.l0` 不再被当乐檬共享族塞给 3120/64188，豁免失去存在理由。
   // forms 的排班随它自己的 console/workspace 落地登记进 `schedules/forms.json`（M1.4 阶段 E）。
