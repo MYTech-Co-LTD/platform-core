@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.214.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.214.0...v0.214.1) - 2026-10-29
+- 【修复】data: 回填驱动从 console 容器取 S3 凭据注入删热分区步骤 (#1162) ([#1163](https://github.com/MYTech-Co-LTD/platform-core/pull/1163), [38bd379](https://github.com/MYTech-Co-LTD/platform-core/commit/38bd3799c573df00e8dc79e6d132baf7cebd3cc8))
+
+
 ## [0.214.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.213.5...v0.214.0) - 2026-10-29
 - 【新增】data: 补齐全量历史回填变体（13 个，双账套）(#1160) ([#1161](https://github.com/MYTech-Co-LTD/platform-core/pull/1161), [1ecd907](https://github.com/MYTech-Co-LTD/platform-core/commit/1ecd9077042c17010539162829ff8ebe39db9799))
 
