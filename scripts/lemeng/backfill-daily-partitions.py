@@ -24,6 +24,10 @@
   --books 3120,64188     默认两本
   --console-port 3120=18080,64188=18081   控制台端口（宿主映射）
 
+⚠️ 删热分区那步要 S3 凭据，而**宿主上没有**（在 console 容器 env 里）⇒ 本脚本每次从 console
+容器 `docker inspect` 现取 `LEMENG_ZOS_*` 注入子进程（2026-10-29 实测：不注入就恒 exit 2
+`ENV_FAILED`，把已经落湖成功的一天记成 DAY_FAILED——假红比真红更费人）。
+
 ## 输出
 
   PLAN      day=<D> books=<…>（dry-run，未做任何事）
@@ -69,17 +73,47 @@ def console_port(book: str) -> int:
     raise SystemExit(f"ARGS_FAILED: --console-port 里没有 {book}")
 
 
-def console_token(book: str) -> str:
-    # 运行时从容器 env 现取（不落盘、不进 argv）——与 recon-day-heal.sh 同一口径
+def console_env(book: str) -> dict[str, str]:
+    """console 容器的 env（运行时现取，不落盘、不进 argv）——与 recon-day-heal.sh 同一口径。"""
     ct = f"openship-platform-core-shanhai-data-lemeng-console-{book}"
     out = subprocess.run(
         ["docker", "inspect", ct, "--format", "{{range .Config.Env}}{{println .}}{{end}}"],
         capture_output=True, text=True, check=False,
     ).stdout
+    env: dict[str, str] = {}
     for line in out.splitlines():
-        if line.startswith("DUCKLE_TOKEN="):
-            return line.split("=", 1)[1]
-    raise SystemExit(f"ENV_FAILED: 取不到 {ct} 的 DUCKLE_TOKEN")
+        k, sep, v = line.partition("=")
+        if sep:
+            env[k] = v
+    return env
+
+
+def console_token(book: str) -> str:
+    env = console_env(book)
+    tok = env.get("DUCKLE_TOKEN", "")
+    if not tok:
+        raise SystemExit(f"ENV_FAILED: 取不到 console-{book} 的 DUCKLE_TOKEN")
+    return tok
+
+
+# 删热分区那步要 S3 凭据。**宿主上没有这些变量**（它们在 console 容器里），
+# 2026-10-29 实测：不注入 ⇒ `delete-supplanted-hour-partitions.py` 恒 exit 2（ENV_FAILED），
+# 每天都被记成 DAY_FAILED——而数据其实已经落湖（run 本身 ok），是最误导人的那种假红。
+S3_ENV_KEYS = (
+    "ZOS_ACCESS_KEY", "ZOS_SECRET_KEY", "ZOS_ENDPOINT", "ZOS_REGION", "ZOS_BUCKET",
+    "LEMENG_ZOS_ACCESS_KEY", "LEMENG_ZOS_SECRET", "LEMENG_ZOS_SECRET_KEY",
+    "LEMENG_ZOS_ENDPOINT", "LEMENG_ZOS_REGION", "LEMENG_ZOS_BUCKET",
+)
+
+
+def delete_env(book: str) -> dict[str, str]:
+    """子进程 env = 本进程 env + console 容器里的 S3 五键（工具侧已认 LEMENG_ZOS_* 别名）。"""
+    env = dict(os.environ)
+    ct_env = console_env(book)
+    for k in S3_ENV_KEYS:
+        if k in ct_env:
+            env[k] = ct_env[k]
+    return env
 
 
 def api(book: str, method: str, path: str, body: dict | None = None) -> dict:
@@ -161,7 +195,7 @@ def main() -> int:
             p = subprocess.run(
                 [sys.executable, DELETE_TOOL, "--book", b, "--from", day,
                  "--before", (cur + timedelta(days=1)).isoformat(), "--apply"],
-                capture_output=True, text=True, check=False,
+                capture_output=True, text=True, check=False, env=delete_env(b),
             )
             deleted = sum(int(x.split("objects=")[1]) for x in p.stdout.splitlines() if "DELETE_PLAN" in x)
             if p.returncode != 0:
