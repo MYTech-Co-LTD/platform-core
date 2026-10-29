@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.215.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.215.0...v0.215.1) - 2026-10-29
+- 【修复】data: 回填驱动超时 180s→600s，submit 超时改按 run 记录判真伪 (#1166) ([#1167](https://github.com/MYTech-Co-LTD/platform-core/pull/1167), [b43b6dd](https://github.com/MYTech-Co-LTD/platform-core/commit/b43b6ddc0d2236b9925cd32cbdf49a427cd45bdb))
+
+
 ## [0.215.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.214.1...v0.215.0) - 2026-10-29
 - 【新增】data: 通用历史回填驱动（逐日串行 + 湖侧行数回读）(#1164) ([#1165](https://github.com/MYTech-Co-LTD/platform-core/pull/1165), [92dd3ee](https://github.com/MYTech-Co-LTD/platform-core/commit/92dd3eec65305bbdc0e366fe2a00a2c1a19ca498))
 
