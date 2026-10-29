@@ -1,4 +1,4 @@
-sha256-of-rest c2e4e791e3dac7efec702c2587b20d69577681c3c51cb1b2b3c07acb58ca2b9f
+sha256-of-rest 9ecd6df1b79e555adcd9d3ad9812321c01b5e3f90a4f805bf1e484964062d721
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -260,7 +260,7 @@ f62784890e4fe711204f6928c51b0f8ab6714dd95527e6445bb38963f9fe60bd deploy/duckle/c
 7008275436af2d9853c26268da5714159f297519a6dd349e16b98481a903a80f scripts/askdata/export-transcript.py /var/lib/askdata/export-transcript.py 0644
 739dd60b0444809b11c9b470916b4592896880a69afdbe601176997324af9a09 scripts/askdata/sync-and-run.sh /var/lib/askdata/sync-and-run.sh 0755
 a477c6828f557fc13d0860edd1240d0b6446d19380270536881ac676cf046814 scripts/duckle/connection-setup.py /opt/connection-setup.py 0755
-eeb3ae3afc863f94c699652c360e630a0c1389ca53992399e0c88bae232bc3e5 scripts/lemeng/backfill-daily-partitions.py ${REPO}/scripts/lemeng/backfill-daily-partitions.py 0644
+7f2b72fc8e4cbfa4e49bce875d91b254d306a2d9a9e6b0d70f46f26874952482 scripts/lemeng/backfill-daily-partitions.py ${REPO}/scripts/lemeng/backfill-daily-partitions.py 0644
 bbcc8969b337591f9431a1a06f0d603deab72d59364ce21722bb3139e7a31100 scripts/lemeng/backfill-retail-order-line.sh /opt/lemeng-backfill.sh 0755
 01030dcce0bee5c3c50ed54c0be7b9fa302da3de50be65cf137e03881fd453dc scripts/lemeng/delete-supplanted-hour-partitions.py ${REPO}/scripts/lemeng/delete-supplanted-hour-partitions.py 0644
 f030ebf00606c0e64157c69bd60aaa74ee932f647165d3f8ec8f419982e63344 scripts/lemeng/diagnose.sh /opt/lemeng-diagnose.sh 0755
