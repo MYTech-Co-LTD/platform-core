@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.215.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.214.1...v0.215.0) - 2026-10-29
+- 【新增】data: 通用历史回填驱动（逐日串行 + 湖侧行数回读）(#1164) ([#1165](https://github.com/MYTech-Co-LTD/platform-core/pull/1165), [92dd3ee](https://github.com/MYTech-Co-LTD/platform-core/commit/92dd3eec65305bbdc0e366fe2a00a2c1a19ca498))
+
+
 ## [0.214.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.214.0...v0.214.1) - 2026-10-29
 - 【修复】data: 回填驱动从 console 容器取 S3 凭据注入删热分区步骤 (#1162) ([#1163](https://github.com/MYTech-Co-LTD/platform-core/pull/1163), [38bd379](https://github.com/MYTech-Co-LTD/platform-core/commit/38bd3799c573df00e8dc79e6d132baf7cebd3cc8))
 
