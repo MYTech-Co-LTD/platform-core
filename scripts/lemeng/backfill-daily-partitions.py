@@ -54,6 +54,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DELETE_TOOL = os.path.join(HERE, "delete-supplanted-hour-partitions.py")
 BACKFILL_FILE = "pipelines/lemeng.retail.day.backfill.json"
 RUN_TIMEOUT_S = 900
+# `POST /api/run` 是**同步阻塞**的（整天回填 ~70s 才返回）。180s 在调度竞争/网关抖动下会把
+# 「已经跑完并落湖」的一天判成 `submit: timed out` 并让整本账套停机（2026-10-29 实测：3120
+# 09-20 记为失败，湖侧 13,788 行在）。⇒ 客户端给到 600s；真超时也先按 run 记录判真伪。
+HTTP_TIMEOUT_S = 600
+# submit 超时后的「判真伪」窗口：够跑到 run 记录出现终态即可，不必等满 RUN_TIMEOUT_S。
+SUBMIT_RECOVERY_S = 300
 
 
 def arg(name: str, default: str = "") -> str:
@@ -122,15 +128,16 @@ def api(book: str, method: str, path: str, body: dict | None = None) -> dict:
         f"http://127.0.0.1:{console_port(book)}{path}", data=data, method=method,
         headers={"Authorization": "Bearer " + console_token(book), "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=180) as r:
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as r:
         raw = r.read()
     return json.loads(raw) if raw else {}
 
 
-def wait_run(book: str, since_iso: str) -> tuple[str, float]:
+def wait_run(book: str, since_iso: str, timeout_s: float | None = None) -> tuple[str, float]:
     """等这一本 console 上**新起的** day.backfill run 结束。返回 (status, 秒)。"""
+    limit = RUN_TIMEOUT_S if timeout_s is None else timeout_s
     t0 = time.time()
-    while time.time() - t0 < RUN_TIMEOUT_S:
+    while time.time() - t0 < limit:
         time.sleep(10)
         try:
             runs = api(book, "GET", "/api/runs?limit=8").get("runs", [])
@@ -180,13 +187,19 @@ def main() -> int:
         for b in books:
             print(f"DAY_START day={day} book={b}")
             since = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+            submit_ok = True
             try:
                 api(b, "POST", "/api/run", {"file": BACKFILL_FILE, "params": {"BIZDAY": day}})
             except Exception as e:  # noqa: BLE001
-                print(f"DAY_FAILED day={day} book={b} reason=submit:{e}")
+                # 超时 ≠ 失败：POST 是同步的，客户端先放弃时空服务端还在跑、还会落湖。
+                # 转为「等 run 记录判真伪」，只有确实没有 ok 记录才判失败。
+                submit_ok = False
+                print(f"DAY_WARN day={day} book={b} submit:{e}（等 run 记录判真伪）")
+            st, secs = wait_run(b, since, None if submit_ok else SUBMIT_RECOVERY_S)
+            if not submit_ok and st == "timeout":
+                print(f"DAY_FAILED day={day} book={b} reason=submit:{st} 且 {SUBMIT_RECOVERY_S}s 内无 run 记录")
                 failed += 1
                 continue
-            st, secs = wait_run(b, since)
             if st != "ok":
                 print(f"DAY_FAILED day={day} book={b} reason=run:{st} after {secs:.0f}s")
                 failed += 1
