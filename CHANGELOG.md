@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.218.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.217.0...v0.218.0) - 2026-10-30
+- 【新增】notify: 推送部门接收人——发送时展开 + 审计三数 (#1174) ([#1176](https://github.com/MYTech-Co-LTD/platform-core/pull/1176), [1c8d7e2](https://github.com/MYTech-Co-LTD/platform-core/commit/1c8d7e2c7bf16b17a94193b6a05cf1ba5280f4c5))
+
+
 ## [0.217.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.216.0...v0.217.0) - 2026-10-30
 - 【新增】data: 报表部门门——按组织架构子树授权可见性 (#1173) ([#1175](https://github.com/MYTech-Co-LTD/platform-core/pull/1175), [6bfbbfe](https://github.com/MYTech-Co-LTD/platform-core/commit/6bfbbfebb9812a022baa3dfff45ebe32329a8c89))
 
