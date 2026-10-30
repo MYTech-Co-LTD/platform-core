@@ -32,6 +32,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // 权限码持有者（Casdoor 直挂 ∪ 角色展开）：宿主侧能力，缺凭据时降级为「不解析」
   // （→ 只能靠 manual literal 规则；**不静默假装没人持有**，有 warn）
   let resolveScopeHolderNames
+  /** 部门 → 成员展开（缺 Casdoor 凭据时不注入 ⇒ 部门规则显式阻塞，不静默发 0 人） */
+  let deptMembers
   if (process.env.CASDOOR_URL && process.env.CASDOOR_ADMIN_USER && process.env.CASDOOR_ADMIN_PWD) {
     const { createScopeHolderResolver } = await import('../apps/server/src/scope-holders.ts')
     const { CasdoorClient } = await import('../packages/auth-core/src/public.ts')
@@ -45,8 +47,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       adminPwd: String(process.env.CASDOOR_ADMIN_PWD),
     })
     resolveScopeHolderNames = createScopeHolderResolver(casdoorFor)
+    // 部门展开（组织架构 Phase C）：平台 org 表（只读视图）+ Casdoor isForbidden 过滤。
+    // 同一份 casdoorFor 工厂，语义与宿主装载期一致（缺凭据 ⇒ 不注入 ⇒ 部门规则显式阻塞）。
+    const { createChannelAddressResolver } = await import('../apps/server/src/channel-address.ts')
+    deptMembers = createChannelAddressResolver({ pool, casdoorFor }).resolveDeptMembers
   } else {
-    console.warn('notify-worker: 缺 CASDOOR_* 凭据 ⇒ scope_holders 不解析（仅 manual literal 规则可用）')
+    console.warn('notify-worker: 缺 CASDOOR_* 凭据 ⇒ scope_holders / 部门收件人不解析（仅 manual literal 规则可用）')
   }
 
   // 健康端点：镜像的 HEALTHCHECK 打 `127.0.0.1:${PORT:-13000}/healthz`（与 server 同镜像继承），
@@ -78,7 +84,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     do {
       try {
-        const s = await runOnceCli(pool, getEventDecl, process.env, resolveScopeHolderNames)
+        const s = await runOnceCli(pool, getEventDecl, process.env, resolveScopeHolderNames, deptMembers)
         console.log(JSON.stringify({ ts: new Date().toISOString(), ...s }))
       } catch (e) {
         console.error('notify-worker 本轮失败:', e instanceof Error ? e.message : e)

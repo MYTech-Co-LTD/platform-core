@@ -1,11 +1,12 @@
 // rules.tsx — 规则管理（五元组；无表达式编辑器）
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Button, Form, Input, InputNumber, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message,
+  Button, Form, Input, InputNumber, Popconfirm, Select, Space, Switch, Table, Tag, Tree, Typography, message,
 } from 'antd'
 import {
   del, get, post, put,
-  type ChannelView, type EventView, type RuleDeliverability, type RuleView, type TemplateView,
+  type ChannelView, type EventView, type OrgDeptOption, type RuleDeliverability, type RuleView,
+  type TemplateView,
 } from './api'
 
 /** 阻塞原因 → 人话（与 domain/deliverability.ts 的 Blocked 一一对应） */
@@ -16,6 +17,10 @@ export const blockedLabel = (blocked: string): string => {
   return blocked
 }
 
+/** 选中的收件人档的 kind（`undefined`/未知 ⇒ undefined）。部门树只对 `dept` 档出现。 */
+export const recipientKindOf = (decl: EventView | undefined, key: string | undefined) =>
+  key === undefined ? undefined : decl?.recipients[key]?.kind
+
 export const recipientOptions = (decl?: EventView) =>
   Object.entries(decl?.recipients ?? {}).map(([value, r]) => ({ value, label: r.label ?? value }))
 
@@ -23,6 +28,22 @@ export const publishedTemplateOptions = (templates: TemplateView[]) =>
   templates
     .filter((t) => t.status === 'published')
     .map((t) => ({ value: t.key, label: `${t.key}（v${t.publishedRevision ?? '?'}）` }))
+
+/** 平表 → antd Tree（按 parentExtId 挂；找不到父亲的当根，不丢节点）。 */
+export const deptTreeOf = (depts: OrgDeptOption[]) => {
+  type Node = { title: string; key: string; children: Node[] }
+  const nodes = new Map<string, Node>(depts.map((d) => [
+    d.extId, { title: `${d.name}（${d.memberCount}）`, key: d.extId, children: [] },
+  ]))
+  const roots: Node[] = []
+  for (const d of depts) {
+    const node = nodes.get(d.extId)!
+    const parent = d.parentExtId === null ? undefined : nodes.get(d.parentExtId)
+    if (parent === undefined) roots.push(node)
+    else parent.children.push(node)
+  }
+  return roots
+}
 
 export const enabledChannelOptions = (channels: ChannelView[]) =>
   channels.filter((c) => c.enabled).map((c) => ({ value: c.id, label: `${c.id}（${c.provider}）` }))
@@ -34,10 +55,15 @@ export default function RulesTab() {
   const [channels, setChannels] = useState<ChannelView[]>([])
   const [loading, setLoading] = useState(false)
   const [deliv, setDeliv] = useState<Map<string, RuleDeliverability>>(new Map())
+  const [depts, setDepts] = useState<OrgDeptOption[]>([])
+  const [deptPicked, setDeptPicked] = useState<string[]>([])
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
   const eventKey = Form.useWatch('eventKey', form) as string | undefined
+  const recipientKey = Form.useWatch('recipientKey', form) as string | undefined
   const decl = events.find((e) => e.key === eventKey)
+  /** 当前选的收件人档是不是「按部门」（决定要不要出部门树） */
+  const isDeptKind = recipientKindOf(decl, recipientKey) === 'dept'
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -51,6 +77,11 @@ export default function RulesTab() {
         get<{ rules: RuleDeliverability[] }>('/rules/deliverability')
           .catch(() => ({ rules: [] as RuleDeliverability[] })),
       ])
+      // 部门选择器的选项（组织架构 Phase C）：单独 catch —— 组织架构未同步/宿主没注入时
+      // 这页其余功能必须照常可用，只是「按部门」那一档不可选。
+      await get<{ depts: OrgDeptOption[] }>('/org-depts')
+        .then((d) => setDepts(d.depts))
+        .catch(() => setDepts([]))
       setRules(r.rules)
       setEvents(ev.events)
       setTemplates(t.templates)
@@ -66,10 +97,14 @@ export default function RulesTab() {
   useEffect(() => { void load() }, [load])
 
   const onCreate = async (v: Record<string, unknown>) => {
+    // 部门档才带 recipientDepts；其余档带空数组会被服务端按「非 dept 档不许带」拒（RULE_DEPTS_NOT_ALLOWED）
+    const isDept = recipientKindOf(decl, String(v.recipientKey)) === 'dept'
+    const body = isDept ? { ...v, recipientDepts: deptPicked } : v
     try {
-      await post('/rules', v)
+      await post('/rules', body)
       setOpen(false)
       form.resetFields()
+      setDeptPicked([])
       await load()
       message.success('规则已保存（即时生效）')
     } catch (e) {
@@ -121,6 +156,25 @@ export default function RulesTab() {
           <Form.Item name="recipientKey" label="收件人" rules={[{ required: true }]}>
             <Select aria-label="收件人" style={{ minWidth: 160 }} options={recipientOptions(decl)} />
           </Form.Item>
+          {isDeptKind && (
+            // 部门树多选（含子树）：选中的是 ext_id 集合，**发送时**才展开成人
+            <Form.Item label="部门" required>
+              {depts.length === 0 ? (
+                <Typography.Text type="secondary">组织架构未同步（先在企业微信同步部门）</Typography.Text>
+              ) : (
+                <div style={{ maxHeight: 220, overflow: 'auto', width: '100%', border: '1px solid #f0f0f0', padding: 8 }}>
+                  <Tree
+                    checkable
+                    selectable={false}
+                    defaultExpandAll
+                    treeData={deptTreeOf(depts)}
+                    checkedKeys={deptPicked}
+                    onCheck={(keys) => setDeptPicked((Array.isArray(keys) ? keys : keys.checked).map(String))}
+                  />
+                </div>
+              )}
+            </Form.Item>
+          )}
           <Form.Item name="templateKey" label="模板" rules={[{ required: true }]}>
             <Select aria-label="模板" style={{ minWidth: 220 }} options={publishedTemplateOptions(templates)} />
           </Form.Item>

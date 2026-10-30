@@ -1,0 +1,12 @@
+-- 006_notify_recipient_depts.sql — 规则的「部门收件人」选择（组织架构 Phase C；#1174）
+-- 正典：docs/superpowers/specs/2026-10-30-org-as-platform-primitive-design.md §3.5
+--
+-- 语义：`recipient_depts` 存**部门 ext_id 数组**（`platform.org_node.ext_id`），
+-- **发送时才展开**（含子树），所以组织架构变动即时生效、不需要回写规则。
+--   · 只有 kind=dept 的收件人档才允许有值（其余档必须 NULL —— 应用层 fail-closed 校验）；
+--   · NULL / 空 = 未选部门 ⇒ 该规则不产生收件人（阻塞原因 no_recipient，可见不静默）。
+-- 为什么与 recipient_literal 分开存：一个是人名一个部门号，混在一列会让「展开前」与
+-- 「展开后」两个状态无法区分（审计要记的是**选了哪些部门**，不是展开后的人）。
+--
+-- 幂等：add column if not exists。
+alter table notify.rule add column if not exists recipient_depts jsonb;

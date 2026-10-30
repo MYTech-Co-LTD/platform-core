@@ -386,7 +386,10 @@ export async function loadModules(
   const catalogEntries = buildCatalog(pending.map((p) => p.manifest))
   await upsertCatalog(deps.pool, catalogEntries, pending.map((p) => p.manifest.id))
   const events = createCatalogReader(catalogEntries)
-  const addresses = deps.channelAddressResolver ?? createChannelAddressResolver({ pool: deps.pool })
+  // `casdoorFor` 必须传：部门展开要判 `isForbidden`（不传 = 禁用的人照样发，安全侧硬伤）。
+  // 测试注入的整块解析器优先（`channelAddressResolver`），生产走这里。
+  const addresses = deps.channelAddressResolver
+    ?? createChannelAddressResolver({ pool: deps.pool, casdoorFor: deps.casdoorFor })
 
   const baseCtx: ModuleContext = { pool: deps.pool, identityLinks, events, addresses }
   for (const p of pending) {

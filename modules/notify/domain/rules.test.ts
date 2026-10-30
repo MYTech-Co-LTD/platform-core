@@ -12,12 +12,13 @@ const decl: NotificationEventDecl = {
     approver: { kind: 'field', field: 'u' },
     managers: { kind: 'scope_holders', scope: 'm:manage' },
     manualList: { kind: 'literal' },
+    dept: { kind: 'dept' },
   },
 }
 
 const rule = (over: Partial<NotificationRule> = {}): NotificationRule => ({
   org: 'o', id: 'r1', enabled: true, eventKey: 'm.a.b', scope: '*',
-  recipientKey: 'approver', recipientLiteral: null, templateKey: 't1',
+  recipientKey: 'approver', recipientLiteral: null, recipientDepts: null, templateKey: 't1',
   channels: ['c1'], cooldownMinutes: null, origin: 'manual', createdAt: '2026-01-01',
   ...over,
 })
@@ -87,5 +88,38 @@ describe('validateRule', () => {
       .toBe('RULE_CHANNEL_UNKNOWN')
     expect(validateRule({ ...base, templateKey: 'nope' }, decl, enabled, published))
       .toBe('RULE_TEMPLATE_UNKNOWN')
+  })
+})
+
+// ── 部门档的写入侧校验（组织架构 Phase C；spec 2026-10-30 §3.5）────────────────────
+describe('validateRule: 部门收件人', () => {
+  const ok = new Set(['c1'])
+  const tpl = new Set(['t1'])
+  const v = (over: Partial<NotificationRule>) => validateRule(rule(over), decl, ok, tpl)
+
+  it('★ 声明了 dept 档 + 选了部门 ⇒ 通过', () => {
+    expect(v({ recipientKey: 'dept', recipientDepts: ['D1', 'D2'] })).toBeNull()
+  })
+
+  it('★ 声明了 dept 档但一个部门都没选 ⇒ RULE_DEPTS_REQUIRED（不许「配一半」上线）', () => {
+    expect(v({ recipientKey: 'dept', recipientDepts: null })).toBe('RULE_DEPTS_REQUIRED')
+    expect(v({ recipientKey: 'dept', recipientDepts: [] })).toBe('RULE_DEPTS_REQUIRED')
+  })
+
+  it('★ 非 dept 档带部门选择 ⇒ RULE_DEPTS_NOT_ALLOWED（拒绝优于静默丢弃）', () => {
+    expect(v({ recipientKey: 'approver', recipientDepts: ['D1'] })).toBe('RULE_DEPTS_NOT_ALLOWED')
+    // 反证：不带选择就正常
+    expect(v({ recipientKey: 'approver' })).toBeNull()
+  })
+
+  it('dept 档 + 字面名单并存 ⇒ 拒（两档互斥）', () => {
+    expect(v({ recipientKey: 'dept', recipientDepts: ['D1'], recipientLiteral: ['x'] }))
+      .toBe('RULE_DEPTS_NOT_ALLOWED')
+  })
+
+  it('事件没声明 dept 档 ⇒ RULE_RECIPIENT_UNKNOWN（声明即授权：消费方不能自选）', () => {
+    const noDept = { ...decl, recipients: { approver: decl.recipients.approver! } }
+    expect(validateRule(rule({ recipientKey: 'dept', recipientDepts: ['D1'] }), noDept, ok, tpl))
+      .toBe('RULE_RECIPIENT_UNKNOWN')
   })
 })

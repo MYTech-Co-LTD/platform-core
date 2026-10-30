@@ -434,6 +434,12 @@ describe('notifications.events', () => {
     expect(parse([ev({ recipients: { r: { kind: 'literal', scope: 'x' } } })]).success).toBe(false)
   })
 
+  it('dept 收件人（组织架构 Phase C）：接受裸声明，不能带 field/scope', () => {
+    expect(parse([ev({ recipients: { r: { kind: 'dept', label: '按部门' } } })]).success).toBe(true)
+    expect(parse([ev({ recipients: { r: { kind: 'dept', field: 'u' } } })]).success).toBe(false)
+    expect(parse([ev({ recipients: { r: { kind: 'dept', scope: 'x' } } })]).success).toBe(false)
+  })
+
   it('defaults.recipient 必须已声明', () => {
     expect(parse([ev({ defaults: { recipient: 'nope', template: 't', channels: ['c'] } })]).success).toBe(false)
   })

@@ -20,6 +20,9 @@ api:
     - { method: GET,    path: /rules/deliverability,   scope: notify:view }
     - { method: GET,    path: /rules/:id/resolve,      scope: notify:view }
     - { method: POST,   path: /rules/:id/resolve,      scope: notify:view }
+    # 部门选择器（组织架构 Phase C；#1174）：规则里「按部门发」的候选项。数据由宿主注入
+    # （`ChannelAddressResolver.listOrgNodes`），模块自身不读 platform.org_* —— B1。
+    - { method: GET,    path: /org-depts,         scope: notify:manage }
     - { method: POST,   path: /rules,             scope: notify:manage }
     - { method: PUT,    path: /rules/:id/enabled, scope: notify:manage }
     - { method: DELETE, path: /rules/:id,         scope: notify:manage }

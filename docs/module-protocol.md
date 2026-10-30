@@ -582,13 +582,17 @@ notifications:
       payload:
         <field>: { type: string|number|boolean|date|url|user|user_list, required?: true, label?: ... }
       recipients:
-        <key>: { kind: field|scope_holders|literal, field?/scope?, label? }
+        <key>: { kind: field|scope_holders|literal|dept, field?/scope?, label? }
       defaults: { recipient: <key>, template: <builtin>, channels: [<channel id>] }  # 可选
 ```
 
 约束（`ManifestSchema` 强校验，fail-fast）：`key` 至少三段且前缀 = `manifest.id`、同模块唯一；
 `scope.key` 必须是 payload 的 string 字段；`field` 收件人必须指向 payload 的 `user`/`user_list`
 字段；`defaults.recipient` 必须已声明；payload 最多 20 个字段、不支持嵌套。
+
+`dept` 档（2026-10-30 组织架构 Phase C）＝按组织架构部门群发：规则上存部门 `ext_id`，
+**发送时**展开成「部门 + 全部子部门」的成员并排除禁用用户。与 `scope_holders` 同理，
+**声明即授权**——按部门群发的爆炸半径远大于点名，能不能这么发必须由生产模块显式表态。
 
 ### 运行时：怎么发
 

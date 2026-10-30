@@ -8,9 +8,10 @@ export type { CheckResult } from './checks'
 export { validatePayload } from './events'
 export { DECLARED_GATE_APPROVED, defineModule, requireScope, declaredScopeGate, LinkError } from './module'
 export type {
-  ChannelAddressResolver, DeclaredEndpoint, EnqueueEventInput, EventCatalogReader,
+  ChannelAddressResolver, DeclaredEndpoint, DeptExpansion, EnqueueEventInput, EventCatalogReader,
   Identity, IdentityLinkView, IdentityLinks, LinkProvider,
-  ModuleContext, ModuleDefinition, ModulePorts, NotifyEmitInput, NotifyPort, ResolvedPatKey,
+  ModuleContext, ModuleDefinition, ModulePorts, NotifyEmitInput, NotifyPort, OrgNodeOption,
+  ResolvedPatKey,
 } from './module'
 export { METRIC_SOURCE_RE, TENANT_SOURCES, TENANT_STORAGE } from './module'
 export type { TenantStorageConfig } from './module'

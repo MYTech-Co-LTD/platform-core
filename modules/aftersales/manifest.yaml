@@ -96,6 +96,10 @@ notifications:
       recipients:
         approvers:        { kind: scope_holders, scope: aftersales:manage, label: 售后管理员 }
         approvers_manual: { kind: literal, label: 手动指定审批人 }
+        # 按组织架构部门发（spec 2026-10-30 §3.5；#1174）：规则里选部门 ext_id，**发送时**展开
+        # 成「部门 + 全部子部门」的成员（排除禁用用户）。不进 defaults ⇒ 不改默认行为，
+        # 只有人工建规则时才多一个可选项。声明这一档 = 本事件**授权**按部门群发。
+        approvers_by_dept: { kind: dept, label: 按部门（含子部门） }
       defaults:
         recipient: approvers
         template: aftersales_employee_approval_pending

@@ -4,16 +4,22 @@
 // 为什么要有这一层：worker 里原先是三段内联（tpl → names/holders → channelRows），
 // 零结果一律 `continue` ⇒ 静默。抽成函数后，「谁能收到 / 为什么收不到」可被
 // worker、HTTP、MCP、体检 job 用**同一份逻辑**回答，不出现两套口径漂移。
-import type { NotificationEventDecl } from '@platform/sdk'
+import type { DeptExpansion, NotificationEventDecl } from '@platform/sdk'
 import type { NotificationRule } from './rules'
 import { resolveRecipientNames } from './recipients'
 
-/** 规则当前发不出去的原因（null = 可送达） */
-export type Blocked = 'no_recipient' | 'no_channel' | 'template_missing'
+/**
+ * 规则当前发不出去的原因（null = 可送达）。
+ *
+ * `dept_resolver_unavailable` 单列而不是并进 `no_recipient`：前者是**宿主没配解析器**
+ * （配置/部署问题），后者是**真的没人**（业务事实）。混成一个码会让排障方向从
+ * 「去查部署」错到「去查组织架构」，也与 `scope_holders_unavailable` 的既有口径不一致。
+ */
+export type Blocked = 'no_recipient' | 'no_channel' | 'template_missing' | 'dept_resolver_unavailable'
 
 export type ResolvedRecipient = {
   name: string
-  source: 'field' | 'literal' | 'scope_holders'
+  source: 'field' | 'literal' | 'scope_holders' | 'dept'
 }
 
 export type DeliverabilityDeps = {
@@ -37,6 +43,12 @@ export type DeliverabilityDeps = {
     key: string,
     decl: NotificationEventDecl,
   ): Promise<string[]>
+  /**
+   * 部门 `ext_id` → 展开后的成员（含子树、已排除禁用；spec 2026-10-30 §3.5）。
+   * **缺省 = 查不了**（宿主没注入）：调用方必须落 `dept_resolver_unavailable`，
+   * 不得当成空集——那会把「部署没配」伪装成「这个部门没人」。
+   */
+  resolveDeptMembers?(org: string, extIds: readonly string[]): Promise<DeptExpansion>
 }
 
 export type Deliverability = {
@@ -51,6 +63,11 @@ export type Deliverability = {
   usableChannels: string[]
   /** 已发布模板（blocked=template_missing 时缺省）；worker 复用它渲染，避免二次读库 */
   tpl?: { revision: number; contents: unknown }
+  /**
+   * 部门规则的展开结果（**审计三数**的唯一来源）：worker 拿它写审计、预检拿它显示
+   * 「将发送给 N 人 / 排除 M 人 / 未解析 K 人」。非部门规则不设。
+   */
+  deptExpansion?: DeptExpansion
 }
 
 /**
@@ -72,19 +89,42 @@ export async function resolveDeliverability(
   const decl = await deps.getEventDecl(rule.eventKey)
   const recipients: ResolvedRecipient[] = []
   const seen = new Set<string>()
+  let deptExpansion: DeptExpansion | undefined
 
   if (decl) {
-    for (const name of resolveRecipientNames(rule, decl, payload)) {
-      if (seen.has(name)) continue
-      seen.add(name)
-      recipients.push({ name, source: recipientSource(rule, decl) })
-    }
-    // literal 规则的人员已在 rule.recipientLiteral 里；不再问 scope_holders
-    if (!rule.recipientLiteral) {
-      for (const name of await deps.resolveScopeHolders(org, rule.recipientKey, decl)) {
+    const kind = decl.recipients[rule.recipientKey]?.kind
+    if (kind === 'dept') {
+      // ── 部门档（spec 2026-10-30 §3.5）：发送时才展开，组织架构改了即时生效 ──────────
+      const depts = rule.recipientDepts ?? []
+      if (depts.length === 0) {
+        // 配了一半（选了部门档却没选部门）：**不静默发 0 人**，按「没人」显式阻塞
+        return { blocked: 'no_recipient', recipients, channels: [], usableChannels: [], tpl: tplOut }
+      }
+      if (!deps.resolveDeptMembers) {
+        // 「查不了」≠「没人」：这条必须与 no_recipient 分开（见 Blocked 的注）
+        return {
+          blocked: 'dept_resolver_unavailable', recipients, channels: [], usableChannels: [], tpl: tplOut,
+        }
+      }
+      deptExpansion = await deps.resolveDeptMembers(org, depts)
+      for (const name of deptExpansion.names) {
         if (seen.has(name)) continue
         seen.add(name)
-        recipients.push({ name, source: 'scope_holders' })
+        recipients.push({ name, source: 'dept' })
+      }
+    } else {
+      for (const name of resolveRecipientNames(rule, decl, payload)) {
+        if (seen.has(name)) continue
+        seen.add(name)
+        recipients.push({ name, source: recipientSource(rule, decl) })
+      }
+      // literal 规则的人员已在 rule.recipientLiteral 里；不再问 scope_holders
+      if (!rule.recipientLiteral) {
+        for (const name of await deps.resolveScopeHolders(org, rule.recipientKey, decl)) {
+          if (seen.has(name)) continue
+          seen.add(name)
+          recipients.push({ name, source: 'scope_holders' })
+        }
       }
     }
   }
@@ -102,12 +142,12 @@ export async function resolveDeliverability(
   const usableChannels = channels.filter((c) => c.enabled).map((c) => c.id)
 
   if (recipients.length === 0) {
-    return { blocked: 'no_recipient', recipients, channels, usableChannels, tpl: tplOut }
+    return { blocked: 'no_recipient', recipients, channels, usableChannels, tpl: tplOut, deptExpansion }
   }
   if (usableChannels.length === 0) {
-    return { blocked: 'no_channel', recipients, channels, usableChannels, tpl: tplOut }
+    return { blocked: 'no_channel', recipients, channels, usableChannels, tpl: tplOut, deptExpansion }
   }
-  return { blocked: null, recipients, channels, usableChannels, tpl: tplOut }
+  return { blocked: null, recipients, channels, usableChannels, tpl: tplOut, deptExpansion }
 }
 
 function recipientSource(
@@ -117,6 +157,7 @@ function recipientSource(
   const kind = decl.recipients[rule.recipientKey]?.kind
   if (kind === 'literal') return 'literal'
   if (kind === 'scope_holders') return 'scope_holders'
+  if (kind === 'dept') return 'dept'
   return 'field'
 }
 
@@ -134,6 +175,8 @@ export type EventStatus =
 const SEVERITY: Record<Blocked, number> = {
   template_missing: 3,
   no_channel: 2,
+  // 解析器没配 = 部署缺陷，比「这个部门真没人」更该先修 ⇒ 与 no_channel 同档（高于没人）
+  dept_resolver_unavailable: 2,
   no_recipient: 1,
 }
 
@@ -159,6 +202,10 @@ export function aggregateEventStatus(
 
   if (worst === 'template_missing') return 'invalid'
   if (worst === 'no_channel') return 'no_channel'
+  // 部门解析器没配在**事件级**归到 no_recipients：与 `scope_holders` 未注入时的既有行为
+  // 一致（那条也是解析器缺失 ⇒ 零收件人 ⇒ no_recipients）。**规则级**仍保留精确码
+  // `dept_resolver_unavailable`（预检面要能区分「部署没配」与「这个部门真没人」）。
+  if (worst === 'dept_resolver_unavailable') return 'no_recipients'
   if (worst === 'no_recipient') return 'no_recipients'
   // 全部规则都拿到 null（可送达）但没有任何 delivery 产出（全被判冷却/渲染失败）：
   // 这不是「发不出去」的配置问题 ⇒ 保持 matched（与旧行为一致）。

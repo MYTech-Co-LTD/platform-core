@@ -26,8 +26,18 @@ export interface EventFieldDecl {
   label?: string
 }
 
+/**
+ * 一个事件的收件人档（四选一）。
+ *
+ * `dept`（2026-10-30 spec §3.5）＝**按组织架构部门发送**：规则上存部门 `ext_id` 集合，
+ * **发送时**才展开成收件人（含全部子部门 `org_node.path` 前缀），并排除禁用用户，
+ * 展开结果落审计三数（展开 / 排除 / 未解析）。
+ *
+ * 为什么要事件先声明这一档而不能由消费方自选：与 `scope_holders` 同理——**声明即授权**。
+ * 按部门群发的爆炸半径比点名几个人大一个量级，能不能这么发必须是生产模块显式表态的。
+ */
 export interface EventRecipientDecl {
-  kind: 'field' | 'scope_holders' | 'literal'
+  kind: 'field' | 'scope_holders' | 'literal' | 'dept'
   /** kind=field：payload 中的 user/user_list 字段名 */
   field?: string
   /** kind=scope_holders：权限码（如 aftersales:manage） */
@@ -112,7 +122,7 @@ const EventDeclSchema = z.object({
     label: z.string().optional(),
   }).strict()),
   recipients: z.record(z.string(), z.object({
-    kind: z.enum(['field', 'scope_holders', 'literal']),
+    kind: z.enum(['field', 'scope_holders', 'literal', 'dept']),
     field: z.string().optional(),
     scope: z.string().optional(),
     label: z.string().optional(),
@@ -338,10 +348,13 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
           })
         }
       } else if (r.field !== undefined || r.scope !== undefined) {
+        // literal / dept 两档都不接受 field/scope：前者是人工名单，后者是部门 ext_id 集合，
+        // 二者都不从 payload 取值。带了就是**误以为生效**的静默丢弃源（同 POST /reports 的
+        // `lockedParams` 口径：拒绝优于静默）。
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: [...p, 'recipients', rk],
-          message: `recipients.${rk}（literal）不能带 field/scope`,
+          message: `recipients.${rk}（${r.kind}）不能带 field/scope`,
         })
       }
     }

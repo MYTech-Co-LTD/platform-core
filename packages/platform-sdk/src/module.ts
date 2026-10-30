@@ -75,6 +75,50 @@ export interface ChannelAddressResolver {
     permissionCode: string,
     decl: NotificationEventDecl,
   ): Promise<string[]>
+  /**
+   * 部门 `ext_id` 集合 → 展开后的收件人（spec 2026-10-30-org-as-platform-primitive §3.5）。
+   *
+   * **子树继承**：返回的 `depts` 是「所选部门 + 全部后代」的并集，`members` 是这批部门的
+   * 去重成员数（过滤前）。三数对齐审计口径：
+   *   · `excluded`   = 命中但 `isForbidden` 的人（不发）；
+   *   · `unresolved` = org 表里有、平台/Casdoor 里没有的人（企微有/平台无 —— **不阻断发送**，
+   *     但必须可见，否则「少发了谁」永远查不出来）。
+   *
+   * **未注入 ≠ 没人**：缺省时调用方按「查不了」处理（预检报 `dept_resolver_unavailable`、
+   * 发送时该规则阻塞），不得当成空集静默发 0 人。
+   */
+  resolveDeptMembers?(org: string, extIds: readonly string[]): Promise<DeptExpansion>
+  /**
+   * 组织架构**平表**（部门选择器的数据源；只读，不含子树展开）。
+   *
+   * 为什么也挂在宿主：模块读不到平台 org 表（B1），而「有哪些部门可选」是平台原语的
+   * 只读面，不该让每个模块各写一份 SQL。返回顺序按 `path`（深度优先），前端按
+   * `parentExtId` 组树即可。
+   */
+  listOrgNodes?(org: string): Promise<OrgNodeOption[]>
+}
+
+/** 部门选择器的一行。 */
+export interface OrgNodeOption {
+  extId: string
+  name: string
+  parentExtId: string | null
+  /** 直属成员数（不含子树） */
+  memberCount: number
+}
+
+/** 部门展开结果（`resolveDeptMembers` 的返回；也是审计三数的载体）。 */
+export interface DeptExpansion {
+  /** 展开后的收件人（Casdoor name），已排除禁用与未解析 */
+  names: string[]
+  /** 命中的部门节点（含子树后代）的 ext_id 并集 */
+  depts: string[]
+  /** 这批部门的去重成员总数（过滤之前） */
+  members: number
+  /** 排除：命中但被禁用的人数 */
+  excluded: number
+  /** 未解析：org 表里有、平台/Casdoor 里查不到实体的人数 */
+  unresolved: number
 }
 
 /** 模块端口：notify 模块供给、宿主装载期取用的入队实现。 */

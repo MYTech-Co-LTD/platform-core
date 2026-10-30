@@ -143,7 +143,7 @@ notifications:
 | `key` | 小写蛇形 + 点号，**至少三段**，前缀必须 = `manifest.id`；全局唯一；发布后不复用 |
 | `payload` | 最多 20 个字段；类型 ∈ `string / number / boolean / date / url / user / user_list`；**不支持嵌套对象**；总大小 ≤ 16KB |
 | `scope.key` | 必须是 payload 中已声明的 `string` 字段；缺省 = 事件无实例级作用域 |
-| `recipients` | `kind ∈ field / scope_holders / literal`；`field` 必须指向 payload 的 `user`/`user_list` 字段；`scope_holders` 的 `scope` 必须是已供给的权限码；`literal` 只能由人工规则填充 |
+| `recipients` | `kind ∈ field / scope_holders / literal / dept`；`field` 必须指向 payload 的 `user`/`user_list` 字段；`scope_holders` 的 `scope` 必须是已供给的权限码；`literal` 只能由人工规则填充；`dept`（2026-10-30 增补，见 `2026-10-30-org-as-platform-primitive-design.md` §3.5）只能由人工规则填充部门 `ext_id`，发送时展开子树 |
 | `defaults` | 可选；`recipient` 必须已在 `recipients` 声明；`template` 必须是内置模板；`channels` 必须是内置通道 id |
 
 **事件 key 的语义版本**：`payload` 只增不改；改字段语义 = 新 key（如 `.v2`），旧 key 标 `active=false`

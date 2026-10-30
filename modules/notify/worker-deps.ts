@@ -1,13 +1,14 @@
 // worker-deps.ts — worker 的组合根（TS，可测；scripts/notify-worker.mjs 只是 CLI 薄壳）。
 // secret_refs 的逻辑键 → env 值；缺任一键 ⇒ null（该通道视为未配置，不假装成功）。
 import type { Pool } from 'pg'
-import type { NotificationEventDecl } from '@platform/sdk'
+import type { ChannelAddressResolver, NotificationEventDecl } from '@platform/sdk'
 import { createChannelAddressResolver } from '../../apps/server/src/channel-address'
 import { sendInApp } from './providers/in-app'
 import { sendWecom } from './providers/wecom'
 import { rateLimitVerdict } from './domain/rate-limit'
 import { sendWebhook } from './providers/webhook'
 import * as storage from './storage'
+import { audit } from './storage'
 import { runOnce, type WorkerDeps, type WorkerStats } from './worker'
 
 /** 事件目录读取器（由 scripts/ 注入；模块不读 platform schema —— B1） */
@@ -29,6 +30,12 @@ export function buildWorkerDeps(
    * **缺省 = 未注入 ⇒ 返回 []**（旧宿主/单测），此时只能靠 manual literal 规则。
    */
   resolveScopeHolderNames?: ScopeHolderLoader,
+  /**
+   * 部门 → 成员展开（宿主注入：平台 org 表 + Casdoor 禁用过滤，模块层 B1 拿不到）。
+   * 缺省 = 未注入 ⇒ 部门规则落 `dept_resolver_unavailable`（不静默发 0 人）。
+   * ⚠️ 参数放**最后**：既有调用点（worker.test.ts 等）按位置传 5 个参数，插中间会静默错位。
+   */
+  deptMembers?: ChannelAddressResolver['resolveDeptMembers'],
 ): WorkerDeps {
   const addresses = createChannelAddressResolver({ pool })
 
@@ -65,6 +72,9 @@ export function buildWorkerDeps(
       }
       return resolveScopeHolderNames(org, r.scope)
     },
+    resolveDeptMembers: deptMembers ?? addresses.resolveDeptMembers?.bind(addresses),
+    // 审计三数落 notify.audit（actor 固定 'system:notify-worker'：这不是人做的动作）
+    audit: (org, action, target, detail) => audit(pool, org, 'system:notify-worker', action, target, detail),
     resolveAddress: (input) => addresses.resolve(input),
     isCoolingDown: (org, rule, recipient, now) =>
       storage.isCoolingDown(pool, org, rule, recipient, now),
@@ -133,8 +143,11 @@ export async function runOnceCli(
   getEventDecl: EventDeclLoader,
   env: NodeJS.ProcessEnv = process.env,
   resolveScopeHolderNames?: ScopeHolderLoader,
+  deptMembers?: ChannelAddressResolver['resolveDeptMembers'],
 ): Promise<WorkerStats> {
-  const stats = await runOnce(buildWorkerDeps(pool, getEventDecl, env, undefined, resolveScopeHolderNames))
+  const stats = await runOnce(
+    buildWorkerDeps(pool, getEventDecl, env, undefined, resolveScopeHolderNames, deptMembers),
+  )
   await pool.query(
     `insert into notify.worker_heartbeat(id,beat_at) values ('notify-worker',now())
      on conflict (id) do update set beat_at=now()`,
