@@ -144,6 +144,14 @@ export type Channel = 'session' | 'pat' | 'wecom'
 
 export interface Requester {
   userId: string
+  /**
+   * 正式态账户身份（Casdoor name；宿主 Identity 的 `acct` 投影）。中间态/旧形状会话不设。
+   *
+   * 为什么授权判定需要它：部门归属（`platform.org_membership.user_name`）是按 **Casdoor name**
+   * 灌的，而 `userId` 在微信 OA 访客通道下是 openid、在企微通道下才是 name——两键不同源。
+   * 消费方取「`accountName` 优先，缺失回退 `userId`」（见 `domain/dept-gate.ts` 的 `deptNamesOf`）。
+   */
+  accountName?: string
   /** 主体值（SQL 里 WHERE <subjectColumn> = '<orgId>'）——**只**来自身份解析 */
   orgId: string
   channel: Channel

@@ -716,3 +716,87 @@ describe('平台自绘行的版本管理', () => {
     }
   })
 })
+
+// ── 部门门（spec 2026-10-30 §3.4；#1173）───────────────────────────────────────────
+describe('部门门配置（组织架构树多选）', () => {
+  /** 管理清单带 `myDepts`（请求者自己的部门闭包，含祖先）；部门选项走 `/reports/dept-options`。 */
+  const DEPT_OPTIONS = [
+    { extId: '49', name: '共享中心', parentExtId: null, memberCount: 3 },
+    { extId: '57', name: '数字技术部', parentExtId: '49', memberCount: 2 },
+    { extId: '60', name: '销售部', parentExtId: null, memberCount: 9 },
+  ]
+  const mockWith = (rows: unknown[], myDepts: string[]) =>
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) return json({ reports: rows, myDepts })
+      if (url.endsWith('/reports/dept-options')) return json({ depts: DEPT_OPTIONS })
+      if (url.endsWith('/reports')) return json({ reports: rows })
+      if (init?.method === 'PUT') return json({ ok: true })
+      return json({})
+    })
+
+  it('★ 带门行的「打开」按部门判：不在门里 ⇒ 禁用；门里（含祖先闭包）⇒ 可点', async () => {
+    mockWith([
+      { ...ROWS[0], requiredDepts: ['60'] },   // 只在销售部 —— 我在共享中心/数字技术部 ⇒ 不可点
+      // ⚠️ 这一行的**页门必须放行**（`requiredScope: null`）：本用例只证部门门那一维，
+      //    页门未放行会把「打开」置灰，两维混在一起就分不清是谁拦的。
+      { ...ROWS[1], requiredScope: null, requiredDepts: ['49'] },   // 我的祖先闭包里 ⇒ 可点
+      { ...ROWS[2], requiredDepts: null },     // 无部门门 ⇒ 可点
+    ], ['49', '57'])                             // 我 = 数字技术部（祖先 49 已展开进闭包）
+
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
+
+    expect((within(rowOf('销售日报')).getByRole('button', { name: /打\s*开/ }) as HTMLButtonElement).disabled)
+      .toBe(true)
+    expect((within(rowOf('未放行报表')).getByRole('button', { name: /打\s*开/ }) as HTMLButtonElement).disabled)
+      .toBe(false)
+    expect((within(rowOf('自绘大盘')).getByRole('button', { name: /打\s*开/ }) as HTMLButtonElement).disabled)
+      .toBe(false)
+    // 部门门列恒在（不靠悬停解释）：一门显示数量，无门显示「不限」
+    expect(within(rowOf('销售日报')).getByText('1 个部门')).toBeInTheDocument()
+    // 无门的行两列都是「不限」（页门 + 部门门）⇒ 复数断言（单数查询会因歧义抛错）
+    expect(within(rowOf('自绘大盘')).getAllByText('不限')).toHaveLength(2)
+  })
+
+  it('★ 配部门门：拉选项、按现有门预勾、确定 ⇒ PUT 带 requiredDepts + 该行 expectedVersion', async () => {
+    mockWith([{ ...ROWS[0], requiredDepts: ['49'] }], [])
+
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
+
+    fireEvent.click(rowButton('销售日报', '改部门门'))
+    // 选项来自服务端（不是前端硬编码的组织架构）
+    expect(await screen.findByText('数字技术部（2）')).toBeInTheDocument()
+    expect(calls.some((c) => c.url.endsWith('/reports/dept-options'))).toBe(true)
+
+    fireEvent.click(button('确定'))
+    await waitFor(() => {
+      const put = calls.find((c) => c.init?.method === 'PUT' && c.url.endsWith('/reports/r1/dept-gate'))
+      expect(put).toBeDefined()
+      // ⚠️ expectedVersion 必须取**该行**读到的版本（ROWS[0].version = 1），不是页面常量
+      expect(JSON.parse(String(put!.init!.body))).toEqual({
+        requiredDepts: ['49'], expectedVersion: ROWS[0].version,
+      })
+    })
+    expect(await screen.findByText('部门门已更新')).toBeInTheDocument()
+  })
+
+  it('无门行显示「配部门门」，点击打开的是空勾选（清空 = 提交空数组）', async () => {
+    mockWith([{ ...ROWS[2], requiredDepts: null }], [])
+
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
+
+    fireEvent.click(rowButton('自绘大盘', '配部门门'))
+    expect(await screen.findByText('共享中心（3）')).toBeInTheDocument()
+    fireEvent.click(button('确定'))
+    await waitFor(() => {
+      const put = calls.find((c) => c.init?.method === 'PUT' && c.url.endsWith('/reports/r3/dept-gate'))
+      expect(put).toBeDefined()
+      expect(JSON.parse(String(put!.init!.body))).toEqual({
+        requiredDepts: [], expectedVersion: ROWS[2].version,
+      })
+    })
+  })
+})

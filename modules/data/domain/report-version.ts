@@ -54,6 +54,8 @@ export interface VersionRow {
   spec: unknown
   /** 发布时的页门快照（`null` = 拿到模块即可见）。 */
   requiredScope: string | null
+  /** 发布时的部门门快照（`null`/空 = 无部门门；迁移 025）。 */
+  requiredDepts: string[] | null
   /** 发布时的 `data.reports.version`（判「发布后草稿又改过」）。 */
   draftVersion: number
   /** 发布时间（ISO 8601 UTC）。 */
@@ -70,6 +72,7 @@ export interface PublishOutcome {
   publishedVersion: number
   publishedAt: string
   requiredScope: string | null
+  requiredDepts: string[] | null
   /** 内容与最新快照一致且指针就在它上面 ⇒ 不新建版本（设计 §4.2 第 4 步）。 */
   unchanged?: boolean
 }
@@ -97,6 +100,8 @@ export interface PublishedSpec {
   spec: ReportSpec
   version: number
   requiredScope: string | null
+  /** 部门门快照（迁移 025）：独立链接必须按**那一版**的部门门判权，同 requiredScope 口径。 */
+  requiredDepts: string[] | null
   publishedAt: string
 }
 
@@ -155,6 +160,7 @@ function toVersionRow(row: Record<string, unknown>): VersionRow {
     title: row.title as string,
     spec: row.spec,
     requiredScope: row.required_scope as string | null,
+    requiredDepts: (row.required_depts ?? null) as string[] | null,
     draftVersion: row.draft_version as number,
     publishedAt: toIso(row.published_at),
     publishedBy: row.published_by as string,
@@ -162,7 +168,7 @@ function toVersionRow(row: Record<string, unknown>): VersionRow {
   }
 }
 
-const VERSION_COLS = `id, org, report_id, version, title, spec, required_scope,
+const VERSION_COLS = `id, org, report_id, version, title, spec, required_scope, required_depts,
        draft_version, published_at, published_by, note`
 
 /** 历史版本（`version desc`，最多 100 条；设计 §4.5）。跨租户 = 空数组。 */
@@ -232,7 +238,7 @@ export async function publishVersion(
 
     const attempt = async (): Promise<PublishOutcome> => withTx(pool, async (c) => {
       const latest = await c.query(
-        `select id, version, title, spec, required_scope, draft_version, published_at
+        `select id, version, title, spec, required_scope, required_depts, draft_version, published_at
            from data.report_versions
           where org = $1 and report_id = $2
           order by version desc
@@ -241,7 +247,8 @@ export async function publishVersion(
       )
       const last = latest.rows[0] as {
         id: string; version: number; title: string; spec: unknown
-        required_scope: string | null; draft_version: number; published_at: unknown
+        required_scope: string | null; required_depts: string[] | null
+        draft_version: number; published_at: unknown
       } | undefined
 
       // 「无改动再发布」：内容逐字相同 + 草稿计数器未动 + **指针正在它上面**。
@@ -253,6 +260,7 @@ export async function publishVersion(
         && last.title === cur.title
         && stableStringify(last.spec) === stableStringify(parsed.spec)
         && last.required_scope === scope.requiredScope
+        && stableStringify(last.required_depts ?? null) === stableStringify(cur.requiredDepts ?? null)
         && last.draft_version === cur.version
       ) {
         return {
@@ -260,6 +268,7 @@ export async function publishVersion(
           publishedVersion: last.version,
           publishedAt: toIso(last.published_at),
           requiredScope: scope.requiredScope,
+          requiredDepts: cur.requiredDepts ?? null,
           unchanged: true,
         }
       }
@@ -268,18 +277,22 @@ export async function publishVersion(
       const vid = randomUUID()
       const inserted = await c.query(
         `insert into data.report_versions
-           (id, org, report_id, version, title, spec, required_scope, draft_version, published_by, note)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           (id, org, report_id, version, title, spec, required_scope, required_depts, draft_version, published_by, note)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          returning published_at`,
         [vid, org, id, version, cur.title, JSON.stringify(parsed.spec),
-          scope.requiredScope, cur.version, userId, note.slice(0, MAX_NOTE)],
+          scope.requiredScope,
+          cur.requiredDepts == null ? null : JSON.stringify(cur.requiredDepts),
+          cur.version, userId, note.slice(0, MAX_NOTE)],
       )
       // 条件更新 + 计数校验：`version = $5` 命不中 ⇒ 抛出回滚（不能把已插入的快照提交出去）。
       const updated = await c.query(
         `update data.reports
-            set published_version_id = $1, required_scope = $2, updated_at = now()
-          where org = $3 and id = $4 and version = $5`,
-        [vid, scope.requiredScope, org, id, expectedVersion],
+            set published_version_id = $1, required_scope = $2, required_depts = $3, updated_at = now()
+          where org = $4 and id = $5 and version = $6`,
+        [vid, scope.requiredScope,
+          cur.requiredDepts == null ? null : JSON.stringify(cur.requiredDepts),
+          org, id, expectedVersion],
       )
       if ((updated.rowCount ?? 0) === 0) throw new StaleWriteError()
       return {
@@ -287,6 +300,7 @@ export async function publishVersion(
         publishedVersion: version,
         publishedAt: toIso(inserted.rows[0].published_at),
         requiredScope: scope.requiredScope,
+        requiredDepts: cur.requiredDepts ?? null,
       }
     })
 
@@ -379,21 +393,25 @@ export async function rollbackVersion(
 
         const inserted = await c.query(
           `insert into data.report_versions
-             (id, org, report_id, version, title, spec, required_scope, draft_version, published_by, note)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             (id, org, report_id, version, title, spec, required_scope, required_depts, draft_version, published_by, note)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
            returning published_at`,
           [vid, org, id, newVersion, target.title, JSON.stringify(parsed.spec),
-            scope.requiredScope, newDraftVersion, userId, rollbackNote.slice(0, MAX_NOTE)],
+            scope.requiredScope,
+            target.requiredDepts == null ? null : JSON.stringify(target.requiredDepts),
+            newDraftVersion, userId, rollbackNote.slice(0, MAX_NOTE)],
         )
 
         // 草稿跟着回滚到旧内容（设计 §4.4：回滚后编辑面看到的就是 vN 的定义），
         // 指针同步指向新版本——同一条 UPDATE 落，没有「新草稿 + 旧指针」的窗口。
         const updated = await c.query(
           `update data.reports
-              set title = $1, spec = $2, required_scope = $3,
-                  published_version_id = $4, version = version + 1, updated_at = now()
-            where org = $5 and id = $6 and version = $7`,
-          [target.title, JSON.stringify(parsed.spec), scope.requiredScope, vid, org, id, expectedVersion],
+              set title = $1, spec = $2, required_scope = $3, required_depts = $4,
+                  published_version_id = $5, version = version + 1, updated_at = now()
+            where org = $6 and id = $7 and version = $8`,
+          [target.title, JSON.stringify(parsed.spec), scope.requiredScope,
+            target.requiredDepts == null ? null : JSON.stringify(target.requiredDepts),
+            vid, org, id, expectedVersion],
         )
         if ((updated.rowCount ?? 0) === 0) throw new StaleWriteError()
         return {
@@ -401,6 +419,7 @@ export async function rollbackVersion(
           publishedVersion: newVersion,
           publishedAt: toIso(inserted.rows[0].published_at),
           requiredScope: scope.requiredScope,
+          requiredDepts: target.requiredDepts ?? null,
         }
       })
     } catch (e) {
@@ -425,7 +444,7 @@ export async function getPublishedSpec(
   pool: Pool, org: string, id: string, version?: number,
 ): Promise<PublishedSpec | null> {
   const r = await pool.query(
-    `select v.title, v.spec, v.version, v.required_scope, v.published_at
+    `select v.title, v.spec, v.version, v.required_scope, v.required_depts, v.published_at
        from data.reports r
        join data.report_versions v
          on v.org = r.org and v.report_id = r.id
@@ -441,7 +460,7 @@ export async function getPublishedSpec(
   if (r.rowCount === 0) return null
   const row = r.rows[0] as {
     title: string; spec: unknown; version: number
-    required_scope: string | null; published_at: unknown
+    required_scope: string | null; required_depts: string[] | null; published_at: unknown
   }
   const parsed = parseReportSpec(row.spec)
   if (!parsed.ok) return null
@@ -450,6 +469,7 @@ export async function getPublishedSpec(
     spec: parsed.spec,
     version: row.version,
     requiredScope: row.required_scope,
+    requiredDepts: row.required_depts ?? null,
     publishedAt: toIso(row.published_at),
   }
 }

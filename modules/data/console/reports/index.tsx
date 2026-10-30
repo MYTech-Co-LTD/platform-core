@@ -24,7 +24,7 @@
 //     `PUT` 对 platform 行回 409 `USE_PUBLISH_ENDPOINT`）。
 import { useEffect, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
-import { Button, Drawer, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { Button, Drawer, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, Tree, Typography, message } from 'antd'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import SpecView from './SpecView'
 
@@ -37,6 +37,11 @@ interface ReportRow {
   id: string
   title: string
   requiredScope: string | null
+  /**
+   * 部门门（spec 2026-10-30 §3.4）：ext_id 数组，**子树继承**（配父部门 ⇒ 子部门成员也可见）。
+   * `null` / 空 = 无部门门。观看清单与管理清单都回带；改门走 `PUT /reports/:id/dept-gate`。
+   */
+  requiredDepts?: string[] | null
   renderer: 'metabase' | 'platform'
   // **登记侧**版本（写保护的读侧）：`GET /reports/manage` 每行回带；三个写动作回带它
   // （PUT 走 body `expectedVersion`、DELETE 走查询串 `?expectedVersion=`）。服务端不服 ⇒ 409 STALE_WRITE。
@@ -49,6 +54,14 @@ interface ReportRow {
   // `publishedVersion = null` = 未发布/已下线；`hasUnpublishedChanges` = 指针存在且草稿改过。
   publishedVersion: number | null
   hasUnpublishedChanges: boolean
+}
+
+/** `GET /reports/dept-options` 的一行：活节点平表（前端按 `parentExtId` 组树）。 */
+interface DeptOption {
+  extId: string
+  name: string
+  parentExtId: string | null
+  memberCount: number
 }
 
 /** `GET /reports/:id/versions` 的一行（列表只给元数据，正文快照走 `/versions/:version`）。 */
@@ -67,6 +80,11 @@ export default function ReportsPage() {
   const canManage = session.scopes.includes('data:manage')
 
   const [rows, setRows] = useState<ReportRow[]>([])
+  // 请求者自己的部门闭包（`GET /reports/manage` 回带；本人部门 + 全部祖先）。只用来判
+  // 「打开」按钮的可用性——真正的授权在服务端（前端不重复判权，见文件头②）。
+  // `null` = **不知道**（观看清单不带这个键）：那时**不判部门门**——那里的行已经被服务端裁过，
+  // 拿未知当「空集」会把看得见的行误置灰。
+  const [myDepts, setMyDepts] = useState<string[] | null>(null)
   const [embed, setEmbed] = useState<{ title: string; url: string } | null>(null)
   // platform 行的「打开」渲染 <SpecView/>（Task 4）：数据面在组件内自取（规格 + 逐面板 /query），
   // 这里只记「哪张报表」，关闭即清。
@@ -76,6 +94,11 @@ export default function ReportsPage() {
   const [editRow, setEditRow] = useState<ReportRow | null>(null)
   const [gateEdit, setGateEdit] = useState<ReportRow | null>(null)
   const [gateDraft, setGateDraft] = useState('')
+  // 部门门（spec 2026-10-30 §3.4）：编辑态目标行 + 全量部门选项（首开时拉一次、缓存）
+  // + 勾选集合（`ext_id`）。两渲染器共用同一个入口（服务端 `PUT /reports/:id/dept-gate`）。
+  const [deptEdit, setDeptEdit] = useState<ReportRow | null>(null)
+  const [deptOptions, setDeptOptions] = useState<DeptOption[] | null>(null)
+  const [deptChecked, setDeptChecked] = useState<string[]>([])
   // 版本通路（platform 行）的三种面：发布备注 Modal / 版本历史抽屉 / 抽屉里的行快照。
   const [publishTarget, setPublishTarget] = useState<ReportRow | null>(null)
   const [publishNote, setPublishNote] = useState('')
@@ -92,6 +115,9 @@ export default function ReportsPage() {
     try {
       const b = await apiGet(path)
       const reports = (b as { reports: ReportRow[] }).reports
+      // 管理清单另带 `myDepts`（请求者自己的部门闭包，含祖先）；观看清单没有这个键
+      // ⇒ 落 `null`（**不知道 ≠ 空集**：观看清单的行已被服务端裁过，不能再拿空集去掉一遍）。
+      setMyDepts((b as { myDepts?: string[] }).myDepts ?? null)
       // ── fail-closed（评审 Minor ③，2026-09-29）────────────────────────────────
       // 无校验断言 `as ReportRow[]` 曾把「服务端漏带 version」静默成坏快照：写动作随后发出
       // `?expectedVersion=undefined`（PUT 则 body 里 undefined 被 JSON 丢掉 ⇒ 缺键）——服务端
@@ -231,6 +257,60 @@ export default function ReportsPage() {
     await load()
   }
 
+  // ── 部门门（spec 2026-10-30 §3.4；#1173）：**两种渲染器共用**一个改门入口 ──────────
+  // 语义早于这里就要清楚：配的是「**这些部门及其子树**里的人可以看」，与页门**叠加**
+  // （两个门都要过）。空勾选 = 清空部门门 = 不限部门。
+  const openDeptGate = async (r: ReportRow) => {
+    setDeptEdit(r)
+    setDeptChecked(r.requiredDepts ?? [])
+    if (deptOptions !== null) return          // 已拉过就复用（组织架构不常变）
+    try {
+      const b = await apiGet('/reports/dept-options') as { depts: DeptOption[] }
+      setDeptOptions(b.depts)
+    } catch (e) {
+      messageApi.error(messageOf(e))
+      setDeptEdit(null)
+    }
+  }
+
+  /**
+   * 保存部门门。⚠️ **已发布的平台行**上，线上链接仍按**那一版快照**的门判权，要等下一次发布
+   * 才生效——弹框里的说明文案必须讲清（否则会被当成「改了没生效」的 bug）。
+   * 409 收口同改页门：`deptEdit` 是加载时的行快照，不关框就会拿陈旧版本反复重试。
+   */
+  const saveDeptGate = async () => {
+    const r = deptEdit
+    if (r === null) return
+    try {
+      await apiSend(`/reports/${r.id}/dept-gate`, 'PUT', {
+        requiredDepts: deptChecked,
+        expectedVersion: r.version,
+      })
+      messageApi.success(deptChecked.length === 0 ? '已清除部门门' : '部门门已更新')
+      setDeptEdit(null)
+    } catch (e) {
+      messageApi.error(messageOf(e))
+      if (e instanceof ApiError && e.status === 409) setDeptEdit(null)
+    }
+    await load()
+  }
+
+  /** 平表 → antd Tree 的树（按 `parentExtId` 挂；找不到父亲的当根，不会丢节点）。 */
+  const deptTreeData = (opts: DeptOption[]) => {
+    type Node = { title: string; key: string; children: Node[] }
+    const nodes = new Map<string, Node>(opts.map((o) => [
+      o.extId, { title: `${o.name}（${o.memberCount}）`, key: o.extId, children: [] },
+    ]))
+    const roots: Node[] = []
+    for (const o of opts) {
+      const node = nodes.get(o.extId)!
+      const parent = o.parentExtId === null ? undefined : nodes.get(o.parentExtId)
+      if (parent === undefined) roots.push(node)
+      else parent.children.push(node)
+    }
+    return roots
+  }
+
   // ── 版本通路（platform 行；设计 §6.4）───────────────────────────────────────────
   // 发布 = 对当前草稿做**不可变快照**（`POST /reports/:id/publish`），独立链接从此展示这一版；
   // 与 Metabase 行的「发布」（清页门）是两条不同通路，见文件头 ⑤。
@@ -353,13 +433,28 @@ export default function ReportsPage() {
    * **服务端仍是权威**：本函数只是视图层的前置体验，不是鉴权（前端不重复判权，见文件头②）。
    */
   const canOpen = (r: ReportRow) =>
-    r.requiredScope === null || session.scopes.includes(r.requiredScope)
+    (r.requiredScope === null || session.scopes.includes(r.requiredScope)) && deptOk(r)
 
-  const openBtn = (r: ReportRow) =>
-    !canOpen(r) ? (
+  /**
+   * 部门门的体验层判据（与 `canOpen` 的页门那半同构）：配了门的行，只有「我在门里」才默认可按。
+   * 子树继承由服务端写成闭包（`myDepts` 已含祖先）⇒ 这里只做集合相交，不重复展开树。
+   * `myDepts === null`（观看清单）⇒ 不判（见 state 的注）。
+   */
+  function deptOk(r: ReportRow): boolean {
+    const gate = r.requiredDepts ?? []
+    if (gate.length === 0) return true
+    if (myDepts === null) return true
+    return gate.some((d) => myDepts.includes(d))
+  }
+
+  const openBtn = (r: ReportRow) => !canOpen(r) ? (
       // ⚠️ antd 6.6.3 已移除 v5 的 `getDisabledCompatibleChildren` ⇒ Tooltip 在禁用的原生 button
-      // 上不保证弹；表格里的「页门」列是兜底说明（恒在，不依赖悬停），Tooltip 是锦上添花。
-      <Tooltip title={`你的账号没有这张报表的页门权限（${r.requiredScope}）`}>
+      // 上不保证弹；表格里的「页门」「部门门」两列是兜底说明（恒在，不依赖悬停），Tooltip 是锦上添花。
+      <Tooltip title={
+        r.requiredScope !== null && !session.scopes.includes(r.requiredScope)
+          ? `你的账号没有这张报表的页门权限（${r.requiredScope}）`
+          : '你的部门不在这张报表的部门门里'
+      }>
         <Button size="small" disabled>打开</Button>
       </Tooltip>
     ) : r.renderer === 'platform' ? (
@@ -404,6 +499,20 @@ export default function ReportsPage() {
           render: (v: ReportRow['renderer']) => (v === 'platform' ? <Tag color="purple">平台自绘</Tag> : <Tag>Metabase</Tag>),
         }] : []),
         { title: '页门', dataIndex: 'requiredScope', render: (v: string | null) => v ?? '不限' },
+        // 部门门（spec 2026-10-30 §3.4）：恒在的列（不依赖悬停）——它是「打开」置灰的另一半理由。
+        // 显示的是**门里配的部门数**（子树继承意味着实际覆盖更多），悬停给出 ext_id。
+        {
+          title: '部门门', dataIndex: 'requiredDepts',
+          render: (v: string[] | null | undefined) => {
+            const gate = v ?? []
+            if (gate.length === 0) return '不限'
+            return (
+              <Tooltip title={`限定部门（含其子部门）：${gate.join('、')}`}>
+                <Tag color="blue">{`${gate.length} 个部门`}</Tag>
+              </Tooltip>
+            )
+          },
+        },
         {
           title: '操作', render: (_: unknown, r: ReportRow) => (
             <Space size="small">
@@ -413,6 +522,13 @@ export default function ReportsPage() {
                   故按 renderer 逐行给按钮（服务端同守卫：409 RENDERER_NOT_EDITABLE）。 */}
               {canManage && r.renderer === 'metabase' && (
                 <Button size="small" onClick={() => void edit(r)}>编辑</Button>
+              )}
+              {/* 部门门：**与渲染器无关**（自绘行也要能配），故放在两支条件之外。
+                  与「改页门」的区别：页门按 scope，部门门按组织架构（子树继承）。 */}
+              {canManage && (
+                <Button size="small" onClick={() => void openDeptGate(r)}>
+                  {(r.requiredDepts ?? []).length === 0 ? '配部门门' : '改部门门'}
+                </Button>
               )}
               {/* ── Metabase 行：既有管理动作**一字不动**（改页门/发布=清页门/回收）────────── */}
               {canManage && r.renderer === 'metabase' && (
@@ -478,6 +594,33 @@ export default function ReportsPage() {
           页门 = 持有该 scope 才能在清单和嵌入里看到这张报表；发布（清空页门）用上方「发布」。
         </Typography.Paragraph>
         <Input value={gateDraft} onChange={(e) => setGateDraft(e.target.value)} placeholder="如 sales:read" />
+      </Modal>
+      {/* 部门门（spec 2026-10-30 §3.4）：组织架构树多选。**子树继承**——勾一个部门，它的下级部门
+          的成员都算在内；页门与部门门**叠加**（两个都过才可见）。
+          ⚠️ 已发布的平台行：线上链接按**那一版快照**的门判权，改完要点「发布」才生效。 */}
+      <Modal title={`部门门：${deptEdit?.title ?? ''}`}
+             open={deptEdit !== null}
+             okText="确定" cancelText="取消"
+             width={520}
+             onOk={() => void saveDeptGate()}
+             onCancel={() => setDeptEdit(null)}>
+        <Typography.Paragraph type="secondary">
+          勾选「哪些部门可以看」。包含所勾部门的**全部子部门**；不勾 = 不限部门。
+          部门门与页门**叠加**（两个都要过）。已发布的平台自绘报表需再「发布」一次才影响线上链接。
+        </Typography.Paragraph>
+        {deptOptions === null || deptOptions.length === 0 ? (
+          <Typography.Text type="secondary">
+            {deptOptions === null ? '正在加载组织架构…' : '本租户还没有同步组织架构（先在企业微信同步）'}
+          </Typography.Text>
+        ) : (
+          <Tree checkable selectable={false}
+                treeData={deptTreeData(deptOptions)}
+                defaultExpandAll
+                checkedKeys={deptChecked}
+                onCheck={(keys) => setDeptChecked(
+                  (Array.isArray(keys) ? keys : keys.checked).map(String),
+                )} />
+        )}
       </Modal>
       {/* 发布版本（platform 行）：note 随版本永久留存（审计面），可选但值得填。 */}
       <Modal title={`发布：${publishTarget?.title ?? ''}`}

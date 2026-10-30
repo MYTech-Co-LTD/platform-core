@@ -67,6 +67,7 @@ export function requesterOf(c: Context<ModuleVars>): Requester | null {
   if (!identity || identity.orgId === '') return null
   return {
     userId: identity.userId,
+    accountName: identity.accountName,
     orgId: identity.orgId,
     channel: c.get(REQUESTER_CHANNEL) ?? 'session',
     keyId: c.get(REQUESTER_KEY_ID) ?? null,

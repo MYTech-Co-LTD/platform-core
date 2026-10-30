@@ -50,6 +50,12 @@ export interface ReportRow {
    * `version > publishedDraftVersion`；未发布 ⇒ `null`。
    */
   publishedDraftVersion: number | null
+  /**
+   * 部门门（spec 2026-10-30 §3.4 / 迁移 025）：NULL = 无部门门（存量行为不变）；
+   * 非 NULL = ext_id 数组，子树继承由判定侧按 org_node.path 展开（D-O3）。
+   * 与 requiredScope 叠加不替代（D-O4）。
+   */
+  requiredDepts: string[] | null
 }
 
 /**
@@ -59,7 +65,7 @@ export interface ReportRow {
  */
 const REPORT_COLUMNS = [
   'id', 'title', 'metabase_id', 'embed_params', 'required_scope', 'renderer', 'version', 'spec',
-  'published_version_id',
+  'published_version_id', 'required_depts',
 ] as const
 const REPORT_COLS_R = REPORT_COLUMNS.map((c) => `r.${c}`).join(', ')
 /**
@@ -86,6 +92,7 @@ function toReportRow(row: Record<string, unknown>): ReportRow {
     // 投影里缺席（老查询）与「未发布」同为 null：两列只由 join 带出，无 join 的路径拿不到
     publishedVersion: (row.published_version ?? null) as number | null,
     publishedDraftVersion: (row.published_draft_version ?? null) as number | null,
+    requiredDepts: (row.required_depts ?? null) as string[] | null,
   }
 }
 
@@ -172,6 +179,8 @@ export interface UpsertReportInput {
   requiredScope: string | null
   renderer?: ReportRenderer
   spec?: ReportSpec | null
+  /** 部门门（可空，迁移 025）；缺省 null = 无门——既有调用方零改动 */
+  requiredDepts?: string[] | null
 }
 
 export function upsertReport(pool: Pool, org: string, input: UpsertReportInput): Promise<string>
@@ -190,11 +199,12 @@ export async function upsertReport(
        required_scope = excluded.required_scope,
        renderer       = excluded.renderer,
        spec           = excluded.spec,
+       required_depts = excluded.required_depts,
        version        = data.reports.version + 1,
        updated_at     = now()`
   const r = await pool.query(
-    `insert into data.reports (org, id, title, metabase_id, embed_params, required_scope, renderer, spec)
-     values ($1, $2, $3, $4, $5, $6, $7, $8)
+    `insert into data.reports (org, id, title, metabase_id, embed_params, required_scope, renderer, spec, required_depts)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ${conflict}
      returning id`,
     [org, randomUUID(), input.title, input.metabaseId,
@@ -202,7 +212,9 @@ export async function upsertReport(
       // 缺省必须是 **SQL null**（不是 jsonb 的 'null' 字面量）——后者在 `spec is null` 里为假，
       // 会把 Metabase 行钉死在跨列 check 上。pg 收到 JS null 才发 SQL NULL（与 embed_params
       // 同款显式 stringify：不依赖驱动对对象的隐式序列化）。
-      input.spec == null ? null : JSON.stringify(input.spec)],
+      input.spec == null ? null : JSON.stringify(input.spec),
+      // 部门门同款：null = SQL NULL（无门）；数组显式 stringify（与 embed_params 同口径）
+      input.requiredDepts == null ? null : JSON.stringify([...new Set(input.requiredDepts)])],
   )
   // create-only 撞名时 `returning` 无行 ⇒ rowCount 0 ⇒ null；upsert 恒有一行
   return (r.rowCount ?? 0) === 0 ? null : (r.rows[0].id as string)
@@ -230,19 +242,40 @@ export async function deleteReport(pool: Pool, org: string, id: string): Promise
 export async function updateRequiredScope(
   pool: Pool, org: string, id: string, requiredScope: string | null, expectedVersion: number,
 ): Promise<ReportRow | null> {
+  return updateGates(pool, org, id, { requiredScope }, expectedVersion)
+}
+
+/**
+ * 门（页门 + 部门门）写入：一条条件 UPDATE 落两列，版本 +1。
+ *
+ * `requiredDepts` 三态，**不能**用 `null` 兼职「不改」——`null` 本身就是有语义的值（清空部门门）：
+ *   · 键缺席（`undefined`）= 不动该列（页门端点 `updateRequiredScope` 就是这种用法）；
+ *   · `null`             = 清空 ⇒ 无部门门；
+ *   · 数组               = 覆盖（重复值去重后落 jsonb）。
+ * 所以 SQL 里用 `$5::boolean` 当「要不要写这一列」的闸，而不是 `coalesce`。
+ */
+export async function updateGates(
+  pool: Pool, org: string, id: string,
+  gates: { requiredScope: string | null; requiredDepts?: string[] | null },
+  expectedVersion: number,
+): Promise<ReportRow | null> {
   // 用「数据修改 CTE + 外层 join」而不是裸 `returning`：返回值也要带发布字段
   // （`publishedVersion`/`publishedDraftVersion` 来自 `report_versions`，`returning` 里 join 不到）。
+  const setDepts = gates.requiredDepts !== undefined
   const r = await pool.query(
     `with updated as (
        update data.reports
-          set required_scope = $3, version = version + 1, updated_at = now()
+          set required_scope = $3,
+              required_depts = case when $5::boolean then $6::jsonb else required_depts end,
+              version = version + 1, updated_at = now()
         where org = $1 and id = $2 and version = $4
        returning *
      )
      select ${REPORT_COLS_R}, ${PUBLISHED_COLS_R}
        from updated r
        ${PUBLISHED_JOIN}`,
-    [org, id, requiredScope, expectedVersion],
+    [org, id, gates.requiredScope, expectedVersion, setDepts,
+      gates.requiredDepts == null ? null : JSON.stringify([...new Set(gates.requiredDepts)])],
   )
   return r.rowCount === 0 ? null : toReportRow(r.rows[0])
 }

@@ -22,7 +22,7 @@ import type { SqlExecutor } from '../domain/query-service'
 import { updateSpec, upsertReport } from '../domain/report-store'
 import { upsertL1Metric, upsertMetric } from '../domain/metric-store'
 import { parseReportSpec } from '../domain/report-spec'
-import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
+import { applyMigrations, applyPlatformMigrations, buildTestApp, makeIdentity } from '../test-util'
 import type { ModuleVars } from './context'
 
 const dbUrl = process.env.DATABASE_URL
@@ -211,7 +211,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('十九个报表端点都声明了（api.internal 全模块共 32 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('十九个报表端点都声明了（api.internal 全模块共 34 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -219,9 +219,10 @@ describe('报表面声明（不需要数据库）', () => {
     // spec 2026-10-21；+1：/toolbox registry 薄封装，Wave 2 #985；+1：/branches 门店维读面，
     // #1047 报表页筛选器；+7：报表定义版本（publish/unpublish/rollback/versions×2/
     // published-spec/draft，月报重做 Task 10）；+2：AI 文本 JSON/SSE（计划 2026-10-26
-    // Task 7））：穷举口径（同 module.test.ts 的表清单）——
+    // Task 7）；+2：部门门（`PUT /reports/:id/dept-gate` 改门 + `GET /reports/dept-options`
+    // 选择器数据源，spec 2026-10-30 §3.4；#1173））：穷举口径（同 module.test.ts 的表清单）——
     // 别处加端点而漏改这里会红，逼着声明与测试一起动。
-    expect(declared).toHaveLength(32)
+    expect(declared).toHaveLength(34)
     expect(declared.get('GET /branches')).toBe('data:query')
     expect(declared.get('POST /reports')).toBe('data:manage')
     expect(declared.get('GET /reports')).toBe('data:query')
@@ -245,6 +246,10 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('GET /reports/:id/versions/:version')).toBe('data:manage')
     expect(declared.get('GET /reports/:id/published-spec')).toBe('data:query')
     expect(declared.get('GET /reports/:id/draft')).toBe('data:manage')
+    // ── 部门门（spec 2026-10-30 §3.4；#1173）：改门 = 授权变更 ⇒ 管理面；选择器数据源也是
+    //    配置信息（观看者不需要知道「有哪些部门可以当门」）。行级判定在 handler，不在门卫。──
+    expect(declared.get('PUT /reports/:id/dept-gate')).toBe('data:manage')
+    expect(declared.get('GET /reports/dept-options')).toBe('data:manage')
     // ── AI 文本（ai_text，计划 2026-10-26 Task 7）：观看面；更细的页门按快照另判（handler）。──
     expect(declared.get('POST /reports/:id/narrative')).toBe('data:query')
     expect(declared.get('POST /reports/:id/narrative/stream')).toBe('data:query')
@@ -512,14 +517,16 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(rows.rowCount).toBe(0)
   })
 
-  it('GET /reports：只回本 org 的登记，投影 id/title/requiredScope/renderer', async () => {
+  it('GET /reports：只回本 org 的登记，投影 id/title/requiredScope/requiredDepts/renderer', async () => {
     const { app } = manage()
     await post(app, { title: '销售日报' })
     await post(app, { title: '仅管理员', requiredScope: 'data:manage' })
     const body = await (await viewer().app.request('/reports')).json()
     // viewer 只有 data:query ⇒ 行级 requiredScope 把它裁掉
     expect(body.reports.map((r: { title: string }) => r.title)).toEqual(['销售日报'])
-    expect(Object.keys(body.reports[0]).sort()).toEqual(['id', 'renderer', 'requiredScope', 'title'])
+    // 部门门对外可见（console 要据此显示门徽标），所以投影里带上 `requiredDepts`
+    expect(Object.keys(body.reports[0]).sort())
+      .toEqual(['id', 'renderer', 'requiredDepts', 'requiredScope', 'title'])
 
     const admin = await (await manage().app.request('/reports')).json()
     expect(admin.reports).toHaveLength(2)
@@ -2459,6 +2466,239 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       const ok = await narrate(app, id, { preview: 'draft' })
       expect(ok.status).toBe(200)
       expect(await ok.json()).toMatchObject({ text: SAFE_TEXT, fallback: false })
+    })
+  })
+
+  // ── 部门门（spec docs/superpowers/specs/2026-10-30-org-as-platform-primitive-design.md §3.4）──
+  // 断言的都是**授权结果**（谁看得见 / 谁看不见），不是「列里存了什么」：存了但判错 = 门形同虚设。
+  describe('部门门（org 子树继承 + 快照跟随）', () => {
+    /** 一棵三节点的小树：共享中心(T7D1) → 数字技术部(T7D2)；销售部(T7D3) 是另一支。 */
+    const ROOT_DEPT = 'T7D1'
+    const CHILD_DEPT = 'T7D2'
+    const SIBLING_DEPT = 'T7D3'
+    const ALICE = 't7-alice'     // 数字技术部（在共享中心子树内）
+    const BOB = 't7-bob'         // 销售部（子树外）
+    const CAROL = 't7-carol'     // 不属于任何部门
+    const openPanel = { chart: 'table', title: '公开', metricId: OPEN_METRIC }
+
+    const insDept = async (extId: string, name: string, parent: string | null, path: string) => {
+      await pool.query(
+        `insert into platform.org_node(tenant_id, ext_id, name, parent_ext_id, path, status)
+         values ($1, $2, $3, $4, $5, 1)
+         on conflict (tenant_id, ext_id) do update
+           set name = excluded.name, parent_ext_id = excluded.parent_ext_id,
+               path = excluded.path, status = 1`,
+        [TENANT, extId, name, parent, path],
+      )
+    }
+    const insMember = async (userName: string, extId: string) => {
+      await pool.query(
+        `insert into platform.org_membership(tenant_id, user_name, ext_id, is_primary)
+         values ($1, $2, $3, true) on conflict do nothing`,
+        [TENANT, userName, extId],
+      )
+    }
+
+    beforeAll(async () => {
+      // 部门门的判定/配置读的是平台原语的**只读稳定视图**（`platform.v_org_*`，声明在
+      // manifest `dataDependencies`）。模块测试壳没有宿主，得自己把平台迁移跑一遍——
+      // 否则空库 CI 上「relation does not exist」，而本地有库的环境会假绿。
+      await applyPlatformMigrations(pool)
+      // org 表有 `tenant_id → platform.tenant(id)` 外键：本文件既有的 TENANT 常量没有租户行
+      // （模块自身的表按 org 文本隔离，用不到它）。这里补一行，幂等。
+      await pool.query(
+        `insert into platform.tenant(id, slug, casdoor_org) values ($1, $2, $3)
+         on conflict (id) do nothing`,
+        [TENANT, 't7-reports-fixture', ORG],
+      )
+      await insDept(ROOT_DEPT, '共享中心', null, ROOT_DEPT)
+      await insDept(CHILD_DEPT, '数字技术部', ROOT_DEPT, `${ROOT_DEPT}.${CHILD_DEPT}`)
+      await insDept(SIBLING_DEPT, '销售部', null, SIBLING_DEPT)
+      await insMember(ALICE, CHILD_DEPT)
+      await insMember(BOB, SIBLING_DEPT)
+    })
+
+    beforeEach(async () => {
+      // 只清本块种的成员关系（部门节点留着：删了再重的成本更高，且与别的用例无关）
+      await pool.query(
+        'delete from platform.org_membership where tenant_id = $1 and user_name = any($2)',
+        [TENANT, [ALICE, BOB, CAROL]],
+      )
+      await insMember(ALICE, CHILD_DEPT)
+      await insMember(BOB, SIBLING_DEPT)
+    })
+
+    afterAll(async () => {
+      await pool.query('delete from platform.org_membership where tenant_id = $1', [TENANT]).catch(() => {})
+      await pool.query('delete from platform.org_node where tenant_id = $1', [TENANT]).catch(() => {})
+      await pool.query('delete from platform.tenant where id = $1', [TENANT]).catch(() => {})
+    })
+
+    /** 观看者（只有 data:query，无管理权）。`accountName` 可给——微信 OA 通道的键是 openid。 */
+    const watcher = (userId: string, extra: { accountName?: string; org?: string } = {}) =>
+      shell(makeIdentity({
+        orgId: extra.org ?? ORG, userId,
+        ...(extra.accountName === undefined ? {} : { accountName: extra.accountName }),
+      })).app
+    const admin = () => shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] })).app
+    const create = async (app: Hono, requiredDepts: string[] | null, title = '部门门报表') => {
+      const res = await post(app, {
+        title, renderer: 'platform', spec: { panels: [openPanel] }, requiredDepts,
+      })
+      expect(res.status).toBe(201)
+      return (await res.json()).id as string
+    }
+    const visibleIds = async (app: Hono): Promise<string[]> => {
+      const body = await (await app.request('/reports')).json() as { reports: { id: string }[] }
+      return body.reports.map((r) => r.id)
+    }
+    const putDeptGate = (app: Hono, id: string, requiredDepts: string[] | null, expectedVersion: number) =>
+      app.request(`/reports/${id}/dept-gate`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ requiredDepts, expectedVersion }),
+      })
+    const publish = (app: Hono, id: string, expectedVersion: number) =>
+      app.request(`/reports/${id}/publish`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedVersion }),
+      })
+
+    it('★ 子树继承：授权父部门 ⇒ 子部门成员可见；门外的人不可见；无部门的人不可见', async () => {
+      const app = admin()
+      const id = await create(app, [ROOT_DEPT])
+
+      // ALICE 在子部门（T7D2），门配的是父部门（T7D1）⇒ 靠 path 拆段拿到的祖先链放行
+      expect(await visibleIds(watcher(ALICE))).toContain(id)
+      // BOB 在销售部（不在子树内）
+      expect(await visibleIds(watcher(BOB))).not.toContain(id)
+      // CAROL 在 org 表里根本没有行 ⇒ 空集 ⇒ fail-closed（不是「没有部门就放行」）
+      expect(await visibleIds(watcher(CAROL))).not.toContain(id)
+    })
+
+    it('★ 身份键归一：accountName（Casdoor name）优先，微信 OA 通道的 openid 照样判得对', async () => {
+      const id = await create(admin(), [ROOT_DEPT])
+      // 微信 OA 访客：userId = openid，accountName = Casdoor name ⇒ 应按部门放行
+      expect(await visibleIds(watcher('o_openid_xyz', { accountName: ALICE }))).toContain(id)
+      // 反向：openid 恰好等于别人的名字也不能顶替（用 BOB 的 openid + 自己的名字）
+      expect(await visibleIds(watcher(BOB, { accountName: 't7-nobody' }))).not.toContain(id)
+    })
+
+    it('★ 无门行不受影响（存量行为逐字节不变）：requiredDepts 缺省 ⇒ 所有 data:query 可见', async () => {
+      const id = await create(admin(), null)
+      for (const who of [ALICE, BOB, CAROL]) {
+        expect(await visibleIds(watcher(who))).toContain(id)
+      }
+    })
+
+    it('配置期校验：未知部门 ⇒ 400 UNKNOWN_DEPT；org 未同步 ⇒ 409 ORG_NOT_SYNCED', async () => {
+      const app = admin()
+      const bad = await post(app, {
+        title: '坏门', renderer: 'platform', spec: { panels: [openPanel] }, requiredDepts: ['T7-NOPE'],
+      })
+      expect(bad.status).toBe(400)
+      expect(await bad.json()).toEqual({ error: 'UNKNOWN_DEPT', unknown: ['T7-NOPE'] })
+
+      // 未同步的租户（org 表零节点）：同一份 body 是**状态**问题不是入参问题 ⇒ 409
+      const res = await buildTestApp(
+        mod, makeIdentity({ orgId: 'org-t7-reports-unsynced', scopes: ['data:query', 'data:manage'] }),
+        { pool }, { id: 9199, casdoor_org: 'org-t7-reports-unsynced' },
+      ).request('/reports', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: '未同步', renderer: 'platform', spec: { panels: [openPanel] }, requiredDepts: [ROOT_DEPT],
+        }),
+      })
+      expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({ error: 'ORG_NOT_SYNCED' })
+    })
+
+    it('★ 改门端点：落库 + 版本推进；陈旧版本 409；未知部门 400（自绘行也能改）', async () => {
+      const app = admin()
+      const id = await create(app, null)
+      const v0 = await versionOf(app, id)
+
+      const ok = await putDeptGate(app, id, [SIBLING_DEPT], v0)
+      expect(ok.status).toBe(200)
+      const body = await ok.json() as { requiredDepts: string[]; version: number }
+      expect(body.requiredDepts).toEqual([SIBLING_DEPT])
+      expect(body.version).toBe(v0 + 1)   // 写保护契约：门变了版本必须前进
+
+      // BOB 在销售部 ⇒ 现在能看见；ALICE 反过来看不见
+      expect(await visibleIds(watcher(BOB))).toContain(id)
+      expect(await visibleIds(watcher(ALICE))).not.toContain(id)
+
+      // 陈旧版本（用 v0 再写一次）⇒ 409 STALE_WRITE，且值没被改
+      const stale = await putDeptGate(app, id, [ROOT_DEPT], v0)
+      expect(stale.status).toBe(409)
+      expect(await stale.json()).toMatchObject({ error: 'STALE_WRITE' })
+      expect(await visibleIds(watcher(BOB))).toContain(id)
+
+      // 未知部门在**写之前**就拒（门没被改）
+      const unknown = await putDeptGate(app, id, ['T7-NOPE'], body.version)
+      expect(unknown.status).toBe(400)
+      expect(await unknown.json()).toMatchObject({ error: 'UNKNOWN_DEPT' })
+    })
+
+    it('★ 发布后门随快照走：?v=1 判旧版的门，最新版判新版的门', async () => {
+      const app = admin()
+      const id = await create(app, [ROOT_DEPT])
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+      // v1：门 = 共享中心 ⇒ ALICE 可读，BOB 404
+      expect((await watcher(ALICE).request(`/reports/${id}/published-spec`)).status).toBe(200)
+      expect((await watcher(BOB).request(`/reports/${id}/published-spec`)).status).toBe(404)
+
+      // 改成销售部并发布 v2：BOB 现在能读最新版，但 **?v=1 仍按 v1 的门判**（404）
+      const v1 = await versionOf(app, id)
+      expect((await putDeptGate(app, id, [SIBLING_DEPT], v1)).status).toBe(200)
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+      expect((await watcher(BOB).request(`/reports/${id}/published-spec`)).status).toBe(200)
+      expect((await watcher(BOB).request(`/reports/${id}/published-spec?v=1`)).status).toBe(404)
+      // ALICE 反过来：v2 看不见，v1 看得见（旧链接不因新门失效）
+      expect((await watcher(ALICE).request(`/reports/${id}/published-spec?v=1`)).status).toBe(200)
+      expect((await watcher(ALICE).request(`/reports/${id}/published-spec`)).status).toBe(404)
+
+      // 清空部门门再发布 v3 ⇒ 所有人都可读（null 是「无门」，不是「无改动」）
+      expect((await putDeptGate(app, id, null, await versionOf(app, id))).status).toBe(200)
+      const pub3 = await publish(app, id, await versionOf(app, id))
+      expect(pub3.status).toBe(200)
+      expect((await pub3.json()).requiredDepts).toBeNull()
+      expect((await watcher(CAROL).request(`/reports/${id}/published-spec`)).status).toBe(200)
+    })
+
+    it('★ 规格读取与 AI 文本也过部门门（内容面不能绕过门）', async () => {
+      const app = admin()
+      const id = await create(app, [ROOT_DEPT])
+      expect((await watcher(ALICE).request(`/reports/${id}/spec`)).status).toBe(200)
+      expect((await watcher(BOB).request(`/reports/${id}/spec`)).status).toBe(403)
+
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+      // body 必须是**合法**的叙述请求（period 必填）：否则 400 INVALID_BODY 会盖掉门的判定，
+      // 这条用例就变成「在测 zod」而不是「在测门」。
+      const narrate = (userId: string) => watcher(userId).request(`/reports/${id}/narrative`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          panelIndex: 0, period: { mode: 'custom', from: '2026-10-01', to: '2026-10-19' },
+        }),
+      })
+      // 门不过 ⇒ 404（与页门同一形态：不泄露「已发布且有一道你过不去的门」）。
+      // 门**过**的人这里的 400 是 NOT_AI_TEXT_PANEL（第 0 个面板是表格）——正好证明门已放行、
+      // 判定确实走到了面板解析那一步。
+      expect((await narrate(BOB)).status).toBe(404)
+      expect((await narrate(ALICE)).status).toBe(400)
+    })
+
+    it('部门选择器：活节点平表 + 直属人数（管理面）', async () => {
+      const res = await admin().request('/reports/dept-options')
+      expect(res.status).toBe(200)
+      const body = await res.json() as {
+        depts: { extId: string; name: string; parentExtId: string | null; memberCount: number }[]
+      }
+      const byId = new Map(body.depts.map((d) => [d.extId, d]))
+      expect(byId.get(ROOT_DEPT)).toMatchObject({ name: '共享中心', parentExtId: null })
+      expect(byId.get(CHILD_DEPT)).toMatchObject({ name: '数字技术部', parentExtId: ROOT_DEPT })
+      expect(byId.get(CHILD_DEPT)!.memberCount).toBe(1)   // ALICE 直属
+      expect(byId.get(SIBLING_DEPT)!.memberCount).toBe(1) // BOB 直属
     })
   })
 })
