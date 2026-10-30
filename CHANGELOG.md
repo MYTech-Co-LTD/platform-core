@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.219.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.218.3...v0.219.0) - 2026-10-30
+- 【新增】data: 战区出库面——客户维 + 三分列 + 指标（#1181） ([#1186](https://github.com/MYTech-Co-LTD/platform-core/pull/1186), [e70066b](https://github.com/MYTech-Co-LTD/platform-core/commit/e70066ba0e41ac2902f790b3896fbabec497ed4e))
+
+
 ## [0.218.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.218.2...v0.218.3) - 2026-10-30
 - 【修复】notify: resolveScopeHolders 收的是收件人档名，不是权限码（#1179 补） ([#1185](https://github.com/MYTech-Co-LTD/platform-core/pull/1185), [2739918](https://github.com/MYTech-Co-LTD/platform-core/commit/2739918b0369a7557fcbde7798bda2fa856d43b9))
 
