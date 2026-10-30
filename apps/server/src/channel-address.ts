@@ -76,12 +76,21 @@ export function createChannelAddressResolver(deps: {
     },
 
     /**
-     * 权限码 → 持有者（Casdoor 直挂 ∪ 角色展开）。缺 `casdoorFor` ⇒ **不提供这个方法**
+     * 收件人档 → 持有者（Casdoor 直挂 ∪ 角色展开）。缺 `casdoorFor` ⇒ **不提供这个方法**
      * （调用方据此报 `scope_holders_unavailable`，而不是拿到一个假的空集）。
+     *
+     * ⚠️ 第二个参数是 **recipientKey**（如 `approvers`），不是权限码——真正的码在
+     * `decl.recipients[key].scope`。这是 `deliverability` 与 worker 的既有契约
+     * （`worker-deps.ts` 同一段逻辑）：**三处必须同源**，否则症状是「解析器在、结果恒空」
+     * （2026-10-30 亲测：按 SDK 旧形参名当码用 ⇒ 控制台永远 0 人）。
      */
     resolveScopeHolders: scopeHolders === undefined
       ? undefined
-      : (org, permissionCode) => scopeHolders(org, permissionCode),
+      : (org, recipientKey, decl) => {
+        const r = decl?.recipients?.[recipientKey]
+        if (r?.kind !== 'scope_holders' || r.scope === undefined || r.scope === '') return Promise.resolve([])
+        return scopeHolders(org, r.scope)
+      },
 
     /**
      * 部门 ext_id（可多选）→ 成员（**含全部后代部门**，spec 2026-10-30 §3.5）。

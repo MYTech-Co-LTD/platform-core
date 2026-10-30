@@ -142,13 +142,32 @@ describePg('channel-address: resolveDeptMembers', () => {
   })
 
   // ── 权限码持有者（issue #1179：控制台预检与 worker 同一份口径）─────────────────
-  it('★ resolveScopeHolders：直挂 ∪ 角色展开（与 worker 同一实现）', async () => {
+  it('★ resolveScopeHolders：按**收件人档**取码（直挂 ∪ 角色展开，与 worker 同一语义）', async () => {
     const r = createChannelAddressResolver({ pool, casdoorFor: () => fakeCasdoor() })
     expect(r.resolveScopeHolders).toBeDefined()
-    const names = await r.resolveScopeHolders!(
-      ORG, 'm:manage', { key: 'm.a.b', title: '', payload: {}, recipients: {} },
-    )
+    const decl = {
+      key: 'm.a.b', title: '', payload: {},
+      recipients: { mgrs: { kind: 'scope_holders' as const, scope: 'm:manage' } },
+    }
+    // ⚠️ 传的是**档名** `mgrs`，不是权限码——码从 decl 里取（2026-10-30 实测订正：
+    //    把 key 当码用 ⇒ collectHolders 恒空 ⇒ 控制台永远「0 人」）
+    const names = await r.resolveScopeHolders!(ORG, 'mgrs', decl)
     expect(names.sort()).toEqual(['alice', 'carol'])
+  })
+
+  it('非 scope_holders 档 / 未知档 ⇒ 空且**不调 Casdoor**（不白跑一次 admin 会话）', async () => {
+    let called = false
+    const r = createChannelAddressResolver({
+      pool, casdoorFor: () => { called = true; return fakeCasdoor() },
+    })
+    const decl = {
+      key: 'm.a.b', title: '', payload: {},
+      recipients: { one: { kind: 'field' as const, field: 'u' } },
+    }
+    expect(await r.resolveScopeHolders!(ORG, 'one', decl)).toEqual([])
+    expect(await r.resolveScopeHolders!(ORG, 'nope', decl)).toEqual([])
+    // `createScopeHolderResolver` 惰性取客户端：没命中 scope_holders 档 ⇒ 一次 Casdoor 都不打
+    expect(called).toBe(false)
   })
 
   it('缺 casdoorFor ⇒ 不提供该方法（调用方据此报 unavailable，而不是拿到假空集）', () => {
