@@ -272,7 +272,7 @@ describe('deriveTotalable —— 可加判定（spec §8.4：表达式形状的�
       expect(row.totalable, `${row.id} 的 totalable 与 expression 形状不符`).toBe(!NOT_TOTALABLE.has(row.id))
     }
     // 「恰好」要有实证数：不是全体都可加、也不是全体都不可加
-    expect(rows.filter((r) => r.totalable === true).length, '可加条数（加/改指标时重核）').toBe(31)
+    expect(rows.filter((r) => r.totalable === true).length, '可加条数（加/改指标时重核）').toBe(32)
     expect(rows.filter((r) => r.totalable === false).length).toBe(17)
     // 抽样钉两条形态极值（brief 点名）
     expect(rows.find((r) => r.id === 'lemeng:retail:net_sales')?.totalable).toBe(true)
@@ -655,14 +655,14 @@ describe('真 YAML：47 条 sla_days / freshnessRelations 逐条断言（spec §
     'lemeng:retail:order_line',
   ])
 
-  it('恰 48 条；inventory 两指标 sla_days=3、retail 七条=1、其余 39 条=2（按实测发布时钟标定，#849）', () => {
-    expect(rows.length).toBe(48)
+  it('恰 49 条；inventory 两指标 sla_days=3、retail 七条=1、其余 40 条=2（按实测发布时钟标定，#849）', () => {
+    expect(rows.length).toBe(49)
     for (const row of rows) {
       const want = SLA3.has(row.id) ? 3 : SLA1.has(row.id) ? 1 : 2
       expect(row.slaDays, `${row.id} 的 sla_days 与标定不符`).toBe(want)
     }
     expect(rows.filter((r) => r.slaDays === 3).length).toBe(2)
-    expect(rows.filter((r) => r.slaDays === 2).length).toBe(39)
+    expect(rows.filter((r) => r.slaDays === 2).length).toBe(40)
     expect(rows.filter((r) => r.slaDays === 1).length).toBe(7)
   })
 
@@ -677,6 +677,8 @@ describe('真 YAML：47 条 sla_days / freshnessRelations 逐条断言（spec §
       // 2026-10-21（issue #965）：行级明细读面（8 列闭集 + FINISHED 行域），读 retail_order_line 湖资产
       'lemeng:retail:order_line': ['stg_lemeng_retail_order_line'],
       'lemeng:outbound:net_amount': ['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out', 'stg_lemeng_wholesale_return'],
+      // #1181（2026-10-30）：战区出库面——归因三源与 outbound:net_amount 同（不新增采集源）
+      'lemeng:outbound:region_net': ['stg_lemeng_transfer_out', 'stg_lemeng_wholesale_out', 'stg_lemeng_wholesale_return'],
       'lemeng:expense:branch_payable': ['stg_lemeng_branch_expense'],
       'lemeng:expense:client_payable': ['stg_lemeng_client_expense'],
       'lemeng:inventory:quantity': ['stg_lemeng_inventory_snapshot'],
@@ -733,7 +735,7 @@ describe('真 YAML：47 条 sla_days / freshnessRelations 逐条断言（spec §
     }
     // 推导一致性：**43 条全部**声明了 sources（2026-10-17 补齐前是 15 条，另 20 条水位恒未知）。
     // 计数兜底保留：以后新增指标若忘声明 sources，下面的 43 会立刻红。
-    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length).toBe(48)
+    expect(rows.filter((r) => (r.freshnessRelations ?? []).length > 0).length).toBe(49)
     expect(rows.filter((r) => (r.freshnessRelations ?? []).length === 0).length).toBe(0)
   })
 })
