@@ -230,3 +230,36 @@ describe('resolveDeliverability: 部门收件人', () => {
     expect(aggregateEventStatus(['dept_resolver_unavailable'], true)).toBe('matched')
   })
 })
+
+// ── 未配置通道不算可送达（2026-10-30 山海实测：seed 的 wecom_default 是空壳）───────────
+describe('resolveDeliverability: 通道未配置', () => {
+  it('★ 启用但未配置 ⇒ 不算 usable，并列入 unconfiguredChannels', async () => {
+    const r = await resolveDeliverability(
+      { org: 'o', rule: rule(), payload: { u: 'alice' } },
+      deps({ getChannel: async (_o, id) => ({ id, provider: 'wecom_chat', enabled: true, configured: false }) }),
+    )
+    expect(r.usableChannels).toEqual([])
+    expect(r.unconfiguredChannels).toEqual(['wecom_default'])
+    expect(r.blocked).toBe('no_channel')     // 全都没配 ⇒ 明确阻塞，而不是发出去全红
+  })
+
+  it('★ 一半配一半没配 ⇒ 只走配好的那条（不因为另一条是空壳就整条规则阻塞）', async () => {
+    const r = await resolveDeliverability(
+      { org: 'o', rule: rule({ channels: ['wecom_default', 'inapp_default'] }), payload: { u: 'alice' } },
+      deps({
+        getChannel: async (_o, id) => (id === 'wecom_default'
+          ? { id, provider: 'wecom_chat', enabled: true, configured: false }
+          : { id, provider: 'in_app', enabled: true, configured: true }),
+      }),
+    )
+    expect(r.blocked).toBeNull()
+    expect(r.usableChannels).toEqual(['inapp_default'])
+    expect(r.unconfiguredChannels).toEqual(['wecom_default'])
+  })
+
+  it('不传 configured ⇒ 视为已配置（旧调用方行为不变）', async () => {
+    const r = await resolveDeliverability({ org: 'o', rule: rule(), payload: { u: 'a' } }, deps())
+    expect(r.usableChannels).toEqual(['wecom_default'])
+    expect(r.unconfiguredChannels).toEqual([])
+  })
+})

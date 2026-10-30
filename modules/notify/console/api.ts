@@ -144,6 +144,8 @@ export type RuleDeliverability = {
   eventKey: string
   blocked: string | null
   recipientCount: number
+  /** 启用了但没配（secret_refs 的 env 键缺失）的通道 id */
+  unconfiguredChannels?: string[]
 }
 
 export const fetchDeliverability = (): Promise<RuleDeliverability[]> =>

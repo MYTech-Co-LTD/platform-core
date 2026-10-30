@@ -75,20 +75,3 @@ export async function validateDeptGate(
   if (unknown.length > 0) return { ok: false, code: 'UNKNOWN_DEPT', unknown }
   return { ok: true }
 }
-
-/** 部门选择器的数据源（data:manage 面）：活节点平表（前端按 parent 组树）。 */
-export async function listDeptOptions(
-  pool: Pool, tenantId: number,
-): Promise<Array<{ extId: string; name: string; parentExtId: string | null; memberCount: number }>> {
-  const r = await pool.query(
-    `select n.ext_id, n.name, n.parent_ext_id,
-            (select count(*)::int from platform.v_org_membership m
-              where m.tenant_id = n.tenant_id and m.ext_id = n.ext_id) as members
-       from platform.v_org_node n
-      where n.tenant_id = $1 and n.status = 1
-      order by n.path`,
-    [tenantId],
-  )
-  return (r.rows as Array<{ ext_id: string; name: string; parent_ext_id: string | null; members: number }>)
-    .map((x) => ({ extId: x.ext_id, name: x.name, parentExtId: x.parent_ext_id, memberCount: x.members }))
-}

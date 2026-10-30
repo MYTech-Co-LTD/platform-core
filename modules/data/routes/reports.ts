@@ -76,7 +76,7 @@ import type { PublishErrorReason } from '../domain/report-version'
 //    调用方之一）。写计划时第一版写成了 `'../domain/query-service'`——那是错的，已订正。
 import { loadMergedCatalog } from '../domain/metric-store'
 import {
-  deptGatePasses, deptNamesOf, listDeptOptions, userDeptClosure, validateDeptGate,
+  deptGatePasses, deptNamesOf, userDeptClosure, validateDeptGate,
 } from '../domain/dept-gate'
 import {
   TENANT_PARAM_ID, TENANT_SLUG, publishWithTenantBinding, readDashboardContent,
@@ -525,7 +525,13 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/reports/dept-options', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
-    const depts = await listDeptOptions(ctx.pool, c.get('tenant').id)
+    // 数据源 = 宿主注入的组织架构平表（与通知模块的「按部门」选择器**同一份实现**）。
+    // 模块不再自己查 platform schema（那条 SQL 2026-10-30 已下沉到
+    // `apps/server/src/channel-address.ts` 的 `listOrgNodes`，本模块的 dataDependencies
+    // 随之退役）。未注入 = 宿主装配缺陷 ⇒ 503，不静默回空表（那会让前端以为「组织架构没同步」）。
+    const list = ctx.addresses?.listOrgNodes
+    if (list === undefined) return c.json({ error: 'ORG_RESOLVER_UNAVAILABLE' }, 503)
+    const depts = await list.call(ctx.addresses, c.get('tenant').casdoor_org)
     return c.json({ depts })
   })
 

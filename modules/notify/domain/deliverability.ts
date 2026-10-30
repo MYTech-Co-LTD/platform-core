@@ -37,6 +37,13 @@ export type DeliverabilityDeps = {
     enabled: boolean
     /** 非敏感配置（address_fallback 等）；worker 的地址回退判定要用 */
     config?: Record<string, unknown>
+    /**
+     * `secret_refs` 指向的 env 键是否都在本进程可见（缺省视为**已配置**，保持旧行为）。
+     * 未配置的通道**不算可送达**——否则预检说「能发」、真发时每个收件人各记一条
+     * `secret_missing` 永久失败（2026-10-30 山海实测：seed 出来的 `wecom_default`
+     * 就是这样，bridge env 键不在时整条通道是空壳）。
+     */
+    configured?: boolean
   } | null>
   resolveScopeHolders(
     org: string,
@@ -59,8 +66,14 @@ export type Deliverability = {
     provider: string
     enabled: boolean
     config?: Record<string, unknown>
+    configured?: boolean
   }>
   usableChannels: string[]
+  /**
+   * 启用了但**没配**（secret_refs 指向的 env 键缺失）的通道 id。
+   * 预检据此报 `channel_unconfigured:<id>` —— 这类通道以前要等投递失败才看得见。
+   */
+  unconfiguredChannels: string[]
   /** 已发布模板（blocked=template_missing 时缺省）；worker 复用它渲染，避免二次读库 */
   tpl?: { revision: number; contents: unknown }
   /**
@@ -68,6 +81,14 @@ export type Deliverability = {
    * 「将发送给 N 人 / 排除 M 人 / 未解析 K 人」。非部门规则不设。
    */
   deptExpansion?: DeptExpansion
+}
+
+/**
+ * 通道是否真的能发：启用 **且** 已配置（`secret_refs` 的 env 键都在）。
+ * `configured` 缺省 = true（旧调用方/测试不传时行为不变）。
+ */
+export function isChannelUsable(c: { enabled: boolean; configured?: boolean }): boolean {
+  return c.enabled && c.configured !== false
 }
 
 /**
@@ -82,7 +103,7 @@ export async function resolveDeliverability(
 
   const tpl = await deps.getPublishedTemplate(org, rule.templateKey)
   if (!tpl) {
-    return { blocked: 'template_missing', recipients: [], channels: [], usableChannels: [] }
+    return { blocked: 'template_missing', recipients: [], channels: [], usableChannels: [], unconfiguredChannels: [] }
   }
   const tplOut = { revision: tpl.revision, contents: tpl.contents }
 
@@ -98,12 +119,13 @@ export async function resolveDeliverability(
       const depts = rule.recipientDepts ?? []
       if (depts.length === 0) {
         // 配了一半（选了部门档却没选部门）：**不静默发 0 人**，按「没人」显式阻塞
-        return { blocked: 'no_recipient', recipients, channels: [], usableChannels: [], tpl: tplOut }
+        return { blocked: 'no_recipient', recipients, channels: [], usableChannels: [], unconfiguredChannels: [], tpl: tplOut }
       }
       if (!deps.resolveDeptMembers) {
         // 「查不了」≠「没人」：这条必须与 no_recipient 分开（见 Blocked 的注）
         return {
-          blocked: 'dept_resolver_unavailable', recipients, channels: [], usableChannels: [], tpl: tplOut,
+          blocked: 'dept_resolver_unavailable', recipients, channels: [], usableChannels: [],
+          unconfiguredChannels: [], tpl: tplOut,
         }
       }
       deptExpansion = await deps.resolveDeptMembers(org, depts)
@@ -137,17 +159,27 @@ export async function resolveDeliverability(
       provider: ch?.provider ?? 'unknown',
       enabled: ch?.enabled === true,
       config: ch?.config,
+      configured: ch?.configured,
     })
   }
-  const usableChannels = channels.filter((c) => c.enabled).map((c) => c.id)
+  const usableChannels = channels.filter(isChannelUsable).map((c) => c.id)
+  const unconfiguredChannels = channels
+    .filter((c) => c.enabled && c.configured === false)
+    .map((c) => c.id)
 
   if (recipients.length === 0) {
-    return { blocked: 'no_recipient', recipients, channels, usableChannels, tpl: tplOut, deptExpansion }
+    return {
+      blocked: 'no_recipient', recipients, channels, usableChannels, unconfiguredChannels, tpl: tplOut, deptExpansion,
+    }
   }
   if (usableChannels.length === 0) {
-    return { blocked: 'no_channel', recipients, channels, usableChannels, tpl: tplOut, deptExpansion }
+    return {
+      blocked: 'no_channel', recipients, channels, usableChannels, unconfiguredChannels, tpl: tplOut, deptExpansion,
+    }
   }
-  return { blocked: null, recipients, channels, usableChannels, tpl: tplOut, deptExpansion }
+  return {
+    blocked: null, recipients, channels, usableChannels, unconfiguredChannels, tpl: tplOut, deptExpansion,
+  }
 }
 
 function recipientSource(
