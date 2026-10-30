@@ -73,6 +73,40 @@ models:
       - name: address
         description: 地址。
 
+  - name: fct_outbound_region
+    description: >-
+      **战区出库面**（#1181，2026-10-30）。粒度 `(system_book, bizday, channel_type, region_l1_bucket)`。
+      出库按通道分三列：`自有门店配送`（transfer，战区=调入门店战区）、`体系内批发`
+      （wholesale 且客户=另一账套门店，战区=该门店战区）、`外部批发`（其余客户，**不硬摊战区**，
+      `region_l1_bucket='未归属'`，2026-10-30 裁决）。金额不重算，守恒由
+      `audit_lemeng__outbound__region_conservation` 钉住；粒度唯一性由
+      `assert_fct_outbound_region_grain_unique` 钉住。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（宏注入）。
+        tests: [{not_null: {}}]
+      - name: bizday
+        description: 业务日。粒度键。
+        tests: [{not_null: {}}]
+      - name: channel_type
+        description: >-
+          通道：`自有门店配送` / `体系内批发` / `外部批发`。粒度键。
+        tests: [{not_null: {}}]
+      - name: region_l1_bucket
+        description: >-
+          一级战区桶（`dim_region.region_l1`，空值显式落 `未归属`）。粒度键。
+          两账套 region_id 空间不相交、一级名共用 ⇒ 只有这一层能跨账套合并。
+        tests: [{not_null: {}}]
+      - name: r_net
+        description: 出库净额（原样求和，不重算）。
+      - name: order_count
+        description: 出库单数（原样求和）。
+      - name: line_count
+        description: 出库明细行数（原样求和）。
+
   - name: dim_lemeng_client
     description: >-
       **批发客户维**（客户 → 体系内门店 / 战区归属）（#1181，2026-10-30）。粒度
