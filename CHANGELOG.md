@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.218.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.218.1...v0.218.2) - 2026-10-30
+- 【修复】notify: 控制台预检认 scope_holders——宿主地址解析器实现 resolveScopeHolders (#1179) ([#1180](https://github.com/MYTech-Co-LTD/platform-core/pull/1180), [77a67cf](https://github.com/MYTech-Co-LTD/platform-core/commit/77a67cf2d0e04a76b863616f3f9ee56c3a2b4195))
+
+
 ## [0.218.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.218.0...v0.218.1) - 2026-10-30
 - 【修复】console: 部门树默认只展开第一层 + 限高滚动 (#1177) ([#1178](https://github.com/MYTech-Co-LTD/platform-core/pull/1178), [b230ca5](https://github.com/MYTech-Co-LTD/platform-core/commit/b230ca5c00eeb36e523ab85eafd17fdf79ae53cc))
 
