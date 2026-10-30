@@ -98,6 +98,12 @@ api:
     # 「发布」= requiredScope 置 null，没有独立的 published 列（见 report-store 头注）。
     - { method: GET,    path: /reports/manage,        scope: data:manage }
     - { method: PUT,    path: /reports/:id,           scope: data:manage }
+    # ── 部门门（spec 2026-10-30-org-as-platform-primitive §3.4；#1173）──
+    # 改门 = 授权变更 ⇒ data:manage（与页门同档）。选择器数据源同样是管理面：
+    # 观看者不需要看到「有哪些部门可以当门」，那是配置信息不是内容。
+    # 判定（行级部门门）不在门卫这一层，在 handler 的 visibleTo（清单表达不了「行级」）。
+    - { method: PUT,    path: /reports/:id/dept-gate, scope: data:manage }
+    - { method: GET,    path: /reports/dept-options,  scope: data:manage }
     # ── 自绘规格读写（#391 计划 6 Task 3）：读 = 观看面（行级页门照 embed-url 的 visibleTo
     #    裁剪，Task 4 渲染器从这里取规格）；写 = 管理面动作（改规格就是改报表内容）。
     #    注册序保持字面量在前、param 在后（#145 口径）。──
@@ -131,3 +137,11 @@ migrations: { dir: ./migrations }
 #     两个维度不能共用一个词（Constraint 1）。声明 true 之后本模块的每个 API 请求多一次查表
 #     （宿主侧刻意不做缓存，见 loader.ts 的注记）。
 tenantSources: true
+# 跨模块只读数据依赖（docs/module-protocol.md「跨模块只读数据依赖」判据 1）：
+# 报表的**部门门**（spec 2026-10-30-org-as-platform-primitive-design §3.4）要在判定侧把
+# 「用户所在部门 + 全部祖先」算出来，数据源是平台原语的只读稳定视图（不是物理表——
+# 协议要求声明面是视图）。`apps/server/src/migrations/013_org_views.sql` 提供这两个视图。
+# 只读：本模块不写组织架构（写侧由宿主 admin 的 org-sync 负责）。
+dataDependencies:
+  - platform.v_org_node
+  - platform.v_org_membership

@@ -19,6 +19,9 @@ export function makeIdentity(partial: Partial<Identity> & { orgId: string }): Id
     displayName: partial.displayName ?? '测试用户',
     scopes,
     hasScope: (code: string) => scopes.includes(code),
+    // 账户统一（Task 5）：**只在给了才带**——不给即 undefined，与「中间态/旧形状会话」
+    // 的宿主 Identity 逐键同形（部门的键归一见 domain/dept-gate.ts 的 deptNamesOf）。
+    ...(partial.accountName === undefined ? {} : { accountName: partial.accountName }),
   }
 }
 
@@ -65,6 +68,21 @@ export function buildTestApp(
  * （形如 `relation "data.metrics" does not exist`）。CI 是 ASCII 路径，故这条只在本地咬人。 */
 export function applyMigrations(pool: Pool): Promise<string[]> {
   return runMigrations(pool, 'data', fileURLToPath(new URL('./migrations', import.meta.url)))
+}
+
+/**
+ * 跑**平台**迁移（apps/server 的 migrations/）。只有需要平台原语（如组织架构视图
+ * `platform.v_org_*`）的模块测试才用——绝大多数模块测试只跑本模块的迁移。
+ *
+ * 为什么模块测试要能拉平台迁移：模块 SQL 里 `from platform.v_org_node` 这类**声明过的**
+ * 跨 schema 只读依赖，在真库里由宿主启动时建（`app.ts` 的 `runMigrations(pool,'platform',…)`）；
+ * 单测没有宿主，不自己拉一遍就会「本地有库能过、CI 空库必红」。`runMigrations` 有记账表 ⇒
+ * 幂等，重复调用只多一次锁。
+ */
+export function applyPlatformMigrations(pool: Pool): Promise<string[]> {
+  return runMigrations(
+    pool, 'platform', fileURLToPath(new URL('../../apps/server/src/migrations', import.meta.url)),
+  )
 }
 
 /** 迁移目录里全部 *.sql 的正文，按文件名排序（与 runMigrations 同一排序口径）。 */

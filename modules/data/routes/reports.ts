@@ -54,6 +54,7 @@ import {
   getReportVersion,
   listAllReports,
   listReports,
+  updateGates,
   updateRequiredScope,
   updateSpec,
   updateSpecAndScope,
@@ -74,6 +75,9 @@ import type { PublishErrorReason } from '../domain/report-version'
 // ⚠️ `loadMergedCatalog` 的**家在 `domain/metric-store.ts`**，不在 query-service（后者只是它的
 //    调用方之一）。写计划时第一版写成了 `'../domain/query-service'`——那是错的，已订正。
 import { loadMergedCatalog } from '../domain/metric-store'
+import {
+  deptGatePasses, deptNamesOf, listDeptOptions, userDeptClosure, validateDeptGate,
+} from '../domain/dept-gate'
 import {
   TENANT_PARAM_ID, TENANT_SLUG, publishWithTenantBinding, readDashboardContent,
 } from '../domain/report-content'
@@ -100,6 +104,14 @@ const ReportBody = z.object({
   lockedParams: z.record(z.string()).default({}),
   /** NULL = 所有拿到本模块的人可见（口径同 data.metrics.required_scope）。 */
   requiredScope: z.string().min(1).nullable().default(null),
+  /**
+   * 部门门（spec §3.4）：ext_id 数组，**子树继承**（授权「共享中心」⇒ 数字技术部的成员也可见）。
+   * NULL / 空数组 = 无部门门。与 `requiredScope` **叠加**（两个门都要过），不是替代。
+   * 上界 200 与 `MAX_QUERY_ROWS` 同理：只挡「客户端可控的长数组灌进 SQL」，不表达业务上限
+   * （真实租户最深是一个部门一条链，个位数）。
+   * 创建后改门走 `PUT /reports/:id/dept-gate`（自绘/嵌入两种行同一入口）。
+   */
+  requiredDepts: z.array(z.string().min(1)).max(200).nullable().default(null),
   // 内容侧版本（写保护）：更新既有 dashboard 时**必填**；见 handler 里的 fail-closed 分支
   expectedFingerprint: z.string().min(1).nullable().default(null),
 }).strict()
@@ -157,11 +169,25 @@ const narrativeErrorStatus = (e: NarrativeContextErr): 400 | 403 | 404 => {
 const reportIdOf = (raw: string | undefined): string | null =>
   raw === undefined || raw === '' ? null : raw
 
-/** 行级数据门：词表外的报表可见性也按「org + 行上 required_scope」裁（口径同 visibleMetrics）。 */
+/** 行级数据门：词表外的报表可见性也按「org + 行上 required_scope」裁（口径同 visibleMetrics）。
+ *  2026-10-30 起叠加**部门门**（spec §3.4 / D-O4：叠加不替代）——
+ *  `userDepts` 是调用方预取的本人部门闭包（含祖先）；`undefined` = 未取 ⇒ 有门即拒（fail-closed）。 */
+/**
+ * 观看面的行级可见判定（spec §3.4）：**页门 ∧ 部门门**（叠加不替代，D-O4）。
+ *
+ * 部门门的 fail-closed 面在第三个参数：`undefined` = 调用方没解析用户部门。此时**只要行上有门
+ * 就拒**——「没解析」绝不能等价于「没有部门，所以过」。调用方要么先算好部门集，要么先确认
+ * 这批行里没有人带门（`GET /reports` 的惰性取法）。
+ */
 const visibleTo = (
-  row: { requiredScope: string | null },
+  row: { requiredScope: string | null; requiredDepts?: string[] | null },
   requester: { hasScope(code: string): boolean },
-): boolean => row.requiredScope === null || requester.hasScope(row.requiredScope)
+  userDepts: ReadonlySet<string> | undefined,
+): boolean => {
+  if (row.requiredScope !== null && !requester.hasScope(row.requiredScope)) return false
+  if (userDepts === undefined && (row.requiredDepts ?? []).length > 0) return false
+  return deptGatePasses(row.requiredDepts ?? null, userDepts ?? new Set())
+}
 
 export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   r.post('/reports', async (c) => {
@@ -172,6 +198,16 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 本就该先于 503「配置状态」——先验参再查环境，与 PUT 的「先 parse 再查库」同序）。
     const parsed = ReportBody.safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    // ── 部门门的配置期校验（spec §3.4）：位置在**任何写之前**（拒 = 一行都不落）───────
+    // 未知 ext_id ⇒ 400（配了也恒拒，不如当场拒）；org 表为空（租户没同步组织架构）⇒ 409
+    // ORG_NOT_SYNCED（是**状态**问题，不是入参缺陷：同步后同一份 body 就能过）。
+    const gateCheck = await validateDeptGate(ctx.pool, c.get('tenant').id, parsed.data.requiredDepts)
+    if (!gateCheck.ok) {
+      return c.json(
+        { error: gateCheck.code, ...(gateCheck.unknown ? { unknown: gateCheck.unknown } : {}) },
+        gateCheck.code === 'ORG_NOT_SYNCED' ? 409 : 400,
+      )
+    }
     // ── 平台自绘分支（#391 计划 6 Task 3）────────────────────────────────────────
     // ⚠️ **分支位置是硬要求**：必须在 `metabaseFromEnv()` 那次 503 检查**之前**——自绘报表
     //    不碰 Metabase，不该因为「Metabase 没配」而建不出来；顺序反了会在「平台自绘可用、
@@ -236,6 +272,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         metabaseId: 0,                    // 哨兵：platform 行没有 Metabase dashboard（见 ReportRow）
         embedParams: {},                  // 入参面正交：非空 lockedParams 已在 zod 层被拒
         requiredScope: effectiveScope,
+        requiredDepts: parsed.data.requiredDepts,
         renderer: 'platform',
         spec: spec.spec,
       })
@@ -305,6 +342,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
           metabaseId: up.id,
           embedParams: parsed.data.lockedParams,
           requiredScope: parsed.data.requiredScope,
+          requiredDepts: parsed.data.requiredDepts,
         })
         // `version` 是**登记侧**版本（与内容侧指纹分属两条通路，别混名）：**写后**回读，不复用写前的值。
         // `fingerprint` 直接复用发布那次的现算结果——零额外请求（publishWithTenantBinding 已算过）。
@@ -329,11 +367,16 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // M3 守卫拒掉的请求者：对其「看不见」（约束 3）——空清单，不是报错（口径同 GET /metrics）
     if (requester === null) return c.json({ reports: [] })
     const rows = await listReports(ctx.pool, c.get('tenant').casdoor_org)
+    // 部门门（spec §3.4）：只有存在带门行时才取用户部门闭包（无门租户零额外查询）
+    const userDepts = rows.some((r) => (r.requiredDepts ?? []).length > 0)
+      ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
+      : undefined
     // 只投影消费面要的字段：metabase_id / embed_params 是实现细节，不外泄
     return c.json({
-      reports: rows.filter((row) => visibleTo(row, requester))
+      reports: rows.filter((row) => visibleTo(row, requester, userDepts))
         .map((row) => ({
-          id: row.id, title: row.title, requiredScope: row.requiredScope, renderer: row.renderer,
+          id: row.id, title: row.title, requiredScope: row.requiredScope,
+          requiredDepts: row.requiredDepts, renderer: row.renderer,
         })),
     })
   })
@@ -346,13 +389,21 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const rows = await listReports(ctx.pool, c.get('tenant').casdoor_org)
+    // 管理面**不裁行**（上面的分档），但「打开」按钮的可用性得知道管理员自己在不在门的部门里——
+    // 把**请求者自己的**部门闭包一并回过（不是别人的，也不含任何组织架构全量信息）。
+    // 惰性：本租户一张带门行都没有 ⇒ 不查、回空数组（零额外查询）。
+    const myDepts = rows.some((r) => (r.requiredDepts ?? []).length > 0)
+      ? [...await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))]
+      : []
     return c.json({
+      myDepts,
       // `version` 是**登记侧**版本（写保护的读侧）：console 从本清单拿它、写时回带。
       // 观看面 GET /reports 刻意不带它（那里没有写动作，外泄版本号无消费方）。
       // 版本徽标（设计 §8.2）：`publishedVersion` = 线上内容版本号（null = 未发布/已下线）；
       // `hasUnpublishedChanges` = 指针存在且草稿计数器越过了那一版发布时的 draft_version。
       reports: rows.map((row) => ({
         id: row.id, title: row.title, requiredScope: row.requiredScope,
+        requiredDepts: row.requiredDepts,
         renderer: row.renderer, version: row.version,
         publishedVersion: row.publishedVersion,
         hasUnpublishedChanges:
@@ -413,6 +464,69 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         renderer: row.renderer, version: row.version,
       })
     })
+  })
+
+  // ── 部门门（spec §3.4；#1173）：**两种渲染器同一入口** ─────────────────────────────
+  // 为什么不并进 `GateBody`：那个端点对**平台自绘行**已下线（409 USE_PUBLISH_ENDPOINT），而部门门
+  // 恰恰在自绘行上也要能改（console 的「报表页门配置权限时可选组织架构」）。为什么不并进
+  // `PUT /reports/:id/spec`：部门门不是规格的一部分（规格是内容，门是授权），混在一个 body 里
+  // 会让「只改门」也必须回带整份 spec——一次误覆盖就能把内容改掉。
+  //
+  // 两种行的生效时机**不同**，与既有的页门口径一致，别抹平：
+  //   · metabase 行：行上就是生效值，改完立刻生效；
+  //   · platform 行：**已发布**行的线上门归快照（`report_versions.required_depts`），改行只影响
+  //     草稿预览与**下一次发布**；未发布行改完即生效。已发出的独立链接不会因为这次改动
+  //     悄悄换门——这正是「页门跟快照走」要保证的。
+  const DeptGateBody = z.object({
+    requiredDepts: z.array(z.string().min(1)).max(200).nullable(),
+    // 与 GateBody 同款上界（int4）：值会绑进 SQL 与 version 列比较
+    expectedVersion: z.number().int().positive().max(2147483647),
+  }).strict()
+
+  r.put('/reports/:id/dept-gate', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const parsed = DeptGateBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    // 先验门再落库：未知 ext_id ⇒ 400；org 表未同步 ⇒ 409（与创建通路同一份判定）
+    const gateCheck = await validateDeptGate(ctx.pool, c.get('tenant').id, parsed.data.requiredDepts)
+    if (!gateCheck.ok) {
+      return c.json(
+        { error: gateCheck.code, ...(gateCheck.unknown ? { unknown: gateCheck.unknown } : {}) },
+        gateCheck.code === 'ORG_NOT_SYNCED' ? 409 : 400,
+      )
+    }
+    const org = c.get('tenant').casdoor_org
+    // 与 PUT /reports/:id、PUT /spec、DELETE 同键：同一行的「页门 / 部门门 / 规格 / 删」必须互斥
+    return await withObjectLock(`${org}/row:${id}`, async () => {
+      const current = await getReport(ctx.pool, org, id)
+      if (current === null) return c.json({ error: 'NOT_FOUND' }, 404)
+      // 页门原值回写（`updateGates` 要求两列同写）：锁内读到的值就是这一行此刻的值
+      const row = await updateGates(
+        ctx.pool, org, id,
+        { requiredScope: current.requiredScope, requiredDepts: parsed.data.requiredDepts },
+        parsed.data.expectedVersion,
+      )
+      if (row === null) {
+        // 存储层把「不存在 / 跨租户 / 陈旧」合流成 null ⇒ 二次读分 404 / 409（同 PUT /reports/:id）
+        const cur = await getReportVersion(ctx.pool, org, id)
+        if (cur === null) return c.json({ error: 'NOT_FOUND' }, 404)
+        return c.json({ error: 'STALE_WRITE', currentVersion: cur }, 409)
+      }
+      return c.json({ id: row.id, requiredDepts: row.requiredDepts, version: row.version })
+    })
+  })
+
+  // ── 部门选择器的数据源（data:manage）：活节点平表 + 各节点直属人数 ─────────────────
+  // 平表而不是嵌套树：前端已经有 `buildGroupTree` 同族的组装逻辑，且「门」的语义是 ext_id 集合，
+  // 树形结构在这里没有额外信息。
+  r.get('/reports/dept-options', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const depts = await listDeptOptions(ctx.pool, c.get('tenant').id)
+    return c.json({ depts })
   })
 
   // ── 自绘规格读写（#391 计划 6 Task 3）────────────────────────────────────────────
@@ -505,7 +619,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 数据门之二（行级，照 embed-url 的口径）：行上 required_scope 比页门更细——页门未放行的行
     // 对观看者不存在（403 带 need）。规格里的 metricId 可见性另由 /query 的语义裁剪兜底，
     // 但「这份规格存不存在」本身先过行门。
-    if (!visibleTo(row, requester)) {
+    // 部门门（spec §3.4）：有门才去解析用户部门（无门租户零额外查询，同 GET /reports）
+    const specDepts = (row.requiredDepts ?? []).length > 0
+      ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
+      : undefined
+    if (!visibleTo(row, requester, specDepts)) {
       return c.json({ error: 'FORBIDDEN', need: row.requiredScope }, 403)
     }
     // 渲染器通道守卫：metabase 行的「内容」在 Metabase 侧，没有可读的 spec（列必为 null）
@@ -674,6 +792,12 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (snapshot.requiredScope !== null && !requester.hasScope(snapshot.requiredScope)) {
       return c.json({ error: 'NOT_FOUND' }, 404)
     }
+    // ④ 部门门同样跟快照走（spec §3.4）：`?v=N` 钉住旧定义时判的是**那一版**记下的部门集。
+    //    有门才解析用户部门（与上面同一惰性取法）；不通过同样回 404（不泄露门的存在）。
+    if ((snapshot.requiredDepts ?? []).length > 0) {
+      const depts = await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
+      if (!deptGatePasses(snapshot.requiredDepts, depts)) return c.json({ error: 'NOT_FOUND' }, 404)
+    }
     return c.json(snapshot)
   })
 
@@ -747,6 +871,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       if (snapshot === null) return { error: 'NOT_PUBLISHED' }
       if (snapshot.requiredScope !== null && !requester.hasScope(snapshot.requiredScope)) {
         return { error: 'NOT_FOUND' }
+      }
+      // 部门门同样跟快照走（spec §3.4）：AI 文本是报表内容的一部分，门不过就没有内容可讲。
+      if ((snapshot.requiredDepts ?? []).length > 0) {
+        const depts = await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
+        if (!deptGatePasses(snapshot.requiredDepts, depts)) return { error: 'NOT_FOUND' }
       }
       spec = snapshot.spec
       specKey = `published:${snapshot.version}`
@@ -906,8 +1035,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const row = await getReport(ctx.pool, c.get('tenant').casdoor_org, id)
     if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    // 数据门之二（行级）：行上 required_scope 比页门更细
-    if (!visibleTo(row, requester)) {
+    // 数据门之二（行级）：行上 required_scope 比页门更细；部门门在此叠加（spec §3.4）
+    const embedDepts = (row.requiredDepts ?? []).length > 0
+      ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
+      : undefined
+    if (!visibleTo(row, requester, embedDepts)) {
       return c.json({ error: 'FORBIDDEN', need: row.requiredScope }, 403)
     }
 
