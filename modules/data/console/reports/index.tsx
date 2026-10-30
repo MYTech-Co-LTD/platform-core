@@ -613,13 +613,23 @@ export default function ReportsPage() {
             {deptOptions === null ? '正在加载组织架构…' : '本租户还没有同步组织架构（先在企业微信同步）'}
           </Typography.Text>
         ) : (
-          <Tree checkable selectable={false}
-                treeData={deptTreeData(deptOptions)}
-                defaultExpandAll
-                checkedKeys={deptChecked}
-                onCheck={(keys) => setDeptChecked(
-                  (Array.isArray(keys) ? keys : keys.checked).map(String),
-                )} />
+          // ⚠️ 别用 `defaultExpandAll`：真实租户有 272 个部门（山海实测），全展开的树在
+          //    弹框里会撑到 7800px 高、连「确定」都够不着。默认只展开**第一层**，其余按需点开；
+          //    容器限高滚动（与通知模块的部门选择器同款）。
+          <>
+            <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+              {`共 ${deptOptions.length} 个部门，默认只展开第一层（勾父部门包含其全部子部门）`}
+            </Typography.Text>
+            <div style={{ maxHeight: 280, overflow: 'auto', border: '1px solid #f0f0f0', padding: 8 }}>
+              <Tree checkable selectable={false}
+                    treeData={deptTreeData(deptOptions)}
+                    defaultExpandedKeys={deptTreeData(deptOptions).map((n) => n.key)}
+                    checkedKeys={deptChecked}
+                    onCheck={(keys) => setDeptChecked(
+                      (Array.isArray(keys) ? keys : keys.checked).map(String),
+                    )} />
+            </div>
+          </>
         )}
       </Modal>
       {/* 发布版本（platform 行）：note 随版本永久留存（审计面），可选但值得填。 */}

@@ -162,11 +162,12 @@ export default function RulesTab() {
               {depts.length === 0 ? (
                 <Typography.Text type="secondary">组织架构未同步（先在企业微信同步部门）</Typography.Text>
               ) : (
-                <div style={{ maxHeight: 220, overflow: 'auto', width: '100%', border: '1px solid #f0f0f0', padding: 8 }}>
+                <div style={{ maxHeight: 280, overflow: 'auto', width: '100%', border: '1px solid #f0f0f0', padding: 8 }}>
+                  {/* 默认只展开第一层：真实租户 272 个部门（山海实测），全展开会撑成几千像素 */}
                   <Tree
                     checkable
                     selectable={false}
-                    defaultExpandAll
+                    defaultExpandedKeys={deptTreeOf(depts).map((n) => n.key)}
                     treeData={deptTreeOf(depts)}
                     checkedKeys={deptPicked}
                     onCheck={(keys) => setDeptPicked((Array.isArray(keys) ? keys : keys.checked).map(String))}
