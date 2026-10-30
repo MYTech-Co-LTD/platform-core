@@ -34,6 +34,7 @@
 //
 // 产出后必须：`duckle validate` 过 → 才许提交（口径：仓内文件 = 引擎验过的）。
 import { readFileSync, writeFileSync } from 'node:fs'
+import { basename } from 'node:path'
 
 /** @param {string} flag */
 function argOf(flag) {
@@ -43,6 +44,10 @@ function argOf(flag) {
 
 const SRC_REL = 'deploy/duckle/console/pipelines/lemeng.retail_order_line.window.json'
 const DEFAULT_OUT = 'deploy/duckle/console/pipelines/lemeng.retail_order_line.day.json'
+// `--out` 换名 = 派生高容量变体（#1168）：`*.hp`（high pages）与 `*.day` 同构，只多页。
+// 管线名必须等于文件 stem（#531 门禁），故 name 随 out 走。
+const PARENT_REL = 'deploy/duckle/console/pipelines/lemeng.retail.day.backfill.json'
+const PARENT_HP_REL = 'deploy/duckle/console/pipelines/lemeng.retail.day.backfill.hp.json'
 
 const pages = Number(argOf('--pages') ?? 96)
 if (!Number.isInteger(pages) || pages < 2) {
@@ -247,5 +252,27 @@ edges.push({
   data: { connectionType: 'trigger' },
 })
 
-writeFileSync(out, JSON.stringify({ name: 'lemeng.retail_order_line.day', nodes, edges }, null, 1) + '\n')
+writeFileSync(out, JSON.stringify({ name: basename(out, '.json'), nodes, edges }, null, 1) + '\n')
 console.log(`gen-retail-day-pipeline: 写入 ${out}（${pages} 页 + ${nodes.length - pages} 个结构节点，${edges.length} 条边）`)
+
+// ── hp 变体的回填父管线：唯一差异 = foreach 的 pipelineRef 指向 hp 子管线 ─────────────
+// （排班表里没有它——EXEMPT_GLOBAL 登记「容量溢出日手动用」；改回填父管线时重跑本生成器同步。）
+if (basename(out, '.json').endsWith('.hp')) {
+  const parent = JSON.parse(readFileSync(PARENT_REL, 'utf8'))
+  /** @type {number} */
+  let refs = 0
+  for (const n of parent.nodes) {
+    const p = n?.data?.properties
+    if (p && typeof p.pipelineRef === 'string' && p.pipelineRef.includes('lemeng.retail_order_line.day.json')) {
+      p.pipelineRef = p.pipelineRef.replace('lemeng.retail_order_line.day.json', `${basename(out, '.json')}.json`)
+      refs += 1
+    }
+  }
+  if (refs === 0) {
+    console.error('回填父管线里找不到 day 子管线引用——父管线形态变过，生成器要跟着改')
+    process.exit(2)
+  }
+  parent.name = basename(PARENT_HP_REL, '.json')
+  writeFileSync(PARENT_HP_REL, JSON.stringify(parent, null, 1) + '\n')
+  console.log(`gen-retail-day-pipeline: 写入 ${PARENT_HP_REL}（pipelineRef → ${basename(out, '.json')}.json）`)
+}

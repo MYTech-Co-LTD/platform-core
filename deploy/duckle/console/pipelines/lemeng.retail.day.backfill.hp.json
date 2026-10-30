@@ -1,0 +1,880 @@
+{
+ "name": "lemeng.retail.day.backfill.hp",
+ "version": 1,
+ "id": "lemeng.retail.windows.l1",
+ "nodes": [
+  {
+   "id": "v0",
+   "type": "source",
+   "position": {
+    "x": 0,
+    "y": -600
+   },
+   "data": {
+    "label": "whoami 身份探针（xml + raw 落原件）",
+    "componentId": "src.rest",
+    "properties": {
+     "connectionRef": "lemeng",
+     "url": "https://cloud.nhsoft.cn/agi/mcp",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json",
+      "Accept": "application/json, text/event-stream"
+     },
+     "body": "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"whoami\", \"arguments\": {}}}",
+     "paginationType": "none",
+     "responseFormat": "xml",
+     "rawResponseDestination": "/workspace/.duckle-raw/retail-windows-whoami-${datetime}.sse",
+     "retryAttempts": 3,
+     "retryBackoffMs": 2000
+    },
+    "schema": [
+     {
+      "name": "x",
+      "type": "string"
+     }
+    ]
+   }
+  },
+  {
+   "id": "g0",
+   "type": "transform",
+   "position": {
+    "x": 500,
+    "y": -600
+   },
+   "data": {
+    "label": "抠出全部 SSE data: 行",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT unnest(regexp_extract_all(content, '(?m)^data: ([^\\r\\n]*)', 1)) AS line FROM read_text('/workspace/.duckle-raw/retail-windows-whoami-${datetime}.sse')"
+    }
+   }
+  },
+  {
+   "id": "g1",
+   "type": "transform",
+   "position": {
+    "x": 740,
+    "y": -600
+   },
+   "data": {
+    "label": "取最后一条 + 拆 JSON-RPC 外壳（对齐 wrapper 的 m[-1]）",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT json_extract_string(line, '$.result.content[0].text') AS txt FROM input QUALIFY row_number() OVER () = count(*) OVER ()"
+    }
+   }
+  },
+  {
+   "id": "g2",
+   "type": "transform",
+   "position": {
+    "x": 980,
+    "y": -600
+   },
+   "data": {
+    "label": "取身份事实 company_id / branch_nums",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT json_extract_string(txt, '$.company_id') AS company_id, json_extract_string(txt, '$.branch_nums') AS branch_nums FROM input"
+    }
+   }
+  },
+  {
+   "id": "d0",
+   "type": "control",
+   "position": {
+    "x": 1220,
+    "y": -600
+   },
+   "data": {
+    "label": "反向闸：抠不出身份 ⇒ 红（挡网关形状漂移）",
+    "componentId": "ctl.die",
+    "properties": {
+     "condition": "no-rows",
+     "message": "identity: whoami 响应里没有可解析的身份（网关形状变了？）⇒ 身份未证，拒绝采集与写湖"
+    }
+   }
+  },
+  {
+   "id": "g3",
+   "type": "transform",
+   "position": {
+    "x": 1460,
+    "y": -600
+   },
+   "data": {
+    "label": "两条断言：① 账套 ② 配置门店 ⊆ 可见门店",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT 'book' AS violation, company_id AS detail FROM input WHERE company_id IS DISTINCT FROM '${ENV:SYSTEM_BOOK}' UNION ALL SELECT 'branch' AS violation, CAST(c.branch_num AS VARCHAR) AS detail FROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS branch_num) c LEFT JOIN (SELECT unnest(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[])) AS branch_num FROM input) w USING (branch_num) WHERE w.branch_num IS NULL"
+    }
+   }
+  },
+  {
+   "id": "d1",
+   "type": "control",
+   "position": {
+    "x": 1700,
+    "y": -600
+   },
+   "data": {
+    "label": "有违规行 ⇒ 红；其后才 trigger 采集（先证后采）",
+    "componentId": "ctl.die",
+    "properties": {
+     "condition": "has-rows",
+     "message": "identity: 凭据账套/门店清单自证未过 ⇒ 拒绝采集与写湖"
+    }
+   }
+  },
+  {
+   "id": "gv",
+   "type": "control",
+   "position": {
+    "x": 1940,
+    "y": -600
+   },
+   "data": {
+    "label": "Assert expected-value shapes",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT 'BRANCH_NUMS' AS violation, '${ENV:BRANCH_NUMS}' AS detail, 'JSON integer array, e.g. [1001,1002]' AS rule\nWHERE NOT regexp_full_match('${ENV:BRANCH_NUMS}', '\\[[0-9]+([, ]+[0-9]+)*\\]')\nUNION ALL SELECT 'SYSTEM_BOOK', '${ENV:SYSTEM_BOOK}', 'digits only'\nWHERE NOT regexp_full_match('${ENV:SYSTEM_BOOK}', '[0-9]{1,32}')\nUNION ALL SELECT 'BIZDAY', '${BIZDAY}', 'YYYY-MM-DD（回填参数；由驱动脚本按 bizday 逐日传入）'\nWHERE NOT regexp_full_match('${BIZDAY}', '[0-9]{4}-[0-9]{2}-[0-9]{2}')\nUNION ALL SELECT 'RUN_TOKEN', t.tok, 'YYYYMMDDTHHMMSSZ'\nFROM (SELECT replace(replace('${datetime}','-',''),'_','T') || 'Z' AS tok) t\nWHERE NOT regexp_full_match(t.tok, '[0-9]{8}T[0-9]{6}Z')\nUNION ALL SELECT 'BATCH_ID', x.bid, 'retail-<book>-YYYYMMDDTHHMMSSZ-day'\nFROM (SELECT 'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || replace(replace('${datetime}','-',''),'_','T') || 'Z-day' AS bid) x\nWHERE NOT regexp_full_match(x.bid, 'retail-[0-9]+-[0-9]{8}T[0-9]{6}Z-day')\nUNION ALL SELECT 'DAY_SET', CAST(count(*) AS VARCHAR) || '/' || min(b.bizday) || '-' || max(b.bizday), '1 row, bizday = ${BIZDAY}（回填）'\nFROM (SELECT '${BIZDAY}' AS bizday) b\nHAVING count(*) <> 1"
+    }
+   }
+  },
+  {
+   "id": "dv",
+   "type": "control",
+   "position": {
+    "x": 2180,
+    "y": -600
+   },
+   "data": {
+    "label": "Die on missing/malformed expected values",
+    "componentId": "ctl.die",
+    "properties": {
+     "condition": "has-rows",
+     "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: 期望值缺席或形状非法（{rows} 条违规，明细见上）⇒ 拒绝采集与写湖（等价于 wrapper 在 run-retail-day.sh:383/397 的 ASSERT_FAIL 硬失败）。处置：检查该管线调度/触发面的 env 注入"
+    }
+   }
+  },
+  {
+   "id": "w0",
+   "type": "transform",
+   "position": {
+    "x": 0,
+    "y": 1200
+   },
+   "data": {
+    "label": "窗口表（回填：${BIZDAY} 整天，恒 1 行）",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT\n  t.run_token AS run_token,\n  '${BIZDAY}' AS bizday,\n  '-' AS hour,\n  '00:00:00' AS hour_from,\n  '23:59:59' AS hour_to,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  (SELECT branch_nums FROM input) AS branch_nums,\n  'retail-' || '${ENV:SYSTEM_BOOK}' || '-' || replace(replace('${datetime}','-',''),'_','T') || 'Z-day' AS batch_id\nFROM (SELECT replace(replace('${datetime}','-',''),'_','T') AS run_token) t"
+    }
+   }
+  },
+  {
+   "id": "fe",
+   "type": "control",
+   "position": {
+    "x": 260,
+    "y": 1200
+   },
+   "data": {
+    "label": "逐天跑整天重采子管线",
+    "componentId": "ctl.foreach",
+    "properties": {
+     "pipelineRef": "${workspace}/pipelines/lemeng.retail_order_line.day.hp.json",
+     "itemKey": "hour",
+     "concurrency": 1,
+     "retryAttempts": 4,
+     "retryBackoffMs": 60000,
+     "continueOnFailure": true
+    }
+   }
+  },
+  {
+   "id": "wm",
+   "type": "transform",
+   "position": {
+    "x": 0,
+    "y": 1440
+   },
+   "data": {
+    "label": "窗口表 → 收据形状（status=pending）",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT run_token AS run_token, system_book AS system_book, bizday AS bizday,\n  hour AS hour, 0 AS \"rows\", 'pending' AS status\nFROM input"
+    }
+   }
+  },
+  {
+   "id": "wsink",
+   "type": "sink",
+   "position": {
+    "x": 0,
+    "y": 1680
+   },
+   "data": {
+    "label": "本 run 的窗口清单落盘（收据目录的 schema 锚）",
+    "componentId": "snk.csv",
+    "properties": {
+     "path": "/workspace/logs/retail-windows/_windows-pending.csv",
+     "mode": "overwrite"
+    }
+   }
+  },
+  {
+   "id": "a1",
+   "type": "control",
+   "position": {
+    "x": 520,
+    "y": 1320
+   },
+   "data": {
+    "label": "整批跑完再汇总",
+    "componentId": "ctl.anchor",
+    "properties": {}
+   }
+  },
+  {
+   "id": "su",
+   "type": "transform",
+   "position": {
+    "x": 520,
+    "y": 1200
+   },
+   "data": {
+    "label": "汇总每窗（收据 × 窗口表）",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT w.hour AS hour, w.bizday AS bizday,\n  w.run_token AS run_token,\n  COALESCE(r.\"rows\", 0) AS \"rows\",\n  COALESCE(r.status, 'missing') AS status\nFROM (SELECT DISTINCT hour, bizday, run_token FROM input) w\nLEFT JOIN (SELECT hour, run_token, \"rows\", status\n           FROM read_csv('/workspace/logs/retail-windows/*.csv', header = true, union_by_name = true)\n           WHERE status = 'ok') r\n  ON r.hour = w.hour AND r.run_token = w.run_token\nORDER BY w.hour"
+    }
+   }
+  },
+  {
+   "id": "op",
+   "type": "transform",
+   "position": {
+    "x": 780,
+    "y": 1560
+   },
+   "data": {
+    "label": "_ops 行成形（job=retail-window，wrapper ops_ship 同形：每天一行，缺口天也投）",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-window' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n  bizday, hour, \"rows\", status, run_token FROM input"
+    }
+   }
+  },
+  {
+   "id": "wh",
+   "type": "sink",
+   "position": {
+    "x": 1040,
+    "y": 1560
+   },
+   "data": {
+    "label": "_ops 行投 OO retail_day（软 stage：失败不拦判红链，但 run 会红——同 tick _note ⑩）",
+    "componentId": "snk.webhook",
+    "properties": {
+     "url": "${ENV:OO_BASE}/api/${ENV:OO_ORG}/retail-day/_json",
+     "method": "POST",
+     "headers": {
+      "Authorization": "Basic ${ENV:OO_AUTH}",
+      "Content-Type": "application/json"
+     },
+     "batchMode": "one",
+     "retryAttempts": 3,
+     "retryBackoffMs": 2000,
+     "continueOnFailure": true
+    }
+   }
+  },
+  {
+   "id": "rep",
+   "type": "sink",
+   "position": {
+    "x": 780,
+    "y": 1080
+   },
+   "data": {
+    "label": "汇总表落盘（运行记录）",
+    "componentId": "snk.csv",
+    "properties": {
+     "path": "/workspace/logs/retail-windows-summary.csv",
+     "mode": "overwrite"
+    }
+   }
+  },
+  {
+   "id": "sr",
+   "type": "transform",
+   "position": {
+    "x": 780,
+    "y": 1200
+   },
+   "data": {
+    "label": "缺口窗（判红输入）",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT * FROM input WHERE status <> 'ok'"
+    }
+   }
+  },
+  {
+   "id": "a2",
+   "type": "control",
+   "position": {
+    "x": 1040,
+    "y": 1140
+   },
+   "data": {
+    "label": "先落盘后判红",
+    "componentId": "ctl.anchor",
+    "properties": {}
+   }
+  },
+  {
+   "id": "dz",
+   "type": "control",
+   "position": {
+    "x": 1300,
+    "y": 1200
+   },
+   "data": {
+    "label": "末尾统一判红",
+    "componentId": "ctl.die",
+    "properties": {
+     "condition": "has-rows",
+     "message": "WINDOWS_FAILED {rows} 窗未采到（system_book=${ENV:SYSTEM_BOOK}）⇒ 整批判红。⚠️ windows 形只采「上海昨天」、无回溯重放 ⇒ 被截掉的尾窗**必须当日补跑**（本 run 的 checkpoint 会让补跑只发缺页数个请求）；缺口明细见 /workspace/logs/retail-windows-summary.csv"
+    }
+   }
+  },
+  {
+   "data": {
+    "componentId": "code.sql",
+    "label": "现算门店清单 = whoami可见 − BRANCH_EXCLUDE（#793 新店自动纳入）",
+    "properties": {
+     "sql": "SELECT company_id,\n       to_json(list_filter(CAST(json_extract(branch_nums, '$[*]') AS BIGINT[]),\n              x -> NOT list_contains(CAST('${ENV:BRANCH_EXCLUDE}' AS BIGINT[]), x))) AS branch_nums\nFROM input"
+    }
+   },
+   "id": "wc2",
+   "position": {
+    "x": 2420,
+    "y": -320
+   },
+   "type": "transform"
+  },
+  {
+   "data": {
+    "componentId": "code.sql",
+    "label": "现算清单为空守卫（foreach 零 item = 静默空转）",
+    "properties": {
+     "sql": "SELECT 'computed_branch_list_empty' AS violation, company_id AS detail\nFROM input WHERE json_array_length(branch_nums) = 0"
+    }
+   },
+   "id": "wf",
+   "position": {
+    "x": 2660,
+    "y": -320
+   },
+   "type": "transform"
+  },
+  {
+   "data": {
+    "componentId": "ctl.die",
+    "label": "现算清单空 ⇒ 判红",
+    "properties": {
+     "condition": "has-rows",
+     "message": "computed: whoami 现算门店清单为空（visible − BRANCH_EXCLUDE）⇒ foreach 零 item = 静默空转（#793）⇒ 拒绝采集与写湖"
+    }
+   },
+   "id": "dwf",
+   "position": {
+    "x": 2900,
+    "y": -320
+   },
+   "type": "control"
+  },
+  {
+   "data": {
+    "componentId": "code.sql",
+    "label": "BRANCH_EXCLUDE 形状闸",
+    "properties": {
+     "sql": "SELECT 'BRANCH_EXCLUDE' AS violation, '${ENV:BRANCH_EXCLUDE}' AS detail, 'JSON integer array, [] or [99,100]' AS rule\nWHERE NOT regexp_full_match('${ENV:BRANCH_EXCLUDE}', '\\[\\s*\\]|\\[\\s*[0-9]+(\\s*,\\s*[0-9]+)*\\s*\\]')"
+    }
+   },
+   "id": "gv2",
+   "position": {
+    "x": 2420,
+    "y": -600
+   },
+   "type": "transform"
+  },
+  {
+   "data": {
+    "componentId": "ctl.die",
+    "label": "BRANCH_EXCLUDE 非法 ⇒ 判红",
+    "properties": {
+     "condition": "has-rows",
+     "message": "EXPECTED_VALUE_MISSING_OR_MALFORMED: BRANCH_EXCLUDE 缺席或形状非法（#793）⇒ 现算清单无法计算 ⇒ 拒绝采集与写湖。处置：console 服务 env 补 BRANCH_EXCLUDE（[] 或 [99] 形）"
+    }
+   },
+   "id": "dv2",
+   "position": {
+    "x": 2660,
+    "y": -600
+   },
+   "type": "control"
+  },
+  {
+   "id": "wc",
+   "type": "transform",
+   "position": {
+    "x": 0,
+    "y": 900
+   },
+   "data": {
+    "label": "Assert bizday window closed (fail-closed, #528)",
+    "componentId": "code.sql",
+    "properties": {
+     "sql": "SELECT 'WINDOW_OPEN' AS violation,\n       '${BIZDAY}' AS detail,\n       '上海时间未到次日 00:00：回填将窗内抓拍并被 checkpoint 永久冻结（#528），拒绝' AS rule\nWHERE (now() AT TIME ZONE 'Asia/Shanghai') < ('${BIZDAY}'::date + INTERVAL 1 DAY)"
+    }
+   }
+  },
+  {
+   "id": "dw",
+   "type": "control",
+   "position": {
+    "x": 200,
+    "y": 900
+   },
+   "data": {
+    "label": "Die if bizday not closed",
+    "componentId": "ctl.die",
+    "properties": {
+     "condition": "has-rows",
+     "message": "WINDOW_OPEN: bizday=${BIZDAY} 尚未闭窗（上海时间未到次日 00:00），回填会抓到截断快照并被 checkpoint 永久冻结（#528）⇒ fail-closed 拒绝。处置：等上海时间过了该 bizday 次日 00:00 再回填"
+    }
+   }
+  },
+  {
+   "data": {
+    "componentId": "code.sql",
+    "label": "反向漂移：现算 vs 底账（只告警不阻断）",
+    "properties": {
+     "sql": "SELECT strftime(now(), '%Y-%m-%dT%H:%M:%SZ') AS ts, 'retail-window' AS job, '${ENV:SYSTEM_BOOK}' AS system_book,\n       '-' AS bizday, 'drift' AS hour, count(*) AS \"rows\", 'config_drift' AS status,\n       replace('${datetime}', '-', '') AS run_token,\n       string_agg(CASE WHEN w.b IS NULL THEN '底账有现算无(排除或不可见): ' || CAST(c.b AS VARCHAR)\n                       ELSE '现算有底账无(新店): ' || CAST(w.b AS VARCHAR) END, '；' ORDER BY 1) AS detail\nFROM (SELECT unnest('${ENV:BRANCH_NUMS}'::BIGINT[]) AS b) c\nFULL OUTER JOIN (SELECT unnest(CAST(json_extract(i.branch_nums, '$[*]') AS BIGINT[])) AS b FROM input i) w\n  ON c.b = w.b\nWHERE c.b IS NULL OR w.b IS NULL"
+    }
+   },
+   "id": "gd",
+   "position": {
+    "x": 2420,
+    "y": -80
+   },
+   "type": "transform"
+  },
+  {
+   "data": {
+    "componentId": "xf.unionall",
+    "label": "合流：窗口摘要 + 漂移告警（漂移 0 行时不贡献）",
+    "properties": {
+     "matchBy": "name"
+    }
+   },
+   "id": "un",
+   "position": {
+    "x": 910,
+    "y": 1560
+   },
+   "type": "transform"
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "source": "v0",
+   "target": "g0",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e2",
+   "source": "g0",
+   "target": "g1",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e3",
+   "source": "g1",
+   "target": "g2",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e4",
+   "source": "g2",
+   "target": "d0",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e5",
+   "source": "d0",
+   "target": "g3",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e6",
+   "source": "g3",
+   "target": "d1",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e7",
+   "source": "d1",
+   "target": "gv",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e8",
+   "source": "gv",
+   "target": "dv",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "t9",
+   "source": "dv",
+   "target": "wc",
+   "data": {
+    "connectionType": "on-subjob-ok"
+   }
+  },
+  {
+   "id": "e10",
+   "source": "w0",
+   "target": "fe",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e11",
+   "source": "w0",
+   "target": "wm",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e12",
+   "source": "w0",
+   "target": "su",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e22",
+   "source": "wm",
+   "target": "wsink",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "t13",
+   "source": "fe",
+   "target": "a1",
+   "data": {
+    "connectionType": "on-subjob-ok"
+   }
+  },
+  {
+   "id": "t14",
+   "source": "wsink",
+   "target": "a1",
+   "data": {
+    "connectionType": "on-subjob-ok"
+   }
+  },
+  {
+   "id": "t15",
+   "source": "a1",
+   "target": "su",
+   "data": {
+    "connectionType": "on-subjob-ok"
+   }
+  },
+  {
+   "id": "e16",
+   "source": "su",
+   "target": "rep",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e17",
+   "source": "su",
+   "target": "sr",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e23",
+   "source": "su",
+   "target": "op",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e24",
+   "source": "un",
+   "target": "wh",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "t25",
+   "source": "wh",
+   "target": "a2",
+   "data": {
+    "connectionType": "on-subjob-ok"
+   }
+  },
+  {
+   "id": "t18",
+   "source": "rep",
+   "target": "a2",
+   "data": {
+    "connectionType": "on-subjob-ok"
+   }
+  },
+  {
+   "id": "t19",
+   "source": "sr",
+   "target": "a2",
+   "data": {
+    "connectionType": "on-subjob-ok"
+   }
+  },
+  {
+   "id": "t20",
+   "source": "a2",
+   "target": "dz",
+   "data": {
+    "connectionType": "on-subjob-ok"
+   }
+  },
+  {
+   "id": "e21",
+   "source": "sr",
+   "target": "dz",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "data": {
+    "connectionType": "main"
+   },
+   "id": "e100",
+   "source": "d0",
+   "sourceHandle": "main",
+   "target": "wc2",
+   "targetHandle": "main"
+  },
+  {
+   "data": {
+    "connectionType": "main"
+   },
+   "id": "e101",
+   "source": "wc2",
+   "sourceHandle": "main",
+   "target": "wf",
+   "targetHandle": "main"
+  },
+  {
+   "data": {
+    "connectionType": "main"
+   },
+   "id": "e102",
+   "source": "wf",
+   "sourceHandle": "main",
+   "target": "dwf",
+   "targetHandle": "main"
+  },
+  {
+   "data": {
+    "connectionType": "main"
+   },
+   "id": "e103",
+   "source": "wc2",
+   "sourceHandle": "main",
+   "target": "gd",
+   "targetHandle": "main"
+  },
+  {
+   "data": {
+    "connectionType": "main"
+   },
+   "id": "e104",
+   "source": "wc2",
+   "sourceHandle": "main",
+   "target": "w0",
+   "targetHandle": "main"
+  },
+  {
+   "data": {
+    "connectionType": "on-subjob-ok"
+   },
+   "id": "t30",
+   "source": "dwf",
+   "target": "w0"
+  },
+  {
+   "data": {
+    "connectionType": "main"
+   },
+   "id": "e106",
+   "source": "dv",
+   "sourceHandle": "main",
+   "target": "gv2",
+   "targetHandle": "main"
+  },
+  {
+   "data": {
+    "connectionType": "main"
+   },
+   "id": "e107",
+   "source": "gv2",
+   "sourceHandle": "main",
+   "target": "dv2",
+   "targetHandle": "main"
+  },
+  {
+   "data": {
+    "connectionType": "on-subjob-ok"
+   },
+   "id": "t31",
+   "source": "dv2",
+   "target": "w0"
+  },
+  {
+   "data": {
+    "connectionType": "main"
+   },
+   "id": "e109",
+   "source": "op",
+   "sourceHandle": "main",
+   "target": "un",
+   "targetHandle": "main"
+  },
+  {
+   "data": {
+    "connectionType": "main"
+   },
+   "id": "e110",
+   "source": "gd",
+   "sourceHandle": "main",
+   "target": "un",
+   "targetHandle": "main"
+  },
+  {
+   "id": "e_dv_wc",
+   "source": "dv",
+   "target": "wc",
+   "sourceHandle": "main",
+   "data": {
+    "connectionType": "on-subjob-ok"
+   }
+  },
+  {
+   "id": "e_wc_dw",
+   "source": "wc",
+   "target": "dw",
+   "sourceHandle": "main",
+   "targetHandle": "main",
+   "data": {
+    "connectionType": "main"
+   }
+  },
+  {
+   "id": "e_dw_w0",
+   "source": "dw",
+   "target": "w0",
+   "sourceHandle": "main",
+   "data": {
+    "connectionType": "on-subjob-ok"
+   }
+  }
+ ],
+ "_note": [
+  "lemeng.retail.day.backfill —— **回填专用**：整天重采某一天（参数驱动，可整批重跑）。",
+  "",
+  "与 lemeng.retail.windows.l1 的差（三处，都有理由）：",
+  "  ① w0 的 bizday 取 **${BIZDAY}**（非 ENV 占位符，由驱动脚本经 POST /api/run 的 params 传入；",
+  "     同一机制见 scripts/lemeng/backfill-retail-order-line.sh）。父管线那条只认「上海昨天」。",
+  "  ② 多一道 WINDOW_OPEN 闸（wc/dw，抄自 lemeng.retail.windows.backfill）：",
+  "     子管线的 src.rest 是 `checkpoint: true` ⇒ 对**未闭窗**的日子回填会抓到截断快照并被",
+  "     checkpoint 永久冻结（#528）⇒ fail-closed 拒绝，等过了次日 00:00 再来。",
+  "  ③ gv 的 BIZDAY / DAY_SET 断言改按 ${BIZDAY} 校验（父管线那条校验的是「昨天」）。",
+  "",
+  "其余（身份自证、门店现算、收据、判红、封版标记）与父管线逐字同源 —— 它驱动的是同一条",
+  "子管线 lemeng.retail_order_line.day.json。",
+  "",
+  "排班：**不排**（EXEMPT_GLOBAL 已登记为回填专用）。"
+ ]
+}

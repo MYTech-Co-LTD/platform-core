@@ -125,6 +125,8 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.retail_order_line.window', '旧零售族残留——已被 retail.windows.l1 取代，待退役（§2 台账）'],
   ['lemeng.retail_order_line.day', '**foreach 子管线**——由 lemeng.retail.windows.l1 的 ctl.foreach 逐天驱动（2026-10-20 起整天重采），不单独排班；排班在父管线'],
   ['lemeng.retail.day.backfill', '回填专用（整天重采某一天，${BIZDAY} 由驱动脚本经 POST /api/run 的 params 传入，handbook §1.3 阶段 H）'],
+  ['lemeng.retail_order_line.day.hp', '**foreach 子管线 + 容量溢出变体**（160 页，#1168）——由 lemeng.retail.day.backfill.hp 驱动，只在整天行数击穿 96 页上限的日子（春节峰）手动用；排班在 windows.l1 / backfill'],
+  ['lemeng.retail.day.backfill.hp', '回填专用·容量溢出变体（#1168，pipelineRef 指向 160 页 hp 子管线）——仅当 day.backfill 因容量哨兵停机时换用，${BIZDAY} 参数化'],
 ['lemeng.branch.expense.backfill.3120', '回填专用（#1047 费用空窗补采 9-20..10-12；${BIZDAY} 参数化，同族 transfer.in 先例）'],
 ['lemeng.loss.adjustment.backfill.3120', '回填专用（#1047 报损回填 10-01..19；同款参数化）'],
   ['lemeng.member.summary.backfill.3120', '回填专用（#1047 会员全店回填 10-01..24；${BIZDAY} 参数化，同族 loss/expense 先例）'],
