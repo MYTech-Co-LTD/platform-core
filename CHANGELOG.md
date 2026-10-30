@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.218.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.218.0...v0.218.1) - 2026-10-30
+- 【修复】console: 部门树默认只展开第一层 + 限高滚动 (#1177) ([#1178](https://github.com/MYTech-Co-LTD/platform-core/pull/1178), [b230ca5](https://github.com/MYTech-Co-LTD/platform-core/commit/b230ca5c00eeb36e523ab85eafd17fdf79ae53cc))
+
+
 ## [0.218.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.217.0...v0.218.0) - 2026-10-30
 - 【新增】notify: 推送部门接收人——发送时展开 + 审计三数 (#1174) ([#1176](https://github.com/MYTech-Co-LTD/platform-core/pull/1176), [1c8d7e2](https://github.com/MYTech-Co-LTD/platform-core/commit/1c8d7e2c7bf16b17a94193b6a05cf1ba5280f4c5))
 
