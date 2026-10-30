@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.217.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.216.0...v0.217.0) - 2026-10-30
+- 【新增】data: 报表部门门——按组织架构子树授权可见性 (#1173) ([#1175](https://github.com/MYTech-Co-LTD/platform-core/pull/1175), [6bfbbfe](https://github.com/MYTech-Co-LTD/platform-core/commit/6bfbbfebb9812a022baa3dfff45ebe32329a8c89))
+
+
 ## [0.216.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.215.2...v0.216.0) - 2026-10-30
 - 【新增】platform: 组织架构 Phase A——org 表 + 同步器 + 组织树切源 (#1171) ([#1172](https://github.com/MYTech-Co-LTD/platform-core/pull/1172), [674bda9](https://github.com/MYTech-Co-LTD/platform-core/commit/674bda981e4d0c9c1ca652c49be3dd42321ec61c))
 
