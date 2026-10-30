@@ -18,6 +18,19 @@ import type { TenantEnv, TenantRow } from '../tenant'
 import type { CasdoorFactory, SessionEnv } from '../session-middleware'
 import { probeStorage, type ProbeResult } from '../storage-probe'
 import { replaceTenantSources, SOURCES_SELECT_SQL } from '../tenant-source'
+import {
+  countNodes as orgStoreCount,
+  listNodes as orgStoreListNodes,
+  memberCounts as orgStoreMemberCounts,
+  membersOf as orgStoreMembersOf,
+  orgTreeOf,
+} from '../org-store'
+import {
+  fetchWecomSnapshot,
+  runOrgSync,
+  snapshotFromCasdoor,
+  OrgSyncError,
+} from '../org-sync'
 
 /** 订阅锚用户名（casdoor-client ensureAnchorUser 同款；单处定义防漂移） */
 export const ANCHOR_USER = 'tenantsub'
@@ -37,6 +50,8 @@ export interface AdminRoutesDeps {
    * 可注入是为了让用例覆盖失败分类；**缺省 = 真探测**（`probeStorage`），生产走缺省即可。
    */
   probe?: (cfg: TenantStorageConfig) => Promise<ProbeResult>
+  /** 企微 qyapi 注入口（org-sync 用；缺省真企微——auth-wecom 同款约定） */
+  wecomFetch?: typeof globalThis.fetch
 }
 
 /** 管理动作审计（platform.audit；与 auth.ts writeAudit 同款——await、失败即断） */
@@ -46,7 +61,7 @@ async function writeAudit(
   actor: string,
   action: 'admin.user.create' | 'admin.user.update' | 'admin.user.delete' | 'admin.grant' | 'admin.revoke'
     | 'admin.role.create' | 'admin.role.delete' | 'admin.role.members' | 'admin.role.grant' | 'admin.role.revoke'
-    | 'admin.storage.update' | 'admin.storage.clear' | 'admin.sources.update',
+    | 'admin.storage.update' | 'admin.storage.clear' | 'admin.sources.update' | 'admin.org-sync',
   detail: Record<string, unknown>,
 ): Promise<void> {
   await pool.query(
@@ -271,11 +286,19 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
     return c.json({ ok: true })
   })
 
-  // ---- 组织架构（账户和权限体系 spec §3.4：Casdoor group 树代理视图——syncer 是唯一写者，
-  // 本路由组只读。用户组键是 groups 数组、全形 `org/组名`（真机 spike 2026-10-24 附录 B））----
+  // ---- 组织架构（2026-10-30 spec §3.3：数据源切到平台 org 表；org 表为空（未同步过）时
+  // 回退旧 Casdoor groups 路径——空表 ⇒ 行为与切换前逐字一致，切源零风险；种子/同步见
+  // POST /org-sync。D-O5：Casdoor groups 切源后不再写入，遗留数据不动）----
 
   app.get('/org-tree', async (c) => {
-    const org = c.get('tenant').casdoor_org
+    const t = c.get('tenant')
+    if ((await orgStoreCount(deps.pool, t.id)) > 0) {
+      const nodes = await orgStoreListNodes(deps.pool, t.id)
+      const counts = await orgStoreMemberCounts(deps.pool, t.id)
+      return c.json({ tree: orgTreeOf(t.casdoor_org, nodes, counts) })
+    }
+    // 回退：org 表空（未做过首同步）——维持切换前的 Casdoor 直读行为
+    const org = t.casdoor_org
     const cas = deps.casdoor(org)
     const users = (await cas.listUsers()).filter((u) => u.name !== ANCHOR_USER)
     const counts = new Map<string, number>()
@@ -289,11 +312,19 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
   })
 
   app.get('/org-tree/members', async (c) => {
-    const org = c.get('tenant').casdoor_org
+    const t = c.get('tenant')
     const group = c.req.query('group') ?? ''
+    const org = t.casdoor_org
     const cas = deps.casdoor(org)
-    let users = (await cas.listUsers()).filter((u) => u.name !== ANCHOR_USER)
-    if (group) users = users.filter((u) => u.groups.some((g) => g === group || g.endsWith(`/${group}`)))
+    const allUsers = (await cas.listUsers()).filter((u) => u.name !== ANCHOR_USER)
+    let users = allUsers
+    if (group && (await orgStoreCount(deps.pool, t.id)) > 0) {
+      // 新路径：成员归属来自 org 表；用户信息/禁用态仍来自 Casdoor（人归 Casdoor，D-O6）
+      const names = new Set(await orgStoreMembersOf(deps.pool, t.id, group))
+      users = allUsers.filter((u) => names.has(u.name))
+    } else if (group) {
+      users = allUsers.filter((u) => u.groups.some((g) => g === group || g.endsWith(`/${group}`)))
+    }
     // 真机 get-users 行的 roles 恒 null（spike 附录 B）→ 角色归属从 listRoles 倒排（一次调用，不 N+1）
     const roles = await cas.listRoles()
     return c.json({
@@ -306,6 +337,31 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
           .map((r) => (r.name.startsWith(`${org}/`) ? r.name.slice(org.length + 1) : r.name)),
       })),
     })
+  })
+
+  // ---- 组织同步触发（spec §3.2：手动起步；dryRun 缺省 true——写动作必须显式）----
+  // source=casdoor：从 Casdoor groups 灌基线（首次切源用，幂等）
+  // source=wecom：从企微拉全量（须租户凭证可见范围=全部且本机出口 IP 在企微可信名单——spec §1.2 教训）
+  app.post('/org-sync', async (c) => {
+    const t = c.get('tenant')
+    const source = (c.req.query('source') ?? 'wecom') === 'casdoor' ? 'casdoor' : 'wecom'
+    const dryRun = (c.req.query('dryRun') ?? 'true') !== 'false'
+    const actor = c.get('identity').userId
+    try {
+      const cas = deps.casdoor(t.casdoor_org)
+      const casdoorNames = (await cas.listUsers()).map((u) => u.name)
+      const snapshot = source === 'casdoor'
+        ? await snapshotFromCasdoor(t.casdoor_org, cas)
+        : await fetchWecomSnapshot({ corpId: t.wecom_corp_id ?? '', secret: t.wecom_secret ?? '' }, deps.wecomFetch)
+      const result = await runOrgSync(deps.pool, t.id, snapshot, { dryRun, casdoorNames })
+      await writeAudit(deps.pool, t.id, actor, 'admin.org-sync', { source, ...result })
+      return c.json(result)
+    } catch (e) {
+      // 失败也落审计（失败即断的既有口径）：fail-closed 门与企微故障都在这里留痕
+      const code = e instanceof OrgSyncError ? e.code : 'SYNC_FAILED'
+      await writeAudit(deps.pool, t.id, actor, 'admin.org-sync', { source, dryRun, failed: code })
+      return c.json({ error: code }, e instanceof OrgSyncError && e.code !== 'WECOM_API' ? 400 : 502)
+    }
   })
 
   // ---- 我的订阅（只读）----
