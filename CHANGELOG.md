@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.218.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.218.2...v0.218.3) - 2026-10-30
+- 【修复】notify: resolveScopeHolders 收的是收件人档名，不是权限码（#1179 补） ([#1185](https://github.com/MYTech-Co-LTD/platform-core/pull/1185), [2739918](https://github.com/MYTech-Co-LTD/platform-core/commit/2739918b0369a7557fcbde7798bda2fa856d43b9))
+
+
 ## [0.218.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.218.1...v0.218.2) - 2026-10-30
 - 【修复】notify: 控制台预检认 scope_holders——宿主地址解析器实现 resolveScopeHolders (#1179) ([#1180](https://github.com/MYTech-Co-LTD/platform-core/pull/1180), [77a67cf](https://github.com/MYTech-Co-LTD/platform-core/commit/77a67cf2d0e04a76b863616f3f9ee56c3a2b4195))
 
