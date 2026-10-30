@@ -42,7 +42,10 @@ export function createNotifyRouter(deps: {
     },
     getChannel: async (o, id) => {
       const ch = await getChannel(deps.pool, o, id)
-      return ch ? { id, provider: ch.provider, enabled: ch.enabled, config: ch.config } : null
+      // `configured`：secret_refs 的 env 键在本进程是否齐全（与 /channels 的判定同一函数）
+      return ch
+        ? { id, provider: ch.provider, enabled: ch.enabled, config: ch.config, configured: channelConfigured(ch.secret_refs) }
+        : null
     },
     resolveScopeHolders: async (o, key, decl) =>
       deps.addresses?.resolveScopeHolders?.(o, key, decl) ?? [],
@@ -88,6 +91,8 @@ export function createNotifyRouter(deps: {
       { org: o, rule, payload: payload ?? samplePayload(decl) },
       ddeps,
     )
+    // 启用了但没配的通道：以前要等真发失败（每个收件人一条 secret_missing）才看得见
+    for (const id of r2.unconfiguredChannels) warnings.push(`channel_unconfigured:${id}`)
     return {
       body: {
         ruleId: rule.id, eventKey: rule.eventKey, scope: rule.scope, mode,
@@ -100,7 +105,11 @@ export function createNotifyRouter(deps: {
 
   r.get('/rules/deliverability', async (c) => {
     const o = org(c)
-    const out: Array<{ ruleId: string; eventKey: string; blocked: string | null; recipientCount: number }> = []
+    const out: Array<{
+      ruleId: string; eventKey: string; blocked: string | null; recipientCount: number
+      /** 启用了但没配（env 键缺失）的通道 id —— 前端据此标「未配置」，不等真发失败 */
+      unconfiguredChannels: string[]
+    }> = []
     for (const rule of await listRules(deps.pool, o)) {
       const decl = deps.events?.get(rule.eventKey)
       const r2 = await resolveDeliverability(
@@ -110,6 +119,7 @@ export function createNotifyRouter(deps: {
       out.push({
         ruleId: rule.id, eventKey: rule.eventKey,
         blocked: r2.blocked, recipientCount: r2.recipients.length,
+        unconfiguredChannels: r2.unconfiguredChannels,
       })
     }
     return c.json({ rules: out })

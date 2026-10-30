@@ -3,7 +3,9 @@
 // 关键语义：事件先入队；worker 匹配 → 渲染冻结 → 到期领取 → provider 发送 → 回执。
 import type { DeptExpansion, NotificationEventDecl } from '@platform/sdk'
 import { matchRules, type NotificationRule } from './domain/rules'
-import { aggregateEventStatus, resolveDeliverability, type Blocked } from './domain/deliverability'
+import {
+  aggregateEventStatus, isChannelUsable, resolveDeliverability, type Blocked,
+} from './domain/deliverability'
 import { renderContents, type Contents } from './domain/render'
 import type { DeliveryRow, InsertDeliveryInput, PendingEvent } from './storage'
 
@@ -148,9 +150,15 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
       if (deliv.blocked !== null) continue
 
       const recipients = deliv.recipients.map((r) => r.name)
+      // ⚠️ 用 `isChannelUsable`（启用 ∧ 已配置），不是裸 `enabled`：未配置的通道（secret_refs
+      //    指向的 env 键缺失）真发时每个收件人各记一条 `secret_missing` 永久失败——那时
+      //    「规则看起来能发、结果全红」。这里与预检共用同一个判据，两边不会各说各话。
       const channelRows = deliv.channels
-        .filter((c) => c.enabled)
-        .map((c) => ({ id: c.id, row: { provider: c.provider, enabled: c.enabled, config: c.config } }))
+        .filter(isChannelUsable)
+        .map((c) => ({
+          id: c.id,
+          row: { provider: c.provider, enabled: c.enabled, config: c.config, configured: c.configured },
+        }))
       if (channelRows.length === 0) continue
 
       // 模板内容按 provider 组织（wecom_chat / in_app / webhook），规则引用的是通道实例 id

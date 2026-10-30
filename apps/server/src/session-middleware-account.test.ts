@@ -176,6 +176,9 @@ describe.skipIf(!dbUrl)('session 中间件正式态分支（账户统一 Task 5�
     const bound = stubBoundIds([OPENID, 'wecom_user_1'])
     const app = makeApp(pool, { casdoor: cas.factory, boundExternalIds: bound.dep })
     const stale = await formalToken()
+    // ⚠️ 基准必须在**发请求之前**取（#1184）：中间件用的是它处理请求那一刻的 nowSec()，
+    //    响应回来后我再取一次，两者跨整秒边界就差 1 —— 断言恒假、CI 随机红。
+    const t0 = nowSec()
     const res = await probe(app, stale)
     expect(res.status).toBe(200)
     const sc = setCookies(res).join('\n')
@@ -186,7 +189,7 @@ describe.skipIf(!dbUrl)('session 中间件正式态分支（账户统一 Task 5�
     expect(p?.sub).toBe(OPENID) // openid 锚不变（正典修订：sub 仍 = openid）
     expect(p?.acct).toBe(ACCT) // 账户身份保留
     expect(p?.authVia).toBe('wechat-oa')
-    expect(p?.sfa).toBeGreaterThanOrEqual(nowSec()) // 刷新点已推进
+    expect(p?.sfa).toBeGreaterThanOrEqual(t0) // 刷新点已推进（基准取自请求前，见上）
     expect([...(p?.ext ?? [])].sort()).toEqual([OPENID, 'wecom_user_1'].sort()) // ext 重算（不赌 DB 序）
     expect(cas.getUserArgs).toEqual([ACCT]) // 以 acct 校验账户（简报接口）
     expect(bound.calls).toEqual([{ org: 'acme', casdoorName: ACCT }]) // 以 acct 查绑定集合

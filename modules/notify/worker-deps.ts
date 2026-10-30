@@ -8,7 +8,7 @@ import { sendWecom } from './providers/wecom'
 import { rateLimitVerdict } from './domain/rate-limit'
 import { sendWebhook } from './providers/webhook'
 import * as storage from './storage'
-import { audit } from './storage'
+import { audit, channelConfigured } from './storage'
 import { runOnce, type WorkerDeps, type WorkerStats } from './worker'
 
 /** 事件目录读取器（由 scripts/ 注入；模块不读 platform schema —— B1） */
@@ -56,7 +56,11 @@ export function buildWorkerDeps(
     listRules: (org) => storage.listRules(pool, org),
     getEventDecl,
     getPublishedTemplate: (org, key) => storage.getPublishedTemplate(pool, org, key),
-    getChannel: (org, id) => storage.getChannel(pool, org, id),
+    getChannel: async (org, id) => {
+      const ch = await storage.getChannel(pool, org, id)
+      // `configured` 由**本进程**的 env 判定（worker 与 server 同一份 env 注入口径）
+      return ch === null ? null : { ...ch, configured: channelConfigured(ch.secret_refs) }
+    },
     claimDueDeliveries: (n) => storage.claimDueDeliveries(pool, n),
     insertDelivery: (row) => storage.insertDelivery(pool, row),
     insertAttempt: (d, r) => storage.insertAttempt(pool, d, r),

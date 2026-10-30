@@ -41,10 +41,14 @@ describePg('routes v2', () => {
   })
   afterAll(async () => {
     await cleanup()
+    delete process.env.WECOM_BRIDGE_URL__X
     await pool.end()
   })
   beforeEach(async () => {
     await cleanup()
+    // 通道「已配置」= secret_refs 指向的 env 键在本进程可见（2026-10-31 起未配置的通道
+    // 不再算可送达）。测试壳里把它点上，否则每个用例都会落 blocked=no_channel。
+    process.env.WECOM_BRIDGE_URL__X = 'http://bridge.test/send'
     await pool.query(
       `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
        values ($1,'wecom_default','wecom_chat',true,'{}','{"bridge_url":"WECOM_BRIDGE_URL__X"}','u')`, [ORG])
@@ -182,7 +186,14 @@ describePg('routes v2', () => {
       channels: { id: string; secretRefs: Record<string, string>; configured: boolean }[]
     }
     expect(body.channels[0]!.secretRefs).toEqual({ bridge_url: 'WECOM_BRIDGE_URL__X' })
-    expect(body.channels[0]!.configured).toBe(false)
+    // env 键在 ⇒ 已配置；摘掉 ⇒ 立刻未配置（同一函数、同一份 env 口径，两个方向都咬住）
+    expect(body.channels[0]!.configured).toBe(true)
+    delete process.env.WECOM_BRIDGE_URL__X
+    const un = (await (await app.request('/channels')).json()) as {
+      channels: { configured: boolean }[]
+    }
+    expect(un.channels[0]!.configured).toBe(false)
+    process.env.WECOM_BRIDGE_URL__X = 'http://bridge.test/send'
 
     const bad = await app.request('/channels/wecom_default', {
       method: 'PATCH', headers: { 'content-type': 'application/json' },
@@ -394,6 +405,7 @@ describePg('routes: 部门收件人', () => {
     await applyMigrations(pool)
   })
   afterAll(async () => {
+    delete process.env.WECOM_BRIDGE_URL__X
     await pool.query('delete from notify.rule where org=$1', [ORG2]).catch(() => {})
     await pool.query('delete from notify.template_revision where org=$1', [ORG2]).catch(() => {})
     await pool.query('delete from notify.template where org=$1', [ORG2]).catch(() => {})
@@ -401,13 +413,14 @@ describePg('routes: 部门收件人', () => {
     await pool.end()
   })
   beforeEach(async () => {
+    process.env.WECOM_BRIDGE_URL__X = 'http://bridge.test/send'
     await pool.query('delete from notify.rule where org=$1', [ORG2])
     await pool.query('delete from notify.channel where org=$1', [ORG2])
     await pool.query('delete from notify.template where org=$1', [ORG2])
     await pool.query('delete from notify.template_revision where org=$1', [ORG2])
     await pool.query(
       `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
-       values ($1,'wecom_default','wecom_chat',true,'{}','{"bridge_url":"X"}','u')`, [ORG2])
+       values ($1,'wecom_default','wecom_chat',true,'{}','{"bridge_url":"WECOM_BRIDGE_URL__X"}','u')`, [ORG2])
     await pool.query(
       `insert into notify.template(org,key,name,event_key,status,origin,published_revision,created_by)
        values ($1,'t1','T','m.a.b','published','tenant',1,'u')`, [ORG2])

@@ -23,6 +23,7 @@ import { updateSpec, upsertReport } from '../domain/report-store'
 import { upsertL1Metric, upsertMetric } from '../domain/metric-store'
 import { parseReportSpec } from '../domain/report-spec'
 import { applyMigrations, applyPlatformMigrations, buildTestApp, makeIdentity } from '../test-util'
+import type { ChannelAddressResolver } from '@platform/sdk'
 import type { ModuleVars } from './context'
 
 const dbUrl = process.env.DATABASE_URL
@@ -395,8 +396,38 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
 
   // `sources` 不传 = 宿主没投影（`c.get(TENANT_SOURCES)` 恒 undefined）；传了（含空数组）=
   // 宿主投影了该集合。语义见 test-util.buildTestApp。
+  /**
+   * 部门选择器的数据源现在由**宿主**注入（`ChannelAddressResolver.listOrgNodes`，与 notify
+   * 的「按部门」选择器同一份实现）。测试壳默认给一个转发真库的实现——断言仍然落在真数据上，
+   * 但走的是与生产同一条注入路径。
+   */
+  const fakeAddresses: ChannelAddressResolver = {
+    resolve: async () => null,
+    listOrgNodes: async (org) => {
+      const tenant = (await pool.query('select id from platform.tenant where casdoor_org=$1', [org])).rows[0]
+      if (!tenant) return []
+      const { rows } = await pool.query<{
+        ext_id: string; name: string; parent_ext_id: string | null; members: number
+      }>(
+        `select n.ext_id, n.name, n.parent_ext_id,
+                (select count(*)::int from platform.v_org_membership m
+                  where m.tenant_id = n.tenant_id and m.ext_id = n.ext_id) as members
+           from platform.v_org_node n
+          where n.tenant_id = $1 and n.status = 1
+          order by n.path`,
+        [tenant.id],
+      )
+      return rows.map((r) => ({
+        extId: r.ext_id, name: r.name, parentExtId: r.parent_ext_id, memberCount: r.members,
+      }))
+    },
+  }
+
   const shell = (identity: ReturnType<typeof makeIdentity>, sources?: string[]) => ({
-    app: buildTestApp(mod, identity, { pool }, { id: TENANT, casdoor_org: identity.orgId }, sources),
+    app: buildTestApp(
+      mod, identity, { pool, addresses: fakeAddresses },
+      { id: TENANT, casdoor_org: identity.orgId }, sources,
+    ),
     identity,
   })
   const manage = () => shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }))
@@ -2688,7 +2719,7 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect((await narrate(ALICE)).status).toBe(400)
     })
 
-    it('部门选择器：活节点平表 + 直属人数（管理面）', async () => {
+    it('部门选择器：转发宿主注入的平表（含直属人数）', async () => {
       const res = await admin().request('/reports/dept-options')
       expect(res.status).toBe(200)
       const body = await res.json() as {
@@ -2699,6 +2730,16 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect(byId.get(CHILD_DEPT)).toMatchObject({ name: '数字技术部', parentExtId: ROOT_DEPT })
       expect(byId.get(CHILD_DEPT)!.memberCount).toBe(1)   // ALICE 直属
       expect(byId.get(SIBLING_DEPT)!.memberCount).toBe(1) // BOB 直属
+    })
+
+    it('宿主没注入选择器 ⇒ 503（不静默回空表，那会让前端误判「组织架构未同步」）', async () => {
+      const bare = buildTestApp(
+        mod, makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }),
+        { pool }, { id: TENANT, casdoor_org: ORG },
+      )
+      const res = await bare.request('/reports/dept-options')
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual({ error: 'ORG_RESOLVER_UNAVAILABLE' })
     })
   })
 })

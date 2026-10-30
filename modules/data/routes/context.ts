@@ -2,7 +2,7 @@
 // ⚠️ 引类型务必 `import type`，别把类型当值引（#44 的形状，typecheck 拦不住）。
 import type { Context, Hono } from 'hono'
 import type { Pool } from 'pg'
-import type { Identity, RequesterVars } from '@platform/sdk'
+import type { ChannelAddressResolver, Identity, RequesterVars } from '@platform/sdk'
 import { REQUESTER_CHANNEL, REQUESTER_KEY_ID, TENANT_SOURCES } from '@platform/sdk'
 import type { Requester } from '../domain/authz'
 import type { StreamingChatModel } from '../domain/llm'
@@ -50,6 +50,12 @@ export interface RouteCtx {
    * ⚠️ 与 `execute` 同款：只给测试注入，不是模块协议的字段。
    */
   llm?: () => StreamingChatModel | null
+  /**
+   * 宿主注入的只读能力（组织架构选择器）。**与 notify 用的是同一个注入面**
+   * （`ChannelAddressResolver`）——同一个平台原语不各写一份 SQL（2026-10-30 收口：
+   * 部门选择器的数据源从此只有宿主一处）。
+   */
+  addresses?: ChannelAddressResolver
 }
 
 /**

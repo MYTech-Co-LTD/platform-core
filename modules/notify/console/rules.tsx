@@ -205,7 +205,22 @@ export default function RulesTab() {
             render: (_, r) => `${r.recipientKey}${r.recipientLiteral ? `: ${r.recipientLiteral.join(',')}` : ''}`,
           },
           { title: '模板', dataIndex: 'templateKey' },
-          { title: '通道', render: (_, r) => r.channels.join(' / ') },
+          {
+            title: '通道',
+            render: (_, r) => {
+              // 未配置的通道单独标红：否则只有等真发失败（每个收件人一条 secret_missing）才看得见
+              const bad = new Set(deliv.get(r.id)?.unconfiguredChannels ?? [])
+              return (
+                <Space size={4} wrap>
+                  {r.channels.map((c) => (
+                    <Tag key={c} color={bad.has(c) ? 'red' : undefined}>
+                      {bad.has(c) ? `${c}（未配置）` : c}
+                    </Tag>
+                  ))}
+                </Space>
+              )
+            },
+          },
           {
             title: '可解析',
             render: (_, r) => {
