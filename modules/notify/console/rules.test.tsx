@@ -6,7 +6,9 @@ import { message } from 'antd'
 
 vi.mock('@platform/sdk/web', () => ({ platformFetch: vi.fn() }))
 
-import RulesTab, { recipientOptions, publishedTemplateOptions, enabledChannelOptions } from './rules'
+import RulesTab, {
+  recipientOptions, publishedTemplateOptions, enabledChannelOptions, deptTreeOf, recipientKindOf,
+} from './rules'
 import { fetchMock, json, routeFetch } from './test-util'
 
 beforeEach(() => {
@@ -116,5 +118,51 @@ describe('RulesTab', () => {
       { id: 'on', provider: 'wecom_chat', enabled: true },
       { id: 'off', provider: 'wecom_chat', enabled: false },
     ] as never).map((o) => o.value)).toEqual(['on'])
+  })
+})
+
+// ── 部门收件人（组织架构 Phase C；#1174）──────────────────────────────────────────
+describe('RulesTab: 按部门发', () => {
+  const deptEvent = {
+    key: 'm.a.b', title: '测试事件', payload: { u: { type: 'user' } },
+    recipients: {
+      approver: { kind: 'field', field: 'u' },
+      byDept: { kind: 'dept', label: '按部门' },
+    },
+  }
+  const baseRoutes = () => ({
+    'GET /api/modules/notify/rules': () => json({ rules: [] }),
+    'GET /api/modules/notify/events': () => json({ events: [deptEvent] }),
+    'GET /api/modules/notify/templates': () => json({
+      templates: [{ key: 't1', status: 'published', publishedRevision: 1 }],
+    }),
+    'GET /api/modules/notify/channels': () => json({
+      channels: [{
+        id: 'wecom_default', provider: 'wecom_chat', enabled: true, configured: true,
+        config: {}, secretRefs: {}, health: null, healthAt: null,
+      }],
+    }),
+    'GET /api/modules/notify/rules/deliverability': () => json({ rules: [] }),
+  })
+
+  it('平表 → 树：按 parentExtId 挂，孤儿当根不丢节点', () => {
+    const tree = deptTreeOf([
+      { extId: 'D1', name: '共享中心', parentExtId: null, memberCount: 3 },
+      { extId: 'D2', name: '数字技术部', parentExtId: 'D1', memberCount: 2 },
+      { extId: 'DX', name: '孤儿', parentExtId: 'MISSING', memberCount: 0 },
+    ])
+    expect(tree.map((n) => n.key)).toEqual(['D1', 'DX'])
+    expect(tree[0]!.children.map((n) => n.key)).toEqual(['D2'])
+    expect(tree[0]!.title).toBe('共享中心（3）')
+  })
+
+  it('★ 「按部门」档的判定与选项都来自事件声明（不是前端硬编码）', () => {
+    expect(recipientOptions(deptEvent as never).map((o) => [o.value, o.label]))
+      .toEqual([['approver', 'approver'], ['byDept', '按部门']])
+    expect(recipientKindOf(deptEvent as never, 'byDept')).toBe('dept')
+    expect(recipientKindOf(deptEvent as never, 'approver')).toBe('field')
+    // 未选 / 未知档 ⇒ undefined（树不出现）
+    expect(recipientKindOf(deptEvent as never, undefined)).toBeUndefined()
+    expect(recipientKindOf(deptEvent as never, 'nope')).toBeUndefined()
   })
 })

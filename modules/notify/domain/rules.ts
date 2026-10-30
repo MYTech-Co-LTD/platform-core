@@ -15,6 +15,11 @@ export interface NotificationRule {
   recipientKey: string
   /** kind=literal 的人工规则才用 */
   recipientLiteral: string[] | null
+  /**
+   * kind=dept 的人工规则才用：所选部门 `ext_id`（**发送时**展开，含子树）。
+   * `null` = 不是部门规则；空数组 = 选了但一个都没选 ⇒ 视为配置不完整（见 validateRule）。
+   */
+  recipientDepts: string[] | null
   templateKey: string
   channels: string[]
   cooldownMinutes: number | null
@@ -47,7 +52,7 @@ export function matchRules(
 export function validateRule(
   rule: Pick<NotificationRule,
     'eventKey' | 'scope' | 'recipientKey' | 'recipientLiteral' | 'templateKey' | 'channels'
-    | 'origin'> & { cooldownMinutes?: number | null },
+    | 'origin'> & { cooldownMinutes?: number | null; recipientDepts?: string[] | null },
   decl: NotificationEventDecl,
   enabledChannels: Set<string>,
   publishedTemplates: Set<string>,
@@ -57,6 +62,21 @@ export function validateRule(
   const recipient = decl.recipients[rule.recipientKey]
   if (!recipient) return 'RULE_RECIPIENT_UNKNOWN'
 
+  // ── 部门收件人（spec 2026-10-30 §3.5；#1174）────────────────────────────────
+  // fail-closed 三面：① 只有事件**声明了 dept 档**才允许按部门发（声明即授权——按部门群发
+  // 的爆炸半径远大于点名，不能让消费方自选）；② 选了就必须**至少一个部门**（空选择 = 配了一半，
+  // 上线后恒 `no_recipient`，不如当场拒）；③ 非 dept 档**不许**带部门选择（与 recipientLiteral
+  // 同款的「拒绝优于静默丢弃」：静默会让调用方以为配了部门）。
+  const depts = rule.recipientDepts ?? null
+  if (recipient.kind === 'dept') {
+    if (rule.origin !== 'manual') return 'RULE_DEPTS_MANUAL_ONLY'
+    if (depts === null || depts.length === 0) return 'RULE_DEPTS_REQUIRED'
+    if (rule.recipientLiteral !== null) return 'RULE_DEPTS_NOT_ALLOWED'
+  } else if (depts !== null && depts.length > 0) {
+    return 'RULE_DEPTS_NOT_ALLOWED'
+  }
+
+  // 字面名单只在 literal 档 + 人工规则下合法（dept 档带名单在上面的 dept 分支已拒）
   if (rule.recipientLiteral !== null) {
     if (rule.origin !== 'manual' || recipient.kind !== 'literal') {
       return 'RULE_LITERAL_MANUAL_ONLY'

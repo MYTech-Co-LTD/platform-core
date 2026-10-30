@@ -86,6 +86,8 @@ export async function callTool(
       scope: str(args.scope) || '*',
       recipientKey,
       recipientLiteral: Array.isArray(args.recipientLiteral) ? arr(args.recipientLiteral) : null,
+      // 部门收件人（spec 2026-10-30 §3.5）：与 HTTP 面同一份校验（validateRule）
+      recipientDepts: Array.isArray(args.recipientDepts) ? arr(args.recipientDepts) : null,
       templateKey,
       channels,
       cooldownMinutes: typeof args.cooldownMinutes === 'number' ? args.cooldownMinutes : null,

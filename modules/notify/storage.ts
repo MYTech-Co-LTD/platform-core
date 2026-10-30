@@ -12,6 +12,8 @@ export type RuleInput = {
   scope: string
   recipientKey: string
   recipientLiteral: string[] | null
+  /** kind=dept 才用：所选部门 ext_id（发送时展开含子树；迁移 006） */
+  recipientDepts: string[] | null
   templateKey: string
   channels: string[]
   cooldownMinutes: number | null
@@ -88,8 +90,8 @@ export async function markEvent(
 
 export async function listRules(pool: Pool, org: string): Promise<NotificationRule[]> {
   const { rows } = await pool.query(
-    `select org,id,enabled,event_key,scope,recipient_key,recipient_literal,template_key,
-            channels,cooldown_minutes,origin,created_at
+    `select org,id,enabled,event_key,scope,recipient_key,recipient_literal,recipient_depts,
+            template_key,channels,cooldown_minutes,origin,created_at
        from notify.rule where org=$1 order by created_at,id`,
     [org],
   )
@@ -101,6 +103,7 @@ export async function listRules(pool: Pool, org: string): Promise<NotificationRu
     scope: r.scope,
     recipientKey: r.recipient_key,
     recipientLiteral: r.recipient_literal,
+    recipientDepts: r.recipient_depts ?? null,
     templateKey: r.template_key,
     channels: r.channels,
     cooldownMinutes: r.cooldown_minutes,
@@ -117,21 +120,24 @@ export async function upsertRule(
 ): Promise<void> {
   await pool.query(
     `insert into notify.rule
-       (org,id,enabled,event_key,scope,recipient_key,recipient_literal,
+       (org,id,enabled,event_key,scope,recipient_key,recipient_literal,recipient_depts,
         template_key,channels,cooldown_minutes,origin,created_by)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      on conflict (org,id) do update set
        enabled=excluded.enabled,
        event_key=excluded.event_key,
        scope=excluded.scope,
        recipient_key=excluded.recipient_key,
        recipient_literal=excluded.recipient_literal,
+       recipient_depts=excluded.recipient_depts,
        template_key=excluded.template_key,
        channels=excluded.channels,
        cooldown_minutes=excluded.cooldown_minutes,
        origin=excluded.origin`,
     [org, rule.id, rule.enabled, rule.eventKey, rule.scope, rule.recipientKey,
-     rule.recipientLiteral, rule.templateKey, rule.channels, rule.cooldownMinutes,
+     rule.recipientLiteral,
+     rule.recipientDepts == null ? null : JSON.stringify([...new Set(rule.recipientDepts)]),
+     rule.templateKey, rule.channels, rule.cooldownMinutes,
      rule.origin, actor],
   )
 }

@@ -1,7 +1,7 @@
 // worker.ts — 通知投递编排核心（纯编排，依赖全部注入；进程入口见 scripts/notify-worker.mjs）。
 // 正典：docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md §7
 // 关键语义：事件先入队；worker 匹配 → 渲染冻结 → 到期领取 → provider 发送 → 回执。
-import type { NotificationEventDecl } from '@platform/sdk'
+import type { DeptExpansion, NotificationEventDecl } from '@platform/sdk'
 import { matchRules, type NotificationRule } from './domain/rules'
 import { aggregateEventStatus, resolveDeliverability, type Blocked } from './domain/deliverability'
 import { renderContents, type Contents } from './domain/render'
@@ -44,6 +44,16 @@ export type WorkerDeps = {
     key: string,
     decl: NotificationEventDecl,
   ): Promise<string[]>
+  /**
+   * 部门 → 成员展开（含子树、已排除禁用）。**未注入 = 查不了**（该规则落
+   * `dept_resolver_unavailable`，不静默发 0 人）。
+   */
+  resolveDeptMembers?(org: string, extIds: readonly string[]): Promise<DeptExpansion>
+  /**
+   * 写一条审计（部门展开三数等）。缺省 = 不写（只打日志）——单测与旧组合根不强制提供。
+   * 生产由 `buildWorkerDeps` 注入到 `notify.audit`。
+   */
+  audit?(org: string, action: string, target: string, detail: Record<string, unknown>): Promise<void>
   resolveAddress(input: {
     org: string
     provider: string
@@ -109,8 +119,31 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
             return ch ? { id, provider: ch.provider, enabled: ch.enabled, config: ch.config } : null
           },
           resolveScopeHolders: deps.resolveScopeHolders,
+          resolveDeptMembers: deps.resolveDeptMembers,
         },
       )
+      // ── 部门规则的展开三数（spec 2026-10-30 §3.5；#1174）────────────────────────
+      // 位置在 blocked 判定**之前**：展开数本身是有用事实（哪怕这次因为通道停用没发出去），
+      // 「谁该收到、排除了谁、谁没解析出来」不能因为下游阻塞就丢掉。
+      if (deliv.deptExpansion) {
+        const exp = deliv.deptExpansion
+        const detail = {
+          ruleId: rule.id,
+          depts: exp.depts,
+          expanded: exp.names.length,
+          members: exp.members,
+          excluded: exp.excluded,
+          unresolved: exp.unresolved,
+          blocked: deliv.blocked,
+        }
+        // 未解析 > 0 是**数据问题**（企微有/平台无）：warning 不阻断发送，但必须留痕
+        if (exp.unresolved > 0) {
+          console.warn(
+            `[notify] 部门展开有 ${exp.unresolved} 人未解析（org 表有/平台无）org=${ev.org} rule=${rule.id}`,
+          )
+        }
+        if (deps.audit) await deps.audit(ev.org, 'notify.dept-expand', rule.id, detail)
+      }
       perRule.push(deliv.blocked)
       if (deliv.blocked !== null) continue
 

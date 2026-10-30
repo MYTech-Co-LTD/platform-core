@@ -56,7 +56,7 @@ describePg('notify storage v2', () => {
   it('规则 upsert 保留 created_at；启停/删除', async () => {
     const rule = {
       id: 'r1', enabled: true, eventKey: 'm.a.b', scope: '*', recipientKey: 'approver',
-      recipientLiteral: null, templateKey: 't1', channels: ['wecom_default'],
+      recipientLiteral: null, recipientDepts: null, templateKey: 't1', channels: ['wecom_default'],
       cooldownMinutes: null, origin: 'manual' as const,
     }
     await upsertRule(pool, ORG, rule, 'u')

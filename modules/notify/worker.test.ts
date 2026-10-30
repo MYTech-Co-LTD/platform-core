@@ -12,12 +12,13 @@ const decl: NotificationEventDecl = {
   recipients: {
     approver: { kind: 'field', field: 'u' },
     managers: { kind: 'scope_holders', scope: 'm:manage' },
+    dept: { kind: 'dept' },
   },
 }
 
 const rule = (over: Partial<NotificationRule> = {}): NotificationRule => ({
   org: 'o', id: 'r1', enabled: true, eventKey: 'm.a.b', scope: 's1',
-  recipientKey: 'approver', recipientLiteral: null, templateKey: 't1',
+  recipientKey: 'approver', recipientLiteral: null, recipientDepts: null, templateKey: 't1',
   channels: ['wecom_default'], cooldownMinutes: null, origin: 'manual', createdAt: '2026-01-01',
   ...over,
 })
@@ -208,5 +209,65 @@ describe('nextAt', () => {
     expect(d1).toBeLessThanOrEqual(36_000)
     expect(d4).toBeGreaterThanOrEqual(1_440_000)
     expect(d4).toBeLessThanOrEqual(2_160_000)
+  })
+})
+
+// ── 部门收件人（组织架构 Phase C；spec 2026-10-30 §3.5；#1174）────────────────────
+describe('runOnce: 部门收件人', () => {
+  const deptRule = () => rule({ recipientKey: 'dept', recipientDepts: ['D1'] })
+  const expansion = { names: ['u1', 'u2'], depts: ['D1', 'D2'], members: 4, excluded: 1, unresolved: 0 }
+
+  it('★ 展开→投递，并写审计三数（展开/排除/未解析 + 目标部门）', async () => {
+    const audits: { action: string; target: string; detail: Record<string, unknown> }[] = []
+    const f = makeDeps({
+      listRules: async () => [deptRule()],
+      resolveDeptMembers: async () => expansion,
+      resolveAddress: async ({ casdoorName }) => `wecom-${casdoorName}`,
+      audit: async (_org, action, target, detail) => { audits.push({ action, target, detail }) },
+    })
+    await runOnce(f.deps)
+
+    expect(f.inserted.map((d) => d.recipient)).toEqual(['u1', 'u2'])
+    expect(f.marks).toEqual([{ status: 'matched' }])
+    expect(audits).toHaveLength(1)
+    expect(audits[0]).toMatchObject({
+      action: 'notify.dept-expand',
+      target: 'r1',
+      detail: { depts: ['D1', 'D2'], expanded: 2, members: 4, excluded: 1, unresolved: 0, blocked: null },
+    })
+  })
+
+  it('★ 未解析 > 0：审计照写、发送**不阻断**（warn 只留痕）', async () => {
+    const audits: Record<string, unknown>[] = []
+    const f = makeDeps({
+      listRules: async () => [deptRule()],
+      resolveDeptMembers: async () => ({ ...expansion, unresolved: 3 }),
+      resolveAddress: async ({ casdoorName }) => `wecom-${casdoorName}`,
+      audit: async (_o, _a, _t, detail) => { audits.push(detail) },
+    })
+    await runOnce(f.deps)
+    expect(audits[0]).toMatchObject({ unresolved: 3 })
+    expect(f.inserted).toHaveLength(2)              // 仍发
+    expect(f.marks).toEqual([{ status: 'matched' }])
+  })
+
+  it('解析器未注入 ⇒ 显式阻塞（no_recipients），一个 delivery 都不产', async () => {
+    const f = makeDeps({ listRules: async () => [deptRule()] })
+    await runOnce(f.deps)
+    expect(f.inserted).toHaveLength(0)
+    expect(f.marks).toEqual([{ status: 'no_recipients' }])
+  })
+
+  it('展开为空（全员被禁用/未解析）⇒ no_recipients，但审计仍记下三数', async () => {
+    const audits: Record<string, unknown>[] = []
+    const f = makeDeps({
+      listRules: async () => [deptRule()],
+      resolveDeptMembers: async () => ({ ...expansion, names: [], excluded: 4, unresolved: 0 }),
+      audit: async (_o, _a, _t, detail) => { audits.push(detail) },
+    })
+    await runOnce(f.deps)
+    expect(f.inserted).toHaveLength(0)
+    expect(f.marks).toEqual([{ status: 'no_recipients' }])
+    expect(audits[0]).toMatchObject({ expanded: 0, excluded: 4 })
   })
 })

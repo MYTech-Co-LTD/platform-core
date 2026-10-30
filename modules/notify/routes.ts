@@ -46,9 +46,23 @@ export function createNotifyRouter(deps: {
     },
     resolveScopeHolders: async (o, key, decl) =>
       deps.addresses?.resolveScopeHolders?.(o, key, decl) ?? [],
+    // 部门展开：**不兜底成空数组**——未注入时要落 dept_resolver_unavailable（见 domain 的注），
+    // 这里返回 undefined 会让 resolveDeliverability 走那条分支。
+    resolveDeptMembers: deps.addresses?.resolveDeptMembers?.bind(deps.addresses),
   }
 
   r.get('/rules', async (c) => c.json({ rules: await listRules(deps.pool, org(c)) }))
+
+  /**
+   * 部门选择器（组织架构 Phase C；#1174）：规则里能选的部门。
+   * 数据来自宿主注入的 `listOrgNodes`（模块读不到 platform.org_*——B1）；
+   * **未注入 / 未同步**都回空数组，由前端提示「先在企业微信同步组织架构」——
+   * 这与写规则的 fail-closed 一致（空集时选了也发不出去，见 validateDeptIds）。
+   */
+  r.get('/org-depts', async (c) => {
+    const list = await deps.addresses?.listOrgNodes?.(org(c)) ?? []
+    return c.json({ depts: list, available: deps.addresses?.listOrgNodes !== undefined })
+  })
 
   // ── 可送达性预检（只读，D3）：回答「会发给谁 / 为什么发不出去」─────────────
   // 与投递期共用 `resolveDeliverability`（单一实现）⇒ 不会「预检说能发、实际发不出」。
@@ -66,6 +80,7 @@ export function createNotifyRouter(deps: {
     const warnings: string[] = []
     // 「查不了」≠「没人持有」：解析器未注入时必须显式说出来
     if (!deps.addresses?.resolveScopeHolders) warnings.push('scope_holders_unavailable')
+    if (!deps.addresses?.resolveDeptMembers) warnings.push('dept_resolver_unavailable')
     // sample 模式下 field 类的 user 值是占位符，解析不到真实用户
     if (mode === 'sample') warnings.push('sample_mode_field_recipients_unverified')
 
@@ -77,6 +92,8 @@ export function createNotifyRouter(deps: {
       body: {
         ruleId: rule.id, eventKey: rule.eventKey, scope: rule.scope, mode,
         blocked: r2.blocked, recipients: r2.recipients, channels: r2.channels, warnings,
+        // 部门规则的展开三数（「将发送给 N 人 / 排除 M / 未解析 K」的唯一来源）
+        deptExpansion: r2.deptExpansion,
       },
     }
   }
@@ -122,6 +139,8 @@ export function createNotifyRouter(deps: {
       scope?: string
       recipientKey?: string
       recipientLiteral?: string[] | null
+      /** kind=dept 才用：所选部门 ext_id（发送时展开含子树） */
+      recipientDepts?: string[] | null
       templateKey?: string
       channels?: string[]
       cooldownMinutes?: number | null
@@ -142,12 +161,28 @@ export function createNotifyRouter(deps: {
       scope: body.scope ?? '*',
       recipientKey: body.recipientKey,
       recipientLiteral: body.recipientLiteral ?? null,
+      recipientDepts: body.recipientDepts ?? null,
       templateKey: body.templateKey,
       channels: body.channels,
       cooldownMinutes: body.cooldownMinutes ?? null,
       origin: 'manual',
     }, decl, channels, templates)
     if (bad) return c.json({ error: bad }, 400)
+
+    // ── 部门 id 的配置期校验（组织架构 Phase C；与报表部门门同一套 fail-closed）──────
+    // 未知 ext_id ⇒ 400；组织架构未同步（或宿主没注入选择器）⇒ 409：这两种状态下「配了也恒
+    // 发不出去」，当场拒掉比让它上线后静默 0 收件人好。位置在**任何写之前**。
+    const depts = body.recipientDepts ?? []
+    if (depts.length > 0) {
+      const nodes = deps.addresses?.listOrgNodes === undefined
+        ? null
+        : await deps.addresses.listOrgNodes(org(c))
+      if (nodes === null) return c.json({ error: 'ORG_RESOLVER_UNAVAILABLE' }, 409)
+      if (nodes.length === 0) return c.json({ error: 'ORG_NOT_SYNCED' }, 409)
+      const known = new Set(nodes.map((n) => n.extId))
+      const unknown = [...new Set(depts)].filter((d) => !known.has(d))
+      if (unknown.length > 0) return c.json({ error: 'RULE_DEPT_UNKNOWN', unknown }, 400)
+    }
 
     const id = body.id ?? `rule:${randomUUID()}`
     await upsertRule(deps.pool, org(c), {
@@ -157,6 +192,7 @@ export function createNotifyRouter(deps: {
       scope: body.scope ?? '*',
       recipientKey: body.recipientKey,
       recipientLiteral: body.recipientLiteral ?? null,
+      recipientDepts: body.recipientDepts ?? null,
       templateKey: body.templateKey,
       channels: body.channels,
       cooldownMinutes: body.cooldownMinutes ?? null,

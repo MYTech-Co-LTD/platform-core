@@ -63,6 +63,8 @@ export type RuleView = {
   scope: string
   recipientKey: string
   recipientLiteral: string[] | null
+  /** kind=dept 才有值：所选部门 ext_id（发送时展开含子树） */
+  recipientDepts?: string[] | null
   templateKey: string
   channels: string[]
   cooldownMinutes: number | null
@@ -127,6 +129,14 @@ export type InboxItem = {
   link: string | null
   readAt: string | null
   createdAt: string
+}
+
+/** `GET /org-depts`：部门选择器的数据源（宿主注入的 org 平表）。 */
+export type OrgDeptOption = {
+  extId: string
+  name: string
+  parentExtId: string | null
+  memberCount: number
 }
 
 export type RuleDeliverability = {

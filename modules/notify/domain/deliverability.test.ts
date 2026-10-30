@@ -13,6 +13,7 @@ const decl: NotificationEventDecl = {
     many: { kind: 'field', field: 'us' },
     mgrs: { kind: 'scope_holders', scope: 'm:manage' },
     lit: { kind: 'literal' },
+    dept: { kind: 'dept' },
   },
 }
 
@@ -23,7 +24,7 @@ const rule = (over: Partial<NotificationRule> = {}): NotificationRule => ({
   eventKey: 'm.a.b',
   scope: '*',
   recipientKey: 'one',
-  recipientLiteral: null,
+  recipientLiteral: null, recipientDepts: null,
   templateKey: 't1',
   channels: ['wecom_default'],
   cooldownMinutes: null,
@@ -161,5 +162,71 @@ describe('aggregateEventStatus', () => {
 
   it('全 null 但没产出投递（如全被冷却/渲染失败）⇒ matched（不是阻塞）', () => {
     expect(aggregateEventStatus([null], false)).toBe('matched')
+  })
+})
+
+// ── 部门档（组织架构 Phase C；spec 2026-10-30 §3.5）────────────────────────────────
+describe('resolveDeliverability: 部门收件人', () => {
+  const exp = {
+    names: ['alice', 'carol'], depts: ['D1', 'D2'], members: 4, excluded: 1, unresolved: 1,
+  }
+  const deptRule = (depts: string[] | null) =>
+    rule({ recipientKey: 'dept', recipientDepts: depts })
+
+  it('★ 展开结果进收件人（source=dept）且三数原样带出（审计的唯一来源）', async () => {
+    const r = await resolveDeliverability(
+      { org: 'o', rule: deptRule(['D1']), payload: {} },
+      deps({ resolveDeptMembers: async () => exp }),
+    )
+    expect(r.blocked).toBeNull()
+    expect(r.recipients).toEqual([
+      { name: 'alice', source: 'dept' }, { name: 'carol', source: 'dept' },
+    ])
+    // 三数原样透传：worker 拿它写审计、预检拿它显示「将发送给 N 人」
+    expect(r.deptExpansion).toEqual(exp)
+  })
+
+  it('解析器未注入 ⇒ blocked=dept_resolver_unavailable（**不是** no_recipient）', async () => {
+    const r = await resolveDeliverability({ org: 'o', rule: deptRule(['D1']), payload: {} }, deps())
+    expect(r.blocked).toBe('dept_resolver_unavailable')
+    expect(r.recipients).toEqual([])
+  })
+
+  it('选了部门档却没选部门 ⇒ no_recipient（不静默发 0 人、也不调解析器）', async () => {
+    let called = false
+    const r = await resolveDeliverability(
+      { org: 'o', rule: deptRule([]), payload: {} },
+      deps({ resolveDeptMembers: async () => { called = true; return exp } }),
+    )
+    expect(r.blocked).toBe('no_recipient')
+    expect(called).toBe(false)
+  })
+
+  it('展开后一个人都没有 ⇒ no_recipient，但三数仍回（all-excluded 要看得见）', async () => {
+    const r = await resolveDeliverability(
+      { org: 'o', rule: deptRule(['D1']), payload: {} },
+      deps({ resolveDeptMembers: async () => ({ ...exp, names: [] }) }),
+    )
+    expect(r.blocked).toBe('no_recipient')
+    expect(r.deptExpansion).toMatchObject({ excluded: 1, unresolved: 1 })
+  })
+
+  it('部门档**不**叠加 scope_holders（两档互斥，别把持有权限码的人也发一遍）', async () => {
+    let holdersCalled = false
+    const r = await resolveDeliverability(
+      { org: 'o', rule: deptRule(['D1']), payload: {} },
+      deps({
+        resolveDeptMembers: async () => exp,
+        resolveScopeHolders: async () => { holdersCalled = true; return ['zzz'] },
+      }),
+    )
+    expect(holdersCalled).toBe(false)
+    expect(r.recipients.map((x) => x.name)).toEqual(['alice', 'carol'])
+  })
+
+  it('事件级聚合：解析器缺失归 no_recipients（与 scope_holders 未注入同口径）', () => {
+    expect(aggregateEventStatus(['dept_resolver_unavailable'], false)).toBe('no_recipients')
+    // 反证：有投递就算 matched
+    expect(aggregateEventStatus(['dept_resolver_unavailable'], true)).toBe('matched')
   })
 })

@@ -349,3 +349,160 @@ describePg('routes v2', () => {
     })).status).toBe(404)
   })
 })
+
+// ── 部门收件人（组织架构 Phase C；spec 2026-10-30 §3.5；#1174）──────────────────────
+describePg('routes: 部门收件人', () => {
+  const ORG2 = 'org-routes2-dept'
+  const declDept: NotificationEventDecl = {
+    key: 'm.a.b',
+    title: 't',
+    payload: { u: { type: 'user', required: true }, link: { type: 'url', required: true } },
+    recipients: {
+      approver: { kind: 'field', field: 'u' },
+      byDept: { kind: 'dept', label: '按部门' },
+    },
+  }
+  const eventsDept = {
+    get: (k: string) => (k === 'm.a.b' ? declDept : undefined),
+    list: () => [declDept],
+  }
+
+  let pool: Pool
+  /** 每个用例可改：选择器数据源（undefined = 宿主没注入） */
+  let orgNodes: Array<{ extId: string; name: string; parentExtId: string | null; memberCount: number }> | undefined
+  let app: ReturnType<typeof buildTestApp>
+
+  const addresses = (): ChannelAddressResolver => ({
+    resolve: async ({ provider, casdoorName }) =>
+      provider === 'wecom_chat' ? `wecom-${casdoorName}` : casdoorName,
+    ...(orgNodes === undefined ? {} : { listOrgNodes: async () => orgNodes! }),
+    resolveDeptMembers: async (_org, ids) => ({
+      names: ['alice'], depts: [...ids], members: 3, excluded: 1, unresolved: 1,
+    }),
+  })
+
+  const rebuild = () => {
+    app = buildTestApp(
+      notifyV2,
+      makeIdentity({ orgId: ORG2, userId: 'u1', scopes: ['notify:view', 'notify:manage'] }),
+      { pool, events: eventsDept, addresses: addresses() },
+    )
+  }
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: url })
+    await applyMigrations(pool)
+  })
+  afterAll(async () => {
+    await pool.query('delete from notify.rule where org=$1', [ORG2]).catch(() => {})
+    await pool.query('delete from notify.template_revision where org=$1', [ORG2]).catch(() => {})
+    await pool.query('delete from notify.template where org=$1', [ORG2]).catch(() => {})
+    await pool.query('delete from notify.channel where org=$1', [ORG2]).catch(() => {})
+    await pool.end()
+  })
+  beforeEach(async () => {
+    await pool.query('delete from notify.rule where org=$1', [ORG2])
+    await pool.query('delete from notify.channel where org=$1', [ORG2])
+    await pool.query('delete from notify.template where org=$1', [ORG2])
+    await pool.query('delete from notify.template_revision where org=$1', [ORG2])
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'wecom_default','wecom_chat',true,'{}','{"bridge_url":"X"}','u')`, [ORG2])
+    await pool.query(
+      `insert into notify.template(org,key,name,event_key,status,origin,published_revision,created_by)
+       values ($1,'t1','T','m.a.b','published','tenant',1,'u')`, [ORG2])
+    await pool.query(
+      `insert into notify.template_revision(org,key,revision,contents,body_hash,review_status,created_by)
+       values ($1,'t1',1,'{"wecom_chat":{"text":"hi"}}','h1','approved','u')`, [ORG2])
+    orgNodes = [{ extId: 'D1', name: '共享中心', parentExtId: null, memberCount: 3 }]
+    rebuild()
+  })
+
+  const postRule = (body: Record<string, unknown>) => app.request('/rules', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ eventKey: 'm.a.b', templateKey: 't1', channels: ['wecom_default'], ...body }),
+  })
+
+  it('★ 建部门规则：合法 id ⇒ 201，落库带 recipient_depts', async () => {
+    const res = await postRule({ recipientKey: 'byDept', recipientDepts: ['D1'] })
+    expect(res.status).toBe(201)
+    const { id } = await res.json() as { id: string }
+    const row = (await pool.query(
+      'select recipient_depts from notify.rule where org=$1 and id=$2', [ORG2, id],
+    )).rows[0]
+    expect(row.recipient_depts).toEqual(['D1'])
+  })
+
+  it('★ 配置期 fail-closed：未知部门 400 / 组织架构未同步 409 / 解析器没注入 409', async () => {
+    const unknown = await postRule({ recipientKey: 'byDept', recipientDepts: ['NOPE'] })
+    expect(unknown.status).toBe(400)
+    expect(await unknown.json()).toMatchObject({ error: 'RULE_DEPT_UNKNOWN', unknown: ['NOPE'] })
+
+    orgNodes = []                       // 组织架构未同步
+    rebuild()
+    const unsynced = await postRule({ recipientKey: 'byDept', recipientDepts: ['D1'] })
+    expect(unsynced.status).toBe(409)
+    expect(await unsynced.json()).toMatchObject({ error: 'ORG_NOT_SYNCED' })
+
+    orgNodes = undefined                // 宿主没注入选择器
+    rebuild()
+    const noResolver = await postRule({ recipientKey: 'byDept', recipientDepts: ['D1'] })
+    expect(noResolver.status).toBe(409)
+    expect(await noResolver.json()).toMatchObject({ error: 'ORG_RESOLVER_UNAVAILABLE' })
+
+    // 一行都没落（拒在写之前）
+    expect((await pool.query('select 1 from notify.rule where org=$1', [ORG2])).rowCount).toBe(0)
+  })
+
+  it('部门档没选部门 ⇒ 400 RULE_DEPTS_REQUIRED', async () => {
+    const res = await postRule({ recipientKey: 'byDept' })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: 'RULE_DEPTS_REQUIRED' })
+  })
+
+  it('★ 预检：部门规则回展开三数 + 收件人（「将发送给 N 人」的数据源）', async () => {
+    const created = await postRule({ recipientKey: 'byDept', recipientDepts: ['D1'] })
+    const { id } = await created.json() as { id: string }
+    const res = await app.request(`/rules/${encodeURIComponent(id)}/resolve`)
+    expect(res.status).toBe(200)
+    const body = await res.json() as Record<string, unknown>
+    expect(body).toMatchObject({
+      blocked: null,
+      recipients: [{ name: 'alice', source: 'dept' }],
+      deptExpansion: { names: ['alice'], depts: ['D1'], members: 3, excluded: 1, unresolved: 1 },
+    })
+    // 解析器都在 ⇒ 不该出 unavailable 警告
+    expect(body.warnings).not.toContain('dept_resolver_unavailable')
+  })
+
+  it('预检：宿主没注入部门解析器 ⇒ 规则阻塞 + 显式 warning', async () => {
+    // 先用正常解析器建好规则，再把 app 换成「只有 resolve」的宿主面
+    const created = await postRule({ recipientKey: 'byDept', recipientDepts: ['D1'] })
+    const { id } = await created.json() as { id: string }
+    app = buildTestApp(
+      notifyV2,
+      makeIdentity({ orgId: ORG2, userId: 'u1', scopes: ['notify:view', 'notify:manage'] }),
+      { pool, events: eventsDept, addresses: { resolve: async () => null } },
+    )
+    const body = await (await app.request(`/rules/${encodeURIComponent(id)}/resolve`)).json() as Record<string, unknown>
+    expect(body.blocked).toBe('dept_resolver_unavailable')
+    expect(body.warnings).toContain('dept_resolver_unavailable')
+    expect(body.warnings).toContain('scope_holders_unavailable')
+  })
+
+  it('GET /org-depts：注入 ⇒ 平表 + available；没注入 ⇒ available=false（前端据此禁用）', async () => {
+    const ok = await (await app.request('/org-depts')).json() as { depts: unknown[]; available: boolean }
+    expect(ok.available).toBe(true)
+    expect(ok.depts).toEqual([{ extId: 'D1', name: '共享中心', parentExtId: null, memberCount: 3 }])
+
+    app = buildTestApp(
+      notifyV2,
+      makeIdentity({ orgId: ORG2, userId: 'u1', scopes: ['notify:view', 'notify:manage'] }),
+      { pool, events: eventsDept, addresses: { resolve: async () => null } },
+    )
+    const none = await (await app.request('/org-depts')).json() as { depts: unknown[]; available: boolean }
+    expect(none.available).toBe(false)
+    expect(none.depts).toEqual([])
+  })
+})

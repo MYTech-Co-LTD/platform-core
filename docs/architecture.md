@@ -660,8 +660,9 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 - 规则五元组：`event_key × scope × recipient_key × template_key × channels`；`manual > derived`，
   精确 scope 优先于 `*`。**不做条件/延迟/摘要**。
 - 收件人：`field`（payload 的 user/user_list）、`scope_holders`（本 org 持有权限码）、`literal`
-  （人工名单）。平台解析到 Casdoor 用户，再按通道解析地址（企微 userid 走
-  `platform.identity_link`；映射不到 = `failed`，**不假装成功**）。
+  （人工名单）、`dept`（组织架构部门，**发送时**按 `org_node.path` 展开子树、排除禁用用户，
+  展开/排除/未解析三数落 `notify.audit`；spec 2026-10-30 §3.5）。平台解析到 Casdoor 用户，
+  再按通道解析地址（企微 userid 走 `platform.identity_link`；映射不到 = `failed`，**不假装成功**）。
 - 派生：事件声明的 `defaults` 幂等派生默认规则（零配置就通）；`scripts/notify-seed-builtin.mjs`
   在开通/升级时 seed 模板、默认通道与默认规则。
 

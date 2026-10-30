@@ -3,7 +3,7 @@ export { effectiveScopes } from './effective-scopes'
 export { collectHolders, shortName } from './permission-holders'
 export type { HolderPermission, HolderRole, Holders } from './permission-holders'
 export { CasdoorClient } from './casdoor-client'
-export type { CasdoorClientOptions, CasdoorUser, CasdoorPermission, CasdoorSubscription, CasdoorGroup, CasdoorRole } from './casdoor-client'
+export type { CasdoorClientOptions, CasdoorUser, CasdoorPermission, CasdoorSubscription, CasdoorGroup, CasdoorRole, CasdoorListedUser } from './casdoor-client'
 export { buildGroupTree } from './group-tree'
 export type { CasdoorGroupLike, GroupTreeNode } from './group-tree'
 export {
