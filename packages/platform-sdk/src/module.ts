@@ -61,7 +61,11 @@ export interface EventCatalogReader {
 export interface ChannelAddressResolver {
   resolve(input: { org: string; provider: string; casdoorName: string }): Promise<string | null>
   /**
-   * 权限码 → 持有者（Casdoor 用户名），直挂 ∪ 角色展开。
+   * 收件人档 → 持有者（Casdoor 用户名），直挂 ∪ 角色展开。
+   *
+   * ⚠️ `recipientKey` 是**事件的收件人档名**（如 `approvers`），不是权限码——码要从
+   * `decl.recipients[recipientKey].scope` 取。实现方与 `deliverability` 必须同源
+   * （曾因形参名写成 `permissionCode` 而把 key 当码用，症状是「解析器在、结果恒空」）。
    *
    * 为什么挂在**地址解析**上：两者都是「把人解析成投递所需的目标」，且都需要宿主级能力
    * （Casdoor 客户端），模块层（B1）两样都拿不到。
@@ -72,7 +76,7 @@ export interface ChannelAddressResolver {
    */
   resolveScopeHolders?(
     org: string,
-    permissionCode: string,
+    recipientKey: string,
     decl: NotificationEventDecl,
   ): Promise<string[]>
   /**
