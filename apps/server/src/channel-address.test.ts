@@ -93,13 +93,18 @@ describePg('channel-address: resolveDeptMembers', () => {
     await pool.end()
   })
 
-  /** Casdoor 假面：alice/bob/carol 存在，bob 被禁用；ghost 不存在。 */
+  /**
+   * Casdoor 假面：alice/bob/carol 存在，bob 被禁用；ghost 不存在。
+   * 权限面（#1179）：`m:manage` 直挂 alice + 角色 `mgr` 的成员 carol。
+   */
   const fakeCasdoor = () => ({
     listUsers: async () => [
       { name: 'alice', displayName: 'alice', isForbidden: false, groups: [], roles: [] },
       { name: 'bob', displayName: 'bob', isForbidden: true, groups: [], roles: [] },
       { name: 'carol', displayName: 'carol', isForbidden: false, groups: [], roles: [] },
     ],
+    getPermissions: async () => [{ resources: ['m:manage'], users: ['alice'], roles: ['mgr'] }],
+    listRoles: async () => [{ name: 'mgr', users: ['carol'] }],
   })
 
   it('★ 子树继承 + 排除禁用 + 未解析计数（三数同源）', async () => {
@@ -134,6 +139,22 @@ describePg('channel-address: resolveDeptMembers', () => {
     const exp = await r.resolveDeptMembers!(ORG, [ROOT])
     expect(exp.names.sort()).toEqual(['alice', 'bob', 'ghost'])
     expect(exp).toMatchObject({ excluded: 0, unresolved: 0 })
+  })
+
+  // ── 权限码持有者（issue #1179：控制台预检与 worker 同一份口径）─────────────────
+  it('★ resolveScopeHolders：直挂 ∪ 角色展开（与 worker 同一实现）', async () => {
+    const r = createChannelAddressResolver({ pool, casdoorFor: () => fakeCasdoor() })
+    expect(r.resolveScopeHolders).toBeDefined()
+    const names = await r.resolveScopeHolders!(
+      ORG, 'm:manage', { key: 'm.a.b', title: '', payload: {}, recipients: {} },
+    )
+    expect(names.sort()).toEqual(['alice', 'carol'])
+  })
+
+  it('缺 casdoorFor ⇒ 不提供该方法（调用方据此报 unavailable，而不是拿到假空集）', () => {
+    const r = createChannelAddressResolver({ pool })
+    expect(r.resolveScopeHolders).toBeUndefined()
+    expect(r.resolveDeptMembers).toBeDefined()
   })
 
   it('选择器平表：活节点 + 直属人数 + 按 path 深度优先', async () => {
