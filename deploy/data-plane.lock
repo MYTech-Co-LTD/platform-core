@@ -1,4 +1,4 @@
-sha256-of-rest 65e7c46feacd7b4cacfe81f8d0691462cabee3db4bdc849af148e8bab2f0b077
+sha256-of-rest 02cceee3eba3ca92e5f85cb620b99db0b62cd81d84d2e1a21b935990d1eb6de5
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -85,7 +85,7 @@ d4f8f1ee7cd0b9b2847ff9d060e9c3dbc14d82a37c9b24f6bc2faadc1f389ac6 dbt/seeds/dim_b
 d97d54e949117437636327003d1326ad79ba2488367e6dd5d7a74ee43aa49dca dbt/seeds/x01_branch_calendar.csv ${REPO}/dbt/seeds/x01_branch_calendar.csv 0644
 de9ccb666c60518df42e72c49887727c2879e75dcb0b1a08b6d988153e60136d dbt/seeds/x01_client_region_overrides.csv ${REPO}/dbt/seeds/x01_client_region_overrides.csv 0644
 8d039ed687c993221698878e646b6425b064157761da717e7bc84d2c39c463a3 dbt/seeds/x08_thresholds.csv ${REPO}/dbt/seeds/x08_thresholds.csv 0644
-793f754e10546f48a3a1c74812c22111e76df0c9ac30c0e7f01dcaf8ffc8c9cc dbt/semantics/l1_metrics.yml ${REPO}/dbt/semantics/l1_metrics.yml 0644
+5fa01c309d5f623c8140c82531d8bfc78752524599fe6a211006fada189f9c65 dbt/semantics/l1_metrics.yml ${REPO}/dbt/semantics/l1_metrics.yml 0644
 0e5597bb1d43db3237445787e71944f86669d8542b3e473af30f0fe1b0f1b5ea dbt/tests/lemeng/assert_dim_client_region_unique.sql ${REPO}/dbt/tests/lemeng/assert_dim_client_region_unique.sql 0644
 ee84b62a4ca175750ad7e76228446956cb9ec1c8f556ce39b056cfbbd8d2b444 dbt/tests/lemeng/assert_dim_lemeng_branch_key_unique.sql ${REPO}/dbt/tests/lemeng/assert_dim_lemeng_branch_key_unique.sql 0644
 1d4877283ebb59ae5c60e1f2fa7d8a440107bfc70bc1e7bc266f2d9e8167a76c dbt/tests/lemeng/assert_dim_region_key_unique.sql ${REPO}/dbt/tests/lemeng/assert_dim_region_key_unique.sql 0644
@@ -157,6 +157,7 @@ df2323bd441b6642d8a37b2be222e00c8304d54ca88f28010ebc9e202b4fb5ae dbt/tests/lemen
 79769e89ba2297811ac38e98408d8cf9da4b7a32085072c37b7df8e8798e1a48 dbt/tests/lemeng/audit_lemeng__outbound__net_amount.sql ${REPO}/dbt/tests/lemeng/audit_lemeng__outbound__net_amount.sql 0644
 a6e56b9aacd1693953e81a2c3dda838dd16fe1bd6d0944afb622ce415ca56d1e dbt/tests/lemeng/audit_lemeng__outbound__order_count.sql ${REPO}/dbt/tests/lemeng/audit_lemeng__outbound__order_count.sql 0644
 023fb493eb6f6ca9159c21999245f1240dbff7791018e3b56cbfdae13719afe1 dbt/tests/lemeng/audit_lemeng__outbound__region_conservation.sql ${REPO}/dbt/tests/lemeng/audit_lemeng__outbound__region_conservation.sql 0644
+a2829b61bff33ea3f3a28b62fca57b1f8a3713581a80da1d9f21d589ba0486ae dbt/tests/lemeng/audit_lemeng__outbound__region_net.sql ${REPO}/dbt/tests/lemeng/audit_lemeng__outbound__region_net.sql 0644
 67e115a92a0d006924b06bf13155ee878c33452a78221b5a68f4b8c0a38cb01c dbt/tests/lemeng/audit_lemeng__purchase__amount.sql ${REPO}/dbt/tests/lemeng/audit_lemeng__purchase__amount.sql 0644
 a00786138e545d05e7e20f49dd68a077b7a13de335af2d7e08029bb42117653b dbt/tests/lemeng/audit_lemeng__purchase__cr5.sql ${REPO}/dbt/tests/lemeng/audit_lemeng__purchase__cr5.sql 0644
 aef3d4ca35c0900919de4c3f0bcf7ee09a456f895c8e9b6c1247aa2dc177a38c dbt/tests/lemeng/audit_lemeng__purchase__item_count.sql ${REPO}/dbt/tests/lemeng/audit_lemeng__purchase__item_count.sql 0644
