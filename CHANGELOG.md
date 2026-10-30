@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.219.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.219.0...v0.219.1) - 2026-10-30
+- 【修复】notify: 未配置通道可见 + 部门选择器合一 + flaky 测试 (#1187, #1184) ([#1188](https://github.com/MYTech-Co-LTD/platform-core/pull/1188), [1351981](https://github.com/MYTech-Co-LTD/platform-core/commit/1351981dcc397bb1d2fef92be40d6cb0ad5eef0b))
+
+
 ## [0.219.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.218.3...v0.219.0) - 2026-10-30
 - 【新增】data: 战区出库面——客户维 + 三分列 + 指标（#1181） ([#1186](https://github.com/MYTech-Co-LTD/platform-core/pull/1186), [e70066b](https://github.com/MYTech-Co-LTD/platform-core/commit/e70066ba0e41ac2902f790b3896fbabec497ed4e))
 
