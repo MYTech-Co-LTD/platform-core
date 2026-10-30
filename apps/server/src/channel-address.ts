@@ -9,6 +9,14 @@
 import type { CasdoorListedUser } from '@platform/auth-core'
 import type { ChannelAddressResolver, DeptExpansion, OrgNodeOption } from '@platform/sdk'
 import type { Pool } from 'pg'
+import { createScopeHolderResolver } from './scope-holders'
+
+/** 宿主侧解析器需要的 Casdoor 能力（只声明用到的，测试好造形状）。 */
+type CasdoorLike = {
+  listUsers(): Promise<CasdoorListedUser[]>
+  getPermissions(): Promise<Array<{ users?: string[]; roles?: string[]; resources?: string[] }>>
+  listRoles(): Promise<Array<{ name: string; users?: string[] }>>
+}
 
 export function createChannelAddressResolver(deps: {
   pool: Pool
@@ -17,15 +25,26 @@ export function createChannelAddressResolver(deps: {
    * 只能按 org 表全量发**——那条路会在结果里把它标出来（`complete: false` 没有，见下），
    * 生产不存在这种形态（`config.ts` 已把 admin 凭据设为必填）。
    */
-  casdoorFor?: (org: string) => {
-    listUsers(): Promise<CasdoorListedUser[]>
-  }
+  casdoorFor?: (org: string) => CasdoorLike
   /** 用户表的进程内缓存（默认 60s，与 `createScopeHolderResolver` 同口径）。 */
   userCacheTtlMs?: number
 }): ChannelAddressResolver {
   /** org → 用户快照。部门群发一次要问「谁是禁用的」，逐人查 Casdoor 是 N 次 RPC。 */
   const userCache = new Map<string, { at: number; byName: Map<string, { forbidden: boolean }> }>()
   const ttl = deps.userCacheTtlMs ?? 60_000
+  /**
+   * 「权限码 → 持有者」解析器（issue #1179）：**与 worker 脚本同一份实现**
+   * （`createScopeHolderResolver`：直挂 ∪ 角色展开、按 org 60s 缓存）。
+   *
+   * 为什么必须在这里实现：控制台的规则预检走 HTTP 路由，它拿的是本解析器；此前本文件
+   * 没实现 `resolveScopeHolders` ⇒ 预检恒落 `?? []` + `scope_holders_unavailable` 警告，
+   * 于是**同一条规则**在控制台显示「0 人」、worker 真发时却发得出去——两个入口结论不一致。
+   *
+   * 失败**抛错**（与 resolver 本身的口径一致）：让调用方看见「查不了」，而不是静默成空集。
+   */
+  const scopeHolders = deps.casdoorFor === undefined
+    ? undefined
+    : createScopeHolderResolver((org) => deps.casdoorFor!(org) as never)
 
   const usersOf = async (org: string) => {
     const hit = userCache.get(org)
@@ -55,6 +74,14 @@ export function createChannelAddressResolver(deps: {
       )
       return rows[0]?.external_id ?? null
     },
+
+    /**
+     * 权限码 → 持有者（Casdoor 直挂 ∪ 角色展开）。缺 `casdoorFor` ⇒ **不提供这个方法**
+     * （调用方据此报 `scope_holders_unavailable`，而不是拿到一个假的空集）。
+     */
+    resolveScopeHolders: scopeHolders === undefined
+      ? undefined
+      : (org, permissionCode) => scopeHolders(org, permissionCode),
 
     /**
      * 部门 ext_id（可多选）→ 成员（**含全部后代部门**，spec 2026-10-30 §3.5）。
