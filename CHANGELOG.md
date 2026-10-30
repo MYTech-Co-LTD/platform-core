@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.216.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.215.2...v0.216.0) - 2026-10-30
+- 【新增】platform: 组织架构 Phase A——org 表 + 同步器 + 组织树切源 (#1171) ([#1172](https://github.com/MYTech-Co-LTD/platform-core/pull/1172), [674bda9](https://github.com/MYTech-Co-LTD/platform-core/commit/674bda981e4d0c9c1ca652c49be3dd42321ec61c))
+
+
 ## [0.215.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.215.1...v0.215.2) - 2026-10-30
 - 【修复】data: 零售整天重采容量溢出变体（160 页 hp），春节峰日停机的出路 (#1168) ([#1169](https://github.com/MYTech-Co-LTD/platform-core/pull/1169), [ba38397](https://github.com/MYTech-Co-LTD/platform-core/commit/ba383975df63bae93a0a99e72d742be3a641dc0f))
 
