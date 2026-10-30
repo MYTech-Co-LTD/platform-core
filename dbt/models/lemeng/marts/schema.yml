@@ -73,6 +73,88 @@ models:
       - name: address
         description: 地址。
 
+  - name: fct_outbound_region
+    description: >-
+      **战区出库面**（#1181，2026-10-30）。粒度 `(system_book, bizday, channel_type, region_l1_bucket)`。
+      出库按通道分三列：`自有门店配送`（transfer，战区=调入门店战区）、`体系内批发`
+      （wholesale 且客户=另一账套门店，战区=该门店战区）、`外部批发`（其余客户，**不硬摊战区**，
+      `region_l1_bucket='未归属'`，2026-10-30 裁决）。金额不重算，守恒由
+      `audit_lemeng__outbound__region_conservation` 钉住；粒度唯一性由
+      `assert_fct_outbound_region_grain_unique` 钉住。
+    columns:
+      - name: system_book
+        description: 账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（宏注入）。
+        tests: [{not_null: {}}]
+      - name: bizday
+        description: 业务日。粒度键。
+        tests: [{not_null: {}}]
+      - name: channel_type
+        description: >-
+          通道：`自有门店配送` / `体系内批发` / `外部批发`。粒度键。
+        tests: [{not_null: {}}]
+      - name: region_l1_bucket
+        description: >-
+          一级战区桶（`dim_region.region_l1`，空值显式落 `未归属`）。粒度键。
+          两账套 region_id 空间不相交、一级名共用 ⇒ 只有这一层能跨账套合并。
+        tests: [{not_null: {}}]
+      - name: r_net
+        description: 出库净额（原样求和，不重算）。
+      - name: order_count
+        description: 出库单数（原样求和）。
+      - name: line_count
+        description: 出库明细行数（原样求和）。
+
+  - name: dim_lemeng_client
+    description: >-
+      **批发客户维**（客户 → 体系内门店 / 战区归属）（#1181，2026-10-30）。粒度
+      `(system_book, client_fid)`，只取**最新快照**。存在理由：出库侧批发行的 `region_id` 是
+      `branch_num = 99` 回落的**幻影战区**（实测全部落 9046），客户文档 02-04 要求按
+      `client_fid → 战区` 归集。匹配规则：客户名在**另一账套**门店名里**唯一命中** ⇒ 体系内门店
+      （≥2 家 = 歧义不匹配）；微小差异走受控 seed `x01_client_region_overrides`；未命中 ⇒
+      **外部客户**，`region_id` 为 null，下游按「未归属」呈现、**不硬摊战区**（2026-10-30 裁决）。
+      唯一性由 `assert_dim_client_region_unique` 钉住。
+    columns:
+      - name: system_book
+        description: 客户所属账套。粒度键。
+        tests: [{not_null: {}}]
+      - name: org
+        description: 主体列（宏注入）。
+        tests: [{not_null: {}}]
+      - name: client_fid
+        description: 客户 ID。粒度键。
+        tests: [{not_null: {}}]
+      - name: client_name
+        description: 客户名（最新快照值；匹配用的是 btrim 后的名字）。
+      - name: client_kind
+        description: >-
+          **渠道归属**：`体系内门店` / `外部客户`。与客户自己的 `client_type`（等级/性质）不是一回事。
+        tests: [{not_null: {}}]
+      - name: home_system_book
+        description: 客户本体所属账套（体系内门店 = 门店所在账套，如 64188）；外部客户为 null。
+      - name: home_branch_num
+        description: 本体门店号；外部客户为 null。
+      - name: region_id
+        description: 战区编号（本体门店的战区）。**外部客户为 null**——不硬摊。
+      - name: region_name
+        description: 战区二级名（`dim_region` join）。未登记的新区为 null（不捏造）。
+      - name: region_l1
+        description: 一级战区（东部/中部/南部/西部战区等）；空 = 根节点或未登记。
+      - name: match_rule
+        description: >-
+          `override`（受控 seed 指定）/ `name_unique`（另一账套门店名唯一命中）/ `none`（未匹配）。
+        tests: [{not_null: {}}]
+      - name: snapshot
+        description: 客户档案快照日（本维只取最新一份）。
+      - name: client_type
+        description: 乐檬客户类型原值（与 `client_kind` 不是一回事，仅透传）。
+      - name: client_actived
+        description: 是否启用（原值透传）。
+      - name: client_del_tag
+        description: 删除标记（原值透传；本维不过滤，避免下游 join 丢行）。
+
   - name: fct_branch_day_activity
     description: >-
       门店 × 日 **活动骨架**（03-05 连续无业绩天数的落点；2026-10-17 最小案例）。粒度

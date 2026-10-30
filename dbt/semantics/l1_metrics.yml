@@ -473,6 +473,31 @@ metrics:
       - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
       - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
 
+  - name: 'lemeng:outbound:region_net'
+    label: 战区出库净额
+    definition: >-
+      出库净额按**一级战区 × 通道**归集（服务「各战区出库金额」）。三个通道：
+      `自有门店配送`（transfer 域，战区 = 调入门店所在战区）、`体系内批发`（wholesale 域且客户是
+      **另一个账套的门店**——客户名唯一命中对方门店档案，战区 = 那家门店的战区）、
+      `外部批发`（其余 wholesale 客户，**不硬摊战区**：外部批发商跨区采购常见，硬指派战区得到的
+      分布是假的；2026-10-30 用户裁决）。因此 `region_l1_bucket = '未归属'` 的那一档**只含外部批发**。
+      ⚠️ 口径边界：本指标**只做归因、不重算金额**——`Σ(各战区各通道) 恒等于 Σ(fct_hq_outbound.r_net)`
+      （`audit_lemeng__outbound__region_conservation` 逐账套逐日钉住）。批发侧的单头口径与退货
+      冲减仍以 `outbound:net_amount` 为准，本条的每行数值是它的**分解**，不是另一套口径。
+      ⚠️ 两级战区：`region_l1_bucket` 是一级（东部/中部/南部/西部战区 + 大区/杂项自成一档），
+      两账套 region_id 空间不相交但一级名共用 ⇒ **跨账套合并只能在这一层做**。
+      粒度 = 账套 × 业务日 × 一级战区桶 × 通道。
+    expression: 'sum(fct_outbound_region.r_net)'
+    grain: [system_book, bizday, region_l1_bucket, channel_type]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+    sources:
+      - 's3://<bucket>/lemeng/transfer_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
+      - 's3://<bucket>/lemeng/wholesale_return/system_book=<账套>/bizday=<日期>/all.parquet'
+
   - name: 'lemeng:transfer:batch_fill_rate'
     label: 配送批号填写率
     definition: >-
@@ -899,8 +924,10 @@ metrics:
       branch_num=99 回落 dim_branch 的**幻影战区**（真机实测：全部批发落进单个 region_id=9046，
       与 12 个真战区不重叠）⇒ 把批发算进来会把 84 万批发额记到一个不存在的战区上。
       **本指标覆盖配送出库到门店的部分**；批发侧 2026-10-17 已按**客户级**另声明
-      （`client_contribution:net_amount`，对象=批发客户）——按**战区**归批发仍需 X01
-      client→region 映射（未就位），本条射程不变。
+      （`client_contribution:net_amount`，对象=批发客户）。按**战区**归批发的映射已于 2026-10-30
+      就位（`dim_lemeng_client`：体系内门店按名字唯一命中自动识别，外部客户不摊战区），
+      批发侧的战区分列见 `outbound:region_net`；本条的射程**仍为 transfer-only**（是否并入批发
+      属消费面另议，不在 #1181 内）。
       粒度 = 账套 × 业务日 × 战区。
     expression: 'sum(fct_contribution.n_net_store)'
     grain: [system_book, bizday, region_id]

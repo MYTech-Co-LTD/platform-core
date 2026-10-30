@@ -197,3 +197,32 @@ seeds:
         description: 处置说明（为什么接受、按哪边修）。
       - name: disposition_by
         description: 认领人。
+
+  - name: x01_client_region_overrides
+    description: >-
+      **批发客户 → 体系内门店 的覆盖映射**（P0 2026-10-30，issue #1181）。默认口径是**自动匹配**：
+      客户名在**另一个账套**的门店名里**唯一命中** ⇒ 判为体系内门店（`dim_lemeng_client` 的实现）。
+      本 seed 只装**自动匹配救不了的两种情况**：① 名字写法不一致的别名（如客户台账写「腾冲1店」、
+      门店档案写「品品甜保山腾冲1店」）；② 业务人工指定的归属（如某外部客户确属某战区）。
+      **0 行是合规态**（没有需要覆盖的数据就不造数据，与 `x01_branch_calendar` 同规）。
+      一行 = 某账套的一个客户被指定为「另一个账套的某家门店」，`region_id` 可省略（省略时取该门店
+      在 `dim_region` 里的 `region_id`）；`source_system_book` + `client_fid` 唯一。
+      **生效语义**：覆盖优先于自动匹配（`match_rule = 'override'`）；客户改名不影响本行。
+    columns:
+      - name: source_system_book
+        description: 客户所属账套（如 3120）。与 `client_fid` 一起定位一个客户。
+        tests: [{not_null: {}}]
+      - name: client_fid
+        description: 客户 ID（`stg_lemeng_client.client_fid`）。
+        tests: [{not_null: {}}]
+      - name: client_name
+        description: 客户名（仅供人读；匹配键是 `client_fid`，改本列不影响生效）。
+      - name: home_system_book
+        description: 客户本体所属账套（如 64188）——战区从这个账套的门店档案取。
+        tests: [{not_null: {}}]
+      - name: home_branch_num
+        description: 本体门店号（可空：只指定战区、不指定门店时留空）。
+      - name: region_id
+        description: 指定战区（可空：留空则取 `home_branch_num` 在 `dim_region` 的 `region_id`）。
+      - name: note
+        description: 为什么需要这条覆盖（必填，供评审看）。
