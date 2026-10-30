@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.215.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.215.1...v0.215.2) - 2026-10-30
+- 【修复】data: 零售整天重采容量溢出变体（160 页 hp），春节峰日停机的出路 (#1168) ([#1169](https://github.com/MYTech-Co-LTD/platform-core/pull/1169), [ba38397](https://github.com/MYTech-Co-LTD/platform-core/commit/ba383975df63bae93a0a99e72d742be3a641dc0f))
+
+
 ## [0.215.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.215.0...v0.215.1) - 2026-10-29
 - 【修复】data: 回填驱动超时 180s→600s，submit 超时改按 run 记录判真伪 (#1166) ([#1167](https://github.com/MYTech-Co-LTD/platform-core/pull/1167), [b43b6dd](https://github.com/MYTech-Co-LTD/platform-core/commit/b43b6ddc0d2236b9925cd32cbdf49a427cd45bdb))
 
