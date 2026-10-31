@@ -44,6 +44,44 @@ describePg('channel-address', () => {
     const r = createChannelAddressResolver({ pool })
     expect(await r.resolve({ org: 'org-ca', provider: 'wecom_chat', casdoorName: 'u-p' })).toBeNull()
   })
+
+  // spec 2026-10-31 §3.3：同步时落下的「渠道原生地址」是第一优先来源
+  it('★ org_membership.external_id 优先于 identity_link，且只认 source 匹配的行', async () => {
+    const T = 9412
+    await pool.query(
+      `insert into platform.tenant(id, slug, casdoor_org) values ($1,'ca-ident','org-ca-ident')
+       on conflict (id) do update set casdoor_org = excluded.casdoor_org`,
+      [T],
+    )
+    await pool.query(`delete from platform.org_membership where tenant_id=$1`, [T])
+    await pool.query(`delete from platform.identity_link where org='org-ca-ident'`)
+    const member = (user: string, source: string | null, external: string | null) =>
+      pool.query(
+        `insert into platform.org_membership(tenant_id, user_name, ext_id, is_primary, source, external_id)
+         values ($1,$2,'D1',true,$3,$4)`,
+        [T, user, source, external],
+      )
+    await member('sync-user', 'wecom', 'wecom-from-sync')
+    await member('casdoor-user', 'casdoor', null)      // 源不匹配 ⇒ 不许当企微地址用
+    await member('legacy-user', null, 'wecom-legacy')  // 旧行 source=NULL ⇒ 来源未知，不许猜
+    await pool.query(
+      `insert into platform.identity_link(org,provider,external_id,casdoor_name,status,bound_via)
+       values ('org-ca-ident','wecom','wecom-link-sync','sync-user','active','manual'),
+              ('org-ca-ident','wecom','wecom-link-casdoor','casdoor-user','active','manual')`,
+    )
+
+    const r = createChannelAddressResolver({ pool })
+    expect(await r.resolve({ org: 'org-ca-ident', provider: 'wecom_chat', casdoorName: 'sync-user' }))
+      .toBe('wecom-from-sync')
+    expect(await r.resolve({ org: 'org-ca-ident', provider: 'wecom_chat', casdoorName: 'casdoor-user' }))
+      .toBe('wecom-link-casdoor') // membership 行存在但 source 不匹配 ⇒ 落到 ② 显式绑定
+    expect(await r.resolve({ org: 'org-ca-ident', provider: 'wecom_chat', casdoorName: 'legacy-user' }))
+      .toBeNull() // 旧行不参与猜测，且无绑定
+
+    await pool.query(`delete from platform.org_membership where tenant_id=$1`, [T])
+    await pool.query(`delete from platform.identity_link where org='org-ca-ident'`)
+    await pool.query(`delete from platform.tenant where id=$1`, [T])
+  })
 })
 
 // ── 部门展开（组织架构 Phase C；spec 2026-10-30 §3.5）─────────────────────────────

@@ -66,6 +66,21 @@ export function createChannelAddressResolver(deps: {
       if (provider === 'in_app') return casdoorName
       if (provider !== 'wecom_chat') return null
 
+      // ① 显式地址（spec 2026-10-31 §3.3）：同步时把渠道原生地址落在 org_membership.external_id。
+      //    只认 `source` 与本 provider 匹配的行——`source` 不同（如 casdoor 源）或旧行（NULL）
+      //    不知道 external_id 属于哪个渠道，**不跨渠道硬套**。
+      const byMembership = await deps.pool.query<{ external_id: string }>(
+        `select m.external_id
+           from platform.org_membership m
+           join platform.tenant t on t.id = m.tenant_id
+          where t.casdoor_org = $1 and m.user_name = $2
+            and m.source = $3 and m.external_id is not null and m.external_id <> ''
+          limit 1`,
+        [org, casdoorName, sourceOf(provider)],
+      )
+      if (byMembership.rows[0]?.external_id) return byMembership.rows[0].external_id
+
+      // ② 显式绑定（who 用过企微登录 ⇒ identity_link）
       const { rows } = await deps.pool.query<{ external_id: string }>(
         `select external_id from platform.identity_link
           where org = $1 and provider = 'wecom' and casdoor_name = $2 and status = 'active'
@@ -186,4 +201,12 @@ export function createChannelAddressResolver(deps: {
       }))
     },
   }
+}
+
+/**
+ * provider → 写入 `org_membership.source` 的源名（同一件事的唯一映射）。
+ * wecom_chat 的成员来自企微通讯录同步；将来飞书/钉钉各加一行即可，**不做字符串猜测**。
+ */
+export function sourceOf(provider: string): string {
+  return provider === 'wecom_chat' ? 'wecom' : provider
 }

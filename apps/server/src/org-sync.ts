@@ -16,8 +16,15 @@ import type { Pool, PoolClient } from 'pg'
 /** 归一后的组织快照（两路来源——企微 API / Casdoor groups 种子——都汇到这个形状再入 apply）。 */
 export interface OrgSnapshot {
   depts: Array<{ extId: string; name: string; parentExtId: string | null }>
-  memberships: Array<{ userName: string; extId: string; isPrimary: boolean }>
+  /**
+   * `externalId` = **该源渠道的原生地址**（企微源 = userid；Casdoor 源 = null，不知道就不猜）。
+   * 与 `userName`（平台标识）分开存：今天企微源两者同值，但语义不同（spec 2026-10-31 §3.1）。
+   */
+  memberships: Array<{ userName: string; extId: string; isPrimary: boolean; externalId: string | null }>
 }
+
+/** 同步来源：写进 `org_membership.source`，解析时按它决定 external_id 能否当某渠道地址用。 */
+export type OrgSyncSource = 'wecom' | 'casdoor'
 
 export interface OrgSyncPlan {
   deptCount: number
@@ -77,6 +84,7 @@ export async function fetchWecomSnapshot(
       userName: u.userid,
       extId: String(dep),
       isPrimary: u.main_department === dep,
+      externalId: u.userid, // 企微源：原生地址就是 userid
     })),
   )
   return { depts, memberships }
@@ -107,6 +115,7 @@ export async function snapshotFromCasdoor(
       userName: u.name,
       extId: raw.startsWith(`${org}/`) ? raw.slice(org.length + 1) : raw,
       isPrimary: false, // Casdoor 无主部门概念；真源切换到企微后由 fetchWecomSnapshot 带上
+      externalId: null, // Casdoor groups 不含渠道地址——**不知道就不猜**
     })),
   )
   return { depts, memberships }
@@ -173,6 +182,8 @@ export async function applySnapshot(
   pool: Pool,
   tenantId: number,
   snapshot: OrgSnapshot,
+  /** 写入来源（进 `org_membership.source`）。**必填**：默认值会让「忘了传」变成静默错源。 */
+  source: OrgSyncSource,
 ): Promise<void> {
   const client = await pool.connect()
   try {
@@ -198,10 +209,15 @@ export async function applySnapshot(
     await client.query('delete from platform.org_membership where tenant_id = $1', [tenantId])
     for (const m of snapshot.memberships) {
       await client.query(
-        `insert into platform.org_membership (tenant_id, user_name, ext_id, is_primary, synced_at)
-         values ($1, $2, $3, $4, now())
-         on conflict (tenant_id, user_name, ext_id) do update set is_primary = excluded.is_primary, synced_at = now()`,
-        [tenantId, m.userName, m.extId, m.isPrimary],
+        `insert into platform.org_membership
+           (tenant_id, user_name, ext_id, is_primary, source, external_id, synced_at)
+         values ($1, $2, $3, $4, $5, $6, now())
+         on conflict (tenant_id, user_name, ext_id) do update
+           set is_primary = excluded.is_primary,
+               source = excluded.source,
+               external_id = excluded.external_id,
+               synced_at = now()`,
+        [tenantId, m.userName, m.extId, m.isPrimary, source, m.externalId],
       )
     }
     await recomputePaths(client, tenantId)
@@ -253,7 +269,7 @@ export async function runOrgSync(
   pool: Pool,
   tenantId: number,
   snapshot: OrgSnapshot,
-  opts: { dryRun: boolean; casdoorNames: Iterable<string> },
+  opts: { dryRun: boolean; casdoorNames: Iterable<string>; source: OrgSyncSource },
 ): Promise<SyncResult> {
   const nodes = await pool.query(
     'select ext_id, name, parent_ext_id, status from platform.org_node where tenant_id = $1',
@@ -273,6 +289,6 @@ export async function runOrgSync(
   assertSnapshotViable(snapshot, existing.filter((n) => n.status === 1).length)
 
   const plan = planSync(snapshot, existing, existingMembers, new Set(opts.casdoorNames))
-  if (!opts.dryRun) await applySnapshot(pool, tenantId, snapshot)
+  if (!opts.dryRun) await applySnapshot(pool, tenantId, snapshot, opts.source)
   return { ...plan, dryRun: opts.dryRun }
 }

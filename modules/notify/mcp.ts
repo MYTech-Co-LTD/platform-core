@@ -8,6 +8,7 @@ import type { ChannelAddressResolver, EventCatalogReader, Identity } from '@plat
 import { validatePayload } from '@platform/sdk'
 import { NOTIFY_TOOLS } from './mcp-tools'
 import { resolveDeliverability } from './domain/deliverability'
+import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
 import { validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
@@ -228,13 +229,9 @@ export async function callTool(
 
     const ch = await getChannel(deps.pool, deps.org, channelId)
     if (!ch || !ch.enabled) return err('channel_not_found')
-    const resolved = await deps.addresses?.resolve({
-      org: deps.org, provider: ch.provider, casdoorName: deps.userId,
+    const address = await resolveDeliveryAddress(deps.addresses?.resolve, ch, {
+      org: deps.org, casdoorName: deps.userId,
     })
-    const address = resolved
-      ?? (ch.provider === 'wecom_chat' && ch.config.address_fallback === 'casdoor_name'
-        ? deps.userId
-        : null)
     if (!address && ch.provider !== 'in_app') return err('missing_address')
 
     // 收件人强制 = 调用者本人；args 里即使带 recipient 也不读
