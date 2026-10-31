@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.222.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.222.0...v0.222.1) - 2026-10-31
+- 【修复】data: 量级审计骤降判据两档化（#1198） ([#1203](https://github.com/MYTech-Co-LTD/platform-core/pull/1203), [9f401a2](https://github.com/MYTech-Co-LTD/platform-core/commit/9f401a23a7dc2bec7dc00c6bc3b0ed5a620b469b))
+
+
 ## [0.222.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.221.0...v0.222.0) - 2026-10-31
 - 【新增】platform: 集成健康 Phase 2a——探针编排 + registry + 触发通路 (#1201) ([#1202](https://github.com/MYTech-Co-LTD/platform-core/pull/1202), [2ac32b5](https://github.com/MYTech-Co-LTD/platform-core/commit/2ac32b5d81a557c3e1265ba8dd1367d2d1fb8f8d))
 
