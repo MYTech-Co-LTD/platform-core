@@ -182,20 +182,20 @@ union all
 -- 只自检 `landed` 为空是不够的：`landed` 非空、而 `today`/`history` 为空时（冷启动、或目标日
 -- 整天没落），主查询恒不出行 = 「通过」，而那个通过**什么都没比过**。三种空都要显式出行。
 select
-    null, null, null, null, null, null,
+    null, null, null, null, null, null, null,
     '湖里一行都没有：空集上「通过」是空转绿（不是对上了）'
 where not exists (select 1 from landed)
 
 union all
 
 select
-    null, null, null, null, null, null,
+    null, null, null, null, null, null, null,
     '目标营业日一行都没有（today 为空）：没有任何小时进入判据——空转绿（不是对上了）'
 where not exists (select 1 from today)
 
 union all
 
 select
-    null, null, null, null, null, null,
+    null, null, null, null, null, null, null,
     '没有任何历史可作基线（history 为空）：判据从未跑过——空转绿（不是对上了）'
 where not exists (select 1 from history)
