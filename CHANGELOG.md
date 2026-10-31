@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.222.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.222.1...v0.222.2) - 2026-10-31
+- 【修复】platform: 集成探针 registry 路径少一层 ../（生产 ENOENT 空转）(#1205) ([#1206](https://github.com/MYTech-Co-LTD/platform-core/pull/1206), [7388693](https://github.com/MYTech-Co-LTD/platform-core/commit/73886932b9095a233b751ee9971e241ff9798d41))
+
+
 ## [0.222.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.222.0...v0.222.1) - 2026-10-31
 - 【修复】data: 量级审计骤降判据两档化（#1198） ([#1203](https://github.com/MYTech-Co-LTD/platform-core/pull/1203), [9f401a2](https://github.com/MYTech-Co-LTD/platform-core/commit/9f401a23a7dc2bec7dc00c6bc3b0ed5a620b469b))
 
