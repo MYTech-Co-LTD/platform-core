@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { Pool } from 'pg'
 import { applyMigrations } from '../test-util'
-import { probeDirectChannels, MIN_PROBE_INTERVAL_SECONDS } from './channel-probe'
+import { probeDirectChannels, MIN_PROBE_INTERVAL_SECONDS, SAMPLE_LIMIT } from './channel-probe'
 import { upsertCredential } from './credential-store'
 import { __resetTokenCache } from './im/wecom-direct'
 
@@ -19,7 +19,7 @@ const KEK = 'e'.repeat(64)
 const env = { NOTIFY_CRED_KEK: KEK }
 
 /** 假企微网关：errcode 可切。 */
-function fakeFetch(state: { fail: boolean; calls: number }): typeof fetch {
+function fakeFetch(state: { fail: boolean; calls: number; badUsers?: string[] }): typeof fetch {
   return (async (input: string | URL | Request) => {
     state.calls += 1
     const u = String(input)
@@ -28,6 +28,13 @@ function fakeFetch(state: { fail: boolean; calls: number }): typeof fetch {
         return new Response(JSON.stringify({ errcode: 40013, errmsg: 'invalid corpid' }), { status: 200 })
       }
       return new Response(JSON.stringify({ errcode: 0, access_token: 'tok-1', expires_in: 7200 }), { status: 200 })
+    }
+    if (u.includes('/cgi-bin/user/get')) {
+      const uid = new URL(u).searchParams.get('userid') ?? ''
+      if ((state.badUsers ?? []).includes(uid)) {
+        return new Response(JSON.stringify({ errcode: 60111, errmsg: 'user not found' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ errcode: 0, userid: uid }), { status: 200 })
     }
     return new Response(JSON.stringify({ errcode: 0 }), { status: 200 })
   }) as unknown as typeof fetch
@@ -125,6 +132,44 @@ describePg('channel-probe', () => {
     expect(state.calls).toBe(first)
     // 间隔常量是 300s（与 spec「每 5 分钟一次 gettoken」一致）
     expect(MIN_PROBE_INTERVAL_SECONDS).toBe(300)
+  })
+
+  it('★ 个人级抽样：成功/失败分别落 reachable / unreachable，**不改** last_ok_at 语义', async () => {
+    await addChannel({ transport: 'direct' })
+    await upsertCredential(pool, ORG, 'wecom', { appKey: 'ww-sample', agentId: '9', secret: 's' }, 't', env)
+    let asked = 0
+    const opts = {
+      pool, env,
+      fetchImpl: fakeFetch({ fail: false, calls: 0, badUsers: ['ghost'] }),
+      sampleAddresses: async (_org: string, limit: number) => {
+        asked = limit
+        return ['ok1', 'ghost', 'ok2']
+      },
+    }
+    const s = await probeDirectChannels(opts)
+    expect(s.ok).toEqual([`${ORG}/wecom_chat`])
+    expect(asked).toBe(SAMPLE_LIMIT)
+    const row = await pool.query(
+      'select reachable, unreachable, last_ok_at, last_error from notify.channel_probe where org=$1', [ORG],
+    )
+    expect(row.rows[0]).toMatchObject({ reachable: 2, unreachable: 1, last_error: null })
+    expect(row.rows[0].last_ok_at).not.toBeNull()
+  })
+
+  it('采样器缺省 / 抽不到人 ⇒ 统计列为 null（「不知道」≠「0 可达」）', async () => {
+    await addChannel({ transport: 'direct' })
+    await upsertCredential(pool, ORG, 'wecom', { appKey: 'ww-sample2', agentId: '9', secret: 's' }, 't', env)
+    await probeDirectChannels({ pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }) })
+    const r1 = await pool.query('select reachable, unreachable from notify.channel_probe where org=$1', [ORG])
+    expect(r1.rows[0]).toEqual({ reachable: null, unreachable: null })
+
+    await pool.query("update notify.channel_probe set checked_at = now() - interval '10 minutes' where org=$1", [ORG])
+    __resetTokenCache()
+    await probeDirectChannels({
+      pool, env, fetchImpl: fakeFetch({ fail: false, calls: 0 }), sampleAddresses: async () => [],
+    })
+    const r2 = await pool.query('select reachable, unreachable from notify.channel_probe where org=$1', [ORG])
+    expect(r2.rows[0]).toEqual({ reachable: null, unreachable: null })
   })
 
   it('★ 停用的通道不探', async () => {

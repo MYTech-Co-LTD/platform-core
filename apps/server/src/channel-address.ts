@@ -200,6 +200,27 @@ export function createChannelAddressResolver(deps: {
         extId: r.ext_id, name: r.name, parentExtId: r.parent_ext_id, memberCount: r.members,
       }))
     },
+    /**
+     * 抽 N 个成员的**渠道原生地址**（spec 2026-10-31 §3.4 Phase 2）。
+     *
+     * 只取 `source` 与本渠道匹配、且 `external_id` 非空的行——旧行（source=NULL）与 Casdoor 源
+     * 不知道地址，**不参与抽样**（拿名字去猜会把「不知道」混进「不可达」的统计里）。
+     * `order by random()` 是有意的：抽样要覆盖不同人，而不是永远同一批。
+     */
+    async sampleMemberAddresses(org, limit) {
+      if (limit <= 0) return []
+      const { rows } = await deps.pool.query<{ external_id: string }>(
+        `select m.external_id
+           from platform.org_membership m
+           join platform.tenant t on t.id = m.tenant_id
+          where t.casdoor_org = $1 and m.source = 'wecom'
+            and m.external_id is not null and m.external_id <> ''
+          order by random()
+          limit $2`,
+        [org, Math.min(limit, 50)],
+      )
+      return rows.map((r) => r.external_id)
+    },
   }
 }
 

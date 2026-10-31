@@ -82,6 +82,33 @@ describePg('channel-address', () => {
     await pool.query(`delete from platform.identity_link where org='org-ca-ident'`)
     await pool.query(`delete from platform.tenant where id=$1`, [T])
   })
+
+  // plan 2026-10-31 Phase 2：可达性抽样的取样面——只取「来源匹配且地址非空」的行
+  it('★ sampleMemberAddresses 只抽 source=wecom 且 external_id 非空的成员', async () => {
+    const T = 9413
+    await pool.query(
+      `insert into platform.tenant(id, slug, casdoor_org) values ($1,'ca-sample','org-ca-sample')
+       on conflict (id) do update set casdoor_org = excluded.casdoor_org`,
+      [T],
+    )
+    await pool.query('delete from platform.org_membership where tenant_id=$1', [T])
+    const member = (user: string, source: string | null, ext: string | null) =>
+      pool.query(
+        `insert into platform.org_membership(tenant_id, user_name, ext_id, is_primary, source, external_id)
+         values ($1,$2,'D',true,$3,$4)`, [T, user, source, ext])
+    await member('a', 'wecom', 'wecom-a')
+    await member('b', 'wecom', 'wecom-b')
+    await member('c', 'casdoor', null)
+    await member('d', null, null)
+
+    const r = createChannelAddressResolver({ pool })
+    const got = await r.sampleMemberAddresses!('org-ca-sample', 10)
+    expect(got.sort()).toEqual(['wecom-a', 'wecom-b'])
+    expect(await r.sampleMemberAddresses!('org-ca-sample', 1)).toHaveLength(1)
+
+    await pool.query('delete from platform.org_membership where tenant_id=$1', [T])
+    await pool.query('delete from platform.tenant where id=$1', [T])
+  })
 })
 
 // ── 部门展开（组织架构 Phase C；spec 2026-10-30 §3.5）─────────────────────────────

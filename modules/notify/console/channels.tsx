@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   Button, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Tag, Typography, message,
 } from 'antd'
-import { get, patch, post, type ChannelView, type TemplateView } from './api'
+import { get, patch, post, type AddressIssueView, type ChannelView, type TemplateView } from './api'
 
 export default function ChannelsTab() {
   const [channels, setChannels] = useState<ChannelView[]>([])
@@ -12,6 +12,7 @@ export default function ChannelsTab() {
   const [loading, setLoading] = useState(false)
   const [configFor, setConfigFor] = useState<ChannelView | null>(null)
   const [testFor, setTestFor] = useState<ChannelView | null>(null)
+  const [issues, setIssues] = useState<AddressIssueView[]>([])
   const [configForm] = Form.useForm()
   const [testForm] = Form.useForm()
 
@@ -24,6 +25,12 @@ export default function ChannelsTab() {
       ])
       setChannels(c.channels)
       setTemplates(t.templates.filter((x) => x.status === 'published'))
+      // 「谁收不到」是**辅助读面**：它挂了不该把通道列表也带下水（两段独立，各自的失败各自可见）
+      try {
+        setIssues((await get<{ issues: AddressIssueView[] }>('/channels/address-issues')).issues)
+      } catch {
+        setIssues([])
+      }
     } catch (e) {
       message.error(`加载失败：${String(e)}`)
     } finally {
@@ -144,6 +151,35 @@ export default function ChannelsTab() {
               </Space>
             ),
           },
+        ]}
+      />
+
+      <Typography.Title level={5} style={{ marginTop: 24 }}>谁收不到（近 24 小时永久失败）</Typography.Title>
+      <Typography.Paragraph type="secondary">
+        只统计 `dead`（永久失败）：`unresolved` = 我们没解析出地址（改配置）；
+        `rejected` = 渠道明确拒收（企微 81013/60111 = 收件人不在应用可见范围或已不存在）；
+        `other` 需看原文。可重试的失败不在此列。
+      </Typography.Paragraph>
+      <Table<AddressIssueView>
+        rowKey={(r) => `${r.recipient}-${r.channel}-${r.code}`}
+        dataSource={issues}
+        size="small"
+        pagination={false}
+        locale={{ emptyText: '近 24 小时没有永久失败' }}
+        columns={[
+          { title: '收件人', dataIndex: 'recipient' },
+          { title: '通道', dataIndex: 'channel' },
+          {
+            title: '类型',
+            dataIndex: 'kind',
+            render: (k: AddressIssueView['kind']) => (
+              <Tag color={k === 'unresolved' ? 'orange' : k === 'rejected' ? 'red' : 'default'}>
+                {k === 'unresolved' ? '地址未解析' : k === 'rejected' ? '被渠道拒收' : '其它'}
+              </Tag>
+            ),
+          },
+          { title: '次数', dataIndex: 'count', width: 80 },
+          { title: '错误原文（截断）', dataIndex: 'code' },
         ]}
       />
 

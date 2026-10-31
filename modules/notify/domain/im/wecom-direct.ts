@@ -146,3 +146,29 @@ export async function probeDirect(
     return { ok: false, detail: e instanceof Error ? e.message : String(e) }
   }
 }
+
+/**
+ * 个人级可达性：`user/get` 查一个 userid（幂等、不发消息）。
+ *
+ * 与 `probeDirect` 的分工：那个回答「应用凭据活着吗」，这个回答「**这个人**收得到吗」。
+ * 只有它才看得见「收件人不在应用可见范围」（`60111`/`81013`）——判据永远看不见的那一类失败。
+ */
+export async function probeUser(
+  cred: WecomDirectCred,
+  userId: string,
+  opts: { fetchImpl?: typeof fetch; apiBase?: string; now?: () => number } = {},
+): Promise<{ ok: boolean; detail?: string }> {
+  try {
+    const lease = await accessToken(cred, opts)
+    const f = opts.fetchImpl ?? fetch
+    const base = opts.apiBase ?? DEFAULT_API
+    const res = await f(
+      `${base}/cgi-bin/user/get?access_token=${encodeURIComponent(lease.token)}&userid=${encodeURIComponent(userId)}`,
+    )
+    const body = (await res.json().catch(() => ({}))) as { errcode?: number; errmsg?: string }
+    if (body.errcode === 0) return { ok: true }
+    return { ok: false, detail: `${body.errcode ?? res.status} ${body.errmsg ?? ''}`.trim() }
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.message : String(e) }
+  }
+}

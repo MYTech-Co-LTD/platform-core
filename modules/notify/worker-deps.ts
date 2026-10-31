@@ -157,7 +157,9 @@ export async function runOnceCli(
   // 直连渠道的活性证据（spec 2026-10-31 §3.4）：内部按 ≥300s 限频，每轮调用几乎零成本。
   // 放在心跳之后：探针失败不该让心跳丢（心跳是「worker 活着」的证据，两者互不替代）。
   try {
-    const p = await probeDirectChannels({ pool, env })
+    // 宿主能力注入：抽样需要的成员地址在 platform 表里（模块读不到，B1），由组合根给。
+    const addresses = createChannelAddressResolver({ pool })
+    const p = await probeDirectChannels({ pool, env, sampleAddresses: addresses.sampleMemberAddresses })
     if (p.probed > 0) {
       console.log(JSON.stringify({ ts: new Date().toISOString(), channelProbe: p }))
     }
