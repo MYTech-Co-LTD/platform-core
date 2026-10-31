@@ -140,4 +140,32 @@ describe('runProbes', () => {
     )
     expect(r).toEqual({ probed: 0, staleTransitions: [], stale: [], probeFailed: [], ok: [] })
   })
+
+  it('★ sql 两列 {at,error} 且 error 非空 ⇒ PROBE_FAILED 并带上原因（不是 STALE）', async () => {
+    // 「证据由别的进程写出、它明说这次没探成」：如企微直连换不到 token。
+    // 若把它当 NULL（没动静）判，会变成「沉默很久」——而真相是「凭据死了」，处置完全不同。
+    const pool = {
+      async query(sql: string) {
+        if (/insert into platform\.integration/.test(sql)) return { rows: [] }
+        if (/^\s*select id, org, kind/.test(sql)) {
+          return { rows: [baseRow({ kind: 'token', source: 'sql:select last_ok_at as at, last_error as error from t' })] }
+        }
+        if (/^\s*update platform\.integration/.test(sql)) return { rows: [] }
+        return { rows: [{ at: '2026-10-31T11:00:00Z', error: 'wecom gettoken errcode=40013 invalid corpid' }] }
+      },
+    } as unknown as Pool
+    let lastError: unknown = null
+    const recording = {
+      async query(sql: string, params?: unknown[]) {
+        if (/^\s*update platform\.integration/.test(sql)) lastError = params?.[4]
+        return (pool as unknown as { query: (s: string, p?: unknown[]) => Promise<{ rows: unknown[] }> }).query(sql, params)
+      },
+    } as unknown as Pool
+    const r = await runProbes(
+      { pool: recording, env: {}, fetchImpl: fetch, casdoorGetUser: async () => null, now },
+      [],
+    )
+    expect(r.probeFailed).toEqual(['x'])
+    expect(String(lastError)).toContain('40013')
+  })
 })

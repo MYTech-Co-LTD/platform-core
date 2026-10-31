@@ -16,6 +16,8 @@ import { sendInApp } from '../../providers/in-app'
 import { sendWebhook } from '../../providers/webhook'
 import { sendWecom } from '../../providers/wecom'
 import type { NotifyProvider } from '../providers'
+import { sendDirect } from './wecom-direct'
+import type { WecomDirectCred } from './wecom-direct'
 
 export type ProviderResult =
   | { ok: true }
@@ -45,6 +47,11 @@ export interface SendContext {
   resolveHost?: (host: string) => Promise<string[]>
   /** 测试缝：所有 provider 的 HTTP 走它（缺省 = 全局 fetch） */
   fetchImpl?: typeof fetch
+  /**
+   * 企微直连凭据（已解密）。`transport==='direct'` 时由调用方解析后传入；
+   * 缺省 ⇒ 走共享桥（与改造前逐字一致）。
+   */
+  credential?: WecomDirectCred
 }
 
 export type ImSender = (ctx: SendContext, d: DeliveryLike) => Promise<ProviderResult>
@@ -61,13 +68,22 @@ const SENDERS: Record<NotifyProvider, ImSender> = {
       revision: d.revision,
       rendered: d.rendered as { title: string; body: string; link?: string },
     }),
+  // 企微：**有直连凭据就直连，否则走共享桥**（transport 由通道 config 决定，默认 bridge）。
+  // 直连的意义：凭据只在客户自己的实例里、判据=能取到 token（桥的 /healthz 只能证明桥活着）。
   wecom_chat: (ctx, d) =>
-    sendWecom({
-      bridgeUrl: ctx.secrets.bridge_url,
-      to: d.address,
-      content: (d.rendered.text as string | undefined) ?? '',
-      fetchImpl: ctx.fetchImpl,
-    }),
+    ctx.credential !== undefined
+      ? sendDirect({
+        cred: ctx.credential,
+        to: d.address,
+        content: (d.rendered.text as string | undefined) ?? '',
+        fetchImpl: ctx.fetchImpl,
+      })
+      : sendWecom({
+        bridgeUrl: ctx.secrets.bridge_url,
+        to: d.address,
+        content: (d.rendered.text as string | undefined) ?? '',
+        fetchImpl: ctx.fetchImpl,
+      }),
   webhook: (ctx, d) =>
     sendWebhook({
       url: ctx.secrets.url,

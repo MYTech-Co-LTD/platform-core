@@ -94,9 +94,24 @@ create table if not exists notify.channel_credential (
 
 ### 3.4 判据改造（修假绿）
 
-- registry 里 wecom 那条：`source` 从 `http-healthz:WECOM_BRIDGE_URL__…` 改成 **`token:wecom:<org>`**；
 - 语义：**能换到 access_token 才算活**——同时覆盖「凭据失效 / 被禁用 / 出口 IP 被拒」三种真故障；
 - 桥主机 `/healthz` 从此**不作为**任何租户的活性证据（它只证明桥进程活着）。
+- **实现落点（原稿写的是新 source 形态 `token:wecom:<org>`，落地时改了，理由如下）**：
+  取 token 需要凭据，而凭据在本模块的加密表里；集成探针跑在**宿主 server**，宿主按 B1
+  **不许读 `notify` schema**。若在宿主里实现 `token:` 源，就得把凭据解析与解密的代码
+  复制进 `apps/server`（两处 KEK 语义各走各的 ⇒ 迟早分叉），或者让宿主 import 模块内部
+  （反向依赖，模块协议里没有这条）。故改为**证据由模块产出、宿主只读结论**：
+
+  | 谁 | 做什么 |
+  |---|---|
+  | `modules/notify/domain/channel-probe.ts`（worker 每轮调，≥300s 限频） | 对每条 `config.transport='direct'` 的通道 `gettoken`（幂等、不发消息），写 `notify.channel_probe(org, provider, checked_at, last_ok_at, last_error)` |
+  | `deploy/integration-registry.json` | 一条 `sql:` 判据读该表：`select last_ok_at as at, last_error as error …` |
+
+  `sql:` 源因此新增**两列形态** `{at, error}`：`error` 非空 ⇒ 探针失败（PROBE_FAILED 并点名原因），
+  而不是「沉默」（STALE）。这一形态是通用的（任何「证据由别的进程写出、它自己知道这次没探成」
+  的集成都能用），不是给企微开的特例。先例：`notify-worker-heartbeat` 早已用 `sql:` 读模块表。
+- **假绿的根治点**：判据证明的是**这条凭据能不能用**，不是**承载它的进程在不在**。
+  换 provider 时同理——一个渠道的判据必须问「凭据/端点还能不能完成一次真实的握手」。
 
 ### 3.5 迁移与回滚（企微）
 

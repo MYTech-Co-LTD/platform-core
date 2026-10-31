@@ -17,12 +17,13 @@
       "note": "每天主动取一次用户：admin 会话还能换来吗（密码轮换/账号被禁用会先在这里暴露，而不是等用户登不进来）"
     },
     {
-      "id": "wecom-bridge",
-      "kind": "channel",
-      "source": "http-healthz:WECOM_BRIDGE_URL__SHANHAIYIGUO_ORG",
+      "id": "wecom-direct-shanhaiyiguo-org",
+      "kind": "token",
+      "org": "shanhaiyiguo-org",
+      "source": "sql:select last_ok_at as at, last_error as error from notify.channel_probe where org='shanhaiyiguo-org' and provider='wecom_chat'",
       "slaSeconds": 93600,
       "covers": ["wecom_chat"],
-      "note": "企微推送桥的 /healthz。env 未配时探针会点名缺哪个键——空壳通道正是这样被看见的"
+      "note": "企微直连：notify worker 每 5 分钟用本实例凭据换一次 token（幂等、不发消息）并写证据。取不到 token（secret 被改/应用停用/出口 IP 被拒）⇒ error 非空 ⇒ PROBE_FAILED 点名原因；换得到但长期没用 ⇒ 证据不前进 ⇒ STALE。替换掉旧的 http-healthz 假绿（桥 /healthz 证明的只是桥进程活着，租户没注册也是 200）"
     }
   ],
   "$exemptComment": "豁免必须写理由：门禁要求每个 notify 通道 provider 要么被 registry 的 covers 覆盖、要么在这里显式豁免。没有理由的豁免 = 静默，门禁会拒。",
