@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.225.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.225.0...v0.225.1) - 2026-10-31
+- 【修复】notify: 凭据导入脚本读错租户列（org ≠ casdoor_org） ([#1222](https://github.com/MYTech-Co-LTD/platform-core/pull/1222), [729e73b](https://github.com/MYTech-Co-LTD/platform-core/commit/729e73b8c33f2780fc85fbfb6e697e1726b7010d))
+
+
 ## [0.225.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.224.2...v0.225.0) - 2026-10-31
 - 【新增】notify: 企微直连 P1——凭据加密落库 + token 缓存 + 活性判据 ([#1219](https://github.com/MYTech-Co-LTD/platform-core/pull/1219), [ba177ac](https://github.com/MYTech-Co-LTD/platform-core/commit/ba177ac71d1852cc01f10f2c91fd66b5457ed854))
 
