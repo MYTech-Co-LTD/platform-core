@@ -88,6 +88,9 @@ domains:
   # fct_retail_quantity.sql 的 case-when 条件（生成器基面 where 的派生源，改判别式两边一起改）。
   # 退货侧含 REPAID_RETURN（净销量解释性落地①）——与净额族的 return_finished（state='FINISHED'，
   # 不含 REPAID）刻意不同，别共用（见 fct_retail_quantity 头注「为什么单开一张 mart」）。
+  # 批发明细构件（#1182，2026-10-31）：批发行域 = 审核态。谓词逐字取自 fct_hq_outbound 的
+  # wholesale_dom（`where state_code = 3`）——两处一起改。
+  wholesale_out_audited:  "state_code = 3"
   retail_quantity_sale:   "order_transaction_type = 'SALE_ORDER' and state = 'FINISHED'"
   retail_quantity_return: "order_transaction_type like '%RETURN%' and state in ('FINISHED', 'REPAID')"
 
@@ -197,6 +200,16 @@ measures:
     unit: count
     precision: '20,3'
     domain: retail_quantity_return
+
+  # 批发明细构件（#1182，2026-10-31）：行级原始金额，**不承载口径**——批发金额的聚合口径是单头
+  # total_money（per_order 去冗余）减退货，行级 money 之和**不等于**它（单头金额随行冗余会翻倍）。
+  # 行域由指标侧钉（domain: wholesale_out_audited），组件体只做行级求和（同 line_amount@line 的定位）。
+  wholesale_line_amount@line:
+    expr: 'sum(money)'
+    grain: [line]
+    additivity: flow
+    unit: CNY
+    domain: wholesale_out_audited
 
 metrics:
   - name: 'lemeng:retail:sales'
@@ -1181,6 +1194,39 @@ metrics:
       relation: vw_lemeng_retail_order_line
       columns:
         - { col: order_detail_std_price, grantedBy: data:cost }
+
+  - name: 'lemeng:wholesale:order_line'
+    label: 批发明细行
+    definition: >-
+      乐檬批发销售单的**行级**读面（一行 = 一个批发单商品行）。用途是定位根因：聚合指标答
+      「是多少」，本指标答「哪几行造成的」。行域 = **审核态**（`state_code = 3`，与
+      `fct_hq_outbound` 的 `wholesale_dom` 同源）。维度闭集 = 账套 × 制单日 × 发货方 × 单号 ×
+      明细行号 × 商品。**行数的唯一权威 = query_detail 回包的 rowCountTotal**（不受 limit 影响）。
+      ⚠️ **本指标不承载口径**：批发金额的聚合口径（单头 `total_money` 按单去冗余 − 退货）在
+      `outbound:net_amount`；行级 `money` 之和**不等于**它（单头金额随行冗余，行级 sum 会翻倍）。
+      要「净额」用 `outbound:net_amount`，要「明细构成」用本指标。
+      ⚠️ **退货侧未并入**：`wholesale_return` 至今持续 0 行（2026-10-31 实测 load_log max_bizday 全 NULL、
+      status ok）⇒ 退货金额符号无法实证，按计划不并入；有数据后先探针定符号再另开。
+      ⚠️ 成本/单价列（`cost` / `price`）需 `data:cost` 授权——**未授权时整列缺席**（不是 NULL，也不是没数据）。
+      ⚠️ `bizday` = **制单日**（分区键）；跨期（制单窗 ≠ 审核窗）看 `audit_time` 列。
+    expression: >-
+      sum(case when stg_lemeng_wholesale_out.state_code = 3
+               then stg_lemeng_wholesale_out.money else 0 end)
+    grain: [system_book, bizday, branch_num, order_no, order_detail_num, item_num]
+    owner: data-platform
+    tier: experimental
+    source: lemeng
+    freshness_sla_days: 2
+    sources:
+      - 's3://<bucket>/lemeng/wholesale_out/system_book=<账套>/bizday=<日期>/all.parquet'
+    compose: 'wholesale_line_amount@line'
+    dimensions: [system_book, bizday, branch_num, order_no, order_detail_num, item_num]
+    # detail.filter 不手写：由 compose 的组件域派生 ⇒ `state_code = 3`
+    detail:
+      relation: vw_lemeng_wholesale_out
+      columns:
+        - { col: cost, grantedBy: data:cost }
+        - { col: price, grantedBy: data:cost }
 
   - name: 'lemeng:loss:branch_amount'
     label: 门店报损金额
