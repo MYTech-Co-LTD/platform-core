@@ -663,6 +663,11 @@ console 触发。写操作落 `notify.audit`；通道密钥只以 env 键名出�
 
 3. 跑 `pnpm exec tsx scripts/check-integrations.mjs` 自检（CI gates 同款）。
 
+> **退役语义**：registry **就是判据的声明集**——从里面删掉一条 = 退役它。探针每轮会把
+> 「表里有、registry 里没有」的行置 `enabled=false`（**不删行**，历史 `last_*` 全留），
+> 所以不要靠 `delete from platform.integration` 手工清（2026-10-31 之前就是这么干的，见 issue #1223）；
+> 也不要指望「从 registry 删掉但表里还探」——那样控制台会留一条永不消失的红。
+
 ### 代码侧落点（加一个渠道 provider）
 
 发送分发在 `modules/notify/domain/im/senders.ts` 的 **provider 表**（`SENDERS`）。新增渠道 =

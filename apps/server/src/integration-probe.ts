@@ -58,6 +58,8 @@ export interface ProbeReport {
   probeFailed: string[]
   /** 判为 OK 的 id */
   ok: string[]
+  /** 本轮因「registry 里已不再声明」而被退役（置 enabled=false）的 id */
+  retired: string[]
 }
 
 /**
@@ -108,13 +110,14 @@ export function probeEverySeconds(slaSeconds: number): number {
 export async function runProbes(deps: ProbeDeps, registry: RegistryEntry[]): Promise<ProbeReport> {
   const now = deps.now()
   await upsertRegistry(deps.pool, registry)
+  const retired = await retireUndeclared(deps.pool, registry)
 
   const { rows } = await deps.pool.query(
     `select id, org, kind, source, sla_seconds, enabled, last_ok_at, last_probe_at, last_error, note,
             last_verdict, stale_notified
        from platform.integration`,
   )
-  const report: ProbeReport = { probed: 0, staleTransitions: [], stale: [], probeFailed: [], ok: [] }
+  const report: ProbeReport = { probed: 0, staleTransitions: [], stale: [], probeFailed: [], ok: [], retired }
 
   for (const r of rows) {
     const row = toRow(r)
@@ -233,6 +236,36 @@ async function upsertRegistry(pool: Pool, registry: RegistryEntry[]): Promise<vo
       [e.id, e.org, e.kind, e.source, e.slaSeconds, e.note ?? null],
     )
   }
+}
+
+/**
+ * 退役「registry 里已不存在的条目」：置 `enabled=false`，**不删行**（issue #1223）。
+ *
+ * 为什么要有这一步：registry 是判据的唯一声明面，删掉一条就是退役它。而 `upsertRegistry`
+ * 只做 upsert ⇒ 删掉的条目会永远留在表里，按最后一条 `source` 一直探下去（换判据时表现为
+ * 控制台多一条永不消失的红，2026-10-31 企微判据改造实测：`wecom-bridge` 就是这么残留的）。
+ *
+ * 三条边界：
+ *   ① **保留历史**：只改 `enabled`，`last_*` 全留着——排障时「它以前红过没有」就靠这些；
+ *   ② **不反向启用**：registry 里重新出现的条目不会被这里置回 true（`upsertRegistry` 不碰
+ *      `enabled`）。要重新启用是显式动作，不做隐式复活；
+ *   ③ **空注册表不清理**：`registry` 为空多半是读文件出错，此时把全表退役等于「一次故障
+ *      把所有监控关掉」——宁可什么也不做。
+ */
+async function retireUndeclared(pool: Pool, registry: RegistryEntry[]): Promise<string[]> {
+  if (registry.length === 0) return []
+  const r = await pool.query(
+    `update platform.integration i
+        set enabled = false, updated_at = now()
+      where i.enabled
+        and not exists (
+          select 1 from unnest($1::text[], $2::text[]) as d(id, org)
+           where d.id = i.id and d.org = i.org
+        )
+      returning i.id`,
+    [registry.map((e) => e.id), registry.map((e) => e.org)],
+  )
+  return r.rows.map((x) => (x as { id: string }).id)
 }
 
 function toRow(r: Record<string, unknown>): IntegrationRow {
