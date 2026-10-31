@@ -128,6 +128,7 @@ history as (
         l.system_book,
         l.hour,
         percentile_cont(0.5) within group (order by l.rows_landed) as median_rows,
+        min(l.rows_landed)    as min_rows,
         count(*)              as history_days
     from landed l
     join latest u
@@ -144,6 +145,7 @@ select
     h.hour,
     t.rows_landed as today_rows,
     h.median_rows as history_median,
+    h.min_rows    as history_min,
     h.history_days,
     case when t.system_book is null
          then '本小时在目标营业日**整块缺席**（历史常态有量）——最严重的那种「丢了」（§1.4.1）'
@@ -163,7 +165,16 @@ where h.history_days >= 3                                   -- 历史不够不�
   --      换源/换账套后应重新标定。
   and h.median_rows  >= 50
   and (t.system_book is null                                 -- ① 整块缺席
-       or t.rows_landed < h.median_rows * 0.5)               -- ② 骤降（低于中位数一半）
+       -- ② 骤降，**两档**（#1198，2026-10-31 用 --store-failures 的红行重标定）：
+       --   · ②a 繁忙档（中位 ≥ 200，数百~千行的小时）：中位数的一半就是灾——掉一半只可能是
+       --     管线/源断了，正常营业摆不动这么多。
+       --   · ②b 中间档（50 ≤ 中位 < 200）：这个量级的小时**正常相对摆动就有 ±50%**
+       --     （实测 3120 的 23 时：14 天 19↔81、中位 53——10-29 的 24 行被旧判据 ② 擦线打红，
+       --     其实是安静的一晚，不是丢数）。改比 **14 天最小值** 的一半：跌出「历史下包络的一半」
+       --     才算灾；真灾（整小时近零）在两档都红（0 < min×0.5 恒真）。
+       --   繁忙档也顺带受 ②b 覆盖（min ≤ median，不会放松）。
+       or (h.median_rows >= 200 and t.rows_landed < h.median_rows * 0.5)
+       or (t.rows_landed < h.min_rows * 0.5))
 
 union all
 
