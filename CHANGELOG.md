@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.225.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.224.2...v0.225.0) - 2026-10-31
+- 【新增】notify: 企微直连 P1——凭据加密落库 + token 缓存 + 活性判据 ([#1219](https://github.com/MYTech-Co-LTD/platform-core/pull/1219), [ba177ac](https://github.com/MYTech-Co-LTD/platform-core/commit/ba177ac71d1852cc01f10f2c91fd66b5457ed854))
+
+
 ## [0.224.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.224.1...v0.224.2) - 2026-10-31
 - 【优化】notify: 出站发送收敛成 provider 表（只留多渠道架构空间）(#1217) ([#1218](https://github.com/MYTech-Co-LTD/platform-core/pull/1218), [495a24d](https://github.com/MYTech-Co-LTD/platform-core/commit/495a24d3bf415397bf954aa05dfb64f85f1f0be2))
 
