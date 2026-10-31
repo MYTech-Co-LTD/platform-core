@@ -383,7 +383,7 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
       const snapshot = source === 'casdoor'
         ? await snapshotFromCasdoor(t.casdoor_org, cas)
         : await fetchWecomSnapshot({ corpId: t.wecom_corp_id ?? '', secret: t.wecom_secret ?? '' }, deps.wecomFetch)
-      const result = await runOrgSync(deps.pool, t.id, snapshot, { dryRun, casdoorNames })
+      const result = await runOrgSync(deps.pool, t.id, snapshot, { dryRun, casdoorNames, source })
       await writeAudit(deps.pool, t.id, actor, 'admin.org-sync', { source, ...result })
       return c.json(result)
     } catch (e) {

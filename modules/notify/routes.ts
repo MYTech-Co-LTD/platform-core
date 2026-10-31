@@ -9,6 +9,7 @@ import { validatePayload } from '@platform/sdk'
 import { checkWecomHealth, checkWebhookHealth } from './domain/channel'
 import { resolveDeliverability, type DeliverabilityDeps } from './domain/deliverability'
 import { channelIsConfigured } from './domain/channel-config'
+import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
 import { validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
@@ -456,13 +457,9 @@ export function createNotifyRouter(deps: {
     const ch = await getChannel(deps.pool, identity.orgId, body.channel)
     if (!ch || !ch.enabled) return c.json({ error: 'CHANNEL_NOT_FOUND' }, 404)
 
-    const resolved = await deps.addresses?.resolve({
-      org: identity.orgId, provider: ch.provider, casdoorName: identity.userId,
+    const address = await resolveDeliveryAddress(deps.addresses?.resolve, ch, {
+      org: identity.orgId, casdoorName: identity.userId,
     })
-    const address = resolved
-      ?? (ch.provider === 'wecom_chat' && ch.config.address_fallback === 'casdoor_name'
-        ? identity.userId
-        : null)
     if (!address && ch.provider !== 'in_app') return c.json({ error: 'MISSING_ADDRESS' }, 400)
 
     await insertDelivery(deps.pool, {

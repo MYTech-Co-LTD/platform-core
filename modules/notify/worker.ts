@@ -3,6 +3,7 @@
 // 关键语义：事件先入队；worker 匹配 → 渲染冻结 → 到期领取 → provider 发送 → 回执。
 import type { DeptExpansion, NotificationEventDecl } from '@platform/sdk'
 import { matchRules, type NotificationRule } from './domain/rules'
+import { resolveDeliveryAddress } from './domain/resolve-address'
 import {
   aggregateEventStatus, isChannelUsable, resolveDeliverability, type Blocked,
 } from './domain/deliverability'
@@ -192,14 +193,10 @@ export async function runOnce(deps: WorkerDeps): Promise<WorkerStats> {
             continue
           }
 
-          const resolved = await deps.resolveAddress({
-            org: ev.org, provider: ch.provider, casdoorName: recipient,
+          // 显式解析 → 兼容兜底（唯一实现，见 domain/resolve-address.ts；兜底会打 warn）
+          const address = await resolveDeliveryAddress(deps.resolveAddress, ch, {
+            org: ev.org, casdoorName: recipient,
           })
-          // 只有显式开了 address_fallback 的租户才允许把 Casdoor 名当企微 userid（fail-closed 默认）
-          const address = resolved
-            ?? (ch.provider === 'wecom_chat' && ch.config?.address_fallback === 'casdoor_name'
-              ? recipient
-              : null)
           if (!address && ch.provider !== 'in_app') {
             await deps.insertDelivery({
               ...base, address: '', rendered: out, status: 'dead',

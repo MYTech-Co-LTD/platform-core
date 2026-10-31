@@ -70,8 +70,8 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
       { extId: '57', name: '数字技术部', parentExtId: '49' },
       { extId: '2', name: '总经办', parentExtId: null },
     ])
-    expect(snap.memberships).toContainEqual({ userName: 'duo', extId: '2', isPrimary: true })
-    expect(snap.memberships).toContainEqual({ userName: 'duo', extId: '57', isPrimary: false })
+    expect(snap.memberships).toContainEqual({ userName: 'duo', extId: '2', isPrimary: true, externalId: 'duo' })
+    expect(snap.memberships).toContainEqual({ userName: 'duo', extId: '57', isPrimary: false, externalId: 'duo' })
   })
 
   it('fail-closed 门一：0 部门 ⇒ EMPTY_DEPARTMENTS（变异确认：门真的会被触发）', () => {
@@ -90,7 +90,7 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
   it('runOrgSync dry-run（缺省写路径的对照面）：零写入 + plan 数字准确', async () => {
     await clean()
     const snap = await fetchWecomSnapshot({ corpId: 'ww1', secret: 's' }, fakeWecom(DEPTS, USERS))
-    const r = await runOrgSync(pool, tenantId, snap, { dryRun: true, casdoorNames: CASDOOR_NAMES })
+    const r = await runOrgSync(pool, tenantId, snap, { dryRun: true, casdoorNames: CASDOOR_NAMES, source: 'wecom' })
     expect(r.dryRun).toBe(true)
     expect(r).toMatchObject({ deptCount: 4, userCount: 4, nodesCreated: 4, membersAdded: 5 })
     expect(r.usersNotInCasdoor).toEqual(['ghost'])
@@ -100,7 +100,7 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
   it('apply：树/path/成员落库正确，幂等重跑 diff 全零', async () => {
     await clean()
     const snap = await fetchWecomSnapshot({ corpId: 'ww1', secret: 's' }, fakeWecom(DEPTS, USERS))
-    const r1 = await runOrgSync(pool, tenantId, snap, { dryRun: false, casdoorNames: CASDOOR_NAMES })
+    const r1 = await runOrgSync(pool, tenantId, snap, { dryRun: false, casdoorNames: CASDOOR_NAMES, source: 'wecom' })
     expect(r1.nodesCreated).toBe(4)
     // path 物化：子树入口（D-O3 的实现基础）
     const nodes = await listNodes(pool, tenantId)
@@ -116,8 +116,15 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
     const tree = orgTreeOf('acme', nodes, counts)
     const g49 = tree.find((n) => n.name === '49')
     expect(g49?.children.map((n) => n.name)).toEqual(['57'])
+    // spec 2026-10-31 §3.2：来源与渠道原生地址必须落库（解析的第一优先来源）
+    const ident = await pool.query<{ source: string; external_id: string }>(
+      "select source, external_id from platform.org_membership where tenant_id = $1 and user_name = 'yangwei'",
+      [tenantId],
+    )
+    expect(ident.rows[0]).toEqual({ source: 'wecom', external_id: 'yangwei' })
+
     // 幂等：同快照重跑 ⇒ 除计数外 diff 全零
-    const r2 = await runOrgSync(pool, tenantId, snap, { dryRun: false, casdoorNames: CASDOOR_NAMES })
+    const r2 = await runOrgSync(pool, tenantId, snap, { dryRun: false, casdoorNames: CASDOOR_NAMES, source: 'wecom' })
     expect(r2).toMatchObject({
       nodesCreated: 0, nodesRenamed: 0, nodesReparented: 0, nodesDisabled: 0,
       membersAdded: 0, membersRemoved: 0,
@@ -127,11 +134,11 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
   it('软删纪律：部门从快照消失 ⇒ status=0（不物理删），其成员退出计数/正查', async () => {
     await clean()
     const snap = await fetchWecomSnapshot({ corpId: 'ww1', secret: 's' }, fakeWecom(DEPTS, USERS))
-    await runOrgSync(pool, tenantId, snap, { dryRun: false, casdoorNames: CASDOOR_NAMES })
+    await runOrgSync(pool, tenantId, snap, { dryRun: false, casdoorNames: CASDOOR_NAMES, source: 'wecom' })
     // 新快照：数字技术部(57)整个消失，但部门数 3 ≥ 4×0.5，不触断崖门
     const snap2 = await fetchWecomSnapshot({ corpId: 'ww1', secret: 's' },
       fakeWecom(DEPTS.filter((d) => d.id !== 57), USERS.map((u) => ({ ...u, department: u.department.filter((x) => x !== 57) }))))
-    const r = await runOrgSync(pool, tenantId, snap2, { dryRun: false, casdoorNames: CASDOOR_NAMES })
+    const r = await runOrgSync(pool, tenantId, snap2, { dryRun: false, casdoorNames: CASDOOR_NAMES, source: 'wecom' })
     expect(r.nodesDisabled).toBe(1)
     expect(r.membersRemoved).toBe(3) // yangwei + duo + ghost 在 57 的行
     const nodes = await listNodes(pool, tenantId)
@@ -139,7 +146,7 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
     expect(await membersOf(pool, tenantId, '57')).toEqual([])      // 正查排除
     expect((await memberCounts(pool, tenantId)).get('57')).toBeUndefined()
     // 复活：57 回到快照 ⇒ reactivated（不是新建）
-    const r3 = await runOrgSync(pool, tenantId, snap, { dryRun: false, casdoorNames: CASDOOR_NAMES })
+    const r3 = await runOrgSync(pool, tenantId, snap, { dryRun: false, casdoorNames: CASDOOR_NAMES, source: 'wecom' })
     expect(r3.nodesReactivated).toBe(1)
     expect(r3.nodesCreated).toBe(0)
   })
@@ -163,10 +170,10 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
       { extId: '57', name: '数字技术部', parentExtId: '49' },
       { extId: '2', name: '总经办', parentExtId: null },
     ]))
-    expect(snap.memberships).toContainEqual({ userName: 'legacy', extId: '2', isPrimary: false })
+    expect(snap.memberships).toContainEqual({ userName: 'legacy', extId: '2', isPrimary: false, externalId: null })
     // 种子可 apply（基线路径与企微路径共用同一 apply）
     await clean()
-    const r = await runOrgSync(pool, tenantId, snap, { dryRun: false, casdoorNames: new Set(['yangwei', 'ZhangDuo', 'legacy']) })
+    const r = await runOrgSync(pool, tenantId, snap, { dryRun: false, casdoorNames: new Set(['yangwei', 'ZhangDuo', 'legacy']), source: 'casdoor' })
     expect(r.nodesCreated).toBe(3)
   })
 
@@ -179,7 +186,7 @@ d('org-sync（企微组织 → 平台 org 表）', () => {
       ],
       memberships: [],
     }
-    await applySnapshot(pool, tenantId, snap)
+    await applySnapshot(pool, tenantId, snap, 'wecom')
     const nodes = await listNodes(pool, tenantId)
     const orphan = nodes.find((n) => n.extId === '99')
     expect(orphan?.path).toBe('99') // 环/孤儿守卫：path=extId，不递归炸栈
