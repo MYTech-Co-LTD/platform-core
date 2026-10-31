@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.224.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.224.0...v0.224.1) - 2026-10-31
+- 【修复】platform: 补 Phase 2 元级看门狗 + 协议文档「接入必带判据」 (#1213) ([#1214](https://github.com/MYTech-Co-LTD/platform-core/pull/1214), [8d8b2b6](https://github.com/MYTech-Co-LTD/platform-core/commit/8d8b2b61dbd39b582b02116c6a506140a5e162b5))
+
+
 ## [0.224.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.223.1...v0.224.0) - 2026-10-31
 - 【新增】platform: 集成健康 Phase 3——registry 硬门禁（声明即判据） (#1211) ([#1212](https://github.com/MYTech-Co-LTD/platform-core/pull/1212), [62ff61a](https://github.com/MYTech-Co-LTD/platform-core/commit/62ff61ac552613b7c9838cb6f085a31a44994774))
 
