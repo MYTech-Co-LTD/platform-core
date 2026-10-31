@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.221.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.220.0...v0.221.0) - 2026-10-31
+- 【新增】data: 批发明细下钻——直读湖视图 + 指标三键（#1182） ([#1200](https://github.com/MYTech-Co-LTD/platform-core/pull/1200), [a33150d](https://github.com/MYTech-Co-LTD/platform-core/commit/a33150d15b29cfa71f8bb81aa4003e1a1a31204b))
+
+
 ## [0.220.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.219.3...v0.220.0) - 2026-10-31
 - 【新增】platform: 集成健康 Phase 1——登记表 + 判据纯函数 + 读面 + 控制台一屏 (#1194) ([#1197](https://github.com/MYTech-Co-LTD/platform-core/pull/1197), [112ad13](https://github.com/MYTech-Co-LTD/platform-core/commit/112ad1382c49f96900b133af7982c09ef836c5ca))
 
