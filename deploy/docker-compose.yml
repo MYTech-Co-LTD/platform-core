@@ -70,6 +70,11 @@ services:
       # 不是 env_file 指的 ../.env（同 openclaw 的 OPENCLAW_GATEWAY_TOKEN 一类的坑）⇒
       # 写了反而可能用空值覆盖掉真值。它们由根 .env / openship 服务行 env 注入。
       DATA_SANDBOX_DIR: /run/duckle-sandbox
+      # 集成健康探针（spec 2026-10-31 §2.3）：代码里缺省 0=关（fail-closed），生产在这里显式开。
+      # 60s 一跳，每轮按各集成的 SLA 派生间隔决定谁真去探（心跳类 75s，凭据/通道类 1h）。
+      # 放 server 进程、**不与 notify-worker 同容器**——worker 自己是被监控对象，
+      # 探针跟它同生共死就发不出「worker 死了」这条。
+      INTEGRATION_PROBE_INTERVAL_MS: '60000'
     depends_on:
       postgres:
         # service_healthy 而非 service_started：迁移在启动期跑，PG 未就绪即失败

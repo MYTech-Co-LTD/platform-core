@@ -17,6 +17,9 @@ import type { PermissionSpec } from '../admin-permissions'
 import type { TenantEnv, TenantRow } from '../tenant'
 import type { CasdoorFactory, SessionEnv } from '../session-middleware'
 import { listIntegrationViews } from '../integration-health'
+import { parseRegistry, runProbes } from '../integration-probe'
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { probeStorage, type ProbeResult } from '../storage-probe'
 import { replaceTenantSources, SOURCES_SELECT_SQL } from '../tenant-source'
 import {
@@ -296,6 +299,23 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
     const stale = rows.filter((r) => r.health.verdict === 'STALE').length
     const probeFailed = rows.filter((r) => r.health.verdict === 'PROBE_FAILED').length
     return c.json({ integrations: rows, summary: { total: rows.length, stale, probeFailed } })
+  })
+
+  /**
+   * 手动跑一轮集成探针（Phase 2；spec §2.3）。**管理员可触发**，便于排障与变异验证。
+   * 常驻调度在 `app.ts`（每 60s 一跳，按各自的 SLA 派生间隔决定谁真去探）。
+   */
+  app.post('/integrations/probe', async (c) => {
+    const registry = parseRegistry(JSON.parse(await readFile(
+      fileURLToPath(new URL('../../../deploy/integration-registry.json', import.meta.url)), 'utf8')))
+    const report = await runProbes({
+      pool: deps.pool,
+      env: process.env,
+      fetchImpl: fetch,
+      casdoorGetUser: async (name) => deps.casdoor(c.get('tenant').casdoor_org).getUser(name),
+      now: () => new Date(),
+    }, registry)
+    return c.json({ ...report })
   })
 
   // ---- 组织架构（2026-10-30 spec §3.3：数据源切到平台 org 表；org 表为空（未同步过）时
