@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.229.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.229.0...v0.229.1) - 2026-10-31
+- 【修复】notify: 直连通道的凭据列不再显示桥的 env 键名 ([#1233](https://github.com/MYTech-Co-LTD/platform-core/pull/1233), [02f2775](https://github.com/MYTech-Co-LTD/platform-core/commit/02f2775604557a219c11c22fe531f9181d2388be))
+
+
 ## [0.229.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.228.0...v0.229.0) - 2026-10-31
 - 【新增】notify: 收件人可达性可观测——抽样 + 聚合 + 控制台清单 ([#1231](https://github.com/MYTech-Co-LTD/platform-core/pull/1231), [0362487](https://github.com/MYTech-Co-LTD/platform-core/commit/03624871a929ea298e5860c86ffb48e551c1caf7))
 
