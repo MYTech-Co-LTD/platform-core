@@ -68,7 +68,13 @@ hit as (
 ),
 -- 受控覆盖（人工指定 / 别名）
 ovr as (
-    select source_system_book, client_fid, home_system_book, home_branch_num, region_id
+    -- ⚠️ 显式 cast：seed 是 **0 行 CSV**，dbt 的类型推断对它不可靠（实测把 system_book 推断成 integer
+    -- ⇒ join 时 `operator does not exist: text = integer`）。列类型必须由这里钉死，不吃推断。
+    select source_system_book::varchar as source_system_book,
+           client_fid::varchar         as client_fid,
+           home_system_book::varchar   as home_system_book,
+           home_branch_num::bigint     as home_branch_num,
+           region_id::int              as region_id
     from {{ ref('x01_client_region_overrides') }}
 ),
 -- 覆盖只给了门店、没给 region_id 时，从该门店补
