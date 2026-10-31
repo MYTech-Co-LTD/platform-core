@@ -819,7 +819,7 @@
             "bizday": "not_null",
             "hour": "not_null",
             "batch_id": "not_null",
-            "sale_money": "in_range:-1000000,1000000"
+            "sale_money": "in_range:-10000000,10000000"
           }
         }
       }

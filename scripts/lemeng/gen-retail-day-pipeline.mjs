@@ -252,7 +252,22 @@ edges.push({
   data: { connectionType: 'trigger' },
 })
 
-writeFileSync(out, JSON.stringify({ name: basename(out, '.json'), nodes, edges }, null, 1) + '\n')
+// `_note` 由生成器自带（原来手写在 day.json 里，重新生成时被冲掉过一次）：
+// 记录 96 个 src.rest 关闭 checkpoint 的来龙去脉（#975），改这里 = 同时改 day 与 hp 两个变体。
+const NOTE = [
+  'lemeng.retail_order_line 的 **L1 子管线（day 形：日批 / 手工回填用）**。',
+  '',
+  '①【checkpoint 已关闭（2026-10-21，#975）】96 个 src.rest 由 checkpoint=true 改为 false。理由两条：',
+  '   ① 成本无界：复用键 = 配置指纹(url/method/body/responsePath) + 父行，body 含日期 ⇒ 条目只增不命中，',
+  '      引擎无保留期 ⇒ 两账套 state/ 累积到 11G，已致数据机 96% 满、一次部署构建 ENOSPC；',
+  '   ② 该缓存换不到东西：本管线 96 个源节点 urlTemplate 全空、paginationType=none ⇒ 无扇出可分页可续，',
+  '      组件说明里的收益（「扇出死在第 90 万行不用重跑前 90 万」）在此不成立。',
+  '   同族对照：tick 变体本就是 false，与 window 形的 12 个源节点**除 checkpoint 外逐字段相同**（差异 0）。',
+  '   代价：重跑重抓（这正是 #528 想要的语义——裸回填不再重放冻结快照）。依据 issue #975。',
+  '',
+  '②【保留不动】96 页节点 + guard + merge + flatten + qa.contract gate + sink 分区写进 key（不开 partitionBy）。',
+]
+writeFileSync(out, JSON.stringify({ name: basename(out, '.json'), nodes, edges, _note: NOTE }, null, 1) + '\n')
 console.log(`gen-retail-day-pipeline: 写入 ${out}（${pages} 页 + ${nodes.length - pages} 个结构节点，${edges.length} 条边）`)
 
 // ── hp 变体的回填父管线：唯一差异 = foreach 的 pipelineRef 指向 hp 子管线 ─────────────
