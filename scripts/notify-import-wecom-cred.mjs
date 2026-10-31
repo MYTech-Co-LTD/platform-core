@@ -63,10 +63,12 @@ async function main() {
   const pool = new Pool({ connectionString: url })
   try {
     const { rows } = await pool.query(
-      `select org, wecom_corp_id, wecom_agent_id, wecom_secret
+      // ⚠️ `platform.tenant` 的租户键叫 `casdoor_org`（不是 `org`；`org` 在 notify 自己的表里）。
+      // 2026-10-31 生产实测：写成 `org` ⇒ `column "org" does not exist`（脚本根本跑不起来）。
+      `select casdoor_org as org, wecom_corp_id, wecom_agent_id, wecom_secret
          from platform.tenant
-        where ($1::text is null or org = $1)
-        order by org`,
+        where ($1::text is null or casdoor_org = $1)
+        order by casdoor_org`,
       [args.org],
     )
     if (rows.length === 0) {
