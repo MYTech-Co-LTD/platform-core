@@ -1,6 +1,6 @@
 {
-  "$comment": "集成登记表（spec 2026-10-31-integration-health-design.md §2.5）。新增出站集成必须在这里登记判据；Phase 3 起缺登记 ⇒ gates 红。source 语法见 apps/server/src/integration-probe.ts 头注。",
-  "version": 1,
+  "$comment": "集成登记表（spec 2026-10-31-integration-health-design.md §2.5）。新增出站集成必须在这里登记判据；缺登记 ⇒ scripts/check-integrations.mjs 判红（gates）。source 语法见 apps/server/src/integration-probe.ts 头注。covers = 这个条目为哪些 notify 通道 provider 提供活性判据。",
+  "version": 2,
   "integrations": [
     {
       "id": "notify-worker-heartbeat",
@@ -21,7 +21,19 @@
       "kind": "channel",
       "source": "http-healthz:WECOM_BRIDGE_URL__SHANHAIYIGUO_ORG",
       "slaSeconds": 93600,
+      "covers": ["wecom_chat"],
       "note": "企微推送桥的 /healthz。env 未配时探针会点名缺哪个键——空壳通道正是这样被看见的"
+    }
+  ],
+  "$exemptComment": "豁免必须写理由：门禁要求每个 notify 通道 provider 要么被 registry 的 covers 覆盖、要么在这里显式豁免。没有理由的豁免 = 静默，门禁会拒。",
+  "exempt": [
+    {
+      "provider": "in_app",
+      "reason": "纯库内写入（notify.inbox），没有外部依赖可探；它坏了等于 DB 坏了，属基建层（openship 容器/DB 探活）"
+    },
+    {
+      "provider": "webhook",
+      "reason": "端点按通道实例逐个配置（NOTIFY_WEBHOOK_URL__<ORG>__<CHANNEL_ID>），没有全局端点可探；当前无租户配置该通道。一旦启用须补一条 http-healthz 或 sql 判据（本条即缺口登记）"
     }
   ]
 }
