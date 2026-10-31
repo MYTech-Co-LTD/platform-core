@@ -149,7 +149,31 @@ export interface AdminSubscription {
   endTime: string | null
 }
 
+/** 集成健康（spec 2026-10-31 §2.3）：判定由服务端纯函数算好，前端只渲染，不重写判据。 */
+export interface AdminIntegration {
+  id: string
+  org: string
+  kind: 'callback' | 'token' | 'channel'
+  source: string
+  slaSeconds: number
+  enabled: boolean
+  lastOkAt: string | null
+  lastProbeAt: string | null
+  lastError: string | null
+  note: string | null
+  health: {
+    verdict: 'OK' | 'STALE' | 'PROBE_FAILED' | 'DISABLED'
+    ageSeconds: number | null
+    reason: string
+  }
+}
+
 export const listAdminUsers = () => request<{ users: AdminUser[] }>('/api/platform/admin/users')
+export const listAdminIntegrations = () =>
+  request<{
+    integrations: AdminIntegration[]
+    summary: { total: number; stale: number; probeFailed: number }
+  }>('/api/platform/admin/integrations')
 export const listAdminPermissions = () =>
   request<{ permissions: AdminPermission[] }>('/api/platform/admin/permissions')
 export const listAdminSubscriptions = () =>

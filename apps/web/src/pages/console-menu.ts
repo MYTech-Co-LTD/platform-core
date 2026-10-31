@@ -60,6 +60,9 @@ function adminGroup(iconMap: Record<string, ReactNode>, admin: AdminMenuInput): 
     { path: '/console/admin/permissions', name: '角色与授权' },
     { path: '/console/admin/subscriptions', name: '我的订阅' },
     { path: '/console/admin/keys', name: 'Key 管理' },
+    // 集成健康（spec 2026-10-31）：把「出站集成还有没有动静」变成一屏可见。
+    // 排在订阅之后、模块 admin 页之前——它是平台内置页，不走 registry。
+    { path: '/console/admin/integrations', name: '集成健康' },
     // 存储配置（M3c）：能力联动——启用的模块里至少一个声明 storage 才显示；
     // **不设图标** —— CONSOLE_ICONS 要求图标名先登记才渲染，不设就不欠这笔账
     ...(admin.storageVisible ? [{ path: '/console/admin/storage', name: '存储配置' }] : []),

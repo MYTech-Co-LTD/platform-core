@@ -16,6 +16,7 @@ import type { TenantStorageConfig } from '@platform/sdk'
 import type { PermissionSpec } from '../admin-permissions'
 import type { TenantEnv, TenantRow } from '../tenant'
 import type { CasdoorFactory, SessionEnv } from '../session-middleware'
+import { listIntegrationViews } from '../integration-health'
 import { probeStorage, type ProbeResult } from '../storage-probe'
 import { replaceTenantSources, SOURCES_SELECT_SQL } from '../tenant-source'
 import {
@@ -284,6 +285,17 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
     await deps.casdoor(t.casdoor_org).revokePermissionFromRole(code, role)
     await writeAudit(deps.pool, t.id, c.get('identity').userId, 'admin.role.revoke', { code, role })
     return c.json({ ok: true })
+  })
+
+  // ---- 集成健康（spec 2026-10-31-integration-health-design.md §2.3）----------------
+  // 只读：**让状态先可见**（Phase 1），探针 job 与告警在 Phase 2。
+  // 判定在 `integration-health.ts` 的纯函数里，本端点只做投影——控制台不重写判据。
+  app.get('/integrations', async (c) => {
+    const rows = await listIntegrationViews(deps.pool)
+    // 带出计数便于控制台一眼看到「有几个红的」，省掉前端自己 reduce
+    const stale = rows.filter((r) => r.health.verdict === 'STALE').length
+    const probeFailed = rows.filter((r) => r.health.verdict === 'PROBE_FAILED').length
+    return c.json({ integrations: rows, summary: { total: rows.length, stale, probeFailed } })
   })
 
   // ---- 组织架构（2026-10-30 spec §3.3：数据源切到平台 org 表；org 表为空（未同步过）时
