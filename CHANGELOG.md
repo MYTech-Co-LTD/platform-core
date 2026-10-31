@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.229.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.228.0...v0.229.0) - 2026-10-31
+- 【新增】notify: 收件人可达性可观测——抽样 + 聚合 + 控制台清单 ([#1231](https://github.com/MYTech-Co-LTD/platform-core/pull/1231), [0362487](https://github.com/MYTech-Co-LTD/platform-core/commit/03624871a929ea298e5860c86ffb48e551c1caf7))
+
+
 ## [0.228.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.227.0...v0.228.0) - 2026-10-31
 - 【新增】platform: 组织同步允许用独立的企微应用（WECOM_SYNC_SECRET__<ORG>） ([#1229](https://github.com/MYTech-Co-LTD/platform-core/pull/1229), [fcda760](https://github.com/MYTech-Co-LTD/platform-core/commit/fcda760aabb70476f23659e339651cbc19310f12))
 
