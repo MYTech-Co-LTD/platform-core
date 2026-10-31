@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.223.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.222.4...v0.223.0) - 2026-10-31
+- 【新增】platform: 集成健康 Phase 2b——STALE 事件 + 装填位 + worker 消费 (#1208) ([#1209](https://github.com/MYTech-Co-LTD/platform-core/pull/1209), [e051b04](https://github.com/MYTech-Co-LTD/platform-core/commit/e051b04065132512c4bfc9609f005c8ff70163af))
+
+
 ## [0.222.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.222.3...v0.222.4) - 2026-10-31
 - 【修复】platform: app.ts 的 registry 内联路径替换静默失败（#1205 补第二刀） ([#1207](https://github.com/MYTech-Co-LTD/platform-core/pull/1207), [337afc8](https://github.com/MYTech-Co-LTD/platform-core/commit/337afc8e7bee438c521b9b52dab0427070d76027))
 
