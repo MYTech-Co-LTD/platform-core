@@ -47,7 +47,9 @@ export interface ProbeDeps {
 export interface ProbeReport {
   /** 本轮实际探测的集成数（未到探测间隔的不算） */
   probed: number
-  /** 探测后判为 STALE 的 id（Phase 2b 的告警就消费这个集合） */
+  /** 本轮**进入** STALE 的 id（转好后再变红也算）；告警消费方据此只报一次 */
+  staleTransitions: string[]
+  /** 探测后判为 STALE 的 id（含持续 STALE——告警只在 staleTransitions 里） */
   stale: string[]
   /** 探测本身失败的 id ⇒ PROBE_FAILED */
   probeFailed: string[]
@@ -105,10 +107,11 @@ export async function runProbes(deps: ProbeDeps, registry: RegistryEntry[]): Pro
   await upsertRegistry(deps.pool, registry)
 
   const { rows } = await deps.pool.query(
-    `select id, org, kind, source, sla_seconds, enabled, last_ok_at, last_probe_at, last_error, note
+    `select id, org, kind, source, sla_seconds, enabled, last_ok_at, last_probe_at, last_error, note,
+            last_verdict, stale_notified
        from platform.integration`,
   )
-  const report: ProbeReport = { probed: 0, stale: [], probeFailed: [], ok: [] }
+  const report: ProbeReport = { probed: 0, staleTransitions: [], stale: [], probeFailed: [], ok: [] }
 
   for (const r of rows) {
     const row = toRow(r)
@@ -120,17 +123,6 @@ export async function runProbes(deps: ProbeDeps, registry: RegistryEntry[]): Pro
 
     const probe = await takeEvidence(deps, row.source, row.org, now)
     report.probed += 1
-    await deps.pool.query(
-      `update platform.integration
-          set last_probe_at = $3,
-              last_ok_at = coalesce($4, last_ok_at),
-              last_error = $5,
-              updated_at = now()
-        where id = $1 and org = $2`,
-      [row.id, row.org, now.toISOString(),
-        probe.ok && probe.evidenceAt !== undefined ? probe.evidenceAt : null,
-        probe.ok ? null : (probe.error ?? 'probe failed')],
-    )
 
     // 判定用「刚写回的新证据」——不能拿旧行判（那会慢一整个周期）
     const judged: IntegrationRow = {
@@ -140,9 +132,34 @@ export async function runProbes(deps: ProbeDeps, registry: RegistryEntry[]): Pro
     }
     const outcome: ProbeOutcome | null = probe.ok ? null : { ok: false, at: now.toISOString(), error: probe.error }
     const h = judgeIntegration(judged, outcome, now)
+
+    // 告警装填（spec §2.4）：**进入 STALE 才装填一次**（上次不是 STALE ⇒ 装），持续 STALE
+    // 不重复装（防预警风暴，桥的 #1198 同款教训）；转好/探不了/停用 ⇒ 解除装填。
+    // 通知本身由 **notify worker** 消费（独立容器：worker 死了标志位还在，重启照发）。
+    const staleArmed = h.verdict === 'STALE' && row.lastVerdict !== 'STALE'
+    await deps.pool.query(
+      `update platform.integration
+          set last_probe_at = $3,
+              last_ok_at = coalesce($4, last_ok_at),
+              last_error = $5,
+              last_verdict = $6,
+              stale_notified = case
+                when $6 = 'STALE' and $7 then false          -- 进入 STALE ⇒ 装填
+                when $6 <> 'STALE' then true                  -- 转好/其它 ⇒ 解除
+                else stale_notified end,
+              updated_at = now()
+        where id = $1 and org = $2`,
+      [row.id, row.org, now.toISOString(),
+        probe.ok && probe.evidenceAt !== undefined ? probe.evidenceAt : null,
+        probe.ok ? null : (probe.error ?? 'probe failed'),
+        h.verdict,
+        staleArmed],
+    )
+
     if (h.verdict === 'STALE') report.stale.push(row.id)
     else if (h.verdict === 'PROBE_FAILED') report.probeFailed.push(row.id)
     else if (h.verdict === 'OK') report.ok.push(row.id)
+    if (staleArmed) report.staleTransitions.push(row.id)
   }
   return report
 }
@@ -220,6 +237,8 @@ function toRow(r: Record<string, unknown>): IntegrationRow {
     lastProbeAt: iso(r.last_probe_at),
     lastError: (r.last_error as string | null) ?? null,
     note: (r.note as string | null) ?? null,
+    lastVerdict: (r.last_verdict as string | null) ?? null,
+    staleNotified: (r.stale_notified as boolean | undefined) ?? true,
   }
 }
 

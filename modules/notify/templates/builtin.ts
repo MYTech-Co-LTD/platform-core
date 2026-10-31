@@ -23,4 +23,19 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
       },
     },
   },
+  {
+    key: 'notify_integration_stale',
+    name: '集成活性超期',
+    eventKey: 'notify.integration.stale',
+    // 企微 markdown 的链接必须闭合（#44 教训）；这里没有外链，保持纯文本
+    contents: {
+      wecom_chat: {
+        text: '【集成超期】{{integrationId}}\n类型：{{integrationKind}}\n依据：{{reason}}',
+      },
+      in_app: {
+        title: '集成活性超期：{{integrationId}}',
+        body: '{{reason}}',
+      },
+    },
+  },
 ]

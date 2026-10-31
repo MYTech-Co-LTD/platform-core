@@ -81,11 +81,62 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
   const once = process.argv.includes('--once')
 
+  /**
+   * 集成健康 STALE → 事件入队（spec 2026-10-31-integration-health-design.md §2.4）。
+   *
+   * 为什么在脚本里而不是模块里：装填位在 `platform.integration`，**模块不许读 platform schema**
+   * （B1）；`scripts/` 没有这条限制（与 `notify-seed-builtin.mjs` 同款）。
+   *
+   * 语义 = **至少一次**：入队成功才落 `stale_notified=true`；worker 恰好死在两步之间，
+   * 下一轮用同一个 event_id 重入队（`notify.event` 主键去重）⇒ 不双发、不丢。
+   */
+  const drainStaleAlerts = async () => {
+    const { rows } = await pool.query(
+      `select id, org, kind, sla_seconds, coalesce(last_error, '') as last_error
+         from platform.integration
+        where stale_notified = false
+        order by id`,
+    )
+    if (rows.length === 0) return 0
+    const { enqueueEvent } = await import('../modules/notify/storage.ts')
+    // 装填位是租户无关的（org 常为空串）：本实例的租户从 platform.tenant 取，
+    // 事件按租户入队（通知模型是租户级的），单租户实例就是一行。
+    const { rows: tenants } = await pool.query('select casdoor_org from platform.tenant order by id')
+    const orgs = tenants.map((t) => t.casdoor_org)
+    let sent = 0
+    for (const r of rows) {
+      // 租户维度：集成行带 org 就只发给它；否则发给本实例全部租户
+      const targets = r.org ? [r.org] : orgs
+      for (const org of targets) {
+        await enqueueEvent(pool, {
+          org,
+          // 确定性 event_id：同一集成同一次「进入 STALE」只入队一次（撞键即去重）
+          eventId: `integration-stale:${r.id}:${r.last_error || 'no-error'}`,
+          eventKey: 'notify.integration.stale',
+          scope: r.id,
+          payload: {
+            integrationId: r.id,
+            integrationKind: r.kind,
+            reason: r.last_error || '超过允许静默时长没有活性证据',
+            slaSeconds: Number(r.sla_seconds),
+          },
+          producer: 'integration-probe',
+        })
+        sent += 1
+      }
+      // 入队成功才落标志位（尤其一次：worker 死在两步之间，下一轮 event_id 去重兜底）
+      await pool.query('update platform.integration set stale_notified = true where id = $1 and org = $2',
+        [r.id, r.org])
+    }
+    return sent
+  }
+
   try {
     do {
       try {
         const s = await runOnceCli(pool, getEventDecl, process.env, resolveScopeHolderNames, deptMembers)
-        console.log(JSON.stringify({ ts: new Date().toISOString(), ...s }))
+        const staleQueued = await drainStaleAlerts()
+        console.log(JSON.stringify({ ts: new Date().toISOString(), ...s, staleQueued }))
       } catch (e) {
         console.error('notify-worker 本轮失败:', e instanceof Error ? e.message : e)
         if (once) process.exitCode = 1

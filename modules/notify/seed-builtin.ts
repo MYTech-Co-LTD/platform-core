@@ -99,6 +99,19 @@ export async function seedBuiltin(
     )
     rules += derived.rowCount ?? 0
 
+    // 集成健康 STALE 的派生规则（spec 2026-10-31 §2.4）：收件人 = 持 tenant:admin 的人；
+    // **只走 in_app**——企微通道本身可能正是坏掉的那一个，用坏通道报坏消息是自欺。
+    // 这也是变异验证的观察面：行会落到 notify.inbox / delivery。
+    const staleRule = await pool.query(
+      `insert into notify.rule
+         (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+       values ($1,$2,true,$3,'*','admins',$4,'{inapp_default}'::text[],'derived','system')
+       on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
+         channels=excluded.channels`,
+      [org, 'derived:notify:notify.integration.stale:*', 'notify.integration.stale', 'notify_integration_stale'],
+    )
+    rules += staleRule.rowCount ?? 0
+
     const names = (env[orgEnvKeyFor('NOTIFY_APPROVERS', org)] ?? '')
       .split(',')
       .map((s) => s.trim())

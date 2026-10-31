@@ -50,6 +50,28 @@ api:
     - { method: POST,   path: /deliveries/retry,        scope: notify:manage }
     # 管理面 MCP（agent）：工具清单见 mcp-tools.ts；无 publish/channel 工具
     - { method: POST,   path: /mcp-manage,              scope: notify:manage }
+# 通知事件声明（spec 2026-10-31-integration-health-design.md §2.4）：
+# **集成健康 STALE** —— 由 notify-worker 从 `platform.integration` 的装填位消费后入队
+# （模块不读 platform schema，B1：装填位由宿主探针写、脚本侧转成事件）。
+# 收件人 = 持 tenant:admin 的人；scope 用集成 id（同一集成反复转红时靠它区分作用域）。
+notifications:
+  events:
+    - key: notify.integration.stale
+      title: 集成活性超期
+      description: 某个出站集成超过允许静默时长没有活性证据（回调没来 / 凭据换不到 / 通道无投递）
+      scope: { key: integrationId, label: 集成 }
+      payload:
+        integrationId: { type: string, required: true, label: 集成标识 }
+        integrationKind: { type: string, required: true, label: 类型 }
+        reason: { type: string, required: true, label: 判定依据 }
+        slaSeconds: { type: number, required: true, label: 允许静默(秒) }
+      recipients:
+        admins: { kind: scope_holders, scope: tenant:admin, label: 租户管理员 }
+      defaults:
+        recipient: admins
+        template: notify_integration_stale
+        channels: [inapp_default]
+
 frontend:
   console:
     - { path: /console/notify, title: 通知, icon: BellOutlined, scope: notify:view, entry: ./console/index.tsx }
