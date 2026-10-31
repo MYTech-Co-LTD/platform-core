@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.219.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.219.2...v0.219.3) - 2026-10-31
+- 【修复】data: 空 seed 列类型显式 cast（#1181） ([#1195](https://github.com/MYTech-Co-LTD/platform-core/pull/1195), [4d5a837](https://github.com/MYTech-Co-LTD/platform-core/commit/4d5a83751d5a11f8dae4452ad57ea92c6b4cfc21))
+
+
 ## [0.219.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.219.1...v0.219.2) - 2026-10-31
 - 【修复】data: 零售 sale_money 契约闸放宽到 ±1000 万，容纳取消单占位值 (#1191) ([#1192](https://github.com/MYTech-Co-LTD/platform-core/pull/1192), [5377281](https://github.com/MYTech-Co-LTD/platform-core/commit/537728180920f043bff271853e932f2505a5d2e3))
 
