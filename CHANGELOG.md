@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.222.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.222.3...v0.222.4) - 2026-10-31
+- 【修复】platform: app.ts 的 registry 内联路径替换静默失败（#1205 补第二刀） ([#1207](https://github.com/MYTech-Co-LTD/platform-core/pull/1207), [337afc8](https://github.com/MYTech-Co-LTD/platform-core/commit/337afc8e7bee438c521b9b52dab0427070d76027))
+
+
 ## [0.222.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.222.2...v0.222.3) - 2026-10-31
 - 【修复】data: 量级审计哨兵分支补齐 8 列（#1198） ([#1204](https://github.com/MYTech-Co-LTD/platform-core/pull/1204), [c4d26be](https://github.com/MYTech-Co-LTD/platform-core/commit/c4d26bec306e7aad7bb81675f209b7dafe7d4cfd))
 
