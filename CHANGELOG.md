@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.219.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.219.1...v0.219.2) - 2026-10-31
+- 【修复】data: 零售 sale_money 契约闸放宽到 ±1000 万，容纳取消单占位值 (#1191) ([#1192](https://github.com/MYTech-Co-LTD/platform-core/pull/1192), [5377281](https://github.com/MYTech-Co-LTD/platform-core/commit/537728180920f043bff271853e932f2505a5d2e3))
+
+
 ## [0.219.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.219.0...v0.219.1) - 2026-10-30
 - 【修复】notify: 未配置通道可见 + 部门选择器合一 + flaky 测试 (#1187, #1184) ([#1188](https://github.com/MYTech-Co-LTD/platform-core/pull/1188), [1351981](https://github.com/MYTech-Co-LTD/platform-core/commit/1351981dcc397bb1d2fef92be40d6cb0ad5eef0b))
 
