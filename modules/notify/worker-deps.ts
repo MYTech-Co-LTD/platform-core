@@ -3,13 +3,14 @@
 import type { Pool } from 'pg'
 import type { ChannelAddressResolver, NotificationEventDecl } from '@platform/sdk'
 import { createChannelAddressResolver } from '../../apps/server/src/channel-address'
+import { channelIsConfigured } from './domain/channel-config'
 import { probeDirectChannels } from './domain/channel-probe'
 import { resolveWecomCredential } from './domain/credential-store'
 import { dispatchSend } from './domain/im/senders'
 import type { WecomDirectCred } from './domain/im/wecom-direct'
 import { rateLimitVerdict } from './domain/rate-limit'
 import * as storage from './storage'
-import { audit, channelConfigured } from './storage'
+import { audit } from './storage'
 import { runOnce, type WorkerDeps, type WorkerStats } from './worker'
 
 /** 事件目录读取器（由 scripts/ 注入；模块不读 platform schema —— B1） */
@@ -59,8 +60,9 @@ export function buildWorkerDeps(
     getPublishedTemplate: (org, key) => storage.getPublishedTemplate(pool, org, key),
     getChannel: async (org, id) => {
       const ch = await storage.getChannel(pool, org, id)
-      // `configured` 由**本进程**的 env 判定（worker 与 server 同一份 env 注入口径）
-      return ch === null ? null : { ...ch, configured: channelConfigured(ch.secret_refs) }
+      // `configured` 由**本进程**的 env 判定（worker 与 server 同一份 env 注入口径）；
+      // 直连通道看凭据、桥通道看 secret_refs（见 domain/channel-config.ts）
+      return ch === null ? null : { ...ch, configured: await channelIsConfigured(pool, org, ch, env) }
     },
     claimDueDeliveries: (n) => storage.claimDueDeliveries(pool, n),
     insertDelivery: (row) => storage.insertDelivery(pool, row),
@@ -98,17 +100,14 @@ export function buildWorkerDeps(
       if (!ch || !ch.enabled) {
         return { ok: false, kind: 'permanent', code: 'channel_missing', summary: 'channel not found/disabled' }
       }
-      const secrets = secretsOf(ch)
-      if (!secrets) {
-        return { ok: false, kind: 'permanent', code: 'secret_missing', summary: 'secret_refs 指向的 env 未配置' }
-      }
       // 企微传输方式由通道 config 决定（spec 2026-10-31 §3.5 迁移开关）：
       //   · `transport: 'direct'` ⇒ 解析本实例自己的凭据（DB 密文优先，env 兜底）；
       //   · 其余（含缺省）⇒ 共享桥，与改造前**逐字一致**。
       // ⚠️ 直连解析失败**不回落桥**：回落会把「配错了直连」伪装成「照常工作」，
       //    正是本设计要消灭的静默。要回桥就把通道配置改回 bridge——那是显式动作。
+      const direct = ch.provider === 'wecom_chat' && ch.config.transport === 'direct'
       let credential: WecomDirectCred | undefined
-      if (ch.provider === 'wecom_chat' && ch.config.transport === 'direct') {
+      if (direct) {
         const r = await resolveWecomCredential(pool, d.org, env)
         if (!r.ok) {
           return {
@@ -119,6 +118,12 @@ export function buildWorkerDeps(
           }
         }
         credential = r.cred
+      }
+      // 直连**不消费** `secret_refs`（那是桥的地址）；要求它存在等于「换成直连还必须留着桥的 env」——
+      // 部署上会变成「先配好桥才允许直连」，正是要退役的那个依赖。只在走桥/其它 provider 时校验。
+      const secrets = direct ? {} : secretsOf(ch)
+      if (!secrets) {
+        return { ok: false, kind: 'permanent', code: 'secret_missing', summary: 'secret_refs 指向的 env 未配置' }
       }
       // 发送分发收敛到 `domain/im/senders.ts` 的 provider 表（spec 2026-10-31 §3.1）。
       return dispatchSend(ch.provider, {

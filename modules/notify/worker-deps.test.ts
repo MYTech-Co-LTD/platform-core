@@ -66,6 +66,38 @@ describePg('buildWorkerDeps', () => {
     expect(await deps.send(row())).toMatchObject({ ok: false, kind: 'permanent', code: 'secret_missing' })
   })
 
+  it('★ wecom 直连：**不要求桥的 env**（退役依赖不该变成新前置）', async () => {
+    await pool.query(
+      `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
+       values ($1,'wecom_default','wecom_chat',true,'{"transport":"direct"}','{"bridge_url":"MISSING_KEY"}','u')`,
+      [ORG])
+    const { upsertCredential } = await import('./domain/credential-store')
+    const env = { NOTIFY_CRED_KEK: 'a'.repeat(64) }
+    await upsertCredential(pool, ORG, 'wecom', { appKey: 'ww-wd2', agentId: '100', secret: 's' }, 'u', env)
+
+    let captured: { url: string; body: string } | null = null
+    const orig = globalThis.fetch
+    globalThis.fetch = (async (u: string | URL | Request, init?: RequestInit) => {
+      const url = String(u)
+      if (url.includes('/cgi-bin/gettoken')) {
+        return new Response(JSON.stringify({ errcode: 0, access_token: 'tok', expires_in: 7200 }), { status: 200 })
+      }
+      captured = { url, body: String(init?.body) }
+      return new Response(JSON.stringify({ errcode: 0 }), { status: 200 })
+    }) as typeof fetch
+    try {
+      const { __resetTokenCache } = await import('./domain/im/wecom-direct')
+      __resetTokenCache()
+      expect(await buildWorkerDeps(pool, async () => null, env).send(row())).toEqual({ ok: true })
+    } finally {
+      globalThis.fetch = orig
+      await pool.query('delete from notify.channel_credential where org=$1', [ORG])
+    }
+    // 走的是企微官方 send 端点，且 tou user 是收件地址
+    expect(captured!.url).toContain('qyapi.weixin.qq.com/cgi-bin/message/send')
+    expect(JSON.parse(captured!.body)).toMatchObject({ touser: 'wecom-u1', agentid: 100 })
+  })
+
   it('in_app：写收件箱', async () => {
     await pool.query(
       `insert into notify.channel(org,id,provider,enabled,config,secret_refs,created_by)
