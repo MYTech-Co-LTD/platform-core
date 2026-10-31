@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.222.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.221.0...v0.222.0) - 2026-10-31
+- 【新增】platform: 集成健康 Phase 2a——探针编排 + registry + 触发通路 (#1201) ([#1202](https://github.com/MYTech-Co-LTD/platform-core/pull/1202), [2ac32b5](https://github.com/MYTech-Co-LTD/platform-core/commit/2ac32b5d81a557c3e1265ba8dd1367d2d1fb8f8d))
+
+
 ## [0.221.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.220.0...v0.221.0) - 2026-10-31
 - 【新增】data: 批发明细下钻——直读湖视图 + 指标三键（#1182） ([#1200](https://github.com/MYTech-Co-LTD/platform-core/pull/1200), [a33150d](https://github.com/MYTech-Co-LTD/platform-core/commit/a33150d15b29cfa71f8bb81aa4003e1a1a31204b))
 
