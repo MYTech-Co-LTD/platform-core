@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.228.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.227.0...v0.228.0) - 2026-10-31
+- 【新增】platform: 组织同步允许用独立的企微应用（WECOM_SYNC_SECRET__<ORG>） ([#1229](https://github.com/MYTech-Co-LTD/platform-core/pull/1229), [fcda760](https://github.com/MYTech-Co-LTD/platform-core/commit/fcda760aabb70476f23659e339651cbc19310f12))
+
+
 ## [0.227.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.226.0...v0.227.0) - 2026-10-31
 - 【新增】platform: 收件人身份映射 Phase 1——source/external_id + 解析优先级 ([#1227](https://github.com/MYTech-Co-LTD/platform-core/pull/1227), [356bea1](https://github.com/MYTech-Co-LTD/platform-core/commit/356bea1cb528724c97ee96241ec61f32f0ef3061))
 
