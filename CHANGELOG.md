@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.227.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.226.0...v0.227.0) - 2026-10-31
+- 【新增】platform: 收件人身份映射 Phase 1——source/external_id + 解析优先级 ([#1227](https://github.com/MYTech-Co-LTD/platform-core/pull/1227), [356bea1](https://github.com/MYTech-Co-LTD/platform-core/commit/356bea1cb528724c97ee96241ec61f32f0ef3061))
+
+
 ## [0.226.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.225.1...v0.226.0) - 2026-10-31
 - 【新增】platform: 集成判据退役——registry 删掉的条目自动置 enabled=false ([#1223](https://github.com/MYTech-Co-LTD/platform-core/pull/1223), [6d5a9cf](https://github.com/MYTech-Co-LTD/platform-core/commit/6d5a9cfe7179e296177a5dc9be4c06533ae17005))
 
