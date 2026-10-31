@@ -92,6 +92,10 @@ jobs:
       - run: pnpm exec tsx scripts/lint-architecture.mjs
       - run: pnpm exec tsx scripts/check-compose.mjs
       - run: pnpm exec tsx scripts/check-env-example.mjs
+      # 集成判据门禁（spec 2026-10-31 §2.5「声明即判据」）：新增 notify 通道 provider
+      # 或新出站集成，必须在 deploy/integration-registry.json 登记活性判据（或带理由豁免），
+      # 否则这里红——否则探针永远只盯老的那几个集成，「装完就忘」照旧。
+      - run: pnpm exec tsx scripts/check-integrations.mjs
       # 开源边界门禁（正典 docs/architecture.md §4.1 **B12**；2026-10-20 人决策：platform-core 公开、
       # case-engine 私有）。本仓是**公开仓**，不变量是「外部 clone 即可独立构建与运行」——一旦依赖
       # 私有件，外部构建必失败而**本仓 CI 全绿**（加一行 dependency / 一个 submodule 都是静默的），
