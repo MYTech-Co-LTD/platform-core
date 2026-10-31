@@ -658,6 +658,13 @@ console 触发。写操作落 `notify.audit`；通道密钥只以 env 键名出�
 
 3. 跑 `pnpm exec tsx scripts/check-integrations.mjs` 自检（CI gates 同款）。
 
+### 代码侧落点（加一个渠道 provider）
+
+发送分发在 `modules/notify/domain/im/senders.ts` 的 **provider 表**（`SENDERS`）。新增渠道 =
+① 写一个 `(ctx, delivery) => ProviderResult` 的 sender；② 在 `SENDERS` 注册；③
+`modules/notify/domain/providers.ts` 加 id（门禁会要求你去 registry 登记判据）；④ 模板加该
+provider 的渲染键。**不要**在 worker 的编排里加分支——那是把 N 条链路重新长回来的路。
+
 ### 谁在看这些判据
 
 - `integration-probe`（server 进程，每 `INTEGRATION_PROBE_INTERVAL_MS` 一跳，缺省 0=关）按 SLA/4 的

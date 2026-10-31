@@ -3,10 +3,8 @@
 import type { Pool } from 'pg'
 import type { ChannelAddressResolver, NotificationEventDecl } from '@platform/sdk'
 import { createChannelAddressResolver } from '../../apps/server/src/channel-address'
-import { sendInApp } from './providers/in-app'
-import { sendWecom } from './providers/wecom'
+import { dispatchSend } from './domain/im/senders'
 import { rateLimitVerdict } from './domain/rate-limit'
-import { sendWebhook } from './providers/webhook'
 import * as storage from './storage'
 import { audit, channelConfigured } from './storage'
 import { runOnce, type WorkerDeps, type WorkerStats } from './worker'
@@ -101,43 +99,17 @@ export function buildWorkerDeps(
       if (!secrets) {
         return { ok: false, kind: 'permanent', code: 'secret_missing', summary: 'secret_refs 指向的 env 未配置' }
       }
-      if (ch.provider === 'in_app') {
-        return sendInApp({
-          pool,
-          org: d.org,
-          recipient: d.recipient,
-          eventId: d.eventId,
-          eventKey: d.eventKey,
-          templateKey: d.templateKey,
-          revision: d.revision,
-          rendered: d.rendered as { title: string; body: string; link?: string },
-        })
-      }
-      if (ch.provider === 'wecom_chat') {
-        return sendWecom({
-          bridgeUrl: secrets.bridge_url,
-          to: d.address,
-          content: d.rendered.text ?? '',
-        })
-      }
-      if (ch.provider === 'webhook') {
-        return sendWebhook({
-          url: secrets.url,
-          secret: secrets.key,
-          payload: {
-            eventId: d.eventId,
-            eventKey: d.eventKey,
-            recipient: d.recipient,
-            templateKey: d.templateKey,
-            revision: d.revision,
-            rendered: d.rendered,
-          },
-          timeoutMs: typeof ch.config.timeout_ms === 'number' ? ch.config.timeout_ms : undefined,
-          resolveHost,
-        })
-      }
-      return { ok: false, kind: 'permanent', code: 'provider_unsupported', summary: ch.provider }
+      // 发送分发收敛到 `domain/im/senders.ts` 的 provider 表（spec 2026-10-31 §3.1）：
+      // 本轮只留架构空间，三个 provider 的实现与顺序**逐字未变**；加飞书/钉钉时只改那张表。
+      return dispatchSend(ch.provider, {
+        pool,
+        channelId: d.channel,
+        config: ch.config,
+        secrets,
+        resolveHost,
+      }, d)
     },
+
   }
 }
 
