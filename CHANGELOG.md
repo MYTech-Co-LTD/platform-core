@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.224.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.224.1...v0.224.2) - 2026-10-31
+- 【优化】notify: 出站发送收敛成 provider 表（只留多渠道架构空间）(#1217) ([#1218](https://github.com/MYTech-Co-LTD/platform-core/pull/1218), [495a24d](https://github.com/MYTech-Co-LTD/platform-core/commit/495a24d3bf415397bf954aa05dfb64f85f1f0be2))
+
+
 ## [0.224.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.224.0...v0.224.1) - 2026-10-31
 - 【修复】platform: 补 Phase 2 元级看门狗 + 协议文档「接入必带判据」 (#1213) ([#1214](https://github.com/MYTech-Co-LTD/platform-core/pull/1214), [8d8b2b6](https://github.com/MYTech-Co-LTD/platform-core/commit/8d8b2b61dbd39b582b02116c6a506140a5e162b5))
 
