@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.224.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.223.1...v0.224.0) - 2026-10-31
+- 【新增】platform: 集成健康 Phase 3——registry 硬门禁（声明即判据） (#1211) ([#1212](https://github.com/MYTech-Co-LTD/platform-core/pull/1212), [62ff61a](https://github.com/MYTech-Co-LTD/platform-core/commit/62ff61ac552613b7c9838cb6f085a31a44994774))
+
+
 ## [0.223.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.223.0...v0.223.1) - 2026-10-31
 - 【修复】scripts: notify-worker 的 map 回调补 JSDoc 类型（gates typecheck:scripts 红） ([#1210](https://github.com/MYTech-Co-LTD/platform-core/pull/1210), [d241d7a](https://github.com/MYTech-Co-LTD/platform-core/commit/d241d7aed9ba1dc929ee284f036173ea828a60cd))
 
