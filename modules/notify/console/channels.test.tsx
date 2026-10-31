@@ -23,7 +23,21 @@ const channel = {
 }
 
 describe('ChannelsTab', () => {
-  it('只显示 env 键名；启停/健康检查/测试发送', async () => {
+  // 2026-11-01 走查实测的误读：transport=direct 时凭据在密文表，仍显示桥的 env 键名会被当成「还在用桥」
+  it('★ 直连通道不显示桥的 env 键名（改为「直连凭据（密文表）」）', async () => {
+    routeFetch({
+      'GET /api/modules/notify/channels': () => json({
+        channels: [{ ...channel, configured: true, config: { transport: 'direct' } }],
+      }),
+      'GET /api/modules/notify/templates': () => json({ templates: [] }),
+      'GET /api/modules/notify/channels/address-issues': () => json({ issues: [] }),
+    })
+    render(<ChannelsTab />)
+    expect(await screen.findByText('直连凭据（密文表）')).toBeInTheDocument()
+    expect(screen.queryByText('WECOM_BRIDGE_URL__X')).toBeNull()
+  })
+
+  it('桥通道仍显示 env 键名；启停/健康检查/测试发送', async () => {
     let patched: unknown = null
     let healthCalled = false
     routeFetch({

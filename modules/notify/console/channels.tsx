@@ -133,7 +133,13 @@ export default function ChannelsTab() {
             render: (_, r) => (
               <>
                 <Tag color={r.configured ? 'green' : 'red'}>{r.configured ? '已配置' : '未配置'}</Tag>
-                {Object.values(r.secretRefs).map((k) => <Tag key={k}>{k}</Tag>)}
+                {/*
+                  transport=direct ⇒ 凭据在密文表（channel_credential），**不消费** secret_refs。
+                  这时仍把桥的 env 键名摆出来会让人以为「还在用桥」（2026-11-01 走查实测的误读）。
+                */}
+                {r.config?.transport === 'direct'
+                  ? <Tag color="blue">直连凭据（密文表）</Tag>
+                  : Object.values(r.secretRefs).map((k) => <Tag key={k}>{k}</Tag>)}
               </>
             ),
           },
