@@ -68,7 +68,7 @@ describe('buildConsoleMenu（spec §3 位置规则）', () => {
 
 // ---- M3：管理组（tenant:admin 门禁，spec D4/D9，issue #46）----
 describe('buildConsoleMenu 管理组', () => {
-  it('有 tenant:admin → 尾部追加「管理」组（七项子菜单）', () => {
+  it('有 tenant:admin → 尾部追加「管理」组（八项子菜单）', () => {
     const menu = buildConsoleMenu([], {}, { scopes: ['tenant:admin'] }, { adminEntries: [], storageVisible: true })
     const group = menu.at(-1)
     expect(group?.name).toBe('管理')
@@ -80,6 +80,7 @@ describe('buildConsoleMenu 管理组', () => {
       '/console/admin/permissions',
       '/console/admin/subscriptions',
       '/console/admin/keys',
+      '/console/admin/integrations',
       '/console/admin/storage',
     ])
   })
@@ -116,10 +117,11 @@ describe('管理组联动', () => {
       '/console/admin/permissions',
       '/console/admin/subscriptions',
       '/console/admin/keys',
+      '/console/admin/integrations',
     ])
   })
 
-  it('storageVisible=true → 存储配置在第 6 位；模块 admin 页排其后', () => {
+  it('storageVisible=true → 存储配置在模块 admin 页之前；模块 admin 页排其后', () => {
     const menu = buildConsoleMenu([], {}, ADMIN_SESSION, {
       adminEntries: [{ moduleId: 'demo', path: '/console/admin/demo/x', title: '演示管理页' }],
       storageVisible: true,
@@ -131,6 +133,7 @@ describe('管理组联动', () => {
       '/console/admin/permissions',
       '/console/admin/subscriptions',
       '/console/admin/keys',
+      '/console/admin/integrations',
       '/console/admin/storage',
       '/console/admin/demo/x',
     ])

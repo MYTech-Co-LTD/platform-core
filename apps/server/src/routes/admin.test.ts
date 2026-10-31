@@ -963,3 +963,58 @@ describe('admin 路由：角色管理', () => {
     expect(unknown.status).toBe(404)
   })
 })
+
+// ── 集成健康读面（spec 2026-10-31 §2.3；#1189 Phase 1）─────────────────────────────
+// 只读一屏：把「哪些集成多久没消息」变成可见状态。判定在 integration-health.ts 的纯函数里，
+// 这里验的是**投影与排序**：真库写三行（新鲜 / 超期 / 停用）⇒ 读面按「最该看的排最前」。
+describe.skipIf(!dbUrl)('admin 路由：集成健康（真 PG 读面）', () => {
+  let pool: Pool
+  let app: Hono<TenantEnv & SessionEnv>
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: dbUrl })
+    await runMigrations(pool, 'platform', fileURLToPath(new URL('../migrations', import.meta.url)))
+    await seedDemo(pool)
+    app = makeAdminApp(pool)
+  })
+
+  afterAll(async () => {
+    await pool.query("delete from platform.integration where org = '' and id like 't-ih-%'").catch(() => {})
+    await pool.end()
+  })
+
+  beforeEach(async () => {
+    await pool.query("delete from platform.integration where org = '' and id like 't-ih-%'")
+  })
+
+  const ins = (
+    id: string, sla: number, lastOk: string | null, enabled = true,
+  ) => pool.query(
+    `insert into platform.integration(id, org, kind, source, sla_seconds, enabled, last_ok_at)
+     values ($1,'',$2,$3,$4,$5,$6)`,
+    [id, 'callback', `sql:t-ih-${id}`, sla, enabled, lastOk],
+  )
+
+  it('★ 三态投影：新鲜⇒OK / 超期⇒STALE / 停用⇒DISABLED，且 STALE 排最前', async () => {
+    const now = Date.now()
+    const iso = (secAgo: number) => new Date(now - secAgo * 1000).toISOString()
+    await ins('t-ih-ok', 3600, iso(10))
+    await ins('t-ih-stale', 60, iso(7200))
+    await ins('t-ih-off', 3600, null, false)
+
+    const { cookie } = await adminSession()
+    const res = await app.request('/api/platform/admin/integrations', { headers: { host: 'acme.test', cookie } })
+    expect(res.status).toBe(200)
+    const body = await res.json() as {
+      integrations: Array<{ id: string; health: { verdict: string; ageSeconds: number | null } }>
+      summary: { total: number; stale: number; probeFailed: number }
+    }
+    const mine = body.integrations.filter((i) => i.id.startsWith('t-ih-'))
+    expect(mine.map((i) => [i.id, i.health.verdict])).toEqual([
+      ['t-ih-stale', 'STALE'],
+      ['t-ih-ok', 'OK'],
+      ['t-ih-off', 'DISABLED'],
+    ])
+    expect(body.summary.stale).toBeGreaterThanOrEqual(1)
+  })
+})
