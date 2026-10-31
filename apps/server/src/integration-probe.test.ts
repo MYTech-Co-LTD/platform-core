@@ -58,10 +58,15 @@ function fakePool(state: {
   rows: Array<Record<string, unknown>>
   updates: Array<unknown[]>
   sqlValues?: Record<string, unknown>
+  retired?: string[]
 }) {
   return {
     async query(sql: string, params?: unknown[]) {
       if (/insert into platform\.integration/.test(sql)) return { rows: [] }
+      // 退役（issue #1223）：不声明即置 enabled=false；假 pool 只回报 id
+      if (/update platform\.integration i/.test(sql)) {
+        return { rows: (state.retired ?? []).map((id) => ({ id })) }
+      }
       if (/^\s*select id, org, kind/.test(sql)) return { rows: state.rows }
       if (/^\s*update platform\.integration/.test(sql)) {
         state.updates.push(params ?? [])
@@ -138,7 +143,7 @@ describe('runProbes', () => {
       { pool: fakePool(state), env: {}, fetchImpl: fetch, casdoorGetUser: async () => null, now },
       [],
     )
-    expect(r).toEqual({ probed: 0, staleTransitions: [], stale: [], probeFailed: [], ok: [] })
+    expect(r).toEqual({ probed: 0, staleTransitions: [], stale: [], probeFailed: [], ok: [], retired: [] })
   })
 
   it('★ sql 两列 {at,error} 且 error 非空 ⇒ PROBE_FAILED 并带上原因（不是 STALE）', async () => {
@@ -167,5 +172,31 @@ describe('runProbes', () => {
     )
     expect(r.probeFailed).toEqual(['x'])
     expect(String(lastError)).toContain('40013')
+  })
+
+  it('★ registry 里删掉的条目 ⇒ 退役（置 enabled=false 并进 report.retired）', async () => {
+    // 2026-10-31 实测：换判据后旧条目会永远留在表里按旧 source 探下去，控制台多一条永不消失的红
+    const state = { rows: [], updates: [] as Array<unknown[]>, retired: ['wecom-bridge'] }
+    const r = await runProbes(
+      { pool: fakePool(state), env: {}, fetchImpl: fetch, casdoorGetUser: async () => null, now },
+      parseRegistry({ integrations: [entry({ id: 'kept', source: 'sql:select 1' })] }),
+    )
+    expect(r.retired).toEqual(['wecom-bridge'])
+  })
+
+  it('★ 空 registry 不清理（读文件出错时别把全部监控关掉）', async () => {
+    let pruned = false
+    const pool = {
+      async query(sql: string) {
+        if (/update platform\.integration i/.test(sql)) pruned = true
+        return { rows: [] }
+      },
+    } as unknown as Pool
+    const r = await runProbes(
+      { pool, env: {}, fetchImpl: fetch, casdoorGetUser: async () => null, now },
+      [],
+    )
+    expect(pruned).toBe(false)
+    expect(r.retired).toEqual([])
   })
 })
