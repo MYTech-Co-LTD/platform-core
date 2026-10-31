@@ -21,6 +21,7 @@ import { loadConfig, type AppConfig } from './config'
 import { getPool } from './db'
 import { loadModules, type ModulesRuntime } from './loader'
 import { runMigrations } from './migrate'
+import { startIntegrationProbeLoop } from './integration-probe'
 import { resolveKeyWithTouch } from './api-key-store'
 import { seedDemo } from './seed'
 import { getTenantByHost, resolveTenantMiddleware, type TenantEnv } from './tenant'
@@ -433,6 +434,19 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
       )
     }
   }
+
+  // ⑩ 集成健康探针（spec 2026-10-31-integration-health-design.md §2.3）
+  // 放 server 进程、**不与 notify-worker 同容器**：worker 本身是被监控对象，探针跟它同生共死
+  // 就发不出「worker 死了」这条。默认 60s 一跳，每轮按各自 SLA 派生间隔决定谁真去探；
+  // **缺省 0 = 关**（fail-closed：测试/本地不该因为建了个 app 就开始打外部系统）；
+  // 生产由 `deploy/docker-compose.yml` 的 server 服务显式给 60000。
+  startIntegrationProbeLoop({
+    pool,
+    intervalMs: Number(process.env.INTEGRATION_PROBE_INTERVAL_MS ?? 0),
+    registryPath: fileURLToPath(new URL('../../deploy/integration-registry.json', import.meta.url)),
+    casdoorGetUser: async (org, name) => casdoorFactory(org).getUser(name),
+    onError: (e) => console.warn('[integration-probe] 本轮失败：', e instanceof Error ? e.message : e),
+  })
 
   return { app, config, modules: runtime }
 }

@@ -1,0 +1,27 @@
+{
+  "$comment": "集成登记表（spec 2026-10-31-integration-health-design.md §2.5）。新增出站集成必须在这里登记判据；Phase 3 起缺登记 ⇒ gates 红。source 语法见 apps/server/src/integration-probe.ts 头注。",
+  "version": 1,
+  "integrations": [
+    {
+      "id": "notify-worker-heartbeat",
+      "kind": "callback",
+      "source": "sql:select extract(epoch from max(beat_at)) as at from notify.worker_heartbeat where id = 'notify-worker'",
+      "slaSeconds": 300,
+      "note": "通知 worker 每 2 秒打一次心跳；它死了事件就只入队不投递，而没有任何调用会因此失败"
+    },
+    {
+      "id": "casdoor-admin-session",
+      "kind": "token",
+      "source": "casdoor:get-user:tenantsub",
+      "slaSeconds": 93600,
+      "note": "每天主动取一次用户：admin 会话还能换来吗（密码轮换/账号被禁用会先在这里暴露，而不是等用户登不进来）"
+    },
+    {
+      "id": "wecom-bridge",
+      "kind": "channel",
+      "source": "http-healthz:WECOM_BRIDGE_URL__SHANHAIYIGUO_ORG",
+      "slaSeconds": 93600,
+      "note": "企微推送桥的 /healthz。env 未配时探针会点名缺哪个键——空壳通道正是这样被看见的"
+    }
+  ]
+}
