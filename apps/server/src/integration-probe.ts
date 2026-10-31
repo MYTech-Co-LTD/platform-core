@@ -12,8 +12,18 @@
 //   · `casdoor:get-user:<name>` —— 主动取一次用户（幂等、无副作用）⇒ 覆盖「没人调用、凭据已死」。
 //
 // IO 全部注入（pool / fetch / casdoorGetUser / env / now）：本文件可穷举单测，不起真连接。
+import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import type { Pool } from 'pg'
 import { judgeIntegration, type IntegrationKind, type IntegrationRow, type ProbeOutcome } from './integration-health'
+
+/**
+ * registry 文件路径（唯一事实源）。⚠️ 本文件在 `apps/server/src/` 下 ⇒ 仓根要**三层** `../`：
+ * 生产实测踩过两层 `../../` 的坑（解析成 `/app/apps/deploy/…` ⇒ ENOENT，探针空转；
+ * 2026-10-31 山海日志 `[integration-probe] 本轮失败： ENOENT`）。`existsSync` 的守卫测试
+ * 钉住这一条——路径再算错一层，测试当场红，而不是等到生产探针空转才发现。
+ */
+export const REGISTRY_PATH = fileURLToPath(new URL('../../../deploy/integration-registry.json', import.meta.url))
 
 export interface RegistryEntry {
   id: string

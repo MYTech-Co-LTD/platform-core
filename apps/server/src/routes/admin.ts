@@ -17,9 +17,8 @@ import type { PermissionSpec } from '../admin-permissions'
 import type { TenantEnv, TenantRow } from '../tenant'
 import type { CasdoorFactory, SessionEnv } from '../session-middleware'
 import { listIntegrationViews } from '../integration-health'
-import { parseRegistry, runProbes } from '../integration-probe'
+import { parseRegistry, REGISTRY_PATH, runProbes } from '../integration-probe'
 import { readFile } from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
 import { probeStorage, type ProbeResult } from '../storage-probe'
 import { replaceTenantSources, SOURCES_SELECT_SQL } from '../tenant-source'
 import {
@@ -306,8 +305,7 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
    * 常驻调度在 `app.ts`（每 60s 一跳，按各自的 SLA 派生间隔决定谁真去探）。
    */
   app.post('/integrations/probe', async (c) => {
-    const registry = parseRegistry(JSON.parse(await readFile(
-      fileURLToPath(new URL('../../../deploy/integration-registry.json', import.meta.url)), 'utf8')))
+    const registry = parseRegistry(JSON.parse(await readFile(REGISTRY_PATH, 'utf8')))
     const report = await runProbes({
       pool: deps.pool,
       env: process.env,

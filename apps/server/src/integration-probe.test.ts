@@ -6,10 +6,21 @@
 //   ③ 证据写回与判定用的是**刚采到的新证据**（不是旧行——那会慢一整个周期）。
 import { describe, it, expect } from 'vitest'
 import type { Pool } from 'pg'
-import { parseRegistry, probeEverySeconds, runProbes } from './integration-probe'
+import { existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
+import { parseRegistry, probeEverySeconds, REGISTRY_PATH, runProbes } from './integration-probe'
 
 const entry = (over: Record<string, unknown> = {}) => ({
   id: 'x', kind: 'channel', source: 'http-healthz:BRIDGE', slaSeconds: 600, ...over,
+})
+
+describe('REGISTRY_PATH', () => {
+  it('★ 指向仓根 deploy/ 且文件真实存在（生产实测踩过两层 ../ 的 ENOENT 坑）', () => {
+    expect(REGISTRY_PATH.replace(/\\/g, '/')).toMatch(/platform-core[^/]*\/deploy\/integration-registry\.json$|\/deploy\/integration-registry\.json$/)
+    expect(existsSync(REGISTRY_PATH)).toBe(true)
+    // 顺带：真 registry 必须能通过严格校验（它自己就是被守卫的对象）
+    expect(() => parseRegistry(JSON.parse(readFileSync(REGISTRY_PATH, 'utf8')))).not.toThrow()
+  })
 })
 
 describe('parseRegistry', () => {
