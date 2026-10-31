@@ -272,15 +272,38 @@ export function startIntegrationProbeLoop(opts: {
   fetchImpl?: typeof fetch
   onError?: (e: unknown) => void
 }): { stop(): void } {
-  if (opts.intervalMs <= 0) return { stop() {} }
   const env = opts.env ?? process.env
   const fetchImpl = opts.fetchImpl ?? fetch
+  const HEARTBEAT_ID = 'integration-probe'
+
+  /**
+   * 写心跳（spec §2.4 的元级看门狗）。**关闭时也要写一行 `enabled=false`**：
+   * 看门狗要把「这台机器根本没启用探针」与「探针挂了」分开——两者都静默，但处置完全不同。
+   * 关闭态只在启动时写一次（下面 `if (opts.intervalMs <= 0)` 分支），随后返回不启动循环。
+   */
+  const beat = async (enabled: boolean) => {
+    await opts.pool.query(
+      `insert into platform.probe_heartbeat(id, beat_at, enabled, interval_ms)
+       values ($1, now(), $2, $3)
+       on conflict (id) do update
+         set beat_at = now(), enabled = excluded.enabled, interval_ms = excluded.interval_ms`,
+      [HEARTBEAT_ID, enabled, Math.max(0, opts.intervalMs)],
+    )
+  }
+
+  if (opts.intervalMs <= 0) {
+    // 关闭态：写一行说明，随后不启动定时器（本地/测试默认关）。
+    void beat(false).catch((e) => opts.onError?.(e))
+    return { stop() {} }
+  }
   let running = false
 
   const tick = async () => {
     if (running) return
     running = true
     try {
+      // 心跳**先写**：本轮即使一条集成都没到期、或下面读 registry 抛错，也证明「循环还在转」。
+      await beat(true)
       const lock = await opts.pool.query<{ ok: boolean }>(
         "select pg_try_advisory_lock(hashtext('platform.integration_probe')) as ok",
       )

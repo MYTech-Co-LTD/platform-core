@@ -161,3 +161,37 @@ export async function listIntegrationViews(
     rank[a.health.verdict] - rank[b.health.verdict]
     || (b.health.ageSeconds ?? Number.MAX_SAFE_INTEGER) - (a.health.ageSeconds ?? Number.MAX_SAFE_INTEGER))
 }
+
+/**
+ * 探针心跳判定（spec §2.4 元级看门狗；纯函数）。
+ *
+ * 为什么单独判定而不是复用 `judgeIntegration`：这里问的是**另一件事**——
+ * 「探针这个循环还在转吗」，不是「某个集成还活着吗」。混用会把「探针挂了」误报成
+ * 「所有集成同时挂了」，排障方向直接跑偏。
+ *
+ * 阈值 = `max(2 × 周期, 5 分钟)`：2× 周期是 spec 的写法，5 分钟下限避免周期配得过小
+ * （如 60s ⇒ 2 分钟）时被正常的调度抖动误伤。
+ */
+export type ProbeHeartbeatVerdict = 'OK' | 'STALE' | 'DISABLED' | 'NEVER'
+
+export function judgeProbeHeartbeat(
+  row: { beatAt: string; enabled: boolean; intervalMs: number } | null,
+  now: Date,
+): { verdict: ProbeHeartbeatVerdict; ageSeconds: number | null; reason: string } {
+  if (row === null) {
+    return { verdict: 'NEVER', ageSeconds: null, reason: '探针从未运行过（没有心跳行）' }
+  }
+  if (!row.enabled) {
+    return { verdict: 'DISABLED', ageSeconds: null, reason: '本实例未启用探针（INTEGRATION_PROBE_INTERVAL_MS=0）' }
+  }
+  const ageSeconds = Math.max(0, Math.floor((now.getTime() - Date.parse(row.beatAt)) / 1000))
+  const limit = Math.max(2 * row.intervalMs, 300_000) / 1000
+  if (ageSeconds > limit) {
+    return {
+      verdict: 'STALE',
+      ageSeconds,
+      reason: `探针 ${humanAge(ageSeconds)} 没跳了（周期 ${humanAge(row.intervalMs / 1000)}，阈值 ${humanAge(limit)}）`,
+    }
+  }
+  return { verdict: 'OK', ageSeconds, reason: `探针正常，最近一跳在 ${humanAge(ageSeconds)} 前` }
+}
