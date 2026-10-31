@@ -8,12 +8,13 @@ import type { ChannelAddressResolver, EventCatalogReader, Identity } from '@plat
 import { validatePayload } from '@platform/sdk'
 import { checkWecomHealth, checkWebhookHealth } from './domain/channel'
 import { resolveDeliverability, type DeliverabilityDeps } from './domain/deliverability'
+import { channelIsConfigured } from './domain/channel-config'
 import { renderContents } from './domain/render'
 import { validateRule } from './domain/rules'
 import { samplePayload, validateContents } from './domain/template'
 import { registerNotifyMcpManage } from './mcp'
 import {
-  audit, channelConfigured, countRecentTestDeliveries, createTemplateRevision,
+  audit, countRecentTestDeliveries, createTemplateRevision,
   deleteRule, enqueueEvent, getChannel, getPublishedTemplate, getTemplate, insertDelivery, listChannels,
   listDeliveries, listEnabledChannelIds, listInbox, listPublishedTemplateKeys, listRules,
   listTemplates, markAllInboxRead, markInboxRead, patchChannel, publishTemplateRevision, retryDelivery,
@@ -42,9 +43,9 @@ export function createNotifyRouter(deps: {
     },
     getChannel: async (o, id) => {
       const ch = await getChannel(deps.pool, o, id)
-      // `configured`：secret_refs 的 env 键在本进程是否齐全（与 /channels 的判定同一函数）
+      // `configured`：直连看凭据、桥看 secret_refs 的 env 键（与 /channels 同一实现）
       return ch
-        ? { id, provider: ch.provider, enabled: ch.enabled, config: ch.config, configured: channelConfigured(ch.secret_refs) }
+        ? { id, provider: ch.provider, enabled: ch.enabled, config: ch.config, configured: await channelIsConfigured(deps.pool, o, ch) }
         : null
     },
     resolveScopeHolders: async (o, key, decl) =>
@@ -363,9 +364,12 @@ export function createNotifyRouter(deps: {
 
   // ── 通道：列表 / 配置 / 健康 ────────────────────────────────────────────────
   r.get('/channels', async (c) => {
-    const list = await listChannels(deps.pool, org(c))
+    const o = org(c)
+    const list = await listChannels(deps.pool, o)
     return c.json({
-      channels: list.map((x) => ({ ...x, configured: channelConfigured(x.secretRefs) })),
+      channels: await Promise.all(
+        list.map(async (x) => ({ ...x, configured: await channelIsConfigured(deps.pool, o, x) })),
+      ),
     })
   })
 
@@ -381,8 +385,13 @@ export function createNotifyRouter(deps: {
     }
     const config = body.config as Record<string, unknown> | undefined
     if (config && Object.keys(config).some((k) =>
-      !['address_fallback', 'rate_limit_per_min', 'timeout_ms'].includes(k))) {
+      !['address_fallback', 'rate_limit_per_min', 'timeout_ms', 'transport'].includes(k))) {
       return c.json({ error: 'CONFIG_KEY_INVALID' }, 400)
+    }
+    // transport 是**迁移开关**（spec 2026-10-31 §3.5）：只接受两个值，写错了必须当场拒——
+    // 写成 'Direct'/true 之类会让通道静默落回桥，那正是「配错了直连」被伪装成正常的老路。
+    if (config && 'transport' in config && config.transport !== 'direct' && config.transport !== 'bridge') {
+      return c.json({ error: 'CONFIG_VALUE_INVALID', detail: "transport 只能是 'direct' 或 'bridge'" }, 400)
     }
 
     const n = await patchChannel(deps.pool, org(c), c.req.param('id'), {

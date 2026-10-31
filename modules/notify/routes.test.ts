@@ -206,6 +206,18 @@ describePg('routes v2', () => {
       body: JSON.stringify({ enabled: false }),
     })
     expect(ok.status).toBe(200)
+
+    // transport 是迁移开关：合法值放行、写错当场拒（静默落回桥 = 假绿的老路）
+    const direct = await app.request('/channels/wecom_default', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ config: { transport: 'direct' } }),
+    })
+    expect(direct.status).toBe(200)
+    const badT = await app.request('/channels/wecom_default', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ config: { transport: 'Direct' } }),
+    })
+    expect(badT.status).toBe(400)
   })
 
   it('测试发送：只给自己；第 6 次 429', async () => {

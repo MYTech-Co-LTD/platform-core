@@ -7,6 +7,9 @@
 //   · `sql:<query>`             —— 查「最后一次收到 X 的时间」（epoch 秒或 timestamptz 单值列）。
 //                                  查回 NULL **不是探针失败**：这只说明「确实没动静」，
 //                                  交给判据落 STALE（探针失败是另一码事，见 §2.1）。
+//                                  单行可给**两列** `{ at, error }`：`error` 非空 ⇒ 探针失败并
+//                                  带上原因（用于「证据由别的进程写出、它自己知道这次没探成」，
+//                                  如 notify 模块的 channel_probe）。
 //   · `http-healthz:<ENV_KEY>`  —— 取该 env 键的 base URL，GET `<origin>/healthz`，200 视为活着。
 //                                  env 缺失 ⇒ 探针失败并**点名缺哪个键**（空壳通道就是这么暴露的）。
 //   · `casdoor:get-user:<name>` —— 主动取一次用户（幂等、无副作用）⇒ 覆盖「没人调用、凭据已死」。
@@ -177,7 +180,15 @@ async function takeEvidence(deps: ProbeDeps, source: string, rowOrg: string, now
   try {
     if (scheme === 'sql') {
       const r = await deps.pool.query(arg)
-      const v = r.rows[0] === undefined ? null : Object.values(r.rows[0] as Record<string, unknown>)[0]
+      const row = r.rows[0] as Record<string, unknown> | undefined
+      if (row === undefined) return { ok: true }
+      // 两列形态 `{ at, error }`：**证据由别的进程写出**，它明确说了「这次探失败了」——
+      // 这是「探不了」而不是「没人用」，必须落 PROBE_FAILED 并带上原因（否则会被误读成沉默）。
+      // 单列形态保持历史语义：value = 最后一次活着的证据时间，NULL = 确实没动静。
+      if (Object.hasOwn(row, 'error') && row.error !== null && row.error !== undefined) {
+        return { ok: false, error: String(row.error) }
+      }
+      const v = Object.hasOwn(row, 'at') ? row.at : Object.values(row)[0]
       if (v === null || v === undefined) return { ok: true }          // 查得到、但确实没动静
       const at = toIso(v)
       return at === null ? { ok: false, error: `sql 返回值无法解析为时间：${String(v)}` } : { ok: true, evidenceAt: at }

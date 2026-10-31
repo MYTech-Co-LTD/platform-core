@@ -649,7 +649,12 @@ console 触发。写操作落 `notify.audit`；通道密钥只以 env 键名出�
    `source` 三种形态（实现见 `apps/server/src/integration-probe.ts` 头注）：
    - `sql:<query>` —— 查「最后一次收到 X 的时间」（epoch 秒或 timestamptz 单值列）；
      **查回 NULL = 确实没动静（STALE）**，不是探针失败；
+     也可回**两列** `{ at, error }`：`error` 非空 ⇒ 探针失败并点名原因。用于「证据由另一个进程
+     产出、它自己知道这次没探成」的集成（例：企微直连由 notify worker 换 token 后写
+     `notify.channel_probe`，见 `docs/superpowers/specs/2026-10-31-multi-channel-im-provider-design.md` §3.4）；
    - `http-healthz:<ENV_KEY>` —— 取该 env 的 base URL 打 `/healthz`；env 缺失会**点名缺哪个键**；
+     ⚠️ 它只证明**那个进程活着**，不证明**凭据/租户能完成一次真实握手**——用它做渠道判据极易假绿
+     （共享桥就是这么把「租户没注册」探成 200 的）；
    - `casdoor:get-user:<name>` —— 主动取一次用户，覆盖「没人调用、凭据已死」。
 
 2. 新增**通知通道 provider** 时，还要改 `modules/notify/domain/providers.ts`（provider 的唯一代码
@@ -664,6 +669,11 @@ console 触发。写操作落 `notify.audit`；通道密钥只以 env 键名出�
 ① 写一个 `(ctx, delivery) => ProviderResult` 的 sender；② 在 `SENDERS` 注册；③
 `modules/notify/domain/providers.ts` 加 id（门禁会要求你去 registry 登记判据）；④ 模板加该
 provider 的渲染键。**不要**在 worker 的编排里加分支——那是把 N 条链路重新长回来的路。
+
+渠道**直连**（凭据在本实例，而不是共享桥）还要两处：⑤ `notify.channel_credential` 落凭据
+（加密，`domain/credential-store.ts`；KEK = env `NOTIFY_CRED_KEK`）；⑥ `domain/channel-probe.ts`
+加该 provider 的**活性探针**（幂等、不含业务副作用，如「换一次 token」），结论写
+`notify.channel_probe` 供 registry 的 `sql:` 判据读。**没有探针的直连渠道 = 又一个假绿**。
 
 ### 谁在看这些判据
 

@@ -6,9 +6,12 @@
 // 不需要再动 worker 的编排逻辑。
 //
 // 刻意不做（等真有第二个 provider 再定，避免提前抽象）：
-//   · 不引入 `ImProvider` 的 token/send/probe 三段式接口——现有三个 sender 的入参差异很大
-//     （in_app 落库、webhook 要 DNS 守卫、wecom 走桥），硬统一个形状会造出一堆可选字段；
-//   · 不做凭据表 / KEK 加密——那是「直连某渠道」时才需要的（spec §3.2），没有直连就没有消费者。
+//   · 不引入 `ImProvider` 的 token/send/probe 三段式接口——现有 sender 的入参差异很大
+//     （in_app 落库、webhook 要 DNS 守卫、wecom 直连还是走桥由 ctx.credential 决定），
+//     硬统一个形状会造出一堆可选字段。
+//   · 凭据表/KEK 加密已经落地（spec §3.2），但它是**发送侧的准备**，不属于本表：
+//     由 `domain/credential-store.ts` 解析、`worker-deps.ts` 决定要不要解析，本文件只收成果
+//     （`ctx.credential`）。加 provider 时同理——解析凭据的地方在组合根，不在这张表里。
 //
 // 统一形状：`(ctx, delivery) => Promise<ProviderResult>`，ctx 携带**provider 无关**的投递上下文。
 import type { Pool } from 'pg'
@@ -16,6 +19,8 @@ import { sendInApp } from '../../providers/in-app'
 import { sendWebhook } from '../../providers/webhook'
 import { sendWecom } from '../../providers/wecom'
 import type { NotifyProvider } from '../providers'
+import { sendDirect } from './wecom-direct'
+import type { WecomDirectCred } from './wecom-direct'
 
 export type ProviderResult =
   | { ok: true }
@@ -45,6 +50,11 @@ export interface SendContext {
   resolveHost?: (host: string) => Promise<string[]>
   /** 测试缝：所有 provider 的 HTTP 走它（缺省 = 全局 fetch） */
   fetchImpl?: typeof fetch
+  /**
+   * 企微直连凭据（已解密）。`transport==='direct'` 时由调用方解析后传入；
+   * 缺省 ⇒ 走共享桥（与改造前逐字一致）。
+   */
+  credential?: WecomDirectCred
 }
 
 export type ImSender = (ctx: SendContext, d: DeliveryLike) => Promise<ProviderResult>
@@ -61,13 +71,22 @@ const SENDERS: Record<NotifyProvider, ImSender> = {
       revision: d.revision,
       rendered: d.rendered as { title: string; body: string; link?: string },
     }),
+  // 企微：**有直连凭据就直连，否则走共享桥**（transport 由通道 config 决定，默认 bridge）。
+  // 直连的意义：凭据只在客户自己的实例里、判据=能取到 token（桥的 /healthz 只能证明桥活着）。
   wecom_chat: (ctx, d) =>
-    sendWecom({
-      bridgeUrl: ctx.secrets.bridge_url,
-      to: d.address,
-      content: (d.rendered.text as string | undefined) ?? '',
-      fetchImpl: ctx.fetchImpl,
-    }),
+    ctx.credential !== undefined
+      ? sendDirect({
+        cred: ctx.credential,
+        to: d.address,
+        content: (d.rendered.text as string | undefined) ?? '',
+        fetchImpl: ctx.fetchImpl,
+      })
+      : sendWecom({
+        bridgeUrl: ctx.secrets.bridge_url,
+        to: d.address,
+        content: (d.rendered.text as string | undefined) ?? '',
+        fetchImpl: ctx.fetchImpl,
+      }),
   webhook: (ctx, d) =>
     sendWebhook({
       url: ctx.secrets.url,

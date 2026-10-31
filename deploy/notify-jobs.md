@@ -69,8 +69,31 @@ DATABASE_URL=<平台库> pnpm exec tsx scripts/notify-retention.mjs
 |---|---|
 | `DATABASE_URL` | openship 该项目 env（isSecret）注入 |
 | `NOTIFY_*_RETENTION_DAYS` | 同上（非敏感） |
+| `NOTIFY_CRED_KEK` | openship 该项目 env（isSecret）。**生成**：`openssl rand -hex 32`（64 hex = 32 字节） |
 
 > ⚠️ **不要去 SSH 读机器上的 env**——那是读机器状态，违反「唯一通道」铁律。
+
+### `NOTIFY_CRED_KEK`（出站渠道凭据的加密密钥）
+
+- 用途：加解密 `notify.channel_credential.secret_enc`（AES-256-GCM）。**只由 notify-worker / 导入 CLI 消费**，
+  宿主 server 不读它（宿主不碰渠道凭据）。
+- **丢失 = 所有渠道凭据需重录**（重录只需重跑导入，见下）——故它进交付备份清单。
+- 缺它时：直连通道**一律发不出去**且判据 PROBE_FAILED（fail-closed，不会降级成明文，也不会偷偷回共享桥）。
+- 轮换：换 KEK 后旧密文解不开 ⇒ 用新 KEK 重跑一次导入即可（`upsertCredential` 是 upsert）。
+
+### 渠道凭据导入（企微直连）
+
+从 `platform.tenant` 的 `wecom_corp_id / wecom_agent_id / wecom_secret` 一次性导入并加密：
+
+```bash
+pnpm exec tsx scripts/notify-import-wecom-cred.mjs                    # 预演：只列 org / corpId / agentId / secret 长度与尾号
+pnpm exec tsx scripts/notify-import-wecom-cred.mjs --apply            # 真写（需 NOTIFY_CRED_KEK）
+pnpm exec tsx scripts/notify-import-wecom-cred.mjs --org <org> --apply
+```
+
+- 默认预演：写凭据表是要人确认的动作，不该一次误敲就落。
+- 只导三者齐全的租户；缺的**点名跳过**（不是静默略过）。
+- 导入后通道要显式切 `transport: 'direct'` 才走直连（缺省 `bridge`），回滚就是把配置改回 `bridge`。
 
 ## 3. `notify-preflight`（每日 03:43 UTC，D4）
 
