@@ -101,6 +101,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const { enqueueEvent } = await import('../modules/notify/storage.ts')
     // 装填位是租户无关的（org 常为空串）：本实例的租户从 platform.tenant 取，
     // 事件按租户入队（通知模型是租户级的），单租户实例就是一行。
+    // ⚠️ 本文件被 `typecheck:scripts`（checkJs）检查：`pool.query` 返回 `any`，
+    //    map 回调参数必须显式标类型（TS7006），否则 gates 的 typecheck 步红。
+    /** @type {{ rows: Array<{ casdoor_org: string }> }} */
     const { rows: tenants } = await pool.query('select casdoor_org from platform.tenant order by id')
     const orgs = tenants.map((t) => t.casdoor_org)
     let sent = 0
