@@ -69,3 +69,32 @@ describe('humanAge', () => {
     expect(humanAge(86400 * 62)).toBe('62 天')
   })
 })
+
+// ── 探针心跳（spec §2.4 元级看门狗）────────────────────────────────────────────
+import { judgeProbeHeartbeat } from './integration-health'
+
+describe('judgeProbeHeartbeat', () => {
+  const now = new Date('2026-10-31T12:00:00Z')
+  const beatAgo = (s: number) => new Date(now.getTime() - s * 1000).toISOString()
+
+  it('正常跳动 ⇒ OK', () => {
+    const v = judgeProbeHeartbeat({ beatAt: beatAgo(30), enabled: true, intervalMs: 60_000 }, now)
+    expect(v.verdict).toBe('OK')
+    expect(v.ageSeconds).toBe(30)
+  })
+
+  it('★ 太久没跳 ⇒ STALE（阈值为 max(2×周期, 5 分钟)）', () => {
+    // 周期 60s ⇒ 2×=120s，但下限 5 分钟 ⇒ 4 分钟仍 OK、6 分钟才 STALE
+    expect(judgeProbeHeartbeat({ beatAt: beatAgo(240), enabled: true, intervalMs: 60_000 }, now).verdict).toBe('OK')
+    expect(judgeProbeHeartbeat({ beatAt: beatAgo(360), enabled: true, intervalMs: 60_000 }, now).verdict).toBe('STALE')
+  })
+
+  it('★ 未启用 ⇒ DISABLED（不算故障，但也绝不冒充健康）', () => {
+    const v = judgeProbeHeartbeat({ beatAt: beatAgo(99999), enabled: false, intervalMs: 0 }, now)
+    expect(v.verdict).toBe('DISABLED')
+  })
+
+  it('★ 从来没有心跳行 ⇒ NEVER（从未跑过）', () => {
+    expect(judgeProbeHeartbeat(null, now).verdict).toBe('NEVER')
+  })
+})

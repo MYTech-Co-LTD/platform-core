@@ -619,6 +619,53 @@ await ctx.notify?.emit(c.get('identity'), {
 **没有 publish / channel 工具**；`draft_template` 只写草稿，发布仍由持 `notify:publish` 的人在
 console 触发。写操作落 `notify.audit`；通道密钥只以 env 键名出现，任何端点不回显值。
 
+## 接入出站集成：声明即判据（2026-10-31）
+
+> 正典：`docs/superpowers/specs/2026-10-31-integration-health-design.md`（§2.2 判据模型 / §2.5 门禁）。
+> 本节是**接入时该做什么**的操作面，判据数值与实现在那篇里。
+
+**规则一句话**：新增一个出站集成（新的通知通道 provider、新的外部回调、新的凭证换取），
+**必须同时登记「凭什么判它还活着」**，否则 gates 红。
+
+为什么要有这条：出站集成最致命的失效是「**该来的没来**」——它没有调用方，所以永远不失败、
+永远不告警（2026 年企微 suite_ticket 就这样静默死了两个月）。引擎告警要有事件、投递失败要有
+投递、容器健康只证明进程活着、job 失败要有 job——这四种既有机制对「装完就忘的集成」全部失明。
+
+### 怎么登记
+
+1. 在 `deploy/integration-registry.json` 加一条：
+
+   ```json
+   {
+     "id": "my-integration",
+     "kind": "callback",                     // callback | token | channel
+     "source": "sql:select extract(epoch from max(received_at)) as at from ...",
+     "slaSeconds": 1800,                     // 允许多久没有活性证据
+     "covers": ["my_provider"],              // 可选：这条判据为哪些通道 provider 背书
+     "note": "对方每 10 分钟推一次 ⇒ SLA 取 30 分钟"
+   }
+   ```
+
+   `source` 三种形态（实现见 `apps/server/src/integration-probe.ts` 头注）：
+   - `sql:<query>` —— 查「最后一次收到 X 的时间」（epoch 秒或 timestamptz 单值列）；
+     **查回 NULL = 确实没动静（STALE）**，不是探针失败；
+   - `http-healthz:<ENV_KEY>` —— 取该 env 的 base URL 打 `/healthz`；env 缺失会**点名缺哪个键**；
+   - `casdoor:get-user:<name>` —— 主动取一次用户，覆盖「没人调用、凭据已死」。
+
+2. 新增**通知通道 provider** 时，还要改 `modules/notify/domain/providers.ts`（provider 的唯一代码
+   事实源）与 `modules/notify/migrations/002` 的 check 约束；provider 若无法给判据，必须在 registry
+   的 `exempt` 里登记、**并写非空理由**（无理由豁免 = 静默，门禁拒）。
+
+3. 跑 `pnpm exec tsx scripts/check-integrations.mjs` 自检（CI gates 同款）。
+
+### 谁在看这些判据
+
+- `integration-probe`（server 进程，每 `INTEGRATION_PROBE_INTERVAL_MS` 一跳，缺省 0=关）按 SLA/4 的
+  间隔取证，写入 `platform.integration`；
+- 判定 **进入 STALE** 时由 notify-worker 发 `notify.integration.stale`（持续 STALE 不重复轰炸）；
+- 探针自己也有心跳（`platform.probe_heartbeat`），由 `scripts/check-probe-heartbeat.mjs` 作为
+  openship job 盯着——**探针停了也必须有人知道**。
+
 ## 跨模块只读数据依赖：`dataDependencies`（2026-09-23 拍板）
 
 > 适用：`modules/<id>/manifest.yaml` 的**可选** `dataDependencies` 字段——消费方声明自己
