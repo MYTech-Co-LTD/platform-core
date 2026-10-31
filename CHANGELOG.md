@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.226.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.225.1...v0.226.0) - 2026-10-31
+- 【新增】platform: 集成判据退役——registry 删掉的条目自动置 enabled=false ([#1223](https://github.com/MYTech-Co-LTD/platform-core/pull/1223), [6d5a9cf](https://github.com/MYTech-Co-LTD/platform-core/commit/6d5a9cfe7179e296177a5dc9be4c06533ae17005))
+
+
 ## [0.225.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.225.0...v0.225.1) - 2026-10-31
 - 【修复】notify: 凭据导入脚本读错租户列（org ≠ casdoor_org） ([#1222](https://github.com/MYTech-Co-LTD/platform-core/pull/1222), [729e73b](https://github.com/MYTech-Co-LTD/platform-core/commit/729e73b8c33f2780fc85fbfb6e697e1726b7010d))
 
