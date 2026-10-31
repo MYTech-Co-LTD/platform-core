@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.220.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.219.3...v0.220.0) - 2026-10-31
+- 【新增】platform: 集成健康 Phase 1——登记表 + 判据纯函数 + 读面 + 控制台一屏 (#1194) ([#1197](https://github.com/MYTech-Co-LTD/platform-core/pull/1197), [112ad13](https://github.com/MYTech-Co-LTD/platform-core/commit/112ad1382c49f96900b133af7982c09ef836c5ca))
+
+
 ## [0.219.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.219.2...v0.219.3) - 2026-10-31
 - 【修复】data: 空 seed 列类型显式 cast（#1181） ([#1195](https://github.com/MYTech-Co-LTD/platform-core/pull/1195), [4d5a837](https://github.com/MYTech-Co-LTD/platform-core/commit/4d5a83751d5a11f8dae4452ad57ea92c6b4cfc21))
 
