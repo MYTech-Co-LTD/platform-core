@@ -21,6 +21,12 @@ describe('REGISTRY_PATH', () => {
     // 顺带：真 registry 必须能通过严格校验（它自己就是被守卫的对象）
     expect(() => parseRegistry(JSON.parse(readFileSync(REGISTRY_PATH, 'utf8')))).not.toThrow()
   })
+
+  it('★ app.ts 只能引 REGISTRY_PATH 常量（不许再内联相对路径——#1205 第一版修复就栽在替换静默失败）', () => {
+    const app = readFileSync(new URL('./app.ts', import.meta.url), 'utf8')
+    expect(app).toContain('REGISTRY_PATH, startIntegrationProbeLoop')
+    expect(app).not.toMatch(/new URL\(['"]\.\.\/.*integration-registry/)
+  })
 })
 
 describe('parseRegistry', () => {

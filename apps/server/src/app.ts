@@ -443,7 +443,10 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   startIntegrationProbeLoop({
     pool,
     intervalMs: Number(process.env.INTEGRATION_PROBE_INTERVAL_MS ?? 0),
-    registryPath: fileURLToPath(new URL('../../deploy/integration-registry.json', import.meta.url)),
+    // ⚠️ 用 `integration-probe.ts` 的 REGISTRY_PATH 常量，别在这里再写相对 URL——
+    //    #1205 第一版修复就栽在这：常量改对了，这里内联的旧两层路径没被替换（python
+    //    str.replace 不匹配时静默跳过），部署后探针仍在空转。守卫测试钉住「本文件只引常量」。
+    registryPath: REGISTRY_PATH,
     casdoorGetUser: async (org, name) => casdoorFactory(org).getUser(name),
     onError: (e) => console.warn('[integration-probe] 本轮失败：', e instanceof Error ? e.message : e),
   })
