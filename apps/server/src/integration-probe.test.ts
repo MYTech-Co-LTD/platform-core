@@ -138,6 +138,6 @@ describe('runProbes', () => {
       { pool: fakePool(state), env: {}, fetchImpl: fetch, casdoorGetUser: async () => null, now },
       [],
     )
-    expect(r).toEqual({ probed: 0, stale: [], probeFailed: [], ok: [] })
+    expect(r).toEqual({ probed: 0, staleTransitions: [], stale: [], probeFailed: [], ok: [] })
   })
 })

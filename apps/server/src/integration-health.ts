@@ -31,6 +31,13 @@ export interface IntegrationRow {
   lastProbeAt: string | null
   lastError: string | null
   note: string | null
+  /**
+   * 上一轮判定结论（Phase 2b 告警用）：**进入 STALE**（上次 ≠ STALE）才装填告警，
+   * 持续 STALE 不重复轰炸。`null` = 还没探测过。
+   */
+  lastVerdict: string | null
+  /** 告警装填位：`false` = STALE 已装填、等 notify worker 消费；详见迁移 015。 */
+  staleNotified: boolean
 }
 
 /** 一次探针的结果（Phase 2 由探针 job 产生；Phase 1 读面里恒为 null）。 */
@@ -127,7 +134,8 @@ export async function listIntegrationViews(
   pool: Pool, now: Date = new Date(),
 ): Promise<IntegrationView[]> {
   const { rows } = await pool.query(
-    `select id, org, kind, source, sla_seconds, enabled, last_ok_at, last_probe_at, last_error, note
+    `select id, org, kind, source, sla_seconds, enabled, last_ok_at, last_probe_at, last_error, note,
+            last_verdict, stale_notified
        from platform.integration
       order by enabled desc, last_ok_at nulls first, id`,
   )
@@ -138,6 +146,8 @@ export async function listIntegrationViews(
       kind: r.kind as IntegrationKind,
       source: r.source as string,
       slaSeconds: Number(r.sla_seconds),
+      lastVerdict: (r.last_verdict as string | null) ?? null,
+      staleNotified: (r.stale_notified as boolean | undefined) ?? true,
       enabled: r.enabled as boolean,
       lastOkAt: r.last_ok_at === null ? null : new Date(r.last_ok_at as Date).toISOString(),
       lastProbeAt: r.last_probe_at === null ? null : new Date(r.last_probe_at as Date).toISOString(),
