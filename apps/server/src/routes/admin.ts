@@ -35,8 +35,28 @@ import {
   OrgSyncError,
 } from '../org-sync'
 
+/**
+ * 组织同步用的企微凭据（**可以且建议**与「发消息/登录」那个应用分开）。
+ *
+ * 为什么分开：企微里「读通讯录」与「发消息」是两套权限，且都受**应用可见范围**约束——
+ * 2026-10-31 山海实测：可见范围只有 2 人的应用，`department/list` 回空、`user/list` 回 60011，
+ * 而同一条 secret 却能正常发消息。登录应用（带 agentid）不宜随便扩范围，故同步允许用另一个应用：
+ * `WECOM_SYNC_SECRET__<ORG>`（env，isSecret）= 该应用的 corpsecret（同一 corpId）。
+ *
+ * 缺省回落到 `platform.tenant.wecom_secret`（现状），并打 warn——**不静默**。
+ */
+function syncCredential(t: TenantRow, env: NodeJS.ProcessEnv): { corpId: string; secret: string } {
+  const key = `WECOM_SYNC_SECRET__${t.casdoor_org.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`
+  const override = env[key]
+  if (override) return { corpId: t.wecom_corp_id ?? '', secret: override }
+  console.warn(JSON.stringify({ event: 'wecom_sync_uses_login_app', org: t.casdoor_org, hint: `可配 ${key} 用独立的通讯录应用` }))
+  return { corpId: t.wecom_corp_id ?? '', secret: t.wecom_secret ?? '' }
+}
+
 /** 订阅锚用户名（casdoor-client ensureAnchorUser 同款；单处定义防漂移） */
 export const ANCHOR_USER = 'tenantsub'
+
+
 
 export interface AdminRoutesDeps {
   casdoor: CasdoorFactory
@@ -382,7 +402,7 @@ export function adminRoutes(deps: AdminRoutesDeps): Hono<TenantEnv & SessionEnv>
       const casdoorNames = (await cas.listUsers()).map((u) => u.name)
       const snapshot = source === 'casdoor'
         ? await snapshotFromCasdoor(t.casdoor_org, cas)
-        : await fetchWecomSnapshot({ corpId: t.wecom_corp_id ?? '', secret: t.wecom_secret ?? '' }, deps.wecomFetch)
+        : await fetchWecomSnapshot(syncCredential(t, process.env), deps.wecomFetch)
       const result = await runOrgSync(deps.pool, t.id, snapshot, { dryRun, casdoorNames, source })
       await writeAudit(deps.pool, t.id, actor, 'admin.org-sync', { source, ...result })
       return c.json(result)
