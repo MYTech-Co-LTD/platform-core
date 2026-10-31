@@ -9,6 +9,7 @@ import { validatePayload } from '@platform/sdk'
 import { checkWecomHealth, checkWebhookHealth } from './domain/channel'
 import { resolveDeliverability, type DeliverabilityDeps } from './domain/deliverability'
 import { channelIsConfigured } from './domain/channel-config'
+import { listAddressIssues } from './domain/delivery-stats'
 import { resolveDeliveryAddress } from './domain/resolve-address'
 import { renderContents } from './domain/render'
 import { validateRule } from './domain/rules'
@@ -364,6 +365,10 @@ export function createNotifyRouter(deps: {
   })
 
   // ── 通道：列表 / 配置 / 健康 ────────────────────────────────────────────────
+  // 「谁收不到」的读面（plan 2026-10-31 Phase 2 / #1225）：按收件人聚合永久失败，只读。
+  // 挂在 /channels/address-issues：与通道配置同一屏，且静态路径优先于任何 /channels/:id。
+  r.get('/channels/address-issues', async (c) => c.json({ issues: await listAddressIssues(deps.pool, org(c)) }))
+
   r.get('/channels', async (c) => {
     const o = org(c)
     const list = await listChannels(deps.pool, o)

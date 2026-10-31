@@ -100,6 +100,16 @@ export interface ChannelAddressResolver {
    * `parentExtId` 组树即可。
    */
   listOrgNodes?(org: string): Promise<OrgNodeOption[]>
+  /**
+   * 抽 `limit` 个成员，返回其**渠道原生地址**（spec 2026-10-31 §3.4 Phase 2）。
+   *
+   * 用途：渠道探针做「个人级可达性」抽样（`user/get` 幂等、不发消息）——只有它能回答
+   * 「这批人收得到吗」，而判据（换 token）只回答「应用凭据活着吗」。
+   *
+   * 数据来源：`org_membership.external_id`（sync 写入的显式地址）。**没同步过的租户返回空**，
+   * 抽样据此跳过——不是失败，是「不知道地址」（别把它当 0 可达率去告警）。
+   */
+  sampleMemberAddresses?(org: string, limit: number): Promise<string[]>
 }
 
 /** 部门选择器的一行。 */

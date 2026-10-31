@@ -43,6 +43,8 @@ api:
     - { method: POST,   path: /templates/:key/publish,  scope: notify:publish }
     # 通道：列表/配置/健康
     - { method: GET,    path: /channels,                scope: notify:view }
+    # 「谁收不到」聚合（plan 2026-10-31 Phase 2）：永久失败按收件人/渠道/错误码聚合，只读
+    - { method: GET,    path: /channels/address-issues, scope: notify:view }
     - { method: PATCH,  path: /channels/:id,            scope: notify:channel }
     - { method: POST,   path: /channels/:id/health,     scope: notify:manage }
     # 测试发送（只发给自己）/ 手动重试

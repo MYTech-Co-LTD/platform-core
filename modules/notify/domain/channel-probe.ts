@@ -14,10 +14,16 @@
 //      不是**通道坏了**；写失败会让「压根没启用直连」的实例天天红。只有「配了但取不到 token」才落错误。
 import type { Pool } from 'pg'
 import { resolveWecomCredential } from './credential-store'
-import { probeDirect } from './im/wecom-direct'
+import { probeDirect, probeUser } from './im/wecom-direct'
 
 /** 同一 (org, provider) 两次真探的最小间隔（秒）；worker 每 2s 转一圈，这个值决定真实探测频率。 */
 export const MIN_PROBE_INTERVAL_SECONDS = 300
+
+/**
+ * 每轮抽几个成员验可达性（plan 2026-10-31 Phase 2）。
+ * 只抽样不普查：475 人 × 每分钟 = 打爆企微配额；5 个足以在几天内覆盖到大多数人。
+ */
+export const SAMPLE_LIMIT = 5
 
 export interface ProbeSummary {
   /** 本轮真去探的通道数 */
@@ -35,6 +41,11 @@ interface ProbeDep {
   now?: () => Date
   /** 测试注入：绕过最小间隔（生产不传） */
   minIntervalSeconds?: number
+  /**
+   * 采样器（宿主注入）：抽 N 个成员的渠道原生地址。
+   * 缺省 ⇒ 不做个人级抽样（只证凭据），不是「0 可达」。
+   */
+  sampleAddresses?: (org: string, limit: number) => Promise<string[]>
 }
 
 /**
@@ -86,7 +97,10 @@ export async function probeDirectChannels(dep: ProbeDep): Promise<ProbeSummary> 
 
     const p = await probeDirect(cred.cred, { fetchImpl: dep.fetchImpl })
     if (p.ok) {
-      await recordProbe(pool, r.org, r.provider, at, at, null)
+      // 凭据活着 ⇒ 顺带做一次**个人级**抽样（plan 2026-10-31 Phase 2）：
+      // 只调 `user/get`，幂等、不发消息；结果只进统计列，**不改变 last_ok_at / 判据 verdict**。
+      const sample = await sampleReachability(dep, cred.cred, r.org)
+      await recordProbe(pool, r.org, r.provider, at, at, null, sample)
       summary.ok.push(key)
     } else {
       await recordProbe(pool, r.org, r.provider, at, null, p.detail ?? 'probe failed')
@@ -96,18 +110,56 @@ export async function probeDirectChannels(dep: ProbeDep): Promise<ProbeSummary> 
   return summary
 }
 
+interface Reachability {
+  reachable: number | null
+  unreachable: number | null
+  sampledAt: string | null
+}
+
+/** 抽样一次个人级可达性。采样器缺失或抽不到人 ⇒ 三个统计列保持 null（「不知道」≠「0 可达」）。 */
+async function sampleReachability(
+  dep: ProbeDep,
+  cred: { corpId: string; agentId: string; secret: string },
+  org: string,
+): Promise<Reachability> {
+  const empty: Reachability = { reachable: null, unreachable: null, sampledAt: null }
+  if (!dep.sampleAddresses) return empty
+  let addrs: string[]
+  try {
+    addrs = await dep.sampleAddresses(org, SAMPLE_LIMIT)
+  } catch (e) {
+    console.warn('[notify] 可达性抽样取地址失败:', e instanceof Error ? e.message : e)
+    return empty
+  }
+  if (addrs.length === 0) return empty
+  let reachable = 0
+  let unreachable = 0
+  for (const a of addrs) {
+    const u = await probeUser(cred, a, { fetchImpl: dep.fetchImpl })
+    if (u.ok) reachable += 1
+    else unreachable += 1
+  }
+  return { reachable, unreachable, sampledAt: (dep.now ?? (() => new Date()))().toISOString() }
+}
+
 async function recordProbe(
   pool: Pool, org: string, provider: string,
   checkedAt: string, okAt: string | null, error: string | null,
+  reach: Reachability = { reachable: null, unreachable: null, sampledAt: null },
 ): Promise<void> {
   await pool.query(
-    `insert into notify.channel_probe(org, provider, checked_at, last_ok_at, last_error)
-     values ($1,$2,$3,$4,$5)
+    `insert into notify.channel_probe(org, provider, checked_at, last_ok_at, last_error,
+                                      reachable, unreachable, sampled_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
      on conflict (org, provider) do update
        set checked_at = excluded.checked_at,
            -- 失败不倒退既有证据（头注 ②）
            last_ok_at = coalesce(excluded.last_ok_at, notify.channel_probe.last_ok_at),
-           last_error = excluded.last_error`,
-    [org, provider, checkedAt, okAt, error],
+           last_error = excluded.last_error,
+           -- 抽样列同理：这一轮没抽（null）就保留上一次的统计，别把已知信息洗掉
+           reachable = coalesce(excluded.reachable, notify.channel_probe.reachable),
+           unreachable = coalesce(excluded.unreachable, notify.channel_probe.unreachable),
+           sampled_at = coalesce(excluded.sampled_at, notify.channel_probe.sampled_at)`,
+    [org, provider, checkedAt, okAt, error, reach.reachable, reach.unreachable, reach.sampledAt],
   )
 }

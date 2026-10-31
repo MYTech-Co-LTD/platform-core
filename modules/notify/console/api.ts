@@ -104,6 +104,16 @@ export type ChannelView = {
   healthAt: string | null
 }
 
+/** 「谁收不到」聚合行（/channels/address-issues；plan 2026-10-31 Phase 2）。 */
+export type AddressIssueView = {
+  kind: 'unresolved' | 'rejected' | 'other'
+  recipient: string
+  channel: string
+  code: string
+  count: number
+  lastAt: string
+}
+
 export type DeliveryView = {
   eventId: string
   eventKey: string
