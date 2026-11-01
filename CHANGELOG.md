@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.236.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.235.1...v0.236.0) - 2026-11-01
+- 【新增】data: 门店经营指标扩到 10 个 (#1257) ([#1258](https://github.com/MYTech-Co-LTD/platform-core/pull/1258), [c16bec3](https://github.com/MYTech-Co-LTD/platform-core/commit/c16bec32f2dd6c332a7c9242d06fa300e43be948))
+
+
 ## [0.235.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.235.0...v0.235.1) - 2026-11-01
 - 【修复】aftersales: 平台会话下打开员工登记页 403 卡死（身份互斥） ([#1255](https://github.com/MYTech-Co-LTD/platform-core/pull/1255), [b7fd5d3](https://github.com/MYTech-Co-LTD/platform-core/commit/b7fd5d3be4eb6019b97fb76117858aa2b86542c6))
 
