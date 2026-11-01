@@ -91,9 +91,18 @@ export async function callWecom({ token, path, method = "POST", body, fetchImpl 
   if (resp.status === 404) {
     return { error: `企微端点不存在（404）：${path}——插件与官方文档漂移，请联系维护者。` };
   }
-  const data = await resp.json().catch(() => ({}));
-  if (data.errcode === 0 || data.errcode === undefined) return data;
-  return { errcode: data.errcode, error: mapError(data.errcode, data.errmsg) };
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    return { error: `企微 API 返回了无法解析的响应（HTTP ${resp.status}）` };
+  }
+  if (typeof data.errcode === "number") {
+    if (data.errcode === 0) return data;
+    return { errcode: data.errcode, error: mapError(data.errcode, data.errmsg) };
+  }
+  if (!resp.ok) return { error: `企微 API 异常响应（HTTP ${resp.status}）` };
+  return data;
 }
 
 /** 宿主 execute 第二参历史形状：直传对象 / JSON 串 / 单键包裹（与 data-query 同律）。 */

@@ -123,3 +123,26 @@ test("拒绝文案常量在（index.js 引用，防改名漂移）", () => {
   assert.match(DENIED_MESSAGE, /使用权限/);
   assert.match(NO_IDENTITY_MESSAGE, /requesterSenderId/);
 });
+
+test("callWecom：非 2xx/非 JSON 显式报错——502 与 200 非 JSON 都不再静默成功", async () => {
+  const f502 = async () => ({ status: 502, ok: false, json: async () => { throw new Error("x"); } });
+  const out502 = await callWecom({ token: "T", path: "wedoc/smartsheet/get_sheet", fetchImpl: f502 });
+  assert.match(out502.error, /无法解析/);
+  assert.match(out502.error, /502/);
+  const f200bad = async () => ({ status: 200, ok: true, json: async () => { throw new Error("x"); } });
+  assert.match((await callWecom({ token: "T", path: "x", fetchImpl: f200bad })).error, /无法解析/);
+});
+
+test("callWecom：非 2xx 解析成功但无 errcode → 异常响应文案（HTTP 状态不被吞）", async () => {
+  const f503 = async () => ({ status: 503, ok: false, json: async () => ({}) });
+  const out = await callWecom({ token: "T", path: "x", fetchImpl: f503 });
+  assert.match(out.error, /异常响应/);
+  assert.match(out.error, /503/);
+});
+
+test("callWecom：HTTP 400 带 errcode 仍走 mapError（status 不遮蔽 errcode 语义）", async () => {
+  const f400 = async () => ({ status: 400, ok: false, json: async () => ({ errcode: 40058, errmsg: "invalid Request Parameter, hint: [x]" }) });
+  const out = await callWecom({ token: "T", path: "x", fetchImpl: f400 });
+  assert.equal(out.errcode, 40058);
+  assert.match(out.error, /参数形状不合法/);
+});
