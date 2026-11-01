@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.236.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.236.0...v0.236.1) - 2026-11-01
+- 【修复】data: 经营指标自证闸按门店数比较，修多指标假红 (#1259) ([#1261](https://github.com/MYTech-Co-LTD/platform-core/pull/1261), [c893a83](https://github.com/MYTech-Co-LTD/platform-core/commit/c893a83be8f30811a4bb77ada6d75597e8119c3b))
+
+
 ## [0.236.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.235.1...v0.236.0) - 2026-11-01
 - 【新增】data: 门店经营指标扩到 10 个 (#1257) ([#1258](https://github.com/MYTech-Co-LTD/platform-core/pull/1258), [c16bec3](https://github.com/MYTech-Co-LTD/platform-core/commit/c16bec32f2dd6c332a7c9242d06fa300e43be948))
 
