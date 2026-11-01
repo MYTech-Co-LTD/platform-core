@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.231.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.230.0...v0.231.0) - 2026-11-01
+- 【新增】data: 资产级授权 P1——ACL + 默认私有 + canView/canEdit 单一实现 ([#1244](https://github.com/MYTech-Co-LTD/platform-core/pull/1244), [fd771c3](https://github.com/MYTech-Co-LTD/platform-core/commit/fd771c3d21b843927f5a9cd34ae2c2557e5cbc74))
+
+
 ## [0.230.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.229.3...v0.230.0) - 2026-11-01
 - 【新增】openclaw: wecom-app 企微自建应用插件——17 工具+白名单+SKILL (#1238) ([#1240](https://github.com/MYTech-Co-LTD/platform-core/pull/1240), [a50e107](https://github.com/MYTech-Co-LTD/platform-core/commit/a50e10701cfa085bfdea02918f4b7f0e2e185da0))
 
