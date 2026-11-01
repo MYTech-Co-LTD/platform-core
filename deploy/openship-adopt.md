@@ -374,11 +374,13 @@ psql "$DATABASE_URL" -c "select platform.prune_audit();"
 1. **静态托管静默降级**：`app.ts` 的 `webDistDir` 按【`apps/server/src/app.ts` 自己的位置】解析
    `../../web/dist`。镜像里 `apps/` 与 `packages/` 的层级被打散 → 该目录不存在 → 只打印一行
    warn 就继续启动（`/healthz` 照绿、页面白屏）。容器日志里搜 `跳过静态托管` 是唯一的现场证据。
-2. **启动期连不上 Casdoor 就起不来**（设计如此，fail-fast）：装载器会按 `platform.tenant` 的
-   每个租户 org 调 `upsertPermission`——**`single` 与 `multi` 都一样**（M1 起 `multi` 不再跳过
-   供给）。**别把 Casdoor 排在平台容器后面部署**；共享 SSO 短暂不可用时，`restart: unless-stopped`
-   会让容器反复重启直到它恢复。
-   另：`CASDOOR_ADMIN_USER`/`_PWD` 在 M1 起是**必填**，缺了在配置装配阶段就报错——不要试图
+2. **启动期连不上 Casdoor：权限供给降级 + 后台重试，进程不再崩**（#579 起改为此行为；
+   旧文「fail-fast 反复重启」已废弃——2026-10-12 实测：共用 admin 被第三方试错锁定约 8 分钟，
+   两个实例同时崩溃循环、平台 11 分钟不可用）。装载器按 `platform.tenant` 的每个租户 org 调
+   `upsertPermissions`（**single 与 multi 都一样**）；失败时：进程照常监听，模块 API 对缺码用户
+   403（门卫仍在），后台按 60s×2 封顶 600s 退避重试；**集成判据 `casdoor-admin-session` 同步变红**
+   （控制台 → 集成可见）。登录仍需 Casdoor 可用，但平台本体（console/健康检查）不再跟着挂。
+   另：`CASDOOR_ADMIN_USER`/`_PWD` 是**必填**，缺了在配置装配阶段就报错——不要试图
    靠"不配凭据"来跳过启动期供给：登录本身也要 admin 会话，缺了谁都拿不到会话。
 3. **境内构建可能很慢**：镜像构建要现拉 pnpm（corepack）与整棵依赖树。本机（macOS + 已缓存）
    构建约 2 分钟；生产机如果直连 npm 官方源被限速，可参照 `data-platform-scaffold` 里

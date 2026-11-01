@@ -141,6 +141,11 @@ export interface LoadModulesDeps {
    * 生产不存在缺省以外的形态；注入口只服务单测。
    */
   channelAddressResolver?: ChannelAddressResolver
+  /**
+   * 权限供给重试的等待实现（测试注入用，缺省真 setTimeout）。只服务 #579 的重试路径单测：
+   * 让「后台退避」在测试里即时推进，不留悬挂定时器。生产不存在缺省以外的形态。
+   */
+  provisionRetryWait?: (ms: number) => Promise<void>
 }
 
 /** 待供给的权限码（manifest.permissions 的元素形状） */
@@ -182,6 +187,75 @@ export async function provisionModulePermissions(
     await casdoorFor(org).upsertPermissions(permissions)
   }
   return rows.map((r) => r.casdoor_org)
+}
+
+/**
+ * 带退避重试的权限码供给（issue #579：admin 被锁 ⇒ 启动致命路径全挂）。
+ *
+ * 事件回放（2026-10-12，约 11 分钟不可用）：第三方在共用 Casdoor 登录页试错把 **admin 账号**
+ * 锁定（账号级、约 8 分钟窗口）⇒ 共用该 Casdoor 的**所有实例**启动期 `upsertPermissions`
+ * 抛错 ⇒ `Exit 1` ⇒ 容器崩溃循环。锁定解除后自愈——全程无凭据错误。
+ *
+ * 判定：**权限供给不配当致命错误**。它失败的真实语义是「Casdoor 暂时不可用/被锁」，此时：
+ *   · 平台本体（登录、console、已装配的路由）照常监听；
+ *   · 降级表现 = 模块 API 对缺码用户 403（声明即授权的门卫仍在，不会敞开）；
+ *   · **可见性不新造**：admin 会话死了 ⇒ 集成判据 `casdoor-admin-session`（casdoor:get-user）
+ *     同源失败 ⇒ 控制台集成页变红——本来就有这张告警面（spec 2026-10-31-integration-health）。
+ *
+ * 退避：60s 起、×2、封顶 600s，无限次。**不重试风暴**：锁定窗口约 8 分钟，60s→120s→240s→480s
+ * 共 4 次尝试即跨过窗口，且失败的是「登录被锁」不是「密码错」，不计入新的失败计数。
+ *
+ * 返回 `retryDone` 供测试等待后台收敛；生产调用方忽略它（进程活着，循环自会走完）。
+ */
+export interface ProvisionRetryHandle {
+  provisionedAtStartup: boolean
+  orgs: string[]
+  /** 启动失败后转后台重试的收敛 promise；启动即成功时为 null */
+  retryDone: Promise<void> | null
+}
+
+export async function provisionModulePermissionsResilient(
+  pool: Pool,
+  casdoorFor: (org: string) => CasdoorClient,
+  permissions: ReadonlyArray<ProvisionPermission>,
+  opts: {
+    /** 测试注入的等待实现；缺省真 setTimeout */
+    wait?: (ms: number) => Promise<void>
+    initialDelayMs?: number
+    maxBackoffMs?: number
+  } = {},
+): Promise<ProvisionRetryHandle> {
+  const wait = opts.wait ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms) }))
+  let delay = opts.initialDelayMs ?? 60_000
+  const max = opts.maxBackoffMs ?? 600_000
+
+  const attempt = () => provisionModulePermissions(pool, casdoorFor, permissions)
+
+  try {
+    return { provisionedAtStartup: true, orgs: await attempt(), retryDone: null }
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e)
+    console.error(
+      '[modules] 权限码供给失败，进程照常运行（降级：模块 API 对缺码用户 403；'
+      + `集成页 casdoor-admin-session 应同时变红）：${reason}`,
+    )
+    const retryDone = (async (): Promise<void> => {
+      for (;;) {
+        await wait(delay)
+        try {
+          const orgs = await attempt()
+          console.log(`[modules] 权限码供给重试成功（org: ${orgs.join(', ') || '(无租户)'}）`)
+          return
+        } catch (e2) {
+          const r2 = e2 instanceof Error ? e2.message : String(e2)
+          // 先算再报：日志说的是「下次要等多久」，不是刚等过的（读日志的人关心的是下一次）
+          delay = Math.min(delay * 2, max)
+          console.error(`[modules] 权限码供给重试失败，${Math.round(delay / 1000)}s 后再试：${r2}`)
+        }
+      }
+    })()
+    return { provisionedAtStartup: false, orgs: [], retryDone }
+  }
 }
 
 /** 模块 API 在宿主上的挂载前缀。mount() 与门卫声明共用此处，**不许各写一份**（防漂移） */
@@ -422,8 +496,12 @@ export async function loadModules(
     ...loaded.flatMap((m) => m.manifest.permissions),
   ]
   if (deps.casdoorFor) {
-    const orgs = await provisionModulePermissions(deps.pool, deps.casdoorFor, allPermissions)
-    if (orgs.length === 0 && allPermissions.length > 0) {
+    // #579：供给失败（Casdoor admin 被锁/不可达）不再杀进程——降级运行 + 后台退避重试
+    const r = await provisionModulePermissionsResilient(
+      deps.pool, deps.casdoorFor, allPermissions,
+      deps.provisionRetryWait === undefined ? {} : { wait: deps.provisionRetryWait },
+    )
+    if (r.provisionedAtStartup && r.orgs.length === 0 && allPermissions.length > 0) {
       console.warn('[modules] platform.tenant 无租户，权限码未供给任何 org（先跑租户 seed）')
     }
   } else if (allPermissions.length > 0) {

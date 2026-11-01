@@ -5,7 +5,7 @@
 // apps/server/.tmp-loader-fixtures/——index.ts 裸导入 '@platform/sdk'/'hono' 靠
 // apps/server/node_modules walk-up 解析（/tmp 下裸导入解析不到）；目录随机名 +
 // afterEach 清理，不污染工作树。
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,7 +19,8 @@ import { TENANT_SOURCES } from '@platform/sdk'
 import type { Identity } from '@platform/sdk'
 import { runMigrations } from './migrate'
 import { seedDemo } from './seed'
-import { loadModules, provisionModulePermissions } from './loader'
+import {
+  provisionModulePermissionsResilient, loadModules, provisionModulePermissions } from './loader'
 import type { TenantRow } from './tenant'
 
 const dbUrl = process.env.DATABASE_URL
@@ -536,6 +537,61 @@ describe.skipIf(!dbUrl)('loadModules', INTEGRATION_SUITE, () => {
     )
     expect(orgs).toEqual([])
     expect(requested).toEqual([])
+  })
+
+  // ── #579：admin 被锁 ⇒ 供给失败不得杀进程（降级 + 后台退避重试）─────────────────
+
+  /** 状态化假 Casdoor：前 failN 次 upsertPermissions 抛错（模拟账号锁定窗口），之后成功。 */
+  function flakyCasdoorFor(failN: number) {
+    let calls = 0
+    const rec: { at: number }[] = []
+    const factory = (org: string) => {
+      calls += 1
+      const n = calls
+      return {
+        upsertPermissions: async () => {
+          if (n <= failN) throw new Error('casdoor admin login failed: too many times')
+          return undefined
+        },
+      } as unknown as CasdoorClient
+    }
+    return { factory, rec, callsOf: () => calls }
+  }
+
+  it('★ #579：供给失败 ⇒ loadModules 照常完成（不杀进程），且后台重试收敛', async () => {
+    cleanupModules.push('boomperm')
+    const modulesDir = await newModulesDir()
+    await writeModule(modulesDir, 'boomperm', {
+      'manifest.yaml': manifestYaml('boomperm'),
+      'index.ts': indexTs('boomperm', 'boomperm:view'),
+    })
+    // 启动 1 次 + 重试第 1 次都失败，第 3 次成功（模拟 admin 锁定窗口跨过后恢复）
+    const { factory } = flakyCasdoorFor(2)
+    const waits: number[] = []
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // 注入即时 wait：后台退避在测试里立刻推进，不留悬挂定时器
+      const runtime = await loadModules(modulesDir, {
+        pool, casdoorFor: factory as unknown as (org: string) => CasdoorClient,
+        provisionRetryWait: async (ms) => { waits.push(ms) },
+      })
+      expect(runtime.modules).toHaveLength(1) // 装载完成 = 没被供给失败拖死（#579 的核心断言）
+      expect(errSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('权限码供给失败'))).toBe(true)
+      // 退避序列：60s → 120s（封顶前的倍增）
+      await new Promise((r) => { setTimeout(r, 20) })
+      expect(waits.slice(0, 2)).toEqual([60_000, 120_000])
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+
+  it('★ #579（单元）：provisionModulePermissionsResilient 启动即成功 ⇒ 无重试', async () => {
+    const factory = () => ({
+      upsertPermissions: async () => undefined,
+    }) as unknown as CasdoorClient
+    const r = await provisionModulePermissionsResilient(pool, factory, [{ code: 'x:y', name: 'X' }])
+    expect(r.provisionedAtStartup).toBe(true)
+    expect(r.retryDone).toBeNull()
   })
 
   it('无 casdoorFor：跳过供给、不抛错，且该模块的码不存在于任何 org', async () => {
