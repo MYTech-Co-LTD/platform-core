@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.235.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.235.0...v0.235.1) - 2026-11-01
+- 【修复】aftersales: 平台会话下打开员工登记页 403 卡死（身份互斥） ([#1255](https://github.com/MYTech-Co-LTD/platform-core/pull/1255), [b7fd5d3](https://github.com/MYTech-Co-LTD/platform-core/commit/b7fd5d3be4eb6019b97fb76117858aa2b86542c6))
+
+
 ## [0.235.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.234.0...v0.235.0) - 2026-11-01
 - 【新增】data: 所有者转移 PUT /reports/:id/owner（P4） ([#1253](https://github.com/MYTech-Co-LTD/platform-core/pull/1253), [05005f1](https://github.com/MYTech-Co-LTD/platform-core/commit/05005f102ad302a5d19f69b5a66e0bcfb5f79b33))
 
