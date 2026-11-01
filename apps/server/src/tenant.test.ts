@@ -155,6 +155,54 @@ describe.skipIf(!dbUrl)('租户解析 + platform 路由 + seed', () => {
     await seedDemo(pool) // 收敛还原
   })
 
+  // —— /api/platform/me/apps（spec 2026-11-01 §5.2：按人过滤的业务入口）——
+
+  it('★ /me/apps：匿名 401；按 scope 过滤；停用模块不进', async () => {
+    const ids = await pool.query<{ id: number; slug: string }>(
+      "select id, slug from platform.tenant where slug in ('acme','beta')",
+    )
+    const acmeId = ids.rows.find((r) => r.slug === 'acme')!.id
+    const deps: PlatformRoutesDeps = {
+      pool,
+      modules: () => [
+        {
+          id: 'aftersales', name: '售后',
+          console: [{ path: '/console/aftersales', title: '售后', scope: 'aftersales:manage' }],
+          userApp: { mount: '/app/aftersales', title: '售后管理', scope: 'aftersales:manage' },
+        },
+        {
+          id: 'data', name: '数据',
+          console: [{ path: '/console/data', title: '数据', scope: 'data:query' }],
+          userApp: { mount: '/app/data', title: '数据问数', scope: 'data:query' },
+        },
+        {
+          id: 'off', name: '停用模块',
+          console: [{ path: '/console/off', title: 'Off', scope: 'off:view' }],
+          userApp: { mount: '/app/off', title: 'Off' },
+        },
+      ],
+      enabledFor: async (t) => new Set(t === acmeId ? ['aftersales', 'data'] : []), // 'off' 未启用 ⇒ 不进
+    }
+    const build = (identity: unknown) => testClient(
+      new Hono<TenantEnv>()
+        .use('*', resolveTenantMiddleware({ pool, mode: 'multi', platformOrg: '' }))
+        .use('*', async (c, next) => {
+          if (identity !== null) (c as unknown as { set: (k: string, v: unknown) => void }).set('identity', identity)
+          await next()
+        })
+        .route('/api/platform', platformRoutes(deps)),
+    )
+
+    // 匿名 ⇒ 401（按人的入口不向匿名披露）
+    const anon = await build(null).api.platform.me.apps.$get(undefined, { headers: { host: 'acme.test' } })
+    expect(anon.status).toBe(401)
+
+    // 只有 data:query 的人 ⇒ 只看到「数据问数」
+    const viewer = await build({ userId: 'u1', hasScope: (c: string) => c === 'data:query' })
+      .api.platform.me.apps.$get(undefined, { headers: { host: 'acme.test' } })
+    expect(((await viewer.json()) as { apps: { moduleId: string }[] }).apps.map((a) => a.moduleId)).toEqual(['data'])
+  })
+
   // —— /api/platform/config ——
 
   it('config：modules 经 enabledFor 过滤 + 空 console 剔除；tenant 回 slug/org', async () => {
