@@ -98,6 +98,13 @@ export default function ReportsPage() {
   // + 勾选集合（`ext_id`）。两渲染器共用同一个入口（服务端 `PUT /reports/:id/dept-gate`）。
   const [deptEdit, setDeptEdit] = useState<ReportRow | null>(null)
   const [deptOptions, setDeptOptions] = useState<DeptOption[] | null>(null)
+  // ── 资产级共享（spec 2026-11-01 §4）：谁能看这张报表 ─────────────────────────
+  const [shareFor, setShareFor] = useState<ReportRow | null>(null)
+  const [shareInfo, setShareInfo] = useState<{ visibility: string; owner: string | null } | null>(null)
+  const [shareUsers, setShareUsers] = useState('')
+  const [shareScopes, setShareScopes] = useState('')
+  const [shareDepts, setShareDepts] = useState<string[]>([])
+  const [shareSaving, setShareSaving] = useState(false)
   const [deptChecked, setDeptChecked] = useState<string[]>([])
   // 版本通路（platform 行）的三种面：发布备注 Modal / 版本历史抽屉 / 抽屉里的行快照。
   const [publishTarget, setPublishTarget] = useState<ReportRow | null>(null)
@@ -260,6 +267,60 @@ export default function ReportsPage() {
   // ── 部门门（spec 2026-10-30 §3.4；#1173）：**两种渲染器共用**一个改门入口 ──────────
   // 语义早于这里就要清楚：配的是「**这些部门及其子树**里的人可以看」，与页门**叠加**
   // （两个门都要过）。空勾选 = 清空部门门 = 不限部门。
+  /**
+   * 打开共享面板：先读当前 ACL（owner / visibility / viewers），再让用户编辑。
+   * 授权由服务端 `canEditAsset`（owner ∪ data:manage）判定——前端不复制这套判断
+   * （`platform-permission` 红线：不造第二套权限）。
+   */
+  const openShare = async (r: ReportRow) => {
+    setShareFor(r)
+    setShareInfo(null)
+    try {
+      const b = await apiGet(`/reports/${r.id}/acl`) as {
+        visibility: string; owner: string | null
+        viewers: { subjectType: string; subjectId: string }[]
+      }
+      setShareInfo({ visibility: b.visibility, owner: b.owner })
+      setShareUsers(b.viewers.filter((v) => v.subjectType === 'user').map((v) => v.subjectId).join(','))
+      setShareScopes(b.viewers.filter((v) => v.subjectType === 'scope').map((v) => v.subjectId).join(','))
+      setShareDepts(b.viewers.filter((v) => v.subjectType === 'dept').map((v) => v.subjectId))
+      // 部门多选的数据源与部门门同款（本租户已同步的 org 平表；拉过就复用）
+      if (deptOptions === null) {
+        try {
+          const d = await apiGet('/reports/dept-options') as { depts: DeptOption[] }
+          setDeptOptions(d.depts)
+        } catch { /* 组织架构未同步：部门多选留空，不阻断共享（用户/权限码仍可用） */ }
+      }
+    } catch (e) {
+      messageApi.error(e instanceof ApiError && e.status === 403 ? '只有所有者或管理码持有者能改共享' : `读取共享设置失败：${String(e)}`)
+      setShareFor(null)
+    }
+  }
+
+  const saveShare = async () => {
+    if (shareFor === null) return
+    setShareSaving(true)
+    try {
+      const viewers = [
+        ...shareUsers.split(',').map((x) => x.trim()).filter(Boolean)
+          .map((id) => ({ subjectType: 'user', subjectId: id })),
+        ...shareScopes.split(',').map((x) => x.trim()).filter(Boolean)
+          .map((id) => ({ subjectType: 'scope', subjectId: id })),
+        ...shareDepts.map((id) => ({ subjectType: 'dept', subjectId: id })),
+      ]
+      await apiSend(`/reports/${shareFor.id}/acl`, 'PUT', { viewers })
+      messageApi.success('共享设置已保存')
+      setShareFor(null)
+      await load()
+    } catch (e) {
+      messageApi.error(e instanceof ApiError && e.status === 403
+        ? '只有所有者或管理码持有者能改共享'
+        : `保存失败：${String(e)}`)
+    } finally {
+      setShareSaving(false)
+    }
+  }
+
   const openDeptGate = async (r: ReportRow) => {
     setDeptEdit(r)
     setDeptChecked(r.requiredDepts ?? [])
@@ -530,6 +591,9 @@ export default function ReportsPage() {
                   {(r.requiredDepts ?? []).length === 0 ? '配部门门' : '改部门门'}
                 </Button>
               )}
+              {/* 资产级共享（spec 2026-11-01 §4）：**谁被允许看**。授权在服务端
+                  （owner ∪ data:manage），这里不看 canManage——被共享的 owner 也要能改。 */}
+              <Button size="small" onClick={() => void openShare(r)}>共享</Button>
               {/* ── Metabase 行：既有管理动作**一字不动**（改页门/发布=清页门/回收）────────── */}
               {canManage && r.renderer === 'metabase' && (
                 <>
@@ -632,6 +696,47 @@ export default function ReportsPage() {
           </>
         )}
       </Modal>
+      {/* 资产级共享（spec 2026-11-01 §4）：三类受让方（点名用户 / 部门 / 权限码）。
+          默认私有（visibility=restricted）：只有 owner 与这里列出的对象能看。
+          授权判定在服务端 canEditAsset（owner ∪ data:manage），前端不复制。 */}
+      <Modal title={`共享：${shareFor?.title ?? ''}`}
+             open={shareFor !== null}
+             okText="保存" cancelText="取消"
+             width={560}
+             confirmLoading={shareSaving}
+             onOk={() => void saveShare()}
+             onCancel={() => setShareFor(null)}>
+        <Typography.Paragraph type="secondary">
+          {shareInfo === null
+            ? '正在读取当前共享设置…'
+            : `所有者：${shareInfo.owner ?? '（历史资产，无所有者）'} ·
+               可见性：${shareInfo.visibility === 'tenant' ? '全租户可见（按页门/部门门）' : '仅所有者与下列对象'}`}
+        </Typography.Paragraph>
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+          只填用户名即「点名共享」；部门包含其全部子部门；权限码 = 持有该码的人都能看。清空保存 = 收回全部共享。
+        </Typography.Paragraph>
+        <Typography.Text>点名用户（Casdoor 用户名，逗号分隔）</Typography.Text>
+        <Input value={shareUsers} onChange={(e) => setShareUsers(e.target.value)}
+               placeholder="如 yangwei,LuZhengHui" style={{ marginBottom: 12 }} />
+        <Typography.Text>权限码（逗号分隔）</Typography.Text>
+        <Input value={shareScopes} onChange={(e) => setShareScopes(e.target.value)}
+               placeholder="如 data:query" style={{ marginBottom: 12 }} />
+        <Typography.Text>部门（含子部门）</Typography.Text>
+        {deptOptions === null || deptOptions.length === 0 ? (
+          <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
+            {deptOptions === null ? '正在加载组织架构…' : '本租户还没有同步组织架构（先在企业微信同步）'}
+          </Typography.Paragraph>
+        ) : (
+          <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid #f0f0f0', padding: 8, marginTop: 8 }}>
+            <Tree checkable selectable={false}
+                  treeData={deptTreeData(deptOptions)}
+                  defaultExpandedKeys={deptTreeData(deptOptions).map((n) => n.key)}
+                  checkedKeys={shareDepts}
+                  onCheck={(keys) => setShareDepts((Array.isArray(keys) ? keys : keys.checked).map(String))} />
+          </div>
+        )}
+      </Modal>
+
       {/* 发布版本（platform 行）：note 随版本永久留存（审计面），可选但值得填。 */}
       <Modal title={`发布：${publishTarget?.title ?? ''}`}
              open={publishTarget !== null}
