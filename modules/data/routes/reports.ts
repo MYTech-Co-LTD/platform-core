@@ -79,6 +79,18 @@ import {
   deptGatePasses, deptNamesOf, userDeptClosure, validateDeptGate,
 } from '../domain/dept-gate'
 import {
+  canEditAsset,
+  canViewAsset,
+  ensureOwner,
+  isAdminOverride,
+  loadAssetAcl,
+  loadAssetAcls,
+  replaceViewers,
+  writeAssetAudit,
+  type AclRow,
+  type AclSubjectType,
+} from '../domain/asset-auth'
+import {
   TENANT_PARAM_ID, TENANT_SLUG, publishWithTenantBinding, readDashboardContent,
 } from '../domain/report-content'
 
@@ -104,6 +116,12 @@ const ReportBody = z.object({
   lockedParams: z.record(z.string()).default({}),
   /** NULL = 所有拿到本模块的人可见（口径同 data.metrics.required_scope）。 */
   requiredScope: z.string().min(1).nullable().default(null),
+  /**
+   * 资产可见面（spec 2026-11-01 §4.3）：**新建默认私有**（`restricted` = 只有 owner 与 ACL 里的人）；
+   * `tenant` = 沿用旧粗门（required_scope / required_depts）。显式给 `tenant` 即"建给全租户看"。
+   * ⚠️ 与 `requiredScope` **正交**：后者是内容门/已发布语义，不是"公开"开关。
+   */
+  visibility: z.enum(['tenant', 'restricted']).default('restricted'),
   /**
    * 部门门（spec §3.4）：ext_id 数组，**子树继承**（授权「共享中心」⇒ 数字技术部的成员也可见）。
    * NULL / 空数组 = 无部门门。与 `requiredScope` **叠加**（两个门都要过），不是替代。
@@ -166,6 +184,9 @@ const narrativeErrorStatus = (e: NarrativeContextErr): 400 | 403 | 404 => {
  * metrics 的「非法 id 一律 404」一致，不给存在性探针（不做 uuid 形状校验：形状不对
  * 也只是查不到，多一条正则就多一个「合法 id 被拒」的误伤面）。
  */
+/** 模块管理码（资产级判定的另一半：owner ∪ 该码）。单一常量，别在多处写字符串。 */
+const MANAGE_SCOPE = 'data:manage'
+
 const reportIdOf = (raw: string | undefined): string | null =>
   raw === undefined || raw === '' ? null : raw
 
@@ -179,15 +200,8 @@ const reportIdOf = (raw: string | undefined): string | null =>
  * 就拒**——「没解析」绝不能等价于「没有部门，所以过」。调用方要么先算好部门集，要么先确认
  * 这批行里没有人带门（`GET /reports` 的惰性取法）。
  */
-const visibleTo = (
-  row: { requiredScope: string | null; requiredDepts?: string[] | null },
-  requester: { hasScope(code: string): boolean },
-  userDepts: ReadonlySet<string> | undefined,
-): boolean => {
-  if (row.requiredScope !== null && !requester.hasScope(row.requiredScope)) return false
-  if (userDepts === undefined && (row.requiredDepts ?? []).length > 0) return false
-  return deptGatePasses(row.requiredDepts ?? null, userDepts ?? new Set())
-}
+// 行级可见判定已收口到 `domain/asset-auth.ts` 的 `canViewAsset`（ACL → visibility → 旧内容门）。
+// **不要再在路由里另写一套**——两处判断必然漂移（#1179 的教训）。
 
 export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   r.post('/reports', async (c) => {
@@ -275,7 +289,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         requiredDepts: parsed.data.requiredDepts,
         renderer: 'platform',
         spec: spec.spec,
+        // 资产级（spec 2026-11-01 §4.3）：缺省 restricted（私有）；显式 tenant = 建给全租户看。
+        // 同名 upsert **不覆盖**既有可见性（upsert 的冲突分支不更新该列）。
+        visibility: parsed.data.visibility,
       })
+      await ensureOwner(ctx.pool, org, id, requester.userId)
       // `version` 是登记侧版本，**写后**回读（与 metabase 路径同口径）。自绘没有内容侧指纹
       // （内容就是 spec 本身，写保护走 PUT /spec 的 expectedVersion）也没有 `created` 证据
       // （upsertReport 只回 id）⇒ 响应体相应少这两键。
@@ -343,7 +361,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
           embedParams: parsed.data.lockedParams,
           requiredScope: parsed.data.requiredScope,
           requiredDepts: parsed.data.requiredDepts,
+          visibility: parsed.data.visibility,
         })
+        await ensureOwner(ctx.pool, org, id, requester.userId)
         // `version` 是**登记侧**版本（与内容侧指纹分属两条通路，别混名）：**写后**回读，不复用写前的值。
         // `fingerprint` 直接复用发布那次的现算结果——零额外请求（publishWithTenantBinding 已算过）。
         const row = await getReport(ctx.pool, org, id)
@@ -366,14 +386,19 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const requester = requesterOf(c)
     // M3 守卫拒掉的请求者：对其「看不见」（约束 3）——空清单，不是报错（口径同 GET /metrics）
     if (requester === null) return c.json({ reports: [] })
-    const rows = await listReports(ctx.pool, c.get('tenant').casdoor_org)
-    // 部门门（spec §3.4）：只有存在带门行时才取用户部门闭包（无门租户零额外查询）
-    const userDepts = rows.some((r) => (r.requiredDepts ?? []).length > 0)
+    const org = c.get('tenant').casdoor_org
+    const rows = await listReports(ctx.pool, org)
+    // 资产级 ACL（spec 2026-11-01 §4）：批量取，避免 N+1；判据只有 canViewAsset 一处。
+    const acls = await loadAssetAcls(ctx.pool, org, rows.map((r) => r.id))
+    // 部门闭包：带部门门**或**有部门受让方时才取（其余情形零额外查询）
+    const needsDepts = rows.some((r) => (r.requiredDepts ?? []).length > 0)
+      || [...acls.values()].some((list) => list.some((a) => a.subjectType === 'dept'))
+    const userDepts = needsDepts
       ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
       : undefined
     // 只投影消费面要的字段：metabase_id / embed_params 是实现细节，不外泄
     return c.json({
-      reports: rows.filter((row) => visibleTo(row, requester, userDepts))
+      reports: rows.filter((row) => canViewAsset(row, requester, acls.get(row.id) ?? [], userDepts))
         .map((row) => ({
           id: row.id, title: row.title, requiredScope: row.requiredScope,
           requiredDepts: row.requiredDepts, renderer: row.renderer,
@@ -482,6 +507,76 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 与 GateBody 同款上界（int4）：值会绑进 SQL 与 version 列比较
     expectedVersion: z.number().int().positive().max(2147483647),
   }).strict()
+
+  // ── 资产级共享（spec 2026-11-01 §4）：谁能看这条资产 ────────────────────────────
+  // 授权：**owner 或模块管理码**；管理员代管留 `asset_audit.by_admin=true`。
+  // 声明 **data:view** 而不是 data:manage：owner 未必持管理码——那是本功能存在的理由。
+  // 真判据在 handler 的 canEditAsset（单一实现），门卫只挡匿名/无关者。
+  r.get('/reports/:id/acl', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const org = c.get('tenant').casdoor_org
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const row = await getReport(ctx.pool, org, id)
+    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const acl = await loadAssetAcl(ctx.pool, org, id)
+    if (!canEditAsset(acl, requester, MANAGE_SCOPE)) {
+      return c.json({ error: 'FORBIDDEN', need: 'owner_or_' + MANAGE_SCOPE }, 403)
+    }
+    return c.json({
+      visibility: row.visibility,
+      owner: acl.find((a) => a.relation === 'owner')?.subjectId ?? null,
+      viewers: acl.filter((a) => a.relation === 'viewer')
+        .map((a) => ({ subjectType: a.subjectType, subjectId: a.subjectId })),
+    })
+  })
+
+  r.put('/reports/:id/acl', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const org = c.get('tenant').casdoor_org
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const parsed = z.object({
+      viewers: z.array(z.object({
+        subjectType: z.enum(['user', 'dept', 'scope']),
+        subjectId: z.string().min(1),
+      })).max(200),
+    }).safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+
+    const row = await getReport(ctx.pool, org, id)
+    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const acl = await loadAssetAcl(ctx.pool, org, id)
+    if (!canEditAsset(acl, requester, MANAGE_SCOPE)) {
+      return c.json({ error: 'FORBIDDEN', need: 'owner_or_' + MANAGE_SCOPE }, 403)
+    }
+
+    // 部门受让方必须真实存在（fail-closed：配了也永远命不中的门不如当场拒）
+    const deptIds = parsed.data.viewers.filter((v) => v.subjectType === 'dept').map((v) => v.subjectId)
+    if (deptIds.length > 0) {
+      const gate = await validateDeptGate(ctx.pool, c.get('tenant').id, deptIds)
+      if (!gate.ok) {
+        return c.json(
+          { error: gate.code, ...(gate.unknown ? { unknown: gate.unknown } : {}) },
+          gate.code === 'ORG_NOT_SYNCED' ? 409 : 400,
+        )
+      }
+    }
+
+    const viewers: AclRow[] = parsed.data.viewers.map((v) => ({
+      subjectType: v.subjectType as AclSubjectType,
+      subjectId: v.subjectId,
+      relation: 'viewer' as const,
+    }))
+    await replaceViewers(ctx.pool, org, id, viewers, requester.userId)
+    await writeAssetAudit(ctx.pool, {
+      org, assetId: id, actor: requester.userId, action: 'acl.update',
+      detail: { viewers }, byAdmin: isAdminOverride(acl, requester, MANAGE_SCOPE),
+    })
+    return c.json({ ok: true, viewers: viewers.map((v) => ({ subjectType: v.subjectType, subjectId: v.subjectId })) })
+  })
 
   r.put('/reports/:id/dept-gate', async (c) => {
     const requester = requesterOf(c)
@@ -618,18 +713,20 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/reports/:id/spec', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const org = c.get('tenant').casdoor_org
     const id = reportIdOf(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    const row = await getReport(ctx.pool, c.get('tenant').casdoor_org, id)
+    const row = await getReport(ctx.pool, org, id)
     if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
     // 数据门之二（行级，照 embed-url 的口径）：行上 required_scope 比页门更细——页门未放行的行
     // 对观看者不存在（403 带 need）。规格里的 metricId 可见性另由 /query 的语义裁剪兜底，
     // 但「这份规格存不存在」本身先过行门。
     // 部门门（spec §3.4）：有门才去解析用户部门（无门租户零额外查询，同 GET /reports）
-    const specDepts = (row.requiredDepts ?? []).length > 0
+    const specAcl = await loadAssetAcl(ctx.pool, org, row.id)
+    const specDepts = (row.requiredDepts ?? []).length > 0 || specAcl.some((a) => a.subjectType === 'dept')
       ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
       : undefined
-    if (!visibleTo(row, requester, specDepts)) {
+    if (!canViewAsset(row, requester, specAcl, specDepts)) {
       return c.json({ error: 'FORBIDDEN', need: row.requiredScope }, 403)
     }
     // 渲染器通道守卫：metabase 行的「内容」在 Metabase 侧，没有可读的 spec（列必为 null）
@@ -1035,6 +1132,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   r.get('/reports/:id/embed-url', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const org = c.get('tenant').casdoor_org
     const cfg = metabaseFromEnv()
     if (!cfg) return c.json({ error: 'METABASE_UNCONFIGURED' }, 503)
     const id = reportIdOf(c.req.param('id'))
@@ -1042,10 +1140,11 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const row = await getReport(ctx.pool, c.get('tenant').casdoor_org, id)
     if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
     // 数据门之二（行级）：行上 required_scope 比页门更细；部门门在此叠加（spec §3.4）
-    const embedDepts = (row.requiredDepts ?? []).length > 0
+    const embedAcl = await loadAssetAcl(ctx.pool, org, row.id)
+    const embedDepts = (row.requiredDepts ?? []).length > 0 || embedAcl.some((a) => a.subjectType === 'dept')
       ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
       : undefined
-    if (!visibleTo(row, requester, embedDepts)) {
+    if (!canViewAsset(row, requester, embedAcl, embedDepts)) {
       return c.json({ error: 'FORBIDDEN', need: row.requiredScope }, 403)
     }
 

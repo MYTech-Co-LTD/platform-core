@@ -102,6 +102,11 @@ api:
     # 改门 = 授权变更 ⇒ data:manage（与页门同档）。选择器数据源同样是管理面：
     # 观看者不需要看到「有哪些部门可以当门」，那是配置信息不是内容。
     # 判定（行级部门门）不在门卫这一层，在 handler 的 visibleTo（清单表达不了「行级」）。
+    # 资产级共享（spec 2026-11-01 §4）：**data:query** 是有意的——owner 未必持管理码，
+    # 真判据在 handler 的 canEditAsset（owner ∪ data:manage），门卫只挡匿名与无关者。
+    # （模块只能声明自己的码，data:view 不在本模块清单里。）
+    - { method: GET,    path: /reports/:id/acl,       scope: data:query }
+    - { method: PUT,    path: /reports/:id/acl,       scope: data:query }
     - { method: PUT,    path: /reports/:id/dept-gate, scope: data:manage }
     - { method: GET,    path: /reports/dept-options,  scope: data:manage }
     # ── 自绘规格读写（#391 计划 6 Task 3）：读 = 观看面（行级页门照 embed-url 的 visibleTo

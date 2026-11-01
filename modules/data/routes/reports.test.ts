@@ -212,7 +212,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('十九个报表端点都声明了（api.internal 全模块共 34 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 36 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -221,9 +221,14 @@ describe('报表面声明（不需要数据库）', () => {
     // #1047 报表页筛选器；+7：报表定义版本（publish/unpublish/rollback/versions×2/
     // published-spec/draft，月报重做 Task 10）；+2：AI 文本 JSON/SSE（计划 2026-10-26
     // Task 7）；+2：部门门（`PUT /reports/:id/dept-gate` 改门 + `GET /reports/dept-options`
-    // 选择器数据源，spec 2026-10-30 §3.4；#1173））：穷举口径（同 module.test.ts 的表清单）——
-    // 别处加端点而漏改这里会红，逼着声明与测试一起动。
-    expect(declared).toHaveLength(34)
+    // 选择器数据源，spec 2026-10-30 §3.4；#1173）；+2：资产级共享 `GET/PUT /reports/:id/acl`
+    // （spec 2026-11-01 §4，申报 data:query —— owner 未必持管理码，真判据在 handler 的
+    // canEditAsset））：穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
+    // 逼着声明与测试一起动。
+    expect(declared).toHaveLength(36)
+    // 资产级共享：入口按观看面（data:query）申报，授权收紧在 handler 里（owner ∪ data:manage）
+    expect(declared.get('GET /reports/:id/acl')).toBe('data:query')
+    expect(declared.get('PUT /reports/:id/acl')).toBe('data:query')
     expect(declared.get('GET /branches')).toBe('data:query')
     expect(declared.get('POST /reports')).toBe('data:manage')
     expect(declared.get('GET /reports')).toBe('data:query')
@@ -430,10 +435,19 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     ),
     identity,
   })
-  const manage = () => shell(makeIdentity({ orgId: ORG, scopes: ['data:query', 'data:manage'] }))
-  const viewer = () => shell(makeIdentity({ orgId: ORG, scopes: ['data:query'] }))
-  const post = (app: Hono, body: unknown) => app.request('/reports', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  // **两个不同的人**（userId 不同）：资产级授权落地后，"同一 userId + 不同 scopes" 会变成本人
+  // 看自己的资产（owner 恒可见），从而绕开门——那不是这些用例要证的东西。
+  const manage = () => shell(makeIdentity({ orgId: ORG, userId: 'u-admin', scopes: ['data:query', 'data:manage'] }))
+  const viewer = () => shell(makeIdentity({ orgId: ORG, userId: 'u-viewer', scopes: ['data:query'] }))
+  /**
+   * 建报表。**默认 `visibility:'tenant'`**：本文件的既有用例都写在「资产级私有不存在的年代」，
+   * 它们验的是门（required_scope / required_depts）本身；默认私有会把这些用例整体变成
+   * "只有创建者可见"，从而掩盖门的行为。新默认（restricted）与 ACL 的行为由专门的用例覆盖
+   * （「★ 默认私有 + shared」那几条），不靠这个 helper 兜。
+   */
+  const post = (app: Hono, body: Record<string, unknown>) => app.request('/reports', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ visibility: 'tenant', ...body }),
   })
   /**
    * 登记侧版本回读（管理清单 = console 的取版本通路；Task 3 起 PUT/DELETE 必须回带它）。
@@ -755,6 +769,55 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(await res.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
     // 反证：有 data:manage 的人拿得到（不是「谁都拿不到」）
     expect((await app.request(`/reports/${id}/embed-url`)).status).toBe(200)
+  })
+
+  // ── 资产级授权（spec 2026-11-01 §4）────────────────────────────────────────────
+
+  it('★ 新建默认私有：只有创建者可见；显式 visibility=tenant 才是建给全租户', async () => {
+    const { app } = manage()
+    const { id } = await (await app.request('/reports', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '我的私有报表' }),   // 不传 visibility ⇒ 默认 restricted
+    })).json()
+    // 创建者（owner）看得到
+    expect((await (await app.request('/reports')).json()).reports.map((r: { id: string }) => r.id)).toContain(id)
+    // 另一个 data:query comrade 看不到
+    expect((await (await viewer().app.request('/reports')).json()).reports).toEqual([])
+    // 显式 tenant ⇒ 旧语义
+    await post(app, { title: '全租户报表' })
+    expect((await (await viewer().app.request('/reports')).json()).reports.map((r: { title: string }) => r.title))
+      .toEqual(['全租户报表'])
+  })
+
+  it('★ ACL：点名共享后对方可见；非 owner 非管理码改 ACL ⇒ 403；未知部门 ⇒ 400', async () => {
+    const { app } = manage()
+    const { id } = await (await app.request('/reports', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '共享测试', requiredScope: null }),
+    })).json()
+
+    // 共享给 u-viewer（点名）
+    const put = await app.request(`/reports/${id}/acl`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ viewers: [{ subjectType: 'user', subjectId: 'u-viewer' }] }),
+    })
+    expect(put.status).toBe(200)
+    expect((await (await viewer().app.request('/reports')).json()).reports.map((r: { id: string }) => r.id))
+      .toContain(id)
+
+    // 被共享者不能改共享（可看 ≠ 可改）
+    const denied = await viewer().app.request(`/reports/${id}/acl`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ viewers: [] }),
+    })
+    expect(denied.status).toBe(403)
+
+    // 未知部门受让方：当场拒（fail-closed），不落"永远命不中"的门
+    const bad = await app.request(`/reports/${id}/acl`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ viewers: [{ subjectType: 'dept', subjectId: 'no-such-dept' }] }),
+    })
+    expect([400, 409]).toContain(bad.status)
   })
 
   it('★ 跨租户：另一个 org 看不到本 org 的登记，也拿不到嵌入 URL（404，不泄露存在性）', async () => {
