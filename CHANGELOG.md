@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.232.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.231.0...v0.232.0) - 2026-11-01
+- 【新增】data: 报表控制台「共享」入口（资产级授权可用面） ([#1247](https://github.com/MYTech-Co-LTD/platform-core/pull/1247), [1cfaf6f](https://github.com/MYTech-Co-LTD/platform-core/commit/1cfaf6f9dcaac9849f38e3b9821f8860d9179d00))
+
+
 ## [0.231.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.230.0...v0.231.0) - 2026-11-01
 - 【新增】data: 资产级授权 P1——ACL + 默认私有 + canView/canEdit 单一实现 ([#1244](https://github.com/MYTech-Co-LTD/platform-core/pull/1244), [fd771c3](https://github.com/MYTech-Co-LTD/platform-core/commit/fd771c3d21b843927f5a9cd34ae2c2557e5cbc74))
 
