@@ -1,3 +1,10 @@
+> **⚠️ 后续变更指针（2026-10-31）**：本文的**桥单路线**已被
+> `docs/superpowers/specs/2026-10-31-multi-channel-im-provider-design.md` 部分取代——
+> `wecom_chat` 增加通道级 `transport: direct|bridge`（缺省 bridge），直连凭据密文落
+> `notify.channel_credential`；收件人地址解析改为「显式 `org_membership.external_id` →
+> `identity_link` → `casdoor_name` 兜底（带 warn）」三级，见同 spec §3.3。
+> 正典状态：`docs/architecture.md` §2.6。本文其余部分（outbox/模板/审计/收件人模型）仍然有效。
+
 # 租户级通知基础设施（设计）
 
 > 2026-10-27 brainstorming 定稿。**状态：设计稿，待评审后转实施计划**（writing-plans）。

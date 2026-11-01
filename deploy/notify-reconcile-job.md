@@ -34,7 +34,8 @@
 | `PLATFORM_CONSOLE_BASE_URL` | 同上；拼通知里的详情链接（缺省 ⇒ 相对路径，企微里不可点） |
 
 > ⚠️ **不要去 SSH 读机器上的 env**——那是读机器状态，违反「唯一通道」铁律。
-> 投递侧的 `WECOM_BRIDGE_URL__<ORG>` 等密钥属于 **notify-worker** 服务行，不在本 job。
+> 投递侧密钥不在本 job：桥路线的 `WECOM_BRIDGE_URL__<ORG>` 属 **notify-worker** 服务行；
+> 直连路线的凭据在 `notify.channel_credential`（密文，KEK 解密），根本不经 env（2026-10-31 起）。
 
 ## 怎么读结果 / 告警
 
