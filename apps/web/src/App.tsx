@@ -11,6 +11,7 @@ import AdminStoragePage from './pages/admin/Storage'
 import AdminKeysPage from './pages/admin/Keys'
 import AdminIntegrationsPage from './pages/admin/Integrations'
 import MyKeysPage from './pages/me/Keys'
+import MobileHome from './pages/MobileHome'
 
 /**
  * 报表独立页（计划 2026-10-26 Task 13）：`/r/:id` 顶层裸路由，**在 `/console` 壳之外**——
@@ -33,6 +34,9 @@ export function createAppRouter() {
     // 报表独立页：顶层裸路由，**必须在 `*` 兜底之前**（否则会被重定向 /console）。
     // 未登录时 platformFetch 401 会带 search 跳 /login?next=/r/:id?v=N，登录后原样回跳。
     { path: '/r/:id', element: <Suspense fallback={null}><StandaloneReport /></Suspense> },
+    // 移动端业务入口页（spec 2026-11-01 §5.1）：IM 工作台应用的主页就填
+    // `/api/platform/auth/wecom/silent?next=/m`。裸路由、无 console 壳（手机上不需要侧边栏）。
+    { path: '/m', element: <MobileHome /> },
     {
       path: '/console',
       element: <ConsoleShell />,
