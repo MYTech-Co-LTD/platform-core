@@ -115,7 +115,7 @@ glob，以实测为准）；consent → 重启 → allowlist 顺序照经验库 
 | `wecom_app_schedule_add` | `oa/schedule/add` | 写 | 建日程（agentid 插件注入；cal_id/时间窗必传） |
 | `wecom_app_todo_get` / `wecom_app_todo_update` | `todo/get` / `todo/update` | 读/写 | 待办（无创建，D6） |
 
-（末行两把工具并作一行，共 16 个注册名。）所有工具：参数 schema 校验、结果只回业务字段、
+（末行两把工具并作一行，共 17 个注册名。）所有工具：参数 schema 校验、结果只回业务字段、
 docid/record_id 等由模型按 SKILL 规则取用。
 
 ## 6. SKILL 要点（`skills/wecom-app/SKILL.md`）
@@ -186,3 +186,4 @@ docid/record_id 等由模型按 SKILL 规则取用。
 - `toolsBySender` 隐藏层若实测不符预期，仅影响"未授权者是否看得见工具名"，不影响拦截（D2）。
 - 1000009 同时服务数据面 data-analysis 与本插件：token 各自独立获取，互不挤占；但其应用权限
   变更会影响两处（共用应用，改权限前想一下另一边）。
+- **exec 可绕过白名单读 secret（存量面，D2 缓解）**：exec 在 agent allowlist 里且 dmPolicy=open ⇒ 非白名单用户理论上可诱导模型 exec 读容器 env 拿 WECOM_APP_SECRET。缓解=部署时 toolsBySender 的 `*` deny 同时含 `wecom_app_*` 与 `exec`（白名单成员的 specific 条目放行）——见 plan Task 5 Step 5。

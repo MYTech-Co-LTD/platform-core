@@ -42,3 +42,7 @@ test("execute 顺序契约：isAllowed 门先于 credentialsReady、二者先于
   assert.ok(iAllowed >= 0 && iCred > iAllowed && iExec > iCred, `顺序锚失效：isAllowed=${iAllowed}, credentialsReady=${iCred}, exec=${iExec}——重构不得把白名单门挪后`);
   assert.ok(indexSrc.includes("DENIED_MESSAGE") && indexSrc.includes("NO_IDENTITY_MESSAGE"), "拒绝文案常量必须被引用");
 });
+
+test("TOOLS 名单无重名（重名会静默顶掉前一把的工具面）", () => {
+  assert.equal(new Set(defNames).size, defNames.length, `defNames 有重名：${defNames.join(",")}`);
+});

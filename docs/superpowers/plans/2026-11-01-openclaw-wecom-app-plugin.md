@@ -1,6 +1,7 @@
 # OpenClaw 企微自建应用插件（wecom-app）实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> ⚠️ 勘误：Task 1 Step 3 内嵌的 lib.js 是初稿——以分支实现为准（93b6727f 修 callWecom 非2xx/非JSON 显式报错；dd3fa6a5 修 GET 参数转 query 串）。执行本计划时 brief 由 task-brief 脚本从本文件抽取，重执行 Task 1 前先核对分支现状。
 
 **Goal:** 给山海 openclaw bot 加 `wecom-app` native plugin：17 把企微自建应用（1000009）固定端点工具 + 使用人白名单（fail-closed）+ 随插件发布的 SKILL，让 agent 涉及企微内部功能时不再用 exec 硬试。
 

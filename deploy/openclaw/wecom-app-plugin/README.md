@@ -21,12 +21,12 @@ OpenClaw native plugin：17 把固定端点工具（通讯录/文档·智能表�
 | `wecom_app_status` | `agent/get` | 读 |
 | `wecom_app_departments` / `wecom_app_users` | `department/list` / `user/list` | 读 |
 | `wecom_app_doc_create` | `wedoc/create_doc` | 写 |
-| `wecom_app_sheet_sheets` / `_fields` / `_records` | `wedoc/smartsheet/get_sheet` / `get_fields` / `get_records` | 读 |
-| `wecom_app_sheet_add_records` / `_update_records` | `wedoc/smartsheet/add_records` / `update_records` | 写 |
-| `wecom_app_meetings` / `_info` / `_create` | `meeting/get_user_meetingid` / `get_info` / `create` | 读/读/写 |
+| `wecom_app_sheet_sheets` / `wecom_app_sheet_fields` / `wecom_app_sheet_records` | `wedoc/smartsheet/get_sheet` / `get_fields` / `get_records` | 读 |
+| `wecom_app_sheet_add_records` / `wecom_app_sheet_update_records` | `wedoc/smartsheet/add_records` / `update_records` | 写 |
+| `wecom_app_meetings` / `wecom_app_meeting_info` / `wecom_app_meeting_create` | `meeting/get_user_meetingid` / `get_info` / `create` | 读/读/写 |
 | `wecom_app_calendar_create` | `oa/calendar/add` | 写 |
-| `wecom_app_schedules` / `_schedule_add` | `oa/schedule/get_by_calendar` / `add` | 读/写 |
-| `wecom_app_todo_get` / `_todo_update` | `todo/get` / `todo/update` | 读/写（无创建 API） |
+| `wecom_app_schedules` / `wecom_app_schedule_add` | `oa/schedule/get_by_calendar` / `add` | 读/写 |
+| `wecom_app_todo_get` / `wecom_app_todo_update` | `todo/get` / `todo/update` | 读/写（无创建 API） |
 
 ## 部署（三道门）
 
