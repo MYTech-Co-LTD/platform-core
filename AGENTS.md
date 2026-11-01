@@ -22,6 +22,7 @@ Casdoor 后台运营，租户管理员在 console 自建页管理——spec D4 �
 | 做 / 改**任何数据面工件**（采集管线、判定、对账、管线节点）——**先问引擎** | `.claude/skills/duckle-native-first`（判停门：`list_components`/`get_component_schema` 查目录 → 横向试同类 → 落三档 → 登记缺口；三档判据与 E3 证成方法学在正典 §1.1 / §1.1.1；不变量见 `docs/architecture.md` §4.2「duckle 原生优先」） |
 | 配告警 / 接探活 / 新增发布面 / 涉 OO 告警规则或 openship 通知（**监控执法**） | `.claude/skills/data-monitor`（三层职责判停 + 四条红线；分工定案与执行状态在正典 §1.5.3，追踪 issue #538） |
 | 改通知 / 新增通知事件 / 接投递通道 / 通知规则或模板 | `docs/architecture.md` §2.6 + `docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md`（实施计划 `docs/superpowers/plans/2026-10-27-notification-infrastructure-p1.md`） |
+| 接/改**出站渠道**（企微直连、凭据、判据、可达性、飞书/钉钉预留） | `docs/superpowers/specs/2026-10-31-multi-channel-im-provider-design.md`（transport 开关、`channel_credential` 密文、`sql:{at,error}` 判据）+ `2026-10-31-recipient-identity-mapping-design.md`（地址解析三级顺序）；观测面计划 `2026-10-31-recipient-reachability-observability.md` |
 | **调问答效果** / 问数 bot 表现不确定（反复尝试、用 exec/curl 翻插件源码或猜参数、同一调用原样重试、答错时间窗、拿不到数） | `.claude/skills/askdata-tuning`（测→定位→改→验的判据表 + 四个杠杆；实现与实测在 `scripts/askdata/` 与 `docs/superpowers/notes/2026-10-16-t0-span-inventory.md`） |
 | 设计稿与实施计划 | `docs/superpowers/specs/`、`docs/superpowers/plans/`（按日期命名；SaaS 管理域 spec 是现行主线的正典）——**动手前先 `ls` 这两个目录、按文件名挑 2–3 份读完**（文件名语义可靠：盲测 8/8 命中正确文档；但**清单只用来定位，拿到候选必须打开读**，阴性对照 2/4 误配）。**别指望关键词检索**：`orca search` 整句自然语言 0 命中，须用 2–3 个空格分隔的关键词 |
 | 部署 / 接入 / 回滚 | `deploy/openship-adopt.md`（含自动部署与控制面 API 前缀坑）、`deploy/branch-protection-runbook.md` |

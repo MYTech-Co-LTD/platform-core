@@ -662,7 +662,11 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 - 收件人：`field`（payload 的 user/user_list）、`scope_holders`（本 org 持有权限码）、`literal`
   （人工名单）、`dept`（组织架构部门，**发送时**按 `org_node.path` 展开子树、排除禁用用户，
   展开/排除/未解析三数落 `notify.audit`；spec 2026-10-30 §3.5）。平台解析到 Casdoor 用户，
-  再按通道解析地址（企微 userid 走 `platform.identity_link`；映射不到 = `failed`，**不假装成功**）。
+  再按通道解析地址——**顺序固定：显式 → 绑定 → 兜底**（spec 2026-10-31 §3.3）：
+  ① `org_membership.external_id`（同步落下的渠道原生地址，`source` 与 provider 匹配才用，
+  旧行 source=NULL **不参与猜测**）→ ② `platform.identity_link`（active）→ ③ 通道
+  `address_fallback=casdoor_name` 兜底（唯一实现 `domain/resolve-address.ts`，走兜底打
+  `address_fallback_used` warn）。三级全空 = `missing_channel_address` 落 `dead`，**不假装成功**。
 - 派生：事件声明的 `defaults` 幂等派生默认规则（零配置就通）；`scripts/notify-seed-builtin.mjs`
   在开通/升级时 seed 模板、默认通道与默认规则。
 
@@ -674,9 +678,23 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 
 #### 通道与投递
 
-- 内置 provider：`wecom_chat`（公司 bridge 直发）、`in_app`（自建 `notify.inbox`）、`webhook`（P3）。
+- 内置 provider：`wecom_chat`、`in_app`（自建 `notify.inbox`）、`webhook`（P3）。
   **不做运行时插件/外部沙箱**；租户只能启用/配置平台预备的通道实例。
-- 通道密钥：DB 只存 env 键名（`secret_refs`），值只在 openship env（isSecret）。
+- `wecom_chat` 的传输方式由通道 `config.transport` 决定（spec 2026-10-31，**缺省 bridge**）：
+  - `direct`（**推荐**）：凭据在本实例——`notify.channel_credential` **密文存储**
+    （AES-256-GCM，KEK = env `NOTIFY_CRED_KEK`，导入走 `scripts/notify-import-wecom-cred.mjs`）；
+    解析不到凭据 = `credential_missing` 永久失败，**不静默回落桥**。山海生产即此形态。
+  - `bridge`：走共享桥（`secret_refs.bridge_url` 指向 env），存量路径保留；桥仍是公司资产，
+    只是不再是 platform-core 租户的默认。
+- 通道密钥两种形态并存：**桥路线** DB 只存 env 键名（`secret_refs`）、值在 openship env（isSecret）；
+  **直连路线** DB 存密文（值不进 env、不进 repo）。
+- **判据与可达性**（spec 2026-10-31-integration-health + multi-channel §3.4）：
+  `wecom_chat` 的活性判据 = worker 每 ≥300s 用凭据真换一次 token（`probeDirect` 恒 `noCache`，
+  凭据改坏 ⇒ 一轮内红）写 `notify.channel_probe`；registry（`deploy/integration-registry.json`）
+  用 `sql:` 判据读它，`{at,error}` 两列形态下 `error` 非空 ⇒ PROBE_FAILED 点名原因；
+  registry 删掉的条目由探针自动置 `enabled=false`（声明集即真值，不手工删行）。
+  个人级可达性（谁收不到）由同表 `reachable/unreachable` 抽样列 + `/channels/address-issues`
+  聚合读面承担——**不进 SLA**（可见范围是配置问题，纳入会天天红）。
 - 投递：`notify.event` 入队 → `notify-worker`（独立进程，租约 + `SKIP LOCKED`）→ provider；
   至少一次、指数退避、企微 45009 退避；`notify.delivery` 是唯一回执事实源。
 - **fail-open**：通知失败不阻塞业务；`dead`/积压由 `scripts/notify-health.mjs` job 报警。
@@ -1267,6 +1285,9 @@ env，多租户同进程部署就只能共用一份 ⇒ 无 BYO、单密钥爆�
 | 同上 §11.9 #3/#4 | 「Ossie 观察信号」「自建镜像的构建频率」两个开放项 | **两项均已消解**：ossie 出局 ⇒ 观察信号无对象；自建镜像未启用 ⇒ 构建频率无对象（备件将来启用时另议） |
 | `specs/2026-09-21-data-platform-layered-design.md` §2 / §3（**七层**） | dbt 侧只有两层：③ `staging/`（**表**）、④ `marts/`（**表**） | **（2026-09-26）dbt 侧多一层**：明细直读视图 `views/vw_*`（**view**、**直读湖**、逐列显式 cast）——它属 ⑦ 消费的材料、但由 dbt 生成 ⇒ **层数以本文 §2.2 为准，别再按那份 spec 数层**。设计与三条 gate 见 `specs/2026-09-26-detail-read-view-design.md` |
 | `specs/2026-09-26-detail-read-view-design.md` §5 gate 2「分区裁剪」 | 「3 天数据下单日过滤 207 ms vs 全量 249 ms，**分不出差别** ⇒ 未定论」（落笔时湖只有 3 天） | **（2026-10-20）已定论：裁剪成立。** 湖有 28 天后实测 **11.14 s → 0.53 s**；可用形态是 `CREATE VIEW … SELECT r['列']::type AS 列 FROM read_parquet(…) r`（**不是** `duckdb.query() + SELECT *`——那形态只得到一列不透明 `duckdb."row"`）。证据与全部实测见 `specs/2026-10-20-lake-format-decision.md` §8。⚠️ 该 spec 的 gate 1（新鲜度）/ gate 3（读今天的竞态）**仍待** |
+| `specs/2026-10-27-notification-infrastructure-design.md` 通道与密钥节（2026-10-31 起被部分取代；spec 顶部已加同义横幅） | 企微**只有桥**一条路；通道密钥只有 `secret_refs`→env 一种形态；收件人地址只走 `identity_link` | `wecom_chat` 通道级 `transport: direct`（缺省 bridge）：直连凭据**密文**落 `notify.channel_credential`（KEK=env `NOTIFY_CRED_KEK`）；地址解析改三级（`org_membership.external_id` → `identity_link` → `casdoor_name` 兜底带 warn）。正典 = 本文 §2.6，细节 `specs/2026-10-31-multi-channel-im-provider-design.md` |
+| 同上「活性判据」（http-healthz 形态，2026-10-31 集成健康轮引入后仍沿用至企微条目） | 企微判据探桥 `/healthz`（**假绿**：租户没注册也 200） | 判据 = **凭据能换 token**（worker ≥300s 写 `notify.channel_probe`，探针恒 `noCache`——凭据改坏一轮内红）；registry `sql:{at,error}` 两列，`error` 非空 ⇒ PROBE_FAILED；registry 删条目自动退役。见本文 §2.6「判据与可达性」 |
+
 
 ---
 
