@@ -39,14 +39,20 @@ const SKEW_MS = 300_000
 
 export async function accessToken(
   cred: WecomDirectCred,
-  opts: { fetchImpl?: typeof fetch; apiBase?: string; now?: () => number } = {},
+  opts: { fetchImpl?: typeof fetch; apiBase?: string; now?: () => number; noCache?: boolean } = {},
 ): Promise<TokenLease> {
   const key = `${cred.corpId}|${cred.agentId}`
   const now = (opts.now ?? Date.now)()
-  const hit = tokenCache.get(key)
-  if (hit !== undefined && hit.expiresAt - SKEW_MS > now) return hit
-  const running = inflight.get(key)
-  if (running !== undefined) return running
+  // `noCache`（探针专用）：**不读缓存、不并入 in-flight**，强制用当前凭据真换一次 token。
+  // 为什么必须有它（issue #1235，2026-10-31 生产变异实测）：凭据被改坏后，缓存里的旧 token 仍有效，
+  // 探针命中缓存就会继续报 OK——判据证明的对象被缓存替换成了「旧 token 还能用」，凭据故障最多
+  // 晚一个 TTL（≈2h）才被发现。发送路径**不用** noCache：它的目标是把消息发出去，token 新旧无所谓。
+  if (opts.noCache !== true) {
+    const hit = tokenCache.get(key)
+    if (hit !== undefined && hit.expiresAt - SKEW_MS > now) return hit
+    const running = inflight.get(key)
+    if (running !== undefined) return running
+  }
 
   const p = (async (): Promise<TokenLease> => {
     const f = opts.fetchImpl ?? fetch
@@ -134,13 +140,18 @@ export async function sendDirect(a: {
   }
 }
 
-/** 活性判据：能取到 token 即活（覆盖「凭据失效 / 被禁用 / 出口 IP 被拒」）。 */
+/**
+ * 活性判据：能取到 token 即活（覆盖「凭据失效 / 被禁用 / 出口 IP 被拒」）。
+ * **走 noCache**（issue #1235）：判据要回答的是「当前凭据还能换 token 吗」，命中缓存就答不上来——
+ * 凭据被改坏后旧 token 仍有效，缓存只会把故障藏一个 TTL。代价是每轮探针一次 gettoken（≥300s 一次，
+ * 对配额无感），换来「坏凭据 ≤ 一轮探针就被点名」。
+ */
 export async function probeDirect(
   cred: WecomDirectCred,
-  opts: { fetchImpl?: typeof fetch; apiBase?: string } = {},
+  opts: { fetchImpl?: typeof fetch; apiBase?: string; now?: () => number } = {},
 ): Promise<{ ok: boolean; detail?: string }> {
   try {
-    await accessToken(cred, opts)
+    await accessToken(cred, { ...opts, noCache: true })
     return { ok: true }
   } catch (e) {
     return { ok: false, detail: e instanceof Error ? e.message : String(e) }
