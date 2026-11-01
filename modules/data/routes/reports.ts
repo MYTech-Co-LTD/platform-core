@@ -86,6 +86,7 @@ import {
   loadAssetAcl,
   loadAssetAcls,
   replaceViewers,
+  transferOwner,
   writeAssetAudit,
   type AclRow,
   type AclSubjectType,
@@ -576,6 +577,31 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       detail: { viewers }, byAdmin: isAdminOverride(acl, requester, MANAGE_SCOPE),
     })
     return c.json({ ok: true, viewers: viewers.map((v) => ({ subjectType: v.subjectType, subjectId: v.subjectId })) })
+  })
+
+  // 所有者转移（spec §4.4）：离职/换负责人时**唯一 owner 换人**，旧 owner 不再有特权。
+  // 授权 = canEditAsset（owner ∪ data:manage）；管理员代管记 by_admin。
+  r.put('/reports/:id/owner', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const org = c.get('tenant').casdoor_org
+    const id = reportIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const parsed = z.object({ owner: z.string().min(1).max(200) }).safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const row = await getReport(ctx.pool, org, id)
+    if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const acl = await loadAssetAcl(ctx.pool, org, id)
+    if (!canEditAsset(acl, requester, MANAGE_SCOPE)) {
+      return c.json({ error: 'FORBIDDEN', need: 'owner_or_' + MANAGE_SCOPE }, 403)
+    }
+    const from = acl.find((a) => a.relation === 'owner')?.subjectId ?? null
+    await transferOwner(ctx.pool, org, id, parsed.data.owner, requester.userId)
+    await writeAssetAudit(ctx.pool, {
+      org, assetId: id, actor: requester.userId, action: 'owner.transfer',
+      detail: { from, to: parsed.data.owner }, byAdmin: isAdminOverride(acl, requester, MANAGE_SCOPE),
+    })
+    return c.json({ ok: true, owner: parsed.data.owner })
   })
 
   r.put('/reports/:id/dept-gate', async (c) => {

@@ -212,7 +212,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 36 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 37 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -225,10 +225,11 @@ describe('报表面声明（不需要数据库）', () => {
     // （spec 2026-11-01 §4，申报 data:query —— owner 未必持管理码，真判据在 handler 的
     // canEditAsset））：穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(36)
+    expect(declared).toHaveLength(37)
     // 资产级共享：入口按观看面（data:query）申报，授权收紧在 handler 里（owner ∪ data:manage）
     expect(declared.get('GET /reports/:id/acl')).toBe('data:query')
     expect(declared.get('PUT /reports/:id/acl')).toBe('data:query')
+    expect(declared.get('PUT /reports/:id/owner')).toBe('data:query')
     expect(declared.get('GET /branches')).toBe('data:query')
     expect(declared.get('POST /reports')).toBe('data:manage')
     expect(declared.get('GET /reports')).toBe('data:query')
@@ -821,6 +822,31 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       body: JSON.stringify({ viewers: [{ subjectType: 'dept', subjectId: 'no-such-dept' }] }),
     })
     expect([400, 409]).toContain(bad.status)
+  })
+
+  it('★ 所有者转移：唯一 owner 换人；旧 owner 不再可见；非 owner 非管理码 ⇒ 403', async () => {
+    const { app } = manage()
+    const { id } = await (await app.request('/reports', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '转移测试' }),   // 默认 restricted，owner = u-admin
+    })).json()
+
+    // 非 owner 非管理码（u-viewer 只有 data:query）不能转移
+    const denied = await viewer().app.request(`/reports/${id}/owner`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ owner: 'u-viewer' }),
+    })
+    expect(denied.status).toBe(403)
+
+    // owner 自己转移给 u-viewer
+    const ok = await app.request(`/reports/${id}/owner`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ owner: 'u-viewer' }),
+    })
+    expect(ok.status).toBe(200)
+    // 新 owner 看得到，旧 owner（admin）仍能看到——因为持 data:manage
+    expect((await (await viewer().app.request('/reports')).json()).reports.map((r: { id: string }) => r.id))
+      .toContain(id)
   })
 
   it('★ 跨租户：另一个 org 看不到本 org 的登记，也拿不到嵌入 URL（404，不泄露存在性）', async () => {

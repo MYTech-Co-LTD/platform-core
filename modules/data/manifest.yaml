@@ -107,6 +107,7 @@ api:
     # （模块只能声明自己的码，data:view 不在本模块清单里。）
     - { method: GET,    path: /reports/:id/acl,       scope: data:query }
     - { method: PUT,    path: /reports/:id/acl,       scope: data:query }
+    - { method: PUT,    path: /reports/:id/owner,     scope: data:query }
     - { method: PUT,    path: /reports/:id/dept-gate, scope: data:manage }
     - { method: GET,    path: /reports/dept-options,  scope: data:manage }
     # ── 自绘规格读写（#391 计划 6 Task 3）：读 = 观看面（行级页门照 embed-url 的 visibleTo
