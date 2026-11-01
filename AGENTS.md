@@ -18,6 +18,7 @@ Casdoor 后台运营，租户管理员在 console 自建页管理——spec D4 �
 | 新接一个业务模块 | `docs/module-onboarding.md`（接入步骤/全字段参考/验收清单/故障速查）；协议语义正典仍是 `docs/module-protocol.md` |
 | 接采集任务 / 改采集链路 / 改调度 / 源退役（**流程执法**） | `.claude/skills/collect-source`（A→I 逐段判停门 + 开工三查；判据数值与台账的唯一事实源仍是下行正典） |
 | 接采集任务 / 改采集链路 / 改调度（判据与台账） | `docs/data-platform-handbook.md`（**采集正典**：决策 / 生命周期 SOP / 四层验收 / 运维速查 / 逐源决策登记 + 数据源台账） |
+| 做 / 改任何**涉及权限接入**的功能（新模块权限码 / 路由 scope / console 页权限 / 数据按部门门）——**流程执法** | `.claude/skills/platform-permission`（选路①声明式权限→四段判停；②部门门 fail-closed；③列级=先推动 #764 不自造） |
 | 做 / 改**任何数据面工件**（采集管线、判定、对账、管线节点）——**先问引擎** | `.claude/skills/duckle-native-first`（判停门：`list_components`/`get_component_schema` 查目录 → 横向试同类 → 落三档 → 登记缺口；三档判据与 E3 证成方法学在正典 §1.1 / §1.1.1；不变量见 `docs/architecture.md` §4.2「duckle 原生优先」） |
 | 配告警 / 接探活 / 新增发布面 / 涉 OO 告警规则或 openship 通知（**监控执法**） | `.claude/skills/data-monitor`（三层职责判停 + 四条红线；分工定案与执行状态在正典 §1.5.3，追踪 issue #538） |
 | 改通知 / 新增通知事件 / 接投递通道 / 通知规则或模板 | `docs/architecture.md` §2.6 + `docs/superpowers/specs/2026-10-27-notification-infrastructure-design.md`（实施计划 `docs/superpowers/plans/2026-10-27-notification-infrastructure-p1.md`） |
