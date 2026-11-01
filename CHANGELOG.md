@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.235.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.234.0...v0.235.0) - 2026-11-01
+- 【新增】data: 所有者转移 PUT /reports/:id/owner（P4） ([#1253](https://github.com/MYTech-Co-LTD/platform-core/pull/1253), [05005f1](https://github.com/MYTech-Co-LTD/platform-core/commit/05005f102ad302a5d19f69b5a66e0bcfb5f79b33))
+
+
 ## [0.234.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.233.0...v0.234.0) - 2026-11-01
 - 【新增】web: 移动端业务入口页 /m（按权限列应用卡片） ([#1251](https://github.com/MYTech-Co-LTD/platform-core/pull/1251), [da6fad5](https://github.com/MYTech-Co-LTD/platform-core/commit/da6fad54e646fe51fea219dd5fe0fb39ffc21d35))
 
