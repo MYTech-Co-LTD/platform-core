@@ -462,5 +462,13 @@ function toModuleInfos(runtime: ModulesRuntime): ModuleInfo[] {
     console: (m.manifest.frontend?.console ?? []).map(
       ({ path: p, title, icon, scope }) => ({ path: p, title, icon, scope }),
     ),
+    userApp: m.manifest.frontend?.userApp === undefined
+      ? undefined
+      : {
+          mount: m.manifest.frontend.userApp.mount,
+          title: m.manifest.frontend.userApp.title,
+          icon: m.manifest.frontend.userApp.icon,
+          scope: m.manifest.frontend.userApp.scope,
+        },
   }))
 }

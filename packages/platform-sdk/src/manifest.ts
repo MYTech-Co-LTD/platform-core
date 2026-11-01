@@ -84,7 +84,7 @@ export interface ModuleManifest {
    *  按 DATA_DEP_REGEX 校验。判据 2（列集变更登记）待首个真实跨模块依赖出现
    *  （无案例不立标准；正典：docs/module-protocol.md「跨模块只读数据依赖」节门禁小节）。 */
   dataDependencies?: string[]
-  frontend?: { userApp?: { mount: string; dist: string };
+  frontend?: { userApp?: { mount: string; dist: string; scope?: string; title?: string; icon?: string };
     console?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }>;
     /** 模块管理页协议（2026-09-20 spec）：模块自有的「管理」组子页。门禁 = tenant:admin（组门，
      *  宿主施加）+ scope（页门）。path 必须以 /console/admin/ 开头、scope 必须 ∈ permissions[].code
@@ -176,7 +176,14 @@ const ManifestObject = z.object({
   // 再实施（无案例不立标准）。
   dataDependencies: z.array(z.string()).optional(),
   frontend: z.object({
-    userApp: z.object({ mount: z.string(), dist: z.string() }).optional(),
+    // 移动端业务应用（spec 2026-11-01 §5.2）：`scope` = 进入该应用所需的权限码（缺省 = 启用即可）
+    userApp: z.object({
+      mount: z.string(),
+      dist: z.string(),
+      scope: z.string().min(1).optional(),
+      title: z.string().min(1).optional(),
+      icon: z.string().min(1).optional(),
+    }).optional(),
     console: z.array(z.object({
       path: z.string(),
       title: z.string(),
@@ -244,6 +251,16 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
         message: `guest.scope "${m.guest.scope}" 必须是本模块 permissions[].code 里的码`,
       })
     }
+  }
+
+  // 移动端业务应用的 scope 同样只能是本模块自己的码（spec 2026-11-01 §5.2）
+  const uaScope = m.frontend?.userApp?.scope
+  if (uaScope !== undefined && !codes.has(uaScope)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['frontend', 'userApp', 'scope'],
+      message: `frontend.userApp.scope "${uaScope}" 不在本模块 permissions[].code 内（模块只能声明自己的权限码）`,
+    })
   }
 
   const seenEndpoints = new Set<string>()
