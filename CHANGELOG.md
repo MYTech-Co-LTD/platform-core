@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.236.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.236.1...v0.236.2) - 2026-11-01
+- 【修复】data: 回填变体同步自证闸修复 (#1262) ([#1263](https://github.com/MYTech-Co-LTD/platform-core/pull/1263), [cfbea6b](https://github.com/MYTech-Co-LTD/platform-core/commit/cfbea6b47b697a8cbb97b7c31b045c512a180686))
+
+
 ## [0.236.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.236.0...v0.236.1) - 2026-11-01
 - 【修复】data: 经营指标自证闸按门店数比较，修多指标假红 (#1259) ([#1261](https://github.com/MYTech-Co-LTD/platform-core/pull/1261), [c893a83](https://github.com/MYTech-Co-LTD/platform-core/commit/c893a83be8f30811a4bb77ada6d75597e8119c3b))
 
