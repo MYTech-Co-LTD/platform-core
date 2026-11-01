@@ -23,6 +23,38 @@ const sendCode = (errcode: number) => () => new Response(JSON.stringify({ errcod
 
 beforeEach(() => __resetTokenCache())
 
+describe('accessToken noCache（issue #1235：判据不能被缓存糊弄）', () => {
+  it('★ 探针绕过缓存：缓存已热时仍真发一次 gettoken（凭据改坏 ⇒ 下一轮就红）', async () => {
+    const { f, count } = fakeFetch([tokenOk])
+    await accessToken(cred, { fetchImpl: f, apiBase: API })            // 热缓存
+    expect(count()).toBe(1)
+    await accessToken(cred, { fetchImpl: f, apiBase: API, noCache: true })
+    expect(count()).toBe(2)                                            // noCache ⇒ 又发了一次
+  })
+
+  it('noCache 成功后仍回写缓存：发送路径随后的调用不再打企微', async () => {
+    const { f, count } = fakeFetch([tokenOk])
+    await accessToken(cred, { fetchImpl: f, apiBase: API, noCache: true })
+    await accessToken(cred, { fetchImpl: f, apiBase: API })            // 命中 noCache 刚写入的缓存
+    expect(count()).toBe(1)
+  })
+
+  it('probeDirect 恒走 noCache：两次探针 = 两次 gettoken', async () => {
+    const { f, count } = fakeFetch([tokenOk])
+    await probeDirect(cred, { fetchImpl: f, apiBase: API })
+    await probeDirect(cred, { fetchImpl: f, apiBase: API })
+    expect(count()).toBe(2)
+  })
+
+  it('noCache 撞上坏凭据 ⇒ 抛错（即使缓存里还有好 token）', async () => {
+    const { f } = fakeFetch([tokenOk, () => new Response(JSON.stringify({ errcode: 40001, errmsg: 'invalid credential' }))])
+    await accessToken(cred, { fetchImpl: f, apiBase: API })            // 先拿到好 token
+    const r = await probeDirect(cred, { fetchImpl: f, apiBase: API })  // 凭据已换坏
+    expect(r.ok).toBe(false)
+    expect(r.detail).toContain('40001')
+  })
+})
+
 describe('accessToken', () => {
   it('★ 缓存：第二次不再请求', async () => {
     const { f, count } = fakeFetch([tokenOk])
