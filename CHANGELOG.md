@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.236.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.236.2...v0.236.3) - 2026-11-01
+- 【修复】data: branch_indicator 契约闸去单指标假设 (#1264) ([#1265](https://github.com/MYTech-Co-LTD/platform-core/pull/1265), [6fab42b](https://github.com/MYTech-Co-LTD/platform-core/commit/6fab42b7d0c3e7220fe0bef1886914a425689655))
+
+
 ## [0.236.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.236.1...v0.236.2) - 2026-11-01
 - 【修复】data: 回填变体同步自证闸修复 (#1262) ([#1263](https://github.com/MYTech-Co-LTD/platform-core/pull/1263), [cfbea6b](https://github.com/MYTech-Co-LTD/platform-core/commit/cfbea6b47b697a8cbb97b7c31b045c512a180686))
 
