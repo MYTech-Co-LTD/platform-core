@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.229.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.229.1...v0.229.2) - 2026-11-01
+- 【修复】notify: 探针绕过 token 缓存——凭据改坏后一轮即红，不再等 TTL ([#1235](https://github.com/MYTech-Co-LTD/platform-core/pull/1235), [791a52d](https://github.com/MYTech-Co-LTD/platform-core/commit/791a52d14ae0d2bdb1c925c8626683e917096943))
+
+
 ## [0.229.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.229.0...v0.229.1) - 2026-10-31
 - 【修复】notify: 直连通道的凭据列不再显示桥的 env 键名 ([#1233](https://github.com/MYTech-Co-LTD/platform-core/pull/1233), [02f2775](https://github.com/MYTech-Co-LTD/platform-core/commit/02f2775604557a219c11c22fe531f9181d2388be))
 
