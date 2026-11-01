@@ -192,6 +192,9 @@ jobs:
       # 网关按声明放行工具，漏登即真机拒载（Wave 2 三新工具在 shanhai 实锤过）。
       - run: node --test
         working-directory: deploy/openclaw/data-query-plugin
+      # wecom-app 插件（#1238）同律：contracts 钉「注册名 ⊆ contracts.tools」+ fail-closed 顺序锚。
+      - run: node --test
+        working-directory: deploy/openclaw/wecom-app-plugin
       # 回填工具链的行为测试（issue #387；判据正典 spec `2026-09-29-read-side-migration.md` §4 Phase 0/1）。
       #
       # 为什么它该进 CI（而别的 `.test.sh` 没进）：本工具的判据是**数字与顺序**——Phase 0 探针必须

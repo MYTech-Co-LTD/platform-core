@@ -35,6 +35,9 @@ COPY deploy/openclaw/data-query-plugin /opt/plugins/data-query-plugin
 #   ① openclaw plugins install -l /opt/plugins/zh-thinking-plugin --force
 #   ② 配置 plugins.entries.zh-thinking.hooks.allowConversationAccess=true（不然钩子被静默挡住）
 COPY deploy/openclaw/zh-thinking-plugin /opt/plugins/zh-thinking-plugin
+# 企微自建应用工具插件（spec 2026-11-01-openclaw-wecom-app-plugin-design.md）。
+# 凭据不进镜像：容器经 openship 服务行 env 注入（WECOM_APP_*，secret 间接引用）。
+COPY deploy/openclaw/wecom-app-plugin /opt/plugins/wecom-app-plugin
 
 # ── 官方企微插件 vendor 进镜像（构建期固定路径）──────────────────────────────
 # 目的：让「思考过程流式展示」补丁**可复现、可退场**（spec 2026-10-12-…-reasoning-stream-design.md §2.1）。
