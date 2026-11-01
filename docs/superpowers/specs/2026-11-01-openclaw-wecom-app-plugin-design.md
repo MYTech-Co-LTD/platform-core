@@ -57,8 +57,8 @@ CorpSecret（`agent/get?agentid=1000009` 回 `errcode 0, name 消息通知`；�
   `wecom_app_*` deny，让未授权者连工具都看不见。运行时行为以实测为准；若与文档不符，以插件层
   为准（隐藏层失败不构成安全缺口）。
 
-**D3 —— 工具面：固定端点、首批 16 把**（§5，表 15 行、末行两把）。加新 API = 插件加一把
-工具 + SKILL 加一行，不做通用转发。
+**D3 —— 工具面：固定端点、首批 17 把**（§5，表 16 行、todo 两把并作一行）。加新 API = 插件
+加一把工具 + SKILL 加一行，不做通用转发。
 
 **D4 —— 智能表格数据形状（实测钉死，别按想象写）：**
 - `create_doc` 的 `doc_type`：**10=智能表格**、4=电子表格、3=文档（实测三种都建成功）。
@@ -69,9 +69,13 @@ CorpSecret（`agent/get?agentid=1000009` 回 `errcode 0, name 消息通知`；�
 - `update_records` 必须带 `record_id`（来自 add_records 回包或 get_records）。
 - **应用自建文档天然免文档级授权**（301085 只发生在访问他人/机器人空间的文档时）。
 
-**D5 —— 日程 cal_id 不许裸用 userid**：`oa/schedule/get_by_calendar` 传 userid 报 `90457
-invalid calendar id`。插件内部先 `oa/calendar/list` 解析成员日历 cal_id 再查（实现时以该 API
-实测形状为准；若解析失败如实报错，不猜）。
+**D5 —— 日程 = 应用自建日历模型（实测钉死，成员日历不可寻址）**：
+`oa/calendar/list` **不存在**（HTTP 404）；`get_by_calendar` 传 `ZhangDuo` / `usr:ZhangDuo`
+均 `90457`。正确链路：`oa/calendar/add` `{calendar:{summary,…}}` 建应用日历 → 回 `cal_id` →
+`oa/schedule/add` `{agentid, schedule:{cal_id, summary, start_time, end_time}}`（unix 秒）→ 回
+`schedule_id`；`get_by_calendar` 用该 `cal_id` 查（全链路 2026-11-01 实测 errcode 0）。
+⇒ 工具面按此建模：读/写日程都只针对**应用日历**；「查某个成员自己的日程」**不可用**，SKILL
+明示这一边界，不猜。自检日历锚点：`wcfjPaWwAAkJwSPR7u7Je4FCYU56msJg`（openclaw-自检日历）。
 
 **D6 —— 待办降级**：服务端 API 只有 `todo/get` / `todo/update`（文档树 parent 101523 下仅两
 条），**没有创建待办**。SKILL 明示这一能力边界，禁止模型"编造创建成功"。
@@ -84,13 +88,13 @@ invalid calendar id`。插件内部先 `oa/calendar/list` 解析成员日历 cal
 （卷重建会回退）。
 
 **D9 —— 注册三道门照走**：`openclaw plugins install -l /opt/plugins/wecom-app-plugin --force
---accept-capabilities`；`agents.entries.main.tools.allow` 追加 16 个工具名（或 `wecom_app_*`
+--accept-capabilities`；`agents.entries.main.tools.allow` 追加 17 个工具名（或 `wecom_app_*`
 glob，以实测为准）；consent → 重启 → allowlist 顺序照经验库 §7 三道门，漏一道 = 模型看不见。
 
 **D10 —— 不拦截"谁能跟 bot 说话"**：`dmPolicy` 维持 open，会话隔离已由 `session.dmScope` 另行
 解决；白名单只管这批工具。
 
-## 5. 工具面（首批 16 把）
+## 5. 工具面（首批 17 把）
 
 | 工具 | 端点（cgi-bin/） | 读/写 | 说明 |
 |---|---|---|---|
@@ -106,8 +110,9 @@ glob，以实测为准）；consent → 重启 → allowlist 顺序照经验库 
 | `wecom_app_meetings` | `meeting/get_user_meetingid` | 读 | 成员会议 ID 列表（时间窗） |
 | `wecom_app_meeting_info` | `meeting/get_info` | 读 | 会议详情 |
 | `wecom_app_meeting_create` | `meeting/create` | 写 | 建预约会议 |
-| `wecom_app_schedules` | `oa/schedule/get_by_calendar`（内部先 `oa/calendar/list`） | 读 | 日程列表（D5） |
-| `wecom_app_schedule_create` | `oa/schedule/add` | 写 | 建日程 |
+| `wecom_app_calendar_create` | `oa/calendar/add` | 写 | 建应用日历 → cal_id（D5 链路起点） |
+| `wecom_app_schedules` | `oa/schedule/get_by_calendar` | 读 | 应用日历的日程列表（cal_id 必传，D5） |
+| `wecom_app_schedule_add` | `oa/schedule/add` | 写 | 建日程（agentid 插件注入；cal_id/时间窗必传） |
 | `wecom_app_todo_get` / `wecom_app_todo_update` | `todo/get` / `todo/update` | 读/写 | 待办（无创建，D6） |
 
 （末行两把工具并作一行，共 16 个注册名。）所有工具：参数 schema 校验、结果只回业务字段、
@@ -144,9 +149,10 @@ docid/record_id 等由模型按 SKILL 规则取用。
 2. `deploy/Dockerfile.openclaw` 加一行 `COPY deploy/openclaw/wecom-app-plugin /opt/plugins/wecom-app-plugin`；
 3. 容器内一次性注册：`openclaw plugins install -l /opt/plugins/wecom-app-plugin --force
    --accept-capabilities`（写 state 卷 `plugins.load.paths`）；
-4. `agents.entries.main.tools.allow` 追加 16 个工具名（或 `wecom_app_*` glob，以实测为准）→
+4. `agents.entries.main.tools.allow` 追加 17 个工具名（或 `wecom_app_*` glob，以实测为准）→
    重启网关（三道门，D9）；
-5. env 已就位（2026-11-01 已写 openclaw 服务行四键，容器重建时生效）；
+5. env 已就位并**已生效**（2026-11-01 写入 openclaw 服务行四键；容器随 patch 自动重建，
+   `env | grep WECOM_APP_` 实测四键在场）；
 6. `tools.toolsBySender` 隐藏层（D2，实施时验，不生效则记录为已知边界）。
 
 ## 9. 可行性证据（2026-11-01，openclaw 容器内实测，出口 113.249.104.181）
@@ -156,7 +162,9 @@ docid/record_id 等由模型按 SKILL 规则取用。
 | `agent/get` (1000009) | **0**（name=消息通知）⇒ secret 身份 + 可信 IP 双确认 |
 | `department/list` / `user/list` | **0 / 0** |
 | `meeting/get_user_meetingid` | **0** |
-| `oa/schedule/get_by_calendar` | 90457（权限通，cal_id 格式待实现期核 → D5） |
+| `get_by_calendar`（userid / usr: 前缀） | 90457（成员日历不可寻址 → D5 应用日历模型） |
+| `oa/calendar/add` → `schedule/add` → `get_by_calendar(cal_id)` | **0 / 0 / 0**（应用日历全链路，cal_id 见 D5 锚点） |
+| `oa/calendar/list` | **HTTP 404**（不存在，别再按它设计） |
 | `todo/get` | 40058（权限通，字段名实现期核） |
 | `create_doc`(10) + `get_sheet` + `get_fields` | **0 / 0 / 0**（默认子表+5字段） |
 | `add_records` → `get_records` → `update_records` | **0 / 0(total=6) / 0**（读改写全链路） |
