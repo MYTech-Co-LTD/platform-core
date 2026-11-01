@@ -181,7 +181,7 @@ describe.skipIf(!dbUrl)('租户解析 + platform 路由 + seed', () => {
           userApp: { mount: '/app/off', title: 'Off' },
         },
       ],
-      enabledFor: async (t) => new Set(t === acmeId ? ['aftersales', 'data', 'off'] : []),
+      enabledFor: async (t) => new Set(t === acmeId ? ['aftersales', 'data'] : []), // 'off' 未启用 ⇒ 不进
     }
     const build = (identity: unknown) => testClient(
       new Hono<TenantEnv>()
