@@ -8,6 +8,34 @@ function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 }
 
+describe('shims/http · 身份不对的恢复路径（2026-11-01 企微实测）', () => {
+  it('★ 403 + need=*:guest ⇒ 跳微信 OA 访客登录（不是报"加载失败"卡死）', async () => {
+    const hrefs: string[] = []
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { pathname: '/app/aftersales/register', search: '', set href(v: string) { hrefs.push(v) } },
+    })
+    globalThis.fetch = (async () => json(403, { error: 'FORBIDDEN', need: 'aftersales:guest' })) as unknown as typeof fetch
+    await expect(apiGet('/guest/me/registration')).rejects.toMatchObject({ status: 403, code: 'GUEST_SESSION_REQUIRED' })
+    expect(hrefs[0]).toContain('/api/platform/auth/wechat-oa/silent?next=')
+    globalThis.fetch = origFetch
+    Object.defineProperty(window, 'location', { configurable: true, value: origLocation })
+  })
+
+  it('其它 403（业务无权）不跳登录，按普通错误抛', async () => {
+    const hrefs: string[] = []
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { pathname: '/x', search: '', set href(v: string) { hrefs.push(v) } },
+    })
+    globalThis.fetch = (async () => json(403, { error: 'FORBIDDEN', need: 'aftersales:manage' })) as unknown as typeof fetch
+    await expect(apiGet('/x')).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' })
+    expect(hrefs).toEqual([])
+    globalThis.fetch = origFetch
+    Object.defineProperty(window, 'location', { configurable: true, value: origLocation })
+  })
+})
+
 describe('shims/http', () => {
   let calls: Array<{ url: string; init?: RequestInit }>
   let hrefs: string[]

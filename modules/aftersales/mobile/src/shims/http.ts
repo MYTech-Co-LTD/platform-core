@@ -42,6 +42,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // 跳转已经发起，本页不会再渲染出有意义的结果 —— 抛出让调用方收尾 loading
     throw new ApiError(401, 'UNAUTHENTICATED')
   }
+  // **已登录但不是访客**：单 cookie 站点里，平台会话（企微静默/账密）与访客会话互斥，
+  // 带着平台会话打访客端点 ⇒ 门卫回 403 且 `need` 是 `*:guest`。这不是"无权限"而是
+  // "身份不对"——按 401 同款处理（切访客登录），否则页面只会报「加载失败」卡死
+  // （2026-11-01 企微实测：从业务工作台进 /app/aftersales/register 必卡在这里）。
+  if (res.status === 403) {
+    const body = (await res.clone().json().catch(() => null)) as { need?: unknown } | null
+    const need = typeof body?.need === 'string' ? body.need : ''
+    if (need.endsWith(':guest')) {
+      redirectToGuestLogin()
+      throw new ApiError(403, 'GUEST_SESSION_REQUIRED')
+    }
+  }
   if (!res.ok) throw await toApiError(res)
   return (await res.json()) as T
 }
