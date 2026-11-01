@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.230.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.229.3...v0.230.0) - 2026-11-01
+- 【新增】openclaw: wecom-app 企微自建应用插件——17 工具+白名单+SKILL (#1238) ([#1240](https://github.com/MYTech-Co-LTD/platform-core/pull/1240), [a50e107](https://github.com/MYTech-Co-LTD/platform-core/commit/a50e10701cfa085bfdea02918f4b7f0e2e185da0))
+
+
 ## [0.229.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.229.2...v0.229.3) - 2026-11-01
 - 【修复】platform: 权限码供给不再在启动致命路径——Casdoor admin 被锁不再全实例崩 ([#579](https://github.com/MYTech-Co-LTD/platform-core/pull/579), [83bc3e8](https://github.com/MYTech-Co-LTD/platform-core/commit/83bc3e84e12c832129c4bd0a69bae8e0276559bf))
 
