@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.233.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.232.0...v0.233.0) - 2026-11-01
+- 【新增】platform: 按人过滤的业务应用入口 /me/apps（P2 第一步） ([#1249](https://github.com/MYTech-Co-LTD/platform-core/pull/1249), [ca579bc](https://github.com/MYTech-Co-LTD/platform-core/commit/ca579bc4d986f81da0b31c7af8d46d9d761f4fbb))
+
+
 ## [0.232.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.231.0...v0.232.0) - 2026-11-01
 - 【新增】data: 报表控制台「共享」入口（资产级授权可用面） ([#1247](https://github.com/MYTech-Co-LTD/platform-core/pull/1247), [1cfaf6f](https://github.com/MYTech-Co-LTD/platform-core/commit/1cfaf6f9dcaac9849f38e3b9821f8860d9179d00))
 
