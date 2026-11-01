@@ -283,8 +283,7 @@
             "batch_id": "not_null",
             "system_book": "not_null",
             "bizday": "not_null",
-            "branch_num": "unique",
-            "metric": "in_set:transfer_money",
+            "metric": "in_set:transfer_money,sale_money,sale_money_no_coupon,sale_profit,transfer_profit,receipt_money,receipt_money_no_coupon,new_card_count,deposit_money,order_count",
             "actual_value": "not_null"
           }
         }
