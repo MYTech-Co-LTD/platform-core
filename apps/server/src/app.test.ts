@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { MockCasdoor } from '@platform/auth-core/src/test-util/mock-casdoor'
 import { buildApp, MAX_API_BODY_BYTES } from './app'
 import { getPool } from './db'
@@ -523,14 +523,21 @@ describe.skipIf(!dbUrl)('buildApp：启动期 fail-fast 传播', () => {
     await mock.stop()
   })
 
-  it('★ 权限码供给抛错 → 原样上抛 → buildApp 拒绝（宿主起不来）', async () => {
-    // admin 口令故意配错：管理会话登不上 ⇒ upsertPermission 抛 ⇒ 该错误必须一路传出 buildApp
-    // （运维契约：Casdoor 不可用时容器就反复重启，见 deploy/openship-adopt.md 陷阱 2）
-    //
-    // 断言锁在具体错误来源上，不用裸 rejects.toThrow()：裸写法下任何原因抛错都算过，
-    // 那样"seed 顺序错了 / 模块没找到"之类的无关失败会被误读成本条契约成立
-    await expect(
-      buildApp({ config: configWith(mock.origin, 'wrong-password') }),
-    ).rejects.toThrow(/casdoor admin login failed/)
+  it('★ #579 权限码供给抛错 → buildApp 照常起来（降级 + 后台重试，不再杀进程）', async () => {
+    // 契约变更（#579）：admin 会话登不上（被锁/凭据错）不再让宿主崩溃循环——
+    // 2026-10-12 实测：共用 admin 被第三方试错锁定 8 分钟 ⇒ 两个实例同时 Exit 1 ⇒ 平台 11 分钟不可用。
+    // 新契约：进程照常监听；降级 = 模块 API 对缺码用户 403；ERROR 日志点名原因；
+    // 可见性复用集成判据 casdoor-admin-session（admin 会话死 ⇒ get-user 失败 ⇒ 集成页红）。
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const built = await buildApp({ config: configWith(mock.origin, 'wrong-password') })
+      // 起来了：app 存在、健康检查路由在（平台本体不受 Casdoor 锁定牵连）
+      expect(built.app).toBeTruthy()
+      // 且降级是**显式**的：ERROR 里点名「权限码供给失败」与原因，不是静默吞掉
+      const hit = errSpy.mock.calls.find((c: unknown[]) => String(c[0]).includes('权限码供给失败'))
+      expect(String(hit?.[0])).toMatch(/casdoor admin login failed/)
+    } finally {
+      errSpy.mockRestore()
+    }
   })
 })
