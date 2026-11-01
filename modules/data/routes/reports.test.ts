@@ -813,6 +813,9 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(denied.status).toBe(403)
 
     // 未知部门受让方：当场拒（fail-closed），不落"永远命不中"的门
+    // ⚠️ 账号数据校验读的是平台只读视图（`platform.v_org_node`）：模块测试壳没有宿主，
+    //    空库 CI 上必须先跑平台迁移，否则是 500 "relation does not exist"（本地有库会假绿）。
+    await applyPlatformMigrations(pool)
     const bad = await app.request(`/reports/${id}/acl`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ viewers: [{ subjectType: 'dept', subjectId: 'no-such-dept' }] }),
