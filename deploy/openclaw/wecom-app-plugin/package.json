@@ -1,0 +1,11 @@
+{
+  "name": "openclaw-plugin-wecom-app",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "企微自建应用（1000009）工具插件——通讯录/文档·智能表格/会议/应用日历/待办，按人白名单 fail-closed。",
+  "scripts": { "test": "node --test" },
+  "files": ["index.js", "lib.js", "skills", "openclaw.plugin.json", "README.md"],
+  "peerDependencies": { "openclaw": ">=2026.3.28" },
+  "openclaw": { "extensions": ["./index.js"] }
+}

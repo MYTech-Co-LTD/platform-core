@@ -1,0 +1,19 @@
+{
+  "id": "wecom-app",
+  "name": "WeCom App Tools",
+  "description": "企微自建应用能力：通讯录/文档·智能表格/会议/应用日历/待办。凭据走 env，使用人白名单 fail-closed，权限裁决在企微服务端。",
+  "version": "0.1.0",
+  "configSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+  "activation": { "onStartup": true },
+  "contracts": {
+    "tools": [
+      "wecom_app_status", "wecom_app_departments", "wecom_app_users", "wecom_app_doc_create",
+      "wecom_app_sheet_sheets", "wecom_app_sheet_fields", "wecom_app_sheet_records",
+      "wecom_app_sheet_add_records", "wecom_app_sheet_update_records",
+      "wecom_app_meetings", "wecom_app_meeting_info", "wecom_app_meeting_create",
+      "wecom_app_calendar_create", "wecom_app_schedules", "wecom_app_schedule_add",
+      "wecom_app_todo_get", "wecom_app_todo_update"
+    ]
+  },
+  "skills": ["./skills"]
+}
