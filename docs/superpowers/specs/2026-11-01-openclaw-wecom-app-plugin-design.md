@@ -174,8 +174,10 @@ docid/record_id 等由模型按 SKILL 规则取用。
 
 1. 白名单内（ZhangDuo）问「公司现在有哪些部门」→ 整轮工具 = `['wecom_app_departments']`，
    零 `exec`；问「建一个智能表格写入 XX」→ `wecom_app_doc_create`+`add_records`，且回读一致；
-2. 白名单外（DongJiJuan 或任一非名单用户）同问 → 回固定拒绝文案，**transcript 无任何
-   wecom_app_* 调用**（fail-closed 生效）；
+2. 白名单外（DongJiJuan 或任一非名单用户）同问 → **看不到 `wecom_app_*` 工具**
+   （`toolsBySender` 通配 deny 先行隐藏，模型会如实答"没有该能力"）；
+   **transcript 无任何 wecom_app_* 调用**（fail-closed 生效）。插件层固定拒绝文案只在工具
+   意外可见时才出现，属第二道防线（模拟实测见 §12）；
 3. 问数类问题不受影响（`list_metrics`/`query_data` 照常，工具面无串扰）。
 
 ## 11. 已知边界与风险
@@ -186,4 +188,26 @@ docid/record_id 等由模型按 SKILL 规则取用。
 - `toolsBySender` 隐藏层若实测不符预期，仅影响"未授权者是否看得见工具名"，不影响拦截（D2）。
 - 1000009 同时服务数据面 data-analysis 与本插件：token 各自独立获取，互不挤占；但其应用权限
   变更会影响两处（共用应用，改权限前想一下另一边）。
-- **exec 可绕过白名单读 secret（存量面，D2 缓解）**：exec 在 agent allowlist 里且 dmPolicy=open ⇒ 非白名单用户理论上可诱导模型 exec 读容器 env 拿 WECOM_APP_SECRET。缓解=部署时 toolsBySender 的 `*` deny 同时含 `wecom_app_*` 与 `exec`（白名单成员的 specific 条目放行）——见 plan Task 5 Step 5。
+- **exec 可绕过白名单读 secret（存量面，已接受的残留风险）**：exec 在 agent allowlist 里且
+  dmPolicy=open ⇒ 非白名单用户理论上可诱导模型 exec 读容器 env 拿 WECOM_APP_SECRET。
+  **决策（2026-11-01，用户拍板）**：`toolsBySender` 的 `*` 只 deny `wecom_app_*`，**不 deny
+  `exec`**——避免为非白名单用户的其他任务制造连带影响。⇒ exec 绕过面**保留**，属已知残留风险；
+  插件层白名单仍是 `wecom_app_*` 的硬闸（非白名单零 API 调用，见 §12）。
+
+## 12. 上线后实测与模拟（2026-11-01）
+
+- **真渠道（白名单 ZhangDuo）**：私聊「公司现在有哪些部门」→ 新会话
+  `agent:main:wecom:default:direct:zhangduo`（§8 的 dmScope 同时得证），转录
+  `"name":"wecom_app_departments"` ×1、零 `exec`；回复真实部门树（272 个部门）。
+- **插件判定路径模拟**（lib.js 同一实现 + 容器真实 env，未改生产配置）：
+
+  | sender | 结果 | HTTP 调用 |
+  |---|---|---|
+  | DongJiJuan / someoneelse | 拒绝文案 | **0** |
+  | （空 sender） | 身份缺失文案 | **0** |
+  | ZhangDuo | `agent/get` errcode 0（消息通知/1000009） | 2（gettoken+agent/get） |
+  | yangwei | errcode 0 | 1（token 缓存复用） |
+
+- **`toolsBySender` 实测**：无 sender 的 CLI 会话工具面 = 数据工具 + `exec`，
+  **无 `wecom_app_*`**（通配隐藏生效）；白名单 specific 条目放行（真渠道已证）。
+- 会话库查询注意：`transcript_events.seq` 是**每会话**的，取最新批次须按 `created_at` 窗口。
