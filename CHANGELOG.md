@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.229.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.229.2...v0.229.3) - 2026-11-01
+- 【修复】platform: 权限码供给不再在启动致命路径——Casdoor admin 被锁不再全实例崩 ([#579](https://github.com/MYTech-Co-LTD/platform-core/pull/579), [83bc3e8](https://github.com/MYTech-Co-LTD/platform-core/commit/83bc3e84e12c832129c4bd0a69bae8e0276559bf))
+
+
 ## [0.229.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.229.1...v0.229.2) - 2026-11-01
 - 【修复】notify: 探针绕过 token 缓存——凭据改坏后一轮即红，不再等 TTL ([#1235](https://github.com/MYTech-Co-LTD/platform-core/pull/1235), [791a52d](https://github.com/MYTech-Co-LTD/platform-core/commit/791a52d14ae0d2bdb1c925c8626683e917096943))
 
