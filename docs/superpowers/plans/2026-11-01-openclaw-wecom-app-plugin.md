@@ -19,7 +19,7 @@
 - **实测形状不得凭想象改**：`create_doc` doc_type **10=智能表格**/4=电子表格/3=文档；`get_sheet` 回包在顶层 **`sheet_list`**；`add_records`/`update_records` 的 `records[].values` **键=字段标题（field_title）**、单元格 `{values:[{type:1,text|number}]}`；日程=**应用日历模型**（`oa/calendar/add`→cal_id→`schedule/add` 注入 `agentid`）；待办**无创建 API**。
 - **lib.js 不 import openclaw SDK**（node --test 直跑）；index.js 不被单测 import（契约测试按源码文本提取）。
 - **不动**：bot 通道、data-query 插件、`agents.entries.main.tools.allow` 既有 8 项、官方 wecom 插件的 hook 现状。
-- **提交纪律**：Conventional Commits `feat(openclaw)/docs(openclaw)/chore(openclaw)`；本波走一个 issue（下文 `#1199` 为占位，**开工前建真实 issue 并全局替换**）+ 一个 PR（body 含 `Closes #<N>`）。
+- **提交纪律**：Conventional Commits `feat(openclaw)/docs(openclaw)/chore(openclaw)`；本波走一个 issue（下文 `#1238` 为占位，**开工前建真实 issue 并全局替换**）+ 一个 PR（body 含 `Closes #<N>`）。
 - 企微侧事实源：`https://qyapi.weixin.qq.com/cgi-bin/*`；出口 IP `113.249.104.181`（可信 IP 已配）。
 
 ---
@@ -311,7 +311,7 @@ Expected: PASS（0 fail）
 
 ```bash
 git add deploy/openclaw/wecom-app-plugin/lib.js deploy/openclaw/wecom-app-plugin/lib.test.js
-git commit -m "feat(openclaw): wecom-app 纯逻辑 lib——白名单/env 间接引用/token/错误文案映射 (#1199)"
+git commit -m "feat(openclaw): wecom-app 纯逻辑 lib——白名单/env 间接引用/token/错误文案映射 (#1238)"
 ```
 
 ---
@@ -599,7 +599,7 @@ Expected: PASS（lib + contracts 全绿）
 
 ```bash
 git add deploy/openclaw/wecom-app-plugin/
-git commit -m "feat(openclaw): wecom-app 插件入口——17 工具注册+白名单门+透传调用 (#1199)"
+git commit -m "feat(openclaw): wecom-app 插件入口——17 工具注册+白名单门+透传调用 (#1238)"
 ```
 
 ---
@@ -710,7 +710,7 @@ OpenClaw native plugin：17 把固定端点工具（通讯录/文档·智能表�
 
 ```bash
 git add deploy/openclaw/wecom-app-plugin/skills deploy/openclaw/wecom-app-plugin/README.md
-git commit -m "docs(openclaw): wecom-app SKILL——路由表/硬纪律/能力边界 (#1199)"
+git commit -m "docs(openclaw): wecom-app SKILL——路由表/硬纪律/能力边界 (#1238)"
 ```
 
 ---
@@ -748,12 +748,12 @@ Expected: PASS（本插件零 compose/env 模板改动，B9 门禁不受影响�
 
 ```bash
 git add deploy/Dockerfile.openclaw
-git commit -m "build(openclaw): 镜像纳入 wecom-app 插件源 (#1199)"
+git commit -m "build(openclaw): 镜像纳入 wecom-app 插件源 (#1238)"
 git push -u origin docs/wecom-app-plugin-spec  # 或按当次分支名
 ```
 
-PR：标题 `feat(openclaw): wecom-app 企微自建应用插件——17 工具+白名单+SKILL (#1199)`，
-body 含 `Closes #1199`、spec/plan 链接、`node --test` 结果贴文。
+PR：标题 `feat(openclaw): wecom-app 企微自建应用插件——17 工具+白名单+SKILL (#1238)`，
+body 含 `Closes #1238`、spec/plan 链接、`node --test` 结果贴文。
 
 ---
 
