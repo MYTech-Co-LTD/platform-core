@@ -189,3 +189,34 @@ export async function replaceViewers(
     client.release()
   }
 }
+
+/**
+ * 转移所有权（spec §4.4）：`owner` 行整体换人（旧 owner 不再保留任何特权）。
+ *
+ * 为什么单独一个动作而不是"再加一个 owner 行"：多个 owner 会让「谁负责」失去单一答案；
+ * 业界（Drive/GitHub）转移就是把唯一 owner 换人，**旧 owner 若仍需访问**应作为 viewer 显式加回。
+ * 审计由调用方写（带 byAdmin）——本函数只管行状态。
+ */
+export async function transferOwner(
+  pool: Pool, org: string, assetId: string, nextOwner: string, actor: string,
+): Promise<void> {
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+    await client.query(
+      "delete from data.asset_acl where org = $1 and asset_id = $2 and relation = 'owner'",
+      [org, assetId],
+    )
+    await client.query(
+      `insert into data.asset_acl(org, asset_id, subject_type, subject_id, relation, granted_by)
+       values ($1, $2, 'user', $3, 'owner', $4)`,
+      [org, assetId, nextOwner, actor],
+    )
+    await client.query('commit')
+  } catch (e) {
+    await client.query('rollback').catch(() => {})
+    throw e
+  } finally {
+    client.release()
+  }
+}
