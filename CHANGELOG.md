@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.234.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.233.0...v0.234.0) - 2026-11-01
+- 【新增】web: 移动端业务入口页 /m（按权限列应用卡片） ([#1251](https://github.com/MYTech-Co-LTD/platform-core/pull/1251), [da6fad5](https://github.com/MYTech-Co-LTD/platform-core/commit/da6fad54e646fe51fea219dd5fe0fb39ffc21d35))
+
+
 ## [0.233.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.232.0...v0.233.0) - 2026-11-01
 - 【新增】platform: 按人过滤的业务应用入口 /me/apps（P2 第一步） ([#1249](https://github.com/MYTech-Co-LTD/platform-core/pull/1249), [ca579bc](https://github.com/MYTech-Co-LTD/platform-core/commit/ca579bc4d986f81da0b31c7af8d46d9d761f4fbb))
 
