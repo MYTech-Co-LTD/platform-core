@@ -41,7 +41,7 @@
           "headers": {
             "Content-Type": "application/json"
           },
-          "body": "{\"date_type\":\"month\",\"date\":\"${ITER_ITEM_BIZDAY}\",\"group_type\":\"day\",\"metrics\":[\"transfer_money\"],\"branch_nums\":${ITER_ITEM_BRANCH_NUMS_JSON}}",
+          "body": "{\"date_type\":\"month\",\"date\":\"${ITER_ITEM_BIZDAY}\",\"group_type\":\"day\",\"metrics\":[\"transfer_money\",\"sale_money\",\"sale_money_no_coupon\",\"sale_profit\",\"transfer_profit\",\"receipt_money\",\"receipt_money_no_coupon\",\"new_card_count\",\"deposit_money\",\"order_count\"],\"branch_nums\":${ITER_ITEM_BRANCH_NUMS_JSON}}",
           "paginationType": "none",
           "responsePath": "/result/rows",
           "rawResponseDestination": "/workspace/.duckle-raw/branch-indicator-${ITER_ITEM_BATCH_ID}-c${ITER_ITEM_CHUNK_NO}.json",
