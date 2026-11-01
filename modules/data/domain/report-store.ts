@@ -29,6 +29,8 @@ export interface ReportRow {
   /** 本报表除 `tenant` 外要锁的参数 → 值（`tenant` 的平台保留值不在此列，见 routes/reports.ts）。 */
   embedParams: Record<string, string>
   requiredScope: string | null
+  /** 资产级可见面（spec 2026-11-01 §4）：'tenant' = 旧粗门；'restricted' = 只有 ACL 里的人。 */
+  visibility: 'tenant' | 'restricted'
   renderer: ReportRenderer
   /**
    * 平台自绘的**声明式规格**（spec §3⑥；迁移 007）：`renderer='platform'` ⇒ 必非空，
@@ -65,7 +67,7 @@ export interface ReportRow {
  */
 const REPORT_COLUMNS = [
   'id', 'title', 'metabase_id', 'embed_params', 'required_scope', 'renderer', 'version', 'spec',
-  'published_version_id', 'required_depts',
+  'published_version_id', 'required_depts', 'visibility',
 ] as const
 const REPORT_COLS_R = REPORT_COLUMNS.map((c) => `r.${c}`).join(', ')
 /**
@@ -93,6 +95,9 @@ function toReportRow(row: Record<string, unknown>): ReportRow {
     publishedVersion: (row.published_version ?? null) as number | null,
     publishedDraftVersion: (row.published_draft_version ?? null) as number | null,
     requiredDepts: (row.required_depts ?? null) as string[] | null,
+    // 资产级可见面（spec 2026-11-01 §4）：'tenant' = 旧粗门；'restricted' = 只有 ACL 里的人。
+    // 与 required_scope（内容门/已发布）**正交**——两个维度别混。
+    visibility: (row.visibility ?? 'tenant') as 'tenant' | 'restricted',
   }
 }
 
@@ -181,6 +186,8 @@ export interface UpsertReportInput {
   spec?: ReportSpec | null
   /** 部门门（可空，迁移 025）；缺省 null = 无门——既有调用方零改动 */
   requiredDepts?: string[] | null
+  /** 资产可见面（spec 2026-11-01 §4）：**只在新建时生效**；缺省 'tenant'（历史语义） */
+  visibility?: 'tenant' | 'restricted'
 }
 
 export function upsertReport(pool: Pool, org: string, input: UpsertReportInput): Promise<string>
@@ -203,8 +210,8 @@ export async function upsertReport(
        version        = data.reports.version + 1,
        updated_at     = now()`
   const r = await pool.query(
-    `insert into data.reports (org, id, title, metabase_id, embed_params, required_scope, renderer, spec, required_depts)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `insert into data.reports (org, id, title, metabase_id, embed_params, required_scope, renderer, spec, required_depts, visibility)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ${conflict}
      returning id`,
     [org, randomUUID(), input.title, input.metabaseId,
@@ -214,7 +221,9 @@ export async function upsertReport(
       // 同款显式 stringify：不依赖驱动对对象的隐式序列化）。
       input.spec == null ? null : JSON.stringify(input.spec),
       // 部门门同款：null = SQL NULL（无门）；数组显式 stringify（与 embed_params 同口径）
-      input.requiredDepts == null ? null : JSON.stringify([...new Set(input.requiredDepts)])],
+      input.requiredDepts == null ? null : JSON.stringify([...new Set(input.requiredDepts)]),
+      // 只在**新建**时生效：冲突分支不更新 visibility（既有资产的可见性不因同名 upsert 被改）
+      input.visibility ?? 'tenant'],
   )
   // create-only 撞名时 `returning` 无行 ⇒ rowCount 0 ⇒ null；upsert 恒有一行
   return (r.rowCount ?? 0) === 0 ? null : (r.rows[0].id as string)
