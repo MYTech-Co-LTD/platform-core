@@ -146,3 +146,25 @@ test("callWecom：HTTP 400 带 errcode 仍走 mapError（status 不遮蔽 errcod
   assert.equal(out.errcode, 40058);
   assert.match(out.error, /参数形状不合法/);
 });
+
+// —— 评审 fix（#1238 Important 1）：GET 的参数走 query 串，init 不带 body ——
+
+test("callWecom：GET+body → 参数转 query 串追加在 access_token 后，init 无 body", async () => {
+  const f = stubFetch(200, { errcode: 0, department: [] });
+  const out = await callWecom({ token: "T", path: "department/list", method: "GET", body: { id: 1 }, fetchImpl: f });
+  assert.deepEqual(out.department, []);
+  assert.ok(f.calls[0].url.includes("access_token=T&id=1"), f.calls[0].url);
+  assert.equal(f.calls[0].init.body, undefined);
+});
+
+test("callWecom：GET+undefined/空对象 body → URL 只有 access_token，无 body", async () => {
+  const f1 = stubFetch(200, { errcode: 0 });
+  await callWecom({ token: "T", path: "agent/get", method: "GET", fetchImpl: f1 });
+  assert.ok(f1.calls[0].url.endsWith("access_token=T"), f1.calls[0].url);
+  assert.ok(!f1.calls[0].url.includes("&"), f1.calls[0].url);
+  assert.equal(f1.calls[0].init.body, undefined);
+  const f2 = stubFetch(200, { errcode: 0 });
+  await callWecom({ token: "T", path: "department/list", method: "GET", body: {}, fetchImpl: f2 });
+  assert.ok(f2.calls[0].url.endsWith("access_token=T"), f2.calls[0].url);
+  assert.equal(f2.calls[0].init.body, undefined);
+});

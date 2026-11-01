@@ -32,3 +32,13 @@ test("contracts.tools 无陈旧残留（两侧集合一致）", () => {
   const declared = manifest.contracts?.tools ?? [];
   assert.deepEqual(declared.filter((n) => !defNames.includes(n)), []);
 });
+
+test("execute 顺序契约：isAllowed 门先于 credentialsReady、二者先于任何 exec 调用（fail-closed 顺序锚）", () => {
+  const iAllowed = indexSrc.indexOf("if (!isAllowed(");
+  // ① credentialsReady 在 index.js 出现两处：register 期的告警（在前）+ execute 的门（在后）。
+  //    必须从 isAllowed 之后找，锚定的才是 execute 里的那道门（评审代码原样 indexOf 会撞 register 告警误红）。
+  const iCred = indexSrc.indexOf("if (!credentialsReady(", iAllowed);
+  const iExec = indexSrc.indexOf("await tool.exec(");
+  assert.ok(iAllowed >= 0 && iCred > iAllowed && iExec > iCred, `顺序锚失效：isAllowed=${iAllowed}, credentialsReady=${iCred}, exec=${iExec}——重构不得把白名单门挪后`);
+  assert.ok(indexSrc.includes("DENIED_MESSAGE") && indexSrc.includes("NO_IDENTITY_MESSAGE"), "拒绝文案常量必须被引用");
+});

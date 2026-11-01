@@ -76,15 +76,32 @@ export function createTokenManager({ corpId, secret, fetchImpl = fetch, now = Da
   };
 }
 
+/** GET 的参数必须走 query 串：fetch 的 GET 带 body 会被 undici 直接抛 TypeError
+ *  （"Request with GET/HEAD method cannot have body"），再被 catch 吞成「企微 API 不可达」，
+ *  status/departments/users 三个 GET 工具会恒坏（#1238 评审 Important 1）。
+ *  只取「有值」的键（undefined/null 不进 query）；body 为 undefined/空对象 ⇒ URL 原样。
+ *  POST 行为一律不变。 */
+function bodyToQuery(body) {
+  if (!body || typeof body !== "object") return "";
+  const entries = Object.entries(body).filter(([, v]) => v !== undefined && v !== null);
+  return entries.length === 0 ? "" : `&${new URLSearchParams(entries).toString()}`;
+}
+
 /** 业务载荷原样回；非零 errcode → {errcode, error}；404/网络错误有固定文案。 */
 export async function callWecom({ token, path, method = "POST", body, fetchImpl = fetch }) {
+  const isGet = method === "GET";
   let resp;
   try {
-    resp = await fetchImpl(`${API_BASE}/${path}?access_token=${token}`, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    resp = await fetchImpl(
+      `${API_BASE}/${path}?access_token=${token}${isGet ? bodyToQuery(body) : ""}`,
+      isGet
+        ? { method }
+        : {
+            method,
+            headers: { "Content-Type": "application/json" },
+            body: body === undefined ? undefined : JSON.stringify(body),
+          },
+    );
   } catch (e) {
     return { error: `企微 API 不可达：${e.message}` };
   }
