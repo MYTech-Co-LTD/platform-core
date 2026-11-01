@@ -233,7 +233,7 @@
         "label": "gchk",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT 'chunk_missing' AS violation, CAST(count(DISTINCT file_chunk) AS VARCHAR) AS detail, CAST(any_value(exp_n_chunks) AS VARCHAR) AS expected\nFROM input\nHAVING count(DISTINCT file_chunk) <> any_value(exp_n_chunks) OR count(*) = 0\nUNION ALL\nSELECT 'chunk_rows_vs_matched', CAST(file_chunk AS VARCHAR), CAST(max(chunk_n_matched) AS VARCHAR)\nFROM input\nGROUP BY file_chunk\nHAVING count(*) <> max(chunk_n_matched)"
+          "sql": "SELECT 'chunk_missing' AS violation, CAST(count(DISTINCT file_chunk) AS VARCHAR) AS detail, CAST(any_value(exp_n_chunks) AS VARCHAR) AS expected\nFROM input\nHAVING count(DISTINCT file_chunk) <> any_value(exp_n_chunks) OR count(*) = 0\nUNION ALL\nSELECT 'chunk_rows_vs_matched', CAST(file_chunk AS VARCHAR), CAST(max(chunk_n_matched) AS VARCHAR)\nFROM input\nGROUP BY file_chunk\nHAVING count(DISTINCT branch_num) <> max(chunk_n_matched)"
         }
       }
     },
@@ -249,7 +249,7 @@
         "componentId": "ctl.die",
         "properties": {
           "condition": "has-rows",
-          "message": "汇总自证未过（{rows} 条违规，明细见上）：chunk_missing=应到的分块没到（detail=实到块数 / expected=应有块数）；chunk_rows_vs_matched=某块落盘行数 ≠ 该块自报的有数据门店数（detail=实际行数 / expected=自报匹配数）。拒绝写湖"
+          "message": "汇总自证未过（{rows} 条违规，明细见上）：chunk_missing=应到的分块没到（detail=实到块数 / expected=应有块数）；chunk_rows_vs_matched=某块落盘**门店数** ≠ 该块自报的有数据门店数（detail=实际门店数 / expected=自报匹配数；多指标下每店多行，故按门店数比）。拒绝写湖"
         }
       }
     },

@@ -1,4 +1,4 @@
-sha256-of-rest be0e7fc22eba58a4c8f8dd41666bb1add46d8e2fb930c58a59e26663a78da546
+sha256-of-rest 79f2e02b4a27180eceaa930462636cbbb182a517eec672f832a6ac34cc4b0e39
 08938c10c6b4a688c8afda6cd7d1ad3dbf2c20f83cf8c4e7023055ad34eddc70 contracts/README.md ${REPO}/contracts/README.md 0644
 fcc8189e1012d5fbb8e2505025bed637dd01c7b4465ab86125d3eaa7f330eff3 contracts/common/_schema.schema.json ${REPO}/contracts/common/_schema.schema.json 0644
 1730119518c3371f3c2ff3492f4c15cd731688047c6d40805ec4d2c65892f3ff contracts/common/_template.contract.json ${REPO}/contracts/common/_template.contract.json 0644
@@ -207,8 +207,8 @@ d832736b62731c807aba0e9f15e4f2a7739da1d748f9c39d0e291ec8afca3e37 deploy/duckle/c
 ece34c0bf41d9f180c67c24a1d62b37c18ccb14098f239fe38ac029d4fd510e8 deploy/duckle/console/pipelines/lemeng.branch_indicator.backfill.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.branch_indicator.backfill.3120.json 0644
 ce4ac81f021a3b3c128ef3d2090f8f5f2fa57564460b99c47d83bb773b51ca32 deploy/duckle/console/pipelines/lemeng.branch_indicator.backfill.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.branch_indicator.backfill.64188.json 0644
 2f573f6b479228ae6261ab6f8aa9418e4897da46468b2e85a4b9002a0d0161a3 deploy/duckle/console/pipelines/lemeng.branch_indicator.day.json ${REPO}/deploy/duckle/console/pipelines/lemeng.branch_indicator.day.json 0644
-f908fb2be22c8d773b786d1bcbfda3d7f3512362deb95ab8056b2c11f41aad74 deploy/duckle/console/pipelines/lemeng.branch_indicator.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.branch_indicator.l0.3120.json 0644
-e5c78e1d541f758f970c32cae61a38a7232a74c6ba52fec25cb6d5c7527e26cb deploy/duckle/console/pipelines/lemeng.branch_indicator.l0.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.branch_indicator.l0.64188.json 0644
+77618686a6567bd48b5cf59525329ea52454093b24230c56fef9edfb4f16d662 deploy/duckle/console/pipelines/lemeng.branch_indicator.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.branch_indicator.l0.3120.json 0644
+47ff04e882cc14451b178e2f309c75c7b260fa78dc8686d03552194d89110946 deploy/duckle/console/pipelines/lemeng.branch_indicator.l0.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.branch_indicator.l0.64188.json 0644
 33a0bde5c17e596c93baeba12c9d0b6743946b77828e89b4470031090db27a28 deploy/duckle/console/pipelines/lemeng.client.expense.backfill.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.client.expense.backfill.3120.json 0644
 56c02426d069c7ec4433c6e18f5693863c5001a97ddaf334c158a1a990da47e3 deploy/duckle/console/pipelines/lemeng.client.expense.backfill.64188.json ${REPO}/deploy/duckle/console/pipelines/lemeng.client.expense.backfill.64188.json 0644
 559a8dcc92f74d154139ec3a38d85bbfeebe5c401acb1a1927d64876d720d244 deploy/duckle/console/pipelines/lemeng.client.expense.l0.3120.json ${REPO}/deploy/duckle/console/pipelines/lemeng.client.expense.l0.3120.json 0644
