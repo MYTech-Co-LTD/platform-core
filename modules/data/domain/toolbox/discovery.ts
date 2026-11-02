@@ -15,7 +15,8 @@ const DATASET_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 const WATERMARK_RE = /^\d{4}-\d{2}-\d{2}$/
 
-const tierOf = (m: MetricRow): 'certified' | 'custom' => (m.source === 'l1' ? 'certified' : 'custom')
+// 可信度分级消费读侧推导后的值（同 toolbox/query.ts 的 tierOf 注记——唯一收口在 metric-store）
+const tierOf = (m: MetricRow): 'certified' | 'custom' => (m.certified === 'certified' ? 'certified' : 'custom')
 const ownerOf = (m: MetricRow, org: string): string => (m.source === 'l1' ? 'data-platform' : org)
 const oneLinerOf = (m: MetricRow): string => (m.description.split('\n')[0] ?? '').slice(0, 120)
 
@@ -59,10 +60,12 @@ async function watermarkOf(
 
 export const searchImpl: ToolImpl = async (deps, args) => {
   const q = typeof args.q === 'string' && args.q !== '' ? args.q.toLowerCase() : null
-  const tierFilter = args.tier === 'certified' ? 'l1' : args.tier === 'custom' ? 'l2' : null
+  // tier 过滤按**读侧推导后的可信度**（与 tierOf 同源，不再借 source 现推）：
+  // 「certified」= 平台口径 + 管理员升过级的 L2；「custom」= 其余 L2。
+  const wantCertified = args.tier === 'certified' ? true : args.tier === 'custom' ? false : null
   if (args.kind !== 'dataset') {
     const results = (await visibleRows(deps))
-      .filter((m) => tierFilter === null || m.source === tierFilter)
+      .filter((m) => wantCertified === null || (m.certified === 'certified') === wantCertified)
       .filter((m) => q === null || m.id.toLowerCase().includes(q)
         || m.title.toLowerCase().includes(q) || m.description.toLowerCase().includes(q))
       .slice(0, SEARCH_LIMIT)

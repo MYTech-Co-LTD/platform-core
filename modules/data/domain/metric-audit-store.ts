@@ -12,8 +12,10 @@
 // 「这是写行」与「这次查询没出数」——语义立刻模糊。
 import type { Pool, PoolClient } from 'pg'
 import type { Channel } from './authz'
+import type { MetricCertification } from './metric-governance'
 
-export type MetricAction = 'create' | 'update' | 'delete'
+/** `certify` = 可信度分级升降（spec 2026-11-01 §10.4 D7）：不是定义变更，单独一个动作词。 */
+export type MetricAction = 'create' | 'update' | 'delete' | 'certify'
 
 /** 行的语义快照（前后态同一个形状；`params` 给对象，落库时 stringify）。 */
 export interface MetricRowSnapshot {
@@ -23,6 +25,11 @@ export interface MetricRowSnapshot {
   selectSql: string
   groupBy: string
   params: Record<string, unknown>
+  /**
+   * 可信度（spec 2026-11-01 §10.4 D7）：`certify` 动作的前后态里**必须带**（它是该动作
+   * 唯一变化的东西）；其余动作可不带（字段缺席 = 快照先于 027 的历史行）。
+   */
+  certified?: MetricCertification
 }
 
 export interface MetricAuditEntry {

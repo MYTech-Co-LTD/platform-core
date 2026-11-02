@@ -6,6 +6,7 @@
 import type { Pool, PoolClient } from 'pg'
 import type { DrillBinding, DrillColumn, MaskSpec, MetricDef, MetricParamDef } from './authz'
 import type { MetricRowSnapshot } from './metric-audit-store'
+import type { MetricCertification } from './metric-governance'
 
 /**
  * 指标行的**来源分层**（003_metrics_source.sql）——「这行 select_sql 谁写的、谁可以改」。
@@ -78,6 +79,15 @@ export interface MetricRow extends MetricDef {
    */
   masks: MaskSpec[] | null
   /**
+   * 可信度分级（027 迁移，spec 2026-11-01 §10.4 D7）：**读侧推导后的值**——
+   * L1 行恒 `'certified'`（平台口径，从 `source='l1'` 推导，不读列：sync 重写整行，列不可信）；
+   * L2 行读列（新建走 API 时写 `'draft'`；列 NULL = 027 之前的存量行，按 `'draft'` 报——
+   * 它们本来就没经过审核，与迁移 027 头注同口径）。
+   */
+  certified: MetricCertification
+  /** L2 创建者（027 迁移）；L1 行恒 null（平台口径无「创建者」概念），存量 L2 行可能 null（诚实状态）。 */
+  createdBy: string | null
+  /**
    * 明细下钻绑定（021 迁移，下钻 spec 2026-10-21 §2.3）：三列（drill_expr/drill_dims/drill_detail）
    * 经 `drillBindingOf` 归一后的产物。**读侧不信任存储形状**——任一列缺/坏 ⇒ undefined（= 未声明），
    * 绝不半绑（半个绑定比没有绑定更危险，spec §2.5：未声明即不下钻）。
@@ -146,6 +156,11 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     // 掩码声明（spec §5.2）：mask_spec 是 jsonb 数组（pg 已反序列化），只认真数组——
     // 列缺省/坏形状宁可落 null（= 未声明），不让 undefined 冒充真值（同 freshness_relations）。
     masks: Array.isArray(row.mask_spec) ? (row.mask_spec as MaskSpec[]) : null,
+    // 可信度分级（spec 2026-11-01 §10.4 D7）：推导收口在**这一处**——
+    // L1 恒 certified（source 推导，不读列）；L2 读列，NULL（存量）按 draft 报。
+    // toolbox 的 tier 投影消费本值，不再各自从 source 推导（第二事实源会打架）。
+    certified: row.source === 'l1' ? 'certified' : row.certified === 'certified' ? 'certified' : 'draft',
+    createdBy: (row.created_by ?? null) as string | null,
     // 下钻绑定（下钻 spec §2.3）：三列归一收口在 drillBindingOf——读侧不信任存储形状，
     // 任一列缺/坏 ⇒ undefined（= 未声明），绝不半绑。
     drill: drillBindingOf(row),
@@ -184,7 +199,7 @@ function drillBindingOf(row: Record<string, unknown>): DrillBinding | undefined 
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
@@ -291,7 +306,11 @@ export async function loadMergedCatalog(pool: Pool, org: string): Promise<Metric
 //    由存储形状自然涌现（读侧 drillBindingOf 恒判 undefined），无需运行期特判。
 export async function upsertMetric(
   db: Pool | PoolClient, org: string, def: MetricDef, updatedBy: string,
+  /** 确认生效路径专用：草稿的清除由 confirm 的**内容条件清除**收尾（竞态守卫），这里别抢。 */
+  opts?: { keepDraft?: boolean },
 ): Promise<void> {
+  // see SQL 里的 draft_spec 分支：keepDraft = 确认路径（草稿清不清由调用方的条件清除决定）
+  const keepDraft = opts?.keepDraft === true
   // ★ `updatedBy` 是**必填**（不给默认值）：给了默认值就等于留一条「不写人也能写库」的暗道，
   //   而 #489 的全部意义就是堵它。⚠️ 调用方若直接传 Pool（如夹具），参数照传即可——
   //   生产写路径（domain/metric-write）传的是事务里的 client，审计与变更同生共死。
@@ -309,6 +328,12 @@ export async function upsertMetric(
        params         = excluded.params,
        updated_by     = excluded.updated_by,
        version        = data.metrics.version + 1,   -- ★ 单调计数（追溯用；本表无并发写案例，不做乐观并发）
+       -- ★ live 变更作废草稿（spec §10.4 D6，评审 #1271 发现 #3）：spec 一动，此前存下的
+       --   draft_spec 就成了对着旧 spec 的陈稿——确认它会把管理员刚改的口径静默改回去。
+       --   与其留一份没有 staleness 信号的旧稿，不如直接作废（creator 对着新 spec 重新起草）。
+       --   ⚠️ 例外：确认生效路径（keepDraft）不在这里清——草稿的清除由 confirm 的内容条件
+       --      清除收尾，这里抢清会把「load→清」的竞态守卫架空（并发新稿被静默吞掉）。
+       ${keepDraft ? '' : 'draft_spec     = null,'}
        updated_at     = now()`,
     [
       org, def.id, def.title, def.description, def.requiredScope,
@@ -424,7 +449,7 @@ export async function selectMetricSnapshot(
   db: Pool | PoolClient, org: string, id: string,
 ): Promise<MetricRowSnapshot | null> {
   const r = await db.query(
-    `select title, description, subject_column, select_sql, group_by, params
+    `select title, description, subject_column, select_sql, group_by, params, certified
        from data.metrics where org = $1 and id = $2 and source = 'l2'`,
     [org, id],
   )
@@ -437,6 +462,8 @@ export async function selectMetricSnapshot(
     selectSql: row.select_sql as string,
     groupBy: row.group_by as string,
     params: row.params as Record<string, unknown>,
+    // 可信度（027，spec §10.4 D7）：certify 动作的前后态要带它（唯一变化物）；NULL（存量）按 draft
+    certified: row.certified === 'certified' ? 'certified' : 'draft',
   }
 }
 

@@ -30,7 +30,7 @@ interface MetricRow {
 /** 变更史的一行（`GET /metrics/:id/audit` 的形状）。 */
 interface AuditRow {
   id: number
-  action: 'create' | 'update' | 'delete'
+  action: 'create' | 'update' | 'delete' | 'certify'
   userId: string
   channel: string
   createdAt: string
@@ -250,12 +250,12 @@ export default function MetricsPage() {
       <Drawer title={`变更历史：${historyId ?? ''}`} open={historyId !== null}
               onClose={() => setHistoryId(null)} width={520}>
         <Timeline items={history.map((a) => ({
-          color: a.action === 'delete' ? 'red' : a.action === 'create' ? 'green' : 'blue',
+          color: a.action === 'delete' ? 'red' : a.action === 'create' ? 'green' : a.action === 'certify' ? 'gold' : 'blue',
           children: (
             <>
               <div>
-                <Tag color={a.action === 'delete' ? 'red' : a.action === 'create' ? 'green' : 'blue'}>
-                  {{ create: '新建', update: '修改', delete: '删除' }[a.action]}
+                <Tag color={a.action === 'delete' ? 'red' : a.action === 'create' ? 'green' : a.action === 'certify' ? 'gold' : 'blue'}>
+                  {{ create: '新建', update: '修改', delete: '删除', certify: '可信度' }[a.action]}
                 </Tag>
                 {a.userId} · {a.channel} · {new Date(a.createdAt).toLocaleString('zh-CN')}
               </div>

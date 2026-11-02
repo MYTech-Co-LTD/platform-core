@@ -10,6 +10,7 @@ import type { Pool, PoolClient } from 'pg'
 import type { Requester } from './authz'
 import { deleteMetric, loadPlatformCatalog, selectMetricSnapshot, upsertMetric } from './metric-store'
 import { writeMetricAudit } from './metric-audit-store'
+import type { MetricCertification } from './metric-governance'
 import { SemanticCompileError, collectRefIds, compileL2, resolveL1Base } from './semantic-compiler'
 import type { CompiledL2, L2Declaration } from './semantic-compiler'
 
@@ -76,6 +77,8 @@ async function isL1Id(deps: MetricWriteDeps, id: string): Promise<boolean> {
 
 export async function writeL2Declaration(
   deps: MetricWriteDeps, org: string, id: string, decl: L2DeclarationBody,
+  /** 透传 upsertMetric：确认生效路径 keepDraft（草稿由 confirm 的条件清除收尾，见那里）。 */
+  opts?: { keepDraft?: boolean },
 ): Promise<MetricWriteOutcome> {
   // `target` 在 data.metrics 里**没有存储列**（003 只加了 source）。显式拒绝而不是静默丢弃：
   // 静默丢弃会让调用方以为目标值生效了。见 README「L2 的已知边界」。
@@ -128,6 +131,13 @@ export async function writeL2Declaration(
   }
 
   // 闸门全过（都是只读校验）⇒ 开事务：读前态 → 落库 → 写审计
+  // ★ creator 闸（spec 2026-11-01 §10.2）在**这里**而不是路由：HTTP 的 PUT 与 MCP 的 customize
+  //   共用本函数——「改别人的 L2」在哪个面都一样拒。判定：
+  //   · 行不存在 ⇒ 创建路径，无闸（谁建谁就是 creator）；
+  //   · 行是 L2 且 created_by = 别人 ⇒ 403（草稿流是唯一的变更通路，见 routes 的 /metrics/:id/draft）；
+  //   · created_by 为 NULL（027 前存量且 028 回填也没找到 create 审计）⇒ 403 METRIC_CREATOR_UNKNOWN
+  //     ——「不知道谁建的」按 fail-closed 处理，孤儿治理流程是 spec §10.4.3 P1（本期不做）。
+  //   · 行是 L1 ⇒ 不在本闸判（撞 L1 的 id 已在前面 409；L1 行经 API 本来只读）。
   const row = {
     id,
     title: compiled.title,
@@ -141,11 +151,23 @@ export async function writeL2Declaration(
     params: {},
   }
   const actor = deps.requester
-  await withTx(deps.pool, async (c) => {
+  // 回调返回 `MetricWriteOutcome`：creator 闸拒绝时带回失败结果（事务空转即回滚，无害）；
+  // 正常路径回调返回 `{ ok: true }`，本函数原样透传——**不能无视回调返回值**（那等于闸白装）。
+  const outcome = await withTx(deps.pool, async (c): Promise<MetricWriteOutcome> => {
     // 「建」还是「改」的判据就是**写之前有没有这行**（HTTP 的 POST/PUT 与 MCP 的 customize 都走这里，
     // 不为「建/改」各留一条分支）。同一读也给出审计要的**前态**。
     const before = await selectMetricSnapshot(c, org, id)
-    await upsertMetric(c, org, row, actor.userId)
+    if (before !== null) {
+      // creator 闸（判定说明见上面函数体外的注释块）：update 才判，create 不判。
+      const cur = await c.query(
+        `select created_by from data.metrics where org = $1 and id = $2 and source = 'l2'`,
+        [org, id],
+      )
+      const createdBy: string | null = cur.rows[0]?.created_by ?? null
+      if (createdBy === null) return { ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' }
+      if (createdBy !== actor.userId) return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
+    }
+    await upsertMetric(c, org, row, actor.userId, opts)
     await writeMetricAudit(c, {
       org,
       metricId: id,
@@ -159,8 +181,9 @@ export async function writeL2Declaration(
         selectSql: row.selectSql, groupBy: row.groupBy, params: row.params,
       },
     })
+    return { ok: true }
   })
-  return { ok: true }
+  return outcome
 }
 
 export async function deleteMetricDeclaration(
@@ -178,6 +201,17 @@ export async function deleteMetricDeclaration(
       if (await isL1Id(deps, id)) return { ok: false, http: 409, error: 'READONLY_L1' }
       return { ok: false, http: 404, error: 'NOT_FOUND' }
     }
+    // creator 闸（spec §10.2，与 writeL2Declaration 同一条判定）：删别人的 L2 也是「改了
+    // 看数人的世界」——同样只能走 creator 自己的手。NULL（存量且无 create 审计）fail-closed。
+    {
+      const cur = await c.query(
+        `select created_by from data.metrics where org = $1 and id = $2 and source = 'l2'`,
+        [org, id],
+      )
+      const createdBy: string | null = cur.rows[0]?.created_by ?? null
+      if (createdBy === null) return { ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' }
+      if (createdBy !== actor.userId) return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
+    }
     await deleteMetric(c, org, id)
     await writeMetricAudit(c, {
       org,
@@ -188,6 +222,46 @@ export async function deleteMetricDeclaration(
       keyId: actor.keyId,
       before,          // ★ 删除留证：被删的内容在 before 里（after 为 null）
       after: null,
+    })
+    return { ok: true }
+  })
+}
+
+/**
+ * 可信度分级升降（spec 2026-11-01 §10.4 D7）：管理员把 L2 在 certified/draft 之间切换。
+ *
+ *   · **只作用于 L2**——L1 的可信度读侧恒从 `source='l1'` 推导（sync 会重写整行，
+ *     写列会被下一次物化冲掉，骗人），对 L1 调用是 403 不是静默成功；
+ *   · 审计与变更同生共死（与 writeL2/delete 同一事务纪律），动作词 `certify`：
+ *     它不是定义变更（spec/SQL 没动），独立成词让审计流里「改了口径」与「只改了标」可分辨；
+ *   · 草稿（draft_spec）不受影响——可信度是「审核态」，草稿是「待审核的下一版」，两回事。
+ */
+export async function certifyMetric(
+  deps: MetricWriteDeps, org: string, id: string, next: MetricCertification,
+): Promise<MetricWriteOutcome> {
+  const actor = deps.requester
+  return withTx(deps.pool, async (c) => {
+    // 快照只读 L2 行（selectMetricSnapshot 的形状契约）；没读到 = L1 或不存在，区分着回：
+    // L1 ⇒ 403（L1 只读，读侧恒 certified——给它「降级」是语义错误）；真没有 ⇒ 404。
+    const before = await selectMetricSnapshot(c, org, id)
+    if (before === null) {
+      if (await isL1Id(deps, id)) return { ok: false, http: 403, error: 'L1_NOT_EDITABLE' }
+      return { ok: false, http: 404, error: 'NOT_FOUND' }
+    }
+    await c.query(
+      `update data.metrics set certified = $3 where org = $1 and id = $2 and source = 'l2'`,
+      [org, id, next],
+    )
+    await writeMetricAudit(c, {
+      org,
+      metricId: id,
+      action: 'certify',
+      userId: actor.userId,
+      channel: actor.channel,
+      keyId: actor.keyId,
+      // 前后态 = 整行快照 + 可信度（certify 唯一变化物）；「从什么到什么」直接可读
+      before: { ...before, certified: before.certified ?? 'draft' },
+      after: { ...before, certified: next },
     })
     return { ok: true }
   })

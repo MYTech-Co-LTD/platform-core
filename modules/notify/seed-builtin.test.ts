@@ -44,9 +44,9 @@ describePg('seedBuiltin', () => {
     const env = { NOTIFY_APPROVERS__ORG_SEED2: 'alice, bob' }
     await seedBuiltin(pool, env, [ORG])
     const first = await counts()
-    // templates/revisions 2：内置文案 = 员工登记审批 + 集成活性超期（Phase 2b）
-    // rules 3：derived(aftersales) + derived(notify.integration.stale) + manual
-    expect(first).toEqual({ templates: 2, revisions: 2, channels: 2, rules: 3 })
+    // templates/revisions 3：内置文案 = 员工登记审批 + 集成活性超期（Phase 2b）+ 指标定义变更（spec 2026-11-01 §10.4 D6）
+    // rules 4：derived(aftersales) + derived(notify.integration.stale) + derived(data.metric.definition.changed) + manual
+    expect(first).toEqual({ templates: 3, revisions: 3, channels: 2, rules: 4 })
 
     const manual = await pool.query(
       "select recipient_key, recipient_literal from notify.rule where org=$1 and id like 'manual:%'",
@@ -58,9 +58,9 @@ describePg('seedBuiltin', () => {
     expect(await counts()).toEqual(first)
   })
 
-  it('无 NOTIFY_APPROVERS ⇒ 只剩两条 derived 规则（含集成健康那条）', async () => {
+  it('无 NOTIFY_APPROVERS ⇒ 只剩三条 derived 规则（含集成健康与指标变更）', async () => {
     await seedBuiltin(pool, {}, [ORG])
-    expect((await counts()).rules).toBe(2)
+    expect((await counts()).rules).toBe(3)
     const stale = await pool.query(
       "select channels from notify.rule where org=$1 and event_key='notify.integration.stale'", [ORG])
     // 只用 in_app：企微通道本身可能正是坏掉的那个（坏通道报坏消息 = 自欺）

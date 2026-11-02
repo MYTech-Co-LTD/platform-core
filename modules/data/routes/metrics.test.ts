@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Hono } from 'hono'
 import { Pool } from 'pg'
 import { TENANT_SOURCES, declaredScopeGate } from '@platform/sdk'
+import type { NotifyPort } from '@platform/sdk'
 import mod from '../index'
 import { applyMigrations, buildTestApp, makeIdentity } from '../test-util'
 import { L1_ORG, upsertL1Metric, upsertMetric } from '../domain/metric-store'
@@ -110,8 +111,9 @@ const exprBody = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
-function app(org: string, scopes: string[], sources: string[] | undefined = ADOPTED) {
-  return buildTestApp(mod, makeIdentity({ orgId: org, scopes }), { pool },
+function app(org: string, scopes: string[], sources: string[] | undefined = ADOPTED,
+             notify?: NotifyPort) {
+  return buildTestApp(mod, makeIdentity({ orgId: org, scopes }), notify === undefined ? { pool } : { pool, notify },
     { id: 1, casdoor_org: org }, sources)
 }
 
@@ -156,9 +158,10 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     const ids = body.metrics.map((m: { id: string }) => m.id)
     expect(ids).toContain(L1_SALES.id)
     expect(ids, 'data:finance 的 L1 指标对只有 data:query 的人可见了').not.toContain(L1_FINANCE.id)
-    // 消费面投影：三字段 + 参数面形状——selectSql/subjectColumn/column 属实现细节，不外泄
+    // 消费面投影：字段面 + 参数面形状——selectSql/subjectColumn/column 属实现细节，不外泄；
+    // certified 徽标在观看面就带（spec §10.4：L1/L2 并存，看数人得知道信哪个）
     expect(body.metrics.find((m: { id: string }) => m.id === L1_SALES.id))
-      .toEqual({ id: L1_SALES.id, title: '净销售额', description: def().description, params: {} })
+      .toEqual({ id: L1_SALES.id, title: '净销售额', description: def().description, params: {}, certified: 'certified' })
   })
 
   it('GET /metrics 不掺别家 L2 行（跨租户串词表是禁止的）', async () => {
@@ -630,6 +633,150 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
       expect(JSON.stringify(row)).not.toContain('group_by')
     })
   })
+
+  // ── 指标治理：草稿→确认→生效（spec 2026-11-01 §10.4 D6/D7）───────────────────
+  it('★ 确认生效全链：草稿走唯一编译点进 spec + 清草稿 + 发通知 + audit 留 update 行', async () => {
+    const id = 'l2_confirm_probe'
+    // 夹具自愈：audit 行跨次累积（同上）
+    await pool.query('delete from data.metric_audit where org = $1 and metric_id = $2', [ORG, id])
+    const emitted: Array<Record<string, unknown>> = []
+    const notify: NotifyPort = { emit: async (_identity: unknown, e: { eventKey?: string; scope?: string; payload?: Record<string, unknown> }) => { emitted.push(e); return { accepted: true } } }
+    // 建 L2（creator = u-test；POST 要 data:manage）
+    expect((await post(l2Body({ id }))).status).toBe(201)
+    // 草稿：把显示名改掉（编译产物 title 会跟着变 ⇒ 「spec 真的动了」有可断言的差）
+    const decl = { baseMetric: L1_SALES.id, op: { kind: 'refine' }, alias: '确认后的别名' }
+    const a = (scopes: string[]) => app(ORG, scopes, ADOPTED, notify)
+    const put = await a(['data:query']).request(`/metrics/${id}/draft`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ draftSpec: decl }),
+    })
+    expect(put.status).toBe(200)                       // creator 只带 data:query 也能存（不必持管理码）
+    expect((await a(['data:query']).request(`/metrics/${id}/draft`)).status).toBe(200)
+
+    const confirm = await a(['data:query']).request(`/metrics/${id}/confirm-draft`, { method: 'POST' })
+    expect(confirm.status).toBe(200)
+    // spec 真的动了：编译产物 title = 草稿 alias（「草稿→spec」不是嘴上说说）
+    const row = await pool.query(`select title, draft_spec, certified, created_by from data.metrics where org = $1 and id = $2`, [ORG, id])
+    expect(row.rows[0].title).toBe('确认后的别名')
+    expect(row.rows[0].draft_spec).toBeNull()          // 确认后草稿清掉
+    expect(row.rows[0].created_by).toBe('u-test')      // creator 判定面
+    // 变更通知真发出去了（事件 key 与 scope 对得上 manifest 声明）
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0].eventKey).toBe('data.metric.definition.changed')
+    expect(emitted[0].scope).toBe(id)
+    expect(emitted[0].payload).toMatchObject({ metricId: id, changedBy: 'u-test' })
+    // audit 与变更同生共死：writeL2Declaration 落了 update 行（不是「改了没记」）
+    const audit = await pool.query(
+      `select action from data.metric_audit where org = $1 and metric_id = $2 order by id`, [ORG, id])
+    expect(audit.rows.map((r) => r.action)).toEqual(['create', 'update'])
+  })
+
+  it('确认被编译点拒绝 ⇒ 草稿原地保留（先编后清，编译失败不清草稿）', async () => {
+    const id = 'l2_confirm_reject'
+    const emitted: Array<Record<string, unknown>> = []
+    const notify: NotifyPort = { emit: async (_i: unknown, e: { eventKey?: string; scope?: string; payload?: Record<string, unknown> }) => { emitted.push(e); return { accepted: true } } }
+    expect((await post(l2Body({ id }))).status).toBe(201)
+    // 草稿引用**未接入源**（shanhai）的 L1 —— 编译点的前置闸会拒（403）
+    const decl = { baseMetric: L1_FOREIGN.id, op: { kind: 'refine' } }
+    await app(ORG, ['data:query']).request(`/metrics/${id}/draft`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ draftSpec: decl }),
+    })
+    const confirm = await app(ORG, ['data:query']).request(`/metrics/${id}/confirm-draft`, { method: 'POST' })
+    expect(confirm.status).toBe(403)
+    expect(((await confirm.json()) as { error: string }).error).toBe('METRIC_SOURCE_NOT_ADOPTED')
+    // 草稿还在（改了还能再确认），通知没发出去
+    expect((await app(ORG, ['data:query']).request(`/metrics/${id}/draft`)).status).toBe(200)
+    expect(emitted).toHaveLength(0)
+  })
+
+  it('草稿保存校验声明形状：不合法的声明 400 INVALID_DRAFT（存的时候就校验，不留到确认页）', async () => {
+    const id = 'l2_draft_invalid'
+    expect((await post(l2Body({ id }))).status).toBe(201)
+    const res = await app(ORG, ['data:query']).request(`/metrics/${id}/draft`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ draftSpec: { op: { kind: 'bogus' } } }),
+    })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe('INVALID_DRAFT')
+  })
+
+  it('非 creator：无草稿可读 ⇒ 确认 404（读不到就是没有，不给存在性探针）', async () => {
+    const id = 'l2_confirm_other'
+    expect((await post(l2Body({ id }))).status).toBe(201)
+    const other = await app(ORG, ['data:query']).request(`/metrics/${id}/confirm-draft`, {
+      method: 'POST',
+    })
+    // 同身份（u-test）没有草稿 ⇒ 404；「别人创建」的判定在域层 creator 闸（metric-write 侧测）
+    expect(other.status).toBe(404)
+  })
+
+  it('★ 可信度升降（D7）：管理员升 certified → 落库 + audit certify 行；L1 拒 403；未知 404', async () => {
+    const id = 'l2_certify_probe'
+    await pool.query('delete from data.metric_audit where org = $1 and metric_id = $2', [ORG, id])
+    expect((await post(l2Body({ id }))).status).toBe(201)
+    const promote = await app(ORG, ['data:manage']).request(`/metrics/${id}/certified`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ certified: 'certified' }),
+    })
+    expect(promote.status).toBe(200)
+    const row = await pool.query(`select certified from data.metrics where org = $1 and id = $2`, [ORG, id])
+    expect(row.rows[0].certified).toBe('certified')
+    const audit = await pool.query(
+      `select action, row_before, row_after from data.metric_audit where org = $1 and metric_id = $2 order by id desc limit 1`, [ORG, id])
+    expect(audit.rows[0].action).toBe('certify')
+    expect(audit.rows[0].row_after).toMatchObject({ certified: 'certified', title: expect.any(String) })
+    // 读侧面：adminView 带 certified + createdBy
+    const all = await (await app(ORG, ['data:manage']).request('/metrics/all')).json() as {
+      metrics: { id: string; certified: string; createdBy: string | null }[] }
+    expect(all.metrics.find((m) => m.id === id)).toMatchObject({ certified: 'certified', createdBy: 'u-test' })
+    // 降回去（draft）⇒ L1 侧不受影响：L1 行读侧恒 certified（source 推导，写列也没用）
+    expect((await app(ORG, ['data:manage']).request(`/metrics/${id}/certified`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ certified: 'draft' }),
+    })).status).toBe(200)
+    const l1 = await app(ORG, ['data:manage']).request(`/metrics/${L1_SALES.id}/certified`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ certified: 'draft' }),
+    })
+    expect(l1.status).toBe(403)
+    expect(((await l1.json()) as { error: string }).error).toBe('L1_NOT_EDITABLE')
+    const unknown = await app(ORG, ['data:manage']).request('/metrics/nope_missing/certified', {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ certified: 'certified' }),
+    })
+    expect(unknown.status).toBe(404)
+    // 形状：枚举外的值 400
+    const bad = await app(ORG, ['data:manage']).request(`/metrics/${id}/certified`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ certified: 'gold' }),
+    })
+    expect(bad.status).toBe(400)
+  })
+
+  it('★ creator 闸（spec §10.2 面级）：非 creator 改/删别人的 L2 ⇒ 403 NOT_METRIC_CREATOR', async () => {
+    const id = 'l2_creator_gate'
+    expect((await post(l2Body({ id }))).status).toBe(201)          // creator = u-test
+    // 另一个人（data:manage 齐全但不是 creator）PUT 同一条 ⇒ 403（走唯一编译点的路径也不例外）
+    const other = makeIdentity({ orgId: ORG, scopes: ['data:manage', 'data:query'], userId: 'u-other' })
+    const otherApp = buildTestApp(mod, other, { pool }, { id: 1, casdoor_org: ORG }, ADOPTED)
+    const put = await otherApp.request(`/metrics/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(l2Body({ id })),
+    })
+    expect(put.status).toBe(403)
+    expect(((await put.json()) as { error: string }).error).toBe('NOT_METRIC_CREATOR')
+    const del = await otherApp.request(`/metrics/${id}`, { method: 'DELETE' })
+    expect(del.status).toBe(403)
+    expect(((await del.json()) as { error: string }).error).toBe('NOT_METRIC_CREATOR')
+    // creator 自己照常改（草稿流的例外豁免不存在：编译点路径与草稿路径同一闸）
+    expect((await post(l2Body({ id, alias: '本人改的' }))).status).toBe(201)
+    const self = await app(ORG, ['data:manage']).request(`/metrics/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(l2Body({ id, alias: '本人改的' })),
+    })
+    expect(self.status).toBe(200)
+  })
 })
 
 // ── B 中档 · schema ↔ compiler 对偶（增补 §6.2 的**行为侧**）· 纯逻辑三条 ──────────
@@ -642,7 +789,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
 describe('L2 · B 中档 · schema ↔ compiler 对偶（纯逻辑 · 无需库）', () => {
   /** 域层基底：必须是 `source:'l1'` 的行（resolveL1Base 只认 L1 词表）。 */
   const l1Row = (over: Partial<MetricRow> = {}): MetricRow =>
-    ({ ...L1_SALES, source: 'l1', updatedBy: null, version: 1, totalable: false, ...over })
+    ({ ...L1_SALES, source: 'l1', updatedBy: null, version: 1, totalable: false, certified: 'certified', createdBy: null, ...over })
   const catalog: MetricRow[] = [l1Row()]
 
   /** 域层编译结果：抛错 ⇒ 回它的 code；不抛 ⇒ null（期望抛时它会让断言自然红）。 */
