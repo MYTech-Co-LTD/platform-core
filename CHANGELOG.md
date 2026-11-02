@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.1...v0.248.2) - 2026-11-02
+- 【修复】data: 会员审计 NULL 键 join 失效（#1301） ([#1302](https://github.com/MYTech-Co-LTD/platform-core/pull/1302), [ed19f6f](https://github.com/MYTech-Co-LTD/platform-core/commit/ed19f6fcd9df81294f00b2937d0809a1627bd9ed))
+
+
 ## [0.248.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.0...v0.248.1) - 2026-11-02
 - 【修复】server: runMigrations 目录缺失口径——onMissingDir=error 档（#203 裁决） ([#1300](https://github.com/MYTech-Co-LTD/platform-core/pull/1300), [22f565f](https://github.com/MYTech-Co-LTD/platform-core/commit/22f565f5b0eda1f625807f9a840254412345deb6))
 
