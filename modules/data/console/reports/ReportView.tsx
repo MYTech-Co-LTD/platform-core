@@ -95,17 +95,40 @@ const NARROW_BAR_AXIS_LABEL = { interval: 0, rotate: 45, fontSize: 11, overflow:
 /** 画布留白（宽窄屏共用；窄屏媒体查询只把 bottom 再抬一点，给倾斜标签呼吸位）。 */
 const GRID_MARGINS = { left: 12, right: 20, top: 36, bottom: 12, containLabel: true } as const
 
+/** 北京的日历日 / 钟点（与 query-service 的 data_as_of 同一把尺：en-CA + Asia/Shanghai）。 */
+const SH_DATE_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+})
+const SH_TIME_FMT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+})
+/** pg 回传的完整 ISO 时间戳（Z 结尾）——从字符串形态也要能认出（JSON 序列化后会丢 Date 类型）。 */
+const ISO_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/
+
 /**
- * 日期维度在表格/图表上的统一展示（#1094）：`/query` 的 `date` 列可能回 ISO 串
- * （`2026-10-13T00:00:00.000Z`），表格单元格与 x 轴统一截成 `YYYY-MM-DD`；其它值 String 化。
+ * 日期维度在表格/图表上的统一展示（#1094 起，**#400 修时区口径**）：
+ *   · `Date`（pg date/timestamptz 的默认回传形态）或完整 ISO 串 ⇒ 按 **Asia/Shanghai** 格式化：
+ *     上海零点 ⇒ `YYYY-MM-DD`；否则 `YYYY-MM-DD HH:mm`。
+ *   · 旧的「只按列名==bizday 截 UTC 日期部分」是**错的**：`date` 列经驱动解析为上海午夜时
+ *     UTC ISO 落在前一天（2026-08-15 显示成 08-14T16:00Z 或反之），截 UTC 日期部分 ⇒ 差一天
+ *     （#400 的真机证据）。而「取上海日历日」对两种进程时区下的解析结果都落到正确业务日。
+ *   · 列名无关：任何日期型维度（day/system_book 之外的 order_day、created_at…）同享此口径。
+ *   · 其它值 String 化（数字、文本维原样）。
  */
-function displayValue(column: string, v: unknown): string {
-  const s = v === null || v === undefined ? '' : String(v)
-  if (column === 'bizday') {
-    const m = /^(\d{4}-\d{2}-\d{2})/.exec(s)
-    if (m !== null) return m[1]!
+function displayValue(_column: string, v: unknown): string {
+  if (v === null || v === undefined) return ''
+  const d = v instanceof Date
+    ? v
+    : (typeof v === 'string' && ISO_TS_RE.test(v) ? new Date(v) : null)
+  if (d !== null && !Number.isNaN(d.getTime())) {
+    const day = SH_DATE_FMT.format(d)
+    const time = SH_TIME_FMT.format(d)
+    // 日期型值的两种实测解析路径都要认：进程时区 Asia/Shanghai ⇒ 上海零点（16:00Z 前一天）；
+    // UTC 进程 ⇒ UTC 午夜（00:00Z）。两者都渲染成纯日期；真正的钟点值才带 HH:mm。
+    const utcMidnight = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0
+    return time === '00:00:00' || utcMidnight ? day : `${day} ${time.slice(0, 5)}`
   }
-  return s
+  return String(v)
 }
 
 /**
@@ -147,6 +170,12 @@ function buildOption(chart: 'line' | 'bar', dimensions: string[], result: OkResu
     const key = `${x}\u0000${seriesKey}`
     cells.set(key, (cells.get(key) ?? 0) + num)
   }
+
+  // #399 口径 A：x 轴按维度值**升序**（numeric 感知的 localeCompare——日期串、数字串、中文名
+  // 都单调）。返回行序不可信：SQL 无 ORDER BY（LIMIT 截断后顺序未定义），乱序折线看起来与
+  // 正确折线一模一样 = 「图在撒谎」。文本维的「升序」语义存疑是已知取舍——图表横轴单调成立
+  // 本身是产品可辩护的默认（issue #399 方案 A）；需要自定义顺序时走 args.orderBy（方案 C，未开）。
+  xLabels.sort((a, b) => a.localeCompare(b, 'zh', { numeric: true }))
 
   const series = (seriesKeys.length > 0 ? seriesKeys : ['']).map((seriesKey) => ({
     name: seriesKey,
