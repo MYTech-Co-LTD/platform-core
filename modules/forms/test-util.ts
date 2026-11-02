@@ -37,5 +37,5 @@ export function buildTestApp(mod: ModuleDefinition, identity: Identity, ctx: Mod
 /** 跑本模块迁移（读 ./migrations/*.sql）。路径用 node:path 取——本包 vitest 开 happy-dom
  *  后全局 URL 被换掉，new URL(rel, import.meta.url) 分辨不出 file: 方案（#718 实测）。 */
 export function applyMigrations(pool: Pool): Promise<string[]> {
-  return runMigrations(pool, 'forms', join(dirname(fileURLToPath(import.meta.url)), 'migrations'))
+  return runMigrations(pool, 'forms', join(dirname(fileURLToPath(import.meta.url)), 'migrations'), { onMissingDir: 'error' })
 }

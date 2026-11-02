@@ -428,11 +428,13 @@ export async function loadModules(
     }
     seen.set(manifest.id, dir)
 
-    // ③ 模块迁移（目录不存在静默跳过——migrate.ts 约定）
+    // ③ 模块迁移（#203 口径）：manifest **显式声明** migrations.dir ⇒ 目录缺失是错（fail-fast）；
+    //    未声明 ⇒ 走约定路径，目录不存在是合法形态（无迁移模块），保持静默跳过。
     await runMigrations(
       deps.pool,
       manifest.id,
       path.join(dir, manifest.migrations?.dir ?? 'migrations'),
+      manifest.migrations?.dir !== undefined ? { onMissingDir: 'error' } : {},
     )
 
     // ④ 动态 import index.ts（tsx / vitest 运行时都按 TS 转译）→ defineModule 产物校验

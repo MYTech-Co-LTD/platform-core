@@ -67,7 +67,7 @@ export function buildTestApp(
  * 对 ENOENT 是**静默跳过**（#203）⇒ 症状是「零迁移却报成功」，一路红到业务断言上
  * （形如 `relation "data.metrics" does not exist`）。CI 是 ASCII 路径，故这条只在本地咬人。 */
 export function applyMigrations(pool: Pool): Promise<string[]> {
-  return runMigrations(pool, 'data', fileURLToPath(new URL('./migrations', import.meta.url)))
+  return runMigrations(pool, 'data', fileURLToPath(new URL('./migrations', import.meta.url)), { onMissingDir: 'error' })
 }
 
 /**
@@ -82,6 +82,7 @@ export function applyMigrations(pool: Pool): Promise<string[]> {
 export function applyPlatformMigrations(pool: Pool): Promise<string[]> {
   return runMigrations(
     pool, 'platform', fileURLToPath(new URL('../../apps/server/src/migrations', import.meta.url)),
+    { onMissingDir: 'error' },
   )
 }
 

@@ -115,7 +115,9 @@ export async function buildApp(overrides: BuildAppOverrides = {}): Promise<{
   const pool = getPool(config)
 
   // ① platform schema 先行（tenant/tenant_domain/tenant_module/audit 四表）
-  await runMigrations(pool, 'platform', platformMigrationsDir)
+  // onMissingDir:'error'——platform 迁移目录是**镜像内容物**，缺失只可能是打包/路径错，
+  // 静默零迁移 = 带空 schema 启动（issue #203 的 fail-fast 边界，见 RunMigrationsOptions 注释）。
+  await runMigrations(pool, 'platform', platformMigrationsDir, { onMissingDir: 'error' })
 
   // CasdoorClient 工厂：按 org 缓存实例。构造本身轻量，但 admin 会话缓存在实例内——
   // 同 org 复用即免重复登 admin；multi 模式各租户 org 各自实例（Task 13 移交项）
