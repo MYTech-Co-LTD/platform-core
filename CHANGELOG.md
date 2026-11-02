@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.240.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.239.0...v0.240.0) - 2026-11-02
+- 【新增】data: 指标治理收口——确认生效编译+通知、certified 分级、creator 闸（D6/D7） ([#1277](https://github.com/MYTech-Co-LTD/platform-core/pull/1277), [272a4b7](https://github.com/MYTech-Co-LTD/platform-core/commit/272a4b7221de6b4ab35f672a7ac2b86db556b9fc))
+
+
 ## [0.239.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.238.1...v0.239.0) - 2026-11-02
 - 【新增】data: 指标治理第一步——L2 草稿声明面 + certified/created_by（spec §10.4） ([#1271](https://github.com/MYTech-Co-LTD/platform-core/pull/1271), [3519ad8](https://github.com/MYTech-Co-LTD/platform-core/commit/3519ad815f06eca74ce49372c39a36d315878dc0))
 
