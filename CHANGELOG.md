@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.7](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.6...v0.248.7) - 2026-11-02
+- 【修复】aftersales: 临时库 FORCE-drop 的 57P01 不再以 unhandled error 打死整轮（#1308） ([#1309](https://github.com/MYTech-Co-LTD/platform-core/pull/1309), [a918a04](https://github.com/MYTech-Co-LTD/platform-core/commit/a918a041d8a5dd77fa40b9ed512768645b465433))
+
+
 ## [0.248.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.5...v0.248.6) - 2026-11-02
 - 【修复】data: 自绘图横轴——x 轴升序（#399 A）与日期按上海时区格式化（#400） ([#1307](https://github.com/MYTech-Co-LTD/platform-core/pull/1307), [7c9ec3f](https://github.com/MYTech-Co-LTD/platform-core/commit/7c9ec3f5130478161a552a8e5269f453505afbce))
 
