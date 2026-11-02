@@ -26,5 +26,14 @@ a.v as recheck_value,
 b.vip_nums as materialized_value,
 '会员客单：复算与物化结果不一致' as note
 from recheck a
-full join materialized b using (system_book, bizday, branch_num, order_sale_type_name)
+full join materialized b
+       -- ⚠️ **NULL 安全的 join 键**（2026-11-02）：`order_sale_type_name` 在 64188 的
+       --   2025-03-06..03-19 有 257 行为 NULL（回填覆盖历史后首次出现）。原来的
+       --   `using(system_book, bizday, branch_num, order_sale_type_name)` 里 NULL 永不相等
+       --   ⇒ 每个 NULL 组在两侧各出一行（257×2=514 条假红）。`is not distinct from` 才把
+       --   NULL 当同一个值比对。
+       on  a.system_book = b.system_book
+       and a.bizday      = b.bizday
+       and a.branch_num  = b.branch_num
+       and a.order_sale_type_name is not distinct from b.order_sale_type_name
 where a.v is distinct from b.vip_nums
