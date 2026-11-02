@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.245.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.245.1...v0.245.2) - 2026-11-02
+- 【修复】data: 调拨单自然键纳入 use_unit（#1287） ([#1288](https://github.com/MYTech-Co-LTD/platform-core/pull/1288), [e96bc62](https://github.com/MYTech-Co-LTD/platform-core/commit/e96bc62db6053056064a19043612e0e1f6f03de6))
+
+
 ## [0.245.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.245.0...v0.245.1) - 2026-11-02
 - 【修复】data: 战区结构不变量收窄——根节点战区不算映射缺失（#1199） ([#1285](https://github.com/MYTech-Co-LTD/platform-core/pull/1285), [ac4719e](https://github.com/MYTech-Co-LTD/platform-core/commit/ac4719ecbf9b0f46a9a70b19a149d7f770ca8040))
 
