@@ -51,12 +51,39 @@ full join indep i
       and i.region_l1_bucket = m.region_l1_bucket
 where abs(coalesce(m.r_net, 0) - coalesce(i.r_net, 0)) > 0.01
 union all
--- 结构不变量：外部批发必须落未归属；体系内批发必须有真战区
-select system_book, bizday, channel_type, region_l1_bucket, r_net, r_net,
-       '通道与战区桶矛盾：外部批发不摊战区、体系内批发必须有真战区'
-from {{ ref('fct_outbound_region') }}
-where (channel_type = '外部批发' and region_l1_bucket <> '未归属')
-   or (channel_type = '体系内批发' and region_l1_bucket = '未归属')
+-- 结构不变量：外部批发必须落未归属；体系内批发**不得因为映射缺失**而落未归属。
+--
+-- ⚠️ 第二半的射程收窄（#1199，2026-11-02）：原判据是「体系内批发 且 桶=未归属 ⇒ 红」，
+--   但有一种**合法**情形会被它误伤——体系内门店本体的 `region_id` 是**根节点**
+--   （如 64188 的 6294「所有区域」、3120 的 9046：`dim_region.level = 0`、`region_l1` 为空）。
+--   实测样本：客户「管理中心」→ 64188 门店 99 → 6294（根节点）。这类客户的战区**在语义上
+--   就不存在**，落 `未归属` 是对的，不是映射缺陷。
+--   ⇒ 只在「本体战区**已登记且有一级（level ≥ 1）**、却仍落未归属」时判红——那才是真的归因丢了。
+--   （2026-11-02 真机上无任何行触发这两条；本条是**潜在**缺陷的收口，见 issue #1199。）
+select m.system_book, m.bizday, m.channel_type, m.region_l1_bucket, m.r_net, m.r_net,
+       '通道与战区桶矛盾：外部批发不摊战区、体系内批发不得因映射缺失落未归属'
+from {{ ref('fct_outbound_region') }} m
+where (m.channel_type = '外部批发' and m.region_l1_bucket <> '未归属')
+   or (m.channel_type = '体系内批发'
+       and m.region_l1_bucket = '未归属'
+       -- 用 exists 钉到「该日确有本体有一级战区、却没落上」的客户：
+       -- ① 不 join 聚合表（fct_outbound_region 按桶聚合，join 客户维会放大输出行数）；
+       -- ② 判据落在**出库原件**上（fct_hq_outbound + 客户维 + 战区维），不读聚合后的桶。
+       and exists (
+             select 1
+             from {{ ref('fct_hq_outbound') }} f
+             join {{ ref('dim_lemeng_client') }} c
+               on c.system_book = f.system_book
+              and c.client_fid  = f.client_fid
+             join {{ ref('dim_region') }} r
+               on r.system_book = c.home_system_book
+              and r.region_id  = c.region_id
+             where f.system_book = m.system_book
+               and f.bizday      = m.bizday
+               and f.domain      = 'wholesale'
+               and c.client_kind = '体系内门店'
+               and coalesce(r.level, 0) >= 1      -- 本体确有一级战区 ⇒ 落未归属是真缺陷
+           ))
 union all
 select null, null, null, null, null, null, '两侧都为空：对账在空集上「通过」是空转绿'
 where not exists (select 1 from mart)
