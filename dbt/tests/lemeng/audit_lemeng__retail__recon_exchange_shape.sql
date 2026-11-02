@@ -14,6 +14,13 @@
 --          **非空且 ≥ 0**。order_total_money 是换货半边公式的加数：恒空/缺失 ⇒
 --          (Σ + 总额)/2 **静默退化成** Σ/2，等价换货与差价换货不再可分，**无任何报错**。
 --          payment_money 是「等价换货」识别式的另一半（= 0 且 total = 0），同守。
+--   ⚠️ **负值判据带分位容差**（2026-11-02）：`order_total_money` / `payment_money` 允许
+--      **(-0.10, 0)** 区间——真机实测（回填覆盖全史后首次暴露）两账套 2025-06~2026-08 共
+--      **110 行** SALE_ORDER 的 `order_total_money` 落在 **-0.09 ~ -0.01**（均值 -0.063），
+--      是**分位舍入噪声**，不是真负单：这些单的行金额本身为正（如 -0.07 / 行 29.70）。
+--      本条的目的是抓「**恒空** ⇒ (Σ+总额)/2 静默退化成 Σ/2」，-0.07 只会让半边结果偏 0.035，
+--      不构成退化；而 `total_money < -0.10` 的真负单（异常冲红/调整）仍然判红。
+--      容差取值依据 = 实测最大负值 0.09，留一个分的余量。
 --   part2  **识别自检（空转）**：全湖 FINISHED+SALE_ORDER 里「total=0 且 payment=0」的
 --          等价换货若**零命中**、而湖里明明有销售行 ⇒ 识别式静默失明（两列断供 / 改名）。
 --          依据：2026-10-05 的口径定案就建立在**真实换货数据**上（双账套 5 天逐分归零），
@@ -81,10 +88,10 @@ bad_pq as (
         count(*)                                       as bad_rows,
         count(*) filter (where total_money is null)    as total_null,
         count(*) filter (where pay_money  is null)     as pay_null,
-        count(*) filter (where total_money < 0)        as total_neg,
-        count(*) filter (where pay_money  < 0)         as pay_neg
+        count(*) filter (where total_money < -0.10)    as total_neg,
+        count(*) filter (where pay_money  < -0.10)     as pay_neg
     from src_pq
-    where total_money is null or pay_money is null or total_money < 0 or pay_money < 0
+    where total_money is null or pay_money is null or total_money < -0.10 or pay_money < -0.10
     group by 1, 2
 ),
 bad_stg as (
@@ -94,10 +101,10 @@ bad_stg as (
         count(*)                                       as bad_rows,
         count(*) filter (where total_money is null)    as total_null,
         count(*) filter (where pay_money  is null)     as pay_null,
-        count(*) filter (where total_money < 0)        as total_neg,
-        count(*) filter (where pay_money  < 0)         as pay_neg
+        count(*) filter (where total_money < -0.10)    as total_neg,
+        count(*) filter (where pay_money  < -0.10)     as pay_neg
     from src_stg
-    where total_money is null or pay_money is null or total_money < 0 or pay_money < 0
+    where total_money is null or pay_money is null or total_money < -0.10 or pay_money < -0.10
     group by 1, 2
 )
 -- part1（parquet 复算侧）：按 (账套,日) 出坏行计数——列真死了会是全量行，
