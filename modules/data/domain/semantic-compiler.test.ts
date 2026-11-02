@@ -67,6 +67,9 @@ function l1(over: Partial<MetricRow> = {}): MetricRow {
     freshnessRelations: [],
     // 值级掩码声明（spec 2026-10-17 §5.2；缺省 = 未声明形态，本夹具不涉掩码）
     masks: null,
+    // 治理（spec 2026-11-01 §10.4 D7）：L1 读侧恒 certified（从 source 推导）；无创建者
+    certified: 'certified',
+    createdBy: null,
     ...over,
   }
 }

@@ -10,7 +10,10 @@ import { buildEnvelope } from './envelope'
 import type { ToolImpl, ToolboxDeps } from './registry'
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex')
-const tierOf = (m: MetricRow): 'certified' | 'custom' => (m.source === 'l1' ? 'certified' : 'custom')
+// 可信度分级消费读侧推导后的值（spec 2026-11-01 §10.4 D7）：L1 恒 certified；
+// L2 管理员升了 certified 的也进 certified 档。**别再从 source 现推**——那会与
+// metric-store 的推导（唯一收口）打架（评审 PR #1271 发现 #5）。
+const tierOf = (m: MetricRow): 'certified' | 'custom' => (m.certified === 'certified' ? 'certified' : 'custom')
 const ownerOf = (m: MetricRow, org: string): string => (m.source === 'l1' ? 'data-platform' : org)
 /** selectSql 首个 `from <schema>.<name>` 的模型名（血缘 seam 的键）。 */
 const modelOf = (selectSql: string): string | null => {

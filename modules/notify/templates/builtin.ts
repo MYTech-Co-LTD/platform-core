@@ -38,4 +38,21 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
       },
     },
   },
+  {
+    key: 'data_metric_definition_changed',
+    name: '指标定义变更',
+    eventKey: 'data.metric.definition.changed',
+    // 指标口径变了，看数人得知道（spec 2026-11-01 §10.4 D6：生效必发通知）。
+    // 链接闭合（#44 教训）——link 由 emit 侧拼 PLATFORM_CONSOLE_BASE_URL。
+    contents: {
+      wecom_chat: {
+        text: '【指标变更】{{title}} 的定义已生效\n操作人：{{changedBy}}\n👉 [查看指标]({{link}})',
+      },
+      in_app: {
+        title: '指标定义变更：{{title}}',
+        body: '{{changedBy}} 确认生效了新定义',
+        link: '{{link}}',
+      },
+    },
+  },
 ]

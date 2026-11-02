@@ -43,13 +43,22 @@ export async function loadMetricDraft(
   return (rows[0]?.draft_spec as Record<string, unknown> | undefined) ?? null
 }
 
-/** 清除草稿（确认生效后调用；丢弃草稿也用这个）。 */
-export async function clearMetricDraft(pool: Pool, org: string, metricId: string, creator: string): Promise<void> {
-  await pool.query(
+/**
+ * 清除草稿。带 `expected` 时是**内容条件清除**（确认生效路径）：只有「库里还是刚才读到的那份」
+ * 才清——load 与 clear 之间被并发保存抢写时返回 false（调用方回 409，新草稿原地保留），
+ * 绝不静默吞掉比刚才读到的更新的草稿。不带 `expected` = 无条件清（当前无调用方，留给显式弃稿）。
+ */
+export async function clearMetricDraft(
+  pool: Pool, org: string, metricId: string, creator: string,
+  expected?: Record<string, unknown>,
+): Promise<boolean> {
+  const cond = expected === undefined ? '' : ` and draft_spec = $4::jsonb`
+  const r = await pool.query(
     `update data.metrics set draft_spec = null
-      where org = $1 and id = $2 and source = 'l2' and created_by = $3`,
-    [org, metricId, creator],
+      where org = $1 and id = $2 and source = 'l2' and created_by = $3${cond}`,
+    expected === undefined ? [org, metricId, creator] : [org, metricId, creator, JSON.stringify(expected)],
   )
+  return (r.rowCount ?? 0) > 0
 }
 
 /** 「能不能管这条指标」的判定（L2 且 creator）。L1 只读、非 creator 只读。 */

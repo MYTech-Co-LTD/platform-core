@@ -20,12 +20,13 @@ import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf } from './context'
 import { saveMetricDraft, loadMetricDraft, clearMetricDraft } from '../domain/metric-governance'
+import { certifyMetric } from '../domain/metric-write'
 import { paramFaceOf, visibleMetrics } from '../domain/authz'
 import type { MetricParamDef, Requester } from '../domain/authz'
 import { loadMergedCatalog } from '../domain/metric-store'
 import { listMetricAudit } from '../domain/metric-audit-store'
 import type { MetricRow } from '../domain/metric-store'
-import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, exceedsNesting } from '../domain/semantic-compiler'
+import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, L2DeclarationSchema, exceedsNesting } from '../domain/semantic-compiler'
 // 写/删的判定链在域层**只有一份**（HTTP 面与 MCP 写面共用）——本文件只做
 // 「参数形状校验 + 域层结果 → HTTP」，不再内联任何闸门。
 import { deleteMetricDeclaration, writeL2Declaration } from '../domain/metric-write'
@@ -55,9 +56,12 @@ type L2BodyType = z.infer<typeof L2Body>
  * 入参按**结构**收窄，不写 `MetricRow`：`visibleMetrics` 的契约是 `MetricDef`
  * （授权核心不认来源）⇒ 写死 MetricRow 会让「裁剪后的词表」传不进来。
  */
-const publicView = (m: { id: string; title: string; description: string; params?: Record<string, MetricParamDef> }) => ({
+const publicView = (m: { id: string; title: string; description: string; params?: Record<string, MetricParamDef>; certified?: 'certified' | 'draft' }) => ({
   id: m.id, title: m.title, description: m.description,
   params: paramFaceOf(m.params),
+  // 可信度徽标（spec 2026-11-01 §10.4：L1 与 L2 并存，用户得知道信哪个）——观看面就带：
+  // 「信不信这个数」是看数人的问题，不是管理员才有的问题。
+  certified: m.certified,
 })
 
 /**
@@ -70,6 +74,9 @@ const adminView = (m: MetricRow) => ({
   selectSql: m.selectSql, groupBy: m.groupBy, params: m.params, source: m.source,
   // #489：列表两列的数据源（页面按 /metrics/all 一次拉齐，不为每行再打一次请求）
   updatedBy: m.updatedBy, version: m.version,
+  // 治理（spec §10.4）：可信度（读侧已推导：L1 恒 certified）+ 创建者（creator 判定面）。
+  // 「所有者」列（#1268 的 updatedBy）之外，管理员还要看「谁建的」与「审过没」。
+  certified: m.certified, createdBy: m.createdBy,
 })
 
 /**
@@ -197,14 +204,20 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
   // ── 指标治理（spec 2026-11-01 §10.4 P0）：L2 草稿→确认→生效 ─────────────────
   // 只面向 L2 且 creator；L1 只读（管理按钮不出现）。授权判定在 metric-governance.ts。
 
-  // 草稿保存：只写 draft_spec，不触发编译点（数字不变）
+  // 草稿保存：只写 draft_spec，不触发编译点（数字不变）。
+  // 形状在**存的时候就校验**（L2DeclarationSchema + 深度预检）而不是留到确认时——
+  // 「草稿已保存」必须意味着「这是一份完整的合法声明」，否则确认页才爆错等于骗了保存的人。
+  // 确认时仍可能失败（ref 指向的 L1 被下线/源被摘），那类**状态**错误编译点会响亮地拒。
   r.put('/metrics/:id/draft', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
     const id = metricIdOf(c.req.param('id'))
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    const parsed = z.object({ draftSpec: z.record(z.unknown()) }).safeParse(await c.req.json().catch(() => null))
-    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const body = await c.req.json().catch(() => null)
+    // 结构预检必须**先于**递归 schema：超深输入会在 zod 里爆栈冒成 500（#593，与 POST /metrics 同款）
+    if (exceedsNesting(body)) return c.json({ error: 'INVALID_BODY' }, 400)
+    const parsed = z.object({ draftSpec: L2DeclarationSchema }).safeParse(body)
+    if (!parsed.success) return c.json({ error: 'INVALID_DRAFT' }, 400)
     const ok = await saveMetricDraft(ctx.pool, orgOf(c), id, requester.userId, parsed.data.draftSpec)
     return ok ? c.json({ ok: true }) : c.json({ error: 'NOT_EDITABLE' }, 403)
   })
@@ -219,11 +232,15 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     return draft === null ? c.json({ error: 'NOT_FOUND' }, 404) : c.json({ draftSpec: draft })
   })
 
-  // 确认生效：清草稿 + 编译进 spec + 通知（**通知接线在 P1**，本期只清草稿）
-  // ⚠️ 确认后 spec 变更了，但编译点的产出（select_sql）**没有变**——因为草稿确认走的是
-  //    「草稿内容作为新的 L2 声明重新编译」的通路，不走 upsertMetric（那条会绕编译点）。
-  //    实现落点：调 domain/semantic-compiler 的编译函数，而非直接改 spec。
-  //    本期先只清草稿 + 打日志（编译逻辑属于 semantic-compiler 的扩展，另立 issue）。
+  // 确认生效（spec §10.4 D6）：草稿走**唯一编译点**（writeL2Declaration = POST/PUT 同一份实现：
+  // 编译 + 事务 + 审计同生共死），编译过了才清草稿、再发变更通知。
+  //
+  // 为什么编译在清草稿**之前**：编译失败 ⇒ 409/400 原样返回，草稿**原地保留**（creator 改了再确认）；
+  // 先清后编等于把编译失败变成「草稿白丢」。
+  //
+  // 为什么清草稿要带**内容条件**（评审 #1271-#7）：load → 编译 → clear 之间若 creator 在另一
+  // 标签页存了 v2，无条件 clear 会把 v2 吞掉。带上「等于刚才读到的那份」做守卫——被并发写入
+  // 抢过 ⇒ rowCount=0 ⇒ 409，v2 原样保留（可重试），不静默丢数据。
   r.post('/metrics/:id/confirm-draft', async (c) => {
     const requester = requesterOf(c)
     if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
@@ -232,10 +249,46 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const draft = await loadMetricDraft(ctx.pool, org, id, requester.userId)
     if (draft === null) return c.json({ error: 'NOT_FOUND' }, 404)
-    // ⚠️ 草稿→spec 的编译需要 semantic-compiler 的支持（草稿是结构化声明，不是 SQL）。
-    //    本期先打日志 + 清草稿（草稿内容已在 audit 可追溯），编译接线另立 issue。
-    console.log(JSON.stringify({ event: 'metric_draft_confirmed', org, metricId: id, draft: draft }))
-    await clearMetricDraft(ctx.pool, org, id, requester.userId)
-    return c.json({ ok: true, note: 'draft cleared; compile wiring is P1' })
+    // 显式重解析（不是断言式转型）：draft_spec 是 jsonb，读回来的形状不因为是「自己存的」就免检
+    // ——027 之前的脏数据/手工改库都要在这里被拦住（400），而不是漏进编译点冒 500。
+    const parsedDecl = L2DeclarationSchema.safeParse(draft)
+    if (!parsedDecl.success) return c.json({ error: 'INVALID_DRAFT' }, 400)
+    const out = await writeL2Declaration(writeDeps(ctx, c, requester), org, id, parsedDecl.data, { keepDraft: true })
+    if (!out.ok) return writeOutcome(c, out, 200)
+    const cleared = await clearMetricDraft(ctx.pool, org, id, requester.userId, draft)
+    if (!cleared) return c.json({ error: 'DRAFT_CHANGED_RETRY' }, 409)
+    // 变更通知（fail-open，模块协议 12：emit 的返回不参与业务分支；事件已在 manifest 声明）。
+    // 收件人由 notify 层按绑定规则解析（scope_holders: data:query）——模块只报事实，不自己找收件人。
+    if (ctx.notify) {
+      try {
+        const row = await ctx.pool.query(`select title, version from data.metrics where org = $1 and id = $2`, [org, id])
+        await ctx.notify.emit(c.get('identity'), {
+          eventKey: 'data.metric.definition.changed',
+          eventId: `data.metric.definition.changed:${org}:${id}:${row.rows[0]?.version ?? 0}`,
+          scope: id,
+          payload: {
+            metricId: id,
+            title: String(row.rows[0]?.title ?? id),
+            changedBy: requester.userId,
+            link: `${process.env.PLATFORM_CONSOLE_BASE_URL ?? ''}/console/data`,
+          },
+        })
+      } catch (e) {
+        console.warn('[data] metric.definition.changed emit failed（不阻断业务）:', e instanceof Error ? e.message : e)
+      }
+    }
+    return c.json({ ok: true })
+  })
+
+  // 可信度分级升降（spec §10.4 D7）：管理员把 L2 在 certified/draft 间切换。
+  // 门 = data:manage（管理员动作，与草稿流的 data:query 不同档）；L1 只读由 certifyMetric 判（403）。
+  r.put('/metrics/:id/certified', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = metricIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const parsed = z.object({ certified: z.enum(['certified', 'draft']) }).safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    return writeOutcome(c, await certifyMetric(writeDeps(ctx, c, requester), orgOf(c), id, parsed.data.certified), 200)
   })
 }

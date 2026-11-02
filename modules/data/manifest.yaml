@@ -73,6 +73,9 @@ api:
     - { method: PUT,    path: /metrics/:id/draft,         scope: data:query }
     - { method: GET,    path: /metrics/:id/draft,         scope: data:query }
     - { method: POST,   path: /metrics/:id/confirm-draft, scope: data:query }
+    # 可信度分级升降（spec §10.4 D7）：管理员动作，门与 /metrics/all 同档（data:manage）；
+    # L1 只读由 certifyMetric 判（403，读侧恒 certified 从 source 推导，写列会被 sync 冲掉）
+    - { method: PUT,    path: /metrics/:id/certified,     scope: data:manage }
     # ── agent 接入面（**已落地**；#486）──────────────────────────────────────────────
     # 两条通道，对 agent 与人**同形**（都是 HTTP/MCP + 同一个 scope，管理面不自建第二份判定）：
     #   · HTTP：上面那四条 /metrics 写/读端点（PAT 通道即可调）；
@@ -138,6 +141,28 @@ api:
     #    草稿预览（preview:'draft'）另要 data:manage；跨租户 / 无门一律 404。──
     - { method: POST,   path: /reports/:id/narrative,                 scope: data:query }
     - { method: POST,   path: /reports/:id/narrative/stream,          scope: data:query }
+# 通知事件（模块协议 12：先声明再发；spec 2026-11-01 §10.4 D6「生效必发通知」）。
+# 收件人 = 持 data:query 的人（scope_holders；指标查看面唯一门就是这个码，声明侧没有
+# 逐指标 viewer 清单，这是 P0 的诚实近似——资产级 ACL 到指标是后续议题）。defaults 幂等
+# 派生默认规则（模板/派生规则的 seed 在 modules/notify 侧，开通/升级时 seed-builtin 落库）。
+notifications:
+  events:
+    - key: data.metric.definition.changed
+      title: 指标定义变更
+      description: L2 指标草稿确认生效后，通知本租户的看数人（spec 2026-11-01 §10.4 D6）
+      scope: { key: metricId, label: 指标 }
+      payload:
+        metricId: { type: string, required: true, label: 指标 }
+        title:    { type: string, required: true, label: 指标名 }
+        changedBy: { type: user, required: true, label: 操作人 }
+        link:     { type: url, required: true, label: 详情链接 }
+      recipients:
+        viewers: { kind: scope_holders, scope: data:query, label: 指标看数人 }
+      defaults:
+        recipient: viewers
+        template: data_metric_definition_changed
+        channels: [inapp_default]
+
 frontend:
   console:
     - { path: /console/data, title: 数据问数, icon: BarChartOutlined, scope: data:query, entry: ./console/index.tsx }

@@ -125,4 +125,41 @@ describePg('写路径的审计（#489）', () => {
     expect((await listMetricAudit(pool, ORG, 'ma_masked_update')).length).toBe(1)  // 只有最初的 create
     await deleteMetricDeclaration(deps(pool), ORG, 'ma_masked_update')
   })
+
+  // ── creator 闸（spec 2026-11-01 §10.2；评审 PR #1271 发现 #4）──────────────────
+  // 「L2 非我创建 ⇒ 只读」是域层判定（HTTP PUT 与 MCP customize 共用本函数 = 共用这份闸）。
+  // 没有这道闸，任何 data:manage 都能绕过草稿流直改别人的口径——正是 D6 草稿流要堵的事。
+  it('★ creator 闸：非 creator 改/删别人的 L2 ⇒ 403，行原样不动', async () => {
+    const id = 'ma_gate_l2'
+    expect((await writeL2Declaration(deps(pool), ORG, id, decl)).ok).toBe(true)   // creator = ZhangDuo
+    const before = await pool.query(
+      `select version, title from data.metrics where org = $1 and id = $2`, [ORG, id])
+    const r = await writeL2Declaration(deps(pool, 'WangDuo'), ORG, id, { ...decl, alias: '别人改的' })
+    expect(r).toMatchObject({ ok: false, http: 403, error: 'NOT_METRIC_CREATOR' })
+    const d = await deleteMetricDeclaration(deps(pool, 'WangDuo'), ORG, id)
+    expect(d).toMatchObject({ ok: false, http: 403, error: 'NOT_METRIC_CREATOR' })
+    const after = await pool.query(
+      `select version, title from data.metrics where org = $1 and id = $2`, [ORG, id])
+    expect(after.rows[0].version).toBe(before.rows[0].version)     // ★ 一个字节都没动
+    expect((await listMetricAudit(pool, ORG, id)).length).toBe(1)  // 也别记成一次变更
+    // creator 自己：update 与 delete 都通（同一闸，同一份判定）
+    expect((await writeL2Declaration(deps(pool), ORG, id, { ...decl, alias: '本人改的' })).ok).toBe(true)
+    expect((await deleteMetricDeclaration(deps(pool), ORG, id)).ok).toBe(true)
+  })
+
+  it('★ creator 闸：created_by 为 NULL 的存量行 fail-closed（METRIC_CREATOR_UNKNOWN）', async () => {
+    const id = 'ma_gate_legacy'
+    // 直接落一条 created_by=NULL 的 L2（模拟「027 前的存量且无 create 审计」——028 也回填不出）
+    await pool.query(
+      `insert into data.metrics
+         (org, id, title, description, required_scope, subject_column, select_sql, group_by,
+          params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations, created_by, certified)
+       values ($1, $2, '存量', '', null, 'org', 'select 1 as value', '', '{}'::jsonb, 'l2', null, 'legacy', 1, false, null, null, null, 'draft')`,
+      [ORG, id])
+    const r = await writeL2Declaration(deps(pool), ORG, id, decl)
+    expect(r).toMatchObject({ ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' })
+    const d = await deleteMetricDeclaration(deps(pool), ORG, id)
+    expect(d).toMatchObject({ ok: false, http: 403, error: 'METRIC_CREATOR_UNKNOWN' })
+    await pool.query(`delete from data.metrics where org = $1 and id = $2`, [ORG, id])
+  })
 })

@@ -112,6 +112,20 @@ export async function seedBuiltin(
     )
     rules += staleRule.rowCount ?? 0
 
+    // 指标定义变更（spec 2026-11-01 §10.4 D6）：L2 草稿确认生效 ⇒ 看数人（持 data:query）
+    // 得知道口径变了。收件人 kind=scope_holders(scope=data:query)，与事件声明（modules/data
+    // 的 manifest notifications.events）的 recipients/defaults 三者必须同描——
+    // 「事件声明 + 模板 + 派生规则」是一根链，改任何一节要三处一起动。
+    const metricRule = await pool.query(
+      `insert into notify.rule
+         (org,id,enabled,event_key,scope,recipient_key,template_key,channels,origin,created_by)
+       values ($1,$2,true,$3,'*','viewers',$4,'{inapp_default}'::text[],'derived','system')
+       on conflict (org,id) do update set enabled=true, template_key=excluded.template_key,
+         channels=excluded.channels`,
+      [org, 'derived:data:data.metric.definition.changed:*', 'data.metric.definition.changed', 'data_metric_definition_changed'],
+    )
+    rules += metricRule.rowCount ?? 0
+
     const names = (env[orgEnvKeyFor('NOTIFY_APPROVERS', org)] ?? '')
       .split(',')
       .map((s) => s.trim())

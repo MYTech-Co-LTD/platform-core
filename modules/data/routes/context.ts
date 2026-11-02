@@ -2,7 +2,7 @@
 // ⚠️ 引类型务必 `import type`，别把类型当值引（#44 的形状，typecheck 拦不住）。
 import type { Context, Hono } from 'hono'
 import type { Pool } from 'pg'
-import type { ChannelAddressResolver, Identity, RequesterVars } from '@platform/sdk'
+import type { ChannelAddressResolver, Identity, NotifyPort, RequesterVars } from '@platform/sdk'
 import { REQUESTER_CHANNEL, REQUESTER_KEY_ID, TENANT_SOURCES } from '@platform/sdk'
 import type { Requester } from '../domain/authz'
 import type { StreamingChatModel } from '../domain/llm'
@@ -44,6 +44,11 @@ export interface RouteCtx {
   pool: Pool
   /** 缺省 = 真仓库（runQuery 惰性连）。测试注入假执行器（T8/T9 的测试也靠它）。 */
   execute?: SqlExecutor
+  /**
+   * 通知端口（宿主注入；缺省 = 旧宿主/单测，调用点判空跳过——与 aftersales 同款注入面）。
+   * 消费方：指标确认生效的变更通知（spec 2026-11-01 §10.4 D6）。
+   */
+  notify?: NotifyPort
   /**
    * LLM 测试缝（计划 2026-10-26 Task 7）：缺省 = `llmFromEnv()` + `openAiCompatModel`
    * （生产装配下 `index.ts` 不传 ⇒ 恒走 env）。返回 `null` = 本次无模型（模板回退）。
