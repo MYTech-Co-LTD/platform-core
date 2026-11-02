@@ -2,7 +2,7 @@
 // fetch 全部 mock（纯前端测试）；后端契约已在 routes/metrics.test.ts 钉过，这里钉「页面怎么消费」。
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import App from './App'
+import App, { composeExpr, validTerm } from './App'
 
 const origFetch = globalThis.fetch
 const origLocation = window.location
@@ -142,5 +142,70 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
     fireEvent.change(await waitFor(() => screen.getByPlaceholderText('给看数人读的话')), { target: { value: '毛利率=毛利÷收入' } })
     fireEvent.click(await waitFor(() => screen.getByText('保存元数据')))
     await waitFor(() => expect([...puts]).toContain('PUT meta'))
+  })
+})
+
+// ── 表达式编辑器（#1298）：composeExpr 纯函数 + 两条写入流 ────────────────────────
+describe('表达式指标编辑器（expr，两操作数算式条）', () => {
+  it('composeExpr：四运算符 × 两侧 ref/num → 与编译器 ExprNode 词表同形', () => {
+    const ref = { kind: 'ref', id: 'm:l1' } as const
+    const num = { kind: 'num', value: 2 } as const
+    expect(composeExpr(ref, 'div', num)).toEqual({ kind: 'div', left: ref, right: num })
+    expect(composeExpr(num, 'mul', ref).kind).toBe('mul')
+    expect(composeExpr(ref, 'add', ref).left.kind).toBe('ref')
+    expect(composeExpr(ref, 'sub', num)).toEqual({ kind: 'sub', left: ref, right: num })
+    // 有效性：空 ref / 非有限数都不算就绪
+    expect(validTerm({ kind: 'ref', id: '' })).toBe(false)
+    expect(validTerm({ kind: 'num', value: Number.NaN })).toBe(false)
+    expect(validTerm(num)).toBe(true)
+  })
+
+  it('草稿流：切「表达式」→ 保存草稿的 PUT 载荷 = {op:{kind:"expr",expr}}（走既有草稿通道）', async () => {
+    const drafted: string[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (init?.method === 'PUT' && url.endsWith('/draft')) { drafted.push(String(init.body)); return json(200, { ok: true }) }
+      if (url.includes('/api/modules/data/metrics') && (init?.method ?? 'GET') === 'GET' && !url.includes('/draft')) return json(200, LIST)
+      throw new Error(`no mock for ${init?.method ?? 'GET'} ${url}`)
+    }) as unknown as typeof fetch
+    render(<App />)
+    fireEvent.click(await waitFor(() => screen.getByText('编辑草稿')))
+    fireEvent.click(await waitFor(() => screen.getByText('表达式')))
+    // 右侧默认是数字 1；把左项保持为第一个 L1（净销售额），直接保存草稿
+    fireEvent.click(await waitFor(() => screen.getByText('保存草稿')))
+    await waitFor(() => expect(drafted.length).toBeGreaterThan(0))
+    const body = JSON.parse(drafted[0]!) as { draftSpec: { op: { kind: string; expr: { kind: string; left: { kind: string }; right: { kind: string } } } } }
+    expect(body.draftSpec.op.kind).toBe('expr')
+    expect(body.draftSpec.op.expr.kind).toBe('add')          // 默认运算符
+    expect(body.draftSpec.op.expr.left.kind).toBe('ref')     // 左=指标
+    expect(body.draftSpec.op.expr.right).toEqual({ kind: 'num', value: 1 })
+  })
+
+  it('新建流（admin）：填 id → 创建 → POST 载荷带 expr；数字项清空 ⇒ 创建按钮禁用（不发请求）', async () => {
+    const posts: string[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (init?.method === 'POST' && url.endsWith('/api/modules/data/metrics')) { posts.push(String(init.body)); return json(201, { ok: true }) }
+      if (url.includes('/api/modules/data/metrics') && (init?.method ?? 'GET') === 'GET') {
+        return json(200, { ...LIST, self: { userId: 'u-admin', scopes: ['data:query', 'data:manage'] } })
+      }
+      throw new Error(`no mock for ${init?.method ?? 'GET'} ${url}`)
+    }) as unknown as typeof fetch
+    render(<App />)
+    fireEvent.click(await waitFor(() => screen.getByText('新建表达式指标')))
+    fireEvent.change(await waitFor(() => screen.getByPlaceholderText('指标 id')), { target: { value: 'xiongmao:gross_margin' } })
+    // 先验禁用：数字项清空 ⇒ 不就绪，点「创建」不得发请求
+    fireEvent.change(screen.getByPlaceholderText('数字'), { target: { value: '' } })
+    fireEvent.click(screen.getByText('创建'))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(posts.length).toBe(0)
+    // 填回数字 → 创建成功，POST 载荷逐字断言
+    fireEvent.change(screen.getByPlaceholderText('数字'), { target: { value: '2' } })
+    fireEvent.click(screen.getByText('创建'))
+    await waitFor(() => expect(posts.length).toBeGreaterThan(0))
+    const body = JSON.parse(posts[0]!) as { id: string; op: { kind: string; expr: { kind: string; right: { kind: string; value: number } } } }
+    expect(body.id).toBe('xiongmao:gross_margin')
+    expect(body.op.kind).toBe('expr')
+    expect(body.op.expr.right).toEqual({ kind: 'num', value: 2 })
   })
 })
