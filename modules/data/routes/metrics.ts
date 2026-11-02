@@ -61,7 +61,7 @@ type L2BodyType = z.infer<typeof L2Body>
  * （授权核心不认来源）⇒ 写死 MetricRow 会让「裁剪后的词表」传不进来。
  */
 const publicView = (
-  m: { id: string; title: string; description: string; params?: Record<string, MetricParamDef>; certified?: 'certified' | 'draft'; source?: 'l1' | 'l2'; createdBy?: string | null },
+  m: { id: string; title: string; description: string; params?: Record<string, MetricParamDef>; certified?: 'certified' | 'draft'; source?: 'l1' | 'l2'; createdBy?: string | null; bizDescription?: string | null; unit?: string | null; caliberNote?: string | null },
   freshness?: MetricFreshnessFace,
 ) => {
   const out: Record<string, unknown> = {
@@ -73,6 +73,9 @@ const publicView = (
     // 来源与创建者（spec §10.2 判定表）：移动卡片要显「来源=平台声明/自建」，
     // creator 判定（「我的」标记 + 编辑入口）要 createdBy。站内用户名不是敏感面。
     source: m.source, createdBy: m.createdBy ?? null,
+    // 元数据三件套（030，spec §10.4.3）：#1284 时「观看面暂不带」的边界随移动卡消费面
+    // （#1292）如实更新——看数人要靠业务描述/单位读懂口径；未标注 = null（不编默认值）。
+    bizDescription: m.bizDescription ?? null, unit: m.unit ?? null, caliberNote: m.caliberNote ?? null,
   }
   // 新鲜度徽标（spec §10.4.2）：unknown = 没有可判的 sla/水位 ⇒ **字段缺席**（不捏造，
   // 与 runQuery 的 data_as_of 同一口径）；移动端卡片据此渲染 绿/黄/红/灰。
