@@ -48,7 +48,11 @@ spine as (
     cross join days d
 ),
 -- as-of 快照：门店在**那一天**的档案状态（存在性 / 是否营业 / 战区）
-asof as (
+-- ⚠️ CTE 名**不能叫 `asof`**（2026-11-02，issue #1303）：`ASOF` 是 DuckDB 的保留关键字
+--   （ASOF JOIN）。2026-11 把 staging 翻成直读湖视图（#1276）后，本模型的查询整体推给 DuckDB
+--   解析 ⇒ 报 `Parser Error: syntax error at or near "asof"`（此前 staging 是表、走 Postgres
+--   规划器，缺陷潜伏）。改名 `asof_rows`，语义不变。
+asof_rows as (
     select
         s.system_book,
         s.bizday,
@@ -105,7 +109,7 @@ classified as (
             when coalesce(s.sale_money, 0) > 0 then 'has_sales'
             else 'zero_sales'
         end                                 as data_status
-    from asof a
+    from asof_rows a
     left join sales s
            on s.system_book = a.system_book
           and s.bizday     = a.bizday
