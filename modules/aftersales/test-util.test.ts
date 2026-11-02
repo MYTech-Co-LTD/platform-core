@@ -39,6 +39,16 @@ describePg('夹具自愈的顺序无关性（#483）', () => {
   it('在「data schema 还不存在」的库上：调完 ensureDimTables 即可查 data.dim_*', async () => {
     await admin.query(`create database "${SCRATCH_DB}"`)
     scratch = new Pool({ connectionString: `${base}/${SCRATCH_DB}` })
+    // #1308（#1052 附带发现的 CI flake）：afterAll 的 `drop database ... with (force)` 会强杀
+    // 该库上**残留**的连接，被杀客户端的 57P01（terminating connection due to administrator
+    // command）会异步发给 Pool 的 'error' 事件——**无人监听 = unhandled error ⇒ vitest 整轮红**
+    // （症状随机、rerun 即绿）。本池的使命就是被强杀：只吞 57P01，其余错误照常留痕
+    // （全吞 = 另一种假绿——真实连接层缺陷会被这里静默掉）。
+    scratch.on('error', (err) => {
+      const code = (err as { code?: string }).code
+      if (code === '57P01') return
+      console.error('[aftersales test] scratch pool 非终止类错误:', err)
+    })
 
     // 前置：这个库确实还没有 data schema —— 否则本条验的就成了「已经迁移过」，等于没验
     const pre = await scratch.query<{ n: number }>(
