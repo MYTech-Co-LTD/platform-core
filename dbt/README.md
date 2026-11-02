@@ -168,6 +168,10 @@ vars，报 `Required var 'x' not found in config`）；`materialize.sh` 侧 `DAT
 `sources` = 背后**实际读的对象存储路径**（选填、人读、不落库；但**参与新鲜度链路推导**——
 sync 取路径段 `lemeng/<资产>` 推导 `stg_lemeng_<资产>` 关系集物化进
 `data.metrics.freshness_relations`，spec §10.7.3；不声明 = 该指标无自动水位）。
+`unit`（选填，spec 2026-11-01 §10.4.3 P1，2026-11-02 起）= **展示语义单位**（元/单/行/%/天/家…），
+物化进 `data.metrics.unit` 并进 `--check` 比对（声明改/撤而库没刷会被检出）；
+不声明 = 未标注（NULL，**不代编**——赋错单位比空着糟，值由口径责任人逐条补）；
+`%` 等 YAML 保留首字符必须加引号（`unit: '%'`，裸 `%` 是指令符会 parse 失败）。
 
 **下钻三键与度量组件（spec 2026-10-21 §2.3/§2.3.1，#977）**：每条指标可另声明 `compose` /
 `dimensions` / `detail` —— **三者同现或同缺**（半套 = 声明了但下钻面起不来，静默）。
