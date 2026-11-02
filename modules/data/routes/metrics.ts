@@ -24,6 +24,9 @@ import { certifyMetric } from '../domain/metric-write'
 import { paramFaceOf, visibleMetrics } from '../domain/authz'
 import type { MetricParamDef, Requester } from '../domain/authz'
 import { loadMergedCatalog } from '../domain/metric-store'
+import { beijingTodayOf, freshnessFaceFor } from '../domain/query-service'
+import type { MetricFreshnessFace } from '../domain/query-service'
+import { warehouseConfigured, warehousePool } from '../domain/warehouse'
 import { listMetricAudit } from '../domain/metric-audit-store'
 import type { MetricRow } from '../domain/metric-store'
 import { L2RefineDeclarationSchema, L2ExprDeclarationSchema, L2DeclarationSchema, exceedsNesting } from '../domain/semantic-compiler'
@@ -56,13 +59,27 @@ type L2BodyType = z.infer<typeof L2Body>
  * 入参按**结构**收窄，不写 `MetricRow`：`visibleMetrics` 的契约是 `MetricDef`
  * （授权核心不认来源）⇒ 写死 MetricRow 会让「裁剪后的词表」传不进来。
  */
-const publicView = (m: { id: string; title: string; description: string; params?: Record<string, MetricParamDef>; certified?: 'certified' | 'draft' }) => ({
-  id: m.id, title: m.title, description: m.description,
-  params: paramFaceOf(m.params),
-  // 可信度徽标（spec 2026-11-01 §10.4：L1 与 L2 并存，用户得知道信哪个）——观看面就带：
-  // 「信不信这个数」是看数人的问题，不是管理员才有的问题。
-  certified: m.certified,
-})
+const publicView = (
+  m: { id: string; title: string; description: string; params?: Record<string, MetricParamDef>; certified?: 'certified' | 'draft'; source?: 'l1' | 'l2'; createdBy?: string | null },
+  freshness?: MetricFreshnessFace,
+) => {
+  const out: Record<string, unknown> = {
+    id: m.id, title: m.title, description: m.description,
+    params: paramFaceOf(m.params),
+    // 可信度徽标（spec 2026-11-01 §10.4：L1 与 L2 并存，用户得知道信哪个）——观看面就带：
+    // 「信不信这个数」是看数人的问题，不是管理员才有的问题。
+    certified: m.certified,
+    // 来源与创建者（spec §10.2 判定表）：移动卡片要显「来源=平台声明/自建」，
+    // creator 判定（「我的」标记 + 编辑入口）要 createdBy。站内用户名不是敏感面。
+    source: m.source, createdBy: m.createdBy ?? null,
+  }
+  // 新鲜度徽标（spec §10.4.2）：unknown = 没有可判的 sla/水位 ⇒ **字段缺席**（不捏造，
+  // 与 runQuery 的 data_as_of 同一口径）；移动端卡片据此渲染 绿/黄/红/灰。
+  if (freshness !== undefined && freshness.status !== 'unknown') {
+    out.freshness = { status: freshness.status, watermark: freshness.watermark }
+  }
+  return out
+}
 
 /**
  * 管理面投影：带上 `source`——它是「这行能不能经 API 改」的**唯一**判据面，
@@ -141,7 +158,20 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     if (requester === null) return c.json({ metrics: [] })
     // 消费面词表 = L1（平台）∪ L2（本 org），再按 **scope + 已接入源** 裁（计划 5 §3⑧）
     const all = await loadMergedCatalog(ctx.pool, orgOf(c))
-    return c.json({ metrics: visibleMetrics(all, requester, adoptedSourcesOf(c)).map(publicView) })
+    const visible = visibleMetrics(all, requester, adoptedSourcesOf(c))
+    // 新鲜度面（spec §10.4.2）：水位查询走**仓库池**（load_log 在数据面，与 data_as_of 同通路，
+    // 不走 ctx.pool）；按关系集分组（同组共享一次 load_log 查询）；整面 fail-open——
+    // 仓库未配/查询失败都降级成 unknown（字段缺席），词表本身绝不因徽标面 500。
+    let fresh = new Map<string, MetricFreshnessFace>()
+    if (warehouseConfigured()) {
+      try {
+        fresh = await freshnessFaceFor(warehousePool(), visible, beijingTodayOf())
+      } catch {
+        fresh = new Map()
+      }
+    }
+    // self：移动端「我的」判定用（createdBy === self.userId）；不引第二套身份面
+    return c.json({ metrics: visible.map((m) => publicView(m, fresh.get(m.id))), self: { userId: requester.userId } })
   })
 
   r.get('/metrics/all', async (c) => {

@@ -52,7 +52,7 @@ const L1_ID_PREFIX = 't6test:'
  * 本文件的 L1 夹具都是 sync 的产物，故与声明同形（`lemeng` = 当前唯一已接入源）；
  * 不给源的 L1 行在 Task 5 的裁剪里会被判成「未接入源」而**没人看得见**——那是不该出现在夹具里的形状。
  */
-const l1Def = (over: Partial<MetricDef> = {}): L1MetricDef =>
+const l1Def = (over: Partial<L1MetricDef> = {}): L1MetricDef =>
   ({ ...def(over), sourceSystem: 'lemeng', slaDays: 1, freshnessRelations: [], masks: null })
 const L1_SALES = l1Def({
   id: `${L1_ID_PREFIX}net_sales`, title: '净销售额',
@@ -159,9 +159,11 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect(ids).toContain(L1_SALES.id)
     expect(ids, 'data:finance 的 L1 指标对只有 data:query 的人可见了').not.toContain(L1_FINANCE.id)
     // 消费面投影：字段面 + 参数面形状——selectSql/subjectColumn/column 属实现细节，不外泄；
-    // certified 徽标在观看面就带（spec §10.4：L1/L2 并存，看数人得知道信哪个）
+    // certified/source/createdBy 徽标在观看面就带（spec §10.2/§10.4：来源、可信度、「我的」判定）
     expect(body.metrics.find((m: { id: string }) => m.id === L1_SALES.id))
-      .toEqual({ id: L1_SALES.id, title: '净销售额', description: def().description, params: {}, certified: 'certified' })
+      .toEqual({ id: L1_SALES.id, title: '净销售额', description: def().description, params: {}, certified: 'certified', source: 'l1', createdBy: null })
+    // self：移动端「我的」判定用（夹具默认身份 userId=u-test）
+    expect(body.self).toEqual({ userId: 'u-test' })
   })
 
   it('GET /metrics 不掺别家 L2 行（跨租户串词表是禁止的）', async () => {
@@ -776,6 +778,23 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
       body: JSON.stringify(l2Body({ id, alias: '本人改的' })),
     })
     expect(self.status).toBe(200)
+  })
+
+  // ── 新鲜度徽标面（spec 2026-11-01 §10.4.2；判据与 §10.7.3 同一份）────────────
+  // 路由级只钉「仓库未配 ⇒ 字段缺席」（status 映射在 query-service.test 的纯单测里用假池
+  // 钉——真 load_log 表被并行兄弟文件反复 drop/create（它们的夹具语义），路由级碰它会竞态）。
+  it('GET /metrics 的新鲜度面 fail-open：仓库未配 ⇒ 字段缺席（词表照常 200，不因徽标面 500）', async () => {
+    // 接了新鲜度链路的 L1（有 sla + 关系集）——仓库未配（本文件不设 DATA_WAREHOUSE_URL）
+    // ⇒ 水位查不了 ⇒ unknown ⇒ 字段缺席；不捏造、不报错。
+    await upsertL1Metric(pool, l1Def({
+      id: `${L1_ID_PREFIX}fresh_unconfigured`, title: '接了链路但仓库未配',
+      freshnessRelations: ['fct_retail_sale'], slaDays: 3,
+    }))
+    const body = await (await app(ORG, ['data:query']).request('/metrics')).json() as {
+      metrics: { id: string; freshness?: unknown }[] }
+    const byId = new Map(body.metrics.map((m) => [m.id, m]))
+    expect(byId.get(`${L1_ID_PREFIX}fresh_unconfigured`)?.freshness).toBeUndefined()
+    expect(byId.get(L1_SALES.id)?.freshness).toBeUndefined()
   })
 })
 
