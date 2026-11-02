@@ -279,7 +279,9 @@ describePg('metric-store（需要 DATABASE_URL）', () => {
         // 列是 not null default ''，运行期恒为字符串；'' = 未声明）
         scopeNote: '',
         // 治理（spec 2026-11-01 §10.4）：L2 首插写 created_by='fixture' + certified='draft'（读列）
-        certified: 'draft', createdBy: 'fixture' })
+        certified: 'draft', createdBy: 'fixture',
+        // 元数据（030，§10.4.3）：L2 新建侧不写三列 ⇒ 未标注形态（nullable 直读）
+        bizDescription: null, unit: null, caliberNote: null })
   })
 
   it('deleteMetric 返「是否真删了一行」，且只删本租户的', async () => {

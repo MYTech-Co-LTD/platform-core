@@ -70,6 +70,10 @@ function l1(over: Partial<MetricRow> = {}): MetricRow {
     // 治理（spec 2026-11-01 §10.4 D7）：L1 读侧恒 certified（从 source 推导）；无创建者
     certified: 'certified',
     createdBy: null,
+    // 元数据（030）：L1 行恒 null——租户不得注解平台口径（写面对租户天然 404）
+    bizDescription: null,
+    unit: null,
+    caliberNote: null,
     ...over,
   }
 }

@@ -11,7 +11,7 @@
 // 入参会以 400 `TARGET_NOT_SUPPORTED` 被**显式拒绝**（不静默丢弃）。所以这里也不摆一个
 // 按了会报错的输入框——见 README「L2 的已知边界」。
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Drawer, Input, Popconfirm, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
+import { Button, Card, Drawer, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Timeline, Typography, message } from 'antd'
 import { apiGet, apiSend, messageOf } from '../lib/api'
 
 interface MetricRow {
@@ -25,6 +25,13 @@ interface MetricRow {
   /** #489：最后操作人（L1 行走 sync 物化 ⇒ null）；列表两列的数据源。 */
   updatedBy: string | null
   version: number
+  /** #489 之后的治理字段（adminView 形状）：creator 判定 + certified 徽标 + 元数据三件套。 */
+  createdBy: string | null
+  certified?: 'certified' | 'draft'
+  /** 元数据（030，spec §10.4.3）：null = 未标注；L1 行恒 null（平台口径，租户不得注解）。 */
+  bizDescription: string | null
+  unit: string | null
+  caliberNote: string | null
 }
 
 /** 变更史的一行（`GET /metrics/:id/audit` 的形状）。 */
@@ -49,7 +56,7 @@ interface RetireCandidate {
 
 interface AuditRow {
   id: number
-  action: 'create' | 'update' | 'delete' | 'certify'
+  action: 'create' | 'update' | 'delete' | 'certify' | 'meta'
   userId: string
   channel: string
   createdAt: string
@@ -88,6 +95,10 @@ export default function MetricsPage() {
   // 使用统计抽屉（spec 2026-11-01 §10.4.3 P1）；null = 关（与 history 同款单状态惯例）
   const [usageDays, setUsageDays] = useState<number | null>(null)
   const [usage, setUsage] = useState<{ days: number; stats: UsageStat[]; retireCandidates: RetireCandidate[] } | null>(null)
+  // 元数据编辑弹窗（§10.4.3 P1）：null = 关。只对 L2 行开放（L1 平台口径，租户不得注解 → 404）。
+  const [metaDraft, setMetaDraft] = useState<{
+    id: string; title: string; biz: string; unit: string; note: string
+  } | null>(null)
   const [messageApi, ctx] = message.useMessage()
 
   const load = () => apiGet('/metrics/all')
@@ -115,6 +126,25 @@ export default function MetricsPage() {
     apiGet(`/metrics/usage?days=${days}`)
       .then((b) => setUsage(b as { days: number; stats: UsageStat[]; retireCandidates: RetireCandidate[] }))
       .catch((e) => messageApi.error(messageOf(e)))
+  }
+
+  /** 打开元数据编辑（预填当前值；null 显示为空串——保存时全部回传 = 全量更新）。 */
+  function openMeta(r: MetricRow) {
+    setMetaDraft({ id: r.id, title: r.title, biz: r.bizDescription ?? '', unit: r.unit ?? '', note: r.caliberNote ?? '' })
+  }
+
+  /** 保存元数据（全量三字段；空串 = 显式清空——后端 clean 成 null）。 */
+  async function submitMeta() {
+    if (metaDraft === null) return
+    try {
+      await apiSend(`/metrics/${metaDraft.id}/meta`, 'PUT', {
+        bizDescription: metaDraft.biz.trim(),
+        unit: metaDraft.unit.trim(),
+        caliberNote: metaDraft.note.trim(),
+      })
+      setMetaDraft(null)
+      await load()
+    } catch (e) { messageApi.error(messageOf(e)) }
   }
 
   function openCreate() {
@@ -270,6 +300,10 @@ export default function MetricsPage() {
                 <Space>
                   <Button size="small" onClick={() => openHistory(r.id)}>变更历史</Button>
                   <Button size="small" onClick={() => openEdit(r)}>编辑</Button>
+                  {/* 元数据编辑只对 L2 开放（L1 平台口径，租户不得注解 ⇒ 后端 404，别放出假按钮） */}
+                  {r.source === 'l2' && (
+                    <Button size="small" onClick={() => openMeta(r)}>元数据</Button>
+                  )}
                   {/* okText 显式写中文：Popconfirm 的默认 okText 取**locale**（未配 zh_CN 时是 "OK"），
                       而删除是不可逆动作——确认按钮上的字应当自己掌握，不随宿主是否配了 locale 漂。 */}
                   <Popconfirm title={`删除派生指标 ${r.id}？`} okText="确认删除" cancelText="取消"
@@ -284,12 +318,12 @@ export default function MetricsPage() {
       <Drawer title={`变更历史：${historyId ?? ''}`} open={historyId !== null}
               onClose={() => setHistoryId(null)} width={520}>
         <Timeline items={history.map((a) => ({
-          color: a.action === 'delete' ? 'red' : a.action === 'create' ? 'green' : a.action === 'certify' ? 'gold' : 'blue',
+          color: a.action === 'delete' ? 'red' : a.action === 'create' ? 'green' : a.action === 'certify' ? 'gold' : a.action === 'meta' ? 'purple' : 'blue',
           children: (
             <>
               <div>
-                <Tag color={a.action === 'delete' ? 'red' : a.action === 'create' ? 'green' : a.action === 'certify' ? 'gold' : 'blue'}>
-                  {{ create: '新建', update: '修改', delete: '删除', certify: '可信度' }[a.action]}
+                <Tag color={a.action === 'delete' ? 'red' : a.action === 'create' ? 'green' : a.action === 'certify' ? 'gold' : a.action === 'meta' ? 'purple' : 'blue'}>
+                  {{ create: '新建', update: '修改', delete: '删除', certify: '可信度', meta: '元数据' }[a.action]}
                 </Tag>
                 {a.userId} · {a.channel} · {new Date(a.createdAt).toLocaleString('zh-CN')}
               </div>
@@ -357,6 +391,31 @@ export default function MetricsPage() {
           )}
         </Space>
       </Drawer>
+
+      {/* 元数据编辑（§10.4.3 P1）：三个标注字段独立于口径——不经编译点，审计动作词 meta。 */}
+      <Modal title={`元数据：${metaDraft?.title ?? ''}`} open={metaDraft !== null}
+             onCancel={() => setMetaDraft(null)} onOk={() => { void submitMeta() }} okText="保存">
+        <Space direction="vertical" style={{ width: '100%' }} size="small">
+          <div>
+            <Typography.Text type="secondary">业务描述（这数怎么算、该拿它看什么）</Typography.Text>
+            <Input.TextArea rows={2} maxLength={2000} value={metaDraft?.biz ?? ''}
+                            onChange={(e) => setMetaDraft((d) => d === null ? d : { ...d, biz: e.target.value })} />
+          </div>
+          <div>
+            <Typography.Text type="secondary">单位（元/单/件/人/%…）</Typography.Text>
+            <Input maxLength={64} value={metaDraft?.unit ?? ''}
+                   onChange={(e) => setMetaDraft((d) => d === null ? d : { ...d, unit: e.target.value })} />
+          </div>
+          <div>
+            <Typography.Text type="secondary">口径说明（边界：含不含优惠/退货、统计窗口…）</Typography.Text>
+            <Input.TextArea rows={2} maxLength={2000} value={metaDraft?.note ?? ''}
+                            onChange={(e) => setMetaDraft((d) => d === null ? d : { ...d, note: e.target.value })} />
+          </div>
+          <Typography.Text type="secondary">
+            空掉一个框 = 清空该字段；保存不走编译点，数字不变（审计记「元数据」动作）。
+          </Typography.Text>
+        </Space>
+      </Modal>
     </Space>
   )
 }

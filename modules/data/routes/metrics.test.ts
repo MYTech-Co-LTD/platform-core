@@ -162,6 +162,10 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     // certified/source/createdBy 徽标在观看面就带（spec §10.2/§10.4：来源、可信度、「我的」判定）
     expect(body.metrics.find((m: { id: string }) => m.id === L1_SALES.id))
       .toEqual({ id: L1_SALES.id, title: '净销售额', description: def().description, params: {}, certified: 'certified', source: 'l1', createdBy: null })
+    // 元数据三件套只在管理面（adminView）露出；观看面暂不带（issue #1283 的范围边界）
+    const l1Admin = (await (await app(ORG, ['data:manage']).request('/metrics/all')).json()) as {
+      metrics: { id: string; bizDescription: string | null; unit: string | null; caliberNote: string | null }[] }
+    expect(l1Admin.metrics.find((m) => m.id === L1_SALES.id)).toMatchObject({ bizDescription: null, unit: null, caliberNote: null })
     // self：移动端「我的」判定用（夹具默认身份 userId=u-test）
     expect(body.self).toEqual({ userId: 'u-test' })
   })
@@ -830,6 +834,65 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
         [ORG, [idHot, idCold]])
     }
   })
+
+  // ── 元数据写路径（spec 2026-11-01 §10.4.3 P1；写闸 manage ∪ creator 在域层）──────
+  it('★ PUT /metrics/:id/meta：creator 可改；管理员可代修；非 creator 403；L1 404；审计 meta 词', async () => {
+    const id = 'l2_meta_probe'
+    // 清理收口必须是**测试全程**的 finally（一定清到最后一行）：早期版本把 finally 放在中段，
+    // admin 代修的审计行漏清——残留 meta 行会让 rawMigrationSqls 重放测试炸 CHECK（教训见 030）。
+    try {
+      expect((await post(l2Body({ id }))).status).toBe(201)   // creator = u-test
+      // 部分 update：只给 biz/unit，caliber 不动
+      const r1 = await app(ORG, ['data:query']).request(`/metrics/${id}/meta`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ bizDescription: '毛利率（含税）', unit: '%' }),
+      })
+      expect(r1.status).toBe(200)
+      const row = await pool.query(
+        `select biz_description, unit, caliber_note from data.metrics where org = $1 and id = $2`, [ORG, id])
+      expect(row.rows[0]).toEqual({ biz_description: '毛利率（含税）', unit: '%', caliber_note: null })
+      // audit：meta 词 + 前后态只带被改字段
+      const audit = await pool.query(
+        `select action, row_before, row_after from data.metric_audit where org = $1 and metric_id = $2 order by id desc limit 1`, [ORG, id])
+      expect(audit.rows[0].action).toBe('meta')
+      expect(audit.rows[0].row_after).toEqual({ bizDescription: '毛利率（含税）', unit: '%' })
+      // 空串 = 显式清空；空补丁 ⇒ 400 EMPTY_META_PATCH
+      const r2 = await app(ORG, ['data:query']).request(`/metrics/${id}/meta`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ unit: '' }),
+      })
+      expect(r2.status).toBe(200)
+      const row2 = await pool.query(`select unit from data.metrics where org = $1 and id = $2`, [ORG, id])
+      expect(row2.rows[0].unit).toBeNull()
+      const empty = await app(ORG, ['data:query']).request(`/metrics/${id}/meta`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}) })
+      expect(empty.status).toBe(400)
+      expect(((await empty.json()) as { error: string }).error).toBe('EMPTY_META_PATCH')
+      // 非 creator 且无 manage ⇒ 403；管理员可代修；L1 id ⇒ 404（租户不得注解平台口径）
+      const other = buildTestApp(mod, makeIdentity({ orgId: ORG, scopes: ['data:query'], userId: 'u-other' }),
+        { pool }, { id: 1, casdoor_org: ORG }, ADOPTED)
+      const denied = await other.request(`/metrics/${id}/meta`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ unit: '元' }),
+      })
+      expect(denied.status).toBe(403)
+      expect(((await denied.json()) as { error: string }).error).toBe('NOT_METRIC_CREATOR')
+      const admin = buildTestApp(mod, makeIdentity({ orgId: ORG, scopes: ['data:manage', 'data:query'], userId: 'u-admin' }),
+        { pool }, { id: 1, casdoor_org: ORG }, ADOPTED)
+      expect((await admin.request(`/metrics/${id}/meta`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ caliberNote: '含优惠后口径' }),
+      })).status).toBe(200)
+      const l1 = await app(ORG, ['data:manage']).request(`/metrics/${L1_SALES.id}/meta`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ unit: '%' }),
+      })
+      expect(l1.status).toBe(404)   // L1 行在平台桶：租户 UPDATE 天然 404（跨租户 fail-closed）
+    } finally {
+      await pool.query(`delete from data.metric_audit where org = $1 and (metric_id = $2 or user_id = 'u-admin')`, [ORG, id])
+      await pool.query(`delete from data.metrics where org = $1 and id = $2`, [ORG, id])
+    }
+  })
 })
 
 // ── B 中档 · schema ↔ compiler 对偶（增补 §6.2 的**行为侧**）· 纯逻辑三条 ──────────
@@ -842,7 +905,7 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
 describe('L2 · B 中档 · schema ↔ compiler 对偶（纯逻辑 · 无需库）', () => {
   /** 域层基底：必须是 `source:'l1'` 的行（resolveL1Base 只认 L1 词表）。 */
   const l1Row = (over: Partial<MetricRow> = {}): MetricRow =>
-    ({ ...L1_SALES, source: 'l1', updatedBy: null, version: 1, totalable: false, certified: 'certified', createdBy: null, ...over })
+    ({ ...L1_SALES, source: 'l1', updatedBy: null, version: 1, totalable: false, certified: 'certified', createdBy: null, bizDescription: null, unit: null, caliberNote: null, ...over })
   const catalog: MetricRow[] = [l1Row()]
 
   /** 域层编译结果：抛错 ⇒ 回它的 code；不抛 ⇒ null（期望抛时它会让断言自然红）。 */

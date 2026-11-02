@@ -20,7 +20,7 @@ import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf } from './context'
 import { saveMetricDraft, loadMetricDraft, clearMetricDraft } from '../domain/metric-governance'
-import { certifyMetric } from '../domain/metric-write'
+import { certifyMetric, updateMetricMeta } from '../domain/metric-write'
 import { metricUsageStats, retireCandidatesOf } from '../domain/metric-usage'
 import { paramFaceOf, visibleMetrics } from '../domain/authz'
 import type { MetricParamDef, Requester } from '../domain/authz'
@@ -95,6 +95,8 @@ const adminView = (m: MetricRow) => ({
   // 治理（spec §10.4）：可信度（读侧已推导：L1 恒 certified）+ 创建者（creator 判定面）。
   // 「所有者」列（#1268 的 updatedBy）之外，管理员还要看「谁建的」与「审过没」。
   certified: m.certified, createdBy: m.createdBy,
+  // 元数据（030，§10.4.3）：治理标注三件套（管理面可编辑/可见）。
+  bizDescription: m.bizDescription, unit: m.unit, caliberNote: m.caliberNote,
 })
 
 /**
@@ -321,6 +323,24 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     const parsed = z.object({ certified: z.enum(['certified', 'draft']) }).safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     return writeOutcome(c, await certifyMetric(writeDeps(ctx, c, requester), orgOf(c), id, parsed.data.certified), 200)
+  })
+
+  // 元数据写路径（spec 2026-11-01 §10.4.3 P1）：业务描述/单位/口径说明。
+  // 申报 data:query（同 draft 的口径：写闸是 manage ∪ creator 的并集，单一宿主 scope 表达不了
+  // 并集——取低档让双方都能进门，真判据 updateMetricMeta 在域层；持有 data:manage 的 PAT
+  // 需同时持 data:query 才能走此端，与草稿端点的取舍一致）。
+  r.put('/metrics/:id/meta', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = metricIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const parsed = z.object({
+      bizDescription: z.string().max(2000).nullable().optional(),
+      unit: z.string().max(64).nullable().optional(),
+      caliberNote: z.string().max(2000).nullable().optional(),
+    }).safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    return writeOutcome(c, await updateMetricMeta(writeDeps(ctx, c, requester), orgOf(c), id, parsed.data), 200)
   })
 
   // 使用统计读面（spec 2026-11-01 §10.4.3 P1）：query_audit 按 metricId 聚合 + 下线候选。

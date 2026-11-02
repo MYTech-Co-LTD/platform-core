@@ -14,8 +14,8 @@ import type { Pool, PoolClient } from 'pg'
 import type { Channel } from './authz'
 import type { MetricCertification } from './metric-governance'
 
-/** `certify` = 可信度分级升降（spec 2026-11-01 §10.4 D7）：不是定义变更，单独一个动作词。 */
-export type MetricAction = 'create' | 'update' | 'delete' | 'certify'
+/** `certify` = 可信度升降（§10.4 D7）；`meta` = 元数据标注（§10.4.3 P1）——两者都不是定义变更，单独成词。 */
+export type MetricAction = 'create' | 'update' | 'delete' | 'certify' | 'meta'
 
 /** 行的语义快照（前后态同一个形状；`params` 给对象，落库时 stringify）。 */
 export interface MetricRowSnapshot {
