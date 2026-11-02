@@ -53,10 +53,17 @@ describe.skipIf(!dbUrl)('runMigrations', () => {
     expect(await runMigrations(pool, 't_empty', dir)).toEqual([])
   })
 
-  it('目录不存在：静默跳过不抛（装载器对无迁移模块的约定）', async () => {
+  it('目录不存在：默认 skip 档静默跳过不抛（未声明迁移的模块是合法形态）', async () => {
     usedModules.push('t_missing')
     const noDir = path.join(tmpdir(), 'no-such-dir-platform-test')
     expect(await runMigrations(pool, 't_missing', noDir)).toEqual([])
+  })
+
+  it('★ 目录不存在 + onMissingDir:error ⇒ 响亮失败（#203 裁决：声明了目录就等于声称它存在）', async () => {
+    usedModules.push('t_missing_strict')
+    const noDir = path.join(tmpdir(), 'no-such-dir-platform-test-strict')
+    await expect(runMigrations(pool, 't_missing_strict', noDir, { onMissingDir: 'error' }))
+      .rejects.toThrow(/迁移目录不存在.*no-such-dir-platform-test-strict/s)
   })
 
   it('两个 *.sql 按文件名排序执行并记账两行；重跑幂等零 applied', async () => {

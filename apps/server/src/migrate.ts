@@ -60,6 +60,16 @@ export interface RunMigrationsOptions {
   lockTimeoutMs?: number
   /** 取锁告警的出口（默认 `console.warn`；测试注入以捕获，避免污染输出）。 */
   warn?: (message: string) => void
+  /**
+   * 迁移目录不存在时的口径（issue #203 的裁决，2026-11-02）：
+   *   · `'skip'`（**默认**，向后兼容）——「模块没有迁移目录」是合法形态（loader 对未声明
+   *     `migrations.dir` 的模块走约定路径，目录不存在属正常），返回空数组。
+   *   · `'error'`——调用方**声称该目录应存在**时必须给出（platform 恒真；模块在 manifest
+   *     **显式声明**了 `migrations.dir` 即入此档；测试夹具知道自己造了目录）。
+   * 为什么要有这一档：静默跳过让「目录改名/路径写错」表现为「零迁移、启动成功、之后炸在
+   * 『表不存在』」——#203 的根因。fail-fast 的边界画在「谁声称目录存在」上，而不是一刀切。
+   */
+  onMissingDir?: 'skip' | 'error'
 }
 
 /** 有界睡眠。不用 `.unref()`：启动期这条路径必须把事件循环撑住，否则进程会提前退出。 */
@@ -79,7 +89,7 @@ async function describeLockKey(client: PoolClient): Promise<string> {
 /** 有界取锁：**拿到返回 true，等满上限仍拿不到返回 false**（调用方负责抛出）。 */
 async function acquireMigrationLockBounded(
   client: PoolClient,
-  { lockRetryIntervalMs, lockTimeoutMs, warn }: Required<RunMigrationsOptions>,
+  { lockRetryIntervalMs, lockTimeoutMs, warn }: Required<Omit<RunMigrationsOptions, 'onMissingDir'>>,
 ): Promise<boolean> {
   const startedAt = Date.now()
   let attempts = 0
@@ -117,10 +127,11 @@ export async function runMigrations(
   dir: string,
   options: RunMigrationsOptions = {},
 ): Promise<string[]> {
-  const { lockRetryIntervalMs, lockTimeoutMs, warn } = {
+  const { lockRetryIntervalMs, lockTimeoutMs, warn, onMissingDir } = {
     lockRetryIntervalMs: options.lockRetryIntervalMs ?? MIGRATION_LOCK_RETRY_INTERVAL_MS,
     lockTimeoutMs: options.lockTimeoutMs ?? MIGRATION_LOCK_TIMEOUT_MS,
     warn: options.warn ?? ((message: string) => console.warn(message)),
+    onMissingDir: options.onMissingDir ?? 'skip',
   }
 
   // 列目录（**先于取锁**，issue #310）：不存在 → 静默跳过；其余错误（权限/非目录）照抛。
@@ -143,7 +154,20 @@ export async function runMigrations(
   try {
     entries = await readdir(dir)
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      // #203 裁决：目录缺失的口径由调用方声明（见 RunMigrationsOptions.onMissingDir）。
+      // strict 档的报错要**可行动**：带上绝对路径与「谁声称它该在」，否则排障又是猜。
+      if (onMissingDir === 'error') {
+        throw new Error(
+          `[migrate] 迁移目录不存在：${dir}（模块 "${module}"）\n`
+          + '  本调用方声明该目录应存在（onMissingDir=error）：platform 恒真；模块在 manifest 显式声明了\n'
+          + '  migrations.dir；测试夹具自造目录。目录改名/路径写错时**不再静默零迁移**——那会让服务\n'
+          + '  带着空 schema 正常启动、之后炸在「表不存在」，错误点远离真因（issue #203）。\n'
+          + '  若该模块本就没有迁移，请去掉 manifest 的 migrations 声明（或调用方改用默认 skip 档）。',
+        )
+      }
+      return []
+    }
     throw err
   }
   const files = entries.filter((f) => f.endsWith('.sql')).sort()

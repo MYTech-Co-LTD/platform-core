@@ -65,7 +65,7 @@ export function buildTestApp(
  * 路径**下（本仓的 Orca 工作树就叫「采集板块」）会让 `readdir` 直接 ENOENT，而 `runMigrations`
  * 对 ENOENT 是**静默跳过**（#203）⇒ 症状是「零迁移却报成功」，一路红到业务断言上。 */
 export function applyMigrations(pool: Pool): Promise<string[]> {
-  return runMigrations(pool, 'aftersales', fileURLToPath(new URL('./migrations', import.meta.url)))
+  return runMigrations(pool, 'aftersales', fileURLToPath(new URL('./migrations', import.meta.url)), { onMissingDir: 'error' })
 }
 
 /** 迁移目录里全部 *.sql 的正文，按文件名排序（与 runMigrations 同一排序口径）。 */
@@ -102,5 +102,5 @@ export async function rawMigrationSqls(): Promise<string[]> {
  * 可能已经把它迁移过了）。
  */
 export function ensureDimTables(pool: Pool): Promise<string[]> {
-  return runMigrations(pool, 'data', fileURLToPath(new URL('../data/migrations', import.meta.url)))
+  return runMigrations(pool, 'data', fileURLToPath(new URL('../data/migrations', import.meta.url)), { onMissingDir: 'error' })
 }
