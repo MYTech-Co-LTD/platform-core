@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.237.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.236.3...v0.237.0) - 2026-11-02
+- 【新增】platform: manifest 声明业务面承载端 surfaces（机检「不做双实现」） ([#1266](https://github.com/MYTech-Co-LTD/platform-core/pull/1266), [5c7da63](https://github.com/MYTech-Co-LTD/platform-core/commit/5c7da63436345d773e4b956ccd1e284519678c19))
+
+
 ## [0.236.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.236.2...v0.236.3) - 2026-11-01
 - 【修复】data: branch_indicator 契约闸去单指标假设 (#1264) ([#1265](https://github.com/MYTech-Co-LTD/platform-core/pull/1265), [6fab42b](https://github.com/MYTech-Co-LTD/platform-core/commit/6fab42b7d0c3e7220fe0bef1886914a425689655))
 
