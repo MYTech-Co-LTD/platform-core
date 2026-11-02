@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.3...v0.248.4) - 2026-11-02
+- 【修复】ci: release 走 workflow_run 终态门禁——ci 绿才发版，与 CI 不再赛跑（#1052） ([#1303](https://github.com/MYTech-Co-LTD/platform-core/pull/1303), [5e90bad](https://github.com/MYTech-Co-LTD/platform-core/commit/5e90badb2d891cf096b39e6f593f64949bcf6294))
+
+
 ## [0.248.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.2...v0.248.3) - 2026-11-02
 - 【修复】data: fct_branch_day_activity 的 CTE 改名 asof_rows（#1304） ([#1305](https://github.com/MYTech-Co-LTD/platform-core/pull/1305), [08dea0f](https://github.com/MYTech-Co-LTD/platform-core/commit/08dea0fc86966a01c1838953b7dfee27d90a6b2f))
 
