@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.4...v0.248.5) - 2026-11-02
+- 【修复】guard: 两个守卫逃检面收口——软链 compose 可见 + 带引号 double 类型名（#165/#170） ([#1306](https://github.com/MYTech-Co-LTD/platform-core/pull/1306), [be2cbc5](https://github.com/MYTech-Co-LTD/platform-core/commit/be2cbc5aa8badcb7602971c4f66ae2f878e214ab))
+
+
 ## [0.248.4](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.3...v0.248.4) - 2026-11-02
 - 【修复】ci: release 走 workflow_run 终态门禁——ci 绿才发版，与 CI 不再赛跑（#1052） ([#1303](https://github.com/MYTech-Co-LTD/platform-core/pull/1303), [5e90bad](https://github.com/MYTech-Co-LTD/platform-core/commit/5e90badb2d891cf096b39e6f593f64949bcf6294))
 
