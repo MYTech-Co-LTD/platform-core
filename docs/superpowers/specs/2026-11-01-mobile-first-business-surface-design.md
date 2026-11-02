@@ -258,3 +258,38 @@ export interface ImChannel {
 - L1 管理 API 只读的纪律**不因移动端改变**（全局约束 12：定义面禁自由 SQL，唯一编译点不变）
 - `created_by` 只是**展示与归属**，不构成新的授权维度——授权仍是 `required_scope` + 掩码
 - 移动端与 PC 共用同一套指标 API 与编译点；**不做双实现**
+
+### 10.4 治理层（2026-11-02 追加，分析师评审后补）
+
+业界（dbt Semantic Layer / Looker / Cube / PowerBI endorsed metrics）与"自建指标列表"的分水岭
+不在展示，在**治理**。分析师评审找出 5 个缺口，按 P0/P1/P2 分层：
+
+| 缺口 | 影响 | 层 |
+|---|---|---|
+| L2 编辑无发布语义：creator 改一处，全租户看数人的数字跟着变，无版本/diff/通知 | 静默改口径，无人知晓 | **P0** |
+| 无可信度分级：L1 平台口径与 L2 自建并存，用户不知道信哪个 | 两个相近指标谁权威无从判断 | **P0** |
+| 新鲜度未露出：用户拿上周数据当实时做决策 | 移动端最需要"数据截至 X 时" | **P0** |
+| 无使用统计：指标蔓延，没人敢下线 | 治理闭环缺一半 | P1 |
+| L2 孤儿 + 元数据薄 | creator 离职即孤儿 | P1 |
+
+#### 10.4.1 用户拍板（2026-11-02）
+
+| # | 决策 |
+|---|---|
+| D6 | **L2 变更走「草稿 → 确认 → 生效」**（不做即时生效）：creator 编辑产生草稿，确认后经唯一编译点编译生效；生效**必发通知**给该指标的 viewer（复用 notify：`metric.definition.changed` 事件，收件人 = 当前 `viewer` 受让方 + `required_scope` 持有者） |
+| D7 | **可信度分级**：L1 恒 `certified`（平台口径自动）；L2 默认 `draft`，**管理员审核后升 `certified`**（先手动标，审核工作流出现真实诉求再自动化） |
+
+#### 10.4.2 P0 落地清单
+
+| 项 | 落点 |
+|---|---|
+| L2 草稿/生效 | `data.metrics` 增 `draft_spec jsonb`（草稿）与 `certified text`（certified/draft）；编译点只吃 `spec`（生效列），确认 = 草稿 → spec + 事件 |
+| 变更通知 | 确认生效时 enqueue `metric.definition.changed`（viewer = ACL viewer + required_scope 持有者） |
+| 新鲜度徽标 | 移动卡片读 `017` 的新鲜度列 + SLA 木桶：绿（SLA 内）/黄（超期）/红（断流）；**不进 SLA 判据**（展示层） |
+| certified 字段 | L1 恒 certified（读侧从 `source='l1'` 推导）；L2 默认 draft，管理员可升 |
+
+#### 10.4.3 P1/P2 登记（本期不做）
+
+- 使用统计读面：`query_audit` 按 metricId 聚合（谁、多久一次、最近一次）
+- L2 下线流程：使用统计为 0 + N 天 ⇒ 候选下线清单
+- 元数据：业务描述 / 单位 / 口径说明字段
