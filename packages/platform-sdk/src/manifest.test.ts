@@ -41,6 +41,29 @@ const validManifest = {
 }
 
 describe('ManifestSchema', () => {
+  it('★ surfaces 自洽校验（spec 2026-11-01 §3）：userApp ⇒ 含 mobile；console ⇒ 含 pc', () => {
+    const base = {
+      id: 'm', name: 'M', version: '0.1.0', platform: '>=0.1',
+      permissions: [{ code: 'm:view', name: 'V' }],
+      api: { internal: [{ method: 'GET', path: '/x', scope: 'm:view' }] },
+    }
+    // 未声明 surfaces ⇒ 不拦（历史模块兼容）
+    expect(ManifestSchema.safeParse({ ...base, frontend: { userApp: { mount: '/app/m', dist: './d' } } }).success).toBe(true)
+    // userApp 但 surfaces 无 mobile ⇒ 拒
+    expect(ManifestSchema.safeParse({
+      ...base, surfaces: ['pc'], frontend: { userApp: { mount: '/app/m', dist: './d' } },
+    }).success).toBe(false)
+    // console 但 surfaces 无 pc ⇒ 拒
+    expect(ManifestSchema.safeParse({
+      ...base, surfaces: ['mobile'],
+      frontend: { console: [{ path: '/console/m', title: 'M', scope: 'm:view', entry: './c.tsx' }] },
+    }).success).toBe(false)
+    // 自洽 ⇒ 通过
+    expect(ManifestSchema.safeParse({
+      ...base, surfaces: ['mobile'], frontend: { userApp: { mount: '/app/m', dist: './d' } },
+    }).success).toBe(true)
+  })
+
   it('合法全量样例 parse 通过（api/frontend.console+userApp/migrations/bindings/notifications/config 全字段）', () => {
     const r = ManifestSchema.safeParse(validManifest)
     expect(r.success).toBe(true)

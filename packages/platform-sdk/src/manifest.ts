@@ -84,6 +84,13 @@ export interface ModuleManifest {
    *  按 DATA_DEP_REGEX 校验。判据 2（列集变更登记）待首个真实跨模块依赖出现
    *  （无案例不立标准；正典：docs/module-protocol.md「跨模块只读数据依赖」节门禁小节）。 */
   dataDependencies?: string[]
+  /**
+   * 该模块的**业务面承载端**（spec 2026-11-01 §3 判据表的机检落点）：
+   * `['pc']` / `['mobile']` / `['pc','mobile']`。**缺省不写 = 未表态**（历史模块兼容）。
+   * 写了就必须与 frontend 实际产物自洽（userApp ⇒ 含 mobile；console ⇒ 含 pc），
+   * 由 schema superRefine 校验——「不做双实现」靠这条不被慢慢侵蚀。
+   */
+  surfaces?: Array<'pc' | 'mobile'>
   frontend?: { userApp?: { mount: string; dist: string; scope?: string; title?: string; icon?: string };
     console?: Array<{ path: string; title: string; icon?: string; scope: string; entry: string }>;
     /** 模块管理页协议（2026-09-20 spec）：模块自有的「管理」组子页。门禁 = tenant:admin（组门，
@@ -175,6 +182,8 @@ const ManifestObject = z.object({
   // 与 scope∈permissions 同纪律）。门禁判据 2（列集变更登记）仍待首个真实跨模块依赖出现
   // 再实施（无案例不立标准）。
   dataDependencies: z.array(z.string()).optional(),
+  // 业务面承载端（spec 2026-11-01 §3）：缺省不写 = 未表态（历史模块兼容）
+  surfaces: z.array(z.enum(['pc', 'mobile'])).optional(),
   frontend: z.object({
     // 移动端业务应用（spec 2026-11-01 §5.2）：`scope` = 进入该应用所需的权限码（缺省 = 启用即可）
     userApp: z.object({
@@ -249,6 +258,25 @@ export const ManifestSchema = ManifestObject.superRefine((m, ctx) => {
         code: 'custom',
         path: ['guest', 'scope'],
         message: `guest.scope "${m.guest.scope}" 必须是本模块 permissions[].code 里的码`,
+      })
+    }
+  }
+
+  // 业务面端声明与实际产物必须自洽（spec 2026-11-01 §3）：写了 surfaces 才校验，不写不拦
+  if (m.surfaces !== undefined) {
+    const has = (x: 'pc' | 'mobile') => m.surfaces!.includes(x)
+    if (m.frontend?.userApp !== undefined && !has('mobile')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['surfaces'],
+        message: '声明了 frontend.userApp（移动端产物）但 surfaces 不含 "mobile"——两端声明自相矛盾',
+      })
+    }
+    if ((m.frontend?.console?.length ?? 0) > 0 && !has('pc')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['surfaces'],
+        message: '声明了 frontend.console（PC 产物）但 surfaces 不含 "pc"——两端声明自相矛盾',
       })
     }
   }
