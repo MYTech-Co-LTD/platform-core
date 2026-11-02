@@ -796,6 +796,40 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     expect(byId.get(`${L1_ID_PREFIX}fresh_unconfigured`)?.freshness).toBeUndefined()
     expect(byId.get(L1_SALES.id)?.freshness).toBeUndefined()
   })
+
+  // ── 使用统计读面（spec 2026-11-01 §10.4.3 P1；聚合/去重/跨租户细节在域层钉）──────
+  it('GET /metrics/usage：聚合 + 下线候选（诚实零 + days 边界 400；候选只含窗口内 0 次的 L2）', async () => {
+    const idHot = 'l2_usage_hot'
+    const idCold = 'l2_usage_cold'
+    await pool.query('delete from data.query_audit where org = $1 and metric_id = any($2::text[])',
+      [ORG, [idHot, idCold]])
+    expect((await post(l2Body({ id: idHot }))).status).toBe(201)
+    expect((await post(l2Body({ id: idCold }))).status).toBe(201)
+    await pool.query(
+      `insert into data.query_audit (org, user_id, channel, metric_id, verdict)
+       values ($1, 'u-x', 'session', $2, 'ok')`, [ORG, idHot])
+    try {
+      const res = await app(ORG, ['data:manage']).request('/metrics/usage')
+      expect(res.status).toBe(200)
+      const body = await res.json() as {
+        days: number
+        stats: { metricId: string; queries: number }[]
+        retireCandidates: { metricId: string; source: string }[] }
+      expect(body.days).toBe(30)
+      const byId = new Map(body.stats.map((s) => [s.metricId, s]))
+      expect(byId.get(idHot)).toMatchObject({ queries: 1 })
+      expect(byId.get(idCold)).toMatchObject({ queries: 0 })          // 诚实零
+      const ids = body.retireCandidates.map((c) => c.metricId)
+      expect(ids).toContain(idCold)
+      expect(ids, '用过的不候选').not.toContain(idHot)
+      // days 钳位：非整数/越界 ⇒ 400
+      expect((await app(ORG, ['data:manage']).request('/metrics/usage?days=0')).status).toBe(400)
+      expect((await app(ORG, ['data:manage']).request('/metrics/usage?days=abc')).status).toBe(400)
+    } finally {
+      await pool.query('delete from data.query_audit where org = $1 and metric_id = any($2::text[])',
+        [ORG, [idHot, idCold]])
+    }
+  })
 })
 
 // ── B 中档 · schema ↔ compiler 对偶（增补 §6.2 的**行为侧**）· 纯逻辑三条 ──────────

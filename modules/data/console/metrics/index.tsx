@@ -28,6 +28,25 @@ interface MetricRow {
 }
 
 /** 变更史的一行（`GET /metrics/:id/audit` 的形状）。 */
+/** 使用统计一行（GET /metrics/usage 的形状，spec §10.4.3 P1）。 */
+interface UsageStat {
+  metricId: string
+  title: string
+  source: 'l1' | 'l2'
+  createdBy: string | null
+  queries: number
+  users: number
+  lastUsedAt: string | null
+}
+/** 下线候选一行（source=l2 且窗口内 0 次使用——清单只读，动作另行）。 */
+interface RetireCandidate {
+  metricId: string
+  title: string
+  source: 'l2'
+  createdBy: string | null
+  lastUsedAt: string | null
+}
+
 interface AuditRow {
   id: number
   action: 'create' | 'update' | 'delete' | 'certify'
@@ -66,6 +85,9 @@ export default function MetricsPage() {
   // #489：变更历史抽屉。historyId=null 即关闭（不用额外一个 open 布尔量，避免两处状态打架）
   const [historyId, setHistoryId] = useState<string | null>(null)
   const [history, setHistory] = useState<AuditRow[]>([])
+  // 使用统计抽屉（spec 2026-11-01 §10.4.3 P1）；null = 关（与 history 同款单状态惯例）
+  const [usageDays, setUsageDays] = useState<number | null>(null)
+  const [usage, setUsage] = useState<{ days: number; stats: UsageStat[]; retireCandidates: RetireCandidate[] } | null>(null)
   const [messageApi, ctx] = message.useMessage()
 
   const load = () => apiGet('/metrics/all')
@@ -83,6 +105,15 @@ export default function MetricsPage() {
     setHistory([])
     apiGet(`/metrics/${id}/audit`)
       .then((b) => setHistory((b as { audit: AuditRow[] }).audit))
+      .catch((e) => messageApi.error(messageOf(e)))
+  }
+
+  /** 打开使用统计抽屉（窗口切换即重新拉取；失败只提示）。 */
+  const openUsage = (days: number) => {
+    setUsageDays(days)
+    setUsage(null)
+    apiGet(`/metrics/usage?days=${days}`)
+      .then((b) => setUsage(b as { days: number; stats: UsageStat[]; retireCandidates: RetireCandidate[] }))
       .catch((e) => messageApi.error(messageOf(e)))
   }
 
@@ -136,6 +167,9 @@ export default function MetricsPage() {
       {ctx}
       <Space>
         <Button type="primary" onClick={openCreate} disabled={l1Rows.length === 0}>新建派生指标</Button>
+        <Button onClick={() => { if (usageDays === null) openUsage(30); else openUsage(usageDays) }}>
+          使用统计
+        </Button>
         <Typography.Text type="secondary">
           派生指标只能**裁剪/别名/过滤**平台已声明的指标；口径本体改不了（要改口径请改 dbt 声明）。
         </Typography.Text>
@@ -267,6 +301,61 @@ export default function MetricsPage() {
             </>
           ),
         }))} />
+      </Drawer>
+
+      {/* 使用统计（spec 2026-11-01 §10.4.3 P1）：窗口聚合 + 下线候选（读面，不下线动作） */}
+      <Drawer title={`使用统计（窗口 ${usage?.days ?? usageDays ?? 30} 天）`} open={usageDays !== null}
+              onClose={() => setUsageDays(null)} width={640}>
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Space>
+            <Typography.Text>窗口：</Typography.Text>
+            <Select style={{ width: 120 }} value={usageDays ?? 30}
+                    onChange={(v: number) => openUsage(v)}
+                    options={[{ value: 7, label: '7 天' }, { value: 30, label: '30 天' }, { value: 90, label: '90 天' }]} />
+          </Space>
+          {usage === null ? (
+            <Typography.Text type="secondary">加载中…</Typography.Text>
+          ) : (
+            <>
+              {usage.retireCandidates.length > 0 ? (
+                <Card size="small" title={`下线候选（窗口内 0 次使用的自建指标，${usage.retireCandidates.length} 条）`}>
+                  <Space direction="vertical" style={{ width: '100%' }} size={4}>
+                    {usage.retireCandidates.map((c) => (
+                      <div key={c.metricId}>
+                        <Tag color="warning">候选</Tag>
+                        <Typography.Text>{c.title}</Typography.Text>
+                        <Typography.Text type="secondary">　{c.metricId} · 创建者 {c.createdBy ?? '（未知，028 前存量）'}</Typography.Text>
+                      </div>
+                    ))}
+                    <Typography.Text type="secondary">
+                      清单只读：下线动作走创建者的草稿流（删除），出现真实诉求再自动化（spec D7 口径）。
+                    </Typography.Text>
+                  </Space>
+                </Card>
+              ) : (
+                <Typography.Text type="secondary">没有下线候选（窗口内每条自建指标都有使用）。</Typography.Text>
+              )}
+              <Table<UsageStat>
+                key={`usage-${usage.days}`}
+                size="small"
+                rowKey="metricId"
+                columns={[
+                  { title: '指标', dataIndex: 'title', render: (_: unknown, r: UsageStat) => `${r.title}（${r.metricId}）` },
+                  { title: '来源', key: 'source', width: 90,
+                    render: (_: unknown, r: UsageStat) => r.source === 'l1' ? <Tag>平台</Tag> : <Tag color="blue">自建</Tag> },
+                  { title: '查询次数', dataIndex: 'queries', width: 90, sorter: (a: UsageStat, b: UsageStat) => a.queries - b.queries },
+                  { title: '去重用户', dataIndex: 'users', width: 90 },
+                  { title: '最近使用', key: 'last', width: 170,
+                    render: (_: unknown, r: UsageStat) => r.lastUsedAt === null
+                      ? <Typography.Text type="secondary">窗口内未使用</Typography.Text>
+                      : new Date(r.lastUsedAt).toLocaleString('zh-CN') },
+                ]}
+                dataSource={usage.stats}
+                pagination={{ pageSize: 15, showSizeChanger: false, showTotal: (n: number) => `共 ${n} 条` }}
+              />
+            </>
+          )}
+        </Space>
       </Drawer>
     </Space>
   )
