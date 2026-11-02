@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { Pool } from 'pg'
-import { runQuery, freshnessLineOf, freshnessRelationsOf, freshnessStatusOf, formatHumanDay, type QueryDeps, type SqlExecutor } from './query-service'
+import { runQuery, freshnessFaceFor, freshnessLineOf, freshnessRelationsOf, freshnessStatusOf, formatHumanDay, type QueryDeps, type SqlExecutor } from './query-service'
 import { L1_ORG, upsertL1Metric, upsertMetric } from './metric-store'
 import { applyMigrations } from '../test-util'
 import { MAX_QUERY_ROWS, type MaskSpec, type Requester } from './authz'
@@ -1024,5 +1024,76 @@ describe('runQuery 分析师面接线', () => {
     )
     expect(out.status).toBe('ok')
     expect(executed).toContain('sum(value) as value')
+  })
+})
+
+// ── freshnessFaceFor（spec 2026-11-01 §10.4.2 移动徽标读侧）· 纯逻辑 · 假池注入 ──
+// 真表（data.load_log）被并行兄弟测试文件反复 drop/create（它们各自的夹具语义），路由级
+// 碰它会竞态——故状态映射/分组/fail-open 全部在假池上钉，路由级只钉「仓库未配 ⇒ 缺席」。
+describe('freshnessFaceFor（纯逻辑 · 无需库）', () => {
+  const TODAY = '2026-11-02'
+  type Face = { status: string; watermark: string | null }
+
+  /** 假池：按「SQL 里的首个关系名」回水位；未登记的关系集回空集（= 无水位）；throwRel 抛错。 */
+  function fakePool(byRelation: Record<string, string>, throwRel?: string) {
+    const calls: string[] = []
+    return {
+      calls,
+      query: async (sql: string) => {
+        calls.push(sql)
+        const rel = /relation in \('([^']+)'/.exec(sql)?.[1] ?? ''
+        if (rel === throwRel) throw new Error('load_log exploded')
+        const wm = byRelation[rel]
+        return { rows: wm === undefined ? [] : [{ watermark: wm }] }
+      },
+    }
+  }
+  const row = (id: string, slaDays: number | null, freshnessRelations: string[] | null) =>
+    ({ id, slaDays, freshnessRelations })
+
+  it('状态映射：SLA 内 normal；超 1-2 天 late；更早 alert（与 freshnessStatusOf 同判据）', async () => {
+    const pool = fakePool({ r1: '2026-11-01', r2: '2026-10-30', r3: '2026-10-20' })
+    const out = await freshnessFaceFor(pool, [
+      row('a', 2, ['r1']),   // 差 1 天 ≤ sla 2 ⇒ normal
+      row('b', 2, ['r2']),   // 差 3 天 = sla 2 + 1 ⇒ late
+      row('c', 2, ['r3']),   // 差 13 天 ⇒ alert
+    ], TODAY)
+    expect(out.get('a')).toEqual({ status: 'normal', watermark: '2026-11-01' })
+    expect(out.get('b')).toEqual({ status: 'late', watermark: '2026-10-30' })
+    expect(out.get('c')).toEqual({ status: 'alert', watermark: '2026-10-20' })
+  })
+
+  it('sla 缺席 / 关系集空 ⇒ unknown 且不发 SQL（L2 行恒此形态，零查询开销）', async () => {
+    const pool = fakePool({})
+    const out = await freshnessFaceFor(pool, [
+      row('l2a', null, ['r1']),
+      row('l2b', 3, []),
+      row('l2c', 3, null),
+    ], TODAY)
+    for (const id of ['l2a', 'l2b', 'l2c']) expect(out.get(id)).toEqual({ status: 'unknown', watermark: null })
+    expect(pool.calls).toHaveLength(0)
+  })
+
+  it('同关系集共享一次水位查询（分组 = distinct 集数）；同集不同 sla 各算各的状态', async () => {
+    const pool = fakePool({ r1: '2026-10-30' })
+    const out = await freshnessFaceFor(pool, [
+      row('x', 2, ['r1', 'r9']),   // 集合 {r1,r9}
+      row('y', 30, ['r9', 'r1']),  // 同集（顺序无关）
+      row('z', 2, ['r1']),         // 不同集 ⇒ 另一次查询
+    ], TODAY)
+    expect(pool.calls).toHaveLength(2)
+    // 水位 10-30：x（sla 2）差 3 天 ⇒ late；y（sla 30）⇒ normal；z 另一次查询同水位同 sla ⇒ late
+    expect(out.get('x')).toEqual({ status: 'late', watermark: '2026-10-30' })
+    expect(out.get('y')).toEqual({ status: 'normal', watermark: '2026-10-30' })
+    expect(out.get('z')).toEqual({ status: 'late', watermark: '2026-10-30' })
+  })
+
+  it('fail-open：水位查询抛错 / 水位形状坏 ⇒ unknown，不外抛（词表不因徽标面坏）', async () => {
+    const boom = fakePool({}, 'bad_rel')
+    const out1 = await freshnessFaceFor(boom, [row('a', 2, ['bad_rel'])], TODAY)
+    expect(out1.get('a')).toEqual({ status: 'unknown', watermark: null })
+    const ugly = fakePool({ r1: 'not-a-date' })
+    const out2 = await freshnessFaceFor(ugly, [row('a', 2, ['r1'])], TODAY)
+    expect(out2.get('a')).toEqual({ status: 'unknown', watermark: null })
   })
 })

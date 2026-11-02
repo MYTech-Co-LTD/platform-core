@@ -98,6 +98,86 @@ export function freshnessStatusOf(watermark: string, slaDays: number, today: str
   return 'alert'
 }
 
+/** 北京的今天（`YYYY-MM-DD`）——水位的业务日基准（复用 §10.6 的 en-CA 上海格式器）。 */
+export function beijingTodayOf(now: Date = new Date()): string {
+  return DATA_AS_OF_DATE_FMT.format(now)
+}
+
+/** 指标行的新鲜度投影（移动卡片徽标消费；`unknown` 时视图层字段缺席——不捏造）。 */
+export interface MetricFreshnessFace {
+  status: FreshnessStatus
+  /** 水位日（`YYYY-MM-DD`）；无自动水位/查不到 = null。 */
+  watermark: string | null
+}
+
+/** 新鲜度面的输入行形状（`MetricRow` 的最小结构面——不拖整个存储行进来）。 */
+export interface FreshnessFaceRow {
+  id: string
+  slaDays: number | null
+  freshnessRelations: readonly string[] | null
+}
+
+/**
+ * 指标集的新鲜度面（spec 2026-11-01 §10.4.2 新鲜度徽标的**读侧**；判据与 §10.7.3 同一份：
+ * `watermarkSqlFor` + `freshnessStatusOf`，不另写第二套）。
+ *
+ * 为什么按「关系集」分组：词表页一次 N 条指标，而水位查询是**按关系集**算的——同组
+ * 指标（同一批源关系的 L1）共享一次 load_log 查询，逐条查会把 load_log 打穿。
+ * sla 缺席 / 关系集空（L2 行恒此形态）= `unknown`；声明了关系但 load_log 无 ok 行
+ * （从没物化过/断流）也 = `unknown`——「没水位」与「水位迟到」可辨（§10.7.3 同口径），
+ * 徽标上「未知」渲染成灰而不是红（红只留给 `alert`：有水位且确证超 SLA）。
+ */
+/** 水位执行器的最小结构面（pg Pool 的 query 重载全集太重；真池/假池都按这个面注入）。 */
+export interface FreshnessExecutor {
+  query(sql: string): Promise<{ rows: Record<string, unknown>[] }>
+}
+
+export async function freshnessFaceFor(
+  pool: FreshnessExecutor, rows: readonly FreshnessFaceRow[], today: string,
+): Promise<Map<string, MetricFreshnessFace>> {
+  const unknownFace: MetricFreshnessFace = { status: 'unknown', watermark: null }
+  const out = new Map<string, MetricFreshnessFace>()
+  /** 关系集键（排序去重后 join）→ 该集的指标 id 列表 */
+  const sets = new Map<string, { rels: string[]; ids: string[] }>()
+  for (const r of rows) {
+    // 显式标注（scripts/checkJs 教训同源）：三元假分支的裸 `[]` 会被推成 never[]
+    const rels: string[] = Array.isArray(r.freshnessRelations)
+      ? [...new Set(r.freshnessRelations)].sort()
+      : []
+    if (r.slaDays === null || r.slaDays === undefined || rels.length === 0) {
+      out.set(r.id, unknownFace)
+      continue
+    }
+    const key = rels.join('\n')
+    const entry = sets.get(key) ?? { rels, ids: [] }
+    entry.ids.push(r.id)
+    sets.set(key, entry)
+  }
+  await Promise.all([...sets.keys()].map(async (key) => {
+    const set = sets.get(key)
+    if (set === undefined) return
+    // ★ fail-open（spec §10.7.3 F1 同款纪律）：load_log 表缺席/旧形状/任何查询错误都只降级成
+    //   unknown——新鲜度是词表页的**附加面**，它坏了不能反噬 GET /metrics 本身。
+    let value: string | null = null
+    try {
+      const wm = await pool.query(watermarkSqlFor(set.rels))
+      value = typeof wm.rows[0]?.watermark === 'string' && WATERMARK_RE.test(wm.rows[0].watermark)
+        ? (wm.rows[0].watermark as string)
+        : null
+    } catch {
+      value = null
+    }
+    for (const id of set.ids) {
+      const sla = rows.find((r) => r.id === id)?.slaDays ?? null
+      out.set(id, value === null || sla === null
+        ? unknownFace
+        // 共享同一关系集的指标 slaDays 可能不同 ⇒ 逐 id 算状态（status 是「水位 vs 各自 sla」）
+        : { status: freshnessStatusOf(value, sla, today), watermark: value })
+    }
+  }))
+  return out
+}
+
 /**
  * 人话日期（spec §10.7.4 固定行的 {d}）：`YYYY-MM-DD` → `M月D日`。不给 ISO——固定行的
  * 硬约束是行内零工程术语、零换算负担，日期按人读的说法给。

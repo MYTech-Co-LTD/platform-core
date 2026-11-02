@@ -1,0 +1,25 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // 新写的 React 壳，从一开始就开 strict（aftersales 的 strict:false 是「整包搬」的历史
+    // 显式弱化，不是本包该抄的形状）
+    "strict": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    // ⚠️ 必须显式写（aftersales/mobile 同款实测）：baseUrl 从基配置继承到**仓根**，
+    // 相对路径会落到 仓根/src/... ⇒ TS2307 一片。锚回本包目录。
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      // ⚠️ 本包钉 react 18 类型（antd-mobile v5 只支持 16~18；apps/web 的 @types/react@19
+      // 被 pnpm hoist 到仓根，antd-mobile 的 d.ts 解析 'react' 会吃到它 ⇒ ReactNode bigint
+      // 冲突 TS2786。paths 全项目生效（含第三方 d.ts），把 react/react-dom 钉回本包 18 版。
+      "react": ["./node_modules/@types/react"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}

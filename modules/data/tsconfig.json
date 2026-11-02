@@ -7,5 +7,7 @@
     "paths": {
       "vitest": ["./node_modules/vitest/dist/index.d.ts"]
     }
-  }
+  },
+  "exclude": ["mobile"]
 }
+

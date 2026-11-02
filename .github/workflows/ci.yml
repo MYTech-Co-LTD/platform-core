@@ -386,7 +386,9 @@ jobs:
       - run: pnpm --filter @platform/web build
       # 再构建移动端（M3b-2）：H6 要断言 userApp 挂载点回的是移动端壳本体，
       # 而 loader 在 dist 不存在时**静默跳过挂载** ⇒ 不构建就等于让 H6 永远没得断。
+      # @data/mobile 同理（spec 2026-11-01 §10.2 移动指标页）。
       - run: pnpm --filter @aftersales/mobile build
+      - run: pnpm --filter @data/mobile build
       - run: pnpm exec tsx scripts/smoke-load.mjs
 
   # CD 触发：四个门禁 job 全绿后，让 openship 按本次 commit 部署（部署本身归 openship）。
