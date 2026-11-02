@@ -421,6 +421,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const myDepts = rows.some((r) => (r.requiredDepts ?? []).length > 0)
       ? [...await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))]
       : []
+    // 所有者（spec 2026-11-01 §4.4）：管理面要能看出「谁负责 / 有没有人负责」。
+    // 无 owner 行的 = 历史资产（本设计不猜测所有者，见 §4.3）；清单里显式标注，供交接清理。
+    const acls = await loadAssetAcls(ctx.pool, c.get('tenant').casdoor_org, rows.map((r) => r.id))
     return c.json({
       myDepts,
       // `version` 是**登记侧**版本（写保护的读侧）：console 从本清单拿它、写时回带。
@@ -432,6 +435,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
         requiredDepts: row.requiredDepts,
         renderer: row.renderer, version: row.version,
         publishedVersion: row.publishedVersion,
+        // 无所有者（历史资产）显式暴露；管理员可「转移」给它一个负责人（spec §4.4）
+        owner: (acls.get(row.id) ?? []).find((a) => a.relation === 'owner')?.subjectId ?? null,
         hasUnpublishedChanges:
           row.publishedVersionId !== null && row.version > (row.publishedDraftVersion ?? 0),
       })),

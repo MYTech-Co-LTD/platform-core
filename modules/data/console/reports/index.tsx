@@ -42,6 +42,8 @@ interface ReportRow {
    * `null` / 空 = 无部门门。观看清单与管理清单都回带；改门走 `PUT /reports/:id/dept-gate`。
    */
   requiredDepts?: string[] | null
+  /** 所有者（spec 2026-11-01 §4.4）：`null` = 历史资产无所有者（只读标注，转移走 API） */
+  owner?: string | null
   renderer: 'metabase' | 'platform'
   // **登记侧**版本（写保护的读侧）：`GET /reports/manage` 每行回带；三个写动作回带它
   // （PUT 走 body `expectedVersion`、DELETE 走查询串 `?expectedVersion=`）。服务端不服 ⇒ 409 STALE_WRITE。
@@ -573,6 +575,15 @@ export default function ReportsPage() {
               </Tooltip>
             )
           },
+        },
+        {
+          // 无所有者（历史资产，spec §4.4）：只读标注——交接清理时一眼看见；转移走
+          // `PUT /reports/:id/owner`（owner 或 data:manage）
+          title: '所有者', render: (_: unknown, r: ReportRow) => (
+            r.owner == null
+              ? <Tooltip title="历史资产：创建者未知（ACL 落地前）。管理员可转移一个负责人"><Tag color="orange">无所有者</Tag></Tooltip>
+              : <span>{r.owner}</span>
+          ),
         },
         {
           title: '操作', render: (_: unknown, r: ReportRow) => (
