@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.238.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.237.0...v0.238.0) - 2026-11-02
+- 【新增】data: 管理清单回带 owner + 控制台「所有者」列（P4 收尾） ([#1268](https://github.com/MYTech-Co-LTD/platform-core/pull/1268), [1326b0a](https://github.com/MYTech-Co-LTD/platform-core/commit/1326b0a2b2271d40b32c2ebbb086ebe0a614ba03))
+
+
 ## [0.237.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.236.3...v0.237.0) - 2026-11-02
 - 【新增】platform: manifest 声明业务面承载端 surfaces（机检「不做双实现」） ([#1266](https://github.com/MYTech-Co-LTD/platform-core/pull/1266), [5c7da63](https://github.com/MYTech-Co-LTD/platform-core/commit/5c7da63436345d773e4b956ccd1e284519678c19))
 
