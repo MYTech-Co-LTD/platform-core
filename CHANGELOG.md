@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.245.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.244.0...v0.245.0) - 2026-11-02
+- 【新增】data: L2 元数据移动端消费面——卡片展示 + creator 编辑弹窗（spec §10.4.3） ([#1293](https://github.com/MYTech-Co-LTD/platform-core/pull/1293), [ab6d7ac](https://github.com/MYTech-Co-LTD/platform-core/commit/ab6d7acdb307c3e098803709e23ba66e4e4f830f))
+
+
 ## [0.244.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.243.0...v0.244.0) - 2026-11-02
 - 【新增】data: P1 收尾——L1 unit 声明面机制 + 移动端 certified 管理入口（self.scopes） ([#1289](https://github.com/MYTech-Co-LTD/platform-core/pull/1289), [2787034](https://github.com/MYTech-Co-LTD/platform-core/commit/27870349fc43101d48d44adbd917a34a4d5d4b66))
 
