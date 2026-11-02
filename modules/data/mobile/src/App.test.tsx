@@ -33,7 +33,8 @@ const LIST = {
       freshness: { status: 'normal', watermark: '2026-11-01' } },
     { id: 'm:mine', title: '我的毛利', description: '自建', certified: 'draft', source: 'l2', createdBy: 'u-me' },
     { id: 'm:other', title: '别人的', description: '自建', certified: 'draft', source: 'l2', createdBy: 'u-someone-else',
-      freshness: { status: 'alert', watermark: '2026-10-01' } },
+      freshness: { status: 'alert', watermark: '2026-10-01' },
+      bizDescription: '出库口径毛利', unit: '元' },
   ],
   self: { userId: 'u-me' },
 }
@@ -119,5 +120,27 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
     expect(btn.length).toBeGreaterThan(0)          // L1 卡不给按钮（读侧恒 certified）
     fireEvent.click(btn[0]!)
     await waitFor(() => expect([...puts]).toContain('PUT certified'))
+  })
+
+  it('元数据展示：带标注的显示业务描述+单位；未标注的诚实显「未标注」（不编默认值）', async () => {
+    render(<App />)
+    await waitFor(() => expect(screen.getByText('我的毛利')).toBeTruthy())
+    expect(screen.getByText(/业务描述：出库口径毛利 · 单位：元/)).toBeTruthy()
+    expect(screen.getAllByText('业务描述：未标注').length).toBeGreaterThan(0)   // 夹具里两条未标注（mine + L1）
+  })
+
+  it('元数据编辑（creator）：自己的 L2 有「元数据」入口 → 三字段弹窗 → PUT meta 全量到位后列表刷新', async () => {
+    const puts: string[] = []
+    mockFetch([
+      { match: (u, m) => u.endsWith('/meta') && m === 'PUT',
+        respond: () => { puts.push('PUT meta'); return json(200, { ok: true }) } },
+      { match: (u, m) => u.includes('/api/modules/data/metrics') && m === 'GET' && !u.includes('/draft'),
+        respond: () => json(200, LIST) },
+    ])
+    render(<App />)
+    fireEvent.click(await waitFor(() => screen.getByText('元数据')))
+    fireEvent.change(await waitFor(() => screen.getByPlaceholderText('给看数人读的话')), { target: { value: '毛利率=毛利÷收入' } })
+    fireEvent.click(await waitFor(() => screen.getByText('保存元数据')))
+    await waitFor(() => expect([...puts]).toContain('PUT meta'))
   })
 })
