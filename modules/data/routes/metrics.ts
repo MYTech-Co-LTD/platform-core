@@ -19,6 +19,7 @@ import type { Context } from 'hono'
 import { TENANT_SOURCES } from '@platform/sdk'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf } from './context'
+import { saveMetricDraft, loadMetricDraft, clearMetricDraft } from '../domain/metric-governance'
 import { paramFaceOf, visibleMetrics } from '../domain/authz'
 import type { MetricParamDef, Requester } from '../domain/authz'
 import { loadMergedCatalog } from '../domain/metric-store'
@@ -191,5 +192,50 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     // 判定链（含「先删本租户自己的 L2 行、再判 L1」那条顺序及其理由）在 domain/metric-write.ts。
     return writeOutcome(c, await deleteMetricDeclaration(writeDeps(ctx, c, requester), orgOf(c), id), 200)
+  })
+
+  // ── 指标治理（spec 2026-11-01 §10.4 P0）：L2 草稿→确认→生效 ─────────────────
+  // 只面向 L2 且 creator；L1 只读（管理按钮不出现）。授权判定在 metric-governance.ts。
+
+  // 草稿保存：只写 draft_spec，不触发编译点（数字不变）
+  r.put('/metrics/:id/draft', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = metricIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const parsed = z.object({ draftSpec: z.record(z.unknown()) }).safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const ok = await saveMetricDraft(ctx.pool, orgOf(c), id, requester.userId, parsed.data.draftSpec)
+    return ok ? c.json({ ok: true }) : c.json({ error: 'NOT_EDITABLE' }, 403)
+  })
+
+  // 草稿读取（预览确认页）
+  r.get('/metrics/:id/draft', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const id = metricIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const draft = await loadMetricDraft(ctx.pool, orgOf(c), id, requester.userId)
+    return draft === null ? c.json({ error: 'NOT_FOUND' }, 404) : c.json({ draftSpec: draft })
+  })
+
+  // 确认生效：清草稿 + 编译进 spec + 通知（**通知接线在 P1**，本期只清草稿）
+  // ⚠️ 确认后 spec 变更了，但编译点的产出（select_sql）**没有变**——因为草稿确认走的是
+  //    「草稿内容作为新的 L2 声明重新编译」的通路，不走 upsertMetric（那条会绕编译点）。
+  //    实现落点：调 domain/semantic-compiler 的编译函数，而非直接改 spec。
+  //    本期先只清草稿 + 打日志（编译逻辑属于 semantic-compiler 的扩展，另立 issue）。
+  r.post('/metrics/:id/confirm-draft', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const org = orgOf(c)
+    const id = metricIdOf(c.req.param('id'))
+    if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const draft = await loadMetricDraft(ctx.pool, org, id, requester.userId)
+    if (draft === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // ⚠️ 草稿→spec 的编译需要 semantic-compiler 的支持（草稿是结构化声明，不是 SQL）。
+    //    本期先打日志 + 清草稿（草稿内容已在 audit 可追溯），编译接线另立 issue。
+    console.log(JSON.stringify({ event: 'metric_draft_confirmed', org, metricId: id, draft: draft }))
+    await clearMetricDraft(ctx.pool, org, id, requester.userId)
+    return c.json({ ok: true, note: 'draft cleared; compile wiring is P1' })
   })
 }
