@@ -367,6 +367,8 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
       metricUsageStats(ctx.pool, orgOf(c), days),
       retireCandidatesOf(ctx.pool, orgOf(c), days),
     ])
-    return c.json({ days, stats, retireCandidates })
+    // self：候选卡的删除入口按 creator 门显示（与 DELETE 的后端 creator 闸对齐——
+    // 给所有人放删除按钮 = 假 affordance；#1294）。与 GET /metrics 的 self 同形。
+    return c.json({ days, stats, retireCandidates, self: { userId: requester.userId } })
   })
 }

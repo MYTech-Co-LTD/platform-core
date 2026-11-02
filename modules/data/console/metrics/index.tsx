@@ -94,7 +94,9 @@ export default function MetricsPage() {
   const [history, setHistory] = useState<AuditRow[]>([])
   // 使用统计抽屉（spec 2026-11-01 §10.4.3 P1）；null = 关（与 history 同款单状态惯例）
   const [usageDays, setUsageDays] = useState<number | null>(null)
-  const [usage, setUsage] = useState<{ days: number; stats: UsageStat[]; retireCandidates: RetireCandidate[] } | null>(null)
+  const [usage, setUsage] = useState<{
+    days: number; stats: UsageStat[]; retireCandidates: RetireCandidate[]; self?: { userId: string }
+  } | null>(null)
   // 元数据编辑弹窗（§10.4.3 P1）：null = 关。只对 L2 行开放（L1 平台口径，租户不得注解 → 404）。
   const [metaDraft, setMetaDraft] = useState<{
     id: string; title: string; biz: string; unit: string; note: string
@@ -124,7 +126,9 @@ export default function MetricsPage() {
     setUsageDays(days)
     setUsage(null)
     apiGet(`/metrics/usage?days=${days}`)
-      .then((b) => setUsage(b as { days: number; stats: UsageStat[]; retireCandidates: RetireCandidate[] }))
+      .then((b) => setUsage(b as {
+        days: number; stats: UsageStat[]; retireCandidates: RetireCandidate[]; self?: { userId: string }
+      }))
       .catch((e) => messageApi.error(messageOf(e)))
   }
 
@@ -359,6 +363,15 @@ export default function MetricsPage() {
                         <Tag color="warning">候选</Tag>
                         <Typography.Text>{c.title}</Typography.Text>
                         <Typography.Text type="secondary">　{c.metricId} · 创建者 {c.createdBy ?? '（未知，028 前存量）'}</Typography.Text>
+                        {/* 删除入口按 creator 门（#1294）：后端 DELETE 对非 creator 403，别放假按钮 */}
+                        {c.createdBy !== null && c.createdBy === usage.self?.userId ? (
+                          <Popconfirm title={`删除派生指标 ${c.metricId}？`} okText="确认删除" cancelText="取消"
+                                      onConfirm={async () => { await remove(c.metricId); openUsage(usage.days) }}>
+                            <Button danger size="small" style={{ marginLeft: 8 }}>删除</Button>
+                          </Popconfirm>
+                        ) : (
+                          <Typography.Text type="secondary" style={{ marginLeft: 8 }}>仅创建者可删</Typography.Text>
+                        )}
                       </div>
                     ))}
                     <Typography.Text type="secondary">
