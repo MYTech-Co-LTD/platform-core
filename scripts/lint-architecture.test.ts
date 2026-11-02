@@ -7,7 +7,7 @@
 // 每个脚本的第一个位置参数是 rootDir（默认仓库根），fixtures 因此可以落在系统临时目录里，
 // 与真实仓库完全隔离；最后一组用例反过来钉住「真实仓库必须干净」（exit 0）。
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -585,6 +585,18 @@ describe('check-compose: B7 双白名单（P1 数据面 compose，issue #150）'
     expect(r.status).toBe(1)
     expect(out(r)).toContain('deploy/data-compose.yml')
     expect(out(r)).toContain('未绑回环')
+  })
+
+  it('★ 软链形态的第三份 compose 也违规（#165：walk 此前对符号链接完全不可见）', () => {
+    const root = fixture({
+      'deploy/docker-compose.yml': MINIMAL_COMPOSE,
+      'deploy/data-compose.yml': DATA_COMPOSE,
+    })
+    // 软链**指向白名单内**的文件也不行——白名单钉的是路径名，「这是第三份 compose 文件」由路径定
+    symlinkSync('data-compose.yml', join(root, 'deploy', 'link-compose.yml'))
+    const r = run('check-compose.mjs', root)
+    expect(r.status).toBe(1)
+    expect(out(r)).toContain('deploy/link-compose.yml')
   })
 
   it('★ 第三份 compose 仍违规（白名单只有两份）', () => {

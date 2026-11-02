@@ -93,8 +93,9 @@
 //    `asdouble` 这类标识符（真 SQL 里不存在），是纯粹的误伤面。
 //    ⚠️ 诚实标注：`double precision` 是否同样受坑 #4 影响的**未实测** —— 本条放行是「不误伤 PG
 //    合法写法」的取舍，不是「已证实安全」。真出事时改这里，别改调用方。
-//    ⚠️ 已知漏检（评审 M-2，本轮有意不修）：带引号的类型名 `::"double"` 同属坑 #4 形态但**不拦**
-//    —— 正则要求 `double` 紧随 `::`，引号挡住了。真实仓无此写法，概率远低于 `CAST`。
+//    ✅ 已知漏检收口（#170）：带引号的类型名 `::"double"` / `AS "double"` 已拦（正则反向引用匹配
+//    无引号与成对双引号两形态）。残余：单引号**字符串字面量**里出现该形态会误报——fail-closed
+//    方向，与 maskSqlComments 头注声明的引号语义边界同源，维持接受。
 // ③ **违规行号字段恒在**（`scripts/` 是 checkJs，JSDoc 字面量类型会被加宽 ⇒ 可辨识联合收窄在这里
 //    会静默失效）。故 `Violation` 是**单形状、字段恒在**：`{ file, line, message }`，无行号的
 //    检查项写 `line: 0`（打印时不带 `:0`，**不伪造 `:1`** —— 与 check-compose 的无行号报错同旨）。
@@ -167,8 +168,13 @@ export const SUBJECT_ORG_EXEMPT = new Map([
 ])
 /** 规则 ①：`r['列名']`（单双引号都算；坑 #5 要的是「点名取列」这个构造，不是某一种引号） */
 const R_COLUMN_RE = /r\s*\[\s*['"]/
-/** 规则 ②：DuckDB shell 类型 `double`——**两种写法都拦**（`::double` 与 `CAST(x AS double)`，见头注判断②）；`double precision` 是 PG 原生类型 ⇒ 放行 */
-const DOUBLE_CAST_RE = /(?:::\s*|\bas\s+)double\b(?!\s+precision)/gi
+/** 规则 ②：DuckDB shell 类型 `double`——**两种写法都拦**（`::double` 与 `CAST(x AS double)`，见头注判断②）；`double precision` 是 PG 原生类型 ⇒ 放行。
+ *  #170 收口：**带引号的类型名**（`::"double"` / `AS "double"`）同属「拿裸 double 去查类型名」路径，
+ *  用反向引用同时匹配「无引号」与「成对双引号」两形态；单引号字符串字面量里出现该形态仍会误报
+ *  （fail-closed 方向，maskSqlComments 头注已声明的边界，#170 表格第 2 条维持接受）。 */
+//    ⚠️ 右边界用 `(?![\w])` **不是** `\b`：带引号形态中 `double` 后紧跟闭合引号，`"` 与后续
+//    空格都是非词字符 ⇒ `\b` 不成立（实测：`::"double"` 在 `\b` 版本下恒不匹配，红格当场抓出）。
+const DOUBLE_CAST_RE = /(?:::\s*|\bas\s+)("?)double\1(?![\w])(?!\s+precision)/gi
 /** 规则 ③：`union_by_name` 兜列集漂移 */
 const UNION_BY_NAME_RE = /union_by_name/gi
 /** 规则 ⑥：指标名的命名空间形态 `<源>:<业务域>:<指标>`（三段都小写蛇形） */

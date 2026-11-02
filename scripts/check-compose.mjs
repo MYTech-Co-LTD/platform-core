@@ -274,7 +274,11 @@ export async function findViolations(rootDir) {
         if (!SKIP_DIRS.has(entry.name)) await walk(join(dir, entry.name))
         continue
       }
-      if (!entry.isFile()) continue
+      // 符号链接也按**文件**参与规则一（#165）：`entry.isFile()` 对软链恒 false ⇒ 软链此前
+      // 对 walk 完全不可见，「第三条 compose」可以用一条软链凭空多出来而全绿。判定按**链接
+      // 自身的路径名**（白名单名单制的语义就是把路径钉死），指向哪不影响「这是一份 compose 文件」。
+      // 软链**目录**不在此列（不跟随，避免环）——缺这一口的风险远低于把 walk 做成会自环的东西。
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue
       const rel = toPosix(relative(rootDir, join(dir, entry.name)))
       if (FRAGMENT_RE.test(rel)) {
         violations.push({ file: rel, message: `compose 片段（*compose*fragment*）——编排事实源只许 ${ALLOWED.join(' / ')}` })
