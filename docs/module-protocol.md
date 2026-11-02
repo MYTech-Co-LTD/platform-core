@@ -177,6 +177,10 @@ scope 的绝对断言，改掉）。`GET /api/platform/config` 是**有意的披
     `{"error":"UNAUTHENTICATED"}`，响应逐字相同，停用与否无从区分；**已登录**用户照旧拿到
     404（那条路径上闸门照常判定）。**注意这条的 scope 只到模块 API 面**——系统面上 `/config`
     照旧匿名公开该租户的启用清单（见上一节的 ⚠️）。
+- **业务面承载端声明**（spec 2026-11-01 §3，2026-11-02 起）：manifest 顶层可写
+  `surfaces: [pc, mobile]`。**不写 = 未表态**（历史模块兼容，不拦）；写了就必须与产物自洽——
+  `frontend.userApp` ⇒ 含 `mobile`，`frontend.console` ⇒ 含 `pc`，否则 schema 校验失败。
+  目的：把「一个功能只做一个端、不做双实现」从口头约定变成机检。
 - **userApp 静态已吃同一道启用闸门**（售后 M1，2026-09-15 收口）：`frontend.userApp` 的
   静态目录在 `mountPath + '/*'` 上先挂模块 API 同款 `gate` 再 serveStatic——匿名放行
   （SPA 壳登录前必须可载，业务 API 自会 401/404），**已登录 + 停用 ⇒ 404 与 API 面同形**。
