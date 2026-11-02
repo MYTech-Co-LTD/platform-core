@@ -21,6 +21,7 @@ import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf } from './context'
 import { saveMetricDraft, loadMetricDraft, clearMetricDraft } from '../domain/metric-governance'
 import { certifyMetric } from '../domain/metric-write'
+import { metricUsageStats, retireCandidatesOf } from '../domain/metric-usage'
 import { paramFaceOf, visibleMetrics } from '../domain/authz'
 import type { MetricParamDef, Requester } from '../domain/authz'
 import { loadMergedCatalog } from '../domain/metric-store'
@@ -320,5 +321,25 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
     const parsed = z.object({ certified: z.enum(['certified', 'draft']) }).safeParse(await c.req.json().catch(() => null))
     if (!parsed.success) return c.json({ error: 'INVALID_BODY' }, 400)
     return writeOutcome(c, await certifyMetric(writeDeps(ctx, c, requester), orgOf(c), id, parsed.data.certified), 200)
+  })
+
+  // 使用统计读面（spec 2026-11-01 §10.4.3 P1）：query_audit 按 metricId 聚合 + 下线候选。
+  // 门 = data:manage（与 /metrics/audit 同档——「谁在用」是管理信息）。
+  // days 缺省 30、钳 1..365（给个能交互的窗口上限，别让一次聚合扫全史）。
+  r.get('/metrics/usage', async (c) => {
+    const requester = requesterOf(c)
+    if (requester === null) return c.json({ error: 'UNAUTHENTICATED' }, 403)
+    const daysRaw = c.req.query('days')
+    let days = 30
+    if (daysRaw !== undefined) {
+      const n = Number(daysRaw)
+      if (!Number.isInteger(n) || n < 1 || n > 365) return c.json({ error: 'INVALID_DAYS' }, 400)
+      days = n
+    }
+    const [stats, retireCandidates] = await Promise.all([
+      metricUsageStats(ctx.pool, orgOf(c), days),
+      retireCandidatesOf(ctx.pool, orgOf(c), days),
+    ])
+    return c.json({ days, stats, retireCandidates })
   })
 }

@@ -76,6 +76,9 @@ api:
     # 可信度分级升降（spec §10.4 D7）：管理员动作，门与 /metrics/all 同档（data:manage）；
     # L1 只读由 certifyMetric 判（403，读侧恒 certified 从 source 推导，写列会被 sync 冲掉）
     - { method: PUT,    path: /metrics/:id/certified,     scope: data:manage }
+    # 使用统计读面（spec 2026-11-01 §10.4.3 P1）：query_audit 按 metricId 聚合 + 下线候选清单。
+    # 门与 /metrics/audit 同档（data:manage）——「谁在用」是管理信息；下线候选只含本租户 L2
+    - { method: GET,    path: /metrics/usage,             scope: data:manage }
     # ── agent 接入面（**已落地**；#486）──────────────────────────────────────────────
     # 两条通道，对 agent 与人**同形**（都是 HTTP/MCP + 同一个 scope，管理面不自建第二份判定）：
     #   · HTTP：上面那四条 /metrics 写/读端点（PAT 通道即可调）；
