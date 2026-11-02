@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.239.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.238.1...v0.239.0) - 2026-11-02
+- 【新增】data: 指标治理第一步——L2 草稿声明面 + certified/created_by（spec §10.4） ([#1271](https://github.com/MYTech-Co-LTD/platform-core/pull/1271), [3519ad8](https://github.com/MYTech-Co-LTD/platform-core/commit/3519ad815f06eca74ce49372c39a36d315878dc0))
+
+
 ## [0.238.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.238.0...v0.238.1) - 2026-11-02
 - 【优化】data: 明细 staging 物化表翻直读湖视图，维度快照保留物化 (#1275) ([#1276](https://github.com/MYTech-Co-LTD/platform-core/pull/1276), [e091878](https://github.com/MYTech-Co-LTD/platform-core/commit/e0918783d87ee19010aa94105622dc2633c661b2))
 
