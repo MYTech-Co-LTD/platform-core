@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.246.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.245.2...v0.246.0) - 2026-11-02
+- 【新增】data: 下线候选的操作入口——usage 响应带 self + 候选卡按 creator 门给删除（spec §10.4.3） ([#1295](https://github.com/MYTech-Co-LTD/platform-core/pull/1295), [78f0f7f](https://github.com/MYTech-Co-LTD/platform-core/commit/78f0f7f1a3a51b161b22cf2379c0a465e20b97d2))
+- 【修复】data: 换货形状审计负值判据加分位容差（#1290） ([#1291](https://github.com/MYTech-Co-LTD/platform-core/pull/1291), [7394547](https://github.com/MYTech-Co-LTD/platform-core/commit/739454761e44d653d68d20bf481eedfef6d4ab21))
+
+
 ## [0.245.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.245.1...v0.245.2) - 2026-11-02
 - 【修复】data: 调拨单自然键纳入 use_unit（#1287） ([#1288](https://github.com/MYTech-Co-LTD/platform-core/pull/1288), [e96bc62](https://github.com/MYTech-Co-LTD/platform-core/commit/e96bc62db6053056064a19043612e0e1f6f03de6))
 
