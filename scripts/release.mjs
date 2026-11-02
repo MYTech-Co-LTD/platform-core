@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
  * release.mjs — 公司标准发布脚本(配套 check-pr-discipline.mjs)
- * 每次 push main: 解析上个 tag 以来的 conventional commits
+ * 触发: release.yml 改为 **workflow_run（ci 在 main 上 conclusion=success）**（#1052 终态门禁，
+ * 2026-11-02）——不再与 ci 并行赛跑；本脚本假定「已在一个 ci 全绿的主提交上」执行：
+ * 解析上个 tag 以来的 conventional commits
  *   → CHANGELOG.md 每条带【新增】/【优化】/【修复】前缀(关联 PR/commit)
  *   → 提交 chore(release) [skip ci](防循环) + 打 tag vN.N.N
  *   → gh release create(Release Notes = 同款行内前缀条目)

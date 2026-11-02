@@ -1,12 +1,27 @@
 # release.yml —— 发版（公司标准 dev-discipline §1.4）
-# push main 后由 release.mjs 解析上个 tag 以来的 conventional commits：
+# 由 release.mjs 解析上个 tag 以来的 conventional commits：
 #   CHANGELOG 每条带【新增】/【优化】/【修复】→ 提交 chore(release) → 打 tag → GitHub Release
 # 纪律：可见类型提交必须带 (#N) PR 引用，否则 release.mjs 拒绝发版。
 # 前置：仓库 Actions 权限需 Read and write（见 templates/discipline/README.md「注意」）。
+#
+# ★ 终态门禁（issue #1052，2026-11-02）：触发从 `push: main` 改为 **`workflow_run`（ci 完成）**。
+#   旧形态与 ci.yml **并行赛跑**——ci 红（flake/锚漏更）时 release 照发，实测两连
+#   （ab564c79 → v0.197.0、b794c24e → v0.198.0），其中一例还留下「发版成功但 deploy 被 skip」的错位态。
+#   现在唯一入口 = 「ci 工作流在 main 上跑完且 conclusion=success」，发版天然排在整套门禁之后
+#   （含 deploy job——它也在 ci.yml 里，等它绿完才发版，错位态一并消除）。
+#
+# 三个不动点，改触发方式时别丢：
+#   ① **checkout 必须钉 workflow_run.head_sha**——workflow_run 默认检出的不是那次 run 的提交；
+#      钉错 = 对着「门禁测过之外的树」发版。
+#   ② **event 必须限 push**：ci.yml 也跑 PR（pull_request 事件），workflow_run 对 PR run 同样会触发。
+#   ③ **防循环**：release bot 自己的提交带 [skip ci]（且 GITHUB_TOKEN 的 push 默认不触发 workflow，
+#      双保险）——没有它，发版提交会再次跑 ci → 再次触发 release。
 name: release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
     branches: [main]
 
 permissions:
@@ -21,11 +36,17 @@ jobs:
     name: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # 防循环：release bot 自己的提交不再触发
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    # 终态门禁本体：ci 必须 success；只认 main 上的 push run（PR run 不算）；
+    # bot 自己的发版提交不再二次发版。
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && !contains(github.event.workflow_run.head_commit.message, '[skip ci]')
     steps:
       - uses: actions/checkout@v4
         with:
+          # ① 钉「那次 ci 真正测过的提交」，不是默认分支当前 HEAD
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-node@v4
