@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.247.0...v0.248.0) - 2026-11-02
+- 【新增】data: 移动端表达式指标编辑器——两操作数算式条（spec §10.4 遗留项） ([#1299](https://github.com/MYTech-Co-LTD/platform-core/pull/1299), [c05b5b9](https://github.com/MYTech-Co-LTD/platform-core/commit/c05b5b9740fc7e95d1c7c91ed5c6aaf49f7a2c15))
+
+
 ## [0.247.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.246.0...v0.247.0) - 2026-11-02
 - 【新增】data: L1 单位赋值——机械可推导子集 46 条 + 契约闸放行 unit 键（spec §10.4.3） ([#1297](https://github.com/MYTech-Co-LTD/platform-core/pull/1297), [b9637e6](https://github.com/MYTech-Co-LTD/platform-core/commit/b9637e65f5f7038b769f57179b8bee6aff01dc62))
 
