@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.6](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.5...v0.248.6) - 2026-11-02
+- 【修复】data: 自绘图横轴——x 轴升序（#399 A）与日期按上海时区格式化（#400） ([#1307](https://github.com/MYTech-Co-LTD/platform-core/pull/1307), [7c9ec3f](https://github.com/MYTech-Co-LTD/platform-core/commit/7c9ec3f5130478161a552a8e5269f453505afbce))
+
+
 ## [0.248.5](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.4...v0.248.5) - 2026-11-02
 - 【修复】guard: 两个守卫逃检面收口——软链 compose 可见 + 带引号 double 类型名（#165/#170） ([#1306](https://github.com/MYTech-Co-LTD/platform-core/pull/1306), [be2cbc5](https://github.com/MYTech-Co-LTD/platform-core/commit/be2cbc5aa8badcb7602971c4f66ae2f878e214ab))
 
