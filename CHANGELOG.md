@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.3](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.2...v0.248.3) - 2026-11-02
+- 【修复】data: fct_branch_day_activity 的 CTE 改名 asof_rows（#1304） ([#1305](https://github.com/MYTech-Co-LTD/platform-core/pull/1305), [08dea0f](https://github.com/MYTech-Co-LTD/platform-core/commit/08dea0fc86966a01c1838953b7dfee27d90a6b2f))
+
+
 ## [0.248.2](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.1...v0.248.2) - 2026-11-02
 - 【修复】data: 会员审计 NULL 键 join 失效（#1301） ([#1302](https://github.com/MYTech-Co-LTD/platform-core/pull/1302), [ed19f6f](https://github.com/MYTech-Co-LTD/platform-core/commit/ed19f6fcd9df81294f00b2937d0809a1627bd9ed))
 
