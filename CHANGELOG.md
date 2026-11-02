@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.244.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.243.0...v0.244.0) - 2026-11-02
+- 【新增】data: P1 收尾——L1 unit 声明面机制 + 移动端 certified 管理入口（self.scopes） ([#1289](https://github.com/MYTech-Co-LTD/platform-core/pull/1289), [2787034](https://github.com/MYTech-Co-LTD/platform-core/commit/27870349fc43101d48d44adbd917a34a4d5d4b66))
+
+
 ## [0.243.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.242.0...v0.243.0) - 2026-11-02
 - 【新增】data: P1 指标元数据——业务描述/单位/口径说明三字段（spec §10.4.3） ([#1284](https://github.com/MYTech-Co-LTD/platform-core/pull/1284), [8cd3110](https://github.com/MYTech-Co-LTD/platform-core/commit/8cd311024ab65eacf1dccc9a33f6d227b2431f68))
 
