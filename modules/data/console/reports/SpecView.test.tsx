@@ -271,6 +271,55 @@ describe('自绘渲染器 SpecView', () => {
     expect(option.xAxis.data).toEqual(['2026-09-01', '2026-09-02'])
   })
 
+  it('★ #400：日期型值按 Asia/Shanghai 落到**正确业务日**——上海零点形态（前日 16:00Z）不再差一天，非午夜时间戳带 HH:mm', async () => {
+    stub({
+      panels: [
+        { chart: 'line', title: '趋势', metricId: 'm1', dims: ['day'], args: {}, span: 24 },
+        { chart: 'table', title: '明细', metricId: 'm2', dims: ['day'], columns: ['day', 'created_at'], args: {}, span: 24 },
+      ],
+    }, {
+      m1: {
+        columns: ['value', 'day'],
+        // pg 在 Asia/Shanghai 进程时区下把 date 解析为「上海零点」⇒ UTC ISO 落在前一天。
+        rows: [['1', new Date('2026-08-14T16:00:00.000Z')], ['2', new Date('2026-08-15T16:00:00.000Z')]],
+      },
+      m2: {
+        columns: ['value', 'day', 'created_at'],
+        rows: [['1', '2026-08-15', '2026-08-15T03:27:00.000Z']],
+      },
+    }, new Set())
+    renderView()
+    await waitFor(() => expect(mInit).toHaveBeenCalled())
+    const chartStub = mInit.mock.results[0].value as unknown as { setOption: ReturnType<typeof vi.fn> }
+    const option = chartStub.setOption.mock.calls[0][0] as { xAxis: { data: string[] } }
+    // 上海零点形态 = 业务日 8-15 / 8-16（旧口径截 UTC 日期部分会显示 8-14/8-15，差一天）
+    expect(option.xAxis.data).toEqual(['2026-08-15', '2026-08-16'])
+    // 表格：date 列纯日期；真时间戳按上海带 HH:mm（03:27Z = 11:27 上海）
+    await waitFor(() => expect(screen.getByText('2026-08-15')).toBeInTheDocument())
+    expect(screen.getByText('2026-08-15 11:27')).toBeInTheDocument()
+  })
+
+  it('★ #399：x 轴按维度值升序（返回行序不可信——SQL 无 ORDER BY）；数字串 numeric 感知（2 在 10 前）', async () => {
+    stub({
+      panels: [{ chart: 'line', title: '趋势', metricId: 'm1', dims: ['bizday'], args: {}, span: 24 }],
+    }, {
+      m1: {
+        columns: ['value', 'bizday'],
+        // 乱序返回（无 ORDER BY 的真实形态）
+        rows: [['3', '2026-09-03'], ['1', '2026-09-01'], ['2', '2026-09-02']],
+      },
+    }, new Set())
+    renderView()
+    await waitFor(() => expect(mInit).toHaveBeenCalled())
+    const chartStub = mInit.mock.results[0].value as unknown as { setOption: ReturnType<typeof vi.fn> }
+    const option = chartStub.setOption.mock.calls[0][0] as {
+      xAxis: { data: string[] }; series: Array<{ data: Array<number | null> }>
+    }
+    expect(option.xAxis.data).toEqual(['2026-09-01', '2026-09-02', '2026-09-03'])
+    // 值随 x 对齐（排序后 series 数据同步重排——不是只排标签）
+    expect(option.series[0]!.data).toEqual([1, 2, 3])
+  })
+
   it('★ 多系列按透视数据集装配（每系列一个 data 数组；xAxis.data 用维度值）——spec §5 实测坑 1', async () => {
     // dims 两个维度：bizday 做 x 轴、system_book 做系列 ⇒ 必须透视成 2 系列 × 2 点。
     // 「把多出来的点塞进一个系列」的错法会让 series 长度=1 且 data 长 4（点被连成一条线）。
@@ -429,8 +478,9 @@ describe('自绘渲染器 SpecView', () => {
     const bar = options.find((o) => o.baseOption?.series[0]?.type === 'bar')!
     const line = options.find((o) => o.baseOption === undefined)!
 
-    // 柱状图：类目全量保留（不是被抽稀的 4 个），且窄屏媒体查询把标签钉成「全显 + 倾斜 + 截断」
-    expect(bar.baseOption!.xAxis.data).toEqual(labels)
+    // 柱状图：类目全量保留（不是被抽稀的 4 个/8→4），且窄屏媒体查询把标签钉成「全显 + 倾斜 + 截断」。
+    // 顺序断言按 #399 口径 A 更新：x 轴恒按维度值升序（这里用排序副本对照——旧期望钉的是返回行序）
+    expect(bar.baseOption!.xAxis.data).toEqual([...labels].sort((a, b) => a.localeCompare(b, 'zh', { numeric: true })))
     expect(bar.media).toEqual([{
       query: { maxWidth: 520 },
       option: {
