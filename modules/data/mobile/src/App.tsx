@@ -22,7 +22,8 @@ interface MetricItem {
 
 interface MetricsResponse {
   metrics: MetricItem[]
-  self?: { userId: string }
+  /** scopes ∋ data:manage ⇒ 认证升降动作可见（唯一事实源：requester 的既有投影，不引第二套身份面）。 */
+  self?: { userId: string; scopes?: string[] }
 }
 
 /** `YYYY-MM-DD` → `M月D日`（后端 formatHumanDay 同款人话形态）。 */
@@ -67,6 +68,21 @@ export default function App() {
 
   const self = data?.self?.userId
   const isMine = (m: MetricItem): boolean => m.source === 'l2' && m.createdBy !== undefined && m.createdBy !== null && m.createdBy === self
+  /** 管理员动作门（spec §10.4 D7）：认证升降是 data:manage 的事——L1 恒 certified（读侧推导）不给按钮。 */
+  const isAdmin = (data?.self?.scopes ?? []).includes('data:manage')
+
+  /** 认证升降（PUT /metrics/:id/certified；reversible 动作，直接点不弹确认）。 */
+  const toggleCertified = async (m: MetricItem): Promise<void> => {
+    const next = m.certified === 'certified' ? 'draft' : 'certified'
+    try {
+      await apiSend('PUT', `/api/modules/data/metrics/${encodeURIComponent(m.id)}/certified`, { certified: next })
+      Toast.show({ content: next === 'certified' ? '已标记为平台认证' : '已撤回认证标记' })
+      void reload()
+    } catch (e) {
+      if (e instanceof ApiError) Toast.show({ content: e.status === 403 ? '没有数据指标管理权限' : `操作失败（${e.status}）` })
+      else Toast.show({ content: '网络异常，请重试' })
+    }
+  }
 
   if (error !== null) return <div style={{ padding: 32, textAlign: 'center', color: '#999' }}>{error}</div>
   if (data === null) return <div style={{ padding: 48, textAlign: 'center' }}><SpinLoading /></div>
@@ -98,6 +114,12 @@ export default function App() {
                 <span>
                   {m.certified === 'certified' ? <Tag color='success' fill='outline' style={{ '--background-color': '#fff' }}>平台认证</Tag> : null}
                   {m.certified === 'draft' ? <Tag color='warning' fill='outline' style={{ '--background-color': '#fff' }}>未认证</Tag> : null}
+                  {isAdmin && m.source === 'l2' ? (
+                    <Button size='mini' fill='none' style={{ padding: 0, marginLeft: 6 }}
+                            onClick={() => void toggleCertified(m)}>
+                      {m.certified === 'certified' ? '撤回认证' : '标记认证'}
+                    </Button>
+                  ) : null}
                 </span>
               </div>
               {/* 管理入口只出现在自己的 L2 上（判定表：L1 只读、非我创建只读） */}

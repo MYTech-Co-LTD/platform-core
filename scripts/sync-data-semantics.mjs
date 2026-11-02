@@ -138,6 +138,9 @@ const METRIC_NAME_RE = /^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/
  * @property {{ relation: string, filter: string, columns?: Array<{ col: string, grantedBy: string }> } | null} drillDetail
  *                  下钻明细关系、行域过滤与条件列（声明 `detail` 的物化值；null = 未声明。
  *                  `columns` 缺省**不写键**——库侧 `drillTripleOf` 必须同形，否则 --check 恒报更新）
+ * @property {string | null} [unit] 单位（spec 2026-11-01 §10.4.3 P1 的 L1 声明侧；声明 `unit` 的
+ *                  物化值；null = 未声明——**接住未声明的行**，赋值留给口径责任人，不代编。
+ *                  **可选**与 scopeNote 同形：未声明 = 缺键，canonical 归一后与 null 判等）
  */
 
 /**
@@ -1045,6 +1048,10 @@ export function declarationsFromYaml(parsed) {
       drillExpr,
       drillDims,
       drillDetail,
+      // 单位（spec 2026-11-01 §10.4.3 P1 的 L1 声明侧）：可选，未声明 = null（未标注）。
+      // 为什么不做强制：单位是口径责任人的**辖区**——sync 脚本代所有指标编一个单位，错一个
+      // 就是产品可见的错误数据；正确姿势是通路在位、值由声明作者逐条补。
+      unit: unitOf(m.unit, name),
       // `reads` 上载进行对象：默认档要读它（`applyDefaultMaskTier`）。
       // ⚠️ 它**不在** `comparableOf` 的 16 元组里 ⇒ 加它**不会**让 `--check` 凭空报漂移；
       //    但 `reads` 的改动**仍可被 `--check` 检出**——经由它对**合成 masks**（第 13 元）的影响。
@@ -1052,6 +1059,26 @@ export function declarationsFromYaml(parsed) {
       reads: Array.isArray(m.reads) ? m.reads.map(String) : null,
     }
   })
+}
+
+/**
+ * 声明 `unit` → 物化形态（spec 2026-11-01 §10.4.3 P1 的 L1 声明侧；可选）。
+ *
+ * 与 `scopeNoteOf` 的宽容不同点：`unit` 是**展示语义**的字符串，给 `''` 等于「声明了但没写」
+ * ⇒ 归一为 null（未标注），不触库。非字符串（数字/对象）算声明坏形状——sync 会被手跑
+ * （不经 CI），把坏形状静默物化进库 = 词表 unit 列出垃圾，响亮失败是 sync 的脾气。
+ *
+ * @param {unknown} v 声明里的 `unit` 原值
+ * @param {string} metricName 指标名（只用于错误信息）
+ * @returns {string | null} null = 未声明
+ */
+export function unitOf(v, metricName) {
+  if (v === undefined || v === null) return null
+  if (typeof v !== 'string') {
+    throw new Error(`指标 \`${metricName}\` 的 \`unit\` ${JSON.stringify(v)} 不是字符串（单位是展示语义，如「元」「单」「%」）`)
+  }
+  const s = v.trim()
+  return s === '' ? null : s
 }
 
 /**
@@ -1099,6 +1126,7 @@ const comparableOf = (/** @type {ComparableMetric} */ row) => JSON.stringify(can
   row.drillExpr,
   row.drillDims,
   row.drillDetail,
+  row.unit,
 ]))
 
 /**

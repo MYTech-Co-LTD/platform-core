@@ -42,6 +42,7 @@ import {
   diffDeclarations,
   domainLub,
   domainsOf,
+  unitOf,
   drillOf,
   resolveDomain,
   drillTripleOf,
@@ -287,6 +288,7 @@ describe('diffDeclarations：双向差集的四态分类', () => {
     totalable: false, slaDays: 1, freshnessRelations: [] as string[], masks: null,
     drillExpr: null, drillDims: null, drillDetail: null,
   })
+  /** 未声明的键不写（声明的 tests/真实行不带 unit 就是没声明——undefined 与 null 在 Comparable 里靠 canonical 归一） */
   const declared = [row('a', 'A'), row('b', 'B2'), row('c', 'C')]
   const current = [row('a', 'A'), row('b', 'B1'), row('d', 'D')]
 
@@ -1400,5 +1402,42 @@ describe('具名行域（domains:）与 detail.filter 派生（P3.0 Task 3）', 
     const byId = new Map(readDeclarations(ROOT).map((r) => [r.id, r]))
     expect(byId.get('lemeng:retail:net_sales')?.drillDetail?.filter).toBe("state = 'FINISHED'")
     expect(byId.get('lemeng:retail:order_line')?.drillDetail?.filter).toBe("state = 'FINISHED'")
+  })
+})
+
+// ── unit（spec 2026-11-01 §10.4.3 P1 的 L1 声明侧）─────────────────────────────
+// 单位是口径责任人的辖区：机制在位、值不代编（未声明 = null 未标注）。声明改了而库没刷
+// 必须被 --check 检出（unit 进 comparableOf 的第 17 元，与 slaDays/masks 同理）。
+describe('unit 声明侧：可选字段 + 可比对面（spec 2026-11-01 §10.4.3）', () => {
+  const base = { name: 'x:y:z', source: 'lemeng', definition: 'd', expression: 'sum(t.c)',
+    grain: ['g'], owner: 'o', tier: 'certified', freshness_sla_days: 1 }
+
+  it('未声明 / null / 空串 ⇒ null（未标注）；字符串原样（sync 不替声明 trim——与 source 同脾气）', () => {
+    expect((declarationsFromYaml(yaml([{ ...base }]))[0] as { unit: string | null }).unit
+    ).toBeNull()
+    expect((declarationsFromYaml(yaml([{ ...base, unit: null }]))[0] as { unit: string | null }).unit
+    ).toBeNull()
+    expect((declarationsFromYaml(yaml([{ ...base, unit: '' }]))[0] as { unit: string | null }).unit
+    ).toBeNull()
+    expect((declarationsFromYaml(yaml([{ ...base, unit: '元' }]))[0] as { unit: string | null }).unit
+    ).toBe('元')
+  })
+
+  it('非字符串 ⇒ 响亮失败（sync 会被手跑；坏的 unit 静默落库 = 词表出垃圾）', () => {
+    expect(() => declarationsFromYaml(yaml([{ ...base, unit: 3 } as never]))).toThrow(/unit.*不是字符串/)
+  })
+
+  it('unit 在 diffDeclarations 的比对面上：声明加了单位 ⇒ 库旧行判「更新」（不是「未变」）', () => {
+    const row = { id: 'a', title: 'A', description: '', requiredScope: null,
+      subjectColumn: 'org', selectSql: 'select sum(t.c) as value from t', groupBy: 'g', params: {},
+      sourceSystem: 'lemeng', totalable: false, slaDays: 1, freshnessRelations: [] as string[],
+      masks: null, drillExpr: null, drillDims: null, drillDetail: null } as Record<string, unknown>
+    // 声明侧带 unit、库侧没刷（unit 缺席）⇒ 更新
+    const declaredWithUnit: Record<string, unknown> = { ...row, unit: '元' }
+    expect(diffDeclarations([declaredWithUnit as never], [row as never]).updated).toEqual(['a'])
+    // 双方都没有 unit（undefined↔undefined 经 canonical 归一）⇒ 未变（重放不假更新）
+    expect(diffDeclarations([{ ...row } as never], [{ ...row, unit: null } as never]).unchanged).toEqual(['a'])
+    // 声明撤了 unit、库里有值 ⇒ 更新（撤也要进比对）
+    expect(diffDeclarations([{ ...row } as never], [{ ...row, unit: '元' } as never]).updated).toEqual(['a'])
   })
 })

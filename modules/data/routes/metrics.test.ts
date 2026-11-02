@@ -166,8 +166,8 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
     const l1Admin = (await (await app(ORG, ['data:manage']).request('/metrics/all')).json()) as {
       metrics: { id: string; bizDescription: string | null; unit: string | null; caliberNote: string | null }[] }
     expect(l1Admin.metrics.find((m) => m.id === L1_SALES.id)).toMatchObject({ bizDescription: null, unit: null, caliberNote: null })
-    // self：移动端「我的」判定用（夹具默认身份 userId=u-test）
-    expect(body.self).toEqual({ userId: 'u-test' })
+    // self：移动端「我的」判定 + 管理员动作的门（scopes 与 requester 同源，引第二套身份面才真错）
+    expect(body.self).toEqual({ userId: 'u-test', scopes: ['data:query'] })
   })
 
   it('GET /metrics 不掺别家 L2 行（跨租户串词表是禁止的）', async () => {

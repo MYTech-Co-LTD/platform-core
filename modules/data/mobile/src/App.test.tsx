@@ -1,6 +1,6 @@
 // App.test.tsx — 移动指标页的呈现与草稿流（spec 2026-11-01 §10.2 判定表 → 页面契约）。
 // fetch 全部 mock（纯前端测试）；后端契约已在 routes/metrics.test.ts 钉过，这里钉「页面怎么消费」。
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
@@ -96,5 +96,28 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
     render(<App />)
     await waitFor(() => expect(hrefs[0]).toContain('/api/platform/auth/wecom/silent?next='))
     expect(hrefs[0]).toContain(encodeURIComponent('/app/data/'))
+  })
+
+  it('认证升降（D7）：管理员见「撤回认证/标记认证」按钮；普通人不见（affordance 收在 scopes 上）', async () => {
+    // 普通人（scopes 无 data:manage）：无按钮
+    render(<App />)
+    await waitFor(() => expect(screen.getByText('我的毛利')).toBeTruthy())
+    expect(screen.queryByText('标记认证')).toBeNull()
+    expect(screen.queryByText('撤回认证')).toBeNull()
+    cleanup()
+
+    // 管理员：L2 卡上有动作；点击 → PUT certified 到位 + 列表刷新
+    const puts: string[] = []
+    mockFetch([
+      { match: (u, m) => u.includes('/api/modules/data/metrics') && m === 'GET' && !u.includes('/draft') && !u.includes('/certified'),
+        respond: () => json(200, { ...LIST, self: { userId: 'u-admin', scopes: ['data:query', 'data:manage'] } }) },
+      { match: (u, m) => u.endsWith('/certified') && m === 'PUT',
+        respond: () => { puts.push('PUT certified'); return json(200, { ok: true }) } },
+    ])
+    render(<App />)
+    const btn = await waitFor(() => screen.getAllByText('标记认证'))
+    expect(btn.length).toBeGreaterThan(0)          // L1 卡不给按钮（读侧恒 certified）
+    fireEvent.click(btn[0]!)
+    await waitFor(() => expect([...puts]).toContain('PUT certified'))
   })
 })
