@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.0...v0.248.1) - 2026-11-02
+- 【修复】server: runMigrations 目录缺失口径——onMissingDir=error 档（#203 裁决） ([#1300](https://github.com/MYTech-Co-LTD/platform-core/pull/1300), [22f565f](https://github.com/MYTech-Co-LTD/platform-core/commit/22f565f5b0eda1f625807f9a840254412345deb6))
+
+
 ## [0.248.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.247.0...v0.248.0) - 2026-11-02
 - 【新增】data: 移动端表达式指标编辑器——两操作数算式条（spec §10.4 遗留项） ([#1299](https://github.com/MYTech-Co-LTD/platform-core/pull/1299), [c05b5b9](https://github.com/MYTech-Co-LTD/platform-core/commit/c05b5b9740fc7e95d1c7c91ed5c6aaf49f7a2c15))
 
