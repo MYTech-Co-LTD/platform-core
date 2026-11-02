@@ -126,6 +126,11 @@ export interface L1MetricDef extends Omit<MetricDef, 'drill'> {
    */
   scopeNote?: string
   /**
+   * 单位（spec 2026-11-01 §10.4.3，声明 `unit` 的物化值；可选）：null = 未声明——赋值留给
+   * 口径责任人（sync 代编错一个就是产品可见的错误数据），机制先于值在位。
+   */
+  unit?: string | null
+  /**
    * 明细下钻绑定（下钻 spec 2026-10-21 §2.3，声明 compose/dimensions/detail 的物化值）：
    * **sync 物化路径必传**（声明有 compose/dimensions/detail 就给绑定；未声明 compose = 缺省，
    * 与读侧 `MetricDef.drill?` 的「未声明 = 字段缺席」同一口径）。类型上可选与 `scopeNote`
@@ -397,8 +402,8 @@ function drillDetailJson(drill: DrillBinding): string {
 export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void> {
   await pool.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, $17::jsonb, $18::jsonb)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, unit)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l1', $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, $17::jsonb, $18::jsonb, $19)
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,
@@ -416,6 +421,9 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
        drill_expr          = excluded.drill_expr,
        drill_dims          = excluded.drill_dims,
        drill_detail        = excluded.drill_detail,
+       -- 单位（§10.4.3 声明侧，2026-11-02 起）：与 sla_days/masks **同进退**——声明改了
+       --    重新物化必须跟上，否则词表 unit 按旧声明显示（--check 也认它）。
+       unit                = excluded.unit,
        updated_at     = now()`,
     [
       L1_ORG, def.id, def.title, def.description, def.requiredScope,
@@ -428,6 +436,7 @@ export async function upsertL1Metric(pool: Pool, def: L1MetricDef): Promise<void
       def.drill == null ? null : def.drill.expr,
       def.drill == null ? null : JSON.stringify(def.drill.dims),
       def.drill == null ? null : drillDetailJson(def.drill),
+      def.unit ?? null,
     ],
   )
 }

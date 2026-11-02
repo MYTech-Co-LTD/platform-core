@@ -173,8 +173,12 @@ export function registerMetrics(r: ModuleHono, ctx: RouteCtx): void {
         fresh = new Map()
       }
     }
-    // self：移动端「我的」判定用（createdBy === self.userId）；不引第二套身份面
-    return c.json({ metrics: visible.map((m) => publicView(m, fresh.get(m.id))), self: { userId: requester.userId } })
+    // self：移动端「我的」判定与「管理员动作」的门（createdBy === self.userId；
+    // scopes ∋ data:manage ⇒ 认证升降按钮）。同 requester 的既有投影，不引第二套身份面。
+    return c.json({
+      metrics: visible.map((m) => publicView(m, fresh.get(m.id))),
+      self: { userId: requester.userId, scopes: requester.scopes },
+    })
   })
 
   r.get('/metrics/all', async (c) => {
