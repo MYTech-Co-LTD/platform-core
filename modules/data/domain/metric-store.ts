@@ -297,8 +297,8 @@ export async function upsertMetric(
   //   生产写路径（domain/metric-write）传的是事务里的 client，审计与变更同生共死。
   await db.query(
     `insert into data.metrics
-       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1, false, null, null)
+       (org, id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, sla_days, freshness_relations, created_by, certified)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'l2', null, $10, 1, false, null, null, $10, 'draft')
      on conflict (org, id) do update set
        title          = excluded.title,
        description    = excluded.description,

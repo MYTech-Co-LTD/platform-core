@@ -68,6 +68,11 @@ api:
     - { method: POST,   path: /metrics,     scope: data:manage }
     - { method: PUT,    path: /metrics/:id, scope: data:manage }
     - { method: DELETE, path: /metrics/:id, scope: data:manage }
+    # 指标治理（spec 2026-11-01 §10.4）：L2 草稿→确认→生效。申报 data:query——
+    # creator 未必持管理码，真判据在 handler（source=l2 且 created_by=requester）
+    - { method: PUT,    path: /metrics/:id/draft,         scope: data:query }
+    - { method: GET,    path: /metrics/:id/draft,         scope: data:query }
+    - { method: POST,   path: /metrics/:id/confirm-draft, scope: data:query }
     # ── agent 接入面（**已落地**；#486）──────────────────────────────────────────────
     # 两条通道，对 agent 与人**同形**（都是 HTTP/MCP + 同一个 scope，管理面不自建第二份判定）：
     #   · HTTP：上面那四条 /metrics 写/读端点（PAT 通道即可调）；
