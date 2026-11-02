@@ -1,5 +1,5 @@
 {{
-    config(materialized='table')
+    config(materialized='view')
 }}
 -- stg_lemeng_recon_source.sql — 乐檬**口径对账的源侧快照** staging（issue #920；消费面 spec §12.4 缺口①）
 --

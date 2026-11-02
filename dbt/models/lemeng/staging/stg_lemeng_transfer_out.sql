@@ -1,5 +1,5 @@
 {{
-    config(materialized='table')
+    config(materialized='view')
 }}
 -- stg_lemeng_transfer_out.sql — 乐檬**配送调出单** staging（新湖；#499/R2；一对一、只规范化不改义）
 -- 【R2】行 = 配送单商品行（管线内已展开）；「单头列」随行冗余透传。工单取价口径

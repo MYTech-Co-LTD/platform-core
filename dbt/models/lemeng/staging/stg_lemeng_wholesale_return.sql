@@ -1,5 +1,5 @@
 {{
-    config(materialized='table')
+    config(materialized='view')
 }}
 -- stg_lemeng_wholesale_return.sql — 乐檬**批发退货单** staging（新湖；W1 2026-10-12；一对一、只规范化不改义）
 -- 【行】= 退货单商品行（管线内已展开）；【A 阶段边界】探针恒空集（接口可达无业务样本）——

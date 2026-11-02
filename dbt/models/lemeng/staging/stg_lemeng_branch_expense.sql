@@ -1,5 +1,5 @@
 {{
-    config(materialized='table')
+    config(materialized='view')
 }}
 -- stg_lemeng_branch_expense.sql — 乐檬**门店费用单** staging（新湖；W2 2026-10-13；一对一、只规范化不改义）
 -- 【行】= 费用单（无明细子结构）。【归属】branch_num=归属店（operate_branch_num=结算方，仅落列）。

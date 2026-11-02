@@ -1,5 +1,5 @@
 {{
-    config(materialized='table')
+    config(materialized='view')
 }}
 -- stg_lemeng_item_purchase.sql — staging（新湖；W3 余项 2026-10-13；一对一、只规范化不改义）
 -- 【前缀单点】var 见 dbt_project.yml（出处：契约 layout.prefix）。⚠️ 路径 glob 是 `/*/bizday=**/*.parquet`

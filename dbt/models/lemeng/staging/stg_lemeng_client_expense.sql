@@ -1,5 +1,5 @@
 {{
-    config(materialized='table')
+    config(materialized='view')
 }}
 -- stg_lemeng_client_expense.sql — 乐檬**客户费用单** staging（新湖；W2 2026-10-13；一对一、只规范化不改义）
 -- 【行】= 客户费用单。【归属】client_fid（前导零字符串）；branch_num=业务机构仅落列。

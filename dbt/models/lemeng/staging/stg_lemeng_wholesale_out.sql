@@ -1,5 +1,5 @@
 {{
-    config(materialized='table')
+    config(materialized='view')
 }}
 -- stg_lemeng_wholesale_out.sql — 乐檬**批发销售单** staging（新湖；#499/R3；一对一、只规范化不改义）
 -- 【R3】行 = 批发单商品行（管线内已展开）；发货方 = 3120 管理中心/批发仓，收货方 = 外部批发客户

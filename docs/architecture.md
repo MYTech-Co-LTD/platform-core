@@ -209,6 +209,12 @@ token 只决定「这个账号能调哪些面」，不改变分层。
 
 **3. dbt（runner 镜像；`etl` profile；按需 job）**
 - **职责**：**建模与物化**（staging 清洗 → marts 口径模型，物化进 pg_duckdb）；
+  <!-- 2026-11-02 物化策略订正（#1275）：明细/流水类 staging 从 `table` 翻 `view`（读面=湖），
+       维度快照类（item/branch/client/item_price）保留 `table`。实测依据（pg_duckdb 真机，760 天湖）：
+       季度片聚合湖视图 2.8s vs 物化表 27.7s（PG 堆表逐行转换 vs parquet 列存+分区裁剪）；
+       全史扫描持平（~29s）且视图更新鲜（含当日 tick）。物化表此前是「倒贴磁盘换负优化」：
+       lemeng-dbt-materialize 每 2 小时全量重建 13GB staging（单轮 ~40 分钟 + 换表双份盘峰），
+       翻视图后该轮只剩 marts 重建。明细视图纪律：必带 bizday 分区过滤；聚合走 marts。 -->
   **L1 语义声明的事实源**（`dbt/semantics/l1_metrics.yml` + `dbt/models/<域>/marts/schema.yml`）；
   **对账/断言 tests**（`audit_*` 独立复算 + `assert_*` 结构断言）；**血缘与文档**（`dbt docs generate`）。
 - **输入**：湖里的 parquet（staging 读源）；语义声明是**仓内 YAML**。

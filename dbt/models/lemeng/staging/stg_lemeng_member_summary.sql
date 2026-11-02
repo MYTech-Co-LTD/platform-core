@@ -1,5 +1,5 @@
 {{
-config(materialized='table')
+config(materialized='view')
 }}
 -- stg_lemeng_member_summary.sql — 乐檬**会员销售汇总** staging（#1047 P5 2026-10-25 接源；一对一、只规范化不改义）
 -- 【行】= 门店×营业日×订单类型的汇总行（report 端点，无明细）。【会员口径】customer_vip_* 字段；

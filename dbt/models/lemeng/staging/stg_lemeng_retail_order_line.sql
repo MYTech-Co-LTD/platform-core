@@ -4,7 +4,7 @@
 -- ⚠️ 注释必须留在 Jinja config 块外：块内是 Jinja 表达式、不认 SQL 注释行（真 dbt 1.9.1
 --   parse 实测报 expected token，2026-09-23 T6 收尾订正）。
 {{
-    config(materialized='table')
+    config(materialized='view')
 }}
 
 -- stg_lemeng_retail_order_line.sql — 乐檬零售订单明细 staging（**新湖**，2026-09-24 契约；

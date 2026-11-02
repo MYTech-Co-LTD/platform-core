@@ -1,5 +1,5 @@
 {{
-    config(materialized='table')
+    config(materialized='view')
 }}
 -- stg_lemeng_branch_indicator.sql — 乐檬**门店经营指标日粒度** staging（新湖；D10 2026-10-26；一对一、只规范化不改义）
 -- 【行】= 账套×bizday×门店×指标。源按 `date_type=month + group_type=day` 返回整月，管线已裁到单一 bizday。

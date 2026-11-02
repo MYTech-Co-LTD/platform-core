@@ -1,5 +1,5 @@
 {{
-config(materialized='table')
+config(materialized='view')
 }}
 -- stg_lemeng_loss_adjustment.sql — 乐檬**库存调整单** staging（#1047 P1 2026-10-25 接源；一对一、只规范化不改义）
 -- 【行】= 调整单（明细仅在 memo 文本，未结构化）。【归属】branch_num=归属店。【报损】direction='出库' 按 cause 分组。
