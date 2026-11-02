@@ -16,6 +16,11 @@
 #   expression  必填。口径的**实现表达式**（指向哪个模型的哪些列）；「口径只定义一次」的落点。
 #   grain       必填。可聚合维度清单（非空数组）。消费层只能在这些维度上组合（layered §7 约束 5）。
 #   owner       必填。口径负责人（谁改谁负责；治理机制①）。
+#   unit        选填（spec 2026-11-01 §10.4.3 P1）。**展示语义单位**（元/单/行/%/天/家…），
+#               物化进 data.metrics.unit、进 --check 比对；不声明 = 未标注（不代编——赋错单位
+#               比空着糟）。⚠️ `%` 是 YAML 指令符首字符，必须引号：`unit: '%'`。
+#               数量类（销量/库存/要货/商品数）的「件/支/SKU 口径」因源系统计量单位未定而
+#               **刻意留空**，待口径责任人确认后再补。
 #   tier        必填。`certified`（已认证，可直接对外）| `experimental`（试验口径，消费方自担）。
 #               ⚠️ tier 是**标记**不是强制（spec §10 软肋③）：本仓不靠它挡谁，靠它让人一眼看见成熟度。
 #   source      必填。**源系统**（小写蛇形，如 `lemeng`）—— 这条口径的数据来自哪个源。
@@ -214,6 +219,7 @@ measures:
 metrics:
   - name: 'lemeng:retail:sales'
     label: 销售额（不冲退货）
+    unit: 元
     definition: >-
       零售销售侧金额（**不冲退货**）= 2026-10-17 之前 `lemeng:retail:net_sales` 的原值。
       取 state=FINISHED 且 order_transaction_type=SALE_ORDER 的订单（**退货单不进本口径**），
@@ -236,6 +242,7 @@ metrics:
 
   - name: 'lemeng:retail:net_sales'
     label: 净销售额
+    unit: 元
     definition: >-
       零售净销售额 = **销售侧 − 退货侧**（2026-10-17 起，issue #813；口径依据 = 客户裁1 的净额
       L = Σsale − Σreturn 叠加「换货扣送出半边」）。**销售侧** = state=FINISHED 且
@@ -281,6 +288,7 @@ metrics:
 
   - name: 'lemeng:retail:order_count'
     label: 订单数
+    unit: 单
     definition: >-
       有效零售订单数：state=FINISHED 且 order_transaction_type=SALE_ORDER 的去重订单笔数
       （基面 = 销售单，与 `lemeng:retail:sales` 同基面，**不含退货单**——退货不是「订单」；
@@ -326,6 +334,7 @@ metrics:
 
   - name: 'lemeng:retail:consecutive_no_sales_days'
     label: 连续无业绩天数
+    unit: 天
     definition: >-
       03-05：从报告日向前**逐日累计**的连续无正向销售天数（正向销售 = `Σsale_money > 0`）。
       **不可加**（跨日/跨店求和无意义）⇒ 用 `max(…)` 取该粒度上的值，消费侧不要跨行求和。
@@ -355,6 +364,7 @@ metrics:
 
   - name: 'lemeng:retail:comparable_growth_rate'
     label: 可比门店销售增长率
+    unit: '%'
     definition: >-
       01-05：两期**可比门店集合 B** 的销售增长率 = `Σ_B本期L / Σ_B上期L − 1`
       （L = `Σsale_money` **毛额**，不冲退货——与 certified 净额口径 #430 **不同**，按客户 01-05 原式取毛额）。
@@ -397,6 +407,7 @@ metrics:
 
   - name: 'lemeng:outbound:net_amount'
     label: 总仓出库净额
+    unit: 元
     definition: >-
       出库净额 R 构件（客户公共定义 R 的平台实现，分域不混加）：transfer 域 = Σ行级 out_money
       （总部结算口径，裁8）；wholesale 域 = Σ 单头 total_money（per_order 去冗余）− Σ 退货单头
@@ -417,6 +428,7 @@ metrics:
 
   - name: 'lemeng:outbound:gross_profit'
     label: 总仓出库毛利
+    unit: 元
     definition: >-
       出库毛利 G 构件 = R − C：transfer 域 C = Σ行级 subtotal（成本小计，契约实测=cost_subtotal）；
       wholesale 域 C = Σ 单头 cost_money − Σ 退货单头 cost_money（同 net_amount 的去冗余与相减形态）。
@@ -436,6 +448,7 @@ metrics:
 
   - name: 'lemeng:outbound:gross_margin_rate'
     label: 总仓出库毛利率
+    unit: '%'
     definition: >-
       出库毛利率 = G/R（不可加；上滚=重算/另声明）。分子分母同域同店日（domain 在 grain，
       域间不混算分母）。零分母 → 不适用（sync 自动包 nullif）。
@@ -455,6 +468,7 @@ metrics:
 
   - name: 'lemeng:outbound:order_count'
     label: 出库单数
+    unit: 单
     definition: >-
       审核出库单数（域内去重；04-01 的单数面）。transfer 域 = COUNT DISTINCT 配送单号；
       wholesale 域 = COUNT DISTINCT 批发单号（domain 在 grain，客户文档「配送批发分别列」由
@@ -472,6 +486,7 @@ metrics:
 
   - name: 'lemeng:outbound:line_count'
     label: 出库明细行数
+    unit: 行
     definition: >-
       审核出库明细行数（04-01 的行数面；transfer 域 = 配送单商品行计数，wholesale 域 = 批发单
       商品行计数；domain 在 grain 分别列）。上滚 = 各粒度行数之和（行数可加）。
@@ -488,6 +503,7 @@ metrics:
 
   - name: 'lemeng:outbound:region_net'
     label: 战区出库净额
+    unit: 元
     definition: >-
       出库净额按**一级战区 × 通道**归集（服务「各战区出库金额」）。三个通道：
       `自有门店配送`（transfer 域，战区 = 调入门店所在战区）、`体系内批发`（wholesale 域且客户是
@@ -513,6 +529,7 @@ metrics:
 
   - name: 'lemeng:transfer:batch_fill_rate'
     label: 配送批号填写率
+    unit: '%'
     definition: >-
       出库明细批号填写率（04-05，**全量版**：分母 = 全部审核出库明细行，非「需批号管理」清单——
       X08 需批号清单未批准，考核版待 X08 就位另声明）。分子 = 批号非空且非空白串的行数
@@ -532,6 +549,7 @@ metrics:
 
   - name: 'lemeng:transfer:zero_cost_exposure_amount'
     label: 配送零成本出库暴露金额
+    unit: 元
     definition: >-
       零成本出库暴露金额（04-06 金额面）= Σ（金额≠0 且**已知**成本=0 的行的金额）；
       成本 **null 的缺成本金额是另一类暴露**（fct_transfer_line_quality.missing_cost_amount），
@@ -556,6 +574,7 @@ metrics:
 
   - name: 'lemeng:transfer:cost_coverage_pct'
     label: 配送出库成本覆盖率
+    unit: '%'
     definition: >-
       成本覆盖率 = 有成本金额 / 出库金额合计。**质量指标，不是业务口径**——用来判断成本缺失是否失控。
       抑制规则：低于阈值时，成本派生指标（毛利/毛利率）应标 `unreliable` 并**不对外展示**，不照算
@@ -581,6 +600,7 @@ metrics:
 
   - name: 'lemeng:transfer:negative_order_count'
     label: 配送负金额单数
+    unit: 单
     definition: >-
       负金额出库单数（04-07 单数面）= 单头金额 < 0 的去重单数（合计面见
       fct_transfer_line_quality.negative_amount，未声明为指标）。负数可能是退补/冲红/调整——
@@ -597,6 +617,7 @@ metrics:
 
   - name: 'lemeng:transfer:item_gross_margin_rate'
     label: 商品出库毛利率
+    unit: '%'
     definition: >-
       商品粒度出库毛利率（06-03；不可加；上滚=重算/另声明）。只 transfer 域——客户文档 06-03
       数据条件「批发明细先与单头成本勾稽，差额单列或经批准分配；不能将整张单头成本分配给每个
@@ -622,6 +643,7 @@ metrics:
 
   - name: 'lemeng:expense:branch_payable'
     label: 门店应付费用
+    unit: 元
     definition: >-
       门店费用应付合计（EP）：审核费用单（state_code=3）按 direction='应付' 的 amount 合计，
       按费用项目（expense_type）与门店、日分列。金额保留红字。粒度 = 账套 × 审核日 × 门店 × 项目。
@@ -636,6 +658,7 @@ metrics:
 
   - name: 'lemeng:expense:branch_receivable'
     label: 门店应收费用
+    unit: 元
     definition: >-
       门店费用应收合计（ER）：同上基面按 direction='应收' 的 amount 合计。
       粒度 = 账套 × 审核日 × 门店 × 项目。
@@ -650,6 +673,7 @@ metrics:
 
   - name: 'lemeng:expense:branch_net'
     label: 门店净费用
+    unit: 元
     definition: >-
       门店净费用（E 构件）= 应付合计 − 应收合计。**不可加边界**：更粗粒度求和即净费用之和
       （E 可加）。（符号语义 = 应付 − 应收；**裁9 客户已回签 2026-10-13**。）
@@ -665,6 +689,7 @@ metrics:
 
   - name: 'lemeng:expense:client_payable'
     label: 客户应付费用
+    unit: 元
     definition: >-
       客户费用应付合计（EP）：审核客户费用单（state_code=3）按 other_inout_flag=false（应付，
       真样本实证）的 other_inout_money 合计，按费用项目（other_inout_kind）与客户、日分列。
@@ -680,6 +705,7 @@ metrics:
 
   - name: 'lemeng:expense:client_receivable'
     label: 客户应收费用
+    unit: 元
     definition: >-
       客户费用应收合计（ER）：同上基面按 other_inout_flag=true（应收）合计。
       粒度 = 账套 × 审核日 × 客户 × 项目。
@@ -696,6 +722,7 @@ metrics:
   #   —— 2026-10-24 终审 F-4 订正。）
   - name: 'lemeng:expense:client_net'
     label: 客户净费用
+    unit: 元
     definition: >-
       客户净费用（E 构件）= 应付合计 − 应收合计。可加。（符号语义 = 应付 − 应收；
       **裁9 客户已回签 2026-10-13**，与 branch_net 同。）
@@ -735,6 +762,7 @@ metrics:
 
   - name: 'lemeng:inventory:money'
     label: 库存金额
+    unit: 元
     definition: >-
       库存快照金额合计（元）。**不可加边界**：同上（时点数）。粒度 = 账套 × 快照日 × 门店 × 仓库 × 商品。
       ⚠️ experimental：裁4/裁5 未回签 + D17 可回溯深度待长期观察。
@@ -756,6 +784,7 @@ metrics:
 
   - name: 'lemeng:purchase:amount'
     label: 采购金额
+    unit: 元
     definition: >-
       采购收货金额合计（元，`purchase_item_money` 行级求和）。粒度 = 账套 × 采购审核日 × 供应商 × 商品。
       ⚠️ 仅管理中心采购（见族头注）；不含赠品、不含退货（那两项另有指标）。
@@ -770,6 +799,7 @@ metrics:
 
   - name: 'lemeng:purchase:present_amount'
     label: 采购赠品金额
+    unit: 元
     definition: >-
       采购赠品金额合计（元，`purchase_present_money`）。采购随货赠品，独立于购入金额。
     expression: 'sum(fct_purchase.purchase_present_money)'
@@ -783,6 +813,7 @@ metrics:
 
   - name: 'lemeng:purchase:return_amount'
     label: 采购退货金额
+    unit: 元
     definition: >-
       采购退货金额合计（元，`purchase_item_return_money`）。**不从采购金额里自动扣**——
       净额见 `net_amount`。
@@ -797,6 +828,7 @@ metrics:
 
   - name: 'lemeng:purchase:net_amount'
     label: 净采购额
+    unit: 元
     definition: >-
       采购金额 − 采购退货金额（元）。**赠品不计入**（赠品金额独立，见 present_amount）。
       ⚠️ 与 `money_total` 的勾稽关系待客户确认（客户文档边界：money_total 与购入/赠品/退货分量先勾稽）。
@@ -811,6 +843,7 @@ metrics:
 
   - name: 'lemeng:purchase:supplier_count'
     label: 采购供应商数
+    unit: 家
     definition: >-
       该窗口内有采购收货的供应商**去重数**（01-07 供应商集中度 的分子侧基础）。
       ⚠️ 非可加：跨日/跨商品行不可直接相加，须按窗口重算 distinct。
@@ -841,6 +874,7 @@ metrics:
 
   - name: 'lemeng:purchase:return_rate'
     label: 采购退货率
+    unit: '%'
     definition: >-
       金额退货率 = 采购退货金额 / 采购收货金额（不可加；上滚=重算/另声明）。零分母 → 不适用
       （sync 自动包 nullif）。服务客户项 05-05「水果采购退货率」与 06-06「采购退货率」——
@@ -863,6 +897,7 @@ metrics:
 
   - name: 'lemeng:purchase:zero_amount_rows'
     label: 零金额采购行数
+    unit: 行
     definition: >-
       购入数量 > 0 且购入金额 = 0 的采购行数（客户项 05-08）。赠品**不在此列**（赠品是独立分量，
       见 present_amount）。⚠️ 计数类不可加语义同 supplier_count：跨窗口直接相加即错，须按窗口重算。
@@ -883,6 +918,7 @@ metrics:
 
   - name: 'lemeng:contribution:net_amount'
     label: 费用后贡献额（总仓级）
+    unit: 元
     definition: >-
       N = R − C − E（元），**总仓级全域口径**：R/C 为配送出库与批发合并后的出库构件，E 为门店费用净额。
       服务客户项 01-03「费用后贡献与贡献率」与 08-05「费用后贡献率」的分子侧。
@@ -908,6 +944,7 @@ metrics:
 
   - name: 'lemeng:contribution:margin_rate'
     label: 费用后贡献率（总仓级）
+    unit: '%'
     definition: >-
       贡献率 = N / R（不可加；上滚=重算/另声明）。零分母 → 不适用（sync 自动包 nullif）。
       分子分母同口径同粒度（都是总仓级全域），**域间不混算分母**。
@@ -929,6 +966,7 @@ metrics:
 
   - name: 'lemeng:contribution:region_net'
     label: 费用后贡献额（战区级）
+    unit: 元
     definition: >-
       N = R − C − E 的**战区级门店域口径**（服务客户项 02-04「战区费用后贡献」）。
       ⚠️ **本条的射程只有 transfer 域**，理由是两条硬边界：① 门店费用的对象是「归属门店」，
@@ -954,6 +992,7 @@ metrics:
 
   - name: 'lemeng:contribution:region_l1_net'
     label: 费用后贡献额（一级战区）
+    unit: 元
     definition: >-
       N = R − C − E 的**一级战区口径**：`region_l1`（`dim_region` 的受控一级战区）上的 `n_net_store` 合计。
       **粒度** = 账套 × 业务日 × **一级战区桶**（`region_l1_bucket`，空值显式落 `未归属`）。
@@ -980,6 +1019,7 @@ metrics:
 
   - name: 'lemeng:client_contribution:net_amount'
     label: 客户费用后贡献额
+    unit: 元
     definition: >-
       N = R − C − E（元），**客户级口径**：R/C 为该客户的批发出库净额/成本（退货冲减已含，
       同 `outbound:net_amount` 的批发域），E 为该客户费用净额（应付−应收）。
@@ -1002,6 +1042,7 @@ metrics:
 
   - name: 'lemeng:client_contribution:margin_rate'
     label: 客户费用后贡献率
+    unit: '%'
     definition: >-
       贡献率 = N / R（不可加；上滚=重算/另声明）。零分母 → 不适用（sync 自动包 nullif）。
       分子分母同口径同粒度（都是客户级；E 只含客户费用的边界同
@@ -1022,6 +1063,7 @@ metrics:
 
   - name: 'lemeng:expense:loss_rate'
     label: 门店补损率
+    unit: '%'
     definition: >-
       补损率 = Q / R（不可加；上滚=重算/另声明）。Q = 补损类费用净额（真机实测取值字面量
       `产品售后补损`），R = 同门店同期间**配送出库净额**（门店域）。零分母 → 不适用。
@@ -1044,6 +1086,7 @@ metrics:
 
   - name: 'lemeng:expense:subsidy_rate'
     label: 门店补贴率
+    unit: '%'
     definition: >-
       补贴率 = S / R（不可加；上滚=重算/另声明）。S = 补贴类费用净额，R = 同门店同期间配送出库净额。
       零分母 → 不适用。服务客户项 03-04「门店补损与补贴率」的补贴侧（补损侧见 `expense:loss_rate`）。
@@ -1069,6 +1112,7 @@ metrics:
 
   - name: 'lemeng:purchase:cr5'
     label: 供应商集中度 CR5
+    unit: '%'
     definition: >-
       CR5 = 前 5 供应商净采购额 / 全部净采购额（不可加；上滚=重算/另声明）。零分母 → 不适用。
       服务客户项 01-07「供应商集中度」、05-06「水果供应商集中度」、06-04「供应商集中度」——
@@ -1119,6 +1163,7 @@ metrics:
 
   - name: 'lemeng:request:day_fulfillment_rate'
     label: 截止日满足率
+    unit: '%'
     definition: >-
       要货满足率（截止日口径，客户正典 03-06 的聚合近似）：同日同店同品的调入数量 ≥ 要货
       数量的组，其要货行计满足。Σ满足行 / Σ有效要货行（行加权）。⚠️ 不可加（率）；⚠️ 分子
@@ -1161,6 +1206,7 @@ metrics:
   #    缺口归 #995（下钻条件列 × 列级掩码的语义缺口）；别指望它自己报错。
   - name: 'lemeng:retail:order_line'
     label: 零售订单明细行
+    unit: 行
     definition: >-
       乐檬零售订单明细的**行级**读面（一行 = 一个订单明细行）。
       用途是**定位根因**：聚合指标答「是多少」，本指标答「哪几行造成的」。
@@ -1197,6 +1243,7 @@ metrics:
 
   - name: 'lemeng:wholesale:order_line'
     label: 批发明细行
+    unit: 行
     definition: >-
       乐檬批发销售单的**行级**读面（一行 = 一个批发单商品行）。用途是定位根因：聚合指标答
       「是多少」，本指标答「哪几行造成的」。行域 = **审核态**（`state_code = 3`，与
@@ -1230,6 +1277,7 @@ metrics:
 
   - name: 'lemeng:loss:branch_amount'
     label: 门店报损金额
+    unit: 元
     definition: >-
       报损/调整出库金额合计：库存调整单（direction 含出库=报损/盘亏、入库=盘盈）按原因（cause：
       来货损/自然损/试吃 等）的 total_money 合计。真机锚：3120/店92/2026-10-01..19 三 cause
@@ -1245,6 +1293,7 @@ metrics:
 
   - name: 'lemeng:member:branch_vip_money'
     label: 门店会员销售
+    unit: 元
     definition: >-
       会员销售合计：会员销售汇总（customeranalysissummary）按门店×日×订单类型的 customer_vip_money 合计。
       **口径=全部订单类型的 vip 字段合计**（漏「拼团」型 2026-10-25 实测差 82.19/455 客单中 9 单）。
@@ -1260,6 +1309,7 @@ metrics:
     - 's3://<bucket>/lemeng/member_summary/system_book=<账套>/bizday=<日期>/all.parquet'
   - name: 'lemeng:member:branch_vip_nums'
     label: 门店会员客单
+    unit: 元
     definition: >-
       会员客单合计：同基面 customer_vip_nums 合计。**口径=全部订单类型的 vip 字段合计**。
       粒度 = 账套 × 营业日 × 门店 × 订单类型。
@@ -1277,6 +1327,7 @@ metrics:
   # + 本节加一条声明；采集形态/网关省略语义见契约 contracts/common/lemeng.branch_indicator.json。
   - name: 'lemeng:branch:transfer_money'
     label: 门店配送金额
+    unit: 元
     definition: >-
       D10「配送金额」（乐檬 `transfer_money` 指标）= 源 `actual_value` 按门店×日合计，**可加**。
       采集形态：`date_type=month` + `date=<月内任一天>` + `group_type=day` + `metrics=["transfer_money"]`，

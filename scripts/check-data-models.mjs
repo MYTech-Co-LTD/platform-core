@@ -209,6 +209,9 @@ const METRIC_KEYS = new Set([
   'scope_note',
   // 下钻三键（spec 2026-10-21 §2.3/§2.3.1）：compose/dimensions/detail 必须同现
   'compose', 'dimensions', 'detail',
+  // 单位（spec 2026-11-01 §10.4.3 P1，2026-11-02）：展示语义（元/单/行/%/天/家）；
+  // 选填——值由口径责任人逐条补，sync 未声明 = 未标注（不代编）。
+  'unit',
 ])
 
 /**

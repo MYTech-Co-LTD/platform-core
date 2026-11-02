@@ -1441,3 +1441,22 @@ describe('unit 声明侧：可选字段 + 可比对面（spec 2026-11-01 §10.4.
     expect(diffDeclarations([{ ...row } as never], [{ ...row, unit: '元' } as never]).updated).toEqual(['a'])
   })
 })
+
+// ── 真实声明的单位赋值（2026-11-02，机械可推导子集）───────────────────────────
+// 只钉「已赋值」与「刻意留空」两侧的样本：金额/率/计数/天已赋；数量类因源计量单位未定留空。
+describe('l1_metrics.yml 真实单位赋值（机械可推导子集）', () => {
+  it('金额→元、率→%、单数→单、行数→行、天数→天；数量类刻意留空（不编）', () => {
+    const byId = new Map(readDeclarations(ROOT).map((r) => [r.id, r]))
+    expect(byId.get('lemeng:retail:net_sales')?.unit).toBe('元')
+    expect(byId.get('lemeng:outbound:gross_margin_rate')?.unit).toBe('%')
+    expect(byId.get('lemeng:retail:order_count')?.unit).toBe('单')
+    expect(byId.get('lemeng:outbound:line_count')?.unit).toBe('行')
+    expect(byId.get('lemeng:retail:consecutive_no_sales_days')?.unit).toBe('天')
+    expect(byId.get('lemeng:purchase:supplier_count')?.unit).toBe('家')
+    // 数量类：源计量单位未定 ⇒ 留空（诚实未标注，不是漏配）
+    expect(byId.get('lemeng:retail:net_quantity')?.unit ?? null).toBeNull()
+    expect(byId.get('lemeng:inventory:quantity')?.unit ?? null).toBeNull()
+    expect(byId.get('lemeng:request:quantity')?.unit ?? null).toBeNull()
+    expect(byId.get('lemeng:purchase:item_count')?.unit ?? null).toBeNull()
+  })
+})
