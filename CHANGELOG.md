@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.8](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.7...v0.248.8) - 2026-11-02
+- 【修复】askdata: 轨迹导出读 event_zstd + 解不出的事件钉住水位（#969） ([#1310](https://github.com/MYTech-Co-LTD/platform-core/pull/1310), [daea465](https://github.com/MYTech-Co-LTD/platform-core/commit/daea465bfaf23cf2aea7c6e7d7c380260444b00a))
+
+
 ## [0.248.7](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.6...v0.248.7) - 2026-11-02
 - 【修复】aftersales: 临时库 FORCE-drop 的 57P01 不再以 unhandled error 打死整轮（#1308） ([#1309](https://github.com/MYTech-Co-LTD/platform-core/pull/1309), [a918a04](https://github.com/MYTech-Co-LTD/platform-core/commit/a918a041d8a5dd77fa40b9ed512768645b465433))
 
