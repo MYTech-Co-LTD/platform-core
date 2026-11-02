@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.245.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.245.0...v0.245.1) - 2026-11-02
+- 【修复】data: 战区结构不变量收窄——根节点战区不算映射缺失（#1199） ([#1285](https://github.com/MYTech-Co-LTD/platform-core/pull/1285), [ac4719e](https://github.com/MYTech-Co-LTD/platform-core/commit/ac4719ecbf9b0f46a9a70b19a149d7f770ca8040))
+
+
 ## [0.245.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.244.0...v0.245.0) - 2026-11-02
 - 【新增】data: L2 元数据移动端消费面——卡片展示 + creator 编辑弹窗（spec §10.4.3） ([#1293](https://github.com/MYTech-Co-LTD/platform-core/pull/1293), [ab6d7ac](https://github.com/MYTech-Co-LTD/platform-core/commit/ab6d7acdb307c3e098803709e23ba66e4e4f830f))
 
