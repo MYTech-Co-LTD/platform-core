@@ -212,7 +212,7 @@ function gatedApp(identity: ReturnType<typeof makeIdentity>, pool: Pool | null) 
 }
 
 describe('报表面声明（不需要数据库）', () => {
-  it('报表端点都声明了（api.internal 全模块共 37 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
+  it('报表端点都声明了（api.internal 全模块共 40 条），且页门分档：管理动作=data:manage，观看面=data:query', () => {
     const declared = new Map(
       (mod.manifest.api?.internal ?? []).map((d) => [`${d.method} ${d.path}`, d.scope]),
     )
@@ -225,11 +225,15 @@ describe('报表面声明（不需要数据库）', () => {
     // （spec 2026-11-01 §4，申报 data:query —— owner 未必持管理码，真判据在 handler 的
     // canEditAsset））：穷举口径（同 module.test.ts 的表清单）——别处加端点而漏改这里会红，
     // 逼着声明与测试一起动。
-    expect(declared).toHaveLength(37)
+    expect(declared).toHaveLength(40)
     // 资产级共享：入口按观看面（data:query）申报，授权收紧在 handler 里（owner ∪ data:manage）
     expect(declared.get('GET /reports/:id/acl')).toBe('data:query')
     expect(declared.get('PUT /reports/:id/acl')).toBe('data:query')
     expect(declared.get('PUT /reports/:id/owner')).toBe('data:query')
+    // 指标治理（spec 2026-11-01 §10.4）：creator 未必持管理码，真判据在 handler
+    expect(declared.get('PUT /metrics/:id/draft')).toBe('data:query')
+    expect(declared.get('GET /metrics/:id/draft')).toBe('data:query')
+    expect(declared.get('POST /metrics/:id/confirm-draft')).toBe('data:query')
     expect(declared.get('GET /branches')).toBe('data:query')
     expect(declared.get('POST /reports')).toBe('data:manage')
     expect(declared.get('GET /reports')).toBe('data:query')
