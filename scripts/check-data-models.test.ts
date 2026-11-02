@@ -238,6 +238,16 @@ describe('门禁六格（计划 L649）+ 附加两格', () => {
     expect(violations[0]?.message).toContain('::double')
   })
 
+  it('★ 格④（#170）：带引号的类型名 ::"double" → 违规（残余逃检面收口）', () => {
+    const root = variant((f) => {
+      f[STAGING] = f[STAGING].replace("r['amount']::numeric as amount", 'r[\'amount\']::"double" as amount')
+    })
+    const violations = checkDataModels(root)
+    expect(violations).toHaveLength(1)
+    expect(violations[0]?.file).toBe(STAGING)
+    expect(violations[0]?.message).toContain('double')
+  })
+
   // ── 规则 ② 的第二形态：`CAST(expr AS double)` ────────────────────────────────────────
   // 坑 #4 的触发条件是「**裸 `double` 去查 pg_type**」（触发器是类型名查找，不是 `::` 这个运算符）。
   // `CAST(expr AS Typename)` 的 Typename 与 `::` 走同一条路 ⇒ 两者必须同红；且 `CAST` 是比 `::`
