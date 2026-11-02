@@ -26,6 +26,10 @@ select
     order_detail_num,
     count(*) as rows_in_key
 from {{ ref('stg_lemeng_retail_order_line') }}
+-- ⚠️ 只比已闭窗营业日（#462 同款）：staging 自 #1276 起是直读湖视图，今天的分区被 tick 每
+--    5 分钟重写 ⇒ 全表扫会撞 ETag 竞态（2026-11-02 实测 ERROR in 32s）；幂等断言语义本就
+--    落在「已封版」的数据上（同窗重跑当天即显现，次日必被本条抓到）。
+where bizday < CAST(now() AT TIME ZONE 'Asia/Shanghai' AS DATE)
 group by
     order_no,
     order_detail_num
