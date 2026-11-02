@@ -1,0 +1,188 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "item_profit",
+  "owner": "data-platform",
+  "description": "乐檬商品毛利分析日粒度（nhsoft.report.ai.itemprofitanalysis.find；AMAREPORT，2026-11-02 接源）。【行粒度】一行 = 账套×bizday×门店×商品（summary_types=[branch,item]）。【窗口】同 item_sales（≤31 天 / branch_nums ≤100 / 越权 10003）。【毛利口径】sale_cost / profit_money / profit_rate(_no_coupon) 需成本查询权限，缺权限时列可能为空或行缺失。【与 item_sales 的关系】同粒度不同表，商品集合不保证一致 ⇒ join 属 dbt 消费面。【首发锚】3120 店 1 2026-10-28：sale_money=41.66 / sale_cost=28.54 / profit_money=13.12 / profit_rate=0.3149。",
+  "layout": {
+    "prefix": "lemeng/item_profit",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "system_book",
+      "bizday"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 父管线 lemeng.item_profit.l0.<book> 每轮的批次号（UTC 时间戳串）。同一 bizday 分区每轮覆盖写；回填变体由 params.BIZDAY 驱动、复用同一 layout。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "采集批次（父管线 drv 的 batch_id，UTC 时间戳串）",
+      "expr": "CAST(batch_id AS VARCHAR)"
+    },
+    {
+      "name": "system_book",
+      "type": "integer",
+      "nullable": false,
+      "description": "账套（3120 熊喵 / 64188 品品甜）；分区键",
+      "expr": "CAST(system_book AS INTEGER)"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "营业日（查询窗单日 = bizday_start = bizday_end）；分区键",
+      "expr": "CAST(bizday AS DATE)"
+    },
+    {
+      "name": "branch_num",
+      "type": "integer",
+      "nullable": false,
+      "description": "门店编号（与 dim_branch.branch_num 同键）",
+      "expr": "CAST(branch_num AS INTEGER)"
+    },
+    {
+      "name": "branch_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店编码",
+      "expr": "CAST(branch_code AS VARCHAR)"
+    },
+    {
+      "name": "branch_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店名称",
+      "expr": "CAST(branch_name AS VARCHAR)"
+    },
+    {
+      "name": "item_num",
+      "type": "integer",
+      "nullable": false,
+      "description": "商品编号（与 dim_item.item_num 同键）",
+      "expr": "CAST(item_num AS INTEGER)"
+    },
+    {
+      "name": "item_code",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品编码",
+      "expr": "CAST(item_code AS VARCHAR)"
+    },
+    {
+      "name": "item_barcode",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品条码",
+      "expr": "CAST(item_barcode AS VARCHAR)"
+    },
+    {
+      "name": "item_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "商品名称",
+      "expr": "CAST(item_name AS VARCHAR)"
+    },
+    {
+      "name": "item_spec",
+      "type": "varchar",
+      "nullable": true,
+      "description": "规格（itemprofit 侧字段名是 item_spec）",
+      "expr": "CAST(item_spec AS VARCHAR)"
+    },
+    {
+      "name": "item_unit",
+      "type": "varchar",
+      "nullable": true,
+      "description": "单位（itemprofit 侧字段名是 item_unit）",
+      "expr": "CAST(item_unit AS VARCHAR)"
+    },
+    {
+      "name": "sale_num",
+      "type": "decimal(20,4)",
+      "nullable": true,
+      "description": "商品销售数量",
+      "expr": "CAST(sale_num AS DECIMAL(20,4))"
+    },
+    {
+      "name": "sale_count",
+      "type": "decimal(20,4)",
+      "nullable": true,
+      "description": "销售次数",
+      "expr": "CAST(sale_count AS DECIMAL(20,4))"
+    },
+    {
+      "name": "customer_nums",
+      "type": "decimal(20,4)",
+      "nullable": true,
+      "description": "客数",
+      "expr": "CAST(customer_nums AS DECIMAL(20,4))"
+    },
+    {
+      "name": "sale_money",
+      "type": "decimal(20,2)",
+      "nullable": false,
+      "description": "销售金额（券售价）",
+      "expr": "CAST(sale_money AS DECIMAL(20,2))"
+    },
+    {
+      "name": "sale_money_no_coupon",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "销售金额（不含券）",
+      "expr": "CAST(sale_money_no_coupon AS DECIMAL(20,2))"
+    },
+    {
+      "name": "sale_cost",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "销售成本（需成本查询权限；缺权限列可能为空）",
+      "expr": "CAST(sale_cost AS DECIMAL(20,2))"
+    },
+    {
+      "name": "profit_money",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "毛利额",
+      "expr": "CAST(profit_money AS DECIMAL(20,2))"
+    },
+    {
+      "name": "profit_rate",
+      "type": "decimal(20,6)",
+      "nullable": true,
+      "description": "毛利率",
+      "expr": "CAST(profit_rate AS DECIMAL(20,6))"
+    },
+    {
+      "name": "profit_money_no_coupon",
+      "type": "decimal(20,2)",
+      "nullable": true,
+      "description": "毛利额（不含券）",
+      "expr": "CAST(profit_money_no_coupon AS DECIMAL(20,2))"
+    },
+    {
+      "name": "profit_rate_no_coupon",
+      "type": "decimal(20,6)",
+      "nullable": true,
+      "description": "毛利率（不含券）",
+      "expr": "CAST(profit_rate_no_coupon AS DECIMAL(20,6))"
+    },
+    {
+      "name": "computed_at",
+      "type": "timestamptz",
+      "nullable": false,
+      "description": "计算时间（子管线写 staging 时）",
+      "expr": "CAST(computed_at AS TIMESTAMPTZ)"
+    }
+  ]
+}

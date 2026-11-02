@@ -118,6 +118,15 @@ vars:
   lemeng_transfer_in_prefix: 'lemeng/transfer_in'
   lemeng_inventory_snapshot_prefix: 'lemeng/inventory_snapshot'
   lemeng_item_purchase_prefix: 'lemeng/item_purchase'
+  # 乐檬**商品销售分析**前缀（AMAREPORT 2026-11-02 接源；行=账套×bizday×门店×商品；不含 bucket / 协议）：
+  # s3://<bucket>/lemeng/item_sales/system_book=<账套>/bizday=<YYYY-MM-DD>/all.parquet
+  # 出处：contracts/common/lemeng.item_sales.json 的 `layout.prefix` / `partitionBy`。
+  # 消费者 = `stg_lemeng_item_sales`（唯一）；两本账套；与 item_profit 同粒度不同表（join 在消费面）。
+  lemeng_item_sales_prefix: 'lemeng/item_sales'
+  # 乐檬**商品毛利分析**前缀（AMAREPORT 2026-11-02 接源；行=账套×bizday×门店×商品；不含 bucket / 协议）：
+  # 出处：contracts/common/lemeng.item_profit.json 的 `layout.prefix` / `partitionBy`。
+  # 消费者 = `stg_lemeng_item_profit`（唯一）；毛利列需成本查询权限。
+  lemeng_item_profit_prefix: 'lemeng/item_profit'
   # 乐檬**批发客户档案**前缀（#516 段①；全量快照；不含 bucket / 协议）：
   # s3://<bucket>/lemeng/client/system_book=<账套>/snapshot=<YYYY-MM-DD>/all.parquet
   # 出处：contracts/common/lemeng.client.json 的 `layout.prefix` / `partitionBy`（hive 两级分区）。
