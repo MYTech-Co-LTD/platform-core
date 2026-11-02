@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.243.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.242.0...v0.243.0) - 2026-11-02
+- 【新增】data: P1 指标元数据——业务描述/单位/口径说明三字段（spec §10.4.3） ([#1284](https://github.com/MYTech-Co-LTD/platform-core/pull/1284), [8cd3110](https://github.com/MYTech-Co-LTD/platform-core/commit/8cd311024ab65eacf1dccc9a33f6d227b2431f68))
+
+
 ## [0.242.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.241.1...v0.242.0) - 2026-11-02
 - 【新增】data: P1 使用统计读面——query_audit 按 metricId 聚合 + L2 下线候选清单（spec §10.4.3） ([#1282](https://github.com/MYTech-Co-LTD/platform-core/pull/1282), [0f7eede](https://github.com/MYTech-Co-LTD/platform-core/commit/0f7eede69532c87fefd802c89d998253dc49104a))
 
