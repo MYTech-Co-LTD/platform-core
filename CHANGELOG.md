@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.247.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.246.0...v0.247.0) - 2026-11-02
+- 【新增】data: L1 单位赋值——机械可推导子集 46 条 + 契约闸放行 unit 键（spec §10.4.3） ([#1297](https://github.com/MYTech-Co-LTD/platform-core/pull/1297), [b9637e6](https://github.com/MYTech-Co-LTD/platform-core/commit/b9637e65f5f7038b769f57179b8bee6aff01dc62))
+
+
 ## [0.246.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.245.2...v0.246.0) - 2026-11-02
 - 【新增】data: 下线候选的操作入口——usage 响应带 self + 候选卡按 creator 门给删除（spec §10.4.3） ([#1295](https://github.com/MYTech-Co-LTD/platform-core/pull/1295), [78f0f7f](https://github.com/MYTech-Co-LTD/platform-core/commit/78f0f7f1a3a51b161b22cf2379c0a465e20b97d2))
 - 【修复】data: 换货形状审计负值判据加分位容差（#1290） ([#1291](https://github.com/MYTech-Co-LTD/platform-core/pull/1291), [7394547](https://github.com/MYTech-Co-LTD/platform-core/commit/739454761e44d653d68d20bf481eedfef6d4ab21))
