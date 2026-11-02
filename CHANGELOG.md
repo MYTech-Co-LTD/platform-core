@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.241.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.241.0...v0.241.1) - 2026-11-02
+- 【修复】data: 零售 staging 视图的结构测试滤掉今天，避 tick 重写 ETag 竞态 (#1279) ([#1280](https://github.com/MYTech-Co-LTD/platform-core/pull/1280), [6f6d7f3](https://github.com/MYTech-Co-LTD/platform-core/commit/6f6d7f3e8cddbde0fae5085e494df5a58a0875b1))
+
+
 ## [0.241.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.240.0...v0.241.0) - 2026-11-02
 - 【新增】data: 移动端指标页——L1 只读卡 + L2 creator 草稿管理 + 新鲜度/certified 徽标（spec §10.2/§10.4.2） ([#1278](https://github.com/MYTech-Co-LTD/platform-core/pull/1278), [83cccd9](https://github.com/MYTech-Co-LTD/platform-core/commit/83cccd9ccaa275431c4e9268344157e5675d2d66))
 
