@@ -266,3 +266,83 @@ export async function certifyMetric(
     return { ok: true }
   })
 }
+
+/**
+ * 元数据写路径（spec 2026-11-01 §10.4.3 P1）：业务描述 / 单位 / 口径说明。
+ *
+ * 写闸（manage ∪ creator）：治理标注不是口径，**管理员可代任何人修**（标注要有人接手，
+ * 与 D7 认证管理的逻辑同源）；creator（data:query 档）可修自己的。判定在域层——HTTP
+ * 与 MCP 共用本函数 = 共用同一份闸（同 creator 闸的落法）。
+ *
+ * 边界（fail-closed 是结构自足的）：
+ *   · **只落本租户桶**（update where org=…）——L1 行在平台桶，租户 UPDATE 天然 404：
+ *     「租户不得注解平台口径」，那是跨租户污染；平台侧元数据来源是另一议题；
+ *   · 草稿/可信度不动——三个治理动作各管各的字段；
+ *   · `undefined` = 不改该字段（部分更新），`null`/空串 = 显式清空；
+ *   · 审计动作词 `meta`：前后态只带被改的 meta 字段（行快照稀释信号）。
+ */
+export interface MetricMetaPatch {
+  bizDescription?: string | null
+  unit?: string | null
+  caliberNote?: string | null
+}
+
+export async function updateMetricMeta(
+  deps: MetricWriteDeps, org: string, id: string, next: MetricMetaPatch,
+): Promise<MetricWriteOutcome> {
+  const actor = deps.requester
+  return withTx(deps.pool, async (c) => {
+    const cur = await c.query(
+      `select source, created_by, biz_description, unit, caliber_note
+         from data.metrics where org = $1 and id = $2`,
+      [org, id],
+    )
+    if ((cur.rowCount ?? 0) === 0) return { ok: false, http: 404, error: 'NOT_FOUND' }
+    const row = cur.rows[0] as {
+      source: string; created_by: string | null
+      biz_description: string | null; unit: string | null; caliber_note: string | null
+    }
+    const createdBy: string | null = row.created_by ?? null
+    const isCreator = row.source === 'l2' && createdBy !== null && createdBy === actor.userId
+    if (!isCreator && !actor.hasScope('data:manage')) {
+      return { ok: false, http: 403, error: 'NOT_METRIC_CREATOR' }
+    }
+    // 空串/纯空白 → null（显式清空）；undefined → 不改该字段（不进 SET）
+    /** @param v 声明侧来的原始值 @returns 入库值；undefined 透传 */
+    const clean = (v: string | null | undefined): string | null | undefined => {
+      if (v === undefined) return undefined
+      const s = v === null ? null : v.trim()
+      return s === '' ? null : s
+    }
+    /** 物理列 → [键, 前值, 新值]；undefined 新值 = 该字段不参与本次更新。 */
+    const fields: Array<{ key: string; column: string; prev: string | null; nextVal: string | null | undefined }> = [
+      { key: 'bizDescription', column: 'biz_description', prev: row.biz_description, nextVal: clean(next.bizDescription) },
+      { key: 'unit', column: 'unit', prev: row.unit, nextVal: clean(next.unit) },
+      { key: 'caliberNote', column: 'caliber_note', prev: row.caliber_note, nextVal: clean(next.caliberNote) },
+    ]
+    const changing = fields.filter((f) => f.nextVal !== undefined)
+    if (changing.length === 0) return { ok: false, http: 400, error: 'EMPTY_META_PATCH' }
+    const sets: string[] = []
+    const params: unknown[] = [org, id]
+    const beforeMeta: Record<string, string | null> = {}
+    const afterMeta: Record<string, string | null> = {}
+    for (const f of changing) {
+      sets.push(`${f.column} = $${params.length + 1}`)
+      params.push(f.nextVal)
+      beforeMeta[f.key] = f.prev
+      afterMeta[f.key] = f.nextVal as string | null
+    }
+    await c.query(`update data.metrics set ${sets.join(', ')} where org = $1 and id = $2`, params)
+    await writeMetricAudit(c, {
+      org,
+      metricId: id,
+      action: 'meta',
+      userId: actor.userId,
+      channel: actor.channel,
+      keyId: actor.keyId,
+      before: beforeMeta as never,
+      after: afterMeta as never,
+    })
+    return { ok: true }
+  })
+}

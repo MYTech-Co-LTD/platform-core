@@ -88,6 +88,14 @@ export interface MetricRow extends MetricDef {
   /** L2 创建者（027 迁移）；L1 行恒 null（平台口径无「创建者」概念），存量 L2 行可能 null（诚实状态）。 */
   createdBy: string | null
   /**
+   * 元数据（030 迁移，spec §10.4.3 P1）：业务描述 / 单位 / 口径说明——**治理标注**，不经编译点。
+   * NULL = 未标注（迁移头注：空着比编一个错的好）。L1 行恒 null——租户不得注解平台口径
+   * （L1 行在平台桶，写面对租户天然 404，列自然不被污染；平台侧元数据来源是另一议题）。
+   */
+  bizDescription: string | null
+  unit: string | null
+  caliberNote: string | null
+  /**
    * 明细下钻绑定（021 迁移，下钻 spec 2026-10-21 §2.3）：三列（drill_expr/drill_dims/drill_detail）
    * 经 `drillBindingOf` 归一后的产物。**读侧不信任存储形状**——任一列缺/坏 ⇒ undefined（= 未声明），
    * 绝不半绑（半个绑定比没有绑定更危险，spec §2.5：未声明即不下钻）。
@@ -161,6 +169,10 @@ function toMetricRow(row: Record<string, unknown>): MetricRow {
     // toolbox 的 tier 投影消费本值，不再各自从 source 推导（第二事实源会打架）。
     certified: row.source === 'l1' ? 'certified' : row.certified === 'certified' ? 'certified' : 'draft',
     createdBy: (row.created_by ?? null) as string | null,
+    // 元数据（030）：nullable 直读——NULL = 未标注（不编默认值）；坏形状列死了直读也一样安全（text）
+    bizDescription: (row.biz_description ?? null) as string | null,
+    unit: (row.unit ?? null) as string | null,
+    caliberNote: (row.caliber_note ?? null) as string | null,
     // 下钻绑定（下钻 spec §2.3）：三列归一收口在 drillBindingOf——读侧不信任存储形状，
     // 任一列缺/坏 ⇒ undefined（= 未声明），绝不半绑。
     drill: drillBindingOf(row),
@@ -199,7 +211,7 @@ function drillBindingOf(row: Record<string, unknown>): DrillBinding | undefined 
 
 /** 投影列清单（三处查询共用一处写法——少写/写错一列是「字段静默变 undefined」的经典来源）。 */
 const ROW_COLUMNS =
-  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by'
+  'id, title, description, required_scope, subject_column, select_sql, group_by, params, source, source_system, updated_by, version, totalable, scope_note, sla_days, freshness_relations, mask_spec, drill_expr, drill_dims, drill_detail, certified, created_by, biz_description, unit, caliber_note'
 
 /**
  * 本 org 的 L2 行（**不含** L1 平台行）。`order by id`：顺序确定。
