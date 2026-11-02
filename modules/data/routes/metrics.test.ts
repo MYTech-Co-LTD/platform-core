@@ -818,8 +818,11 @@ describePg('指标路由（需要 DATABASE_URL：词表读写）', () => {
       const body = await res.json() as {
         days: number
         stats: { metricId: string; queries: number }[]
-        retireCandidates: { metricId: string; source: string }[] }
+        retireCandidates: { metricId: string; source: string }[]
+        self: { userId: string } }
       expect(body.days).toBe(30)
+      // self（#1294）：候选卡删除入口的 creator 门——与 requester 同源（夹具默认 u-test）
+      expect(body.self).toEqual({ userId: 'u-test' })
       const byId = new Map(body.stats.map((s) => [s.metricId, s]))
       expect(byId.get(idHot)).toMatchObject({ queries: 1 })
       expect(byId.get(idCold)).toMatchObject({ queries: 0 })          // 诚实零
