@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.242.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.241.1...v0.242.0) - 2026-11-02
+- 【新增】data: P1 使用统计读面——query_audit 按 metricId 聚合 + L2 下线候选清单（spec §10.4.3） ([#1282](https://github.com/MYTech-Co-LTD/platform-core/pull/1282), [0f7eede](https://github.com/MYTech-Co-LTD/platform-core/commit/0f7eede69532c87fefd802c89d998253dc49104a))
+
+
 ## [0.241.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.241.0...v0.241.1) - 2026-11-02
 - 【修复】data: 零售 staging 视图的结构测试滤掉今天，避 tick 重写 ETag 竞态 (#1279) ([#1280](https://github.com/MYTech-Co-LTD/platform-core/pull/1280), [6f6d7f3](https://github.com/MYTech-Co-LTD/platform-core/commit/6f6d7f3e8cddbde0fae5085e494df5a58a0875b1))
 
