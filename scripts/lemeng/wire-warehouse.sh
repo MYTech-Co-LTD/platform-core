@@ -108,6 +108,8 @@ REGION_SELFTEST=${WIRE_REGION_SELFTEST:-}
 # 反向测试钩子（#892）：给 ⑪⑫⑬ 各注入一行假判红，确认「判红行 → 桥 → 企微」这条腿通。
 # 默认空 ⇒ 生产行为不含它。见 assert_recon_* 的注释。
 RECON_SELFTEST=${WIRE_RECON_SELFTEST:-}
+# 反向测试钩子（#809）：跳过真实查询、直接注入一行假 config_drift 判红——验「判红行 → data_plane_probes → 桥 → 企微」。
+DRIFT_SELFTEST=${WIRE_DRIFT_SELFTEST:-}
 
 die() { echo "WIRE_FAILED: $*" >&2; exit 1; }
 
@@ -363,15 +365,57 @@ const SELFTEST='${RECON_SELFTEST}';
 "
 }
 
+# ⑭ 配置漂移（#809，2026-11-03）：gd 节点的「现算 vs 底账」双向 diff 行（status='config_drift'）
+#    落在 OO `retail_day` 流——此前**可观测、不可通知**（无任何告警绑定；#809 实测漂移已在发生：
+#    3120/64188 各 3 行）。接线范式照 #898/#892：断言在数据面、判红行进 `data_plane_probes`、
+#    桥通道②送企微；**不新建 OO 规则**（分工节 Phase 1 明文；OO 规则里写 status 过滤=语义进预警面）。
+#    查询凭据：`/etc/openobserve-search.env` 的 **可读 token**（ingest 凭据 search 401，实测）——
+#    文件形态：OO_SEARCH_BASE / OO_SEARCH_ORG / OO_SEARCH_AUTH（Basic base64），600 权限。
+#    容差：即时信号，探测周期 */5；§1.5.2 对齐表行同批补（出处 #809）。两账套现算==底账时恒 0 行，
+#    **不会结构性红**；桥 per-check 12h 冷却防持续漂移轰炸。
+assert_config_drift() {
+  printf '⑭ 配置漂移（retail_day 近 2h status=config_drift，#809）—— '
+  if [ ! -r /etc/openobserve-search.env ]; then
+    printf 'SKIP 可读 token 缺（/etc/openobserve-search.env 未投递，见 #809）\n'; return 0
+  fi
+  WIRE_DRIFT_SELFTEST="${DRIFT_SELFTEST}" python3 - <<'PYEOF'
+import json, os, sys, time, urllib.request
+env = {}
+for line in open('/etc/openobserve-search.env'):
+    line = line.strip()
+    if line and not line.startswith('#') and '=' in line:
+        k, v = line.split('=', 1)
+        env[k.strip()] = v.strip()
+base, org, auth = env['OO_SEARCH_BASE'], env['OO_SEARCH_ORG'], env['OO_SEARCH_AUTH']
+now = int(time.time() * 1e6)
+since = now - 2 * 3600 * 1000000
+sql = ("select system_book, count(*)::int as n from \"retail_day\" "
+       "where status = 'config_drift' and _timestamp > %d group by system_book" % since)
+req = urllib.request.Request(
+    base + '/api/' + org + '/_search',
+    data=json.dumps({'query': {'sql': sql, 'start_time': since, 'end_time': now, 'from': 0, 'size': 50}}).encode(),
+    headers={'Authorization': 'Basic ' + auth, 'Content-Type': 'application/json'})
+with urllib.request.urlopen(req, timeout=15) as r:
+    hits = json.loads(r.read()).get('hits', [])
+if os.environ.get('WIRE_DRIFT_SELFTEST'):
+    hits = [{'system_book': 'SELFTEST', 'n': 0}]
+if hits:
+    print('ERR 配置漂移 ' + ', '.join('%s(%s)' % (h['system_book'], h['n']) for h in hits)
+          + '（现算 vs 底账不一致——新店未纳入或底账腐化，#809）')
+    sys.exit(1)
+print('OK 近 2h 无漂移行')
+PYEOF
+}
+
 # advisory 断言集（判红**不进 rc**、只吐判红行）：语义判据**不走 openship 通知**（红线③），
 # 通知由桥承担（`oo-notify-bridge.sh` 通道② 读 `verdict <> 'OK'` → 企微）。加新条目**先想清它归谁**。
-ADVISORY_CHECKS=" region_registered recon_ledger_cover recon_not_evaluated recon_source_cover "
+ADVISORY_CHECKS=" region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift "
 
 do_check() {
   # #538 Phase 1：逐断言产出判红行（probe 观测面）——执行与观测同行，判定逻辑不变。
   rc=0
   _vf=$(mktemp ${TMPDIR:-/tmp}/ww-verdicts.XXXXXX)
-  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face region_registered recon_ledger_cover recon_not_evaluated recon_source_cover; do
+  for _step in dns tcp query fresh marts_fresh metrics dims item_price settlement_face region_registered recon_ledger_cover recon_not_evaluated recon_source_cover config_drift; do
     _mode=hard
     case "$ADVISORY_CHECKS" in *" ${_step} "*) _mode=advisory ;; esac
     if _out=$(eval "assert_${_step}" 2>&1); then
