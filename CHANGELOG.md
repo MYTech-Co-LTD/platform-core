@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.12](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.11...v0.248.12) - 2026-11-03
+- 【修复】data: config_drift 漂移行接线告警面——断言⑭ + 对齐表行（#809） ([#1316](https://github.com/MYTech-Co-LTD/platform-core/pull/1316), [1a05138](https://github.com/MYTech-Co-LTD/platform-core/commit/1a051384bd173b2661dc7f67176e8fbdb33d063a))
+
+
 ## [0.248.11](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.10...v0.248.11) - 2026-11-03
 - 【修复】data: 门店指标判空从分块级提到父级，部分块空不再整天拒写湖 (#1314) ([#1315](https://github.com/MYTech-Co-LTD/platform-core/pull/1315), [f4027a7](https://github.com/MYTech-Co-LTD/platform-core/commit/f4027a705e55527baddf7e380ef28813b7342562))
 
