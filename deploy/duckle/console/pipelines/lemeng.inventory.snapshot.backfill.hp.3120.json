@@ -5,7 +5,7 @@
   "_note": [
     "库存快照**大容量回填变体**（#1318）：老日期单日 5~6 万行，静态 30 页（6,000 行）必截断。",
     "",
-    "① drv 生成页号 1..301（数据页 1..300 + 哨兵页 301），ctl.foreach 逐页拉（并发 8），",
+    "① drv 生成页号 1..401（数据页 1..400 + 哨兵页 401），ctl.foreach 逐页拉（并发 8），",
     "   子管线 lemeng.inventory.snapshot.page 每页写一个 staging chunk（空页写占位行）。",
     "② 三道闸：页到齐（gpage/dpages）→ 哨兵页必须为空（gsent/sentinel）→ 源端零行（die_empty）。",
     "③ rows 剔除占位行与哨兵页后进 shape，契约闸与写湖与主管线一致。"
@@ -255,7 +255,7 @@
         "componentId": "ctl.die",
         "properties": {
           "condition": "has-rows",
-          "message": "lemeng inventory_snapshot 容量截断：哨兵页（第 301 页）仍有数据（{rows} 行）⇒ 单日行数击穿 300×200=60000 行上限（#1318）。处置：提高 drv 的页数并同步哨兵页号，重生成后端再跑。"
+          "message": "lemeng inventory_snapshot 容量截断：哨兵页（第 401 页）仍有数据（{rows} 行）⇒ 单日行数击穿 400×200=80000 行上限（#1318）。处置：提高 drv 的页数并同步哨兵页号，重生成后端再跑。"
         }
       }
     },
@@ -271,7 +271,7 @@
         "componentId": "code.sql",
         "properties": {
           "pureSql": true,
-          "sql": "CREATE OR REPLACE TABLE \"drv\" AS\nWITH pg AS (\n  SELECT CAST(x AS INTEGER) AS page_no FROM generate_series(1, 301) t(x)\n)\nSELECT CAST('${BIZDAY}' AS DATE) AS bizday,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       strftime(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', '%Y%m%dT%H%M%SZ') AS batch_id,\n       CAST(page_no AS INTEGER) AS page_number,\n       '301' AS n_pages\nFROM pg ORDER BY page_no"
+          "sql": "CREATE OR REPLACE TABLE \"drv\" AS\nWITH pg AS (\n  SELECT CAST(x AS INTEGER) AS page_no FROM generate_series(1, 401) t(x)\n)\nSELECT CAST('${BIZDAY}' AS DATE) AS bizday,\n       CAST('${ENV:SYSTEM_BOOK}' AS INTEGER) AS system_book,\n       strftime(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', '%Y%m%dT%H%M%SZ') AS batch_id,\n       CAST(page_no AS INTEGER) AS page_number,\n       '401' AS n_pages\nFROM pg ORDER BY page_no"
         }
       }
     },
@@ -347,7 +347,7 @@
         "componentId": "ctl.die",
         "properties": {
           "condition": "has-rows",
-          "message": "页未到齐（{rows} 条违规，明细见上）：data pages 1..300 + 哨兵页 301。detail=实到页数 / expected=应有页数"
+          "message": "页未到齐（{rows} 条违规，明细见上）：data pages 1..400 + 哨兵页 401。detail=实到页数 / expected=应有页数"
         }
       }
     },
@@ -362,7 +362,7 @@
         "label": "rows",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT * FROM input WHERE is_placeholder = 0 AND page_num <> 301"
+          "sql": "SELECT * FROM input WHERE is_placeholder = 0 AND page_num <> 401"
         }
       }
     },
@@ -377,7 +377,7 @@
         "label": "gsent",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT * FROM input WHERE page_num = 301 AND page_rows > 0"
+          "sql": "SELECT * FROM input WHERE page_num = 401 AND page_rows > 0"
         }
       }
     }
