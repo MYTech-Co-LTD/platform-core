@@ -1,0 +1,118 @@
+{
+  "$schema": "./_schema.schema.json",
+  "contractVersion": 2,
+  "schemaVersion": 1,
+  "consumerVersion": 1,
+  "domain": "lemeng",
+  "table": "saler_commission",
+  "owner": "data-platform",
+  "description": "乐檬**销售员提成汇总**（nhsoft.report.ai.salercommission.find；AMAREPORT，2026-11-03 接源）。【行粒度】一行 = 账套×bizday×门店×销售员（该接口无 summary_types 参数，粒度固定）。【窗口】单日窗；含首尾 ≤30 天、branch_nums 必填 ≤100 家。【用途】销售员提成核算与业绩分析。【首发锚】3120 / 2026-10-28 / 100 店 → 121 行；样本 saler=王丽先 店1 sale_money_no_coupon=1203.2 / sale_cost=750.32 / sale_order_count=35。",
+  "layout": {
+    "prefix": "lemeng/saler_commission",
+    "partitionStyle": "hive",
+    "partitionBy": [
+      "system_book",
+      "bizday"
+    ],
+    "fileName": "all.parquet"
+  },
+  "batch": {
+    "markerColumn": "batch_id",
+    "type": "varchar",
+    "unique": false,
+    "note": "= 父管线每轮批次号（UTC 时间戳串）；同 bizday 分区覆盖写。"
+  },
+  "columns": [
+    {
+      "name": "batch_id",
+      "type": "varchar",
+      "nullable": false,
+      "description": "采集批次（父管线 drv 的 batch_id）",
+      "expr": "CAST(batch_id AS VARCHAR)"
+    },
+    {
+      "name": "system_book",
+      "type": "integer",
+      "nullable": false,
+      "description": "账套；分区键",
+      "expr": "CAST(system_book AS INTEGER)"
+    },
+    {
+      "name": "bizday",
+      "type": "date",
+      "nullable": false,
+      "description": "营业日；分区键",
+      "expr": "CAST(bizday AS DATE)"
+    },
+    {
+      "name": "branch_num",
+      "type": "integer",
+      "nullable": false,
+      "description": "门店编号",
+      "expr": "CAST(branch_num AS INTEGER)"
+    },
+    {
+      "name": "branch_name",
+      "type": "varchar",
+      "nullable": true,
+      "description": "门店名称",
+      "expr": "CAST(branch_name AS VARCHAR)"
+    },
+    {
+      "name": "saler",
+      "type": "varchar",
+      "nullable": false,
+      "description": "销售员",
+      "expr": "CAST(saler AS VARCHAR)"
+    },
+    {
+      "name": "sale_commission",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "提成金额",
+      "expr": "CAST(sale_commission AS DECIMAL(14,2))"
+    },
+    {
+      "name": "turnover_with_coupon_price",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "含券售价营业额",
+      "expr": "CAST(turnover_with_coupon_price AS DECIMAL(14,2))"
+    },
+    {
+      "name": "sale_money_no_coupon",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "不含券销售额",
+      "expr": "CAST(sale_money_no_coupon AS DECIMAL(14,2))"
+    },
+    {
+      "name": "sale_cost",
+      "type": "decimal(14,2)",
+      "nullable": true,
+      "description": "销售成本",
+      "expr": "CAST(sale_cost AS DECIMAL(14,2))"
+    },
+    {
+      "name": "commission_rate",
+      "type": "decimal(14,8)",
+      "nullable": true,
+      "description": "提成率",
+      "expr": "CAST(commission_rate AS DECIMAL(14,8))"
+    },
+    {
+      "name": "sale_order_count",
+      "type": "bigint",
+      "nullable": true,
+      "description": "订单数",
+      "expr": "CAST(sale_order_count AS BIGINT)"
+    },
+    {
+      "name": "computed_at",
+      "type": "timestamptz",
+      "nullable": false,
+      "description": "计算时间",
+      "expr": "CAST(computed_at AS TIMESTAMPTZ)"
+    }
+  ]
+}
