@@ -92,8 +92,14 @@ export default function MetricsPage() {
   // 列表工具条（UX 2026-11-03）：指标表列多、行多，搜索与来源筛选是第一需要。
   const isMobile = useIsMobile()
   const [sheetFor, setSheetFor] = useState<MetricRow | null>(null)
+  const [filterOpen, setFilterOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [sourceFilter, setSourceFilter] = useState<'all' | 'l1' | 'l2'>('all')
+  const SOURCE_OPTIONS = [
+    { label: '全部', value: 'all' as const },
+    { label: '平台指标', value: 'l1' as const },
+    { label: '派生指标', value: 'l2' as const },
+  ]
   const [draft, setDraft] = useState<Draft | null>(null)
   // #489：变更历史抽屉。historyId=null 即关闭（不用额外一个 open 布尔量，避免两处状态打架）
   const [historyId, setHistoryId] = useState<string | null>(null)
@@ -275,6 +281,44 @@ export default function MetricsPage() {
     </div>
   )
 
+  const mobileFilterSheet = (
+    <Drawer
+      placement="bottom"
+      open={filterOpen}
+      onClose={() => setFilterOpen(false)}
+      closable={false}
+      title="筛选来源"
+      height="auto"
+      styles={{ body: { padding: '4px 0 16px' } }}
+    >
+      {SOURCE_OPTIONS.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => { setSourceFilter(o.value); setFilterOpen(false) }}
+          style={{
+            display: 'flex', justifyContent: 'space-between', width: '100%',
+            padding: '15px 24px', border: 'none', background: 'none',
+            textAlign: 'left', fontSize: 16, cursor: 'pointer',
+            color: sourceFilter === o.value ? '#1677ff' : '#1f1f1f',
+          }}
+        >
+          {o.label}
+          {sourceFilter === o.value ? <span aria-hidden>✓</span> : null}
+        </button>
+      ))}
+      <button
+        type="button"
+        onClick={() => setFilterOpen(false)}
+        style={{
+          display: 'block', width: '100%', padding: '15px 24px', marginTop: 8,
+          border: 'none', borderTop: '1px solid #f0f0f0', background: '#fafafa',
+          textAlign: 'center', cursor: 'pointer', fontSize: 16, color: '#666',
+        }}
+      >取消</button>
+    </Drawer>
+  )
+
   const mobileSheet = (
     <Drawer
       placement="bottom"
@@ -322,28 +366,35 @@ export default function MetricsPage() {
         </Typography.Text>
       </Space>
 
-      <div style={{
-        display: 'flex', gap: 8,
-        flexDirection: isMobile ? 'column' : 'row',
-        justifyContent: 'space-between', alignItems: isMobile ? 'stretch' : 'center',
-      }}>
-        <Input
-          allowClear
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="搜索指标 id / 标题 / 说明"
-          style={{ width: isMobile ? '100%' : 300 }}
-        />
-        <Segmented
-          value={sourceFilter}
-          onChange={(v) => setSourceFilter(v as typeof sourceFilter)}
-          options={[
-            { label: '全部', value: 'all' },
-            { label: '平台指标', value: 'l1' },
-            { label: '派生指标', value: 'l2' },
-          ]}
-        />
-      </div>
+      {isMobile ? (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Input
+            allowClear
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索指标 id / 标题 / 说明"
+            style={{ flex: 1 }}
+          />
+          <Button onClick={() => setFilterOpen(true)} style={{ height: 44, paddingInline: 16 }}>
+            {sourceFilter === 'all' ? '筛选' : SOURCE_OPTIONS.find((o) => o.value === sourceFilter)?.label}
+          </Button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+          <Input
+            allowClear
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索指标 id / 标题 / 说明"
+            style={{ width: 300 }}
+          />
+          <Segmented
+            value={sourceFilter}
+            onChange={(v) => setSourceFilter(v as typeof sourceFilter)}
+            options={SOURCE_OPTIONS}
+          />
+        </div>
+      )}
 
       {draft !== null && (
         <Card size="small" title={draft.id === '' ? '新建派生指标（L2）' : `编辑 ${draft.id}`}>
@@ -466,6 +517,7 @@ export default function MetricsPage() {
       ]} />
       )}
       {isMobile ? mobileSheet : null}
+      {isMobile ? mobileFilterSheet : null}
 
       {/* 变更史：#489。倒序（服务端已排好），删除行标红——它是不可逆的那一类。 */}
       <Drawer title={`变更历史：${historyId ?? ''}`} open={historyId !== null}

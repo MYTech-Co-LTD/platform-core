@@ -10,6 +10,7 @@ import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router-dom'
 import { ProLayout } from '@ant-design/pro-components'
+import type { MenuDataItem } from '@ant-design/pro-components'
 import {
   AppstoreOutlined,
   BarChartOutlined,
@@ -31,11 +32,13 @@ import {
   Button,
   Card,
   ConfigProvider,
+  Drawer,
   Result,
   Spin,
   Typography,
   theme,
 } from 'antd'
+import { useIsMobile } from '../lib/useIsMobile'
 import { consoleRegistry, storageDeclarers } from '../console-registry.gen'
 import { buildConsoleMenu, visibleAdminEntries, visibleConsoleEntries } from './console-menu'
 import {
@@ -192,6 +195,112 @@ export default function ConsoleShell() {
   )
 }
 
+/**
+ * 移动端壳（<768px）：**没有** PC 的顶栏/侧栏/页签——底部固定标签栏 + 内容一屏。
+ * 顶层目的地 = 概览 + 最多 3 个模块 + 我的（主题/手机工作台/退出）。
+ * 模块内部的页签由模块自己用**段控**呈现（不是 antd 横向 Menu）。
+ */
+function MobileConsoleShell({
+  session, config, branding, dark, onToggleDark, menuItems, onLogout, loggingOut,
+}: {
+  session: PlatformSession
+  config: PlatformConfig
+  branding: Branding
+  dark: boolean
+  onToggleDark: () => void
+  menuItems: MenuDataItem[]
+  onLogout: () => void
+  loggingOut: boolean
+}) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [sheetOpen, setSheetOpen] = useState(false)
+
+  const tops = menuItems.filter((m) => typeof m.path === 'string' && m.path !== '/console/admin')
+  const tabs = [
+    { path: '/console', name: '概览', icon: <DashboardOutlined /> as ReactNode },
+    ...tops
+      .filter((m) => m.path !== '/console')
+      .slice(0, 3)
+      .map((m) => ({ path: String(m.path), name: String(m.name ?? ''), icon: (m.icon ?? <AppstoreOutlined />) as ReactNode })),
+  ]
+  const isActive = (path: string) => (path === '/console'
+    ? location.pathname === '/console' || location.pathname === '/console/'
+    : location.pathname === path || location.pathname.startsWith(`${path}/`))
+
+  return (
+    <div style={{
+      minHeight: '100dvh', background: '#f5f5f5',
+      paddingBottom: 'calc(58px + env(safe-area-inset-bottom, 0px))',
+    }}>
+      <div style={{ padding: '10px 12px 0' }}>
+        <Outlet context={{ session, config, branding } satisfies ConsoleOutletContext} />
+      </div>
+
+      <nav style={{
+        position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 100,
+        display: 'flex', background: '#fff', borderTop: '1px solid #ececec',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+      }}>
+        {tabs.map((t) => (
+          <button
+            key={t.path}
+            type="button"
+            onClick={() => navigate(t.path)}
+            aria-current={isActive(t.path) ? 'page' : undefined}
+            style={{
+              flex: 1, height: 56, border: 'none', background: 'none', cursor: 'pointer',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
+              fontSize: 11, color: isActive(t.path) ? branding.primaryColor : '#8c8c8c',
+            }}
+          >
+            <span aria-hidden style={{ fontSize: 20, lineHeight: 1 }}>{t.icon}</span>
+            <span>{t.name}</span>
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => setSheetOpen(true)}
+          style={{
+            flex: 1, height: 56, border: 'none', background: 'none', cursor: 'pointer',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
+            fontSize: 11, color: '#8c8c8c',
+          }}
+        >
+          <span aria-hidden style={{ fontSize: 20, lineHeight: 1 }}><UserOutlined /></span>
+          <span>我的</span>
+        </button>
+      </nav>
+
+      <Drawer
+        placement="bottom"
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        closable={false}
+        height="auto"
+        title={session.user.displayName}
+        styles={{ body: { padding: '4px 0 16px' } }}
+      >
+        <button type="button" onClick={() => { setSheetOpen(false); onToggleDark() }}
+                style={{ display: 'block', width: '100%', padding: '15px 24px', border: 'none', background: 'none', textAlign: 'left', fontSize: 16, cursor: 'pointer' }}>
+          {dark ? '切换到浅色模式' : '切换到暗色模式'}
+        </button>
+        <a href="/m" style={{ display: 'block', padding: '15px 24px', color: 'inherit', textDecoration: 'none', fontSize: 16 }}>
+          打开手机工作台
+        </a>
+        <button type="button" onClick={() => { setSheetOpen(false); onLogout() }} disabled={loggingOut}
+                style={{ display: 'block', width: '100%', padding: '15px 24px', border: 'none', background: 'none', textAlign: 'left', fontSize: 16, color: '#ff4d4f', cursor: 'pointer' }}>
+          退出登录
+        </button>
+        <button type="button" onClick={() => setSheetOpen(false)}
+                style={{ display: 'block', width: '100%', padding: '15px 24px', marginTop: 8, border: 'none', borderTop: '1px solid #f0f0f0', background: '#fafafa', textAlign: 'center', fontSize: 16, color: '#666', cursor: 'pointer' }}>
+          取消
+        </button>
+      </Drawer>
+    </div>
+  )
+}
+
 function ConsoleLayout({
   session,
   config,
@@ -206,6 +315,7 @@ function ConsoleLayout({
   onToggleDark: () => void
 }) {
   const location = useLocation()
+  const isMobile = useIsMobile()
   const [loggingOut, setLoggingOut] = useState(false)
 
   // 菜单位置规则（spec §3）在 console-menu.ts：概览 → pinned（case-engine）→ manifest 声明序
@@ -230,6 +340,21 @@ function ConsoleLayout({
       // 无论登出成败都回登录页（401/403 由服务端语义兜底，停在原地只会让用户卡死）
       window.location.href = '/login'
     }
+  }
+
+  if (isMobile) {
+    return (
+      <MobileConsoleShell
+        session={session}
+        config={config}
+        branding={branding}
+        dark={dark}
+        onToggleDark={onToggleDark}
+        menuItems={menuItems}
+        onLogout={() => void onLogout()}
+        loggingOut={loggingOut}
+      />
+    )
   }
 
   return (
@@ -269,6 +394,7 @@ function ConsoleLayout({
 export function ConsoleOverview() {
   const { session, config, branding } = useOutletContext<ConsoleOutletContext>()
   const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const entries = visibleConsoleEntries(config, session, consoleRegistry)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -292,14 +418,19 @@ export function ConsoleOverview() {
               <Card
                 key={e.path}
                 hoverable
-                style={{ width: 240, borderRadius: 12 }}
+                // 移动端：整宽单列（固定 240px 在 390 屏上会只占半行，看着像没加载完）
+                style={{ width: isMobile ? '100%' : 240, borderRadius: 12 }}
+                styles={{ body: { padding: isMobile ? 16 : 24 } }}
                 onClick={() => navigate(e.path)}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  {CONSOLE_ICONS[e.icon ?? '']}
+                  {CONSOLE_ICONS[e.icon ?? ''] ?? <AppstoreOutlined />}
                   <Typography.Text strong>{e.title}</Typography.Text>
                 </div>
-                <Typography.Text type="secondary">{e.moduleName}</Typography.Text>
+                {/* 模块名与标题常同名（售后管理/数据问数）⇒ 重复时不再显示 */}
+                {e.moduleName !== e.title && (
+                  <Typography.Text type="secondary">{e.moduleName}</Typography.Text>
+                )}
               </Card>
             ))}
           </div>
