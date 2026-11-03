@@ -33,6 +33,8 @@ export default defineModule({
       addresses: moduleCtx.addresses,
       // 通知端口：指标确认生效的变更通知（spec 2026-11-01 §10.4 D6）。旧宿主/单测 = undefined ⇒ 跳过
       notify: moduleCtx.notify,
+      // 用户活跃态（#1333）：管理面标「无活跃所有者」。旧宿主/单测 = undefined ⇒ ownerActive=null
+      userStatus: moduleCtx.userStatus,
     }
     // register* 与 manifest.yaml 的 api.internal 必须同一提交对齐（装载期双向核对）
     // 个人 Key 管理已上移宿主（issue #894，正典 §1.5）⇒ 本模块不再有 /keys 路由与声明。

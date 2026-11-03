@@ -170,6 +170,24 @@ describe('报表页签双视图', () => {
     expect(rowButton('自绘大盘', '配部门门')).toBeInTheDocument()
   })
 
+  it('★ 所有者活跃态（#1333）：ownerActive=false 标「已停用」；null（未知）不标', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) {
+        return json({ reports: [
+          { ...ROWS[0], owner: 'u-gone', ownerActive: false, canEdit: true },
+          { ...ROWS[2], owner: 'u-live', ownerActive: null, canEdit: true },
+        ] })
+      }
+      return json({})
+    })
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
+    expect(within(rowOf('销售日报')).getByText('已停用')).toBeInTheDocument()
+    // null = 未知（未注入 resolver / Casdoor 不可达）⇒ 不冒充停用
+    expect(within(rowOf('自绘大盘')).queryByText('已停用')).toBeNull()
+  })
+
   it('管理清单里「门是自己没有的 scope」的行：打开被禁用（服务端 embed-url 对它是 403）', async () => {
     // 管理清单按 spec **不裁行**（管理员必须看得见、能改页门）⇒ 「打开」只按 renderer 置灰是不够的：
     // 页门未放行的行（r2 = sales:read，而本 session 只有 data:query/data:manage）点开必然 403。

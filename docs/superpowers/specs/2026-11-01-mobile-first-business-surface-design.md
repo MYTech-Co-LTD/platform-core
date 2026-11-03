@@ -122,6 +122,9 @@ canEditAsset(row, requester, acl):
 - **转移**：owner 可把自己资产转给他人（写 ACL + 审计）；管理员可代转。
 - **离职/停用**：owner 不再活跃时资产不自动消失——管理员可接管（已有 `:manage`），
   控制台列出「无活跃所有者的资产」供清理。**不做自动转移**（谁接管是需要人判断的事）。
+  实现（#1333）：宿主经 `ctx.userStatus` 注入 Casdoor 用户态只读查询（不暴露客户端），
+  管理清单每行回 `ownerActive: true|false|null`（null = 未注入/Casdoor 不可达，**不冒充停用**）；
+  console 在所有者旁标「已停用」。按 owner 去重缓存，避免 N+1。
 
 ### 4.5 与「推送给谁」的关系
 

@@ -2,7 +2,9 @@
 // ⚠️ 引类型务必 `import type`，别把类型当值引（#44 的形状，typecheck 拦不住）。
 import type { Context, Hono } from 'hono'
 import type { Pool } from 'pg'
-import type { ChannelAddressResolver, Identity, NotifyPort, RequesterVars } from '@platform/sdk'
+import type {
+  ChannelAddressResolver, Identity, NotifyPort, RequesterVars, UserStatusResolver,
+} from '@platform/sdk'
 import { REQUESTER_CHANNEL, REQUESTER_KEY_ID, TENANT_SOURCES } from '@platform/sdk'
 import type { Requester } from '../domain/authz'
 import type { StreamingChatModel } from '../domain/llm'
@@ -61,6 +63,8 @@ export interface RouteCtx {
    * 部门选择器的数据源从此只有宿主一处）。
    */
   addresses?: ChannelAddressResolver
+  /** 用户活跃态（#1333）：宿主注入（Casdoor 状态）；未注入 = 未知（管理面 ownerActive=null）。 */
+  userStatus?: UserStatusResolver
 }
 
 /**

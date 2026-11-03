@@ -45,6 +45,8 @@ interface ReportRow {
   requiredDepts?: string[] | null
   /** 所有者（spec 2026-11-01 §4.4）：`null` = 历史资产无所有者（只读标注，转移走 API） */
   owner?: string | null
+  /** 所有者活跃态（#1333）：true=在职 / false=停用或查无此人 / null=未知（不标） */
+  ownerActive?: boolean | null
   renderer: 'metabase' | 'platform'
   // **登记侧**版本（写保护的读侧）：`GET /reports/manage` 每行回带；三个写动作回带它
   // （PUT 走 body `expectedVersion`、DELETE 走查询串 `?expectedVersion=`）。服务端不服 ⇒ 409 STALE_WRITE。
@@ -588,7 +590,17 @@ export default function ReportsPage() {
           title: '所有者', render: (_: unknown, r: ReportRow) => (
             r.owner == null
               ? <Tooltip title="历史资产：创建者未知（ACL 落地前）。管理员可转移一个负责人"><Tag color="orange">无所有者</Tag></Tooltip>
-              : <span>{r.owner}</span>
+              : (
+                <Space size={4}>
+                  <span>{r.owner}</span>
+                  {/* #1333：停用/离职标注供交接清理；null=未知 ⇒ 不标（不冒充） */}
+                  {r.ownerActive === false && (
+                    <Tooltip title="Casdoor 里已停用或查无此人。建议把资产转移给在职负责人（共享 → 所有者转移）">
+                      <Tag color="red">已停用</Tag>
+                    </Tooltip>
+                  )}
+                </Space>
+              )
           ),
         },
         {
