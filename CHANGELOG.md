@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.258.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.257.0...v0.258.0) - 2026-11-03
+- 【新增】web: 移动端业务工作台 /m 打磨（#1351） ([#1352](https://github.com/MYTech-Co-LTD/platform-core/pull/1352), [5d8a082](https://github.com/MYTech-Co-LTD/platform-core/commit/5d8a082d5652ea82bacff55be50d81aeee0c2758))
+
+
 ## [0.257.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.256.0...v0.257.0) - 2026-11-03
 - 【新增】data-mobile: 移动指标页移动端优先优化（#1349） ([#1350](https://github.com/MYTech-Co-LTD/platform-core/pull/1350), [a48341f](https://github.com/MYTech-Co-LTD/platform-core/commit/a48341f6a9df5c02212b0463d704f569f4156120))
 
