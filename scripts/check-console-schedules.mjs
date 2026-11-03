@@ -140,7 +140,10 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.item_profit.backfill.64188', '回填专用（${BIZDAY} 参数化；同族 loss/expense 先例）'],
   ['lemeng.item_sales.day', '**foreach 子管线**——由 item_sales.l0.<book> 的 ctl.foreach 逐门店块驱动（≤100 家/块），不单独排班'],
   ['lemeng.item_profit.day', '**foreach 子管线**——由 item_profit.l0.<book> 的 ctl.foreach 逐门店块驱动（≤100 家/块），不单独排班'],  ['lemeng.recon.preagg.item', '按需手动（逐分归零对账执行面，无日更节奏）'],
-  ['lemeng.recon.preagg.backfill', '回填专用（换 BIZDAY 参数手动触发，handbook §1.3 阶段 H）'],
+
+  ['lemeng.customer_analysis.backfill.3120', '回填专用（${BIZDAY} 参数化）'],
+  ['lemeng.customer_analysis.backfill.64188', '回填专用（${BIZDAY} 参数化）'],
+  ['lemeng.customer_analysis.day', '**foreach 子管线**——由 customer_analysis.l0.<book> 的 ctl.foreach 逐门店块驱动'],  ['lemeng.recon.preagg.backfill', '回填专用（换 BIZDAY 参数手动触发，handbook §1.3 阶段 H）'],
   // ── #1160 全量历史回填（2024-10-01 起，双账套）：以下变体由
   //    scripts/lemeng/gen-backfill-variants.mjs 从同账套 l0 机械派生，只在回填期手动驱动。
   ['lemeng.request.order.backfill.3120', '回填专用（#1160 全量历史回填；${BIZDAY} 参数化）'],

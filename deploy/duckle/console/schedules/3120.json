@@ -481,5 +481,26 @@
     "last_run_duration_ms": null,
     "last_run_error": null,
     "next_run_at": null
+  },
+  {
+    "id": "panel-lemeng.customer_analysis.l0.3120",
+    "pipeline_id": "lemeng.customer_analysis.l0.3120",
+    "name": "lemeng.customer_analysis.l0.3120",
+    "enabled": true,
+    "kind": {
+      "type": "cron",
+      "expr": "30 3 * * *"
+    },
+    "timezone": "Asia/Shanghai",
+    "misfire": "skip",
+    "catchup": {
+      "maxCatchupRuns": 31,
+      "maxCatchupAgeDays": 45
+    },
+    "last_run_at": null,
+    "last_run_status": null,
+    "last_run_duration_ms": null,
+    "last_run_error": null,
+    "next_run_at": null
   }
 ]

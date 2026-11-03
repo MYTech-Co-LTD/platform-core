@@ -231,3 +231,12 @@ sources:
           partition_keys: ['system_book', 'bizday']
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
           pagination: '无分页（responsePath=/result/rows）；响应 {result:{total_count,rows[]}}，管线断言 len(rows)==total_count'
+
+      - name: customer_analysis
+        description: '乐檬**时段分析**（2026-11-03 契约）：行 = 账套 × bizday × 门店 × 时段切片（interval_minutes=60）。接口 nhsoft.report.ai.customeranalysis.find；窗口单日、含首尾 ≤31 天、branch_nums 必填 ≤100 家 ⇒ 父管线 whoami 切块 foreach。⚠️ 当日无经营的时段不出现 ⇒ 缺行 = 无数据。'
+        meta:
+          path_convention: 'lemeng/customer_analysis/system_book=<账套>/bizday=<日期>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_customer_analysis_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '无分页（responsePath=/result/rows）；响应 {result:{total_count,rows[]}}，管线断言 len(rows)==total_count'

@@ -1,6 +1,6 @@
 // console-schedules-tz.test.ts — 业务排班时区统一门禁（spec 2026-10-15 §10.6，2026-10-16 用户拍板）。
 //
-// 钉什么：deploy/duckle/console/schedules/ 下三本种子（3120×21 + 64188×16 + forms×1，共 42 条）必须
+// 钉什么：deploy/duckle/console/schedules/ 下三本种子（3120×21 + 64188×16 + forms×1，共 44 条）必须
 //   ① 全部显式 `timezone: 'Asia/Shanghai'`（含原先缺省无字段的 9 条）；
 //   ② `kind.expr` 与 §10.6 转换表**逐字**一致（旧 UTC expr +8h）。
 //   ⚠️ **2026-10-20 订正（#931）**：非销售采集统一到 **14–24 点每 2 小时**（`M 14,16,18,20,22 * * *`），
@@ -19,6 +19,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 /** 期望：book →（排班 id → §10.6 转换表逐字的 expr）。行序即文件内条目序。 */
 const EXPECTED: Record<string, Record<string, string>> = {
   '3120': {
+    'panel-lemeng.customer_analysis.l0.3120': '30 3 * * *',
     'panel-lemeng.item_sales.l0.3120': '0 3 * * *',
     'panel-lemeng.item_profit.l0.3120': '0 5 * * *',
     'panel-lemeng.retail.tick.l1': '*/5 8-23 * * *',
@@ -45,6 +46,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     'panel-lemeng.recon.preagg': '40 0 * * *',
   },
   '64188': {
+    'panel-lemeng.customer_analysis.l0.64188': '30 3 * * *',
     'panel-lemeng.item_sales.l0.64188': '0 3 * * *',
     'panel-lemeng.item_profit.l0.64188': '0 5 * * *',
     'panel-lemeng.dim.branch.l0': '0 14,16,18,20,22 * * *',
@@ -78,7 +80,7 @@ function readBook(book: string): Array<{ id?: unknown; kind?: { type?: unknown; 
   return JSON.parse(readFileSync(path.join(ROOT, 'deploy', 'duckle', 'console', 'schedules', `${book}.json`), 'utf8'))
 }
 
-describe('console 排班时区统一（spec §10.6）：42 条全显式 Asia/Shanghai + expr 逐字合表', () => {
+describe('console 排班时区统一（spec §10.6）：44 条全显式 Asia/Shanghai + expr 逐字合表', () => {
   for (const [book, expected] of Object.entries(EXPECTED)) {
     it(`book=${book}：条目集与期望表恰同集，timezone 全显式 Asia/Shanghai，expr 逐字一致`, () => {
       const entries = readBook(book)
@@ -97,8 +99,8 @@ describe('console 排班时区统一（spec §10.6）：42 条全显式 Asia/Sha
     })
   }
 
-  it('合计恰 42 条（3120×23 + 64188×18 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
+  it('合计恰 44 条（3120×24 + 64188×19 + forms×1）——条数漂移必须显式改 spec §10.6 与本测试', () => {
     const total = Object.values(EXPECTED).reduce((n, m) => n + Object.keys(m).length, 0)
-    expect(total).toBe(42)
+    expect(total).toBe(44)
   })
 })
