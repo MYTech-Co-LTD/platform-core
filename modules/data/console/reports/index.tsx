@@ -25,7 +25,7 @@
 //     `PUT` 对 platform 行回 409 `USE_PUBLISH_ENDPOINT`）。
 import { useEffect, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
-import { Button, Drawer, Input, Modal, Popconfirm, Space, Table, Tag, Tooltip, Tree, Typography, message } from 'antd'
+import { Button, Drawer, Input, Modal, Popconfirm, Segmented, Space, Table, Tag, Tooltip, Tree, Typography, message } from 'antd'
 import { ApiError, apiGet, apiSend, messageOf } from '../lib/api'
 import SpecView from './SpecView'
 
@@ -90,6 +90,10 @@ export default function ReportsPage() {
   const canManage = session.scopes.includes('data:manage')
 
   const [rows, setRows] = useState<ReportRow[]>([])
+  // 列表工具条（2026-11-03 UX）：租户报表多起来后，靠肉眼扫表找一张是主要摩擦点。
+  // 纯前端过滤（服务端清单本来就是一次性全量；分页/服务端搜索是另一个议题）。
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'changed'>('all')
   // 请求者自己的部门闭包（`GET /reports/manage` 回带；本人部门 + 全部祖先）。只用来判
   // 「打开」按钮的可用性——真正的授权在服务端（前端不重复判权，见文件头②）。
   // `null` = **不知道**（观看清单不带这个键）：那时**不判部门门**——那里的行已经被服务端裁过，
@@ -526,32 +530,75 @@ export default function ReportsPage() {
           ? `你的账号没有这张报表的页门权限（${r.requiredScope}）`
           : '你的部门不在这张报表的部门门里'
       }>
-        <Button size="small" disabled>打开</Button>
+        <Button size="small" type="link" disabled>打开</Button>
       </Tooltip>
     ) : r.renderer === 'platform' ? (
       // platform 行：打开自绘视图（Tooltip 说明这条「打开」与 Metabase 嵌入预览不是一回事）
       <Tooltip title="打开自绘视图">
-        <Button size="small" onClick={() => setSelfDrawn({ title: r.title, id: r.id })}>打开</Button>
+        <Button size="small" type="link" onClick={() => setSelfDrawn({ title: r.title, id: r.id })}>打开</Button>
       </Tooltip>
     ) : (
       // metabase 行：既有行为一字不动（embed-url 那条路，见 open）
-      <Button size="small" onClick={() => void open(r)}>打开</Button>
+      <Button size="small" type="link" onClick={() => void open(r)}>打开</Button>
     )
+
+  // 纯前端过滤：标题/所有者匹配 + 发布状态分档（「未发布」= 从未发布；「有改动」= 发布后草稿又改过）
+  const q = query.trim().toLowerCase()
+  const visibleRows = rows.filter((r) => {
+    const matched = q === '' || r.title.toLowerCase().includes(q)
+      || (r.owner ?? '').toLowerCase().includes(q)
+    if (!matched) return false
+    if (statusFilter === 'published') return r.publishedVersion !== null && !r.hasUnpublishedChanges
+    if (statusFilter === 'changed') return r.hasUnpublishedChanges
+    if (statusFilter === 'draft') return r.publishedVersion === null
+    return true
+  })
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {ctx}
-      <Table rowKey="id" dataSource={rows} pagination={false} columns={[
+      <Space wrap size="small" style={{ width: '100%', justifyContent: 'space-between' }}>
+        <Input
+          allowClear
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="搜索报表标题或所有者"
+          style={{ width: 280 }}
+        />
+        <Segmented
+          value={statusFilter}
+          onChange={(v) => setStatusFilter(v as typeof statusFilter)}
+          options={[
+            { label: '全部', value: 'all' },
+            { label: '已发布', value: 'published' },
+            { label: '未发布', value: 'draft' },
+            { label: '有改动', value: 'changed' },
+          ]}
+        />
+      </Space>
+      <Table
+        rowKey="id"
+        dataSource={visibleRows}
+        pagination={false}
+        // 窄屏（平板/分屏）横向滚动，而不是把列挤成一团
+        scroll={{ x: 1000 }}
+        locale={{
+          emptyText: rows.length === 0
+            ? (canManage ? '还没有报表。可通过 AI 助手（MCP）或 API 创建第一张。' : '暂时没有对你可见的报表')
+            : '没有匹配的报表，试试清空搜索或切换筛选',
+        }}
+        columns={[
         // ⚠️ 订正记录（2026-09-29，Task 5 评审 spec ❌ + 人裁「两视图都加」）：徽章必须内联在**标题**里
         //    ——原稿把它只放在管理视图的条件列里，观看视图就只剩一个置灰按钮；而本仓 antd 6.6.3 已移除
         //    v5 的 `getDisabledCompatibleChildren`，**Tooltip 在禁用按钮上不保证弹**，普通员工会看到
         //    一个没有理由的灰按钮。徽章自己承担「为什么这行点不开」。管理视图另留一列「渲染器」便于扫读。
         {
-          title: '报表标题', dataIndex: 'title',
+          title: '报表标题', dataIndex: 'title', width: 280,
           render: (v: string, r: ReportRow) => (
             <Space size={4} wrap>
               {v}
-              {r.renderer === 'platform' && <Tag color="purple">平台自绘</Tag>}
+              {/* 管理视图有独立「渲染器」列 ⇒ 标题里不再重复（#UX 去噪）；观看视图没有该列，保留标签 */}
+              {!canManage && r.renderer === 'platform' && <Tag color="purple">平台自绘</Tag>}
               {/* 版本徽标（月报重做 Task 12；设计 §8.2）：只有管理清单带 `publishedVersion` /
                   `hasUnpublishedChanges`，且版本通路只属于 platform 行——Metabase 行标题保持原样，
                   不硬造一个「未发布」（它根本没有版本概念）。 */}
@@ -566,14 +613,14 @@ export default function ReportsPage() {
           ),
         },
         ...(canManage ? [{
-          title: '渲染器', dataIndex: 'renderer',
+          title: '渲染器', dataIndex: 'renderer', width: 110,
           render: (v: ReportRow['renderer']) => (v === 'platform' ? <Tag color="purple">平台自绘</Tag> : <Tag>Metabase</Tag>),
         }] : []),
-        { title: '页门', dataIndex: 'requiredScope', render: (v: string | null) => v ?? '不限' },
+        { title: '页门', dataIndex: 'requiredScope', width: 110, render: (v: string | null) => v ?? '不限' },
         // 部门门（spec 2026-10-30 §3.4）：恒在的列（不依赖悬停）——它是「打开」置灰的另一半理由。
         // 显示的是**门里配的部门数**（子树继承意味着实际覆盖更多），悬停给出 ext_id。
         {
-          title: '部门门', dataIndex: 'requiredDepts',
+          title: '部门门', dataIndex: 'requiredDepts', width: 120,
           render: (v: string[] | null | undefined) => {
             const gate = v ?? []
             if (gate.length === 0) return '不限'
@@ -587,7 +634,7 @@ export default function ReportsPage() {
         {
           // 无所有者（历史资产，spec §4.4）：只读标注——交接清理时一眼看见；转移走
           // `PUT /reports/:id/owner`（owner 或 data:manage）
-          title: '所有者', render: (_: unknown, r: ReportRow) => (
+          title: '所有者', width: 150, render: (_: unknown, r: ReportRow) => (
             r.owner == null
               ? <Tooltip title="历史资产：创建者未知（ACL 落地前）。管理员可转移一个负责人"><Tag color="orange">无所有者</Tag></Tooltip>
               : (
@@ -604,29 +651,29 @@ export default function ReportsPage() {
           ),
         },
         {
-          title: '操作', render: (_: unknown, r: ReportRow) => (
+          title: '操作', width: 300, render: (_: unknown, r: ReportRow) => (
             <Space size="small">
               {openBtn(r)}
               {/* 「编辑」与「打开」是**两条不同通路**：打开 = 嵌入预览（embed-url，只读令牌）；
                   编辑 = 专用入口反代会话（edit-url，可写）。平台自绘行没有 Metabase dashboard 可编辑，
                   故按 renderer 逐行给按钮（服务端同守卫：409 RENDERER_NOT_EDITABLE）。 */}
               {r.canEdit && r.renderer === 'metabase' && (
-                <Button size="small" onClick={() => void edit(r)}>编辑</Button>
+                <Button size="small" type="text" onClick={() => void edit(r)}>编辑</Button>
               )}
               {/* 部门门：**与渲染器无关**（自绘行也要能配），故放在两支条件之外。
                   与「改页门」的区别：页门按 scope，部门门按组织架构（子树继承）。 */}
               {r.canEdit && (
-                <Button size="small" onClick={() => void openDeptGate(r)}>
+                <Button size="small" type="text" onClick={() => void openDeptGate(r)}>
                   {(r.requiredDepts ?? []).length === 0 ? '配部门门' : '改部门门'}
                 </Button>
               )}
               {/* 资产级共享（spec 2026-11-01 §4）：**谁被允许看**。授权在服务端
                   （owner ∪ data:manage），这里不看 canManage——被共享的 owner 也要能改。 */}
-              <Button size="small" onClick={() => void openShare(r)}>共享</Button>
+              <Button size="small" type="text" onClick={() => void openShare(r)}>共享</Button>
               {/* ── Metabase 行：既有管理动作**一字不动**（改页门/发布=清页门/回收）────────── */}
               {r.canEdit && r.renderer === 'metabase' && (
                 <>
-                  <Button size="small" onClick={() => { setGateEdit(r); setGateDraft(r.requiredScope ?? '') }}>
+                  <Button size="small" type="text" onClick={() => { setGateEdit(r); setGateDraft(r.requiredScope ?? '') }}>
                     改页门
                   </Button>
                   {r.requiredScope !== null && (
@@ -636,14 +683,14 @@ export default function ReportsPage() {
                     <Popconfirm title={`发布后所有拿到本模块的人都能看到「${r.title}」，确定？`}
                                 okText="确认发布" cancelText="取消"
                                 onConfirm={() => void publishGate(r)}>
-                      <Button size="small">发布</Button>
+                      <Button size="small" type="text">发布</Button>
                     </Popconfirm>
                   )}
                   <Popconfirm title={`回收会删除「${r.title}」及其报表本体，确定？`}
                               okText="确认回收" cancelText="取消"
                               okButtonProps={{ danger: true }}
                               onConfirm={() => void recycle(r)}>
-                    <Button size="small" danger>回收</Button>
+                    <Button size="small" type="text" danger>回收</Button>
                   </Popconfirm>
                 </>
               )}
@@ -651,17 +698,17 @@ export default function ReportsPage() {
                      派生并随快照钉死；手改会与线上快照不一致（服务端 PUT 对该类行 409）。────── */}
               {r.canEdit && r.renderer === 'platform' && (
                 <>
-                  <Button size="small" onClick={() => { setPublishTarget(r); setPublishNote('') }}>发布</Button>
+                  <Button size="small" type="text" onClick={() => { setPublishTarget(r); setPublishNote('') }}>发布</Button>
                   {r.publishedVersion !== null && (
                     <Popconfirm title={`下线后独立链接立即失效（历史版本保留），确定下线「${r.title}」？`}
                                 okText="确认下线" cancelText="取消"
                                 onConfirm={() => void unpublish(r)}>
-                      <Button size="small">下线</Button>
+                      <Button size="small" type="text">下线</Button>
                     </Popconfirm>
                   )}
-                  <Button size="small" onClick={() => void openVersions(r)}>版本</Button>
+                  <Button size="small" type="text" onClick={() => void openVersions(r)}>版本</Button>
                   {r.publishedVersion !== null && (
-                    <Button size="small" onClick={() => void copyLink(r)}>复制链接</Button>
+                    <Button size="small" type="text" onClick={() => void copyLink(r)}>复制链接</Button>
                   )}
                   {/* 回收连带删 report_versions（on delete cascade）⇒ 文案必须写明历史一并删除
                       （设计 §6.4），否则会有人以为还能找回旧版本。 */}
@@ -669,7 +716,7 @@ export default function ReportsPage() {
                               okText="确认回收" cancelText="取消"
                               okButtonProps={{ danger: true }}
                               onConfirm={() => void recycle(r)}>
-                    <Button size="small" danger>回收</Button>
+                    <Button size="small" type="text" danger>回收</Button>
                   </Popconfirm>
                 </>
               )}

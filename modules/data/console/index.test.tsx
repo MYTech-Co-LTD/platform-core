@@ -77,7 +77,9 @@ describe('数据模块 console 入口（三页签）', () => {
 
   it('深链到 /reports 渲染报表页（「报表标题」是报表页独有表头）并请求 /reports', async () => {
     renderAt('/console/data/reports')
-    await waitFor(() => expect(screen.getByText('报表标题')).toBeInTheDocument())
+    // ⚠️ 表格开启了横向滚动（scroll.x）⇒ antd 会额外渲染一份隐藏的表头量尺行，
+    //    「报表标题」出现两次。用 getAllByText 断言存在即可（2026-11-03 UX 改动）。
+    await waitFor(() => expect(screen.getAllByText('报表标题').length).toBeGreaterThan(0))
     await waitFor(() => expect(urls.some((u) => u.includes('/reports'))).toBe(true))
   })
 })

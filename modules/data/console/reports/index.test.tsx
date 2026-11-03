@@ -170,6 +170,38 @@ describe('报表页签双视图', () => {
     expect(rowButton('自绘大盘', '配部门门')).toBeInTheDocument()
   })
 
+  it('★ 工具条（UX）：搜索过滤 → 无匹配空态 → 状态筛选；清空恢复', async () => {
+    renderPage(['data:query', 'data:manage'])
+    await waitFor(() => expect(screen.getByText('销售日报')).toBeInTheDocument())
+    const search = screen.getByPlaceholderText('搜索报表标题或所有者')
+
+    fireEvent.change(search, { target: { value: '自绘' } })
+    expect(screen.getByText('自绘大盘')).toBeInTheDocument()
+    expect(screen.queryByText('销售日报')).toBeNull()
+
+    // 无匹配：空态文案要说「怎么回去」，不是一句「暂无数据」
+    fireEvent.change(search, { target: { value: '不存在的报表' } })
+    expect(screen.getByText('没有匹配的报表，试试清空搜索或切换筛选')).toBeInTheDocument()
+
+    fireEvent.change(search, { target: { value: '' } })
+    expect(screen.getByText('销售日报')).toBeInTheDocument()
+
+    // 状态筛选：只留「有未发布改动」的行（r3 自绘大盘），r4 未发布被筛掉
+    fireEvent.click(screen.getByText('有改动'))
+    expect(screen.getByText('自绘大盘')).toBeInTheDocument()
+    expect(screen.queryByText('未发布报表')).toBeNull()
+  })
+
+  it('★ 空清单（UX）：管理视图给「如何创建」的下一步，而不是裸「暂无数据」', async () => {
+    m.mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      if (url.endsWith('/reports/manage')) return json({ reports: [] })
+      return json({})
+    })
+    renderPage(['data:query', 'data:manage'])
+    expect(await screen.findByText('还没有报表。可通过 AI 助手（MCP）或 API 创建第一张。')).toBeInTheDocument()
+  })
+
   it('★ 所有者活跃态（#1333）：ownerActive=false 标「已停用」；null（未知）不标', async () => {
     m.mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
@@ -588,8 +620,9 @@ describe('平台自绘行的版本管理', () => {
   it('观看视图（无 data:manage）不渲染版本徽标（GET /reports 不带版本字段）', async () => {
     renderPage(['data:query'])
     await waitFor(() => expect(screen.getByText('自绘大盘')).toBeInTheDocument())
-    expect(screen.queryByText('v2 · 有未发布改动')).toBeNull()
-    expect(screen.queryByText('未发布')).toBeNull()
+    // ⚠️ 行内断言（2026-11-03）：工具条的「未发布」筛选也是这个词 ⇒ 全局 query 会误命中。
+    expect(within(rowOf('自绘大盘')).queryByText('v2 · 有未发布改动')).toBeNull()
+    expect(within(rowOf('未发布报表')).queryByText('未发布')).toBeNull()
   })
 
   it('平台行隐藏「改页门」，Metabase 行保持；未发布行没有下线/复制链接', async () => {
