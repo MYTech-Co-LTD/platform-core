@@ -87,7 +87,7 @@ flowchart TD
 flowchart TD
   S["① 调度 console —— 到点点火（含 timezone / misfire / catchup）"]:::e1
   S --> ID["身份门（＝图 1 的 v0/g0/g1/g2/d0/g3/d1/gv/dv 共 9 个节点）<br/>先证凭据与账套相符，未证则整轮不采"]:::e3
-  ID --> W0["③ w0 code.sql 窗口表 —— 算「这一轮该采哪些窗」<br/>日批 24 窗 / tick 当前+前一小时 / close 仅前一小时"]:::e3
+  ID --> W0["③ w0 code.sql 窗口表 —— 算「这一轮该采哪些窗」<br/>日批 T-1..T-3 全日窗 / tick 当前+前一小时 / close 仅前一小时"]:::e3
   W0 --> FE["① fe ctl.foreach —— 按窗口表逐窗跑子管线<br/>同 run 同窗失败自动重试 N 次（循环与重试都是它的）"]:::e1
   W0 --> WM["③ wm code.sql —— 把窗口表落成「收据形状」(status=pending)<br/>当收据目录的 schema 锚（保证读文件恒非空）"]:::e3
   WM --> WS["② wsink snk.csv —— 落本 run 的窗口清单（收据目录第一份文件）"]:::e2
@@ -144,8 +144,10 @@ flowchart TD
 | `sr` | ③ | SQL 执行壳 | 缺口窗判据（status ≠ ok） |
 | `dz` ctl.die | ② | 有行即红 | 判红文案 |
 
-**三兄弟的差别只在窗口表**：`windows` = 24 窗（日批，零点在 UTC 02:30 / 10:30 双点火）；
-`tick` = 当前小时 + 前一小时（每 5 分钟，`misfire:skip`，catchup 结构上补不回错过的窗）；
+**三兄弟的差别只在窗口表**：`windows` = **T-1..T-3 三个全日窗 ×24 小时**（日批，上海 10:30 / 18:30 双点火；
+2026-11-03 起扩窗——此前只采 T-1，晚于次日 18:30 过账的退货永久漏，#814 restatement window；
+**T-0 刻意不采**：staging 只读 `_DAY_DATA/`，采 T-0 会以半日快照覆盖式落湖）；
+`tick` = 当前小时 + 前一小时（每 5 分钟，`misfire:skip`，catchup 结构上补不回错过的窗；staging 不消费其 hour 分区）；
 `close` = 仅前一小时（1 窗）。`backfill` 变体与 `windows` 同形，**只差窗口来源是参数**（`BIZDAY`），且**不含 `op`/`wh`**（手动驱动、不进调度）。
 
 ---
