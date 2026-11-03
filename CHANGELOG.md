@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.252.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.252.0...v0.252.1) - 2026-11-03
+- 【修复】data: 所有者转移 / ACL 点名校验受让人真实可用（#1335） ([#1336](https://github.com/MYTech-Co-LTD/platform-core/pull/1336), [ddf794e](https://github.com/MYTech-Co-LTD/platform-core/commit/ddf794ea0ced8debf04af7357cb28a87e9145ec4))
+
+
 ## [0.252.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.251.0...v0.252.0) - 2026-11-03
 - 【新增】data: 管理面标注「无活跃所有者」的资产（#1333） ([#1334](https://github.com/MYTech-Co-LTD/platform-core/pull/1334), [48aa8df](https://github.com/MYTech-Co-LTD/platform-core/commit/48aa8dfaa3f3e60d3132dcdc6ec56508f7aced78))
 
