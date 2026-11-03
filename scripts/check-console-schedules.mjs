@@ -133,7 +133,13 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.branch_indicator.backfill.3120', '回填专用（#1047 D10 配送金额回填 10-01..19；${BIZDAY} 参数化，同族成员先例）'],
   ['lemeng.branch_indicator.day', '**foreach 子管线**——由 lemeng.branch_indicator.l0.3120 的 ctl.foreach 逐门店块驱动（100 家/块绕端点硬限），不单独排班；排班在父管线'],
   ['lemeng.inventory.snapshot.backfill.3120', '回填专用（#1079 库存快照 10-18..10-25 补采；${BIZDAY} 参数化，同族 transfer.in 先例）'],
-  ['lemeng.recon.preagg.item', '按需手动（逐分归零对账执行面，无日更节奏）'],
+
+  ['lemeng.item_sales.backfill.3120', '回填专用（${BIZDAY} 参数化；同族 loss/expense 先例）'],
+  ['lemeng.item_sales.backfill.64188', '回填专用（${BIZDAY} 参数化；同族 loss/expense 先例）'],
+  ['lemeng.item_profit.backfill.3120', '回填专用（${BIZDAY} 参数化；同族 loss/expense 先例）'],
+  ['lemeng.item_profit.backfill.64188', '回填专用（${BIZDAY} 参数化；同族 loss/expense 先例）'],
+  ['lemeng.item_sales.day', '**foreach 子管线**——由 item_sales.l0.<book> 的 ctl.foreach 逐门店块驱动（≤100 家/块），不单独排班'],
+  ['lemeng.item_profit.day', '**foreach 子管线**——由 item_profit.l0.<book> 的 ctl.foreach 逐门店块驱动（≤100 家/块），不单独排班'],  ['lemeng.recon.preagg.item', '按需手动（逐分归零对账执行面，无日更节奏）'],
   ['lemeng.recon.preagg.backfill', '回填专用（换 BIZDAY 参数手动触发，handbook §1.3 阶段 H）'],
   // ── #1160 全量历史回填（2024-10-01 起，双账套）：以下变体由
   //    scripts/lemeng/gen-backfill-variants.mjs 从同账套 l0 机械派生，只在回填期手动驱动。

@@ -213,3 +213,21 @@ sources:
           partition_keys: ['system_book', 'bizday']
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast（system_book::varchar / bizday::date）'
           pagination: '无分页（responsePath=/result/rows）；`branch_nums` 单次 ≤100 家（超出 code=10001）⇒ 父管线 whoami 取全店、按 100 切块经 ctl.foreach 派子管线，子管线只写 .duckle-stage，父管线 asm 合并后写湖（2026-10-26 起每轮 date-1d）'
+
+      - name: item_sales
+        description: '乐檬**商品销售分析**（2026-11-02 契约）：行 = 账套 × bizday × 门店 × 商品（summary_types=[branch,item]）。接口 nhsoft.report.ai.itemsales.find；窗口 ≤31 天硬限（10002）、branch_nums 必传 ≤100 家（10001）、越权店号 10003 ⇒ 父管线 whoami 取全店、按 100 切块 ctl.foreach 扇出。⚠️ 当日无销售的门店/商品不出现在 rows（total_count==len(rows) 合法）⇒ 缺行 = 无数据，不是零值。与 item_profit 同粒度不同表（商品集合不保证一致），join 在消费面做。'
+        meta:
+          path_convention: 'lemeng/item_sales/system_book=<账套>/bizday=<日期>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_item_sales_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '无分页（responsePath=/result/rows）；响应 {result:{total_count,rows[]}}，管线断言 len(rows)==total_count'
+
+      - name: item_profit
+        description: '乐檬**商品毛利分析**（2026-11-02 契约）：行 = 账套 × bizday × 门店 × 商品（summary_types=[branch,item]）。接口 nhsoft.report.ai.itemprofitanalysis.find；窗口/门店约束同 item_sales。⚠️ sale_cost / profit_* 需成本查询权限，缺权限时列可能为空或整行缺失 ⇒ 消费面聚合别拿它当分母。与 item_sales 同粒度不同表，join 在消费面做。'
+        meta:
+          path_convention: 'lemeng/item_profit/system_book=<账套>/bizday=<日期>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_item_profit_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '无分页（responsePath=/result/rows）；响应 {result:{total_count,rows[]}}，管线断言 len(rows)==total_count'
