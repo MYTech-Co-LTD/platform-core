@@ -7,7 +7,7 @@
 // 徽标：certified（平台认证/草稿）+ 新鲜度（绿 SLA 内 / 黄 偏慢 / 红 滞后 / 灰 未知）。
 // 「数据至 M月D日」的口径与后端固定行同源（watermark 是日历日，+8 不吃钟点）。
 import { useCallback, useEffect, useState } from 'react'
-import { Button, Input, Popup, SpinLoading, TextArea, Tag, Toast } from 'antd-mobile'
+import { Button, Input, Popup, PullToRefresh, Skeleton, TextArea, Tag, Toast } from 'antd-mobile'
 import { apiGet, apiSend, ApiError } from './api'
 
 interface MetricItem {
@@ -121,6 +121,8 @@ const OP_LABEL: Record<ExprOp, string> = { add: '+', sub: '−', mul: '×', div:
 export default function App() {
   const [data, setData] = useState<MetricsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // 移动端列表搜索（2026-11-03）：指标多起来后，首屏先给搜索而不是让人一直滑
+  const [search, setSearch] = useState('')
   /** 编辑中的 L2 id（null = 编辑器关着） */
   const [editing, setEditing] = useState<MetricItem | null>(null)
   /** 元数据编辑中的 L2 id（#1284 的 PUT /metrics/:id/meta；null = 关） */
@@ -161,24 +163,72 @@ export default function App() {
   }
 
   if (error !== null) return <div style={{ padding: 32, textAlign: 'center', color: '#999' }}>{error}</div>
-  if (data === null) return <div style={{ padding: 48, textAlign: 'center' }}><SpinLoading /></div>
+  if (data === null) {
+    // 移动端用骨架屏而不是居中转圈：同样的等待时间，页面结构先出现，感知更快
+    return (
+      <div style={{ padding: 12 }}>
+        <Skeleton.Title animated />
+        <Skeleton.Paragraph lineCount={3} animated />
+        <div style={{ height: 12 }} />
+        <Skeleton.Title animated />
+        <Skeleton.Paragraph lineCount={3} animated />
+      </div>
+    )
+  }
 
   const metrics = data.metrics ?? []
   const bases = metrics.filter((m) => m.source === 'l1')
+  const q = search.trim().toLowerCase()
+  const visible = metrics.filter((m) => q === ''
+    || m.title.toLowerCase().includes(q)
+    || (m.description ?? '').toLowerCase().includes(q)
+    || (m.bizDescription ?? '').toLowerCase().includes(q))
 
   return (
-    <div style={{ padding: 12, paddingBottom: 32 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h3 style={{ margin: '4px 0 12px', fontSize: 18 }}>指标</h3>
-        {isAdmin ? (
-          <Button size='small' color='primary' fill='outline' onClick={() => setCreatingExpr(true)}>新建表达式指标</Button>
-        ) : null}
+    <div style={{ paddingBottom: 32 }}>
+      {/* 顶部固定区（移动端首屏最重要的两件事：我在看什么、怎么找）。滚动时保持可见。 */}
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 10, background: '#f5f5f5',
+        padding: '8px 12px 6px', borderBottom: '1px solid #eee',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ margin: '0 0 2px', fontSize: 18 }}>
+            指标
+            {metrics.length > 0 ? (
+              <span style={{ fontSize: 12, color: '#999', fontWeight: 400, marginLeft: 8 }}>
+                {q === '' ? `共 ${metrics.length} 个` : `匹配 ${visible.length} / ${metrics.length}`}
+              </span>
+            ) : null}
+          </h3>
+          {isAdmin ? (
+            <Button size='small' color='primary' fill='outline' onClick={() => setCreatingExpr(true)}>新建表达式指标</Button>
+          ) : null}
+        </div>
+        {/* ⚠️ 不用 antd-mobile SearchBar：它在本仓（React 18 页面 + hoisted React 19）下
+            渲染时报 "Objects are not valid as a React child"（真机正常、单测必炸）。
+            已用 Input 组合同款外观，行为一致（2026-11-03）。 */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          background: '#fff', border: '1px solid #e5e5e5', borderRadius: 8, padding: '6px 10px',
+        }}>
+          <span style={{ color: '#bbb', fontSize: 14 }}>⌕</span>
+          <Input
+            placeholder='搜索名称 / 说明'
+            value={search}
+            onChange={setSearch}
+            style={{ '--font-size': '14px' }}
+          />
+        </div>
       </div>
+      <PullToRefresh onRefresh={() => reload()}>
+        <div style={{ padding: '10px 12px 0', minHeight: '60vh' }}>
       {metrics.length === 0 ? (
         <div style={{ color: '#999', textAlign: 'center', padding: 32 }}>没有可见的指标（需要管理员开通数据问数权限）。</div>
+      ) : visible.length === 0 ? (
+        <div style={{ color: '#999', textAlign: 'center', padding: 32 }}>没有匹配的指标，试试清空搜索。</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {metrics.map((m) => (
+          {visible.map((m) => (
             <div key={m.id} style={{ background: '#fff', borderRadius: 12, padding: 14, border: '1px solid #f0f0f0' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: 16, fontWeight: 600 }}>{m.title}</span>
@@ -189,7 +239,10 @@ export default function App() {
                   {isMine(m) ? <Tag color='warning' fill='outline' style={{ '--background-color': '#fff', marginLeft: 4 }}>我的</Tag> : null}
                 </span>
               </div>
-              <div style={{ fontSize: 12, color: '#666', margin: '6px 0', whiteSpace: 'pre-wrap' }}>{m.description}</div>
+              <div style={{
+                fontSize: 12, color: '#666', margin: '6px 0',
+                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+              }}>{m.description}</div>
               {/* 元数据（§10.4.3，#1292）：业务描述 + 单位给看数人读；未标注 = 灰字「未标注」（不编默认值）。 */}
               <div style={{ fontSize: 12, margin: '4px 0', color: m.bizDescription ? '#444' : '#aaa' }}>
                 {(m.bizDescription ? `业务描述：${m.bizDescription}` : '业务描述：未标注')
@@ -225,6 +278,8 @@ export default function App() {
           ))}
         </div>
       )}
+        </div>
+      </PullToRefresh>
       <DraftSheet metric={editing} bases={bases} onClose={() => setEditing(null)} onDone={() => { setEditing(null); void reload() }} />
       <MetaSheet metric={metaEditing} onClose={() => setMetaEditing(null)} onDone={() => { setMetaEditing(null); void reload() }} />
       <CreateExprSheet open={creatingExpr} bases={bases} onClose={() => setCreatingExpr(false)}

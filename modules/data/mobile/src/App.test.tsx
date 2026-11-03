@@ -62,6 +62,27 @@ describe('移动指标页（spec 2026-11-01 §10.2）', () => {
     expect(screen.getByText('新鲜度未知')).toBeTruthy()
   })
 
+  it('★ 移动端搜索（UX）：按名称/说明过滤，计数更新，无匹配有空态', async () => {
+    render(<App />)
+    await waitFor(() => expect(screen.getByText('净销售额')).toBeTruthy())
+    const input = screen.getByPlaceholderText('搜索名称 / 说明')
+
+    // "毛利" 同时命中「我的毛利」（标题）与「别人的」（业务描述「出库口径毛利」）
+    fireEvent.change(input, { target: { value: '毛利' } })
+    expect(screen.getByText('我的毛利')).toBeTruthy()
+    expect(screen.getByText('别人的')).toBeTruthy()
+    expect(screen.queryByText('净销售额')).toBeNull()
+    expect(screen.getByText('匹配 2 / 3')).toBeTruthy()
+
+    // 业务描述也参与匹配（bizDescription='出库口径毛利'）
+    fireEvent.change(input, { target: { value: '出库' } })
+    expect(screen.getByText('别人的')).toBeTruthy()
+    expect(screen.getByText('匹配 1 / 3')).toBeTruthy()
+
+    fireEvent.change(input, { target: { value: '不存在的指标' } })
+    expect(screen.getByText('没有匹配的指标，试试清空搜索。')).toBeTruthy()
+  })
+
   it('「编辑草稿」只出现在自己的 L2 上（L1 只读、非我创建只读——判定表直译）', async () => {
     render(<App />)
     await waitFor(() => expect(screen.getByText('我的毛利')).toBeTruthy())
