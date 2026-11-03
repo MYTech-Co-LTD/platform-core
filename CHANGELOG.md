@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.250.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.249.0...v0.250.0) - 2026-11-03
+- 【新增】data: console 按服务端 canEdit 显示资产操作（#1327） ([#1328](https://github.com/MYTech-Co-LTD/platform-core/pull/1328), [bcce129](https://github.com/MYTech-Co-LTD/platform-core/commit/bcce129aa0dc27e8cd3d728b5552b0e51ea36a19))
+
+
 ## [0.249.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.15...v0.249.0) - 2026-11-03
 - 【新增】data: owner 对自己报表的最高权限（#1325） ([#1326](https://github.com/MYTech-Co-LTD/platform-core/pull/1326), [905e75a](https://github.com/MYTech-Co-LTD/platform-core/commit/905e75a00b46f6de2b0c414329fb309715a705b2))
 
