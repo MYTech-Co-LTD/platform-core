@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.9](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.8...v0.248.9) - 2026-11-03
+- 【修复】openclaw: 身份兜底改按会话键隔离——跨会话绝不用他人 userid 取数（#964） ([#1311](https://github.com/MYTech-Co-LTD/platform-core/pull/1311), [b1949f1](https://github.com/MYTech-Co-LTD/platform-core/commit/b1949f17c584f31c8036271a585700da8571f3b4))
+
+
 ## [0.248.8](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.7...v0.248.8) - 2026-11-02
 - 【修复】askdata: 轨迹导出读 event_zstd + 解不出的事件钉住水位（#969） ([#1310](https://github.com/MYTech-Co-LTD/platform-core/pull/1310), [daea465](https://github.com/MYTech-Co-LTD/platform-core/commit/daea465bfaf23cf2aea7c6e7d7c380260444b00a))
 
