@@ -517,7 +517,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
 
   // ── 资产级共享（spec 2026-11-01 §4）：谁能看这条资产 ────────────────────────────
   // 授权：**owner 或模块管理码**；管理员代管留 `asset_audit.by_admin=true`。
-  // 声明 **data:view** 而不是 data:manage：owner 未必持管理码——那是本功能存在的理由。
+  // 声明 **data:query** 而不是 data:manage：owner 未必持管理码——那是本功能存在的理由。
   // 真判据在 handler 的 canEditAsset（单一实现），门卫只挡匿名/无关者。
   r.get('/reports/:id/acl', async (c) => {
     const requester = requesterOf(c)

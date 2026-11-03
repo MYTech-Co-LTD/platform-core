@@ -119,7 +119,7 @@ api:
     # 判定（行级部门门）不在门卫这一层，在 handler 的 visibleTo（清单表达不了「行级」）。
     # 资产级共享（spec 2026-11-01 §4）：**data:query** 是有意的——owner 未必持管理码，
     # 真判据在 handler 的 canEditAsset（owner ∪ data:manage），门卫只挡匿名与无关者。
-    # （模块只能声明自己的码，data:view 不在本模块清单里。）
+    # （模块只能声明自己的码；owner 侧的 `data:query` 是本模块已声明的码，直接复用。）
     - { method: GET,    path: /reports/:id/acl,       scope: data:query }
     - { method: PUT,    path: /reports/:id/acl,       scope: data:query }
     - { method: PUT,    path: /reports/:id/owner,     scope: data:query }
