@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.248.10](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.9...v0.248.10) - 2026-11-03
+- 【修复】askdata: 撞墙判据三处失真 + 判据侧水位（#963） ([#1312](https://github.com/MYTech-Co-LTD/platform-core/pull/1312), [909ccb0](https://github.com/MYTech-Co-LTD/platform-core/commit/909ccb072a053a5f7351a11d7ac700518aaf7f92))
+
+
 ## [0.248.9](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.8...v0.248.9) - 2026-11-03
 - 【修复】openclaw: 身份兜底改按会话键隔离——跨会话绝不用他人 userid 取数（#964） ([#1311](https://github.com/MYTech-Co-LTD/platform-core/pull/1311), [b1949f1](https://github.com/MYTech-Co-LTD/platform-core/commit/b1949f17c584f31c8036271a585700da8571f3b4))
 
