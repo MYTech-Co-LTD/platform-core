@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.257.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.256.0...v0.257.0) - 2026-11-03
+- 【新增】data-mobile: 移动指标页移动端优先优化（#1349） ([#1350](https://github.com/MYTech-Co-LTD/platform-core/pull/1350), [a48341f](https://github.com/MYTech-Co-LTD/platform-core/commit/a48341f6a9df5c02212b0463d704f569f4156120))
+
+
 ## [0.256.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.255.0...v0.256.0) - 2026-11-03
 - 【新增】data: 接源 AMAREPORT 时段分析（customeranalysis）——日×门店×时段切片 ([#1344](https://github.com/MYTech-Co-LTD/platform-core/pull/1344), [ee166aa](https://github.com/MYTech-Co-LTD/platform-core/commit/ee166aa000af838ef91790c2b79eecfa5b6c4359))
 
