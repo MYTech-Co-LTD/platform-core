@@ -28,5 +28,6 @@ for db in $AGENTS_GLOB; do
   a=$(basename "$(dirname "$(dirname "$db")")")
   echo "AGENT $a"
   ASK_TRACE_WM="$D/export.watermark.$a" python3 "$D/export-transcript.py" "$db"
-  python3 "$D/attribute.py" "$db"
+  # #963：判据侧也按 agent 一份水位（旧版每轮重扫末 5000 行 ⇒ 重复上报 + rule_ver 混版）
+  ASK_ATTR_WM="$D/attribute.watermark.$a" python3 "$D/attribute.py" "$db"
 done
