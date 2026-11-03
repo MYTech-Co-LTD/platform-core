@@ -28,6 +28,7 @@ import type { Pool } from 'pg'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf } from './context'
 import type { Requester } from '../domain/authz'
+import type { UserStatus } from '@platform/sdk'
 import { llmFromEnv, openAiCompatModel } from '../domain/llm'
 import type { StreamingChatModel } from '../domain/llm'
 import { buildFacts } from '../domain/report-facts'
@@ -221,6 +222,18 @@ async function denyUnlessCanEdit(
   const acl = await loadAssetAcl(pool, org, id)
   if (canEditAsset(acl, requester, MANAGE_SCOPE)) return null
   return c.json({ error: 'FORBIDDEN', need: 'owner_or_' + MANAGE_SCOPE }, 403)
+}
+
+/**
+ * 受让人/受让所有者必须是**真实且可用**的账号（#1335）：与部门门同一 fail-closed 口径——
+ * 「配了永远命不中」的授权不如当场拒。
+ *
+ * - `inactive`（查无此人 / Casdoor 停用）⇒ 拒；
+ * - `unknown`（未注入 resolver / Casdoor 不可达）⇒ **放行**：可用性优先，且旧宿主/单测
+ *   没有该能力（与 `userStatusOf` 的缺省契约一致）。这两态的区别是语义的，别合并。
+ */
+async function userStatusOf(ctx: RouteCtx, org: string, name: string): Promise<UserStatus> {
+  return ctx.userStatus === undefined ? 'unknown' : ctx.userStatus(org, name)
 }
 
 export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
@@ -625,6 +638,19 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       }
     }
 
+    // 点名的用户受让方同样必须真实可用（#1335）：与部门门同一 fail-closed 口径。
+    // 去重后再查（同一人重复点名不重复打 Casdoor）；unknown（未注入/上游不可达）放行。
+    const userIds = [...new Set(
+      parsed.data.viewers.filter((v) => v.subjectType === 'user').map((v) => v.subjectId),
+    )]
+    const unknownUsers: string[] = []
+    for (const u of userIds) {
+      if (await userStatusOf(ctx, org, u) === 'inactive') unknownUsers.push(u)
+    }
+    if (unknownUsers.length > 0) {
+      return c.json({ error: 'UNKNOWN_USER', unknown: unknownUsers }, 400)
+    }
+
     const viewers: AclRow[] = parsed.data.viewers.map((v) => ({
       subjectType: v.subjectType as AclSubjectType,
       subjectId: v.subjectId,
@@ -653,6 +679,10 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const acl = await loadAssetAcl(ctx.pool, org, id)
     if (!canEditAsset(acl, requester, MANAGE_SCOPE)) {
       return c.json({ error: 'FORBIDDEN', need: 'owner_or_' + MANAGE_SCOPE }, 403)
+    }
+    // 目标账号必须真实可用（#1335）：转给拼错/停用的用户名 = 造出没人能管的资产。
+    if (await userStatusOf(ctx, org, parsed.data.owner) === 'inactive') {
+      return c.json({ error: 'UNKNOWN_OWNER' }, 400)
     }
     const from = acl.find((a) => a.relation === 'owner')?.subjectId ?? null
     await transferOwner(ctx.pool, org, id, parsed.data.owner, requester.userId)

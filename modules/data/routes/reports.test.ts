@@ -878,6 +878,37 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     expect(ownerRow.owner).toBe('u-viewer')
   })
 
+  it('★ 受让人校验（#1335）：转移给停用/不存在账号 400；ACL 点名同样拒；在职放行', async () => {
+    const jsonHdr = { 'content-type': 'application/json' }
+    const identity = makeIdentity({ orgId: ORG, userId: 'u-admin', scopes: ['data:query', 'data:manage'] })
+    const app = shell(identity, undefined, {
+      userStatus: async (_org, name) => (name === 'u-gone' ? 'inactive' : 'active'),
+    }).app
+    const created = await post(app, {
+      title: '受让人校验', renderer: 'platform',
+      spec: { panels: [{ chart: 'text', content: 'x', span: 24 }] },
+    })
+    const { id } = await created.json() as { id: string }
+
+    const denied = await app.request(`/reports/${id}/owner`, {
+      method: 'PUT', headers: jsonHdr, body: JSON.stringify({ owner: 'u-gone' }),
+    })
+    expect(denied.status).toBe(400)
+    expect(await denied.json()).toEqual({ error: 'UNKNOWN_OWNER' })
+    // 在职目标放行
+    expect((await app.request(`/reports/${id}/owner`, {
+      method: 'PUT', headers: jsonHdr, body: JSON.stringify({ owner: 'u-live' }),
+    })).status).toBe(200)
+
+    // ACL 点名的用户受让方同口径
+    const acl = await app.request(`/reports/${id}/acl`, {
+      method: 'PUT', headers: jsonHdr,
+      body: JSON.stringify({ viewers: [{ subjectType: 'user', subjectId: 'u-gone' }] }),
+    })
+    expect(acl.status).toBe(400)
+    expect(await acl.json()).toEqual({ error: 'UNKNOWN_USER', unknown: ['u-gone'] })
+  })
+
   it('★ 管理清单回 ownerActive（#1333）：停用/查无此人 ⇒ false；在职 ⇒ true；未注入 ⇒ null', async () => {
     const { app } = manage()
     const created = await post(app, {
