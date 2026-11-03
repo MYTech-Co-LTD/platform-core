@@ -41,7 +41,14 @@ beforeEach(() => {
     return json({ items: ROWS })
   })
 })
-afterEach(cleanup)
+// #1329：CI 并发整轮时出现过「测试全过但 teardown 后泄漏 Uncaught Exception：
+// `window is not defined`（react-dom 19 的 Immediate.performWorkUntilDeadline）」⇒ 整轮判红。
+// React 19 的调度任务可能在 cleanup 之后才执行，而 happy-dom 环境此时已被拆除。
+// 排空一个宏任务再结束用例，把这类任务留在环境存活期内消化。
+afterEach(async () => {
+  cleanup()
+  await new Promise((r) => setTimeout(r, 0))
+})
 
 const postCalls = () => calls.filter((c) => c.method === 'POST')
 
