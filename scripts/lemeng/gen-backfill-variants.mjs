@@ -42,6 +42,11 @@ const TARGETS = [
   { base: 'lemeng.request.order', book: '64188', window: '${date-1d}' },
   { base: 'lemeng.inventory.snapshot', book: '64188', window: '${date-2d}' },
   { base: 'lemeng.branch_indicator', book: '64188', window: '${date-1d}' },
+  // ── 商品销售/毛利（#1313 后续：AMAREPORT 两表，两本账套都采）──
+  { base: 'lemeng.item_sales', book: '3120', window: '${date-1d}' },
+  { base: 'lemeng.item_sales', book: '64188', window: '${date-1d}' },
+  { base: 'lemeng.item_profit', book: '3120', window: '${date-1d}' },
+  { base: 'lemeng.item_profit', book: '64188', window: '${date-1d}' },
 ]
 
 const BACKFILL = '${BIZDAY}'
