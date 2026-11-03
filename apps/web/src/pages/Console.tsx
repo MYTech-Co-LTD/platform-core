@@ -201,7 +201,7 @@ export default function ConsoleShell() {
  * 模块内部的页签由模块自己用**段控**呈现（不是 antd 横向 Menu）。
  */
 function MobileConsoleShell({
-  session, config, branding, dark, onToggleDark, menuItems, onLogout, loggingOut,
+  session, config, branding, dark, onToggleDark, menuItems, hasAdmin, onLogout, loggingOut,
 }: {
   session: PlatformSession
   config: PlatformConfig
@@ -209,6 +209,7 @@ function MobileConsoleShell({
   dark: boolean
   onToggleDark: () => void
   menuItems: MenuDataItem[]
+  hasAdmin: boolean
   onLogout: () => void
   loggingOut: boolean
 }) {
@@ -285,6 +286,12 @@ function MobileConsoleShell({
                 style={{ display: 'block', width: '100%', padding: '15px 24px', border: 'none', background: 'none', textAlign: 'left', fontSize: 16, cursor: 'pointer' }}>
           {dark ? '切换到浅色模式' : '切换到暗色模式'}
         </button>
+        {hasAdmin ? (
+          <button type="button" onClick={() => { setSheetOpen(false); navigate('/console/admin/users') }}
+                  style={{ display: 'block', width: '100%', padding: '15px 24px', border: 'none', background: 'none', textAlign: 'left', fontSize: 16, cursor: 'pointer' }}>
+            管理控制台
+          </button>
+        ) : null}
         <a href="/m" style={{ display: 'block', padding: '15px 24px', color: 'inherit', textDecoration: 'none', fontSize: 16 }}>
           打开手机工作台
         </a>
@@ -351,6 +358,7 @@ function ConsoleLayout({
         dark={dark}
         onToggleDark={onToggleDark}
         menuItems={menuItems}
+        hasAdmin={menuItems.some((m) => m.path === '/console/admin')}
         onLogout={() => void onLogout()}
         loggingOut={loggingOut}
       />
