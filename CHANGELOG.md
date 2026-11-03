@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.256.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.255.0...v0.256.0) - 2026-11-03
+- 【新增】data: 接源 AMAREPORT 时段分析（customeranalysis）——日×门店×时段切片 ([#1344](https://github.com/MYTech-Co-LTD/platform-core/pull/1344), [ee166aa](https://github.com/MYTech-Co-LTD/platform-core/commit/ee166aa000af838ef91790c2b79eecfa5b6c4359))
+
+
 ## [0.255.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.254.0...v0.255.0) - 2026-11-03
 - 【新增】data: 指标列表 UX 优化（搜索/来源筛选/空态/单行表格/文本动作）（#1341） ([#1342](https://github.com/MYTech-Co-LTD/platform-core/pull/1342), [96e4d81](https://github.com/MYTech-Co-LTD/platform-core/commit/96e4d816f4ebfdbea315938694ec641d5de69019))
 
