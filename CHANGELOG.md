@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.254.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.253.0...v0.254.0) - 2026-11-03
+- 【新增】data: 报表列表 UX 优化（搜索/筛选/空态/视觉降噪/窄屏滚动）（#1339） ([#1340](https://github.com/MYTech-Co-LTD/platform-core/pull/1340), [d3a9677](https://github.com/MYTech-Co-LTD/platform-core/commit/d3a967778dbebb7a7e55ce25baf163b893fba8a4))
+
+
 ## [0.253.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.252.1...v0.253.0) - 2026-11-03
 - 【新增】data: 接源 AMAREPORT 商品销售/毛利分析（itemsales / itemprofitanalysis） ([#1338](https://github.com/MYTech-Co-LTD/platform-core/pull/1338), [d1eb8a3](https://github.com/MYTech-Co-LTD/platform-core/commit/d1eb8a3ab8950bdc1f2857882e3005e35b5649a8))
 
