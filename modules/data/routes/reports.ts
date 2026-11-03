@@ -24,6 +24,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { TENANT_SOURCES } from '@platform/sdk'
 import type { Context } from 'hono'
+import type { Pool } from 'pg'
 import type { ModuleHono, ModuleVars, RouteCtx } from './context'
 import { requesterOf } from './context'
 import type { Requester } from '../domain/authz'
@@ -204,6 +205,21 @@ const reportIdOf = (raw: string | undefined): string | null =>
  */
 // 行级可见判定已收口到 `domain/asset-auth.ts` 的 `canViewAsset`（ACL → visibility → 旧内容门）。
 // **不要再在路由里另写一套**——两处判断必然漂移（#1179 的教训）。
+
+/**
+ * 资产写权限（#1325 用户裁决：**owner 对自己报表的最高权限**）。
+ *
+ * 返回 `null` = 放行；否则返回 403 响应（`need: owner_or_data:manage`）。
+ * 这些端点在 manifest 里声明为 `data:query`（门卫只挡匿名/无关者），真判据在
+ * `canEditAsset`（owner ∪ 管理码，单一实现）——与 `/reports/:id/acl` 同口径。
+ */
+async function denyUnlessCanEdit(
+  c: Context<ModuleVars>, pool: Pool, requester: Requester, org: string, id: string,
+): Promise<Response | null> {
+  const acl = await loadAssetAcl(pool, org, id)
+  if (canEditAsset(acl, requester, MANAGE_SCOPE)) return null
+  return c.json({ error: 'FORBIDDEN', need: 'owner_or_' + MANAGE_SCOPE }, 403)
+}
 
 export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
   r.post('/reports', async (c) => {
@@ -477,6 +493,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // ⚠️ 读 `current` 在**锁外**：陈旧由 `expectedVersion` 兜（条件 UPDATE 落空 ⇒ 409），不会写错。
     const current = await getReport(ctx.pool, org, id)
     if (current === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // 资产写权限（#1325）：owner ∪ data:manage。先于渲染器分流判，免给非 owner 存在性/形态探针。
+    const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+    if (denied !== null) return denied
     if (current.renderer === 'platform') return c.json({ error: 'USE_PUBLISH_ENDPOINT' }, 409)
     const effectiveScope = parsed.data.requiredScope
     // ── 每对象一把锁（spec §3③）：条件 UPDATE + 「陈旧时分清 404/409」的二次读**同锁**，
@@ -630,6 +649,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     return await withObjectLock(`${org}/row:${id}`, async () => {
       const current = await getReport(ctx.pool, org, id)
       if (current === null) return c.json({ error: 'NOT_FOUND' }, 404)
+      // 资产写权限（#1325）：owner 可改自己报表的部门门。
+      const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+      if (denied !== null) return denied
       // 页门原值回写（`updateGates` 要求两列同写）：锁内读到的值就是这一行此刻的值
       const row = await updateGates(
         ctx.pool, org, id,
@@ -695,6 +717,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
       // （metabase 行 spec 必须-null 那半边——「非法入参 ⇒ 4xx」的契约位置）。
       const row = await getReport(ctx.pool, org, id)
       if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+      // 资产写权限（#1325）：owner 可改自己报表的规格；管理码照旧。
+      const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+      if (denied !== null) return denied
       if (row.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
       // ── 页门归属：**已发布行的线上门归快照，草稿编辑不动它**（月报重做 Task 10 后续）─────
       // `required_scope` 在本文件有两个身份，靠「有没有发布指针」分开：
@@ -808,8 +833,14 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const body = VersionBody.safeParse(await c.req.json().catch(() => null))
     if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const org = c.get('tenant').casdoor_org
+    // 资产写权限（#1325）：owner 可发布自己报表；管理码照旧。
+    const report = await getReport(ctx.pool, org, id)
+    if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+    if (denied !== null) return denied
     const out = await publishVersion(
-      ctx.pool, c.get('tenant').casdoor_org, id, body.data.expectedVersion,
+      ctx.pool, org, id, body.data.expectedVersion,
       requester.userId, body.data.note, new Set(c.get(TENANT_SOURCES) ?? []),
     )
     if (!out.ok) return c.json(out, statusOfVersionFailure(out.reason))
@@ -828,6 +859,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // （设计 §4.3 末条：没有状态变化就不产生写——尤其不推进草稿计数器）。
     const current = await getReport(ctx.pool, org, id)
     if (current === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // 资产写权限（#1325）：owner 可回收自己报表。
+    const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+    if (denied !== null) return denied
     if (current.publishedVersionId === null) return c.json({ unpublished: true, unchanged: true })
     const ok = await unpublishVersion(ctx.pool, org, id, body.data.expectedVersion)
     if (!ok) {
@@ -848,8 +882,14 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (version === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const body = VersionBody.safeParse(await c.req.json().catch(() => null))
     if (!body.success) return c.json({ error: 'INVALID_BODY' }, 400)
+    const org = c.get('tenant').casdoor_org
+    // 资产写权限（#1325）：owner 可回滚自己报表；管理码照旧。
+    const report = await getReport(ctx.pool, org, id)
+    if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+    if (denied !== null) return denied
     const out = await rollbackVersion(
-      ctx.pool, c.get('tenant').casdoor_org, id, version, body.data.expectedVersion,
+      ctx.pool, org, id, version, body.data.expectedVersion,
       requester.userId, body.data.note, new Set(c.get(TENANT_SOURCES) ?? []),
     )
     if (!out.ok) return c.json(out, statusOfVersionFailure(out.reason))
@@ -865,6 +905,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // 先确认报表存在：直接列版本会把「不存在 / 跨租户」伪装成空历史（等于存在性探针）。
     const report = await getReport(ctx.pool, org, id)
     if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // 资产写权限（#1325）：历史版本属「未公开内容」，只有 owner ∪ 管理码可读。
+    const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+    if (denied !== null) return denied
     // 列表只给元数据（正文快照走 /versions/:version —— 100 条 × 全量 spec 没有消费方）。
     const rows = await listVersions(ctx.pool, org, id)
     return c.json({
@@ -888,8 +931,14 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const version = versionParamOf(c.req.param('version'))
     if (version === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const org = c.get('tenant').casdoor_org
+    // 先确认报表存在再判资产写权限（#1325）：历史快照属未公开内容，owner ∪ 管理码可读。
+    const report = await getReport(ctx.pool, org, id)
+    if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+    if (denied !== null) return denied
     // 存储层每条 SQL 都带 org ⇒ 跨租户与不存在同形（null ⇒ 404，不给存在性探针）。
-    const row = await getVersion(ctx.pool, c.get('tenant').casdoor_org, id, version)
+    const row = await getVersion(ctx.pool, org, id, version)
     if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
     // 完整快照（含 spec）：供 review / 回滚确认。spec 原样返回——回填行未过当前白名单，
     // 「原样展示给人看」比「解析失败就 500」正确（要上线的走回滚，那里会重新校验）。
@@ -955,6 +1004,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const org = c.get('tenant').casdoor_org
     const report = await getReport(ctx.pool, org, id)
     if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // 资产写权限（#1325）：草稿是未公开内容，owner ∪ 管理码可读可改。
+    const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+    if (denied !== null) return denied
     // 管理面（data:manage）：**不裁** visibleTo——页门未放行的草稿对管理员必须可见可改
     // （同 GET /reports/manage）。metabase 行的内容在 Metabase 侧，没有可读的 spec 列。
     if (report.renderer !== 'platform') return c.json({ error: 'RENDERER_NOT_SELF_DRAWN' }, 409)
@@ -1014,8 +1066,8 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     let specKey: string
     let title: string
     if (body.preview === 'draft') {
-      // 草稿 = 未发布内容（同 `GET /reports/:id/draft` 的分档）：没有 data:manage 一律 404。
-      if (!requester.hasScope('data:manage')) return { error: 'NOT_FOUND' }
+      // 草稿 = 未发布内容（同 `GET /reports/:id/draft` 的分档）：owner ∪ 管理码才可预览，其余 404。
+      if (!canEditAsset(narrativeAcl, requester, MANAGE_SCOPE)) return { error: 'NOT_FOUND' }
       if (report.spec === null) return { error: 'NO_SPEC' }
       spec = report.spec
       specKey = `draft:${report.version}`
@@ -1170,6 +1222,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     if (id === null) return c.json({ error: 'NOT_FOUND' }, 404)
     const row = await getReport(ctx.pool, c.get('tenant').casdoor_org, id)
     if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // 资产写权限（#1325）：owner 可编辑自己报表；管理码照旧。
+    const denied = await denyUnlessCanEdit(c, ctx.pool, requester, c.get('tenant').casdoor_org, id)
+    if (denied !== null) return denied
     // platform 自绘行没有 Metabase dashboard（metabaseId=0 是哨兵）⇒ 没有可编辑的页
     if (row.renderer === 'platform') return c.json({ error: 'RENDERER_NOT_EDITABLE' }, 409)
     // 票据只绑 org + 单张 dashboard（不绑用户）：代理侧只按这两个维度授权，用户维度由本端点的
@@ -1248,6 +1303,9 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     return await withObjectLock(`${org}/row:${id}`, async () => {
       const row = await getReport(ctx.pool, org, id)
       if (row === null) return c.json({ error: 'NOT_FOUND' }, 404)
+      // 资产写权限（#1325）：owner 可删自己报表；管理码照旧。
+      const denied = await denyUnlessCanEdit(c, ctx.pool, requester, org, id)
+      if (denied !== null) return denied
       // ⚠️ **版本判定必须发生在 `archiveDashboard` 之前**（Task 3 硬约束）：本端点是「先归档、再删行」
       //    的两步序列（顺序见下），版本守卫若挪到归档后，被拒的请求**已经改过 Metabase** ——
       //    「拒」就只剩一个响应码。由 routes/reports.test.ts 的「陈旧 ⇒ 409 且 mb.state.calls 为空」钉住。
