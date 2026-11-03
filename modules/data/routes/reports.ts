@@ -81,6 +81,7 @@ import {
 import {
   canEditAsset,
   canViewAsset,
+  canViewVersionedContent,
   ensureOwner,
   isAdminOverride,
   loadAssetAcl,
@@ -516,7 +517,7 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
 
   // ── 资产级共享（spec 2026-11-01 §4）：谁能看这条资产 ────────────────────────────
   // 授权：**owner 或模块管理码**；管理员代管留 `asset_audit.by_admin=true`。
-  // 声明 **data:view** 而不是 data:manage：owner 未必持管理码——那是本功能存在的理由。
+  // 声明 **data:query** 而不是 data:manage：owner 未必持管理码——那是本功能存在的理由。
   // 真判据在 handler 的 canEditAsset（单一实现），门卫只挡匿名/无关者。
   r.get('/reports/:id/acl', async (c) => {
     const requester = requesterOf(c)
@@ -915,6 +916,17 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     // ① 先在**本 org**里确认报表存在：不存在 / 跨租户一律 404（不给存在性探针）。
     const report = await getReport(ctx.pool, org, id)
     if (report === null) return c.json({ error: 'NOT_FOUND' }, 404)
+    // ①.5 资产面（spec 2026-11-01 §4.2：「列表/详情、导出/嵌入 URL **全部走 canViewAsset**」）。
+    //     快照门管「已发布内容该给谁」，资产面管「这条资产该给谁」——两道都过才放行。
+    //     `restricted` 行（新建默认）只有 owner/ACL 受让人可读；不过同样 404（不泄露存在性）。
+    const assetAcl = await loadAssetAcl(ctx.pool, org, id)
+    const assetDepts = assetAcl.some((a) => a.subjectType === 'dept')
+      ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
+      : undefined
+    // 粗门（scope/depts）由**下面的快照**判，资产面只看 visibility + ACL（见 canViewVersionedContent）。
+    if (!canViewVersionedContent(report, requester, assetAcl, assetDepts)) {
+      return c.json({ error: 'NOT_FOUND' }, 404)
+    }
     // ② 再确认**有已发布版本**（下线总闸在存储层：`published_version_id is null` ⇒ 含 `?v=N`
     //    一律 null ⇒ NOT_PUBLISHED）。必须先到这一步，判权才有对象可依。
     const snapshot = await getPublishedSpec(ctx.pool, org, id, version)
@@ -986,6 +998,16 @@ export function registerReports(r: ModuleHono, ctx: RouteCtx): void {
     const org = c.get('tenant').casdoor_org
     const report = await getReport(ctx.pool, org, id)
     if (report === null) return { error: 'NOT_FOUND' }
+    // 资产面先于渲染器判定：restricted 行对非受让人一律 404（否则 RENDERER_NOT_SELF_DRAWN
+    // 之类的非 404 会给非受让人当存在性探针用）。判据与 published-spec 同一份 canViewAsset。
+    const narrativeAcl = await loadAssetAcl(ctx.pool, org, id)
+    const narrativeDepts = narrativeAcl.some((a) => a.subjectType === 'dept')
+      ? await userDeptClosure(ctx.pool, c.get('tenant').id, deptNamesOf(requester))
+      : undefined
+    // 粗门由快照（或 draft 预览的 data:manage 闸）判，资产面只看 visibility + ACL。
+    if (!canViewVersionedContent(report, requester, narrativeAcl, narrativeDepts)) {
+      return { error: 'NOT_FOUND' }
+    }
     if (report.renderer !== 'platform') return { error: 'RENDERER_NOT_SELF_DRAWN' }
 
     let spec: ReportSpec

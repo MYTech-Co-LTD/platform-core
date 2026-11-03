@@ -76,6 +76,27 @@ export function canViewAsset(
 }
 
 /**
+ * 版本化内容（`published-spec` / AI 文本）的资产面判定：**粗门由那一版快照判**，
+ * 这里只判 `visibility` 与 ACL。
+ *
+ * 为什么不能直接用 `canViewAsset(row, …)`：行上的 `requiredScope` / `requiredDepts` 是
+ * **草稿/下一次发布**的门；`?v=N` 的契约是「旧链接按那一版的门判，不因后来改门失效」。
+ * 用行上当前值会让旧版链接被新门误杀（测试 `★ 发布后门随快照走` 即此判据）。
+ *
+ * 仍复用 `canViewAsset`（单一实现），只是把粗门置空——不是第二份判定逻辑。
+ */
+export function canViewVersionedContent(
+  row: AssetVisibility,
+  requester: AuthRequester,
+  acl: readonly AclRow[],
+  userDepts?: ReadonlySet<string>,
+): boolean {
+  return canViewAsset(
+    { ...row, requiredScope: null, requiredDepts: null }, requester, acl, userDepts,
+  )
+}
+
+/**
  * 能否**改配置**（共享设置 / 门 / 删除）。
  * **不看 viewer**：被点名可看 ≠ 可改配置；只有 owner 与模块管理码持有者可以。
  */

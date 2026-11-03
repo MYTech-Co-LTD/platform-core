@@ -2123,6 +2123,40 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect((await viewer().app.request(`/reports/${id}/published-spec`)).status).toBe(200)
     })
 
+    it('★ 资产 ACL 也管内容读取路径：restricted 报表非受让人读 published-spec / narrative ⇒ 404', async () => {
+      const { app } = manage()
+      // 不传 visibility ⇒ 默认 restricted（开箱只有 owner）。⚠️ 不能用 `post()`：它强制 tenant。
+      const created = await app.request('/reports', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: '私有已发布', renderer: 'platform', spec: { panels: [openPanel] } }),
+      })
+      expect(created.status).toBe(201)
+      const id = (await created.json()).id
+      expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+      // 非 owner 非受让人（只有 data:query）：列表本来就看不到；内容路径也必须 404，
+      // 否则 restricted 的「默认私有」只在列表成立、拿到 id 就绕过（spec §4.2 判停）。
+      const plain = viewer().app
+      expect((await plain.request(`/reports/${id}/published-spec`)).status).toBe(404)
+      const narrative = () => plain.request(`/reports/${id}/narrative`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          panelIndex: 0, period: { mode: 'custom', from: '2026-10-01', to: '2026-10-19' },
+        }),
+      })
+      expect((await narrative()).status).toBe(404)
+
+      // 点名共享后被共享者可读；owner 始终可读（不是把整条通道关掉）
+      expect((await app.request(`/reports/${id}/acl`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ viewers: [{ subjectType: 'user', subjectId: 'u-viewer' }] }),
+      })).status).toBe(200)
+      expect((await plain.request(`/reports/${id}/published-spec`)).status).toBe(200)
+      // narrative 门已放行 ⇒ 走到面板判定（第 0 个面板是 table ⇒ NOT_AI_TEXT_PANEL，不是 404）
+      expect((await narrative()).status).not.toBe(404)
+      expect((await app.request(`/reports/${id}/published-spec`)).status).toBe(200)
+    })
+
     // ── 页门归属：已发布 ⇒ 门随快照；未发布 ⇒ 门随草稿（Task 10 后续）──────────────────
     it('★ 已发布行的草稿编辑只改 spec，不动线上页门（required_scope 保持发布时的派生值）', async () => {
       const { app } = manage()
