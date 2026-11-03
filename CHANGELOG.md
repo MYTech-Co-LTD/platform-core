@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.259.1](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.259.0...v0.259.1) - 2026-11-03
+- 【修复】data: console 报表/指标页在手机上改成卡片列表（#1355） ([#1356](https://github.com/MYTech-Co-LTD/platform-core/pull/1356), [76cbae3](https://github.com/MYTech-Co-LTD/platform-core/commit/76cbae32efc2532893ec9b40ddac5d2364dd8b44))
+
+
 ## [0.259.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.258.0...v0.259.0) - 2026-11-03
 - 【新增】data: 接源 AMAREPORT 销售员提成汇总（salercommission） ([#1348](https://github.com/MYTech-Co-LTD/platform-core/pull/1348), [676b31c](https://github.com/MYTech-Co-LTD/platform-core/commit/676b31c91ce1723f7e67e3feea5b116df5ec9888))
 
