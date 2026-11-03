@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.255.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.254.0...v0.255.0) - 2026-11-03
+- 【新增】data: 指标列表 UX 优化（搜索/来源筛选/空态/单行表格/文本动作）（#1341） ([#1342](https://github.com/MYTech-Co-LTD/platform-core/pull/1342), [96e4d81](https://github.com/MYTech-Co-LTD/platform-core/commit/96e4d816f4ebfdbea315938694ec641d5de69019))
+
+
 ## [0.254.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.253.0...v0.254.0) - 2026-11-03
 - 【新增】data: 报表列表 UX 优化（搜索/筛选/空态/视觉降噪/窄屏滚动）（#1339） ([#1340](https://github.com/MYTech-Co-LTD/platform-core/pull/1340), [d3a9677](https://github.com/MYTech-Co-LTD/platform-core/commit/d3a967778dbebb7a7e55ce25baf163b893fba8a4))
 
