@@ -157,12 +157,12 @@
 
   .headline {
     margin-bottom: 8px;
-    font-size: 24px;
+    /* 22px：390px 宽下两行各 7 个字正好放下；再大就会在「平 / 台」处断字 */
+    font-size: 22px;
+    line-height: 1.4;
   }
-
-  .headline br {
-    display: none;
-  }
+  /* ⚠️ 保留 <br>（不要 display:none）：中文没有词间断点，合并成一段会在任意字间折行
+     （实测 390px 断成「多租户管理平 / 台」）。固定两行断句比自动折行稳。 */
 
   .tagline,
   .accentLine,
@@ -172,6 +172,8 @@
   }
 
   .formCol {
-    padding: 32px 20px;
+    /* 移动端不要垂直居中（高屏留出 ~200px 空档）：表单贴近品牌横幅，少一次长距离视线移动 */
+    align-items: flex-start;
+    padding: 28px 20px 40px;
   }
 }
