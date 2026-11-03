@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+## [0.249.0](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.15...v0.249.0) - 2026-11-03
+- 【新增】data: owner 对自己报表的最高权限（#1325） ([#1326](https://github.com/MYTech-Co-LTD/platform-core/pull/1326), [905e75a](https://github.com/MYTech-Co-LTD/platform-core/commit/905e75a00b46f6de2b0c414329fb309715a705b2))
+
+
 ## [0.248.15](https://github.com/MYTech-Co-LTD/platform-core/compare/v0.248.14...v0.248.15) - 2026-11-03
 - 【修复】data: 报表内容读取路径补齐资产 ACL（published-spec / narrative） ([#1322](https://github.com/MYTech-Co-LTD/platform-core/pull/1322), [1f2ac01](https://github.com/MYTech-Co-LTD/platform-core/commit/1f2ac0138ea8b645fd1b52cc8e82d11fe3a38a85))
 
