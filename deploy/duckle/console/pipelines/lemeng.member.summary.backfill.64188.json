@@ -285,7 +285,7 @@
         "label": "shape",
         "componentId": "code.sql",
         "properties": {
-          "sql": "SELECT\n  'ms-' || '${ENV:SYSTEM_BOOK}' || '-member_summary-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${BIZDAY}' AS DATE) AS bizday,\n  CAST(o.order_sale_type AS INTEGER) AS order_sale_type,\n  CAST(o.order_sale_type_name AS VARCHAR) AS order_sale_type_name,\n  CAST(o.receive_money AS DECIMAL(14,2)) AS receive_money,\n  CAST(o.receipt_coupon_share_money AS DECIMAL(14,2)) AS receipt_coupon_share_money,\n  CAST(o.customer_nums AS BIGINT) AS customer_nums,\n  CAST(o.customer_ave_price_no_coupon AS DECIMAL(14,2)) AS customer_ave_price_no_coupon,\n  CAST(o.customer_ave_price AS DECIMAL(14,2)) AS customer_ave_price,\n  CAST(o.customer_vip_money AS DECIMAL(14,2)) AS customer_vip_money,\n  CAST(o.customer_vip_nums AS BIGINT) AS customer_vip_nums,\n  CAST(o.customer_vip_ave_price AS DECIMAL(14,2)) AS customer_vip_ave_price,\n  CAST(o.member_customer_price AS DECIMAL(14,2)) AS member_customer_price,\n  CAST(o.relat_rate AS DECIMAL(18,8)) AS relat_rate,\n  CAST(o.relat_rate_vip AS DECIMAL(18,8)) AS relat_rate_vip,\n  CAST(o.buy_rate AS DECIMAL(18,8)) AS buy_rate,\n  CAST(o.item_sale_cost AS DECIMAL(14,2)) AS item_sale_cost,\n  CAST(o.item_sale_profit AS DECIMAL(14,2)) AS item_sale_profit,\n  CAST(o.item_sale_profit_rate AS DECIMAL(18,8)) AS item_sale_profit_rate,\n  CAST(o.branch_num AS INTEGER) AS branch_num,\n  CAST(o.branch_code AS VARCHAR) AS branch_code,\n  CAST(o.branch_name AS VARCHAR) AS branch_name\nFROM input o"
+          "sql": "SELECT\n  'ms-' || '${ENV:SYSTEM_BOOK}' || '-member_summary-' || replace(replace('${datetime}','-',''),'_','T') || 'Z' AS batch_id,\n  '${ENV:SYSTEM_BOOK}' AS system_book,\n  CAST('${BIZDAY}' AS DATE) AS bizday,\n  CAST(json_extract_string(js, '$.order_sale_type') AS INTEGER) AS order_sale_type,\n  CAST(json_extract_string(js, '$.order_sale_type_name') AS VARCHAR) AS order_sale_type_name,\n  CAST(json_extract_string(js, '$.receive_money') AS DECIMAL(14,2)) AS receive_money,\n  CAST(json_extract_string(js, '$.receipt_coupon_share_money') AS DECIMAL(14,2)) AS receipt_coupon_share_money,\n  CAST(json_extract_string(js, '$.customer_nums') AS BIGINT) AS customer_nums,\n  CAST(json_extract_string(js, '$.customer_ave_price_no_coupon') AS DECIMAL(14,2)) AS customer_ave_price_no_coupon,\n  CAST(json_extract_string(js, '$.customer_ave_price') AS DECIMAL(14,2)) AS customer_ave_price,\n  CAST(json_extract_string(js, '$.customer_vip_money') AS DECIMAL(14,2)) AS customer_vip_money,\n  CAST(json_extract_string(js, '$.customer_vip_nums') AS BIGINT) AS customer_vip_nums,\n  CAST(json_extract_string(js, '$.customer_vip_ave_price') AS DECIMAL(14,2)) AS customer_vip_ave_price,\n  CAST(json_extract_string(js, '$.member_customer_price') AS DECIMAL(14,2)) AS member_customer_price,\n  CAST(json_extract_string(js, '$.relat_rate') AS DECIMAL(18,8)) AS relat_rate,\n  CAST(json_extract_string(js, '$.relat_rate_vip') AS DECIMAL(18,8)) AS relat_rate_vip,\n  CAST(json_extract_string(js, '$.buy_rate') AS DECIMAL(18,8)) AS buy_rate,\n  CAST(json_extract_string(js, '$.item_sale_cost') AS DECIMAL(14,2)) AS item_sale_cost,\n  CAST(json_extract_string(js, '$.item_sale_profit') AS DECIMAL(14,2)) AS item_sale_profit,\n  CAST(json_extract_string(js, '$.item_sale_profit_rate') AS DECIMAL(18,8)) AS item_sale_profit_rate,\n  CAST(json_extract_string(js, '$.branch_num') AS INTEGER) AS branch_num,\n  CAST(json_extract_string(js, '$.branch_code') AS VARCHAR) AS branch_code,\n  CAST(json_extract_string(js, '$.branch_name') AS VARCHAR) AS branch_name\nFROM nz"
         }
       }
     },
@@ -435,6 +435,21 @@
           "retryBackoffMs": 2000
         }
       }
+    },
+    {
+      "id": "nz",
+      "type": "transform",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "nz",
+        "componentId": "code.sql",
+        "properties": {
+          "sql": "-- 行内 JSON 归一化（issue #1313）：源端旧日期不返回 order_sale_type 维度，缺键在此得 NULL，不再 Binder Error。\nSELECT to_json(o) AS js FROM input o"
+        }
+      }
     }
   ],
   "edges": [
@@ -541,6 +556,16 @@
     {
       "id": "e-merge-shape",
       "source": "merge",
+      "target": "nz",
+      "sourceHandle": "main",
+      "targetHandle": "main",
+      "data": {
+        "connectionType": "main"
+      }
+    },
+    {
+      "id": "e_nz_shape",
+      "source": "nz",
       "target": "shape",
       "sourceHandle": "main",
       "targetHandle": "main",
