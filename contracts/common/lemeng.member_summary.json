@@ -49,140 +49,140 @@
       "type": "int",
       "nullable": false,
       "description": "订单类型编码（1=销售 3=拼团…；会员口径=全部类型 vip 字段合计）",
-      "expr": "CAST(o.order_sale_type AS INTEGER)"
+      "expr": "CAST(json_extract_string(js, '$.order_sale_type') AS INTEGER)"
     },
     {
       "name": "order_sale_type_name",
       "type": "varchar",
       "nullable": true,
       "description": "订单类型名",
-      "expr": "CAST(o.order_sale_type_name AS VARCHAR)"
+      "expr": "CAST(json_extract_string(js, '$.order_sale_type_name') AS VARCHAR)"
     },
     {
       "name": "receive_money",
       "type": "decimal(14,2)",
       "nullable": true,
       "description": "收款金额（全型合计）",
-      "expr": "CAST(o.receive_money AS DECIMAL(14,2))"
+      "expr": "CAST(json_extract_string(js, '$.receive_money') AS DECIMAL(14,2))"
     },
     {
       "name": "receipt_coupon_share_money",
       "type": "decimal(14,2)",
       "nullable": true,
       "description": "券分摊收款",
-      "expr": "CAST(o.receipt_coupon_share_money AS DECIMAL(14,2))"
+      "expr": "CAST(json_extract_string(js, '$.receipt_coupon_share_money') AS DECIMAL(14,2))"
     },
     {
       "name": "customer_nums",
       "type": "bigint",
       "nullable": true,
       "description": "客单数（全型）",
-      "expr": "CAST(o.customer_nums AS BIGINT)"
+      "expr": "CAST(json_extract_string(js, '$.customer_nums') AS BIGINT)"
     },
     {
       "name": "customer_ave_price_no_coupon",
       "type": "decimal(14,2)",
       "nullable": true,
       "description": "客单价（无券）",
-      "expr": "CAST(o.customer_ave_price_no_coupon AS DECIMAL(14,2))"
+      "expr": "CAST(json_extract_string(js, '$.customer_ave_price_no_coupon') AS DECIMAL(14,2))"
     },
     {
       "name": "customer_ave_price",
       "type": "decimal(14,2)",
       "nullable": true,
       "description": "客单价",
-      "expr": "CAST(o.customer_ave_price AS DECIMAL(14,2))"
+      "expr": "CAST(json_extract_string(js, '$.customer_ave_price') AS DECIMAL(14,2))"
     },
     {
       "name": "customer_vip_money",
       "type": "decimal(14,2)",
       "nullable": true,
       "description": "**会员销售**（该类型 vip 合计）",
-      "expr": "CAST(o.customer_vip_money AS DECIMAL(14,2))"
+      "expr": "CAST(json_extract_string(js, '$.customer_vip_money') AS DECIMAL(14,2))"
     },
     {
       "name": "customer_vip_nums",
       "type": "bigint",
       "nullable": true,
       "description": "**会员客单**",
-      "expr": "CAST(o.customer_vip_nums AS BIGINT)"
+      "expr": "CAST(json_extract_string(js, '$.customer_vip_nums') AS BIGINT)"
     },
     {
       "name": "customer_vip_ave_price",
       "type": "decimal(14,2)",
       "nullable": true,
       "description": "会员客单价",
-      "expr": "CAST(o.customer_vip_ave_price AS DECIMAL(14,2))"
+      "expr": "CAST(json_extract_string(js, '$.customer_vip_ave_price') AS DECIMAL(14,2))"
     },
     {
       "name": "member_customer_price",
       "type": "decimal(14,2)",
       "nullable": true,
       "description": "会员客单价（别名，服务端同出）",
-      "expr": "CAST(o.member_customer_price AS DECIMAL(14,2))"
+      "expr": "CAST(json_extract_string(js, '$.member_customer_price') AS DECIMAL(14,2))"
     },
     {
       "name": "relat_rate",
       "type": "decimal(18,8)",
       "nullable": true,
       "description": "目标完成率",
-      "expr": "CAST(o.relat_rate AS DECIMAL(18,8))"
+      "expr": "CAST(json_extract_string(js, '$.relat_rate') AS DECIMAL(18,8))"
     },
     {
       "name": "relat_rate_vip",
       "type": "decimal(18,8)",
       "nullable": true,
       "description": "会员目标完成率",
-      "expr": "CAST(o.relat_rate_vip AS DECIMAL(18,8))"
+      "expr": "CAST(json_extract_string(js, '$.relat_rate_vip') AS DECIMAL(18,8))"
     },
     {
       "name": "buy_rate",
       "type": "decimal(18,8)",
       "nullable": true,
       "description": "购买率",
-      "expr": "CAST(o.buy_rate AS DECIMAL(18,8))"
+      "expr": "CAST(json_extract_string(js, '$.buy_rate') AS DECIMAL(18,8))"
     },
     {
       "name": "item_sale_cost",
       "type": "decimal(14,2)",
       "nullable": true,
       "description": "销售成本",
-      "expr": "CAST(o.item_sale_cost AS DECIMAL(14,2))"
+      "expr": "CAST(json_extract_string(js, '$.item_sale_cost') AS DECIMAL(14,2))"
     },
     {
       "name": "item_sale_profit",
       "type": "decimal(14,2)",
       "nullable": true,
       "description": "销售毛利",
-      "expr": "CAST(o.item_sale_profit AS DECIMAL(14,2))"
+      "expr": "CAST(json_extract_string(js, '$.item_sale_profit') AS DECIMAL(14,2))"
     },
     {
       "name": "item_sale_profit_rate",
       "type": "decimal(18,8)",
       "nullable": true,
       "description": "毛利率",
-      "expr": "CAST(o.item_sale_profit_rate AS DECIMAL(18,8))"
+      "expr": "CAST(json_extract_string(js, '$.item_sale_profit_rate') AS DECIMAL(18,8))"
     },
     {
       "name": "branch_num",
       "type": "int",
       "nullable": false,
       "description": "归属门店（**行内字段**：summary_types 含 branch 时端点直接给店维；不含 branch 则网关无视 branch_nums 只回绑定店——2026-10-26 实测）",
-      "expr": "CAST(o.branch_num AS INTEGER)"
+      "expr": "CAST(json_extract_string(js, '$.branch_num') AS INTEGER)"
     },
     {
       "name": "branch_code",
       "type": "varchar",
       "nullable": true,
       "description": "门店编码（行内字段）",
-      "expr": "CAST(o.branch_code AS VARCHAR)"
+      "expr": "CAST(json_extract_string(js, '$.branch_code') AS VARCHAR)"
     },
     {
       "name": "branch_name",
       "type": "varchar",
       "nullable": true,
       "description": "门店名（行内字段）",
-      "expr": "CAST(o.branch_name AS VARCHAR)"
+      "expr": "CAST(json_extract_string(js, '$.branch_name') AS VARCHAR)"
     }
   ]
 }
