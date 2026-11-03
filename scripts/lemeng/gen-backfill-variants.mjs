@@ -49,6 +49,8 @@ const TARGETS = [
   { base: 'lemeng.item_profit', book: '64188', window: '${date-1d}' },
   { base: 'lemeng.customer_analysis', book: '3120', window: '${date-1d}' },
   { base: 'lemeng.customer_analysis', book: '64188', window: '${date-1d}' },
+  { base: 'lemeng.saler_commission', book: '3120', window: '${date-1d}' },
+  { base: 'lemeng.saler_commission', book: '64188', window: '${date-1d}' },
 ]
 
 const BACKFILL = '${BIZDAY}'

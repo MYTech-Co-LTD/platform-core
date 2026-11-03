@@ -240,3 +240,12 @@ sources:
           partition_keys: ['system_book', 'bizday']
           partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
           pagination: '无分页（responsePath=/result/rows）；响应 {result:{total_count,rows[]}}，管线断言 len(rows)==total_count'
+
+      - name: saler_commission
+        description: '乐檬**销售员提成汇总**（2026-11-03 契约）：行 = 账套 × bizday × 门店 × 销售员。接口 nhsoft.report.ai.salercommission.find；单日窗、含首尾 ≤30 天、branch_nums 必填 ≤100 家 ⇒ 父管线切块 foreach。该接口**无 summary_types 参数**，粒度固定。'
+        meta:
+          path_convention: 'lemeng/saler_commission/system_book=<账套>/bizday=<日期>/all.parquet'
+          access_path: "read_parquet('s3://{{ var(\"zos_bucket\") }}/{{ var(\"lemeng_saler_commission_prefix\") }}/*/bizday=**/*.parquet') r"
+          partition_keys: ['system_book', 'bizday']
+          partition_key_typing: '由路径字符串重推断；两列在 staging 显式 cast'
+          pagination: '无分页（responsePath=/result/rows）'

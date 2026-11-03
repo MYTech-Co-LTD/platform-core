@@ -144,7 +144,10 @@ const EXEMPT_GLOBAL = new Map([
   ['lemeng.customer_analysis.backfill.3120', '回填专用（${BIZDAY} 参数化）'],
   ['lemeng.customer_analysis.backfill.64188', '回填专用（${BIZDAY} 参数化）'],
   ['lemeng.customer_analysis.day', '**foreach 子管线**——由 customer_analysis.l0.<book> 的 ctl.foreach 逐门店块驱动'],  ['lemeng.recon.preagg.backfill', '回填专用（换 BIZDAY 参数手动触发，handbook §1.3 阶段 H）'],
-  // ── #1160 全量历史回填（2024-10-01 起，双账套）：以下变体由
+
+  ['lemeng.saler_commission.backfill.3120', '回填专用（${BIZDAY} 参数化）'],
+  ['lemeng.saler_commission.backfill.64188', '回填专用（${BIZDAY} 参数化）'],
+  ['lemeng.saler_commission.day', '**foreach 子管线**——由 saler_commission.l0.<book> 的 ctl.foreach 逐门店块驱动'],  // ── #1160 全量历史回填（2024-10-01 起，双账套）：以下变体由
   //    scripts/lemeng/gen-backfill-variants.mjs 从同账套 l0 机械派生，只在回填期手动驱动。
   ['lemeng.request.order.backfill.3120', '回填专用（#1160 全量历史回填；${BIZDAY} 参数化）'],
   ['lemeng.transfer.out.backfill.3120', '回填专用（#1160 全量历史回填；${BIZDAY} 参数化）'],
