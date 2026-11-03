@@ -95,8 +95,15 @@ export default function ReportsPage() {
   // 纯前端过滤（服务端清单本来就是一次性全量；分页/服务端搜索是另一个议题）。
   const isMobile = useIsMobile()
   const [sheetFor, setSheetFor] = useState<ReportRow | null>(null)
+  const [filterOpen, setFilterOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'changed'>('all')
+  const STATUS_OPTIONS = [
+    { label: '全部', value: 'all' as const },
+    { label: '已发布', value: 'published' as const },
+    { label: '未发布', value: 'draft' as const },
+    { label: '有改动', value: 'changed' as const },
+  ]
   // 请求者自己的部门闭包（`GET /reports/manage` 回带；本人部门 + 全部祖先）。只用来判
   // 「打开」按钮的可用性——真正的授权在服务端（前端不重复判权，见文件头②）。
   // `null` = **不知道**（观看清单不带这个键）：那时**不判部门门**——那里的行已经被服务端裁过，
@@ -704,6 +711,44 @@ export default function ReportsPage() {
     </div>
   )
 
+  const mobileFilterSheet = (
+    <Drawer
+      placement="bottom"
+      open={filterOpen}
+      onClose={() => setFilterOpen(false)}
+      closable={false}
+      title="筛选状态"
+      height="auto"
+      styles={{ body: { padding: '4px 0 16px' } }}
+    >
+      {STATUS_OPTIONS.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => { setStatusFilter(o.value); setFilterOpen(false) }}
+          style={{
+            display: 'flex', justifyContent: 'space-between', width: '100%',
+            padding: '15px 24px', border: 'none', background: 'none',
+            textAlign: 'left', fontSize: 16, cursor: 'pointer',
+            color: statusFilter === o.value ? '#1677ff' : '#1f1f1f',
+          }}
+        >
+          {o.label}
+          {statusFilter === o.value ? <span aria-hidden>✓</span> : null}
+        </button>
+      ))}
+      <button
+        type="button"
+        onClick={() => setFilterOpen(false)}
+        style={{
+          display: 'block', width: '100%', padding: '15px 24px', marginTop: 8,
+          border: 'none', borderTop: '1px solid #f0f0f0', background: '#fafafa',
+          textAlign: 'center', cursor: 'pointer', fontSize: 16, color: '#666',
+        }}
+      >取消</button>
+    </Drawer>
+  )
+
   const mobileSheet = (
     <Drawer
       placement="bottom"
@@ -741,29 +786,38 @@ export default function ReportsPage() {
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {ctx}
-      <div style={{
-        display: 'flex', gap: 8,
-        flexDirection: isMobile ? 'column' : 'row',
-        justifyContent: 'space-between', alignItems: isMobile ? 'stretch' : 'center',
-      }}>
-        <Input
-          allowClear
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="搜索报表标题或所有者"
-          style={{ width: isMobile ? '100%' : 280 }}
-        />
-        <Segmented
-          value={statusFilter}
-          onChange={(v) => setStatusFilter(v as typeof statusFilter)}
-          options={[
-            { label: '全部', value: 'all' },
-            { label: '已发布', value: 'published' },
-            { label: '未发布', value: 'draft' },
-            { label: '有改动', value: 'changed' },
-          ]}
-        />
-      </div>
+      {isMobile ? (
+        // 移动端一屏优先：搜索 + 一个「筛选」按钮（当前状态写在按钮上），不再常驻 4 个筛选项
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Input
+            allowClear
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索报表标题或所有者"
+            style={{ flex: 1 }}
+          />
+          <Button onClick={() => setFilterOpen(true)} style={{ height: 44, paddingInline: 16 }}>
+            {statusFilter === 'all' ? '筛选' : STATUS_OPTIONS.find((o) => o.value === statusFilter)?.label}
+          </Button>
+        </div>
+      ) : (
+        <div style={{
+          display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <Input
+            allowClear
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索报表标题或所有者"
+            style={{ width: 280 }}
+          />
+          <Segmented
+            value={statusFilter}
+            onChange={(v) => setStatusFilter(v as typeof statusFilter)}
+            options={STATUS_OPTIONS}
+          />
+        </div>
+      )}
       {isMobile ? mobileCards : (
       <Table
         rowKey="id"
@@ -915,6 +969,7 @@ export default function ReportsPage() {
       ]} />
       )}
       {isMobile ? mobileSheet : null}
+      {isMobile ? mobileFilterSheet : null}
       <Modal title={`改页门：${gateEdit?.title ?? ''}`}
              open={gateEdit !== null}
              okText="确定" cancelText="取消"

@@ -7,11 +7,12 @@
 // 2. **导航必须用绝对路径**：相对导航会以壳的 splat 为基准解析到 `/console/`，把 `data` 段丢掉。
 // 3. 裸条目路径规范化到默认页签：让 URL 与页面内容始终一致（否则深链/刷新语义含混）。
 import { useEffect } from 'react'
-import { Layout, Menu } from 'antd'
+import { Layout, Menu, Segmented } from 'antd'
 import { useLocation, useNavigate } from 'react-router-dom'
 import QueryPage from './query'
 import MetricsPage from './metrics'
 import ReportsPage from './reports'
+import { useIsMobile } from './lib/useIsMobile'
 
 const TABS = [
   { key: 'query', label: '问数' },
@@ -29,6 +30,7 @@ function isTabSegment(seg: string): seg is TabKey {
 }
 
 export default function DataConsolePage() {
+  const isMobile = useIsMobile()
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const last = pathname.split('/').filter(Boolean).pop() ?? ''
@@ -48,10 +50,21 @@ export default function DataConsolePage() {
 
   return (
     <Layout style={{ background: 'transparent' }}>
-      <Menu mode="horizontal" selectedKeys={[active]}
-            items={TABS.map((t) => ({ key: t.key, label: t.label }))}
-            onClick={({ key }) => navigate(`${basePath}/${key}`)}
-            style={{ marginBottom: 16 }} />
+      {isMobile ? (
+        // 移动端：「一屏」优先——段控一行（36px 级），不再用 PC 的横向 Menu
+        <Segmented
+          block
+          value={active}
+          onChange={(v) => navigate(`${basePath}/${String(v)}`)}
+          options={TABS.map((t) => ({ label: t.label, value: t.key }))}
+          style={{ marginBottom: 12 }}
+        />
+      ) : (
+        <Menu mode="horizontal" selectedKeys={[active]}
+              items={TABS.map((t) => ({ key: t.key, label: t.label }))}
+              onClick={({ key }) => navigate(`${basePath}/${key}`)}
+              style={{ marginBottom: 16 }} />
+      )}
       <Active />
     </Layout>
   )
