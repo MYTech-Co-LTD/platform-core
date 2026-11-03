@@ -96,6 +96,10 @@ canEditAsset(row, requester, acl):
 - `canViewAsset` 与 `canEditAsset` **各只有一份实现**（模块 domain 层），PC/移动、列表/详情、
   导出/嵌入 URL **全部走它**——两处各写一遍就是 #1179 的翻版（同一规则两个入口结论不同）。
 - **`canEditAsset` 不看 `viewer`**：被点名可看 ≠ 可改配置。
+- **owner 对自己报表有最高权限**（2026-11-03 用户裁决，issue #1325）：改规格、发布/回收/回滚、
+  读草稿与历史版本、改部门门、编辑入口、删除都走 `canEditAsset`（owner ∪ `data:manage`）；
+  这些端点在 manifest 申报 `data:query`（门卫只挡匿名/无关者），创建报表/管理清单/对账仍为
+  `data:manage`（跨资产动作）。转账后的 owner 未必持管理码——这正是本条的动机。
 - 管理员改他人资产**必须留审计**（who / 哪条 / 改了什么 / `byAdmin`）。
 - owner 判定用 **Casdoor 用户名**（与权限码同源），不引第二套身份。
 

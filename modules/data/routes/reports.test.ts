@@ -244,57 +244,37 @@ describe('报表面声明（不需要数据库）', () => {
     expect(declared.get('POST /reports')).toBe('data:manage')
     expect(declared.get('GET /reports')).toBe('data:query')
     expect(declared.get('GET /reports/:id/embed-url')).toBe('data:query')
-    // 编辑入口是**管理动作**（能改报表的人才拿得到），与观看面的 embed-url 分档
-    expect(declared.get('GET /reports/:id/edit-url')).toBe('data:manage')
-    expect(declared.get('DELETE /reports/:id')).toBe('data:manage')
+    // ── 资产级写动作（#1325 用户裁决：**owner 对自己报表有最高权限**）——
+    //    声明 data:query（门卫只挡匿名/无关者），真判据在 handler 的 canEditAsset
+    //    （owner ∪ data:manage）。转账后的 owner 未必持管理码。
+    expect(declared.get('GET /reports/:id/edit-url')).toBe('data:query')
+    expect(declared.get('DELETE /reports/:id')).toBe('data:query')
     expect(declared.get('POST /reports/reconcile')).toBe('data:manage')
+    // 管理清单是**跨资产**视图，仍为管理面
     expect(declared.get('GET /reports/manage')).toBe('data:manage')
-    expect(declared.get('PUT /reports/:id')).toBe('data:manage')
-    // ── 自绘规格读写（#391 计划 6 Task 3）：读=观看面（行级页门照 embed-url 的 visibleTo），
-    //    写=管理面（改规格就是改报表内容，与 PUT /reports/:id 同档）。
+    expect(declared.get('PUT /reports/:id')).toBe('data:query')
+    // ── 自绘规格读写（#391 计划 6 Task 3）：读=观看面；写=单资产写（同上 canEditAsset）。──
     expect(declared.get('GET /reports/:id/spec')).toBe('data:query')
-    expect(declared.get('PUT /reports/:id/spec')).toBe('data:manage')
-    // ── 定义版本（月报重做 Task 10）：发布类动作全是管理面；只有「读已发布快照」是观看面
-    //    （独立链接 /r/:id 的用户只有 data:query）。──
-    expect(declared.get('POST /reports/:id/publish')).toBe('data:manage')
-    expect(declared.get('POST /reports/:id/unpublish')).toBe('data:manage')
-    expect(declared.get('POST /reports/:id/versions/:version/rollback')).toBe('data:manage')
-    expect(declared.get('GET /reports/:id/versions')).toBe('data:manage')
-    expect(declared.get('GET /reports/:id/versions/:version')).toBe('data:manage')
+    expect(declared.get('PUT /reports/:id/spec')).toBe('data:query')
+    // ── 定义版本（月报重做 Task 10）：发布/下线/回滚/历史/草稿 = 单资产读写（canEditAsset）；
+    //    只有「读已发布快照」是观看面（独立链接 /r/:id 的用户只有 data:query）。──
+    expect(declared.get('POST /reports/:id/publish')).toBe('data:query')
+    expect(declared.get('POST /reports/:id/unpublish')).toBe('data:query')
+    expect(declared.get('POST /reports/:id/versions/:version/rollback')).toBe('data:query')
+    expect(declared.get('GET /reports/:id/versions')).toBe('data:query')
+    expect(declared.get('GET /reports/:id/versions/:version')).toBe('data:query')
     expect(declared.get('GET /reports/:id/published-spec')).toBe('data:query')
-    expect(declared.get('GET /reports/:id/draft')).toBe('data:manage')
-    // ── 部门门（spec 2026-10-30 §3.4；#1173）：改门 = 授权变更 ⇒ 管理面；选择器数据源也是
-    //    配置信息（观看者不需要知道「有哪些部门可以当门」）。行级判定在 handler，不在门卫。──
-    expect(declared.get('PUT /reports/:id/dept-gate')).toBe('data:manage')
+    expect(declared.get('GET /reports/:id/draft')).toBe('data:query')
+    // ── 部门门（spec 2026-10-30 §3.4；#1173）：改门 = 单资产写（canEditAsset，#1325）；
+    //    选择器数据源是配置信息（观看者不需要知道「有哪些部门可以当门」）。──
+    expect(declared.get('PUT /reports/:id/dept-gate')).toBe('data:query')
     expect(declared.get('GET /reports/dept-options')).toBe('data:manage')
     // ── AI 文本（ai_text，计划 2026-10-26 Task 7）：观看面；更细的页门按快照另判（handler）。──
     expect(declared.get('POST /reports/:id/narrative')).toBe('data:query')
     expect(declared.get('POST /reports/:id/narrative/stream')).toBe('data:query')
   })
 
-  it('★ 页门负测：只有 data:query ⇒ 版本管理动作全 403（带 need）；published-spec 过门', async () => {
-    const app = gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), null)
-    const manageCalls: [string, string][] = [
-      ['POST', '/reports/x/publish'],
-      ['POST', '/reports/x/unpublish'],
-      ['POST', '/reports/x/versions/1/rollback'],
-      ['GET', '/reports/x/versions'],
-      ['GET', '/reports/x/versions/1'],
-      ['GET', '/reports/x/draft'],
-    ]
-    for (const [method, path] of manageCalls) {
-      const res = await app.request(path, { method })
-      // 断言带 body（need: 'data:manage'）：只断 status 的话「未声明路径」的 !hit 兜底同样 403，
-      // manifest 的声明就没被这条负测承重（同上方管理清单负测的订正口径）。
-      expect(res.status).toBe(403)
-      expect(await res.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
-    }
-    // 观看面：data:query 恰好够 ⇒ 门卫放行（壳里 pool=null ⇒ 后续 500 也可能，唯独不许 403）
-    const pub = await app.request('/reports/x/published-spec')
-    expect(pub.status).not.toBe(403)
-  })
-
-  it('★ 页门负测：只有 data:query ⇒ 管理清单 / 页门改动同样 403', async () => {
+  it('★ 页门负测：只有 data:query ⇒ 管理清单（跨资产视图）403', async () => {
     const app = gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), null)
     // ⚠️ 断言必须带 body（`need: 'data:manage'`），不能只断 status（订正记录 2026-09-29，Task 2
     // 实施中发现）：**未声明**的路径走门卫的 `!hit` 兜底，同样给 403——只断 status 的话，这条负测
@@ -302,12 +282,6 @@ describe('报表面声明（不需要数据库）', () => {
     const list = await app.request('/reports/manage')
     expect(list.status).toBe(403)
     expect(await list.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
-    const put = await app.request('/reports/whatever', {
-      method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requiredScope: null }),
-    })
-    expect(put.status).toBe(403)
-    expect(await put.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
   })
 
   it('★ 页门负测：只有 data:query ⇒ 建报表被门卫 403（模块自己不写 requireScope）', async () => {
@@ -319,10 +293,9 @@ describe('报表面声明（不需要数据库）', () => {
     expect(await res.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
   })
 
-  it('★ 页门负测：只有 data:query ⇒ 对账 / 删除同样 403', async () => {
+  it('★ 页门负测：对账是管理面（跨资产）⇒ 无 data:manage 403', async () => {
     const app = gatedApp(makeIdentity({ orgId: ORG }), null)
     expect((await app.request('/reports/reconcile', { method: 'POST' })).status).toBe(403)
-    expect((await app.request('/reports/whatever', { method: 'DELETE' })).status).toBe(403)
   })
 
   it('★ 静态兄弟路径不被 param 门卫误杀（#145）：POST /reports/reconcile 带 manage 可达（不是 403）', async () => {
@@ -332,20 +305,6 @@ describe('报表面声明（不需要数据库）', () => {
     expect(res.status).not.toBe(403)
   })
 
-  it('★ 页门负测：只有 data:query ⇒ PUT /reports/:id/spec 403（带 need）；GET /reports/:id/spec 过门', async () => {
-    const app = gatedApp(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), null)
-    const put = await app.request('/reports/whatever/spec', {
-      method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ spec: { panels: [] }, expectedVersion: 1 }),
-    })
-    // 断言带 body（need: 'data:manage'）：只断 status 的话「未声明路径」的 !hit 兜底同样 403，
-    // manifest 那两行声明就没被这条负测承重（同上方管理清单负测的订正口径）。
-    expect(put.status).toBe(403)
-    expect(await put.json()).toEqual({ error: 'FORBIDDEN', need: 'data:manage' })
-    // GET 是观看面：data:query 恰好够 ⇒ 门卫放行（壳里 pool=null ⇒ 后续 404/500 都可能，唯独不许 403）
-    const get = await app.request('/reports/whatever/spec')
-    expect(get.status).not.toBe(403)
-  })
 })
 
 describePg('报表路由（需要 DATABASE_URL）', () => {
@@ -857,6 +816,76 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
     // 新 owner 看得到，旧 owner（admin）仍能看到——因为持 data:manage
     expect((await (await viewer().app.request('/reports')).json()).reports.map((r: { id: string }) => r.id))
       .toContain(id)
+  })
+
+  it('★ owner 最高权限（#1325）：转账给只有 data:query 的 owner 后，可读草稿/历史、改规格/部门门、发布/回收、删除；非 owner 仍 403', async () => {
+    const { app } = manage()
+    const jsonHdr = { 'content-type': 'application/json' }
+    const panel = { chart: 'table', title: '公开', metricId: OPEN_METRIC }
+    const created = await post(app, { title: 'owner 最高权限', renderer: 'platform', spec: { panels: [panel] } })
+    expect(created.status).toBe(201)
+    const { id } = await created.json() as { id: string }
+    const publish = (target: Hono, rid: string, expectedVersion: number) => target.request(`/reports/${rid}/publish`, {
+      method: 'POST', headers: jsonHdr, body: JSON.stringify({ expectedVersion }),
+    })
+    expect((await publish(app, id, await versionOf(app, id))).status).toBe(200)
+
+    // 转给只有 data:query 的人（owner 未必持管理码——这正是本裁决的场景）
+    expect((await app.request(`/reports/${id}/owner`, {
+      method: 'PUT', headers: jsonHdr, body: JSON.stringify({ owner: 'u-viewer' }),
+    })).status).toBe(200)
+
+    const owner = viewer().app   // u-viewer：只有 data:query
+    // 读草稿与历史
+    expect((await owner.request(`/reports/${id}/draft`)).status).toBe(200)
+    expect((await owner.request(`/reports/${id}/versions`)).status).toBe(200)
+    expect((await owner.request(`/reports/${id}/versions/1`)).status).toBe(200)
+    // 改规格
+    expect((await owner.request(`/reports/${id}/spec`, {
+      method: 'PUT', headers: jsonHdr,
+      body: JSON.stringify({
+        spec: { panels: [{ chart: 'text', content: 'owner 改的', span: 24 }] },
+        expectedVersion: await versionOf(app, id),
+      }),
+    })).status).toBe(200)
+    // 改部门门（null = 清空）
+    expect((await owner.request(`/reports/${id}/dept-gate`, {
+      method: 'PUT', headers: jsonHdr,
+      body: JSON.stringify({ requiredDepts: null, expectedVersion: await versionOf(app, id) }),
+    })).status).toBe(200)
+    // 发布 / 回收
+    expect((await publish(owner, id, await versionOf(app, id))).status).toBe(200)
+    expect((await owner.request(`/reports/${id}/unpublish`, {
+      method: 'POST', headers: jsonHdr, body: JSON.stringify({ expectedVersion: await versionOf(app, id) }),
+    })).status).toBe(200)
+    // 删除
+    expect((await owner.request(`/reports/${id}?expectedVersion=${await versionOf(app, id)}`, {
+      method: 'DELETE',
+    })).status).toBe(204)
+
+    // ── 反证：非 owner 的同码用户仍被 asset 判据拒（不是「所有 data:query 都放行」）──
+    const created2 = await post(app, { title: 'owner 最高权限 2', renderer: 'platform', spec: { panels: [panel] } })
+    expect(created2.status).toBe(201)
+    const id2 = (await created2.json() as { id: string }).id
+    expect((await publish(app, id2, await versionOf(app, id2))).status).toBe(200)
+    const stranger = shell(makeIdentity({ orgId: ORG, userId: 'u-stranger', scopes: ['data:query'] })).app
+    const denied = [
+      await stranger.request(`/reports/${id2}/draft`),
+      await stranger.request(`/reports/${id2}/versions`),
+      await stranger.request(`/reports/${id2}/versions/1`),
+      await stranger.request(`/reports/${id2}/dept-gate`, {
+        method: 'PUT', headers: jsonHdr,
+        body: JSON.stringify({ requiredDepts: null, expectedVersion: await versionOf(app, id2) }),
+      }),
+      await stranger.request(`/reports/${id2}/publish`, {
+        method: 'POST', headers: jsonHdr, body: JSON.stringify({ expectedVersion: await versionOf(app, id2) }),
+      }),
+      await stranger.request(`/reports/${id2}?expectedVersion=${await versionOf(app, id2)}`, { method: 'DELETE' }),
+    ]
+    for (const res of denied) {
+      expect(res.status).toBe(403)
+      expect(await res.json()).toMatchObject({ error: 'FORBIDDEN', need: 'owner_or_data:manage' })
+    }
   })
 
   it('★ 跨租户：另一个 org 看不到本 org 的登记，也拿不到嵌入 URL（404，不泄露存在性）', async () => {
@@ -2613,7 +2642,11 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       })
       expect(pub2.status).toBe(200)
 
-      const viewer = narrativeShell(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), () => fakeModel(SAFE_TEXT))
+      // 非 owner（#1325 起 owner 对资产有写权，会绕开这组「观看面」判据——必须是另一个人）
+      const viewer = narrativeShell(
+        makeIdentity({ orgId: ORG, userId: 'u-narr-viewer', scopes: ['data:query'] }),
+        () => fakeModel(SAFE_TEXT),
+      )
       // 最新版（v2，无门）可看
       expect((await narrate(viewer, id)).status).toBe(200)
       // 钉 v1：那一版要 data:cost ⇒ 404。若误用行上的 null 放行，这里会变 200。
@@ -2626,7 +2659,11 @@ describePg('报表路由（需要 DATABASE_URL）', () => {
       expect(res.status).toBe(201)
       const { id } = await res.json() as { id: string }
 
-      const viewer = narrativeShell(makeIdentity({ orgId: ORG, scopes: ['data:query'] }), () => fakeModel(SAFE_TEXT))
+      // 非 owner：草稿预览要 canEditAsset（owner ∪ data:manage）⇒ 404（#1325 同一判据）
+      const viewer = narrativeShell(
+        makeIdentity({ orgId: ORG, userId: 'u-draft-viewer', scopes: ['data:query'] }),
+        () => fakeModel(SAFE_TEXT),
+      )
       expect((await narrate(viewer, id, { preview: 'draft' })).status).toBe(404)
       expect((await narrate(viewer, id)).status).toBe(404)   // 未发布 ⇒ NOT_PUBLISHED
 
